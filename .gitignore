@@ -16,6 +16,9 @@ DB/
 uploads/
 tests/sample.xlsx
 
+# MS Office lock/owner files (e.g. ~$sample.xlsx when opened in Excel)
+~$*
+
 # Honey release binaries — served by /honey/download, not version-controlled.
 # version.json IS tracked; drop built exe here at deploy time.
 server/releases/*.exe

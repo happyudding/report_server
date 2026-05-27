@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 )
 
 from config import CURRENT_VERSION, SERVER_BASE_URL
+import updater
 import uploader
 import version_check
 
@@ -141,19 +142,50 @@ class HoneyMainWindow(QMainWindow):
 
         url = manifest.get("url") or "/honey/download"
         expected = manifest.get("sha256") or None
-        target = Path(tempfile.gettempdir()) / (manifest.get("file") or f"Honey-{remote}.exe")
-        try:
-            version_check.download_to(target, url, expected_sha256=expected or None)
-        except Exception as exc:
-            QMessageBox.critical(self, "다운로드 실패", str(exc))
+
+        self.status.showMessage(f"새 버전 {remote} 다운로드 중...")
+        QApplication.processEvents()
+
+        if updater.is_frozen():
+            # 패키징된 exe: 다운로드 → 자동 교체 → 재시작
+            target = updater.current_exe_path()
+            staged = updater.staging_path(target)
+            try:
+                version_check.download_to(staged, url, expected_sha256=expected)
+            except Exception as exc:
+                QMessageBox.critical(self, "다운로드 실패", str(exc))
+                self.status.showMessage("업데이트 실패")
+                return
+            try:
+                updater.apply_update(staged, target)
+            except Exception as exc:
+                QMessageBox.critical(self, "업데이트 적용 실패", str(exc))
+                self.status.showMessage("업데이트 실패")
+                return
+
+            QMessageBox.information(
+                self, "업데이트 적용",
+                f"새 버전 {remote} 으로 교체 후 자동 재시작됩니다.\n앱을 종료합니다.",
+            )
+            # 앱 종료 → exe 락 해제 → updater.bat 가 교체 후 재실행
+            QApplication.quit()
             return
 
+        # 스크립트(개발) 실행: 교체 대상 exe 가 없으므로 다운로드만 수행
+        target = Path(tempfile.gettempdir()) / (manifest.get("file") or f"Honey-{remote}.exe")
+        try:
+            version_check.download_to(target, url, expected_sha256=expected)
+        except Exception as exc:
+            QMessageBox.critical(self, "다운로드 실패", str(exc))
+            self.status.showMessage("업데이트 실패")
+            return
         QMessageBox.information(
-            self, "다운로드 완료",
-            f"새 버전이 다운로드되었습니다:\n{target}\n\n"
-            f"이 앱을 종료 후 수동으로 교체해주세요.\n"
-            f"(자동 교체는 다음 릴리즈에서 추가 예정)",
+            self, "다운로드 완료 (개발 모드)",
+            f"스크립트 실행 중이라 교체 대상 exe 가 없습니다.\n"
+            f"다운로드만 완료:\n{target}\n\n"
+            f"(자동 교체는 빌드된 exe 에서 동작합니다.)",
         )
+        self.status.showMessage("다운로드 완료 (개발 모드)")
 
 
 def main():
