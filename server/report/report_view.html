@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Session View</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f0f2f5; margin: 0; padding: 24px 20px;
+  color: #222;
+}
+.container { max-width: 1100px; margin: 0 auto; }
+.header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+.back-btn {
+  padding: 6px 14px; border-radius: 6px; border: 1px solid #d0d5dd;
+  background: #fff; cursor: pointer; font-size: 12px; color: #555;
+  text-decoration: none;
+}
+.back-btn:hover { background: #f0f6ff; border-color: #4a90e2; color: #4a90e2; }
+.title { font-size: 18px; font-weight: 700; color: #1a1a2e; flex: 1; }
+
+.card {
+  background: #fff; border-radius: 10px; padding: 18px 22px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.06); margin-bottom: 14px;
+}
+.card-title {
+  font-size: 14px; font-weight: 600; color: #333;
+  margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid #eef0f3;
+}
+
+.meta-grid {
+  display: grid; grid-template-columns: 110px 1fr; gap: 8px 14px;
+  font-size: 13px;
+}
+.meta-key { color: #888; font-weight: 500; }
+.meta-val { color: #222; word-break: break-all; }
+
+.badge {
+  display: inline-block; padding: 2px 10px; border-radius: 4px;
+  font-size: 11px; font-weight: 600;
+}
+.badge.xlsx_upload { background: #dcfce7; color: #166534; }
+.badge.analyze     { background: #dbeafe; color: #1e40af; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 6px 10px; border-bottom: 1px solid #eef0f3; text-align: left; }
+th { background: #fafbfc; font-weight: 600; color: #555; font-size: 11px; }
+
+.kv-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; font-size: 13px; }
+.kv-list .k { color: #888; }
+.kv-list .v { color: #222; }
+
+.placeholder { font-size: 12px; color: #999; padding: 20px; text-align: center; }
+.error-box {
+  background: #fef2f2; color: #991b1b; padding: 12px 16px;
+  border-radius: 6px; font-size: 13px; margin-bottom: 14px;
+}
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <a class="back-btn" href="/pe/report/">← 검색결과</a>
+    <div class="title">Session View</div>
+  </div>
+
+  <div id="errorBox" class="error-box" style="display:none"></div>
+
+  <div class="card">
+    <h2 class="card-title">메타 정보</h2>
+    <div class="meta-grid" id="metaGrid">
+      <div class="meta-key">로드 중...</div><div class="meta-val"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">Summary</h2>
+    <div id="summaryBlock" class="placeholder">로드 중...</div>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">Yield</h2>
+    <div id="yieldBlock" class="placeholder">로드 중...</div>
+  </div>
+
+  <div class="card">
+    <h2 class="card-title">Issue Table</h2>
+    <div id="issueBlock" class="placeholder">로드 중...</div>
+  </div>
+
+</div>
+
+<script>
+const SESSION_ID = location.pathname.split("/").pop();
+
+function fmtDate(unix) {
+  if (!unix) return "-";
+  const d = new Date(unix * 1000);
+  return d.toLocaleString("ko-KR");
+}
+
+function renderMeta(session) {
+  const src = session.source || "xlsx_upload";
+  const rows = [
+    ["Session ID", session.session_id || "-"],
+    ["Source", `<span class="badge ${src}">${src}</span>`],
+    ["Status", session.status || "-"],
+    ["Product Type", session.product_type || "-"],
+    ["Product", session.product || "-"],
+    ["LOT ID", session.lot_id || "-"],
+    ["파일명", session.file_name || "-"],
+    ["업로드 일시", fmtDate(session.created_at)],
+    ["Analysis Key", session.analysis_key || "-"],
+  ];
+  document.getElementById("metaGrid").innerHTML = rows.map(r =>
+    `<div class="meta-key">${r[0]}</div><div class="meta-val">${r[1]}</div>`
+  ).join("");
+}
+
+function renderSummary(summary_text, summary_rows) {
+  const block = document.getElementById("summaryBlock");
+  if (summary_text && Object.keys(summary_text).length) {
+    const entries = Object.entries(summary_text);
+    block.innerHTML = `<div class="kv-list">` + entries.map(([k, v]) => {
+      const val = typeof v === "object" ? JSON.stringify(v) : String(v);
+      return `<div class="k">${k}</div><div class="v">${val}</div>`;
+    }).join("") + `</div>`;
+    return;
+  }
+  if (summary_rows && summary_rows.length) {
+    const cols = ["item_name", "bin_number", "yield_percent", "fail_count", "cpk_val", "unit"];
+    block.innerHTML = `<table><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead>` +
+      `<tbody>${summary_rows.map(r =>
+        `<tr>${cols.map(c => `<td>${r[c] ?? ""}</td>`).join("")}</tr>`
+      ).join("")}</tbody></table>`;
+    return;
+  }
+  block.innerHTML = `<div class="placeholder">데이터 없음</div>`;
+}
+
+function renderYield(summary_rows) {
+  const block = document.getElementById("yieldBlock");
+  if (!summary_rows || !summary_rows.length) {
+    block.innerHTML = `<div class="placeholder">데이터 없음</div>`;
+    return;
+  }
+  const cols = ["bin_number", "item_name", "yield_percent", "fail_count"];
+  block.innerHTML = `<table><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead>` +
+    `<tbody>${summary_rows.map(r =>
+      `<tr>${cols.map(c => `<td>${r[c] ?? ""}</td>`).join("")}</tr>`
+    ).join("")}</tbody></table>`;
+}
+
+function renderIssue(issue_rows) {
+  const block = document.getElementById("issueBlock");
+  if (!issue_rows || !issue_rows.length) {
+    block.innerHTML = `<div class="placeholder">데이터 없음</div>`;
+    return;
+  }
+  const keys = Object.keys(issue_rows[0]);
+  block.innerHTML = `<table><thead><tr>${keys.map(c => `<th>${c}</th>`).join("")}</tr></thead>` +
+    `<tbody>${issue_rows.map(r =>
+      `<tr>${keys.map(c => `<td>${r[c] ?? ""}</td>`).join("")}</tr>`
+    ).join("")}</tbody></table>`;
+}
+
+async function load() {
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-store" });
+    if (!res.ok) {
+      document.getElementById("errorBox").style.display = "";
+      document.getElementById("errorBox").textContent = `세션을 불러올 수 없습니다 (${res.status})`;
+      return;
+    }
+    const data = await res.json();
+    renderMeta(data.session || {});
+    renderSummary(data.summary_text, data.summary);
+    renderYield(data.summary);
+    renderIssue(data.issue_table_text);
+  } catch (e) {
+    document.getElementById("errorBox").style.display = "";
+    document.getElementById("errorBox").textContent = "로드 실패: " + e.message;
+  }
+}
+
+load();
+</script>
+</body>
+</html>

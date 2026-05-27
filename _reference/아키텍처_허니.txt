@@ -1,0 +1,56 @@
+ 1. 데이타 형식
+
+웹에서 사용할 데이터는 특정 형식의 데이타프레임이다 0행에 단위, 1행에 하한값, 2행에 상한값이 들어가고 5행부터 데이터가 들어간다 컬럼은 고정 컬럼 과 테스트 아이템 컬럼으로 구성된다 (현재 프로젝트의 마크다운 파일및 코드를 참조)
+
+2. 구현할 4개 시트의 정의
+
+2.1 raw data sheet
+목적 : 측정된 모든 데이터를 테이블로 보여주기
+데이터 : 5행 이후의 모든 데이터 
+dash component : DataTable
+
+2.2 yield sheet
+목적 : 과목별 수량과 portion display
+calculation : counts of each bin / all count * 100
+
+student_type | count | portion (%) | Main Fail subject
+----|--------|------------| ---------
+1  | 95 | 95.0 | Pass
+2 | 3 | 3.0 | subject1
+3 | 2 | 2.0 | subject50
+
+2.3. cpk sheet
+각 과목 아이템별 공정 능력 지수 표시 
+min, max, average, stdev:
+cp = (Hilimit - LoLimit) / 6* stdev
+cpl  = (average - loLimit ) / 3* stdev
+cpu = (HiLimit - Average) / 3* stdev
+cpk = min(cpl, cpu)
+
+주의  : stdev 0 이면 cpk 계산 불가 해서 N/A process
+dash component : datatable
+
+2.4 Fail Item sheet
+
+purpose : student_type != (Fail Item) data only gathering and display
+information most fail item by each students type
+dash component : datatable
+
+3. 기존 프로젝트와의 관계
+
+이미 데이터프레임을 입력받아 json으로 빌드하고 plotly 산포를 그려서 웹에 뿌려주는 프로젝트가 구현되어 있다. 이 프로젝트의 구조 및 구현된 함수들을 참조하여 같은 방식으로 4개의 시트를 구현하면 되고 2.5 에 distribution sheet 를 추가 하여 현재 plotly 프로젝트를 넣으면 된다. 그리고  fail item sheet  의 경우 산포 그래프를 png image 로 변환해서 보여주는 방식으로 구현할수있다 이때 각각의 subject 에 포션이 높은 순으로 가로로 쭉 이어 붙여 주면된다.
+
+4. 구현 순서
+먼저 json으로 빌더를 만드는데 빌더는 아마 이미 구현이 되어 있으므로 구현된 빌더를 최대한 사용하거나 만약없다면 새로 빌더를 만든다 그다음 dash datatable 과 연결한다. fail item 의 경우 기존 차트를 png 이미ㅈ로 내보내는 기능을 활용 한다.
+
+5. 대시 연결방식
+
+dcc.tabs로 5개 탭을 만들고 각 탭에 datatable 을 배치 한다 dcc.store json 으로 저장하고 탭 전환할때 해당 json  불러와서 테이블에 표시하면될거같다.
+
+6. 체크 리스트
+
+json.builder 파일생성(기존꺼 재사용 가능한지 체크), df 로드 및 json 변환 테스트, dash datatable 5개 탭 연결, 기존 plotly 차트와 통합 ,fail item png 연동 순으로 진행 한다.
+
+
+주의사항 
+- 4기가 램 을 가진 서버에서 동시 사용자 10명이 진행하기 때문에 서버 과부하 측면에서 효율적인 설계가 들어 가야 함

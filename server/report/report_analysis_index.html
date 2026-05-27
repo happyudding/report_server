@@ -1,0 +1,430 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Report Server — 검색결과</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f0f2f5; margin: 0; padding: 24px 20px;
+  color: #222;
+}
+h1 { margin: 0 0 20px; font-size: 22px; font-weight: 700; color: #1a1a2e; }
+
+.top-bar {
+  display: flex; align-items: center; gap: 12px;
+  background: #fff; border-radius: 10px; padding: 16px 20px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.pt-btn {
+  flex: 0 0 80px; height: 56px; border: 2px solid #d0d5dd;
+  border-radius: 10px; background: #fff; cursor: pointer;
+  font-size: 16px; font-weight: 700; color: #555;
+  transition: all .15s;
+}
+.pt-btn:hover { border-color: #4a90e2; color: #4a90e2; background: #f0f6ff; }
+.pt-btn.active {
+  border-color: #4a90e2; background: #4a90e2; color: #fff;
+  box-shadow: 0 2px 8px rgba(74,144,226,.35);
+}
+.spacer { flex: 1; }
+
+.filter-card {
+  background: #fff; border-radius: 10px; padding: 16px 20px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 16px;
+}
+.filter-grid {
+  display: grid; grid-template-columns: 1fr 1fr 2fr auto; gap: 12px;
+  align-items: end;
+}
+.filter-group { display: flex; flex-direction: column; gap: 6px; }
+.filter-label { font-size: 12px; color: #666; font-weight: 600; }
+.filter-input, .sel-input {
+  height: 36px; padding: 0 10px; border: 1px solid #d0d5dd;
+  border-radius: 6px; font-size: 13px; outline: none;
+  background: #fff;
+}
+.filter-input:focus, .sel-input:focus { border-color: #4a90e2; }
+.filter-actions { display: flex; gap: 8px; align-items: end; }
+.btn-action {
+  height: 36px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
+  background: #fff; color: #333; font-size: 13px; cursor: pointer; font-weight: 500;
+}
+.btn-action.primary { background: #4a90e2; color: #fff; border-color: #4a90e2; }
+.btn-action.primary:hover { background: #357abd; }
+
+.results-card {
+  background: #fff; border-radius: 10px; padding: 16px 20px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07);
+}
+.results-header {
+  font-size: 14px; font-weight: 600; color: #333;
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.results-count { font-size: 12px; color: #888; font-weight: 400; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 10px; border-bottom: 1px solid #eef0f3; text-align: left; }
+th { background: #fafbfc; font-weight: 600; color: #555; font-size: 12px; }
+tr.empty-row td { text-align: center; color: #999; padding: 30px; }
+tr.result-row { cursor: pointer; transition: background .1s; }
+tr.result-row:hover { background: #f5f8ff; }
+
+.badge-source {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 600;
+}
+.badge-source.xlsx_upload { background: #dcfce7; color: #166534; }
+.badge-source.analyze { background: #dbeafe; color: #1e40af; }
+
+.btn-row { display: inline-flex; gap: 6px; }
+.btn-mini {
+  padding: 4px 10px; font-size: 12px; border-radius: 4px;
+  border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
+}
+.btn-mini.danger { color: #dc2626; border-color: #fca5a5; }
+.btn-mini.danger:hover { background: #fef2f2; }
+
+.pager {
+  display: flex; gap: 6px; justify-content: center; margin-top: 14px;
+}
+.pager .pg-btn {
+  min-width: 32px; height: 30px; padding: 0 8px; font-size: 12px;
+  border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-radius: 4px;
+}
+.pager .pg-btn.active { background: #4a90e2; color: #fff; border-color: #4a90e2; }
+
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: #333; color: #fff; padding: 10px 18px; border-radius: 6px;
+  font-size: 13px; opacity: 0; transition: opacity .2s;
+  pointer-events: none; z-index: 1000;
+}
+.toast.show { opacity: 1; }
+
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.4); z-index: 100;
+  align-items: center; justify-content: center;
+}
+.modal-overlay.show { display: flex; }
+.modal-box {
+  background: #fff; border-radius: 10px; padding: 24px;
+  width: 360px; max-width: 90%;
+}
+.modal-title { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+.modal-desc { font-size: 13px; color: #666; margin: 0 0 14px; }
+.pin-row { display: flex; gap: 8px; justify-content: center; }
+.pin-cell {
+  width: 44px; height: 50px; text-align: center; font-size: 22px;
+  border: 1px solid #d0d5dd; border-radius: 6px; outline: none;
+}
+.pin-cell:focus { border-color: #4a90e2; }
+.modal-hint { font-size: 11px; color: #888; text-align: center; margin: 8px 0 0; }
+.modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
+.modal-btn {
+  padding: 8px 16px; font-size: 13px; border-radius: 6px;
+  border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
+}
+.modal-btn.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
+</style>
+</head>
+<body>
+
+<h1>Report Server — 검색결과</h1>
+
+<!-- product type 필터 -->
+<div class="top-bar">
+  <button class="pt-btn" data-pt="MD">MD</button>
+  <button class="pt-btn" data-pt="PD">PD</button>
+  <button class="pt-btn" data-pt="PM">PM</button>
+  <button class="pt-btn" data-pt="SE">SE</button>
+  <div class="spacer"></div>
+  <div style="font-size:12px; color:#888;">
+    업로드는 Honey 클라이언트에서 수행합니다.
+  </div>
+</div>
+
+<!-- 검색 필터 -->
+<div class="filter-card">
+  <div class="filter-grid">
+    <div class="filter-group">
+      <label class="filter-label">Process</label>
+      <input type="text" class="filter-input" id="processInput" placeholder="All">
+    </div>
+    <div class="filter-group">
+      <label class="filter-label">Product</label>
+      <input type="text" class="filter-input" id="productInput" placeholder="All">
+    </div>
+    <div class="filter-group">
+      <label class="filter-label">검색</label>
+      <input type="text" class="filter-input" id="lotIdInput"
+             placeholder="Product / LOT / Process / 파일명 등 모든 항목 검색...">
+    </div>
+    <div class="filter-actions">
+      <button class="btn-action primary" id="searchBtn">조회</button>
+    </div>
+  </div>
+</div>
+
+<!-- 결과 -->
+<div class="results-card">
+  <div class="results-header">
+    검색결과
+    <span class="results-count" id="resultsCount"></span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Source</th>
+        <th>Product Type</th>
+        <th>Product</th>
+        <th>LOT ID</th>
+        <th>파일명</th>
+        <th>업로드날짜</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="resultsTbody">
+      <tr class="empty-row"><td colspan="7">데이터를 불러오는 중...</td></tr>
+    </tbody>
+  </table>
+  <div class="pager" id="pager"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- 삭제 비밀번호 모달 -->
+<div class="modal-overlay" id="delModal">
+  <div class="modal-box">
+    <p class="modal-title">세션 삭제</p>
+    <p class="modal-desc" id="delModalDesc">삭제하려면 비밀번호를 입력하세요.</p>
+    <div class="pin-row" id="delPinRow">
+      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="delPin0">
+      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="delPin1">
+      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="delPin2">
+      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="delPin3">
+    </div>
+    <p class="modal-hint" id="delModalHint">숫자 4자리</p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="delModalCancel">취소</button>
+      <button class="modal-btn danger" id="delModalConfirm">삭제</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const PAGE_SIZE = 10;
+let _lastRows = [];
+let _currentPage = 0;
+
+const state = {
+  productType: null,
+};
+
+// ── product type buttons ──
+document.querySelectorAll(".pt-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const pt = btn.dataset.pt;
+    if (state.productType === pt) {
+      state.productType = null;
+      btn.classList.remove("active");
+    } else {
+      document.querySelectorAll(".pt-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      state.productType = pt;
+    }
+    loadHistory();
+  });
+});
+
+// ── search button ──
+document.getElementById("searchBtn").addEventListener("click", loadHistory);
+["processInput", "productInput", "lotIdInput"].forEach(id => {
+  document.getElementById(id).addEventListener("keydown", e => {
+    if (e.key === "Enter") loadHistory();
+  });
+});
+
+// ── toast ──
+function showToast(msg, ms=2000) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), ms);
+}
+
+// ── format date ──
+function fmtDate(unix) {
+  const d = new Date(unix * 1000);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ── client-side substring search across all columns ──
+function applyClientFilter(rows) {
+  const q = (document.getElementById("lotIdInput").value || "").trim().toLowerCase();
+  const process = (document.getElementById("processInput").value || "").trim().toLowerCase();
+  const product = (document.getElementById("productInput").value || "").trim().toLowerCase();
+  return rows.filter(r => {
+    if (process && (r.process || "").toLowerCase() !== process) return false;
+    if (product && (r.product || "").toLowerCase() !== product) return false;
+    if (!q) return true;
+    const haystack = [
+      r.source, r.product_type, r.product, r.revision, r.lot_id,
+      r.process, r.file_name, r.session_id,
+    ].map(v => String(v || "").toLowerCase()).join(" ");
+    return haystack.includes(q);
+  });
+}
+
+// ── load history ──
+async function loadHistory() {
+  const params = new URLSearchParams();
+  if (state.productType) params.set("product_type", state.productType);
+  const url = "/pe/report/api/history" + (params.toString() ? "?" + params.toString() : "");
+  try {
+    const res = await fetch(url);
+    const rows = await res.json();
+    _lastRows = rows;
+    _currentPage = 0;
+    renderResults();
+  } catch (e) {
+    document.getElementById("resultsTbody").innerHTML =
+      `<tr class="empty-row"><td colspan="7">로드 실패: ${e.message}</td></tr>`;
+  }
+}
+
+// ── render results ──
+function renderResults() {
+  const filtered = applyClientFilter(_lastRows);
+  const total = filtered.length;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  _currentPage = Math.min(_currentPage, pageCount - 1);
+  const start = _currentPage * PAGE_SIZE;
+  const slice = filtered.slice(start, start + PAGE_SIZE);
+
+  document.getElementById("resultsCount").textContent =
+    total ? `(${total}건)` : "";
+
+  const tbody = document.getElementById("resultsTbody");
+  if (!slice.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="7">검색 결과가 없습니다.</td></tr>`;
+  } else {
+    tbody.innerHTML = slice.map(r => `
+      <tr class="result-row" data-sid="${r.session_id}">
+        <td><span class="badge-source ${r.source || 'xlsx_upload'}">${r.source || 'xlsx_upload'}</span></td>
+        <td>${r.product_type || '-'}</td>
+        <td>${r.product || '-'}</td>
+        <td>${r.lot_id || '-'}</td>
+        <td>${r.file_name || '-'}</td>
+        <td>${fmtDate(r.created_at)}</td>
+        <td>
+          <div class="btn-row">
+            <button class="btn-mini" data-act="view" data-sid="${r.session_id}">보기</button>
+            <button class="btn-mini danger" data-act="del" data-sid="${r.session_id}" data-pw="${r.has_password ? 1 : 0}">삭제</button>
+          </div>
+        </td>
+      </tr>
+    `).join("");
+  }
+
+  // pager
+  const pager = document.getElementById("pager");
+  if (pageCount <= 1) {
+    pager.innerHTML = "";
+  } else {
+    let html = "";
+    for (let i = 0; i < pageCount; i++) {
+      html += `<button class="pg-btn ${i===_currentPage?'active':''}" data-page="${i}">${i+1}</button>`;
+    }
+    pager.innerHTML = html;
+  }
+
+  // bind clicks
+  tbody.querySelectorAll(".result-row").forEach(row => {
+    row.addEventListener("click", e => {
+      if (e.target.closest("button")) return;
+      const sid = row.dataset.sid;
+      location.href = `/pe/report/view/${sid}`;
+    });
+  });
+  tbody.querySelectorAll("button[data-act='view']").forEach(b => {
+    b.addEventListener("click", e => {
+      e.stopPropagation();
+      location.href = `/pe/report/view/${b.dataset.sid}`;
+    });
+  });
+  tbody.querySelectorAll("button[data-act='del']").forEach(b => {
+    b.addEventListener("click", e => {
+      e.stopPropagation();
+      startDelete(b.dataset.sid, b.dataset.pw === "1");
+    });
+  });
+  pager.querySelectorAll(".pg-btn").forEach(b => {
+    b.addEventListener("click", () => {
+      _currentPage = parseInt(b.dataset.page, 10);
+      renderResults();
+    });
+  });
+}
+
+// ── delete modal ──
+let _delSid = null;
+let _delNeedPw = false;
+function startDelete(sid, needPw) {
+  _delSid = sid;
+  _delNeedPw = needPw;
+  const modal = document.getElementById("delModal");
+  document.getElementById("delModalDesc").textContent =
+    needPw ? "삭제하려면 비밀번호를 입력하세요." : "정말 삭제하시겠습니까?";
+  const pinRow = document.getElementById("delPinRow");
+  pinRow.style.display = needPw ? "flex" : "none";
+  ["delPin0","delPin1","delPin2","delPin3"].forEach(id => document.getElementById(id).value = "");
+  modal.classList.add("show");
+}
+document.getElementById("delModalCancel").addEventListener("click", () => {
+  document.getElementById("delModal").classList.remove("show");
+});
+document.getElementById("delModalConfirm").addEventListener("click", async () => {
+  const pw = ["delPin0","delPin1","delPin2","delPin3"]
+    .map(id => document.getElementById(id).value).join("");
+  if (_delNeedPw && pw.length !== 4) {
+    showToast("비밀번호 4자리를 입력하세요.");
+    return;
+  }
+  try {
+    const res = await fetch(`/pe/report/session/${_delSid}`, {
+      method: "DELETE",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({password: pw}),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      showToast(j.error || "삭제 실패");
+      return;
+    }
+    showToast("삭제됨");
+    document.getElementById("delModal").classList.remove("show");
+    loadHistory();
+  } catch (e) {
+    showToast("삭제 실패: " + e.message);
+  }
+});
+
+// PIN cell auto-advance
+document.querySelectorAll(".pin-cell").forEach((c, i, arr) => {
+  c.addEventListener("input", () => {
+    if (c.value && i < arr.length - 1) arr[i+1].focus();
+  });
+  c.addEventListener("keydown", e => {
+    if (e.key === "Backspace" && !c.value && i > 0) arr[i-1].focus();
+  });
+});
+
+// init
+loadHistory();
+</script>
+</body>
+</html>

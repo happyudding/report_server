@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller build output (build_honey.spec is kept as source)
+build/
+dist/
+*.manifest
+
+# Runtime artifacts (regenerated at runtime)
+DB/
+uploads/
+tests/sample.xlsx
+
+# Honey release binaries — served by /honey/download, not version-controlled.
+# version.json IS tracked; drop built exe here at deploy time.
+server/releases/*.exe
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
