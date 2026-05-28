@@ -16,6 +16,9 @@ import numpy as np
 _MAX_CDF_POINTS = 150
 _CHARTS_PER_ROW = 5
 _CHART_W, _CHART_H, _GAP = 320, 220, 16
+# distribution 찾기(Ctrl+F)용 item 인덱스: 차트 그리드 오른쪽 열, 차트 한 행당 행 수
+_INDEX_COL = 40
+_ROWS_PER_CHART = 16
 
 ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
 
@@ -189,6 +192,10 @@ def _write_distribution(wb, sh, result):
     data = wb.sheets.add("_dist", after=sh)
     cur = 1  # 헬퍼 시트 행 커서
 
+    # 찾기(Ctrl+F) index 헤더 — 차트 그리드 오른쪽 열
+    sh.range((1, _INDEX_COL)).value = "Item Index (Ctrl+F)"
+    sh.range((1, _INDEX_COL)).column_width = 26
+
     for i, d in enumerate(result.distributions):
         header, rows, sources = _aligned_cdf_table(d)
         if not rows:
@@ -212,6 +219,10 @@ def _write_distribution(wb, sh, result):
         _set_chart_title(ch, title)
         _add_limit_lines(ch, data, d, top_row, bot_row, ncol)
         _fix_cdf_axes(ch)
+
+        # 차트 그리드 오른쪽에 item 명을 세로 5개씩, 차트 행에 정렬해 기록 (찾기용)
+        idx_row = 2 + grow * _ROWS_PER_CHART + col
+        sh.range((idx_row, _INDEX_COL)).value = f"[{col + 1}] {d.subject}"
 
         cur = bot_row + 2
 

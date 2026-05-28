@@ -1,0 +1,285 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>HoneyMainWindow</class>
+ <widget class="QMainWindow" name="HoneyMainWindow">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>820</width>
+    <height>960</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Honey</string>
+  </property>
+  <widget class="QWidget" name="centralwidget">
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <property name="leftMargin"><number>18</number></property>
+    <property name="topMargin"><number>18</number></property>
+    <property name="rightMargin"><number>18</number></property>
+    <property name="bottomMargin"><number>18</number></property>
+    <property name="spacing"><number>10</number></property>
+    <item>
+     <widget class="QLabel" name="lblTitle">
+      <property name="text">
+       <string>로컬 리포트 생성</string>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">font-size: 16pt; font-weight: 600;</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="horizontalLayout_csv">
+      <item>
+       <widget class="QPushButton" name="btn_pick_csv">
+        <property name="text">
+         <string>CSV 파일 선택…</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="lbl_csv">
+        <property name="text">
+         <string>선택된 파일 없음</string>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">color: #555;</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QListWidget" name="list_csv">
+      <property name="maximumSize">
+       <size>
+        <width>16777215</width>
+        <height>70</height>
+       </size>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <layout class="QFormLayout" name="formLayout">
+      <item row="0" column="0">
+       <widget class="QLabel" name="label_pt">
+        <property name="text"><string>Product Type:</string></property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QComboBox" name="cb_product_type">
+        <item><property name="text"><string>MD</string></property></item>
+        <item><property name="text"><string>PD</string></property></item>
+        <item><property name="text"><string>PM</string></property></item>
+        <item><property name="text"><string>SE</string></property></item>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QLabel" name="label_product">
+        <property name="text"><string>Product:</string></property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QLineEdit" name="le_product">
+        <property name="placeholderText"><string>예: A1</string></property>
+       </widget>
+      </item>
+      <item row="2" column="0">
+       <widget class="QLabel" name="label_lot">
+        <property name="text"><string>LOT ID:</string></property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QLineEdit" name="le_lot_id">
+        <property name="placeholderText"><string>예: L001</string></property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+       <widget class="QLabel" name="label_revision">
+        <property name="text"><string>Revision:</string></property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QLineEdit" name="le_revision">
+        <property name="placeholderText"><string>예: r1</string></property>
+       </widget>
+      </item>
+      <item row="4" column="0">
+       <widget class="QLabel" name="label_process">
+        <property name="text"><string>Process:</string></property>
+       </widget>
+      </item>
+      <item row="4" column="1">
+       <widget class="QLineEdit" name="le_process">
+        <property name="placeholderText"><string>예: P1</string></property>
+       </widget>
+      </item>
+      <item row="5" column="0">
+       <widget class="QLabel" name="label_pw">
+        <property name="text"><string>비밀번호:</string></property>
+       </widget>
+      </item>
+      <item row="5" column="1">
+       <widget class="QLineEdit" name="le_password">
+        <property name="placeholderText"><string>숫자 4자리</string></property>
+        <property name="echoMode"><enum>QLineEdit::Password</enum></property>
+        <property name="maxLength"><number>4</number></property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QGroupBox" name="groupBox_sheets">
+      <property name="title">
+       <string>출력 시트</string>
+      </property>
+      <layout class="QHBoxLayout" name="horizontalLayout_sheets">
+       <item>
+        <widget class="QCheckBox" name="cb_sheet_summary">
+         <property name="text"><string>summary</string></property>
+         <property name="checked"><bool>true</bool></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="cb_sheet_yield">
+         <property name="text"><string>yield</string></property>
+         <property name="checked"><bool>true</bool></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="cb_sheet_cpk">
+         <property name="text"><string>cpk</string></property>
+         <property name="checked"><bool>true</bool></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="cb_sheet_fail_item">
+         <property name="text"><string>fail_item</string></property>
+         <property name="checked"><bool>true</bool></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="cb_sheet_issue_table">
+         <property name="text"><string>issue_table</string></property>
+         <property name="checked"><bool>true</bool></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QCheckBox" name="cb_sheet_distribution">
+         <property name="text"><string>distribution</string></property>
+         <property name="checked"><bool>true</bool></property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="horizontalSpacer_sheets">
+         <property name="orientation"><enum>Qt::Horizontal</enum></property>
+         <property name="sizeHint" stdset="0">
+          <size><width>40</width><height>20</height></size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QGroupBox" name="groupBox_items">
+      <property name="title">
+       <string>분석 항목 (item select)</string>
+      </property>
+      <layout class="QVBoxLayout" name="verticalLayout_items">
+       <item>
+        <layout class="QHBoxLayout" name="horizontalLayout_selbtns">
+         <item>
+          <widget class="QPushButton" name="btn_sel_all">
+           <property name="text"><string>전체</string></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_sel_none">
+           <property name="text"><string>해제</string></property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="btn_sel_fail">
+           <property name="text"><string>Fail 항목만</string></property>
+          </widget>
+         </item>
+         <item>
+          <spacer name="horizontalSpacer_selbtns">
+           <property name="orientation"><enum>Qt::Horizontal</enum></property>
+           <property name="sizeHint" stdset="0">
+            <size><width>40</width><height>20</height></size>
+           </property>
+          </spacer>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QListWidget" name="list_items">
+         <property name="minimumSize">
+          <size><width>0</width><height>180</height></size>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="horizontalLayout_actions">
+      <item>
+       <widget class="QPushButton" name="btn_analyze">
+        <property name="text">
+         <string>분석 실행 (자동 저장)</string>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QPushButton { padding: 10px 18px; font-weight: 600; background: #4a90e2; color: white; border-radius: 6px; } QPushButton:hover { background: #357abd; } QPushButton:disabled { background: #aaa; }</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btn_upload">
+        <property name="text">
+         <string>서버에 업로드</string>
+        </property>
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="QLabel" name="lbl_out">
+      <property name="text">
+       <string/>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">color: #2a6;</string>
+      </property>
+      <property name="wordWrap">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QTextEdit" name="txt_summary">
+      <property name="minimumSize">
+       <size><width>0</width><height>150</height></size>
+      </property>
+      <property name="readOnly">
+       <bool>true</bool>
+      </property>
+      <property name="placeholderText">
+       <string>분석 결과 요약이 여기에 표시됩니다.</string>
+      </property>
+     </widget>
+    </item>
+   </layout>
+  </widget>
+  <widget class="QStatusBar" name="statusbar"/>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

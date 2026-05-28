@@ -1,22 +1,21 @@
 """Honey 클라이언트 (PyQt5).
 
-로컬 리포트 생성 워크플로우 단일 화면:
-CSV 여러 개 → 로컬 분석(df_honey) → 출력 시트 선택 → '분석 실행' 시 입력 폴더에
-xlsx 자동 저장(xlwings) → '서버에 업로드' 로 전송.
+UI 레이아웃은 honey_main.ui (Qt Designer 로 편집 가능) 에 정의되어 있고, 런타임에
+uic.loadUi 로 로드한다. 이 파일은 동작(시그널 연결 + 분석/생성/업로드 로직)만 담당.
 
-시작 시 server 버전 체크는 유지.
+워크플로우: CSV 여러 개 → 로컬 분석(df_honey) → 출력 시트 선택 → '분석 실행' 시
+입력 폴더에 xlsx 자동 저장(xlwings) → '서버에 업로드'.
 """
 import os
 import sys
 import tempfile
 from pathlib import Path
 
+from PyQt5 import uic
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
-    QMessageBox, QPushButton, QStatusBar, QTextEdit, QVBoxLayout, QWidget,
+    QApplication, QFileDialog, QListWidgetItem, QMainWindow, QMessageBox,
 )
 
 from config import CURRENT_VERSION, SERVER_BASE_URL
@@ -35,8 +34,11 @@ except Exception as exc:  # noqa: BLE001
     xlsx_writer = None
     _RG_IMPORT_ERROR = exc
 
-PRODUCT_TYPES = ["MD", "PD", "PM", "SE"]
 SHEET_OPTIONS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
+
+# 프리징(onefile) 시 _MEIPASS, 아니면 스크립트 폴더에서 .ui 탐색
+_BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+UI_PATH = os.path.join(_BASE_DIR, "honey_main.ui")
 
 
 def _validate_meta(product, lot_id, password):
@@ -72,137 +74,47 @@ def _derive_output_path(csv_paths):
 class HoneyMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        uic.loadUi(UI_PATH, self)
+        self.status = self.statusbar
         self.setWindowTitle(f"Honey  v{CURRENT_VERSION}")
-        self.resize(820, 960)
+        self.status.showMessage(f"Server: {SERVER_BASE_URL}")
+
         self.csv_paths = []
         self.group = None          # DfHoneyGroup
         self.last_result = None    # AnalysisResult
         self.out_path = None       # 생성된 xlsx 경로
-        self._build_ui()
+
+        # .ui 에서 표현하기 어려운 속성 보강
+        self.le_password.setValidator(QIntValidator(0, 9999))
+        self.sheet_checks = {
+            name: getattr(self, f"cb_sheet_{name}") for name in SHEET_OPTIONS
+        }
+
+        self._connect_signals()
+
+        if rg is None:
+            self._disable_engine()
         QTimer.singleShot(500, self.check_for_update)
+
+    def _connect_signals(self):
+        self.btn_pick_csv.clicked.connect(self.on_pick_csv)
+        self.btn_sel_all.clicked.connect(lambda: self._check_all(True))
+        self.btn_sel_none.clicked.connect(lambda: self._check_all(False))
+        self.btn_sel_fail.clicked.connect(self._check_fail_only)
+        self.btn_analyze.clicked.connect(self.on_analyze)
+        self.btn_upload.clicked.connect(self.on_upload)
+
+    def _disable_engine(self):
+        for name in ("btn_pick_csv", "btn_analyze", "btn_upload"):
+            getattr(self, name).setEnabled(False)
+        self.lbl_out.setStyleSheet("color: #b00;")
+        self.lbl_out.setText(
+            "report_generator 모듈을 불러오지 못했습니다 — "
+            f"{_RG_IMPORT_ERROR}\npandas / numpy / xlwings + MS Excel 이 필요합니다."
+        )
 
     def _status(self, msg):
         self.status.showMessage(msg)
-
-    # ── UI ──────────────────────────────────────────────────────────────────
-    def _build_ui(self):
-        self.status = QStatusBar()
-        self.setStatusBar(self.status)
-        self.status.showMessage(f"Server: {SERVER_BASE_URL}")
-
-        central = QWidget()
-        self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(10)
-
-        title = QLabel("로컬 리포트 생성")
-        title.setStyleSheet("font-size: 16pt; font-weight: 600;")
-        root.addWidget(title)
-
-        if rg is None:
-            warn = QLabel(
-                "report_generator 모듈을 불러오지 못했습니다.\n"
-                f"({_RG_IMPORT_ERROR})\n"
-                "pandas / numpy / xlwings 설치 및 MS Excel 이 필요합니다."
-            )
-            warn.setStyleSheet("color: #b00;")
-            warn.setWordWrap(True)
-            root.addWidget(warn)
-            root.addStretch(1)
-            return
-
-        # CSV 선택
-        csv_row = QHBoxLayout()
-        self.btn_pick_csv = QPushButton("CSV 파일 선택…")
-        self.btn_pick_csv.clicked.connect(self.on_pick_csv)
-        csv_row.addWidget(self.btn_pick_csv)
-        self.lbl_csv = QLabel("선택된 파일 없음")
-        self.lbl_csv.setStyleSheet("color: #555;")
-        csv_row.addWidget(self.lbl_csv, 1)
-        root.addLayout(csv_row)
-
-        self.list_csv = QListWidget()
-        self.list_csv.setMaximumHeight(70)
-        root.addWidget(self.list_csv)
-
-        # 메타 입력
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignRight)
-        self.cb_product_type = QComboBox()
-        self.cb_product_type.addItems(PRODUCT_TYPES)
-        self.le_product = QLineEdit(); self.le_product.setPlaceholderText("예: A1")
-        self.le_lot_id = QLineEdit(); self.le_lot_id.setPlaceholderText("예: L001")
-        self.le_revision = QLineEdit(); self.le_revision.setPlaceholderText("예: r1")
-        self.le_process = QLineEdit(); self.le_process.setPlaceholderText("예: P1")
-        self.le_password = QLineEdit()
-        self.le_password.setPlaceholderText("숫자 4자리")
-        self.le_password.setEchoMode(QLineEdit.Password)
-        self.le_password.setMaxLength(4)
-        self.le_password.setValidator(QIntValidator(0, 9999))
-        form.addRow("Product Type:", self.cb_product_type)
-        form.addRow("Product:", self.le_product)
-        form.addRow("LOT ID:", self.le_lot_id)
-        form.addRow("Revision:", self.le_revision)
-        form.addRow("Process:", self.le_process)
-        form.addRow("비밀번호:", self.le_password)
-        root.addLayout(form)
-
-        # 출력 시트 선택
-        sheet_box = QGroupBox("출력 시트")
-        sheet_h = QHBoxLayout(sheet_box)
-        self.sheet_checks = {}
-        for name in SHEET_OPTIONS:
-            cb = QCheckBox(name)
-            cb.setChecked(True)
-            self.sheet_checks[name] = cb
-            sheet_h.addWidget(cb)
-        sheet_h.addStretch(1)
-        root.addWidget(sheet_box)
-
-        # item select (subject)
-        items_box = QGroupBox("분석 항목 (item select)")
-        items_v = QVBoxLayout(items_box)
-        sel_row = QHBoxLayout()
-        self.btn_sel_all = QPushButton("전체"); self.btn_sel_all.clicked.connect(lambda: self._check_all(True))
-        self.btn_sel_none = QPushButton("해제"); self.btn_sel_none.clicked.connect(lambda: self._check_all(False))
-        self.btn_sel_fail = QPushButton("Fail 항목만"); self.btn_sel_fail.clicked.connect(self._check_fail_only)
-        sel_row.addWidget(self.btn_sel_all); sel_row.addWidget(self.btn_sel_none)
-        sel_row.addWidget(self.btn_sel_fail); sel_row.addStretch(1)
-        items_v.addLayout(sel_row)
-        self.list_items = QListWidget()
-        self.list_items.setMinimumHeight(180)
-        items_v.addWidget(self.list_items)
-        root.addWidget(items_box, 1)
-
-        # 액션 버튼
-        act_row = QHBoxLayout()
-        self.btn_analyze = QPushButton("분석 실행 (자동 저장)")
-        self.btn_analyze.setStyleSheet(
-            "QPushButton { padding: 10px 18px; font-weight: 600;"
-            " background: #4a90e2; color: white; border-radius: 6px; }"
-            " QPushButton:hover { background: #357abd; }"
-            " QPushButton:disabled { background: #aaa; }"
-        )
-        self.btn_analyze.clicked.connect(self.on_analyze)
-        self.btn_upload = QPushButton("서버에 업로드")
-        self.btn_upload.clicked.connect(self.on_upload)
-        self.btn_upload.setEnabled(False)
-        act_row.addWidget(self.btn_analyze, 1)
-        act_row.addWidget(self.btn_upload, 1)
-        root.addLayout(act_row)
-
-        self.lbl_out = QLabel("")
-        self.lbl_out.setStyleSheet("color: #2a6;")
-        self.lbl_out.setWordWrap(True)
-        root.addWidget(self.lbl_out)
-
-        # 결과 요약
-        self.txt_summary = QTextEdit()
-        self.txt_summary.setReadOnly(True)
-        self.txt_summary.setPlaceholderText("분석 결과 요약이 여기에 표시됩니다.")
-        self.txt_summary.setMinimumHeight(150)
-        root.addWidget(self.txt_summary, 1)
 
     # ── CSV 선택 → 그룹 로드 → 항목 채우기 ──────────────────────────────────
     def on_pick_csv(self):

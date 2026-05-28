@@ -1,5 +1,8 @@
 # PyInstaller spec — 사용: pyinstaller build_honey.spec
-# onefile + windowed(console 없음). PyInstaller 6.x 기준.
+# onedir + windowed(console 없음). PyInstaller 6.x 기준.
+# onedir 인 이유: onefile 은 실행마다 임시폴더로 전체 압축해제 → 첫 로딩이 느림.
+# onedir 은 dist/Honey/ 폴더(Honey.exe + _internal/)로 풀려 있어 시작이 훨씬 빠름.
+# 이 폴더를 Inno Setup(installer.iss)으로 묶어 HoneySetup.exe 설치본을 만든다.
 # PyQt5 plugins 누락 시 hiddenimports / collect 옵션 추가.
 
 # -*- mode: python ; coding: utf-8 -*-
@@ -13,10 +16,10 @@ a = Analysis(
     ['honey_main.py'],
     pathex=[],
     binaries=_xw_binaries,
-    datas=_xw_datas,
+    datas=_xw_datas + [('honey_main.ui', '.')],
     hiddenimports=(
-        ['PyQt5.sip', 'win32com', 'win32com.client', 'pythoncom', 'pywintypes',
-         'pandas', 'numpy']
+        ['PyQt5.sip', 'PyQt5.uic', 'win32com', 'win32com.client', 'pythoncom',
+         'pywintypes', 'pandas', 'numpy']
         + _xw_hidden
         + collect_submodules('report_generator')
     ),
@@ -30,20 +33,27 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,   # onedir: 바이너리/데이터는 COLLECT 로 폴더에 분리
     name='Honey',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
     upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='Honey',   # → dist/Honey/ (Honey.exe + _internal/)
 )
