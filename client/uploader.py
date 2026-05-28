@@ -6,9 +6,10 @@ import requests
 from config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
 
 
-def post_xlsx(xlsx_path, product_type, product, lot_id, base_url=None):
-    """xlsx 파일 + 메타를 /pe/report/upload_xlsx 로 전송.
+def post_xlsx(xlsx_path, product_type, product, lot_id, base_url=None, chart_pngs=None):
+    """xlsx 파일 + 메타 (+ 클라이언트가 렌더한 차트 PNG) 를 /pe/report/upload_xlsx 로 전송.
 
+    chart_pngs: list[bytes] — 차트 PNG. chart_0, chart_1, ... 필드로 순서대로 동봉.
     Returns: response.json() — 실패 시 RuntimeError 발생.
     """
     base = (base_url or SERVER_BASE_URL).rstrip("/")
@@ -21,6 +22,8 @@ def post_xlsx(xlsx_path, product_type, product, lot_id, base_url=None):
     with xlsx_path.open("rb") as f:
         files = {"xlsx": (xlsx_path.name, f,
                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+        for i, png in enumerate(chart_pngs or []):
+            files[f"chart_{i}"] = (f"{i}.png", png, "image/png")
         data = {
             "product_type": product_type,
             "product": product,

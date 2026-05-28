@@ -29,6 +29,23 @@ from s3_storage.report_s3 import S3NotConfigured
 _PRODUCT_TYPES = {"MD", "PD", "PM", "SE"}
 _SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-\.]{1,80}$")
 
+_MAX_CHARTS = 50
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+
+def _collect_chart_pngs(files):
+    """multipart 의 chart_0, chart_1, ... 를 순서대로 PNG bytes 리스트로.
+    클라이언트(Excel COM)가 렌더해 동봉한 차트 이미지. PNG 매직바이트 검증."""
+    out = []
+    for i in range(_MAX_CHARTS):
+        f = files.get(f"chart_{i}")
+        if f is None:
+            break
+        data = f.read()
+        if data[:8] == _PNG_MAGIC:
+            out.append(data)
+    return out
+
 
 def _validate_meta(form) -> dict:
     pt = (form.get("product_type") or "").strip()
@@ -191,6 +208,28 @@ def upload_xlsx():
         except Exception:
             pass
 
+    # ── 차트 PNG 갤러리 (클라이언트 Excel COM 렌더) → S3 ─────────────────────
+    charts_saved = 0
+    if s3_ok:
+        chart_pngs = _collect_chart_pngs(request.files)
+        for idx, data in enumerate(chart_pngs):
+            try:
+                ckey = report_s3.make_chart_png_s3_key(analysis_key, idx)
+                report_s3.upload_bytes_to_s3(ckey, data, content_type="image/png")
+                charts_saved += 1
+            except Exception:
+                break
+        if charts_saved:
+            try:
+                idx_key = report_s3.make_chart_index_s3_key(analysis_key)
+                idx_uri = report_s3.upload_json_to_s3(idx_key, {"count": charts_saved})
+                report_db.upsert_object_info(
+                    analysis_key, content_hash, _canonical_meta_bytes(meta).decode("utf-8"),
+                    "chart_index", report_s3.bucket_name(), idx_key, idx_uri,
+                )
+            except Exception:
+                pass
+
     report_db.update_session(session_id, status="done")
 
     return jsonify({
@@ -199,6 +238,7 @@ def upload_xlsx():
         "status": "done",
         "rows_saved": saved,
         "s3_uploaded": s3_ok,
+        "charts_saved": charts_saved,
         "summary_keys": list(parsed["summary"].keys()),
         "yield_row_count": len(parsed["yield_rows"]),
         "issue_row_count": len(parsed["issue_rows"]),

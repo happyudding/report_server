@@ -15,6 +15,7 @@ from config import (
     REPORT_S3_SOURCE_XLSX_PREFIX,
     REPORT_S3_SUMMARY_TEXT_PREFIX,
     REPORT_S3_THUMB_PREFIX,
+    REPORT_S3_CHART_PREFIX,
 )
 
 
@@ -192,3 +193,15 @@ def make_summary_text_s3_key(analysis_key):
 def make_issue_text_s3_key(analysis_key):
     prefix = REPORT_S3_ISSUE_TEXT_PREFIX.strip("/")
     return f"{prefix}/{analysis_key}.json"
+
+
+# ── 클라이언트(Excel COM)가 렌더한 차트 PNG 갤러리 ───────────────────────────
+
+def make_chart_png_s3_key(analysis_key, idx):
+    prefix = REPORT_S3_CHART_PREFIX.strip("/")
+    return f"{prefix}/{analysis_key}/{int(idx)}.png"
+
+
+def make_chart_index_s3_key(analysis_key):
+    prefix = REPORT_S3_CHART_PREFIX.strip("/")
+    return f"{prefix}/{analysis_key}/index.json"

@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
 )
 
 from config import CURRENT_VERSION, SERVER_BASE_URL
+import chart_export
 import updater
 import uploader
 import version_check
@@ -91,7 +92,16 @@ class HoneyMainWindow(QMainWindow):
             return
 
         self.btn_upload.setEnabled(False)
-        self.status.showMessage(f"업로드 중... {Path(path).name}")
+
+        # 로컬 Excel(COM)로 차트 → PNG 렌더 (미설치/실패 시 빈 리스트)
+        self.status.showMessage("차트 변환 중... (Excel)")
+        QApplication.processEvents()
+        try:
+            chart_pngs = chart_export.export_chart_pngs(path)
+        except Exception:
+            chart_pngs = []
+
+        self.status.showMessage(f"업로드 중... {Path(path).name} (차트 {len(chart_pngs)}장)")
         QApplication.processEvents()
         try:
             result = uploader.post_xlsx(
@@ -99,6 +109,7 @@ class HoneyMainWindow(QMainWindow):
                 product_type=self.cb_product_type.currentText(),
                 product=product,
                 lot_id=lot_id,
+                chart_pngs=chart_pngs,
             )
         except Exception as exc:
             QMessageBox.critical(self, "업로드 실패", str(exc))
@@ -109,12 +120,14 @@ class HoneyMainWindow(QMainWindow):
         sid = result.get("session_id", "?")
         akey = result.get("analysis_key", "?")
         rows = result.get("rows_saved", 0)
+        charts = result.get("charts_saved", 0)
         QMessageBox.information(
             self, "업로드 완료",
-            f"session_id: {sid}\nanalysis_key: {akey[:16]}...\nyield rows: {rows}\n\n"
+            f"session_id: {sid}\nanalysis_key: {akey[:16]}...\n"
+            f"yield rows: {rows}\n차트: {charts}장\n\n"
             f"브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
         )
-        self.status.showMessage("업로드 완료")
+        self.status.showMessage(f"업로드 완료 (차트 {charts}장)")
         self.btn_upload.setEnabled(True)
 
     # ── version check ──────────────────────────────────────────────────────

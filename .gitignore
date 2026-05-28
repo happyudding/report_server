@@ -23,6 +23,9 @@ tests/sample.xlsx
 # version.json IS tracked; drop built exe here at deploy time.
 server/releases/*.exe
 
+# Local Claude Code settings (personal, not shared)
+.claude/settings.local.json
+
 # Editor / OS
 .vscode/
 .idea/

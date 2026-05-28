@@ -1,6 +1,15 @@
 import os
 import socket
+import sys
 import time
+
+# 콘솔 인코딩(예: Windows cp949)이 로그 문자열의 비-인코딩 문자(em-dash 등)를
+# 만나도 서버가 UnicodeEncodeError 로 죽지 않도록 stdout/stderr 를 UTF-8 로 강제.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 
 def _log(msg):

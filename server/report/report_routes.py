@@ -1,6 +1,6 @@
 import re
 
-from flask import abort, jsonify, request, send_file
+from flask import Response, abort, jsonify, request, send_file
 
 from database import report_db
 from s3_storage import report_s3
@@ -81,15 +81,49 @@ def session_full(session_id):
                 issue_table_text = report_s3.download_json_from_s3(objects["issue_table_text"]["s3_key"])
             except (S3NotConfigured, S3ObjectCorrupted, Exception):
                 issue_table_text = None
+    charts = []
+    if "chart_index" in objects:
+        try:
+            manifest = report_s3.download_json_from_s3(objects["chart_index"]["s3_key"])
+            count = int((manifest or {}).get("count", 0))
+            charts = [{"index": i, "url": f"/pe/report/chart/{session_id}/{i}"}
+                      for i in range(count)]
+        except (S3NotConfigured, S3ObjectCorrupted, Exception):
+            charts = []
     return jsonify({
         "session": session,
         "summary": report_db.get_summary_by_analysis_key(akey) if akey else [],
         "summary_text": summary_text,
         "issue_table_text": issue_table_text,
+        "charts": charts,
         "csv_files": report_db.get_csv_files(akey) if akey else [],
         "objects": objects,
         "annotations": report_db.get_annotations(session_id),
     })
+
+
+@report_bp.get("/chart/<session_id>/<int:idx>")
+def chart_image(session_id, idx):
+    """클라이언트가 렌더해 올린 차트 PNG 를 S3 에서 스트리밍.
+    공개 버킷/presign 없이 서버 경유로 서빙 (기존 패턴 일관)."""
+    _validate_session_id(session_id)
+    if idx < 0 or idx > 1000:
+        abort(404, "invalid chart index")
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    akey = session.get("analysis_key")
+    if not akey:
+        abort(404, "no analysis_key for session")
+    try:
+        key = report_s3.make_chart_png_s3_key(akey, idx)
+        data = report_s3.download_bytes_from_s3(key)
+    except S3NotConfigured:
+        abort(503, "S3 not configured")
+    except Exception:
+        abort(404, "chart not found")
+    return Response(data, mimetype="image/png",
+                    headers={"Cache-Control": "private, max-age=3600"})
 
 
 @report_bp.delete("/session/<session_id>")
