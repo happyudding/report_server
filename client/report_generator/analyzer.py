@@ -20,16 +20,16 @@ def run(group: DfHoneyGroup, meta: Optional[ReportMeta] = None,
     selector = selector or ItemSelector()
 
     work = group.select_items(selector.selected_items)
-    schools = work.schools
-    if not schools:
+    mass_data_map = work.mass_data_map
+    if not mass_data_map:
         raise ValueError("분석할 데이터가 없습니다.")
 
-    first = next(iter(schools.values()))
+    first = next(iter(mass_data_map.values()))
 
     yield_rows = work.yield_rate()
     cpk_rows = work.cpk()
     fail_item_rows = work.fail_items()
-    issue_rows = B.build_issue_summary(schools)  # bin별 most-fail item 요약
+    issue_rows = B.build_issue_summary(mass_data_map)  # bin별 most-fail item 요약
     summary_rows = work.summary()
 
     subjects_meta = [
@@ -45,7 +45,7 @@ def run(group: DfHoneyGroup, meta: Optional[ReportMeta] = None,
 
     distributions = _build_distributions(work, subjects_meta)
 
-    total_dut = sum(len(h.scores) for h in schools.values())
+    total_dut = sum(len(md.scores) for md in mass_data_map.values())
     pass_yield = next((r["portion (%)"] for r in yield_rows if str(r["bin"]) == "1"), None)
 
     return AnalysisResult(

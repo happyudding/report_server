@@ -1,9 +1,10 @@
 """순수 분석 함수 (pandas/numpy 만).
 
-_reference/analysis/table_builder.py + report_analysis_service.py + preprocess.py 의
-순수 계산 로직만 이식. flask / db / s3 / plotly / config 의존 전부 제거.
+반도체 mass_data(웨이퍼/로트 단위 측정 데이터) 분석 로직. flask / db / s3 /
+plotly / config 의존 없음.
 
-`schools` = {source_name: table} dict. table 은 다음 속성을 갖는 객체(DfHoney):
+`mass_data_map` = {source_name: mass_data} dict. 각 value(mass_data)는 DfHoney
+인스턴스로, 하나의 입력 sheet/CSV(= 한 mass_data 단위)에 대응하며 다음 속성을 갖는다:
     subjects, units, lower_limits, upper_limits, scores(DataFrame), meta(DataFrame[...,"Bin"])
 """
 from __future__ import annotations
@@ -52,19 +53,19 @@ def _fmt_metric(value):
     return _fmt_num(value, digits=3)
 
 
-def _subject_columns(table):
-    return [str(s) for s in table.subjects]
+def _subject_columns(mass_data):
+    return [str(s) for s in mass_data.subjects]
 
 
 # ---------------------------------------------------------------------------
 # 결합 / 마스크
 
-def _combined_frames(schools):
+def _combined_frames(mass_data_map):
     frames = []
-    for source_name, table in schools.items():
-        meta = table.meta.reset_index(drop=True).copy()
-        scores = table.scores.reset_index(drop=True).copy()
-        scores.columns = _subject_columns(table)
+    for source_name, mass_data in mass_data_map.items():
+        meta = mass_data.meta.reset_index(drop=True).copy()
+        scores = mass_data.scores.reset_index(drop=True).copy()
+        scores.columns = _subject_columns(mass_data)
         frame = pd.concat([meta, scores], axis=1)
         frame.insert(0, "source_file", source_name)
         frame["Bin"] = frame["Bin"].map(_fmt_type)
@@ -74,8 +75,9 @@ def _combined_frames(schools):
     return pd.concat(frames, ignore_index=True)
 
 
-def _fail_mask_for_table(table):
-    numeric = table.scores.apply(pd.to_numeric, errors="coerce")
+def _fail_mask(mass_data):
+    """mass_data 의 각 측정값이 lo/up 한계를 벗어났는지 bool DataFrame."""
+    numeric = mass_data.scores.apply(pd.to_numeric, errors="coerce")
     arr = numeric.to_numpy(dtype="float64", copy=False)
     n_sub = arr.shape[1]
 
@@ -90,8 +92,8 @@ def _fail_mask_for_table(table):
         except (TypeError, ValueError):
             return np.nan
 
-    lo = np.array([_lim(table.lower_limits, i) for i in range(n_sub)], dtype="float64")
-    hi = np.array([_lim(table.upper_limits, i) for i in range(n_sub)], dtype="float64")
+    lo = np.array([_lim(mass_data.lower_limits, i) for i in range(n_sub)], dtype="float64")
+    hi = np.array([_lim(mass_data.upper_limits, i) for i in range(n_sub)], dtype="float64")
     with np.errstate(invalid="ignore"):
         fail = (arr < lo) | (arr > hi)
     return pd.DataFrame(fail, index=numeric.index, columns=numeric.columns, copy=False)
@@ -105,14 +107,14 @@ def _type_sort_key(value):
         return (1, text)
 
 
-def _subject_rankings_by_type(schools):
+def _subject_rankings_by_type(mass_data_map):
     rankings = {}
     type_totals = {}
-    first = next(iter(schools.values()))
+    first = next(iter(mass_data_map.values()))
     subject_names = _subject_columns(first)
-    for _source_name, table in schools.items():
-        fail_mask = _fail_mask_for_table(table)
-        bin_types = table.meta["Bin"].map(_fmt_type)
+    for _source_name, mass_data in mass_data_map.items():
+        fail_mask = _fail_mask(mass_data)
+        bin_types = mass_data.meta["Bin"].map(_fmt_type)
         for bin_type in sorted(bin_types.unique(), key=_type_sort_key):
             rows = bin_types == bin_type
             row_count = int(rows.sum())
@@ -146,18 +148,18 @@ def _subject_rankings_by_type(schools):
 # ---------------------------------------------------------------------------
 # yield
 
-def build_yield(schools):
-    combined = _combined_frames(schools)
+def build_yield(mass_data_map):
+    combined = _combined_frames(mass_data_map)
     total = len(combined)
-    subject_rankings = _subject_rankings_by_type(schools)
+    subject_rankings = _subject_rankings_by_type(mass_data_map)
     rows = []
     if total == 0:
         return rows
-    sources = list(schools.keys())
+    sources = list(mass_data_map.keys())
     per_file_total = {}
     per_file_type_count = {}
-    for source_name, table in schools.items():
-        types = table.meta["Bin"].map(_fmt_type)
+    for source_name, mass_data in mass_data_map.items():
+        types = mass_data.meta["Bin"].map(_fmt_type)
         per_file_total[source_name] = len(types)
         per_file_type_count[source_name] = types.value_counts(dropna=False).to_dict()
     counts = combined["Bin"].map(_fmt_type).value_counts(dropna=False)
@@ -218,16 +220,16 @@ def _calc_stats(series, lo, hi):
     }
 
 
-def build_cpk(schools):
+def build_cpk(mass_data_map):
     rows = []
-    first = next(iter(schools.values()))
+    first = next(iter(mass_data_map.values()))
     for idx, subject in enumerate(first.subjects):
         lo = first.lower_limits[idx] if idx < len(first.lower_limits) else None
         hi = first.upper_limits[idx] if idx < len(first.upper_limits) else None
         unit = first.units[idx] if idx < len(first.units) else ""
         per_source = []
-        for source_name, table in schools.items():
-            series = pd.to_numeric(table.scores.iloc[:, idx], errors="coerce")
+        for source_name, mass_data in mass_data_map.items():
+            series = pd.to_numeric(mass_data.scores.iloc[:, idx], errors="coerce")
             per_source.append(series)
             rows.append({
                 "subject": subject,
@@ -252,9 +254,9 @@ def build_cpk(schools):
 # ---------------------------------------------------------------------------
 # fail items
 
-def build_fail_items(schools):
-    yield_rows = build_yield(schools)
-    subject_rankings = _subject_rankings_by_type(schools)
+def build_fail_items(mass_data_map):
+    yield_rows = build_yield(mass_data_map)
+    subject_rankings = _subject_rankings_by_type(mass_data_map)
     rows = []
     for row in yield_rows:
         bin_type = row["bin"]
@@ -271,14 +273,14 @@ def build_fail_items(schools):
 # ---------------------------------------------------------------------------
 # issue_table (legacy) — yield/fail_items 기반 bin별 "most fail item" 요약
 
-def build_issue_summary(schools):
+def build_issue_summary(mass_data_map):
     """fail bin 별 1순위 fail subject + avg + source 별 portion.
 
     _reference/server_legacy/xlsx_export._build_issue_rows 와 동일 개념.
     pass(bin 1) 는 제외하고 avg 내림차순 정렬.
     """
-    fi = build_fail_items(schools)["rows"]
-    sources = list(schools.keys())
+    fi = build_fail_items(mass_data_map)["rows"]
+    sources = list(mass_data_map.keys())
     rows = []
     for r in fi:
         st = str(r.get("bin", "")).strip()
@@ -302,21 +304,21 @@ def build_issue_summary(schools):
 # ---------------------------------------------------------------------------
 # fail_values — 비합격 DUT별 한계 이탈 레코드 (DfHoney.fail_values 용)
 
-def build_issue_table(schools):
+def build_issue_table(mass_data_map):
     rows = []
-    for source_name, table in schools.items():
-        subjects_list = _subject_columns(table)
+    for source_name, mass_data in mass_data_map.items():
+        subjects_list = _subject_columns(mass_data)
         n_sub = len(subjects_list)
-        meta = table.meta.reset_index(drop=True).copy()
+        meta = mass_data.meta.reset_index(drop=True).copy()
         meta["Bin"] = meta["Bin"].map(_fmt_type)
         non_pass = meta["Bin"] != PASS_BIN
         if not non_pass.any():
             continue
         meta_np = meta[non_pass].reset_index(drop=True)
-        scores_np = table.scores[non_pass].reset_index(drop=True)
+        scores_np = mass_data.scores[non_pass].reset_index(drop=True)
         numeric = scores_np.apply(pd.to_numeric, errors="coerce")
-        lo_arr = [table.lower_limits[i] if i < len(table.lower_limits) else None for i in range(n_sub)]
-        hi_arr = [table.upper_limits[i] if i < len(table.upper_limits) else None for i in range(n_sub)]
+        lo_arr = [mass_data.lower_limits[i] if i < len(mass_data.lower_limits) else None for i in range(n_sub)]
+        hi_arr = [mass_data.upper_limits[i] if i < len(mass_data.upper_limits) else None for i in range(n_sub)]
         fail_lo = pd.DataFrame(False, index=numeric.index, columns=numeric.columns)
         fail_hi = pd.DataFrame(False, index=numeric.index, columns=numeric.columns)
         for idx in range(n_sub):
@@ -373,15 +375,15 @@ def _try_int(value):
     return int(f)
 
 
-def build_summary_rows(schools):
-    cpk_rows = build_cpk(schools)
-    yield_rows = build_yield(schools)
-    fail_items = build_fail_items(schools)["rows"]
+def build_summary_rows(mass_data_map):
+    cpk_rows = build_cpk(mass_data_map)
+    yield_rows = build_yield(mass_data_map)
+    fail_items = build_fail_items(mass_data_map)["rows"]
 
     _fail_sums = []
     _fail_rows = []
-    for table in schools.values():
-        mask = _fail_mask_for_table(table)
+    for mass_data in mass_data_map.values():
+        mask = _fail_mask(mass_data)
         _fail_sums.append(mask.sum(axis=0).to_numpy(dtype=int, copy=False))
         _fail_rows.append(int(len(mask)))
 

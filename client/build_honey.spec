@@ -16,7 +16,7 @@ a = Analysis(
     ['honey_main.py'],
     pathex=[],
     binaries=_xw_binaries,
-    datas=_xw_datas + [('honey_main.ui', '.')],
+    datas=_xw_datas + [('honey_main.ui', '.'), ('upload_dialog.ui', '.'), ('d1_browser.ui', '.')],
     hiddenimports=(
         ['PyQt5.sip', 'PyQt5.uic', 'win32com', 'win32com.client', 'pythoncom',
          'pywintypes', 'pandas', 'numpy']

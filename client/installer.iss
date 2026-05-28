@@ -25,6 +25,10 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; 자동 업데이트(/SILENT) 시 실행 중인 Honey 를 닫고 폴더 교체.
+; 재실행은 [Run] postinstall 로 한 번만 하므로 RestartApplications=no.
+CloseApplications=yes
+RestartApplications=no
 
 [Tasks]
 Name: "desktopicon"; Description: "바탕화면 바로가기 생성"; GroupDescription: "추가 아이콘:"
@@ -32,6 +36,8 @@ Name: "desktopicon"; Description: "바탕화면 바로가기 생성"; GroupDescr
 [Files]
 ; dist\Honey\ (onedir) 전체를 설치 폴더로 복사
 Source: "dist\Honey\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; d1_storage(가상 서버 스토리지) 초기 샘플 — 기존 파일은 보존(onlyifdoesntexist)
+Source: "d1_storage\*"; DestDir: "{app}\d1_storage"; Flags: recursesubdirs createallsubdirs onlyifdoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -39,4 +45,5 @@ Name: "{group}\{#MyAppName} 제거"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{#MyAppName} 실행"; Flags: nowait postinstall skipifsilent
+; skipifsilent 를 두지 않음 → /SILENT 자동 업데이트 후에도 Honey 자동 재실행
+Filename: "{app}\{#MyAppExeName}"; Description: "{#MyAppName} 실행"; Flags: nowait postinstall

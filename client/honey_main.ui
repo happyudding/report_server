@@ -33,9 +33,16 @@
     <item>
      <layout class="QHBoxLayout" name="horizontalLayout_csv">
       <item>
+       <widget class="QPushButton" name="btn_open_local">
+        <property name="text">
+         <string>로컬 CSV 열기…</string>
+        </property>
+       </widget>
+      </item>
+      <item>
        <widget class="QPushButton" name="btn_pick_csv">
         <property name="text">
-         <string>CSV 파일 선택…</string>
+         <string>d1_storage 에서 검색…</string>
         </property>
        </widget>
       </item>
@@ -60,75 +67,6 @@
        </size>
       </property>
      </widget>
-    </item>
-    <item>
-     <layout class="QFormLayout" name="formLayout">
-      <item row="0" column="0">
-       <widget class="QLabel" name="label_pt">
-        <property name="text"><string>Product Type:</string></property>
-       </widget>
-      </item>
-      <item row="0" column="1">
-       <widget class="QComboBox" name="cb_product_type">
-        <item><property name="text"><string>MD</string></property></item>
-        <item><property name="text"><string>PD</string></property></item>
-        <item><property name="text"><string>PM</string></property></item>
-        <item><property name="text"><string>SE</string></property></item>
-       </widget>
-      </item>
-      <item row="1" column="0">
-       <widget class="QLabel" name="label_product">
-        <property name="text"><string>Product:</string></property>
-       </widget>
-      </item>
-      <item row="1" column="1">
-       <widget class="QLineEdit" name="le_product">
-        <property name="placeholderText"><string>예: A1</string></property>
-       </widget>
-      </item>
-      <item row="2" column="0">
-       <widget class="QLabel" name="label_lot">
-        <property name="text"><string>LOT ID:</string></property>
-       </widget>
-      </item>
-      <item row="2" column="1">
-       <widget class="QLineEdit" name="le_lot_id">
-        <property name="placeholderText"><string>예: L001</string></property>
-       </widget>
-      </item>
-      <item row="3" column="0">
-       <widget class="QLabel" name="label_revision">
-        <property name="text"><string>Revision:</string></property>
-       </widget>
-      </item>
-      <item row="3" column="1">
-       <widget class="QLineEdit" name="le_revision">
-        <property name="placeholderText"><string>예: r1</string></property>
-       </widget>
-      </item>
-      <item row="4" column="0">
-       <widget class="QLabel" name="label_process">
-        <property name="text"><string>Process:</string></property>
-       </widget>
-      </item>
-      <item row="4" column="1">
-       <widget class="QLineEdit" name="le_process">
-        <property name="placeholderText"><string>예: P1</string></property>
-       </widget>
-      </item>
-      <item row="5" column="0">
-       <widget class="QLabel" name="label_pw">
-        <property name="text"><string>비밀번호:</string></property>
-       </widget>
-      </item>
-      <item row="5" column="1">
-       <widget class="QLineEdit" name="le_password">
-        <property name="placeholderText"><string>숫자 4자리</string></property>
-        <property name="echoMode"><enum>QLineEdit::Password</enum></property>
-        <property name="maxLength"><number>4</number></property>
-       </widget>
-      </item>
-     </layout>
     </item>
     <item>
      <widget class="QGroupBox" name="groupBox_sheets">
@@ -227,24 +165,31 @@
      </widget>
     </item>
     <item>
-     <layout class="QHBoxLayout" name="horizontalLayout_actions">
+     <widget class="QPushButton" name="btn_analyze">
+      <property name="text">
+       <string>분석 실행 (자동 저장)</string>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">QPushButton { padding: 10px 18px; font-weight: 600; background: #4a90e2; color: white; border-radius: 6px; } QPushButton:hover { background: #357abd; } QPushButton:disabled { background: #aaa; }</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <layout class="QHBoxLayout" name="horizontalLayout_upload">
       <item>
-       <widget class="QPushButton" name="btn_analyze">
+       <widget class="QPushButton" name="btn_upload">
         <property name="text">
-         <string>분석 실행 (자동 저장)</string>
+         <string>생성 리포트 업로드</string>
         </property>
-        <property name="styleSheet">
-         <string notr="true">QPushButton { padding: 10px 18px; font-weight: 600; background: #4a90e2; color: white; border-radius: 6px; } QPushButton:hover { background: #357abd; } QPushButton:disabled { background: #aaa; }</string>
+        <property name="enabled">
+         <bool>false</bool>
         </property>
        </widget>
       </item>
       <item>
-       <widget class="QPushButton" name="btn_upload">
+       <widget class="QPushButton" name="btn_upload_local">
         <property name="text">
-         <string>서버에 업로드</string>
-        </property>
-        <property name="enabled">
-         <bool>false</bool>
+         <string>로컬 파일 업로드…</string>
         </property>
        </widget>
       </item>

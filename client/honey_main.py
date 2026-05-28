@@ -1,10 +1,12 @@
 """Honey 클라이언트 (PyQt5).
 
-UI 레이아웃은 honey_main.ui (Qt Designer 로 편집 가능) 에 정의되어 있고, 런타임에
-uic.loadUi 로 로드한다. 이 파일은 동작(시그널 연결 + 분석/생성/업로드 로직)만 담당.
+UI 레이아웃은 .ui (Qt Designer 편집 가능) 에 정의, 런타임에 uic.loadUi 로 로드.
+- honey_main.ui   : 메인 화면 (d1_storage 검색 → 분석 → 자동 저장 → 업로드)
+- upload_dialog.ui: 서버 업로드용 메타(Product Type 라디오/Product/LOT/Revision/PW) 팝업
+- d1_browser.ui   : d1_storage(가상 서버 스토리지) 파일 검색/선택 팝업
 
-워크플로우: CSV 여러 개 → 로컬 분석(df_honey) → 출력 시트 선택 → '분석 실행' 시
-입력 폴더에 xlsx 자동 저장(xlwings) → '서버에 업로드'.
+워크플로우: d1_storage 에서 CSV 검색·선택 → 출력 시트 선택 → '분석 실행' 시
+입력 폴더에 xlsx 자동 저장(xlwings) → '서버에 업로드' 클릭 시 메타 팝업 입력 후 전송.
 """
 import os
 import sys
@@ -15,10 +17,11 @@ from PyQt5 import uic
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (
-    QApplication, QFileDialog, QListWidgetItem, QMainWindow, QMessageBox,
+    QApplication, QDialog, QFileDialog, QListWidgetItem, QMainWindow,
+    QMessageBox, QProgressDialog,
 )
 
-from config import CURRENT_VERSION, SERVER_BASE_URL
+from config import CURRENT_VERSION, SERVER_BASE_URL, D1_STORAGE_DIR
 import chart_export
 import updater
 import uploader
@@ -35,10 +38,13 @@ except Exception as exc:  # noqa: BLE001
     _RG_IMPORT_ERROR = exc
 
 SHEET_OPTIONS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
+PRODUCT_TYPES = ["MD", "PD", "PM", "SE"]
 
-# 프리징(onefile) 시 _MEIPASS, 아니면 스크립트 폴더에서 .ui 탐색
+# 프리징(onedir) 시 _MEIPASS, 아니면 스크립트 폴더에서 .ui 탐색
 _BASE_DIR = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
 UI_PATH = os.path.join(_BASE_DIR, "honey_main.ui")
+UPLOAD_UI_PATH = os.path.join(_BASE_DIR, "upload_dialog.ui")
+D1_UI_PATH = os.path.join(_BASE_DIR, "d1_browser.ui")
 
 
 def _validate_meta(product, lot_id, password):
@@ -71,6 +77,98 @@ def _derive_output_path(csv_paths):
     return str(out_dir / f"{base}_report.xlsx")
 
 
+# ───────────────────────────────────────────────────────────────────────────
+# 서버 업로드 메타 입력 팝업 (Product Type 라디오 상단 + Product/LOT/Revision/PW)
+
+class UploadDialog(QDialog):
+    def __init__(self, parent=None, defaults=None):
+        super().__init__(parent)
+        uic.loadUi(UPLOAD_UI_PATH, self)
+        self.le_password.setValidator(QIntValidator(0, 9999))
+        self._pt_radios = {
+            "MD": self.rb_pt_MD, "PD": self.rb_pt_PD,
+            "PM": self.rb_pt_PM, "SE": self.rb_pt_SE,
+        }
+        self.buttonBox.accepted.connect(self._on_ok)
+        self.buttonBox.rejected.connect(self.reject)
+        if defaults:
+            self._pt_radios.get(defaults.get("product_type", "MD"),
+                                self.rb_pt_MD).setChecked(True)
+            self.le_product.setText(defaults.get("product", ""))
+            self.le_lot_id.setText(defaults.get("lot_id", ""))
+            self.le_revision.setText(defaults.get("revision", ""))
+
+    def product_type(self):
+        for key, rb in self._pt_radios.items():
+            if rb.isChecked():
+                return key
+        return "MD"
+
+    def _on_ok(self):
+        err = _validate_meta(self.le_product.text().strip(),
+                             self.le_lot_id.text().strip(),
+                             self.le_password.text().strip())
+        if err:
+            QMessageBox.warning(self, "입력 오류", err)
+            return
+        self.accept()
+
+    def values(self):
+        return {
+            "product_type": self.product_type(),
+            "product": self.le_product.text().strip(),
+            "lot_id": self.le_lot_id.text().strip(),
+            "revision": self.le_revision.text().strip(),
+            "password": self.le_password.text().strip(),
+        }
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# d1_storage 파일 검색/선택 팝업
+
+class D1BrowserDialog(QDialog):
+    def __init__(self, parent, storage_dir):
+        super().__init__(parent)
+        uic.loadUi(D1_UI_PATH, self)
+        self.storage_dir = storage_dir
+        self.lbl_path.setText(f"d1_storage: {storage_dir}")
+        self._all = self._scan()
+        self.le_search.textChanged.connect(self._reload)
+        self.btn_refresh.clicked.connect(self._refresh)
+        self.list_files.itemDoubleClicked.connect(lambda _i: self.accept())
+        self.buttonBox.accepted.connect(self.accept)
+        self.buttonBox.rejected.connect(self.reject)
+        self._reload()
+
+    def _scan(self):
+        p = Path(self.storage_dir)
+        if not p.exists():
+            return []
+        files = [f for f in p.rglob("*")
+                 if f.is_file() and f.suffix.lower() in (".csv", ".xlsx")]
+        return sorted(files, key=lambda x: str(x).lower())
+
+    def _refresh(self):
+        self._all = self._scan()
+        self._reload()
+
+    def _reload(self):
+        q = self.le_search.text().strip().lower()
+        self.list_files.clear()
+        for f in self._all:
+            rel = str(f.relative_to(self.storage_dir))
+            if q and q not in rel.lower():
+                continue
+            it = QListWidgetItem(rel)
+            it.setData(Qt.UserRole, str(f))
+            self.list_files.addItem(it)
+
+    def selected_paths(self):
+        return [it.data(Qt.UserRole) for it in self.list_files.selectedItems()]
+
+
+# ───────────────────────────────────────────────────────────────────────────
+
 class HoneyMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -83,13 +181,11 @@ class HoneyMainWindow(QMainWindow):
         self.group = None          # DfHoneyGroup
         self.last_result = None    # AnalysisResult
         self.out_path = None       # 생성된 xlsx 경로
+        self._last_upload = None   # 마지막 업로드 메타 (팝업 프리필용)
 
-        # .ui 에서 표현하기 어려운 속성 보강
-        self.le_password.setValidator(QIntValidator(0, 9999))
         self.sheet_checks = {
             name: getattr(self, f"cb_sheet_{name}") for name in SHEET_OPTIONS
         }
-
         self._connect_signals()
 
         if rg is None:
@@ -97,44 +193,65 @@ class HoneyMainWindow(QMainWindow):
         QTimer.singleShot(500, self.check_for_update)
 
     def _connect_signals(self):
-        self.btn_pick_csv.clicked.connect(self.on_pick_csv)
+        self.btn_open_local.clicked.connect(self.on_open_local)
+        self.btn_pick_csv.clicked.connect(self.on_browse_d1)
         self.btn_sel_all.clicked.connect(lambda: self._check_all(True))
         self.btn_sel_none.clicked.connect(lambda: self._check_all(False))
         self.btn_sel_fail.clicked.connect(self._check_fail_only)
         self.btn_analyze.clicked.connect(self.on_analyze)
         self.btn_upload.clicked.connect(self.on_upload)
+        self.btn_upload_local.clicked.connect(self.on_upload_local)
 
     def _disable_engine(self):
-        for name in ("btn_pick_csv", "btn_analyze", "btn_upload"):
+        # 분석 관련 기능만 비활성. 로컬 파일 직접 업로드는 엔진 없이도 동작하므로 유지.
+        for name in ("btn_open_local", "btn_pick_csv", "btn_analyze", "btn_upload"):
             getattr(self, name).setEnabled(False)
         self.lbl_out.setStyleSheet("color: #b00;")
         self.lbl_out.setText(
             "report_generator 모듈을 불러오지 못했습니다 — "
-            f"{_RG_IMPORT_ERROR}\npandas / numpy / xlwings + MS Excel 이 필요합니다."
+            f"{_RG_IMPORT_ERROR}\n분석/생성에는 pandas / numpy / xlwings + MS Excel 이 필요합니다."
+            "\n(로컬 파일 직접 업로드는 가능합니다.)"
         )
 
     def _status(self, msg):
         self.status.showMessage(msg)
 
-    # ── CSV 선택 → 그룹 로드 → 항목 채우기 ──────────────────────────────────
-    def on_pick_csv(self):
+    # ── 입력 선택: 로컬 파일 열기 / d1_storage 검색 ─────────────────────────
+    def on_open_local(self):
+        # 네이티브 대화상자는 frozen 앱에서 셸 확장/COM 충돌로 크래시할 수 있어 Qt 다이얼로그 사용
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "CSV 파일 선택 (여러 개 가능)", "", "CSV/Excel (*.csv *.xlsx)")
-        if not paths:
+            self, "CSV/XLSX 파일 열기 (여러 개 가능)", "",
+            "데이터 파일 (*.csv *.xlsx);;CSV (*.csv);;Excel (*.xlsx);;모든 파일 (*.*)",
+            options=QFileDialog.DontUseNativeDialog)
+        if paths:
+            self._load_paths(paths)
+
+    def on_browse_d1(self):
+        os.makedirs(D1_STORAGE_DIR, exist_ok=True)
+        dlg = D1BrowserDialog(self, D1_STORAGE_DIR)
+        if not dlg.exec_():
             return
+        paths = dlg.selected_paths()
+        if not paths:
+            QMessageBox.warning(self, "선택 없음", "가져올 파일을 선택하세요.")
+            return
+        self._load_paths(paths)
+
+    def _load_paths(self, paths):
+        """선택된 입력 파일들 → 그룹 로드 + 검증 + 항목 채우기 (소스 공통)."""
         self.csv_paths = paths
         self.list_csv.clear()
         for p in paths:
             self.list_csv.addItem(Path(p).name)
         self.lbl_csv.setText(f"{len(paths)}개 파일  ({Path(paths[0]).parent})")
 
-        self._status("CSV 로딩/검증 중...")
+        self._status("파일 로딩/검증 중...")
         QApplication.processEvents()
         try:
             self.group = rg.DfHoneyGroup.from_csvs(paths)
         except Exception as exc:
-            QMessageBox.critical(self, "CSV 로드 실패", str(exc))
-            self._status("CSV 로드 실패")
+            QMessageBox.critical(self, "파일 로드 실패", str(exc))
+            self._status("파일 로드 실패")
             self.group = None
             return
 
@@ -147,7 +264,7 @@ class HoneyMainWindow(QMainWindow):
         self.btn_upload.setEnabled(False)
         self.out_path = None
         self.lbl_out.setText("")
-        self._status(f"{len(paths)}개 CSV 로드 완료. 항목/시트를 선택하고 분석을 실행하세요.")
+        self._status(f"{len(paths)}개 파일 로드 완료. 항목/시트를 선택하고 분석을 실행하세요.")
 
     def _populate_items(self):
         self.list_items.clear()
@@ -179,19 +296,10 @@ class HoneyMainWindow(QMainWindow):
     def _selected_sheets(self):
         return [n for n, cb in self.sheet_checks.items() if cb.isChecked()]
 
-    def _meta(self):
-        return rg.ReportMeta(
-            product_type=self.cb_product_type.currentText(),
-            product=self.le_product.text().strip(),
-            lot_id=self.le_lot_id.text().strip(),
-            revision=self.le_revision.text().strip(),
-            process=self.le_process.text().strip(),
-        )
-
     # ── 분석 실행 → 자동 저장 ────────────────────────────────────────────────
     def on_analyze(self):
         if self.group is None:
-            QMessageBox.warning(self, "입력 누락", "먼저 CSV 파일을 선택하세요.")
+            QMessageBox.warning(self, "입력 누락", "먼저 d1_storage 에서 파일을 가져오세요.")
             return
         selected = self._selected_items()
         if not selected:
@@ -208,7 +316,7 @@ class HoneyMainWindow(QMainWindow):
         QApplication.processEvents()
         try:
             self.last_result = rg.analyze(
-                self.group, meta=self._meta(),
+                self.group, meta=rg.ReportMeta(),
                 selector=rg.ItemSelector(selected_items=selected),
             )
         except Exception as exc:
@@ -251,42 +359,55 @@ class HoneyMainWindow(QMainWindow):
                   f"distribution 차트: {len(r.distributions)}개"]
         self.txt_summary.setPlainText("\n".join(lines))
 
-    # ── 서버 업로드 (기존 uploader 재사용) ──────────────────────────────────
+    # ── 서버 업로드 ─────────────────────────────────────────────────────────
     def on_upload(self):
+        """생성한 리포트(self.out_path) 업로드."""
         if not self.out_path or not Path(self.out_path).exists():
             QMessageBox.warning(self, "파일 없음", "먼저 분석을 실행해 xlsx 를 생성하세요.")
             return
-        product = self.le_product.text().strip()
-        lot_id = self.le_lot_id.text().strip()
-        password = self.le_password.text().strip()
-        err = _validate_meta(product, lot_id, password)
-        if err:
-            QMessageBox.warning(self, "입력 오류", err)
+        self._do_upload(self.out_path)
+
+    def on_upload_local(self):
+        """로컬에 있는 임의의 xlsx 를 직접 업로드 (분석 엔진 불필요)."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "업로드할 파일 선택", "", "Excel (*.xlsx);;모든 파일 (*.*)",
+            options=QFileDialog.DontUseNativeDialog)
+        if path:
+            self._do_upload(path)
+
+    def _do_upload(self, path):
+        """메타 팝업 입력 → 차트 PNG 렌더 → post_xlsx (소스 공통)."""
+        dlg = UploadDialog(self, defaults=self._last_upload)
+        if not dlg.exec_():
             return
+        v = dlg.values()
+        self._last_upload = v
 
         self.btn_upload.setEnabled(False)
+        self.btn_upload_local.setEnabled(False)
         self._status("차트 변환 중... (Excel)")
         QApplication.processEvents()
         try:
-            chart_pngs = chart_export.export_chart_pngs(self.out_path)
+            chart_pngs = chart_export.export_chart_pngs(path)
         except Exception:
             chart_pngs = []
 
-        self._status(f"업로드 중... {Path(self.out_path).name} (차트 {len(chart_pngs)}장)")
+        self._status(f"업로드 중... {Path(path).name} (차트 {len(chart_pngs)}장)")
         QApplication.processEvents()
         try:
             result = uploader.post_xlsx(
-                self.out_path,
-                product_type=self.cb_product_type.currentText(),
-                product=product,
-                lot_id=lot_id,
-                password=password,
+                path,
+                product_type=v["product_type"],
+                product=v["product"],
+                lot_id=v["lot_id"],
+                password=v["password"],
                 chart_pngs=chart_pngs,
             )
         except Exception as exc:
             QMessageBox.critical(self, "업로드 실패", str(exc))
             self._status("업로드 실패")
-            self.btn_upload.setEnabled(True)
+            self.btn_upload.setEnabled(self.out_path is not None)
+            self.btn_upload_local.setEnabled(True)
             return
 
         sid = result.get("session_id", "?")
@@ -297,7 +418,8 @@ class HoneyMainWindow(QMainWindow):
             f"브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
         )
         self._status(f"업로드 완료 (차트 {charts}장)")
-        self.btn_upload.setEnabled(True)
+        self.btn_upload.setEnabled(self.out_path is not None)
+        self.btn_upload_local.setEnabled(True)
 
     # ── version check (기존 로직 무변경) ────────────────────────────────────
     def check_for_update(self):
@@ -324,51 +446,89 @@ class HoneyMainWindow(QMainWindow):
 
         url = manifest.get("url") or "/honey/download"
         expected = manifest.get("sha256") or None
+        setup_name = manifest.get("file") or f"HoneySetup-{remote}.exe"
+        dest = Path(tempfile.gettempdir()) / setup_name
 
-        self.status.showMessage(f"새 버전 {remote} 다운로드 중...")
-        QApplication.processEvents()
+        # 다운로드 진행바
+        dlg = QProgressDialog("업데이트 다운로드 중...", "취소", 0, 100, self)
+        dlg.setWindowTitle("Honey 업데이트")
+        dlg.setWindowModality(Qt.WindowModal)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setMinimumDuration(0)
+        dlg.setValue(0)
 
-        if updater.is_frozen():
-            target = updater.current_exe_path()
-            staged = updater.staging_path(target)
-            try:
-                version_check.download_to(staged, url, expected_sha256=expected)
-            except Exception as exc:
-                QMessageBox.critical(self, "다운로드 실패", str(exc))
-                self.status.showMessage("업데이트 실패")
-                return
-            try:
-                updater.apply_update(staged, target)
-            except Exception as exc:
-                QMessageBox.critical(self, "업데이트 적용 실패", str(exc))
-                self.status.showMessage("업데이트 실패")
-                return
+        def _cb(done, total):
+            if dlg.wasCanceled():
+                return False
+            dlg.setLabelText(f"업데이트 다운로드 중... ({done // (1024*1024)}MB"
+                             + (f" / {total // (1024*1024)}MB)" if total else ")"))
+            dlg.setValue(int(done * 100 / total) if total else 0)
+            QApplication.processEvents()
+            return True
 
-            QMessageBox.information(
-                self, "업데이트 적용",
-                f"새 버전 {remote} 으로 교체 후 자동 재시작됩니다.\n앱을 종료합니다.",
-            )
-            QApplication.quit()
-            return
-
-        target = Path(tempfile.gettempdir()) / (manifest.get("file") or f"Honey-{remote}.exe")
         try:
-            version_check.download_to(target, url, expected_sha256=expected)
+            version_check.download_to(dest, url, expected_sha256=expected, progress_cb=_cb)
+        except version_check.DownloadCancelled:
+            dlg.close()
+            self.status.showMessage("업데이트 취소됨")
+            return
         except Exception as exc:
+            dlg.close()
             QMessageBox.critical(self, "다운로드 실패", str(exc))
             self.status.showMessage("업데이트 실패")
             return
+        dlg.setValue(100)
+        dlg.close()
+
+        if not updater.is_frozen():
+            QMessageBox.information(
+                self, "다운로드 완료 (개발 모드)",
+                f"스크립트 실행 중이라 설치를 진행하지 않습니다.\n"
+                f"설치본만 다운로드 완료:\n{dest}\n\n"
+                f"(자동 설치는 빌드된 exe 에서 동작합니다.)",
+            )
+            self.status.showMessage("다운로드 완료 (개발 모드)")
+            return
+
         QMessageBox.information(
-            self, "다운로드 완료 (개발 모드)",
-            f"스크립트 실행 중이라 교체 대상 exe 가 없습니다.\n"
-            f"다운로드만 완료:\n{target}\n\n"
-            f"(자동 교체는 빌드된 exe 에서 동작합니다.)",
+            self, "업데이트 설치",
+            f"새 버전 {remote} 을(를) 설치합니다.\n\n"
+            "설치하는 동안 앱이 잠시 종료되며, 설치가 끝나면 자동으로 다시 실행됩니다.\n"
+            "잠시만 기다려 주세요.",
         )
-        self.status.showMessage("다운로드 완료 (개발 모드)")
+        try:
+            updater.run_installer(dest)
+        except Exception as exc:
+            QMessageBox.critical(self, "설치 실행 실패", str(exc))
+            self.status.showMessage("업데이트 실패")
+            return
+        self.status.showMessage("업데이트 설치 중... 앱을 종료합니다.")
+        QApplication.quit()
+
+
+def _install_excepthook():
+    """슬롯에서 발생한 미처리 예외로 앱이 조용히 죽지 않도록, 메시지로 표시.
+
+    PyQt5 는 슬롯의 미처리 예외 시 기본 excepthook 이면 abort 한다. 후킹하면
+    앱을 유지하면서 오류를 보여줄 수 있다.
+    """
+    import traceback
+
+    def hook(etype, value, tb):
+        text = "".join(traceback.format_exception(etype, value, tb))
+        try:
+            QMessageBox.critical(None, "오류가 발생했습니다", text[-3000:])
+        except Exception:
+            pass
+        sys.__excepthook__(etype, value, tb)
+
+    sys.excepthook = hook
 
 
 def main():
     app = QApplication(sys.argv)
+    _install_excepthook()
     win = HoneyMainWindow()
     win.show()
     sys.exit(app.exec_())

@@ -1,7 +1,8 @@
-"""DfHoney — 단일 입력 sheet/CSV 에 대응하는 분석 단위.
+"""DfHoney — 하나의 mass_data 단위(반도체 웨이퍼/로트 측정 sheet·CSV) 분석 객체.
 
-규격화된 pandas DataFrame(meta + scores)과 메타데이터를 보유하고, sheet-level
-기본 분석 메서드를 제공한다. PyQt/xlwings 비의존 순수 Python.
+규격화된 pandas DataFrame(meta + scores)과 메타데이터를 보유하고, mass_data 단위
+기본 분석 메서드(cpk/yield/fail/issue/summary/distribution)를 제공한다.
+PyQt/xlwings 비의존 순수 Python.
 """
 from __future__ import annotations
 
@@ -78,27 +79,28 @@ class DfHoney:
 
     # ------------------------------------------------------------------ 분석
 
-    def _as_schools(self):
+    def _as_mass_data_map(self):
+        """단일 mass_data 를 {name: self} map 으로 (builder 호환 어댑터)."""
         return {self.name: self}
 
     def cpk(self, subject_idx=None) -> list:
-        rows = B.build_cpk(self._as_schools())
+        rows = B.build_cpk(self._as_mass_data_map())
         if subject_idx is None:
             return rows
         subject = self.subjects[subject_idx]
         return [r for r in rows if r["subject"] == subject]
 
     def yield_rate(self) -> list:
-        return B.build_yield(self._as_schools())
+        return B.build_yield(self._as_mass_data_map())
 
     def fail_items(self) -> dict:
-        return B.build_fail_items(self._as_schools())
+        return B.build_fail_items(self._as_mass_data_map())
 
     def fail_values(self) -> list:
-        return B.build_issue_table(self._as_schools())
+        return B.build_issue_table(self._as_mass_data_map())
 
     def summary(self) -> list:
-        return B.build_summary_rows(self._as_schools())
+        return B.build_summary_rows(self._as_mass_data_map())
 
     def distribution(self, subject_idx) -> tuple:
         values = B.to_numeric_clean(self.scores.iloc[:, subject_idx])
@@ -106,7 +108,7 @@ class DfHoney:
 
     def fail_subject_ids(self) -> list:
         """fail 이 발생한 subject_id 목록 (item select 기본값용)."""
-        mask = B._fail_mask_for_table(self)
+        mask = B._fail_mask(self)
         sums = mask.sum(axis=0)
         return [int(i) for i, c in sums.items() if int(c) > 0]
 
