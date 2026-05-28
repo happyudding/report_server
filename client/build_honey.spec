@@ -4,12 +4,22 @@
 
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_all, collect_submodules
+
+# xlwings 는 자체 데이터/바이너리(.xlam, dll)를 동봉해야 동작
+_xw_datas, _xw_binaries, _xw_hidden = collect_all('xlwings')
+
 a = Analysis(
     ['honey_main.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=['PyQt5.sip', 'win32com', 'win32com.client', 'pythoncom', 'pywintypes'],
+    binaries=_xw_binaries,
+    datas=_xw_datas,
+    hiddenimports=(
+        ['PyQt5.sip', 'win32com', 'win32com.client', 'pythoncom', 'pywintypes',
+         'pandas', 'numpy']
+        + _xw_hidden
+        + collect_submodules('report_generator')
+    ),
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

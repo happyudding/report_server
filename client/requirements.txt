@@ -1,3 +1,6 @@
 PyQt5>=5.15
 requests>=2.28
 pywin32>=306   ; sys_platform == "win32"   # Excel COM 으로 차트 → PNG 렌더 (chart_export.py)
+pandas>=1.5    # 로컬 리포트 분석 엔진 (report_generator)
+numpy>=1.23    # 분석 계산 (cpk/yield/distribution)
+xlwings>=0.30  ; sys_platform == "win32"   # 로컬 xlsx 리포트 생성 (Excel COM)
