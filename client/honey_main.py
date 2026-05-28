@@ -12,6 +12,7 @@ import tempfile
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QIntValidator
 from PyQt5.QtWidgets import (
     QApplication, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLabel,
     QLineEdit, QMainWindow, QMessageBox, QPushButton, QStatusBar, QVBoxLayout,
@@ -54,9 +55,15 @@ class HoneyMainWindow(QMainWindow):
         self.le_product.setPlaceholderText("예: A1")
         self.le_lot_id = QLineEdit()
         self.le_lot_id.setPlaceholderText("예: L001")
+        self.le_password = QLineEdit()
+        self.le_password.setPlaceholderText("숫자 4자리")
+        self.le_password.setEchoMode(QLineEdit.Password)
+        self.le_password.setMaxLength(4)
+        self.le_password.setValidator(QIntValidator(0, 9999))  # 숫자만
         form.addRow("Product Type:", self.cb_product_type)
         form.addRow("Product:", self.le_product)
         form.addRow("LOT ID:", self.le_lot_id)
+        form.addRow("비밀번호:", self.le_password)
         layout.addLayout(form)
 
         btn_row = QHBoxLayout()
@@ -82,8 +89,13 @@ class HoneyMainWindow(QMainWindow):
     def on_upload_clicked(self):
         product = self.le_product.text().strip()
         lot_id = self.le_lot_id.text().strip()
+        password = self.le_password.text().strip()
         if not product or not lot_id:
             QMessageBox.warning(self, "입력 누락", "Product 와 LOT ID 를 모두 입력하세요.")
+            return
+        if len(password) != 4 or not password.isdigit():
+            QMessageBox.warning(self, "비밀번호 오류",
+                                "비밀번호는 숫자 4자리로 입력하세요.\n(서버에서 수정/삭제 시 사용됩니다.)")
             return
 
         path, _ = QFileDialog.getOpenFileName(
@@ -109,6 +121,7 @@ class HoneyMainWindow(QMainWindow):
                 product_type=self.cb_product_type.currentText(),
                 product=product,
                 lot_id=lot_id,
+                password=password,
                 chart_pngs=chart_pngs,
             )
         except Exception as exc:

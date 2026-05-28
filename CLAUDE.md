@@ -55,15 +55,24 @@ report_server/
 
 **Honey → Server**
 1. Honey 시작 → `GET /honey/version` → 새 버전 있으면 사용자에게 확인 후 `/honey/download`
-2. 사용자가 product_type / product / lot_id 입력 + xlsx 선택 → `POST /pe/report/upload_xlsx`
-3. 서버: sha256(xlsx + meta) → analysis_key → S3 업로드 → DB 세션 생성 → xlsx 파싱 →
+2. 사용자가 product_type / product / lot_id + 4자리 PIN 입력 + xlsx 선택 → `POST /pe/report/upload_xlsx`
+3. 서버: sha256(xlsx + meta) → analysis_key → S3 업로드 → DB 세션 생성(PIN 저장) → xlsx 파싱 →
    yield_rows DB 저장, summary/issue_table 텍스트는 S3 JSON 으로 보관
 
-**검색결과 조회**
+**검색결과 조회 / 편집**
 - `GET /pe/report/` → 검색결과 페이지
 - `GET /pe/report/api/history?product_type=MD&...` → 세션 목록 (source 컬럼 포함)
-- `GET /pe/report/view/<session_id>` → 세션 상세 (summary/yield/issue_table 텍스트)
+- `GET /pe/report/view/<session_id>` → 세션 상세 (보기/수정/삭제 모드)
 - `GET /pe/report/session/<sid>/full` → 세션 + summary + objects + annotations + 추출 텍스트
+  (응답 session 에서 password 제거, `has_password` 불린만 노출)
+- `POST /pe/report/session/<sid>/verify_password` → 수정 모드 진입 전 PIN 확인
+- `PATCH /pe/report/session/<sid>/content` → 텍스트 콘텐츠 수정 (PIN 검증 후
+  summary_text / issue_rows = S3 JSON 재업로드, yield_rows = DB 행 치환)
+- `DELETE /pe/report/session/<sid>` → 세션 삭제 (PIN 검증)
+
+업로드 시 4자리 숫자 PIN 필수 (`report_session.password`). 수정·삭제는 PIN 일치 필요
+(미설정 legacy 세션은 PIN 없이 허용). PIN 은 analysis_key 산출 meta 에 **포함하지 않음**
+— 접근 제어용이라 같은 xlsx+meta 면 PIN 이 달라도 동일 analysis_key (rule #4 유지).
 
 ---
 

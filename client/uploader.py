@@ -6,9 +6,11 @@ import requests
 from config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
 
 
-def post_xlsx(xlsx_path, product_type, product, lot_id, base_url=None, chart_pngs=None):
+def post_xlsx(xlsx_path, product_type, product, lot_id, password,
+              base_url=None, chart_pngs=None):
     """xlsx 파일 + 메타 (+ 클라이언트가 렌더한 차트 PNG) 를 /pe/report/upload_xlsx 로 전송.
 
+    password: 4자리 숫자 PIN — 추후 서버에서 수정/삭제 시 요구된다.
     chart_pngs: list[bytes] — 차트 PNG. chart_0, chart_1, ... 필드로 순서대로 동봉.
     Returns: response.json() — 실패 시 RuntimeError 발생.
     """
@@ -28,6 +30,7 @@ def post_xlsx(xlsx_path, product_type, product, lot_id, base_url=None, chart_png
             "product_type": product_type,
             "product": product,
             "lot_id": lot_id,
+            "password": password,
         }
         resp = requests.post(url, files=files, data=data, timeout=REQUEST_TIMEOUT_SEC)
 

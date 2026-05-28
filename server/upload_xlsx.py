@@ -28,6 +28,7 @@ from s3_storage.report_s3 import S3NotConfigured
 
 _PRODUCT_TYPES = {"MD", "PD", "PM", "SE"}
 _SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-\.]{1,80}$")
+_PIN_RE = re.compile(r"^\d{4}$")
 
 _MAX_CHARTS = 50
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -133,6 +134,10 @@ def upload_xlsx():
         abort(400, "empty file")
 
     meta = _validate_meta(request.form)
+    # password 는 접근 제어용이라 analysis_key 산출(meta)에는 포함하지 않는다.
+    password = (request.form.get("password") or "").strip()
+    if not _PIN_RE.match(password):
+        abort(400, "password must be 4 digits")
     analysis_key = _compute_analysis_key(xlsx_bytes, meta)
     content_hash = hashlib.sha256(xlsx_bytes).hexdigest()
     session_id = f"{int(time.time())}_{secrets.token_hex(3)}"
@@ -144,6 +149,7 @@ def upload_xlsx():
         product_type=meta["product_type"],
         product=meta["product"],
         lot_id=meta["lot_id"],
+        password=password,
         source="xlsx_upload",
     )
     report_db.update_session(

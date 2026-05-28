@@ -371,6 +371,34 @@ def save_summary_batch(analysis_key, session_id, rows):
     return len(payload)
 
 
+def replace_summary_batch(analysis_key, session_id, rows):
+    """analysis_key 의 summary 행 전체를 rows 로 치환 (DELETE + INSERT).
+    수정(edit) 모드에서 yield 표를 통째로 다시 저장할 때 사용."""
+    now = _now()
+    payload = [
+        (
+            analysis_key, session_id,
+            r["item_name"], r.get("bin_number"),
+            r.get("yield_percent"), r.get("fail_count"), r.get("cpk_val"),
+            r.get("mean_val"), r.get("stdev_val"), r.get("lsl"), r.get("usl"),
+            r.get("unit"), now,
+        )
+        for r in rows
+    ]
+    placeholders = ",".join(["?"] * len(_SUMMARY_COLUMNS))
+    cols = ",".join(_SUMMARY_COLUMNS)
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM report_analysis_summary WHERE analysis_key=?", (analysis_key,)
+        )
+        if payload:
+            conn.executemany(
+                f"INSERT OR IGNORE INTO report_analysis_summary ({cols}) VALUES ({placeholders})",
+                payload,
+            )
+    return len(payload)
+
+
 # ── object_info ──────────────────────────────────────────────────────────────
 
 def get_object_info(analysis_key, object_type="plotly"):

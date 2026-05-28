@@ -1,0 +1,81 @@
+================================================================================
+ Honey.exe 버전 릴리스 가이드
+================================================================================
+
+[ 동작 원리 ]
+
+- 서버: honey_routes.py 가 /honey/version 에서 server/releases/version.json 을
+  그대로 반환하고, /honey/download 는 그 json 의 "file" 필드 이름으로
+  HONEY_RELEASES_DIR(기본 server/releases/) 에서 exe 를 서빙한다.
+
+- 클라이언트: 시작 시 /honey/version 을 받아 is_newer(remote, CURRENT_VERSION)
+  비교 -> 새 버전이면 다운로드 -> frozen exe 면 updater.py 의 updater.bat 가
+  락이 풀린 뒤 교체·재시작.
+
+[ 핵심 함정 ]
+
+is_newer 는 서버의 "version" 과 exe 에 "컴파일되어 박힌" CURRENT_VERSION
+(client/config.py) 을 비교한다. 그래서 빌드 "전에" CURRENT_VERSION 을 올려야
+새 exe 가 자기 자신을 또 업데이트하라고 무한 권유하지 않는다.
+
+================================================================================
+ 릴리스 절차 (예: 0.1.0 -> 0.2.0)
+================================================================================
+
+[ 자동 (권장) ]
+
+  client/release/ 에서:
+
+    .\release_honey.ps1 -Version 0.2.0 -Notes "변경 사항 요약"
+
+  이 스크립트가 아래 1~5단계를 전부 수행한다.
+  exe 를 이미 빌드해 둔 경우 -SkipBuild 로 빌드 단계만 건너뛸 수 있다.
+
+[ 수동 ]
+
+1. 클라이언트 버전 먼저 올리기 (빌드 전!)
+   client/config.py:
+       CURRENT_VERSION = "0.2.0"
+
+2. exe 빌드 (build_honey.spec 사용)
+   # client/ 디렉터리에서
+   pyinstaller build_honey.spec
+   # -> dist/Honey.exe 생성
+
+3. 버전명으로 리네임하며 releases 디렉터리에 배치
+   Copy-Item client\dist\Honey.exe server\releases\Honey-0.2.0.exe
+   (파일명에 / \ 선행 . 금지 — honey_routes.py 가 거부함)
+
+4. sha256 계산
+   (Get-FileHash server\releases\Honey-0.2.0.exe -Algorithm SHA256).Hash.ToLower()
+
+5. version.json 갱신 (server/releases/version.json)
+   {
+     "version": "0.2.0",
+     "file": "Honey-0.2.0.exe",
+     "sha256": "<4번에서 나온 해시>",
+     "released_at": "2026-05-28T00:00:00",
+     "notes": "변경 사항 요약"
+   }
+
+   끝. 서버 재시작 불필요 — version.json 은 요청마다 다시 읽는다.
+   다음에 클라이언트가 뜰 때 자동으로 업데이트 안내가 뜬다.
+
+================================================================================
+ 주의할 점
+================================================================================
+
+- sha256 는 꼭 채워라. 비워두면 클라이언트가 무결성 검증을 건너뛴다
+  (version_check.py). 채워두면 다운로드 후 불일치 시 파일 삭제하고 실패 처리된다.
+
+- 구버전 exe 도 남겨두는 게 안전하다. version.json 이 가리키는 파일만 서빙되니
+  Honey-0.1.0.exe 를 지울 필요는 없고, 롤백 시 version.json 만 되돌리면 된다.
+
+- 자동 교체는 frozen exe 에서만 동작한다. `python honey_main.py` (개발 모드) 로
+  돌리면 다운로드만 하고 교체는 안 한다 (honey_main.py).
+
+- url 필드는 선택사항이다. 없으면 클라이언트가 /honey/download 로 폴백하니
+  보통 비워두면 된다. CDN 등 외부 호스팅을 쓸 때만 절대 URL 을 넣는다.
+
+- version.json 은 BOM 없는 UTF-8 로 저장해야 한다. BOM 이 붙으면 서버의
+  json.loads 가 실패할 수 있다. (release_honey.ps1 은 BOM 없이 기록한다.)

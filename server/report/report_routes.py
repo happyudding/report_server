@@ -25,6 +25,60 @@ def _validate_session_id(value):
         abort(400, "invalid session_id")
 
 
+def _public_session(session):
+    """password 같은 민감 컬럼을 제거하고 has_password 플래그만 노출."""
+    if not session:
+        return session
+    pub = dict(session)
+    pub["has_password"] = bool(pub.get("password"))
+    pub.pop("password", None)
+    return pub
+
+
+def _password_ok(session, password):
+    """세션에 비밀번호가 설정돼 있으면 일치해야 True. 없으면 항상 True (legacy)."""
+    stored = (session or {}).get("password")
+    if not stored:
+        return True
+    return (password or "").strip() == stored
+
+
+def _to_float(v):
+    if v is None or v == "":
+        return None
+    try:
+        return float(v)
+    except (ValueError, TypeError):
+        return None
+
+
+def _to_int(v):
+    if v is None or v == "":
+        return None
+    try:
+        return int(float(v))
+    except (ValueError, TypeError):
+        return None
+
+
+def _coerce_yield_row(row):
+    """수정 모드에서 넘어온 yield 행 dict 를 summary 컬럼 타입으로 정리."""
+    name = str(row.get("item_name") or "").strip()
+    unit = row.get("unit")
+    return {
+        "item_name": name,
+        "bin_number": _to_int(row.get("bin_number")),
+        "yield_percent": _to_float(row.get("yield_percent")),
+        "fail_count": _to_int(row.get("fail_count")),
+        "cpk_val": _to_float(row.get("cpk_val")),
+        "mean_val": _to_float(row.get("mean_val")),
+        "stdev_val": _to_float(row.get("stdev_val")),
+        "lsl": _to_float(row.get("lsl")),
+        "usl": _to_float(row.get("usl")),
+        "unit": (str(unit).strip() if unit not in (None, "") else None),
+    }
+
+
 # ── session ─────────────────────────────────────────────────────────────────
 
 @report_bp.get("/result/<session_id>")
@@ -51,7 +105,7 @@ def session_info(session_id):
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
-    return jsonify(session)
+    return jsonify(_public_session(session))
 
 
 @report_bp.get("/session/<session_id>/full")
@@ -91,7 +145,7 @@ def session_full(session_id):
         except (S3NotConfigured, S3ObjectCorrupted, Exception):
             charts = []
     return jsonify({
-        "session": session,
+        "session": _public_session(session),
         "summary": report_db.get_summary_by_analysis_key(akey) if akey else [],
         "summary_text": summary_text,
         "issue_table_text": issue_table_text,
@@ -134,12 +188,96 @@ def delete_session_route(session_id):
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
-    stored_password = session.get("password")
-    if stored_password:
-        if password != stored_password:
-            return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
+    if not _password_ok(session, password):
+        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
     report_db.delete_session(session_id)
     return jsonify({"deleted": True, "session_id": session_id})
+
+
+@report_bp.post("/session/<session_id>/verify_password")
+def verify_session_password(session_id):
+    """수정/삭제 진입 전 PIN 확인. 비밀번호 미설정 세션은 ok=True."""
+    _validate_session_id(session_id)
+    body = request.get_json(force=True, silent=True) or {}
+    password = (body.get("password") or "").strip()
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    if not _password_ok(session, password):
+        return jsonify({"ok": False, "error": "비밀번호가 일치하지 않습니다."}), 403
+    return jsonify({"ok": True, "has_password": bool(session.get("password"))})
+
+
+@report_bp.patch("/session/<session_id>/content")
+def update_session_content(session_id):
+    """수정 모드 저장: 텍스트 콘텐츠(summary_text / issue_rows / yield_rows) 치환.
+
+    summary_text, issue_rows 는 S3 JSON 으로 다시 업로드하고, yield_rows 는
+    report_analysis_summary 를 통째로 치환한다. analysis_key 는 재계산하지 않는다
+    (원본 업로드 식별자로 유지)."""
+    _validate_session_id(session_id)
+    body = request.get_json(force=True, silent=True) or {}
+    password = (body.get("password") or "").strip()
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    if not _password_ok(session, password):
+        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
+
+    akey = session.get("analysis_key")
+    if not akey:
+        return jsonify({"error": "이 세션에는 analysis_key 가 없어 수정할 수 없습니다."}), 400
+
+    updated = {}
+    errors = {}
+
+    # yield_rows → DB (S3 미설정과 무관하게 저장 가능)
+    if body.get("yield_rows") is not None:
+        try:
+            rows = [_coerce_yield_row(r) for r in (body.get("yield_rows") or [])]
+            rows = [r for r in rows if r["item_name"]]
+            report_db.replace_summary_batch(akey, session_id, rows)
+            updated["yield_rows"] = len(rows)
+        except Exception as exc:
+            errors["yield_rows"] = str(exc)
+
+    # summary_text / issue_rows → S3 JSON
+    if body.get("summary_text") is not None:
+        try:
+            _write_text_object(akey, session, "summary_text",
+                               report_s3.make_summary_text_s3_key, body["summary_text"])
+            updated["summary_text"] = True
+        except S3NotConfigured:
+            errors["summary_text"] = "S3 미설정"
+        except Exception as exc:
+            errors["summary_text"] = str(exc)
+
+    if body.get("issue_rows") is not None:
+        try:
+            _write_text_object(akey, session, "issue_table_text",
+                               report_s3.make_issue_text_s3_key, body["issue_rows"])
+            updated["issue_rows"] = True
+        except S3NotConfigured:
+            errors["issue_rows"] = "S3 미설정"
+        except Exception as exc:
+            errors["issue_rows"] = str(exc)
+
+    status = 200 if not errors else (207 if updated else 500)
+    return jsonify({"ok": not errors, "updated": updated, "errors": errors}), status
+
+
+def _write_text_object(analysis_key, session, object_type, key_builder, data):
+    """텍스트 콘텐츠 JSON 을 S3 에 다시 올리고 report_object_info 를 갱신.
+    content_hash / options_json 은 기존 행 값을 유지(없으면 세션 값/빈 객체로 폴백)."""
+    key = key_builder(analysis_key)
+    uri = report_s3.upload_json_to_s3(key, data)
+    existing = report_db.get_object_info(analysis_key, object_type) or {}
+    content_hash = existing.get("content_hash") or session.get("content_hash") or ""
+    options_json = existing.get("options_json") or "{}"
+    report_db.upsert_object_info(
+        analysis_key, content_hash, options_json, object_type,
+        report_s3.bucket_name(), key, uri,
+    )
 
 
 # ── annotations ───────────────────────────────────────────────────────────────

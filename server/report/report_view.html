@@ -2,217 +2,774 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>Session View</title>
+<title>Report</title>
 <style>
 * { box-sizing: border-box; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #f0f2f5; margin: 0; padding: 24px 20px;
-  color: #222;
+  background: #fafafa; margin: 0; color: #222;
 }
-.container { max-width: 1100px; margin: 0 auto; }
-.header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+
+/* ── topbar: 제목 + 세션 정보 인라인 ─────────────────────────────────────── */
+.topbar {
+  position: sticky; top: 0; z-index: 100;
+  background: #fff; border-bottom: 1px solid #ddd;
+  padding: 8px 16px; display: flex; gap: 10px; align-items: center;
+  flex-wrap: wrap; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+}
+.topbar h1 { font-size: 15px; margin: 0 8px 0 0; color: #1a1a2e; font-weight: 700; }
 .back-btn {
-  padding: 6px 14px; border-radius: 6px; border: 1px solid #d0d5dd;
+  padding: 5px 12px; border-radius: 6px; border: 1px solid #d0d5dd;
   background: #fff; cursor: pointer; font-size: 12px; color: #555;
   text-decoration: none;
 }
 .back-btn:hover { background: #f0f6ff; border-color: #4a90e2; color: #4a90e2; }
-.title { font-size: 18px; font-weight: 700; color: #1a1a2e; flex: 1; }
 
-.card {
-  background: #fff; border-radius: 10px; padding: 18px 22px;
-  box-shadow: 0 1px 6px rgba(0,0,0,.06); margin-bottom: 14px;
+.topbar-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; flex: 1; }
+.meta-inline {
+  font-size: 12px; color: #444; background: #f3f5f8;
+  padding: 3px 9px; border-radius: 4px; white-space: nowrap;
 }
-.card-title {
-  font-size: 14px; font-weight: 600; color: #333;
-  margin: 0 0 12px; padding-bottom: 8px; border-bottom: 1px solid #eef0f3;
+.meta-inline .mk { color: #999; margin-right: 4px; font-size: 11px; }
+.meta-inline-file {
+  font-size: 12px; color: #444; max-width: 280px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
-.meta-grid {
-  display: grid; grid-template-columns: 110px 1fr; gap: 8px 14px;
-  font-size: 13px;
+.pt-badge {
+  display: inline-block; padding: 3px 11px; border-radius: 4px;
+  font-size: 12px; font-weight: 700; color: #fff;
 }
-.meta-key { color: #888; font-weight: 500; }
-.meta-val { color: #222; word-break: break-all; }
-
-.badge {
-  display: inline-block; padding: 2px 10px; border-radius: 4px;
+.pt-badge.MD { background: #4a90e2; }
+.pt-badge.PD { background: #16a34a; }
+.pt-badge.PM { background: #d97706; }
+.pt-badge.SE { background: #9333ea; }
+.pt-badge.default { background: #64748b; }
+.src-badge {
+  display: inline-block; padding: 2px 9px; border-radius: 4px;
   font-size: 11px; font-weight: 600;
 }
-.badge.xlsx_upload { background: #dcfce7; color: #166534; }
-.badge.analyze     { background: #dbeafe; color: #1e40af; }
+.src-badge.xlsx_upload { background: #dcfce7; color: #166534; }
+.src-badge.analyze { background: #dbeafe; color: #1e40af; }
 
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+/* ── mode switch (보기 / 수정 / 삭제) ──────────────────────────────────────── */
+.mode-switch { display: flex; gap: 4px; margin-left: auto; }
+.mode-btn {
+  padding: 5px 14px; border-radius: 6px; border: 1px solid #d0d5dd;
+  background: #fff; cursor: pointer; font-size: 12px; font-weight: 700; color: #555;
+}
+.mode-btn:hover { background: #f0f6ff; border-color: #4a90e2; color: #4a90e2; }
+.mode-btn.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+.mode-btn.danger { color: #dc2626; border-color: #fca5a5; }
+.mode-btn.danger:hover { background: #fef2f2; }
+
+/* ── tabs ──────────────────────────────────────────────────────────────── */
+.tabs {
+  display: flex; gap: 2px; background: #fff;
+  border-bottom: 1px solid #ddd; padding: 0 16px;
+  position: sticky; top: 49px; z-index: 90;
+}
+.tab {
+  padding: 9px 18px; font-size: 13px; font-weight: 700; color: #777;
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  cursor: pointer; transition: color .1s;
+}
+.tab:hover { color: #4a90e2; }
+.tab.active { color: #1f4d8c; border-bottom-color: #4a90e2; }
+
+/* ── content ───────────────────────────────────────────────────────────── */
+.content { padding: 18px 20px 90px; max-width: 1200px; margin: 0 auto; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+.section-title {
+  font-size: 13px; font-weight: 700; color: #333;
+  margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid #eef0f3;
+}
+.section-title.small { margin-top: 24px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
 th, td { padding: 6px 10px; border-bottom: 1px solid #eef0f3; text-align: left; }
-th { background: #fafbfc; font-weight: 600; color: #555; font-size: 11px; }
+th { background: #f6f7f9; font-weight: 600; color: #555; font-size: 11px; }
+td { color: #222; }
+tbody tr:hover { background: #f9fbff; }
 
-.kv-list { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; font-size: 13px; }
-.kv-list .k { color: #888; }
-.kv-list .v { color: #222; }
+.kv-table { width: auto; min-width: 360px; }
+.kv-table th { width: 160px; background: #f6f7f9; text-align: left; }
 
-.placeholder { font-size: 12px; color: #999; padding: 20px; text-align: center; }
+.text-lines {
+  font-size: 13px; color: #333; line-height: 1.7;
+  background: #fff; border: 1px solid #eef0f3; border-radius: 6px;
+  padding: 12px 16px; margin-bottom: 8px;
+}
+.text-lines div { padding: 1px 0; }
 
+.placeholder { font-size: 13px; color: #999; padding: 40px 20px; text-align: center; }
+
+/* ── distribution gallery ──────────────────────────────────────────────── */
 .gallery {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
 }
 .gallery a {
-  display: block; border: 1px solid #eef0f3; border-radius: 8px;
-  overflow: hidden; background: #fafbfc;
+  display: block; border: 1px solid #e0e0e0; border-radius: 8px;
+  overflow: hidden; background: #fff; transition: border-color .1s, box-shadow .1s;
 }
-.gallery a:hover { border-color: #4a90e2; }
+.gallery a:hover { border-color: #4a90e2; box-shadow: 0 0 0 2px rgba(74,144,226,.2); }
 .gallery img { width: 100%; height: auto; display: block; }
+
 .error-box {
   background: #fef2f2; color: #991b1b; padding: 12px 16px;
-  border-radius: 6px; font-size: 13px; margin-bottom: 14px;
+  border-radius: 6px; font-size: 13px; margin: 16px 20px;
 }
+
+/* ── edit mode ─────────────────────────────────────────────────────────── */
+.edit-section-title { font-size: 12px; font-weight: 700; color: #555; margin: 18px 0 6px; }
+.edit-hint { font-size: 11px; color: #888; margin: 2px 0 8px; }
+.cell-input, .field-input {
+  width: 100%; padding: 4px 6px; border: 1px solid #d0d5dd;
+  border-radius: 4px; font-size: 12px; outline: none;
+}
+.cell-input:focus, .field-input:focus { border-color: #4a90e2; }
+.edit-table td input { min-width: 70px; }
+.field-input.title { max-width: 600px; font-weight: 700; }
+.field-textarea {
+  width: 100%; min-height: 110px; padding: 8px; border: 1px solid #d0d5dd;
+  border-radius: 6px; font-size: 12px; outline: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.field-textarea:focus { border-color: #4a90e2; }
+.kv-edit {
+  display: grid; grid-template-columns: 200px 1fr; gap: 6px 12px;
+  align-items: center; max-width: 720px; margin-bottom: 8px;
+}
+.kv-edit label { font-size: 12px; color: #555; word-break: break-all; }
+.btn-sm {
+  margin-top: 6px; padding: 4px 12px; font-size: 12px;
+  border: 1px solid #d0d5dd; background: #fff; border-radius: 4px; cursor: pointer;
+}
+.btn-sm:hover { border-color: #4a90e2; color: #4a90e2; }
+.btn-del-row {
+  border: none; background: transparent; color: #dc2626;
+  font-size: 16px; cursor: pointer; line-height: 1; padding: 0 6px;
+}
+.btn-del-row:hover { color: #b91c1c; }
+
+.edit-bar {
+  display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 95;
+  background: #fff; border-top: 1px solid #ddd; box-shadow: 0 -1px 8px rgba(0,0,0,.08);
+  padding: 10px 20px; align-items: center; gap: 12px;
+}
+.edit-bar.show { display: flex; }
+.edit-bar .bar-msg { font-size: 13px; color: #8a6d00; font-weight: 600; }
+.edit-bar .grow { flex: 1; }
+.btn-save {
+  padding: 7px 18px; border-radius: 6px; border: none;
+  background: #16a34a; color: #fff; font-weight: 700; cursor: pointer; font-size: 13px;
+}
+.btn-save:hover { background: #15803d; }
+.btn-cancel {
+  padding: 7px 16px; border-radius: 6px; border: 1px solid #d0d5dd;
+  background: #fff; cursor: pointer; font-size: 13px;
+}
+
+/* ── toast ─────────────────────────────────────────────────────────────── */
+.toast {
+  position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%);
+  background: #333; color: #fff; padding: 10px 18px; border-radius: 6px;
+  font-size: 13px; opacity: 0; transition: opacity .2s;
+  pointer-events: none; z-index: 1000; max-width: 80%;
+}
+.toast.show { opacity: 1; }
+
+/* ── PIN modal ─────────────────────────────────────────────────────────── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(0,0,0,.4); z-index: 200;
+  align-items: center; justify-content: center;
+}
+.modal-overlay.show { display: flex; }
+.modal-box { background: #fff; border-radius: 10px; padding: 24px; width: 360px; max-width: 90%; }
+.modal-title { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
+.modal-desc { font-size: 13px; color: #666; margin: 0 0 14px; }
+.pin-row { display: flex; gap: 8px; justify-content: center; }
+.pin-cell {
+  width: 44px; height: 50px; text-align: center; font-size: 22px;
+  border: 1px solid #d0d5dd; border-radius: 6px; outline: none;
+}
+.pin-cell:focus { border-color: #4a90e2; }
+.modal-hint { font-size: 11px; color: #888; text-align: center; margin: 8px 0 0; }
+.modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
+.modal-btn {
+  padding: 8px 16px; font-size: 13px; border-radius: 6px;
+  border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
+}
+.modal-btn.primary { background: #4a90e2; color: #fff; border-color: #4a90e2; }
+.modal-btn.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
 </style>
 </head>
 <body>
-<div class="container">
 
-  <div class="header">
-    <a class="back-btn" href="/pe/report/">← 검색결과</a>
-    <div class="title">Session View</div>
+<div class="topbar">
+  <a class="back-btn" href="/pe/report/">← 검색결과</a>
+  <h1>Report</h1>
+  <div class="topbar-meta" id="topbarMeta">
+    <span class="meta-inline">로드 중...</span>
   </div>
+  <div class="mode-switch" id="modeSwitch">
+    <button class="mode-btn active" data-mode="view">보기</button>
+    <button class="mode-btn" data-mode="edit">수정</button>
+    <button class="mode-btn danger" data-mode="delete">삭제</button>
+  </div>
+</div>
 
-  <div id="errorBox" class="error-box" style="display:none"></div>
+<div class="tabs" id="tabs">
+  <button class="tab active" data-tab="summary">Summary</button>
+  <button class="tab" data-tab="yield">Yield</button>
+  <button class="tab" data-tab="issues">Issue Table</button>
+  <button class="tab" data-tab="distribution">Distribution</button>
+</div>
 
-  <div class="card">
-    <h2 class="card-title">메타 정보</h2>
-    <div class="meta-grid" id="metaGrid">
-      <div class="meta-key">로드 중...</div><div class="meta-val"></div>
+<div id="errorBox" class="error-box" style="display:none"></div>
+
+<div class="content">
+  <div class="panel active" id="panel-summary"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-yield"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-issues"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-distribution"><div class="placeholder">로드 중...</div></div>
+</div>
+
+<!-- 수정 모드 저장 바 -->
+<div class="edit-bar" id="editBar">
+  <span class="bar-msg">✎ 수정 모드 — 표/텍스트를 편집한 뒤 저장하세요. (Distribution 차트는 수정 불가)</span>
+  <span class="grow"></span>
+  <button class="btn-cancel" id="editCancel">취소</button>
+  <button class="btn-save" id="editSave">저장</button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- PIN 모달 (수정/삭제 공용) -->
+<div class="modal-overlay" id="pinModal">
+  <div class="modal-box">
+    <p class="modal-title" id="pinTitle">비밀번호 입력</p>
+    <p class="modal-desc" id="pinDesc">비밀번호를 입력하세요.</p>
+    <div class="pin-row">
+      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="pin0">
+      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="pin1">
+      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="pin2">
+      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="pin3">
+    </div>
+    <p class="modal-hint">숫자 4자리</p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="pinCancel">취소</button>
+      <button class="modal-btn primary" id="pinConfirm">확인</button>
     </div>
   </div>
-
-  <div class="card">
-    <h2 class="card-title">Summary</h2>
-    <div id="summaryBlock" class="placeholder">로드 중...</div>
-  </div>
-
-  <div class="card">
-    <h2 class="card-title">Yield</h2>
-    <div id="yieldBlock" class="placeholder">로드 중...</div>
-  </div>
-
-  <div class="card">
-    <h2 class="card-title">Issue Table</h2>
-    <div id="issueBlock" class="placeholder">로드 중...</div>
-  </div>
-
-  <div class="card">
-    <h2 class="card-title">산포 그래프</h2>
-    <div id="chartBlock" class="placeholder">로드 중...</div>
-  </div>
-
 </div>
 
 <script>
 const SESSION_ID = location.pathname.split("/").pop();
+const YIELD_COLS = ["item_name", "bin_number", "yield_percent", "fail_count",
+                    "cpk_val", "mean_val", "stdev_val", "lsl", "usl", "unit"];
+
+let DATA = null;
+let MODE = "view";              // "view" | "edit"
+let verifiedPassword = "";      // 수정 모드 진입 시 검증된 PIN (저장에 재사용)
+
+// & < > " ' 모두 이스케이프 → 텍스트/속성 양쪽에서 안전
+function esc(v) {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
 
 function fmtDate(unix) {
   if (!unix) return "-";
   const d = new Date(unix * 1000);
-  return d.toLocaleString("ko-KR");
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function showToast(msg, ms=2200) {
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), ms);
+}
+
+function splitLines(v) {
+  const a = (v || "").split("\n");
+  while (a.length && a[a.length - 1].trim() === "") a.pop();
+  return a;
+}
+
+// ── tab switching ──────────────────────────────────────────────────────────
+document.getElementById("tabs").addEventListener("click", e => {
+  const btn = e.target.closest(".tab");
+  if (!btn) return;
+  const tab = btn.dataset.tab;
+  document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === btn));
+  document.querySelectorAll(".panel").forEach(p =>
+    p.classList.toggle("active", p.id === `panel-${tab}`));
+});
+
+// ── topbar meta ──────────────────────────────────────────────────────────────
 function renderMeta(session) {
   const src = session.source || "xlsx_upload";
-  const rows = [
-    ["Session ID", session.session_id || "-"],
-    ["Source", `<span class="badge ${src}">${src}</span>`],
-    ["Status", session.status || "-"],
-    ["Product Type", session.product_type || "-"],
-    ["Product", session.product || "-"],
-    ["LOT ID", session.lot_id || "-"],
-    ["파일명", session.file_name || "-"],
-    ["업로드 일시", fmtDate(session.created_at)],
-    ["Analysis Key", session.analysis_key || "-"],
+  const pt = (session.product_type || "").trim();
+  const ptCls = ["MD", "PD", "PM", "SE"].includes(pt) ? pt : "default";
+  const fname = session.file_name || "-";
+  const items = [
+    `<span class="pt-badge ${ptCls}">${esc(pt || "-")}</span>`,
+    `<span class="src-badge ${src}">${esc(src)}</span>`,
+    `<span class="meta-inline"><span class="mk">Product</span>${esc(session.product || "-")}</span>`,
+    `<span class="meta-inline"><span class="mk">LOT</span>${esc(session.lot_id || "-")}</span>`,
+    `<span class="meta-inline-file" title="${esc(fname)}"><span class="mk">File</span>${esc(fname)}</span>`,
+    `<span class="meta-inline"><span class="mk">Uploaded</span>${esc(fmtDate(session.created_at))}</span>`,
+    `<span class="meta-inline"><span class="mk">Status</span>${esc(session.status || "-")}</span>`,
   ];
-  document.getElementById("metaGrid").innerHTML = rows.map(r =>
-    `<div class="meta-key">${r[0]}</div><div class="meta-val">${r[1]}</div>`
-  ).join("");
+  document.getElementById("topbarMeta").innerHTML = items.join("");
 }
 
+// ── read-only helpers ────────────────────────────────────────────────────────
+function kvTable(obj) {
+  const entries = Object.entries(obj || {}).filter(([k]) => k);
+  if (!entries.length) return "";
+  return `<table class="kv-table"><tbody>` + entries.map(([k, v]) => {
+    const val = (v && typeof v === "object") ? JSON.stringify(v) : (v ?? "");
+    return `<tr><th>${esc(k)}</th><td>${esc(val)}</td></tr>`;
+  }).join("") + `</tbody></table>`;
+}
+
+function rowsTable(rows, preferredCols) {
+  if (!rows || !rows.length) return "";
+  let cols = preferredCols;
+  if (!cols) {
+    const seen = [];
+    rows.forEach(r => Object.keys(r).forEach(k => { if (!seen.includes(k)) seen.push(k); }));
+    cols = seen;
+  }
+  return `<table><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>` +
+    `<tbody>${rows.map(r =>
+      `<tr>${cols.map(c => `<td>${esc(r[c])}</td>`).join("")}</tr>`
+    ).join("")}</tbody></table>`;
+}
+
+function emptyPanel(panel, msg) {
+  panel.innerHTML = `<div class="placeholder">${esc(msg)}</div>`;
+}
+
+function deriveCols(rows) {
+  const seen = [];
+  (rows || []).forEach(r => Object.keys(r || {}).forEach(k => { if (!seen.includes(k)) seen.push(k); }));
+  return seen;
+}
+
+// ── Summary (read) ────────────────────────────────────────────────────────────
 function renderSummary(summary_text, summary_rows) {
-  const block = document.getElementById("summaryBlock");
-  if (summary_text && Object.keys(summary_text).length) {
-    const entries = Object.entries(summary_text);
-    block.innerHTML = `<div class="kv-list">` + entries.map(([k, v]) => {
-      const val = typeof v === "object" ? JSON.stringify(v) : String(v);
-      return `<div class="k">${k}</div><div class="v">${val}</div>`;
-    }).join("") + `</div>`;
+  const panel = document.getElementById("panel-summary");
+  const st = summary_text || {};
+  const blocks = [];
+
+  if (st.title) blocks.push(`<div class="section-title">${esc(st.title)}</div>`);
+
+  if (st.feature && Object.keys(st.feature).length) {
+    blocks.push(`<div class="section-title">Feature</div>`);
+    blocks.push(kvTable(st.feature));
+  }
+
+  if (Array.isArray(st.yield_summary_text) && st.yield_summary_text.length) {
+    blocks.push(`<div class="section-title small">Yield Summary</div>`);
+    blocks.push(`<div class="text-lines">` +
+      st.yield_summary_text.map(line => `<div>${esc(line)}</div>`).join("") + `</div>`);
+  }
+
+  if (Array.isArray(st.major_fail_bins) && st.major_fail_bins.length) {
+    blocks.push(`<div class="section-title small">Major Fail Bins</div>`);
+    blocks.push(rowsTable(st.major_fail_bins));
+  }
+
+  if (st.evaluation && Object.keys(st.evaluation).length) {
+    blocks.push(`<div class="section-title small">Evaluation Summary</div>`);
+    blocks.push(kvTable(st.evaluation));
+  }
+
+  if (Array.isArray(st.raw_rows) && st.raw_rows.length) {
+    blocks.push(`<div class="section-title">Summary</div>`);
+    blocks.push(`<div class="text-lines">` +
+      st.raw_rows.map(r => `<div>${esc(r.join("  |  "))}</div>`).join("") + `</div>`);
+  }
+
+  const meaningful = blocks.filter(b => b && !b.includes("section-title"));
+  if (meaningful.length) {
+    panel.innerHTML = blocks.join("");
     return;
   }
+
   if (summary_rows && summary_rows.length) {
-    const cols = ["item_name", "bin_number", "yield_percent", "fail_count", "cpk_val", "unit"];
-    block.innerHTML = `<table><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead>` +
-      `<tbody>${summary_rows.map(r =>
-        `<tr>${cols.map(c => `<td>${r[c] ?? ""}</td>`).join("")}</tr>`
-      ).join("")}</tbody></table>`;
+    panel.innerHTML = `<div class="section-title">Summary</div>` +
+      rowsTable(summary_rows, ["item_name", "bin_number", "yield_percent", "fail_count", "mean_val"]);
     return;
   }
-  block.innerHTML = `<div class="placeholder">데이터 없음</div>`;
+  emptyPanel(panel, "Summary 데이터 없음");
 }
 
+// ── Yield (read) ──────────────────────────────────────────────────────────────
 function renderYield(summary_rows) {
-  const block = document.getElementById("yieldBlock");
+  const panel = document.getElementById("panel-yield");
   if (!summary_rows || !summary_rows.length) {
-    block.innerHTML = `<div class="placeholder">데이터 없음</div>`;
+    emptyPanel(panel, "Yield 데이터 없음");
     return;
   }
-  const cols = ["bin_number", "item_name", "yield_percent", "fail_count"];
-  block.innerHTML = `<table><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead>` +
-    `<tbody>${summary_rows.map(r =>
-      `<tr>${cols.map(c => `<td>${r[c] ?? ""}</td>`).join("")}</tr>`
-    ).join("")}</tbody></table>`;
+  panel.innerHTML = `<div class="section-title">Yield</div>` +
+    rowsTable(summary_rows, ["bin_number", "item_name", "yield_percent", "fail_count", "mean_val"]);
 }
 
-function renderIssue(issue_rows) {
-  const block = document.getElementById("issueBlock");
+// ── Issue Table (read) ──────────────────────────────────────────────────────
+function renderIssues(issue_rows) {
+  const panel = document.getElementById("panel-issues");
   if (!issue_rows || !issue_rows.length) {
-    block.innerHTML = `<div class="placeholder">데이터 없음</div>`;
+    emptyPanel(panel, "Issue Table 데이터 없음");
     return;
   }
-  const keys = Object.keys(issue_rows[0]);
-  block.innerHTML = `<table><thead><tr>${keys.map(c => `<th>${c}</th>`).join("")}</tr></thead>` +
-    `<tbody>${issue_rows.map(r =>
-      `<tr>${keys.map(c => `<td>${r[c] ?? ""}</td>`).join("")}</tr>`
-    ).join("")}</tbody></table>`;
+  panel.innerHTML = `<div class="section-title">Issue Table</div>` + rowsTable(issue_rows);
 }
 
-function renderCharts(charts) {
-  const block = document.getElementById("chartBlock");
+// ── Distribution (read; 수정 불가) ────────────────────────────────────────────
+function renderDistribution(charts) {
+  const panel = document.getElementById("panel-distribution");
   if (!charts || !charts.length) {
-    block.className = "placeholder";
-    block.innerHTML = "차트 없음";
+    emptyPanel(panel, "Distribution 차트 없음");
     return;
   }
-  block.className = "";
-  block.innerHTML = `<div class="gallery">` + charts.map(c =>
-    `<a href="${c.url}" target="_blank" rel="noopener" title="chart ${c.index}">` +
-    `<img loading="lazy" src="${c.url}" alt="chart ${c.index}"></a>`
-  ).join("") + `</div>`;
+  panel.innerHTML = `<div class="section-title">Distribution (${charts.length})</div>` +
+    `<div class="gallery">` + charts.map(c =>
+      `<a href="${esc(c.url)}" target="_blank" rel="noopener" title="chart ${c.index}">` +
+      `<img loading="lazy" src="${esc(c.url)}" alt="chart ${c.index}"></a>`
+    ).join("") + `</div>`;
 }
 
-async function load() {
+// ── 편집용 위젯 ────────────────────────────────────────────────────────────
+function editRowHtml(r, cols) {
+  return `<tr>` + cols.map(c =>
+    `<td><input class="cell-input" data-col="${esc(c)}" value="${esc(r ? r[c] : "")}"></td>`
+  ).join("") + `<td><button type="button" class="btn-del-row" title="행 삭제">×</button></td></tr>`;
+}
+
+function editTableHtml(rows, cols, tableId) {
+  const head = cols.map(c => `<th data-col="${esc(c)}">${esc(c)}</th>`).join("") + `<th></th>`;
+  const body = (rows || []).map(r => editRowHtml(r, cols)).join("");
+  return `<table class="edit-table" id="${tableId}"><thead><tr>${head}</tr></thead>` +
+         `<tbody>${body}</tbody></table>` +
+         `<button type="button" class="btn-sm add-row" data-table="${tableId}">+ 행 추가</button>`;
+}
+
+function readEditTable(tableEl) {
+  if (!tableEl) return null;
+  const cols = [...tableEl.querySelectorAll("thead th[data-col]")].map(th => th.dataset.col);
+  const rows = [];
+  tableEl.querySelectorAll("tbody tr").forEach(tr => {
+    const obj = {};
+    tr.querySelectorAll("input.cell-input").forEach(inp => { obj[inp.dataset.col] = inp.value; });
+    if (cols.some(c => String(obj[c] ?? "").trim() !== "")) rows.push(obj);
+  });
+  return rows;
+}
+
+function kvEditHtml(obj, group) {
+  const entries = Object.entries(obj || {}).filter(([k]) => k);
+  if (!entries.length) return "";
+  return `<div class="kv-edit">` + entries.map(([k, v]) => {
+    const val = (v && typeof v === "object") ? JSON.stringify(v) : (v ?? "");
+    return `<label title="${esc(k)}">${esc(k)}</label>` +
+      `<input class="field-input" data-f="${esc(group)}" data-key="${esc(k)}" value="${esc(val)}">`;
+  }).join("") + `</div>`;
+}
+
+// ── Summary (edit) ────────────────────────────────────────────────────────────
+function renderSummaryEdit() {
+  const panel = document.getElementById("panel-summary");
+  const st = DATA.summary_text || {};
+  const blocks = [];
+
+  blocks.push(`<div class="edit-section-title">Title</div>`);
+  blocks.push(`<input class="field-input title" data-f="title" value="${esc(st.title || "")}">`);
+
+  if (st.feature && Object.keys(st.feature).length) {
+    blocks.push(`<div class="edit-section-title">Feature</div>`);
+    blocks.push(kvEditHtml(st.feature, "feature"));
+  }
+
+  blocks.push(`<div class="edit-section-title">Yield Summary</div>`);
+  blocks.push(`<div class="edit-hint">한 줄에 한 항목.</div>`);
+  blocks.push(`<textarea class="field-textarea" data-f="yield_summary_text">` +
+    esc((st.yield_summary_text || []).join("\n")) + `</textarea>`);
+
+  if (Array.isArray(st.major_fail_bins) && st.major_fail_bins.length) {
+    blocks.push(`<div class="edit-section-title">Major Fail Bins</div>`);
+    blocks.push(editTableHtml(st.major_fail_bins, deriveCols(st.major_fail_bins), "tbl-mfb"));
+  }
+
+  if (st.evaluation && Object.keys(st.evaluation).length) {
+    blocks.push(`<div class="edit-section-title">Evaluation Summary</div>`);
+    blocks.push(kvEditHtml(st.evaluation, "evaluation"));
+  }
+
+  if (Array.isArray(st.raw_rows) && st.raw_rows.length) {
+    blocks.push(`<div class="edit-section-title">Summary (raw rows)</div>`);
+    blocks.push(`<div class="edit-hint">한 줄에 한 행, 셀은 탭(Tab)으로 구분.</div>`);
+    blocks.push(`<textarea class="field-textarea" data-f="raw_rows">` +
+      esc(st.raw_rows.map(r => (Array.isArray(r) ? r.join("\t") : r)).join("\n")) + `</textarea>`);
+  }
+
+  panel.innerHTML = blocks.join("");
+}
+
+function collectSummaryText() {
+  const panel = document.getElementById("panel-summary");
+  const out = DATA.summary_text ? JSON.parse(JSON.stringify(DATA.summary_text)) : {};
+
+  const titleInp = panel.querySelector('[data-f="title"]');
+  if (titleInp) out.title = titleInp.value;
+
+  const featInputs = panel.querySelectorAll('[data-f="feature"]');
+  if (featInputs.length) {
+    out.feature = {};
+    featInputs.forEach(i => { out.feature[i.dataset.key] = i.value; });
+  }
+
+  const yst = panel.querySelector('[data-f="yield_summary_text"]');
+  if (yst) out.yield_summary_text = splitLines(yst.value);
+
+  const mfb = readEditTable(document.getElementById("tbl-mfb"));
+  if (mfb !== null) out.major_fail_bins = mfb;
+
+  const evalInputs = panel.querySelectorAll('[data-f="evaluation"]');
+  if (evalInputs.length) {
+    out.evaluation = {};
+    evalInputs.forEach(i => { out.evaluation[i.dataset.key] = i.value; });
+  }
+
+  const rr = panel.querySelector('[data-f="raw_rows"]');
+  if (rr) out.raw_rows = splitLines(rr.value).map(line => line.split("\t"));
+
+  return out;
+}
+
+// ── Yield (edit) ──────────────────────────────────────────────────────────────
+function renderYieldEdit() {
+  const panel = document.getElementById("panel-yield");
+  panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
+    `<div class="edit-hint">item_name 이 빈 행은 저장되지 않습니다. 숫자 칸은 비워두면 빈 값으로 저장됩니다.</div>` +
+    editTableHtml(DATA.summary || [], YIELD_COLS, "tbl-yield");
+}
+
+// ── Issue Table (edit) ──────────────────────────────────────────────────────
+function renderIssuesEdit() {
+  const panel = document.getElementById("panel-issues");
+  const rows = DATA.issue_table_text || [];
+  const cols = deriveCols(rows);
+  if (!cols.length) {
+    emptyPanel(panel, "Issue Table 데이터 없음 — 편집할 컬럼 정보가 없습니다.");
+    return;
+  }
+  panel.innerHTML = `<div class="edit-section-title">Issue Table</div>` +
+    editTableHtml(rows, cols, "tbl-issue");
+}
+
+// ── 모드 전환 ──────────────────────────────────────────────────────────────
+function renderActive() {
+  if (MODE === "edit") {
+    renderSummaryEdit();
+    renderYieldEdit();
+    renderIssuesEdit();
+    renderDistribution(DATA.charts);
+  } else {
+    renderSummary(DATA.summary_text, DATA.summary);
+    renderYield(DATA.summary);
+    renderIssues(DATA.issue_table_text);
+    renderDistribution(DATA.charts);
+  }
+}
+
+function setMode(m) {
+  MODE = m;
+  if (m !== "edit") verifiedPassword = "";
+  document.querySelectorAll(".mode-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.mode === m));
+  document.getElementById("editBar").classList.toggle("show", m === "edit");
+  renderActive();
+}
+
+// add/delete row (편집 테이블 공용 위임)
+document.querySelector(".content").addEventListener("click", e => {
+  const addBtn = e.target.closest(".add-row");
+  if (addBtn) {
+    const table = document.getElementById(addBtn.dataset.table);
+    const cols = [...table.querySelectorAll("thead th[data-col]")].map(th => th.dataset.col);
+    table.querySelector("tbody").insertAdjacentHTML("beforeend", editRowHtml(null, cols));
+    return;
+  }
+  const delBtn = e.target.closest(".btn-del-row");
+  if (delBtn) { delBtn.closest("tr").remove(); }
+});
+
+// ── mode buttons ────────────────────────────────────────────────────────────
+document.getElementById("modeSwitch").addEventListener("click", e => {
+  const btn = e.target.closest(".mode-btn");
+  if (!btn || !DATA) return;
+  const target = btn.dataset.mode;
+  if (target === "view") { setMode("view"); return; }
+  const needPw = !!(DATA.session && DATA.session.has_password);
+  if (target === "edit") {
+    if (!needPw) { setMode("edit"); return; }
+    openPin("edit");
+  } else if (target === "delete") {
+    if (!needPw) {
+      if (confirm("정말 이 세션을 삭제하시겠습니까?")) doDelete("");
+      return;
+    }
+    openPin("delete");
+  }
+});
+
+// ── save / cancel ─────────────────────────────────────────────────────────────
+document.getElementById("editCancel").addEventListener("click", () => setMode("view"));
+document.getElementById("editSave").addEventListener("click", saveEdits);
+
+async function saveEdits() {
+  const payload = {
+    password: verifiedPassword,
+    yield_rows: readEditTable(document.getElementById("tbl-yield")) || [],
+    summary_text: collectSummaryText(),
+  };
+  const issueTbl = document.getElementById("tbl-issue");
+  if (issueTbl) payload.issue_rows = readEditTable(issueTbl);
+
+  const saveBtn = document.getElementById("editSave");
+  saveBtn.disabled = true;
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/content`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (res.status === 403) { showToast(j.error || "비밀번호가 일치하지 않습니다."); return; }
+    if (!res.ok && res.status !== 207) { showToast(j.error || "저장 실패"); return; }
+    if (res.status === 207) {
+      showToast("일부만 저장됨: " + Object.keys(j.errors || {}).join(", "));
+    } else {
+      showToast("저장되었습니다.");
+    }
+    await load(false);   // 데이터 갱신
+    setMode("view");
+  } catch (e) {
+    showToast("저장 실패: " + e.message);
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+// ── PIN modal ─────────────────────────────────────────────────────────────────
+let _pinPurpose = null;   // "edit" | "delete"
+const PIN_IDS = ["pin0", "pin1", "pin2", "pin3"];
+
+function openPin(purpose) {
+  _pinPurpose = purpose;
+  document.getElementById("pinTitle").textContent =
+    purpose === "delete" ? "세션 삭제" : "수정 모드 진입";
+  document.getElementById("pinDesc").textContent =
+    purpose === "delete" ? "삭제하려면 비밀번호를 입력하세요." : "수정하려면 비밀번호를 입력하세요.";
+  const confirmBtn = document.getElementById("pinConfirm");
+  confirmBtn.textContent = purpose === "delete" ? "삭제" : "확인";
+  confirmBtn.classList.toggle("danger", purpose === "delete");
+  confirmBtn.classList.toggle("primary", purpose !== "delete");
+  PIN_IDS.forEach(id => document.getElementById(id).value = "");
+  document.getElementById("pinModal").classList.add("show");
+  document.getElementById("pin0").focus();
+}
+
+function closePin() { document.getElementById("pinModal").classList.remove("show"); }
+function readPin() { return PIN_IDS.map(id => document.getElementById(id).value).join(""); }
+
+document.getElementById("pinCancel").addEventListener("click", closePin);
+document.getElementById("pinConfirm").addEventListener("click", async () => {
+  const pin = readPin();
+  if (pin.length !== 4) { showToast("비밀번호 4자리를 입력하세요."); return; }
+  if (_pinPurpose === "delete") {
+    closePin();
+    doDelete(pin);
+  } else {
+    // 수정: 먼저 검증 후 진입
+    try {
+      const res = await fetch(`/pe/report/session/${SESSION_ID}/verify_password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pin }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        showToast(j.error || "비밀번호가 일치하지 않습니다.");
+        return;
+      }
+      verifiedPassword = pin;
+      closePin();
+      setMode("edit");
+    } catch (e) {
+      showToast("확인 실패: " + e.message);
+    }
+  }
+});
+
+async function doDelete(pin) {
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: pin }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      showToast(j.error || "삭제 실패");
+      return;
+    }
+    showToast("삭제되었습니다. 검색결과로 이동합니다.");
+    setTimeout(() => { location.href = "/pe/report/"; }, 700);
+  } catch (e) {
+    showToast("삭제 실패: " + e.message);
+  }
+}
+
+// PIN cell auto-advance
+document.querySelectorAll(".pin-cell").forEach((c, i, arr) => {
+  c.addEventListener("input", () => {
+    if (c.value.length > 1) c.value = c.value.slice(-1);
+    if (c.value && i < arr.length - 1) arr[i + 1].focus();
+  });
+  c.addEventListener("keydown", e => {
+    if (e.key === "Backspace" && !c.value && i > 0) arr[i - 1].focus();
+    if (e.key === "Enter") document.getElementById("pinConfirm").click();
+  });
+});
+
+// ── load ──────────────────────────────────────────────────────────────────────
+async function load(resetMode=true) {
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-store" });
     if (!res.ok) {
-      document.getElementById("errorBox").style.display = "";
-      document.getElementById("errorBox").textContent = `세션을 불러올 수 없습니다 (${res.status})`;
+      const box = document.getElementById("errorBox");
+      box.style.display = "";
+      box.textContent = `세션을 불러올 수 없습니다 (${res.status})`;
       return;
     }
-    const data = await res.json();
-    renderMeta(data.session || {});
-    renderSummary(data.summary_text, data.summary);
-    renderYield(data.summary);
-    renderIssue(data.issue_table_text);
-    renderCharts(data.charts);
+    DATA = await res.json();
+    renderMeta(DATA.session || {});
+    if (resetMode) setMode("view");
+    else renderActive();
   } catch (e) {
-    document.getElementById("errorBox").style.display = "";
-    document.getElementById("errorBox").textContent = "로드 실패: " + e.message;
+    const box = document.getElementById("errorBox");
+    box.style.display = "";
+    box.textContent = "로드 실패: " + e.message;
   }
 }
 
