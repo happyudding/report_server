@@ -51,17 +51,6 @@ body {
 .src-badge.xlsx_upload { background: #dcfce7; color: #166534; }
 .src-badge.analyze { background: #dbeafe; color: #1e40af; }
 
-/* ── mode switch (보기 / 수정 / 삭제) ──────────────────────────────────────── */
-.mode-switch { display: flex; gap: 4px; margin-left: auto; }
-.mode-btn {
-  padding: 5px 14px; border-radius: 6px; border: 1px solid #d0d5dd;
-  background: #fff; cursor: pointer; font-size: 12px; font-weight: 700; color: #555;
-}
-.mode-btn:hover { background: #f0f6ff; border-color: #4a90e2; color: #4a90e2; }
-.mode-btn.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
-.mode-btn.danger { color: #dc2626; border-color: #fca5a5; }
-.mode-btn.danger:hover { background: #fef2f2; }
-
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 .tabs {
   display: flex; gap: 2px; background: #fff;
@@ -214,11 +203,6 @@ tbody tr:hover { background: #f9fbff; }
   <h1>Report</h1>
   <div class="topbar-meta" id="topbarMeta">
     <span class="meta-inline">로드 중...</span>
-  </div>
-  <div class="mode-switch" id="modeSwitch">
-    <button class="mode-btn active" data-mode="view">보기</button>
-    <button class="mode-btn" data-mode="edit">수정</button>
-    <button class="mode-btn danger" data-mode="delete">삭제</button>
   </div>
 </div>
 
@@ -594,8 +578,6 @@ function renderActive() {
 function setMode(m) {
   MODE = m;
   if (m !== "edit") verifiedPassword = "";
-  document.querySelectorAll(".mode-btn").forEach(b =>
-    b.classList.toggle("active", b.dataset.mode === m));
   document.getElementById("editBar").classList.toggle("show", m === "edit");
   renderActive();
 }
@@ -613,24 +595,15 @@ document.querySelector(".content").addEventListener("click", e => {
   if (delBtn) { delBtn.closest("tr").remove(); }
 });
 
-// ── mode buttons ────────────────────────────────────────────────────────────
-document.getElementById("modeSwitch").addEventListener("click", e => {
-  const btn = e.target.closest(".mode-btn");
-  if (!btn || !DATA) return;
-  const target = btn.dataset.mode;
-  if (target === "view") { setMode("view"); return; }
+// ── edit entry ──────────────────────────────────────────────────────────────
+// 수정/삭제 진입은 검색결과 목록에서 한다. 상세 페이지는 목록의 '수정' 버튼이
+// /view/<sid>?mode=edit 로 들어오면 자동으로 수정 모드(필요시 PIN)로 진입.
+function enterEdit() {
+  if (!DATA) return;
   const needPw = !!(DATA.session && DATA.session.has_password);
-  if (target === "edit") {
-    if (!needPw) { setMode("edit"); return; }
-    openPin("edit");
-  } else if (target === "delete") {
-    if (!needPw) {
-      if (confirm("정말 이 세션을 삭제하시겠습니까?")) doDelete("");
-      return;
-    }
-    openPin("delete");
-  }
-});
+  if (!needPw) { setMode("edit"); return; }
+  openPin("edit");
+}
 
 // ── save / cancel ─────────────────────────────────────────────────────────────
 document.getElementById("editCancel").addEventListener("click", () => setMode("view"));
@@ -764,8 +737,15 @@ async function load(resetMode=true) {
     }
     DATA = await res.json();
     renderMeta(DATA.session || {});
-    if (resetMode) setMode("view");
-    else renderActive();
+    if (resetMode) {
+      setMode("view");
+      if (new URLSearchParams(location.search).get("mode") === "edit") {
+        history.replaceState({}, "", location.pathname);  // 새로고침 시 재진입 방지
+        enterEdit();
+      }
+    } else {
+      renderActive();
+    }
   } catch (e) {
     const box = document.getElementById("errorBox");
     box.style.display = "";
