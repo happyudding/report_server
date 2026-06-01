@@ -87,3 +87,7 @@ pyinstaller --noconsole --onefile honey_main.py
   추후 batch 스크립트 + 재실행 방식으로 추가 예정.
 - S3 미설정 시 서버는 계속 동작하지만 업로드된 xlsx 본문 / 추출 텍스트 JSON 은
   보관되지 않는다 (`s3_uploaded=false` 응답). yield rows DB 저장은 정상.
+
+
+cd f:\COINAPI\report_server\client
+pyinstaller --clean --noconfirm build_honey.spec

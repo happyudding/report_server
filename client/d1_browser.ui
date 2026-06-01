@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>d1_storage 파일 검색</string>
+   <string>D1 검색</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="leftMargin"><number>14</number></property>
@@ -30,20 +30,20 @@
     <layout class="QHBoxLayout" name="horizontalLayout_search">
      <item>
       <widget class="QLineEdit" name="le_search">
-       <property name="placeholderText"><string>파일명 검색… (예: lot, wafer)</string></property>
+       <property name="placeholderText"><string>검색할 키워드를 입력하고 [검색] (비우고 검색하면 전체 조회)</string></property>
        <property name="clearButtonEnabled"><bool>true</bool></property>
       </widget>
      </item>
      <item>
       <widget class="QPushButton" name="btn_refresh">
-       <property name="text"><string>새로고침</string></property>
+       <property name="text"><string>검색</string></property>
       </widget>
      </item>
     </layout>
    </item>
    <item>
     <widget class="QLabel" name="lbl_hint">
-     <property name="text"><string>Ctrl/Shift 로 여러 파일 선택 가능</string></property>
+     <property name="text"><string>키워드 입력 후 [검색] → 결과에서 Ctrl/Shift 로 여러 파일 선택 가능</string></property>
      <property name="styleSheet"><string notr="true">color: #888; font-size: 9pt;</string></property>
     </widget>
    </item>

@@ -8,6 +8,7 @@ UI 레이아웃은 .ui (Qt Designer 편집 가능) 에 정의, 런타임에 uic.
 워크플로우: d1_storage 에서 CSV 검색·선택 → 출력 시트 선택 → '분석 실행' 시
 입력 폴더에 xlsx 자동 저장(xlwings) → '서버에 업로드' 클릭 시 메타 팝업 입력 후 전송.
 """
+import datetime
 import os
 import sys
 import tempfile
@@ -69,12 +70,26 @@ def _common_base(stems):
     return cand if len(cand) >= 3 else stems[0]
 
 
-def _derive_output_path(csv_paths):
-    """입력 파일들이 있는 폴더에 추측한 파일명으로 저장 경로 생성."""
+def _suggest_base_name(csv_paths):
+    """입력 파일명들로부터 결과물 base 이름을 rough 하게 유추 (시간 접미사 제외)."""
     stems = [Path(p).stem for p in csv_paths]
     base = _common_base(stems)
-    out_dir = Path(csv_paths[0]).parent
-    return str(out_dir / f"{base}_report.xlsx")
+    base = base.strip(" _-") or "report"
+    return f"{base}_report"
+
+
+def _timestamp():
+    """파일명용 현재 시각: 260601_0949 (YYMMDD_HHMM)."""
+    return datetime.datetime.now().strftime("%y%m%d_%H%M")
+
+
+def _build_output_path(out_dir, base):
+    """base 이름 + 현재 시각 접미사로 최종 저장 경로 생성."""
+    base = base.strip()
+    if base.lower().endswith(".xlsx"):
+        base = base[:-5]
+    base = base.strip(" _-") or "report"
+    return str(Path(out_dir) / f"{base}_{_timestamp()}.xlsx")
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -131,14 +146,14 @@ class D1BrowserDialog(QDialog):
         super().__init__(parent)
         uic.loadUi(D1_UI_PATH, self)
         self.storage_dir = storage_dir
-        self.lbl_path.setText(f"d1_storage: {storage_dir}")
-        self._all = self._scan()
-        self.le_search.textChanged.connect(self._reload)
-        self.btn_refresh.clicked.connect(self._refresh)
+        self.lbl_path.setText(f"D1: {storage_dir}")
+        # 검색 전에는 비어 있다가, 키워드 입력 후 [검색] 시에만 조회
+        self.btn_refresh.clicked.connect(self._search)
+        self.le_search.returnPressed.connect(self._search)
         self.list_files.itemDoubleClicked.connect(lambda _i: self.accept())
         self.buttonBox.accepted.connect(self.accept)
         self.buttonBox.rejected.connect(self.reject)
-        self._reload()
+        self.le_search.setFocus()
 
     def _scan(self):
         p = Path(self.storage_dir)
@@ -148,20 +163,22 @@ class D1BrowserDialog(QDialog):
                  if f.is_file() and f.suffix.lower() in (".csv", ".xlsx")]
         return sorted(files, key=lambda x: str(x).lower())
 
-    def _refresh(self):
-        self._all = self._scan()
-        self._reload()
-
-    def _reload(self):
+    def _search(self):
+        """현재 키워드로 D1 을 조회해 결과를 채운다 (매번 디스크 재스캔)."""
         q = self.le_search.text().strip().lower()
         self.list_files.clear()
-        for f in self._all:
+        for f in self._scan():
             rel = str(f.relative_to(self.storage_dir))
             if q and q not in rel.lower():
                 continue
             it = QListWidgetItem(rel)
             it.setData(Qt.UserRole, str(f))
             self.list_files.addItem(it)
+        if self.list_files.count() == 0:
+            self.lbl_hint.setText(f"'{self.le_search.text().strip()}' 검색 결과가 없습니다.")
+        else:
+            self.lbl_hint.setText(
+                f"{self.list_files.count()}개 결과 — Ctrl/Shift 로 여러 파일 선택 가능")
 
     def selected_paths(self):
         return [it.data(Qt.UserRole) for it in self.list_files.selectedItems()]
@@ -178,6 +195,7 @@ class HoneyMainWindow(QMainWindow):
         self.status.showMessage(f"Server: {SERVER_BASE_URL}")
 
         self.csv_paths = []
+        self._suppress_reorder = False  # list_csv 프로그램 변경 시 rowsMoved 무시
         self.group = None          # DfHoneyGroup
         self.last_result = None    # AnalysisResult
         self.out_path = None       # 생성된 xlsx 경로
@@ -187,6 +205,8 @@ class HoneyMainWindow(QMainWindow):
             name: getattr(self, f"cb_sheet_{name}") for name in SHEET_OPTIONS
         }
         self._connect_signals()
+        self._sync_yield_dependents()
+        self._update_dut_mode_availability()
 
         if rg is None:
             self._disable_engine()
@@ -195,9 +215,13 @@ class HoneyMainWindow(QMainWindow):
     def _connect_signals(self):
         self.btn_open_local.clicked.connect(self.on_open_local)
         self.btn_pick_csv.clicked.connect(self.on_browse_d1)
+        # 입력 파일 드래그로 순서 변경 → 그룹 재구성 (맨 위 파일이 기준)
+        self.list_csv.model().rowsMoved.connect(self._on_files_reordered)
         self.btn_sel_all.clicked.connect(lambda: self._check_all(True))
         self.btn_sel_none.clicked.connect(lambda: self._check_all(False))
         self.btn_sel_fail.clicked.connect(self._check_fail_only)
+        # yield 미선택 시 fail_item / issue_table 도 선택 불가
+        self.cb_sheet_yield.toggled.connect(self._sync_yield_dependents)
         self.btn_analyze.clicked.connect(self.on_analyze)
         self.btn_upload.clicked.connect(self.on_upload)
         self.btn_upload_local.clicked.connect(self.on_upload_local)
@@ -238,13 +262,37 @@ class HoneyMainWindow(QMainWindow):
         self._load_paths(paths)
 
     def _load_paths(self, paths):
-        """선택된 입력 파일들 → 그룹 로드 + 검증 + 항목 채우기 (소스 공통)."""
-        self.csv_paths = paths
-        self.list_csv.clear()
-        for p in paths:
-            self.list_csv.addItem(Path(p).name)
-        self.lbl_csv.setText(f"{len(paths)}개 파일  ({Path(paths[0]).parent})")
+        """선택된 입력 파일들 → 리스트 채우기 + 그룹 로드 (신규 로드)."""
+        self.csv_paths = list(paths)
+        self._suppress_reorder = True
+        try:
+            self.list_csv.clear()
+            for p in self.csv_paths:
+                it = QListWidgetItem(Path(p).name)
+                it.setData(Qt.UserRole, p)
+                it.setToolTip(p)
+                self.list_csv.addItem(it)
+        finally:
+            self._suppress_reorder = False
+        self.le_outname.setText(_suggest_base_name(self.csv_paths))
+        self._rebuild_group(warn=True)
 
+    def _current_list_order(self):
+        """list_csv 표시 순서대로의 경로 목록."""
+        paths = [self.list_csv.item(i).data(Qt.UserRole)
+                 for i in range(self.list_csv.count())]
+        return [p for p in paths if p]
+
+    def _rebuild_group(self, warn=False):
+        """현재 self.csv_paths 순서로 그룹 재구성 + 항목 갱신.
+
+        맨 위(첫) 파일이 units/항목명/Lower·Upper limit 의 기준이 된다 — 서로 다른
+        유형의 파일이 섞여 들어와도 첫 파일 스키마를 기준으로 데이터가 처리된다.
+        """
+        paths = self.csv_paths
+        if not paths:
+            return
+        self.lbl_csv.setText(f"{len(paths)}개 파일  ({Path(paths[0]).parent})")
         self._status("파일 로딩/검증 중...")
         QApplication.processEvents()
         try:
@@ -255,25 +303,37 @@ class HoneyMainWindow(QMainWindow):
             self.group = None
             return
 
-        issues = {n: v for n, v in self.group.validate().items() if v}
-        if issues:
-            msg = "\n".join(f"- {n}: {', '.join(v)}" for n, v in issues.items())
-            QMessageBox.warning(self, "스키마 경고", f"일부 파일에 문제가 있습니다:\n{msg}")
+        if warn:
+            issues = {n: v for n, v in self.group.validate().items() if v}
+            if issues:
+                msg = "\n".join(f"- {n}: {', '.join(v)}" for n, v in issues.items())
+                QMessageBox.warning(self, "스키마 경고", f"일부 파일에 문제가 있습니다:\n{msg}")
 
         self._populate_items()
+        self._update_dut_mode_availability()
         self.btn_upload.setEnabled(False)
         self.out_path = None
         self.lbl_out.setText("")
-        self._status(f"{len(paths)}개 파일 로드 완료. 항목/시트를 선택하고 분석을 실행하세요.")
+        self._status(f"{len(paths)}개 파일 (기준: {Path(paths[0]).name}). 항목/시트 선택 후 분석을 실행하세요.")
+
+    def _on_files_reordered(self, *_):
+        """list_csv 드래그 순서 변경 → csv_paths 갱신 후 그룹 재구성."""
+        if self._suppress_reorder:
+            return
+        order = self._current_list_order()
+        if not order or order == self.csv_paths:
+            return
+        self.csv_paths = order
+        self._rebuild_group(warn=False)
 
     def _populate_items(self):
         self.list_items.clear()
         subjects = self.group.subjects()
-        fail_ids = set(self.group.fail_subject_ids())
-        for idx, subj in enumerate(subjects):
+        # default: 전체 선택
+        for subj in subjects:
             item = QListWidgetItem(subj)
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked if idx in fail_ids else Qt.Unchecked)
+            item.setCheckState(Qt.Checked)
             self.list_items.addItem(item)
 
     def _check_all(self, checked):
@@ -296,11 +356,48 @@ class HoneyMainWindow(QMainWindow):
     def _selected_sheets(self):
         return [n for n, cb in self.sheet_checks.items() if cb.isChecked()]
 
+    def _sync_yield_dependents(self, *_):
+        """yield 시트 미선택이면 fail_item / issue_table 선택 불가(해제+비활성)."""
+        enabled = self.cb_sheet_yield.isChecked()
+        for name in ("fail_item", "issue_table"):
+            cb = self.sheet_checks[name]
+            if not enabled:
+                cb.setChecked(False)
+            cb.setEnabled(enabled)
+
+    def _update_dut_mode_availability(self):
+        """DUT 정리는 입력 파일이 정확히 1개일 때만 가능."""
+        ok = len(self.csv_paths) == 1
+        if not ok:
+            self.cb_mode_dut.setChecked(False)
+        self.cb_mode_dut.setEnabled(ok)
+
+    def _apply_modes(self, group):
+        """선택된 데이터 정리 모드를 그룹에 적용. 문제 시 ValueError."""
+        work = group
+        if self.cb_mode_bin1.isChecked():
+            work = work.filter_rows_by_bin("1")
+            if not work.subjects() or all(len(md.scores) == 0
+                                          for md in work.mass_data_map.values()):
+                raise ValueError("Bin1 Only: Bin 이 1(Pass)인 데이터가 없습니다.")
+        if self.cb_mode_dut.isChecked():
+            if len(self.csv_paths) != 1:
+                raise ValueError("DUT 정리는 입력 파일이 1개일 때만 가능합니다.")
+            work = work.split_by_dut()
+        return work
+
     # ── 분석 실행 → 자동 저장 ────────────────────────────────────────────────
     def on_analyze(self):
         if self.group is None:
-            QMessageBox.warning(self, "입력 누락", "먼저 d1_storage 에서 파일을 가져오세요.")
+            QMessageBox.warning(self, "입력 누락", "먼저 파일을 가져오세요.")
             return
+        # 드래그 순서 변경 신호를 놓쳤어도 분석 직전에 현재 순서로 맞춘다 (기준 파일 보장)
+        order = self._current_list_order()
+        if order and order != self.csv_paths:
+            self.csv_paths = order
+            self._rebuild_group(warn=False)
+            if self.group is None:
+                return
         selected = self._selected_items()
         if not selected:
             QMessageBox.warning(self, "항목 누락", "분석할 항목을 1개 이상 선택하세요.")
@@ -310,13 +407,20 @@ class HoneyMainWindow(QMainWindow):
             QMessageBox.warning(self, "시트 누락", "출력할 시트를 1개 이상 선택하세요.")
             return
 
+        # 데이터 정리 모드 적용 (Bin1 Only → DUT 정리 순서로 그룹 변환)
+        try:
+            work_group = self._apply_modes(self.group)
+        except ValueError as exc:
+            QMessageBox.warning(self, "모드 적용 불가", str(exc))
+            return
+
         self.btn_analyze.setEnabled(False)
         self.btn_upload.setEnabled(False)
         self._status("분석 중...")
         QApplication.processEvents()
         try:
             self.last_result = rg.analyze(
-                self.group, meta=rg.ReportMeta(),
+                work_group, meta=rg.ReportMeta(),
                 selector=rg.ItemSelector(selected_items=selected),
             )
         except Exception as exc:
@@ -327,7 +431,8 @@ class HoneyMainWindow(QMainWindow):
 
         self._show_summary(self.last_result)
 
-        out = _derive_output_path(self.csv_paths)
+        base = self.le_outname.text().strip() or _suggest_base_name(self.csv_paths)
+        out = _build_output_path(Path(self.csv_paths[0]).parent, base)
         self._status(f"xlsx 생성/저장 중... (Excel)  → {Path(out).name}")
         QApplication.processEvents()
         try:
