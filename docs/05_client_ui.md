@@ -20,7 +20,7 @@
 
 ## 메인 워크플로우 (`HoneyMainWindow`)
 1. **입력 선택** — `on_open_local`(로컬 파일대화) 또는 `on_browse_d1`(D1 검색) → `_intake` → 2개↑면 `FileOrderDialog` → `_load_paths`.
-2. **그룹 구성** — `_rebuild_group` 가 `rg.DfHoneyGroup.from_csvs(paths)` 로드 + `validate()` 경고. **첫(맨 위) 파일이 units/항목명/limit 기준** ([06](06_analysis_engine.md)).
+2. **그룹 구성** — `_rebuild_group` 가 `rg.df_honey_group.from_csvs(paths)` 로드 + `validate()` 경고. **첫(맨 위) 파일이 units/항목명/limit 기준** ([06](06_analysis_engine.md)).
 3. **항목 선택** — 좌(제외)/우(선택) 리스트 이동(`_move_*`). `_select_fail_only` 는 fail 발생 subject 만 우측. 원본 순서는 `UserRole` 로 보존(`_resort`).
 4. **시트 선택** — `SHEET_OPTIONS = summary/yield/cpk/fail_item/issue_table/distribution`. `cb_sheet_yield` 해제 시 `fail_item`/`issue_table` 비활성(`_sync_yield_dependents`).
 5. **데이터 정리 모드** — `_apply_modes`: `Bin1 Only`(`filter_rows_by_bin("1")`) → `DUT 정리`(`split_by_dut`, 입력 1개일 때만, `_update_dut_mode_availability`).
@@ -30,7 +30,7 @@
 9. **업데이트** — 기동 500ms 후 `check_for_update` ([04](04_honey_update.md)).
 
 ## 핵심 상태 / 헬퍼
-- 상태: `csv_paths`, `group`(DfHoneyGroup), `last_result`(AnalysisResult), `out_path`, `_last_upload`(메타 프리필).
+- 상태: `csv_paths`, `group`(df_honey_group), `last_result`(AnalysisResult), `out_path`, `_last_upload`(메타 프리필).
 - `_validate_meta` — Product/LOT 필수 + PIN 숫자 4자리.
 - `_suggest_base_name`/`_build_output_path`/`_TS_RE` — 결과 파일명(`_YYMMDD_HHMM` 접미사 중복 방지).
 - 경로 탐색: `_BASE_DIR = sys._MEIPASS or 스크립트폴더` (frozen 대응, .ui 위치).

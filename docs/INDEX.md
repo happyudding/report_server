@@ -60,7 +60,7 @@
   meta = `{product_type, product, lot_id}` 만 (PIN 제외). 모든 S3 키/DB 행의 기준 식별자.
   산출: [upload_xlsx.py `_compute_analysis_key`](../server/upload_xlsx.py#L71).
 - **session_id** — `"<epoch>_<hex6>"`. 업로드 1건 = 1 세션. 브라우저 조회 단위.
-- **mass_data (DfHoney)** — 입력 CSV/시트 1개 = 측정 데이터 1단위. 분석 엔진의 기본 객체 → [06](06_analysis_engine.md).
+- **mass_data (df_honey)** — 입력 CSV/시트 1개 = 측정 데이터 1단위, **단일 DataFrame 보유**. 분석 엔진의 기본 객체 → [06](06_analysis_engine.md).
 - **subject** — 측정 항목(컬럼). **bin** — 합격/불량 분류 코드 (`PASS_BIN="1"` 이 합격).
 - **source** (DB 컬럼) — `'xlsx_upload'`(현재 흐름) vs `'analyze'`(legacy CSV 분석, 비활성).
 - **PIN/password** — 업로드 시 필수 4자리. 수정/삭제 시 검증. analysis_key 에는 **불포함**.
