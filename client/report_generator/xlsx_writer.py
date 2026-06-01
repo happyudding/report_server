@@ -33,6 +33,9 @@ _DIST_TITLE_PX = 30
 _XL_VALUE, _XL_CATEGORY, _XL_PRIMARY = 2, 1, 1
 _XL_LOW = -4134               # xlLow (y축 TickLabelPosition)
 _XL_MARKER_NONE = -4142       # xlMarkerStyleNone
+_XL_MARKER_CIRCLE = 8         # xlMarkerStyleCircle (data 점)
+_MARKER_SIZE = 6              # data 점 크기(pt) — plotly 기준(5) + 1
+_MSO_FALSE = 0                # msoFalse (LineFormat.Visible — 점 사이 선 제거)
 _MSO_LINE_SYSDASH = 10        # msoLineSysDash (limit line)
 _RGB_RED = 255               # RGB(255,0,0)
 _RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail 차트 배경)
@@ -42,6 +45,7 @@ ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distributi
 # 템플릿 table 시트의 표 시작 위치 (A열 비움, 제목 A1, 헤더 3행, 데이터 4행~)
 _HEADER_ROW = 3
 _START_COL = 2  # B열
+_FAIL_ITEM_ROW_HEIGHT = 30  # fail_item 데이터 행 높이(pt)
 
 
 # ── 템플릿 경로 ──────────────────────────────────────────────────────────────
@@ -66,13 +70,14 @@ def _template_path() -> str:
 # ── write ────────────────────────────────────────────────────────────────────
 
 def write(result, out_path, sheets=None, colors=None, progress_cb=None,
-          raw_data=None) -> str:
+          raw_sheets=None) -> str:
     """AnalysisResult 를 xlsx 로 저장. 반환: 저장 경로(str).
 
     sheets: 출력할 시트명 리스트/집합 (None 이면 전체). 알 수 없는 이름은 무시.
     colors: distribution Legend(소스)별 '#RRGGBB' 색 리스트 (None 이면 Excel 기본색).
     progress_cb: 시트 1개 생성 후 progress_cb(done, total, name) 호출 (선택).
-    raw_data: (header, rows) 튜플. 주어지면 'Raw Data' 시트를 맨 앞에 추가.
+    raw_sheets: [(sheet명, df_honey 포맷 DataFrame), ...]. 주어지면 source(input
+        file)별로 df_honey 적재 포맷 그대로의 시트를 맨 앞에 추가한다.
     """
     import openpyxl
 
@@ -106,7 +111,7 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     if want_dist and not wb.sheetnames:
         wb.create_sheet("distribution")
 
-    total = len([s for s in sel if s in table_writers]) + (1 if raw_data is not None else 0) \
+    total = len([s for s in sel if s in table_writers]) + (len(raw_sheets) if raw_sheets else 0) \
         + (1 if want_dist else 0)
     done = 0
 
@@ -117,12 +122,13 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
             done += 1
             _progress(progress_cb, done, total, nm)
 
-    # Raw Data (맨 앞)
-    if raw_data is not None:
-        ws = wb.create_sheet("Raw Data", 0)
-        _fill_raw_data(ws, raw_data)
-        done += 1
-        _progress(progress_cb, done, total, "Raw Data")
+    # Raw Data — source(input file)별 df_honey 포맷 시트를 맨 앞에 순서대로 추가
+    if raw_sheets:
+        for idx, (name, df) in enumerate(raw_sheets):
+            ws = wb.create_sheet(_unique_sheet_name(wb, name), idx)
+            _fill_raw_data(ws, df)
+            done += 1
+            _progress(progress_cb, done, total, ws.title)
 
     wb.save(out_path)
 
@@ -205,6 +211,9 @@ def _fill_fail_item(ws, result):
     # 템플릿상 fail_item 은 yield 시트와 동일
     header, rows = _yield_table(result)
     _fill_table(ws, header, rows)
+    # fail item 데이터 행 높이 키움 (가독성)
+    for i in range(len(rows)):
+        ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
 
 
 def _fill_cpk(ws, result):
@@ -248,16 +257,31 @@ def _fill_issue_table(ws, result):
     _fill_table(ws, header, rows)
 
 
-def _fill_raw_data(ws, raw_data):
-    """raw_data=(header, rows) 를 표로 기록 (제목 + 헤더 bold)."""
+def _fill_raw_data(ws, df):
+    """df_honey 포맷 DataFrame 을 A1 부터 그대로 기록.
+
+    행0=subject 헤더, 1=Units, 2~5=Lower/Upper/Lower/Upper limit, 6~=측정 데이터.
+    제목·Source 열 없이 df_honey 적재 포맷과 동일. 헤더·라벨행(1~6행)만 bold.
+    """
     from openpyxl.styles import Font
-    header, rows = raw_data
-    ws.cell(row=1, column=1, value="Raw Data").font = Font(bold=True, size=14)
-    for ci, h in enumerate(header, start=1):
-        ws.cell(row=2, column=ci, value=h).font = Font(bold=True)
-    for ri, row in enumerate(rows, start=3):
+    bold = Font(bold=True)
+    for ri, row in enumerate(df.values.tolist(), start=1):
         for ci, val in enumerate(row, start=1):
-            ws.cell(row=ri, column=ci, value=_sanitize_cell(val))
+            cell = ws.cell(row=ri, column=ci, value=_sanitize_cell(val))
+            if ri <= 6:
+                cell.font = bold
+
+
+def _unique_sheet_name(wb, name):
+    """Excel 시트명 규칙(≤31자, []:*?/\\ 금지, 중복 불가)으로 정제."""
+    import re
+    base = re.sub(r"[\[\]:*?/\\]", "_", str(name or "Sheet")).strip()[:31] or "Sheet"
+    cand, n = base, 2
+    while cand in set(wb.sheetnames):
+        suffix = f"_{n}"
+        cand = base[:31 - len(suffix)] + suffix
+        n += 1
+    return cand
 
 
 # ── openpyxl 표 채움 헬퍼 (템플릿 스타일 복제) ───────────────────────────────
@@ -557,15 +581,10 @@ def _write_distribution(wb, sh, result, colors=None):
         # 스타일은 chart_type 설정 후 적용 (덮어쓰기 방지)
         for s in limit_series:
             _style_limit_series(s)
-        if colors:
-            for k, s in enumerate(data_series):
-                rgb = _hex_to_excel_rgb(colors[k % len(colors)])
-                if rgb is not None:
-                    try:
-                        s.Format.Line.ForeColor.RGB = rgb
-                        s.Format.Line.Weight = 1.5
-                    except Exception:
-                        pass
+        # data series: 점(마커)만 표시, 잇는 선 제거 (limit line 은 선 유지)
+        for k, s in enumerate(data_series):
+            rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
+            _style_data_series(s, rgb)
         _format_dist_chart(chart, d, x_min, x_max, len(limit_series), is_fail)
 
         idx_row = 2 + grow * _ROWS_PER_CHART + col
@@ -603,6 +622,25 @@ def _style_limit_series(s):
         pass
 
 
+def _style_data_series(s, rgb=None):
+    """data series: 점(마커)만 — 점 사이 선 제거, 마커 색 = source 색(rgb)."""
+    try:
+        s.Format.Line.Visible = _MSO_FALSE   # 점 사이 잇는 선 제거
+    except Exception:
+        pass
+    try:
+        s.MarkerStyle = _XL_MARKER_CIRCLE
+        s.MarkerSize = _MARKER_SIZE
+    except Exception:
+        pass
+    if rgb is not None:
+        try:
+            s.MarkerBackgroundColor = rgb
+            s.MarkerForegroundColor = rgb
+        except Exception:
+            pass
+
+
 def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
     """xy_scatter CDF 차트 서식 (COM 객체 1회 할당 후 재사용)."""
     try:
@@ -629,10 +667,15 @@ def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
     try:
         chart.HasTitle = True
         title = chart.ChartTitle
-        title.Text = d.subject + (f" ({d.unit})" if d.unit else "")
+        cap = _limit_caption(d)          # item 명 아래 줄: (LO ~ HI units)
+        title.Text = d.subject + "\n" + cap
         tf = title.Font
         tf.Name = "Arial Black"
         tf.Size = 10
+        try:                             # 둘째 줄(캡션)은 작게
+            title.Characters(len(d.subject) + 2, len(cap)).Font.Size = 8
+        except Exception:
+            pass
         title.Top = 0
     except Exception:
         pass
@@ -671,6 +714,21 @@ def _isnum(v):
         return not math.isnan(float(v))
     except (TypeError, ValueError):
         return False
+
+
+def _fmt_lim(v):
+    """limit 표시값: nan/None → '-', 정수 → int, 그 외 → 간결한 실수."""
+    if not _isnum(v):
+        return "-"
+    f = float(v)
+    return str(int(f)) if f.is_integer() else f"{f:g}"
+
+
+def _limit_caption(d):
+    """차트 item 명 아래 줄: '(LO ~ HI units)'."""
+    unit = (d.unit or "").strip()
+    body = f"{_fmt_lim(d.lower_limit)} ~ {_fmt_lim(d.upper_limit)}"
+    return f"({body} {unit})" if unit else f"({body})"
 
 
 def _decimals(v):

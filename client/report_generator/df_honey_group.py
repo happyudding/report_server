@@ -119,30 +119,14 @@ class df_honey_group:
             ids.update(md.fail_subject_ids())
         return sorted(ids)
 
-    def raw_table(self):
-        """df_honey 에 적재된 원본 측정 데이터를 단일 테이블로 반환.
+    def raw_frames(self):
+        """각 source(input file)의 df_honey 포맷 DataFrame 을 (sheet명, df) 리스트로.
 
-        Returns (header, rows):
-          header = ['Source', <meta 컬럼...>, <subject 이름...>]
-          rows   = [[source, *meta_values, *score_values], ...]
-        그룹은 동일 subject 를 가정하므로 첫 source 의 컬럼을 헤더로 쓰고,
-        여러 source 는 행을 위아래로 이어붙인다 (Source 열로 구분).
+        sheet명 = source 이름(input file stem). Raw Data 시트 출력용 — df_honey 에
+        적재된 포맷(subject 헤더 + Units/Lower/Upper/Lower/Upper limit + 데이터)을
+        Source 열·제목 없이 그대로 내보낸다.
         """
-        header = None
-        rows = []
-        for name, md in self._mass_data_map.items():
-            meta_cols = list(md.meta.columns)
-            subjects = list(md.subjects)
-            if header is None:
-                header = ["Source"] + meta_cols + subjects
-            meta_vals = md.meta.reset_index(drop=True).values.tolist()
-            score_vals = md.scores.reset_index(drop=True).values.tolist()
-            n = max(len(meta_vals), len(score_vals))
-            for i in range(n):
-                mrow = list(meta_vals[i]) if i < len(meta_vals) else [None] * len(meta_cols)
-                srow = list(score_vals[i]) if i < len(score_vals) else [None] * len(subjects)
-                rows.append([name] + mrow + srow)
-        return (header or ["Source"]), rows
+        return [(md.name, md.to_df()) for md in self._mass_data_map.values()]
 
     def __len__(self):
         return len(self._mass_data_map)

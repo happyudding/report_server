@@ -638,17 +638,17 @@ class HoneyMainWindow(QMainWindow):
 
     def _run_analysis(self, work_group, selected, sheets, auto_upload, raw_data=False):
         self.btn_start.setEnabled(False)
-        # Raw Data 시트용 원본 테이블 (체크 시) — df_honey 적재 데이터 그대로
+        # Raw Data 시트용 원본 프레임 (체크 시) — source별 df_honey 적재 포맷 그대로
         raw = None
         if raw_data:
             try:
-                raw = work_group.raw_table()
+                raw = work_group.raw_frames()
             except Exception as exc:  # noqa: BLE001
                 QMessageBox.warning(self, "Raw Data 생략",
                                     f"원본 데이터 시트를 만들지 못해 건너뜁니다:\n{exc}")
                 raw = None
-        # 진행 단계: 준비(1) → 분석(1) → 요약(1) → 시트별(N, +Raw) → 저장 마무리(1)
-        total = len(sheets) + 4 + (1 if raw is not None else 0)
+        # 진행 단계: 준비(1) → 분석(1) → 요약(1) → 시트별(N, +Raw N) → 저장 마무리(1)
+        total = len(sheets) + 4 + (len(raw) if raw else 0)
         prog = QProgressDialog("분석 준비 중...", None, 0, total, self)
         prog.setWindowTitle("분석 실행")
         prog.setWindowModality(Qt.WindowModal)
@@ -707,7 +707,7 @@ class HoneyMainWindow(QMainWindow):
         try:
             xlsx_writer.write(self.last_result, out, sheets=sheets,
                               colors=chart_colors.load_colors(),
-                              progress_cb=_sheet_progress, raw_data=raw)
+                              progress_cb=_sheet_progress, raw_sheets=raw)
         except Exception as exc:
             prog.close()
             QMessageBox.critical(self, "생성 실패", str(exc))
