@@ -20,12 +20,22 @@ import numpy as np
 
 _MAX_CDF_POINTS = 150
 _CHARTS_PER_ROW = 5
-_CHART_W, _CHART_H, _GAP = 320, 220, 16
+# 차트 크기 — gap 없이 밀착 배치 (사용자 사양 324x198)
+_CHART_W, _CHART_H = 324, 198
+_PLOT_W, _PLOT_TOP, _PLOT_H = 280, 30, 167
 # distribution 찾기(Ctrl+F)용 item 인덱스: 차트 그리드 오른쪽 열, 차트 한 행당 행 수
 _INDEX_COL = 40
 _ROWS_PER_CHART = 16
 # distribution 차트 그리드를 제목 배너 아래로 내리는 픽셀 오프셋
 _DIST_TITLE_PX = 30
+
+# Excel COM 상수 (distribution 차트 서식)
+_XL_VALUE, _XL_CATEGORY, _XL_PRIMARY = 2, 1, 1
+_XL_LOW = -4134               # xlLow (y축 TickLabelPosition)
+_XL_MARKER_NONE = -4142       # xlMarkerStyleNone
+_MSO_LINE_SYSDASH = 10        # msoLineSysDash (limit line)
+_RGB_RED = 255               # RGB(255,0,0)
+_RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail 차트 배경)
 
 ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
 
@@ -83,6 +93,7 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     wb = openpyxl.load_workbook(_template_path())
 
     # distribution/_dist 는 Phase2(xlwings)에서 재생성 → openpyxl 단계에서 제거
+    # (템플릿 샘플 차트도 함께 제거됨)
     for nm in ("distribution", "_dist"):
         if nm in wb.sheetnames:
             del wb[nm]
@@ -90,6 +101,10 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     for nm in list(wb.sheetnames):
         if nm in table_writers and nm not in sel:
             del wb[nm]
+    # distribution 만 선택돼 table 시트가 모두 사라진 경우 빈 시트 1개 확보
+    # (openpyxl 은 시트 0개 저장 불가 → Phase2 에서 이 시트를 차트로 채움)
+    if want_dist and not wb.sheetnames:
+        wb.create_sheet("distribution")
 
     total = len([s for s in sel if s in table_writers]) + (1 if raw_data is not None else 0) \
         + (1 if want_dist else 0)
@@ -362,8 +377,17 @@ def _write_distribution_xlwings(out_path, result, colors=None):
     wb = None
     try:
         wb = app.books.open(out_path)
-        last = wb.sheets[len(wb.sheets) - 1]
-        sh = wb.sheets.add("distribution", after=last)
+        names = [s.name for s in wb.sheets]
+        if "distribution" in names:
+            sh = wb.sheets["distribution"]
+            for c in list(sh.charts):     # 템플릿/이전 차트 제거
+                try:
+                    c.delete()
+                except Exception:
+                    pass
+            sh.clear()
+        else:
+            sh = wb.sheets.add("distribution", after=wb.sheets[len(wb.sheets) - 1])
         _write_distribution(wb, sh, result, colors)
         sh.activate()
         wb.save()
@@ -385,71 +409,110 @@ def _hex_to_excel_rgb(hex_color):
         return None
 
 
-def _apply_series_colors(ch, n_sources, colors):
-    """차트의 소스 series(처음 n_sources 개) 선색을 팔레트로 지정."""
-    if not colors or n_sources <= 0:
-        return
-    try:
-        chart_com = getattr(ch.api, "Chart", ch.api)
-        sc = chart_com.SeriesCollection()
-    except Exception:
-        return
-    for i in range(n_sources):
-        rgb = _hex_to_excel_rgb(colors[i % len(colors)])
-        if rgb is None:
-            continue
-        try:
-            s = sc.Item(i + 1)
-            s.Format.Line.ForeColor.RGB = rgb
-            s.Format.Line.Weight = 1.5
-        except Exception:
-            pass
-
-
 def _write_distribution(wb, sh, result, colors=None):
-    if not result.distributions:
+    """각 subject 의 누적분포(CDF) 차트. x=value, y=0~100%(0~1 스케일).
+
+    source(input file)별 series + LSL/USL 세로 한계선(series 1,2). 차트는 gap 없이
+    밀착 배치. 서식은 _format_dist_chart 사양 따름.
+    """
+    dists = result.distributions
+    if not dists:
         sh.range("A1").value = "선택된 항목에 분포 데이터가 없습니다."
         return
 
     data = wb.sheets.add("_dist", after=sh)
-    cur = 1  # 헬퍼 시트 행 커서
 
-    # 시트 제목 배너 (차트는 셀 위에 부유 — 배너 아래로 내려 자리 확보)
     _put_title(sh, 8, "Distribution")
-
-    # 찾기(Ctrl+F) index 헤더 — 차트 그리드 오른쪽 열
     sh.range((1, _INDEX_COL)).value = "Item Index (Ctrl+F)"
     sh.range((1, _INDEX_COL)).column_width = 26
 
-    for i, d in enumerate(result.distributions):
-        header, rows, sources = _aligned_cdf_table(d)
-        if not rows:
+    cur = 1  # 헬퍼 시트 행 커서
+    for i, d in enumerate(dists):
+        # source별 (value, 누적 0~1) 준비
+        series_list = []
+        for tr in d.traces:
+            xs = np.asarray(tr["xs"], dtype=float)
+            ys = np.asarray(tr["ys"], dtype=float) / 100.0   # 0~100 → 0~1
+            if xs.size == 0:
+                continue
+            xs, ys = _downsample(xs, ys)
+            series_list.append((tr["source"], xs, ys))
+        if not series_list:
             continue
-        ncol = 1 + len(sources)
-        block = [header] + rows
-        top_row = cur
-        data.range((top_row, 1)).value = block
-        bot_row = top_row + len(block) - 1
-        src_range = data.range((top_row, 1), (bot_row, ncol))
 
+        data_min = min(float(xs.min()) for _, xs, _ in series_list)
+        data_max = max(float(xs.max()) for _, xs, _ in series_list)
+        lo, hi = d.lower_limit, d.upper_limit
+        is_fail = (_isnum(lo) and data_min < float(lo)) or (_isnum(hi) and data_max > float(hi))
+        x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
+
+        # _dist 기입: col1/2=LSL x/y, col3/4=USL x/y, col5~=source x/y 쌍
+        top_row = cur
+        lo_v = float(lo) if _isnum(lo) else None
+        hi_v = float(hi) if _isnum(hi) else None
+        if lo_v is not None:
+            data.range((top_row, 1)).value = [[lo_v, 0.0], [lo_v, 1.0]]
+        if hi_v is not None:
+            data.range((top_row, 3)).value = [[hi_v, 0.0], [hi_v, 1.0]]
+        dcol = 5
+        max_len = 2
+        for _name, xs, ys in series_list:
+            block = [[float(x), float(y)] for x, y in zip(xs, ys)]
+            data.range((top_row, dcol)).value = block
+            max_len = max(max_len, len(block))
+            dcol += 2
+        bot_row = top_row + max_len - 1
+
+        # 차트 배치 (gap 없이 밀착)
         col = i % _CHARTS_PER_ROW
         grow = i // _CHARTS_PER_ROW
-        left = _GAP + col * (_CHART_W + _GAP)
-        top = _GAP + _DIST_TITLE_PX + grow * (_CHART_H + _GAP)
+        left = col * _CHART_W
+        top = _DIST_TITLE_PX + grow * _CHART_H
 
         ch = sh.charts.add(left, top, _CHART_W, _CHART_H)
-        ch.set_source_data(src_range)
-        ch.chart_type = "xy_scatter_lines_no_markers"
-        _apply_series_colors(ch, len(sources), colors)
-        title = d.subject + (f" ({d.unit})" if d.unit else "")
-        _set_chart_title(ch, title)
-        _add_limit_lines(ch, data, d, top_row, bot_row, ncol)
-        _fix_cdf_axes(ch)
+        chart = _chart_com(ch)   # COM Chart (반복 접근 대신 변수 재사용)
+        sc = chart.SeriesCollection()
 
-        # 차트 그리드 오른쪽에 item 명을 세로 5개씩, 차트 행에 정렬해 기록 (찾기용)
+        # series 1,2 = limit line (먼저 추가해야 legendentry 인덱스가 1,2 가 됨)
+        limit_series = []
+        for lim_v, xcol, nm in ((lo_v, 1, "LSL"), (hi_v, 3, "USL")):
+            if lim_v is None:
+                continue
+            s = sc.NewSeries()
+            s.XValues = data.range((top_row, xcol), (top_row + 1, xcol)).api
+            s.Values = data.range((top_row, xcol + 1), (top_row + 1, xcol + 1)).api
+            s.Name = nm
+            limit_series.append(s)
+
+        # 데이터 series (source별)
+        data_series = []
+        dcol = 5
+        for name, xs, ys in series_list:
+            n = len(xs)
+            s = sc.NewSeries()
+            s.XValues = data.range((top_row, dcol), (top_row + n - 1, dcol)).api
+            s.Values = data.range((top_row, dcol + 1), (top_row + n - 1, dcol + 1)).api
+            s.Name = str(name)
+            data_series.append(s)
+            dcol += 2
+
+        ch.chart_type = "xy_scatter_lines_no_markers"
+        # 스타일은 chart_type 설정 후 적용 (덮어쓰기 방지)
+        for s in limit_series:
+            _style_limit_series(s)
+        if colors:
+            for k, s in enumerate(data_series):
+                rgb = _hex_to_excel_rgb(colors[k % len(colors)])
+                if rgb is not None:
+                    try:
+                        s.Format.Line.ForeColor.RGB = rgb
+                        s.Format.Line.Weight = 1.5
+                    except Exception:
+                        pass
+        _format_dist_chart(chart, d, x_min, x_max, len(limit_series), is_fail)
+
         idx_row = 2 + grow * _ROWS_PER_CHART + col
         sh.range((idx_row, _INDEX_COL)).value = f"[{col + 1}] {d.subject}"
-
         cur = bot_row + 2
 
     _finalize_title_row(sh)
@@ -459,86 +522,133 @@ def _write_distribution(wb, sh, result, colors=None):
         pass
 
 
-def _aligned_cdf_table(d):
-    """source 별 CDF 를 공통 x 축으로 정렬한 테이블.
-
-    Returns (header, rows, sources):
-      header = ["value", src1, src2, ...]
-      rows   = [[x, y_src1, y_src2, ...], ...]   (각 source 의 step-CDF)
-    """
-    sources, src_xs, src_ys = [], [], []
-    for tr in d.traces:
-        xs = np.asarray(tr["xs"], dtype=float)
-        ys = np.asarray(tr["ys"], dtype=float)
-        if xs.size == 0:
-            continue
-        sources.append(tr["source"])
-        src_xs.append(xs)
-        src_ys.append(ys)
-    if not sources:
-        return [], [], []
-
-    union = np.unique(np.concatenate(src_xs))
-    union, _ = _downsample(union, union)  # 점 수 제한
-    header = ["value"] + sources
-    rows = []
-    for x in union:
-        row = [float(x)]
-        for xs, ys in zip(src_xs, src_ys):
-            idx = int(np.searchsorted(xs, x, side="right")) - 1
-            row.append(float(ys[idx]) if idx >= 0 else 0.0)
-        rows.append(row)
-    return header, rows, sources
+def _chart_com(ch):
+    """xlwings Chart → COM Chart 객체. ch.api 가 (ChartObject, Chart) 튜플일 수 있음."""
+    api = ch.api
+    if isinstance(api, tuple):
+        return api[1]
+    return getattr(api, "Chart", api)
 
 
-def _add_limit_lines(ch, data, d, top_row, bot_row, ncol):
-    """LSL/USL 세로 한계선을 2-point series 로 추가 (best-effort)."""
-    com = ch.api
-    chart_com = getattr(com, "Chart", com)
-    pad_col = ncol + 2
-    pr = top_row
-    for label, lim in (("LSL", d.lower_limit), ("USL", d.upper_limit)):
-        if lim is None:
-            continue
+def _style_limit_series(s):
+    """limit line series: 빨강 system dash + 마커 제거 (선만)."""
+    try:
+        line = s.Format.Line
+        line.DashStyle = _MSO_LINE_SYSDASH
+        line.ForeColor.RGB = _RGB_RED
+    except Exception:
+        pass
+    try:
+        s.MarkerStyle = _XL_MARKER_NONE
+    except Exception:
+        pass
+
+
+def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
+    """xy_scatter CDF 차트 서식 (COM 객체 1회 할당 후 재사용)."""
+    try:
+        yax = chart.Axes(_XL_VALUE, _XL_PRIMARY)
+        yax.MinimumScale = 0
+        yax.MaximumScale = 1
+        yax.MajorUnit = 0.2
+        yax.HasMinorGridlines = True
+        ytl = yax.TickLabels
+        ytl.NumberFormatLocal = "0%"
+        ytl.Font.Size = 8
+        yax.TickLabelPosition = _XL_LOW
+    except Exception:
+        pass
+    try:
+        xax = chart.Axes(_XL_CATEGORY, _XL_PRIMARY)
+        if x_min is not None and x_max is not None and x_min < x_max:
+            xax.MinimumScale = x_min
+            xax.MaximumScale = x_max
+        xax.HasMinorGridlines = True
+        xax.TickLabels.Font.Size = 8
+    except Exception:
+        pass
+    try:
+        chart.HasTitle = True
+        title = chart.ChartTitle
+        title.Text = d.subject + (f" ({d.unit})" if d.unit else "")
+        tf = title.Font
+        tf.Name = "Arial Black"
+        tf.Size = 10
+        title.Top = 0
+    except Exception:
+        pass
+    try:
+        pa = chart.PlotArea
+        pa.Width = _PLOT_W
+        pa.Top = _PLOT_TOP
+        pa.Height = _PLOT_H
+    except Exception:
+        pass
+    # legend: limit series(1..limit_count) entry 삭제, 폰트 8
+    try:
+        chart.HasLegend = True
+        leg = chart.Legend
+        leg.Font.Size = 8
+        for idx in range(limit_count, 0, -1):
+            try:
+                leg.LegendEntries(idx).Delete()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if is_fail:
         try:
-            data.range((pr, pad_col)).value = [[float(lim), 0.0], [float(lim), 100.0]]
-            x_rng = data.range((pr, pad_col), (pr + 1, pad_col)).api
-            y_rng = data.range((pr, pad_col + 1), (pr + 1, pad_col + 1)).api
-            s = chart_com.SeriesCollection().NewSeries()
-            s.Values = y_rng
-            s.XValues = x_rng
-            s.Name = label
-            pr += 3
+            chart.ChartArea.Interior.Color = _RGB_FAIL_BG
         except Exception:
             pass
 
 
-def _set_chart_title(ch, title):
+# ── x축 범위 계산 헬퍼 ───────────────────────────────────────────────────────
+
+def _isnum(v):
+    if v is None:
+        return False
     try:
-        com = ch.api
-        chart_com = getattr(com, "Chart", com)
-        chart_com.HasTitle = True
-        chart_com.ChartTitle.Text = title
-    except Exception:
-        pass
+        return not math.isnan(float(v))
+    except (TypeError, ValueError):
+        return False
 
 
-# Excel 축 상수: xlCategory(x)=1, xlValue(y)=2 / xlPrimary=1
-def _fix_cdf_axes(ch):
-    """y축(누적%)을 0~100 으로 고정. x축(value)은 자동."""
-    try:
-        com = ch.api
-        chart_com = getattr(com, "Chart", com)
-        y_axis = chart_com.Axes(2, 1)  # xlValue, xlPrimary
-        y_axis.MinimumScale = 0
-        y_axis.MaximumScale = 100
-        y_axis.HasTitle = True
-        y_axis.AxisTitle.Text = "Cumulative (%)"
-        x_axis = chart_com.Axes(1, 1)  # xlCategory(=value for XY)
-        x_axis.HasTitle = True
-        x_axis.AxisTitle.Text = "value"
-    except Exception:
-        pass
+def _decimals(v):
+    """숫자의 유효 소수 자릿수 (정수면 0)."""
+    if v is None:
+        return 0
+    s = repr(float(v))
+    if "e" in s or "E" in s or "." not in s:
+        return 0
+    return len(s.split(".")[1].rstrip("0"))
+
+
+def _floor_dec(x, dec):
+    f = 10 ** dec
+    return math.floor(x * f) / f
+
+
+def _ceil_dec(x, dec):
+    f = 10 ** dec
+    return math.ceil(x * f) / f
+
+
+def _x_axis_range(lo, hi, dmin, dmax, is_fail):
+    """x축 [min,max]. Pass=LIM 그대로, Fail=±5% 가드밴드 후 LIM 자릿수로 floor/ceil.
+    LIM None/nan 이면 data min/max 사용."""
+    lo_n = float(lo) if _isnum(lo) else None
+    hi_n = float(hi) if _isnum(hi) else None
+    xmin = lo_n if lo_n is not None else dmin
+    xmax = hi_n if hi_n is not None else dmax
+    if not is_fail:
+        return xmin, xmax
+    if lo_n is not None and dmin < lo_n:
+        xmin = dmin - (lo_n - dmin) * 0.05
+    if hi_n is not None and dmax > hi_n:
+        xmax = dmax + (dmax - hi_n) * 0.05
+    dec = max(_decimals(lo_n), _decimals(hi_n))
+    return _floor_dec(xmin, dec), _ceil_dec(xmax, dec)
 
 
 def _downsample(xs, ys, max_points=_MAX_CDF_POINTS):
