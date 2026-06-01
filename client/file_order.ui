@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>FileOrderDialog</class>
+ <widget class="QDialog" name="FileOrderDialog">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>480</width>
+    <height>420</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>파일 순서 정하기</string>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <property name="leftMargin"><number>14</number></property>
+   <property name="topMargin"><number>14</number></property>
+   <property name="rightMargin"><number>14</number></property>
+   <property name="bottomMargin"><number>14</number></property>
+   <property name="spacing"><number>8</number></property>
+   <item>
+    <widget class="QLabel" name="lbl_info">
+     <property name="text">
+      <string>맨 위 파일을 기준으로 units · 항목명 · Lower/Upper limit 이 정해집니다.
+파일을 선택한 뒤 [▲ 위로] / [▼ 아래로] 로 순서를 조정하세요.</string>
+     </property>
+     <property name="wordWrap"><bool>true</bool></property>
+     <property name="styleSheet"><string notr="true">color: #555;</string></property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="horizontalLayout_order">
+     <item>
+      <widget class="QListWidget" name="list_order">
+       <property name="selectionMode">
+        <enum>QAbstractItemView::SingleSelection</enum>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <layout class="QVBoxLayout" name="vbox_btns">
+       <item>
+        <widget class="QPushButton" name="btn_up">
+         <property name="text"><string>▲ 위로</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="btn_down">
+         <property name="text"><string>▼ 아래로</string></property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="spacer_btns">
+         <property name="orientation"><enum>Qt::Vertical</enum></property>
+         <property name="sizeHint" stdset="0">
+          <size><width>20</width><height>40</height></size>
+         </property>
+        </spacer>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

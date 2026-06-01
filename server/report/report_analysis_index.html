@@ -122,7 +122,10 @@ tr.result-row:hover { background: #f5f8ff; }
 .pin-cell {
   width: 44px; height: 50px; text-align: center; font-size: 22px;
   border: 1px solid #d0d5dd; border-radius: 6px; outline: none;
+  -moz-appearance: textfield; appearance: textfield;
 }
+.pin-cell::-webkit-outer-spin-button,
+.pin-cell::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .pin-cell:focus { border-color: #4a90e2; }
 .modal-hint { font-size: 11px; color: #888; text-align: center; margin: 8px 0 0; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }

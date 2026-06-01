@@ -1,4 +1,4 @@
-"""CSV / xlsx sheet 로딩 → 정규화 → DfHoney 구성 요소.
+"""CSV / xlsx sheet 로딩 → 정규화 → df_honey 포맷 DataFrame / 구성 요소.
 
 _reference/analysis/preprocessor_fromhoney.py + data_loader.py 의 순수 로직만 이식.
 config / analysis 패키지 의존 없음. 정규화 표준 = 5-meta (constants 참조).
@@ -169,11 +169,21 @@ def split_components(norm: pd.DataFrame) -> dict:
     }
 
 
-def load_components(path) -> dict:
-    """파일 경로 → 구성 요소 dict (정규화 + 분리). 실패 시 ValueError."""
+def csvfile_to_df(path) -> pd.DataFrame:
+    """파일 경로 → df_honey 포맷 단일 DataFrame (정규화). 실패 시 ValueError.
+
+    df_honey 포맷: 행 0=subject명, 1=Units, 2=Lower, 3=Upper, 4~5=limit 중복,
+    6~=데이터 / 열 0~4=meta(DUT/XCoord/YCoord/Bin/Serial), 5~=subject 측정값.
+    df_honey 클래스가 이 단일 DataFrame 을 보유하고 컴포넌트를 파생한다.
+    """
     path = Path(path)
     raw = _read_raw(path)
     norm = normalize_raw(raw)
     if norm.empty or norm.shape[0] <= DATA_START_ROW:
         raise ValueError(f"인식 불가/빈 입력 파일: {path.name}")
-    return split_components(norm)
+    return norm
+
+
+def load_components(path) -> dict:
+    """파일 경로 → 구성 요소 dict (정규화 + 분리). 실패 시 ValueError."""
+    return split_components(csvfile_to_df(path))

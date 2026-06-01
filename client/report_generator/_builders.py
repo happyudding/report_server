@@ -3,7 +3,7 @@
 반도체 mass_data(웨이퍼/로트 단위 측정 데이터) 분석 로직. flask / db / s3 /
 plotly / config 의존 없음.
 
-`mass_data_map` = {source_name: mass_data} dict. 각 value(mass_data)는 DfHoney
+`mass_data_map` = {source_name: mass_data} dict. 각 value(mass_data)는 df_honey
 인스턴스로, 하나의 입력 sheet/CSV(= 한 mass_data 단위)에 대응하며 다음 속성을 갖는다:
     subjects, units, lower_limits, upper_limits, scores(DataFrame), meta(DataFrame[...,"Bin"])
 """
@@ -172,6 +172,9 @@ def build_yield(mass_data_map):
             file_count = int(per_file_type_count.get(src, {}).get(bin_type, 0))
             portion = round(file_count / file_total * 100.0, 2) if file_total else 0.0
             portion_fields[f"portion_{src}"] = portion
+            # 템플릿 yield/issue_table 의 source별 컬럼: {src}_count / {src}_yield
+            portion_fields[f"{src}_count"] = file_count
+            portion_fields[f"{src}_yield"] = portion
             portions.append(portion)
         avg_portion = round(sum(portions) / len(portions), 2) if portions else 0.0
         rows.append({
@@ -302,7 +305,7 @@ def build_issue_summary(mass_data_map):
 
 
 # ---------------------------------------------------------------------------
-# fail_values — 비합격 DUT별 한계 이탈 레코드 (DfHoney.fail_values 용)
+# fail_values — 비합격 DUT별 한계 이탈 레코드 (df_honey.fail_values 용)
 
 def build_issue_table(mass_data_map):
     rows = []
@@ -346,6 +349,43 @@ def build_issue_table(mass_data_map):
                 "fail": "< lo" if is_lo else "> hi",
             })
     return rows
+
+
+# ---------------------------------------------------------------------------
+# major fail subjects — summary 시트 "Major Fail Bins" (subject별 총 fail 랭킹)
+
+def build_major_fail_subjects(mass_data_map, top: int = 5):
+    """subject별 총 fail 수를 bin 무관하게 합산한 상위 top 랭킹.
+
+    반환: [{"subject": str, "fail_count": int, "ratio": float}, ...]
+      ratio = subject 총 fail 수 / 전체 DUT 수 (소수, 예: 0.0102).
+    summary 시트의 1st~5th Fail 표시에 쓰인다.
+    """
+    total_dut = 0
+    fail_counts = {}            # subject_id -> 누적 fail 수
+    subject_names = None
+    for mass_data in mass_data_map.values():
+        if subject_names is None:
+            subject_names = _subject_columns(mass_data)
+        total_dut += len(mass_data.scores)
+        sums = _fail_mask(mass_data).sum(axis=0)
+        for sid, count in sums.items():
+            count = int(count)
+            if count <= 0:
+                continue
+            sid = int(sid)
+            fail_counts[sid] = fail_counts.get(sid, 0) + count
+    subject_names = subject_names or []
+    rows = [
+        {
+            "subject": subject_names[sid] if sid < len(subject_names) else str(sid),
+            "fail_count": count,
+            "ratio": round(count / total_dut, 4) if total_dut else 0.0,
+        }
+        for sid, count in fail_counts.items()
+    ]
+    rows.sort(key=lambda x: (-x["fail_count"], x["subject"]))
+    return rows[:top]
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,11 @@ a = Analysis(
     ['honey_main.py'],
     pathex=[],
     binaries=_xw_binaries,
-    datas=_xw_datas + [('honey_main.ui', '.'), ('upload_dialog.ui', '.'), ('d1_browser.ui', '.')],
+    datas=_xw_datas + [('honey_main.ui', '.'), ('upload_dialog.ui', '.'),
+                       ('d1_browser.ui', '.'), ('file_order.ui', '.'),
+                       ('report_settings.ui', '.'),
+                       # 리포트 출력 양식 — xlsx_writer 가 openpyxl 로 열어 값만 채움
+                       ('data/templete.xlsx', 'data')],
     hiddenimports=(
         ['PyQt5.sip', 'PyQt5.uic', 'win32com', 'win32com.client', 'pythoncom',
          'pywintypes', 'pandas', 'numpy']
@@ -39,7 +43,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     console=False,
     disable_windowed_traceback=False,
@@ -53,7 +57,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name='Honey',   # → dist/Honey/ (Honey.exe + _internal/)
 )

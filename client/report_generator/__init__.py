@@ -4,15 +4,15 @@
 비의존 순수 Python. xlsx_writer 만 xlwings(Excel) 의존.
 """
 from .analyzer import run as analyze
-from .df_honey import DfHoney
-from .df_honey_group import DfHoneyGroup
+from .df_honey import df_honey
+from .df_honey_group import df_honey_group
 from .item_selector import ItemSelector
 from .models import AnalysisResult, DistSeries, ReportMeta
 
 __all__ = [
     "analyze",
-    "DfHoney",
-    "DfHoneyGroup",
+    "df_honey",
+    "df_honey_group",
     "ItemSelector",
     "AnalysisResult",
     "DistSeries",
@@ -25,7 +25,7 @@ def build_report(csv_paths, meta=None, selected_items=None, out_path=None, sheet
 
     Returns: out_path 지정 시 생성 경로(str), 아니면 AnalysisResult.
     """
-    group = DfHoneyGroup.from_csvs(csv_paths, report_meta=meta)
+    group = df_honey_group.from_csvs(csv_paths, report_meta=meta)
     selector = ItemSelector(selected_items=selected_items)
     result = analyze(group, meta=meta, selector=selector)
     if out_path is None:

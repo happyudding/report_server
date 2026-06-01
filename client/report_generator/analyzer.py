@@ -1,6 +1,6 @@
 """analyzer — group-level 분석 orchestration.
 
-DfHoneyGroup + ReportMeta + ItemSelector → AnalysisResult.
+df_honey_group + ReportMeta + ItemSelector → AnalysisResult.
 xlsx_writer 가 소비할 모든 결과(테이블 + distribution)를 한 번에 계산한다.
 """
 from __future__ import annotations
@@ -8,12 +8,12 @@ from __future__ import annotations
 from typing import Optional
 
 from . import _builders as B
-from .df_honey_group import DfHoneyGroup
+from .df_honey_group import df_honey_group
 from .item_selector import ItemSelector
 from .models import AnalysisResult, DistSeries, ReportMeta
 
 
-def run(group: DfHoneyGroup, meta: Optional[ReportMeta] = None,
+def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
         selector: Optional[ItemSelector] = None) -> AnalysisResult:
     """선택 item 적용 → 전 테이블 계산 → AnalysisResult."""
     meta = meta or ReportMeta()
@@ -31,6 +31,7 @@ def run(group: DfHoneyGroup, meta: Optional[ReportMeta] = None,
     fail_item_rows = work.fail_items()
     issue_rows = B.build_issue_summary(mass_data_map)  # bin별 most-fail item 요약
     summary_rows = work.summary()
+    major_fail_subject_rows = B.build_major_fail_subjects(mass_data_map)
 
     subjects_meta = [
         {
@@ -58,12 +59,13 @@ def run(group: DfHoneyGroup, meta: Optional[ReportMeta] = None,
         issue_rows=issue_rows,
         summary_rows=summary_rows,
         distributions=distributions,
+        major_fail_subject_rows=major_fail_subject_rows,
         total_dut=total_dut,
         pass_yield=pass_yield,
     )
 
 
-def _build_distributions(group: DfHoneyGroup, subjects_meta: list) -> list:
+def _build_distributions(group: df_honey_group, subjects_meta: list) -> list:
     """선택된 각 subject 의 source 별 CDF 트레이스."""
     out = []
     names = group.names()

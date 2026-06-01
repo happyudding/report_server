@@ -28,3 +28,14 @@ def _default_d1_dir():
 
 # S3 외 별도 서버 스토리지(가상 폴더). CSV/xlsx 입력을 여기서 검색·선택한다.
 D1_STORAGE_DIR = os.environ.get("HONEY_D1_STORAGE", _default_d1_dir())
+
+
+def _config_dir():
+    """사용자별 설정 저장 폴더 (%APPDATA%/Honey, 없으면 홈)."""
+    base = os.environ.get("APPDATA") or str(Path.home())
+    return str(Path(base) / "Honey")
+
+
+# 사용자 설정 디렉토리 + 차트 색 팔레트 파일 경로
+CONFIG_DIR = os.environ.get("HONEY_CONFIG_DIR", _config_dir())
+CHART_COLORS_PATH = str(Path(CONFIG_DIR) / "chart_colors.json")

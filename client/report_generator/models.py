@@ -47,19 +47,22 @@ class AnalysisResult:
     issue_rows: list = field(default_factory=list)       # list[dict] (fail_values)
     summary_rows: list = field(default_factory=list)     # list[dict]
     distributions: list = field(default_factory=list)    # list[DistSeries]
+    major_fail_subject_rows: list = field(default_factory=list)  # [{subject, fail_count, ratio}]
     total_dut: int = 0
     pass_yield: Optional[float] = None                   # Bin 1 portion (%)
 
     def summary_feature(self) -> dict:
-        """summary 시트 Feature 섹션 값."""
+        """summary 시트 Device Feature 섹션 값 (Fail Types 는 fail bin 번호 목록)."""
         fail_bins = sorted({str(r.get("bin")) for r in self.yield_rows
-                            if str(r.get("bin")) != "1"})
+                            if str(r.get("bin")) != "1"},
+                           key=lambda b: (0, int(b)) if b.isdigit() else (1, b))
         return {
             "Total DUT": self.total_dut,
             "Pass (Bin 1)": self._pass_count(),
             "Fail Types": ", ".join(fail_bins) if fail_bins else "-",
             "Sources": len(self.sources),
             "Subjects": len(self.subjects),
+            "EVT Version": self.meta.revision or "-",
         }
 
     def _pass_count(self) -> int:
@@ -69,10 +72,17 @@ class AnalysisResult:
         return 0
 
     def major_fail_bins(self, top: int = 5) -> list:
-        """avg 내림차순 상위 fail bin (summary Major Fail Bins 테이블용)."""
+        """avg 내림차순 상위 fail bin (legacy summary Major Fail Bins 테이블용)."""
         fails = [r for r in self.yield_rows if str(r.get("bin")) != "1"]
         fails.sort(key=lambda r: -(r.get("avg") or 0.0))
         return fails[:top]
+
+    def major_fail_subjects(self, top: int = 5) -> list:
+        """subject별 총 fail 랭킹 상위 top (summary 시트 1st~5th Fail 용).
+
+        [{"subject", "fail_count", "ratio"}]. analyzer 가 채운 행을 그대로 슬라이스.
+        """
+        return self.major_fail_subject_rows[:top]
 
 
 def _to_native(value: Any):
