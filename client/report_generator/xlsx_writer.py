@@ -126,10 +126,11 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
 
     wb.save(out_path)
 
-    # Phase 2: distribution 차트 (xlwings / Excel COM)
+    # Phase 2: distribution 차트 (xlwings / Excel COM) + fail_item PNG 썸네일
     if want_dist:
         try:
-            _write_distribution_xlwings(out_path, result, colors)
+            _write_distribution_xlwings(out_path, result, colors,
+                                        attach_fail_item=("fail_item" in sel))
             done += 1
             _progress(progress_cb, done, total, "distribution")
         except Exception as exc:
@@ -367,14 +368,20 @@ def _sanitize_cell(v):
 
 # ── distribution (xlwings / Excel COM) ───────────────────────────────────────
 
-def _write_distribution_xlwings(out_path, result, colors=None):
-    """openpyxl 로 저장된 파일을 열어 distribution 시트 + 차트를 추가한다."""
+def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=False):
+    """openpyxl 로 저장된 파일을 열어 distribution 시트 + 차트를 추가한다.
+
+    attach_fail_item=True 면 distribution 차트를 PNG 로 export 해 fail_item 시트에
+    불량율 높은 순으로 1/3 크기 썸네일로 부착한다 (차트 원본 재생성 없이 재활용).
+    """
+    import shutil
     import xlwings as xw
 
     app = xw.App(visible=False, add_book=False)
     app.display_alerts = False
     app.screen_updating = False
     wb = None
+    tmpdir = None
     try:
         wb = app.books.open(out_path)
         names = [s.name for s in wb.sheets]
@@ -388,7 +395,9 @@ def _write_distribution_xlwings(out_path, result, colors=None):
             sh.clear()
         else:
             sh = wb.sheets.add("distribution", after=wb.sheets[len(wb.sheets) - 1])
-        _write_distribution(wb, sh, result, colors)
+        chart_map = _write_distribution(wb, sh, result, colors)
+        if attach_fail_item and chart_map:
+            tmpdir = _attach_fail_item_charts(wb, result, chart_map)
         sh.activate()
         wb.save()
     finally:
@@ -397,6 +406,53 @@ def _write_distribution_xlwings(out_path, result, colors=None):
                 wb.close()
         finally:
             app.quit()
+            if tmpdir:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _attach_fail_item_charts(wb, result, chart_map):
+    """fail_item 시트 오른쪽에 fail bin 차트(=main fail subject 의 distribution)를
+    PNG(원본 1/3 크기)로 불량율 높은 순(왼→오)으로 같은 행에 나열. tmpdir 반환."""
+    import os
+    import tempfile
+
+    names = [s.name for s in wb.sheets]
+    if "fail_item" not in names:
+        return None
+    fi = wb.sheets["fail_item"]
+
+    fails = [r for r in result.yield_rows if str(r.get("bin")) != "1"]
+    fails.sort(key=lambda r: -(r.get("avg") or 0.0))   # 불량율 높은 순
+    if not fails:
+        return None
+
+    # fail_item 표 폭: bin, Item, {src}_count/{src}_yield×N, avg, comment
+    ncols = 2 + 2 * len(result.sources) + 2
+    last_col = _START_COL + ncols - 1
+    w, h = _CHART_W / 3.0, _CHART_H / 3.0
+    try:
+        start_left = fi.range((1, last_col + 2)).left   # 표 오른쪽 한 칸 띄움
+        top = fi.range((_HEADER_ROW + 1, 1)).top
+    except Exception:
+        start_left, top = 700.0, 60.0
+
+    tmpdir = tempfile.mkdtemp(prefix="honey_fi_")
+    x = start_left
+    seq = 0
+    for r in fails:
+        ch = chart_map.get(r.get("Main Fail subject"))
+        if ch is None:
+            continue
+        png = os.path.join(tmpdir, f"fi_{seq}.png")
+        seq += 1
+        try:
+            _chart_com(ch).Export(png, "PNG")
+            fi.pictures.add(png, name=f"fi_chart_{seq}", left=x, top=top,
+                            width=w, height=h)
+            x += w
+        except Exception:
+            pass
+    return tmpdir
 
 
 def _hex_to_excel_rgb(hex_color):
@@ -427,6 +483,7 @@ def _write_distribution(wb, sh, result, colors=None):
     sh.range((1, _INDEX_COL)).column_width = 26
 
     cur = 1  # 헬퍼 시트 행 커서
+    chart_map = {}  # subject 이름 → xlwings Chart (fail_item PNG 부착에 재활용)
     for i, d in enumerate(dists):
         # source별 (value, 누적 0~1) 준비
         series_list = []
@@ -513,6 +570,7 @@ def _write_distribution(wb, sh, result, colors=None):
 
         idx_row = 2 + grow * _ROWS_PER_CHART + col
         sh.range((idx_row, _INDEX_COL)).value = f"[{col + 1}] {d.subject}"
+        chart_map[d.subject] = ch
         cur = bot_row + 2
 
     _finalize_title_row(sh)
@@ -520,6 +578,7 @@ def _write_distribution(wb, sh, result, colors=None):
         data.api.Visible = False  # 헬퍼 시트 숨김
     except Exception:
         pass
+    return chart_map
 
 
 def _chart_com(ch):
