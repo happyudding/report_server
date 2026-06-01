@@ -77,7 +77,12 @@ def _compute_analysis_key(xlsx_bytes: bytes, meta: dict) -> str:
 
 
 def _yield_row_to_summary(row: dict) -> dict:
-    """yield 시트의 한 행 dict 를 report_analysis_summary 컬럼으로 매핑."""
+    """yield 시트의 한 행 dict 를 report_analysis_summary 컬럼으로 매핑.
+
+    templete 레이아웃의 yield 행은 `bin | Item | {src}_count | {src}_yield | avg | comment`.
+    - yield_percent : avg(소스 평균 수율%). legacy `portion(%)`/`yield` 도 fallback.
+    - fail_count    : {src}_count 합(전체 개수). legacy `count`/`fail_count` fallback.
+    """
     bin_val = row.get("bin")
     bin_num = None
     try:
@@ -86,12 +91,20 @@ def _yield_row_to_summary(row: dict) -> dict:
     except (ValueError, TypeError):
         bin_num = None
 
+    yp = row.get("avg")
+    if yp is None:
+        yp = (row.get("portion(%)") or row.get("portion")
+              or row.get("yield") or row.get("yield_percent"))
+
+    src_count = sum(int(v) for k, v in row.items()
+                    if k.endswith("_count") and isinstance(v, (int, float)))
+    fail_count = src_count if src_count else _to_int(row.get("count") or row.get("fail_count"))
+
     return {
         "item_name": str(row.get("bin") if bin_val is not None else "unknown"),
         "bin_number": bin_num,
-        "yield_percent": _to_float(row.get("portion(%)") or row.get("portion")
-                                   or row.get("yield") or row.get("yield_percent")),
-        "fail_count": _to_int(row.get("count") or row.get("fail_count")),
+        "yield_percent": _to_float(yp),
+        "fail_count": fail_count,
         "cpk_val": None,
         "mean_val": _to_float(row.get("avg") or row.get("average")),
         "stdev_val": None,
