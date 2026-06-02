@@ -13,6 +13,7 @@ from .constants import (
     DATA_START_ROW, LOWER_LIMIT_ROW, META_COLUMNS, N_META_COLUMNS,
     SUBJECT_NAME_ROW, UNITS_ROW, UPPER_LIMIT_ROW,
 )
+from .csvfile_to_df import DF_YIELD_COLUMNS, csvfile_to_df  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -169,21 +170,7 @@ def split_components(norm: pd.DataFrame) -> dict:
     }
 
 
-def csvfile_to_df(path) -> pd.DataFrame:
-    """파일 경로 → df_honey 포맷 단일 DataFrame (정규화). 실패 시 ValueError.
-
-    df_honey 포맷: 행 0=subject명, 1=Units, 2=Lower, 3=Upper, 4~5=limit 중복,
-    6~=데이터 / 열 0~4=meta(DUT/XCoord/YCoord/Bin/Serial), 5~=subject 측정값.
-    df_honey 클래스가 이 단일 DataFrame 을 보유하고 컴포넌트를 파생한다.
-    """
-    path = Path(path)
-    raw = _read_raw(path)
-    norm = normalize_raw(raw)
-    if norm.empty or norm.shape[0] <= DATA_START_ROW:
-        raise ValueError(f"인식 불가/빈 입력 파일: {path.name}")
-    return norm
-
-
 def load_components(path) -> dict:
     """파일 경로 → 구성 요소 dict (정규화 + 분리). 실패 시 ValueError."""
-    return split_components(csvfile_to_df(path))
+    df, _ = csvfile_to_df(path)
+    return split_components(df)

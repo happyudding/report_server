@@ -10,7 +10,10 @@ from __future__ import annotations
 
 from typing import Optional
 
+import pandas as pd
+
 from . import _builders as B
+from .csvfile_to_df import DF_YIELD_COLUMNS
 from .df_honey import df_honey
 
 
@@ -25,6 +28,15 @@ class df_honey_group:
     def from_csvs(cls, paths, report_meta=None) -> "df_honey_group":
         mass_data_list = [df_honey.from_csv(p, report_meta=report_meta) for p in paths]
         return cls(mass_data_list)
+
+    @property
+    def combined_df_yield(self) -> pd.DataFrame:
+        """각 source 의 df_yield 를 이어붙인 전체 yield 집계 DataFrame."""
+        frames = [md.df_yield for md in self._mass_data_map.values()
+                  if md.df_yield is not None and not md.df_yield.empty]
+        if not frames:
+            return pd.DataFrame(columns=DF_YIELD_COLUMNS)
+        return pd.concat(frames, ignore_index=True)
 
     @property
     def mass_data_map(self) -> dict:

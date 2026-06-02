@@ -26,6 +26,7 @@ from .constants import (
     DATA_START_ROW, LOWER_LIMIT_ROW, META_COLUMNS, N_META_COLUMNS,
     SUBJECT_NAME_ROW, UNITS_ROW, UPPER_LIMIT_ROW,
 )
+from .csvfile_to_df import DF_YIELD_COLUMNS
 from .models import ReportMeta
 
 
@@ -35,6 +36,7 @@ class df_honey:
         self.df = df.reset_index(drop=True)
         self.name = name
         self.report_meta = report_meta or ReportMeta()
+        self.df_yield: pd.DataFrame = pd.DataFrame(columns=DF_YIELD_COLUMNS)
 
     # ------------------------------------------------------------------ 생성
 
@@ -42,13 +44,15 @@ class df_honey:
     def from_csv(cls, path, report_meta: Optional[ReportMeta] = None,
                  name: Optional[str] = None) -> "df_honey":
         path = Path(path)
-        df = csv_loader.csvfile_to_df(path)
+        df, df_yield = csv_loader.csvfile_to_df(path)
         rm = report_meta or ReportMeta()
         if not rm.source_path:
             rm.source_path = str(path)
         if not rm.sheet_name:
             rm.sheet_name = path.stem
-        return cls(df, name=name or path.stem, report_meta=rm)
+        instance = cls(df, name=name or path.stem, report_meta=rm)
+        instance.df_yield = df_yield
+        return instance
 
     @classmethod
     def from_dataframe(cls, raw_df: pd.DataFrame, name: str = "data",
@@ -108,7 +112,9 @@ class df_honey:
         """
         cols = list(range(N_META_COLUMNS)) + [N_META_COLUMNS + int(i) for i in keep_idx]
         new_df = self.df.iloc[:, cols].copy()
-        return df_honey(new_df, name=self.name, report_meta=self.report_meta)
+        new = df_honey(new_df, name=self.name, report_meta=self.report_meta)
+        new.df_yield = self.df_yield.copy()
+        return new
 
     def subset_rows(self, mask, name: Optional[str] = None) -> "df_honey":
         """데이터행 mask(bool, 길이=데이터행 수) 로 행 필터 → 헤더행 0~5 유지 새 df_honey."""
@@ -117,7 +123,9 @@ class df_honey:
         data = self.df.iloc[DATA_START_ROW:]
         kept = data[m]
         new_df = pd.concat([head, kept], ignore_index=True)
-        return df_honey(new_df, name=name or self.name, report_meta=self.report_meta)
+        new = df_honey(new_df, name=name or self.name, report_meta=self.report_meta)
+        new.df_yield = self.df_yield.copy()
+        return new
 
     # ------------------------------------------------------------------ 검증
 

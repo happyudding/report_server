@@ -96,7 +96,10 @@ ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distributi
 # 템플릿 table 시트의 표 시작 위치 (A열 비움, 제목 A1, 헤더 3행, 데이터 4행~)
 _HEADER_ROW = 3
 _START_COL = 2  # B열
-_FAIL_ITEM_ROW_HEIGHT = 78  # fail_item 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
+_FAIL_ITEM_ROW_HEIGHT = 78  # fail_item / issue_table 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
+_NARROW_COL_WIDTH = 6.5    # bin / count / yield / avg / comment 등 짧은 데이터
+_DIST_COL_WIDTH   = 27.1   # Distribution 열 (썸네일 이미지 크기 기준)
+_ITEM_COL_WIDTH   = 20.0   # Item / Category 열 (긴 텍스트)
 
 
 # ── 템플릿 경로 ──────────────────────────────────────────────────────────────
@@ -181,6 +184,10 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
             done += 1
             _progress(progress_cb, done, total, ws.title)
 
+    # 모든 시트 눈금선 제거 (openpyxl 단계)
+    for nm in wb.sheetnames:
+        wb[nm].sheet_view.showGridLines = False
+
     wb.save(out_path)
 
     # Phase 2: distribution 차트 (xlwings / Excel COM) + fail_item PNG 썸네일
@@ -217,26 +224,33 @@ def _fill_summary(ws, result):
     meta = result.meta
     title = " ".join(x for x in [meta.product_type, meta.product, meta.lot_id] if x).strip()
 
-    feat = result.summary_feature()
-    # 1. Device Feature 값행 (5행) — 라벨행(4행)은 템플릿 유지
+    # 1. Device Feature 라벨행(4행) 업데이트 + 값행(5행)
     _safe_set(ws, "A1", title or "REPORT TITLE")
-    _safe_set(ws, "B5", feat["Total DUT"])
-    _safe_set(ws, "D5", feat["Pass (Bin 1)"])
-    _safe_set(ws, "E5", feat["Fail Types"])
-    _safe_set(ws, "F5", feat["Sources"])
-    _safe_set(ws, "G5", feat["Subjects"])
-    _safe_set(ws, "H5", feat["EVT Version"])
+    _safe_set(ws, "B4", "DEVICE")
+    _safe_set(ws, "D4", "customer")
+    _safe_set(ws, "E4", "PKG Type")
+    _safe_set(ws, "F4", "GrossDie")
+    _safe_set(ws, "G4", "Process Line")
+    _safe_set(ws, "H4", "EVT version")
+    _safe_set(ws, "B5", "")                        # DEVICE — 미입력
+    _safe_set(ws, "D5", "")                        # customer — 미입력
+    _safe_set(ws, "E5", "")                        # PKG Type — 미입력
+    _safe_set(ws, "F5", "")                        # GrossDie — 미입력
+    _safe_set(ws, "G5", "")                        # Process Line — 미입력
+    _safe_set(ws, "H5", meta.revision or "-")      # EVT version
 
-    # 2. Yield — Lot NO / Yield 값 (라벨행 8행 유지)
+    # 2. Yield — Lot NO / 전체 평균 yield (pass bin avg)
     _safe_set(ws, "B9", meta.lot_id or "-")
-    _safe_set(ws, "D9", result.pass_yield if result.pass_yield is not None else "-")
+    pass_row = next((r for r in result.yield_rows if str(r.get("bin")) == "1"), None)
+    pass_avg = pass_row.get("avg") if pass_row else result.pass_yield
+    _safe_set(ws, "D9", pass_avg if pass_avg is not None else "-")
 
-    # Major Fail Bins: E9~E13 라벨(1st~5th Fail)은 유지, F=subject / G=ratio 채움
-    majors = result.major_fail_subjects(5)
+    # Major Fail Bins: avg 내림차순 상위 5개 fail bin (F=Main Fail subject, G=avg)
+    majors = result.major_fail_bins(5)
     for i in range(5):
         r = 9 + i
-        _safe_set(ws, f"F{r}", majors[i]["subject"] if i < len(majors) else None)
-        _safe_set(ws, f"G{r}", majors[i]["ratio"] if i < len(majors) else None)
+        _safe_set(ws, f"F{r}", majors[i].get("Main Fail subject") if i < len(majors) else None)
+        _safe_set(ws, f"G{r}", majors[i].get("avg") if i < len(majors) else None)
     # 3. Evaluation Summary 는 템플릿 플레이스홀더("-") 그대로 둔다.
 
 
@@ -258,8 +272,13 @@ def _yield_table(result):
 
 
 def _fill_yield(ws, result):
-    header, rows = _yield_table(result)
+    if result.df_yield is not None and not result.df_yield.empty:
+        header = list(result.df_yield.columns)
+        rows = [list(r) for r in result.df_yield.itertuples(index=False)]
+    else:
+        header, rows = _yield_table(result)
     _fill_table(ws, header, rows)
+    _apply_table_col_widths(ws, header)
 
 
 def _fill_fail_item(ws, result):
@@ -278,6 +297,7 @@ def _fill_fail_item(ws, result):
     _fill_table(ws, header, rows)
     for i in range(len(rows)):
         ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
+    _apply_table_col_widths(ws, header)
 
 
 def _fill_cpk(ws, result):
@@ -353,6 +373,10 @@ def _fill_issue_table(ws, result):
     rows.append(["CPK"] + [""] * (len(header) - 1))
     rows.append(["ETC"] + [""] * (len(header) - 1))
     _fill_table(ws, header, rows)
+    n_yield = len(result.yield_rows)
+    for i in range(n_yield):
+        ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
+    _apply_table_col_widths(ws, header)
 
 
 def _fill_raw_data(ws, df):
@@ -462,6 +486,24 @@ def _apply_style(cell, st):
     cell.protection = st["protection"]
 
 
+def _apply_table_col_widths(ws, header, start_col=_START_COL):
+    """헤더 이름 기반 열너비 일괄 설정.
+
+    Distribution → _DIST_COL_WIDTH, Item/Category → _ITEM_COL_WIDTH, 나머지 → _NARROW_COL_WIDTH.
+    소스 수에 따라 동적으로 늘어나는 count/yield 열도 자동 처리.
+    """
+    from openpyxl.utils import get_column_letter
+    _WIDE = {"Item", "Category"}
+    for i, name in enumerate(header):
+        letter = get_column_letter(start_col + i)
+        if name == "Distribution":
+            ws.column_dimensions[letter].width = _DIST_COL_WIDTH
+        elif name in _WIDE:
+            ws.column_dimensions[letter].width = _ITEM_COL_WIDTH
+        else:
+            ws.column_dimensions[letter].width = _NARROW_COL_WIDTH
+
+
 def _bin_label(value):
     """bin 표시값: 정수 문자열이면 int, 아니면 원본."""
     s = str(value).strip()
@@ -546,6 +588,13 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
             )
             if tmpdir:
                 tmpdirs.append(tmpdir)
+        # 모든 시트 눈금선 제거 (xlwings/Excel COM 단계 — distribution 포함)
+        for s in wb.sheets:
+            try:
+                s.activate()
+                app.api.ActiveWindow.DisplayGridlines = False
+            except Exception:
+                pass
         sh.activate()
         with _prof("wb_save"):
             wb.save()

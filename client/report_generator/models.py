@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 import numpy as np
+import pandas as pd
 
 
 @dataclass
@@ -50,6 +51,7 @@ class AnalysisResult:
     major_fail_subject_rows: list = field(default_factory=list)  # [{subject, fail_count, ratio}]
     total_dut: int = 0
     pass_yield: Optional[float] = None                   # Bin 1 portion (%)
+    df_yield: Optional[pd.DataFrame] = None              # per-(step,Bin,Tno,item) yield 집계
 
     def summary_feature(self) -> dict:
         """summary 시트 Device Feature 섹션 값 (Fail Types 는 fail bin 번호 목록)."""
