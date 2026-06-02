@@ -30,6 +30,8 @@ _PROF_CNT = defaultdict(int)
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _EXPORT_MOVE_RETRIES = 2
 _EXPORT_RETRY_SLEEP = 0.08
+_EXCEL_QUIT_FILE_READY_RETRIES = 10
+_EXCEL_QUIT_FILE_READY_SLEEP = 1.0
 
 
 @contextlib.contextmanager
@@ -181,6 +183,26 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     }
     want_dist = "distribution" in sel and bool(result.distributions)
 
+    # diff compare: a_only / b_only 의 CPK·Distribution 추가 시트 스펙 준비
+    dc = getattr(result, "diff_classification", None)
+    diff_cpk_specs = []   # [(시트명, cpk_rows)]
+    diff_dist_specs = []  # [(시트명, dists, sources)]
+    if dc:
+        name_a, name_b = dc["name_a"], dc["name_b"]
+        if "cpk" in sel:
+            if result.cpk_rows_a_only:
+                diff_cpk_specs.append((f"CPK_{name_a}", result.cpk_rows_a_only))
+            if result.cpk_rows_b_only:
+                diff_cpk_specs.append((f"CPK_{name_b}", result.cpk_rows_b_only))
+        if "distribution" in sel:
+            if result.distributions_a_only:
+                diff_dist_specs.append((f"Distribution_{name_a}",
+                                        result.distributions_a_only, [name_a]))
+            if result.distributions_b_only:
+                diff_dist_specs.append((f"Distribution_{name_b}",
+                                        result.distributions_b_only, [name_b]))
+    want_dist_phase = want_dist or bool(diff_dist_specs)
+
     wb = openpyxl.Workbook()
     wb.remove(wb.active)  # 기본 Sheet 제거 후 필요한 시트만 생성
     for nm in ALL_SHEETS:
@@ -191,7 +213,7 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
         wb.create_sheet(_report_sheet_display_name("distribution"))
 
     total = len([s for s in sel if s in table_writers]) + (len(raw_sheets) if raw_sheets else 0) \
-        + (1 if want_dist else 0)
+        + (1 if want_dist else 0) + len(diff_cpk_specs) + len(diff_dist_specs)
     done = 0
 
     # table 시트 채움 (템플릿 순서 유지)
@@ -201,6 +223,14 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
             table_writers[nm](wb[sheet_name], result)
             done += 1
             _progress(progress_cb, done, total, nm)
+
+    # diff compare: a_only / b_only CPK 시트 (openpyxl 단계 — distribution 은 phase 2)
+    for disp, cpk_rows in diff_cpk_specs:
+        title = _unique_sheet_name(wb, disp)
+        ws = wb.create_sheet(title)
+        _fill_cpk_rows(ws, cpk_rows)
+        done += 1
+        _progress(progress_cb, done, total, title)
 
     # Raw Data — source(input file)별 df_honey 포맷 시트를 맨 앞에 순서대로 추가
     if raw_sheets:
@@ -221,13 +251,15 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     wb.save(out_path)
 
     # Phase 2: distribution 차트 (xlwings / Excel COM) + fail_item PNG 썸네일
-    if want_dist:
+    if want_dist_phase:
         try:
             _write_distribution_xlwings(out_path, result, colors,
                                         attach_fail_item=("fail_item" in sel),
                                         dist_progress_cb=dist_progress_cb,
-                                        attach_progress_cb=attach_progress_cb)
-            done += 1
+                                        attach_progress_cb=attach_progress_cb,
+                                        write_main=want_dist,
+                                        extra_dist=diff_dist_specs)
+            done += 1 + len(diff_dist_specs)
             _progress(progress_cb, done, total, "distribution")
         except Exception as exc:
             # Excel/xlwings 미설치·실패 → distribution 만 생략(table 시트는 이미 저장됨)
@@ -520,11 +552,15 @@ def _fill_fail_values_section(ws, result):
 
 
 def _fill_cpk(ws, result):
+    _fill_cpk_rows(ws, result.cpk_rows)
+
+
+def _fill_cpk_rows(ws, cpk_rows):
     header = ["TEST NAME", "LOW SPEC", "HIGH SPEC", "SCALE", "계열", "n",
               "min", "median", "max", "average", "stdev",
               "cpl", "cpu", "cp", "cpk", "comment"]
     rows = []
-    for r in result.cpk_rows:
+    for r in cpk_rows:
         rows.append([
             r.get("subject"), r.get("lower_limit"), r.get("upper_limit"),
             r.get("units"), r.get("source"), r.get("n"), r.get("min"),
@@ -651,10 +687,19 @@ def _fill_raw_data(ws, df):
 
 def _unique_sheet_name(wb, name, reserved=()):
     """Excel 시트명 규칙(≤31자, []:*?/\\ 금지, 중복 불가)으로 정제."""
+    existing = {s.lower() for s in wb.sheetnames} | {str(s).lower() for s in reserved}
+    return _excel_safe_sheet_name(name, existing)
+
+
+def _excel_safe_sheet_name(name, existing_lower):
+    """Excel 시트명 규칙(≤31자, []:*?/\\ 금지, 중복 불가)으로 정제.
+
+    existing_lower: 이미 사용 중인 시트명(소문자) 집합. 충돌 시 _n 접미사로 회피.
+    """
     import re
     base = re.sub(r"[\[\]:*?/\\]", "_", str(name or "Sheet")).strip()[:31] or "Sheet"
     cand, n = base, 2
-    existing = {s.lower() for s in wb.sheetnames} | {str(s).lower() for s in reserved}
+    existing = {str(s).lower() for s in existing_lower}
     while cand.lower() in existing:
         suffix = f"_{n}"
         cand = base[:31 - len(suffix)] + suffix
@@ -933,11 +978,16 @@ def _report_sheet_display_name(name):
 # ── distribution (xlwings / Excel COM) ───────────────────────────────────────
 
 def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=False,
-                                dist_progress_cb=None, attach_progress_cb=None):
+                                dist_progress_cb=None, attach_progress_cb=None,
+                                write_main=True, extra_dist=None):
     """openpyxl 로 저장된 파일을 열어 distribution 시트 + 차트를 추가한다.
 
     attach_fail_item=True 면 distribution 차트를 PNG 로 export 해 fail_item 시트에
     불량율 높은 순으로 1/3 크기 썸네일로 부착한다 (차트 원본 재생성 없이 재활용).
+
+    write_main=False 면 공통 distribution 메인 시트는 건너뛴다 (common 분포가 없는
+    diff 케이스). extra_dist=[(시트명, dists, sources), ...] 는 diff compare 의
+    a_only/b_only distribution 시트를 추가로 그린다 (fail_item/issue 부착 없음).
     """
     import shutil
     import xlwings as xw
@@ -958,34 +1008,58 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
             app.api.EnableEvents = False
         except Exception:
             pass
-        with _prof("clear"):
-            names = [s.name for s in wb.sheets]
-            dist_name = next((n for n in names if n.lower() == "distribution"), None)
-            if dist_name:
-                sh = wb.sheets[dist_name]
-                for c in list(sh.charts):     # 템플릿/이전 차트 제거
+        last_sheet = None
+        if write_main:
+            with _prof("clear"):
+                names = [s.name for s in wb.sheets]
+                dist_name = next((n for n in names if n.lower() == "distribution"), None)
+                if dist_name:
+                    sh = wb.sheets[dist_name]
+                    for c in list(sh.charts):     # 템플릿/이전 차트 제거
+                        try:
+                            c.delete()
+                        except Exception:
+                            pass
+                    sh.clear()
+                else:
+                    sh = wb.sheets.add(_report_sheet_display_name("distribution"),
+                                       after=wb.sheets[len(wb.sheets) - 1])
+            chart_map = _write_distribution(wb, sh, result, colors,
+                                            dist_progress_cb=dist_progress_cb)
+            last_sheet = sh
+            if attach_fail_item and chart_map:
+                tmpdir = _attach_fail_item_charts(
+                    wb, result, chart_map, attach_progress_cb=attach_progress_cb
+                )
+                if tmpdir:
+                    tmpdirs.append(tmpdir)
+            if chart_map:
+                tmpdir = _attach_issue_table_charts(
+                    wb, result, chart_map, attach_progress_cb=attach_progress_cb
+                )
+                if tmpdir:
+                    tmpdirs.append(tmpdir)
+
+        # diff compare: a_only / b_only distribution 시트 추가
+        for raw_title, dists, sources in (extra_dist or []):
+            if not dists:
+                continue
+            existing = {s.name.lower() for s in wb.sheets}
+            sheet_title = _excel_safe_sheet_name(raw_title, existing)
+            if sheet_title.lower() in existing:
+                d_sh = wb.sheets[sheet_title]
+                for c in list(d_sh.charts):
                     try:
                         c.delete()
                     except Exception:
                         pass
-                sh.clear()
+                d_sh.clear()
             else:
-                sh = wb.sheets.add(_report_sheet_display_name("distribution"),
-                                   after=wb.sheets[len(wb.sheets) - 1])
-        chart_map = _write_distribution(wb, sh, result, colors,
-                                        dist_progress_cb=dist_progress_cb)
-        if attach_fail_item and chart_map:
-            tmpdir = _attach_fail_item_charts(
-                wb, result, chart_map, attach_progress_cb=attach_progress_cb
-            )
-            if tmpdir:
-                tmpdirs.append(tmpdir)
-        if chart_map:
-            tmpdir = _attach_issue_table_charts(
-                wb, result, chart_map, attach_progress_cb=attach_progress_cb
-            )
-            if tmpdir:
-                tmpdirs.append(tmpdir)
+                d_sh = wb.sheets.add(sheet_title, after=wb.sheets[len(wb.sheets) - 1])
+            _write_distribution(wb, d_sh, result, colors, dists=dists,
+                                sources=sources, title=sheet_title)
+            last_sheet = d_sh
+
         # 모든 시트 눈금선 제거 (xlwings/Excel COM 단계 — distribution 포함)
         for s in wb.sheets:
             try:
@@ -993,7 +1067,8 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
                 app.api.ActiveWindow.DisplayGridlines = False
             except Exception:
                 pass
-        sh.activate()
+        if last_sheet is not None:
+            last_sheet.activate()
         with _prof("wb_save"):
             wb.save()
     finally:
@@ -1004,6 +1079,7 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
         finally:
             with _prof("wb_close"):
                 app.quit()
+            _wait_for_xlsx_ready(out_path)
             try:
                 _validate_embedded_images(out_path)
             finally:
@@ -1244,6 +1320,23 @@ def _validate_embedded_images(xlsx_path):
         raise RuntimeError(f"invalid xlsx package: {xlsx_path}") from exc
 
 
+def _wait_for_xlsx_ready(xlsx_path):
+    last_exc = None
+    for attempt in range(1, _EXCEL_QUIT_FILE_READY_RETRIES + 1):
+        try:
+            with zipfile.ZipFile(xlsx_path) as zf:
+                zf.namelist()
+            return
+        except (zipfile.BadZipFile, PermissionError, OSError) as exc:
+            last_exc = exc
+            if attempt >= _EXCEL_QUIT_FILE_READY_RETRIES:
+                break
+            time.sleep(_EXCEL_QUIT_FILE_READY_SLEEP)
+    raise RuntimeError(
+        f"xlsx file is not ready after Excel quit: {xlsx_path}"
+    ) from last_exc
+
+
 def _is_package_integrity_error(exc):
     msg = str(exc)
     return ("broken image relationship" in msg
@@ -1415,7 +1508,8 @@ def _apply_per_chart(chart, spec, legend_fix):
             pass
 
 
-def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None):
+def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
+                        dists=None, sources=None, title="Distribution"):
     """각 subject 의 누적분포(CDF) 차트. x=value, y=0~100%(0~1 스케일).
 
     source(input file)별 series + LSL/USL 세로 한계선(series 1,2). 차트는 gap 없이
@@ -1423,16 +1517,28 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None):
 
     성능: _dist 데이터는 차트별로 쓰지 않고 한 번에 일괄기입(2-pass)하고, 시리즈
     참조는 COM Range(A1 문자열)로 직접 건다.
+
+    dists/sources: diff compare 의 a_only/b_only 시트용 override (None 이면
+    result.distributions / result.sources 사용).
     """
-    dists = result.distributions
+    dists = result.distributions if dists is None else dists
+    sources = result.sources if sources is None else sources
     if not dists:
         sh.range("A1").value = "선택된 항목에 분포 데이터가 없습니다."
         return
 
-    data = wb.sheets.add("_dist", after=sh)
+    # diff compare 는 시트별로 _write_distribution 을 여러 번 호출하므로 헬퍼
+    # 시트명이 충돌하지 않도록 대상 시트명 기반으로 유니크하게 만든다.
+    existing_names = {s.name for s in wb.sheets}
+    data_sheet_name = "_dist"
+    _suffix = 2
+    while data_sheet_name in existing_names:
+        data_sheet_name = f"_dist{_suffix}"
+        _suffix += 1
+    data = wb.sheets.add(data_sheet_name, after=sh)
     data_api = data.api  # COM Worksheet 캐시 (시리즈 참조용)
 
-    _put_title(sh, 8, "Distribution")
+    _put_title(sh, 8, title)
     sh.range((1, _INDEX_COL)).value = "Item Index (Ctrl+F)"
     sh.range((1, _INDEX_COL)).column_width = 26
 
@@ -1512,7 +1618,7 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None):
 
     # ── Pass 2: 차트 생성 — 표준 레이아웃은 템플릿 1개 만들어 COM Duplicate 복제 ─
     # (format/style 반복 COM 호출 회피). 비표준(한계 누락 등)은 개별 빌드.
-    n_sources = len(result.sources)
+    n_sources = len(sources)
     standard = [s for s in specs if _is_standard(s, n_sources)]
     others = [s for s in specs if not _is_standard(s, n_sources)]
     n_dist_charts = len(specs)

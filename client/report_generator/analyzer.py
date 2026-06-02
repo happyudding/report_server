@@ -24,8 +24,6 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     if not mass_data_map:
         raise ValueError("분석할 데이터가 없습니다.")
 
-    first = next(iter(mass_data_map.values()))
-
     yield_rows = work.yield_rate()
     cpk_rows = work.cpk()
     fail_item_rows = work.fail_items()
@@ -33,16 +31,7 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     summary_rows = work.summary()
     major_fail_subject_rows = B.build_major_fail_subjects(mass_data_map)
 
-    subjects_meta = [
-        {
-            "subject_id": idx,
-            "subject": subject,
-            "units": first.units[idx] if idx < len(first.units) else "",
-            "lower_limit": B._json_safe(first.lower_limits[idx] if idx < len(first.lower_limits) else None),
-            "upper_limit": B._json_safe(first.upper_limits[idx] if idx < len(first.upper_limits) else None),
-        }
-        for idx, subject in enumerate(first.subjects)
-    ]
+    subjects_meta = _subjects_meta_from_group(work)
 
     distributions = _build_distributions(work, subjects_meta)
 
@@ -55,7 +44,7 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     }
 
     combined_df_yield = group.combined_df_yield
-    return AnalysisResult(
+    result = AnalysisResult(
         meta=meta,
         sources=work.names(),
         subjects=subjects_meta,
@@ -71,6 +60,56 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
         df_yield=combined_df_yield if not combined_df_yield.empty else None,
         fail_value_rows=fail_value_rows,
     )
+
+    _apply_diff_compare(work, result)
+    return result
+
+
+def _apply_diff_compare(group: df_honey_group, result: AnalysisResult) -> None:
+    """2개 파일 subject 불일치 시 diff compare 결과를 result 에 채운다.
+
+    공통(common) CPK/Distribution 은 이름 기반으로 재계산해 메인 시트(cpk/distribution)
+    의 위치 기반 오정렬을 바로잡고, a_only/b_only 는 별도 필드에 담는다. Yield/Fail
+    Item/Issue Table/Summary 는 병합 기준 기존 계산을 그대로 둔다.
+    """
+    split = group.split_for_diff()
+    if split is None:
+        return
+    cl = split["classification"]
+    common_g, a_only_g, b_only_g = split["common"], split["a_only"], split["b_only"]
+
+    result.diff_classification = cl
+
+    # 메인 cpk/distribution 을 common subjects 기준(이름 매칭)으로 재계산
+    result.cpk_rows = B.build_cpk_for_subjects(common_g.mass_data_map, cl["common"])
+    result.subjects = _subjects_meta_from_group(common_g)
+    result.distributions = _build_distributions(common_g, result.subjects)
+
+    # a_only / b_only
+    result.cpk_rows_a_only = B.build_cpk_for_subjects(a_only_g.mass_data_map, cl["a_only"])
+    result.cpk_rows_b_only = B.build_cpk_for_subjects(b_only_g.mass_data_map, cl["b_only"])
+    result.subjects_a_only = _subjects_meta_from_group(a_only_g)
+    result.subjects_b_only = _subjects_meta_from_group(b_only_g)
+    result.distributions_a_only = _build_distributions(a_only_g, result.subjects_a_only)
+    result.distributions_b_only = _build_distributions(b_only_g, result.subjects_b_only)
+
+
+def _subjects_meta_from_group(group: df_honey_group) -> list:
+    """그룹 첫 source 의 subject 메타([{subject_id, subject, units, lower/upper_limit}])."""
+    mass_data_map = group.mass_data_map
+    if not mass_data_map:
+        return []
+    first = next(iter(mass_data_map.values()))
+    return [
+        {
+            "subject_id": idx,
+            "subject": subject,
+            "units": first.units[idx] if idx < len(first.units) else "",
+            "lower_limit": B._json_safe(first.lower_limits[idx] if idx < len(first.lower_limits) else None),
+            "upper_limit": B._json_safe(first.upper_limits[idx] if idx < len(first.upper_limits) else None),
+        }
+        for idx, subject in enumerate(first.subjects)
+    ]
 
 
 def _build_distributions(group: df_honey_group, subjects_meta: list) -> list:

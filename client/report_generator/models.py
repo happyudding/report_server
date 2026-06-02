@@ -54,6 +54,15 @@ class AnalysisResult:
     df_yield: Optional[pd.DataFrame] = None              # per-(step,Bin,Tno,item) yield 집계
     fail_value_rows: dict = field(default_factory=dict)  # {source_name: list[dict]}
 
+    # diff compare (None = diff mode 아님). 2개 파일 subject 불일치 시 analyzer 가 채움.
+    diff_classification: Optional[dict] = None           # {common,a_only,b_only,name_a,name_b}
+    cpk_rows_a_only: Optional[list] = None               # list[dict] (a_only subjects)
+    cpk_rows_b_only: Optional[list] = None               # list[dict] (b_only subjects)
+    distributions_a_only: Optional[list] = None          # list[DistSeries]
+    distributions_b_only: Optional[list] = None          # list[DistSeries]
+    subjects_a_only: Optional[list] = None               # [{subject_id, subject, ...}]
+    subjects_b_only: Optional[list] = None               # [{subject_id, subject, ...}]
+
     def summary_feature(self) -> dict:
         """summary 시트 Device Feature 섹션 값 (Fail Types 는 fail bin 번호 목록)."""
         fail_bins = sorted({str(r.get("bin")) for r in self.yield_rows

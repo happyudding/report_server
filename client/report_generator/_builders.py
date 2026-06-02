@@ -223,6 +223,75 @@ def _calc_stats(series, lo, hi):
     }
 
 
+def classify_subjects(mass_data_map):
+    """2개 파일의 subject 를 이름 기준으로 common/a_only/b_only 분류.
+
+    파일이 2개가 아니거나 두 파일의 subject 집합이 동일하면 None 반환
+    (diff compare 불필요 → 기존 단일 모드 유지).
+    반환 dict: {common, a_only, b_only, name_a, name_b}. 각 목록은 해당 파일의
+    원본 subject 순서를 유지한다.
+    """
+    if len(mass_data_map) != 2:
+        return None
+    name_a, name_b = list(mass_data_map.keys())
+    subs_a = [str(s) for s in mass_data_map[name_a].subjects]
+    subs_b = [str(s) for s in mass_data_map[name_b].subjects]
+    set_a, set_b = set(subs_a), set(subs_b)
+    if set_a == set_b:
+        return None
+    return {
+        "common": [s for s in subs_a if s in set_b],
+        "a_only": [s for s in subs_a if s not in set_b],
+        "b_only": [s for s in subs_b if s not in set_a],
+        "name_a": name_a,
+        "name_b": name_b,
+    }
+
+
+def build_cpk_for_subjects(mass_data_map, subject_names):
+    """지정 subject 이름 목록에 대해서만 CPK 계산 (이름 기반 인덱스 조회).
+
+    build_cpk 는 첫 파일 기준 위치(idx)로 모든 파일을 슬라이싱하므로 파일별 subject
+    구성이 다르면 어긋난다. 이 함수는 각 subject 를 보유한 파일에서만 해당 이름의
+    열을 찾아 통계를 낸다 (diff compare 의 common/a_only/b_only 시트용).
+    """
+    rows = []
+    for subject_name in subject_names:
+        relevant = {n: md for n, md in mass_data_map.items()
+                    if subject_name in [str(s) for s in md.subjects]}
+        if not relevant:
+            continue
+        first_md = next(iter(relevant.values()))
+        names0 = [str(s) for s in first_md.subjects]
+        idx0 = names0.index(subject_name)
+        lo = first_md.lower_limits[idx0] if idx0 < len(first_md.lower_limits) else None
+        hi = first_md.upper_limits[idx0] if idx0 < len(first_md.upper_limits) else None
+        unit = first_md.units[idx0] if idx0 < len(first_md.units) else ""
+        per_source = []
+        for source_name, md in relevant.items():
+            idx = [str(s) for s in md.subjects].index(subject_name)
+            series = pd.to_numeric(md.scores.iloc[:, idx], errors="coerce")
+            per_source.append(series)
+            rows.append({
+                "subject": subject_name,
+                "source": source_name,
+                "units": unit,
+                "lower_limit": _fmt_num(lo),
+                "upper_limit": _fmt_num(hi),
+                **_calc_stats(series, lo, hi),
+            })
+        total_series = pd.concat(per_source, ignore_index=True) if per_source else pd.Series(dtype=float)
+        rows.append({
+            "subject": subject_name,
+            "source": "total",
+            "units": unit,
+            "lower_limit": _fmt_num(lo),
+            "upper_limit": _fmt_num(hi),
+            **_calc_stats(total_series, lo, hi),
+        })
+    return rows
+
+
 def build_cpk(mass_data_map):
     rows = []
     first = next(iter(mass_data_map.values()))

@@ -87,6 +87,38 @@ class df_honey_group:
             filtered.append(mass_data.select_subjects(keep))
         return df_honey_group(filtered)
 
+    def split_for_diff(self) -> Optional[dict]:
+        """diff compare: 2개 파일의 subject 를 common/a_only/b_only 서브그룹으로 분할.
+
+        파일이 2개가 아니거나 두 파일 subject 집합이 동일하면 None (기존 단일 모드).
+        반환: {common, a_only, b_only, classification}. 각 서브그룹은 해당 분류의
+        subject 만 남긴 df_honey_group (source 이름은 보존).
+        """
+        classification = B.classify_subjects(self._mass_data_map)
+        if classification is None:
+            return None
+        name_a, name_b = classification["name_a"], classification["name_b"]
+        md_a, md_b = self._mass_data_map[name_a], self._mass_data_map[name_b]
+
+        def _keep(md, subject_names):
+            names0 = [str(s) for s in md.subjects]
+            idx_list = [names0.index(s) for s in subject_names if s in names0]
+            return md.select_subjects(idx_list)
+
+        common_g = df_honey_group([
+            _keep(md_a, classification["common"]),
+            _keep(md_b, classification["common"]),
+        ])
+        a_only_g = df_honey_group([_keep(md_a, classification["a_only"])])
+        b_only_g = df_honey_group([_keep(md_b, classification["b_only"])])
+
+        return {
+            "common": common_g,
+            "a_only": a_only_g,
+            "b_only": b_only_g,
+            "classification": classification,
+        }
+
     def filter_rows_by_bin(self, bin_value) -> "df_honey_group":
         """meta.Bin == bin_value 인 행만 남긴 새 그룹 (예: Bin1 Only)."""
         target = B._fmt_type(bin_value)
