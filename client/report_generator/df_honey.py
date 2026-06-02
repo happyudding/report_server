@@ -42,9 +42,10 @@ class df_honey:
 
     @classmethod
     def from_csv(cls, path, report_meta: Optional[ReportMeta] = None,
-                 name: Optional[str] = None) -> "df_honey":
+                 name: Optional[str] = None,
+                 progress_cb=None) -> "df_honey":
         path = Path(path)
-        df, df_yield = csv_loader.csvfile_to_df(path)
+        df, df_yield = csv_loader.csvfile_to_df(path, progress_cb=progress_cb)
         rm = report_meta or ReportMeta()
         if not rm.source_path:
             rm.source_path = str(path)
@@ -175,6 +176,23 @@ class df_honey:
 
     def fail_values(self) -> list:
         return B.build_issue_table(self._as_mass_data_map())
+
+    def get_fail_detail(self) -> list:
+        """Bin != 1 DUT 의 항목별 한계 이탈 레코드.
+
+        반환: [{"dut", "xcoord", "ycoord", "bin", "item", "value"}, ...]
+        """
+        return [
+            {
+                "dut":    r["dut"],
+                "xcoord": r["x_coord"],
+                "ycoord": r["y_coord"],
+                "bin":    r["bin"],
+                "item":   r["subject"],
+                "value":  r["value"],
+            }
+            for r in self.fail_values()
+        ]
 
     def summary(self) -> list:
         return B.build_summary_rows(self._as_mass_data_map())

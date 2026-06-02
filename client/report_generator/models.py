@@ -52,6 +52,7 @@ class AnalysisResult:
     total_dut: int = 0
     pass_yield: Optional[float] = None                   # Bin 1 portion (%)
     df_yield: Optional[pd.DataFrame] = None              # per-(step,Bin,Tno,item) yield 집계
+    fail_value_rows: dict = field(default_factory=dict)  # {source_name: list[dict]}
 
     def summary_feature(self) -> dict:
         """summary 시트 Device Feature 섹션 값 (Fail Types 는 fail bin 번호 목록)."""

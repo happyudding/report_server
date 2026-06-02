@@ -49,6 +49,11 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     total_dut = sum(len(md.scores) for md in mass_data_map.values())
     pass_yield = next((r["portion (%)"] for r in yield_rows if str(r["bin"]) == "1"), None)
 
+    fail_value_rows = {
+        name: md.get_fail_detail()
+        for name, md in mass_data_map.items()
+    }
+
     combined_df_yield = group.combined_df_yield
     return AnalysisResult(
         meta=meta,
@@ -64,6 +69,7 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
         total_dut=total_dut,
         pass_yield=pass_yield,
         df_yield=combined_df_yield if not combined_df_yield.empty else None,
+        fail_value_rows=fail_value_rows,
     )
 
 

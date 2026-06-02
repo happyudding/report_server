@@ -13,7 +13,17 @@ from .constants import (
     DATA_START_ROW, LOWER_LIMIT_ROW, META_COLUMNS, N_META_COLUMNS,
     SUBJECT_NAME_ROW, UNITS_ROW, UPPER_LIMIT_ROW,
 )
-from .csvfile_to_df import DF_YIELD_COLUMNS, csvfile_to_df  # noqa: F401
+from .csvfile_to_df import DF_YIELD_COLUMNS
+from .csvfile_to_df import csvfile_to_df as _csvfile_to_df_impl
+
+
+def csvfile_to_df(path, progress_cb=None) -> tuple:
+    """외부 csvfile_to_df 래퍼. progress_cb 는 현재 미전달.
+
+    브랜치 교체 시 이 한 줄만 수정:
+        return _csvfile_to_df_impl(path, progress_cb=progress_cb)
+    """
+    return _csvfile_to_df_impl(path)
 
 
 # ---------------------------------------------------------------------------

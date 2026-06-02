@@ -20,17 +20,6 @@
    <property name="bottomMargin"><number>12</number></property>
    <property name="spacing"><number>8</number></property>
    <item>
-    <widget class="QLabel" name="lbl_settings_title">
-     <property name="text">
-      <string>분석 항목 · 출력 옵션 · 차트 색을 설정한 뒤 Confirm 으로 실행합니다.</string>
-     </property>
-     <property name="styleSheet">
-      <string notr="true">color: #555; font-size: 9pt;</string>
-     </property>
-     <property name="wordWrap"><bool>true</bool></property>
-    </widget>
-   </item>
-   <item>
     <widget class="QGroupBox" name="groupBox_sheets">
      <property name="title">
       <string>Option</string>
@@ -41,7 +30,7 @@
       <item row="0" column="0">
        <widget class="QCheckBox" name="cb_sheet_summary">
         <property name="text"><string>summary</string></property>
-        <property name="checked"><bool>true</bool></property>
+        <property name="checked"><bool>false</bool></property>
        </widget>
       </item>
       <item row="0" column="1">
@@ -205,6 +194,7 @@ only</string></property>
        <property name="toolTip">
         <string>체크하면 Confirm 으로 xlsx 가 생성된 직후 업로드(메타 입력)까지 자동 진행합니다.</string>
        </property>
+       <property name="checked"><bool>true</bool></property>
       </widget>
      </item>
      <item>

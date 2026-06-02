@@ -106,10 +106,10 @@
       <item>
        <widget class="QListWidget" name="list_csv">
         <property name="minimumSize">
-         <size><width>0</width><height>104</height></size>
+         <size><width>0</width><height>156</height></size>
         </property>
         <property name="maximumSize">
-         <size><width>16777215</width><height>104</height></size>
+         <size><width>16777215</width><height>156</height></size>
         </property>
         <property name="selectionMode">
          <enum>QAbstractItemView::SingleSelection</enum>
@@ -146,10 +146,10 @@
       <item>
        <widget class="QLineEdit" name="le_outname">
         <property name="minimumSize">
-         <size><width>130</width><height>0</height></size>
+         <size><width>221</width><height>0</height></size>
         </property>
         <property name="maximumSize">
-         <size><width>180</width><height>16777215</height></size>
+         <size><width>306</width><height>16777215</height></size>
         </property>
         <property name="placeholderText">
          <string/>
@@ -201,7 +201,7 @@
     <item>
      <widget class="QTextEdit" name="txt_summary">
       <property name="minimumSize">
-       <size><width>0</width><height>110</height></size>
+       <size><width>0</width><height>58</height></size>
       </property>
       <property name="readOnly">
        <bool>true</bool>

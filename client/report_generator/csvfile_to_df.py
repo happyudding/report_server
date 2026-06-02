@@ -20,10 +20,9 @@ DF_YIELD_COLUMNS: list[str] = [
 ]
 
 try:
-    from honey_parser import csvfile_to_df  # type: ignore[import]
+    from honey_parse import csvfile_to_df  # type: ignore[import]
 except ImportError:
     def csvfile_to_df(path) -> tuple[pd.DataFrame, pd.DataFrame]:  # type: ignore[misc]
         raise ImportError(
-            "csvfile_to_df 구현이 없습니다. honey_parser 패키지를 설치하세요.\n"
-            "  pip install honey_parser"
+            "honey_parse 패키지가 없습니다. client/honey_parse/ 폴더를 확인하세요."
         )

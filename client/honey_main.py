@@ -576,20 +576,41 @@ class HoneyMainWindow(QMainWindow):
         paths = self.csv_paths
         if not paths:
             return False
-        self._status("파일 로딩/검증 중...")
+
+        n_files = len(paths)
+        prog = QProgressDialog("파일 로딩 준비 중...", None, 0, n_files, self)
+        prog.setWindowTitle("파일 전처리")
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+        prog.setCancelButton(None)
+        prog.setValue(0)
         QApplication.processEvents()
+
+        def _on_file(done, total, filename, sub_done=0, sub_total=0):
+            if filename:
+                label = f"({done + 1}/{total})  {filename}"
+                if sub_total > 0:
+                    label += f"  [{sub_done}/{sub_total}]"
+                prog.setLabelText(label)
+            prog.setValue(done)
+            QApplication.processEvents()
+
         try:
-            self.group = rg.df_honey_group.from_csvs(paths)
+            self.group = rg.df_honey_group.from_csvs(paths, progress_cb=_on_file)
         except Exception as exc:
+            prog.close()
             QMessageBox.critical(self, "파일 로드 실패", str(exc))
             self._status("파일 로드 실패")
             self.group = None
             return False
 
+        prog.setValue(n_files)
+        prog.close()
+
         if warn:
-            issues = {n: v for n, v in self.group.validate().items() if v}
+            issues = {name: v for name, v in self.group.validate().items() if v}
             if issues:
-                msg = "\n".join(f"- {n}: {', '.join(v)}" for n, v in issues.items())
+                msg = "\n".join(f"- {name}: {', '.join(v)}" for name, v in issues.items())
                 QMessageBox.warning(self, "스키마 경고", f"일부 파일에 문제가 있습니다:\n{msg}")
 
         self.out_path = None

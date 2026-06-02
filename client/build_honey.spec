@@ -18,14 +18,13 @@ a = Analysis(
     binaries=_xw_binaries,
     datas=_xw_datas + [('honey_main.ui', '.'), ('upload_dialog.ui', '.'),
                        ('d1_browser.ui', '.'), ('file_order.ui', '.'),
-                       ('report_settings.ui', '.'),
-                       # 리포트 출력 양식 — xlsx_writer 가 openpyxl 로 열어 값만 채움
-                       ('data/templete.xlsx', 'data')],
+                       ('report_settings.ui', '.')],
     hiddenimports=(
         ['PyQt5.sip', 'PyQt5.uic', 'win32com', 'win32com.client', 'pythoncom',
          'pywintypes', 'pandas', 'numpy']
         + _xw_hidden
         + collect_submodules('report_generator')
+    + collect_submodules('honey_parse')
     ),
     hookspath=[],
     hooksconfig={},
