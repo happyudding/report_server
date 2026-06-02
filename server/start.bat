@@ -38,6 +38,22 @@ pause
 exit /b 1
 
 :py_ok
+rem -- venv 자동 생성: clone 직후 .venv 가 없으면 만들고 requirements 설치 --
+if not exist "%ROOT%.venv\Scripts\python.exe" (
+    echo [start] .venv not found - creating virtual environment ...
+    %PY_CMD% -m venv "%ROOT%.venv"
+    if not exist "%ROOT%.venv\Scripts\python.exe" (
+        echo [start] ERROR: failed to create .venv
+        pause
+        exit /b 1
+    )
+    echo [start] Installing dependencies from requirements.txt ...
+    "%ROOT%.venv\Scripts\python.exe" -m pip install --upgrade pip
+    "%ROOT%.venv\Scripts\python.exe" -m pip install -r "%ROOT%requirements.txt"
+)
+rem venv 가 준비됐으니 항상 venv python 으로 고정
+set PY_CMD="%ROOT%.venv\Scripts\python.exe"
+
 echo [start] Python    : %PY_CMD%
 echo [start] Bind host : %HOST%
 echo [start] Port      : %PORT%

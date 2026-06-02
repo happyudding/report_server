@@ -282,6 +282,10 @@ let DATA = null;
 let MODE = "view";              // "view" | "edit"
 let verifiedPassword = "";      // 수정 모드 진입 시 검증된 PIN (저장에 재사용)
 
+// product_type 내부값(MD/PD/PM/SE)은 그대로 두고 화면 표시만 친절한 라벨로.
+const PT_LABELS = { MD: "MDDI", PD: "PDDI", PM: "PMIC", SE: "SECURITY" };
+const ptLabel = pt => PT_LABELS[pt] || pt || "-";
+
 // & < > " ' 모두 이스케이프 → 텍스트/속성 양쪽에서 안전
 function esc(v) {
   return String(v ?? "")
@@ -325,7 +329,7 @@ function renderMeta(session) {
   const ptCls = ["MD", "PD", "PM", "SE"].includes(pt) ? pt : "default";
   const fname = session.file_name || "-";
   const items = [
-    `<span class="pt-badge ${ptCls}">${esc(pt || "-")}</span>`,
+    `<span class="pt-badge ${ptCls}">${esc(ptLabel(pt))}</span>`,
     `<span class="src-badge ${src}">${esc(src)}</span>`,
     `<span class="meta-inline"><span class="mk">Product</span>${esc(session.product || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">LOT</span>${esc(session.lot_id || "-")}</span>`,

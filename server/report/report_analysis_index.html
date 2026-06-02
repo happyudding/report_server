@@ -142,10 +142,10 @@ tr.result-row:hover { background: #f5f8ff; }
 
 <!-- product type 필터 -->
 <div class="top-bar">
-  <button class="pt-btn" data-pt="MD">MD</button>
-  <button class="pt-btn" data-pt="PD">PD</button>
-  <button class="pt-btn" data-pt="PM">PM</button>
-  <button class="pt-btn" data-pt="SE">SE</button>
+  <button class="pt-btn" data-pt="MD">MDDI</button>
+  <button class="pt-btn" data-pt="PD">PDDI</button>
+  <button class="pt-btn" data-pt="PM">PMIC</button>
+  <button class="pt-btn" data-pt="SE">SECURITY</button>
   <div class="spacer"></div>
   <div style="font-size:12px; color:#888;">
     업로드는 Honey 클라이언트에서 수행합니다.
@@ -224,6 +224,10 @@ tr.result-row:hover { background: #f5f8ff; }
 const PAGE_SIZE = 10;
 let _lastRows = [];
 let _currentPage = 0;
+
+// product_type 내부값(MD/PD/PM/SE)은 그대로 두고 화면 표시만 친절한 라벨로.
+const PT_LABELS = { MD: "MDDI", PD: "PDDI", PM: "PMIC", SE: "SECURITY" };
+const ptLabel = pt => PT_LABELS[pt] || pt || "-";
 
 const state = {
   productType: null,
@@ -320,7 +324,7 @@ function renderResults() {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row" data-sid="${r.session_id}">
         <td><span class="badge-source ${r.source || 'xlsx_upload'}">${r.source || 'xlsx_upload'}</span></td>
-        <td>${r.product_type || '-'}</td>
+        <td>${ptLabel(r.product_type)}</td>
         <td>${r.product || '-'}</td>
         <td>${r.lot_id || '-'}</td>
         <td>${r.file_name || '-'}</td>

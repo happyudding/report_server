@@ -39,7 +39,7 @@ def _lan_ips():
 
 _t0 = time.perf_counter()
 _log("importing Flask ...")
-from flask import Flask
+from flask import Flask, redirect
 
 _log(f"importing blueprints ... ({time.perf_counter() - _t0:.2f}s)")
 from report.report_extension import report_bp
@@ -49,6 +49,12 @@ _log(f"creating app ... ({time.perf_counter() - _t0:.2f}s)")
 app = Flask(__name__)
 app.register_blueprint(report_bp)
 app.register_blueprint(honey_bp)
+
+
+@app.route("/")
+def _root():
+    return redirect("/pe/report/")
+
 
 _log(f"app ready in {time.perf_counter() - _t0:.2f}s")
 
