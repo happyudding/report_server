@@ -11,12 +11,57 @@ server/xlsx_parser.py 의 anchor/header 규약과도 맞춘다.
 """
 from __future__ import annotations
 
+import contextlib
 import math
+import os
 import sys
+import time
+from collections import defaultdict
 from copy import copy
 from pathlib import Path
 
 import numpy as np
+
+# ── 차트 생성 병목 측정 프로파일러 (HONEY_CHART_PROFILE set 시에만 동작) ───────
+# unset 이면 _prof 는 즉시 통과 → 평상시 동작·출력 불변. 측정 결과는 stderr 로.
+_PROF_ON = bool(os.environ.get("HONEY_CHART_PROFILE"))
+_PROF = defaultdict(float)
+_PROF_CNT = defaultdict(int)
+
+
+@contextlib.contextmanager
+def _prof(bucket):
+    if not _PROF_ON:
+        yield
+        return
+    t = time.perf_counter()
+    try:
+        yield
+    finally:
+        _PROF[bucket] += time.perf_counter() - t
+        _PROF_CNT[bucket] += 1
+
+
+def _prof_count(bucket, n=1):
+    """시간 측정 없이 카운터만 증가 (차트/시리즈/PNG 개수 등)."""
+    if _PROF_ON:
+        _PROF_CNT[bucket] += n
+
+
+def _prof_report():
+    if not _PROF_ON or not _PROF:
+        return
+    total = sum(_PROF.values())
+    print("\n[chart-profile] phase breakdown (s):", file=sys.stderr)
+    for k, v in sorted(_PROF.items(), key=lambda kv: -kv[1]):
+        pct = (100 * v / total) if total else 0.0
+        print(f"  {k:18s} {v:8.3f}  ({pct:5.1f}%)  x{_PROF_CNT[k]}", file=sys.stderr)
+    print(f"  {'TOTAL':18s} {total:8.3f}", file=sys.stderr)
+    extra = {k: _PROF_CNT[k] for k in ("charts", "series", "pngs") if k in _PROF_CNT}
+    if extra:
+        print(f"  counts: {extra}", file=sys.stderr)
+    _PROF.clear()
+    _PROF_CNT.clear()
 
 _MAX_CDF_POINTS = 150
 _CHARTS_PER_ROW = 5
@@ -24,7 +69,7 @@ _CHARTS_PER_ROW = 5
 _CHART_W, _CHART_H = 324, 198
 _PLOT_W, _PLOT_TOP, _PLOT_H = 280, 30, 167
 # distribution 찾기(Ctrl+F)용 item 인덱스: 차트 그리드 오른쪽 열, 차트 한 행당 행 수
-_INDEX_COL = 40
+_INDEX_COL = 33  # AG열
 _ROWS_PER_CHART = 16
 # distribution 차트 그리드를 제목 배너 아래로 내리는 픽셀 오프셋
 _DIST_TITLE_PX = 30
@@ -45,7 +90,7 @@ ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distributi
 # 템플릿 table 시트의 표 시작 위치 (A열 비움, 제목 A1, 헤더 3행, 데이터 4행~)
 _HEADER_ROW = 3
 _START_COL = 2  # B열
-_FAIL_ITEM_ROW_HEIGHT = 30  # fail_item 데이터 행 높이(pt)
+_FAIL_ITEM_ROW_HEIGHT = 78  # fail_item 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
 
 
 # ── 템플릿 경로 ──────────────────────────────────────────────────────────────
@@ -208,10 +253,19 @@ def _fill_yield(ws, result):
 
 
 def _fill_fail_item(ws, result):
-    # 템플릿상 fail_item 은 yield 시트와 동일
-    header, rows = _yield_table(result)
+    src = result.sources
+    header = ["bin", "Item"]
+    for s in src:
+        header += [f"{s}_count", f"{s}_yield"]
+    header += ["Distribution"]
+    rows = []
+    for r in result.yield_rows:
+        row = [_bin_label(r.get("bin")), r.get("Main Fail subject", "")]
+        for s in src:
+            row += [r.get(f"{s}_count"), r.get(f"{s}_yield")]
+        row += [""]   # Distribution 열 — 차트는 xlwings 단계에서 삽입
+        rows.append(row)
     _fill_table(ws, header, rows)
-    # fail item 데이터 행 높이 키움 (가독성)
     for i in range(len(rows)):
         ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
 
@@ -229,6 +283,40 @@ def _fill_cpk(ws, result):
             r.get("cpl"), r.get("cpu"), r.get("cp"), r.get("cpk"), "",
         ])
     _fill_table(ws, header, rows)
+    _merge_cpk_subject(ws, len(rows))
+
+
+def _merge_cpk_subject(ws, n_rows, header_row=_HEADER_ROW, start_col=_START_COL):
+    """같은 subject 연속 행의 TEST NAME/LOW SPEC/HIGH SPEC/SCALE 열 병합 + 세로 중앙 정렬."""
+    if n_rows <= 1:
+        return
+    from openpyxl.styles import Alignment
+    merge_cols = [start_col + i for i in range(4)]  # TEST NAME, LOW SPEC, HIGH SPEC, SCALE
+    data_start = header_row + 1
+
+    groups = []
+    cur_val = ws.cell(row=data_start, column=start_col).value
+    grp_start = data_start
+    for r in range(data_start + 1, data_start + n_rows):
+        val = ws.cell(row=r, column=start_col).value
+        if val != cur_val or val is None:
+            groups.append((grp_start, r - 1))
+            cur_val = val
+            grp_start = r
+    groups.append((grp_start, data_start + n_rows - 1))
+
+    for r_start, r_end in groups:
+        if r_start == r_end:
+            continue
+        for c in merge_cols:
+            ws.merge_cells(start_row=r_start, start_column=c,
+                           end_row=r_end, end_column=c)
+            cell = ws.cell(row=r_start, column=c)
+            al = cell.alignment
+            cell.alignment = Alignment(
+                horizontal=al.horizontal, vertical="center",
+                wrap_text=al.wrap_text
+            )
 
 
 def _fill_issue_table(ws, result):
@@ -236,10 +324,10 @@ def _fill_issue_table(ws, result):
     src = result.sources
     header = ["Category", "bin", "Item", "avg"]
     for s in src:
-        header += [f"{s}_count", f"{s}_yield"]
+        header += [f"{s}_yield"]          # count 열 제거, yield 만 유지
     header += ["Distribution", "comment", "개발 1차 comment",
                "PTE 2차 comment", "개발 2차 comment"]
-    pad = len(header) - (4 + 2 * len(src))  # Distribution + comment 열 수
+    pad = len(header) - (4 + len(src))    # Distribution + comment 열 수
 
     rows = []
     first = True
@@ -247,7 +335,7 @@ def _fill_issue_table(ws, result):
         row = ["Yield" if first else "", _bin_label(r.get("bin")),
                r.get("Main Fail subject", ""), r.get("avg")]
         for s in src:
-            row += [r.get(f"{s}_count"), r.get(f"{s}_yield")]
+            row += [r.get(f"{s}_yield")]  # count 제거
         row += [""] * pad
         rows.append(row)
         first = False
@@ -262,9 +350,13 @@ def _fill_raw_data(ws, df):
 
     행0=subject 헤더, 1=Units, 2~5=Lower/Upper/Lower/Upper limit, 6~=측정 데이터.
     제목·Source 열 없이 df_honey 적재 포맷과 동일. 헤더·라벨행(1~6행)만 bold.
+    Serial 컬럼은 정규화 시 자동 삽입되는 내부 컬럼이므로 제거.
     """
     from openpyxl.styles import Font
     bold = Font(bold=True)
+    serial_cols = [c for c, v in zip(df.columns, df.iloc[0]) if v == "Serial"]
+    if serial_cols:
+        df = df.drop(columns=serial_cols)
     for ri, row in enumerate(df.values.tolist(), start=1):
         for ci, val in enumerate(row, start=1):
             cell = ws.cell(row=ri, column=ci, value=_sanitize_cell(val))
@@ -401,42 +493,51 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
     import shutil
     import xlwings as xw
 
-    app = xw.App(visible=False, add_book=False)
-    app.display_alerts = False
-    app.screen_updating = False
+    with _prof("app_launch"):
+        app = xw.App(visible=False, add_book=False)
+        app.display_alerts = False
+        app.screen_updating = False
     wb = None
     tmpdir = None
     try:
-        wb = app.books.open(out_path)
-        names = [s.name for s in wb.sheets]
-        if "distribution" in names:
-            sh = wb.sheets["distribution"]
-            for c in list(sh.charts):     # 템플릿/이전 차트 제거
-                try:
-                    c.delete()
-                except Exception:
-                    pass
-            sh.clear()
-        else:
-            sh = wb.sheets.add("distribution", after=wb.sheets[len(wb.sheets) - 1])
+        with _prof("wb_open"):
+            wb = app.books.open(out_path)
+        with _prof("clear"):
+            names = [s.name for s in wb.sheets]
+            if "distribution" in names:
+                sh = wb.sheets["distribution"]
+                for c in list(sh.charts):     # 템플릿/이전 차트 제거
+                    try:
+                        c.delete()
+                    except Exception:
+                        pass
+                sh.clear()
+            else:
+                sh = wb.sheets.add("distribution", after=wb.sheets[len(wb.sheets) - 1])
         chart_map = _write_distribution(wb, sh, result, colors)
         if attach_fail_item and chart_map:
             tmpdir = _attach_fail_item_charts(wb, result, chart_map)
         sh.activate()
-        wb.save()
+        with _prof("wb_save"):
+            wb.save()
     finally:
         try:
-            if wb is not None:
-                wb.close()
+            with _prof("wb_close"):
+                if wb is not None:
+                    wb.close()
         finally:
-            app.quit()
+            with _prof("wb_close"):
+                app.quit()
             if tmpdir:
                 shutil.rmtree(tmpdir, ignore_errors=True)
+            _prof_report()
 
 
 def _attach_fail_item_charts(wb, result, chart_map):
-    """fail_item 시트 오른쪽에 fail bin 차트(=main fail subject 의 distribution)를
-    PNG(원본 1/3 크기)로 불량율 높은 순(왼→오)으로 같은 행에 나열. tmpdir 반환."""
+    """fail_item 시트의 Distribution 열(각 데이터 행)에 해당 subject 차트 PNG 삽입.
+
+    yield_row 1개 = 1행 = Distribution 열 1셀에 차트 1개 배치.
+    """
     import os
     import tempfile
 
@@ -445,38 +546,40 @@ def _attach_fail_item_charts(wb, result, chart_map):
         return None
     fi = wb.sheets["fail_item"]
 
-    fails = [r for r in result.yield_rows if str(r.get("bin")) != "1"]
-    fails.sort(key=lambda r: -(r.get("avg") or 0.0))   # 불량율 높은 순
-    if not fails:
-        return None
-
-    # fail_item 표 폭: bin, Item, {src}_count/{src}_yield×N, avg, comment
-    ncols = 2 + 2 * len(result.sources) + 2
-    last_col = _START_COL + ncols - 1
-    w, h = _CHART_W / 3.0, _CHART_H / 3.0
-    try:
-        start_left = fi.range((1, last_col + 2)).left   # 표 오른쪽 한 칸 띄움
-        top = fi.range((_HEADER_ROW + 1, 1)).top
-    except Exception:
-        start_left, top = 700.0, 60.0
+    # Distribution 열 = B(2) + bin + Item + (count+yield) × sources
+    dist_col = _START_COL + 2 + 2 * len(result.sources)
 
     tmpdir = tempfile.mkdtemp(prefix="honey_fi_")
-    x = start_left
     seq = 0
-    for r in fails:
-        ch = chart_map.get(r.get("Main Fail subject"))
-        if ch is None:
+
+    for i, r in enumerate(result.yield_rows):
+        subj = r.get("Main Fail subject")
+        if not subj or subj not in chart_map:
             continue
+        ch = chart_map[subj]
+        row_excel = _HEADER_ROW + 1 + i
+        try:
+            cell = fi.range((row_excel, dist_col))
+            left = cell.left
+            top = cell.top
+            w = cell.width
+            h = cell.height
+        except Exception:
+            left, top = 700.0, 60.0 + i * _FAIL_ITEM_ROW_HEIGHT
+            w, h = 200.0, float(_FAIL_ITEM_ROW_HEIGHT)
         png = os.path.join(tmpdir, f"fi_{seq}.png")
         seq += 1
         try:
-            _chart_com(ch).Export(png, "PNG")
-            fi.pictures.add(png, name=f"fi_chart_{seq}", left=x, top=top,
-                            width=w, height=h)
-            x += w
+            with _prof("fi.export"):
+                _chart_com(ch).Export(png, "PNG")
+            with _prof("fi.picadd"):
+                fi.pictures.add(png, name=f"fi_chart_{seq}",
+                                left=left, top=top, width=w, height=h)
+            _prof_count("pngs")
         except Exception:
             pass
-    return tmpdir
+
+    return tmpdir if seq > 0 else None
 
 
 def _hex_to_excel_rgb(hex_color):
@@ -531,17 +634,18 @@ def _write_distribution(wb, sh, result, colors=None):
         top_row = cur
         lo_v = float(lo) if _isnum(lo) else None
         hi_v = float(hi) if _isnum(hi) else None
-        if lo_v is not None:
-            data.range((top_row, 1)).value = [[lo_v, 0.0], [lo_v, 1.0]]
-        if hi_v is not None:
-            data.range((top_row, 3)).value = [[hi_v, 0.0], [hi_v, 1.0]]
-        dcol = 5
-        max_len = 2
-        for _name, xs, ys in series_list:
-            block = [[float(x), float(y)] for x, y in zip(xs, ys)]
-            data.range((top_row, dcol)).value = block
-            max_len = max(max_len, len(block))
-            dcol += 2
+        with _prof("dist.data_write"):
+            if lo_v is not None:
+                data.range((top_row, 1)).value = [[lo_v, 0.0], [lo_v, 1.0]]
+            if hi_v is not None:
+                data.range((top_row, 3)).value = [[hi_v, 0.0], [hi_v, 1.0]]
+            dcol = 5
+            max_len = 2
+            for _name, xs, ys in series_list:
+                block = [[float(x), float(y)] for x, y in zip(xs, ys)]
+                data.range((top_row, dcol)).value = block
+                max_len = max(max_len, len(block))
+                dcol += 2
         bot_row = top_row + max_len - 1
 
         # 차트 배치 (gap 없이 밀착)
@@ -550,48 +654,54 @@ def _write_distribution(wb, sh, result, colors=None):
         left = col * _CHART_W
         top = _DIST_TITLE_PX + grow * _CHART_H
 
-        ch = sh.charts.add(left, top, _CHART_W, _CHART_H)
-        chart = _chart_com(ch)   # COM Chart (반복 접근 대신 변수 재사용)
-        sc = chart.SeriesCollection()
+        with _prof("dist.series_add"):
+            ch = sh.charts.add(left, top, _CHART_W, _CHART_H)
+            chart = _chart_com(ch)   # COM Chart (반복 접근 대신 변수 재사용)
+            sc = chart.SeriesCollection()
 
-        # series 1,2 = limit line (먼저 추가해야 legendentry 인덱스가 1,2 가 됨)
-        limit_series = []
-        for lim_v, xcol, nm in ((lo_v, 1, "LSL"), (hi_v, 3, "USL")):
-            if lim_v is None:
-                continue
-            s = sc.NewSeries()
-            s.XValues = data.range((top_row, xcol), (top_row + 1, xcol)).api
-            s.Values = data.range((top_row, xcol + 1), (top_row + 1, xcol + 1)).api
-            s.Name = nm
-            limit_series.append(s)
+            # series 1,2 = limit line (먼저 추가해야 legendentry 인덱스가 1,2 가 됨)
+            limit_series = []
+            for lim_v, xcol, nm in ((lo_v, 1, "LSL"), (hi_v, 3, "USL")):
+                if lim_v is None:
+                    continue
+                s = sc.NewSeries()
+                s.XValues = data.range((top_row, xcol), (top_row + 1, xcol)).api
+                s.Values = data.range((top_row, xcol + 1), (top_row + 1, xcol + 1)).api
+                s.Name = nm
+                limit_series.append(s)
 
-        # 데이터 series (source별)
-        data_series = []
-        dcol = 5
-        for name, xs, ys in series_list:
-            n = len(xs)
-            s = sc.NewSeries()
-            s.XValues = data.range((top_row, dcol), (top_row + n - 1, dcol)).api
-            s.Values = data.range((top_row, dcol + 1), (top_row + n - 1, dcol + 1)).api
-            s.Name = str(name)
-            data_series.append(s)
-            dcol += 2
+            # 데이터 series (source별)
+            data_series = []
+            dcol = 5
+            for name, xs, ys in series_list:
+                n = len(xs)
+                s = sc.NewSeries()
+                s.XValues = data.range((top_row, dcol), (top_row + n - 1, dcol)).api
+                s.Values = data.range((top_row, dcol + 1), (top_row + n - 1, dcol + 1)).api
+                s.Name = str(name)
+                data_series.append(s)
+                dcol += 2
 
-        ch.chart_type = "xy_scatter_lines_no_markers"
+            ch.chart_type = "xy_scatter_lines_no_markers"
+        _prof_count("series", len(limit_series) + len(data_series))
+
         # 스타일은 chart_type 설정 후 적용 (덮어쓰기 방지)
-        for s in limit_series:
-            _style_limit_series(s)
-        # data series: 점(마커)만 표시, 잇는 선 제거 (limit line 은 선 유지)
-        for k, s in enumerate(data_series):
-            rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
-            _style_data_series(s, rgb)
-        _format_dist_chart(chart, d, x_min, x_max, len(limit_series), is_fail)
+        with _prof("dist.style"):
+            for s in limit_series:
+                _style_limit_series(s)
+            # data series: 점(마커)만 표시, 잇는 선 제거 (limit line 은 선 유지)
+            for k, s in enumerate(data_series):
+                rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
+                _style_data_series(s, rgb)
+        with _prof("dist.format"):
+            _format_dist_chart(chart, d, x_min, x_max, len(limit_series), is_fail)
 
         idx_row = 2 + grow * _ROWS_PER_CHART + col
-        sh.range((idx_row, _INDEX_COL)).value = f"[{col + 1}] {d.subject}"
+        sh.range((idx_row, _INDEX_COL)).value = d.subject
         chart_map[d.subject] = ch
         cur = bot_row + 2
 
+    _prof_count("charts", len(chart_map))
     _finalize_title_row(sh)
     try:
         data.api.Visible = False  # 헬퍼 시트 숨김

@@ -1,0 +1,25 @@
+하던거 이어서 진행해줘
+하던거 완료 되면 commit -m "260601 templete to openpyxl and xlwings refactoring" 해줘
+
+
+Distribution sheet 부분의 대대적인 변경이 필요해 아래 사항 진행해줘
+1. 지금 cumulative 인데 그건 유지할거야 x 축은 value 값이 들어갈거고 y 축은 각 item 들에 대해 value 의 작은수 에서 큰수 으로 0% ~ 100% 까지 display 되게 해줘. Input file 별로 legend 구분되게 해줘
+
+2. 서식 아래와 같이 변경해줘
+
+xlwings COM API 로 xy_scatter 차트 서식 설정(한차트당):
+범례 : series 1,2 의 legendentry 삭제 (limit line 이라 숨김)
+y축 : Majorunit = 0.2 , minimumScale = 0 , maximumScale = 1, NumberFormatlocal = "0%", Ticklabelposition = -4134(xlLow)
+Series 1-2 의 points(2).MarkerStyle = -4142 (마커 제거 - 선만 보이게)
+X축 범위 : LoLIM/HILIM 기준
+Pass 면 LOLIM/HILIM 그대로
+Fail 이면 ± 5% 가드밴드 ( ( LIM -data ) *0.05)
+LOLIM/HILIM 의 정수부, 소수부 자릿수에 맞춰 floor(min)/ceil(max) 으로 자릿수 보정
+LIM 이 None/""/nan 이면 data min/max 그대로 사용
+gridline : Y/X 축 모두 HasMinorGridlines = True
+폰트 : TickLabel/Legend 모두 size 8
+Limit line (Series 1,2) : format.Line.Dashstyle=10(msoLinesysdash), Forcolor.RGB = 빨강(255,0,0)
+Title : Arial Black 10pt, top=0
+크기 : 차트 324x198, Plotarea Width = 280/Top = 30 /Height = 167
+Fail 차트 : ChartArea.Interior.Color = (255, 255, 204) 연노랑 배경
+성능 팁 : chart.api[1], Axes(xlValue/xlCategory), FullseriesCollection, Legend, Charttile, plotarea 같은 COM 객체는 반복 접근하지말고 변수에 한번 할당해 재사용
