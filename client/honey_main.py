@@ -657,8 +657,14 @@ class HoneyMainWindow(QMainWindow):
         prog.setValue(0)
         QApplication.processEvents()
 
+        start_dt = datetime.datetime.now()
+
+        def _elapsed():
+            secs = int((datetime.datetime.now() - start_dt).total_seconds())
+            return f"{secs // 60:02d}:{secs % 60:02d}"
+
         def _step(value, label):
-            prog.setLabelText(label)
+            prog.setLabelText(f"{label}  [{_elapsed()}] (진행중)")
             prog.setValue(value)
             self._status(label)
             QApplication.processEvents()
@@ -667,7 +673,7 @@ class HoneyMainWindow(QMainWindow):
         _step(1, "데이터 검증/준비 중...")
 
         # 2) 데이터 분석 (통계 · Bin 집계)
-        prog.setLabelText("데이터 분석 중... (통계 · Bin 집계)")
+        prog.setLabelText(f"데이터 분석 중... (통계 · Bin 집계)  [{_elapsed()}] (진행중)")
         self._status("데이터 분석 중...")
         QApplication.processEvents()
         try:
@@ -696,18 +702,37 @@ class HoneyMainWindow(QMainWindow):
 
         # 4) 시트/차트 생성 (시트 1개당 1스텝, offset 3)
         def _sheet_progress(done, total_s, name):
-            prog.setLabelText(f"시트/차트 생성 중... ({name})   {done}/{total_s}")
+            if name == "distribution":
+                return  # _dist_progress 가 처리
+            prog.setLabelText(
+                f"시트/차트 생성 중... ({name})   {done}/{total_s}  [{_elapsed()}] (진행중)")
             prog.setValue(3 + done)
             self._status(f"시트 생성 중... ({name})  {done}/{total_s}")
             QApplication.processEvents()
 
-        prog.setLabelText("Excel 시트/차트 생성 중...")
+        _dist_state = {"base": 0, "n": 0}
+
+        def _dist_progress(done, n_charts):
+            if _dist_state["n"] == 0:           # 첫 콜백: 프로그레스 바 max 확장
+                _dist_state["base"] = prog.value()
+                _dist_state["n"] = n_charts
+                prog.setMaximum(prog.maximum() + n_charts - 1)  # 1스텝 → N스텝
+            pct = done * 100 // n_charts if n_charts else 100
+            prog.setValue(_dist_state["base"] + done)
+            prog.setLabelText(
+                f"Distribution 차트 생성 중... ({done}/{n_charts} - {pct}%)"
+                f"  [{_elapsed()}] (진행중)")
+            self._status(f"Distribution {pct}%  ({done}/{n_charts})  [{_elapsed()}]")
+            QApplication.processEvents()
+
+        prog.setLabelText(f"Excel 시트/차트 생성 중...  [{_elapsed()}] (진행중)")
         self._status(f"xlsx 생성 중... (Excel)  → {Path(out).name}")
         QApplication.processEvents()
         try:
             xlsx_writer.write(self.last_result, out, sheets=sheets,
                               colors=chart_colors.load_colors(),
-                              progress_cb=_sheet_progress, raw_sheets=raw)
+                              progress_cb=_sheet_progress, raw_sheets=raw,
+                              dist_progress_cb=_dist_progress)
         except Exception as exc:
             prog.close()
             QMessageBox.critical(self, "생성 실패", str(exc))
@@ -716,7 +741,7 @@ class HoneyMainWindow(QMainWindow):
             return
 
         # 5) Excel 파일 저장 마무리
-        _step(total, "Excel 파일 저장 마무리 중...")
+        _step(prog.maximum(), "Excel 파일 저장 마무리 중...")
         prog.close()
         self.out_path = out
         self.btn_start.setEnabled(True)
