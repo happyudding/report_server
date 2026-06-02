@@ -21,6 +21,7 @@ from copy import copy
 from pathlib import Path
 
 import numpy as np
+from openpyxl.utils import get_column_letter
 
 # ── 차트 생성 병목 측정 프로파일러 (HONEY_CHART_PROFILE set 시에만 동작) ───────
 # unset 이면 _prof 는 즉시 통과 → 평상시 동작·출력 불변. 측정 결과는 stderr 로.
@@ -502,6 +503,12 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
     try:
         with _prof("wb_open"):
             wb = app.books.open(out_path)
+        # 변경마다 재계산·이벤트 억제 (전용 인스턴스라 사용자 Excel 무영향)
+        try:
+            app.api.Calculation = -4135   # xlCalculationManual
+            app.api.EnableEvents = False
+        except Exception:
+            pass
         with _prof("clear"):
             names = [s.name for s in wb.sheets]
             if "distribution" in names:
@@ -592,11 +599,19 @@ def _hex_to_excel_rgb(hex_color):
         return None
 
 
+def _a1(r1, c1, r2, c2):
+    """(r1,c1)~(r2,c2) → 'E1:E150' A1 주소. COM Range 1회 호출용(xlwings Range 우회)."""
+    return f"{get_column_letter(c1)}{r1}:{get_column_letter(c2)}{r2}"
+
+
 def _write_distribution(wb, sh, result, colors=None):
     """각 subject 의 누적분포(CDF) 차트. x=value, y=0~100%(0~1 스케일).
 
     source(input file)별 series + LSL/USL 세로 한계선(series 1,2). 차트는 gap 없이
     밀착 배치. 서식은 _format_dist_chart 사양 따름.
+
+    성능: _dist 데이터는 차트별로 쓰지 않고 한 번에 일괄기입(2-pass)하고, 시리즈
+    참조는 COM Range(A1 문자열)로 직접 건다.
     """
     dists = result.distributions
     if not dists:
@@ -604,13 +619,19 @@ def _write_distribution(wb, sh, result, colors=None):
         return
 
     data = wb.sheets.add("_dist", after=sh)
+    data_api = data.api  # COM Worksheet 캐시 (시리즈 참조용)
 
     _put_title(sh, 8, "Distribution")
     sh.range((1, _INDEX_COL)).value = "Item Index (Ctrl+F)"
     sh.range((1, _INDEX_COL)).column_width = 26
 
-    cur = 1  # 헬퍼 시트 행 커서
-    chart_map = {}  # subject 이름 → xlwings Chart (fail_item PNG 부착에 재활용)
+    # ── Pass 1: 차트별 레이아웃 계산 + _dist 전체를 하나의 2D 배열로 조립 ──────
+    specs = []          # 차트 생성용 메타 (Pass 2)
+    index_entries = []  # (idx_row, subject) — Item Index 열 일괄기입용
+    cells = []          # (row0, col0, value) — grid 채울 좌표(0-based)
+    total_rows = 0
+    max_cols = 4        # 최소 limit 4열
+    cur = 1             # _dist 행 커서(1-based)
     for i, d in enumerate(dists):
         # source별 (value, 누적 0~1) 준비
         series_list = []
@@ -629,28 +650,63 @@ def _write_distribution(wb, sh, result, colors=None):
         lo, hi = d.lower_limit, d.upper_limit
         is_fail = (_isnum(lo) and data_min < float(lo)) or (_isnum(hi) and data_max > float(hi))
         x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
-
-        # _dist 기입: col1/2=LSL x/y, col3/4=USL x/y, col5~=source x/y 쌍
-        top_row = cur
         lo_v = float(lo) if _isnum(lo) else None
         hi_v = float(hi) if _isnum(hi) else None
-        with _prof("dist.data_write"):
-            if lo_v is not None:
-                data.range((top_row, 1)).value = [[lo_v, 0.0], [lo_v, 1.0]]
-            if hi_v is not None:
-                data.range((top_row, 3)).value = [[hi_v, 0.0], [hi_v, 1.0]]
-            dcol = 5
-            max_len = 2
-            for _name, xs, ys in series_list:
-                block = [[float(x), float(y)] for x, y in zip(xs, ys)]
-                data.range((top_row, dcol)).value = block
-                max_len = max(max_len, len(block))
-                dcol += 2
-        bot_row = top_row + max_len - 1
 
-        # 차트 배치 (gap 없이 밀착)
+        # _dist 좌표 적재 (0-based): col1/2=LSL x/y, col3/4=USL x/y, col5~=source x/y
+        top_row = cur
+        max_len = 2
+        if lo_v is not None:
+            cells += [(top_row - 1, 0, lo_v), (top_row - 1, 1, 0.0),
+                      (top_row, 0, lo_v), (top_row, 1, 1.0)]
+        if hi_v is not None:
+            cells += [(top_row - 1, 2, hi_v), (top_row - 1, 3, 0.0),
+                      (top_row, 2, hi_v), (top_row, 3, 1.0)]
+        dcol = 5
+        for _name, xs, ys in series_list:
+            for j in range(len(xs)):
+                cells.append((top_row - 1 + j, dcol - 1, float(xs[j])))
+                cells.append((top_row - 1 + j, dcol, float(ys[j])))
+            max_len = max(max_len, len(xs))
+            dcol += 2
+        bot_row = top_row + max_len - 1
+        max_cols = max(max_cols, 4 + 2 * len(series_list))
+        total_rows = max(total_rows, bot_row)
+
+        # 차트 배치 인덱스 (원본 enumerate i 기준 — 빈 series 스킵 시 격자 위치 보존)
         col = i % _CHARTS_PER_ROW
         grow = i // _CHARTS_PER_ROW
+        index_entries.append((2 + grow * _ROWS_PER_CHART + col, d.subject))
+        specs.append({
+            "d": d, "i": i, "top_row": top_row, "series_list": series_list,
+            "lo_v": lo_v, "hi_v": hi_v, "x_min": x_min, "x_max": x_max,
+            "is_fail": is_fail,
+        })
+        cur = bot_row + 2
+
+    chart_map = {}  # subject 이름 → xlwings Chart (fail_item PNG 부착에 재활용)
+    if specs:
+        # ── _dist + Item Index 일괄기입 (병목 #1: 차트당 쓰기 → 1~2회로) ──────
+        with _prof("dist.data_write"):
+            grid = [[None] * max_cols for _ in range(total_rows)]
+            for r0, c0, v in cells:
+                grid[r0][c0] = v
+            data.range((1, 1), (total_rows, max_cols)).value = grid
+            # Item Index 열: 흩어진 행을 None-pad 한 단일 열로 1회 기입
+            max_idx = max(r for r, _ in index_entries)
+            col_vals = [[None] for _ in range(2, max_idx + 1)]
+            for r, subj in index_entries:
+                col_vals[r - 2] = [subj]
+            sh.range((2, _INDEX_COL), (max_idx, _INDEX_COL)).value = col_vals
+
+    # ── Pass 2: 차트 생성 (이미 기입된 range 참조) ───────────────────────────
+    for spec in specs:
+        d = spec["d"]
+        top_row = spec["top_row"]
+        series_list = spec["series_list"]
+        lo_v, hi_v = spec["lo_v"], spec["hi_v"]
+        col = spec["i"] % _CHARTS_PER_ROW
+        grow = spec["i"] // _CHARTS_PER_ROW
         left = col * _CHART_W
         top = _DIST_TITLE_PX + grow * _CHART_H
 
@@ -665,8 +721,8 @@ def _write_distribution(wb, sh, result, colors=None):
                 if lim_v is None:
                     continue
                 s = sc.NewSeries()
-                s.XValues = data.range((top_row, xcol), (top_row + 1, xcol)).api
-                s.Values = data.range((top_row, xcol + 1), (top_row + 1, xcol + 1)).api
+                s.XValues = data_api.Range(_a1(top_row, xcol, top_row + 1, xcol))
+                s.Values = data_api.Range(_a1(top_row, xcol + 1, top_row + 1, xcol + 1))
                 s.Name = nm
                 limit_series.append(s)
 
@@ -676,8 +732,8 @@ def _write_distribution(wb, sh, result, colors=None):
             for name, xs, ys in series_list:
                 n = len(xs)
                 s = sc.NewSeries()
-                s.XValues = data.range((top_row, dcol), (top_row + n - 1, dcol)).api
-                s.Values = data.range((top_row, dcol + 1), (top_row + n - 1, dcol + 1)).api
+                s.XValues = data_api.Range(_a1(top_row, dcol, top_row + n - 1, dcol))
+                s.Values = data_api.Range(_a1(top_row, dcol + 1, top_row + n - 1, dcol + 1))
                 s.Name = str(name)
                 data_series.append(s)
                 dcol += 2
@@ -694,12 +750,10 @@ def _write_distribution(wb, sh, result, colors=None):
                 rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
                 _style_data_series(s, rgb)
         with _prof("dist.format"):
-            _format_dist_chart(chart, d, x_min, x_max, len(limit_series), is_fail)
+            _format_dist_chart(chart, d, spec["x_min"], spec["x_max"],
+                               len(limit_series), spec["is_fail"])
 
-        idx_row = 2 + grow * _ROWS_PER_CHART + col
-        sh.range((idx_row, _INDEX_COL)).value = d.subject
         chart_map[d.subject] = ch
-        cur = bot_row + 2
 
     _prof_count("charts", len(chart_map))
     _finalize_title_row(sh)
