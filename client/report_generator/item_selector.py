@@ -16,10 +16,13 @@ class ItemSelector:
 
     @classmethod
     def fail_only(cls, group) -> "ItemSelector":
-        """fail 발생 subject 만 선택하는 selector (UI 기본값)."""
-        subjects = group.subjects()
-        ids = group.fail_subject_ids()
-        return cls(selected_items=[subjects[i] for i in ids if i < len(subjects)])
+        """fail 발생 subject 만 선택하는 selector (UI 기본값).
+
+        파일별 subject 구성이 달라도(diff) 각 파일 자기 인덱스로 fail 이름을 모은다
+        (group.fail_subject_names). 첫 파일에 위치 매핑하던 기존 방식은 B 에만 있는
+        항목을 엉뚱하게 매핑/누락시켰다.
+        """
+        return cls(selected_items=group.fail_subject_names())
 
     def resolved_items(self, group) -> list:
         """실제 적용될 subject 목록 (None 이면 전체)."""

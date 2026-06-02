@@ -85,10 +85,21 @@ class df_honey_group:
         self._mass_data_map = {md.name: md for md in renamed}
 
     def subjects(self) -> list:
-        """첫 source 기준 subject 이름 목록 (그룹은 동일 subject 가정)."""
-        if not self._mass_data_map:
-            return []
-        return list(next(iter(self._mass_data_map.values())).subjects)
+        """모든 source 의 subject 이름 합집합 (등장 순서 유지).
+
+        파일마다 subject 구성이 다를 수 있어(diff compare) 첫 파일만 보면 다른
+        파일에만 있는 항목이 누락된다. item 선택 UI 가 common/only-A/only-B 를
+        모두 볼 수 있도록 각 파일 순서대로 합집합을 만든다. (동일 구성이면 첫 파일
+        목록과 동일.)
+        """
+        names, seen = [], set()
+        for md in self._mass_data_map.values():
+            for s in md.subjects:
+                s = str(s)
+                if s not in seen:
+                    seen.add(s)
+                    names.append(s)
+        return names
 
     def validate(self) -> dict:
         """{source_name: [issues...]} (정상이면 빈 리스트)."""
@@ -201,6 +212,21 @@ class df_honey_group:
         for md in self._mass_data_map.values():
             ids.update(md.fail_subject_ids())
         return sorted(ids)
+
+    def fail_subject_names(self) -> list:
+        """그룹 전체에서 fail 이 발생한 subject 이름 목록 (등장 순서 유지).
+
+        파일마다 subject 구성이 다를 수 있어(diff) 위치 기반 id union 은 다른 파일의
+        항목을 엉뚱한 이름으로 매핑한다. 각 파일의 자기 인덱스로 이름을 모아 합친다.
+        """
+        names, seen = [], set()
+        for md in self._mass_data_map.values():
+            subs = [str(s) for s in md.subjects]
+            for i in md.fail_subject_ids():
+                if 0 <= i < len(subs) and subs[i] not in seen:
+                    seen.add(subs[i])
+                    names.append(subs[i])
+        return names
 
     def raw_frames(self):
         """각 source(input file)의 df_honey 포맷 DataFrame 을 (sheet명, df) 리스트로.

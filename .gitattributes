@@ -1,0 +1,4 @@
+# Windows 배치 스크립트는 항상 CRLF 로 체크아웃 (LF 면 cmd.exe 가 바이트 오프셋을
+# 잘못 계산해 줄 앞부분이 잘려 빌드/실행이 깨진다). core.autocrlf 설정과 무관하게 강제.
+*.bat text eol=crlf
+*.cmd text eol=crlf

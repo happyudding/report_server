@@ -393,11 +393,11 @@ class ReportSettingsDialog(QDialog):
         if self.group is None:
             return
         subjects = self.group.subjects()
-        fail_ids = set(self.group.fail_subject_ids())
+        fail_names = set(self.group.fail_subject_names())
         self.list_items_avail.clear()
         self.list_items_sel.clear()
         for idx, subj in enumerate(subjects):
-            target = self.list_items_sel if idx in fail_ids else self.list_items_avail
+            target = self.list_items_sel if subj in fail_names else self.list_items_avail
             target.addItem(self._make_item(idx, subj))
 
     # ── 출력 옵션 ─────────────────────────────────────────────────────────────
