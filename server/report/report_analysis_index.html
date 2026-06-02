@@ -31,6 +31,20 @@ h1 { margin: 0 0 20px; font-size: 22px; font-weight: 700; color: #1a1a2e; }
 }
 .spacer { flex: 1; }
 
+.honey-dl-btn {
+  flex: 0 0 auto; height: 40px; padding: 0 16px;
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: 8px; border: 1px solid #16a34a;
+  background: #16a34a; color: #fff; font-size: 13px; font-weight: 600;
+  text-decoration: none; cursor: pointer; transition: all .15s;
+  white-space: nowrap;
+}
+.honey-dl-btn:hover { background: #15803d; border-color: #15803d; }
+.honey-dl-btn.disabled {
+  background: #e5e7eb; border-color: #d1d5db; color: #9ca3af;
+  cursor: not-allowed; pointer-events: none;
+}
+
 .filter-card {
   background: #fff; border-radius: 10px; padding: 16px 20px;
   box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 16px;
@@ -150,6 +164,7 @@ tr.result-row:hover { background: #f5f8ff; }
   <div style="font-size:12px; color:#888;">
     업로드는 Honey 클라이언트에서 수행합니다.
   </div>
+  <a id="honeyDlBtn" class="honey-dl-btn" href="/honey/download">⬇ HONEY 설치본 다운로드</a>
 </div>
 
 <!-- 검색 필터 -->
@@ -228,6 +243,27 @@ let _currentPage = 0;
 // product_type 내부값(MD/PD/PM/SE)은 그대로 두고 화면 표시만 친절한 라벨로.
 const PT_LABELS = { MD: "MDDI", PD: "PDDI", PM: "PMIC", SE: "SECURITY" };
 const ptLabel = pt => PT_LABELS[pt] || pt || "-";
+
+// HONEY 설치본 다운로드 버튼: /honey/version 으로 라벨/링크 보정 (없으면 비활성).
+// 링크 규칙은 클라이언트(version_check)와 동일: manifest.url 우선, 없으면 /honey/download.
+(async () => {
+  const btn = document.getElementById("honeyDlBtn");
+  if (!btn) return;
+  try {
+    const res = await fetch("/honey/version");
+    if (!res.ok) throw new Error("no release");
+    const m = await res.json();
+    if (!m.version) throw new Error("no version");
+    if (m.url) btn.href = m.url;
+    if (m.file) btn.setAttribute("download", m.file);
+    btn.textContent = `⬇ HONEY 다운로드 v${m.version}`;
+  } catch (e) {
+    btn.classList.add("disabled");
+    btn.removeAttribute("href");
+    btn.title = "배포된 설치본이 없습니다";
+    btn.textContent = "HONEY 다운로드 (없음)";
+  }
+})();
 
 const state = {
   productType: null,

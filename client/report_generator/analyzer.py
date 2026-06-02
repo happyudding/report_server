@@ -24,16 +24,28 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     if not mass_data_map:
         raise ValueError("분석할 데이터가 없습니다.")
 
+    # diff 모드(2파일·subject 구성 상이) 선판정. cpk/distribution 은 위치(iloc) 기반
+    # 빌더라 파일별 subject 수가 다르면 첫 파일 기준 idx 가 다른 파일에서 범위를
+    # 벗어나 깨진다. diff 면 common subject 를 이름 기반으로 계산한다. (단일/동일
+    # 모드면 split is None → 기존 위치 기반 경로 유지.)
+    split = work.split_for_diff()
+
     yield_rows = work.yield_rate()
-    cpk_rows = work.cpk()
     fail_item_rows = work.fail_items()
     issue_rows = B.build_issue_summary(mass_data_map)  # bin별 most-fail item 요약
     summary_rows = work.summary()
     major_fail_subject_rows = B.build_major_fail_subjects(mass_data_map)
 
-    subjects_meta = _subjects_meta_from_group(work)
-
-    distributions = _build_distributions(work, subjects_meta)
+    if split is None:
+        cpk_rows = work.cpk()
+        subjects_meta = _subjects_meta_from_group(work)
+        distributions = _build_distributions(work, subjects_meta)
+    else:
+        cl = split["classification"]
+        common_g = split["common"]
+        cpk_rows = B.build_cpk_for_subjects(common_g.mass_data_map, cl["common"])
+        subjects_meta = _subjects_meta_from_group(common_g)
+        distributions = _build_distributions(common_g, subjects_meta)
 
     total_dut = sum(len(md.scores) for md in mass_data_map.values())
     pass_yield = next((r["portion (%)"] for r in yield_rows if str(r["bin"]) == "1"), None)
@@ -61,31 +73,22 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
         fail_value_rows=fail_value_rows,
     )
 
-    _apply_diff_compare(work, result)
+    if split is not None:
+        _apply_diff_extras(result, split)
     return result
 
 
-def _apply_diff_compare(group: df_honey_group, result: AnalysisResult) -> None:
-    """2개 파일 subject 불일치 시 diff compare 결과를 result 에 채운다.
+def _apply_diff_extras(result: AnalysisResult, split: dict) -> None:
+    """diff compare 의 분류 메타 + a_only/b_only 전용 CPK/Distribution 을 채운다.
 
-    공통(common) CPK/Distribution 은 이름 기반으로 재계산해 메인 시트(cpk/distribution)
-    의 위치 기반 오정렬을 바로잡고, a_only/b_only 는 별도 필드에 담는다. Yield/Fail
-    Item/Issue Table/Summary 는 병합 기준 기존 계산을 그대로 둔다.
+    공통(common) CPK/Distribution/subjects 는 run() 에서 이미 이름 기반으로 계산해
+    메인 시트에 반영했으므로, 여기서는 분류 정보와 a_only/b_only 만 추가한다. Yield/
+    Fail Item/Issue Table/Summary 는 병합 기준 기존 계산을 그대로 둔다.
     """
-    split = group.split_for_diff()
-    if split is None:
-        return
     cl = split["classification"]
-    common_g, a_only_g, b_only_g = split["common"], split["a_only"], split["b_only"]
+    a_only_g, b_only_g = split["a_only"], split["b_only"]
 
     result.diff_classification = cl
-
-    # 메인 cpk/distribution 을 common subjects 기준(이름 매칭)으로 재계산
-    result.cpk_rows = B.build_cpk_for_subjects(common_g.mass_data_map, cl["common"])
-    result.subjects = _subjects_meta_from_group(common_g)
-    result.distributions = _build_distributions(common_g, result.subjects)
-
-    # a_only / b_only
     result.cpk_rows_a_only = B.build_cpk_for_subjects(a_only_g.mass_data_map, cl["a_only"])
     result.cpk_rows_b_only = B.build_cpk_for_subjects(b_only_g.mass_data_map, cl["b_only"])
     result.subjects_a_only = _subjects_meta_from_group(a_only_g)

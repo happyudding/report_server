@@ -293,34 +293,17 @@ def build_cpk_for_subjects(mass_data_map, subject_names):
 
 
 def build_cpk(mass_data_map):
-    rows = []
+    """첫 파일 기준 subject 전체의 CPK.
+
+    위치(iloc) 기반으로 모든 파일을 슬라이싱하면 파일별 subject 구성이 다를 때(diff)
+    첫 파일 idx 가 다른 파일에서 범위를 벗어난다. 이름 기반 매칭(build_cpk_for_subjects)
+    에 위임해 subject 를 보유한 파일에서만 해당 이름 열을 찾는다 — 구성이 동일하면
+    기존 위치 기반과 결과·순서가 같고, 달라도 안전하다.
+    """
+    if not mass_data_map:
+        return []
     first = next(iter(mass_data_map.values()))
-    for idx, subject in enumerate(first.subjects):
-        lo = first.lower_limits[idx] if idx < len(first.lower_limits) else None
-        hi = first.upper_limits[idx] if idx < len(first.upper_limits) else None
-        unit = first.units[idx] if idx < len(first.units) else ""
-        per_source = []
-        for source_name, mass_data in mass_data_map.items():
-            series = pd.to_numeric(mass_data.scores.iloc[:, idx], errors="coerce")
-            per_source.append(series)
-            rows.append({
-                "subject": subject,
-                "source": source_name,
-                "units": unit,
-                "lower_limit": _fmt_num(lo),
-                "upper_limit": _fmt_num(hi),
-                **_calc_stats(series, lo, hi),
-            })
-        total_series = pd.concat(per_source, ignore_index=True) if per_source else pd.Series(dtype=float)
-        rows.append({
-            "subject": subject,
-            "source": "total",
-            "units": unit,
-            "lower_limit": _fmt_num(lo),
-            "upper_limit": _fmt_num(hi),
-            **_calc_stats(total_series, lo, hi),
-        })
-    return rows
+    return build_cpk_for_subjects(mass_data_map, [str(s) for s in first.subjects])
 
 
 # ---------------------------------------------------------------------------

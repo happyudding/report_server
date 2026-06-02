@@ -84,7 +84,11 @@ _XL_VALUE, _XL_CATEGORY, _XL_PRIMARY = 2, 1, 1
 _XL_LOW = -4134               # xlLow (y축 TickLabelPosition)
 _XL_MARKER_NONE = -4142       # xlMarkerStyleNone
 _XL_MARKER_CIRCLE = 8         # xlMarkerStyleCircle (data 점)
-_MARKER_SIZE = 6              # data 점 크기(pt) — plotly 기준(5) + 1
+_MARKER_SIZE = 5             # data 점 크기(pt) — 기존 6 에서 축소. Excel MarkerSize 는
+                             # 정수만 저장(5.5 → 6 으로 반올림돼 무효)하므로 가장 가까운 5 사용.
+# distribution 차트 제목: item 명(subject) / 둘째줄 limit 캡션(Lo~Hi)
+_CHART_TITLE_ITEM_FONT = 11   # item 명 — 기존 10 에서 +1
+_CHART_TITLE_CAP_FONT = 7     # Lo~Hi limit 캡션 — 기존 8 에서 -1
 _MSO_FALSE = 0                # msoFalse (LineFormat.Visible — 점 사이 선 제거)
 _MSO_LINE_SYSDASH = 10        # msoLineSysDash (limit line)
 _RGB_RED = 255               # RGB(255,0,0)
@@ -141,7 +145,8 @@ def _apply_data_style(cell):
 # ── table 시트의 표 시작 위치 (A열 비움, 제목 A1, 헤더 3행, 데이터 4행~)
 _HEADER_ROW = 3
 _START_COL = 2  # B열
-_FAIL_ITEM_ROW_HEIGHT = 78  # fail_item / issue_table 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
+_FAIL_ITEM_ROW_HEIGHT = 90    # fail_item 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
+_ISSUE_TABLE_ROW_HEIGHT = 78  # issue_table 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
 _YIELD_TABLE_ROW_HEIGHT = 22
 _YIELD_HEADER_ROW_HEIGHT = 40
 _NARROW_COL_WIDTH = 6.5    # bin / count / yield / avg / comment 등 짧은 데이터
@@ -233,11 +238,13 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
         _progress(progress_cb, done, total, title)
 
     # Raw Data — source(input file)별 df_honey 포맷 시트를 맨 앞에 순서대로 추가
+    raw_ws_list = []
     if raw_sheets:
         reserved_sheet_names = [_report_sheet_display_name("distribution")] if want_dist else []
         for idx, (name, df) in enumerate(raw_sheets):
             ws = wb.create_sheet(_unique_sheet_name(wb, name, reserved_sheet_names), idx)
             _fill_raw_data(ws, df)
+            raw_ws_list.append(ws)
             done += 1
             _progress(progress_cb, done, total, ws.title)
 
@@ -246,7 +253,7 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
         wb[nm].sheet_view.showGridLines = False
 
     _normalize_report_sheet_names(wb)
-    _finalize_openpyxl_sheet_layouts(wb)
+    _finalize_openpyxl_sheet_layouts(wb, skip_title_for=raw_ws_list)
 
     wb.save(out_path)
 
@@ -638,7 +645,7 @@ def _fill_issue_table(ws, result):
     n_yield = len(result.yield_rows)
     _merge_issue_category(ws, n_yield)
     for i in range(n_yield):
-        ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
+        ws.row_dimensions[_HEADER_ROW + 1 + i].height = _ISSUE_TABLE_ROW_HEIGHT
     _apply_table_col_widths(ws, header, custom_widths={
         "Distribution": 17,
         "comment": 40,
@@ -668,10 +675,11 @@ def _merge_issue_category(ws, n_yield, header_row=_HEADER_ROW, start_col=_START_
 
 
 def _fill_raw_data(ws, df):
-    """df_honey 포맷 DataFrame 을 제목행 아래 A2 부터 기록.
+    """df_honey 포맷 DataFrame 을 A1 부터 기록 (제목행 없음).
 
     행0=subject 헤더, 1=Units, 2~5=Lower/Upper/Lower/Upper limit, 6~=측정 데이터.
-    제목·Source 열 없이 df_honey 적재 포맷과 동일. 헤더·라벨행(2~7행)만 bold.
+    제목·Source 열 없이 df_honey 적재 포맷과 동일. 헤더·라벨행(1~6행)만 bold.
+    숫자처럼 보이는 값은 text 가 아닌 number 로 저장한다(_coerce_number).
     Serial 컬럼은 정규화 시 자동 삽입되는 내부 컬럼이므로 제거.
     """
     from openpyxl.styles import Font
@@ -679,10 +687,10 @@ def _fill_raw_data(ws, df):
     serial_cols = [c for c, v in zip(df.columns, df.iloc[0]) if v == "Serial"]
     if serial_cols:
         df = df.drop(columns=serial_cols)
-    for ri, row in enumerate(df.values.tolist(), start=2):
+    for ri, row in enumerate(df.values.tolist(), start=1):
         for ci, val in enumerate(row, start=1):
-            cell = ws.cell(row=ri, column=ci, value=_sanitize_cell(val))
-            if ri <= 7:
+            cell = ws.cell(row=ri, column=ci, value=_sanitize_cell(_coerce_number(val)))
+            if ri <= 6:
                 cell.font = bold
             cell.alignment = copy(_DATA_ALIGN)
 
@@ -919,11 +927,16 @@ def _apply_sheet_title(ws, title=None):
     cell.font = copy(_TITLE_FONT)
 
 
-def _finalize_openpyxl_sheet_layouts(wb):
+def _finalize_openpyxl_sheet_layouts(wb, skip_title_for=()):
+    """시트 레이아웃 마무리. skip_title_for 에 포함된 시트(Raw Data)는 1행 제목을
+    붙이지 않는다 — Raw Data 는 A1 부터 원본 그대로 두기 위함."""
+    skip = {id(ws) for ws in skip_title_for}
     for ws in wb.worksheets:
         if ws.title.lower() == "summary":
             continue
         _center_used_cells(ws)
+        if id(ws) in skip:
+            continue
         _apply_sheet_title(ws)
 
 
@@ -954,6 +967,28 @@ def _bin_label(value):
     except (TypeError, ValueError):
         pass
     return value
+
+
+def _coerce_number(v):
+    """숫자처럼 보이는 문자열을 number 로 변환 (Raw Data 를 text 가 아닌 숫자로 저장).
+
+    정수 표기('1','42')는 int, 소수·지수 표기('3.14','1e-3')는 float. 변환 불가·빈칸·
+    비문자열은 원본 그대로. NaN/inf 문자열도 원본 유지(_sanitize_cell 가 처리).
+    """
+    if not isinstance(v, str):
+        return v
+    s = v.strip()
+    if not s:
+        return v
+    try:
+        f = float(s)
+    except ValueError:
+        return v
+    if math.isnan(f) or math.isinf(f):
+        return v
+    if "." not in s and "e" not in s.lower() and f.is_integer():
+        return int(f)
+    return f
 
 
 def _sanitize_cell(v):
@@ -1168,8 +1203,8 @@ def _attach_issue_table_charts(wb, result, chart_map, attach_progress_cb=None):
             w = cell.width
             h = cell.height
         except Exception:
-            left, top = 700.0, 60.0 + i * _FAIL_ITEM_ROW_HEIGHT
-            w, h = 200.0, float(_FAIL_ITEM_ROW_HEIGHT)
+            left, top = 700.0, 60.0 + i * _ISSUE_TABLE_ROW_HEIGHT
+            w, h = 200.0, float(_ISSUE_TABLE_ROW_HEIGHT)
         png = os.path.join(tmpdir, f"it_{seq}.png")
         seq += 1
         if _attach_chart_picture(it, ch, png, f"it_chart_{seq}", left, top, w, h,
@@ -1486,7 +1521,7 @@ def _apply_per_chart(chart, spec, legend_fix):
         cap = _limit_caption(d)
         title.Text = d.subject + "\n" + cap
         try:
-            title.Characters(len(d.subject) + 2, len(cap)).Font.Size = 8
+            title.Characters(len(d.subject) + 2, len(cap)).Font.Size = _CHART_TITLE_CAP_FONT
         except Exception:
             pass
         title.Top = 0
@@ -1775,9 +1810,9 @@ def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
         title.Text = d.subject + "\n" + cap
         tf = title.Font
         tf.Name = "Arial Black"
-        tf.Size = 10
+        tf.Size = _CHART_TITLE_ITEM_FONT
         try:                             # 둘째 줄(캡션)은 작게
-            title.Characters(len(d.subject) + 2, len(cap)).Font.Size = 8
+            title.Characters(len(d.subject) + 2, len(cap)).Font.Size = _CHART_TITLE_CAP_FONT
         except Exception:
             pass
         title.Top = 0
