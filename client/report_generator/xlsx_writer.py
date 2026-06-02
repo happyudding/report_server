@@ -141,11 +141,12 @@ _HEADER_ROW = 3
 _START_COL = 2  # B열
 _FAIL_ITEM_ROW_HEIGHT = 78  # fail_item / issue_table 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
 _YIELD_TABLE_ROW_HEIGHT = 22
+_YIELD_HEADER_ROW_HEIGHT = 40
 _NARROW_COL_WIDTH = 6.5    # bin / count / yield / avg / comment 등 짧은 데이터
 _DIST_COL_WIDTH   = 27.1   # Distribution 열 (썸네일 이미지 크기 기준)
 _ITEM_COL_WIDTH   = 20.0   # Item / Category 열 (긴 텍스트)
-_CPK_TEST_NAME_COL_WIDTH = 15
-_CPK_SERIES_COL_WIDTH = _NARROW_COL_WIDTH * 1.5
+_CPK_TEST_NAME_COL_WIDTH = 30
+_CPK_SERIES_COL_WIDTH = 15
 _CPK_N_COL_WIDTH = _NARROW_COL_WIDTH * 0.7
 _FAIL_VALUES_COLS  = ["DUT", "XCoord", "YCoord", "Bin", "Item", "Value"]
 _FAIL_VALUES_NCOLS = 6     # source 블록당 열 수
@@ -184,10 +185,10 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     wb.remove(wb.active)  # 기본 Sheet 제거 후 필요한 시트만 생성
     for nm in ALL_SHEETS:
         if nm in table_writers and nm in sel:
-            wb.create_sheet(nm)
+            wb.create_sheet(_report_sheet_display_name(nm))
     # distribution 만 선택돼 table 시트가 없는 경우 빈 시트 1개 확보
     if want_dist and not wb.sheetnames:
-        wb.create_sheet("distribution")
+        wb.create_sheet(_report_sheet_display_name("distribution"))
 
     total = len([s for s in sel if s in table_writers]) + (len(raw_sheets) if raw_sheets else 0) \
         + (1 if want_dist else 0)
@@ -195,14 +196,15 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
 
     # table 시트 채움 (템플릿 순서 유지)
     for nm in ALL_SHEETS:
-        if nm in table_writers and nm in sel and nm in wb.sheetnames:
-            table_writers[nm](wb[nm], result)
+        sheet_name = _report_sheet_display_name(nm)
+        if nm in table_writers and nm in sel and sheet_name in wb.sheetnames:
+            table_writers[nm](wb[sheet_name], result)
             done += 1
             _progress(progress_cb, done, total, nm)
 
     # Raw Data — source(input file)별 df_honey 포맷 시트를 맨 앞에 순서대로 추가
     if raw_sheets:
-        reserved_sheet_names = ["distribution"] if want_dist else []
+        reserved_sheet_names = [_report_sheet_display_name("distribution")] if want_dist else []
         for idx, (name, df) in enumerate(raw_sheets):
             ws = wb.create_sheet(_unique_sheet_name(wb, name, reserved_sheet_names), idx)
             _fill_raw_data(ws, df)
@@ -303,19 +305,18 @@ def _fill_summary(ws, result):
     _safe_set(ws, "B7", "2. Yield")
     _safe_set(ws, "B15", "3. Evaluation Summary")
 
-    feature = result.summary_feature()
-    _safe_set(ws, "B4", "Total DUT")
-    _safe_set(ws, "D4", "Pass (Bin 1)")
-    _safe_set(ws, "E4", "Fail Types")
-    _safe_set(ws, "F4", "Sources")
-    _safe_set(ws, "G4", "Subjects")
-    _safe_set(ws, "H4", "EVT Version")
-    _safe_set(ws, "B5", feature.get("Total DUT"))
-    _safe_set(ws, "D5", feature.get("Pass (Bin 1)"))
-    _safe_set(ws, "E5", feature.get("Fail Types"))
-    _safe_set(ws, "F5", feature.get("Sources"))
-    _safe_set(ws, "G5", feature.get("Subjects"))
-    _safe_set(ws, "H5", feature.get("EVT Version"))
+    _safe_set(ws, "B4", "DEVICE")
+    _safe_set(ws, "C4", "Customer")
+    _safe_set(ws, "D4", "PKG_Type")
+    _safe_set(ws, "E4", "GrossDie")
+    _safe_set(ws, "F4", "Process Line")
+    _safe_set(ws, "G4", "EVT_Version")
+    _safe_set(ws, "B5", meta.product or meta.product_type or "")
+    _safe_set(ws, "C5", "")
+    _safe_set(ws, "D5", meta.product_type or "")
+    _safe_set(ws, "E5", "")
+    _safe_set(ws, "F5", meta.process or "")
+    _safe_set(ws, "G5", meta.revision or "")
 
     _safe_set(ws, "B8", "Lot NO")
     _safe_set(ws, "D8", "Yield")
@@ -332,7 +333,7 @@ def _fill_summary(ws, result):
         _safe_set(ws, f"E{r}", _ordinal_fail_label(i + 1))
         if i < len(majors):
             _safe_set(ws, f"F{r}", majors[i].get("subject") or majors[i].get("Main Fail subject"))
-            _safe_set(ws, f"G{r}", majors[i].get("ratio") if "ratio" in majors[i] else majors[i].get("avg"))
+            _safe_set(ws, f"G{r}", _summary_fail_percent(majors[i]))
 
     _safe_set(ws, "B16", "Category")
     _safe_set(ws, "C16", "Condition & Judge Limit")
@@ -402,7 +403,7 @@ def _apply_summary_layout_styles(ws):
 
     ws["D9"].number_format = "0.00"
     for row in range(9, 14):
-        ws[f"G{row}"].number_format = "0.0000"
+        ws[f"G{row}"].number_format = "0.00"
 
     for cell_range in (
         "A1:H1", "B3:C3", "B7:C7", "B8:C8", "B9:C13", "D9:D13",
@@ -421,6 +422,12 @@ def _ordinal_fail_label(index):
     elif index == 3:
         suffix = "rd"
     return f"{index}{suffix} Fail"
+
+
+def _summary_fail_percent(row):
+    if "ratio" in row and row.get("ratio") is not None:
+        return row.get("ratio") * 100
+    return row.get("avg")
 
 
 def _yield_table(result):
@@ -448,9 +455,10 @@ def _fill_yield(ws, result):
         header, rows = _yield_table(result)
     _fill_table(ws, header, rows)
     _apply_table_col_widths(ws, header, custom_widths={"comment": 50})
-    _apply_small_font_headers(ws, header, ["_count", "_yield", "avg"])
     _apply_table_font(ws, header, size=12)
+    _apply_small_font_headers(ws, header, ["_count", "_yield"], size=10)
     _set_table_row_heights(ws, len(rows), height=_YIELD_TABLE_ROW_HEIGHT)
+    ws.row_dimensions[_HEADER_ROW].height = _YIELD_HEADER_ROW_HEIGHT
 
 
 def _fill_fail_item(ws, result):
@@ -595,10 +603,10 @@ def _fill_issue_table(ws, result):
         ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
     _apply_table_col_widths(ws, header, custom_widths={
         "Distribution": 17,
-        "comment": 25,
-        "개발 1차 comment": 25,
-        "PTE 2차 comment": 25,
-        "개발 2차 comment": 25,
+        "comment": 40,
+        "개발 1차 comment": 40,
+        "PTE 2차 comment": 40,
+        "개발 2차 comment": 40,
     })
     _apply_used_cell_font(ws, size=15, bold=False)
     _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=True,
@@ -818,7 +826,7 @@ def _apply_font_delta_to_columns(ws, header, names, delta,
 
 
 def _normalize_report_sheet_names(wb):
-    canonical = {name.lower(): name for name in ALL_SHEETS}
+    canonical = {name.lower(): _report_sheet_display_name(name) for name in ALL_SHEETS}
     existing = {name.lower() for name in wb.sheetnames}
     for ws in wb.worksheets:
         current = ws.title
@@ -917,6 +925,11 @@ def _sanitize_cell(v):
     return v
 
 
+def _report_sheet_display_name(name):
+    text = str(name or "")
+    return text[:1].upper() + text[1:] if text else text
+
+
 # ── distribution (xlwings / Excel COM) ───────────────────────────────────────
 
 def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=False,
@@ -957,7 +970,8 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
                         pass
                 sh.clear()
             else:
-                sh = wb.sheets.add("distribution", after=wb.sheets[len(wb.sheets) - 1])
+                sh = wb.sheets.add(_report_sheet_display_name("distribution"),
+                                   after=wb.sheets[len(wb.sheets) - 1])
         chart_map = _write_distribution(wb, sh, result, colors,
                                         dist_progress_cb=dist_progress_cb)
         if attach_fail_item and chart_map:

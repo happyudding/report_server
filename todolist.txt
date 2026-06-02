@@ -1,11 +1,30 @@
-Honey Main Ui 수정 해줘
-1. 전체 UI 크기 고정 file list 높이 지금보다 1.5 배 증가Status 높이 그만큼감소
-2. File name 부분 길이 지금의 1.7배 정도 증가
+새로운 기능 추가 해줘 diff compare 기능이야
+1. 지금 까지는 동일한 subject 와 Limit 을 가진 서로 다른 input file여러개가 들어온다고 가정했었는데
+subject 와 Limit 이 일부는 같고 일부는 다른 서로다른 input file 2개가 들어온다고 가정했을때 compare 해줄수 있는 기능을 추가 해줘
+2. Yield, Fail Item, Issue Table 은 Merge 된 상태에서도 기존 code 와 동일하게 동작 가능할거같아.
+3. Distribution 과 CPK 는 아래와 같이 분리 되어야 할거같아
+1) input file A,B 라 가정했을때 우선 전처리 과정에서 Item name 기준으로 (Lo, Up Limit 처리는 우선 나중에 한다.) 공통으로 가지고 있는 Item, A만 가지고 있는 item, B 만 가지고 있는 Item 으로 분류 한다.
+2) 공통, A only, B only 에 대해 각각 Cpk, Distribution 을 따로 다 그려준다. sheet name 은 공통은 기존과 그대로 A only 는 CPK_Filename 이며 이 Filename 은 input file 명에 따라 부여되는 각 파일의 이름이야 (기존 코드에 구현되어 있음) Distribution_Filename 이런식으로 가겠지)
 
-Options ui 수정해줘
 
-1. 분석항목 출력옵션 차트색을 어쩌고.... comment 삭제
-2. Server auto upload 자동 check
-3. Summary default 로 uncheck 
+1. cnt yield cnt yield 이런식이 아니라 cnt cnt cnt yield yield yield 이런식으로 되게 정리해줘 yield, fail_item, Issue table 모두다 
+2. 사용자가 legend 명 을 정할수있께 하는 UI 추가 해줘 이 기능을 Filename change 로 정할거야 Filename 이라는 개념은 그 개념이야 file 명에서 일부 catch 해와서 하는 개념으로 (sheetname 이라는 용어를 내가 코드내에서 썻었던거같은데 앞으로는 filename 이라고 하고 싶어)각 input file 에 대한 legend 명이야. 해당 UI 는 Options UI 에 버튼 하나 추가해줘 버튼 위치는 좌우 화살표 넘겨주는곳 바로 위쪽이야 이름은 FileName Change 로 만들어줘 버튼을 누르면 기존의 Filename 을 Filename_A, Filename_B, Filename_C 라고 가정했을때 text 입력창이 하나 뜨면서 미리 입력되어 있는 text 창에 Filename_A,Filename_B,Filename_C 가 입력 되어있고 사용자가 수정할수있게 해줘 즉 comma 로 input file 3개(예시임) 에 대한 사용자가 지정하는걸 구분하겠다는 의미야 
 
-Start 버튼 누르면 이제 csvfile_to_df 가 시작될텐데 (이건 외부꺼) 전처리 할때도 Progress bar 띄워줄수 있나? 지금 어짜피 구현해놔도 나중에 새로운 csvfile_to_df 가 오면 progress bar 가 의미 없겠지? 그럼 혹시 어떤식으로 구현하는게 좋을까 진행사항을 파악하게 미리 짜놓고 싶은데 파일 별로 
+서버 xlsx file upload 관련
+1. 서버에 Upload 했을때 지금 Summary, Yield, Issue_TAble, Distribution 이 올라가는데 
+2. Summary Yield Issue Table 의 text 와 table 은 최대한 원형 그대로 (원형이라는 말은 내용과 표의 셀 개수등은 당연히 들어가야 하며 Font 크기나 행너비 열너비 등이 최대한 동일한 비율로 올라가게) 해줘
+특정 부분에서 index 를 잡고 data 를 grep 해야 될거같은데 
+Summary 는 B4 에 "DEVICE"
+Yield 는 B3 에 "BIN"
+IssueTable 은 는 C3 에 "BIN" 
+은 사용자가 수정할 확률이 적어서 우선 이거 기준으로 전체 각 표에 있는 text data 를 grep 해서 가져오는 방식으로 하고 혹시 이 위치가 search 가 안됬을 경우에는 해당 keyword 를 찾아보고 있으면 거기를 기준 index 로 가져 온다.
+text를 가져올때는 해당 page 에 있는 text 전체를 가져오지 말고 정해진 table (현재 column 명이 있는) 까지만 grep 해서 가져 오도록한다.
+
+3. IssueTable sheet 와 Distribution 의 차트 data 는 PNG file 로 export 해서 S3 서버에 저장한다. 우선 issuetable 의 distribution 은 각각의 PNG file 을 S3 에 저장하고 그 경로를 DB 에 들고있어서 나중에 세션이 재 호출될때 S3 에서 불러와서 해당 위치에 display 시킨다. Distribution 의 차트 data 는 차트 전체를 하나의 PNG 로 export 하고 S3 에 저장하며 세션 재 호출시 S3 에서 해당 PNG load 해서 display 하도록 한다. 
+
+
+
+
+Layout 관련
+1. 각 sheet 의 Title 전부 좌측 정렬 해줘
+2. 
