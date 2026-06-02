@@ -209,23 +209,64 @@ def upload_xlsx():
                     if r["item_name"] and r["item_name"] != "unknown"]
     saved = report_db.save_summary_batch(analysis_key, session_id, summary_rows)
 
-    # ── summary / issue_table 텍스트 → S3 JSON ─────────────────────────────
+    # ── summary / yield / issue_table grid model → S3 JSON ─────────────────
+    # 표 원형 재현용 grid 를 저장. grid 추출 실패 시 의미 dict 로 폴백(하위호환).
+    grids = parsed.get("grids") or {}
     if s3_ok:
         try:
+            meta_str = _canonical_meta_bytes(meta).decode("utf-8")
+
             sum_key = report_s3.make_summary_text_s3_key(analysis_key)
-            sum_uri = report_s3.upload_json_to_s3(sum_key, parsed["summary"])
+            sum_uri = report_s3.upload_json_to_s3(
+                sum_key, grids.get("summary") or parsed["summary"])
             report_db.upsert_object_info(
-                analysis_key, content_hash, _canonical_meta_bytes(meta).decode("utf-8"),
+                analysis_key, content_hash, meta_str,
                 "summary_text", report_s3.bucket_name(), sum_key, sum_uri,
             )
-            iss_key = report_s3.make_issue_text_s3_key(analysis_key)
-            iss_uri = report_s3.upload_json_to_s3(iss_key, parsed["issue_rows"])
+
+            yld_key = report_s3.make_yield_text_s3_key(analysis_key)
+            yld_uri = report_s3.upload_json_to_s3(
+                yld_key, grids.get("yield") or parsed["yield_rows"])
             report_db.upsert_object_info(
-                analysis_key, content_hash, _canonical_meta_bytes(meta).decode("utf-8"),
+                analysis_key, content_hash, meta_str,
+                "yield_text", report_s3.bucket_name(), yld_key, yld_uri,
+            )
+
+            iss_key = report_s3.make_issue_text_s3_key(analysis_key)
+            iss_uri = report_s3.upload_json_to_s3(
+                iss_key, grids.get("issue_table") or parsed["issue_rows"])
+            report_db.upsert_object_info(
+                analysis_key, content_hash, meta_str,
                 "issue_table_text", report_s3.bucket_name(), iss_key, iss_uri,
             )
         except Exception:
             pass
+
+    # ── Issue_table 행별 분포 PNG → S3 (골격: 기본 비활성) ──────────────────
+    # parse 단계 ISSUE_IMAGES_ENABLED=False 면 issue_images=[] 라 아래 블록은 미실행.
+    # 외부 프로젝트 브랜치 시 플래그만 켜면 추출→업로드→인덱스가 자동 동작한다.
+    issue_imgs_saved = 0
+    if s3_ok and parsed.get("issue_images"):
+        index = []
+        for item in parsed["issue_images"]:
+            try:
+                row = int(item["row"])
+                ikey = report_s3.make_issue_image_s3_key(analysis_key, row)
+                report_s3.upload_bytes_to_s3(ikey, item["png"], content_type="image/png")
+                index.append({"row": row, "key": ikey})
+                issue_imgs_saved += 1
+            except Exception:
+                continue
+        if index:
+            try:
+                idx_key = report_s3.make_issue_image_index_s3_key(analysis_key)
+                idx_uri = report_s3.upload_json_to_s3(idx_key, {"images": index})
+                report_db.upsert_object_info(
+                    analysis_key, content_hash, _canonical_meta_bytes(meta).decode("utf-8"),
+                    "issue_image_index", report_s3.bucket_name(), idx_key, idx_uri,
+                )
+            except Exception:
+                pass
 
     # ── 차트 PNG 갤러리 (클라이언트 Excel COM 렌더) → S3 ─────────────────────
     charts_saved = 0
@@ -258,6 +299,8 @@ def upload_xlsx():
         "rows_saved": saved,
         "s3_uploaded": s3_ok,
         "charts_saved": charts_saved,
+        "issue_images_saved": issue_imgs_saved,
+        "grids": sorted(grids.keys()),
         "summary_keys": list(parsed["summary"].keys()),
         "yield_row_count": len(parsed["yield_rows"]),
         "issue_row_count": len(parsed["issue_rows"]),

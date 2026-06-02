@@ -118,6 +118,7 @@ def session_full(session_id):
     akey = session.get("analysis_key")
     objects = {}
     summary_text = None
+    yield_text = None
     issue_table_text = None
     if akey:
         for obj in report_db.get_all_object_infos(akey):
@@ -125,16 +126,9 @@ def session_full(session_id):
                 "s3_uri": obj["s3_uri"],
                 "s3_key": obj["s3_key"],
             }
-        if "summary_text" in objects:
-            try:
-                summary_text = report_s3.download_json_from_s3(objects["summary_text"]["s3_key"])
-            except (S3NotConfigured, S3ObjectCorrupted, Exception):
-                summary_text = None
-        if "issue_table_text" in objects:
-            try:
-                issue_table_text = report_s3.download_json_from_s3(objects["issue_table_text"]["s3_key"])
-            except (S3NotConfigured, S3ObjectCorrupted, Exception):
-                issue_table_text = None
+        summary_text = _load_json_object(objects, "summary_text")
+        yield_text = _load_json_object(objects, "yield_text")
+        issue_table_text = _load_json_object(objects, "issue_table_text")
     charts = []
     if "chart_index" in objects:
         try:
@@ -144,16 +138,39 @@ def session_full(session_id):
                       for i in range(count)]
         except (S3NotConfigured, S3ObjectCorrupted, Exception):
             charts = []
+    # Issue_table 행별 분포 이미지(골격). 인덱스 객체가 있을 때만 채움 — 보통 [].
+    issue_images = []
+    if "issue_image_index" in objects:
+        try:
+            manifest = report_s3.download_json_from_s3(objects["issue_image_index"]["s3_key"])
+            for it in (manifest or {}).get("images", []) or []:
+                row = int(it.get("row"))
+                issue_images.append({"row": row,
+                                     "url": f"/pe/report/issue_image/{session_id}/{row}"})
+        except (S3NotConfigured, S3ObjectCorrupted, Exception):
+            issue_images = []
     return jsonify({
         "session": _public_session(session),
         "summary": report_db.get_summary_by_analysis_key(akey) if akey else [],
         "summary_text": summary_text,
+        "yield_text": yield_text,
         "issue_table_text": issue_table_text,
         "charts": charts,
+        "issue_images": issue_images,
         "csv_files": report_db.get_csv_files(akey) if akey else [],
         "objects": objects,
         "annotations": report_db.get_annotations(session_id),
     })
+
+
+def _load_json_object(objects, object_type):
+    """objects 인덱스에 object_type 이 있으면 S3 JSON 다운로드, 실패 시 None."""
+    if object_type not in objects:
+        return None
+    try:
+        return report_s3.download_json_from_s3(objects[object_type]["s3_key"])
+    except (S3NotConfigured, S3ObjectCorrupted, Exception):
+        return None
 
 
 @report_bp.get("/chart/<session_id>/<int:idx>")
@@ -176,6 +193,30 @@ def chart_image(session_id, idx):
         abort(503, "S3 not configured")
     except Exception:
         abort(404, "chart not found")
+    return Response(data, mimetype="image/png",
+                    headers={"Cache-Control": "private, max-age=3600"})
+
+
+@report_bp.get("/issue_image/<session_id>/<int:row>")
+def issue_image(session_id, row):
+    """Issue_table 행별 분포 PNG 를 S3 에서 스트리밍 (골격).
+    chart_image 와 동일 패턴 — 서버 경유 서빙. 이미지 미존재 시 404."""
+    _validate_session_id(session_id)
+    if row < 0 or row > 10000:
+        abort(404, "invalid image row")
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    akey = session.get("analysis_key")
+    if not akey:
+        abort(404, "no analysis_key for session")
+    try:
+        key = report_s3.make_issue_image_s3_key(akey, row)
+        data = report_s3.download_bytes_from_s3(key)
+    except S3NotConfigured:
+        abort(503, "S3 not configured")
+    except Exception:
+        abort(404, "image not found")
     return Response(data, mimetype="image/png",
                     headers={"Cache-Control": "private, max-age=3600"})
 
@@ -252,15 +293,30 @@ def update_session_content(session_id):
         except Exception as exc:
             errors["summary_text"] = str(exc)
 
-    if body.get("issue_rows") is not None:
+    # yield grid model → S3 JSON (yield_text). grid 편집 경로.
+    if body.get("yield_text") is not None:
+        try:
+            _write_text_object(akey, session, "yield_text",
+                               report_s3.make_yield_text_s3_key, body["yield_text"])
+            updated["yield_text"] = True
+        except S3NotConfigured:
+            errors["yield_text"] = "S3 미설정"
+        except Exception as exc:
+            errors["yield_text"] = str(exc)
+
+    # issue_table 콘텐츠 → S3 JSON. grid(issue_table_text) 또는 legacy(issue_rows) 수용.
+    issue_payload = body.get("issue_table_text")
+    if issue_payload is None:
+        issue_payload = body.get("issue_rows")
+    if issue_payload is not None:
         try:
             _write_text_object(akey, session, "issue_table_text",
-                               report_s3.make_issue_text_s3_key, body["issue_rows"])
-            updated["issue_rows"] = True
+                               report_s3.make_issue_text_s3_key, issue_payload)
+            updated["issue_table_text"] = True
         except S3NotConfigured:
-            errors["issue_rows"] = "S3 미설정"
+            errors["issue_table_text"] = "S3 미설정"
         except Exception as exc:
-            errors["issue_rows"] = str(exc)
+            errors["issue_table_text"] = str(exc)
 
     status = 200 if not errors else (207 if updated else 500)
     return jsonify({"ok": not errors, "updated": updated, "errors": errors}), status

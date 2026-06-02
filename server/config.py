@@ -32,6 +32,8 @@ REPORT_S3_THUMB_PREFIX      = os.getenv("REPORT_S3_THUMB_PREFIX",      "pe/repor
 REPORT_S3_SOURCE_XLSX_PREFIX = os.getenv("REPORT_S3_SOURCE_XLSX_PREFIX","pe/report_server/source_xlsx")
 REPORT_S3_SUMMARY_TEXT_PREFIX = os.getenv("REPORT_S3_SUMMARY_TEXT_PREFIX","pe/report_server/summary_text")
 REPORT_S3_ISSUE_TEXT_PREFIX   = os.getenv("REPORT_S3_ISSUE_TEXT_PREFIX",  "pe/report_server/issue_table_text")
+REPORT_S3_YIELD_TEXT_PREFIX   = os.getenv("REPORT_S3_YIELD_TEXT_PREFIX",  "pe/report_server/yield_text")
+REPORT_S3_ISSUE_IMG_PREFIX    = os.getenv("REPORT_S3_ISSUE_IMG_PREFIX",   "pe/report_server/issue_img")
 REPORT_S3_CHART_PREFIX        = os.getenv("REPORT_S3_CHART_PREFIX",       "pe/report_server/chart_png")
 
 REPORT_THUMB_WORKERS = int(os.getenv("REPORT_THUMB_WORKERS", "8"))

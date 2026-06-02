@@ -15,6 +15,8 @@ from config import (
     REPORT_S3_SOURCE_XLSX_PREFIX,
     REPORT_S3_SUMMARY_TEXT_PREFIX,
     REPORT_S3_THUMB_PREFIX,
+    REPORT_S3_YIELD_TEXT_PREFIX,
+    REPORT_S3_ISSUE_IMG_PREFIX,
     REPORT_S3_CHART_PREFIX,
 )
 
@@ -195,6 +197,25 @@ def make_issue_text_s3_key(analysis_key):
     return f"{prefix}/{analysis_key}.json"
 
 
+def make_yield_text_s3_key(analysis_key):
+    prefix = REPORT_S3_YIELD_TEXT_PREFIX.strip("/")
+    return f"{prefix}/{analysis_key}.json"
+
+
+# ── Issue_table 행별 분포 이미지 (골격) ──────────────────────────────────────
+# xlsx 의 Distribution(I) 열에 박힌 행별 PNG 를 S3 에 보관. 키빌더만 우선 구현하고
+# 실제 추출/업로드 활성화는 다음 단계(upload_xlsx.py 의 조건부 훅) 에서.
+
+def make_issue_image_s3_key(analysis_key, row):
+    prefix = REPORT_S3_ISSUE_IMG_PREFIX.strip("/")
+    return f"{prefix}/{analysis_key}/{int(row)}.png"
+
+
+def make_issue_image_index_s3_key(analysis_key):
+    prefix = REPORT_S3_ISSUE_IMG_PREFIX.strip("/")
+    return f"{prefix}/{analysis_key}/index.json"
+
+
 # ── 클라이언트(Excel COM)가 렌더한 차트 PNG 갤러리 ───────────────────────────
 
 def make_chart_png_s3_key(analysis_key, idx):
@@ -205,3 +226,17 @@ def make_chart_png_s3_key(analysis_key, idx):
 def make_chart_index_s3_key(analysis_key):
     prefix = REPORT_S3_CHART_PREFIX.strip("/")
     return f"{prefix}/{analysis_key}/index.json"
+
+
+# ── presigned URL (외부 프로젝트 브랜치 호환) ────────────────────────────────
+# 현재 표시는 서버 프록시(/pe/report/chart, /pe/report/issue_image) 로 일관하되,
+# 외부 S3 드라이브 패턴(<img src={presigned_url}>) 과 브랜치하기 쉽도록 헬퍼만 노출.
+
+def get_presigned_url(key, expires=3600):
+    """key 에 대한 임시 GET URL 생성. boto3 generate_presigned_url 래퍼."""
+    client = get_s3_client()
+    return client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": REPORT_S3_BUCKET, "Key": key},
+        ExpiresIn=int(expires),
+    )

@@ -85,6 +85,25 @@ tbody tr:hover { background: #f9fbff; }
 .kv-table { width: auto; min-width: 360px; }
 .kv-table th { width: 160px; background: #f6f7f9; text-align: left; }
 
+/* ── grid (xlsx 원형 재현: 구조 + 상대크기) ─────────────────────────────── */
+.grid-wrap { overflow-x: auto; margin-bottom: 12px; }
+.grid-table {
+  width: auto; border-collapse: collapse; table-layout: fixed;
+  background: #fff; margin-bottom: 0;
+}
+.grid-table td {
+  border: 1px solid #e3e6ea; padding: 2px 6px; vertical-align: middle;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #222; font-size: 12px; line-height: 1.3;
+}
+.grid-table tbody tr:hover { background: transparent; }
+.grid-table td.editing {
+  white-space: normal; outline: none; cursor: text;
+}
+.grid-table td.editing:focus { background: #fffbe6; box-shadow: inset 0 0 0 2px #4a90e2; }
+.grid-table td .dist-img { max-width: 100%; height: auto; display: block; }
+.grid-table td.empty { background: #fcfcfd; }
+
 .text-lines {
   font-size: 13px; color: #333; line-height: 1.7;
   background: #fff; border: 1px solid #eef0f3; border-radius: 6px;
@@ -351,9 +370,94 @@ function deriveCols(rows) {
   return seen;
 }
 
+// ── grid model 렌더 (xlsx 원형 재현) ─────────────────────────────────────────
+function isGrid(o) { return !!(o && typeof o === "object" && Array.isArray(o.cells)); }
+
+// Excel 열너비(문자단위) → px, 행높이(pt) → px 근사
+function colPx(w) { return w ? Math.round(w * 7 + 5) : null; }
+function rowPx(h) { return h ? Math.round(h * 4 / 3) : null; }
+
+function gridCellStyle(cell) {
+  const s = [];
+  if (cell.sz) s.push(`font-size:${cell.sz}px`);
+  if (cell.b) s.push("font-weight:700");
+  if (cell.a) s.push(`text-align:${cell.a}`);
+  return s.join(";");
+}
+
+// 헤더행(cells[0])에서 컬럼명 index 찾기 (없으면 -1)
+function gridColIndex(grid, name) {
+  const head = (grid.cells && grid.cells[0]) || [];
+  for (let i = 0; i < head.length; i++) {
+    if (String(head[i].t || "").trim() === name) return i;
+  }
+  return -1;
+}
+
+/**
+ * grid model → HTML table.
+ * opts: { edit:bool, imgMap:{rowIndex:url}, distCol:int }
+ */
+function renderGrid(grid, opts) {
+  opts = opts || {};
+  const cols = grid.cols || [];
+  const rows = grid.rows || [];
+  const cells = grid.cells || [];
+  const imgMap = opts.imgMap || {};
+  const distCol = (opts.distCol == null) ? -1 : opts.distCol;
+
+  const colgroup = "<colgroup>" + cols.map(c => {
+    const w = colPx(c.w);
+    return `<col${w ? ` style="width:${w}px"` : ""}>`;
+  }).join("") + "</colgroup>";
+
+  const body = cells.map((line, ri) => {
+    const h = rowPx(rows[ri] && rows[ri].h);
+    const tds = line.map((cell, ci) => {
+      const style = gridCellStyle(cell);
+      const styleAttr = style ? ` style="${style}"` : "";
+      // Distribution 열 + 해당 행 이미지가 있으면 <img> (골격 단계엔 보통 없음)
+      if (ci === distCol && imgMap[ri]) {
+        return `<td${styleAttr}><img class="dist-img" loading="lazy" src="${esc(imgMap[ri])}" alt="dist ${ri}"></td>`;
+      }
+      const txt = esc(cell.t || "");
+      if (opts.edit && ci !== distCol) {
+        return `<td${styleAttr} class="editing" contenteditable="true" data-r="${ri}" data-c="${ci}">${txt}</td>`;
+      }
+      const cls = (cell.t === "" || cell.t == null) ? ' class="empty"' : "";
+      return `<td${styleAttr}${cls}>${txt}</td>`;
+    }).join("");
+    return `<tr${h ? ` style="height:${h}px"` : ""}>${tds}</tr>`;
+  }).join("");
+
+  return `<div class="grid-wrap"><table class="grid-table">${colgroup}<tbody>${body}</tbody></table></div>`;
+}
+
+// 편집된 grid DOM → 원본 grid 복제본에 셀 텍스트만 반영
+function collectGrid(panelEl, baseGrid) {
+  if (!isGrid(baseGrid)) return baseGrid;
+  const out = JSON.parse(JSON.stringify(baseGrid));
+  panelEl.querySelectorAll("td[data-r]").forEach(td => {
+    const r = +td.dataset.r, c = +td.dataset.c;
+    if (out.cells[r] && out.cells[r][c]) out.cells[r][c].t = td.textContent;
+  });
+  return out;
+}
+
+// issue_images([{row,url}]) → {rowIndex:url}
+function issueImgMap(issue_images) {
+  const m = {};
+  (issue_images || []).forEach(it => { m[it.row] = it.url; });
+  return m;
+}
+
 // ── Summary (read) ────────────────────────────────────────────────────────────
 function renderSummary(summary_text, summary_rows) {
   const panel = document.getElementById("panel-summary");
+  if (isGrid(summary_text)) {
+    panel.innerHTML = `<div class="section-title">Summary</div>` + renderGrid(summary_text);
+    return;
+  }
   const st = summary_text || {};
   const blocks = [];
 
@@ -401,8 +505,12 @@ function renderSummary(summary_text, summary_rows) {
 }
 
 // ── Yield (read) ──────────────────────────────────────────────────────────────
-function renderYield(summary_rows) {
+function renderYield(yield_text, summary_rows) {
   const panel = document.getElementById("panel-yield");
+  if (isGrid(yield_text)) {
+    panel.innerHTML = `<div class="section-title">Yield</div>` + renderGrid(yield_text);
+    return;
+  }
   if (!summary_rows || !summary_rows.length) {
     emptyPanel(panel, "Yield 데이터 없음");
     return;
@@ -412,13 +520,19 @@ function renderYield(summary_rows) {
 }
 
 // ── Issue Table (read) ──────────────────────────────────────────────────────
-function renderIssues(issue_rows) {
+function renderIssues(issue_table_text, issue_images) {
   const panel = document.getElementById("panel-issues");
-  if (!issue_rows || !issue_rows.length) {
+  if (isGrid(issue_table_text)) {
+    const distCol = gridColIndex(issue_table_text, "Distribution");
+    panel.innerHTML = `<div class="section-title">Issue Table</div>` +
+      renderGrid(issue_table_text, { imgMap: issueImgMap(issue_images), distCol });
+    return;
+  }
+  if (!issue_table_text || !issue_table_text.length) {
     emptyPanel(panel, "Issue Table 데이터 없음");
     return;
   }
-  panel.innerHTML = `<div class="section-title">Issue Table</div>` + rowsTable(issue_rows);
+  panel.innerHTML = `<div class="section-title">Issue Table</div>` + rowsTable(issue_table_text);
 }
 
 // ── Distribution (read; 수정 불가) ────────────────────────────────────────────
@@ -475,6 +589,12 @@ function kvEditHtml(obj, group) {
 // ── Summary (edit) ────────────────────────────────────────────────────────────
 function renderSummaryEdit() {
   const panel = document.getElementById("panel-summary");
+  if (isGrid(DATA.summary_text)) {
+    panel.innerHTML = `<div class="edit-section-title">Summary</div>` +
+      `<div class="edit-hint">셀을 직접 클릭해 텍스트를 수정하세요. 표 구조/크기는 유지됩니다.</div>` +
+      renderGrid(DATA.summary_text, { edit: true });
+    return;
+  }
   const st = DATA.summary_text || {};
   const blocks = [];
 
@@ -545,6 +665,12 @@ function collectSummaryText() {
 // ── Yield (edit) ──────────────────────────────────────────────────────────────
 function renderYieldEdit() {
   const panel = document.getElementById("panel-yield");
+  if (isGrid(DATA.yield_text)) {
+    panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
+      `<div class="edit-hint">셀을 직접 클릭해 텍스트를 수정하세요. 표 구조/크기는 유지됩니다.</div>` +
+      renderGrid(DATA.yield_text, { edit: true });
+    return;
+  }
   panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
     `<div class="edit-hint">item_name 이 빈 행은 저장되지 않습니다. 숫자 칸은 비워두면 빈 값으로 저장됩니다.</div>` +
     editTableHtml(DATA.summary || [], YIELD_COLS, "tbl-yield");
@@ -553,6 +679,13 @@ function renderYieldEdit() {
 // ── Issue Table (edit) ──────────────────────────────────────────────────────
 function renderIssuesEdit() {
   const panel = document.getElementById("panel-issues");
+  if (isGrid(DATA.issue_table_text)) {
+    const distCol = gridColIndex(DATA.issue_table_text, "Distribution");
+    panel.innerHTML = `<div class="edit-section-title">Issue Table</div>` +
+      `<div class="edit-hint">셀을 직접 클릭해 텍스트를 수정하세요. 표 구조/크기·이미지는 유지됩니다.</div>` +
+      renderGrid(DATA.issue_table_text, { edit: true, imgMap: issueImgMap(DATA.issue_images), distCol });
+    return;
+  }
   const rows = DATA.issue_table_text || [];
   const cols = deriveCols(rows);
   if (!cols.length) {
@@ -572,8 +705,8 @@ function renderActive() {
     renderDistribution(DATA.charts);
   } else {
     renderSummary(DATA.summary_text, DATA.summary);
-    renderYield(DATA.summary);
-    renderIssues(DATA.issue_table_text);
+    renderYield(DATA.yield_text, DATA.summary);
+    renderIssues(DATA.issue_table_text, DATA.issue_images);
     renderDistribution(DATA.charts);
   }
 }
@@ -613,13 +746,29 @@ document.getElementById("editCancel").addEventListener("click", () => setMode("v
 document.getElementById("editSave").addEventListener("click", saveEdits);
 
 async function saveEdits() {
-  const payload = {
-    password: verifiedPassword,
-    yield_rows: readEditTable(document.getElementById("tbl-yield")) || [],
-    summary_text: collectSummaryText(),
-  };
-  const issueTbl = document.getElementById("tbl-issue");
-  if (issueTbl) payload.issue_rows = readEditTable(issueTbl);
+  const payload = { password: verifiedPassword };
+
+  // Summary: grid 면 셀 텍스트 수집(grid), 아니면 legacy summary_text 구조.
+  if (isGrid(DATA.summary_text)) {
+    payload.summary_text = collectGrid(document.getElementById("panel-summary"), DATA.summary_text);
+  } else {
+    payload.summary_text = collectSummaryText();
+  }
+
+  // Yield: grid 면 yield_text(grid), 아니면 legacy yield_rows(DB).
+  if (isGrid(DATA.yield_text)) {
+    payload.yield_text = collectGrid(document.getElementById("panel-yield"), DATA.yield_text);
+  } else {
+    payload.yield_rows = readEditTable(document.getElementById("tbl-yield")) || [];
+  }
+
+  // Issue Table: grid 면 issue_table_text(grid), 아니면 legacy issue_rows.
+  if (isGrid(DATA.issue_table_text)) {
+    payload.issue_table_text = collectGrid(document.getElementById("panel-issues"), DATA.issue_table_text);
+  } else {
+    const issueTbl = document.getElementById("tbl-issue");
+    if (issueTbl) payload.issue_rows = readEditTable(issueTbl);
+  }
 
   const saveBtn = document.getElementById("editSave");
   saveBtn.disabled = true;
