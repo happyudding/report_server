@@ -4,30 +4,38 @@
 > 계산은 [06 분석 엔진](06_analysis_engine.md), 전송은 [07 업로드](07_client_upload_chart.md), 업데이트는 [04](04_honey_update.md) 로 위임.
 
 ## 파일
-- [client/honey_main.py](../client/honey_main.py) — `HoneyMainWindow` + 다이얼로그 4종 + `main()`
-- UI 레이아웃(.ui, Qt Designer): `honey_main.ui`, `upload_dialog.ui`, `d1_browser.ui`, `file_order.ui` — 런타임 `uic.loadUi`
+- [client/honey_main.py](../client/honey_main.py) — `HoneyMainWindow` + 다이얼로그 5종 + `main()`
+- UI 레이아웃(.ui, Qt Designer): `honey_main.ui`, `upload_dialog.ui`, `d1_browser.ui`, `file_order.ui`, `report_settings.ui` — 런타임 `uic.loadUi`
 - [client/config.py](../client/config.py) — `SERVER_BASE_URL`, `D1_STORAGE_DIR`, `CONFIG_DIR`
+- [client/app_settings.py](../client/app_settings.py) — 사용자별 settings.json(Product Type 등 복원)
 - [client/chart_colors.py](../client/chart_colors.py) — distribution 차트 48색 팔레트(편집/저장)
 
 ## 화면 구성 / 다이얼로그
 | 클래스 | .ui | 역할 |
 |--------|-----|------|
-| `HoneyMainWindow` | honey_main.ui | 메인: 입력목록·항목 선택(좌/우)·시트 체크·요약·버튼 |
+| `HoneyMainWindow` | honey_main.ui | 메인: ProductType 라디오·입력목록(좌측 open 버튼/우측 ▲▼)·저장명·Status·버튼 |
+| `ReportSettingsDialog` | report_settings.ui | Start 후 설정 팝업: 출력 시트(Option)·항목 선택(좌/우)·FileName Change·Color·Auto Upload·Confirm |
 | `UploadDialog` | upload_dialog.ui | 업로드 메타 팝업(ProductType 라디오/Product/LOT/Revision/**PW 4자리**) |
 | `D1BrowserDialog` | d1_browser.ui | d1_storage(가상 서버 스토리지) 키워드 검색·다중선택 |
 | `FileOrderDialog` | file_order.ui | 입력 2개↑ 시 순서 확정(첫 파일=기준 스키마) |
 | `ColorEditorDialog` | (코드 생성) | 48색 그리드 편집 → chart_colors.json |
 
+> **Product Type 라벨**: 화면 표시는 `MDDI / PDDI / PMIC / SECURITY` 이지만 내부 키/서버 전송값은
+> 기존 `MD / PD / PM / SE` 그대로(라디오 `text` 만 변경, `product_type()` 는 dict 키 반환).
+
 ## 메인 워크플로우 (`HoneyMainWindow`)
-1. **입력 선택** — `on_open_local`(로컬 파일대화) 또는 `on_browse_d1`(D1 검색) → `_intake` → 2개↑면 `FileOrderDialog` → `_load_paths`.
-2. **그룹 구성** — `_rebuild_group` 가 `rg.df_honey_group.from_csvs(paths)` 로드 + `validate()` 경고. **첫(맨 위) 파일이 units/항목명/limit 기준** ([06](06_analysis_engine.md)).
-3. **항목 선택** — 좌(제외)/우(선택) 리스트 이동(`_move_*`). `_select_fail_only` 는 fail 발생 subject 만 우측. 원본 순서는 `UserRole` 로 보존(`_resort`).
-4. **시트 선택** — `SHEET_OPTIONS = summary/yield/cpk/fail_item/issue_table/distribution`. `cb_sheet_yield` 해제 시 `fail_item`/`issue_table` 비활성(`_sync_yield_dependents`).
-5. **데이터 정리 모드** — `_apply_modes`: `Bin1 Only`(`filter_rows_by_bin("1")`) → `DUT 정리`(`split_by_dut`, 입력 1개일 때만, `_update_dut_mode_availability`).
-6. **분석 실행** — `on_analyze`: 검증 → `_apply_modes` → `rg.analyze(...)` → `_show_summary` 미리보기 → `xlsx_writer.write(...)` 로 입력폴더에 `<base>_report_YYMMDD_HHMM.xlsx` 자동 저장(`_build_output_path`). 진행바는 분석 1 + 시트 N. `cb_auto_upload` 면 곧장 업로드.
-7. **서버 업로드** — `on_upload_local`(임의 xlsx 직접) 또는 분석 후 → `_do_upload` ([07](07_client_upload_chart.md)).
-8. **차트 색 편집** — `on_edit_chart_colors` → 다음 분석부터 적용.
-9. **업데이트** — 기동 500ms 후 `check_for_update` ([04](04_honey_update.md)).
+1. **입력 선택** — `on_open_local`(LOCAL FILE OPEN, 로컬 파일대화) 또는 `on_browse_d1`(D1 검색) → `_intake` → 2개↑면 `FileOrderDialog` → `_load_paths`. open 버튼 2종은 입력목록(`list_csv`) **왼쪽 칼럼**, ▲▼ 순서이동은 오른쪽.
+2. **저장명 제안** — `_load_paths` 가 `_suggest_base_name` 으로 `le_outname` 채움(확장자 `.xlsx` 는 화면 라벨로 별도 표기).
+3. **Start** — `on_start`: `_rebuild_group`(`df_honey_group.from_csvs` + `validate()` 경고, **첫 파일=기준 스키마** [06](06_analysis_engine.md)) → `ReportSettingsDialog` 팝업.
+4. **설정 팝업(`ReportSettingsDialog`)**
+   - **출력 시트(Option)** — `SHEET_OPTIONS = summary/yield/cpk/fail_item/issue_table/distribution`. `yield` 해제 시 `fail_item`/`issue_table` 비활성(`_sync_yield_dependents`).
+   - **항목 선택** — 좌(제외)/우(선택) 이동(`_move_*`), `Fail only` 는 fail subject 만 우측. 원본 순서는 `UserRole` 보존(`_resort`).
+   - **FileName Change** — `on_edit_filenames`: 입력 파일별 legend명(Filename)을 콤마로 구분해 한 줄 편집. Confirm 시 `group.rename_sources(...)` 로 source 명 교체(빈칸=기존명, 중복=`_n`). DUT 정리 모드면 자체 명명 사용으로 미적용.
+   - **데이터 정리 모드** — `Bin1 Only`(`filter_rows_by_bin("1")`) / `DUT 정리`(`split_by_dut`, 입력 1개일 때만, `_update_dut_mode_availability`).
+   - **Color Change** — `on_edit_chart_colors`(48색) / **Server Auto Upload** 체크.
+5. **분석 실행** — Confirm → `_apply_modes` → `rg.analyze(...)` → `_show_summary`(Status 미리보기) → `xlsx_writer.write(...)` 로 입력폴더에 `<base>_report_YYMMDD_HHMM.xlsx` 저장(`_build_output_path`). 진행바: 준비/분석/요약 + 시트 N(+distribution 차트). `cb_auto_upload` 면 곧장 업로드.
+6. **서버 업로드** — `on_upload_local`(임의 xlsx 직접) 또는 분석 후 → `_do_upload` ([07](07_client_upload_chart.md)).
+7. **업데이트** — 기동 500ms 후 `check_for_update` ([04](04_honey_update.md)).
 
 ## 핵심 상태 / 헬퍼
 - 상태: `csv_paths`, `group`(df_honey_group), `last_result`(AnalysisResult), `out_path`, `_last_upload`(메타 프리필).

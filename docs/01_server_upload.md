@@ -16,7 +16,7 @@
 4. **세션 생성** — `create_session(... source="xlsx_upload")` → `update_session(status="uploading", analysis_key, content_hash)`.
 5. **S3 원본 xlsx** — `make_source_xlsx_s3_key(akey)` 키로 `s3_object_exists` 검사 후 없으면 `upload_bytes_to_s3`. 그 후 `upsert_object_info(object_type="source_xlsx")`. `S3NotConfigured` 면 `s3_ok=False` 로 계속, 그 외 예외는 `status="failed"` + 500.
 6. **xlsx 파싱** — `parse_report_xlsx(xlsx_bytes)` → `{summary, yield_rows, issue_rows}`. 실패 시 `status="failed"` + 400.
-7. **yield → DB** — [`_yield_row_to_summary`](../server/upload_xlsx.py#L79) 로 각 행을 summary 컬럼에 매핑. templete yield 행 = `bin | Item | {src}_count | {src}_yield | avg | comment` 기준 → `item_name`=bin, `yield_percent`=**avg**(소스 평균 수율%; legacy `portion(%)`/`yield` fallback), `fail_count`=**`{src}_count` 합**(legacy `count` fallback). `unknown`/빈 행 제거 후 `save_summary_batch`(INSERT OR IGNORE).
+7. **yield → DB** — [`_yield_row_to_summary`](../server/upload_xlsx.py#L79) 로 각 행을 summary 컬럼에 매핑. yield 행 = `bin | Item | {src}_count …(전 소스) | {src}_yield …(전 소스) | avg | comment` → `item_name`=bin, `yield_percent`=**avg**(소스 평균 수율%; legacy `portion(%)`/`yield` fallback), `fail_count`=**`{src}_count` 합**(legacy `count` fallback). 파서는 헤더명으로 읽으므로 count/yield 묶음 순서와 무관. `unknown`/빈 행 제거 후 `save_summary_batch`(INSERT OR IGNORE).
 8. **summary/issue 텍스트 → S3 JSON** (s3_ok 일 때) — `upload_json_to_s3` + `upsert_object_info("summary_text"|"issue_table_text")`. 실패는 조용히 무시(`except: pass`).
 9. **차트 PNG 갤러리** — [`_collect_chart_pngs`](../server/upload_xlsx.py#L37) 가 multipart `chart_0, chart_1, …` 를 PNG 매직바이트 검증하며 수집(최대 50). 각각 `make_chart_png_s3_key(akey, idx)` 로 업로드, 마지막에 `chart_index` object(`{"count": N}`) upsert.
 10. **마무리** — `update_session(status="done")`, JSON 응답(`session_id, analysis_key, rows_saved, charts_saved, …`).
@@ -24,10 +24,10 @@
 ## 핵심 포인트 / 주의
 - **부분 실패 정책**: S3 미설정·텍스트 업로드·차트 업로드는 *그레이스풀*(세션은 done). 원본 xlsx S3 업로드 실패와 파싱 실패만 `failed` 로 끊는다.
 - **멱등성**: 같은 xlsx+meta → 같은 analysis_key → S3 `source_xlsx` 는 exists 검사로 재업로드 skip. 단 `create_session` 은 매번 새 session_id (세션은 누적, S3 본문은 1개).
-- **파서 견고성 (templete 레이아웃 짝)** [xlsx_parser.py](../server/xlsx_parser.py): 표가 B열~·헤더 3행인 templete 출력에 맞춰 셀 좌표 대신 **2D anchor 텍스트**로 섹션을 찾는다.
+- **파서 견고성 (xlsx_writer 레이아웃 짝)** [xlsx_parser.py](../server/xlsx_parser.py): 표가 B열~·헤더 3행인 클라 출력에 맞춰 셀 좌표 대신 **2D anchor 텍스트**로 섹션을 찾는다.
   - `summary` → `1. Device Feature` / `2. Yield` / `Major Fail Bins`(E열) / `3. Evaluation Summary` anchor 기준 dict: `feature`(Total DUT/Pass/Fail Types/Sources/Subjects/**EVT Version**), `yield_summary`(Lot NO/Yield), `major_fail_bins`(1st~5th = subject+ratio), `evaluation`(Yield/CPK/Temp/ETC). 최상위 `title`(A1) 포함.
   - `yield`/`issue_table` → ‘비어있지 않은 셀 2개 이상’ 첫 행을 헤더로 잡는 list[dict]. `issue_table` 은 `Distribution` 컬럼 drop + Category 그룹의 `CPK`/`ETC` 플레이스홀더(빈 bin) 행 제외 → Yield 블록만.
-  - 클라 출력은 동봉 templete.xlsx 를 **openpyxl** 로 값만 채우고 distribution 만 **xlwings** 로 그린다 → 한쪽 레이아웃 바꾸면 이 파서도 함께 (→[06](06_analysis_engine.md), [xlsx_writer](../client/report_generator/xlsx_writer.py)).
+  - 클라 출력은 table 시트를 **openpyxl** 로 직접 생성하고 distribution 만 **xlwings** 로 그린다 → 한쪽 레이아웃 바꾸면 이 파서도 함께 (→[06](06_analysis_engine.md), [xlsx_writer](../client/report_generator/xlsx_writer.py)).
 - 응답 status 코드: 정상 200, 파싱실패 400, S3 본문 실패 500.
 
 ## 자주 바뀌는 지점
