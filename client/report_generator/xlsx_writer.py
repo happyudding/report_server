@@ -91,7 +91,7 @@ _XL_COLORINDEX_NONE = -4142   # xlColorIndexNone (ChartArea 채움 제거 — �
 
 ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
 
-# ── openpyxl 셀 스타일 상수 (templete.xlsx 의존 제거 후 코드 직접 정의) ─────────
+# ── openpyxl 셀 스타일 상수 (xlsx 파일 런타임 의존 없이 코드 직접 정의) ─────────
 from openpyxl.styles import (  # noqa: E402  (module-level import after constants)
     Alignment as _Alignment, Border as _Border, Font as _Font,
     PatternFill as _PatternFill, Side as _SideStyle,
@@ -103,9 +103,18 @@ _TITLE_FILL_RGB = "FFBDD7EE"   # 제목 연파랑
 _HDR_FONT    = _Font(name="Calibri", bold=True, size=11)
 _HDR_ALIGN   = _Alignment(horizontal="center", vertical="center", wrap_text=True)
 _DATA_FONT   = _Font(name="Calibri", size=10)
-_DATA_ALIGN  = _Alignment(vertical="center", wrap_text=True)
-_TITLE_FONT  = _Font(name="Calibri", bold=True, size=14)
+_DATA_ALIGN  = _Alignment(horizontal="center", vertical="center", wrap_text=True)
+_TITLE_FONT  = _Font(name="Calibri", bold=True, size=20)
 _TITLE_ALIGN = _Alignment(horizontal="center", vertical="center")
+_TITLE_ROW_MAX_COL = 26
+_SUMMARY_TITLE_FILL_RGB = "FFBFE3FF"
+_SUMMARY_HDR_FILL_RGB = "FFE2E8F0"
+_SUMMARY_TITLE_FONT = _Font(name="Tahoma", bold=True, size=22)
+_SUMMARY_SECTION_FONT = _Font(name="Tahoma", bold=True, size=20)
+_SUMMARY_HDR_FONT = _Font(name="Tahoma", bold=True, size=10)
+_SUMMARY_DATA_FONT = _Font(name="Tahoma", size=10)
+_SUMMARY_LEFT_ALIGN = _Alignment(horizontal="left", vertical="center")
+_SUMMARY_CENTER_ALIGN = _Alignment(horizontal="center", vertical="center", wrap_text=True)
 
 
 def _new_border():
@@ -131,9 +140,13 @@ def _apply_data_style(cell):
 _HEADER_ROW = 3
 _START_COL = 2  # B열
 _FAIL_ITEM_ROW_HEIGHT = 78  # fail_item / issue_table 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
+_YIELD_TABLE_ROW_HEIGHT = 22
 _NARROW_COL_WIDTH = 6.5    # bin / count / yield / avg / comment 등 짧은 데이터
 _DIST_COL_WIDTH   = 27.1   # Distribution 열 (썸네일 이미지 크기 기준)
 _ITEM_COL_WIDTH   = 20.0   # Item / Category 열 (긴 텍스트)
+_CPK_TEST_NAME_COL_WIDTH = 15
+_CPK_SERIES_COL_WIDTH = _NARROW_COL_WIDTH * 1.5
+_CPK_N_COL_WIDTH = _NARROW_COL_WIDTH * 0.7
 _FAIL_VALUES_COLS  = ["DUT", "XCoord", "YCoord", "Bin", "Item", "Value"]
 _FAIL_VALUES_NCOLS = 6     # source 블록당 열 수
 _FAIL_VALUES_GAP   = 1     # source 블록 간 빈 열 수
@@ -189,8 +202,9 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
 
     # Raw Data — source(input file)별 df_honey 포맷 시트를 맨 앞에 순서대로 추가
     if raw_sheets:
+        reserved_sheet_names = ["distribution"] if want_dist else []
         for idx, (name, df) in enumerate(raw_sheets):
-            ws = wb.create_sheet(_unique_sheet_name(wb, name), idx)
+            ws = wb.create_sheet(_unique_sheet_name(wb, name, reserved_sheet_names), idx)
             _fill_raw_data(ws, df)
             done += 1
             _progress(progress_cb, done, total, ws.title)
@@ -199,12 +213,8 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     for nm in wb.sheetnames:
         wb[nm].sheet_view.showGridLines = False
 
-    # 시트명 첫 글자 대문자로 (summary → Summary 등)
-    for nm in list(wb.sheetnames):
-        if nm in table_writers:
-            new_nm = nm[0].upper() + nm[1:]
-            if new_nm != nm:
-                wb[nm].title = new_nm
+    _normalize_report_sheet_names(wb)
+    _finalize_openpyxl_sheet_layouts(wb)
 
     wb.save(out_path)
 
@@ -237,8 +247,8 @@ def _progress(cb, done, total, name):
 
 # ── openpyxl 채움 (table 시트) ───────────────────────────────────────────────
 
-def _fill_summary(ws, result):
-    """summary 시트 고정 셀 채움 (3개 번호 섹션)."""
+def _fill_summary_legacy_unused(ws, result):
+    """Legacy summary layout kept unused."""
     meta = result.meta
     title = " ".join(x for x in [meta.product_type, meta.product, meta.lot_id] if x).strip()
 
@@ -279,6 +289,140 @@ def _fill_summary(ws, result):
     # 3. Evaluation Summary 는 템플릿 플레이스홀더("-") 그대로 둔다.
 
 
+def _fill_summary(ws, result):
+    """Summary sheet layout implemented directly with openpyxl."""
+    meta = result.meta
+    title = " ".join(x for x in [meta.product_type, meta.product, meta.lot_id] if x).strip()
+
+    _reset_summary_sheet(ws)
+    _apply_summary_dimensions(ws)
+    _apply_summary_layout_styles(ws)
+
+    _safe_set(ws, "A1", f"{chr(0x25A0)} {title or 'REPORT TITLE'}")
+    _safe_set(ws, "B3", "1. Device Feature")
+    _safe_set(ws, "B7", "2. Yield")
+    _safe_set(ws, "B15", "3. Evaluation Summary")
+
+    feature = result.summary_feature()
+    _safe_set(ws, "B4", "Total DUT")
+    _safe_set(ws, "D4", "Pass (Bin 1)")
+    _safe_set(ws, "E4", "Fail Types")
+    _safe_set(ws, "F4", "Sources")
+    _safe_set(ws, "G4", "Subjects")
+    _safe_set(ws, "H4", "EVT Version")
+    _safe_set(ws, "B5", feature.get("Total DUT"))
+    _safe_set(ws, "D5", feature.get("Pass (Bin 1)"))
+    _safe_set(ws, "E5", feature.get("Fail Types"))
+    _safe_set(ws, "F5", feature.get("Sources"))
+    _safe_set(ws, "G5", feature.get("Subjects"))
+    _safe_set(ws, "H5", feature.get("EVT Version"))
+
+    _safe_set(ws, "B8", "Lot NO")
+    _safe_set(ws, "D8", "Yield")
+    _safe_set(ws, "E8", "Major Fail Bins")
+    _safe_set(ws, "H8", "Comment")
+    _safe_set(ws, "B9", meta.lot_id or "-")
+    pass_row = next((r for r in result.yield_rows if str(r.get("bin")) == "1"), None)
+    pass_avg = pass_row.get("avg") if pass_row else result.pass_yield
+    _safe_set(ws, "D9", pass_avg if pass_avg is not None else "-")
+
+    majors = result.major_fail_subjects(5) or result.major_fail_bins(5)
+    for i in range(5):
+        r = 9 + i
+        _safe_set(ws, f"E{r}", _ordinal_fail_label(i + 1))
+        if i < len(majors):
+            _safe_set(ws, f"F{r}", majors[i].get("subject") or majors[i].get("Main Fail subject"))
+            _safe_set(ws, f"G{r}", majors[i].get("ratio") if "ratio" in majors[i] else majors[i].get("avg"))
+
+    _safe_set(ws, "B16", "Category")
+    _safe_set(ws, "C16", "Condition & Judge Limit")
+    _safe_set(ws, "D16", "Result")
+    for r, category in enumerate(["Yield", "CPK", "Temp", "ETC"], start=17):
+        _safe_set(ws, f"B{r}", category)
+    _safe_set(ws, "C17", "-")
+    _safe_set(ws, "D17", "-")
+
+
+def _reset_summary_sheet(ws):
+    for rng in list(ws.merged_cells.ranges):
+        ws.unmerge_cells(str(rng))
+    for row in ws.iter_rows(min_row=1, max_row=20, min_col=1, max_col=8):
+        for cell in row:
+            cell.value = None
+            cell.fill = _PatternFill(fill_type="solid", fgColor=_DATA_FILL_RGB)
+            cell.font = copy(_SUMMARY_DATA_FONT)
+            cell.alignment = copy(_SUMMARY_CENTER_ALIGN)
+            cell.border = _Border()
+
+
+def _apply_summary_dimensions(ws):
+    widths = {
+        "A": 2.625, "B": 16, "C": 26.125, "D": 10.375,
+        "E": 10.5, "F": 12.625, "G": 9, "H": 44.75,
+    }
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
+    row_heights = {
+        1: 30, 3: 25.5, 4: 16.5, 5: 16.5, 7: 21.75, 8: 16.5,
+        15: 27, 17: 48.75, 18: 48.75, 19: 48.75, 20: 48.75,
+    }
+    for row, height in row_heights.items():
+        ws.row_dimensions[row].height = height
+
+
+def _summary_style_range(ws, cell_range, font=None, fill_rgb=None, align=None, border=False):
+    fill = _PatternFill(fill_type="solid", fgColor=fill_rgb or _DATA_FILL_RGB)
+    for row in ws[cell_range]:
+        for cell in row:
+            cell.font = copy(font or _SUMMARY_DATA_FONT)
+            cell.fill = copy(fill)
+            cell.alignment = copy(align or _SUMMARY_CENTER_ALIGN)
+            cell.border = _new_border() if border else _Border()
+
+
+def _apply_summary_layout_styles(ws):
+    _summary_style_range(
+        ws, "A1:H1", _SUMMARY_TITLE_FONT, _SUMMARY_TITLE_FILL_RGB,
+        _SUMMARY_LEFT_ALIGN, border=False
+    )
+    ws["A1"].border = _Border(bottom=_SideStyle(style="thin"))
+
+    for cell_range in ("B3:C3", "B7:C7", "B15:C15"):
+        _summary_style_range(
+            ws, cell_range, _SUMMARY_SECTION_FONT, _DATA_FILL_RGB,
+            _SUMMARY_LEFT_ALIGN, border=False
+        )
+
+    _summary_style_range(ws, "B4:H4", _SUMMARY_HDR_FONT, _SUMMARY_HDR_FILL_RGB, border=True)
+    _summary_style_range(ws, "B5:H5", _SUMMARY_DATA_FONT, _DATA_FILL_RGB, border=True)
+    _summary_style_range(ws, "B8:H13", _SUMMARY_DATA_FONT, _DATA_FILL_RGB, border=True)
+    _summary_style_range(ws, "E8:H8", _SUMMARY_HDR_FONT, _SUMMARY_HDR_FILL_RGB, border=True)
+    _summary_style_range(ws, "B16:H16", _SUMMARY_HDR_FONT, _SUMMARY_HDR_FILL_RGB, border=True)
+    _summary_style_range(ws, "B17:H20", _SUMMARY_DATA_FONT, _DATA_FILL_RGB, border=True)
+
+    ws["D9"].number_format = "0.00"
+    for row in range(9, 14):
+        ws[f"G{row}"].number_format = "0.0000"
+
+    for cell_range in (
+        "A1:H1", "B3:C3", "B7:C7", "B8:C8", "B9:C13", "D9:D13",
+        "E8:G8", "B15:C15", "D16:H16", "D17:H17", "D18:H18",
+        "D19:H19", "D20:H20",
+    ):
+        ws.merge_cells(cell_range)
+
+
+def _ordinal_fail_label(index):
+    suffix = "th"
+    if index == 1:
+        suffix = "st"
+    elif index == 2:
+        suffix = "nd"
+    elif index == 3:
+        suffix = "rd"
+    return f"{index}{suffix} Fail"
+
+
 def _yield_table(result):
     """yield / fail_item 공용 표 (bin | Item | {src}_count | {src}_yield | avg | comment)."""
     src = result.sources
@@ -305,11 +449,13 @@ def _fill_yield(ws, result):
     _fill_table(ws, header, rows)
     _apply_table_col_widths(ws, header, custom_widths={"comment": 50})
     _apply_small_font_headers(ws, header, ["_count", "_yield", "avg"])
+    _apply_table_font(ws, header, size=12)
+    _set_table_row_heights(ws, len(rows), height=_YIELD_TABLE_ROW_HEIGHT)
 
 
 def _fill_fail_item(ws, result):
     src = result.sources
-    header = ["bin", "Item"]
+    header = ["Bin", "Item"]
     for s in src:
         header += [f"{s}_count", f"{s}_yield"]
     header += ["Distribution"]
@@ -323,9 +469,11 @@ def _fill_fail_item(ws, result):
     _fill_table(ws, header, rows)
     for i in range(len(rows)):
         ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
-    _apply_table_col_widths(ws, header)
-    _apply_small_font_headers(ws, header, ["_count", "_yield"])
     _fill_fail_values_section(ws, result)
+    _apply_table_col_widths(ws, header)
+    _apply_used_cell_font(ws, size=15, bold=False)
+    _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=True,
+                              last_row=_HEADER_ROW + len(rows))
 
 
 def _fill_fail_values_section(ws, result):
@@ -340,21 +488,21 @@ def _fill_fail_values_section(ws, result):
     hdr_row   = title_row + 2            # 열 헤더 행
     data_row0 = title_row + 3           # 데이터 시작 행
 
-    ws.cell(row=title_row, column=_START_COL, value="FAIL_VALUES")
+    _apply_hdr_style(ws.cell(row=title_row, column=_START_COL, value="FAIL_VALUES"))
 
     for i, (src_name, rows) in enumerate(fvr.items()):
         col0 = _START_COL + i * (_FAIL_VALUES_NCOLS + _FAIL_VALUES_GAP)
-        ws.cell(row=src_row, column=col0, value=src_name)
+        _apply_hdr_style(ws.cell(row=src_row, column=col0, value=src_name))
         for ci, h in enumerate(_FAIL_VALUES_COLS):
-            ws.cell(row=hdr_row, column=col0 + ci, value=h)
+            _apply_hdr_style(ws.cell(row=hdr_row, column=col0 + ci, value=h))
         for ri, row in enumerate(rows):
             r = data_row0 + ri
-            ws.cell(row=r, column=col0,     value=_sanitize_cell(row["dut"]))
-            ws.cell(row=r, column=col0 + 1, value=_sanitize_cell(row["xcoord"]))
-            ws.cell(row=r, column=col0 + 2, value=_sanitize_cell(row["ycoord"]))
-            ws.cell(row=r, column=col0 + 3, value=_sanitize_cell(row["bin"]))
-            ws.cell(row=r, column=col0 + 4, value=_sanitize_cell(row["item"]))
-            ws.cell(row=r, column=col0 + 5, value=_sanitize_cell(row["value"]))
+            _apply_data_style(ws.cell(row=r, column=col0,     value=_sanitize_cell(row["dut"])))
+            _apply_data_style(ws.cell(row=r, column=col0 + 1, value=_sanitize_cell(row["xcoord"])))
+            _apply_data_style(ws.cell(row=r, column=col0 + 2, value=_sanitize_cell(row["ycoord"])))
+            _apply_data_style(ws.cell(row=r, column=col0 + 3, value=_sanitize_cell(row["bin"])))
+            _apply_data_style(ws.cell(row=r, column=col0 + 4, value=_sanitize_cell(row["item"])))
+            _apply_data_style(ws.cell(row=r, column=col0 + 5, value=_sanitize_cell(row["value"])))
 
     # 소스 블록별 윤곽선 적용 (src_row 헤더~마지막 데이터행)
     for i, (src_name, rows) in enumerate(fvr.items()):
@@ -376,6 +524,13 @@ def _fill_cpk(ws, result):
             r.get("cpl"), r.get("cpu"), r.get("cp"), r.get("cpk"), "",
         ])
     _fill_table(ws, header, rows)
+    _apply_table_col_widths(ws, header, custom_widths={
+        "TEST NAME": _CPK_TEST_NAME_COL_WIDTH,
+        "계열": _CPK_SERIES_COL_WIDTH,
+        "n": _CPK_N_COL_WIDTH,
+        "comment": 30,
+    })
+    _apply_font_delta_to_columns(ws, header, ["TEST NAME", "LOW SPEC", "HIGH SPEC", "SCALE"], 2)
     _merge_cpk_subject(ws, len(rows))
 
 
@@ -415,7 +570,7 @@ def _merge_cpk_subject(ws, n_rows, header_row=_HEADER_ROW, start_col=_START_COL)
 def _fill_issue_table(ws, result):
     """Category 그룹 레이아웃. Yield Category = yield 데이터 재사용, CPK/ETC 플레이스홀더."""
     src = result.sources
-    header = ["Category", "bin", "Item", "avg"]
+    header = ["Category", "Bin", "Item", "avg"]
     for s in src:
         header += [f"{s}_yield"]          # count 열 제거, yield 만 유지
     header += ["Distribution", "comment", "개발 1차 comment",
@@ -445,6 +600,9 @@ def _fill_issue_table(ws, result):
         "PTE 2차 comment": 25,
         "개발 2차 comment": 25,
     })
+    _apply_used_cell_font(ws, size=15, bold=False)
+    _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=True,
+                              last_row=_HEADER_ROW + len(rows))
 
 
 def _merge_issue_category(ws, n_yield, header_row=_HEADER_ROW, start_col=_START_COL):
@@ -464,10 +622,10 @@ def _merge_issue_category(ws, n_yield, header_row=_HEADER_ROW, start_col=_START_
 
 
 def _fill_raw_data(ws, df):
-    """df_honey 포맷 DataFrame 을 A1 부터 그대로 기록.
+    """df_honey 포맷 DataFrame 을 제목행 아래 A2 부터 기록.
 
     행0=subject 헤더, 1=Units, 2~5=Lower/Upper/Lower/Upper limit, 6~=측정 데이터.
-    제목·Source 열 없이 df_honey 적재 포맷과 동일. 헤더·라벨행(1~6행)만 bold.
+    제목·Source 열 없이 df_honey 적재 포맷과 동일. 헤더·라벨행(2~7행)만 bold.
     Serial 컬럼은 정규화 시 자동 삽입되는 내부 컬럼이므로 제거.
     """
     from openpyxl.styles import Font
@@ -475,19 +633,21 @@ def _fill_raw_data(ws, df):
     serial_cols = [c for c, v in zip(df.columns, df.iloc[0]) if v == "Serial"]
     if serial_cols:
         df = df.drop(columns=serial_cols)
-    for ri, row in enumerate(df.values.tolist(), start=1):
+    for ri, row in enumerate(df.values.tolist(), start=2):
         for ci, val in enumerate(row, start=1):
             cell = ws.cell(row=ri, column=ci, value=_sanitize_cell(val))
-            if ri <= 6:
+            if ri <= 7:
                 cell.font = bold
+            cell.alignment = copy(_DATA_ALIGN)
 
 
-def _unique_sheet_name(wb, name):
+def _unique_sheet_name(wb, name, reserved=()):
     """Excel 시트명 규칙(≤31자, []:*?/\\ 금지, 중복 불가)으로 정제."""
     import re
     base = re.sub(r"[\[\]:*?/\\]", "_", str(name or "Sheet")).strip()[:31] or "Sheet"
     cand, n = base, 2
-    while cand in set(wb.sheetnames):
+    existing = {s.lower() for s in wb.sheetnames} | {str(s).lower() for s in reserved}
+    while cand.lower() in existing:
         suffix = f"_{n}"
         cand = base[:31 - len(suffix)] + suffix
         n += 1
@@ -575,13 +735,141 @@ def _apply_all_borders(ws, min_row, min_col, max_row, max_col):
 
 
 def _set_cell_font_size(cell, size):
-    from openpyxl.styles import Font
     f = cell.font
-    cell.font = Font(
-        name=f.name, size=size, bold=f.bold, italic=f.italic,
-        underline=f.underline, color=f.color, strike=f.strike,
-        vertAlign=f.vertAlign,
-    )
+    nf = copy(f)
+    nf.size = size
+    cell.font = nf
+
+
+def _set_cell_font(cell, size=None, bold=None):
+    f = copy(cell.font)
+    if size is not None:
+        f.size = size
+    if bold is not None:
+        f.bold = bold
+    cell.font = f
+
+
+def _apply_table_font(ws, header, size=None, bold=None,
+                      header_row=_HEADER_ROW, start_col=_START_COL):
+    max_row = header_row + max(0, ws.max_row - header_row)
+    max_col = start_col + len(header) - 1
+    for row in ws.iter_rows(min_row=header_row, max_row=max_row,
+                            min_col=start_col, max_col=max_col):
+        for cell in row:
+            _set_cell_font(cell, size=size, bold=bold)
+
+
+def _apply_used_cell_font(ws, size=None, bold=None):
+    from openpyxl.cell.cell import MergedCell
+    for row in ws.iter_rows():
+        for cell in row:
+            if isinstance(cell, MergedCell) or cell.value is None:
+                continue
+            _set_cell_font(cell, size=size, bold=bold)
+
+
+def _set_table_row_heights(ws, n_rows, height,
+                           header_row=_HEADER_ROW):
+    for row in range(header_row, header_row + n_rows + 1):
+        ws.row_dimensions[row].height = height
+
+
+def _apply_named_columns_font(ws, header, names, size=None, bold=None,
+                              header_row=_HEADER_ROW, start_col=_START_COL,
+                              include_header=True, include_data=True,
+                              last_row=None):
+    name_set = set(names)
+    for i, name in enumerate(header):
+        if name not in name_set:
+            continue
+        col = start_col + i
+        first = header_row if include_header else header_row + 1
+        last = last_row if last_row is not None else (ws.max_row if include_data else header_row)
+        for r in range(first, last + 1):
+            _set_cell_font(ws.cell(row=r, column=col), size=size, bold=bold)
+
+
+def _apply_data_font_by_suffix(ws, header, suffixes_or_names, size,
+                               header_row=_HEADER_ROW, start_col=_START_COL):
+    for i, name in enumerate(header):
+        match = any(
+            (name.endswith(pat) if pat.startswith("_") else name == pat)
+            for pat in suffixes_or_names
+        )
+        if not match:
+            continue
+        col = start_col + i
+        for r in range(header_row + 1, ws.max_row + 1):
+            _set_cell_font_size(ws.cell(row=r, column=col), size)
+
+
+def _apply_font_delta_to_columns(ws, header, names, delta,
+                                 header_row=_HEADER_ROW, start_col=_START_COL):
+    name_set = set(names)
+    for i, name in enumerate(header):
+        if name not in name_set:
+            continue
+        col = start_col + i
+        for r in range(header_row, ws.max_row + 1):
+            cell = ws.cell(row=r, column=col)
+            base_size = cell.font.size or (_HDR_FONT.size if r == header_row else _DATA_FONT.size)
+            _set_cell_font_size(cell, base_size + delta)
+
+
+def _normalize_report_sheet_names(wb):
+    canonical = {name.lower(): name for name in ALL_SHEETS}
+    existing = {name.lower() for name in wb.sheetnames}
+    for ws in wb.worksheets:
+        current = ws.title
+        lower = current.lower()
+        if not lower.endswith("1"):
+            continue
+        base = lower[:-1]
+        target = canonical.get(base)
+        if target and target.lower() not in existing:
+            existing.discard(lower)
+            ws.title = target
+            existing.add(target.lower())
+
+
+def _center_used_cells(ws):
+    from openpyxl.cell.cell import MergedCell
+    for row in ws.iter_rows():
+        for cell in row:
+            if isinstance(cell, MergedCell) or cell.value is None:
+                continue
+            al = cell.alignment
+            cell.alignment = _Alignment(
+                horizontal="center",
+                vertical="center",
+                wrap_text=al.wrap_text if al.wrap_text is not None else True,
+            )
+
+
+def _apply_sheet_title(ws, title=None):
+    from openpyxl.utils import range_boundaries
+    title = title or ws.title
+    for rng in list(ws.merged_cells.ranges):
+        c0, r0, c1, r1 = range_boundaries(str(rng))
+        if r0 <= 1 <= r1:
+            ws.unmerge_cells(str(rng))
+    ws.row_dimensions[1].height = 30
+    for col in range(1, _TITLE_ROW_MAX_COL + 1):
+        cell = ws.cell(row=1, column=col)
+        cell.fill = _PatternFill(fill_type="solid", fgColor=_TITLE_FILL_RGB)
+        cell.alignment = copy(_TITLE_ALIGN)
+    cell = ws["A1"]
+    cell.value = title
+    cell.font = copy(_TITLE_FONT)
+
+
+def _finalize_openpyxl_sheet_layouts(wb):
+    for ws in wb.worksheets:
+        if ws.title.lower() == "summary":
+            continue
+        _center_used_cells(ws)
+        _apply_sheet_title(ws)
 
 
 def _apply_small_font_headers(ws, header, suffixes_or_names,
@@ -659,8 +947,9 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
             pass
         with _prof("clear"):
             names = [s.name for s in wb.sheets]
-            if "distribution" in names:
-                sh = wb.sheets["distribution"]
+            dist_name = next((n for n in names if n.lower() == "distribution"), None)
+            if dist_name:
+                sh = wb.sheets[dist_name]
                 for c in list(sh.charts):     # 템플릿/이전 차트 제거
                     try:
                         c.delete()
@@ -691,12 +980,6 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
             except Exception:
                 pass
         sh.activate()
-        # distribution 시트명 첫 글자 대문자로
-        try:
-            if sh.name == "distribution":
-                sh.name = "Distribution"
-        except Exception:
-            pass
         with _prof("wb_save"):
             wb.save()
     finally:
@@ -1478,13 +1761,13 @@ def _downsample(xs, ys, max_points=_MAX_CDF_POINTS):
 
 _XL_CENTER = -4108        # xlCenter
 _TITLE_FILL = (191, 227, 255)
-_TITLE_FONT_SIZE = 14
-_TITLE_ROW_HEIGHT = 26
+_TITLE_FONT_SIZE = 20
+_TITLE_ROW_HEIGHT = 30
 
 
 def _put_title(sh, ncols, text):
     """1행에 시트 제목 배너 — 하늘색 배경, 검은 bold, 큰 글씨, 가로 병합."""
-    span = max(1, ncols)
+    span = max(_TITLE_ROW_MAX_COL, ncols)
     try:
         sh.range((1, 1), (1, span)).merge()
     except Exception:
@@ -1499,6 +1782,7 @@ def _put_title(sh, ncols, text):
         f.Color = 0  # black
         c.api.HorizontalAlignment = _XL_CENTER
         c.api.VerticalAlignment = _XL_CENTER
+        sh.range((1, 1), (1, span)).color = _TITLE_FILL
     except Exception:
         pass
 
