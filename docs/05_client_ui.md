@@ -37,6 +37,7 @@
 - `main()`: `_apply_cute_font`(둥근 폰트), `_install_excepthook`(슬롯 미처리 예외를 메시지박스로 — PyQt5 기본 abort 방지).
 
 ## 주의
+- **report generator 산출물은 .xlsx 1개**. 클라이언트는 하나의 파일에서 모든 것을 관리하는 정책이므로, 분석 결과물 xlsx 는 단일 파일로만 존재해야 한다.
 - **엔진 미설치 그레이스풀** — `import report_generator` 실패 시 `_disable_engine`: 분석 버튼만 비활성, **로컬 xlsx 직접 업로드는 유지**. 분석/생성엔 pandas/numpy/xlwings+Excel 필요.
 - 모든 무거운 작업 사이 `QApplication.processEvents()` 로 UI 갱신 + 진행바.
 - D1 검색은 매번 디스크 재스캔(`_scan` rglob csv/xlsx).

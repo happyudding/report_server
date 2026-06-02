@@ -26,5 +26,6 @@
 - `SERVER_BASE_URL` = `HONEY_SERVER_URL` env 또는 `http://127.0.0.1:8000` ([config.py](../client/config.py#L9)). `REQUEST_TIMEOUT_SEC=30`.
 
 ## 주의
+- **report generator 산출물은 .xlsx 1개**. 클라이언트는 하나의 파일에서 모든 것을 관리하는 정책이므로, 분석 결과물 xlsx 는 단일 파일로만 존재해야 한다.
 - 차트 렌더는 **클라 책임**(서버 헤드리스). [06 xlsx_writer](06_analysis_engine.md) 가 만든 네이티브 Excel CDF 차트를 그대로 PNG 화 → 서버는 S3 갤러리로 저장 후 [02 `chart_image`](02_server_query_edit.md) 가 서빙.
 - 차트 렌더 실패는 업로드를 막지 않는다(빈 리스트). 분석 없이 임의 xlsx 직접 업로드(`on_upload_local`)도 같은 경로.
