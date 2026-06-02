@@ -16,6 +16,7 @@ import math
 import os
 import sys
 import time
+import zipfile
 from collections import defaultdict
 from copy import copy
 from pathlib import Path
@@ -28,6 +29,9 @@ from openpyxl.utils import get_column_letter
 _PROF_ON = bool(os.environ.get("HONEY_CHART_PROFILE"))
 _PROF = defaultdict(float)
 _PROF_CNT = defaultdict(int)
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_EXPORT_MOVE_RETRIES = 2
+_EXPORT_RETRY_SLEEP = 0.08
 
 
 @contextlib.contextmanager
@@ -117,7 +121,7 @@ def _template_path() -> str:
 # ── write ────────────────────────────────────────────────────────────────────
 
 def write(result, out_path, sheets=None, colors=None, progress_cb=None,
-          raw_sheets=None, dist_progress_cb=None) -> str:
+          raw_sheets=None, dist_progress_cb=None, attach_progress_cb=None) -> str:
     """AnalysisResult 를 xlsx 로 저장. 반환: 저장 경로(str).
 
     sheets: 출력할 시트명 리스트/집합 (None 이면 전체). 알 수 없는 이름은 무시.
@@ -184,11 +188,14 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
         try:
             _write_distribution_xlwings(out_path, result, colors,
                                         attach_fail_item=("fail_item" in sel),
-                                        dist_progress_cb=dist_progress_cb)
+                                        dist_progress_cb=dist_progress_cb,
+                                        attach_progress_cb=attach_progress_cb)
             done += 1
             _progress(progress_cb, done, total, "distribution")
         except Exception as exc:
             # Excel/xlwings 미설치·실패 → distribution 만 생략(table 시트는 이미 저장됨)
+            if _is_package_integrity_error(exc):
+                raise
             print(f"[xlsx_writer] distribution 차트 생략: {exc}")
 
     return out_path
@@ -488,7 +495,7 @@ def _sanitize_cell(v):
 # ── distribution (xlwings / Excel COM) ───────────────────────────────────────
 
 def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=False,
-                                dist_progress_cb=None):
+                                dist_progress_cb=None, attach_progress_cb=None):
     """openpyxl 로 저장된 파일을 열어 distribution 시트 + 차트를 추가한다.
 
     attach_fail_item=True 면 distribution 차트를 PNG 로 export 해 fail_item 시트에
@@ -497,12 +504,13 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
     import shutil
     import xlwings as xw
 
+    out_path = str(Path(out_path).resolve())
     with _prof("app_launch"):
         app = xw.App(visible=False, add_book=False)
         app.display_alerts = False
         app.screen_updating = False
     wb = None
-    tmpdir = None
+    tmpdirs = []
     try:
         with _prof("wb_open"):
             wb = app.books.open(out_path)
@@ -527,9 +535,17 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
         chart_map = _write_distribution(wb, sh, result, colors,
                                         dist_progress_cb=dist_progress_cb)
         if attach_fail_item and chart_map:
-            tmpdir = _attach_fail_item_charts(wb, result, chart_map)
+            tmpdir = _attach_fail_item_charts(
+                wb, result, chart_map, attach_progress_cb=attach_progress_cb
+            )
+            if tmpdir:
+                tmpdirs.append(tmpdir)
         if chart_map:
-            _attach_issue_table_charts(wb, result, chart_map)
+            tmpdir = _attach_issue_table_charts(
+                wb, result, chart_map, attach_progress_cb=attach_progress_cb
+            )
+            if tmpdir:
+                tmpdirs.append(tmpdir)
         sh.activate()
         with _prof("wb_save"):
             wb.save()
@@ -541,12 +557,15 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
         finally:
             with _prof("wb_close"):
                 app.quit()
-            if tmpdir:
-                shutil.rmtree(tmpdir, ignore_errors=True)
-            _prof_report()
+            try:
+                _validate_embedded_images(out_path)
+            finally:
+                for tmpdir in tmpdirs:
+                    shutil.rmtree(tmpdir, ignore_errors=True)
+                _prof_report()
 
 
-def _attach_fail_item_charts(wb, result, chart_map):
+def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None):
     """fail_item 시트의 Distribution 열(각 데이터 행)에 해당 subject 차트 PNG 삽입.
 
     yield_row 1개 = 1행 = Distribution 열 1셀에 차트 1개 배치.
@@ -582,20 +601,14 @@ def _attach_fail_item_charts(wb, result, chart_map):
             w, h = 200.0, float(_FAIL_ITEM_ROW_HEIGHT)
         png = os.path.join(tmpdir, f"fi_{seq}.png")
         seq += 1
-        try:
-            with _prof("fi.export"):
-                ch.Export(png, "PNG")
-            with _prof("fi.picadd"):
-                fi.pictures.add(png, name=f"fi_chart_{seq}",
-                                left=left, top=top, width=w, height=h)
+        if _attach_chart_picture(fi, ch, png, f"fi_chart_{seq}", left, top, w, h,
+                                 "fail_item", subj, attach_progress_cb):
             _prof_count("pngs")
-        except Exception:
-            pass
 
     return tmpdir if seq > 0 else None
 
 
-def _attach_issue_table_charts(wb, result, chart_map):
+def _attach_issue_table_charts(wb, result, chart_map, attach_progress_cb=None):
     """issue_table 시트의 Distribution 열(각 데이터 행)에 해당 subject 차트 PNG 삽입.
 
     fail_item 과 동일한 COM Export 방식. dist_col 계산만 issue_table header 기준으로 다름.
@@ -607,7 +620,7 @@ def _attach_issue_table_charts(wb, result, chart_map):
 
     names = [s.name for s in wb.sheets]
     if "issue_table" not in names:
-        return
+        return None
     it = wb.sheets["issue_table"]
 
     dist_col = _START_COL + 4 + len(result.sources)
@@ -632,17 +645,179 @@ def _attach_issue_table_charts(wb, result, chart_map):
             w, h = 200.0, float(_FAIL_ITEM_ROW_HEIGHT)
         png = os.path.join(tmpdir, f"it_{seq}.png")
         seq += 1
-        try:
-            with _prof("it.export"):
-                ch.Export(png, "PNG")
-            with _prof("it.picadd"):
-                it.pictures.add(png, name=f"it_chart_{seq}",
-                                left=left, top=top, width=w, height=h)
-        except Exception:
-            pass
+        if _attach_chart_picture(it, ch, png, f"it_chart_{seq}", left, top, w, h,
+                                 "issue_table", subj, attach_progress_cb):
+            _prof_count("pngs")
 
-    import shutil
-    shutil.rmtree(tmpdir, ignore_errors=True)
+    return tmpdir if seq > 0 else None
+
+
+def _attach_chart_picture(sheet, chart, png_path, name, left, top, width, height,
+                          sheet_name, subject, attach_progress_cb=None):
+    """Export a COM chart as PNG, then embed it as a picture on target sheet."""
+    try:
+        with _prof(f"{sheet_name}.export"):
+            method = _export_chart_png_stable(chart, png_path)
+        if method:
+            with _prof(f"{sheet_name}.picadd"):
+                sheet.pictures.add(
+                    png_path,
+                    link_to_file=False,
+                    save_with_document=True,
+                    name=name,
+                    left=left,
+                    top=top,
+                    width=width,
+                    height=height,
+                )
+            return True
+        _notify_attach_progress(attach_progress_cb, "copy_picture", sheet_name, subject)
+        with _prof(f"{sheet_name}.copy_picture"):
+            _copy_chart_picture_to_sheet(chart, sheet, name, left, top, width, height)
+        _log_chart_attach(f"{sheet_name}:{subject} used CopyPicture fallback")
+        return True
+    except Exception as exc:
+        _log_chart_attach(f"{sheet_name}:{subject} attach failed: {exc!r}")
+        return False
+
+
+def _export_chart_png_stable(chart, png_path):
+    """Keep COM Chart.Export, but retry after moving off-screen charts into view."""
+    if _export_chart_png_once(chart, png_path):
+        return "direct"
+
+    chart_object = _chart_object(chart)
+    if chart_object is None:
+        return None
+
+    old_left = old_top = None
+    try:
+        old_left, old_top = chart_object.Left, chart_object.Top
+        for attempt in range(1, _EXPORT_MOVE_RETRIES + 1):
+            chart_object.Left = 0
+            chart_object.Top = _DIST_TITLE_PX + (attempt - 1) * (_CHART_H + 6)
+            time.sleep(_EXPORT_RETRY_SLEEP * attempt)
+            if _export_chart_png_once(chart, png_path):
+                return f"moved{attempt}"
+    except Exception as exc:
+        _log_chart_attach(f"Chart.Export move retry failed: {exc!r}")
+    finally:
+        if old_left is not None and old_top is not None:
+            try:
+                chart_object.Left = old_left
+                chart_object.Top = old_top
+            except Exception:
+                pass
+    return None
+
+
+def _export_chart_png_once(chart, png_path):
+    try:
+        if os.path.exists(png_path):
+            os.remove(png_path)
+        chart.Export(png_path, "PNG")
+    except Exception as exc:
+        _log_chart_attach(f"Chart.Export failed: {exc!r}")
+        return False
+    return _is_valid_png(png_path)
+
+
+def _is_valid_png(png_path):
+    try:
+        if os.path.getsize(png_path) <= len(_PNG_MAGIC):
+            return False
+        with open(png_path, "rb") as fh:
+            return fh.read(len(_PNG_MAGIC)) == _PNG_MAGIC
+    except OSError:
+        return False
+
+
+def _copy_chart_picture_to_sheet(chart, sheet, name, left, top, width, height):
+    chart_object = _chart_object(chart)
+    if chart_object is None:
+        raise RuntimeError("chart object not found for CopyPicture fallback")
+    before = int(sheet.api.Shapes.Count)
+    try:
+        sheet.api.Activate()
+    except Exception:
+        pass
+    chart_object.CopyPicture(Appearance=1, Format=-4147)
+    sheet.api.Paste()
+    after = int(sheet.api.Shapes.Count)
+    if after <= before:
+        raise RuntimeError("CopyPicture paste did not create a shape")
+    shape = sheet.api.Shapes.Item(after)
+    shape.Name = name
+    shape.Left = float(left)
+    shape.Top = float(top)
+    shape.Width = float(width)
+    shape.Height = float(height)
+    return shape
+
+
+def _notify_attach_progress(cb, event, sheet_name, subject):
+    if cb is None:
+        return
+    try:
+        cb(event, sheet_name, subject)
+    except Exception:
+        pass
+
+
+def _chart_object(chart):
+    try:
+        return chart.Parent
+    except Exception:
+        return None
+
+
+def _log_chart_attach(message):
+    print(f"[xlsx_writer] chart attach: {message}", file=sys.stderr)
+
+
+def _validate_embedded_images(xlsx_path):
+    try:
+        with zipfile.ZipFile(xlsx_path) as zf:
+            names = set(zf.namelist())
+            rel_names = [n for n in names if n.startswith("xl/drawings/_rels/")
+                         and n.endswith(".rels")]
+            for rel_name in rel_names:
+                rel_xml = zf.read(rel_name).decode("utf-8", errors="replace")
+                if 'Target="NULL"' in rel_xml or "Target='NULL'" in rel_xml:
+                    raise RuntimeError(f"broken image relationship in {rel_name}: Target=NULL")
+                for target in _image_rel_targets(rel_xml):
+                    part = _resolve_xlsx_part(rel_name, target)
+                    if part not in names:
+                        raise RuntimeError(
+                            f"broken image relationship in {rel_name}: missing {part}"
+                        )
+    except zipfile.BadZipFile as exc:
+        raise RuntimeError(f"invalid xlsx package: {xlsx_path}") from exc
+
+
+def _is_package_integrity_error(exc):
+    msg = str(exc)
+    return ("broken image relationship" in msg
+            or "invalid xlsx package" in msg)
+
+
+def _image_rel_targets(rel_xml):
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(rel_xml)
+    for rel in root:
+        typ = rel.attrib.get("Type", "")
+        if typ.endswith("/image"):
+            yield rel.attrib.get("Target", "")
+
+
+def _resolve_xlsx_part(rel_name, target):
+    base = Path(rel_name).parent.parent
+    part = (base / target).as_posix()
+    while "/../" in part:
+        left, right = part.split("/../", 1)
+        part = left.rsplit("/", 1)[0] + "/" + right
+    return part.lstrip("/")
 
 
 def _hex_to_excel_rgb(hex_color):

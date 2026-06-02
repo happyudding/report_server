@@ -725,6 +725,14 @@ class HoneyMainWindow(QMainWindow):
             self._status(f"Distribution {pct}%  ({done}/{n_charts})  [{_elapsed()}]")
             QApplication.processEvents()
 
+        def _attach_progress(event, sheet_name, subject):
+            if event != "copy_picture":
+                return
+            msg = f"클립보드를 잠시 사용할 수 있음 ({sheet_name}: {subject})"
+            prog.setLabelText(f"{msg}  [{_elapsed()}]")
+            self._status(msg)
+            QApplication.processEvents()
+
         prog.setLabelText(f"Excel 시트/차트 생성 중...  [{_elapsed()}] (진행중)")
         self._status(f"xlsx 생성 중... (Excel)  → {Path(out).name}")
         QApplication.processEvents()
@@ -732,7 +740,8 @@ class HoneyMainWindow(QMainWindow):
             xlsx_writer.write(self.last_result, out, sheets=sheets,
                               colors=chart_colors.load_colors(),
                               progress_cb=_sheet_progress, raw_sheets=raw,
-                              dist_progress_cb=_dist_progress)
+                              dist_progress_cb=_dist_progress,
+                              attach_progress_cb=_attach_progress)
         except Exception as exc:
             prog.close()
             QMessageBox.critical(self, "생성 실패", str(exc))
