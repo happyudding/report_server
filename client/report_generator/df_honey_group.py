@@ -64,6 +64,26 @@ class df_honey_group:
     def names(self) -> list:
         return list(self._mass_data_map.keys())
 
+    def rename_sources(self, new_names) -> None:
+        """각 source(input file)의 legend 명(Filename)을 순서대로 교체.
+
+        new_names 길이가 부족하면 앞에서부터만 적용하고 나머지는 기존명 유지.
+        빈 문자열은 무시(기존명 유지). 중복명은 _2, _3 … 접미사로 회피.
+        """
+        old = list(self._mass_data_map.values())
+        used = set()
+        renamed = []
+        for i, md in enumerate(old):
+            want = (str(new_names[i]).strip() if i < len(new_names) else "") or md.name
+            base, cand, n = want, want, 2
+            while cand in used:
+                cand = f"{base}_{n}"
+                n += 1
+            md.name = cand
+            used.add(cand)
+            renamed.append(md)
+        self._mass_data_map = {md.name: md for md in renamed}
+
     def subjects(self) -> list:
         """첫 source 기준 subject 이름 목록 (그룹은 동일 subject 가정)."""
         if not self._mass_data_map:

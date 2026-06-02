@@ -50,40 +50,26 @@
          <property name="spacing"><number>8</number></property>
          <item>
           <widget class="QRadioButton" name="rb_pt_MD">
-           <property name="text"><string>MD</string></property>
+           <property name="text"><string>MDDI</string></property>
            <property name="checked"><bool>true</bool></property>
           </widget>
          </item>
          <item>
           <widget class="QRadioButton" name="rb_pt_PD">
-           <property name="text"><string>PD</string></property>
+           <property name="text"><string>PDDI</string></property>
           </widget>
          </item>
          <item>
           <widget class="QRadioButton" name="rb_pt_PM">
-           <property name="text"><string>PM</string></property>
+           <property name="text"><string>PMIC</string></property>
           </widget>
          </item>
          <item>
           <widget class="QRadioButton" name="rb_pt_SE">
-           <property name="text"><string>SE</string></property>
+           <property name="text"><string>SECURITY</string></property>
           </widget>
          </item>
         </layout>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="btn_open_local">
-        <property name="text">
-         <string>CSV Open</string>
-        </property>
-       </widget>
-      </item>
-      <item>
-       <widget class="QPushButton" name="btn_pick_csv">
-        <property name="text">
-         <string>D1 에서 불러오기</string>
-        </property>
        </widget>
       </item>
       <item>
@@ -104,12 +90,37 @@
     <item>
      <layout class="QHBoxLayout" name="horizontalLayout_csvlist">
       <item>
+       <layout class="QVBoxLayout" name="vbox_csvopen">
+        <item>
+         <widget class="QPushButton" name="btn_open_local">
+          <property name="text"><string>LOCAL FILE OPEN</string></property>
+          <property name="maximumSize"><size><width>120</width><height>16777215</height></size></property>
+         </widget>
+        </item>
+        <item>
+         <widget class="QPushButton" name="btn_pick_csv">
+          <property name="text"><string>D1 에서 불러오기</string></property>
+          <property name="maximumSize"><size><width>120</width><height>16777215</height></size></property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="spacer_csvopen">
+          <property name="orientation"><enum>Qt::Vertical</enum></property>
+          <property name="sizeHint" stdset="0"><size><width>20</width><height>20</height></size></property>
+         </spacer>
+        </item>
+       </layout>
+      </item>
+      <item>
        <widget class="QListWidget" name="list_csv">
         <property name="minimumSize">
-         <size><width>0</width><height>156</height></size>
+         <size><width>0</width><height>128</height></size>
         </property>
         <property name="maximumSize">
-         <size><width>16777215</width><height>156</height></size>
+         <size><width>16777215</width><height>128</height></size>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">font-size: 9pt;</string>
         </property>
         <property name="selectionMode">
          <enum>QAbstractItemView::SingleSelection</enum>
@@ -146,15 +157,26 @@
       <item>
        <widget class="QLineEdit" name="le_outname">
         <property name="minimumSize">
-         <size><width>221</width><height>0</height></size>
+         <size><width>300</width><height>0</height></size>
         </property>
         <property name="maximumSize">
-         <size><width>306</width><height>16777215</height></size>
+         <size><width>16777215</width><height>16777215</height></size>
         </property>
         <property name="placeholderText">
          <string/>
         </property>
        </widget>
+      </item>
+      <item>
+       <widget class="QLabel" name="lbl_xlsx_ext">
+        <property name="text"><string>.xlsx</string></property>
+       </widget>
+      </item>
+      <item>
+       <spacer name="spacer_analyze">
+        <property name="orientation"><enum>Qt::Horizontal</enum></property>
+        <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
+       </spacer>
       </item>
       <item>
        <widget class="QPushButton" name="btn_start">
@@ -177,12 +199,6 @@
         </property>
        </widget>
       </item>
-      <item>
-       <spacer name="spacer_analyze">
-        <property name="orientation"><enum>Qt::Horizontal</enum></property>
-        <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
-       </spacer>
-      </item>
      </layout>
     </item>
     <item>
@@ -196,6 +212,12 @@
       <property name="wordWrap">
        <bool>true</bool>
       </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QLabel" name="lbl_status_title">
+      <property name="text"><string>Status</string></property>
+      <property name="styleSheet"><string notr="true">font-weight: 600; color:#444;</string></property>
      </widget>
     </item>
     <item>

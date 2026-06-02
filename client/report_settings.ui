@@ -111,6 +111,15 @@
       <item>
        <layout class="QVBoxLayout" name="vbox_arrows">
         <item>
+         <widget class="QPushButton" name="btn_filename_change">
+          <property name="text"><string>FileName
+Change</string></property>
+          <property name="toolTip"><string>각 입력 파일(Filename)의 legend 명을 콤마로 구분해 직접 지정합니다.</string></property>
+          <property name="maximumSize"><size><width>52</width><height>16777215</height></size></property>
+          <property name="styleSheet"><string notr="true">font-size: 8pt; padding: 2px 0px;</string></property>
+         </widget>
+        </item>
+        <item>
          <spacer name="spacer_arrows_top">
           <property name="orientation"><enum>Qt::Vertical</enum></property>
           <property name="sizeHint" stdset="0"><size><width>20</width><height>10</height></size></property>

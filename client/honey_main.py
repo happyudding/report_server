@@ -20,8 +20,8 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QIntValidator
 from PyQt5.QtWidgets import (
     QApplication, QColorDialog, QDialog, QDialogButtonBox, QFileDialog,
-    QGridLayout, QHBoxLayout, QLabel, QListWidgetItem, QMainWindow,
-    QMessageBox, QProgressDialog, QPushButton, QVBoxLayout,
+    QGridLayout, QHBoxLayout, QInputDialog, QLabel, QListWidgetItem,
+    QMainWindow, QMessageBox, QProgressDialog, QPushButton, QVBoxLayout,
 )
 
 from config import CURRENT_VERSION, SERVER_BASE_URL, D1_STORAGE_DIR
@@ -315,6 +315,8 @@ class ReportSettingsDialog(QDialog):
         uic.loadUi(SETTINGS_UI_PATH, self)
         self.group = group
         self.csv_count = csv_count
+        # Filename(legend) 사용자 지정값. None 이면 미변경(기존 파일명 사용).
+        self._filename_overrides = None
         self.sheet_checks = {
             name: getattr(self, f"cb_sheet_{name}") for name in SHEET_OPTIONS
         }
@@ -331,6 +333,7 @@ class ReportSettingsDialog(QDialog):
             lambda it: self._move(self.list_items_sel, self.list_items_avail, [it]))
         # yield 미선택 시 fail_item / issue_table 도 선택 불가
         self.cb_sheet_yield.toggled.connect(self._sync_yield_dependents)
+        self.btn_filename_change.clicked.connect(self.on_edit_filenames)
         self.btn_chart_colors.clicked.connect(self.on_edit_chart_colors)
         self.buttonBox.accepted.connect(self._on_confirm)
         self.buttonBox.rejected.connect(self.reject)
@@ -413,6 +416,42 @@ class ReportSettingsDialog(QDialog):
         if not ok:
             self.cb_mode_dut.setChecked(False)
         self.cb_mode_dut.setEnabled(ok)
+
+    # ── Filename(legend) 편집 ─────────────────────────────────────────────────
+    def _current_filenames(self):
+        """현재 적용될 Filename(legend) 목록 — 사용자 지정값 우선, 없으면 파일명."""
+        if self._filename_overrides is not None:
+            return list(self._filename_overrides)
+        return self.group.names() if self.group is not None else []
+
+    def on_edit_filenames(self):
+        """입력 파일별 legend 명(Filename)을 콤마로 구분해 한 줄로 편집."""
+        names = self._current_filenames()
+        if not names:
+            QMessageBox.information(self, "Filename", "입력 파일이 없습니다.")
+            return
+        text, ok = QInputDialog.getText(
+            self, "FileName Change",
+            "각 입력 파일의 Filename(legend)을 콤마(,)로 구분해 입력하세요.\n"
+            f"(파일 {len(names)}개)",
+            text=",".join(names))
+        if not ok:
+            return
+        parts = [p.strip() for p in text.split(",")]
+        # 개수 안내(부족/초과해도 적용은 앞에서부터, 빈칸은 기존명 유지)
+        if len(parts) != len(names):
+            QMessageBox.warning(
+                self, "개수 불일치",
+                f"입력 파일은 {len(names)}개인데 {len(parts)}개를 입력했습니다.\n"
+                "앞에서부터 매칭하며, 빈 항목은 기존 파일명을 사용합니다.")
+        self._filename_overrides = [
+            (parts[i] if i < len(parts) else "") or names[i]
+            for i in range(len(names))
+        ]
+
+    def filename_overrides(self):
+        """사용자가 지정한 Filename(legend) 목록. 미변경이면 None."""
+        return self._filename_overrides
 
     # ── 차트 색 편집 ──────────────────────────────────────────────────────────
     def on_edit_chart_colors(self):
@@ -648,6 +687,10 @@ class HoneyMainWindow(QMainWindow):
 
         selected = dlg.selected_items()
         sheets = dlg.selected_sheets()
+        # Filename(legend) 사용자 지정 시 source 명 교체 (DUT 정리 모드는 자체 명명 사용)
+        overrides = dlg.filename_overrides()
+        if overrides is not None and not dlg.mode_dut():
+            self.group.rename_sources(overrides)
         # 데이터 정리 모드 적용 (Bin1 Only → DUT 정리 순서로 그룹 변환)
         try:
             work_group = self._apply_modes(self.group, dlg.mode_bin1(), dlg.mode_dut())

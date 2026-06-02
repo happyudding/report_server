@@ -107,7 +107,7 @@ _HDR_ALIGN   = _Alignment(horizontal="center", vertical="center", wrap_text=True
 _DATA_FONT   = _Font(name="Calibri", size=10)
 _DATA_ALIGN  = _Alignment(horizontal="center", vertical="center", wrap_text=True)
 _TITLE_FONT  = _Font(name="Calibri", bold=True, size=20)
-_TITLE_ALIGN = _Alignment(horizontal="center", vertical="center")
+_TITLE_ALIGN = _Alignment(horizontal="left", vertical="center")
 _TITLE_ROW_MAX_COL = 26
 _SUMMARY_TITLE_FILL_RGB = "FFBFE3FF"
 _SUMMARY_HDR_FILL_RGB = "FFE2E8F0"
@@ -465,15 +465,16 @@ def _summary_fail_percent(row):
 def _yield_table(result):
     """yield / fail_item 공용 표 (bin | Item | {src}_count | {src}_yield | avg | comment)."""
     src = result.sources
+    # count 들을 먼저 모두, 이어서 yield 들을 모두 (cnt cnt … yield yield …)
     header = ["bin", "Item"]
-    for s in src:
-        header += [f"{s}_count", f"{s}_yield"]
+    header += [f"{s}_count" for s in src]
+    header += [f"{s}_yield" for s in src]
     header += ["avg", "comment"]
     rows = []
     for r in result.yield_rows:
         row = [_bin_label(r.get("bin")), r.get("Main Fail subject", "")]
-        for s in src:
-            row += [r.get(f"{s}_count"), r.get(f"{s}_yield")]
+        row += [r.get(f"{s}_count") for s in src]
+        row += [r.get(f"{s}_yield") for s in src]
         row += [r.get("avg"), r.get("comment", "")]
         rows.append(row)
     return header, rows
@@ -495,15 +496,16 @@ def _fill_yield(ws, result):
 
 def _fill_fail_item(ws, result):
     src = result.sources
+    # count 들을 먼저 모두, 이어서 yield 들을 모두 (cnt cnt … yield yield …)
     header = ["Bin", "Item"]
-    for s in src:
-        header += [f"{s}_count", f"{s}_yield"]
+    header += [f"{s}_count" for s in src]
+    header += [f"{s}_yield" for s in src]
     header += ["Distribution"]
     rows = []
     for r in result.yield_rows:
         row = [_bin_label(r.get("bin")), r.get("Main Fail subject", "")]
-        for s in src:
-            row += [r.get(f"{s}_count"), r.get(f"{s}_yield")]
+        row += [r.get(f"{s}_count") for s in src]
+        row += [r.get(f"{s}_yield") for s in src]
         row += [""]   # Distribution 열 — 차트는 xlwings 단계에서 삽입
         rows.append(row)
     _fill_table(ws, header, rows)
@@ -1880,6 +1882,7 @@ def _downsample(xs, ys, max_points=_MAX_CDF_POINTS):
 # ── distribution 시트 제목 배너 (xlwings) ────────────────────────────────────
 
 _XL_CENTER = -4108        # xlCenter
+_XL_LEFT = -4131          # xlLeft
 _TITLE_FILL = (191, 227, 255)
 _TITLE_FONT_SIZE = 20
 _TITLE_ROW_HEIGHT = 30
@@ -1900,7 +1903,7 @@ def _put_title(sh, ncols, text):
         f.Bold = True
         f.Size = _TITLE_FONT_SIZE
         f.Color = 0  # black
-        c.api.HorizontalAlignment = _XL_CENTER
+        c.api.HorizontalAlignment = _XL_LEFT
         c.api.VerticalAlignment = _XL_CENTER
         sh.range((1, 1), (1, span)).color = _TITLE_FILL
     except Exception:

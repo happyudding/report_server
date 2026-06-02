@@ -27,23 +27,23 @@
      <layout class="QHBoxLayout" name="horizontalLayout_pt">
       <item>
        <widget class="QRadioButton" name="rb_pt_MD">
-        <property name="text"><string>MD</string></property>
+        <property name="text"><string>MDDI</string></property>
         <property name="checked"><bool>true</bool></property>
        </widget>
       </item>
       <item>
        <widget class="QRadioButton" name="rb_pt_PD">
-        <property name="text"><string>PD</string></property>
+        <property name="text"><string>PDDI</string></property>
        </widget>
       </item>
       <item>
        <widget class="QRadioButton" name="rb_pt_PM">
-        <property name="text"><string>PM</string></property>
+        <property name="text"><string>PMIC</string></property>
        </widget>
       </item>
       <item>
        <widget class="QRadioButton" name="rb_pt_SE">
-        <property name="text"><string>SE</string></property>
+        <property name="text"><string>SECURITY</string></property>
        </widget>
       </item>
       <item>
