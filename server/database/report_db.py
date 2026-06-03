@@ -118,6 +118,25 @@ CREATE TABLE IF NOT EXISTS report_sheet_data (
     updated_at   INTEGER NOT NULL,
     PRIMARY KEY (analysis_key, sheet_name)
 );
+
+CREATE TABLE IF NOT EXISTS report_audit_log (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    action         TEXT NOT NULL,        -- 'upload' | 'edit' | 'delete'
+    session_id     TEXT,
+    analysis_key   TEXT,
+    -- 삭제 시 세션 행이 사라지므로 조회 가독성을 위해 메타 스냅샷을 함께 저장
+    product_type   TEXT,
+    product        TEXT,
+    lot_id         TEXT,
+    file_name      TEXT,
+    changed_fields TEXT,                 -- edit 시 변경 필드명 콤마조인, 그 외 NULL
+    client_ip      TEXT,
+    user_agent     TEXT,
+    result         TEXT DEFAULT 'ok',    -- 'ok' | 'fail'
+    created_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_report_audit_created_at
+    ON report_audit_log(created_at);
 """
 
 _SUMMARY_COLUMNS = (
@@ -308,6 +327,73 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
         GROUP BY s.session_id
         ORDER BY s.created_at DESC
         LIMIT ?
+    """
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ── audit log ─────────────────────────────────────────────────────────────────
+
+_AUDIT_COLUMNS = (
+    "action", "session_id", "analysis_key", "product_type", "product",
+    "lot_id", "file_name", "changed_fields", "client_ip", "user_agent",
+    "result", "created_at",
+)
+
+
+def log_audit(action, session_id=None, analysis_key=None, product_type=None,
+              product=None, lot_id=None, file_name=None, changed_fields=None,
+              client_ip=None, user_agent=None, result="ok"):
+    """업로드/수정/삭제 감사 기록 1행 추가. user_agent 는 과도하게 길면 잘라 저장."""
+    if user_agent and len(user_agent) > 500:
+        user_agent = user_agent[:500]
+    values = (
+        action, session_id, analysis_key, product_type, product,
+        lot_id, file_name, changed_fields, client_ip, user_agent,
+        result, _now(),
+    )
+    placeholders = ", ".join("?" for _ in _AUDIT_COLUMNS)
+    cols = ", ".join(_AUDIT_COLUMNS)
+    with get_conn() as conn:
+        conn.execute(
+            f"INSERT INTO report_audit_log ({cols}) VALUES ({placeholders})",
+            values,
+        )
+
+
+def get_audit_logs(action=None, session_id=None, q=None, limit=200, offset=0):
+    """감사 로그 조회. action/session_id 필터 + q(파일명/product/lot_id 부분일치)."""
+    conditions = []
+    params = []
+    if action:
+        conditions.append("action = ?")
+        params.append(action)
+    if session_id:
+        conditions.append("session_id = ?")
+        params.append(session_id)
+    if q:
+        conditions.append("(file_name LIKE ? OR product LIKE ? OR lot_id LIKE ?)")
+        like = f"%{q}%"
+        params.extend([like, like, like])
+    where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+    try:
+        limit = max(1, min(int(limit), 1000))
+    except (TypeError, ValueError):
+        limit = 200
+    try:
+        offset = max(0, int(offset))
+    except (TypeError, ValueError):
+        offset = 0
+    params.extend([limit, offset])
+    sql = f"""
+        SELECT id, action, session_id, analysis_key, product_type, product,
+               lot_id, file_name, changed_fields, client_ip, user_agent,
+               result, created_at
+        FROM report_audit_log
+        {where}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ? OFFSET ?
     """
     with get_conn() as conn:
         rows = conn.execute(sql, params).fetchall()

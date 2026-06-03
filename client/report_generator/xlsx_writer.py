@@ -95,6 +95,9 @@ _RGB_RED = 255               # RGB(255,0,0)
 _RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail 차트 배경)
 _XL_COLORINDEX_NONE = -4142   # xlColorIndexNone (ChartArea 채움 제거 — 템플릿 중립화)
 
+_CPK_THRESHOLD = 1.33
+_CPK_WARN_FILL_RGB = "FFFFFF00"  # 노란색 ARGB — CPK < 1.33 행 하이라이트
+
 ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
 
 # ── openpyxl 셀 스타일 상수 (xlsx 파일 런타임 의존 없이 코드 직접 정의) ─────────
@@ -577,6 +580,7 @@ def _fill_cpk_rows(ws, cpk_rows):
             r.get("cpl"), r.get("cpu"), r.get("cp"), r.get("cpk"), "",
         ])
     _fill_table(ws, header, rows)
+    _apply_cpk_warn_fill(ws, header, rows)   # CPK < 1.33 행 노란 하이라이트 (병합 전)
     _apply_table_col_widths(ws, header, custom_widths={
         "TEST NAME": _CPK_TEST_NAME_COL_WIDTH,
         "계열": _CPK_SERIES_COL_WIDTH,
@@ -585,6 +589,44 @@ def _fill_cpk_rows(ws, cpk_rows):
     })
     _apply_font_delta_to_columns(ws, header, ["TEST NAME", "LOW SPEC", "HIGH SPEC", "SCALE"], 2)
     _merge_cpk_subject(ws, len(rows))
+
+
+def _apply_cpk_warn_fill(ws, header, rows, header_row=_HEADER_ROW, start_col=_START_COL):
+    """CPK 열 값이 _CPK_THRESHOLD 미만인 행 전체에 노란 배경 적용 (병합 전 호출)."""
+    cpk_idx = next((i for i, h in enumerate(header) if h == "cpk"), None)
+    if cpk_idx is None:
+        return
+    warn_fill = _PatternFill(fill_type="solid", fgColor=_CPK_WARN_FILL_RGB)
+    for ri, row in enumerate(rows):
+        val = row[cpk_idx] if cpk_idx < len(row) else None
+        try:
+            f = float(val) if val is not None else None
+        except (TypeError, ValueError):
+            f = None
+        if f is not None and f < _CPK_THRESHOLD:
+            excel_row = header_row + 1 + ri
+            for ci in range(len(header)):
+                ws.cell(row=excel_row, column=start_col + ci).fill = copy(warn_fill)
+
+
+def _cpk_fail_subjects(result):
+    """source=='total' 이고 CPK < _CPK_THRESHOLD 인 (subject, cpk_val) 목록. 순서 보존."""
+    out = []
+    seen = set()
+    for r in (getattr(result, "cpk_rows", None) or []):
+        if str(r.get("source") or "").strip().lower() != "total":
+            continue
+        cpk_val = r.get("cpk")
+        try:
+            cpk_f = float(cpk_val) if cpk_val is not None else None
+        except (TypeError, ValueError):
+            cpk_f = None
+        if cpk_f is not None and cpk_f < _CPK_THRESHOLD:
+            subj = r.get("subject")
+            if subj and subj not in seen:
+                seen.add(subj)
+                out.append((subj, cpk_f))
+    return out
 
 
 def _merge_cpk_subject(ws, n_rows, header_row=_HEADER_ROW, start_col=_START_COL):
@@ -621,7 +663,7 @@ def _merge_cpk_subject(ws, n_rows, header_row=_HEADER_ROW, start_col=_START_COL)
 
 
 def _fill_issue_table(ws, result):
-    """Category 그룹 레이아웃. Yield Category = yield 데이터 재사용, CPK/ETC 플레이스홀더."""
+    """Category 그룹 레이아웃. Yield = yield 데이터, CPK = CPK < 1.33 아이템, ETC = 플레이스홀더."""
     src = result.sources
     header = ["Category", "Bin", "Item", "avg"]
     for s in src:
@@ -638,14 +680,42 @@ def _fill_issue_table(ws, result):
             row += [r.get(f"{s}_yield")]  # count 제거
         row += [""] * pad
         rows.append(row)
-    # CPK / ETC Category 섹션 (플레이스홀더 행)
-    rows.append(["CPK"] + [""] * (len(header) - 1))
+
+    # CPK Category: CPK < 1.33 아이템 (source='total' 기준)
+    cpk_fails = _cpk_fail_subjects(result)
+    if cpk_fails:
+        for subj, cpk_val in cpk_fails:
+            row = ["CPK", "", subj, _sanitize_cell(cpk_val)]
+            row += [""] * len(src)       # _yield 열: CPK 에 해당 없음
+            row += [""] * pad
+            rows.append(row)
+    else:
+        rows.append(["CPK"] + [""] * (len(header) - 1))  # CPK 없으면 플레이스홀더 유지
+
     rows.append(["ETC"] + [""] * (len(header) - 1))
+
     _fill_table(ws, header, rows)
     n_yield = len(result.yield_rows)
-    _merge_issue_category(ws, n_yield)
+    n_cpk = max(1, len(cpk_fails))
+
+    _merge_issue_category(ws, n_yield)  # Yield 병합 (기존)
+
+    # CPK Category 병합 (2행 이상인 경우)
+    if len(cpk_fails) > 1:
+        from openpyxl.styles import Alignment
+        cpk_start = _HEADER_ROW + 1 + n_yield
+        ws.merge_cells(start_row=cpk_start, start_column=_START_COL,
+                       end_row=cpk_start + n_cpk - 1, end_column=_START_COL)
+        cell = ws.cell(row=cpk_start, column=_START_COL)
+        al = cell.alignment
+        cell.alignment = Alignment(horizontal=al.horizontal, vertical="center",
+                                   wrap_text=al.wrap_text)
+
     for i in range(n_yield):
         ws.row_dimensions[_HEADER_ROW + 1 + i].height = _ISSUE_TABLE_ROW_HEIGHT
+    for i in range(n_cpk):
+        ws.row_dimensions[_HEADER_ROW + 1 + n_yield + i].height = _ISSUE_TABLE_ROW_HEIGHT
+
     _apply_table_col_widths(ws, header, custom_widths={
         "Distribution": 17,
         "comment": 40,
@@ -1204,6 +1274,29 @@ def _attach_issue_table_charts(wb, result, chart_map, attach_progress_cb=None):
             h = cell.height
         except Exception:
             left, top = 700.0, 60.0 + i * _ISSUE_TABLE_ROW_HEIGHT
+            w, h = 200.0, float(_ISSUE_TABLE_ROW_HEIGHT)
+        png = os.path.join(tmpdir, f"it_{seq}.png")
+        seq += 1
+        if _attach_chart_picture(it, ch, png, f"it_chart_{seq}", left, top, w, h,
+                                 "issue_table", subj, attach_progress_cb):
+            _prof_count("pngs")
+
+    # CPK < 1.33 행 distribution 차트 부착
+    n_yield = len(result.yield_rows)
+    for j, (subj, _cpk_val) in enumerate(_cpk_fail_subjects(result)):
+        if subj not in chart_map:
+            continue
+        ch = chart_map[subj]
+        row_excel = _HEADER_ROW + 1 + n_yield + j
+        try:
+            cell = it.range((row_excel, dist_col))
+            left = cell.left
+            top = cell.top
+            w = cell.width
+            h = cell.height
+        except Exception:
+            left = 700.0
+            top = 60.0 + (n_yield + j) * _ISSUE_TABLE_ROW_HEIGHT
             w, h = 200.0, float(_ISSUE_TABLE_ROW_HEIGHT)
         png = os.path.join(tmpdir, f"it_{seq}.png")
         seq += 1

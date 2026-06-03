@@ -10,6 +10,7 @@ def _path_env(name, default):
 
 REPORT_ANALYSIS_INDEX_HTML = ROOT_DIR / "server" / "report" / "report_analysis_index.html"
 REPORT_VIEW_HTML           = ROOT_DIR / "server" / "report" / "report_view.html"
+ADMIN_DASHBOARD_HTML       = ROOT_DIR / "server" / "report" / "admin_dashboard.html"
 
 _HOST = os.getenv("HOST", "127.0.0.1")
 _PORT = os.getenv("PORT", "8000")

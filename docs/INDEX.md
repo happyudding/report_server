@@ -78,6 +78,7 @@
 | 세션 상세에 데이터 추가 | [02](02_server_query_edit.md) | `session_full()` |
 | 수정 모드 저장 동작 | [02](02_server_query_edit.md) | `update_session_content()` |
 | DB 컬럼/테이블 추가 | [03](03_storage.md) | `SCHEMA`, `_migrate()` |
+| 감사 로그(업/수정/삭제) 기록·조회 | [02](02_server_query_edit.md) | `report_db.log_audit`/`get_audit_logs`, [admin_routes.py](../server/admin_routes.py), 대시보드 `/pe/admin` |
 | S3 키 경로 바꾸기 | [03](03_storage.md) | [report_s3.py](../server/s3_storage/report_s3.py) `make_*_key` + [config.py](../server/config.py) |
 | 새 Honey 버전 배포 | [04](04_honey_update.md) | `version.json` + release 스크립트 |
 | 클라 화면/버튼 동작 | [05](05_client_ui.md) | `HoneyMainWindow` 슬롯 |

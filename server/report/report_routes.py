@@ -74,6 +74,35 @@ def _password_ok(session, password):
     return (password or "").strip() == stored
 
 
+def _client_meta():
+    """감사 로그용 (client_ip, user_agent). 역프록시 뒤면 X-Forwarded-For 첫 IP 사용."""
+    fwd = request.headers.get("X-Forwarded-For")
+    ip = fwd.split(",")[0].strip() if fwd else (request.remote_addr or "")
+    return ip, str(request.user_agent)
+
+
+def _audit(action, session=None, session_id=None, changed_fields=None, result="ok"):
+    """감사 로그 best-effort 기록 — 실패해도 본 요청 처리를 깨뜨리지 않는다."""
+    try:
+        ip, ua = _client_meta()
+        meta = session or {}
+        report_db.log_audit(
+            action,
+            session_id=session_id or meta.get("session_id"),
+            analysis_key=meta.get("analysis_key"),
+            product_type=meta.get("product_type"),
+            product=meta.get("product"),
+            lot_id=meta.get("lot_id"),
+            file_name=meta.get("file_name"),
+            changed_fields=changed_fields,
+            client_ip=ip,
+            user_agent=ua,
+            result=result,
+        )
+    except Exception:
+        pass
+
+
 def _coerce_yield_row(row):
     """수정 모드에서 넘어온 yield 행 dict 를 summary 컬럼 타입으로 정리."""
     name = str(row.get("item_name") or "").strip()
@@ -275,6 +304,7 @@ def delete_session_route(session_id):
     if not _password_ok(session, password):
         return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
     report_db.delete_session(session_id)
+    _audit("delete", session=session)
     return jsonify({"deleted": True, "session_id": session_id})
 
 
@@ -373,6 +403,10 @@ def update_session_content(session_id):
                 pass
 
     status = 200 if not errors else (207 if updated else 500)
+    if updated:
+        _audit("edit", session=session,
+               changed_fields=",".join(sorted(updated.keys())),
+               result="ok" if not errors else "fail")
     return jsonify({"ok": not errors, "updated": updated, "errors": errors}), status
 
 

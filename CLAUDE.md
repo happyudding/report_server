@@ -19,7 +19,7 @@
 ```
 report_server/
 ├── server/                     Flask 서버
-│   ├── wsgi.py                  진입점 (report_bp + honey_bp 등록)
+│   ├── wsgi.py                  진입점 (report_bp + honey_bp + admin_bp 등록)
 │   ├── config.py                환경변수·경로 통합 설정
 │   ├── start.bat / terminate.bat 로컬 기동·종료
 │   ├── requirements.txt
@@ -28,10 +28,12 @@ report_server/
 │   │   ├── report_extension.py  Blueprint 등록 + DB init
 │   │   ├── report_routes.py     검색결과·세션·주석 (분석 라우트 모두 제거됨)
 │   │   ├── report_analysis_index.html  검색결과 페이지 (모달 없음)
-│   │   └── report_view.html     세션 상세 (text only)
+│   │   ├── report_view.html     세션 상세 (text only)
+│   │   └── admin_dashboard.html 감사 로그 대시보드 (/pe/admin)
 │   ├── s3_storage/report_s3.py  boto3 호환 client + key 빌더
 │   ├── upload_xlsx.py           /pe/report/upload_xlsx 라우트
 │   ├── xlsx_parser.py           openpyxl 기반 텍스트 추출
+│   ├── admin_routes.py          /pe/admin 감사 로그 조회 (인증 없음, 내부망 전용)
 │   ├── honey_routes.py          /honey/version, /honey/download
 │   └── releases/version.json    Honey exe 배포 manifest
 ├── client/                     Honey 클라이언트 (PyQt5)
@@ -91,6 +93,13 @@ report_server/
 - `source_xlsx` — 원본 xlsx S3 위치
 - `summary_text` — summary 시트 추출 JSON
 - `issue_table_text` — issue_table 시트 추출 JSON
+
+`report_audit_log` 테이블 추가 — 업로드/수정/삭제 감사 기록. action / session_id /
+analysis_key / 메타 스냅샷(product_type·product·lot_id·file_name) / changed_fields(edit 시
+변경 필드명) / client_ip / user_agent / result / created_at. SCHEMA 의 `CREATE TABLE IF NOT
+EXISTS` 로 기존 DB 에도 자동 생성(별도 `_migrate()` 불필요). 기록은 best-effort —
+삽입 실패가 본 업로드/수정/삭제를 깨뜨리지 않는다. 신원은 IP + User-Agent 만 (클라이언트가
+사용자명을 보내지 않음). `/pe/admin` 대시보드에서 조회 (인증 없음, 내부망 전용).
 
 ---
 
@@ -153,6 +162,9 @@ HONEY_SERVER_URL      기본 http://127.0.0.1:8000
 | S3 키 빌더 | [server/s3_storage/report_s3.py](server/s3_storage/report_s3.py) |
 | 검색결과 UI | [server/report/report_analysis_index.html](server/report/report_analysis_index.html) |
 | 세션 상세 UI | [server/report/report_view.html](server/report/report_view.html) |
+| 감사 로그 라우트 | [server/admin_routes.py](server/admin_routes.py) |
+| 감사 로그 대시보드 UI | [server/report/admin_dashboard.html](server/report/admin_dashboard.html) |
+| 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |
 | Honey 메인 윈도우 | [client/honey_main.py](client/honey_main.py) |
 | 더미 xlsx 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |
 

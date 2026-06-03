@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Report Server — 감사 로그</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f0f2f5; margin: 0; padding: 24px 20px;
+  color: #222;
+}
+h1 { margin: 0 0 20px; font-size: 22px; font-weight: 700; color: #1a1a2e; }
+h1 .sub { font-size: 13px; font-weight: 400; color: #888; margin-left: 8px; }
+
+.filter-card {
+  background: #fff; border-radius: 10px; padding: 16px 20px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 16px;
+}
+.filter-grid {
+  display: grid; grid-template-columns: 1fr 2fr auto; gap: 12px;
+  align-items: end;
+}
+.filter-group { display: flex; flex-direction: column; gap: 6px; }
+.filter-label { font-size: 12px; color: #666; font-weight: 600; }
+.filter-input, .sel-input {
+  height: 36px; padding: 0 10px; border: 1px solid #d0d5dd;
+  border-radius: 6px; font-size: 13px; outline: none; background: #fff;
+}
+.filter-input:focus, .sel-input:focus { border-color: #4a90e2; }
+.filter-actions { display: flex; gap: 8px; align-items: end; }
+.btn-action {
+  height: 36px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
+  background: #fff; color: #333; font-size: 13px; cursor: pointer; font-weight: 500;
+}
+.btn-action.primary { background: #4a90e2; color: #fff; border-color: #4a90e2; }
+.btn-action.primary:hover { background: #357abd; }
+
+.results-card {
+  background: #fff; border-radius: 10px; padding: 16px 20px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07);
+}
+.results-header {
+  font-size: 14px; font-weight: 600; color: #333;
+  display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+}
+.results-count { font-size: 12px; color: #888; font-weight: 400; }
+
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 10px; border-bottom: 1px solid #eef0f3; text-align: left; white-space: nowrap; }
+th { background: #fafbfc; font-weight: 600; color: #555; font-size: 12px; }
+tr.empty-row td { text-align: center; color: #999; padding: 30px; }
+td.ua { max-width: 280px; overflow: hidden; text-overflow: ellipsis; color: #888; font-size: 12px; }
+td.fields { color: #555; font-size: 12px; }
+td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #555; }
+
+.badge-action {
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
+  font-size: 11px; font-weight: 600;
+}
+.badge-action.upload { background: #dcfce7; color: #166534; }
+.badge-action.edit   { background: #dbeafe; color: #1e40af; }
+.badge-action.delete { background: #fee2e2; color: #b91c1c; }
+.badge-fail { color: #dc2626; font-size: 11px; font-weight: 600; margin-left: 4px; }
+
+.pager { display: flex; gap: 6px; justify-content: center; margin-top: 14px; }
+.pager .pg-btn {
+  min-width: 32px; height: 30px; padding: 0 8px; font-size: 12px;
+  border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-radius: 4px;
+}
+.pager .pg-btn:disabled { opacity: .4; cursor: not-allowed; }
+</style>
+</head>
+<body>
+<h1>감사 로그 <span class="sub">업로드 · 수정 · 삭제 이력</span></h1>
+
+<div class="filter-card">
+  <div class="filter-grid">
+    <div class="filter-group">
+      <label class="filter-label" for="fAction">작업</label>
+      <select id="fAction" class="sel-input">
+        <option value="">전체</option>
+        <option value="upload">업로드</option>
+        <option value="edit">수정</option>
+        <option value="delete">삭제</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label" for="fQuery">검색 (파일명 / product / lot)</label>
+      <input id="fQuery" class="filter-input" type="text" placeholder="부분 일치 검색…">
+    </div>
+    <div class="filter-actions">
+      <button id="btnSearch" class="btn-action primary">검색</button>
+      <button id="btnReset" class="btn-action">초기화</button>
+    </div>
+  </div>
+</div>
+
+<div class="results-card">
+  <div class="results-header">
+    감사 로그 <span id="resultCount" class="results-count"></span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>시각</th>
+          <th>작업</th>
+          <th>type</th>
+          <th>product</th>
+          <th>lot_id</th>
+          <th>파일명</th>
+          <th>변경 필드</th>
+          <th>IP</th>
+          <th>User-Agent</th>
+          <th>session_id</th>
+        </tr>
+      </thead>
+      <tbody id="tbody">
+        <tr class="empty-row"><td colspan="10">로딩 중…</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="pager" class="pager"></div>
+</div>
+
+<script>
+const PT_LABELS = { MD: "MDDI", PD: "PDDI", PM: "PMIC", SE: "SECURITY" };
+const ptLabel = pt => PT_LABELS[pt] || pt || "-";
+const PAGE_SIZE = 50;
+
+let _page = 0;
+let _hasMore = false;
+let _rows = [];
+
+function fmtDate(unix) {
+  if (!unix) return "-";
+  const d = new Date(unix * 1000);
+  const pad = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+const ACTION_LABEL = { upload: "업로드", edit: "수정", delete: "삭제" };
+
+async function load() {
+  const action = document.getElementById("fAction").value;
+  const q = document.getElementById("fQuery").value.trim();
+  const params = new URLSearchParams();
+  if (action) params.set("action", action);
+  if (q) params.set("q", q);
+  // 다음 페이지 존재 여부 판단을 위해 1건 더 요청
+  params.set("limit", PAGE_SIZE + 1);
+  params.set("offset", _page * PAGE_SIZE);
+  const tbody = document.getElementById("tbody");
+  tbody.innerHTML = `<tr class="empty-row"><td colspan="10">로딩 중…</td></tr>`;
+  try {
+    const res = await fetch("/pe/admin/api/audit?" + params.toString(), { cache: "no-store" });
+    const data = await res.json();
+    _hasMore = data.length > PAGE_SIZE;
+    _rows = data.slice(0, PAGE_SIZE);
+  } catch (e) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  render();
+}
+
+function render() {
+  const tbody = document.getElementById("tbody");
+  document.getElementById("resultCount").textContent =
+    `(${_rows.length}건${_hasMore ? "+" : ""}, 페이지 ${_page + 1})`;
+  if (!_rows.length) {
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">기록이 없습니다.</td></tr>`;
+    renderPager();
+    return;
+  }
+  tbody.innerHTML = _rows.map(r => {
+    const act = r.action || "";
+    const failBadge = (r.result && r.result !== "ok")
+      ? `<span class="badge-fail">${esc(r.result)}</span>` : "";
+    return `
+    <tr>
+      <td>${fmtDate(r.created_at)}</td>
+      <td><span class="badge-action ${esc(act)}">${esc(ACTION_LABEL[act] || act)}</span>${failBadge}</td>
+      <td>${esc(ptLabel(r.product_type))}</td>
+      <td>${esc(r.product || "-")}</td>
+      <td>${esc(r.lot_id || "-")}</td>
+      <td>${esc(r.file_name || "-")}</td>
+      <td class="fields">${esc(r.changed_fields || "-")}</td>
+      <td class="mono">${esc(r.client_ip || "-")}</td>
+      <td class="ua" title="${esc(r.user_agent || "")}">${esc(r.user_agent || "-")}</td>
+      <td class="mono">${esc(r.session_id || "-")}</td>
+    </tr>`;
+  }).join("");
+  renderPager();
+}
+
+function renderPager() {
+  const pager = document.getElementById("pager");
+  pager.innerHTML = "";
+  const prev = document.createElement("button");
+  prev.className = "pg-btn"; prev.textContent = "← 이전";
+  prev.disabled = _page === 0;
+  prev.onclick = () => { if (_page > 0) { _page--; load(); } };
+  const next = document.createElement("button");
+  next.className = "pg-btn"; next.textContent = "다음 →";
+  next.disabled = !_hasMore;
+  next.onclick = () => { if (_hasMore) { _page++; load(); } };
+  pager.appendChild(prev);
+  pager.appendChild(next);
+}
+
+document.getElementById("btnSearch").onclick = () => { _page = 0; load(); };
+document.getElementById("fQuery").addEventListener("keydown", e => {
+  if (e.key === "Enter") { _page = 0; load(); }
+});
+document.getElementById("fAction").onchange = () => { _page = 0; load(); };
+document.getElementById("btnReset").onclick = () => {
+  document.getElementById("fAction").value = "";
+  document.getElementById("fQuery").value = "";
+  _page = 0; load();
+};
+
+load();
+</script>
+</body>
+</html>

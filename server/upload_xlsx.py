@@ -305,6 +305,19 @@ def upload_xlsx():
     else:
         report_db.update_session(session_id, status="done")
 
+    # ── 감사 로그 (best-effort, 실패해도 업로드 응답에 영향 없음) ───────────────
+    try:
+        fwd = request.headers.get("X-Forwarded-For")
+        client_ip = fwd.split(",")[0].strip() if fwd else (request.remote_addr or "")
+        report_db.log_audit(
+            "upload", session_id=session_id, analysis_key=analysis_key,
+            product_type=meta["product_type"], product=meta["product"],
+            lot_id=meta["lot_id"], file_name=name,
+            client_ip=client_ip, user_agent=str(request.user_agent),
+        )
+    except Exception:
+        pass
+
     return jsonify({
         "session_id": session_id,
         "analysis_key": analysis_key,
