@@ -104,6 +104,36 @@ tbody tr:hover { background: #f9fbff; }
 .grid-table td .dist-img { max-width: 100%; height: auto; display: block; }
 .grid-table td.empty { background: #fcfcfd; }
 
+/* ── sheet-table (xlsx 텍스트 데이터 원형 재현) ────────────────────────── */
+.sheet-wrap { overflow-x: auto; margin-bottom: 16px; }
+.sheet-table {
+  width: auto; border-collapse: collapse; font-size: 12px;
+  background: #fff; margin-bottom: 0;
+}
+.sheet-table th {
+  background: #e8eef4; font-weight: 700; padding: 5px 8px;
+  border: 1px solid #b0bec5; white-space: nowrap; color: #1a3a5c;
+  vertical-align: middle; text-align: center;
+}
+.sheet-table td {
+  padding: 4px 8px; border: 1px solid #d0d7de;
+  white-space: nowrap; vertical-align: middle; color: #222;
+}
+.sheet-table tbody tr:nth-child(even) td { background: #f7f9fb; }
+.sheet-table tbody tr:hover td { background: #edf3fc; }
+.sheet-table td.st-empty { color: #bbb; }
+.sheet-table td.st-num { text-align: right; }
+.sheet-table td.editing-cell {
+  outline: none; cursor: text; background: #fffbe6 !important;
+}
+.sheet-table td.editing-cell:focus { box-shadow: inset 0 0 0 2px #4a90e2; }
+.sheet-block { margin-bottom: 24px; }
+.sheet-block-title {
+  font-size: 12px; font-weight: 700; color: #1f4d8c;
+  margin: 0 0 6px; padding: 3px 8px;
+  background: #eef3fb; border-left: 3px solid #4a90e2; border-radius: 0 4px 4px 0;
+}
+
 .text-lines {
   font-size: 13px; color: #333; line-height: 1.7;
   background: #fff; border: 1px solid #eef0f3; border-radius: 6px;
@@ -448,6 +478,122 @@ function collectGrid(panelEl, baseGrid) {
   return out;
 }
 
+// ── sheet-table 렌더 (xlsx 텍스트 데이터 원형 재현) ──────────────────────────
+
+// 열 이름 → 고정 너비(px) — xlsx 실측 기준 패턴
+function colWidth(name) {
+  const n = String(name || "").toLowerCase().trim();
+  if (n === "bin")                      return "50px";
+  if (n === "distribution")             return "120px";
+  if (n.endsWith("_count"))             return "54px";
+  if (n.endsWith("_yield"))             return "60px";
+  if (n === "avg")                      return "56px";
+  if (n === "item" || n === "category") return "150px";
+  if (n === "condition & judge limit")  return "185px";
+  if (n === "result")                   return "80px";
+  if (n.includes("comment"))            return "220px";
+  return "80px";
+}
+
+// 값이 숫자인지 (td 정렬용)
+function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNaN(+v); }
+
+/**
+ * rows(list of dict) → HTML sheet-table.
+ * opts: { edit:bool, imgMap:{rowIndex:url}, title:string }
+ */
+function renderSheetTable(rows, opts) {
+  opts = opts || {};
+  if (!rows || !rows.length) return "";
+  const cols = [];
+  rows.forEach(r => Object.keys(r || {}).forEach(k => { if (!cols.includes(k)) cols.push(k); }));
+
+  const colgroup = "<colgroup>" + cols.map(c =>
+    `<col style="width:${colWidth(c)}">`
+  ).join("") + "</colgroup>";
+
+  const head = "<thead><tr>" + cols.map(c =>
+    `<th>${esc(c)}</th>`
+  ).join("") + "</tr></thead>";
+
+  const body = "<tbody>" + rows.map((r, ri) => {
+    const tds = cols.map((c, ci) => {
+      const v = r[c];
+      const txt = (v === null || v === undefined) ? "" : String(v);
+      const isEmpty = txt === "";
+      const isNum = isNumVal(v);
+      if (c.toLowerCase() === "distribution" && opts.imgMap && opts.imgMap[ri]) {
+        return `<td><img loading="lazy" src="${esc(opts.imgMap[ri])}" style="max-width:115px;height:auto;display:block" alt="dist"></td>`;
+      }
+      if (opts.edit) {
+        return `<td class="editing-cell${isNum ? " st-num" : ""}" contenteditable="true" data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${esc(txt)}</td>`;
+      }
+      const cls = isEmpty ? " st-empty" : (isNum ? " st-num" : "");
+      return `<td${cls ? ` class="${cls.trim()}"` : ""}>${isEmpty ? "" : esc(txt)}</td>`;
+    }).join("");
+    return `<tr>${tds}</tr>`;
+  }).join("") + "</tbody>";
+
+  return `<div class="sheet-wrap"><table class="sheet-table">${colgroup}${head}${body}</table></div>`;
+}
+
+/**
+ * summary blocks({"blocks":[{label,headers,rows}]}) → HTML.
+ * opts: { edit:bool }
+ */
+function renderSummaryBlocks(data, opts) {
+  opts = opts || {};
+  const blocks = (data && data.blocks) || [];
+  return blocks.map(blk => {
+    const rows = (blk.rows || []).map(row => {
+      const obj = {};
+      (blk.headers || []).forEach((h, i) => { obj[h === "" ? `_col${i}` : h] = row[i] !== undefined ? row[i] : null; });
+      return obj;
+    });
+    const title = `<div class="sheet-block-title">${esc(blk.label || "")}</div>`;
+    const tbl = renderSheetTable(rows, opts);
+    return `<div class="sheet-block">${title}${tbl}</div>`;
+  }).join("");
+}
+
+// 편집된 sheet-table DOM → rows 재구성
+function collectSheetTable(panelEl, baseRows) {
+  if (!baseRows || !baseRows.length) return baseRows;
+  const cols = [];
+  baseRows.forEach(r => Object.keys(r || {}).forEach(k => { if (!cols.includes(k)) cols.push(k); }));
+  const tds = panelEl.querySelectorAll("td[data-r][data-col]");
+  const out = JSON.parse(JSON.stringify(baseRows));
+  tds.forEach(td => {
+    const ri = +td.dataset.r, col = td.dataset.col;
+    if (out[ri] && col in out[ri]) out[ri][col] = td.textContent;
+  });
+  return out;
+}
+
+// summary blocks 편집 수집
+function collectSummaryBlocks(panelEl, baseData) {
+  if (!baseData || !baseData.blocks) return baseData;
+  const out = JSON.parse(JSON.stringify(baseData));
+  const blockEls = panelEl.querySelectorAll(".sheet-block");
+  out.blocks.forEach((blk, bi) => {
+    const blockEl = blockEls[bi];
+    if (!blockEl) return;
+    const tds = blockEl.querySelectorAll("td[data-r][data-c]");
+    tds.forEach(td => {
+      const ri = +td.dataset.r, ci = +td.dataset.c;
+      if (out.blocks[bi].rows[ri] !== undefined) {
+        out.blocks[bi].rows[ri][ci] = td.textContent;
+      }
+    });
+  });
+  return out;
+}
+
+// isSummaryBlocks: {"blocks":[...]} 형태인지
+function isSummaryBlocks(o) {
+  return !!(o && typeof o === "object" && Array.isArray(o.blocks) && o.blocks.length > 0);
+}
+
 // issue_images([{row,url}]) → {rowIndex:url}
 function issueImgMap(issue_images) {
   const m = {};
@@ -458,10 +604,20 @@ function issueImgMap(issue_images) {
 // ── Summary (read) ────────────────────────────────────────────────────────────
 function renderSummary(summary_text, summary_rows) {
   const panel = document.getElementById("panel-summary");
+
+  // 신규 포맷: {"blocks":[...]}
+  if (isSummaryBlocks(summary_text)) {
+    panel.innerHTML = `<div class="section-title">Summary</div>` + renderSummaryBlocks(summary_text);
+    return;
+  }
+
+  // 구형 하위호환: grid
   if (isGrid(summary_text)) {
     panel.innerHTML = `<div class="section-title">Summary</div>` + renderGrid(summary_text);
     return;
   }
+
+  // 구형 하위호환: legacy dict
   const st = summary_text || {};
   const blocks = [];
 
@@ -511,10 +667,19 @@ function renderSummary(summary_text, summary_rows) {
 // ── Yield (read) ──────────────────────────────────────────────────────────────
 function renderYield(yield_text, summary_rows) {
   const panel = document.getElementById("panel-yield");
+
+  // 신규 포맷: list of dicts
+  if (Array.isArray(yield_text) && yield_text.length) {
+    panel.innerHTML = `<div class="section-title">Yield</div>` + renderSheetTable(yield_text);
+    return;
+  }
+
+  // 구형 하위호환: grid
   if (isGrid(yield_text)) {
     panel.innerHTML = `<div class="section-title">Yield</div>` + renderGrid(yield_text);
     return;
   }
+
   if (!summary_rows || !summary_rows.length) {
     emptyPanel(panel, "Yield 데이터 없음");
     return;
@@ -526,12 +691,23 @@ function renderYield(yield_text, summary_rows) {
 // ── Issue Table (read) ──────────────────────────────────────────────────────
 function renderIssues(issue_table_text, issue_images) {
   const panel = document.getElementById("panel-issues");
+  const imgMap = issueImgMap(issue_images);
+
+  // 신규 포맷: list of dicts
+  if (Array.isArray(issue_table_text) && issue_table_text.length) {
+    panel.innerHTML = `<div class="section-title">Issue Table</div>` +
+      renderSheetTable(issue_table_text, { imgMap });
+    return;
+  }
+
+  // 구형 하위호환: grid
   if (isGrid(issue_table_text)) {
     const distCol = gridColIndex(issue_table_text, "Distribution");
     panel.innerHTML = `<div class="section-title">Issue Table</div>` +
-      renderGrid(issue_table_text, { imgMap: issueImgMap(issue_images), distCol });
+      renderGrid(issue_table_text, { imgMap, distCol });
     return;
   }
+
   if (!issue_table_text || !issue_table_text.length) {
     emptyPanel(panel, "Issue Table 데이터 없음");
     return;
@@ -593,6 +769,16 @@ function kvEditHtml(obj, group) {
 // ── Summary (edit) ────────────────────────────────────────────────────────────
 function renderSummaryEdit() {
   const panel = document.getElementById("panel-summary");
+
+  // 신규 포맷
+  if (isSummaryBlocks(DATA.summary_text)) {
+    panel.innerHTML = `<div class="edit-section-title">Summary</div>` +
+      `<div class="edit-hint">셀을 클릭해 텍스트를 수정하세요.</div>` +
+      renderSummaryBlocks(DATA.summary_text, { edit: true });
+    return;
+  }
+
+  // 구형 하위호환: grid
   if (isGrid(DATA.summary_text)) {
     panel.innerHTML = `<div class="edit-section-title">Summary</div>` +
       `<div class="edit-hint">셀을 직접 클릭해 텍스트를 수정하세요. 표 구조/크기는 유지됩니다.</div>` +
@@ -669,27 +855,50 @@ function collectSummaryText() {
 // ── Yield (edit) ──────────────────────────────────────────────────────────────
 function renderYieldEdit() {
   const panel = document.getElementById("panel-yield");
+
+  // 신규 포맷: list of dicts
+  if (Array.isArray(DATA.yield_text) && DATA.yield_text.length) {
+    panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
+      `<div class="edit-hint">셀을 클릭해 텍스트를 수정하세요.</div>` +
+      renderSheetTable(DATA.yield_text, { edit: true });
+    return;
+  }
+
+  // 구형 하위호환: grid
   if (isGrid(DATA.yield_text)) {
     panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
       `<div class="edit-hint">셀을 직접 클릭해 텍스트를 수정하세요. 표 구조/크기는 유지됩니다.</div>` +
       renderGrid(DATA.yield_text, { edit: true });
     return;
   }
+
   panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
-    `<div class="edit-hint">item_name 이 빈 행은 저장되지 않습니다. 숫자 칸은 비워두면 빈 값으로 저장됩니다.</div>` +
+    `<div class="edit-hint">item_name 이 빈 행은 저장되지 않습니다.</div>` +
     editTableHtml(DATA.summary || [], YIELD_COLS, "tbl-yield");
 }
 
 // ── Issue Table (edit) ──────────────────────────────────────────────────────
 function renderIssuesEdit() {
   const panel = document.getElementById("panel-issues");
+  const imgMap = issueImgMap(DATA.issue_images);
+
+  // 신규 포맷: list of dicts
+  if (Array.isArray(DATA.issue_table_text) && DATA.issue_table_text.length) {
+    panel.innerHTML = `<div class="edit-section-title">Issue Table</div>` +
+      `<div class="edit-hint">셀을 클릭해 텍스트를 수정하세요. (Distribution 열은 수정 불가)</div>` +
+      renderSheetTable(DATA.issue_table_text, { edit: true, imgMap });
+    return;
+  }
+
+  // 구형 하위호환: grid
   if (isGrid(DATA.issue_table_text)) {
     const distCol = gridColIndex(DATA.issue_table_text, "Distribution");
     panel.innerHTML = `<div class="edit-section-title">Issue Table</div>` +
       `<div class="edit-hint">셀을 직접 클릭해 텍스트를 수정하세요. 표 구조/크기·이미지는 유지됩니다.</div>` +
-      renderGrid(DATA.issue_table_text, { edit: true, imgMap: issueImgMap(DATA.issue_images), distCol });
+      renderGrid(DATA.issue_table_text, { edit: true, imgMap, distCol });
     return;
   }
+
   const rows = DATA.issue_table_text || [];
   const cols = deriveCols(rows);
   if (!cols.length) {
@@ -752,22 +961,28 @@ document.getElementById("editSave").addEventListener("click", saveEdits);
 async function saveEdits() {
   const payload = { password: verifiedPassword };
 
-  // Summary: grid 면 셀 텍스트 수집(grid), 아니면 legacy summary_text 구조.
-  if (isGrid(DATA.summary_text)) {
+  // Summary
+  if (isSummaryBlocks(DATA.summary_text)) {
+    payload.summary_text = collectSummaryBlocks(document.getElementById("panel-summary"), DATA.summary_text);
+  } else if (isGrid(DATA.summary_text)) {
     payload.summary_text = collectGrid(document.getElementById("panel-summary"), DATA.summary_text);
   } else {
     payload.summary_text = collectSummaryText();
   }
 
-  // Yield: grid 면 yield_text(grid), 아니면 legacy yield_rows(DB).
-  if (isGrid(DATA.yield_text)) {
+  // Yield
+  if (Array.isArray(DATA.yield_text) && DATA.yield_text.length) {
+    payload.yield_text = collectSheetTable(document.getElementById("panel-yield"), DATA.yield_text);
+  } else if (isGrid(DATA.yield_text)) {
     payload.yield_text = collectGrid(document.getElementById("panel-yield"), DATA.yield_text);
   } else {
     payload.yield_rows = readEditTable(document.getElementById("tbl-yield")) || [];
   }
 
-  // Issue Table: grid 면 issue_table_text(grid), 아니면 legacy issue_rows.
-  if (isGrid(DATA.issue_table_text)) {
+  // Issue Table
+  if (Array.isArray(DATA.issue_table_text) && DATA.issue_table_text.length) {
+    payload.issue_table_text = collectSheetTable(document.getElementById("panel-issues"), DATA.issue_table_text);
+  } else if (isGrid(DATA.issue_table_text)) {
     payload.issue_table_text = collectGrid(document.getElementById("panel-issues"), DATA.issue_table_text);
   } else {
     const issueTbl = document.getElementById("tbl-issue");

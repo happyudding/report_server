@@ -1,3 +1,5 @@
+input file 2개 이상 들어오면 itemname, units, lolimit, hilimit 모두 비교해서 itemname 이 같더라도 lolimit hilimit 둘중 하나라도 다르면 diff mode 에 들어가게 해줘 근데 itemname 이 같은 경우는 _a 나 _b only 를 안만들텐데 그때는 공통 distribution 에 차트그릴때 lolimit or hilimit 변경된걸 세로 limit 선을 하나 더 그어줘 색깔은 빨간색 주황색 실선 으로
+
 
 
 
@@ -36,7 +38,7 @@ Layout 관련
 -=-------------- 이미 입력함 -------------
 서버 xlsx file upload 관련
 1. 서버에 Upload 했을때 지금 Summary, Yield, Issue_TAble, Distribution 이 올라가는데 
-2. Summary Yield Issue Table 의 text 와 table 은 최대한 원형 그대로 (원형이라는 말은 내용과 표의 셀 개수등은 당연히 들어가야 하며 Font 크기나 행너비 열너비 등이 최대한 동일한 비율로 올라가게) 해줘
+2. Summary Yield Issue Table 의 text 와 table 은 최대한 원형 그대로 (원형이라는 말은 업로드 하는 내용과 표의 셀 개수등은 당연히 들어가야 하며 Font 크기나 행너비 열너비 등이 최대한 동일한 비율로 올라가게) 해줘
 특정 부분에서 index 를 잡고 data 를 grep 해야 될거같은데 
 Summary 는 B4 에 "DEVICE"
 Yield 는 B3 에 "BIN"

@@ -203,42 +203,17 @@ def upload_xlsx():
         return jsonify({"session_id": session_id, "status": "failed",
                         "error": f"parse failed: {exc}"}), 400
 
-    # ── yield rows → DB ────────────────────────────────────────────────────
+    # ── yield rows → DB (report_analysis_summary) ─────────────────────────
     summary_rows = [_yield_row_to_summary(r) for r in parsed["yield_rows"]]
     summary_rows = [r for r in summary_rows
                     if r["item_name"] and r["item_name"] != "unknown"]
     saved = report_db.save_summary_batch(analysis_key, session_id, summary_rows)
 
-    # ── summary / yield / issue_table grid model → S3 JSON ─────────────────
-    # 표 원형 재현용 grid 를 저장. grid 추출 실패 시 의미 dict 로 폴백(하위호환).
-    grids = parsed.get("grids") or {}
-    if s3_ok:
+    # ── sheet_data (순수 텍스트) → DB (S3 유무와 무관하게 항상 저장) ──────────
+    sheet_data = parsed.get("sheet_data") or {}
+    for sheet_name, data in sheet_data.items():
         try:
-            meta_str = _canonical_meta_bytes(meta).decode("utf-8")
-
-            sum_key = report_s3.make_summary_text_s3_key(analysis_key)
-            sum_uri = report_s3.upload_json_to_s3(
-                sum_key, grids.get("summary") or parsed["summary"])
-            report_db.upsert_object_info(
-                analysis_key, content_hash, meta_str,
-                "summary_text", report_s3.bucket_name(), sum_key, sum_uri,
-            )
-
-            yld_key = report_s3.make_yield_text_s3_key(analysis_key)
-            yld_uri = report_s3.upload_json_to_s3(
-                yld_key, grids.get("yield") or parsed["yield_rows"])
-            report_db.upsert_object_info(
-                analysis_key, content_hash, meta_str,
-                "yield_text", report_s3.bucket_name(), yld_key, yld_uri,
-            )
-
-            iss_key = report_s3.make_issue_text_s3_key(analysis_key)
-            iss_uri = report_s3.upload_json_to_s3(
-                iss_key, grids.get("issue_table") or parsed["issue_rows"])
-            report_db.upsert_object_info(
-                analysis_key, content_hash, meta_str,
-                "issue_table_text", report_s3.bucket_name(), iss_key, iss_uri,
-            )
+            report_db.upsert_sheet_data(analysis_key, sheet_name, data)
         except Exception:
             pass
 
@@ -300,7 +275,7 @@ def upload_xlsx():
         "s3_uploaded": s3_ok,
         "charts_saved": charts_saved,
         "issue_images_saved": issue_imgs_saved,
-        "grids": sorted(grids.keys()),
+        "sheet_data_saved": sorted(sheet_data.keys()),
         "summary_keys": list(parsed["summary"].keys()),
         "yield_row_count": len(parsed["yield_rows"]),
         "issue_row_count": len(parsed["issue_rows"]),

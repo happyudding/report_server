@@ -117,18 +117,18 @@ def session_full(session_id):
         abort(404, "session not found")
     akey = session.get("analysis_key")
     objects = {}
-    summary_text = None
-    yield_text = None
-    issue_table_text = None
     if akey:
         for obj in report_db.get_all_object_infos(akey):
             objects[obj["object_type"]] = {
                 "s3_uri": obj["s3_uri"],
                 "s3_key": obj["s3_key"],
             }
-        summary_text = _load_json_object(objects, "summary_text")
-        yield_text = _load_json_object(objects, "yield_text")
-        issue_table_text = _load_json_object(objects, "issue_table_text")
+
+    # sheet_data: DB 우선. DB 에 없으면 S3 폴백(구형 세션 하위호환).
+    sheet_data = report_db.get_all_sheet_data(akey) if akey else {}
+    summary_text = sheet_data.get("summary") or _load_json_object(objects, "summary_text")
+    yield_text = sheet_data.get("yield") or _load_json_object(objects, "yield_text")
+    issue_table_text = sheet_data.get("issue_table") or _load_json_object(objects, "issue_table_text")
     charts = []
     if "chart_index" in objects:
         try:
@@ -282,41 +282,50 @@ def update_session_content(session_id):
         except Exception as exc:
             errors["yield_rows"] = str(exc)
 
-    # summary_text / issue_rows → S3 JSON
+    # summary_text → DB 갱신 (S3 는 있으면 추가 저장)
     if body.get("summary_text") is not None:
         try:
-            _write_text_object(akey, session, "summary_text",
-                               report_s3.make_summary_text_s3_key, body["summary_text"])
+            report_db.upsert_sheet_data(akey, "summary", body["summary_text"])
             updated["summary_text"] = True
-        except S3NotConfigured:
-            errors["summary_text"] = "S3 미설정"
         except Exception as exc:
             errors["summary_text"] = str(exc)
+        else:
+            try:
+                _write_text_object(akey, session, "summary_text",
+                                   report_s3.make_summary_text_s3_key, body["summary_text"])
+            except (S3NotConfigured, Exception):
+                pass
 
-    # yield grid model → S3 JSON (yield_text). grid 편집 경로.
+    # yield_text → DB 갱신
     if body.get("yield_text") is not None:
         try:
-            _write_text_object(akey, session, "yield_text",
-                               report_s3.make_yield_text_s3_key, body["yield_text"])
+            report_db.upsert_sheet_data(akey, "yield", body["yield_text"])
             updated["yield_text"] = True
-        except S3NotConfigured:
-            errors["yield_text"] = "S3 미설정"
         except Exception as exc:
             errors["yield_text"] = str(exc)
+        else:
+            try:
+                _write_text_object(akey, session, "yield_text",
+                                   report_s3.make_yield_text_s3_key, body["yield_text"])
+            except (S3NotConfigured, Exception):
+                pass
 
-    # issue_table 콘텐츠 → S3 JSON. grid(issue_table_text) 또는 legacy(issue_rows) 수용.
+    # issue_table_text → DB 갱신
     issue_payload = body.get("issue_table_text")
     if issue_payload is None:
         issue_payload = body.get("issue_rows")
     if issue_payload is not None:
         try:
-            _write_text_object(akey, session, "issue_table_text",
-                               report_s3.make_issue_text_s3_key, issue_payload)
+            report_db.upsert_sheet_data(akey, "issue_table", issue_payload)
             updated["issue_table_text"] = True
-        except S3NotConfigured:
-            errors["issue_table_text"] = "S3 미설정"
         except Exception as exc:
             errors["issue_table_text"] = str(exc)
+        else:
+            try:
+                _write_text_object(akey, session, "issue_table_text",
+                                   report_s3.make_issue_text_s3_key, issue_payload)
+            except (S3NotConfigured, Exception):
+                pass
 
     status = 200 if not errors else (207 if updated else 500)
     return jsonify({"ok": not errors, "updated": updated, "errors": errors}), status

@@ -110,6 +110,14 @@ CREATE TABLE IF NOT EXISTS report_dashboard_comment (
 );
 CREATE INDEX IF NOT EXISTS idx_report_dashboard_dataset
     ON report_dashboard_comment(dataset_id, kind);
+
+CREATE TABLE IF NOT EXISTS report_sheet_data (
+    analysis_key TEXT NOT NULL,
+    sheet_name   TEXT NOT NULL,
+    data_json    TEXT NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    PRIMARY KEY (analysis_key, sheet_name)
+);
 """
 
 _SUMMARY_COLUMNS = (
@@ -179,6 +187,17 @@ def _migrate(conn):
             conn.execute("ALTER TABLE report_session ADD COLUMN is_debug INTEGER DEFAULT 0")
         if "source" not in sess_cols:
             conn.execute("ALTER TABLE report_session ADD COLUMN source TEXT DEFAULT 'xlsx_upload'")
+
+    if not _table_exists(conn, "report_sheet_data"):
+        conn.execute("""
+            CREATE TABLE report_sheet_data (
+                analysis_key TEXT NOT NULL,
+                sheet_name   TEXT NOT NULL,
+                data_json    TEXT NOT NULL,
+                updated_at   INTEGER NOT NULL,
+                PRIMARY KEY (analysis_key, sheet_name)
+            )
+        """)
 
 
 def init_report_db():
@@ -524,6 +543,55 @@ def get_annotations(session_id):
             (session_id,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── sheet_data (순수 텍스트 데이터 캐시) ─────────────────────────────────────
+
+def upsert_sheet_data(analysis_key: str, sheet_name: str, data) -> None:
+    """data(dict|list) → JSON 직렬화해 upsert. 스타일 없는 셀 텍스트 데이터."""
+    import json
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO report_sheet_data (analysis_key, sheet_name, data_json, updated_at) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(analysis_key, sheet_name) DO UPDATE SET "
+            "  data_json=excluded.data_json, updated_at=excluded.updated_at",
+            (analysis_key, sheet_name, json.dumps(data, ensure_ascii=False), _now()),
+        )
+
+
+def get_sheet_data(analysis_key: str, sheet_name: str):
+    """없으면 None. JSON 역직렬화해 반환."""
+    import json
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT data_json FROM report_sheet_data "
+            "WHERE analysis_key=? AND sheet_name=?",
+            (analysis_key, sheet_name),
+        ).fetchone()
+    if row is None:
+        return None
+    try:
+        return json.loads(row[0])
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def get_all_sheet_data(analysis_key: str) -> dict:
+    """{'summary':..., 'yield':..., 'issue_table':...} 존재하는 것만."""
+    import json
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT sheet_name, data_json FROM report_sheet_data WHERE analysis_key=?",
+            (analysis_key,),
+        ).fetchall()
+    result = {}
+    for row in rows:
+        try:
+            result[row[0]] = json.loads(row[1])
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return result
 
 
 def update_annotation(annotation_id, content):
