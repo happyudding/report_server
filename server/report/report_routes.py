@@ -1,4 +1,5 @@
 import re
+import secrets
 
 from flask import Response, abort, jsonify, make_response, request, send_file
 
@@ -23,6 +24,35 @@ def _validate_analysis_key(value):
 def _validate_session_id(value):
     if not value or not _SESSION_ID_RE.match(value):
         abort(400, "invalid session_id")
+
+
+# ── CSRF (double-submit cookie) ───────────────────────────────────────────────
+# 쿠키 기반 세션 인증이 없고 PIN 을 본문으로 보내는 구조라, 표준 stateless 방어인
+# double-submit 쿠키 패턴을 쓴다: GET(/, /view)에서 JS 가 읽을 수 있는 토큰 쿠키를
+# 발급하고, 변경요청(PATCH/DELETE/POST)은 같은 토큰을 X-CSRF-Token 헤더로 되돌려
+# 보낸다. 교차출처 공격자는 동일출처 정책 때문에 쿠키를 읽거나 커스텀 헤더를 위조할
+# 수 없다. 단, Honey 클라이언트가 호출하는 /upload_xlsx 는 브라우저가 아니므로 제외.
+_CSRF_COOKIE = "report_csrf"
+_CSRF_HEADER = "X-CSRF-Token"
+
+
+def _issue_csrf_cookie(resp):
+    """토큰 쿠키가 없으면 새로 발급. JS 가 읽어야 하므로 httponly=False."""
+    if not request.cookies.get(_CSRF_COOKIE):
+        resp.set_cookie(
+            _CSRF_COOKIE, secrets.token_urlsafe(32),
+            max_age=86400, samesite="Strict",
+            secure=request.is_secure, httponly=False, path="/",
+        )
+    return resp
+
+
+def _require_csrf():
+    """변경요청에서 헤더 토큰이 쿠키와 일치하는지 검증. 불일치 시 403."""
+    cookie = request.cookies.get(_CSRF_COOKIE) or ""
+    header = request.headers.get(_CSRF_HEADER) or ""
+    if not cookie or not header or not secrets.compare_digest(cookie, header):
+        abort(403, "CSRF token missing or invalid")
 
 
 def _public_session(session):
@@ -252,6 +282,7 @@ def distribution_combined_png(session_id):
 
 @report_bp.delete("/session/<session_id>")
 def delete_session_route(session_id):
+    _require_csrf()
     _validate_session_id(session_id)
     body = request.get_json(force=True, silent=True) or {}
     password = (body.get("password") or "").strip()
@@ -267,6 +298,7 @@ def delete_session_route(session_id):
 @report_bp.post("/session/<session_id>/verify_password")
 def verify_session_password(session_id):
     """수정/삭제 진입 전 PIN 확인. 비밀번호 미설정 세션은 ok=True."""
+    _require_csrf()
     _validate_session_id(session_id)
     body = request.get_json(force=True, silent=True) or {}
     password = (body.get("password") or "").strip()
@@ -285,6 +317,7 @@ def update_session_content(session_id):
     summary_text, issue_rows 는 S3 JSON 으로 다시 업로드하고, yield_rows 는
     report_analysis_summary 를 통째로 치환한다. analysis_key 는 재계산하지 않는다
     (원본 업로드 식별자로 유지)."""
+    _require_csrf()
     _validate_session_id(session_id)
     body = request.get_json(force=True, silent=True) or {}
     password = (body.get("password") or "").strip()
@@ -378,6 +411,7 @@ def _write_text_object(analysis_key, session, object_type, key_builder, data):
 
 @report_bp.post("/annotation")
 def create_annotation():
+    _require_csrf()
     body = request.get_json(force=True, silent=True) or {}
     session_id = body.get("session_id", "")
     _validate_session_id(session_id)
@@ -398,6 +432,7 @@ def list_annotations(session_id):
 
 @report_bp.patch("/annotation/<int:aid>")
 def update_annotation(aid):
+    _require_csrf()
     body = request.get_json(force=True, silent=True) or {}
     content = (body.get("content") or "").strip()
     if not content:
@@ -408,6 +443,7 @@ def update_annotation(aid):
 
 @report_bp.delete("/annotation/<int:aid>")
 def delete_annotation(aid):
+    _require_csrf()
     report_db.delete_annotation(aid)
     return jsonify({"id": aid, "deleted": True})
 
@@ -416,13 +452,13 @@ def delete_annotation(aid):
 
 @report_bp.get("/")
 def index_page():
-    return send_file(REPORT_ANALYSIS_INDEX_HTML)
+    return _issue_csrf_cookie(make_response(send_file(REPORT_ANALYSIS_INDEX_HTML)))
 
 
 @report_bp.get("/view/<session_id>")
 def view_page(session_id):
     _validate_session_id(session_id)
-    return send_file(REPORT_VIEW_HTML)
+    return _issue_csrf_cookie(make_response(send_file(REPORT_VIEW_HTML)))
 
 
 @report_bp.get("/api/history")

@@ -266,6 +266,28 @@ tbody tr:hover { background: #f9fbff; }
 }
 .modal-btn.primary { background: #4a90e2; color: #fff; border-color: #4a90e2; }
 .modal-btn.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
+
+/* ── topbar 수정/삭제 버튼 ─────────────────────────────────────────────────── */
+.topbar-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+.btn-topbar-edit {
+  padding: 5px 14px; border-radius: 6px; border: 1px solid #4a90e2;
+  background: #fff; cursor: pointer; font-size: 12px; color: #4a90e2; font-weight: 600;
+}
+.btn-topbar-edit:hover { background: #f0f6ff; }
+.btn-topbar-del {
+  padding: 5px 12px; border-radius: 6px; border: 1px solid #fca5a5;
+  background: #fff; cursor: pointer; font-size: 12px; color: #dc2626;
+}
+.btn-topbar-del:hover { background: #fef2f2; }
+
+/* 자동저장 상태 표시 (edit bar 왼쪽) */
+.autosave-dot {
+  width: 7px; height: 7px; border-radius: 50%; background: #d1d5db;
+  display: inline-block; margin-right: 4px; transition: background .3s;
+}
+.autosave-dot.dirty  { background: #f59e0b; }
+.autosave-dot.saving { background: #60a5fa; }
+.autosave-dot.saved  { background: #22c55e; }
 </style>
 </head>
 <body>
@@ -275,6 +297,10 @@ tbody tr:hover { background: #f9fbff; }
   <h1>Report</h1>
   <div class="topbar-meta" id="topbarMeta">
     <span class="meta-inline">로드 중...</span>
+  </div>
+  <div class="topbar-actions" id="topbarActions">
+    <button class="btn-topbar-edit" id="btnEdit">✎ 수정</button>
+    <button class="btn-topbar-del"  id="btnDel">삭제</button>
   </div>
 </div>
 
@@ -296,7 +322,10 @@ tbody tr:hover { background: #f9fbff; }
 
 <!-- 수정 모드 저장 바 -->
 <div class="edit-bar" id="editBar">
-  <span class="bar-msg">✎ 수정 모드 — 표/텍스트를 편집한 뒤 저장하세요. (Distribution 차트는 수정 불가)</span>
+  <span class="bar-msg">
+    <span class="autosave-dot" id="autosaveDot" title="자동저장 상태"></span>
+    ✎ 수정 모드 — 셀을 클릭해 편집하세요. 탭 전환 시 자동저장됩니다.
+  </span>
   <span class="grow"></span>
   <button class="btn-cancel" id="editCancel">취소</button>
   <button class="btn-save" id="editSave">저장</button>
@@ -313,10 +342,10 @@ tbody tr:hover { background: #f9fbff; }
     <p class="modal-title" id="pinTitle">비밀번호 입력</p>
     <p class="modal-desc" id="pinDesc">비밀번호를 입력하세요.</p>
     <div class="pin-row">
-      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="pin0">
-      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="pin1">
-      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="pin2">
-      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="pin3">
+      <input class="pin-cell" type="password" inputmode="numeric" autocomplete="off" maxlength="1" id="pin0">
+      <input class="pin-cell" type="password" inputmode="numeric" autocomplete="off" maxlength="1" id="pin1">
+      <input class="pin-cell" type="password" inputmode="numeric" autocomplete="off" maxlength="1" id="pin2">
+      <input class="pin-cell" type="password" inputmode="numeric" autocomplete="off" maxlength="1" id="pin3">
     </div>
     <p class="modal-hint">숫자 4자리</p>
     <div class="modal-actions">
@@ -330,6 +359,12 @@ tbody tr:hover { background: #f9fbff; }
 const SESSION_ID = location.pathname.split("/").pop();
 const YIELD_COLS = ["item_name", "bin_number", "yield_percent", "fail_count",
                     "cpk_val", "mean_val", "stdev_val", "lsl", "usl", "unit"];
+
+// CSRF: 서버가 /view 응답에 내려준 double-submit 쿠키를 읽어 변경요청 헤더로 되돌려준다.
+function csrfToken() {
+  const m = document.cookie.match(/(?:^|;\s*)report_csrf=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
 
 let DATA = null;
 let MODE = "view";              // "view" | "edit"
@@ -997,8 +1032,10 @@ function renderActive() {
 
 function setMode(m) {
   MODE = m;
-  if (m !== "edit") verifiedPassword = "";
+  if (m !== "edit") { verifiedPassword = ""; _dirty = false; }
   document.getElementById("editBar").classList.toggle("show", m === "edit");
+  // 수정 모드일 땐 topbar 버튼 숨김 (edit bar 가 역할 대체)
+  document.getElementById("topbarActions").style.display = m === "edit" ? "none" : "";
   renderActive();
 }
 
@@ -1016,8 +1053,6 @@ document.querySelector(".content").addEventListener("click", e => {
 });
 
 // ── edit entry ──────────────────────────────────────────────────────────────
-// 수정/삭제 진입은 검색결과 목록에서 한다. 상세 페이지는 목록의 '수정' 버튼이
-// /view/<sid>?mode=edit 로 들어오면 자동으로 수정 모드(필요시 PIN)로 진입.
 function enterEdit() {
   if (!DATA) return;
   const needPw = !!(DATA.session && DATA.session.has_password);
@@ -1025,14 +1060,42 @@ function enterEdit() {
   openPin("edit");
 }
 
+document.getElementById("btnEdit").addEventListener("click", enterEdit);
+document.getElementById("btnDel").addEventListener("click", () => {
+  if (!DATA) return;
+  const needPw = !!(DATA.session && DATA.session.has_password);
+  if (!needPw) { doDelete(""); return; }
+  openPin("delete");
+});
+
 // ── save / cancel ─────────────────────────────────────────────────────────────
-document.getElementById("editCancel").addEventListener("click", () => setMode("view"));
+let _dirty = false;        // 수정 모드에서 셀이 변경되면 true
+let _autoSaving = false;   // 자동저장 진행 중 중복 방지
+
+// edit bar 상태표시 dot
+function _setDot(state) {
+  const dot = document.getElementById("autosaveDot");
+  if (!dot) return;
+  dot.className = "autosave-dot" + (state ? " " + state : "");
+}
+
+// dirty 마킹: 수정 모드에서 contenteditable 또는 input 변경 시
+document.querySelector(".content").addEventListener("input", () => {
+  if (MODE !== "edit") return;
+  _dirty = true;
+  _setDot("dirty");
+});
+
+document.getElementById("editCancel").addEventListener("click", () => {
+  _dirty = false;
+  setMode("view");
+});
 document.getElementById("editSave").addEventListener("click", saveEdits);
 
-async function saveEdits() {
+// payload 조립 (saveEdits / autoSave 공용)
+function buildPayload() {
   const payload = { password: verifiedPassword };
 
-  // Summary
   if (isSummaryBlocks(DATA.summary_text)) {
     payload.summary_text = collectSummaryBlocks(document.getElementById("panel-summary"), DATA.summary_text);
   } else if (isGrid(DATA.summary_text)) {
@@ -1041,7 +1104,6 @@ async function saveEdits() {
     payload.summary_text = collectSummaryText();
   }
 
-  // Yield
   if (Array.isArray(DATA.yield_text) && DATA.yield_text.length) {
     payload.yield_text = collectSheetTable(document.getElementById("panel-yield"), DATA.yield_text);
   } else if (isGrid(DATA.yield_text)) {
@@ -1050,7 +1112,6 @@ async function saveEdits() {
     payload.yield_rows = readEditTable(document.getElementById("tbl-yield")) || [];
   }
 
-  // Issue Table
   if (Array.isArray(DATA.issue_table_text) && DATA.issue_table_text.length) {
     payload.issue_table_text = collectSheetTable(document.getElementById("panel-issues"), DATA.issue_table_text);
   } else if (isGrid(DATA.issue_table_text)) {
@@ -1060,30 +1121,79 @@ async function saveEdits() {
     if (issueTbl) payload.issue_rows = readEditTable(issueTbl);
   }
 
+  return payload;
+}
+
+async function saveEdits() {
+  if (!DATA) return;
+  const payload = buildPayload();
   const saveBtn = document.getElementById("editSave");
   saveBtn.disabled = true;
+  _setDot("saving");
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/content`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
       body: JSON.stringify(payload),
     });
     const j = await res.json().catch(() => ({}));
-    if (res.status === 403) { showToast(j.error || "비밀번호가 일치하지 않습니다."); return; }
-    if (!res.ok && res.status !== 207) { showToast(j.error || "저장 실패"); return; }
+    if (res.status === 403) { showToast(j.error || "비밀번호가 일치하지 않습니다."); _setDot("dirty"); return; }
+    if (!res.ok && res.status !== 207) { showToast(j.error || "저장 실패"); _setDot("dirty"); return; }
     if (res.status === 207) {
       showToast("일부만 저장됨: " + Object.keys(j.errors || {}).join(", "));
     } else {
       showToast("저장되었습니다.");
     }
-    await load(false);   // 데이터 갱신
+    _dirty = false;
+    _setDot("saved");
+    await load(false);
     setMode("view");
   } catch (e) {
     showToast("저장 실패: " + e.message);
+    _setDot("dirty");
   } finally {
     saveBtn.disabled = false;
   }
 }
+
+// 자동저장: 페이지가 숨겨질 때(탭 전환·창 최소화 등) 변경사항 자동 저장.
+// keepalive:true 로 페이지 언로드 중에도 요청이 완료된다.
+async function autoSave() {
+  if (!DATA || MODE !== "edit" || !_dirty || _autoSaving) return;
+  _autoSaving = true;
+  _setDot("saving");
+  const payload = buildPayload();
+  _dirty = false;  // optimistic
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/content`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    });
+    if (!res.ok) { _dirty = true; _setDot("dirty"); }
+    else _setDot("saved");
+  } catch (_) {
+    _dirty = true;
+    _setDot("dirty");
+  } finally {
+    _autoSaving = false;
+  }
+}
+
+// 탭이 백그라운드로 가거나 창이 최소화될 때 자동저장
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) autoSave();
+});
+
+// 페이지를 떠날 때: dirty 상태면 브라우저 경고 + keepalive 저장 시도
+window.addEventListener("beforeunload", e => {
+  if (MODE === "edit" && _dirty) {
+    autoSave();            // keepalive 요청 발사 (비동기, 브라우저가 완료 보장)
+    e.preventDefault();
+    e.returnValue = "";    // 브라우저 "변경사항이 저장되지 않을 수 있습니다" 경고
+  }
+});
 
 // ── PIN modal ─────────────────────────────────────────────────────────────────
 let _pinPurpose = null;   // "edit" | "delete"
@@ -1119,7 +1229,7 @@ document.getElementById("pinConfirm").addEventListener("click", async () => {
     try {
       const res = await fetch(`/pe/report/session/${SESSION_ID}/verify_password`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
         body: JSON.stringify({ password: pin }),
       });
       if (!res.ok) {
@@ -1140,7 +1250,7 @@ async function doDelete(pin) {
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}`, {
       method: "DELETE",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
       body: JSON.stringify({ password: pin }),
     });
     if (!res.ok) {
@@ -1158,7 +1268,8 @@ async function doDelete(pin) {
 // PIN cell auto-advance
 document.querySelectorAll(".pin-cell").forEach((c, i, arr) => {
   c.addEventListener("input", () => {
-    if (c.value.length > 1) c.value = c.value.slice(-1);
+    // type=password 는 숫자 강제가 안 되므로 비숫자 제거 후 마지막 한 자리만 유지
+    c.value = c.value.replace(/\D/g, "").slice(-1);
     if (c.value && i < arr.length - 1) arr[i + 1].focus();
   });
   c.addEventListener("keydown", e => {

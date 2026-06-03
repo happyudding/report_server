@@ -55,12 +55,13 @@ SETTINGS_UI_PATH = os.path.join(_BASE_DIR, "report_settings.ui")
 
 
 def _validate_meta(product, lot_id, password):
-    """공통 메타/PIN 검증. 문제 메시지(str) 반환, 정상이면 None."""
+    """공통 메타/PIN 검증. 문제 메시지(str) 반환, 정상이면 None.
+    password 는 빈 문자열 허용 — 미설정 시 웹에서 비밀번호 없이 수정/삭제 가능.
+    """
     if not product or not lot_id:
         return "Product 와 LOT ID 를 모두 입력하세요."
-    if len(password) != 4 or not password.isdigit():
-        return ("비밀번호는 숫자 4자리로 입력하세요.\n"
-                "(서버에서 수정/삭제 시 사용됩니다.)")
+    if password and (len(password) != 4 or not password.isdigit()):
+        return "비밀번호는 숫자 4자리 또는 빈칸(미설정)으로 입력하세요."
     return None
 
 
@@ -107,7 +108,7 @@ class UploadDialog(QDialog):
     def __init__(self, parent=None, defaults=None):
         super().__init__(parent)
         uic.loadUi(UPLOAD_UI_PATH, self)
-        self.le_password.setValidator(QIntValidator(0, 9999))
+        # validator 제거 — 빈칸(미설정)도 허용. 검증은 _on_ok 에서 수행.
         self._pt_radios = {
             "MD": self.rb_pt_MD, "PD": self.rb_pt_PD,
             "PM": self.rb_pt_PM, "SE": self.rb_pt_SE,
@@ -615,15 +616,21 @@ class HoneyMainWindow(QMainWindow):
             return False
 
         n_files = len(paths)
-        prog = QProgressDialog("파일 로딩 준비 중...", None, 0, n_files, self)
+        # 취소 버튼 활성화: from_csvs 는 동기 실행이지만 progress_cb 를 파일/하위단계
+        # 마다 호출하므로, 콜백에서 wasCanceled() 를 확인해 _Cancelled 를 던져 중단한다.
+        prog = QProgressDialog("파일 로딩 준비 중...", "취소", 0, n_files, self)
         prog.setWindowTitle("파일 전처리")
         prog.setWindowModality(Qt.WindowModal)
         prog.setMinimumDuration(0)
-        prog.setCancelButton(None)
         prog.setValue(0)
         QApplication.processEvents()
 
+        class _Cancelled(Exception):
+            pass
+
         def _on_file(done, total, filename, sub_done=0, sub_total=0):
+            if prog.wasCanceled():
+                raise _Cancelled()
             if filename:
                 label = f"({done + 1}/{total})  {filename}"
                 if sub_total > 0:
@@ -634,6 +641,11 @@ class HoneyMainWindow(QMainWindow):
 
         try:
             self.group = rg.df_honey_group.from_csvs(paths, progress_cb=_on_file)
+        except _Cancelled:
+            prog.close()
+            self._status("파일 로드 취소됨")
+            self.group = None
+            return False
         except Exception as exc:
             prog.close()
             QMessageBox.critical(self, "파일 로드 실패", str(exc))

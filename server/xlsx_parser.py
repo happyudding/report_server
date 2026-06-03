@@ -15,21 +15,86 @@
 
 앵커 탐색: 지정 셀 우선 → 키워드 전체 스캔 폴백 (_find_anchor).
 """
+import os
+import threading
+import zipfile
 from io import BytesIO
 
 # Issue_table 행별 임베드 PNG 추출 활성화 플래그.
 # True 면 Distribution 열의 행별 PNG 를 추출해 저장소(S3 또는 로컬 폴백)에 보관한다.
 ISSUE_IMAGES_ENABLED = True
 
+# ── 파싱 보호 한계 ───────────────────────────────────────────────────────────
+# openpyxl 은 순수 파이썬 파서라 거대/악성(zip bomb) 파일에서 메모리 폭증·무한
+# CPU 점유가 발생할 수 있다. 로드 전에 크기를 검사하고, 로드 자체는 타임아웃을 건다.
+_MAX_XLSX_BYTES = int(os.environ.get(
+    "REPORT_XLSX_MAX_BYTES", str(80 * 1024 * 1024)))            # 압축 파일 자체 80MB
+_MAX_XLSX_UNCOMPRESSED = int(os.environ.get(
+    "REPORT_XLSX_MAX_UNCOMPRESSED", str(800 * 1024 * 1024)))    # 압축 해제 합계 800MB
+_LOAD_TIMEOUT_SEC = float(os.environ.get(
+    "REPORT_XLSX_LOAD_TIMEOUT", "60"))                          # load_workbook 타임아웃(초)
+
+
+class XlsxTooLarge(ValueError):
+    """xlsx 가 허용 크기/압축비를 초과."""
+
+
+class XlsxLoadTimeout(RuntimeError):
+    """openpyxl.load_workbook 가 타임아웃 내에 끝나지 않음."""
+
+
+def _guard_xlsx_size(xlsx_bytes: bytes) -> None:
+    """파싱 전 크기/압축 해제 크기 검사. zip bomb·거대 파일을 사전 차단."""
+    if len(xlsx_bytes) > _MAX_XLSX_BYTES:
+        raise XlsxTooLarge(
+            f"xlsx too large: {len(xlsx_bytes)} bytes > {_MAX_XLSX_BYTES}")
+    try:
+        with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zf:
+            total = sum(zi.file_size for zi in zf.infolist())
+    except zipfile.BadZipFile as exc:
+        raise XlsxTooLarge(f"not a valid xlsx (zip) file: {exc}") from exc
+    if total > _MAX_XLSX_UNCOMPRESSED:
+        raise XlsxTooLarge(
+            f"xlsx uncompressed size too large: {total} bytes > {_MAX_XLSX_UNCOMPRESSED}")
+
+
+def _load_workbook_guarded(xlsx_bytes: bytes):
+    """openpyxl.load_workbook 을 워커 스레드에서 실행하고 타임아웃을 건다.
+
+    타임아웃 초과 시 워커는 데몬으로 방치하고 호출자에게 XlsxLoadTimeout 을 던진다
+    — 해당 요청만 실패시키고 서버는 계속 응답한다 (파이썬에서 스레드 강제 종료는
+    불가하므로 데몬 스레드로 두어 인터프리터 종료 시 함께 회수되게 한다)."""
+    import openpyxl
+
+    result = {}
+
+    def _work():
+        try:
+            result["wb"] = openpyxl.load_workbook(
+                BytesIO(xlsx_bytes), data_only=True, read_only=False)
+        except Exception as exc:  # 워커 예외를 호출 스레드로 전달
+            result["err"] = exc
+
+    t = threading.Thread(target=_work, daemon=True)
+    t.start()
+    t.join(_LOAD_TIMEOUT_SEC)
+    if t.is_alive():
+        raise XlsxLoadTimeout(
+            f"openpyxl.load_workbook exceeded {_LOAD_TIMEOUT_SEC}s")
+    if "err" in result:
+        raise result["err"]
+    return result["wb"]
+
 
 def parse_report_xlsx(xlsx_bytes: bytes) -> dict:
     """xlsx 바이트열을 받아 sheet_data + legacy 의미 dict + 이미지 훅 결과를 반환."""
     try:
-        import openpyxl
+        import openpyxl  # noqa: F401 - 설치 여부 확인 (실제 로드는 _load_workbook_guarded)
     except ImportError as exc:
         raise RuntimeError("openpyxl not installed; pip install openpyxl") from exc
 
-    wb = openpyxl.load_workbook(BytesIO(xlsx_bytes), data_only=True, read_only=False)
+    _guard_xlsx_size(xlsx_bytes)
+    wb = _load_workbook_guarded(xlsx_bytes)
 
     sm = _get_sheet(wb, "summary")
     yl = _get_sheet(wb, "yield")

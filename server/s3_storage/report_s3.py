@@ -147,11 +147,7 @@ def upload_bytes_to_s3(key, data, content_type="application/octet-stream"):
     return make_s3_uri(key)
 
 
-def download_bytes_from_s3(key):
-    """범용 bytes 다운로드."""
-    client = get_s3_client()
-    obj = client.get_object(Bucket=REPORT_S3_BUCKET, Key=key)
-    return obj["Body"].read()
+# download_bytes_from_s3() 는 파일 하단(presigned URL 위)에 단일 정의로 통합됨.
 
 
 # ── fail_items ────────────────────────────────────────────────────────────────
@@ -240,10 +236,12 @@ def make_distribution_combined_s3_key(analysis_key: str) -> str:
 
 def download_bytes_from_s3(key: str) -> bytes:
     """S3 객체를 bytes 로 다운로드. S3NotConfigured / S3ObjectCorrupted 발생 가능."""
-    client = get_s3_client()
+    client = get_s3_client()  # 미설정 시 S3NotConfigured 가 그대로 전파됨
     try:
         obj = client.get_object(Bucket=bucket_name(), Key=key)
         return obj["Body"].read()
+    except S3NotConfigured:
+        raise
     except Exception as exc:
         raise S3ObjectCorrupted(key) from exc
 

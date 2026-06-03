@@ -240,6 +240,12 @@ const PAGE_SIZE = 10;
 let _lastRows = [];
 let _currentPage = 0;
 
+// CSRF: 서버가 내려준 double-submit 쿠키를 읽어 변경요청 헤더로 되돌려준다.
+function csrfToken() {
+  const m = document.cookie.match(/(?:^|;\s*)report_csrf=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
 // product_type 내부값(MD/PD/PM/SE)은 그대로 두고 화면 표시만 친절한 라벨로.
 const PT_LABELS = { MD: "MDDI", PD: "PDDI", PM: "PMIC", SE: "SECURITY" };
 const ptLabel = pt => PT_LABELS[pt] || pt || "-";
@@ -449,7 +455,7 @@ document.getElementById("delModalConfirm").addEventListener("click", async () =>
   try {
     const res = await fetch(`/pe/report/session/${_delSid}`, {
       method: "DELETE",
-      headers: {"Content-Type": "application/json"},
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
       body: JSON.stringify({password: pw}),
     });
     if (!res.ok) {
