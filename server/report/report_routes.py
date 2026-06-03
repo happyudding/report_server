@@ -4,6 +4,7 @@ import secrets
 from flask import Response, abort, jsonify, make_response, request, send_file
 
 from database import report_db
+from report_utils import to_float as _to_float, to_int as _to_int
 from s3_storage import report_s3
 from config import (
     REPORT_ANALYSIS_INDEX_HTML,
@@ -71,24 +72,6 @@ def _password_ok(session, password):
     if not stored:
         return True
     return (password or "").strip() == stored
-
-
-def _to_float(v):
-    if v is None or v == "":
-        return None
-    try:
-        return float(v)
-    except (ValueError, TypeError):
-        return None
-
-
-def _to_int(v):
-    if v is None or v == "":
-        return None
-    try:
-        return int(float(v))
-    except (ValueError, TypeError):
-        return None
 
 
 def _coerce_yield_row(row):

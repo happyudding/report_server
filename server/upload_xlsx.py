@@ -23,6 +23,7 @@ from werkzeug.utils import secure_filename
 
 from database import report_db
 from report.report_extension import report_bp
+from report_utils import to_float as _to_float, to_int as _to_int
 from s3_storage import report_s3
 from s3_storage.report_s3 import S3NotConfigured
 
@@ -140,24 +141,6 @@ def _yield_row_to_summary(row: dict) -> dict:
         "usl": None,
         "unit": None,
     }
-
-
-def _to_float(v):
-    if v is None or v == "":
-        return None
-    try:
-        return float(v)
-    except (ValueError, TypeError):
-        return None
-
-
-def _to_int(v):
-    if v is None or v == "":
-        return None
-    try:
-        return int(float(v))
-    except (ValueError, TypeError):
-        return None
 
 
 @report_bp.post("/upload_xlsx")

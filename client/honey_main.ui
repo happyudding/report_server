@@ -112,7 +112,7 @@
        </layout>
       </item>
       <item>
-       <widget class="QListWidget" name="list_csv">
+       <widget class="QTableWidget" name="list_csv">
         <property name="minimumSize">
          <size><width>0</width><height>128</height></size>
         </property>
@@ -124,6 +124,9 @@
         </property>
         <property name="selectionMode">
          <enum>QAbstractItemView::SingleSelection</enum>
+        </property>
+        <property name="selectionBehavior">
+         <enum>QAbstractItemView::SelectRows</enum>
         </property>
        </widget>
       </item>

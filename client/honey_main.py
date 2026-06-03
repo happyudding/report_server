@@ -15,13 +15,16 @@ import sys
 import tempfile
 from pathlib import Path
 
+import requests
+
 from PyQt5 import uic
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QEvent
 from PyQt5.QtGui import QColor, QFont, QIntValidator
 from PyQt5.QtWidgets import (
     QApplication, QColorDialog, QDialog, QDialogButtonBox, QFileDialog,
-    QGridLayout, QHBoxLayout, QInputDialog, QLabel, QListWidgetItem,
-    QMainWindow, QMessageBox, QProgressDialog, QPushButton, QVBoxLayout,
+    QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
+    QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
+    QTableWidgetItem, QVBoxLayout,
 )
 
 from config import D1_STORAGE_DIR
@@ -512,11 +515,51 @@ class HoneyMainWindow(QMainWindow):
         saved_pt = app_settings.get_setting("product_type")
         if saved_pt in self._pt_radios:
             self._pt_radios[saved_pt].setChecked(True)
+        self._setup_csv_table()
         self._connect_signals()
 
         if rg is None:
             self._disable_engine()
         QTimer.singleShot(500, self.check_for_update)
+
+    def _setup_csv_table(self):
+        """list_csv (QTableWidget) 를 '확장자 | 파일 경로' 2열로 구성하고,
+        파일 리스트 영역에 한정한 드래그앤드롭(외부 파일)을 활성화한다."""
+        t = self.list_csv
+        t.setColumnCount(2)
+        t.setHorizontalHeaderLabels(["확장자", "파일 경로"])
+        t.verticalHeader().setVisible(False)
+        t.setEditTriggers(t.NoEditTriggers)
+        t.setSelectionBehavior(t.SelectRows)
+        t.setSelectionMode(t.SingleSelection)
+        hh = t.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # 확장자 좁게
+        hh.setSectionResizeMode(1, QHeaderView.Stretch)           # 경로 늘림
+        # 드롭은 리스트 영역에서만 받는다 (메인 창엔 setAcceptDrops 를 걸지 않음).
+        t.setAcceptDrops(True)
+        t.viewport().installEventFilter(self)
+
+    # ── 드래그앤드롭 (파일 리스트 영역 한정) ─────────────────────────────────
+    def eventFilter(self, obj, event):
+        if obj is self.list_csv.viewport():
+            etype = event.type()
+            if etype in (QEvent.DragEnter, QEvent.DragMove):
+                if event.mimeData().hasUrls():
+                    event.acceptProposedAction()
+                    return True
+            elif etype == QEvent.Drop:
+                self._handle_csv_drop(event)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _handle_csv_drop(self, event):
+        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        paths = [p for p in paths if p.lower().endswith((".csv", ".xlsx"))]
+        if paths:
+            event.acceptProposedAction()
+            self._intake(paths)   # 기존 인테이크 흐름 재사용(2개↑면 순서 팝업)
+        else:
+            self._status("CSV/XLSX 파일만 끌어다 놓을 수 있습니다.")
 
     def _connect_signals(self):
         self.btn_open_local.clicked.connect(self.on_open_local)
@@ -577,13 +620,17 @@ class HoneyMainWindow(QMainWindow):
         self._load_paths(paths)
 
     def _refill_csv_list(self):
-        """self.csv_paths 순서대로 list_csv 다시 채우기 (절대 경로로 표시)."""
-        self.list_csv.clear()
-        for p in self.csv_paths:
-            it = QListWidgetItem(str(p))
-            it.setData(Qt.UserRole, p)
-            it.setToolTip(str(p))
-            self.list_csv.addItem(it)
+        """self.csv_paths 순서대로 list_csv(테이블) 다시 채우기.
+        0열=확장자(좁게), 1열=파일 절대경로."""
+        self.list_csv.setRowCount(len(self.csv_paths))
+        for r, p in enumerate(self.csv_paths):
+            ext = Path(p).suffix.lstrip(".").lower()
+            ext_item = QTableWidgetItem(ext)
+            path_item = QTableWidgetItem(str(p))
+            path_item.setData(Qt.UserRole, p)
+            path_item.setToolTip(str(p))
+            self.list_csv.setItem(r, 0, ext_item)
+            self.list_csv.setItem(r, 1, path_item)
 
     def _load_paths(self, paths):
         """선택된 입력 파일들 → 리스트 채우기 + 저장 파일명 제안 (전처리는 Start 까지 보류)."""
@@ -603,7 +650,7 @@ class HoneyMainWindow(QMainWindow):
             return
         self.csv_paths[row], self.csv_paths[new] = self.csv_paths[new], self.csv_paths[row]
         self._refill_csv_list()
-        self.list_csv.setCurrentRow(new)
+        self.list_csv.selectRow(new)
 
     def _rebuild_group(self, warn=False):
         """현재 self.csv_paths 순서로 그룹 재구성 + 항목 갱신.
@@ -949,6 +996,11 @@ class HoneyMainWindow(QMainWindow):
     def check_for_update(self):
         try:
             manifest = version_check.fetch_latest()
+        except requests.exceptions.RequestException:
+            # 연결 불가/타임아웃 = 서버 오프라인으로 간주, 상태바에 명확히 표시
+            self.status.showMessage(
+                f"⚠ 서버 오프라인 — {SERVER_BASE_URL} 에 연결할 수 없습니다")
+            return
         except Exception as exc:
             self.status.showMessage(f"버전 체크 실패: {exc}")
             return
