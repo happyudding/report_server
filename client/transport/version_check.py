@@ -11,7 +11,7 @@ from pathlib import Path
 
 import requests
 
-from config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
+from .config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
 
 
 class DownloadCancelled(Exception):

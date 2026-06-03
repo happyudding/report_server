@@ -3,7 +3,7 @@ from pathlib import Path
 
 import requests
 
-from config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
+from .config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
 
 
 def post_xlsx(xlsx_path, product_type, product, lot_id, password,

@@ -24,13 +24,11 @@ from PyQt5.QtWidgets import (
     QMainWindow, QMessageBox, QProgressDialog, QPushButton, QVBoxLayout,
 )
 
-from config import CURRENT_VERSION, SERVER_BASE_URL, D1_STORAGE_DIR
+from config import D1_STORAGE_DIR
+from transport.config import CURRENT_VERSION, SERVER_BASE_URL
+from transport import chart_export, updater, uploader, version_check
 import app_settings
 import chart_colors
-import chart_export
-import updater
-import uploader
-import version_check
 
 # 로컬 리포트 엔진 (pandas/xlwings 의존). 미설치 시 화면 비활성.
 try:
@@ -842,10 +840,14 @@ class HoneyMainWindow(QMainWindow):
 
     # ── 서버 업로드 ─────────────────────────────────────────────────────────
     def on_upload_local(self):
-        """로컬에 있는 임의의 xlsx 를 직접 업로드 (분석 엔진 불필요)."""
+        """로컬에 있는 임의의 xlsx 를 직접 업로드 (분석 엔진 불필요).
+
+        최신 Windows 탐색기(네이티브) 파일 열기 대화상자 사용 — DontUseNativeDialog
+        를 주지 않아 OS 기본 다이얼로그가 뜬다.
+        """
         path, _ = QFileDialog.getOpenFileName(
-            self, "업로드할 파일 선택", "", "Excel (*.xlsx);;모든 파일 (*.*)",
-            options=QFileDialog.DontUseNativeDialog)
+            self, "업로드할 파일 선택", "",
+            "Excel (*.xlsx);;모든 파일 (*.*)")
         if path:
             self._do_upload(path)
 
@@ -861,8 +863,7 @@ class HoneyMainWindow(QMainWindow):
         app_settings.set_setting("product_type", self.product_type())
 
     def _do_upload(self, path):
-        """메타 팝업 입력 → 차트 PNG 렌더 → post_xlsx (소스 공통)."""
-        # 메인 UI 의 Product Type 선택을 업로드 팝업 기본값으로 사용
+        """메타 팝업 입력 → 차트 PNG 렌더(프로그레스) → 업로드(프로그레스) → 완료."""
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
         dlg = UploadDialog(self, defaults=defaults)
@@ -872,15 +873,36 @@ class HoneyMainWindow(QMainWindow):
         self._last_upload = v
 
         self.btn_upload_local.setEnabled(False)
-        self._status("차트 변환 중... (Excel)")
+
+        # ── Phase 1: 차트 PNG 렌더링 ──────────────────────────────────────
+        prog = QProgressDialog("차트 렌더링 준비 중...", None, 0, 100, self)
+        prog.setWindowTitle("업로드 준비")
+        prog.setWindowModality(Qt.WindowModal)
+        prog.setMinimumDuration(0)
+        prog.setCancelButton(None)
+        prog.setValue(0)
         QApplication.processEvents()
+
+        def _chart_progress(done, total):
+            if prog.maximum() != total:
+                prog.setMaximum(total)
+            prog.setValue(done)
+            prog.setLabelText(f"차트 렌더링 중... ({done}/{total})")
+            QApplication.processEvents()
+
         try:
-            chart_pngs = chart_export.export_chart_pngs(path)
+            chart_pngs = chart_export.export_chart_pngs(path, progress_cb=_chart_progress)
         except Exception:
             chart_pngs = []
 
-        self._status(f"업로드 중... {Path(path).name} (차트 {len(chart_pngs)}장)")
+        # ── Phase 2: 서버 업로드 ──────────────────────────────────────────
+        prog.setMaximum(0)          # 0 = 비결정형(indeterminate, 스피닝)
+        prog.setValue(0)
+        prog.setLabelText(
+            f"서버 업로드 중... {Path(path).name}  (차트 {len(chart_pngs)}장)")
+        prog.setWindowTitle("업로드 중")
         QApplication.processEvents()
+
         try:
             result = uploader.post_xlsx(
                 path,
@@ -891,19 +913,24 @@ class HoneyMainWindow(QMainWindow):
                 chart_pngs=chart_pngs,
             )
         except Exception as exc:
+            prog.close()
             QMessageBox.critical(self, "업로드 실패", str(exc))
             self._status("업로드 실패")
             self.btn_upload_local.setEnabled(True)
             return
 
+        prog.close()
+
         sid = result.get("session_id", "?")
-        charts = result.get("charts_saved", 0)
+        charts_n = result.get("charts_saved", 0)
+        combined = result.get("distribution_combined", False)
         QMessageBox.information(
             self, "업로드 완료",
-            f"session_id: {sid}\n차트: {charts}장\n\n"
-            f"브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
+            f"session_id: {sid}\n차트: {charts_n}장"
+            + ("  (Distribution 합성 완료)" if combined else "") +
+            f"\n\n브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
         )
-        self._status(f"업로드 완료 (차트 {charts}장)")
+        self._status(f"업로드 완료 (차트 {charts_n}장)")
         self.btn_upload_local.setEnabled(True)
 
     # ── version check (기존 로직 무변경) ────────────────────────────────────

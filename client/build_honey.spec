@@ -25,6 +25,7 @@ a = Analysis(
         + _xw_hidden
         + collect_submodules('report_generator')
     + collect_submodules('honey_parse')
+    + collect_submodules('transport')
     ),
     hookspath=[],
     hooksconfig={},

@@ -138,16 +138,15 @@ def session_full(session_id):
                       for i in range(count)]
         except (S3NotConfigured, S3ObjectCorrupted, Exception):
             charts = []
-    # Issue_table 행별 분포 이미지(골격). 인덱스 객체가 있을 때만 채움 — 보통 [].
+    # Issue_table 행별 분포 이미지. 저장소(S3 또는 로컬 폴백)에서 행 인덱스를 조회.
     issue_images = []
-    if "issue_image_index" in objects:
+    if akey:
         try:
-            manifest = report_s3.download_json_from_s3(objects["issue_image_index"]["s3_key"])
-            for it in (manifest or {}).get("images", []) or []:
-                row = int(it.get("row"))
-                issue_images.append({"row": row,
-                                     "url": f"/pe/report/issue_image/{session_id}/{row}"})
-        except (S3NotConfigured, S3ObjectCorrupted, Exception):
+            from issue_image_store import list_rows
+            for row in list_rows(akey):
+                issue_images.append({"row": int(row),
+                                     "url": f"/pe/report/issue_image/{session_id}/{int(row)}"})
+        except Exception:
             issue_images = []
     # Distribution 합성 PNG: 있으면 프록시 URL 반환.
     distribution_url = None
@@ -216,8 +215,8 @@ def issue_image(session_id, row):
     if not akey:
         abort(404, "no analysis_key for session")
     try:
-        key = report_s3.make_issue_image_s3_key(akey, row)
-        data = report_s3.download_bytes_from_s3(key)
+        from issue_image_store import load_image
+        data = load_image(akey, row)
     except S3NotConfigured:
         abort(503, "S3 not configured")
     except Exception:

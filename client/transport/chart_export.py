@@ -23,11 +23,13 @@ def is_available() -> bool:
         return False
 
 
-def export_chart_pngs(xlsx_path) -> list:
+def export_chart_pngs(xlsx_path, progress_cb=None) -> list:
     """xlsx 의 모든 차트를 PNG bytes 리스트로 반환.
 
     순서: 워크시트 순회 → 시트 내 임베드 차트, 그다음 차트 시트.
     실패/미설치 시 [] 반환.
+
+    progress_cb: callable(done: int, total: int) — 차트 1장 완료될 때마다 호출.
     """
     try:
         import pythoncom
@@ -42,8 +44,9 @@ def export_chart_pngs(xlsx_path) -> list:
     excel = None
     wb = None
     seq = [0]
+    done_count = [0]
 
-    def _export(chart):
+    def _export(chart, total):
         out = os.path.join(tmpdir, f"{seq[0]}.png")
         seq[0] += 1
         chart.Export(out, "PNG")
@@ -57,6 +60,12 @@ def export_chart_pngs(xlsx_path) -> list:
                 pass
         if data[:8] == _PNG_MAGIC:
             pngs.append(data)
+        done_count[0] += 1
+        if progress_cb:
+            try:
+                progress_cb(done_count[0], total)
+            except Exception:
+                pass
 
     try:
         excel = win32com.client.DispatchEx("Excel.Application")
@@ -65,15 +74,41 @@ def export_chart_pngs(xlsx_path) -> list:
         # ReadOnly + UpdateLinks=0: 사용자가 같은 파일을 열어둬도 락/프롬프트 회피
         wb = excel.Workbooks.Open(xlsx_path, ReadOnly=True, UpdateLinks=0)
 
+        # 차트 총 개수 사전 카운트 (progress bar 전체 범위 설정용)
+        total = 0
+        for ws in wb.Worksheets:
+            try:
+                total += int(ws.ChartObjects().Count)
+            except Exception:
+                pass
+        try:
+            total += int(wb.Charts.Count)
+        except Exception:
+            pass
+        if total == 0:
+            total = 1  # 0 division 방지 (실제 차트 없는 파일)
+
+        # 초기 progress 알림
+        if progress_cb:
+            try:
+                progress_cb(0, total)
+            except Exception:
+                pass
+
         # 1) 워크시트 임베드 차트 (ChartObjects)
         for ws in wb.Worksheets:
             try:
                 cobjs = ws.ChartObjects()
                 for i in range(1, int(cobjs.Count) + 1):
                     try:
-                        _export(cobjs.Item(i).Chart)
+                        _export(cobjs.Item(i).Chart, total)
                     except Exception:
-                        pass
+                        done_count[0] += 1
+                        if progress_cb:
+                            try:
+                                progress_cb(done_count[0], total)
+                            except Exception:
+                                pass
             except Exception:
                 pass
 
@@ -82,9 +117,14 @@ def export_chart_pngs(xlsx_path) -> list:
             charts = wb.Charts
             for i in range(1, int(charts.Count) + 1):
                 try:
-                    _export(charts.Item(i))
+                    _export(charts.Item(i), total)
                 except Exception:
-                    pass
+                    done_count[0] += 1
+                    if progress_cb:
+                        try:
+                            progress_cb(done_count[0], total)
+                        except Exception:
+                            pass
         except Exception:
             pass
     except Exception:

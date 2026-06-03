@@ -1,16 +1,11 @@
-"""Honey 클라이언트 설정.
+"""Honey 클라이언트 로컬/UI 설정.
 
-빌드 시 SERVER_BASE_URL 은 환경별로 다르게 주입 가능.
+서버·전송·버전 상수(SERVER_BASE_URL, REQUEST_TIMEOUT_SEC, CURRENT_VERSION)는
+transport/config.py 로 분리됨. 여기엔 로컬 파일·UI 관련 설정만 둔다.
 """
 import os
 import sys
 from pathlib import Path
-
-SERVER_BASE_URL = os.environ.get("HONEY_SERVER_URL", "http://127.0.0.1:8000")
-
-CURRENT_VERSION = "0.1.0"
-
-REQUEST_TIMEOUT_SEC = 30
 
 
 def _default_d1_dir():

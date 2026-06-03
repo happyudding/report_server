@@ -245,31 +245,18 @@ def upload_xlsx():
         except Exception:
             pass
 
-    # ── Issue_table 행별 분포 PNG → S3 (골격: 기본 비활성) ──────────────────
-    # parse 단계 ISSUE_IMAGES_ENABLED=False 면 issue_images=[] 라 아래 블록은 미실행.
-    # 외부 프로젝트 브랜치 시 플래그만 켜면 추출→업로드→인덱스가 자동 동작한다.
+    # ── Issue_table 행별 분포 PNG → 저장소(S3 또는 로컬 폴백) ─────────────────
+    # ISSUE_IMAGES_ENABLED=True 면 Distribution 열의 행별 PNG 가 추출된다.
+    # issue_image_store 가 S3 설정 유무에 따라 S3/로컬을 자동 선택 → S3 미설정
+    # 로컬 환경에서도 PNG 가 표시된다("임시로 PNG 나오게").
     issue_imgs_saved = 0
-    if s3_ok and parsed.get("issue_images"):
-        index = []
-        for item in parsed["issue_images"]:
-            try:
-                row = int(item["row"])
-                ikey = report_s3.make_issue_image_s3_key(analysis_key, row)
-                report_s3.upload_bytes_to_s3(ikey, item["png"], content_type="image/png")
-                index.append({"row": row, "key": ikey})
-                issue_imgs_saved += 1
-            except Exception:
-                continue
-        if index:
-            try:
-                idx_key = report_s3.make_issue_image_index_s3_key(analysis_key)
-                idx_uri = report_s3.upload_json_to_s3(idx_key, {"images": index})
-                report_db.upsert_object_info(
-                    analysis_key, content_hash, _canonical_meta_bytes(meta).decode("utf-8"),
-                    "issue_image_index", report_s3.bucket_name(), idx_key, idx_uri,
-                )
-            except Exception:
-                pass
+    if parsed.get("issue_images"):
+        try:
+            from issue_image_store import save_images
+            res = save_images(analysis_key, parsed["issue_images"])
+            issue_imgs_saved = len(res.get("rows", []))
+        except Exception:
+            issue_imgs_saved = 0
 
     # ── 차트 PNG 수신 → 그리드 합성 → S3 단일 PNG ───────────────────────────
     # 클라이언트(Excel COM)가 렌더한 개별 차트 PNG 를 Pillow 로 격자 합성한다.

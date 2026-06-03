@@ -113,7 +113,7 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table th {
   background: #e8eef4; font-weight: 700; padding: 5px 8px;
   border: 1px solid #b0bec5; white-space: nowrap; color: #1a3a5c;
-  vertical-align: middle; text-align: center;
+  vertical-align: middle; text-align: left;
 }
 .sheet-table td {
   padding: 4px 8px; border: 1px solid #d0d7de;
@@ -122,7 +122,7 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table tbody tr:nth-child(even) td { background: #f7f9fb; }
 .sheet-table tbody tr:hover td { background: #edf3fc; }
 .sheet-table td.st-empty { color: #bbb; }
-.sheet-table td.st-num { text-align: right; }
+.sheet-table td.st-num { text-align: left; }
 .sheet-table td.editing-cell {
   outline: none; cursor: text; background: #fffbe6 !important;
 }
@@ -227,6 +227,18 @@ tbody tr:hover { background: #f9fbff; }
 }
 .toast.show { opacity: 1; }
 
+/* ── 선택 셀 합계/평균 표시줄 (엑셀 상태바 느낌) ───────────────────────────── */
+.calc-bar {
+  position: fixed; bottom: 12px; right: 16px; z-index: 96;
+  background: #1f2937; color: #fff; padding: 7px 14px; border-radius: 8px;
+  font-size: 12px; box-shadow: 0 2px 10px rgba(0,0,0,.25);
+  display: none; gap: 16px; align-items: center;
+}
+.calc-bar.show { display: inline-flex; }
+.calc-bar.lift { bottom: 60px; }
+.calc-bar .ci { color: #9ca3af; margin-right: 4px; }
+.calc-bar .cv { color: #fff; font-weight: 700; }
+
 /* ── PIN modal ─────────────────────────────────────────────────────────── */
 .modal-overlay {
   display: none; position: fixed; inset: 0;
@@ -291,6 +303,9 @@ tbody tr:hover { background: #f9fbff; }
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- 드래그로 선택한 숫자들의 개수/합계/평균 (엑셀 상태바) -->
+<div class="calc-bar" id="calcBar"></div>
 
 <!-- PIN 모달 (수정/삭제 공용) -->
 <div class="modal-overlay" id="pinModal">
@@ -506,32 +521,64 @@ function colWidth(name) {
 // 값이 숫자인지 (td 정렬용)
 function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNaN(+v); }
 
+function isDistCol(c) { return String(c || "").toLowerCase() === "distribution"; }
+
+// 열 순서 보정: comment 류 → 최우측, issue 의 category → 최좌측. 상대순서 유지.
+// (xlsx 헤더 순서를 따르되 위 불변식을 보장 → 원본 엑셀 배치와 일치)
+function orderColumns(cols, kind) {
+  const isComment = c => /comment/i.test(String(c));
+  const comments = cols.filter(isComment);
+  let rest = cols.filter(c => !isComment(c));
+  if (kind === "issue") {
+    const cat = rest.filter(c => String(c).toLowerCase() === "category");
+    rest = cat.concat(rest.filter(c => String(c).toLowerCase() !== "category"));
+  }
+  return rest.concat(comments);
+}
+
+// 빈 헤더 placeholder(_colN)는 화면엔 빈칸으로
+function headerLabel(c) { return /^_col\d+$/.test(String(c)) ? "" : c; }
+
 /**
  * rows(list of dict) → HTML sheet-table.
- * opts: { edit:bool, imgMap:{rowIndex:url}, title:string }
+ * opts: { edit, imgMap:{rowIndex:url}, kind:"yield"|"issue", columns:[...] }
+ *  - columns: 명시적 열 목록(있으면 derive·정렬 생략, 순서 그대로).
+ *    데이터행이 없어도 헤더는 항상 렌더 → 내용 없는 컬럼도 유지.
+ *  - kind: comment 최우측 / (issue) category 최좌측 정렬.
  */
 function renderSheetTable(rows, opts) {
   opts = opts || {};
-  if (!rows || !rows.length) return "";
-  const cols = [];
-  rows.forEach(r => Object.keys(r || {}).forEach(k => { if (!cols.includes(k)) cols.push(k); }));
+  let cols;
+  if (opts.columns && opts.columns.length) {
+    cols = opts.columns.slice();
+  } else {
+    if (!rows || !rows.length) return "";
+    cols = [];
+    rows.forEach(r => Object.keys(r || {}).forEach(k => { if (!cols.includes(k)) cols.push(k); }));
+    if (opts.kind) cols = orderColumns(cols, opts.kind);
+  }
+  if (!cols.length) return "";
 
   const colgroup = "<colgroup>" + cols.map(c =>
     `<col style="width:${colWidth(c)}">`
   ).join("") + "</colgroup>";
 
   const head = "<thead><tr>" + cols.map(c =>
-    `<th>${esc(c)}</th>`
+    `<th>${esc(headerLabel(c))}</th>`
   ).join("") + "</tr></thead>";
 
-  const body = "<tbody>" + rows.map((r, ri) => {
+  const body = "<tbody>" + (rows || []).map((r, ri) => {
     const tds = cols.map((c, ci) => {
-      const v = r[c];
+      const v = r ? r[c] : "";
       const txt = (v === null || v === undefined) ? "" : String(v);
       const isEmpty = txt === "";
       const isNum = isNumVal(v);
-      if (c.toLowerCase() === "distribution" && opts.imgMap && opts.imgMap[ri]) {
-        return `<td><img loading="lazy" src="${esc(opts.imgMap[ri])}" style="max-width:115px;height:auto;display:block" alt="dist"></td>`;
+      // Distribution 열: 행별 PNG(있으면)만, 항상 편집 불가.
+      if (isDistCol(c)) {
+        if (opts.imgMap && opts.imgMap[ri]) {
+          return `<td><img loading="lazy" src="${esc(opts.imgMap[ri])}" style="max-width:115px;height:auto;display:block" alt="dist"></td>`;
+        }
+        return `<td class="st-empty"></td>`;
       }
       if (opts.edit) {
         return `<td class="editing-cell${isNum ? " st-num" : ""}" contenteditable="true" data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${esc(txt)}</td>`;
@@ -553,13 +600,15 @@ function renderSummaryBlocks(data, opts) {
   opts = opts || {};
   const blocks = (data && data.blocks) || [];
   return blocks.map(blk => {
+    const cols = (blk.headers || []).map((h, i) => h === "" ? `_col${i}` : h);
     const rows = (blk.rows || []).map(row => {
       const obj = {};
-      (blk.headers || []).forEach((h, i) => { obj[h === "" ? `_col${i}` : h] = row[i] !== undefined ? row[i] : null; });
+      cols.forEach((h, i) => { obj[h] = row[i] !== undefined ? row[i] : null; });
       return obj;
     });
     const title = `<div class="sheet-block-title">${esc(blk.label || "")}</div>`;
-    const tbl = renderSheetTable(rows, opts);
+    // columns 명시 → 데이터가 비어도 헤더(컬럼)는 항상 표시.
+    const tbl = renderSheetTable(rows, Object.assign({}, opts, { columns: cols }));
     return `<div class="sheet-block">${title}${tbl}</div>`;
   }).join("");
 }
@@ -678,7 +727,8 @@ function renderYield(yield_text, summary_rows) {
 
   // 신규 포맷: list of dicts
   if (Array.isArray(yield_text) && yield_text.length) {
-    panel.innerHTML = `<div class="section-title">Yield</div>` + renderSheetTable(yield_text);
+    panel.innerHTML = `<div class="section-title">Yield</div>` +
+      renderSheetTable(yield_text, { kind: "yield" });
     return;
   }
 
@@ -704,7 +754,7 @@ function renderIssues(issue_table_text, issue_images) {
   // 신규 포맷: list of dicts
   if (Array.isArray(issue_table_text) && issue_table_text.length) {
     panel.innerHTML = `<div class="section-title">Issue Table</div>` +
-      renderSheetTable(issue_table_text, { imgMap });
+      renderSheetTable(issue_table_text, { imgMap, kind: "issue" });
     return;
   }
 
@@ -881,7 +931,7 @@ function renderYieldEdit() {
   if (Array.isArray(DATA.yield_text) && DATA.yield_text.length) {
     panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
       `<div class="edit-hint">셀을 클릭해 텍스트를 수정하세요.</div>` +
-      renderSheetTable(DATA.yield_text, { edit: true });
+      renderSheetTable(DATA.yield_text, { edit: true, kind: "yield" });
     return;
   }
 
@@ -907,7 +957,7 @@ function renderIssuesEdit() {
   if (Array.isArray(DATA.issue_table_text) && DATA.issue_table_text.length) {
     panel.innerHTML = `<div class="edit-section-title">Issue Table</div>` +
       `<div class="edit-hint">셀을 클릭해 텍스트를 수정하세요. (Distribution 열은 수정 불가)</div>` +
-      renderSheetTable(DATA.issue_table_text, { edit: true, imgMap });
+      renderSheetTable(DATA.issue_table_text, { edit: true, imgMap, kind: "issue" });
     return;
   }
 
@@ -1144,6 +1194,35 @@ async function load(resetMode=true) {
     box.textContent = "로드 실패: " + e.message;
   }
 }
+
+// ── 선택 셀 합계/평균 (엑셀 상태바) ───────────────────────────────────────────
+// 표에서 드래그로 셀을 선택하면 그 안의 숫자들의 개수·합계·평균을 우하단에 표시.
+function fmtNum(n) {
+  const r = Math.round(n * 1e6) / 1e6;
+  if (Number.isInteger(r)) return String(r);
+  return r.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function updateCalc() {
+  const bar = document.getElementById("calcBar");
+  const sel = window.getSelection ? window.getSelection() : null;
+  const text = sel ? String(sel.toString()) : "";
+  // 천단위 콤마 제거 후 숫자 토큰 추출
+  const nums = (text.match(/-?\d[\d,]*\.?\d*/g) || [])
+    .map(s => parseFloat(s.replace(/,/g, "")))
+    .filter(n => !isNaN(n));
+  if (nums.length < 2) { bar.classList.remove("show"); return; }
+  const sum = nums.reduce((a, b) => a + b, 0);
+  const avg = sum / nums.length;
+  bar.innerHTML =
+    `<span><span class="ci">개수</span><span class="cv">${nums.length}</span></span>` +
+    `<span><span class="ci">합계</span><span class="cv">${fmtNum(sum)}</span></span>` +
+    `<span><span class="ci">평균</span><span class="cv">${fmtNum(avg)}</span></span>`;
+  bar.classList.toggle("lift", MODE === "edit");
+  bar.classList.add("show");
+}
+document.addEventListener("selectionchange", updateCalc);
+document.addEventListener("mouseup", updateCalc);
 
 load();
 </script>

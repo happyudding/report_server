@@ -17,8 +17,9 @@
 """
 from io import BytesIO
 
-# Issue_table 행별 임베드 PNG 추출 활성화 플래그. 골격 단계에선 False(빈 리스트).
-ISSUE_IMAGES_ENABLED = False
+# Issue_table 행별 임베드 PNG 추출 활성화 플래그.
+# True 면 Distribution 열의 행별 PNG 를 추출해 저장소(S3 또는 로컬 폴백)에 보관한다.
+ISSUE_IMAGES_ENABLED = True
 
 
 def parse_report_xlsx(xlsx_bytes: bytes) -> dict:
@@ -42,8 +43,10 @@ def parse_report_xlsx(xlsx_bytes: bytes) -> dict:
     ]
 
     # 순수 텍스트 데이터 (스타일 없음) — DB 저장용
+    # Distribution 열은 유지한다(값은 비어있고 행별 PNG 는 issue_images 로 따로 추출).
+    # 열 순서는 xlsx 헤더 순서를 그대로 보존 → Category(좌) … Distribution … comment(우).
     summary_blocks = _extract_summary_blocks(sm)
-    issue_full = _rows_with_header(it, drop_cols={"Distribution"})
+    issue_full = _rows_with_header(it)
 
     sheet_data = {}
     if summary_blocks:
@@ -227,7 +230,12 @@ def _extract_issue_images(ws, header_row, enabled=False):
     for img in (getattr(ws, "_images", None) or []):
         try:
             frm = img.anchor._from
-            grid_row = (int(frm.row) + 1) - header_row
+            # frm.row 는 0-based. 데이터행 리스트 인덱스(ri) = ExcelRow-(header_row+1)
+            # = (frm.row+1) - (header_row+1) = frm.row - header_row.
+            # 개수는 파일에 박힌 이미지 수만큼 동적 — 고정값 아님.
+            grid_row = int(frm.row) - header_row
+            if grid_row < 0:           # 헤더보다 위에 있는 이미지(로고 등)는 제외
+                continue
             ref = img.ref
             data = ref.getvalue() if hasattr(ref, "getvalue") else ref
             if data:
