@@ -30,7 +30,7 @@ _PRODUCT_TYPES = {"MD", "PD", "PM", "SE"}
 _SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-\.]{1,80}$")
 _PIN_RE = re.compile(r"^\d{4}$")
 
-_MAX_CHARTS = 50
+_MAX_CHARTS = 10000   # 차트 수 제한 없음 (2000개 이상 지원)
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
@@ -46,6 +46,34 @@ def _collect_chart_pngs(files):
         if data[:8] == _PNG_MAGIC:
             out.append(data)
     return out
+
+
+def _combine_chart_pngs(pngs: list):
+    """PNG bytes 리스트 → 그리드 합성 단일 PNG bytes.
+    각 차트 이미지는 그대로 유지하고, 격자 배치로 하나의 큰 PNG 를 만든다.
+    Pillow 미설치 / 빈 입력 시 None 반환."""
+    if not pngs:
+        return None
+    try:
+        import io
+        import math
+        from PIL import Image
+
+        imgs = [Image.open(io.BytesIO(p)).convert("RGB") for p in pngs]
+        w = max(im.width for im in imgs)
+        h = max(im.height for im in imgs)
+        n = len(imgs)
+        ncols = max(1, min(10, math.ceil(math.sqrt(n))))
+        nrows = math.ceil(n / ncols)
+        canvas = Image.new("RGB", (w * ncols, h * nrows), color=(255, 255, 255))
+        for i, im in enumerate(imgs):
+            r, c = divmod(i, ncols)
+            canvas.paste(im, (c * w, r * h))
+        buf = io.BytesIO()
+        canvas.save(buf, format="PNG", optimize=True)
+        return buf.getvalue()
+    except Exception:
+        return None
 
 
 def _validate_meta(form) -> dict:
@@ -243,25 +271,25 @@ def upload_xlsx():
             except Exception:
                 pass
 
-    # ── 차트 PNG 갤러리 (클라이언트 Excel COM 렌더) → S3 ─────────────────────
-    charts_saved = 0
-    if s3_ok:
-        chart_pngs = _collect_chart_pngs(request.files)
-        for idx, data in enumerate(chart_pngs):
+    # ── 차트 PNG 수신 → 그리드 합성 → S3 단일 PNG ───────────────────────────
+    # 클라이언트(Excel COM)가 렌더한 개별 차트 PNG 를 Pillow 로 격자 합성한다.
+    # 각 차트 이미지는 픽셀 그대로 유지 — 합성만 수행.
+    chart_pngs = _collect_chart_pngs(request.files)
+    charts_saved = len(chart_pngs)
+    dist_combined_saved = False
+    if s3_ok and chart_pngs:
+        combined = _combine_chart_pngs(chart_pngs)
+        if combined:
             try:
-                ckey = report_s3.make_chart_png_s3_key(analysis_key, idx)
-                report_s3.upload_bytes_to_s3(ckey, data, content_type="image/png")
-                charts_saved += 1
-            except Exception:
-                break
-        if charts_saved:
-            try:
-                idx_key = report_s3.make_chart_index_s3_key(analysis_key)
-                idx_uri = report_s3.upload_json_to_s3(idx_key, {"count": charts_saved})
+                meta_str = _canonical_meta_bytes(meta).decode("utf-8")
+                dist_key = report_s3.make_distribution_combined_s3_key(analysis_key)
+                dist_uri = report_s3.upload_bytes_to_s3(
+                    dist_key, combined, content_type="image/png")
                 report_db.upsert_object_info(
-                    analysis_key, content_hash, _canonical_meta_bytes(meta).decode("utf-8"),
-                    "chart_index", report_s3.bucket_name(), idx_key, idx_uri,
+                    analysis_key, content_hash, meta_str,
+                    "distribution_combined", report_s3.bucket_name(), dist_key, dist_uri,
                 )
+                dist_combined_saved = True
             except Exception:
                 pass
 
@@ -274,6 +302,7 @@ def upload_xlsx():
         "rows_saved": saved,
         "s3_uploaded": s3_ok,
         "charts_saved": charts_saved,
+        "distribution_combined": dist_combined_saved,
         "issue_images_saved": issue_imgs_saved,
         "sheet_data_saved": sorted(sheet_data.keys()),
         "summary_keys": list(parsed["summary"].keys()),

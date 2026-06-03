@@ -1,6 +1,6 @@
 import re
 
-from flask import Response, abort, jsonify, request, send_file
+from flask import Response, abort, jsonify, make_response, request, send_file
 
 from database import report_db
 from s3_storage import report_s3
@@ -149,6 +149,10 @@ def session_full(session_id):
                                      "url": f"/pe/report/issue_image/{session_id}/{row}"})
         except (S3NotConfigured, S3ObjectCorrupted, Exception):
             issue_images = []
+    # Distribution 합성 PNG: 있으면 프록시 URL 반환.
+    distribution_url = None
+    if "distribution_combined" in objects:
+        distribution_url = f"/pe/report/distribution_combined/{session_id}"
     return jsonify({
         "session": _public_session(session),
         "summary": report_db.get_summary_by_analysis_key(akey) if akey else [],
@@ -157,6 +161,7 @@ def session_full(session_id):
         "issue_table_text": issue_table_text,
         "charts": charts,
         "issue_images": issue_images,
+        "distribution_url": distribution_url,
         "csv_files": report_db.get_csv_files(akey) if akey else [],
         "objects": objects,
         "annotations": report_db.get_annotations(session_id),
@@ -219,6 +224,31 @@ def issue_image(session_id, row):
         abort(404, "image not found")
     return Response(data, mimetype="image/png",
                     headers={"Cache-Control": "private, max-age=3600"})
+
+
+@report_bp.get("/distribution_combined/<session_id>")
+def distribution_combined_png(session_id):
+    """클라이언트 차트 PNG 그리드 합성 이미지를 S3 에서 스트리밍."""
+    _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    akey = session.get("analysis_key")
+    if not akey:
+        abort(404, "no analysis_key for session")
+    objs = {o["object_type"]: o for o in report_db.get_all_object_infos(akey)}
+    if "distribution_combined" not in objs:
+        abort(404, "distribution combined PNG 없음")
+    try:
+        data = report_s3.download_bytes_from_s3(objs["distribution_combined"]["s3_key"])
+    except S3NotConfigured:
+        abort(503, "S3 not configured")
+    except Exception:
+        abort(404, "distribution combined not found")
+    resp = make_response(data)
+    resp.headers["Content-Type"] = "image/png"
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 
 @report_bp.delete("/session/<session_id>")

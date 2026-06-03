@@ -228,6 +228,26 @@ def make_chart_index_s3_key(analysis_key):
     return f"{prefix}/{analysis_key}/index.json"
 
 
+# ── Distribution 합성 PNG (클라이언트 차트 PNG 그리드 합성) ──────────────────
+
+REPORT_S3_DIST_COMBINED_PREFIX = "pe/report_server/distribution_combined"
+
+
+def make_distribution_combined_s3_key(analysis_key: str) -> str:
+    prefix = REPORT_S3_DIST_COMBINED_PREFIX.strip("/")
+    return f"{prefix}/{analysis_key}.png"
+
+
+def download_bytes_from_s3(key: str) -> bytes:
+    """S3 객체를 bytes 로 다운로드. S3NotConfigured / S3ObjectCorrupted 발생 가능."""
+    client = get_s3_client()
+    try:
+        obj = client.get_object(Bucket=bucket_name(), Key=key)
+        return obj["Body"].read()
+    except Exception as exc:
+        raise S3ObjectCorrupted(key) from exc
+
+
 # ── presigned URL (외부 프로젝트 브랜치 호환) ────────────────────────────────
 # 현재 표시는 서버 프록시(/pe/report/chart, /pe/report/issue_image) 로 일관하되,
 # 외부 S3 드라이브 패턴(<img src={presigned_url}>) 과 브랜치하기 쉽도록 헬퍼만 노출.
