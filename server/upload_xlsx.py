@@ -296,27 +296,35 @@ def upload_xlsx():
     dist_sheet_f = request.files.get("distribution_sheet")
     if dist_sheet_f:
         dist_data = dist_sheet_f.read()
-        if dist_data[:8] == _PNG_MAGIC and s3_ok:
-            try:
-                dist_key = report_s3.make_distribution_combined_s3_key(analysis_key)
-                dist_uri = report_s3.upload_bytes_to_s3(
-                    dist_key, dist_data, content_type="image/png")
-                report_db.upsert_object_info(
-                    analysis_key, content_hash, meta_str,
-                    "distribution_combined", report_s3.bucket_name(), dist_key, dist_uri,
-                )
-                dist_combined_saved = True
-            except Exception as exc:
-                warnings.append(f"distribution_sheet S3 upload failed: {exc}")
-        elif dist_data[:8] == _PNG_MAGIC and not s3_ok:
-            warnings.append("distribution_sheet received but S3 not configured; skipped")
+        if dist_data[:8] == _PNG_MAGIC:
+            if s3_ok:
+                try:
+                    dist_key = report_s3.make_distribution_combined_s3_key(analysis_key)
+                    dist_uri = report_s3.upload_bytes_to_s3(
+                        dist_key, dist_data, content_type="image/png")
+                    report_db.upsert_object_info(
+                        analysis_key, content_hash, meta_str,
+                        "distribution_combined", report_s3.bucket_name(), dist_key, dist_uri,
+                    )
+                    dist_combined_saved = True
+                except Exception as exc:
+                    warnings.append(f"distribution_sheet S3 upload failed: {exc}")
+            else:
+                # S3 미설정 → 로컬 폴백 (issue_image_store 와 동일 패턴)
+                try:
+                    from pathlib import Path
+                    from config import REPORT_UPLOAD_DIR
+                    local_dir = Path(REPORT_UPLOAD_DIR) / "dist_combined"
+                    local_dir.mkdir(parents=True, exist_ok=True)
+                    (local_dir / f"{analysis_key}.png").write_bytes(dist_data)
+                    dist_combined_saved = True
+                except Exception as exc:
+                    warnings.append(f"distribution_sheet local save failed: {exc}")
 
     # chart_N 폴백: distribution_sheet 미전송 또는 저장 실패한 경우에만 시도
     if not dist_combined_saved:
         chart_pngs = _collect_chart_pngs(request.files)
         charts_saved = len(chart_pngs)
-        if chart_pngs and not s3_ok:
-            warnings.append("charts received but S3 not configured; distribution_combined skipped")
         if s3_ok and chart_pngs:
             combined = _combine_chart_pngs(chart_pngs)
             if combined:
@@ -333,6 +341,9 @@ def upload_xlsx():
                     warnings.append(f"distribution_combined upload failed: {exc}")
             else:
                 warnings.append("chart PNG grid composition failed (Pillow missing or bad PNG)")
+        elif chart_pngs and not s3_ok:
+            # chart_N 도 S3 없으면 건너뜀 (distribution_sheet 로컬 폴백이 우선)
+            warnings.append("charts received but S3 not configured; skipped (use distribution_sheet)")
 
     # S3 미설정으로 원본 xlsx 가 저장되지 않았으면 경고로 명시 (조회 시 본문 누락).
     if not s3_ok:

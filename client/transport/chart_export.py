@@ -388,12 +388,12 @@ def export_distribution_png(xlsx_path) -> bytes | None:
 
     ExportAsFixedFormat(PDF) → PyMuPDF(fitz) → PNG.
     다중 페이지는 수직 합성. 클립보드 미사용.
-    fitz(PyMuPDF) 또는 win32com 미설치 시 None 반환.
+    실패 시 RuntimeError 를 raise 해 caller 가 원인을 알 수 있게 함.
     """
     try:
         import fitz  # PyMuPDF
     except ImportError:
-        return None
+        raise RuntimeError("PyMuPDF(fitz) 미설치 — pip install PyMuPDF")
 
     xlsx_path = str(Path(xlsx_path).resolve())
     tmpdir = tempfile.mkdtemp(prefix="honey_dist_")
@@ -402,12 +402,18 @@ def export_distribution_png(xlsx_path) -> bytes | None:
     excel, wb = _open_excel(xlsx_path)
     if excel is None:
         shutil.rmtree(tmpdir, ignore_errors=True)
-        return None
+        raise RuntimeError("Excel COM 열기 실패 (win32com/pywin32 문제)")
 
     try:
         ws = _find_sheet_by_name(wb, "distribution")
         if ws is None:
-            return None
+            try:
+                sheet_names = [wb.Worksheets.Item(i).Name
+                               for i in range(1, wb.Worksheets.Count + 1)]
+            except Exception:
+                sheet_names = ["(시트 목록 조회 실패)"]
+            raise RuntimeError(
+                f"'distribution' 시트 없음. 실제 시트 목록: {sheet_names}")
         ws.ExportAsFixedFormat(
             Type=0,                     # xlTypePDF
             Filename=pdf_path,
@@ -416,21 +422,23 @@ def export_distribution_png(xlsx_path) -> bytes | None:
             IgnorePrintAreas=False,
             OpenAfterPublish=False,
         )
-    except Exception:
-        return None
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"ExportAsFixedFormat 실패: {exc}") from exc
     finally:
         _close_excel(excel, wb)
 
     if not os.path.exists(pdf_path):
         shutil.rmtree(tmpdir, ignore_errors=True)
-        return None
+        raise RuntimeError("PDF 파일이 생성되지 않음 (ExportAsFixedFormat 오류)")
 
     try:
         from PIL import Image
 
         doc = fitz.open(pdf_path)
         if doc.page_count == 0:
-            return None
+            raise RuntimeError("PDF 페이지가 0개 — Distribution 시트가 비어 있음")
 
         mat = fitz.Matrix(1.5, 1.5)   # ~108 DPI
 
@@ -456,7 +464,9 @@ def export_distribution_png(xlsx_path) -> bytes | None:
         combined.save(buf, format="PNG", optimize=True)
         return buf.getvalue()
 
-    except Exception:
-        return None
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"PDF→PNG 변환 실패: {exc}") from exc
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)

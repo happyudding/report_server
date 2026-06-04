@@ -967,10 +967,13 @@ class HoneyMainWindow(QMainWindow):
         # 1-c) Distribution 시트 전체 → 단일 PNG (PDF → PyMuPDF)
         prog.setLabelText("Distribution 시트 렌더링 중 (PDF 변환)...")
         QApplication.processEvents()
+        dist_err = ""
         try:
             dist_png = chart_export.export_distribution_png(path)
-        except Exception:
+        except Exception as exc:
             dist_png = None
+            dist_err = str(exc)
+            self._status(f"⚠ Distribution 렌더 실패: {dist_err}")
 
         # ── Phase 2: 서버 업로드 ──────────────────────────────────────────
         prog.setMaximum(0)
@@ -1009,8 +1012,9 @@ class HoneyMainWindow(QMainWindow):
             self, "업로드 완료",
             f"session_id: {sid}"
             f"\nIssue 이미지: {issue_saved}장"
-            + ("  |  Distribution PNG 저장됨" if combined else "") +
-            f"\n\n브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
+            + ("  |  Distribution PNG 저장됨" if combined else "")
+            + (f"\n\n⚠ Distribution 렌더 실패:\n{dist_err}" if dist_err else "")
+            + f"\n\n브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
         )
         self._status(f"업로드 완료 (Issue 이미지 {issue_saved}장)")
         self.btn_upload_local.setEnabled(True)

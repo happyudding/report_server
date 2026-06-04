@@ -12,17 +12,21 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 # xlwings 는 자체 데이터/바이너리(.xlam, dll)를 동봉해야 동작
 _xw_datas, _xw_binaries, _xw_hidden = collect_all('xlwings')
 
+# PyMuPDF(fitz) — Distribution 시트 PDF→PNG 변환. 바이너리/데이터 포함 필요
+_fitz_datas, _fitz_binaries, _fitz_hidden = collect_all('fitz')
+
 a = Analysis(
     ['honey_main.py'],
     pathex=[],
-    binaries=_xw_binaries,
-    datas=_xw_datas + [('honey_main.ui', '.'), ('upload_dialog.ui', '.'),
+    binaries=_xw_binaries + _fitz_binaries,
+    datas=_xw_datas + _fitz_datas + [('honey_main.ui', '.'), ('upload_dialog.ui', '.'),
                        ('d1_browser.ui', '.'), ('file_order.ui', '.'),
                        ('report_settings.ui', '.')],
     hiddenimports=(
         ['PyQt5.sip', 'PyQt5.uic', 'win32com', 'win32com.client', 'pythoncom',
          'pywintypes', 'pandas', 'numpy']
         + _xw_hidden
+        + _fitz_hidden
         + collect_submodules('report_generator')
     + collect_submodules('honey_parse')
     + collect_submodules('transport')

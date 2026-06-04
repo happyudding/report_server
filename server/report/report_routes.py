@@ -190,10 +190,15 @@ def session_full(session_id):
                                      "url": f"/pe/report/issue_image/{session_id}/{int(row)}"})
         except Exception:
             issue_images = []
-    # Distribution 합성 PNG: 있으면 프록시 URL 반환.
+    # Distribution 합성 PNG: S3 오브젝트 또는 로컬 폴백 파일이 있으면 프록시 URL 반환.
     distribution_url = None
     if "distribution_combined" in objects:
         distribution_url = f"/pe/report/distribution_combined/{session_id}"
+    elif akey:
+        from pathlib import Path
+        from config import REPORT_UPLOAD_DIR
+        if (Path(REPORT_UPLOAD_DIR) / "dist_combined" / f"{akey}.png").exists():
+            distribution_url = f"/pe/report/distribution_combined/{session_id}"
     return jsonify({
         "session": _public_session(session),
         "summary": report_db.get_summary_by_analysis_key(akey) if akey else [],
@@ -269,7 +274,7 @@ def issue_image(session_id, row):
 
 @report_bp.get("/distribution_combined/<session_id>")
 def distribution_combined_png(session_id):
-    """클라이언트 차트 PNG 그리드 합성 이미지를 S3 에서 스트리밍."""
+    """Distribution 합성 PNG — S3 우선, 없으면 로컬 폴백."""
     _validate_session_id(session_id)
     session = report_db.get_session(session_id)
     if not session:
@@ -277,15 +282,28 @@ def distribution_combined_png(session_id):
     akey = session.get("analysis_key")
     if not akey:
         abort(404, "no analysis_key for session")
+
+    data = None
+
+    # S3 오브젝트가 등록돼 있으면 S3 에서 서빙
     objs = {o["object_type"]: o for o in report_db.get_all_object_infos(akey)}
-    if "distribution_combined" not in objs:
+    if "distribution_combined" in objs:
+        try:
+            data = report_s3.download_bytes_from_s3(objs["distribution_combined"]["s3_key"])
+        except (S3NotConfigured, Exception):
+            data = None  # S3 실패 시 로컬 폴백으로
+
+    # 로컬 폴백 (S3 미설정 또는 S3 실패)
+    if data is None:
+        from pathlib import Path
+        from config import REPORT_UPLOAD_DIR
+        local_path = Path(REPORT_UPLOAD_DIR) / "dist_combined" / f"{akey}.png"
+        if local_path.exists():
+            data = local_path.read_bytes()
+
+    if data is None:
         abort(404, "distribution combined PNG 없음")
-    try:
-        data = report_s3.download_bytes_from_s3(objs["distribution_combined"]["s3_key"])
-    except S3NotConfigured:
-        abort(503, "S3 not configured")
-    except Exception:
-        abort(404, "distribution combined not found")
+
     resp = make_response(data)
     resp.headers["Content-Type"] = "image/png"
     resp.headers["Cache-Control"] = "public, max-age=86400"
