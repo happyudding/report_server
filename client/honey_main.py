@@ -71,27 +71,24 @@ def _validate_meta(product, lot_id, password):
     return None
 
 
-def _common_base(stems):
-    """입력 파일 stem 들에서 저장 파일명 base 추측 (공통 접두/접미사 우선)."""
-    if not stems:
-        return "report"
-    if len(stems) == 1:
-        return stems[0]
-    pre = os.path.commonprefix(stems).strip(" _-")
-    suf = os.path.commonprefix([s[::-1] for s in stems])[::-1].strip(" _-")
-    cand = max((pre, suf), key=len)
-    return cand if len(cand) >= 3 else stems[0]
-
-
 def _timestamp():
     """파일명용 현재 시각: 260601_0949 (YYMMDD_HHMM)."""
     return datetime.datetime.now().strftime("%y%m%d_%H%M")
 
 
-def _suggest_base_name(csv_paths):
-    """입력 파일명들로부터 결과물 이름을 rough 하게 유추 (시간 접미사 포함해서 표시)."""
-    stems = [Path(p).stem for p in csv_paths]
-    base = _common_base(stems)
+def _suggest_base_name(csv_paths, group=None):
+    """저장 파일명 base 를 **첫 입력 파일의 FileName** 기준으로 생성.
+
+    group 이 있으면 통일된 첫 FileName(group.names()[0], 설정 rename 반영분)을,
+    없으면(로드 직후 프리뷰) 첫 파일 stem 을 쓴다. 여러 파일명 join 으로 길어지는
+    것을 피하고 재계산/지연 없이 단순하게 첫 파일 이름만 사용한다.
+    """
+    if group is not None and group.names():
+        base = group.names()[0]
+    elif csv_paths:
+        base = Path(csv_paths[0]).stem
+    else:
+        base = "report"
     base = base.strip(" _-") or "report"
     return f"{base}_report_{_timestamp()}"
 
@@ -896,7 +893,7 @@ class HoneyMainWindow(QMainWindow):
         prog.setValue(3)
         QApplication.processEvents()
 
-        base = self.le_outname.text().strip() or _suggest_base_name(self.csv_paths)
+        base = self.le_outname.text().strip() or _suggest_base_name(self.csv_paths, self.group)
         out = _build_output_path(Path(self.csv_paths[0]).parent, base)
 
         # 4) 시트/차트 생성 (시트 1개당 1스텝, offset 3)

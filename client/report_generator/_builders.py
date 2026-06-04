@@ -596,6 +596,13 @@ def to_numeric_clean(series):
     return arr[np.isfinite(arr)].to_numpy()
 
 
+# ── ECDF 선분 표현 기능 플래그 ────────────────────────────────────────────────
+# True : 정수형 중복 data → NaN gap 계단형 선분 (수직선만, 수평 연결선 없음)
+# False: 기존 방식 — 모든 data unique값 1포인트, 점(마커)으로 표시
+# 복구하려면 아래 값을 True 로 변경
+_ECDF_STEP_LINES = False
+
+
 def cumulative_distribution_full(values):
     if values.size == 0:
         return np.empty(0), np.empty(0)
@@ -605,7 +612,7 @@ def cumulative_distribution_full(values):
     # 연속형(all-unique) 또는 실수형은 기존 방식(1포인트/unique값, 점 표현).
     has_duplicates = len(unique_vals) < values.size
     is_integer_data = has_duplicates and np.all(values == np.floor(values))
-    if is_integer_data:
+    if is_integer_data and _ECDF_STEP_LINES:
         y_starts = np.concatenate(([0.0], cum[:-1]))
         n = len(unique_vals)
         # NaN gap 패턴: [v, v, NaN] × n — NaN 위치에서 Excel 선이 끊겨 수직 선분만 표시
