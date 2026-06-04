@@ -11,6 +11,7 @@ UI 레이아웃은 .ui (Qt Designer 편집 가능) 에 정의, 런타임에 uic.
 import concurrent.futures
 import datetime
 import os
+import queue
 import re
 import sys
 import tempfile
@@ -69,6 +70,84 @@ def _validate_meta(product, lot_id, password):
     if password and (len(password) != 4 or not password.isdigit()):
         return "비밀번호는 숫자 4자리 또는 빈칸(미설정)으로 입력하세요."
     return None
+
+
+class _ElapsedProgress:
+    """QProgressDialog 라벨의 elapsed 시간을 메인 스레드에서 계속 갱신한다."""
+
+    def __init__(self, dialog, label, status_cb=None, busy=True):
+        self.dialog = dialog
+        self.status_cb = status_cb
+        self.busy = busy
+        self.started = time.monotonic()
+        self.label = label
+        self.status = None
+        self._last_secs = -1
+        self._last_rendered = None
+        self.update(force=True)
+
+    def _elapsed(self):
+        secs = int(time.monotonic() - self.started)
+        return secs, f"{secs // 60:02d}:{secs % 60:02d}"
+
+    def set(self, label=None, value=None, status=None, busy=None):
+        if label is not None:
+            self.label = label
+        if busy is not None:
+            self.busy = busy
+        if value is not None:
+            self.dialog.setValue(value)
+        if status is not None:
+            self.status = status
+            if self.status_cb is not None:
+                self.status_cb(status)
+        self.update(force=True)
+
+    def update(self, force=False):
+        secs, elapsed = self._elapsed()
+        if not force and secs == self._last_secs:
+            return
+        suffix = " (진행중)" if self.busy else ""
+        text = f"{self.label}  [{elapsed}]{suffix}"
+        if force or text != self._last_rendered:
+            self.dialog.setLabelText(text)
+            self._last_rendered = text
+        self._last_secs = secs
+        QApplication.processEvents()
+
+
+def _init_com_for_worker():
+    """Excel COM/xlwings 를 워커 스레드에서 쓸 수 있으면 초기화한다."""
+    try:
+        import pythoncom  # type: ignore
+    except Exception:
+        return None
+    try:
+        pythoncom.CoInitialize()
+        return pythoncom
+    except Exception:
+        return None
+
+
+def _co_uninitialize(com_module):
+    if com_module is None:
+        return
+    try:
+        com_module.CoUninitialize()
+    except Exception:
+        pass
+
+
+def _wait_for_future(future, progress, poll_cb=None, timeout=0.1):
+    while True:
+        if poll_cb is not None:
+            poll_cb()
+        progress.update()
+        done, _ = concurrent.futures.wait([future], timeout=timeout)
+        if done:
+            if poll_cb is not None:
+                poll_cb()
+            return future.result()
 
 
 def _timestamp():
@@ -343,11 +422,11 @@ class ReportSettingsDialog(QDialog):
         ok_btn = self.buttonBox.button(QDialogButtonBox.Ok)
         if ok_btn is not None:
             ok_btn.setText("Confirm")
-            ok_btn.setMinimumSize(300, 72)
+            ok_btn.setMinimumSize(150, 36)
             ok_btn.setDefault(True)
             ok_btn.setStyleSheet(
                 "QPushButton { font-size: 16pt; font-weight: 700; "
-                "padding: 14px 42px; background: #2f7de1; color: white; "
+                "padding: 7px 21px; background: #2f7de1; color: white; "
                 "border: 1px solid #1f62b8; border-radius: 6px; }"
                 "QPushButton:hover { background: #236cc7; }"
             )
@@ -805,6 +884,7 @@ class HoneyMainWindow(QMainWindow):
         prog.setWindowModality(Qt.WindowModal)
         prog.setMinimumDuration(0)
         prog.setValue(0)
+        progress = _ElapsedProgress(prog, "파일 로딩 준비 중...", self._status)
         QApplication.processEvents()
 
         class _Cancelled(Exception):
@@ -824,15 +904,13 @@ class HoneyMainWindow(QMainWindow):
                         done_set, _ = concurrent.futures.wait([fut], timeout=0.1)
                         elapsed = int(time.monotonic() - file_start)
                         if elapsed >= _SLOW_FILE_SEC:
-                            prog.setLabelText(
+                            label = (
                                 f"({i + 1}/{n_files})  {filename}  "
-                                f"전처리 계속해서 진행중입니다.")
+                                f"전처리 계속해서 진행중입니다."
+                            )
                         else:
-                            prog.setLabelText(
-                                f"({i + 1}/{n_files})  {filename}  "
-                                f"[{elapsed:02d}s] (진행중)")
-                        prog.setValue(i)
-                        QApplication.processEvents()
+                            label = f"({i + 1}/{n_files})  {filename}"
+                        progress.set(label, value=i)
                         if done_set:
                             break
                     results.append(fut.result())  # 로드 실패 시 여기서 예외 전파
@@ -924,99 +1002,121 @@ class HoneyMainWindow(QMainWindow):
         prog.setMinimumDuration(0)
         prog.setCancelButton(None)
         prog.setValue(0)
+        progress = _ElapsedProgress(prog, "분석 준비 중...", self._status)
         QApplication.processEvents()
 
-        start_dt = datetime.datetime.now()
-
-        def _elapsed():
-            secs = int((datetime.datetime.now() - start_dt).total_seconds())
-            return f"{secs // 60:02d}:{secs % 60:02d}"
-
         def _step(value, label):
-            prog.setLabelText(f"{label}  [{_elapsed()}] (진행중)")
-            prog.setValue(value)
-            self._status(label)
-            QApplication.processEvents()
+            progress.set(label, value=value, status=label)
 
         # 1) 데이터 검증/준비
         _step(1, "데이터 검증/준비 중...")
 
         # 2) 데이터 분석 (통계 · Bin 집계)
-        prog.setLabelText(f"데이터 분석 중... (통계 · Bin 집계)  [{_elapsed()}] (진행중)")
-        self._status("데이터 분석 중...")
-        QApplication.processEvents()
+        progress.set("데이터 분석 중... (통계 · Bin 집계)", status="데이터 분석 중...")
         try:
-            self.last_result = rg.analyze(
-                work_group, meta=rg.ReportMeta(),
-                selector=rg.ItemSelector(selected_items=selected),
-            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(
+                    rg.analyze,
+                    work_group,
+                    meta=rg.ReportMeta(),
+                    selector=rg.ItemSelector(selected_items=selected),
+                )
+                self.last_result = _wait_for_future(fut, progress)
         except Exception as exc:
             prog.close()
             QMessageBox.critical(self, "분석 실패", str(exc))
             self._status("분석 실패")
             self.btn_start.setEnabled(True)
             return
-        prog.setValue(2)
-        QApplication.processEvents()
+        progress.set("데이터 분석 완료", value=2)
 
         # 3) 요약 작성
-        prog.setLabelText("요약 작성 중...")
-        QApplication.processEvents()
+        progress.set("요약 작성 중...", status="요약 작성 중...")
         self._show_summary(self.last_result)
-        prog.setValue(3)
-        QApplication.processEvents()
+        progress.set("요약 작성 완료", value=3)
 
         base = self.le_outname.text().strip() or _suggest_base_name(self.csv_paths, self.group)
         out = _build_output_path(Path(self.csv_paths[0]).parent, base)
 
         # 4) 시트/차트 생성 (시트 1개당 1스텝, offset 3)
+        progress_events = queue.Queue()
+
         def _sheet_progress(done, total_s, name):
-            if name == "distribution":
-                return  # _dist_progress 가 처리
-            prog.setLabelText(
-                f"시트/차트 생성 중... ({name})   {done}/{total_s}  [{_elapsed()}] (진행중)")
-            prog.setValue(3 + done)
-            self._status(f"시트 생성 중... ({name})  {done}/{total_s}")
-            QApplication.processEvents()
+            progress_events.put(("sheet", done, total_s, name))
 
         _dist_state = {"base": 0, "n": 0}
 
         def _dist_progress(done, n_charts):
-            if _dist_state["n"] == 0:           # 첫 콜백: 프로그레스 바 max 확장
-                _dist_state["base"] = prog.value()
-                _dist_state["n"] = n_charts
-                prog.setMaximum(prog.maximum() + n_charts - 1)  # 1스텝 → N스텝
-            pct = done * 100 // n_charts if n_charts else 100
-            prog.setValue(_dist_state["base"] + done)
-            prog.setLabelText(
-                f"Distribution 차트 생성 중... ({done}/{n_charts} - {pct}%)"
-                f"  [{_elapsed()}] (진행중)")
-            self._status(f"Distribution {pct}%  ({done}/{n_charts})  [{_elapsed()}]")
-            QApplication.processEvents()
+            progress_events.put(("dist", done, n_charts, None))
 
         def _attach_progress(event, sheet_name, subject):
-            if event != "copy_picture":
-                return
-            msg = "Chart 복사 붙여넣기 진행중 잠시 기다려주세요"
-            prog.setLabelText(f"{msg}  [{_elapsed()}]")
-            self._status(msg)
-            QApplication.processEvents()
+            progress_events.put(("attach", event, sheet_name, subject))
 
-        prog.setLabelText(f"Excel 시트/차트 생성 중...  [{_elapsed()}] (진행중)")
-        self._status(f"xlsx 생성 중... (Excel)  → {Path(out).name}")
-        QApplication.processEvents()
+        def _drain_progress_events():
+            while True:
+                try:
+                    kind, a, b, c = progress_events.get_nowait()
+                except queue.Empty:
+                    break
+                if kind == "sheet":
+                    done, total_s, name = a, b, c
+                    if name == "distribution":
+                        continue  # _dist_progress 가 처리
+                    progress.set(
+                        f"시트/차트 생성 중... ({name})   {done}/{total_s}",
+                        value=3 + done,
+                        status=f"시트 생성 중... ({name})  {done}/{total_s}",
+                    )
+                elif kind == "dist":
+                    done, n_charts = a, b
+                    if _dist_state["n"] == 0 and n_charts:
+                        _dist_state["base"] = prog.value()
+                        _dist_state["n"] = n_charts
+                        prog.setMaximum(prog.maximum() + n_charts - 1)
+                    pct = done * 100 // n_charts if n_charts else 100
+                    value = _dist_state["base"] + done if n_charts else prog.value()
+                    progress.set(
+                        f"Distribution 차트 생성 중... ({done}/{n_charts} - {pct}%)",
+                        value=value,
+                        status=f"Distribution {pct}%  ({done}/{n_charts})",
+                    )
+                elif kind == "attach":
+                    event, sheet_name, subject = a, b, c
+                    if event != "copy_picture":
+                        continue
+                    msg = "Chart 복사 붙여넣기 진행중 잠시 기다려주세요"
+                    progress.set(f"{msg} ({sheet_name}: {subject})", status=msg)
+
+        progress.set(
+            f"Excel 시트/차트 생성 중...  → {Path(out).name}",
+            status=f"xlsx 생성 중... (Excel)  → {Path(out).name}",
+        )
         try:
-            xlsx_writer.write(self.last_result, out, sheets=sheets,
-                              colors=chart_colors.load_colors(),
-                              progress_cb=_sheet_progress, raw_sheets=raw,
-                              dist_progress_cb=_dist_progress,
-                              attach_progress_cb=_attach_progress)
+            colors = chart_colors.load_colors()
+
+            def _write_job():
+                com_module = _init_com_for_worker()
+                try:
+                    return xlsx_writer.write(
+                        self.last_result, out, sheets=sheets,
+                        colors=colors,
+                        progress_cb=_sheet_progress, raw_sheets=raw,
+                        dist_progress_cb=_dist_progress,
+                        attach_progress_cb=_attach_progress,
+                    )
+                finally:
+                    _co_uninitialize(com_module)
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_write_job)
+                _wait_for_future(fut, progress, poll_cb=_drain_progress_events)
         except Exception as exc:
             prog.close()
             QMessageBox.critical(self, "생성 실패", str(exc))
             self._status("xlsx 생성 실패")
             self.btn_start.setEnabled(True)
             return
+        _drain_progress_events()
 
         # 5) Excel 파일 저장 마무리
         _step(prog.maximum(), "Excel 파일 저장 마무리 중...")
@@ -1099,17 +1199,22 @@ class HoneyMainWindow(QMainWindow):
         prog.setWindowModality(Qt.WindowModal)
         prog.setMinimumDuration(0)
         prog.setCancelButton(None)
+        progress = _ElapsedProgress(
+            prog, f"서버 업로드 중... {Path(upload_path).name}", self._status)
         QApplication.processEvents()
 
         try:
-            result = uploader.post_xlsx(
-                upload_path,
-                product_type=v["product_type"],
-                product=v["product"],
-                lot_id=v["lot_id"],
-                password=v["password"],
-                issue_imgs=issue_imgs,
-            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(
+                    uploader.post_xlsx,
+                    upload_path,
+                    product_type=v["product_type"],
+                    product=v["product"],
+                    lot_id=v["lot_id"],
+                    password=v["password"],
+                    issue_imgs=issue_imgs,
+                )
+                result = _wait_for_future(fut, progress)
         except Exception as exc:
             prog.close()
             QMessageBox.critical(self, "업로드 실패", str(exc))
@@ -1177,18 +1282,36 @@ class HoneyMainWindow(QMainWindow):
         dlg.setAutoReset(False)
         dlg.setMinimumDuration(0)
         dlg.setValue(0)
+        progress = _ElapsedProgress(dlg, "업데이트 다운로드 중...", self.status.showMessage)
+        download_events = queue.Queue()
+        cancel_state = {"cancel": False}
 
         def _cb(done, total):
+            download_events.put((done, total))
+            return not cancel_state["cancel"]
+
+        def _drain_download_events():
             if dlg.wasCanceled():
-                return False
-            dlg.setLabelText(f"업데이트 다운로드 중... ({done // (1024*1024)}MB"
-                             + (f" / {total // (1024*1024)}MB)" if total else ")"))
-            dlg.setValue(int(done * 100 / total) if total else 0)
-            QApplication.processEvents()
-            return True
+                cancel_state["cancel"] = True
+            while True:
+                try:
+                    done, total = download_events.get_nowait()
+                except queue.Empty:
+                    break
+                label = f"업데이트 다운로드 중... ({done // (1024 * 1024)}MB"
+                label += f" / {total // (1024 * 1024)}MB)" if total else ")"
+                progress.set(label, value=int(done * 100 / total) if total else 0)
 
         try:
-            version_check.download_to(dest, url, expected_sha256=expected, progress_cb=_cb)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(
+                    version_check.download_to,
+                    dest,
+                    url,
+                    expected_sha256=expected,
+                    progress_cb=_cb,
+                )
+                _wait_for_future(fut, progress, poll_cb=_drain_download_events)
         except version_check.DownloadCancelled:
             dlg.close()
             self.status.showMessage("업데이트 취소됨")

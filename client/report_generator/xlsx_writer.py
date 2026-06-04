@@ -154,7 +154,7 @@ _YIELD_HEADER_ROW_HEIGHT = 40
 _NARROW_COL_WIDTH = 6.5    # bin / count / yield / avg / comment 등 짧은 데이터
 _DIST_COL_WIDTH   = 27.1   # Distribution 열 (썸네일 이미지 크기 기준)
 _ITEM_COL_WIDTH   = 20.0   # Item / Category 열 (긴 텍스트)
-_CPK_TEST_NAME_COL_WIDTH = 30
+_CPK_TEST_NAME_COL_WIDTH = 60
 _CPK_SERIES_COL_WIDTH = 15
 _CPK_N_COL_WIDTH = _NARROW_COL_WIDTH * 1.05
 _FAIL_VALUES_COLS  = ["DUT", "XCoord", "YCoord", "Bin", "Item", "Value"]
@@ -227,7 +227,10 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     for nm in ALL_SHEETS:
         sheet_name = _report_sheet_display_name(nm)
         if nm in table_writers and nm in sel and sheet_name in wb.sheetnames:
-            table_writers[nm](wb[sheet_name], result)
+            if nm == "issue_table":
+                _fill_issue_table(wb[sheet_name], result, include_cpk=("cpk" in sel))
+            else:
+                table_writers[nm](wb[sheet_name], result)
             done += 1
             _progress(progress_cb, done, total, nm)
 
@@ -252,12 +255,13 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
 
     # 시트별 Zoom 설정 + 눈금선 숨김 (openpyxl 단계)
     _ZOOM_80_SHEETS = {"fail_item", "issue_table", "distribution"}
+    raw_ws_ids = {id(ws) for ws in raw_ws_list}
     for nm in wb.sheetnames:
         nm_key = nm.lower().replace(" ", "_")
         zoom = 80 if any(z in nm_key for z in _ZOOM_80_SHEETS) else 100
         try:
             wb[nm].sheet_view.zoomScale = zoom
-            wb[nm].sheet_view.showGridLines = False
+            wb[nm].sheet_view.showGridLines = id(wb[nm]) in raw_ws_ids
         except Exception:
             pass
 
@@ -271,10 +275,12 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
         try:
             _write_distribution_xlwings(out_path, result, colors,
                                         attach_fail_item=("fail_item" in sel),
+                                        attach_issue_cpk=("cpk" in sel),
                                         dist_progress_cb=dist_progress_cb,
                                         attach_progress_cb=attach_progress_cb,
                                         write_main=want_dist,
-                                        extra_dist=diff_dist_specs)
+                                        extra_dist=diff_dist_specs,
+                                        raw_gridline_sheets=[ws.title for ws in raw_ws_list])
             done += 1 + len(diff_dist_specs)
             _progress(progress_cb, done, total, "distribution")
         except Exception as exc:
@@ -671,7 +677,7 @@ def _merge_cpk_subject(ws, n_rows, header_row=_HEADER_ROW, start_col=_START_COL)
             )
 
 
-def _fill_issue_table(ws, result):
+def _fill_issue_table(ws, result, include_cpk=True):
     """Category 그룹 레이아웃. Yield = yield 데이터, CPK = CPK < 1.33 아이템, ETC = 플레이스홀더."""
     src = result.sources
     header = ["Category", "Bin", "Item", "avg"]
@@ -692,9 +698,10 @@ def _fill_issue_table(ws, result):
 
     # CPK Category: CPK < 1.33 아이템 (source='total' 기준).
     # 카테고리 시작 행에 "item name" / "cpk" 서브헤더를 넣어 'avg' 헤더와의 혼동 방지.
-    cpk_fails = _cpk_fail_subjects(result)
+    cpk_fails = _cpk_fail_subjects(result) if include_cpk else []
     n_cpk = max(1, len(cpk_fails))
-    rows.append(["CPK", "", "item name", "cpk"] + [""] * len(src) + [""] * pad)
+    cpk_subheader = ["item name", "cpk"] if include_cpk else ["", ""]
+    rows.append(["CPK", "", cpk_subheader[0], cpk_subheader[1]] + [""] * len(src) + [""] * pad)
     if cpk_fails:
         for subj, cpk_val in cpk_fails:
             row = ["", "", subj, _sanitize_cell(cpk_val)]
@@ -728,6 +735,7 @@ def _fill_issue_table(ws, result):
         ws.row_dimensions[cpk_start + 1 + i].height = _ISSUE_TABLE_ROW_HEIGHT
 
     _apply_table_col_widths(ws, header, custom_widths={
+        "Item": _ITEM_COL_WIDTH * 2,
         "Distribution": 22.1,
         "comment": 40,
         "개발 1차 comment": 40,
@@ -738,8 +746,9 @@ def _fill_issue_table(ws, result):
     _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=False,
                               last_row=_HEADER_ROW + len(rows))
     # CPK 서브헤더(item name / cpk)는 폰트 패스 이후 헤더 스타일 재적용 — 굵게/음영 유지
-    _apply_hdr_style(ws.cell(row=cpk_start, column=_START_COL + 2))  # Item 열
-    _apply_hdr_style(ws.cell(row=cpk_start, column=_START_COL + 3))  # avg 열
+    if include_cpk:
+        _apply_hdr_style(ws.cell(row=cpk_start, column=_START_COL + 2))  # Item 열
+        _apply_hdr_style(ws.cell(row=cpk_start, column=_START_COL + 3))  # avg 열
 
 
 def _merge_issue_category(ws, n_yield, header_row=_HEADER_ROW, start_col=_START_COL):
@@ -1100,8 +1109,10 @@ def _report_sheet_display_name(name):
 # ── distribution (xlwings / Excel COM) ───────────────────────────────────────
 
 def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=False,
+                                attach_issue_cpk=True,
                                 dist_progress_cb=None, attach_progress_cb=None,
-                                write_main=True, extra_dist=None):
+                                write_main=True, extra_dist=None,
+                                raw_gridline_sheets=None):
     """openpyxl 로 저장된 파일을 열어 distribution 시트 + 차트를 추가한다.
 
     attach_fail_item=True 면 distribution 차트를 PNG 로 export 해 fail_item 시트에
@@ -1157,7 +1168,8 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
                     tmpdirs.append(tmpdir)
             if chart_map:
                 tmpdir = _attach_issue_table_charts(
-                    wb, result, chart_map, attach_progress_cb=attach_progress_cb
+                    wb, result, chart_map, include_cpk=attach_issue_cpk,
+                    attach_progress_cb=attach_progress_cb
                 )
                 if tmpdir:
                     tmpdirs.append(tmpdir)
@@ -1184,10 +1196,11 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
 
         # 모든 시트 눈금선 숨김 + Zoom 설정 (xlwings/Excel COM 단계 — distribution 포함)
         _XLWINGS_ZOOM_80 = {"fail_item", "issue_table", "distribution"}
+        raw_gridline_names = {str(n).lower() for n in (raw_gridline_sheets or [])}
         for s in wb.sheets:
             try:
                 s.activate()
-                app.api.ActiveWindow.DisplayGridlines = False
+                app.api.ActiveWindow.DisplayGridlines = s.name.lower() in raw_gridline_names
                 nm_key = s.name.lower().replace(" ", "_")
                 zoom = 80 if any(z in nm_key for z in _XLWINGS_ZOOM_80) else 100
                 app.api.ActiveWindow.Zoom = zoom
@@ -1267,7 +1280,8 @@ def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None):
     return tmpdir if seq > 0 else None
 
 
-def _attach_issue_table_charts(wb, result, chart_map, attach_progress_cb=None):
+def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
+                               attach_progress_cb=None):
     """issue_table 시트의 Distribution 열(각 데이터 행)에 해당 subject 차트 PNG 삽입.
 
     fail_item 과 동일한 COM Export 방식. dist_col 계산만 issue_table header 기준으로 다름.
@@ -1308,6 +1322,9 @@ def _attach_issue_table_charts(wb, result, chart_map, attach_progress_cb=None):
         if _attach_chart_picture(it, ch, png, f"it_chart_{seq}", left, top, w, h,
                                  "issue_table", subj, attach_progress_cb):
             _prof_count("pngs")
+
+    if not include_cpk:
+        return tmpdir if seq > 0 else None
 
     # CPK < 1.33 행 distribution 차트 부착 (+1: CPK 카테고리 서브헤더 행 보정)
     n_yield = len(result.yield_rows)
