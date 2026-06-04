@@ -360,6 +360,67 @@ const SESSION_ID = location.pathname.split("/").pop();
 const YIELD_COLS = ["item_name", "bin_number", "yield_percent", "fail_count",
                     "cpk_val", "mean_val", "stdev_val", "lsl", "usl", "unit"];
 
+// ── 없는 sheet 용 기본 표 골격(frame) ──────────────────────────────────────────
+// 업로드 xlsx 에 해당 sheet 가 없으면 헤더만 있는 빈 표(헤더 + 빈 행 1개)를 보여준다.
+// 동적 source 열({src}_count/_yield)은 sheet 가 없으면 알 수 없으므로 정적 열만 포함.
+// 헤더 값은 생성기 client/report_generator/xlsx_writer.py 레이아웃과 일치.
+const YIELD_FRAME_COLS = ["bin", "Item", "avg", "comment"];
+const ISSUE_FRAME_COLS = ["Category", "Bin", "Item", "avg", "Distribution",
+                          "comment", "개발 1차 comment", "PTE 2차 comment", "개발 2차 comment"];
+const SUMMARY_FRAME_BLOCKS = [
+  { label: "1. Device Feature",
+    headers: ["DEVICE", "Customer", "PKG_Type", "GrossDie", "Process Line", "EVT_Version"] },
+  { label: "2. Yield",
+    headers: ["Lot NO", "Yield", "Major Fail Bins", "Comment"] },
+  { label: "3. Evaluation Summary",
+    headers: ["Category", "Condition & Judge Limit", "Result"] },
+];
+
+// 헤더+빈 행 1개용 행 객체 (모든 열 빈 문자열)
+function frameRow(cols) { const o = {}; cols.forEach(c => { o[c] = ""; }); return o; }
+// summary blocks frame: 블록마다 빈 행 1개
+function summaryFrameData() {
+  return { blocks: SUMMARY_FRAME_BLOCKS.map(b => ({
+    label: b.label, headers: b.headers, rows: [b.headers.map(() => "")] })) };
+}
+
+// legacy summary dict 에 표시할 의미있는 내용이 있는지 (title 단독은 제외)
+function summaryDictHasContent(st) {
+  if (!st || typeof st !== "object") return false;
+  return !!((st.feature && Object.keys(st.feature).length) ||
+            (Array.isArray(st.yield_summary_text) && st.yield_summary_text.length) ||
+            (Array.isArray(st.major_fail_bins) && st.major_fail_bins.length) ||
+            (st.evaluation && Object.keys(st.evaluation).length) ||
+            (Array.isArray(st.raw_rows) && st.raw_rows.length));
+}
+
+// 표 3종이 "정말로 비었을 때"만 frame 구조로 시드 → 보기/수정/저장이 신규 포맷 경로를 탄다.
+// 판정 조건은 각 render* 의 emptyPanel fall-through 와 동일.
+function seedEmptyFrames() {
+  if (!DATA) return;
+  const summaryRows = DATA.summary;
+
+  // summary: blocks/grid 아니고 legacy dict 내용도 summary_rows 도 없을 때
+  if (!isSummaryBlocks(DATA.summary_text) && !isGrid(DATA.summary_text) &&
+      !summaryDictHasContent(DATA.summary_text) &&
+      !(Array.isArray(summaryRows) && summaryRows.length)) {
+    DATA.summary_text = summaryFrameData();
+  }
+
+  // yield: yield_text(list/grid) 미사용 그리고 legacy summary_rows 도 없을 때
+  if (!(Array.isArray(DATA.yield_text) && DATA.yield_text.length) &&
+      !isGrid(DATA.yield_text) &&
+      !(Array.isArray(summaryRows) && summaryRows.length)) {
+    DATA.yield_text = [frameRow(YIELD_FRAME_COLS)];
+  }
+
+  // issue: issue_table_text(list/grid) 미사용일 때
+  if (!(Array.isArray(DATA.issue_table_text) && DATA.issue_table_text.length) &&
+      !isGrid(DATA.issue_table_text)) {
+    DATA.issue_table_text = [frameRow(ISSUE_FRAME_COLS)];
+  }
+}
+
 // CSRF: 서버가 /view 응답에 내려준 double-submit 쿠키를 읽어 변경요청 헤더로 되돌려준다.
 function csrfToken() {
   const m = document.cookie.match(/(?:^|;\s*)report_csrf=([^;]+)/);
@@ -847,7 +908,9 @@ function renderDistribution(charts, distribution_url) {
 
   // 하위호환: 개별 갤러리
   if (!charts || !charts.length) {
-    emptyPanel(panel, "Distribution 차트 없음");
+    // distribution sheet 없음 → 표 대신 comment 만
+    panel.innerHTML = `<div class="section-title">Distribution</div>` +
+                      `<div class="placeholder">distribution 없음</div>`;
     return;
   }
   panel.innerHTML = `<div class="section-title">Distribution (${charts.length})</div>` +
@@ -1311,6 +1374,7 @@ async function load(resetMode=true) {
       return;
     }
     DATA = await res.json();
+    seedEmptyFrames();
     renderMeta(DATA.session || {});
     if (resetMode) {
       setMode("view");

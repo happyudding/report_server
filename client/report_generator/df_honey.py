@@ -29,6 +29,27 @@ from .constants import (
 from .csvfile_to_df import DF_YIELD_COLUMNS
 from .models import ReportMeta
 
+# FileName(=계열명) fallback 시 stem 절단 길이. Yield 의 sheetname(외부 honey_parse 가
+# 만든 10자리 절단 이름)과 일관되도록 df_yield 가 없을 때 path.stem 을 이만큼 자른다.
+_NAME_MAXLEN = 10
+
+
+def _sheetname_from_df_yield(df_yield) -> Optional[str]:
+    """df_yield 의 'sheetname' 컬럼에서 이 파일의 대표 sheetname(최빈값 1개) 반환.
+
+    Yield 시트가 그대로 출력하는 10자리 절단·자동생성 이름. 비어있거나 컬럼이 없으면
+    None — 호출자가 path.stem fallback 으로 처리.
+    """
+    if df_yield is None or getattr(df_yield, "empty", True):
+        return None
+    if "sheetname" not in df_yield.columns:
+        return None
+    vals = df_yield["sheetname"].dropna().astype(str)
+    vals = vals[vals.str.strip() != ""]
+    if vals.empty:
+        return None
+    return str(vals.mode().iloc[0])
+
 
 class df_honey:
     def __init__(self, df: pd.DataFrame, name: str,
@@ -61,9 +82,12 @@ class df_honey:
         rm = report_meta or ReportMeta()
         if not rm.source_path:
             rm.source_path = str(path)
+        # FileName(=계열명) = Yield 의 sheetname 과 통일. df_yield 가 비면 stem[:10] fallback.
+        sheetname = _sheetname_from_df_yield(df_yield)
         if not rm.sheet_name:
-            rm.sheet_name = path.stem
-        instance = cls(df, name=name or path.stem, report_meta=rm)
+            rm.sheet_name = sheetname or path.stem
+        canonical = name or sheetname or path.stem[:_NAME_MAXLEN]
+        instance = cls(df, name=canonical, report_meta=rm)
         instance.df_yield = df_yield
         return instance
 

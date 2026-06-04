@@ -592,7 +592,8 @@ def build_summary_rows(mass_data_map):
 # distribution (CDF)
 
 def to_numeric_clean(series):
-    return pd.to_numeric(series, errors="coerce").dropna().to_numpy()
+    arr = pd.to_numeric(series, errors="coerce")
+    return arr[np.isfinite(arr)].to_numpy()
 
 
 def cumulative_distribution_full(values):
@@ -600,11 +601,22 @@ def cumulative_distribution_full(values):
         return np.empty(0), np.empty(0)
     unique_vals, counts = np.unique(np.sort(values), return_counts=True)
     cum = np.cumsum(counts) / values.size * 100.0
-    # 각 unique 값을 2포인트(y_start, y_end)로 확장해 계단형 ECDF 선분 생성.
-    # 선으로 연결하면: 수직선(값의 구간) + 수평선(다음 값으로의 계단 발판) 자동 형성.
-    y_starts = np.concatenate(([0.0], cum[:-1]))
-    xs = np.repeat(unique_vals, 2)          # [v0,v0, v1,v1, ...]
-    ys = np.empty(len(xs))
-    ys[0::2] = y_starts                     # 짝수 인덱스: 구간 시작 %
-    ys[1::2] = cum                          # 홀수 인덱스: 구간 끝 %
+    # 정수형이고 중복이 있는 경우에만 step-function (2포인트/값, 선분 표현).
+    # 연속형(all-unique) 또는 실수형은 기존 방식(1포인트/unique값, 점 표현).
+    has_duplicates = len(unique_vals) < values.size
+    is_integer_data = has_duplicates and np.all(values == np.floor(values))
+    if is_integer_data:
+        y_starts = np.concatenate(([0.0], cum[:-1]))
+        n = len(unique_vals)
+        # NaN gap 패턴: [v, v, NaN] × n — NaN 위치에서 Excel 선이 끊겨 수직 선분만 표시
+        all_xs = np.full(3 * n, np.nan)
+        all_ys = np.full(3 * n, np.nan)
+        all_xs[0::3] = unique_vals   # 구간 시작 x
+        all_xs[1::3] = unique_vals   # 구간 끝 x (같은 값)
+        all_ys[0::3] = y_starts      # 구간 시작 %
+        all_ys[1::3] = cum           # 구간 끝 %
+        xs, ys = all_xs, all_ys
+    else:
+        xs = unique_vals
+        ys = cum
     return xs, ys

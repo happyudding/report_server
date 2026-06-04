@@ -81,7 +81,8 @@ _DIST_TITLE_PX = 30
 # Excel COM 상수 (distribution 차트 서식)
 _XL_VALUE, _XL_CATEGORY, _XL_PRIMARY = 2, 1, 1
 _XL_LOW = -4134               # xlLow (y축 TickLabelPosition)
-_XL_MARKER_NONE = -4142       # xlMarkerStyleNone
+_XL_MARKER_NONE   = -4142       # xlMarkerStyleNone
+_XL_MARKER_CIRCLE = 8           # xlMarkerStyleCircle (dot 방식 series)
 _MARKER_SIZE = 4             # data 점 크기(pt)
 # distribution 차트 제목: item 명(subject) / 둘째줄 limit 캡션(Lo~Hi)
 _CHART_TITLE_ITEM_FONT = 11   # item 명
@@ -1572,13 +1573,14 @@ def _add_dist_series(sc, data_api, spec):
     return limit_series, data_series
 
 
-def _style_series(limit_series, data_series, colors):
+def _style_series(limit_series, data_series, colors, step_flags=None):
     """limit/data series 스타일 일괄 적용."""
     for s in limit_series:
         _style_limit_series(s)
     for k, s in enumerate(data_series):
         rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
-        _style_data_series(s, rgb)
+        is_step = bool(step_flags[k]) if step_flags and k < len(step_flags) else False
+        _style_data_series(s, rgb, is_step)
 
 
 def _new_dist_chart(sh, spec, data_api, colors):
@@ -1592,7 +1594,9 @@ def _new_dist_chart(sh, spec, data_api, colors):
         ch.chart_type = "xy_scatter_lines_no_markers"
     _prof_count("series", len(limit_series) + len(data_series))
     with _prof("dist.style"):
-        _style_series(limit_series, data_series, colors)
+        step_flags = [len(xs) >= 2 and xs[0] == xs[1]
+                      for _, xs, _ in spec["series_list"]]
+        _style_series(limit_series, data_series, colors, step_flags)
     with _prof("dist.format"):
         _format_dist_chart(chart, spec["d"], spec["x_min"], spec["x_max"],
                            len(limit_series), spec["is_fail"])
@@ -1718,8 +1722,8 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
         if not series_list:
             continue
 
-        data_min = min(float(xs.min()) for _, xs, _ in series_list)
-        data_max = max(float(xs.max()) for _, xs, _ in series_list)
+        data_min = min(float(np.nanmin(xs)) for _, xs, _ in series_list)
+        data_max = max(float(np.nanmax(xs)) for _, xs, _ in series_list)
         lo, hi = d.lower_limit, d.upper_limit
         is_fail = (_isnum(lo) and data_min < float(lo)) or (_isnum(hi) and data_max > float(hi))
         x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
@@ -1738,8 +1742,10 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
         dcol = 5
         for _name, xs, ys in series_list:
             for j in range(len(xs)):
-                cells.append((top_row - 1 + j, dcol - 1, float(xs[j])))
-                cells.append((top_row - 1 + j, dcol, float(ys[j])))
+                x_val = None if np.isnan(xs[j]) else float(xs[j])
+                y_val = None if np.isnan(ys[j]) else float(ys[j])
+                cells.append((top_row - 1 + j, dcol - 1, x_val))
+                cells.append((top_row - 1 + j, dcol, y_val))
             max_len = max(max_len, len(xs))
             dcol += 2
         bot_row = top_row + max_len - 1
@@ -1782,72 +1788,84 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
 
     if standard:
         tspec = standard[0]
-        template = _new_dist_chart(sh, tspec, data_api, colors)  # 완전 서식
-        chart_map[tspec["d"].subject] = template
-        done_charts += 1
-        if dist_progress_cb:
-            dist_progress_cb(done_charts, n_dist_charts)
-        template_co = template.Parent  # ChartObject (Duplicate 원본)
-        # 클론이 fail 배경을 상속하지 않도록 중립화 (tspec 배경은 마지막에 재적용)
+        _tmpl_ok = False
         try:
-            template.ChartArea.Interior.ColorIndex = _XL_COLORINDEX_NONE
-        except Exception:
-            pass
-
-        restyle = False       # 복제 시 series 마커/선 서식이 리셋되는가
-        legend_fix = False    # 복제 시 limit 범례 entry 가 되살아나는가
-        coll = sh.api.ChartObjects()   # live 컬렉션 — Duplicate 후 Count 증가
-        for idx, spec in enumerate(standard[1:]):
-            with _prof("dist.series_add"):
-                template_co.Duplicate()
-                new_co = coll.Item(coll.Count)   # 방금 복제된 것(최고 인덱스)
-                # 크기는 Duplicate 가 복사 → 위치만 재설정
-                new_co.Left, new_co.Top = _chart_pos(spec["i"])
-                nchart = new_co.Chart
-                limit_series, data_series = _repoint_series(nchart, data_api, spec)
-            _prof_count("series", len(limit_series) + len(data_series))
-
-            if idx == 0:  # 첫 복제로 게이트 판정 (이후 동일하게 적용)
-                try:
-                    marker_ok = (nchart.SeriesCollection().Item(3).MarkerStyle
-                                 == _XL_MARKER_NONE)
-                except Exception:
-                    marker_ok = False
-                n_legend = 2 + len(spec["series_list"])
-                try:
-                    leg_count = nchart.Legend.LegendEntries().Count
-                except Exception:
-                    leg_count = n_legend
-                restyle = not marker_ok
-                legend_fix = (leg_count >= n_legend)
-                if _PROF_ON:
-                    print(f"[chart-profile] clone gate: marker_ok={marker_ok} "
-                          f"legend={leg_count}/{n_legend} → restyle={restyle} "
-                          f"legend_fix={legend_fix}", file=sys.stderr)
-
-            if restyle:
-                with _prof("dist.style"):
-                    _style_series(limit_series, data_series, colors)
-            with _prof("dist.format"):
-                _apply_per_chart(nchart, spec, legend_fix)
-            chart_map[spec["d"].subject] = nchart
+            template = _new_dist_chart(sh, tspec, data_api, colors)  # 완전 서식
+            chart_map[tspec["d"].subject] = template
+            _tmpl_ok = True
+        except Exception as _e:
+            print(f"[dist-chart] skip subject={tspec['d'].subject!r} (template): {_e}",
+                  file=sys.stderr)
+        finally:
             done_charts += 1
             if dist_progress_cb:
                 dist_progress_cb(done_charts, n_dist_charts)
-
-        # 템플릿 자신의 fail 배경 재적용 (중립화 되돌림)
-        if tspec["is_fail"]:
+        if not _tmpl_ok:
+            others = standard[1:] + others
+        else:
+            template_co = template.Parent  # ChartObject (Duplicate 원본)
+            # 클론이 fail 배경을 상속하지 않도록 중립화 (tspec 배경은 마지막에 재적용)
             try:
-                template.ChartArea.Interior.Color = _RGB_FAIL_BG
+                template.ChartArea.Interior.ColorIndex = _XL_COLORINDEX_NONE
             except Exception:
                 pass
 
+            restyle = False       # 복제 시 series 마커/선 서식이 리셋되는가
+            legend_fix = False    # 복제 시 limit 범례 entry 가 되살아나는가
+            coll = sh.api.ChartObjects()   # live 컬렉션 — Duplicate 후 Count 증가
+            for idx, spec in enumerate(standard[1:]):
+                try:
+                    with _prof("dist.series_add"):
+                        template_co.Duplicate()
+                        new_co = coll.Item(coll.Count)   # 방금 복제된 것(최고 인덱스)
+                        # 크기는 Duplicate 가 복사 → 위치만 재설정
+                        new_co.Left, new_co.Top = _chart_pos(spec["i"])
+                        nchart = new_co.Chart
+                        limit_series, data_series = _repoint_series(nchart, data_api, spec)
+                    _prof_count("series", len(limit_series) + len(data_series))
+
+                    if idx == 0:  # 첫 복제로 legend_fix 판정
+                        n_legend = 2 + len(spec["series_list"])
+                        try:
+                            leg_count = nchart.Legend.LegendEntries().Count
+                        except Exception:
+                            leg_count = n_legend
+                        legend_fix = (leg_count >= n_legend)
+
+                    # subject 마다 step 여부가 다를 수 있으므로 항상 restyle
+                    with _prof("dist.style"):
+                        step_flags = [len(xs) >= 2 and xs[0] == xs[1]
+                                      for _, xs, _ in spec["series_list"]]
+                        _style_series(limit_series, data_series, colors, step_flags)
+                    with _prof("dist.format"):
+                        _apply_per_chart(nchart, spec, legend_fix)
+                    chart_map[spec["d"].subject] = nchart
+                except Exception as _e:
+                    print(f"[dist-chart] skip subject={spec['d'].subject!r}: {_e}",
+                          file=sys.stderr)
+                finally:
+                    done_charts += 1
+                    if dist_progress_cb:
+                        dist_progress_cb(done_charts, n_dist_charts)
+
+            # 템플릿 자신의 fail 배경 재적용 (중립화 되돌림)
+            if tspec["is_fail"]:
+                try:
+                    template.ChartArea.Interior.Color = _RGB_FAIL_BG
+                except Exception:
+                    pass
+
     # 비표준 차트는 개별 빌드 (기존 경로)
     for spec in others:
-        chart_map[spec["d"].subject] = _new_dist_chart(sh, spec, data_api, colors)
-        done_charts += 1
-        if dist_progress_cb:
-            dist_progress_cb(done_charts, n_dist_charts)
+        try:
+            chart_map[spec["d"].subject] = _new_dist_chart(sh, spec, data_api, colors)
+        except Exception as _e:
+            print(f"[dist-chart] skip subject={spec['d'].subject!r}: {_e}",
+                  file=sys.stderr)
+        finally:
+            done_charts += 1
+            if dist_progress_cb:
+                dist_progress_cb(done_charts, n_dist_charts)
 
     _prof_count("charts", len(chart_map))
     _finalize_title_row(sh)
@@ -1880,20 +1898,39 @@ def _style_limit_series(s):
         pass
 
 
-def _style_data_series(s, rgb=None):
-    """data series: 계단형 ECDF 선 — 마커 없이 선만 표시."""
-    try:
-        line = s.Format.Line
-        line.Visible = _MSO_TRUE            # 선 명시적 활성화 (MarkerStyle 변경이 선을 숨길 수 있음)
-        line.Weight = _MARKER_SIZE / 2.0
+def _style_data_series(s, rgb=None, is_step=False):
+    """data series 스타일: step 여부에 따라 선분 또는 점."""
+    if is_step:
+        # 정수형 중복 data: 선분으로 표현
+        try:
+            line = s.Format.Line
+            line.Visible = _MSO_TRUE
+            line.Weight = _MARKER_SIZE / 2.0
+            if rgb is not None:
+                line.ForeColor.RGB = rgb
+        except Exception:
+            pass
+        try:
+            s.MarkerStyle = _XL_MARKER_NONE
+        except Exception:
+            pass
+    else:
+        # 연속형 data: 기존 점 방식
+        try:
+            s.Format.Line.Visible = _MSO_FALSE
+        except Exception:
+            pass
+        try:
+            s.MarkerStyle = _XL_MARKER_CIRCLE
+            s.MarkerSize = _MARKER_SIZE
+        except Exception:
+            pass
         if rgb is not None:
-            line.ForeColor.RGB = rgb
-    except Exception:
-        pass
-    try:
-        s.MarkerStyle = _XL_MARKER_NONE     # 마커 제거 — 선만으로 표현
-    except Exception:
-        pass
+            try:
+                s.MarkerBackgroundColor = rgb
+                s.MarkerForegroundColor = rgb
+            except Exception:
+                pass
 
 
 def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
@@ -1966,7 +2003,8 @@ def _isnum(v):
     if v is None:
         return False
     try:
-        return not math.isnan(float(v))
+        f = float(v)
+        return not math.isnan(f) and not math.isinf(f)
     except (TypeError, ValueError):
         return False
 
