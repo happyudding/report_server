@@ -505,31 +505,104 @@ class ReportSettingsDialog(QDialog):
         self.accept()
 
 
-def _prepare_upload_xlsx(src_path: str) -> tuple:
-    """zip 유효성 검증 + distribution 시트 제거 임시 xlsx 생성.
+def _png_from_picture(pic):
+    """Excel Picture shape 를 클립보드 PNG 포맷으로 추출. 실패 시 None."""
+    import win32clipboard
+    pic.api.Copy()
+    fmt = win32clipboard.RegisterClipboardFormat("PNG")
+    win32clipboard.OpenClipboard()
+    try:
+        if win32clipboard.IsClipboardFormatAvailable(fmt):
+            return bytes(win32clipboard.GetClipboardData(fmt))
+    finally:
+        win32clipboard.CloseClipboard()
+    return None
 
-    반환: (upload_path: str, is_tmp: bool)
-    distribution 이 없거나 openpyxl 미설치이면 원본 경로를 그대로 반환(is_tmp=False).
+
+def _extract_via_xlwings(src_path, header_row=3):
+    """xlsx 를 xlwings(Excel COM)로 열어 (DRM 자동 복호화) 시트 값을 openpyxl 로
+    위치 보존 재구성. distribution/_dist* 시트는 제외, issue_table 이미지는 추출.
+
+    반환: (tmp_path, issue_imgs). 실패 시 예외 raise (caller 가 fallback 처리).
+    """
+    import openpyxl
+    import xlwings as xw
+
+    app = xw.App(visible=False, add_book=False)
+    app.display_alerts = False
+    app.screen_updating = False
+    wb = None
+    try:
+        wb = app.books.open(src_path)
+        out_wb = openpyxl.Workbook()
+        out_wb.remove(out_wb.active)          # 기본 빈 시트 제거
+        issue_imgs = []
+        for sheet in wb.sheets:
+            low = sheet.name.lower()
+            if low == "distribution" or low.startswith("_dist"):
+                continue
+            ws = out_wb.create_sheet(title=sheet.name)
+            rng = sheet.used_range
+            r0, c0 = rng.row, rng.column        # 1-based 시작 위치(위치 보존용)
+            values = rng.options(ndim=2).value  # 항상 2D 로 정규화
+            for i, row_vals in enumerate(values):
+                for j, val in enumerate(row_vals):
+                    if val is not None:
+                        ws.cell(row=r0 + i, column=c0 + j, value=val)
+            if low == "issue_table":
+                for pic in sheet.pictures:
+                    ri = int(pic.api.TopLeftCell.Row) - (header_row + 1)  # 0-based
+                    if ri < 0:
+                        continue
+                    png = _png_from_picture(pic)
+                    if png:
+                        issue_imgs.append({"row": ri, "png": png})
+        tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+        tmp.close()
+        out_wb.save(tmp.name)
+        return tmp.name, sorted(issue_imgs, key=lambda x: x["row"])
+    finally:
+        try:
+            if wb is not None:
+                wb.close()
+        finally:
+            app.quit()
+
+
+def _prepare_upload_xlsx(src_path: str) -> tuple:
+    """업로드용 xlsx 전처리. 반환: (upload_path, is_tmp, issue_imgs).
+
+    1순위: xlwings(Excel COM) — DRM 자동 복호화 + distribution 제외 + 이미지 추출.
+    2순위(fallback): zip 검증 + openpyxl distribution 제거 (일반 xlsx 전용, 이미지 없음).
     is_tmp=True 이면 호출자가 upload 후 upload_path 를 삭제해야 한다.
     """
+    # 1순위: xlwings 로 재구성 (DRM·일반 모두 처리)
+    try:
+        tmp_path, issue_imgs = _extract_via_xlwings(src_path)
+        return tmp_path, True, issue_imgs
+    except Exception:
+        pass  # Excel 미설치/COM 실패 → openpyxl fallback 시도
+
+    # 2순위(fallback): zip 검증 + distribution 제거
     try:
         with zipfile.ZipFile(src_path):
             pass
     except zipfile.BadZipFile:
         raise ValueError(
-            "선택한 파일이 유효한 xlsx(zip) 형식이 아닙니다.\n"
-            "Excel에서 다시 저장한 후 시도하세요.")
+            "선택한 파일을 처리할 수 없습니다.\n"
+            "DRM(NASCA) 파일은 Excel 이 설치된 PC 에서만 업로드할 수 있고,\n"
+            "그 외에는 Excel 에서 일반 xlsx 로 다시 저장한 뒤 시도하세요.")
 
     try:
         import openpyxl
     except ImportError:
-        return src_path, False
+        return src_path, False, []
 
     wb = openpyxl.load_workbook(src_path)
     dist_names = [s for s in wb.sheetnames if s.lower() == "distribution"]
     if not dist_names:
         wb.close()
-        return src_path, False
+        return src_path, False, []
 
     for name in dist_names:
         del wb[name]
@@ -537,7 +610,7 @@ def _prepare_upload_xlsx(src_path: str) -> tuple:
     tmp.close()
     wb.save(tmp.name)
     wb.close()
-    return tmp.name, True
+    return tmp.name, True, []
 
 
 # ───────────────────────────────────────────────────────────────────────────
@@ -1006,9 +1079,9 @@ class HoneyMainWindow(QMainWindow):
 
         self.btn_upload_local.setEnabled(False)
 
-        # ── xlsx 전처리: zip 유효성 검증 + distribution 시트 제거 ─────────
+        # ── xlsx 전처리: xlwings 복호화/재구성 (실패 시 openpyxl fallback) ─────
         try:
-            upload_path, is_tmp = _prepare_upload_xlsx(path)
+            upload_path, is_tmp, issue_imgs = _prepare_upload_xlsx(path)
         except ValueError as exc:
             QMessageBox.critical(self, "파일 오류", str(exc))
             self.btn_upload_local.setEnabled(True)
@@ -1017,7 +1090,7 @@ class HoneyMainWindow(QMainWindow):
             QMessageBox.warning(
                 self, "전처리 경고",
                 f"xlsx 전처리 중 오류가 발생해 원본 파일로 업로드합니다:\n{exc}")
-            upload_path, is_tmp = path, False
+            upload_path, is_tmp, issue_imgs = path, False, []
 
         # ── 서버 업로드 ───────────────────────────────────────────────────
         prog = QProgressDialog(
@@ -1035,6 +1108,7 @@ class HoneyMainWindow(QMainWindow):
                 product=v["product"],
                 lot_id=v["lot_id"],
                 password=v["password"],
+                issue_imgs=issue_imgs,
             )
         except Exception as exc:
             prog.close()
@@ -1052,12 +1126,14 @@ class HoneyMainWindow(QMainWindow):
         prog.close()
 
         sid = result.get("session_id", "?")
+        issue_saved = result.get("issue_images_saved", 0)
         QMessageBox.information(
             self, "업로드 완료",
             f"session_id: {sid}"
+            f"\nIssue 이미지: {issue_saved}장"
             + f"\n\n브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
         )
-        self._status("업로드 완료")
+        self._status(f"업로드 완료 (Issue 이미지 {issue_saved}장)")
         self.btn_upload_local.setEnabled(True)
 
     # ── version check (기존 로직 무변경) ────────────────────────────────────

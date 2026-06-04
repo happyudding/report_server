@@ -1,102 +1,23 @@
+Progress Bar 에서 시간이 step 마다 멈춰 있는데 시간은 초단위로 따로 계속 흘러갔으면 좋겠다. 멈춰 있으니까 마치 tool 이 멈춰 있는것 처럼 보인다. 모든 Progress bar 에 그렇게 적용 가능할까?
 
 
+excel 생성 관련
+CPK 가 생성 안되는 상태(option 에서 CPK uncheck 상태)면 Issue Table 에 CPK 부분은 빈칸으로 놔둬줘
+Cpk Item명 C열 ISsue_table D열 열너비 2배로 해줘 (Item 명)
+Raw data check 했을때 만들어지는 sheet 는 눈금선 추가해줱
 
-Server Web UI  관련
-1. MD 를 MDDI PD 를 PDDI PM 을 PMIC SE 을 SECURITY 로 변경해줘
-2. 현재 이 프로젝트 clone 후 start.bat 실행하면 .venv 가 없어서 python 을 못찾고 실패 합니다. 아래 2가지 사항 수정 부탁드립니다.
-1). server/start.bat venv 없으면 자동 생성
-:py_ok 라벨 바로 아래에 venv 자동 생성 블록 추가 -> 이렇게 하면 clone 직후 start.bat 실행하면 venv생성 + 패키지 설치 + 서버 기동 까지 됩니다.
-2) server/wsgi.py 루트(/) 리 다이렉트 추가
-app.register_blueprint(honey_bp) 바로 아래에 3줄 추가
+Main ui
+Product Type, Local File Server upload 버튼 반반 나눠주고 Local File server upload 버튼은 grid 내 버튼 꽉채워줘
 
-from flask import redirect
-@app.route("/")
-def _root()
-	return redirect("/pe/report/")
+client/honey_main.py 수정해줘
+배경 : NASCA DRM xlsx 는 ZIP 이 아니라 zipfile.zipFILE() 검증에서 차단됨. xlwings 로 우회해야함.
 
-3. Main 화면 우상단에 HONEY Download 버튼 만들어 주고 server 에서 들고 있는 다운로드 버튼 클라이언트가 누르면 Honey 설치 파일을 다운로드 받을수 있게 해줘 우선 Honey 설치 파일은 어떤 방식으로 구성할지 너가 한번 현재 pyinstaller 로 하는 방식을 참조 해서 고민해줘 그리고 현재 HONEY 가 clinet 에서 실행되면 초기에 서버와 통신하면서 version check 를 하게 되어 있는데 그 부분도 문제 없는지 확인해줘 내가 원하는건 클라이언트가 실행하고 -> 서버에서 다른 버전의 setup 파일이 있으면 클라이언트에게 메시지 하나 띄우고(update 하시겠습니까?) 예 누르면 서버에 새로운 setup 파일을 클라이언트에게 honey project 를 덮어쓰기나 새로운 설치 로 업데이트하게 하는의도야.
-
-
-Client Main UI 관련
-1. File 경로 display 해주는 부분 칸이랑 글씨 크기 더 작게 해줘 지금 보다 font 1개 정도 더 작게
-2. Start 버튼 오른쪽 끝으로 보내주고 save file name 더 길게 해주고 끝에 .xlsx 붙여줘
-3. Status 창 제목에 title 로 Status 넣어줘
-4. MD 를 MDDI PD 를 PDDI PM 을 PMIC SE 을 SECURITY 로 변경해줘 
-5. CSV OPEN D1 에서 불러오기 를 file 경로 나오는거 왼쪽 grid 로 이동시켜줘 
-6. CSV OPEN 은 LOCAL FILE OPEN 으로 이름 변경
-7. 사용자가 legend 명 을 정할수있께 하는 UI 추가 해줘 이 기능을 Filename change 로 정할거야 Filename 이라는 개념은 그 개념이야 file 명에서 일부 catch 해와서 하는 개념으로 (sheetname 이라는 용어를 내가 코드내에서 썻었던거같은데 앞으로는 filename 이라고 하고 싶어)각 input file 에 대한 legend 명이야. 해당 UI 는 Options UI 에 버튼 하나 추가해줘 버튼 위치는 좌우 화살표 넘겨주는곳 바로 위쪽이야 이름은 FileName Change 로 만들어줘 버튼을 누르면 기존의 Filename 을 Filename_A, Filename_B, Filename_C 라고 가정했을때 text 입력창이 하나 뜨면서 미리 입력되어 있는 text 창에 Filename_A,Filename_B,Filename_C 가 입력 되어있고 사용자가 수정할수있게 해줘 즉 comma 로 input file 3개(예시임) 에 대한 사용자가 지정하는걸 구분하겠다는 의미야 
-
-Layout 관련
-1. 각 sheet 의 Title 전부 좌측 정렬 해줘
-2. cnt yield cnt yield 이런식이 아니라 cnt cnt cnt yield yield yield 이런식으로 되게 정리해줘 yield, fail_item, Issue table 모두다 
-
-
-
-
--=-------------- 이미 입력함 -------------
-서버 xlsx file upload 관련
-1. 서버에 Upload 했을때 지금 Summary, Yield, Issue_TAble, Distribution 이 올라가는데 
-2. Summary Yield Issue Table 의 text 와 table 은 최대한 원형 그대로 (원형이라는 말은 내용과 표의 셀 개수등은 당연히 들어가야 하며 Font 크기나 행너비 열너비 등이 최대한 동일한 비율로 올라가게) 해줘
-특정 부분에서 index 를 잡고 data 를 grep 해야 될거같은데 
-Summary 는 B4 에 "DEVICE"
-Yield 는 B3 에 "BIN"
-IssueTable 은 는 C3 에 "BIN" 
-은 사용자가 수정할 확률이 적어서 우선 이거 기준으로 전체 각 표에 있는 text data 를 grep 해서 가져오는 방식으로 하고 혹시 이 위치가 search 가 안됬을 경우에는 해당 keyword 를 찾아보고 있으면 거기를 기준 index 로 가져 온다.
-text를 가져올때는 해당 page 에 있는 text 전체를 가져오지 말고 정해진 table (현재 column 명이 있는) 까지만 grep 해서 가져 오도록한다.
-
-
-
-***아래는 외부 프로젝트에서 s3 drive 에 입력 출력 하는 방식에 대한 내용이다 
-중요 : 해당 내용을 참고 해서 코드 작성 할수 있또록 기본적인 틀만 만들고 나중에 외부 프로젝트와 브랜치 하기 용이 하도록만 구성하되 현재 코드에도 어느정도 구현되는 선이면 좋을거같다 (서버내의 s3_storage 를 이용). 
-
-결국 report 내용을 webpage 에 display 하기 위해 DB 와 S3 에 저장하고 세션 재호출 되었을때 다시  DB(text) 와 S3(png) 에서 가져오는 흐름만 만들면 된다.
-
-report 와의 s3 의 관계 : IssueTable sheet 와 Distribution 의 차트 data 는 PNG file 로 export 해서 S3 서버에 저장한다. 우선 issuetable 의 distribution 은 각각의 PNG file 을 S3 에 저장하고 그 경로를 DB 에 들고있어서 나중에 세션이 재 호출될때 S3 에서 불러와서 해당 위치에 display 시킨다. Distribution 의 차트 data 는 차트 전체를 하나의 PNG 로 export 하고 S3 에 저장하며 세션 재 호출시 S3 에서 해당 PNG load 해서 display 하도록 한다. 
-
-현재 S3 코드 구조
-파일 구성
-
-S3/
-- S3_config.py # 연결 설정 (credentials + client 생성)
-- s3_drive.py # 기능 함수들
-S3/s3_config.py - 연결 설정
-
-.env 파일 (프로젝트 루트)
-├── load_dotenv() 로딩
-│   ├── S3_ACCESS_KEY
-│   ├── S3_SECRET_KEY
-│   ├── S3_ENDPOINT = http://s3.dataplatform.samsungds.net:9020 (이부분은 나중에 브랜치 할때 변경 반영될 부분)
-│   ├── S3_NAMESPACE = org-lsi_pte_group-slsi
-│   ├── S3_BUCKET = AI_EDS
-│   ├── S3_FOLDER = PE_Report/Test
-
-get_s3_client() -> boto3.client 반환
-S3/s3_drive.py - 기능함수
-함수 입력 반환 용도
-build_key(report_id, item_name, timestamp, ext) 식별자들 str(S3 key) 키 이름 조합
-upload_png(local_path, report_id, item_name, timestamp) 로컬 경로 + 식별자 str key 단일 업로드
-upload_pngs(items, max workers =8) list[dict] list[dict] 다수 병렬 업로드
-download_png(key, local_path) S3 Key+저장경로 str 로컬경로 다운로드
-get_presigned_url(key, expires=3600) S3 key str URL 웹 조회용 URL
-list_pngs(prefix="") 접두사 (옵션) list[str] 파일 목록
-delete_png(key) S3 key bool 삭제
-exists(key) S3key bool 존재 확인
-S3 key 네이밍 규칙
-
-키 규칙 :
-PE_Report/Test/{report_id}_{item_name}_{YYYYMMDD_HHMMSS}.png
-
-pipeline 흐름
-업로드 (리포트 생성 시)
-
-차트생성 ->temp/*.png저장
-upload_pngs(items)
-items:[{"local_path","report_id","item_name"},...]
-return:[{"key","ok","error"},...]
-key 를 DB/메타데이터에 저장
-조회(웹 리포트 열람 시)
-
-DB 에서 Key 조회
-get_presigned_url(key, expires=3600)
-return:URL(1시간 유효)
-<img src="{url}" 에 삽입
+수정 내용 3가지 
+_extract_via_xlwings(src_path)함수 추가
+xw.app(visible=False, add_book=False) 로 열어 DRM 자동 복호화
+각 시트 cell 값을 used_range.value 로 읽어 openpyxl workbook 에 위치 보존하며 복사(distribution/_dist 시트 제외)
+issue_table 시트 이미지는 sheet.pictures -> pic.api.Copy() -> win32clipboard PNG format 으로 추출, row 는 pic.api.Topleftcell.row - (header_row+1)(0-based)
+tempfile 에 저장 후 (tmp_path, issue_imgs) 반환, finally 에서 wb.close(); app.quit()
+2. _prepare_upload_xlsx() 반환 을 3tuple 로 변경
+BadzipFile 시에 헤더에 "NASCA" 있으면 _extract_via_xlwings() 호출, 실패 시 에러
+3. _do_upload() 에서 3-tuple 언패킹 후 uploader.post_xlsx(..., issue_imgs = issue_imgs) 추가
