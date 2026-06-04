@@ -16,6 +16,7 @@ import re
 import sys
 import tempfile
 import time
+import traceback
 import zipfile
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from PyQt5.QtGui import QColor, QFont, QIntValidator
 from PyQt5.QtWidgets import (
     QAbstractItemView, QApplication, QColorDialog, QDialog, QDialogButtonBox, QFileDialog,
     QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
-    QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
+    QListWidgetItem, QMainWindow, QMessageBox, QPushButton,
     QTableWidgetItem, QVBoxLayout,
 )
 
@@ -73,10 +74,10 @@ def _validate_meta(product, lot_id, password):
 
 
 class _ElapsedProgress:
-    """QProgressDialog 라벨의 elapsed 시간을 메인 스레드에서 계속 갱신한다."""
+    """메인 UI Status progress bar 의 elapsed 시간을 계속 갱신한다."""
 
-    def __init__(self, dialog, label, status_cb=None, busy=True):
-        self.dialog = dialog
+    def __init__(self, bar, label, status_cb=None, busy=True, minimum=0, maximum=100):
+        self.bar = bar
         self.status_cb = status_cb
         self.busy = busy
         self.started = time.monotonic()
@@ -84,6 +85,12 @@ class _ElapsedProgress:
         self.status = None
         self._last_secs = -1
         self._last_rendered = None
+        self.token = int(self.bar.property("_honey_progress_token") or 0) + 1
+        self.bar.setProperty("_honey_progress_token", self.token)
+        self.bar.setRange(0, 0) if busy and maximum == 0 else self.bar.setRange(minimum, maximum)
+        self.bar.setValue(minimum)
+        self.bar.setFormat("")
+        self.bar.show()
         self.update(force=True)
 
     def _elapsed(self):
@@ -96,12 +103,21 @@ class _ElapsedProgress:
         if busy is not None:
             self.busy = busy
         if value is not None:
-            self.dialog.setValue(value)
+            self.bar.setValue(value)
         if status is not None:
             self.status = status
             if self.status_cb is not None:
                 self.status_cb(status)
         self.update(force=True)
+
+    def value(self):
+        return self.bar.value()
+
+    def maximum(self):
+        return self.bar.maximum()
+
+    def set_maximum(self, value):
+        self.bar.setMaximum(value)
 
     def update(self, force=False):
         secs, elapsed = self._elapsed()
@@ -110,10 +126,48 @@ class _ElapsedProgress:
         suffix = " (진행중)" if self.busy else ""
         text = f"{self.label}  [{elapsed}]{suffix}"
         if force or text != self._last_rendered:
-            self.dialog.setLabelText(text)
+            self.bar.setFormat(text)
             self._last_rendered = text
         self._last_secs = secs
         QApplication.processEvents()
+
+    def success(self, text, value=None, hide_ms=5000):
+        was_indeterminate = self.bar.minimum() == 0 and self.bar.maximum() == 0
+        if value is None:
+            value = 100 if was_indeterminate else self.bar.maximum()
+        if was_indeterminate:
+            self.bar.setRange(0, 100)
+        self.busy = False
+        self.bar.setValue(value)
+        self.label = text
+        self.bar.setFormat(text)
+        if self.status_cb is not None:
+            self.status_cb(text)
+        self._hide_later(hide_ms)
+        QApplication.processEvents()
+
+    def fail(self, text, hide_ms=8000):
+        if self.bar.minimum() == 0 and self.bar.maximum() == 0:
+            self.bar.setRange(0, 100)
+        self.busy = False
+        self.bar.setValue(0)
+        self.label = text
+        self.bar.setFormat(text)
+        if self.status_cb is not None:
+            self.status_cb(text)
+        self._hide_later(hide_ms)
+        QApplication.processEvents()
+
+    def _hide_later(self, ms):
+        token = self.token
+
+        def _hide_if_current():
+            if int(self.bar.property("_honey_progress_token") or 0) != token:
+                return
+            self.bar.hide()
+            self.bar.setFormat("")
+
+        QTimer.singleShot(ms, _hide_if_current)
 
 
 def _init_com_for_worker():
@@ -584,56 +638,98 @@ class ReportSettingsDialog(QDialog):
         self.accept()
 
 
-def _png_from_picture(pic):
-    """Excel Picture shape 를 클립보드 PNG 포맷으로 추출. 실패 시 None."""
+def _png_from_com_shape(shape):
+    """Excel COM Shape 를 클립보드 PNG 포맷으로 추출. 실패 시 1회 재시도 후 None.
+
+    shape.Copy() 후 클립보드 반영까지 약간의 지연이 필요하므로 sleep(0.05) 한다.
+    """
     import win32clipboard
-    pic.api.Copy()
     fmt = win32clipboard.RegisterClipboardFormat("PNG")
-    win32clipboard.OpenClipboard()
-    try:
-        if win32clipboard.IsClipboardFormatAvailable(fmt):
-            return bytes(win32clipboard.GetClipboardData(fmt))
-    finally:
-        win32clipboard.CloseClipboard()
+    for _ in range(2):  # 원샷 + 재시도 1회
+        try:
+            shape.Copy()
+            time.sleep(0.05)  # 클립보드 반영 대기
+            win32clipboard.OpenClipboard()
+            try:
+                if win32clipboard.IsClipboardFormatAvailable(fmt):
+                    data = win32clipboard.GetClipboardData(fmt)
+                    if data:
+                        return bytes(data)
+            finally:
+                win32clipboard.CloseClipboard()
+        except Exception:  # noqa: BLE001
+            pass
     return None
 
 
-def _extract_via_xlwings(src_path, header_row=3):
-    """xlsx 를 xlwings(Excel COM)로 열어 (DRM 자동 복호화) 시트 값을 openpyxl 로
+def _normalize_grid(value):
+    """win32com Range.Value (단일셀=scalar, 다중셀=tuple-of-tuples) 를 2D 리스트로 정규화.
+
+    날짜 셀은 pywintypes 시간객체로 오므로 파이썬 datetime 으로 변환한다
+    (xlwings 동작 보존 + openpyxl 저장 깨짐 방지).
+    """
+    def _conv(v):
+        # pywintypes time 류: year 등 속성을 갖지만 숫자/문자열은 아님
+        if hasattr(v, "year") and not isinstance(v, (int, float, str)):
+            try:
+                return datetime.datetime(
+                    int(v.year), int(v.month), int(v.day),
+                    int(v.hour), int(v.minute), int(v.second))
+            except Exception:  # noqa: BLE001
+                return v
+        return v
+
+    if not isinstance(value, (tuple, list)):           # 단일 셀 (scalar)
+        return [[_conv(value)]]
+    if not value or not isinstance(value[0], (tuple, list)):  # 1D
+        return [[_conv(x) for x in value]]
+    return [[_conv(x) for x in row] for row in value]  # 2D
+
+
+def _extract_via_excel_com(src_path, header_row=3):
+    """xlsx 를 win32com(Excel COM)으로 직접 열어 (DRM 자동 복호화) 시트 값을 openpyxl 로
     위치 보존 재구성. distribution/_dist* 시트는 제외, issue_table 이미지는 추출.
+
+    xlwings 의 gencache.EnsureDispatch 가 PyInstaller(frozen) 환경에서 실패하므로,
+    late-binding DispatchEx 로 Excel 을 직접 제어한다 (gen_py 캐시 불필요).
 
     반환: (tmp_path, issue_imgs). 실패 시 예외 raise (caller 가 fallback 처리).
     """
     import openpyxl
-    import xlwings as xw
+    import pythoncom
+    import win32com.client
 
-    app = xw.App(visible=False, add_book=False)
-    app.display_alerts = False
-    app.screen_updating = False
+    pythoncom.CoInitialize()
+    excel = None
     wb = None
     try:
-        wb = app.books.open(src_path)
+        excel = win32com.client.DispatchEx("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        wb = excel.Workbooks.Open(src_path, UpdateLinks=0, ReadOnly=True)
+
         out_wb = openpyxl.Workbook()
         out_wb.remove(out_wb.active)          # 기본 빈 시트 제거
         issue_imgs = []
-        for sheet in wb.sheets:
-            low = sheet.name.lower()
+        for sht in wb.Worksheets:
+            name = sht.Name
+            low = name.lower()
             if low == "distribution" or low.startswith("_dist"):
                 continue
-            ws = out_wb.create_sheet(title=sheet.name)
-            rng = sheet.used_range
-            r0, c0 = rng.row, rng.column        # 1-based 시작 위치(위치 보존용)
-            values = rng.options(ndim=2).value  # 항상 2D 로 정규화
+            ws = out_wb.create_sheet(title=name)
+            ur = sht.UsedRange
+            r0, c0 = ur.Row, ur.Column        # 1-based 시작 위치(위치 보존용)
+            values = _normalize_grid(ur.Value)  # 항상 2D 로 정규화
             for i, row_vals in enumerate(values):
                 for j, val in enumerate(row_vals):
                     if val is not None:
                         ws.cell(row=r0 + i, column=c0 + j, value=val)
             if low == "issue_table":
-                for pic in sheet.pictures:
-                    ri = int(pic.api.TopLeftCell.Row) - (header_row + 1)  # 0-based
+                for shape in sht.Shapes:
+                    ri = int(shape.TopLeftCell.Row) - (header_row + 1)  # 0-based
                     if ri < 0:
                         continue
-                    png = _png_from_picture(pic)
+                    png = _png_from_com_shape(shape)
                     if png:
                         issue_imgs.append({"row": ri, "png": png})
         tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
@@ -643,24 +739,33 @@ def _extract_via_xlwings(src_path, header_row=3):
     finally:
         try:
             if wb is not None:
-                wb.close()
-        finally:
-            app.quit()
+                wb.Close(SaveChanges=False)
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if excel is not None:
+                excel.Quit()
+        except Exception:  # noqa: BLE001
+            pass
+        pythoncom.CoUninitialize()
 
 
 def _prepare_upload_xlsx(src_path: str) -> tuple:
     """업로드용 xlsx 전처리. 반환: (upload_path, is_tmp, issue_imgs).
 
-    1순위: xlwings(Excel COM) — DRM 자동 복호화 + distribution 제외 + 이미지 추출.
+    1순위: win32com(Excel COM) — DRM 자동 복호화 + distribution 제외 + 이미지 추출.
     2순위(fallback): zip 검증 + openpyxl distribution 제거 (일반 xlsx 전용, 이미지 없음).
     is_tmp=True 이면 호출자가 upload 후 upload_path 를 삭제해야 한다.
     """
-    # 1순위: xlwings 로 재구성 (DRM·일반 모두 처리)
+    # 1순위: Excel COM 으로 재구성 (DRM·일반 모두 처리)
+    com_error = None
     try:
-        tmp_path, issue_imgs = _extract_via_xlwings(src_path)
+        tmp_path, issue_imgs = _extract_via_excel_com(src_path)
         return tmp_path, True, issue_imgs
     except Exception:
-        pass  # Excel 미설치/COM 실패 → openpyxl fallback 시도
+        # Excel 미설치/COM 실패 → openpyxl fallback 시도.
+        # 진짜 원인을 보존해 fallback ValueError 메시지에 노출(오진 방지).
+        com_error = traceback.format_exc()
 
     # 2순위(fallback): zip 검증 + distribution 제거
     try:
@@ -670,7 +775,8 @@ def _prepare_upload_xlsx(src_path: str) -> tuple:
         raise ValueError(
             "선택한 파일을 처리할 수 없습니다.\n"
             "DRM(NASCA) 파일은 Excel 이 설치된 PC 에서만 업로드할 수 있고,\n"
-            "그 외에는 Excel 에서 일반 xlsx 로 다시 저장한 뒤 시도하세요.")
+            "그 외에는 Excel 에서 일반 xlsx 로 다시 저장한 뒤 시도하세요.\n\n"
+            f"[Excel 처리 실패 원인]\n{com_error}")
 
     try:
         import openpyxl
@@ -701,6 +807,7 @@ class HoneyMainWindow(QMainWindow):
         self.status = self.statusbar
         self.setWindowTitle(f"Honey  v{CURRENT_VERSION}")
         self.status.showMessage(f"Server: {SERVER_BASE_URL}")
+        self.progress_status.hide()
 
         self.csv_paths = []
         self.group = None          # df_honey_group
@@ -879,16 +986,10 @@ class HoneyMainWindow(QMainWindow):
         # 으로 표시한다. 메인 스레드는 짧게 폴링하며 processEvents() 로 UI 를 살려
         # "(진행중)" 을 보여주고, 한 파일이 60초를 넘기면 라벨만 바꾼다(중단 없음).
         _SLOW_FILE_SEC = 60
-        prog = QProgressDialog("파일 로딩 준비 중...", "취소", 0, n_files, self)
-        prog.setWindowTitle("파일 전처리")
-        prog.setWindowModality(Qt.WindowModal)
-        prog.setMinimumDuration(0)
-        prog.setValue(0)
-        progress = _ElapsedProgress(prog, "파일 로딩 준비 중...", self._status)
+        progress = _ElapsedProgress(
+            self.progress_status, "파일 로딩 준비 중...", self._status,
+            busy=True, minimum=0, maximum=n_files)
         QApplication.processEvents()
-
-        class _Cancelled(Exception):
-            pass
 
         results = []
         try:
@@ -898,9 +999,6 @@ class HoneyMainWindow(QMainWindow):
                     fut = ex.submit(rg.df_honey.from_csv, p)
                     file_start = time.monotonic()
                     while True:
-                        if prog.wasCanceled():
-                            fut.cancel()
-                            raise _Cancelled()
                         done_set, _ = concurrent.futures.wait([fut], timeout=0.1)
                         elapsed = int(time.monotonic() - file_start)
                         if elapsed >= _SLOW_FILE_SEC:
@@ -915,20 +1013,14 @@ class HoneyMainWindow(QMainWindow):
                             break
                     results.append(fut.result())  # 로드 실패 시 여기서 예외 전파
             self.group = rg.df_honey_group(results)
-        except _Cancelled:
-            prog.close()
-            self._status("파일 로드 취소됨")
-            self.group = None
-            return False
         except Exception as exc:
-            prog.close()
+            progress.fail(f"실패: 파일 로드 실패 - {exc}")
             QMessageBox.critical(self, "파일 로드 실패", str(exc))
             self._status("파일 로드 실패")
             self.group = None
             return False
 
-        prog.setValue(n_files)
-        prog.close()
+        progress.success(f"완료: {n_files}개 파일 전처리 완료", value=n_files)
 
         if warn:
             issues = {name: v for name, v in self.group.validate().items() if v}
@@ -996,13 +1088,9 @@ class HoneyMainWindow(QMainWindow):
                 raw = None
         # 진행 단계: 준비(1) → 분석(1) → 요약(1) → 시트별(N, +Raw N) → 저장 마무리(1)
         total = len(sheets) + 4 + (len(raw) if raw else 0)
-        prog = QProgressDialog("분석 준비 중...", None, 0, total, self)
-        prog.setWindowTitle("분석 실행")
-        prog.setWindowModality(Qt.WindowModal)
-        prog.setMinimumDuration(0)
-        prog.setCancelButton(None)
-        prog.setValue(0)
-        progress = _ElapsedProgress(prog, "분석 준비 중...", self._status)
+        progress = _ElapsedProgress(
+            self.progress_status, "분석 준비 중...", self._status,
+            busy=True, minimum=0, maximum=total)
         QApplication.processEvents()
 
         def _step(value, label):
@@ -1023,7 +1111,7 @@ class HoneyMainWindow(QMainWindow):
                 )
                 self.last_result = _wait_for_future(fut, progress)
         except Exception as exc:
-            prog.close()
+            progress.fail(f"실패: 분석 실패 - {exc}")
             QMessageBox.critical(self, "분석 실패", str(exc))
             self._status("분석 실패")
             self.btn_start.setEnabled(True)
@@ -1070,11 +1158,11 @@ class HoneyMainWindow(QMainWindow):
                 elif kind == "dist":
                     done, n_charts = a, b
                     if _dist_state["n"] == 0 and n_charts:
-                        _dist_state["base"] = prog.value()
+                        _dist_state["base"] = progress.value()
                         _dist_state["n"] = n_charts
-                        prog.setMaximum(prog.maximum() + n_charts - 1)
+                        progress.set_maximum(progress.maximum() + n_charts - 1)
                     pct = done * 100 // n_charts if n_charts else 100
-                    value = _dist_state["base"] + done if n_charts else prog.value()
+                    value = _dist_state["base"] + done if n_charts else progress.value()
                     progress.set(
                         f"Distribution 차트 생성 중... ({done}/{n_charts} - {pct}%)",
                         value=value,
@@ -1111,7 +1199,7 @@ class HoneyMainWindow(QMainWindow):
                 fut = ex.submit(_write_job)
                 _wait_for_future(fut, progress, poll_cb=_drain_progress_events)
         except Exception as exc:
-            prog.close()
+            progress.fail(f"실패: xlsx 생성 실패 - {exc}")
             QMessageBox.critical(self, "생성 실패", str(exc))
             self._status("xlsx 생성 실패")
             self.btn_start.setEnabled(True)
@@ -1119,12 +1207,12 @@ class HoneyMainWindow(QMainWindow):
         _drain_progress_events()
 
         # 5) Excel 파일 저장 마무리
-        _step(prog.maximum(), "Excel 파일 저장 마무리 중...")
-        prog.close()
+        _step(progress.maximum(), "Excel 파일 저장 마무리 중...")
         self.out_path = out
         self.btn_start.setEnabled(True)
         current = self.txt_summary.toPlainText()
         self.txt_summary.setPlainText(current + f"\n\n저장됨: {out}")
+        progress.success(f"완료: {Path(out).name} 저장됨", value=progress.maximum())
         self._status(f"완료: {Path(out).name}  ('서버에 업로드' 가능)")
 
         # 자동 업로드 옵션
@@ -1193,14 +1281,9 @@ class HoneyMainWindow(QMainWindow):
             upload_path, is_tmp, issue_imgs = path, False, []
 
         # ── 서버 업로드 ───────────────────────────────────────────────────
-        prog = QProgressDialog(
-            f"서버 업로드 중... {Path(upload_path).name}", None, 0, 0, self)
-        prog.setWindowTitle("업로드 중")
-        prog.setWindowModality(Qt.WindowModal)
-        prog.setMinimumDuration(0)
-        prog.setCancelButton(None)
         progress = _ElapsedProgress(
-            prog, f"서버 업로드 중... {Path(upload_path).name}", self._status)
+            self.progress_status, f"서버 업로드 중... {Path(upload_path).name}",
+            self._status, busy=True, minimum=0, maximum=0)
         QApplication.processEvents()
 
         try:
@@ -1216,7 +1299,7 @@ class HoneyMainWindow(QMainWindow):
                 )
                 result = _wait_for_future(fut, progress)
         except Exception as exc:
-            prog.close()
+            progress.fail(f"실패: 업로드 실패 - {exc}")
             QMessageBox.critical(self, "업로드 실패", str(exc))
             self._status("업로드 실패")
             self.btn_upload_local.setEnabled(True)
@@ -1228,10 +1311,9 @@ class HoneyMainWindow(QMainWindow):
                 except OSError:
                     pass
 
-        prog.close()
-
         sid = result.get("session_id", "?")
         issue_saved = result.get("issue_images_saved", 0)
+        progress.success(f"업로드 완료: session_id {sid}, Issue 이미지 {issue_saved}장")
         QMessageBox.information(
             self, "업로드 완료",
             f"session_id: {sid}"
@@ -1274,25 +1356,17 @@ class HoneyMainWindow(QMainWindow):
         setup_name = manifest.get("file") or f"HoneySetup-{remote}.exe"
         dest = Path(tempfile.gettempdir()) / setup_name
 
-        # 다운로드 진행바
-        dlg = QProgressDialog("업데이트 다운로드 중...", "취소", 0, 100, self)
-        dlg.setWindowTitle("Honey 업데이트")
-        dlg.setWindowModality(Qt.WindowModal)
-        dlg.setAutoClose(False)
-        dlg.setAutoReset(False)
-        dlg.setMinimumDuration(0)
-        dlg.setValue(0)
-        progress = _ElapsedProgress(dlg, "업데이트 다운로드 중...", self.status.showMessage)
+        # 다운로드 진행 상태는 메인 UI Status bar 에 표시한다.
+        progress = _ElapsedProgress(
+            self.progress_status, "업데이트 다운로드 중...",
+            self.status.showMessage, busy=True, minimum=0, maximum=100)
         download_events = queue.Queue()
-        cancel_state = {"cancel": False}
 
         def _cb(done, total):
             download_events.put((done, total))
-            return not cancel_state["cancel"]
+            return True
 
         def _drain_download_events():
-            if dlg.wasCanceled():
-                cancel_state["cancel"] = True
             while True:
                 try:
                     done, total = download_events.get_nowait()
@@ -1313,16 +1387,15 @@ class HoneyMainWindow(QMainWindow):
                 )
                 _wait_for_future(fut, progress, poll_cb=_drain_download_events)
         except version_check.DownloadCancelled:
-            dlg.close()
+            progress.fail("실패: 업데이트 다운로드 취소됨")
             self.status.showMessage("업데이트 취소됨")
             return
         except Exception as exc:
-            dlg.close()
+            progress.fail(f"실패: 업데이트 다운로드 실패 - {exc}")
             QMessageBox.critical(self, "다운로드 실패", str(exc))
             self.status.showMessage("업데이트 실패")
             return
-        dlg.setValue(100)
-        dlg.close()
+        progress.success("완료: 업데이트 다운로드 완료", value=100)
 
         if not updater.is_frozen():
             QMessageBox.information(
@@ -1331,6 +1404,7 @@ class HoneyMainWindow(QMainWindow):
                 f"설치본만 다운로드 완료:\n{dest}\n\n"
                 f"(자동 설치는 빌드된 exe 에서 동작합니다.)",
             )
+            progress.success("다운로드 완료 (개발 모드)", value=100)
             self.status.showMessage("다운로드 완료 (개발 모드)")
             return
 
@@ -1343,9 +1417,11 @@ class HoneyMainWindow(QMainWindow):
         try:
             updater.run_installer(dest)
         except Exception as exc:
+            progress.fail(f"실패: 업데이트 설치 실행 실패 - {exc}")
             QMessageBox.critical(self, "설치 실행 실패", str(exc))
             self.status.showMessage("업데이트 실패")
             return
+        progress.success("업데이트 설치 중... 앱을 종료합니다.", value=100)
         self.status.showMessage("업데이트 설치 중... 앱을 종료합니다.")
         QApplication.quit()
 
