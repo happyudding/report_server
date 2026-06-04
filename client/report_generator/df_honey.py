@@ -5,8 +5,8 @@ subjects/units/limits/scores/meta 는 그 df 에서 파생하는 cached property
 입력을 df 하나로 표준화해 슬라이싱(subject 선택 / 행 필터)과 코드 재사용을 단순화한다.
 
 df 레이아웃 (csv_loader.csvfile_to_df = normalize_raw 결과):
-    행 0 = subject 이름(헤더), 1 = Units, 2 = Lower Limit, 3 = Upper Limit,
-    4~5 = limit 중복행, 6~ = 데이터.
+    columns = subject 이름(DUT/XCoord/…/item1/item2…), 0 = Units,
+    1 = Lower Limit, 2 = Upper Limit, 3~4 = limit 중복행, 5~ = 데이터.
     열 0~4 = meta(DUT/XCoord/YCoord/Bin/Serial), 5~ = subject 측정값.
 
 PyQt/xlwings 비의존 순수 Python.
@@ -24,7 +24,7 @@ from . import _builders as B
 from . import csv_loader
 from .constants import (
     DATA_START_ROW, LOWER_LIMIT_ROW, META_COLUMNS, N_META_COLUMNS,
-    SUBJECT_NAME_ROW, UNITS_ROW, UPPER_LIMIT_ROW,
+    UNITS_ROW, UPPER_LIMIT_ROW,
 )
 from .csvfile_to_df import DF_YIELD_COLUMNS
 from .models import ReportMeta
@@ -70,7 +70,7 @@ class df_honey:
 
     @cached_property
     def subjects(self) -> list:
-        return [str(s) for s in self.df.iloc[SUBJECT_NAME_ROW, N_META_COLUMNS:].tolist()]
+        return [str(s) for s in self.df.columns[N_META_COLUMNS:].tolist()]
 
     @cached_property
     def units(self) -> list:

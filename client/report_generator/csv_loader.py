@@ -11,7 +11,7 @@ import pandas as pd
 
 from .constants import (
     DATA_START_ROW, LOWER_LIMIT_ROW, META_COLUMNS, N_META_COLUMNS,
-    SUBJECT_NAME_ROW, UNITS_ROW, UPPER_LIMIT_ROW,
+    UNITS_ROW, UPPER_LIMIT_ROW,
 )
 from .csvfile_to_df import DF_YIELD_COLUMNS
 from .csvfile_to_df import csvfile_to_df as _csvfile_to_df_impl
@@ -161,7 +161,7 @@ def _fill_duplicate_limit_rows(df: pd.DataFrame) -> None:
 def split_components(norm: pd.DataFrame) -> dict:
     """정규화 DataFrame → subjects/units/limits/scores/meta dict."""
     row = lambda r: norm.iloc[r, N_META_COLUMNS:]
-    subjects = [str(s) for s in row(SUBJECT_NAME_ROW).tolist()]
+    subjects = [str(s) for s in norm.columns[N_META_COLUMNS:].tolist()]
     units = [str(u) if pd.notna(u) else "" for u in row(UNITS_ROW).tolist()]
     lo = pd.to_numeric(row(LOWER_LIMIT_ROW), errors="coerce").tolist()
     hi = pd.to_numeric(row(UPPER_LIMIT_ROW), errors="coerce").tolist()
