@@ -517,6 +517,9 @@ class HoneyMainWindow(QMainWindow):
             self._pt_radios[saved_pt].setChecked(True)
         self._setup_csv_table()
         self._connect_signals()
+        self.btn_open_local.setText(
+            "LOCAL FILE OPEN\n(.csv, .xlsx, .std, .std.gz, stdf.gz)"
+        )
 
         if rg is None:
             self._disable_engine()
@@ -536,6 +539,7 @@ class HoneyMainWindow(QMainWindow):
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # 확장자 좁게
         hh.setSectionResizeMode(1, QHeaderView.Stretch)           # 경로 늘림
         # 드롭은 리스트 영역에서만 받는다 (메인 창엔 setAcceptDrops 를 걸지 않음).
+        t.setTextElideMode(Qt.ElideNone)
         t.setAcceptDrops(True)
         t.viewport().installEventFilter(self)
 
@@ -578,8 +582,7 @@ class HoneyMainWindow(QMainWindow):
         # 분석 관련 기능만 비활성. 로컬 파일 직접 업로드는 엔진 없이도 동작하므로 유지.
         for name in ("btn_open_local", "btn_pick_csv", "btn_start"):
             getattr(self, name).setEnabled(False)
-        self.lbl_out.setStyleSheet("color: #b00;")
-        self.lbl_out.setText(
+        self.txt_summary.setPlainText(
             "report_generator 모듈을 불러오지 못했습니다 — "
             f"{_RG_IMPORT_ERROR}\n분석/생성에는 pandas / numpy / xlwings + MS Excel 이 필요합니다."
             "\n(로컬 파일 직접 업로드는 가능합니다.)"
@@ -639,7 +642,7 @@ class HoneyMainWindow(QMainWindow):
         self.le_outname.setText(_suggest_base_name(self.csv_paths))
         self.group = None
         self.out_path = None
-        self.lbl_out.setText("")
+        self.txt_summary.setPlainText("")
         self._status(f"{len(self.csv_paths)}개 파일 선택됨. 순서 확인 후 Start 를 누르세요.")
 
     def _move_file(self, delta):
@@ -710,7 +713,6 @@ class HoneyMainWindow(QMainWindow):
                 QMessageBox.warning(self, "스키마 경고", f"일부 파일에 문제가 있습니다:\n{msg}")
 
         self.out_path = None
-        self.lbl_out.setText("")
         self._status(f"{len(paths)}개 파일 전처리 완료 (기준: {Path(paths[0]).name}).")
         return True
 
@@ -849,7 +851,7 @@ class HoneyMainWindow(QMainWindow):
         def _attach_progress(event, sheet_name, subject):
             if event != "copy_picture":
                 return
-            msg = f"클립보드를 잠시 사용할 수 있음 ({sheet_name}: {subject})"
+            msg = "Chart 복사 붙여넣기 진행중 잠시 기다려주세요"
             prog.setLabelText(f"{msg}  [{_elapsed()}]")
             self._status(msg)
             QApplication.processEvents()
@@ -875,7 +877,8 @@ class HoneyMainWindow(QMainWindow):
         prog.close()
         self.out_path = out
         self.btn_start.setEnabled(True)
-        self.lbl_out.setText(f"저장됨: {out}")
+        current = self.txt_summary.toPlainText()
+        self.txt_summary.setPlainText(current + f"\n\n저장됨: {out}")
         self._status(f"완료: {Path(out).name}  ('서버에 업로드' 가능)")
 
         # 자동 업로드 옵션
@@ -886,8 +889,7 @@ class HoneyMainWindow(QMainWindow):
         feat = r.summary_feature()
         lines = [
             f"Sources: {', '.join(r.sources)}",
-            f"Total DUT: {r.total_dut}    Pass(Bin1): {feat['Pass (Bin 1)']}  ({r.pass_yield}%)",
-            f"분석 항목: {len(r.subjects)}개   |   Fail Types: {feat['Fail Types']}",
+            f"Total: {r.total_dut}    Pass(Bin1): {feat['Pass (Bin 1)']}  ({r.pass_yield}%)",
             "",
             "[Major Fail Bins]",
         ]

@@ -109,18 +109,18 @@ from openpyxl.styles import (  # noqa: E402  (module-level import after constant
 _HDR_FILL_RGB   = "FFD9E1F2"   # 헤더 연청색
 _DATA_FILL_RGB  = "FFFFFFFF"   # 데이터 흰색
 _TITLE_FILL_RGB = "FFBDD7EE"   # 제목 연파랑
-_HDR_FONT    = _Font(name="Calibri", bold=True, size=11)
+_HDR_FONT    = _Font(name="Calibri", bold=False, size=11)
 _HDR_ALIGN   = _Alignment(horizontal="center", vertical="center", wrap_text=True)
 _DATA_FONT   = _Font(name="Calibri", size=10)
 _DATA_ALIGN  = _Alignment(horizontal="center", vertical="center", wrap_text=True)
-_TITLE_FONT  = _Font(name="Calibri", bold=True, size=20)
+_TITLE_FONT  = _Font(name="Calibri", bold=False, size=20)
 _TITLE_ALIGN = _Alignment(horizontal="left", vertical="center")
 _TITLE_ROW_MAX_COL = 26
 _SUMMARY_TITLE_FILL_RGB = "FFBFE3FF"
 _SUMMARY_HDR_FILL_RGB = "FFE2E8F0"
-_SUMMARY_TITLE_FONT = _Font(name="Tahoma", bold=True, size=22)
-_SUMMARY_SECTION_FONT = _Font(name="Tahoma", bold=True, size=20)
-_SUMMARY_HDR_FONT = _Font(name="Tahoma", bold=True, size=10)
+_SUMMARY_TITLE_FONT = _Font(name="Tahoma", bold=False, size=22)
+_SUMMARY_SECTION_FONT = _Font(name="Tahoma", bold=False, size=20)
+_SUMMARY_HDR_FONT = _Font(name="Tahoma", bold=False, size=10)
 _SUMMARY_DATA_FONT = _Font(name="Tahoma", size=10)
 _SUMMARY_LEFT_ALIGN = _Alignment(horizontal="left", vertical="center")
 _SUMMARY_CENTER_ALIGN = _Alignment(horizontal="center", vertical="center", wrap_text=True)
@@ -148,7 +148,7 @@ def _apply_data_style(cell):
 # ── table 시트의 표 시작 위치 (A열 비움, 제목 A1, 헤더 3행, 데이터 4행~)
 _HEADER_ROW = 3
 _START_COL = 2  # B열
-_FAIL_ITEM_ROW_HEIGHT = 90    # fail_item 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
+_FAIL_ITEM_ROW_HEIGHT = 135   # fail_item 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
 _ISSUE_TABLE_ROW_HEIGHT = 78  # issue_table 데이터 행 높이(pt) — Distribution 차트 셀 맞춤
 _YIELD_TABLE_ROW_HEIGHT = 22
 _YIELD_HEADER_ROW_HEIGHT = 40
@@ -157,7 +157,7 @@ _DIST_COL_WIDTH   = 27.1   # Distribution 열 (썸네일 이미지 크기 기준
 _ITEM_COL_WIDTH   = 20.0   # Item / Category 열 (긴 텍스트)
 _CPK_TEST_NAME_COL_WIDTH = 30
 _CPK_SERIES_COL_WIDTH = 15
-_CPK_N_COL_WIDTH = _NARROW_COL_WIDTH * 0.7
+_CPK_N_COL_WIDTH = _NARROW_COL_WIDTH * 1.05
 _FAIL_VALUES_COLS  = ["DUT", "XCoord", "YCoord", "Bin", "Item", "Value"]
 _FAIL_VALUES_NCOLS = 6     # source 블록당 열 수
 _FAIL_VALUES_GAP   = 1     # source 블록 간 빈 열 수
@@ -251,9 +251,16 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
             done += 1
             _progress(progress_cb, done, total, ws.title)
 
-    # 모든 시트 눈금선 제거 (openpyxl 단계)
+    # 시트별 Zoom 설정 + 눈금선 표시 (openpyxl 단계)
+    _ZOOM_70_SHEETS = {"fail_item", "issue_table", "distribution"}
     for nm in wb.sheetnames:
-        wb[nm].sheet_view.showGridLines = False
+        nm_key = nm.lower().replace(" ", "_")
+        zoom = 70 if any(z in nm_key for z in _ZOOM_70_SHEETS) else 100
+        try:
+            wb[nm].sheet_view.zoomScale = zoom
+            wb[nm].sheet_view.showGridLines = True
+        except Exception:
+            pass
 
     _normalize_report_sheet_names(wb)
     _finalize_openpyxl_sheet_layouts(wb, skip_title_for=raw_ws_list)
@@ -494,10 +501,13 @@ def _fill_yield(ws, result):
     if result.df_yield is not None and not result.df_yield.empty:
         header = list(result.df_yield.columns)
         rows = [list(r) for r in result.df_yield.itertuples(index=False)]
+        if "comment" not in header:
+            header.append("comment")
+            rows = [row + [""] for row in rows]
     else:
         header, rows = _yield_table(result)
     _fill_table(ws, header, rows)
-    _apply_table_col_widths(ws, header, custom_widths={"comment": 50})
+    _apply_table_col_widths(ws, header, custom_widths={"comment": 50, "Item": _ITEM_COL_WIDTH * 2})
     _apply_table_font(ws, header, size=12)
     _apply_small_font_headers(ws, header, ["_count", "_yield"], size=10)
     _set_table_row_heights(ws, len(rows), height=_YIELD_TABLE_ROW_HEIGHT)
@@ -522,9 +532,9 @@ def _fill_fail_item(ws, result):
     for i in range(len(rows)):
         ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
     _fill_fail_values_section(ws, result)
-    _apply_table_col_widths(ws, header)
+    _apply_table_col_widths(ws, header, col_multiplier=1.3)
     _apply_used_cell_font(ws, size=15, bold=False)
-    _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=True,
+    _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=False,
                               last_row=_HEADER_ROW + len(rows))
 
 
@@ -717,14 +727,14 @@ def _fill_issue_table(ws, result):
         ws.row_dimensions[_HEADER_ROW + 1 + n_yield + i].height = _ISSUE_TABLE_ROW_HEIGHT
 
     _apply_table_col_widths(ws, header, custom_widths={
-        "Distribution": 17,
+        "Distribution": 22.1,
         "comment": 40,
         "개발 1차 comment": 40,
         "PTE 2차 comment": 40,
         "개발 2차 comment": 40,
     })
     _apply_used_cell_font(ws, size=15, bold=False)
-    _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=True,
+    _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=False,
                               last_row=_HEADER_ROW + len(rows))
 
 
@@ -745,24 +755,25 @@ def _merge_issue_category(ws, n_yield, header_row=_HEADER_ROW, start_col=_START_
 
 
 def _fill_raw_data(ws, df):
-    """df_honey 포맷 DataFrame 을 A1 부터 기록 (제목행 없음).
+    """df_honey 포맷 DataFrame 을 A1 부터 기록.
 
-    행0=subject 헤더, 1=Units, 2~5=Lower/Upper/Lower/Upper limit, 6~=측정 데이터.
-    제목·Source 열 없이 df_honey 적재 포맷과 동일. 헤더·라벨행(1~6행)만 bold.
-    숫자처럼 보이는 값은 text 가 아닌 number 로 저장한다(_coerce_number).
+    1행: pandas column names, 2행~: df.values (행0=subject헤더, 1=Units, ..., 6~=측정데이터).
     Serial 컬럼은 정규화 시 자동 삽입되는 내부 컬럼이므로 제거.
+    A열 너비는 기본값의 2배. Bold 없음.
     """
-    from openpyxl.styles import Font
-    bold = Font(bold=True)
     serial_cols = [c for c, v in zip(df.columns, df.iloc[0]) if v == "Serial"]
     if serial_cols:
         df = df.drop(columns=serial_cols)
-    for ri, row in enumerate(df.values.tolist(), start=1):
+    # row 1: pandas column names
+    for ci, col_name in enumerate(df.columns, start=1):
+        cell = ws.cell(row=1, column=ci, value=str(col_name))
+        cell.alignment = copy(_DATA_ALIGN)
+    # row 2~: data values
+    for ri, row in enumerate(df.values.tolist(), start=2):
         for ci, val in enumerate(row, start=1):
             cell = ws.cell(row=ri, column=ci, value=_sanitize_cell(_coerce_number(val)))
-            if ri <= 6:
-                cell.font = bold
             cell.alignment = copy(_DATA_ALIGN)
+    ws.column_dimensions["A"].width = 17  # default ~8.43 의 2배
 
 
 def _unique_sheet_name(wb, name, reserved=()):
@@ -834,24 +845,24 @@ def _unmerge_below(ws, min_row, min_col):
 
 
 
-def _apply_table_col_widths(ws, header, start_col=_START_COL, custom_widths=None):
+def _apply_table_col_widths(ws, header, start_col=_START_COL, custom_widths=None, col_multiplier=1.0):
     """헤더 이름 기반 열너비 일괄 설정.
 
     Distribution → _DIST_COL_WIDTH, Item/Category → _ITEM_COL_WIDTH, 나머지 → _NARROW_COL_WIDTH.
-    custom_widths dict 에 있는 열은 해당 너비로 우선 적용.
+    custom_widths dict 에 있는 열은 해당 너비로 우선 적용. col_multiplier 로 전체 배율 조정.
     """
     from openpyxl.utils import get_column_letter
     _WIDE = {"Item", "Category"}
     for i, name in enumerate(header):
         letter = get_column_letter(start_col + i)
         if custom_widths and name in custom_widths:
-            ws.column_dimensions[letter].width = custom_widths[name]
+            ws.column_dimensions[letter].width = custom_widths[name] * col_multiplier
         elif name == "Distribution":
-            ws.column_dimensions[letter].width = _DIST_COL_WIDTH
+            ws.column_dimensions[letter].width = _DIST_COL_WIDTH * col_multiplier
         elif name in _WIDE:
-            ws.column_dimensions[letter].width = _ITEM_COL_WIDTH
+            ws.column_dimensions[letter].width = _ITEM_COL_WIDTH * col_multiplier
         else:
-            ws.column_dimensions[letter].width = _NARROW_COL_WIDTH
+            ws.column_dimensions[letter].width = _NARROW_COL_WIDTH * col_multiplier
 
 
 def _apply_all_borders(ws, min_row, min_col, max_row, max_col):
@@ -1167,11 +1178,15 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
                                 sources=sources, title=sheet_title)
             last_sheet = d_sh
 
-        # 모든 시트 눈금선 제거 (xlwings/Excel COM 단계 — distribution 포함)
+        # 모든 시트 눈금선 표시 + Zoom 설정 (xlwings/Excel COM 단계 — distribution 포함)
+        _XLWINGS_ZOOM_70 = {"fail_item", "issue_table", "distribution"}
         for s in wb.sheets:
             try:
                 s.activate()
-                app.api.ActiveWindow.DisplayGridlines = False
+                app.api.ActiveWindow.DisplayGridlines = True
+                nm_key = s.name.lower().replace(" ", "_")
+                zoom = 70 if any(z in nm_key for z in _XLWINGS_ZOOM_70) else 100
+                app.api.ActiveWindow.Zoom = zoom
             except Exception:
                 pass
         if last_sheet is not None:

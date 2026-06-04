@@ -20,6 +20,9 @@
    <string>Honey</string>
   </property>
   <widget class="QWidget" name="centralwidget">
+   <property name="styleSheet">
+    <string notr="true">QWidget#centralwidget { background-color: #FFFFE0; }</string>
+   </property>
    <layout class="QVBoxLayout" name="verticalLayout">
     <property name="leftMargin"><number>8</number></property>
     <property name="topMargin"><number>8</number></property>
@@ -75,15 +78,14 @@
       <item>
        <widget class="QPushButton" name="btn_upload_local">
         <property name="text">
-         <string>Local File Upload</string>
+         <string>Local File Server Upload</string>
+        </property>
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+          <horstretch>1</horstretch><verstretch>0</verstretch>
+         </sizepolicy>
         </property>
        </widget>
-      </item>
-      <item>
-       <spacer name="spacer_top">
-        <property name="orientation"><enum>Qt::Horizontal</enum></property>
-        <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
-       </spacer>
       </item>
      </layout>
     </item>
@@ -208,19 +210,6 @@
        </widget>
       </item>
      </layout>
-    </item>
-    <item>
-     <widget class="QLabel" name="lbl_out">
-      <property name="text">
-       <string/>
-      </property>
-      <property name="styleSheet">
-       <string notr="true">color: #2a6;</string>
-      </property>
-      <property name="wordWrap">
-       <bool>true</bool>
-      </property>
-     </widget>
     </item>
     <item>
      <widget class="QLabel" name="lbl_status_title">
