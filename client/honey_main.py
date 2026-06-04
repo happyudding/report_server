@@ -922,7 +922,7 @@ class HoneyMainWindow(QMainWindow):
         app_settings.set_setting("product_type", self.product_type())
 
     def _do_upload(self, path):
-        """메타 팝업 입력 → 차트 PNG 렌더(프로그레스) → 업로드(프로그레스) → 완료."""
+        """메타 팝업 입력 → 이미지 렌더(프로그레스) → 업로드(프로그레스) → 완료."""
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
         dlg = UploadDialog(self, defaults=defaults)
@@ -933,7 +933,8 @@ class HoneyMainWindow(QMainWindow):
 
         self.btn_upload_local.setEnabled(False)
 
-        # ── Phase 1: 차트 PNG 렌더링 ──────────────────────────────────────
+        # ── Phase 1: 이미지 렌더링 ────────────────────────────────────────
+        # 1-a) 기존 Distribution 차트 개별 내보내기 (하위호환 / 폴백용)
         prog = QProgressDialog("차트 렌더링 준비 중...", None, 0, 100, self)
         prog.setWindowTitle("업로드 준비")
         prog.setWindowModality(Qt.WindowModal)
@@ -954,11 +955,30 @@ class HoneyMainWindow(QMainWindow):
         except Exception:
             chart_pngs = []
 
+        # 1-b) Issue Table 행별 임베드 이미지 추출 (zip 파싱 우선, COM 폴백)
+        prog.setMaximum(0)
+        prog.setLabelText("Issue Table 이미지 추출 중...")
+        QApplication.processEvents()
+        try:
+            issue_imgs = chart_export.export_issue_table_pngs(path)
+        except Exception:
+            issue_imgs = []
+
+        # 1-c) Distribution 시트 전체 → 단일 PNG (PDF → PyMuPDF)
+        prog.setLabelText("Distribution 시트 렌더링 중 (PDF 변환)...")
+        QApplication.processEvents()
+        try:
+            dist_png = chart_export.export_distribution_png(path)
+        except Exception:
+            dist_png = None
+
         # ── Phase 2: 서버 업로드 ──────────────────────────────────────────
-        prog.setMaximum(0)          # 0 = 비결정형(indeterminate, 스피닝)
+        prog.setMaximum(0)
         prog.setValue(0)
         prog.setLabelText(
-            f"서버 업로드 중... {Path(path).name}  (차트 {len(chart_pngs)}장)")
+            f"서버 업로드 중... {Path(path).name}"
+            f"  (Issue 이미지 {len(issue_imgs)}장"
+            f"  Distribution {'있음' if dist_png else '없음'})")
         prog.setWindowTitle("업로드 중")
         QApplication.processEvents()
 
@@ -970,6 +990,8 @@ class HoneyMainWindow(QMainWindow):
                 lot_id=v["lot_id"],
                 password=v["password"],
                 chart_pngs=chart_pngs,
+                issue_imgs=issue_imgs,
+                dist_png=dist_png,
             )
         except Exception as exc:
             prog.close()
@@ -981,15 +1003,16 @@ class HoneyMainWindow(QMainWindow):
         prog.close()
 
         sid = result.get("session_id", "?")
-        charts_n = result.get("charts_saved", 0)
+        issue_saved = result.get("issue_images_saved", 0)
         combined = result.get("distribution_combined", False)
         QMessageBox.information(
             self, "업로드 완료",
-            f"session_id: {sid}\n차트: {charts_n}장"
-            + ("  (Distribution 합성 완료)" if combined else "") +
+            f"session_id: {sid}"
+            f"\nIssue 이미지: {issue_saved}장"
+            + ("  |  Distribution PNG 저장됨" if combined else "") +
             f"\n\n브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
         )
-        self._status(f"업로드 완료 (차트 {charts_n}장)")
+        self._status(f"업로드 완료 (Issue 이미지 {issue_saved}장)")
         self.btn_upload_local.setEnabled(True)
 
     # ── version check (기존 로직 무변경) ────────────────────────────────────

@@ -559,15 +559,37 @@ function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNa
 function isDistCol(c) { return String(c || "").toLowerCase() === "distribution"; }
 
 // 열 순서 보정: comment 류 → 최우측, issue 의 category → 최좌측. 상대순서 유지.
-// (xlsx 헤더 순서를 따르되 위 불변식을 보장 → 원본 엑셀 배치와 일치)
+// 소스 복수 시 _count 그룹 먼저, _yield 그룹 이후 (cnt cnt cnt / yield yield yield).
 function orderColumns(cols, kind) {
   const isComment = c => /comment/i.test(String(c));
+  const isCnt = c => String(c).endsWith("_count");
+  const isYld = c => String(c).endsWith("_yield");
+
   const comments = cols.filter(isComment);
   let rest = cols.filter(c => !isComment(c));
+
   if (kind === "issue") {
     const cat = rest.filter(c => String(c).toLowerCase() === "category");
     rest = cat.concat(rest.filter(c => String(c).toLowerCase() !== "category"));
   }
+
+  // cnt cnt cnt / yield yield yield 그루핑: _count 먼저, _yield 이후
+  if (rest.some(isCnt) && rest.some(isYld)) {
+    const before = [], cnts = [], ylds = [], after = [];
+    let cntYldSeen = false;
+    for (const c of rest) {
+      if (isCnt(c) || isYld(c)) {
+        cntYldSeen = true;
+        (isCnt(c) ? cnts : ylds).push(c);
+      } else if (!cntYldSeen) {
+        before.push(c);
+      } else {
+        after.push(c);
+      }
+    }
+    rest = before.concat(cnts).concat(ylds).concat(after);
+  }
+
   return rest.concat(comments);
 }
 

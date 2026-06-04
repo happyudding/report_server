@@ -1,5 +1,8 @@
 # COINAPI report_server — Claude Code 진입점
 
+> **세션 시작 규칙**: 새 대화가 시작될 때마다 [docs/INDEX.md](docs/INDEX.md)를
+> 먼저 읽어라. 기능별 코드 흐름·파일 위치·불변 규칙이 모두 INDEX에 있다.
+
 이 프로젝트는 외부 report generator 가 만든 .xlsx 산출물을 Honey 클라이언트가 서버로
 업로드하고, Flask 서버가 SQLite + S3 에 세션 단위로 저장한 뒤 검색결과 페이지로
 조회할 수 있게 한다. 분석/플롯 파이프라인은 비활성화 상태이며 코드는 `_reference/`

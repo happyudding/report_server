@@ -49,6 +49,23 @@ def _collect_chart_pngs(files):
     return out
 
 
+def _collect_issue_images(files):
+    """multipart 의 issue_img_<row> 필드를 {"row": int, "png": bytes} 리스트로.
+    row 는 0-based 데이터행 인덱스. PNG 매직바이트 검증."""
+    out = []
+    for key, f in files.items():
+        if not key.startswith("issue_img_"):
+            continue
+        try:
+            ri = int(key[len("issue_img_"):])
+            data = f.read()
+            if data[:8] == _PNG_MAGIC:
+                out.append({"row": ri, "png": data})
+        except Exception:
+            continue
+    return sorted(out, key=lambda x: x["row"])
+
+
 def _combine_chart_pngs(pngs: list):
     """PNG bytes 리스트 → 그리드 합성 단일 PNG bytes.
     각 차트 이미지는 그대로 유지하고, 격자 배치로 하나의 큰 PNG 를 만든다.
@@ -253,44 +270,69 @@ def upload_xlsx():
         except Exception as exc:
             warnings.append(f"sheet_data[{sheet_name}] save failed: {exc}")
 
-    # ── Issue_table 행별 분포 PNG → 저장소(S3 또는 로컬 폴백) : 비치명적 ───────
-    # ISSUE_IMAGES_ENABLED=True 면 Distribution 열의 행별 PNG 가 추출된다.
-    # issue_image_store 가 S3 설정 유무에 따라 S3/로컬을 자동 선택 → S3 미설정
-    # 로컬 환경에서도 PNG 가 표시된다("임시로 PNG 나오게").
+    # ── Issue_table 행별 분포 PNG : 비치명적 ─────────────────────────────────
+    # 클라이언트가 보낸 issue_img_<row> 필드를 우선 사용.
+    # 없으면 xlsx 파서 추출 결과(ISSUE_IMAGES_ENABLED=True 시) 를 폴백으로 사용.
+    client_issue_imgs = _collect_issue_images(request.files)
+    issue_images_src = client_issue_imgs or parsed.get("issue_images") or []
     issue_imgs_saved = 0
-    if parsed.get("issue_images"):
+    if issue_images_src:
         try:
             from issue_image_store import save_images
-            res = save_images(analysis_key, parsed["issue_images"])
+            res = save_images(analysis_key, issue_images_src)
             issue_imgs_saved = len(res.get("rows", []))
         except Exception as exc:
             warnings.append(f"issue_images save failed: {exc}")
 
-    # ── 차트 PNG 수신 → 그리드 합성 → S3 단일 PNG : 비치명적 ─────────────────
-    # 클라이언트(Excel COM)가 렌더한 개별 차트 PNG 를 Pillow 로 격자 합성한다.
-    # 각 차트 이미지는 픽셀 그대로 유지 — 합성만 수행. S3 미설정이면 건너뜀.
-    chart_pngs = _collect_chart_pngs(request.files)
-    charts_saved = len(chart_pngs)
+    # ── Distribution 탭 PNG : 비치명적 ───────────────────────────────────────
+    # 우선순위:
+    #   1. distribution_sheet 필드 (클라이언트가 시트 전체를 단일 PNG 로 렌더)
+    #   2. chart_N 필드들 (클라이언트 개별 차트 → 서버에서 격자 합성, 하위호환)
+    # 둘 다 S3 필요. S3 미설정이면 건너뜀.
+    meta_str = _canonical_meta_bytes(meta).decode("utf-8")
     dist_combined_saved = False
-    if chart_pngs and not s3_ok:
-        warnings.append("charts received but S3 not configured; distribution_combined skipped")
-    if s3_ok and chart_pngs:
-        combined = _combine_chart_pngs(chart_pngs)
-        if combined:
+    charts_saved = 0
+
+    dist_sheet_f = request.files.get("distribution_sheet")
+    if dist_sheet_f:
+        dist_data = dist_sheet_f.read()
+        if dist_data[:8] == _PNG_MAGIC and s3_ok:
             try:
-                meta_str = _canonical_meta_bytes(meta).decode("utf-8")
                 dist_key = report_s3.make_distribution_combined_s3_key(analysis_key)
                 dist_uri = report_s3.upload_bytes_to_s3(
-                    dist_key, combined, content_type="image/png")
+                    dist_key, dist_data, content_type="image/png")
                 report_db.upsert_object_info(
                     analysis_key, content_hash, meta_str,
                     "distribution_combined", report_s3.bucket_name(), dist_key, dist_uri,
                 )
                 dist_combined_saved = True
             except Exception as exc:
-                warnings.append(f"distribution_combined upload failed: {exc}")
-        else:
-            warnings.append("chart PNG grid composition failed (Pillow missing or bad PNG)")
+                warnings.append(f"distribution_sheet S3 upload failed: {exc}")
+        elif dist_data[:8] == _PNG_MAGIC and not s3_ok:
+            warnings.append("distribution_sheet received but S3 not configured; skipped")
+
+    # chart_N 폴백: distribution_sheet 미전송 또는 저장 실패한 경우에만 시도
+    if not dist_combined_saved:
+        chart_pngs = _collect_chart_pngs(request.files)
+        charts_saved = len(chart_pngs)
+        if chart_pngs and not s3_ok:
+            warnings.append("charts received but S3 not configured; distribution_combined skipped")
+        if s3_ok and chart_pngs:
+            combined = _combine_chart_pngs(chart_pngs)
+            if combined:
+                try:
+                    dist_key = report_s3.make_distribution_combined_s3_key(analysis_key)
+                    dist_uri = report_s3.upload_bytes_to_s3(
+                        dist_key, combined, content_type="image/png")
+                    report_db.upsert_object_info(
+                        analysis_key, content_hash, meta_str,
+                        "distribution_combined", report_s3.bucket_name(), dist_key, dist_uri,
+                    )
+                    dist_combined_saved = True
+                except Exception as exc:
+                    warnings.append(f"distribution_combined upload failed: {exc}")
+            else:
+                warnings.append("chart PNG grid composition failed (Pillow missing or bad PNG)")
 
     # S3 미설정으로 원본 xlsx 가 저장되지 않았으면 경고로 명시 (조회 시 본문 누락).
     if not s3_ok:
