@@ -24,7 +24,7 @@ from PyQt5 import uic
 from PyQt5.QtCore import Qt, QTimer, QEvent
 from PyQt5.QtGui import QColor, QFont, QIntValidator
 from PyQt5.QtWidgets import (
-    QApplication, QColorDialog, QDialog, QDialogButtonBox, QFileDialog,
+    QAbstractItemView, QApplication, QColorDialog, QDialog, QDialogButtonBox, QFileDialog,
     QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel,
     QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog, QPushButton,
     QTableWidgetItem, QVBoxLayout,
@@ -342,9 +342,23 @@ class ReportSettingsDialog(QDialog):
         self.btn_chart_colors.clicked.connect(self.on_edit_chart_colors)
         self.buttonBox.accepted.connect(self._on_confirm)
         self.buttonBox.rejected.connect(self.reject)
+        self.buttonBox.setCenterButtons(True)
         ok_btn = self.buttonBox.button(QDialogButtonBox.Ok)
         if ok_btn is not None:
             ok_btn.setText("Confirm")
+            ok_btn.setMinimumSize(300, 72)
+            ok_btn.setDefault(True)
+            ok_btn.setStyleSheet(
+                "QPushButton { font-size: 16pt; font-weight: 700; "
+                "padding: 14px 42px; background: #2f7de1; color: white; "
+                "border: 1px solid #1f62b8; border-radius: 6px; }"
+                "QPushButton:hover { background: #236cc7; }"
+            )
+        cancel_btn = self.buttonBox.button(QDialogButtonBox.Cancel)
+        if cancel_btn is not None:
+            cancel_btn.setText("Cancel")
+            cancel_btn.setMinimumSize(72, 28)
+            cancel_btn.setMaximumSize(90, 32)
 
         self._populate_items()
         self._sync_yield_dependents()
@@ -573,9 +587,14 @@ class HoneyMainWindow(QMainWindow):
         t.setSelectionMode(t.SingleSelection)
         hh = t.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # 확장자 좁게
-        hh.setSectionResizeMode(1, QHeaderView.Stretch)           # 경로 늘림
+        hh.setSectionResizeMode(1, QHeaderView.Interactive)       # 긴 경로는 가로 스크롤
+        hh.setStretchLastSection(False)
         # 드롭은 리스트 영역에서만 받는다 (메인 창엔 setAcceptDrops 를 걸지 않음).
         t.setTextElideMode(Qt.ElideNone)
+        t.setWordWrap(False)
+        t.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        t.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        t.verticalHeader().setDefaultSectionSize(20)
         t.setAcceptDrops(True)
         t.viewport().installEventFilter(self)
 
@@ -660,17 +679,24 @@ class HoneyMainWindow(QMainWindow):
         0열=확장자(좁게), 1열=파일 절대경로."""
         self.list_csv.setRowCount(len(self.csv_paths))
         for r, p in enumerate(self.csv_paths):
-            ext = Path(p).suffix.lstrip(".").lower()
+            full_path = str(Path(p).resolve())
+            ext = Path(full_path).suffix.lstrip(".").lower()
             ext_item = QTableWidgetItem(ext)
-            path_item = QTableWidgetItem(str(p))
-            path_item.setData(Qt.UserRole, p)
-            path_item.setToolTip(str(p))
+            path_item = QTableWidgetItem(full_path)
+            path_item.setData(Qt.UserRole, full_path)
+            path_item.setToolTip(full_path)
             self.list_csv.setItem(r, 0, ext_item)
             self.list_csv.setItem(r, 1, path_item)
+            self.list_csv.setRowHeight(r, 20)
+        if self.csv_paths:
+            fm = self.list_csv.fontMetrics()
+            measure = getattr(fm, "horizontalAdvance", fm.width)
+            width = max(measure(str(Path(p).resolve())) for p in self.csv_paths)
+            self.list_csv.setColumnWidth(1, max(420, width + 36))
 
     def _load_paths(self, paths):
         """선택된 입력 파일들 → 리스트 채우기 + 저장 파일명 제안 (전처리는 Start 까지 보류)."""
-        self.csv_paths = list(paths)
+        self.csv_paths = [str(Path(p).resolve()) for p in paths]
         self._refill_csv_list()
         self.le_outname.setText(_suggest_base_name(self.csv_paths))
         self.group = None

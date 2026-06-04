@@ -249,14 +249,14 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
             done += 1
             _progress(progress_cb, done, total, ws.title)
 
-    # 시트별 Zoom 설정 + 눈금선 표시 (openpyxl 단계)
-    _ZOOM_70_SHEETS = {"fail_item", "issue_table", "distribution"}
+    # 시트별 Zoom 설정 + 눈금선 숨김 (openpyxl 단계)
+    _ZOOM_80_SHEETS = {"fail_item", "issue_table", "distribution"}
     for nm in wb.sheetnames:
         nm_key = nm.lower().replace(" ", "_")
-        zoom = 70 if any(z in nm_key for z in _ZOOM_70_SHEETS) else 100
+        zoom = 80 if any(z in nm_key for z in _ZOOM_80_SHEETS) else 100
         try:
             wb[nm].sheet_view.zoomScale = zoom
-            wb[nm].sheet_view.showGridLines = True
+            wb[nm].sheet_view.showGridLines = False
         except Exception:
             pass
 
@@ -1181,14 +1181,14 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
                                 sources=sources, title=sheet_title)
             last_sheet = d_sh
 
-        # 모든 시트 눈금선 표시 + Zoom 설정 (xlwings/Excel COM 단계 — distribution 포함)
-        _XLWINGS_ZOOM_70 = {"fail_item", "issue_table", "distribution"}
+        # 모든 시트 눈금선 숨김 + Zoom 설정 (xlwings/Excel COM 단계 — distribution 포함)
+        _XLWINGS_ZOOM_80 = {"fail_item", "issue_table", "distribution"}
         for s in wb.sheets:
             try:
                 s.activate()
-                app.api.ActiveWindow.DisplayGridlines = True
+                app.api.ActiveWindow.DisplayGridlines = False
                 nm_key = s.name.lower().replace(" ", "_")
-                zoom = 70 if any(z in nm_key for z in _XLWINGS_ZOOM_70) else 100
+                zoom = 80 if any(z in nm_key for z in _XLWINGS_ZOOM_80) else 100
                 app.api.ActiveWindow.Zoom = zoom
             except Exception:
                 pass

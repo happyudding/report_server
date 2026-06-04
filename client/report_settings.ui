@@ -67,6 +67,7 @@
        <widget class="QCheckBox" name="cb_raw_data">
         <property name="text"><string>Raw Data</string></property>
         <property name="toolTip"><string>체크하면 df_honey 에 적재된 원본 측정 데이터를 맨 앞 'Raw Data' 시트로 추가합니다.</string></property>
+        <property name="checked"><bool>true</bool></property>
        </widget>
       </item>
       <item row="1" column="2">
@@ -213,7 +214,15 @@ only</string></property>
       </spacer>
      </item>
      <item>
-      <widget class="QDialogButtonBox" name="buttonBox">
+     <widget class="QDialogButtonBox" name="buttonBox">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+         <horstretch>1</horstretch><verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="centerButtons">
+        <bool>true</bool>
+       </property>
        <property name="standardButtons">
         <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
        </property>
