@@ -75,8 +75,40 @@ def _combined_frames(mass_data_map):
     return pd.concat(frames, ignore_index=True)
 
 
+def _break_mask(mass_data):
+    """stop-on-fail 로 data 흐름이 뚝 끊긴 시점(말미 연속 NaN 런의 시작 열) bool DataFrame.
+
+    각 DUT(행)에서 측정값이 끝까지 이어지지 않고 어느 item 부터 끝까지 모두 비어버린
+    (NaN) 경우, 그 끊긴 첫 item 한 곳만 True. 전부 NaN 인 행과 PASS_BIN DUT 는 제외
+    (옵션 미측정 오탐 방지). limit 위반과 별개의 fail 원인 — fail item/fail value 정의에
+    함께 합산된다.
+    """
+    numeric = mass_data.scores.apply(pd.to_numeric, errors="coerce")
+    isnan = numeric.isna().to_numpy()
+    n_rows, n_sub = isnan.shape
+    out = np.zeros((n_rows, n_sub), dtype=bool)
+    if n_rows == 0 or n_sub == 0:
+        return pd.DataFrame(out, index=numeric.index, columns=numeric.columns, copy=False)
+    # 말미 연속 NaN 런: col..끝 이 모두 NaN 인 위치 (오른쪽부터 cumprod)
+    trailing = np.cumprod(isnan[:, ::-1], axis=1)[:, ::-1].astype(bool)
+    # onset = 런의 시작(False→True 전환) 한 곳만
+    prev = np.zeros_like(trailing)
+    prev[:, 1:] = trailing[:, :-1]
+    onset = trailing & ~prev
+    onset[:, 0] = False   # col 0 onset = 전부 NaN 행 → 제외 (앞에 valid 값 없음)
+    # PASS_BIN DUT 제외
+    bins = mass_data.meta["Bin"].map(_fmt_type).to_numpy()
+    onset &= (bins != PASS_BIN)[:, None]
+    return pd.DataFrame(onset, index=numeric.index, columns=numeric.columns, copy=False)
+
+
 def _fail_mask(mass_data):
-    """mass_data 의 각 측정값이 lo/up 한계를 벗어났는지 bool DataFrame."""
+    """각 측정값의 fail 여부 bool DataFrame — limit 위반 ∪ data 흐름 끊김(onset).
+
+    fail item 과 fail value 가 동일 정의를 공유하도록 통합한다.
+      limit: value < lower 또는 > upper.
+      break: stop-on-fail 로 말미부터 값이 끊긴 첫 item (_break_mask).
+    """
     numeric = mass_data.scores.apply(pd.to_numeric, errors="coerce")
     arr = numeric.to_numpy(dtype="float64", copy=False)
     n_sub = arr.shape[1]
@@ -96,7 +128,8 @@ def _fail_mask(mass_data):
     hi = np.array([_lim(mass_data.upper_limits, i) for i in range(n_sub)], dtype="float64")
     with np.errstate(invalid="ignore"):
         fail = (arr < lo) | (arr > hi)
-    return pd.DataFrame(fail, index=numeric.index, columns=numeric.columns, copy=False)
+    limit = pd.DataFrame(fail, index=numeric.index, columns=numeric.columns, copy=False)
+    return limit | _break_mask(mass_data)
 
 
 def _type_sort_key(value):
@@ -382,11 +415,16 @@ def build_issue_table(mass_data_map):
                 fail_lo.iloc[:, idx] = (col_s < float(lo_arr[idx])).fillna(False)
             if hi_arr[idx] is not None and pd.notna(hi_arr[idx]):
                 fail_hi.iloc[:, idx] = (col_s > float(hi_arr[idx])).fillna(False)
-        fail_any = (fail_lo | fail_hi)
+        # data 흐름 끊김(stop-on-fail) onset 도 fail 로 합산 — non_pass 행만 정렬해 정렬
+        brk_np = _break_mask(mass_data)[non_pass].reset_index(drop=True)
+        brk_np.columns = numeric.columns
+        fail_any = (fail_lo | fail_hi | brk_np)
         failing = fail_any.stack()
         failing = failing[failing]
         for row_i, col_i in failing.index:
             is_lo = bool(fail_lo.at[row_i, col_i])
+            is_hi = bool(fail_hi.at[row_i, col_i])
+            fail_dir = "< lo" if is_lo else ("> hi" if is_hi else "break")
             meta_row = meta_np.iloc[row_i]
             rows.append({
                 "source": source_name,
@@ -398,7 +436,7 @@ def build_issue_table(mass_data_map):
                 "value": _fmt_num(numeric.at[row_i, col_i]),
                 "lower_limit": _fmt_num(lo_arr[col_i]) if (lo_arr[col_i] is not None and pd.notna(lo_arr[col_i])) else "N/A",
                 "upper_limit": _fmt_num(hi_arr[col_i]) if (hi_arr[col_i] is not None and pd.notna(hi_arr[col_i])) else "N/A",
-                "fail": "< lo" if is_lo else "> hi",
+                "fail": fail_dir,
             })
     return rows
 
@@ -561,4 +599,12 @@ def cumulative_distribution_full(values):
     if values.size == 0:
         return np.empty(0), np.empty(0)
     unique_vals, counts = np.unique(np.sort(values), return_counts=True)
-    return unique_vals, np.cumsum(counts) / values.size * 100.0
+    cum = np.cumsum(counts) / values.size * 100.0
+    # 각 unique 값을 2포인트(y_start, y_end)로 확장해 계단형 ECDF 선분 생성.
+    # 선으로 연결하면: 수직선(값의 구간) + 수평선(다음 값으로의 계단 발판) 자동 형성.
+    y_starts = np.concatenate(([0.0], cum[:-1]))
+    xs = np.repeat(unique_vals, 2)          # [v0,v0, v1,v1, ...]
+    ys = np.empty(len(xs))
+    ys[0::2] = y_starts                     # 짝수 인덱스: 구간 시작 %
+    ys[1::2] = cum                          # 홀수 인덱스: 구간 끝 %
+    return xs, ys

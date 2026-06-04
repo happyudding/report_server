@@ -38,6 +38,18 @@ class df_honey:
         self.report_meta = report_meta or ReportMeta()
         self.df_yield: pd.DataFrame = pd.DataFrame(columns=DF_YIELD_COLUMNS)
 
+    # FileName = 이 mass_data(input file)의 단일 표시 라벨. yield 컬럼명 / cpk source /
+    # issue_table 컬럼명 / distribution legend 가 모두 이 값을 공유한다(네 출력이 항상
+    # 동일 문자열). df_honey_group 이 생성 시 유일화하므로 같은 stem 두 파일도 a, a_2 로
+    # 분리된다. self.name 의 별칭 — 기존 .name 참조 코드와 호환 유지.
+    @property
+    def FileName(self) -> str:
+        return self.name
+
+    @FileName.setter
+    def FileName(self, value: str) -> None:
+        self.name = value
+
     # ------------------------------------------------------------------ 생성
 
     @classmethod

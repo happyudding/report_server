@@ -8,11 +8,13 @@ UI 레이아웃은 .ui (Qt Designer 편집 가능) 에 정의, 런타임에 uic.
 워크플로우: d1_storage 에서 CSV 검색·선택 → 출력 시트 선택 → '분석 실행' 시
 입력 폴더에 xlsx 자동 저장(xlwings) → '서버에 업로드' 클릭 시 메타 팝업 입력 후 전송.
 """
+import concurrent.futures
 import datetime
 import os
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import requests
@@ -517,9 +519,7 @@ class HoneyMainWindow(QMainWindow):
             self._pt_radios[saved_pt].setChecked(True)
         self._setup_csv_table()
         self._connect_signals()
-        self.btn_open_local.setText(
-            "LOCAL FILE OPEN\n(.csv, .xlsx, .std, .std.gz, stdf.gz)"
-        )
+        self.btn_open_local.setText("LOCAL FILE OPEN")
 
         if rg is None:
             self._disable_engine()
@@ -558,12 +558,9 @@ class HoneyMainWindow(QMainWindow):
 
     def _handle_csv_drop(self, event):
         paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
-        paths = [p for p in paths if p.lower().endswith((".csv", ".xlsx"))]
         if paths:
             event.acceptProposedAction()
             self._intake(paths)   # 기존 인테이크 흐름 재사용(2개↑면 순서 팝업)
-        else:
-            self._status("CSV/XLSX 파일만 끌어다 놓을 수 있습니다.")
 
     def _connect_signals(self):
         self.btn_open_local.clicked.connect(self.on_open_local)
@@ -595,8 +592,8 @@ class HoneyMainWindow(QMainWindow):
     def on_open_local(self):
         # 현재 윈도우(네이티브) 파일 열기 대화상자
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "CSV/XLSX 파일 열기 (여러 개 가능)", "",
-            "데이터 파일 (*.csv *.xlsx);;CSV (*.csv);;Excel (*.xlsx);;모든 파일 (*.*)")
+            self, "파일 열기 (여러 개 가능)", "",
+            "모든 파일 (*.*)")
         self._intake(paths)
 
     def on_browse_d1(self):
@@ -666,8 +663,11 @@ class HoneyMainWindow(QMainWindow):
             return False
 
         n_files = len(paths)
-        # 취소 버튼 활성화: from_csvs 는 동기 실행이지만 progress_cb 를 파일/하위단계
-        # 마다 호출하므로, 콜백에서 wasCanceled() 를 확인해 _Cancelled 를 던져 중단한다.
+        # CSV 로딩을 백그라운드 스레드(1개)에서 파일 단위로 수행한다. 동기로 돌리면
+        # 무거운 pandas 읽기 동안 Qt 이벤트 루프가 멈춰 Windows 가 창을 "응답 없음"
+        # 으로 표시한다. 메인 스레드는 짧게 폴링하며 processEvents() 로 UI 를 살려
+        # "(진행중)" 을 보여주고, 한 파일이 60초를 넘기면 라벨만 바꾼다(중단 없음).
+        _SLOW_FILE_SEC = 60
         prog = QProgressDialog("파일 로딩 준비 중...", "취소", 0, n_files, self)
         prog.setWindowTitle("파일 전처리")
         prog.setWindowModality(Qt.WindowModal)
@@ -678,19 +678,33 @@ class HoneyMainWindow(QMainWindow):
         class _Cancelled(Exception):
             pass
 
-        def _on_file(done, total, filename, sub_done=0, sub_total=0):
-            if prog.wasCanceled():
-                raise _Cancelled()
-            if filename:
-                label = f"({done + 1}/{total})  {filename}"
-                if sub_total > 0:
-                    label += f"  [{sub_done}/{sub_total}]"
-                prog.setLabelText(label)
-            prog.setValue(done)
-            QApplication.processEvents()
-
+        results = []
         try:
-            self.group = rg.df_honey_group.from_csvs(paths, progress_cb=_on_file)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                for i, p in enumerate(paths):
+                    filename = Path(p).name
+                    fut = ex.submit(rg.df_honey.from_csv, p)
+                    file_start = time.monotonic()
+                    while True:
+                        if prog.wasCanceled():
+                            fut.cancel()
+                            raise _Cancelled()
+                        done_set, _ = concurrent.futures.wait([fut], timeout=0.1)
+                        elapsed = int(time.monotonic() - file_start)
+                        if elapsed >= _SLOW_FILE_SEC:
+                            prog.setLabelText(
+                                f"({i + 1}/{n_files})  {filename}  "
+                                f"전처리 계속해서 진행중입니다.")
+                        else:
+                            prog.setLabelText(
+                                f"({i + 1}/{n_files})  {filename}  "
+                                f"[{elapsed:02d}s] (진행중)")
+                        prog.setValue(i)
+                        QApplication.processEvents()
+                        if done_set:
+                            break
+                    results.append(fut.result())  # 로드 실패 시 여기서 예외 전파
+            self.group = rg.df_honey_group(results)
         except _Cancelled:
             prog.close()
             self._status("파일 로드 취소됨")
@@ -895,8 +909,6 @@ class HoneyMainWindow(QMainWindow):
         ]
         for i, b in enumerate(r.major_fail_bins(), start=1):
             lines.append(f"  {i}. bin {b.get('bin')}  -  {b.get('Main Fail subject')}  ({b.get('avg')}%)")
-        lines += ["", f"issue(most-fail item) bins: {len(r.issue_rows)}건",
-                  f"distribution 차트: {len(r.distributions)}개"]
         self.txt_summary.setPlainText("\n".join(lines))
 
     # ── 서버 업로드 ─────────────────────────────────────────────────────────
@@ -966,24 +978,16 @@ class HoneyMainWindow(QMainWindow):
         except Exception:
             issue_imgs = []
 
-        # 1-c) Distribution 시트 전체 → 단일 PNG (PDF → PyMuPDF)
-        prog.setLabelText("Distribution 시트 렌더링 중 (PDF 변환)...")
-        QApplication.processEvents()
+        # 1-c) Distribution 시트 PNG 렌더링 비활성화 (속도 개선)
+        dist_png = None
         dist_err = ""
-        try:
-            dist_png = chart_export.export_distribution_png(path)
-        except Exception as exc:
-            dist_png = None
-            dist_err = str(exc)
-            self._status(f"⚠ Distribution 렌더 실패: {dist_err}")
 
         # ── Phase 2: 서버 업로드 ──────────────────────────────────────────
         prog.setMaximum(0)
         prog.setValue(0)
         prog.setLabelText(
             f"서버 업로드 중... {Path(path).name}"
-            f"  (Issue 이미지 {len(issue_imgs)}장"
-            f"  Distribution {'있음' if dist_png else '없음'})")
+            f"  (Issue 이미지 {len(issue_imgs)}장)")
         prog.setWindowTitle("업로드 중")
         QApplication.processEvents()
 
@@ -1009,13 +1013,10 @@ class HoneyMainWindow(QMainWindow):
 
         sid = result.get("session_id", "?")
         issue_saved = result.get("issue_images_saved", 0)
-        combined = result.get("distribution_combined", False)
         QMessageBox.information(
             self, "업로드 완료",
             f"session_id: {sid}"
             f"\nIssue 이미지: {issue_saved}장"
-            + ("  |  Distribution PNG 저장됨" if combined else "")
-            + (f"\n\n⚠ Distribution 렌더 실패:\n{dist_err}" if dist_err else "")
             + f"\n\n브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
         )
         self._status(f"업로드 완료 (Issue 이미지 {issue_saved}장)")

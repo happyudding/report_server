@@ -18,10 +18,34 @@ from .csvfile_to_df import DF_YIELD_COLUMNS
 from .df_honey import df_honey
 
 
+def _dedup_in_place(mass_data_list: list, new_names=None) -> list:
+    """각 mass_data 의 name(=FileName legend) 을 유일화(중복은 _2, _3 … 접미사).
+
+    new_names 가 주어지면 i 번째 항목의 원하는 이름으로 먼저 교체(빈 문자열·범위 밖은
+    기존명 유지) 후 유일화한다. 입력 파일 stem 이 같아도 별도 source 로 보존되도록
+    md.name 을 제자리에서 갱신하고 동일 리스트를 반환한다.
+    """
+    used = set()
+    for i, md in enumerate(mass_data_list):
+        if new_names is not None:
+            want = (str(new_names[i]).strip() if i < len(new_names) else "") or md.name
+        else:
+            want = md.name
+        base, cand, n = want, want, 2
+        while cand in used:
+            cand = f"{base}_{n}"
+            n += 1
+        md.name = cand
+        used.add(cand)
+    return mass_data_list
+
+
 class df_honey_group:
     def __init__(self, mass_data_list: list):
-        # {source_name: mass_data(df_honey)}
-        self._mass_data_map = {md.name: md for md in mass_data_list}
+        # {source_name: mass_data(df_honey)} — 같은 stem 의 두 입력 파일이 1개로
+        # 붕괴하지 않도록 생성 시 name 을 유일화(_2, _3 …)한다.
+        deduped = _dedup_in_place(list(mass_data_list))
+        self._mass_data_map = {md.name: md for md in deduped}
 
     # ------------------------------------------------------------------ 구성
 
@@ -70,18 +94,7 @@ class df_honey_group:
         new_names 길이가 부족하면 앞에서부터만 적용하고 나머지는 기존명 유지.
         빈 문자열은 무시(기존명 유지). 중복명은 _2, _3 … 접미사로 회피.
         """
-        old = list(self._mass_data_map.values())
-        used = set()
-        renamed = []
-        for i, md in enumerate(old):
-            want = (str(new_names[i]).strip() if i < len(new_names) else "") or md.name
-            base, cand, n = want, want, 2
-            while cand in used:
-                cand = f"{base}_{n}"
-                n += 1
-            md.name = cand
-            used.add(cand)
-            renamed.append(md)
+        renamed = _dedup_in_place(list(self._mass_data_map.values()), new_names)
         self._mass_data_map = {md.name: md for md in renamed}
 
     def subjects(self) -> list:

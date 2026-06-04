@@ -68,7 +68,6 @@ def _prof_report():
     _PROF.clear()
     _PROF_CNT.clear()
 
-_MAX_CDF_POINTS = 150
 _CHARTS_PER_ROW = 5
 # 차트 크기 — gap 없이 밀착 배치 (사용자 사양 324x198)
 _CHART_W, _CHART_H = 324, 198
@@ -84,11 +83,10 @@ _XL_VALUE, _XL_CATEGORY, _XL_PRIMARY = 2, 1, 1
 _XL_LOW = -4134               # xlLow (y축 TickLabelPosition)
 _XL_MARKER_NONE = -4142       # xlMarkerStyleNone
 _XL_MARKER_CIRCLE = 8         # xlMarkerStyleCircle (data 점)
-_MARKER_SIZE = 5             # data 점 크기(pt) — 기존 6 에서 축소. Excel MarkerSize 는
-                             # 정수만 저장(5.5 → 6 으로 반올림돼 무효)하므로 가장 가까운 5 사용.
+_MARKER_SIZE = 4             # data 점 크기(pt)
 # distribution 차트 제목: item 명(subject) / 둘째줄 limit 캡션(Lo~Hi)
-_CHART_TITLE_ITEM_FONT = 11   # item 명 — 기존 10 에서 +1
-_CHART_TITLE_CAP_FONT = 7     # Lo~Hi limit 캡션 — 기존 8 에서 -1
+_CHART_TITLE_ITEM_FONT = 11   # item 명
+_CHART_TITLE_CAP_FONT = 9     # Lo~Hi limit 캡션
 _MSO_FALSE = 0                # msoFalse (LineFormat.Visible — 점 사이 선 제거)
 _MSO_LINE_SYSDASH = 10        # msoLineSysDash (limit line)
 _RGB_RED = 255               # RGB(255,0,0)
@@ -691,40 +689,42 @@ def _fill_issue_table(ws, result):
         row += [""] * pad
         rows.append(row)
 
-    # CPK Category: CPK < 1.33 아이템 (source='total' 기준)
+    # CPK Category: CPK < 1.33 아이템 (source='total' 기준).
+    # 카테고리 시작 행에 "item name" / "cpk" 서브헤더를 넣어 'avg' 헤더와의 혼동 방지.
     cpk_fails = _cpk_fail_subjects(result)
+    n_cpk = max(1, len(cpk_fails))
+    rows.append(["CPK", "", "item name", "cpk"] + [""] * len(src) + [""] * pad)
     if cpk_fails:
         for subj, cpk_val in cpk_fails:
-            row = ["CPK", "", subj, _sanitize_cell(cpk_val)]
+            row = ["", "", subj, _sanitize_cell(cpk_val)]
             row += [""] * len(src)       # _yield 열: CPK 에 해당 없음
             row += [""] * pad
             rows.append(row)
     else:
-        rows.append(["CPK"] + [""] * (len(header) - 1))  # CPK 없으면 플레이스홀더 유지
+        rows.append([""] * len(header))  # CPK 없으면 빈 데이터행 유지
 
     rows.append(["ETC"] + [""] * (len(header) - 1))
 
     _fill_table(ws, header, rows)
     n_yield = len(result.yield_rows)
-    n_cpk = max(1, len(cpk_fails))
 
     _merge_issue_category(ws, n_yield)  # Yield 병합 (기존)
 
-    # CPK Category 병합 (2행 이상인 경우)
-    if len(cpk_fails) > 1:
-        from openpyxl.styles import Alignment
-        cpk_start = _HEADER_ROW + 1 + n_yield
-        ws.merge_cells(start_row=cpk_start, start_column=_START_COL,
-                       end_row=cpk_start + n_cpk - 1, end_column=_START_COL)
-        cell = ws.cell(row=cpk_start, column=_START_COL)
-        al = cell.alignment
-        cell.alignment = Alignment(horizontal=al.horizontal, vertical="center",
-                                   wrap_text=al.wrap_text)
+    # CPK Category 병합: 서브헤더 + 데이터 행 전체에 걸쳐 B열 "CPK" 세로 표시
+    from openpyxl.styles import Alignment
+    cpk_start = _HEADER_ROW + 1 + n_yield   # 서브헤더 행
+    cpk_block = 1 + n_cpk                    # 서브헤더 + 데이터 행 수
+    ws.merge_cells(start_row=cpk_start, start_column=_START_COL,
+                   end_row=cpk_start + cpk_block - 1, end_column=_START_COL)
+    cell = ws.cell(row=cpk_start, column=_START_COL)
+    al = cell.alignment
+    cell.alignment = Alignment(horizontal=al.horizontal, vertical="center",
+                               wrap_text=al.wrap_text)
 
     for i in range(n_yield):
         ws.row_dimensions[_HEADER_ROW + 1 + i].height = _ISSUE_TABLE_ROW_HEIGHT
     for i in range(n_cpk):
-        ws.row_dimensions[_HEADER_ROW + 1 + n_yield + i].height = _ISSUE_TABLE_ROW_HEIGHT
+        ws.row_dimensions[cpk_start + 1 + i].height = _ISSUE_TABLE_ROW_HEIGHT
 
     _apply_table_col_widths(ws, header, custom_widths={
         "Distribution": 22.1,
@@ -736,6 +736,9 @@ def _fill_issue_table(ws, result):
     _apply_used_cell_font(ws, size=15, bold=False)
     _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=False,
                               last_row=_HEADER_ROW + len(rows))
+    # CPK 서브헤더(item name / cpk)는 폰트 패스 이후 헤더 스타일 재적용 — 굵게/음영 유지
+    _apply_hdr_style(ws.cell(row=cpk_start, column=_START_COL + 2))  # Item 열
+    _apply_hdr_style(ws.cell(row=cpk_start, column=_START_COL + 3))  # avg 열
 
 
 def _merge_issue_category(ws, n_yield, header_row=_HEADER_ROW, start_col=_START_COL):
@@ -1211,9 +1214,11 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
 
 
 def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None):
-    """fail_item 시트의 Distribution 열(각 데이터 행)에 해당 subject 차트 PNG 삽입.
+    """fail_item 시트의 Distribution 열(각 bin 행)에 fail item 차트 PNG 삽입.
 
-    yield_row 1개 = 1행 = Distribution 열 1셀에 차트 1개 배치.
+    한 bin 에 fail item 이 여럿일 수 있으므로, 해당 행 fail_subjects 전체를 불량율
+    (portion %) 내림차순으로 Distribution 칸에서 오른쪽으로 나열한다 (fail_subjects 는
+    이미 정렬됨). Distribution 은 마지막 열이라 우측 빈 공간으로 확장된다.
     """
     import os
     import tempfile
@@ -1230,26 +1235,33 @@ def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None):
     tmpdir = tempfile.mkdtemp(prefix="honey_fi_")
     seq = 0
 
-    for i, r in enumerate(result.yield_rows):
-        subj = r.get("Main Fail subject")
-        if not subj or subj not in chart_map:
+    for i, r in enumerate(result.fail_item_rows):
+        fail_subjects = r.get("fail_subjects") or []
+        if not fail_subjects:
             continue
-        ch = chart_map[subj]   # COM Chart (Pass2 가 COM Chart 를 저장)
         row_excel = _HEADER_ROW + 1 + i
         try:
             cell = fi.range((row_excel, dist_col))
-            left = cell.left
+            base_left = cell.left
             top = cell.top
             w = cell.width
             h = cell.height
         except Exception:
-            left, top = 700.0, 60.0 + i * _FAIL_ITEM_ROW_HEIGHT
+            base_left, top = 700.0, 60.0 + i * _FAIL_ITEM_ROW_HEIGHT
             w, h = 200.0, float(_FAIL_ITEM_ROW_HEIGHT)
-        png = os.path.join(tmpdir, f"fi_{seq}.png")
-        seq += 1
-        if _attach_chart_picture(fi, ch, png, f"fi_chart_{seq}", left, top, w, h,
-                                 "fail_item", subj, attach_progress_cb):
-            _prof_count("pngs")
+        k = 0   # 실제 부착된 차트 수 — 가로 위치 인덱스
+        for fs in fail_subjects:
+            subj = fs.get("subject")
+            if not subj or subj not in chart_map:
+                continue
+            ch = chart_map[subj]   # COM Chart (Pass2 가 COM Chart 를 저장)
+            left = base_left + k * w
+            png = os.path.join(tmpdir, f"fi_{seq}.png")
+            seq += 1
+            if _attach_chart_picture(fi, ch, png, f"fi_chart_{seq}", left, top, w, h,
+                                     "fail_item", subj, attach_progress_cb):
+                _prof_count("pngs")
+            k += 1
 
     return tmpdir if seq > 0 else None
 
@@ -1296,13 +1308,13 @@ def _attach_issue_table_charts(wb, result, chart_map, attach_progress_cb=None):
                                  "issue_table", subj, attach_progress_cb):
             _prof_count("pngs")
 
-    # CPK < 1.33 행 distribution 차트 부착
+    # CPK < 1.33 행 distribution 차트 부착 (+1: CPK 카테고리 서브헤더 행 보정)
     n_yield = len(result.yield_rows)
     for j, (subj, _cpk_val) in enumerate(_cpk_fail_subjects(result)):
         if subj not in chart_map:
             continue
         ch = chart_map[subj]
-        row_excel = _HEADER_ROW + 1 + n_yield + j
+        row_excel = _HEADER_ROW + 1 + n_yield + 1 + j
         try:
             cell = it.range((row_excel, dist_col))
             left = cell.left
@@ -1311,7 +1323,7 @@ def _attach_issue_table_charts(wb, result, chart_map, attach_progress_cb=None):
             h = cell.height
         except Exception:
             left = 700.0
-            top = 60.0 + (n_yield + j) * _ISSUE_TABLE_ROW_HEIGHT
+            top = 60.0 + (n_yield + 1 + j) * _ISSUE_TABLE_ROW_HEIGHT
             w, h = 200.0, float(_ISSUE_TABLE_ROW_HEIGHT)
         png = os.path.join(tmpdir, f"it_{seq}.png")
         seq += 1
@@ -1702,7 +1714,6 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
             ys = np.asarray(tr["ys"], dtype=float) / 100.0   # 0~100 → 0~1
             if xs.size == 0:
                 continue
-            xs, ys = _downsample(xs, ys)
             series_list.append((tr["source"], xs, ys))
         if not series_list:
             continue
@@ -1870,22 +1881,18 @@ def _style_limit_series(s):
 
 
 def _style_data_series(s, rgb=None):
-    """data series: 점(마커)만 — 점 사이 선 제거, 마커 색 = source 색(rgb)."""
+    """data series: 계단형 ECDF 선 — 마커 없이 선만 표시."""
     try:
-        s.Format.Line.Visible = _MSO_FALSE   # 점 사이 잇는 선 제거
+        line = s.Format.Line
+        line.Weight = _MARKER_SIZE / 2.0    # 마커 크기의 절반 굵기 (4pt → 2pt)
+        if rgb is not None:
+            line.ForeColor.RGB = rgb
     except Exception:
         pass
     try:
-        s.MarkerStyle = _XL_MARKER_CIRCLE
-        s.MarkerSize = _MARKER_SIZE
+        s.MarkerStyle = _XL_MARKER_NONE     # 마커 제거 — 선만으로 표현
     except Exception:
         pass
-    if rgb is not None:
-        try:
-            s.MarkerBackgroundColor = rgb
-            s.MarkerForegroundColor = rgb
-        except Exception:
-            pass
 
 
 def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
@@ -2013,13 +2020,6 @@ def _x_axis_range(lo, hi, dmin, dmax, is_fail):
         xmax = dmax + (dmax - hi_n) * 0.05
     dec = max(_decimals(lo_n), _decimals(hi_n))
     return _floor_dec(xmin, dec), _ceil_dec(xmax, dec)
-
-
-def _downsample(xs, ys, max_points=_MAX_CDF_POINTS):
-    if xs.size <= max_points:
-        return xs, ys
-    idx = np.unique(np.linspace(0, xs.size - 1, max_points).astype(int))
-    return xs[idx], ys[idx]
 
 
 # ── distribution 시트 제목 배너 (xlwings) ────────────────────────────────────

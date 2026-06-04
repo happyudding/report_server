@@ -151,6 +151,13 @@ HONEY_SERVER_URL      기본 http://127.0.0.1:8000
    같은 xlsx 라도 다른 키가 됨. canonical 은 `json.dumps(sort_keys=True)`.
 5. 클라이언트 자동 업데이트는 batch 스크립트 + 외부 다운로드 방식. 실행 중인 exe
    에 직접 쓰지 말 것 (Windows 락).
+6. **Distribution 차트 데이터 다운샘플링 절대 금지.**
+   모든 데이터 포인트를 빠짐없이 차트에 표현해야 한다.
+   `_MAX_CDF_POINTS`, `_downsample`, `max_points` 같은 포인트 상한 로직을
+   절대 추가하지 말 것.
+   유일하게 허용되는 최적화는 동일값 구간을 2포인트 선분으로 표현하는
+   `cumulative_distribution_full()` 의 계단형(step) ECDF 변환뿐이다
+   ([client/report_generator/_builders.py](client/report_generator/_builders.py)).
 
 ---
 
