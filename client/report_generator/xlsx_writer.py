@@ -82,12 +82,12 @@ _DIST_TITLE_PX = 30
 _XL_VALUE, _XL_CATEGORY, _XL_PRIMARY = 2, 1, 1
 _XL_LOW = -4134               # xlLow (y축 TickLabelPosition)
 _XL_MARKER_NONE = -4142       # xlMarkerStyleNone
-_XL_MARKER_CIRCLE = 8         # xlMarkerStyleCircle (data 점)
 _MARKER_SIZE = 4             # data 점 크기(pt)
 # distribution 차트 제목: item 명(subject) / 둘째줄 limit 캡션(Lo~Hi)
 _CHART_TITLE_ITEM_FONT = 11   # item 명
 _CHART_TITLE_CAP_FONT = 9     # Lo~Hi limit 캡션
-_MSO_FALSE = 0                # msoFalse (LineFormat.Visible — 점 사이 선 제거)
+_MSO_TRUE  = -1               # msoTrue  (LineFormat.Visible — 선 활성화)
+_MSO_FALSE = 0                # msoFalse (LineFormat.Visible — 선 숨김)
 _MSO_LINE_SYSDASH = 10        # msoLineSysDash (limit line)
 _RGB_RED = 255               # RGB(255,0,0)
 _RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail 차트 배경)
@@ -1810,7 +1810,7 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
             if idx == 0:  # 첫 복제로 게이트 판정 (이후 동일하게 적용)
                 try:
                     marker_ok = (nchart.SeriesCollection().Item(3).MarkerStyle
-                                 == _XL_MARKER_CIRCLE)
+                                 == _XL_MARKER_NONE)
                 except Exception:
                     marker_ok = False
                 n_legend = 2 + len(spec["series_list"])
@@ -1884,7 +1884,8 @@ def _style_data_series(s, rgb=None):
     """data series: 계단형 ECDF 선 — 마커 없이 선만 표시."""
     try:
         line = s.Format.Line
-        line.Weight = _MARKER_SIZE / 2.0    # 마커 크기의 절반 굵기 (4pt → 2pt)
+        line.Visible = _MSO_TRUE            # 선 명시적 활성화 (MarkerStyle 변경이 선을 숨길 수 있음)
+        line.Weight = _MARKER_SIZE / 2.0
         if rgb is not None:
             line.ForeColor.RGB = rgb
     except Exception:

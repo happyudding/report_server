@@ -15,6 +15,7 @@ import re
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 import requests
@@ -493,6 +494,41 @@ class ReportSettingsDialog(QDialog):
         self.accept()
 
 
+def _prepare_upload_xlsx(src_path: str) -> tuple:
+    """zip 유효성 검증 + distribution 시트 제거 임시 xlsx 생성.
+
+    반환: (upload_path: str, is_tmp: bool)
+    distribution 이 없거나 openpyxl 미설치이면 원본 경로를 그대로 반환(is_tmp=False).
+    is_tmp=True 이면 호출자가 upload 후 upload_path 를 삭제해야 한다.
+    """
+    try:
+        with zipfile.ZipFile(src_path):
+            pass
+    except zipfile.BadZipFile:
+        raise ValueError(
+            "선택한 파일이 유효한 xlsx(zip) 형식이 아닙니다.\n"
+            "Excel에서 다시 저장한 후 시도하세요.")
+
+    try:
+        import openpyxl
+    except ImportError:
+        return src_path, False
+
+    wb = openpyxl.load_workbook(src_path)
+    dist_names = [s for s in wb.sheetnames if s.lower() == "distribution"]
+    if not dist_names:
+        wb.close()
+        return src_path, False
+
+    for name in dist_names:
+        del wb[name]
+    tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+    tmp.close()
+    wb.save(tmp.name)
+    wb.close()
+    return tmp.name, True
+
+
 # ───────────────────────────────────────────────────────────────────────────
 
 class HoneyMainWindow(QMainWindow):
@@ -936,7 +972,7 @@ class HoneyMainWindow(QMainWindow):
         app_settings.set_setting("product_type", self.product_type())
 
     def _do_upload(self, path):
-        """메타 팝업 입력 → 이미지 렌더(프로그레스) → 업로드(프로그레스) → 완료."""
+        """메타 팝업 입력 → xlsx 전처리 → 업로드 → 완료."""
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
         dlg = UploadDialog(self, defaults=defaults)
@@ -947,60 +983,35 @@ class HoneyMainWindow(QMainWindow):
 
         self.btn_upload_local.setEnabled(False)
 
-        # ── Phase 1: 이미지 렌더링 ────────────────────────────────────────
-        # 1-a) 기존 Distribution 차트 개별 내보내기 (하위호환 / 폴백용)
-        prog = QProgressDialog("차트 렌더링 준비 중...", None, 0, 100, self)
-        prog.setWindowTitle("업로드 준비")
+        # ── xlsx 전처리: zip 유효성 검증 + distribution 시트 제거 ─────────
+        try:
+            upload_path, is_tmp = _prepare_upload_xlsx(path)
+        except ValueError as exc:
+            QMessageBox.critical(self, "파일 오류", str(exc))
+            self.btn_upload_local.setEnabled(True)
+            return
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "전처리 경고",
+                f"xlsx 전처리 중 오류가 발생해 원본 파일로 업로드합니다:\n{exc}")
+            upload_path, is_tmp = path, False
+
+        # ── 서버 업로드 ───────────────────────────────────────────────────
+        prog = QProgressDialog(
+            f"서버 업로드 중... {Path(upload_path).name}", None, 0, 0, self)
+        prog.setWindowTitle("업로드 중")
         prog.setWindowModality(Qt.WindowModal)
         prog.setMinimumDuration(0)
         prog.setCancelButton(None)
-        prog.setValue(0)
-        QApplication.processEvents()
-
-        def _chart_progress(done, total):
-            if prog.maximum() != total:
-                prog.setMaximum(total)
-            prog.setValue(done)
-            prog.setLabelText(f"차트 렌더링 중... ({done}/{total})")
-            QApplication.processEvents()
-
-        try:
-            chart_pngs = chart_export.export_chart_pngs(path, progress_cb=_chart_progress)
-        except Exception:
-            chart_pngs = []
-
-        # 1-b) Issue Table 행별 임베드 이미지 추출 (zip 파싱 우선, COM 폴백)
-        prog.setMaximum(0)
-        prog.setLabelText("Issue Table 이미지 추출 중...")
-        QApplication.processEvents()
-        try:
-            issue_imgs = chart_export.export_issue_table_pngs(path)
-        except Exception:
-            issue_imgs = []
-
-        # 1-c) Distribution 시트 PNG 렌더링 비활성화 (속도 개선)
-        dist_png = None
-        dist_err = ""
-
-        # ── Phase 2: 서버 업로드 ──────────────────────────────────────────
-        prog.setMaximum(0)
-        prog.setValue(0)
-        prog.setLabelText(
-            f"서버 업로드 중... {Path(path).name}"
-            f"  (Issue 이미지 {len(issue_imgs)}장)")
-        prog.setWindowTitle("업로드 중")
         QApplication.processEvents()
 
         try:
             result = uploader.post_xlsx(
-                path,
+                upload_path,
                 product_type=v["product_type"],
                 product=v["product"],
                 lot_id=v["lot_id"],
                 password=v["password"],
-                chart_pngs=chart_pngs,
-                issue_imgs=issue_imgs,
-                dist_png=dist_png,
             )
         except Exception as exc:
             prog.close()
@@ -1008,18 +1019,22 @@ class HoneyMainWindow(QMainWindow):
             self._status("업로드 실패")
             self.btn_upload_local.setEnabled(True)
             return
+        finally:
+            if is_tmp:
+                try:
+                    os.remove(upload_path)
+                except OSError:
+                    pass
 
         prog.close()
 
         sid = result.get("session_id", "?")
-        issue_saved = result.get("issue_images_saved", 0)
         QMessageBox.information(
             self, "업로드 완료",
             f"session_id: {sid}"
-            f"\nIssue 이미지: {issue_saved}장"
             + f"\n\n브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
         )
-        self._status(f"업로드 완료 (Issue 이미지 {issue_saved}장)")
+        self._status("업로드 완료")
         self.btn_upload_local.setEnabled(True)
 
     # ── version check (기존 로직 무변경) ────────────────────────────────────

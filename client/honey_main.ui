@@ -6,15 +6,15 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>540</width>
+    <width>702</width>
     <height>580</height>
    </rect>
   </property>
   <property name="minimumSize">
-   <size><width>540</width><height>580</height></size>
+   <size><width>702</width><height>580</height></size>
   </property>
   <property name="maximumSize">
-   <size><width>540</width><height>580</height></size>
+   <size><width>702</width><height>580</height></size>
   </property>
   <property name="windowTitle">
    <string>Honey</string>
@@ -127,7 +127,7 @@
          <size><width>16777215</width><height>128</height></size>
         </property>
         <property name="styleSheet">
-         <string notr="true">font-size: 9pt;</string>
+         <string notr="true">font-size: 8pt;</string>
         </property>
         <property name="selectionMode">
          <enum>QAbstractItemView::SingleSelection</enum>
