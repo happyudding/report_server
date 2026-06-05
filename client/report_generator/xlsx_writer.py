@@ -668,34 +668,30 @@ def _fill_fail_values_section(ws, result):
     with _flow_prof("fail_values.title"):
         _hdr_cell(ws, title_row, _START_COL, "FAIL_VALUES")
 
-    last_col = _START_COL + _FAIL_VALUES_NCOLS - 1
-    for i, (src_name, rows) in enumerate(fvr.items()):
+    for i, (src_name, df) in enumerate(fvr.items()):
         with _flow_prof(f"fail_values.write_source[{src_name}]"):
+            ncol = df.shape[1]
             col0 = _START_COL + i * (_FAIL_VALUES_NCOLS + _FAIL_VALUES_GAP)
-            c1 = col0 + _FAIL_VALUES_NCOLS - 1
-            # source 이름 셀 + 열 헤더행 일괄
+            c1 = col0 + ncol - 1
+            # source 이름 셀 + 열 헤더행(df.columns) 일괄
             _hdr_cell(ws, src_row, col0, src_name)
-            ws.range((hdr_row, col0), (hdr_row, c1)).value = list(_FAIL_VALUES_COLS)
+            ws.range((hdr_row, col0), (hdr_row, c1)).value = list(df.columns)
             _hdr_range(ws, hdr_row, col0, c1)
-            # 데이터 블록 2D 일괄 기입 + 블록 단위 스타일 (셀 단위 기입 제거)
-            if rows:
-                data = [[_sanitize_cell(row["dut"]), _sanitize_cell(row["xcoord"]),
-                         _sanitize_cell(row["ycoord"]), _sanitize_cell(row["bin"]),
-                         _sanitize_cell(row["item"]), _sanitize_cell(row["value"])]
-                        for row in rows]
-                rlast = data_row0 + len(rows) - 1
-                # DUT/XCoord/YCoord/Bin 은 식별자 텍스트(_fmt_type) — Excel 숫자 자동변환
-                # 방지로 OLD(openpyxl) 와 동일하게 text 유지. Value 열은 숫자 그대로.
+            # 분석단계 산출 DataFrame 을 블록 단위 1회 write (재계산·행단위 setter 없음)
+            if len(df):
+                rlast = data_row0 + len(df) - 1
+                # DUT/XCoord/YCoord/Bin(식별자 텍스트)은 Excel 숫자 자동변환 방지로 text 유지
                 ws.range((data_row0, col0), (rlast, col0 + 3)).number_format = "@"
-                ws.range((data_row0, col0), (rlast, c1)).value = data
+                ws.range((data_row0, col0), (rlast, c1)).value = df.values.tolist()
                 _data_range(ws, data_row0, col0, rlast, c1)
 
     # 소스 블록별 윤곽선 적용 (src_row 헤더~마지막 데이터행) — 블록 Range 1회
     with _flow_prof("fail_values.borders"):
-        for i, (src_name, rows) in enumerate(fvr.items()):
+        for i, (src_name, df) in enumerate(fvr.items()):
+            ncol = df.shape[1]
             col0 = _START_COL + i * (_FAIL_VALUES_NCOLS + _FAIL_VALUES_GAP)
-            last_row = data_row0 + len(rows) - 1 if rows else hdr_row
-            _style_range(ws.range((src_row, col0), (last_row, col0 + _FAIL_VALUES_NCOLS - 1)),
+            last_row = data_row0 + len(df) - 1 if len(df) else hdr_row
+            _style_range(ws.range((src_row, col0), (last_row, col0 + ncol - 1)),
                          border=True)
 
 
@@ -1214,6 +1210,14 @@ def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None):
 
     tmpdir = tempfile.mkdtemp(prefix="honey_fi_")
     seq = 0
+    total = sum(
+        1
+        for r in result.fail_item_rows
+        for fs in (r.get("fail_subjects") or [])
+        if fs.get("subject") in chart_map
+    )
+    done = 0
+    _notify_attach_progress(attach_progress_cb, "start", "fail_item", "", done, total)
 
     for i, r in enumerate(result.fail_item_rows):
         fail_subjects = r.get("fail_subjects") or []
@@ -1241,8 +1245,12 @@ def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None):
             if _attach_chart_picture(fi, ch, png, f"fi_chart_{seq}", left, top, w, h,
                                      "fail_item", subj, attach_progress_cb):
                 _prof_count("pngs")
+            done += 1
+            _notify_attach_progress(
+                attach_progress_cb, "progress", "fail_item", subj, done, total)
             k += 1
 
+    _notify_attach_progress(attach_progress_cb, "done", "fail_item", "", done, total)
     return tmpdir if seq > 0 else None
 
 
@@ -1267,6 +1275,14 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
 
     tmpdir = tempfile.mkdtemp(prefix="honey_it_")
     seq = 0
+    cpk_subjects = _cpk_fail_subjects(result) if include_cpk else []
+    total = sum(
+        1
+        for r in result.yield_rows
+        if r.get("Main Fail subject") in chart_map
+    ) + sum(1 for subj, _cpk_val in cpk_subjects if subj in chart_map)
+    done = 0
+    _notify_attach_progress(attach_progress_cb, "start", "issue_table", "", done, total)
 
     for i, r in enumerate(result.yield_rows):
         subj = r.get("Main Fail subject")
@@ -1288,13 +1304,17 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
         if _attach_chart_picture(it, ch, png, f"it_chart_{seq}", left, top, w, h,
                                  "issue_table", subj, attach_progress_cb):
             _prof_count("pngs")
+        done += 1
+        _notify_attach_progress(
+            attach_progress_cb, "progress", "issue_table", subj, done, total)
 
     if not include_cpk:
+        _notify_attach_progress(attach_progress_cb, "done", "issue_table", "", done, total)
         return tmpdir if seq > 0 else None
 
     # CPK < 1.33 행 distribution 차트 부착 (+1: CPK 카테고리 서브헤더 행 보정)
     n_yield = len(result.yield_rows)
-    for j, (subj, _cpk_val) in enumerate(_cpk_fail_subjects(result)):
+    for j, (subj, _cpk_val) in enumerate(cpk_subjects):
         if subj not in chart_map:
             continue
         ch = chart_map[subj]
@@ -1314,7 +1334,11 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
         if _attach_chart_picture(it, ch, png, f"it_chart_{seq}", left, top, w, h,
                                  "issue_table", subj, attach_progress_cb):
             _prof_count("pngs")
+        done += 1
+        _notify_attach_progress(
+            attach_progress_cb, "progress", "issue_table", subj, done, total)
 
+    _notify_attach_progress(attach_progress_cb, "done", "issue_table", "", done, total)
     return tmpdir if seq > 0 else None
 
 
@@ -1421,11 +1445,11 @@ def _copy_chart_picture_to_sheet(chart, sheet, name, left, top, width, height):
     return shape
 
 
-def _notify_attach_progress(cb, event, sheet_name, subject):
+def _notify_attach_progress(cb, event, sheet_name, subject, done=None, total=None):
     if cb is None:
         return
     try:
-        cb(event, sheet_name, subject)
+        cb(event, sheet_name, subject, done, total)
     except Exception:
         pass
 

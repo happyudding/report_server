@@ -111,6 +111,46 @@ class df_honey:
         df.columns = list(self.subjects)
         return df
 
+    def fail_value_frame(self) -> pd.DataFrame:
+        """원본 honey fail value — 각 DUT 의 '첫 NaN 직전 subject' 의 값/이름 (벡터 연산).
+
+        get_prev_col_val_before_nan_all 동치: 행을 왼쪽부터 보아 첫 NaN 직전 subject 를 기록.
+        반환 행=DUT, 열=[DUT, XCoord, YCoord, Bin, Item, Value].
+          Item = "PASS"(NaN 없이 완주) / 멈춘 subject 이름(첫 NaN 직전) / None(첫 열부터 NaN)
+          Value = 그 직전 측정값 (없으면 N/A)
+        """
+        cols = ["DUT", "XCoord", "YCoord", "Bin", "Item", "Value"]
+        arr = self.numeric_scores.to_numpy(dtype="float64", copy=False)
+        subjects = list(self.subjects)
+        n_dut, n_subj = arr.shape
+        if n_dut == 0:
+            return pd.DataFrame(columns=cols)
+        meta = self.meta.reset_index(drop=True)
+        items = np.array(["PASS"] * n_dut, dtype=object)
+        values = np.full(n_dut, np.nan)
+        if n_subj:
+            isnan = np.isnan(arr)
+            has_nan = isnan.any(axis=1)
+            first = isnan.argmax(axis=1)          # 첫 NaN 열 (NaN 없으면 0 → has_nan 로 구분)
+            no_nan = ~has_nan
+            values[no_nan] = arr[no_nan, n_subj - 1]      # 완주 → 마지막 subject 값
+            stop = has_nan & (first > 0)                  # 중간에 멈춤 → 직전 subject
+            if stop.any():
+                pidx = first[stop] - 1
+                items[stop] = np.array(subjects, dtype=object)[pidx]
+                values[stop] = arr[np.nonzero(stop)[0], pidx]
+            items[has_nan & (first == 0)] = None          # 첫 열부터 NaN → None
+        else:
+            items[:] = None
+        return pd.DataFrame({
+            "DUT":    [B._fmt_type(v) for v in meta["DUT"]],
+            "XCoord": [B._fmt_type(v) for v in meta["XCoord"]],
+            "YCoord": [B._fmt_type(v) for v in meta["YCoord"]],
+            "Bin":    [B._fmt_type(v) for v in meta["Bin"]],
+            "Item":   items,
+            "Value":  [B._fmt_num(v) for v in values],
+        })[cols]
+
     # ------------------------------------------------------------------ df 파생 컴포넌트
 
     @cached_property

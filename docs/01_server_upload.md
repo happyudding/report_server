@@ -27,7 +27,7 @@
 - **파서 견고성 (xlsx_writer 레이아웃 짝)** [xlsx_parser.py](../server/xlsx_parser.py): 표가 B열~·헤더 3행인 클라 출력에 맞춰 셀 좌표 대신 **2D anchor 텍스트**로 섹션을 찾는다.
   - `summary` → `1. Device Feature` / `2. Yield` / `Major Fail Bins`(E열) / `3. Evaluation Summary` anchor 기준 dict: `feature`(Total DUT/Pass/Fail Types/Sources/Subjects/**EVT Version**), `yield_summary`(Lot NO/Yield), `major_fail_bins`(1st~5th = subject+ratio), `evaluation`(Yield/CPK/Temp/ETC). 최상위 `title`(A1) 포함.
   - `yield`/`issue_table` → ‘비어있지 않은 셀 2개 이상’ 첫 행을 헤더로 잡는 list[dict]. `issue_table` 은 `Distribution` 컬럼 drop + Category 그룹의 `CPK`/`ETC` 플레이스홀더(빈 bin) 행 제외 → Yield 블록만.
-  - 클라 출력은 table 시트를 **openpyxl** 로 직접 생성하고 distribution 만 **xlwings** 로 그린다 → 한쪽 레이아웃 바꾸면 이 파서도 함께 (→[06](06_analysis_engine.md), [xlsx_writer](../client/report_generator/xlsx_writer.py)).
+  - 클라 출력은 `xlsx_writer` 가 **xlwings 단일 Excel COM 세션**에서 table/raw/distribution/PNG attachment/save 를 모두 처리한다. table 레이아웃을 바꾸면 이 파서도 함께 확인한다 (→[06](06_analysis_engine.md), [xlsx_writer](../client/report_generator/xlsx_writer.py)).
 - 응답 status 코드: 정상 200, 파싱실패 400, S3 본문 실패 500.
 
 ## 자주 바뀌는 지점

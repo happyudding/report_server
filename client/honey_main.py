@@ -874,6 +874,15 @@ class HoneyMainWindow(QMainWindow):
             "split_for_diff",
             "subjects_meta",
             "subjects_meta_common",
+            "build_yield",
+            "build_fail_items",
+            "build_issue_summary",
+            "build_summary_rows",
+            "build_major_fail_subjects",
+            "build_cpk",
+            "build_cpk_common",
+            "build_distributions",
+            "build_distributions_common",
             "combined_df_yield",
             "fill_fail_item",
             "fail_values.title",
@@ -907,7 +916,7 @@ class HoneyMainWindow(QMainWindow):
         steps = 0
         if raw_data:
             steps += 1  # raw_frames
-        steps += 7 + sources  # analysis major builders + fail_detail per source
+        steps += 1 + sources  # analysis table builders + fail_detail per source
         steps += 1  # workbook_init
         steps += sum(1 for s in selected_tables if s != "fail_item")
         if "fail_item" in selected_tables:
@@ -1264,8 +1273,17 @@ class HoneyMainWindow(QMainWindow):
         def _dist_progress(done, n_charts):
             progress_events.put(("dist", done, n_charts, None))
 
-        def _attach_progress(event, sheet_name, subject):
-            progress_events.put(("attach", event, sheet_name, subject))
+        _attach_state = {"base": 0, "last_log": {}}
+
+        def _attach_progress(event, sheet_name, subject, done=None, total=None):
+            payload = {
+                "event": event,
+                "sheet_name": sheet_name,
+                "subject": subject,
+                "done": done,
+                "total": total,
+            }
+            progress_events.put(("attach", payload, None, None))
 
         def _drain_progress_events():
             while True:
@@ -1301,12 +1319,37 @@ class HoneyMainWindow(QMainWindow):
                             _dist_state["last_log"] = done
                             self._append_run_log(f"Distribution chart {done}/{n_charts} ({pct}%)")
                 elif kind == "attach":
-                    event, sheet_name, subject = a, b, c
-                    if event != "copy_picture":
+                    payload = a or {}
+                    event = payload.get("event")
+                    sheet_name = payload.get("sheet_name") or ""
+                    subject = payload.get("subject") or ""
+                    done = int(payload.get("done") or 0)
+                    total_a = int(payload.get("total") or 0)
+                    if event == "start":
+                        if total_a:
+                            _attach_state["base"] = progress.value()
+                            progress.set_maximum(progress.maximum() + total_a)
+                        _attach_state["last_log"][sheet_name] = 0
                         continue
-                    msg = "Chart 복사 붙여넣기 진행중 잠시 기다려주세요"
-                    progress.set(f"{msg} ({sheet_name}: {subject})", status=msg)
-                    self._append_run_log(f"{msg} ({sheet_name}: {subject})")
+                    if event == "progress":
+                        pct = done * 100 // total_a if total_a else 100
+                        value = _attach_state["base"] + done if total_a else progress.value()
+                        msg = f"PNG 붙이는 중... ({sheet_name} {done}/{total_a} - {pct}%)"
+                        progress.set(msg, value=value, status=msg)
+                        last_log = _attach_state["last_log"].get(sheet_name, 0)
+                        if total_a and (done == total_a or done - last_log >= 10):
+                            _attach_state["last_log"][sheet_name] = done
+                            self._append_run_log(
+                                f"PNG attach {sheet_name} {done}/{total_a} ({pct}%)")
+                        continue
+                    if event == "done":
+                        if total_a:
+                            self._append_run_log(f"PNG attach {sheet_name} done: {done}/{total_a}")
+                        continue
+                    if event == "copy_picture":
+                        msg = "Chart 복사 붙여넣기 진행중 잠시 기다려주세요"
+                        progress.set(f"{msg} ({sheet_name}: {subject})", status=msg)
+                        self._append_run_log(f"{msg} ({sheet_name}: {subject})")
 
         progress.set(
             f"Excel 시트/차트 생성 중...  → {Path(out).name}",

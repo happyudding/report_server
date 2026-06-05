@@ -55,7 +55,7 @@ class AnalysisResult:
     total_dut: int = 0
     pass_yield: Optional[float] = None                   # Bin 1 portion (%)
     df_yield: Optional[pd.DataFrame] = None              # per-(step,Bin,Tno,item) yield 집계
-    fail_value_rows: dict = field(default_factory=dict)  # {source_name: list[dict]}
+    fail_value_rows: dict = field(default_factory=dict)  # {source_name: DataFrame[DUT,XCoord,YCoord,Bin,Item,Value]}
 
     # diff compare (None = diff mode 아님). 2개 파일 subject 불일치 시 analyzer 가 채움.
     diff_classification: Optional[dict] = None           # {common,a_only,b_only,name_a,name_b}

@@ -87,36 +87,37 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     with _flow_time("split_for_diff", profile_cb):
         split = work.split_for_diff()
 
-    with _flow_time("build_yield", profile_cb):
-        yield_rows = work.yield_rate()
-    with _flow_time("build_fail_items", profile_cb):
-        fail_item_rows = work.fail_items()
-    with _flow_time("build_issue_summary", profile_cb):
-        # fail_item_rows(=캐시) 재사용 — 내부 build_fail_items 재계산 회피
-        issue_rows = B.build_issue_summary(mass_data_map, fail_items=fail_item_rows)
-    with _flow_time("build_summary_rows", profile_cb):
-        summary_rows = work.summary()
-    with _flow_time("build_major_fail_subjects", profile_cb):
-        major_fail_subject_rows = B.build_major_fail_subjects(mass_data_map)
+    with _flow_time("build_analysis_tables", profile_cb):
+        with _flow_time("build_yield"):
+            yield_rows = work.yield_rate()
+        with _flow_time("build_fail_items"):
+            fail_item_rows = work.fail_items()
+        with _flow_time("build_issue_summary"):
+            # fail_item_rows(=캐시) 재사용 — 내부 build_fail_items 재계산 회피
+            issue_rows = B.build_issue_summary(mass_data_map, fail_items=fail_item_rows)
+        with _flow_time("build_summary_rows"):
+            summary_rows = work.summary()
+        with _flow_time("build_major_fail_subjects"):
+            major_fail_subject_rows = B.build_major_fail_subjects(mass_data_map)
 
-    if split is None:
-        with _flow_time("build_cpk", profile_cb):
-            cpk_rows = work.cpk()
-        with _flow_time("subjects_meta", profile_cb):
-            subjects_meta = _subjects_meta_from_group(work)
-        with _flow_time("build_distributions", profile_cb):
-            dist_source_data = work.dist_source_frames()
-            distributions = _build_distributions(subjects_meta, dist_source_data)
-    else:
-        cl = split["classification"]
-        common_g = split["common"]
-        with _flow_time("build_cpk_common", profile_cb):
-            cpk_rows = B.build_cpk_for_subjects(common_g.mass_data_map, cl["common"])
-        with _flow_time("subjects_meta_common", profile_cb):
-            subjects_meta = _subjects_meta_from_group(common_g)
-        with _flow_time("build_distributions_common", profile_cb):
-            dist_source_data = common_g.dist_source_frames()
-            distributions = _build_distributions(subjects_meta, dist_source_data)
+        if split is None:
+            with _flow_time("build_cpk"):
+                cpk_rows = work.cpk()
+            with _flow_time("subjects_meta"):
+                subjects_meta = _subjects_meta_from_group(work)
+            with _flow_time("build_distributions"):
+                dist_source_data = work.dist_source_frames()
+                distributions = _build_distributions(subjects_meta, dist_source_data)
+        else:
+            cl = split["classification"]
+            common_g = split["common"]
+            with _flow_time("build_cpk_common"):
+                cpk_rows = B.build_cpk_for_subjects(common_g.mass_data_map, cl["common"])
+            with _flow_time("subjects_meta_common"):
+                subjects_meta = _subjects_meta_from_group(common_g)
+            with _flow_time("build_distributions_common"):
+                dist_source_data = common_g.dist_source_frames()
+                distributions = _build_distributions(subjects_meta, dist_source_data)
 
     total_dut = sum(len(md.scores) for md in mass_data_map.values())
     pass_yield = next((r["portion (%)"] for r in yield_rows if str(r["bin"]) == "1"), None)
@@ -124,7 +125,7 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     fail_value_rows = {}
     for name, md in mass_data_map.items():
         with _flow_time(f"fail_detail {name}", profile_cb):
-            fail_value_rows[name] = md.get_fail_detail()
+            fail_value_rows[name] = md.fail_value_frame()
 
     with _flow_time("combined_df_yield", profile_cb):
         combined_df_yield = group.combined_df_yield

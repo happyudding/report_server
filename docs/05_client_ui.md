@@ -33,7 +33,11 @@
    - **FileName Change** — `on_edit_filenames`: 입력 파일별 legend명(Filename)을 콤마로 구분해 한 줄 편집. Confirm 시 `group.rename_sources(...)` 로 source 명 교체(빈칸=기존명, 중복=`_n`). DUT 정리 모드면 자체 명명 사용으로 미적용.
    - **데이터 정리 모드** — `Bin1 Only`(`filter_rows_by_bin("1")`) / `DUT 정리`(`split_by_dut`, 입력 1개일 때만, `_update_dut_mode_availability`).
    - **Color Change** — `on_edit_chart_colors`(48색) / **Server Auto Upload** 체크.
-5. **분석 실행** — Confirm → `_apply_modes` → `rg.analyze(...)` → `_show_summary`(Status 미리보기) → `xlsx_writer.write(...)` 로 입력폴더에 `<base>_report_YYMMDD_HHMM.xlsx` 저장(`_build_output_path`). 진행바: 준비/분석/요약 + 시트 N(+distribution 차트). `cb_auto_upload` 면 곧장 업로드.
+5. **분석 실행** — Confirm → `_apply_modes` → `_run_analysis`.
+   - Log(`txt_summary`) 는 실행 시작 시 초기화되고 `[mm:ss] [step xx/yy] <step> done: n.nn s` 형식의 debug timer 를 append 한다. `running...` 시작 로그는 표시하지 않는다.
+   - `rg.analyze(..., profile_cb=...)` 와 `xlsx_writer.write(..., profile_cb=...)` 의 단계 이벤트를 Log 에 누적하고, 최종 summary 는 기존 로그를 덮지 않고 아래에 append 한다.
+   - 진행바: 준비/분석/요약 + 시트 생성 + distribution chart 개수 진행률 + PNG attach 개수 진행률. distribution chart 100% 는 chart 생성 완료이며, 같은 phase 의 PNG attach/save 는 별도 시간이 더 걸릴 수 있다.
+   - 결과는 입력폴더에 `<base>_report_YYMMDD_HHMM.xlsx` 로 저장한다(`_build_output_path`). `cb_auto_upload` 면 곧장 업로드.
 6. **서버 업로드** — `on_upload_local`(임의 xlsx 직접) 또는 분석 후 → `_do_upload` ([07](07_client_upload_chart.md)).
 7. **업데이트** — 기동 500ms 후 `check_for_update` ([04](04_honey_update.md)).
 
@@ -43,9 +47,10 @@
 - `_suggest_base_name`/`_build_output_path`/`_TS_RE` — 결과 파일명(`_YYMMDD_HHMM` 접미사 중복 방지).
 - 경로 탐색: `_BASE_DIR = sys._MEIPASS or 스크립트폴더` (frozen 대응, .ui 위치).
 - `main()`: `_apply_cute_font`(둥근 폰트), `_install_excepthook`(슬롯 미처리 예외를 메시지박스로 — PyQt5 기본 abort 방지).
+- Log(`txt_summary`) 는 read-only QTextEdit 이며 드래그 선택/Ctrl+A/C 복사가 가능하다. 실행 로그와 최종 summary 가 같은 영역에 남는다.
 
 ## 주의
 - **report generator 산출물은 .xlsx 1개**. 클라이언트는 하나의 파일에서 모든 것을 관리하는 정책이므로, 분석 결과물 xlsx 는 단일 파일로만 존재해야 한다.
 - **엔진 미설치 그레이스풀** — `import report_generator` 실패 시 `_disable_engine`: 분석 버튼만 비활성, **로컬 xlsx 직접 업로드는 유지**. 분석/생성엔 pandas/numpy/xlwings+Excel 필요.
-- 모든 무거운 작업 사이 `QApplication.processEvents()` 로 UI 갱신 + 진행바.
+- 모든 무거운 작업은 worker thread + `_wait_for_future(..., poll_cb=...)` 로 돌리고, poll 중 `QApplication.processEvents()` 로 UI 갱신 + 진행바/Log 이벤트를 drain 한다.
 - D1 검색은 매번 디스크 재스캔(`_scan` rglob csv/xlsx).
