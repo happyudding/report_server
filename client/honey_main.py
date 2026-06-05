@@ -899,6 +899,10 @@ class HoneyMainWindow(QMainWindow):
         error = event.get("error")
         if status == "start":
             return
+        elif status == "info":
+            msg = event.get("message") or label
+            if msg:
+                self._append_run_log(str(msg))
         elif status == "done":
             self._append_run_log(f"{label} done: {elapsed:.2f}s" if elapsed is not None
                                  else f"{label} done", advance=True)
@@ -921,7 +925,7 @@ class HoneyMainWindow(QMainWindow):
         steps += 1  # workbook_init
         steps += sum(1 for s in selected_tables if s != "fail_item")
         if "cpk" in selected_tables:
-            steps += 4  # fill_cpk expands into five substeps
+            steps += 3  # fill_cpk expands into four substeps
         if "fail_item" in selected_tables:
             steps += 2 + sources  # top table + FAIL_VALUES + source chunks
         if raw_data:

@@ -36,6 +36,7 @@ from . import _profile
 _PROF_ON = bool(os.environ.get("HONEY_CHART_PROFILE"))
 _FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
 _CURRENT_PROFILE_CB = contextvars.ContextVar("xlsx_writer_profile_cb", default=None)
+_CURRENT_DIST_STATS = contextvars.ContextVar("xlsx_writer_dist_stats", default=None)
 _PROF = defaultdict(float)
 _PROF_CNT = defaultdict(int)
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -64,7 +65,7 @@ def _prof_count(bucket, n=1):
         _PROF_CNT[bucket] += n
 
 
-def _emit_profile_event(profile_cb, label, status, elapsed=None, error=None):
+def _emit_profile_event(profile_cb, label, status, elapsed=None, error=None, message=None):
     if profile_cb is None:
         return
     event = {
@@ -76,10 +77,135 @@ def _emit_profile_event(profile_cb, label, status, elapsed=None, error=None):
         event["elapsed"] = elapsed
     if error:
         event["error"] = error
+    if message:
+        event["message"] = message
     try:
         profile_cb(event)
     except Exception:
         pass
+
+
+def _emit_profile_info(message):
+    _emit_profile_event(_CURRENT_PROFILE_CB.get(), "distribution_profile", "info",
+                        message=message)
+
+
+@contextlib.contextmanager
+def _profile_info_time(label):
+    profile_cb = _CURRENT_PROFILE_CB.get()
+    if profile_cb is None:
+        yield
+        return
+    t = time.perf_counter()
+    try:
+        yield
+    except Exception as exc:
+        _emit_profile_info(f"{label} ERROR after {time.perf_counter() - t:.2f}s - {exc}")
+        raise
+    else:
+        _emit_profile_info(f"{label} done: {time.perf_counter() - t:.2f}s")
+
+
+def _new_dist_stats():
+    return {
+        "timings": defaultdict(lambda: {"total": 0.0, "count": 0, "max": 0.0}),
+        "png": defaultdict(lambda: {
+            "count": 0, "direct": 0, "moved": 0, "copy_picture": 0,
+            "failed": 0, "bytes": 0,
+        }),
+    }
+
+
+def _dist_add_time(bucket, elapsed):
+    stats = _CURRENT_DIST_STATS.get()
+    if stats is None:
+        return
+    rec = stats["timings"][bucket]
+    rec["total"] += elapsed
+    rec["count"] += 1
+    rec["max"] = max(rec["max"], elapsed)
+
+
+@contextlib.contextmanager
+def _dist_time(bucket):
+    if _CURRENT_DIST_STATS.get() is None:
+        yield
+        return
+    t = time.perf_counter()
+    try:
+        yield
+    finally:
+        _dist_add_time(bucket, time.perf_counter() - t)
+
+
+def _dist_count_png(sheet_name, method, png_path=None):
+    stats = _CURRENT_DIST_STATS.get()
+    if stats is None:
+        return
+    rec = stats["png"][str(sheet_name)]
+    rec["count"] += 1
+    if method == "direct":
+        rec["direct"] += 1
+    elif str(method).startswith("moved"):
+        rec["moved"] += 1
+    elif method == "copy_picture":
+        rec["copy_picture"] += 1
+    else:
+        rec["failed"] += 1
+    if png_path:
+        try:
+            rec["bytes"] += os.path.getsize(png_path)
+        except OSError:
+            pass
+
+
+def _dist_format_time(rec):
+    count = rec["count"]
+    avg_ms = rec["total"] * 1000.0 / count if count else 0.0
+    max_ms = rec["max"] * 1000.0
+    return f"total={rec['total']:.2f}s avg={avg_ms:.1f}ms max={max_ms:.1f}ms x{count}"
+
+
+def _dist_emit_summary():
+    stats = _CURRENT_DIST_STATS.get()
+    if not stats:
+        return
+    timings = stats["timings"]
+    loop_order = [
+        "dist.loop.finite_scan", "dist.loop.axis_range", "dist.loop.step_flags",
+        "dist.loop.chart_add", "dist.loop.series_limits", "dist.loop.series_sources",
+        "dist.loop.chart_type", "dist.loop.style_limits", "dist.loop.style_sources",
+        "dist.loop.axis_format", "dist.loop.title_format", "dist.loop.plot_format",
+        "dist.loop.legend_format", "dist.loop.fail_bg",
+    ]
+    for bucket in loop_order:
+        rec = timings.get(bucket)
+        if rec and rec["count"]:
+            _emit_profile_info(
+                f"Dist loop {bucket.removeprefix('dist.loop.')}: {_dist_format_time(rec)}"
+            )
+    for sheet_name in ("fail_item", "issue_table"):
+        rec = stats["png"].get(sheet_name)
+        if not rec or not rec["count"]:
+            continue
+        total_mb = rec["bytes"] / (1024.0 * 1024.0)
+        avg_kb = rec["bytes"] / 1024.0 / rec["count"] if rec["count"] else 0.0
+        _emit_profile_info(
+            f"PNG stats {sheet_name}: count={rec['count']} direct={rec['direct']} "
+            f"moved={rec['moved']} copy={rec['copy_picture']} failed={rec['failed']} "
+            f"total={total_mb:.1f}MB avg={avg_kb:.0f}KB"
+        )
+        parts = []
+        for name in (
+            "export.direct", "export.moved", "export.failed", "picture_add",
+            "copy_picture.copy", "copy_picture.paste", "copy_picture.position",
+            "copy_picture.total",
+        ):
+            trec = timings.get(f"png.{sheet_name}.{name}")
+            if trec and trec["count"]:
+                parts.append(f"{name} {_dist_format_time(trec)}")
+        if parts:
+            _emit_profile_info(f"PNG timing {sheet_name}: " + "; ".join(parts))
 
 
 @contextlib.contextmanager
@@ -711,6 +837,7 @@ def _fill_cpk_rows(ws, cpk_rows):
             r.get("median"), r.get("max"), r.get("average"), r.get("stdev"),
             r.get("cpl"), r.get("cpu"), r.get("cp"), r.get("cpk"), "",
         ])
+    _blank_repeated_cpk_labels(rows)
     _fill_cpk_table(ws, header, rows)
     _apply_cpk_warn_fill(ws, header, rows)   # CPK < 1.33 행 노란 하이라이트 (병합 전)
     _apply_table_col_widths(ws, header, custom_widths={
@@ -720,7 +847,16 @@ def _fill_cpk_rows(ws, cpk_rows):
         "comment": 30,
     })
     _apply_font_delta_to_columns(ws, header, ["TEST NAME", "LOW SPEC", "HIGH SPEC", "SCALE"], 2)
-    _merge_cpk_subject(ws, len(rows))
+
+
+def _blank_repeated_cpk_labels(rows):
+    prev_key = None
+    for row in rows:
+        key = tuple(row[:4])
+        if key == prev_key:
+            row[0:4] = ["", "", "", ""]
+        else:
+            prev_key = key
 
 
 def _fill_cpk_table(ws, header, rows):
@@ -769,41 +905,6 @@ def _cpk_fail_subjects(result):
                 seen.add(subj)
                 out.append((subj, cpk_f))
     return out
-
-
-def _merge_cpk_subject(ws, n_rows, header_row=_HEADER_ROW, start_col=_START_COL):
-    with _flow_prof("fill_cpk.merge_subject"):
-        return _merge_cpk_subject_inner(ws, n_rows, header_row, start_col)
-
-
-def _merge_cpk_subject_inner(ws, n_rows, header_row=_HEADER_ROW, start_col=_START_COL):
-    """같은 subject 연속 행의 TEST NAME/LOW SPEC/HIGH SPEC/SCALE 열 병합 + 세로 중앙 정렬."""
-    if n_rows <= 1:
-        return
-    data_start = header_row + 1
-    # TEST NAME 열을 한 번에 읽어 그룹 경계 탐지 (셀 단위 COM read 회피)
-    col_vals = ws.range((data_start, start_col), (data_start + n_rows - 1, start_col)).value
-    if not isinstance(col_vals, list):
-        col_vals = [col_vals]
-
-    groups = []
-    cur_val = col_vals[0]
-    grp_start = data_start
-    for k in range(1, n_rows):
-        val = col_vals[k]
-        if val != cur_val or val is None:
-            groups.append((grp_start, data_start + k - 1))
-            cur_val = val
-            grp_start = data_start + k
-    groups.append((grp_start, data_start + n_rows - 1))
-
-    for r_start, r_end in groups:
-        if r_start == r_end:
-            continue
-        for c in range(start_col, start_col + 4):  # TEST NAME, LOW SPEC, HIGH SPEC, SCALE
-            rng = ws.range((r_start, c), (r_end, c))
-            rng.merge()
-            rng.api.VerticalAlignment = _XL_CENTER
 
 
 def _fill_issue_table(ws, result, include_cpk=True):
@@ -1147,66 +1248,75 @@ def _write_distribution_phase(app, wb, result, colors=None, attach_fail_item=Fal
 
     반환: 정리할 임시 PNG 디렉토리 리스트(호출자가 save 후 rmtree).
     """
+    token = _CURRENT_DIST_STATS.set(_new_dist_stats())
     tmpdirs = []
     last_sheet = None
-    if write_main:
-        with _prof("clear"):
-            names = [s.name for s in wb.sheets]
-            dist_name = next((n for n in names if n.lower() == "distribution"), None)
-            if dist_name:
-                sh = wb.sheets[dist_name]
-                for c in list(sh.charts):     # 템플릿/이전 차트 제거
+    try:
+        if write_main:
+            with _prof("clear"):
+                names = [s.name for s in wb.sheets]
+                dist_name = next((n for n in names if n.lower() == "distribution"), None)
+                if dist_name:
+                    sh = wb.sheets[dist_name]
+                    for c in list(sh.charts):     # 템플릿/이전 차트 제거
+                        try:
+                            c.delete()
+                        except Exception:
+                            pass
+                    sh.clear()
+                else:
+                    sh = wb.sheets.add(_report_sheet_display_name("distribution"),
+                                       after=wb.sheets[len(wb.sheets) - 1])
+            chart_map = _write_distribution(
+                wb, sh, result, colors, dist_progress_cb=dist_progress_cb,
+                profile_label="main")
+            last_sheet = sh
+            if attach_fail_item and chart_map:
+                with _profile_info_time("distribution.attach_fail_item"):
+                    tmpdir = _attach_fail_item_charts(
+                        wb, result, chart_map, attach_progress_cb=attach_progress_cb
+                    )
+                if tmpdir:
+                    tmpdirs.append(tmpdir)
+            if chart_map:
+                with _profile_info_time("distribution.attach_issue_table"):
+                    tmpdir = _attach_issue_table_charts(
+                        wb, result, chart_map, include_cpk=attach_issue_cpk,
+                        attach_progress_cb=attach_progress_cb
+                    )
+                if tmpdir:
+                    tmpdirs.append(tmpdir)
+
+        # diff compare: a_only / b_only distribution 시트 추가
+        for raw_title, dists, sources, sdata in (extra_dist or []):
+            if not dists:
+                continue
+            existing = {s.name.lower() for s in wb.sheets}
+            sheet_title = _excel_safe_sheet_name(raw_title, existing)
+            if sheet_title.lower() in existing:
+                d_sh = wb.sheets[sheet_title]
+                for c in list(d_sh.charts):
                     try:
                         c.delete()
                     except Exception:
                         pass
-                sh.clear()
+                d_sh.clear()
             else:
-                sh = wb.sheets.add(_report_sheet_display_name("distribution"),
-                                   after=wb.sheets[len(wb.sheets) - 1])
-        chart_map = _write_distribution(wb, sh, result, colors,
-                                        dist_progress_cb=dist_progress_cb)
-        last_sheet = sh
-        if attach_fail_item and chart_map:
-            tmpdir = _attach_fail_item_charts(
-                wb, result, chart_map, attach_progress_cb=attach_progress_cb
-            )
-            if tmpdir:
-                tmpdirs.append(tmpdir)
-        if chart_map:
-            tmpdir = _attach_issue_table_charts(
-                wb, result, chart_map, include_cpk=attach_issue_cpk,
-                attach_progress_cb=attach_progress_cb
-            )
-            if tmpdir:
-                tmpdirs.append(tmpdir)
+                d_sh = wb.sheets.add(sheet_title, after=wb.sheets[len(wb.sheets) - 1])
+            _write_distribution(
+                wb, d_sh, result, colors, dists=dists, sources=sources,
+                source_data=sdata, title=sheet_title, profile_label=f"diff:{sheet_title}")
+            last_sheet = d_sh
 
-    # diff compare: a_only / b_only distribution 시트 추가
-    for raw_title, dists, sources, sdata in (extra_dist or []):
-        if not dists:
-            continue
-        existing = {s.name.lower() for s in wb.sheets}
-        sheet_title = _excel_safe_sheet_name(raw_title, existing)
-        if sheet_title.lower() in existing:
-            d_sh = wb.sheets[sheet_title]
-            for c in list(d_sh.charts):
-                try:
-                    c.delete()
-                except Exception:
-                    pass
-            d_sh.clear()
-        else:
-            d_sh = wb.sheets.add(sheet_title, after=wb.sheets[len(wb.sheets) - 1])
-        _write_distribution(wb, d_sh, result, colors, dists=dists,
-                            sources=sources, source_data=sdata, title=sheet_title)
-        last_sheet = d_sh
-
-    if last_sheet is not None:
-        try:
-            last_sheet.activate()
-        except Exception:
-            pass
-    return tmpdirs
+        if last_sheet is not None:
+            try:
+                last_sheet.activate()
+            except Exception:
+                pass
+        return tmpdirs
+    finally:
+        _dist_emit_summary()
+        _CURRENT_DIST_STATS.reset(token)
 
 
 def _apply_zoom_gridlines(app, wb, raw_gridline_sheets=None):
@@ -1381,27 +1491,38 @@ def _attach_chart_picture(sheet, chart, png_path, name, left, top, width, height
                           sheet_name, subject, attach_progress_cb=None):
     """Export a COM chart as PNG, then embed it as a picture on target sheet."""
     try:
+        export_t0 = time.perf_counter()
         with _prof(f"{sheet_name}.export"):
             method = _export_chart_png_stable(chart, png_path)
+        export_elapsed = time.perf_counter() - export_t0
         if method:
+            export_bucket = "export.direct" if method == "direct" else "export.moved"
+            _dist_add_time(f"png.{sheet_name}.{export_bucket}", export_elapsed)
             with _prof(f"{sheet_name}.picadd"):
-                sheet.pictures.add(
-                    png_path,
-                    link_to_file=False,
-                    save_with_document=True,
-                    name=name,
-                    left=left,
-                    top=top,
-                    width=width,
-                    height=height,
-                )
+                with _dist_time(f"png.{sheet_name}.picture_add"):
+                    sheet.pictures.add(
+                        png_path,
+                        link_to_file=False,
+                        save_with_document=True,
+                        name=name,
+                        left=left,
+                        top=top,
+                        width=width,
+                        height=height,
+                    )
+            _dist_count_png(sheet_name, method, png_path)
             return True
+        _dist_add_time(f"png.{sheet_name}.export.failed", export_elapsed)
         _notify_attach_progress(attach_progress_cb, "copy_picture", sheet_name, subject)
         with _prof(f"{sheet_name}.copy_picture"):
-            _copy_chart_picture_to_sheet(chart, sheet, name, left, top, width, height)
+            with _dist_time(f"png.{sheet_name}.copy_picture.total"):
+                _copy_chart_picture_to_sheet(
+                    chart, sheet, name, left, top, width, height, sheet_name=sheet_name)
+        _dist_count_png(sheet_name, "copy_picture")
         _log_chart_attach(f"{sheet_name}:{subject} used CopyPicture fallback")
         return True
     except Exception as exc:
+        _dist_count_png(sheet_name, "failed")
         _log_chart_attach(f"{sheet_name}:{subject} attach failed: {exc!r}")
         return False
 
@@ -1457,26 +1578,30 @@ def _is_valid_png(png_path):
         return False
 
 
-def _copy_chart_picture_to_sheet(chart, sheet, name, left, top, width, height):
+def _copy_chart_picture_to_sheet(chart, sheet, name, left, top, width, height, sheet_name=None):
     chart_object = _chart_object(chart)
     if chart_object is None:
         raise RuntimeError("chart object not found for CopyPicture fallback")
-    before = int(sheet.api.Shapes.Count)
-    try:
-        sheet.api.Activate()
-    except Exception:
-        pass
-    chart_object.CopyPicture(Appearance=1, Format=-4147)
-    sheet.api.Paste()
-    after = int(sheet.api.Shapes.Count)
-    if after <= before:
-        raise RuntimeError("CopyPicture paste did not create a shape")
-    shape = sheet.api.Shapes.Item(after)
-    shape.Name = name
-    shape.Left = float(left)
-    shape.Top = float(top)
-    shape.Width = float(width)
-    shape.Height = float(height)
+    prefix = f"png.{sheet_name}." if sheet_name else "png."
+    with _dist_time(prefix + "copy_picture.copy"):
+        chart_object.CopyPicture(Appearance=1, Format=-4147)
+    with _dist_time(prefix + "copy_picture.paste"):
+        before = int(sheet.api.Shapes.Count)
+        try:
+            sheet.api.Activate()
+        except Exception:
+            pass
+        sheet.api.Paste()
+        after = int(sheet.api.Shapes.Count)
+        if after <= before:
+            raise RuntimeError("CopyPicture paste did not create a shape")
+        shape = sheet.api.Shapes.Item(after)
+    with _dist_time(prefix + "copy_picture.position"):
+        shape.Name = name
+        shape.Left = float(left)
+        shape.Top = float(top)
+        shape.Width = float(width)
+        shape.Height = float(height)
     return shape
 
 
@@ -1617,40 +1742,44 @@ def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_mi
     hi = float(d.upper_limit) if _isnum(d.upper_limit) else None
     xv0 = x_min if x_min is not None else 0.0
     limit_series = []
-    for lim, nm in ((lo, "LSL"), (hi, "USL")):
-        s = sc.NewSeries()
-        if lim is not None:
-            s.XValues = (lim, lim)
-            s.Values = (-1.0, 1.0)            # x=lim 세로선(Y 0~1 덮음)
-        else:
-            s.XValues = (xv0, xv0)
-            s.Values = (-2.0, -2.0)           # 차트 밖(안 보임) — series 인덱스 안정용
-        s.Name = nm
-        limit_series.append(s)
+    with _dist_time("dist.loop.series_limits"):
+        for lim, nm in ((lo, "LSL"), (hi, "USL")):
+            s = sc.NewSeries()
+            if lim is not None:
+                s.XValues = (lim, lim)
+                s.Values = (-1.0, 1.0)            # x=lim 세로선(Y 0~1 덮음)
+            else:
+                s.XValues = (xv0, xv0)
+                s.Values = (-2.0, -2.0)           # 차트 밖(안 보임) — series 인덱스 안정용
+            s.Name = nm
+            limit_series.append(s)
     data_series = []
     y = 0
-    for k, name in enumerate(src_names):
-        n = cnt_list[k]
-        r1, r2 = y + 2, y + n + 1
-        y += n
-        x_ref = f"='{x_sheet}'!${col}${r1}:${col}${r2}"
-        y_ref = f"='{y_sheet}'!${col}${r1}:${col}${r2}"
-        s = sc.NewSeries()
-        s.XValues = x_ref
-        s.Values = y_ref
-        s.Name = str(name)
-        data_series.append(s)
+    with _dist_time("dist.loop.series_sources"):
+        for k, name in enumerate(src_names):
+            n = cnt_list[k]
+            r1, r2 = y + 2, y + n + 1
+            y += n
+            x_ref = f"='{x_sheet}'!${col}${r1}:${col}${r2}"
+            y_ref = f"='{y_sheet}'!${col}${r1}:${col}${r2}"
+            s = sc.NewSeries()
+            s.XValues = x_ref
+            s.Values = y_ref
+            s.Name = str(name)
+            data_series.append(s)
     return limit_series, data_series
 
 
 def _style_series(limit_series, data_series, colors, step_flags=None):
     """limit/data series 스타일 일괄 적용."""
-    for s in limit_series:
-        _style_limit_series(s)
-    for k, s in enumerate(data_series):
-        rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
-        is_step = bool(step_flags[k]) if step_flags and k < len(step_flags) else False
-        _style_data_series(s, rgb, is_step)
+    with _dist_time("dist.loop.style_limits"):
+        for s in limit_series:
+            _style_limit_series(s)
+    with _dist_time("dist.loop.style_sources"):
+        for k, s in enumerate(data_series):
+            rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
+            is_step = bool(step_flags[k]) if step_flags and k < len(step_flags) else False
+            _style_data_series(s, rgb, is_step)
 
 
 def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
@@ -1658,12 +1787,14 @@ def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
     """차트 1개 독립 생성+서식 (정리/정리_Y range 참조). 반환: COM Chart."""
     left, top = _chart_pos(i)
     with _prof("dist.series_add"):
-        ch = sh.charts.add(left, top, _CHART_W, _CHART_H)
-        chart = _chart_com(ch)
-        sc = chart.SeriesCollection()
+        with _dist_time("dist.loop.chart_add"):
+            ch = sh.charts.add(left, top, _CHART_W, _CHART_H)
+            chart = _chart_com(ch)
+            sc = chart.SeriesCollection()
         limit_series, data_series = _add_dist_series(sc, d, x_sheet, y_sheet,
                                                      col_idx, cnt_list, src_names, x_min)
-        ch.chart_type = "xy_scatter_lines_no_markers"
+        with _dist_time("dist.loop.chart_type"):
+            ch.chart_type = "xy_scatter_lines_no_markers"
     _prof_count("series", len(limit_series) + len(data_series))
     with _prof("dist.style"):
         _style_series(limit_series, data_series, colors, step_flags)
@@ -1673,7 +1804,8 @@ def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
 
 
 def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
-                        dists=None, sources=None, source_data=None, title="Distribution"):
+                        dists=None, sources=None, source_data=None, title="Distribution",
+                        profile_label="main"):
     """각 subject 의 누적분포(ECDF) 차트 — 모든 DUT 가 1점(중복 제거 없음).
 
     source(input file)별 데이터 series + LSL/USL 세로 한계선(series 1,2, COM 배열리터럴).
@@ -1704,25 +1836,28 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
         return {}
 
     # ── 데이터 변환: 열별 정렬(X) + rank/count(Y), source별 블록 concat ──────────
-    with _prof("dist.data_write"):
-        df_x_list = [sort_alldata(df, True).reset_index(drop=True) for df in src_dfs]
-        df_y_list = [sort_data_to_percent(df).reset_index(drop=True) for df in df_x_list]
-        df_x = pd.concat(df_x_list, ignore_index=True)
-        df_y = pd.concat(df_y_list, ignore_index=True)
-        cnt_list = [df.shape[0] for df in df_x_list]   # source별 DUT 수(모든 subject 균일)
+    with _profile_info_time("distribution.data_write"):
+        with _prof("dist.data_write"):
+            with _dist_time("dist.data_prepare"):
+                df_x_list = [sort_alldata(df, True).reset_index(drop=True) for df in src_dfs]
+                df_y_list = [sort_data_to_percent(df).reset_index(drop=True) for df in df_x_list]
+                df_x = pd.concat(df_x_list, ignore_index=True)
+                df_y = pd.concat(df_y_list, ignore_index=True)
+                cnt_list = [df.shape[0] for df in df_x_list]   # source별 DUT 수(모든 subject 균일)
 
-        existing = {s.name for s in wb.sheets}
-        x_name = _unique_helper_name("정리", existing)
-        y_name = _unique_helper_name("정리_Y", existing | {x_name})
-        ws_x = wb.sheets.add(x_name, after=sh)
-        ws_y = wb.sheets.add(y_name, after=ws_x)
-        ws_x.range("A1").options(index=True, header=True).value = df_x
-        ws_y.range("A1").options(index=True, header=True).value = df_y
-        for w in (ws_x, ws_y):
-            try:
-                w.api.Visible = False
-            except Exception:
-                pass
+            with _dist_time("dist.helper_sheet_write"):
+                existing = {s.name for s in wb.sheets}
+                x_name = _unique_helper_name("정리", existing)
+                y_name = _unique_helper_name("정리_Y", existing | {x_name})
+                ws_x = wb.sheets.add(x_name, after=sh)
+                ws_y = wb.sheets.add(y_name, after=ws_x)
+                ws_x.range("A1").options(index=True, header=True).value = df_x
+                ws_y.range("A1").options(index=True, header=True).value = df_y
+                for w in (ws_x, ws_y):
+                    try:
+                        w.api.Visible = False
+                    except Exception:
+                        pass
 
     _put_title(sh, 8, title)
     sh.range((1, _INDEX_COL)).value = "Item Index (Ctrl+F)"
@@ -1735,35 +1870,41 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
     index_entries = []
     n_charts = len(dists)
     done = 0
-    for i, d in enumerate(dists):
-        cols = [arr[:, i] for arr in x_arrs]
-        finite = np.concatenate([c[np.isfinite(c)] for c in cols]) if cols else np.empty(0)
-        if finite.size == 0:
+    with _profile_info_time(f"distribution.chart_create[{profile_label}]"):
+        for i, d in enumerate(dists):
+            with _dist_time("dist.loop.finite_scan"):
+                cols = [arr[:, i] for arr in x_arrs]
+                finite = np.concatenate([c[np.isfinite(c)] for c in cols]) if cols else np.empty(0)
+                if finite.size:
+                    data_min, data_max = float(finite.min()), float(finite.max())
+            if finite.size == 0:
+                done += 1
+                if dist_progress_cb:
+                    dist_progress_cb(done, n_charts)
+                continue
+            with _dist_time("dist.loop.axis_range"):
+                lo, hi = d.lower_limit, d.upper_limit
+                is_fail = (_isnum(lo) and data_min < float(lo)) or (
+                    _isnum(hi) and data_max > float(hi))
+                x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
+            with _dist_time("dist.loop.step_flags"):
+                step_flags = []
+                for c in cols:
+                    real = c[np.isfinite(c)]
+                    step_flags.append(bool(real.size >= 2 and real[0] == real[1]))
+
+            try:
+                chart_map[d.subject] = _new_dist_chart(
+                    sh, i, d, x_name, y_name, i, cnt_list, src_names, colors,
+                    x_min, x_max, is_fail, step_flags)
+            except Exception as _e:
+                print(f"[dist-chart] skip subject={d.subject!r}: {_e}", file=sys.stderr)
+            col = i % _CHARTS_PER_ROW
+            grow = i // _CHARTS_PER_ROW
+            index_entries.append((2 + grow * _ROWS_PER_CHART + col, d.subject))
             done += 1
             if dist_progress_cb:
                 dist_progress_cb(done, n_charts)
-            continue
-        data_min, data_max = float(finite.min()), float(finite.max())
-        lo, hi = d.lower_limit, d.upper_limit
-        is_fail = (_isnum(lo) and data_min < float(lo)) or (_isnum(hi) and data_max > float(hi))
-        x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
-        step_flags = []
-        for c in cols:
-            real = c[np.isfinite(c)]
-            step_flags.append(bool(real.size >= 2 and real[0] == real[1]))
-
-        try:
-            chart_map[d.subject] = _new_dist_chart(
-                sh, i, d, x_name, y_name, i, cnt_list, src_names, colors,
-                x_min, x_max, is_fail, step_flags)
-        except Exception as _e:
-            print(f"[dist-chart] skip subject={d.subject!r}: {_e}", file=sys.stderr)
-        col = i % _CHARTS_PER_ROW
-        grow = i // _CHARTS_PER_ROW
-        index_entries.append((2 + grow * _ROWS_PER_CHART + col, d.subject))
-        done += 1
-        if dist_progress_cb:
-            dist_progress_cb(done, n_charts)
 
     # Item Index 열 일괄 기입
     if index_entries:
@@ -1837,66 +1978,71 @@ def _style_data_series(s, rgb=None, is_step=False):
 
 def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
     """xy_scatter CDF 차트 서식 (COM 객체 1회 할당 후 재사용)."""
-    try:
-        yax = chart.Axes(_XL_VALUE, _XL_PRIMARY)
-        yax.MinimumScale = 0
-        yax.MaximumScale = 1
-        yax.MajorUnit = 0.2
-        yax.HasMinorGridlines = True
-        ytl = yax.TickLabels
-        ytl.NumberFormatLocal = "0%"
-        ytl.Font.Size = 8
-        yax.TickLabelPosition = _XL_LOW
-    except Exception:
-        pass
-    try:
-        xax = chart.Axes(_XL_CATEGORY, _XL_PRIMARY)
-        if x_min is not None and x_max is not None and x_min < x_max:
-            xax.MinimumScale = x_min
-            xax.MaximumScale = x_max
-        xax.HasMinorGridlines = True
-        xax.TickLabels.Font.Size = 8
-    except Exception:
-        pass
-    try:
-        chart.HasTitle = True
-        title = chart.ChartTitle
-        cap = _limit_caption(d)          # item 명 아래 줄: (LO ~ HI units)
-        title.Text = d.subject + "\n" + cap
-        tf = title.Font
-        tf.Name = "Arial Black"
-        tf.Size = _CHART_TITLE_ITEM_FONT
-        try:                             # 둘째 줄(캡션)은 작게
-            title.Characters(len(d.subject) + 2, len(cap)).Font.Size = _CHART_TITLE_CAP_FONT
+    with _dist_time("dist.loop.axis_format"):
+        try:
+            yax = chart.Axes(_XL_VALUE, _XL_PRIMARY)
+            yax.MinimumScale = 0
+            yax.MaximumScale = 1
+            yax.MajorUnit = 0.2
+            yax.HasMinorGridlines = True
+            ytl = yax.TickLabels
+            ytl.NumberFormatLocal = "0%"
+            ytl.Font.Size = 8
+            yax.TickLabelPosition = _XL_LOW
         except Exception:
             pass
-        title.Top = 0
-    except Exception:
-        pass
-    try:
-        pa = chart.PlotArea
-        pa.Width = _PLOT_W
-        pa.Top = _PLOT_TOP
-        pa.Height = _PLOT_H
-    except Exception:
-        pass
-    # legend: limit series(1..limit_count) entry 삭제, 폰트 8
-    try:
-        chart.HasLegend = True
-        leg = chart.Legend
-        leg.Font.Size = 8
-        for idx in range(limit_count, 0, -1):
-            try:
-                leg.LegendEntries(idx).Delete()
+        try:
+            xax = chart.Axes(_XL_CATEGORY, _XL_PRIMARY)
+            if x_min is not None and x_max is not None and x_min < x_max:
+                xax.MinimumScale = x_min
+                xax.MaximumScale = x_max
+            xax.HasMinorGridlines = True
+            xax.TickLabels.Font.Size = 8
+        except Exception:
+            pass
+    with _dist_time("dist.loop.title_format"):
+        try:
+            chart.HasTitle = True
+            title = chart.ChartTitle
+            cap = _limit_caption(d)          # item 명 아래 줄: (LO ~ HI units)
+            title.Text = d.subject + "\n" + cap
+            tf = title.Font
+            tf.Name = "Arial Black"
+            tf.Size = _CHART_TITLE_ITEM_FONT
+            try:                             # 둘째 줄(캡션)은 작게
+                title.Characters(len(d.subject) + 2, len(cap)).Font.Size = _CHART_TITLE_CAP_FONT
             except Exception:
                 pass
-    except Exception:
-        pass
-    if is_fail:
-        try:
-            chart.ChartArea.Interior.Color = _RGB_FAIL_BG
+            title.Top = 0
         except Exception:
             pass
+    with _dist_time("dist.loop.plot_format"):
+        try:
+            pa = chart.PlotArea
+            pa.Width = _PLOT_W
+            pa.Top = _PLOT_TOP
+            pa.Height = _PLOT_H
+        except Exception:
+            pass
+    with _dist_time("dist.loop.legend_format"):
+        # legend: limit series(1..limit_count) entry 삭제, 폰트 8
+        try:
+            chart.HasLegend = True
+            leg = chart.Legend
+            leg.Font.Size = 8
+            for idx in range(limit_count, 0, -1):
+                try:
+                    leg.LegendEntries(idx).Delete()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    if is_fail:
+        with _dist_time("dist.loop.fail_bg"):
+            try:
+                chart.ChartArea.Interior.Color = _RGB_FAIL_BG
+            except Exception:
+                pass
 
 
 # ── x축 범위 계산 헬퍼 ───────────────────────────────────────────────────────
