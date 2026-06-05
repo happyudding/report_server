@@ -20,29 +20,61 @@ from .models import AnalysisResult, DistSeries, ReportMeta
 _FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
 
 
+def _emit_profile_event(profile_cb, label: str, status: str,
+                        elapsed: Optional[float] = None, error: Optional[str] = None) -> None:
+    if profile_cb is None:
+        return
+    event = {
+        "module": "analyzer",
+        "label": label,
+        "status": status,
+    }
+    if elapsed is not None:
+        event["elapsed"] = elapsed
+    if error:
+        event["error"] = error
+    try:
+        profile_cb(event)
+    except Exception:
+        pass
+
+
 @contextlib.contextmanager
-def _flow_time(label: str):
-    if not (_FLOW_PROFILE_ON or _profile.collecting()):
+def _flow_time(label: str, profile_cb=None):
+    if not (_FLOW_PROFILE_ON or _profile.collecting() or profile_cb is not None):
         yield
         return
+    _emit_profile_event(profile_cb, label, "start")
     depth = _profile.push()
     t0 = time.perf_counter()
     try:
         yield
-    finally:
+    except Exception as exc:
         elapsed = time.perf_counter() - t0
         _profile.pop("analyzer", label, elapsed, depth)
+        _emit_profile_event(profile_cb, label, "error", elapsed, str(exc))
         if _FLOW_PROFILE_ON:
-            print(f"[flow-profile] analyzer.{label}: {elapsed:.3f}s", file=sys.stderr, flush=True)
+            print(f"[flow-profile] analyzer.{label}: ERROR after {elapsed:.3f}s ({exc})",
+                  file=sys.stderr, flush=True)
+        raise
+    finally:
+        if sys.exc_info()[0] is None:
+            elapsed = time.perf_counter() - t0
+            _profile.pop("analyzer", label, elapsed, depth)
+            _emit_profile_event(profile_cb, label, "done", elapsed)
+            if _FLOW_PROFILE_ON:
+                print(f"[flow-profile] analyzer.{label}: {elapsed:.3f}s",
+                      file=sys.stderr, flush=True)
 
 
 def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
-        selector: Optional[ItemSelector] = None) -> AnalysisResult:
+        selector: Optional[ItemSelector] = None,
+        profile_cb=None) -> AnalysisResult:
     """선택 item 적용 → 전 테이블 계산 → AnalysisResult."""
     meta = meta or ReportMeta()
     selector = selector or ItemSelector()
 
-    with _flow_time("select_items"):
+    with _flow_time("select_items", profile_cb):
         work = group.select_items(selector.selected_items)
     mass_data_map = work.mass_data_map
     if not mass_data_map:
@@ -52,36 +84,36 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     # 빌더라 파일별 subject 수가 다르면 첫 파일 기준 idx 가 다른 파일에서 범위를
     # 벗어나 깨진다. diff 면 common subject 를 이름 기반으로 계산한다. (단일/동일
     # 모드면 split is None → 기존 위치 기반 경로 유지.)
-    with _flow_time("split_for_diff"):
+    with _flow_time("split_for_diff", profile_cb):
         split = work.split_for_diff()
 
-    with _flow_time("build_yield"):
+    with _flow_time("build_yield", profile_cb):
         yield_rows = work.yield_rate()
-    with _flow_time("build_fail_items"):
+    with _flow_time("build_fail_items", profile_cb):
         fail_item_rows = work.fail_items()
-    with _flow_time("build_issue_summary"):
+    with _flow_time("build_issue_summary", profile_cb):
         # fail_item_rows(=캐시) 재사용 — 내부 build_fail_items 재계산 회피
         issue_rows = B.build_issue_summary(mass_data_map, fail_items=fail_item_rows)
-    with _flow_time("build_summary_rows"):
+    with _flow_time("build_summary_rows", profile_cb):
         summary_rows = work.summary()
-    with _flow_time("build_major_fail_subjects"):
+    with _flow_time("build_major_fail_subjects", profile_cb):
         major_fail_subject_rows = B.build_major_fail_subjects(mass_data_map)
 
     if split is None:
-        with _flow_time("build_cpk"):
+        with _flow_time("build_cpk", profile_cb):
             cpk_rows = work.cpk()
-        with _flow_time("subjects_meta"):
+        with _flow_time("subjects_meta", profile_cb):
             subjects_meta = _subjects_meta_from_group(work)
-        with _flow_time("build_distributions"):
+        with _flow_time("build_distributions", profile_cb):
             distributions = _build_distributions(work, subjects_meta)
     else:
         cl = split["classification"]
         common_g = split["common"]
-        with _flow_time("build_cpk_common"):
+        with _flow_time("build_cpk_common", profile_cb):
             cpk_rows = B.build_cpk_for_subjects(common_g.mass_data_map, cl["common"])
-        with _flow_time("subjects_meta_common"):
+        with _flow_time("subjects_meta_common", profile_cb):
             subjects_meta = _subjects_meta_from_group(common_g)
-        with _flow_time("build_distributions_common"):
+        with _flow_time("build_distributions_common", profile_cb):
             distributions = _build_distributions(common_g, subjects_meta)
 
     total_dut = sum(len(md.scores) for md in mass_data_map.values())
@@ -89,10 +121,10 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
 
     fail_value_rows = {}
     for name, md in mass_data_map.items():
-        with _flow_time(f"fail_value_rows[{name}]"):
+        with _flow_time(f"fail_detail {name}", profile_cb):
             fail_value_rows[name] = md.get_fail_detail()
 
-    with _flow_time("combined_df_yield"):
+    with _flow_time("combined_df_yield", profile_cb):
         combined_df_yield = group.combined_df_yield
     result = AnalysisResult(
         meta=meta,
@@ -112,7 +144,7 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     )
 
     if split is not None:
-        with _flow_time("diff_extras"):
+        with _flow_time("diff_extras", profile_cb):
             _apply_diff_extras(result, split)
     return result
 

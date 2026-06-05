@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import contextlib
+import contextvars
 import math
 import os
 import shutil
@@ -33,6 +34,7 @@ from . import _profile
 # unset 이면 _prof 는 즉시 통과 → 평상시 동작·출력 불변. 측정 결과는 stderr 로.
 _PROF_ON = bool(os.environ.get("HONEY_CHART_PROFILE"))
 _FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
+_CURRENT_PROFILE_CB = contextvars.ContextVar("xlsx_writer_profile_cb", default=None)
 _PROF = defaultdict(float)
 _PROF_CNT = defaultdict(int)
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -61,20 +63,51 @@ def _prof_count(bucket, n=1):
         _PROF_CNT[bucket] += n
 
 
+def _emit_profile_event(profile_cb, label, status, elapsed=None, error=None):
+    if profile_cb is None:
+        return
+    event = {
+        "module": "xlsx_writer",
+        "label": label,
+        "status": status,
+    }
+    if elapsed is not None:
+        event["elapsed"] = elapsed
+    if error:
+        event["error"] = error
+    try:
+        profile_cb(event)
+    except Exception:
+        pass
+
+
 @contextlib.contextmanager
 def _flow_prof(bucket):
-    if not (_FLOW_PROFILE_ON or _profile.collecting()):
+    profile_cb = _CURRENT_PROFILE_CB.get()
+    if not (_FLOW_PROFILE_ON or _profile.collecting() or profile_cb is not None):
         yield
         return
+    _emit_profile_event(profile_cb, bucket, "start")
     depth = _profile.push()
     t = time.perf_counter()
     try:
         yield
-    finally:
+    except Exception as exc:
         elapsed = time.perf_counter() - t
         _profile.pop("xlsx_writer", bucket, elapsed, depth)
+        _emit_profile_event(profile_cb, bucket, "error", elapsed, str(exc))
         if _FLOW_PROFILE_ON:
-            print(f"[flow-profile] xlsx_writer.{bucket}: {elapsed:.3f}s", file=sys.stderr, flush=True)
+            print(f"[flow-profile] xlsx_writer.{bucket}: ERROR after {elapsed:.3f}s ({exc})",
+                  file=sys.stderr, flush=True)
+        raise
+    finally:
+        if sys.exc_info()[0] is None:
+            elapsed = time.perf_counter() - t
+            _profile.pop("xlsx_writer", bucket, elapsed, depth)
+            _emit_profile_event(profile_cb, bucket, "done", elapsed)
+            if _FLOW_PROFILE_ON:
+                print(f"[flow-profile] xlsx_writer.{bucket}: {elapsed:.3f}s",
+                      file=sys.stderr, flush=True)
 
 
 def _prof_report():
@@ -230,7 +263,8 @@ _FAIL_VALUES_GAP   = 1     # source 블록 간 빈 열 수
 # ── write ────────────────────────────────────────────────────────────────────
 
 def write(result, out_path, sheets=None, colors=None, progress_cb=None,
-          raw_sheets=None, dist_progress_cb=None, attach_progress_cb=None) -> str:
+          raw_sheets=None, dist_progress_cb=None, attach_progress_cb=None,
+          profile_cb=None) -> str:
     """AnalysisResult 를 xlsx 로 저장. 반환: 저장 경로(str).
 
     sheets: 출력할 시트명 리스트/집합 (None 이면 전체). 알 수 없는 이름은 무시.
@@ -242,6 +276,7 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     단일 xlwings(Excel COM) 세션에서 모든 시트(raw/table/diff/distribution)를 생성·
     스타일링·저장한다. Excel/xlwings 가 없으면 전체 실패한다(openpyxl fallback 없음).
     """
+    _CURRENT_PROFILE_CB.set(profile_cb)
     out_path = str(Path(out_path).resolve())
     sel = [s for s in ALL_SHEETS if (sheets is None or s in set(sheets))]
     if not sel:

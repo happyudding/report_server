@@ -814,6 +814,8 @@ class HoneyMainWindow(QMainWindow):
         self.setWindowTitle(f"Honey  v{CURRENT_VERSION}")
         self.status.showMessage(f"Server: {SERVER_BASE_URL}")
         self.progress_status.hide()
+        self.txt_summary.setReadOnly(True)
+        self.txt_summary.setUndoRedoEnabled(False)
 
         self.csv_paths = []
         self.group = None          # df_honey_group
@@ -836,6 +838,86 @@ class HoneyMainWindow(QMainWindow):
         if rg is None:
             self._disable_engine()
         QTimer.singleShot(500, self.check_for_update)
+
+    def _init_run_log(self, title):
+        self._run_log_started = time.perf_counter()
+        self._run_log_step = 0
+        self._run_log_total = 0
+        self.txt_summary.clear()
+        self._append_run_log(title)
+
+    def _set_run_log_total(self, total):
+        self._run_log_total = max(int(total or 0), 0)
+
+    def _elapsed_run_log(self):
+        started = getattr(self, "_run_log_started", None)
+        secs = int(time.perf_counter() - started) if started is not None else 0
+        return f"{secs // 60:02d}:{secs % 60:02d}"
+
+    def _append_run_log(self, message, advance=False):
+        if advance:
+            self._run_log_step = int(getattr(self, "_run_log_step", 0)) + 1
+        step = int(getattr(self, "_run_log_step", 0))
+        total = int(getattr(self, "_run_log_total", 0))
+        if total:
+            prefix = f"[{self._elapsed_run_log()}] [{step:02d}/{total:02d}]"
+        else:
+            prefix = f"[{self._elapsed_run_log()}]"
+        self.txt_summary.append(f"{prefix} {message}")
+        bar = self.txt_summary.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def _log_profile_event(self, event):
+        label = str(event.get("label") or "")
+        skip = {
+            "select_items",
+            "split_for_diff",
+            "subjects_meta",
+            "subjects_meta_common",
+            "combined_df_yield",
+            "fill_fail_item",
+            "fail_values.title",
+            "fail_values.borders",
+            "fill_fail_item.style",
+            "normalize_sheet_names",
+            "zoom_gridlines",
+        }
+        if label in skip:
+            return
+        status = event.get("status")
+        elapsed = event.get("elapsed")
+        error = event.get("error")
+        if status == "start":
+            self._append_run_log(f"{label}: running...", advance=True)
+        elif status == "done":
+            self._append_run_log(f"{label} done: {elapsed:.2f}s" if elapsed is not None
+                                 else f"{label} done")
+        elif status == "error":
+            msg = f"{label} ERROR"
+            if elapsed is not None:
+                msg += f" after {elapsed:.2f}s"
+            if error:
+                msg += f" - {error}"
+            self._append_run_log(msg)
+
+    def _estimate_run_log_steps(self, work_group, sheets, raw_data):
+        sources = len(work_group.names()) if work_group is not None else 0
+        table_sheets = {"summary", "yield", "cpk", "fail_item", "issue_table"}
+        selected_tables = [s for s in sheets if s in table_sheets]
+        steps = 0
+        if raw_data:
+            steps += 1  # raw_frames
+        steps += 7 + sources  # analysis major builders + fail_detail per source
+        steps += 1  # workbook_init
+        steps += sum(1 for s in selected_tables if s != "fail_item")
+        if "fail_item" in selected_tables:
+            steps += 2 + sources  # top table + FAIL_VALUES + source chunks
+        if raw_data:
+            steps += sources
+        steps += 2  # finalize + save
+        if "distribution" in sheets:
+            steps += 1
+        return max(steps, 1)
 
     def _setup_csv_table(self):
         """list_csv (QTableWidget) 를 '확장자 | 파일 경로' 2열로 구성하고,
@@ -1094,15 +1176,35 @@ class HoneyMainWindow(QMainWindow):
 
     def _run_analysis(self, work_group, selected, sheets, auto_upload, raw_data=False):
         self.btn_start.setEnabled(False)
+        overall_t0 = time.perf_counter()
+        self._init_run_log("=== Report Generator Log ===")
+        self._set_run_log_total(self._estimate_run_log_steps(work_group, sheets, raw_data))
+        profile_events = queue.Queue()
+
+        def _profile_cb(event):
+            profile_events.put(event)
+
+        def _drain_profile_events():
+            while True:
+                try:
+                    event = profile_events.get_nowait()
+                except queue.Empty:
+                    break
+                self._log_profile_event(event)
+
         # Raw Data 시트용 원본 프레임 (체크 시) — source별 df_honey 적재 포맷 그대로
         raw = None
         if raw_data:
             try:
+                self._append_run_log("raw_frames: running...", advance=True)
+                raw_t0 = time.perf_counter()
                 with _flow_time("raw_frames"):
                     raw = work_group.raw_frames()
+                self._append_run_log(f"raw_frames done: {time.perf_counter() - raw_t0:.2f}s")
             except Exception as exc:  # noqa: BLE001
                 QMessageBox.warning(self, "Raw Data 생략",
                                     f"원본 데이터 시트를 만들지 못해 건너뜁니다:\n{exc}")
+                self._append_run_log(f"raw_frames ERROR - {exc}")
                 raw = None
         # 진행 단계: 준비(1) → 분석(1) → 요약(1) → 시트별(N, +Raw N) → 저장 마무리(1)
         total = len(sheets) + 4 + (len(raw) if raw else 0)
@@ -1120,6 +1222,7 @@ class HoneyMainWindow(QMainWindow):
         # 2) 데이터 분석 (통계 · Bin 집계)
         progress.set("데이터 분석 중... (통계 · Bin 집계)", status="데이터 분석 중...")
         try:
+            analyze_t0 = time.perf_counter()
             with _flow_time("rg.analyze.total"):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                     fut = ex.submit(
@@ -1127,9 +1230,14 @@ class HoneyMainWindow(QMainWindow):
                         work_group,
                         meta=rg.ReportMeta(),
                         selector=rg.ItemSelector(selected_items=selected),
+                        profile_cb=_profile_cb,
                     )
-                    self.last_result = _wait_for_future(fut, progress)
+                    self.last_result = _wait_for_future(fut, progress, poll_cb=_drain_profile_events)
+            _drain_profile_events()
+            self._append_run_log(f"Analysis total: {time.perf_counter() - analyze_t0:.2f}s")
         except Exception as exc:
+            _drain_profile_events()
+            self._append_run_log(f"Analysis ERROR - {exc}")
             progress.fail(f"실패: 분석 실패 - {exc}")
             QMessageBox.critical(self, "분석 실패", str(exc))
             self._status("분석 실패")
@@ -1151,7 +1259,7 @@ class HoneyMainWindow(QMainWindow):
         def _sheet_progress(done, total_s, name):
             progress_events.put(("sheet", done, total_s, name))
 
-        _dist_state = {"base": 0, "n": 0}
+        _dist_state = {"base": 0, "n": 0, "last_log": 0}
 
         def _dist_progress(done, n_charts):
             progress_events.put(("dist", done, n_charts, None))
@@ -1187,12 +1295,18 @@ class HoneyMainWindow(QMainWindow):
                         value=value,
                         status=f"Distribution {pct}%  ({done}/{n_charts})",
                     )
+                    if n_charts:
+                        interval = max(1, n_charts // 10)
+                        if done == 1 or done == n_charts or done - _dist_state["last_log"] >= interval:
+                            _dist_state["last_log"] = done
+                            self._append_run_log(f"Distribution chart {done}/{n_charts} ({pct}%)")
                 elif kind == "attach":
                     event, sheet_name, subject = a, b, c
                     if event != "copy_picture":
                         continue
                     msg = "Chart 복사 붙여넣기 진행중 잠시 기다려주세요"
                     progress.set(f"{msg} ({sheet_name}: {subject})", status=msg)
+                    self._append_run_log(f"{msg} ({sheet_name}: {subject})")
 
         progress.set(
             f"Excel 시트/차트 생성 중...  → {Path(out).name}",
@@ -1211,15 +1325,25 @@ class HoneyMainWindow(QMainWindow):
                             progress_cb=_sheet_progress, raw_sheets=raw,
                             dist_progress_cb=_dist_progress,
                             attach_progress_cb=_attach_progress,
+                            profile_cb=_profile_cb,
                         )
                 finally:
                     _co_uninitialize(com_module)
 
+            write_t0 = time.perf_counter()
             with _flow_time("xlsx_generation.total_wait"):
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                     fut = ex.submit(_write_job)
-                    _wait_for_future(fut, progress, poll_cb=_drain_progress_events)
+                    _wait_for_future(
+                        fut,
+                        progress,
+                        poll_cb=lambda: (_drain_profile_events(), _drain_progress_events()),
+                    )
+            _drain_profile_events()
+            self._append_run_log(f"XLSX write total: {time.perf_counter() - write_t0:.2f}s")
         except Exception as exc:
+            _drain_profile_events()
+            self._append_run_log(f"XLSX write ERROR - {exc}")
             progress.fail(f"실패: xlsx 생성 실패 - {exc}")
             QMessageBox.critical(self, "생성 실패", str(exc))
             self._status("xlsx 생성 실패")
@@ -1231,8 +1355,8 @@ class HoneyMainWindow(QMainWindow):
         _step(progress.maximum(), "Excel 파일 저장 마무리 중...")
         self.out_path = out
         self.btn_start.setEnabled(True)
-        current = self.txt_summary.toPlainText()
-        self.txt_summary.setPlainText(current + f"\n\n저장됨: {out}")
+        self._append_run_log(f"Overall total: {time.perf_counter() - overall_t0:.2f}s")
+        self._append_run_log(f"저장됨: {out}")
         progress.success(f"완료: {Path(out).name} 저장됨", value=progress.maximum())
         self._status(f"완료: {Path(out).name}  ('서버에 업로드' 가능)")
 
@@ -1243,6 +1367,8 @@ class HoneyMainWindow(QMainWindow):
     def _show_summary(self, r):
         feat = r.summary_feature()
         lines = [
+            "",
+            "=== Summary ===",
             f"Sources: {', '.join(r.sources)}",
             f"Total: {r.total_dut}    Pass(Bin1): {feat['Pass (Bin 1)']}  ({r.pass_yield}%)",
             "",
@@ -1250,7 +1376,13 @@ class HoneyMainWindow(QMainWindow):
         ]
         for i, b in enumerate(r.major_fail_bins(), start=1):
             lines.append(f"  {i}. bin {b.get('bin')}  -  {b.get('Main Fail subject')}  ({b.get('avg')}%)")
-        self.txt_summary.setPlainText("\n".join(lines))
+        current = self.txt_summary.toPlainText()
+        if current.strip():
+            self.txt_summary.append("\n".join(lines))
+        else:
+            self.txt_summary.setPlainText("\n".join(lines))
+        bar = self.txt_summary.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
     # ── 서버 업로드 ─────────────────────────────────────────────────────────
     def on_upload_local(self):
