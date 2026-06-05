@@ -5,12 +5,31 @@ xlsx_writer 가 소비할 모든 결과(테이블 + distribution)를 한 번에 
 """
 from __future__ import annotations
 
+import contextlib
+import os
+import sys
+import time
 from typing import Optional
 
 from . import _builders as B
 from .df_honey_group import df_honey_group
 from .item_selector import ItemSelector
 from .models import AnalysisResult, DistSeries, ReportMeta
+
+_FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
+
+
+@contextlib.contextmanager
+def _flow_time(label: str):
+    if not _FLOW_PROFILE_ON:
+        yield
+        return
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - t0
+        print(f"[flow-profile] analyzer.{label}: {elapsed:.3f}s", file=sys.stderr, flush=True)
 
 
 def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
@@ -19,7 +38,8 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     meta = meta or ReportMeta()
     selector = selector or ItemSelector()
 
-    work = group.select_items(selector.selected_items)
+    with _flow_time("select_items"):
+        work = group.select_items(selector.selected_items)
     mass_data_map = work.mass_data_map
     if not mass_data_map:
         raise ValueError("분석할 데이터가 없습니다.")
@@ -28,34 +48,48 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     # 빌더라 파일별 subject 수가 다르면 첫 파일 기준 idx 가 다른 파일에서 범위를
     # 벗어나 깨진다. diff 면 common subject 를 이름 기반으로 계산한다. (단일/동일
     # 모드면 split is None → 기존 위치 기반 경로 유지.)
-    split = work.split_for_diff()
+    with _flow_time("split_for_diff"):
+        split = work.split_for_diff()
 
-    yield_rows = work.yield_rate()
-    fail_item_rows = work.fail_items()
-    issue_rows = B.build_issue_summary(mass_data_map)  # bin별 most-fail item 요약
-    summary_rows = work.summary()
-    major_fail_subject_rows = B.build_major_fail_subjects(mass_data_map)
+    with _flow_time("build_yield"):
+        yield_rows = work.yield_rate()
+    with _flow_time("build_fail_items"):
+        fail_item_rows = work.fail_items()
+    with _flow_time("build_issue_summary"):
+        # fail_item_rows(=캐시) 재사용 — 내부 build_fail_items 재계산 회피
+        issue_rows = B.build_issue_summary(mass_data_map, fail_items=fail_item_rows)
+    with _flow_time("build_summary_rows"):
+        summary_rows = work.summary()
+    with _flow_time("build_major_fail_subjects"):
+        major_fail_subject_rows = B.build_major_fail_subjects(mass_data_map)
 
     if split is None:
-        cpk_rows = work.cpk()
-        subjects_meta = _subjects_meta_from_group(work)
-        distributions = _build_distributions(work, subjects_meta)
+        with _flow_time("build_cpk"):
+            cpk_rows = work.cpk()
+        with _flow_time("subjects_meta"):
+            subjects_meta = _subjects_meta_from_group(work)
+        with _flow_time("build_distributions"):
+            distributions = _build_distributions(work, subjects_meta)
     else:
         cl = split["classification"]
         common_g = split["common"]
-        cpk_rows = B.build_cpk_for_subjects(common_g.mass_data_map, cl["common"])
-        subjects_meta = _subjects_meta_from_group(common_g)
-        distributions = _build_distributions(common_g, subjects_meta)
+        with _flow_time("build_cpk_common"):
+            cpk_rows = B.build_cpk_for_subjects(common_g.mass_data_map, cl["common"])
+        with _flow_time("subjects_meta_common"):
+            subjects_meta = _subjects_meta_from_group(common_g)
+        with _flow_time("build_distributions_common"):
+            distributions = _build_distributions(common_g, subjects_meta)
 
     total_dut = sum(len(md.scores) for md in mass_data_map.values())
     pass_yield = next((r["portion (%)"] for r in yield_rows if str(r["bin"]) == "1"), None)
 
-    fail_value_rows = {
-        name: md.get_fail_detail()
-        for name, md in mass_data_map.items()
-    }
+    fail_value_rows = {}
+    for name, md in mass_data_map.items():
+        with _flow_time(f"fail_value_rows[{name}]"):
+            fail_value_rows[name] = md.get_fail_detail()
 
-    combined_df_yield = group.combined_df_yield
+    with _flow_time("combined_df_yield"):
+        combined_df_yield = group.combined_df_yield
     result = AnalysisResult(
         meta=meta,
         sources=work.names(),
@@ -74,7 +108,8 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     )
 
     if split is not None:
-        _apply_diff_extras(result, split)
+        with _flow_time("diff_extras"):
+            _apply_diff_extras(result, split)
     return result
 
 

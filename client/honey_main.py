@@ -9,6 +9,7 @@ UI 레이아웃은 .ui (Qt Designer 편집 가능) 에 정의, 런타임에 uic.
 입력 폴더에 xlsx 자동 저장(xlwings) → '서버에 업로드' 클릭 시 메타 팝업 입력 후 전송.
 """
 import concurrent.futures
+import contextlib
 import datetime
 import os
 import queue
@@ -50,6 +51,7 @@ except Exception as exc:  # noqa: BLE001
 
 SHEET_OPTIONS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
 PRODUCT_TYPES = ["MD", "PD", "PM", "SE"]
+_FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
 # 파일명 끝 시간 접미사 패턴 (_YYMMDD_HHMM) — 중복 부착 방지용
 _TS_RE = re.compile(r"_\d{6}_\d{4}$")
 
@@ -60,6 +62,19 @@ UPLOAD_UI_PATH = os.path.join(_BASE_DIR, "upload_dialog.ui")
 D1_UI_PATH = os.path.join(_BASE_DIR, "d1_browser.ui")
 ORDER_UI_PATH = os.path.join(_BASE_DIR, "file_order.ui")
 SETTINGS_UI_PATH = os.path.join(_BASE_DIR, "report_settings.ui")
+
+
+@contextlib.contextmanager
+def _flow_time(label):
+    if not _FLOW_PROFILE_ON:
+        yield
+        return
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - t0
+        print(f"[flow-profile] honey_main.{label}: {elapsed:.3f}s", file=sys.stderr, flush=True)
 
 
 def _validate_meta(product, lot_id, password):
@@ -470,25 +485,16 @@ class ReportSettingsDialog(QDialog):
         self.cb_sheet_yield.toggled.connect(self._sync_yield_dependents)
         self.btn_filename_change.clicked.connect(self.on_edit_filenames)
         self.btn_chart_colors.clicked.connect(self.on_edit_chart_colors)
-        self.buttonBox.accepted.connect(self._on_confirm)
-        self.buttonBox.rejected.connect(self.reject)
-        self.buttonBox.setCenterButtons(True)
-        ok_btn = self.buttonBox.button(QDialogButtonBox.Ok)
-        if ok_btn is not None:
-            ok_btn.setText("Confirm")
-            ok_btn.setMinimumSize(150, 36)
-            ok_btn.setDefault(True)
-            ok_btn.setStyleSheet(
-                "QPushButton { font-size: 16pt; font-weight: 700; "
-                "padding: 7px 21px; background: #2f7de1; color: white; "
-                "border: 1px solid #1f62b8; border-radius: 6px; }"
-                "QPushButton:hover { background: #236cc7; }"
-            )
-        cancel_btn = self.buttonBox.button(QDialogButtonBox.Cancel)
-        if cancel_btn is not None:
-            cancel_btn.setText("Cancel")
-            cancel_btn.setMinimumSize(72, 28)
-            cancel_btn.setMaximumSize(90, 32)
+        # Confirm 만 노출 — 취소는 ESC / 창 닫기(X)로 QDialog.reject() 자동 처리.
+        self.btn_confirm.clicked.connect(self._on_confirm)
+        self.btn_confirm.setMinimumHeight(36)
+        self.btn_confirm.setDefault(True)
+        self.btn_confirm.setStyleSheet(
+            "QPushButton { font-size: 16pt; font-weight: 700; "
+            "padding: 7px 21px; background: #2f7de1; color: white; "
+            "border: 1px solid #1f62b8; border-radius: 6px; }"
+            "QPushButton:hover { background: #236cc7; }"
+        )
 
         self._populate_items()
         self._sync_yield_dependents()
@@ -580,7 +586,7 @@ class ReportSettingsDialog(QDialog):
             QMessageBox.information(self, "Filename", "입력 파일이 없습니다.")
             return
         text, ok = QInputDialog.getText(
-            self, "FileName Change",
+            self, "Name Change",
             "각 입력 파일의 Filename(legend)을 콤마(,)로 구분해 입력하세요.\n"
             f"(파일 {len(names)}개)",
             text=",".join(names))
@@ -976,61 +982,72 @@ class HoneyMainWindow(QMainWindow):
         맨 위(첫) 파일이 units/항목명/Lower·Upper limit 의 기준이 된다 — 서로 다른
         유형의 파일이 섞여 들어와도 첫 파일 스키마를 기준으로 데이터가 처리된다.
         """
-        paths = self.csv_paths
-        if not paths:
-            return False
+        with _flow_time("_rebuild_group.total"):
+            paths = self.csv_paths
+            if not paths:
+                return False
 
-        n_files = len(paths)
-        # CSV 로딩을 백그라운드 스레드(1개)에서 파일 단위로 수행한다. 동기로 돌리면
-        # 무거운 pandas 읽기 동안 Qt 이벤트 루프가 멈춰 Windows 가 창을 "응답 없음"
-        # 으로 표시한다. 메인 스레드는 짧게 폴링하며 processEvents() 로 UI 를 살려
-        # "(진행중)" 을 보여주고, 한 파일이 60초를 넘기면 라벨만 바꾼다(중단 없음).
-        _SLOW_FILE_SEC = 60
-        progress = _ElapsedProgress(
-            self.progress_status, "파일 로딩 준비 중...", self._status,
-            busy=True, minimum=0, maximum=n_files)
-        QApplication.processEvents()
+            n_files = len(paths)
+            # CSV 로딩을 백그라운드 스레드(1개)에서 파일 단위로 수행한다. 동기로 돌리면
+            # 무거운 pandas 읽기 동안 Qt 이벤트 루프가 멈춰 Windows 가 창을 "응답 없음"
+            # 으로 표시한다. 메인 스레드는 짧게 폴링하며 processEvents() 로 UI 를 살려
+            # "(진행중)" 을 보여주고, 한 파일이 60초를 넘기면 라벨만 바꾼다(중단 없음).
+            _SLOW_FILE_SEC = 60
+            progress = _ElapsedProgress(
+                self.progress_status, "파일 로딩 준비 중...", self._status,
+                busy=True, minimum=0, maximum=n_files)
+            QApplication.processEvents()
 
-        results = []
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                for i, p in enumerate(paths):
-                    filename = Path(p).name
-                    fut = ex.submit(rg.df_honey.from_csv, p)
-                    file_start = time.monotonic()
-                    while True:
-                        done_set, _ = concurrent.futures.wait([fut], timeout=0.1)
-                        elapsed = int(time.monotonic() - file_start)
-                        if elapsed >= _SLOW_FILE_SEC:
-                            label = (
-                                f"({i + 1}/{n_files})  {filename}  "
-                                f"전처리 계속해서 진행중입니다."
+            results = []
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    for i, p in enumerate(paths):
+                        filename = Path(p).name
+                        file_start_perf = time.perf_counter()
+                        fut = ex.submit(rg.df_honey.from_csv, p)
+                        file_start = time.monotonic()
+                        while True:
+                            done_set, _ = concurrent.futures.wait([fut], timeout=0.1)
+                            elapsed = int(time.monotonic() - file_start)
+                            if elapsed >= _SLOW_FILE_SEC:
+                                label = (
+                                    f"({i + 1}/{n_files})  {filename}  "
+                                    f"전처리 계속해서 진행중입니다."
+                                )
+                            else:
+                                label = f"({i + 1}/{n_files})  {filename}"
+                            progress.set(label, value=i)
+                            if done_set:
+                                break
+                        results.append(fut.result())  # 로드 실패 시 여기서 예외 전파
+                        if _FLOW_PROFILE_ON:
+                            print(
+                                f"[flow-profile] honey_main.load_file[{filename}]: "
+                                f"{time.perf_counter() - file_start_perf:.3f}s",
+                                file=sys.stderr,
+                                flush=True,
                             )
-                        else:
-                            label = f"({i + 1}/{n_files})  {filename}"
-                        progress.set(label, value=i)
-                        if done_set:
-                            break
-                    results.append(fut.result())  # 로드 실패 시 여기서 예외 전파
-            self.group = rg.df_honey_group(results)
-        except Exception as exc:
-            progress.fail(f"실패: 파일 로드 실패 - {exc}")
-            QMessageBox.critical(self, "파일 로드 실패", str(exc))
-            self._status("파일 로드 실패")
-            self.group = None
-            return False
+                with _flow_time("df_honey_group.construct"):
+                    self.group = rg.df_honey_group(results)
+            except Exception as exc:
+                progress.fail(f"실패: 파일 로드 실패 - {exc}")
+                QMessageBox.critical(self, "파일 로드 실패", str(exc))
+                self._status("파일 로드 실패")
+                self.group = None
+                return False
 
-        progress.success(f"완료: {n_files}개 파일 전처리 완료", value=n_files)
+            progress.success(f"완료: {n_files}개 파일 전처리 완료", value=n_files)
 
-        if warn:
-            issues = {name: v for name, v in self.group.validate().items() if v}
-            if issues:
-                msg = "\n".join(f"- {name}: {', '.join(v)}" for name, v in issues.items())
-                QMessageBox.warning(self, "스키마 경고", f"일부 파일에 문제가 있습니다:\n{msg}")
+            if warn:
+                with _flow_time("group.validate"):
+                    issues = {name: v for name, v in self.group.validate().items() if v}
+                if issues:
+                    msg = "\n".join(f"- {name}: {', '.join(v)}" for name, v in issues.items())
+                    QMessageBox.warning(self, "스키마 경고", f"일부 파일에 문제가 있습니다:\n{msg}")
 
-        self.out_path = None
-        self._status(f"{len(paths)}개 파일 전처리 완료 (기준: {Path(paths[0]).name}).")
-        return True
+            self.out_path = None
+            self._status(f"{len(paths)}개 파일 전처리 완료 (기준: {Path(paths[0]).name}).")
+            return True
 
     def _apply_modes(self, group, mode_bin1, mode_dut):
         """선택된 데이터 정리 모드를 그룹에 적용. 문제 시 ValueError."""
@@ -1081,7 +1098,8 @@ class HoneyMainWindow(QMainWindow):
         raw = None
         if raw_data:
             try:
-                raw = work_group.raw_frames()
+                with _flow_time("raw_frames"):
+                    raw = work_group.raw_frames()
             except Exception as exc:  # noqa: BLE001
                 QMessageBox.warning(self, "Raw Data 생략",
                                     f"원본 데이터 시트를 만들지 못해 건너뜁니다:\n{exc}")
@@ -1102,14 +1120,15 @@ class HoneyMainWindow(QMainWindow):
         # 2) 데이터 분석 (통계 · Bin 집계)
         progress.set("데이터 분석 중... (통계 · Bin 집계)", status="데이터 분석 중...")
         try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(
-                    rg.analyze,
-                    work_group,
-                    meta=rg.ReportMeta(),
-                    selector=rg.ItemSelector(selected_items=selected),
-                )
-                self.last_result = _wait_for_future(fut, progress)
+            with _flow_time("rg.analyze.total"):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(
+                        rg.analyze,
+                        work_group,
+                        meta=rg.ReportMeta(),
+                        selector=rg.ItemSelector(selected_items=selected),
+                    )
+                    self.last_result = _wait_for_future(fut, progress)
         except Exception as exc:
             progress.fail(f"실패: 분석 실패 - {exc}")
             QMessageBox.critical(self, "분석 실패", str(exc))
@@ -1185,19 +1204,21 @@ class HoneyMainWindow(QMainWindow):
             def _write_job():
                 com_module = _init_com_for_worker()
                 try:
-                    return xlsx_writer.write(
-                        self.last_result, out, sheets=sheets,
-                        colors=colors,
-                        progress_cb=_sheet_progress, raw_sheets=raw,
-                        dist_progress_cb=_dist_progress,
-                        attach_progress_cb=_attach_progress,
-                    )
+                    with _flow_time("xlsx_writer.write.total"):
+                        return xlsx_writer.write(
+                            self.last_result, out, sheets=sheets,
+                            colors=colors,
+                            progress_cb=_sheet_progress, raw_sheets=raw,
+                            dist_progress_cb=_dist_progress,
+                            attach_progress_cb=_attach_progress,
+                        )
                 finally:
                     _co_uninitialize(com_module)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(_write_job)
-                _wait_for_future(fut, progress, poll_cb=_drain_progress_events)
+            with _flow_time("xlsx_generation.total_wait"):
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    fut = ex.submit(_write_job)
+                    _wait_for_future(fut, progress, poll_cb=_drain_progress_events)
         except Exception as exc:
             progress.fail(f"실패: xlsx 생성 실패 - {exc}")
             QMessageBox.critical(self, "생성 실패", str(exc))

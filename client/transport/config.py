@@ -8,6 +8,6 @@ import os
 
 SERVER_BASE_URL = os.environ.get("HONEY_SERVER_URL", "http://127.0.0.1:8000")
 
-CURRENT_VERSION = "0.1.0"
+CURRENT_VERSION = "3.0.0"
 
 REQUEST_TIMEOUT_SEC = (10, 300)  # (connect_timeout, read_timeout)

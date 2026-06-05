@@ -25,6 +25,7 @@ from openpyxl.utils import get_column_letter
 # ── 차트 생성 병목 측정 프로파일러 (HONEY_CHART_PROFILE set 시에만 동작) ───────
 # unset 이면 _prof 는 즉시 통과 → 평상시 동작·출력 불변. 측정 결과는 stderr 로.
 _PROF_ON = bool(os.environ.get("HONEY_CHART_PROFILE"))
+_FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
 _PROF = defaultdict(float)
 _PROF_CNT = defaultdict(int)
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -51,6 +52,19 @@ def _prof_count(bucket, n=1):
     """시간 측정 없이 카운터만 증가 (차트/시리즈/PNG 개수 등)."""
     if _PROF_ON:
         _PROF_CNT[bucket] += n
+
+
+@contextlib.contextmanager
+def _flow_prof(bucket):
+    if not _FLOW_PROFILE_ON:
+        yield
+        return
+    t = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed = time.perf_counter() - t
+        print(f"[flow-profile] xlsx_writer.{bucket}: {elapsed:.3f}s", file=sys.stderr, flush=True)
 
 
 def _prof_report():
@@ -210,14 +224,15 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
                                         result.distributions_b_only, [name_b]))
     want_dist_phase = want_dist or bool(diff_dist_specs)
 
-    wb = openpyxl.Workbook()
-    wb.remove(wb.active)  # 기본 Sheet 제거 후 필요한 시트만 생성
-    for nm in ALL_SHEETS:
-        if nm in table_writers and nm in sel:
-            wb.create_sheet(_report_sheet_display_name(nm))
-    # distribution 만 선택돼 table 시트가 없는 경우 빈 시트 1개 확보
-    if want_dist and not wb.sheetnames:
-        wb.create_sheet(_report_sheet_display_name("distribution"))
+    with _flow_prof("workbook_init"):
+        wb = openpyxl.Workbook()
+        wb.remove(wb.active)  # 기본 Sheet 제거 후 필요한 시트만 생성
+        for nm in ALL_SHEETS:
+            if nm in table_writers and nm in sel:
+                wb.create_sheet(_report_sheet_display_name(nm))
+        # distribution 만 선택돼 table 시트가 없는 경우 빈 시트 1개 확보
+        if want_dist and not wb.sheetnames:
+            wb.create_sheet(_report_sheet_display_name("distribution"))
 
     total = len([s for s in sel if s in table_writers]) + (len(raw_sheets) if raw_sheets else 0) \
         + (1 if want_dist else 0) + len(diff_cpk_specs) + len(diff_dist_specs)
@@ -228,9 +243,11 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
         sheet_name = _report_sheet_display_name(nm)
         if nm in table_writers and nm in sel and sheet_name in wb.sheetnames:
             if nm == "issue_table":
-                _fill_issue_table(wb[sheet_name], result, include_cpk=("cpk" in sel))
+                with _flow_prof(f"fill_{nm}"):
+                    _fill_issue_table(wb[sheet_name], result, include_cpk=("cpk" in sel))
             else:
-                table_writers[nm](wb[sheet_name], result)
+                with _flow_prof(f"fill_{nm}"):
+                    table_writers[nm](wb[sheet_name], result)
             done += 1
             _progress(progress_cb, done, total, nm)
 
@@ -238,7 +255,8 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     for disp, cpk_rows in diff_cpk_specs:
         title = _unique_sheet_name(wb, disp)
         ws = wb.create_sheet(title)
-        _fill_cpk_rows(ws, cpk_rows)
+        with _flow_prof(f"fill_{title}"):
+            _fill_cpk_rows(ws, cpk_rows)
         done += 1
         _progress(progress_cb, done, total, title)
 
@@ -248,7 +266,8 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
         reserved_sheet_names = [_report_sheet_display_name("distribution")] if want_dist else []
         for idx, (name, df) in enumerate(raw_sheets):
             ws = wb.create_sheet(_unique_sheet_name(wb, name, reserved_sheet_names), idx)
-            _fill_raw_data(ws, df)
+            with _flow_prof(f"fill_raw_data[{ws.title}]"):
+                _fill_raw_data(ws, df)
             raw_ws_list.append(ws)
             done += 1
             _progress(progress_cb, done, total, ws.title)
@@ -265,22 +284,26 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
         except Exception:
             pass
 
-    _normalize_report_sheet_names(wb)
-    _finalize_openpyxl_sheet_layouts(wb, skip_title_for=raw_ws_list)
+    with _flow_prof("normalize_sheet_names"):
+        _normalize_report_sheet_names(wb)
+    with _flow_prof("finalize_openpyxl_layouts"):
+        _finalize_openpyxl_sheet_layouts(wb, skip_title_for=raw_ws_list)
 
-    wb.save(out_path)
+    with _flow_prof("workbook_save"):
+        wb.save(out_path)
 
     # Phase 2: distribution 차트 (xlwings / Excel COM) + fail_item PNG 썸네일
     if want_dist_phase:
         try:
-            _write_distribution_xlwings(out_path, result, colors,
-                                        attach_fail_item=("fail_item" in sel),
-                                        attach_issue_cpk=("cpk" in sel),
-                                        dist_progress_cb=dist_progress_cb,
-                                        attach_progress_cb=attach_progress_cb,
-                                        write_main=want_dist,
-                                        extra_dist=diff_dist_specs,
-                                        raw_gridline_sheets=[ws.title for ws in raw_ws_list])
+            with _flow_prof("distribution_xlwings_phase"):
+                _write_distribution_xlwings(out_path, result, colors,
+                                            attach_fail_item=("fail_item" in sel),
+                                            attach_issue_cpk=("cpk" in sel),
+                                            dist_progress_cb=dist_progress_cb,
+                                            attach_progress_cb=attach_progress_cb,
+                                            write_main=want_dist,
+                                            extra_dist=diff_dist_specs,
+                                            raw_gridline_sheets=[ws.title for ws in raw_ws_list])
             done += 1 + len(diff_dist_specs)
             _progress(progress_cb, done, total, "distribution")
         except Exception as exc:
@@ -533,14 +556,17 @@ def _fill_fail_item(ws, result):
         row += [r.get(f"{s}_yield") for s in src]
         row += [""]   # Distribution 열 — 차트는 xlwings 단계에서 삽입
         rows.append(row)
-    _fill_table(ws, header, rows)
-    for i in range(len(rows)):
-        ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
-    _fill_fail_values_section(ws, result)
-    _apply_table_col_widths(ws, header, col_multiplier=1.3)
-    _apply_used_cell_font(ws, size=15, bold=False)
-    _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=False,
-                              last_row=_HEADER_ROW + len(rows))
+    with _flow_prof("fill_fail_item.top_table"):
+        _fill_table(ws, header, rows)
+        for i in range(len(rows)):
+            ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
+    with _flow_prof("fill_fail_item.fail_values"):
+        _fill_fail_values_section(ws, result)
+    with _flow_prof("fill_fail_item.style"):
+        _apply_table_col_widths(ws, header, col_multiplier=1.3)
+        _apply_used_cell_font(ws, size=15, bold=False)
+        _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=False,
+                                  last_row=_HEADER_ROW + len(rows))
 
 
 def _fill_fail_values_section(ws, result):
@@ -555,27 +581,30 @@ def _fill_fail_values_section(ws, result):
     hdr_row   = title_row + 2            # 열 헤더 행
     data_row0 = title_row + 3           # 데이터 시작 행
 
-    _apply_hdr_style(ws.cell(row=title_row, column=_START_COL, value="FAIL_VALUES"))
+    with _flow_prof("fail_values.title"):
+        _apply_hdr_style(ws.cell(row=title_row, column=_START_COL, value="FAIL_VALUES"))
 
     for i, (src_name, rows) in enumerate(fvr.items()):
-        col0 = _START_COL + i * (_FAIL_VALUES_NCOLS + _FAIL_VALUES_GAP)
-        _apply_hdr_style(ws.cell(row=src_row, column=col0, value=src_name))
-        for ci, h in enumerate(_FAIL_VALUES_COLS):
-            _apply_hdr_style(ws.cell(row=hdr_row, column=col0 + ci, value=h))
-        for ri, row in enumerate(rows):
-            r = data_row0 + ri
-            _apply_data_style(ws.cell(row=r, column=col0,     value=_sanitize_cell(row["dut"])))
-            _apply_data_style(ws.cell(row=r, column=col0 + 1, value=_sanitize_cell(row["xcoord"])))
-            _apply_data_style(ws.cell(row=r, column=col0 + 2, value=_sanitize_cell(row["ycoord"])))
-            _apply_data_style(ws.cell(row=r, column=col0 + 3, value=_sanitize_cell(row["bin"])))
-            _apply_data_style(ws.cell(row=r, column=col0 + 4, value=_sanitize_cell(row["item"])))
-            _apply_data_style(ws.cell(row=r, column=col0 + 5, value=_sanitize_cell(row["value"])))
+        with _flow_prof(f"fail_values.write_source[{src_name}]"):
+            col0 = _START_COL + i * (_FAIL_VALUES_NCOLS + _FAIL_VALUES_GAP)
+            _apply_hdr_style(ws.cell(row=src_row, column=col0, value=src_name))
+            for ci, h in enumerate(_FAIL_VALUES_COLS):
+                _apply_hdr_style(ws.cell(row=hdr_row, column=col0 + ci, value=h))
+            for ri, row in enumerate(rows):
+                r = data_row0 + ri
+                _apply_data_style(ws.cell(row=r, column=col0,     value=_sanitize_cell(row["dut"])))
+                _apply_data_style(ws.cell(row=r, column=col0 + 1, value=_sanitize_cell(row["xcoord"])))
+                _apply_data_style(ws.cell(row=r, column=col0 + 2, value=_sanitize_cell(row["ycoord"])))
+                _apply_data_style(ws.cell(row=r, column=col0 + 3, value=_sanitize_cell(row["bin"])))
+                _apply_data_style(ws.cell(row=r, column=col0 + 4, value=_sanitize_cell(row["item"])))
+                _apply_data_style(ws.cell(row=r, column=col0 + 5, value=_sanitize_cell(row["value"])))
 
     # 소스 블록별 윤곽선 적용 (src_row 헤더~마지막 데이터행)
-    for i, (src_name, rows) in enumerate(fvr.items()):
-        col0 = _START_COL + i * (_FAIL_VALUES_NCOLS + _FAIL_VALUES_GAP)
-        last_row = data_row0 + len(rows) - 1 if rows else hdr_row
-        _apply_all_borders(ws, src_row, col0, last_row, col0 + _FAIL_VALUES_NCOLS - 1)
+    with _flow_prof("fail_values.borders"):
+        for i, (src_name, rows) in enumerate(fvr.items()):
+            col0 = _START_COL + i * (_FAIL_VALUES_NCOLS + _FAIL_VALUES_GAP)
+            last_row = data_row0 + len(rows) - 1 if rows else hdr_row
+            _apply_all_borders(ws, src_row, col0, last_row, col0 + _FAIL_VALUES_NCOLS - 1)
 
 
 def _fill_cpk(ws, result):

@@ -48,6 +48,43 @@ class df_honey_group:
         # 붕괴하지 않도록 생성 시 name 을 유일화(_2, _3 …)한다.
         deduped = _dedup_in_place(list(mass_data_list))
         self._mass_data_map = {md.name: md for md in deduped}
+        self._reset_cache()
+
+    # ------------------------------------------------------------------ 그룹 집계 캐시
+    # 원본 df_honey_group 의 for_each_* 처럼, 그룹 전체를 훑는 무거운 집계를 첫 호출
+    # 시 1회만 계산해 보존한다. select_items/filter/split 은 새 그룹을 반환하므로
+    # 캐시도 새로 시작(정합성 자동).
+
+    def _reset_cache(self) -> None:
+        self._computed = False
+        self._cached_rankings = None
+        self._cached_yield = None
+        self._cached_cpk = None
+        self._cached_fail_items = None
+        self._cached_summary = None
+        # issue_table 은 analyzer 가 per-md get_fail_detail 로 따로 만들어 hot path 에서
+        # 그룹 단위로는 안 쓰이므로 _compute_all_once 에 넣지 않고 lazy 개별 캐시로 둔다.
+        self._cached_issue_table = None
+
+    def _compute_all_once(self) -> None:
+        """그룹 전체 집계를 for_each 1회 순회로 계산·보존 (원본 for_each_* 패턴)."""
+        m = self._mass_data_map
+        for md in m.values():
+            _ = md.fail_mask  # 작업 A per-md 캐시 강제 평가
+        self._cached_rankings = B._subject_rankings_by_type(m)
+        self._cached_yield = B.build_yield(m, subject_rankings=self._cached_rankings)
+        self._cached_cpk = B.build_cpk(m)
+        self._cached_fail_items = B.build_fail_items(
+            m, yield_rows=self._cached_yield, subject_rankings=self._cached_rankings)
+        self._cached_summary = B.build_summary_rows(
+            m, cpk_rows=self._cached_cpk, yield_rows=self._cached_yield,
+            fail_items=self._cached_fail_items["rows"],
+            subject_rankings=self._cached_rankings)
+        self._computed = True
+
+    def _ensure_computed(self) -> None:
+        if not self._computed:
+            self._compute_all_once()
 
     # ------------------------------------------------------------------ 구성
 
@@ -110,6 +147,8 @@ class df_honey_group:
         """
         renamed = _dedup_in_place(list(self._mass_data_map.values()), new_names)
         self._mass_data_map = {md.name: md for md in renamed}
+        # source 이름이 yield/issue 의 컬럼 키로 쓰이므로 캐시 무효화
+        self._reset_cache()
 
     def subjects(self) -> list:
         """모든 source 의 subject 이름 합집합 (등장 순서 유지).
@@ -206,19 +245,25 @@ class df_honey_group:
     # ------------------------------------------------------------------ 분석
 
     def cpk(self) -> list:
-        return B.build_cpk(self._mass_data_map)
+        self._ensure_computed()
+        return self._cached_cpk
 
     def yield_rate(self) -> list:
-        return B.build_yield(self._mass_data_map)
+        self._ensure_computed()
+        return self._cached_yield
 
     def fail_items(self) -> list:
-        return B.build_fail_items(self._mass_data_map)["rows"]
+        self._ensure_computed()
+        return self._cached_fail_items["rows"]
 
     def issue_table(self) -> list:
-        return B.build_issue_table(self._mass_data_map)
+        if self._cached_issue_table is None:
+            self._cached_issue_table = B.build_issue_table(self._mass_data_map)
+        return self._cached_issue_table
 
     def summary(self) -> list:
-        return B.build_summary_rows(self._mass_data_map)
+        self._ensure_computed()
+        return self._cached_summary
 
     def major_fail_subjects(self, top: int = 5) -> list:
         return B.build_major_fail_subjects(self._mass_data_map, top=top)

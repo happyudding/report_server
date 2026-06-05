@@ -24,7 +24,7 @@ from . import _builders as B
 from . import csv_loader
 from .constants import (
     DATA_START_ROW, LOWER_LIMIT_ROW, META_COLUMNS, N_META_COLUMNS,
-    UNITS_ROW, UPPER_LIMIT_ROW,
+    PASS_BIN, UNITS_ROW, UPPER_LIMIT_ROW,
 )
 from .csvfile_to_df import DF_YIELD_COLUMNS
 from .models import ReportMeta
@@ -139,6 +139,90 @@ class df_honey:
         scores.columns = range(len(self.subjects))
         return scores
 
+    # ------------------------------------------------------------------ fail 계산 캐시
+    # 무거운 계산(numeric 변환 / fail mask)을 mass_data 단위로 1회만 평가·보존한다.
+    # 모든 builder 가 이 attribute 만 참조하도록 통일 — 호출마다 재계산하지 않는다.
+    # 슬라이싱(select_subjects/subset_rows)은 새 인스턴스를 만들므로 캐시도 새로 시작.
+
+    @cached_property
+    def numeric_scores(self) -> pd.DataFrame:
+        """scores 전체를 수치로 1회 변환 (columns = range(n_sub) 유지)."""
+        return self.scores.apply(pd.to_numeric, errors="coerce")
+
+    @cached_property
+    def _limit_arrays(self):
+        """(lo, hi) float64 배열 — subject 열 정렬. 범위밖·None·비수치 → NaN."""
+        n_sub = len(self.numeric_scores.columns)
+
+        def _lim(seq, i):
+            if i >= len(seq):
+                return np.nan
+            v = seq[i]
+            if v is None:
+                return np.nan
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return np.nan
+
+        lo = np.array([_lim(self.lower_limits, i) for i in range(n_sub)], dtype="float64")
+        hi = np.array([_lim(self.upper_limits, i) for i in range(n_sub)], dtype="float64")
+        return lo, hi
+
+    @cached_property
+    def fail_mask_lo(self) -> pd.DataFrame:
+        """value < lower limit 인 셀 bool DataFrame (NaN·결측 limit → False)."""
+        numeric = self.numeric_scores
+        arr = numeric.to_numpy(dtype="float64", copy=False)
+        lo, _ = self._limit_arrays
+        with np.errstate(invalid="ignore"):
+            fail = arr < lo
+        return pd.DataFrame(fail, index=numeric.index, columns=numeric.columns, copy=False)
+
+    @cached_property
+    def fail_mask_hi(self) -> pd.DataFrame:
+        """value > upper limit 인 셀 bool DataFrame (NaN·결측 limit → False)."""
+        numeric = self.numeric_scores
+        arr = numeric.to_numpy(dtype="float64", copy=False)
+        _, hi = self._limit_arrays
+        with np.errstate(invalid="ignore"):
+            fail = arr > hi
+        return pd.DataFrame(fail, index=numeric.index, columns=numeric.columns, copy=False)
+
+    @cached_property
+    def fail_mask_break(self) -> pd.DataFrame:
+        """stop-on-fail 로 data 흐름이 뚝 끊긴 시점(말미 연속 NaN 런의 시작 열) bool DataFrame.
+
+        각 DUT(행)에서 측정값이 끝까지 이어지지 않고 어느 item 부터 끝까지 모두 비어버린
+        (NaN) 경우, 그 끊긴 첫 item 한 곳만 True. 전부 NaN 인 행과 PASS_BIN DUT 는 제외
+        (옵션 미측정 오탐 방지). limit 위반과 별개의 fail 원인.
+        """
+        numeric = self.numeric_scores
+        isnan = numeric.isna().to_numpy()
+        n_rows, n_sub = isnan.shape
+        out = np.zeros((n_rows, n_sub), dtype=bool)
+        if n_rows == 0 or n_sub == 0:
+            return pd.DataFrame(out, index=numeric.index, columns=numeric.columns, copy=False)
+        # 말미 연속 NaN 런: col..끝 이 모두 NaN 인 위치 (오른쪽부터 cumprod)
+        trailing = np.cumprod(isnan[:, ::-1], axis=1)[:, ::-1].astype(bool)
+        # onset = 런의 시작(False→True 전환) 한 곳만
+        prev = np.zeros_like(trailing)
+        prev[:, 1:] = trailing[:, :-1]
+        onset = trailing & ~prev
+        onset[:, 0] = False   # col 0 onset = 전부 NaN 행 → 제외 (앞에 valid 값 없음)
+        # PASS_BIN DUT 제외
+        bins = self.meta["Bin"].map(B._fmt_type).to_numpy()
+        onset &= (bins != PASS_BIN)[:, None]
+        return pd.DataFrame(onset, index=numeric.index, columns=numeric.columns, copy=False)
+
+    @cached_property
+    def fail_mask(self) -> pd.DataFrame:
+        """각 측정값의 fail 여부 bool DataFrame — limit 위반(lo∪hi) ∪ data 흐름 끊김(break).
+
+        fail item 과 fail value 가 동일 정의를 공유한다.
+        """
+        return self.fail_mask_lo | self.fail_mask_hi | self.fail_mask_break
+
     # ------------------------------------------------------------------ 슬라이싱 (단일 df 기반)
 
     def select_subjects(self, keep_idx) -> "df_honey":
@@ -242,7 +326,7 @@ class df_honey:
 
     def fail_subject_ids(self) -> list:
         """fail 이 발생한 subject_id 목록 (item select 기본값용)."""
-        mask = B._fail_mask(self)
+        mask = self.fail_mask
         sums = mask.sum(axis=0)
         return [int(i) for i, c in sums.items() if int(c) > 0]
 

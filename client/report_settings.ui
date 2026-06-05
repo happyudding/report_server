@@ -113,7 +113,7 @@
        <layout class="QVBoxLayout" name="vbox_arrows">
         <item>
          <widget class="QPushButton" name="btn_filename_change">
-          <property name="text"><string>FileName
+          <property name="text"><string>Name
 Change</string></property>
           <property name="toolTip"><string>각 입력 파일(Filename)의 legend 명을 콤마로 구분해 직접 지정합니다.</string></property>
           <property name="maximumSize"><size><width>52</width><height>16777215</height></size></property>
@@ -208,23 +208,14 @@ only</string></property>
       </widget>
      </item>
      <item>
-      <spacer name="spacer_bottom">
-       <property name="orientation"><enum>Qt::Horizontal</enum></property>
-       <property name="sizeHint" stdset="0"><size><width>40</width><height>20</height></size></property>
-      </spacer>
-     </item>
-     <item>
-     <widget class="QDialogButtonBox" name="buttonBox">
+      <widget class="QPushButton" name="btn_confirm">
        <property name="sizePolicy">
         <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
          <horstretch>1</horstretch><verstretch>0</verstretch>
         </sizepolicy>
        </property>
-       <property name="centerButtons">
-        <bool>true</bool>
-       </property>
-       <property name="standardButtons">
-        <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
+       <property name="text">
+        <string>Confirm</string>
        </property>
       </widget>
      </item>

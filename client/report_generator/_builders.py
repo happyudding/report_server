@@ -75,63 +75,6 @@ def _combined_frames(mass_data_map):
     return pd.concat(frames, ignore_index=True)
 
 
-def _break_mask(mass_data):
-    """stop-on-fail 로 data 흐름이 뚝 끊긴 시점(말미 연속 NaN 런의 시작 열) bool DataFrame.
-
-    각 DUT(행)에서 측정값이 끝까지 이어지지 않고 어느 item 부터 끝까지 모두 비어버린
-    (NaN) 경우, 그 끊긴 첫 item 한 곳만 True. 전부 NaN 인 행과 PASS_BIN DUT 는 제외
-    (옵션 미측정 오탐 방지). limit 위반과 별개의 fail 원인 — fail item/fail value 정의에
-    함께 합산된다.
-    """
-    numeric = mass_data.scores.apply(pd.to_numeric, errors="coerce")
-    isnan = numeric.isna().to_numpy()
-    n_rows, n_sub = isnan.shape
-    out = np.zeros((n_rows, n_sub), dtype=bool)
-    if n_rows == 0 or n_sub == 0:
-        return pd.DataFrame(out, index=numeric.index, columns=numeric.columns, copy=False)
-    # 말미 연속 NaN 런: col..끝 이 모두 NaN 인 위치 (오른쪽부터 cumprod)
-    trailing = np.cumprod(isnan[:, ::-1], axis=1)[:, ::-1].astype(bool)
-    # onset = 런의 시작(False→True 전환) 한 곳만
-    prev = np.zeros_like(trailing)
-    prev[:, 1:] = trailing[:, :-1]
-    onset = trailing & ~prev
-    onset[:, 0] = False   # col 0 onset = 전부 NaN 행 → 제외 (앞에 valid 값 없음)
-    # PASS_BIN DUT 제외
-    bins = mass_data.meta["Bin"].map(_fmt_type).to_numpy()
-    onset &= (bins != PASS_BIN)[:, None]
-    return pd.DataFrame(onset, index=numeric.index, columns=numeric.columns, copy=False)
-
-
-def _fail_mask(mass_data):
-    """각 측정값의 fail 여부 bool DataFrame — limit 위반 ∪ data 흐름 끊김(onset).
-
-    fail item 과 fail value 가 동일 정의를 공유하도록 통합한다.
-      limit: value < lower 또는 > upper.
-      break: stop-on-fail 로 말미부터 값이 끊긴 첫 item (_break_mask).
-    """
-    numeric = mass_data.scores.apply(pd.to_numeric, errors="coerce")
-    arr = numeric.to_numpy(dtype="float64", copy=False)
-    n_sub = arr.shape[1]
-
-    def _lim(seq, i):
-        if i >= len(seq):
-            return np.nan
-        v = seq[i]
-        if v is None:
-            return np.nan
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return np.nan
-
-    lo = np.array([_lim(mass_data.lower_limits, i) for i in range(n_sub)], dtype="float64")
-    hi = np.array([_lim(mass_data.upper_limits, i) for i in range(n_sub)], dtype="float64")
-    with np.errstate(invalid="ignore"):
-        fail = (arr < lo) | (arr > hi)
-    limit = pd.DataFrame(fail, index=numeric.index, columns=numeric.columns, copy=False)
-    return limit | _break_mask(mass_data)
-
-
 def _type_sort_key(value):
     text = str(value)
     try:
@@ -146,7 +89,7 @@ def _subject_rankings_by_type(mass_data_map):
     first = next(iter(mass_data_map.values()))
     subject_names = _subject_columns(first)
     for _source_name, mass_data in mass_data_map.items():
-        fail_mask = _fail_mask(mass_data)
+        fail_mask = mass_data.fail_mask
         bin_types = mass_data.meta["Bin"].map(_fmt_type)
         for bin_type in sorted(bin_types.unique(), key=_type_sort_key):
             rows = bin_types == bin_type
@@ -181,10 +124,11 @@ def _subject_rankings_by_type(mass_data_map):
 # ---------------------------------------------------------------------------
 # yield
 
-def build_yield(mass_data_map):
+def build_yield(mass_data_map, subject_rankings=None):
     combined = _combined_frames(mass_data_map)
     total = len(combined)
-    subject_rankings = _subject_rankings_by_type(mass_data_map)
+    if subject_rankings is None:
+        subject_rankings = _subject_rankings_by_type(mass_data_map)
     rows = []
     if total == 0:
         return rows
@@ -342,9 +286,11 @@ def build_cpk(mass_data_map):
 # ---------------------------------------------------------------------------
 # fail items
 
-def build_fail_items(mass_data_map):
-    yield_rows = build_yield(mass_data_map)
-    subject_rankings = _subject_rankings_by_type(mass_data_map)
+def build_fail_items(mass_data_map, yield_rows=None, subject_rankings=None):
+    if subject_rankings is None:
+        subject_rankings = _subject_rankings_by_type(mass_data_map)
+    if yield_rows is None:
+        yield_rows = build_yield(mass_data_map, subject_rankings=subject_rankings)
     rows = []
     for row in yield_rows:
         bin_type = row["bin"]
@@ -361,13 +307,12 @@ def build_fail_items(mass_data_map):
 # ---------------------------------------------------------------------------
 # issue_table (legacy) — yield/fail_items 기반 bin별 "most fail item" 요약
 
-def build_issue_summary(mass_data_map):
+def build_issue_summary(mass_data_map, fail_items=None):
     """fail bin 별 1순위 fail subject + avg + source 별 portion.
 
-    _reference/server_legacy/xlsx_export._build_issue_rows 와 동일 개념.
     pass(bin 1) 는 제외하고 avg 내림차순 정렬.
     """
-    fi = build_fail_items(mass_data_map)["rows"]
+    fi = fail_items if fail_items is not None else build_fail_items(mass_data_map)["rows"]
     sources = list(mass_data_map.keys())
     rows = []
     for r in fi:
@@ -397,45 +342,35 @@ def build_issue_table(mass_data_map):
     for source_name, mass_data in mass_data_map.items():
         subjects_list = _subject_columns(mass_data)
         n_sub = len(subjects_list)
-        meta = mass_data.meta.reset_index(drop=True).copy()
-        meta["Bin"] = meta["Bin"].map(_fmt_type)
-        non_pass = meta["Bin"] != PASS_BIN
+        meta = mass_data.meta.reset_index(drop=True)
+        non_pass = (meta["Bin"].map(_fmt_type) != PASS_BIN).to_numpy()
         if not non_pass.any():
             continue
-        meta_np = meta[non_pass].reset_index(drop=True)
-        scores_np = mass_data.scores[non_pass].reset_index(drop=True)
-        numeric = scores_np.apply(pd.to_numeric, errors="coerce")
+        # 작업 A 의 방향별 캐시 마스크 재사용 (numeric 재변환·column loop 제거)
+        lo_mask = mass_data.fail_mask_lo.to_numpy()
+        hi_mask = mass_data.fail_mask_hi.to_numpy()
+        brk_mask = mass_data.fail_mask_break.to_numpy()
+        fail_any = (lo_mask | hi_mask | brk_mask) & non_pass[:, None]
+        # np.where 는 행→열 C-order → 기존 DataFrame.stack() 순회 순서와 동일
+        row_idx, col_idx = np.where(fail_any)
+        if row_idx.size == 0:
+            continue
+        numeric_arr = mass_data.numeric_scores.to_numpy()
         lo_arr = [mass_data.lower_limits[i] if i < len(mass_data.lower_limits) else None for i in range(n_sub)]
         hi_arr = [mass_data.upper_limits[i] if i < len(mass_data.upper_limits) else None for i in range(n_sub)]
-        fail_lo = pd.DataFrame(False, index=numeric.index, columns=numeric.columns)
-        fail_hi = pd.DataFrame(False, index=numeric.index, columns=numeric.columns)
-        for idx in range(n_sub):
-            col_s = numeric.iloc[:, idx]
-            if lo_arr[idx] is not None and pd.notna(lo_arr[idx]):
-                fail_lo.iloc[:, idx] = (col_s < float(lo_arr[idx])).fillna(False)
-            if hi_arr[idx] is not None and pd.notna(hi_arr[idx]):
-                fail_hi.iloc[:, idx] = (col_s > float(hi_arr[idx])).fillna(False)
-        # data 흐름 끊김(stop-on-fail) onset 도 fail 로 합산 — non_pass 행만 정렬해 정렬
-        brk_np = _break_mask(mass_data)[non_pass].reset_index(drop=True)
-        brk_np.columns = numeric.columns
-        fail_any = (fail_lo | fail_hi | brk_np)
-        failing = fail_any.stack()
-        failing = failing[failing]
-        for row_i, col_i in failing.index:
-            is_lo = bool(fail_lo.at[row_i, col_i])
-            is_hi = bool(fail_hi.at[row_i, col_i])
-            fail_dir = "< lo" if is_lo else ("> hi" if is_hi else "break")
-            meta_row = meta_np.iloc[row_i]
+        dut, xc, yc, bn = meta["DUT"], meta["XCoord"], meta["YCoord"], meta["Bin"]
+        for r, c in zip(row_idx.tolist(), col_idx.tolist()):
+            fail_dir = "< lo" if lo_mask[r, c] else ("> hi" if hi_mask[r, c] else "break")
             rows.append({
                 "source": source_name,
-                "dut": _fmt_type(meta_row["DUT"]),
-                "x_coord": _fmt_type(meta_row["XCoord"]),
-                "y_coord": _fmt_type(meta_row["YCoord"]),
-                "bin": _fmt_type(meta_row["Bin"]),
-                "subject": subjects_list[col_i],
-                "value": _fmt_num(numeric.at[row_i, col_i]),
-                "lower_limit": _fmt_num(lo_arr[col_i]) if (lo_arr[col_i] is not None and pd.notna(lo_arr[col_i])) else "N/A",
-                "upper_limit": _fmt_num(hi_arr[col_i]) if (hi_arr[col_i] is not None and pd.notna(hi_arr[col_i])) else "N/A",
+                "dut": _fmt_type(dut.iat[r]),
+                "x_coord": _fmt_type(xc.iat[r]),
+                "y_coord": _fmt_type(yc.iat[r]),
+                "bin": _fmt_type(bn.iat[r]),
+                "subject": subjects_list[c],
+                "value": _fmt_num(numeric_arr[r, c]),
+                "lower_limit": _fmt_num(lo_arr[c]) if (lo_arr[c] is not None and pd.notna(lo_arr[c])) else "N/A",
+                "upper_limit": _fmt_num(hi_arr[c]) if (hi_arr[c] is not None and pd.notna(hi_arr[c])) else "N/A",
                 "fail": fail_dir,
             })
     return rows
@@ -458,7 +393,7 @@ def build_major_fail_subjects(mass_data_map, top: int = 5):
         if subject_names is None:
             subject_names = _subject_columns(mass_data)
         total_dut += len(mass_data.scores)
-        sums = _fail_mask(mass_data).sum(axis=0)
+        sums = mass_data.fail_mask.sum(axis=0)
         for sid, count in sums.items():
             count = int(count)
             if count <= 0:
@@ -505,15 +440,20 @@ def _try_int(value):
     return int(f)
 
 
-def build_summary_rows(mass_data_map):
-    cpk_rows = build_cpk(mass_data_map)
-    yield_rows = build_yield(mass_data_map)
-    fail_items = build_fail_items(mass_data_map)["rows"]
+def build_summary_rows(mass_data_map, cpk_rows=None, yield_rows=None,
+                       fail_items=None, subject_rankings=None):
+    if cpk_rows is None:
+        cpk_rows = build_cpk(mass_data_map)
+    if yield_rows is None:
+        yield_rows = build_yield(mass_data_map, subject_rankings=subject_rankings)
+    if fail_items is None:
+        fail_items = build_fail_items(mass_data_map, yield_rows=yield_rows,
+                                      subject_rankings=subject_rankings)["rows"]
 
     _fail_sums = []
     _fail_rows = []
     for mass_data in mass_data_map.values():
-        mask = _fail_mask(mass_data)
+        mask = mass_data.fail_mask
         _fail_sums.append(mask.sum(axis=0).to_numpy(dtype=int, copy=False))
         _fail_rows.append(int(len(mask)))
 
