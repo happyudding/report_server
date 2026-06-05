@@ -711,7 +711,7 @@ def _fill_cpk_rows(ws, cpk_rows):
             r.get("median"), r.get("max"), r.get("average"), r.get("stdev"),
             r.get("cpl"), r.get("cpu"), r.get("cp"), r.get("cpk"), "",
         ])
-    _fill_table(ws, header, rows)
+    _fill_cpk_table(ws, header, rows)
     _apply_cpk_warn_fill(ws, header, rows)   # CPK < 1.33 행 노란 하이라이트 (병합 전)
     _apply_table_col_widths(ws, header, custom_widths={
         "TEST NAME": _CPK_TEST_NAME_COL_WIDTH,
@@ -723,7 +723,17 @@ def _fill_cpk_rows(ws, cpk_rows):
     _merge_cpk_subject(ws, len(rows))
 
 
+def _fill_cpk_table(ws, header, rows):
+    with _flow_prof(f"fill_cpk.fill_table[{len(rows)}x{len(header)}]"):
+        _fill_table(ws, header, rows)
+
+
 def _apply_cpk_warn_fill(ws, header, rows, header_row=_HEADER_ROW, start_col=_START_COL):
+    with _flow_prof("fill_cpk.warn_fill"):
+        return _apply_cpk_warn_fill_inner(ws, header, rows, header_row, start_col)
+
+
+def _apply_cpk_warn_fill_inner(ws, header, rows, header_row=_HEADER_ROW, start_col=_START_COL):
     """CPK 열 값이 _CPK_THRESHOLD 미만인 행 전체에 노란 배경 적용 (병합 전 호출)."""
     cpk_idx = next((i for i, h in enumerate(header) if h == "cpk"), None)
     if cpk_idx is None:
@@ -762,6 +772,11 @@ def _cpk_fail_subjects(result):
 
 
 def _merge_cpk_subject(ws, n_rows, header_row=_HEADER_ROW, start_col=_START_COL):
+    with _flow_prof("fill_cpk.merge_subject"):
+        return _merge_cpk_subject_inner(ws, n_rows, header_row, start_col)
+
+
+def _merge_cpk_subject_inner(ws, n_rows, header_row=_HEADER_ROW, start_col=_START_COL):
     """같은 subject 연속 행의 TEST NAME/LOW SPEC/HIGH SPEC/SCALE 열 병합 + 세로 중앙 정렬."""
     if n_rows <= 1:
         return
@@ -928,7 +943,18 @@ def _safe_set(ws, coord, value):
     ws.range(coord).value = value
 
 
+def _is_cpk_header(header):
+    return list(header[:4]) == ["TEST NAME", "LOW SPEC", "HIGH SPEC", "SCALE"] and "cpk" in header
+
+
 def _apply_table_col_widths(ws, header, start_col=_START_COL, custom_widths=None, col_multiplier=1.0):
+    if _is_cpk_header(header):
+        with _flow_prof("fill_cpk.col_widths"):
+            return _apply_table_col_widths_inner(ws, header, start_col, custom_widths, col_multiplier)
+    return _apply_table_col_widths_inner(ws, header, start_col, custom_widths, col_multiplier)
+
+
+def _apply_table_col_widths_inner(ws, header, start_col=_START_COL, custom_widths=None, col_multiplier=1.0):
     """헤더 이름 기반 열너비 일괄 설정.
 
     Distribution → _DIST_COL_WIDTH, Item/Category → _ITEM_COL_WIDTH, 나머지 → _NARROW_COL_WIDTH.
@@ -982,6 +1008,15 @@ def _apply_named_columns_font(ws, header, names, size=None, bold=None,
 
 def _apply_font_delta_to_columns(ws, header, names, delta,
                                  header_row=_HEADER_ROW, start_col=_START_COL):
+    if _is_cpk_header(header):
+        with _flow_prof("fill_cpk.font_delta"):
+            return _apply_font_delta_to_columns_inner(
+                ws, header, names, delta, header_row, start_col)
+    return _apply_font_delta_to_columns_inner(ws, header, names, delta, header_row, start_col)
+
+
+def _apply_font_delta_to_columns_inner(ws, header, names, delta,
+                                       header_row=_HEADER_ROW, start_col=_START_COL):
     """지정 열의 폰트 크기를 헤더(_HDR_FONT)·데이터(_DATA_FONT) 기준 + delta 로 설정."""
     name_set = set(names)
     last = _last_row(ws)

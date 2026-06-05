@@ -884,6 +884,7 @@ class HoneyMainWindow(QMainWindow):
             "build_distributions",
             "build_distributions_common",
             "combined_df_yield",
+            "fill_cpk",
             "fill_fail_item",
             "fail_values.title",
             "fail_values.borders",
@@ -919,6 +920,8 @@ class HoneyMainWindow(QMainWindow):
         steps += 1 + sources  # analysis table builders + fail_detail per source
         steps += 1  # workbook_init
         steps += sum(1 for s in selected_tables if s != "fail_item")
+        if "cpk" in selected_tables:
+            steps += 4  # fill_cpk expands into five substeps
         if "fail_item" in selected_tables:
             steps += 2 + sources  # top table + FAIL_VALUES + source chunks
         if raw_data:

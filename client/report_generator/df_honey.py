@@ -115,8 +115,9 @@ class df_honey:
         """원본 honey fail value — 각 DUT 의 '첫 NaN 직전 subject' 의 값/이름 (벡터 연산).
 
         get_prev_col_val_before_nan_all 동치: 행을 왼쪽부터 보아 첫 NaN 직전 subject 를 기록.
-        반환 행=DUT, 열=[DUT, XCoord, YCoord, Bin, Item, Value].
-          Item = "PASS"(NaN 없이 완주) / 멈춘 subject 이름(첫 NaN 직전) / None(첫 열부터 NaN)
+        **non-PASS(측정 중단) DUT 만** 반환(fail 기준 = 측정이 끝까지 못 감).
+        반환 행=중단 DUT, 열=[DUT, XCoord, YCoord, Bin, Item, Value].
+          Item = 멈춘 subject 이름(첫 NaN 직전) / None(첫 열부터 NaN). ("PASS" 완주 행은 제외)
           Value = 그 직전 측정값 (없으면 N/A)
         """
         cols = ["DUT", "XCoord", "YCoord", "Bin", "Item", "Value"]
@@ -142,13 +143,17 @@ class df_honey:
             items[has_nan & (first == 0)] = None          # 첫 열부터 NaN → None
         else:
             items[:] = None
+        keep = items != "PASS"                            # non-PASS(측정 중단)만 display
+        if not keep.any():
+            return pd.DataFrame(columns=cols)
+        m = meta[keep]
         return pd.DataFrame({
-            "DUT":    [B._fmt_type(v) for v in meta["DUT"]],
-            "XCoord": [B._fmt_type(v) for v in meta["XCoord"]],
-            "YCoord": [B._fmt_type(v) for v in meta["YCoord"]],
-            "Bin":    [B._fmt_type(v) for v in meta["Bin"]],
-            "Item":   items,
-            "Value":  [B._fmt_num(v) for v in values],
+            "DUT":    [B._fmt_type(v) for v in m["DUT"]],
+            "XCoord": [B._fmt_type(v) for v in m["XCoord"]],
+            "YCoord": [B._fmt_type(v) for v in m["YCoord"]],
+            "Bin":    [B._fmt_type(v) for v in m["Bin"]],
+            "Item":   items[keep],
+            "Value":  [B._fmt_num(v) for v in values[keep]],
         })[cols]
 
     # ------------------------------------------------------------------ df 파생 컴포넌트
