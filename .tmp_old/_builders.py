@@ -170,52 +170,33 @@ def build_yield(mass_data_map, subject_rankings=None):
 # ---------------------------------------------------------------------------
 # cpk
 
-def get_df_cpk_summary(numeric_df, lo_arr, hi_arr):
-    """source 측정행렬(행=DUT, 열=subject) → subject별 **raw 통계 DataFrame** (벡터 컬럼연산).
-
-    lo_arr/hi_arr: 열 정렬 limit(canonical, float/NaN). 결측 조건은 _calc_stats 와 동일:
-    can = n>1 & stdev 유효(NaN·0 아님) & lo/hi 유효. 반환 idx=subject, 열 = n/min/median/max/
-    average/stdev/cp/cpl/cpu/cpk (raw, 결측=NaN). 포맷은 호출부에서 _fmt_num/_fmt_metric.
-    """
-    cols = list(numeric_df.columns)
-    n = numeric_df.notna().sum()
-    mn = numeric_df.min()
-    med = numeric_df.median()
-    mx = numeric_df.max()
-    avg = numeric_df.mean()
-    std = numeric_df.std(ddof=1)
-    lo = pd.Series(lo_arr, index=cols, dtype="float64")
-    hi = pd.Series(hi_arr, index=cols, dtype="float64")
-    can = (n > 1) & std.notna() & (std != 0) & lo.notna() & hi.notna()
-    with np.errstate(invalid="ignore", divide="ignore"):
-        cp = (hi - lo) / (6.0 * std)
-        cpl = (avg - lo) / (3.0 * std)
-        cpu = (hi - avg) / (3.0 * std)
-    cpk = pd.Series(np.minimum(cpl.to_numpy(), cpu.to_numpy()), index=cols)
-    nan = float("nan")
-    cp = cp.where(can, nan)
-    cpl = cpl.where(can, nan)
-    cpu = cpu.where(can, nan)
-    cpk = cpk.where(can, nan)
-    return pd.DataFrame({
-        "n": n, "min": mn, "median": med, "max": mx, "average": avg,
-        "stdev": std, "cp": cp, "cpl": cpl, "cpu": cpu, "cpk": cpk,
-    })
-
-
-def _cpk_stat_dict(r):
-    """get_df_cpk_summary 한 행(raw) → 포맷된 stats dict (_calc_stats 출력과 동일)."""
+def _calc_stats(series, lo, hi):
+    series = series.dropna() if series is not None else pd.Series(dtype=float)
+    n = len(series)
+    stdev = series.std(ddof=1) if n > 1 else float("nan")
+    avg = series.mean() if n else float("nan")
+    can_calc = (
+        n > 1 and stdev and not pd.isna(stdev) and stdev != 0
+        and lo is not None and hi is not None and not pd.isna(lo) and not pd.isna(hi)
+    )
+    if can_calc:
+        cp = (float(hi) - float(lo)) / (6.0 * stdev)
+        cpl = (avg - float(lo)) / (3.0 * stdev)
+        cpu = (float(hi) - avg) / (3.0 * stdev)
+        cpk = min(cpl, cpu)
+    else:
+        cp = cpl = cpu = cpk = None
     return {
-        "n": int(r["n"]),
-        "min": _fmt_num(r["min"]),
-        "median": _fmt_num(r["median"]),
-        "max": _fmt_num(r["max"]),
-        "average": _fmt_num(r["average"]),
-        "stdev": _fmt_metric(r["stdev"]),
-        "cp": _fmt_metric(r["cp"]),
-        "cpl": _fmt_metric(r["cpl"]),
-        "cpu": _fmt_metric(r["cpu"]),
-        "cpk": _fmt_metric(r["cpk"]),
+        "n": n,
+        "min": _fmt_num(series.min() if n else None),
+        "median": _fmt_num(series.median() if n else None),
+        "max": _fmt_num(series.max() if n else None),
+        "average": _fmt_num(avg),
+        "stdev": _fmt_metric(stdev),
+        "cp": _fmt_metric(cp),
+        "cpl": _fmt_metric(cpl),
+        "cpu": _fmt_metric(cpu),
+        "cpk": _fmt_metric(cpk),
     }
 
 
@@ -251,50 +232,40 @@ def build_cpk_for_subjects(mass_data_map, subject_names):
     구성이 다르면 어긋난다. 이 함수는 각 subject 를 보유한 파일에서만 해당 이름의
     열을 찾아 통계를 낸다 (diff compare 의 common/a_only/b_only 시트용).
     """
-    if not mass_data_map:
-        return []
-    # source별 측정행렬(열=subject 이름) — 캐시된 numeric_frame 재사용
-    src_frames = {name: md.numeric_frame() for name, md in mass_data_map.items()}
-    # canonical lo/hi/unit: 각 subject 를 처음 보유한 source 기준 (현재 first_md 동작과 동일)
-    canon = {}
-    for name, md in mass_data_map.items():
-        subs = [str(s) for s in md.subjects]
-        for i, s in enumerate(subs):
-            if s not in canon:
-                lo = md.lower_limits[i] if i < len(md.lower_limits) else None
-                hi = md.upper_limits[i] if i < len(md.upper_limits) else None
-                unit = md.units[i] if i < len(md.units) else ""
-                canon[s] = (lo, hi, unit)
-
-    def _lohi(cols):
-        lo_arr = [_to_float(canon.get(c, (None, None, ""))[0]) for c in cols]
-        hi_arr = [_to_float(canon.get(c, (None, None, ""))[1]) for c in cols]
-        return lo_arr, hi_arr
-
-    # source별 + total(세로 concat, subject 이름 정렬) 통계 1벌씩 벡터 산출
-    src_summ = {}
-    for name, frame in src_frames.items():
-        cols = list(frame.columns)
-        lo_arr, hi_arr = _lohi(cols)
-        src_summ[name] = get_df_cpk_summary(frame, lo_arr, hi_arr)
-    total_frame = pd.concat(list(src_frames.values()), ignore_index=True)
-    t_lo, t_hi = _lohi(list(total_frame.columns))
-    total_summ = get_df_cpk_summary(total_frame, t_lo, t_hi)
-
     rows = []
     for subject_name in subject_names:
-        relevant = [(name, fr) for name, fr in src_frames.items()
-                    if subject_name in fr.columns]
+        relevant = {n: md for n, md in mass_data_map.items()
+                    if subject_name in [str(s) for s in md.subjects]}
         if not relevant:
             continue
-        lo, hi, unit = canon[subject_name]
-        meta = {"subject": subject_name, "units": unit,
-                "lower_limit": _fmt_num(lo), "upper_limit": _fmt_num(hi)}
-        for name, _fr in relevant:
-            rows.append({**meta, "source": name,
-                         **_cpk_stat_dict(src_summ[name].loc[subject_name])})
-        rows.append({**meta, "source": "total",
-                     **_cpk_stat_dict(total_summ.loc[subject_name])})
+        first_md = next(iter(relevant.values()))
+        names0 = [str(s) for s in first_md.subjects]
+        idx0 = names0.index(subject_name)
+        lo = first_md.lower_limits[idx0] if idx0 < len(first_md.lower_limits) else None
+        hi = first_md.upper_limits[idx0] if idx0 < len(first_md.upper_limits) else None
+        unit = first_md.units[idx0] if idx0 < len(first_md.units) else ""
+        per_source = []
+        for source_name, md in relevant.items():
+            idx = [str(s) for s in md.subjects].index(subject_name)
+            series = pd.to_numeric(md.scores.iloc[:, idx], errors="coerce")
+            per_source.append(series)
+            rows.append({
+                "subject": subject_name,
+                "source": source_name,
+                "units": unit,
+                "lower_limit": _fmt_num(lo),
+                "upper_limit": _fmt_num(hi),
+                **_calc_stats(series, lo, hi),
+            })
+        total_series = pd.concat(per_source, ignore_index=True) if per_source else pd.Series(dtype=float)
+        rows.append({
+            "subject": subject_name,
+            "source": "total",
+            "units": unit,
+            "lower_limit": _fmt_num(lo),
+            "upper_limit": _fmt_num(hi),
+            **_calc_stats(total_series, lo, hi),
+        })
     return rows
 
 

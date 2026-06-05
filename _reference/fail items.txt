@@ -1,6 +1,0 @@
-1. 엑셀 파일 다운 받는데 에러 발생했어 fail items SVG 변환할때 문제가 생겼나봐 Error: Failed to execute 'showSaveFilePicker' on 'Window': Must be handling a user gesture to show a file picker. Fail Items 도 그림이 너무 많으니까 생략 하고 link 눌러서 서버 접근해서 세션 직접 들어가는걸로 변경하자(Distribution 처럼 link로) 근데 Issue table 은 꼭 산포 그림 하나만 들어가니까 산포 그림 하나가 꼭 나오게 하고 싶다 가능할까?
-2. commit 한번 해줘 "260526 before folder tree"
-3. .md 파일이 분기 된것 기준으로 Project 의 기능들을 Folder 로 묶어 주는게 관리하기가 효율적일것 같아 우선 import 구문도 바꿔야 되기 때문에 .md 파일 기준으로 folder 로 묶고 기존 code 기능 그대로 돌아가게끔 변경해줘 절대로 기존 알고리즘이 변경되면 안되고 관리 하기 쉽게 각 기능들을 Folder 로 묶는게 내 요청의 핵심이야
-4. 2번 작업 완료 되면 commit 한번 해줘 "260526 after folder tree"
-5. 해당 Code 는 구동 되는 Server가 따로 있고 실제 client 들은 각각의 PC 에서 웹페이지에 접속해서 실시간으로 구동 되게 되 보고서 만들고 DB 저장하고 S3 불러오고 다시 넣고 이런 과정들이 실시간으로 동시에 최대 10명 정도 진행할수 있게 되야 하는데 그 관점에서 지금 구조가 문제 없는지 파악해줘 그리고 혹시 수정해야 할 부분이 있으면 좋겠다.. 
-
