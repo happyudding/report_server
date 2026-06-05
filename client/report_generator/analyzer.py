@@ -105,7 +105,8 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
         with _flow_time("subjects_meta", profile_cb):
             subjects_meta = _subjects_meta_from_group(work)
         with _flow_time("build_distributions", profile_cb):
-            distributions = _build_distributions(work, subjects_meta)
+            dist_source_data = work.dist_source_frames()
+            distributions = _build_distributions(subjects_meta, dist_source_data)
     else:
         cl = split["classification"]
         common_g = split["common"]
@@ -114,7 +115,8 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
         with _flow_time("subjects_meta_common", profile_cb):
             subjects_meta = _subjects_meta_from_group(common_g)
         with _flow_time("build_distributions_common", profile_cb):
-            distributions = _build_distributions(common_g, subjects_meta)
+            dist_source_data = common_g.dist_source_frames()
+            distributions = _build_distributions(subjects_meta, dist_source_data)
 
     total_dut = sum(len(md.scores) for md in mass_data_map.values())
     pass_yield = next((r["portion (%)"] for r in yield_rows if str(r["bin"]) == "1"), None)
@@ -136,6 +138,7 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
         issue_rows=issue_rows,
         summary_rows=summary_rows,
         distributions=distributions,
+        dist_source_data=dist_source_data,
         major_fail_subject_rows=major_fail_subject_rows,
         total_dut=total_dut,
         pass_yield=pass_yield,
@@ -164,8 +167,12 @@ def _apply_diff_extras(result: AnalysisResult, split: dict) -> None:
     result.cpk_rows_b_only = B.build_cpk_for_subjects(b_only_g.mass_data_map, cl["b_only"])
     result.subjects_a_only = _subjects_meta_from_group(a_only_g)
     result.subjects_b_only = _subjects_meta_from_group(b_only_g)
-    result.distributions_a_only = _build_distributions(a_only_g, result.subjects_a_only)
-    result.distributions_b_only = _build_distributions(b_only_g, result.subjects_b_only)
+    sd_a = a_only_g.dist_source_frames()
+    sd_b = b_only_g.dist_source_frames()
+    result.distributions_a_only = _build_distributions(result.subjects_a_only, sd_a)
+    result.distributions_b_only = _build_distributions(result.subjects_b_only, sd_b)
+    result.dist_source_data_a_only = sd_a
+    result.dist_source_data_b_only = sd_b
 
 
 def _subjects_meta_from_group(group: df_honey_group) -> list:
@@ -186,26 +193,26 @@ def _subjects_meta_from_group(group: df_honey_group) -> list:
     ]
 
 
-def _build_distributions(group: df_honey_group, subjects_meta: list) -> list:
-    """선택된 각 subject 의 source 별 CDF 트레이스."""
+def _build_distributions(subjects_meta: list, source_frames: list) -> list:
+    """선택 subject 의 메타 DistSeries (traces 비움).
+
+    차트 X/Y(모든 DUT 점)는 writer 가 dist_source_data(=source_frames)에서 열별 정렬 +
+    rank/count 로 직접 산출하므로, 여기서는 고유값 ECDF 트레이스를 계산하지 않는다(다운샘플
+    폐기). source_frames 에 non-NaN 데이터가 있는 subject 만 포함(기존 skip-empty 유지).
+    """
     out = []
-    names = group.names()
     for sm in subjects_meta:
-        idx = sm["subject_id"]
-        traces = []
-        for name in names:
-            xs, ys = group.distribution(idx, source_name=name)
-            if xs.size == 0:
-                continue
-            traces.append({"source": name, "xs": xs, "ys": ys})
-        if not traces:
+        name = sm["subject"]
+        has_data = any(name in f.columns and bool(f[name].notna().any())
+                       for _n, f in source_frames)
+        if not has_data:
             continue
         out.append(DistSeries(
-            subject_id=idx,
-            subject=sm["subject"],
+            subject_id=sm["subject_id"],
+            subject=name,
             unit=sm["units"],
             lower_limit=sm["lower_limit"],
             upper_limit=sm["upper_limit"],
-            traces=traces,
+            traces=[],
         ))
     return out

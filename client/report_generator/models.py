@@ -47,7 +47,10 @@ class AnalysisResult:
     fail_item_rows: list = field(default_factory=list)   # list[dict] (fail_subjects 포함)
     issue_rows: list = field(default_factory=list)       # list[dict] (fail_values)
     summary_rows: list = field(default_factory=list)     # list[dict]
-    distributions: list = field(default_factory=list)    # list[DistSeries]
+    distributions: list = field(default_factory=list)    # list[DistSeries] (메타 only, traces 비움)
+    # distribution 차트 X/Y 산출용 source별 측정행렬 [(source_name, DataFrame 행=DUT 열=subject)].
+    # 데이터 계층(df_honey_group.dist_source_frames)이 제공, writer 가 all-DUT ECDF 산출.
+    dist_source_data: list = field(default_factory=list)
     major_fail_subject_rows: list = field(default_factory=list)  # [{subject, fail_count, ratio}]
     total_dut: int = 0
     pass_yield: Optional[float] = None                   # Bin 1 portion (%)
@@ -60,6 +63,8 @@ class AnalysisResult:
     cpk_rows_b_only: Optional[list] = None               # list[dict] (b_only subjects)
     distributions_a_only: Optional[list] = None          # list[DistSeries]
     distributions_b_only: Optional[list] = None          # list[DistSeries]
+    dist_source_data_a_only: Optional[list] = None       # [(source_name, DataFrame)]
+    dist_source_data_b_only: Optional[list] = None       # [(source_name, DataFrame)]
     subjects_a_only: Optional[list] = None               # [{subject_id, subject, ...}]
     subjects_b_only: Optional[list] = None               # [{subject_id, subject, ...}]
 

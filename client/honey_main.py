@@ -888,17 +888,17 @@ class HoneyMainWindow(QMainWindow):
         elapsed = event.get("elapsed")
         error = event.get("error")
         if status == "start":
-            self._append_run_log(f"{label}: running...", advance=True)
+            return
         elif status == "done":
             self._append_run_log(f"{label} done: {elapsed:.2f}s" if elapsed is not None
-                                 else f"{label} done")
+                                 else f"{label} done", advance=True)
         elif status == "error":
             msg = f"{label} ERROR"
             if elapsed is not None:
                 msg += f" after {elapsed:.2f}s"
             if error:
                 msg += f" - {error}"
-            self._append_run_log(msg)
+            self._append_run_log(msg, advance=True)
 
     def _estimate_run_log_steps(self, work_group, sheets, raw_data):
         sources = len(work_group.names()) if work_group is not None else 0
@@ -1196,15 +1196,15 @@ class HoneyMainWindow(QMainWindow):
         raw = None
         if raw_data:
             try:
-                self._append_run_log("raw_frames: running...", advance=True)
                 raw_t0 = time.perf_counter()
                 with _flow_time("raw_frames"):
                     raw = work_group.raw_frames()
-                self._append_run_log(f"raw_frames done: {time.perf_counter() - raw_t0:.2f}s")
+                self._append_run_log(f"raw_frames done: {time.perf_counter() - raw_t0:.2f}s",
+                                     advance=True)
             except Exception as exc:  # noqa: BLE001
                 QMessageBox.warning(self, "Raw Data 생략",
                                     f"원본 데이터 시트를 만들지 못해 건너뜁니다:\n{exc}")
-                self._append_run_log(f"raw_frames ERROR - {exc}")
+                self._append_run_log(f"raw_frames ERROR - {exc}", advance=True)
                 raw = None
         # 진행 단계: 준비(1) → 분석(1) → 요약(1) → 시트별(N, +Raw N) → 저장 마무리(1)
         total = len(sheets) + 4 + (len(raw) if raw else 0)

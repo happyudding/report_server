@@ -20,10 +20,23 @@ from .csvfile_to_df import csvfile_to_df as _csvfile_to_df_impl
 def csvfile_to_df(path, progress_cb=None) -> tuple:
     """외부 csvfile_to_df 래퍼. progress_cb 는 현재 미전달.
 
+    **불변 보증 지점**: 반환 df 는 항상 canonical 구조(헤더는 df.columns 로만, row0=Units).
+    실제 honey_parse 가 계약대로 row0=헤더(중복)를 주더라도 여기서 1행 드롭해 정합시킨다.
+
     브랜치 교체 시 이 한 줄만 수정:
-        return _csvfile_to_df_impl(path, progress_cb=progress_cb)
+        df, df_yield = _csvfile_to_df_impl(path, progress_cb=progress_cb)
     """
-    return _csvfile_to_df_impl(path)
+    df, df_yield = _csvfile_to_df_impl(path)
+    return _ensure_canonical(df), df_yield
+
+
+def _ensure_canonical(df: pd.DataFrame) -> pd.DataFrame:
+    """row0 이 헤더(==df.columns) 중복이면 1행 드롭 → row0=Units 보장. 아니면 그대로."""
+    if df is None or getattr(df, "empty", True):
+        return df
+    if list(df.iloc[0]) == list(df.columns):
+        return df.iloc[1:].reset_index(drop=True)
+    return df
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +94,8 @@ def _normalize_standard(raw: pd.DataFrame) -> pd.DataFrame:
     if df.shape[0] >= 6:
         _fill_duplicate_limit_rows(df)
     df.columns = df.iloc[0].tolist()
-    return df
+    # 헤더는 df.columns 로만 보존하고 중복 row0(원본 헤더)은 제거 → row0=Units (불변 구조)
+    return df.iloc[1:].reset_index(drop=True)
 
 
 def _normalize_test_rp(raw: pd.DataFrame) -> pd.DataFrame:
@@ -133,7 +147,8 @@ def _normalize_test_rp(raw: pd.DataFrame) -> pd.DataFrame:
     head_df = pd.DataFrame(header_rows, dtype=object)
     out = pd.concat([head_df, data_part], ignore_index=True)
     out.columns = out.iloc[0].tolist()
-    return out
+    # 헤더 중복 row0 제거 → row0=Units (불변 구조)
+    return out.iloc[1:].reset_index(drop=True)
 
 
 def _canonicalize_row_labels(df: pd.DataFrame) -> None:

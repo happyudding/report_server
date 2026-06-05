@@ -102,6 +102,15 @@ class df_honey:
         """보유 중인 df_honey 포맷 단일 DataFrame 반환."""
         return self.df
 
+    def numeric_frame(self) -> pd.DataFrame:
+        """측정행렬 DataFrame (행=DUT, 열=subject 이름, 값=수치). numeric_scores 재사용.
+
+        distribution 차트가 all-DUT ECDF(열별 정렬 + rank/count)를 직접 산출하는 데 쓴다.
+        """
+        df = self.numeric_scores.copy()
+        df.columns = list(self.subjects)
+        return df
+
     # ------------------------------------------------------------------ df 파생 컴포넌트
 
     @cached_property

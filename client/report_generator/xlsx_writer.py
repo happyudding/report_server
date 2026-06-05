@@ -25,6 +25,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import xlwings as xw
 from openpyxl.utils import get_column_letter  # 순수 열문자 util (차트 _a1 등에서 사용)
 
@@ -149,7 +150,6 @@ _MSO_FALSE = 0                # msoFalse (LineFormat.Visible — 선 숨김)
 _MSO_LINE_SYSDASH = 10        # msoLineSysDash (limit line)
 _RGB_RED = 255               # RGB(255,0,0)
 _RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail 차트 배경)
-_XL_COLORINDEX_NONE = -4142   # xlColorIndexNone (ChartArea 채움 제거 — 템플릿 중립화)
 
 _CPK_THRESHOLD = 1.33
 _CPK_WARN_FILL_RGB = "FFFFFF00"  # 노란색 ARGB — CPK < 1.33 행 하이라이트
@@ -177,7 +177,7 @@ _XL_CENTER = -4108     # xlCenter (H/V align)
 _XL_LEFT   = -4131     # xlLeft
 _XL_CALC_MANUAL = -4135
 _XL_CALC_AUTO   = -4105
-_XL_EDGES = (7, 8, 9, 10)   # xlEdgeLeft/Right/Top/Bottom
+_XL_BORDERS = (7, 8, 9, 10, 11, 12)   # xlEdge* + xlInsideVertical/Horizontal
 _XL_CONTINUOUS = 1     # xlContinuous
 _XL_THIN = 2           # xlThin (Borders.Weight)
 
@@ -214,7 +214,7 @@ def _style_range(rng, *, fill=None, font=None, halign=None, valign=None,
     if wrap is not None:
         api.WrapText = wrap
     if border:
-        for e in _XL_EDGES:
+        for e in _XL_BORDERS:
             b = api.Borders(e)
             b.LineStyle = _XL_CONTINUOUS
             b.Weight = _XL_THIN
@@ -305,10 +305,12 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
         if "distribution" in sel:
             if result.distributions_a_only:
                 diff_dist_specs.append((f"Distribution_{name_a}",
-                                        result.distributions_a_only, [name_a]))
+                                        result.distributions_a_only, [name_a],
+                                        result.dist_source_data_a_only))
             if result.distributions_b_only:
                 diff_dist_specs.append((f"Distribution_{name_b}",
-                                        result.distributions_b_only, [name_b]))
+                                        result.distributions_b_only, [name_b],
+                                        result.dist_source_data_b_only))
     want_dist_phase = want_dist or bool(diff_dist_specs)
 
     table_sel = [nm for nm in ALL_SHEETS if nm in table_writers and nm in sel]
@@ -1150,7 +1152,7 @@ def _write_distribution_phase(app, wb, result, colors=None, attach_fail_item=Fal
                 tmpdirs.append(tmpdir)
 
     # diff compare: a_only / b_only distribution 시트 추가
-    for raw_title, dists, sources in (extra_dist or []):
+    for raw_title, dists, sources, sdata in (extra_dist or []):
         if not dists:
             continue
         existing = {s.name.lower() for s in wb.sheets}
@@ -1166,7 +1168,7 @@ def _write_distribution_phase(app, wb, result, colors=None, attach_fail_item=Fal
         else:
             d_sh = wb.sheets.add(sheet_title, after=wb.sheets[len(wb.sheets) - 1])
         _write_distribution(wb, d_sh, result, colors, dists=dists,
-                            sources=sources, title=sheet_title)
+                            sources=sources, source_data=sdata, title=sheet_title)
         last_sheet = d_sh
 
     if last_sheet is not None:
@@ -1512,11 +1514,6 @@ def _hex_to_excel_rgb(hex_color):
         return None
 
 
-def _a1(r1, c1, r2, c2):
-    """(r1,c1)~(r2,c2) → 'E1:E150' A1 주소. COM Range 1회 호출용(xlwings Range 우회)."""
-    return f"{get_column_letter(c1)}{r1}:{get_column_letter(c2)}{r2}"
-
-
 def _chart_pos(i):
     """차트 grid 좌상단 픽셀 (gap 없이 밀착, 제목 배너 아래)."""
     col = i % _CHARTS_PER_ROW
@@ -1524,34 +1521,67 @@ def _chart_pos(i):
     return col * _CHART_W, _DIST_TITLE_PX + grow * _CHART_H
 
 
-def _is_standard(spec, n_sources):
-    """표준 레이아웃(LSL+USL 2개 + 전체 source) — 템플릿 클론 대상."""
-    return (spec["lo_v"] is not None and spec["hi_v"] is not None
-            and len(spec["series_list"]) == n_sources)
+def sort_alldata(df, ascending=True):
+    """각 열을 독립적으로 오름차순 정렬(NaN 말미). 행=정렬된 값, 열=subject."""
+    out = df.copy()
+    for c in df.columns:
+        out[c] = df[c].sort_values(ascending=ascending, na_position="last").to_numpy()
+    return out
 
 
-def _add_dist_series(sc, data_api, spec):
-    """SeriesCollection 에 limit(1,2) + source series 추가. 반환 (limit, data) 리스트."""
-    top_row = spec["top_row"]
+def sort_data_to_percent(df):
+    """열별 ECDF(rank/count). y = 행순위/notna개수, >1 또는 count=0 → NaN (모든 DUT 1점)."""
+    inds = np.arange(df.shape[0]).reshape(-1, 1) + 1            # (N,1)
+    counts = df.notna().sum().to_numpy()                        # (n_cols,)
+    vals = np.divide(inds, counts, out=np.full(df.shape, np.nan, dtype=float),
+                     where=counts != 0)
+    vals[vals > 1] = np.nan
+    return pd.DataFrame(vals, columns=df.columns)
+
+
+def _unique_helper_name(base, existing):
+    """존재 시트명과 충돌 회피한 헬퍼 시트명(정리/정리_Y)."""
+    name, n = base, 2
+    while name in existing:
+        name = f"{base}{n}"
+        n += 1
+    return name
+
+
+def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_min):
+    """SeriesCollection 에 LSL/USL(배열리터럴) + source 데이터 series(정리/정리_Y range) 추가.
+
+    series 1=LSL, 2=USL(없으면 차트 밖 -2,-2), 3+=source. 반환 (limit_series, data_series).
+    데이터 series 는 정리/정리_Y 시트의 subject 열을 source별 행구간으로 참조.
+    """
+    col = get_column_letter(col_idx + 2)   # A=index, B=subject0
+    lo = float(d.lower_limit) if _isnum(d.lower_limit) else None
+    hi = float(d.upper_limit) if _isnum(d.upper_limit) else None
+    xv0 = x_min if x_min is not None else 0.0
     limit_series = []
-    for lim_v, xcol, nm in ((spec["lo_v"], 1, "LSL"), (spec["hi_v"], 3, "USL")):
-        if lim_v is None:
-            continue
+    for lim, nm in ((lo, "LSL"), (hi, "USL")):
         s = sc.NewSeries()
-        s.XValues = data_api.Range(_a1(top_row, xcol, top_row + 1, xcol))
-        s.Values = data_api.Range(_a1(top_row, xcol + 1, top_row + 1, xcol + 1))
+        if lim is not None:
+            s.XValues = (lim, lim)
+            s.Values = (-1.0, 1.0)            # x=lim 세로선(Y 0~1 덮음)
+        else:
+            s.XValues = (xv0, xv0)
+            s.Values = (-2.0, -2.0)           # 차트 밖(안 보임) — series 인덱스 안정용
         s.Name = nm
         limit_series.append(s)
     data_series = []
-    dcol = 5
-    for name, xs, _ys in spec["series_list"]:
-        n = len(xs)
+    y = 0
+    for k, name in enumerate(src_names):
+        n = cnt_list[k]
+        r1, r2 = y + 2, y + n + 1
+        y += n
+        x_ref = f"='{x_sheet}'!${col}${r1}:${col}${r2}"
+        y_ref = f"='{y_sheet}'!${col}${r1}:${col}${r2}"
         s = sc.NewSeries()
-        s.XValues = data_api.Range(_a1(top_row, dcol, top_row + n - 1, dcol))
-        s.Values = data_api.Range(_a1(top_row, dcol + 1, top_row + n - 1, dcol + 1))
+        s.XValues = x_ref
+        s.Values = y_ref
         s.Name = str(name)
         data_series.append(s)
-        dcol += 2
     return limit_series, data_series
 
 
@@ -1565,296 +1595,128 @@ def _style_series(limit_series, data_series, colors, step_flags=None):
         _style_data_series(s, rgb, is_step)
 
 
-def _new_dist_chart(sh, spec, data_api, colors):
-    """신규 차트 1개를 처음부터 생성+서식 (기존 경로). 반환: COM Chart."""
-    left, top = _chart_pos(spec["i"])
+def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
+                    colors, x_min, x_max, is_fail, step_flags):
+    """차트 1개 독립 생성+서식 (정리/정리_Y range 참조). 반환: COM Chart."""
+    left, top = _chart_pos(i)
     with _prof("dist.series_add"):
         ch = sh.charts.add(left, top, _CHART_W, _CHART_H)
         chart = _chart_com(ch)
         sc = chart.SeriesCollection()
-        limit_series, data_series = _add_dist_series(sc, data_api, spec)
+        limit_series, data_series = _add_dist_series(sc, d, x_sheet, y_sheet,
+                                                     col_idx, cnt_list, src_names, x_min)
         ch.chart_type = "xy_scatter_lines_no_markers"
     _prof_count("series", len(limit_series) + len(data_series))
     with _prof("dist.style"):
-        step_flags = [len(xs) >= 2 and xs[0] == xs[1]
-                      for _, xs, _ in spec["series_list"]]
         _style_series(limit_series, data_series, colors, step_flags)
     with _prof("dist.format"):
-        _format_dist_chart(chart, spec["d"], spec["x_min"], spec["x_max"],
-                           len(limit_series), spec["is_fail"])
+        _format_dist_chart(chart, d, x_min, x_max, len(limit_series), is_fail)
     return chart
 
 
-def _repoint_series(chart, data_api, spec):
-    """복제 차트의 기존 series(순서: LSL,USL,source…)를 spec 의 range 로 재참조.
-
-    반환 (limit_series, data_series) — 서식 리셋 시 재스타일용.
-    """
-    sc = chart.SeriesCollection()
-    top_row = spec["top_row"]
-    limit_series = []
-    for idx, xcol in ((1, 1), (2, 3)):
-        s = sc.Item(idx)
-        s.XValues = data_api.Range(_a1(top_row, xcol, top_row + 1, xcol))
-        s.Values = data_api.Range(_a1(top_row, xcol + 1, top_row + 1, xcol + 1))
-        limit_series.append(s)
-    data_series = []
-    dcol = 5
-    for k, (name, xs, _ys) in enumerate(spec["series_list"]):
-        s = sc.Item(3 + k)
-        n = len(xs)
-        s.XValues = data_api.Range(_a1(top_row, dcol, top_row + n - 1, dcol))
-        s.Values = data_api.Range(_a1(top_row, dcol + 1, top_row + n - 1, dcol + 1))
-        s.Name = str(name)
-        data_series.append(s)
-        dcol += 2
-    return limit_series, data_series
-
-
-def _apply_per_chart(chart, spec, legend_fix):
-    """복제 차트에 subject별 가변 서식만 적용: x축 범위·제목·fail배경·(필요시)범례."""
-    try:
-        xax = chart.Axes(_XL_CATEGORY, _XL_PRIMARY)
-        x_min, x_max = spec["x_min"], spec["x_max"]
-        if x_min is not None and x_max is not None and x_min < x_max:
-            xax.MinimumScale = x_min
-            xax.MaximumScale = x_max
-    except Exception:
-        pass
-    d = spec["d"]
-    try:
-        title = chart.ChartTitle
-        cap = _limit_caption(d)
-        title.Text = d.subject + "\n" + cap
-        try:
-            title.Characters(len(d.subject) + 2, len(cap)).Font.Size = _CHART_TITLE_CAP_FONT
-        except Exception:
-            pass
-        title.Top = 0
-    except Exception:
-        pass
-    # 범례: 복제로 limit(1,2) entry 가 되살아난 경우에만 재삭제
-    if legend_fix:
-        try:
-            leg = chart.Legend
-            for li in (2, 1):
-                try:
-                    leg.LegendEntries(li).Delete()
-                except Exception:
-                    pass
-        except Exception:
-            pass
-    if spec["is_fail"]:
-        try:
-            chart.ChartArea.Interior.Color = _RGB_FAIL_BG
-        except Exception:
-            pass
-
-
 def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
-                        dists=None, sources=None, title="Distribution"):
-    """각 subject 의 누적분포(CDF) 차트. x=value, y=0~100%(0~1 스케일).
+                        dists=None, sources=None, source_data=None, title="Distribution"):
+    """각 subject 의 누적분포(ECDF) 차트 — 모든 DUT 가 1점(중복 제거 없음).
 
-    source(input file)별 series + LSL/USL 세로 한계선(series 1,2). 차트는 gap 없이
-    밀착 배치. 서식은 _format_dist_chart 사양 따름.
+    source(input file)별 데이터 series + LSL/USL 세로 한계선(series 1,2, COM 배열리터럴).
+    데이터는 정리(X)/정리_Y(Y) 두 시트에 통째 1회 bulk write, 차트 series 는 그 시트의
+    subject 열을 source별 행구간으로 참조한다. 차트는 gap 없이 밀착 배치·독립 생성.
 
-    성능: _dist 데이터는 차트별로 쓰지 않고 한 번에 일괄기입(2-pass)하고, 시리즈
-    참조는 COM Range(A1 문자열)로 직접 건다.
-
-    dists/sources: diff compare 의 a_only/b_only 시트용 override (None 이면
-    result.distributions / result.sources 사용).
+    dists/sources/source_data: diff compare 의 a_only/b_only 시트용 override (None 이면
+    result.distributions / result.sources / result.dist_source_data 사용).
     """
     dists = result.distributions if dists is None else dists
     sources = result.sources if sources is None else sources
-    if not dists:
+    source_data = result.dist_source_data if source_data is None else source_data
+    if not dists or not source_data:
         sh.range("A1").value = "선택된 항목에 분포 데이터가 없습니다."
-        return
+        return {}
 
-    # diff compare 는 시트별로 _write_distribution 을 여러 번 호출하므로 헬퍼
-    # 시트명이 충돌하지 않도록 대상 시트명 기반으로 유니크하게 만든다.
-    existing_names = {s.name for s in wb.sheets}
-    data_sheet_name = "_dist"
-    _suffix = 2
-    while data_sheet_name in existing_names:
-        data_sheet_name = f"_dist{_suffix}"
-        _suffix += 1
-    data = wb.sheets.add(data_sheet_name, after=sh)
-    data_api = data.api  # COM Worksheet 캐시 (시리즈 참조용)
+    subj_names = [d.subject for d in dists]
+    sd_map = dict(source_data)
+    src_dfs, src_names = [], []
+    for s in sources:
+        df = sd_map.get(s)
+        if df is None:
+            continue
+        src_dfs.append(df.reindex(columns=subj_names))   # 없는 subject 열 → NaN
+        src_names.append(s)
+    if not src_dfs:
+        sh.range("A1").value = "선택된 항목에 분포 데이터가 없습니다."
+        return {}
+
+    # ── 데이터 변환: 열별 정렬(X) + rank/count(Y), source별 블록 concat ──────────
+    with _prof("dist.data_write"):
+        df_x_list = [sort_alldata(df, True).reset_index(drop=True) for df in src_dfs]
+        df_y_list = [sort_data_to_percent(df).reset_index(drop=True) for df in df_x_list]
+        df_x = pd.concat(df_x_list, ignore_index=True)
+        df_y = pd.concat(df_y_list, ignore_index=True)
+        cnt_list = [df.shape[0] for df in df_x_list]   # source별 DUT 수(모든 subject 균일)
+
+        existing = {s.name for s in wb.sheets}
+        x_name = _unique_helper_name("정리", existing)
+        y_name = _unique_helper_name("정리_Y", existing | {x_name})
+        ws_x = wb.sheets.add(x_name, after=sh)
+        ws_y = wb.sheets.add(y_name, after=ws_x)
+        ws_x.range("A1").options(index=True, header=True).value = df_x
+        ws_y.range("A1").options(index=True, header=True).value = df_y
+        for w in (ws_x, ws_y):
+            try:
+                w.api.Visible = False
+            except Exception:
+                pass
 
     _put_title(sh, 8, title)
     sh.range((1, _INDEX_COL)).value = "Item Index (Ctrl+F)"
     sh.range((1, _INDEX_COL)).column_width = 26
 
-    # ── Pass 1: 차트별 레이아웃 계산 + _dist 전체를 하나의 2D 배열로 조립 ──────
-    specs = []          # 차트 생성용 메타 (Pass 2)
-    index_entries = []  # (idx_row, subject) — Item Index 열 일괄기입용
-    cells = []          # (row0, col0, value) — grid 채울 좌표(0-based)
-    total_rows = 0
-    max_cols = 4        # 최소 limit 4열
-    cur = 1             # _dist 행 커서(1-based)
-    for i, d in enumerate(dists):
-        # source별 (value, 누적 0~1) 준비
-        series_list = []
-        for tr in d.traces:
-            xs = np.asarray(tr["xs"], dtype=float)
-            ys = np.asarray(tr["ys"], dtype=float) / 100.0   # 0~100 → 0~1
-            if xs.size == 0:
-                continue
-            series_list.append((tr["source"], xs, ys))
-        if not series_list:
-            continue
+    # 정렬값 numpy 캐시(데이터 min/max·step 판정용) — 셀 읽기 없이
+    x_arrs = [df.to_numpy(dtype=float) for df in df_x_list]   # [source](N, n_subj)
 
-        data_min = min(float(np.nanmin(xs)) for _, xs, _ in series_list)
-        data_max = max(float(np.nanmax(xs)) for _, xs, _ in series_list)
+    chart_map = {}
+    index_entries = []
+    n_charts = len(dists)
+    done = 0
+    for i, d in enumerate(dists):
+        cols = [arr[:, i] for arr in x_arrs]
+        finite = np.concatenate([c[np.isfinite(c)] for c in cols]) if cols else np.empty(0)
+        if finite.size == 0:
+            done += 1
+            if dist_progress_cb:
+                dist_progress_cb(done, n_charts)
+            continue
+        data_min, data_max = float(finite.min()), float(finite.max())
         lo, hi = d.lower_limit, d.upper_limit
         is_fail = (_isnum(lo) and data_min < float(lo)) or (_isnum(hi) and data_max > float(hi))
         x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
-        lo_v = float(lo) if _isnum(lo) else None
-        hi_v = float(hi) if _isnum(hi) else None
+        step_flags = []
+        for c in cols:
+            real = c[np.isfinite(c)]
+            step_flags.append(bool(real.size >= 2 and real[0] == real[1]))
 
-        # _dist 좌표 적재 (0-based): col1/2=LSL x/y, col3/4=USL x/y, col5~=source x/y
-        top_row = cur
-        max_len = 2
-        if lo_v is not None:
-            cells += [(top_row - 1, 0, lo_v), (top_row - 1, 1, 0.0),
-                      (top_row, 0, lo_v), (top_row, 1, 1.0)]
-        if hi_v is not None:
-            cells += [(top_row - 1, 2, hi_v), (top_row - 1, 3, 0.0),
-                      (top_row, 2, hi_v), (top_row, 3, 1.0)]
-        dcol = 5
-        for _name, xs, ys in series_list:
-            for j in range(len(xs)):
-                x_val = None if np.isnan(xs[j]) else float(xs[j])
-                y_val = None if np.isnan(ys[j]) else float(ys[j])
-                cells.append((top_row - 1 + j, dcol - 1, x_val))
-                cells.append((top_row - 1 + j, dcol, y_val))
-            max_len = max(max_len, len(xs))
-            dcol += 2
-        bot_row = top_row + max_len - 1
-        max_cols = max(max_cols, 4 + 2 * len(series_list))
-        total_rows = max(total_rows, bot_row)
-
-        # 차트 배치 인덱스 (원본 enumerate i 기준 — 빈 series 스킵 시 격자 위치 보존)
+        try:
+            chart_map[d.subject] = _new_dist_chart(
+                sh, i, d, x_name, y_name, i, cnt_list, src_names, colors,
+                x_min, x_max, is_fail, step_flags)
+        except Exception as _e:
+            print(f"[dist-chart] skip subject={d.subject!r}: {_e}", file=sys.stderr)
         col = i % _CHARTS_PER_ROW
         grow = i // _CHARTS_PER_ROW
         index_entries.append((2 + grow * _ROWS_PER_CHART + col, d.subject))
-        specs.append({
-            "d": d, "i": i, "top_row": top_row, "series_list": series_list,
-            "lo_v": lo_v, "hi_v": hi_v, "x_min": x_min, "x_max": x_max,
-            "is_fail": is_fail,
-        })
-        cur = bot_row + 2
+        done += 1
+        if dist_progress_cb:
+            dist_progress_cb(done, n_charts)
 
-    chart_map = {}  # subject 이름 → xlwings Chart (fail_item PNG 부착에 재활용)
-    if specs:
-        # ── _dist + Item Index 일괄기입 (병목 #1: 차트당 쓰기 → 1~2회로) ──────
-        with _prof("dist.data_write"):
-            grid = [[None] * max_cols for _ in range(total_rows)]
-            for r0, c0, v in cells:
-                grid[r0][c0] = v
-            data.range((1, 1), (total_rows, max_cols)).value = grid
-            # Item Index 열: 흩어진 행을 None-pad 한 단일 열로 1회 기입
-            max_idx = max(r for r, _ in index_entries)
-            col_vals = [[None] for _ in range(2, max_idx + 1)]
-            for r, subj in index_entries:
-                col_vals[r - 2] = [subj]
-            sh.range((2, _INDEX_COL), (max_idx, _INDEX_COL)).value = col_vals
-
-    # ── Pass 2: 차트 생성 — 표준 레이아웃은 템플릿 1개 만들어 COM Duplicate 복제 ─
-    # (format/style 반복 COM 호출 회피). 비표준(한계 누락 등)은 개별 빌드.
-    n_sources = len(sources)
-    standard = [s for s in specs if _is_standard(s, n_sources)]
-    others = [s for s in specs if not _is_standard(s, n_sources)]
-    n_dist_charts = len(specs)
-    done_charts = 0
-
-    if standard:
-        tspec = standard[0]
-        _tmpl_ok = False
-        try:
-            template = _new_dist_chart(sh, tspec, data_api, colors)  # 완전 서식
-            chart_map[tspec["d"].subject] = template
-            _tmpl_ok = True
-        except Exception as _e:
-            print(f"[dist-chart] skip subject={tspec['d'].subject!r} (template): {_e}",
-                  file=sys.stderr)
-        finally:
-            done_charts += 1
-            if dist_progress_cb:
-                dist_progress_cb(done_charts, n_dist_charts)
-        if not _tmpl_ok:
-            others = standard[1:] + others
-        else:
-            template_co = template.Parent  # ChartObject (Duplicate 원본)
-            # 클론이 fail 배경을 상속하지 않도록 중립화 (tspec 배경은 마지막에 재적용)
-            try:
-                template.ChartArea.Interior.ColorIndex = _XL_COLORINDEX_NONE
-            except Exception:
-                pass
-
-            restyle = False       # 복제 시 series 마커/선 서식이 리셋되는가
-            legend_fix = False    # 복제 시 limit 범례 entry 가 되살아나는가
-            coll = sh.api.ChartObjects()   # live 컬렉션 — Duplicate 후 Count 증가
-            for idx, spec in enumerate(standard[1:]):
-                try:
-                    with _prof("dist.series_add"):
-                        template_co.Duplicate()
-                        new_co = coll.Item(coll.Count)   # 방금 복제된 것(최고 인덱스)
-                        # 크기는 Duplicate 가 복사 → 위치만 재설정
-                        new_co.Left, new_co.Top = _chart_pos(spec["i"])
-                        nchart = new_co.Chart
-                        limit_series, data_series = _repoint_series(nchart, data_api, spec)
-                    _prof_count("series", len(limit_series) + len(data_series))
-
-                    if idx == 0:  # 첫 복제로 legend_fix 판정
-                        n_legend = 2 + len(spec["series_list"])
-                        try:
-                            leg_count = nchart.Legend.LegendEntries().Count
-                        except Exception:
-                            leg_count = n_legend
-                        legend_fix = (leg_count >= n_legend)
-
-                    # subject 마다 step 여부가 다를 수 있으므로 항상 restyle
-                    with _prof("dist.style"):
-                        step_flags = [len(xs) >= 2 and xs[0] == xs[1]
-                                      for _, xs, _ in spec["series_list"]]
-                        _style_series(limit_series, data_series, colors, step_flags)
-                    with _prof("dist.format"):
-                        _apply_per_chart(nchart, spec, legend_fix)
-                    chart_map[spec["d"].subject] = nchart
-                except Exception as _e:
-                    print(f"[dist-chart] skip subject={spec['d'].subject!r}: {_e}",
-                          file=sys.stderr)
-                finally:
-                    done_charts += 1
-                    if dist_progress_cb:
-                        dist_progress_cb(done_charts, n_dist_charts)
-
-            # 템플릿 자신의 fail 배경 재적용 (중립화 되돌림)
-            if tspec["is_fail"]:
-                try:
-                    template.ChartArea.Interior.Color = _RGB_FAIL_BG
-                except Exception:
-                    pass
-
-    # 비표준 차트는 개별 빌드 (기존 경로)
-    for spec in others:
-        try:
-            chart_map[spec["d"].subject] = _new_dist_chart(sh, spec, data_api, colors)
-        except Exception as _e:
-            print(f"[dist-chart] skip subject={spec['d'].subject!r}: {_e}",
-                  file=sys.stderr)
-        finally:
-            done_charts += 1
-            if dist_progress_cb:
-                dist_progress_cb(done_charts, n_dist_charts)
+    # Item Index 열 일괄 기입
+    if index_entries:
+        max_idx = max(r for r, _ in index_entries)
+        col_vals = [[None] for _ in range(2, max_idx + 1)]
+        for r, subj in index_entries:
+            col_vals[r - 2] = [subj]
+        sh.range((2, _INDEX_COL), (max_idx, _INDEX_COL)).value = col_vals
 
     _prof_count("charts", len(chart_map))
     _finalize_title_row(sh)
-    try:
-        data.api.Visible = False  # 헬퍼 시트 숨김
-    except Exception:
-        pass
     return chart_map
 
 

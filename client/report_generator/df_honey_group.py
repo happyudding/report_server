@@ -300,6 +300,14 @@ class df_honey_group:
                     names.append(subs[i])
         return names
 
+    def dist_source_frames(self):
+        """각 source 의 측정행렬 [(name, DataFrame(행=DUT, 열=subject))].
+
+        distribution 차트용. raw_frames 의 '수치만' 판 — writer 가 열별 정렬 + rank/count
+        로 all-DUT ECDF 를 산출한다. 데이터 제공 책임은 데이터 계층(group)에 둔다.
+        """
+        return [(md.name, md.numeric_frame()) for md in self._mass_data_map.values()]
+
     def raw_frames(self):
         """각 source(input file)의 df_honey 포맷 DataFrame 을 (sheet명, df) 리스트로.
 
