@@ -1,10 +1,10 @@
 """csvfile_to_df 스텁 — 실제 구현은 honey_parser 에서 import.
 
-반환 계약: (df, df_yield)
+반환 계약: (df, df_yield)  ※ 불변 구조 — 헤더는 df.columns 로만, row0 은 Units
   df       : df_honey 포맷 정규화 DataFrame
-               행 0=subject명, 1=Units, 2=LowerLimit, 3=UpperLimit,
-               4~5=limit 중복행, 6~=측정 데이터
-               열 0~4=meta(DUT/XCoord/YCoord/Bin/Serial), 5~=subject 측정값
+               열(df.columns) = DUT/XCoord/YCoord/Bin/Serial, subject…  (헤더는 컬럼으로만)
+               행 0=Units, 1=LowerLimit, 2=UpperLimit, 3~4=limit 중복행, 5~=측정 데이터
+               (row0 에 헤더를 중복으로 두지 말 것 — constants.UNITS_ROW=0/DATA_START_ROW=5 와 정합)
   df_yield : per-(step, Bin, Tno, item) yield 집계 DataFrame
                컬럼: step, Bin, Tno, item, sheetname_cnt, sheetname
 

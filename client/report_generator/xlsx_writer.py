@@ -427,7 +427,8 @@ def _copy_df_via_csv(app, wb, df, sheet_name, before_sheet):
     Excel CSV 파싱이 담당(_coerce_number 대체). Serial 컬럼 제거·A열 너비·중앙정렬은
     기존 _fill_raw_data 와 일치하도록 재적용.
     """
-    serial_cols = [c for c, v in zip(df.columns, df.iloc[0]) if v == "Serial"]
+    # 헤더는 df.columns 로만 존재(row0=Units 불변)하므로 Serial 은 컬럼명으로 탐지
+    serial_cols = [c for c in df.columns if str(c).strip() == "Serial"]
     if serial_cols:
         df = df.drop(columns=serial_cols)
     tmpdir = tempfile.mkdtemp(prefix="honey_raw_")
