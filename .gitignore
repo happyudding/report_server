@@ -24,6 +24,9 @@ DB/
 uploads/
 tests/sample.xlsx
 
+# 프로파일러 산출물 (profile_run.py 가 생성)
+client/_profiles/
+
 # MS Office lock/owner files (e.g. ~$sample.xlsx when opened in Excel)
 ~$*
 

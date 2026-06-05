@@ -1,26 +1,33 @@
-"""순수 openpyxl xlsx 리포트 생성.
+"""단일 xlwings(Excel COM) 세션 xlsx 리포트 생성.
 
-- table 시트(summary / yield / cpk / fail_item / issue_table)는 openpyxl 로
-  워크북을 직접 생성하고 스타일 상수(_HDR_FONT 등)를 적용한다.
-- distribution 차트만 **xlwings**(Excel COM) 로 생성한다(차트 옵션 정밀 제어 목적).
+- 모든 시트(raw / summary / yield / cpk / fail_item / issue_table / distribution)를
+  하나의 xw.App 세션에서 생성·스타일링·저장한다(openpyxl 미사용).
+- 셀 기입은 **범위 단위 일괄(bulk range)**, 스타일은 **Range 단위 COM** 적용으로
+  셀 단위 왕복을 피한다. raw data 는 임시 CSV 를 Excel 네이티브 파싱으로 복사한다.
+- distribution 차트는 같은 세션에서 그린다(차트 옵션 정밀 제어 목적).
 
-스타일 변경은 모듈 상단 상수(_HDR_FONT, _HDR_FILL 등)만 수정하면 된다.
-계산은 analyzer/_builders 에서 끝났고, 이 모듈은 출력만 담당한다.
+스타일 변경은 모듈 상단 상수(_HDR_FONT, _HDR_FILL_RGB 등)만 수정하면 된다.
+계산은 analyzer/_builders 에서 끝났고, 이 모듈은 출력만 담당한다. Excel/xlwings 가
+없으면 전체 실패한다(openpyxl fallback 없음).
 """
 from __future__ import annotations
 
 import contextlib
 import math
 import os
+import shutil
 import sys
+import tempfile
 import time
 import zipfile
 from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
-from copy import copy
-from openpyxl.utils import get_column_letter
+import xlwings as xw
+from openpyxl.utils import get_column_letter  # 순수 열문자 util (차트 _a1 등에서 사용)
+
+from . import _profile
 
 # ── 차트 생성 병목 측정 프로파일러 (HONEY_CHART_PROFILE set 시에만 동작) ───────
 # unset 이면 _prof 는 즉시 통과 → 평상시 동작·출력 불변. 측정 결과는 stderr 로.
@@ -56,15 +63,18 @@ def _prof_count(bucket, n=1):
 
 @contextlib.contextmanager
 def _flow_prof(bucket):
-    if not _FLOW_PROFILE_ON:
+    if not (_FLOW_PROFILE_ON or _profile.collecting()):
         yield
         return
+    depth = _profile.push()
     t = time.perf_counter()
     try:
         yield
     finally:
         elapsed = time.perf_counter() - t
-        print(f"[flow-profile] xlsx_writer.{bucket}: {elapsed:.3f}s", file=sys.stderr, flush=True)
+        _profile.pop("xlsx_writer", bucket, elapsed, depth)
+        if _FLOW_PROFILE_ON:
+            print(f"[flow-profile] xlsx_writer.{bucket}: {elapsed:.3f}s", file=sys.stderr, flush=True)
 
 
 def _prof_report():
@@ -113,50 +123,91 @@ _CPK_WARN_FILL_RGB = "FFFFFF00"  # 노란색 ARGB — CPK < 1.33 행 하이라�
 
 ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
 
-# ── openpyxl 셀 스타일 상수 (xlsx 파일 런타임 의존 없이 코드 직접 정의) ─────────
-from openpyxl.styles import (  # noqa: E402  (module-level import after constants)
-    Alignment as _Alignment, Border as _Border, Font as _Font,
-    PatternFill as _PatternFill, Side as _SideStyle,
-)
-# 색상은 ARGB 8자리 (openpyxl 호환성). 스타일 변경 시 이 상수만 수정.
+# ── 셀 스타일 상수 (색=ARGB 8자리 문자열, 폰트=dict{name,size,bold}) ─────────────
+# 색상은 ARGB 8자리(뒤 6자리 RRGGBB 만 _rgb_int 가 사용). 스타일 변경 시 이 상수만 수정.
 _HDR_FILL_RGB   = "FFD9E1F2"   # 헤더 연청색
 _DATA_FILL_RGB  = "FFFFFFFF"   # 데이터 흰색
 _TITLE_FILL_RGB = "FFBDD7EE"   # 제목 연파랑
-_HDR_FONT    = _Font(name="Calibri", bold=False, size=11)
-_HDR_ALIGN   = _Alignment(horizontal="center", vertical="center", wrap_text=True)
-_DATA_FONT   = _Font(name="Calibri", size=10)
-_DATA_ALIGN  = _Alignment(horizontal="center", vertical="center", wrap_text=True)
-_TITLE_FONT  = _Font(name="Calibri", bold=False, size=20)
-_TITLE_ALIGN = _Alignment(horizontal="left", vertical="center")
+_HDR_FONT    = {"name": "Calibri", "bold": False, "size": 11}
+_DATA_FONT   = {"name": "Calibri", "size": 10}
+_TITLE_FONT  = {"name": "Calibri", "bold": False, "size": 20}
 _TITLE_ROW_MAX_COL = 26
 _SUMMARY_TITLE_FILL_RGB = "FFBFE3FF"
 _SUMMARY_HDR_FILL_RGB = "FFE2E8F0"
-_SUMMARY_TITLE_FONT = _Font(name="Tahoma", bold=False, size=22)
-_SUMMARY_SECTION_FONT = _Font(name="Tahoma", bold=False, size=20)
-_SUMMARY_HDR_FONT = _Font(name="Tahoma", bold=False, size=10)
-_SUMMARY_DATA_FONT = _Font(name="Tahoma", size=10)
-_SUMMARY_LEFT_ALIGN = _Alignment(horizontal="left", vertical="center")
-_SUMMARY_CENTER_ALIGN = _Alignment(horizontal="center", vertical="center", wrap_text=True)
+_SUMMARY_TITLE_FONT = {"name": "Tahoma", "bold": False, "size": 22}
+_SUMMARY_SECTION_FONT = {"name": "Tahoma", "bold": False, "size": 20}
+_SUMMARY_HDR_FONT = {"name": "Tahoma", "bold": False, "size": 10}
+_SUMMARY_DATA_FONT = {"name": "Tahoma", "size": 10}
+
+# ── Excel COM 상수 (서식) ─────────────────────────────────────────────────────
+_XL_CENTER = -4108     # xlCenter (H/V align)
+_XL_LEFT   = -4131     # xlLeft
+_XL_CALC_MANUAL = -4135
+_XL_CALC_AUTO   = -4105
+_XL_EDGES = (7, 8, 9, 10)   # xlEdgeLeft/Right/Top/Bottom
+_XL_CONTINUOUS = 1     # xlContinuous
+_XL_THIN = 2           # xlThin (Borders.Weight)
 
 
-def _new_border():
-    """매 호출마다 새 Border/Side 인스턴스 반환 (공유 객체 문제 방지)."""
-    t = _SideStyle(style="thin")
-    return _Border(left=t, right=t, top=t, bottom=t)
+def _rgb_int(argb):
+    """ARGB 8자리(또는 RRGGBB) → Excel COM 색 정수 (R + G*256 + B*65536)."""
+    h = str(argb)[-6:]
+    return int(h[0:2], 16) + int(h[2:4], 16) * 256 + int(h[4:6], 16) * 65536
 
 
-def _apply_hdr_style(cell):
-    cell.font      = copy(_HDR_FONT)
-    cell.fill      = _PatternFill(fill_type="solid", fgColor=_HDR_FILL_RGB)
-    cell.alignment = copy(_HDR_ALIGN)
-    cell.border    = _new_border()
+def _apply_font(api, font):
+    """COM Range/Cell .api 에 폰트 dict 적용."""
+    if not font:
+        return
+    if font.get("name"):
+        api.Font.Name = font["name"]
+    if font.get("size") is not None:
+        api.Font.Size = font["size"]
+    if font.get("bold") is not None:
+        api.Font.Bold = bool(font["bold"])
 
 
-def _apply_data_style(cell):
-    cell.font      = copy(_DATA_FONT)
-    cell.fill      = _PatternFill(fill_type="solid", fgColor=_DATA_FILL_RGB)
-    cell.alignment = copy(_DATA_ALIGN)
-    cell.border    = _new_border()
+def _style_range(rng, *, fill=None, font=None, halign=None, valign=None,
+                 wrap=None, border=False):
+    """xlwings Range 에 스타일을 **범위 단위 1회** 적용 (셀 단위 COM 왕복 회피)."""
+    api = rng.api
+    if fill is not None:
+        api.Interior.Color = _rgb_int(fill)
+    _apply_font(api, font)
+    if halign is not None:
+        api.HorizontalAlignment = halign
+    if valign is not None:
+        api.VerticalAlignment = valign
+    if wrap is not None:
+        api.WrapText = wrap
+    if border:
+        for e in _XL_EDGES:
+            b = api.Borders(e)
+            b.LineStyle = _XL_CONTINUOUS
+            b.Weight = _XL_THIN
+
+
+def _rng(ws, r1, c1, r2=None, c2=None):
+    """(r1,c1)[~(r2,c2)] → xlwings Range. 단일 셀이면 r2/c2 생략."""
+    if r2 is None:
+        return ws.range((r1, c1))
+    return ws.range((r1, c1), (r2, c2))
+
+
+def _hdr_range(ws, r, c1, c2):
+    """헤더 스타일(연청색 fill, _HDR_FONT, 중앙, wrap, thin border)을 범위 1회 적용."""
+    rng = ws.range((r, c1), (r, c2))
+    _style_range(rng, fill=_HDR_FILL_RGB, font=_HDR_FONT, halign=_XL_CENTER,
+                 valign=_XL_CENTER, wrap=True, border=True)
+    return rng
+
+
+def _data_range(ws, r1, c1, r2, c2):
+    """데이터 스타일(흰 fill, _DATA_FONT, 중앙, wrap, thin border)을 범위 1회 적용."""
+    rng = ws.range((r1, c1), (r2, c2))
+    _style_range(rng, fill=_DATA_FILL_RGB, font=_DATA_FONT, halign=_XL_CENTER,
+                 valign=_XL_CENTER, wrap=True, border=True)
+    return rng
 
 # ── table 시트의 표 시작 위치 (A열 비움, 제목 A1, 헤더 3행, 데이터 4행~)
 _HEADER_ROW = 3
@@ -187,9 +238,10 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
     progress_cb: 시트 1개 생성 후 progress_cb(done, total, name) 호출 (선택).
     raw_sheets: [(sheet명, df_honey 포맷 DataFrame), ...]. 주어지면 source(input
         file)별로 df_honey 적재 포맷 그대로의 시트를 맨 앞에 추가한다.
-    """
-    import openpyxl
 
+    단일 xlwings(Excel COM) 세션에서 모든 시트(raw/table/diff/distribution)를 생성·
+    스타일링·저장한다. Excel/xlwings 가 없으면 전체 실패한다(openpyxl fallback 없음).
+    """
     out_path = str(Path(out_path).resolve())
     sel = [s for s in ALL_SHEETS if (sheets is None or s in set(sheets))]
     if not sel:
@@ -224,95 +276,139 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
                                         result.distributions_b_only, [name_b]))
     want_dist_phase = want_dist or bool(diff_dist_specs)
 
-    with _flow_prof("workbook_init"):
-        wb = openpyxl.Workbook()
-        wb.remove(wb.active)  # 기본 Sheet 제거 후 필요한 시트만 생성
-        for nm in ALL_SHEETS:
-            if nm in table_writers and nm in sel:
-                wb.create_sheet(_report_sheet_display_name(nm))
-        # distribution 만 선택돼 table 시트가 없는 경우 빈 시트 1개 확보
-        if want_dist and not wb.sheetnames:
-            wb.create_sheet(_report_sheet_display_name("distribution"))
-
-    total = len([s for s in sel if s in table_writers]) + (len(raw_sheets) if raw_sheets else 0) \
+    table_sel = [nm for nm in ALL_SHEETS if nm in table_writers and nm in sel]
+    total = len(table_sel) + (len(raw_sheets) if raw_sheets else 0) \
         + (1 if want_dist else 0) + len(diff_cpk_specs) + len(diff_dist_specs)
     done = 0
+    tmpdirs = []
 
-    # table 시트 채움 (템플릿 순서 유지)
-    for nm in ALL_SHEETS:
-        sheet_name = _report_sheet_display_name(nm)
-        if nm in table_writers and nm in sel and sheet_name in wb.sheetnames:
-            if nm == "issue_table":
-                with _flow_prof(f"fill_{nm}"):
-                    _fill_issue_table(wb[sheet_name], result, include_cpk=("cpk" in sel))
-            else:
-                with _flow_prof(f"fill_{nm}"):
-                    table_writers[nm](wb[sheet_name], result)
-            done += 1
-            _progress(progress_cb, done, total, nm)
-
-    # diff compare: a_only / b_only CPK 시트 (openpyxl 단계 — distribution 은 phase 2)
-    for disp, cpk_rows in diff_cpk_specs:
-        title = _unique_sheet_name(wb, disp)
-        ws = wb.create_sheet(title)
-        with _flow_prof(f"fill_{title}"):
-            _fill_cpk_rows(ws, cpk_rows)
-        done += 1
-        _progress(progress_cb, done, total, title)
-
-    # Raw Data — source(input file)별 df_honey 포맷 시트를 맨 앞에 순서대로 추가
-    raw_ws_list = []
-    if raw_sheets:
-        reserved_sheet_names = [_report_sheet_display_name("distribution")] if want_dist else []
-        for idx, (name, df) in enumerate(raw_sheets):
-            ws = wb.create_sheet(_unique_sheet_name(wb, name, reserved_sheet_names), idx)
-            with _flow_prof(f"fill_raw_data[{ws.title}]"):
-                _fill_raw_data(ws, df)
-            raw_ws_list.append(ws)
-            done += 1
-            _progress(progress_cb, done, total, ws.title)
-
-    # 시트별 Zoom 설정 + 눈금선 숨김 (openpyxl 단계)
-    _ZOOM_80_SHEETS = {"fail_item", "issue_table", "distribution"}
-    raw_ws_ids = {id(ws) for ws in raw_ws_list}
-    for nm in wb.sheetnames:
-        nm_key = nm.lower().replace(" ", "_")
-        zoom = 80 if any(z in nm_key for z in _ZOOM_80_SHEETS) else 100
+    with xw.App(visible=False, add_book=False) as app:
+        app.display_alerts = False
+        app.screen_updating = False
         try:
-            wb[nm].sheet_view.zoomScale = zoom
-            wb[nm].sheet_view.showGridLines = id(wb[nm]) in raw_ws_ids
+            app.api.Calculation = _XL_CALC_MANUAL
+            app.api.EnableEvents = False
         except Exception:
             pass
 
-    with _flow_prof("normalize_sheet_names"):
-        _normalize_report_sheet_names(wb)
-    with _flow_prof("finalize_openpyxl_layouts"):
-        _finalize_openpyxl_sheet_layouts(wb, skip_title_for=raw_ws_list)
+        with _flow_prof("workbook_init"):
+            wb = app.books.add()
+            base = wb.sheets[0]   # 기본 빈 시트 — 저장 전 삭제
+            for nm in table_sel:
+                wb.sheets.add(_report_sheet_display_name(nm),
+                              after=wb.sheets[wb.sheets.count - 1])
 
-    with _flow_prof("workbook_save"):
-        wb.save(out_path)
+        # raw 를 맨 앞에 삽입하기 위한 앵커(첫 table 시트, 없으면 base)
+        anchor = wb.sheets[1] if wb.sheets.count > 1 else base
 
-    # Phase 2: distribution 차트 (xlwings / Excel COM) + fail_item PNG 썸네일
-    if want_dist_phase:
+        # table 시트 채움 (템플릿 순서 유지)
+        for nm in table_sel:
+            sheet_name = _report_sheet_display_name(nm)
+            ws = wb.sheets[sheet_name]
+            if nm == "issue_table":
+                with _flow_prof(f"fill_{nm}"):
+                    _fill_issue_table(ws, result, include_cpk=("cpk" in sel))
+            else:
+                with _flow_prof(f"fill_{nm}"):
+                    table_writers[nm](ws, result)
+            done += 1
+            _progress(progress_cb, done, total, nm)
+
+        # diff compare: a_only / b_only CPK 시트 (끝에 추가)
+        for disp, cpk_rows in diff_cpk_specs:
+            title = _unique_sheet_name(wb, disp)
+            ws = wb.sheets.add(title, after=wb.sheets[wb.sheets.count - 1])
+            with _flow_prof(f"fill_{title}"):
+                _fill_cpk_rows(ws, cpk_rows)
+            done += 1
+            _progress(progress_cb, done, total, title)
+
+        # Raw Data — source별 df_honey 포맷 시트를 앵커 앞(맨 앞)에 순서대로 추가
+        raw_titles = []
+        if raw_sheets:
+            reserved = [_report_sheet_display_name("distribution")] if want_dist else []
+            for name, df in raw_sheets:
+                title = _unique_sheet_name(wb, name, reserved)
+                with _flow_prof(f"fill_raw_data[{title}]"):
+                    _copy_df_via_csv(app, wb, df, title, anchor)
+                raw_titles.append(title)
+                done += 1
+                _progress(progress_cb, done, total, title)
+
+        # 이름 정규화 + 제목 배너/중앙정렬 (distribution 시트 생성 전 — 기존 phase1 순서)
+        with _flow_prof("normalize_sheet_names"):
+            _normalize_report_sheet_names(wb)
+        with _flow_prof("finalize_layouts"):
+            _finalize_sheet_layouts(wb, skip_title_titles={t.lower() for t in raw_titles})
+
+        # distribution 차트 + PNG 부착 (같은 세션, 앱/워크북 재오픈 없음)
+        if want_dist_phase:
+            try:
+                with _flow_prof("distribution_xlwings_phase"):
+                    tmpdirs.extend(_write_distribution_phase(
+                        app, wb, result, colors,
+                        attach_fail_item=("fail_item" in sel),
+                        attach_issue_cpk=("cpk" in sel),
+                        dist_progress_cb=dist_progress_cb,
+                        attach_progress_cb=attach_progress_cb,
+                        write_main=want_dist, extra_dist=diff_dist_specs))
+                done += 1 + len(diff_dist_specs)
+                _progress(progress_cb, done, total, "distribution")
+            except Exception as exc:
+                print(f"[xlsx_writer] distribution 차트 생략: {exc}")
+
+        # 모든 시트 Zoom/눈금선 (단일 세션 1회, distribution 포함)
+        with _flow_prof("zoom_gridlines"):
+            _apply_zoom_gridlines(app, wb, raw_titles)
+
+        if wb.sheets.count > 1:
+            base.delete()
         try:
-            with _flow_prof("distribution_xlwings_phase"):
-                _write_distribution_xlwings(out_path, result, colors,
-                                            attach_fail_item=("fail_item" in sel),
-                                            attach_issue_cpk=("cpk" in sel),
-                                            dist_progress_cb=dist_progress_cb,
-                                            attach_progress_cb=attach_progress_cb,
-                                            write_main=want_dist,
-                                            extra_dist=diff_dist_specs,
-                                            raw_gridline_sheets=[ws.title for ws in raw_ws_list])
-            done += 1 + len(diff_dist_specs)
-            _progress(progress_cb, done, total, "distribution")
-        except Exception as exc:
-            # Excel/xlwings 미설치·실패 → distribution 만 생략(table 시트는 이미 저장됨)
-            if _is_package_integrity_error(exc):
-                raise
-            print(f"[xlsx_writer] distribution 차트 생략: {exc}")
+            app.api.Calculation = _XL_CALC_AUTO
+        except Exception:
+            pass
+        with _flow_prof("workbook_save"):
+            wb.save(out_path)
+        wb.close()
+
+    # 저장 완료 후 파일 안정화 대기 + 임베드 이미지 무결성 검증
+    _wait_for_xlsx_ready(out_path)
+    try:
+        _validate_embedded_images(out_path)
+    finally:
+        for td in tmpdirs:
+            shutil.rmtree(td, ignore_errors=True)
+        _prof_report()
 
     return out_path
+
+
+def _copy_df_via_csv(app, wb, df, sheet_name, before_sheet):
+    """df 를 임시 CSV 로 쓴 뒤 Excel 네이티브 파싱으로 열어 wb 의 before_sheet 앞으로 복사.
+
+    셀 단위 기입 없이 시트를 통째로 가져온다(raw data 대량 기입 가속). 숫자 변환은
+    Excel CSV 파싱이 담당(_coerce_number 대체). Serial 컬럼 제거·A열 너비·중앙정렬은
+    기존 _fill_raw_data 와 일치하도록 재적용.
+    """
+    serial_cols = [c for c, v in zip(df.columns, df.iloc[0]) if v == "Serial"]
+    if serial_cols:
+        df = df.drop(columns=serial_cols)
+    tmpdir = tempfile.mkdtemp(prefix="honey_raw_")
+    csv_path = os.path.join(tmpdir, "df_temp.csv")
+    df.to_csv(csv_path, index=False)   # row1=컬럼명, row2~=값 (기존 레이아웃 동일)
+    before_names = {s.name for s in wb.sheets}
+    wb_csv = app.books.open(csv_path)
+    try:
+        wb_csv.sheets[0].api.Copy(Before=before_sheet.api)
+    finally:
+        wb_csv.close()
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    new = [s for s in wb.sheets if s.name not in before_names]
+    copied = new[0] if new else wb.sheets.active
+    copied.name = sheet_name
+    copied.range("A:A").column_width = 17   # 기존 A열 너비 2배 유지
+    _style_range(copied.used_range, halign=_XL_CENTER, valign=_XL_CENTER, wrap=True)
+    return copied
 
 
 def _progress(cb, done, total, name):
@@ -324,52 +420,10 @@ def _progress(cb, done, total, name):
         pass
 
 
-# ── openpyxl 채움 (table 시트) ───────────────────────────────────────────────
-
-def _fill_summary_legacy_unused(ws, result):
-    """Legacy summary layout kept unused."""
-    meta = result.meta
-    title = " ".join(x for x in [meta.product_type, meta.product, meta.lot_id] if x).strip()
-
-    # 제목 A1 병합 + 스타일
-    ws.merge_cells("A1:H1")
-    cell = ws["A1"]
-    cell.value     = title or "REPORT TITLE"
-    cell.font      = copy(_TITLE_FONT)
-    cell.fill      = _PatternFill(fill_type="solid", fgColor=_TITLE_FILL_RGB)
-    cell.alignment = copy(_TITLE_ALIGN)
-
-    # 1. Device Feature 라벨행(4행) 업데이트 + 값행(5행)
-    _safe_set(ws, "B4", "DEVICE")
-    _safe_set(ws, "D4", "customer")
-    _safe_set(ws, "E4", "PKG Type")
-    _safe_set(ws, "F4", "GrossDie")
-    _safe_set(ws, "G4", "Process Line")
-    _safe_set(ws, "H4", "EVT version")
-    _safe_set(ws, "B5", "")                        # DEVICE — 미입력
-    _safe_set(ws, "D5", "")                        # customer — 미입력
-    _safe_set(ws, "E5", "")                        # PKG Type — 미입력
-    _safe_set(ws, "F5", "")                        # GrossDie — 미입력
-    _safe_set(ws, "G5", "")                        # Process Line — 미입력
-    _safe_set(ws, "H5", meta.revision or "-")      # EVT version
-
-    # 2. Yield — Lot NO / 전체 평균 yield (pass bin avg)
-    _safe_set(ws, "B9", meta.lot_id or "-")
-    pass_row = next((r for r in result.yield_rows if str(r.get("bin")) == "1"), None)
-    pass_avg = pass_row.get("avg") if pass_row else result.pass_yield
-    _safe_set(ws, "D9", pass_avg if pass_avg is not None else "-")
-
-    # Major Fail Bins: avg 내림차순 상위 5개 fail bin (F=Main Fail subject, G=avg)
-    majors = result.major_fail_bins(5)
-    for i in range(5):
-        r = 9 + i
-        _safe_set(ws, f"F{r}", majors[i].get("Main Fail subject") if i < len(majors) else None)
-        _safe_set(ws, f"G{r}", majors[i].get("avg") if i < len(majors) else None)
-    # 3. Evaluation Summary 는 템플릿 플레이스홀더("-") 그대로 둔다.
-
+# ── 채움 (table 시트, xlwings) ───────────────────────────────────────────────
 
 def _fill_summary(ws, result):
-    """Summary sheet layout implemented directly with openpyxl."""
+    """Summary 시트 — 고정 좌표 레이아웃 (xlwings)."""
     meta = result.meta
     title = " ".join(x for x in [meta.product_type, meta.product, meta.lot_id] if x).strip()
 
@@ -422,15 +476,14 @@ def _fill_summary(ws, result):
 
 
 def _reset_summary_sheet(ws):
-    for rng in list(ws.merged_cells.ranges):
-        ws.unmerge_cells(str(rng))
-    for row in ws.iter_rows(min_row=1, max_row=20, min_col=1, max_col=8):
-        for cell in row:
-            cell.value = None
-            cell.fill = _PatternFill(fill_type="solid", fgColor=_DATA_FILL_RGB)
-            cell.font = copy(_SUMMARY_DATA_FONT)
-            cell.alignment = copy(_SUMMARY_CENTER_ALIGN)
-            cell.border = _Border()
+    rng = ws.range("A1:H20")
+    try:
+        rng.api.UnMerge()
+    except Exception:
+        pass
+    rng.clear_contents()
+    _style_range(rng, fill=_DATA_FILL_RGB, font=_SUMMARY_DATA_FONT,
+                 halign=_XL_CENTER, valign=_XL_CENTER, wrap=True)
 
 
 def _apply_summary_dimensions(ws):
@@ -439,37 +492,32 @@ def _apply_summary_dimensions(ws):
         "E": 10.5, "F": 12.625, "G": 9, "H": 44.75,
     }
     for col, width in widths.items():
-        ws.column_dimensions[col].width = width
+        ws.range(f"{col}:{col}").column_width = width
     row_heights = {
         1: 30, 3: 25.5, 4: 16.5, 5: 16.5, 7: 21.75, 8: 16.5,
         15: 27, 17: 48.75, 18: 48.75, 19: 48.75, 20: 48.75,
     }
     for row, height in row_heights.items():
-        ws.row_dimensions[row].height = height
+        ws.range(f"{row}:{row}").row_height = height
 
 
-def _summary_style_range(ws, cell_range, font=None, fill_rgb=None, align=None, border=False):
-    fill = _PatternFill(fill_type="solid", fgColor=fill_rgb or _DATA_FILL_RGB)
-    for row in ws[cell_range]:
-        for cell in row:
-            cell.font = copy(font or _SUMMARY_DATA_FONT)
-            cell.fill = copy(fill)
-            cell.alignment = copy(align or _SUMMARY_CENTER_ALIGN)
-            cell.border = _new_border() if border else _Border()
+def _summary_style_range(ws, cell_range, font=None, fill_rgb=None, halign=None, border=False):
+    """summary 전용 범위 스타일. halign=None 이면 center+wrap, _XL_LEFT 면 left(no wrap)."""
+    center = halign is None
+    _style_range(ws.range(cell_range), fill=fill_rgb or _DATA_FILL_RGB,
+                 font=font or _SUMMARY_DATA_FONT,
+                 halign=_XL_CENTER if center else halign,
+                 valign=_XL_CENTER, wrap=center, border=border)
 
 
 def _apply_summary_layout_styles(ws):
-    _summary_style_range(
-        ws, "A1:H1", _SUMMARY_TITLE_FONT, _SUMMARY_TITLE_FILL_RGB,
-        _SUMMARY_LEFT_ALIGN, border=False
-    )
-    ws["A1"].border = _Border(bottom=_SideStyle(style="thin"))
+    _summary_style_range(ws, "A1:H1", _SUMMARY_TITLE_FONT, _SUMMARY_TITLE_FILL_RGB, _XL_LEFT)
+    b = ws.range("A1:H1").api.Borders(9)   # xlEdgeBottom
+    b.LineStyle = _XL_CONTINUOUS
+    b.Weight = _XL_THIN
 
     for cell_range in ("B3:C3", "B7:C7", "B15:C15"):
-        _summary_style_range(
-            ws, cell_range, _SUMMARY_SECTION_FONT, _DATA_FILL_RGB,
-            _SUMMARY_LEFT_ALIGN, border=False
-        )
+        _summary_style_range(ws, cell_range, _SUMMARY_SECTION_FONT, _DATA_FILL_RGB, _XL_LEFT)
 
     _summary_style_range(ws, "B4:H4", _SUMMARY_HDR_FONT, _SUMMARY_HDR_FILL_RGB, border=True)
     _summary_style_range(ws, "B5:H5", _SUMMARY_DATA_FONT, _DATA_FILL_RGB, border=True)
@@ -478,16 +526,16 @@ def _apply_summary_layout_styles(ws):
     _summary_style_range(ws, "B16:H16", _SUMMARY_HDR_FONT, _SUMMARY_HDR_FILL_RGB, border=True)
     _summary_style_range(ws, "B17:H20", _SUMMARY_DATA_FONT, _DATA_FILL_RGB, border=True)
 
-    ws["D9"].number_format = "0.00"
+    ws.range("D9").number_format = "0.00"
     for row in range(9, 14):
-        ws[f"G{row}"].number_format = "0.00"
+        ws.range(f"G{row}").number_format = "0.00"
 
     for cell_range in (
         "A1:H1", "B3:C3", "B7:C7", "B8:C8", "B9:C13", "D9:D13",
         "E8:G8", "B15:C15", "D16:H16", "D17:H17", "D18:H18",
         "D19:H19", "D20:H20",
     ):
-        ws.merge_cells(cell_range)
+        ws.range(cell_range).merge()
 
 
 def _ordinal_fail_label(index):
@@ -539,7 +587,7 @@ def _fill_yield(ws, result):
     _apply_table_font(ws, header, size=12)
     _apply_small_font_headers(ws, header, ["_count", "_yield"], size=10)
     _set_table_row_heights(ws, len(rows), height=_YIELD_TABLE_ROW_HEIGHT)
-    ws.row_dimensions[_HEADER_ROW].height = _YIELD_HEADER_ROW_HEIGHT
+    ws.range(f"{_HEADER_ROW}:{_HEADER_ROW}").row_height = _YIELD_HEADER_ROW_HEIGHT
 
 
 def _fill_fail_item(ws, result):
@@ -558,8 +606,8 @@ def _fill_fail_item(ws, result):
         rows.append(row)
     with _flow_prof("fill_fail_item.top_table"):
         _fill_table(ws, header, rows)
-        for i in range(len(rows)):
-            ws.row_dimensions[_HEADER_ROW + 1 + i].height = _FAIL_ITEM_ROW_HEIGHT
+        if rows:
+            ws.range(f"{_HEADER_ROW + 1}:{_HEADER_ROW + len(rows)}").row_height = _FAIL_ITEM_ROW_HEIGHT
     with _flow_prof("fill_fail_item.fail_values"):
         _fill_fail_values_section(ws, result)
     with _flow_prof("fill_fail_item.style"):
@@ -582,29 +630,37 @@ def _fill_fail_values_section(ws, result):
     data_row0 = title_row + 3           # 데이터 시작 행
 
     with _flow_prof("fail_values.title"):
-        _apply_hdr_style(ws.cell(row=title_row, column=_START_COL, value="FAIL_VALUES"))
+        _hdr_cell(ws, title_row, _START_COL, "FAIL_VALUES")
 
+    last_col = _START_COL + _FAIL_VALUES_NCOLS - 1
     for i, (src_name, rows) in enumerate(fvr.items()):
         with _flow_prof(f"fail_values.write_source[{src_name}]"):
             col0 = _START_COL + i * (_FAIL_VALUES_NCOLS + _FAIL_VALUES_GAP)
-            _apply_hdr_style(ws.cell(row=src_row, column=col0, value=src_name))
-            for ci, h in enumerate(_FAIL_VALUES_COLS):
-                _apply_hdr_style(ws.cell(row=hdr_row, column=col0 + ci, value=h))
-            for ri, row in enumerate(rows):
-                r = data_row0 + ri
-                _apply_data_style(ws.cell(row=r, column=col0,     value=_sanitize_cell(row["dut"])))
-                _apply_data_style(ws.cell(row=r, column=col0 + 1, value=_sanitize_cell(row["xcoord"])))
-                _apply_data_style(ws.cell(row=r, column=col0 + 2, value=_sanitize_cell(row["ycoord"])))
-                _apply_data_style(ws.cell(row=r, column=col0 + 3, value=_sanitize_cell(row["bin"])))
-                _apply_data_style(ws.cell(row=r, column=col0 + 4, value=_sanitize_cell(row["item"])))
-                _apply_data_style(ws.cell(row=r, column=col0 + 5, value=_sanitize_cell(row["value"])))
+            c1 = col0 + _FAIL_VALUES_NCOLS - 1
+            # source 이름 셀 + 열 헤더행 일괄
+            _hdr_cell(ws, src_row, col0, src_name)
+            ws.range((hdr_row, col0), (hdr_row, c1)).value = list(_FAIL_VALUES_COLS)
+            _hdr_range(ws, hdr_row, col0, c1)
+            # 데이터 블록 2D 일괄 기입 + 블록 단위 스타일 (셀 단위 기입 제거)
+            if rows:
+                data = [[_sanitize_cell(row["dut"]), _sanitize_cell(row["xcoord"]),
+                         _sanitize_cell(row["ycoord"]), _sanitize_cell(row["bin"]),
+                         _sanitize_cell(row["item"]), _sanitize_cell(row["value"])]
+                        for row in rows]
+                rlast = data_row0 + len(rows) - 1
+                # DUT/XCoord/YCoord/Bin 은 식별자 텍스트(_fmt_type) — Excel 숫자 자동변환
+                # 방지로 OLD(openpyxl) 와 동일하게 text 유지. Value 열은 숫자 그대로.
+                ws.range((data_row0, col0), (rlast, col0 + 3)).number_format = "@"
+                ws.range((data_row0, col0), (rlast, c1)).value = data
+                _data_range(ws, data_row0, col0, rlast, c1)
 
-    # 소스 블록별 윤곽선 적용 (src_row 헤더~마지막 데이터행)
+    # 소스 블록별 윤곽선 적용 (src_row 헤더~마지막 데이터행) — 블록 Range 1회
     with _flow_prof("fail_values.borders"):
         for i, (src_name, rows) in enumerate(fvr.items()):
             col0 = _START_COL + i * (_FAIL_VALUES_NCOLS + _FAIL_VALUES_GAP)
             last_row = data_row0 + len(rows) - 1 if rows else hdr_row
-            _apply_all_borders(ws, src_row, col0, last_row, col0 + _FAIL_VALUES_NCOLS - 1)
+            _style_range(ws.range((src_row, col0), (last_row, col0 + _FAIL_VALUES_NCOLS - 1)),
+                         border=True)
 
 
 def _fill_cpk(ws, result):
@@ -640,7 +696,7 @@ def _apply_cpk_warn_fill(ws, header, rows, header_row=_HEADER_ROW, start_col=_ST
     cpk_idx = next((i for i, h in enumerate(header) if h == "cpk"), None)
     if cpk_idx is None:
         return
-    warn_fill = _PatternFill(fill_type="solid", fgColor=_CPK_WARN_FILL_RGB)
+    ncol = len(header)
     for ri, row in enumerate(rows):
         val = row[cpk_idx] if cpk_idx < len(row) else None
         try:
@@ -649,8 +705,8 @@ def _apply_cpk_warn_fill(ws, header, rows, header_row=_HEADER_ROW, start_col=_ST
             f = None
         if f is not None and f < _CPK_THRESHOLD:
             excel_row = header_row + 1 + ri
-            for ci in range(len(header)):
-                ws.cell(row=excel_row, column=start_col + ci).fill = copy(warn_fill)
+            _style_range(ws.range((excel_row, start_col), (excel_row, start_col + ncol - 1)),
+                         fill=_CPK_WARN_FILL_RGB)
 
 
 def _cpk_fail_subjects(result):
@@ -677,33 +733,30 @@ def _merge_cpk_subject(ws, n_rows, header_row=_HEADER_ROW, start_col=_START_COL)
     """같은 subject 연속 행의 TEST NAME/LOW SPEC/HIGH SPEC/SCALE 열 병합 + 세로 중앙 정렬."""
     if n_rows <= 1:
         return
-    from openpyxl.styles import Alignment
-    merge_cols = [start_col + i for i in range(4)]  # TEST NAME, LOW SPEC, HIGH SPEC, SCALE
     data_start = header_row + 1
+    # TEST NAME 열을 한 번에 읽어 그룹 경계 탐지 (셀 단위 COM read 회피)
+    col_vals = ws.range((data_start, start_col), (data_start + n_rows - 1, start_col)).value
+    if not isinstance(col_vals, list):
+        col_vals = [col_vals]
 
     groups = []
-    cur_val = ws.cell(row=data_start, column=start_col).value
+    cur_val = col_vals[0]
     grp_start = data_start
-    for r in range(data_start + 1, data_start + n_rows):
-        val = ws.cell(row=r, column=start_col).value
+    for k in range(1, n_rows):
+        val = col_vals[k]
         if val != cur_val or val is None:
-            groups.append((grp_start, r - 1))
+            groups.append((grp_start, data_start + k - 1))
             cur_val = val
-            grp_start = r
+            grp_start = data_start + k
     groups.append((grp_start, data_start + n_rows - 1))
 
     for r_start, r_end in groups:
         if r_start == r_end:
             continue
-        for c in merge_cols:
-            ws.merge_cells(start_row=r_start, start_column=c,
-                           end_row=r_end, end_column=c)
-            cell = ws.cell(row=r_start, column=c)
-            al = cell.alignment
-            cell.alignment = Alignment(
-                horizontal=al.horizontal, vertical="center",
-                wrap_text=al.wrap_text
-            )
+        for c in range(start_col, start_col + 4):  # TEST NAME, LOW SPEC, HIGH SPEC, SCALE
+            rng = ws.range((r_start, c), (r_end, c))
+            rng.merge()
+            rng.api.VerticalAlignment = _XL_CENTER
 
 
 def _fill_issue_table(ws, result, include_cpk=True):
@@ -748,20 +801,16 @@ def _fill_issue_table(ws, result, include_cpk=True):
     _merge_issue_category(ws, n_yield)  # Yield 병합 (기존)
 
     # CPK Category 병합: 서브헤더 + 데이터 행 전체에 걸쳐 B열 "CPK" 세로 표시
-    from openpyxl.styles import Alignment
     cpk_start = _HEADER_ROW + 1 + n_yield   # 서브헤더 행
     cpk_block = 1 + n_cpk                    # 서브헤더 + 데이터 행 수
-    ws.merge_cells(start_row=cpk_start, start_column=_START_COL,
-                   end_row=cpk_start + cpk_block - 1, end_column=_START_COL)
-    cell = ws.cell(row=cpk_start, column=_START_COL)
-    al = cell.alignment
-    cell.alignment = Alignment(horizontal=al.horizontal, vertical="center",
-                               wrap_text=al.wrap_text)
+    rng = ws.range((cpk_start, _START_COL), (cpk_start + cpk_block - 1, _START_COL))
+    rng.merge()
+    rng.api.VerticalAlignment = _XL_CENTER
 
-    for i in range(n_yield):
-        ws.row_dimensions[_HEADER_ROW + 1 + i].height = _ISSUE_TABLE_ROW_HEIGHT
-    for i in range(n_cpk):
-        ws.row_dimensions[cpk_start + 1 + i].height = _ISSUE_TABLE_ROW_HEIGHT
+    if n_yield:
+        ws.range(f"{_HEADER_ROW + 1}:{_HEADER_ROW + n_yield}").row_height = _ISSUE_TABLE_ROW_HEIGHT
+    if n_cpk:
+        ws.range(f"{cpk_start + 1}:{cpk_start + n_cpk}").row_height = _ISSUE_TABLE_ROW_HEIGHT
 
     _apply_table_col_widths(ws, header, custom_widths={
         "Item": _ITEM_COL_WIDTH * 2,
@@ -776,51 +825,23 @@ def _fill_issue_table(ws, result, include_cpk=True):
                               last_row=_HEADER_ROW + len(rows))
     # CPK 서브헤더(item name / cpk)는 폰트 패스 이후 헤더 스타일 재적용 — 굵게/음영 유지
     if include_cpk:
-        _apply_hdr_style(ws.cell(row=cpk_start, column=_START_COL + 2))  # Item 열
-        _apply_hdr_style(ws.cell(row=cpk_start, column=_START_COL + 3))  # avg 열
+        _hdr_range(ws, cpk_start, _START_COL + 2, _START_COL + 2)  # Item 열
+        _hdr_range(ws, cpk_start, _START_COL + 3, _START_COL + 3)  # avg 열
 
 
 def _merge_issue_category(ws, n_yield, header_row=_HEADER_ROW, start_col=_START_COL):
     """issue_table Category 열의 Yield 행 전체를 병합 + 세로 중앙 정렬."""
     if n_yield <= 1:
         return
-    from openpyxl.styles import Alignment
     data_start = header_row + 1
-    ws.merge_cells(start_row=data_start, start_column=start_col,
-                   end_row=data_start + n_yield - 1, end_column=start_col)
-    cell = ws.cell(row=data_start, column=start_col)
-    al = cell.alignment
-    cell.alignment = Alignment(
-        horizontal=al.horizontal, vertical="center",
-        wrap_text=al.wrap_text
-    )
-
-
-def _fill_raw_data(ws, df):
-    """df_honey 포맷 DataFrame 을 A1 부터 기록.
-
-    1행: pandas column names, 2행~: df.values (행0=subject헤더, 1=Units, ..., 6~=측정데이터).
-    Serial 컬럼은 정규화 시 자동 삽입되는 내부 컬럼이므로 제거.
-    A열 너비는 기본값의 2배. Bold 없음.
-    """
-    serial_cols = [c for c, v in zip(df.columns, df.iloc[0]) if v == "Serial"]
-    if serial_cols:
-        df = df.drop(columns=serial_cols)
-    # row 1: pandas column names
-    for ci, col_name in enumerate(df.columns, start=1):
-        cell = ws.cell(row=1, column=ci, value=str(col_name))
-        cell.alignment = copy(_DATA_ALIGN)
-    # row 2~: data values
-    for ri, row in enumerate(df.values.tolist(), start=2):
-        for ci, val in enumerate(row, start=1):
-            cell = ws.cell(row=ri, column=ci, value=_sanitize_cell(_coerce_number(val)))
-            cell.alignment = copy(_DATA_ALIGN)
-    ws.column_dimensions["A"].width = 17  # default ~8.43 의 2배
+    rng = ws.range((data_start, start_col), (data_start + n_yield - 1, start_col))
+    rng.merge()
+    rng.api.VerticalAlignment = _XL_CENTER
 
 
 def _unique_sheet_name(wb, name, reserved=()):
     """Excel 시트명 규칙(≤31자, []:*?/\\ 금지, 중복 불가)으로 정제."""
-    existing = {s.lower() for s in wb.sheetnames} | {str(s).lower() for s in reserved}
+    existing = {s.name.lower() for s in wb.sheets} | {str(s).lower() for s in reserved}
     return _excel_safe_sheet_name(name, existing)
 
 
@@ -840,51 +861,39 @@ def _excel_safe_sheet_name(name, existing_lower):
     return cand
 
 
-# ── openpyxl 표 채움 헬퍼 (템플릿 스타일 복제) ───────────────────────────────
+# ── 표 채움 헬퍼 (xlwings — 범위 단위 일괄) ──────────────────────────────────
+
+def _last_row(ws):
+    """used_range 의 마지막 행 (없으면 헤더행)."""
+    try:
+        return ws.used_range.last_cell.row
+    except Exception:
+        return _HEADER_ROW
+
+
+def _hdr_cell(ws, r, c, value):
+    """단일 셀에 값 기입 + 헤더 스타일 적용."""
+    ws.range((r, c)).value = value
+    _hdr_range(ws, r, c, c)
+
 
 def _fill_table(ws, header, rows, header_row=_HEADER_ROW, start_col=_START_COL):
-    """헤더·데이터 셀을 기입하고 정의된 스타일 상수를 직접 적용."""
-    _unmerge_below(ws, header_row, start_col)
-    # 기존 범위 값 클리어 (재호출 방어용)
-    max_r = ws.max_row
-    max_c = max(ws.max_column, start_col + len(header) - 1)
-    for r in range(header_row, max_r + 1):
-        for c in range(start_col, max_c + 1):
-            ws.cell(row=r, column=c).value = None
-    # 헤더 기입 + 스타일
-    for i, h in enumerate(header):
-        _apply_hdr_style(ws.cell(row=header_row, column=start_col + i, value=h))
-    # 데이터 기입 + 스타일
-    for ri, row in enumerate(rows):
-        for ci, val in enumerate(row):
-            _apply_data_style(ws.cell(row=header_row + 1 + ri, column=start_col + ci,
-                                      value=_sanitize_cell(val)))
+    """헤더+데이터를 범위 단위 일괄 기입 후 헤더행/데이터블록 스타일을 1회씩 적용."""
+    ncol = len(header)
+    c2 = start_col + ncol - 1
+    ws.range((header_row, start_col), (header_row, c2)).value = list(header)
+    _hdr_range(ws, header_row, start_col, c2)
+    if not rows:
+        return
+    nrow = len(rows)
+    data = [[_sanitize_cell(v) for v in row] for row in rows]
+    ws.range((header_row + 1, start_col), (header_row + nrow, c2)).value = data
+    _data_range(ws, header_row + 1, start_col, header_row + nrow, c2)
 
 
 def _safe_set(ws, coord, value):
-    """병합 셀(비-좌상단)이면 해당 병합을 해제한 뒤 값을 쓴다."""
-    from openpyxl.cell.cell import MergedCell
-    from openpyxl.utils import coordinate_to_tuple, range_boundaries
-    cell = ws[coord]
-    if isinstance(cell, MergedCell):
-        rr, cc = coordinate_to_tuple(coord)
-        for rng in list(ws.merged_cells.ranges):
-            c0, r0, c1, r1 = range_boundaries(str(rng))
-            if r0 <= rr <= r1 and c0 <= cc <= c1:
-                ws.unmerge_cells(str(rng))
-                break
-        cell = ws[coord]
-    cell.value = value
-
-
-def _unmerge_below(ws, min_row, min_col):
-    """min_row/min_col 이후 영역에 걸친 병합을 모두 해제 (좌상단 제목 병합은 유지)."""
-    from openpyxl.utils import range_boundaries
-    for rng in list(ws.merged_cells.ranges):
-        c0, r0, c1, r1 = range_boundaries(str(rng))
-        if r0 >= min_row and c0 >= min_col:
-            ws.unmerge_cells(str(rng))
-
+    """단일 셀 값 기입 (summary 고정 좌표용)."""
+    ws.range(coord).value = value
 
 
 def _apply_table_col_widths(ws, header, start_col=_START_COL, custom_widths=None, col_multiplier=1.0):
@@ -893,72 +902,34 @@ def _apply_table_col_widths(ws, header, start_col=_START_COL, custom_widths=None
     Distribution → _DIST_COL_WIDTH, Item/Category → _ITEM_COL_WIDTH, 나머지 → _NARROW_COL_WIDTH.
     custom_widths dict 에 있는 열은 해당 너비로 우선 적용. col_multiplier 로 전체 배율 조정.
     """
-    from openpyxl.utils import get_column_letter
     _WIDE = {"Item", "Category"}
     for i, name in enumerate(header):
-        letter = get_column_letter(start_col + i)
+        col = start_col + i
         if custom_widths and name in custom_widths:
-            ws.column_dimensions[letter].width = custom_widths[name] * col_multiplier
+            w = custom_widths[name] * col_multiplier
         elif name == "Distribution":
-            ws.column_dimensions[letter].width = _DIST_COL_WIDTH * col_multiplier
+            w = _DIST_COL_WIDTH * col_multiplier
         elif name in _WIDE:
-            ws.column_dimensions[letter].width = _ITEM_COL_WIDTH * col_multiplier
+            w = _ITEM_COL_WIDTH * col_multiplier
         else:
-            ws.column_dimensions[letter].width = _NARROW_COL_WIDTH * col_multiplier
-
-
-def _apply_all_borders(ws, min_row, min_col, max_row, max_col):
-    """지정 사각형 범위의 모든 셀에 thin 테두리 적용 (병합 상단 셀만 처리)."""
-    from openpyxl.styles import Border, Side
-    from openpyxl.cell.cell import MergedCell
-    thin = Side(style="thin")
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    for r in range(min_row, max_row + 1):
-        for c in range(min_col, max_col + 1):
-            cell = ws.cell(row=r, column=c)
-            if not isinstance(cell, MergedCell):
-                cell.border = border
-
-
-def _set_cell_font_size(cell, size):
-    f = cell.font
-    nf = copy(f)
-    nf.size = size
-    cell.font = nf
-
-
-def _set_cell_font(cell, size=None, bold=None):
-    f = copy(cell.font)
-    if size is not None:
-        f.size = size
-    if bold is not None:
-        f.bold = bold
-    cell.font = f
+            w = _NARROW_COL_WIDTH * col_multiplier
+        ws.range((1, col)).column_width = w
 
 
 def _apply_table_font(ws, header, size=None, bold=None,
                       header_row=_HEADER_ROW, start_col=_START_COL):
-    max_row = header_row + max(0, ws.max_row - header_row)
-    max_col = start_col + len(header) - 1
-    for row in ws.iter_rows(min_row=header_row, max_row=max_row,
-                            min_col=start_col, max_col=max_col):
-        for cell in row:
-            _set_cell_font(cell, size=size, bold=bold)
+    last = max(_last_row(ws), header_row)
+    c2 = start_col + len(header) - 1
+    _style_range(ws.range((header_row, start_col), (last, c2)),
+                 font={"size": size, "bold": bold})
 
 
 def _apply_used_cell_font(ws, size=None, bold=None):
-    from openpyxl.cell.cell import MergedCell
-    for row in ws.iter_rows():
-        for cell in row:
-            if isinstance(cell, MergedCell) or cell.value is None:
-                continue
-            _set_cell_font(cell, size=size, bold=bold)
+    _style_range(ws.used_range, font={"size": size, "bold": bold})
 
 
-def _set_table_row_heights(ws, n_rows, height,
-                           header_row=_HEADER_ROW):
-    for row in range(header_row, header_row + n_rows + 1):
-        ws.row_dimensions[row].height = height
+def _set_table_row_heights(ws, n_rows, height, header_row=_HEADER_ROW):
+    ws.range(f"{header_row}:{header_row + n_rows}").row_height = height
 
 
 def _apply_named_columns_font(ws, header, names, size=None, bold=None,
@@ -966,99 +937,77 @@ def _apply_named_columns_font(ws, header, names, size=None, bold=None,
                               include_header=True, include_data=True,
                               last_row=None):
     name_set = set(names)
+    first = header_row if include_header else header_row + 1
+    last = last_row if last_row is not None else (_last_row(ws) if include_data else header_row)
+    if last < first:
+        last = first
     for i, name in enumerate(header):
         if name not in name_set:
             continue
         col = start_col + i
-        first = header_row if include_header else header_row + 1
-        last = last_row if last_row is not None else (ws.max_row if include_data else header_row)
-        for r in range(first, last + 1):
-            _set_cell_font(ws.cell(row=r, column=col), size=size, bold=bold)
-
-
-def _apply_data_font_by_suffix(ws, header, suffixes_or_names, size,
-                               header_row=_HEADER_ROW, start_col=_START_COL):
-    for i, name in enumerate(header):
-        match = any(
-            (name.endswith(pat) if pat.startswith("_") else name == pat)
-            for pat in suffixes_or_names
-        )
-        if not match:
-            continue
-        col = start_col + i
-        for r in range(header_row + 1, ws.max_row + 1):
-            _set_cell_font_size(ws.cell(row=r, column=col), size)
+        _style_range(ws.range((first, col), (last, col)), font={"size": size, "bold": bold})
 
 
 def _apply_font_delta_to_columns(ws, header, names, delta,
                                  header_row=_HEADER_ROW, start_col=_START_COL):
+    """지정 열의 폰트 크기를 헤더(_HDR_FONT)·데이터(_DATA_FONT) 기준 + delta 로 설정."""
     name_set = set(names)
+    last = _last_row(ws)
     for i, name in enumerate(header):
         if name not in name_set:
             continue
         col = start_col + i
-        for r in range(header_row, ws.max_row + 1):
-            cell = ws.cell(row=r, column=col)
-            base_size = cell.font.size or (_HDR_FONT.size if r == header_row else _DATA_FONT.size)
-            _set_cell_font_size(cell, base_size + delta)
+        _style_range(ws.range((header_row, col), (header_row, col)),
+                     font={"size": _HDR_FONT["size"] + delta})
+        if last > header_row:
+            _style_range(ws.range((header_row + 1, col), (last, col)),
+                         font={"size": _DATA_FONT["size"] + delta})
 
 
 def _normalize_report_sheet_names(wb):
     canonical = {name.lower(): _report_sheet_display_name(name) for name in ALL_SHEETS}
-    existing = {name.lower() for name in wb.sheetnames}
-    for ws in wb.worksheets:
-        current = ws.title
-        lower = current.lower()
+    existing = {s.name.lower() for s in wb.sheets}
+    for ws in list(wb.sheets):
+        lower = ws.name.lower()
         if not lower.endswith("1"):
             continue
         base = lower[:-1]
         target = canonical.get(base)
         if target and target.lower() not in existing:
             existing.discard(lower)
-            ws.title = target
+            ws.name = target
             existing.add(target.lower())
 
 
 def _center_used_cells(ws):
-    from openpyxl.cell.cell import MergedCell
-    for row in ws.iter_rows():
-        for cell in row:
-            if isinstance(cell, MergedCell) or cell.value is None:
-                continue
-            al = cell.alignment
-            cell.alignment = _Alignment(
-                horizontal="center",
-                vertical="center",
-                wrap_text=al.wrap_text if al.wrap_text is not None else True,
-            )
+    """used_range 전체 중앙정렬(+wrap) — 범위 1회 적용."""
+    _style_range(ws.used_range, halign=_XL_CENTER, valign=_XL_CENTER, wrap=True)
 
 
 def _apply_sheet_title(ws, title=None):
-    from openpyxl.utils import range_boundaries
-    title = title or ws.title
-    for rng in list(ws.merged_cells.ranges):
-        c0, r0, c1, r1 = range_boundaries(str(rng))
-        if r0 <= 1 <= r1:
-            ws.unmerge_cells(str(rng))
-    ws.row_dimensions[1].height = 30
-    for col in range(1, _TITLE_ROW_MAX_COL + 1):
-        cell = ws.cell(row=1, column=col)
-        cell.fill = _PatternFill(fill_type="solid", fgColor=_TITLE_FILL_RGB)
-        cell.alignment = copy(_TITLE_ALIGN)
-    cell = ws["A1"]
-    cell.value = title
-    cell.font = copy(_TITLE_FONT)
+    """1행에 제목 배너(연파랑 fill, 좌측정렬) + A1 제목값/폰트 적용."""
+    title = title or ws.name
+    row1 = ws.range((1, 1), (1, _TITLE_ROW_MAX_COL))
+    try:
+        row1.api.UnMerge()
+    except Exception:
+        pass
+    ws.range("1:1").row_height = 30
+    _style_range(row1, fill=_TITLE_FILL_RGB, halign=_XL_LEFT, valign=_XL_CENTER)
+    a1 = ws.range("A1")
+    a1.value = title
+    _apply_font(a1.api, _TITLE_FONT)
 
 
-def _finalize_openpyxl_sheet_layouts(wb, skip_title_for=()):
-    """시트 레이아웃 마무리. skip_title_for 에 포함된 시트(Raw Data)는 1행 제목을
-    붙이지 않는다 — Raw Data 는 A1 부터 원본 그대로 두기 위함."""
-    skip = {id(ws) for ws in skip_title_for}
-    for ws in wb.worksheets:
-        if ws.title.lower() == "summary":
+def _finalize_sheet_layouts(wb, skip_title_titles=()):
+    """시트 레이아웃 마무리(중앙정렬 + 제목 배너). distribution 시트는 생성 전이라
+    여기 대상이 아니며, skip_title_titles(Raw Data) 는 1행 제목을 붙이지 않는다."""
+    skip = {str(t).lower() for t in skip_title_titles}
+    for ws in wb.sheets:
+        if ws.name.lower() == "summary":
             continue
         _center_used_cells(ws)
-        if id(ws) in skip:
+        if ws.name.lower() in skip:
             continue
         _apply_sheet_title(ws)
 
@@ -1075,7 +1024,8 @@ def _apply_small_font_headers(ws, header, suffixes_or_names,
             for pat in suffixes_or_names
         )
         if match:
-            _set_cell_font_size(ws.cell(row=header_row, column=start_col + i), size)
+            _style_range(ws.range((header_row, start_col + i), (header_row, start_col + i)),
+                         font={"size": size})
 
 
 def _bin_label(value):
@@ -1090,28 +1040,6 @@ def _bin_label(value):
     except (TypeError, ValueError):
         pass
     return value
-
-
-def _coerce_number(v):
-    """숫자처럼 보이는 문자열을 number 로 변환 (Raw Data 를 text 가 아닌 숫자로 저장).
-
-    정수 표기('1','42')는 int, 소수·지수 표기('3.14','1e-3')는 float. 변환 불가·빈칸·
-    비문자열은 원본 그대로. NaN/inf 문자열도 원본 유지(_sanitize_cell 가 처리).
-    """
-    if not isinstance(v, str):
-        return v
-    s = v.strip()
-    if not s:
-        return v
-    try:
-        f = float(s)
-    except ValueError:
-        return v
-    if math.isnan(f) or math.isinf(f):
-        return v
-    if "." not in s and "e" not in s.lower() and f.is_integer():
-        return int(f)
-    return f
 
 
 def _sanitize_cell(v):
@@ -1137,12 +1065,11 @@ def _report_sheet_display_name(name):
 
 # ── distribution (xlwings / Excel COM) ───────────────────────────────────────
 
-def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=False,
-                                attach_issue_cpk=True,
-                                dist_progress_cb=None, attach_progress_cb=None,
-                                write_main=True, extra_dist=None,
-                                raw_gridline_sheets=None):
-    """openpyxl 로 저장된 파일을 열어 distribution 시트 + 차트를 추가한다.
+def _write_distribution_phase(app, wb, result, colors=None, attach_fail_item=False,
+                              attach_issue_cpk=True,
+                              dist_progress_cb=None, attach_progress_cb=None,
+                              write_main=True, extra_dist=None):
+    """이미 열린 app/wb 에 distribution 시트 + 차트 + PNG 썸네일을 추가한다.
 
     attach_fail_item=True 면 distribution 차트를 PNG 로 export 해 fail_item 시트에
     불량율 높은 순으로 1/3 크기 썸네일로 부착한다 (차트 원본 재생성 없이 재활용).
@@ -1150,110 +1077,84 @@ def _write_distribution_xlwings(out_path, result, colors=None, attach_fail_item=
     write_main=False 면 공통 distribution 메인 시트는 건너뛴다 (common 분포가 없는
     diff 케이스). extra_dist=[(시트명, dists, sources), ...] 는 diff compare 의
     a_only/b_only distribution 시트를 추가로 그린다 (fail_item/issue 부착 없음).
+
+    반환: 정리할 임시 PNG 디렉토리 리스트(호출자가 save 후 rmtree).
     """
-    import shutil
-    import xlwings as xw
-
-    out_path = str(Path(out_path).resolve())
-    with _prof("app_launch"):
-        app = xw.App(visible=False, add_book=False)
-        app.display_alerts = False
-        app.screen_updating = False
-    wb = None
     tmpdirs = []
-    try:
-        with _prof("wb_open"):
-            wb = app.books.open(out_path)
-        # 변경마다 재계산·이벤트 억제 (전용 인스턴스라 사용자 Excel 무영향)
-        try:
-            app.api.Calculation = -4135   # xlCalculationManual
-            app.api.EnableEvents = False
-        except Exception:
-            pass
-        last_sheet = None
-        if write_main:
-            with _prof("clear"):
-                names = [s.name for s in wb.sheets]
-                dist_name = next((n for n in names if n.lower() == "distribution"), None)
-                if dist_name:
-                    sh = wb.sheets[dist_name]
-                    for c in list(sh.charts):     # 템플릿/이전 차트 제거
-                        try:
-                            c.delete()
-                        except Exception:
-                            pass
-                    sh.clear()
-                else:
-                    sh = wb.sheets.add(_report_sheet_display_name("distribution"),
-                                       after=wb.sheets[len(wb.sheets) - 1])
-            chart_map = _write_distribution(wb, sh, result, colors,
-                                            dist_progress_cb=dist_progress_cb)
-            last_sheet = sh
-            if attach_fail_item and chart_map:
-                tmpdir = _attach_fail_item_charts(
-                    wb, result, chart_map, attach_progress_cb=attach_progress_cb
-                )
-                if tmpdir:
-                    tmpdirs.append(tmpdir)
-            if chart_map:
-                tmpdir = _attach_issue_table_charts(
-                    wb, result, chart_map, include_cpk=attach_issue_cpk,
-                    attach_progress_cb=attach_progress_cb
-                )
-                if tmpdir:
-                    tmpdirs.append(tmpdir)
-
-        # diff compare: a_only / b_only distribution 시트 추가
-        for raw_title, dists, sources in (extra_dist or []):
-            if not dists:
-                continue
-            existing = {s.name.lower() for s in wb.sheets}
-            sheet_title = _excel_safe_sheet_name(raw_title, existing)
-            if sheet_title.lower() in existing:
-                d_sh = wb.sheets[sheet_title]
-                for c in list(d_sh.charts):
+    last_sheet = None
+    if write_main:
+        with _prof("clear"):
+            names = [s.name for s in wb.sheets]
+            dist_name = next((n for n in names if n.lower() == "distribution"), None)
+            if dist_name:
+                sh = wb.sheets[dist_name]
+                for c in list(sh.charts):     # 템플릿/이전 차트 제거
                     try:
                         c.delete()
                     except Exception:
                         pass
-                d_sh.clear()
+                sh.clear()
             else:
-                d_sh = wb.sheets.add(sheet_title, after=wb.sheets[len(wb.sheets) - 1])
-            _write_distribution(wb, d_sh, result, colors, dists=dists,
-                                sources=sources, title=sheet_title)
-            last_sheet = d_sh
+                sh = wb.sheets.add(_report_sheet_display_name("distribution"),
+                                   after=wb.sheets[len(wb.sheets) - 1])
+        chart_map = _write_distribution(wb, sh, result, colors,
+                                        dist_progress_cb=dist_progress_cb)
+        last_sheet = sh
+        if attach_fail_item and chart_map:
+            tmpdir = _attach_fail_item_charts(
+                wb, result, chart_map, attach_progress_cb=attach_progress_cb
+            )
+            if tmpdir:
+                tmpdirs.append(tmpdir)
+        if chart_map:
+            tmpdir = _attach_issue_table_charts(
+                wb, result, chart_map, include_cpk=attach_issue_cpk,
+                attach_progress_cb=attach_progress_cb
+            )
+            if tmpdir:
+                tmpdirs.append(tmpdir)
 
-        # 모든 시트 눈금선 숨김 + Zoom 설정 (xlwings/Excel COM 단계 — distribution 포함)
-        _XLWINGS_ZOOM_80 = {"fail_item", "issue_table", "distribution"}
-        raw_gridline_names = {str(n).lower() for n in (raw_gridline_sheets or [])}
-        for s in wb.sheets:
-            try:
-                s.activate()
-                app.api.ActiveWindow.DisplayGridlines = s.name.lower() in raw_gridline_names
-                nm_key = s.name.lower().replace(" ", "_")
-                zoom = 80 if any(z in nm_key for z in _XLWINGS_ZOOM_80) else 100
-                app.api.ActiveWindow.Zoom = zoom
-            except Exception:
-                pass
-        if last_sheet is not None:
-            last_sheet.activate()
-        with _prof("wb_save"):
-            wb.save()
-    finally:
+    # diff compare: a_only / b_only distribution 시트 추가
+    for raw_title, dists, sources in (extra_dist or []):
+        if not dists:
+            continue
+        existing = {s.name.lower() for s in wb.sheets}
+        sheet_title = _excel_safe_sheet_name(raw_title, existing)
+        if sheet_title.lower() in existing:
+            d_sh = wb.sheets[sheet_title]
+            for c in list(d_sh.charts):
+                try:
+                    c.delete()
+                except Exception:
+                    pass
+            d_sh.clear()
+        else:
+            d_sh = wb.sheets.add(sheet_title, after=wb.sheets[len(wb.sheets) - 1])
+        _write_distribution(wb, d_sh, result, colors, dists=dists,
+                            sources=sources, title=sheet_title)
+        last_sheet = d_sh
+
+    if last_sheet is not None:
         try:
-            with _prof("wb_close"):
-                if wb is not None:
-                    wb.close()
-        finally:
-            with _prof("wb_close"):
-                app.quit()
-            _wait_for_xlsx_ready(out_path)
-            try:
-                _validate_embedded_images(out_path)
-            finally:
-                for tmpdir in tmpdirs:
-                    shutil.rmtree(tmpdir, ignore_errors=True)
-                _prof_report()
+            last_sheet.activate()
+        except Exception:
+            pass
+    return tmpdirs
+
+
+def _apply_zoom_gridlines(app, wb, raw_gridline_sheets=None):
+    """모든 시트 Zoom(fail_item/issue_table/distribution=80, 그 외 100) + 눈금선 숨김.
+    raw 시트만 눈금선 표시 (단일 세션 1회 적용)."""
+    zoom80 = {"fail_item", "issue_table", "distribution"}
+    raw_names = {str(n).lower() for n in (raw_gridline_sheets or [])}
+    for s in wb.sheets:
+        try:
+            s.activate()
+            app.api.ActiveWindow.DisplayGridlines = s.name.lower() in raw_names
+            nm_key = s.name.lower().replace(" ", "_")
+            app.api.ActiveWindow.Zoom = 80 if any(z in nm_key for z in zoom80) else 100
+        except Exception:
+            pass
 
 
 def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None):

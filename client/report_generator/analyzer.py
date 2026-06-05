@@ -12,6 +12,7 @@ import time
 from typing import Optional
 
 from . import _builders as B
+from . import _profile
 from .df_honey_group import df_honey_group
 from .item_selector import ItemSelector
 from .models import AnalysisResult, DistSeries, ReportMeta
@@ -21,15 +22,18 @@ _FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
 
 @contextlib.contextmanager
 def _flow_time(label: str):
-    if not _FLOW_PROFILE_ON:
+    if not (_FLOW_PROFILE_ON or _profile.collecting()):
         yield
         return
+    depth = _profile.push()
     t0 = time.perf_counter()
     try:
         yield
     finally:
         elapsed = time.perf_counter() - t0
-        print(f"[flow-profile] analyzer.{label}: {elapsed:.3f}s", file=sys.stderr, flush=True)
+        _profile.pop("analyzer", label, elapsed, depth)
+        if _FLOW_PROFILE_ON:
+            print(f"[flow-profile] analyzer.{label}: {elapsed:.3f}s", file=sys.stderr, flush=True)
 
 
 def run(group: df_honey_group, meta: Optional[ReportMeta] = None,

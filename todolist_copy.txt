@@ -1,23 +1,91 @@
-Progress Bar 에서 시간이 step 마다 멈춰 있는데 시간은 초단위로 따로 계속 흘러갔으면 좋겠다. 멈춰 있으니까 마치 tool 이 멈춰 있는것 처럼 보인다. 모든 Progress bar 에 그렇게 적용 가능할까?
+clinet/report_generator/xlsx_writer.py - openpyxl -> xlwings 변환
+
+현재 [clinet/report_generator/xlsx_writer.py] (clinet/report_generator/xlsx_writer.py) 는 하이브리드 :
+phase 1 openpyxl : summary/yield/cpk/fail_item/issue_table + raw_data 시트 생성 스타일링 저장
+phase 2 xlwings : distribution 차트 + PNG 부착
+
+이걸 단일 xlwings 세션으로 통합
+
+기능은 그대로 유지 하고 변환은 출력 레이어 (openpyxl 호출 -> xlwgins 호출) 만
+
+호출부 ([client/honey_main.py:1100](client/honey_main.py#L1100)) 는 변경하지 않는다.
+
+# 변환규칙 
+## A . 진입점 골격
+
+'write()' 시작에서 'xw.App' 컨텍스트 1개를 열고 끝까지 그안에서 처리. openpyxl 워크북 생성 저장 호출 모두 제거 . distribution phase 2 의 '_write_distribuition_xlwgins' 가 별도로 앱을 다시 여는 부분도 제거하고 같은 'wb' 객체를 '_write_distribution()' 에 그대로 전달
+
+```python
+import xlwings as xw
+with xw.App(visible = False, add_book=False) as app:
+	app.Calculation = 'manual'
+	wb = app.books.add()
+	# 1. raw data 시트들 (잇으면)
+	# 2. table 시트들 (summary / yield / cpk / faii_item/ issue_table)
+	# 3. diff CPK 시트들 (있으면)
+	# 4. distribution 시트 + 차트 + PNG 부착
+	wb.save(out_path)
+	app.Calculation = 'automatic'
+	wb.Close()
+```
+
+B. Raw data 시트 
+기존 `_fill_raw_data(ws,df)' 의 호출 부분을 아래 함수를 사용한다.
+raw data copy 할때 df_to_excel_sheet_toward_csv(df_input, sheet_name, destination_sheet, index_header_flag):
+
+df_input.to_csv('df_temp.csv', index = index_header_flag)
+wb_x_value = xw.Book('df_temp.csv')
+ws_x_value = wb_x_value.sheets['df_temp']
+ws_x_value.anme = str(sheet_name)
+ws_x_value.api.Copy(Before=detination_sheet.api)
+wb_x_value.close()
+if os.path_exists('df_temp.csv');
+	os.remove('df_temp.csv')
+del df_input
 
 
-excel 생성 관련
-CPK 가 생성 안되는 상태(option 에서 CPK uncheck 상태)면 Issue Table 에 CPK 부분은 빈칸으로 놔둬줘
-Cpk Item명 C열 ISsue_table D열 열너비 2배로 해줘 (Item 명)
-Raw data check 했을때 만들어지는 sheet 는 눈금선 추가해줱
+C. Table 시트
+각 '_Fill_"함수 시그니처('ws,result') 는 유지하고 본문만 xlwings 로 치환. 
+이미 분석은 끝났으니 셀 기입 + 스타일만 바뀐다.
 
-Main ui
-Product Type, Local File Server upload 버튼 반반 나눠주고 Local File server upload 버튼은 grid 내 버튼 꽉채워줘
+openpyxl -> xlwings 매핑 표
 
-client/honey_main.py 수정해줘
-배경 : NASCA DRM xlsx 는 ZIP 이 아니라 zipfile.zipFILE() 검증에서 차단됨. xlwings 로 우회해야함.
+'wb = openpyxl.Workbook()' -> wb = app.books.add()
+wb.create_sheet(name) -> wb.sheets.add(name, after=wb.sheets[-1])
+wb.remove(ws) / del wb[name] -> wb.sheets[name].delete()
+ws.cell(row=r, column=c, value=v) -> ws.range((r,c)).value = v
+일괄 기입(2D 리스트) -> ws.range((r.c)).value = rows
+ws.merge_cells(B3:D3:) -> ws.range(B3:D3).merge()
+ws.column_dimensions['B'].width = w -> ws.range(B:B).column_width = w
+ws.row_dimensions[r].height = h -> ws.range(f'{r}:{r}).row_height = h
+ws.sheet_view.zoomScale = 80 -> ws.api.Parent.windows(1).Zoom = 80 (또는 wb.app.api.Activewindow.zoom)
+wsheet_view.showgridlines = False -> ws.api.Parent.Windows(1).DisplayGridlines = False
 
-수정 내용 3가지 
-_extract_via_xlwings(src_path)함수 추가
-xw.app(visible=False, add_book=False) 로 열어 DRM 자동 복호화
-각 시트 cell 값을 used_range.value 로 읽어 openpyxl workbook 에 위치 보존하며 복사(distribution/_dist 시트 제외)
-issue_table 시트 이미지는 sheet.pictures -> pic.api.Copy() -> win32clipboard PNG format 으로 추출, row 는 pic.api.Topleftcell.row - (header_row+1)(0-based)
-tempfile 에 저장 후 (tmp_path, issue_imgs) 반환, finally 에서 wb.close(); app.quit()
-2. _prepare_upload_xlsx() 반환 을 3tuple 로 변경
-BadzipFile 시에 헤더에 "NASCA" 있으면 _extract_via_xlwings() 호출, 실패 시 에러
-3. _do_upload() 에서 3-tuple 언패킹 후 uploader.post_xlsx(..., issue_imgs = issue_imgs) 추가
+스타일은 EXcel Com ('.api')로 : 
+기존 모듈 상단 색상/폰트 상수는 유지하되 적용함수만 xlwings 로. ARGB 8자리 뒤 6자리만 빼서 _rgb_int 입력
+
+** 범위 단위 일괄 적용 ** 으로 셀 단위 호출 최소화 예 : 헤더 1행 전체에 '_apply_hdr_style_xw(ws.range((3,2),(3,2+ncols-1)))'
+
+Distribution 차트는 그대로
+_write_distribution_xlwings() 의 "App/Workbook 직접 열기" 부분은 제거
+호출 시그니처를 (wb, result, colors, ...) 로 바꿔 상위 컨텍스트의 wb 를 그대로 받게 함.
+zoom 이나 grid line 는 ㅅ단일 세션안에서
+
+diff 시트
+diff_cpk_sepc : _fill_cpk_rows(ws,rows) 본문도 c 규칙대로 xlwgins 변환
+diff_dst_spec : distribution 챁 ㅡ그리는 함수에 위임
+
+정리
+from openpyxl ... import 전부 제거 copy, path 등은 남김
+wb.save() 는 컨텍스트 안에서 1회
+_finalize_openpyxl_sheet_layouts, normalize reportsheetnames 의 openpyxl 의존 부분도 xlwigns 옮기거나 호출 시점만 단일 세션내로 이동.
+
+수정대상 파일
+
+clinet/report_generator/xlsx_writer.py 단일 파일
+호출부 변경 없음 (clinet/honey_main.py:1100)
+
+verification 
+더미 xlsx 입력으로 honey 실행
+DUT 정리 bin1 only 제외 모두 체크해서 진행
+동일 입력으로 변환전 산출물과 비교 시트 구성 셀값 스타일 일치
