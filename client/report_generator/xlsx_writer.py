@@ -1824,8 +1824,9 @@ def _build_compact_dist_y(df_x_list):
     valid points, so subjects with the same count can share one Y column.
     """
     if not df_x_list:
-        return pd.DataFrame(), [], {
+        return pd.DataFrame(), [], [], {
             "full_y_cells": 0, "compact_y_cells": 0, "unique_counts": 0,
+            "unique_count_cases": 0, "valid_refs": 0, "trimmed_nan_tail": 0,
         }
 
     count_arrs = [df.notna().sum().astype(int).to_numpy() for df in df_x_list]
@@ -1855,10 +1856,14 @@ def _build_compact_dist_y(df_x_list):
     df_y = pd.concat(y_blocks, ignore_index=True) if y_blocks else pd.DataFrame(columns=columns)
     full_y_cells = sum(df.shape[0] * df.shape[1] for df in df_x_list)
     compact_y_cells = df_y.shape[0] * df_y.shape[1]
-    return df_y, y_cols_by_source, {
+    valid_refs = sum(int(counts.sum()) for counts in count_arrs)
+    return df_y, y_cols_by_source, count_arrs, {
         "full_y_cells": full_y_cells,
         "compact_y_cells": compact_y_cells,
         "unique_counts": max_unique_counts,
+        "unique_count_cases": sum(len(counts) for counts in unique_counts_by_source),
+        "valid_refs": valid_refs,
+        "trimmed_nan_tail": full_y_cells - valid_refs,
     }
 
 
@@ -1872,7 +1877,7 @@ def _unique_helper_name(base, existing):
 
 
 def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_min,
-                     y_cols_by_source):
+                     y_cols_by_source, count_matrix):
     """SeriesCollection 에 LSL/USL(배열리터럴) + source 데이터 series(정리/정리_Y range) 추가.
 
     series 1=LSL, 2=USL(없으면 차트 밖 -2,-2), 3+=source. 반환 (limit_series, data_series).
@@ -1899,14 +1904,21 @@ def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_mi
     with _dist_time("dist.loop.series_sources"):
         for k, name in enumerate(src_names):
             n = cnt_list[k]
-            r1, r2 = y + 2, y + n + 1
+            valid_count = min(int(count_matrix[k][col_idx]), n)
+            r1 = y + 2
             y += n
-            x_ref = f"='{x_sheet}'!${col}${r1}:${col}${r2}"
-            y_col = y_cols_by_source[k][col_idx]
-            y_ref = f"='{y_sheet}'!${y_col}${r1}:${y_col}${r2}"
             s = sc.NewSeries()
-            s.XValues = x_ref
-            s.Values = y_ref
+            if valid_count > 0:
+                r2 = r1 + valid_count - 1
+                x_ref = f"='{x_sheet}'!${col}${r1}:${col}${r2}"
+                y_col = y_cols_by_source[k][col_idx]
+                y_ref = f"='{y_sheet}'!${y_col}${r1}:${y_col}${r2}"
+                s.XValues = x_ref
+                s.Values = y_ref
+            else:
+                s.XValues = (x_min if x_min is not None else 0.0,
+                             x_min if x_min is not None else 0.0)
+                s.Values = (-2.0, -2.0)
             s.Name = str(name)
             data_series.append(s)
     return limit_series, data_series
@@ -1924,7 +1936,7 @@ def _style_series(limit_series, data_series, colors):
 
 
 def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
-                    colors, x_min, x_max, is_fail, y_cols_by_source):
+                    colors, x_min, x_max, is_fail, y_cols_by_source, count_matrix):
     """차트 1개 독립 생성+서식 (정리/정리_Y range 참조). 반환: COM Chart."""
     left, top = _chart_pos(i)
     with _prof("dist.series_add"):
@@ -1934,7 +1946,7 @@ def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
             sc = chart.SeriesCollection()
         limit_series, data_series = _add_dist_series(
             sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_min,
-            y_cols_by_source)
+            y_cols_by_source, count_matrix)
         with _dist_time("dist.loop.chart_type"):
             ch.chart_type = "xy_scatter_lines_no_markers"
     _prof_count("series", len(limit_series) + len(data_series))
@@ -1947,12 +1959,12 @@ def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
 
 def _new_dist_chart_from_template(sh, template_cache, i, d, x_sheet, y_sheet, col_idx,
                                   cnt_list, src_names, colors, x_min, x_max, is_fail,
-                                  y_cols_by_source):
+                                  y_cols_by_source, count_matrix):
     """Clone a formatted chart template, then rebind subject-specific data."""
     if not _DIST_CHART_TEMPLATE:
         return _new_dist_chart(
             sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, colors,
-            x_min, x_max, is_fail, y_cols_by_source)
+            x_min, x_max, is_fail, y_cols_by_source, count_matrix)
 
     key = len(src_names)
     template = template_cache.get(key)
@@ -1962,7 +1974,7 @@ def _new_dist_chart_from_template(sh, template_cache, i, d, x_sheet, y_sheet, co
             # Keep the cached chart neutral; fail background is applied dynamically.
             chart = _new_dist_chart(
                 sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, colors,
-                x_min, x_max, False, y_cols_by_source)
+                x_min, x_max, False, y_cols_by_source, count_matrix)
         template_cache[key] = chart
         with _dist_time("dist.template.dynamic_format"):
             _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail)
@@ -1975,7 +1987,7 @@ def _new_dist_chart_from_template(sh, template_cache, i, d, x_sheet, y_sheet, co
         with _dist_time("dist.template.rebind_series"):
             _rebind_dist_chart_series(
                 chart, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
-                x_min, y_cols_by_source)
+                x_min, y_cols_by_source, count_matrix)
         with _dist_time("dist.template.dynamic_format"):
             _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail)
         return chart
@@ -1985,7 +1997,7 @@ def _new_dist_chart_from_template(sh, template_cache, i, d, x_sheet, y_sheet, co
         with _dist_time("dist.template.fallback"):
             return _new_dist_chart(
                 sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, colors,
-                x_min, x_max, is_fail, y_cols_by_source)
+                x_min, x_max, is_fail, y_cols_by_source, count_matrix)
 
 
 def _clone_dist_chart_from_template(template_chart, left, top):
@@ -2030,7 +2042,7 @@ def _chart_object_from_duplicate(dup):
 
 
 def _rebind_dist_chart_series(chart, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
-                              x_min, y_cols_by_source):
+                              x_min, y_cols_by_source, count_matrix):
     col = get_column_letter(col_idx + 2)
     lo = float(d.lower_limit) if _isnum(d.lower_limit) else None
     hi = float(d.upper_limit) if _isnum(d.upper_limit) else None
@@ -2049,12 +2061,19 @@ def _rebind_dist_chart_series(chart, d, x_sheet, y_sheet, col_idx, cnt_list, src
     y = 0
     for k, name in enumerate(src_names):
         n = cnt_list[k]
-        r1, r2 = y + 2, y + n + 1
+        valid_count = min(int(count_matrix[k][col_idx]), n)
+        r1 = y + 2
         y += n
-        y_col = y_cols_by_source[k][col_idx]
         s = sc(k + 3)
-        s.XValues = f"='{x_sheet}'!${col}${r1}:${col}${r2}"
-        s.Values = f"='{y_sheet}'!${y_col}${r1}:${y_col}${r2}"
+        if valid_count > 0:
+            r2 = r1 + valid_count - 1
+            y_col = y_cols_by_source[k][col_idx]
+            s.XValues = f"='{x_sheet}'!${col}${r1}:${col}${r2}"
+            s.Values = f"='{y_sheet}'!${y_col}${r1}:${y_col}${r2}"
+        else:
+            s.XValues = (x_min if x_min is not None else 0.0,
+                         x_min if x_min is not None else 0.0)
+            s.Values = (-2.0, -2.0)
         s.Name = str(name)
 
 
@@ -2102,18 +2121,21 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
             with _dist_time("dist.data_prepare"):
                 df_x_list = [sort_alldata(df, True).reset_index(drop=True) for df in src_dfs]
                 df_x = pd.concat(df_x_list, ignore_index=True)
-                df_y, y_cols_by_source, y_stats = _build_compact_dist_y(df_x_list)
+                df_y, y_cols_by_source, count_matrix, y_stats = _build_compact_dist_y(df_x_list)
                 cnt_list = [df.shape[0] for df in df_x_list]   # source별 DUT 수(모든 subject 균일)
                 reduction = 0.0
                 if y_stats["full_y_cells"]:
                     reduction = 100.0 * (1.0 - (
                         y_stats["compact_y_cells"] / y_stats["full_y_cells"]))
                 _emit_profile_info(
-                    "Dist helper Y mode: compact "
+                    "Dist helper Y mode: sheet count_cases "
                     f"x_cells={df_x.shape[0] * df_x.shape[1]:,} "
                     f"full_y_cells={y_stats['full_y_cells']:,} "
                     f"compact_y_cells={y_stats['compact_y_cells']:,} "
                     f"unique_counts={y_stats['unique_counts']} "
+                    f"unique_count_cases={y_stats['unique_count_cases']} "
+                    f"valid_refs={y_stats['valid_refs']:,} "
+                    f"trimmed_nan_tail={y_stats['trimmed_nan_tail']:,} "
                     f"reduction={reduction:.1f}%"
                 )
 
@@ -2164,7 +2186,8 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
             try:
                 chart_map[d.subject] = _new_dist_chart_from_template(
                     sh, template_cache, i, d, x_name, y_name, i, cnt_list,
-                    src_names, colors, x_min, x_max, is_fail, y_cols_by_source)
+                    src_names, colors, x_min, x_max, is_fail, y_cols_by_source,
+                    count_matrix)
             except Exception as _e:
                 print(f"[dist-chart] skip subject={d.subject!r}: {_e}", file=sys.stderr)
             col = i % _CHARTS_PER_ROW
