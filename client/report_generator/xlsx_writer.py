@@ -50,6 +50,9 @@ if _PNG_ATTACH_MODE not in {"export", "move_first_export", "copy_picture"}:
 _PNG_SUBJECT_CACHE = os.environ.get("HONEY_PNG_SUBJECT_CACHE", "").strip().lower() in {
     "1", "true", "yes", "on",
 }
+_DIST_CHART_TEMPLATE = os.environ.get("HONEY_DIST_CHART_TEMPLATE", "1").strip().lower() not in {
+    "0", "false", "off", "no",
+}
 
 
 @contextlib.contextmanager
@@ -115,6 +118,7 @@ def _profile_info_time(label):
 def _new_dist_stats():
     return {
         "timings": defaultdict(lambda: {"total": 0.0, "count": 0, "max": 0.0}),
+        "template": defaultdict(int),
         "png": defaultdict(lambda: {
             "count": 0, "direct": 0, "moved": 0, "copy_picture": 0,
             "cache": 0, "failed": 0, "bytes": 0,
@@ -130,6 +134,13 @@ def _dist_add_time(bucket, elapsed):
     rec["total"] += elapsed
     rec["count"] += 1
     rec["max"] = max(rec["max"], elapsed)
+
+
+def _dist_count_template(kind, n=1):
+    stats = _CURRENT_DIST_STATS.get()
+    if stats is None:
+        return
+    stats["template"][kind] += n
 
 
 @contextlib.contextmanager
@@ -181,14 +192,17 @@ def _dist_emit_summary():
     timings = stats["timings"]
     _emit_profile_info(
         f"Distribution debug: png_mode={_PNG_ATTACH_MODE} "
-        f"png_cache={'on' if _PNG_SUBJECT_CACHE else 'off'}"
+        f"png_cache={'on' if _PNG_SUBJECT_CACHE else 'off'} "
+        f"chart_template={'on' if _DIST_CHART_TEMPLATE else 'off'}"
     )
     loop_order = [
-        "dist.loop.finite_scan", "dist.loop.axis_range", "dist.loop.step_flags",
+        "dist.loop.finite_scan", "dist.loop.axis_range",
         "dist.loop.chart_add", "dist.loop.series_limits", "dist.loop.series_sources",
         "dist.loop.chart_type", "dist.loop.style_limits", "dist.loop.style_sources",
         "dist.loop.axis_format", "dist.loop.title_format", "dist.loop.plot_format",
         "dist.loop.legend_format", "dist.loop.fail_bg",
+        "dist.template.create", "dist.template.clone", "dist.template.rebind_series",
+        "dist.template.dynamic_format", "dist.template.fallback",
     ]
     for bucket in loop_order:
         rec = timings.get(bucket)
@@ -196,6 +210,15 @@ def _dist_emit_summary():
             _emit_profile_info(
                 f"Dist loop {bucket.removeprefix('dist.loop.')}: {_dist_format_time(rec)}"
             )
+    template_stats = stats.get("template") or {}
+    if template_stats:
+        _emit_profile_info(
+            "Dist template stats: "
+            f"on={'1' if _DIST_CHART_TEMPLATE else '0'} "
+            f"hit={template_stats.get('hit', 0)} "
+            f"miss={template_stats.get('miss', 0)} "
+            f"fallback={template_stats.get('fallback', 0)}"
+        )
     for sheet_name in ("fail_item", "issue_table"):
         rec = stats["png"].get(sheet_name)
         if not rec or not rec["count"]:
@@ -289,6 +312,7 @@ _MSO_FALSE = 0                # msoFalse (LineFormat.Visible — 선 숨김)
 _MSO_LINE_SYSDASH = 10        # msoLineSysDash (limit line)
 _RGB_RED = 255               # RGB(255,0,0)
 _RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail 차트 배경)
+_RGB_WHITE = 255 + 255 * 256 + 255 * 65536
 
 _CPK_THRESHOLD = 1.33
 _CPK_WARN_FILL_RGB = "FFFFFF00"  # 노란색 ARGB — CPK < 1.33 행 하이라이트
@@ -1888,7 +1912,7 @@ def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_mi
     return limit_series, data_series
 
 
-def _style_series(limit_series, data_series, colors, step_flags=None):
+def _style_series(limit_series, data_series, colors):
     """limit/data series 스타일 일괄 적용."""
     with _dist_time("dist.loop.style_limits"):
         for s in limit_series:
@@ -1896,12 +1920,11 @@ def _style_series(limit_series, data_series, colors, step_flags=None):
     with _dist_time("dist.loop.style_sources"):
         for k, s in enumerate(data_series):
             rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
-            is_step = bool(step_flags[k]) if step_flags and k < len(step_flags) else False
-            _style_data_series(s, rgb, is_step)
+            _style_data_series(s, rgb)
 
 
 def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
-                    colors, x_min, x_max, is_fail, step_flags, y_cols_by_source):
+                    colors, x_min, x_max, is_fail, y_cols_by_source):
     """차트 1개 독립 생성+서식 (정리/정리_Y range 참조). 반환: COM Chart."""
     left, top = _chart_pos(i)
     with _prof("dist.series_add"):
@@ -1916,10 +1939,129 @@ def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
             ch.chart_type = "xy_scatter_lines_no_markers"
     _prof_count("series", len(limit_series) + len(data_series))
     with _prof("dist.style"):
-        _style_series(limit_series, data_series, colors, step_flags)
+        _style_series(limit_series, data_series, colors)
     with _prof("dist.format"):
         _format_dist_chart(chart, d, x_min, x_max, len(limit_series), is_fail)
     return chart
+
+
+def _new_dist_chart_from_template(sh, template_cache, i, d, x_sheet, y_sheet, col_idx,
+                                  cnt_list, src_names, colors, x_min, x_max, is_fail,
+                                  y_cols_by_source):
+    """Clone a formatted chart template, then rebind subject-specific data."""
+    if not _DIST_CHART_TEMPLATE:
+        return _new_dist_chart(
+            sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, colors,
+            x_min, x_max, is_fail, y_cols_by_source)
+
+    key = len(src_names)
+    template = template_cache.get(key)
+    if template is None:
+        _dist_count_template("miss")
+        with _dist_time("dist.template.create"):
+            # Keep the cached chart neutral; fail background is applied dynamically.
+            chart = _new_dist_chart(
+                sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, colors,
+                x_min, x_max, False, y_cols_by_source)
+        template_cache[key] = chart
+        with _dist_time("dist.template.dynamic_format"):
+            _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail)
+        return chart
+
+    _dist_count_template("hit")
+    try:
+        with _dist_time("dist.template.clone"):
+            chart = _clone_dist_chart_from_template(template, *_chart_pos(i))
+        with _dist_time("dist.template.rebind_series"):
+            _rebind_dist_chart_series(
+                chart, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
+                x_min, y_cols_by_source)
+        with _dist_time("dist.template.dynamic_format"):
+            _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail)
+        return chart
+    except Exception as exc:
+        _dist_count_template("fallback")
+        _log_chart_attach(f"Distribution template fallback subject={d.subject!r}: {exc!r}")
+        with _dist_time("dist.template.fallback"):
+            return _new_dist_chart(
+                sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, colors,
+                x_min, x_max, is_fail, y_cols_by_source)
+
+
+def _clone_dist_chart_from_template(template_chart, left, top):
+    chart_object = _chart_object(template_chart)
+    if chart_object is None:
+        raise RuntimeError("template chart object not found")
+    dup = chart_object.Duplicate()
+    dup_obj = _chart_object_from_duplicate(dup)
+    if dup_obj is None:
+        raise RuntimeError("template duplicate did not return a chart object")
+    dup_obj.Left = left
+    dup_obj.Top = top
+    dup_obj.Width = _CHART_W
+    dup_obj.Height = _CHART_H
+    return dup_obj.Chart
+
+
+def _chart_object_from_duplicate(dup):
+    candidates = [dup]
+    for attr in ("Item",):
+        try:
+            candidates.append(getattr(dup, attr)(1))
+        except Exception:
+            pass
+    for obj in candidates:
+        if obj is None:
+            continue
+        try:
+            chart = obj.Chart
+            if chart is not None:
+                return obj
+        except Exception:
+            pass
+        try:
+            shape = obj.ShapeRange.Item(1)
+            chart = shape.Chart
+            if chart is not None:
+                return shape
+        except Exception:
+            pass
+    return None
+
+
+def _rebind_dist_chart_series(chart, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
+                              x_min, y_cols_by_source):
+    col = get_column_letter(col_idx + 2)
+    lo = float(d.lower_limit) if _isnum(d.lower_limit) else None
+    hi = float(d.upper_limit) if _isnum(d.upper_limit) else None
+    xv0 = x_min if x_min is not None else 0.0
+    sc = chart.SeriesCollection()
+    for idx, (lim, nm) in enumerate(((lo, "LSL"), (hi, "USL")), start=1):
+        s = sc(idx)
+        if lim is not None:
+            s.XValues = (lim, lim)
+            s.Values = (-1.0, 1.0)
+        else:
+            s.XValues = (xv0, xv0)
+            s.Values = (-2.0, -2.0)
+        s.Name = nm
+
+    y = 0
+    for k, name in enumerate(src_names):
+        n = cnt_list[k]
+        r1, r2 = y + 2, y + n + 1
+        y += n
+        y_col = y_cols_by_source[k][col_idx]
+        s = sc(k + 3)
+        s.XValues = f"='{x_sheet}'!${col}${r1}:${col}${r2}"
+        s.Values = f"='{y_sheet}'!${y_col}${r1}:${y_col}${r2}"
+        s.Name = str(name)
+
+
+def _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail):
+    _format_dist_chart_title(chart, d)
+    _format_dist_chart_x_axis(chart, x_min, x_max)
+    _format_dist_chart_fail_bg(chart, is_fail, reset=True)
 
 
 def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
@@ -2000,6 +2142,7 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
     index_entries = []
     n_charts = len(dists)
     done = 0
+    template_cache = {}
     with _profile_info_time(f"distribution.chart_create[{profile_label}]"):
         for i, d in enumerate(dists):
             with _dist_time("dist.loop.finite_scan"):
@@ -2017,16 +2160,11 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
                 is_fail = (_isnum(lo) and data_min < float(lo)) or (
                     _isnum(hi) and data_max > float(hi))
                 x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
-            with _dist_time("dist.loop.step_flags"):
-                step_flags = []
-                for c in cols:
-                    real = c[np.isfinite(c)]
-                    step_flags.append(bool(real.size >= 2 and real[0] == real[1]))
 
             try:
-                chart_map[d.subject] = _new_dist_chart(
-                    sh, i, d, x_name, y_name, i, cnt_list, src_names, colors,
-                    x_min, x_max, is_fail, step_flags, y_cols_by_source)
+                chart_map[d.subject] = _new_dist_chart_from_template(
+                    sh, template_cache, i, d, x_name, y_name, i, cnt_list,
+                    src_names, colors, x_min, x_max, is_fail, y_cols_by_source)
             except Exception as _e:
                 print(f"[dist-chart] skip subject={d.subject!r}: {_e}", file=sys.stderr)
             col = i % _CHARTS_PER_ROW
@@ -2071,39 +2209,23 @@ def _style_limit_series(s):
         pass
 
 
-def _style_data_series(s, rgb=None, is_step=False):
-    """data series 스타일: step 여부에 따라 선분 또는 점."""
-    if is_step:
-        # 정수형 중복 data: 선분으로 표현
+def _style_data_series(s, rgb=None):
+    """Source data series: always show all DUT values as dot markers."""
+    try:
+        s.Format.Line.Visible = _MSO_FALSE
+    except Exception:
+        pass
+    try:
+        s.MarkerStyle = _XL_MARKER_CIRCLE
+        s.MarkerSize = _MARKER_SIZE
+    except Exception:
+        pass
+    if rgb is not None:
         try:
-            line = s.Format.Line
-            line.Visible = _MSO_TRUE
-            line.Weight = _MARKER_SIZE / 2.0
-            if rgb is not None:
-                line.ForeColor.RGB = rgb
+            s.MarkerBackgroundColor = rgb
+            s.MarkerForegroundColor = rgb
         except Exception:
             pass
-        try:
-            s.MarkerStyle = _XL_MARKER_NONE
-        except Exception:
-            pass
-    else:
-        # 연속형 data: 기존 점 방식
-        try:
-            s.Format.Line.Visible = _MSO_FALSE
-        except Exception:
-            pass
-        try:
-            s.MarkerStyle = _XL_MARKER_CIRCLE
-            s.MarkerSize = _MARKER_SIZE
-        except Exception:
-            pass
-        if rgb is not None:
-            try:
-                s.MarkerBackgroundColor = rgb
-                s.MarkerForegroundColor = rgb
-            except Exception:
-                pass
 
 
 def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
@@ -2121,31 +2243,8 @@ def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
             yax.TickLabelPosition = _XL_LOW
         except Exception:
             pass
-        try:
-            xax = chart.Axes(_XL_CATEGORY, _XL_PRIMARY)
-            if x_min is not None and x_max is not None and x_min < x_max:
-                xax.MinimumScale = x_min
-                xax.MaximumScale = x_max
-            xax.HasMinorGridlines = True
-            xax.TickLabels.Font.Size = 8
-        except Exception:
-            pass
-    with _dist_time("dist.loop.title_format"):
-        try:
-            chart.HasTitle = True
-            title = chart.ChartTitle
-            cap = _limit_caption(d)          # item 명 아래 줄: (LO ~ HI units)
-            title.Text = d.subject + "\n" + cap
-            tf = title.Font
-            tf.Name = "Arial Black"
-            tf.Size = _CHART_TITLE_ITEM_FONT
-            try:                             # 둘째 줄(캡션)은 작게
-                title.Characters(len(d.subject) + 2, len(cap)).Font.Size = _CHART_TITLE_CAP_FONT
-            except Exception:
-                pass
-            title.Top = 0
-        except Exception:
-            pass
+        _format_dist_chart_x_axis(chart, x_min, x_max)
+    _format_dist_chart_title(chart, d)
     with _dist_time("dist.loop.plot_format"):
         try:
             pa = chart.PlotArea
@@ -2167,12 +2266,48 @@ def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
                     pass
         except Exception:
             pass
-    if is_fail:
-        with _dist_time("dist.loop.fail_bg"):
-            try:
-                chart.ChartArea.Interior.Color = _RGB_FAIL_BG
+    _format_dist_chart_fail_bg(chart, is_fail)
+
+
+def _format_dist_chart_title(chart, d):
+    with _dist_time("dist.loop.title_format"):
+        try:
+            chart.HasTitle = True
+            title = chart.ChartTitle
+            cap = _limit_caption(d)          # item 명 아래 줄: (LO ~ HI units)
+            title.Text = d.subject + "\n" + cap
+            tf = title.Font
+            tf.Name = "Arial Black"
+            tf.Size = _CHART_TITLE_ITEM_FONT
+            try:                             # 둘째 줄(캡션)은 작게
+                title.Characters(len(d.subject) + 2, len(cap)).Font.Size = _CHART_TITLE_CAP_FONT
             except Exception:
                 pass
+            title.Top = 0
+        except Exception:
+            pass
+
+
+def _format_dist_chart_x_axis(chart, x_min, x_max):
+    try:
+        xax = chart.Axes(_XL_CATEGORY, _XL_PRIMARY)
+        if x_min is not None and x_max is not None and x_min < x_max:
+            xax.MinimumScale = x_min
+            xax.MaximumScale = x_max
+        xax.HasMinorGridlines = True
+        xax.TickLabels.Font.Size = 8
+    except Exception:
+        pass
+
+
+def _format_dist_chart_fail_bg(chart, is_fail, reset=False):
+    if not (is_fail or reset):
+        return
+    with _dist_time("dist.loop.fail_bg"):
+        try:
+            chart.ChartArea.Interior.Color = _RGB_FAIL_BG if is_fail else _RGB_WHITE
+        except Exception:
+            pass
 
 
 # ── x축 범위 계산 헬퍼 ───────────────────────────────────────────────────────

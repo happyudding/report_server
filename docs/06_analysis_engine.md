@@ -72,10 +72,10 @@ row5+: DUT 측정 데이터
 
 ## Distribution / PNG
 - Distribution 데이터 다운샘플링은 하지 않는다. 모든 DUT 값이 정렬 X 데이터와 rank/count Y 데이터로 반영된다.
-- writer 는 source별 `numeric_frame` 을 subject 열 기준으로 정렬해 숨김 helper 시트 `정리`, `정리_Y` 에 bulk write 한다.
+- writer 는 source별 `numeric_frame` 을 subject 열 기준으로 정렬해 숨김 helper 시트 `정리` 에 bulk write 하고, `정리_Y` 는 count 기반 compact helper 로 작성한다.
 - 차트 series 는 `정리/정리_Y` 의 source별 행 구간을 참조한다. LSL/USL 은 range 가 아니라 배열 literal 로 넣어 series index 를 안정화한다.
 - 차트는 5개/행, 324×198 크기로 배치하고, AG열에 `Item Index (Ctrl+F)` 를 둔다.
-- fail chart 는 연노랑 배경, limit line 은 빨간 sysdash, 정수형 step 데이터는 선분, 그 외 데이터는 점으로 표시한다.
+- fail chart 는 연노랑 배경, limit line 은 빨간 sysdash, 모든 source data 는 점(marker)으로 표시한다.
 - `fail_item`/`issue_table` 의 Distribution 열에는 distribution 차트를 `Chart.Export(PNG)` 후 `pictures.add` 로 붙인다. Export 실패 시 `CopyPicture` fallback 을 사용한다.
 - `distribution_xlwings_phase` 시간은 차트 생성뿐 아니라 helper 데이터 쓰기, 차트 1000개 생성, fail_item/issue_table PNG export+attach 전체를 포함한다.
 
