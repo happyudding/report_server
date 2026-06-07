@@ -44,6 +44,12 @@ _EXPORT_MOVE_RETRIES = 2
 _EXPORT_RETRY_SLEEP = 0.08
 _EXCEL_QUIT_FILE_READY_RETRIES = 10
 _EXCEL_QUIT_FILE_READY_SLEEP = 1.0
+_PNG_ATTACH_MODE = os.environ.get("HONEY_PNG_ATTACH_MODE", "export").strip().lower()
+if _PNG_ATTACH_MODE not in {"export", "move_first_export", "copy_picture"}:
+    _PNG_ATTACH_MODE = "export"
+_PNG_SUBJECT_CACHE = os.environ.get("HONEY_PNG_SUBJECT_CACHE", "").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 
 
 @contextlib.contextmanager
@@ -111,7 +117,7 @@ def _new_dist_stats():
         "timings": defaultdict(lambda: {"total": 0.0, "count": 0, "max": 0.0}),
         "png": defaultdict(lambda: {
             "count": 0, "direct": 0, "moved": 0, "copy_picture": 0,
-            "failed": 0, "bytes": 0,
+            "cache": 0, "failed": 0, "bytes": 0,
         }),
     }
 
@@ -150,9 +156,11 @@ def _dist_count_png(sheet_name, method, png_path=None):
         rec["moved"] += 1
     elif method == "copy_picture":
         rec["copy_picture"] += 1
+    elif method == "cache":
+        rec["cache"] += 1
     else:
         rec["failed"] += 1
-    if png_path:
+    if png_path and method != "cache":
         try:
             rec["bytes"] += os.path.getsize(png_path)
         except OSError:
@@ -171,6 +179,10 @@ def _dist_emit_summary():
     if not stats:
         return
     timings = stats["timings"]
+    _emit_profile_info(
+        f"Distribution debug: png_mode={_PNG_ATTACH_MODE} "
+        f"png_cache={'on' if _PNG_SUBJECT_CACHE else 'off'}"
+    )
     loop_order = [
         "dist.loop.finite_scan", "dist.loop.axis_range", "dist.loop.step_flags",
         "dist.loop.chart_add", "dist.loop.series_limits", "dist.loop.series_sources",
@@ -192,7 +204,8 @@ def _dist_emit_summary():
         avg_kb = rec["bytes"] / 1024.0 / rec["count"] if rec["count"] else 0.0
         _emit_profile_info(
             f"PNG stats {sheet_name}: count={rec['count']} direct={rec['direct']} "
-            f"moved={rec['moved']} copy={rec['copy_picture']} failed={rec['failed']} "
+            f"moved={rec['moved']} copy={rec['copy_picture']} cache={rec['cache']} "
+            f"failed={rec['failed']} "
             f"total={total_mb:.1f}MB avg={avg_kb:.0f}KB"
         )
         parts = []
@@ -1251,6 +1264,7 @@ def _write_distribution_phase(app, wb, result, colors=None, attach_fail_item=Fal
     token = _CURRENT_DIST_STATS.set(_new_dist_stats())
     tmpdirs = []
     last_sheet = None
+    png_cache = {} if (_PNG_SUBJECT_CACHE and _PNG_ATTACH_MODE != "copy_picture") else None
     try:
         if write_main:
             with _prof("clear"):
@@ -1274,7 +1288,8 @@ def _write_distribution_phase(app, wb, result, colors=None, attach_fail_item=Fal
             if attach_fail_item and chart_map:
                 with _profile_info_time("distribution.attach_fail_item"):
                     tmpdir = _attach_fail_item_charts(
-                        wb, result, chart_map, attach_progress_cb=attach_progress_cb
+                        wb, result, chart_map, attach_progress_cb=attach_progress_cb,
+                        png_cache=png_cache
                     )
                 if tmpdir:
                     tmpdirs.append(tmpdir)
@@ -1282,7 +1297,7 @@ def _write_distribution_phase(app, wb, result, colors=None, attach_fail_item=Fal
                 with _profile_info_time("distribution.attach_issue_table"):
                     tmpdir = _attach_issue_table_charts(
                         wb, result, chart_map, include_cpk=attach_issue_cpk,
-                        attach_progress_cb=attach_progress_cb
+                        attach_progress_cb=attach_progress_cb, png_cache=png_cache
                     )
                 if tmpdir:
                     tmpdirs.append(tmpdir)
@@ -1334,7 +1349,7 @@ def _apply_zoom_gridlines(app, wb, raw_gridline_sheets=None):
             pass
 
 
-def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None):
+def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None, png_cache=None):
     """fail_item 시트의 Distribution 열(각 bin 행)에 fail item 차트 PNG 삽입.
 
     한 bin 에 fail item 이 여럿일 수 있으므로, 해당 행 fail_subjects 전체를 불량율
@@ -1388,7 +1403,8 @@ def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None):
             png = os.path.join(tmpdir, f"fi_{seq}.png")
             seq += 1
             if _attach_chart_picture(fi, ch, png, f"fi_chart_{seq}", left, top, w, h,
-                                     "fail_item", subj, attach_progress_cb):
+                                     "fail_item", subj, attach_progress_cb,
+                                     png_cache=png_cache):
                 _prof_count("pngs")
             done += 1
             _notify_attach_progress(
@@ -1400,7 +1416,7 @@ def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None):
 
 
 def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
-                               attach_progress_cb=None):
+                               attach_progress_cb=None, png_cache=None):
     """issue_table 시트의 Distribution 열(각 데이터 행)에 해당 subject 차트 PNG 삽입.
 
     fail_item 과 동일한 COM Export 방식. dist_col 계산만 issue_table header 기준으로 다름.
@@ -1447,7 +1463,8 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
         png = os.path.join(tmpdir, f"it_{seq}.png")
         seq += 1
         if _attach_chart_picture(it, ch, png, f"it_chart_{seq}", left, top, w, h,
-                                 "issue_table", subj, attach_progress_cb):
+                                 "issue_table", subj, attach_progress_cb,
+                                 png_cache=png_cache):
             _prof_count("pngs")
         done += 1
         _notify_attach_progress(
@@ -1477,7 +1494,8 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
         png = os.path.join(tmpdir, f"it_{seq}.png")
         seq += 1
         if _attach_chart_picture(it, ch, png, f"it_chart_{seq}", left, top, w, h,
-                                 "issue_table", subj, attach_progress_cb):
+                                 "issue_table", subj, attach_progress_cb,
+                                 png_cache=png_cache):
             _prof_count("pngs")
         done += 1
         _notify_attach_progress(
@@ -1488,28 +1506,41 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
 
 
 def _attach_chart_picture(sheet, chart, png_path, name, left, top, width, height,
-                          sheet_name, subject, attach_progress_cb=None):
+                          sheet_name, subject, attach_progress_cb=None, png_cache=None):
     """Export a COM chart as PNG, then embed it as a picture on target sheet."""
     try:
+        if _PNG_ATTACH_MODE == "copy_picture":
+            _notify_attach_progress(attach_progress_cb, "copy_picture", sheet_name, subject)
+            with _prof(f"{sheet_name}.copy_picture"):
+                with _dist_time(f"png.{sheet_name}.copy_picture.total"):
+                    _copy_chart_picture_to_sheet(
+                        chart, sheet, name, left, top, width, height, sheet_name=sheet_name)
+            _dist_count_png(sheet_name, "copy_picture")
+            return True
+
+        cached_png = png_cache.get(subject) if png_cache is not None else None
+        if cached_png and os.path.exists(cached_png):
+            with _prof(f"{sheet_name}.picadd"):
+                with _dist_time(f"png.{sheet_name}.picture_add"):
+                    _add_picture_from_file(sheet, cached_png, name, left, top, width, height)
+            _dist_count_png(sheet_name, "cache", cached_png)
+            return True
+
         export_t0 = time.perf_counter()
         with _prof(f"{sheet_name}.export"):
-            method = _export_chart_png_stable(chart, png_path)
+            if _PNG_ATTACH_MODE == "move_first_export":
+                method = _export_chart_png_move_first(chart, png_path)
+            else:
+                method = _export_chart_png_stable(chart, png_path)
         export_elapsed = time.perf_counter() - export_t0
         if method:
             export_bucket = "export.direct" if method == "direct" else "export.moved"
             _dist_add_time(f"png.{sheet_name}.{export_bucket}", export_elapsed)
             with _prof(f"{sheet_name}.picadd"):
                 with _dist_time(f"png.{sheet_name}.picture_add"):
-                    sheet.pictures.add(
-                        png_path,
-                        link_to_file=False,
-                        save_with_document=True,
-                        name=name,
-                        left=left,
-                        top=top,
-                        width=width,
-                        height=height,
-                    )
+                    _add_picture_from_file(sheet, png_path, name, left, top, width, height)
+            if png_cache is not None:
+                png_cache[subject] = png_path
             _dist_count_png(sheet_name, method, png_path)
             return True
         _dist_add_time(f"png.{sheet_name}.export.failed", export_elapsed)
@@ -1525,6 +1556,19 @@ def _attach_chart_picture(sheet, chart, png_path, name, left, top, width, height
         _dist_count_png(sheet_name, "failed")
         _log_chart_attach(f"{sheet_name}:{subject} attach failed: {exc!r}")
         return False
+
+
+def _add_picture_from_file(sheet, png_path, name, left, top, width, height):
+    sheet.pictures.add(
+        png_path,
+        link_to_file=False,
+        save_with_document=True,
+        name=name,
+        left=left,
+        top=top,
+        width=width,
+        height=height,
+    )
 
 
 def _export_chart_png_stable(chart, png_path):
@@ -1547,6 +1591,33 @@ def _export_chart_png_stable(chart, png_path):
                 return f"moved{attempt}"
     except Exception as exc:
         _log_chart_attach(f"Chart.Export move retry failed: {exc!r}")
+    finally:
+        if old_left is not None and old_top is not None:
+            try:
+                chart_object.Left = old_left
+                chart_object.Top = old_top
+            except Exception:
+                pass
+    return None
+
+
+def _export_chart_png_move_first(chart, png_path):
+    """Move the chart into Excel's renderable area before the first PNG export."""
+    chart_object = _chart_object(chart)
+    if chart_object is None:
+        return None
+
+    old_left = old_top = None
+    try:
+        old_left, old_top = chart_object.Left, chart_object.Top
+        for attempt in range(1, _EXPORT_MOVE_RETRIES + 2):
+            chart_object.Left = 0
+            chart_object.Top = _DIST_TITLE_PX + (attempt - 1) * (_CHART_H + 6)
+            time.sleep(_EXPORT_RETRY_SLEEP * attempt)
+            if _export_chart_png_once(chart, png_path):
+                return f"moved{attempt}"
+    except Exception as exc:
+        _log_chart_attach(f"Chart.Export move-first failed: {exc!r}")
     finally:
         if old_left is not None and old_top is not None:
             try:
@@ -1844,6 +1915,11 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
                 df_x = pd.concat(df_x_list, ignore_index=True)
                 df_y = pd.concat(df_y_list, ignore_index=True)
                 cnt_list = [df.shape[0] for df in df_x_list]   # source별 DUT 수(모든 subject 균일)
+                _emit_profile_info(
+                    "Dist helper Y mode: full "
+                    f"x_cells={df_x.shape[0] * df_x.shape[1]:,} "
+                    f"y_cells={df_y.shape[0] * df_y.shape[1]:,}"
+                )
 
             with _dist_time("dist.helper_sheet_write"):
                 existing = {s.name for s in wb.sheets}

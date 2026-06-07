@@ -1,4 +1,6 @@
-"""Issue_table 행별 분포(Distribution) PNG 저장소.
+"""ENTRYPOINT / EXTERNAL_OWNER: Issue_table row image storage.
+
+Issue_table 행별 분포(Distribution) PNG 저장소.
 
 S3 가 설정돼 있으면 S3 에, 아니면 로컬 디스크(REPORT_UPLOAD_DIR/issue_img/<key>/)에
 임시 보관한다. "임시로 PNG 가 보이게" 하기 위한 폴백 — S3 환경변수를 채우면

@@ -13,7 +13,7 @@
 
 ```
 [Honey 클라이언트 (PyQt5, 사용자 PC + Excel)]
-  d1_storage/로컬에서 CSV/xlsx 선택
+  client/d1/ provider 에서 CSV/xlsx 선택 (기본: d1_storage 로컬 폴더)
         │  (06 분석 엔진: csv → 분석 → xlsx 생성)
         ▼
   xlsx 자동 저장 ──(05 UI)──► "서버에 업로드" 클릭
@@ -26,7 +26,7 @@
         │  sha256→analysis_key, S3 업로드, xlsx 파싱
         ▼
   (03 저장소) SQLite: report_session / report_analysis_summary / report_object_info
-             S3:     source_xlsx / summary_text / issue_table_text / chart_png
+             storage_gateway: source_xlsx / summary_text / issue_table_text / chart_png
         ▲
         │  (02 조회·수정) GET /pe/report/ , /api/history , /session/<id>/full ...
         ▼
@@ -43,11 +43,11 @@
 |---|---------|------|------|-----------|
 | 01 | **xlsx 업로드 파이프라인** (수신→해시→S3→파싱→DB) | Server | [01_server_upload.md](01_server_upload.md) | [server/upload_xlsx.py](../server/upload_xlsx.py) |
 | 02 | **조회·수정·삭제·주석·차트 서빙** | Server | [02_server_query_edit.md](02_server_query_edit.md) | [server/report/report_routes.py](../server/report/report_routes.py) |
-| 03 | **저장소 (SQLite 스키마 + S3 키)** | Server / DB | [03_storage.md](03_storage.md) | [server/database/report_db.py](../server/database/report_db.py) |
+| 03 | **저장소 (SQLite 스키마 + storage_gateway/S3 키)** | Server / DB | [03_storage.md](03_storage.md) | [server/storage_gateway/](../server/storage_gateway/) |
 | 04 | **Honey 자동 업데이트 채널** (배포/버전/설치) | Server + Client | [04_honey_update.md](04_honey_update.md) | [server/honey_routes.py](../server/honey_routes.py) |
 | 05 | **Honey 클라이언트 UI / 워크플로우** | Client | [05_client_ui.md](05_client_ui.md) | [client/honey_main.py](../client/honey_main.py) |
 | 06 | **로컬 분석 엔진** (CSV→분석→xlsx 생성) | Client | [06_analysis_engine.md](06_analysis_engine.md) | [client/report_generator/](../client/report_generator/) |
-| 07 | **업로드 전송 + 차트 PNG 렌더** | Client | [07_client_upload_chart.md](07_client_upload_chart.md) | [client/uploader.py](../client/uploader.py) |
+| 07 | **업로드 전송 + 차트 PNG 렌더** | Client | [07_client_upload_chart.md](07_client_upload_chart.md) | [client/transport/uploader.py](../client/transport/uploader.py) |
 
 > 서버 부팅 자체: [server/wsgi.py](../server/wsgi.py) → `report_bp`([01](01_server_upload.md)/[02](02_server_query_edit.md)) + `honey_bp`([04](04_honey_update.md)) 등록.
 > Blueprint 등록 트리거는 [server/report/report_extension.py](../server/report/report_extension.py) (import 시 DB init + 라우트 평가).
@@ -85,6 +85,14 @@
 | 분석 수식(cpk/yield 등) | [06](06_analysis_engine.md) | [_builders.py](../client/report_generator/_builders.py) |
 | 생성 xlsx 레이아웃/차트 | [06](06_analysis_engine.md) | [xlsx_writer.py](../client/report_generator/xlsx_writer.py) |
 | 업로드 multipart 형식 | [07](07_client_upload_chart.md) | `post_xlsx()` |
+
+## 3.1 외부 소유 경계 / 진입점
+
+| 경계 | 외부 브랜치 진입점 | 기본 구현 | 유지 계약 |
+|------|-------------------|-----------|-----------|
+| D1 입력 | [client/d1/__init__.py](../client/d1/__init__.py) `get_provider`, `list_files`, `D1BrowserDialog` | `HONEY_D1_STORAGE` 또는 `client/d1_storage` 로컬 검색 | Honey UI 는 provider 결과 경로 목록만 사용 |
+| 서버 저장소/S3 | [server/storage_gateway/](../server/storage_gateway/) | `s3_storage.report_s3` + 로컬 fallback | `/pe/report/...` URL, multipart 필드, 응답 JSON 유지 |
+| 사용자 담당 리포트 | [client/report_generator/](../client/report_generator/) + [client/report_flow/](../client/report_flow/) | 분석/xlsx 생성/업로드 전처리 | 분석 수식, xlsx 레이아웃, DB 스키마 변경 없음 |
 
 ---
 

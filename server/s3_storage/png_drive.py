@@ -1,4 +1,6 @@
-"""외부 프로젝트(`S3/s3_drive.py`) API 표면을 모방한 PNG 헬퍼 — 골격(스캐폴드).
+"""ENTRYPOINT / EXTERNAL_OWNER: external-compatible PNG drive adapter.
+
+외부 프로젝트(`S3/s3_drive.py`) API 표면을 모방한 PNG 헬퍼 — 골격(스캐폴드).
 
 목적: report 의 Distribution / Issue_table 분포 차트를 PNG 로 S3 에 올렸다가 세션
 재호출 시 다시 표시하는 흐름을, 외부 프로젝트와 **브랜치/병합하기 쉽게** 같은 함수

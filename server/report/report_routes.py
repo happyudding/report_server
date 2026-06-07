@@ -1,4 +1,4 @@
-import re
+﻿import re
 import secrets
 
 from flask import Response, abort, jsonify, make_response, request, send_file
@@ -6,6 +6,7 @@ from flask import Response, abort, jsonify, make_response, request, send_file
 from database import report_db
 from report_utils import to_float as _to_float, to_int as _to_int
 from s3_storage import report_s3
+import storage_gateway
 from config import (
     REPORT_ANALYSIS_INDEX_HTML,
     REPORT_VIEW_HTML,
@@ -184,8 +185,7 @@ def session_full(session_id):
     issue_images = []
     if akey:
         try:
-            from issue_image_store import list_rows
-            for row in list_rows(akey):
+            for row in storage_gateway.list_issue_image_rows(akey):
                 issue_images.append({"row": int(row),
                                      "url": f"/pe/report/issue_image/{session_id}/{int(row)}"})
         except Exception:
@@ -216,98 +216,7 @@ def session_full(session_id):
 
 def _load_json_object(objects, object_type):
     """objects 인덱스에 object_type 이 있으면 S3 JSON 다운로드, 실패 시 None."""
-    if object_type not in objects:
-        return None
-    try:
-        return report_s3.download_json_from_s3(objects[object_type]["s3_key"])
-    except (S3NotConfigured, S3ObjectCorrupted, Exception):
-        return None
-
-
-@report_bp.get("/chart/<session_id>/<int:idx>")
-def chart_image(session_id, idx):
-    """클라이언트가 렌더해 올린 차트 PNG 를 S3 에서 스트리밍.
-    공개 버킷/presign 없이 서버 경유로 서빙 (기존 패턴 일관)."""
-    _validate_session_id(session_id)
-    if idx < 0 or idx > 1000:
-        abort(404, "invalid chart index")
-    session = report_db.get_session(session_id)
-    if not session:
-        abort(404, "session not found")
-    akey = session.get("analysis_key")
-    if not akey:
-        abort(404, "no analysis_key for session")
-    try:
-        key = report_s3.make_chart_png_s3_key(akey, idx)
-        data = report_s3.download_bytes_from_s3(key)
-    except S3NotConfigured:
-        abort(503, "S3 not configured")
-    except Exception:
-        abort(404, "chart not found")
-    return Response(data, mimetype="image/png",
-                    headers={"Cache-Control": "private, max-age=3600"})
-
-
-@report_bp.get("/issue_image/<session_id>/<int:row>")
-def issue_image(session_id, row):
-    """Issue_table 행별 분포 PNG 를 S3 에서 스트리밍 (골격).
-    chart_image 와 동일 패턴 — 서버 경유 서빙. 이미지 미존재 시 404."""
-    _validate_session_id(session_id)
-    if row < 0 or row > 10000:
-        abort(404, "invalid image row")
-    session = report_db.get_session(session_id)
-    if not session:
-        abort(404, "session not found")
-    akey = session.get("analysis_key")
-    if not akey:
-        abort(404, "no analysis_key for session")
-    try:
-        from issue_image_store import load_image
-        data = load_image(akey, row)
-    except S3NotConfigured:
-        abort(503, "S3 not configured")
-    except Exception:
-        abort(404, "image not found")
-    return Response(data, mimetype="image/png",
-                    headers={"Cache-Control": "private, max-age=3600"})
-
-
-@report_bp.get("/distribution_combined/<session_id>")
-def distribution_combined_png(session_id):
-    """Distribution 합성 PNG — S3 우선, 없으면 로컬 폴백."""
-    _validate_session_id(session_id)
-    session = report_db.get_session(session_id)
-    if not session:
-        abort(404, "session not found")
-    akey = session.get("analysis_key")
-    if not akey:
-        abort(404, "no analysis_key for session")
-
-    data = None
-
-    # S3 오브젝트가 등록돼 있으면 S3 에서 서빙
-    objs = {o["object_type"]: o for o in report_db.get_all_object_infos(akey)}
-    if "distribution_combined" in objs:
-        try:
-            data = report_s3.download_bytes_from_s3(objs["distribution_combined"]["s3_key"])
-        except (S3NotConfigured, Exception):
-            data = None  # S3 실패 시 로컬 폴백으로
-
-    # 로컬 폴백 (S3 미설정 또는 S3 실패)
-    if data is None:
-        from pathlib import Path
-        from config import REPORT_UPLOAD_DIR
-        local_path = Path(REPORT_UPLOAD_DIR) / "dist_combined" / f"{akey}.png"
-        if local_path.exists():
-            data = local_path.read_bytes()
-
-    if data is None:
-        abort(404, "distribution combined PNG 없음")
-
-    resp = make_response(data)
-    resp.headers["Content-Type"] = "image/png"
-    resp.headers["Cache-Control"] = "public, max-age=86400"
-    return resp
+    return storage_gateway.load_json_object(objects, object_type)
 
 
 @report_bp.delete("/session/<session_id>")
@@ -431,15 +340,7 @@ def update_session_content(session_id):
 def _write_text_object(analysis_key, session, object_type, key_builder, data):
     """텍스트 콘텐츠 JSON 을 S3 에 다시 올리고 report_object_info 를 갱신.
     content_hash / options_json 은 기존 행 값을 유지(없으면 세션 값/빈 객체로 폴백)."""
-    key = key_builder(analysis_key)
-    uri = report_s3.upload_json_to_s3(key, data)
-    existing = report_db.get_object_info(analysis_key, object_type) or {}
-    content_hash = existing.get("content_hash") or session.get("content_hash") or ""
-    options_json = existing.get("options_json") or "{}"
-    report_db.upsert_object_info(
-        analysis_key, content_hash, options_json, object_type,
-        report_s3.bucket_name(), key, uri,
-    )
+    storage_gateway.save_text_object(analysis_key, session, object_type, key_builder, data)
 
 
 # ── annotations ───────────────────────────────────────────────────────────────

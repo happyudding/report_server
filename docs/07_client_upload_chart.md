@@ -4,17 +4,21 @@
 > 트리거는 [05 UI `_do_upload`](05_client_ui.md), 받는 쪽은 [01 서버 업로드](01_server_upload.md).
 
 ## 파일
-- [client/uploader.py](../client/uploader.py) — `post_xlsx` multipart POST
-- [client/chart_export.py](../client/chart_export.py) — Excel COM 으로 차트 → PNG bytes
-- 호출 지점: [honey_main.py `_do_upload`](../client/honey_main.py#L671)
+- [client/transport/uploader.py](../client/transport/uploader.py) — `post_xlsx` multipart POST
+- [client/transport/chart_export.py](../client/transport/chart_export.py) — Excel COM 으로 차트 → PNG bytes
+- [client/report_flow/upload_prepare.py](../client/report_flow/upload_prepare.py) — 업로드용 xlsx 재구성 + issue image 추출
+- 호출 지점: [honey_main.py `_do_upload`](../client/honey_main.py)
 
 ## 흐름 (`_do_upload` → 두 모듈)
 1. `UploadDialog` 로 메타 입력(product_type/product/lot_id/revision/**PIN 4자리**), `_last_upload` 에 프리필 저장.
-2. **차트 렌더** — `chart_export.export_chart_pngs(path)`:
+2. **업로드 전처리** — `report_flow.prepare_upload_xlsx(path)`:
+   - Excel COM 으로 DRM/일반 xlsx 를 재구성하고 `distribution` 시트는 제외한다.
+   - `issue_table` 임베드 이미지는 `issue_img_<row>` multipart 필드로 보낼 bytes 로 추출한다.
+3. **차트 렌더** — `chart_export.export_chart_pngs(path)`:
    - `win32com.client.DispatchEx("Excel.Application")`, `ReadOnly=True, UpdateLinks=0`(사용자가 같은 파일 열어둬도 락/프롬프트 회피).
    - 워크시트 임베드 차트(`ChartObjects`) → 차트 시트(`Charts`) 순으로 `chart.Export(png)`. PNG 매직바이트 검증.
    - **그레이스풀**: pywin32/Excel 미설치·실패 시 `[]` 반환 → xlsx 만 업로드. CoInitialize/Quit/임시폴더 정리 finally 보장.
-3. **전송** — `uploader.post_xlsx(path, product_type, product, lot_id, password, chart_pngs)`:
+4. **전송** — `uploader.post_xlsx(path, product_type, product, lot_id, password, chart_pngs)`:
    - `POST {SERVER_BASE_URL}/pe/report/upload_xlsx`, multipart.
    - files: `xlsx`(본문) + `chart_0, chart_1, …`(PNG, 순서대로). data: `product_type/product/lot_id/password`.
    - `resp.ok` 아니면 `RuntimeError(detail)`. 성공 시 `resp.json()`.

@@ -30,6 +30,9 @@ a = Analysis(
         + collect_submodules('report_generator')
     + collect_submodules('honey_parse')
     + collect_submodules('transport')
+    + collect_submodules('d1')
+    + collect_submodules('honey_ui')
+    + collect_submodules('report_flow')
     ),
     hookspath=[],
     hooksconfig={},

@@ -1,3 +1,9 @@
+"""ENTRYPOINT / EXTERNAL_OWNER: low-level S3 adapter.
+
+This module is now called through ``storage_gateway`` by report routes and
+upload flow. External S3/server-storage branches can replace or extend this
+adapter while preserving the gateway contract.
+"""
 import json
 
 from config import (

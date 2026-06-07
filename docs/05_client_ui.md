@@ -4,9 +4,12 @@
 > 계산은 [06 분석 엔진](06_analysis_engine.md), 전송은 [07 업로드](07_client_upload_chart.md), 업데이트는 [04](04_honey_update.md) 로 위임.
 
 ## 파일
-- [client/honey_main.py](../client/honey_main.py) — `HoneyMainWindow` + 다이얼로그 5종 + `main()`
+- [client/honey_main.py](../client/honey_main.py) — `HoneyMainWindow` + `main()` (워크플로우 연결)
+- [client/honey_ui/](../client/honey_ui/) — `UploadDialog`, `ReportSettingsDialog`, `FileOrderDialog`, `ColorEditorDialog`, 진행바 헬퍼
+- [client/d1/](../client/d1/) — D1 입력 provider 진입점 (`get_provider`, `list_files`, `D1BrowserDialog`)
+- [client/report_flow/](../client/report_flow/) — 파일명 생성, 업로드 xlsx 전처리
 - UI 레이아웃(.ui, Qt Designer): `honey_main.ui`, `upload_dialog.ui`, `d1_browser.ui`, `file_order.ui`, `report_settings.ui` — 런타임 `uic.loadUi`
-- [client/config.py](../client/config.py) — `SERVER_BASE_URL`, `D1_STORAGE_DIR`, `CONFIG_DIR`
+- [client/config.py](../client/config.py) — `D1_STORAGE_DIR`, `CONFIG_DIR`
 - [client/app_settings.py](../client/app_settings.py) — 사용자별 settings.json(Product Type 등 복원)
 - [client/chart_colors.py](../client/chart_colors.py) — distribution 차트 48색 팔레트(편집/저장)
 
@@ -24,7 +27,7 @@
 > 기존 `MD / PD / PM / SE` 그대로(라디오 `text` 만 변경, `product_type()` 는 dict 키 반환).
 
 ## 메인 워크플로우 (`HoneyMainWindow`)
-1. **입력 선택** — `on_open_local`(LOCAL FILE OPEN, 로컬 파일대화) 또는 `on_browse_d1`(D1 검색) → `_intake` → 2개↑면 `FileOrderDialog` → `_load_paths`. open 버튼 2종은 입력목록(`list_csv`) **왼쪽 칼럼**, ▲▼ 순서이동은 오른쪽.
+1. **입력 선택** — `on_open_local`(LOCAL FILE OPEN, 로컬 파일대화) 또는 `on_browse_d1`(D1 검색: `client/d1` provider) → `_intake` → 2개↑면 `FileOrderDialog` → `_load_paths`. open 버튼 2종은 입력목록(`list_csv`) **왼쪽 칼럼**, ▲▼ 순서이동은 오른쪽.
 2. **저장명 제안** — `_load_paths` 가 `_suggest_base_name` 으로 `le_outname` 채움(확장자 `.xlsx` 는 화면 라벨로 별도 표기).
 3. **Start** — `on_start`: `_rebuild_group`(`df_honey_group.from_csvs` + `validate()` 경고, **첫 파일=기준 스키마** [06](06_analysis_engine.md)) → `ReportSettingsDialog` 팝업.
 4. **설정 팝업(`ReportSettingsDialog`)**
@@ -53,4 +56,4 @@
 - **report generator 산출물은 .xlsx 1개**. 클라이언트는 하나의 파일에서 모든 것을 관리하는 정책이므로, 분석 결과물 xlsx 는 단일 파일로만 존재해야 한다.
 - **엔진 미설치 그레이스풀** — `import report_generator` 실패 시 `_disable_engine`: 분석 버튼만 비활성, **로컬 xlsx 직접 업로드는 유지**. 분석/생성엔 pandas/numpy/xlwings+Excel 필요.
 - 모든 무거운 작업은 worker thread + `_wait_for_future(..., poll_cb=...)` 로 돌리고, poll 중 `QApplication.processEvents()` 로 UI 갱신 + 진행바/Log 이벤트를 drain 한다.
-- D1 검색은 매번 디스크 재스캔(`_scan` rglob csv/xlsx).
+- D1 검색은 `client/d1`의 기본 provider가 매번 디스크 재스캔(rglob csv/xlsx)한다. 외부 D1 프로젝트는 이 패키지만 교체한다.
