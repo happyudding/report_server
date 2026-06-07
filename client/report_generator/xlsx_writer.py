@@ -1793,6 +1793,51 @@ def sort_data_to_percent(df):
     return pd.DataFrame(vals, columns=df.columns)
 
 
+def _build_compact_dist_y(df_x_list):
+    """Build ECDF Y helper columns keyed by non-NaN count.
+
+    X data still uses one column per subject. Y only depends on the number of
+    valid points, so subjects with the same count can share one Y column.
+    """
+    if not df_x_list:
+        return pd.DataFrame(), [], {
+            "full_y_cells": 0, "compact_y_cells": 0, "unique_counts": 0,
+        }
+
+    count_arrs = [df.notna().sum().astype(int).to_numpy() for df in df_x_list]
+    unique_counts_by_source = []
+    for counts in count_arrs:
+        unique_counts = sorted({int(c) for c in counts})
+        unique_counts_by_source.append(unique_counts or [0])
+    max_unique_counts = max(len(counts) for counts in unique_counts_by_source)
+
+    columns = [f"count_slot_{i + 1}" for i in range(max_unique_counts)]
+    y_blocks = []
+    y_cols_by_source = []
+    for df, unique_counts, counts in zip(df_x_list, unique_counts_by_source, count_arrs):
+        n_rows = df.shape[0]
+        block = np.full((n_rows, max_unique_counts), np.nan, dtype=float)
+        count_to_pos = {count: pos for pos, count in enumerate(unique_counts)}
+        for count, pos in count_to_pos.items():
+            if count <= 0:
+                continue
+            upto = min(count, n_rows)
+            block[:upto, pos] = np.arange(1, upto + 1, dtype=float) / float(count)
+        y_blocks.append(pd.DataFrame(block, columns=columns))
+        y_cols_by_source.append([
+            get_column_letter(count_to_pos[int(count)] + 2) for count in counts
+        ])
+
+    df_y = pd.concat(y_blocks, ignore_index=True) if y_blocks else pd.DataFrame(columns=columns)
+    full_y_cells = sum(df.shape[0] * df.shape[1] for df in df_x_list)
+    compact_y_cells = df_y.shape[0] * df_y.shape[1]
+    return df_y, y_cols_by_source, {
+        "full_y_cells": full_y_cells,
+        "compact_y_cells": compact_y_cells,
+        "unique_counts": max_unique_counts,
+    }
+
+
 def _unique_helper_name(base, existing):
     """존재 시트명과 충돌 회피한 헬퍼 시트명(정리/정리_Y)."""
     name, n = base, 2
@@ -1802,7 +1847,8 @@ def _unique_helper_name(base, existing):
     return name
 
 
-def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_min):
+def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_min,
+                     y_cols_by_source):
     """SeriesCollection 에 LSL/USL(배열리터럴) + source 데이터 series(정리/정리_Y range) 추가.
 
     series 1=LSL, 2=USL(없으면 차트 밖 -2,-2), 3+=source. 반환 (limit_series, data_series).
@@ -1832,7 +1878,8 @@ def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_mi
             r1, r2 = y + 2, y + n + 1
             y += n
             x_ref = f"='{x_sheet}'!${col}${r1}:${col}${r2}"
-            y_ref = f"='{y_sheet}'!${col}${r1}:${col}${r2}"
+            y_col = y_cols_by_source[k][col_idx]
+            y_ref = f"='{y_sheet}'!${y_col}${r1}:${y_col}${r2}"
             s = sc.NewSeries()
             s.XValues = x_ref
             s.Values = y_ref
@@ -1854,7 +1901,7 @@ def _style_series(limit_series, data_series, colors, step_flags=None):
 
 
 def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
-                    colors, x_min, x_max, is_fail, step_flags):
+                    colors, x_min, x_max, is_fail, step_flags, y_cols_by_source):
     """차트 1개 독립 생성+서식 (정리/정리_Y range 참조). 반환: COM Chart."""
     left, top = _chart_pos(i)
     with _prof("dist.series_add"):
@@ -1862,8 +1909,9 @@ def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
             ch = sh.charts.add(left, top, _CHART_W, _CHART_H)
             chart = _chart_com(ch)
             sc = chart.SeriesCollection()
-        limit_series, data_series = _add_dist_series(sc, d, x_sheet, y_sheet,
-                                                     col_idx, cnt_list, src_names, x_min)
+        limit_series, data_series = _add_dist_series(
+            sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_min,
+            y_cols_by_source)
         with _dist_time("dist.loop.chart_type"):
             ch.chart_type = "xy_scatter_lines_no_markers"
     _prof_count("series", len(limit_series) + len(data_series))
@@ -1911,14 +1959,20 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
         with _prof("dist.data_write"):
             with _dist_time("dist.data_prepare"):
                 df_x_list = [sort_alldata(df, True).reset_index(drop=True) for df in src_dfs]
-                df_y_list = [sort_data_to_percent(df).reset_index(drop=True) for df in df_x_list]
                 df_x = pd.concat(df_x_list, ignore_index=True)
-                df_y = pd.concat(df_y_list, ignore_index=True)
+                df_y, y_cols_by_source, y_stats = _build_compact_dist_y(df_x_list)
                 cnt_list = [df.shape[0] for df in df_x_list]   # source별 DUT 수(모든 subject 균일)
+                reduction = 0.0
+                if y_stats["full_y_cells"]:
+                    reduction = 100.0 * (1.0 - (
+                        y_stats["compact_y_cells"] / y_stats["full_y_cells"]))
                 _emit_profile_info(
-                    "Dist helper Y mode: full "
+                    "Dist helper Y mode: compact "
                     f"x_cells={df_x.shape[0] * df_x.shape[1]:,} "
-                    f"y_cells={df_y.shape[0] * df_y.shape[1]:,}"
+                    f"full_y_cells={y_stats['full_y_cells']:,} "
+                    f"compact_y_cells={y_stats['compact_y_cells']:,} "
+                    f"unique_counts={y_stats['unique_counts']} "
+                    f"reduction={reduction:.1f}%"
                 )
 
             with _dist_time("dist.helper_sheet_write"):
@@ -1972,7 +2026,7 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
             try:
                 chart_map[d.subject] = _new_dist_chart(
                     sh, i, d, x_name, y_name, i, cnt_list, src_names, colors,
-                    x_min, x_max, is_fail, step_flags)
+                    x_min, x_max, is_fail, step_flags, y_cols_by_source)
             except Exception as _e:
                 print(f"[dist-chart] skip subject={d.subject!r}: {_e}", file=sys.stderr)
             col = i % _CHARTS_PER_ROW
