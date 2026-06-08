@@ -13,7 +13,7 @@ _reference 의 config.py 의존을 끊고 client 자립용으로 정의한다.
 
 **불변 규칙**: 헤더(컬럼명)는 오직 df.columns 로만 존재하고 row0 은 Units 다.
 row0 에 헤더를 중복으로 남기면 모든 행 인덱스가 1칸씩 밀려(units=subject명, limit 오배정,
-가짜 DUT 1행 포함) yield/cpk/fail/distribution 이 전부 깨진다. csvfile_to_df / normalize_raw 가
+가짜 DUT 1행 포함) yield/cpk/fail/distribution 이 전부 깨진다. file_to_df / normalize_raw 가
 이 구조를 보장한다(csv_loader._ensure_canonical).
 """
 

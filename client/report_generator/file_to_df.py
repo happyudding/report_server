@@ -1,4 +1,4 @@
-"""csvfile_to_df 스텁 — 실제 구현은 honey_parser 에서 import.
+"""file_to_df 스텁 — 실제 구현은 honey_parser 에서 import.
 
 반환 계약: (df, df_yield)  ※ 불변 구조 — 헤더는 df.columns 로만, row0 은 Units
   df       : df_honey 포맷 정규화 DataFrame
@@ -20,9 +20,9 @@ DF_YIELD_COLUMNS: list[str] = [
 ]
 
 try:
-    from honey_parse import csvfile_to_df  # type: ignore[import]
+    from honey_parse import file_to_df  # type: ignore[import]
 except ImportError:
-    def csvfile_to_df(path) -> tuple[pd.DataFrame, pd.DataFrame]:  # type: ignore[misc]
+    def file_to_df(path, product_type=None, all_paths=None) -> tuple[pd.DataFrame, pd.DataFrame]:  # type: ignore[misc]
         raise ImportError(
             "honey_parse 패키지가 없습니다. client/honey_parse/ 폴더를 확인하세요."
         )

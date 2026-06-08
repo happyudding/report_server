@@ -320,7 +320,7 @@ _CPK_WARN_FILL_RGB = "FFFFFF00"  # 노란색 ARGB — CPK < 1.33 행 하이라�
 _CPK_WARN_FONT_RGB = "FF000000"
 _CPK_TOTAL_FILL_RGB = "FF0070C0"
 _CPK_TOTAL_FONT_RGB = "FFFFFFFF"
-_CPK_TOTAL_CHUNK_SIZE = 100
+_CPK_TOTAL_ADDR_MAXLEN = 250  # Excel Range 주소 255자 한계 대비 마진
 
 ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
 
@@ -917,12 +917,27 @@ def _apply_cpk_total_fill(ws, row_offsets, header_row=_HEADER_ROW):
         return
     with _flow_prof("fill_cpk.total_fill"):
         excel_rows = [header_row + 1 + offset for offset in row_offsets]
-        for i in range(0, len(excel_rows), _CPK_TOTAL_CHUNK_SIZE):
-            addresses = [f"B{row}:P{row}"
-                         for row in excel_rows[i:i + _CPK_TOTAL_CHUNK_SIZE]]
+
+        def _flush(addresses):
+            if not addresses:
+                return
             _style_range(ws.range(",".join(addresses)),
                          fill=_CPK_TOTAL_FILL_RGB,
                          font={"color": _CPK_TOTAL_FONT_RGB})
+
+        addresses = []
+        length = 0
+        for row in excel_rows:
+            address = f"B{row}:P{row}"
+            next_length = length + len(address) + (1 if addresses else 0)
+            if addresses and next_length > _CPK_TOTAL_ADDR_MAXLEN:
+                _flush(addresses)
+                addresses = []
+                length = 0
+                next_length = len(address)
+            addresses.append(address)
+            length = next_length
+        _flush(addresses)
 
 
 def _apply_cpk_warn_fill(ws, header, rows, header_row=_HEADER_ROW, start_col=_START_COL):

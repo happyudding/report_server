@@ -42,7 +42,7 @@
       <item row="0" column="2">
        <widget class="QCheckBox" name="cb_sheet_cpk">
         <property name="text"><string>cpk</string></property>
-        <property name="checked"><bool>true</bool></property>
+        <property name="checked"><bool>false</bool></property>
        </widget>
       </item>
       <item row="0" column="3">
@@ -54,7 +54,7 @@
       <item row="0" column="4">
        <widget class="QCheckBox" name="cb_sheet_issue_table">
         <property name="text"><string>issue_table</string></property>
-        <property name="checked"><bool>true</bool></property>
+        <property name="checked"><bool>false</bool></property>
        </widget>
       </item>
       <item row="1" column="0">

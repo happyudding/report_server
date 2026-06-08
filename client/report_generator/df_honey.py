@@ -4,7 +4,7 @@
 subjects/units/limits/scores/meta 는 그 df 에서 파생하는 cached property 로 노출한다.
 입력을 df 하나로 표준화해 슬라이싱(subject 선택 / 행 필터)과 코드 재사용을 단순화한다.
 
-df 레이아웃 (csv_loader.csvfile_to_df = normalize_raw 결과):
+df 레이아웃 (csv_loader.file_to_df = normalize_raw 결과):
     columns = subject 이름(DUT/XCoord/…/item1/item2…), 0 = Units,
     1 = Lower Limit, 2 = Upper Limit, 3~4 = limit 중복행, 5~ = 데이터.
     열 0~4 = meta(DUT/XCoord/YCoord/Bin/Serial), 5~ = subject 측정값.
@@ -26,7 +26,7 @@ from .constants import (
     DATA_START_ROW, LOWER_LIMIT_ROW, META_COLUMNS, N_META_COLUMNS,
     PASS_BIN, UNITS_ROW, UPPER_LIMIT_ROW,
 )
-from .csvfile_to_df import DF_YIELD_COLUMNS
+from .file_to_df import DF_YIELD_COLUMNS
 from .models import ReportMeta
 
 # FileName(=계열명) fallback 시 stem 절단 길이. Yield 의 sheetname(외부 honey_parse 가
@@ -78,7 +78,7 @@ class df_honey:
                  name: Optional[str] = None,
                  progress_cb=None) -> "df_honey":
         path = Path(path)
-        df, df_yield = csv_loader.csvfile_to_df(path, progress_cb=progress_cb)
+        df, df_yield = csv_loader.file_to_df(path, progress_cb=progress_cb)
         rm = report_meta or ReportMeta()
         if not rm.source_path:
             rm.source_path = str(path)
