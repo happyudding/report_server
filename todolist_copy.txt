@@ -1,144 +1,66 @@
-xlsx_writer.py 전면 재작성 Distribution 차트 알고리즘 교체
-Distribution 차트 헬퍼 시트 '_dist' 폐기 정리/정리_Y 방식으로 재작성
+table : products - 제품 기본 정보
+columns
+컬럼명 타입 제약
+id INTEGER - PK, AUTOINCREMENT # 내부 ID
+part_id TEXT - NOT NULL, UNIQUE # 부품 번호
+product_group TEXT # 제품군
+osat TEXT # 외부 업체
+prod_type TEXT # 생산 유형 (MP, ER)
+dev_manager TEXT # 개발 담당자
+mass_prod_manager TEXT # 양산 담당자
+pe_manager TEXT # PE 담당자
+modify_date TEXT # 최종 수정일시 (YYYY-MM-DD HH:MM:SS)
+status TEXT # 상태 (완결 / 상신취소 / 반려)
+created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP # 레코드 생성일시
 
-## Context
+table : product_details - 제품 상세 메타
+id INTEGER PK, AUTOINCREMENT # 내부 ID
+product_id INTEGER NOT NULL, FK ->products.id # 부모 제품 참조
+title TEXT - #상세 타이블 (현재 전부 "ONE")
+fetched_at TIMESTAMP # 데이터 수집 일시 (ISO 8601)
 
-[xlsx_writer.py](client/report_generator/xlsx_writer.py) 의 distribution 차트가 1차 xlwings 변환 후 깨짐. 원인 : 기존 코드가 헬퍼 시트 '_dist' 1개에 LSL/USL/X/Y 를 2D grid 로 통합 기입 + 템플릿 1개 만들어 COM duplicate() 로 복제 + A1 문자열로 시리즈 참조하는 패턴. COM duplicate 후 series 마커 legend 리셋이 비결정적이고, 헬퍼시트 grid 좌표가 한칸만 어긋나도 차트 전체가 빈칸. 외부 변환에 취약
+table : product_detail_tables - 공정 단계별 파라미터
+id INTEGER PK, AUTOINCREMENT # 내부 ID
+detail_id INTEGER NOT NULL, FK -> product_details.id 부모 상세 참조
+table_index INTEGER DEFAULT 0 # 상세 내 순번
+osat TEXT # 공정 담당 osat
+step TEXT # 공정 단계 L1 L2 L3 FT M1~M4
+temperature TEXT # 온도 설정값
+duration TEXT # 공정 시간
+abs_distance_y TEXT # 절대거리 Y
+abs_distance_x TEXT # 절대거리 X
+sanding TEXT # CHIP or S/W
+sanding_value TEXT # 값
+equip TEXT # 설비 유형 T2K ETS UFLEX ND4 IFLEX V93K
+equip_name TEXT # 설비 모델명
+para TEXT # 파라미터값 1~1024 (보통 6 12 16 24 48 128 512 등)
+flat_zone TEXT # 0 or 270 or 90 or 180 등
+pgm_name TEXT # 프로그램 이름 
+pgm_dir TEXT # 프로그램 디렉토리
 
-해결 :  검증된 다른 시스템에서 쓰던 안정적 패턴으로 교체
-차트 데이터 시트를 **2개로 분리** (X값용, Y값용) 차트는 한개씩 독립 생성
-USL/USL 은 시트 참조 없이 배열 리터럴 직접 지정.
-컬럼 단위 정렬 + numpy broadcating 으로 벡터 처리
-Dataframe 통째 1회 write (셀 단위 호출 금지)
-차트 1개씩 독립 생성, Duplicate() 패턴 폐기 - 이부분은 변경하는게 이득일지 유지하는게 이득일지 너가 검토해
-LSL_USL 은 시트 참조 없이 COM 배열 리터럴 - 이부분도 변경하는게 이득일지 유지하는게 이득일지 너가 검토해 
+관계
+(ERD)
+products(697)
+	- product_details (697) [1:1, FK: product_id -> products.id]
+		- product_detail_tables(1,269) [1:N, FK:detail_id -> product_details.id]
 
-전체 흐름은 xw.App 컨텍스트 1개 안에서 단일 세션. write() 시그니처 변경 X Diff (a_only/b_only) / PNG 부착은 기존 코드 유지
+인덱스
 
-1. 데이터 변환 - 컬럼 단위 정렬 +numpy broadcasting
-각 source df(측정값만 남긴 형태, 행 = DUt, 열 = subject) 를 받아 X/Y df 를 만드는 알고리즘 전부 벡터연산이라 셀 단위 호출 0회
+인덱스명 테이블 컬럼 비고
+sqlite_autoindex_products_1 products part_id UNIQUE 자동 생성
+idx_products_part_id products part_id 조회 최적화
+idx_products_product_group products product_group 필터링 최적화
+idx_products_status products status 필터링 최적화
+idx_product_details_product_id product_details product_id JOIN 최적화
+idx_product_detial_tables_detail_id product_detail_tables detail_id JOIN 최적화
 
-1-1 컬럼별 독립 오름차순 정렬
-
-def sort_alldata(df, ascending=true):
-out = df.copy()
-for col in df_columns:
-	out[col] = df[col].sort_values(ascending = ascending).values
-return out
-
-1-2. ECDF (numpy broadcasting, 1초과는 NAN)
-def sort_data_to percent(df) :
-inds = np.arange(df.shape[0]).reshape(-1,1) + 1 #(N,1)
-counts = df.notna().sum().to_numpy() #(n_cols,)
-vals = np.divide(inds,counts, out=np.zeros(df.shape,dtype=float), where counts!=0)
-vals[vals > 1] = np.nan
-return pd.Dataframe(vals, colums=df.columns)
-
-1-3 cource리스트 -> X/Y dataframe 리스트
-def get_list_xvalues_by_each_list(source_dfs):
-return [sort_alldata(df,True).reset_index(drop=True) for df in source_dfs]
-
-def get_list_yvalues_by_dut_from_xvalues(x_dfs):
-return [sort_data_to_percent(df).reset_index(drop=true) for df in xdfs]
-
-위 알고리즘은 ECDF, MAX CDF POINTS downsample 같은 포인트 상한 추가 절대 금지
-
-2. 정리 / 정리 Y 시트 생성
-df_x_list = get_list_xvalues_by_each_list(source_dfs)
-df_y_list = get_list_yvalues_by_dut_from_xvalues(df_x_list)
-df_x_value = pd.concat(df_x_list)
-df_y_value = pd.concat(df_y_list)
-
-#source 별 행 개수 - 차트 series 범위 계산용
-x_value_data_cnt_list = [df.shape[0] for df in df_x_list]
-
-# Dataframe 통째 1회 write(셀 단위 setter 금지)
-ws_x = wb.sheets.add("정리", after = ws_dist)
-ws_y = wb.sheets.add("정리_Y", after = ws_x)
-ws_x.range("A1").options(index=true, header = ture).value = =df_x
-ws_y.range("A1").options(index=true, header = ture).value = =df_y
-
-
-3. Chart 생성
-차트 독립생성은 현재되고 되어있는걸로 알고있음 독립생성하는 함수에 아래 내용 필요하면 추가 
-아래 코드가 100% 같을 필요는 없고 source data 참조하는 부분을 중점적으로 벤치마킹
-
-def chart_draw_at_position() - 이부분은 현재 독립생성 하고있는 차트 부분을 수정하는것으로 하고 내용은 아래 참조 (정리, 정리Y 컨셉으로 변경되며  range 지정해주는 알고리즘이 들어가야함)
-
-# 더미 source - 아래에서 series 1.2.3 +를 재참조
-chart.set_source_data(self.ws_dist.range('A1:D5"))
-chart_title_limit_set(chart, self.min_value_list, self.max_value_list, self.subjects, self.lolims, self.hilims, col_idx)
-chart_data_set(chart, self.x_value_data_cnt_list, col_ids,self.src_names, self.colors, self.Sheet_name)
-
-
-3-1 chart_title_limit_set - 제목 + LSL/USL (series 1,2)
-
-LSL /USL 은 시트참조 X COM 배열 리터럴 직접 지정 (XValues = 같은값 두번, Values = {-1,1} 로 Y축 0~1 수직선 한계 없으면 ={-2, -2} 로 차트 밖에 배치
-
-def chart_title_limit_set(chart, self.min_value_list, self.max_value_list, self.subjects, self.lolims, self.hilims, col_idx)
-LOLIM = lolims[col_ids]
-HILIM = hilims[col_idx]
-test_item = subjects[col_idx]
-unit = units[col_idx]
-
-chart_api = chart.api[1]
-chart_api.HASTitel = True
-chart_api.Charttitle.Txext 는 기존과 동일
-LOLIM, HILIM 정하는 로직은 기존과 유사하며 위의 값 받아서 기존 로직 판단에 사ㅅ용
-
-3-2 chart_data_set - data series (series 3+)
-정리 시트의 같은 컬럼을 source 별 행 구간으로 잘라 X 범위 정리_Y 의 같은 영역을 Y 범위로 참조 ! -> _Y! 치환
-
-def chart_data_set(chart, self.x_value_data_cnt_list, col_ids,self.src_names, self.colors, self.Sheet_name)
-sc = chart.api[1].SeriesCollection
-column_str = num_to_col(col_idx+2)
-y= 0 
-n_src = len(xvalue_data_cnt_list)
-for k in range(n_src):
-n = x_value_data_cnt_list[k]
-x_range = (f"={sheet_name_x}!${column_str}${y + 2}:"
-f"${column_str}${y+n+1}")
-y_range = x_range.repleace("!","_Y!")
-y+=n
-s= sc(k+3)
-s.XValues = x_range
-s.Values = y_range
-s.Name = str(src_names[k]
-
-3.3 chart Layout setting 은 기존과 동일하게 간다.
-
-4. 전체 골격
-def write(result, out_path, sheets=None ....
-import xlwings as xw
-with xw.App
-1) raw data 시트 먼저
-2) yield
-3) cpk
-4) failitem
-5) issueitem
-6) distribution
-7. diff 처리
-8) 차트 부착
-9) 저장
-
-5. 효율화 체크 
-데이터 정리 단계가 아직 셀단위로 박혀 있으면 아래로 치환
-
-for r,c,v in cells : ws.range((r,c)).value = v -> ws.range((r1,c1)).value = df 또는 2D 리스트 1회 write
-셀마다 cell.api.Font.Size = 17 -> ws.range((r1,c1),(r2,c2)).api.Font.Szie = 17 1회
-셀마다 interiror.Color 적용 -> range 단위 1회 CPK <1.33 처럼 조건부면 해당 행만 모아 1회
-wb.sheets.add 호출이 시트당 1개 여러번 -> 시트 1개당 1회
-차트 1개당 series 일일이 add 후 format/style 반복 -> set_source_data 더미로 series 한번에 만들고 range 만 재참조
-df sheet 에 붙일때 셀별로 접근 -> df_temp.csv 로 변환후 우회 하는방법 이용
-특히 _dist 헬퍼 시트 템플릿 duplicate A1 문자열 누적패턴 전부 삭제
-
-마무리 정리/정리_Y 숨김
-
-정리, 정리_Y sheet visible false
-
-폐기 항목
-헬퍼 시트 _dist, grid 2D 일괄 기입 cells 좌표 누적 (기존 Pass 1)
-템플릿 1개 + duplicate 복제 패턴 (기존 Pass 2 의 standard 분기)
-_reportint_series, _is_standard new_dist_chart 의 _dist 의존부
-
-
+table: product_detail_tables
+columns:
+- id @
+- lot TEXT
+- wafer TEXT
+- item TEXT
+- value REAL
+- lower_limit REAL
+- upper_limit REAL
+- result TEXT

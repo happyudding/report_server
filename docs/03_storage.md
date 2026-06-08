@@ -5,8 +5,8 @@
 
 ## 파일
 - [server/database/report_db.py](../server/database/report_db.py) — 스키마/마이그레이션/CRUD/락
-- [server/storage_gateway/](../server/storage_gateway/) — 업로드 산출물 저장/조회 진입점 (`ENTRYPOINT / EXTERNAL_OWNER`)
-- [server/s3_storage/report_s3.py](../server/s3_storage/report_s3.py) — boto3 클라이언트 + 키 빌더(게이트웨이 내부 기본 어댑터)
+- [server/storage_gateway/](../server/storage_gateway/) — 업로드 산출물 저장/조회 **단일 진입점** (`ENTRYPOINT / EXTERNAL_OWNER`, 실무 가이드 [README](../server/storage_gateway/README.md))
+- [server/storage_gateway/_s3.py](../server/storage_gateway/_s3.py) — boto3 클라이언트 + 키 빌더(게이트웨이 내부 기본 어댑터, 구 `s3_storage/report_s3.py`)
 - [server/config.py](../server/config.py) — DB 경로·S3 자격증명·키 prefix
 
 ## SQLite 테이블 ([report_db.py `SCHEMA`](../server/database/report_db.py#L7))
@@ -43,13 +43,18 @@
 - 락: `try_acquire_analysis_lock`(만료행 청소 후 INSERT, IntegrityError=실패), `release_analysis_lock`.
 
 ## storage_gateway ([server/storage_gateway/](../server/storage_gateway/))
+- **S3 산출물 저장의 단일 진입점.** 프로젝트 코드(`report_routes.py`·`upload_xlsx.py`·
+  `routes.py`)는 내부 `_s3` 어댑터를 직접 import 하지 않고 이 패키지만 의존한다.
+  예외 `S3NotConfigured`/`S3ObjectCorrupted` 도 facade 에서 재노출한다.
 - 공개 함수: `save_upload_artifacts`, `load_json_object`, `save_text_object`,
   `list_issue_image_rows`, `load_issue_image`, `load_chart_png`, `load_distribution_png`.
 - 이미지 URL 라우트(`/chart`, `/issue_image`, `/distribution_combined`)는
   [server/storage_gateway/routes.py](../server/storage_gateway/routes.py)에 있으며 기존 URL을 유지한다.
-- 외부 S3/server 저장소 프로젝트는 이 패키지를 진입점으로 브랜치한다.
+- 내부 모듈(외부 담당자 영역): `_s3`(boto3 어댑터·키 빌더), `_issue_images`(이슈 이미지
+  백엔드), `_png_drive`(외부 호환 PNG 스캐폴드, 미사용). 외부 S3/server 저장소 프로젝트는
+  이 패키지를 진입점으로 브랜치한다 — 실무 가이드 [README](../server/storage_gateway/README.md).
 
-## S3 기본 어댑터 ([report_s3.py](../server/s3_storage/report_s3.py))
+## S3 기본 어댑터 ([_s3.py](../server/storage_gateway/_s3.py))
 - 클라이언트: `get_s3_client()` 싱글톤. `REPORT_S3_BUCKET` 비면 `S3NotConfigured` raise → 호출측이 그레이스풀 처리. endpoint/access/secret 있으면 호환 스토리지, 없으면 boto3 기본 자격증명·AWS. `max_pool_connections` = config(기본 30).
 - 입출력: `upload_bytes_to_s3` / `download_bytes_from_s3` / `upload_json_to_s3` / `download_json_from_s3`(깨진 JSON 시 `S3ObjectCorrupted`) / `s3_object_exists`(head_object).
 - 키 패턴 (prefix 는 [config.py](../server/config.py#L27), 모두 `pe/report_server/` 네임스페이스로 plotly legacy 와 충돌 회피):

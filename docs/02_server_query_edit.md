@@ -7,7 +7,7 @@
 - [server/report/report_routes.py](../server/report/report_routes.py) — 모든 라우트
 - [server/report/report_analysis_index.html](../server/report/report_analysis_index.html) — 검색결과 페이지(모달 없음)
 - [server/report/report_view.html](../server/report/report_view.html) — 세션 상세(보기/수정/삭제)
-- DB 접근은 [report_db.py](../server/database/report_db.py), S3 다운로드는 [report_s3.py](../server/s3_storage/report_s3.py) (→[03](03_storage.md))
+- DB 접근은 [report_db.py](../server/database/report_db.py), S3 조회는 [storage_gateway](../server/storage_gateway/)(`load_json_object`/`load_chart_png` 등) (→[03](03_storage.md))
 
 ## 라우트 맵 (prefix `/pe/report`)
 | 메서드 · 경로 | 함수 | 용도 |

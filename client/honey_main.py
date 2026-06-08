@@ -161,6 +161,8 @@ class HoneyMainWindow(QMainWindow):
         bar.setValue(bar.maximum())
 
     def _log_profile_event(self, event):
+        if not getattr(rg, "DEBUG_RUN_TIMING_LOG", False):
+            return
         label = str(event.get("label") or "")
         skip = {
             "select_items",
@@ -484,15 +486,23 @@ class HoneyMainWindow(QMainWindow):
 
     def _run_analysis(self, work_group, selected, sheets, auto_upload, raw_data=False):
         self.btn_start.setEnabled(False)
+        show_timing_log = bool(getattr(rg, "DEBUG_RUN_TIMING_LOG", False))
         overall_t0 = time.perf_counter()
         self._init_run_log("=== Report Generator Log ===")
-        self._set_run_log_total(self._estimate_run_log_steps(work_group, sheets, raw_data))
+        self._set_run_log_total(
+            self._estimate_run_log_steps(work_group, sheets, raw_data)
+            if show_timing_log else 0
+        )
         profile_events = queue.Queue()
 
         def _profile_cb(event):
             profile_events.put(event)
 
+        profile_cb = _profile_cb if show_timing_log else None
+
         def _drain_profile_events():
+            if profile_cb is None:
+                return
             while True:
                 try:
                     event = profile_events.get_nowait()
@@ -507,8 +517,10 @@ class HoneyMainWindow(QMainWindow):
                 raw_t0 = time.perf_counter()
                 with _flow_time("raw_frames"):
                     raw = work_group.raw_frames()
-                self._append_run_log(f"raw_frames done: {time.perf_counter() - raw_t0:.2f}s",
-                                     advance=True)
+                if show_timing_log:
+                    self._append_run_log(
+                        f"raw_frames done: {time.perf_counter() - raw_t0:.2f}s",
+                        advance=True)
             except Exception as exc:  # noqa: BLE001
                 QMessageBox.warning(self, "Raw Data 생략",
                                     f"원본 데이터 시트를 만들지 못해 건너뜁니다:\n{exc}")
@@ -538,11 +550,12 @@ class HoneyMainWindow(QMainWindow):
                         work_group,
                         meta=rg.ReportMeta(),
                         selector=rg.ItemSelector(selected_items=selected),
-                        profile_cb=_profile_cb,
+                        profile_cb=profile_cb,
                     )
                     self.last_result = _wait_for_future(fut, progress, poll_cb=_drain_profile_events)
             _drain_profile_events()
-            self._append_run_log(f"Analysis total: {time.perf_counter() - analyze_t0:.2f}s")
+            if show_timing_log:
+                self._append_run_log(f"Analysis total: {time.perf_counter() - analyze_t0:.2f}s")
         except Exception as exc:
             _drain_profile_events()
             self._append_run_log(f"Analysis ERROR - {exc}")
@@ -667,7 +680,7 @@ class HoneyMainWindow(QMainWindow):
                             progress_cb=_sheet_progress, raw_sheets=raw,
                             dist_progress_cb=_dist_progress,
                             attach_progress_cb=_attach_progress,
-                            profile_cb=_profile_cb,
+                            profile_cb=profile_cb,
                         )
                 finally:
                     _co_uninitialize(com_module)
@@ -682,7 +695,8 @@ class HoneyMainWindow(QMainWindow):
                         poll_cb=lambda: (_drain_profile_events(), _drain_progress_events()),
                     )
             _drain_profile_events()
-            self._append_run_log(f"XLSX write total: {time.perf_counter() - write_t0:.2f}s")
+            if show_timing_log:
+                self._append_run_log(f"XLSX write total: {time.perf_counter() - write_t0:.2f}s")
         except Exception as exc:
             _drain_profile_events()
             self._append_run_log(f"XLSX write ERROR - {exc}")
@@ -697,7 +711,8 @@ class HoneyMainWindow(QMainWindow):
         _step(progress.maximum(), "Excel 파일 저장 마무리 중...")
         self.out_path = out
         self.btn_start.setEnabled(True)
-        self._append_run_log(f"Overall total: {time.perf_counter() - overall_t0:.2f}s")
+        if show_timing_log:
+            self._append_run_log(f"Overall total: {time.perf_counter() - overall_t0:.2f}s")
         self._append_run_log(f"저장됨: {out}")
         progress.success(f"완료: {Path(out).name} 저장됨", value=progress.maximum())
         self._status(f"완료: {Path(out).name}  ('서버에 업로드' 가능)")

@@ -30,7 +30,7 @@ import pandas as pd
 import xlwings as xw
 from openpyxl.utils import get_column_letter  # 순수 열문자 util (차트 _a1 등에서 사용)
 
-from . import _profile
+from . import DEBUG_CHART_LINE_TRACE, _profile
 
 # ── 차트 생성 병목 측정 프로파일러 (HONEY_CHART_PROFILE set 시에만 동작) ───────
 # unset 이면 _prof 는 즉시 통과 → 평상시 동작·출력 불변. 측정 결과는 stderr 로.
@@ -67,11 +67,11 @@ def _parse_int_set(raw):
     return out
 
 
-# ── 차트 생성 함수 line-by-line 디버그 트레이서 (HONEY_CHART_LINE_TRACE set 시에만 동작) ──
-# unset 이면 sys.settrace 자체를 호출하지 않음 → 평상시 동작·성능 100% 불변.
+# Line-by-line chart debug tracer. Toggle DEBUG_CHART_LINE_TRACE in __init__.py.
+# When off, sys.settrace is never called, so normal runtime is unchanged.
 # 지정한 차트 순번(_LINE_TRACE_TARGETS, 1-based, skip 제외)에서 _chart_draw_at_position
 # 호출 1건의 모든 실행 줄을 줄 단위 소요시간과 함께 stderr 로 출력한다.
-_LINE_TRACE_ON = bool(os.environ.get("HONEY_CHART_LINE_TRACE"))
+_LINE_TRACE_ON = bool(DEBUG_CHART_LINE_TRACE)
 _LINE_TRACE_TARGETS = _parse_int_set(os.environ.get("HONEY_CHART_LINE_TRACE_TARGETS", "10,11"))
 _LINE_TRACE_FILE = os.path.abspath(__file__)
 _LINE_TRACE_FILE_KEY = os.path.normcase(_LINE_TRACE_FILE)
@@ -317,6 +317,10 @@ _RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail
 
 _CPK_THRESHOLD = 1.33
 _CPK_WARN_FILL_RGB = "FFFFFF00"  # 노란색 ARGB — CPK < 1.33 행 하이라이트
+_CPK_WARN_FONT_RGB = "FF000000"
+_CPK_TOTAL_FILL_RGB = "FF0070C0"
+_CPK_TOTAL_FONT_RGB = "FFFFFFFF"
+_CPK_TOTAL_ADDR_MAXLEN = 250  # Excel Range 주소 255자 한계 대비 마진
 
 ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
 
@@ -362,6 +366,8 @@ def _apply_font(api, font):
         api.Font.Size = font["size"]
     if font.get("bold") is not None:
         api.Font.Bold = bool(font["bold"])
+    if font.get("color") is not None:
+        api.Font.Color = _rgb_int(font["color"])
 
 
 def _style_range(rng, *, fill=None, font=None, halign=None, valign=None,
@@ -868,7 +874,10 @@ def _fill_cpk_rows(ws, cpk_rows):
               "min", "median", "max", "average", "stdev",
               "cpl", "cpu", "cp", "cpk", "comment"]
     rows = []
+    total_row_offsets = []
     for r in cpk_rows:
+        if str(r.get("source") or "").strip().lower() == "total":
+            total_row_offsets.append(len(rows))
         rows.append([
             r.get("subject"), r.get("lower_limit"), r.get("upper_limit"),
             r.get("units"), r.get("source"), r.get("n"), r.get("min"),
@@ -877,6 +886,7 @@ def _fill_cpk_rows(ws, cpk_rows):
         ])
     _blank_repeated_cpk_labels(rows)
     _fill_cpk_table(ws, header, rows)
+    _apply_cpk_total_fill(ws, total_row_offsets)
     _apply_cpk_warn_fill(ws, header, rows)   # CPK < 1.33 행 노란 하이라이트 (병합 전)
     _apply_table_col_widths(ws, header, custom_widths={
         "TEST NAME": _CPK_TEST_NAME_COL_WIDTH,
@@ -902,6 +912,34 @@ def _fill_cpk_table(ws, header, rows):
         _fill_table(ws, header, rows)
 
 
+def _apply_cpk_total_fill(ws, row_offsets, header_row=_HEADER_ROW):
+    if not row_offsets:
+        return
+    with _flow_prof("fill_cpk.total_fill"):
+        excel_rows = [header_row + 1 + offset for offset in row_offsets]
+
+        def _flush(addresses):
+            if not addresses:
+                return
+            _style_range(ws.range(",".join(addresses)),
+                         fill=_CPK_TOTAL_FILL_RGB,
+                         font={"color": _CPK_TOTAL_FONT_RGB})
+
+        addresses = []
+        length = 0
+        for row in excel_rows:
+            address = f"B{row}:P{row}"
+            next_length = length + len(address) + (1 if addresses else 0)
+            if addresses and next_length > _CPK_TOTAL_ADDR_MAXLEN:
+                _flush(addresses)
+                addresses = []
+                length = 0
+                next_length = len(address)
+            addresses.append(address)
+            length = next_length
+        _flush(addresses)
+
+
 def _apply_cpk_warn_fill(ws, header, rows, header_row=_HEADER_ROW, start_col=_START_COL):
     with _flow_prof("fill_cpk.warn_fill"):
         return _apply_cpk_warn_fill_inner(ws, header, rows, header_row, start_col)
@@ -912,6 +950,7 @@ def _apply_cpk_warn_fill_inner(ws, header, rows, header_row=_HEADER_ROW, start_c
     cpk_idx = next((i for i, h in enumerate(header) if h == "cpk"), None)
     if cpk_idx is None:
         return
+    source_idx = 4
     ncol = len(header)
     for ri, row in enumerate(rows):
         val = row[cpk_idx] if cpk_idx < len(row) else None
@@ -921,8 +960,14 @@ def _apply_cpk_warn_fill_inner(ws, header, rows, header_row=_HEADER_ROW, start_c
             f = None
         if f is not None and f < _CPK_THRESHOLD:
             excel_row = header_row + 1 + ri
-            _style_range(ws.range((excel_row, start_col), (excel_row, start_col + ncol - 1)),
-                         fill=_CPK_WARN_FILL_RGB)
+            if len(row) > source_idx and str(row[source_idx]).strip().lower() == "total":
+                cpk_col = start_col + cpk_idx
+                _style_range(ws.range((excel_row, cpk_col)),
+                             fill=_CPK_WARN_FILL_RGB,
+                             font={"color": _CPK_WARN_FONT_RGB})
+            else:
+                _style_range(ws.range((excel_row, start_col), (excel_row, start_col + ncol - 1)),
+                             fill=_CPK_WARN_FILL_RGB)
 
 
 def _cpk_fail_subjects(result):
@@ -2081,7 +2126,7 @@ def _chart_layout_setting(chart_api, x_min, x_max, is_fail, limit_count):
 # ── 차트 생성 함수 line-by-line 디버그 트레이서 ──────────────────────────────
 # _chart_draw_at_position 호출 1건(그 호출 스택 전체 — title/data/layout 등 하위 함수
 # + COM 조작 줄 포함)의 모든 실행 줄을 줄 단위 소요시간과 함께 stderr 로 출력한다.
-# HONEY_CHART_LINE_TRACE 가 꺼져 있으면 sys.settrace 자체를 호출하지 않으므로 평상시
+# DEBUG_CHART_LINE_TRACE is off by default, so sys.settrace is not called in normal runs.
 # 동작·성능에 영향 없음.
 
 def _chart_line_tracer(state):

@@ -14,7 +14,7 @@ from typing import Optional
 import pandas as pd
 
 from . import _builders as B
-from .csvfile_to_df import DF_YIELD_COLUMNS
+from .file_to_df import DF_YIELD_COLUMNS
 from .df_honey import df_honey
 
 
@@ -93,7 +93,7 @@ class df_honey_group:
         """paths 목록을 순서대로 로드해 그룹 생성.
 
         progress_cb(done, total, filename) — 각 파일 로드 시작 전 호출.
-        done == total 이면 완료 신호. csvfile_to_df 는 변경 없음.
+        done == total 이면 완료 신호. file_to_df 는 변경 없음.
         """
         paths = list(paths)
         n = len(paths)
@@ -102,7 +102,7 @@ class df_honey_group:
             filename = Path(p).name
             if progress_cb:
                 progress_cb(i, n, filename)
-            # 파일 내부 서브콜백 — 브랜치 교체 후 csvfile_to_df 가 지원하면 자동 동작
+            # 파일 내부 서브콜백 — 브랜치 교체 후 file_to_df 가 지원하면 자동 동작
             sub_cb = (lambda s, t, _i=i, _n=n, _f=filename: progress_cb(_i, _n, _f, s, t)
                       ) if progress_cb else None
             mass_data_list.append(df_honey.from_csv(p, report_meta=report_meta,

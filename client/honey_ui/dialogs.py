@@ -220,8 +220,9 @@ class ReportSettingsDialog(QDialog):
         )
         self.cb_raw_data.setChecked(False)
         self.cb_raw_data.setToolTip("체크하면 입력 원본 데이터를 Raw Data 시트로 추가합니다.")
-        for cb in self.sheet_checks.values():
-            cb.setChecked(True)
+        default_sheets = {"yield", "fail_item", "distribution"}
+        for name, cb in self.sheet_checks.items():
+            cb.setChecked(name in default_sheets)
         self.cb_raw_data.toggled.connect(self._update_dut_mode_availability)
         self.cb_mode_dut.toggled.connect(lambda checked: (
             self.cb_raw_data.setEnabled(not checked),

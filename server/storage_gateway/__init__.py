@@ -1,9 +1,14 @@
 """ENTRYPOINT / EXTERNAL_OWNER: report artifact storage gateway.
 
 External S3/server-storage branches should integrate here.  Flask routes and
-upload parsing call this module instead of reaching into ``s3_storage``
-directly.  The default implementation preserves the existing S3 + local
-fallback behavior for Honey.exe compatibility tests.
+upload parsing call this module instead of reaching into the internal
+``_s3`` adapter directly.  The default implementation preserves the existing
+S3 + local fallback behavior for Honey.exe compatibility tests.
+
+Internal modules (외부 담당자 영역):
+  ``_s3``           — boto3 어댑터 + 키 빌더 + 예외 (구 ``s3_storage.report_s3``)
+  ``_issue_images`` — Issue_table 행 이미지 백엔드 (S3 + 로컬 폴백)
+  ``_png_drive``    — 외부 호환 PNG 헬퍼 스캐폴드 (현재 미사용)
 """
 import io
 import math
@@ -11,10 +16,18 @@ from pathlib import Path
 
 from config import REPORT_UPLOAD_DIR
 from database import report_db
-from s3_storage import report_s3
-from s3_storage.report_s3 import S3NotConfigured, S3ObjectCorrupted
+from . import _s3 as report_s3
+from ._s3 import S3NotConfigured, S3ObjectCorrupted
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+
+# 텍스트 콘텐츠(object_type) → S3 키 빌더 매핑. 호출부가 키 빌더를 알 필요 없도록
+# 게이트웨이 내부에서 해소한다(진입점 누수 방지).
+_TEXT_KEY_BUILDERS = {
+    "summary_text": report_s3.make_summary_text_s3_key,
+    "yield_text": report_s3.make_yield_text_s3_key,
+    "issue_table_text": report_s3.make_issue_text_s3_key,
+}
 
 
 def _combine_chart_pngs(pngs: list):
@@ -84,7 +97,7 @@ def save_upload_artifacts(
 
     if issue_images:
         try:
-            from issue_image_store import save_images
+            from ._issue_images import save_images
             res = save_images(analysis_key, issue_images)
             issue_imgs_saved = len(res.get("rows", []))
         except Exception as exc:
@@ -149,9 +162,12 @@ def load_json_object(objects, object_type):
         return None
 
 
-def save_text_object(analysis_key, session, object_type, key_builder, data):
-    """Upload text JSON and refresh report_object_info."""
-    key = key_builder(analysis_key)
+def save_text_object(analysis_key, session, object_type, data):
+    """Upload text JSON and refresh report_object_info.
+
+    object_type 에 해당하는 S3 키 빌더는 내부 ``_TEXT_KEY_BUILDERS`` 로 해소한다.
+    """
+    key = _TEXT_KEY_BUILDERS[object_type](analysis_key)
     uri = report_s3.upload_json_to_s3(key, data)
     existing = report_db.get_object_info(analysis_key, object_type) or {}
     content_hash = existing.get("content_hash") or session.get("content_hash") or ""
@@ -163,12 +179,12 @@ def save_text_object(analysis_key, session, object_type, key_builder, data):
 
 
 def list_issue_image_rows(analysis_key):
-    from issue_image_store import list_rows
+    from ._issue_images import list_rows
     return list_rows(analysis_key)
 
 
 def load_issue_image(analysis_key, row):
-    from issue_image_store import load_image
+    from ._issue_images import load_image
     return load_image(analysis_key, row)
 
 

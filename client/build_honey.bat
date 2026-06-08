@@ -1,6 +1,28 @@
 @echo off
 setlocal EnableExtensions
 
+if /i not "%~1"=="--inner" (
+  set "LOG_DIR=%~dp0build_logs"
+  if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>nul
+
+  for /f %%I in ('powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"') do set "LOG_TS=%%I"
+  if not defined LOG_TS set "LOG_TS=%RANDOM%"
+  set "LOG_FILE=%LOG_DIR%\Honey_build_%LOG_TS%.txt"
+
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Transcript -Path '%LOG_FILE%' -Force | Out-Null; & '%~f0' --inner; $code=$LASTEXITCODE; Stop-Transcript | Out-Null; exit $code"
+  set "BUILD_EXIT=%ERRORLEVEL%"
+
+  if "%BUILD_EXIT%"=="0" (
+    del "%LOG_FILE%" >nul 2>nul
+  ) else (
+    echo.
+    echo [ERROR] Build failed. Console log saved to:
+    echo   "%LOG_FILE%"
+  )
+  exit /b %BUILD_EXIT%
+)
+
+shift /1
 cd /d "%~dp0"
 
 set "PYTHON_CMD=python"

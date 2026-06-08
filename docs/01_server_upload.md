@@ -6,7 +6,7 @@
 ## 파일
 - [server/upload_xlsx.py](../server/upload_xlsx.py) — 라우트 `POST /pe/report/upload_xlsx` 전체
 - [server/xlsx_parser.py](../server/xlsx_parser.py) — openpyxl 텍스트 추출
-- [server/s3_storage/report_s3.py](../server/s3_storage/report_s3.py) — S3 업로드/키 빌더 (→[03](03_storage.md))
+- [server/storage_gateway/](../server/storage_gateway/) — S3 산출물 저장 진입점(`save_upload_artifacts`); 내부 어댑터 [_s3.py](../server/storage_gateway/_s3.py) (→[03](03_storage.md))
 - [server/database/report_db.py](../server/database/report_db.py) — 세션/summary/object 저장 (→[03](03_storage.md))
 
 ## 흐름 (`upload_xlsx()` [upload_xlsx.py:122](../server/upload_xlsx.py#L122))
