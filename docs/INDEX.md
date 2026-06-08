@@ -79,7 +79,7 @@
 | 수정 모드 저장 동작 | [02](02_server_query_edit.md) | `update_session_content()` |
 | DB 컬럼/테이블 추가 | [03](03_storage.md) | `SCHEMA`, `_migrate()` |
 | 감사 로그(업/수정/삭제) 기록·조회 | [02](02_server_query_edit.md) | `report_db.log_audit`/`get_audit_logs`, [admin_routes.py](../server/admin_routes.py), 대시보드 `/pe/admin` |
-| S3 키 경로 바꾸기 | [03](03_storage.md) | [report_s3.py](../server/s3_storage/report_s3.py) `make_*_key` + [config.py](../server/config.py) |
+| S3 키 경로 바꾸기 | [03](03_storage.md) | [_s3.py](../server/storage_gateway/_s3.py) `make_*_key` + [config.py](../server/config.py) |
 | 새 Honey 버전 배포 | [04](04_honey_update.md) | `version.json` + release 스크립트 |
 | 클라 화면/버튼 동작 | [05](05_client_ui.md) | `HoneyMainWindow` 슬롯 |
 | 분석 수식(cpk/yield 등) | [06](06_analysis_engine.md) | [_builders.py](../client/report_generator/_builders.py) |
@@ -90,8 +90,8 @@
 
 | 경계 | 외부 브랜치 진입점 | 기본 구현 | 유지 계약 |
 |------|-------------------|-----------|-----------|
-| D1 입력 | [client/d1/__init__.py](../client/d1/__init__.py) `get_provider`, `list_files`, `D1BrowserDialog` | `HONEY_D1_STORAGE` 또는 `client/d1_storage` 로컬 검색 | Honey UI 는 provider 결과 경로 목록만 사용 |
-| 서버 저장소/S3 | [server/storage_gateway/](../server/storage_gateway/) | `s3_storage.report_s3` + 로컬 fallback | `/pe/report/...` URL, multipart 필드, 응답 JSON 유지 |
+| D1 입력 | [client/d1/](../client/d1/) `get_provider`, `list_files`, `D1BrowserDialog` ([README](../client/d1/README.md)) | `HONEY_D1_STORAGE` 또는 `client/d1_storage` 로컬 검색 | Honey UI 는 provider 결과 경로 목록만 사용 |
+| 서버 저장소/S3 | [server/storage_gateway/](../server/storage_gateway/) ([README](../server/storage_gateway/README.md)) | 내부 `_s3` 어댑터 + 로컬 fallback | `/pe/report/...` URL, multipart 필드, 응답 JSON 유지 |
 | 사용자 담당 리포트 | [client/report_generator/](../client/report_generator/) + [client/report_flow/](../client/report_flow/) | 분석/xlsx 생성/업로드 전처리 | 분석 수식, xlsx 레이아웃, DB 스키마 변경 없음 |
 
 ---

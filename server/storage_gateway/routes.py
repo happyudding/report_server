@@ -9,8 +9,12 @@ from flask import Response, abort, make_response
 
 from database import report_db
 from report.report_extension import report_bp
-from s3_storage.report_s3 import S3NotConfigured
-from storage_gateway import load_chart_png, load_distribution_png, load_issue_image
+from storage_gateway import (
+    S3NotConfigured,
+    load_chart_png,
+    load_distribution_png,
+    load_issue_image,
+)
 
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 

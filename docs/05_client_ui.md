@@ -6,7 +6,7 @@
 ## 파일
 - [client/honey_main.py](../client/honey_main.py) — `HoneyMainWindow` + `main()` (워크플로우 연결)
 - [client/honey_ui/](../client/honey_ui/) — `UploadDialog`, `ReportSettingsDialog`, `FileOrderDialog`, `ColorEditorDialog`, 진행바 헬퍼
-- [client/d1/](../client/d1/) — D1 입력 provider 진입점 (`get_provider`, `list_files`, `D1BrowserDialog`)
+- [client/d1/](../client/d1/) — D1 입력 provider 진입점 (`get_provider`, `list_files`, `D1BrowserDialog`); 외부 브랜치 가이드 [README](../client/d1/README.md)
 - [client/report_flow/](../client/report_flow/) — 파일명 생성, 업로드 xlsx 전처리
 - UI 레이아웃(.ui, Qt Designer): `honey_main.ui`, `upload_dialog.ui`, `d1_browser.ui`, `file_order.ui`, `report_settings.ui` — 런타임 `uic.loadUi`
 - [client/config.py](../client/config.py) — `D1_STORAGE_DIR`, `CONFIG_DIR`

@@ -33,7 +33,12 @@ report_server/
 │   │   ├── report_analysis_index.html  검색결과 페이지 (모달 없음)
 │   │   ├── report_view.html     세션 상세 (text only)
 │   │   └── admin_dashboard.html 감사 로그 대시보드 (/pe/admin)
-│   ├── s3_storage/report_s3.py  boto3 호환 client + key 빌더
+│   ├── storage_gateway/         S3 산출물 저장 단일 진입점 (ENTRYPOINT/EXTERNAL_OWNER)
+│   │   ├── __init__.py          facade (공개 API + 예외 재노출)
+│   │   ├── routes.py            이미지 URL 라우트
+│   │   ├── _s3.py              boto3 호환 client + key 빌더 (내부 어댑터)
+│   │   ├── _issue_images.py    이슈 이미지 백엔드 (S3+로컬 폴백)
+│   │   └── _png_drive.py       외부 호환 PNG 스캐폴드 (미사용)
 │   ├── upload_xlsx.py           /pe/report/upload_xlsx 라우트
 │   ├── xlsx_parser.py           openpyxl 기반 텍스트 추출
 │   ├── admin_routes.py          /pe/admin 감사 로그 조회 (인증 없음, 내부망 전용)
@@ -169,7 +174,8 @@ HONEY_SERVER_URL      기본 http://127.0.0.1:8000
 | xlsx 파싱 | [server/xlsx_parser.py](server/xlsx_parser.py) |
 | Honey 다운로드 라우트 | [server/honey_routes.py](server/honey_routes.py) |
 | DB 스키마 | [server/database/report_db.py](server/database/report_db.py) |
-| S3 키 빌더 | [server/s3_storage/report_s3.py](server/s3_storage/report_s3.py) |
+| S3 키 빌더 | [server/storage_gateway/_s3.py](server/storage_gateway/_s3.py) |
+| S3 저장 진입점(facade) | [server/storage_gateway/__init__.py](server/storage_gateway/__init__.py) ([README](server/storage_gateway/README.md)) |
 | 검색결과 UI | [server/report/report_analysis_index.html](server/report/report_analysis_index.html) |
 | 세션 상세 UI | [server/report/report_view.html](server/report/report_view.html) |
 | 감사 로그 라우트 | [server/admin_routes.py](server/admin_routes.py) |

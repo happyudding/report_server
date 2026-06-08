@@ -5,14 +5,12 @@ from flask import Response, abort, jsonify, make_response, request, send_file
 
 from database import report_db
 from report_utils import to_float as _to_float, to_int as _to_int
-from s3_storage import report_s3
 import storage_gateway
 from config import (
     REPORT_ANALYSIS_INDEX_HTML,
     REPORT_VIEW_HTML,
 )
 from report.report_extension import report_bp
-from s3_storage.report_s3 import S3NotConfigured, S3ObjectCorrupted
 
 _ANALYSIS_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -174,13 +172,10 @@ def session_full(session_id):
     issue_table_text = sheet_data.get("issue_table") or _load_json_object(objects, "issue_table_text")
     charts = []
     if "chart_index" in objects:
-        try:
-            manifest = report_s3.download_json_from_s3(objects["chart_index"]["s3_key"])
-            count = int((manifest or {}).get("count", 0))
-            charts = [{"index": i, "url": f"/pe/report/chart/{session_id}/{i}"}
-                      for i in range(count)]
-        except (S3NotConfigured, S3ObjectCorrupted, Exception):
-            charts = []
+        manifest = _load_json_object(objects, "chart_index")
+        count = int((manifest or {}).get("count", 0))
+        charts = [{"index": i, "url": f"/pe/report/chart/{session_id}/{i}"}
+                  for i in range(count)]
     # Issue_table 행별 분포 이미지. 저장소(S3 또는 로컬 폴백)에서 행 인덱스를 조회.
     issue_images = []
     if akey:
@@ -293,9 +288,8 @@ def update_session_content(session_id):
             errors["summary_text"] = str(exc)
         else:
             try:
-                _write_text_object(akey, session, "summary_text",
-                                   report_s3.make_summary_text_s3_key, body["summary_text"])
-            except (S3NotConfigured, Exception):
+                _write_text_object(akey, session, "summary_text", body["summary_text"])
+            except Exception:
                 pass
 
     # yield_text → DB 갱신
@@ -307,9 +301,8 @@ def update_session_content(session_id):
             errors["yield_text"] = str(exc)
         else:
             try:
-                _write_text_object(akey, session, "yield_text",
-                                   report_s3.make_yield_text_s3_key, body["yield_text"])
-            except (S3NotConfigured, Exception):
+                _write_text_object(akey, session, "yield_text", body["yield_text"])
+            except Exception:
                 pass
 
     # issue_table_text → DB 갱신
@@ -324,9 +317,8 @@ def update_session_content(session_id):
             errors["issue_table_text"] = str(exc)
         else:
             try:
-                _write_text_object(akey, session, "issue_table_text",
-                                   report_s3.make_issue_text_s3_key, issue_payload)
-            except (S3NotConfigured, Exception):
+                _write_text_object(akey, session, "issue_table_text", issue_payload)
+            except Exception:
                 pass
 
     status = 200 if not errors else (207 if updated else 500)
@@ -337,10 +329,10 @@ def update_session_content(session_id):
     return jsonify({"ok": not errors, "updated": updated, "errors": errors}), status
 
 
-def _write_text_object(analysis_key, session, object_type, key_builder, data):
+def _write_text_object(analysis_key, session, object_type, data):
     """텍스트 콘텐츠 JSON 을 S3 에 다시 올리고 report_object_info 를 갱신.
     content_hash / options_json 은 기존 행 값을 유지(없으면 세션 값/빈 객체로 폴백)."""
-    storage_gateway.save_text_object(analysis_key, session, object_type, key_builder, data)
+    storage_gateway.save_text_object(analysis_key, session, object_type, data)
 
 
 # ── annotations ───────────────────────────────────────────────────────────────

@@ -3,6 +3,8 @@
 분석 계층(df_honey / df_honey_group / analyzer / item_selector)은 PyQt·xlwings
 비의존 순수 Python. xlsx_writer 만 xlwings(Excel) 의존.
 """
+DEBUG_CHART_LINE_TRACE = False
+
 from .analyzer import run as analyze
 from .df_honey import df_honey
 from .df_honey_group import df_honey_group
@@ -17,6 +19,7 @@ __all__ = [
     "AnalysisResult",
     "DistSeries",
     "ReportMeta",
+    "DEBUG_CHART_LINE_TRACE",
 ]
 
 
