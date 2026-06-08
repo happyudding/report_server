@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import linecache
 import math
 import os
 import shutil
@@ -53,6 +54,30 @@ _PNG_SUBJECT_CACHE = os.environ.get("HONEY_PNG_SUBJECT_CACHE", "").strip().lower
 _DIST_CHART_TEMPLATE = os.environ.get("HONEY_DIST_CHART_TEMPLATE", "1").strip().lower() not in {
     "0", "false", "off", "no",
 }
+
+
+def _parse_int_set(raw):
+    """\"100,101\" → {100, 101} (콤마 split + int, 잘못된 토큰은 무시)."""
+    out = set()
+    for tok in str(raw or "").split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            out.add(int(tok))
+        except ValueError:
+            pass
+    return out
+
+
+# ── 차트 생성 함수 line-by-line 디버그 트레이서 (HONEY_CHART_LINE_TRACE set 시에만 동작) ──
+# unset 이면 sys.settrace 자체를 호출하지 않음 → 평상시 동작·성능 100% 불변.
+# 지정한 차트 순번(_LINE_TRACE_TARGETS, 1-based, skip 제외)에서 _new_dist_chart_from_template
+# 호출 1건의 모든 실행 줄을 줄 단위 소요시간과 함께 stderr 로 출력한다.
+_LINE_TRACE_ON = bool(os.environ.get("HONEY_CHART_LINE_TRACE"))
+_LINE_TRACE_TARGETS = _parse_int_set(os.environ.get("HONEY_CHART_LINE_TRACE_TARGETS", "10,11"))
+_LINE_TRACE_FILE = os.path.abspath(__file__)
+_LINE_TRACE_FILE_KEY = os.path.normcase(_LINE_TRACE_FILE)
 
 
 @contextlib.contextmanager
@@ -1991,10 +2016,10 @@ def _new_dist_chart_from_template(sh, template_cache, i, d, x_sheet, y_sheet, co
             _rebind_dist_chart_series(
                 chart, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
                 x_min, y_cols_by_source, count_matrix, colors)
-        with _dist_time("dist.template.legend_fix"):
-            _fix_dist_chart_legend(chart, 2)
         with _dist_time("dist.template.dynamic_format"):
             _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail)
+        with _dist_time("dist.template.legend_fix"):
+            _fix_dist_chart_legend(chart, 2)
         return chart
     except Exception as exc:
         _dist_count_template("fallback")
@@ -2091,49 +2116,101 @@ def _rebind_dist_chart_series(chart, d, x_sheet, y_sheet, col_idx, cnt_list, src
 
 
 def _fix_dist_chart_legend(chart, limit_count):
+    """LSL/USL 범례 항목 제거 + 범례 폰트 8.
+
+    series 순서(1=LSL, 2=USL, 3+=source)와 범례 항목이 1:1 대응하므로 맨 앞
+    limit_count 개를 인덱스로 삭제한다. LegendEntry 는 이름 속성이 없어 이름 기반
+    매칭이 불가능 → 인덱스 삭제로 대체. LegendEntries(1) 을 삭제하면 뒤 항목이 앞으로
+    당겨지므로 1번을 limit_count 회 반복 삭제하면 앞 limit_count 개가 제거된다.
+    """
     try:
         chart.HasLegend = True
         leg = chart.Legend
         leg.Font.Size = 8
-        legend_entries = leg.LegendEntries
-        try:
-            count = int(legend_entries().Count)
-        except Exception:
-            return
-        for idx in range(count, 0, -1):
-            try:
-                entry = legend_entries(idx)
-                if _legend_entry_name(entry) in {"LSL", "USL"}:
-                    entry.Delete()
-            except Exception:
-                pass
     except Exception:
-        pass
-
-
-def _legend_entry_name(entry):
-    for expr in (
-        lambda e: e.Text,
-        lambda e: e.Caption,
-        lambda e: e.Name,
-        lambda e: e.LegendKey.Parent.Name,
-    ):
+        return
+    for _ in range(limit_count):
         try:
-            name = expr(entry)
+            leg.LegendEntries(1).Delete()
         except Exception:
-            continue
-        if name is None:
-            continue
-        text = str(name).strip()
-        if text:
-            return text
-    return ""
+            pass
 
 
 def _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail):
     _format_dist_chart_title(chart, d)
     _format_dist_chart_x_axis(chart, x_min, x_max)
     _format_dist_chart_fail_bg(chart, is_fail, reset=True)
+
+
+# ── 차트 생성 함수 line-by-line 디버그 트레이서 ──────────────────────────────
+# _new_dist_chart_from_template 호출 1건(그 호출 스택 전체 — clone/rebind/style/
+# format/legend 등 하위 함수 + COM 조작 줄 포함)의 모든 실행 줄을 줄 단위 소요시간과
+# 함께 stderr 로 출력한다. HONEY_CHART_LINE_TRACE 가 꺼져 있으면 sys.settrace 자체를
+# 호출하지 않으므로 평상시 동작·성능에 영향 없음.
+
+def _chart_line_tracer(state):
+    """sys.settrace 콜백. 이 모듈 파일에 속한 프레임의 'line' 이벤트만 기록한다.
+
+    다른 파일(numpy/pandas/get_column_letter 등 외부 라이브러리)로 진입하는 프레임은
+    None 을 반환해 추적을 차단 — 소스가 없어 줄 단위 추적이 불가능한 컴파일 확장
+    (pywin32 COM 등) 및 무관한 노이즈를 거른다. 활성 구간 자체가
+    _new_dist_chart_from_template 호출 1건으로 한정되므로 실질적으로는 그 호출
+    스택만 보게 된다.
+
+    'line' 이벤트마다 "직전 줄"의 (filename, lineno, func, elapsed) 를
+    state['entries'] 에 push 하고 현재 줄을 state['last'] 로 갱신한다 — 호출 스택을
+    가로지른 단일 시간순 로그(실제 실행 순서 그대로).
+    """
+    def tracer(frame, event, _arg):
+        if os.path.normcase(frame.f_code.co_filename) != _LINE_TRACE_FILE_KEY:
+            return None
+        if event == "call":
+            return tracer
+        if event == "line":
+            now = time.perf_counter()
+            last = state["last"]
+            if last is not None:
+                state["entries"].append((last[0], last[1], now - last[2]))
+            state["last"] = (frame.f_lineno, frame.f_code.co_name, now)
+            return tracer
+        return tracer
+    return tracer
+
+
+def _dump_chart_line_trace(seq, subject, entries, total_elapsed):
+    sep = "=" * 88
+    print(sep, file=sys.stderr)
+    print(f"[chart-line-trace] chart_seq={seq} subject={subject!r} "
+          f"lines={len(entries)} total={total_elapsed * 1000:.3f}ms", file=sys.stderr)
+    print(sep, file=sys.stderr)
+    for lineno, func, elapsed in entries:
+        src = linecache.getline(_LINE_TRACE_FILE, lineno).rstrip()
+        print(f"  {func}:{lineno} | {elapsed * 1000:8.3f} ms | {src}", file=sys.stderr)
+    print(sep, file=sys.stderr, flush=True)
+
+
+@contextlib.contextmanager
+def _trace_chart_lines(seq, subject):
+    """대상 차트(seq)일 때만 _new_dist_chart_from_template 호출 1건을 줄 단위로 추적.
+
+    대상이 아니면 sys.settrace 호출 없이 즉시 통과 → 다른 모든 차트·코드 경로는
+    평소와 100% 동일하게 실행된다.
+    """
+    if not _LINE_TRACE_ON or seq not in _LINE_TRACE_TARGETS:
+        yield
+        return
+    state = {"entries": [], "last": None}
+    old_trace = sys.gettrace()
+    sys.settrace(_chart_line_tracer(state))
+    t0 = time.perf_counter()
+    try:
+        yield
+    finally:
+        sys.settrace(old_trace)
+        last = state["last"]
+        if last is not None:
+            state["entries"].append((last[0], last[1], time.perf_counter() - last[2]))
+        _dump_chart_line_trace(seq, subject, state["entries"], time.perf_counter() - t0)
 
 
 def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
@@ -2217,6 +2294,7 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
     index_entries = []
     n_charts = len(dists)
     done = 0
+    chart_seq = 0   # 스킵 제외, 실제 생성 시도한 차트의 1-based 순번 (line-trace 타깃 기준)
     template_cache = {}
     with _profile_info_time(f"distribution.chart_create[{profile_label}]"):
         for i, d in enumerate(dists):
@@ -2236,11 +2314,13 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
                     _isnum(hi) and data_max > float(hi))
                 x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
 
+            chart_seq += 1
             try:
-                chart_map[d.subject] = _new_dist_chart_from_template(
-                    sh, template_cache, i, d, x_name, y_name, i, cnt_list,
-                    src_names, colors, x_min, x_max, is_fail, y_cols_by_source,
-                    count_matrix)
+                with _trace_chart_lines(chart_seq, d.subject):
+                    chart_map[d.subject] = _new_dist_chart_from_template(
+                        sh, template_cache, i, d, x_name, y_name, i, cnt_list,
+                        src_names, colors, x_min, x_max, is_fail, y_cols_by_source,
+                        count_matrix)
             except Exception as _e:
                 print(f"[dist-chart] skip subject={d.subject!r}: {_e}", file=sys.stderr)
             col = i % _CHARTS_PER_ROW
@@ -2329,10 +2409,10 @@ def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
             pa.Height = _PLOT_H
         except Exception:
             pass
-    with _dist_time("dist.loop.legend_format"):
-        # legend: limit series(1..limit_count) entry 삭제, 폰트 8
-        _fix_dist_chart_legend(chart, limit_count)
     _format_dist_chart_fail_bg(chart, is_fail)
+    with _dist_time("dist.loop.legend_format"):
+        # legend: limit series(1..limit_count) entry 삭제, 폰트 8 — 서식 맨 마지막
+        _fix_dist_chart_legend(chart, limit_count)
 
 
 def _format_dist_chart_title(chart, d):
