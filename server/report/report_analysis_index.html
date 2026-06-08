@@ -54,6 +54,7 @@ h1 { margin: 0 0 20px; font-size: 22px; font-weight: 700; color: #1a1a2e; }
   align-items: end;
 }
 .filter-group { display: flex; flex-direction: column; gap: 6px; }
+.filter-group.search-group { position: relative; }
 .filter-label { font-size: 12px; color: #666; font-weight: 600; }
 .filter-input, .sel-input {
   height: 36px; padding: 0 10px; border: 1px solid #d0d5dd;
@@ -61,6 +62,21 @@ h1 { margin: 0 0 20px; font-size: 22px; font-weight: 700; color: #1a1a2e; }
   background: #fff;
 }
 .filter-input:focus, .sel-input:focus { border-color: #4a90e2; }
+.suggest-box {
+  display: none; position: absolute; top: 62px; left: 0; right: 0;
+  background: #fff; border: 1px solid #d0d5dd; border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.12); z-index: 20;
+  max-height: 220px; overflow-y: auto;
+}
+.suggest-box.show { display: block; }
+.suggest-item {
+  padding: 7px 10px; cursor: pointer; font-size: 12px; color: #333;
+  border-bottom: 1px solid #f1f3f5;
+}
+.suggest-item:last-child { border-bottom: none; }
+.suggest-item:hover { background: #f5f8ff; }
+.suggest-main { font-weight: 700; }
+.suggest-sub { color: #777; margin-top: 2px; }
 .filter-actions { display: flex; gap: 8px; align-items: end; }
 .btn-action {
   height: 36px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
@@ -178,10 +194,11 @@ tr.result-row:hover { background: #f5f8ff; }
       <label class="filter-label">Product</label>
       <input type="text" class="filter-input" id="productInput" placeholder="All">
     </div>
-    <div class="filter-group">
+    <div class="filter-group search-group">
       <label class="filter-label">검색</label>
       <input type="text" class="filter-input" id="lotIdInput"
-             placeholder="Product / LOT / Process / 파일명 등 모든 항목 검색...">
+             placeholder="Product / LOT / Revision / Process / EDM / 파일명 검색...">
+      <div class="suggest-box" id="searchSuggest"></div>
     </div>
     <div class="filter-actions">
       <button class="btn-action primary" id="searchBtn">조회</button>
@@ -201,6 +218,8 @@ tr.result-row:hover { background: #f5f8ff; }
         <th>Source</th>
         <th>Product Type</th>
         <th>Product</th>
+        <th>Revision</th>
+        <th>Process</th>
         <th>LOT ID</th>
         <th>파일명</th>
         <th>업로드날짜</th>
@@ -208,7 +227,7 @@ tr.result-row:hover { background: #f5f8ff; }
       </tr>
     </thead>
     <tbody id="resultsTbody">
-      <tr class="empty-row"><td colspan="7">데이터를 불러오는 중...</td></tr>
+      <tr class="empty-row"><td colspan="9">데이터를 불러오는 중...</td></tr>
     </tbody>
   </table>
   <div class="pager" id="pager"></div>
@@ -249,6 +268,11 @@ function csrfToken() {
 // product_type 내부값(MD/PD/PM/SE)은 그대로 두고 화면 표시만 친절한 라벨로.
 const PT_LABELS = { MD: "MDDI", PD: "PDDI", PM: "PMIC", SE: "SECURITY" };
 const ptLabel = pt => PT_LABELS[pt] || pt || "-";
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"']/g, c => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[c]));
+}
 
 // HONEY 설치본 다운로드 버튼: /honey/version 으로 라벨/링크 보정 (없으면 비활성).
 // 링크 규칙은 클라이언트(version_check)와 동일: manifest.url 우선, 없으면 /honey/download.
@@ -294,9 +318,18 @@ document.querySelectorAll(".pt-btn").forEach(btn => {
 // ── search button ──
 document.getElementById("searchBtn").addEventListener("click", loadHistory);
 ["processInput", "productInput", "lotIdInput"].forEach(id => {
-  document.getElementById(id).addEventListener("keydown", e => {
+  const input = document.getElementById(id);
+  input.addEventListener("keydown", e => {
     if (e.key === "Enter") loadHistory();
   });
+  input.addEventListener("input", () => {
+    _currentPage = 0;
+    renderResults();
+    if (id === "lotIdInput") renderSuggestions();
+  });
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest(".search-group")) hideSuggestions();
 });
 
 // ── toast ──
@@ -324,9 +357,41 @@ function applyClientFilter(rows) {
     if (!q) return true;
     const haystack = [
       r.source, r.product_type, r.product, r.revision, r.lot_id,
-      r.process, r.file_name, r.session_id,
+      r.process, r.edm_link, r.file_name, r.session_id,
     ].map(v => String(v || "").toLowerCase()).join(" ");
     return haystack.includes(q);
+  });
+}
+
+function hideSuggestions() {
+  const box = document.getElementById("searchSuggest");
+  box.classList.remove("show");
+  box.innerHTML = "";
+}
+
+function renderSuggestions() {
+  const box = document.getElementById("searchSuggest");
+  const q = (document.getElementById("lotIdInput").value || "").trim().toLowerCase();
+  if (!q) { hideSuggestions(); return; }
+  const matches = applyClientFilter(_lastRows).slice(0, 8);
+  if (!matches.length) { hideSuggestions(); return; }
+  box.innerHTML = matches.map(r => `
+    <div class="suggest-item" data-sid="${esc(r.session_id)}">
+      <div class="suggest-main">${esc(r.product || "-")} / ${esc(r.lot_id || "-")}</div>
+      <div class="suggest-sub">${esc(r.revision || "-")} · ${esc(r.process || "-")} · ${esc(r.file_name || "-")}</div>
+    </div>
+  `).join("");
+  box.classList.add("show");
+  box.querySelectorAll(".suggest-item").forEach(item => {
+    item.addEventListener("click", () => {
+      const row = _lastRows.find(r => r.session_id === item.dataset.sid);
+      if (row) {
+        document.getElementById("lotIdInput").value = row.lot_id || row.product || "";
+      }
+      hideSuggestions();
+      _currentPage = 0;
+      renderResults();
+    });
   });
 }
 
@@ -343,7 +408,7 @@ async function loadHistory() {
     renderResults();
   } catch (e) {
     document.getElementById("resultsTbody").innerHTML =
-      `<tr class="empty-row"><td colspan="7">로드 실패: ${e.message}</td></tr>`;
+      `<tr class="empty-row"><td colspan="9">로드 실패: ${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -361,21 +426,22 @@ function renderResults() {
 
   const tbody = document.getElementById("resultsTbody");
   if (!slice.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="7">검색 결과가 없습니다.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">검색 결과가 없습니다.</td></tr>`;
   } else {
     tbody.innerHTML = slice.map(r => `
-      <tr class="result-row" data-sid="${r.session_id}">
-        <td><span class="badge-source ${r.source || 'xlsx_upload'}">${r.source || 'xlsx_upload'}</span></td>
-        <td>${ptLabel(r.product_type)}</td>
-        <td>${r.product || '-'}</td>
-        <td>${r.lot_id || '-'}</td>
-        <td>${r.file_name || '-'}</td>
+      <tr class="result-row" data-sid="${esc(r.session_id)}">
+        <td><span class="badge-source ${esc(r.source || 'xlsx_upload')}">${esc(r.source || 'xlsx_upload')}</span></td>
+        <td>${esc(ptLabel(r.product_type))}</td>
+        <td>${esc(r.product || '-')}</td>
+        <td>${esc(r.revision || '-')}</td>
+        <td>${esc(r.process || '-')}</td>
+        <td>${esc(r.lot_id || '-')}</td>
+        <td>${esc(r.file_name || '-')}</td>
         <td>${fmtDate(r.created_at)}</td>
         <td>
           <div class="btn-row">
-            <button class="btn-mini" data-act="view" data-sid="${r.session_id}">보기</button>
-            <button class="btn-mini edit" data-act="edit" data-sid="${r.session_id}">수정</button>
-            <button class="btn-mini danger" data-act="del" data-sid="${r.session_id}" data-pw="${r.has_password ? 1 : 0}">삭제</button>
+            <button class="btn-mini edit" data-act="edit" data-sid="${esc(r.session_id)}">수정</button>
+            <button class="btn-mini danger" data-act="del" data-sid="${esc(r.session_id)}" data-pw="${r.has_password ? 1 : 0}">삭제</button>
           </div>
         </td>
       </tr>
@@ -400,12 +466,6 @@ function renderResults() {
       if (e.target.closest("button")) return;
       const sid = row.dataset.sid;
       location.href = `/pe/report/view/${sid}`;
-    });
-  });
-  tbody.querySelectorAll("button[data-act='view']").forEach(b => {
-    b.addEventListener("click", e => {
-      e.stopPropagation();
-      location.href = `/pe/report/view/${b.dataset.sid}`;
     });
   });
   tbody.querySelectorAll("button[data-act='edit']").forEach(b => {

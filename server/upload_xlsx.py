@@ -69,6 +69,9 @@ def _validate_meta(form) -> dict:
     pt = (form.get("product_type") or "").strip()
     product = (form.get("product") or "").strip()
     lot_id = (form.get("lot_id") or "").strip()
+    revision = (form.get("revision") or "").strip()
+    process = (form.get("process") or "").strip()
+    edm_link = (form.get("edm_link") or "").strip()
 
     if pt not in _PRODUCT_TYPES:
         abort(400, f"product_type must be one of {sorted(_PRODUCT_TYPES)}")
@@ -76,8 +79,21 @@ def _validate_meta(form) -> dict:
         abort(400, "product is required (alphanumeric / _ - . only)")
     if not lot_id or not _SAFE_TOKEN_RE.match(lot_id):
         abort(400, "lot_id is required (alphanumeric / _ - . only)")
+    if len(revision) > 80:
+        abort(400, "revision is too long")
+    if len(process) > 80:
+        abort(400, "process is too long")
+    if len(edm_link) > 500:
+        abort(400, "edm_link is too long")
 
-    return {"product_type": pt, "product": product, "lot_id": lot_id}
+    return {
+        "product_type": pt,
+        "product": product,
+        "lot_id": lot_id,
+        "revision": revision,
+        "process": process,
+        "edm_link": edm_link,
+    }
 
 
 def _canonical_meta_bytes(meta: dict) -> bytes:
@@ -151,7 +167,12 @@ def upload_xlsx():
     password = (request.form.get("password") or "").strip()
     if password and not _PIN_RE.match(password):
         abort(400, "password must be 4 digits or empty")
-    analysis_key = _compute_analysis_key(xlsx_bytes, meta)
+    key_meta = {
+        "product_type": meta["product_type"],
+        "product": meta["product"],
+        "lot_id": meta["lot_id"],
+    }
+    analysis_key = _compute_analysis_key(xlsx_bytes, key_meta)
     content_hash = hashlib.sha256(xlsx_bytes).hexdigest()
     session_id = f"{int(time.time())}_{secrets.token_hex(3)}"
 
@@ -160,7 +181,10 @@ def upload_xlsx():
         file_name=name,
         file_path=None,
         product_type=meta["product_type"],
+        process=meta["process"],
         product=meta["product"],
+        revision=meta["revision"],
+        edm_link=meta["edm_link"],
         lot_id=meta["lot_id"],
         password=password,
         source="xlsx_upload",
@@ -222,9 +246,9 @@ def upload_xlsx():
     meta_str = _canonical_meta_bytes(meta).decode("utf-8")
     client_issue_imgs = _collect_issue_images(request.files)
     issue_images_src = client_issue_imgs or parsed.get("issue_images") or []
-    dist_sheet_f = request.files.get("distribution_sheet")
-    dist_data = dist_sheet_f.read() if dist_sheet_f else None
-    chart_pngs = _collect_chart_pngs(request.files)
+    # Distribution PDF/PNG 업로드는 일단 비활성화한다. Issue Table 행별 이미지는 유지.
+    dist_data = None
+    chart_pngs = []
     try:
         artifact_result = storage_gateway.save_upload_artifacts(
             analysis_key=analysis_key,

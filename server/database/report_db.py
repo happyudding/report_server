@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS report_session (
     process       TEXT,
     product       TEXT,
     revision      TEXT,
+    edm_link      TEXT,
     dataset_id    TEXT,
     lot_id        TEXT,
     password      TEXT,
@@ -197,7 +198,7 @@ def _migrate(conn):
         sess_cols = {r[1] for r in sess_info}
         for col in (
             "analysis_key", "content_hash", "error_message",
-            "product_type", "process", "product", "revision",
+            "product_type", "process", "product", "revision", "edm_link",
             "dataset_id", "lot_id", "password",
         ):
             if col not in sess_cols:
@@ -250,17 +251,17 @@ def _row(row):
 
 def create_session(session_id, file_name, file_path, product_type=None, dataset_id=None,
                    lot_id=None, password=None, is_debug=0, product=None,
-                   source='xlsx_upload'):
+                   process=None, revision=None, edm_link=None, source='xlsx_upload'):
     now = _now()
     file_path_str = str(file_path) if file_path is not None else None
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO report_session "
-            "(session_id, file_name, file_path, product_type, product, dataset_id, lot_id, "
-            " password, is_debug, source, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
-            (session_id, file_name, file_path_str, product_type, product, dataset_id, lot_id,
-             password, is_debug, source, now, now),
+            "(session_id, file_name, file_path, product_type, process, product, revision, "
+            " edm_link, dataset_id, lot_id, password, is_debug, source, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            (session_id, file_name, file_path_str, product_type, process, product, revision,
+             edm_link, dataset_id, lot_id, password, is_debug, source, now, now),
         )
 
 
@@ -317,7 +318,7 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
     params.append(limit)
     sql = f"""
         SELECT s.session_id, s.file_name, s.product_type, s.process, s.product,
-               s.revision, s.lot_id, s.created_at, s.status, s.dataset_id,
+               s.revision, s.edm_link, s.lot_id, s.created_at, s.status, s.dataset_id,
                s.is_debug, s.source,
                CASE WHEN s.password IS NOT NULL THEN 1 ELSE 0 END AS has_password,
                COALESCE(SUM(c.file_size), 0) AS total_file_size
@@ -404,7 +405,7 @@ def get_session_by_dataset_id(dataset_id):
     """dataset_id 로 가장 최근 세션 1건과 총 CSV 크기를 함께 반환."""
     sql = """
         SELECT s.session_id, s.file_name, s.product_type, s.process, s.product,
-               s.revision, s.lot_id, s.created_at, s.status, s.dataset_id, s.analysis_key,
+               s.revision, s.edm_link, s.lot_id, s.created_at, s.status, s.dataset_id, s.analysis_key,
                COALESCE(SUM(c.file_size), 0) AS total_file_size
         FROM report_session s
         LEFT JOIN report_csv_files c ON c.analysis_key = s.analysis_key

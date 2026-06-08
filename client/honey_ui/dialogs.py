@@ -54,6 +54,8 @@ class UploadDialog(QDialog):
             self.le_product.setText(defaults.get("product", ""))
             self.le_lot_id.setText(defaults.get("lot_id", ""))
             self.le_revision.setText(defaults.get("revision", ""))
+            self.le_process.setText(defaults.get("process", ""))
+            self.le_edm_link.setText(defaults.get("edm_link", ""))
 
     def product_type(self):
         for key, rb in self._pt_radios.items():
@@ -76,6 +78,8 @@ class UploadDialog(QDialog):
             "product": self.le_product.text().strip(),
             "lot_id": self.le_lot_id.text().strip(),
             "revision": self.le_revision.text().strip(),
+            "process": self.le_process.text().strip(),
+            "edm_link": self.le_edm_link.text().strip(),
             "password": self.le_password.text().strip(),
         }
 
@@ -220,7 +224,7 @@ class ReportSettingsDialog(QDialog):
         )
         self.cb_raw_data.setChecked(False)
         self.cb_raw_data.setToolTip("체크하면 입력 원본 데이터를 Raw Data 시트로 추가합니다.")
-        default_sheets = {"yield", "fail_item", "distribution"}
+        default_sheets = {"yield", "cpk", "distribution"}
         for name, cb in self.sheet_checks.items():
             cb.setChecked(name in default_sheets)
         self.cb_raw_data.toggled.connect(self._update_dut_mode_availability)

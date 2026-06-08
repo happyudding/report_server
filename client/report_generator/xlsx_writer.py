@@ -43,8 +43,9 @@ _PROF_CNT = defaultdict(int)
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _EXPORT_MOVE_RETRIES = 2
 _EXPORT_RETRY_SLEEP = 0.08
-_EXCEL_QUIT_FILE_READY_RETRIES = 10
+_EXCEL_QUIT_FILE_READY_RETRIES = 20
 _EXCEL_QUIT_FILE_READY_SLEEP = 1.0
+_EXCEL_QUIT_FILE_STABLE_SLEEP = 0.25
 _PNG_ATTACH_MODE = os.environ.get("HONEY_PNG_ATTACH_MODE", "export").strip().lower()
 if _PNG_ATTACH_MODE not in {"export", "move_first_export", "copy_picture"}:
     _PNG_ATTACH_MODE = "export"
@@ -1790,19 +1791,80 @@ def _validate_embedded_images(xlsx_path):
 
 def _wait_for_xlsx_ready(xlsx_path):
     last_exc = None
+    last_size = None
     for attempt in range(1, _EXCEL_QUIT_FILE_READY_RETRIES + 1):
         try:
+            last_size = _stable_file_size(xlsx_path)
             with zipfile.ZipFile(xlsx_path) as zf:
-                zf.namelist()
+                names = zf.namelist()
+                if "[Content_Types].xml" not in names:
+                    raise zipfile.BadZipFile("missing [Content_Types].xml")
             return
-        except (zipfile.BadZipFile, PermissionError, OSError) as exc:
+        except (FileNotFoundError, zipfile.BadZipFile, PermissionError, OSError) as exc:
             last_exc = exc
             if attempt >= _EXCEL_QUIT_FILE_READY_RETRIES:
                 break
             time.sleep(_EXCEL_QUIT_FILE_READY_SLEEP)
-    raise RuntimeError(
-        f"xlsx file is not ready after Excel quit: {xlsx_path}"
-    ) from last_exc
+
+    try:
+        _retry_open_xlsx_with_excel(xlsx_path)
+    except Exception as excel_exc:
+        last_msg = f"{type(last_exc).__name__}: {last_exc}" if last_exc else "none"
+        raise RuntimeError(
+            "xlsx file is not ready after Excel quit: "
+            f"{xlsx_path} (size={last_size}, last_error={last_msg}, "
+            f"excel_retry_error={type(excel_exc).__name__}: {excel_exc})"
+        ) from excel_exc
+
+    try:
+        last_size = _stable_file_size(xlsx_path)
+        with zipfile.ZipFile(xlsx_path) as zf:
+            names = zf.namelist()
+            if "[Content_Types].xml" not in names:
+                raise zipfile.BadZipFile("missing [Content_Types].xml")
+        return
+    except (FileNotFoundError, zipfile.BadZipFile, PermissionError, OSError) as final_exc:
+        last_msg = f"{type(last_exc).__name__}: {last_exc}" if last_exc else "none"
+        raise RuntimeError(
+            "xlsx file is not ready after Excel quit: "
+            f"{xlsx_path} (size={last_size}, last_error={last_msg}, "
+            f"excel_retry=opened, final_error={type(final_exc).__name__}: {final_exc})"
+        ) from final_exc
+
+
+def _stable_file_size(xlsx_path):
+    if not os.path.exists(xlsx_path):
+        raise FileNotFoundError(xlsx_path)
+    size1 = os.path.getsize(xlsx_path)
+    if size1 <= 0:
+        raise OSError(f"xlsx file is empty: {xlsx_path}")
+    time.sleep(_EXCEL_QUIT_FILE_STABLE_SLEEP)
+    size2 = os.path.getsize(xlsx_path)
+    if size1 != size2:
+        raise OSError(f"xlsx file size is still changing: {size1} -> {size2}")
+    return size2
+
+
+def _retry_open_xlsx_with_excel(xlsx_path):
+    app = None
+    wb = None
+    try:
+        app = xw.App(visible=False, add_book=False)
+        app.display_alerts = False
+        app.screen_updating = False
+        try:
+            app.api.EnableEvents = False
+        except Exception:
+            pass
+        wb = app.books.open(str(Path(xlsx_path).resolve()),
+                            update_links=False, read_only=True)
+    finally:
+        try:
+            if wb is not None:
+                wb.close()
+        finally:
+            if app is not None:
+                app.quit()
 
 
 def _is_package_integrity_error(exc):

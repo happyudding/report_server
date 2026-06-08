@@ -275,6 +275,7 @@ class HoneyMainWindow(QMainWindow):
     def _connect_signals(self):
         self.btn_open_local.clicked.connect(self.on_open_local)
         self.btn_pick_csv.clicked.connect(self.on_browse_d1)
+        self.btn_help.clicked.connect(self.on_help_file_open)
         # 입력 파일: 선택 후 ▲▼ 로 순서 변경 (맨 위 파일이 기준)
         self.btn_csv_up.clicked.connect(lambda: self._move_file(-1))
         self.btn_csv_down.clicked.connect(lambda: self._move_file(1))
@@ -315,6 +316,17 @@ class HoneyMainWindow(QMainWindow):
             QMessageBox.warning(self, "선택 없음", "가져올 파일을 선택하세요.")
             return
         self._intake(paths)
+
+    def on_help_file_open(self):
+        QMessageBox.information(
+            self,
+            "File Open Guide",
+            "LOCAL FILE OPEN / Dolphin (D1)\n"
+            "- 리포트 생성용 CSV 계열 파일을 선택합니다.\n"
+            "- 여러 파일을 선택하면 순서를 지정한 뒤 Start 로 분석합니다.\n\n"
+            "보고서 Server Upload (.xlsx)\n"
+            "- 이미 생성된 .xlsx 보고서 파일만 업로드합니다.",
+        )
 
     def _intake(self, paths):
         """선택된 파일들 → (2개 이상이면) 순서 지정 팝업 → 메인 창에 로드."""
@@ -804,6 +816,9 @@ class HoneyMainWindow(QMainWindow):
                     product_type=v["product_type"],
                     product=v["product"],
                     lot_id=v["lot_id"],
+                    revision=v["revision"],
+                    process=v["process"],
+                    edm_link=v["edm_link"],
                     password=v["password"],
                     issue_imgs=issue_imgs,
                 )

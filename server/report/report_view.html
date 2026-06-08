@@ -308,7 +308,6 @@ tbody tr:hover { background: #f9fbff; }
   <button class="tab active" data-tab="summary">Summary</button>
   <button class="tab" data-tab="yield">Yield</button>
   <button class="tab" data-tab="issues">Issue Table</button>
-  <button class="tab" data-tab="distribution">Distribution</button>
 </div>
 
 <div id="errorBox" class="error-box" style="display:none"></div>
@@ -317,7 +316,6 @@ tbody tr:hover { background: #f9fbff; }
   <div class="panel active" id="panel-summary"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-yield"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-issues"><div class="placeholder">로드 중...</div></div>
-  <div class="panel" id="panel-distribution"><div class="placeholder">로드 중...</div></div>
 </div>
 
 <!-- 수정 모드 저장 바 -->
@@ -477,11 +475,18 @@ function renderMeta(session) {
   const pt = (session.product_type || "").trim();
   const ptCls = ["MD", "PD", "PM", "SE"].includes(pt) ? pt : "default";
   const fname = session.file_name || "-";
+  const edm = String(session.edm_link || "").trim();
+  const edmValue = /^https?:\/\//i.test(edm)
+    ? `<a href="${esc(edm)}" target="_blank" rel="noopener">${esc(edm)}</a>`
+    : esc(edm || "-");
   const items = [
     `<span class="pt-badge ${ptCls}">${esc(ptLabel(pt))}</span>`,
     `<span class="src-badge ${src}">${esc(src)}</span>`,
     `<span class="meta-inline"><span class="mk">Product</span>${esc(session.product || "-")}</span>`,
+    `<span class="meta-inline"><span class="mk">Revision</span>${esc(session.revision || "-")}</span>`,
+    `<span class="meta-inline"><span class="mk">Process</span>${esc(session.process || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">LOT</span>${esc(session.lot_id || "-")}</span>`,
+    `<span class="meta-inline"><span class="mk">EDM</span>${edmValue}</span>`,
     `<span class="meta-inline-file" title="${esc(fname)}"><span class="mk">File</span>${esc(fname)}</span>`,
     `<span class="meta-inline"><span class="mk">Uploaded</span>${esc(fmtDate(session.created_at))}</span>`,
     `<span class="meta-inline"><span class="mk">Status</span>${esc(session.status || "-")}</span>`,
@@ -891,35 +896,6 @@ function renderIssues(issue_table_text, issue_images) {
   panel.innerHTML = `<div class="section-title">Issue Table</div>` + rowsTable(issue_table_text);
 }
 
-// ── Distribution (read; 수정 불가) ────────────────────────────────────────────
-function renderDistribution(charts, distribution_url) {
-  const panel = document.getElementById("panel-distribution");
-
-  // 신규: 합성 PNG (엑셀 차트 그대로, Pillow 격자 합성)
-  if (distribution_url) {
-    panel.innerHTML =
-      `<div class="section-title">Distribution</div>` +
-      `<div class="dist-combined-wrap">` +
-        `<img src="${esc(distribution_url)}" alt="Distribution" ` +
-             `class="dist-combined-img" loading="lazy">` +
-      `</div>`;
-    return;
-  }
-
-  // 하위호환: 개별 갤러리
-  if (!charts || !charts.length) {
-    // distribution sheet 없음 → 표 대신 comment 만
-    panel.innerHTML = `<div class="section-title">Distribution</div>` +
-                      `<div class="placeholder">distribution 없음</div>`;
-    return;
-  }
-  panel.innerHTML = `<div class="section-title">Distribution (${charts.length})</div>` +
-    `<div class="gallery">` + charts.map(c =>
-      `<a href="${esc(c.url)}" target="_blank" rel="noopener" title="chart ${c.index}">` +
-      `<img loading="lazy" src="${esc(c.url)}" alt="chart ${c.index}"></a>`
-    ).join("") + `</div>`;
-}
-
 // ── 편집용 위젯 ────────────────────────────────────────────────────────────
 function editRowHtml(r, cols) {
   return `<tr>` + cols.map(c =>
@@ -1106,12 +1082,10 @@ function renderActive() {
     renderSummaryEdit();
     renderYieldEdit();
     renderIssuesEdit();
-    renderDistribution(DATA.charts, DATA.distribution_url);
   } else {
     renderSummary(DATA.summary_text, DATA.summary);
     renderYield(DATA.yield_text, DATA.summary);
     renderIssues(DATA.issue_table_text, DATA.issue_images);
-    renderDistribution(DATA.charts, DATA.distribution_url);
   }
 }
 
