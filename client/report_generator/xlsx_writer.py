@@ -202,6 +202,7 @@ def _dist_emit_summary():
         "dist.loop.axis_format", "dist.loop.title_format", "dist.loop.plot_format",
         "dist.loop.legend_format", "dist.loop.fail_bg",
         "dist.template.create", "dist.template.clone", "dist.template.rebind_series",
+        "dist.template.restyle_series", "dist.template.legend_fix",
         "dist.template.dynamic_format", "dist.template.fallback",
     ]
     for bucket in loop_order:
@@ -1681,16 +1682,18 @@ def _copy_chart_picture_to_sheet(chart, sheet, name, left, top, width, height, s
     with _dist_time(prefix + "copy_picture.copy"):
         chart_object.CopyPicture(Appearance=1, Format=-4147)
     with _dist_time(prefix + "copy_picture.paste"):
-        before = int(sheet.api.Shapes.Count)
+        sheet_api = sheet.api
+        shapes = sheet_api.Shapes
+        before = int(shapes.Count)
         try:
-            sheet.api.Activate()
+            sheet_api.Activate()
         except Exception:
             pass
-        sheet.api.Paste()
-        after = int(sheet.api.Shapes.Count)
+        sheet_api.Paste()
+        after = int(shapes.Count)
         if after <= before:
             raise RuntimeError("CopyPicture paste did not create a shape")
-        shape = sheet.api.Shapes.Item(after)
+        shape = shapes.Item(after)
     with _dist_time(prefix + "copy_picture.position"):
         shape.Name = name
         shape.Left = float(left)
@@ -1987,7 +1990,9 @@ def _new_dist_chart_from_template(sh, template_cache, i, d, x_sheet, y_sheet, co
         with _dist_time("dist.template.rebind_series"):
             _rebind_dist_chart_series(
                 chart, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
-                x_min, y_cols_by_source, count_matrix)
+                x_min, y_cols_by_source, count_matrix, colors)
+        with _dist_time("dist.template.legend_fix"):
+            _fix_dist_chart_legend(chart, 2)
         with _dist_time("dist.template.dynamic_format"):
             _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail)
         return chart
@@ -2042,7 +2047,12 @@ def _chart_object_from_duplicate(dup):
 
 
 def _rebind_dist_chart_series(chart, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
-                              x_min, y_cols_by_source, count_matrix):
+                              x_min, y_cols_by_source, count_matrix, colors):
+    """Rebind X/Y ranges + names and re-apply series styles in a single pass.
+
+    SeriesCollection 과 각 series 객체를 반복당 1회만 받아 X/Y/Name 설정 직후 같은
+    객체에 스타일까지 적용한다(범위 재바인딩이 스타일을 리셋하므로 rebind 이후 적용).
+    """
     col = get_column_letter(col_idx + 2)
     lo = float(d.lower_limit) if _isnum(d.lower_limit) else None
     hi = float(d.upper_limit) if _isnum(d.upper_limit) else None
@@ -2057,6 +2067,7 @@ def _rebind_dist_chart_series(chart, d, x_sheet, y_sheet, col_idx, cnt_list, src
             s.XValues = (xv0, xv0)
             s.Values = (-2.0, -2.0)
         s.Name = nm
+        _style_limit_series(s)
 
     y = 0
     for k, name in enumerate(src_names):
@@ -2075,6 +2086,48 @@ def _rebind_dist_chart_series(chart, d, x_sheet, y_sheet, col_idx, cnt_list, src
                          x_min if x_min is not None else 0.0)
             s.Values = (-2.0, -2.0)
         s.Name = str(name)
+        rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
+        _style_data_series(s, rgb)
+
+
+def _fix_dist_chart_legend(chart, limit_count):
+    try:
+        chart.HasLegend = True
+        leg = chart.Legend
+        leg.Font.Size = 8
+        legend_entries = leg.LegendEntries
+        try:
+            count = int(legend_entries().Count)
+        except Exception:
+            return
+        for idx in range(count, 0, -1):
+            try:
+                entry = legend_entries(idx)
+                if _legend_entry_name(entry) in {"LSL", "USL"}:
+                    entry.Delete()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _legend_entry_name(entry):
+    for expr in (
+        lambda e: e.Text,
+        lambda e: e.Caption,
+        lambda e: e.Name,
+        lambda e: e.LegendKey.Parent.Name,
+    ):
+        try:
+            name = expr(entry)
+        except Exception:
+            continue
+        if name is None:
+            continue
+        text = str(name).strip()
+        if text:
+            return text
+    return ""
 
 
 def _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail):
@@ -2278,17 +2331,7 @@ def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
             pass
     with _dist_time("dist.loop.legend_format"):
         # legend: limit series(1..limit_count) entry 삭제, 폰트 8
-        try:
-            chart.HasLegend = True
-            leg = chart.Legend
-            leg.Font.Size = 8
-            for idx in range(limit_count, 0, -1):
-                try:
-                    leg.LegendEntries(idx).Delete()
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        _fix_dist_chart_legend(chart, limit_count)
     _format_dist_chart_fail_bg(chart, is_fail)
 
 
