@@ -51,9 +51,6 @@ if _PNG_ATTACH_MODE not in {"export", "move_first_export", "copy_picture"}:
 _PNG_SUBJECT_CACHE = os.environ.get("HONEY_PNG_SUBJECT_CACHE", "").strip().lower() in {
     "1", "true", "yes", "on",
 }
-_DIST_CHART_TEMPLATE = os.environ.get("HONEY_DIST_CHART_TEMPLATE", "1").strip().lower() not in {
-    "0", "false", "off", "no",
-}
 
 
 def _parse_int_set(raw):
@@ -72,7 +69,7 @@ def _parse_int_set(raw):
 
 # ── 차트 생성 함수 line-by-line 디버그 트레이서 (HONEY_CHART_LINE_TRACE set 시에만 동작) ──
 # unset 이면 sys.settrace 자체를 호출하지 않음 → 평상시 동작·성능 100% 불변.
-# 지정한 차트 순번(_LINE_TRACE_TARGETS, 1-based, skip 제외)에서 _new_dist_chart_from_template
+# 지정한 차트 순번(_LINE_TRACE_TARGETS, 1-based, skip 제외)에서 _chart_draw_at_position
 # 호출 1건의 모든 실행 줄을 줄 단위 소요시간과 함께 stderr 로 출력한다.
 _LINE_TRACE_ON = bool(os.environ.get("HONEY_CHART_LINE_TRACE"))
 _LINE_TRACE_TARGETS = _parse_int_set(os.environ.get("HONEY_CHART_LINE_TRACE_TARGETS", "10,11"))
@@ -143,7 +140,6 @@ def _profile_info_time(label):
 def _new_dist_stats():
     return {
         "timings": defaultdict(lambda: {"total": 0.0, "count": 0, "max": 0.0}),
-        "template": defaultdict(int),
         "png": defaultdict(lambda: {
             "count": 0, "direct": 0, "moved": 0, "copy_picture": 0,
             "cache": 0, "failed": 0, "bytes": 0,
@@ -159,13 +155,6 @@ def _dist_add_time(bucket, elapsed):
     rec["total"] += elapsed
     rec["count"] += 1
     rec["max"] = max(rec["max"], elapsed)
-
-
-def _dist_count_template(kind, n=1):
-    stats = _CURRENT_DIST_STATS.get()
-    if stats is None:
-        return
-    stats["template"][kind] += n
 
 
 @contextlib.contextmanager
@@ -217,8 +206,7 @@ def _dist_emit_summary():
     timings = stats["timings"]
     _emit_profile_info(
         f"Distribution debug: png_mode={_PNG_ATTACH_MODE} "
-        f"png_cache={'on' if _PNG_SUBJECT_CACHE else 'off'} "
-        f"chart_template={'on' if _DIST_CHART_TEMPLATE else 'off'}"
+        f"png_cache={'on' if _PNG_SUBJECT_CACHE else 'off'}"
     )
     loop_order = [
         "dist.loop.finite_scan", "dist.loop.axis_range",
@@ -226,9 +214,6 @@ def _dist_emit_summary():
         "dist.loop.chart_type", "dist.loop.style_limits", "dist.loop.style_sources",
         "dist.loop.axis_format", "dist.loop.title_format", "dist.loop.plot_format",
         "dist.loop.legend_format", "dist.loop.fail_bg",
-        "dist.template.create", "dist.template.clone", "dist.template.rebind_series",
-        "dist.template.restyle_series", "dist.template.legend_fix",
-        "dist.template.dynamic_format", "dist.template.fallback",
     ]
     for bucket in loop_order:
         rec = timings.get(bucket)
@@ -236,15 +221,6 @@ def _dist_emit_summary():
             _emit_profile_info(
                 f"Dist loop {bucket.removeprefix('dist.loop.')}: {_dist_format_time(rec)}"
             )
-    template_stats = stats.get("template") or {}
-    if template_stats:
-        _emit_profile_info(
-            "Dist template stats: "
-            f"on={'1' if _DIST_CHART_TEMPLATE else '0'} "
-            f"hit={template_stats.get('hit', 0)} "
-            f"miss={template_stats.get('miss', 0)} "
-            f"fallback={template_stats.get('fallback', 0)}"
-        )
     for sheet_name in ("fail_item", "issue_table"):
         rec = stats["png"].get(sheet_name)
         if not rec or not rec["count"]:
@@ -338,7 +314,6 @@ _MSO_FALSE = 0                # msoFalse (LineFormat.Visible — 선 숨김)
 _MSO_LINE_SYSDASH = 10        # msoLineSysDash (limit line)
 _RGB_RED = 255               # RGB(255,0,0)
 _RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail 차트 배경)
-_RGB_WHITE = 255 + 255 * 256 + 255 * 65536
 
 _CPK_THRESHOLD = 1.33
 _CPK_WARN_FILL_RGB = "FFFFFF00"  # 노란색 ARGB — CPK < 1.33 행 하이라이트
@@ -1904,18 +1879,112 @@ def _unique_helper_name(base, existing):
     return name
 
 
-def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_min,
-                     y_cols_by_source, count_matrix):
-    """SeriesCollection 에 LSL/USL(배열리터럴) + source 데이터 series(정리/정리_Y range) 추가.
+# ── distribution 차트 그리기 (subject별 순회 + 매번 새로 생성) ────────────────
+# HONEY 원본 구조 참조: draw_all_chart → chart_draw_at_position →
+#   {chart_title_limit_set, chart_data_set, chart_layout_setting}.
+# template/duplicate 미사용. 차트당 COM 객체(api[1]/SeriesCollection/Axes/Legend 등)는
+# 한 번만 바인딩해 호출 수를 최소화한다.
 
-    series 1=LSL, 2=USL(없으면 차트 밖 -2,-2), 3+=source. 반환 (limit_series, data_series).
-    데이터 series 는 정리/정리_Y 시트의 subject 열을 source별 행구간으로 참조.
+def _draw_all_chart(sh, dists, x_arrs, x_name, y_name, cnt_list, src_names, colors,
+                    y_cols_by_source, count_matrix, n_charts, dist_progress_cb):
+    """전체 subject 를 순회하며 차트를 1개씩 새로 생성.
+
+    유한 데이터가 없는 subject 는 건너뛰되 grid 인덱스 i 는 유지해 칸 gap 을 보존한다.
+    반환: (chart_map{subject: COM Chart}, index_entries[(row, subject)]).
+    """
+    chart_map = {}
+    index_entries = []
+    done = 0
+    chart_seq = 0   # skip 제외, 실제 생성 시도한 차트의 1-based 순번 (line-trace 타깃)
+    for i, d in enumerate(dists):
+        with _dist_time("dist.loop.finite_scan"):
+            cols = [arr[:, i] for arr in x_arrs]
+            finite = np.concatenate([c[np.isfinite(c)] for c in cols]) if cols else np.empty(0)
+            if finite.size:
+                data_min, data_max = float(finite.min()), float(finite.max())
+        if finite.size == 0:
+            done += 1
+            if dist_progress_cb:
+                dist_progress_cb(done, n_charts)
+            continue
+        with _dist_time("dist.loop.axis_range"):
+            lo, hi = d.lower_limit, d.upper_limit
+            is_fail = (_isnum(lo) and data_min < float(lo)) or (
+                _isnum(hi) and data_max > float(hi))
+            x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
+
+        chart_seq += 1
+        try:
+            with _trace_chart_lines(chart_seq, d.subject):
+                chart_map[d.subject] = _chart_draw_at_position(
+                    sh, i, d, x_name, y_name, i, cnt_list, src_names, colors,
+                    x_min, x_max, is_fail, y_cols_by_source, count_matrix)
+        except Exception as _e:
+            print(f"[dist-chart] skip subject={d.subject!r}: {_e}", file=sys.stderr)
+        col = i % _CHARTS_PER_ROW
+        grow = i // _CHARTS_PER_ROW
+        index_entries.append((2 + grow * _ROWS_PER_CHART + col, d.subject))
+        done += 1
+        if dist_progress_cb:
+            dist_progress_cb(done, n_charts)
+    return chart_map, index_entries
+
+
+def _chart_draw_at_position(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
+                            colors, x_min, x_max, is_fail, y_cols_by_source, count_matrix):
+    """차트 1개를 새로 생성·서식 적용 (정리/정리_Y range 참조). 반환: COM Chart."""
+    left, top = _chart_pos(i)
+    with _prof("dist.series_add"):
+        with _dist_time("dist.loop.chart_add"):
+            ch = sh.charts.add(left, top, _CHART_W, _CHART_H)
+            chart_api = _chart_com(ch)   # api[1] 1회 바인딩, 이하 하위 함수에 전달
+        with _dist_time("dist.loop.chart_type"):
+            ch.chart_type = "xy_scatter_lines_no_markers"
+    _chart_title_limit_set(chart_api, d)
+    with _prof("dist.style"):
+        limit_count = _chart_data_set(
+            chart_api, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_min,
+            colors, y_cols_by_source, count_matrix)
+    with _prof("dist.format"):
+        _chart_layout_setting(chart_api, x_min, x_max, is_fail, limit_count)
+    return chart_api
+
+
+def _chart_title_limit_set(chart_api, d):
+    """차트 제목: item 명 + 둘째 줄 (LO~HI unit) 캡션 (현재 서식 유지)."""
+    with _dist_time("dist.loop.title_format"):
+        try:
+            chart_api.HasTitle = True
+            title = chart_api.ChartTitle
+            cap = _limit_caption(d)          # item 명 아래 줄: (LO ~ HI units)
+            title.Text = d.subject + "\n" + cap
+            tf = title.Font
+            tf.Name = "Arial Black"
+            tf.Size = _CHART_TITLE_ITEM_FONT
+            try:                             # 둘째 줄(캡션)은 작게
+                title.Characters(len(d.subject) + 2, len(cap)).Font.Size = _CHART_TITLE_CAP_FONT
+            except Exception:
+                pass
+            title.Top = 0
+        except Exception:
+            pass
+
+
+def _chart_data_set(chart_api, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_min,
+                    colors, y_cols_by_source, count_matrix):
+    """LSL/USL + source series 를 생성하고 같은 객체에 스타일까지 한 번에 적용.
+
+    series 1=LSL, 2=USL(없으면 차트 밖 -2,-2), 3+=source. 정리/정리_Y 시트의 subject
+    열을 source별 행구간으로 참조(compact-Y). SeriesCollection 은 1회 바인딩, 각 series
+    는 NewSeries 직후 같은 객체에 스타일 적용 — COM 재조회 없음. limit line 스타일도
+    series 객체를 보유한 여기서 적용(COM 최소화). 반환: limit series 개수(범례 삭제 수).
     """
     col = get_column_letter(col_idx + 2)   # A=index, B=subject0
     lo = float(d.lower_limit) if _isnum(d.lower_limit) else None
     hi = float(d.upper_limit) if _isnum(d.upper_limit) else None
     xv0 = x_min if x_min is not None else 0.0
-    limit_series = []
+    sc = chart_api.SeriesCollection()
+    limit_count = 0
     with _dist_time("dist.loop.series_limits"):
         for lim, nm in ((lo, "LSL"), (hi, "USL")):
             s = sc.NewSeries()
@@ -1926,8 +1995,8 @@ def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_mi
                 s.XValues = (xv0, xv0)
                 s.Values = (-2.0, -2.0)           # 차트 밖(안 보임) — series 인덱스 안정용
             s.Name = nm
-            limit_series.append(s)
-    data_series = []
+            _style_limit_series(s)
+            limit_count += 1
     y = 0
     with _dist_time("dist.loop.series_sources"):
         for k, name in enumerate(src_names):
@@ -1948,205 +2017,72 @@ def _add_dist_series(sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_mi
                              x_min if x_min is not None else 0.0)
                 s.Values = (-2.0, -2.0)
             s.Name = str(name)
-            data_series.append(s)
-    return limit_series, data_series
-
-
-def _style_series(limit_series, data_series, colors):
-    """limit/data series 스타일 일괄 적용."""
-    with _dist_time("dist.loop.style_limits"):
-        for s in limit_series:
-            _style_limit_series(s)
-    with _dist_time("dist.loop.style_sources"):
-        for k, s in enumerate(data_series):
             rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
             _style_data_series(s, rgb)
+    return limit_count
 
 
-def _new_dist_chart(sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
-                    colors, x_min, x_max, is_fail, y_cols_by_source, count_matrix):
-    """차트 1개 독립 생성+서식 (정리/정리_Y range 참조). 반환: COM Chart."""
-    left, top = _chart_pos(i)
-    with _prof("dist.series_add"):
-        with _dist_time("dist.loop.chart_add"):
-            ch = sh.charts.add(left, top, _CHART_W, _CHART_H)
-            chart = _chart_com(ch)
-            sc = chart.SeriesCollection()
-        limit_series, data_series = _add_dist_series(
-            sc, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, x_min,
-            y_cols_by_source, count_matrix)
-        with _dist_time("dist.loop.chart_type"):
-            ch.chart_type = "xy_scatter_lines_no_markers"
-    _prof_count("series", len(limit_series) + len(data_series))
-    with _prof("dist.style"):
-        _style_series(limit_series, data_series, colors)
-    with _prof("dist.format"):
-        _format_dist_chart(chart, d, x_min, x_max, len(limit_series), is_fail)
-    return chart
+def _chart_layout_setting(chart_api, x_min, x_max, is_fail, limit_count):
+    """축·gridline·plotarea·fail 배경·범례 삭제 (COM 객체별 1회 바인딩, 현재 서식 유지).
 
-
-def _new_dist_chart_from_template(sh, template_cache, i, d, x_sheet, y_sheet, col_idx,
-                                  cnt_list, src_names, colors, x_min, x_max, is_fail,
-                                  y_cols_by_source, count_matrix):
-    """Clone a formatted chart template, then rebind subject-specific data."""
-    if not _DIST_CHART_TEMPLATE:
-        return _new_dist_chart(
-            sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, colors,
-            x_min, x_max, is_fail, y_cols_by_source, count_matrix)
-
-    key = len(src_names)
-    template = template_cache.get(key)
-    if template is None:
-        _dist_count_template("miss")
-        with _dist_time("dist.template.create"):
-            # Keep the cached chart neutral; fail background is applied dynamically.
-            chart = _new_dist_chart(
-                sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, colors,
-                x_min, x_max, False, y_cols_by_source, count_matrix)
-        template_cache[key] = chart
-        with _dist_time("dist.template.dynamic_format"):
-            _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail)
-        return chart
-
-    _dist_count_template("hit")
-    try:
-        with _dist_time("dist.template.clone"):
-            chart = _clone_dist_chart_from_template(template, *_chart_pos(i))
-        with _dist_time("dist.template.rebind_series"):
-            _rebind_dist_chart_series(
-                chart, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
-                x_min, y_cols_by_source, count_matrix, colors)
-        with _dist_time("dist.template.dynamic_format"):
-            _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail)
-        with _dist_time("dist.template.legend_fix"):
-            _fix_dist_chart_legend(chart, 2)
-        return chart
-    except Exception as exc:
-        _dist_count_template("fallback")
-        _log_chart_attach(f"Distribution template fallback subject={d.subject!r}: {exc!r}")
-        with _dist_time("dist.template.fallback"):
-            return _new_dist_chart(
-                sh, i, d, x_sheet, y_sheet, col_idx, cnt_list, src_names, colors,
-                x_min, x_max, is_fail, y_cols_by_source, count_matrix)
-
-
-def _clone_dist_chart_from_template(template_chart, left, top):
-    chart_object = _chart_object(template_chart)
-    if chart_object is None:
-        raise RuntimeError("template chart object not found")
-    dup = chart_object.Duplicate()
-    dup_obj = _chart_object_from_duplicate(dup)
-    if dup_obj is None:
-        raise RuntimeError("template duplicate did not return a chart object")
-    dup_obj.Left = left
-    dup_obj.Top = top
-    dup_obj.Width = _CHART_W
-    dup_obj.Height = _CHART_H
-    return dup_obj.Chart
-
-
-def _chart_object_from_duplicate(dup):
-    candidates = [dup]
-    for attr in ("Item",):
-        try:
-            candidates.append(getattr(dup, attr)(1))
-        except Exception:
-            pass
-    for obj in candidates:
-        if obj is None:
-            continue
-        try:
-            chart = obj.Chart
-            if chart is not None:
-                return obj
-        except Exception:
-            pass
-        try:
-            shape = obj.ShapeRange.Item(1)
-            chart = shape.Chart
-            if chart is not None:
-                return shape
-        except Exception:
-            pass
-    return None
-
-
-def _rebind_dist_chart_series(chart, d, x_sheet, y_sheet, col_idx, cnt_list, src_names,
-                              x_min, y_cols_by_source, count_matrix, colors):
-    """Rebind X/Y ranges + names and re-apply series styles in a single pass.
-
-    SeriesCollection 과 각 series 객체를 반복당 1회만 받아 X/Y/Name 설정 직후 같은
-    객체에 스타일까지 적용한다(범위 재바인딩이 스타일을 리셋하므로 rebind 이후 적용).
+    range 재바인딩이 없는 신규 차트라 fail 이 아니면 ChartArea 는 기본(흰색) 그대로 둔다.
+    범례는 맨 마지막에 앞 limit_count(=LSL/USL)개를 인덱스로 삭제.
     """
-    col = get_column_letter(col_idx + 2)
-    lo = float(d.lower_limit) if _isnum(d.lower_limit) else None
-    hi = float(d.upper_limit) if _isnum(d.upper_limit) else None
-    xv0 = x_min if x_min is not None else 0.0
-    sc = chart.SeriesCollection()
-    for idx, (lim, nm) in enumerate(((lo, "LSL"), (hi, "USL")), start=1):
-        s = sc(idx)
-        if lim is not None:
-            s.XValues = (lim, lim)
-            s.Values = (-1.0, 1.0)
-        else:
-            s.XValues = (xv0, xv0)
-            s.Values = (-2.0, -2.0)
-        s.Name = nm
-        _style_limit_series(s)
-
-    y = 0
-    for k, name in enumerate(src_names):
-        n = cnt_list[k]
-        valid_count = min(int(count_matrix[k][col_idx]), n)
-        r1 = y + 2
-        y += n
-        s = sc(k + 3)
-        if valid_count > 0:
-            r2 = r1 + valid_count - 1
-            y_col = y_cols_by_source[k][col_idx]
-            s.XValues = f"='{x_sheet}'!${col}${r1}:${col}${r2}"
-            s.Values = f"='{y_sheet}'!${y_col}${r1}:${y_col}${r2}"
-        else:
-            s.XValues = (x_min if x_min is not None else 0.0,
-                         x_min if x_min is not None else 0.0)
-            s.Values = (-2.0, -2.0)
-        s.Name = str(name)
-        rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else None
-        _style_data_series(s, rgb)
-
-
-def _fix_dist_chart_legend(chart, limit_count):
-    """LSL/USL 범례 항목 제거 + 범례 폰트 8.
-
-    series 순서(1=LSL, 2=USL, 3+=source)와 범례 항목이 1:1 대응하므로 맨 앞
-    limit_count 개를 인덱스로 삭제한다. LegendEntry 는 이름 속성이 없어 이름 기반
-    매칭이 불가능 → 인덱스 삭제로 대체. LegendEntries(1) 을 삭제하면 뒤 항목이 앞으로
-    당겨지므로 1번을 limit_count 회 반복 삭제하면 앞 limit_count 개가 제거된다.
-    """
-    try:
-        chart.HasLegend = True
-        leg = chart.Legend
-        leg.Font.Size = 8
-    except Exception:
-        return
-    for _ in range(limit_count):
+    with _dist_time("dist.loop.axis_format"):
         try:
-            leg.LegendEntries(1).Delete()
+            yax = chart_api.Axes(_XL_VALUE, _XL_PRIMARY)
+            yax.MinimumScale = 0
+            yax.MaximumScale = 1
+            yax.MajorUnit = 0.2
+            yax.HasMinorGridlines = True
+            ytl = yax.TickLabels
+            ytl.NumberFormatLocal = "0%"
+            ytl.Font.Size = 8
+            yax.TickLabelPosition = _XL_LOW
         except Exception:
             pass
-
-
-def _apply_dist_chart_dynamic_format(chart, d, x_min, x_max, is_fail):
-    _format_dist_chart_title(chart, d)
-    _format_dist_chart_x_axis(chart, x_min, x_max)
-    _format_dist_chart_fail_bg(chart, is_fail, reset=True)
+        try:
+            xax = chart_api.Axes(_XL_CATEGORY, _XL_PRIMARY)
+            if x_min is not None and x_max is not None and x_min < x_max:
+                xax.MinimumScale = x_min
+                xax.MaximumScale = x_max
+            xax.HasMinorGridlines = True
+            xax.TickLabels.Font.Size = 8
+        except Exception:
+            pass
+    with _dist_time("dist.loop.plot_format"):
+        try:
+            pa = chart_api.PlotArea
+            pa.Width = _PLOT_W
+            pa.Top = _PLOT_TOP
+            pa.Height = _PLOT_H
+        except Exception:
+            pass
+    if is_fail:
+        with _dist_time("dist.loop.fail_bg"):
+            try:
+                chart_api.ChartArea.Interior.Color = _RGB_FAIL_BG
+            except Exception:
+                pass
+    with _dist_time("dist.loop.legend_format"):
+        try:
+            chart_api.HasLegend = True
+            leg = chart_api.Legend
+            leg.Font.Size = 8
+            for _ in range(limit_count):
+                try:
+                    leg.LegendEntries(1).Delete()
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
 
 # ── 차트 생성 함수 line-by-line 디버그 트레이서 ──────────────────────────────
-# _new_dist_chart_from_template 호출 1건(그 호출 스택 전체 — clone/rebind/style/
-# format/legend 등 하위 함수 + COM 조작 줄 포함)의 모든 실행 줄을 줄 단위 소요시간과
-# 함께 stderr 로 출력한다. HONEY_CHART_LINE_TRACE 가 꺼져 있으면 sys.settrace 자체를
-# 호출하지 않으므로 평상시 동작·성능에 영향 없음.
+# _chart_draw_at_position 호출 1건(그 호출 스택 전체 — title/data/layout 등 하위 함수
+# + COM 조작 줄 포함)의 모든 실행 줄을 줄 단위 소요시간과 함께 stderr 로 출력한다.
+# HONEY_CHART_LINE_TRACE 가 꺼져 있으면 sys.settrace 자체를 호출하지 않으므로 평상시
+# 동작·성능에 영향 없음.
 
 def _chart_line_tracer(state):
     """sys.settrace 콜백. 이 모듈 파일에 속한 프레임의 'line' 이벤트만 기록한다.
@@ -2154,8 +2090,8 @@ def _chart_line_tracer(state):
     다른 파일(numpy/pandas/get_column_letter 등 외부 라이브러리)로 진입하는 프레임은
     None 을 반환해 추적을 차단 — 소스가 없어 줄 단위 추적이 불가능한 컴파일 확장
     (pywin32 COM 등) 및 무관한 노이즈를 거른다. 활성 구간 자체가
-    _new_dist_chart_from_template 호출 1건으로 한정되므로 실질적으로는 그 호출
-    스택만 보게 된다.
+    _chart_draw_at_position 호출 1건으로 한정되므로 실질적으로는 그 호출 스택만
+    보게 된다.
 
     'line' 이벤트마다 "직전 줄"의 (filename, lineno, func, elapsed) 를
     state['entries'] 에 push 하고 현재 줄을 state['last'] 로 갱신한다 — 호출 스택을
@@ -2191,7 +2127,7 @@ def _dump_chart_line_trace(seq, subject, entries, total_elapsed):
 
 @contextlib.contextmanager
 def _trace_chart_lines(seq, subject):
-    """대상 차트(seq)일 때만 _new_dist_chart_from_template 호출 1건을 줄 단위로 추적.
+    """대상 차트(seq)일 때만 _chart_draw_at_position 호출 1건을 줄 단위로 추적.
 
     대상이 아니면 sys.settrace 호출 없이 즉시 통과 → 다른 모든 차트·코드 경로는
     평소와 100% 동일하게 실행된다.
@@ -2290,45 +2226,11 @@ def _write_distribution(wb, sh, result, colors=None, dist_progress_cb=None,
     # 정렬값 numpy 캐시(데이터 min/max·step 판정용) — 셀 읽기 없이
     x_arrs = [df.to_numpy(dtype=float) for df in df_x_list]   # [source](N, n_subj)
 
-    chart_map = {}
-    index_entries = []
     n_charts = len(dists)
-    done = 0
-    chart_seq = 0   # 스킵 제외, 실제 생성 시도한 차트의 1-based 순번 (line-trace 타깃 기준)
-    template_cache = {}
     with _profile_info_time(f"distribution.chart_create[{profile_label}]"):
-        for i, d in enumerate(dists):
-            with _dist_time("dist.loop.finite_scan"):
-                cols = [arr[:, i] for arr in x_arrs]
-                finite = np.concatenate([c[np.isfinite(c)] for c in cols]) if cols else np.empty(0)
-                if finite.size:
-                    data_min, data_max = float(finite.min()), float(finite.max())
-            if finite.size == 0:
-                done += 1
-                if dist_progress_cb:
-                    dist_progress_cb(done, n_charts)
-                continue
-            with _dist_time("dist.loop.axis_range"):
-                lo, hi = d.lower_limit, d.upper_limit
-                is_fail = (_isnum(lo) and data_min < float(lo)) or (
-                    _isnum(hi) and data_max > float(hi))
-                x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
-
-            chart_seq += 1
-            try:
-                with _trace_chart_lines(chart_seq, d.subject):
-                    chart_map[d.subject] = _new_dist_chart_from_template(
-                        sh, template_cache, i, d, x_name, y_name, i, cnt_list,
-                        src_names, colors, x_min, x_max, is_fail, y_cols_by_source,
-                        count_matrix)
-            except Exception as _e:
-                print(f"[dist-chart] skip subject={d.subject!r}: {_e}", file=sys.stderr)
-            col = i % _CHARTS_PER_ROW
-            grow = i // _CHARTS_PER_ROW
-            index_entries.append((2 + grow * _ROWS_PER_CHART + col, d.subject))
-            done += 1
-            if dist_progress_cb:
-                dist_progress_cb(done, n_charts)
+        chart_map, index_entries = _draw_all_chart(
+            sh, dists, x_arrs, x_name, y_name, cnt_list, src_names, colors,
+            y_cols_by_source, count_matrix, n_charts, dist_progress_cb)
 
     # Item Index 열 일괄 기입
     if index_entries:
@@ -2380,78 +2282,6 @@ def _style_data_series(s, rgb=None):
         try:
             s.MarkerBackgroundColor = rgb
             s.MarkerForegroundColor = rgb
-        except Exception:
-            pass
-
-
-def _format_dist_chart(chart, d, x_min, x_max, limit_count, is_fail):
-    """xy_scatter CDF 차트 서식 (COM 객체 1회 할당 후 재사용)."""
-    with _dist_time("dist.loop.axis_format"):
-        try:
-            yax = chart.Axes(_XL_VALUE, _XL_PRIMARY)
-            yax.MinimumScale = 0
-            yax.MaximumScale = 1
-            yax.MajorUnit = 0.2
-            yax.HasMinorGridlines = True
-            ytl = yax.TickLabels
-            ytl.NumberFormatLocal = "0%"
-            ytl.Font.Size = 8
-            yax.TickLabelPosition = _XL_LOW
-        except Exception:
-            pass
-        _format_dist_chart_x_axis(chart, x_min, x_max)
-    _format_dist_chart_title(chart, d)
-    with _dist_time("dist.loop.plot_format"):
-        try:
-            pa = chart.PlotArea
-            pa.Width = _PLOT_W
-            pa.Top = _PLOT_TOP
-            pa.Height = _PLOT_H
-        except Exception:
-            pass
-    _format_dist_chart_fail_bg(chart, is_fail)
-    with _dist_time("dist.loop.legend_format"):
-        # legend: limit series(1..limit_count) entry 삭제, 폰트 8 — 서식 맨 마지막
-        _fix_dist_chart_legend(chart, limit_count)
-
-
-def _format_dist_chart_title(chart, d):
-    with _dist_time("dist.loop.title_format"):
-        try:
-            chart.HasTitle = True
-            title = chart.ChartTitle
-            cap = _limit_caption(d)          # item 명 아래 줄: (LO ~ HI units)
-            title.Text = d.subject + "\n" + cap
-            tf = title.Font
-            tf.Name = "Arial Black"
-            tf.Size = _CHART_TITLE_ITEM_FONT
-            try:                             # 둘째 줄(캡션)은 작게
-                title.Characters(len(d.subject) + 2, len(cap)).Font.Size = _CHART_TITLE_CAP_FONT
-            except Exception:
-                pass
-            title.Top = 0
-        except Exception:
-            pass
-
-
-def _format_dist_chart_x_axis(chart, x_min, x_max):
-    try:
-        xax = chart.Axes(_XL_CATEGORY, _XL_PRIMARY)
-        if x_min is not None and x_max is not None and x_min < x_max:
-            xax.MinimumScale = x_min
-            xax.MaximumScale = x_max
-        xax.HasMinorGridlines = True
-        xax.TickLabels.Font.Size = 8
-    except Exception:
-        pass
-
-
-def _format_dist_chart_fail_bg(chart, is_fail, reset=False):
-    if not (is_fail or reset):
-        return
-    with _dist_time("dist.loop.fail_bg"):
-        try:
-            chart.ChartArea.Interior.Color = _RGB_FAIL_BG if is_fail else _RGB_WHITE
         except Exception:
             pass
 
