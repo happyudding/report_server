@@ -26,7 +26,7 @@ from report.report_extension import report_bp
 from report_utils import to_float as _to_float, to_int as _to_int
 import storage_gateway
 
-_PRODUCT_TYPES = {"MD", "PD", "PM", "SE"}
+_PRODUCT_TYPES = {"MDDI", "PDDI", "PMIC", "SECURITY"}
 _SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-\.]{1,80}$")
 _PIN_RE = re.compile(r"^\d{4}$")
 

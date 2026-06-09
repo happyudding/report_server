@@ -1,12 +1,14 @@
 ﻿"""Honey dialogs split from the main window module."""
+import sqlite3
 import sys
 from pathlib import Path
 
 from PyQt5 import uic
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QStringListModel
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QColorDialog,
+    QCompleter,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
@@ -20,6 +22,7 @@ from PyQt5.QtWidgets import (
 )
 
 import chart_colors
+import config as _client_config
 
 SHEET_OPTIONS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
 
@@ -27,6 +30,19 @@ _BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent
 UPLOAD_UI_PATH = _BASE_DIR / "upload_dialog.ui"
 ORDER_UI_PATH = _BASE_DIR / "file_order.ui"
 SETTINGS_UI_PATH = _BASE_DIR / "report_settings.ui"
+
+
+def _load_part_ids(db_path: str) -> list:
+    """stdinfo DB에서 part_id 목록을 로드. 실패하면 빈 리스트."""
+    if not db_path:
+        return []
+    try:
+        con = sqlite3.connect(db_path)
+        rows = con.execute("SELECT part_id FROM products ORDER BY part_id").fetchall()
+        con.close()
+        return [r[0] for r in rows if r[0]]
+    except Exception:
+        return []
 
 
 def _validate_meta(product, lot_id, password):
@@ -42,15 +58,22 @@ class UploadDialog(QDialog):
     def __init__(self, parent=None, defaults=None):
         super().__init__(parent)
         uic.loadUi(str(UPLOAD_UI_PATH), self)
+        self._part_ids = _load_part_ids(_client_config.STDINFO_DB_PATH)
+        if self._part_ids:
+            _model = QStringListModel(self._part_ids, self)
+            _comp = QCompleter(_model, self)
+            _comp.setFilterMode(Qt.MatchContains)
+            _comp.setCaseSensitivity(Qt.CaseInsensitive)
+            self.le_product.setCompleter(_comp)
         self._pt_radios = {
-            "MD": self.rb_pt_MD, "PD": self.rb_pt_PD,
-            "PM": self.rb_pt_PM, "SE": self.rb_pt_SE,
+            "MDDI": self.rb_pt_MDDI, "PDDI": self.rb_pt_PDDI,
+            "PMIC": self.rb_pt_PMIC, "SECURITY": self.rb_pt_SECURITY,
         }
         self.buttonBox.accepted.connect(self._on_ok)
         self.buttonBox.rejected.connect(self.reject)
         if defaults:
-            self._pt_radios.get(defaults.get("product_type", "MD"),
-                                self.rb_pt_MD).setChecked(True)
+            self._pt_radios.get(defaults.get("product_type", "MDDI"),
+                                self.rb_pt_MDDI).setChecked(True)
             self.le_product.setText(defaults.get("product", ""))
             self.le_lot_id.setText(defaults.get("lot_id", ""))
             self.le_revision.setText(defaults.get("revision", ""))
@@ -61,14 +84,20 @@ class UploadDialog(QDialog):
         for key, rb in self._pt_radios.items():
             if rb.isChecked():
                 return key
-        return "MD"
+        return "MDDI"
 
     def _on_ok(self):
-        err = _validate_meta(self.le_product.text().strip(),
+        product = self.le_product.text().strip()
+        err = _validate_meta(product,
                              self.le_lot_id.text().strip(),
                              self.le_password.text().strip())
         if err:
             QMessageBox.warning(self, "입력 오류", err)
+            return
+        if self._part_ids and product not in self._part_ids:
+            QMessageBox.warning(self, "입력 오류",
+                f"'{product}'은(는) 등록된 Part ID가 아닙니다.\n"
+                "목록에서 선택하거나 검색어를 확인하세요.")
             return
         self.accept()
 

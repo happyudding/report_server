@@ -37,7 +37,7 @@ Name: "desktopicon"; Description: "바탕화면 바로가기 생성"; GroupDescr
 ; dist\Honey\ (onedir) 전체를 설치 폴더로 복사
 Source: "dist\Honey\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 ; d1_storage(가상 서버 스토리지) 초기 샘플 — 기존 파일은 보존(onlyifdoesntexist)
-Source: "d1_storage\*"; DestDir: "{app}\d1_storage"; Flags: recursesubdirs createallsubdirs onlyifdoesntexist
+Source: "..\d1_storage\*"; DestDir: "{app}\d1_storage"; Flags: recursesubdirs createallsubdirs onlyifdoesntexist
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"

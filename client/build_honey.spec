@@ -15,12 +15,16 @@ _xw_datas, _xw_binaries, _xw_hidden = collect_all('xlwings')
 # PyMuPDF(fitz) — Distribution 시트 PDF→PNG 변환. 바이너리/데이터 포함 필요
 _fitz_datas, _fitz_binaries, _fitz_hidden = collect_all('fitz')
 
+import os as _os
+_repo_root = _os.path.normpath(_os.path.join(SPECPATH, '..'))
+
 a = Analysis(
     ['honey_main.py'],
-    pathex=[],
+    pathex=[_repo_root],
     binaries=_xw_binaries + _fitz_binaries,
     datas=_xw_datas + _fitz_datas + [('honey_main.ui', '.'), ('upload_dialog.ui', '.'),
-                       ('d1_browser.ui', '.'), ('file_order.ui', '.'),
+                       (_os.path.join(_repo_root, 'd1', 'd1_browser.ui'), 'd1'),
+                       ('file_order.ui', '.'),
                        ('report_settings.ui', '.')],
     hiddenimports=(
         ['PyQt5.sip', 'PyQt5.uic', 'win32com', 'win32com.client', 'pythoncom',

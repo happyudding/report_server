@@ -76,9 +76,10 @@ class df_honey:
     @classmethod
     def from_csv(cls, path, report_meta: Optional[ReportMeta] = None,
                  name: Optional[str] = None,
+                 product_type: Optional[str] = None,
                  progress_cb=None) -> "df_honey":
         path = Path(path)
-        df, df_yield = csv_loader.file_to_df(path, progress_cb=progress_cb)
+        df, df_yield = csv_loader.file_to_df(path, product_type=product_type, progress_cb=progress_cb)
         rm = report_meta or ReportMeta()
         if not rm.source_path:
             rm.source_path = str(path)

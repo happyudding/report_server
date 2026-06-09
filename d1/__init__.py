@@ -4,16 +4,17 @@ External D1 projects should branch or replace this package without touching
 Honey UI/report generation code.  The default provider preserves the current
 local ``d1_storage`` folder behavior for Honey.exe compatibility tests.
 """
+import os
 from pathlib import Path
 
-from config import D1_STORAGE_DIR
+_DEFAULT_D1_DIR = str(Path(__file__).resolve().parent.parent / "d1_storage")
 
 
 class LocalD1Provider:
     """Default D1 provider backed by a local directory."""
 
     def __init__(self, storage_dir=None):
-        self.storage_dir = Path(storage_dir or D1_STORAGE_DIR)
+        self.storage_dir = Path(storage_dir or os.environ.get("HONEY_D1_STORAGE", _DEFAULT_D1_DIR))
 
     def ensure_ready(self):
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -61,7 +62,7 @@ def D1BrowserDialog(parent=None, provider=None, ui_path=None):
     class _D1BrowserDialog(QDialog):
         def __init__(self, parent=None, provider=None, ui_path=None):
             super().__init__(parent)
-            base_dir = Path(__file__).resolve().parent.parent
+            base_dir = Path(__file__).resolve().parent
             uic.loadUi(str(ui_path or base_dir / "d1_browser.ui"), self)
             self.provider = provider or get_provider()
             self.provider.ensure_ready()

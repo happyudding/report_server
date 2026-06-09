@@ -146,6 +146,8 @@ _SUMMARY_COLUMNS = (
     "lsl", "usl", "unit", "created_at",
 )
 
+_PRODUCT_TYPE_NAMES = ("MDDI", "PDDI", "PMIC", "SECURITY")
+
 
 def _now():
     return int(time.time())
@@ -156,6 +158,23 @@ def _table_exists(conn, name):
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
     ).fetchone()
     return row is not None
+
+
+def _column_exists(conn, table_name, column_name):
+    if not _table_exists(conn, table_name):
+        return False
+    return any(r[1] == column_name for r in conn.execute(f"PRAGMA table_info({table_name})"))
+
+
+def _migrate_product_type_names(conn):
+    for table_name in ("report_session", "report_audit_log"):
+        if not _column_exists(conn, table_name, "product_type"):
+            continue
+        for name in _PRODUCT_TYPE_NAMES:
+            conn.execute(
+                f"UPDATE {table_name} SET product_type=? WHERE product_type=?",
+                (name, name[:2]),
+            )
 
 
 def _migrate(conn):
@@ -218,6 +237,8 @@ def _migrate(conn):
                 PRIMARY KEY (analysis_key, sheet_name)
             )
         """)
+
+    _migrate_product_type_names(conn)
 
 
 def init_report_db():

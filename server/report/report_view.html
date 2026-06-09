@@ -39,10 +39,10 @@ body {
   display: inline-block; padding: 3px 11px; border-radius: 4px;
   font-size: 12px; font-weight: 700; color: #fff;
 }
-.pt-badge.MD { background: #4a90e2; }
-.pt-badge.PD { background: #16a34a; }
-.pt-badge.PM { background: #d97706; }
-.pt-badge.SE { background: #9333ea; }
+.pt-badge.MDDI { background: #4a90e2; }
+.pt-badge.PDDI { background: #16a34a; }
+.pt-badge.PMIC { background: #d97706; }
+.pt-badge.SECURITY { background: #9333ea; }
 .pt-badge.default { background: #64748b; }
 .src-badge {
   display: inline-block; padding: 2px 9px; border-radius: 4px;
@@ -429,9 +429,6 @@ let DATA = null;
 let MODE = "view";              // "view" | "edit"
 let verifiedPassword = "";      // 수정 모드 진입 시 검증된 PIN (저장에 재사용)
 
-// product_type 내부값(MD/PD/PM/SE)은 그대로 두고 화면 표시만 친절한 라벨로.
-const PT_LABELS = { MD: "MDDI", PD: "PDDI", PM: "PMIC", SE: "SECURITY" };
-const ptLabel = pt => PT_LABELS[pt] || pt || "-";
 
 // & < > " ' 모두 이스케이프 → 텍스트/속성 양쪽에서 안전
 function esc(v) {
@@ -473,14 +470,14 @@ document.getElementById("tabs").addEventListener("click", e => {
 function renderMeta(session) {
   const src = session.source || "xlsx_upload";
   const pt = (session.product_type || "").trim();
-  const ptCls = ["MD", "PD", "PM", "SE"].includes(pt) ? pt : "default";
+  const ptCls = ["MDDI", "PDDI", "PMIC", "SECURITY"].includes(pt) ? pt : "default";
   const fname = session.file_name || "-";
   const edm = String(session.edm_link || "").trim();
   const edmValue = /^https?:\/\//i.test(edm)
     ? `<a href="${esc(edm)}" target="_blank" rel="noopener">${esc(edm)}</a>`
     : esc(edm || "-");
   const items = [
-    `<span class="pt-badge ${ptCls}">${esc(ptLabel(pt))}</span>`,
+    `<span class="pt-badge ${ptCls}">${esc(pt || "-")}</span>`,
     `<span class="src-badge ${src}">${esc(src)}</span>`,
     `<span class="meta-inline"><span class="mk">Product</span>${esc(session.product || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Revision</span>${esc(session.revision || "-")}</span>`,

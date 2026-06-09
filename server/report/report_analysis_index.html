@@ -172,10 +172,10 @@ tr.result-row:hover { background: #f5f8ff; }
 
 <!-- product type 필터 -->
 <div class="top-bar">
-  <button class="pt-btn" data-pt="MD">MDDI</button>
-  <button class="pt-btn" data-pt="PD">PDDI</button>
-  <button class="pt-btn" data-pt="PM">PMIC</button>
-  <button class="pt-btn" data-pt="SE">SECURITY</button>
+  <button class="pt-btn" data-pt="MDDI">MDDI</button>
+  <button class="pt-btn" data-pt="PDDI">PDDI</button>
+  <button class="pt-btn" data-pt="PMIC">PMIC</button>
+  <button class="pt-btn" data-pt="SECURITY">SECURITY</button>
   <div class="spacer"></div>
   <div style="font-size:12px; color:#888;">
     업로드는 Honey 클라이언트에서 수행합니다.
@@ -265,9 +265,6 @@ function csrfToken() {
   return m ? decodeURIComponent(m[1]) : "";
 }
 
-// product_type 내부값(MD/PD/PM/SE)은 그대로 두고 화면 표시만 친절한 라벨로.
-const PT_LABELS = { MD: "MDDI", PD: "PDDI", PM: "PMIC", SE: "SECURITY" };
-const ptLabel = pt => PT_LABELS[pt] || pt || "-";
 function esc(v) {
   return String(v ?? "").replace(/[&<>"']/g, c => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -431,7 +428,7 @@ function renderResults() {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row" data-sid="${esc(r.session_id)}">
         <td><span class="badge-source ${esc(r.source || 'xlsx_upload')}">${esc(r.source || 'xlsx_upload')}</span></td>
-        <td>${esc(ptLabel(r.product_type))}</td>
+        <td>${esc(r.product_type || '-')}</td>
         <td>${esc(r.product || '-')}</td>
         <td>${esc(r.revision || '-')}</td>
         <td>${esc(r.process || '-')}</td>

@@ -11,7 +11,7 @@
 
 ## 흐름 (`upload_xlsx()` [upload_xlsx.py:122](../server/upload_xlsx.py#L122))
 1. **파일 검증** — `request.files["xlsx"]` 존재·`.xlsx` 확장자·비어있지 않음. `secure_filename`.
-2. **메타 검증** [`_validate_meta`](../server/upload_xlsx.py#L51) — `product_type ∈ {MD,PD,PM,SE}`, `product`/`lot_id` 는 안전토큰 정규식. **PIN** `^\d{4}$` 필수.
+2. **메타 검증** [`_validate_meta`](../server/upload_xlsx.py#L51) — `product_type ∈ {MDDI,PDDI,PMIC,SECURITY}`, `product`/`lot_id` 는 안전토큰 정규식. **PIN** `^\d{4}$` 필수.
 3. **키 산출** — `analysis_key = _compute_analysis_key(xlsx_bytes, meta)` ([:71](../server/upload_xlsx.py#L71)) = `sha256(xlsx + "|" + canonical_meta)`. `canonical` = `json.dumps(sort_keys, ensure_ascii=False, separators=(",",":"))`. PIN 은 meta 에 **불포함**. `content_hash = sha256(xlsx)`. `session_id = "<epoch>_<hex6>"`.
 4. **세션 생성** — `create_session(... source="xlsx_upload")` → `update_session(status="uploading", analysis_key, content_hash)`.
 5. **S3 원본 xlsx** — `make_source_xlsx_s3_key(akey)` 키로 `s3_object_exists` 검사 후 없으면 `upload_bytes_to_s3`. 그 후 `upsert_object_info(object_type="source_xlsx")`. `S3NotConfigured` 면 `s3_ok=False` 로 계속, 그 외 예외는 `status="failed"` + 500.

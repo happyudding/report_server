@@ -126,8 +126,6 @@ td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size
 </div>
 
 <script>
-const PT_LABELS = { MD: "MDDI", PD: "PDDI", PM: "PMIC", SE: "SECURITY" };
-const ptLabel = pt => PT_LABELS[pt] || pt || "-";
 const PAGE_SIZE = 50;
 
 let _page = 0;
@@ -186,7 +184,7 @@ function render() {
     <tr>
       <td>${fmtDate(r.created_at)}</td>
       <td><span class="badge-action ${esc(act)}">${esc(ACTION_LABEL[act] || act)}</span>${failBadge}</td>
-      <td>${esc(ptLabel(r.product_type))}</td>
+      <td>${esc(r.product_type || "-")}</td>
       <td>${esc(r.product || "-")}</td>
       <td>${esc(r.lot_id || "-")}</td>
       <td>${esc(r.file_name || "-")}</td>

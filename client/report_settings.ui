@@ -25,7 +25,7 @@
       <string>Option</string>
      </property>
      <layout class="QGridLayout" name="gridLayout_sheets">
-      <property name="horizontalSpacing"><number>24</number></property>
+      <property name="horizontalSpacing"><number>10</number></property>
       <property name="verticalSpacing"><number>6</number></property>
       <item row="0" column="0">
        <widget class="QCheckBox" name="cb_sheet_summary">
@@ -33,63 +33,63 @@
         <property name="checked"><bool>false</bool></property>
        </widget>
       </item>
-      <item row="0" column="1">
+      <item row="0" column="2">
        <widget class="QCheckBox" name="cb_sheet_yield">
         <property name="text"><string>yield</string></property>
         <property name="checked"><bool>true</bool></property>
        </widget>
       </item>
-      <item row="1" column="0">
+      <item row="0" column="3">
        <widget class="QCheckBox" name="cb_sheet_cpk">
         <property name="text"><string>cpk</string></property>
         <property name="checked"><bool>true</bool></property>
        </widget>
       </item>
-      <item row="1" column="1">
+      <item row="0" column="4">
        <widget class="QCheckBox" name="cb_sheet_fail_item">
         <property name="text"><string>fail_item</string></property>
         <property name="checked"><bool>false</bool></property>
        </widget>
       </item>
-      <item row="2" column="0">
+      <item row="0" column="1">
        <widget class="QCheckBox" name="cb_sheet_issue_table">
         <property name="text"><string>issue_table</string></property>
         <property name="checked"><bool>false</bool></property>
        </widget>
       </item>
-      <item row="2" column="1">
+      <item row="0" column="5">
        <widget class="QCheckBox" name="cb_sheet_distribution">
         <property name="text"><string>distribution</string></property>
         <property name="checked"><bool>true</bool></property>
        </widget>
       </item>
-      <item row="3" column="0">
+      <item row="1" column="0">
        <widget class="QCheckBox" name="cb_raw_data">
         <property name="text"><string>Raw Data</string></property>
         <property name="toolTip"><string>체크하면 df_honey 에 적재된 원본 측정 데이터를 맨 앞 'Raw Data' 시트로 추가합니다.</string></property>
         <property name="checked"><bool>false</bool></property>
        </widget>
       </item>
-      <item row="3" column="1">
+      <item row="1" column="1">
        <widget class="QCheckBox" name="cb_mode_dut">
         <property name="text"><string>DUT 정리</string></property>
         <property name="toolTip"><string>입력 파일이 1개일 때만 가능. 파일 내 DUT 를 legend 로 전체 데이터 정리.</string></property>
        </widget>
       </item>
-      <item row="4" column="0">
+      <item row="1" column="2">
        <widget class="QCheckBox" name="cb_mode_bin1">
         <property name="text"><string>Bin1 Only</string></property>
         <property name="toolTip"><string>Bin 이 1(Pass)인 데이터만으로 전체 데이터 정리.</string></property>
        </widget>
       </item>
-      <item row="4" column="1">
+      <item row="1" column="3">
        <widget class="QCheckBox" name="cb_limit_xlsx">
         <property name="text"><string>Limit.xlsx 파일 생성</string></property>
         <property name="toolTip"><string>현재는 UI 옵션만 제공하며 파일 생성 동작은 연결하지 않습니다.</string></property>
         <property name="checked"><bool>false</bool></property>
        </widget>
       </item>
-      <item row="0" column="2" rowspan="5">
+      <item row="1" column="4" colspan="2">
        <spacer name="horizontalSpacer_sheets">
         <property name="orientation"><enum>Qt::Horizontal</enum></property>
         <property name="sizeHint" stdset="0">

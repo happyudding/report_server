@@ -29,6 +29,9 @@ from PyQt5.QtWidgets import (
 
 from transport.config import CURRENT_VERSION, SERVER_BASE_URL
 from transport import updater, uploader, version_check
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 from d1 import D1BrowserDialog
 from honey_ui import (
     ElapsedProgress as _ElapsedProgress,
@@ -56,7 +59,7 @@ except Exception as exc:  # noqa: BLE001
     xlsx_writer = None
     _RG_IMPORT_ERROR = exc
 
-PRODUCT_TYPES = ["MD", "PD", "PM", "SE"]
+PRODUCT_TYPES = ["MDDI", "PDDI", "PMIC", "SECURITY"]
 _FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
 
 # 프리징(onedir) 시 _MEIPASS, 아니면 스크립트 폴더에서 .ui 탐색
@@ -117,8 +120,8 @@ class HoneyMainWindow(QMainWindow):
         self._last_upload = None   # 마지막 업로드 메타 (팝업 프리필용)
 
         self._pt_radios = {
-            "MD": self.rb_pt_MD, "PD": self.rb_pt_PD,
-            "PM": self.rb_pt_PM, "SE": self.rb_pt_SE,
+            "MDDI": self.rb_pt_MDDI, "PDDI": self.rb_pt_PDDI,
+            "PMIC": self.rb_pt_PMIC, "SECURITY": self.rb_pt_SECURITY,
         }
         # 지난 실행에서 고른 Product Type 복원 (사용자별 settings.json)
         saved_pt = app_settings.get_setting("product_type")
@@ -408,7 +411,7 @@ class HoneyMainWindow(QMainWindow):
                     for i, p in enumerate(paths):
                         filename = Path(p).name
                         file_start_perf = time.perf_counter()
-                        fut = ex.submit(rg.df_honey.from_csv, p)
+                        fut = ex.submit(rg.df_honey.from_csv, p, product_type=self.product_type())
                         file_start = time.monotonic()
                         while True:
                             done_set, _ = concurrent.futures.wait([fut], timeout=0.1)
@@ -592,7 +595,7 @@ class HoneyMainWindow(QMainWindow):
         def _sheet_progress(done, total_s, name):
             progress_events.put(("sheet", done, total_s, name))
 
-        _dist_state = {"base": 0, "n": 0, "last_log": 0}
+        _dist_state = {"base": 0, "n": 0}
 
         def _dist_progress(done, n_charts):
             progress_events.put(("dist", done, n_charts, None))
@@ -637,11 +640,6 @@ class HoneyMainWindow(QMainWindow):
                         value=value,
                         status=f"Distribution {pct}%  ({done}/{n_charts})",
                     )
-                    if n_charts:
-                        interval = max(1, n_charts // 10)
-                        if done == 1 or done == n_charts or done - _dist_state["last_log"] >= interval:
-                            _dist_state["last_log"] = done
-                            self._append_run_log(f"Distribution chart {done}/{n_charts} ({pct}%)")
                 elif kind == "attach":
                     payload = a or {}
                     event = payload.get("event")
@@ -767,11 +765,11 @@ class HoneyMainWindow(QMainWindow):
             self._do_upload(path)
 
     def product_type(self):
-        """메인 UI 에서 선택된 Product Type (라디오). 기본 MD."""
+        """메인 UI 에서 선택된 Product Type (라디오). 기본 MDDI."""
         for key, rb in self._pt_radios.items():
             if rb.isChecked():
                 return key
-        return "MD"
+        return "MDDI"
 
     def _save_product_type(self, *_):
         """Product Type 선택을 사용자별 설정에 저장 (다음 실행 때 복원)."""

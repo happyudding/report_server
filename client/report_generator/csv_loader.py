@@ -17,7 +17,7 @@ from .file_to_df import DF_YIELD_COLUMNS
 from .file_to_df import file_to_df as _file_to_df_impl
 
 
-def file_to_df(path, progress_cb=None) -> tuple:
+def file_to_df(path, product_type=None, progress_cb=None) -> tuple:
     """외부 file_to_df 래퍼. progress_cb 는 현재 미전달.
 
     **불변 보증 지점**: 반환 df 는 항상 canonical 구조(헤더는 df.columns 로만, row0=Units).
@@ -26,7 +26,7 @@ def file_to_df(path, progress_cb=None) -> tuple:
     브랜치 교체 시 이 한 줄만 수정:
         df, df_yield = _file_to_df_impl(path, progress_cb=progress_cb)
     """
-    df, df_yield = _file_to_df_impl(path)
+    df, df_yield = _file_to_df_impl(path, product_type=product_type)
     return _ensure_canonical(df), df_yield
 
 

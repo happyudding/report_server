@@ -23,8 +23,8 @@
 | `FileOrderDialog` | file_order.ui | 입력 2개↑ 시 순서 확정(첫 파일=기준 스키마) |
 | `ColorEditorDialog` | (코드 생성) | 48색 그리드 편집 → chart_colors.json |
 
-> **Product Type 라벨**: 화면 표시는 `MDDI / PDDI / PMIC / SECURITY` 이지만 내부 키/서버 전송값은
-> 기존 `MD / PD / PM / SE` 그대로(라디오 `text` 만 변경, `product_type()` 는 dict 키 반환).
+> **Product Type 라벨**: 화면 표시, 내부 키, 서버 전송값은 모두
+> `MDDI / PDDI / PMIC / SECURITY` 를 그대로 사용한다.
 
 ## 메인 워크플로우 (`HoneyMainWindow`)
 1. **입력 선택** — `on_open_local`(LOCAL FILE OPEN, 로컬 파일대화) 또는 `on_browse_d1`(D1 검색: `client/d1` provider) → `_intake` → 2개↑면 `FileOrderDialog` → `_load_paths`. open 버튼 2종은 입력목록(`list_csv`) **왼쪽 칼럼**, ▲▼ 순서이동은 오른쪽.
