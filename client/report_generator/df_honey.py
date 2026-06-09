@@ -13,6 +13,7 @@ PyQt/xlwings 비의존 순수 Python.
 """
 from __future__ import annotations
 
+import re
 from functools import cached_property
 from pathlib import Path
 from typing import Optional
@@ -51,6 +52,28 @@ def _sheetname_from_df_yield(df_yield) -> Optional[str]:
     return str(vals.mode().iloc[0])
 
 
+# 입력 파일명 → 기본 Sheetname. lot header(_6Z1234_ 등) + W tail(_W03/.W03).
+_FILENAME_HEADER_RE = re.compile(r"_([68][012Z][^_.]*)", re.IGNORECASE)
+_FILENAME_TAIL_RE = re.compile(r"[_.](W[^_.]*)", re.IGNORECASE)
+
+
+def _sheetname_from_filename(path: Path) -> Optional[str]:
+    """입력 파일명에서 lot header + W tail 을 뽑아 기본 Sheetname 생성.
+
+    header: '_' 뒤 60/61/62/6Z/80/81/82/8Z 로 시작 → 다음 '_'/'.' 직전까지.
+    tail:   '_W*' 또는 '.W*' (다음 '_'/'.' 직전까지).
+    예) T2K_6Z1234_W03_260505.csv -> '6Z1234_W03'.
+    header 없으면 None(호출자 fallback). header 만 있으면 header 단독 반환.
+    """
+    name = path.name
+    h = _FILENAME_HEADER_RE.search(name)
+    if not h:
+        return None
+    header = h.group(1)
+    t = _FILENAME_TAIL_RE.search(name)
+    return f"{header}_{t.group(1)}" if t else header
+
+
 class df_honey:
     def __init__(self, df: pd.DataFrame, name: str,
                  report_meta: Optional[ReportMeta] = None):
@@ -83,11 +106,13 @@ class df_honey:
         rm = report_meta or ReportMeta()
         if not rm.source_path:
             rm.source_path = str(path)
-        # FileName(=계열명) = Yield 의 sheetname 과 통일. df_yield 가 비면 stem[:10] fallback.
+        # FileName(=계열명). 파일명 패턴(6Z1234_W03) 우선, 없으면 Yield 의 sheetname,
+        # 그것도 없으면 stem[:10] fallback.
         sheetname = _sheetname_from_df_yield(df_yield)
+        parsed = _sheetname_from_filename(path)
         if not rm.sheet_name:
-            rm.sheet_name = sheetname or path.stem
-        canonical = name or sheetname or path.stem[:_NAME_MAXLEN]
+            rm.sheet_name = parsed or sheetname or path.stem
+        canonical = name or parsed or sheetname or path.stem[:_NAME_MAXLEN]
         instance = cls(df, name=canonical, report_meta=rm)
         instance.df_yield = df_yield
         return instance

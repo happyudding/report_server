@@ -1785,8 +1785,11 @@ def _validate_embedded_images(xlsx_path):
                         raise RuntimeError(
                             f"broken image relationship in {rel_name}: missing {part}"
                         )
-    except zipfile.BadZipFile as exc:
-        raise RuntimeError(f"invalid xlsx package: {xlsx_path}") from exc
+    except zipfile.BadZipFile:
+        # DRM(NASCA) 암호화 파일은 zip 이 아니어서 내부 part 를 들여다볼 수 없다.
+        # _wait_for_xlsx_ready 가 이미 Excel 로 열림을 확인했으므로 손상이 아니라
+        # 암호화로 보고 임베드 이미지 검증을 건너뛴다(평문 xlsx 검증은 그대로).
+        return
 
 
 def _wait_for_xlsx_ready(xlsx_path):
@@ -1806,30 +1809,26 @@ def _wait_for_xlsx_ready(xlsx_path):
                 break
             time.sleep(_EXCEL_QUIT_FILE_READY_SLEEP)
 
-    try:
-        _retry_open_xlsx_with_excel(xlsx_path)
-    except Exception as excel_exc:
-        last_msg = f"{type(last_exc).__name__}: {last_exc}" if last_exc else "none"
-        raise RuntimeError(
-            "xlsx file is not ready after Excel quit: "
-            f"{xlsx_path} (size={last_size}, last_error={last_msg}, "
-            f"excel_retry_error={type(excel_exc).__name__}: {excel_exc})"
-        ) from excel_exc
+    # zip 으로 안 열리면 DRM(NASCA) 암호화 파일일 수 있다. 암호화 파일은 zip 이
+    # 아니므로 Excel(DispatchEx)이 열 수 있으면 준비 완료로 간주한다(zip 재검증 안 함).
+    # 대용량 파일은 암호화 완료까지 시간이 걸리므로 재오픈을 재시도 루프로 감싼다.
+    excel_exc = None
+    for attempt in range(1, _EXCEL_QUIT_FILE_READY_RETRIES + 1):
+        try:
+            _retry_open_xlsx_with_excel(xlsx_path)
+            return
+        except Exception as exc:
+            excel_exc = exc
+            if attempt >= _EXCEL_QUIT_FILE_READY_RETRIES:
+                break
+            time.sleep(_EXCEL_QUIT_FILE_READY_SLEEP)
 
-    try:
-        last_size = _stable_file_size(xlsx_path)
-        with zipfile.ZipFile(xlsx_path) as zf:
-            names = zf.namelist()
-            if "[Content_Types].xml" not in names:
-                raise zipfile.BadZipFile("missing [Content_Types].xml")
-        return
-    except (FileNotFoundError, zipfile.BadZipFile, PermissionError, OSError) as final_exc:
-        last_msg = f"{type(last_exc).__name__}: {last_exc}" if last_exc else "none"
-        raise RuntimeError(
-            "xlsx file is not ready after Excel quit: "
-            f"{xlsx_path} (size={last_size}, last_error={last_msg}, "
-            f"excel_retry=opened, final_error={type(final_exc).__name__}: {final_exc})"
-        ) from final_exc
+    last_msg = f"{type(last_exc).__name__}: {last_exc}" if last_exc else "none"
+    raise RuntimeError(
+        "xlsx file is not ready after Excel quit: "
+        f"{xlsx_path} (size={last_size}, last_error={last_msg}, "
+        f"excel_retry_error={type(excel_exc).__name__}: {excel_exc})"
+    ) from excel_exc
 
 
 def _stable_file_size(xlsx_path):
@@ -1846,25 +1845,34 @@ def _stable_file_size(xlsx_path):
 
 
 def _retry_open_xlsx_with_excel(xlsx_path):
-    app = None
+    """저장된 xlsx 를 Excel COM(DispatchEx)으로 열어 본다.
+
+    DRM(NASCA)이 걸린 파일은 Excel COM 으로만 열 수 있으므로 xlwings 대신
+    win32com DispatchEx 를 쓴다(upload_prepare._extract_via_excel_com,
+    chart_export._open_excel 와 동일 패턴). 열기에 실패하면 예외를 전파한다.
+    """
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    excel = None
     wb = None
     try:
-        app = xw.App(visible=False, add_book=False)
-        app.display_alerts = False
-        app.screen_updating = False
-        try:
-            app.api.EnableEvents = False
-        except Exception:
-            pass
-        wb = app.books.open(str(Path(xlsx_path).resolve()),
-                            update_links=False, read_only=True)
+        excel = win32com.client.DispatchEx("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        wb = excel.Workbooks.Open(str(Path(xlsx_path).resolve()),
+                                  UpdateLinks=0, ReadOnly=True)
     finally:
         try:
             if wb is not None:
-                wb.close()
+                wb.Close(SaveChanges=False)
         finally:
-            if app is not None:
-                app.quit()
+            try:
+                if excel is not None:
+                    excel.Quit()
+            finally:
+                pythoncom.CoUninitialize()
 
 
 def _is_package_integrity_error(exc):

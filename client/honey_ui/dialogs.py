@@ -459,7 +459,6 @@ class ReportSettingsDialog(QDialog):
                 seen[key] = 1
             overrides.append(base)
         self._filename_overrides = overrides
-        self.lbl_filename_preview.setText(", ".join(overrides))
 
     def filename_overrides(self):
         return self._filename_overrides
