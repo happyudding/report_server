@@ -319,8 +319,8 @@ _RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail
 _CPK_THRESHOLD = 1.33
 _CPK_WARN_FILL_RGB = "FFFFFF00"  # 노란색 ARGB — CPK < 1.33 행 하이라이트
 _CPK_WARN_FONT_RGB = "FF000000"
-_CPK_TOTAL_FILL_RGB = "FF0070C0"
-_CPK_TOTAL_FONT_RGB = "FFFFFFFF"
+_CPK_TOTAL_FILL_RGB = "FFDDEBF7"
+_CPK_TOTAL_FONT_RGB = "FF000000"
 _CPK_TOTAL_ADDR_MAXLEN = 250  # Excel Range 주소 255자 한계 대비 마진
 
 ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
@@ -1486,8 +1486,8 @@ def _attach_fail_item_charts(wb, result, chart_map, attach_progress_cb=None, png
         return None
     fi = wb.sheets[fi_name]
 
-    # Distribution 열 = B(2) + bin + Item + (count+yield) × sources
-    dist_col = _START_COL + 2 + 2 * len(result.sources)
+    # Distribution 열 = B(2) + Step + Bin + Item + (count+yield) × sources
+    dist_col = _START_COL + 3 + 2 * len(result.sources)
 
     tmpdir = tempfile.mkdtemp(prefix="honey_fi_")
     seq = 0
@@ -1541,8 +1541,8 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
     """issue_table 시트의 Distribution 열(각 데이터 행)에 해당 subject 차트 PNG 삽입.
 
     fail_item 과 동일한 COM Export 방식. dist_col 계산만 issue_table header 기준으로 다름.
-    header: ["Category","bin","Item","avg", {src}_yield×N, "Distribution", ...]
-    → dist_col = _START_COL + 4 + len(sources)
+    header: ["Category","Step","Bin","Item","avg", {src}_yield×N, "Distribution", ...]
+    → dist_col = _START_COL + 5 + len(sources)
     """
     import os
     import tempfile
@@ -1553,7 +1553,7 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
         return None
     it = wb.sheets[it_name]
 
-    dist_col = _START_COL + 4 + len(result.sources)
+    dist_col = _START_COL + 5 + len(result.sources)
 
     tmpdir = tempfile.mkdtemp(prefix="honey_it_")
     seq = 0
@@ -2067,6 +2067,7 @@ def _draw_all_chart(sh, dists, x_arrs, x_name, y_name, cnt_list, src_names, colo
             finite = np.concatenate([c[np.isfinite(c)] for c in cols]) if cols else np.empty(0)
             if finite.size:
                 data_min, data_max = float(finite.min()), float(finite.max())
+                data_med = float(np.median(finite))
         if finite.size == 0:
             done += 1
             if dist_progress_cb:
@@ -2076,7 +2077,7 @@ def _draw_all_chart(sh, dists, x_arrs, x_name, y_name, cnt_list, src_names, colo
             lo, hi = d.lower_limit, d.upper_limit
             is_fail = (_isnum(lo) and data_min < float(lo)) or (
                 _isnum(hi) and data_max > float(hi))
-            x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail)
+            x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail, data_med)
 
         chart_seq += 1
         try:
@@ -2498,11 +2499,32 @@ def _ceil_dec(x, dec):
     return math.ceil(x * f) / f
 
 
-def _x_axis_range(lo, hi, dmin, dmax, is_fail):
-    """x축 [min,max]. Pass=LIM 그대로, Fail=±5% 가드밴드 후 LIM 자릿수로 floor/ceil.
-    LIM None/nan 이면 data min/max 사용."""
+def _x_axis_range(lo, hi, dmin, dmax, is_fail, dmed):
+    """x축 [min,max].
+    - 양쪽 LIM 있음/없음: 기존 규칙(Pass=LIM 그대로, Fail=±5% 가드밴드 후 LIM 자릿수로
+      floor/ceil; LIM None/nan 이면 data min/max).
+    - 한쪽만 있음: 열린 쪽 끝을 median 대칭(median±(median-LIM))으로, 닫힌 쪽은 기존
+      규칙. 데이터를 잘라내지 않도록 clamp(규칙 #6)."""
     lo_n = float(lo) if _isnum(lo) else None
     hi_n = float(hi) if _isnum(hi) else None
+
+    # one-sided spec: 열린 쪽 축 끝을 median 대칭으로 확장
+    if (lo_n is None) != (hi_n is None) and _isnum(dmed):
+        if lo_n is not None:                 # LSL-only → 위쪽(max) 열림
+            dec = _decimals(lo_n)
+            xmin = lo_n
+            if is_fail and dmin < lo_n:
+                xmin = dmin - (lo_n - dmin) * 0.05
+            xmax = max(dmed + (dmed - lo_n), dmax)   # clamp: 데이터 전부 포함
+            return _floor_dec(xmin, dec), _ceil_dec(xmax, dec)
+        else:                                # USL-only → 아래쪽(min) 열림
+            dec = _decimals(hi_n)
+            xmax = hi_n
+            if is_fail and dmax > hi_n:
+                xmax = dmax + (dmax - hi_n) * 0.05
+            xmin = min(dmed - (hi_n - dmed), dmin)   # clamp: 데이터 전부 포함
+            return _floor_dec(xmin, dec), _ceil_dec(xmax, dec)
+
     xmin = lo_n if lo_n is not None else dmin
     xmax = hi_n if hi_n is not None else dmax
     if not is_fail:
