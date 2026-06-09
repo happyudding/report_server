@@ -49,7 +49,7 @@ row 5+ : DUT 측정 데이터
 - 헤더명은 `df.columns`에만 존재해야 한다.
 - row0에 `DUT/XCoord/...` 헤더가 중복으로 들어가면 unit/limit/data 인덱스가 밀린다.
 - `constants.py`의 `DATA_START_ROW = 5`, `PASS_BIN = "1"` 전제를 바꾸면 계산 전체에 영향이 간다.
-- `csvfile_to_df.py`는 실제 파서를 `honey_parse.csvfile_to_df`에서 import한다. 없으면 호출 시 `ImportError`가 난다.
+- `file_to_df.py`는 실제 파서를 `honey_parse.file_to_df`에서 import한다. 없으면 호출 시 `ImportError`가 난다.
 
 ## 분석 단계
 

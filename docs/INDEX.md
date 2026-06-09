@@ -94,6 +94,14 @@
 | 서버 저장소/S3 | [server/storage_gateway/](../server/storage_gateway/) ([README](../server/storage_gateway/README.md)) | 내부 `_s3` 어댑터 + 로컬 fallback | `/pe/report/...` URL, multipart 필드, 응답 JSON 유지 |
 | 사용자 담당 리포트 | [client/report_generator/](../client/report_generator/) + [client/report_flow/](../client/report_flow/) | 분석/xlsx 생성/업로드 전처리 | 분석 수식, xlsx 레이아웃, DB 스키마 변경 없음 |
 
+## 3.2 컴포넌트별 README (설정·실행·환경변수)
+
+| 컴포넌트 | README |
+|----------|--------|
+| 서버 전체 (환경변수·API 목록·모듈 구조) | [server/README.md](../server/README.md) |
+| 클라이언트 (설치·빌드·워크플로) | [client/README.md](../client/README.md) |
+| E2E 검증 절차 | [README.md](../README.md) |
+
 ---
 
 ## 4. 불변 규칙 (위반 금지 — CLAUDE.md §5 요약)
