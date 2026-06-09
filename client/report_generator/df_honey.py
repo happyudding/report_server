@@ -77,6 +77,7 @@ def _sheetname_from_filename(path: Path) -> Optional[str]:
 class df_honey:
     def __init__(self, df: pd.DataFrame, name: str,
                  report_meta: Optional[ReportMeta] = None):
+        """df_honey 포맷 DataFrame + 소스명 + 리포트 메타로 초기화."""
         self.df = df.reset_index(drop=True)
         self.name = name
         self.report_meta = report_meta or ReportMeta()
@@ -101,6 +102,7 @@ class df_honey:
                  name: Optional[str] = None,
                  product_type: Optional[str] = None,
                  progress_cb=None) -> "df_honey":
+        """CSV/xlsx 파일 → df_honey. FileName 은 파일명 패턴 → Yield sheetname → stem 순으로 추론."""
         path = Path(path)
         df, df_yield = csv_loader.file_to_df(path, product_type=product_type, progress_cb=progress_cb)
         rm = report_meta or ReportMeta()
@@ -186,35 +188,42 @@ class df_honey:
 
     @cached_property
     def subjects(self) -> list:
+        """subject(측정 항목) 이름 목록 (5번째 열 이후 컬럼명)."""
         return [str(s) for s in self.df.columns[N_META_COLUMNS:].tolist()]
 
     @cached_property
     def units(self) -> list:
+        """subject 별 단위 목록 (row 0 = Units 행)."""
         return [str(u) if pd.notna(u) else ""
                 for u in self.df.iloc[UNITS_ROW, N_META_COLUMNS:].tolist()]
 
     @cached_property
     def lower_limits(self) -> list:
+        """subject 별 하한 limit 목록 (row 1, float; 비수치 → NaN)."""
         return pd.to_numeric(self.df.iloc[LOWER_LIMIT_ROW, N_META_COLUMNS:],
                              errors="coerce").tolist()
 
     @cached_property
     def upper_limits(self) -> list:
+        """subject 별 상한 limit 목록 (row 2, float; 비수치 → NaN)."""
         return pd.to_numeric(self.df.iloc[UPPER_LIMIT_ROW, N_META_COLUMNS:],
                              errors="coerce").tolist()
 
     @cached_property
     def _block(self) -> pd.DataFrame:
+        """데이터 구간(row 5 이후) DataFrame."""
         return self.df.iloc[DATA_START_ROW:].reset_index(drop=True)
 
     @cached_property
     def meta(self) -> pd.DataFrame:
+        """DUT/XCoord/YCoord/Bin/Serial 5열 메타 DataFrame."""
         meta = self._block.iloc[:, :N_META_COLUMNS].copy()
         meta.columns = META_COLUMNS
         return meta
 
     @cached_property
     def scores(self) -> pd.DataFrame:
+        """측정값 DataFrame (열 = range(n_subject) 정수 인덱스)."""
         scores = self._block.iloc[:, N_META_COLUMNS:].copy()
         scores.columns = range(len(self.subjects))
         return scores
@@ -353,6 +362,7 @@ class df_honey:
         return issues
 
     def is_valid(self) -> bool:
+        """validate() 이슈가 없으면 True."""
         return not self.validate()
 
     # ------------------------------------------------------------------ 분석
@@ -362,6 +372,7 @@ class df_honey:
         return {self.name: self}
 
     def cpk(self, subject_idx=None) -> list:
+        """이 source 의 CPK 행 목록. subject_idx 지정 시 해당 항목만 반환."""
         rows = B.build_cpk(self._as_mass_data_map())
         if subject_idx is None:
             return rows
@@ -369,12 +380,15 @@ class df_honey:
         return [r for r in rows if r["subject"] == subject]
 
     def yield_rate(self) -> list:
+        """이 source 의 bin 별 yield 집계 행 목록."""
         return B.build_yield(self._as_mass_data_map())
 
     def fail_items(self) -> dict:
+        """이 source 의 yield + fail_subjects 합산 dict."""
         return B.build_fail_items(self._as_mass_data_map())
 
     def fail_values(self) -> list:
+        """비합격 DUT 별 한계 이탈 레코드 목록."""
         return B.build_issue_table(self._as_mass_data_map())
 
     def get_fail_detail(self) -> list:
@@ -395,12 +409,15 @@ class df_honey:
         ]
 
     def summary(self) -> list:
+        """이 source 의 subject/bin 요약 행 목록."""
         return B.build_summary_rows(self._as_mass_data_map())
 
     def major_fail_subjects(self, top: int = 5) -> list:
+        """fail 수 상위 top subject 목록."""
         return B.build_major_fail_subjects(self._as_mass_data_map(), top=top)
 
     def distribution(self, subject_idx) -> tuple:
+        """subject_idx 에 해당하는 ECDF (unique_vals, cumulative_percent) 반환."""
         values = B.to_numeric_clean(self.scores.iloc[:, subject_idx])
         return B.cumulative_distribution_full(values)
 

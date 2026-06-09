@@ -219,11 +219,13 @@ class FileOrderDialog(QDialog):
 
 
 class ReportSettingsDialog(QDialog):
-    def __init__(self, parent, group, csv_count):
+    def __init__(self, parent, group, csv_count, product_type=None):
         super().__init__(parent)
         uic.loadUi(str(SETTINGS_UI_PATH), self)
         self.group = group
         self.csv_count = csv_count
+        self.product_type = product_type or ""
+        self._fail_item_blocked = self.product_type == "MDDI"
         self._filename_overrides = None
         self.sheet_checks = {
             name: getattr(self, f"cb_sheet_{name}") for name in SHEET_OPTIONS
@@ -411,11 +413,13 @@ class ReportSettingsDialog(QDialog):
         self._resort(self.list_items_sel)
 
     def _sync_yield_dependents(self, *_):
-        enabled = self.cb_sheet_yield.isChecked()
-        for cb in (self.cb_sheet_fail_item, self.cb_sheet_issue_table):
-            cb.setEnabled(enabled)
-            if not enabled:
-                cb.setChecked(False)
+        yield_enabled = self.cb_sheet_yield.isChecked()
+        self.cb_sheet_fail_item.setEnabled(yield_enabled and not self._fail_item_blocked)
+        if not yield_enabled or self._fail_item_blocked:
+            self.cb_sheet_fail_item.setChecked(False)
+        self.cb_sheet_issue_table.setEnabled(yield_enabled)
+        if not yield_enabled:
+            self.cb_sheet_issue_table.setChecked(False)
 
     def _update_dut_mode_availability(self):
         raw_on = self.cb_raw_data.isChecked()

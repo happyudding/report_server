@@ -21,6 +21,7 @@ from .constants import PASS_BIN, META_COLUMNS
 # 포맷 헬퍼
 
 def _json_safe(value):
+    """float NaN/inf·None·pd.NA → None, 나머지 그대로 반환 (JSON 직렬화 안전값)."""
     if value is None:
         return None
     if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
@@ -31,6 +32,7 @@ def _json_safe(value):
 
 
 def _fmt_type(value):
+    """값을 표시용 문자열로 변환. float 정수(1.0 → '1'), NaN → '' 처리."""
     if pd.isna(value):
         return ""
     try:
@@ -43,6 +45,7 @@ def _fmt_type(value):
 
 
 def _fmt_num(value, digits=6):
+    """숫자를 소수점 digits 자리로 반올림. 결측/NaN → 'N/A'."""
     value = _json_safe(value)
     if value is None:
         return "N/A"
@@ -50,10 +53,12 @@ def _fmt_num(value, digits=6):
 
 
 def _fmt_metric(value):
+    """CPK 등 metric 출력용 3자리 반올림 포맷 (_fmt_num 3자리 단축)."""
     return _fmt_num(value, digits=3)
 
 
 def _subject_columns(mass_data):
+    """mass_data 의 subject 이름을 str 리스트로 반환."""
     return [str(s) for s in mass_data.subjects]
 
 
@@ -61,6 +66,7 @@ def _subject_columns(mass_data):
 # 결합 / 마스크
 
 def _combined_frames(mass_data_map):
+    """모든 source 의 meta+scores 를 세로로 이어붙인 DataFrame (source_file 열 추가)."""
     frames = []
     for source_name, mass_data in mass_data_map.items():
         meta = mass_data.meta.reset_index(drop=True).copy()
@@ -76,6 +82,7 @@ def _combined_frames(mass_data_map):
 
 
 def _type_sort_key(value):
+    """숫자처럼 보이는 bin 값은 수치 앞으로, 나머지는 문자열 뒤로 정렬하는 키."""
     text = str(value)
     try:
         return (0, float(text))
@@ -84,6 +91,7 @@ def _type_sort_key(value):
 
 
 def _subject_rankings_by_type(mass_data_map):
+    """bin_type 별 fail subject 랭킹 dict {bin_type: [{subject_id, subject, count, portion (%)}]}."""
     rankings = {}
     type_totals = {}
     first = next(iter(mass_data_map.values()))
@@ -125,6 +133,7 @@ def _subject_rankings_by_type(mass_data_map):
 # yield
 
 def build_yield(mass_data_map, subject_rankings=None):
+    """전체 mass_data 의 bin 별 count/portion/소스별 yield 집계 행 목록."""
     combined = _combined_frames(mass_data_map)
     total = len(combined)
     if subject_rankings is None:
@@ -164,6 +173,71 @@ def build_yield(mass_data_map, subject_rankings=None):
                 fail_subjects[0]["subject"] if fail_subjects else "N/A"),
             "comment": "",
         })
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# yield from df_yield
+
+def build_yield_from_df_yield(combined_df_yield, sources, subject_rankings=None):
+    """merged df_yield (step/Bin/Tno/item/sheetname_cnt/sheetname) → yield_rows.
+
+    Step 단위로 분리, 각 step 내에서 Bin1 먼저 숫자순 정렬.
+    portion (%) = 해당 step 내 비율. {src}_count/{src}_yield = fail_item 방식.
+    """
+    import re
+
+    df = combined_df_yield.copy()
+    df["Bin"] = df["Bin"].map(_fmt_type)
+
+    # 같은 (step, Bin, Tno, sheetname) 내 여러 item 행은 동일 DUT → 중복 제거
+    deduped = df.drop_duplicates(subset=["step", "Bin", "Tno", "sheetname"])
+
+    step_src_total = deduped.groupby(["step", "sheetname"])["sheetname_cnt"].sum()
+    step_bin_src   = deduped.groupby(["step", "Bin", "sheetname"])["sheetname_cnt"].sum()
+    step_bin_total = deduped.groupby(["step", "Bin"])["sheetname_cnt"].sum()
+    step_total     = deduped.groupby("step")["sheetname_cnt"].sum()
+
+    def _step_sort_key(s):
+        parts = re.split(r'(\d+)', str(s))
+        return [int(p) if p.isdigit() else p.lower() for p in parts]
+
+    steps = sorted(step_total.index.tolist(), key=_step_sort_key)
+
+    rows = []
+    for step in steps:
+        s_total = int(step_total.get(step, 0))
+        if s_total == 0:
+            continue
+        bins_in_step = [b for (st, b) in step_bin_total.index if st == step]
+        bins_sorted = sorted(
+            bins_in_step,
+            key=lambda b: (0 if b == PASS_BIN else 1, _type_sort_key(b)),
+        )
+        for bin_type in bins_sorted:
+            count = int(step_bin_total.get((step, bin_type), 0))
+            fail_subjects = (subject_rankings or {}).get(bin_type, [])
+            portion_fields, portions = {}, []
+            for src in sources:
+                src_total_val = int(step_src_total.get((step, src), 0))
+                src_count     = int(step_bin_src.get((step, bin_type, src), 0))
+                portion = round(src_count / src_total_val * 100.0, 2) if src_total_val else 0.0
+                portion_fields[f"portion_{src}"] = portion
+                portion_fields[f"{src}_count"]   = src_count
+                portion_fields[f"{src}_yield"]   = portion
+                portions.append(portion)
+            avg = round(sum(portions) / len(portions), 2) if portions else 0.0
+            rows.append({
+                "step":  step,
+                "bin":   bin_type,
+                "count": count,
+                "portion (%)": round(count / s_total * 100.0, 2),
+                **portion_fields,
+                "avg": avg,
+                "Main Fail subject": "Pass" if bin_type == PASS_BIN else (
+                    fail_subjects[0]["subject"] if fail_subjects else "N/A"),
+                "comment": "",
+            })
     return rows
 
 
@@ -316,6 +390,7 @@ def build_cpk(mass_data_map):
 # fail items
 
 def build_fail_items(mass_data_map, yield_rows=None, subject_rankings=None):
+    """yield 행에 fail_subjects(bin 별 fail 항목 목록)를 합쳐 {"rows": [...]} 반환."""
     if subject_rankings is None:
         subject_rankings = _subject_rankings_by_type(mass_data_map)
     if yield_rows is None:
@@ -367,6 +442,7 @@ def build_issue_summary(mass_data_map, fail_items=None):
 # fail_values — 비합격 DUT별 한계 이탈 레코드 (df_honey.fail_values 용)
 
 def build_issue_table(mass_data_map):
+    """비합격 DUT 별 한계 이탈 레코드 목록 (source/dut/xy/bin/subject/value/방향)."""
     rows = []
     for source_name, mass_data in mass_data_map.items():
         subjects_list = _subject_columns(mass_data)
@@ -446,6 +522,7 @@ def build_major_fail_subjects(mass_data_map, top: int = 5):
 # summary rows
 
 def _to_float(value):
+    """값을 float 로 변환. None·'N/A'·NaN·inf → None."""
     if value is None or value == "N/A":
         return None
     try:
@@ -458,6 +535,7 @@ def _to_float(value):
 
 
 def _try_int(value):
+    """값이 정수로 표현 가능한 float 이면 int 반환, 아니면 None."""
     if value is None:
         return None
     try:
@@ -471,6 +549,7 @@ def _try_int(value):
 
 def build_summary_rows(mass_data_map, cpk_rows=None, yield_rows=None,
                        fail_items=None, subject_rankings=None):
+    """per-subject(cpk 기반) + per-bin×item(fail) + bin 전체의 요약 행 목록."""
     if cpk_rows is None:
         cpk_rows = build_cpk(mass_data_map)
     if yield_rows is None:
@@ -561,11 +640,13 @@ def build_summary_rows(mass_data_map, cpk_rows=None, yield_rows=None,
 # distribution (CDF)
 
 def to_numeric_clean(series):
+    """Series → float64 배열 (유한값만, NaN·inf 제거)."""
     arr = pd.to_numeric(series, errors="coerce")
     return arr[np.isfinite(arr)].to_numpy()
 
 
 def cumulative_distribution_full(values):
+    """고유값별 누적 분포(ECDF) 계산. 반환: (unique_vals, cumulative_percent)."""
     if values.size == 0:
         return np.empty(0), np.empty(0)
     unique_vals, counts = np.unique(np.sort(values), return_counts=True)

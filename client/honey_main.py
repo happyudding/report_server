@@ -140,7 +140,8 @@ class HoneyMainWindow(QMainWindow):
         self._run_log_step = 0
         self._run_log_total = 0
         self.txt_summary.clear()
-        self._append_run_log(title)
+        if title:
+            self._append_run_log(title)
 
     def _set_run_log_total(self, total):
         self._run_log_total = max(int(total or 0), 0)
@@ -479,7 +480,8 @@ class HoneyMainWindow(QMainWindow):
         if not self._rebuild_group(warn=True) or self.group is None:
             return
 
-        dlg = ReportSettingsDialog(self, self.group, len(self.csv_paths))
+        dlg = ReportSettingsDialog(
+            self, self.group, len(self.csv_paths), product_type=self.product_type())
         if not dlg.exec_():
             self._status("설정 취소됨 — 다시 Start 로 진행할 수 있습니다.")
             return
@@ -503,7 +505,7 @@ class HoneyMainWindow(QMainWindow):
         self.btn_start.setEnabled(False)
         show_timing_log = bool(getattr(rg, "DEBUG_RUN_TIMING_LOG", False))
         overall_t0 = time.perf_counter()
-        self._init_run_log("=== Report Generator Log ===")
+        self._init_run_log("")
         self._set_run_log_total(
             self._estimate_run_log_steps(work_group, sheets, raw_data)
             if show_timing_log else 0
@@ -658,20 +660,12 @@ class HoneyMainWindow(QMainWindow):
                         value = _attach_state["base"] + done if total_a else progress.value()
                         msg = f"PNG 붙이는 중... ({sheet_name} {done}/{total_a} - {pct}%)"
                         progress.set(msg, value=value, status=msg)
-                        last_log = _attach_state["last_log"].get(sheet_name, 0)
-                        if total_a and (done == total_a or done - last_log >= 10):
-                            _attach_state["last_log"][sheet_name] = done
-                            self._append_run_log(
-                                f"PNG attach {sheet_name} {done}/{total_a} ({pct}%)")
                         continue
                     if event == "done":
-                        if total_a:
-                            self._append_run_log(f"PNG attach {sheet_name} done: {done}/{total_a}")
                         continue
                     if event == "copy_picture":
                         msg = "Chart 복사 붙여넣기 진행중 잠시 기다려주세요"
                         progress.set(f"{msg} ({sheet_name}: {subject})", status=msg)
-                        self._append_run_log(f"{msg} ({sheet_name}: {subject})")
 
         progress.set(
             f"Excel 시트/차트 생성 중...  → {Path(out).name}",

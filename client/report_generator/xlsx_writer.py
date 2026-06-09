@@ -763,16 +763,15 @@ def _summary_fail_percent(row):
 
 
 def _yield_table(result):
-    """yield / fail_item 공용 표 (bin | Item | {src}_count | {src}_yield | avg | comment)."""
+    """yield / fail_item 공용 표 (step | bin | Item | {src}_count | {src}_yield | avg | comment)."""
     src = result.sources
-    # count 들을 먼저 모두, 이어서 yield 들을 모두 (cnt cnt … yield yield …)
-    header = ["bin", "Item"]
+    header = ["step", "bin", "Item"]
     header += [f"{s}_count" for s in src]
     header += [f"{s}_yield" for s in src]
     header += ["avg", "comment"]
     rows = []
     for r in result.yield_rows:
-        row = [_bin_label(r.get("bin")), r.get("Main Fail subject", "")]
+        row = [r.get("step", ""), _bin_label(r.get("bin")), r.get("Main Fail subject", "")]
         row += [r.get(f"{s}_count") for s in src]
         row += [r.get(f"{s}_yield") for s in src]
         row += [r.get("avg"), r.get("comment", "")]
@@ -780,33 +779,84 @@ def _yield_table(result):
     return header, rows
 
 
+def _fill_yield_by_step(ws, df_yield):
+    """df_yield 를 step 별 섹션으로 출력. 각 섹션 상단에 동일 헤더, 섹션 간 1행 공백.
+
+    반환: (header, section_header_rows) — 각 섹션 헤더 행 번호 목록.
+    """
+    import re
+
+    def _step_sort_key(s):
+        parts = re.split(r'(\d+)', str(s))
+        return [int(p) if p.isdigit() else p.lower() for p in parts]
+
+    header = list(df_yield.columns)
+    add_comment = "comment" not in header
+    if add_comment:
+        header = header + ["comment"]
+
+    ncol = len(header)
+    c2 = _START_COL + ncol - 1
+
+    steps = (sorted(df_yield["step"].unique().tolist(), key=_step_sort_key)
+             if "step" in df_yield.columns else [None])
+
+    section_header_rows = []
+    cur = _HEADER_ROW
+
+    for i, step in enumerate(steps):
+        sub = df_yield[df_yield["step"] == step] if step is not None else df_yield
+        rows = [list(r) for r in sub.itertuples(index=False)]
+        if add_comment:
+            rows = [row + [""] for row in rows]
+
+        # 섹션 헤더
+        ws.range((cur, _START_COL), (cur, c2)).value = header
+        _hdr_range(ws, cur, _START_COL, c2)
+        ws.range(f"{cur}:{cur}").row_height = _YIELD_HEADER_ROW_HEIGHT
+        section_header_rows.append(cur)
+        cur += 1
+
+        # 데이터 행
+        if rows:
+            data = [[_sanitize_cell(v) for v in row] for row in rows]
+            ws.range((cur, _START_COL), (cur + len(rows) - 1, c2)).value = data
+            _data_range(ws, cur, _START_COL, cur + len(rows) - 1, c2)
+            ws.range(f"{cur}:{cur + len(rows) - 1}").row_height = _YIELD_TABLE_ROW_HEIGHT
+            cur += len(rows)
+
+        # 섹션 간 공백 1행 (마지막 섹션 제외)
+        if i < len(steps) - 1:
+            cur += 1
+
+    return header, section_header_rows
+
+
 def _fill_yield(ws, result):
     if result.df_yield is not None and not result.df_yield.empty:
-        header = list(result.df_yield.columns)
-        rows = [list(r) for r in result.df_yield.itertuples(index=False)]
-        if "comment" not in header:
-            header.append("comment")
-            rows = [row + [""] for row in rows]
+        header, section_header_rows = _fill_yield_by_step(ws, result.df_yield)
     else:
         header, rows = _yield_table(result)
-    _fill_table(ws, header, rows)
+        _fill_table(ws, header, rows)
+        section_header_rows = [_HEADER_ROW]
+        _set_table_row_heights(ws, len(rows), height=_YIELD_TABLE_ROW_HEIGHT)
+        ws.range(f"{_HEADER_ROW}:{_HEADER_ROW}").row_height = _YIELD_HEADER_ROW_HEIGHT
+
     _apply_table_col_widths(ws, header, custom_widths={"comment": 50, "Item": _ITEM_COL_WIDTH * 2})
     _apply_table_font(ws, header, size=12)
-    _apply_small_font_headers(ws, header, ["_count", "_yield"], size=10)
-    _set_table_row_heights(ws, len(rows), height=_YIELD_TABLE_ROW_HEIGHT)
-    ws.range(f"{_HEADER_ROW}:{_HEADER_ROW}").row_height = _YIELD_HEADER_ROW_HEIGHT
+    for hr in section_header_rows:
+        _apply_small_font_headers(ws, header, ["_count", "_yield"], header_row=hr, size=10)
 
 
 def _fill_fail_item(ws, result):
     src = result.sources
-    # count 들을 먼저 모두, 이어서 yield 들을 모두 (cnt cnt … yield yield …)
-    header = ["Bin", "Item"]
+    header = ["Step", "Bin", "Item"]
     header += [f"{s}_count" for s in src]
     header += [f"{s}_yield" for s in src]
     header += ["Distribution"]
     rows = []
     for r in result.yield_rows:
-        row = [_bin_label(r.get("bin")), r.get("Main Fail subject", "")]
+        row = [r.get("step", ""), _bin_label(r.get("bin")), r.get("Main Fail subject", "")]
         row += [r.get(f"{s}_count") for s in src]
         row += [r.get(f"{s}_yield") for s in src]
         row += [""]   # Distribution 열 — 차트는 xlwings 단계에서 삽입
@@ -820,7 +870,7 @@ def _fill_fail_item(ws, result):
     with _flow_prof("fill_fail_item.style"):
         _apply_table_col_widths(ws, header, col_multiplier=1.3)
         _apply_used_cell_font(ws, size=15, bold=False)
-        _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=False,
+        _apply_named_columns_font(ws, header, ["Step", "Bin", "Item"], size=15, bold=False,
                                   last_row=_HEADER_ROW + len(rows))
 
 
@@ -994,16 +1044,16 @@ def _cpk_fail_subjects(result):
 def _fill_issue_table(ws, result, include_cpk=True):
     """Category 그룹 레이아웃. Yield = yield 데이터, CPK = CPK < 1.33 아이템, ETC = 플레이스홀더."""
     src = result.sources
-    header = ["Category", "Bin", "Item", "avg"]
+    header = ["Category", "Step", "Bin", "Item", "avg"]
     for s in src:
         header += [f"{s}_yield"]          # count 열 제거, yield 만 유지
     header += ["Distribution", "comment", "개발 1차 comment",
                "PTE 2차 comment", "개발 2차 comment"]
-    pad = len(header) - (4 + len(src))    # Distribution + comment 열 수
+    pad = len(header) - (5 + len(src))    # Distribution + comment 열 수
 
     rows = []
     for r in result.yield_rows:
-        row = ["Yield", _bin_label(r.get("bin")),
+        row = ["Yield", r.get("step", ""), _bin_label(r.get("bin")),
                r.get("Main Fail subject", ""), r.get("avg")]
         for s in src:
             row += [r.get(f"{s}_yield")]  # count 제거
@@ -1015,10 +1065,10 @@ def _fill_issue_table(ws, result, include_cpk=True):
     cpk_fails = _cpk_fail_subjects(result) if include_cpk else []
     n_cpk = max(1, len(cpk_fails))
     cpk_subheader = ["item name", "cpk"] if include_cpk else ["", ""]
-    rows.append(["CPK", "", cpk_subheader[0], cpk_subheader[1]] + [""] * len(src) + [""] * pad)
+    rows.append(["CPK", "", "", cpk_subheader[0], cpk_subheader[1]] + [""] * len(src) + [""] * pad)
     if cpk_fails:
         for subj, cpk_val in cpk_fails:
-            row = ["", "", subj, _sanitize_cell(cpk_val)]
+            row = ["", "", "", subj, _sanitize_cell(cpk_val)]
             row += [""] * len(src)       # _yield 열: CPK 에 해당 없음
             row += [""] * pad
             rows.append(row)
@@ -1053,12 +1103,12 @@ def _fill_issue_table(ws, result, include_cpk=True):
         "개발 2차 comment": 40,
     })
     _apply_used_cell_font(ws, size=15, bold=False)
-    _apply_named_columns_font(ws, header, ["Bin", "Item"], size=15, bold=False,
+    _apply_named_columns_font(ws, header, ["Step", "Bin", "Item"], size=15, bold=False,
                               last_row=_HEADER_ROW + len(rows))
     # CPK 서브헤더(item name / cpk)는 폰트 패스 이후 헤더 스타일 재적용 — 굵게/음영 유지
     if include_cpk:
-        _hdr_range(ws, cpk_start, _START_COL + 2, _START_COL + 2)  # Item 열
-        _hdr_range(ws, cpk_start, _START_COL + 3, _START_COL + 3)  # avg 열
+        _hdr_range(ws, cpk_start, _START_COL + 3, _START_COL + 3)  # Item 열 (+1 for Step col)
+        _hdr_range(ws, cpk_start, _START_COL + 4, _START_COL + 4)  # avg 열 (+1 for Step col)
 
 
 def _merge_issue_category(ws, n_yield, header_row=_HEADER_ROW, start_col=_START_COL):

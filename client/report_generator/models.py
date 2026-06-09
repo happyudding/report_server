@@ -83,6 +83,7 @@ class AnalysisResult:
         }
 
     def _pass_count(self) -> int:
+        """yield_rows 에서 Bin 1 DUT 수 추출."""
         for r in self.yield_rows:
             if str(r.get("bin")) == "1":
                 return int(r.get("count") or 0)

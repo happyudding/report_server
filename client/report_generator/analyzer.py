@@ -22,6 +22,7 @@ _FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
 
 def _emit_profile_event(profile_cb, label: str, status: str,
                         elapsed: Optional[float] = None, error: Optional[str] = None) -> None:
+    """profile_cb 에 측정 이벤트(module/label/status/elapsed/error) 전달. cb 없으면 무시."""
     if profile_cb is None:
         return
     event = {
@@ -41,6 +42,7 @@ def _emit_profile_event(profile_cb, label: str, status: str,
 
 @contextlib.contextmanager
 def _flow_time(label: str, profile_cb=None):
+    """label 구간 시간 측정 context manager. _profile sink + profile_cb 에 동시 기록."""
     if not (_FLOW_PROFILE_ON or _profile.collecting() or profile_cb is not None):
         yield
         return

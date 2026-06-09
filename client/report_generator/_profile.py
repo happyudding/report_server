@@ -19,6 +19,7 @@ _seq = 0
 
 
 def collecting() -> bool:
+    """현재 프로파일 수집이 활성 상태인지 반환."""
     return _collecting
 
 
@@ -30,11 +31,13 @@ def start_collection() -> None:
 
 
 def stop_collection() -> None:
+    """수집 중단 (records 는 유지)."""
     global _collecting
     _collecting = False
 
 
 def reset() -> None:
+    """records·depth·seq 초기화."""
     global _records, _depth, _seq
     _records = []
     _depth = 0
@@ -96,6 +99,7 @@ def save(path, payload: dict) -> str:
 
 
 def load(path) -> dict:
+    """JSON 파일에서 payload 로드."""
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 

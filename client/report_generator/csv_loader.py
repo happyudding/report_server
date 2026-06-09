@@ -43,6 +43,7 @@ def _ensure_canonical(df: pd.DataFrame) -> pd.DataFrame:
 # raw 읽기
 
 def _read_raw(path: Path) -> pd.DataFrame:
+    """CSV/xlsx 파일을 header=None raw DataFrame 으로 읽음."""
     if path.suffix.lower() == ".xlsx":
         return pd.read_excel(path, header=None, dtype=object)
     try:
@@ -68,6 +69,7 @@ def normalize_raw(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _detect_format(raw: pd.DataFrame) -> str:
+    """raw 첫 100행 첫 열을 보고 'standard' 또는 'test_rp' 포맷 판별."""
     n = min(100, raw.shape[0])
     for i in range(n):
         v = raw.iat[i, 0]
@@ -82,6 +84,7 @@ def _detect_format(raw: pd.DataFrame) -> str:
 
 
 def _normalize_standard(raw: pd.DataFrame) -> pd.DataFrame:
+    """standard 포맷 raw → 5-meta 표준 DataFrame (4-meta면 Serial 열 삽입)."""
     df = raw.copy()
     # 4-meta → 5-meta (Serial 컬럼 삽입)
     if str(df.iat[0, 4]).strip().lower() != "serial":
@@ -99,6 +102,7 @@ def _normalize_standard(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _normalize_test_rp(raw: pd.DataFrame) -> pd.DataFrame:
+    """test_rp 포맷(Test Name/Site # 행 기반) raw → 5-meta 표준 DataFrame."""
     def _find(token_lower, require_data=False):
         for i in range(raw.shape[0]):
             v = str(raw.iat[i, 0]).strip().lower()
@@ -152,6 +156,7 @@ def _normalize_test_rp(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _canonicalize_row_labels(df: pd.DataFrame) -> None:
+    """row 1~5 의 첫 열 레이블을 표준(Units/Lower Limit/Upper Limit…)으로 고정, meta 열 None."""
     label_map = {1: "Units", 2: "Lower Limit", 3: "Upper Limit",
                  4: "Lower Limit", 5: "Upper Limit"}
     for row_idx, label in label_map.items():
@@ -163,6 +168,7 @@ def _canonicalize_row_labels(df: pd.DataFrame) -> None:
 
 
 def _fill_duplicate_limit_rows(df: pd.DataFrame) -> None:
+    """row 4·5 가 비어 있으면 row 2·3 값을 복사해 표준 6행 헤더 구조를 완성."""
     for src, dst in ((2, 4), (3, 5)):
         tail_dst = df.iloc[dst, 5:]
         if all((v is None) or (isinstance(v, float) and pd.isna(v)) or (str(v).strip() == "")
