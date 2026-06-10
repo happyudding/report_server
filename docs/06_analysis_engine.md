@@ -47,6 +47,34 @@ row5+: DUT 측정 데이터
 - `df_honey.to_df()` 는 이 보유 df 그대로 반환한다. Raw Data 시트는 이 df 를 임시 CSV 로 열어 Excel 시트로 복사한다.
 - `df_honey.numeric_frame()` 은 `numeric_scores` 를 subject 이름 컬럼으로 바꾼 DataFrame 이며, distribution all-DUT ECDF 작성에 사용된다.
 
+## df_yield 포맷
+[file_to_df.py](../client/report_generator/file_to_df.py) 가 반환하는 `df_yield` 는
+**wide 포맷**이다 (per-source 단위, `df_honey.df_yield` 에 보관).
+
+```
+| Step | Bin | TNO | Item | <file_label> | <file_label>_cnt |
+```
+
+- `Step / Bin / TNO` : 키 컬럼.
+- `Item` : 해당 (Step,Bin,TNO) 의 **most fail item name** (1순위 fail subject 이름).
+- `<file_label>` : 해당 bin 의 yield% (= 그 bin 개수 / 전체 개수 × 100).
+- `<file_label>_cnt` : 해당 bin 의 DUT 개수.
+- `<file_label>` 두 컬럼은 **파일(소스)별로 1쌍씩 가변**이다. `DF_YIELD_COLUMNS`
+  (`Step,Bin,TNO,Item`)는 키 컬럼만 정의하며, 빈 DataFrame 폴백에 쓰인다.
+
+### combined_df_yield (그룹 병합)
+[df_honey_group.py](../client/report_generator/df_honey_group.py) 의
+`combined_df_yield` 는 여러 source 의 wide `df_yield` 를 `(Step,Bin,TNO,Item)` 기준
+**outer join** 으로 병합한다.
+- 각 source 의 `<file_label>`/`<file_label>_cnt` 쌍을 `md.name`/`md.name + "_cnt"`
+  로 rename — Yield 계열명을 FileName(`md.name`)으로 단일 통일하는 지점(cpk/fail/
+  issue/distribution 과 동일 carrier).
+- outer join 으로 생긴 결측치는 yield → `0.0`, cnt → `0` 으로 채운다.
+- 마지막에 `avg`(행별 source `<file_label>` 평균, round 2) 컬럼을 추가한다.
+- `_builders.build_yield_from_df_yield(combined_df_yield, sources)` 가 이 병합표를
+  `(Step,Bin)` 단위로 묶어 yield_rows 를 만든다 (`Step` 동일 항목끼리 그룹, step 내
+  source 별 merge, step 전체 카운트는 step 내 합산).
+
 ## 분석 흐름
 `analyzer.run(group, meta, selector, profile_cb=None)` 는 선택 item 적용 후 전체 결과를 만든다.
 - group 캐시는 `_compute_all_once()` 에서 per-source `fail_mask`, subject ranking, yield, cpk, fail item, summary 를 한 번 계산한다.

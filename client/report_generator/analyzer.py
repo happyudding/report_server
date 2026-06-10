@@ -131,12 +131,15 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
 
     with _flow_time("combined_df_yield", profile_cb):
         combined_df_yield = group.combined_df_yield
+    with _flow_time("issue_yield_rows", profile_cb):
+        issue_yield_rows = B.build_issue_yield_rows(combined_df_yield, work.names())
     result = AnalysisResult(
         meta=meta,
         sources=work.names(),
         subjects=subjects_meta,
         cpk_rows=cpk_rows,
         yield_rows=yield_rows,
+        issue_yield_rows=issue_yield_rows,
         fail_item_rows=fail_item_rows,
         issue_rows=issue_rows,
         summary_rows=summary_rows,

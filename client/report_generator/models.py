@@ -44,6 +44,7 @@ class AnalysisResult:
     subjects: list = field(default_factory=list)        # [{subject_id, subject, units, lower_limit, upper_limit}]
     cpk_rows: list = field(default_factory=list)         # list[dict]
     yield_rows: list = field(default_factory=list)       # list[dict]
+    issue_yield_rows: list = field(default_factory=list)  # list[dict] (issue_table "Yield" 카테고리, df_yield 기반)
     fail_item_rows: list = field(default_factory=list)   # list[dict] (fail_subjects 포함)
     issue_rows: list = field(default_factory=list)       # list[dict] (fail_values)
     summary_rows: list = field(default_factory=list)     # list[dict]

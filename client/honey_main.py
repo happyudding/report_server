@@ -232,6 +232,8 @@ class HoneyMainWindow(QMainWindow):
         steps += 2  # finalize + save
         if "distribution" in sheets:
             steps += 1
+        if "histogram" in sheets:
+            steps += 1
         return max(steps, 1)
 
     def _setup_csv_table(self):

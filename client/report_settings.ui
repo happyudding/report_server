@@ -97,6 +97,13 @@
         </property>
        </spacer>
       </item>
+      <item row="2" column="0">
+       <widget class="QCheckBox" name="cb_sheet_histogram">
+        <property name="text"><string>histogram</string></property>
+        <property name="toolTip"><string>체크하면 subject 별 빈도 히스토그램(자동 bin) 시트를 distribution 뒤에 추가합니다.</string></property>
+        <property name="checked"><bool>false</bool></property>
+       </widget>
+      </item>
      </layout>
     </widget>
    </item>

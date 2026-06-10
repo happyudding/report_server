@@ -230,6 +230,11 @@ def build_yield_from_df_yield(combined_df_yield, sources, subject_rankings=None)
                 portion_fields[f"{src}_yield"]   = src_yield
                 portions.append(src_yield)
             avg = round(sum(portions) / len(portions), 2) if portions else 0.0
+            bin_df = df[(df["Step"] == step) & (df["Bin"] == bin_type)]
+            items = [
+                {"tno": _fmt_type(it.TNO), "item": it.Item}
+                for it in bin_df.itertuples(index=False)
+            ]
             rows.append({
                 "step":  step,
                 "bin":   bin_type,
@@ -240,7 +245,54 @@ def build_yield_from_df_yield(combined_df_yield, sources, subject_rankings=None)
                 "Main Fail subject": "Pass" if bin_type == PASS_BIN else (
                     fail_subjects[0]["subject"] if fail_subjects else "N/A"),
                 "comment": "",
+                "items": items,
             })
+    return rows
+
+
+def build_issue_yield_rows(combined_df_yield, sources):
+    """combined_df_yield(Step,Bin,TNO,Item,<src>,<src>_cnt,...,avg) -> issue_table
+    "Yield" 카테고리 행 목록.
+
+    BIN1 은 마지막 step(자연정렬 기준)의 행만 남기고, 나머지(non-BIN1)는 모든 step의
+    행을 TNO 내림차순으로 정렬한다. 반환 순서: BIN1(마지막 step) 행 → TNO 내림차순
+    non-BIN1 행.
+    """
+    import re
+
+    if combined_df_yield is None or combined_df_yield.empty:
+        return []
+
+    df = combined_df_yield.copy()
+    df["Bin"] = df["Bin"].map(_fmt_type)
+
+    def _step_sort_key(s):
+        parts = re.split(r'(\d+)', str(s))
+        return [int(p) if p.isdigit() else p.lower() for p in parts]
+
+    steps = sorted(df["Step"].unique().tolist(), key=_step_sort_key)
+    last_step = steps[-1] if steps else None
+
+    bin1_mask = df["Bin"] == PASS_BIN
+    bin1_rows = df[bin1_mask & (df["Step"] == last_step)]
+    other_rows = df[~bin1_mask].copy()
+    other_rows["_tno_key"] = other_rows["TNO"].map(_type_sort_key)
+    other_rows = other_rows.sort_values("_tno_key", ascending=False)
+
+    rows = []
+    for _, r in pd.concat([bin1_rows, other_rows], ignore_index=True).iterrows():
+        portion_fields = {}
+        for src in sources:
+            portion_fields[f"{src}_yield"] = round(float(r[src]), 2)
+        rows.append({
+            "step": r["Step"],
+            "bin": r["Bin"],
+            "tno": _fmt_type(r["TNO"]),
+            "item": r["Item"],
+            "avg": round(float(r["avg"]), 2),
+            **portion_fields,
+            "comment": "",
+        })
     return rows
 
 

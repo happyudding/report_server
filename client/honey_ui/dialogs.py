@@ -24,7 +24,8 @@ from PyQt5.QtWidgets import (
 import chart_colors
 import config as _client_config
 
-SHEET_OPTIONS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
+SHEET_OPTIONS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution",
+                 "histogram"]
 
 _BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 UPLOAD_UI_PATH = _BASE_DIR / "upload_dialog.ui"

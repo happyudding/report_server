@@ -322,6 +322,7 @@ _MSO_TRUE  = -1               # msoTrue  (LineFormat.Visible — 선 활성화)
 _MSO_FALSE = 0                # msoFalse (LineFormat.Visible — 선 숨김)
 _MSO_LINE_SYSDASH = 10        # msoLineSysDash (limit line)
 _RGB_RED = 255               # RGB(255,0,0)
+_RGB_BLUE = 255 * 65536      # RGB(0,0,255) — histogram 기본 곡선색(팔레트 없을 때)
 _RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail 차트 배경)
 
 _CPK_THRESHOLD = 1.33
@@ -331,7 +332,8 @@ _CPK_TOTAL_FILL_RGB = "FFDDEBF7"
 _CPK_TOTAL_FONT_RGB = "FF000000"
 _CPK_TOTAL_ADDR_MAXLEN = 250  # Excel Range 주소 255자 한계 대비 마진
 
-ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution"]
+ALL_SHEETS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution",
+              "histogram"]
 
 # ── 셀 스타일 상수 (색=ARGB 8자리 문자열, 폰트=dict{name,size,bold}) ─────────────
 # 색상은 ARGB 8자리(뒤 6자리 RRGGBB 만 _rgb_int 가 사용). 스타일 변경 시 이 상수만 수정.
@@ -469,6 +471,7 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
         "issue_table": _fill_issue_table,
     }
     want_dist = "distribution" in sel and bool(result.distributions)
+    want_hist = "histogram" in sel and bool(result.distributions)
 
     # diff compare: a_only / b_only 의 CPK·Distribution 추가 시트 스펙 준비
     dc = getattr(result, "diff_classification", None)
@@ -494,7 +497,8 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
 
     table_sel = [nm for nm in ALL_SHEETS if nm in table_writers and nm in sel]
     total = len(table_sel) + (len(raw_sheets) if raw_sheets else 0) \
-        + (1 if want_dist else 0) + len(diff_cpk_specs) + len(diff_dist_specs)
+        + (1 if want_dist else 0) + (1 if want_hist else 0) \
+        + len(diff_cpk_specs) + len(diff_dist_specs)
     done = 0
     tmpdirs = []
 
@@ -572,6 +576,17 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
                 _progress(progress_cb, done, total, "distribution")
             except Exception as exc:
                 print(f"[xlsx_writer] distribution 차트 생략: {exc}")
+
+        # histogram 차트 (distribution 뒤, 같은 세션). distribution 과 독립.
+        if want_hist:
+            try:
+                with _flow_prof("histogram_xlwings_phase"):
+                    tmpdirs.extend(_write_histogram_phase(
+                        wb, result, colors, dist_progress_cb=dist_progress_cb))
+                done += 1
+                _progress(progress_cb, done, total, "histogram")
+            except Exception as exc:
+                print(f"[xlsx_writer] histogram 차트 생략: {exc}")
 
         # 모든 시트 Zoom/눈금선 (단일 세션 1회, distribution 포함)
         with _flow_prof("zoom_gridlines"):
@@ -771,19 +786,21 @@ def _summary_fail_percent(row):
 
 
 def _yield_table(result):
-    """yield / fail_item 공용 표 (step | bin | Item | {src}_count | {src}_yield | avg | comment)."""
+    """yield 표 (step | bin | TNO | Item | {src}_count | {src}_yield | avg | comment)."""
     src = result.sources
-    header = ["step", "bin", "Item"]
+    header = ["step", "bin", "TNO", "Item"]
     header += [f"{s}_count" for s in src]
     header += [f"{s}_yield" for s in src]
     header += ["avg", "comment"]
     rows = []
     for r in result.yield_rows:
-        row = [r.get("step", ""), _bin_label(r.get("bin")), r.get("Main Fail subject", "")]
-        row += [r.get(f"{s}_count") for s in src]
-        row += [r.get(f"{s}_yield") for s in src]
-        row += [r.get("avg"), r.get("comment", "")]
-        rows.append(row)
+        items = r.get("items") or [{"tno": "", "item": r.get("Main Fail subject", "")}]
+        for it in items:
+            row = [r.get("step", ""), _bin_label(r.get("bin")), it.get("tno", ""), it.get("item", "")]
+            row += [r.get(f"{s}_count") for s in src]
+            row += [r.get(f"{s}_yield") for s in src]
+            row += [r.get("avg"), r.get("comment", "")]
+            rows.append(row)
     return header, rows
 
 
@@ -1069,17 +1086,17 @@ def _cpk_fail_subjects(result):
 def _fill_issue_table(ws, result, include_cpk=True):
     """Category 그룹 레이아웃. Yield = yield 데이터, CPK = CPK < 1.33 아이템, ETC = 플레이스홀더."""
     src = result.sources
-    header = ["Category", "Step", "Bin", "Item", "avg"]
+    header = ["Category", "Step", "Bin", "TNO", "Item", "avg"]
     for s in src:
         header += [f"{s}_yield"]          # count 열 제거, yield 만 유지
     header += ["Distribution", "comment", "개발 1차 comment",
                "PTE 2차 comment", "개발 2차 comment"]
-    pad = len(header) - (5 + len(src))    # Distribution + comment 열 수
+    pad = len(header) - (6 + len(src))    # Distribution + comment 열 수
 
     rows = []
-    for r in result.yield_rows:
-        row = ["Yield", r.get("step", ""), _bin_label(r.get("bin")),
-               r.get("Main Fail subject", ""), r.get("avg")]
+    for r in result.issue_yield_rows:
+        row = ["Yield", r.get("step", ""), _bin_label(r.get("bin")), r.get("tno", ""),
+               r.get("item", ""), r.get("avg")]
         for s in src:
             row += [r.get(f"{s}_yield")]  # count 제거
         row += [""] * pad
@@ -1090,10 +1107,10 @@ def _fill_issue_table(ws, result, include_cpk=True):
     cpk_fails = _cpk_fail_subjects(result) if include_cpk else []
     n_cpk = max(1, len(cpk_fails))
     cpk_subheader = ["item name", "cpk"] if include_cpk else ["", ""]
-    rows.append(["CPK", "", "", cpk_subheader[0], cpk_subheader[1]] + [""] * len(src) + [""] * pad)
+    rows.append(["CPK", "", "", "", cpk_subheader[0], cpk_subheader[1]] + [""] * len(src) + [""] * pad)
     if cpk_fails:
         for subj, cpk_val in cpk_fails:
-            row = ["", "", "", subj, _sanitize_cell(cpk_val)]
+            row = ["", "", "", "", subj, _sanitize_cell(cpk_val)]
             row += [""] * len(src)       # _yield 열: CPK 에 해당 없음
             row += [""] * pad
             rows.append(row)
@@ -1103,7 +1120,7 @@ def _fill_issue_table(ws, result, include_cpk=True):
     rows.append(["ETC"] + [""] * (len(header) - 1))
 
     _fill_table(ws, header, rows)
-    n_yield = len(result.yield_rows)
+    n_yield = len(result.issue_yield_rows)
 
     _merge_issue_category(ws, n_yield)  # Yield 병합 (기존)
 
@@ -1128,12 +1145,12 @@ def _fill_issue_table(ws, result, include_cpk=True):
         "개발 2차 comment": 40,
     })
     _apply_used_cell_font(ws, size=15, bold=False)
-    _apply_named_columns_font(ws, header, ["Step", "Bin", "Item"], size=15, bold=False,
+    _apply_named_columns_font(ws, header, ["Step", "Bin", "TNO", "Item"], size=15, bold=False,
                               last_row=_HEADER_ROW + len(rows))
     # CPK 서브헤더(item name / cpk)는 폰트 패스 이후 헤더 스타일 재적용 — 굵게/음영 유지
     if include_cpk:
-        _hdr_range(ws, cpk_start, _START_COL + 3, _START_COL + 3)  # Item 열 (+1 for Step col)
-        _hdr_range(ws, cpk_start, _START_COL + 4, _START_COL + 4)  # avg 열 (+1 for Step col)
+        _hdr_range(ws, cpk_start, _START_COL + 4, _START_COL + 4)  # Item 열 (+2 for Step,TNO col)
+        _hdr_range(ws, cpk_start, _START_COL + 5, _START_COL + 5)  # avg 열 (+2 for Step,TNO col)
 
 
 def _merge_issue_category(ws, n_yield, header_row=_HEADER_ROW, start_col=_START_COL):
@@ -1483,7 +1500,7 @@ def _write_distribution_phase(app, wb, result, colors=None, attach_fail_item=Fal
 def _apply_zoom_gridlines(app, wb, raw_gridline_sheets=None):
     """모든 시트 Zoom(fail_item/issue_table/distribution=80, 그 외 100) + 눈금선 숨김.
     raw 시트만 눈금선 표시 (단일 세션 1회 적용)."""
-    zoom80 = {"fail_item", "issue_table", "distribution"}
+    zoom80 = {"fail_item", "issue_table", "distribution", "histogram"}
     raw_names = {str(n).lower() for n in (raw_gridline_sheets or [])}
     for s in wb.sheets:
         try:
@@ -1566,8 +1583,8 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
     """issue_table 시트의 Distribution 열(각 데이터 행)에 해당 subject 차트 PNG 삽입.
 
     fail_item 과 동일한 COM Export 방식. dist_col 계산만 issue_table header 기준으로 다름.
-    header: ["Category","Step","Bin","Item","avg", {src}_yield×N, "Distribution", ...]
-    → dist_col = _START_COL + 5 + len(sources)
+    header: ["Category","Step","Bin","TNO","Item","avg", {src}_yield×N, "Distribution", ...]
+    → dist_col = _START_COL + 6 + len(sources)
     """
     import os
     import tempfile
@@ -1578,21 +1595,21 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
         return None
     it = wb.sheets[it_name]
 
-    dist_col = _START_COL + 5 + len(result.sources)
+    dist_col = _START_COL + 6 + len(result.sources)
 
     tmpdir = tempfile.mkdtemp(prefix="honey_it_")
     seq = 0
     cpk_subjects = _cpk_fail_subjects(result) if include_cpk else []
     total = sum(
         1
-        for r in result.yield_rows
-        if r.get("Main Fail subject") in chart_map
+        for r in result.issue_yield_rows
+        if r.get("item") in chart_map
     ) + sum(1 for subj, _cpk_val in cpk_subjects if subj in chart_map)
     done = 0
     _notify_attach_progress(attach_progress_cb, "start", "issue_table", "", done, total)
 
-    for i, r in enumerate(result.yield_rows):
-        subj = r.get("Main Fail subject")
+    for i, r in enumerate(result.issue_yield_rows):
+        subj = r.get("item")
         if not subj or subj not in chart_map:
             continue
         ch = chart_map[subj]
@@ -1621,7 +1638,7 @@ def _attach_issue_table_charts(wb, result, chart_map, include_cpk=True,
         return tmpdir if seq > 0 else None
 
     # CPK < 1.33 행 distribution 차트 부착 (+1: CPK 카테고리 서브헤더 행 보정)
-    n_yield = len(result.yield_rows)
+    n_yield = len(result.issue_yield_rows)
     for j, (subj, _cpk_val) in enumerate(cpk_subjects):
         if subj not in chart_map:
             continue
@@ -2597,5 +2614,318 @@ def _finalize_title_row(sh):
     """제목 행 높이 보정."""
     try:
         sh.range((1, 1)).row_height = _TITLE_ROW_HEIGHT
+    except Exception:
+        pass
+
+
+# ── histogram (xlwings / Excel COM) ──────────────────────────────────────────
+# distribution(ECDF) 와 동일한 차트 그리드/헬퍼시트/COM 패턴을 재사용하되, y축이
+# 누적분포(0~1) 가 아니라 자동 bin 빈도(count) 곡선이다. subject 별로 source 마다
+# 곡선 1개(파란/팔레트색) + USL/LSL 빨강 세로선. 제목은 'Item[Unit], <USL>, <LSL>'.
+
+def _write_histogram_phase(wb, result, colors=None, dist_progress_cb=None):
+    """이미 열린 app/wb 에 "Histogram" 시트 + subject 별 빈도 히스토그램 차트를 추가한다.
+
+    distribution 과 독립된 시트다. PNG 부착(fail_item/issue_table) 은 없다.
+    반환: 정리할 임시 디렉토리 리스트 (histogram 은 PNG 미사용 → 항상 []).
+    """
+    names = [s.name for s in wb.sheets]
+    hist_name = next((n for n in names if n.lower() == "histogram"), None)
+    if hist_name:
+        sh = wb.sheets[hist_name]
+        for c in list(sh.charts):
+            try:
+                c.delete()
+            except Exception:
+                pass
+        sh.clear()
+    else:
+        sh = wb.sheets.add(_report_sheet_display_name("histogram"),
+                           after=wb.sheets[len(wb.sheets) - 1])
+    _write_histogram(wb, sh, result, colors, dist_progress_cb=dist_progress_cb)
+    try:
+        sh.activate()
+    except Exception:
+        pass
+    return []
+
+
+def _write_histogram(wb, sh, result, colors=None, dist_progress_cb=None,
+                     title="Histogram"):
+    """각 subject 의 자동 bin 빈도 히스토그램 차트. source 별 곡선 + USL/LSL 세로선.
+
+    데이터는 정리_H(X=bin 중심)/정리_HY(Y=빈도) 두 숨김 시트에 통째 1회 bulk write 하고,
+    차트 series 는 그 시트의 (subject×source) 열을 bin 행구간으로 참조한다.
+    차트 배치/제목/Item Index 는 distribution(_write_distribution) 패턴 재사용.
+    """
+    dists = result.distributions
+    sources = result.sources
+    source_data = result.dist_source_data
+    if not dists or not source_data:
+        sh.range("A1").value = "선택된 항목에 분포 데이터가 없습니다."
+        return {}
+
+    subj_names = [d.subject for d in dists]
+    sd_map = dict(source_data)
+    src_dfs, src_names = [], []
+    for s in sources:
+        df = sd_map.get(s)
+        if df is None:
+            continue
+        src_dfs.append(df.reindex(columns=subj_names))   # 없는 subject 열 → NaN
+        src_names.append(s)
+    if not src_dfs:
+        sh.range("A1").value = "선택된 항목에 분포 데이터가 없습니다."
+        return {}
+
+    df_hx, df_hy, nbins, ymax = _build_histogram_data(dists, src_dfs)
+
+    # 숨김 헬퍼시트 (X=bin 중심, Y=빈도). 컬럼 = subject×source, 행 = bin
+    existing = {s.name for s in wb.sheets}
+    hx_name = _unique_helper_name("정리_H", existing)
+    hy_name = _unique_helper_name("정리_HY", existing | {hx_name})
+    ws_hx = wb.sheets.add(hx_name, after=sh)
+    ws_hy = wb.sheets.add(hy_name, after=ws_hx)
+    ws_hx.range("A1").options(index=True, header=True).value = df_hx
+    ws_hy.range("A1").options(index=True, header=True).value = df_hy
+    for w in (ws_hx, ws_hy):
+        try:
+            w.api.Visible = False
+        except Exception:
+            pass
+
+    _put_title(sh, 8, title)
+    sh.range((1, _INDEX_COL)).value = "Item Index (Ctrl+F)"
+    sh.range((1, _INDEX_COL)).column_width = 26
+
+    n_src = len(src_names)
+    chart_map, index_entries = _draw_all_histogram(
+        sh, dists, src_dfs, hx_name, hy_name, n_src, src_names, colors,
+        nbins, ymax, dist_progress_cb)
+
+    # Item Index 열 일괄 기입 (distribution 과 동일)
+    if index_entries:
+        max_idx = max(r for r, _ in index_entries)
+        col_vals = [[None] for _ in range(2, max_idx + 1)]
+        for r, subj in index_entries:
+            col_vals[r - 2] = [subj]
+        sh.range((2, _INDEX_COL), (max_idx, _INDEX_COL)).value = col_vals
+
+    _prof_count("charts", len(chart_map))
+    _finalize_title_row(sh)
+    return chart_map
+
+
+def _build_histogram_data(dists, src_dfs):
+    """subject × source 별 자동 bin 히스토그램(중심, 빈도) 산출.
+
+    각 (subject i, source k) 유한값에 numpy histogram(bins='auto') 적용 →
+    bin 중심 = (edges[:-1]+edges[1:])/2, 빈도 = counts. 컬럼 인덱스 i*n_src+k 로
+    X(중심)/Y(빈도) 두 DataFrame 에 NaN 패딩 적재. 반환:
+    (df_hx, df_hy, nbins[i][k], ymax[i]=subject i 의 source 간 최대 빈도).
+    """
+    n_subj = len(dists)
+    n_src = len(src_dfs)
+    arrs = [df.to_numpy(dtype=float) for df in src_dfs]   # [k] (N, n_subj)
+    centers_cols, counts_cols = [], []                    # index = i*n_src+k
+    nbins = [[0] * n_src for _ in range(n_subj)]
+    ymax = [0.0] * n_subj
+    max_bins = 0
+    for i in range(n_subj):
+        for k in range(n_src):
+            col = arrs[k][:, i] if arrs[k].size else np.empty(0)
+            finite = col[np.isfinite(col)]
+            if finite.size:
+                counts, edges = np.histogram(finite, bins="auto")
+                centers = (edges[:-1] + edges[1:]) / 2.0
+                counts = counts.astype(float)
+            else:
+                counts, centers = np.empty(0), np.empty(0)
+            centers_cols.append(centers)
+            counts_cols.append(counts)
+            nbins[i][k] = int(centers.size)
+            if counts.size:
+                ymax[i] = max(ymax[i], float(counts.max()))
+            max_bins = max(max_bins, int(centers.size))
+
+    ncols = n_subj * n_src
+    hx = np.full((max_bins, ncols), np.nan, dtype=float)
+    hy = np.full((max_bins, ncols), np.nan, dtype=float)
+    for idx in range(ncols):
+        c, y = centers_cols[idx], counts_cols[idx]
+        if c.size:
+            hx[:c.size, idx] = c
+            hy[:y.size, idx] = y
+    cols = [f"c{idx}" for idx in range(ncols)]
+    return (pd.DataFrame(hx, columns=cols), pd.DataFrame(hy, columns=cols), nbins, ymax)
+
+
+def _draw_all_histogram(sh, dists, src_dfs, hx_name, hy_name, n_src, src_names,
+                        colors, nbins, ymax, dist_progress_cb):
+    """전체 subject 를 순회하며 histogram 차트를 1개씩 생성 (_draw_all_chart 미러).
+
+    유한 데이터가 없는 subject 는 건너뛰되 grid 인덱스 i 는 유지해 칸 gap 을 보존한다.
+    반환: (chart_map{subject: COM Chart}, index_entries[(row, subject)]).
+    """
+    arrs = [df.to_numpy(dtype=float) for df in src_dfs]
+    chart_map, index_entries = {}, []
+    done = 0
+    n_charts = len(dists)
+    for i, d in enumerate(dists):
+        cols = [arr[:, i] for arr in arrs] if arrs else []
+        finite = np.concatenate([c[np.isfinite(c)] for c in cols]) if cols else np.empty(0)
+        if finite.size == 0:
+            done += 1
+            if dist_progress_cb:
+                dist_progress_cb(done, n_charts)
+            continue
+        data_min, data_max = float(finite.min()), float(finite.max())
+        data_med = float(np.median(finite))
+        lo, hi = d.lower_limit, d.upper_limit
+        is_fail = (_isnum(lo) and data_min < float(lo)) or (
+            _isnum(hi) and data_max > float(hi))
+        x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail, data_med)
+        y_top = max(1.0, ymax[i])
+        try:
+            chart_map[d.subject] = _histogram_draw_at_position(
+                sh, i, d, hx_name, hy_name, n_src, src_names, colors,
+                x_min, x_max, y_top, nbins[i])
+        except Exception as _e:
+            print(f"[hist-chart] skip subject={d.subject!r}: {_e}", file=sys.stderr)
+        col = i % _CHARTS_PER_ROW
+        grow = i // _CHARTS_PER_ROW
+        index_entries.append((2 + grow * _ROWS_PER_CHART + col, d.subject))
+        done += 1
+        if dist_progress_cb:
+            dist_progress_cb(done, n_charts)
+    return chart_map, index_entries
+
+
+def _histogram_draw_at_position(sh, i, d, hx_name, hy_name, n_src, src_names, colors,
+                                x_min, x_max, y_top, nbins_row):
+    """histogram 차트 1개를 새로 생성·서식 적용. 반환: COM Chart."""
+    left, top = _chart_pos(i)
+    ch = sh.charts.add(left, top, _CHART_W, _CHART_H)
+    chart_api = _chart_com(ch)
+    ch.chart_type = "xy_scatter_lines_no_markers"
+    _histogram_title_set(chart_api, d)
+    limit_count = _histogram_data_set(
+        chart_api, d, hx_name, hy_name, i, n_src, src_names, colors, nbins_row,
+        y_top, x_min)
+    _histogram_layout_setting(chart_api, x_min, x_max, y_top, limit_count)
+    return chart_api
+
+
+def _histogram_title_set(chart_api, d):
+    """차트 제목: 'Item[Unit], <USL>, <LSL>' (값만, USL→LSL 순; 값 없으면 '-')."""
+    try:
+        chart_api.HasTitle = True
+        title = chart_api.ChartTitle
+        unit = (d.unit or "").strip()
+        title.Text = (f"{d.subject}[{unit}], "
+                      f"{_fmt_lim(d.upper_limit)}, {_fmt_lim(d.lower_limit)}")
+        tf = title.Font
+        tf.Name = "Arial Black"
+        tf.Size = _CHART_TITLE_ITEM_FONT
+        title.Top = 0
+    except Exception:
+        pass
+
+
+def _histogram_data_set(chart_api, d, hx_name, hy_name, i, n_src, src_names, colors,
+                        nbins_row, y_top, x_min):
+    """LSL/USL 세로선 + source 별 빈도 곡선 series 생성·스타일 (_chart_data_set 미러).
+
+    series 1=LSL, 2=USL(없으면 차트 밖), 3+=source 곡선. 세로선 Y 는 0~y_top(빈도 축).
+    반환: limit series 개수(범례 삭제 수).
+    """
+    sc = chart_api.SeriesCollection()
+    lo = float(d.lower_limit) if _isnum(d.lower_limit) else None
+    hi = float(d.upper_limit) if _isnum(d.upper_limit) else None
+    xv0 = x_min if x_min is not None else 0.0
+    limit_count = 0
+    for lim, nm in ((lo, "LSL"), (hi, "USL")):
+        s = sc.NewSeries()
+        if lim is not None:
+            s.XValues = (lim, lim)
+            s.Values = (0.0, y_top)              # x=lim 세로선(빈도 0~y_top)
+        else:
+            s.XValues = (xv0, xv0)
+            s.Values = (-2.0, -2.0)              # 차트 밖(series 인덱스 안정용)
+        s.Name = nm
+        _style_limit_series(s)
+        limit_count += 1
+    for k, name in enumerate(src_names):
+        nb = nbins_row[k] if k < len(nbins_row) else 0
+        col = _col_letter(2 + i * n_src + k)
+        s = sc.NewSeries()
+        if nb > 0:
+            r1, r2 = 2, 1 + nb
+            s.XValues = f"='{hx_name}'!${col}${r1}:${col}${r2}"
+            s.Values = f"='{hy_name}'!${col}${r1}:${col}${r2}"
+        else:
+            s.XValues = (xv0, xv0)
+            s.Values = (-2.0, -2.0)
+        s.Name = str(name)
+        rgb = _hex_to_excel_rgb(colors[k % len(colors)]) if colors else _RGB_BLUE
+        _style_hist_series(s, rgb)
+    return limit_count
+
+
+def _style_hist_series(s, rgb=None):
+    """Histogram 곡선 series: 선 보이기 + 마커 없음(빈도 폴리곤). 색 = source 팔레트/파랑."""
+    try:
+        line = s.Format.Line
+        line.Visible = _MSO_TRUE
+        if rgb is not None:
+            line.ForeColor.RGB = rgb
+    except Exception:
+        pass
+    try:
+        s.MarkerStyle = _XL_MARKER_NONE
+    except Exception:
+        pass
+
+
+def _histogram_layout_setting(chart_api, x_min, x_max, y_top, limit_count):
+    """축·plotarea·범례 (distribution _chart_layout_setting 미러, y축만 빈도(정수)).
+
+    y축은 0~y_top 정수 눈금(분포의 % 대신). 범례에서 앞 limit_count(LSL/USL) 삭제.
+    """
+    try:
+        yax = chart_api.Axes(_XL_VALUE, _XL_PRIMARY)
+        yax.MinimumScale = 0
+        yax.MaximumScale = y_top
+        ytl = yax.TickLabels
+        ytl.NumberFormatLocal = "0"
+        ytl.Font.Size = 8
+        yax.TickLabelPosition = _XL_LOW
+    except Exception:
+        pass
+    try:
+        xax = chart_api.Axes(_XL_CATEGORY, _XL_PRIMARY)
+        if x_min is not None and x_max is not None and x_min < x_max:
+            xax.MinimumScale = x_min
+            xax.MaximumScale = x_max
+        xax.HasMinorGridlines = True
+        xax.TickLabels.Font.Size = 8
+    except Exception:
+        pass
+    try:
+        pa = chart_api.PlotArea
+        pa.Width = _PLOT_W
+        pa.Top = _PLOT_TOP
+        pa.Height = _PLOT_H
+    except Exception:
+        pass
+    try:
+        chart_api.HasLegend = True
+        leg = chart_api.Legend
+        leg.Font.Size = 8
+        for _ in range(limit_count):
+            try:
+                leg.LegendEntries(1).Delete()
+            except Exception:
+                pass
     except Exception:
         pass
