@@ -108,4 +108,4 @@ client/
 | UI 워크플로 상세 | [docs/05_client_ui.md](../docs/05_client_ui.md) |
 | 분석 엔진 (CPK/yield/분포) | [docs/06_analysis_engine.md](../docs/06_analysis_engine.md) |
 | 업로드 전송 + 차트 PNG | [docs/07_client_upload_chart.md](../docs/07_client_upload_chart.md) |
-| Honey exe 배포 절차 | [docs/04_honey_update.md](../docs/04_honey_update.md) |
+| Honey ZIP 배포 절차 | [docs/04_honey_update.md](../docs/04_honey_update.md) |

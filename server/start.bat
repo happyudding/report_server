@@ -54,36 +54,6 @@ if not exist "%ROOT%.venv\Scripts\python.exe" (
 rem venv 가 준비됐으니 항상 venv python 으로 고정
 set PY_CMD="%ROOT%.venv\Scripts\python.exe"
 
-rem -- Honey 설치본 자동 빌드: CURRENT_VERSION 기준으로 매번 새 릴리즈 생성 --
-set "HONEY_CONFIG=%ROOT%..\client\transport\config.py"
-set "HONEY_RELEASE_SCRIPT=%ROOT%..\client\release\release_honey.ps1"
-if not exist "%HONEY_CONFIG%" (
-    echo [start] ERROR: Honey config not found: %HONEY_CONFIG%
-    pause
-    exit /b 1
-)
-if not exist "%HONEY_RELEASE_SCRIPT%" (
-    echo [start] ERROR: Honey release script not found: %HONEY_RELEASE_SCRIPT%
-    pause
-    exit /b 1
-)
-set "HONEY_VERSION="
-for /f "usebackq delims=" %%V in (`powershell -NoProfile -ExecutionPolicy Bypass -Command "$p = '%HONEY_CONFIG%'; $lines = Get-Content -LiteralPath $p -Encoding UTF8; foreach ($line in $lines) { if ($line -match 'CURRENT_VERSION') { $parts = $line.Split([char]34); if ($parts.Count -ge 3) { Write-Output $parts[1]; exit 0 } } }; exit 1"`) do set "HONEY_VERSION=%%V"
-if not defined HONEY_VERSION (
-    echo [start] ERROR: CURRENT_VERSION not found in %HONEY_CONFIG%
-    pause
-    exit /b 1
-)
-
-echo [start] Honey version : %HONEY_VERSION%
-echo [start] Building Honey installer before server start ...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%HONEY_RELEASE_SCRIPT%" -Version "%HONEY_VERSION%" -Notes "Auto build from start.bat"
-if errorlevel 1 (
-    echo [start] ERROR: Honey installer build failed.
-    pause
-    exit /b 1
-)
-
 echo [start] Python    : %PY_CMD%
 echo [start] Bind host : %HOST%
 echo [start] Port      : %PORT%

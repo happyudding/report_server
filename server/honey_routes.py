@@ -1,16 +1,7 @@
-"""Honey 클라이언트 자동 업데이트 채널.
+"""Honey client update channel.
 
-- GET /honey/version : releases/version.json 그대로 반환
-- GET /honey/download : 최신 exe 파일 서빙 (Content-Disposition attachment)
-
-version.json 예시:
-  {
-    "version": "0.1.0",
-    "file": "Honey-0.1.0.exe",
-    "sha256": "<hex>",
-    "released_at": "2026-05-27T10:00:00",
-    "notes": "initial release"
-  }
+- GET /honey/version: return releases/version.json as-is.
+- GET /honey/download: serve the release ZIP named by version.json.file.
 """
 import json
 
@@ -33,7 +24,7 @@ def get_version():
 
 
 @honey_bp.get("/download")
-def download_exe():
+def download_release():
     if not HONEY_VERSION_JSON.exists():
         abort(404, "no release published")
     try:
@@ -47,13 +38,14 @@ def download_exe():
     if "/" in filename or "\\" in filename or filename.startswith("."):
         abort(400, "invalid filename in version.json")
 
-    exe_path = HONEY_RELEASES_DIR / filename
-    if not exe_path.exists():
+    release_path = HONEY_RELEASES_DIR / filename
+    if not release_path.exists():
         abort(404, f"release file not found: {filename}")
 
+    mimetype = "application/zip" if filename.lower().endswith(".zip") else "application/octet-stream"
     return send_file(
-        str(exe_path),
+        str(release_path),
         as_attachment=True,
         download_name=filename,
-        mimetype="application/octet-stream",
+        mimetype=mimetype,
     )

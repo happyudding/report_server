@@ -1,7 +1,7 @@
 {
   "version": "0.1.0",
-  "file": "HoneySetup-0.1.0.exe",
-  "sha256": "9b6529ae8d530ea6e93eefa5cedc01f563a1522ce15b0f19307137326b4a9013",
+  "file": "Honey-0.1.0.zip",
+  "sha256": "",
   "released_at": "2026-05-28T00:00:00",
-  "notes": "onedir + Inno Setup 설치본 방식. 업데이트 배포 시: client/installer_dist/HoneySetup-<ver>.exe 를 server/releases/ 로 복사하고 version/file/sha256 갱신."
+  "notes": "PyInstaller onedir ZIP 배포 방식. release_honey.ps1 실행 시 Honey-<ver>.zip 생성, server/releases/ 복사, version/file/sha256 갱신."
 }

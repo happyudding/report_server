@@ -1,10 +1,10 @@
-"""버전 체크 / 자동 업데이트 헬퍼.
+"""Version check and release package download helpers.
 
-flow:
-1) fetch_latest(base_url) → version.json dict
-2) is_newer(remote, CURRENT_VERSION) 가 True 면 사용자에게 묻고
-3) download_to(target, url, expected_sha256, progress_cb) 로 설치본(HoneySetup.exe) 다운로드
-4) updater.run_installer() 로 조용히(/SILENT) 재설치 → 앱 종료 → 설치 후 자동 재실행
+Flow:
+1) fetch_latest(base_url) -> version.json dict.
+2) is_newer(remote, CURRENT_VERSION) tells the UI whether to ask the user.
+3) download_to(target, url, expected_sha256, progress_cb) downloads Honey ZIP.
+4) updater.apply_update_zip() applies the ZIP after the app exits.
 """
 import hashlib
 from pathlib import Path
@@ -15,7 +15,7 @@ from .config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
 
 
 class DownloadCancelled(Exception):
-    """progress_cb 가 False 를 반환해 사용자가 다운로드를 취소함."""
+    """Raised when progress_cb returns False."""
 
 
 def fetch_latest(base_url=None) -> dict:
@@ -27,7 +27,7 @@ def fetch_latest(base_url=None) -> dict:
 
 
 def is_newer(remote: str, local: str) -> bool:
-    """semver 비교 (간이 — 'a.b.c' 형태 가정)."""
+    """Compare simple semver strings in a.b.c form."""
     if not remote or not local:
         return False
     try:
@@ -39,10 +39,10 @@ def is_newer(remote: str, local: str) -> bool:
 
 
 def download_to(target_path, url, expected_sha256=None, base_url=None, progress_cb=None):
-    """target_path 로 streaming 다운로드. sha256 검증 옵션.
+    """Stream a file to target_path and optionally verify sha256.
 
-    progress_cb(downloaded:int, total:int) -> bool|None : 청크마다 호출.
-      total 은 Content-Length (없으면 0). False 를 반환하면 DownloadCancelled.
+    progress_cb(downloaded:int, total:int) -> bool|None is called for each chunk.
+    Returning False cancels the download and deletes the partial file.
     """
     target_path = Path(target_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)

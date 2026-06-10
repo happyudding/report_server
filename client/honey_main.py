@@ -868,8 +868,8 @@ class HoneyMainWindow(QMainWindow):
 
         url = manifest.get("url") or "/honey/download"
         expected = manifest.get("sha256") or None
-        setup_name = manifest.get("file") or f"HoneySetup-{remote}.exe"
-        dest = Path(tempfile.gettempdir()) / setup_name
+        package_name = manifest.get("file") or f"Honey-{remote}.zip"
+        dest = Path(tempfile.gettempdir()) / package_name
 
         # 다운로드 진행 상태는 메인 UI Status bar 에 표시한다.
         progress = _ElapsedProgress(
@@ -916,8 +916,8 @@ class HoneyMainWindow(QMainWindow):
             QMessageBox.information(
                 self, "다운로드 완료 (개발 모드)",
                 f"스크립트 실행 중이라 설치를 진행하지 않습니다.\n"
-                f"설치본만 다운로드 완료:\n{dest}\n\n"
-                f"(자동 설치는 빌드된 exe 에서 동작합니다.)",
+                f"업데이트 ZIP만 다운로드 완료:\n{dest}\n\n"
+                f"(자동 업데이트는 빌드된 exe 에서 동작합니다.)",
             )
             progress.success("다운로드 완료 (개발 모드)", value=100)
             self.status.showMessage("다운로드 완료 (개발 모드)")
@@ -926,18 +926,18 @@ class HoneyMainWindow(QMainWindow):
         QMessageBox.information(
             self, "업데이트 설치",
             f"새 버전 {remote} 을(를) 설치합니다.\n\n"
-            "설치하는 동안 앱이 잠시 종료되며, 설치가 끝나면 자동으로 다시 실행됩니다.\n"
+            "업데이트하는 동안 앱이 잠시 종료되며, 완료되면 자동으로 다시 실행됩니다.\n"
             "잠시만 기다려 주세요.",
         )
         try:
-            updater.run_installer(dest)
+            updater.apply_update_zip(dest)
         except Exception as exc:
-            progress.fail(f"실패: 업데이트 설치 실행 실패 - {exc}")
-            QMessageBox.critical(self, "설치 실행 실패", str(exc))
+            progress.fail(f"실패: 업데이트 실행 실패 - {exc}")
+            QMessageBox.critical(self, "업데이트 실행 실패", str(exc))
             self.status.showMessage("업데이트 실패")
             return
-        progress.success("업데이트 설치 중... 앱을 종료합니다.", value=100)
-        self.status.showMessage("업데이트 설치 중... 앱을 종료합니다.")
+        progress.success("업데이트 적용 중... 앱을 종료합니다.", value=100)
+        self.status.showMessage("업데이트 적용 중... 앱을 종료합니다.")
         QApplication.quit()
 
 

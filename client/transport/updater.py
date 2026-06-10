@@ -1,37 +1,85 @@
-"""Honey 자동 업데이트 실행기 (Windows, onedir + 설치본 방식).
+"""Honey automatic updater for PyInstaller onedir ZIP releases.
 
-배포가 onedir(폴더형) + Inno Setup 설치본(HoneySetup-x.y.z.exe) 으로 바뀌면서,
-업데이트는 "단일 exe 교체" 가 아니라 "새 설치본을 받아 조용히(/SILENT) 재설치"
-한다. 설치본이 설치 폴더 전체(_internal 포함)를 교체하고, 설치 끝에 [Run] 항목으로
-Honey 를 자동 재실행한다.
-
-frozen(PyInstaller) 에서만 의미가 있다 (스크립트 실행 중엔 교체 대상이 없음).
+The app downloads Honey-<version>.zip, extracts it to a temporary directory,
+then starts a detached batch file. The batch file waits until the current
+Honey.exe process exits, copies the extracted onedir payload over the app
+directory, and starts Honey.exe again.
 """
+import os
 import subprocess
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
 
-# DETACHED_PROCESS(0x08) | CREATE_NEW_PROCESS_GROUP(0x200):
-# 부모(이 앱)가 종료돼도 설치본이 계속 진행되도록.
 _DETACHED = 0x00000008 | 0x00000200
 
 
 def is_frozen() -> bool:
-    """PyInstaller 등으로 패키징된 exe 로 실행 중인지."""
+    """Return True when running as a PyInstaller-built executable."""
     return bool(getattr(sys, "frozen", False))
 
 
-def run_installer(installer_path, silent=True):
-    """다운로드한 HoneySetup.exe 를 실행. silent=True 면 /SILENT(진행바만 표시).
+def _safe_extract(zip_path: Path, target_dir: Path) -> None:
+    target_root = target_dir.resolve()
+    with zipfile.ZipFile(zip_path) as zf:
+        for member in zf.infolist():
+            dest = (target_root / member.filename).resolve()
+            if os.path.commonpath([str(target_root), str(dest)]) != str(target_root):
+                raise RuntimeError(f"unsafe path in update zip: {member.filename}")
+        zf.extractall(target_root)
 
-    detached 로 띄우므로 즉시 반환한다. 호출 측은 곧바로 앱을 종료해
-    설치본이 파일 락 없이 폴더를 교체하게 해야 한다. 설치본의 [Run] 항목이
-    설치 완료 후 Honey 를 자동 재실행한다.
-    """
-    installer_path = str(Path(installer_path).resolve())
-    args = [installer_path]
-    if silent:
-        # /SILENT: 마법사 페이지 없이 "설치 중" 진행바 창만 표시
-        # /SUPPRESSMSGBOXES: 확인창 자동 응답, /NOCANCEL: 설치 중 취소 비활성
-        args += ["/SILENT", "/SUPPRESSMSGBOXES", "/NOCANCEL"]
-    subprocess.Popen(args, creationflags=_DETACHED, close_fds=True)
+
+def _find_payload_dir(extract_root: Path) -> Path:
+    preferred = extract_root / "Honey"
+    if (preferred / "Honey.exe").exists():
+        return preferred
+    if (extract_root / "Honey.exe").exists():
+        return extract_root
+
+    matches = list(extract_root.rglob("Honey.exe"))
+    if not matches:
+        raise RuntimeError("Honey.exe was not found in update zip")
+    return matches[0].parent
+
+
+def apply_update_zip(zip_path) -> None:
+    """Apply a downloaded Honey ZIP release after the current app exits."""
+    if not is_frozen():
+        raise RuntimeError("ZIP update can only be applied from a built Honey.exe")
+
+    zip_path = Path(zip_path).resolve()
+    app_dir = Path(sys.executable).resolve().parent
+    app_exe = app_dir / "Honey.exe"
+
+    extract_root = Path(tempfile.mkdtemp(prefix="honey_update_"))
+    _safe_extract(zip_path, extract_root)
+    payload_dir = _find_payload_dir(extract_root)
+
+    bat_path = Path(tempfile.gettempdir()) / f"honey_update_{os.getpid()}.bat"
+    bat_text = f"""@echo off
+setlocal
+set "SRC={payload_dir}"
+set "DST={app_dir}"
+set "EXE={app_exe}"
+
+:wait_for_exit
+tasklist /FI "PID eq {os.getpid()}" 2>NUL | find "{os.getpid()}" >NUL
+if not errorlevel 1 (
+  timeout /t 1 /nobreak >NUL
+  goto wait_for_exit
+)
+
+robocopy "%SRC%" "%DST%" /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
+set "RC=%ERRORLEVEL%"
+if %RC% GEQ 8 exit /b %RC%
+
+start "" "%EXE%"
+exit /b 0
+"""
+    bat_path.write_text(bat_text, encoding="mbcs")
+    subprocess.Popen(
+        ["cmd.exe", "/c", str(bat_path)],
+        creationflags=_DETACHED,
+        close_fds=True,
+    )

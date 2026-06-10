@@ -43,7 +43,7 @@ report_server/
 │   ├── xlsx_parser.py           시트 grid → 텍스트 추출 (_GridSheet 셸, openpyxl 미사용)
 │   ├── admin_routes.py          /pe/admin 감사 로그 조회 (인증 없음, 내부망 전용)
 │   ├── honey_routes.py          /honey/version, /honey/download
-│   └── releases/version.json    Honey exe 배포 manifest
+│   └── releases/version.json    Honey ZIP 배포 manifest
 ├── client/                     Honey 클라이언트 (PyQt5)
 │   ├── honey_main.py            QMainWindow + upload 버튼
 │   ├── version_check.py         /honey/version 폴링 + 다운로드

@@ -2,7 +2,7 @@
 # onedir + windowed(console 없음). PyInstaller 6.x 기준.
 # onedir 인 이유: onefile 은 실행마다 임시폴더로 전체 압축해제 → 첫 로딩이 느림.
 # onedir 은 dist/Honey/ 폴더(Honey.exe + _internal/)로 풀려 있어 시작이 훨씬 빠름.
-# 이 폴더를 Inno Setup(installer.iss)으로 묶어 HoneySetup.exe 설치본을 만든다.
+# 이 폴더를 ZIP 패키지(Honey-<version>.zip)로 묶어 배포한다.
 # PyQt5 plugins 누락 시 hiddenimports / collect 옵션 추가.
 
 # -*- mode: python ; coding: utf-8 -*-
