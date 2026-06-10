@@ -8,6 +8,7 @@ df_honey 의 select_subjects / subset_rows 슬라이싱 메서드에 위임한�
 """
 from __future__ import annotations
 
+from functools import reduce
 from pathlib import Path
 from typing import Optional
 
@@ -121,24 +122,38 @@ class df_honey_group:
 
     @property
     def combined_df_yield(self) -> pd.DataFrame:
-        """각 source 의 df_yield 를 이어붙인 전체 yield 집계 DataFrame.
+        """각 source 의 wide df_yield 를 (Step,Bin,TNO,Item) outer join 한 병합표.
 
-        Yield 계열명 = FileName 통일 단일 지점: 각 df_yield 의 'sheetname' 을
-        그 source 의 md.name 으로 덮어쓴다. → Yield 컬럼이 cpk/fail/issue/distribution
-        과 동일한 md.name 을 쓰게 됨(단일 carrier).
+        Yield 계열명 = FileName 통일 단일 지점: 각 source 의 가변 컬럼 2개
+        (<file_label>, <file_label>_cnt) 를 그 source 의 md.name / md.name+"_cnt" 로
+        rename 한다. → Yield 컬럼이 cpk/fail/issue/distribution 과 동일한 md.name 을
+        쓰게 됨(단일 carrier). 마지막에 avg(파일별 yield% 평균) 컬럼을 덧붙인다.
         """
-        frames = []
+        fixed = list(DF_YIELD_COLUMNS)  # ["Step", "Bin", "TNO", "Item"]
+        frames, yield_cols = [], []
         for md in self._mass_data_map.values():
             dy = md.df_yield
             if dy is None or dy.empty:
                 continue
-            dy = dy.copy()
-            if "sheetname" in dy.columns:
-                dy["sheetname"] = md.name
-            frames.append(dy)
+            var_cols = [c for c in dy.columns if c not in fixed]
+            cnt_col = next((c for c in var_cols if str(c).endswith("_cnt")), None)
+            lbl_col = next((c for c in var_cols if c != cnt_col), None)
+            if lbl_col is None or cnt_col is None:
+                continue
+            name_cnt = f"{md.name}_cnt"
+            sub = dy[fixed + [lbl_col, cnt_col]].rename(
+                columns={lbl_col: md.name, cnt_col: name_cnt})
+            frames.append(sub)
+            yield_cols.append(md.name)
         if not frames:
             return pd.DataFrame(columns=DF_YIELD_COLUMNS)
-        return pd.concat(frames, ignore_index=True)
+        merged = reduce(lambda l, r: l.merge(r, on=fixed, how="outer"), frames)
+        # outer join 결측: yield -> 0.0, cnt -> 0
+        for col in yield_cols:
+            merged[col] = merged[col].fillna(0.0)
+            merged[f"{col}_cnt"] = merged[f"{col}_cnt"].fillna(0)
+        merged["avg"] = merged[yield_cols].mean(axis=1).round(2)
+        return merged
 
     @property
     def mass_data_map(self) -> dict:

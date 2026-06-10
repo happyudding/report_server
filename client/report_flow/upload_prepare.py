@@ -1,14 +1,16 @@
-"""Upload xlsx preprocessing boundary for Honey.
+"""Upload preprocessing boundary for Honey.
 
-This module keeps Excel COM reconstruction and issue-table image extraction
-separate from the main window.  The behavior intentionally matches the old
-``honey_main.py`` helpers.
+This module decrypts the DRM/xlsx via Excel COM and extracts the cell values of
+the report sheets (summary / yield / issue_table) into JSON-serializable grids,
+plus the issue_table row images.  No file is rebuilt or uploaded — only the
+extracted text grids and PNGs are sent to the server.
 """
 import datetime
-import tempfile
 import time
 import traceback
-import zipfile
+
+# 서버 파서가 사용하는 시트(텍스트 추출 대상). 그 외 시트(distribution 등)는 보내지 않는다.
+_TARGET_SHEETS = {"summary", "yield", "issue_table"}
 
 
 def _png_from_com_shape(shape):
@@ -33,16 +35,21 @@ def _png_from_com_shape(shape):
 
 
 def _normalize_grid(value):
-    """Normalize win32com Range.Value to a 2D list."""
+    """Normalize win32com Range.Value to a JSON-safe 2D list.
+
+    날짜/시간 셀은 ISO 문자열로, 그 외 비-primitive 는 str() 로 변환한다(JSON 전송용).
+    """
     def _conv(v):
-        if hasattr(v, "year") and not isinstance(v, (int, float, str)):
+        if v is None or isinstance(v, (int, float, str, bool)):
+            return v
+        if hasattr(v, "year"):                       # pywintypes datetime 류
             try:
                 return datetime.datetime(
                     int(v.year), int(v.month), int(v.day),
-                    int(v.hour), int(v.minute), int(v.second))
+                    int(v.hour), int(v.minute), int(v.second)).isoformat()
             except Exception:  # noqa: BLE001
-                return v
-        return v
+                return str(v)
+        return str(v)
 
     if not isinstance(value, (tuple, list)):
         return [[_conv(value)]]
@@ -52,8 +59,12 @@ def _normalize_grid(value):
 
 
 def _extract_via_excel_com(src_path, header_row=3):
-    """Rebuild xlsx via Excel COM, excluding distribution sheets."""
-    import openpyxl
+    """Excel COM 으로 열어 대상 시트 grid + issue_table 행 이미지 추출.
+
+    Returns ``(sheet_grids, issue_imgs)`` —
+      sheet_grids = {"summary": {"origin":[r0,c0], "values":[[...]]}, ...}
+      issue_imgs  = [{"row": int, "png": bytes}]  (0-based 데이터행)
+    """
     import pythoncom
     import win32com.client
 
@@ -66,22 +77,16 @@ def _extract_via_excel_com(src_path, header_row=3):
         excel.DisplayAlerts = False
         wb = excel.Workbooks.Open(src_path, UpdateLinks=0, ReadOnly=True)
 
-        out_wb = openpyxl.Workbook()
-        out_wb.remove(out_wb.active)
+        sheet_grids = {}
         issue_imgs = []
         for sht in wb.Worksheets:
-            name = sht.Name
-            low = name.lower()
-            if low == "distribution" or low.startswith("_dist"):
+            low = sht.Name.lower()
+            if low not in _TARGET_SHEETS:
                 continue
-            ws = out_wb.create_sheet(title=name)
             ur = sht.UsedRange
-            r0, c0 = ur.Row, ur.Column
+            r0, c0 = int(ur.Row), int(ur.Column)
             values = _normalize_grid(ur.Value)
-            for i, row_vals in enumerate(values):
-                for j, val in enumerate(row_vals):
-                    if val is not None:
-                        ws.cell(row=r0 + i, column=c0 + j, value=val)
+            sheet_grids[low] = {"origin": [r0, c0], "values": values}
             if low == "issue_table":
                 for shape in sht.Shapes:
                     ri = int(shape.TopLeftCell.Row) - (header_row + 1)
@@ -90,10 +95,7 @@ def _extract_via_excel_com(src_path, header_row=3):
                     png = _png_from_com_shape(shape)
                     if png:
                         issue_imgs.append({"row": ri, "png": png})
-        tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
-        tmp.close()
-        out_wb.save(tmp.name)
-        return tmp.name, sorted(issue_imgs, key=lambda x: x["row"])
+        return sheet_grids, sorted(issue_imgs, key=lambda x: x["row"])
     finally:
         try:
             if wb is not None:
@@ -109,43 +111,16 @@ def _extract_via_excel_com(src_path, header_row=3):
 
 
 def prepare_upload_xlsx(src_path: str) -> tuple:
-    """Prepare xlsx for upload.
+    """업로드용 추출 데이터 준비.
 
-    Returns ``(upload_path, is_tmp, issue_imgs)``.  A temporary path must be
-    removed by the caller after upload.
+    Returns ``(sheet_grids, issue_imgs)``.  Excel COM 추출 실패 시 안내 ValueError.
     """
-    com_error = None
     try:
-        tmp_path, issue_imgs = _extract_via_excel_com(src_path)
-        return tmp_path, True, issue_imgs
-    except Exception:
+        return _extract_via_excel_com(src_path)
+    except Exception:  # noqa: BLE001
         com_error = traceback.format_exc()
-
-    try:
-        with zipfile.ZipFile(src_path):
-            pass
-    except zipfile.BadZipFile:
-        raise ValueError(
-            "선택한 파일을 처리할 수 없습니다.\n"
-            "DRM(NASCA) 파일은 Excel 이 설치된 PC 에서만 업로드할 수 있고,\n"
-            "그 외에는 Excel 에서 일반 xlsx 로 다시 저장한 뒤 시도하세요.\n\n"
-            f"[Excel 처리 실패 원인]\n{com_error}")
-
-    try:
-        import openpyxl
-    except ImportError:
-        return src_path, False, []
-
-    wb = openpyxl.load_workbook(src_path)
-    dist_names = [s for s in wb.sheetnames if s.lower() == "distribution"]
-    if not dist_names:
-        wb.close()
-        return src_path, False, []
-
-    for name in dist_names:
-        del wb[name]
-    tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
-    tmp.close()
-    wb.save(tmp.name)
-    wb.close()
-    return tmp.name, True, []
+    raise ValueError(
+        "선택한 파일을 처리할 수 없습니다.\n"
+        "Excel COM 으로 시트 데이터를 추출하지 못했습니다.\n"
+        "DRM(NASCA) 파일은 Excel 이 설치된 PC 에서만 업로드할 수 있습니다.\n\n"
+        f"[Excel 처리 실패 원인]\n{com_error}")

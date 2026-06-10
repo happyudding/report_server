@@ -17,7 +17,6 @@ pip install -r requirements.txt
 |--------|------|
 | `flask>=3.0` | 웹 프레임워크 |
 | `werkzeug>=3.0` | WSGI 유틸리티 |
-| `openpyxl>=3.1` | xlsx 텍스트 추출 파싱 |
 | `boto3>=1.34` | S3 업로드/다운로드 |
 | `pillow>=10.0` | 이미지 처리 |
 
@@ -71,7 +70,6 @@ LAN 전체에 노출하려면 `HOST=0.0.0.0` 환경변수 설정.
 
 | 변수 | 기본값 |
 |------|--------|
-| `REPORT_S3_SOURCE_XLSX_PREFIX` | `pe/report_server/source_xlsx` |
 | `REPORT_S3_SUMMARY_TEXT_PREFIX` | `pe/report_server/summary_text` |
 | `REPORT_S3_ISSUE_TEXT_PREFIX` | `pe/report_server/issue_table_text` |
 | `REPORT_S3_CHART_PREFIX` | `pe/report_server/chart_png` |
@@ -125,7 +123,7 @@ server/
 ├── plugin.py                 register_report_server() — Blueprint 일괄 등록
 ├── config.py                 환경변수·경로 통합 설정
 ├── upload_xlsx.py            POST /pe/report/upload_xlsx 핸들러
-├── xlsx_parser.py            openpyxl 기반 텍스트 추출 (summary/yield/issue_table)
+├── xlsx_parser.py            시트 grid → 텍스트 추출 (_GridSheet 셸, summary/yield/issue_table)
 ├── honey_routes.py           /honey/version, /honey/download
 ├── admin_routes.py           /pe/admin/ 감사 로그 조회
 ├── report_utils.py           공통 유틸리티 (타입 변환 등)

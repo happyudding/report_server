@@ -117,7 +117,6 @@ Distribution chart는 모든 DUT 값을 표시한다. 다운샘플링이나 poin
 - `pandas`, `numpy`: 분석 계산
 - `xlwings`: Excel COM 기반 xlsx 생성
 - `pywin32`: Windows COM/clipboard 처리
-- `openpyxl`: 업로드 전 xlsx 재구성 fallback 쪽에서 사용
 - `honey_parse`: `csvfile_to_df.py`가 실제 CSV parser로 import한다. 설치/경로가 없으면 CSV 로딩이 실패한다.
 
 ## 변경 시 주의

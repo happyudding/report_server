@@ -59,7 +59,6 @@ def save_upload_artifacts(
     analysis_key,
     content_hash,
     meta_str,
-    xlsx_bytes,
     issue_images=None,
     dist_png=None,
     chart_pngs=None,
@@ -68,6 +67,9 @@ def save_upload_artifacts(
 
     This intentionally owns S3/local fallback details so upload_xlsx.py can stay
     focused on request validation, parsing, and DB summary rows.
+
+    원본 xlsx 는 더 이상 받지 않는다 — 클라이언트가 추출 텍스트(grid)만 전송하므로
+    source_xlsx 아카이브는 폐지되었다. 텍스트 데이터는 DB(sheet_data)에 저장된다.
     """
     warnings = []
     s3_ok = True
@@ -76,24 +78,10 @@ def save_upload_artifacts(
     charts_saved = len(chart_pngs or [])
 
     try:
-        xlsx_key = report_s3.make_source_xlsx_s3_key(analysis_key)
-        if not report_s3.s3_object_exists(xlsx_key):
-            xlsx_uri = report_s3.upload_bytes_to_s3(
-                xlsx_key,
-                xlsx_bytes,
-                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-        else:
-            xlsx_uri = report_s3.make_s3_uri(xlsx_key)
-        report_db.upsert_object_info(
-            analysis_key, content_hash, meta_str,
-            "source_xlsx", report_s3.bucket_name(), xlsx_key, xlsx_uri,
-        )
+        report_s3._require_config()
     except S3NotConfigured:
         s3_ok = False
-        warnings.append("S3 not configured; source xlsx not persisted")
-    except Exception as exc:
-        raise RuntimeError(f"S3 upload failed: {exc}") from exc
+        warnings.append("S3 not configured; image artifacts not persisted")
 
     if issue_images:
         try:

@@ -23,10 +23,10 @@
         ▼
 [Flask 서버 (헤드리스)]
   POST /pe/report/upload_xlsx ──(01 업로드 파이프라인)──►
-        │  sha256→analysis_key, S3 업로드, xlsx 파싱
+        │  sha256(grids)→analysis_key, grid 파싱, sheet_data DB 저장
         ▼
   (03 저장소) SQLite: report_session / report_analysis_summary / report_object_info
-             storage_gateway: source_xlsx / summary_text / issue_table_text / chart_png
+             storage_gateway: summary_text / issue_table_text / chart_png / issue_img
         ▲
         │  (02 조회·수정) GET /pe/report/ , /api/history , /session/<id>/full ...
         ▼
@@ -56,7 +56,7 @@
 
 ## 2. 핵심 개념 사전 (전 문서 공통 용어)
 
-- **analysis_key** — `sha256(xlsx_bytes + canonical(meta))`. 같은 xlsx+meta 면 항상 같은 키.
+- **analysis_key** — `sha256(canonical(sheet_grids) + canonical(meta))`. 같은 grid+meta 면 항상 같은 키.
   meta = `{product_type, product, lot_id}` 만 (PIN 제외). 모든 S3 키/DB 행의 기준 식별자.
   산출: [upload_xlsx.py `_compute_analysis_key`](../server/upload_xlsx.py#L71).
 - **session_id** — `"<epoch>_<hex6>"`. 업로드 1건 = 1 세션. 브라우저 조회 단위.
@@ -64,7 +64,7 @@
 - **subject** — 측정 항목(컬럼). **bin** — 합격/불량 분류 코드 (`PASS_BIN="1"` 이 합격).
 - **source** (DB 컬럼) — `'xlsx_upload'`(현재 흐름) vs `'analyze'`(legacy CSV 분석, 비활성).
 - **PIN/password** — 업로드 시 필수 4자리. 수정/삭제 시 검증. analysis_key 에는 **불포함**.
-- **object_type** (report_object_info) — `source_xlsx` / `summary_text` / `issue_table_text` / `chart_index` → [03](03_storage.md).
+- **object_type** (report_object_info) — `summary_text` / `issue_table_text` / `chart_index` → [03](03_storage.md).
 
 ---
 
@@ -106,10 +106,10 @@
 
 ## 4. 불변 규칙 (위반 금지 — CLAUDE.md §5 요약)
 
-1. xlsx 본문은 SQLite 에 넣지 않는다 (S3 + `report_object_info.s3_key`).
+1. 원본 xlsx 는 서버로 전송·저장하지 않는다 (클라가 grid 추출 후 전송; 서버는 openpyxl·Excel 미사용).
 2. 분석 라우트(analyze/execute/plot)는 `/pe/report/` 에 추가하지 않는다.
 3. `report_` prefix 없는 새 테이블 금지.
-4. analysis_key = `sha256(xlsx_bytes + json.dumps(meta, sort_keys=True))`. meta 바뀌면 키도 바뀜.
+4. analysis_key = `sha256(canonical(sheet_grids) + json.dumps(meta, sort_keys=True))`. meta 바뀌면 키도 바뀜.
 5. 실행 중 exe 직접 덮어쓰기 금지 (Windows 락) — 설치본 재설치 방식 → [04](04_honey_update.md).
 
 ---

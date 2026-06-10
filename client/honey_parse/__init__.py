@@ -2,15 +2,13 @@
 
 반환 계약: (df, df_yield)  ← file_to_df.py 계약과 동일
   df       : df_honey 포맷 정규화 DataFrame
-  df_yield : 빈 DataFrame (컬럼만 유지)
+  df_yield : 빈 DataFrame (고정 키 컬럼만 유지 — 실제 구현은 wide 포맷)
 
 실제 honey_parse 프로젝트 폴더로 교체하면 이 파일은 덮어씌워진다.
 """
 import pandas as pd
 
-DF_YIELD_COLUMNS: list[str] = [
-    "step", "Bin", "Tno", "item", "sheetname_cnt", "sheetname"
-]
+DF_YIELD_COLUMNS: list[str] = ["Step", "Bin", "TNO", "Item"]
 
 
 def file_to_df(path, product_type=None, all_paths=None):

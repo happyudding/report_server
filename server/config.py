@@ -30,7 +30,6 @@ REPORT_S3_CSV_PREFIX        = os.getenv("REPORT_S3_CSV_PREFIX",        "pe/repor
 REPORT_S3_FAIL_PREFIX       = os.getenv("REPORT_S3_FAIL_PREFIX",       "pe/report_server/fail_items")
 REPORT_S3_ISSUE_PREFIX      = os.getenv("REPORT_S3_ISSUE_PREFIX",      "pe/report_server/issue_table")
 REPORT_S3_THUMB_PREFIX      = os.getenv("REPORT_S3_THUMB_PREFIX",      "pe/report_server/thumbs")
-REPORT_S3_SOURCE_XLSX_PREFIX = os.getenv("REPORT_S3_SOURCE_XLSX_PREFIX","pe/report_server/source_xlsx")
 REPORT_S3_SUMMARY_TEXT_PREFIX = os.getenv("REPORT_S3_SUMMARY_TEXT_PREFIX","pe/report_server/summary_text")
 REPORT_S3_ISSUE_TEXT_PREFIX   = os.getenv("REPORT_S3_ISSUE_TEXT_PREFIX",  "pe/report_server/issue_table_text")
 REPORT_S3_YIELD_TEXT_PREFIX   = os.getenv("REPORT_S3_YIELD_TEXT_PREFIX",  "pe/report_server/yield_text")

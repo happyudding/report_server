@@ -5,8 +5,12 @@
                열(df.columns) = DUT/XCoord/YCoord/Bin/Serial, subject…  (헤더는 컬럼으로만)
                행 0=Units, 1=LowerLimit, 2=UpperLimit, 3~4=limit 중복행, 5~=측정 데이터
                (row0 에 헤더를 중복으로 두지 말 것 — constants.UNITS_ROW=0/DATA_START_ROW=5 와 정합)
-  df_yield : per-(step, Bin, Tno, item) yield 집계 DataFrame
-               컬럼: step, Bin, Tno, item, sheetname_cnt, sheetname
+  df_yield : per-(Step, Bin, TNO, Item) yield 집계 DataFrame (wide 포맷)
+               고정 컬럼: Step, Bin, TNO, Item
+               가변 컬럼(파일별 2개): <file_label>, <file_label>_cnt
+                 <file_label>      = 해당 bin yield% (= bin 개수 / 전체 개수 × 100)
+                 <file_label>_cnt  = 해당 bin DUT 개수
+               (DF_YIELD_COLUMNS 는 고정 키 컬럼만 — 빈 DataFrame 폴백용.)
 
 honey_parser 가 설치되면 아래 try 블록이 실제 구현을 로드하고,
 미설치 시에는 호출 시점에 ImportError 를 발생시킨다.
@@ -15,9 +19,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-DF_YIELD_COLUMNS: list[str] = [
-    "step", "Bin", "Tno", "item", "sheetname_cnt", "sheetname"
-]
+DF_YIELD_COLUMNS: list[str] = ["Step", "Bin", "TNO", "Item"]
 
 try:
     from honey_parse import file_to_df  # type: ignore[import]

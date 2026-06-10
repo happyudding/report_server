@@ -24,7 +24,6 @@ pip install -r requirements.txt
 | `pandas>=1.5` | 로컬 분석 엔진 (report_generator) |
 | `numpy>=1.23` | CPK / yield / 분포 계산 |
 | `xlwings>=0.30` | xlsx 리포트 생성 — Excel COM (Windows 전용) |
-| `openpyxl>=3.1` | 업로드 전 distribution 시트 제거 |
 
 ---
 

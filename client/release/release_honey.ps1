@@ -1,140 +1,233 @@
 <#
 .SYNOPSIS
-    Honey 클라이언트 새 버전 릴리스 자동화 스크립트.
+    Build and publish a Honey installer release.
 
 .DESCRIPTION
-    1) client/config.py 의 CURRENT_VERSION 을 -Version 으로 교체 (빌드 전 필수)
-    2) PyInstaller 로 build_honey.spec 빌드 → dist/Honey.exe
-    3) server/releases/Honey-<version>.exe 로 복사
-    4) sha256 계산
-    5) server/releases/version.json 갱신 (BOM 없는 UTF-8)
-
-    서버 재시작은 필요 없다 — version.json 은 /honey/version 요청마다 다시 읽힌다.
+    1) Update client/transport/config.py CURRENT_VERSION.
+    2) Update client/installer.iss MyAppVersion.
+    3) Build client/dist/Honey/ with PyInstaller.
+    4) Build client/installer_dist/HoneySetup-<version>.exe with Inno Setup.
+    5) Copy the installer to server/releases/HoneySetup-<version>.exe.
+    6) Update server/releases/version.json as UTF-8 without BOM.
+    7) Append server/releases/release_log.txt after all release steps succeed.
 
 .PARAMETER Version
-    릴리스할 semver (예: 0.2.0). 'a.b.c' 형태 필수.
+    Release semver in x.y.z format. If omitted, patch is bumped from CURRENT_VERSION.
 
 .PARAMETER Notes
-    version.json 의 notes 필드. 변경 사항 요약.
-
-.PARAMETER SkipBuild
-    exe 를 이미 빌드해 둔 경우 PyInstaller 단계를 건너뛴다.
-    (dist/Honey.exe 가 존재해야 함)
-
-.EXAMPLE
-    .\release_honey.ps1 -Version 0.2.0 -Notes "차트 렌더 버그 수정"
-
-.EXAMPLE
-    .\release_honey.ps1 -Version 0.2.1 -Notes "hotfix" -SkipBuild
+    Release comment for version.json and release_log.txt. If omitted, the script prompts.
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Version,
+    [Parameter(Mandatory = $false)]
+    [string]$Version = "",
 
     [Parameter(Mandatory = $false)]
-    [string]$Notes = "",
-
-    [switch]$SkipBuild
+    [AllowNull()]
+    [string]$Notes = $null
 )
 
 $ErrorActionPreference = "Stop"
 
-# ── 경로 (스크립트 위치 기준) ────────────────────────────────────────────────
-$ClientDir   = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$RepoRoot    = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$ConfigPy    = Join-Path $ClientDir "config.py"
-$SpecFile    = Join-Path $ClientDir "build_honey.spec"
-$DistExe     = Join-Path $ClientDir "dist\Honey.exe"
-$ReleasesDir = Join-Path $RepoRoot "server\releases"
-$VersionJson = Join-Path $ReleasesDir "version.json"
-$TargetName  = "Honey-$Version.exe"
-$TargetExe   = Join-Path $ReleasesDir $TargetName
+$ClientDir     = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$RepoRoot      = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+$ConfigPy      = Join-Path $ClientDir "transport\config.py"
+$SpecFile      = Join-Path $ClientDir "build_honey.spec"
+$InstallerIss  = Join-Path $ClientDir "installer.iss"
+$DistExe       = Join-Path $ClientDir "dist\Honey\Honey.exe"
+$InstallerDist = Join-Path $ClientDir "installer_dist"
+$ReleasesDir   = Join-Path $RepoRoot "server\releases"
+$VersionJson   = Join-Path $ReleasesDir "version.json"
+$ReleaseLog    = Join-Path $ReleasesDir "release_log.txt"
+$Utf8NoBom     = New-Object System.Text.UTF8Encoding($false)
 
-function Write-Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
-
-# ── 0. 버전 형식 검증 ────────────────────────────────────────────────────────
-if ($Version -notmatch '^\d+\.\d+\.\d+$') {
-    throw "Version 형식이 'a.b.c' 가 아닙니다: '$Version'  (예: 0.2.0)"
+function Write-Step([string]$Message) {
+    Write-Host ""
+    Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
-Write-Host "Honey 릴리스 $Version" -ForegroundColor Green
+function Read-Utf8Text([string]$Path) {
+    return Get-Content -Path $Path -Raw -Encoding UTF8
+}
+
+function Write-Utf8NoBomText([string]$Path, [string]$Text) {
+    [System.IO.File]::WriteAllText($Path, $Text, $Utf8NoBom)
+}
+
+function Find-Iscc {
+    $candidates = @()
+    if ($env:ProgramFiles) {
+        $candidates += (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+    }
+    if (${env:ProgramFiles(x86)}) {
+        $candidates += (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe")
+    }
+    if ($env:LOCALAPPDATA) {
+        $candidates += (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe")
+    }
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+    return $null
+}
+
+if (-not (Test-Path $ConfigPy)) {
+    throw "Missing config file: $ConfigPy"
+}
+
+$configText = Read-Utf8Text $ConfigPy
+$versionPattern = 'CURRENT_VERSION\s*=\s*"([^"]*)"'
+$versionMatch = [regex]::Match($configText, $versionPattern)
+if (-not $versionMatch.Success) {
+    throw "CURRENT_VERSION was not found in $ConfigPy"
+}
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $currentVersion = $versionMatch.Groups[1].Value
+    if ($currentVersion -notmatch '^\d+\.\d+\.\d+$') {
+        throw "CURRENT_VERSION must be x.y.z, got: $currentVersion"
+    }
+    $parts = $currentVersion.Split(".")
+    $Version = "{0}.{1}.{2}" -f $parts[0], $parts[1], ([int]$parts[2] + 1)
+    Write-Host "Auto version bump: $currentVersion -> $Version" -ForegroundColor Green
+}
+
+if ($Version -notmatch '^\d+\.\d+\.\d+$') {
+    throw "Version must be x.y.z, got: $Version"
+}
+
+if ($null -eq $Notes) {
+    $Notes = Read-Host "Release comment"
+}
+if ([string]::IsNullOrWhiteSpace($Notes)) {
+    $Notes = "Honey $Version release"
+}
+
+$TargetName = "HoneySetup-$Version.exe"
+$TargetExe  = Join-Path $ReleasesDir $TargetName
+$BuiltSetup = Join-Path $InstallerDist $TargetName
+
+Write-Host "Honey release $Version" -ForegroundColor Green
 Write-Host "  client dir : $ClientDir"
 Write-Host "  releases   : $ReleasesDir"
+Write-Host "  comment    : $Notes"
 
-# ── 1. config.py 의 CURRENT_VERSION 교체 ────────────────────────────────────
-Write-Step "1/5  config.py CURRENT_VERSION 갱신"
-if (-not (Test-Path $ConfigPy)) { throw "config.py 를 찾을 수 없습니다: $ConfigPy" }
-
-$configText = Get-Content $ConfigPy -Raw
-$pattern    = 'CURRENT_VERSION\s*=\s*"[^"]*"'
-$match      = [regex]::Match($configText, $pattern)
-if (-not $match.Success) {
-    throw "config.py 에서 CURRENT_VERSION 라인을 찾지 못했습니다."
-}
-$oldLine = $match.Value
-$newLine = "CURRENT_VERSION = `"$Version`""
-if ($oldLine -eq $newLine) {
-    Write-Host "    이미 $Version 입니다 (변경 없음)."
+Write-Step "1/7 Update CURRENT_VERSION"
+$newVersionLine = "CURRENT_VERSION = `"$Version`""
+$oldVersionLine = $versionMatch.Value
+if ($oldVersionLine -eq $newVersionLine) {
+    Write-Host "    already $Version"
 } else {
-    $configText = [regex]::Replace($configText, $pattern, $newLine)
-    # config.py 는 BOM 없는 UTF-8 로 저장
-    [System.IO.File]::WriteAllText($ConfigPy, $configText, (New-Object System.Text.UTF8Encoding($false)))
-    Write-Host "    $oldLine  ->  $newLine"
+    $configText = [regex]::Replace($configText, $versionPattern, $newVersionLine)
+    Write-Utf8NoBomText $ConfigPy $configText
+    Write-Host "    $oldVersionLine -> $newVersionLine"
 }
 
-# ── 2. PyInstaller 빌드 ─────────────────────────────────────────────────────
-if ($SkipBuild) {
-    Write-Step "2/5  빌드 건너뜀 (-SkipBuild)"
-    if (-not (Test-Path $DistExe)) {
-        throw "-SkipBuild 인데 dist\Honey.exe 가 없습니다: $DistExe"
-    }
-} else {
-    Write-Step "2/5  PyInstaller 빌드"
-    if (-not (Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
-        throw "pyinstaller 를 찾을 수 없습니다. 'pip install pyinstaller' 후 다시 실행하세요."
-    }
-    Push-Location $ClientDir
-    try {
-        & pyinstaller (Split-Path $SpecFile -Leaf) --noconfirm
-        if ($LASTEXITCODE -ne 0) { throw "pyinstaller 가 종료코드 $LASTEXITCODE 로 실패했습니다." }
-    } finally {
-        Pop-Location
-    }
-    if (-not (Test-Path $DistExe)) {
-        throw "빌드 후 dist\Honey.exe 가 생성되지 않았습니다: $DistExe"
-    }
+Write-Step "2/7 Update Inno Setup version"
+if (-not (Test-Path $InstallerIss)) {
+    throw "Missing installer script: $InstallerIss"
+}
+$issText = Read-Utf8Text $InstallerIss
+$issPattern = '#define\s+MyAppVersion\s+"[^"]*"'
+if (-not [regex]::IsMatch($issText, $issPattern)) {
+    throw "MyAppVersion was not found in $InstallerIss"
+}
+$issText = [regex]::Replace($issText, $issPattern, "#define MyAppVersion `"$Version`"")
+Write-Utf8NoBomText $InstallerIss $issText
+Write-Host "    MyAppVersion -> $Version"
+
+Write-Step "3/7 Build PyInstaller onedir"
+$PythonCmd = Get-Command python -ErrorAction SilentlyContinue
+if (-not $PythonCmd) {
+    $PythonCmd = Get-Command py -ErrorAction SilentlyContinue
+}
+if (-not $PythonCmd) {
+    throw "python/py was not found. Install Python and add it to PATH."
 }
 
-# ── 3. releases 로 버전명 복사 ──────────────────────────────────────────────
-Write-Step "3/5  $TargetName 로 복사"
+Push-Location $ClientDir
+try {
+    if ($PythonCmd.Name -ieq "py.exe" -or $PythonCmd.Name -ieq "py") {
+        & $PythonCmd.Source -3 -m PyInstaller --clean --noconfirm (Split-Path $SpecFile -Leaf)
+    } else {
+        & $PythonCmd.Source -m PyInstaller --clean --noconfirm (Split-Path $SpecFile -Leaf)
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Pop-Location
+}
+if (-not (Test-Path $DistExe)) {
+    throw "Build output was not found: $DistExe"
+}
+
+Write-Step "4/7 Build Inno Setup installer"
+$ISCC = Find-Iscc
+if (-not $ISCC) {
+    throw "Inno Setup (ISCC.exe) was not found. Install: winget install -e --id JRSoftware.InnoSetup"
+}
+
+Push-Location $ClientDir
+try {
+    & $ISCC (Split-Path $InstallerIss -Leaf)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Inno Setup failed with exit code $LASTEXITCODE"
+    }
+} finally {
+    Pop-Location
+}
+if (-not (Test-Path $BuiltSetup)) {
+    throw "Installer output was not found: $BuiltSetup"
+}
+Write-Host "    -> $BuiltSetup"
+
+Write-Step "5/7 Copy installer to server releases"
 if (-not (Test-Path $ReleasesDir)) {
     New-Item -ItemType Directory -Path $ReleasesDir | Out-Null
 }
-Copy-Item $DistExe $TargetExe -Force
+Copy-Item $BuiltSetup $TargetExe -Force
 Write-Host "    -> $TargetExe"
 
-# ── 4. sha256 계산 ──────────────────────────────────────────────────────────
-Write-Step "4/5  sha256 계산"
+Write-Step "6/7 Update version.json"
 $sha = (Get-FileHash $TargetExe -Algorithm SHA256).Hash.ToLower()
 $size = (Get-Item $TargetExe).Length
+$releasedAt = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
 Write-Host "    sha256 : $sha"
 Write-Host "    size   : $([math]::Round($size / 1MB, 2)) MB"
 
-# ── 5. version.json 갱신 ────────────────────────────────────────────────────
-Write-Step "5/5  version.json 갱신"
 $manifest = [ordered]@{
     version     = $Version
     file        = $TargetName
     sha256      = $sha
-    released_at = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss")
+    released_at = $releasedAt
     notes       = $Notes
 }
-$json = ($manifest | ConvertTo-Json -Depth 4)
-# version.json 은 BOM 없는 UTF-8 (Python json.loads 가 BOM 에 걸리지 않도록)
-[System.IO.File]::WriteAllText($VersionJson, $json, (New-Object System.Text.UTF8Encoding($false)))
+$json = $manifest | ConvertTo-Json -Depth 4
+Write-Utf8NoBomText $VersionJson $json
 Write-Host "    -> $VersionJson"
-Write-Host $json
 
-Write-Host "`n[완료] Honey $Version 릴리스 준비됨." -ForegroundColor Green
-Write-Host "서버 재시작 불필요. 다음 클라이언트 기동 시 자동 업데이트 안내가 뜹니다." -ForegroundColor Green
+Write-Step "7/7 Append release log"
+$logBlock = @(
+    "[$releasedAt] Honey $Version",
+    "  file    : $TargetName",
+    "  sha256  : $sha",
+    "  size    : $size bytes",
+    "  comment : $Notes",
+    ""
+) -join [Environment]::NewLine
+$logBlock += [Environment]::NewLine
+[System.IO.File]::AppendAllText($ReleaseLog, $logBlock, $Utf8NoBom)
+Write-Host "    -> $ReleaseLog"
+
+Write-Host ""
+Write-Host "[DONE] Honey $Version release completed." -ForegroundColor Green
+Write-Host "Server restart is not required. Clients will see the update on next launch." -ForegroundColor Green

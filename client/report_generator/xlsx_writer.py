@@ -28,9 +28,17 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xlwings as xw
-from openpyxl.utils import get_column_letter  # 순수 열문자 util (차트 _a1 등에서 사용)
 
 from . import DEBUG_CHART_LINE_TRACE, _profile
+
+
+def _col_letter(n):
+    """1-based 열 인덱스 → 엑셀 열문자 ('A'..). openpyxl get_column_letter 대체."""
+    s = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        s = chr(65 + r) + s
+    return s
 
 # ── 차트 생성 병목 측정 프로파일러 (HONEY_CHART_PROFILE set 시에만 동작) ───────
 # unset 이면 _prof 는 즉시 통과 → 평상시 동작·출력 불변. 측정 결과는 stderr 로.
@@ -798,14 +806,14 @@ def _fill_yield_by_step(ws, df_yield):
     ncol = len(header)
     c2 = _START_COL + ncol - 1
 
-    steps = (sorted(df_yield["step"].unique().tolist(), key=_step_sort_key)
-             if "step" in df_yield.columns else [None])
+    steps = (sorted(df_yield["Step"].unique().tolist(), key=_step_sort_key)
+             if "Step" in df_yield.columns else [None])
 
     section_header_rows = []
     cur = _HEADER_ROW
 
     for i, step in enumerate(steps):
-        sub = df_yield[df_yield["step"] == step] if step is not None else df_yield
+        sub = df_yield[df_yield["Step"] == step] if step is not None else df_yield
         rows = [list(r) for r in sub.itertuples(index=False)]
         if add_comment:
             rows = [row + [""] for row in rows]
@@ -824,6 +832,23 @@ def _fill_yield_by_step(ws, df_yield):
             _data_range(ws, cur, _START_COL, cur + len(rows) - 1, c2)
             ws.range(f"{cur}:{cur + len(rows) - 1}").row_height = _YIELD_TABLE_ROW_HEIGHT
             cur += len(rows)
+
+        # 합계 행 — 모든 수치 컬럼(yield%/_cnt/avg) sum. key/comment 는 제외.
+        _fixed_keys = {"Step", "Bin", "TNO", "Item"}
+        sum_row = []
+        for j, col in enumerate(header):
+            if j == 0:
+                sum_row.append("Sum")
+            elif col in _fixed_keys or col == "comment":
+                sum_row.append("")
+            else:
+                total = pd.to_numeric(sub[col], errors="coerce").sum()
+                sum_row.append(int(total) if str(col).endswith("_cnt")
+                               else round(float(total), 2))
+        ws.range((cur, _START_COL), (cur, c2)).value = [_sanitize_cell(v) for v in sum_row]
+        _data_range(ws, cur, _START_COL, cur, c2)
+        ws.range(f"{cur}:{cur}").row_height = _YIELD_TABLE_ROW_HEIGHT
+        cur += 1
 
         # 섹션 간 공백 1행 (마지막 섹션 제외)
         if i < len(steps) - 1:
@@ -2018,7 +2043,7 @@ def _build_compact_dist_y(df_x_list):
             block[:upto, pos] = np.arange(1, upto + 1, dtype=float) / float(count)
         y_blocks.append(pd.DataFrame(block, columns=columns))
         y_cols_by_source.append([
-            get_column_letter(count_to_pos[int(count)] + 2) for count in counts
+            _col_letter(count_to_pos[int(count)] + 2) for count in counts
         ])
 
     df_y = pd.concat(y_blocks, ignore_index=True) if y_blocks else pd.DataFrame(columns=columns)
@@ -2145,7 +2170,7 @@ def _chart_data_set(chart_api, d, x_sheet, y_sheet, col_idx, cnt_list, src_names
     는 NewSeries 직후 같은 객체에 스타일 적용 — COM 재조회 없음. limit line 스타일도
     series 객체를 보유한 여기서 적용(COM 최소화). 반환: limit series 개수(범례 삭제 수).
     """
-    col = get_column_letter(col_idx + 2)   # A=index, B=subject0
+    col = _col_letter(col_idx + 2)   # A=index, B=subject0
     lo = float(d.lower_limit) if _isnum(d.lower_limit) else None
     hi = float(d.upper_limit) if _isnum(d.upper_limit) else None
     xv0 = x_min if x_min is not None else 0.0
@@ -2253,7 +2278,7 @@ def _chart_layout_setting(chart_api, x_min, x_max, is_fail, limit_count):
 def _chart_line_tracer(state):
     """sys.settrace 콜백. 이 모듈 파일에 속한 프레임의 'line' 이벤트만 기록한다.
 
-    다른 파일(numpy/pandas/get_column_letter 등 외부 라이브러리)로 진입하는 프레임은
+    다른 파일(numpy/pandas 등 외부 라이브러리)로 진입하는 프레임은
     None 을 반환해 추적을 차단 — 소스가 없어 줄 단위 추적이 불가능한 컴파일 확장
     (pywin32 COM 등) 및 무관한 노이즈를 거른다. 활성 구간 자체가
     _chart_draw_at_position 호출 1건으로 한정되므로 실질적으로는 그 호출 스택만

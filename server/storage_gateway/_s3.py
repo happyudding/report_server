@@ -18,7 +18,6 @@ from config import (
     REPORT_S3_PREFIX,
     REPORT_S3_REGION,
     REPORT_S3_SECRET_KEY,
-    REPORT_S3_SOURCE_XLSX_PREFIX,
     REPORT_S3_SUMMARY_TEXT_PREFIX,
     REPORT_S3_THUMB_PREFIX,
     REPORT_S3_YIELD_TEXT_PREFIX,
@@ -182,12 +181,7 @@ def make_thumb_prefix_key(analysis_key):
     return f"{prefix}/{analysis_key}/"
 
 
-# ── Honey 업로드 산출물 (xlsx + 추출 텍스트) ─────────────────────────────────
-
-def make_source_xlsx_s3_key(analysis_key):
-    prefix = REPORT_S3_SOURCE_XLSX_PREFIX.strip("/")
-    return f"{prefix}/{analysis_key}.xlsx"
-
+# ── Honey 업로드 산출물 (추출 텍스트) ────────────────────────────────────────
 
 def make_summary_text_s3_key(analysis_key):
     prefix = REPORT_S3_SUMMARY_TEXT_PREFIX.strip("/")

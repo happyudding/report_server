@@ -781,30 +781,32 @@ class HoneyMainWindow(QMainWindow):
 
         self.btn_upload_local.setEnabled(False)
 
-        # ── xlsx 전처리: xlwings 복호화/재구성 (실패 시 openpyxl fallback) ─────
+        # ── xlsx 전처리: Excel COM 으로 DRM 해제·시트 grid 추출 ──────────────
         try:
-            upload_path, is_tmp, issue_imgs = _prepare_upload_xlsx(path)
+            sheet_grids, issue_imgs = _prepare_upload_xlsx(path)
         except ValueError as exc:
             QMessageBox.critical(self, "파일 오류", str(exc))
             self.btn_upload_local.setEnabled(True)
             return
         except Exception as exc:
-            QMessageBox.warning(
-                self, "전처리 경고",
-                f"xlsx 전처리 중 오류가 발생해 원본 파일로 업로드합니다:\n{exc}")
-            upload_path, is_tmp, issue_imgs = path, False, []
+            QMessageBox.critical(
+                self, "전처리 실패",
+                f"xlsx 전처리(Excel COM) 중 오류가 발생했습니다:\n{exc}")
+            self.btn_upload_local.setEnabled(True)
+            return
 
         # ── 서버 업로드 ───────────────────────────────────────────────────
         progress = _ElapsedProgress(
-            self.progress_status, f"서버 업로드 중... {Path(upload_path).name}",
+            self.progress_status, f"서버 업로드 중... {Path(path).name}",
             self._status, busy=True, minimum=0, maximum=0)
         QApplication.processEvents()
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(
-                    uploader.post_xlsx,
-                    upload_path,
+                    uploader.post_grids,
+                    sheet_grids,
+                    file_name=Path(path).name,
                     product_type=v["product_type"],
                     product=v["product"],
                     lot_id=v["lot_id"],
@@ -821,12 +823,6 @@ class HoneyMainWindow(QMainWindow):
             self._status("업로드 실패")
             self.btn_upload_local.setEnabled(True)
             return
-        finally:
-            if is_tmp:
-                try:
-                    os.remove(upload_path)
-                except OSError:
-                    pass
 
         sid = result.get("session_id", "?")
         issue_saved = result.get("issue_images_saved", 0)

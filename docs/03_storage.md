@@ -25,7 +25,6 @@
 ### object_type 종류 (report_object_info)
 | object_type | S3 내용 | 키 빌더 |
 |-------------|---------|---------|
-| `source_xlsx` | 원본 xlsx 본문 | `make_source_xlsx_s3_key` |
 | `summary_text` | summary 시트 추출 JSON | `make_summary_text_s3_key` |
 | `issue_table_text` | issue_table 추출 JSON | `make_issue_text_s3_key` |
 | `chart_index` | `{"count":N}` (차트 장수) | `make_chart_index_s3_key` |
@@ -59,8 +58,8 @@
 - 입출력: `upload_bytes_to_s3` / `download_bytes_from_s3` / `upload_json_to_s3` / `download_json_from_s3`(깨진 JSON 시 `S3ObjectCorrupted`) / `s3_object_exists`(head_object).
 - 키 패턴 (prefix 는 [config.py](../server/config.py#L27), 모두 `pe/report_server/` 네임스페이스로 plotly legacy 와 충돌 회피):
   ```
-  source_xlsx/<akey>.xlsx        summary_text/<akey>.json
-  issue_table_text/<akey>.json   chart_png/<akey>/<idx>.png  +  chart_png/<akey>/index.json
+  summary_text/<akey>.json       issue_table_text/<akey>.json
+  chart_png/<akey>/<idx>.png  +  chart_png/<akey>/index.json
   ```
 
 ## 환경변수 (config.py)
@@ -68,7 +67,7 @@
 각 `REPORT_S3_*_PREFIX`, `HONEY_RELEASES_DIR`. `REPORT_S3_BUCKET` 비면 모든 S3 동작이 503/그레이스풀.
 
 ## 주의 (불변 규칙 §1·§3·§4)
-- xlsx 본문은 절대 SQLite 에 넣지 않는다 — object_info 의 s3_key 만.
+- 원본 xlsx 는 서버로 전송·저장하지 않는다 — 추출 텍스트는 DB(sheet_data), issue PNG 만 S3.
 - `report_` prefix 없는 테이블 추가 금지.
-- analysis_key 는 항상 `sha256(xlsx + canonical meta)`. meta 키 추가/순서는 `sort_keys` 라 안전하지만 **새 필드 추가 시 기존 키가 전부 달라짐** 주의.
+- analysis_key 는 항상 `sha256(canonical(sheet_grids) + canonical meta)`. meta 키 추가/순서는 `sort_keys` 라 안전하지만 **새 필드 추가 시 기존 키가 전부 달라짐** 주의.
 - summary 의 `UNIQUE(analysis_key,item_name,bin_number)` 때문에 같은 키 재업로드는 INSERT OR IGNORE 로 중복 무시. 수정은 replace 로 전체 치환.

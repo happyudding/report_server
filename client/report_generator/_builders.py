@@ -180,52 +180,55 @@ def build_yield(mass_data_map, subject_rankings=None):
 # yield from df_yield
 
 def build_yield_from_df_yield(combined_df_yield, sources, subject_rankings=None):
-    """merged df_yield (step/Bin/Tno/item/sheetname_cnt/sheetname) → yield_rows.
+    """wide 병합 df_yield (Step,Bin,TNO,Item, <name>,<name>_cnt, ..., avg) → yield_rows.
 
-    Step 단위로 분리, 각 step 내에서 Bin1 먼저 숫자순 정렬.
-    portion (%) = 해당 step 내 비율. {src}_count/{src}_yield = fail_item 방식.
+    Step 단위로 분리, 각 step 내 Bin1(PASS) 먼저 정렬. <name>_cnt 는 해당 bin DUT
+    개수(=(Step,Bin) 내 TNO/Item 행에 반복)라 그룹 max 로 대표값을 잡는다.
+    전체 count = source 별 bin 카운트 합, portion (%) = step 내 비율.
     """
     import re
 
     df = combined_df_yield.copy()
     df["Bin"] = df["Bin"].map(_fmt_type)
 
-    # 같은 (step, Bin, Tno, sheetname) 내 여러 item 행은 동일 DUT → 중복 제거
-    deduped = df.drop_duplicates(subset=["step", "Bin", "Tno", "sheetname"])
+    # (Step, Bin) 그룹별 source 별 bin 카운트/yield (TNO/Item 반복 → max 대표값)
+    cnt_cols = [f"{s}_cnt" for s in sources]
+    agg_map = {f"{s}_cnt": "max" for s in sources}
+    agg_map.update({s: "max" for s in sources})
+    grouped = df.groupby(["Step", "Bin"], as_index=False).agg(agg_map)
 
-    step_src_total = deduped.groupby(["step", "sheetname"])["sheetname_cnt"].sum()
-    step_bin_src   = deduped.groupby(["step", "Bin", "sheetname"])["sheetname_cnt"].sum()
-    step_bin_total = deduped.groupby(["step", "Bin"])["sheetname_cnt"].sum()
-    step_total     = deduped.groupby("step")["sheetname_cnt"].sum()
+    # 전체 count = source 별 bin 카운트 합. step 전체 = step 내 bin 카운트 합.
+    grouped["_count"] = grouped[cnt_cols].sum(axis=1)
+    step_total = grouped.groupby("Step")["_count"].sum().to_dict()
 
     def _step_sort_key(s):
         parts = re.split(r'(\d+)', str(s))
         return [int(p) if p.isdigit() else p.lower() for p in parts]
 
-    steps = sorted(step_total.index.tolist(), key=_step_sort_key)
+    steps = sorted(grouped["Step"].unique().tolist(), key=_step_sort_key)
 
     rows = []
     for step in steps:
         s_total = int(step_total.get(step, 0))
         if s_total == 0:
             continue
-        bins_in_step = [b for (st, b) in step_bin_total.index if st == step]
+        sub = grouped[grouped["Step"] == step].set_index("Bin")
         bins_sorted = sorted(
-            bins_in_step,
+            sub.index.tolist(),
             key=lambda b: (0 if b == PASS_BIN else 1, _type_sort_key(b)),
         )
         for bin_type in bins_sorted:
-            count = int(step_bin_total.get((step, bin_type), 0))
+            r = sub.loc[bin_type]
+            count = int(r["_count"])
             fail_subjects = (subject_rankings or {}).get(bin_type, [])
             portion_fields, portions = {}, []
             for src in sources:
-                src_total_val = int(step_src_total.get((step, src), 0))
-                src_count     = int(step_bin_src.get((step, bin_type, src), 0))
-                portion = round(src_count / src_total_val * 100.0, 2) if src_total_val else 0.0
-                portion_fields[f"portion_{src}"] = portion
+                src_count = int(r[f"{src}_cnt"])
+                src_yield = round(float(r[src]), 2)
+                portion_fields[f"portion_{src}"] = src_yield
                 portion_fields[f"{src}_count"]   = src_count
-                portion_fields[f"{src}_yield"]   = portion
-                portions.append(portion)
+                portion_fields[f"{src}_yield"]   = src_yield
+                portions.append(src_yield)
             avg = round(sum(portions) / len(portions), 2) if portions else 0.0
             rows.append({
                 "step":  step,

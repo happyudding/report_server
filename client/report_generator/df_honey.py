@@ -35,21 +35,23 @@ from .models import ReportMeta
 _NAME_MAXLEN = 10
 
 
-def _sheetname_from_df_yield(df_yield) -> Optional[str]:
-    """df_yield 의 'sheetname' 컬럼에서 이 파일의 대표 sheetname(최빈값 1개) 반환.
+_DF_YIELD_FIXED_COLS = {"Step", "Bin", "TNO", "Item"}
 
-    Yield 시트가 그대로 출력하는 10자리 절단·자동생성 이름. 비어있거나 컬럼이 없으면
-    None — 호출자가 path.stem fallback 으로 처리.
+
+def _sheetname_from_df_yield(df_yield) -> Optional[str]:
+    """wide df_yield 의 가변 컬럼명(= file_label)에서 이 파일의 대표 sheetname 반환.
+
+    신규 wide 포맷은 파일 라벨이 *컬럼명*으로 들어간다(고정 Step/Bin/TNO/Item 외에
+    <file_label>, <file_label>_cnt 2개). yield 값 컬럼(=`_cnt` 아닌 가변 컬럼)의
+    이름이 곧 sheetname. 비어있거나 못 찾으면 None — 호출자가 path.stem fallback 처리.
     """
     if df_yield is None or getattr(df_yield, "empty", True):
         return None
-    if "sheetname" not in df_yield.columns:
-        return None
-    vals = df_yield["sheetname"].dropna().astype(str)
-    vals = vals[vals.str.strip() != ""]
-    if vals.empty:
-        return None
-    return str(vals.mode().iloc[0])
+    for col in df_yield.columns:
+        if col in _DF_YIELD_FIXED_COLS or str(col).endswith("_cnt"):
+            continue
+        return str(col)
+    return None
 
 
 # 입력 파일명 → 기본 Sheetname. lot header(_6Z1234_ 등) + W tail(_W03/.W03).

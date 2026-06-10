@@ -101,9 +101,9 @@ def _canonical_meta_bytes(meta: dict) -> bytes:
                       separators=(",", ":")).encode("utf-8")
 
 
-def _compute_analysis_key(xlsx_bytes: bytes, meta: dict) -> str:
+def _compute_analysis_key(grids_canonical: bytes, meta: dict) -> str:
     h = hashlib.sha256()
-    h.update(xlsx_bytes)
+    h.update(grids_canonical)
     h.update(b"|")
     h.update(_canonical_meta_bytes(meta))
     return h.hexdigest()
@@ -149,17 +149,19 @@ def _yield_row_to_summary(row: dict) -> dict:
 
 @report_bp.post("/upload_xlsx")
 def upload_xlsx():
-    if "xlsx" not in request.files:
-        abort(400, "missing 'xlsx' file field")
-    f = request.files["xlsx"]
-    raw_name = f.filename or ""
-    name = secure_filename(raw_name) or "upload.xlsx"
-    if not name.lower().endswith(".xlsx"):
-        abort(400, "file must be .xlsx")
+    # 클라이언트(Excel COM)가 추출한 시트 grid JSON 을 수신. xlsx 파일은 받지 않는다.
+    raw_grids = request.form.get("sheet_grids")
+    if not raw_grids:
+        abort(400, "missing 'sheet_grids' field")
+    try:
+        sheet_grids = json.loads(raw_grids)
+    except (ValueError, TypeError):
+        abort(400, "sheet_grids must be valid JSON")
+    if not isinstance(sheet_grids, dict) or not sheet_grids:
+        abort(400, "sheet_grids must be a non-empty object")
 
-    xlsx_bytes = f.read()
-    if not xlsx_bytes:
-        abort(400, "empty file")
+    raw_name = request.form.get("file_name") or "upload.xlsx"
+    name = secure_filename(raw_name) or "upload.xlsx"
 
     meta = _validate_meta(request.form)
     # password 는 접근 제어용이라 analysis_key 산출(meta)에는 포함하지 않는다.
@@ -172,8 +174,10 @@ def upload_xlsx():
         "product": meta["product"],
         "lot_id": meta["lot_id"],
     }
-    analysis_key = _compute_analysis_key(xlsx_bytes, key_meta)
-    content_hash = hashlib.sha256(xlsx_bytes).hexdigest()
+    grids_canonical = json.dumps(sheet_grids, sort_keys=True, ensure_ascii=False,
+                                 separators=(",", ":")).encode("utf-8")
+    analysis_key = _compute_analysis_key(grids_canonical, key_meta)
+    content_hash = hashlib.sha256(grids_canonical).hexdigest()
     session_id = f"{int(time.time())}_{secrets.token_hex(3)}"
 
     report_db.create_session(
@@ -194,20 +198,10 @@ def upload_xlsx():
         content_hash=content_hash, status="uploading",
     )
 
-    # ── xlsx 파싱 ──────────────────────────────────────────────────────────
+    # ── grid 파싱 ──────────────────────────────────────────────────────────
     try:
-        from xlsx_parser import parse_report_xlsx, XlsxTooLarge, XlsxLoadTimeout
-        parsed = parse_report_xlsx(xlsx_bytes)
-    except XlsxTooLarge as exc:
-        report_db.update_session(session_id, status="failed",
-                                 error_message=f"xlsx too large: {exc}"[:500])
-        return jsonify({"session_id": session_id, "status": "failed",
-                        "error": f"xlsx too large: {exc}"}), 413
-    except XlsxLoadTimeout as exc:
-        report_db.update_session(session_id, status="failed",
-                                 error_message=f"xlsx parse timeout: {exc}"[:500])
-        return jsonify({"session_id": session_id, "status": "failed",
-                        "error": f"xlsx parse timeout: {exc}"}), 422
+        from xlsx_parser import parse_report_xlsx
+        parsed = parse_report_xlsx(sheet_grids)
     except Exception as exc:
         report_db.update_session(session_id, status="failed",
                                  error_message=f"parse failed: {exc}"[:500])
@@ -244,8 +238,9 @@ def upload_xlsx():
 
     # ── 저장소 산출물(S3/local fallback) : 비치명적 ─────────────────────────
     meta_str = _canonical_meta_bytes(meta).decode("utf-8")
-    client_issue_imgs = _collect_issue_images(request.files)
-    issue_images_src = client_issue_imgs or parsed.get("issue_images") or []
+    # 행별 이미지는 클라이언트(issue_img_<row>)가 유일 소스 — 서버는 grid 만 받으므로
+    # 임베드 PNG 추출이 불가하다.
+    issue_images_src = _collect_issue_images(request.files)
     # Distribution PDF/PNG 업로드는 일단 비활성화한다. Issue Table 행별 이미지는 유지.
     dist_data = None
     chart_pngs = []
@@ -254,7 +249,6 @@ def upload_xlsx():
             analysis_key=analysis_key,
             content_hash=content_hash,
             meta_str=meta_str,
-            xlsx_bytes=xlsx_bytes,
             issue_images=issue_images_src,
             dist_png=dist_data,
             chart_pngs=chart_pngs,

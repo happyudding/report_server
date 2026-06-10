@@ -1,4 +1,17 @@
-"""Honey 가 업로드한 .xlsx 에서 summary / yield / issue_table 추출.
+"""Honey 가 추출해 보낸 시트 grid 에서 summary / yield / issue_table 추출.
+
+Honey 클라이언트가 Excel COM 으로 DRM 해제·셀값을 읽어 시트별 grid(2D 배열)로
+전송한다. 서버는 더 이상 xlsx 파일을 받지도, openpyxl 로 로드하지도 않는다 —
+입력은 이미 추출된 텍스트(primitive)뿐이다.
+
+입력 형식 (sheet_grids):
+  {
+    "summary":     {"origin": [r0, c0], "values": [[...], ...]},
+    "yield":       {"origin": [r0, c0], "values": [[...], ...]},
+    "issue_table": {"origin": [r0, c0], "values": [[...], ...]},
+  }
+  origin 은 Excel UsedRange 좌상단(1-based). values 는 그 좌상단부터의 셀값 배열.
+  절대 셀좌표(B4="DEVICE", C3="Bin" 등) 앵커 탐색을 위해 origin 으로 매핑한다.
 
 클라이언트 report generator 산출물 레이아웃 전제(실측 기준):
   - 표는 A열을 비우고 B열부터 시작, 제목 배너 A1, 표 헤더 3행, 데이터 4행~.
@@ -11,94 +24,95 @@
   2. summary dict     — 의미 단위 (기존 report_analysis_summary 매핑·검색 유지용).
   3. yield_rows list  — report_analysis_summary 저장용.
   4. issue_rows list  — comment 제외 legacy(하위호환).
-  5. issue_images     — Distribution PNG 추출 (ISSUE_IMAGES_ENABLED=True 시).
+
+Issue_table 행별 PNG 는 클라이언트가 issue_img_<row> 채널로 따로 보낸다(여기선 다루지 않음).
 
 앵커 탐색: 지정 셀 우선 → 키워드 전체 스캔 폴백 (_find_anchor).
 """
-import os
-import threading
-import zipfile
-from io import BytesIO
-
-# Issue_table 행별 임베드 PNG 추출 활성화 플래그.
-# True 면 Distribution 열의 행별 PNG 를 추출해 저장소(S3 또는 로컬 폴백)에 보관한다.
-ISSUE_IMAGES_ENABLED = True
-
-# ── 파싱 보호 한계 ───────────────────────────────────────────────────────────
-# openpyxl 은 순수 파이썬 파서라 거대/악성(zip bomb) 파일에서 메모리 폭증·무한
-# CPU 점유가 발생할 수 있다. 로드 전에 크기를 검사하고, 로드 자체는 타임아웃을 건다.
-_MAX_XLSX_BYTES = int(os.environ.get(
-    "REPORT_XLSX_MAX_BYTES", str(80 * 1024 * 1024)))            # 압축 파일 자체 80MB
-_MAX_XLSX_UNCOMPRESSED = int(os.environ.get(
-    "REPORT_XLSX_MAX_UNCOMPRESSED", str(800 * 1024 * 1024)))    # 압축 해제 합계 800MB
-_LOAD_TIMEOUT_SEC = float(os.environ.get(
-    "REPORT_XLSX_LOAD_TIMEOUT", "60"))                          # load_workbook 타임아웃(초)
+import re
 
 
-class XlsxTooLarge(ValueError):
-    """xlsx 가 허용 크기/압축비를 초과."""
+# ── grid 백엔드 워크시트 셸 (openpyxl 워크시트 최소 호환) ─────────────────────
+# 기존 파싱 함수들은 openpyxl 워크시트 API(ws.cell / ws.iter_rows / ws.max_row /
+# ws[ref])에 의존한다. 그 인터페이스를 grid(2D 배열) 위에서 그대로 제공해
+# 파싱 로직을 변경 없이 보존한다.
+
+class _Cell:
+    __slots__ = ("value", "row", "column")
+
+    def __init__(self, value, row, column):
+        self.value = value
+        self.row = row
+        self.column = column
 
 
-class XlsxLoadTimeout(RuntimeError):
-    """openpyxl.load_workbook 가 타임아웃 내에 끝나지 않음."""
+def _a1_to_rc(ref):
+    """'B4' → (row=4, col=2) (1-based). 잘못된 표기는 KeyError."""
+    m = re.fullmatch(r"\s*([A-Za-z]+)(\d+)\s*", str(ref))
+    if not m:
+        raise KeyError(ref)
+    letters, digits = m.group(1).upper(), m.group(2)
+    col = 0
+    for ch in letters:
+        col = col * 26 + (ord(ch) - 64)
+    return int(digits), col
 
 
-def _guard_xlsx_size(xlsx_bytes: bytes) -> None:
-    """파싱 전 크기/압축 해제 크기 검사. zip bomb·거대 파일을 사전 차단."""
-    if len(xlsx_bytes) > _MAX_XLSX_BYTES:
-        raise XlsxTooLarge(
-            f"xlsx too large: {len(xlsx_bytes)} bytes > {_MAX_XLSX_BYTES}")
-    try:
-        with zipfile.ZipFile(BytesIO(xlsx_bytes)) as zf:
-            total = sum(zi.file_size for zi in zf.infolist())
-    except zipfile.BadZipFile as exc:
-        raise XlsxTooLarge(f"not a valid xlsx (zip) file: {exc}") from exc
-    if total > _MAX_XLSX_UNCOMPRESSED:
-        raise XlsxTooLarge(
-            f"xlsx uncompressed size too large: {total} bytes > {_MAX_XLSX_UNCOMPRESSED}")
+class _GridSheet:
+    """grid(2D 배열) 백엔드 워크시트 셸.
+
+    values 는 UsedRange 좌상단(row_offset, col_offset, 둘 다 1-based)에서 시작하는
+    셀값 배열. 절대 셀좌표 접근 시 offset 으로 매핑하고, 범위 밖은 None.
+    iter_rows / __getitem__ 은 openpyxl 처럼 행1·열1 부터 None 패딩해 순회한다.
+    """
+
+    def __init__(self, values, row_offset=1, col_offset=1):
+        self._values = values or []
+        self._r0 = max(1, int(row_offset or 1))
+        self._c0 = max(1, int(col_offset or 1))
+        n_rows = len(self._values)
+        n_cols = max((len(r) for r in self._values), default=0)
+        self.max_row = (self._r0 + n_rows - 1) if n_rows else 0
+        self.max_column = (self._c0 + n_cols - 1) if n_cols else 0
+
+    def _value_at(self, row, col):
+        i = row - self._r0
+        j = col - self._c0
+        if i < 0 or j < 0 or i >= len(self._values):
+            return None
+        r = self._values[i]
+        if j >= len(r):
+            return None
+        return r[j]
+
+    def cell(self, row, column):
+        return _Cell(self._value_at(row, column), row, column)
+
+    def iter_rows(self, min_row=1, max_row=None, min_col=1, max_col=None,
+                  values_only=False):
+        last_row = self.max_row if max_row is None else max_row
+        last_col = self.max_column if max_col is None else max_col
+        for r in range(min_row, last_row + 1):
+            if values_only:
+                yield tuple(self._value_at(r, c) for c in range(min_col, last_col + 1))
+            else:
+                yield tuple(_Cell(self._value_at(r, c), r, c)
+                            for c in range(min_col, last_col + 1))
+
+    def __getitem__(self, key):
+        if isinstance(key, int):                       # ws[5] → 5행 셀 튜플
+            return tuple(_Cell(self._value_at(key, c), key, c)
+                         for c in range(1, self.max_column + 1))
+        row, col = _a1_to_rc(key)                       # ws["B4"] → 단일 셀
+        return _Cell(self._value_at(row, col), row, col)
 
 
-def _load_workbook_guarded(xlsx_bytes: bytes):
-    """openpyxl.load_workbook 을 워커 스레드에서 실행하고 타임아웃을 건다.
-
-    타임아웃 초과 시 워커는 데몬으로 방치하고 호출자에게 XlsxLoadTimeout 을 던진다
-    — 해당 요청만 실패시키고 서버는 계속 응답한다 (파이썬에서 스레드 강제 종료는
-    불가하므로 데몬 스레드로 두어 인터프리터 종료 시 함께 회수되게 한다)."""
-    import openpyxl
-
-    result = {}
-
-    def _work():
-        try:
-            result["wb"] = openpyxl.load_workbook(
-                BytesIO(xlsx_bytes), data_only=True, read_only=False)
-        except Exception as exc:  # 워커 예외를 호출 스레드로 전달
-            result["err"] = exc
-
-    t = threading.Thread(target=_work, daemon=True)
-    t.start()
-    t.join(_LOAD_TIMEOUT_SEC)
-    if t.is_alive():
-        raise XlsxLoadTimeout(
-            f"openpyxl.load_workbook exceeded {_LOAD_TIMEOUT_SEC}s")
-    if "err" in result:
-        raise result["err"]
-    return result["wb"]
-
-
-def parse_report_xlsx(xlsx_bytes: bytes) -> dict:
-    """xlsx 바이트열을 받아 sheet_data + legacy 의미 dict + 이미지 훅 결과를 반환."""
-    try:
-        import openpyxl  # noqa: F401 - 설치 여부 확인 (실제 로드는 _load_workbook_guarded)
-    except ImportError as exc:
-        raise RuntimeError("openpyxl not installed; pip install openpyxl") from exc
-
-    _guard_xlsx_size(xlsx_bytes)
-    wb = _load_workbook_guarded(xlsx_bytes)
-
-    sm = _get_sheet(wb, "summary")
-    yl = _get_sheet(wb, "yield")
-    it = _get_sheet(wb, "issue_table")
+def parse_report_xlsx(sheet_grids: dict) -> dict:
+    """추출 grid dict 를 받아 sheet_data + legacy 의미 dict 를 반환."""
+    grids = sheet_grids or {}
+    sm = _get_sheet(grids, "summary")
+    yl = _get_sheet(grids, "yield")
+    it = _get_sheet(grids, "issue_table")
 
     summary = _extract_summary_sheet(sm)
     yield_rows = _rows_with_header(yl)
@@ -108,8 +122,8 @@ def parse_report_xlsx(xlsx_bytes: bytes) -> dict:
     ]
 
     # 순수 텍스트 데이터 (스타일 없음) — DB 저장용
-    # Distribution 열은 유지한다(값은 비어있고 행별 PNG 는 issue_images 로 따로 추출).
-    # 열 순서는 xlsx 헤더 순서를 그대로 보존 → Category(좌) … Distribution … comment(우).
+    # Distribution 열은 유지한다(값은 비어있고 행별 PNG 는 클라가 따로 전송).
+    # 열 순서는 헤더 순서를 그대로 보존 → Category(좌) … Distribution … comment(우).
     summary_blocks = _extract_summary_blocks(sm)
     issue_full = _rows_with_header(it)
 
@@ -121,15 +135,11 @@ def parse_report_xlsx(xlsx_bytes: bytes) -> dict:
     if issue_full is not None:
         sheet_data["issue_table"] = issue_full
 
-    issue_hdr = _find_issue_header_row(it)
-    issue_images = _extract_issue_images(it, issue_hdr, enabled=ISSUE_IMAGES_ENABLED)
-
     return {
         "summary": summary,
         "yield_rows": yield_rows,
         "issue_rows": issue_rows,
         "sheet_data": sheet_data,
-        "issue_images": issue_images,
     }
 
 
@@ -222,14 +232,6 @@ def _region_to_block(ws, region, label: str) -> dict | None:
     return {"label": label, "headers": raw_headers, "rows": rows}
 
 
-def _find_issue_header_row(ws):
-    """issue_table 헤더행(1-based). 없으면 None."""
-    if ws is None:
-        return None
-    a = _find_anchor(ws, "bin", "C3")
-    return a[0] if a else _guess_header_row(ws)
-
-
 # ── 앵커 탐색 ─────────────────────────────────────────────────────────────────
 
 def _find_anchor(ws, text, expect_cell):
@@ -285,40 +287,21 @@ def _table_region(ws, header_row):
     return (header_row, c0, r1, c1)
 
 
-# ── Issue_table 행별 임베드 PNG 추출 (골격) ──────────────────────────────────
-
-def _extract_issue_images(ws, header_row, enabled=False):
-    """Issue_table 의 행별 임베드 PNG 추출. 골격 단계(enabled=False)에선 빈 리스트."""
-    out = []
-    if not enabled or ws is None or not header_row:
-        return out
-    for img in (getattr(ws, "_images", None) or []):
-        try:
-            frm = img.anchor._from
-            # frm.row 는 0-based. 데이터행 리스트 인덱스(ri) = ExcelRow-(header_row+1)
-            # = (frm.row+1) - (header_row+1) = frm.row - header_row.
-            # 개수는 파일에 박힌 이미지 수만큼 동적 — 고정값 아님.
-            grid_row = int(frm.row) - header_row
-            if grid_row < 0:           # 헤더보다 위에 있는 이미지(로고 등)는 제외
-                continue
-            ref = img.ref
-            data = ref.getvalue() if hasattr(ref, "getvalue") else ref
-            if data:
-                out.append({"row": grid_row, "png": bytes(data)})
-        except (AttributeError, TypeError, ValueError):
-            continue
-    return out
-
-
-def _get_sheet(wb, name):
-    """시트 이름이 정확히 일치하지 않을 때 대소문자/공백 무시 fallback."""
-    if name in wb.sheetnames:
-        return wb[name]
-    key = name.strip().lower()
-    for s in wb.sheetnames:
-        if s.strip().lower() == key:
-            return wb[s]
-    return None
+def _get_sheet(grids, name):
+    """grids dict 에서 시트 grid → _GridSheet. 대소문자/공백 무시 fallback. 없으면 None."""
+    g = grids.get(name)
+    if g is None:
+        key = name.strip().lower()
+        for k, v in grids.items():
+            if str(k).strip().lower() == key:
+                g = v
+                break
+    if g is None:
+        return None
+    origin = g.get("origin") or [1, 1]
+    r0 = origin[0] if len(origin) > 0 else 1
+    c0 = origin[1] if len(origin) > 1 else 1
+    return _GridSheet(g.get("values"), r0, c0)
 
 
 # ── summary (legacy 의미 dict — report_analysis_summary 매핑용) ───────────────
