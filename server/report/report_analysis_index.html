@@ -182,7 +182,7 @@ tr.result-row:hover { background: #f5f8ff; }
 
 <header class="page-header">
   <h1 class="page-title">PTE REPORT DASHBOARD</h1>
-  <button type="button" class="back-main-btn">BACK TO MAIN</button>
+  <a class="back-main-btn" href="https://lsipte--github-test-dev.cdep1.samsungds.net">BACK TO MAIN</a>
 </header>
 
 <!-- product type 필터 -->
@@ -195,7 +195,7 @@ tr.result-row:hover { background: #f5f8ff; }
   <div style="font-size:12px; color:#888;">
     업로드는 Honey 클라이언트에서 수행합니다.
   </div>
-  <a id="honeyDlBtn" class="honey-dl-btn" href="/honey/download">⬇ HONEY 다운로드 3.0.0</a>
+  <a id="honeyDlBtn" class="honey-dl-btn" href="/honey/download">⬇ HONEY 다운로드</a>
 </div>
 
 <!-- 검색 필터 -->
@@ -298,7 +298,7 @@ function esc(v) {
     if (!m.version) throw new Error("no version");
     if (m.url) btn.href = m.url;
     if (m.file) btn.setAttribute("download", m.file);
-    btn.textContent = "⬇ HONEY 다운로드 3.0.0";
+    btn.textContent = "⬇ HONEY 다운로드";
   } catch (e) {
     btn.classList.add("disabled");
     btn.removeAttribute("href");

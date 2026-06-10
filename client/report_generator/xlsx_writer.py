@@ -300,6 +300,7 @@ def _prof_report():
     _PROF_CNT.clear()
 
 _CHARTS_PER_ROW = 5
+_HISTOGRAM_BINS = 20
 # 차트 크기 — gap 없이 밀착 배치 (사용자 사양 324x198)
 _CHART_W, _CHART_H = 324, 198
 _PLOT_W, _PLOT_TOP, _PLOT_H = 280, 30, 167
@@ -2196,13 +2197,13 @@ def _chart_data_set(chart_api, d, x_sheet, y_sheet, col_idx, cnt_list, src_names
     with _dist_time("dist.loop.series_limits"):
         for lim, nm in ((lo, "LSL"), (hi, "USL")):
             s = sc.NewSeries()
+            idx = sc.Count
             if lim is not None:
-                s.XValues = (lim, lim)
-                s.Values = (-1.0, 1.0)            # x=lim 세로선(Y 0~1 덮음)
+                x_val = f"{lim:.10g}"
+                s.Formula = f'=SERIES("{nm}",{{{x_val},{x_val}}},{{-1,1}},{idx})'
             else:
-                s.XValues = (xv0, xv0)
-                s.Values = (-2.0, -2.0)           # 차트 밖(안 보임) — series 인덱스 안정용
-            s.Name = nm
+                x_val = f"{xv0:.10g}"
+                s.Formula = f'=SERIES("{nm}",{{{x_val},{x_val}}},{{-2,2}},{idx})'
             _style_limit_series(s)
             limit_count += 1
     y = 0
@@ -2736,7 +2737,7 @@ def _build_histogram_data(dists, src_dfs):
             col = arrs[k][:, i] if arrs[k].size else np.empty(0)
             finite = col[np.isfinite(col)]
             if finite.size:
-                counts, edges = np.histogram(finite, bins="auto")
+                counts, edges = np.histogram(finite, bins=_HISTOGRAM_BINS)
                 centers = (edges[:-1] + edges[1:]) / 2.0
                 counts = counts.astype(float)
             else:
@@ -2885,6 +2886,10 @@ def _style_hist_series(s, rgb=None):
         s.MarkerStyle = _XL_MARKER_NONE
     except Exception:
         pass
+    try:
+        s.Smooth = True
+    except Exception:
+        pass
 
 
 def _histogram_layout_setting(chart_api, x_min, x_max, y_top, limit_count):
@@ -2907,7 +2912,7 @@ def _histogram_layout_setting(chart_api, x_min, x_max, y_top, limit_count):
         if x_min is not None and x_max is not None and x_min < x_max:
             xax.MinimumScale = x_min
             xax.MaximumScale = x_max
-        xax.HasMinorGridlines = True
+        xax.HasMinorGridlines = False
         xax.TickLabels.Font.Size = 8
     except Exception:
         pass
