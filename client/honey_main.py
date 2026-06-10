@@ -112,6 +112,7 @@ class HoneyMainWindow(QMainWindow):
         self.progress_status.hide()
         self.txt_summary.setReadOnly(True)
         self.txt_summary.setUndoRedoEnabled(False)
+        self._apply_main_ui_tweaks()
 
         self.csv_paths = []
         self.group = None          # df_honey_group
@@ -134,6 +135,18 @@ class HoneyMainWindow(QMainWindow):
         if rg is None:
             self._disable_engine()
         QTimer.singleShot(500, self.check_for_update)
+
+    def _apply_main_ui_tweaks(self):
+        """메인 화면 상단 배치와 주요 파일 선택 버튼 가독성을 조정한다."""
+        self.horizontalLayout_top.setStretch(0, 1)
+        self.horizontalLayout_top.setStretch(1, 1)
+
+        for button in (self.btn_open_local, self.btn_pick_csv):
+            font = QFont(button.font())
+            point_size = font.pointSize()
+            if point_size > 0:
+                font.setPointSize(point_size + 3)
+            button.setFont(font)
 
     def _init_run_log(self, title):
         self._run_log_started = time.perf_counter()

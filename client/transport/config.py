@@ -6,7 +6,7 @@ honey 엔진·UI 의 로컬 설정(config.py: CONFIG_DIR, CHART_COLORS_PATH, D1_
 """
 import os
 
-SERVER_BASE_URL = os.environ.get("HONEY_SERVER_URL", "http://127.0.0.1:8000")
+SERVER_BASE_URL = os.environ.get("HONEY_SERVER_URL", "http://12.81.220.117:8080")
 
 CURRENT_VERSION = "3.0.0"
 
