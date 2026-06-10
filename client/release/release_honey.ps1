@@ -35,7 +35,6 @@ $SpecFile    = Join-Path $ClientDir "build_honey.spec"
 $DistDir     = Join-Path $ClientDir "dist\Honey"
 $DistExe     = Join-Path $DistDir "Honey.exe"
 $ReleaseDist = Join-Path $ClientDir "release_dist"
-$D1Storage   = Join-Path $RepoRoot "d1_storage"
 $ReleasesDir = Join-Path $RepoRoot "server\releases"
 $VersionJson = Join-Path $ReleasesDir "version.json"
 $ReleaseLog  = Join-Path $ReleasesDir "release_log.txt"
@@ -144,9 +143,6 @@ $stageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("honey_zip_stage_" + [
 $stageHoney = Join-Path $stageRoot "Honey"
 New-Item -ItemType Directory -Path $stageHoney | Out-Null
 Copy-Item (Join-Path $DistDir "*") $stageHoney -Recurse -Force
-if (Test-Path $D1Storage) {
-    Copy-Item $D1Storage (Join-Path $stageHoney "d1_storage") -Recurse -Force
-}
 Compress-Archive -Path (Join-Path $stageRoot "Honey") -DestinationPath $BuiltZip -CompressionLevel Optimal
 Remove-Item $stageRoot -Recurse -Force
 Write-Host "    -> $BuiltZip"

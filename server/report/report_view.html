@@ -362,8 +362,8 @@ const YIELD_COLS = ["item_name", "bin_number", "yield_percent", "fail_count",
 // 업로드 xlsx 에 해당 sheet 가 없으면 헤더만 있는 빈 표(헤더 + 빈 행 1개)를 보여준다.
 // 동적 source 열({src}_count/_yield)은 sheet 가 없으면 알 수 없으므로 정적 열만 포함.
 // 헤더 값은 생성기 client/report_generator/xlsx_writer.py 레이아웃과 일치.
-const YIELD_FRAME_COLS = ["bin", "Item", "avg", "comment"];
-const ISSUE_FRAME_COLS = ["Category", "Bin", "Item", "avg", "Distribution",
+const YIELD_FRAME_COLS = ["step", "bin", "TNO", "Item", "avg", "comment"];
+const ISSUE_FRAME_COLS = ["Category", "Step", "Bin", "TNO", "Item", "avg", "Distribution",
                           "comment", "개발 1차 comment", "PTE 2차 comment", "개발 2차 comment"];
 const SUMMARY_FRAME_BLOCKS = [
   { label: "1. Device Feature",

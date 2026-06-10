@@ -2,6 +2,7 @@ import os
 import socket
 import sys
 import time
+from pathlib import Path
 
 # 콘솔 인코딩(예: Windows cp949)이 로그 문자열의 비-인코딩 문자(em-dash 등)를
 # 만나도 서버가 UnicodeEncodeError 로 죽지 않도록 stdout/stderr 를 UTF-8 로 강제.
@@ -10,6 +11,55 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+_LOG_FILE = None
+LOG_PATH = None
+
+
+class _TeeStream:
+    def __init__(self, console_stream, file_stream):
+        self._console = console_stream
+        self._file = file_stream
+        self.encoding = getattr(console_stream, "encoding", "utf-8")
+        self.errors = getattr(console_stream, "errors", "replace")
+
+    def write(self, data):
+        self._console.write(data)
+        try:
+            self._file.write(data)
+        except Exception:
+            pass
+        self.flush()
+
+    def flush(self):
+        self._console.flush()
+        try:
+            self._file.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        return self._console.isatty()
+
+    def __getattr__(self, name):
+        return getattr(self._console, name)
+
+
+def _enable_console_log_file():
+    global _LOG_FILE, LOG_PATH
+    try:
+        log_dir = Path(__file__).resolve().parent / "log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        LOG_PATH = log_dir / f"server_{stamp}.txt"
+        _LOG_FILE = LOG_PATH.open("a", encoding="utf-8", buffering=1)
+        sys.stdout = _TeeStream(sys.stdout, _LOG_FILE)
+        sys.stderr = _TeeStream(sys.stderr, _LOG_FILE)
+    except Exception:
+        LOG_PATH = None
+
+
+_enable_console_log_file()
 
 
 def _log(msg):
@@ -38,6 +88,8 @@ def _lan_ips():
 
 
 _t0 = time.perf_counter()
+if LOG_PATH:
+    _log(f"console log file: {LOG_PATH}")
 _log("importing Flask ...")
 from flask import Flask
 

@@ -964,6 +964,7 @@ def _install_excepthook():
 
     def hook(etype, value, tb):
         text = "".join(traceback.format_exception(etype, value, tb))
+        print(text, file=sys.stderr)  # tee 된 stderr → 로그 파일에 traceback 기록
         try:
             QMessageBox.critical(None, "오류가 발생했습니다", text[-3000:])
         except Exception:
@@ -987,6 +988,8 @@ def _apply_cute_font(app):
 
 
 def main():
+    import run_log
+    run_log.setup_run_logging()
     app = QApplication(sys.argv)
     _apply_cute_font(app)
     _install_excepthook()
