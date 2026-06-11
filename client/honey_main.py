@@ -43,6 +43,7 @@ from honey_ui import (
 )
 from report_flow import (
     build_output_path as _build_output_path,
+    ensure_summary_yield as _ensure_summary_yield,
     fill_device_if_empty as _fill_device_if_empty,
     prepare_upload_xlsx as _prepare_upload_xlsx,
     suggest_base_name as _suggest_base_name,
@@ -801,6 +802,7 @@ class HoneyMainWindow(QMainWindow):
         try:
             sheet_grids, issue_imgs = _prepare_upload_xlsx(path)
             _fill_device_if_empty(sheet_grids, v["product"])
+            _ensure_summary_yield(sheet_grids, v["lot_id"])
         except ValueError as exc:
             QMessageBox.critical(self, "파일 오류", str(exc))
             self.btn_upload_local.setEnabled(True)
