@@ -54,16 +54,16 @@ def _sheetname_from_df_yield(df_yield) -> Optional[str]:
     return None
 
 
-# 입력 파일명 → 기본 Sheetname. lot header(_6Z1234_ 등) + W tail(_W03/.W03).
+# 입력 파일명 → 기본 Sheetname. lot header(_6Z1234_ 등) + W tail(_W03/.W03/-W03).
 _FILENAME_HEADER_RE = re.compile(r"_([68][012Z][^_.]*)", re.IGNORECASE)
-_FILENAME_TAIL_RE = re.compile(r"[_.](W[^_.]*)", re.IGNORECASE)
+_FILENAME_TAIL_RE = re.compile(r"[-_.](W[^-_.]*)", re.IGNORECASE)
 
 
 def _sheetname_from_filename(path: Path) -> Optional[str]:
     """입력 파일명에서 lot header + W tail 을 뽑아 기본 Sheetname 생성.
 
     header: '_' 뒤 60/61/62/6Z/80/81/82/8Z 로 시작 → 다음 '_'/'.' 직전까지.
-    tail:   '_W*' 또는 '.W*' (다음 '_'/'.' 직전까지).
+    tail:   '_W*'/'.W*'/'-W*' (다음 '_'/'.'/'-' 직전까지).
     예) T2K_6Z1234_W03_260505.csv -> '6Z1234_W03'.
     header 없으면 None(호출자 fallback). header 만 있으면 header 단독 반환.
     """

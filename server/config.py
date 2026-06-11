@@ -19,6 +19,8 @@ SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", f"http://{_HOST}:{_PORT}")
 REPORT_DB_PATH = _path_env("REPORT_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" / "report.db")
 REPORT_UPLOAD_DIR = _path_env("REPORT_UPLOAD_DIR", ROOT_DIR / "uploads" / "report")
 
+STDINFO_DB_PATH = _path_env("STDINFO_DB_PATH", ROOT_DIR / "DB" / "INFORMATION" / "stdinfo_20260511.db")
+
 REPORT_S3_ENDPOINT   = os.getenv("REPORT_S3_ENDPOINT", "")
 REPORT_S3_BUCKET     = os.getenv("REPORT_S3_BUCKET", "")
 REPORT_S3_REGION     = os.getenv("REPORT_S3_REGION", "us-east-1")

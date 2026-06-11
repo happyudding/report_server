@@ -1,5 +1,7 @@
-﻿import re
+﻿import logging
+import re
 import secrets
+import sqlite3
 
 from flask import Response, abort, jsonify, make_response, request, send_file
 
@@ -9,7 +11,10 @@ import storage_gateway
 from config import (
     REPORT_ANALYSIS_INDEX_HTML,
     REPORT_VIEW_HTML,
+    STDINFO_DB_PATH,
 )
+
+_log = logging.getLogger(__name__)
 from report.report_extension import report_bp
 
 _ANALYSIS_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -406,6 +411,25 @@ def history():
         source=source,
     )
     return jsonify(rows)
+
+
+@report_bp.get("/api/part_ids")
+def part_ids():
+    """stdinfo DB 의 products.part_id 전체 목록. 업로드 다이얼로그 Product 검색용.
+
+    DB 없음/조회 실패는 best-effort 로 빈 리스트 반환(500 안 냄). 서버 로그에만 경고.
+    """
+    ids = []
+    try:
+        con = sqlite3.connect(f"file:{STDINFO_DB_PATH}?mode=ro", uri=True)
+        try:
+            rows = con.execute("SELECT part_id FROM products ORDER BY part_id").fetchall()
+        finally:
+            con.close()
+        ids = [r[0] for r in rows if r[0]]
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("part_ids 조회 실패 (%s): %s", STDINFO_DB_PATH, exc)
+    return jsonify({"part_ids": ids})
 
 
 # ── debug helpers ─────────────────────────────────────────────────────────────

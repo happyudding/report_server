@@ -620,11 +620,9 @@ function isDistCol(c) { return String(c || "").toLowerCase() === "distribution";
 
 // 열 순서 보정: 고정 prefix 컬럼(step/bin/tno/item, issue 는 category 포함 avg 까지)
 // → 지정 순서로 맨 앞에 배치(대소문자 무시), comment 류 → 최우측. 나머지 상대순서 유지.
-// 소스 복수 시 _count 그룹 먼저, _yield 그룹 이후 (cnt cnt cnt / yield yield yield).
+// yield: source 별 yield 값 → source 별 _cnt/_count → avg 순으로 그루핑.
 function orderColumns(cols, kind) {
   const isComment = c => /comment/i.test(String(c));
-  const isCnt = c => String(c).endsWith("_count");
-  const isYld = c => String(c).endsWith("_yield");
 
   const comments = cols.filter(isComment);
   let rest = cols.filter(c => !isComment(c));
@@ -644,21 +642,13 @@ function orderColumns(cols, kind) {
     rest = front.concat(rest);
   }
 
-  // cnt cnt cnt / yield yield yield 그루핑: _count 먼저, _yield 이후
-  if (rest.some(isCnt) && rest.some(isYld)) {
-    const before = [], cnts = [], ylds = [], after = [];
-    let cntYldSeen = false;
-    for (const c of rest) {
-      if (isCnt(c) || isYld(c)) {
-        cntYldSeen = true;
-        (isCnt(c) ? cnts : ylds).push(c);
-      } else if (!cntYldSeen) {
-        before.push(c);
-      } else {
-        after.push(c);
-      }
-    }
-    rest = before.concat(cnts).concat(ylds).concat(after);
+  if (kind === "yield") {
+    const isCntCol = c => /_(cnt|count)$/i.test(String(c));
+    const isAvgCol = c => String(c).trim().toLowerCase() === "avg";
+    const yieldVals = rest.filter(c => !isCntCol(c) && !isAvgCol(c));
+    const cntVals = rest.filter(isCntCol);
+    const avgVals = rest.filter(isAvgCol);
+    rest = yieldVals.concat(cntVals).concat(avgVals);
   }
 
   return rest.concat(comments);
@@ -691,6 +681,44 @@ function isCpkSubheadRow(r) {
   return cat === "cpk" && avg === "cpk";
 }
 
+// yield 행 정렬(보기 전용): step 별 섹션(반복 헤더 행으로 구분) 안에서
+// Bin1(PASS) 행을 맨 위에 두고, 나머지는 avg 내림차순. 합계(Sum) 행은 섹션 끝 유지.
+function reorderYieldRows(rows, cols) {
+  if (!rows || rows.length < 2) return rows || [];
+  const binCol = cols.find(c => String(c).trim().toLowerCase() === "bin");
+  const avgCol = cols.find(c => String(c).trim().toLowerCase() === "avg");
+  if (!binCol || !avgCol) return rows;
+
+  const firstCol = cols[0];
+  const isPassBin = r => String((r ? r[binCol] : "") ?? "").trim() === "1";
+  const isSumRow = r => String((r ? r[firstCol] : "") ?? "").trim().toLowerCase() === "sum";
+
+  const out = [];
+  let section = [];
+  const flushSection = () => {
+    if (!section.length) return;
+    const sumRows = section.filter(isSumRow);
+    const dataRows = section.filter(r => !isSumRow(r));
+    const passRows = dataRows.filter(isPassBin);
+    const restRows = dataRows.filter(r => !isPassBin(r))
+      .slice()
+      .sort((a, b) => (parseFloat(b[avgCol]) || 0) - (parseFloat(a[avgCol]) || 0));
+    out.push(...passRows, ...restRows, ...sumRows);
+    section = [];
+  };
+
+  rows.forEach(r => {
+    if (isHeaderLikeRow(r, cols)) {
+      flushSection();
+      out.push(r);
+    } else {
+      section.push(r);
+    }
+  });
+  flushSection();
+  return out;
+}
+
 /**
  * rows(list of dict) → HTML sheet-table.
  * opts: { edit, imgMap:{rowIndex:url}, kind:"yield"|"issue", columns:[...] }
@@ -711,6 +739,9 @@ function renderSheetTable(rows, opts) {
   }
   if (!cols.length) return "";
 
+  let bodyRows = rows || [];
+  if (opts.kind === "yield" && !opts.edit) bodyRows = reorderYieldRows(bodyRows, cols);
+
   const colgroup = "<colgroup>" + cols.map(c =>
     `<col style="width:${colWidth(c)}">`
   ).join("") + "</colgroup>";
@@ -719,7 +750,7 @@ function renderSheetTable(rows, opts) {
     `<th>${esc(headerLabel(c))}</th>`
   ).join("") + "</tr></thead>";
 
-  const body = "<tbody>" + (rows || []).map((r, ri) => {
+  const body = "<tbody>" + bodyRows.map((r, ri) => {
     const subhead = (opts.kind === "yield" && isHeaderLikeRow(r, cols))
       || (opts.kind === "issue" && isCpkSubheadRow(r));
     const tds = cols.map((c, ci) => {

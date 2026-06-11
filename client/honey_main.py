@@ -43,6 +43,7 @@ from honey_ui import (
 )
 from report_flow import (
     build_output_path as _build_output_path,
+    fill_device_if_empty as _fill_device_if_empty,
     prepare_upload_xlsx as _prepare_upload_xlsx,
     suggest_base_name as _suggest_base_name,
 )
@@ -799,6 +800,7 @@ class HoneyMainWindow(QMainWindow):
         # ── xlsx 전처리: Excel COM 으로 DRM 해제·시트 grid 추출 ──────────────
         try:
             sheet_grids, issue_imgs = _prepare_upload_xlsx(path)
+            _fill_device_if_empty(sheet_grids, v["product"])
         except ValueError as exc:
             QMessageBox.critical(self, "파일 오류", str(exc))
             self.btn_upload_local.setEnabled(True)
@@ -811,10 +813,31 @@ class HoneyMainWindow(QMainWindow):
             return
 
         # ── 서버 업로드 ───────────────────────────────────────────────────
+        self._append_run_log(f"{Path(path).name} 파일 Upload 진행중입니다...")
+
         progress = _ElapsedProgress(
             self.progress_status, f"서버 업로드 중... {Path(path).name}",
-            self._status, busy=True, minimum=0, maximum=0)
+            self._status, busy=False, minimum=0, maximum=100)
         QApplication.processEvents()
+
+        upload_progress_q = queue.Queue()
+
+        def _on_upload_progress(bytes_read, total_bytes):
+            upload_progress_q.put((bytes_read, total_bytes))
+
+        def _drain_upload_progress():
+            last = None
+            while True:
+                try:
+                    last = upload_progress_q.get_nowait()
+                except queue.Empty:
+                    break
+            if last is None:
+                return
+            bytes_read, total_bytes = last
+            pct = int(bytes_read * 100 / total_bytes) if total_bytes else 0
+            msg = f"서버 업로드 중... {Path(path).name} ({pct}%)"
+            progress.set(msg, value=pct, status=msg)
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
@@ -830,8 +853,9 @@ class HoneyMainWindow(QMainWindow):
                     edm_link=v["edm_link"],
                     password=v["password"],
                     issue_imgs=issue_imgs,
+                    progress_cb=_on_upload_progress,
                 )
-                result = _wait_for_future(fut, progress)
+                result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
         except Exception as exc:
             progress.fail(f"실패: 업로드 실패 - {exc}")
             QMessageBox.critical(self, "업로드 실패", str(exc))

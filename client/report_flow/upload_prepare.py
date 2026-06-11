@@ -110,6 +110,39 @@ def _extract_via_excel_com(src_path, header_row=3):
         pythoncom.CoUninitialize()
 
 
+def fill_device_if_empty(sheet_grids: dict, product: str) -> None:
+    """summary 시트의 Device 값이 비어있으면 선택한 product(part_id)로 채운다 (in-place).
+
+    서버 파서와 동일하게 'DEVICE' 헤더 셀 바로 아래 셀을 Device 값으로 본다.
+    summary 없음 / DEVICE 미발견 / 아래 행 없음 / product 빈값 / 아래셀에 이미 값 있음
+    → 아무것도 하지 않는다(원본 유지).
+    """
+    if not product:
+        return
+    summary = (sheet_grids or {}).get("summary")
+    if not summary:
+        return
+    values = summary.get("values")
+    if not isinstance(values, list):
+        return
+    for i, row in enumerate(values):
+        if not isinstance(row, (list, tuple)):
+            continue
+        for j, cell in enumerate(row):
+            if str(cell).strip().upper() != "DEVICE":
+                continue
+            below = i + 1
+            if below >= len(values):
+                return
+            target_row = values[below]
+            if not isinstance(target_row, list) or j >= len(target_row):
+                return
+            cur = target_row[j]
+            if cur is None or str(cur).strip() == "":
+                target_row[j] = product
+            return
+
+
 def prepare_upload_xlsx(src_path: str) -> tuple:
     """업로드용 추출 데이터 준비.
 

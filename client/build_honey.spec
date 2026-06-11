@@ -29,10 +29,12 @@ a = Analysis(
     hiddenimports=(
         ['PyQt5.sip', 'PyQt5.uic', 'win32com', 'win32com.client', 'pythoncom',
          'pywintypes', 'pandas', 'numpy']
+        + collect_submodules('requests_toolbelt')
         + _xw_hidden
         + _fitz_hidden
         + collect_submodules('report_generator')
     + collect_submodules('honey_parse')
+    + collect_submodules('pystdf')
     + collect_submodules('transport')
     + collect_submodules('d1')
     + collect_submodules('honey_ui')

@@ -20,10 +20,11 @@
    - `win32com.client.DispatchEx("Excel.Application")`, `ReadOnly=True, UpdateLinks=0`(사용자가 같은 파일 열어둬도 락/프롬프트 회피).
    - 워크시트 임베드 차트(`ChartObjects`) → 차트 시트(`Charts`) 순으로 `chart.Export(png)`. PNG 매직바이트 검증.
    - **그레이스풀**: pywin32/Excel 미설치·실패 시 `[]` 반환 → xlsx 만 업로드. CoInitialize/Quit/임시폴더 정리 finally 보장.
-4. **전송** — `uploader.post_grids(sheet_grids, file_name, product_type, product, lot_id, password, issue_imgs)`:
-   - `POST {SERVER_BASE_URL}/pe/report/upload_xlsx`, multipart.
+4. **전송** — `uploader.post_grids(sheet_grids, file_name, product_type, product, lot_id, password, issue_imgs, progress_cb)`:
+   - `POST {SERVER_BASE_URL}/pe/report/upload_xlsx`, multipart (`requests_toolbelt.MultipartEncoder` + `MultipartEncoderMonitor`).
    - data: `sheet_grids`(JSON 문자열) + `file_name` + `product_type/product/lot_id/revision/process/edm_link/password`.
      files: `issue_img_<row>`(PNG). **xlsx 파일은 보내지 않는다.**
+   - `progress_cb(bytes_read, total_bytes)` — 전송 바이트 진행률 콜백(옵션). [05 UI `_do_upload`](05_client_ui.md) 가 큐로 받아 진행바 %를 갱신.
    - `resp.ok` 아니면 `RuntimeError(detail)`. 성공 시 `resp.json()`.
 5. 결과 메시지박스 — `session_id`, `issue_images_saved`, 브라우저 확인 링크(`/pe/report/view/<sid>`).
 

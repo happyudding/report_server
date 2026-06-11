@@ -1,5 +1,4 @@
 ﻿"""Honey dialogs split from the main window module."""
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -22,7 +21,7 @@ from PyQt5.QtWidgets import (
 )
 
 import chart_colors
-import config as _client_config
+from transport import uploader
 
 SHEET_OPTIONS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution",
                  "histogram"]
@@ -31,19 +30,6 @@ _BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent
 UPLOAD_UI_PATH = _BASE_DIR / "upload_dialog.ui"
 ORDER_UI_PATH = _BASE_DIR / "file_order.ui"
 SETTINGS_UI_PATH = _BASE_DIR / "report_settings.ui"
-
-
-def _load_part_ids(db_path: str) -> list:
-    """stdinfo DB에서 part_id 목록을 로드. 실패하면 빈 리스트."""
-    if not db_path:
-        return []
-    try:
-        con = sqlite3.connect(db_path)
-        rows = con.execute("SELECT part_id FROM products ORDER BY part_id").fetchall()
-        con.close()
-        return [r[0] for r in rows if r[0]]
-    except Exception:
-        return []
 
 
 def _validate_meta(product, lot_id, password):
@@ -59,13 +45,23 @@ class UploadDialog(QDialog):
     def __init__(self, parent=None, defaults=None):
         super().__init__(parent)
         uic.loadUi(str(UPLOAD_UI_PATH), self)
-        self._part_ids = _load_part_ids(_client_config.STDINFO_DB_PATH)
+        self._part_ids = []
+        try:
+            self._part_ids = uploader.fetch_part_ids()
+        except Exception:  # noqa: BLE001
+            self._part_ids = []
         if self._part_ids:
             _model = QStringListModel(self._part_ids, self)
             _comp = QCompleter(_model, self)
             _comp.setFilterMode(Qt.MatchContains)
             _comp.setCaseSensitivity(Qt.CaseInsensitive)
             self.le_product.setCompleter(_comp)
+        else:
+            self.le_product.setPlaceholderText("Part ID 목록을 불러오지 못했습니다 (서버 확인)")
+            QMessageBox.warning(
+                self, "Part ID 로드 실패",
+                "서버에서 Part ID 목록을 불러오지 못했습니다.\n"
+                "네트워크/서버 상태를 확인하세요. Product 검색이 비활성화됩니다.")
         self._pt_radios = {
             "MDDI": self.rb_pt_MDDI, "PDDI": self.rb_pt_PDDI,
             "PMIC": self.rb_pt_PMIC, "SECURITY": self.rb_pt_SECURITY,

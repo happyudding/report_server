@@ -59,62 +59,68 @@
    </item>
    <item>
     <layout class="QFormLayout" name="formLayout">
-     <item row="0" column="0">
-      <widget class="QLabel" name="label_product">
-       <property name="text"><string>Product:</string></property>
+     <item row="0" column="1">
+      <widget class="QLabel" name="label_required_note">
+       <property name="text"><string>( * 필수입력 )</string></property>
+       <property name="styleSheet"><string>color:#c0392b;</string></property>
       </widget>
      </item>
-     <item row="0" column="1">
+     <item row="1" column="0">
+      <widget class="QLabel" name="label_product">
+       <property name="text"><string>Product*:</string></property>
+      </widget>
+     </item>
+     <item row="1" column="1">
       <widget class="QLineEdit" name="le_product">
        <property name="placeholderText"><string>예: A1</string></property>
       </widget>
      </item>
-     <item row="1" column="0">
+     <item row="2" column="0">
       <widget class="QLabel" name="label_lot">
        <property name="text"><string>LOT ID:</string></property>
       </widget>
      </item>
-     <item row="1" column="1">
+     <item row="2" column="1">
       <widget class="QLineEdit" name="le_lot_id">
        <property name="placeholderText"><string>예: L001</string></property>
       </widget>
      </item>
-     <item row="2" column="0">
+     <item row="3" column="0">
       <widget class="QLabel" name="label_revision">
        <property name="text"><string>Revision:</string></property>
       </widget>
      </item>
-     <item row="2" column="1">
+     <item row="3" column="1">
       <widget class="QLineEdit" name="le_revision">
        <property name="placeholderText"><string>예: r1</string></property>
       </widget>
      </item>
-     <item row="3" column="0">
+     <item row="4" column="0">
       <widget class="QLabel" name="label_process">
        <property name="text"><string>Process:</string></property>
       </widget>
      </item>
-     <item row="3" column="1">
+     <item row="4" column="1">
       <widget class="QLineEdit" name="le_process">
        <property name="placeholderText"><string>예: EVT</string></property>
       </widget>
      </item>
-     <item row="4" column="0">
+     <item row="5" column="0">
       <widget class="QLabel" name="label_edm_link">
        <property name="text"><string>EDM link:</string></property>
       </widget>
      </item>
-     <item row="4" column="1">
+     <item row="5" column="1">
       <widget class="QLineEdit" name="le_edm_link">
-       <property name="placeholderText"><string>사용자가 입력한 EDM URL 또는 메모</string></property>
+       <property name="placeholderText"><string>EDM 에 Upload 된 URL 입력해주세요</string></property>
       </widget>
      </item>
-     <item row="5" column="0">
+     <item row="6" column="0">
       <widget class="QLabel" name="label_pw">
        <property name="text"><string>비밀번호:</string></property>
       </widget>
      </item>
-     <item row="5" column="1">
+     <item row="6" column="1">
       <widget class="QLineEdit" name="le_password">
        <property name="placeholderText"><string>숫자 4자리</string></property>
        <property name="echoMode"><enum>QLineEdit::Password</enum></property>

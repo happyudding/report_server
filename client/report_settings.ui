@@ -84,25 +84,25 @@
       </item>
       <item row="1" column="3">
        <widget class="QCheckBox" name="cb_limit_xlsx">
-        <property name="text"><string>Limit.xlsx 파일 생성</string></property>
+        <property name="text"><string>Limit.xlsx 생성</string></property>
         <property name="toolTip"><string>현재는 UI 옵션만 제공하며 파일 생성 동작은 연결하지 않습니다.</string></property>
         <property name="checked"><bool>false</bool></property>
        </widget>
       </item>
-      <item row="1" column="4" colspan="2">
+      <item row="1" column="4">
+       <widget class="QCheckBox" name="cb_sheet_histogram">
+        <property name="text"><string>histogram</string></property>
+        <property name="toolTip"><string>체크하면 subject 별 빈도 히스토그램(자동 bin) 시트를 distribution 뒤에 추가합니다.</string></property>
+        <property name="checked"><bool>false</bool></property>
+       </widget>
+      </item>
+      <item row="1" column="5">
        <spacer name="horizontalSpacer_sheets">
         <property name="orientation"><enum>Qt::Horizontal</enum></property>
         <property name="sizeHint" stdset="0">
          <size><width>40</width><height>20</height></size>
         </property>
        </spacer>
-      </item>
-      <item row="2" column="0">
-       <widget class="QCheckBox" name="cb_sheet_histogram">
-        <property name="text"><string>histogram</string></property>
-        <property name="toolTip"><string>체크하면 subject 별 빈도 히스토그램(자동 bin) 시트를 distribution 뒤에 추가합니다.</string></property>
-        <property name="checked"><bool>false</bool></property>
-       </widget>
       </item>
      </layout>
     </widget>
