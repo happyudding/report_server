@@ -516,9 +516,10 @@ class HoneyMainWindow(QMainWindow):
             QMessageBox.warning(self, "모드 적용 불가", str(exc))
             return
         self._run_analysis(work_group, selected, sheets, dlg.auto_upload(),
-                           dlg.raw_data())
+                           dlg.raw_data(), compare_mode=dlg.mode_compare())
 
-    def _run_analysis(self, work_group, selected, sheets, auto_upload, raw_data=False):
+    def _run_analysis(self, work_group, selected, sheets, auto_upload, raw_data=False,
+                      compare_mode=False):
         self.btn_start.setEnabled(False)
         show_timing_log = bool(getattr(rg, "DEBUG_RUN_TIMING_LOG", False))
         overall_t0 = time.perf_counter()
@@ -585,6 +586,7 @@ class HoneyMainWindow(QMainWindow):
                         meta=rg.ReportMeta(),
                         selector=rg.ItemSelector(selected_items=selected),
                         profile_cb=profile_cb,
+                        compare_mode=compare_mode,
                     )
                     self.last_result = _wait_for_future(fut, progress, poll_cb=_drain_profile_events)
             _drain_profile_events()

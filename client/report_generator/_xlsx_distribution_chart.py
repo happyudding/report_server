@@ -62,7 +62,9 @@ _CHART_TITLE_CAP_FONT = 9     # Lo~Hi limit 캡션
 _MSO_TRUE  = -1               # msoTrue  (LineFormat.Visible — 선 활성화)
 _MSO_FALSE = 0                # msoFalse (LineFormat.Visible — 선 숨김)
 _MSO_LINE_SYSDASH = 10        # msoLineSysDash (limit line)
+_MSO_LINE_SOLID = 1          # msoLineSolid (before-limit 회색선)
 _RGB_RED = 255               # RGB(255,0,0)
+_RGB_DARK_GRAY = 64 + 64 * 256 + 64 * 65536   # RGB(64,64,64) before-limit 회색선
 _RGB_BLUE = 255 * 65536      # RGB(0,0,255) — histogram 기본 곡선색(팔레트 없을 때)
 _RGB_FAIL_BG = 255 + 255 * 256 + 204 * 65536  # RGB(255,255,204) 연노랑 (fail 차트 배경)
 
@@ -215,6 +217,13 @@ def _draw_all_chart(sh, dists, x_arrs, x_name, y_name, cnt_list, src_names, colo
             is_fail = (_isnum(lo) and data_min < float(lo)) or (
                 _isnum(hi) and data_max > float(hi))
             x_min, x_max = _x_axis_range(lo, hi, data_min, data_max, is_fail, data_med)
+            # Compare Mode: before-limit 회색선이 축 밖이면 잘리지 않도록 축을 확장
+            blo = getattr(d, "before_lower_limit", None)
+            bhi = getattr(d, "before_upper_limit", None)
+            if x_min is not None and _isnum(blo) and float(blo) < x_min:
+                x_min = float(blo)
+            if x_max is not None and _isnum(bhi) and float(bhi) > x_max:
+                x_max = float(bhi)
 
         chart_seq += 1
         try:
@@ -300,6 +309,19 @@ def _chart_data_set(chart_api, d, x_sheet, y_sheet, col_idx, cnt_list, src_names
                 s.Formula = f'=SERIES("{nm}",{{{x_val},{x_val}}},{{-2,2}},{idx})'
             _style_limit_series(s)
             limit_count += 1
+    # Compare Mode: before(둘째 파일) limit 변경분을 진한 회색 세로선으로 추가.
+    # limit_count 에는 더하지 않아 범례는 유지된다(LSL/USL 만 범례 삭제).
+    with _dist_time("dist.loop.series_before_limits"):
+        blo = float(d.before_lower_limit) if _isnum(getattr(d, "before_lower_limit", None)) else None
+        bhi = float(d.before_upper_limit) if _isnum(getattr(d, "before_upper_limit", None)) else None
+        for blim, bnm in ((blo, "before LSL"), (bhi, "before USL")):
+            if blim is None:
+                continue
+            s = sc.NewSeries()
+            idx = sc.Count
+            x_val = f"{blim:.10g}"
+            s.Formula = f'=SERIES("{bnm} {x_val}",{{{x_val},{x_val}}},{{-1,1}},{idx})'
+            _style_before_limit_series(s)
     y = 0
     with _dist_time("dist.loop.series_sources"):
         for k, name in enumerate(src_names):
@@ -562,6 +584,21 @@ def _style_limit_series(s):
         line = s.Format.Line
         line.DashStyle = _MSO_LINE_SYSDASH
         line.ForeColor.RGB = _RGB_RED
+    except Exception:
+        pass
+    try:
+        s.MarkerStyle = _XL_MARKER_NONE
+    except Exception:
+        pass
+
+
+def _style_before_limit_series(s):
+    """before-limit line series: 진한 회색 실선 + 마커 제거 (Compare Mode)."""
+    try:
+        line = s.Format.Line
+        line.DashStyle = _MSO_LINE_SOLID
+        line.ForeColor.RGB = _RGB_DARK_GRAY
+        line.Weight = 1.5
     except Exception:
         pass
     try:

@@ -153,6 +153,10 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
             done += 1
             _progress(progress_cb, done, total, nm)
 
+        # Compare Mode: goodlog 시트를 summary 와 yield 사이에 삽입 (차이가 있을 때만)
+        if getattr(result, "goodlog_rows", None):
+            _insert_goodlog_sheet(wb, result.goodlog_rows)
+
         # diff compare: a_only / b_only CPK 시트 (끝에 추가)
         for disp, cpk_rows in diff_cpk_specs:
             title = _unique_sheet_name(wb, disp)
@@ -258,6 +262,26 @@ def _copy_df_via_csv(app, wb, df, sheet_name, before_sheet):
     copied = new[0] if new else wb.sheets.active
     copied.name = sheet_name
     return copied
+
+
+def _insert_goodlog_sheet(wb, goodlog_rows):
+    """goodlog 시트를 summary 와 yield 사이에 생성·채움 (Compare Mode 전용).
+
+    summary 시트가 있으면 그 뒤, 없으면 yield 시트 앞, 둘 다 없으면 맨 앞에 둔다.
+    """
+    from ._xlsx_goodlog import write_goodlog_sheet
+
+    title = _unique_sheet_name(wb, "goodlog")
+    summary_disp = _report_sheet_display_name("summary")
+    yield_disp = _report_sheet_display_name("yield")
+    existing = {s.name: s for s in wb.sheets}
+    if summary_disp in existing:
+        ws = wb.sheets.add(title, after=existing[summary_disp])
+    elif yield_disp in existing:
+        ws = wb.sheets.add(title, before=existing[yield_disp])
+    else:
+        ws = wb.sheets.add(title, before=wb.sheets[0])
+    write_goodlog_sheet(ws, goodlog_rows)
 
 
 def _progress(cb, done, total, name):

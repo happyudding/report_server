@@ -1,0 +1,23 @@
+[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260611_150931.txt
+[wsgi] importing Flask ...
+[wsgi] importing blueprints ... (2.72s)
+[wsgi] creating app ... (2.72s)
+[wsgi] app ready in 2.74s
+[wsgi] ===== Accessible URLs =====
+[wsgi] Local (이 PC)               : http://127.0.0.1:8080/pe/report/
+[wsgi] LAN (같은 네트워크 다른 PC) : http://192.168.45.25:8080/pe/report/
+[wsgi] ** 처음 외부 PC 에서 접근 시 Windows 방화벽 허용 필요할 수 있음:
+[wsgi]    New-NetFirewallRule -DisplayName "report-server 8080" -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow
+[wsgi] ===========================
+[wsgi] starting server on http://0.0.0.0:8080 (debug=False)
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://192.168.45.25:8080
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [11/Jun/2026 15:09:34] "GET /pe/report/ HTTP/1.1" 200 -
+127.0.0.1 - - [11/Jun/2026 15:09:35] "GET /pe/report/ HTTP/1.1" 200 -
+127.0.0.1 - - [11/Jun/2026 15:09:36] "GET /honey/version HTTP/1.1" 200 -
+127.0.0.1 - - [11/Jun/2026 15:09:36] "GET /pe/report/api/history HTTP/1.1" 200 -
+127.0.0.1 - - [11/Jun/2026 15:09:36] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [11/Jun/2026 15:09:36] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -

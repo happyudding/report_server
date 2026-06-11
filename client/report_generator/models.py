@@ -34,6 +34,10 @@ class DistSeries:
     lower_limit: Optional[float]
     upper_limit: Optional[float]
     traces: list = field(default_factory=list)  # [{"source": str, "xs": np.ndarray, "ys": np.ndarray}]
+    # Compare Mode: before(둘째 파일) limit 이 변경된 경우만 채워짐(진한 회색 세로선용).
+    # None = 그쪽 limit 변경 없음(회색선 미표시). 공통 distribution 에서만 설정된다.
+    before_lower_limit: Optional[float] = None
+    before_upper_limit: Optional[float] = None
 
 
 @dataclass
@@ -68,6 +72,10 @@ class AnalysisResult:
     dist_source_data_b_only: Optional[list] = None       # [(source_name, DataFrame)]
     subjects_a_only: Optional[list] = None               # [{subject_id, subject, ...}]
     subjects_b_only: Optional[list] = None               # [{subject_id, subject, ...}]
+
+    # Compare Mode (None = compare 미사용/차이 없음). analyzer 가 compare_mode=True 일 때 채움.
+    goodlog_rows: Optional[list] = None                  # list[compare_algorithm.GoodlogRow]
+    limit_change_map: Optional[dict] = None              # {subject: (before_lo|None, before_hi|None)}
 
     def summary_feature(self) -> dict:
         """summary 시트 Device Feature 섹션 값 (Fail Types 는 fail bin 번호 목록)."""

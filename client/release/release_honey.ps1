@@ -114,9 +114,23 @@ if (-not $PythonCmd) {
     throw "python/py was not found. Install Python and add it to PATH."
 }
 
+$IsPyLauncher = ($PythonCmd.Name -ieq "py.exe" -or $PythonCmd.Name -ieq "py")
 Push-Location $ClientDir
 try {
-    if ($PythonCmd.Name -ieq "py.exe" -or $PythonCmd.Name -ieq "py") {
+    # 빌드 PC 에 requirements.txt 의존성이 빠져 있으면 PyInstaller 가 조용히 누락한 채
+    # 빌드를 성공시켜 런타임에 ModuleNotFoundError 로 죽는 깨진 exe 가 배포된다
+    # (예: requests_toolbelt). 빌드 직전에 의존성을 보장한다.
+    Write-Host "    pip install -r requirements.txt"
+    if ($IsPyLauncher) {
+        & $PythonCmd.Source -3 -m pip install -r requirements.txt
+    } else {
+        & $PythonCmd.Source -m pip install -r requirements.txt
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "pip install -r requirements.txt failed with exit code $LASTEXITCODE"
+    }
+
+    if ($IsPyLauncher) {
         & $PythonCmd.Source -3 -m PyInstaller --clean --noconfirm (Split-Path $SpecFile -Leaf)
     } else {
         & $PythonCmd.Source -m PyInstaller --clean --noconfirm (Split-Path $SpecFile -Leaf)

@@ -71,8 +71,12 @@ def _flow_time(label: str, profile_cb=None):
 
 def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
         selector: Optional[ItemSelector] = None,
-        profile_cb=None) -> AnalysisResult:
-    """선택 item 적용 → 전 테이블 계산 → AnalysisResult."""
+        profile_cb=None, compare_mode: bool = False) -> AnalysisResult:
+    """선택 item 적용 → 전 테이블 계산 → AnalysisResult.
+
+    compare_mode=True(2파일)면 기존 결과에 goodlog/limit 변경 비교를 **추가로** 얹는다
+    (기존 single/diff 분기는 무수정). 차이가 없으면 아무것도 추가하지 않는다.
+    """
     meta = meta or ReportMeta()
     selector = selector or ItemSelector()
 
@@ -155,7 +159,29 @@ def run(group: df_honey_group, meta: Optional[ReportMeta] = None,
     if split is not None:
         with _flow_time("diff_extras", profile_cb):
             _apply_diff_extras(result, split)
+
+    if compare_mode:
+        with _flow_time("compare_algorithm", profile_cb):
+            _apply_compare(result, group)
     return result
+
+
+def _apply_compare(result: AnalysisResult, group: df_honey_group) -> None:
+    """Compare Mode: 두 파일 비교 결과(goodlog + 공통 distribution 회색선)를 result 에 주입.
+
+    차이가 없으면(build_compare → None) 아무것도 하지 않아 기존 출력과 동일하다.
+    """
+    from . import compare_algorithm
+
+    cmp = compare_algorithm.build_compare(group)
+    if cmp is None:
+        return
+    result.goodlog_rows = cmp.goodlog_rows
+    result.limit_change_map = cmp.limit_change_map
+    for d in result.distributions:
+        change = cmp.limit_change_map.get(d.subject)
+        if change is not None:
+            d.before_lower_limit, d.before_upper_limit = change
 
 
 def _apply_diff_extras(result: AnalysisResult, split: dict) -> None:

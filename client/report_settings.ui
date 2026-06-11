@@ -97,12 +97,11 @@
        </widget>
       </item>
       <item row="1" column="5">
-       <spacer name="horizontalSpacer_sheets">
-        <property name="orientation"><enum>Qt::Horizontal</enum></property>
-        <property name="sizeHint" stdset="0">
-         <size><width>40</width><height>20</height></size>
-        </property>
-       </spacer>
+       <widget class="QCheckBox" name="cb_mode_compare">
+        <property name="text"><string>Compare Mode</string></property>
+        <property name="toolTip"><string>입력 파일이 2개일 때만 가능. 두 파일의 item/limit 차이를 비교해 goodlog 시트와 distribution 회색선을 추가합니다.</string></property>
+        <property name="checked"><bool>false</bool></property>
+       </widget>
       </item>
      </layout>
     </widget>

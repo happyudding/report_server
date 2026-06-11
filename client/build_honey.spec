@@ -9,6 +9,13 @@
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
+# 빌드 환경 의존성 가드 — 아래 패키지가 빌드 venv 에 없으면 collect_submodules/collect_all
+# 은 조용히 빈 리스트를 반환해 '런타임에 ModuleNotFoundError 로 죽는 깨진 exe' 가 그대로
+# 배포된다. 여기서 명시적으로 import 해 미설치 시 빌드를 즉시 실패시킨다 (broken exe 방지).
+import requests_toolbelt  # noqa: F401  transport/uploader.py 가 정적 import
+import xlwings             # noqa: F401
+import fitz                # noqa: F401  PyMuPDF
+
 # xlwings 는 자체 데이터/바이너리(.xlam, dll)를 동봉해야 동작
 _xw_datas, _xw_binaries, _xw_hidden = collect_all('xlwings')
 

@@ -1,4 +1,4 @@
-PyQt5>=5.15
+﻿PyQt5>=5.15
 requests>=2.28
 requests-toolbelt>=1.0  # 업로드 진행률(%) 추적 (transport/uploader.py)
 pywin32>=306   ; sys_platform == "win32"   # Excel COM 으로 차트 → PNG 렌더 (chart_export.py)

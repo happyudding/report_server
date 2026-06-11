@@ -41,6 +41,15 @@ body {
   border-color: #4a90e2; background: #4a90e2; color: #fff;
   box-shadow: 0 2px 8px rgba(74,144,226,.35);
 }
+.pt-badge {
+  display: inline-block; padding: 3px 11px; border-radius: 4px;
+  font-size: 12px; font-weight: 700; color: #fff; white-space: nowrap;
+}
+.pt-badge.MDDI { background: #4a90e2; }
+.pt-badge.PDDI { background: #1e3a8a; }
+.pt-badge.PMIC { background: #16a34a; }
+.pt-badge.SECURITY { background: #9333ea; }
+.pt-badge.default { background: #64748b; }
 .spacer { flex: 1; }
 
 .honey-dl-btn {
@@ -278,6 +287,12 @@ function esc(v) {
   }[c]));
 }
 
+function productTypeBadge(pt) {
+  const value = String(pt || "").trim();
+  const cls = ["MDDI", "PDDI", "PMIC", "SECURITY"].includes(value) ? value : "default";
+  return `<span class="pt-badge ${cls}">${esc(value || "-")}</span>`;
+}
+
 // HONEY 설치본 다운로드 버튼: /honey/version 으로 라벨/링크 보정 (없으면 비활성).
 // 링크 규칙은 클라이언트(version_check)와 동일: manifest.url 우선, 없으면 /honey/download.
 (async () => {
@@ -434,7 +449,7 @@ function renderResults() {
   } else {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row" data-sid="${esc(r.session_id)}">
-        <td>${esc(r.product_type || '-')}</td>
+        <td>${productTypeBadge(r.product_type)}</td>
         <td>${esc(r.product || '-')}</td>
         <td>${esc(r.revision || '-')}</td>
         <td>${esc(r.process || '-')}</td>

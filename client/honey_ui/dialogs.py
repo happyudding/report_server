@@ -263,6 +263,7 @@ class ReportSettingsDialog(QDialog):
         self._populate_items()
         self._sync_yield_dependents()
         self._update_dut_mode_availability()
+        self._update_compare_mode_availability()
 
     def _make_item(self, idx, text):
         it = QListWidgetItem(text)
@@ -424,6 +425,16 @@ class ReportSettingsDialog(QDialog):
         self.cb_mode_dut.setEnabled(one_file and not raw_on)
         if not self.cb_mode_dut.isEnabled():
             self.cb_mode_dut.setChecked(False)
+
+    def _update_compare_mode_availability(self):
+        """입력 파일이 정확히 2개일 때만 Compare Mode 활성화."""
+        ok = self.csv_count == 2
+        if not ok:
+            self.cb_mode_compare.setChecked(False)
+        self.cb_mode_compare.setEnabled(ok)
+
+    def mode_compare(self):
+        return self.cb_mode_compare.isChecked()
 
     def _current_filenames(self):
         names = []
