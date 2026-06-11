@@ -44,13 +44,6 @@ body {
 .pt-badge.PMIC { background: #d97706; }
 .pt-badge.SECURITY { background: #9333ea; }
 .pt-badge.default { background: #64748b; }
-.src-badge {
-  display: inline-block; padding: 2px 9px; border-radius: 4px;
-  font-size: 11px; font-weight: 600;
-}
-.src-badge.xlsx_upload { background: #dcfce7; color: #166534; }
-.src-badge.analyze { background: #dbeafe; color: #1e40af; }
-
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 .tabs {
   display: flex; gap: 2px; background: #fff;
@@ -127,6 +120,12 @@ tbody tr:hover { background: #f9fbff; }
   outline: none; cursor: text; background: #fffbe6 !important;
 }
 .sheet-table td.editing-cell:focus { box-shadow: inset 0 0 0 2px #4a90e2; }
+.sheet-table td.sheet-subhead {
+  background: #e8eef4 !important; font-weight: 700; color: #1a3a5c;
+}
+.sheet-table td.cell-selected {
+  background: #cfe3fb !important; outline: 1px solid #4a90e2; outline-offset: -1px;
+}
 .sheet-block { margin-bottom: 24px; }
 .sheet-block-title {
   font-size: 12px; font-weight: 700; color: #1f4d8c;
@@ -468,7 +467,6 @@ document.getElementById("tabs").addEventListener("click", e => {
 
 // ── topbar meta ──────────────────────────────────────────────────────────────
 function renderMeta(session) {
-  const src = session.source || "xlsx_upload";
   const pt = (session.product_type || "").trim();
   const ptCls = ["MDDI", "PDDI", "PMIC", "SECURITY"].includes(pt) ? pt : "default";
   const fname = session.file_name || "-";
@@ -478,7 +476,6 @@ function renderMeta(session) {
     : esc(edm || "-");
   const items = [
     `<span class="pt-badge ${ptCls}">${esc(pt || "-")}</span>`,
-    `<span class="src-badge ${src}">${esc(src)}</span>`,
     `<span class="meta-inline"><span class="mk">Product</span>${esc(session.product || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Revision</span>${esc(session.revision || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Process</span>${esc(session.process || "-")}</span>`,
@@ -621,7 +618,8 @@ function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNa
 
 function isDistCol(c) { return String(c || "").toLowerCase() === "distribution"; }
 
-// 열 순서 보정: comment 류 → 최우측, issue 의 category → 최좌측. 상대순서 유지.
+// 열 순서 보정: 고정 prefix 컬럼(step/bin/tno/item, issue 는 category 포함 avg 까지)
+// → 지정 순서로 맨 앞에 배치(대소문자 무시), comment 류 → 최우측. 나머지 상대순서 유지.
 // 소스 복수 시 _count 그룹 먼저, _yield 그룹 이후 (cnt cnt cnt / yield yield yield).
 function orderColumns(cols, kind) {
   const isComment = c => /comment/i.test(String(c));
@@ -631,9 +629,19 @@ function orderColumns(cols, kind) {
   const comments = cols.filter(isComment);
   let rest = cols.filter(c => !isComment(c));
 
-  if (kind === "issue") {
-    const cat = rest.filter(c => String(c).toLowerCase() === "category");
-    rest = cat.concat(rest.filter(c => String(c).toLowerCase() !== "category"));
+  const PREFIX_ORDER = {
+    yield: ["step", "bin", "tno", "item"],
+    issue: ["category", "step", "bin", "tno", "item", "avg"],
+  };
+  const prefix = PREFIX_ORDER[kind];
+  if (prefix) {
+    const lower = c => String(c).trim().toLowerCase();
+    const front = [];
+    prefix.forEach(p => {
+      const idx = rest.findIndex(c => lower(c) === p);
+      if (idx !== -1) front.push(rest.splice(idx, 1)[0]);
+    });
+    rest = front.concat(rest);
   }
 
   // cnt cnt cnt / yield yield yield 그루핑: _count 먼저, _yield 이후
@@ -658,6 +666,30 @@ function orderColumns(cols, kind) {
 
 // 빈 헤더 placeholder(_colN)는 화면엔 빈칸으로
 function headerLabel(c) { return /^_col\d+$/.test(String(c)) ? "" : c; }
+
+// 반복 섹션 헤더 행(yield의 P1/P2/P3 구간별 헤더) 감지: 셀 값이 자기 컬럼명과
+// 동일한 비율이 높으면 "헤더가 데이터로 들어간" 행으로 판단.
+function isHeaderLikeRow(r, cols) {
+  if (!r) return false;
+  let total = 0, matches = 0;
+  for (const c of cols) {
+    const name = String(c).trim().toLowerCase();
+    if (!name || /^_col\d+$/.test(name)) continue;
+    total++;
+    const v = r[c];
+    const txt = (v === null || v === undefined) ? "" : String(v).trim().toLowerCase();
+    if (txt === name) matches++;
+  }
+  return total > 0 && (matches / total) >= 0.6;
+}
+
+// issue_table 의 CPK 카테고리 전환 행("item name" / "cpk" 서브헤더) 감지.
+function isCpkSubheadRow(r) {
+  if (!r) return false;
+  const cat = String(r["Category"] ?? "").trim().toLowerCase();
+  const avg = String(r["avg"] ?? "").trim().toLowerCase();
+  return cat === "cpk" && avg === "cpk";
+}
 
 /**
  * rows(list of dict) → HTML sheet-table.
@@ -688,23 +720,31 @@ function renderSheetTable(rows, opts) {
   ).join("") + "</tr></thead>";
 
   const body = "<tbody>" + (rows || []).map((r, ri) => {
+    const subhead = (opts.kind === "yield" && isHeaderLikeRow(r, cols))
+      || (opts.kind === "issue" && isCpkSubheadRow(r));
     const tds = cols.map((c, ci) => {
       const v = r ? r[c] : "";
-      const txt = (v === null || v === undefined) ? "" : String(v);
+      let txt = (v === null || v === undefined) ? "" : String(v);
+      if (subhead && txt.trim().toLowerCase() === "cpk") txt = "CPK";
       const isEmpty = txt === "";
       const isNum = isNumVal(v);
       // Distribution 열: 행별 PNG(있으면)만, 항상 편집 불가.
       if (isDistCol(c)) {
         if (opts.imgMap && opts.imgMap[ri]) {
-          return `<td><img loading="lazy" src="${esc(opts.imgMap[ri])}" style="max-width:115px;height:auto;display:block" alt="dist"></td>`;
+          return `<td${subhead ? ` class="sheet-subhead"` : ""} data-r="${ri}" data-c="${ci}"><img loading="lazy" src="${esc(opts.imgMap[ri])}" style="max-width:115px;height:auto;display:block" alt="dist"></td>`;
         }
-        return `<td class="st-empty"></td>`;
+        return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
       }
       if (opts.edit) {
-        return `<td class="editing-cell${isNum ? " st-num" : ""}" contenteditable="true" data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${esc(txt)}</td>`;
+        const cls = "editing-cell" + (isNum ? " st-num" : "") + (subhead ? " sheet-subhead" : "");
+        return `<td class="${cls}" contenteditable="true" data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${esc(txt)}</td>`;
       }
-      const cls = isEmpty ? " st-empty" : (isNum ? " st-num" : "");
-      return `<td${cls ? ` class="${cls.trim()}"` : ""}>${isEmpty ? "" : esc(txt)}</td>`;
+      const clsParts = [];
+      if (isEmpty) clsParts.push("st-empty");
+      else if (isNum) clsParts.push("st-num");
+      if (subhead) clsParts.push("sheet-subhead");
+      const cls = clsParts.join(" ");
+      return `<td${cls ? ` class="${cls}"` : ""} data-r="${ri}" data-c="${ci}">${isEmpty ? "" : esc(txt)}</td>`;
     }).join("");
     return `<tr>${tds}</tr>`;
   }).join("") + "</tbody>";
@@ -1075,6 +1115,7 @@ function renderIssuesEdit() {
 
 // ── 모드 전환 ──────────────────────────────────────────────────────────────
 function renderActive() {
+  clearCellSel();
   if (MODE === "edit") {
     renderSummaryEdit();
     renderYieldEdit();
@@ -1364,14 +1405,15 @@ async function load(resetMode=true) {
 }
 
 // ── 선택 셀 합계/평균 (엑셀 상태바) ───────────────────────────────────────────
-// 표에서 드래그로 셀을 선택하면 그 안의 숫자들의 개수·합계·평균을 우하단에 표시.
 function fmtNum(n) {
   const r = Math.round(n * 1e6) / 1e6;
   if (Number.isInteger(r)) return String(r);
   return r.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
 }
 
+// 수정 모드: 셀 텍스트 드래그 선택 → 숫자 토큰 합계/평균 (기존 동작 유지).
 function updateCalc() {
+  if (MODE !== "edit") return;
   const bar = document.getElementById("calcBar");
   const sel = window.getSelection ? window.getSelection() : null;
   const text = sel ? String(sel.toString()) : "";
@@ -1391,6 +1433,90 @@ function updateCalc() {
 }
 document.addEventListener("selectionchange", updateCalc);
 document.addEventListener("mouseup", updateCalc);
+
+// 보기 모드: Ctrl/Shift 로 셀 단위 다중 선택 → 선택 셀의 합계/평균 표시.
+let cellSelTable = null;
+let cellSelCells = new Set();
+let cellSelAnchor = null;
+
+function cellKey(r, c) { return r + "," + c; }
+
+function clearCellSel() {
+  if (cellSelTable) {
+    cellSelTable.querySelectorAll("td.cell-selected").forEach(td => td.classList.remove("cell-selected"));
+  }
+  cellSelTable = null;
+  cellSelCells.clear();
+  cellSelAnchor = null;
+  const bar = document.getElementById("calcBar");
+  if (MODE !== "edit") bar.classList.remove("show");
+}
+
+function applyCellSel() {
+  if (!cellSelTable) return;
+  cellSelTable.querySelectorAll("td[data-r]").forEach(td => {
+    td.classList.toggle("cell-selected", cellSelCells.has(cellKey(td.dataset.r, td.dataset.c)));
+  });
+}
+
+function selectRange(r1, c1, r2, c2) {
+  const rMin = Math.min(r1, r2), rMax = Math.max(r1, r2);
+  const cMin = Math.min(c1, c2), cMax = Math.max(c1, c2);
+  cellSelCells.clear();
+  for (let r = rMin; r <= rMax; r++) {
+    for (let c = cMin; c <= cMax; c++) cellSelCells.add(cellKey(r, c));
+  }
+}
+
+function updateCellCalc() {
+  const bar = document.getElementById("calcBar");
+  if (!cellSelTable || !cellSelCells.size) { bar.classList.remove("show"); return; }
+  const nums = [];
+  cellSelTable.querySelectorAll("td[data-r]").forEach(td => {
+    if (!cellSelCells.has(cellKey(td.dataset.r, td.dataset.c))) return;
+    const txt = td.textContent.replace(/,/g, "").trim();
+    if (txt !== "" && !isNaN(+txt)) nums.push(+txt);
+  });
+  if (!nums.length) { bar.classList.remove("show"); return; }
+  const sum = nums.reduce((a, b) => a + b, 0);
+  const avg = sum / nums.length;
+  bar.innerHTML =
+    `<span><span class="ci">개수</span><span class="cv">${nums.length}</span></span>` +
+    `<span><span class="ci">합계</span><span class="cv">${fmtNum(sum)}</span></span>` +
+    `<span><span class="ci">평균</span><span class="cv">${fmtNum(avg)}</span></span>`;
+  bar.classList.remove("lift");
+  bar.classList.add("show");
+}
+
+document.addEventListener("click", e => {
+  if (MODE !== "view") return;
+  const td = e.target.closest("td[data-r]");
+  if (!td) return;
+  const table = td.closest("table.sheet-table");
+  if (!table) return;
+  const r = +td.dataset.r, c = +td.dataset.c;
+
+  if (table !== cellSelTable) {
+    clearCellSel();
+    cellSelTable = table;
+  }
+
+  if (e.shiftKey && cellSelAnchor) {
+    selectRange(cellSelAnchor.r, cellSelAnchor.c, r, c);
+  } else if (e.ctrlKey || e.metaKey) {
+    const key = cellKey(r, c);
+    if (cellSelCells.has(key)) cellSelCells.delete(key);
+    else cellSelCells.add(key);
+    cellSelAnchor = { r, c };
+  } else {
+    cellSelCells.clear();
+    cellSelCells.add(cellKey(r, c));
+    cellSelAnchor = { r, c };
+  }
+
+  applyCellSel();
+  updateCellCalc();
+});
 
 load();
 </script>

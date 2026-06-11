@@ -53,7 +53,8 @@ def download_to(target_path, url, expected_sha256=None, base_url=None, progress_
 
     h = hashlib.sha256()
     try:
-        with requests.get(url, stream=True, timeout=REQUEST_TIMEOUT_SEC * 2) as resp:
+        download_timeout = tuple(t * 2 for t in REQUEST_TIMEOUT_SEC)
+        with requests.get(url, stream=True, timeout=download_timeout) as resp:
             resp.raise_for_status()
             total = int(resp.headers.get("Content-Length") or 0)
             downloaded = 0

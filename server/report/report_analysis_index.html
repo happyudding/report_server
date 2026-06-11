@@ -114,13 +114,6 @@ tr.empty-row td { text-align: center; color: #999; padding: 30px; }
 tr.result-row { cursor: pointer; transition: background .1s; }
 tr.result-row:hover { background: #f5f8ff; }
 
-.badge-source {
-  display: inline-block; padding: 2px 8px; border-radius: 4px;
-  font-size: 11px; font-weight: 600;
-}
-.badge-source.xlsx_upload { background: #dcfce7; color: #166534; }
-.badge-source.analyze { background: #dbeafe; color: #1e40af; }
-
 .btn-row { display: inline-flex; gap: 6px; }
 .btn-mini {
   padding: 4px 10px; font-size: 12px; border-radius: 4px;
@@ -230,7 +223,6 @@ tr.result-row:hover { background: #f5f8ff; }
   <table>
     <thead>
       <tr>
-        <th>Source</th>
         <th>Product Type</th>
         <th>Product</th>
         <th>Revision</th>
@@ -242,7 +234,7 @@ tr.result-row:hover { background: #f5f8ff; }
       </tr>
     </thead>
     <tbody id="resultsTbody">
-      <tr class="empty-row"><td colspan="9">데이터를 불러오는 중...</td></tr>
+      <tr class="empty-row"><td colspan="8">데이터를 불러오는 중...</td></tr>
     </tbody>
   </table>
   <div class="pager" id="pager"></div>
@@ -420,7 +412,7 @@ async function loadHistory() {
     renderResults();
   } catch (e) {
     document.getElementById("resultsTbody").innerHTML =
-      `<tr class="empty-row"><td colspan="9">로드 실패: ${esc(e.message)}</td></tr>`;
+      `<tr class="empty-row"><td colspan="8">로드 실패: ${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -438,11 +430,10 @@ function renderResults() {
 
   const tbody = document.getElementById("resultsTbody");
   if (!slice.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">검색 결과가 없습니다.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="8">검색 결과가 없습니다.</td></tr>`;
   } else {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row" data-sid="${esc(r.session_id)}">
-        <td><span class="badge-source ${esc(r.source || 'xlsx_upload')}">${esc(r.source || 'xlsx_upload')}</span></td>
         <td>${esc(r.product_type || '-')}</td>
         <td>${esc(r.product || '-')}</td>
         <td>${esc(r.revision || '-')}</td>
