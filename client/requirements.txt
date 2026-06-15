@@ -6,5 +6,6 @@ PyMuPDF>=1.23  ; sys_platform == "win32"   # Distribution 시트 PDF → PNG 변
 Pillow>=9.0                                 # 다중 페이지 PDF → PNG 수직 합성
 pandas>=1.5    # 로컬 리포트 분석 엔진 (report_generator)
 numpy>=1.23    # 분석 계산 (cpk/yield/distribution)
+matplotlib>=3.5    # report_generator/map_analyze.py (wafer bin map → PNG)
 xlwings>=0.30  ; sys_platform == "win32"   # 로컬 xlsx 리포트 생성 (Excel COM)
 pystdf         # honey_parse(외부 프로젝트) STDF 파싱 의존성

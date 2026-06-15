@@ -93,17 +93,29 @@ setlocal
 set "SRC={payload_dir}"
 set "DST={app_dir}"
 set "EXE={app_exe}"
+set "LOG=%TEMP%\\honey_update.log"
+
+echo [%date% %time%] update start (pid {os.getpid()}) >> "%LOG%"
 
 :wait_for_exit
-tasklist /FI "PID eq {os.getpid()}" 2>NUL | find "{os.getpid()}" >NUL
+tasklist /FI "PID eq {os.getpid()}" /NH 2>NUL | find "{os.getpid()}" >NUL 2>&1
 if not errorlevel 1 (
-  timeout /t 1 /nobreak >NUL
+  rem timeout 대신 ping 슬립 — 콘솔 입력 핸들이 없어도 동작
+  ping -n 2 127.0.0.1 >NUL 2>&1
   goto wait_for_exit
 )
 
-robocopy "%SRC%" "%DST%" /E /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
+robocopy "%SRC%" "%DST%" /E /R:3 /W:2 /NFL /NDL /NJH /NJS /NP >> "%LOG%" 2>&1
 set "RC=%ERRORLEVEL%"
-if %RC% GEQ 8 exit /b %RC%
+echo [%date% %time%] robocopy RC=%RC% >> "%LOG%"
+if %RC% GEQ 8 (
+  echo.
+  echo 업데이트 파일 복사에 실패했습니다 ^(robocopy RC=%RC%^).
+  echo 로그: %LOG%
+  echo 이 창을 닫으려면 아무 키나 누르세요...
+  pause >NUL
+  exit /b %RC%
+)
 
 start "" "%EXE%"
 exit /b 0

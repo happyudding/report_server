@@ -64,7 +64,7 @@ from ._xlsx_distribution_chart import sort_alldata, sort_data_to_percent  # noqa
 
 def write(result, out_path, sheets=None, colors=None, progress_cb=None,
           raw_sheets=None, dist_progress_cb=None, attach_progress_cb=None,
-          profile_cb=None) -> str:
+          profile_cb=None, map_pngs=None) -> str:
     """AnalysisResult 를 xlsx 로 저장. 반환: 저장 경로(str).
 
     sheets: 출력할 시트명 리스트/집합 (None 이면 전체). 알 수 없는 이름은 무시.
@@ -210,6 +210,15 @@ def write(result, out_path, sheets=None, colors=None, progress_cb=None,
                 _progress(progress_cb, done, total, "histogram")
             except Exception as exc:
                 print(f"[xlsx_writer] histogram 차트 생략: {exc}")
+
+        # Map 시트 (옵션) — wafer bin map PNG 부착 (analyzer/ALL_SHEETS 와 무관)
+        if map_pngs:
+            try:
+                from .map_analyze import write_map_sheet
+                with _flow_prof("map_sheet_phase"):
+                    write_map_sheet(wb, map_pngs)
+            except Exception as exc:
+                print(f"[xlsx_writer] map 시트 생략: {exc}")
 
         # 모든 시트 Zoom/눈금선 (단일 세션 1회, distribution 포함)
         with _flow_prof("zoom_gridlines"):

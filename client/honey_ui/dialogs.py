@@ -436,6 +436,10 @@ class ReportSettingsDialog(QDialog):
     def mode_compare(self):
         return self.cb_mode_compare.isChecked()
 
+    def mode_map(self):
+        """Return whether the Map (wafer bin map) sheet should be generated."""
+        return self.cb_mode_map.isChecked()
+
     def _current_filenames(self):
         names = []
         for i in range(self.csv_count):

@@ -103,6 +103,13 @@
         <property name="checked"><bool>false</bool></property>
        </widget>
       </item>
+      <item row="2" column="0">
+       <widget class="QCheckBox" name="cb_mode_map">
+        <property name="text"><string>Map</string></property>
+        <property name="toolTip"><string>입력 파일별 XCoord/YCoord/Bin 으로 2-D Bin 맵 시트를 추가합니다.</string></property>
+        <property name="checked"><bool>false</bool></property>
+       </widget>
+      </item>
      </layout>
     </widget>
    </item>

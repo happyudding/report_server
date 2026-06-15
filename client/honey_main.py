@@ -12,6 +12,7 @@ import concurrent.futures
 import contextlib
 import os
 import queue
+import shutil
 import sys
 import tempfile
 import time
@@ -55,10 +56,12 @@ import chart_colors
 try:
     import report_generator as rg
     from report_generator import xlsx_writer
+    from report_generator import map_analyze
     _RG_IMPORT_ERROR = None
 except Exception as exc:  # noqa: BLE001
     rg = None
     xlsx_writer = None
+    map_analyze = None
     _RG_IMPORT_ERROR = exc
 
 PRODUCT_TYPES = ["MDDI", "PDDI", "PMIC", "SECURITY"]
@@ -516,10 +519,11 @@ class HoneyMainWindow(QMainWindow):
             QMessageBox.warning(self, "모드 적용 불가", str(exc))
             return
         self._run_analysis(work_group, selected, sheets, dlg.auto_upload(),
-                           dlg.raw_data(), compare_mode=dlg.mode_compare())
+                           dlg.raw_data(), compare_mode=dlg.mode_compare(),
+                           mode_map=dlg.mode_map())
 
     def _run_analysis(self, work_group, selected, sheets, auto_upload, raw_data=False,
-                      compare_mode=False):
+                      compare_mode=False, mode_map=False):
         self.btn_start.setEnabled(False)
         show_timing_log = bool(getattr(rg, "DEBUG_RUN_TIMING_LOG", False))
         overall_t0 = time.perf_counter()
@@ -690,6 +694,15 @@ class HoneyMainWindow(QMainWindow):
             f"Excel 시트/차트 생성 중...  → {Path(out).name}",
             status=f"xlsx 생성 중... (Excel)  → {Path(out).name}",
         )
+        # Map 옵션: 입력 파일별 wafer bin map PNG 생성 (matplotlib, COM 비의존).
+        map_pngs, map_tmpdir = [], None
+        if mode_map and map_analyze is not None:
+            try:
+                map_pngs, map_tmpdir = map_analyze.build_map_pngs(
+                    work_group.mass_data_map, log_cb=self._append_run_log)
+            except Exception as exc:  # noqa: BLE001
+                self._append_run_log(f"Map 생성 ERROR - {exc}")
+                map_pngs, map_tmpdir = [], None
         try:
             colors = chart_colors.load_colors()
 
@@ -704,6 +717,7 @@ class HoneyMainWindow(QMainWindow):
                             dist_progress_cb=_dist_progress,
                             attach_progress_cb=_attach_progress,
                             profile_cb=profile_cb,
+                            map_pngs=map_pngs,
                         )
                 finally:
                     _co_uninitialize(com_module)
@@ -728,6 +742,9 @@ class HoneyMainWindow(QMainWindow):
             self._status("xlsx 생성 실패")
             self.btn_start.setEnabled(True)
             return
+        finally:
+            if map_tmpdir:
+                shutil.rmtree(map_tmpdir, ignore_errors=True)
         _drain_progress_events()
 
         # 5) Excel 파일 저장 마무리
