@@ -10,7 +10,6 @@ xlsx_writer 의 단일 Excel 세션 안에서 PNG 만 시트로 부착한다(별
 """
 from __future__ import annotations
 
-import math
 import tempfile
 from pathlib import Path
 
@@ -21,6 +20,7 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib.figure import Figure          # noqa: E402
 from matplotlib.patches import Patch          # noqa: E402
+from matplotlib.ticker import MultipleLocator  # noqa: E402
 
 MAP_COORD_ERROR_MSG = "X,Y 좌표가 맞지 않아 map 을 확인할수 없습니다."
 
@@ -35,7 +35,9 @@ _OTHER_COLORS = [
 ]
 _EMPTY_RGB = (1.0, 1.0, 1.0)        # 빈 셀(die 없음) 배경 = 흰색
 _NA_BIN_COLOR = "#000000"           # bin 값이 비수치인 die
-_MAX_TICKS = 25                     # 축 눈금 최대 개수(과밀 방지)
+_MAJOR_TICK = 5                     # 축 주눈금 단위
+_MINOR_TICK = 1                     # 축 보조눈금 단위
+_CHIP_GRID_COLOR = "#9a9a9a"        # 칩(셀) 격자선 색
 
 
 def _color_for_bin(bin_code, palette_map):
@@ -53,13 +55,6 @@ def _color_for_bin(bin_code, palette_map):
 def _hex_to_rgb(hex_color):
     h = hex_color.lstrip("#")
     return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
-
-
-def _tick_positions(lo, hi):
-    """[lo, hi] 정수 범위에 대해 과밀하지 않은 정수 눈금 위치 목록."""
-    span = hi - lo + 1
-    step = max(1, math.ceil(span / _MAX_TICKS))
-    return list(range(lo, hi + 1, step))
 
 
 def render_map_png(xs, ys, bins, title, out_path) -> None:
@@ -102,13 +97,28 @@ def render_map_png(xs, ys, bins, title, out_path) -> None:
         extent=(xmin - 0.5, xmax + 0.5, ymin - 0.5, ymax + 0.5),
         interpolation="nearest",
         aspect="equal",
+        zorder=0,
     )
-    ax.set_xticks(_tick_positions(xmin, xmax))
-    ax.set_yticks(_tick_positions(ymin, ymax))
+    # 칩(셀) 격자선 — 셀 경계(반정수 위치)에 그림
+    x_bounds = np.arange(xmin - 0.5, xmax + 1.0, 1.0)
+    y_bounds = np.arange(ymin - 0.5, ymax + 1.0, 1.0)
+    ax.vlines(x_bounds, ymin - 0.5, ymax + 0.5,
+              colors=_CHIP_GRID_COLOR, linewidth=0.5, zorder=2)
+    ax.hlines(y_bounds, xmin - 0.5, xmax + 0.5,
+              colors=_CHIP_GRID_COLOR, linewidth=0.5, zorder=2)
+
+    # 축 눈금: 주눈금 5단위 / 보조눈금 1단위
+    ax.xaxis.set_major_locator(MultipleLocator(_MAJOR_TICK))
+    ax.xaxis.set_minor_locator(MultipleLocator(_MINOR_TICK))
+    ax.yaxis.set_major_locator(MultipleLocator(_MAJOR_TICK))
+    ax.yaxis.set_minor_locator(MultipleLocator(_MINOR_TICK))
+    ax.set_xlim(xmin - 0.5, xmax + 0.5)
+    ax.set_ylim(ymin - 0.5, ymax + 0.5)
     ax.set_xlabel("XCoord")
     ax.set_ylabel("YCoord")
     ax.set_title(title)
-    ax.tick_params(labelsize=8)
+    ax.tick_params(which="major", labelsize=8)
+    ax.tick_params(which="minor", length=2)
 
     # bin ↔ 색 범례 (Pass=bin1 먼저, 그 외 코드 오름차순)
     def _legend_key(item):
