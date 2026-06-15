@@ -64,6 +64,46 @@ row 5+ : DUT 측정 데이터
 
 헤더는 `df.columns`에만 있어야 한다. row0에 헤더가 중복되면 `UNITS_ROW=0`, `DATA_START_ROW=5` 기준이 깨져 unit/limit/data 해석이 모두 밀린다.
 
+## 입력 dtype 계약
+
+공개 진입점(`analyze`, `build_report`, `df_honey.from_csv`, `df_honey_group.from_csvs`)이 받는 인자의 기대 타입.
+
+| 인자 | 타입 | 필수 | 비고 |
+|---|---|---|---|
+| `csv_paths` / `paths` | `list[str]` (또는 `Path`) | 필수 | CSV/xlsx 경로 목록 |
+| `meta` / `report_meta` | `ReportMeta \| None` | 선택 | `None`이면 `ReportMeta()` 기본값 사용 |
+| `selected_items` / `ItemSelector.selected_items` | `list[str] \| None` | 선택 | subject 이름 목록. `None`/`[]` → 전체 subject |
+| `product_type` | `str \| None` | 선택 | honey_parse 포맷 감지용 (MDDI/PDDI/PMIC/SECURITY) |
+| `out_path` | `str` | `build_report`에서 필수 | 출력 xlsx 경로. 생략 시 `AnalysisResult` 반환 |
+| `sheets` | `list[str] \| None` | 선택 | 생성할 시트 목록 (`summary`, `yield`, …) |
+
+### 측정 DataFrame 값 dtype
+
+raw CSV/xlsx는 `dtype=object`(전부 문자열)로 읽힌 뒤 canonical 구조로 정규화된다. 그 위에서 분석이 기대하는 값 계약은 다음과 같다.
+
+- 측정값(row5+)과 limit(row1~4)은 **숫자 변환 가능(numeric-coercible)** 한 문자열·숫자여야 한다. 하류에서 `pd.to_numeric(errors="coerce")`로 변환된다.
+- 변환 불가하거나 빈칸인 값은 `NaN`이 된다. 한 DUT 행의 중간에서 `NaN`이 나오면 **그 지점에서 측정이 중단(fail)** 된 것으로 해석한다.
+- `Bin` 열은 **문자열로 비교**된다 (PASS = `"1"`). 숫자 `1`이 아니라 문자열 `"1"` 기준이다.
+
+## metadata 계약 (ReportMeta)
+
+`ReportMeta`는 report_generator가 받아들이는 유일한 metadata 객체다. 7개 필드 **전부 `str`, 기본값 `""`, 모두 선택**이다.
+
+| 필드 | 타입 | 기본 | 채움 주체 | 용도 |
+|---|---|---|---|---|
+| `product_type` | `str` | `""` | 호출자 | summary 시트 제목 |
+| `product` | `str` | `""` | 호출자 | Device Feature "DEVICE" |
+| `lot_id` | `str` | `""` | 호출자 | "Lot NO" |
+| `revision` | `str` | `""` | 호출자 | "EVT_Version" |
+| `process` | `str` | `""` | 호출자 | "Process Line" |
+| `source_path` | `str` | `""` | `from_csv` 자동 | 입력 파일 경로 추적 |
+| `sheet_name` | `str` | `""` | `from_csv` 자동 | 입력 sheet/파일명 |
+
+- 모두 summary 시트 표시 전용이며, 비어 있어도 안전하다(`-`/빈칸으로 처리).
+- `source_path`/`sheet_name`은 `df_honey.from_csv`가 비어 있을 때 파일 경로·파일명 패턴에서 자동 추론해 채운다.
+
+> **혼동 주의 — ReportMeta ≠ 업로드 메타 dict.** 실제 Honey 흐름에서는 `analyze()`에 빈 `ReportMeta()`를 넘기고, product/lot_id 등 실제 메타 값은 **업로드 시점**에 별도 dict로 수집해 `transport/uploader.py`의 `post_grids`로 서버에 전송한다. 이 업로드 dict는 transport 계약이며 report_generator의 입력 계약과 무관하다.
+
 ## 주요 객체
 
 - `df_honey`: source 1개를 나타낸다. `subjects`, `units`, `lower_limits`, `upper_limits`, `meta`, `scores`, `numeric_scores`, `fail_mask`를 cached property로 제공한다.
