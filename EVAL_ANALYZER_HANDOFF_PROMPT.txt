@@ -1,0 +1,85 @@
+아래 프롬프트를 그대로 report_server 담당자(또는 담당 AI)에게 전달하세요.
+목적: report_server 의 DB 저장을 확장해, 별도 개발 중인 반도체 fail-item 평가 분석 엔진이
+쓰는 컴팩트 파생 통계 + 평가/라벨을 중앙 저장하게 한다. raw(per-DUT 원시값)는 저장하지 않는다.
+
+================================================================================
+
+[작업 의뢰] report_server DB 저장 확장 — 반도체 fail-item 평가 엔진 연동
+
+■ 배경
+별도로 개발 중인 "fail-item 평가 분석 엔진"이 report_generator 에 결합되어, fail item 별로
+파생 통계(cpk·산포·outlier·tail·wafer·site·family 상관 등)를 계산하고, 룰+RAG+LLM 으로
+status 와 분석방향 코멘트를 생성한다. 이 엔진의 입력/출력을 팀 공통으로 누적·표시하려면
+report_server 의 저장 경로를 확장해야 한다. report_generator 는 현재 cpk/산포를 계산하지만
+업로드 시 텍스트 grid 만 보내고 수치를 버리므로, 그 컴팩트 수치와 평가결과를 저장해야 한다.
+
+■ 불변 제약 (반드시 준수)
+- raw(per-DUT 원시 측정 배열)는 절대 저장하지 않는다. 저장 대상은 fail item 당 요약 통계
+  수십 개 숫자(컴팩트)뿐. (용량: raw 는 DUT×item×lot 로 과대)
+- 새 테이블은 report_ prefix. SCHEMA 에 CREATE TABLE IF NOT EXISTS 로 추가(기존 audit_log 처럼
+  자동 생성, 별도 _migrate 불필요한 형태 우선).
+- 기존 업로드/조회/수정 흐름을 깨지 않는다. 신규 필드는 모두 optional, 없으면 무시(하위호환).
+  기록은 best-effort — 실패해도 본 업로드를 깨뜨리지 않는다.
+- analysis_key 산출 규칙(canonical(sheet_grids)+meta sha256)은 변경하지 않는다.
+
+■ 기존 입력 관례에 맞출 것 (report_db.py 패턴 그대로)
+- 모든 쓰기는 기존 get_conn() 컨텍스트매니저 경유(자동 commit, busy_timeout), 타임스탬프는 _now()(unix int).
+- 모든 행은 analysis_key(+session_id)로 키잉 — 전 테이블 조인 축.
+- 수치 테이블(report_item_metrics)은 report_analysis_summary 와 동일 idiom:
+  save 함수 = INSERT OR IGNORE(executemany) + UNIQUE 제약, edit 용 replace_ 함수 = DELETE 후 재INSERT.
+- 평가/라벨 테이블(report_evaluation)은 computed 와 label 이 따로 갱신되므로 report_sheet_data 식
+  INSERT … ON CONFLICT(UNIQUE) DO UPDATE(부분 upsert). label_* 만 갱신해도 computed 안 날아가게.
+- 업로드 입력 순서: create_session → save_summary_batch(치명적) → upsert_sheet_data(비치명적) 흐름에
+  신규 저장을 비치명적 단계로 끼운다(실패해도 status=done 유지, warnings 수집).
+
+■ 작업 1 — fail item 파생 통계 저장 (report_item_metrics, 신규 테이블)
+컬럼(전부 nullable, 컴팩트):
+  analysis_key, session_id,
+  item_canonical, item_base, item_phase, bin_number,
+  cpk, cp, cpl, cpu, mean, stdev, lsl, usl, unit,
+  robust_sigma, spread_norm,
+  outlier_ratio, kurtosis, skewness, tail_ratio_hi, tail_ratio_lo, modality,
+  n_dut, netdie,
+  wafer_pattern, edge_fail_ratio, worst_site, site_cpk_delta,
+  family_corr, phase_recovery_rate,
+  created_at
+  UNIQUE(analysis_key, item_canonical, bin_number)
+(참고: 기존 report_analysis_summary 의 cpk_val/mean_val/stdev_val/lsl/usl 는 현재 NULL.
+ 위 신규 테이블로 분리 권장. 기존 테이블 컬럼을 채우는 방식도 가능하나 의미 충돌 주의 —
+ report_analysis_summary.mean_val 은 'yield avg'라 측정 mean 과 다름.)
+
+■ 작업 2 — 평가 결과 + 인간 라벨 저장 (report_evaluation, 신규 테이블)
+컬럼:
+  analysis_key, session_id, item_canonical, bin_number,
+  -- computed (엔진 출력)
+  eval_status, reason_codes, signatures, eval_comment, model_used, confidence, data_completeness,
+  -- human label (엔지니어 입력)
+  label_status, root_cause, disposition, signature_tag, label_comment,
+  created_at, updated_at
+  UNIQUE(analysis_key, item_canonical, bin_number)
+controlled vocabulary(문자열로 저장, 검증은 엔진/UI 측):
+  status: CRITICAL|MAJOR|MINOR|MONITOR
+  root_cause: equipment|process|design|spec|unknown
+  disposition: retest|trim|spec_review|monitor|scrap
+
+■ 작업 3 — bin 의미 reference (report_bin_taxonomy, 신규 테이블, 도메인 입력)
+컬럼: product_type, bin_number, bin_class, default_severity, note, updated_at
+  UNIQUE(product_type, bin_number)
+(예: bin18 → defective, bin31 → abnormal. 같은 통계 신호라도 bin_class 로 status 보정.)
+
+■ 작업 4 — 업로드 수신 확장 (upload_xlsx)
+- 업로드 폼/JSON 에 optional 필드 'item_metrics'(작업1 레코드 배열) 수신 시
+  report_item_metrics 에 저장. 없으면 무시(기존 동작 유지).
+
+■ 작업 5 — 조회/기록 엔드포인트 (라우트는 /pe/report 내부, 신규 이름)
+- GET  /pe/report/session/<sid>/metrics      → report_item_metrics 조회
+- GET  /pe/report/evaluations?product=&item=  → report_evaluation 조회 (RAG 코퍼스 retrieval)
+- POST /pe/report/session/<sid>/eval_label    → label_* upsert (엔지니어 enum/comment)
+- GET  /pe/report/bin_taxonomy?product_type=   → report_bin_taxonomy 조회
+(분석 라우트 명 analyze/execute/plot/preview_items 는 추가하지 말 것 — 기존 규칙.)
+
+■ 검증
+- 신규 테이블이 서버 기동 시 자동 생성되는지.
+- item_metrics 없는 기존 업로드가 그대로 성공하는지(하위호환).
+- item_metrics 동반 업로드 시 report_item_metrics 에 행 생성, raw 미저장 확인.
+- eval_label POST → report_evaluation upsert, 재조회 일치.

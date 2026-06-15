@@ -1,0 +1,284 @@
+# 반도체 Fail-Item 평가 분석 엔진 (report_generator 통합용 라이브러리) 설계
+
+## Context (왜 / 무엇을)
+
+엔지니어가 fail item 별로 "얼마나 심각한지(status)" 와 "어느 방향으로 분석할지(분석방향
+comment)" 를 수동 판단·기록하는 작업을 자동화한다. 제품/process/yield/netdie/cpk/산포/
+기존 engr comment 를 입력으로, fail item 의 status 를 결정론적 룰로 판정하고 분석방향
+코멘트를 자동 생성한다.
+
+### 확정된 설계 방향 (사용자 확인 완료)
+1. 분석 엔진 라이브러리 — 서버·web UI 없음. 순수 Python 패키지로 evaluate(...) API 제공.
+   추후 report_generator 에 결합(import 되어 호출). "독립"=report_server 런타임 비의존
+   디커플드 모듈이지 별도 실행 앱 아님. 라벨 입력·결과 표시는 report_generator UI 표면에 후속.
+2. Hybrid 룰 + RAG + LLM — 룰 엔진이 status 결정론적 판정, RAG 가 과거 선례 회수,
+   LLM 이 자연어 코멘트 합성. LLM 은 Claude 아님, 사용자 지정 외부 모델 → 교체형 어댑터.
+3. 입력 = comment(free) + 최소 enum 2~3개 (root_cause / disposition / status).
+   엔지니어는 "규칙"이 아니라 판정 라벨만, 룰은 누적에서 채굴.
+4. 데이터 = 메모리에서 계산, raw 비저장 — report_generator 가 이미 손에 쥔 raw(df_honey)를
+   결합 시점에 받아 feature 를 즉시 계산, 요약 통계만 저장(raw 배열 폐기). 별도 raw 적재 없음.
+
+### 범위(Scope) — 본 구현은 분석 엔진 라이브러리만
+- IN(내가 구현): eval_engine/ 패키지 — pipeline(ingest/metrics/features/rules/signatures/
+  status/recommend(RAG+LLM)/present) + llm_client + calibrate + evaluate() API + 얇은 테스트 CLI.
+  cpk/산포 계산은 report_generator 순수함수(df_honey/get_df_cpk_summary) import 재사용.
+- OUT(미구현, 담당자 위임): 서버·web UI, report_server/client 코드 변경. 특히 평가 결과·파생 통계의
+  중앙 저장(report.db 확장)은 report_server 담당자 작업 → [부록] 전달용 프롬프트 참조
+  (EVAL_ANALYZER_HANDOFF_PROMPT.txt). 라벨 입력·결과 표시 UI 는 report_generator 결합 시 후속.
+- degrade: feature 입력이 yield 수준뿐이면 yield-only(LOW_YIELD/GROSS_FAIL+RAG+LLM),
+  cpk/산포 signature 는 data_completeness=low 휴면.
+
+### raw data 저장 원칙 (용량 우려 해소)
+raw = per-DUT 측정 원시(행=DUT, 열=item 값 + limit + 좌표). DB 에 raw 를 적재하지 않는다
+(DUT×item×lot 로 과대). cpk·산포·outlier·tail·wafer·family-corr 는 계산 시점에만 raw 필요,
+산출 후 fail item 당 요약 통계 수십 개 숫자만 persist. report_generator 결합 시 raw 는
+메모리에서 즉시 소비 → 별도 CSV drop 의존 소멸. 통합 전 테스트만 샘플 CSV 1개.
+
+---
+
+## 아키텍처 — 6단계 파이프라인 + 2계층 룰
+
+[입력 (메모리)]                       [파이프라인 — evaluate() API]
+report_generator ─┐               L0 Ingest    raw(메모리)→캐노니컬; item base/phase 파싱, canonical
+ raw(df_honey)    │               L1 Metric    cpk·mean·stdev·yield·netdie (raw 즉시 계산, 비저장)
+report.db(RO,보조)┼──> evaluate ─ L2 Feature   robust 산포(spread/outlier/tail)·modality·wafer·site·family
+ (부트스트랩/테스트)│              L3 Signature 조합형 진단 룰 (bin_taxonomy context 변조)
+                  ┘               L4 Status    severity 집계 + trump + specificity 충돌해소
+                                  L5 Recommend 룰골격 + RAG(과거 선례) + LLM 합성 (교체형 모델)
+                                  L6 Present   결과 dict 반환(→ report_generator UI 가 표시)
+저장: 요약 통계 + label + computed 만(컴팩트). raw 배열 폐기.
+횡단: Scope/Context(product_type·bin_class·site) 전 층 주입 / Confidence·Evidence 각 층 동반
+
+층을 더 나눈 이유: 각 층이 따로 바뀜 — Status(급도)를 Signature(진단)에서 분리,
+Recommend(LLM·문구)를 Signature 에서 분리, Metric(객관 수치·캐시)을 Feature(임계값 해석)에서
+분리. 판정 기준 = "각 층을 고정 input→output 으로 단위테스트 가능한가". 늘 같이 바뀌면 합친다.
+
+### 룰 2계층 (L2 Feature / L3 Signature)
+- Layer 1 Feature: univariate 신호 + 파생지표 — robust 산포 3분리: spread(spread_norm),
+  outlier(outlier_ratio·kurtosis), tail(skewness·tail_ratio); modality(이봉);
+  source/site 분해(site cpk delta); wafer map 패턴(edge/center/cluster, CSV 의 XCoord/YCoord);
+  spec margin=(mean−최근접limit)/stdev; n_dut(min-n 가드). estimator=표준 robust, 임계=정규화+분위수.
+  단위룰은 코드 아닌 데이터: Rule(code, applies, fires, severity, desc_ko), 임계값은 외부 json.
+- Layer 2 Signature: feature 조합 → named 고장 모드. detail/전문성이 여기 쌓임.
+  detail 추가 = signature 한 줄 추가(배관 추가 아님). 선언형(yaml):
+    - id: EQUIPMENT_SUSPECT
+      when_all: [SOURCE_IMBALANCE, ONE_SOURCE_CPK_LOW]
+      when_metric: { site_cpk_delta: ">0.5" }
+      scope: { item_category: any }
+      status_hint: MAJOR
+      action_ko: "site간 편차 큼 — golden unit 재측정 / handler·site correlation"
+      evidence: ["worst source {worst_src} cpk {worst_cpk}", "site delta {site_cpk_delta}"]
+      provenance: "comment cluster #7"
+  예시: EQUIPMENT_SUSPECT / MEAN_SHIFT / WIDE_DISTRIBUTION / SEVERE_OUTLIER / TAIL_RISK /
+  BIMODAL / SPEC_TOO_TIGHT / EDGE_FAIL / GROSS_FAIL / TRIM_INEFFECTIVE / RETEST_RECOVERY(family).
+  지배 signature 가 status, 나머지는 secondary hint.
+  bin_taxonomy context 변조: 같은 signature 라도 bin_class(defective/abnormal)에 따라 status_hint 가
+  달라짐(예: SEVERE_OUTLIER@bin18-defective→CRITICAL, @bin31-abnormal→investigate/MONITOR).
+- 결측 1급 처리: cpk/산포 NULL 이면 해당 룰 applies=False("양호"로 오판 금지),
+  결과에 data_completeness/confidence 명시.
+- 충돌 해소: specificity 우선(구체 signature 가 일반 룰 이김).
+
+### 룰은 발명 아닌 채굴 (calibrate.py, 오프라인)
+1. 분위수 보정: 누적 데이터의 yield·cpk·불량률·source편차를 product_type 별 분위수로 →
+   thresholds.json 생성(업계 표준 cpk 1.33/1.0 은 cold-start 시드, 표본 쌓이면 대체).
+2. comment 클러스터링: 기존 engr comment + 입력 enum 라벨을 군집 → 반복 표현이 signature 후보(패턴+액션).
+3. 검증셋: 과거 룰 high-severity 판정 vs 실제 라벨/comment 비교(precision/recall 유사).
+- 원칙: 룰 로직(코드) / 임계값(json) / 진단룰(yaml) 3분리 → 재보정 시 코드 불변.
+
+---
+
+## 입력 데이터 모델 (캐노니컬 스키마, eval.db)
+
+엔지니어는 label 컬럼만 입력, measured 는 데이터에서 자동.
+
+join / identity — bin 은 identity 1급(의미 인코딩) + item 은 base/phase 로 분해:
+  item-identity : product, item_canonical, bin       # bin 까지 포함이 정체성 (이름 정규화+alias)
+  item 분해      : item_base, item_phase             # X_INIT/X_TRIM → base=X, phase=INIT (family 키)
+  instance      : + lot_id, + session_id             # 그 item 의 특정 발생
+  context       : product_type, process, revision, site(=DUT)
+- bin 의 두 역할: (1) identity 일부(같은 item·다른 bin = 다른 fail), (2) 의미 context —
+  bin 번호가 분류 인코딩(bin18 outlier→defective, bin31 outlier→abnormal). 같은 신호라도
+  bin-class 가 status 를 바꿈 → bin_taxonomy(bin→class/기본severity) reference 가 status 를 변조.
+- item family: item_base 같은 item 들(=같은 파라미터의 phase 묶음)을 묶어 family 단위 분석.
+- (bin 이 불안정한 건 test-program 개정 시 재할당 케이스뿐 → cross-revision 매칭만 item_canonical 사용.)
+
+분석 단위(granularity) 계층 — 질문에 따라 grain 이 달라짐:
+  item   | (product, item_canonical, bin)  | LOW_CPK·WIDE/OUTLIER/TAIL·LOW_YIELD
+  family | (product, item_base)            | TRIM_INEFFECTIVE·RETEST_RECOVERY (phase 간 상관)
+  bin    | (product, bin) + bin_taxonomy   | defective vs abnormal 해석 보정
+  site   | (…, site=DUT)                   | EQUIPMENT_SUSPECT (site_cpk_delta)
+  wafer  | (…, XCoord/YCoord)              | EDGE_FAIL (공간 패턴)
+
+measured (객관 수치, 자동):
+  기본(DB)     : yield, fail_count, src_yields(a/b/c), bin
+  공정능력(CSV): cpk, mean, stdev, lsl, usl, netdie
+  산포-벌어짐  : robust_σ(MAD), spread_norm = robust_σ/(USL−LSL)
+  산포-outlier : outlier_ratio(IQR/modified-z>3.5), kurtosis
+  산포-tail    : skewness(medcouple), tail_ratio_hi/lo, cpl/cpu
+  분포형태     : modality(uni/bi)
+  wafer 공간   : wafer_pattern(EDGE/CENTER/CLUSTER/RANDOM), edge_fail_ratio
+  site 분해    : worst_site, site_cpk_delta (또는 child fail_item_site)
+  bin 의미     : bin_class (bin_taxonomy lookup → defective/abnormal/parametric…)
+  family 상관  : family_corr(phase 간 per-DUT 상관), phase_recovery_rate(INIT→P2 회복률)
+  가드         : n_dut (min-n 신뢰도)
+
+label (인간 판단, 입력): status, root_cause, disposition, signature_tag?, comment(free)
+computed (파이프라인): eval_status, reason_codes, signatures, eval_comment, model_used,
+  confidence, data_completeness  (label 과 같은 모양 → 예측 vs 정답 비교)
+
+controlled vocabulary (미리 합의할 유일한 "규약"):
+- root_cause: equipment / process / design / spec / unknown
+- disposition: retest / trim / spec_review / monitor / scrap
+- status: CRITICAL / MAJOR / MINOR / MONITOR
+
+테이블: fail_item(join+measured) / fail_label(human) / fail_eval(computed)
+/ (옵션) fail_item_site(site grain). enum 은 코드 상수 또는 작은 vocab 테이블.
+
+### 현재 report.db 부족분 상세 + 담당
+report.db 가 현재 보유(재사용, 추가 0): product_type·product·lot_id·process·revision·
+created_at(session) / item_name·bin·yield_percent·fail_count(summary) / Category·Bin·Item·
+mass_data_a/b/c_yield·comment·개발1차comment(issue_table) / GrossDie(summary 텍스트) / issue PNG(S3).
+주의: summary 의 mean_val 은 yield avg 이지 측정 mean 이 아님. cpk/stdev/lsl/usl 컬럼은 전부 NULL.
+
+  부족 항목                              | report.db 현재 | 어디서 채우나                              | 담당
+  per-DUT 측정 원시값(분포 원재료)       | 집계만 저장    | report_generator 결합 시 메모리 수령(비저장)| 통합으로 해소
+  cpk·mean(측정)·stdev·LSL·USL           | 컬럼 NULL      | 원시값에서 엔진 계산(get_df_cpk_summary)    | 내 범위
+  DUT(=site)·XCoord·YCoord               | 없음           | raw(메모리)에 존재 → 엔진 ingest           | 내 범위
+  robust 산포/outlier/tail/modality      | 없음           | 엔진 계산                                  | 내 범위
+  wafer_pattern·edge_fail_ratio          | 없음           | 엔진 계산(좌표)                            | 내 범위
+  site_cpk_delta·worst_site              | 없음           | 엔진 계산(DUT 그룹)                        | 내 범위
+  family_corr·phase_recovery_rate        | 없음           | 엔진 계산(per-DUT 다중 item)               | 내 범위
+  netdie(per-item)                       | summary 텍스트 | 엔진 파싱 / CSV DUT 수                      | 내 범위
+  item_base·item_phase                   | 없음           | 엔진 이름 파싱                             | 내 범위
+  item_canonical·alias map               | 없음           | 엔진 정규화(+개정 rename 은 도메인)         | 내 범위(일부 도메인)
+  bin_taxonomy(bin→class)                | 없음           | 도메인 reference — UI/config 수집           | 내 범위(내용 도메인)
+  human label(status·root_cause·…)       | engr comment만 | 엔진 입력 UI                               | 내 범위
+
+결론:
+- raw 저장: 불필요 — report_generator 결합 시 메모리에서 수령·계산 후 폐기.
+- 컴팩트 파생 통계 + 평가/라벨 중앙 저장: 필요 — 팀 공통 RAG·calibration·표시를 위해
+  report.db 저장 경로를 확장해야 함(report_generator 가 현재 수치를 버리고 텍스트 grid 만 업로드).
+  → 기존 프로젝트(담당자) 변경 항목. 상세 작업·스키마는 EVAL_ANALYZER_HANDOFF_PROMPT.txt 참조.
+- 통합 전 단독 개발은 샘플 CSV / report.db(RO) yield-only 로 진행(저장 확장 전에도 엔진 검증 가능).
+
+### Background data (seed) 입력 포맷 — 한 행 = 과거 fail item 1건
+개념: LLM 을 "학습"시키는 게 아니다(사전학습 모델 교체 사용). 누적하는 건 과거 판정 이력 한 표이고,
+이게 (1) calibration(측정값 분위수→임계값) (2) signature mining(라벨/comment 패턴) (3) RAG(comment 검색)를
+동시에 먹인다. CSV(또는 xlsx→csv), UTF-8. 필수 = A + (C 중 최소 1개), 나머지는 결측 허용.
+
+  A 식별(필수)   : product_type, product, lot_id, item_name, bin
+  B 측정(있으면) : yield_pct, fail_count, netdie, cpk, mean, stdev, lsl, usl, unit,
+                   robust_sigma, spread_norm, outlier_ratio, kurtosis, skewness,
+                   tail_ratio_hi, tail_ratio_lo, modality, n_dut,
+                   site_cpk_delta, worst_site, wafer_pattern, edge_fail_ratio,
+                   family_corr, phase_recovery_rate
+  C 라벨(정답)   : status, root_cause, disposition, signature_tag, comment   # comment 가 RAG 본체
+  D 메타(선택)   : eval_date, engineer, revision, process
+  vocab: status=CRITICAL|MAJOR|MINOR|MONITOR / root_cause=equipment|process|design|spec|unknown
+         disposition=retest|trim|spec_review|monitor|scrap / signature_tag=신호명(선택, 모르면 비움)
+
+별도로 report_bin_taxonomy(product_type, bin, bin_class) seed 도 채우면 status 보정에 사용.
+최소 시작: A + comment(+가능하면 status/root_cause/disposition). cpk/산포 없으면 해당 룰만 휴면.
+
+예시 CSV:
+product_type,product,lot_id,item_name,bin,yield_pct,fail_count,netdie,cpk,mean,stdev,lsl,usl,status,root_cause,disposition,signature_tag,comment
+PMIC,S5E_TEST,LOT001,VREF_TRIM,18,0.68,3,280,0.82,1.21,0.09,1.0,1.4,MAJOR,equipment,retest,SEVERE_OUTLIER,"site 3 에서만 튐, golden unit 재측정 필요"
+PMIC,S5E_TEST,LOT001,IDDQ_INIT,31,0.57,2,280,1.45,12.3,1.1,,15,MONITOR,process,monitor,WIDE_DISTRIBUTION,"abnormal bin, 산포 넓으나 재현 약함 모니터"
+MDDI,S5E_DDI,LOT044,VTH_CODE,12,2.1,9,512,0.91,0.45,0.05,0.3,0.6,MAJOR,design,spec_review,TAIL_RISK,"USL 쪽 꼬리, spec margin 검토"
+
+### robust 통계 / 임계값 원칙
+- estimator 는 표준 robust 기본값(MAD·1.4826, IQR/1.349, Iglewicz modified-z 3.5, Tukey fence, medcouple).
+- 임계값은 절대값 하드코딩 금지 → (1) spec/robust scale 로 정규화(무차원) (2) calibrate 분위수로 결정.
+- hybrid threshold: 안전 앵커(cpk<1.0, z>3.5)는 절대 floor, 주의 tier 는 상대 분위수.
+- 산포 3종 분리: WIDE_DISTRIBUTION(넓다)/SEVERE_OUTLIER(튄다)/TAIL_RISK(치우친다) — 다른 통계·원인·조치.
+- min-n 가드: n_dut<n_min 이면 고차모멘트 룰 applies=False, confidence=low.
+
+### 스키마 설계 원칙 (이 앱의 토대)
+범주의 본질: measured=사실, label=사람의 진실, computed=기계의 추측. 앱 전체가
+measured→(룰)→computed 이고 computed 가 label 에 가까워지게 한다(label/computed 가
+같은 모양 → 예측 vs 정답 비교 → calibration 피드백 루프).
+- join: 정체성·연결(조인/이력). 닫힌 집합 — 바꾸면 다 깨짐 → 일찍 신중히 확정.
+- measured / label: 열린 집합 — 자유롭게 추가(쌈).
+- 무엇을 추가할지 = 소비자 주도(YAGNI): 컬럼은 소비자(join→쿼리, measured→feature/signature,
+  label→calibration/리포트)가 있을 때만 추가. 거꾸로: "지금 못 답하는 진단 질문"에서 출발하면
+  필요한 join+measured+signature 가 한 세트로 도출(예: "어느 site가 나쁜가" → site+site_cpk_delta+EQUIPMENT_SUSPECT).
+
+### 판단 기준 (무엇으로 판단하나) — join 이 아니라 features
+판단의 대상은 join, 판단의 근거는 measured/features, 판단의 경험은 label/RAG. fail item 1건:
+  1. join 으로 식별 + CSV/과거/label 연결          ← 누구 (대상)
+  2. features 계산 (cpk·산포·outlier·tail·wafer·site·family-corr)  ← 근거 산출
+  3. bin_taxonomy(bin-class) context 로 해석 보정    ← 의미 부여
+  4. rules/signatures 가 features 평가 → status      ← 판단(기준은 여기)
+  5. RAG 가 join(item/signature)으로 선례 회수        ← 경험
+  6. LLM 이 4+5 를 코멘트로 합성                     ← 표현
+→ 판단 기준 = 4번(features→rules). join 은 대상을 정하고 데이터를 연결하는 키일 뿐.
+
+---
+
+## 프로젝트 구조 (라이브러리 패키지, 추후 report_generator 로 이동 가능)
+
+eval_engine/                         순수 Python 패키지 (서버·UI 없음)
+├── __init__.py                      evaluate(...) 공개 API re-export
+├── api.py                           evaluate(fail_inputs, labels=None, rag=…) → results dict (통합 진입점)
+├── config.py                        eval.db 경로, LLM endpoint/model/key, 임계값/택소노미 경로
+├── store.py                         eval.db 스키마 + CRUD (요약통계·label·computed·RAG 코퍼스, 컴팩트)
+├── pipeline/
+│   ├── ingest.py                    L0: 메모리 raw/(보조)report.db → 캐노니컬; item base/phase 파싱
+│   ├── metrics.py                   L1: cpk/mean/stdev/yield/netdie (report_generator 순수함수 재사용)
+│   ├── features.py                  L2: robust 산포·modality·wafer·site·bin_class·family_corr
+│   ├── signatures.py                L3: signatures.yaml 평가 (bin_taxonomy context 변조)
+│   ├── status.py                    L4: severity 집계 + trump + specificity
+│   ├── recommend.py                 L5: 룰골격 + RAG + LLM 합성 (실패시 템플릿)
+│   └── present.py                   L6: 결과 dict 직렬화
+├── llm_client.py                    provider-agnostic 어댑터 (모델 사용자 지정, 기본값 없음)
+├── calibrate.py                     분위수 보정 + comment 클러스터링
+├── cli.py                           얇은 테스트/보정 CLI (서버 아님)
+├── rules/{thresholds.json, signatures.yaml, bin_taxonomy.json, item_alias.json}
+├── requirements.txt                 한글주석 시 UTF-8 BOM
+└── README.md
+
+### 통합 / 데이터 연동
+- 결합 경로(목표): report_generator 가 리포트 생성 중 df_honey 로 처리한 raw 를 메모리째 evaluate() 에 전달.
+  엔진은 그 자리서 feature 계산 → 요약 통계만 eval.db 에 persist. report_generator 코드 무수정(import 호출).
+- cpk/산포 계산: client/report_generator 의 df_honey/get_df_cpk_summary/cumulative_distribution_full
+  import 재사용(수정 없음). 향후 패키지를 report_generator 하위로 이동하면 import 경로만 단축.
+- 보조(부트스트랩/테스트): 통합 전에는 report.db(RO) 로 yield 수준 + 샘플 CSV 1개로 엔진 단독 검증.
+  report.db 에 쓰지 않음.
+- 라벨/결과 UI: 미구현 — report_generator 결합 시 그쪽 UI 에 enum 입력·결과 표시 얹음.
+
+### LLM 어댑터
+config 의 endpoint/model/key 로 HTTP 호출(OpenAI 호환 chat 형식 기본 shape, 모델명 하드코딩 금지).
+EVAL_LLM_ENABLED=false 또는 실패 시 reason_codes/action_ko 템플릿 코멘트 fallback(평가 자체는 안 깨짐).
+
+---
+
+## 단계 (success 기준)
+1. 스캐폴드: eval_engine/ 패키지 + eval.db 스키마 + evaluate() 시그니처 → verify: import + 빈 호출 OK.
+2. ingest.py (메모리 raw / 보조 report.db RO) → 캐노니컬 + item base/phase/canonical → verify: 1세션 레코드.
+3. metrics.py+features.py → verify: fail item 당 feature 벡터(결측·n_dut 가드 포함) 출력.
+4. rules(thresholds.json)+signatures.yaml+status.py+bin_taxonomy → verify: 단위 케이스(저yield/저cpk/site/tail/결측/bin-class)로 기대 status·INSUFFICIENT_DATA·지배 signature.
+5. recommend.py+llm_client.py (LLM off) → verify: 룰 골격 템플릿 코멘트.
+6. RAG 검색(코퍼스, 초기엔 구조화 feature 최근접) → verify: 유사 과거 케이스+disposition 회수.
+7. raw 메모리 입력으로 보강 → verify: cpk/산포/family_corr 채워지고 signature 풍부화 / 없으면 yield-only degrade.
+8. calibrate.py → verify: 과거 데이터 분위수 → thresholds.json 재생성.
+9. (사용자 모델 지정) LLM on + RAG → verify: 선례 근거가 녹은 자연어 코멘트.
+10. raw 비저장 확인 → verify: eval.db 에 요약통계만, raw 배열 미적재.
+
+## 검증 (E2E, 라이브러리)
+1. 샘플 raw CSV 1개를 df_honey 로 로드해 evaluate() 에 메모리 전달.
+2. 반환 dict 에서 fail item 별 status·signature·분석방향 코멘트·confidence 확인.
+3. eval.db 조회: 요약 통계 + computed 저장, raw 배열 없음 확인.
+4. enum 라벨 몇 개 주입 → calibrate.py → thresholds.json 갱신 + RAG 코퍼스 증가 확인.
+5. EVAL_LLM_ENABLED off→템플릿 / on+사용자모델→자연어 코멘트 비교.
+6. report.db(RO) 보조 경로: yield-only degrade 동작 확인(cpk/산포 signature 휴면).
+
+## 미해결 (구현 중 확인)
+- 패키지 위치: eval_engine/ 사이블링(통합 전) → 추후 client/report_generator/ 하위 이동 여부.
+- LLM 모델/endpoint 구체값(사용자 지정).
+- report_generator 재사용: path import vs 순수함수 vendoring(통합 전 독립성 vs DRY).
+- evaluate() 입력 계약: report_generator 가 넘길 raw/메타 형식 확정(df_honey 객체 직접 vs 중간 dict).
+- RAG retrieval: 구조화 feature 최근접(초기) → comment 텍스트 임베딩 hybrid(확장).
+- bin_taxonomy / item_alias 내용(도메인 제공) 수집 방법.
+- 저장 방식: report.db 확장(중앙, 권장) vs 엔진 자체 eval.db(분산).
+
+(기존 프로젝트 담당자 전달용 프롬프트는 EVAL_ANALYZER_HANDOFF_PROMPT.txt 참조.)
