@@ -1,0 +1,81 @@
+[역할]
+너는 Flask + vanilla JS 웹앱의 프런트엔드를 수정하는 개발자다. 아래 작업을 기존 구조를
+최대한 보존하며 구현한다. 코드를 추측으로 바꾸지 말고, 명시된 파일을 먼저 읽고 작업한다.
+
+[목표]
+COINAPI report_server 의 세션 상세 페이지(report_view.html)의 "Yield 패널 편집 모드"를,
+지금의 contenteditable 표에서 엑셀형 데이터 그리드(Tabulator)로 교체한다. 사용자가
+엑셀에서 복사한 셀 범위를 Ctrl+V 로 붙여넣고, 셀을 엑셀처럼 편집할 수 있어야 한다.
+Summary/Issue 패널과 서버/DB/PATCH 는 절대 건드리지 않는다.
+
+[대상 파일]
+- 수정: f:\COINAPI\report_server\server\report\report_view.html
+- 참고(읽기 전용): f:\COINAPI\report_server\server\report\report_routes.py
+  (PATCH /pe/report/session/<id>/content)
+
+[현재 데이터 모델 — 반드시 먼저 이해할 것]
+"Yield 시트" 는 JS 전역 DATA.yield_text 다.
+- 형태 A(신규): list-of-dicts.
+  예: [{step, bin, TNO, Item, avg, comment, "<src>_count", "<src>_yield", ...}, ...]
+- 형태 B(구형): 2D 배열 grid.
+- 컬럼은 고정이 아니다. step/bin/TNO/Item/avg/comment 외에, 업로드 소스(파일)마다
+  <src>_count / <src>_yield 열이 동적으로 추가된다. → 컬럼을 하드코딩하지 말고 행
+  데이터에서 동적으로 뽑아라.
+- 일부 행은 서브헤더(섹션 구분) 행이다(기존 isHeaderLikeRow 로 판정). 데이터 행과 섞여
+  있으며 시각적 섹션 헤더 역할을 한다.
+- 보기 모드에선 표시용 정렬(reorderYieldRows: pass bin 먼저 → avg 내림차순)을 적용하지만,
+  편집 모드에선 정렬하지 않는다(원본 순서 유지). 이 규칙을 깨면 저장 시 행이 어긋난다.
+
+[저장 경로 — 서버 무변경]
+편집 결과는 buildPayload() 에서 payload.yield_text 로 만들어 PATCH
+/pe/report/session/<id>/content 로 보낸다. 서버는 이를 upsert_sheet_data(akey,"yield",...)
+로 저장한다. 즉 편집 후 출력 형태는 입력과 동일한 yield_text(list-of-dicts 또는 grid)여야
+한다. 서버 라우트/DB 는 수정 금지.
+
+[작업 상세]
+1. Tabulator(라이선스 MIT) 의 JS/CSS 를 정적 자산으로 추가한다(vendoring 권장, 가능하면
+   CDN). 빌드 스텝을 추가하지 마라 — 이 페이지는 순수 vanilla JS 다.
+2. renderYieldEdit() (현재 yield 편집 표를 그리는 함수) 의 yield_text 분기를, #panel-yield
+   안에 Tabulator 그리드를 생성하도록 교체한다.
+   - 컬럼: DATA.yield_text 행들에서 키를 모아 동적 생성(등장 순서 보존). 기존
+     orderColumns/headerLabel 규칙이 있으면 헤더 라벨에 재사용.
+   - 모든 셀 편집 가능(editor:"input"). 숫자처럼 보이는 열은 우측 정렬. 필요 시 숫자 입력
+     검증.
+   - 서브헤더 행: 일반 행처럼 데이터에 유지하되 시각적으로 구분(rowFormatter 로 배경색),
+     가능하면 해당 행은 편집 비활성.
+   - 정렬/필터로 행 순서를 바꾸지 마라(headerSort:false). 원본 인덱스 순서를 보존한다.
+   - 클립보드: Tabulator clipboard 모듈을 켠다(clipboard:true, 적절한 clipboardPasteAction).
+     엑셀에서 복사한 범위 붙여넣기를 지원한다.
+3. 저장 수집: buildPayload() 의 yield 분기에서, Tabulator 인스턴스의 getData() 로 편집된
+   행을 가져와 원래 DATA.yield_text 와 동일한 구조(list-of-dicts 또는 grid)로 되돌려
+   payload.yield_text 에 넣는다. (기존 collectSheetTable 이 baseRows 를 보존하며 셀 값만
+   덮어쓰는 의미를 그대로 재현 — 행 수/순서/서브헤더 보존, 셀 값만 갱신.)
+4. 구형 grid(형태 B) 입력도 깨지지 않게 처리한다(동일하게 그리드 편집 후 grid 로 환원하거나,
+   최소한 기존 collectGrid 경로를 유지).
+
+[제약 / 불변 규칙]
+- Summary, Issue 패널 편집(renderSummaryEdit / renderIssuesEdit)과 보기 모드 렌더(renderYield
+  등)는 변경하지 않는다.
+- 서버(report_routes.py), DB, PATCH 스키마, CSRF/PIN/감사로그 흐름은 변경하지 않는다.
+- dirty 마킹(.content 의 input 이벤트)과 저장 버튼 흐름에 호환되게 한다(편집 시 _dirty=true,
+  _setDot("dirty") 가 정상 동작).
+- 외부 라이브러리는 Tabulator(MIT) 만 추가한다. 다른 의존성/빌드 도구 추가 금지.
+- 변경은 yield 편집 경로에 국한하고, 무관한 코드/포맷을 손대지 않는다.
+
+[수용 기준]
+1. 세션 상세 → 수정 모드 → Yield 패널에 엑셀형 그리드가 뜬다.
+2. 셀을 클릭/타이핑으로 편집할 수 있고, 엑셀에서 복사한 셀 범위를 Ctrl+V 로 붙여넣을 수 있다.
+3. 동적 소스 열(<src>_count / <src>_yield)이 그대로 표시·편집된다.
+4. 서브헤더 행이 시각적으로 구분되고, 편집 중 행 순서가 바뀌지 않는다.
+5. 저장 → 새로고침 후 편집값이 유지된다(yield_text 로 저장됨).
+6. Summary/Issue 편집과 저장이 기존과 동일하게 동작한다(회귀 없음).
+7. 서버 코드/DB 변경이 0 이다.
+
+[참고 코드 위치 (report_view.html, 행 번호는 근사치 — 먼저 읽고 확인)]
+- renderYieldEdit: 약 1091행
+- renderSheetTable(kind:"yield"): 약 729행
+- collectSheetTable: 약 808행
+- buildPayload 의 yield 분기: 약 1235-1241행
+- YIELD_FRAME_COLS / 동적 소스 열 주석: 약 362-364행
+- reorderYieldRows / 서브헤더(isHeaderLikeRow): 약 700-719, 743, 754행
+- PATCH 의 yield_text 저장: report_routes.py 약 301-311행
