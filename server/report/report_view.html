@@ -3,6 +3,8 @@
 <head>
 <meta charset="utf-8">
 <title>Report</title>
+<link rel="stylesheet" href="/pe/report/vendor/tabulator.min.css">
+<script src="/pe/report/vendor/tabulator.min.js"></script>
 <style>
 * { box-sizing: border-box; }
 body {
@@ -427,6 +429,7 @@ function csrfToken() {
 let DATA = null;
 let MODE = "view";              // "view" | "edit"
 let verifiedPassword = "";      // 수정 모드 진입 시 검증된 PIN (저장에 재사용)
+let yieldGrid = null;           // 수정 모드 Yield 편집 Tabulator 인스턴스 (없으면 null)
 
 
 // & < > " ' 모두 이스케이프 → 텍스트/속성 양쪽에서 안전
@@ -1087,15 +1090,71 @@ function collectSummaryText() {
   return out;
 }
 
+// ── Yield 편집: Tabulator 엑셀형 그리드 (list-of-dicts 포맷 전용) ──────────────
+function destroyYieldGrid() {
+  if (yieldGrid) { try { yieldGrid.destroy(); } catch (e) {} yieldGrid = null; }
+}
+
+// 숫자성 열(우측 정렬): source 별 _yield/_count/_cnt, avg
+function isRightAlignCol(c) {
+  const n = String(c || "").toLowerCase().trim();
+  return n.endsWith("_count") || n.endsWith("_yield") || n.endsWith("_cnt") || n === "avg";
+}
+
+// rows(list of dict) → #panel-yield 안에 Tabulator 그리드 생성.
+// 컬럼은 행에서 동적 derive(소스 열 대응), 서브헤더 행은 읽기전용+음영, 정렬 비활성으로
+// 원본 행 순서 보존. 복붙(clipboard range) 활성.
+function renderYieldGrid(panel, rows) {
+  const cols = orderColumns(deriveCols(rows), "yield");
+  panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
+    `<div class="edit-hint">셀을 더블클릭해 수정하거나, 엑셀에서 복사한 범위를 드래그 선택 후 Ctrl+V 로 붙여넣으세요.</div>` +
+    `<div id="yieldGridHost"></div>`;
+
+  const columns = cols.map(c => ({
+    title: headerLabel(c) || " ",
+    field: c,
+    editor: "input",
+    headerSort: false,
+    resizable: true,
+    width: parseInt(colWidth(c), 10) || undefined,
+    hozAlign: isRightAlignCol(c) ? "right" : "left",
+    editable: cell => !isHeaderLikeRow(cell.getRow().getData(), cols),
+  }));
+
+  destroyYieldGrid();
+  yieldGrid = new Tabulator("#yieldGridHost", {
+    data: JSON.parse(JSON.stringify(rows)),   // 사본 — 저장 전까지 DATA 불변
+    columns,
+    layout: "fitDataStretch",
+    height: "62vh",
+    headerSort: false,
+    clipboard: true,
+    clipboardPasteAction: "range",
+    selectableRange: true,
+    selectableRangeColumns: true,
+    selectableRangeRows: true,
+    selectableRangeClearCells: true,
+    editTriggerEvent: "dblclick",
+    rowFormatter: row => {
+      if (isHeaderLikeRow(row.getData(), cols)) {
+        const el = row.getElement();
+        el.style.background = "#eef2ff";
+        el.style.fontWeight = "600";
+      }
+    },
+  });
+  const markDirty = () => { _dirty = true; _setDot("dirty"); };
+  yieldGrid.on("cellEdited", markDirty);
+  yieldGrid.on("dataChanged", markDirty);   // 클립보드 붙여넣기 등
+}
+
 // ── Yield (edit) ──────────────────────────────────────────────────────────────
 function renderYieldEdit() {
   const panel = document.getElementById("panel-yield");
 
-  // 신규 포맷: list of dicts
+  // 신규 포맷: list of dicts → Tabulator 엑셀형 그리드
   if (Array.isArray(DATA.yield_text) && DATA.yield_text.length) {
-    panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
-      `<div class="edit-hint">셀을 클릭해 텍스트를 수정하세요.</div>` +
-      renderSheetTable(DATA.yield_text, { edit: true, kind: "yield" });
+    renderYieldGrid(panel, DATA.yield_text);
     return;
   }
 
@@ -1147,6 +1206,7 @@ function renderIssuesEdit() {
 // ── 모드 전환 ──────────────────────────────────────────────────────────────
 function renderActive() {
   clearCellSel();
+  destroyYieldGrid();   // 패널 재렌더 전 이전 Tabulator 인스턴스 정리
   if (MODE === "edit") {
     renderSummaryEdit();
     renderYieldEdit();
@@ -1233,7 +1293,10 @@ function buildPayload() {
   }
 
   if (Array.isArray(DATA.yield_text) && DATA.yield_text.length) {
-    payload.yield_text = collectSheetTable(document.getElementById("panel-yield"), DATA.yield_text);
+    // Tabulator 그리드 편집 → 동일 구조(list-of-dicts)로 회수. (행 순서·서브헤더 보존)
+    payload.yield_text = yieldGrid
+      ? yieldGrid.getData()
+      : collectSheetTable(document.getElementById("panel-yield"), DATA.yield_text);
   } else if (isGrid(DATA.yield_text)) {
     payload.yield_text = collectGrid(document.getElementById("panel-yield"), DATA.yield_text);
   } else {

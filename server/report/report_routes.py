@@ -394,6 +394,24 @@ def view_page(session_id):
     return _issue_csrf_cookie(make_response(send_file(REPORT_VIEW_HTML)))
 
 
+# ── Vendored 정적 자산 (Tabulator 등) ─────────────────────────────────────────
+# report_view.html 이 send_file 로 통째 전송되고 정적 폴더 라우트가 없으므로, vendoring 한
+# JS/CSS 를 화이트리스트로만 서빙(경로 traversal 차단). CDN/인터넷 불필요(폐쇄망 대응).
+_VENDOR_DIR = REPORT_VIEW_HTML.parent / "vendor"
+_VENDOR_MIME = {
+    "tabulator.min.js": "application/javascript",
+    "tabulator.min.css": "text/css",
+}
+
+
+@report_bp.get("/vendor/<path:filename>")
+def vendor_asset(filename):
+    mime = _VENDOR_MIME.get(filename)
+    if not mime:
+        abort(404)
+    return send_file(_VENDOR_DIR / filename, mimetype=mime)
+
+
 @report_bp.get("/api/history")
 def history():
     product_type = request.args.get("product_type") or None
