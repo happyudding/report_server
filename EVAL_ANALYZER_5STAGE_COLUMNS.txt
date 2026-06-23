@@ -1,138 +1,176 @@
 ================================================================================
-반도체 불량분석 판단 로직 — 데이터 5단계 + 컬럼 의미
-(엔지니어가 판단하던 흐름을 그대로 코드로 옮긴 구조)
+반도체 불량분석 판단 로직 — 데이터 5단계 + 컬럼 의미 (확정 스키마 기준)
 ================================================================================
+※ 물리 테이블·grain·키는 EVAL_ANALYZER_DB_SCHEMA.txt 참조. 이 문서는 "컬럼 의미 사전".
 
-핵심: 엔지니어의 fail 판단은 아래 5단계로 갈린다.
-  1 INDEX        무엇을 보는가      (식별·조회)
-  2 RAW MEASURE  무엇을 가져오는가  (테스트지의 "사실")
-  3 JUDGMENT     어떻게 calc 하는가 (엔지니어의 "렌즈" = 룰이 임계하는 대상)
-  4 VERDICT      무엇을 도출하는가  (기계 판정)
-  5 HUMAN        사람이 어떻게 판단 (정답 = ground truth)
+핵심: 엔지니어의 fail 판단은 5단계로 갈린다. 각 단계가 어느 테이블에 들어가는지 매핑.
+  1 INDEX        무엇을 보는가      → 마스터 + fail_case
+  2 RAW MEASURE  무엇을 가져오는가  → raw_metrics
+  3 JUDGMENT     어떻게 calc 하는가 → features            (룰이 임계하는 대상)
+  4 VERDICT      무엇을 도출하는가  → evaluation + case_signature
+  5 HUMAN        사람이 어떻게 판단 → label + case_outcome (정답·결과)
 
-  [3↔4 사이] = 룰 로직(thresholds.json + signatures.yaml + bin_taxonomy)
-               → 데이터 컬럼이 아니라 (3)→(4) 변환기.
-
-흐름 한눈에:  1·2·3 (기계 입력/계산) → 4 (기계 판정) → 5 (사람 정답)
-  · 4 는 5 와 "같은 모양" → 예측(4) vs 정답(5) 비교 → calibration 피드백 루프
-  · 노하우는 전부 (3)에 쌓인다 (사실을 어떻게 읽느냐)
-
-
-================================================================================
-[1] INDEX — 무엇을 보는가 (식별·조회 키, 닫힌 집합: 일찍 신중히 확정)
-================================================================================
-  product_type    제품군(MDDI/PDDI/PMIC/SECURITY). spec·임계값이 제품군별로 분기.
-  product         제품명.
-  lot_id          로트 식별자. 그 item 의 특정 발생(instance)을 가른다.
-  process         공정 라인.
-  revision        EVT 버전.
-  item_canonical  정규화된 항목명(공백/대소문자/표기차 제거). 조인·이력·RAG 의 "진짜 이름".
-                  └ 예: "VREF_TRIM" 과 "vref_trim " → 둘 다 vref_trim 으로 통일.
-  item_base       phase 접미사를 뗀 파라미터 본체. = family(단계 묶음) 키.
-                  └ 예: vref_init / vref_trim / vref_code / vref_p2 → base 모두 "vref".
-  item_phase      측정 단계/조건 접미사.
-                  └ 예: init / code / trim / p2. (같은 LOW_CPK 라도 phase 로 의미가 달라짐)
-  bin             불량 분류 번호. 두 역할:
-                  · 식별: 같은 item·다른 bin = 다른 fail 현상 → 정체성=(product,item_canonical,bin)
-                  · 의미: bin 번호가 분류 인코딩(예 bin18=defective, bin31=abnormal)
-                          → 같은 신호라도 bin_class 로 status 보정(bin_taxonomy 참조)
-  (limit)         lsl/usl = spec 한계. INDEX 의 맥락이자 (2)원천값. spec_margin(3) 계산 기준.
+흐름:  1·2·3 (기계 입력/계산) → 4 (기계 판정) → 5 (사람 정답)
+  · 4 는 5 와 같은 모양 → 예측(4) vs 정답(5) → calibration 피드백
+  · 노하우는 전부 (3)에 쌓인다
+  · [3↔4 변환기] thresholds.json + signatures.yaml + bin_taxonomy (engine_version 에 스냅샷)
+  · ★룰 인덱스 = item_class (item_name 아님), 선례 = (signature, item_class, family_product)
 
 
 ================================================================================
-[2] RAW MEASURE — 무엇을 가져오는가 (테스트지의 "사실": 직접측정/표준통계)
+[1] INDEX — 무엇을 보는가 (마스터 + fail_case)
 ================================================================================
-  cpk, cp         공정능력 지수(표준 보고치). ※엄밀히는 계산값이나 "표준 수치"라 RAW 로 둠.
-  yield           수율.
-  fail_value      실패 측정값(한계 이탈한 실제 값).
-  mean            평균.
-  stdev           표준편차.
-  kurtosis        첨도(꼬리 두께의 표준 모멘트).
-  count           개수(측정/불량 수).
-  lsl, usl        하한/상한 spec.
-  x_pos, y_pos    wafer 좌표(공간 패턴 분석의 원재료).
-  site (= DUT)    측정 site. site 간 비교(장비/handler 의심)의 단위.
-  per-DUT 값      DUT 하나하나의 측정 원시값. ※저장 안 함 — 계산 시점에만 메모리에서 사용.
+-- 제품 기준정보 (product_master, 제품당 1행) --
+  product_name     제품명(EDS 13자리). fail_case 의 FK.
+  family_product   상위 제품군(SOC PMIC / Memory PMIC…). cross-product 이력 비교 키(모과제).
+  product_type     MDDI/PMIC/TCON… spec·임계값 분기.
+  process          공정정보(BCD1370F…).
+  inch             웨이퍼 인치(8/12).
+  gross_die        웨이퍼당 총 die 수.
+  fab_line         생산 라인.
+  tester           테스터(제품 고정 속성).
+  para             파라미터/프로그램(제품 고정 속성).
 
-  ※ (2)는 "사실". (3)만 다시 계산해도 (2)는 재수집 불필요(공식 변경 ↔ 원천 분리).
+-- item 정의 (item_master, item당 1행) --
+  item_id          item PK.
+  item_canonical   정규화 이름(표기차 제거). 이력 traceability.
+  item_base        phase 뗀 본체(family 키, 예 vref).
+  item_phase       단계 접미사(init/code/trim/p2). INIT/P2 등은 판단에 의미.
+  category_major   TRIM / non-TRIM.          ← item_class 구성
+  category_mid     중분류.
+  value_type       V/A/Hz/CODE/TCODE/P_F.    ← item_class 구성
+  unit             단위.
+
+-- spec (item_spec, (item,product,revision)당 1행) --
+  lsl, usl         하한/상한 spec. revision별 변경 이력 보존. spec_margin 기준.
+
+-- bin 의미 (bin_taxonomy, (product_type,bin)당 1행) --
+  bin_class        bin 의 분류(defective/abnormal/parametric…).
+  severity_bias    같은 신호라도 bin_class 로 status 보정하는 가중.
+
+-- fail 발생 식별 (fail_case, fail instance당 1행) --
+  case_id          PK = sha256(product|lot|wafer|item_id|bin|revision). 재업로드 idempotent.
+  lot_id           로트.
+  wafer_number     웨이퍼 번호. (lot_id+wafer_number = 물리 웨이퍼)
+  bin              불량 분류 번호(식별 + 의미; 의미는 bin_taxonomy).
+  revision         EVT 버전.
+  item_class       = category_major | value_type | bin.  ★룰/threshold/calibration 스코프 키.
+
+-- 업로드/실행 (ingest_run, 업로드당 1행 / run_case 로 case 와 연결) --
+  run_id           업로드 실행 id. 파이프라인 전 구간(raw/feature/eval)에 전파.
+  source_file      업로드 파일.
+  analysis_key     report.db 역참조.
+  ingested_by      업로더.
 
 
 ================================================================================
-[3] JUDGMENT METRIC — 어떻게 calc 하는가 (엔지니어의 렌즈 = 룰 입력)
+[2] RAW MEASURE — 무엇을 가져오는가 (raw_metrics, (case,run)당 1행)
 ================================================================================
-  spread_norm          정규화 산포 = robust_σ(MAD)/(USL−LSL). "산포가 spec 폭 대비 얼마나 넓나".
-  skewness             비대칭도(medcouple, robust). 부호=꼬리 방향(±). 어느 쪽 spec 으로 치우쳤나.
-  outlier_ratio        이상치 비율(IQR fence / modified-z>3.5). "몸통 대비 얼마나 튀나".
-  cdf_gap              ECDF(누적분포) 점프 크기. = 부분모집단 사이 갭(값이 끊겨 있음).
-  density_gap          분포 밀도의 골(이봉 사이 저밀도 구간). 두 모집단 혼입 신호.
-  spec_margin          (mean − 최근접 limit)/stdev. spec 까지 σ 몇 배 여유인가.
-  site_cpk_delta       site 간 cpk 편차. 큼 = 특정 site/장비 의심.
-  yield_pct            수율 비율(판단용 정규화 수율).
-  code_edge_hit        CODE/TRIM 값이 range 끝(레일)에 박힘 = 트림 포화/클리핑.
-  edge_fail_ratio      wafer edge 영역 불량 집중도.
-  tail_ratio_hi/lo     상/하 꼬리가 몸통 대비 얼마나 늘어졌나(한쪽 꼬리 위험).
-  modality             분포 형태(uni=단봉 / bi=이봉).
-  family_corr          같은 base 의 phase 간 per-DUT 상관(예 INIT↔TRIM).
-  phase_recovery_rate  INIT fail 이 P2(재측정)에서 회복된 비율.
-  wafer_pattern        공간 패턴 분류(EDGE/CENTER/CLUSTER/RANDOM).
+  cpk, cpl, cpu    공정능력 지수(표준 보고치).
+  mean             평균(=average; 동일).
+  stdev            표준편차.
+  min, max         최소/최대.
+  yield            수율.
+  fail_count       불량 수.
+  total_count      총 측정 수.
+  bimodality       이봉성(기본 표준 지표).
+
+  ※ raw 는 (case,run)별 보관 — 재측정/재업로드 시 run 마다 값 보존.
+  ※ per-DUT 원시값은 저장 안 함(계산 시점 메모리만).
+
+
+================================================================================
+[3] JUDGMENT METRIC — 어떻게 calc 하는가 (features, (case,run,engine_version)당 1행)
+================================================================================
+-- 분포형 --
+  spread_norm          정규화 산포 = robust_σ(MAD)/(USL−LSL). spec 폭 대비 산포.
+  skewness             비대칭도(robust). 부호=꼬리 방향.
+  kurtosis             첨도(판단용).
+  outlier_ratio        이상치 비율(IQR fence / modified-z>3.5).
+  modality             단봉/이봉.
+  bimodality_score     이봉 정도(정량).
+  density_gap          분포 밀도의 골(이봉 사이 저밀도).
+  cdf_gap              ECDF 점프(부분모집단 갭).
+-- spec margin --
+  spec_margin_low      하한까지 여유(σ 단위).
+  spec_margin_high     상한까지 여유(σ 단위).
+  nearest_spec_side    어느 쪽 spec 에 더 근접(LOW/HIGH).
+  limit_hit_ratio      한계 도달 비율.
+-- 공간(wafer) --
+  edge_fail_ratio      edge 영역 불량 집중도.
+  center_fail_ratio    center 영역 불량 집중도.
+  radial_gradient      반경 방향 불량 구배.
+  quadrant_imbalance   사분면 불균형.
+  x_gradient           x 방향 구배.
+  y_gradient           y 방향 구배.
+  wafer_zone_signature 웨이퍼 구역 패턴 서명.
+-- 기타 --
   n_dut                표본 수(min-n 가드: 작으면 고차모멘트 룰 비활성, confidence=low).
+  site_cpk_delta       site 간 cpk 편차(장비/site 의심). ※per-source 상세 테이블은 보류.
+  code_edge_hit        CODE/TRIM 값 레일 포화.
 
-  ※ estimator 는 표준 robust 기본값, 임계값은 절대 하드코딩 금지
-    → ① spec/robust scale 로 정규화(무차원) ② calibration 분위수로 결정.
-
-
-[3↔4 사이] 룰 로직 (데이터 아님, 변환기)
-  thresholds.json   (3) 지표의 임계값(product_type 별 override). 분위수 보정.
-  signatures.yaml   (3) 조합 → named 고장 모드(아래 (4) signatures). 선언형.
-  bin_taxonomy      bin → bin_class(defective/abnormal…) → status 보정.
+  ※ engine_version 별로 보관 → feature 공식 바뀌면 새 버전으로 적재(과거값 보존).
+  ※ estimator=표준 robust, 임계값=정규화+calibration 분위수(절대 하드코딩 금지).
 
 
 ================================================================================
-[4] VERDICT — 무엇을 도출하는가 (기계 판정)
+[4] VERDICT — 무엇을 도출하는가 (evaluation + case_signature)
 ================================================================================
-  status             triage 심각도: CRITICAL / MAJOR / MINOR / MONITOR.
-  signatures         발화한 고장 시그니처(아래 목록). 지배 signature 가 status 결정.
-  reason_codes       발화한 원시 신호 코드(LOW_CPK, SOURCE_IMBALANCE 등).
-  confidence         판정 신뢰도(데이터 충분/표본 수 반영).
-  data_completeness  어떤 데이터로 판정했나(예: cpk/산포 결측 시 low → "yield 만으로 판정").
+-- evaluation ((case,run,engine_version,model_version)당 1행) --
+  eval_id            판정 id(PK).
+  engine_version     결정 로직 번들 버전(feature공식+threshold+signature+taxonomy).
+  model_version      LLM 코멘트 모델 버전.
+  status             CRITICAL/MAJOR/MINOR/MONITOR.
+  confidence         판정 신뢰도.
+  data_completeness  어떤 데이터로 판정했나(결측 시 low).
+  evidence_json      판정 근거(발화 신호·수치).
+  comment            엔진 생성 코멘트(재생성 가능 캐시).
+-- case_signature ((eval,signature)당 1행) --
+  signature          발화한 고장 시그니처.
+  role               primary / secondary.
+  score              발화 강도.
 
   signature 예시:
-    EQUIPMENT_SUSPECT  site 간 편차 큼 → 장비/handler/site 의심
-    MEAN_SHIFT         mean 이 한쪽으로 치우침 → 공정 센터링
-    WIDE_DISTRIBUTION  산포가 넓음(spread)
-    SEVERE_OUTLIER     소수 극단값이 튐(outlier)
-    TAIL_RISK          한쪽 꼬리가 spec 근접(tail)
-    BIMODAL            이봉 분포(두 모집단)
-    SUBPOP_GAP         cdf_gap/density_gap → 부분모집단 갭
-    CODE_RAIL          code_edge_hit → CODE/TRIM 레일 포화
-    SPEC_TOO_TIGHT     산포 작고 중앙인데 cpk 낮음 → spec 자체 문제
-    EDGE_FAIL          wafer edge 불량 집중
-    GROSS_FAIL         불량률 매우 높음(전 source) → 근본/설계 이슈
-    TRIM_INEFFECTIVE   TRIM 후에도 산포 안 줄음(family)
-    RETEST_RECOVERY    P2 가 INIT fail 회복 → test marginal 의심(family)
+    EQUIPMENT_SUSPECT / MEAN_SHIFT / WIDE_DISTRIBUTION / SEVERE_OUTLIER / TAIL_RISK /
+    BIMODAL / SUBPOP_GAP / CODE_RAIL / SPEC_TOO_TIGHT / EDGE_FAIL / GROSS_FAIL /
+    (보류) TRIM_INEFFECTIVE / RETEST_RECOVERY / BIDIR_TAIL
 
 
 ================================================================================
-[5] HUMAN — 사람이 어떻게 판단하는가 (정답 = ground truth, 엔지니어 입력)
+[5] HUMAN — 사람이 어떻게 판단하는가 (label + case_outcome)
 ================================================================================
-  root_cause      근본 원인(enum): equipment / process / design / spec / unknown
-  disposition     조치(enum):       retest / trim / spec_review / monitor / scrap
-  signature_tag   사람이 지목한 고장 시그니처(선택, 위 (4) 목록 중. 모르면 비움)
-  comment         자유 텍스트 — 엔지니어의 분석방향 메모.
-                  └ RAG 의 본체. 과거 comment 가 검색되어 새 케이스 코멘트의 근거가 됨.
+-- label (라벨 이벤트당 1행, case당 다중) --
+  label_id               라벨 id(PK).
+  eval_id                어떤 판정을 보고 달았나.
+  human_status           사람이 매긴 status.
+  root_cause_category    근본 원인 대분류(equipment/process/design/spec/unknown).
+  root_cause_detail      근본 원인 상세.
+  engine_comment_accepted 엔진 코멘트 수용 여부(bool).
+  comment_modified       엔진 코멘트 수정 여부(bool).
+  human_comment          엔지니어 분석방향 메모. ← 선례(RAG) 본체.
+  labeler, reviewer      작성/검토자.
+  label_quality          라벨 품질.
+-- case_outcome (실제 조치·결과, case당 1행+) --
+  action                 retest / condition_change / spec_release / dev_feedback /
+                         trim_adjust / scrap / monitor.
+  condition              조치 조건(예 "UVLO_TEST_EN=H"). 조건으로 풀린 지식.
+  result                 recovered_normal / confirmed_defective / improved / pending.
+  resolved_by, resolved_at, note
 
-  ※ 엔지니어는 "규칙"을 넣는 게 아니라 "판정 라벨"만 넣는다.
-    규칙(룰/임계값)은 누적된 (5)에서 시스템이 calibration/mining 으로 채굴한다.
+  ※ 엔지니어는 규칙이 아니라 판정 라벨 + 실제 결과만 입력.
+    규칙은 누적(label+outcome)에서 calibration/mining 으로 채굴.
+    선례 검색 = (signature, item_class, family_product)로 과거 outcome 회수
+    → "retest→정상" "UVLO_TEST_EN H→정상" "spec release" "모과제 동일유형" 코멘트 근거.
 
 
 ================================================================================
-요약
+요약 + 보류
 ================================================================================
-  1 INDEX        : 누구를(무엇을) 보는가          ← 식별·연결
-  2 RAW MEASURE  : 어떤 사실을 가져오는가          ← 원천
-  3 JUDGMENT     : 그 사실을 어떻게 읽는가         ← 엔지니어 노하우(룰 입력)
-  4 VERDICT      : 그래서 기계가 어떻게 판정하나   ← status/signature/confidence
-  5 HUMAN        : 사람은 어떻게 결론짓나          ← root_cause/disposition/comment(정답)
+  1 INDEX    : 누구를 보는가      ← 마스터+fail_case (item_class 가 룰 인덱스)
+  2 RAW      : 어떤 사실 가져오나 ← raw_metrics
+  3 JUDGMENT : 그 사실 어떻게 읽나 ← features (노하우, 룰 입력)
+  4 VERDICT  : 기계가 어떻게 판정 ← evaluation + case_signature
+  5 HUMAN    : 사람 결론 + 결과   ← label + case_outcome (정답·선례)
 
-  · 판단의 "기준"은 (3)→(4): 판단 지표를 룰이 평가해 결과를 낸다. (1)은 대상을 정할 뿐.
-  · (4) 가 (5) 에 가까워지도록 (3)의 임계값을 (5)로 보정 = 학습이 아니라 calibration.
+  보류 컬럼/기능(미반영): per-source 분해 · dist_digest · family_corr/phase_recovery_rate(family) ·
+    RAG embedding · CONDITION 측정축 · clamp_ratio · trim_code_margin · BIDIR_TAIL signature.
