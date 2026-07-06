@@ -50,7 +50,7 @@ from report_flow import (
     prepare_upload_xlsx as _prepare_upload_xlsx,
     suggest_base_name as _suggest_base_name,
 )
-from web_report.honeyform import encode_honeyform_parquet
+from web_report.honeyform import encode_honeyform_parquet, read_honeyform_file
 import app_settings
 import chart_colors
 
@@ -540,11 +540,24 @@ class HoneyMainWindow(QMainWindow):
             ctx["raw_data"], compare_mode=ctx["compare_mode"], mode_map=ctx["mode_map"])
 
     def on_web_report(self):
-        ctx = self._prepare_run_context()
+        ctx = self._prepare_web_report_context()
         if ctx is None:
             return
         self._run_web_report(ctx["work_group"], ctx["selected"], ctx["sheets"],
                              compare_mode=ctx["compare_mode"])
+
+    def _prepare_web_report_context(self):
+        if not self.csv_paths:
+            QMessageBox.warning(self, "입력 누락", "먼저 파일을 가져오세요.")
+            return None
+        if not self._rebuild_group(warn=True) or self.group is None:
+            return None
+        return {
+            "work_group": self.group,
+            "selected": list(self.group.subjects()),
+            "sheets": list(SHEET_OPTIONS),
+            "compare_mode": False,
+        }
 
     def _source_file_name(self, md, fallback):
         try:
@@ -561,7 +574,9 @@ class HoneyMainWindow(QMainWindow):
         names = work_group.names()
         for idx, name in enumerate(names):
             md = work_group.mass_data_map[name]
-            df = md.to_df() if hasattr(md, "to_df") else md.df
+            source_path = getattr(getattr(md, "report_meta", None), "source_path", "") or ""
+            df = read_honeyform_file(source_path) if source_path else (
+                md.to_df() if hasattr(md, "to_df") else md.df)
             data = encode_honeyform_parquet(df)
             file_name = self._source_file_name(md, name)
             items.append({

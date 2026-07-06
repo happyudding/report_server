@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
+from pathlib import Path
 
 import pandas as pd
 
@@ -108,6 +109,19 @@ def decode_honeyform_parquet(data: bytes) -> pd.DataFrame:
     return df
 
 
+def read_honeyform_file(path) -> pd.DataFrame:
+    """Read a 7-meta honeyform CSV/xlsx file without legacy df_honey normalization."""
+    p = Path(path)
+    if p.suffix.lower() == ".xlsx":
+        df = pd.read_excel(p, dtype=object)
+    else:
+        df = pd.read_csv(p, dtype=object, keep_default_na=False)
+    issues = validate_honeyform_df(df)
+    if issues:
+        raise ValueError("; ".join(issues))
+    return df
+
+
 def split_honeyform(df: pd.DataFrame, source: str, file_name: str = "") -> HoneyformTable:
     issues = validate_honeyform_df(df)
     if issues:
@@ -128,4 +142,3 @@ def split_honeyform(df: pd.DataFrame, source: str, file_name: str = "") -> Honey
         lolim={c: df.at[5, c] for c in item_cols},
         data=data,
     )
-
