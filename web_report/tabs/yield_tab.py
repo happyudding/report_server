@@ -54,38 +54,58 @@ def fail_counts_by_source(table) -> Counter:
     return counts
 
 
+def _item_meta(tables):
+    out = {}
+    for table in tables:
+        for item in table.item_columns:
+            out.setdefault(item, {
+                "step": fmt_type(table.step.get(item)),
+                "tno": fmt_type(table.tno.get(item)),
+            })
+    return out
+
+
 def build_yield_rows(tables, fail_counts):
     rows = []
-    all_bins = sorted(
-        {b for t in tables for b in t.data["BIN"].map(fmt_type).tolist()},
-        key=_bin_sort_key,
-    )
     totals = {t.source: len(t.data) for t in tables}
+    item_meta = _item_meta(tables)
 
-    for bin_value in all_bins:
-        row = {"bin": bin_value}
-        counts = []
+    pass_row = {"step": "", "bin": PASS_BIN, "TNO": "", "Item": "Pass"}
+    pass_portions = []
+    for table in tables:
+        bins = table.data["BIN"].map(fmt_type)
+        count = int((bins == PASS_BIN).sum())
+        portion = round(count / totals[table.source] * 100.0, 2) if totals[table.source] else 0.0
+        pass_row[f"{table.source}_yield"] = portion
+        pass_row[f"{table.source}_count"] = count
+        pass_portions.append(portion)
+    pass_row["avg"] = round(sum(pass_portions) / len(pass_portions), 2) if pass_portions else 0.0
+    pass_row["comment"] = ""
+    rows.append(pass_row)
+
+    keys = sorted(
+        {key for counts in fail_counts.values() for key in counts.keys() if key[0] != PASS_BIN},
+        key=lambda key: (_bin_sort_key(key[0]), str(key[1])),
+    )
+    for bin_value, item in keys:
+        meta = item_meta.get(item, {})
+        row = {
+            "step": meta.get("step", ""),
+            "bin": bin_value,
+            "TNO": meta.get("tno", ""),
+            "Item": item,
+        }
         portions = []
-        top_counter = Counter()
-
-        for t in tables:
-            bins = t.data["BIN"].map(fmt_type)
-            count = int((bins == bin_value).sum())
-            portion = round(count / totals[t.source] * 100.0, 2) if totals[t.source] else 0.0
-            row[f"{t.source}_count"] = count
-            row[f"{t.source}_yield"] = portion
-            counts.append(count)
+        total_count = 0
+        for table in tables:
+            count = int(fail_counts[table.source].get((bin_value, item), 0))
+            portion = round(count / totals[table.source] * 100.0, 2) if totals[table.source] else 0.0
+            row[f"{table.source}_yield"] = portion
+            row[f"{table.source}_count"] = count
             portions.append(portion)
-
-            for (b, item), fail_count in fail_counts[t.source].items():
-                if b == bin_value:
-                    top_counter[item] += fail_count
-
-        row["count"] = sum(counts)
+            total_count += count
+        row["count"] = total_count
         row["avg"] = round(sum(portions) / len(portions), 2) if portions else 0.0
-        row["Main Fail subject"] = "Pass" if bin_value == PASS_BIN else (
-            top_counter.most_common(1)[0][0] if top_counter else "N/A")
         row["comment"] = ""
         rows.append(row)
     return rows
-

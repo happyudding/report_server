@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from flask import Response, abort, jsonify, request
+from flask import abort, jsonify, redirect, request
 
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
@@ -76,10 +76,4 @@ def upload_webreport():
 
 @report_bp.get("/web_report/<session_id>")
 def web_report_page(session_id):
-    try:
-        html = web_report_service.render_session(session_id, report_db=report_db)
-    except KeyError:
-        abort(404, "session not found")
-    except FileNotFoundError:
-        abort(404, "web report not found")
-    return Response(html, mimetype="text/html; charset=utf-8")
+    return redirect(f"/pe/report/view/{session_id}", code=302)

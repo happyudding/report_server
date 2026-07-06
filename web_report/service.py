@@ -10,8 +10,7 @@ from pathlib import Path
 from werkzeug.utils import secure_filename
 
 from .honeyform import decode_honeyform_parquet, split_honeyform
-from .html import render_report_html
-from .metrics import build_report_payload, summary_rows_for_db
+from .metrics import build_report_payload
 
 
 def _canon(obj) -> bytes:
@@ -94,12 +93,11 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     ]
     report = build_report_payload(tables, selected_items=selected_items, sheets=sheets)
 
+    sheets_payload = report.get("sheets", {})
     report_db.upsert_sheet_data(analysis_key, "web_report", report)
-    for sheet_name, rows in report.get("sheets", {}).items():
-        report_db.upsert_sheet_data(analysis_key, sheet_name, rows)
-    summary_rows = summary_rows_for_db(report["sheets"].get("Yield", []))
-    if summary_rows:
-        report_db.save_summary_batch(analysis_key, session_id, summary_rows)
+    report_db.upsert_sheet_data(analysis_key, "yield", sheets_payload.get("Yield", []))
+    report_db.upsert_sheet_data(
+        analysis_key, "issue_table", sheets_payload.get("Issue Table", []))
     report_db.update_session(session_id, status="done")
 
     try:
@@ -115,9 +113,9 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         "session_id": session_id,
         "analysis_key": analysis_key,
         "status": "done",
-        "web_report_url": f"/pe/report/web_report/{session_id}",
+        "web_report_url": f"/pe/report/view/{session_id}",
         "sources": [t.source for t in tables],
-        "item_count": len(report.get("distribution", {}).get("subjects", [])),
+        "item_count": len(report.get("selected_items", [])),
         "storage": "local_pending_s3",
     }
 
@@ -133,8 +131,3 @@ def load_webreport(session_id: str, *, report_db) -> tuple[dict, dict]:
     public["has_password"] = bool(public.get("password"))
     public.pop("password", None)
     return public, report
-
-
-def render_session(session_id: str, *, report_db) -> str:
-    session, report = load_webreport(session_id, report_db=report_db)
-    return render_report_html(session, report)

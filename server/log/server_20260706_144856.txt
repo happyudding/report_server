@@ -1,0 +1,43 @@
+[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260706_144856.txt
+[wsgi] importing Flask ...
+[wsgi] importing blueprints ... (0.16s)
+[wsgi] creating app ... (0.16s)
+[wsgi] app ready in 0.85s
+[wsgi] ===== Accessible URLs =====
+[wsgi] Local (이 PC)               : http://127.0.0.1:8080/pe/report/
+[wsgi] LAN (같은 네트워크 다른 PC) : http://192.168.45.141:8080/pe/report/
+[wsgi] ** 처음 외부 PC 에서 접근 시 Windows 방화벽 허용 필요할 수 있음:
+[wsgi]    New-NetFirewallRule -DisplayName "report-server 8080" -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow
+[wsgi] ===========================
+[wsgi] starting server on http://0.0.0.0:8080 (debug=False)
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://192.168.45.141:8080
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [06/Jul/2026 14:48:58] "GET /pe/report/ HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:48:59] "GET /pe/report/ HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:48:59] "GET /honey/version HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:48:59] "GET /pe/report/api/history HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:49:00] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [06/Jul/2026 14:49:00] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [06/Jul/2026 14:49:05] "GET /honey/version HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:49:21] "GET /pe/report/api/part_ids HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:49:33] "POST /pe/report/upload_webreport HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:49:34] "GET /pe/report/web_report/1783316972_4f801b HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:49:34] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [06/Jul/2026 14:50:05] "GET /pe/report/api/history?product_type=PMIC HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:50:07] "GET /pe/report/view/1783316972_4f801b HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:50:07] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:50:07] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:50:07] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [06/Jul/2026 14:50:07] "GET /pe/report/session/1783316972_4f801b/full HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:50:12] "[36mGET /pe/report/ HTTP/1.1[0m" 304 -
+127.0.0.1 - - [06/Jul/2026 14:50:12] "GET /honey/version HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:50:12] "GET /pe/report/api/history HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:50:12] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [06/Jul/2026 14:50:23] "[36mGET /pe/report/view/1783316972_4f801b HTTP/1.1[0m" 304 -
+127.0.0.1 - - [06/Jul/2026 14:50:23] "[36mGET /pe/report/vendor/tabulator.min.css HTTP/1.1[0m" 304 -
+127.0.0.1 - - [06/Jul/2026 14:50:23] "[36mGET /pe/report/vendor/tabulator.min.js HTTP/1.1[0m" 304 -
+127.0.0.1 - - [06/Jul/2026 14:50:23] "GET /pe/report/session/1783316972_4f801b/full HTTP/1.1" 200 -
+127.0.0.1 - - [06/Jul/2026 14:50:23] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -

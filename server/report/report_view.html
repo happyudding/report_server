@@ -307,16 +307,26 @@ tbody tr:hover { background: #f9fbff; }
 
 <div class="tabs" id="tabs">
   <button class="tab active" data-tab="summary">Summary</button>
+  <button class="tab" data-tab="raw-data">Raw Data</button>
   <button class="tab" data-tab="yield">Yield</button>
+  <button class="tab" data-tab="cpk">CPK</button>
   <button class="tab" data-tab="issues">Issue Table</button>
+  <button class="tab" data-tab="distribution">Distribution</button>
+  <button class="tab" data-tab="trim-analysis">Trim Analysis</button>
+  <button class="tab" data-tab="histogram">Histogram</button>
 </div>
 
 <div id="errorBox" class="error-box" style="display:none"></div>
 
 <div class="content">
   <div class="panel active" id="panel-summary"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-raw-data"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-yield"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-cpk"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-issues"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-distribution"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-trim-analysis"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-histogram"><div class="placeholder">로드 중...</div></div>
 </div>
 
 <!-- 수정 모드 저장 바 -->
@@ -427,6 +437,9 @@ function csrfToken() {
 }
 
 let DATA = null;
+function isWebReportSession() {
+  return !!(DATA && DATA.session && DATA.session.source === "web_report");
+}
 let MODE = "view";              // "view" | "edit"
 let verifiedPassword = "";      // 수정 모드 진입 시 검증된 PIN (저장에 재사용)
 let yieldGrid = null;           // 수정 모드 Yield 편집 Tabulator 인스턴스 (없으면 null)
@@ -967,6 +980,20 @@ function renderIssues(issue_table_text, issue_images) {
   panel.innerHTML = `<div class="section-title">Issue Table</div>` + rowsTable(issue_table_text);
 }
 
+function renderPlaceholderTabs() {
+  const panels = [
+    ["panel-raw-data", "Raw Data"],
+    ["panel-cpk", "CPK"],
+    ["panel-distribution", "Distribution"],
+    ["panel-trim-analysis", "Trim Analysis"],
+    ["panel-histogram", "Histogram"],
+  ];
+  panels.forEach(([id, title]) => {
+    const panel = document.getElementById(id);
+    if (panel) emptyPanel(panel, `${title} 데이터 없음`);
+  });
+}
+
 // ── 편집용 위젯 ────────────────────────────────────────────────────────────
 function editRowHtml(r, cols) {
   return `<tr>` + cols.map(c =>
@@ -1208,13 +1235,17 @@ function renderActive() {
   clearCellSel();
   destroyYieldGrid();   // 패널 재렌더 전 이전 Tabulator 인스턴스 정리
   if (MODE === "edit") {
-    renderSummaryEdit();
+    if (isWebReportSession()) emptyPanel(document.getElementById("panel-summary"), "Summary 데이터 없음");
+    else renderSummaryEdit();
     renderYieldEdit();
     renderIssuesEdit();
+    renderPlaceholderTabs();
   } else {
-    renderSummary(DATA.summary_text, DATA.summary);
+    if (isWebReportSession()) emptyPanel(document.getElementById("panel-summary"), "Summary 데이터 없음");
+    else renderSummary(DATA.summary_text, DATA.summary);
     renderYield(DATA.yield_text, DATA.summary);
     renderIssues(DATA.issue_table_text, DATA.issue_images);
+    renderPlaceholderTabs();
   }
 }
 
