@@ -54,13 +54,9 @@ idx_products_status products status 필터링 최적화
 idx_product_details_product_id product_details product_id JOIN 최적화
 idx_product_detial_tables_detail_id product_detail_tables detail_id JOIN 최적화
 
-table: product_detail_tables
-columns:
-- id @
-- lot TEXT
-- wafer TEXT
-- item TEXT
-- value REAL
-- lower_limit REAL
-- upper_limit REAL
-- result TEXT
+주요 규칙 / 특이사항
+1. part_id 는 유일값
+2. CASCADE 없음
+3. 숫자형도 TEXT 저장
+4. product_details 는 사실상 1:1
+5. FK 무결성

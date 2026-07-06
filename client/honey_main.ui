@@ -208,7 +208,7 @@
       <item>
        <widget class="QPushButton" name="btn_start">
         <property name="minimumSize">
-         <size><width>312</width><height>0</height></size>
+         <size><width>190</width><height>0</height></size>
         </property>
         <property name="sizePolicy">
          <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
@@ -223,6 +223,27 @@
         </property>
         <property name="styleSheet">
          <string notr="true">QPushButton { padding: 6px 14px; font-weight: 600; background: #4a90e2; color: white; border-radius: 5px; } QPushButton:hover { background: #357abd; } QPushButton:disabled { background: #aaa; }</string>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QPushButton" name="btn_web_report">
+        <property name="minimumSize">
+         <size><width>140</width><height>0</height></size>
+        </property>
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+          <horstretch>0</horstretch><verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="text">
+         <string>Web Report</string>
+        </property>
+        <property name="toolTip">
+         <string>xlsx 생성 없이 서버 웹 리포트로 바로 확인</string>
+        </property>
+        <property name="styleSheet">
+         <string notr="true">QPushButton { padding: 6px 14px; font-weight: 600; background: #7c3aed; color: white; border-radius: 5px; } QPushButton:hover { background: #6d28d9; } QPushButton:disabled { background: #aaa; }</string>
         </property>
        </widget>
       </item>

@@ -111,6 +111,8 @@
 3. `report_` prefix 없는 새 테이블 금지.
 4. analysis_key = `sha256(canonical(sheet_grids) + json.dumps(meta, sort_keys=True))`. meta 바뀌면 키도 바뀜.
 5. 실행 중 exe 직접 덮어쓰기 금지 (Windows 락) — 설치본 재설치 방식 → [04](04_honey_update.md).
+6. 신규 개발의 중심은 `web_report/` 웹페이지 구현이다. `web_report/` 밖 기존 서버/클라이언트/분석 엔진 변경은
+   먼저 사용자에게 이유와 영향 범위를 설명하고 확인받은 뒤 진행한다.
 
 ---
 

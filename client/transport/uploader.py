@@ -57,6 +57,46 @@ def post_grids(sheet_grids, file_name, product_type, product, lot_id, password,
     return resp.json()
 
 
+def post_webreport(manifest, parquet_items, base_url=None, progress_cb=None):
+    """7-meta honeyform parquet 묶음을 /pe/report/upload_webreport 로 전송.
+
+    manifest: {sources, meta, selected_items, sheets}
+    parquet_items: [{"index", "name", "file_name", "data": bytes}, ...]
+    """
+    base = (base_url or SERVER_BASE_URL).rstrip("/")
+    url = f"{base}/pe/report/upload_webreport"
+
+    fields = {
+        "manifest": json.dumps(manifest, ensure_ascii=False, separators=(",", ":")),
+    }
+    for item in parquet_items:
+        idx = int(item["index"])
+        filename = item.get("file_name") or f"webreport_{idx}.parquet"
+        fields[f"webreport_{idx}"] = (
+            filename,
+            item["data"],
+            "application/vnd.apache.parquet",
+        )
+
+    encoder = MultipartEncoder(fields=fields)
+    body = encoder
+    if progress_cb is not None:
+        body = MultipartEncoderMonitor(
+            encoder, lambda monitor: progress_cb(monitor.bytes_read, monitor.len))
+
+    resp = requests.post(
+        url, data=body, headers={"Content-Type": body.content_type},
+        timeout=REQUEST_TIMEOUT_SEC)
+
+    if not resp.ok:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text
+        raise RuntimeError(f"web report upload failed: HTTP {resp.status_code} — {detail}")
+    return resp.json()
+
+
 def fetch_part_ids(base_url=None):
     """서버 stdinfo DB 의 part_id 전체 목록을 조회. (업로드 다이얼로그 Product 검색용)
 

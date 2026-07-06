@@ -16,6 +16,7 @@ import shutil
 import sys
 import tempfile
 import time
+import webbrowser
 from pathlib import Path
 
 import requests
@@ -49,6 +50,7 @@ from report_flow import (
     prepare_upload_xlsx as _prepare_upload_xlsx,
     suggest_base_name as _suggest_base_name,
 )
+from web_report.honeyform import encode_honeyform_parquet
 import app_settings
 import chart_colors
 
@@ -305,6 +307,7 @@ class HoneyMainWindow(QMainWindow):
         self.btn_csv_down.clicked.connect(lambda: self._move_file(1))
         # Start: 파일 전처리 후 설정 팝업(Select Items/Option/색/Auto Upload) 열기
         self.btn_start.clicked.connect(self.on_start)
+        self.btn_web_report.clicked.connect(self.on_web_report)
         self.btn_upload_local.clicked.connect(self.on_upload_local)
         # Product Type 선택 변경 시 사용자별 settings.json 에 즉시 저장
         for rb in self._pt_radios.values():
@@ -312,7 +315,7 @@ class HoneyMainWindow(QMainWindow):
 
     def _disable_engine(self):
         # 분석 관련 기능만 비활성. 로컬 파일 직접 업로드는 엔진 없이도 동작하므로 유지.
-        for name in ("btn_open_local", "btn_pick_csv", "btn_start"):
+        for name in ("btn_open_local", "btn_pick_csv", "btn_start", "btn_web_report"):
             getattr(self, name).setEnabled(False)
         self.txt_summary.setPlainText(
             "report_generator 모듈을 불러오지 못했습니다 — "
@@ -492,19 +495,19 @@ class HoneyMainWindow(QMainWindow):
         return work
 
     # ── Start: 전처리 → 설정 팝업 → Confirm 시 분석 실행 ─────────────────────
-    def on_start(self):
+    def _prepare_run_context(self):
         if not self.csv_paths:
             QMessageBox.warning(self, "입력 누락", "먼저 파일을 가져오세요.")
-            return
+            return None
         # 파일 전처리(그룹 로드/검증) 를 이 시점에 수행
         if not self._rebuild_group(warn=True) or self.group is None:
-            return
+            return None
 
         dlg = ReportSettingsDialog(
             self, self.group, len(self.csv_paths), product_type=self.product_type())
         if not dlg.exec_():
             self._status("설정 취소됨 — 다시 Start 로 진행할 수 있습니다.")
-            return
+            return None
 
         selected = dlg.selected_items()
         sheets = dlg.selected_sheets()
@@ -517,10 +520,180 @@ class HoneyMainWindow(QMainWindow):
             work_group = self._apply_modes(self.group, dlg.mode_bin1(), dlg.mode_dut())
         except ValueError as exc:
             QMessageBox.warning(self, "모드 적용 불가", str(exc))
+            return None
+        return {
+            "work_group": work_group,
+            "selected": selected,
+            "sheets": sheets,
+            "auto_upload": dlg.auto_upload(),
+            "raw_data": dlg.raw_data(),
+            "compare_mode": dlg.mode_compare(),
+            "mode_map": dlg.mode_map(),
+        }
+
+    def on_start(self):
+        ctx = self._prepare_run_context()
+        if ctx is None:
             return
-        self._run_analysis(work_group, selected, sheets, dlg.auto_upload(),
-                           dlg.raw_data(), compare_mode=dlg.mode_compare(),
-                           mode_map=dlg.mode_map())
+        self._run_analysis(
+            ctx["work_group"], ctx["selected"], ctx["sheets"], ctx["auto_upload"],
+            ctx["raw_data"], compare_mode=ctx["compare_mode"], mode_map=ctx["mode_map"])
+
+    def on_web_report(self):
+        ctx = self._prepare_run_context()
+        if ctx is None:
+            return
+        self._run_web_report(ctx["work_group"], ctx["selected"], ctx["sheets"],
+                             compare_mode=ctx["compare_mode"])
+
+    def _source_file_name(self, md, fallback):
+        try:
+            src = getattr(getattr(md, "report_meta", None), "source_path", "") or ""
+            if src:
+                return Path(src).name
+        except Exception:
+            pass
+        return f"{fallback}.parquet"
+
+    def _build_webreport_parquets(self, work_group):
+        items = []
+        sources = []
+        names = work_group.names()
+        for idx, name in enumerate(names):
+            md = work_group.mass_data_map[name]
+            df = md.to_df() if hasattr(md, "to_df") else md.df
+            data = encode_honeyform_parquet(df)
+            file_name = self._source_file_name(md, name)
+            items.append({
+                "index": idx,
+                "name": name,
+                "file_name": f"{Path(file_name).stem or name}.parquet",
+                "data": data,
+            })
+            sources.append({
+                "index": idx,
+                "name": name,
+                "file_name": file_name,
+            })
+        return sources, items
+
+    def _run_web_report(self, work_group, selected, sheets, compare_mode=False):
+        self.btn_start.setEnabled(False)
+        self.btn_web_report.setEnabled(False)
+        self._init_run_log("Web Report 생성")
+        progress = _ElapsedProgress(
+            self.progress_status, "Web Report 준비 중...", self._status,
+            busy=True, minimum=0, maximum=100)
+        QApplication.processEvents()
+
+        try:
+            progress.set("데이터 분석 중... (Web Report)", value=10, status="데이터 분석 중...")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(
+                    rg.analyze,
+                    work_group,
+                    meta=rg.ReportMeta(),
+                    selector=rg.ItemSelector(selected_items=selected),
+                    compare_mode=compare_mode,
+                )
+                self.last_result = _wait_for_future(fut, progress)
+            self._show_summary(self.last_result)
+        except Exception as exc:
+            progress.fail(f"실패: 분석 실패 - {exc}")
+            QMessageBox.critical(self, "분석 실패", str(exc))
+            self._status("Web Report 분석 실패")
+            self.btn_start.setEnabled(True)
+            self.btn_web_report.setEnabled(True)
+            return
+
+        defaults = dict(self._last_upload or {})
+        defaults["product_type"] = self.product_type()
+        dlg = UploadDialog(self, defaults=defaults)
+        if not dlg.exec_():
+            progress.fail("취소됨: 업로드 메타 입력 취소")
+            self.btn_start.setEnabled(True)
+            self.btn_web_report.setEnabled(True)
+            return
+        meta = dlg.values()
+        self._last_upload = meta
+        meta["file_name"] = self.le_outname.text().strip() or _suggest_base_name(
+            self.csv_paths, work_group)
+
+        try:
+            progress.set("parquet 인코딩 중...", value=35, status="parquet 인코딩 중...")
+            sources, parquet_items = self._build_webreport_parquets(work_group)
+        except Exception as exc:
+            progress.fail(f"실패: parquet 인코딩 실패 - {exc}")
+            QMessageBox.critical(self, "Web Report 실패", str(exc))
+            self._status("parquet 인코딩 실패")
+            self.btn_start.setEnabled(True)
+            self.btn_web_report.setEnabled(True)
+            return
+
+        manifest = {
+            "sources": sources,
+            "meta": meta,
+            "selected_items": list(selected or []),
+            "sheets": list(sheets or []),
+        }
+
+        upload_progress_q = queue.Queue()
+
+        def _on_upload_progress(bytes_read, total_bytes):
+            upload_progress_q.put((bytes_read, total_bytes))
+
+        def _drain_upload_progress():
+            last = None
+            while True:
+                try:
+                    last = upload_progress_q.get_nowait()
+                except queue.Empty:
+                    break
+            if last is None:
+                return
+            bytes_read, total_bytes = last
+            pct = int(bytes_read * 100 / total_bytes) if total_bytes else 0
+            value = 40 + int(pct * 0.6)
+            msg = f"Web Report 업로드 중... ({pct}%)"
+            progress.set(msg, value=value, status=msg)
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(
+                    uploader.post_webreport,
+                    manifest,
+                    parquet_items,
+                    progress_cb=_on_upload_progress,
+                )
+                result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
+        except Exception as exc:
+            progress.fail(f"실패: Web Report 업로드 실패 - {exc}")
+            QMessageBox.critical(self, "Web Report 업로드 실패", str(exc))
+            self._status("Web Report 업로드 실패")
+            self.btn_start.setEnabled(True)
+            self.btn_web_report.setEnabled(True)
+            return
+
+        sid = result.get("session_id", "?")
+        url = result.get("web_report_url")
+        if url and str(url).startswith("/"):
+            url = SERVER_BASE_URL.rstrip("/") + str(url)
+        elif not url:
+            url = f"{SERVER_BASE_URL.rstrip('/')}/pe/report/web_report/{sid}"
+
+        progress.success(f"Web Report 완료: session_id {sid}", value=100)
+        self._append_run_log(f"Web Report URL: {url}")
+        self._status(f"Web Report 완료: {sid}")
+        try:
+            webbrowser.open(url)
+        except Exception:
+            pass
+        QMessageBox.information(
+            self, "Web Report 완료",
+            f"session_id: {sid}\n\n브라우저에서 확인:\n{url}",
+        )
+        self.btn_start.setEnabled(True)
+        self.btn_web_report.setEnabled(True)
 
     def _run_analysis(self, work_group, selected, sheets, auto_upload, raw_data=False,
                       compare_mode=False, mode_map=False):

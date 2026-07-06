@@ -177,6 +177,11 @@ HONEY_SERVER_URL      기본 http://127.0.0.1:8000
    유일하게 허용되는 최적화는 동일값 구간을 2포인트 선분으로 표현하는
    `cumulative_distribution_full()` 의 계단형(step) ECDF 변환뿐이다
    ([client/report_generator/_builders.py](client/report_generator/_builders.py)).
+7. **web_report 중심 작업 경계 유지.**
+   현재 신규 개발의 주 대상은 `web_report/` 내부 웹 리포트 구현이다.
+   `web_report/` 밖의 기존 서버/클라이언트/분석 엔진 코드를 변경해야 할 때는
+   먼저 사용자에게 이유와 영향 범위를 설명하고 확인을 받을 것. 가능한 한 기존 코드는
+   변경하지 말고, 웹페이지 구현은 `web_report/` 안에서 해결할 것.
 
 ---
 

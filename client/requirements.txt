@@ -5,6 +5,7 @@ pywin32>=306   ; sys_platform == "win32"   # Excel COM 으로 차트 → PNG 렌
 PyMuPDF>=1.23  ; sys_platform == "win32"   # Distribution 시트 PDF → PNG 변환 (chart_export.py)
 Pillow>=9.0                                 # 다중 페이지 PDF → PNG 수직 합성
 pandas>=1.5    # 로컬 리포트 분석 엔진 (report_generator)
+pyarrow>=15.0  # webreport parquet bytes encoding
 numpy>=1.23    # 분석 계산 (cpk/yield/distribution)
 matplotlib>=3.5    # report_generator/map_analyze.py (wafer bin map → PNG)
 xlwings>=0.30  ; sys_platform == "win32"   # 로컬 xlsx 리포트 생성 (Excel COM)

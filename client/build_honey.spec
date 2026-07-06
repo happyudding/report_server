@@ -15,6 +15,7 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 import requests_toolbelt  # noqa: F401  transport/uploader.py 가 정적 import
 import xlwings             # noqa: F401
 import fitz                # noqa: F401  PyMuPDF
+import pyarrow             # noqa: F401  web_report parquet encoding
 
 # xlwings 는 자체 데이터/바이너리(.xlam, dll)를 동봉해야 동작
 _xw_datas, _xw_binaries, _xw_hidden = collect_all('xlwings')
@@ -22,14 +23,17 @@ _xw_datas, _xw_binaries, _xw_hidden = collect_all('xlwings')
 # PyMuPDF(fitz) — Distribution 시트 PDF→PNG 변환. 바이너리/데이터 포함 필요
 _fitz_datas, _fitz_binaries, _fitz_hidden = collect_all('fitz')
 
+# pyarrow — Web Report parquet bytes encoding.
+_pa_datas, _pa_binaries, _pa_hidden = collect_all('pyarrow')
+
 import os as _os
 _repo_root = _os.path.normpath(_os.path.join(SPECPATH, '..'))
 
 a = Analysis(
     ['honey_main.py'],
     pathex=[_repo_root],
-    binaries=_xw_binaries + _fitz_binaries,
-    datas=_xw_datas + _fitz_datas + [('honey_main.ui', '.'), ('upload_dialog.ui', '.'),
+    binaries=_xw_binaries + _fitz_binaries + _pa_binaries,
+    datas=_xw_datas + _fitz_datas + _pa_datas + [('honey_main.ui', '.'), ('upload_dialog.ui', '.'),
                        (_os.path.join(_repo_root, 'd1', 'd1_browser.ui'), 'd1'),
                        ('file_order.ui', '.'),
                        ('report_settings.ui', '.')],
@@ -39,6 +43,7 @@ a = Analysis(
         + collect_submodules('requests_toolbelt')
         + _xw_hidden
         + _fitz_hidden
+        + _pa_hidden
         + collect_submodules('report_generator')
     + collect_submodules('honey_parse')
     + collect_submodules('pystdf')

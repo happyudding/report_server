@@ -1,0 +1,20 @@
+[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260706_135327.txt
+[wsgi] importing Flask ...
+[wsgi] importing blueprints ... (0.43s)
+[wsgi] creating app ... (0.43s)
+Traceback (most recent call last):
+  File [35m"F:\COINAPI\report_server\server\wsgi.py"[0m, line [35m101[0m, in [35m<module>[0m
+    [31mregister_report_server[0m[1;31m(app, root_redirect=True)[0m
+    [31m~~~~~~~~~~~~~~~~~~~~~~[0m[1;31m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+  File [35m"F:\COINAPI\report_server\server\plugin.py"[0m, line [35m21[0m, in [35mregister_report_server[0m
+    from report.report_extension import report_bp, init_app as _init_report
+  File [35m"F:\COINAPI\report_server\server\report\report_extension.py"[0m, line [35m8[0m, in [35m<module>[0m
+    [1;31mimport upload_webreport[0m  # noqa: E402,F401
+    [1;31m^^^^^^^^^^^^^^^^^^^^^^^[0m
+  File [35m"F:\COINAPI\report_server\server\upload_webreport.py"[0m, line [35m17[0m, in [35m<module>[0m
+    from web_report import service as web_report_service
+  File [35m"F:\COINAPI\report_server\web_report\service.py"[0m, line [35m12[0m, in [35m<module>[0m
+    from .honeyform import decode_honeyform_parquet, split_honeyform
+  File [35m"F:\COINAPI\report_server\web_report\honeyform.py"[0m, line [35m13[0m, in [35m<module>[0m
+    import pandas as pd
+[1;35mModuleNotFoundError[0m: [35mNo module named 'pandas'[0m
