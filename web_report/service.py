@@ -144,6 +144,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path) -> tuple[di
         selected_items=manifest.get("selected_items") or [],
         sheets=manifest.get("sheets") or [],
         etc_items=manifest.get("etc_items") or [],
+        issue_comments=manifest.get("issue_comments") or {},
     )
     public = dict(session)
     public["has_password"] = bool(public.get("password"))
@@ -208,9 +209,8 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
     """Issue Table ETC 섹션에 ENGR 가 임의로 추가/삭제한 item 이름을 manifest.etc_items 에 반영한다.
 
     Bin/TNO/Distribution 값 자체는 저장하지 않는다 — item 이름만 기억해두고, 조회할 때마다
-    build_issue_table_rows 가 tables/yield_rows 에서 그때그때 다시 채운다(rule #4 의
-    analysis_key 불변 원칙과 무관하게, 여기선 sources 원본이 그대로이므로 content_hash 도
-    사실상 동일하게 재계산될 뿐이다).
+    build_issue_table_rows 가 tables/yield_rows 에서 그때그때 다시 채운다. sources 원본은
+    불변이므로 manifest 만 재저장한다 (parquet 재업로드 없음, content_hash 도 그대로).
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -240,13 +240,8 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
         etc_items = [it for it in etc_items if it != remove]
     manifest["etc_items"] = etc_items
 
-    content_hash = hashlib.sha256(
-        _canon({"files": [hashlib.sha256(b).hexdigest() for b in sources]})
-    ).hexdigest()
-    storage_result = storage_gateway.save_webreport_sources(
-        analysis_key, content_hash, sources, manifest, upload_root=upload_root)
-
-    report_db.update_session(session_id, content_hash=content_hash)
+    storage_result = storage_gateway.save_webreport_manifest(
+        analysis_key, manifest, upload_root=upload_root)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
@@ -258,3 +253,78 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
         pass
 
     return {"ok": True, "etc_items": etc_items, "storage": storage_result["storage"]}
+
+
+_COMMENT_MAX_ITEMS = 200
+_COMMENT_MAX_LEN = 2000
+
+
+def update_issue_comments(session_id: str, comments: list, *, report_db, upload_root: Path,
+                          client_ip: str = "", user_agent: str = "") -> dict:
+    """Issue Table 의 PTE/개발 comment 를 manifest.issue_comments 에 저장한다.
+
+    comments: [{"key": row_key, "col": comment 컬럼명, "value": str}, ...].
+    row_key 는 tabs/issue_table.py 규칙("Yield|<bin>|<item>", "CPK|<item>", "ETC|<item>")을
+    따르고, 빈 value 는 해당 항목 삭제로 처리한다. sources 원본은 불변이므로 manifest 만
+    재저장한다 (parquet 재업로드 없음).
+    """
+    from .tabs.issue_table import COMMENT_COLS
+
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    if not isinstance(comments, list):
+        raise ValueError("comments must be a list")
+    if len(comments) > _COMMENT_MAX_ITEMS:
+        raise ValueError(f"too many comment entries ({len(comments)} > {_COMMENT_MAX_ITEMS})")
+
+    import storage_gateway
+    manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root=upload_root)
+
+    saved = dict(manifest.get("issue_comments") or {})
+    changed = 0
+    for entry in comments:
+        entry = entry or {}
+        key = str(entry.get("key") or "").strip()
+        col = str(entry.get("col") or "")
+        value = str(entry.get("value") or "").strip()
+        if not key or len(key) > 300:
+            raise ValueError(f"invalid comment key: {key!r}")
+        if col not in COMMENT_COLS:
+            raise ValueError(f"unknown comment column: {col!r}")
+        if len(value) > _COMMENT_MAX_LEN:
+            raise ValueError(f"comment too long ({len(value)} > {_COMMENT_MAX_LEN} chars)")
+        row = dict(saved.get(key) or {})
+        if str(row.get(col) or "") == value:
+            continue
+        if value:
+            row[col] = value
+        else:
+            row.pop(col, None)
+        if row:
+            saved[key] = row
+        else:
+            saved.pop(key, None)
+        changed += 1
+    if changed:
+        manifest["issue_comments"] = saved
+        storage_result = storage_gateway.save_webreport_manifest(
+            analysis_key, manifest, upload_root=upload_root)
+        try:
+            report_db.log_audit(
+                "edit", session_id=session_id, analysis_key=analysis_key,
+                product_type=session.get("product_type", ""), product=session.get("product", ""),
+                lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+                changed_fields=f"issue_comments({changed} cells)",
+                client_ip=client_ip, user_agent=user_agent)
+        except Exception:
+            pass
+        storage = storage_result["storage"]
+    else:
+        storage = "unchanged"
+
+    return {"ok": True, "updated": changed, "storage": storage}

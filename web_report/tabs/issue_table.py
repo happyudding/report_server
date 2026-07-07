@@ -10,6 +10,9 @@ CPK 서브헤더 행(Category="CPK", avg="cpk") 감지를 이미 지원한다.
 ETC 섹션은 ENGR 가 임의로 추가한 item(manifest.etc_items, service.update_issue_etc_items 가
 갱신)을 받아 Bin/TNO 는 tables 메타에서, avg/{source}_yield 는 yield_rows 매칭 항목에서
 매 조회마다 다시 채운다(저장하는 값은 item 이름뿐).
+PTE/개발 comment 는 manifest.issue_comments 에 row_key 단위로 저장된다
+(service.update_issue_comments 가 갱신, 여기서는 조회 시 채우기만 한다).
+row_key: Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", ETC 행 "ETC|<item>".
 """
 from __future__ import annotations
 
@@ -18,6 +21,14 @@ from .common import fmt_type
 _CPK_THRESHOLD = 1.33
 
 _COMMENT_COLS = ["PTE comment", "개발 comment"]
+
+# service.update_issue_comments 의 컬럼 검증용 공개 이름
+COMMENT_COLS = list(_COMMENT_COLS)
+
+
+def _comment_values(issue_comments, row_key):
+    saved = (issue_comments or {}).get(row_key) or {}
+    return {col: str(saved.get(col) or "") for col in _COMMENT_COLS}
 
 
 def _blank_row(sources):
@@ -36,7 +47,7 @@ def _item_meta(tables):
     return out
 
 
-def _etc_rows(tables, yield_rows, etc_items, sources):
+def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None):
     if not etc_items:
         return []
     meta = _item_meta(tables)
@@ -57,8 +68,7 @@ def _etc_rows(tables, yield_rows, etc_items, sources):
         for src in sources:
             data[f"{src}_yield"] = match.get(f"{src}_yield", "")
         data["Distribution"] = ""
-        for col in _COMMENT_COLS:
-            data[col] = ""
+        data.update(_comment_values(issue_comments, f"ETC|{item}"))
         rows.append(data)
     return rows
 
@@ -100,7 +110,8 @@ def build_issue_bin_summary(yield_rows):
     return groups
 
 
-def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=None):
+def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=None,
+                           issue_comments=None):
     sources = [t.source for t in (tables or [])]
     rows = []
 
@@ -120,8 +131,7 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
         for src in sources:
             out[f"{src}_yield"] = row.get(f"{src}_yield")
         out["Distribution"] = ""
-        for col in _COMMENT_COLS:
-            out[col] = ""
+        out.update(_comment_values(issue_comments, f"Yield|{bin_value}|{item}"))
         rows.append(out)
 
     cpk_fails = _cpk_fail_subjects(cpk_rows)
@@ -132,11 +142,12 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
         for subject, cpk in cpk_fails:
             data = {"Category": "", "Step": "", "Bin": "", "TNO": "", "Item": subject, "avg": cpk}
             data.update(_blank_row(sources))
+            data.update(_comment_values(issue_comments, f"CPK|{subject}"))
             rows.append(data)
     else:
         rows.append({"Category": "", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources)})
 
     etc = {"Category": "ETC", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources)}
     rows.append(etc)
-    rows.extend(_etc_rows(tables, yield_rows, etc_items, sources))
+    rows.extend(_etc_rows(tables, yield_rows, etc_items, sources, issue_comments=issue_comments))
     return rows

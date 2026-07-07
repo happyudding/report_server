@@ -354,6 +354,35 @@ def web_report_issue_table_etc(session_id):
     return jsonify(result)
 
 
+@report_bp.post("/session/<session_id>/web_report/issue_table/comments")
+def web_report_issue_table_comments(session_id):
+    """Issue Table PTE/개발 comment 저장 — manifest.issue_comments 갱신 (parquet 불변).
+
+    수정 모드(PIN 검증 완료) 에서만 호출되는 것을 전제로, 여기서도 PIN 을 재검증한다."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    body = request.get_json(force=True, silent=True) or {}
+    password = (body.get("password") or "").strip()
+    if not _password_ok(session, password):
+        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
+    comments = body.get("comments")
+    if not isinstance(comments, list) or not comments:
+        return jsonify({"error": "comments가 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_issue_comments(
+            session_id, comments, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        _log.exception("web_report issue_table comments failed for session %s", session_id)
+        abort(500, f"issue_table comments failed: {exc}")
+    return jsonify(result)
+
+
 def _load_json_object(objects, object_type):
     """objects 인덱스에 object_type 이 있으면 S3 JSON 다운로드, 실패 시 None."""
     return storage_gateway.load_json_object(objects, object_type)

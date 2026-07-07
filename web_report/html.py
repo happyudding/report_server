@@ -6,6 +6,9 @@ import json
 
 def render_report_html(session: dict, report: dict) -> str:
     payload = json.dumps({"session": session, "report": report}, ensure_ascii=False)
+    # 인라인 <script> 안에 넣으므로 "</script>" · "</..." 시퀀스가 스크립트 블록을 조기
+    # 종료시키지 못하도록 이스케이프한다 (데이터에 "</script>" 문자열이 섞여도 안전).
+    payload = payload.replace("</", "<\\/")
     title = session.get("file_name") or session.get("session_id") or "Web Report"
     return f"""<!doctype html>
 <html lang="ko">

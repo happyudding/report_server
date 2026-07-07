@@ -12,7 +12,8 @@ from .tabs.trim_analysis import build_trim_analysis_rows
 from .tabs.yield_tab import build_yield_rows, fail_bin_ranking, fail_counts_by_source, yield_overview
 
 
-def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None) -> dict:
+def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
+                         issue_comments=None) -> dict:
     selected_set = {str(v) for v in (selected_items or []) if str(v)}
     if selected_set:
         for table in tables:
@@ -33,7 +34,8 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
             "Raw Data": build_raw_data_rows(tables),
             "Yield": yield_rows,
             "CPK": cpk_rows,
-            "Issue Table": build_issue_table_rows(tables, yield_rows, cpk_rows, etc_items=etc_items),
+            "Issue Table": build_issue_table_rows(tables, yield_rows, cpk_rows, etc_items=etc_items,
+                                              issue_comments=issue_comments),
             "Distribution": build_distribution_rows(tables, all_items),
             "Trim Analysis": build_trim_analysis_rows(tables),
             "Histogram": build_histogram_rows(tables),

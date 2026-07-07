@@ -52,3 +52,12 @@ def round_num(value, digits=6):
     value = num(value)
     return None if value is None else round(value, digits)
 
+
+def bin_sort_key(value):
+    """BIN 정렬 키: 숫자로 해석 가능하면 숫자 우선, 아니면 문자열 사전순."""
+    text = str(value)
+    try:
+        return (0, float(text))
+    except ValueError:
+        return (1, text)
+

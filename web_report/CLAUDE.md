@@ -24,7 +24,9 @@ XPOS, YPOS, BIN, FAILTNO + 측정 항목 컬럼, 상단 6행은 TSEQ/TNO/STEP/UN
 web_report/
 ├── __init__.py        패키지 docstring만
 ├── service.py          ingest_webreport() — 업로드 처리(해시→analysis_key→DB 세션→
-│                        report_db.upsert_sheet_data), load_webreport() — 세션 조회
+│                        parquet+manifest 저장), load_webreport() — 세션 재계산 조회,
+│                        raw_data 조회·편집, update_issue_etc_items/update_issue_comments
+│                        (Issue Table ETC 항목·comment 편집 — manifest 만 재저장)
 ├── honeyform.py         7-meta honeyform 검증/파싱, parquet 인코딩·디코딩
 │                        (META_COLUMNS, META_ROW_LABELS 등 스키마 상수)
 ├── metrics.py           build_report_payload() — tabs/ 각 모듈을 모아 최종 report dict 조립
@@ -34,12 +36,15 @@ web_report/
 │                        라우트에서도 호출되지 않음 — 실제 서빙 중인 세션 상세 페이지는
 │                        server/report/report_view.html, 이 파일은 web_report 밖)
 └── tabs/                시트별 row 빌더 (metrics.py 가 호출)
-    ├── common.py
+    ├── common.py        json_safe/fmt_type/num/round_num, bin_sort_key(BIN 정렬 공용)
     ├── summary.py        build_summary_rows (placeholder — return [])
-    ├── raw_data.py       build_raw_data_rows (placeholder — return [])
+    ├── raw_data.py       build_raw_data_rows(payload 용 placeholder — return []) +
+    │                     build_raw_data_columns/query_raw_data/apply_raw_data_edits (lazy-load 조회·편집)
     ├── yield_tab.py      build_yield_rows(comment/count 컬럼 없음), fail_counts_by_source, fail_bin_ranking, yield_overview(상단 요약 박스)
-    ├── cpk.py            build_cpk_rows (source 별 + subject 당 "total"(전 source 합산) 행)
-    ├── issue_table.py    build_issue_table_rows (Yield 파생 행 + CPK<1.33(total 기준) 파생 행 + ETC placeholder)
+    ├── cpk.py            build_cpk_rows (source 별 행만 — "total" 합산 행 없음. Issue Table 이
+    │                     subject 당 worst-case(최저) cpk 로 이슈 판단)
+    ├── issue_table.py    build_issue_table_rows (Yield 파생 행 + CPK<1.33(subject 별 worst-case) 파생 행 +
+    │                     ETC). PTE/개발 comment 는 manifest.issue_comments 에서 row_key 로 채움
     ├── distribution.py   build_distribution_rows (전량 ECDF — 프런트는 아직 렌더 안 함)
     ├── trim_analysis.py  build_trim_analysis_rows (placeholder — return [])
     ├── histogram.py      build_histogram_rows (placeholder — return [])
@@ -51,8 +56,10 @@ web_report/
 | 연결점 | 파일 (web_report 밖) | 용도 |
 |--------|----------------------|------|
 | 업로드 라우트 | `server/upload_webreport.py` | `POST /pe/report/upload_webreport`, `GET /pe/report/web_report/<sid>` → `/pe/report/view/<sid>` 리다이렉트 |
+| web_report 편집 라우트 | `server/report/report_routes.py` | `.../web_report/raw_data`(조회), `.../raw_data/edit`, `.../issue_table/etc`, `.../issue_table/comments` (모두 PIN 재검증) |
 | 세션 상세 페이지 | `server/report/report_view.html` | 실제 서빙되는 세션 상세 UI (topbar/tabs/grid 등) |
-| DB CRUD | `server/database/report_db.py` | `create_session`, `update_session`, `upsert_sheet_data`, `get_sheet_data`, `log_audit` |
+| 저장소(parquet/manifest) | `server/storage_gateway/__init__.py` | `save/load_webreport_sources`(parquet+manifest), `save/load_webreport_manifest`(manifest 만) |
+| DB CRUD | `server/database/report_db.py` | `create_session`, `update_session`, `get_all_object_infos`, `log_audit` |
 | 공통 설정 | `server/config.py` | `REPORT_UPLOAD_DIR` 등 |
 
 `web_report/` 안에서 위 연결점의 **호출 시그니처(함수명·인자·반환 dict 키)** 를 바꾸면
@@ -72,8 +79,16 @@ UI(체크박스 목록 스타일, 표 컬럼 순서/정렬 화살표/테두리, 
 - `html.py::render_report_html` 은 아직 미사용 코드다. 세션 상세 UI를 고칠 때 사용자가
   "세션 페이지"라고 하면 우선 `server/report/report_view.html` (web_report 밖!) 을
   의미하는지 확인할 것 — 헷갈리기 쉬운 지점.
-- **탭 구현 상태 (2026-07-07 기준)**: Yield / CPK / Issue Table / Map Analysis / Fail Bin 은
+- **탭 구현 상태 (2026-07-08 기준)**: Yield / CPK / Issue Table / Map Analysis / Fail Bin 은
   계산·렌더 완료 (CPK 탭 렌더 함수 `renderCpk()` 는 report_view.html 에 추가 — web_report 밖
-  파일이라 사용자 승인 후 수정함). Distribution 은 계산은 되지만 프런트가 아직 placeholder
-  처리 중이라 화면에 안 나온다. summary / raw_data / trim_analysis / histogram 빌더는
-  `return []` 플레이스홀더 (Summary 탭 화면은 프런트가 Map Analysis + Fail Bin 시트로 자체 구성).
+  파일이라 사용자 승인 후 수정함). Raw Data 는 lazy-load 조회/편집 완료. Distribution 은
+  계산은 되지만 프런트가 아직 placeholder 처리 중이라 화면에 안 나온다. summary / raw_data(payload) /
+  trim_analysis / histogram 빌더는 `return []` 플레이스홀더 (Summary 탭 화면은 프런트가
+  Map Analysis + Fail Bin 시트로 자체 구성).
+- **Issue Table comment 저장**: web_report 세션은 legacy 의 `PATCH /content` 를 쓰지 않는다
+  (해당 라우트가 web_report 를 400 거부). PTE/개발 comment 는 프런트가
+  `POST .../web_report/issue_table/comments` 로 보내고 `manifest.issue_comments` 에 row_key
+  (`Yield|<bin>|<item>` / `CPK|<item>` / `ETC|<item>`) 단위로 저장 → 조회 시
+  build_issue_table_rows 가 다시 채운다. sources parquet 는 불변, manifest 만 재저장.
+- **legacy 세션 탭**: web_report 전용 탭(Raw Data/CPK/Map Analysis)은 `source != "web_report"`
+  세션에선 프런트가 탭 버튼을 숨긴다(`syncTabVisibility`).

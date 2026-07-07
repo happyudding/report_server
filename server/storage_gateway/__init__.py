@@ -181,6 +181,56 @@ def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: 
     return {"storage": "local", "warnings": warnings}
 
 
+def save_webreport_manifest(analysis_key, manifest: dict, upload_root) -> dict:
+    """web_report manifest 만 갱신 저장 (parquet sources 는 건드리지 않음).
+
+    etc_items / issue_comments 처럼 manifest 필드만 바뀌는 편집용. S3 우선, 실패 시 로컬
+    폴백. sources 가 불변이므로 object_info 의 content_hash 는 기존 값을 유지한다.
+    """
+    warnings = []
+    s3_ok = True
+    try:
+        report_s3._require_config()
+    except S3NotConfigured:
+        s3_ok = False
+
+    if s3_ok:
+        try:
+            prev = {o["object_type"]: o for o in report_db.get_all_object_infos(analysis_key)}
+            content_hash = (prev.get("web_report_manifest") or {}).get("content_hash", "")
+            mkey = report_s3.make_webreport_manifest_s3_key(analysis_key)
+            muri = report_s3.upload_json_to_s3(mkey, manifest)
+            report_db.upsert_object_info(
+                analysis_key, content_hash, "{}", "web_report_manifest",
+                report_s3.bucket_name(), mkey, muri)
+            return {"storage": "s3", "warnings": warnings}
+        except Exception as exc:
+            warnings.append(f"web_report manifest S3 upload failed, falling back to local: {exc}")
+
+    import json as _json
+    session_dir = Path(upload_root) / "web_report" / analysis_key
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / "manifest.json").write_text(
+        _json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"storage": "local", "warnings": warnings}
+
+
+def load_webreport_manifest(analysis_key, upload_root) -> dict:
+    """web_report manifest 만 재조회 (parquet sources 다운로드 없음). S3 우선, 로컬 폴백."""
+    objs = {o["object_type"]: o for o in report_db.get_all_object_infos(analysis_key)}
+    if "web_report_manifest" in objs:
+        try:
+            return report_s3.download_json_from_s3(objs["web_report_manifest"]["s3_key"])
+        except (S3NotConfigured, Exception):
+            pass
+
+    import json as _json
+    manifest_path = Path(upload_root) / "web_report" / analysis_key / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"web_report manifest not found: {analysis_key}")
+    return _json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
 def load_webreport_sources(analysis_key, upload_root):
     """web_report parquet 원본 + manifest 재조회. S3 우선, 실패 시 로컬 폴백.
 

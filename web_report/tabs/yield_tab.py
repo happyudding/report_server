@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 
 import pandas as pd
 
-from .common import PASS_BIN, fmt_type
+from .common import PASS_BIN, bin_sort_key, fmt_type
 
 
 def _tno_norm(value):
@@ -28,14 +28,6 @@ def _tno_norm(value):
         return text or None
 
 
-def _bin_sort_key(value):
-    text = str(value)
-    try:
-        return (0, float(text))
-    except ValueError:
-        return (1, text)
-
-
 def fail_counts_by_source(table) -> Counter:
     tno_to_item = defaultdict(list)
     for item, tno in table.tno.items():
@@ -43,14 +35,16 @@ def fail_counts_by_source(table) -> Counter:
         if norm is not None:
             tno_to_item[norm].append(item)
 
+    # 행 단위 iterrows 대신 컬럼 일괄 변환 후 (BIN, FAILTNO) 쌍으로 집계한다.
+    fail_list = [_tno_norm(v) for v in table.data["FAILTNO"].tolist()]
+    bin_list = [fmt_type(v) for v in table.data["BIN"].tolist()]
+    pair_counts = Counter(
+        (b, f) for b, f in zip(bin_list, fail_list) if f is not None)
+
     counts = Counter()
-    for _, row in table.data.iterrows():
-        fail_tno = _tno_norm(row.get("FAILTNO"))
-        if fail_tno is None:
-            continue
-        bin_value = fmt_type(row.get("BIN"))
+    for (bin_value, fail_tno), cnt in pair_counts.items():
         for item in tno_to_item.get(fail_tno, []):
-            counts[(bin_value, item)] += 1
+            counts[(bin_value, item)] += cnt
     return counts
 
 
@@ -84,7 +78,7 @@ def build_yield_rows(tables, fail_counts):
 
     keys = sorted(
         {key for counts in fail_counts.values() for key in counts.keys() if key[0] != PASS_BIN},
-        key=lambda key: (_bin_sort_key(key[0]), str(key[1])),
+        key=lambda key: (bin_sort_key(key[0]), str(key[1])),
     )
     for bin_value, item in keys:
         meta = item_meta.get(item, {})

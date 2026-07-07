@@ -55,31 +55,56 @@ def query_raw_data(tables, *, columns, search="", bin_filter="", source_filter="
         # (table.item_columns 원본 순서가 아니라 사용자가 고른 순서).
         item_set = set(table.item_columns)
         present_cols = [c for c in columns if c in item_set]
-        for idx, row in table.data.iterrows():
-            serial = fmt_type(row.get("SERIAL"))
-            dut = fmt_type(row.get("DUT"))
-            if search_norm and search_norm not in serial.lower() and search_norm not in dut.lower():
+        data = table.data
+        idx_list = data.index.tolist()
+
+        # 행 단위 iterrows 대신 필터에 쓰는 컬럼만 일괄 변환해 선별한 뒤,
+        # 선택된 행에 대해서만 나머지 컬럼을 변환한다.
+        serial_list = [fmt_type(v) for v in data["SERIAL"].tolist()]
+        dut_list = [fmt_type(v) for v in data["DUT"].tolist()]
+        bin_list = [fmt_type(v) for v in data["BIN"].tolist()]
+
+        sel = []
+        for pos in range(len(idx_list)):
+            if (search_norm and search_norm not in serial_list[pos].lower()
+                    and search_norm not in dut_list[pos].lower()):
                 continue
-            bin_value = fmt_type(row.get("BIN"))
-            if bin_norm and bin_value != bin_norm:
+            if bin_norm and bin_list[pos] != bin_norm:
                 continue
             total_matched += 1
-            if len(rows) >= row_cap:
+            if len(rows) + len(sel) >= row_cap:
                 truncated = True
                 continue
+            sel.append(pos)
+
+        meta_sel = {
+            "SERIAL": [serial_list[p] for p in sel],
+            "DUT": [dut_list[p] for p in sel],
+            "BIN": [bin_list[p] for p in sel],
+        }
+        for c in _META_COLUMNS:
+            if c not in meta_sel:
+                meta_sel[c] = [fmt_type(v) for v in data[c].iloc[sel].tolist()]
+        item_sel = {c: [round_num(v) for v in data[c].iloc[sel].tolist()]
+                    for c in present_cols}
+        for j, pos in enumerate(sel):
             # _row_idx: table.data 내 위치(0-base). 편집 저장 시 어느 행을 고쳐야 하는지
             # 알려주는 내부용 필드 — 프런트는 화면에 표시하지 않고 편집 요청에만 실어 보낸다.
-            out = {"SOURCE": table.source, "_row_idx": int(idx)}
+            out = {"SOURCE": table.source, "_row_idx": int(idx_list[pos])}
             for c in _META_COLUMNS:
-                out[c] = fmt_type(row.get(c))
+                out[c] = meta_sel[c][j]
             for c in present_cols:
-                out[c] = round_num(row.get(c))
+                out[c] = item_sel[c][j]
             rows.append(out)
     return {"rows": rows, "total_matched": total_matched, "truncated": truncated}
 
 
 def apply_raw_data_edits(tables, edits):
-    """편집 목록을 tables 에 반영한 새 HoneyformTable 리스트를 반환한다 (원본 tables 는 불변).
+    """편집 목록을 tables 에 반영한 HoneyformTable 리스트를 반환한다.
+
+    주의: 원본 table.df 를 in-place 로 수정한다 (사본이 아님). 호출자는 이 함수가
+    tables 를 변형시킨다는 점을 전제로 써야 한다 — service.edit_raw_data 는 매 요청마다
+    parquet 원본을 새로 디코드해 tables 를 만들므로 in-place 변형이 다음 요청에 새지 않는다.
 
     edits: [{"source", "row_idx", "column", "value"}, ...]. source 는 반드시 tables 중
     하나와 일치해야 하고, column 은 그 테이블의 item_columns 또는 메타 컬럼이어야 한다.

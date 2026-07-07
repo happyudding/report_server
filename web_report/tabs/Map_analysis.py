@@ -8,49 +8,32 @@ from __future__ import annotations
 
 from collections import Counter
 
-from .common import PASS_BIN, fmt_type
+import pandas as pd
 
-
-def _to_int(value):
-    """좌표 문자열/실수 → int. 변환 불가 시 None."""
-    if value is None:
-        return None
-    try:
-        return int(round(float(value)))
-    except (TypeError, ValueError):
-        return None
-
-
-def _bin_sort_key(bin_value):
-    try:
-        return (0, float(bin_value))
-    except ValueError:
-        return (1, bin_value)
+from .common import PASS_BIN, bin_sort_key, fmt_type
 
 
 def build_map_analysis_rows(tables):
     rows = []
     for table in tables:
         data = table.data
-        dies = []
-        bin_counter = Counter()
-        xs, ys = [], []
-        for _, row in data.iterrows():
-            x = _to_int(row.get("XPOS"))
-            y = _to_int(row.get("YPOS"))
-            if x is None or y is None:
-                continue
-            bin_value = fmt_type(row.get("BIN"))
-            dies.append({"x": x, "y": y, "bin": bin_value})
-            bin_counter[bin_value] += 1
-            xs.append(x)
-            ys.append(y)
+        # 행 단위 iterrows 대신 좌표를 일괄 숫자 변환하고 유효 행만 추린다
+        # (변환 불가/결측 좌표 행 제외 — 기존 _to_int 의 None 처리와 동일).
+        x_num = pd.to_numeric(data["XPOS"], errors="coerce")
+        y_num = pd.to_numeric(data["YPOS"], errors="coerce")
+        mask = x_num.notna() & y_num.notna()
+        xs = [int(v) for v in x_num[mask].round().tolist()]
+        ys = [int(v) for v in y_num[mask].round().tolist()]
+        bins = [fmt_type(v) for v in data.loc[mask, "BIN"].tolist()]
+
+        dies = [{"x": x, "y": y, "bin": b} for x, y, b in zip(xs, ys, bins)]
+        bin_counter = Counter(bins)
 
         total = len(dies)
         pass_first = sorted(
             bin_counter.items(),
-            key=lambda kv: (0, _bin_sort_key(kv[0])) if kv[0] == PASS_BIN
-            else (1, -kv[1], _bin_sort_key(kv[0])),
+            key=lambda kv: (0, bin_sort_key(kv[0])) if kv[0] == PASS_BIN
+            else (1, -kv[1], bin_sort_key(kv[0])),
         )
         bin_counts = [
             {

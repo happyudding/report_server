@@ -316,7 +316,7 @@ tbody tr:hover { background: #f9fbff; }
 }
 .wafer-card { border: 1px solid #e3e6ea; border-radius: 8px; padding: 12px; background: #fff; }
 .wafer-card-title { font-size: 12px; font-weight: 700; color: #333; margin: 0 0 8px; }
-.wafer-legend-fixed { flex: 0 0 220px; position: sticky; top: 96px; }
+.wafer-legend-fixed { flex: 0 0 220px; position: sticky; top: var(--sticky-head-h, 96px); }
 .wafer-legend-title { font-size: 13px; font-weight: 700; color: #333; margin: 0 0 8px; }
 .bin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .bin-table th, .bin-table td { padding: 4px 8px; border-bottom: 1px solid #eef0f3; text-align: right; }
@@ -750,7 +750,26 @@ function renderMeta(session) {
   ];
   document.getElementById("topbarMeta").innerHTML =
     `<div class="meta-row">${line1.join("")}</div><div class="meta-row">${line2.join("")}</div>`;
+  syncTabVisibility();
   syncStickyHeadHeight();
+}
+
+// web_report 전용 데이터로만 채워지는 탭(Raw Data/CPK/Map Analysis)은 legacy(xlsx_upload)
+// 세션에서 항상 빈 화면이므로 탭 버튼 자체를 숨긴다. 숨긴 탭이 활성 상태였으면 Summary 로 전환.
+const WEB_REPORT_ONLY_TABS = ["raw-data", "cpk", "map-analysis"];
+function syncTabVisibility() {
+  const web = isWebReportSession();
+  let hidActive = false;
+  WEB_REPORT_ONLY_TABS.forEach(name => {
+    const btn = document.querySelector(`.tab[data-tab="${name}"]`);
+    if (!btn) return;
+    btn.style.display = web ? "" : "none";
+    if (!web && btn.classList.contains("active")) hidActive = true;
+  });
+  if (hidActive) {
+    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === "summary"));
+    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-summary"));
+  }
 }
 
 // topbar 가 1줄/2줄로 실제 렌더 높이가 바뀌므로, 그 아래 붙는 sticky 요소(rawdata-cols 등)가
@@ -1053,6 +1072,18 @@ function reorderYieldRows(rows, cols) {
  *    데이터행이 없어도 헤더는 항상 렌더 → 내용 없는 컬럼도 유지.
  *  - kind: comment 최우측 / (issue) category 최좌측 정렬.
  */
+// Issue Table comment 저장용 행 식별 키 — 백엔드 web_report/tabs/issue_table.py 의
+// manifest.issue_comments 키 규칙과 반드시 동일해야 한다:
+// Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", ETC 데이터 행 "ETC|<item>".
+function issueRowKey(r, section) {
+  const item = String((r && r["Item"]) ?? "");
+  if (!item.trim()) return "";
+  if (section === "Yield") return `Yield|${String((r && r["Bin"]) ?? "")}|${item}`;
+  if (section === "CPK") return `CPK|${item}`;
+  if (section === "ETC") return `ETC|${item}`;
+  return "";
+}
+
 function renderSheetTable(rows, opts) {
   opts = opts || {};
   let cols;
@@ -1142,7 +1173,10 @@ function renderSheetTable(rows, opts) {
       if (opts.edit && (!opts.editableCols || opts.editableCols.has(c))) {
         if (opts.editableCols) {
           const cls = "editing-cell dblclick-edit" + (subhead ? " sheet-subhead" : "");
-          return `<td class="${cls}" data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${esc(txt)}</td>`;
+          // web_report comment 저장용 행 식별 키 — 없으면(서브헤더/placeholder 행) 저장 대상 아님.
+          const rowKey = (opts.kind === "issue" && !subhead) ? issueRowKey(r, rowSection[ri]) : "";
+          const keyAttr = rowKey ? ` data-key="${esc(rowKey)}"` : "";
+          return `<td class="${cls}"${keyAttr} data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${esc(txt)}</td>`;
         }
         const cls = "editing-cell" + (isNum ? " st-num" : "") + (subhead ? " sheet-subhead" : "");
         return `<td class="${cls}" contenteditable="true" data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${esc(txt)}</td>`;
@@ -1390,6 +1424,37 @@ function makeBinColorMap(binList) {
   return map;
 }
 
+// 세션 전체에서 같은 bin 은 어느 차트(Summary 미니 웨이퍼/Fail Bin 막대/Yield Pareto/
+// Map Analysis 범례)에서든 같은 색이 되도록, Map Analysis 전역 범례 순서를 기준으로
+// 색상 매핑을 한 번만 만든다. load() 가 DATA 갱신 시 _globalBinColors 를 초기화한다.
+let _globalBinColors = null;
+function globalBinColorMap() {
+  if (_globalBinColors) return _globalBinColors;
+  const sheets = webReportSheets() || {};
+  const bins = [];
+  buildGlobalBinLegend(sheets["Map Analysis"] || []).forEach(r => {
+    const b = String(r.bin);
+    if (!bins.includes(b)) bins.push(b);
+  });
+  (sheets["Fail Bin"] || []).forEach(r => {
+    const b = String(r.bin);
+    if (!bins.includes(b)) bins.push(b);
+  });
+  _globalBinColors = makeBinColorMap(bins);
+  return _globalBinColors;
+}
+
+// 전역 매핑에 없던 bin(좌표 없는 die 등)도 안정적으로 이어서 색을 배정.
+function binColor(bin) {
+  const map = globalBinColorMap();
+  const b = String(bin);
+  if (!(b in map)) {
+    const failCount = Object.values(map).filter(c => c !== PASS_COLOR).length;
+    map[b] = (b === "1") ? PASS_COLOR : FAIL_PALETTE[failCount % FAIL_PALETTE.length];
+  }
+  return map[b];
+}
+
 // 소스 map dict → { trace } (die → bin 이산 heatmap). opts.showText: Fail 셀에 bin 번호.
 // opts.binOrder/opts.colorMap 을 넘기면 그 값을 그대로 쓴다 (여러 맵 간 동일 bin 색상 통일용).
 function waferHeatmap(m, opts) {
@@ -1511,7 +1576,7 @@ function renderMapAnalysis() {
 
   const legendRows = buildGlobalBinLegend(maps);
   const binOrder = legendRows.map(r => r.bin);
-  const colorMap = makeBinColorMap(binOrder);
+  const colorMap = globalBinColorMap();   // 세션 전체 공통 색상 (Summary/Fail Bin 과 일치)
   let mapBinFilter = null;   // 범례 클릭으로 선택된 bin (재클릭 시 해제)
 
   panel.innerHTML = `<div class="wafer-analysis-layout">` +
@@ -1566,8 +1631,11 @@ function renderWebSummary() {
       `<div class="summary-card"><div class="summary-card-title">${esc(m.source)}</div>` +
       `<div id="mini-wafer-${i}" style="width:170px;height:170px;"></div></div>`).join("") +
     `</div>`;
+  // 미니 웨이퍼도 전역 색상 매핑을 써서 Map Analysis/Fail Bin 차트와 같은 bin=같은 색 유지.
+  const gColorMap = globalBinColorMap();
   maps.forEach((m, i) => {
-    const built = waferHeatmap(m, { mini: true });
+    const binOrder = (m.bin_counts || []).map(bc => String(bc.bin));
+    const built = waferHeatmap(m, { mini: true, colorMap: gColorMap, binOrder });
     if (!built) return;
     Plotly.newPlot(`mini-wafer-${i}`, [built.trace], waferLayout(m, { mini: true }),
       { responsive: true, displayModeBar: false, staticPlot: true });
@@ -1591,9 +1659,8 @@ function renderFailBinBar(divId, rows) {
   }
   const x = rows.map(r => r.item ? `Bin ${r.bin} : ${r.item}` : `Bin ${r.bin}`);
   const y = rows.map(r => r.count);
-  const colorMap = makeBinColorMap(rows.map(r => String(r.bin)));
   const trace = {
-    type: "bar", x, y, marker: { color: rows.map(r => colorMap[String(r.bin)]) },
+    type: "bar", x, y, marker: { color: rows.map(r => binColor(r.bin)) },
     text: failBinBarText(rows), textposition: "outside",
     customdata: rows.map(r => r.bin),
     hovertemplate: "%{x}<br>Bin %{customdata}<br>Count %{y}<extra></extra>",
@@ -1617,10 +1684,9 @@ function renderPareto(divId, rows) {
   }
   const x = rows.map(r => r.item ? `Bin ${r.bin} : ${r.item}` : `Bin ${r.bin}`);
   const y = rows.map(r => r.count);
-  const colorMap = makeBinColorMap(rows.map(r => String(r.bin)));
   const bar = {
     type: "bar", x, y,
-    marker: { color: rows.map(r => colorMap[String(r.bin)]) }, customdata: rows.map(r => r.bin),
+    marker: { color: rows.map(r => binColor(r.bin)) }, customdata: rows.map(r => r.bin),
     text: failBinBarText(rows), textposition: "outside",
     hovertemplate: "%{x}<br>Count %{y}<extra></extra>",
   };
@@ -2145,6 +2211,12 @@ async function runRawDataQuery() {
     banner.innerHTML = `<div class="rawdata-banner">조회 실패: ${esc(e.message)}</div>`;
     return;
   }
+  // 응답이 res.ok 지만 본문이 기대 형태가 아니면(프록시 오류 페이지 등) 여기서 멈춘다 —
+  // 아래 data.rows.length / toLocaleString() 이 TypeError 로 "조회 중..." 상태에 갇히는 것 방지.
+  if (!Array.isArray(data.rows) || typeof data.total_matched !== "number") {
+    banner.innerHTML = `<div class="rawdata-banner">조회 실패: 응답 형식 오류</div>`;
+    return;
+  }
   banner.innerHTML = data.truncated
     ? `<div class="rawdata-banner">결과가 많아 앞 ${data.rows.length.toLocaleString()}행만 표시합니다 ` +
       `(일치 ${data.total_matched.toLocaleString()}행) — 필터를 좁혀주세요.</div>`
@@ -2306,60 +2378,6 @@ function kvEditHtml(obj, group) {
 }
 
 // ── Summary (edit) ────────────────────────────────────────────────────────────
-function renderSummaryEdit() {
-  const panel = document.getElementById("panel-summary");
-
-  // 신규 포맷
-  if (isSummaryBlocks(DATA.summary_text)) {
-    panel.innerHTML = `<div class="edit-section-title">Summary</div>` +
-      `<div class="edit-hint">셀을 클릭해 텍스트를 수정하세요.</div>` +
-      renderSummaryBlocks(DATA.summary_text, { edit: true });
-    return;
-  }
-
-  // 구형 하위호환: grid
-  if (isGrid(DATA.summary_text)) {
-    panel.innerHTML = `<div class="edit-section-title">Summary</div>` +
-      `<div class="edit-hint">셀을 직접 클릭해 텍스트를 수정하세요. 표 구조/크기는 유지됩니다.</div>` +
-      renderGrid(DATA.summary_text, { edit: true });
-    return;
-  }
-  const st = DATA.summary_text || {};
-  const blocks = [];
-
-  blocks.push(`<div class="edit-section-title">Title</div>`);
-  blocks.push(`<input class="field-input title" data-f="title" value="${esc(st.title || "")}">`);
-
-  if (st.feature && Object.keys(st.feature).length) {
-    blocks.push(`<div class="edit-section-title">Feature</div>`);
-    blocks.push(kvEditHtml(st.feature, "feature"));
-  }
-
-  blocks.push(`<div class="edit-section-title">Yield Summary</div>`);
-  blocks.push(`<div class="edit-hint">한 줄에 한 항목.</div>`);
-  blocks.push(`<textarea class="field-textarea" data-f="yield_summary_text">` +
-    esc((st.yield_summary_text || []).join("\n")) + `</textarea>`);
-
-  if (Array.isArray(st.major_fail_bins) && st.major_fail_bins.length) {
-    blocks.push(`<div class="edit-section-title">Major Fail Bins</div>`);
-    blocks.push(editTableHtml(st.major_fail_bins, deriveCols(st.major_fail_bins), "tbl-mfb"));
-  }
-
-  if (st.evaluation && Object.keys(st.evaluation).length) {
-    blocks.push(`<div class="edit-section-title">Evaluation Summary</div>`);
-    blocks.push(kvEditHtml(st.evaluation, "evaluation"));
-  }
-
-  if (Array.isArray(st.raw_rows) && st.raw_rows.length) {
-    blocks.push(`<div class="edit-section-title">Summary (raw rows)</div>`);
-    blocks.push(`<div class="edit-hint">한 줄에 한 행, 셀은 탭(Tab)으로 구분.</div>`);
-    blocks.push(`<textarea class="field-textarea" data-f="raw_rows">` +
-      esc(st.raw_rows.map(r => (Array.isArray(r) ? r.join("\t") : r)).join("\n")) + `</textarea>`);
-  }
-
-  panel.innerHTML = blocks.join("");
-}
-
 function collectSummaryText() {
   const panel = document.getElementById("panel-summary");
   const out = DATA.summary_text ? JSON.parse(JSON.stringify(DATA.summary_text)) : {};
@@ -2391,85 +2409,9 @@ function collectSummaryText() {
   return out;
 }
 
-// ── Yield 편집: Tabulator 엑셀형 그리드 (list-of-dicts 포맷 전용) ──────────────
+// ── Yield 편집: Tabulator 인스턴스 정리 (buildPayload 의 yieldGrid.getData() 폴백 대상) ──
 function destroyYieldGrid() {
   if (yieldGrid) { try { yieldGrid.destroy(); } catch (e) {} yieldGrid = null; }
-}
-
-// 숫자성 열(우측 정렬): source 별 _yield/_count/_cnt, avg
-function isRightAlignCol(c) {
-  const n = String(c || "").toLowerCase().trim();
-  return n.endsWith("_count") || n.endsWith("_yield") || n.endsWith("_cnt") || n === "avg";
-}
-
-// rows(list of dict) → #panel-yield 안에 Tabulator 그리드 생성.
-// 컬럼은 행에서 동적 derive(소스 열 대응), 서브헤더 행은 읽기전용+음영, 정렬 비활성으로
-// 원본 행 순서 보존. 복붙(clipboard range) 활성.
-function renderYieldGrid(panel, rows) {
-  const cols = orderColumns(deriveCols(rows), "yield");
-  panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
-    `<div class="edit-hint">셀을 더블클릭해 수정하거나, 엑셀에서 복사한 범위를 드래그 선택 후 Ctrl+V 로 붙여넣으세요.</div>` +
-    `<div id="yieldGridHost"></div>`;
-
-  const columns = cols.map(c => ({
-    title: headerLabel(c) || " ",
-    field: c,
-    editor: "input",
-    headerSort: false,
-    resizable: true,
-    width: parseInt(colWidth(c), 10) || undefined,
-    hozAlign: isRightAlignCol(c) ? "right" : "left",
-    editable: cell => !isHeaderLikeRow(cell.getRow().getData(), cols),
-  }));
-
-  destroyYieldGrid();
-  yieldGrid = new Tabulator("#yieldGridHost", {
-    data: JSON.parse(JSON.stringify(rows)),   // 사본 — 저장 전까지 DATA 불변
-    columns,
-    layout: "fitDataStretch",
-    height: "62vh",
-    headerSort: false,
-    clipboard: true,
-    clipboardPasteAction: "range",
-    selectableRange: true,
-    selectableRangeColumns: true,
-    selectableRangeRows: true,
-    selectableRangeClearCells: true,
-    editTriggerEvent: "dblclick",
-    rowFormatter: row => {
-      if (isHeaderLikeRow(row.getData(), cols)) {
-        const el = row.getElement();
-        el.style.background = "#eef2ff";
-        el.style.fontWeight = "600";
-      }
-    },
-  });
-  const markDirty = () => { _dirty = true; _setDot("dirty"); };
-  yieldGrid.on("cellEdited", markDirty);
-  yieldGrid.on("dataChanged", markDirty);   // 클립보드 붙여넣기 등
-}
-
-// ── Yield (edit) ──────────────────────────────────────────────────────────────
-function renderYieldEdit() {
-  const panel = document.getElementById("panel-yield");
-
-  // 신규 포맷: list of dicts → Tabulator 엑셀형 그리드
-  if (Array.isArray(DATA.yield_text) && DATA.yield_text.length) {
-    renderYieldGrid(panel, DATA.yield_text);
-    return;
-  }
-
-  // 구형 하위호환: grid
-  if (isGrid(DATA.yield_text)) {
-    panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
-      `<div class="edit-hint">셀을 직접 클릭해 텍스트를 수정하세요. 표 구조/크기는 유지됩니다.</div>` +
-      renderGrid(DATA.yield_text, { edit: true });
-    return;
-  }
-
-  panel.innerHTML = `<div class="edit-section-title">Yield</div>` +
-    `<div class="edit-hint">item_name 이 빈 행은 저장되지 않습니다.</div>` +
-    editTableHtml(DATA.summary || [], YIELD_COLS, "tbl-yield");
 }
 
 // ── Issue Table (edit) ──────────────────────────────────────────────────────
@@ -2556,7 +2498,12 @@ function setMode(m) {
 // add/delete row (편집 테이블 공용 위임)
 document.querySelector(".content").addEventListener("click", e => {
   const issueLink = e.target.closest(".issue-item-link");
-  if (issueLink) { renderIssueDetail(issueLink.dataset.bin, issueLink.dataset.item); return; }
+  if (issueLink) {
+    // Bin 상세 전환도 panel-issues 재렌더 — 미저장 comment 를 먼저 저장하고 이동한다.
+    const bin = issueLink.dataset.bin, item = issueLink.dataset.item;
+    flushPendingComments().then(ok => { if (ok) renderIssueDetail(bin, item); });
+    return;
+  }
   const etcAddBtn = e.target.closest("#etcAddItemBtn");
   if (etcAddBtn) { openEtcItemModal(); return; }
   const etcDelBtn = e.target.closest(".btn-del-etc-item");
@@ -2656,8 +2603,62 @@ function buildPayload() {
   return payload;
 }
 
+// web_report 세션 전용 저장: Issue Table comment(PTE/개발) 변경분만 모아
+// manifest.issue_comments 로 보낸다 (PATCH /content 는 web_report 를 지원하지 않음).
+// 변경 없으면 요청을 보내지 않는다. 실패 시 throw — 호출부가 dirty 복원.
+async function saveIssueComments(opts) {
+  opts = opts || {};
+  const panel = document.getElementById("panel-issues");
+  const rows = Array.isArray(DATA && DATA.issue_table_text) ? DATA.issue_table_text : [];
+  const comments = [];
+  const applied = [];   // 성공 시 DATA.issue_table_text 에도 반영해 재렌더 시 옛 값으로 되돌지 않게 함
+  if (panel) {
+    panel.querySelectorAll("td[data-key][data-col]").forEach(td => {
+      const col = td.dataset.col;
+      const ri = parseInt(td.dataset.r, 10);
+      const orig = String(((rows[ri] || {})[col]) ?? "").trim();
+      const value = (td.textContent || "").trim();
+      if (value !== orig) {
+        comments.push({ key: td.dataset.key, col, value });
+        applied.push({ ri, col, value });
+      }
+    });
+  }
+  if (!comments.length) return { ok: true, updated: 0 };
+  const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/comments`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: JSON.stringify({ password: verifiedPassword, comments }),
+    keepalive: !!opts.keepalive,
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(j.error || `comment 저장 실패 (HTTP ${res.status})`);
+  applied.forEach(({ ri, col, value }) => { if (rows[ri]) rows[ri][col] = value; });
+  return j;
+}
+
 async function saveEdits() {
   if (!DATA) return;
+  if (isWebReportSession()) {
+    // web_report: comment 저장만 지원 (Summary/Yield 등은 읽기전용, Raw Data 는 별도 버튼).
+    const saveBtn = document.getElementById("editSave");
+    saveBtn.disabled = true;
+    _setDot("saving");
+    try {
+      await saveIssueComments();
+      _dirty = false;
+      _setDot("saved");
+      showToast("저장되었습니다.");
+      await load(false);
+      setMode("view");
+    } catch (e) {
+      showToast("저장 실패: " + e.message);
+      _setDot("dirty");
+    } finally {
+      saveBtn.disabled = false;
+    }
+    return;
+  }
   const payload = buildPayload();
   const saveBtn = document.getElementById("editSave");
   saveBtn.disabled = true;
@@ -2694,6 +2695,19 @@ async function autoSave() {
   if (!DATA || MODE !== "edit" || !_dirty || _autoSaving) return;
   _autoSaving = true;
   _setDot("saving");
+  if (isWebReportSession()) {
+    _dirty = false;  // optimistic
+    try {
+      await saveIssueComments({ keepalive: true });
+      _setDot("saved");
+    } catch (_) {
+      _dirty = true;
+      _setDot("dirty");
+    } finally {
+      _autoSaving = false;
+    }
+    return;
+  }
   const payload = buildPayload();
   _dirty = false;  // optimistic
   try {
@@ -2840,7 +2854,23 @@ function renderEtcItemList(filterText) {
   }).join("") : `<div class="placeholder" style="padding:12px;">일치하는 항목 없음</div>`;
 }
 
+// ETC 추가/삭제·Bin 상세 전환은 panel-issues 를 재렌더하므로, 아직 저장 안 된 comment
+// 편집이 있으면 먼저 저장해 유실을 막는다. 저장 실패 시 false 를 반환해 조작을 중단시킨다.
+async function flushPendingComments() {
+  if (MODE !== "edit" || !_dirty || !isWebReportSession()) return true;
+  try {
+    await saveIssueComments();
+    _dirty = false;
+    _setDot("saved");
+    return true;
+  } catch (e) {
+    showToast("저장되지 않은 comment 저장 실패 — 화면 전환을 중단합니다: " + e.message);
+    return false;
+  }
+}
+
 async function addEtcItem(item) {
+  if (!(await flushPendingComments())) return;
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/etc`, {
       method: "POST",
@@ -2858,6 +2888,7 @@ async function addEtcItem(item) {
 
 async function removeEtcItem(item) {
   if (!confirm(`"${item}" 항목을 Issue Table 에서 제거할까요?`)) return;
+  if (!(await flushPendingComments())) return;
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/etc`, {
       method: "POST",
@@ -2906,6 +2937,7 @@ async function load(resetMode=true) {
       return;
     }
     DATA = await res.json();
+    _globalBinColors = null;   // 새 데이터 → bin 색상 매핑 재계산
     seedEmptyFrames();
     // Issue Table 의 미니 분포 차트가 renderDistribution() 보다 먼저 그려질 수 있으므로
     // distDataCache/distColorMap 은 렌더 순서와 무관하게 데이터 로드 직후 미리 준비해둔다.
