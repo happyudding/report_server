@@ -1,0 +1,18 @@
+[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260706_165436.txt
+[wsgi] importing Flask ...
+[wsgi] importing blueprints ... (0.10s)
+[wsgi] creating app ... (0.10s)
+[wsgi] app ready in 0.18s
+upload status: 200
+upload json: {'status': 'done', 'session_id': '1783324476_8a6711', 'sources': ['S1']}
+full status: 200
+has web_report key: True | is None: False
+sheet keys: ['CPK', 'Distribution', 'Fail Bin', 'Histogram', 'Issue Table', 'Map Analysis', 'Raw Data', 'Summary', 'Trim Analysis', 'Yield']
+Map Analysis sources: 1 | first total dies: 1000
+  x/y range: (-35, 35, -35, 35)
+  bin_counts[0:3]: [{'bin': '1', 'count': 805, 'is_pass': True, 'pct': 80.5}, {'bin': '11', 'count': 66, 'is_pass': False, 'pct': 6.6}, {'bin': '16', 'count': 39, 'is_pass': False, 'pct': 3.9}]
+Fail Bin count: 7 | top: {'bin': '11', 'count': 66, 'cum_pct': 33.85, 'item': 'SLEEP_CURR', 'yield_pct': 6.6}
+plotly vendor status: 200 | ctype: application/javascript; charset=utf-8 | bytes: 4842553
+view status: 200 | has panel-map-analysis: True | has plotly script: True | has Map Analysis tab: True
+
+E2E OK

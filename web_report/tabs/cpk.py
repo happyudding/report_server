@@ -53,7 +53,6 @@ def build_cpk_rows(tables, all_items):
                 "lower_limit": round_num(table.lolim.get(item)),
                 "upper_limit": round_num(table.hilim.get(item)),
                 **_stats(table.data[item], table.lolim.get(item), table.hilim.get(item)),
-                "comment": "",
             })
     return rows
 

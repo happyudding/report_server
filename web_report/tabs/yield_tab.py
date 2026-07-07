@@ -80,7 +80,6 @@ def build_yield_rows(tables, fail_counts):
         pass_row[f"{table.source}_count"] = count
         pass_portions.append(portion)
     pass_row["avg"] = round(sum(pass_portions) / len(pass_portions), 2) if pass_portions else 0.0
-    pass_row["comment"] = ""
     rows.append(pass_row)
 
     keys = sorted(
@@ -96,16 +95,50 @@ def build_yield_rows(tables, fail_counts):
             "Item": item,
         }
         portions = []
-        total_count = 0
         for table in tables:
             count = int(fail_counts[table.source].get((bin_value, item), 0))
             portion = round(count / totals[table.source] * 100.0, 2) if totals[table.source] else 0.0
             row[f"{table.source}_yield"] = portion
             row[f"{table.source}_count"] = count
             portions.append(portion)
-            total_count += count
-        row["count"] = total_count
         row["avg"] = round(sum(portions) / len(portions), 2) if portions else 0.0
-        row["comment"] = ""
         rows.append(row)
     return rows
+
+
+def yield_overview(tables, yield_rows):
+    """Yield 탭 상단 요약 박스: 전체 pass/fail/total count + 종합 yield%.
+
+    yield_rows[0] 은 build_yield_rows 가 항상 추가하는 Pass 행이므로 그 값을 소스별로 합산한다.
+    """
+    total = sum(len(t.data) for t in tables)
+    pass_row = yield_rows[0] if yield_rows else {}
+    passed = sum(int(pass_row.get(f"{t.source}_count") or 0) for t in tables)
+    failed = max(total - passed, 0)
+    yield_pct = round(passed / total * 100.0, 2) if total else 0.0
+    return {"yield_pct": yield_pct, "pass": passed, "fail": failed, "total": total}
+
+
+def _row_total_count(row):
+    """행에 있는 소스별 ``{source}_count`` 값을 모두 합산."""
+    return sum(int(v or 0) for k, v in row.items() if str(k).endswith("_count"))
+
+
+def fail_bin_ranking(yield_rows):
+    """yield_rows 에서 Fail bin(비-Pass) 만 뽑아 총합 count 내림차순 정렬.
+
+    소스 Merge 는 소스별 ``{source}_count`` 합산 / 평균 ``avg`` 를 사용한다.
+    Summary(상위 5)·Yield(0.5% 임계 분리) 가 공유하는 단일 출처.
+    """
+    fails = [r for r in yield_rows if str(r.get("bin")) != PASS_BIN]
+    fails.sort(key=_row_total_count, reverse=True)
+
+    ranked = []
+    for r in fails:
+        ranked.append({
+            "bin": r.get("bin"),
+            "item": r.get("Item"),
+            "count": _row_total_count(r),
+            "yield_pct": r.get("avg"),
+        })
+    return ranked

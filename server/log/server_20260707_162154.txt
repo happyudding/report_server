@@ -1,0 +1,8 @@
+[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260707_162154.txt
+[wsgi] importing Flask ...
+[wsgi] importing blueprints ... (0.14s)
+[wsgi] creating app ... (0.14s)
+[wsgi] app ready in 0.50s
+200
+{"analysis_key":"c9a796c5bcee1a45e4a7fe91dfca24c0e05a8044678e47961837c9e9a673fd3f","item_count":0,"session_id":"1783408915_e4ab0e","sources":["diverse_1","diverse_2","diverse_3"],"status":"done","storage":"local","web_report_url":"/pe/report/view/1783408915_e4ab0e"}
+

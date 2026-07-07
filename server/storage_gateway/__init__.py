@@ -140,6 +140,84 @@ def save_distribution_png(analysis_key, content_hash, meta_str, data, s3_ok=True
         return False
 
 
+def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: dict,
+                           upload_root) -> dict:
+    """web_report parquet 원본 + manifest 저장. S3 우선, 실패 시 로컬 폴백.
+
+    sources: list[bytes] (parquet 원본). 반환: {"storage": "s3"|"local", "warnings": [...]}.
+    """
+    warnings = []
+    s3_ok = True
+    try:
+        report_s3._require_config()
+    except S3NotConfigured:
+        s3_ok = False
+
+    if s3_ok:
+        try:
+            for idx, data in enumerate(sources):
+                key = report_s3.make_webreport_source_s3_key(analysis_key, idx)
+                uri = report_s3.upload_bytes_to_s3(
+                    key, data, content_type="application/vnd.apache.parquet")
+                report_db.upsert_object_info(
+                    analysis_key, content_hash, "{}", f"web_report_source_{idx}",
+                    report_s3.bucket_name(), key, uri)
+            mkey = report_s3.make_webreport_manifest_s3_key(analysis_key)
+            muri = report_s3.upload_json_to_s3(mkey, manifest)
+            report_db.upsert_object_info(
+                analysis_key, content_hash, "{}", "web_report_manifest",
+                report_s3.bucket_name(), mkey, muri)
+            return {"storage": "s3", "warnings": warnings}
+        except Exception as exc:
+            warnings.append(f"web_report S3 upload failed, falling back to local: {exc}")
+
+    import json as _json
+    session_dir = Path(upload_root) / "web_report" / analysis_key
+    session_dir.mkdir(parents=True, exist_ok=True)
+    for idx, data in enumerate(sources):
+        (session_dir / f"source_{idx}.parquet").write_bytes(data)
+    (session_dir / "manifest.json").write_text(
+        _json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"storage": "local", "warnings": warnings}
+
+
+def load_webreport_sources(analysis_key, upload_root):
+    """web_report parquet 원본 + manifest 재조회. S3 우선, 실패 시 로컬 폴백.
+
+    반환: (list[bytes] sources, dict manifest). 둘 다 없으면 FileNotFoundError.
+    """
+    objs = {o["object_type"]: o for o in report_db.get_all_object_infos(analysis_key)}
+    source_keys = sorted(
+        (k for k in objs if k.startswith("web_report_source_")),
+        key=lambda k: int(k.rsplit("_", 1)[1]),
+    )
+    if source_keys and "web_report_manifest" in objs:
+        try:
+            sources = [report_s3.download_bytes_from_s3(objs[k]["s3_key"]) for k in source_keys]
+            manifest = report_s3.download_json_from_s3(objs["web_report_manifest"]["s3_key"])
+            return sources, manifest
+        except (S3NotConfigured, Exception):
+            pass
+
+    import json as _json
+    session_dir = Path(upload_root) / "web_report" / analysis_key
+    manifest_path = session_dir / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"web_report sources not found: {analysis_key}")
+    manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+    sources = []
+    idx = 0
+    while True:
+        p = session_dir / f"source_{idx}.parquet"
+        if not p.exists():
+            break
+        sources.append(p.read_bytes())
+        idx += 1
+    if not sources:
+        raise FileNotFoundError(f"web_report parquet sources missing on disk: {analysis_key}")
+    return sources, manifest
+
+
 def load_json_object(objects, object_type):
     """Load JSON object by object_info map and type. Returns None on failure."""
     if object_type not in objects:

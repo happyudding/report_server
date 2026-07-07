@@ -1,0 +1,93 @@
+[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260707_162054.txt
+[wsgi] importing Flask ...
+[wsgi] importing blueprints ... (0.15s)
+[wsgi] creating app ... (0.15s)
+[wsgi] app ready in 0.56s
+[wsgi] ===== Accessible URLs =====
+[wsgi] Local (이 PC)               : http://127.0.0.1:8000/pe/report/
+[wsgi] (HOST=127.0.0.1 으로 bind — LAN 노출 안 됨. LAN 접근하려면 HOST 환경변수 제거)
+[wsgi] ===========================
+[wsgi] starting server on http://127.0.0.1:8000 (debug=False)
+ * Serving Flask app 'wsgi'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on http://127.0.0.1:8000
+Press CTRL+C to quit
+127.0.0.1 - - [07/Jul/2026 16:21:02] "GET /pe/report/ HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:23:27] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:23:27] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:23:27] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:23:27] "GET /pe/report/vendor/plotly.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:23:27] "GET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:23:28] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:23:28] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data/columns HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:24:20] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:24:20] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:24:20] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:24:20] "GET /pe/report/vendor/plotly.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:24:20] "GET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:24:21] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:24:22] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data/columns HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:28:45] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:28:45] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:28:45] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:28:45] "GET /pe/report/vendor/plotly.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:28:45] "GET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:28:46] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:28:46] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data/columns HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:05] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:05] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:05] "GET /pe/report/vendor/plotly.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:05] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:05] "GET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:06] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:06] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data/columns HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:07] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data?columns=VREF_TRIM,IDDQ_INIT,TRIM_BUCK_GM&source=diverse_1 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:34] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:34] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:34] "GET /pe/report/vendor/plotly.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:34] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:35] "GET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:35] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:36] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data/columns HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:29:36] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data?columns=VREF_TRIM,IDDQ_INIT,TRIM_BUCK_GM&source=diverse_1 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:10] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:10] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:10] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:10] "GET /pe/report/vendor/plotly.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:11] "GET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:11] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:12] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data/columns HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:13] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data?columns=VREF_TRIM,IDDQ_INIT,TRIM_BUCK_GM&source=diverse_1 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:26] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:26] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:26] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:26] "GET /pe/report/vendor/plotly.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:27] "GET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:27] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:28] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data/columns HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:30:29] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data?columns=VREF_TRIM,IDDQ_INIT,TRIM_BUCK_GM&source=diverse_1 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:00] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:00] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:00] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:00] "GET /pe/report/vendor/plotly.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:00] "GET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:01] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:02] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data/columns HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:02] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data?columns=VREF_TRIM,IDDQ_INIT,TRIM_BUCK_GM&source=diverse_1 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:43] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:43] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:43] "GET /pe/report/vendor/plotly.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:43] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:44] "GET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:44] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:45] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data/columns HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:31:46] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data?columns=VREF_TRIM,IDDQ_INIT,TRIM_BUCK_GM&source=diverse_1 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:32:07] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:32:07] "GET /pe/report/vendor/tabulator.min.css HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:32:07] "GET /pe/report/vendor/tabulator.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:32:07] "GET /pe/report/vendor/plotly.min.js HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:32:08] "GET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:32:08] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:32:09] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data/columns HTTP/1.1" 200 -
+127.0.0.1 - - [07/Jul/2026 16:32:09] "GET /pe/report/session/1783408915_e4ab0e/web_report/raw_data?columns=VREF_TRIM,IDDQ_INIT,TRIM_BUCK_GM&source=diverse_1 HTTP/1.1" 200 -

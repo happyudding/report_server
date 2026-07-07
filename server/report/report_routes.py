@@ -2,6 +2,8 @@
 import re
 import secrets
 import sqlite3
+import sys
+from pathlib import Path
 
 from flask import Response, abort, jsonify, make_response, request, send_file
 
@@ -10,12 +12,19 @@ from report_utils import to_float as _to_float, to_int as _to_int
 import storage_gateway
 from config import (
     REPORT_ANALYSIS_INDEX_HTML,
+    REPORT_UPLOAD_DIR,
     REPORT_VIEW_HTML,
     STDINFO_DB_PATH,
 )
 
 _log = logging.getLogger(__name__)
 from report.report_extension import report_bp
+
+_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from web_report import service as web_report_service
 
 _ANALYSIS_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -170,11 +179,30 @@ def session_full(session_id):
                 "s3_key": obj["s3_key"],
             }
 
-    # sheet_data: DB 우선. DB 에 없으면 S3 폴백(구형 세션 하위호환).
-    sheet_data = report_db.get_all_sheet_data(akey) if akey else {}
-    summary_text = sheet_data.get("summary") or _load_json_object(objects, "summary_text")
-    yield_text = sheet_data.get("yield") or _load_json_object(objects, "yield_text")
-    issue_table_text = sheet_data.get("issue_table") or _load_json_object(objects, "issue_table_text")
+    if session.get("source") == "web_report":
+        # web_report 세션: 캐시 없이 매번 parquet 원본에서 재계산한다.
+        try:
+            _, report = web_report_service.load_webreport(
+                session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+        except FileNotFoundError:
+            abort(404, "web_report session data not found")
+        except KeyError:
+            abort(404, "session not found")
+        except Exception as exc:
+            _log.exception("web_report recompute failed for session %s", session_id)
+            abort(500, f"web_report recompute failed: {exc}")
+        sheets = report.get("sheets", {})
+        summary_text = sheets.get("Summary")
+        yield_text = sheets.get("Yield")
+        issue_table_text = sheets.get("Issue Table")
+        web_report_payload = report
+    else:
+        # sheet_data: DB 우선. DB 에 없으면 S3 폴백(구형 세션 하위호환).
+        sheet_data = report_db.get_all_sheet_data(akey) if akey else {}
+        summary_text = sheet_data.get("summary") or _load_json_object(objects, "summary_text")
+        yield_text = sheet_data.get("yield") or _load_json_object(objects, "yield_text")
+        issue_table_text = sheet_data.get("issue_table") or _load_json_object(objects, "issue_table_text")
+        web_report_payload = sheet_data.get("web_report")
     charts = []
     if "chart_index" in objects:
         manifest = _load_json_object(objects, "chart_index")
@@ -195,8 +223,6 @@ def session_full(session_id):
     if "distribution_combined" in objects:
         distribution_url = f"/pe/report/distribution_combined/{session_id}"
     elif akey:
-        from pathlib import Path
-        from config import REPORT_UPLOAD_DIR
         if (Path(REPORT_UPLOAD_DIR) / "dist_combined" / f"{akey}.png").exists():
             distribution_url = f"/pe/report/distribution_combined/{session_id}"
     return jsonify({
@@ -205,6 +231,7 @@ def session_full(session_id):
         "summary_text": summary_text,
         "yield_text": yield_text,
         "issue_table_text": issue_table_text,
+        "web_report": web_report_payload,
         "charts": charts,
         "issue_images": issue_images,
         "distribution_url": distribution_url,
@@ -212,6 +239,119 @@ def session_full(session_id):
         "objects": objects,
         "annotations": report_db.get_annotations(session_id),
     })
+
+
+def _require_web_report_session(session_id):
+    """session 조회 + web_report 세션인지 확인. 아니면 404."""
+    _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    if session.get("source") != "web_report":
+        abort(404, "not a web_report session")
+    return session
+
+
+@report_bp.get("/session/<session_id>/web_report/raw_data/columns")
+def web_report_raw_data_columns(session_id):
+    """Raw Data 탭 컬럼 선택 UI용: item 메타 + source 목록 + 전체 die 수."""
+    _require_web_report_session(session_id)
+    try:
+        result = web_report_service.get_raw_data_columns(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception as exc:
+        _log.exception("web_report raw_data columns failed for session %s", session_id)
+        abort(500, f"raw_data columns failed: {exc}")
+    return jsonify(result)
+
+
+@report_bp.get("/session/<session_id>/web_report/raw_data")
+def web_report_raw_data(session_id):
+    """Raw Data 탭 lazy-load 조회: columns(콤마구분) + search/bin/source 필터."""
+    _require_web_report_session(session_id)
+    columns = [c for c in (request.args.get("columns") or "").split(",") if c]
+    search = request.args.get("search") or ""
+    bin_filter = request.args.get("bin") or ""
+    source_filter = request.args.get("source") or ""
+    try:
+        result = web_report_service.query_raw_data(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            columns=columns, search=search, bin_filter=bin_filter, source_filter=source_filter)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        _log.exception("web_report raw_data query failed for session %s", session_id)
+        abort(500, f"raw_data query failed: {exc}")
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/raw_data/edit")
+def web_report_raw_data_edit(session_id):
+    """Raw Data 셀 편집 저장 — 저장된 parquet 원본을 직접 덮어쓴다 (버전관리/undo 없음).
+
+    수정 모드(PIN 검증 완료) 에서만 호출되는 것을 전제로, 여기서도 PIN 을 재검증한다."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    body = request.get_json(force=True, silent=True) or {}
+    password = (body.get("password") or "").strip()
+    if not _password_ok(session, password):
+        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
+    edits = body.get("edits") or []
+    if not isinstance(edits, list) or not edits:
+        return jsonify({"error": "edits가 비어 있습니다."}), 400
+    if len(edits) > 500:
+        return jsonify({"error": f"편집 개수가 너무 많습니다 ({len(edits)} > 500)"}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.edit_raw_data(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            edits=edits, client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        _log.exception("web_report raw_data edit failed for session %s", session_id)
+        abort(500, f"raw_data edit failed: {exc}")
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/issue_table/etc")
+def web_report_issue_table_etc(session_id):
+    """Issue Table ETC 섹션 item 추가/삭제 — manifest.etc_items 갱신 (Bin/TNO/Distribution
+    은 저장하지 않고 조회 시마다 자동으로 다시 채워진다).
+
+    수정 모드(PIN 검증 완료) 에서만 호출되는 것을 전제로, 여기서도 PIN 을 재검증한다."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    body = request.get_json(force=True, silent=True) or {}
+    password = (body.get("password") or "").strip()
+    if not _password_ok(session, password):
+        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
+    action = (body.get("action") or "add").strip()
+    item = (body.get("item") or "").strip()
+    if not item:
+        return jsonify({"error": "item이 비어 있습니다."}), 400
+    if action not in ("add", "remove"):
+        return jsonify({"error": f"알 수 없는 action: {action}"}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_issue_etc_items(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            add=item if action == "add" else "", remove=item if action == "remove" else "",
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        _log.exception("web_report issue_table etc failed for session %s", session_id)
+        abort(500, f"issue_table etc failed: {exc}")
+    return jsonify(result)
 
 
 def _load_json_object(objects, object_type):
@@ -270,6 +410,8 @@ def update_session_content(session_id):
     akey = session.get("analysis_key")
     if not akey:
         return jsonify({"error": "이 세션에는 analysis_key 가 없어 수정할 수 없습니다."}), 400
+    if session.get("source") == "web_report":
+        return jsonify({"error": "web_report 세션은 현재 수정을 지원하지 않습니다."}), 400
 
     updated = {}
     errors = {}
@@ -401,6 +543,8 @@ _VENDOR_DIR = REPORT_VIEW_HTML.parent / "vendor"
 _VENDOR_MIME = {
     "tabulator.min.js": "application/javascript",
     "tabulator.min.css": "text/css",
+    "plotly.min.js": "application/javascript",
+    "pretendard/PretendardVariable.woff2": "font/woff2",
 }
 
 

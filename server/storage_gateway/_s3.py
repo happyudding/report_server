@@ -234,6 +234,22 @@ def make_distribution_combined_s3_key(analysis_key: str) -> str:
     return f"{prefix}/{analysis_key}.png"
 
 
+# ── web_report 원본 parquet + manifest ───────────────────────────────────────
+
+REPORT_S3_WEBREPORT_SOURCE_PREFIX = "pe/report_server/web_report_source"
+REPORT_S3_WEBREPORT_MANIFEST_PREFIX = "pe/report_server/web_report_manifest"
+
+
+def make_webreport_source_s3_key(analysis_key: str, idx: int) -> str:
+    prefix = REPORT_S3_WEBREPORT_SOURCE_PREFIX.strip("/")
+    return f"{prefix}/{analysis_key}/source_{int(idx)}.parquet"
+
+
+def make_webreport_manifest_s3_key(analysis_key: str) -> str:
+    prefix = REPORT_S3_WEBREPORT_MANIFEST_PREFIX.strip("/")
+    return f"{prefix}/{analysis_key}/manifest.json"
+
+
 def download_bytes_from_s3(key: str) -> bytes:
     """S3 객체를 bytes 로 다운로드. S3NotConfigured / S3ObjectCorrupted 발생 가능."""
     client = get_s3_client()  # 미설정 시 S3NotConfigured 가 그대로 전파됨

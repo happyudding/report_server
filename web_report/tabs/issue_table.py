@@ -1,9 +1,92 @@
-"""Issue Table tab placeholder."""
+"""Issue Table tab payload builder.
+
+레이아웃은 client/report_generator/_xlsx_sheets.py::_fill_issue_table 와 동일한
+Category 그룹 구조를 따른다: Yield(Pass bin 포함 전체 bin) → CPK(항목별 worst-case cpk < 임계값) →
+ETC(placeholder). cpk_rows 에는 source="total"(합산) 행이 없으므로, 항목(subject)별로
+모든 source 행 중 가장 낮은 cpk 값을 기준으로 이슈 여부를 판단한다.
+프런트(server/report/report_view.html) 의 renderSheetTable(kind="issue") 가 이 컬럼 순서
+(Category/Step/Bin/TNO/Item/avg → {source}_yield... → Distribution → comment...)와
+CPK 서브헤더 행(Category="CPK", avg="cpk") 감지를 이미 지원한다.
+ETC 섹션은 ENGR 가 임의로 추가한 item(manifest.etc_items, service.update_issue_etc_items 가
+갱신)을 받아 Bin/TNO 는 tables 메타에서, avg/{source}_yield 는 yield_rows 매칭 항목에서
+매 조회마다 다시 채운다(저장하는 값은 item 이름뿐).
+"""
 from __future__ import annotations
 
+from .common import fmt_type
 
-def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None):
+_CPK_THRESHOLD = 1.33
+
+_COMMENT_COLS = ["PTE comment", "개발 comment"]
+
+
+def _blank_row(sources):
+    row = {f"{src}_yield": "" for src in sources}
+    row["Distribution"] = ""
+    for col in _COMMENT_COLS:
+        row[col] = ""
+    return row
+
+
+def _item_meta(tables):
+    out = {}
+    for table in tables or []:
+        for item in table.item_columns:
+            out.setdefault(item, {"step": table.step.get(item), "tno": table.tno.get(item)})
+    return out
+
+
+def _etc_rows(tables, yield_rows, etc_items, sources):
+    if not etc_items:
+        return []
+    meta = _item_meta(tables)
+    by_item = {}
+    for r in yield_rows or []:
+        item = r.get("Item")
+        if item and item not in by_item:
+            by_item[item] = r
+
     rows = []
+    for item in etc_items:
+        m = meta.get(item, {})
+        match = by_item.get(item) or {}
+        data = {
+            "Category": "", "Step": fmt_type(m.get("step")), "Bin": match.get("bin", ""),
+            "TNO": fmt_type(m.get("tno")), "Item": item, "avg": match.get("avg", ""),
+        }
+        for src in sources:
+            data[f"{src}_yield"] = match.get(f"{src}_yield", "")
+        data["Distribution"] = ""
+        for col in _COMMENT_COLS:
+            data[col] = ""
+        rows.append(data)
+    return rows
+
+
+def _cpk_fail_subjects(cpk_rows):
+    """subject 별 모든 source 행 중 최저(worst-case) cpk 를 기준으로 임계값 미만 항목만 반환."""
+    worst = {}
+    order = []
+    for r in cpk_rows or []:
+        cpk = r.get("cpk")
+        if cpk is None:
+            continue
+        subject = r.get("subject")
+        if subject not in worst:
+            order.append(subject)
+            worst[subject] = cpk
+        elif cpk < worst[subject]:
+            worst[subject] = cpk
+    return [(subject, worst[subject]) for subject in order if worst[subject] < _CPK_THRESHOLD]
+
+
+def build_issue_bin_summary(yield_rows):
+    """Bin 별 FailTNO(Item) 구성 요약: {bin(str): [yield_row, ...]} (avg 내림차순).
+
+    같은 Bin 이라도 서로 다른 TNO(Item)에서 fail 한 유닛이 섞일 수 있어, Issue Table 에서
+    Item 클릭 시 그 Bin 전체의 구성을 한눈에 보여주기 위한 조회용 인덱스.
+    """
+    groups = {}
     for row in yield_rows or []:
         bin_value = row.get("bin")
         if str(bin_value).strip() == "1":
@@ -11,17 +94,49 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None):
         item = row.get("Item")
         if not item:
             continue
-        rows.append({
+        groups.setdefault(str(bin_value), []).append(row)
+    for rows in groups.values():
+        rows.sort(key=lambda r: r.get("avg") or 0, reverse=True)
+    return groups
+
+
+def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=None):
+    sources = [t.source for t in (tables or [])]
+    rows = []
+
+    for row in yield_rows or []:
+        bin_value = row.get("bin")
+        item = row.get("Item")
+        if not item:
+            continue
+        out = {
             "Category": "Yield",
             "Step": row.get("step", ""),
             "Bin": bin_value,
             "TNO": row.get("TNO", ""),
             "Item": item,
             "avg": row.get("avg"),
-            "Distribution": "",
-            "comment": "",
-            "개발 1차 comment": "",
-            "PTE 2차 comment": "",
-            "개발 2차 comment": "",
-        })
+        }
+        for src in sources:
+            out[f"{src}_yield"] = row.get(f"{src}_yield")
+        out["Distribution"] = ""
+        for col in _COMMENT_COLS:
+            out[col] = ""
+        rows.append(out)
+
+    cpk_fails = _cpk_fail_subjects(cpk_rows)
+    subhead = {"Category": "CPK", "Step": "", "Bin": "", "TNO": "", "Item": "item name", "avg": "cpk"}
+    subhead.update(_blank_row(sources))
+    rows.append(subhead)
+    if cpk_fails:
+        for subject, cpk in cpk_fails:
+            data = {"Category": "", "Step": "", "Bin": "", "TNO": "", "Item": subject, "avg": cpk}
+            data.update(_blank_row(sources))
+            rows.append(data)
+    else:
+        rows.append({"Category": "", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources)})
+
+    etc = {"Category": "ETC", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources)}
+    rows.append(etc)
+    rows.extend(_etc_rows(tables, yield_rows, etc_items, sources))
     return rows
