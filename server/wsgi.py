@@ -45,6 +45,24 @@ class _TeeStream:
         return getattr(self._console, name)
 
 
+def _prune_old_logs(log_dir):
+    """오래된 server_*.txt 정리 (best-effort) — 기동마다 새 파일이라 무한 누적 방지.
+    LOG_KEEP_FILES(기본 30) 초과분 + LOG_KEEP_DAYS(기본 14) 경과분을 삭제."""
+    try:
+        keep_files = int(os.getenv("LOG_KEEP_FILES", "30"))
+        keep_days = float(os.getenv("LOG_KEEP_DAYS", "14"))
+        cutoff = time.time() - keep_days * 86400
+        logs = sorted(log_dir.glob("server_*.txt"), key=lambda p: p.stat().st_mtime)
+        for i, path in enumerate(logs):
+            if len(logs) - i > keep_files or path.stat().st_mtime < cutoff:
+                try:
+                    path.unlink()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
 def _enable_console_log_file():
     global _LOG_FILE, LOG_PATH
     try:
@@ -55,6 +73,7 @@ def _enable_console_log_file():
         _LOG_FILE = LOG_PATH.open("a", encoding="utf-8", buffering=1)
         sys.stdout = _TeeStream(sys.stdout, _LOG_FILE)
         sys.stderr = _TeeStream(sys.stderr, _LOG_FILE)
+        _prune_old_logs(log_dir)
     except Exception:
         LOG_PATH = None
 

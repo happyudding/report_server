@@ -72,8 +72,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem Health check via localhost (서버 자신에서는 항상 접근 가능)
-powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:%PORT%/pe/report/' -UseBasicParsing -TimeoutSec 15; Write-Output ('[start] HTTP ' + $r.StatusCode) } catch { Write-Output ('[start] HTTP check failed: ' + $_.Exception.Message) }"
+rem Health check via localhost (서버 자신에서는 항상 접근 가능) — 경량 /healthz 사용
+powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:%PORT%/healthz' -UseBasicParsing -TimeoutSec 15; Write-Output ('[start] HTTP ' + $r.StatusCode) } catch { Write-Output ('[start] HTTP check failed: ' + $_.Exception.Message) }"
 
 echo.
 echo [start] ===== Accessible URLs (HOST=%HOST%) =====

@@ -38,6 +38,11 @@ web_report/
 │                        raw_data 편집은 content_hash 로 자연 무효화. 업로드 직후 데몬 스레드
 │                        프리웜(_prewarm). 캐시 크기 env: WEB_REPORT_TABLES_CACHE(4)/
 │                        WEB_REPORT_DIST_CACHE(4)/WEB_REPORT_REPORT_CACHE(8)
+├── response_cache.py    /full·/scatter 응답의 JSON+gzip bytes LRU 캐시 (_FULL_CACHE /
+│                        _SCATTER_CACHE, env WEB_REPORT_FULL_CACHE(8)/WEB_REPORT_SCATTER_CACHE(16)).
+│                        service._AKEY_CACHES 레지스트리에 등록되어 편집·세션삭제 무효화에
+│                        자동 편입. /full 캐시 키에는 manifest digest + extras(annotations 등
+│                        값싼 부분) digest 가 포함되어 comment/annotation 편집이 자연 무효화됨.
 ├── honeyform.py         7-meta honeyform 검증/파싱, parquet 인코딩·디코딩
 │                        (META_COLUMNS, META_ROW_LABELS 등 스키마 상수)
 ├── metrics.py           build_report_payload() — tabs/ 각 모듈을 모아 최종 report dict 조립

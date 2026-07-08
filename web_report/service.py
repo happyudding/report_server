@@ -41,6 +41,11 @@ _REPORT_CACHE: OrderedDict = OrderedDict()   # (akey, chash, manifest_digest, in
 _MANIFEST_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_MANIFEST_CACHE", "16") or 16))
 _MANIFEST_CACHE: OrderedDict = OrderedDict()  # analysis_key -> canonical manifest bytes
 
+# analysis_key 를 키 첫 요소로 쓰는 캐시 레지스트리 — 무효화(invalidate_caches, edit_raw_data)가
+# 이 리스트를 순회한다. 파생 캐시를 새로 만들면 여기 append 만 하면 무효화에 자동 편입된다
+# (response_cache.py 가 import 시 자기 캐시를 등록).
+_AKEY_CACHES: list = [_TABLES_CACHE, _DIST_CACHE, _REPORT_CACHE]
+
 # 콜드 캐시 동시 진입(stampede) 방지 single-flight 락 — 캐시에 없는 같은 세션을 여러
 # 사용자가 동시에 열면 수 초짜리 CPU-bound 계산이 중복 실행되며 GIL 로 서로 밀어내므로,
 # 같은 (종류, akey, chash) 계산은 한 스레드만 수행하고 나머지는 대기 후 캐시를 재확인한다.
@@ -88,7 +93,7 @@ def invalidate_caches(analysis_key) -> None:
     if not analysis_key:
         return
     with _TABLES_CACHE_LOCK:
-        for cache in (_TABLES_CACHE, _DIST_CACHE, _REPORT_CACHE):
+        for cache in _AKEY_CACHES:
             for key in [k for k in cache if k[0] == analysis_key]:
                 cache.pop(key, None)
         _MANIFEST_CACHE.pop(analysis_key, None)
@@ -446,7 +451,7 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
     report_db.update_session(session_id, content_hash=content_hash)
     # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
     with _TABLES_CACHE_LOCK:
-        for cache in (_TABLES_CACHE, _DIST_CACHE, _REPORT_CACHE):
+        for cache in _AKEY_CACHES:
             for key in [k for k in cache if k[0] == analysis_key]:
                 cache.pop(key, None)
     try:

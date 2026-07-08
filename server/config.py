@@ -58,5 +58,12 @@ REPORT_CLEANUP_DRYRUN         = _bool_env("REPORT_CLEANUP_DRYRUN", True)
 REPORT_CLEANUP_INTERVAL_HOURS = float(os.getenv("REPORT_CLEANUP_INTERVAL_HOURS", "24"))
 REPORT_CLEANUP_ENABLED        = _bool_env("REPORT_CLEANUP_ENABLED", True)
 
+# ── report.db 주기 백업 (db_backup.py) ──────────────────────────────────────
+# WAL 모드라 파일 복사가 아닌 sqlite3 backup API 로 온라인 백업. KEEP 초과분 자동 삭제.
+REPORT_DB_BACKUP_ENABLED        = _bool_env("REPORT_DB_BACKUP_ENABLED", True)
+REPORT_DB_BACKUP_INTERVAL_HOURS = float(os.getenv("REPORT_DB_BACKUP_INTERVAL_HOURS", "24"))
+REPORT_DB_BACKUP_KEEP           = int(os.getenv("REPORT_DB_BACKUP_KEEP", "7"))
+REPORT_DB_BACKUP_DIR            = _path_env("REPORT_DB_BACKUP_DIR", REPORT_DB_PATH.parent / "backup")
+
 HONEY_RELEASES_DIR = _path_env("HONEY_RELEASES_DIR", ROOT_DIR / "server" / "releases")
 HONEY_VERSION_JSON = HONEY_RELEASES_DIR / "version.json"

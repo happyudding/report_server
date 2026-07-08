@@ -4,8 +4,11 @@
 <meta charset="utf-8">
 <title>Report</title>
 <link rel="stylesheet" href="/pe/report/vendor/tabulator.min.css">
-<script src="/pe/report/vendor/tabulator.min.js"></script>
-<script src="/pe/report/vendor/plotly.min.js"></script>
+<!-- defer: plotly 4.8MB(gz 1.4MB) 파싱이 HTML 파싱/첫 페인트를 막지 않도록.
+     defer 스크립트는 DOMContentLoaded 전에 순서대로 실행되므로, 하단 인라인 스크립트의
+     load() 를 DOMContentLoaded 이후로 미루면 Tabulator/Plotly 존재가 보장된다. -->
+<script defer src="/pe/report/vendor/tabulator.min.js"></script>
+<script defer src="/pe/report/vendor/plotly.min.js"></script>
 <style>
 @font-face {
   font-family: "Pretendard Variable";
@@ -4031,7 +4034,12 @@ async function load(resetMode=true) {
   }
 }
 
-load();
+// vendor 가 defer 로 로드되므로 DOMContentLoaded(=defer 실행 완료) 후에 시작한다.
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", load);
+} else {
+  load();
+}
 </script>
 </body>
 </html>

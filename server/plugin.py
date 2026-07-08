@@ -27,6 +27,10 @@ def register_report_server(app, root_redirect=False):
     app.register_blueprint(admin_bp)
     _init_report(app)
 
+    # 운영 보조: /healthz + 전역 에러 핸들러 + DB 백업 스케줄러 (ops.py)
+    from ops import init_ops
+    init_ops(app)
+
     if root_redirect:
         from flask import redirect
 

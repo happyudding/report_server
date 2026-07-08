@@ -21,12 +21,14 @@ from config import (
 
 _log = logging.getLogger(__name__)
 from report.report_extension import report_bp
+from report.static_pages import send_html_gzip
 
 _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from web_report import service as web_report_service
+from web_report import response_cache as web_report_response_cache
 
 _ANALYSIS_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -181,33 +183,6 @@ def session_full(session_id):
                 "s3_key": obj["s3_key"],
             }
 
-    if session.get("source") == "web_report":
-        # web_report 세션: parquet 원본에서 재계산 (decoded tables 는 service 의 LRU 캐시 활용).
-        # 대용량 Distribution ECDF 는 제외하고 distribution_deferred=True 로 내려보낸다 —
-        # 프런트가 GET .../web_report/distribution 으로 백그라운드 지연 로드.
-        try:
-            _, report = web_report_service.load_webreport(
-                session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
-                session=session)
-        except FileNotFoundError:
-            abort(404, "web_report session data not found")
-        except KeyError:
-            abort(404, "session not found")
-        except Exception as exc:
-            _log.exception("web_report recompute failed for session %s", session_id)
-            abort(500, f"web_report recompute failed: {exc}")
-        sheets = report.get("sheets", {})
-        summary_text = sheets.get("Summary")
-        yield_text = sheets.get("Yield")
-        issue_table_text = sheets.get("Issue Table")
-        web_report_payload = report
-    else:
-        # sheet_data: DB 우선. DB 에 없으면 S3 폴백(구형 세션 하위호환).
-        sheet_data = report_db.get_all_sheet_data(akey) if akey else {}
-        summary_text = sheet_data.get("summary") or _load_json_object(objects, "summary_text")
-        yield_text = sheet_data.get("yield") or _load_json_object(objects, "yield_text")
-        issue_table_text = sheet_data.get("issue_table") or _load_json_object(objects, "issue_table_text")
-        web_report_payload = sheet_data.get("web_report")
     charts = []
     if "chart_index" in objects:
         manifest = _load_json_object(objects, "chart_index")
@@ -231,13 +206,10 @@ def session_full(session_id):
     elif akey:
         if (Path(REPORT_UPLOAD_DIR) / "dist_combined" / f"{akey}.png").exists():
             distribution_url = f"/pe/report/distribution_combined/{session_id}"
-    payload = {
+    # 값싼(DB·경로 조회) 부분 — web_report 분기의 응답 캐시 키(extras digest)에도 쓰인다.
+    extras = {
         "session": _public_session(session),
         "summary": report_db.get_summary_by_analysis_key(akey) if akey else [],
-        "summary_text": summary_text,
-        "yield_text": yield_text,
-        "issue_table_text": issue_table_text,
-        "web_report": web_report_payload,
         "charts": charts,
         "issue_images": issue_images,
         "distribution_url": distribution_url,
@@ -245,7 +217,40 @@ def session_full(session_id):
         "objects": objects,
         "annotations": report_db.get_annotations(session_id),
     }
-    # web_report payload 가 수 MB 까지 커질 수 있어 /scatter 라우트와 동일하게 gzip 지원.
+
+    if session.get("source") == "web_report":
+        # web_report 세션: parquet 원본에서 재계산 (decoded tables 는 service 의 LRU 캐시 활용).
+        # 대용량 Distribution ECDF 는 제외하고 distribution_deferred=True 로 내려보낸다 —
+        # 프런트가 GET .../web_report/distribution 으로 백그라운드 지연 로드.
+        # 최종 payload 의 JSON 직렬화+gzip bytes 는 response_cache 가 캐시 — warm 요청은
+        # bytes 반환뿐이다. annotations/is_important 등 변경은 extras digest 로 자연 무효화.
+        try:
+            etag, body = web_report_response_cache.get_full_gzip(
+                session_id, session=session, extras=extras,
+                report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+        except FileNotFoundError:
+            abort(404, "web_report session data not found")
+        except KeyError:
+            abort(404, "session not found")
+        except Exception:
+            _log.exception("web_report recompute failed for session %s", session_id)
+            abort(500, "web_report recompute failed")
+        headers = {"Vary": "Accept-Encoding", "ETag": etag}
+        if request.headers.get("If-None-Match") == etag:
+            return Response(status=304, headers=headers)
+        if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+            headers["Content-Encoding"] = "gzip"
+        else:
+            body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+        return Response(body, mimetype="application/json", headers=headers)
+
+    # legacy(xlsx) 세션 — sheet_data: DB 우선. DB 에 없으면 S3 폴백(구형 세션 하위호환).
+    sheet_data = report_db.get_all_sheet_data(akey) if akey else {}
+    payload = dict(extras)
+    payload["summary_text"] = sheet_data.get("summary") or _load_json_object(objects, "summary_text")
+    payload["yield_text"] = sheet_data.get("yield") or _load_json_object(objects, "yield_text")
+    payload["issue_table_text"] = sheet_data.get("issue_table") or _load_json_object(objects, "issue_table_text")
+    payload["web_report"] = sheet_data.get("web_report")
     body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     headers = {"Vary": "Accept-Encoding"}
     if "gzip" in (request.headers.get("Accept-Encoding") or ""):
@@ -274,9 +279,9 @@ def web_report_raw_data_columns(session_id):
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
-    except Exception as exc:
+    except Exception:
         _log.exception("web_report raw_data columns failed for session %s", session_id)
-        abort(500, f"raw_data columns failed: {exc}")
+        abort(500, "raw_data columns failed")
     return jsonify(result)
 
 
@@ -296,9 +301,9 @@ def web_report_raw_data(session_id):
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except Exception as exc:
+    except Exception:
         _log.exception("web_report raw_data query failed for session %s", session_id)
-        abort(500, f"raw_data query failed: {exc}")
+        abort(500, "raw_data query failed")
     return jsonify(result)
 
 
@@ -321,9 +326,9 @@ def web_report_distribution(session_id):
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
-    except Exception as exc:
+    except Exception:
         _log.exception("web_report distribution failed for session %s", session_id)
-        abort(500, f"distribution failed: {exc}")
+        abort(500, "distribution failed")
     if "gzip" in (request.headers.get("Accept-Encoding") or ""):
         headers["Content-Encoding"] = "gzip"
     else:
@@ -336,24 +341,27 @@ def web_report_scatter(session_id, subject):
     """Item_detail 용: 항목(subject)의 소스별 전체 측정값+hover metadata(다운샘플 없음) 지연 로드.
 
     values 배열에 serial/xpos/ypos 가 붙어 페이로드가 커질 수 있어(다운샘플은 여전히 금지),
-    /distribution 라우트와 동일하게 gzip(Accept-Encoding 시)을 지원한다."""
-    _require_web_report_session(session_id)
+    /distribution 라우트와 동일하게 gzip(Accept-Encoding 시)을 지원한다.
+    계산+직렬화+gzip 결과는 response_cache 가 (analysis_key, content_hash, subject) 키로
+    캐시 — 같은 항목 반복 클릭 시 bytes 반환뿐이다."""
+    session = _require_web_report_session(session_id)
     subject = (subject or "").strip()
     if not subject or len(subject) > 200:
         abort(400, "invalid subject")
     try:
-        result = web_report_service.scatter_item(
-            session_id, subject, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+        body = web_report_response_cache.get_scatter_gzip(
+            session_id, subject, session=session,
+            report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
     except (FileNotFoundError, KeyError):
         abort(404, "web_report item or session data not found")
-    except Exception as exc:
+    except Exception:
         _log.exception("web_report scatter failed for session %s item %s", session_id, subject)
-        abort(500, f"scatter failed: {exc}")
-    body = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        abort(500, "scatter failed")
     headers = {"Vary": "Accept-Encoding"}
     if "gzip" in (request.headers.get("Accept-Encoding") or ""):
-        body = gzip.compress(body, compresslevel=1)
         headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
     return Response(body, mimetype="application/json", headers=headers)
 
 
@@ -379,9 +387,9 @@ def web_report_raw_data_edit(session_id):
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except Exception as exc:
+    except Exception:
         _log.exception("web_report raw_data edit failed for session %s", session_id)
-        abort(500, f"raw_data edit failed: {exc}")
+        abort(500, "raw_data edit failed")
     return jsonify(result)
 
 
@@ -410,9 +418,9 @@ def web_report_issue_table_etc(session_id):
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except Exception as exc:
+    except Exception:
         _log.exception("web_report issue_table etc failed for session %s", session_id)
-        abort(500, f"issue_table etc failed: {exc}")
+        abort(500, "issue_table etc failed")
     return jsonify(result)
 
 
@@ -436,9 +444,9 @@ def web_report_issue_table_comments(session_id):
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    except Exception as exc:
+    except Exception:
         _log.exception("web_report issue_table comments failed for session %s", session_id)
-        abort(500, f"issue_table comments failed: {exc}")
+        abort(500, "issue_table comments failed")
     return jsonify(result)
 
 
@@ -647,16 +655,17 @@ def delete_annotation(aid):
 
 
 # ── Report Analysis index / view pages ───────────────────────────────────────
+# gzip+ETag 캐시 서빙 (report_view.html 202KB 비압축 전송 제거) — static_pages 참조.
 
 @report_bp.get("/")
 def index_page():
-    return _issue_csrf_cookie(make_response(send_file(REPORT_ANALYSIS_INDEX_HTML)))
+    return _issue_csrf_cookie(send_html_gzip(REPORT_ANALYSIS_INDEX_HTML))
 
 
 @report_bp.get("/view/<session_id>")
 def view_page(session_id):
     _validate_session_id(session_id)
-    return _issue_csrf_cookie(make_response(send_file(REPORT_VIEW_HTML)))
+    return _issue_csrf_cookie(send_html_gzip(REPORT_VIEW_HTML))
 
 
 # ── Vendored 정적 자산 (Tabulator 등) ─────────────────────────────────────────

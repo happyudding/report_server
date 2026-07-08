@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-if not defined PORT set "PORT=8000"
+if not defined PORT set "PORT=8080"
 
 echo [terminate] Stopping server on port %PORT% ...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^

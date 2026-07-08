@@ -32,6 +32,10 @@ CREATE TABLE IF NOT EXISTS report_session (
 );
 CREATE INDEX IF NOT EXISTS idx_report_session_analysis_key
     ON report_session(analysis_key);
+CREATE INDEX IF NOT EXISTS idx_report_session_status_created
+    ON report_session(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_report_session_product_type
+    ON report_session(product_type);
 
 CREATE TABLE IF NOT EXISTS report_analysis_summary (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -271,6 +275,10 @@ def get_conn():
     conn = sqlite3.connect(REPORT_DB_PATH, timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 5000")
+    # synchronous/temp_store 는 커넥션 단위 설정이라 init_report_db 만으로는 적용되지 않는다
+    # (WAL 은 DB 파일 영속). 미설정 시 요청 커넥션이 synchronous=FULL 로 동작해 쓰기가 느려짐.
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA temp_store = MEMORY")
     try:
         yield conn
         conn.commit()
