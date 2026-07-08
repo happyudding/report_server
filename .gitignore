@@ -24,6 +24,10 @@ DB/
 uploads/
 tests/sample.xlsx
 
+# Runtime logs (server/client console tee output)
+server/log/
+client/log/
+
 # 프로파일러 산출물 (profile_run.py 가 생성)
 client/_profiles/
 

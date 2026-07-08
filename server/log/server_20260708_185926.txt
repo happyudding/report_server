@@ -1,6 +1,0 @@
-[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260708_185926.txt
-[wsgi] importing Flask ...
-[wsgi] importing blueprints ... (0.15s)
-[wsgi] creating app ... (0.15s)
-[wsgi] app ready in 0.53s
-MAX_CONTENT_LENGTH = 2147483648 ( 2048 MB )

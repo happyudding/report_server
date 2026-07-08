@@ -1,7 +1,0 @@
-[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260708_080623.txt
-[wsgi] importing Flask ...
-[wsgi] importing blueprints ... (0.14s)
-[wsgi] creating app ... (0.15s)
-[wsgi] app ready in 0.89s
-wsgi import ok
-routes: 7
