@@ -123,5 +123,14 @@ if __name__ == "__main__":
         _log(f"(HOST={host} 으로 bind — LAN 노출 안 됨. LAN 접근하려면 HOST 환경변수 제거)")
     _log("===========================")
 
-    _log(f"starting server on http://{host}:{port} (debug={debug})")
-    app.run(host=host, port=port, debug=debug, use_reloader=False, threaded=True)
+    if debug:
+        _log(f"starting Flask dev server on http://{host}:{port} (debug=True)")
+        app.run(host=host, port=port, debug=True, use_reloader=False, threaded=True)
+    else:
+        # 동시 사용자(~10명) 운영용: Flask dev 서버 대신 waitress.
+        # threads: 동시에 처리할 요청 수 (CPU-bound 계산은 web_report 캐시가 1회로 줄여줌).
+        from waitress import serve
+
+        threads = int(os.getenv("WAITRESS_THREADS", "8"))
+        _log(f"starting waitress on http://{host}:{port} (threads={threads})")
+        serve(app, host=host, port=port, threads=threads)

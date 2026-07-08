@@ -1,8 +1,10 @@
 """Service layer for /pe/report/upload_webreport and web report rendering."""
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
+import os
 import secrets
 import threading
 import time
@@ -20,9 +22,32 @@ from .tabs import raw_data as raw_data_tab
 # (analysis_key, content_hash) 키로 캐시한다. raw_data 편집은 content_hash 를 갱신하므로
 # 키 자체가 바뀌어 자연 무효화되고, etc/comments 편집은 manifest 만 바꾸므로 캐시가 유효하다
 # (manifest 는 여기 캐시하지 않고 매번 재조회한다).
-_TABLES_CACHE_MAX = 2          # 세션당 df 가 수백 MB 일 수 있어 작게 유지
+_TABLES_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_TABLES_CACHE", "4") or 4))
 _TABLES_CACHE: OrderedDict = OrderedDict()   # (analysis_key, content_hash) -> list[HoneyformTable]
-_TABLES_CACHE_LOCK = threading.Lock()
+_TABLES_CACHE_LOCK = threading.Lock()        # 아래 파생 캐시 2개도 이 락을 공유 (조작 시간 짧음)
+
+# 파생 결과 캐시 — 동시 사용자 대비 핵심. CPU-bound 재계산(distribution compact 수 초,
+# /full payload ~2s)이 GIL 을 잡고 다른 요청까지 밀리게 하므로, 세션당 첫 1회만 계산한다.
+_DIST_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_DIST_CACHE", "4") or 4))
+_DIST_CACHE: OrderedDict = OrderedDict()     # (analysis_key, content_hash) -> gzip bytes
+_REPORT_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_REPORT_CACHE", "8") or 8))
+_REPORT_CACHE: OrderedDict = OrderedDict()   # (akey, chash, manifest_digest, incl_dist) -> report dict
+
+
+def _cache_get(cache: OrderedDict, key):
+    with _TABLES_CACHE_LOCK:
+        value = cache.get(key)
+        if value is not None:
+            cache.move_to_end(key)
+    return value
+
+
+def _cache_put(cache: OrderedDict, key, value, max_size: int):
+    with _TABLES_CACHE_LOCK:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > max_size:
+            cache.popitem(last=False)
 
 
 def _clone_table(t: HoneyformTable) -> HoneyformTable:
@@ -121,6 +146,18 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     except Exception:
         pass
 
+    # 캐시 프리웜: 업로더가 곧바로 여는 첫 조회(cold: parquet decode + payload + dist compact
+    # ~10s)를 없애기 위해 백그라운드 데몬 스레드로 미리 계산해 둔다. 실패해도 무해 —
+    # 조회 시 다시 계산될 뿐이다.
+    def _prewarm():
+        try:
+            load_webreport(session_id, report_db=report_db, upload_root=upload_root)
+            get_distribution_gzip(session_id, report_db=report_db, upload_root=upload_root)
+        except Exception:
+            pass
+
+    threading.Thread(target=_prewarm, name=f"webreport-prewarm-{session_id}", daemon=True).start()
+
     return {
         "session_id": session_id,
         "analysis_key": analysis_key,
@@ -155,10 +192,7 @@ def _load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: bo
 
     cache_key = (analysis_key, str(session.get("content_hash") or ""))
     if use_cache:
-        with _TABLES_CACHE_LOCK:
-            cached = _TABLES_CACHE.get(cache_key)
-            if cached is not None:
-                _TABLES_CACHE.move_to_end(cache_key)
+        cached = _cache_get(_TABLES_CACHE, cache_key)
         if cached is not None:
             manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root=upload_root)
             return session, [_clone_table(t) for t in cached], manifest
@@ -175,30 +209,34 @@ def _load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: bo
         tables.append(split_honeyform(df, source=source_name, file_name=file_name))
 
     if use_cache:
-        with _TABLES_CACHE_LOCK:
-            _TABLES_CACHE[cache_key] = tables
-            _TABLES_CACHE.move_to_end(cache_key)
-            while len(_TABLES_CACHE) > _TABLES_CACHE_MAX:
-                _TABLES_CACHE.popitem(last=False)
+        _cache_put(_TABLES_CACHE, cache_key, tables, _TABLES_CACHE_MAX)
         return session, [_clone_table(t) for t in tables], manifest
     return session, tables, manifest
 
 
 def load_webreport(session_id: str, *, report_db, upload_root: Path) -> tuple[dict, dict]:
-    """세션 재계산: build_report_payload 를 새로 실행한다 (tables 는 LRU 캐시 활용).
+    """세션 조회: build_report_payload 결과를 (analysis_key, content_hash, manifest 해시)
+    키로 캐시한다 — manifest 해시가 키에 들어가므로 comments/etc 편집은 자연 무효화되고,
+    raw_data 편집은 content_hash 변경으로 무효화된다. 반환 report 는 캐시 공유 객체 —
+    호출자는 읽기 전용(jsonify 직렬화)으로만 쓸 것.
 
     Distribution ECDF(대용량)는 항상 payload 에서 제외되고 프런트가 get_distribution 으로
     지연 로드한다.
     """
     session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
 
-    report = build_report_payload(
-        tables,
-        selected_items=manifest.get("selected_items") or [],
-        sheets=manifest.get("sheets") or [],
-        etc_items=manifest.get("etc_items") or [],
-        issue_comments=manifest.get("issue_comments") or {},
-    )
+    cache_key = (session.get("analysis_key"), str(session.get("content_hash") or ""),
+                 hashlib.sha256(_canon(manifest)).hexdigest())
+    report = _cache_get(_REPORT_CACHE, cache_key)
+    if report is None:
+        report = build_report_payload(
+            tables,
+            selected_items=manifest.get("selected_items") or [],
+            sheets=manifest.get("sheets") or [],
+            etc_items=manifest.get("etc_items") or [],
+            issue_comments=manifest.get("issue_comments") or {},
+        )
+        _cache_put(_REPORT_CACHE, cache_key, report, _REPORT_CACHE_MAX)
     public = dict(session)
     public["has_password"] = bool(public.get("password"))
     public.pop("password", None)
@@ -220,6 +258,32 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path) -> dict:
             table.item_columns = [c for c in table.item_columns if c in selected]
     all_items = sorted({c for t in tables for c in t.item_columns})
     return build_distribution_compact(tables, all_items)
+
+
+def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> bytes:
+    """get_distribution 결과를 JSON→gzip bytes 로 캐시해 반환 (라우트가 그대로 응답).
+
+    계산(수 초 CPU)+직렬화+압축을 세션당 1회만 수행 — 동시 사용자·재방문 모두 캐시 히트.
+    키는 tables 캐시와 동일한 (analysis_key, content_hash) — manifest.selected_items 는
+    업로드 시 확정되어 content_hash 와 함께만 바뀌므로 키에 포함하지 않아도 안전하다.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    cache_key = (analysis_key, str(session.get("content_hash") or ""))
+    blob = _cache_get(_DIST_CACHE, cache_key)
+    if blob is not None:
+        return blob
+    compact = get_distribution(session_id, report_db=report_db, upload_root=upload_root)
+    blob = gzip.compress(
+        json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        compresslevel=1)
+    _cache_put(_DIST_CACHE, cache_key, blob, _DIST_CACHE_MAX)
+    return blob
 
 
 def get_raw_data_columns(session_id: str, *, report_db, upload_root: Path) -> dict:
@@ -275,8 +339,9 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
     report_db.update_session(session_id, content_hash=content_hash)
     # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
     with _TABLES_CACHE_LOCK:
-        for key in [k for k in _TABLES_CACHE if k[0] == analysis_key]:
-            _TABLES_CACHE.pop(key, None)
+        for cache in (_TABLES_CACHE, _DIST_CACHE, _REPORT_CACHE):
+            for key in [k for k in cache if k[0] == analysis_key]:
+                cache.pop(key, None)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,

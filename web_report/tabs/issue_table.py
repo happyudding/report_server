@@ -116,14 +116,17 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     sources = [t.source for t in (tables or [])]
     rows = []
 
-    # Yield 섹션은 Bin 당 대표(most-fail TNO) 1행만 표시한다. Bin 정렬은 yield 오름차순
-    # (worst-yield 우선). Bin 전체 TNO 구성은 프런트가 issue_bin_summary 로 드릴다운한다.
-    for group in build_yield_bin_groups(yield_rows):
+    # Yield 섹션은 Bin 당 대표(most-fail TNO) 1행만 표시한다. 정렬은 대표행 avg(yield average)
+    # 내림차순(worst-yield 우선). Bin 전체 TNO 구성은 프런트가 issue_bin_summary 로 드릴다운한다.
+    # Category("Yield")는 섹션 첫 행에만 채우고 이후 행은 ""(프런트가 시각적으로 셀 병합).
+    yield_groups = sorted(build_yield_bin_groups(yield_rows),
+                          key=lambda g: g["rep"].get("avg") or 0, reverse=True)
+    for gi, group in enumerate(yield_groups):
         rep = group["rep"]
         bin_value = rep.get("bin")
         item = rep.get("Item")
         out = {
-            "Category": "Yield",
+            "Category": "Yield" if gi == 0 else "",
             "Step": rep.get("step", ""),
             "Bin": bin_value,
             "TNO": rep.get("TNO", ""),
@@ -137,13 +140,28 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
         rows.append(out)
 
     cpk_fails = _cpk_fail_subjects(cpk_rows)
+    # CPK 구간은 source 컬럼({src}_yield)에 source 별 CPK 값을 담는다(Yield 값 대신).
+    # subhead 행이 그 컬럼을 "CPK"로 재정의(프런트 isCpkSubheadRow 감지). STEP/TNO 는 항목
+    # 메타에서, BIN 은 CPK 항목엔 없어 비운다.
+    cpk_by = {}
+    for r in cpk_rows or []:
+        cpk = r.get("cpk")
+        if cpk is not None:
+            cpk_by[(r.get("subject"), r.get("source"))] = cpk
+    cpk_meta = _item_meta(tables)
     subhead = {"Category": "CPK", "Step": "", "Bin": "", "TNO": "", "Item": "item name", "avg": "cpk"}
     subhead.update(_blank_row(sources))
+    for src in sources:
+        subhead[f"{src}_yield"] = "CPK"
     rows.append(subhead)
     if cpk_fails:
         for subject, cpk in cpk_fails:
-            data = {"Category": "", "Step": "", "Bin": "", "TNO": "", "Item": subject, "avg": cpk}
+            m = cpk_meta.get(subject, {})
+            data = {"Category": "", "Step": fmt_type(m.get("step")), "Bin": "",
+                    "TNO": fmt_type(m.get("tno")), "Item": subject, "avg": cpk}
             data.update(_blank_row(sources))
+            for src in sources:
+                data[f"{src}_yield"] = cpk_by.get((subject, src), "")
             data.update(_comment_values(issue_comments, f"CPK|{subject}"))
             rows.append(data)
     else:

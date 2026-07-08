@@ -30,7 +30,14 @@ web_report/
 │                        (Issue Table ETC 항목·comment 편집 — manifest 만 재저장).
 │                        decoded tables 는 (analysis_key, content_hash) 키 인메모리 LRU 캐시
 │                        (_TABLES_CACHE, 반환은 _clone_table 클론 — df/data 는 읽기 전용 공유,
-│                        df 를 고치는 편집 경로는 use_cache=False)
+│                        df 를 고치는 편집 경로는 use_cache=False).
+│                        파생 캐시 2개 추가: get_distribution_gzip() 이 dist compact 의
+│                        JSON+gzip bytes 를 (akey, chash) 키로, load_webreport() 이 report
+│                        dict 를 (akey, chash, manifest 해시) 키로 LRU 캐시 — 세션당 첫 1회만
+│                        CPU 사용(동시 ~10명 대비 핵심), comments/etc 는 manifest 해시로,
+│                        raw_data 편집은 content_hash 로 자연 무효화. 업로드 직후 데몬 스레드
+│                        프리웜(_prewarm). 캐시 크기 env: WEB_REPORT_TABLES_CACHE(4)/
+│                        WEB_REPORT_DIST_CACHE(4)/WEB_REPORT_REPORT_CACHE(8)
 ├── honeyform.py         7-meta honeyform 검증/파싱, parquet 인코딩·디코딩
 │                        (META_COLUMNS, META_ROW_LABELS 등 스키마 상수)
 ├── metrics.py           build_report_payload() — tabs/ 각 모듈을 모아 최종 report dict 조립
@@ -98,7 +105,11 @@ UI(체크박스 목록 스타일, 표 컬럼 순서/정렬 화살표/테두리, 
   `GET .../web_report/distribution` (`build_distribution_compact` 의 컴팩트 columnar,
   전 포인트·gzip·ETag)을 백그라운드 fetch 해 `distDataCache` 를 채운다 — 도착 전 그려진
   미니셀/갤러리는 `refreshDistConsumers()` 가 다시 채움. Issue Table 미니셀/Bin 상세 분포도
-  이 `distDataCache` 를 산포 갤러리 카드 포맷(표시용 다운샘플 static CDF)으로 렌더. report_view.html 의 `renderActive` 는
+  이 `distDataCache` 를 산포 갤러리 카드 포맷(표시용 다운샘플 static CDF)으로 렌더.
+  **Issue 미니셀은 lazy 렌더(2026-07-08)**: 항목 수 규모(수천 셀)라 전량 동기 렌더 시
+  메인스레드가 분 단위로 얼어붙어(실측 264s), 갤러리와 같은 IntersectionObserver + rAF
+  분할(`renderIssueMiniDist`→`issueDistQueueRender`/`issueDistFlush`, 화면 밖 purge)로
+  보이는 셀만 그린다 — refreshDistConsumers 도 visible 셀만 재큐잉. report_view.html 의 `renderActive` 는
   활성 탭만 즉시 렌더하고 나머지는 tabDirty + requestIdleCallback 프리렌더(`schedulePrerender`).
   summary / raw_data(payload) /
   trim_analysis / histogram 빌더는 `return []` 플레이스홀더 (Summary 탭 화면은 프런트가

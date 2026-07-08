@@ -1,0 +1,43 @@
+[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260708_125346.txt
+[wsgi] importing Flask ...
+[wsgi] importing blueprints ... (0.16s)
+[wsgi] creating app ... (0.16s)
+[wsgi] app ready in 0.54s
+[wsgi] ===== Accessible URLs =====
+[wsgi] Local (이 PC)               : http://127.0.0.1:8080/pe/report/
+[wsgi] LAN (같은 네트워크 다른 PC) : http://192.168.45.2:8080/pe/report/
+[wsgi] ** 처음 외부 PC 에서 접근 시 Windows 방화벽 허용 필요할 수 있음:
+[wsgi]    New-NetFirewallRule -DisplayName "report-server 8080" -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow
+[wsgi] ===========================
+[wsgi] starting server on http://0.0.0.0:8080 (debug=False)
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8080
+ * Running on http://192.168.45.2:8080
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [08/Jul/2026 12:53:47] "GET /pe/report/ HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:53:48] "[36mGET /pe/report/ HTTP/1.1[0m" 304 -
+127.0.0.1 - - [08/Jul/2026 12:53:49] "GET /honey/version HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:53:49] "GET /pe/report/api/history HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:53:49] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [08/Jul/2026 12:53:55] "GET /pe/report/view/1783471325_e1d4f9 HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:53:55] "[36mGET /pe/report/vendor/tabulator.min.css HTTP/1.1[0m" 304 -
+127.0.0.1 - - [08/Jul/2026 12:53:55] "[36mGET /pe/report/vendor/plotly.min.js HTTP/1.1[0m" 304 -
+127.0.0.1 - - [08/Jul/2026 12:53:55] "[36mGET /pe/report/vendor/tabulator.min.js HTTP/1.1[0m" 304 -
+127.0.0.1 - - [08/Jul/2026 12:53:55] "[36mGET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1[0m" 304 -
+127.0.0.1 - - [08/Jul/2026 12:53:55] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [08/Jul/2026 12:53:58] "GET /pe/report/session/1783471325_e1d4f9/full HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:54:01] "GET /pe/report/session/1783471325_e1d4f9/web_report/distribution HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:56:47] "[36mGET /pe/report/ HTTP/1.1[0m" 304 -
+127.0.0.1 - - [08/Jul/2026 12:56:48] "GET /honey/version HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:56:48] "GET /pe/report/api/history HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:56:48] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [08/Jul/2026 12:56:51] "GET /pe/report/view/1783406491_ab4dd0 HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:56:51] "[36mGET /pe/report/vendor/tabulator.min.css HTTP/1.1[0m" 304 -
+127.0.0.1 - - [08/Jul/2026 12:56:51] "[36mGET /pe/report/vendor/tabulator.min.js HTTP/1.1[0m" 304 -
+127.0.0.1 - - [08/Jul/2026 12:56:51] "[36mGET /pe/report/vendor/plotly.min.js HTTP/1.1[0m" 304 -
+127.0.0.1 - - [08/Jul/2026 12:56:52] "[36mGET /pe/report/vendor/pretendard/PretendardVariable.woff2 HTTP/1.1[0m" 304 -
+127.0.0.1 - - [08/Jul/2026 12:56:52] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [08/Jul/2026 12:56:52] "GET /pe/report/session/1783406491_ab4dd0/full HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:56:52] "GET /pe/report/session/1783406491_ab4dd0/web_report/distribution HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 12:56:56] "GET /pe/report/session/1783406491_ab4dd0/web_report/raw_data/columns HTTP/1.1" 200 -

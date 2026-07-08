@@ -1,0 +1,12 @@
+[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260708_142126.txt
+[wsgi] importing Flask ...
+[wsgi] importing blueprints ... (0.14s)
+[wsgi] creating app ... (0.14s)
+[wsgi] app ready in 0.52s
+[wsgi] ===== Accessible URLs =====
+[wsgi] Local (이 PC)               : http://127.0.0.1:8140/pe/report/
+[wsgi] LAN (같은 네트워크 다른 PC) : http://192.168.45.2:8140/pe/report/
+[wsgi] ** 처음 외부 PC 에서 접근 시 Windows 방화벽 허용 필요할 수 있음:
+[wsgi]    New-NetFirewallRule -DisplayName "report-server 8140" -Direction Inbound -LocalPort 8140 -Protocol TCP -Action Allow
+[wsgi] ===========================
+[wsgi] starting waitress on http://0.0.0.0:8140 (threads=8)

@@ -306,23 +306,28 @@ def web_report_distribution(session_id):
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers=headers)
     try:
-        result = web_report_service.get_distribution(
+        # 계산+직렬화+gzip 결과가 service 쪽에서 (analysis_key, content_hash) 키로 캐시됨 —
+        # 세션당 1회만 CPU 를 쓰고 이후 요청은 bytes 반환뿐이라 동시 사용자에도 안전.
+        body = web_report_service.get_distribution_gzip(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except Exception as exc:
         _log.exception("web_report distribution failed for session %s", session_id)
         abort(500, f"distribution failed: {exc}")
-    body = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if "gzip" in (request.headers.get("Accept-Encoding") or ""):
-        body = gzip.compress(body, compresslevel=1)
         headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
     return Response(body, mimetype="application/json", headers=headers)
 
 
 @report_bp.get("/session/<session_id>/web_report/scatter/<path:subject>")
 def web_report_scatter(session_id, subject):
-    """Distribution 상세용: 항목(subject)의 소스별 전체 측정값(다운샘플 없음) 지연 로드."""
+    """Item_detail 용: 항목(subject)의 소스별 전체 측정값+hover metadata(다운샘플 없음) 지연 로드.
+
+    values 배열에 serial/xpos/ypos 가 붙어 페이로드가 커질 수 있어(다운샘플은 여전히 금지),
+    /distribution 라우트와 동일하게 gzip(Accept-Encoding 시)을 지원한다."""
     _require_web_report_session(session_id)
     subject = (subject or "").strip()
     if not subject or len(subject) > 200:
@@ -335,7 +340,12 @@ def web_report_scatter(session_id, subject):
     except Exception as exc:
         _log.exception("web_report scatter failed for session %s item %s", session_id, subject)
         abort(500, f"scatter failed: {exc}")
-    return jsonify(result)
+    body = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    headers = {"Vary": "Accept-Encoding"}
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        body = gzip.compress(body, compresslevel=1)
+        headers["Content-Encoding"] = "gzip"
+    return Response(body, mimetype="application/json", headers=headers)
 
 
 @report_bp.post("/session/<session_id>/web_report/raw_data/edit")

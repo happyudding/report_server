@@ -177,19 +177,25 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-issue thead th { position: sticky; top: 0; z-index: 4; }
 .sheet-table.kind-issue th:nth-child(-n+5),
 .sheet-table.kind-issue td:nth-child(-n+5) { position: sticky; z-index: 3; background: #fff; }
+/* 좌측 고정 오프셋 = 앞 컬럼 폭 누적 (category 68 + step 44 + bin 44 + tno 60). colWidth 와 동기. */
 .sheet-table.kind-issue th:nth-child(1), .sheet-table.kind-issue td:nth-child(1) { left: 0; }
-.sheet-table.kind-issue th:nth-child(2), .sheet-table.kind-issue td:nth-child(2) { left: 90px; }
-.sheet-table.kind-issue th:nth-child(3), .sheet-table.kind-issue td:nth-child(3) { left: 170px; }
-.sheet-table.kind-issue th:nth-child(4), .sheet-table.kind-issue td:nth-child(4) { left: 220px; }
-.sheet-table.kind-issue th:nth-child(5), .sheet-table.kind-issue td:nth-child(5) { left: 300px; }
+.sheet-table.kind-issue th:nth-child(2), .sheet-table.kind-issue td:nth-child(2) { left: 68px; }
+.sheet-table.kind-issue th:nth-child(3), .sheet-table.kind-issue td:nth-child(3) { left: 112px; }
+.sheet-table.kind-issue th:nth-child(4), .sheet-table.kind-issue td:nth-child(4) { left: 156px; }
+.sheet-table.kind-issue th:nth-child(5), .sheet-table.kind-issue td:nth-child(5) { left: 216px; }
 .sheet-table.kind-issue thead th:nth-child(-n+5) { z-index: 5; background: #e8eef4; }
 .sheet-table.kind-issue td.sheet-subhead { background: #e8eef4 !important; }
+/* Category 셀 병합 표시: 같은 섹션이 이어지는 빈 Category 셀은 위 셀과의 경계선을 숨긴다.
+   border-collapse 에서는 'none' 이 인접 셀 solid 에 밀리므로 우선순위가 가장 높은 'hidden' 사용. */
+.sheet-table.kind-issue td.cat-cont { border-top: hidden; }
+/* 공통 접두어를 뗀 source 헤더: hover 시 전체 이름(title) 확인 가능함을 점선 밑줄로 힌트. */
+.sheet-table th.sheet-src-th[title] { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
 
 /* ── Yield 시트: Bin 접기/펼치기 ── */
 .yield-toggle {
   border: 1px solid #c7d2e0; background: #eef3fb; color: #1f4d8c;
   border-radius: 4px; font-size: 10px; line-height: 1; padding: 1px 4px;
-  cursor: pointer; margin-right: 4px;
+  cursor: pointer; float: right;
 }
 .yield-toggle:hover { background: #dbe8fb; }
 .sheet-table.kind-yield tbody tr.yield-bin-detail td { background: #fbfcfe; color: #55606c; }
@@ -277,6 +283,31 @@ tbody tr:hover { background: #f9fbff; }
 .dist-loading { font-size: 12px; color: #999; padding: 10px; }
 @media (max-width: 900px) { .dist-detail-body { grid-template-columns: 1fr; } }
 
+/* ── Item_detail (콘텐츠 상세 뷰: 헤더 + 통계 + CDF/히스토그램 + Fail rawdata) ── */
+.idet-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
+  position: sticky; top: var(--sticky-head-h, 96px); z-index: 90; background: #fff; padding: 6px 0; }
+.idet-title { margin-left: 4px; font-size: 16px; color: #1A1A1F; display: inline-flex;
+  align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.idet-tno { font-weight: 400; color: #6b7280; font-size: 14px; }
+.idet-subject { font-weight: 700; }
+.idet-cpk { color: #555; font-size: 13px; white-space: nowrap; }
+.idet-lim { color: #6b7280; font-size: 13px; white-space: nowrap; }
+.idet-badge { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 10px; }
+.idet-badge.idet-fail { background: #FDECEC; color: #b42318; }
+.idet-badge.idet-cpk_low { background: #FEF9E7; color: #8a6d00; }
+.idet-badge.idet-ok { background: #E7F6EC; color: #14703d; }
+.idet-navpos { font-size: 12px; color: #888; }
+.idet-stats { margin: 0 0 16px; }
+.idet-stats table { width: auto; }
+.idet-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+.idet-chart-block { border: 1px solid #e2e4e8; border-radius: 8px; padding: 8px 10px; }
+.idet-fail-title { margin-top: 8px; }
+@media (max-width: 900px) { .idet-charts { grid-template-columns: 1fr; } }
+.item-detail-link { color: #2a5db0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.item-detail-link:hover { color: #17417f; }
+.bin-detail-link { color: #6b3fa0; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+.bin-detail-link:hover { color: #4a2a72; }
+
 /* ── Raw Data (web_report lazy-load) ──────────────────────────────────────── */
 /* 그리드가 페이지 자체 스크롤을 쓰므로(내부 height 없음), 검색/필터 바와 그 아래 그리드
    헤더(SOURCE/SERIAL/SHOT/DUT...)를 topbar 처럼 sticky 로 고정한다. --rawdata-filters-h 는
@@ -363,7 +394,7 @@ tbody tr:hover { background: #f9fbff; }
 .rawdata-item-meta { color: #999; font-size: 8px; }
 .rawdata-grid-wrap { flex: 1; min-width: 0; }
 .rawdata-banner { font-size: 9px; color: #666; margin-bottom: 8px; }
-.rawdata-source-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.rawdata-source-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-right: 8px; }
 .rawdata-source-btns .btn-sm { margin-top: 0; }
 .rawdata-source-btns .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
 #panel-raw-data .edit-hint { font-size: 8px; }
@@ -406,6 +437,8 @@ tbody tr:hover { background: #f9fbff; }
 .bin-table tbody tr:hover td { background: #f2f6fb; }
 .bin-table tbody tr.is-selected td { background: #fff3bf; }
 .chart-box { width: 100%; max-width: 760px; margin-bottom: 8px; }
+/* Fail Bin 차트: 항목명 라벨이 많아 가로를 최대한 넓게(패널 전체폭) 쓴다. */
+.chart-box-wide { max-width: none; margin-bottom: 18px; }
 .summary-cards { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 24px; }
 .summary-card { flex: 0 0 auto; text-align: center; }
 .summary-card-title { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; }
@@ -574,28 +607,36 @@ tbody tr:hover { background: #f9fbff; }
 .autosave-dot.dirty  { background: #f59e0b; }
 .autosave-dot.saving { background: #60a5fa; }
 .autosave-dot.saved  { background: #22c55e; }
-/* ── 세션 로드 오버레이 ─────────────────────────────────────────────── */
+/* ── 세션 로드 오버레이 (0→100% 진행바 + 단계 메시지) ─────────────────── */
 .load-overlay {
-  position: fixed; inset: 0; background: rgba(255,255,255,.78);
+  position: fixed; inset: 0; background: rgba(255,255,255,.82);
   display: none; align-items: center; justify-content: center; z-index: 9999;
 }
 .load-overlay.show { display: flex; }
-.load-msg { font-size: 13px; color: #475569; text-align: center; }
+.load-box { width: 300px; max-width: 80vw; text-align: center; }
+.load-msg { font-size: 14px; font-weight: 700; color: #1f4d8c; margin-bottom: 12px; }
 .load-bar {
-  width: 240px; height: 6px; border-radius: 3px; background: #e5e7eb;
-  overflow: hidden; margin: 12px auto 0;
+  width: 100%; height: 8px; border-radius: 4px; background: #e5e7eb; overflow: hidden;
 }
-.load-bar::before {
-  content: ""; display: block; height: 100%; width: 40%; border-radius: 3px;
-  background: #4a90e2; animation: load-slide 1.1s infinite ease-in-out;
+.load-fill {
+  height: 100%; width: 0%; border-radius: 4px; background: #4a90e2;
+  transition: width .25s ease;
 }
-@keyframes load-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
+.load-foot {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-top: 8px; font-size: 12px; color: #64748b;
+}
+.load-pct { font-variant-numeric: tabular-nums; font-weight: 700; color: #4a90e2; }
 </style>
 </head>
 <body>
 
 <div class="load-overlay show" id="loadOverlay">
-  <div><div class="load-msg">세션 불러오는 중…</div><div class="load-bar"></div></div>
+  <div class="load-box">
+    <div class="load-msg">세션 불러오는 중</div>
+    <div class="load-bar"><div class="load-fill" id="loadFill"></div></div>
+    <div class="load-foot"><span class="load-status" id="loadStatus">준비 중…</span><span class="load-pct" id="loadPct">0%</span></div>
+  </div>
 </div>
 
 <div class="sticky-head" id="stickyHead">
@@ -633,6 +674,8 @@ tbody tr:hover { background: #f9fbff; }
   <div class="panel" id="panel-distribution"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-trim-analysis"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-map-analysis"><div class="placeholder">로드 중...</div></div>
+  <!-- Item_detail: 탭 버튼 없이 프로그램으로만 활성화(Yield/CPK/IssueTable/Distribution item 클릭) -->
+  <div class="panel" id="panel-item-detail"></div>
 </div>
 
 <!-- 수정 모드 저장 바 -->
@@ -795,6 +838,7 @@ document.getElementById("tabs").addEventListener("click", e => {
   const btn = e.target.closest(".tab");
   if (!btn) return;
   const tab = btn.dataset.tab;
+  hideItemDetail();   // Item_detail 열려 있으면 닫고 해당 탭으로
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === btn));
   document.querySelectorAll(".panel").forEach(p =>
     p.classList.toggle("active", p.id === `panel-${tab}`));
@@ -910,13 +954,16 @@ function collectGrid(panelEl, baseGrid) {
 // 열 이름 → 고정 너비(px) — xlsx 실측 기준 패턴
 function colWidth(name) {
   const n = String(name || "").toLowerCase().trim();
-  if (n === "bin")                      return "50px";
+  // Step/Bin 은 최대 3자리라 아주 좁게, TNO 는 조금 넓게, avg/yield 는 xx.xx 라 짧게.
+  if (n === "step")                     return "44px";
+  if (n === "bin")                      return "44px";
+  if (n === "tno")                      return "60px";
   if (n === "distribution")             return "120px";
   if (n.endsWith("_count"))             return "54px";
-  if (n.endsWith("_yield"))             return "60px";
-  if (n === "avg")                      return "56px";
+  if (n.endsWith("_yield"))             return "52px";
+  if (n === "avg")                      return "48px";
   if (n === "item")                     return "150px";
-  if (n === "category")                 return "90px";
+  if (n === "category")                 return "68px";
   if (n === "condition & judge limit")  return "185px";
   if (n === "result")                   return "80px";
   if (n.includes("comment"))            return "220px";
@@ -977,6 +1024,18 @@ const SHEET_HEADER_SUFFIX_GROUPS = [
 function sheetHeaderShortLabel(c) {
   return headerLabel(c).replace(/_(yield|cnt|count)$/i, "");
 }
+// 여러 source 라벨의 공통 접두어(글자 단위) — 좁은 헤더에서 다른 부분만 보이게 하려고 뗀다.
+function commonPrefix(arr) {
+  if (!arr || arr.length < 2) return "";
+  let p = arr[0];
+  for (let i = 1; i < arr.length && p; i++) {
+    const s = arr[i];
+    let k = 0;
+    while (k < p.length && k < s.length && p[k] === s[k]) k++;
+    p = p.slice(0, k);
+  }
+  return p;
+}
 function buildSheetTableHead(cols) {
   const groupOf = c => SHEET_HEADER_SUFFIX_GROUPS.find(g => g.re.test(String(c)));
   const runs = [];
@@ -994,9 +1053,17 @@ function buildSheetTableHead(cols) {
     ? `<th colspan="${r.len}" class="sheet-group-th">${esc(r.group.label)}</th>`
     : `<th rowspan="2">${esc(headerLabel(cols[r.start]))}</th>`
   ).join("");
-  const botRow = runs.filter(r => r.group).map(r =>
-    cols.slice(r.start, r.start + r.len).map(c => `<th>${esc(sheetHeaderShortLabel(c))}</th>`).join("")
-  ).join("");
+  const botRow = runs.filter(r => r.group).map(r => {
+    const runCols = cols.slice(r.start, r.start + r.len);
+    const fulls = runCols.map(sheetHeaderShortLabel);   // 접미어(_yield/_count) 뗀 source 이름
+    const pfx = commonPrefix(fulls);
+    return fulls.map(full => {
+      let short = (pfx && full.length > pfx.length) ? full.slice(pfx.length).replace(/^[_\-.\s]+/, "") : full;
+      if (!short) short = full;
+      const titleAttr = short !== full ? ` title="${esc(full)}"` : "";
+      return `<th class="sheet-src-th"${titleAttr}>${esc(short)}</th>`;
+    }).join("");
+  }).join("");
   return `<thead><tr>${topRow}</tr><tr>${botRow}</tr></thead>`;
 }
 
@@ -1105,11 +1172,8 @@ function renderSheetTable(rows, opts) {
   const head = buildSheetTableHead(cols);
 
   // Issue Table 의 Category 열은 rowspan 으로 병합하지 않는다(각 행이 셀을 모두 가져야
-  // nth-child 기반 컬럼 틀고정이 어긋나지 않는다). Category 값이 있는 행은 굵게 표시된다.
-  const catSpans = {};
-  if (opts.kind === "issue" && !opts.edit) {
-    for (let i = 0; i < bodyRows.length; i++) catSpans[i] = 1;
-  }
+  // nth-child 기반 컬럼 틀고정이 어긋나지 않는다). 대신 섹션 첫 행에만 라벨을 넣고 이어지는
+  // 빈 Category 셀은 위 셀과의 테두리를 없애(cat-cont) 셀 병합처럼 보이게 한다.
 
   // 각 행이 속한 섹션(Yield/CPK/ETC) — Category 가 비어있는 상세 행은 바로 위 헤더 행의
   // 섹션을 상속한다. Distribution 자동표시(Yield/ETC) 판단과 ETC 상세행의 삭제버튼 표시
@@ -1129,10 +1193,10 @@ function renderSheetTable(rows, opts) {
       || (opts.kind === "issue" && isCpkSubheadRow(r));
     const tds = cols.map((c, ci) => {
       if (c === "Category" && opts.kind === "issue" && !opts.edit) {
-        if (catSpans[ri] === 0) return "";  // 위 행의 rowspan 에 병합됨 — 셀 생략
         const catTxt = (r && r["Category"]) || "";
-        const catCls = catTxt ? "sheet-subhead" : "st-empty";
-        return `<td class="${catCls}" rowspan="${catSpans[ri] || 1}" data-r="${ri}" data-c="${ci}">${esc(catTxt)}</td>`;
+        // 라벨 있는 행 = 섹션 시작(굵게), 빈 행 = 같은 섹션 이어짐(위 셀과 병합 표시).
+        const catCls = catTxt ? "sheet-subhead" : "st-empty cat-cont";
+        return `<td class="${catCls}" data-r="${ri}" data-c="${ci}">${esc(catTxt)}</td>`;
       }
       const v = r ? r[c] : "";
       let txt = (v === null || v === undefined) ? "" : String(v);
@@ -1171,16 +1235,24 @@ function renderSheetTable(rows, opts) {
       else if (isNum) clsParts.push("st-num");
       if (subhead) clsParts.push("sheet-subhead");
       const cls = clsParts.join(" ");
-      // Issue Table 의 Yield 구간 Item 셀: 클릭 시 panel-issues 를 Bin 상세 화면으로 전환
-      // (Bin 1/Pass 행은 FailTNO 구성이랄 게 없으므로 클릭 대상에서 제외)
-      const clickable = opts.kind === "issue" && !subhead && !isEmpty && c === "Item"
+      // Item 셀: 클릭 시 Item_detail 로 이동(항목명 = 측정항목). issue + yield(Bin 상세 구성표) 공용.
+      // Pass(Bin 1) 행은 실제 측정항목이 아니므로 제외.
+      const itemClickable = (opts.kind === "issue" || opts.kind === "yield") && !subhead && !isEmpty
+        && c === "Item" && String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() !== "1";
+      // Issue Table Yield 구간 Bin 셀: 클릭 시 그 Bin 전체 TNO 드릴다운(Bin 1/Pass 제외).
+      const binClickable = opts.kind === "issue" && !subhead && !isEmpty && c === "Bin"
         && r && String(r["Category"] || "") === "Yield" && String(r["Bin"] ?? "").trim() !== "1";
       // ETC 섹션의 상세 행(ENGR 가 수동 추가한 item) Item 셀: 수정 모드에서만 삭제(×) 버튼 노출.
       const etcDeletable = opts.kind === "issue" && opts.edit && !isEmpty && c === "Item"
         && rowSection[ri] === "ETC" && String(r["Category"] || "") === "";
-      let cellHtml = clickable
-        ? `<span class="issue-item-link" data-bin="${esc(r["Bin"])}" data-item="${esc(txt)}">${esc(txt)}</span>`
-        : (isEmpty ? "" : esc(txt));
+      let cellHtml;
+      if (itemClickable) {
+        cellHtml = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;
+      } else if (binClickable) {
+        cellHtml = `<span class="bin-detail-link" data-bin="${esc(txt)}" data-item="${esc(r["Item"] ?? "")}">${esc(txt)}</span>`;
+      } else {
+        cellHtml = isEmpty ? "" : esc(txt);
+      }
       if (etcDeletable) {
         cellHtml += ` <button type="button" class="btn-del-etc-item" data-item="${esc(txt)}" title="ETC 항목 제거">×</button>`;
       }
@@ -1274,10 +1346,16 @@ function renderYieldGrouped(passRow, groups, allRows) {
     const v = r ? r[c] : "";
     const txt = (v === null || v === undefined) ? "" : String(v);
     const isEmpty = txt === "";
+    const cLower = String(c).trim().toLowerCase();
     const cls = [];
     if (isEmpty) cls.push("st-empty"); else if (isNumVal(v)) cls.push("st-num");
     let inner = isEmpty ? "" : esc(txt);
-    if (toggleHtml && String(c).trim().toLowerCase() === "bin") inner = toggleHtml + inner;
+    // Item 셀(Pass 행 제외) → Item_detail 링크
+    if (cLower === "item" && !isEmpty && String((r && r.bin) ?? "").trim() !== "1") {
+      inner = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;
+    }
+    // 접기/펼치기 토글은 STEP 셀 오른쪽에 배치(우측 정렬).
+    if (toggleHtml && cLower === "step") inner = inner + toggleHtml;
     return `<td${cls.length ? ` class="${cls.join(" ")}"` : ""}>${inner}</td>`;
   }).join("");
 
@@ -1286,7 +1364,7 @@ function renderYieldGrouped(passRow, groups, allRows) {
   (groups || []).forEach((g, gi) => {
     const detail = (g.rows || []).slice(1);   // 대표(most-fail) 제외 나머지 fail TNO
     const toggle = detail.length
-      ? `<button type="button" class="yield-toggle" data-grp="${gi}" aria-expanded="false">▶</button> ` : "";
+      ? ` <button type="button" class="yield-toggle" data-grp="${gi}" aria-expanded="false">▼</button>` : "";
     body += `<tr class="yield-bin-rep" data-grp="${gi}">${cellTds(g.rep, toggle)}</tr>`;
     detail.forEach(r => {
       body += `<tr class="yield-bin-detail" data-grp="${gi}" style="display:none">${cellTds(r, "")}</tr>`;
@@ -1306,7 +1384,7 @@ function bindYieldPanel() {
     const gi = btn.dataset.grp;
     const expanded = btn.getAttribute("aria-expanded") === "true";
     btn.setAttribute("aria-expanded", expanded ? "false" : "true");
-    btn.textContent = expanded ? "▶" : "▼";
+    btn.textContent = expanded ? "▼" : "▲";
     panel.querySelectorAll(`tr.yield-bin-detail[data-grp="${gi}"]`).forEach(tr => {
       tr.style.display = expanded ? "none" : "";
     });
@@ -1646,25 +1724,37 @@ function renderPareto(divId, rows) {
 }
 
 // Yield 패널 하단에 Fail bin 차트 추가: ≥0.5% Pareto 콤보 + 나머지 별도 막대.
+// ≥0.5% bin 이 10개 초과면 상위 10개 / 그 외로 분할해 각각 넓은 차트로 표시(항목 라벨 가독성).
 function renderYieldFailBins() {
   const sheets = webReportSheets();
   if (!window.Plotly || !sheets) return;
-  const failBins = sheets["Fail Bin"] || [];
+  const failBins = sheets["Fail Bin"] || [];   // fail_bin_ranking 이 이미 count 내림차순
   if (!failBins.length) return;
   const panel = document.getElementById("panel-yield");
   panel.classList.add("viz-root");
   const major = failBins.filter(r => (r.yield_pct || 0) >= 0.5);
   const minor = failBins.filter(r => (r.yield_pct || 0) < 0.5);
+  const majorTop = major.length > 10 ? major.slice(0, 10) : major;
+  const majorRest = major.length > 10 ? major.slice(10) : [];
+
+  const chartHtml = (id, h) =>
+    `<div class="chart-box chart-box-wide"><div id="${id}" style="width:100%;height:${h}px;"></div></div>`;
+  const topTitle = majorRest.length ? "Fail Bin — 상위 10 (Fail Yield ≥ 0.5%)"
+                                    : "Fail Bin — 누적 (Fail Yield ≥ 0.5%)";
   const wrap = document.createElement("div");
   wrap.innerHTML =
-    `<div class="section-title small">Fail Bin — 누적 (Fail Yield ≥ 0.5%)</div>` +
-    `<div class="chart-box"><div id="yield-pareto" style="width:100%;height:340px;"></div></div>` +
+    `<div class="section-title small">${topTitle}</div>` + chartHtml("yield-pareto", 360) +
+    (majorRest.length
+      ? `<div class="section-title small">Fail Bin — 그 외 (Fail Yield ≥ 0.5%)</div>` +
+        chartHtml("yield-major-rest", 340)
+      : "") +
     (minor.length
       ? `<div class="section-title small">Fail Bin — 기타 (&lt; 0.5%)</div>` +
-        `<div class="chart-box"><div id="yield-minor" style="width:100%;height:300px;"></div></div>`
+        chartHtml("yield-minor", 300)
       : "");
   panel.appendChild(wrap);
-  renderPareto("yield-pareto", major.length ? major : failBins);
+  renderPareto("yield-pareto", majorTop.length ? majorTop : failBins);
+  if (majorRest.length) renderFailBinBar("yield-major-rest", majorRest);
   if (minor.length) renderFailBinBar("yield-minor", minor);
 }
 
@@ -1733,7 +1823,10 @@ function cpkTableHtml(rows) {
       if (txt === "") cls.push("st-empty");
       else if (CPK_NUMERIC.has(c)) cls.push("st-num");
       if (c === "cpk" && isWarn) cls.push("cpk-warn");
-      return `<td${cls.length ? ` class="${cls.join(" ")}"` : ""}>${esc(txt)}</td>`;
+      // subject 셀(비어있지 않을 때) → Item_detail 링크
+      const inner = (c === "subject" && txt !== "")
+        ? `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>` : esc(txt);
+      return `<td${cls.length ? ` class="${cls.join(" ")}"` : ""}>${inner}</td>`;
     }).join("");
     return `<tr>${tds}</tr>`;
   }).join("") + "</tbody>";
@@ -1870,12 +1963,10 @@ function ensureDistData() {
 
 // 데이터 도착 전에 만들어진 분포 소비처들을 다시 채운다.
 function refreshDistConsumers() {
-  // Issue Table 목록의 미니 분포 셀
-  document.querySelectorAll("#panel-issues .dist-cell-mini").forEach(cell => {
-    if (cell.dataset.distLoaded === "1") return;
-    if (distDataCache[cell.dataset.subject]) renderMiniDistCell(cell);
-    else cell.innerHTML = "";   // 이 항목엔 분포 데이터 없음 — 빈 칸
-  });
+  // Issue Table 미니셀 — 화면에 보이는(관측 중) 셀만 rAF 큐로 재큐잉.
+  // 전량 동기 렌더 금지 (수천 셀 × Plotly = 분 단위 freeze). 나머지는 스크롤 시 lazy.
+  document.querySelectorAll('#panel-issues .dist-cell-mini[data-visible="1"]')
+    .forEach(issueDistQueueRender);
   // Issue Table Bin 상세의 단일 분포 셀
   const detail = document.getElementById("issueDetailDistCell");
   if (detail && detail.dataset.distLoaded !== "1") {
@@ -2124,60 +2215,183 @@ function distRenderGallery() {
 }
 
 // ── 상세(검색뷰): CDF + 히스토그램 (전체점 지연 로드) ─────────────────────────
-function distDetailShellHtml(subject) {
-  const r = distIndex.find(x => x.subject === subject) || {};
-  const pos = distNavList.indexOf(subject);
-  const navpos = distNavList.length ? `<span class="dist-navpos">${pos + 1} / ${distNavList.length}</span>` : "";
-  return `<div class="dist-detail">
-    <div class="dist-detail-head">
-      <button class="dist-back">← 갤러리</button>
-      <button class="dist-prev" title="이전 (Alt+↑)">‹</button>
-      <button class="dist-next" title="다음 (Alt+↓)">›</button>
-      ${navpos}
-      <span class="dist-detail-title" data-status="${esc(r.status || "ok")}">
-        <b>${esc(r.test_num || "")} ${esc(subject)}</b>
-        <span class="distg-lim">LSL ${esc(distFmtLimit(r.lower_limit))} / USL ${esc(distFmtLimit(r.upper_limit))}${r.units ? " [" + esc(r.units) + "]" : ""}</span>
-        <span class="distg-cpk">cpk ${esc(r.cpk == null ? "-" : r.cpk)}</span>
+// ── Item_detail (콘텐츠 상세 뷰) ────────────────────────────────────────────────
+// sticky-head(topbar+tabs)는 그대로 두고 #panel-item-detail 만 활성화한다. Back(또는 Esc)으로
+// 원래 탭 패널 복원. Distribution 카드/Yield/CPK/IssueTable item 클릭 모두 이 화면으로 온다.
+const ITEM_FAIL_PAGE_SIZE = 30;
+let _itemDetailReturnId = null;   // 복귀할 탭 패널 id
+let _itemDetailSubject = null;
+let _itemDetailNav = [];          // prev/next 이동 목록(subject 배열)
+let _itemDetailFailRows = [];
+let _itemDetailFailPage = 1;
+let _itemDetailReq = 0;           // 경합 가드(진행 중 fetch 무효화)
+let _itemDetailBound = false;
+
+function openItemDetail(subject, navList) {
+  const dp = document.getElementById("panel-item-detail");
+  if (!dp) return;
+  bindItemDetailPanel();
+  // 상세가 아직 안 열려 있으면 현재 활성 탭 패널을 복귀 대상으로 기억하고 숨긴다.
+  if (!dp.classList.contains("active")) {
+    const cur = document.querySelector(".content > .panel.active");
+    _itemDetailReturnId = cur ? cur.id : "panel-summary";
+    if (cur) cur.classList.remove("active");
+    dp.classList.add("active");
+  }
+  _itemDetailSubject = subject;
+  _itemDetailNav = Array.isArray(navList) && navList.length ? navList : [subject];
+  _itemDetailFailPage = 1;
+  const reqId = ++_itemDetailReq;
+  window.scrollTo(0, 0);
+  dp.innerHTML = `<div class="idet"><div class="idet-head"><button class="btn-sm idet-back">← Back</button>` +
+    `<span class="idet-title"><b>${esc(subject)}</b></span></div><div class="placeholder">로드 중…</div></div>`;
+  fetch(`/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`, { cache: "no-store" })
+    .then(res => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+    .then(data => { if (reqId === _itemDetailReq) renderItemDetail(data); })
+    .catch(e => {
+      if (reqId !== _itemDetailReq) return;
+      dp.innerHTML = `<div class="idet"><div class="idet-head"><button class="btn-sm idet-back">← Back</button></div>` +
+        `<div class="placeholder">상세 로드 실패 (${esc(e.message)})</div></div>`;
+    });
+}
+
+function renderItemDetail(data) {
+  const dp = document.getElementById("panel-item-detail");
+  if (!dp) return;
+  const subject = data.subject;
+  const navLen = _itemDetailNav.length;
+  const pos = _itemDetailNav.indexOf(subject);
+  const navHtml = navLen > 1
+    ? `<button class="btn-sm idet-prev" title="이전 (Alt+↑)">‹</button>` +
+      `<button class="btn-sm idet-next" title="다음 (Alt+↓)">›</button>` +
+      `<span class="idet-navpos">${pos + 1} / ${navLen}</span>` : "";
+  const statusLabel = { fail: "FAIL", cpk_low: "CPK LOW", ok: "OK" }[data.status] || data.status || "";
+  _itemDetailFailRows = data.fail_rows || [];
+  const failTitle = data.is_fail
+    ? `<div class="section-title small idet-fail-title">이 항목으로 Fail 된 die — ${data.fail_total}개` +
+      `${data.fail_truncated ? ` (앞 ${_itemDetailFailRows.length}개만 표시)` : ""}</div><div id="idetFailHost"></div>`
+    : "";
+  dp.innerHTML = `<div class="idet">
+    <div class="idet-head">
+      <button class="btn-sm idet-back">← Back</button>
+      ${navHtml}
+      <span class="idet-title" data-status="${esc(data.status || "ok")}">
+        ${data.test_num ? `<span class="idet-tno">#${esc(data.test_num)}</span>` : ""}
+        <b class="idet-subject">${esc(subject)}</b>
+        <span class="idet-badge idet-${esc(data.status || "ok")}">${esc(statusLabel)}</span>
+        <span class="idet-cpk">cpk ${esc(data.cpk == null ? "-" : data.cpk)}</span>
+        <span class="idet-lim">(${esc(distFmtLimit(data.lower_limit))} ~ ${esc(distFmtLimit(data.upper_limit))}${data.units ? " " + esc(data.units) : ""})</span>
       </span>
     </div>
-    <div class="dist-detail-body">
-      <div class="dist-chart-block"><div class="dist-chart-cap">누적분포 CDF</div><div id="distCdf" class="dist-chart"></div></div>
-      <div class="dist-chart-block"><div class="dist-chart-cap">분포 히스토그램</div><div id="distHist" class="dist-chart"></div></div>
+    ${itemStatsTableHtml(data.stats)}
+    <div class="idet-charts">
+      <div class="idet-chart-block"><div class="dist-chart-cap">누적분포 CDF</div><div id="distCdf" class="dist-chart"></div></div>
+      <div class="idet-chart-block"><div class="dist-chart-cap">분포 히스토그램</div><div id="distHist" class="dist-chart"></div></div>
     </div>
-    <div class="dist-loading" id="distLoading">로드 중...</div>
+    ${failTitle}
   </div>`;
+  distRenderDetailCharts(data);   // #distCdf / #distHist (기존 함수 재사용)
+  if (data.is_fail) renderItemFailRows();
 }
-async function distShowDetail(subject, navList) {
-  const panel = document.getElementById("panel-distribution");
-  // 갤러리 관측/차트 정리 후 상세로 전환
-  if (distGalleryObserver) { try { distGalleryObserver.disconnect(); } catch (e) {} distGalleryObserver = null; }
-  panel.querySelectorAll(".distg-card").forEach(distPurgeGalleryCell);
-  distRenderQueue = []; distRafScheduled = false;
-  distView = "detail";
-  if (Array.isArray(navList)) distNavList = navList;
-  distNavPos = distNavList.indexOf(subject);
-  panel.innerHTML = distDetailShellHtml(subject);
-  window.scrollTo(0, 0);
-  let data;
-  try {
-    const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`, { cache: "no-store" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    data = await res.json();
-  } catch (e) {
-    const body = panel.querySelector(".dist-detail-body");
-    if (body) body.innerHTML = `<div class="placeholder">상세 로드 실패 (${esc(e.message)})</div>`;
-    const ld = document.getElementById("distLoading"); if (ld) ld.style.display = "none";
-    return;
-  }
-  // 로딩 중 다른 항목으로 이동했으면(경합) 최신 요청만 반영
-  if (distView !== "detail" || distNavList[distNavPos] !== subject) return;
-  distRenderDetailCharts(data);
-  const ld = document.getElementById("distLoading"); if (ld) ld.style.display = "none";
+
+const ITEM_STAT_COLS = ["n", "min", "median", "max", "average", "stdev", "cp", "cpl", "cpu", "cpk"];
+function itemStatsTableHtml(stats) {
+  if (!stats || !stats.length) return "";
+  const multi = stats.length > 1;
+  const head = "<thead><tr>" + (multi ? "<th>source</th>" : "") +
+    ITEM_STAT_COLS.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
+  const body = "<tbody>" + stats.map(s => {
+    const warn = (s.cpk != null && parseFloat(s.cpk) < CPK_WARN_THRESHOLD);
+    const tds = ITEM_STAT_COLS.map(c => {
+      const v = s[c]; const t = (v === null || v === undefined) ? "" : String(v);
+      const cls = "st-num" + (c === "cpk" && warn ? " cpk-warn" : "");
+      return `<td class="${cls}">${esc(t)}</td>`;
+    }).join("");
+    return "<tr>" + (multi ? `<td>${esc(s.source)}</td>` : "") + tds + "</tr>";
+  }).join("") + "</tbody>";
+  return `<div class="idet-stats sheet-wrap"><table class="sheet-table">${head}${body}</table></div>`;
 }
+
+function renderItemFailRows() {
+  const host = document.getElementById("idetFailHost");
+  if (!host) return;
+  const rows = _itemDetailFailRows;
+  if (!rows.length) { host.innerHTML = `<div class="placeholder">Fail 행 없음</div>`; return; }
+  const multi = !!(DATA.web_report && (DATA.web_report.sources || []).length > 1);
+  const cols = (multi ? ["SOURCE"] : []).concat(["SERIAL", "SHOT", "DUT", "XPOS", "YPOS", "BIN", "FAILTNO", "value"]);
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / ITEM_FAIL_PAGE_SIZE));
+  if (_itemDetailFailPage > pages) _itemDetailFailPage = pages;
+  if (_itemDetailFailPage < 1) _itemDetailFailPage = 1;
+  const start = (_itemDetailFailPage - 1) * ITEM_FAIL_PAGE_SIZE;
+  const page = rows.slice(start, start + ITEM_FAIL_PAGE_SIZE);
+  const head = "<thead><tr>" + cols.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
+  const body = "<tbody>" + page.map(r => "<tr>" + cols.map(c => {
+    const v = r[c]; const t = (v === null || v === undefined) ? "" : String(v);
+    return `<td>${esc(t)}</td>`;
+  }).join("") + "</tr>").join("") + "</tbody>";
+  const end = Math.min(start + ITEM_FAIL_PAGE_SIZE, total);
+  const pager = pages > 1
+    ? `<div class="cpk-pager">` +
+      `<button type="button" class="btn-sm" data-idet-page="${_itemDetailFailPage - 1}"${_itemDetailFailPage <= 1 ? " disabled" : ""}>‹ 이전</button>` +
+      `<span class="cpk-pager-info">${start + 1}–${end} / ${total} (page ${_itemDetailFailPage}/${pages})</span>` +
+      `<button type="button" class="btn-sm" data-idet-page="${_itemDetailFailPage + 1}"${_itemDetailFailPage >= pages ? " disabled" : ""}>다음 ›</button></div>`
+    : "";
+  host.innerHTML = `<div class="sheet-wrap"><table class="sheet-table">${head}${body}</table></div>` + pager;
+}
+
+function itemDetailNav(delta) {
+  if (_itemDetailNav.length < 2) return;
+  let p = _itemDetailNav.indexOf(_itemDetailSubject) + delta;
+  if (p < 0) p = 0;
+  if (p >= _itemDetailNav.length) p = _itemDetailNav.length - 1;
+  const next = _itemDetailNav[p];
+  if (next && next !== _itemDetailSubject) openItemDetail(next, _itemDetailNav);
+}
+
+function closeItemDetail() {
+  const dp = document.getElementById("panel-item-detail");
+  if (!dp) return;
+  _itemDetailReq++;   // 진행 중 fetch 무효화
+  dp.classList.remove("active");
+  dp.innerHTML = "";
+  const back = document.getElementById(_itemDetailReturnId || "panel-summary");
+  if (back) back.classList.add("active");
+  _itemDetailReturnId = null;
+}
+
+// 탭 버튼 클릭 시: 복원 없이 상세만 닫는다(해당 탭 패널이 이어서 활성화됨).
+function hideItemDetail() {
+  const dp = document.getElementById("panel-item-detail");
+  if (dp && dp.classList.contains("active")) { _itemDetailReq++; dp.classList.remove("active"); dp.innerHTML = ""; }
+  _itemDetailReturnId = null;
+}
+
+function bindItemDetailPanel() {
+  if (_itemDetailBound) return;
+  const dp = document.getElementById("panel-item-detail");
+  if (!dp) return;
+  dp.addEventListener("click", e => {
+    if (e.target.closest(".idet-back")) { closeItemDetail(); return; }
+    if (e.target.closest(".idet-prev")) { itemDetailNav(-1); return; }
+    if (e.target.closest(".idet-next")) { itemDetailNav(1); return; }
+    const pg = e.target.closest("[data-idet-page]");
+    if (pg && !pg.disabled) { _itemDetailFailPage = parseInt(pg.dataset.idetPage, 10) || 1; renderItemFailRows(); return; }
+  });
+  document.addEventListener("keydown", e => {
+    if (!dp.classList.contains("active")) return;
+    if (e.key === "Escape") { closeItemDetail(); return; }
+    if (e.altKey && e.key === "ArrowUp") { e.preventDefault(); itemDetailNav(-1); }
+    else if (e.altKey && e.key === "ArrowDown") { e.preventDefault(); itemDetailNav(1); }
+  });
+  _itemDetailBound = true;
+}
+// values 를 오름차순 정렬하며 원래 index 순서를 함께 반환 — serial/xpos/ypos 를 같은 순서로
+// 재배열해 CDF hover(customdata)에 붙이는 데 쓴다.
 function distCdfFromValues(values) {
-  const sorted = [...values].sort((a, b) => a - b);
-  const n = sorted.length;
-  return { x: sorted, y: sorted.map((_, i) => (i + 1) / n * 100) };
+  const order = values.map((_, i) => i).sort((a, b) => values[a] - values[b]);
+  const n = order.length;
+  return { x: order.map(i => values[i]), y: order.map((_, k) => (k + 1) / n * 100), order };
 }
 function distRenderDetailCharts(data) {
   const lo = data.lower_limit, hi = data.upper_limit;
@@ -2189,9 +2403,17 @@ function distRenderDetailCharts(data) {
   if (cdfDiv) {
     const traces = (data.sources || []).map(s => {
       const c = distCdfFromValues(s.values);
-      return { type: "scatter", mode: "markers", cliponaxis: false, name: s.name, x: c.x, y: c.y,
-        marker: { color: distColorFor(s.name), size: 5 },
-        hovertemplate: "측정값 %{x}<br>누적 %{y:.1f}%<extra></extra>" };
+      const trace = { type: "scatter", mode: "markers", cliponaxis: false, name: s.name, x: c.x, y: c.y,
+        marker: { color: distColorFor(s.name), size: 5 } };
+      // CDF hover 전용: die 식별 metadata(serial/xpos/ypos, values 와 동일 순서로 백엔드가 정렬해 보냄).
+      // histogram 은 die 단위 정보가 의미 없어 붙이지 않는다.
+      if (Array.isArray(s.serial) && s.serial.length === s.values.length) {
+        trace.customdata = c.order.map(i => [s.serial[i], s.xpos[i], s.ypos[i]]);
+        trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<br>SERIAL %{customdata[0]} · X %{customdata[1]} / Y %{customdata[2]}<extra></extra>";
+      } else {
+        trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<extra></extra>";
+      }
+      return trace;
     });
     Plotly.newPlot(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
       xaxis: { title: { text: xtitle }, showgrid: true, gridcolor: "#eee", zeroline: false },
@@ -2209,14 +2431,6 @@ function distRenderDetailCharts(data) {
       shapes: distSpecShapes(lo, hi, false), annotations: distSpecAnnos(lo, hi, false),
       margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi }, DIST_CFG);
   }
-}
-function distNav(delta) {
-  if (distView !== "detail" || !distNavList.length) return;
-  let p = distNavPos + delta;
-  if (p < 0) p = 0;
-  if (p >= distNavList.length) p = distNavList.length - 1;
-  if (p === distNavPos) return;
-  distShowDetail(distNavList[p]);
 }
 function distRenderSuggest(q) {
   const box = document.getElementById("distSuggest");
@@ -2241,21 +2455,12 @@ function distBindPanel() {
     const seg = e.target.closest(".distseg");
     if (seg) { distSegment = seg.dataset.seg; distRenderGallery(); return; }
     const sug = e.target.closest(".dist-sug-item");
-    if (sug) { distShowDetail(sug.dataset.subject, distApplySegment(distIndex).map(r => r.subject)); return; }
+    if (sug) { openItemDetail(sug.dataset.subject, distApplySegment(distIndex).map(r => r.subject)); return; }
     const card = e.target.closest(".distg-card");
-    if (card) { distShowDetail(card.dataset.subject, distFiltered.map(r => r.subject)); return; }
-    if (e.target.closest(".dist-back")) { distRenderGallery(); return; }
-    if (e.target.closest(".dist-prev")) { distNav(-1); return; }
-    if (e.target.closest(".dist-next")) { distNav(1); return; }
+    if (card) { openItemDetail(card.dataset.subject, distFiltered.map(r => r.subject)); return; }
   });
   panel.addEventListener("input", e => {
     if (e.target.id === "distSearch") distRenderSuggest(e.target.value);
-  });
-  document.addEventListener("keydown", e => {
-    if (!e.altKey || distView !== "detail") return;
-    if (!panel.classList.contains("active")) return;
-    if (e.key === "ArrowUp") { e.preventDefault(); distNav(-1); }
-    else if (e.key === "ArrowDown") { e.preventDefault(); distNav(1); }
   });
   distPanelBound = true;
 }
@@ -2279,9 +2484,13 @@ function renderDistribution() {
 function renderMiniDistCell(cell) {
   if (cell.dataset.distLoaded === "1") return;
   const subject = cell.dataset.subject;
-  const info = distDataCache[subject];
   const div = cell.querySelector(".dist-plot");
-  if (!info || !div || typeof Plotly === "undefined") return;
+  if (!div || typeof Plotly === "undefined") return;
+  // 분포 데이터 도착 전 — 플래그를 세우지 않고 리턴해야 도착 후 재큐잉으로 그려진다.
+  if (!distDataReady) return;
+  const info = distDataCache[subject];
+  // 데이터 없는 항목: 빈 칸으로 확정 (loaded 마킹해 재큐잉 no-op 방지)
+  if (!info) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; return; }
 
   const lo = info.lower_limit, hi = info.upper_limit;
   const traces = Object.keys(info.bySource).map(source => {
@@ -2298,8 +2507,58 @@ function renderMiniDistCell(cell) {
   cell.dataset.distLoaded = "1";
 }
 
+// Issue Table 미니셀은 수천 개(항목 수 규모)라 전량 동기 렌더 시 메인스레드가 분 단위로
+// 얼어붙는다 — 갤러리와 같은 IntersectionObserver + rAF 분할(프레임당 3개) lazy 렌더를 쓰고,
+// 화면 밖으로 나가면 purge 해 plot DOM 상주를 막는다. 큐는 갤러리(distRenderQueue)와
+// 분리 — 갤러리 재렌더가 큐를 초기화해도 issue 셀이 유실되지 않도록.
+let issueDistObserver = null;
+let issueDistQueue = [];
+let issueDistRafScheduled = false;
+
+function issueDistQueueRender(cell) {
+  if (cell.dataset.distLoaded === "1" || issueDistQueue.includes(cell)) return;
+  issueDistQueue.push(cell);
+  if (!issueDistRafScheduled) { issueDistRafScheduled = true; requestAnimationFrame(issueDistFlush); }
+}
+function issueDistFlush() {
+  issueDistRafScheduled = false;
+  let n = 0;
+  while (issueDistQueue.length && n < DIST.PER_FRAME) {
+    const cell = issueDistQueue.shift();
+    if (cell.isConnected && cell.dataset.visible === "1") { renderMiniDistCell(cell); n++; }
+  }
+  if (issueDistQueue.length) { issueDistRafScheduled = true; requestAnimationFrame(issueDistFlush); }
+}
+function issueDistPurge(cell) {
+  if (cell.dataset.distLoaded !== "1") return;
+  const div = cell.querySelector(".dist-plot");
+  if (!div) return;   // 데이터 없음으로 비워진 셀 — 확정 상태 유지
+  try { if (window.Plotly) Plotly.purge(div); } catch (e) {}
+  cell.dataset.distLoaded = "";
+}
+
 function renderIssueMiniDist(panel) {
-  panel.querySelectorAll(".dist-cell-mini").forEach(cell => renderMiniDistCell(cell));
+  if (issueDistObserver) { try { issueDistObserver.disconnect(); } catch (e) {} issueDistObserver = null; }
+  issueDistQueue = []; issueDistRafScheduled = false;
+  const cells = panel.querySelectorAll(".dist-cell-mini");
+  if (!cells.length) return;
+  if (typeof IntersectionObserver === "undefined") {
+    cells.forEach(cell => renderMiniDistCell(cell));   // 구형 브라우저 폴백: 기존 동작
+    return;
+  }
+  issueDistObserver = new IntersectionObserver(entries => {
+    entries.forEach(en => {
+      const cell = en.target;
+      if (en.isIntersecting) { cell.dataset.visible = "1"; issueDistQueueRender(cell); }
+      else {
+        cell.dataset.visible = "";
+        issueDistPurge(cell);
+        const i = issueDistQueue.indexOf(cell);
+        if (i >= 0) issueDistQueue.splice(i, 1);
+      }
+    });
+  }, { rootMargin: "600px 0px", threshold: 0 });
+  cells.forEach(c => issueDistObserver.observe(c));
 }
 
 // ── Issue Table: Item 클릭 → Bin 상세(FailTNO 구성 + 분포) 화면 전환 ─────────────
@@ -2377,6 +2636,7 @@ function rawDataControlsHtml(meta) {
     <div class="edit-hint">전체 ${meta.total_dies}개 die 중 검색/필터로 좁힌 뒤, 항목을 최대
       ${RAW_DATA_COLUMN_CAP}개까지 선택해 조회하세요.</div>
     <div class="rawdata-filters">
+      <div class="rawdata-source-btns">${sourceBtns}</div>
       <input type="text" id="rawSearch" placeholder="SERIAL/DUT 검색">
       <input type="text" id="rawBin" placeholder="BIN">
       <button type="button" id="rawQueryBtn" class="btn-sm">조회</button>
@@ -2397,7 +2657,6 @@ function rawDataControlsHtml(meta) {
       </div>
       <div class="rawdata-grid-wrap">
         <div id="rawDataBanner"></div>
-        <div class="rawdata-source-btns">${sourceBtns}</div>
         <div id="rawDataHscroll" class="rawdata-hscroll"><div id="rawDataHscrollSpacer" class="rawdata-hscroll-spacer"></div></div>
         <div id="rawDataGridHost"></div>
       </div>
@@ -2844,10 +3103,18 @@ function setMode(m) {
 
 // add/delete row (편집 테이블 공용 위임)
 document.querySelector(".content").addEventListener("click", e => {
-  const issueLink = e.target.closest(".issue-item-link");
-  if (issueLink) {
-    // Bin 상세 전환도 panel-issues 재렌더 — 미저장 comment 를 먼저 저장하고 이동한다.
-    const bin = issueLink.dataset.bin, item = issueLink.dataset.item;
+  // Item명 클릭 → Item_detail (Yield/CPK/IssueTable/Bin상세 공용).
+  const itemLink = e.target.closest(".item-detail-link");
+  if (itemLink) {
+    const subject = itemLink.dataset.subject;
+    // 미저장 comment 가 있으면 먼저 저장(유실 방지) 후 이동.
+    flushPendingComments().then(ok => { if (ok && subject) openItemDetail(subject, [subject]); });
+    return;
+  }
+  // IssueTable Bin 셀 클릭 → 해당 Bin 전체 TNO 드릴다운.
+  const binLink = e.target.closest(".bin-detail-link");
+  if (binLink) {
+    const bin = binLink.dataset.bin, item = binLink.dataset.item;
     flushPendingComments().then(ok => { if (ok) renderIssueDetail(bin, item); });
     return;
   }
@@ -3272,13 +3539,46 @@ document.querySelectorAll(".pin-cell").forEach((c, i, arr) => {
   });
 });
 
-// ── load ──────────────────────────────────────────────────────────────────────
-function hideLoadOverlay() {
+// ── load 오버레이 진행바 (0→100% + 단계 메시지) ────────────────────────────────
+let _loadCreep = null;
+function setLoadProgress(pct, msg) {
+  pct = Math.max(0, Math.min(100, pct));
+  const fill = document.getElementById("loadFill");
+  const pc = document.getElementById("loadPct");
+  const st = document.getElementById("loadStatus");
+  if (fill) fill.style.width = pct + "%";
+  if (pc) pc.textContent = Math.round(pct) + "%";
+  if (st && msg != null) st.textContent = msg;
+}
+function stopLoadCreep() { if (_loadCreep) { clearInterval(_loadCreep); _loadCreep = null; } }
+// 서버 재계산 대기(첫 바이트 전)엔 실제 진척을 알 수 없어 from→to 로 ease-out 천천히 채운다.
+function startLoadCreep(from, to, ms, msg) {
+  stopLoadCreep();
+  setLoadProgress(from, msg);
+  const t0 = performance.now();
+  _loadCreep = setInterval(() => {
+    const k = Math.min(1, (performance.now() - t0) / ms);
+    setLoadProgress(from + (to - from) * (1 - Math.pow(1 - k, 2)));
+    if (k >= 1) stopLoadCreep();
+  }, 90);
+}
+function showLoadOverlay() {
   const ov = document.getElementById("loadOverlay");
-  if (ov) ov.classList.remove("show");
+  if (ov) ov.classList.add("show");
+  setLoadProgress(0, "준비 중…");
+}
+function hideLoadOverlay() {
+  stopLoadCreep();
+  setLoadProgress(100, "완료");
+  const ov = document.getElementById("loadOverlay");
+  if (ov) setTimeout(() => ov.classList.remove("show"), 200);
 }
 async function load(resetMode=true) {
   try {
+    showLoadOverlay();
+    // 서버가 parquet 재계산(수 초)을 마칠 때까지 첫 바이트가 없어 실제 %를 알 수 없으므로
+    // 대기 동안 62% 까지 천천히 채운다.
+    startLoadCreep(6, 62, 4500, "리포트 계산·수신 중…");
     const res = await fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-store" });
     if (!res.ok) {
       const box = document.getElementById("errorBox");
@@ -3287,6 +3587,8 @@ async function load(resetMode=true) {
       hideLoadOverlay();
       return;
     }
+    stopLoadCreep();
+    setLoadProgress(70, "데이터 파싱 중…");
     DATA = await res.json();
     // web_report 전용 뷰어 — xlsx 업로드(legacy) 세션 렌더링은 더 이상 지원하지 않는다.
     if (!isWebReportSession()) {
@@ -3295,8 +3597,10 @@ async function load(resetMode=true) {
       });
       document.getElementById("topbarActions").style.display = "none";
       renderMeta(DATA.session || {});
+      hideLoadOverlay();   // 이 분기가 오버레이를 안 걷으면 안내문까지 가려진다
       return;
     }
+    setLoadProgress(80, "화면 구성 중…");
     _globalBinColors = null;   // 새 데이터 → bin 색상 매핑 재계산
     seedEmptyFrames();
     // Issue Table 의 미니 분포 차트가 renderDistribution() 보다 먼저 그려질 수 있으므로
@@ -3306,6 +3610,7 @@ async function load(resetMode=true) {
     const webPre = DATA.web_report || {};
     // Distribution ECDF 는 항상 지연 로드 (GET .../web_report/distribution 컴팩트 columnar).
     // 도착 전 그려진 미니셀/갤러리는 refreshDistConsumers 가 다시 채운다.
+    setLoadProgress(92, "분포 데이터 준비 중…");
     ensureDistData();
     buildDistColorMap(webPre.sources || []);
     renderMeta(DATA.session || {});

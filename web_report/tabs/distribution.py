@@ -17,7 +17,11 @@ import pandas as pd
 
 from .common import fmt_type, json_safe, round_num
 from .cpk import _stats
+from .raw_data import _META_COLUMNS
 from .yield_tab import _tno_norm
+
+# Item_detail 의 Fail rawdata 표 상한 (초대형 Fail 항목 페이로드 폭증 방지)
+_FAIL_ROW_CAP = 2000
 
 CPK_THRESHOLD = 1.33
 
@@ -59,9 +63,12 @@ def build_distribution_compact(tables, all_items) -> dict:
                 first = False
             values = to_numeric_clean(table.data[item])
             unique_vals, cum = cumulative_distribution_full(values)
+            # 수백만 포인트를 파이썬 round_num 루프로 돌리면 요청당 수 초가 걸려 numpy 로
+            # 벡터화한다 — to_numeric_clean 이 유한 float64 만 반환하므로(NaN/inf 없음)
+            # np.round(half-even)는 round_num 의 round()와 동일한 값을 낸다.
             sources[table.source] = {
-                "x": [round_num(v) for v in unique_vals],
-                "y": [round_num(p, 3) for p in cum],
+                "x": np.round(unique_vals, 6).tolist(),
+                "y": np.round(cum, 3).tolist(),
             }
         if sources:
             items[item] = {"units": units, "lo": lo, "hi": hi, "sources": sources}
@@ -150,9 +157,16 @@ def build_distribution_index(tables, cpk_rows) -> list:
     return rows
 
 
-def scatter_item(tables, subject) -> dict:
-    """상세용: 항목의 소스별 전체 측정값(다운샘플 없음) + cpk/status.
+def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP) -> dict:
+    """Item_detail 용: 항목의 소스별 전체 측정값(다운샘플 없음) + 통계 + cpk/status +
+    이 항목으로 Fail 된 die 의 rawdata 행(전 metadata + 측정값).
 
+    - ``stats``: 소스별 _stats (n/min/median/max/average/stdev/cp/cpl/cpu/cpk).
+    - ``sources[].serial/xpos/ypos``: CDF hover 용으로 ``values`` 와 동일 순서·길이로 정렬된
+      die 식별 metadata (Item_detail CDF 차트 전용, histogram 은 미사용).
+    - ``fail_rows``: FAILTNO 가 이 항목의 TNO 와 일치하는 행(= 이 항목으로 fail 된 die).
+      ``_META_COLUMNS`` + SOURCE + 측정값. ``fail_row_cap`` 상한 초과 시 잘리고
+      ``fail_truncated=True`` (전체 개수는 ``fail_total``).
     항목이 어떤 소스에도 없으면 ``KeyError`` (라우트가 404 처리).
     """
     matched = [t for t in tables if subject in t.item_columns]
@@ -161,22 +175,62 @@ def scatter_item(tables, subject) -> dict:
     meta_t = matched[0]
 
     sources = []
+    stats = []
     cpks = []
+    fail_rows = []
+    fail_total = 0
     for table in matched:
-        values = to_numeric_clean(table.data[subject])
-        sources.append({"name": table.source, "values": values.round(6).tolist()})
-        st = _stats(table.data[subject], table.lolim.get(subject), table.hilim.get(subject))
+        col = table.data[subject]
+        # to_numeric_clean 과 동일한 유한값 필터를 mask 로 남겨 SERIAL/XPOS/YPOS 를
+        # values 와 같은 순서·길이로 정렬한다 (hover 용, Item_detail CDF 전용).
+        numeric = pd.to_numeric(col, errors="coerce")
+        finite_mask = np.isfinite(numeric.to_numpy())
+        values = numeric.to_numpy()[finite_mask]
+        sources.append({
+            "name": table.source,
+            "values": values.round(6).tolist(),
+            "serial": [fmt_type(v) for v in table.data["SERIAL"].to_numpy()[finite_mask]],
+            "xpos": [fmt_type(v) for v in table.data["XPOS"].to_numpy()[finite_mask]],
+            "ypos": [fmt_type(v) for v in table.data["YPOS"].to_numpy()[finite_mask]],
+        })
+        st = _stats(col, table.lolim.get(subject), table.hilim.get(subject))
+        stats.append({"source": table.source, **st})
         if st["cpk"] is not None:
             cpks.append(st["cpk"])
 
+        # 이 항목으로 Fail 된 die: FAILTNO(정규화) == 항목 TNO(정규화). fail_items 귀속과 동일.
+        item_tno = _tno_norm(table.tno.get(subject))
+        if item_tno is None:
+            continue
+        data = table.data
+        failtno_norm = [_tno_norm(v) for v in data["FAILTNO"].tolist()]
+        meta_vals = {c: data[c].tolist() for c in _META_COLUMNS}
+        item_vals = col.tolist()
+        for i, fn in enumerate(failtno_norm):
+            if fn != item_tno:
+                continue
+            fail_total += 1
+            if len(fail_rows) < fail_row_cap:
+                row = {"SOURCE": table.source}
+                for c in _META_COLUMNS:
+                    row[c] = fmt_type(meta_vals[c][i])
+                row["value"] = round_num(item_vals[i])
+                fail_rows.append(row)
+
     cpk = min(cpks) if cpks else None
-    is_fail = subject in fail_items(matched)
+    is_fail = fail_total > 0
     return {
         "subject": subject,
+        "test_num": fmt_type(meta_t.tno.get(subject)),
         "units": json_safe(meta_t.units.get(subject)) or "",
         "lower_limit": round_num(meta_t.lolim.get(subject)),
         "upper_limit": round_num(meta_t.hilim.get(subject)),
         "cpk": round_num(cpk, 3),
+        "is_fail": is_fail,
         "status": _status(is_fail, cpk),
         "sources": sources,
+        "stats": stats,
+        "fail_rows": fail_rows,
+        "fail_total": fail_total,
+        "fail_truncated": fail_total > len(fail_rows),
     }
