@@ -25,8 +25,12 @@ web_report/
 ├── __init__.py        패키지 docstring만
 ├── service.py          ingest_webreport() — 업로드 처리(해시→analysis_key→DB 세션→
 │                        parquet+manifest 저장), load_webreport() — 세션 재계산 조회,
+│                        get_distribution() — Distribution ECDF lazy 조회(컴팩트 columnar),
 │                        raw_data 조회·편집, update_issue_etc_items/update_issue_comments
-│                        (Issue Table ETC 항목·comment 편집 — manifest 만 재저장)
+│                        (Issue Table ETC 항목·comment 편집 — manifest 만 재저장).
+│                        decoded tables 는 (analysis_key, content_hash) 키 인메모리 LRU 캐시
+│                        (_TABLES_CACHE, 반환은 _clone_table 클론 — df/data 는 읽기 전용 공유,
+│                        df 를 고치는 편집 경로는 use_cache=False)
 ├── honeyform.py         7-meta honeyform 검증/파싱, parquet 인코딩·디코딩
 │                        (META_COLUMNS, META_ROW_LABELS 등 스키마 상수)
 ├── metrics.py           build_report_payload() — tabs/ 각 모듈을 모아 최종 report dict 조립
@@ -82,13 +86,21 @@ UI(체크박스 목록 스타일, 표 컬럼 순서/정렬 화살표/테두리, 
 - **탭 구현 상태 (2026-07-08 기준)**: Yield / CPK / Issue Table / Map Analysis / Fail Bin 은
   계산·렌더 완료 (CPK 탭 렌더 함수 `renderCpk()` 는 report_view.html 에 추가 — web_report 밖
   파일이라 사용자 승인 후 수정함). Raw Data 는 lazy-load 조회/편집 완료. Distribution 은
-  산포 탭으로 구현 완료 — `tabs/distribution.py` 가 ECDF(`sheets["Distribution"]`, 갤러리 미니셀 +
-  Issue Table 미니분포 공용)와 함께 `build_distribution_index`(항목별 test_num·worst-case cpk·
-  fail(FAILTNO==TNO 귀속)·status) / `scatter_item`(상세용 전체 측정값)을 공급한다. metrics 가
+  산포 탭으로 구현 완료 — `tabs/distribution.py` 가 `build_distribution_index`(항목별
+  test_num·worst-case cpk·fail(FAILTNO==TNO 귀속)·status) / `scatter_item`(상세용 전체 측정값) /
+  `build_distribution_compact`(ECDF 전 포인트 컴팩트 columnar, lazy 전용)를 공급한다. metrics 가
   `report["distribution_index"]` 로 내려주고, 상세 전체점은 `GET .../web_report/scatter/<subject>`
   (report_routes.py, 승인 후 추가)로 지연 로드. 프런트(report_view.html `renderDistribution`)는
   툴바(전체/cpk<1.33/Fail Only, 기본 cpk<1.33)+가상스크롤 갤러리+Typeahead+카드→상세(CDF+히스토그램)
-  로 렌더. 미니셀만 1000점 다운샘플(상세·통계는 전체점). summary / raw_data(payload) /
+  로 렌더. 미니셀만 1000점 다운샘플(상세·통계는 전체점). **Distribution embed 폐지(2026-07-08)**:
+  `sheets["Distribution"]` 은 항상 `[]`(`distribution_deferred=True` 고정), 구
+  `build_distribution_rows` embed 는 제거됨. 프런트가 첫 페인트 후
+  `GET .../web_report/distribution` (`build_distribution_compact` 의 컴팩트 columnar,
+  전 포인트·gzip·ETag)을 백그라운드 fetch 해 `distDataCache` 를 채운다 — 도착 전 그려진
+  미니셀/갤러리는 `refreshDistConsumers()` 가 다시 채움. Issue Table 미니셀/Bin 상세 분포도
+  이 `distDataCache` 를 산포 갤러리 카드 포맷(표시용 다운샘플 static CDF)으로 렌더. report_view.html 의 `renderActive` 는
+  활성 탭만 즉시 렌더하고 나머지는 tabDirty + requestIdleCallback 프리렌더(`schedulePrerender`).
+  summary / raw_data(payload) /
   trim_analysis / histogram 빌더는 `return []` 플레이스홀더 (Summary 탭 화면은 프런트가
   Map Analysis + Fail Bin 시트로 자체 구성).
 - **Issue Table comment 저장**: web_report 세션은 legacy 의 `PATCH /content` 를 쓰지 않는다

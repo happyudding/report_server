@@ -100,6 +100,30 @@ def build_yield_rows(tables, fail_counts):
     return rows
 
 
+def build_yield_bin_groups(yield_rows):
+    """Bin 별 그룹(Pass 제외). 각 그룹은 most-fail(avg 최대) 대표 행 + 그 Bin 의 전체 fail 행 목록.
+
+    Yield 시트가 Bin 당 대표(most-fail TNO) 1행만 접힌 상태로 보여주고, 펼치면 rows 전체를
+    보여주는 데 쓴다. Issue Table 의 Bin 집계도 동일 그룹을 쓴다.
+    그룹 정렬은 Bin 총 fail 비중(rows avg 합) 내림차순 = 화면상 worst-yield 우선(= yield 오름차순).
+    """
+    groups_map = {}
+    for row in yield_rows or []:
+        bin_value = row.get("bin")
+        if str(bin_value).strip() == PASS_BIN:
+            continue
+        if not row.get("Item"):
+            continue
+        groups_map.setdefault(str(bin_value), []).append(row)
+
+    groups = []
+    for bin_value, rows in groups_map.items():
+        rows_sorted = sorted(rows, key=lambda r: r.get("avg") or 0, reverse=True)
+        groups.append({"bin": bin_value, "rep": rows_sorted[0], "rows": rows_sorted})
+    groups.sort(key=lambda g: sum(r.get("avg") or 0 for r in g["rows"]), reverse=True)
+    return groups
+
+
 def yield_overview(tables, yield_rows):
     """Yield 탭 상단 요약 박스: 전체 pass/fail/total count + 종합 yield%.
 

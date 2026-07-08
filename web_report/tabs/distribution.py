@@ -1,8 +1,9 @@
 """Distribution tab payload builder.
 
 두 계층을 제공한다:
-- ECDF 행(``build_distribution_rows``): ``sheets["Distribution"]`` 으로 내려가 갤러리 미니셀 +
-  Issue Table 미니분포가 소비한다. 다운샘플 없음(불변 규칙 #6).
+- ECDF 컴팩트(``build_distribution_compact``): lazy 엔드포인트 ``GET .../web_report/distribution``
+  전용 columnar 페이로드. 갤러리 미니셀 + Issue Table 산포 카드가 ``distDataCache`` 로 소비한다.
+  다운샘플 없음(불변 규칙 #6).
 - 산포 탭 인덱스/상세(``build_distribution_index`` / ``fail_items`` / ``scatter_item``): 갤러리
   카드의 status/cpk 분류와, 카드 클릭 시 지연 로드하는 항목별 전체 측정값(상세 CDF+히스토그램)을
   공급한다. cpk 는 이미 계산된 ``cpk_rows`` 를 재사용하고, fail 은 FAILTNO==항목 TNO 로 귀속한다.
@@ -36,29 +37,35 @@ def cumulative_distribution_full(values):
     return unique_vals, cum
 
 
-def build_distribution_rows(tables, all_items):
-    """ECDF 행(subject×source×점). ``sheets["Distribution"]`` 계약 — 다운샘플 금지."""
-    rows = []
+def build_distribution_compact(tables, all_items) -> dict:
+    """ECDF 전량(다운샘플 없음, 불변 규칙 #6)을 columnar 포맷으로 반환.
+
+    행마다 반복되던 subject/source/units/limits 키를 제거한 컴팩트 표현으로,
+    lazy 엔드포인트 ``GET .../web_report/distribution`` 전용이다 (208MB → 수십 MB).
+    """
+    items = {}
     for item in all_items:
+        sources = {}
+        units = ""
+        lo = hi = None
+        first = True
         for table in tables:
             if item not in table.item_columns:
                 continue
+            if first:
+                units = json_safe(table.units.get(item)) or ""
+                lo = round_num(table.lolim.get(item))
+                hi = round_num(table.hilim.get(item))
+                first = False
             values = to_numeric_clean(table.data[item])
             unique_vals, cum = cumulative_distribution_full(values)
-            units = json_safe(table.units.get(item)) or ""
-            lower_limit = round_num(table.lolim.get(item))
-            upper_limit = round_num(table.hilim.get(item))
-            for x, pct in zip(unique_vals, cum):
-                rows.append({
-                    "subject": item,
-                    "source": table.source,
-                    "units": units,
-                    "lower_limit": lower_limit,
-                    "upper_limit": upper_limit,
-                    "value": round_num(x),
-                    "cum_pct": round_num(pct, 3),
-                })
-    return rows
+            sources[table.source] = {
+                "x": [round_num(v) for v in unique_vals],
+                "y": [round_num(p, 3) for p in cum],
+            }
+        if sources:
+            items[item] = {"units": units, "lo": lo, "hi": hi, "sources": sources}
+    return {"format": "ecdf-columnar-v1", "items": items}
 
 
 def fail_items(tables) -> set:

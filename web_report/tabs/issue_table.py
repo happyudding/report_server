@@ -17,6 +17,7 @@ row_key: Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", ETC 행
 from __future__ import annotations
 
 from .common import fmt_type
+from .yield_tab import build_yield_bin_groups
 
 _CPK_THRESHOLD = 1.33
 
@@ -115,21 +116,22 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     sources = [t.source for t in (tables or [])]
     rows = []
 
-    for row in yield_rows or []:
-        bin_value = row.get("bin")
-        item = row.get("Item")
-        if not item:
-            continue
+    # Yield 섹션은 Bin 당 대표(most-fail TNO) 1행만 표시한다. Bin 정렬은 yield 오름차순
+    # (worst-yield 우선). Bin 전체 TNO 구성은 프런트가 issue_bin_summary 로 드릴다운한다.
+    for group in build_yield_bin_groups(yield_rows):
+        rep = group["rep"]
+        bin_value = rep.get("bin")
+        item = rep.get("Item")
         out = {
             "Category": "Yield",
-            "Step": row.get("step", ""),
+            "Step": rep.get("step", ""),
             "Bin": bin_value,
-            "TNO": row.get("TNO", ""),
+            "TNO": rep.get("TNO", ""),
             "Item": item,
-            "avg": row.get("avg"),
+            "avg": rep.get("avg"),
         }
         for src in sources:
-            out[f"{src}_yield"] = row.get(f"{src}_yield")
+            out[f"{src}_yield"] = rep.get(f"{src}_yield")
         out["Distribution"] = ""
         out.update(_comment_values(issue_comments, f"Yield|{bin_value}|{item}"))
         rows.append(out)

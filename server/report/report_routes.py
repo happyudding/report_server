@@ -1,4 +1,6 @@
-﻿import logging
+﻿import gzip
+import json
+import logging
 import re
 import secrets
 import sqlite3
@@ -180,7 +182,9 @@ def session_full(session_id):
             }
 
     if session.get("source") == "web_report":
-        # web_report 세션: 캐시 없이 매번 parquet 원본에서 재계산한다.
+        # web_report 세션: parquet 원본에서 재계산 (decoded tables 는 service 의 LRU 캐시 활용).
+        # 대용량 Distribution ECDF 는 제외하고 distribution_deferred=True 로 내려보낸다 —
+        # 프런트가 GET .../web_report/distribution 으로 백그라운드 지연 로드.
         try:
             _, report = web_report_service.load_webreport(
                 session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
@@ -289,6 +293,33 @@ def web_report_raw_data(session_id):
     return jsonify(result)
 
 
+@report_bp.get("/session/<session_id>/web_report/distribution")
+def web_report_distribution(session_id):
+    """Distribution ECDF 전량(다운샘플 없음)을 컴팩트 columnar JSON 으로 지연 로드.
+
+    /full 에서 제외된 sheets["Distribution"] 의 대체 — 수십 MB 라 gzip(Accept-Encoding 시)과
+    ETag(analysis_key+content_hash) 조건부 응답을 지원한다.
+    """
+    session = _require_web_report_session(session_id)
+    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}"'
+    headers = {"Vary": "Accept-Encoding", "ETag": etag}
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers=headers)
+    try:
+        result = web_report_service.get_distribution(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception as exc:
+        _log.exception("web_report distribution failed for session %s", session_id)
+        abort(500, f"distribution failed: {exc}")
+    body = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        body = gzip.compress(body, compresslevel=1)
+        headers["Content-Encoding"] = "gzip"
+    return Response(body, mimetype="application/json", headers=headers)
+
+
 @report_bp.get("/session/<session_id>/web_report/scatter/<path:subject>")
 def web_report_scatter(session_id, subject):
     """Distribution 상세용: 항목(subject)의 소스별 전체 측정값(다운샘플 없음) 지연 로드."""
@@ -311,13 +342,10 @@ def web_report_scatter(session_id, subject):
 def web_report_raw_data_edit(session_id):
     """Raw Data 셀 편집 저장 — 저장된 parquet 원본을 직접 덮어쓴다 (버전관리/undo 없음).
 
-    수정 모드(PIN 검증 완료) 에서만 호출되는 것을 전제로, 여기서도 PIN 을 재검증한다."""
+    편집은 PIN 없이 누구나 가능하다 (CSRF 토큰만 검증)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
     body = request.get_json(force=True, silent=True) or {}
-    password = (body.get("password") or "").strip()
-    if not _password_ok(session, password):
-        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
     edits = body.get("edits") or []
     if not isinstance(edits, list) or not edits:
         return jsonify({"error": "edits가 비어 있습니다."}), 400
@@ -343,13 +371,10 @@ def web_report_issue_table_etc(session_id):
     """Issue Table ETC 섹션 item 추가/삭제 — manifest.etc_items 갱신 (Bin/TNO/Distribution
     은 저장하지 않고 조회 시마다 자동으로 다시 채워진다).
 
-    수정 모드(PIN 검증 완료) 에서만 호출되는 것을 전제로, 여기서도 PIN 을 재검증한다."""
+    편집은 PIN 없이 누구나 가능하다 (CSRF 토큰만 검증)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
     body = request.get_json(force=True, silent=True) or {}
-    password = (body.get("password") or "").strip()
-    if not _password_ok(session, password):
-        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
     action = (body.get("action") or "add").strip()
     item = (body.get("item") or "").strip()
     if not item:
@@ -376,13 +401,10 @@ def web_report_issue_table_etc(session_id):
 def web_report_issue_table_comments(session_id):
     """Issue Table PTE/개발 comment 저장 — manifest.issue_comments 갱신 (parquet 불변).
 
-    수정 모드(PIN 검증 완료) 에서만 호출되는 것을 전제로, 여기서도 PIN 을 재검증한다."""
+    편집은 PIN 없이 누구나 가능하다 (CSRF 토큰만 검증)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
     body = request.get_json(force=True, silent=True) or {}
-    password = (body.get("password") or "").strip()
-    if not _password_ok(session, password):
-        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
     comments = body.get("comments")
     if not isinstance(comments, list) or not comments:
         return jsonify({"error": "comments가 비어 있습니다."}), 400

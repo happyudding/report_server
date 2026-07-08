@@ -4,14 +4,39 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
+import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
 from werkzeug.utils import secure_filename
 
-from .honeyform import decode_honeyform_parquet, encode_honeyform_parquet, split_honeyform
+from .honeyform import HoneyformTable, decode_honeyform_parquet, encode_honeyform_parquet, split_honeyform
 from .metrics import build_report_payload
 from .tabs import raw_data as raw_data_tab
+
+# ── decoded tables 인메모리 LRU 캐시 ──────────────────────────────────────────
+# parquet decode+split 이 요청당 ~2.4s 로 /full·raw_data·scatter 등 모든 조회의 고정비라
+# (analysis_key, content_hash) 키로 캐시한다. raw_data 편집은 content_hash 를 갱신하므로
+# 키 자체가 바뀌어 자연 무효화되고, etc/comments 편집은 manifest 만 바꾸므로 캐시가 유효하다
+# (manifest 는 여기 캐시하지 않고 매번 재조회한다).
+_TABLES_CACHE_MAX = 2          # 세션당 df 가 수백 MB 일 수 있어 작게 유지
+_TABLES_CACHE: OrderedDict = OrderedDict()   # (analysis_key, content_hash) -> list[HoneyformTable]
+_TABLES_CACHE_LOCK = threading.Lock()
+
+
+def _clone_table(t: HoneyformTable) -> HoneyformTable:
+    """캐시 원본 보호용 얕은 클론.
+
+    build_report_payload 가 item_columns 를 in-place 필터하므로 리스트/메타 dict 는 복사하고,
+    df/data 는 공유한다 — 호출자는 df/data 를 수정하지 않는다는 계약 (편집 경로는
+    use_cache=False 로 캐시를 우회한다).
+    """
+    return HoneyformTable(
+        source=t.source, file_name=t.file_name, df=t.df,
+        item_columns=list(t.item_columns),
+        tno=dict(t.tno), step=dict(t.step), units=dict(t.units),
+        hilim=dict(t.hilim), lolim=dict(t.lolim), data=t.data)
 
 
 def _canon(obj) -> bytes:
@@ -107,12 +132,17 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     }
 
 
-def _load_tables(session_id: str, *, report_db, upload_root: Path):
+def _load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: bool = True):
     """세션 → analysis_key → parquet 원본 디코드 → HoneyformTable 리스트.
 
     manifest.selected_items 필터는 적용하지 않는다 (build_report_payload 가 이후 그 필터를
     in-place 로 적용하므로, 이 헬퍼는 raw data 조회처럼 전체 item 컬럼이 필요한 호출자에도
     안전하게 재사용된다).
+
+    use_cache=True 면 (analysis_key, content_hash) 키의 LRU 캐시를 사용하고, 반환 tables 는
+    캐시 원본의 클론이다 (df/data 공유 — 수정 금지). df 를 수정하는 편집 경로는
+    use_cache=False 로 호출할 것. manifest 는 content_hash 없이 바뀔 수 있어(etc/comments)
+    캐시하지 않고 매번 재조회한다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -122,6 +152,17 @@ def _load_tables(session_id: str, *, report_db, upload_root: Path):
         raise FileNotFoundError(session_id)
 
     import storage_gateway
+
+    cache_key = (analysis_key, str(session.get("content_hash") or ""))
+    if use_cache:
+        with _TABLES_CACHE_LOCK:
+            cached = _TABLES_CACHE.get(cache_key)
+            if cached is not None:
+                _TABLES_CACHE.move_to_end(cache_key)
+        if cached is not None:
+            manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root=upload_root)
+            return session, [_clone_table(t) for t in cached], manifest
+
     sources, manifest = storage_gateway.load_webreport_sources(analysis_key, upload_root=upload_root)
 
     sources_manifest = manifest.get("sources") or []
@@ -132,11 +173,23 @@ def _load_tables(session_id: str, *, report_db, upload_root: Path):
         source_name = str(source_info.get("name") or f"source_{idx + 1}")
         file_name = str(source_info.get("file_name") or source_name)
         tables.append(split_honeyform(df, source=source_name, file_name=file_name))
+
+    if use_cache:
+        with _TABLES_CACHE_LOCK:
+            _TABLES_CACHE[cache_key] = tables
+            _TABLES_CACHE.move_to_end(cache_key)
+            while len(_TABLES_CACHE) > _TABLES_CACHE_MAX:
+                _TABLES_CACHE.popitem(last=False)
+        return session, [_clone_table(t) for t in tables], manifest
     return session, tables, manifest
 
 
 def load_webreport(session_id: str, *, report_db, upload_root: Path) -> tuple[dict, dict]:
-    """세션 재계산: parquet 원본을 다시 받아 build_report_payload 를 매번 새로 실행한다."""
+    """세션 재계산: build_report_payload 를 새로 실행한다 (tables 는 LRU 캐시 활용).
+
+    Distribution ECDF(대용량)는 항상 payload 에서 제외되고 프런트가 get_distribution 으로
+    지연 로드한다.
+    """
     session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
 
     report = build_report_payload(
@@ -150,6 +203,23 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path) -> tuple[di
     public["has_password"] = bool(public.get("password"))
     public.pop("password", None)
     return public, report
+
+
+def get_distribution(session_id: str, *, report_db, upload_root: Path) -> dict:
+    """Distribution lazy 엔드포인트용 컴팩트 ECDF (전 포인트, 다운샘플 없음).
+
+    /full 의 payload 와 동일하게 manifest.selected_items 필터를 적용한다 — 빠뜨리면
+    distribution_index 와 항목 집합이 어긋난다. tables 는 캐시 클론이라 필터가 안전하다.
+    """
+    from .tabs.distribution import build_distribution_compact
+
+    _, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    selected = {str(v) for v in (manifest.get("selected_items") or []) if str(v)}
+    if selected:
+        for table in tables:
+            table.item_columns = [c for c in table.item_columns if c in selected]
+    all_items = sorted({c for t in tables for c in t.item_columns})
+    return build_distribution_compact(tables, all_items)
 
 
 def get_raw_data_columns(session_id: str, *, report_db, upload_root: Path) -> dict:
@@ -184,7 +254,9 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
     버전관리·undo 없음 — 편집된 source 는 df 기준으로 재인코딩해 기존 analysis_key 의
     web_report_source_<idx> 를 덮어쓴다 (Honey 재업로드 전까지 이전 값은 복구 불가).
     """
-    session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    # apply_raw_data_edits 가 df 를 in-place 수정하므로 캐시 원본 오염 방지 위해 캐시 우회
+    session, tables, manifest = _load_tables(
+        session_id, report_db=report_db, upload_root=upload_root, use_cache=False)
     analysis_key = session.get("analysis_key")
     if not analysis_key:
         raise FileNotFoundError(session_id)
@@ -201,6 +273,10 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
         analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
 
     report_db.update_session(session_id, content_hash=content_hash)
+    # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
+    with _TABLES_CACHE_LOCK:
+        for key in [k for k in _TABLES_CACHE if k[0] == analysis_key]:
+            _TABLES_CACHE.pop(key, None)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
@@ -223,20 +299,13 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
     build_issue_table_rows 가 tables/yield_rows 에서 그때그때 다시 채운다. sources 원본은
     불변이므로 manifest 만 재저장한다 (parquet 재업로드 없음, content_hash 도 그대로).
     """
-    session = report_db.get_session(session_id)
-    if not session:
-        raise KeyError(session_id)
+    session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     analysis_key = session.get("analysis_key")
-    if not analysis_key:
-        raise FileNotFoundError(session_id)
 
     import storage_gateway
-    sources, manifest = storage_gateway.load_webreport_sources(analysis_key, upload_root=upload_root)
 
     all_items = set()
-    for data in sources:
-        df = decode_honeyform_parquet(data)
-        table = split_honeyform(df, source="_", file_name="_")
+    for table in tables:
         all_items.update(table.item_columns)
 
     etc_items = list(manifest.get("etc_items") or [])
