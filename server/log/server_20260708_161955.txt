@@ -1,0 +1,10 @@
+[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260708_161955.txt
+[wsgi] importing Flask ...
+[wsgi] importing blueprints ... (0.17s)
+[wsgi] creating app ... (0.17s)
+[wsgi] app ready in 0.59s
+[wsgi] ===== Accessible URLs =====
+[wsgi] Local (이 PC)               : http://127.0.0.1:8137/pe/report/
+[wsgi] (HOST=127.0.0.1 으로 bind — LAN 노출 안 됨. LAN 접근하려면 HOST 환경변수 제거)
+[wsgi] ===========================
+[wsgi] starting waitress on http://127.0.0.1:8137 (threads=8)

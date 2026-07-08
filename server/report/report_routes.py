@@ -476,6 +476,9 @@ def update_session_content(session_id):
     summary_text, issue_rows 는 S3 JSON 으로 다시 업로드하고, yield_rows 는
     report_analysis_summary 를 통째로 치환한다. analysis_key 는 재계산하지 않는다
     (원본 업로드 식별자로 유지)."""
+    # 세션 수정 기능 비활성화(2026-07-08 사용자 요청). 검색결과 페이지의 '수정' 버튼 제거와
+    # 함께 이 저장 라우트도 차단한다. 삭제(delete)·조회·verify_password 는 그대로 유지.
+    return jsonify({"error": "세션 수정 기능이 비활성화되었습니다."}), 405
     _require_csrf()
     _validate_session_id(session_id)
     body = request.get_json(force=True, silent=True) or {}

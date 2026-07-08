@@ -88,7 +88,10 @@ def _cpk_fail_subjects(cpk_rows):
             worst[subject] = cpk
         elif cpk < worst[subject]:
             worst[subject] = cpk
-    return [(subject, worst[subject]) for subject in order if worst[subject] < _CPK_THRESHOLD]
+    fails = [(subject, worst[subject]) for subject in order if worst[subject] < _CPK_THRESHOLD]
+    # 표의 avg 컬럼(=worst-case cpk) 내림차순으로 정렬(높은 순 위 → 아래).
+    fails.sort(key=lambda sc: sc[1], reverse=True)
+    return fails
 
 
 def build_issue_bin_summary(yield_rows):
@@ -116,28 +119,34 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     sources = [t.source for t in (tables or [])]
     rows = []
 
-    # Yield 섹션은 Bin 당 대표(most-fail TNO) 1행만 표시한다. 정렬은 대표행 avg(yield average)
-    # 내림차순(worst-yield 우선). Bin 전체 TNO 구성은 프런트가 issue_bin_summary 로 드릴다운한다.
-    # Category("Yield")는 섹션 첫 행에만 채우고 이후 행은 ""(프런트가 시각적으로 셀 병합).
-    yield_groups = sorted(build_yield_bin_groups(yield_rows),
-                          key=lambda g: g["rep"].get("avg") or 0, reverse=True)
-    for gi, group in enumerate(yield_groups):
-        rep = group["rep"]
-        bin_value = rep.get("bin")
-        item = rep.get("Item")
-        out = {
-            "Category": "Yield" if gi == 0 else "",
-            "Step": rep.get("step", ""),
-            "Bin": bin_value,
-            "TNO": rep.get("TNO", ""),
-            "Item": item,
-            "avg": rep.get("avg"),
-        }
-        for src in sources:
-            out[f"{src}_yield"] = rep.get(f"{src}_yield")
-        out["Distribution"] = ""
-        out.update(_comment_values(issue_comments, f"Yield|{bin_value}|{item}"))
-        rows.append(out)
+    # Yield 섹션: Bin 당 대표(most-fail TNO) 행 + 그 Bin 의 나머지 fail TNO(detail, 접힘).
+    # 프런트가 대표행 STEP 옆 ▼ 토글로 detail 행을 펼친다(Yield 탭과 동일). 정렬은
+    # build_yield_bin_groups 순서(= Bin 별 fail 비중 큰 순)를 그대로 쓴다. Category("Yield")는
+    # 섹션 첫 행에만 채우고 이후 행은 ""(프런트가 시각적으로 셀 병합).
+    # _grp/_detail/_ndetail 은 프런트 토글 전용 내부 필드(orderColumns 가 화면 컬럼에서 제외).
+    for gi, group in enumerate(build_yield_bin_groups(yield_rows)):
+        group_rows = group["rows"]
+        grp_id = f"y{gi}"
+        for j, gr in enumerate(group_rows):
+            bin_value = gr.get("bin")
+            item = gr.get("Item")
+            out = {
+                "Category": "Yield" if (gi == 0 and j == 0) else "",
+                "Step": gr.get("step", ""),
+                "Bin": bin_value,
+                "TNO": gr.get("TNO", ""),
+                "Item": item,
+                "avg": gr.get("avg"),
+                "_grp": grp_id,
+                "_detail": j > 0,
+            }
+            if j == 0:
+                out["_ndetail"] = len(group_rows) - 1
+            for src in sources:
+                out[f"{src}_yield"] = gr.get(f"{src}_yield")
+            out["Distribution"] = ""
+            out.update(_comment_values(issue_comments, f"Yield|{bin_value}|{item}"))
+            rows.append(out)
 
     cpk_fails = _cpk_fail_subjects(cpk_rows)
     # CPK 구간은 source 컬럼({src}_yield)에 source 별 CPK 값을 담는다(Yield 값 대신).

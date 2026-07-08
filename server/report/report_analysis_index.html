@@ -480,7 +480,6 @@ function renderResults() {
         <td>${fmtDate(r.created_at)}</td>
         <td>
           <div class="btn-row">
-            <button class="btn-mini edit" data-act="edit" data-sid="${esc(r.session_id)}">수정</button>
             <button class="btn-mini danger" data-act="del" data-sid="${esc(r.session_id)}" data-pw="${r.has_password ? 1 : 0}">삭제</button>
           </div>
         </td>
@@ -507,13 +506,6 @@ function renderResults() {
       const sid = row.dataset.sid;
       document.getElementById("loadOverlay").classList.add("show");
       location.href = `/pe/report/view/${sid}`;
-    });
-  });
-  tbody.querySelectorAll("button[data-act='edit']").forEach(b => {
-    b.addEventListener("click", e => {
-      e.stopPropagation();
-      document.getElementById("loadOverlay").classList.add("show");
-      location.href = `/pe/report/view/${b.dataset.sid}?mode=edit`;
     });
   });
   tbody.querySelectorAll("button[data-act='del']").forEach(b => {
