@@ -289,6 +289,24 @@ def web_report_raw_data(session_id):
     return jsonify(result)
 
 
+@report_bp.get("/session/<session_id>/web_report/scatter/<path:subject>")
+def web_report_scatter(session_id, subject):
+    """Distribution 상세용: 항목(subject)의 소스별 전체 측정값(다운샘플 없음) 지연 로드."""
+    _require_web_report_session(session_id)
+    subject = (subject or "").strip()
+    if not subject or len(subject) > 200:
+        abort(400, "invalid subject")
+    try:
+        result = web_report_service.scatter_item(
+            session_id, subject, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report item or session data not found")
+    except Exception as exc:
+        _log.exception("web_report scatter failed for session %s item %s", session_id, subject)
+        abort(500, f"scatter failed: {exc}")
+    return jsonify(result)
+
+
 @report_bp.post("/session/<session_id>/web_report/raw_data/edit")
 def web_report_raw_data_edit(session_id):
     """Raw Data 셀 편집 저장 — 저장된 parquet 원본을 직접 덮어쓴다 (버전관리/undo 없음).

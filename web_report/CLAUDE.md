@@ -82,7 +82,13 @@ UI(체크박스 목록 스타일, 표 컬럼 순서/정렬 화살표/테두리, 
 - **탭 구현 상태 (2026-07-08 기준)**: Yield / CPK / Issue Table / Map Analysis / Fail Bin 은
   계산·렌더 완료 (CPK 탭 렌더 함수 `renderCpk()` 는 report_view.html 에 추가 — web_report 밖
   파일이라 사용자 승인 후 수정함). Raw Data 는 lazy-load 조회/편집 완료. Distribution 은
-  계산은 되지만 프런트가 아직 placeholder 처리 중이라 화면에 안 나온다. summary / raw_data(payload) /
+  산포 탭으로 구현 완료 — `tabs/distribution.py` 가 ECDF(`sheets["Distribution"]`, 갤러리 미니셀 +
+  Issue Table 미니분포 공용)와 함께 `build_distribution_index`(항목별 test_num·worst-case cpk·
+  fail(FAILTNO==TNO 귀속)·status) / `scatter_item`(상세용 전체 측정값)을 공급한다. metrics 가
+  `report["distribution_index"]` 로 내려주고, 상세 전체점은 `GET .../web_report/scatter/<subject>`
+  (report_routes.py, 승인 후 추가)로 지연 로드. 프런트(report_view.html `renderDistribution`)는
+  툴바(전체/cpk<1.33/Fail Only, 기본 cpk<1.33)+가상스크롤 갤러리+Typeahead+카드→상세(CDF+히스토그램)
+  로 렌더. 미니셀만 1000점 다운샘플(상세·통계는 전체점). summary / raw_data(payload) /
   trim_analysis / histogram 빌더는 `return []` 플레이스홀더 (Summary 탭 화면은 프런트가
   Map Analysis + Fail Bin 시트로 자체 구성).
 - **Issue Table comment 저장**: web_report 세션은 legacy 의 `PATCH /content` 를 쓰지 않는다

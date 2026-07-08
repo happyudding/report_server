@@ -166,6 +166,17 @@ def query_raw_data(session_id: str, *, report_db, upload_root: Path, columns,
         tables, columns=columns, search=search, bin_filter=bin_filter, source_filter=source_filter)
 
 
+def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path) -> dict:
+    """Distribution 상세용: 항목의 소스별 전체 측정값(다운샘플 없음) + cpk/status 지연 로드.
+
+    항목이 어떤 소스에도 없으면 KeyError (라우트가 404 처리).
+    """
+    from .tabs.distribution import scatter_item as _scatter_item
+
+    _, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    return _scatter_item(tables, subject)
+
+
 def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
                   client_ip: str = "", user_agent: str = "") -> dict:
     """Raw Data 셀 편집을 저장된 parquet 원본에 그대로 반영한다.

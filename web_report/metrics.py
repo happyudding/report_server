@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from .tabs.cpk import build_cpk_rows
-from .tabs.distribution import build_distribution_rows
+from .tabs.distribution import build_distribution_index, build_distribution_rows
 from .tabs.histogram import build_histogram_rows
 from .tabs.issue_table import build_issue_bin_summary, build_issue_table_rows
 from .tabs.Map_analysis import build_map_analysis_rows
@@ -42,6 +42,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
             "Map Analysis": build_map_analysis_rows(tables),
             "Fail Bin": fail_bin_ranking(yield_rows),
         },
+        "distribution_index": build_distribution_index(tables, cpk_rows),
         "selected_items": sorted(selected_set),
         "requested_sheets": list(sheets or []),
     }
