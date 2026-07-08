@@ -45,5 +45,18 @@ REPORT_LOCK_TTL_SEC = 300
 REPORT_LOCK_POLL_SEC = 0.5
 REPORT_LOCK_MAX_WAIT_SEC = 60
 
+# ── 오래된 세션 자동정리 (retention) ─────────────────────────────────────────
+# created_at 이 RETENTION_DAYS 이전인 세션을 주기적으로 삭제(S3 산출물 + DB 행).
+# 단, is_important=1(중요 표시) 세션은 제외. DRYRUN 이 참이면 실제 삭제 없이
+# 대상만 로그/감사로그에 남긴다 — 실삭제하려면 REPORT_CLEANUP_DRYRUN=0 으로 명시.
+def _bool_env(name, default):
+    v = os.getenv(name)
+    return default if v is None else v.strip().lower() in ("1", "true", "yes", "on")
+
+REPORT_RETENTION_DAYS         = int(os.getenv("REPORT_RETENTION_DAYS", "180"))
+REPORT_CLEANUP_DRYRUN         = _bool_env("REPORT_CLEANUP_DRYRUN", True)
+REPORT_CLEANUP_INTERVAL_HOURS = float(os.getenv("REPORT_CLEANUP_INTERVAL_HOURS", "24"))
+REPORT_CLEANUP_ENABLED        = _bool_env("REPORT_CLEANUP_ENABLED", True)
+
 HONEY_RELEASES_DIR = _path_env("HONEY_RELEASES_DIR", ROOT_DIR / "server" / "releases")
 HONEY_VERSION_JSON = HONEY_RELEASES_DIR / "version.json"

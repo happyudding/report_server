@@ -187,7 +187,8 @@ def session_full(session_id):
         # 프런트가 GET .../web_report/distribution 으로 백그라운드 지연 로드.
         try:
             _, report = web_report_service.load_webreport(
-                session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+                session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+                session=session)
         except FileNotFoundError:
             abort(404, "web_report session data not found")
         except KeyError:
@@ -214,8 +215,9 @@ def session_full(session_id):
         charts = [{"index": i, "url": f"/pe/report/chart/{session_id}/{i}"}
                   for i in range(count)]
     # Issue_table 행별 분포 이미지. 저장소(S3 또는 로컬 폴백)에서 행 인덱스를 조회.
+    # web_report 세션은 issue 이미지 업로드 흐름이 없으므로 S3 왕복 자체를 생략.
     issue_images = []
-    if akey:
+    if akey and session.get("source") != "web_report":
         try:
             for row in storage_gateway.list_issue_image_rows(akey):
                 issue_images.append({"row": int(row),
@@ -229,7 +231,7 @@ def session_full(session_id):
     elif akey:
         if (Path(REPORT_UPLOAD_DIR) / "dist_combined" / f"{akey}.png").exists():
             distribution_url = f"/pe/report/distribution_combined/{session_id}"
-    return jsonify({
+    payload = {
         "session": _public_session(session),
         "summary": report_db.get_summary_by_analysis_key(akey) if akey else [],
         "summary_text": summary_text,
@@ -242,7 +244,14 @@ def session_full(session_id):
         "csv_files": report_db.get_csv_files(akey) if akey else [],
         "objects": objects,
         "annotations": report_db.get_annotations(session_id),
-    })
+    }
+    # web_report payload 가 수 MB 까지 커질 수 있어 /scatter 라우트와 동일하게 gzip 지원.
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    headers = {"Vary": "Accept-Encoding"}
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        body = gzip.compress(body, compresslevel=1)
+        headers["Content-Encoding"] = "gzip"
+    return Response(body, mimetype="application/json", headers=headers)
 
 
 def _require_web_report_session(session_id):
@@ -449,9 +458,41 @@ def delete_session_route(session_id):
         abort(404, "session not found")
     if not _password_ok(session, password):
         return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
+    # 마지막 참조 세션이면 산출물(S3 오브젝트·로컬 폴백 파일)과 관련 DB 행까지 정리.
+    # best-effort — 정리 실패가 세션 삭제 자체를 막지 않는다 (audit 패턴과 동일).
+    akey = session.get("analysis_key")
+    if akey and report_db.count_sessions_for_analysis_key(
+            akey, exclude_session_id=session_id) == 0:
+        try:
+            result = storage_gateway.delete_report_artifacts(
+                akey, upload_root=Path(REPORT_UPLOAD_DIR))
+            for warning in result.get("warnings", []):
+                _log.warning("artifact cleanup (%s): %s", akey, warning)
+            report_db.delete_analysis_rows(akey)
+            web_report_service.invalidate_caches(akey)
+        except Exception:
+            _log.exception("artifact cleanup failed for analysis_key %s", akey)
     report_db.delete_session(session_id)
     _audit("delete", session=session)
     return jsonify({"deleted": True, "session_id": session_id})
+
+
+@report_bp.post("/session/<session_id>/important")
+def set_session_important(session_id):
+    """세션 전역 '중요' 플래그 토글. 켜면 오래된 세션 자동정리에서 제외된다. PIN 검증 필요."""
+    _require_csrf()
+    _validate_session_id(session_id)
+    body = request.get_json(force=True, silent=True) or {}
+    password = (body.get("password") or "").strip()
+    important = 1 if body.get("important") else 0
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    if not _password_ok(session, password):
+        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
+    report_db.update_session(session_id, is_important=important)
+    _audit("edit", session=session, changed_fields="is_important")
+    return jsonify({"ok": True, "session_id": session_id, "is_important": important})
 
 
 @report_bp.post("/session/<session_id>/verify_password")
@@ -635,7 +676,19 @@ def vendor_asset(filename):
     mime = _VENDOR_MIME.get(filename)
     if not mime:
         abort(404)
-    return send_file(_VENDOR_DIR / filename, mimetype=mime)
+    # 사전압축 .gz 가 있으면 그대로 서빙 (plotly.min.js 4.8MB→1.4MB). 요청마다 압축하지
+    # 않도록 파일은 배포 시 미리 만들어 둔다 (vendor 파일 교체 시 .gz 도 함께 재생성할 것).
+    path = _VENDOR_DIR / filename
+    gz_path = _VENDOR_DIR / (filename + ".gz")
+    if gz_path.exists() and "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        resp = make_response(send_file(gz_path, mimetype=mime))
+        resp.headers["Content-Encoding"] = "gzip"
+    else:
+        resp = make_response(send_file(path, mimetype=mime))
+    resp.headers["Vary"] = "Accept-Encoding"
+    # vendor 는 수동 교체 전까지 불변 — 브라우저 캐시로 재방문 시 재다운로드/재검증 제거
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 
 @report_bp.get("/api/history")

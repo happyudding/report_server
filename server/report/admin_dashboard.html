@@ -52,6 +52,7 @@ th, td { padding: 8px 10px; border-bottom: 1px solid #eef0f3; text-align: left; 
 th { background: #fafbfc; font-weight: 600; color: #555; font-size: 12px; }
 tr.empty-row td { text-align: center; color: #999; padding: 30px; }
 td.ua { max-width: 280px; overflow: hidden; text-overflow: ellipsis; color: #888; font-size: 12px; }
+td .host { color: #888; font-size: 12px; }
 td.fields { color: #555; font-size: 12px; }
 td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #555; }
 
@@ -112,13 +113,14 @@ td.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size
           <th>lot_id</th>
           <th>파일명</th>
           <th>변경 필드</th>
+          <th>사용자(PC)</th>
           <th>IP</th>
           <th>User-Agent</th>
           <th>session_id</th>
         </tr>
       </thead>
       <tbody id="tbody">
-        <tr class="empty-row"><td colspan="10">로딩 중…</td></tr>
+        <tr class="empty-row"><td colspan="11">로딩 중…</td></tr>
       </tbody>
     </table>
   </div>
@@ -154,14 +156,14 @@ async function load() {
   params.set("limit", PAGE_SIZE + 1);
   params.set("offset", _page * PAGE_SIZE);
   const tbody = document.getElementById("tbody");
-  tbody.innerHTML = `<tr class="empty-row"><td colspan="10">로딩 중…</td></tr>`;
+  tbody.innerHTML = `<tr class="empty-row"><td colspan="11">로딩 중…</td></tr>`;
   try {
     const res = await fetch("/pe/admin/api/audit?" + params.toString(), { cache: "no-store" });
     const data = await res.json();
     _hasMore = data.length > PAGE_SIZE;
     _rows = data.slice(0, PAGE_SIZE);
   } catch (e) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">조회 실패: ${esc(e)}</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="11">조회 실패: ${esc(e)}</td></tr>`;
     return;
   }
   render();
@@ -172,7 +174,7 @@ function render() {
   document.getElementById("resultCount").textContent =
     `(${_rows.length}건${_hasMore ? "+" : ""}, 페이지 ${_page + 1})`;
   if (!_rows.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">기록이 없습니다.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="11">기록이 없습니다.</td></tr>`;
     renderPager();
     return;
   }
@@ -189,6 +191,7 @@ function render() {
       <td>${esc(r.lot_id || "-")}</td>
       <td>${esc(r.file_name || "-")}</td>
       <td class="fields">${esc(r.changed_fields || "-")}</td>
+      <td>${esc(r.client_user || "-")}${r.client_host ? `<span class="host"> (${esc(r.client_host)})</span>` : ""}</td>
       <td class="mono">${esc(r.client_ip || "-")}</td>
       <td class="ua" title="${esc(r.user_agent || "")}">${esc(r.user_agent || "-")}</td>
       <td class="mono">${esc(r.session_id || "-")}</td>

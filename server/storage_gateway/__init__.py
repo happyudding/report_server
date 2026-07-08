@@ -243,7 +243,15 @@ def load_webreport_sources(analysis_key, upload_root):
     )
     if source_keys and "web_report_manifest" in objs:
         try:
-            sources = [report_s3.download_bytes_from_s3(objs[k]["s3_key"]) for k in source_keys]
+            # 소스가 여러 개면 병렬 다운로드 (직렬 왕복 누적 방지). boto3 client 는 스레드세이프.
+            if len(source_keys) > 1:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=min(4, len(source_keys))) as pool:
+                    sources = list(pool.map(
+                        lambda k: report_s3.download_bytes_from_s3(objs[k]["s3_key"]),
+                        source_keys))
+            else:
+                sources = [report_s3.download_bytes_from_s3(objs[k]["s3_key"]) for k in source_keys]
             manifest = report_s3.download_json_from_s3(objs["web_report_manifest"]["s3_key"])
             return sources, manifest
         except (S3NotConfigured, Exception):
@@ -266,6 +274,75 @@ def load_webreport_sources(analysis_key, upload_root):
     if not sources:
         raise FileNotFoundError(f"web_report parquet sources missing on disk: {analysis_key}")
     return sources, manifest
+
+
+def delete_report_artifacts(analysis_key, upload_root=None) -> dict:
+    """analysis_key 산출물 삭제 (S3 오브젝트 + 로컬 폴백 파일). best-effort.
+
+    세션 삭제에서 마지막 참조일 때만 호출한다. object_info 에 기록된 모든 s3_key 와,
+    object_info 에 기록되지 않는 issue 이미지(키 패턴 기반: <akey>/<row>.png + index.json),
+    로컬 폴백 3경로(web_report/<akey>/, issue_img/<akey>/, dist_combined/<akey>.png)를 지운다.
+    실패는 warnings 로 모아 반환하고 예외를 올리지 않는다 — DB 행 정리
+    (report_db.delete_analysis_rows)는 호출자 몫.
+    """
+    import shutil
+
+    warnings = []
+    upload_root = Path(upload_root or REPORT_UPLOAD_DIR)
+
+    s3_ok = True
+    try:
+        report_s3._require_config()
+    except S3NotConfigured:
+        s3_ok = False
+
+    if s3_ok:
+        try:
+            objs = report_db.get_all_object_infos(analysis_key)
+        except Exception as exc:
+            objs = []
+            warnings.append(f"object_info lookup failed: {exc}")
+        for obj in objs:
+            key = str(obj.get("s3_key") or "").strip()
+            if not key:
+                continue
+            try:
+                report_s3.delete_object_from_s3(key)
+            except Exception as exc:
+                warnings.append(f"S3 delete failed ({key}): {exc}")
+        # issue 이미지는 object_info 미기록 — index 로 행을 열거해 지우고 index 는 마지막에
+        # 지운다 (행 삭제 실패 시 index 가 남아 재시도 가능).
+        try:
+            from ._issue_images import list_rows
+            for row in list_rows(analysis_key):
+                try:
+                    report_s3.delete_object_from_s3(
+                        report_s3.make_issue_image_s3_key(analysis_key, int(row)))
+                except Exception as exc:
+                    warnings.append(f"S3 issue image delete failed (row {row}): {exc}")
+            try:
+                report_s3.delete_object_from_s3(
+                    report_s3.make_issue_image_index_s3_key(analysis_key))
+            except Exception:
+                pass
+        except Exception as exc:
+            warnings.append(f"issue image cleanup failed: {exc}")
+
+    for path in (upload_root / "web_report" / analysis_key,
+                 upload_root / "issue_img" / analysis_key):
+        try:
+            if path.is_dir():
+                shutil.rmtree(path)
+        except Exception as exc:
+            warnings.append(f"local delete failed ({path}): {exc}")
+    png = upload_root / "dist_combined" / f"{analysis_key}.png"
+    try:
+        if png.exists():
+            png.unlink()
+    except Exception as exc:
+        warnings.append(f"local delete failed ({png}): {exc}")
+
+    return {"warnings": warnings}
 
 
 def load_json_object(objects, object_type):

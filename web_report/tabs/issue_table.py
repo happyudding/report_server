@@ -119,7 +119,8 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     sources = [t.source for t in (tables or [])]
     rows = []
 
-    # Yield 섹션: Bin 당 대표(most-fail TNO) 행 + 그 Bin 의 나머지 fail TNO(detail, 접힘).
+    # Yield 섹션: Bin 당 대표(Bin 총합 집계, 식별정보는 most-fail TNO) 행 + 그 Bin 의
+    # 전체 fail TNO 행(detail, 접힘 — most-fail TNO 포함).
     # 프런트가 대표행 STEP 옆 ▼ 토글로 detail 행을 펼친다(Yield 탭과 동일). 정렬은
     # build_yield_bin_groups 순서(= Bin 별 fail 비중 큰 순)를 그대로 쓴다. Category("Yield")는
     # 섹션 첫 행에만 채우고 이후 행은 ""(프런트가 시각적으로 셀 병합).

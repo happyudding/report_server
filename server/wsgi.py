@@ -98,6 +98,9 @@ from plugin import register_report_server
 
 _log(f"creating app ... ({time.perf_counter() - _t0:.2f}s)")
 app = Flask(__name__)
+# 요청 본문 상한 — 미설정 시 무제한이라 대용량 업로드 폭주가 메모리 피크로 직결된다.
+# upload_webreport 는 파일당 512MB 자체 검증만 있으므로 합산 상한을 여기서 건다 (초과 시 413).
+app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH_MB", "2048")) * 1024 * 1024
 register_report_server(app, root_redirect=True)
 
 

@@ -30,12 +30,12 @@ body {
   flex-wrap: wrap;
 }
 .pt-btn {
-  flex: 0 0 160px; height: 64px; border: 2px solid #d0d5dd;
-  border-radius: 10px; background: #fff; cursor: pointer;
-  font-size: 30px; font-weight: 800; color: #555;
+  flex: 0 0 100px; height: 40px; border: 2px solid #d0d5dd;
+  border-radius: 8px; background: #fff; cursor: pointer;
+  font-size: 16px; font-weight: 800; color: #555;
   transition: all .15s;
 }
-.pt-btn[data-pt="SECURITY"] { font-size: 24px; }
+.pt-btn[data-pt="SECURITY"] { font-size: 13px; }
 .pt-btn:hover { border-color: #4a90e2; color: #4a90e2; background: #f0f6ff; }
 .pt-btn.active {
   border-color: #4a90e2; background: #4a90e2; color: #fff;
@@ -51,6 +51,7 @@ body {
 .pt-badge.SECURITY { background: #9333ea; }
 .pt-badge.TCON { background: #0d9488; }
 .pt-badge.default { background: #64748b; }
+.star-important { color: #f59e0b; font-size: 15px; margin-right: 5px; }
 .spacer { flex: 1; }
 
 .honey-dl-btn {
@@ -236,7 +237,7 @@ tr.result-row:hover { background: #f5f8ff; }
     <div class="filter-group search-group">
       <label class="filter-label">검색</label>
       <input type="text" class="filter-input" id="lotIdInput"
-             placeholder="Product / LOT / Revision / Process / EDM / 파일명 검색...">
+             placeholder="Product / LOT / Revision / Process / 파일명 검색...">
       <div class="suggest-box" id="searchSuggest"></div>
     </div>
     <div class="filter-actions">
@@ -260,12 +261,13 @@ tr.result-row:hover { background: #f5f8ff; }
         <th>Process</th>
         <th>LOT ID</th>
         <th>파일명</th>
+        <th>업로더</th>
         <th>업로드날짜</th>
         <th></th>
       </tr>
     </thead>
     <tbody id="resultsTbody">
-      <tr class="empty-row"><td colspan="8">데이터를 불러오는 중...</td></tr>
+      <tr class="empty-row"><td colspan="9">데이터를 불러오는 중...</td></tr>
     </tbody>
   </table>
   <div class="pager" id="pager"></div>
@@ -398,7 +400,7 @@ function applyClientFilter(rows) {
     if (!q) return true;
     const haystack = [
       r.source, r.product_type, r.product, r.revision, r.lot_id,
-      r.process, r.edm_link, r.file_name, r.session_id,
+      r.process, r.file_name, r.session_id, r.uploaded_by, r.client_host,
     ].map(v => String(v || "").toLowerCase()).join(" ");
     return haystack.includes(q);
   });
@@ -449,7 +451,7 @@ async function loadHistory() {
     renderResults();
   } catch (e) {
     document.getElementById("resultsTbody").innerHTML =
-      `<tr class="empty-row"><td colspan="8">로드 실패: ${esc(e.message)}</td></tr>`;
+      `<tr class="empty-row"><td colspan="9">로드 실패: ${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -467,16 +469,17 @@ function renderResults() {
 
   const tbody = document.getElementById("resultsTbody");
   if (!slice.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="8">검색 결과가 없습니다.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">검색 결과가 없습니다.</td></tr>`;
   } else {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row" data-sid="${esc(r.session_id)}">
-        <td>${productTypeBadge(r.product_type)}</td>
+        <td>${r.is_important ? '<span class="star-important" title="중요">★</span>' : ''}${productTypeBadge(r.product_type)}</td>
         <td>${esc(r.product || '-')}</td>
         <td>${esc(r.revision || '-')}</td>
         <td>${esc(r.process || '-')}</td>
         <td>${esc(r.lot_id || '-')}</td>
         <td>${esc(r.file_name || '-')}</td>
+        <td title="${esc(r.client_host || '')}">${esc(r.uploaded_by || '-')}</td>
         <td>${fmtDate(r.created_at)}</td>
         <td>
           <div class="btn-row">

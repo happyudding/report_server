@@ -5,6 +5,7 @@ upload flow. External S3/server-storage branches can replace or extend this
 adapter while preserving the gateway contract.
 """
 import json
+import os
 
 from config import (
     REPORT_S3_ACCESS_KEY,
@@ -56,12 +57,16 @@ def get_s3_client():
     # max_pool_connections: 동시 사용자/스레드가 같은 client 를 공유하므로
     # 기본 10 은 너무 작다. config.py 의 REPORT_S3_MAX_POOL_CONNECTIONS (기본 30) 사용.
     # 풀이 부족하면 추가 요청이 connection 자리가 날 때까지 잠깐 대기 → 사용자간 대기 유발.
+    # connect/read timeout: botocore 기본 60s/60s 는 S3 장애 시 waitress 스레드(기본 8개)를
+    # 장시간 잠식해 서버 전체가 멈춘 것처럼 보이게 한다. 짧게 잡고 실패 시 로컬 폴백에 맡긴다.
     kwargs = {
         "region_name": REPORT_S3_REGION or "us-east-1",
         "config": Config(
             signature_version="s3v4",
             retries={"max_attempts": 3},
             max_pool_connections=REPORT_S3_MAX_POOL_CONNECTIONS,
+            connect_timeout=float(os.getenv("REPORT_S3_CONNECT_TIMEOUT", "5") or 5),
+            read_timeout=float(os.getenv("REPORT_S3_READ_TIMEOUT", "30") or 30),
         ),
     }
     if REPORT_S3_ENDPOINT:
@@ -122,6 +127,12 @@ def download_json_from_s3(key):
         return json.loads(raw.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise S3ObjectCorrupted(f"corrupted JSON at s3://{REPORT_S3_BUCKET}/{key}: {exc}") from exc
+
+
+def delete_object_from_s3(key):
+    """S3 오브젝트 삭제. 실패 시 예외 전파 (호출자가 best-effort 처리)."""
+    client = get_s3_client()
+    client.delete_object(Bucket=REPORT_S3_BUCKET, Key=key)
 
 
 def delete_s3_object_if_corrupted(key):

@@ -100,12 +100,26 @@ def build_yield_rows(tables, fail_counts):
     return rows
 
 
-def build_yield_bin_groups(yield_rows):
-    """Bin 별 그룹(Pass 제외). 각 그룹은 most-fail(avg 최대) 대표 행 + 그 Bin 의 전체 fail 행 목록.
+def _bin_total_row(rows_sorted):
+    """Bin 대표 행: 식별정보(Step/TNO/Item)는 most-fail 행에서, 수치(avg/{src}_yield/{src}_count)
+    는 그 Bin 의 모든 fail TNO 행 합계로 채운 집계 행. 대표 행이 'Bin 별 총합 Yield' 를 보여주고,
+    펼치면 TNO 별 개별 yield 행(most-fail 포함 전체)이 보이도록 하기 위함."""
+    total = dict(rows_sorted[0])
+    for key in rows_sorted[0]:
+        name = str(key)
+        if name.endswith("_count"):
+            total[key] = sum(int(r.get(key) or 0) for r in rows_sorted)
+        elif name == "avg" or name.endswith("_yield"):
+            total[key] = round(sum(float(r.get(key) or 0) for r in rows_sorted), 2)
+    return total
 
-    Yield 시트가 Bin 당 대표(most-fail TNO) 1행만 접힌 상태로 보여주고, 펼치면 rows 전체를
-    보여주는 데 쓴다. Issue Table 의 Bin 집계도 동일 그룹을 쓴다.
-    그룹 정렬은 Bin 총 fail 비중(rows avg 합) 내림차순 = 화면상 worst-yield 우선(= yield 오름차순).
+
+def build_yield_bin_groups(yield_rows):
+    """Bin 별 그룹(Pass 제외). rep = Bin 총합 집계 행, rows = [rep] + 그 Bin 의 전체 fail TNO 행.
+
+    Yield 시트가 Bin 당 대표(총합) 1행만 접힌 상태로 보여주고, 펼치면 rows[1:](모든 TNO 행,
+    most-fail 포함)를 보여주는 데 쓴다. Issue Table 의 Bin 집계도 동일 그룹을 쓴다.
+    그룹 정렬은 Bin 총 fail 비중(avg 합 = 대표행 avg) 내림차순 = 화면상 worst-yield 우선.
     """
     groups_map = {}
     for row in yield_rows or []:
@@ -119,8 +133,9 @@ def build_yield_bin_groups(yield_rows):
     groups = []
     for bin_value, rows in groups_map.items():
         rows_sorted = sorted(rows, key=lambda r: r.get("avg") or 0, reverse=True)
-        groups.append({"bin": bin_value, "rep": rows_sorted[0], "rows": rows_sorted})
-    groups.sort(key=lambda g: sum(r.get("avg") or 0 for r in g["rows"]), reverse=True)
+        total = _bin_total_row(rows_sorted)
+        groups.append({"bin": bin_value, "rep": total, "rows": [total] + rows_sorted})
+    groups.sort(key=lambda g: g["rep"].get("avg") or 0, reverse=True)
     return groups
 
 

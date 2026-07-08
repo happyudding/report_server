@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS report_session (
     lot_id        TEXT,
     password      TEXT,
     is_debug      INTEGER DEFAULT 0,
-    source        TEXT DEFAULT 'xlsx_upload'
+    source        TEXT DEFAULT 'xlsx_upload',
+    is_important  INTEGER DEFAULT 0,
+    uploaded_by   TEXT,
+    client_host   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_report_session_analysis_key
     ON report_session(analysis_key);
@@ -133,6 +136,8 @@ CREATE TABLE IF NOT EXISTS report_audit_log (
     changed_fields TEXT,                 -- edit 시 변경 필드명 콤마조인, 그 외 NULL
     client_ip      TEXT,
     user_agent     TEXT,
+    client_user    TEXT,                 -- 클라이언트 신고 Windows 계정 (upload 만, 위조 가능)
+    client_host    TEXT,                 -- 클라이언트 신고 PC 이름
     result         TEXT DEFAULT 'ok',    -- 'ok' | 'fail'
     created_at     INTEGER NOT NULL
 );
@@ -218,7 +223,7 @@ def _migrate(conn):
         for col in (
             "analysis_key", "content_hash", "error_message",
             "product_type", "process", "product", "revision", "edm_link",
-            "dataset_id", "lot_id", "password",
+            "dataset_id", "lot_id", "password", "uploaded_by", "client_host",
         ):
             if col not in sess_cols:
                 conn.execute(f"ALTER TABLE report_session ADD COLUMN {col} TEXT")
@@ -226,6 +231,8 @@ def _migrate(conn):
             conn.execute("ALTER TABLE report_session ADD COLUMN is_debug INTEGER DEFAULT 0")
         if "source" not in sess_cols:
             conn.execute("ALTER TABLE report_session ADD COLUMN source TEXT DEFAULT 'xlsx_upload'")
+        if "is_important" not in sess_cols:
+            conn.execute("ALTER TABLE report_session ADD COLUMN is_important INTEGER DEFAULT 0")
 
     if not _table_exists(conn, "report_sheet_data"):
         conn.execute("""
@@ -237,6 +244,13 @@ def _migrate(conn):
                 PRIMARY KEY (analysis_key, sheet_name)
             )
         """)
+
+    # report_audit_log: 클라이언트 신고 신원 컬럼 (기존 DB 는 ALTER 필요)
+    if _table_exists(conn, "report_audit_log"):
+        audit_cols = {r[1] for r in conn.execute("PRAGMA table_info(report_audit_log)")}
+        for col in ("client_user", "client_host"):
+            if col not in audit_cols:
+                conn.execute(f"ALTER TABLE report_audit_log ADD COLUMN {col} TEXT")
 
     _migrate_product_type_names(conn)
 
@@ -272,27 +286,60 @@ def _row(row):
 
 def create_session(session_id, file_name, file_path, product_type=None, dataset_id=None,
                    lot_id=None, password=None, is_debug=0, product=None,
-                   process=None, revision=None, edm_link=None, source='xlsx_upload'):
+                   process=None, revision=None, edm_link=None, source='xlsx_upload',
+                   uploaded_by=None, client_host=None):
     now = _now()
     file_path_str = str(file_path) if file_path is not None else None
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO report_session "
             "(session_id, file_name, file_path, product_type, process, product, revision, "
-            " edm_link, dataset_id, lot_id, password, is_debug, source, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            " edm_link, dataset_id, lot_id, password, is_debug, source, uploaded_by, client_host, "
+            " status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
             (session_id, file_name, file_path_str, product_type, process, product, revision,
-             edm_link, dataset_id, lot_id, password, is_debug, source, now, now),
+             edm_link, dataset_id, lot_id, password, is_debug, source, uploaded_by, client_host,
+             now, now),
         )
 
 
-_SESSION_UPDATABLE = {"analysis_key", "content_hash", "status", "error_message", "file_path"}
+_SESSION_UPDATABLE = {"analysis_key", "content_hash", "status", "error_message", "file_path", "is_important"}
 
 
 def delete_session(session_id):
     with get_conn() as conn:
         conn.execute("DELETE FROM report_annotation WHERE session_id=?", (session_id,))
         conn.execute("DELETE FROM report_session WHERE session_id=?", (session_id,))
+
+
+def count_sessions_for_analysis_key(analysis_key, exclude_session_id=None):
+    """analysis_key 를 참조하는 세션 수. 삭제 시 산출물 공유 여부 판단용.
+
+    동일 데이터 재업로드는 같은 analysis_key 를 공유하므로, 산출물(S3/로컬 파일·메타 행)은
+    마지막 참조 세션을 지울 때만 정리해야 한다.
+    """
+    with get_conn() as conn:
+        if exclude_session_id:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM report_session WHERE analysis_key=? AND session_id<>?",
+                (analysis_key, exclude_session_id)).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM report_session WHERE analysis_key=?",
+                (analysis_key,)).fetchone()
+    return int(row[0])
+
+
+def delete_analysis_rows(analysis_key):
+    """analysis_key 에 매달린 산출물 메타 행 삭제 (마지막 참조 세션 삭제 시에만 호출).
+
+    report_audit_log 는 의도적으로 보존한다 (삭제 이력 추적용 메타 스냅샷 포함).
+    """
+    with get_conn() as conn:
+        conn.execute("DELETE FROM report_object_info WHERE analysis_key=?", (analysis_key,))
+        conn.execute("DELETE FROM report_analysis_summary WHERE analysis_key=?", (analysis_key,))
+        conn.execute("DELETE FROM report_sheet_data WHERE analysis_key=?", (analysis_key,))
+        conn.execute("DELETE FROM report_csv_files WHERE analysis_key=?", (analysis_key,))
 
 
 def update_session(session_id, **fields):
@@ -340,14 +387,15 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
     sql = f"""
         SELECT s.session_id, s.file_name, s.product_type, s.process, s.product,
                s.revision, s.edm_link, s.lot_id, s.created_at, s.status, s.dataset_id,
-               s.is_debug, s.source,
+               s.is_debug, s.source, s.uploaded_by, s.client_host,
+               COALESCE(s.is_important, 0) AS is_important,
                CASE WHEN s.password IS NOT NULL THEN 1 ELSE 0 END AS has_password,
                COALESCE(SUM(c.file_size), 0) AS total_file_size
         FROM report_session s
         LEFT JOIN report_csv_files c ON c.analysis_key = s.analysis_key
         WHERE {where}
         GROUP BY s.session_id
-        ORDER BY s.created_at DESC
+        ORDER BY COALESCE(s.is_important, 0) DESC, s.created_at DESC
         LIMIT ?
     """
     with get_conn() as conn:
@@ -355,25 +403,47 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
     return [dict(r) for r in rows]
 
 
+# ── retention / cleanup ───────────────────────────────────────────────────────
+
+def get_expired_sessions(cutoff_epoch):
+    """created_at 이 cutoff 이전이고 중요표시(is_important)가 아닌 세션. 자동정리 대상."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT session_id, analysis_key, product_type, product, lot_id, "
+            "       file_name, created_at "
+            "FROM report_session "
+            "WHERE created_at < ? AND COALESCE(is_important, 0) = 0 "
+            "  AND status IN ('done', 'reused') "
+            "ORDER BY created_at ASC",
+            (cutoff_epoch,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# 참고: analysis_key 공유 판단 count_sessions_for_analysis_key / 공유행 삭제
+# delete_analysis_rows 는 이미 위에 정의돼 있어 자동정리도 그대로 재사용한다.
+
+
 # ── audit log ─────────────────────────────────────────────────────────────────
 
 _AUDIT_COLUMNS = (
     "action", "session_id", "analysis_key", "product_type", "product",
     "lot_id", "file_name", "changed_fields", "client_ip", "user_agent",
-    "result", "created_at",
+    "client_user", "client_host", "result", "created_at",
 )
 
 
 def log_audit(action, session_id=None, analysis_key=None, product_type=None,
               product=None, lot_id=None, file_name=None, changed_fields=None,
-              client_ip=None, user_agent=None, result="ok"):
+              client_ip=None, user_agent=None, client_user=None, client_host=None,
+              result="ok"):
     """업로드/수정/삭제 감사 기록 1행 추가. user_agent 는 과도하게 길면 잘라 저장."""
     if user_agent and len(user_agent) > 500:
         user_agent = user_agent[:500]
     values = (
         action, session_id, analysis_key, product_type, product,
         lot_id, file_name, changed_fields, client_ip, user_agent,
-        result, _now(),
+        client_user, client_host, result, _now(),
     )
     placeholders = ", ".join("?" for _ in _AUDIT_COLUMNS)
     cols = ", ".join(_AUDIT_COLUMNS)
@@ -411,7 +481,7 @@ def get_audit_logs(action=None, session_id=None, q=None, limit=200, offset=0):
     sql = f"""
         SELECT id, action, session_id, analysis_key, product_type, product,
                lot_id, file_name, changed_fields, client_ip, user_agent,
-               result, created_at
+               client_user, client_host, result, created_at
         FROM report_audit_log
         {where}
         ORDER BY created_at DESC, id DESC

@@ -53,6 +53,7 @@ from report_flow import (
 from web_report.honeyform import encode_honeyform_parquet, read_honeyform_file
 import app_settings
 import chart_colors
+import client_identity
 
 # 로컬 리포트 엔진 (pandas/xlwings 의존). 미설치 시 화면 비활성.
 try:
@@ -648,6 +649,7 @@ class HoneyMainWindow(QMainWindow):
         manifest = {
             "sources": sources,
             "meta": meta,
+            "client": client_identity.collect(),
             "selected_items": list(selected or []),
             "sheets": list(sheets or []),
         }

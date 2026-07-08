@@ -119,7 +119,7 @@ body {
 .mfb-wrap { overflow-x: auto; margin-bottom: 18px; }
 .mfb-table { width: auto; min-width: 480px; border-collapse: collapse; font-size: 12px; margin: 0; }
 .mfb-table th, .mfb-table td {
-  border: 1px solid #e3e8f0; padding: 5px 12px; text-align: right; white-space: nowrap;
+  border: 1px solid #b8c4d4; padding: 5px 12px; text-align: right; white-space: nowrap;
 }
 .mfb-table thead th { background: #f6f9ff; color: #445; font-weight: 700; text-align: center; }
 .mfb-table tbody tr:hover { background: transparent; }
@@ -201,6 +201,13 @@ tbody tr:hover { background: #f9fbff; }
   max-height: calc(100vh - var(--sticky-head-h, 96px) - 40px - 24px);
   border: 1px solid #d0d7de; border-radius: 6px;
 }
+/* Win11 Chrome/Edge 오버레이 스크롤바는 스크롤 중에만 나타나 "가로 스크롤이 없는 것처럼"
+   보인다 — wrap 내부 스크롤바를 커스텀으로 그려 항상 보이게 한다. */
+.sheet-wrap.kind-issue::-webkit-scrollbar { height: 12px; width: 12px; }
+.sheet-wrap.kind-issue::-webkit-scrollbar-track { background: #f0f2f5; border-radius: 6px; }
+.sheet-wrap.kind-issue::-webkit-scrollbar-thumb {
+  background: #9aa7b5; border-radius: 6px; border: 2px solid #f0f2f5; }
+.sheet-wrap.kind-issue::-webkit-scrollbar-thumb:hover { background: #7b8a9b; }
 /* 섹션 2행 헤더: 상단행 top:0, 하단행 top:상단행높이(--issue-shead-row1-h, JS 실측). */
 .sheet-table.kind-issue tr.issue-shead-top > th {
   position: sticky; top: 0; z-index: 6; background: #e8eef4; }
@@ -217,6 +224,9 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-issue tbody td:nth-child(3), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(3) { left: 132px; }
 .sheet-table.kind-issue tbody td:nth-child(4), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(4) { left: 222px; }
 .sheet-table.kind-issue td.sheet-subhead { background: #e8eef4 !important; }
+/* Bin(2번째)/Item(4번째) 데이터 셀: 기본 12px 보다 3 크게 + Bold (사용자 요청). */
+.sheet-table.kind-issue tbody td:nth-child(2),
+.sheet-table.kind-issue tbody td:nth-child(4) { font-size: 15px; font-weight: 700; }
 /* 공통 접두어를 뗀 source 헤더: hover 시 전체 이름(title) 확인 가능함을 점선 밑줄로 힌트. */
 .sheet-table th.sheet-src-th[title] { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
 
@@ -271,8 +281,9 @@ tbody tr:hover { background: #f9fbff; }
 .dist-cell { position: relative; height: 240px; background: #fff; border: 1px solid #e0e0e0;
   border-radius: 6px; overflow: hidden; }
 /* Issue Table 미니 분포 셀: 폭은 td(colWidth issue 스케일)가, 높이는 여기서.
-   (예전엔 아래쪽에서 42px 로 덮여 CDF 가 세로로 짤렸음 — 단일 정의로 통합) */
-.dist-cell-mini { height: 140px; }
+   (예전엔 아래쪽에서 42px 로 덮여 CDF 가 세로로 짤렸음 — 단일 정의로 통합)
+   140px → 112px: 사용자 요청으로 0.8배 축소(폭도 colWidth 120→96 로 동시 축소). */
+.dist-cell-mini { height: 112px; }
 .dist-placeholder { position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; color: #bbb; font-size: 12px; }
 .dist-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap;
@@ -490,6 +501,13 @@ tbody tr:hover { background: #f9fbff; }
 .summary-cards { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 24px; }
 .summary-card { flex: 0 0 auto; text-align: center; }
 .summary-card-title { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; }
+/* Summary 탭: Yield / Wafer Map 섹션을 카드(테두리 박스)로 감싼다. */
+.summary-section-card {
+  background: #fff; border: 1px solid #d9dfe6; border-radius: 10px;
+  padding: 14px 16px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.05);
+}
+.summary-section-card .section-title { margin-top: 0; }
+.summary-section-card .mfb-wrap, .summary-section-card .summary-cards { margin-bottom: 0; }
 
 .error-box {
   background: #fef2f2; color: #991b1b; padding: 12px 16px;
@@ -641,6 +659,15 @@ tbody tr:hover { background: #f9fbff; }
 .btn-topbar-del:hover {
   background: #fef2f2; box-shadow: 0 2px 6px rgba(0,0,0,.08); transform: translateY(-1px);
 }
+.btn-topbar-star {
+  padding: 5px 12px; border-radius: 8px; border: 1px solid #f0c869;
+  background: #fff; cursor: pointer; font-size: 12px; color: #b7791f; font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05); transition: all .15s ease;
+}
+.btn-topbar-star:hover {
+  background: #fffbeb; box-shadow: 0 2px 6px rgba(0,0,0,.08); transform: translateY(-1px);
+}
+.btn-topbar-star.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
 
 /* 자동저장 상태 표시 (edit bar 왼쪽) */
 .autosave-dot {
@@ -689,6 +716,7 @@ tbody tr:hover { background: #f9fbff; }
       <span class="meta-inline">로드 중...</span>
     </div>
     <div class="topbar-actions" id="topbarActions">
+      <button class="btn-topbar-star" id="btnImportant" title="중요 표시(오래된 세션 자동삭제에서 제외)">☆ 중요</button>
       <button class="btn-topbar-del"  id="btnDel">삭제</button>
     </div>
   </div>
@@ -914,13 +942,26 @@ function renderMeta(session) {
   ];
   const line2 = [
     `<span class="meta-inline-file" title="${esc(fnameTitle)}"><span class="mk">Filename</span>${esc(fname)}</span>`,
+    `<span class="meta-inline" title="${esc(session.client_host || "")}"><span class="mk">Uploader</span>${esc(session.uploaded_by || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Uploaded</span>${esc(fmtDate(session.created_at))}</span>`,
     `<span class="meta-inline"><span class="mk">Status</span>${esc(session.status || "-")}</span>`,
   ];
   document.getElementById("topbarMeta").innerHTML =
     `<div class="meta-row">${line1.join("")}</div><div class="meta-row">${line2.join("")}</div>`;
+  updateImportantBtn(session);
   syncTabVisibility();
   syncStickyHeadHeight();
+}
+
+function updateImportantBtn(session) {
+  const btn = document.getElementById("btnImportant");
+  if (!btn) return;
+  const on = !!(session && session.is_important);
+  btn.classList.toggle("active", on);
+  btn.textContent = (on ? "★" : "☆") + " 중요";
+  btn.title = on
+    ? "중요 표시됨 — 자동삭제 제외 (클릭 시 해제)"
+    : "중요 표시(오래된 세션 자동삭제에서 제외)";
 }
 
 // web_report 전용 데이터로만 채워지는 탭(Raw Data/CPK/Map Analysis)은 legacy(xlsx_upload)
@@ -1007,7 +1048,7 @@ function colWidth(name, kind) {
   if (n === "step")                     return px(44);
   if (n === "bin")                      return px(44);
   if (n === "tno")                      return px(60);
-  if (n === "distribution")             return px(120);
+  if (n === "distribution")             return px(96);   // 기존 120 의 0.8배
   if (n.endsWith("_count"))             return px(60);
   if (n.endsWith("_yield"))             return px(60);
   if (n === "avg")                      return px(48);
@@ -1095,23 +1136,12 @@ function displayLabel(c) {
   if (n === "avg") return "Avg";
   return headerLabel(c);
 }
-// 여러 source 이름을 공통 접두어(LCP)의 마지막 토큰 경계('_')에서 잘라 "…"+뒤글자 로
-// 축약한다 — 이렇게 하면 이름들이 공통 토큰(예: _sem)을 공유할 때 그 토큰이 모든 라벨에서
-// 같은 위치에 동일하게 나타난다(sample_sem/sample_sem_2 → …_sem/…_sem_2 대신 동일 cut).
-// 최소 5글자는 보이도록 보장하고, 이름이 짧으면 그대로 둔다. hover 로 전체이름 확인.
+// 여러 source 이름을 "…" + 이름 끝 3글자로 축약한다 (사용자 요청 — 소스 이름은 보통
+// 끝부분에서 달라지므로 구분 유지). 이름이 4글자 이하면 그대로 둔다. hover 로 전체이름 확인.
 function abbrevSourceLabels(fulls) {
   if (!fulls || fulls.length < 2) return (fulls || []).map(f => ({ short: f, full: f }));
-  const minName = Math.min(...fulls.map(s => s.length));
-  // 공통 접두어(LCP) 길이
-  let lcp = 0;
-  while (lcp < minName && fulls.every(s => s[lcp] === fulls[0][lcp])) lcp++;
-  // 공통 접두어 안의 마지막 토큰 경계('_') 위치에서 자른다(경계 없으면 접지 않음).
-  let cut = fulls[0].lastIndexOf("_", lcp - 1);
-  if (cut < 0) cut = 0;
-  // 최소 5글자 보장: 가장 짧은 이름이 5글자 미만이 되면 cut 을 앞으로 당긴다.
-  if (minName - cut < 5) cut = Math.max(0, minName - 5);
   return fulls.map(full =>
-    (cut <= 0 || full.length <= cut) ? { short: full, full } : { short: "…" + full.slice(cut), full });
+    (full.length <= 4) ? { short: full, full } : { short: "…" + full.slice(-3), full });
 }
 function buildSheetTableHead(cols) {
   const isAvgCol = c => String(c).trim().toLowerCase() === "avg";
@@ -1883,12 +1913,15 @@ function renderWebSummary() {
   const maps = sheets["Map Analysis"] || [];
   panel.classList.add("viz-root");
   panel.innerHTML =
-    `<div class="section-title small">Yield</div>` + majorFailBinsTableHtml() +
+    `<div class="summary-section-card">` +
+    `<div class="section-title">Yield</div>` + majorFailBinsTableHtml() +
+    `</div>` +
+    `<div class="summary-section-card">` +
     `<div class="section-title">Wafer Map</div><div class="summary-cards">` +
     maps.map((m, i) =>
       `<div class="summary-card"><div class="summary-card-title">${esc(m.source)}</div>` +
       `<div id="mini-wafer-${i}" style="width:170px;height:170px;"></div></div>`).join("") +
-    `</div>`;
+    `</div></div>`;
   // 미니 웨이퍼도 전역 색상 매핑을 써서 Map Analysis/Fail Bin 차트와 같은 bin=같은 색 유지.
   const gColorMap = globalBinColorMap();
   maps.forEach((m, i) => {
@@ -1907,7 +1940,7 @@ function failBinPctAnnotations(x, rows) {
     x: x[i], y: (r.count || 0) / 2,
     text: (typeof r.yield_pct === "number") ? `${r.yield_pct.toFixed(2)}%` : "",
     showarrow: false, xanchor: "center", yanchor: "middle",
-    font: { color: "#fff", size: 10, family: PLOTLY_FONT.family },
+    font: { color: "#fff", size: 13, family: PLOTLY_FONT.family },
   })).filter(a => a.text);
 }
 // x축(Bin·항목명) 라벨 가독성 공통 설정.
@@ -1964,12 +1997,13 @@ function renderPareto(divId, rows) {
 
 // fail_bin_ranking 은 (bin, TNO) 조합별 행이라, 같은 Bin 의 여러 TNO 를 하나로 합쳐
 // Bin 단위로 집계한다(x축이 TNO 가 아니라 Bin 기준이 되도록). count·fail rate 는 합산,
-// item 은 비워 라벨을 "Bin xx" 로 만든다. count 내림차순 정렬.
+// item 은 그 Bin 의 most-fail TNO(입력이 count 내림차순이라 첫 행) Item 명을 대표로 유지해
+// 라벨이 "Bin xx : 항목명" 이 되게 한다. count 내림차순 정렬.
 function aggregateFailBinsByBin(rows) {
   const map = new Map();
   (rows || []).forEach(r => {
     const key = String(r.bin);
-    if (!map.has(key)) map.set(key, { bin: r.bin, item: "", count: 0, yield_pct: 0 });
+    if (!map.has(key)) map.set(key, { bin: r.bin, item: r.item || "", count: 0, yield_pct: 0 });
     const g = map.get(key);
     g.count += (Number(r.count) || 0);
     g.yield_pct += (Number(r.yield_pct) || 0);
@@ -1977,8 +2011,8 @@ function aggregateFailBinsByBin(rows) {
   return [...map.values()].sort((a, b) => b.count - a.count);
 }
 
-// Yield 패널 하단에 Fail bin 차트 추가: ≥0.5% Pareto 콤보 + 나머지 별도 막대.
-// ≥0.5% bin 이 10개 초과면 상위 10개 / 그 외로 분할해 각각 넓은 차트로 표시(항목 라벨 가독성).
+// Yield 패널 하단에 Fail bin 차트 2개 추가: 상위 10 (Fail Yield ≥ 0.5%) + 나머지 전부.
+// 나머지 차트는 상위 10에 못 든 ≥0.5% bin 과 0.5% 미만 bin 을 전부 합쳐 하나로 표시.
 function renderYieldFailBins() {
   const sheets = webReportSheets();
   if (!window.Plotly || !sheets) return;
@@ -1987,29 +2021,22 @@ function renderYieldFailBins() {
   const panel = document.getElementById("panel-yield");
   panel.classList.add("viz-root");
   const major = failBins.filter(r => (r.yield_pct || 0) >= 0.5);
-  const minor = failBins.filter(r => (r.yield_pct || 0) < 0.5);
-  const majorTop = major.length > 10 ? major.slice(0, 10) : major;
-  const majorRest = major.length > 10 ? major.slice(10) : [];
+  // ≥0.5% bin 이 하나도 없으면 폴백으로 count 상위 10개를 첫 차트에 표시.
+  const majorTop = major.length ? major.slice(0, 10) : failBins.slice(0, 10);
+  const rest = failBins.filter(r => !majorTop.includes(r));   // 상위 10 제외 나머지 전부
 
   const chartHtml = (id, h) =>
     `<div class="chart-box chart-box-wide"><div id="${id}" style="width:100%;height:${h}px;"></div></div>`;
-  const topTitle = majorRest.length ? "Fail Bin — 상위 10 (Fail Yield ≥ 0.5%)"
-                                    : "Fail Bin — 누적 (Fail Yield ≥ 0.5%)";
   const wrap = document.createElement("div");
   wrap.innerHTML =
-    `<div class="section-title small">${topTitle}</div>` + chartHtml("yield-pareto", 360) +
-    (majorRest.length
-      ? `<div class="section-title small">Fail Bin — 그 외 (Fail Yield ≥ 0.5%)</div>` +
-        chartHtml("yield-major-rest", 340)
-      : "") +
-    (minor.length
-      ? `<div class="section-title small">Fail Bin — 기타 (&lt; 0.5%)</div>` +
-        chartHtml("yield-minor", 300)
+    `<div class="section-title small">Fail Bin — 상위 10 (Fail Yield ≥ 0.5%)</div>` +
+    chartHtml("yield-pareto", 360) +
+    (rest.length
+      ? `<div class="section-title small">Fail Bin — 나머지</div>` + chartHtml("yield-rest", 340)
       : "");
   panel.appendChild(wrap);
-  renderPareto("yield-pareto", majorTop.length ? majorTop : failBins);
-  if (majorRest.length) renderFailBinBar("yield-major-rest", majorRest);
-  if (minor.length) renderFailBinBar("yield-minor", minor);
+  renderPareto("yield-pareto", majorTop);
+  if (rest.length) renderFailBinBar("yield-rest", rest);
 }
 
 // ── CPK ──────────────────────────────────────────────────────────────────
@@ -3540,6 +3567,35 @@ document.getElementById("btnDel").addEventListener("click", () => {
   openPin("delete");
 });
 
+document.getElementById("btnImportant").addEventListener("click", () => {
+  if (!DATA) return;
+  _importantTarget = !(DATA.session && DATA.session.is_important);  // 토글 목표 상태
+  const needPw = !!(DATA.session && DATA.session.has_password);
+  if (!needPw) { doSetImportant("", _importantTarget); return; }
+  openPin("important");
+});
+
+async function doSetImportant(pin, important) {
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/important`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({ password: pin, important }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      showToast(j.error || "중요 표시 변경 실패");
+      return;
+    }
+    const j = await res.json();
+    if (DATA.session) DATA.session.is_important = j.is_important;
+    updateImportantBtn(DATA.session);
+    showToast(j.is_important ? "중요 표시했습니다." : "중요 표시를 해제했습니다.");
+  } catch (e) {
+    showToast("중요 표시 변경 실패: " + e.message);
+  }
+}
+
 // ── save / cancel ─────────────────────────────────────────────────────────────
 let _dirty = false;        // 수정 모드에서 셀이 변경되면 true
 let _autoSaving = false;   // 자동저장 진행 중 중복 방지
@@ -3680,15 +3736,20 @@ window.addEventListener("beforeunload", e => {
 });
 
 // ── PIN modal ─────────────────────────────────────────────────────────────────
-let _pinPurpose = null;   // "edit" | "delete"
+let _pinPurpose = null;   // "edit" | "delete" | "important"
+let _importantTarget = false;  // "important" 토글 목표 상태
 const PIN_IDS = ["pin0", "pin1", "pin2", "pin3"];
 
 function openPin(purpose) {
   _pinPurpose = purpose;
-  document.getElementById("pinTitle").textContent =
-    purpose === "delete" ? "세션 삭제" : "수정 모드 진입";
-  document.getElementById("pinDesc").textContent =
-    purpose === "delete" ? "삭제하려면 비밀번호를 입력하세요." : "수정하려면 비밀번호를 입력하세요.";
+  const titles = { delete: "세션 삭제", important: "중요 표시 변경", edit: "수정 모드 진입" };
+  const descs = {
+    delete: "삭제하려면 비밀번호를 입력하세요.",
+    important: "중요 표시를 변경하려면 비밀번호를 입력하세요.",
+    edit: "수정하려면 비밀번호를 입력하세요.",
+  };
+  document.getElementById("pinTitle").textContent = titles[purpose] || titles.edit;
+  document.getElementById("pinDesc").textContent = descs[purpose] || descs.edit;
   const confirmBtn = document.getElementById("pinConfirm");
   confirmBtn.textContent = purpose === "delete" ? "삭제" : "확인";
   confirmBtn.classList.toggle("danger", purpose === "delete");
@@ -3708,6 +3769,9 @@ document.getElementById("pinConfirm").addEventListener("click", async () => {
   if (_pinPurpose === "delete") {
     closePin();
     doDelete(pin);
+  } else if (_pinPurpose === "important") {
+    closePin();
+    doSetImportant(pin, _importantTarget);
   } else {
     // 수정: 먼저 검증 후 진입
     try {

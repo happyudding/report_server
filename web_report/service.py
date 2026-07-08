@@ -21,7 +21,7 @@ from .tabs import raw_data as raw_data_tab
 # parquet decode+split 이 요청당 ~2.4s 로 /full·raw_data·scatter 등 모든 조회의 고정비라
 # (analysis_key, content_hash) 키로 캐시한다. raw_data 편집은 content_hash 를 갱신하므로
 # 키 자체가 바뀌어 자연 무효화되고, etc/comments 편집은 manifest 만 바꾸므로 캐시가 유효하다
-# (manifest 는 여기 캐시하지 않고 매번 재조회한다).
+# (manifest 는 아래 _MANIFEST_CACHE 에 별도 캐시, 편집 시 write-through 갱신).
 _TABLES_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_TABLES_CACHE", "4") or 4))
 _TABLES_CACHE: OrderedDict = OrderedDict()   # (analysis_key, content_hash) -> list[HoneyformTable]
 _TABLES_CACHE_LOCK = threading.Lock()        # 아래 파생 캐시 2개도 이 락을 공유 (조작 시간 짧음)
@@ -32,6 +32,20 @@ _DIST_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_DIST_CACHE", "4") or 4))
 _DIST_CACHE: OrderedDict = OrderedDict()     # (analysis_key, content_hash) -> gzip bytes
 _REPORT_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_REPORT_CACHE", "8") or 8))
 _REPORT_CACHE: OrderedDict = OrderedDict()   # (akey, chash, manifest_digest, incl_dist) -> report dict
+
+# manifest 인메모리 캐시 — warm 조회(/full·raw_data 등)마다 발생하던 S3 manifest GET 왕복 제거.
+# 단일 프로세스(waitress 1 process) 전제: manifest 를 바꾸는 코드가 전부 이 모듈이라
+# 저장 성공 직후 write-through(_manifest_cache_put) 로 일관성이 유지된다. 값은 canonical
+# JSON bytes 로 보관하고 조회마다 json.loads 로 새 dict 를 만들어 호출자의 in-place 수정이
+# 캐시를 오염시키지 않는다.
+_MANIFEST_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_MANIFEST_CACHE", "16") or 16))
+_MANIFEST_CACHE: OrderedDict = OrderedDict()  # analysis_key -> canonical manifest bytes
+
+# 콜드 캐시 동시 진입(stampede) 방지 single-flight 락 — 캐시에 없는 같은 세션을 여러
+# 사용자가 동시에 열면 수 초짜리 CPU-bound 계산이 중복 실행되며 GIL 로 서로 밀어내므로,
+# 같은 (종류, akey, chash) 계산은 한 스레드만 수행하고 나머지는 대기 후 캐시를 재확인한다.
+_KEYED_LOCKS: OrderedDict = OrderedDict()
+_KEYED_LOCKS_MAX = 32
 
 
 def _cache_get(cache: OrderedDict, key):
@@ -48,6 +62,46 @@ def _cache_put(cache: OrderedDict, key, value, max_size: int):
         cache.move_to_end(key)
         while len(cache) > max_size:
             cache.popitem(last=False)
+
+
+def _keyed_lock(key) -> threading.Lock:
+    """(종류, ...캐시키) 단위 락을 돌려준다. 레지스트리는 LRU 로 상한 유지."""
+    with _TABLES_CACHE_LOCK:
+        lock = _KEYED_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _KEYED_LOCKS[key] = lock
+        _KEYED_LOCKS.move_to_end(key)
+        while len(_KEYED_LOCKS) > _KEYED_LOCKS_MAX:
+            _KEYED_LOCKS.popitem(last=False)
+    return lock
+
+
+def _manifest_cache_put(analysis_key, manifest: dict):
+    if analysis_key:
+        _cache_put(_MANIFEST_CACHE, analysis_key, _canon(manifest), _MANIFEST_CACHE_MAX)
+
+
+def invalidate_caches(analysis_key) -> None:
+    """akey 산출물이 삭제됐을 때(세션 삭제 등) 인메모리 캐시 전부 정리 — 메모리 회수 +
+    stale manifest 재사용 방지."""
+    if not analysis_key:
+        return
+    with _TABLES_CACHE_LOCK:
+        for cache in (_TABLES_CACHE, _DIST_CACHE, _REPORT_CACHE):
+            for key in [k for k in cache if k[0] == analysis_key]:
+                cache.pop(key, None)
+        _MANIFEST_CACHE.pop(analysis_key, None)
+
+
+def _load_manifest_cached(analysis_key, upload_root: Path) -> dict:
+    blob = _cache_get(_MANIFEST_CACHE, analysis_key)
+    if blob is not None:
+        return json.loads(blob.decode("utf-8"))
+    import storage_gateway
+    manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root=upload_root)
+    _manifest_cache_put(analysis_key, manifest)
+    return manifest
 
 
 def _clone_table(t: HoneyformTable) -> HoneyformTable:
@@ -82,9 +136,30 @@ def _validate_meta(meta: dict) -> dict:
     }
 
 
+def _client_identity(manifest: dict) -> tuple[str, str]:
+    """manifest["client"] 에서 클라이언트 신고 신원 추출 → (uploaded_by, client_host).
+
+    구버전 클라이언트(키 없음)는 ("", "") — 하위호환. 클라 신고값이라 위조 가능
+    (사내망 감사 용도). analysis_key 산출에는 포함되지 않는다.
+    """
+    info = manifest.get("client") or {}
+    if not isinstance(info, dict):
+        return "", ""
+    user = str(info.get("user") or "").strip()[:80]
+    host = str(info.get("host") or "").strip()[:80]
+    domain = str(info.get("domain") or "").strip()[:80]
+    # 도메인 미가입 PC 는 USERDOMAIN == 호스트명 — 중복 표기 생략
+    if domain and user and domain.lower() != host.lower():
+        uploaded_by = f"{domain}\\{user}"
+    else:
+        uploaded_by = user
+    return uploaded_by, host
+
+
 def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_root: Path,
                      client_ip: str = "", user_agent: str = "") -> dict:
     meta = _validate_meta(manifest.get("meta") or {})
+    uploaded_by, client_host = _client_identity(manifest)
     sources_manifest = manifest.get("sources") or []
     selected_items = manifest.get("selected_items") or []
     sheets = manifest.get("sheets") or []
@@ -119,6 +194,7 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     storage_result = storage_gateway.save_webreport_sources(
         analysis_key, content_hash, [item["bytes"] for item in decoded], manifest,
         upload_root=upload_root)
+    _manifest_cache_put(analysis_key, manifest)
 
     session_dir = Path(upload_root) / "web_report" / analysis_key
     report_db.create_session(
@@ -133,6 +209,8 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         lot_id=meta["lot_id"],
         password=meta["password"],
         source="web_report",
+        uploaded_by=uploaded_by or None,
+        client_host=client_host or None,
     )
     report_db.update_session(
         session_id, analysis_key=analysis_key, content_hash=content_hash, status="done")
@@ -142,7 +220,8 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
             "upload", session_id=session_id, analysis_key=analysis_key,
             product_type=meta["product_type"], product=meta["product"],
             lot_id=meta["lot_id"], file_name=meta["file_name"],
-            client_ip=client_ip, user_agent=user_agent)
+            client_ip=client_ip, user_agent=user_agent,
+            client_user=uploaded_by or None, client_host=client_host or None)
     except Exception:
         pass
 
@@ -169,35 +248,16 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     }
 
 
-def _load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: bool = True):
-    """세션 → analysis_key → parquet 원본 디코드 → HoneyformTable 리스트.
+def _download_decode_tables(analysis_key, upload_root: Path):
+    """parquet 원본 다운로드 + 디코드. 반환 (tables, manifest).
 
-    manifest.selected_items 필터는 적용하지 않는다 (build_report_payload 가 이후 그 필터를
-    in-place 로 적용하므로, 이 헬퍼는 raw data 조회처럼 전체 item 컬럼이 필요한 호출자에도
-    안전하게 재사용된다).
-
-    use_cache=True 면 (analysis_key, content_hash) 키의 LRU 캐시를 사용하고, 반환 tables 는
-    캐시 원본의 클론이다 (df/data 공유 — 수정 금지). df 를 수정하는 편집 경로는
-    use_cache=False 로 호출할 것. manifest 는 content_hash 없이 바뀔 수 있어(etc/comments)
-    캐시하지 않고 매번 재조회한다.
+    sources 와 함께 받은 manifest 를 manifest 캐시에 write-through 해 이어지는 warm 조회의
+    S3 manifest GET 을 없앤다.
     """
-    session = report_db.get_session(session_id)
-    if not session:
-        raise KeyError(session_id)
-    analysis_key = session.get("analysis_key")
-    if not analysis_key:
-        raise FileNotFoundError(session_id)
-
     import storage_gateway
 
-    cache_key = (analysis_key, str(session.get("content_hash") or ""))
-    if use_cache:
-        cached = _cache_get(_TABLES_CACHE, cache_key)
-        if cached is not None:
-            manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root=upload_root)
-            return session, [_clone_table(t) for t in cached], manifest
-
     sources, manifest = storage_gateway.load_webreport_sources(analysis_key, upload_root=upload_root)
+    _manifest_cache_put(analysis_key, manifest)
 
     sources_manifest = manifest.get("sources") or []
     tables = []
@@ -207,36 +267,79 @@ def _load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: bo
         source_name = str(source_info.get("name") or f"source_{idx + 1}")
         file_name = str(source_info.get("file_name") or source_name)
         tables.append(split_honeyform(df, source=source_name, file_name=file_name))
+    return tables, manifest
 
+
+def _load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: bool = True,
+                 session: dict | None = None):
+    """세션 → analysis_key → parquet 원본 디코드 → HoneyformTable 리스트.
+
+    manifest.selected_items 필터는 적용하지 않는다 (build_report_payload 가 이후 그 필터를
+    in-place 로 적용하므로, 이 헬퍼는 raw data 조회처럼 전체 item 컬럼이 필요한 호출자에도
+    안전하게 재사용된다).
+
+    use_cache=True 면 (analysis_key, content_hash) 키의 LRU 캐시를 사용하고, 반환 tables 는
+    캐시 원본의 클론이다 (df/data 공유 — 수정 금지). df 를 수정하는 편집 경로는
+    use_cache=False 로 호출할 것. 콜드 미스는 single-flight 락으로 같은 키의 다운로드+디코드를
+    한 스레드만 수행한다. manifest 는 content_hash 없이 바뀔 수 있어(etc/comments) 별도
+    _MANIFEST_CACHE 에 두고 편집 시 write-through 로 갱신한다.
+
+    session: 호출자(라우트)가 이미 조회한 세션 dict 를 주면 재조회를 생략한다.
+    """
+    if session is None:
+        session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    cache_key = (analysis_key, str(session.get("content_hash") or ""))
     if use_cache:
-        _cache_put(_TABLES_CACHE, cache_key, tables, _TABLES_CACHE_MAX)
-        return session, [_clone_table(t) for t in tables], manifest
+        cached = _cache_get(_TABLES_CACHE, cache_key)
+        if cached is None:
+            with _keyed_lock(("tables",) + cache_key):
+                cached = _cache_get(_TABLES_CACHE, cache_key)
+                if cached is None:
+                    tables, manifest = _download_decode_tables(analysis_key, upload_root)
+                    _cache_put(_TABLES_CACHE, cache_key, tables, _TABLES_CACHE_MAX)
+                    return session, [_clone_table(t) for t in tables], manifest
+        manifest = _load_manifest_cached(analysis_key, upload_root)
+        return session, [_clone_table(t) for t in cached], manifest
+
+    tables, manifest = _download_decode_tables(analysis_key, upload_root)
     return session, tables, manifest
 
 
-def load_webreport(session_id: str, *, report_db, upload_root: Path) -> tuple[dict, dict]:
+def load_webreport(session_id: str, *, report_db, upload_root: Path,
+                   session: dict | None = None) -> tuple[dict, dict]:
     """세션 조회: build_report_payload 결과를 (analysis_key, content_hash, manifest 해시)
     키로 캐시한다 — manifest 해시가 키에 들어가므로 comments/etc 편집은 자연 무효화되고,
     raw_data 편집은 content_hash 변경으로 무효화된다. 반환 report 는 캐시 공유 객체 —
-    호출자는 읽기 전용(jsonify 직렬화)으로만 쓸 것.
+    호출자는 읽기 전용(jsonify 직렬화)으로만 쓸 것. 콜드 미스 계산은 single-flight 락으로
+    중복 실행을 막는다. session 은 라우트가 이미 조회한 세션 dict 전달용(재조회 생략).
 
     Distribution ECDF(대용량)는 항상 payload 에서 제외되고 프런트가 get_distribution 으로
     지연 로드한다.
     """
-    session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    session, tables, manifest = _load_tables(
+        session_id, report_db=report_db, upload_root=upload_root, session=session)
 
     cache_key = (session.get("analysis_key"), str(session.get("content_hash") or ""),
                  hashlib.sha256(_canon(manifest)).hexdigest())
     report = _cache_get(_REPORT_CACHE, cache_key)
     if report is None:
-        report = build_report_payload(
-            tables,
-            selected_items=manifest.get("selected_items") or [],
-            sheets=manifest.get("sheets") or [],
-            etc_items=manifest.get("etc_items") or [],
-            issue_comments=manifest.get("issue_comments") or {},
-        )
-        _cache_put(_REPORT_CACHE, cache_key, report, _REPORT_CACHE_MAX)
+        with _keyed_lock(("report",) + cache_key):
+            report = _cache_get(_REPORT_CACHE, cache_key)
+            if report is None:
+                report = build_report_payload(
+                    tables,
+                    selected_items=manifest.get("selected_items") or [],
+                    sheets=manifest.get("sheets") or [],
+                    etc_items=manifest.get("etc_items") or [],
+                    issue_comments=manifest.get("issue_comments") or {},
+                )
+                _cache_put(_REPORT_CACHE, cache_key, report, _REPORT_CACHE_MAX)
     public = dict(session)
     public["has_password"] = bool(public.get("password"))
     public.pop("password", None)
@@ -278,11 +381,15 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> b
     blob = _cache_get(_DIST_CACHE, cache_key)
     if blob is not None:
         return blob
-    compact = get_distribution(session_id, report_db=report_db, upload_root=upload_root)
-    blob = gzip.compress(
-        json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-        compresslevel=1)
-    _cache_put(_DIST_CACHE, cache_key, blob, _DIST_CACHE_MAX)
+    with _keyed_lock(("dist",) + cache_key):
+        blob = _cache_get(_DIST_CACHE, cache_key)
+        if blob is not None:
+            return blob
+        compact = get_distribution(session_id, report_db=report_db, upload_root=upload_root)
+        blob = gzip.compress(
+            json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+            compresslevel=1)
+        _cache_put(_DIST_CACHE, cache_key, blob, _DIST_CACHE_MAX)
     return blob
 
 
@@ -387,6 +494,7 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
 
     storage_result = storage_gateway.save_webreport_manifest(
         analysis_key, manifest, upload_root=upload_root)
+    _manifest_cache_put(analysis_key, manifest)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
@@ -428,7 +536,7 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
         raise ValueError(f"too many comment entries ({len(comments)} > {_COMMENT_MAX_ITEMS})")
 
     import storage_gateway
-    manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root=upload_root)
+    manifest = _load_manifest_cached(analysis_key, upload_root)
 
     saved = dict(manifest.get("issue_comments") or {})
     changed = 0
@@ -459,6 +567,7 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
         manifest["issue_comments"] = saved
         storage_result = storage_gateway.save_webreport_manifest(
             analysis_key, manifest, upload_root=upload_root)
+        _manifest_cache_put(analysis_key, manifest)
         try:
             report_db.log_audit(
                 "edit", session_id=session_id, analysis_key=analysis_key,
