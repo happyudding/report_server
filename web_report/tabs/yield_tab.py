@@ -125,16 +125,31 @@ def build_yield_bin_groups(yield_rows):
 
 
 def yield_overview(tables, yield_rows):
-    """Yield 탭 상단 요약 박스: 전체 pass/fail/total count + 종합 yield%.
+    """Yield 탭 상단 요약 박스: 전체 pass/fail/total count + 종합 yield% + 소스별 수율.
 
     yield_rows[0] 은 build_yield_rows 가 항상 추가하는 Pass 행이므로 그 값을 소스별로 합산한다.
+    by_source: 소스마다 {source, yield_pct, pass, fail, total} (Total Yield 소스별 표시용).
     """
     total = sum(len(t.data) for t in tables)
     pass_row = yield_rows[0] if yield_rows else {}
     passed = sum(int(pass_row.get(f"{t.source}_count") or 0) for t in tables)
     failed = max(total - passed, 0)
     yield_pct = round(passed / total * 100.0, 2) if total else 0.0
-    return {"yield_pct": yield_pct, "pass": passed, "fail": failed, "total": total}
+
+    by_source = []
+    for t in tables:
+        t_total = len(t.data)
+        t_pass = int(pass_row.get(f"{t.source}_count") or 0)
+        by_source.append({
+            "source": t.source,
+            "yield_pct": round(t_pass / t_total * 100.0, 2) if t_total else 0.0,
+            "pass": t_pass,
+            "fail": max(t_total - t_pass, 0),
+            "total": t_total,
+        })
+
+    return {"yield_pct": yield_pct, "pass": passed, "fail": failed, "total": total,
+            "by_source": by_source}
 
 
 def _row_total_count(row):

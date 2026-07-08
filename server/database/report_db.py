@@ -146,7 +146,7 @@ _SUMMARY_COLUMNS = (
     "lsl", "usl", "unit", "created_at",
 )
 
-_PRODUCT_TYPE_NAMES = ("MDDI", "PDDI", "PMIC", "SECURITY")
+_PRODUCT_TYPE_NAMES = ("MDDI", "PDDI", "PMIC", "SECURITY", "TCON")
 
 
 def _now():

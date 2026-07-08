@@ -1,0 +1,23 @@
+[wsgi] console log file: F:\COINAPI\report_server\server\log\server_20260708_112004.txt
+[wsgi] importing Flask ...
+[wsgi] importing blueprints ... (0.14s)
+[wsgi] creating app ... (0.14s)
+[wsgi] app ready in 0.53s
+[wsgi] ===== Accessible URLs =====
+[wsgi] Local (이 PC)               : http://127.0.0.1:8138/pe/report/
+[wsgi] LAN (같은 네트워크 다른 PC) : http://192.168.45.2:8138/pe/report/
+[wsgi] ** 처음 외부 PC 에서 접근 시 Windows 방화벽 허용 필요할 수 있음:
+[wsgi]    New-NetFirewallRule -DisplayName "report-server 8138" -Direction Inbound -LocalPort 8138 -Protocol TCP -Action Allow
+[wsgi] ===========================
+[wsgi] starting server on http://0.0.0.0:8138 (debug=False)
+ * Serving Flask app 'wsgi'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:8138
+ * Running on http://192.168.45.2:8138
+Press CTRL+C to quit
+127.0.0.1 - - [08/Jul/2026 11:20:08] "GET /pe/report/view/1783408915_e4ab0e HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 11:20:08] "GET /pe/report/session/1783408915_e4ab0e/full HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 11:20:08] "GET /pe/report/view/1781005302_c2aeb7 HTTP/1.1" 200 -
+127.0.0.1 - - [08/Jul/2026 11:20:08] "GET /pe/report/session/1781005302_c2aeb7/full HTTP/1.1" 200 -
