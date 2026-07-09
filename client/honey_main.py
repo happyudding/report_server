@@ -140,8 +140,9 @@ class SlideInPanel(QWidget):
         lbl = QLabel(title)
         lbl.setObjectName("slideTitle")
         btn_close = QToolButton()
-        btn_close.setText("✕")
+        btn_close.setText("◀")
         btn_close.setObjectName("slideClose")
+        btn_close.setToolTip("왼쪽으로 밀어 넣기")
         btn_close.clicked.connect(self.hide_animated)
         h.addWidget(lbl)
         h.addStretch(1)
@@ -481,14 +482,37 @@ class HoneyMainWindow(QMainWindow):
         self.slide_controls = SlideInPanel(
             self.browser_panel, container, "입력 파일 / 설정", width=460)
 
+    # 하단 로그 dock 높이 (접힘: 한 줄 / 펼침: 넉넉히)
+    _LOG_LINE_H = 26
+    _LOG_COLLAPSED_DOCK_H = 88
+    _LOG_EXPANDED_DOCK_H = 260
+
     def _build_log_dock(self, QDockWidget, QWidget, QVBoxLayout):
-        """Status/Log 를 하단 창(dock)으로 이동."""
+        """Status/Log 를 하단 창(dock)으로. 기본은 각 한 줄로 얇게,
+        확대 버튼(⤢)으로 로그 영역을 펼친다."""
+        from PyQt5.QtWidgets import QHBoxLayout, QToolButton
+
         container = QWidget()
         v = QVBoxLayout(container)
-        v.setContentsMargins(8, 4, 8, 6)
-        v.setSpacing(4)
-        v.addWidget(self.lbl_progress_status)
-        v.addWidget(self.progress_status)
+        v.setContentsMargins(8, 2, 8, 4)
+        v.setSpacing(2)
+
+        # Status 한 줄 (라벨 + 진행바 + 확대 버튼)
+        status_row = QHBoxLayout()
+        status_row.setSpacing(6)
+        status_row.addWidget(self.lbl_progress_status)
+        self.progress_status.setFixedHeight(self._LOG_LINE_H - 4)
+        status_row.addWidget(self.progress_status, 1)
+        self._btn_log_expand = QToolButton()
+        self._btn_log_expand.setText("⤢")
+        self._btn_log_expand.setToolTip("로그 확대")
+        self._btn_log_expand.clicked.connect(self._toggle_log_expand)
+        status_row.addWidget(self._btn_log_expand)
+        v.addLayout(status_row)
+
+        # Log 한 줄 (기본), 확대 시 펼침
+        self.txt_summary.setMinimumHeight(0)
+        self.txt_summary.setMaximumHeight(self._LOG_LINE_H)
         v.addWidget(self.txt_summary)
 
         dock = QDockWidget("Status / Log", self)
@@ -496,7 +520,24 @@ class HoneyMainWindow(QMainWindow):
         dock.setWidget(container)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
         self.dock_log = dock
-        self.resizeDocks([dock], [170], Qt.Vertical)
+        self._log_expanded = False
+        self.resizeDocks([dock], [self._LOG_COLLAPSED_DOCK_H], Qt.Vertical)
+
+    def _toggle_log_expand(self):
+        """하단 로그 영역 확대/축소 토글."""
+        self._log_expanded = not self._log_expanded
+        if self._log_expanded:
+            self.txt_summary.setMaximumHeight(16777215)
+            self.txt_summary.setMinimumHeight(120)
+            self._btn_log_expand.setText("⤡")
+            self._btn_log_expand.setToolTip("로그 축소")
+            self.resizeDocks([self.dock_log], [self._LOG_EXPANDED_DOCK_H], Qt.Vertical)
+        else:
+            self.txt_summary.setMinimumHeight(0)
+            self.txt_summary.setMaximumHeight(self._LOG_LINE_H)
+            self._btn_log_expand.setText("⤢")
+            self._btn_log_expand.setToolTip("로그 확대")
+            self.resizeDocks([self.dock_log], [self._LOG_COLLAPSED_DOCK_H], Qt.Vertical)
 
     def _show_controls(self):
         """입력 창을 슬라이드로 띄운다 (File Open 시 호출)."""
