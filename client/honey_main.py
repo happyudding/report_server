@@ -450,7 +450,7 @@ class HoneyMainWindow(QMainWindow):
         self.setCentralWidget(self.browser_panel)
 
         self._build_controls_panel(QWidget, QVBoxLayout, QHBoxLayout)
-        self._build_log_dock(QDockWidget, QWidget, QVBoxLayout)
+        self._build_log_dock(QDockWidget, QWidget)
         self._menu_bar_actions()
         self._icon_sidebar(QAction, QToolBar)
 
@@ -487,35 +487,33 @@ class HoneyMainWindow(QMainWindow):
     _LOG_COLLAPSED_DOCK_H = 88
     _LOG_EXPANDED_DOCK_H = 260
 
-    def _build_log_dock(self, QDockWidget, QWidget, QVBoxLayout):
-        """Status/Log 를 하단 창(dock)으로. 기본은 각 한 줄로 얇게,
-        확대 버튼(⤢)으로 로그 영역을 펼친다."""
+    def _build_log_dock(self, QDockWidget, QWidget):
+        """Status(왼쪽)·Log(오른쪽)를 한 줄에 배치한 하단 창(dock).
+        제목표시줄 없음. 확대 버튼(⤢)으로 로그 영역을 펼친다."""
         from PyQt5.QtWidgets import QHBoxLayout, QToolButton
 
         container = QWidget()
-        v = QVBoxLayout(container)
-        v.setContentsMargins(8, 2, 8, 4)
-        v.setSpacing(2)
+        row = QHBoxLayout(container)
+        row.setContentsMargins(8, 2, 8, 2)
+        row.setSpacing(8)
 
-        # Status 한 줄 (라벨 + 진행바 + 확대 버튼)
-        status_row = QHBoxLayout()
-        status_row.setSpacing(6)
-        status_row.addWidget(self.lbl_progress_status)
+        row.addWidget(self.lbl_progress_status, 0, Qt.AlignVCenter)
         self.progress_status.setFixedHeight(self._LOG_LINE_H - 4)
-        status_row.addWidget(self.progress_status, 1)
+        self.progress_status.setFixedWidth(160)
+        row.addWidget(self.progress_status, 0, Qt.AlignVCenter)
+
+        self.txt_summary.setMinimumHeight(0)
+        self.txt_summary.setMaximumHeight(self._LOG_LINE_H)
+        row.addWidget(self.txt_summary, 1)
+
         self._btn_log_expand = QToolButton()
         self._btn_log_expand.setText("⤢")
         self._btn_log_expand.setToolTip("로그 확대")
         self._btn_log_expand.clicked.connect(self._toggle_log_expand)
-        status_row.addWidget(self._btn_log_expand)
-        v.addLayout(status_row)
+        row.addWidget(self._btn_log_expand, 0, Qt.AlignVCenter)
 
-        # Log 한 줄 (기본), 확대 시 펼침
-        self.txt_summary.setMinimumHeight(0)
-        self.txt_summary.setMaximumHeight(self._LOG_LINE_H)
-        v.addWidget(self.txt_summary)
-
-        dock = QDockWidget("Status / Log", self)
+        dock = QDockWidget(self)
+        dock.setTitleBarWidget(QWidget())   # 제목표시줄 제거
         dock.setAllowedAreas(Qt.AllDockWidgetAreas)
         dock.setWidget(container)
         self.addDockWidget(Qt.BottomDockWidgetArea, dock)
