@@ -186,6 +186,13 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.cpk-sheet tbody tr:nth-child(even) td:first-child,
 .sheet-table.cpk-sheet tbody tr:nth-child(even) td:last-child { background: #f7f9fb; }
 .sheet-table.cpk-sheet td.cpk-warn { background: #fff3bf !important; }
+/* Limit 계산 모드: 체크박스 열(1번째)·subject 열(2번째)을 좌측 2단 고정 */
+.sheet-table.cpk-sheet .cpk-sel-col { width: 34px; min-width: 34px; text-align: center; }
+.sheet-table.cpk-sheet.has-select th:nth-child(2),
+.sheet-table.cpk-sheet.has-select td:nth-child(2) { position: sticky; left: 34px; z-index: 2; background: #fff; }
+.sheet-table.cpk-sheet.has-select thead th:nth-child(2) { z-index: 4; background: #e8eef4; }
+.sheet-table.cpk-sheet.has-select tbody tr:nth-child(even) td:nth-child(2) { background: #f7f9fb; }
+.sheet-table.cpk-sheet td.cpk-target { background: #e7f0ff; }
 .cpk-pager {
   display: flex; align-items: center; gap: 12px; margin: 4px 0 18px;
   font-size: 12px; color: #555;
@@ -289,6 +296,32 @@ tbody tr:hover { background: #f9fbff; }
 .dist-cell-mini { height: 112px; }
 .dist-placeholder { position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; color: #bbb; font-size: 12px; }
+
+/* ── Issue Table Map 미니셀 (dist 미니셀과 동일 규격) + 소스별 펼치기 팝오버 ────── */
+.map-plot { width: 100%; height: 100%; }
+.map-cell-mini { position: relative; height: 112px; background: #fff; border: 1px solid #e0e0e0;
+  border-radius: 6px; overflow: hidden; }
+.btn-map-expand { position: absolute; top: 2px; right: 2px; z-index: 2;
+  border: 1px solid #cbd2da; background: rgba(255,255,255,.85); color: #445;
+  border-radius: 4px; font-size: 10px; line-height: 1; padding: 1px 3px; cursor: pointer; }
+.btn-map-expand:hover { background: #eef2f7; }
+.map-expand-pop { display: flex; gap: 8px; padding: 8px; z-index: 200;
+  background: #fff; border: 1px solid #cbd2da; border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.18); overflow-x: auto; }
+.map-exp-item { flex: 0 0 auto; }
+.map-exp-title { font-size: 11px; color: #475467; margin-bottom: 4px; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+.map-exp-plot { width: 220px; height: 220px; }
+
+/* 행별 산포·Map 숨기기 토글(Item 셀 안 아주 작은 버튼)과 숨김 상태 셀 접힘 */
+.btn-hide-dist { border: none; background: transparent; color: #98a2b3; cursor: pointer;
+  font-size: 11px; line-height: 1; padding: 0 2px; vertical-align: middle; }
+.btn-hide-dist:hover { color: #475467; }
+tr.issue-row-hidden .dist-cell-mini,
+tr.issue-row-hidden .map-cell-mini { height: auto; min-height: 0; border: none; background: transparent; }
+tr.issue-row-hidden .dist-plot,
+tr.issue-row-hidden .map-plot,
+tr.issue-row-hidden .btn-map-expand { display: none; }
 .dist-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap;
   position: sticky; top: var(--sticky-head-h, 96px); z-index: 90; background: #fff; padding: 6px 0; }
 .distseg-group { display: inline-flex; border: 1px solid #d0d5dd; border-radius: 6px; overflow: hidden; }
@@ -553,6 +586,12 @@ tbody tr:hover { background: #f9fbff; }
   font-size: 12px; min-width: 220px;
 }
 .cpk-toolbar input:focus { border-color: #4a90e2; outline: none; }
+.cpk-toolbar .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+.cpk-target-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 12px; color: #555; }
+.cpk-target-bar input[type="number"] {
+  width: 74px; padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 4px; font-size: 12px;
+}
+.cpk-target-bar input[type="number"]:focus { border-color: #4a90e2; outline: none; }
 .btn-del-row {
   border: none; background: transparent; color: #dc2626;
   font-size: 16px; cursor: pointer; line-height: 1; padding: 0 6px;
@@ -730,7 +769,6 @@ tbody tr:hover { background: #f9fbff; }
     <button class="tab" data-tab="cpk">CPK</button>
     <button class="tab" data-tab="issues">Issue Table</button>
     <button class="tab" data-tab="distribution">Distribution</button>
-    <button class="tab" data-tab="raw-data">Raw Data</button>
     <button class="tab" data-tab="trim-analysis">Trim Analysis</button>
     <button class="tab" data-tab="map-analysis">Map Analysis</button>
   </div>
@@ -967,9 +1005,10 @@ function updateImportantBtn(session) {
     : "중요 표시(오래된 세션 자동삭제에서 제외)";
 }
 
-// web_report 전용 데이터로만 채워지는 탭(Raw Data/CPK/Map Analysis)은 legacy(xlsx_upload)
+// web_report 전용 데이터로만 채워지는 탭(CPK/Map Analysis)은 legacy(xlsx_upload)
 // 세션에서 항상 빈 화면이므로 탭 버튼 자체를 숨긴다. 숨긴 탭이 활성 상태였으면 Summary 로 전환.
-const WEB_REPORT_ONLY_TABS = ["raw-data", "cpk", "map-analysis"];
+// (Raw Data 탭은 제거됨 — rawdata 편집은 Honey 사이드바 'Rawdata 수정'(Excel) 으로 이관.)
+const WEB_REPORT_ONLY_TABS = ["cpk", "map-analysis"];
 function syncTabVisibility() {
   const web = isWebReportSession();
   let hidActive = false;
@@ -1051,6 +1090,7 @@ function colWidth(name, kind) {
   if (n === "step")                     return px(44);
   if (n === "bin")                      return px(44);
   if (n === "tno")                      return px(60);
+  if (n === "map")                      return px(96);   // Distribution 과 동일 폭
   if (n === "distribution")             return px(96);   // 기존 120 의 0.8배
   if (n.endsWith("_count"))             return px(60);
   if (n.endsWith("_yield"))             return px(60);
@@ -1067,6 +1107,22 @@ function colWidth(name, kind) {
 function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNaN(+v); }
 
 function isDistCol(c) { return String(c || "").toLowerCase() === "distribution"; }
+function isMapCol(c) { return String(c || "").toLowerCase() === "map"; }
+
+// Issue Table 에서 행별로 산포·Map 셀을 접은(숨긴) 행들의 식별키(issueRowKey) 집합.
+// 재렌더(모드전환/ETC편집/세션재로드) 시 이 집합을 다시 읽어 초기 숨김 상태를 복원한다.
+const issueHiddenRows = new Set();
+// tr class 문자열에 추가 클래스를 안전하게 주입(class 속성이 없으면 새로 만든다).
+function withRowClass(trAttr, extra) {
+  if (!extra) return trAttr;
+  if (/class="/.test(trAttr)) return trAttr.replace(/class="/, `class="${extra} `);
+  return ` class="${extra}"` + trAttr;
+}
+// web_report Map Analysis 소스(웨이퍼) 개수 — 2개 이상일 때만 Map 셀 펼치기 버튼 노출.
+function mapSourceCount() {
+  const maps = (webReportSheets() || {})["Map Analysis"];
+  return Array.isArray(maps) ? maps.length : 0;
+}
 
 // 열 순서 보정: 고정 prefix 컬럼(step/bin/tno/item, issue 는 category 포함 avg 까지)
 // → 지정 순서로 맨 앞에 배치(대소문자 무시), comment 류 → 최우측. 나머지 상대순서 유지.
@@ -1106,15 +1162,17 @@ function orderColumns(cols, kind) {
   }
 
   if (kind === "issue") {
-    // 식별컬럼 뒤: Distribution → Avg → source별 yield 순. (Avg 는 yield 그룹 헤더 아래로 묶임)
+    // 식별컬럼 뒤: Map → Distribution → Avg → source별 yield 순. (Avg 는 yield 그룹 헤더 아래로 묶임)
+    const isMap = c => String(c).trim().toLowerCase() === "map";
     const isDist = c => String(c).trim().toLowerCase() === "distribution";
     const isAvgCol = c => String(c).trim().toLowerCase() === "avg";
     const isYieldCol = c => /_yield$/i.test(String(c));
+    const map = rest.filter(isMap);
     const dist = rest.filter(isDist);
     const avg = rest.filter(isAvgCol);
     const yields = rest.filter(isYieldCol);
-    const others = rest.filter(c => !isDist(c) && !isAvgCol(c) && !isYieldCol(c));
-    rest = others.concat(dist).concat(avg).concat(yields);
+    const others = rest.filter(c => !isMap(c) && !isDist(c) && !isAvgCol(c) && !isYieldCol(c));
+    rest = others.concat(map).concat(dist).concat(avg).concat(yields);
   }
 
   return rest.concat(comments);
@@ -1358,12 +1416,29 @@ function renderSheetTable(rows, opts) {
   const renderDataRowTr = (r, ri) => {
     const subhead = (opts.kind === "yield" && isHeaderLikeRow(r, cols))
       || (opts.kind === "issue" && isCpkSubheadRow(r));
+    // 이 행이 속한 섹션·행식별키·산포/Map 숨김 여부(Issue Table 전용).
+    const issueRowSec = opts.kind === "issue" ? rowSection[ri] : "";
+    const issueRowKeyVal = (opts.kind === "issue" && !subhead) ? issueRowKey(r, issueRowSec) : "";
+    const rowHidden = !!issueRowKeyVal && issueHiddenRows.has(issueRowKeyVal);
     const tds = cols.map((c, ci) => {
       const v = r ? r[c] : "";
       let txt = (v === null || v === undefined) ? "" : String(v);
       if (subhead && txt.trim().toLowerCase() === "cpk") txt = "CPK";
       const isEmpty = txt === "";
       const isNum = isNumVal(v);
+      // Map 열: 해당 행 Bin 만 원색·나머지 회색·숫자 제거한 웨이퍼(있는 Yield/ETC 행). 없으면 빈 칸.
+      if (isMapCol(c)) {
+        const binv = r && (r["Bin"] ?? r["bin"]);
+        const hasBin = String(binv ?? "").trim() !== "";
+        if (opts.kind === "issue" && !subhead && hasBin
+          && (issueRowSec === "Yield" || issueRowSec === "ETC")) {
+          const expandBtn = (mapSourceCount() > 1)
+            ? `<button type="button" class="btn-map-expand" title="전체 소스 맵 보기">⤢</button>` : "";
+          return `<td data-r="${ri}" data-c="${ci}">` +
+            `<div class="map-cell map-cell-mini" data-bin="${esc(String(binv))}"><div class="map-plot"></div>${expandBtn}</div></td>`;
+        }
+        return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
+      }
       // Distribution 열: web_report 분포(있는 Item)로 작은 산포 카드를 채운다. 없으면 빈 칸.
       if (isDistCol(c)) {
         const item = r && r["Item"];
@@ -1416,6 +1491,11 @@ function renderSheetTable(rows, opts) {
       if (opts.kind === "issue" && c === "Step" && r && r._grp && !r._detail && (Number(r._ndetail) || 0) > 0) {
         cellHtml += ` <button type="button" class="issue-toggle" data-grp="${esc(r._grp)}" aria-expanded="false">▼</button>`;
       }
+      // Issue Table Item 셀 오른쪽에 아주 작은 산포·Map 숨기기 토글(그 행의 Distribution+Map 함께 접기).
+      if (opts.kind === "issue" && c === "Item" && issueRowKeyVal && !isEmpty) {
+        cellHtml += ` <button type="button" class="btn-hide-dist" data-key="${esc(issueRowKeyVal)}" ` +
+          `title="산포·Map ${rowHidden ? "보이기" : "숨기기"}">${rowHidden ? "⊞" : "⊟"}</button>`;
+      }
       return `<td${cls ? ` class="${cls}"` : ""} data-r="${ri}" data-c="${ci}">${cellHtml}</td>`;
     }).join("");
     const isPassRow = !subhead && binCol && String((r ? r[binCol] : "") ?? "").trim() === "1";
@@ -1425,7 +1505,7 @@ function renderSheetTable(rows, opts) {
         ? ` class="issue-bin-detail" data-grp="${esc(r._grp)}" style="display:none"`
         : ` class="issue-bin-rep" data-grp="${esc(r._grp)}"`;
     }
-    return `<tr${trAttr}>${tds}</tr>`;
+    return `<tr${withRowClass(trAttr, rowHidden ? "issue-row-hidden" : "")}>${tds}</tr>`;
   };
 
   let body;
@@ -1620,9 +1700,13 @@ function syncIssueHeadRowHeight(panel) {
 // ── Issue Table (read) ──────────────────────────────────────────────────────
 // Issue Table 상단 sticky 툴바: Yield 섹션 Bin 그룹 전체 펼치기/접기.
 function issueToolbarHtml() {
+  // 수정모드에서는 "ETC 에 항목 추가" 버튼도 같은 sticky 툴바 한 줄에 함께 둔다.
+  const etcBtn = (MODE === "edit")
+    ? `<button type="button" class="btn-sm" id="etcAddItemBtn">ETC 에 항목 추가</button>` : "";
   return `<div class="issue-toolbar">` +
     `<button type="button" class="btn-sm" id="issueExpandAll">전체 펼치기</button>` +
     `<button type="button" class="btn-sm" id="issueCollapseAll">전체 접기</button>` +
+    etcBtn +
     `</div>`;
 }
 // 한 Bin 그룹(대표행)의 detail TNO 행 펼치기/접기.
@@ -1646,6 +1730,7 @@ function renderIssues(issue_table_text) {
     panel.innerHTML = issueToolbarHtml() + renderSheetTable(issue_table_text, { kind: "issue" });
     syncIssueHeadRowHeight(panel);
     renderIssueMiniDist(panel);
+    renderIssueMiniMap(panel);
     return;
   }
   emptyPanel(panel, "Issue Table 데이터 없음");
@@ -2054,6 +2139,36 @@ let cpkShowLowOnly = true;    // 기본값: CPK < 1.33 항목만 오름차순(�
 let cpkSearchTerm = "";       // subject/source 검색어 (실시간 필터)
 let cpkPage = 1;              // 현재 페이지 (1-base)
 let cpkPanelBound = false;    // panel-cpk 페이저 클릭 위임 1회 바인딩 플래그
+let cpkTargetMode = false;    // "Limit 계산" 토글 — 켜지면 체크박스 열 + 목표 Cpk 역산 컨트롤 노출
+let cpkSelected = new Set();  // 선택된 행 키 (`${subject}||${source}`)
+let cpkTargetVal = 1.33;      // 목표 Cpk 입력값
+let cpkTargetResults = new Map(); // 역산 결과: 행 키 → {lo, hi}
+
+function cpkRowKey(r) { return `${r.subject}||${r.source}`; }
+
+function cpkFmt(x) { return Number(x.toPrecision(6)); }
+
+// 목표 Cpk 로부터 선택 행의 규격 한계 역산 (평균 중심 대칭: avg ± 3·Cpk·stdev).
+function cpkComputeTargets() {
+  cpkTargetResults.clear();
+  const cpk = parseFloat(cpkTargetVal);
+  if (!(cpk > 0)) return;
+  const sheets = webReportSheets();
+  const byKey = new Map((sheets ? (sheets["CPK"] || []) : []).map(r => [cpkRowKey(r), r]));
+  for (const key of cpkSelected) {
+    const row = byKey.get(key);
+    if (!row) continue;
+    const avg = parseFloat(row.average), sd = parseFloat(row.stdev);
+    if (isNaN(avg) || isNaN(sd) || sd <= 0) continue;   // 계산 불가 → 빈칸
+    const d = 3 * cpk * sd;
+    cpkTargetResults.set(key, { lo: cpkFmt(avg - d), hi: cpkFmt(avg + d) });
+  }
+}
+
+function updateCpkSelInfo() {
+  const el = document.getElementById("cpkSelInfo");
+  if (el) el.textContent = `선택 ${cpkSelected.size}개`;
+}
 
 function cpkFilterRows(rows) {
   const term = cpkSearchTerm.trim().toLowerCase();
@@ -2062,26 +2177,31 @@ function cpkFilterRows(rows) {
     || String(r.source || "").toLowerCase().includes(term));
 }
 
-function cpkTableHtml(rows) {
-  let bodyRows;
+// 표시용 행 목록 생성. 각 행에 _key(원본 subject/source 기준 안정 키)를 붙여 접힌 행도
+// 개별 선택이 가능하게 한다. (select-all 계산과 cpkTableHtml 이 공용으로 사용)
+function cpkBodyRows(rows) {
   if (cpkShowLowOnly) {
-    bodyRows = rows
+    return rows
       .filter(r => { const v = parseFloat(r.cpk); return !isNaN(v) && v < CPK_WARN_THRESHOLD; })
       .slice()
-      .sort((a, b) => parseFloat(a.cpk) - parseFloat(b.cpk));
-  } else {
-    // subject 가 연속으로 반복되면(같은 item, source 별 행) 2번째 행부터 subject/limit/units 를 비움
-    let prevSubject = null;
-    bodyRows = rows.map(r => {
-      const row = { ...r };
-      if (row.subject === prevSubject) {
-        row.subject = ""; row.lower_limit = ""; row.upper_limit = ""; row.units = "";
-      } else {
-        prevSubject = row.subject;
-      }
-      return row;
-    });
+      .sort((a, b) => parseFloat(a.cpk) - parseFloat(b.cpk))
+      .map(r => ({ ...r, _key: cpkRowKey(r) }));
   }
+  // subject 가 연속으로 반복되면(같은 item, source 별 행) 2번째 행부터 subject/limit/units 를 비움
+  let prevSubject = null;
+  return rows.map(r => {
+    const row = { ...r, _key: cpkRowKey(r) };
+    if (r.subject === prevSubject) {
+      row.subject = ""; row.lower_limit = ""; row.upper_limit = ""; row.units = "";
+    } else {
+      prevSubject = r.subject;
+    }
+    return row;
+  });
+}
+
+function cpkTableHtml(rows) {
+  const bodyRows = cpkBodyRows(rows);
 
   if (!bodyRows.length) {
     const msg = cpkSearchTerm.trim() ? "검색 결과 없음"
@@ -2096,11 +2216,28 @@ function cpkTableHtml(rows) {
   const start = (cpkPage - 1) * CPK_PAGE_SIZE;
   const pageRows = bodyRows.slice(start, start + CPK_PAGE_SIZE);
 
-  const head = "<thead><tr>" + CPK_COLUMNS.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
+  // Limit 계산 모드면 표시 컬럼에 target 열 2개를 upper_limit 뒤에 삽입, 체크박스 열은 별도 선두.
+  const displayCols = CPK_COLUMNS.slice();
+  if (cpkTargetMode) {
+    const i = displayCols.indexOf("upper_limit");
+    displayCols.splice(i + 1, 0, "target_lolimit", "target_hilimit");
+  }
+  const allSelected = cpkTargetMode && bodyRows.every(r => cpkSelected.has(r._key));
+  const selTh = cpkTargetMode
+    ? `<th class="cpk-sel-col"><input type="checkbox" id="cpkSelAll"${allSelected ? " checked" : ""}></th>` : "";
+  const head = "<thead><tr>" + selTh + displayCols.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
   const body = "<tbody>" + pageRows.map(row => {
     const cpkVal = parseFloat(row.cpk);
     const isWarn = !isNaN(cpkVal) && cpkVal < CPK_WARN_THRESHOLD;
-    const tds = CPK_COLUMNS.map(c => {
+    const res = cpkTargetResults.get(row._key);
+    const selTd = cpkTargetMode
+      ? `<td class="cpk-sel-col"><input type="checkbox" class="cpk-row-chk" data-key="${esc(row._key)}"${cpkSelected.has(row._key) ? " checked" : ""}></td>` : "";
+    const tds = displayCols.map(c => {
+      if (c === "target_lolimit" || c === "target_hilimit") {
+        const tv = res ? (c === "target_lolimit" ? res.lo : res.hi) : "";
+        const cls = tv === "" ? "st-empty" : "st-num cpk-target";
+        return `<td class="${cls}">${esc(String(tv))}</td>`;
+      }
       const v = row[c];
       const txt = (v === null || v === undefined) ? "" : String(v);
       const cls = [];
@@ -2112,10 +2249,10 @@ function cpkTableHtml(rows) {
         ? `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>` : esc(txt);
       return `<td${cls.length ? ` class="${cls.join(" ")}"` : ""}>${inner}</td>`;
     }).join("");
-    return `<tr>${tds}</tr>`;
+    return `<tr>${selTd}${tds}</tr>`;
   }).join("") + "</tbody>";
 
-  const table = `<div class="sheet-wrap cpk-sheet"><table class="sheet-table cpk-sheet">${head}${body}</table></div>`;
+  const table = `<div class="sheet-wrap cpk-sheet"><table class="sheet-table cpk-sheet${cpkTargetMode ? " has-select" : ""}">${head}${body}</table></div>`;
   const end = Math.min(start + CPK_PAGE_SIZE, bodyRows.length);
   const pager = `<div class="cpk-pager">` +
     `<button type="button" class="btn-sm" data-cpk-page="${cpkPage - 1}"${cpkPage <= 1 ? " disabled" : ""}>‹ 이전</button>` +
@@ -2139,13 +2276,23 @@ function renderCpk() {
   const rows = sheets ? (sheets["CPK"] || []) : [];
   if (!rows.length) { emptyPanel(panel, "CPK 데이터 없음"); return; }
 
+  const targetBar = cpkTargetMode
+    ? `<div class="cpk-target-bar">목표 Cpk ` +
+      `<input type="number" id="cpkTargetInput" min="0" step="0.01" value="${esc(String(cpkTargetVal))}">` +
+      `<button type="button" id="cpkCalcBtn" class="btn-sm">역산</button>` +
+      `<button type="button" id="cpkClearSelBtn" class="btn-sm">선택 해제</button>` +
+      `<span id="cpkSelInfo" class="cpk-pager-info"></span></div>`
+    : "";
   panel.innerHTML =
     `<div class="cpk-toolbar">` +
     `<input type="text" id="cpkSearchInput" placeholder="항목/source 검색" value="${esc(cpkSearchTerm)}">` +
     `<button type="button" id="cpkLowBtn" class="btn-sm">` +
-    `${cpkShowLowOnly ? "전체 보기" : `CPK &lt; ${CPK_WARN_THRESHOLD}`}</button></div>` +
+    `${cpkShowLowOnly ? "전체 보기" : `CPK &lt; ${CPK_WARN_THRESHOLD}`}</button>` +
+    `<button type="button" id="cpkTargetBtn" class="btn-sm${cpkTargetMode ? " active" : ""}">Limit 계산</button></div>` +
+    targetBar +
     `<div id="cpkTableHost"></div>`;
   renderCpkTable();
+  updateCpkSelInfo();
   document.getElementById("cpkLowBtn").addEventListener("click", () => {
     cpkShowLowOnly = !cpkShowLowOnly;
     cpkPage = 1;
@@ -2156,13 +2303,50 @@ function renderCpk() {
     cpkPage = 1;
     renderCpkTable();
   });
-  // panel-cpk 는 재렌더돼도 요소 자체는 유지되므로 페이저 클릭 위임은 1회만 바인딩한다.
+  document.getElementById("cpkTargetBtn").addEventListener("click", () => {
+    cpkTargetMode = !cpkTargetMode;
+    if (!cpkTargetMode) { cpkSelected.clear(); cpkTargetResults.clear(); }
+    renderCpk();
+  });
+  if (cpkTargetMode) {
+    document.getElementById("cpkTargetInput").addEventListener("input", (e) => {
+      cpkTargetVal = e.target.value;
+    });
+    document.getElementById("cpkCalcBtn").addEventListener("click", () => {
+      cpkComputeTargets();
+      renderCpkTable();
+    });
+    document.getElementById("cpkClearSelBtn").addEventListener("click", () => {
+      cpkSelected.clear();
+      cpkTargetResults.clear();
+      updateCpkSelInfo();
+      renderCpkTable();
+    });
+  }
+  // panel-cpk 는 재렌더돼도 요소 자체는 유지되므로 페이저 클릭·체크박스 위임은 1회만 바인딩한다.
   if (!cpkPanelBound) {
     panel.addEventListener("click", (e) => {
       const pb = e.target.closest("[data-cpk-page]");
       if (!pb || pb.disabled) return;
       cpkPage = parseInt(pb.dataset.cpkPage, 10) || 1;
       renderCpkTable();
+    });
+    panel.addEventListener("change", (e) => {
+      const t = e.target;
+      if (t.id === "cpkSelAll") {
+        const sheets = webReportSheets();
+        const keys = cpkBodyRows(cpkFilterRows(sheets ? (sheets["CPK"] || []) : [])).map(r => r._key);
+        if (t.checked) keys.forEach(k => cpkSelected.add(k));
+        else keys.forEach(k => { cpkSelected.delete(k); cpkTargetResults.delete(k); });
+        updateCpkSelInfo();
+        renderCpkTable();
+      } else if (t.classList.contains("cpk-row-chk")) {
+        const k = t.dataset.key;
+        if (t.checked) cpkSelected.add(k);
+        else { cpkSelected.delete(k); cpkTargetResults.delete(k); }
+        updateCpkSelInfo();
+        renderCpkTable();
+      }
     });
     cpkPanelBound = true;
   }
@@ -2857,6 +3041,7 @@ function renderDistribution() {
 // 다운샘플 static CDF + LSL/USL 점선)으로 축소해 보여주는 용도. 전체점은 데이터에 그대로 유지.
 function renderMiniDistCell(cell) {
   if (cell.dataset.distLoaded === "1") return;
+  if (cell.closest("tr.issue-row-hidden")) return;   // 행별 산포/Map 숨김 상태면 그리지 않음
   const subject = cell.dataset.subject;
   const div = cell.querySelector(".dist-plot");
   if (!div || typeof Plotly === "undefined") return;
@@ -2872,8 +3057,24 @@ function renderMiniDistCell(cell) {
     return { type: "scatter", mode: "markers", cliponaxis: false, name: source,
       x: ds.xs, y: ds.ys, marker: { color: distColorFor(source), size: 3 } };
   });
+  // x축을 데이터 범위로 고정한다. autorange 로 두면 LSL/USL 스펙선 shapes(데이터 범위 밖일
+  // 수 있음)까지 x-autorange 에 포함돼 x축이 늘어나 곡선이 한쪽에 뭉쳐 잘린 것처럼 보인다.
+  // xs 는 ECDF 라 오름차순(distDownsampleForDisplay 전제) → 양끝값으로 min/max 를 O(1) 로 잡음.
+  let xMin = Infinity, xMax = -Infinity;
+  Object.keys(info.bySource).forEach(source => {
+    const xs = info.bySource[source].xs;
+    if (xs && xs.length) {
+      if (xs[0] < xMin) xMin = xs[0];
+      if (xs[xs.length - 1] > xMax) xMax = xs[xs.length - 1];
+    }
+  });
+  let xaxis = { visible: false };
+  if (xMin !== Infinity && xMax !== -Infinity) {
+    const pad = (xMax > xMin) ? (xMax - xMin) * 0.02 : (Math.abs(xMin) * 0.05 || 1);
+    xaxis = { visible: false, autorange: false, range: [xMin - pad, xMax + pad] };
+  }
   const layout = {
-    xaxis: { visible: false }, yaxis: { visible: false, range: [0, 100] },
+    xaxis, yaxis: { visible: false, range: [0, 100] },
     shapes: distSpecShapes(lo, hi, false), margin: { l: 1, r: 1, t: 1, b: 1 },
     paper_bgcolor: "transparent", plot_bgcolor: "transparent", showlegend: false,
   };
@@ -2934,6 +3135,153 @@ function renderIssueMiniDist(panel) {
   }, { rootMargin: "600px 0px", threshold: 0 });
   cells.forEach(c => issueDistObserver.observe(c));
 }
+
+// ── Issue Table Map 미니셀 (해당 Bin 만 하이라이트한 웨이퍼) ────────────────────
+// 분포 미니셀과 동일하게 수천 개라, 같은 IntersectionObserver + rAF 분할로 보이는 셀만
+// lazy 렌더하고 화면 밖은 purge. 색상/범례는 세션 공통(globalBinColorMap) 을 dim 처리해 재사용.
+function renderMiniMapCell(cell) {
+  if (cell.dataset.mapLoaded === "1") return;
+  if (cell.closest("tr.issue-row-hidden")) return;   // 행별 산포/Map 숨김 상태면 그리지 않음
+  const div = cell.querySelector(".map-plot");
+  if (!div || typeof Plotly === "undefined") return;
+  const maps = (webReportSheets() || {})["Map Analysis"];
+  if (!Array.isArray(maps) || !maps.length) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
+  const bin = cell.dataset.bin;
+  const binOrder = buildGlobalBinLegend(maps).map(r => r.bin);
+  const dim = dimColorMap(globalBinColorMap(), binOrder, bin);   // 선택 bin만 원색, 나머지 회색
+  const m = maps[0];   // 접힘(기본): 첫 소스 1개. 펼치기 버튼으로 전 소스 보기.
+  const built = waferHeatmap(m, { colorMap: dim, binOrder, mini: true });   // showText 생략 → 숫자 없음
+  if (!built) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
+  Plotly.newPlot(div, [built.trace], waferLayout(m, { mini: true }), DIST_CFG_STATIC);
+  cell.dataset.mapLoaded = "1";
+}
+
+let issueMapObserver = null;
+let issueMapQueue = [];
+let issueMapRafScheduled = false;
+function issueMapQueueRender(cell) {
+  if (cell.dataset.mapLoaded === "1" || issueMapQueue.includes(cell)) return;
+  issueMapQueue.push(cell);
+  if (!issueMapRafScheduled) { issueMapRafScheduled = true; requestAnimationFrame(issueMapFlush); }
+}
+function issueMapFlush() {
+  issueMapRafScheduled = false;
+  let n = 0;
+  while (issueMapQueue.length && n < DIST.PER_FRAME) {
+    const cell = issueMapQueue.shift();
+    if (cell.isConnected && cell.dataset.visible === "1") { renderMiniMapCell(cell); n++; }
+  }
+  if (issueMapQueue.length) { issueMapRafScheduled = true; requestAnimationFrame(issueMapFlush); }
+}
+function issueMapPurge(cell) {
+  if (cell.dataset.mapLoaded !== "1") return;
+  const div = cell.querySelector(".map-plot");
+  if (!div) return;
+  try { if (window.Plotly) Plotly.purge(div); } catch (e) {}
+  cell.dataset.mapLoaded = "";
+}
+function renderIssueMiniMap(panel) {
+  if (issueMapObserver) { try { issueMapObserver.disconnect(); } catch (e) {} issueMapObserver = null; }
+  issueMapQueue = []; issueMapRafScheduled = false;
+  const cells = panel.querySelectorAll(".map-cell-mini");
+  if (!cells.length) return;
+  if (typeof IntersectionObserver === "undefined") {
+    cells.forEach(cell => renderMiniMapCell(cell));
+    return;
+  }
+  issueMapObserver = new IntersectionObserver(entries => {
+    entries.forEach(en => {
+      const cell = en.target;
+      if (en.isIntersecting) { cell.dataset.visible = "1"; issueMapQueueRender(cell); }
+      else {
+        cell.dataset.visible = "";
+        issueMapPurge(cell);
+        const i = issueMapQueue.indexOf(cell);
+        if (i >= 0) issueMapQueue.splice(i, 1);
+      }
+    });
+  }, { rootMargin: "600px 0px", threshold: 0 });
+  cells.forEach(c => issueMapObserver.observe(c));
+}
+
+// ── Issue Table 행별 산포·Map 숨기기 토글 ──────────────────────────────────────
+function toggleIssueRowHidden(btn) {
+  const key = btn.dataset.key;
+  const tr = btn.closest("tr");
+  if (!key || !tr) return;
+  const nowHidden = !issueHiddenRows.has(key);
+  if (nowHidden) issueHiddenRows.add(key); else issueHiddenRows.delete(key);
+  applyIssueRowHidden(tr, nowHidden);
+}
+function applyIssueRowHidden(tr, hidden) {
+  tr.classList.toggle("issue-row-hidden", hidden);
+  tr.querySelectorAll(".btn-hide-dist").forEach(b => {
+    b.textContent = hidden ? "⊞" : "⊟";
+    b.title = "산포·Map " + (hidden ? "보이기" : "숨기기");
+  });
+  if (hidden) {
+    // 차트 정리(메모리 경량화) 후 loaded 플래그 리셋 — 재표시 시 다시 그린다.
+    tr.querySelectorAll(".dist-cell-mini .dist-plot, .map-cell-mini .map-plot").forEach(div => {
+      try { if (window.Plotly) Plotly.purge(div); } catch (e) {}
+    });
+    tr.querySelectorAll(".dist-cell-mini").forEach(c => { c.dataset.distLoaded = ""; });
+    tr.querySelectorAll(".map-cell-mini").forEach(c => { c.dataset.mapLoaded = ""; });
+    closeMapExpand();
+  } else {
+    tr.querySelectorAll(".dist-cell-mini").forEach(c => { if (c.dataset.visible === "1") issueDistQueueRender(c); });
+    tr.querySelectorAll(".map-cell-mini").forEach(c => { if (c.dataset.visible === "1") issueMapQueueRender(c); });
+  }
+}
+
+// ── Issue Table Map 셀 소스별 펼치기 팝오버(전 소스 웨이퍼 가로 나열) ─────────────
+// 표 td 폭을 흔들지 않도록 셀에 앵커된 절대위치 오버레이로 띄운다. 한 번에 하나만 연다.
+let _mapExpandEl = null;
+let _mapExpandAnchor = null;
+function closeMapExpand() {
+  if (!_mapExpandEl) return;
+  _mapExpandEl.querySelectorAll(".map-exp-plot").forEach(div => {
+    try { if (window.Plotly) Plotly.purge(div); } catch (e) {}
+  });
+  _mapExpandEl.remove();
+  _mapExpandEl = null; _mapExpandAnchor = null;
+}
+function toggleMapExpand(btn) {
+  const cell = btn.closest(".map-cell-mini");
+  if (!cell) return;
+  if (_mapExpandAnchor === cell) { closeMapExpand(); return; }
+  closeMapExpand();
+  const maps = (webReportSheets() || {})["Map Analysis"];
+  if (!Array.isArray(maps) || maps.length < 2) return;
+  const bin = cell.dataset.bin;
+  const binOrder = buildGlobalBinLegend(maps).map(r => r.bin);
+  const dim = dimColorMap(globalBinColorMap(), binOrder, bin);
+  const pop = document.createElement("div");
+  pop.className = "map-expand-pop";
+  pop.innerHTML = maps.map((m, i) =>
+    `<div class="map-exp-item"><div class="map-exp-title">${esc(m.source)}</div>` +
+    `<div class="map-exp-plot" id="mapexp-${i}"></div></div>`).join("");
+  // 스크롤 컨테이너에 잘리지 않도록 body 에 fixed 로 띄우고 셀 위치 기준으로 배치.
+  const rect = cell.getBoundingClientRect();
+  const maxW = Math.min(maps.length * 232 + 16, window.innerWidth - 40);
+  let left = rect.right + 4;
+  if (left + maxW > window.innerWidth) left = Math.max(20, window.innerWidth - maxW - 20);
+  pop.style.position = "fixed";
+  pop.style.top = Math.max(8, rect.top) + "px";
+  pop.style.left = left + "px";
+  pop.style.maxWidth = maxW + "px";
+  document.body.appendChild(pop);
+  _mapExpandEl = pop; _mapExpandAnchor = cell;
+  maps.forEach((m, i) => {
+    const built = waferHeatmap(m, { colorMap: dim, binOrder, mini: true });
+    if (!built) return;
+    Plotly.newPlot(pop.querySelector(`#mapexp-${i}`), [built.trace], waferLayout(m, { mini: true }), DIST_CFG_STATIC);
+  });
+}
+// 팝오버 바깥 클릭 / ESC 로 닫기 (여는 클릭 자체는 btn-map-expand 제외 가드로 통과).
+document.addEventListener("click", e => {
+  if (_mapExpandEl && !e.target.closest(".map-expand-pop") && !e.target.closest(".btn-map-expand")) closeMapExpand();
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeMapExpand(); });
 
 // ── Issue Table: Item 클릭 → Bin 상세(FailTNO 구성 + 분포) 화면 전환 ─────────────
 // 새 창/모달 대신 상단 tab 은 그대로 두고 panel-issues 내용만 상세 화면으로 바꾼다.
@@ -3445,10 +3793,10 @@ function renderIssuesEdit() {
   if (Array.isArray(DATA.issue_table_text) && DATA.issue_table_text.length) {
     panel.innerHTML =
       issueToolbarHtml() +
-      `<div class="edit-hint"><button type="button" class="btn-sm" id="etcAddItemBtn">ETC 에 항목 추가</button></div>` +
       renderSheetTable(DATA.issue_table_text, { edit: true, kind: "issue", editableCols: ISSUE_COMMENT_COLS });
     syncIssueHeadRowHeight(panel);
     renderIssueMiniDist(panel);
+    renderIssueMiniMap(panel);
     return;
   }
   emptyPanel(panel, "Issue Table 데이터 없음");
@@ -3474,7 +3822,8 @@ const TAB_RENDERERS = {
   "cpk": renderCpk,
   "distribution": renderDistribution,
   "map-analysis": renderMapAnalysis,
-  "raw-data": renderRawDataTab,
+  // "raw-data" 탭 제거 — rawdata 편집은 Honey 사이드바 'Rawdata 수정'(Excel) 로 이관.
+  // 관련 JS(renderRawDataTab 등)와 #panel-raw-data 는 비활성 상태로 남겨둠(참조 안전).
   "trim-analysis": renderPlaceholderTabs,
 };
 const tabDirty = {};
@@ -3496,8 +3845,10 @@ function renderTab(name) {
 let _prerenderToken = 0;
 function schedulePrerender() {
   const token = ++_prerenderToken;
-  const queue = ["yield", "issues", "cpk", "map-analysis", "distribution",
-                 "trim-analysis"];
+  // map-analysis 는 프리렌더에서 제외한다. wafer map 은 scaleanchor(정사각 고정) 플롯이라
+  // 숨김(0폭) 상태에서 그려지면 탭 활성화 시 Plotly.Plots.resize 로도 종횡비/폭이 제대로
+  // 복구되지 않아 짤려 보인다 → 탭을 처음 열 때(패널 visible) renderTab 이 정상 폭으로 그리도록 둔다.
+  const queue = ["yield", "issues", "cpk", "distribution", "trim-analysis"];
   const idle = window.requestIdleCallback
     ? (fn => window.requestIdleCallback(fn, { timeout: 1000 }))
     : (fn => setTimeout(fn, 200));
@@ -3537,6 +3888,12 @@ document.querySelector(".content").addEventListener("click", e => {
   // Issue Table Yield 대표행 토글 → 그 Bin 의 detail TNO 행 펼치기/접기.
   const issueToggle = e.target.closest(".issue-toggle");
   if (issueToggle) { toggleIssueGroup(issueToggle); return; }
+  // Issue Table 행별 산포·Map 숨기기 토글.
+  const hideBtn = e.target.closest(".btn-hide-dist");
+  if (hideBtn) { toggleIssueRowHidden(hideBtn); return; }
+  // Issue Table Map 셀 소스별 펼치기.
+  const mapExpandBtn = e.target.closest(".btn-map-expand");
+  if (mapExpandBtn) { toggleMapExpand(mapExpandBtn); return; }
   if (e.target.id === "issueExpandAll") { setAllIssueGroups(true); return; }
   if (e.target.id === "issueCollapseAll") { setAllIssueGroups(false); return; }
   const etcAddBtn = e.target.closest("#etcAddItemBtn");

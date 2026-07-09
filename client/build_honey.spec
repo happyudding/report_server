@@ -51,6 +51,7 @@ a = Analysis(
     + collect_submodules('d1')
     + collect_submodules('honey_ui')
     + collect_submodules('report_flow')
+    + collect_submodules('excel_edit')
     ),
     hookspath=[],
     hooksconfig={},

@@ -51,6 +51,9 @@ web_report/
 ├── html.py              render_report_html() — 세션 상세 페이지 HTML 렌더 (⚠ 아직 어떤
 │                        라우트에서도 호출되지 않음 — 실제 서빙 중인 세션 상세 페이지는
 │                        server/report/report_view.html, 이 파일은 web_report 밖)
+├── wafer_frame.py       제품별 기준정보(PRODUCT_WAFER_REF: die pitch+wafer 크기) → 고정 map
+│                        프레임 계산 frame_for(). die pitch 입력된 제품만 Map_analysis 가
+│                        틀을 고정(부분 데이터 방지), 없으면 현행(데이터 min/max) 유지
 └── tabs/                시트별 row 빌더 (metrics.py 가 호출)
     ├── common.py        json_safe/fmt_type/num/round_num, bin_sort_key(BIN 정렬 공용)
     ├── summary.py        build_summary_rows (placeholder — return [])
@@ -64,7 +67,8 @@ web_report/
     ├── distribution.py   build_distribution_rows (전량 ECDF — 프런트는 아직 렌더 안 함)
     ├── trim_analysis.py  build_trim_analysis_rows (placeholder — return [])
     ├── histogram.py      build_histogram_rows (placeholder — return [])
-    └── Map_analysis.py   build_map_analysis_rows (wafer map die/bin 집계)
+    └── Map_analysis.py   build_map_analysis_rows(tables, product_type, product) — wafer map
+                          die/bin 집계. 제품 기준정보 있으면 wafer_frame 고정 프레임으로 틀 덮어씀
 ```
 
 ## 2. 외부(밖) 연결점 — 여기는 참고만, 수정 시 확인 필수

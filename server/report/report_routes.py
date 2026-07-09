@@ -29,6 +29,9 @@ if str(_ROOT) not in sys.path:
 
 from web_report import service as web_report_service
 from web_report import response_cache as web_report_response_cache
+from web_report import rawedit as web_report_rawedit
+
+_MAX_WEBREPORT_SOURCE_BYTES = 512 * 1024 * 1024
 
 _ANALYSIS_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -390,6 +393,70 @@ def web_report_raw_data_edit(session_id):
     except Exception:
         _log.exception("web_report raw_data edit failed for session %s", session_id)
         abort(500, "raw_data edit failed")
+    return jsonify(result)
+
+
+def _read_webreport_source_files():
+    """멀티파트 webreport_0..N parquet 필드를 list[bytes] 로 읽는다 (upload_webreport 패턴)."""
+    out = []
+    idx = 0
+    while True:
+        f = request.files.get(f"webreport_{idx}")
+        if f is None:
+            break
+        data = f.read()
+        if not data:
+            abort(400, f"webreport_{idx} is empty")
+        if len(data) > _MAX_WEBREPORT_SOURCE_BYTES:
+            abort(413, f"webreport_{idx} payload is too large")
+        out.append(data)
+        idx += 1
+    if not out:
+        abort(400, "missing webreport parquet files")
+    return out
+
+
+@report_bp.get("/session/<session_id>/web_report/rawdata_export")
+def web_report_rawdata_export(session_id):
+    """Honey 클라 Excel 편집용: 세션의 모든 source parquet + manifest 를 zip 으로 내려준다.
+
+    Honey(브라우저 아님)가 GET 으로 받아 Excel 로 연다 — 조회이므로 CSRF 불필요."""
+    _require_web_report_session(session_id)
+    try:
+        blob = web_report_rawedit.export_sources_zip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report rawdata export failed for session %s", session_id)
+        abort(500, "rawdata export failed")
+    return Response(
+        blob, mimetype="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="rawdata_{session_id}.zip"'})
+
+
+@report_bp.post("/session/<session_id>/web_report/rawdata_replace")
+def web_report_rawdata_replace(session_id):
+    """Honey 가 Excel 편집 후 재인코딩한 parquet 전체를 받아 세션 원본을 덮어쓴다.
+
+    Honey 클라(브라우저 아님)가 호출하므로 CSRF 대신 커스텀 헤더 X-Honey-Agent 를 요구한다
+    (커스텀 헤더는 브라우저 폼 CSRF 로 위조 불가 — preflight 가 필요). 무조건 덮어쓰기."""
+    if request.headers.get("X-Honey-Agent") != "1":
+        abort(403, "X-Honey-Agent header required")
+    _require_web_report_session(session_id)
+    sources = _read_webreport_source_files()
+    ip, ua = _client_meta()
+    try:
+        result = web_report_rawedit.replace_sources(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            sources_bytes=sources, client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report rawdata replace failed for session %s", session_id)
+        abort(500, "rawdata replace failed")
     return jsonify(result)
 
 

@@ -34,6 +34,7 @@ def _comment_values(issue_comments, row_key):
 
 def _blank_row(sources):
     row = {f"{src}_yield": "" for src in sources}
+    row["Map"] = ""
     row["Distribution"] = ""
     for col in _COMMENT_COLS:
         row[col] = ""
@@ -68,6 +69,7 @@ def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None):
         }
         for src in sources:
             data[f"{src}_yield"] = match.get(f"{src}_yield", "")
+        data["Map"] = ""
         data["Distribution"] = ""
         data.update(_comment_values(issue_comments, f"ETC|{item}"))
         rows.append(data)
@@ -145,6 +147,7 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
                 out["_ndetail"] = len(group_rows) - 1
             for src in sources:
                 out[f"{src}_yield"] = gr.get(f"{src}_yield")
+            out["Map"] = ""
             out["Distribution"] = ""
             out.update(_comment_values(issue_comments, f"Yield|{bin_value}|{item}"))
             rows.append(out)

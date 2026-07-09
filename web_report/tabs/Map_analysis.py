@@ -11,9 +11,13 @@ from collections import Counter
 import pandas as pd
 
 from .common import PASS_BIN, bin_sort_key, fmt_type
+from ..wafer_frame import frame_for
 
 
-def build_map_analysis_rows(tables):
+def build_map_analysis_rows(tables, product_type="", product=""):
+    # 제품 기준정보(die pitch+wafer 크기)가 있으면 고정 프레임으로 격자 틀을 덮어쓴다.
+    # 없으면 frame=None → 현행(데이터 좌표 min/max) 유지.
+    frame = frame_for(product_type, product)
     rows = []
     for table in tables:
         data = table.data
@@ -45,14 +49,23 @@ def build_map_analysis_rows(tables):
             for bin_value, count in pass_first
         ]
 
+        if frame is not None:
+            x_min, x_max = frame["x_min"], frame["x_max"]
+            y_min, y_max = frame["y_min"], frame["y_max"]
+        else:
+            x_min = min(xs) if xs else None
+            x_max = max(xs) if xs else None
+            y_min = min(ys) if ys else None
+            y_max = max(ys) if ys else None
+
         rows.append({
             "source": table.source,
             "file_name": table.file_name,
             "total": total,
-            "x_min": min(xs) if xs else None,
-            "x_max": max(xs) if xs else None,
-            "y_min": min(ys) if ys else None,
-            "y_max": max(ys) if ys else None,
+            "x_min": x_min,
+            "x_max": x_max,
+            "y_min": y_min,
+            "y_max": y_max,
             "dies": dies,
             "bin_counts": bin_counts,
         })

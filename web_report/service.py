@@ -343,6 +343,8 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                     sheets=manifest.get("sheets") or [],
                     etc_items=manifest.get("etc_items") or [],
                     issue_comments=manifest.get("issue_comments") or {},
+                    product_type=session.get("product_type", ""),
+                    product=session.get("product", ""),
                 )
                 _cache_put(_REPORT_CACHE, cache_key, report, _REPORT_CACHE_MAX)
     public = dict(session)

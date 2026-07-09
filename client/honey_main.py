@@ -624,6 +624,7 @@ class HoneyMainWindow(QMainWindow):
             ("▶", "Start (분석)", self.on_start),
             ("🌐", "Web Report", self.on_web_report),
             ("⬆", "보고서 Server Upload (.xlsx)", self.on_upload_local),
+            ("📝", "Rawdata 수정 (Excel)", self.on_rawdata_edit),
         ]
         for emoji, name, slot in quick:
             act = QAction(emoji, self)
@@ -644,6 +645,63 @@ class HoneyMainWindow(QMainWindow):
 
     def _status(self, msg):
         self.status.showMessage(msg)
+
+    # ── Rawdata 수정: 내장 브라우저에 열린 세션을 Excel 로 편집 ────────────────
+    def _current_session_id(self):
+        """내장 브라우저 주소에서 web_report 세션 id 추출 (없으면 "")."""
+        panel = getattr(self, "browser_panel", None)
+        if panel is None:
+            return ""
+        try:
+            url = panel.view.url().toString()
+        except Exception:
+            return ""
+        import re
+        m = re.search(r"/pe/report/view/([A-Za-z0-9_-]+)", url)
+        return m.group(1) if m else ""
+
+    def on_rawdata_edit(self):
+        """현재 열린 세션의 rawdata 를 Excel 창으로 열어 편집 → 저장·닫으면 서버 반영."""
+        sid = self._current_session_id()
+        if not sid:
+            QMessageBox.information(
+                self, "Rawdata 수정",
+                "먼저 세션(검색결과에서 리포트)을 연 뒤 눌러 주세요.")
+            return
+        worker = getattr(self, "_excel_worker", None)
+        if worker is not None and worker.isRunning():
+            QMessageBox.information(self, "Rawdata 수정", "이미 Excel 편집이 진행 중입니다.")
+            return
+
+        from excel_edit.worker import ExcelEditWorker
+        self._excel_worker = ExcelEditWorker(sid, SERVER_BASE_URL, self)
+        w = self._excel_worker
+        w.status.connect(self._on_excel_edit_status)
+        w.done.connect(self._on_excel_edit_done)
+        w.failed.connect(self._on_excel_edit_failed)
+        self._append_run_log(f"Rawdata 수정 시작 (session {sid}) — Excel 을 엽니다...")
+        w.start()
+
+    def _on_excel_edit_status(self, state, message):
+        self._status(message)
+        self._append_run_log(f"[Rawdata] {message}")
+
+    def _on_excel_edit_done(self, changed, message):
+        if changed:
+            self._status("Rawdata 수정 완료 — 페이지 새로고침")
+            self._append_run_log("[Rawdata] 완료 — 서버 반영됨. 페이지 새로고침.")
+            try:
+                self.browser_panel.view.reload()
+            except Exception:
+                pass
+        else:
+            self._status("Rawdata 변경 없음")
+            self._append_run_log("[Rawdata] 변경 없음 — 업로드 건너뜀.")
+
+    def _on_excel_edit_failed(self, message):
+        self._status(f"Rawdata 수정 실패: {message}")
+        self._append_run_log(f"[Rawdata] 실패: {message}")
+        QMessageBox.warning(self, "Rawdata 수정 실패", message)
 
     # ── 입력 선택: 로컬 파일 열기 / d1_storage 검색 ─────────────────────────
     def on_open_local(self):
