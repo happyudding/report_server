@@ -41,11 +41,11 @@
 ### 차트 이미지 — `chart_image()` [report_routes.py:159](../server/report/report_routes.py#L159)
 `make_chart_png_s3_key(akey, idx)` → `download_bytes_from_s3` → `Response(mimetype=image/png, Cache-Control private)`. 공개버킷/presign 없이 **서버 경유** 서빙(기존 패턴 일관). idx 범위 0~1000.
 
-### 수정 저장 — `update_session_content()` [report_routes.py:211](../server/report/report_routes.py#L211)
-PIN 검증(`_password_ok`) 후, body 에 온 부분만 갱신:
-- `yield_rows` → [`_coerce_yield_row`](../server/report/report_routes.py#L64) 타입정리 → `replace_summary_batch`(DELETE+INSERT, DB).
-- `summary_text` / `issue_rows` → [`_write_text_object`](../server/report/report_routes.py#L269) (S3 JSON 재업로드 + `upsert_object_info`, content_hash/options_json 은 기존행 유지).
-- **analysis_key 는 재계산 안 함**(원본 업로드 식별자 유지). 부분 성공 시 207, 전부 실패 500.
+### 수정 저장 — `update_session_content()` (비활성화, 항상 405)
+2026-07-08 사용자 요청으로 기능 차단. report_view.html 이 아직 이 경로를 호출하므로
+라우트는 405 스텁으로만 유지. 구 구현(`_coerce_yield_row` → `replace_summary_batch`,
+`_write_text_object` → S3 텍스트 재업로드 체인)은 2026-07-09 리팩토링에서 제거 —
+재활성화 시 git 히스토리 참조.
 
 ### 보안 헬퍼
 - [`_public_session`](../server/report/report_routes.py#L28) — `password` 컬럼 제거 + `has_password` 추가.
@@ -54,5 +54,4 @@ PIN 검증(`_password_ok`) 후, body 에 온 부분만 갱신:
 
 ## 주의
 - 삭제는 `delete_session` 이 `report_annotation` 까지 지움. S3 객체/summary 행은 **남는다**(키 기반 멱등이라 의도적). 완전 GC 는 미구현.
-- 수정 모드에서 S3 미설정이면 `summary_text/issue_rows` 는 에러로 표시되지만 `yield_rows`(DB) 는 저장됨 → 부분 성공 207.
 - 분석/플롯 라우트는 절대 여기 추가 금지 (CLAUDE.md §5.2).

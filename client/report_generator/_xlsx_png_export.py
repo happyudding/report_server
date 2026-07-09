@@ -301,8 +301,8 @@ def _retry_open_xlsx_with_excel(xlsx_path):
     """저장된 xlsx 를 Excel COM(DispatchEx)으로 열어 본다.
 
     DRM(NASCA)이 걸린 파일은 Excel COM 으로만 열 수 있으므로 xlwings 대신
-    win32com DispatchEx 를 쓴다(upload_prepare._extract_via_excel_com,
-    chart_export._open_excel 와 동일 패턴). 열기에 실패하면 예외를 전파한다.
+    win32com DispatchEx 를 쓴다(upload_prepare._extract_via_excel_com 와
+    동일 패턴). 열기에 실패하면 예외를 전파한다.
     """
     import pythoncom
     import win32com.client

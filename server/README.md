@@ -70,8 +70,6 @@ LAN 전체에 노출하려면 `HOST=0.0.0.0` 환경변수 설정.
 
 | 변수 | 기본값 |
 |------|--------|
-| `REPORT_S3_SUMMARY_TEXT_PREFIX` | `pe/report_server/summary_text` |
-| `REPORT_S3_ISSUE_TEXT_PREFIX` | `pe/report_server/issue_table_text` |
 | `REPORT_S3_CHART_PREFIX` | `pe/report_server/chart_png` |
 | `REPORT_S3_ISSUE_IMG_PREFIX` | `pe/report_server/issue_img` |
 

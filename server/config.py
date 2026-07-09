@@ -32,9 +32,6 @@ REPORT_S3_CSV_PREFIX        = os.getenv("REPORT_S3_CSV_PREFIX",        "pe/repor
 REPORT_S3_FAIL_PREFIX       = os.getenv("REPORT_S3_FAIL_PREFIX",       "pe/report_server/fail_items")
 REPORT_S3_ISSUE_PREFIX      = os.getenv("REPORT_S3_ISSUE_PREFIX",      "pe/report_server/issue_table")
 REPORT_S3_THUMB_PREFIX      = os.getenv("REPORT_S3_THUMB_PREFIX",      "pe/report_server/thumbs")
-REPORT_S3_SUMMARY_TEXT_PREFIX = os.getenv("REPORT_S3_SUMMARY_TEXT_PREFIX","pe/report_server/summary_text")
-REPORT_S3_ISSUE_TEXT_PREFIX   = os.getenv("REPORT_S3_ISSUE_TEXT_PREFIX",  "pe/report_server/issue_table_text")
-REPORT_S3_YIELD_TEXT_PREFIX   = os.getenv("REPORT_S3_YIELD_TEXT_PREFIX",  "pe/report_server/yield_text")
 REPORT_S3_ISSUE_IMG_PREFIX    = os.getenv("REPORT_S3_ISSUE_IMG_PREFIX",   "pe/report_server/issue_img")
 REPORT_S3_CHART_PREFIX        = os.getenv("REPORT_S3_CHART_PREFIX",       "pe/report_server/chart_png")
 
@@ -72,3 +69,8 @@ REPORT_DB_BACKUP_DIR            = _path_env("REPORT_DB_BACKUP_DIR", REPORT_DB_PA
 
 HONEY_RELEASES_DIR = _path_env("HONEY_RELEASES_DIR", ROOT_DIR / "server" / "releases")
 HONEY_VERSION_JSON = HONEY_RELEASES_DIR / "version.json"
+
+# ── admin 대시보드 (admin_panel/) ────────────────────────────────────────────
+# admin URL 경로 조각. 기본값 'pte' → /pe/admin-pte/ 로 항상 접속 가능.
+# 경로를 숨기고 싶으면 REPORT_ADMIN_SECRET 에 임의 문자열(영숫자/_/- 3~64자) 지정.
+REPORT_ADMIN_SECRET = os.getenv("REPORT_ADMIN_SECRET", "pte").strip()

@@ -21,14 +21,6 @@ from ._s3 import S3NotConfigured, S3ObjectCorrupted
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
-# 텍스트 콘텐츠(object_type) → S3 키 빌더 매핑. 호출부가 키 빌더를 알 필요 없도록
-# 게이트웨이 내부에서 해소한다(진입점 누수 방지).
-_TEXT_KEY_BUILDERS = {
-    "summary_text": report_s3.make_summary_text_s3_key,
-    "yield_text": report_s3.make_yield_text_s3_key,
-    "issue_table_text": report_s3.make_issue_text_s3_key,
-}
-
 
 def _combine_chart_pngs(pngs: list):
     """Compose chart PNG bytes into one grid PNG."""
@@ -353,22 +345,6 @@ def load_json_object(objects, object_type):
         return report_s3.download_json_from_s3(objects[object_type]["s3_key"])
     except (S3NotConfigured, S3ObjectCorrupted, Exception):
         return None
-
-
-def save_text_object(analysis_key, session, object_type, data):
-    """Upload text JSON and refresh report_object_info.
-
-    object_type 에 해당하는 S3 키 빌더는 내부 ``_TEXT_KEY_BUILDERS`` 로 해소한다.
-    """
-    key = _TEXT_KEY_BUILDERS[object_type](analysis_key)
-    uri = report_s3.upload_json_to_s3(key, data)
-    existing = report_db.get_object_info(analysis_key, object_type) or {}
-    content_hash = existing.get("content_hash") or session.get("content_hash") or ""
-    options_json = existing.get("options_json") or "{}"
-    report_db.upsert_object_info(
-        analysis_key, content_hash, options_json, object_type,
-        report_s3.bucket_name(), key, uri,
-    )
 
 
 def list_issue_image_rows(analysis_key):

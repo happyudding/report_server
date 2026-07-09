@@ -1,0 +1,332 @@
+"""Excel Download 시트 작성기 — web_report payload dict 를 직접 소비 (xlwings).
+
+서식(색·폰트·헤더행 위치·경고 하이라이트)은 honey excel 과 동일하게 보이도록
+report_generator._xlsx_style 의 상수/헬퍼를 그대로 재사용한다. 기존 _fill_*
+(AnalysisResult 강결합)는 호출하지 않는다. 셀 단위 COM 왕복을 피하기 위해 값은
+2-D 배열 일괄 기입, 스타일은 Range 단위 1회 적용한다.
+"""
+from __future__ import annotations
+
+from report_generator._xlsx_style import (
+    _CPK_TEST_NAME_COL_WIDTH,
+    _CPK_SERIES_COL_WIDTH,
+    _HEADER_ROW,
+    _ITEM_COL_WIDTH,
+    _NARROW_COL_WIDTH,
+    _START_COL,
+    _SUMMARY_DATA_FONT,
+    _SUMMARY_HDR_FILL_RGB,
+    _SUMMARY_HDR_FONT,
+    _SUMMARY_SECTION_FONT,
+    _SUMMARY_TITLE_FILL_RGB,
+    _SUMMARY_TITLE_FONT,
+    _TITLE_FILL_RGB,
+    _TITLE_FONT,
+    _TITLE_ROW_MAX_COL,
+    _XL_CENTER,
+    _YIELD_HEADER_ROW_HEIGHT,
+    _YIELD_TABLE_ROW_HEIGHT,
+    _col_letter,
+    _data_range,
+    _hdr_range,
+    _style_range,
+)
+
+_CPK_WARN_FILL_RGB = "FFFFF3B0"   # cpk < 1.33 경고(연노랑) — honey excel 과 동일 계열
+_CPK_THRESHOLD = 1.33
+_PASS_BIN = "1"
+_COMMENT_COLS = ["PTE comment", "개발 comment"]
+_ADDR_JOIN_MAXLEN = 200           # Range("A1:...,A2:...") 주소 문자열 상한
+
+# PNG 부착 배치 (map_analyze.write_map_sheet 와 동일 상수)
+_MAP_COLS_PER_ROW = 3
+_MAP_PIC_W = 500
+_MAP_PIC_H = 500
+_PIC_GAP = 24
+_PIC_MARGIN = 10
+_PIC_TOP_START = _PIC_MARGIN + 30  # 상단 범례 행 아래부터
+
+# msoFalse / msoTrue (Shapes.AddPicture 인자)
+_MSO_FALSE = 0
+_MSO_TRUE = -1
+
+
+def _png_pt_per_px():
+    from ._charts import DPI
+    return 72.0 / DPI              # 렌더 DPI 기준 원본 물리 크기 유지
+
+
+def _safe(v):
+    """수식 오인('=' 시작 문자열) 방지."""
+    if isinstance(v, str) and v.startswith("="):
+        return "'" + v
+    return v
+
+
+def _title_banner(ws, text, *, font=_TITLE_FONT, fill=_TITLE_FILL_RGB):
+    ws.range((1, 1)).value = _safe(text)
+    _style_range(ws.range((1, 1), (1, _TITLE_ROW_MAX_COL)), fill=fill, font=font)
+
+
+def _write_table(ws, header, rows, *, header_row=_HEADER_ROW, start_col=_START_COL):
+    """헤더+데이터 일괄 기입 + honey 공통 스타일. 반환: 마지막 데이터 행 번호."""
+    ncol = len(header)
+    ws.range((header_row, start_col)).value = [list(header)]
+    _hdr_range(ws, header_row, start_col, start_col + ncol - 1)
+    if rows:
+        data = [[_safe(v) for v in row] for row in rows]
+        ws.range((header_row + 1, start_col)).value = data
+        _data_range(ws, header_row + 1, start_col, header_row + len(rows), start_col + ncol - 1)
+    return header_row + len(rows)
+
+
+def _set_col_widths(ws, header, widths, *, default=None, start_col=_START_COL):
+    for i, name in enumerate(header):
+        w = widths.get(name, default)
+        if w is not None:
+            ws.range((1, start_col + i)).column_width = w
+
+
+# ── Summary ──────────────────────────────────────────────────────────────────
+
+def write_summary_sheet(ws, yield_summary, fail_bin_rows):
+    """①Yield 요약(source 별 + Total) ②Major Fail Bin 랭킹 — 표 2개."""
+    _title_banner(ws, "Summary", font=_SUMMARY_TITLE_FONT, fill=_SUMMARY_TITLE_FILL_RGB)
+
+    def _section(row, text):
+        ws.range((row, _START_COL)).value = _safe(text)
+        _style_range(ws.range((row, _START_COL)), font=_SUMMARY_SECTION_FONT)
+
+    def _table(header_row, header, rows):
+        ncol = len(header)
+        ws.range((header_row, _START_COL)).value = [list(header)]
+        _style_range(ws.range((header_row, _START_COL), (header_row, _START_COL + ncol - 1)),
+                     fill=_SUMMARY_HDR_FILL_RGB, font=_SUMMARY_HDR_FONT,
+                     halign=_XL_CENTER, valign=_XL_CENTER, wrap=True, border=True)
+        if rows:
+            ws.range((header_row + 1, _START_COL)).value = [[_safe(v) for v in r] for r in rows]
+            _style_range(ws.range((header_row + 1, _START_COL),
+                                  (header_row + len(rows), _START_COL + ncol - 1)),
+                         font=_SUMMARY_DATA_FONT, halign=_XL_CENTER, valign=_XL_CENTER,
+                         border=True)
+        return header_row + len(rows)
+
+    _section(3, "Yield Summary")
+    ys = yield_summary or {}
+    y_rows = [[s.get("source"), s.get("pass"), s.get("fail"), s.get("total"), s.get("yield_pct")]
+              for s in (ys.get("by_source") or [])]
+    y_rows.append(["Total", ys.get("pass"), ys.get("fail"), ys.get("total"), ys.get("yield_pct")])
+    last = _table(4, ["Source", "Pass", "Fail", "Total", "Yield (%)"], y_rows)
+
+    _section(last + 2, "Major Fail Bin")
+    fb_rows = [[r.get("bin"), r.get("item"), r.get("count"), r.get("yield_pct")]
+               for r in (fail_bin_rows or [])]
+    _table(last + 3, ["Bin", "Item", "Count", "Yield (%)"], fb_rows)
+
+    for col, w in ((2, 28), (3, 40), (4, 10), (5, 10), (6, 10)):
+        ws.range((1, col)).column_width = w
+
+
+# ── Yield (TNO 접힌 형태) ────────────────────────────────────────────────────
+
+def yield_header(source_names):
+    return (["Step", "Bin", "TNO", "Item", "avg (%)"]
+            + [f"{s} (%)" for s in source_names]
+            + [f"{s} count" for s in source_names])
+
+
+def _yield_row_values(row, source_names):
+    return ([row.get("step"), row.get("bin"), row.get("TNO"), row.get("Item"), row.get("avg")]
+            + [row.get(f"{s}_yield") for s in source_names]
+            + [row.get(f"{s}_count") for s in source_names])
+
+
+def write_yield_sheet(ws, yield_rows, yield_bin_groups, source_names):
+    """Pass 행 + Bin 별 대표(총합) 행만 — 웹 Yield 탭의 접힌 상태와 동일."""
+    _title_banner(ws, "Yield")
+    header = yield_header(source_names)
+    rows = []
+    if yield_rows and str(yield_rows[0].get("bin")) == _PASS_BIN:
+        rows.append(_yield_row_values(yield_rows[0], source_names))
+    for group in yield_bin_groups or []:
+        rows.append(_yield_row_values(group.get("rep") or {}, source_names))
+    _write_table(ws, header, rows)
+    _set_col_widths(ws, header, {"Item": 36}, default=_NARROW_COL_WIDTH * 1.6)
+    ws.range((_HEADER_ROW, 1)).row_height = _YIELD_HEADER_ROW_HEIGHT
+    if rows:
+        ws.range((_HEADER_ROW + 1, 1), (_HEADER_ROW + len(rows), 1)).row_height = \
+            _YIELD_TABLE_ROW_HEIGHT
+
+
+# ── CPK (전체 기준, honey excel 서식) ────────────────────────────────────────
+
+_CPK_HEADER = ["TEST NAME", "LOW SPEC", "HIGH SPEC", "SCALE", "계열", "n",
+               "min", "median", "max", "average", "stdev",
+               "cpl", "cpu", "cp", "cpk", "comment"]
+
+
+def write_cpk_sheet(ws, cpk_rows):
+    """subject × source 행 그대로 (전체(all-die) 기준 컬럼, *_bin1 무시)."""
+    _title_banner(ws, "CPK")
+    rows = []
+    warn_offsets = []
+    for r in cpk_rows or []:
+        cpk = r.get("cpk")
+        try:
+            if cpk is not None and float(cpk) < _CPK_THRESHOLD:
+                warn_offsets.append(len(rows))
+        except (TypeError, ValueError):
+            pass
+        rows.append([
+            r.get("subject"), r.get("lower_limit"), r.get("upper_limit"),
+            r.get("units"), r.get("source"), r.get("n"), r.get("min"),
+            r.get("median"), r.get("max"), r.get("average"), r.get("stdev"),
+            r.get("cpl"), r.get("cpu"), r.get("cp"), r.get("cpk"), "",
+        ])
+    _blank_repeated_labels(rows)
+    _write_table(ws, _CPK_HEADER, rows)
+    _apply_warn_fill(ws, warn_offsets, len(_CPK_HEADER))
+    _set_col_widths(ws, _CPK_HEADER, {
+        "TEST NAME": _CPK_TEST_NAME_COL_WIDTH,
+        "계열": _CPK_SERIES_COL_WIDTH,
+        "n": _NARROW_COL_WIDTH * 1.05,
+        "comment": 30,
+    }, default=9.5)
+
+
+def _blank_repeated_labels(rows):
+    """같은 subject 연속 행의 TEST NAME/SPEC/SCALE 반복 생략 (honey excel 과 동일)."""
+    prev_key = None
+    for row in rows:
+        key = tuple(row[:4])
+        if key == prev_key:
+            row[0:4] = ["", "", "", ""]
+        else:
+            prev_key = key
+
+
+def _apply_warn_fill(ws, row_offsets, ncol, *, header_row=_HEADER_ROW, start_col=_START_COL):
+    """cpk < 1.33 행 전체 노란 하이라이트 — 연속 행은 병합, 주소 join 으로 COM 호출 최소화."""
+    if not row_offsets:
+        return
+    c1 = _col_letter(start_col)
+    c2 = _col_letter(start_col + ncol - 1)
+    # 연속 offset 을 (start, end) 구간으로 병합
+    spans = []
+    s = e = row_offsets[0]
+    for off in row_offsets[1:]:
+        if off == e + 1:
+            e = off
+        else:
+            spans.append((s, e))
+            s = e = off
+    spans.append((s, e))
+
+    def _flush(addresses):
+        if addresses:
+            _style_range(ws.range(",".join(addresses)), fill=_CPK_WARN_FILL_RGB)
+
+    addresses = []
+    length = 0
+    for s, e in spans:
+        r1 = header_row + 1 + s
+        r2 = header_row + 1 + e
+        address = f"{c1}{r1}:{c2}{r2}"
+        next_length = length + len(address) + (1 if addresses else 0)
+        if addresses and next_length > _ADDR_JOIN_MAXLEN:
+            _flush(addresses)
+            addresses = []
+            next_length = len(address)
+        addresses.append(address)
+        length = next_length
+    _flush(addresses)
+
+
+# ── Issue Table (접힌 형태 + 숨은 comment 를 bin 별로 묶어 나열) ─────────────
+
+def write_issue_sheet(ws, issue_rows, source_names):
+    """rep/서브헤더/ETC 행만 표시. 접힌 detail 행의 comment 는 같은 bin(rep) 행의
+    comment 셀에 "<Item>: <comment>" 줄로 묶어 나열한다 (rep 자신의 comment 가 맨 위)."""
+    _title_banner(ws, "Issue Table")
+    header = (["Category", "Step", "Bin", "TNO", "Item", "avg"]
+              + list(source_names) + list(_COMMENT_COLS))
+
+    # _grp 별 detail comment 수집
+    detail_comments = {}
+    for r in issue_rows or []:
+        if not r.get("_detail"):
+            continue
+        grp = r.get("_grp")
+        for col in _COMMENT_COLS:
+            text = str(r.get(col) or "").strip()
+            if text:
+                detail_comments.setdefault((grp, col), []).append(
+                    f"{r.get('Item')}: {text}")
+
+    rows = []
+    for r in issue_rows or []:
+        if r.get("_detail"):
+            continue
+        vals = [r.get("Category"), r.get("Step"), r.get("Bin"), r.get("TNO"),
+                r.get("Item"), r.get("avg")]
+        vals += [r.get(f"{s}_yield") for s in source_names]
+        for col in _COMMENT_COLS:
+            parts = []
+            own = str(r.get(col) or "").strip()
+            if own:
+                parts.append(own)
+            parts.extend(detail_comments.get((r.get("_grp"), col), []))
+            vals.append("\n".join(parts))
+        rows.append(vals)
+
+    _write_table(ws, header, rows)
+    widths = {"Item": _ITEM_COL_WIDTH * 1.8, "Category": 10}
+    for col in _COMMENT_COLS:
+        widths[col] = 40
+    _set_col_widths(ws, header, widths, default=_NARROW_COL_WIDTH * 1.6)
+
+
+# ── PNG 부착 (Distribution / Histogram / Map Analysis) ──────────────────────
+
+def write_source_legend(ws, source_colors, *, row=2):
+    """시트 상단에 source ↔ 색 범례를 1행으로 (차트 셀 안 범례 생략을 보완)."""
+    col = _START_COL
+    for name, color in source_colors:
+        ws.range((row, col)).value = _safe(f"■ {name}")
+        _style_range(ws.range((row, col)),
+                     font={"name": "Calibri", "size": 11, "bold": True,
+                           "color": "FF" + color.lstrip("#").upper()})
+        col += 3
+
+
+def _add_picture(ws, path, left, top, w_pt, h_pt):
+    """raw COM Shapes.AddPicture — xlwings pictures.add 대비 ~20% 빠르다(픽셀 비례 비용)."""
+    ws.api.Shapes.AddPicture(str(path), _MSO_FALSE, _MSO_TRUE,
+                             float(left), float(top), float(w_pt), float(h_pt))
+
+
+def picture_stack_tops(heights_px):
+    """세로 연속 배치의 각 PNG top(pt) 목록 — 완료 순서와 무관하게 부착 가능하도록 선계산."""
+    ppp = _png_pt_per_px()
+    tops = []
+    top = float(_PIC_TOP_START)
+    for h_px in heights_px:
+        tops.append(top)
+        top += h_px * ppp + _PIC_GAP
+    return tops
+
+
+def add_picture_at(ws, path, *, top, width_px, height_px):
+    """선계산된 top 위치에 PNG 1장 부착 (as_completed 파이프라인용)."""
+    ppp = _png_pt_per_px()
+    _add_picture(ws, path, _PIC_MARGIN, top, width_px * ppp, height_px * ppp)
+
+
+def add_map_grid(ws, labeled_pngs):
+    """wafer map PNG 들을 가로 3개 그리드로 부착 (honey excel Map 시트와 동일 배치)."""
+    for idx, (label, path) in enumerate(labeled_pngs):
+        col = idx % _MAP_COLS_PER_ROW
+        row = idx // _MAP_COLS_PER_ROW
+        left = _PIC_MARGIN + col * (_MAP_PIC_W + _PIC_GAP)
+        top = _PIC_MARGIN + row * (_MAP_PIC_H + _PIC_GAP)
+        _add_picture(ws, path, left, top, _MAP_PIC_W, _MAP_PIC_H)

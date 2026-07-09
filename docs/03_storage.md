@@ -37,7 +37,8 @@
 
 ### 주요 CRUD (전부 `get_conn()` 컨텍스트, row_factory=Row)
 - 세션: `create_session`(source 인자), `update_session`(화이트리스트 `_SESSION_UPDATABLE` 만), `get_session`, `get_history`(필터+JOIN), `delete_session`(+annotation 삭제).
-- summary: `save_summary_batch`(INSERT OR IGNORE), `replace_summary_batch`(DELETE+INSERT, 수정모드), `get_summary_by_analysis_key`.
+- summary: `save_summary_batch`(INSERT OR IGNORE), `get_summary_by_analysis_key`.
+  (`replace_summary_batch` 는 세션 수정 기능 폐기(2026-07-09)로 제거.)
 - object: `upsert_object_info`(ON CONFLICT UPDATE), `get_object_info`, `get_all_object_infos`, `touch_object_info`.
 - 락: `try_acquire_analysis_lock`(만료행 청소 후 INSERT, IntegrityError=실패), `release_analysis_lock`.
 
@@ -45,8 +46,9 @@
 - **S3 산출물 저장의 단일 진입점.** 프로젝트 코드(`report_routes.py`·`upload_xlsx.py`·
   `routes.py`)는 내부 `_s3` 어댑터를 직접 import 하지 않고 이 패키지만 의존한다.
   예외 `S3NotConfigured`/`S3ObjectCorrupted` 도 facade 에서 재노출한다.
-- 공개 함수: `save_upload_artifacts`, `load_json_object`, `save_text_object`,
+- 공개 함수: `save_upload_artifacts`, `load_json_object`,
   `list_issue_image_rows`, `load_issue_image`, `load_chart_png`, `load_distribution_png`.
+  (`save_text_object` 는 세션 수정 기능 폐기(2026-07-09)로 제거.)
 - 이미지 URL 라우트(`/chart`, `/issue_image`, `/distribution_combined`)는
   [server/storage_gateway/routes.py](../server/storage_gateway/routes.py)에 있으며 기존 URL을 유지한다.
 - 내부 모듈(외부 담당자 영역): `_s3`(boto3 어댑터·키 빌더), `_issue_images`(이슈 이미지
@@ -58,9 +60,11 @@
 - 입출력: `upload_bytes_to_s3` / `download_bytes_from_s3` / `upload_json_to_s3` / `download_json_from_s3`(깨진 JSON 시 `S3ObjectCorrupted`) / `s3_object_exists`(head_object).
 - 키 패턴 (prefix 는 [config.py](../server/config.py#L27), 모두 `pe/report_server/` 네임스페이스로 plotly legacy 와 충돌 회피):
   ```
-  summary_text/<akey>.json       issue_table_text/<akey>.json
+  issue_img/<akey>/<row>.png     issue_img/<akey>/index.json
   chart_png/<akey>/<idx>.png  +  chart_png/<akey>/index.json
   ```
+  (구 텍스트 prefix(summary_text 등)는 세션 수정 기능 폐기로 제거 — legacy 객체는
+  report_object_info.s3_key 로 읽는다.)
 
 ## 환경변수 (config.py)
 서버: `HOST/PORT`, `REPORT_DB_PATH`, `REPORT_S3_ENDPOINT/BUCKET/REGION/ACCESS_KEY/SECRET_KEY`,

@@ -1,0 +1,757 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report Server — 관리자</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #f0f2f5; margin: 0; padding: 20px;
+  color: #222;
+  --surface-1: #ffffff;
+  --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #898781;
+  --grid: #e1e0d9; --axis: #c3c2b7;
+  --s-upload: #008300; --s-edit: #2a78d6; --s-delete: #e34948;
+  --st-warn: #fab219; --st-crit: #d03b3b; --accent: #2a78d6;
+}
+h1 { margin: 0 0 14px; font-size: 20px; font-weight: 700; color: #1a1a2e; }
+h1 .sub { font-size: 12px; font-weight: 400; color: #888; margin-left: 8px; }
+
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; }
+.tab {
+  padding: 8px 18px; border-radius: 8px 8px 0 0; border: none; cursor: pointer;
+  background: #e3e6ea; color: #555; font-size: 13px; font-weight: 600;
+}
+.tab.active { background: #fff; color: #1a1a2e; box-shadow: 0 -1px 4px rgba(0,0,0,.06); }
+.panel { display: none; }
+.panel.active { display: block; }
+
+.card {
+  background: var(--surface-1); border-radius: 10px; padding: 16px 20px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 16px;
+}
+.card h2 { margin: 0 0 12px; font-size: 14px; font-weight: 700; color: #333; }
+.card h2 .hint { font-size: 11px; font-weight: 400; color: #999; margin-left: 8px; }
+.row { display: flex; gap: 16px; flex-wrap: wrap; }
+.row > .card { flex: 1 1 260px; margin-bottom: 0; }
+.row { margin-bottom: 16px; }
+
+/* stat tiles */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.tile { background: #fff; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 6px rgba(0,0,0,.07); }
+.tile .lbl { font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+.tile .val { font-size: 26px; font-weight: 600; color: var(--ink-1); }
+.tile .det { font-size: 11px; color: var(--ink-3); margin-top: 4px; }
+.meter { height: 6px; border-radius: 3px; background: #e8eaee; margin-top: 8px; overflow: hidden; }
+.meter > div { height: 100%; border-radius: 3px; background: var(--accent); }
+.meter > div.warn { background: var(--st-warn); }
+.meter > div.crit { background: var(--st-crit); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 7px 10px; border-bottom: 1px solid #eef0f3; text-align: left; white-space: nowrap; }
+th { background: #fafbfc; font-weight: 600; color: #555; font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tr.empty-row td { text-align: center; color: #999; padding: 24px; }
+td.mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #555; }
+.table-wrap { overflow-x: auto; }
+
+.btn {
+  height: 32px; padding: 0 14px; border-radius: 6px; border: 1px solid #d0d5dd;
+  background: #fff; color: #333; font-size: 13px; cursor: pointer; font-weight: 500;
+}
+.btn:hover { background: #f5f7fa; }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn.primary:hover { background: #1c5cab; }
+.btn.danger { background: #fff; color: #b91c1c; border-color: #f3b4b4; }
+.btn.danger:hover { background: #fef2f2; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.inp, .sel {
+  height: 32px; padding: 0 10px; border: 1px solid #d0d5dd; border-radius: 6px;
+  font-size: 13px; outline: none; background: #fff;
+}
+.inp:focus, .sel:focus { border-color: var(--accent); }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.toolbar .grow { flex: 1; }
+.chip { display: inline-block; background: #eef2f7; color: #555; border-radius: 12px;
+        padding: 2px 10px; font-size: 12px; margin-right: 6px; }
+
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge.upload, .badge.done   { background: #dcfce7; color: #166534; }
+.badge.edit, .badge.reused   { background: #dbeafe; color: #1e40af; }
+.badge.delete, .badge.error  { background: #fee2e2; color: #b91c1c; }
+.badge.pending { background: #fef9c3; color: #854d0e; }
+.badge.gray { background: #f1f5f9; color: #64748b; }
+.badge-fail { color: #dc2626; font-size: 11px; font-weight: 600; margin-left: 4px; }
+.star { cursor: pointer; font-size: 15px; color: #cbd5e1; background: none; border: none; padding: 2px; }
+.star.on { color: #eda100; }
+
+.msg { font-size: 12px; margin-top: 8px; color: var(--ink-2); white-space: pre-wrap; }
+.msg.err { color: #b91c1c; }
+pre.logbox {
+  background: #101418; color: #d7dde4; border-radius: 8px; padding: 14px;
+  font-size: 12px; line-height: 1.5; max-height: 560px; overflow: auto; white-space: pre-wrap;
+}
+.pager { display: flex; gap: 6px; justify-content: center; margin-top: 12px; align-items: center; }
+.pager .pg-btn { min-width: 32px; height: 30px; padding: 0 10px; font-size: 12px;
+  border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-radius: 4px; }
+.pager .pg-btn:disabled { opacity: .4; cursor: not-allowed; }
+.pager .pg-info { font-size: 12px; color: #888; }
+
+/* chart */
+.chart-box { position: relative; }
+.chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+.chart-legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.chart-legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+#chartTip {
+  position: absolute; pointer-events: none; display: none; z-index: 5;
+  background: #fff; border: 1px solid #e1e0d9; border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.12); padding: 8px 12px; font-size: 12px; color: var(--ink-1);
+}
+#chartTip .t-date { font-weight: 600; margin-bottom: 4px; }
+#chartTip .t-row { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+#chartTip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>Report Server 관리자 <span class="sub">서버 현황 · 통계 · 세션/DB 컨트롤</span></h1>
+
+<div class="tabs">
+  <button class="tab active" data-panel="pHealth">현황</button>
+  <button class="tab" data-panel="pStats">통계</button>
+  <button class="tab" data-panel="pSessions">세션</button>
+  <button class="tab" data-panel="pDb">DB</button>
+  <button class="tab" data-panel="pLogs">로그</button>
+  <button class="tab" data-panel="pAudit">감사로그</button>
+</div>
+
+<!-- ═══ 현황 ═══ -->
+<div id="pHealth" class="panel active">
+  <div class="tiles" id="healthTiles">
+    <div class="tile"><div class="lbl">로딩 중…</div></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="row">
+    <div class="card">
+      <h2>스토리지 <span class="hint">디렉토리 크기는 60초 캐시</span>
+        <button class="btn" id="btnStorageRefresh" style="float:right">새로 스캔</button></h2>
+      <div class="table-wrap"><table id="storageTable">
+        <tbody><tr class="empty-row"><td>로딩 중…</td></tr></tbody>
+      </table></div>
+    </div>
+    <div class="card" style="max-width:380px">
+      <h2>S3 연결 <span class="hint">수동 확인 (endpoint 다운 시 수 초 걸릴 수 있음)</span></h2>
+      <button class="btn primary" id="btnS3Check">S3 상태 확인</button>
+      <div class="msg" id="s3Msg">아직 확인 안 함</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 통계 ═══ -->
+<div id="pStats" class="panel">
+  <div class="card">
+    <h2>일별 사용량
+      <select id="statsDays" class="sel" style="float:right">
+        <option value="7">최근 7일</option>
+        <option value="30" selected>최근 30일</option>
+        <option value="90">최근 90일</option>
+      </select>
+    </h2>
+    <div class="chart-legend">
+      <span class="key"><span class="sw" style="background:var(--s-upload)"></span>업로드</span>
+      <span class="key"><span class="sw" style="background:var(--s-edit)"></span>수정</span>
+      <span class="key"><span class="sw" style="background:var(--s-delete)"></span>삭제</span>
+    </div>
+    <div class="chart-box">
+      <svg id="dailyChart" width="100%" height="240" viewBox="0 0 900 240" preserveAspectRatio="none"></svg>
+      <div id="chartTip"></div>
+    </div>
+    <details class="tblview"><summary>표로 보기</summary>
+      <div class="table-wrap"><table id="dailyTable"></table></div>
+    </details>
+  </div>
+  <div class="card">
+    <h2>사용자별 사용량 <span class="hint">client_user → PC명 → IP 순 폴백 (클라이언트 신고값)</span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>#</th><th>사용자</th><th>PC</th><th>IP</th>
+        <th class="num">업로드</th><th class="num">수정</th><th class="num">삭제</th>
+        <th class="num">합계</th><th>마지막 사용</th></tr></thead>
+      <tbody id="userRankBody"><tr class="empty-row"><td colspan="9">로딩 중…</td></tr></tbody>
+    </table></div>
+  </div>
+</div>
+
+<!-- ═══ 세션 ═══ -->
+<div id="pSessions" class="panel">
+  <div class="card">
+    <h2>세션 컨트롤 <span id="sessSummary" class="hint"></span></h2>
+    <div class="toolbar">
+      <input id="sessQ" class="inp" style="width:260px" placeholder="세션ID / 파일명 / product / lot 검색…">
+      <select id="sessStatus" class="sel">
+        <option value="">전체 status</option>
+        <option value="done">done</option>
+        <option value="reused">reused</option>
+        <option value="pending">pending</option>
+        <option value="error">error</option>
+      </select>
+      <button class="btn primary" id="btnSessSearch">검색</button>
+      <span class="grow"></span>
+      <button class="btn danger" id="btnBulkDelete" disabled>선택 삭제 (0)</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th><input type="checkbox" id="chkAll"></th>
+        <th>생성</th><th>중요</th><th>type</th><th>product</th><th>lot</th><th>파일명</th>
+        <th>status</th><th>mode</th><th>업로더(PC)</th><th>PIN</th><th>session_id</th><th></th>
+      </tr></thead>
+      <tbody id="sessBody"><tr class="empty-row"><td colspan="13">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="pager" id="sessPager"></div>
+    <div class="msg" id="sessMsg"></div>
+  </div>
+</div>
+
+<!-- ═══ DB ═══ -->
+<div id="pDb" class="panel">
+  <div class="row">
+    <div class="card">
+      <h2>백업</h2>
+      <div class="toolbar">
+        <button class="btn primary" id="btnBackup">지금 백업 실행</button>
+        <a class="btn" id="btnCsv" href="api/audit.csv" download>감사로그 CSV 다운로드</a>
+      </div>
+      <div class="msg" id="backupMsg"></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>파일</th><th class="num">크기</th><th>생성 시각</th></tr></thead>
+        <tbody id="backupBody"><tr class="empty-row"><td colspan="3">로딩 중…</td></tr></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <h2>세션 정리 (retention) <span class="hint" id="cleanupHint"></span></h2>
+      <div class="toolbar">
+        <button class="btn" id="btnCleanupDry">Dry-run (대상만 확인)</button>
+        <button class="btn danger" id="btnCleanupReal">실제 삭제 실행</button>
+      </div>
+      <div class="msg" id="cleanupMsg">보존기간이 지난 비중요 세션을 정리합니다. 먼저 dry-run 으로 대상을 확인하세요.</div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>DB 진단
+      <span style="float:right">
+        <button class="btn" id="btnDiagQuick">quick_check</button>
+        <button class="btn" id="btnDiagFull">integrity_check (느림)</button>
+      </span>
+    </h2>
+    <div class="msg" id="diagMsg"></div>
+    <div class="table-wrap"><table id="diagTable"></table></div>
+  </div>
+</div>
+
+<!-- ═══ 로그 ═══ -->
+<div id="pLogs" class="panel">
+  <div class="card">
+    <h2>서버 로그 tail
+      <span style="float:right">
+        <select id="logBytes" class="sel">
+          <option value="16384">16 KB</option>
+          <option value="65536" selected>64 KB</option>
+          <option value="262144">256 KB</option>
+        </select>
+        <button class="btn primary" id="btnLogRefresh">새로고침</button>
+      </span>
+    </h2>
+    <div class="msg" id="logInfo"></div>
+    <pre class="logbox" id="logBox">로딩 중…</pre>
+  </div>
+</div>
+
+<!-- ═══ 감사로그 ═══ -->
+<div id="pAudit" class="panel">
+  <div class="card">
+    <div class="toolbar">
+      <select id="fAction" class="sel">
+        <option value="">전체 작업</option>
+        <option value="upload">업로드</option>
+        <option value="edit">수정</option>
+        <option value="delete">삭제</option>
+      </select>
+      <input id="fQuery" class="inp" style="width:280px" placeholder="파일명 / product / lot 부분 일치…">
+      <button class="btn primary" id="btnAuditSearch">검색</button>
+      <button class="btn" id="btnAuditReset">초기화</button>
+      <span class="grow"></span>
+      <span id="auditCount" class="hint"></span>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>시각</th><th>작업</th><th>type</th><th>product</th><th>lot_id</th><th>파일명</th>
+        <th>변경 필드</th><th>사용자(PC)</th><th>IP</th><th>session_id</th>
+      </tr></thead>
+      <tbody id="auditBody"><tr class="empty-row"><td colspan="10">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="pager" id="auditPager"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// 상대 URL 만 사용 — 비밀 prefix 가 HTML/JS 소스에 노출되지 않는다.
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? "" : s)
+  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const pad = n => String(n).padStart(2, "0");
+function fmtDate(unix) {
+  if (!unix) return "-";
+  const d = new Date(unix * 1000);
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fmtBytes(n) {
+  if (n == null) return "-";
+  if (n < 1024) return n + " B";
+  const u = ["KB", "MB", "GB", "TB"];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n >= 100 ? 0 : 1) + " " + u[i];
+}
+function fmtUptime(sec) {
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
+  return (d ? d + "일 " : "") + h + "시간 " + m + "분";
+}
+async function getJSON(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  return res.json();
+}
+async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Admin-Request": "1" },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return data;
+}
+
+// ── 탭 ──────────────────────────────────────────────────────────────────────
+const loadedTabs = new Set();
+const TAB_LOADERS = {
+  pHealth: loadHealth, pStats: loadStats, pSessions: loadSessions,
+  pDb: loadDb, pLogs: loadLogs, pAudit: loadAudit,
+};
+document.querySelectorAll(".tab").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".panel").forEach(p =>
+      p.classList.toggle("active", p.id === btn.dataset.panel));
+    const id = btn.dataset.panel;
+    if (!loadedTabs.has(id)) { loadedTabs.add(id); TAB_LOADERS[id](); }
+  };
+});
+
+// ── 현황 ────────────────────────────────────────────────────────────────────
+function meterCls(pct) { return pct >= 90 ? "crit" : pct >= 70 ? "warn" : ""; }
+async function loadHealth() {
+  try {
+    const h = await getJSON("api/health");
+    $("healthTiles").innerHTML = `
+      <div class="tile"><div class="lbl">CPU</div>
+        <div class="val">${h.cpu_percent.toFixed(0)}%</div>
+        <div class="det">${h.cpu_count} 코어</div>
+        <div class="meter"><div class="${meterCls(h.cpu_percent)}" style="width:${Math.min(h.cpu_percent,100)}%"></div></div></div>
+      <div class="tile"><div class="lbl">RAM</div>
+        <div class="val">${h.mem_percent.toFixed(0)}%</div>
+        <div class="det">${fmtBytes(h.mem_used)} / ${fmtBytes(h.mem_total)}</div>
+        <div class="meter"><div class="${meterCls(h.mem_percent)}" style="width:${Math.min(h.mem_percent,100)}%"></div></div></div>
+      <div class="tile"><div class="lbl">디스크 (${esc(h.disk_path)})</div>
+        <div class="val">${h.disk_percent.toFixed(0)}%</div>
+        <div class="det">${fmtBytes(h.disk_used)} / ${fmtBytes(h.disk_total)}</div>
+        <div class="meter"><div class="${meterCls(h.disk_percent)}" style="width:${Math.min(h.disk_percent,100)}%"></div></div></div>
+      <div class="tile"><div class="lbl">서버 업타임</div>
+        <div class="val" style="font-size:20px">${fmtUptime(h.uptime_sec)}</div>
+        <div class="det">프로세스 RSS ${fmtBytes(h.proc_rss)} · 스레드 ${h.proc_threads}</div></div>`;
+  } catch (e) {
+    $("healthTiles").innerHTML = `<div class="tile"><div class="lbl">현황 조회 실패</div><div class="det">${esc(e)}</div></div>`;
+  }
+  loadStorage(false);
+}
+async function loadStorage(refresh) {
+  const tb = $("storageTable").tBodies[0];
+  tb.innerHTML = `<tr class="empty-row"><td>스캔 중…</td></tr>`;
+  try {
+    const s = await getJSON("api/storage" + (refresh ? "?refresh=1" : ""));
+    let html = `
+      <tr><td>DB 파일</td><td class="num">${fmtBytes(s.db_file)}</td><td class="mono">${esc(s.db_path)}</td></tr>
+      <tr><td>DB -wal</td><td class="num">${fmtBytes(s.db_wal)}</td><td></td></tr>
+      <tr><td>DB -shm</td><td class="num">${fmtBytes(s.db_shm)}</td><td></td></tr>`;
+    for (const d of s.dirs)
+      html += `<tr><td>${esc(d.label)}</td><td class="num">${fmtBytes(d.bytes)}</td>
+               <td class="mono">${d.files}개 파일</td></tr>`;
+    tb.innerHTML = html;
+  } catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td>조회 실패: ${esc(e)}</td></tr>`;
+  }
+}
+$("btnStorageRefresh").onclick = () => loadStorage(true);
+$("btnS3Check").onclick = async () => {
+  $("s3Msg").textContent = "확인 중…";
+  try {
+    const r = await getJSON("api/s3-status");
+    if (r.status === "ok")
+      $("s3Msg").innerHTML = `<span class="badge done">연결 OK</span> bucket=${esc(r.bucket)} · ${esc(r.endpoint)}`;
+    else if (r.status === "not_configured")
+      $("s3Msg").innerHTML = `<span class="badge gray">미설정</span> ${esc(r.detail)}`;
+    else
+      $("s3Msg").innerHTML = `<span class="badge error">오류</span> ${esc(r.detail)}`;
+  } catch (e) { $("s3Msg").textContent = "확인 실패: " + e; }
+};
+
+// ── 통계: 스택 막대 차트 ────────────────────────────────────────────────────
+const SERIES = [
+  { key: "upload", label: "업로드", color: "var(--s-upload)" },
+  { key: "edit",   label: "수정",   color: "var(--s-edit)"   },
+  { key: "delete", label: "삭제",   color: "var(--s-delete)" },
+];
+function niceMax(v) {
+  if (v <= 5) return 5;
+  const mag = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 5, 10]) if (v <= m * mag) return m * mag;
+  return 10 * mag;
+}
+function roundedTopRect(x, y, w, h, r) {
+  r = Math.min(r, h, w / 2);
+  return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + w - r},${y} ` +
+         `Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`;
+}
+function renderDailyChart(rows) {
+  const svg = $("dailyChart");
+  const W = 900, H = 240, padL = 44, padR = 10, padT = 10, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = rows.length;
+  const maxTotal = Math.max(...rows.map(r => r.upload + r.edit + r.delete), 0);
+  if (!n || maxTotal === 0) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#999" font-size="13">기간 내 기록이 없습니다.</text>`;
+    return;
+  }
+  const yMax = niceMax(maxTotal);
+  const slot = plotW / n;
+  const barW = Math.min(24, Math.max(3, slot - 2));   // 인접 막대 사이 2px 표면 간격
+  const y = v => padT + plotH * (1 - v / yMax);
+  let parts = [];
+  // 가로 그리드 (hairline) + y 눈금
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const v = yMax * i / ticks, yy = y(v);
+    parts.push(`<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#e1e0d9" stroke-width="1"/>`);
+    parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#898781"
+                 font-variant-numeric="tabular-nums">${Math.round(v).toLocaleString()}</text>`);
+  }
+  // 막대 (스택: 업로드 → 수정 → 삭제, 세그먼트 사이 2px 표면 간격)
+  const labelEvery = n > 40 ? 10 : n > 14 ? 5 : 1;
+  rows.forEach((r, i) => {
+    const x = padL + slot * i + (slot - barW) / 2;
+    const segs = SERIES.map(s => ({ ...s, v: r[s.key] })).filter(s => s.v > 0);
+    let cursor = padT + plotH;
+    segs.forEach((s, si) => {
+      const hRaw = plotH * s.v / yMax;
+      const gap = si < segs.length - 1 ? 2 : 0;   // 위 세그먼트와의 표면 간격
+      const h = Math.max(hRaw - gap, 1);
+      const top = cursor - hRaw;
+      if (si === segs.length - 1)
+        parts.push(`<path d="${roundedTopRect(x, top, barW, h, 4)}" fill="${s.color}"/>`);
+      else
+        parts.push(`<rect x="${x}" y="${top}" width="${barW}" height="${h}" fill="${s.color}"/>`);
+      cursor = top;
+    });
+    // x 라벨 (선택적)
+    if (i % labelEvery === 0)
+      parts.push(`<text x="${padL + slot * i + slot / 2}" y="${H - 8}" text-anchor="middle"
+                   font-size="10" fill="#898781">${r.date.slice(5)}</text>`);
+    // 호버 히트 영역 (막대보다 크게)
+    parts.push(`<rect class="hit" data-i="${i}" x="${padL + slot * i}" y="${padT}"
+                 width="${slot}" height="${plotH}" fill="transparent"/>`);
+  });
+  // 기준선
+  parts.push(`<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="#c3c2b7" stroke-width="1"/>`);
+  svg.innerHTML = parts.join("");
+
+  const tip = $("chartTip");
+  svg.querySelectorAll(".hit").forEach(hit => {
+    hit.addEventListener("mousemove", ev => {
+      const r = rows[+hit.dataset.i];
+      tip.innerHTML = `<div class="t-date">${esc(r.date)}</div>` + SERIES.map(s =>
+        `<div class="t-row"><span class="sw" style="background:${s.color}"></span>${s.label} ${r[s.key]}건</div>`).join("");
+      const box = svg.parentElement.getBoundingClientRect();
+      tip.style.display = "block";
+      tip.style.left = Math.min(ev.clientX - box.left + 14, box.width - 150) + "px";
+      tip.style.top = (ev.clientY - box.top - 10) + "px";
+    });
+    hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  });
+}
+async function loadStats() {
+  const days = $("statsDays").value;
+  try {
+    const d = await getJSON("api/stats/daily?days=" + days);
+    renderDailyChart(d.rows);
+    $("dailyTable").innerHTML =
+      `<thead><tr><th>날짜</th><th class="num">업로드</th><th class="num">수정</th><th class="num">삭제</th></tr></thead><tbody>` +
+      d.rows.map(r => `<tr><td>${esc(r.date)}</td><td class="num">${r.upload}</td>
+        <td class="num">${r.edit}</td><td class="num">${r.delete}</td></tr>`).join("") + "</tbody>";
+  } catch (e) {
+    $("dailyChart").innerHTML = `<text x="450" y="120" text-anchor="middle" fill="#b91c1c" font-size="13">조회 실패: ${esc(e)}</text>`;
+  }
+  try {
+    const u = await getJSON("api/stats/users?days=" + days);
+    $("userRankBody").innerHTML = u.rows.length ? u.rows.map((r, i) => `
+      <tr><td>${i + 1}</td><td><b>${esc(r.who)}</b></td><td>${esc(r.host || "-")}</td>
+        <td class="mono">${esc(r.ip || "-")}</td>
+        <td class="num">${r.upload}</td><td class="num">${r.edit}</td><td class="num">${r.delete}</td>
+        <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="9">기간 내 기록이 없습니다.</td></tr>`;
+  } catch (e) {
+    $("userRankBody").innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
+  }
+}
+$("statsDays").onchange = loadStats;
+
+// ── 세션 ────────────────────────────────────────────────────────────────────
+const SESS_PAGE = 100;
+let sessOffset = 0, sessTotal = 0;
+const selected = new Set();
+function updateBulkBtn() {
+  $("btnBulkDelete").textContent = `선택 삭제 (${selected.size})`;
+  $("btnBulkDelete").disabled = selected.size === 0;
+}
+async function loadSessions() {
+  const tb = $("sessBody");
+  tb.innerHTML = `<tr class="empty-row"><td colspan="13">로딩 중…</td></tr>`;
+  selected.clear(); updateBulkBtn(); $("chkAll").checked = false;
+  try {
+    const summary = await getJSON("api/sessions/status_summary");
+    $("sessSummary").innerHTML = Object.entries(summary)
+      .map(([k, v]) => `<span class="chip">${esc(k)}: ${v}</span>`).join("");
+  } catch (e) { /* 요약 실패는 무시 */ }
+  const params = new URLSearchParams({ limit: SESS_PAGE, offset: sessOffset });
+  const q = $("sessQ").value.trim(); if (q) params.set("q", q);
+  const st = $("sessStatus").value; if (st) params.set("status", st);
+  let data;
+  try { data = await getJSON("api/sessions?" + params); }
+  catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="13">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  sessTotal = data.total;
+  if (!data.rows.length) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="13">세션이 없습니다.</td></tr>`;
+  } else {
+    tb.innerHTML = data.rows.map(r => `
+      <tr data-sid="${esc(r.session_id)}">
+        <td><input type="checkbox" class="chkRow" data-sid="${esc(r.session_id)}"></td>
+        <td>${fmtDate(r.created_at)}</td>
+        <td><button class="star ${r.is_important ? "on" : ""}" data-act="imp"
+             data-sid="${esc(r.session_id)}" data-cur="${r.is_important}" title="중요 표시 토글">★</button></td>
+        <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
+        <td>${esc(r.lot_id || "-")}</td><td>${esc(r.file_name || "-")}</td>
+        <td><span class="badge ${esc(r.status)}">${esc(r.status)}</span>${
+            r.error_message ? `<span class="badge-fail" title="${esc(r.error_message)}">!</span>` : ""}</td>
+        <td>${esc(r.mode)}</td>
+        <td>${esc(r.uploaded_by || "-")}${r.client_host ? ` <span style="color:#999;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
+        <td>${r.has_password
+              ? `<span class="badge gray">PIN</span> <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="pin" data-sid="${esc(r.session_id)}">변경/해제</button>`
+              : `<button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="pin" data-sid="${esc(r.session_id)}">PIN 설정</button>`}</td>
+        <td class="mono">${esc(r.session_id)}</td>
+        <td><button class="btn danger" style="height:24px;padding:0 8px;font-size:11px"
+             data-act="del" data-sid="${esc(r.session_id)}">삭제</button></td>
+      </tr>`).join("");
+  }
+  // pager
+  const page = Math.floor(sessOffset / SESS_PAGE), last = Math.max(0, Math.ceil(sessTotal / SESS_PAGE) - 1);
+  $("sessPager").innerHTML = `
+    <button class="pg-btn" id="sessPrev" ${page === 0 ? "disabled" : ""}>← 이전</button>
+    <span class="pg-info">${sessTotal}건 중 ${sessOffset + 1}–${Math.min(sessOffset + SESS_PAGE, sessTotal)} (페이지 ${page + 1}/${last + 1})</span>
+    <button class="pg-btn" id="sessNext" ${page >= last ? "disabled" : ""}>다음 →</button>`;
+  $("sessPrev").onclick = () => { sessOffset = Math.max(0, sessOffset - SESS_PAGE); loadSessions(); };
+  $("sessNext").onclick = () => { sessOffset += SESS_PAGE; loadSessions(); };
+}
+$("btnSessSearch").onclick = () => { sessOffset = 0; loadSessions(); };
+$("sessQ").addEventListener("keydown", e => { if (e.key === "Enter") { sessOffset = 0; loadSessions(); } });
+$("sessStatus").onchange = () => { sessOffset = 0; loadSessions(); };
+$("chkAll").onchange = () => {
+  document.querySelectorAll(".chkRow").forEach(c => {
+    c.checked = $("chkAll").checked;
+    if (c.checked) selected.add(c.dataset.sid); else selected.delete(c.dataset.sid);
+  });
+  updateBulkBtn();
+};
+$("sessBody").addEventListener("change", e => {
+  if (!e.target.classList.contains("chkRow")) return;
+  if (e.target.checked) selected.add(e.target.dataset.sid); else selected.delete(e.target.dataset.sid);
+  updateBulkBtn();
+});
+$("sessBody").addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const sid = btn.dataset.sid, msg = $("sessMsg");
+  msg.className = "msg"; msg.textContent = "";
+  try {
+    if (btn.dataset.act === "imp") {
+      const next = btn.dataset.cur !== "1";
+      await postJSON(`api/session/${sid}/important`, { important: next });
+      btn.classList.toggle("on", next);
+      btn.dataset.cur = next ? "1" : "0";
+    } else if (btn.dataset.act === "pin") {
+      const pin = prompt("새 PIN (4자리 숫자, 비우면 해제):", "");
+      if (pin === null) return;
+      if (pin && !/^\d{4}$/.test(pin)) { alert("4자리 숫자만 가능합니다."); return; }
+      const r = await postJSON(`api/session/${sid}/password`, { password: pin });
+      msg.textContent = `${sid}: PIN ${r.has_password ? "설정됨" : "해제됨"}`;
+      loadSessions();
+    } else if (btn.dataset.act === "del") {
+      if (!confirm(`세션 ${sid} 을(를) 삭제할까요?\n마지막 참조 세션이면 S3/로컬 산출물도 함께 삭제됩니다.`)) return;
+      const r = await postJSON("api/sessions/delete", { session_ids: [sid] });
+      msg.textContent = r.deleted.length ? `삭제 완료: ${sid}` : `삭제 실패: ${JSON.stringify(r.failed)}`;
+      loadSessions();
+    }
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+});
+$("btnBulkDelete").onclick = async () => {
+  if (!selected.size) return;
+  const typed = prompt(`선택한 ${selected.size}개 세션을 삭제합니다.\n마지막 참조 세션의 S3/로컬 산출물도 함께 삭제됩니다.\n\n계속하려면 DELETE 를 입력하세요:`);
+  if (typed !== "DELETE") return;
+  const msg = $("sessMsg");
+  msg.className = "msg"; msg.textContent = "삭제 중…";
+  try {
+    const r = await postJSON("api/sessions/delete", { session_ids: [...selected] });
+    msg.textContent = `삭제 ${r.deleted.length}건 완료` +
+      (r.failed.length ? `, 실패 ${r.failed.length}건: ${r.failed.map(f => f.session_id).join(", ")}` : "");
+    loadSessions();
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+};
+
+// ── DB ──────────────────────────────────────────────────────────────────────
+async function loadDb() { loadBackups(); }
+async function loadBackups() {
+  try {
+    const b = await getJSON("api/db/backups");
+    $("backupBody").innerHTML = b.rows.length ? b.rows.map(r =>
+      `<tr><td class="mono">${esc(r.name)}</td><td class="num">${fmtBytes(r.bytes)}</td><td>${fmtDate(r.mtime)}</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="3">백업 파일 없음 (${esc(b.dir)})</td></tr>`;
+  } catch (e) {
+    $("backupBody").innerHTML = `<tr class="empty-row"><td colspan="3">조회 실패: ${esc(e)}</td></tr>`;
+  }
+}
+$("btnBackup").onclick = async () => {
+  $("btnBackup").disabled = true;
+  $("backupMsg").className = "msg"; $("backupMsg").textContent = "백업 실행 중…";
+  try {
+    const r = await postJSON("api/db/backup", {});
+    $("backupMsg").textContent = `완료: ${r.file} (${fmtBytes(r.bytes)})`;
+    loadBackups();
+  } catch (e) { $("backupMsg").className = "msg err"; $("backupMsg").textContent = String(e); }
+  $("btnBackup").disabled = false;
+};
+async function runCleanup(dryRun) {
+  const msg = $("cleanupMsg");
+  msg.className = "msg"; msg.textContent = (dryRun ? "dry-run" : "실삭제") + " 실행 중…";
+  try {
+    const r = await postJSON("api/db/cleanup", { dry_run: dryRun });
+    msg.textContent = `${r.dry_run ? "[dry-run] " : ""}대상 ${r.scanned}건, 삭제 ${r.deleted}건, ` +
+      `감사로그 롤오프 ${r.audit_purged}행 (보존기간 ${r.retention_days}일)`;
+  } catch (e) { msg.className = "msg err"; msg.textContent = String(e); }
+}
+$("btnCleanupDry").onclick = () => runCleanup(true);
+$("btnCleanupReal").onclick = () => {
+  const typed = prompt("보존기간이 지난 비중요 세션을 실제로 삭제합니다 (산출물 포함, 복구 불가).\n\n계속하려면 DELETE 를 입력하세요:");
+  if (typed === "DELETE") runCleanup(false);
+};
+async function runDiag(full) {
+  const msg = $("diagMsg");
+  msg.className = "msg"; msg.textContent = full ? "integrity_check 실행 중… (수 초~수 분)" : "quick_check 실행 중…";
+  try {
+    const d = await getJSON("api/db/diagnostics" + (full ? "?full=1" : ""));
+    msg.innerHTML = `${d.check_kind}: ${d.check_ok
+        ? '<span class="badge done">ok</span>'
+        : `<span class="badge error">문제 발견</span> ${esc(d.check_result.join("; "))}`}
+      &nbsp;· DB ${fmtBytes(d.db_file)} · -wal ${fmtBytes(d.db_wal)}`;
+    $("diagTable").innerHTML =
+      `<thead><tr><th>테이블</th><th class="num">행 수</th></tr></thead><tbody>` +
+      d.tables.map(t => `<tr><td class="mono">${esc(t.name)}</td><td class="num">${t.rows.toLocaleString()}</td></tr>`).join("") +
+      "</tbody>";
+  } catch (e) { msg.className = "msg err"; msg.textContent = String(e); }
+}
+$("btnDiagQuick").onclick = () => runDiag(false);
+$("btnDiagFull").onclick = () => runDiag(true);
+
+// ── 로그 ────────────────────────────────────────────────────────────────────
+async function loadLogs() {
+  $("logBox").textContent = "로딩 중…";
+  try {
+    const r = await getJSON("api/logs/tail?bytes=" + $("logBytes").value);
+    $("logInfo").textContent = r.file ? `${r.file} (전체 ${fmtBytes(r.size)})` : "";
+    $("logBox").textContent = r.text || "(비어 있음)";
+    $("logBox").scrollTop = $("logBox").scrollHeight;
+  } catch (e) { $("logBox").textContent = "조회 실패: " + e; }
+}
+$("btnLogRefresh").onclick = loadLogs;
+$("logBytes").onchange = loadLogs;
+
+// ── 감사로그 (구 /pe/admin 뷰어 흡수) ───────────────────────────────────────
+const AUDIT_PAGE = 50;
+let auditPage = 0, auditHasMore = false;
+const ACTION_LABEL = { upload: "업로드", edit: "수정", delete: "삭제" };
+async function loadAudit() {
+  const tb = $("auditBody");
+  tb.innerHTML = `<tr class="empty-row"><td colspan="10">로딩 중…</td></tr>`;
+  const params = new URLSearchParams({ limit: AUDIT_PAGE + 1, offset: auditPage * AUDIT_PAGE });
+  const action = $("fAction").value; if (action) params.set("action", action);
+  const q = $("fQuery").value.trim(); if (q) params.set("q", q);
+  let rows;
+  try { rows = await getJSON("api/audit?" + params); }
+  catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="10">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  auditHasMore = rows.length > AUDIT_PAGE;
+  rows = rows.slice(0, AUDIT_PAGE);
+  $("auditCount").textContent = `${rows.length}건${auditHasMore ? "+" : ""}, 페이지 ${auditPage + 1}`;
+  tb.innerHTML = rows.length ? rows.map(r => {
+    const act = r.action || "";
+    const failBadge = (r.result && r.result !== "ok")
+      ? `<span class="badge-fail">${esc(r.result)}</span>` : "";
+    return `<tr>
+      <td>${fmtDate(r.created_at)}</td>
+      <td><span class="badge ${esc(act)}">${esc(ACTION_LABEL[act] || act)}</span>${failBadge}</td>
+      <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
+      <td>${esc(r.lot_id || "-")}</td><td>${esc(r.file_name || "-")}</td>
+      <td style="font-size:12px;color:#555">${esc(r.changed_fields || "-")}</td>
+      <td>${esc(r.client_user || "-")}${r.client_host ? ` <span style="color:#999;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
+      <td class="mono">${esc(r.client_ip || "-")}</td>
+      <td class="mono">${esc(r.session_id || "-")}</td></tr>`;
+  }).join("") : `<tr class="empty-row"><td colspan="10">기록이 없습니다.</td></tr>`;
+  $("auditPager").innerHTML = `
+    <button class="pg-btn" id="auditPrev" ${auditPage === 0 ? "disabled" : ""}>← 이전</button>
+    <button class="pg-btn" id="auditNext" ${auditHasMore ? "" : "disabled"}>다음 →</button>`;
+  $("auditPrev").onclick = () => { if (auditPage > 0) { auditPage--; loadAudit(); } };
+  $("auditNext").onclick = () => { if (auditHasMore) { auditPage++; loadAudit(); } };
+}
+$("btnAuditSearch").onclick = () => { auditPage = 0; loadAudit(); };
+$("fQuery").addEventListener("keydown", e => { if (e.key === "Enter") { auditPage = 0; loadAudit(); } });
+$("fAction").onchange = () => { auditPage = 0; loadAudit(); };
+$("btnAuditReset").onclick = () => {
+  $("fAction").value = ""; $("fQuery").value = ""; auditPage = 0; loadAudit();
+};
+
+// 초기 로드 — #pStats 처럼 해시로 특정 탭 딥링크 가능
+const hashTab = document.querySelector(`.tab[data-panel="${location.hash.slice(1)}"]`);
+if (hashTab) {
+  hashTab.click();
+} else {
+  loadedTabs.add("pHealth");
+  loadHealth();
+}
+</script>
+</body>
+</html>

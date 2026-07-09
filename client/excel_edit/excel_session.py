@@ -192,7 +192,7 @@ def _read_and_encode(xlsx_path, n_sources):
     read_app = xw.App(visible=False, add_book=False)
     try:
         # 읽기 전용 비가시 인스턴스 — 프롬프트가 뜨면 응답할 사용자가 없어 quit 이 막히고
-        # 좀비 Excel 이 남으므로 알림을 끈다 (upload_prepare/chart_export 와 동일).
+        # 좀비 Excel 이 남으므로 알림을 끈다 (upload_prepare 와 동일).
         read_app.display_alerts = False
     except Exception:
         pass

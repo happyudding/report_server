@@ -20,12 +20,15 @@ def register_report_server(app, root_redirect=False):
     """
     from report.report_extension import report_bp, init_app as _init_report
     from honey_routes import honey_bp
-    from admin_routes import admin_bp
 
     app.register_blueprint(report_bp)
     app.register_blueprint(honey_bp)
-    app.register_blueprint(admin_bp)
     _init_report(app)
+
+    # admin 대시보드 — 기본 경로 /pe/admin-pte/ (REPORT_ADMIN_SECRET 로 경로 변경 가능).
+    # 구 공개 /pe/admin(admin_routes.admin_bp) 은 admin_panel 로 흡수되어 등록하지 않는다.
+    from admin_panel import register_admin_panel
+    register_admin_panel(app)
 
     # 운영 보조: /healthz + 전역 에러 핸들러 + DB 백업 스케줄러 (ops.py)
     from ops import init_ops

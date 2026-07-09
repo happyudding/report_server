@@ -14,14 +14,11 @@ from config import (
     REPORT_S3_ENDPOINT,
     REPORT_S3_FAIL_PREFIX,
     REPORT_S3_ISSUE_PREFIX,
-    REPORT_S3_ISSUE_TEXT_PREFIX,
     REPORT_S3_MAX_POOL_CONNECTIONS,
     REPORT_S3_PREFIX,
     REPORT_S3_REGION,
     REPORT_S3_SECRET_KEY,
-    REPORT_S3_SUMMARY_TEXT_PREFIX,
     REPORT_S3_THUMB_PREFIX,
-    REPORT_S3_YIELD_TEXT_PREFIX,
     REPORT_S3_ISSUE_IMG_PREFIX,
     REPORT_S3_CHART_PREFIX,
 )
@@ -190,23 +187,6 @@ def make_thumb_s3_key(analysis_key, subject_id):
 def make_thumb_prefix_key(analysis_key):
     prefix = REPORT_S3_THUMB_PREFIX.strip("/")
     return f"{prefix}/{analysis_key}/"
-
-
-# ── Honey 업로드 산출물 (추출 텍스트) ────────────────────────────────────────
-
-def make_summary_text_s3_key(analysis_key):
-    prefix = REPORT_S3_SUMMARY_TEXT_PREFIX.strip("/")
-    return f"{prefix}/{analysis_key}.json"
-
-
-def make_issue_text_s3_key(analysis_key):
-    prefix = REPORT_S3_ISSUE_TEXT_PREFIX.strip("/")
-    return f"{prefix}/{analysis_key}.json"
-
-
-def make_yield_text_s3_key(analysis_key):
-    prefix = REPORT_S3_YIELD_TEXT_PREFIX.strip("/")
-    return f"{prefix}/{analysis_key}.json"
 
 
 # ── Issue_table 행별 분포 이미지 (골격) ──────────────────────────────────────

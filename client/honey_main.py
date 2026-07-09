@@ -677,6 +677,7 @@ class HoneyMainWindow(QMainWindow):
         quick = [
             ("🆕", "새 리포트 (입력 / 설정 창 접기·펴기)", self._toggle_controls),
             ("📝", "Rawdata 수정 (Excel)", self.on_rawdata_edit),
+            ("📥", "Excel Download", self.on_excel_download),
         ]
         for emoji, name, slot in quick:
             act = QAction(emoji, self)
@@ -754,6 +755,56 @@ class HoneyMainWindow(QMainWindow):
         self._status(f"Rawdata 수정 실패: {message}")
         self._append_run_log(f"[Rawdata] 실패: {message}")
         QMessageBox.warning(self, "Rawdata 수정 실패", message)
+
+    # ── Excel Download: 열린 세션의 web report 를 xlsx 로 저장 ────────────────
+    def on_excel_download(self):
+        """현재 열린 web_report 세션을 xlsx 로 저장 (시트+차트 PNG, 클라이언트 생성)."""
+        sid = self._current_session_id()
+        if not sid:
+            QMessageBox.information(
+                self, "Excel Download",
+                "먼저 세션(검색결과에서 리포트)을 연 뒤 눌러 주세요.")
+            return
+        worker = getattr(self, "_excel_dl_worker", None)
+        if worker is not None and worker.isRunning():
+            QMessageBox.information(self, "Excel Download", "이미 Excel Download 가 진행 중입니다.")
+            return
+
+        from excel_download._fetch import fetch_session_meta
+        meta = fetch_session_meta(SERVER_BASE_URL, sid)
+        base = "_".join(
+            p for p in (str(meta.get(k) or "").strip() for k in ("product", "lot_id"))
+            if p) or "webreport"
+        default_path = os.path.join(os.path.expanduser("~"), "Documents",
+                                    f"{base}_{sid}.xlsx")
+        out_path, _ = QFileDialog.getSaveFileName(
+            self, "Excel 저장", default_path, "Excel (*.xlsx)")
+        if not out_path:
+            return
+
+        from excel_download.worker import ExcelDownloadWorker
+        self._excel_dl_worker = ExcelDownloadWorker(sid, SERVER_BASE_URL, out_path, self)
+        w = self._excel_dl_worker
+        w.status.connect(self._on_excel_dl_status)
+        w.done.connect(self._on_excel_dl_done)
+        w.failed.connect(self._on_excel_dl_failed)
+        self._append_run_log(f"Excel Download 시작 (session {sid}) → {out_path}")
+        w.start()
+
+    def _on_excel_dl_status(self, state, message):
+        self._status(message)
+        self._append_run_log(f"[ExcelDL] {message}")
+
+    def _on_excel_dl_done(self, out_path, elapsed):
+        self._status(f"Excel Download 완료 ({elapsed:.1f}s)")
+        self._append_run_log(f"[ExcelDL] 완료 ({elapsed:.1f}s): {out_path}")
+        QMessageBox.information(
+            self, "Excel Download", f"저장 완료 ({elapsed:.1f}초)\n{out_path}")
+
+    def _on_excel_dl_failed(self, message):
+        self._status(f"Excel Download 실패: {message}")
+        self._append_run_log(f"[ExcelDL] 실패: {message}")
+        QMessageBox.warning(self, "Excel Download 실패", message)
 
     # ── 입력 선택: 로컬 파일 열기 / d1_storage 검색 ─────────────────────────
     def on_open_local(self):
@@ -1748,4 +1799,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()  # PyInstaller + ProcessPoolExecutor(excel_download) 필수
     main()

@@ -18,9 +18,7 @@ pip install -r requirements.txt
 |--------|------|
 | `PyQt5>=5.15` | GUI 프레임워크 |
 | `requests>=2.28` | HTTP 업로드 |
-| `pywin32>=306` | Excel COM — 차트 PNG 렌더 (Windows 전용) |
-| `PyMuPDF>=1.23` | Distribution 시트 PDF→PNG 변환 (Windows 전용) |
-| `Pillow>=9.0` | 다중 페이지 PDF→PNG 수직 합성 |
+| `pywin32>=306` | Excel COM — 시트/이미지 추출 (Windows 전용) |
 | `pandas>=1.5` | 로컬 분석 엔진 (report_generator) |
 | `numpy>=1.23` | CPK / yield / 분포 계산 |
 | `xlwings>=0.30` | xlsx 리포트 생성 — Excel COM (Windows 전용) |

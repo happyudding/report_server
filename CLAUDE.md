@@ -124,11 +124,14 @@ EXISTS` 로 기존 DB 에도 자동 생성(별도 `_migrate()` 불필요). 기�
 ## 3. S3 키 패턴 (config.py)
 
 ```
-REPORT_S3_SUMMARY_TEXT_PREFIX → pe/report_server/summary_text/<analysis_key>.json
-REPORT_S3_ISSUE_TEXT_PREFIX   → pe/report_server/issue_table_text/<analysis_key>.json
+REPORT_S3_ISSUE_IMG_PREFIX → pe/report_server/issue_img/<analysis_key>/<row>.png
+REPORT_S3_CHART_PREFIX     → pe/report_server/chart_png/<analysis_key>/...
 ```
 
-(`REPORT_S3_SOURCE_XLSX_PREFIX` 는 원본 xlsx 보관 폐지로 제거됨.)
+(`REPORT_S3_SOURCE_XLSX_PREFIX` 는 원본 xlsx 보관 폐지로,
+`REPORT_S3_SUMMARY_TEXT_PREFIX`/`ISSUE_TEXT`/`YIELD_TEXT` 는 세션 수정 기능
+폐기(2026-07-09)로 제거됨 — 텍스트는 DB sheet_data 로만 저장. legacy 세션의
+기존 S3 텍스트 객체는 report_object_info.s3_key 로 계속 읽는다.)
 
 기존 plotly prefix (`pe/report/...`) 와 충돌 회피 위해 `pe/report_server/` 사용.
 

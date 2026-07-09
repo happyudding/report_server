@@ -23,7 +23,6 @@
 |------|------|
 | `save_upload_artifacts(*, analysis_key, content_hash, meta_str, issue_images=None, dist_png=None, chart_pngs=None)` | 업로드 1건의 이미지 산출물 저장(원본 xlsx 는 받지 않음). `{s3_ok, warnings, issue_images_saved, distribution_combined, charts_saved}` 반환 |
 | `save_distribution_png(analysis_key, content_hash, meta_str, data, s3_ok=True, warnings=None)` | 합성 분포 PNG 저장(S3 실패 시 로컬 폴백) |
-| `save_text_object(analysis_key, session, object_type, data)` | 텍스트 JSON(`summary_text`/`yield_text`/`issue_table_text`) 재업로드 + object_info 갱신. **키 빌더는 내부 `_TEXT_KEY_BUILDERS` 가 해소** |
 | `load_json_object(objects, object_type)` | object_info 맵에서 JSON 다운로드. 실패 시 `None` |
 | `load_chart_png(analysis_key, idx)` | 차트 PNG bytes |
 | `load_distribution_png(analysis_key)` | 합성 분포 PNG bytes(S3→로컬 순) |
@@ -62,12 +61,13 @@ REPORT_S3_MAX_POOL_CONNECTIONS  기본 30
 
 키 prefix(모두 `pe/report_server/` 네임스페이스, plotly legacy 와 충돌 회피):
 ```
-summary_text/<akey>.json         issue_table_text/<akey>.json
-yield_text/<akey>.json
 issue_img/<akey>/<row>.png       issue_img/<akey>/index.json
 chart_png/<akey>/<idx>.png       chart_png/<akey>/index.json
 distribution_combined/<akey>.png
 ```
+(구 `summary_text`/`issue_table_text`/`yield_text` prefix 는 세션 수정 기능
+폐기(2026-07-09)로 제거 — legacy 세션의 기존 객체는 report_object_info.s3_key
+로 계속 읽는다.)
 prefix 별 환경변수(`REPORT_S3_*_PREFIX`)는 [config.py](../config.py) 참조.
 
 ## 5. 외부 담당자 교체 가이드

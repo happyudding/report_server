@@ -10,7 +10,6 @@ from pathlib import Path
 from flask import Response, abort, jsonify, make_response, request, send_file
 
 from database import report_db
-from report_utils import to_float as _to_float, to_int as _to_int
 import storage_gateway
 from config import (
     REPORT_ANALYSIS_INDEX_HTML,
@@ -121,24 +120,6 @@ def _audit(action, session=None, session_id=None, changed_fields=None, result="o
         )
     except Exception:
         pass
-
-
-def _coerce_yield_row(row):
-    """수정 모드에서 넘어온 yield 행 dict 를 summary 컬럼 타입으로 정리."""
-    name = str(row.get("item_name") or "").strip()
-    unit = row.get("unit")
-    return {
-        "item_name": name,
-        "bin_number": _to_int(row.get("bin_number")),
-        "yield_percent": _to_float(row.get("yield_percent")),
-        "fail_count": _to_int(row.get("fail_count")),
-        "cpk_val": _to_float(row.get("cpk_val")),
-        "mean_val": _to_float(row.get("mean_val")),
-        "stdev_val": _to_float(row.get("stdev_val")),
-        "lsl": _to_float(row.get("lsl")),
-        "usl": _to_float(row.get("usl")),
-        "unit": (str(unit).strip() if unit not in (None, "") else None),
-    }
 
 
 # ── session ─────────────────────────────────────────────────────────────────
@@ -625,97 +606,12 @@ def verify_session_password(session_id):
 
 @report_bp.patch("/session/<session_id>/content")
 def update_session_content(session_id):
-    """수정 모드 저장: 텍스트 콘텐츠(summary_text / issue_rows / yield_rows) 치환.
+    """수정 모드 저장 라우트 — 기능 비활성화(2026-07-08 사용자 요청, 항상 405).
 
-    summary_text, issue_rows 는 S3 JSON 으로 다시 업로드하고, yield_rows 는
-    report_analysis_summary 를 통째로 치환한다. analysis_key 는 재계산하지 않는다
-    (원본 업로드 식별자로 유지)."""
-    # 세션 수정 기능 비활성화(2026-07-08 사용자 요청). 검색결과 페이지의 '수정' 버튼 제거와
-    # 함께 이 저장 라우트도 차단한다. 삭제(delete)·조회·verify_password 는 그대로 유지.
+    report_view.html 이 아직 이 경로를 호출하므로 라우트 자체는 유지한다.
+    구 구현(summary/yield/issue 텍스트 치환 + S3 재업로드 체인)은 2026-07-09
+    리팩토링에서 제거 — 재활성화 시 git 히스토리 참조."""
     return jsonify({"error": "세션 수정 기능이 비활성화되었습니다."}), 405
-    _require_csrf()
-    _validate_session_id(session_id)
-    body = request.get_json(force=True, silent=True) or {}
-    password = (body.get("password") or "").strip()
-    session = report_db.get_session(session_id)
-    if not session:
-        abort(404, "session not found")
-    if not _password_ok(session, password):
-        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
-
-    akey = session.get("analysis_key")
-    if not akey:
-        return jsonify({"error": "이 세션에는 analysis_key 가 없어 수정할 수 없습니다."}), 400
-    if session.get("source") == "web_report":
-        return jsonify({"error": "web_report 세션은 현재 수정을 지원하지 않습니다."}), 400
-
-    updated = {}
-    errors = {}
-
-    # yield_rows → DB (S3 미설정과 무관하게 저장 가능)
-    if body.get("yield_rows") is not None:
-        try:
-            rows = [_coerce_yield_row(r) for r in (body.get("yield_rows") or [])]
-            rows = [r for r in rows if r["item_name"]]
-            report_db.replace_summary_batch(akey, session_id, rows)
-            updated["yield_rows"] = len(rows)
-        except Exception as exc:
-            errors["yield_rows"] = str(exc)
-
-    # summary_text → DB 갱신 (S3 는 있으면 추가 저장)
-    if body.get("summary_text") is not None:
-        try:
-            report_db.upsert_sheet_data(akey, "summary", body["summary_text"])
-            updated["summary_text"] = True
-        except Exception as exc:
-            errors["summary_text"] = str(exc)
-        else:
-            try:
-                _write_text_object(akey, session, "summary_text", body["summary_text"])
-            except Exception:
-                pass
-
-    # yield_text → DB 갱신
-    if body.get("yield_text") is not None:
-        try:
-            report_db.upsert_sheet_data(akey, "yield", body["yield_text"])
-            updated["yield_text"] = True
-        except Exception as exc:
-            errors["yield_text"] = str(exc)
-        else:
-            try:
-                _write_text_object(akey, session, "yield_text", body["yield_text"])
-            except Exception:
-                pass
-
-    # issue_table_text → DB 갱신
-    issue_payload = body.get("issue_table_text")
-    if issue_payload is None:
-        issue_payload = body.get("issue_rows")
-    if issue_payload is not None:
-        try:
-            report_db.upsert_sheet_data(akey, "issue_table", issue_payload)
-            updated["issue_table_text"] = True
-        except Exception as exc:
-            errors["issue_table_text"] = str(exc)
-        else:
-            try:
-                _write_text_object(akey, session, "issue_table_text", issue_payload)
-            except Exception:
-                pass
-
-    status = 200 if not errors else (207 if updated else 500)
-    if updated:
-        _audit("edit", session=session,
-               changed_fields=",".join(sorted(updated.keys())),
-               result="ok" if not errors else "fail")
-    return jsonify({"ok": not errors, "updated": updated, "errors": errors}), status
-
-
-def _write_text_object(analysis_key, session, object_type, data):
-    """텍스트 콘텐츠 JSON 을 S3 에 다시 올리고 report_object_info 를 갱신.
-    content_hash / options_json 은 기존 행 값을 유지(없으면 세션 값/빈 객체로 폴백)."""
-    storage_gateway.save_text_object(analysis_key, session, object_type, data)
 
 
 # ── annotations ───────────────────────────────────────────────────────────────
