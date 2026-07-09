@@ -22,11 +22,11 @@ from pathlib import Path
 import requests
 
 from PyQt5 import uic
-from PyQt5.QtCore import Qt, QTimer, QEvent
+from PyQt5.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QRect
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QHeaderView,
-    QMainWindow, QMessageBox, QTableWidgetItem,
+    QMainWindow, QMessageBox, QTableWidgetItem, QWidget,
 )
 
 from transport.config import CURRENT_VERSION, SERVER_BASE_URL
@@ -108,6 +108,108 @@ def _co_uninitialize(com_module):
         com_module.CoUninitialize()
     except Exception:
         pass
+
+
+class SlideInPanel(QWidget):
+    """왼쪽→오른쪽으로 슬라이드되어 나오는 프레임리스 최상위 패널.
+
+    QWebEngineView 는 네이티브 윈도우라 일반 위젯 오버레이가 가려지므로,
+    이 패널은 최상위(Qt.Tool) 창으로 만들어 브라우저 위로 슬라이드한다.
+    anchor_widget(브라우저)의 왼쪽 가장자리를 기준으로 위치·높이를 잡는다."""
+
+    def __init__(self, anchor_widget, content, title, width=460):
+        super().__init__(anchor_widget.window(), Qt.Tool | Qt.FramelessWindowHint)
+        from PyQt5.QtWidgets import QHBoxLayout, QLabel, QToolButton, QVBoxLayout
+        self._anchor = anchor_widget
+        self._width = width
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        frame = QWidget()
+        frame.setObjectName("slideFrame")
+        outer.addWidget(frame)
+
+        v = QVBoxLayout(frame)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+
+        header = QWidget()
+        header.setObjectName("slideHeader")
+        h = QHBoxLayout(header)
+        h.setContentsMargins(12, 8, 8, 8)
+        lbl = QLabel(title)
+        lbl.setObjectName("slideTitle")
+        btn_close = QToolButton()
+        btn_close.setText("✕")
+        btn_close.setObjectName("slideClose")
+        btn_close.clicked.connect(self.hide_animated)
+        h.addWidget(lbl)
+        h.addStretch(1)
+        h.addWidget(btn_close)
+        v.addWidget(header)
+        v.addWidget(content, 1)
+
+        self.setStyleSheet("""
+            QWidget#slideFrame {
+                background: #fffef7;
+                border-right: 1px solid #d1d5db;
+            }
+            QWidget#slideHeader {
+                background: #1f2937;
+            }
+            QLabel#slideTitle {
+                color: #f9fafb; font-weight: 600; font-size: 11pt;
+            }
+            QToolButton#slideClose {
+                color: #e5e7eb; font-size: 12pt; border: none;
+                padding: 2px 8px; border-radius: 4px;
+            }
+            QToolButton#slideClose:hover { background: #374151; }
+        """)
+
+        self._anim = QPropertyAnimation(self, b"geometry")
+        self._anim.setDuration(220)
+        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self.hide()
+
+    def _rects(self):
+        """(숨김 위치, 표시 위치) 사각형 — anchor 왼쪽 가장자리 기준."""
+        origin = self._anchor.mapToGlobal(QPoint(0, 0))
+        h = self._anchor.height()
+        shown = QRect(origin.x(), origin.y(), self._width, h)
+        hidden = QRect(origin.x() - self._width, origin.y(), self._width, h)
+        return hidden, shown
+
+    def _restart_anim(self, end_rect, on_finished=None):
+        self._anim.stop()
+        try:
+            self._anim.finished.disconnect()
+        except TypeError:
+            pass
+        self._anim.setStartValue(self.geometry())
+        self._anim.setEndValue(end_rect)
+        if on_finished is not None:
+            self._anim.finished.connect(on_finished)
+        self._anim.start()
+
+    def show_animated(self):
+        hidden, shown = self._rects()
+        if not self.isVisible():
+            self.setGeometry(hidden)
+            self.show()
+        self.raise_()
+        self.activateWindow()
+        self._restart_anim(shown)
+
+    def hide_animated(self):
+        hidden, _ = self._rects()
+        self._restart_anim(hidden, on_finished=self.hide)
+
+    def reposition(self):
+        """메인 창 이동/리사이즈 시 표시 중이면 위치 재정렬."""
+        if self.isVisible():
+            _, shown = self._rects()
+            self.setGeometry(shown)
 
 
 class HoneyMainWindow(QMainWindow):
@@ -346,13 +448,14 @@ class HoneyMainWindow(QMainWindow):
         self.browser_panel = embedded_browser.BrowserPanel(url, navigate=True)
         self.setCentralWidget(self.browser_panel)
 
-        self._build_controls_dock(QDockWidget, QWidget, QVBoxLayout, QHBoxLayout)
+        self._build_controls_panel(QWidget, QVBoxLayout, QHBoxLayout)
         self._build_log_dock(QDockWidget, QWidget, QVBoxLayout)
         self._menu_bar_actions()
         self._icon_sidebar(QAction, QToolBar)
 
-    def _build_controls_dock(self, QDockWidget, QWidget, QVBoxLayout, QHBoxLayout):
-        """Product Type·파일 리스트·저장명을 담은 입력 창 (기본 숨김, 플로팅)."""
+    def _build_controls_panel(self, QWidget, QVBoxLayout, QHBoxLayout):
+        """Product Type·파일 리스트·저장명을 담은 입력 창.
+        기본 숨김 — File Open 시 왼쪽에서 슬라이드되어 나온다."""
         container = QWidget()
         v = QVBoxLayout(container)
         v.setContentsMargins(8, 8, 8, 8)
@@ -373,15 +476,10 @@ class HoneyMainWindow(QMainWindow):
         name_row.addWidget(self.le_outname)
         name_row.addWidget(self.lbl_xlsx_ext)
         v.addLayout(name_row)
+        v.addStretch(1)
 
-        dock = QDockWidget("입력 파일 / 설정", self)
-        dock.setAllowedAreas(Qt.AllDockWidgetAreas)
-        dock.setWidget(container)
-        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
-        dock.setFloating(True)
-        dock.resize(460, 540)
-        dock.hide()   # 기본은 숨김 — File Open 시에만 표시
-        self.dock_controls = dock
+        self.slide_controls = SlideInPanel(
+            self.browser_panel, container, "입력 파일 / 설정", width=460)
 
     def _build_log_dock(self, QDockWidget, QWidget, QVBoxLayout):
         """Status/Log 를 하단 창(dock)으로 이동."""
@@ -401,11 +499,22 @@ class HoneyMainWindow(QMainWindow):
         self.resizeDocks([dock], [170], Qt.Vertical)
 
     def _show_controls(self):
-        """입력 창을 띄운다 (File Open 시 호출)."""
-        dock = getattr(self, "dock_controls", None)
-        if dock is not None:
-            dock.show()
-            dock.raise_()
+        """입력 창을 슬라이드로 띄운다 (File Open 시 호출)."""
+        panel = getattr(self, "slide_controls", None)
+        if panel is not None:
+            panel.show_animated()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        panel = getattr(self, "slide_controls", None)
+        if panel is not None:
+            panel.reposition()
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        panel = getattr(self, "slide_controls", None)
+        if panel is not None:
+            panel.reposition()
 
     def _act_open_local(self):
         self._show_controls()
@@ -430,9 +539,9 @@ class HoneyMainWindow(QMainWindow):
         m_run.addAction("Web Report", self.on_web_report)
 
         m_view = mb.addMenu("보기(&V)")
-        act_c = self.dock_controls.toggleViewAction()
-        act_c.setText("입력 / 설정 창")
-        m_view.addAction(act_c)
+        m_view.addAction("입력 / 설정 창 열기", self._show_controls)
+        m_view.addAction("입력 / 설정 창 닫기",
+                         lambda: self.slide_controls.hide_animated())
         act_l = self.dock_log.toggleViewAction()
         act_l.setText("Status / Log 창")
         m_view.addAction(act_l)
