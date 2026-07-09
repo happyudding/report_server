@@ -1,4 +1,4 @@
-﻿"""Honey 클라이언트 (PyQt5).
+﻿"""Honey 클라이언트 (PyQt6).
 
 UI 레이아웃은 .ui (Qt Designer 편집 가능) 에 정의, 런타임에 uic.loadUi 로 로드.
 - honey_main.ui   : 메인 화면 (d1_storage 검색 → 분석 → 자동 저장 → 업로드)
@@ -21,10 +21,10 @@ from pathlib import Path
 
 import requests
 
-from PyQt5 import uic
-from PyQt5.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QRect
-from PyQt5.QtGui import QFont
-from PyQt5.QtWidgets import (
+from PyQt6 import uic
+from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QRect
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QHeaderView,
     QMainWindow, QMessageBox, QTableWidgetItem, QWidget,
 )
@@ -118,8 +118,9 @@ class SlideInPanel(QWidget):
     anchor_widget(브라우저)의 왼쪽 가장자리를 기준으로 위치·높이를 잡는다."""
 
     def __init__(self, anchor_widget, content, title, width=460):
-        super().__init__(anchor_widget.window(), Qt.Tool | Qt.FramelessWindowHint)
-        from PyQt5.QtWidgets import QHBoxLayout, QLabel, QToolButton, QVBoxLayout
+        super().__init__(anchor_widget.window(),
+                         Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint)
+        from PyQt6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QVBoxLayout
         self._anchor = anchor_widget
         self._width = width
 
@@ -170,7 +171,7 @@ class SlideInPanel(QWidget):
 
         self._anim = QPropertyAnimation(self, b"geometry")
         self._anim.setDuration(220)
-        self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.hide()
 
     def _rects(self):
@@ -368,18 +369,18 @@ class HoneyMainWindow(QMainWindow):
         t.setColumnCount(2)
         t.setHorizontalHeaderLabels(["확장자", "파일 경로"])
         t.verticalHeader().setVisible(False)
-        t.setEditTriggers(t.NoEditTriggers)
-        t.setSelectionBehavior(t.SelectRows)
-        t.setSelectionMode(t.SingleSelection)
+        t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        t.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         hh = t.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # 확장자 좁게
-        hh.setSectionResizeMode(1, QHeaderView.Interactive)       # 긴 경로는 가로 스크롤
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # 확장자 좁게
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)       # 긴 경로는 가로 스크롤
         hh.setStretchLastSection(False)
         # 드롭은 리스트 영역에서만 받는다 (메인 창엔 setAcceptDrops 를 걸지 않음).
-        t.setTextElideMode(Qt.ElideNone)
+        t.setTextElideMode(Qt.TextElideMode.ElideNone)
         t.setWordWrap(False)
-        t.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        t.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        t.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        t.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         t.verticalHeader().setDefaultSectionSize(20)
         t.setAcceptDrops(True)
         t.viewport().installEventFilter(self)
@@ -388,11 +389,11 @@ class HoneyMainWindow(QMainWindow):
     def eventFilter(self, obj, event):
         if obj is self.list_csv.viewport():
             etype = event.type()
-            if etype in (QEvent.DragEnter, QEvent.DragMove):
+            if etype in (QEvent.Type.DragEnter, QEvent.Type.DragMove):
                 if event.mimeData().hasUrls():
                     event.acceptProposedAction()
                     return True
-            elif etype == QEvent.Drop:
+            elif etype == QEvent.Type.Drop:
                 self._handle_csv_drop(event)
                 return True
         return super().eventFilter(obj, event)
@@ -433,8 +434,9 @@ class HoneyMainWindow(QMainWindow):
         except ImportError as exc:
             self._status(f"내장 브라우저 비활성 (PyQtWebEngine 필요): {exc}")
             return
-        from PyQt5.QtWidgets import (
-            QAction, QDockWidget, QHBoxLayout, QToolBar, QVBoxLayout, QWidget,
+        from PyQt6.QtGui import QAction
+        from PyQt6.QtWidgets import (
+            QDockWidget, QHBoxLayout, QToolBar, QVBoxLayout, QWidget,
         )
 
         url = SERVER_BASE_URL.rstrip("/") + "/pe/report/"
@@ -490,17 +492,17 @@ class HoneyMainWindow(QMainWindow):
     def _build_log_dock(self, QDockWidget, QWidget):
         """Status(왼쪽)·Log(오른쪽)를 한 줄에 배치한 하단 창(dock).
         제목표시줄 없음. 확대 버튼(⤢)으로 로그 영역을 펼친다."""
-        from PyQt5.QtWidgets import QHBoxLayout, QToolButton
+        from PyQt6.QtWidgets import QHBoxLayout, QToolButton
 
         container = QWidget()
         row = QHBoxLayout(container)
         row.setContentsMargins(8, 2, 8, 2)
         row.setSpacing(8)
 
-        row.addWidget(self.lbl_progress_status, 0, Qt.AlignVCenter)
+        row.addWidget(self.lbl_progress_status, 0, Qt.AlignmentFlag.AlignVCenter)
         self.progress_status.setFixedHeight(self._LOG_LINE_H - 4)
         self.progress_status.setFixedWidth(160)
-        row.addWidget(self.progress_status, 0, Qt.AlignVCenter)
+        row.addWidget(self.progress_status, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self.txt_summary.setMinimumHeight(0)
         self.txt_summary.setMaximumHeight(self._LOG_LINE_H)
@@ -510,16 +512,16 @@ class HoneyMainWindow(QMainWindow):
         self._btn_log_expand.setText("⤢")
         self._btn_log_expand.setToolTip("로그 확대")
         self._btn_log_expand.clicked.connect(self._toggle_log_expand)
-        row.addWidget(self._btn_log_expand, 0, Qt.AlignVCenter)
+        row.addWidget(self._btn_log_expand, 0, Qt.AlignmentFlag.AlignVCenter)
 
         dock = QDockWidget(self)
         dock.setTitleBarWidget(QWidget())   # 제목표시줄 제거
-        dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         dock.setWidget(container)
-        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
         self.dock_log = dock
         self._log_expanded = False
-        self.resizeDocks([dock], [self._LOG_COLLAPSED_DOCK_H], Qt.Vertical)
+        self.resizeDocks([dock], [self._LOG_COLLAPSED_DOCK_H], Qt.Orientation.Vertical)
 
     def _toggle_log_expand(self):
         """하단 로그 영역 확대/축소 토글."""
@@ -529,13 +531,13 @@ class HoneyMainWindow(QMainWindow):
             self.txt_summary.setMinimumHeight(120)
             self._btn_log_expand.setText("⤡")
             self._btn_log_expand.setToolTip("로그 축소")
-            self.resizeDocks([self.dock_log], [self._LOG_EXPANDED_DOCK_H], Qt.Vertical)
+            self.resizeDocks([self.dock_log], [self._LOG_EXPANDED_DOCK_H], Qt.Orientation.Vertical)
         else:
             self.txt_summary.setMinimumHeight(0)
             self.txt_summary.setMaximumHeight(self._LOG_LINE_H)
             self._btn_log_expand.setText("⤢")
             self._btn_log_expand.setToolTip("로그 확대")
-            self.resizeDocks([self.dock_log], [self._LOG_COLLAPSED_DOCK_H], Qt.Vertical)
+            self.resizeDocks([self.dock_log], [self._LOG_COLLAPSED_DOCK_H], Qt.Orientation.Vertical)
 
     def _show_controls(self):
         """입력 창을 슬라이드로 띄운다 (File Open 시 호출)."""
@@ -593,11 +595,11 @@ class HoneyMainWindow(QMainWindow):
 
     def _icon_sidebar(self, QAction, QToolBar):
         """왼쪽 얇은 아이콘 사이드바 — 자주 쓰는 액션(이모지 + tooltip)."""
-        from PyQt5.QtCore import QSize
+        from PyQt6.QtCore import QSize
         tb = QToolBar("Quick")
         tb.setMovable(False)
-        tb.setOrientation(Qt.Vertical)
-        tb.setToolButtonStyle(Qt.ToolButtonTextOnly)  # 이모지를 텍스트로 표시
+        tb.setOrientation(Qt.Orientation.Vertical)
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)  # 이모지를 텍스트로 표시
         tb.setIconSize(QSize(0, 0))
         tb.setStyleSheet("""
             QToolBar {
@@ -628,7 +630,7 @@ class HoneyMainWindow(QMainWindow):
             act.setToolTip(name)
             act.triggered.connect(slot)
             tb.addAction(act)
-        self.addToolBar(Qt.LeftToolBarArea, tb)
+        self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, tb)
 
     def _disable_engine(self):
         # 분석 관련 기능만 비활성. 로컬 파일 직접 업로드는 엔진 없이도 동작하므로 유지.
@@ -653,7 +655,7 @@ class HoneyMainWindow(QMainWindow):
 
     def on_browse_d1(self):
         dlg = D1BrowserDialog(self)
-        if not dlg.exec_():
+        if not dlg.exec():
             return
         paths = dlg.selected_paths()
         if not paths:
@@ -679,7 +681,7 @@ class HoneyMainWindow(QMainWindow):
             return
         if len(paths) > 1:
             dlg = FileOrderDialog(self, paths)
-            if not dlg.exec_():
+            if not dlg.exec():
                 return
             paths = dlg.ordered_paths()
         self._load_paths(paths)
@@ -693,7 +695,7 @@ class HoneyMainWindow(QMainWindow):
             ext = Path(full_path).suffix.lstrip(".").lower()
             ext_item = QTableWidgetItem(ext)
             path_item = QTableWidgetItem(full_path)
-            path_item.setData(Qt.UserRole, full_path)
+            path_item.setData(Qt.ItemDataRole.UserRole, full_path)
             path_item.setToolTip(full_path)
             self.list_csv.setItem(r, 0, ext_item)
             self.list_csv.setItem(r, 1, path_item)
@@ -822,7 +824,7 @@ class HoneyMainWindow(QMainWindow):
 
         dlg = ReportSettingsDialog(
             self, self.group, len(self.csv_paths), product_type=self.product_type())
-        if not dlg.exec_():
+        if not dlg.exec():
             self._status("설정 취소됨 — 다시 Start 로 진행할 수 있습니다.")
             return None
 
@@ -941,7 +943,7 @@ class HoneyMainWindow(QMainWindow):
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
         dlg = UploadDialog(self, defaults=defaults)
-        if not dlg.exec_():
+        if not dlg.exec():
             progress.fail("취소됨: 업로드 메타 입력 취소")
             self.btn_start.setEnabled(True)
             self.btn_web_report.setEnabled(True)
@@ -1316,7 +1318,7 @@ class HoneyMainWindow(QMainWindow):
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
         dlg = UploadDialog(self, defaults=defaults)
-        if not dlg.exec_():
+        if not dlg.exec():
             return
         v = dlg.values()
         self._last_upload = v
@@ -1425,9 +1427,10 @@ class HoneyMainWindow(QMainWindow):
             self, "업데이트 사용 가능",
             f"신규 버전 {remote} 이(가) 있습니다.\n"
             f"현재: {CURRENT_VERSION}\n\n지금 다운로드 하시겠습니까?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         url = manifest.get("url") or "/honey/download"
@@ -1527,8 +1530,8 @@ def _install_excepthook():
 
 def _apply_cute_font(app):
     """앱 전역 글씨체를 귀여운(둥근) 느낌으로. 설치된 첫 후보를 사용."""
-    from PyQt5.QtGui import QFontDatabase
-    available = set(QFontDatabase().families())
+    from PyQt6.QtGui import QFontDatabase
+    available = set(QFontDatabase.families())
     # 귀여운/둥근 계열 우선순위 (설치돼 있는 첫 폰트 선택)
     candidates = ["Comic Sans MS", "Segoe Print", "Comic Neue",
                   "HY엽서L", "HY견고딕", "맑은 고딕"]
@@ -1542,13 +1545,13 @@ def main():
     import run_log
     run_log.setup_run_logging()
     # QtWebEngine(내장 브라우저)을 앱 생성 후 lazy import 하려면 필수 (없어도 무해)
-    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
     _apply_cute_font(app)
     _install_excepthook()
     win = HoneyMainWindow()
     win.showMaximized()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

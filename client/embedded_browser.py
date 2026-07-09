@@ -11,9 +11,9 @@ PyQtWebEngine 미설치 시 이 모듈 import 가 ImportError — 호출부(hone
 Qt.AA_ShareOpenGLContexts 속성이 앱 생성 전에 설정돼 있어야 한다
 (honey_main.main() 에서 설정).
 """
-from PyQt5.QtCore import QUrl
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtWidgets import QLineEdit, QMainWindow, QToolBar, QVBoxLayout, QWidget
+from PyQt6.QtCore import QUrl
+from PyQt6.QtWebEngineWidgets import QWebEngineView
+from PyQt6.QtWidgets import QLineEdit, QMainWindow, QToolBar, QVBoxLayout, QWidget
 
 # 열린 팝업 창 참조 보관 (GC 로 창이 사라지는 것 방지)
 _open_windows = []

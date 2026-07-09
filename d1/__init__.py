@@ -55,9 +55,9 @@ def list_files(query=""):
 
 def D1BrowserDialog(parent=None, provider=None, ui_path=None):
     """Return a D1 file search/selection dialog using the active provider."""
-    from PyQt5 import uic
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtWidgets import QDialog, QListWidgetItem
+    from PyQt6 import uic
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QDialog, QListWidgetItem
 
     class _D1BrowserDialog(QDialog):
         def __init__(self, parent=None, provider=None, ui_path=None):
@@ -80,7 +80,7 @@ def D1BrowserDialog(parent=None, provider=None, ui_path=None):
             for path in self.provider.list_files(q):
                 rel = str(path.relative_to(self.provider.storage_dir))
                 it = QListWidgetItem(rel)
-                it.setData(Qt.UserRole, str(path))
+                it.setData(Qt.ItemDataRole.UserRole, str(path))
                 self.list_files.addItem(it)
             if self.list_files.count() == 0:
                 self.lbl_hint.setText(f"'{q}' 검색 결과가 없습니다.")
@@ -89,6 +89,6 @@ def D1BrowserDialog(parent=None, provider=None, ui_path=None):
                     f"{self.list_files.count()}개 결과 - Ctrl/Shift 로 여러 파일 선택 가능")
 
         def selected_paths(self):
-            return [it.data(Qt.UserRole) for it in self.list_files.selectedItems()]
+            return [it.data(Qt.ItemDataRole.UserRole) for it in self.list_files.selectedItems()]
 
     return _D1BrowserDialog(parent, provider=provider, ui_path=ui_path)

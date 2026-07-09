@@ -2,10 +2,10 @@
 import sys
 from pathlib import Path
 
-from PyQt5 import uic
-from PyQt5.QtCore import Qt, QStringListModel
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (
+from PyQt6 import uic
+from PyQt6.QtCore import Qt, QStringListModel
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
     QColorDialog,
     QCompleter,
     QDialog,
@@ -53,8 +53,8 @@ class UploadDialog(QDialog):
         if self._part_ids:
             _model = QStringListModel(self._part_ids, self)
             _comp = QCompleter(_model, self)
-            _comp.setFilterMode(Qt.MatchContains)
-            _comp.setCaseSensitivity(Qt.CaseInsensitive)
+            _comp.setFilterMode(Qt.MatchFlag.MatchContains)
+            _comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
             self.le_product.setCompleter(_comp)
         else:
             self.le_product.setPlaceholderText("Part ID 목록을 불러오지 못했습니다 (서버 확인)")
@@ -150,7 +150,8 @@ class ColorEditorDialog(QDialog):
         btn_reset.clicked.connect(self._reset)
         row.addWidget(btn_reset)
         row.addStretch(1)
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self._on_ok)
         bb.rejected.connect(self.reject)
         row.addWidget(bb)
@@ -192,7 +193,7 @@ class FileOrderDialog(QDialog):
         uic.loadUi(str(ORDER_UI_PATH), self)
         for p in paths:
             it = QListWidgetItem(Path(p).name)
-            it.setData(Qt.UserRole, p)
+            it.setData(Qt.ItemDataRole.UserRole, p)
             it.setToolTip(p)
             self.list_order.addItem(it)
         self.list_order.setCurrentRow(0)
@@ -211,7 +212,7 @@ class FileOrderDialog(QDialog):
         self.list_order.setCurrentRow(new)
 
     def ordered_paths(self):
-        return [self.list_order.item(i).data(Qt.UserRole)
+        return [self.list_order.item(i).data(Qt.ItemDataRole.UserRole)
                 for i in range(self.list_order.count())]
 
 
@@ -267,7 +268,7 @@ class ReportSettingsDialog(QDialog):
 
     def _make_item(self, idx, text):
         it = QListWidgetItem(text)
-        it.setData(Qt.UserRole, idx)
+        it.setData(Qt.ItemDataRole.UserRole, idx)
         return it
 
     def _populate_items(self):
@@ -278,7 +279,7 @@ class ReportSettingsDialog(QDialog):
 
     def _resort(self, lw):
         items = [lw.takeItem(0) for _ in range(lw.count())]
-        items.sort(key=lambda it: it.data(Qt.UserRole))
+        items.sort(key=lambda it: it.data(Qt.ItemDataRole.UserRole))
         for it in items:
             lw.addItem(it)
 
@@ -363,7 +364,7 @@ class ReportSettingsDialog(QDialog):
 
     def on_edit_chart_colors(self):
         dlg = ColorEditorDialog(self)
-        dlg.exec_()
+        dlg.exec()
 
     def selected_items(self):
         return [self.list_items_sel.item(i).text()
@@ -481,7 +482,7 @@ class ReportSettingsDialog(QDialog):
 
     def on_edit_chart_colors(self):
         dlg = ColorEditorDialog(self)
-        dlg.exec_()
+        dlg.exec()
 
     def selected_items(self):
         return [self.list_items_sel.item(i).text()
