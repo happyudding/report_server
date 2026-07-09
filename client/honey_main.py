@@ -318,10 +318,11 @@ class HoneyMainWindow(QMainWindow):
     # ── 실험: 내장 브라우저 + 메뉴바 + 아이콘 사이드바 ───────────────────────
     def _build_chrome(self):
         """메인 화면을 재구성한다 (실험, .ui 무변경):
-        - 상단 메뉴바(F10)로 기존 버튼 액션 이관
-        - 왼쪽 얇은 아이콘 사이드바(이모지)로 자주 쓰는 액션 노출
-        - 오른쪽 대부분 영역에 서버 리포트 브라우저 embed, 기존 상태 위젯은
-          왼쪽 슬림 컨트롤 패널로 유지
+        - 중앙 대부분을 서버 리포트 브라우저가 차지
+        - 상단 메뉴바(F10) / 왼쪽 아이콘 사이드바로 기존 버튼 액션 이관
+        - 입력 컨트롤(Product Type·파일 리스트·저장명)은 File Open 시 뜨는
+          별도 창(dock)으로, 기본은 숨김
+        - Status/Log 는 하단 창(dock)으로 이동
 
         PyQtWebEngine 미설치 시 조기 return — 기존 화면/동작 100% 유지."""
         try:
@@ -329,37 +330,98 @@ class HoneyMainWindow(QMainWindow):
         except ImportError as exc:
             self._status(f"내장 브라우저 비활성 (PyQtWebEngine 필요): {exc}")
             return
-        from PyQt5.QtWidgets import QAction, QSplitter, QToolBar
-
-        # 액션 정의: (아이콘 이모지, 전체 이름, 슬롯). 메뉴/사이드바에서 공유.
-        self._menu_bar_actions(QAction)
-        self._icon_sidebar(QAction, QToolBar)
+        from PyQt5.QtWidgets import (
+            QAction, QDockWidget, QHBoxLayout, QToolBar, QVBoxLayout, QWidget,
+        )
 
         url = SERVER_BASE_URL.rstrip("/") + "/pe/report/"
-        old_central = self.takeCentralWidget()
+        # .ui 로 만든 기존 central 은 버리되(참조는 유지해 버튼 위젯 살려둠),
+        # 필요한 위젯만 새 dock 컨테이너로 옮긴다.
+        self._legacy_central = self.takeCentralWidget()
         for name in ("btn_open_local", "btn_pick_csv", "btn_help",
                      "btn_upload_local", "btn_start", "btn_web_report"):
             getattr(self, name).setVisible(False)
-        self._control_panel = old_central
+
+        # 중앙: 웹 브라우저가 전체를 차지
         self.browser_panel = embedded_browser.BrowserPanel(url, navigate=True)
+        self.setCentralWidget(self.browser_panel)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(old_central)
-        splitter.addWidget(self.browser_panel)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setCollapsible(0, True)
-        splitter.setCollapsible(1, False)
-        splitter.setSizes([420, 1400])
-        self.setCentralWidget(splitter)
+        self._build_controls_dock(QDockWidget, QWidget, QVBoxLayout, QHBoxLayout)
+        self._build_log_dock(QDockWidget, QWidget, QVBoxLayout)
+        self._menu_bar_actions()
+        self._icon_sidebar(QAction, QToolBar)
 
-    def _menu_bar_actions(self, QAction):
+    def _build_controls_dock(self, QDockWidget, QWidget, QVBoxLayout, QHBoxLayout):
+        """Product Type·파일 리스트·저장명을 담은 입력 창 (기본 숨김, 플로팅)."""
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(8, 8, 8, 8)
+        v.setSpacing(8)
+        v.addWidget(self.groupBox_pt)
+
+        file_row = QHBoxLayout()
+        file_row.addWidget(self.list_csv)
+        move_col = QVBoxLayout()
+        move_col.addWidget(self.btn_csv_up)
+        move_col.addWidget(self.btn_csv_down)
+        move_col.addStretch(1)
+        file_row.addLayout(move_col)
+        v.addLayout(file_row)
+
+        name_row = QHBoxLayout()
+        name_row.addWidget(self.lbl_outname)
+        name_row.addWidget(self.le_outname)
+        name_row.addWidget(self.lbl_xlsx_ext)
+        v.addLayout(name_row)
+
+        dock = QDockWidget("입력 파일 / 설정", self)
+        dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        dock.setWidget(container)
+        self.addDockWidget(Qt.LeftDockWidgetArea, dock)
+        dock.setFloating(True)
+        dock.resize(460, 540)
+        dock.hide()   # 기본은 숨김 — File Open 시에만 표시
+        self.dock_controls = dock
+
+    def _build_log_dock(self, QDockWidget, QWidget, QVBoxLayout):
+        """Status/Log 를 하단 창(dock)으로 이동."""
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(8, 4, 8, 6)
+        v.setSpacing(4)
+        v.addWidget(self.lbl_progress_status)
+        v.addWidget(self.progress_status)
+        v.addWidget(self.txt_summary)
+
+        dock = QDockWidget("Status / Log", self)
+        dock.setAllowedAreas(Qt.AllDockWidgetAreas)
+        dock.setWidget(container)
+        self.addDockWidget(Qt.BottomDockWidgetArea, dock)
+        self.dock_log = dock
+        self.resizeDocks([dock], [170], Qt.Vertical)
+
+    def _show_controls(self):
+        """입력 창을 띄운다 (File Open 시 호출)."""
+        dock = getattr(self, "dock_controls", None)
+        if dock is not None:
+            dock.show()
+            dock.raise_()
+
+    def _act_open_local(self):
+        self._show_controls()
+        self.on_open_local()
+
+    def _act_browse_d1(self):
+        self._show_controls()
+        self.on_browse_d1()
+
+    def _menu_bar_actions(self):
         """상단 메뉴바 구성 — 기존 슬롯을 그대로 호출 (로직 복제 없음)."""
         mb = self.menuBar()
 
         m_file = mb.addMenu("파일(&F)")
-        m_file.addAction("LOCAL FILE OPEN", self.on_open_local)
-        m_file.addAction("Dolphin (D1)에서 불러오기", self.on_browse_d1)
+        m_file.addAction("LOCAL FILE OPEN", self._act_open_local)
+        m_file.addAction("Dolphin (D1)에서 불러오기", self._act_browse_d1)
         m_file.addSeparator()
         m_file.addAction("보고서 Server Upload (.xlsx)", self.on_upload_local)
 
@@ -368,9 +430,12 @@ class HoneyMainWindow(QMainWindow):
         m_run.addAction("Web Report", self.on_web_report)
 
         m_view = mb.addMenu("보기(&V)")
-        act_panel = QAction("컨트롤 패널 표시", self, checkable=True, checked=True)
-        act_panel.toggled.connect(self._toggle_control_panel)
-        m_view.addAction(act_panel)
+        act_c = self.dock_controls.toggleViewAction()
+        act_c.setText("입력 / 설정 창")
+        m_view.addAction(act_c)
+        act_l = self.dock_log.toggleViewAction()
+        act_l.setText("Status / Log 창")
+        m_view.addAction(act_l)
         m_view.addSeparator()
         m_view.addAction("검색결과 홈", lambda: self.browser_panel.go_home())
         m_view.addAction("새로고침", lambda: self.browser_panel.view.reload())
@@ -404,8 +469,8 @@ class HoneyMainWindow(QMainWindow):
             QToolBar QToolButton:pressed { background: #4b5563; }
         """)
         quick = [
-            ("📂", "파일 열기 (LOCAL)", self.on_open_local),
-            ("🐬", "Dolphin (D1)에서 불러오기", self.on_browse_d1),
+            ("📂", "파일 열기 (LOCAL)", self._act_open_local),
+            ("🐬", "Dolphin (D1)에서 불러오기", self._act_browse_d1),
             ("▶", "Start (분석)", self.on_start),
             ("🌐", "Web Report", self.on_web_report),
             ("⬆", "보고서 Server Upload (.xlsx)", self.on_upload_local),
@@ -416,11 +481,6 @@ class HoneyMainWindow(QMainWindow):
             act.triggered.connect(slot)
             tb.addAction(act)
         self.addToolBar(Qt.LeftToolBarArea, tb)
-
-    def _toggle_control_panel(self, visible):
-        panel = getattr(self, "_control_panel", None)
-        if panel is not None:
-            panel.setVisible(visible)
 
     def _disable_engine(self):
         # 분석 관련 기능만 비활성. 로컬 파일 직접 업로드는 엔진 없이도 동작하므로 유지.
