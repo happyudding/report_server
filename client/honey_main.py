@@ -139,6 +139,7 @@ class HoneyMainWindow(QMainWindow):
         self._setup_csv_table()
         self._connect_signals()
         self.btn_open_local.setText("LOCAL FILE OPEN")
+        self._build_chrome()
 
         if rg is None:
             self._disable_engine()
@@ -313,6 +314,113 @@ class HoneyMainWindow(QMainWindow):
         # Product Type 선택 변경 시 사용자별 settings.json 에 즉시 저장
         for rb in self._pt_radios.values():
             rb.toggled.connect(self._save_product_type)
+
+    # ── 실험: 내장 브라우저 + 메뉴바 + 아이콘 사이드바 ───────────────────────
+    def _build_chrome(self):
+        """메인 화면을 재구성한다 (실험, .ui 무변경):
+        - 상단 메뉴바(F10)로 기존 버튼 액션 이관
+        - 왼쪽 얇은 아이콘 사이드바(이모지)로 자주 쓰는 액션 노출
+        - 오른쪽 대부분 영역에 서버 리포트 브라우저 embed, 기존 상태 위젯은
+          왼쪽 슬림 컨트롤 패널로 유지
+
+        PyQtWebEngine 미설치 시 조기 return — 기존 화면/동작 100% 유지."""
+        try:
+            import embedded_browser
+        except ImportError as exc:
+            self._status(f"내장 브라우저 비활성 (PyQtWebEngine 필요): {exc}")
+            return
+        from PyQt5.QtWidgets import QAction, QSplitter, QToolBar
+
+        # 액션 정의: (아이콘 이모지, 전체 이름, 슬롯). 메뉴/사이드바에서 공유.
+        self._menu_bar_actions(QAction)
+        self._icon_sidebar(QAction, QToolBar)
+
+        url = SERVER_BASE_URL.rstrip("/") + "/pe/report/"
+        old_central = self.takeCentralWidget()
+        for name in ("btn_open_local", "btn_pick_csv", "btn_help",
+                     "btn_upload_local", "btn_start", "btn_web_report"):
+            getattr(self, name).setVisible(False)
+        self._control_panel = old_central
+        self.browser_panel = embedded_browser.BrowserPanel(url, navigate=True)
+
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(old_central)
+        splitter.addWidget(self.browser_panel)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setCollapsible(0, True)
+        splitter.setCollapsible(1, False)
+        splitter.setSizes([420, 1400])
+        self.setCentralWidget(splitter)
+
+    def _menu_bar_actions(self, QAction):
+        """상단 메뉴바 구성 — 기존 슬롯을 그대로 호출 (로직 복제 없음)."""
+        mb = self.menuBar()
+
+        m_file = mb.addMenu("파일(&F)")
+        m_file.addAction("LOCAL FILE OPEN", self.on_open_local)
+        m_file.addAction("Dolphin (D1)에서 불러오기", self.on_browse_d1)
+        m_file.addSeparator()
+        m_file.addAction("보고서 Server Upload (.xlsx)", self.on_upload_local)
+
+        m_run = mb.addMenu("분석(&A)")
+        m_run.addAction("Start", self.on_start)
+        m_run.addAction("Web Report", self.on_web_report)
+
+        m_view = mb.addMenu("보기(&V)")
+        act_panel = QAction("컨트롤 패널 표시", self, checkable=True, checked=True)
+        act_panel.toggled.connect(self._toggle_control_panel)
+        m_view.addAction(act_panel)
+        m_view.addSeparator()
+        m_view.addAction("검색결과 홈", lambda: self.browser_panel.go_home())
+        m_view.addAction("새로고침", lambda: self.browser_panel.view.reload())
+
+        m_help = mb.addMenu("도움말(&H)")
+        m_help.addAction("파일 열기 도움말", self.on_help_file_open)
+
+    def _icon_sidebar(self, QAction, QToolBar):
+        """왼쪽 얇은 아이콘 사이드바 — 자주 쓰는 액션(이모지 + tooltip)."""
+        from PyQt5.QtCore import QSize
+        tb = QToolBar("Quick")
+        tb.setMovable(False)
+        tb.setOrientation(Qt.Vertical)
+        tb.setToolButtonStyle(Qt.ToolButtonTextOnly)  # 이모지를 텍스트로 표시
+        tb.setIconSize(QSize(0, 0))
+        tb.setStyleSheet("""
+            QToolBar {
+                background: #1f2937;
+                border: none;
+                padding: 6px 2px;
+                spacing: 4px;
+            }
+            QToolBar QToolButton {
+                color: #e5e7eb;
+                font-size: 18pt;
+                min-width: 40px;
+                min-height: 40px;
+                border-radius: 8px;
+            }
+            QToolBar QToolButton:hover { background: #374151; }
+            QToolBar QToolButton:pressed { background: #4b5563; }
+        """)
+        quick = [
+            ("📂", "파일 열기 (LOCAL)", self.on_open_local),
+            ("🐬", "Dolphin (D1)에서 불러오기", self.on_browse_d1),
+            ("▶", "Start (분석)", self.on_start),
+            ("🌐", "Web Report", self.on_web_report),
+            ("⬆", "보고서 Server Upload (.xlsx)", self.on_upload_local),
+        ]
+        for emoji, name, slot in quick:
+            act = QAction(emoji, self)
+            act.setToolTip(name)
+            act.triggered.connect(slot)
+            tb.addAction(act)
+        self.addToolBar(Qt.LeftToolBarArea, tb)
+
+    def _toggle_control_panel(self, visible):
+        panel = getattr(self, "_control_panel", None)
+        if panel is not None:
+            panel.setVisible(visible)
 
     def _disable_engine(self):
         # 분석 관련 기능만 비활성. 로컬 파일 직접 업로드는 엔진 없이도 동작하므로 유지.
@@ -1225,11 +1333,13 @@ def _apply_cute_font(app):
 def main():
     import run_log
     run_log.setup_run_logging()
+    # QtWebEngine(내장 브라우저)을 앱 생성 후 lazy import 하려면 필수 (없어도 무해)
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
     _apply_cute_font(app)
     _install_excepthook()
     win = HoneyMainWindow()
-    win.show()
+    win.showMaximized()
     sys.exit(app.exec_())
 
 
