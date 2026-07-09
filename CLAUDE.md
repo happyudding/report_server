@@ -149,6 +149,18 @@ REPORT_S3_SECRET_KEY
 HONEY_RELEASES_DIR    기본 <repo>/server/releases
 ```
 
+세션/DB 유지보수 (report_cleanup.py / db_backup.py):
+```
+REPORT_RETENTION_DAYS        기본 180 — 이보다 오래된 비중요 세션이 정리 대상
+REPORT_CLEANUP_DRYRUN        기본 1(참) — 기본값은 실삭제 없이 대상만 로그.
+                             운영에서 실제 삭제하려면 0 으로 명시해야 한다.
+REPORT_AUDIT_RETENTION_DAYS  기본 365 — report_audit_log 롤오프(무한 증가 방지).
+                             0 이하 = 무기한 보존. DRYRUN 과 무관하게 동작.
+```
+DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + `PRAGMA optimize`
+를 함께 수행해 -wal 파일 비대를 막는다. VACUUM 은 장시간 잠금이라 자동 실행하지 않음 —
+파일 크기 회수가 필요하면 서버 중지 후 수동 실행할 것.
+
 클라이언트:
 ```
 HONEY_SERVER_URL      기본 http://127.0.0.1:8000

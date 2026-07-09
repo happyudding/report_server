@@ -1,9 +1,10 @@
 """CPK tab payload builder."""
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
-from .common import json_safe, num, round_num
+from .common import PASS_BIN, bin_types, json_safe, num, round_num
 
 
 def _stats(series, lo, hi):
@@ -31,7 +32,7 @@ def _stats(series, lo, hi):
         "min": round_num(s.min() if n else None),
         "median": round_num(s.median() if n else None),
         "max": round_num(s.max() if n else None),
-        "average": round_num(avg),
+        "average": round_num(avg, 4),
         "stdev": round_num(stdev, 3),
         "cp": round_num(cp, 3),
         "cpl": round_num(cpl, 3),
@@ -42,17 +43,28 @@ def _stats(series, lo, hi):
 
 def build_cpk_rows(tables, all_items):
     rows = []
+    # BIN 마스크는 item 과 무관 — 테이블당 1회만 계산 (item 루프 안에서 재계산 금지)
+    bin1_masks = [np.array([b == PASS_BIN for b in bin_types(table)], dtype=bool)
+                  for table in tables]
     for item in all_items:
-        for table in tables:
+        for table, bin1_mask in zip(tables, bin1_masks):
             if item not in table.item_columns:
                 continue
+            lo = table.lolim.get(item)
+            hi = table.hilim.get(item)
+            # 전체(모든 die) 기준 통계는 기존 필드 그대로 — Issue Table·Distribution 이
+            # 계속 소비(하위호환). Bin1(BIN==PASS_BIN, 양품) 기준은 *_bin1 로 병기하여
+            # CPK 탭 토글이 클라이언트에서 표시 필드만 바꾸도록 한다.
+            numeric = pd.to_numeric(table.data[item], errors="coerce")
+            bin1_stats = _stats(numeric[bin1_mask], lo, hi)
             rows.append({
                 "subject": item,
                 "source": table.source,
                 "units": json_safe(table.units.get(item)) or "",
-                "lower_limit": round_num(table.lolim.get(item)),
-                "upper_limit": round_num(table.hilim.get(item)),
-                **_stats(table.data[item], table.lolim.get(item), table.hilim.get(item)),
+                "lower_limit": round_num(lo),
+                "upper_limit": round_num(hi),
+                **_stats(numeric, lo, hi),
+                **{f"{k}_bin1": v for k, v in bin1_stats.items()},
             })
     return rows
 

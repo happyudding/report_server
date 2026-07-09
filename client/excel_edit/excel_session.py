@@ -169,10 +169,14 @@ def _write_sheet(sht, df):
     if n_rows < DATA_START_ROW + 2 or n_cols <= len(META_COLUMNS):
         raise ValueError("source 형식이 올바르지 않습니다.")
 
-    # 전체 텍스트 서식 지정 후, 데이터 영역(메타 6행 아래·아이템 열)만 숫자 서식으로 되돌린다.
-    sht.range((1, 1), (n_rows, n_cols)).number_format = "@"
-    sht.range((DATA_START_ROW + 2, len(META_COLUMNS) + 1),
-              (n_rows, n_cols)).number_format = "General"
+    # 텍스트 서식(선행 0 보존)은 메타 영역에만 적용한다. 데이터 블록(수백만 셀)에
+    # number_format 을 한 번에 지정하면 Excel COM 이 0x800A03EC(Range NumberFormat
+    # 설정 불가) 로 거부하므로, 작은 메타 행/열에만 "@" 를 걸고 대용량 데이터 영역은
+    # 기본(General) 서식 그대로 둔다 (원래 데이터 영역을 General 로 되돌리던 것과 동일한 결과).
+    meta_row_end = DATA_START_ROW + 1                 # 헤더 1행 + 메타 6행
+    n_meta_cols = len(META_COLUMNS)
+    sht.range((1, 1), (meta_row_end, n_cols)).number_format = "@"      # 상단 메타 행 전체
+    sht.range((1, 1), (n_rows, n_meta_cols)).number_format = "@"       # 좌측 메타 열 전체
 
     start = 0
     while start < n_rows:
@@ -186,6 +190,12 @@ def _read_and_encode(xlsx_path, n_sources):
     import xlwings as xw
 
     read_app = xw.App(visible=False, add_book=False)
+    try:
+        # 읽기 전용 비가시 인스턴스 — 프롬프트가 뜨면 응답할 사용자가 없어 quit 이 막히고
+        # 좀비 Excel 이 남으므로 알림을 끈다 (upload_prepare/chart_export 와 동일).
+        read_app.display_alerts = False
+    except Exception:
+        pass
     try:
         wb = read_app.books.open(xlsx_path)
         sheets = list(wb.sheets)
@@ -256,9 +266,48 @@ def _wait_until_closed(wb):
             return
 
 
+def _pid_alive(pid):
+    """Windows 프로세스 생존 확인 (권한 최소 핸들)."""
+    import ctypes
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if not handle:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        return bool(ok) and code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _quit_app(app):
+    """Excel 인스턴스 종료. quit 이 프롬프트 등에 막혀 무시되면 프로세스 강제 종료
+    폴백으로 좀비 Excel 잔존을 막는다 (호출 시점엔 대상 workbook 이 이미 닫혀 있어
+    사용자 응답이 필요한 프롬프트가 없다)."""
+    pid = None
+    try:
+        pid = int(app.pid)
+    except Exception:
+        pass
+    try:
+        app.display_alerts = False
+    except Exception:
+        pass
     try:
         app.quit()
+    except Exception:
+        pass
+    if pid is None:
+        return
+    for _ in range(10):          # 종료 유예 최대 ~3초
+        if not _pid_alive(pid):
+            return
+        time.sleep(0.3)
+    try:
+        app.kill()               # quit 무시 → 강제 종료
     except Exception:
         pass
 

@@ -61,3 +61,32 @@ def bin_sort_key(value):
     except ValueError:
         return (1, text)
 
+
+def item_meta(tables) -> dict:
+    """item → {"step", "tno"}(fmt_type 적용) 맵 — yield/issue_table 공용.
+
+    항목이 여러 테이블에 있으면 첫 테이블 값 우선 (setdefault).
+    """
+    out = {}
+    for table in tables or []:
+        for item in table.item_columns:
+            out.setdefault(item, {
+                "step": fmt_type(table.step.get(item)),
+                "tno": fmt_type(table.tno.get(item)),
+            })
+    return out
+
+
+def bin_types(table) -> list:
+    """table.data["BIN"] 전체의 fmt_type 변환 리스트 — 테이블 인스턴스 단위 lazy 캐시.
+
+    한 요청에서 yield/cpk/compare/map 빌더가 같은 BIN 컬럼을 각자 재변환하지 않도록
+    HoneyformTable 인스턴스에 결과를 붙여 재사용한다. tables 는 요청마다 새 클론이므로
+    (service._clone_table) 캐시 무효화가 필요 없다.
+    """
+    cached = getattr(table, "_bin_types_cache", None)
+    if cached is None:
+        cached = [fmt_type(v) for v in table.data["BIN"].tolist()]
+        table._bin_types_cache = cached
+    return cached
+

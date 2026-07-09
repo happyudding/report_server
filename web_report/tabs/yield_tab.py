@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 
 import pandas as pd
 
-from .common import PASS_BIN, bin_sort_key, fmt_type
+from .common import PASS_BIN, bin_sort_key, bin_types, item_meta as _item_meta
 
 
 def _tno_norm(value):
@@ -28,35 +28,47 @@ def _tno_norm(value):
         return text or None
 
 
+def failtno_norms(table) -> list:
+    """table.data["FAILTNO"] 전체의 _tno_norm 변환 리스트 — 테이블 인스턴스 단위 lazy 캐시.
+
+    common.bin_types 와 같은 방식: 한 요청에서 yield/distribution/map 빌더가 같은 컬럼을
+    각자 재변환하지 않도록 재사용한다 (tables 는 요청마다 새 클론이라 무효화 불필요).
+    """
+    cached = getattr(table, "_failtno_norms_cache", None)
+    if cached is None:
+        cached = [_tno_norm(v) for v in table.data["FAILTNO"].tolist()]
+        table._failtno_norms_cache = cached
+    return cached
+
+
+def tno_to_item_map(table) -> dict:
+    """정규화 TNO → 항목명 리스트 맵 — 테이블 인스턴스 단위 lazy 캐시.
+
+    FAILTNO→항목 귀속(yield/distribution 공통 규칙)의 단일 출처.
+    """
+    cached = getattr(table, "_tno_to_item_cache", None)
+    if cached is None:
+        cached = defaultdict(list)
+        for item, tno in table.tno.items():
+            norm = _tno_norm(tno)
+            if norm is not None:
+                cached[norm].append(item)
+        table._tno_to_item_cache = cached
+    return cached
+
+
 def fail_counts_by_source(table) -> Counter:
-    tno_to_item = defaultdict(list)
-    for item, tno in table.tno.items():
-        norm = _tno_norm(tno)
-        if norm is not None:
-            tno_to_item[norm].append(item)
+    tno_to_item = tno_to_item_map(table)
 
     # 행 단위 iterrows 대신 컬럼 일괄 변환 후 (BIN, FAILTNO) 쌍으로 집계한다.
-    fail_list = [_tno_norm(v) for v in table.data["FAILTNO"].tolist()]
-    bin_list = [fmt_type(v) for v in table.data["BIN"].tolist()]
     pair_counts = Counter(
-        (b, f) for b, f in zip(bin_list, fail_list) if f is not None)
+        (b, f) for b, f in zip(bin_types(table), failtno_norms(table)) if f is not None)
 
     counts = Counter()
     for (bin_value, fail_tno), cnt in pair_counts.items():
         for item in tno_to_item.get(fail_tno, []):
             counts[(bin_value, item)] += cnt
     return counts
-
-
-def _item_meta(tables):
-    out = {}
-    for table in tables:
-        for item in table.item_columns:
-            out.setdefault(item, {
-                "step": fmt_type(table.step.get(item)),
-                "tno": fmt_type(table.tno.get(item)),
-            })
-    return out
 
 
 def build_yield_rows(tables, fail_counts):
@@ -67,8 +79,7 @@ def build_yield_rows(tables, fail_counts):
     pass_row = {"step": "", "bin": PASS_BIN, "TNO": "", "Item": "Pass"}
     pass_portions = []
     for table in tables:
-        bins = table.data["BIN"].map(fmt_type)
-        count = int((bins == PASS_BIN).sum())
+        count = sum(1 for b in bin_types(table) if b == PASS_BIN)
         portion = round(count / totals[table.source] * 100.0, 2) if totals[table.source] else 0.0
         pass_row[f"{table.source}_yield"] = portion
         pass_row[f"{table.source}_count"] = count

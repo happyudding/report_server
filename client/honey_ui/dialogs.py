@@ -1,9 +1,10 @@
 ﻿"""Honey dialogs split from the main window module."""
 import sys
+import threading
 from pathlib import Path
 
 from PyQt6 import uic
-from PyQt6.QtCore import Qt, QStringListModel
+from PyQt6.QtCore import Qt, QStringListModel, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
@@ -42,46 +43,59 @@ def _validate_meta(product, lot_id, password):
 
 
 class UploadDialog(QDialog):
+    # 백그라운드 fetch 결과 전달 (ids, ok) — cross-thread 라 자동 queued connection
+    _part_ids_ready = pyqtSignal(list, bool)
+
     def __init__(self, parent=None, defaults=None):
         super().__init__(parent)
         uic.loadUi(str(UPLOAD_UI_PATH), self)
+        # Part ID 목록은 서버 GET(타임아웃 10s)이라 생성자에서 동기 호출하면 팝업이
+        # 그만큼 늦게 뜬다 — 백그라운드 스레드로 받고 도착하면 completer 를 붙인다.
         self._part_ids = []
+        self.le_product.setPlaceholderText("Part ID 목록 불러오는 중...")
+        self._part_ids_ready.connect(self._apply_part_ids)
+        threading.Thread(target=self._fetch_part_ids_bg, daemon=True,
+                         name="upload-dialog-part-ids").start()
+        self.buttonBox.accepted.connect(self._on_ok)
+        self.buttonBox.rejected.connect(self.reject)
+        # Product Type 은 메인창에서 이미 선택된 값을 그대로 재사용한다 (팝업엔 표시 안 함).
+        defaults = defaults or {}
+        self._product_type = defaults.get("product_type", "MDDI")
+        self.le_product.setText(defaults.get("product", ""))
+        self.le_lot_id.setText(defaults.get("lot_id", ""))
+        self.le_revision.setText(defaults.get("revision", ""))
+        self.le_process.setText(defaults.get("process", ""))
+
+    def _fetch_part_ids_bg(self):
         try:
-            self._part_ids = uploader.fetch_part_ids()
+            ids = list(uploader.fetch_part_ids() or [])
+            ok = True
         except Exception:  # noqa: BLE001
-            self._part_ids = []
+            ids, ok = [], False
+        try:
+            self._part_ids_ready.emit(ids, ok)
+        except RuntimeError:
+            pass   # 다이얼로그가 이미 닫혀 C++ 객체가 파괴된 경우
+
+    def _apply_part_ids(self, ids, ok):
+        self._part_ids = list(ids)
         if self._part_ids:
             _model = QStringListModel(self._part_ids, self)
             _comp = QCompleter(_model, self)
             _comp.setFilterMode(Qt.MatchFlag.MatchContains)
             _comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
             self.le_product.setCompleter(_comp)
+            self.le_product.setPlaceholderText("")
         else:
             self.le_product.setPlaceholderText("Part ID 목록을 불러오지 못했습니다 (서버 확인)")
-            QMessageBox.warning(
-                self, "Part ID 로드 실패",
-                "서버에서 Part ID 목록을 불러오지 못했습니다.\n"
-                "네트워크/서버 상태를 확인하세요. Product 검색이 비활성화됩니다.")
-        self._pt_radios = {
-            "MDDI": self.rb_pt_MDDI, "PDDI": self.rb_pt_PDDI,
-            "PMIC": self.rb_pt_PMIC, "SECURITY": self.rb_pt_SECURITY,
-        }
-        self.buttonBox.accepted.connect(self._on_ok)
-        self.buttonBox.rejected.connect(self.reject)
-        if defaults:
-            self._pt_radios.get(defaults.get("product_type", "MDDI"),
-                                self.rb_pt_MDDI).setChecked(True)
-            self.le_product.setText(defaults.get("product", ""))
-            self.le_lot_id.setText(defaults.get("lot_id", ""))
-            self.le_revision.setText(defaults.get("revision", ""))
-            self.le_process.setText(defaults.get("process", ""))
-            self.le_edm_link.setText(defaults.get("edm_link", ""))
+            if not ok and self.isVisible():
+                QMessageBox.warning(
+                    self, "Part ID 로드 실패",
+                    "서버에서 Part ID 목록을 불러오지 못했습니다.\n"
+                    "네트워크/서버 상태를 확인하세요. Product 검색이 비활성화됩니다.")
 
     def product_type(self):
-        for key, rb in self._pt_radios.items():
-            if rb.isChecked():
-                return key
-        return "MDDI"
+        return self._product_type
 
     def _on_ok(self):
         product = self.le_product.text().strip()
@@ -105,7 +119,6 @@ class UploadDialog(QDialog):
             "lot_id": self.le_lot_id.text().strip(),
             "revision": self.le_revision.text().strip(),
             "process": self.le_process.text().strip(),
-            "edm_link": self.le_edm_link.text().strip(),
             "password": self.le_password.text().strip(),
         }
 
@@ -316,100 +329,6 @@ class ReportSettingsDialog(QDialog):
         for idx, subj in enumerate(subjects):
             target = self.list_items_sel if subj in fail else self.list_items_avail
             target.addItem(self._make_item(idx, subj))
-
-    def _sync_yield_dependents(self, *_):
-        enabled = self.cb_sheet_yield.isChecked()
-        for name in ("fail_item", "issue_table"):
-            cb = self.sheet_checks[name]
-            if not enabled:
-                cb.setChecked(False)
-            cb.setEnabled(enabled)
-
-    def _update_dut_mode_availability(self):
-        ok = self.csv_count == 1
-        if not ok:
-            self.cb_mode_dut.setChecked(False)
-        self.cb_mode_dut.setEnabled(ok)
-
-    def _current_filenames(self):
-        if self._filename_overrides is not None:
-            return list(self._filename_overrides)
-        return self.group.names() if self.group is not None else []
-
-    def on_edit_filenames(self):
-        names = self._current_filenames()
-        if not names:
-            QMessageBox.information(self, "Filename", "입력 파일이 없습니다.")
-            return
-        text, ok = QInputDialog.getText(
-            self, "Name Change",
-            "각 입력 파일의 Filename(legend)을 콤마(,)로 구분해 입력하세요.\n"
-            f"(파일 {len(names)}개)",
-            text=",".join(names))
-        if not ok:
-            return
-        parts = [p.strip() for p in text.split(",")]
-        if len(parts) != len(names):
-            QMessageBox.warning(
-                self, "개수 불일치",
-                f"입력 파일은 {len(names)}개인데 {len(parts)}개를 입력했습니다.\n"
-                "앞에서부터 매칭하며, 빈 항목은 기존 파일명을 사용합니다.")
-        self._filename_overrides = [
-            (parts[i] if i < len(parts) else "") or names[i]
-            for i in range(len(names))
-        ]
-
-    def filename_overrides(self):
-        return self._filename_overrides
-
-    def on_edit_chart_colors(self):
-        dlg = ColorEditorDialog(self)
-        dlg.exec()
-
-    def selected_items(self):
-        return [self.list_items_sel.item(i).text()
-                for i in range(self.list_items_sel.count())]
-
-    def selected_sheets(self):
-        return [name for name, cb in self.sheet_checks.items() if cb.isChecked()]
-
-    def mode_bin1(self):
-        return self.cb_mode_bin1.isChecked()
-
-    def mode_dut(self):
-        return self.cb_mode_dut.isChecked()
-
-    def auto_upload(self):
-        return self.cb_auto_upload.isChecked()
-
-    def raw_data(self):
-        """Return whether original df_honey data should be added as Raw Data sheets."""
-        return self.cb_raw_data.isChecked()
-
-    def _on_confirm(self):
-        if not self.selected_items():
-            QMessageBox.warning(self, "항목 누락", "분석할 항목을 1개 이상 선택하세요.")
-            return
-        if not self.selected_sheets():
-            QMessageBox.warning(self, "시트 누락", "출력할 시트를 1개 이상 선택하세요.")
-            return
-        self.accept()
-
-
-        fail = set()
-        try:
-            for row in self.group.fail_item_rows():
-                name = row.get("item") or row.get("Main Fail subject") or row.get("subject")
-                if name:
-                    fail.add(str(name))
-        except Exception:
-            fail = set()
-        self._move_all_left()
-        for i in reversed(range(self.list_items_avail.count())):
-            it = self.list_items_avail.item(i)
-            if it.text() in fail:
-                self.list_items_sel.addItem(self.list_items_avail.takeItem(i))
-        self._resort(self.list_items_sel)
 
     def _sync_yield_dependents(self, *_):
         yield_enabled = self.cb_sheet_yield.isChecked()

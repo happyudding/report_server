@@ -52,8 +52,8 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
     if not analysis_key:
         raise FileNotFoundError(session_id)
     content_hash = str(session.get("content_hash") or "")
-    manifest = service._load_manifest_cached(analysis_key, upload_root)
-    manifest_digest = hashlib.sha256(service._canon(manifest)).hexdigest()
+    # digest 는 manifest 캐시 엔트리에 동봉된 값 재사용 (요청마다 canonical 재해싱 방지)
+    _, manifest_digest = service._load_manifest_with_digest(analysis_key, upload_root)
     extras_digest = hashlib.sha256(service._canon(extras)).hexdigest()
     cache_key = (analysis_key, content_hash, manifest_digest, extras_digest)
     etag = '"' + hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()[:32] + '"'
@@ -84,7 +84,9 @@ def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
     analysis_key = session.get("analysis_key")
     if not analysis_key:
         raise FileNotFoundError(session_id)
-    cache_key = (analysis_key, str(session.get("content_hash") or ""), subject)
+    # DUT 모드는 같은 analysis_key 라도 분할된 소스별 산포를 내므로 mode 를 키에 포함한다.
+    cache_key = (analysis_key, str(session.get("content_hash") or ""),
+                 service._validate_mode(session.get("mode")), subject)
 
     blob = service._cache_get(_SCATTER_CACHE, cache_key)
     if blob is not None:

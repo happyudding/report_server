@@ -18,8 +18,26 @@ _log = logging.getLogger(__name__)
 _started = False
 
 
+def _maintain_wal(conn):
+    """백업 사이클에 얹는 원본 DB 유지보수 (best-effort).
+
+    - wal_checkpoint(TRUNCATE): WAL 페이지를 본 파일로 반영하고 -wal 파일을 0 으로
+      잘라 -wal 무한 증가를 막는다 (기본 auto-checkpoint 는 truncate 하지 않음).
+    - PRAGMA optimize: 쿼리 패턴 기반 통계 갱신 (sqlite 권장 주기 실행).
+    실패해도 백업 자체를 막지 않는다. VACUUM 은 장시간 잠금이라 자동 실행하지 않는다
+    (필요 시 수동 — README 참조).
+    """
+    try:
+        conn.execute("PRAGMA busy_timeout = 5000")
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.execute("PRAGMA optimize")
+        _log.info("[db-backup] wal_checkpoint(TRUNCATE) + optimize done")
+    except Exception:
+        _log.exception("[db-backup] wal maintenance failed")
+
+
 def run_backup():
-    """백업 1회 수행. 백업 파일 경로 반환 (실패 시 예외)."""
+    """백업 1회 수행 (+ 원본 WAL checkpoint/optimize). 백업 파일 경로 반환 (실패 시 예외)."""
     backup_dir = config.REPORT_DB_BACKUP_DIR
     backup_dir.mkdir(parents=True, exist_ok=True)
     dest = backup_dir / f"report_{time.strftime('%Y%m%d_%H%M%S')}.db"
@@ -34,6 +52,7 @@ def run_backup():
             ok = bool(row) and row[0] == "ok"
         finally:
             dst.close()
+        _maintain_wal(src)
     finally:
         src.close()
 

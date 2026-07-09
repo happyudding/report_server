@@ -22,7 +22,7 @@ from pathlib import Path
 import requests
 
 from PyQt6 import uic
-from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QRect
+from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QRect, QUrl
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QHeaderView,
@@ -36,6 +36,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from d1 import D1BrowserDialog
 from honey_ui import (
+    ColorEditorDialog,
     ElapsedProgress as _ElapsedProgress,
     FileOrderDialog,
     ReportSettingsDialog,
@@ -108,6 +109,36 @@ def _co_uninitialize(com_module):
         com_module.CoUninitialize()
     except Exception:
         pass
+
+
+def _upload_progress_channel(progress, label_fmt, value_map=None):
+    """업로드 진행률 콜백 쌍 (worker_cb, drain_cb) 생성 — _run_web_report/_do_upload 공용.
+
+    worker_cb 는 워커 스레드에서 (bytes_read, total) 을 큐에 넣고, drain_cb 는 메인
+    스레드(_wait_for_future poll)에서 마지막 값만 꺼내 progress 에 반영한다.
+    label_fmt 는 "{pct}" 플레이스홀더를 포함한 문자열, value_map 은 pct(0~100)를
+    progressbar value 로 바꾸는 함수 (없으면 pct 그대로).
+    """
+    q = queue.Queue()
+
+    def worker_cb(bytes_read, total_bytes):
+        q.put((bytes_read, total_bytes))
+
+    def drain_cb():
+        last = None
+        while True:
+            try:
+                last = q.get_nowait()
+            except queue.Empty:
+                break
+        if last is None:
+            return
+        bytes_read, total_bytes = last
+        pct = int(bytes_read * 100 / total_bytes) if total_bytes else 0
+        msg = label_fmt.format(pct=pct)
+        progress.set(msg, value=value_map(pct) if value_map else pct, status=msg)
+
+    return worker_cb, drain_cb
 
 
 class SlideInPanel(QWidget):
@@ -242,7 +273,8 @@ class HoneyMainWindow(QMainWindow):
             self._pt_radios[saved_pt].setChecked(True)
         self._setup_csv_table()
         self._connect_signals()
-        self.btn_open_local.setText("LOCAL FILE OPEN")
+        self.btn_open_local.setText("📁  LOCAL FILE OPEN")
+        self.btn_pick_csv.setText("🐬  Dolphin (D1)에서 불러오기")
         self._build_chrome()
 
         if rg is None:
@@ -407,10 +439,10 @@ class HoneyMainWindow(QMainWindow):
     def _connect_signals(self):
         self.btn_open_local.clicked.connect(self.on_open_local)
         self.btn_pick_csv.clicked.connect(self.on_browse_d1)
-        self.btn_help.clicked.connect(self.on_help_file_open)
-        # 입력 파일: 선택 후 ▲▼ 로 순서 변경 (맨 위 파일이 기준)
+        # 입력 파일: 선택 후 ▲▼ 로 순서 변경 (맨 위 파일이 기준), Clear 로 전체 비우기
         self.btn_csv_up.clicked.connect(lambda: self._move_file(-1))
         self.btn_csv_down.clicked.connect(lambda: self._move_file(1))
+        self.btn_csv_clear.clicked.connect(self._clear_files)
         # Start: 파일 전처리 후 설정 팝업(Select Items/Option/색/Auto Upload) 열기
         self.btn_start.clicked.connect(self.on_start)
         self.btn_web_report.clicked.connect(self.on_web_report)
@@ -443,9 +475,9 @@ class HoneyMainWindow(QMainWindow):
         # .ui 로 만든 기존 central 은 버리되(참조는 유지해 버튼 위젯 살려둠),
         # 필요한 위젯만 새 dock 컨테이너로 옮긴다.
         self._legacy_central = self.takeCentralWidget()
-        for name in ("btn_open_local", "btn_pick_csv", "btn_help",
-                     "btn_upload_local", "btn_start", "btn_web_report"):
-            getattr(self, name).setVisible(False)
+        # 파일 열기/D1/Start/Web Report/도움말 버튼은 입력 창(패널) 안으로 이관해 다시 보인다.
+        # Server Upload 버튼만 화면에서 제거(기능은 on_upload_local 로 보존).
+        self.btn_upload_local.setVisible(False)
 
         # 중앙: 웹 브라우저가 전체를 차지
         self.browser_panel = embedded_browser.BrowserPanel(url, navigate=True)
@@ -457,12 +489,22 @@ class HoneyMainWindow(QMainWindow):
         self._icon_sidebar(QAction, QToolBar)
 
     def _build_controls_panel(self, QWidget, QVBoxLayout, QHBoxLayout):
-        """Product Type·파일 리스트·저장명을 담은 입력 창.
-        기본 숨김 — File Open 시 왼쪽에서 슬라이드되어 나온다."""
+        """'새 리포트' 입력 창 — 기본 숨김, 사이드바 🆕 로 왼쪽에서 슬라이드.
+        파일 열기·D1·Product Type·파일 리스트·저장명·분석 모드·Start/Web Report 를 담는다."""
+        from PyQt6.QtWidgets import QButtonGroup, QGroupBox, QRadioButton, QSizePolicy
+
         container = QWidget()
         v = QVBoxLayout(container)
         v.setContentsMargins(8, 8, 8, 8)
         v.setSpacing(8)
+
+        # 파일 열기 / D1 불러오기
+        self.btn_help.setVisible(False)  # 물음표 도움말 버튼 제거 (도움말은 메뉴바로 이동)
+        open_row = QHBoxLayout()
+        open_row.addWidget(self.btn_open_local, 1)
+        open_row.addWidget(self.btn_pick_csv, 1)
+        v.addLayout(open_row)
+
         v.addWidget(self.groupBox_pt)
 
         file_row = QHBoxLayout()
@@ -470,6 +512,7 @@ class HoneyMainWindow(QMainWindow):
         move_col = QVBoxLayout()
         move_col.addWidget(self.btn_csv_up)
         move_col.addWidget(self.btn_csv_down)
+        move_col.addWidget(self.btn_csv_clear)
         move_col.addStretch(1)
         file_row.addLayout(move_col)
         v.addLayout(file_row)
@@ -479,40 +522,62 @@ class HoneyMainWindow(QMainWindow):
         name_row.addWidget(self.le_outname)
         name_row.addWidget(self.lbl_xlsx_ext)
         v.addLayout(name_row)
-        v.addStretch(1)
+
+        # 실행 영역: Web Report(분석 모드 라디오 포함) 와 Excel Report 를 그리드 2개로 분리.
+        # 분석 모드는 Web Report 에만 해당하므로 Web Report 그룹 안에 둔다.
+        web_box = QGroupBox("Web Report")
+        web_v = QVBoxLayout(web_box)
+        web_v.setContentsMargins(8, 6, 8, 6)
+        web_v.setSpacing(6)
+
+        # 분석 모드 — 라디오. 파일 개수와 안 맞는 모드는 실행 시 경고.
+        mode_row = QHBoxLayout()
+        self._mode_radios = {}
+        self._mode_group = QButtonGroup(self)
+        for key in ("Normal", "Compare", "DUT"):
+            rb = QRadioButton(key)
+            if key == "Normal":
+                rb.setChecked(True)
+            self._mode_group.addButton(rb)
+            self._mode_radios[key] = rb
+            mode_row.addWidget(rb)
+        mode_row.addStretch(1)
+        web_v.addLayout(mode_row)
+        web_v.addWidget(self.btn_web_report)
+
+        # Excel Report — 로컬 xlsx 생성/분석 (기존 Start 버튼).
+        self.btn_start.setText("Excel Report")
+        excel_box = QGroupBox("Excel Report")
+        excel_v = QVBoxLayout(excel_box)
+        excel_v.setContentsMargins(8, 6, 8, 6)
+        excel_v.addStretch(1)
+        excel_v.addWidget(self.btn_start)
+
+        # 각 버튼이 그리드 칸 가로를 꽉 채우도록 (.ui 는 Fixed → Expanding 으로 완화)
+        for _b in (self.btn_web_report, self.btn_start):
+            _b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+        # 좌=Web Report / 우=Excel Report (기존 Start·Web Report 위치 스왑)
+        run_row = QHBoxLayout()
+        run_row.addWidget(web_box, 1)
+        run_row.addWidget(excel_box, 1)
+        v.addLayout(run_row)
 
         self.slide_controls = SlideInPanel(
-            self.browser_panel, container, "입력 파일 / 설정", width=460)
-
-    # 하단 로그 dock 높이 (접힘: 한 줄 / 펼침: 넉넉히)
-    _LOG_LINE_H = 26
-    _LOG_COLLAPSED_DOCK_H = 88
-    _LOG_EXPANDED_DOCK_H = 260
+            self.browser_panel, container, "입력 파일 / 설정", width=620)
 
     def _build_log_dock(self, QDockWidget, QWidget):
-        """Status(왼쪽)·Log(오른쪽)를 한 줄에 배치한 하단 창(dock).
-        제목표시줄 없음. 확대 버튼(⤢)으로 로그 영역을 펼친다."""
-        from PyQt6.QtWidgets import QHBoxLayout, QToolButton
+        """하단 창(dock): 진행바만 표시(경과시간·상태 메시지). 제목표시줄 없음.
+        Log(txt_summary)·Status 라벨은 화면에서 제거하되 위젯은 숨겨 코드 참조를 유지한다."""
+        from PyQt6.QtWidgets import QHBoxLayout
+
+        self.txt_summary.hide()
+        self.lbl_progress_status.hide()
 
         container = QWidget()
         row = QHBoxLayout(container)
         row.setContentsMargins(8, 2, 8, 2)
-        row.setSpacing(8)
-
-        row.addWidget(self.lbl_progress_status, 0, Qt.AlignmentFlag.AlignVCenter)
-        self.progress_status.setFixedHeight(self._LOG_LINE_H - 4)
-        self.progress_status.setFixedWidth(160)
-        row.addWidget(self.progress_status, 0, Qt.AlignmentFlag.AlignVCenter)
-
-        self.txt_summary.setMinimumHeight(0)
-        self.txt_summary.setMaximumHeight(self._LOG_LINE_H)
-        row.addWidget(self.txt_summary, 1)
-
-        self._btn_log_expand = QToolButton()
-        self._btn_log_expand.setText("⤢")
-        self._btn_log_expand.setToolTip("로그 확대")
-        self._btn_log_expand.clicked.connect(self._toggle_log_expand)
-        row.addWidget(self._btn_log_expand, 0, Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(self.progress_status, 1, Qt.AlignmentFlag.AlignVCenter)
 
         dock = QDockWidget(self)
         dock.setTitleBarWidget(QWidget())   # 제목표시줄 제거
@@ -520,29 +585,22 @@ class HoneyMainWindow(QMainWindow):
         dock.setWidget(container)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
         self.dock_log = dock
-        self._log_expanded = False
-        self.resizeDocks([dock], [self._LOG_COLLAPSED_DOCK_H], Qt.Orientation.Vertical)
-
-    def _toggle_log_expand(self):
-        """하단 로그 영역 확대/축소 토글."""
-        self._log_expanded = not self._log_expanded
-        if self._log_expanded:
-            self.txt_summary.setMaximumHeight(16777215)
-            self.txt_summary.setMinimumHeight(120)
-            self._btn_log_expand.setText("⤡")
-            self._btn_log_expand.setToolTip("로그 축소")
-            self.resizeDocks([self.dock_log], [self._LOG_EXPANDED_DOCK_H], Qt.Orientation.Vertical)
-        else:
-            self.txt_summary.setMinimumHeight(0)
-            self.txt_summary.setMaximumHeight(self._LOG_LINE_H)
-            self._btn_log_expand.setText("⤢")
-            self._btn_log_expand.setToolTip("로그 확대")
-            self.resizeDocks([self.dock_log], [self._LOG_COLLAPSED_DOCK_H], Qt.Orientation.Vertical)
+        self.resizeDocks([dock], [40], Qt.Orientation.Vertical)
 
     def _show_controls(self):
         """입력 창을 슬라이드로 띄운다 (File Open 시 호출)."""
         panel = getattr(self, "slide_controls", None)
         if panel is not None:
+            panel.show_animated()
+
+    def _toggle_controls(self):
+        """입력/설정 창을 접었다 폈다 토글 (사이드바 🆕)."""
+        panel = getattr(self, "slide_controls", None)
+        if panel is None:
+            return
+        if panel.isVisible():
+            panel.hide_animated()
+        else:
             panel.show_animated()
 
     def resizeEvent(self, event):
@@ -572,26 +630,24 @@ class HoneyMainWindow(QMainWindow):
         m_file = mb.addMenu("파일(&F)")
         m_file.addAction("LOCAL FILE OPEN", self._act_open_local)
         m_file.addAction("Dolphin (D1)에서 불러오기", self._act_browse_d1)
-        m_file.addSeparator()
-        m_file.addAction("보고서 Server Upload (.xlsx)", self.on_upload_local)
-
-        m_run = mb.addMenu("분석(&A)")
-        m_run.addAction("Start", self.on_start)
-        m_run.addAction("Web Report", self.on_web_report)
 
         m_view = mb.addMenu("보기(&V)")
         m_view.addAction("입력 / 설정 창 열기", self._show_controls)
         m_view.addAction("입력 / 설정 창 닫기",
                          lambda: self.slide_controls.hide_animated())
         act_l = self.dock_log.toggleViewAction()
-        act_l.setText("Status / Log 창")
+        act_l.setText("진행 상태 창")
         m_view.addAction(act_l)
         m_view.addSeparator()
         m_view.addAction("검색결과 홈", lambda: self.browser_panel.go_home())
         m_view.addAction("새로고침", lambda: self.browser_panel.view.reload())
 
+        m_settings = mb.addMenu("설정(&S)")
+        m_settings.addAction("Distribution 색 설정...", self.on_webreport_colors)
+
         m_help = mb.addMenu("도움말(&H)")
-        m_help.addAction("파일 열기 도움말", self.on_help_file_open)
+        m_help.addAction("HONEY 도움말", self.on_help_honey)
+        m_help.addAction("VOC", self.on_voc)
 
     def _icon_sidebar(self, QAction, QToolBar):
         """왼쪽 얇은 아이콘 사이드바 — 자주 쓰는 액션(이모지 + tooltip)."""
@@ -619,11 +675,7 @@ class HoneyMainWindow(QMainWindow):
             QToolBar QToolButton:pressed { background: #4b5563; }
         """)
         quick = [
-            ("📂", "파일 열기 (LOCAL)", self._act_open_local),
-            ("🐬", "Dolphin (D1)에서 불러오기", self._act_browse_d1),
-            ("▶", "Start (분석)", self.on_start),
-            ("🌐", "Web Report", self.on_web_report),
-            ("⬆", "보고서 Server Upload (.xlsx)", self.on_upload_local),
+            ("🆕", "새 리포트 (입력 / 설정 창 접기·펴기)", self._toggle_controls),
             ("📝", "Rawdata 수정 (Excel)", self.on_rawdata_edit),
         ]
         for emoji, name, slot in quick:
@@ -721,16 +773,15 @@ class HoneyMainWindow(QMainWindow):
             return
         self._intake(paths)
 
-    def on_help_file_open(self):
-        QMessageBox.information(
-            self,
-            "File Open Guide",
-            "LOCAL FILE OPEN / Dolphin (D1)\n"
-            "- 리포트 생성용 CSV 계열 파일을 선택합니다.\n"
-            "- 여러 파일을 선택하면 순서를 지정한 뒤 Start 로 분석합니다.\n\n"
-            "보고서 Server Upload (.xlsx)\n"
-            "- 이미 생성된 .xlsx 보고서 파일만 업로드합니다.",
-        )
+    def on_help_honey(self):
+        """도움말(&H) → HONEY 도움말: 목차형 통합 도움말 창."""
+        from honey_ui.help_dialog import show_help
+        show_help(self)
+
+    def on_voc(self):
+        """도움말(&H) → VOC: 고객의 소리 접수 페이지를 기본 브라우저로 연다."""
+        from config import VOC_URL
+        webbrowser.open(VOC_URL)
 
     def _intake(self, paths):
         """선택된 파일들 → (2개 이상이면) 순서 지정 팝업 → 메인 창에 로드."""
@@ -760,9 +811,21 @@ class HoneyMainWindow(QMainWindow):
             self.list_csv.setRowHeight(r, 20)
         if self.csv_paths:
             fm = self.list_csv.fontMetrics()
-            measure = getattr(fm, "horizontalAdvance", fm.width)
-            width = max(measure(str(Path(p).resolve())) for p in self.csv_paths)
+            width = max(fm.horizontalAdvance(str(Path(p).resolve())) for p in self.csv_paths)
             self.list_csv.setColumnWidth(1, max(420, width + 36))
+            # 파일 리스트를 채우면 긴 경로의 파일명(오른쪽)이 보이도록 가로 스크롤을 끝까지.
+            # 스크롤바 range 는 레이아웃 후 갱신되므로 다음 이벤트 루프에서 최대로 민다.
+            bar = self.list_csv.horizontalScrollBar()
+            QTimer.singleShot(0, lambda: bar.setValue(bar.maximum()))
+
+    def _clear_files(self):
+        """파일 리스트를 전체 비운다 (Clear 버튼)."""
+        self.csv_paths = []
+        self._refill_csv_list()
+        self.le_outname.clear()
+        self.group = None
+        self.out_path = None
+        self._status("파일 리스트를 비웠습니다.")
 
     def _load_paths(self, paths):
         """선택된 입력 파일들 → 리스트 채우기 + 저장 파일명 제안 (전처리는 Start 까지 보류)."""
@@ -916,24 +979,108 @@ class HoneyMainWindow(QMainWindow):
             ctx["work_group"], ctx["selected"], ctx["sheets"], ctx["auto_upload"],
             ctx["raw_data"], compare_mode=ctx["compare_mode"], mode_map=ctx["mode_map"])
 
+    def on_webreport_colors(self):
+        """F10 메뉴 → Distribution 색(Legend/source 팔레트) 설정.
+
+        기존 ColorEditorDialog 재사용 — OK 시 chart_colors.json 에 저장되어 다음 Web Report
+        생성 때 디폴트로 실린다. 색 번호 i = distribution source i 의 색.
+        """
+        dlg = ColorEditorDialog(self)
+        if dlg.exec():
+            self._status("Distribution 색 저장됨")
+
     def on_web_report(self):
         ctx = self._prepare_web_report_context()
         if ctx is None:
             return
         self._run_web_report(ctx["work_group"], ctx["selected"], ctx["sheets"],
-                             compare_mode=ctx["compare_mode"])
+                             compare_mode=ctx["compare_mode"], options=ctx["options"],
+                             mode=ctx["mode"])
+
+    def _ask_source_names(self):
+        """Web Report 생성 직전 source 별 legend 이름을 매번 확인·변경.
+
+        빈 입력/취소는 기존 이름 유지. 반환값을 rename_sources 에 넘긴다 (없으면 None).
+        """
+        from PyQt6.QtWidgets import QInputDialog
+        current = list(self.group.names())
+        text, ok = QInputDialog.getText(
+            self, "SourceName 변경",
+            "각 입력 파일의 Legend 이름을 쉼표(,)로 구분해 입력하세요.\n"
+            "빈칸은 기존 이름을 유지합니다.",
+            text=", ".join(current))
+        if not ok:
+            return None
+        parts = [p.strip() for p in text.split(",")]
+        while len(parts) < len(current):
+            parts.append("")
+        overrides = []
+        seen = {}
+        for i, part in enumerate(parts[:len(current)]):
+            base = part or current[i]
+            if base in seen:
+                seen[base] += 1
+                base = f"{base}_{seen[base]}"
+            else:
+                seen[base] = 1
+            overrides.append(base)
+        return overrides
+
+    def _selected_web_mode(self):
+        """패널 라디오에서 선택된 Web Report 분석 모드 (기본 Normal)."""
+        radios = getattr(self, "_mode_radios", None) or {}
+        for key, rb in radios.items():
+            if rb.isChecked():
+                return key
+        return "Normal"
+
+    def _validate_web_mode(self, mode):
+        """선택 모드가 입력 파일 개수에 맞는지 검사. 문제 시 경고 후 False.
+
+        - Normal: 제한 없음
+        - Compare: 입력 2개 (after/before 비교 — Honey Compare Mode 관례)
+        - DUT: 입력 1개 (DUT/site 별 분할)
+        - Commonality: 입력 1개 (강조 chip 을 웹에서 선택)
+        """
+        n = len(self.csv_paths)
+        if mode in ("DUT", "Commonality") and n != 1:
+            QMessageBox.warning(self, "모드 적용 불가",
+                                f"{mode} 모드는 입력 파일이 1개일 때만 가능합니다. (현재 {n}개)")
+            return False
+        if mode == "Compare" and n != 2:
+            QMessageBox.warning(self, "모드 적용 불가",
+                                f"Compare 모드는 입력 파일이 2개일 때만 가능합니다. (현재 {n}개)")
+            return False
+        return True
 
     def _prepare_web_report_context(self):
         if not self.csv_paths:
             QMessageBox.warning(self, "입력 누락", "먼저 파일을 가져오세요.")
             return None
+        # 분석 모드는 파일 전처리 전에 검증 (개수만 필요)
+        mode = self._selected_web_mode()
+        if not self._validate_web_mode(mode):
+            self._status("모드 적용 불가")
+            return None
         if not self._rebuild_group(warn=True) or self.group is None:
             return None
+        # F10 에서 지정한 Distribution 색(chart_colors.json)을 웹리포트에 실어 보낸다.
+        # 색 번호 i = distribution source i 의 색. 미지정이면 기본 팔레트가 실린다.
+        options = {"colors": chart_colors.load_colors()}
+        # SourceName(legend) 은 파일마다 달라 매번 확인·변경 후 생성.
+        # DUT 모드는 서버가 업로드된 단일 honeyform 의 DUT 컬럼으로 분할·명명(DUT <값>)하므로
+        # 클라에서는 분할하지 않고 rename 도 건너뛴다 (df_honey→honeyform 포맷 변환 회피).
+        if mode != "DUT":
+            overrides = self._ask_source_names()
+            if overrides is not None:
+                self.group.rename_sources(overrides)
         return {
             "work_group": self.group,
             "selected": list(self.group.subjects()),
             "sheets": list(SHEET_OPTIONS),
-            "compare_mode": False,
+            "compare_mode": (mode == "Compare"),
+            "mode": mode,
+            "options": options,
         }
 
     def _source_file_name(self, md, fallback):
@@ -969,7 +1116,8 @@ class HoneyMainWindow(QMainWindow):
             })
         return sources, items
 
-    def _run_web_report(self, work_group, selected, sheets, compare_mode=False):
+    def _run_web_report(self, work_group, selected, sheets, compare_mode=False, options=None,
+                        mode="Normal"):
         self.btn_start.setEnabled(False)
         self.btn_web_report.setEnabled(False)
         self._init_run_log("Web Report 생성")
@@ -1028,27 +1176,13 @@ class HoneyMainWindow(QMainWindow):
             "client": client_identity.collect(),
             "selected_items": list(selected or []),
             "sheets": list(sheets or []),
+            "options": options or {},
+            "mode": mode or "Normal",
         }
 
-        upload_progress_q = queue.Queue()
-
-        def _on_upload_progress(bytes_read, total_bytes):
-            upload_progress_q.put((bytes_read, total_bytes))
-
-        def _drain_upload_progress():
-            last = None
-            while True:
-                try:
-                    last = upload_progress_q.get_nowait()
-                except queue.Empty:
-                    break
-            if last is None:
-                return
-            bytes_read, total_bytes = last
-            pct = int(bytes_read * 100 / total_bytes) if total_bytes else 0
-            value = 40 + int(pct * 0.6)
-            msg = f"Web Report 업로드 중... ({pct}%)"
-            progress.set(msg, value=value, status=msg)
+        _on_upload_progress, _drain_upload_progress = _upload_progress_channel(
+            progress, "Web Report 업로드 중... ({pct}%)",
+            value_map=lambda pct: 40 + int(pct * 0.6))
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
@@ -1077,16 +1211,24 @@ class HoneyMainWindow(QMainWindow):
         progress.success(f"Web Report 완료: session_id {sid}", value=100)
         self._append_run_log(f"Web Report URL: {url}")
         self._status(f"Web Report 완료: {sid}")
+        # 완료 팝업 없이 바로 내장 브라우저(웹 화면)로 전환하고 입력/설정 창을 닫는다.
+        self._open_in_embedded(url)
+        panel = getattr(self, "slide_controls", None)
+        if panel is not None:
+            panel.hide_animated()
+        self.btn_start.setEnabled(True)
+        self.btn_web_report.setEnabled(True)
+
+    def _open_in_embedded(self, url):
+        """내장 브라우저(있으면)로 url 이동. 없으면 외부 브라우저 폴백."""
+        panel = getattr(self, "browser_panel", None)
+        if panel is not None:
+            panel.view.load(QUrl(url))
+            return
         try:
             webbrowser.open(url)
         except Exception:
             pass
-        QMessageBox.information(
-            self, "Web Report 완료",
-            f"session_id: {sid}\n\n브라우저에서 확인:\n{url}",
-        )
-        self.btn_start.setEnabled(True)
-        self.btn_web_report.setEnabled(True)
 
     def _run_analysis(self, work_group, selected, sheets, auto_upload, raw_data=False,
                       compare_mode=False, mode_map=False):
@@ -1384,15 +1526,25 @@ class HoneyMainWindow(QMainWindow):
         self.btn_upload_local.setEnabled(False)
 
         # ── xlsx 전처리: Excel COM 으로 DRM 해제·시트 grid 추출 ──────────────
+        # 대형/DRM xlsx 는 수 초~수십 초 걸리므로 업로드 구간과 동일하게 워커 스레드에서
+        # 실행한다 (_extract_via_excel_com 이 자체적으로 CoInitialize 하므로 스레드 안전).
+        prep_progress = _ElapsedProgress(
+            self.progress_status, f"xlsx 전처리 중... {Path(path).name}",
+            self._status, busy=True, maximum=0)
+        QApplication.processEvents()
         try:
-            sheet_grids, issue_imgs = _prepare_upload_xlsx(path)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_prepare_upload_xlsx, path)
+                sheet_grids, issue_imgs = _wait_for_future(fut, prep_progress)
             _fill_device_if_empty(sheet_grids, v["product"])
             _ensure_summary_yield(sheet_grids, v["lot_id"])
         except ValueError as exc:
+            prep_progress.fail(f"실패: 파일 오류 - {exc}")
             QMessageBox.critical(self, "파일 오류", str(exc))
             self.btn_upload_local.setEnabled(True)
             return
         except Exception as exc:
+            prep_progress.fail("실패: xlsx 전처리 오류")
             QMessageBox.critical(
                 self, "전처리 실패",
                 f"xlsx 전처리(Excel COM) 중 오류가 발생했습니다:\n{exc}")
@@ -1407,24 +1559,8 @@ class HoneyMainWindow(QMainWindow):
             self._status, busy=False, minimum=0, maximum=100)
         QApplication.processEvents()
 
-        upload_progress_q = queue.Queue()
-
-        def _on_upload_progress(bytes_read, total_bytes):
-            upload_progress_q.put((bytes_read, total_bytes))
-
-        def _drain_upload_progress():
-            last = None
-            while True:
-                try:
-                    last = upload_progress_q.get_nowait()
-                except queue.Empty:
-                    break
-            if last is None:
-                return
-            bytes_read, total_bytes = last
-            pct = int(bytes_read * 100 / total_bytes) if total_bytes else 0
-            msg = f"서버 업로드 중... {Path(path).name} ({pct}%)"
-            progress.set(msg, value=pct, status=msg)
+        _on_upload_progress, _drain_upload_progress = _upload_progress_channel(
+            progress, f"서버 업로드 중... {Path(path).name} ({{pct}}%)")
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
@@ -1437,7 +1573,6 @@ class HoneyMainWindow(QMainWindow):
                     lot_id=v["lot_id"],
                     revision=v["revision"],
                     process=v["process"],
-                    edm_link=v["edm_link"],
                     password=v["password"],
                     issue_imgs=issue_imgs,
                     progress_cb=_on_upload_progress,
@@ -1569,7 +1704,7 @@ class HoneyMainWindow(QMainWindow):
 def _install_excepthook():
     """슬롯에서 발생한 미처리 예외로 앱이 조용히 죽지 않도록, 메시지로 표시.
 
-    PyQt5 는 슬롯의 미처리 예외 시 기본 excepthook 이면 abort 한다. 후킹하면
+    PyQt6 는 슬롯의 미처리 예외 시 기본 excepthook 이면 abort 한다. 후킹하면
     앱을 유지하면서 오류를 보여줄 수 있다.
     """
     import traceback

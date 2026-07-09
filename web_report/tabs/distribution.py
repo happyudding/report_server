@@ -10,15 +10,13 @@
 """
 from __future__ import annotations
 
-from collections import defaultdict
-
 import numpy as np
 import pandas as pd
 
 from .common import fmt_type, json_safe, round_num
 from .cpk import _stats
 from .raw_data import _META_COLUMNS
-from .yield_tab import _tno_norm
+from .yield_tab import _tno_norm, failtno_norms, tno_to_item_map
 
 # Item_detail 의 Fail rawdata 표 상한 (초대형 Fail 항목 페이로드 폭증 방지)
 _FAIL_ROW_CAP = 2000
@@ -83,13 +81,8 @@ def fail_items(tables) -> set:
     """
     failed: set = set()
     for table in tables:
-        tno_to_item = defaultdict(list)
-        for item, tno in table.tno.items():
-            norm = _tno_norm(tno)
-            if norm is not None:
-                tno_to_item[norm].append(item)
-        for value in table.data["FAILTNO"].tolist():
-            norm = _tno_norm(value)
+        tno_to_item = tno_to_item_map(table)
+        for norm in failtno_norms(table):
             if norm is None:
                 continue
             for item in tno_to_item.get(norm, []):
@@ -125,14 +118,36 @@ def _first_table_for(tables, item):
     return None
 
 
+def tseq_sort_key(tables):
+    """항목 → TEST SEQ(TSEQ, 메타 row0) 정렬 키 함수.
+
+    Distribution 갤러리를 TSEQ 순으로 표시하기 위한 것. 숫자로 해석되면 숫자 우선, 아니면
+    뒤로 보내 이름순으로 안정 정렬한다. 소스마다 값이 같다는 보장은 없어 항목이 처음
+    등장한 테이블의 TSEQ 를 쓴다.
+    """
+    tseq_of = {}
+    for table in tables:
+        for item in table.item_columns:
+            tseq_of.setdefault(item, table.tseq.get(item))
+
+    def key(item):
+        try:
+            return (0, float(tseq_of.get(item)), str(item))
+        except (TypeError, ValueError):
+            return (1, 0.0, str(item))
+    return key
+
+
 def build_distribution_index(tables, cpk_rows) -> list:
     """갤러리/툴바/타입어헤드용 항목 인덱스. subject 당 1행 (경량, 점 배열 없음).
 
     cpk 는 ``cpk_rows`` 재사용(재계산 없음), fail 은 ``fail_items`` 로 귀속.
+    항목 순서는 TEST SEQ(TSEQ) 순 — 갤러리가 이 순서대로 표시된다.
     """
     worst = _worst_cpk(cpk_rows)
     failed = fail_items(tables)
-    all_items = sorted({c for t in tables for c in t.item_columns})
+    all_items = sorted({c for t in tables for c in t.item_columns},
+                       key=tseq_sort_key(tables))
 
     rows = []
     for item in all_items:
@@ -194,7 +209,12 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP) -> dict:
             "ypos": [fmt_type(v) for v in table.data["YPOS"].to_numpy()[finite_mask]],
         })
         st = _stats(col, table.lolim.get(subject), table.hilim.get(subject))
-        stats.append({"source": table.source, **st})
+        # report용 정규분포 곡선(프론트)의 축퇴 판정: n<2 또는 std<=0 이면 곡선을
+        # 그리지 못하므로 서버가 degenerate 로 표시(프론트는 스파이크로 대체).
+        # stdev 는 표본표준편차(ddof=1) — n≤1이면 None, 전부 동일값이면 0.
+        degenerate = (st["n"] is None or st["n"] < 2
+                      or st["stdev"] is None or st["stdev"] <= 0)
+        stats.append({"source": table.source, "degenerate": degenerate, **st})
         if st["cpk"] is not None:
             cpks.append(st["cpk"])
 
@@ -203,7 +223,7 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP) -> dict:
         if item_tno is None:
             continue
         data = table.data
-        failtno_norm = [_tno_norm(v) for v in data["FAILTNO"].tolist()]
+        failtno_norm = failtno_norms(table)
         meta_vals = {c: data[c].tolist() for c in _META_COLUMNS}
         item_vals = col.tolist()
         for i, fn in enumerate(failtno_norm):

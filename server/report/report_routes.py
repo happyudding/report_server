@@ -368,6 +368,44 @@ def web_report_scatter(session_id, subject):
     return Response(body, mimetype="application/json", headers=headers)
 
 
+@report_bp.get("/session/<session_id>/web_report/commonality/chips")
+def web_report_commonality_chips(session_id):
+    """Commonality chip 검색: serial/xpos/ypos/dut 부분일치 후보 목록 (읽기 전용)."""
+    _require_web_report_session(session_id)
+    q = request.args.get("q") or ""
+    try:
+        limit = min(max(int(request.args.get("limit") or 300), 1), 2000)
+    except (TypeError, ValueError):
+        limit = 300
+    try:
+        result = web_report_service.commonality_chips(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            q=q, limit=limit)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report commonality chips failed for session %s", session_id)
+        abort(500, "commonality chips failed")
+    return jsonify(result)
+
+
+@report_bp.get("/session/<session_id>/web_report/commonality/chip")
+def web_report_commonality_chip(session_id):
+    """선택 chip 의 항목별 값 + 누적%(ECDF 위치) + wafer 좌표 (읽기 전용)."""
+    _require_web_report_session(session_id)
+    try:
+        result = web_report_service.commonality_chip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            serial=request.args.get("serial") or "", xpos=request.args.get("xpos") or "",
+            ypos=request.args.get("ypos") or "", source=request.args.get("source") or "")
+    except (FileNotFoundError, KeyError):
+        abort(404, "chip or session data not found")
+    except Exception:
+        _log.exception("web_report commonality chip failed for session %s", session_id)
+        abort(500, "commonality chip failed")
+    return jsonify(result)
+
+
 @report_bp.post("/session/<session_id>/web_report/raw_data/edit")
 def web_report_raw_data_edit(session_id):
     """Raw Data 셀 편집 저장 — 저장된 parquet 원본을 직접 덮어쓴다 (버전관리/undo 없음).
@@ -769,21 +807,30 @@ def vendor_asset(filename):
 
 @report_bp.get("/api/history")
 def history():
-    product_type = request.args.get("product_type") or None
-    process = request.args.get("process") or None
-    product = request.args.get("product") or None
-    revision = request.args.get("revision") or None
-    lot_id = request.args.get("lot_id") or None
-    source = request.args.get("source") or None
-    rows = report_db.get_history(
-        product_type=product_type,
-        process=process,
-        product=product,
-        revision=revision,
-        lot_id=lot_id,
-        source=source,
-    )
-    return jsonify(rows)
+    filters = {
+        "product_type": request.args.get("product_type") or None,
+        "process": request.args.get("process") or None,
+        "product": request.args.get("product") or None,
+        "revision": request.args.get("revision") or None,
+        "lot_id": request.args.get("lot_id") or None,
+        "source": request.args.get("source") or None,
+    }
+    limit_raw = request.args.get("limit")
+    offset_raw = request.args.get("offset")
+    if limit_raw is None and offset_raw is None:
+        # 하위호환: 페이지네이션 파라미터가 없으면 기존 리스트 응답 (limit=500 고정)
+        return jsonify(report_db.get_history(**filters))
+    try:
+        limit = max(1, min(int(limit_raw or 500), 1000))
+    except (TypeError, ValueError):
+        limit = 500
+    try:
+        offset = max(0, int(offset_raw or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    rows = report_db.get_history(**filters, limit=limit, offset=offset)
+    total = report_db.count_history(**filters)
+    return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset})
 
 
 @report_bp.get("/api/part_ids")

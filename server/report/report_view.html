@@ -65,6 +65,96 @@ body {
 .pt-badge.SECURITY { background: #9333ea; }
 .pt-badge.TCON { background: #0d9488; }
 .pt-badge.default { background: #64748b; }
+/* 분석 모드 배지 (web_report, Normal 이 아닐 때만 표시) */
+.mode-badge {
+  display: inline-block; padding: 3px 11px; border-radius: 4px;
+  font-size: 12px; font-weight: 700; color: #fff; background: #db2777;
+}
+.mode-badge.Compare { background: #db2777; }
+.mode-badge.DUT { background: #2563eb; }
+.mode-badge.Commonality { background: #d97706; }
+/* ── Compare 탭 ─────────────────────────────────────────────────────────── */
+.compare-wrap { padding: 4px 2px 40px; }
+.compare-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 13px; margin: 6px 0 12px; }
+.compare-h { font-size: 14px; font-weight: 700; margin: 20px 0 8px; color: #334155; }
+.cmp-chip { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 12px;
+  font-weight: 600; background: #e2e8f0; color: #334155; }
+.cmp-chip.cmp-common { background: #cbd5e1; color: #1e293b; }
+.cmp-chip.cmp-unique { background: #fee2e2; color: #b91c1c; }
+.cmp-legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 8px 4px; font-size: 12px; }
+.cmp-lg { display: inline-flex; align-items: center; gap: 5px; }
+.cmp-lg i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+.compare-table td.num, .compare-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.compare-table td.cmp-up { color: #b91c1c; }
+.compare-table td.cmp-down { color: #1d4ed8; }
+.compare-table .cmp-pass-row { background: #f0fdf4; }
+/* goodlog(테스트 프로그램 diff) — Honey Compare Mode 색상 관례: True 초록/False 빨강 배경 */
+.compare-table td.gl-true { background: #c6efce; color: #1e6b30; text-align: center; }
+.compare-table td.gl-false { background: #ffc7ce; color: #9c0006; text-align: center; }
+.compare-table td.gl-gap-red { color: #b91c1c; font-weight: 600; }
+.gl-identical { margin: 8px 0; padding: 10px 12px; background: #f0fdf4;
+  border: 1px solid #bbf7d0; border-radius: 6px; color: #166534; font-size: 13px; }
+/* goodlog 이상 요약 + git-diff 식 접기 */
+.gl-ab-summary { margin: 8px 0 4px; padding: 10px 12px; background: #fff7ed;
+  border: 1px solid #fed7aa; border-radius: 6px; font-size: 13px; }
+.gl-ab-summary.gl-ab-none { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+.gl-ab-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; color: #9a3412; }
+.gl-ab-none .gl-ab-head { color: #166534; }
+.cmp-chip.gl-chip-add { background: #dcfce7; color: #166534; }
+.cmp-chip.gl-chip-del { background: #fee2e2; color: #b91c1c; }
+.cmp-chip.gl-chip-lim { background: #fef9c3; color: #854d0e; }
+.gl-ab-summary .gl-expand-all { margin-left: auto; }
+.gl-ab-items { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+.gl-ab-item { font-size: 12px; padding: 1px 7px; border-radius: 4px; border: 1px solid transparent; }
+.gl-ab-item.gl-add { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+.gl-ab-item.gl-del { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+.gl-ab-item.gl-lim { background: #fefce8; border-color: #fde68a; color: #854d0e; }
+.gl-fold-toggle td { cursor: pointer; background: #f1f5f9; color: #64748b;
+  font-size: 12px; padding: 4px 10px; user-select: none; }
+.gl-fold-toggle:hover td { background: #e2e8f0; }
+.gl-fold-arrow { display: inline-block; width: 12px; color: #94a3b8; }
+.goodlog-table tr.gl-added > td:first-child { box-shadow: inset 3px 0 0 #22c55e; }
+.goodlog-table tr.gl-removed > td:first-child { box-shadow: inset 3px 0 0 #ef4444; }
+.goodlog-table tr.gl-limitchg > td:first-child { box-shadow: inset 3px 0 0 #f59e0b; }
+.goodlog-table tr.gl-added { background: #f6fef9; }
+.goodlog-table tr.gl-removed { background: #fef6f6; }
+.goodlog-table tr.gl-limitchg { background: #fffdf5; }
+/* Bin 전이표: 변경된 조합 강조 */
+.compare-table tr.bt-changed { background: #fff7ed; }
+.compare-table tr.bt-changed td:first-child { font-weight: 600; }
+.gl-sub { font-size: 11px; font-weight: 400; color: #64748b; }
+/* ── 좌표 선택(Map Analysis) 검색 UI ─────────────────────────────────────── */
+.common-search { display: flex; gap: 8px; align-items: center; margin: 6px 0 12px; }
+.common-search input { padding: 6px 10px; border: 1px solid #cbd5e1; border-radius: 5px;
+  font-size: 13px; width: 280px; max-width: 60%; }
+.common-search .muted { color: #64748b; font-size: 12px; }
+.btn-sm { padding: 6px 14px; border: 1px solid #2563eb; background: #2563eb; color: #fff;
+  border-radius: 5px; font-size: 13px; cursor: pointer; }
+.common-list { max-height: 340px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 6px; }
+.common-chip-table th, .common-chip-table td { padding: 4px 8px; font-size: 12px; }
+.common-chip-row { cursor: pointer; }
+.common-chip-row:hover { background: #f1f5f9; }
+.common-chip-row.is-selected { background: #dbeafe; }
+.common-chip-row.common-chip-added { color: #94a3b8; background: #f8fafc; }
+.common-chk-col { width: 30px; text-align: center; }
+.common-chk-col input { cursor: pointer; }
+.mapsel-sep { display: inline-block; width: 1px; height: 16px; background: #d5dbe6; margin: 0 8px; vertical-align: middle; }
+.mapsel-cur { font-size: 12px; color: #0f172a; background: #fee2e2; border: 1px solid #fca5a5;
+  border-radius: 5px; padding: 3px 8px; margin: 0 6px; }
+.mapsel-search { max-width: 720px; margin: 4px 0 14px; padding: 8px 10px;
+  border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.mapsel-list { max-height: 300px; }
+.mapsel-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 12px; }
+.mapsel-leg-title { font-size: 12px; font-weight: 700; color: #475569; }
+.mapsel-leg-item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px;
+  background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 12px; padding: 2px 6px 2px 8px; }
+.mapsel-sw { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.mapsel-src { color: #64748b; }
+.mapsel-del { border: none; background: transparent; color: #94a3b8; cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 2px; }
+.mapsel-del:hover { color: #e11d48; }
+.mapsel-clear { padding: 3px 10px; }
 /* ── tabs ──────────────────────────────────────────────────────────────── */
 .tabs {
   display: flex; gap: 6px; flex-wrap: wrap; background: #fff;
@@ -117,6 +207,12 @@ body {
 .ybs-table .ybs-src { color: #1f4d8c; font-weight: 700; text-align: left; }
 .ybs-table .ybs-pct { color: #222; font-weight: 800; }
 .ybs-table .ybs-cnt { color: #888; }
+/* Yield 표 avg 셀: 값 + 100% 대비 가로 게이지 막대 */
+.yield-avg-cell { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
+.yield-avg-val { text-align: right; }
+.yield-gauge { display: inline-block; width: 56px; height: 8px; background: #edf0f4;
+  border-radius: 4px; overflow: hidden; flex: none; }
+.yield-gauge-fill { display: block; height: 100%; background: #2a78d6; border-radius: 4px; }
 
 /* ── Summary: 전체/소스별 Yield + Major Fail Bins 통합 테이블 ─────────────── */
 .mfb-wrap { overflow-x: auto; margin-bottom: 18px; }
@@ -239,6 +335,8 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-issue tbody td:nth-child(4) { font-size: 15px; font-weight: 700; }
 /* 공통 접두어를 뗀 source 헤더: hover 시 전체 이름(title) 확인 가능함을 점선 밑줄로 힌트. */
 .sheet-table th.sheet-src-th[title] { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
+/* 다중 source Issue Table: 문제 있는 소스 셀(cpk<1.33 / Yield≠0) 연빨강 강조. */
+.sheet-table.kind-issue td.issue-cell-warn { background: #fde2e2 !important; }
 
 /* ── Yield 시트: Bin 접기/펼치기 ── */
 .yield-toggle, .issue-toggle {
@@ -313,20 +411,11 @@ tbody tr:hover { background: #f9fbff; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
 .map-exp-plot { width: 220px; height: 220px; }
 
-/* 행별 산포·Map 숨기기 토글(Item 셀 안 아주 작은 버튼)과 숨김 상태 셀 접힘 */
-.btn-hide-dist { border: none; background: transparent; color: #98a2b3; cursor: pointer;
-  font-size: 11px; line-height: 1; padding: 0 2px; vertical-align: middle; }
-.btn-hide-dist:hover { color: #475467; }
-tr.issue-row-hidden .dist-cell-mini,
-tr.issue-row-hidden .map-cell-mini { height: auto; min-height: 0; border: none; background: transparent; }
-tr.issue-row-hidden .dist-plot,
-tr.issue-row-hidden .map-plot,
-tr.issue-row-hidden .btn-map-expand { display: none; }
 .dist-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap;
   position: sticky; top: var(--sticky-head-h, 96px); z-index: 90; background: #fff; padding: 6px 0; }
 .distseg-group { display: inline-flex; border: 1px solid #d0d5dd; border-radius: 6px; overflow: hidden; }
-.distseg { border: none; background: #fff; padding: 6px 14px; font-size: 13px; cursor: pointer;
-  color: #444; border-right: 1px solid #e5e7eb; }
+.distseg { border: none; background: #eef1f6; padding: 6px 14px; font-size: 13px; cursor: pointer;
+  color: #344054; border-right: 1px solid #cbd2dc; }
 .distseg:last-child { border-right: none; }
 .distseg.active { background: #5E6AD2; color: #fff; }
 .dist-legend { display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -341,7 +430,7 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
 .dist-sug-item:hover { background: #f2f4ff; }
 .dist-sug-item .sug-tno { color: #999; min-width: 34px; }
 .dist-sug-item .sug-name { flex: 1; font-weight: 600; color: #222; }
-.dist-sug-item .sug-cpk { color: #666; }
+.dist-sug-item .dist-sug-chk { margin: 0; }
 .dist-count { font-size: 12px; color: #888; }
 .distg-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 @media (max-width: 1100px) { .distg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -354,18 +443,20 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
   0%   { box-shadow: 0 0 0 3px rgba(74,144,226,.9); }
   100% { box-shadow: 0 0 0 3px rgba(74,144,226,0); }
 }
-.distg-head { display: flex; align-items: baseline; gap: 6px; padding: 6px 9px; font-size: 12px;
+.distg-head { display: flex; flex-direction: column; gap: 2px; padding: 6px 9px; font-size: 12px;
   border-bottom: 1px solid rgba(0,0,0,.06); background: rgba(255,255,255,.45); }
+.distg-line1 { display: flex; align-items: baseline; gap: 6px; }
+.distg-line2 { display: flex; align-items: baseline; gap: 6px; }
 .distg-tno { color: #999; }
 .distg-name { flex: 1; font-weight: 600; color: #1A1A1F; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .distg-cpk { color: #555; font-size: 11.5px; white-space: nowrap; }
-.distg-lim { color: #6b7280; font-size: 10px; white-space: nowrap; margin: 0 6px; }
+.distg-lim { color: #6b7280; font-size: 12px; font-weight: 700; white-space: nowrap; margin-right: 6px; }
 .distg-plot { flex: 1; min-height: 0; }
 .dist-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
   position: sticky; top: var(--sticky-head-h, 96px); z-index: 90; background: #fff; padding: 6px 0; }
-.dist-detail-head button { border: 1px solid #d0d5dd; background: #fff; border-radius: 6px;
+.dist-detail-head button { border: 1px solid #b6c0cc; background: #eef1f6; color: #344054; border-radius: 6px;
   padding: 5px 12px; cursor: pointer; font-size: 13px; }
-.dist-detail-head button:hover { background: #f2f4ff; }
+.dist-detail-head button:hover { background: #e3ebfa; border-color: #4a90e2; }
 .dist-navpos { font-size: 12px; color: #888; }
 .dist-detail-title { margin-left: 8px; font-size: 14px; color: #1A1A1F; }
 .dist-detail-body { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -383,7 +474,10 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
 .idet-tno { font-weight: 400; color: #6b7280; font-size: 14px; }
 .idet-subject { font-weight: 700; }
 .idet-cpk { color: #555; font-size: 13px; white-space: nowrap; }
-.idet-lim { color: #6b7280; font-size: 13px; white-space: nowrap; }
+.idet-lim { color: #1A1A1F; font-size: 18px; font-weight: 700; white-space: nowrap; }
+.idet-stat { font-size: 14px; color: #344054; white-space: nowrap; }
+.idet-stat b { font-weight: 700; color: #1A1A1F; }
+.idet-stat-src { color: #6b7280; font-weight: 600; margin-right: 2px; }
 .idet-badge { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 10px; }
 .idet-badge.idet-fail { background: #FDECEC; color: #b42318; }
 .idet-badge.idet-cpk_low { background: #FEF9E7; color: #8a6d00; }
@@ -394,9 +488,24 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
 .idet-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
 .idet-chart-block { border: 1px solid #e2e4e8; border-radius: 8px; padding: 8px 10px; }
 .idet-fail-title { margin-top: 8px; }
+/* 히스토그램 블록 Analysis/Report 세그먼트 토글 */
+.idet-hist-cap { display: flex; align-items: center; justify-content: space-between; }
+.idet-hist-tabs { display: inline-flex; }
+.idet-hist-tabs .btn-sm { margin-top: 0; padding: 2px 10px; border-radius: 0; }
+.idet-hist-tabs .btn-sm:first-child { border-radius: 8px 0 0 8px; }
+.idet-hist-tabs .btn-sm:last-child { border-radius: 0 8px 8px 0; border-left: none; }
+.idet-hist-tabs .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
 @media (max-width: 900px) { .idet-charts { grid-template-columns: 1fr; } }
 .item-detail-link { color: #2a5db0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .item-detail-link:hover { color: #17417f; }
+/* CDF 칩 편집(제외/강조) 툴바 — 임시(클라이언트), 새로고침/항목이동 시 초기화 */
+.cdf-editbar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; font-size: 12px; }
+.cdf-editbar .cdf-eb-label { color: #6b7280; }
+.cdf-editbar .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+.cdf-editbar .btn-sm.cdf-mode-highlight.active { background: #EF553B; border-color: #EF553B; }
+.cdf-editbar .cdf-eb-count { color: #555; margin-left: 4px; }
+.cdf-editbar .cdf-eb-hint { color: #9aa0aa; }
+.idet-fail-chk-col { width: 34px; text-align: center; }
 
 /* ── Raw Data (web_report lazy-load) ──────────────────────────────────────── */
 /* 그리드가 페이지 자체 스크롤을 쓰므로(내부 height 없음), 검색/필터 바와 그 아래 그리드
@@ -519,6 +628,13 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
   display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px; flex: 1 1 auto; min-width: 0;
 }
+/* Map Analysis 상단 툴바(가로 칸수 조절) */
+.map-toolbar {
+  padding: 2px 0 12px; display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: #333;
+}
+.map-toolbar input { width: 56px; padding: 3px 6px; border: 1px solid #cbd2da; border-radius: 5px; font-size: 13px; }
+.map-toolbar-hint { font-size: 11px; color: #98a2b3; }
 .wafer-card { border: 1px solid #e3e6ea; border-radius: 8px; padding: 12px; background: #fff; }
 .wafer-card-title { font-size: 12px; font-weight: 700; color: #333; margin: 0 0 8px; }
 .wafer-legend-fixed { flex: 0 0 220px; position: sticky; top: var(--sticky-head-h, 96px); }
@@ -544,6 +660,10 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
 }
 .summary-section-card .section-title { margin-top: 0; }
 .summary-section-card .mfb-wrap, .summary-section-card .summary-cards { margin-bottom: 0; }
+/* 클릭 시 해당 탭으로 이동하는 Summary 카드 */
+.summary-section-card.summary-jump { cursor: pointer; transition: box-shadow .12s, border-color .12s; }
+.summary-section-card.summary-jump:hover { border-color: #4a90e2; box-shadow: 0 3px 12px rgba(74,144,226,.22); }
+.summary-jump-hint { font-size: 11px; font-weight: 500; color: #4a90e2; margin-left: 6px; }
 
 .error-box {
   background: #fef2f2; color: #991b1b; padding: 12px 16px;
@@ -573,11 +693,11 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
 .kv-edit label { font-size: 12px; color: #555; word-break: break-all; }
 .btn-sm {
   margin-top: 6px; padding: 4px 12px; font-size: 12px;
-  border: 1px solid #d0d5dd; background: #fff; border-radius: 8px; cursor: pointer;
+  border: 1px solid #b6c0cc; background: #eef1f6; color: #344054; border-radius: 8px; cursor: pointer;
   box-shadow: 0 1px 2px rgba(0,0,0,.05); transition: all .15s ease;
 }
 .btn-sm:hover {
-  border-color: #4a90e2; color: #4a90e2;
+  border-color: #4a90e2; background: #e3ebfa; color: #2f6bd0;
   box-shadow: 0 2px 6px rgba(0,0,0,.08); transform: translateY(-1px);
 }
 .cpk-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
@@ -592,6 +712,11 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
   width: 74px; padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 4px; font-size: 12px;
 }
 .cpk-target-bar input[type="number"]:focus { border-color: #4a90e2; outline: none; }
+.cpk-margin-wrap { display: inline-flex; align-items: center; gap: 4px; }
+.cpk-margin-wrap select {
+  padding: 5px 6px; border: 1px solid #d0d5dd; border-radius: 4px; font-size: 12px; background: #fff;
+}
+.cpk-margin-wrap select:focus { border-color: #4a90e2; outline: none; }
 .btn-del-row {
   border: none; background: transparent; color: #dc2626;
   font-size: 16px; cursor: pointer; line-height: 1; padding: 0 6px;
@@ -769,8 +894,10 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
     <button class="tab" data-tab="cpk">CPK</button>
     <button class="tab" data-tab="issues">Issue Table</button>
     <button class="tab" data-tab="distribution">Distribution</button>
-    <button class="tab" data-tab="trim-analysis">Trim Analysis</button>
+    <!-- Trim Analysis 탭 임시 삭제 (사용자 요청) — 재활성화 시 아래 주석 해제
+    <button class="tab" data-tab="trim-analysis">Trim Analysis</button> -->
     <button class="tab" data-tab="map-analysis">Map Analysis</button>
+    <button class="tab" data-tab="compare" style="display:none">Compare</button>
   </div>
 </div>
 
@@ -783,8 +910,10 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
   <div class="panel" id="panel-issues"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-distribution"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-raw-data"><div class="placeholder">로드 중...</div></div>
-  <div class="panel" id="panel-trim-analysis"><div class="placeholder">로드 중...</div></div>
+  <!-- Trim Analysis 패널 임시 삭제 (사용자 요청)
+  <div class="panel" id="panel-trim-analysis"><div class="placeholder">로드 중...</div></div> -->
   <div class="panel" id="panel-map-analysis"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-compare"><div class="placeholder">로드 중...</div></div>
   <!-- Item_detail: 탭 버튼 없이 프로그램으로만 활성화(Yield/CPK/IssueTable/Distribution item 클릭) -->
   <div class="panel" id="panel-item-detail"></div>
 </div>
@@ -814,7 +943,13 @@ tr.issue-row-hidden .btn-map-expand { display: none; }
 <div class="modal-overlay" id="etcItemModal">
   <div class="modal-box modal-box-wide">
     <p class="modal-title">ETC 항목 추가</p>
-    <p class="modal-desc">추가할 Item 을 선택하세요. Bin/TNO/Distribution 은 자동으로 채워집니다.</p>
+    <div class="etc-engr-form">
+      <p class="modal-desc">Engr 항목 직접 입력 — 측정항목에 없는 Item 명과 Comment 를 적어 추가합니다.</p>
+      <input type="text" id="etcEngrName" class="field-input" placeholder="Item 명 (직접 입력)">
+      <textarea id="etcEngrComment" class="field-input" placeholder="Comment (선택)" rows="2" style="margin-top:6px;resize:vertical;"></textarea>
+      <div style="margin-top:6px;"><button class="modal-btn primary" id="etcEngrAdd">Engr 항목 추가</button></div>
+    </div>
+    <p class="modal-desc" style="margin-top:12px;border-top:1px solid #e5e7eb;padding-top:12px;">또는 측정항목에서 선택 — Bin/TNO/Distribution 은 자동으로 채워집니다.</p>
     <input type="text" id="etcItemSearch" class="field-input" placeholder="항목 검색">
     <div id="etcItemList" class="rawdata-item-list" style="margin-top:8px;"></div>
     <div class="modal-actions">
@@ -912,6 +1047,10 @@ let DATA = null;
 function isWebReportSession() {
   return !!(DATA && DATA.session && DATA.session.source === "web_report");
 }
+// 세션 분석 모드(Normal/Compare/DUT/Commonality). 세션 DB 컬럼이 authoritative.
+function webReportMode() {
+  return (((DATA && DATA.session && DATA.session.mode) || "Normal") + "").trim();
+}
 // 보기/수정 모드 개념 제거 — 항상 편집 가능(Raw Data 인라인 편집 + Issue comment 상시 편집).
 // MODE 는 항상 "edit" 로 고정하고, 흩어진 MODE==="edit" 분기가 자동으로 편집 경로를 타게 둔다.
 let MODE = "edit";
@@ -974,8 +1113,13 @@ function renderMeta(session) {
     .map(s => s.file_name || s.name).filter(Boolean);
   const fname = sourceFiles[0] || session.file_name || "-";
   const fnameTitle = sourceFiles.length > 1 ? sourceFiles.join("\n") : fname;
+  // 분석 모드 배지: web_report 세션이고 Normal 이 아닐 때만 표시 (Normal 은 기본이라 생략).
+  const mode = (session.mode || "Normal").trim();
+  const modeBadge = (isWebReportSession() && mode && mode !== "Normal")
+    ? `<span class="mode-badge ${esc(mode)}" title="분석 모드">${esc(mode)}</span>` : "";
   const line1 = [
     `<span class="pt-badge ${ptCls}">${esc(pt || "-")}</span>`,
+    modeBadge,
     `<span class="meta-inline"><span class="mk">Product</span>${esc(session.product || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Revision</span>${esc(session.revision || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Process</span>${esc(session.process || "-")}</span>`,
@@ -1009,19 +1153,28 @@ function updateImportantBtn(session) {
 // 세션에서 항상 빈 화면이므로 탭 버튼 자체를 숨긴다. 숨긴 탭이 활성 상태였으면 Summary 로 전환.
 // (Raw Data 탭은 제거됨 — rawdata 편집은 Honey 사이드바 'Rawdata 수정'(Excel) 으로 이관.)
 const WEB_REPORT_ONLY_TABS = ["cpk", "map-analysis"];
+
 function syncTabVisibility() {
   const web = isWebReportSession();
-  let hidActive = false;
+  // 1) web_report 전용 탭: 비-web 세션에서 숨김
   WEB_REPORT_ONLY_TABS.forEach(name => {
     const btn = document.querySelector(`.tab[data-tab="${name}"]`);
-    if (!btn) return;
-    btn.style.display = web ? "" : "none";
-    if (!web && btn.classList.contains("active")) hidActive = true;
+    if (btn) btn.style.display = web ? "" : "none";
   });
-  if (hidActive) {
-    document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b.dataset.tab === "summary"));
-    document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === "panel-summary"));
-    renderTab("summary");   // lazy 렌더에서 강제 전환된 summary 가 dirty 로 남지 않도록
+  // 1b) 모드 전용 탭: Compare/Commonality 는 각 모드(web_report)에서만 표시.
+  const modeNow = web ? webReportMode() : "Normal";
+  const compareBtn = document.querySelector('.tab[data-tab="compare"]');
+  if (compareBtn) compareBtn.style.display = (modeNow === "Compare") ? "" : "none";
+  // 2) 활성 탭이 숨겨졌으면 첫 번째로 보이는 탭으로 전환
+  const activeBtn = document.querySelector(".tab.active");
+  if (activeBtn && activeBtn.style.display === "none") {
+    const firstVisible = [...document.querySelectorAll(".tab")].find(b => b.style.display !== "none");
+    if (firstVisible) {
+      const name = firstVisible.dataset.tab;
+      document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === firstVisible));
+      document.querySelectorAll(".panel").forEach(p => p.classList.toggle("active", p.id === `panel-${name}`));
+      renderTab(name);   // lazy 렌더에서 강제 전환된 탭이 dirty 로 남지 않도록
+    }
   }
 }
 
@@ -1109,15 +1262,6 @@ function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNa
 function isDistCol(c) { return String(c || "").toLowerCase() === "distribution"; }
 function isMapCol(c) { return String(c || "").toLowerCase() === "map"; }
 
-// Issue Table 에서 행별로 산포·Map 셀을 접은(숨긴) 행들의 식별키(issueRowKey) 집합.
-// 재렌더(모드전환/ETC편집/세션재로드) 시 이 집합을 다시 읽어 초기 숨김 상태를 복원한다.
-const issueHiddenRows = new Set();
-// tr class 문자열에 추가 클래스를 안전하게 주입(class 속성이 없으면 새로 만든다).
-function withRowClass(trAttr, extra) {
-  if (!extra) return trAttr;
-  if (/class="/.test(trAttr)) return trAttr.replace(/class="/, `class="${extra} `);
-  return ` class="${extra}"` + trAttr;
-}
 // web_report Map Analysis 소스(웨이퍼) 개수 — 2개 이상일 때만 Map 셀 펼치기 버튼 노출.
 function mapSourceCount() {
   const maps = (webReportSheets() || {})["Map Analysis"];
@@ -1351,7 +1495,7 @@ function issueSectionHeadRowsHtml(cols, sec) {
     i = j;
   }
   if (!runs.some(r => r.group)) {
-    return `<tr class="issue-shead-top">` +
+    return `<tr class="issue-shead-top" data-sec="${esc(sec)}">` +
       cols.map(c => `<th>${esc(displayLabel(c))}</th>`).join("") + `</tr>`;
   }
   const topRow = runs.map(r => r.group
@@ -1371,7 +1515,7 @@ function issueSectionHeadRowsHtml(cols, sec) {
       return `<th class="sheet-src-th"${titleAttr}>${esc(a.short)}</th>`;
     }).join("");
   }).join("");
-  return `<tr class="issue-shead-top">${topRow}</tr><tr class="issue-shead-bot">${botRow}</tr>`;
+  return `<tr class="issue-shead-top" data-sec="${esc(sec)}">${topRow}</tr><tr class="issue-shead-bot">${botRow}</tr>`;
 }
 
 function renderSheetTable(rows, opts) {
@@ -1413,13 +1557,16 @@ function renderSheetTable(rows, opts) {
     }
   }
 
+  // Issue Table 다중 source(=_yield 소스 컬럼 2개 이상)일 때만 문제 셀 강조:
+  // CPK 섹션 소스 셀은 cpk < 1.33, Yield/ETC 섹션 소스 셀은 값이 0 이 아닌 셀을 연빨강으로.
+  const issueMultiSource = opts.kind === "issue"
+    && cols.filter(c => /_yield$/i.test(String(c))).length > 1;
+
   const renderDataRowTr = (r, ri) => {
     const subhead = (opts.kind === "yield" && isHeaderLikeRow(r, cols))
       || (opts.kind === "issue" && isCpkSubheadRow(r));
-    // 이 행이 속한 섹션·행식별키·산포/Map 숨김 여부(Issue Table 전용).
+    // 이 행이 속한 섹션(Issue Table 전용) — Map/Distribution 셀 표시 판단·셀 강조에 쓰인다.
     const issueRowSec = opts.kind === "issue" ? rowSection[ri] : "";
-    const issueRowKeyVal = (opts.kind === "issue" && !subhead) ? issueRowKey(r, issueRowSec) : "";
-    const rowHidden = !!issueRowKeyVal && issueHiddenRows.has(issueRowKeyVal);
     const tds = cols.map((c, ci) => {
       const v = r ? r[c] : "";
       let txt = (v === null || v === undefined) ? "" : String(v);
@@ -1470,11 +1617,21 @@ function renderSheetTable(rows, opts) {
       if (isEmpty) clsParts.push("st-empty");
       else if (isNum) clsParts.push("st-num");
       if (subhead) clsParts.push("sheet-subhead");
+      // 다중 source 문제 셀 강조(소스별 _yield 컬럼 한정).
+      if (issueMultiSource && !subhead && !isEmpty && /_yield$/i.test(String(c))) {
+        const num = parseFloat(v);
+        if (!isNaN(num)) {
+          if (issueRowSec === "CPK") { if (num <= CPK_WARN_THRESHOLD) clsParts.push("issue-cell-warn"); }
+          else if (num > 0) clsParts.push("issue-cell-warn");
+        }
+      }
       const cls = clsParts.join(" ");
       // Item 셀: 클릭 시 Item_detail 로 이동(항목명 = 측정항목). issue + yield(Bin 상세 구성표) 공용.
-      // Pass(Bin 1) 행은 실제 측정항목이 아니므로 제외.
+      // Pass(Bin 1) 행과 자유입력 Engr ETC 항목(TNO 없음 = 측정항목 아님)은 제외.
+      const etcFreeform = opts.kind === "issue" && rowSection[ri] === "ETC"
+        && String((r && r["TNO"]) ?? "").trim() === "";
       const itemClickable = (opts.kind === "issue" || opts.kind === "yield") && !subhead && !isEmpty
-        && c === "Item" && String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() !== "1";
+        && c === "Item" && String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() !== "1" && !etcFreeform;
       // ETC 섹션의 상세 행(ENGR 가 수동 추가한 item) Item 셀: 수정 모드에서만 삭제(×) 버튼 노출.
       const etcDeletable = opts.kind === "issue" && opts.edit && !isEmpty && c === "Item"
         && rowSection[ri] === "ETC" && String(r["Category"] || "") === "";
@@ -1491,11 +1648,6 @@ function renderSheetTable(rows, opts) {
       if (opts.kind === "issue" && c === "Step" && r && r._grp && !r._detail && (Number(r._ndetail) || 0) > 0) {
         cellHtml += ` <button type="button" class="issue-toggle" data-grp="${esc(r._grp)}" aria-expanded="false">▼</button>`;
       }
-      // Issue Table Item 셀 오른쪽에 아주 작은 산포·Map 숨기기 토글(그 행의 Distribution+Map 함께 접기).
-      if (opts.kind === "issue" && c === "Item" && issueRowKeyVal && !isEmpty) {
-        cellHtml += ` <button type="button" class="btn-hide-dist" data-key="${esc(issueRowKeyVal)}" ` +
-          `title="산포·Map ${rowHidden ? "보이기" : "숨기기"}">${rowHidden ? "⊞" : "⊟"}</button>`;
-      }
       return `<td${cls ? ` class="${cls}"` : ""} data-r="${ri}" data-c="${ci}">${cellHtml}</td>`;
     }).join("");
     const isPassRow = !subhead && binCol && String((r ? r[binCol] : "") ?? "").trim() === "1";
@@ -1505,7 +1657,7 @@ function renderSheetTable(rows, opts) {
         ? ` class="issue-bin-detail" data-grp="${esc(r._grp)}" style="display:none"`
         : ` class="issue-bin-rep" data-grp="${esc(r._grp)}"`;
     }
-    return `<tr${withRowClass(trAttr, rowHidden ? "issue-row-hidden" : "")}>${tds}</tr>`;
+    return `<tr${trAttr}>${tds}</tr>`;
   };
 
   let body;
@@ -1611,6 +1763,11 @@ function renderYieldGrouped(passRow, groups, allRows) {
   const colgroup = "<colgroup>" + cols.map(c => `<col style="width:${colWidth(c)}">`).join("") + "</colgroup>";
   const head = buildSheetTableHead(cols);
 
+  // 게이지 정규화 기준: Pass(bin1) 제외한 fail bin 대표행 avg 중 최댓값. Pass 행은 게이지를
+  // 그리지 않고, fail 행 게이지는 이 최댓값을 100%로 상대 표시(사용자 요청 — fail 간 비교가 보이게).
+  const maxFailAvg = Math.max(0, ...(groups || [])
+    .map(g => parseFloat(g && g.rep && g.rep.avg)).filter(v => !isNaN(v)));
+
   const cellTds = (r, toggleHtml) => cols.map(c => {
     const v = r ? r[c] : "";
     const txt = (v === null || v === undefined) ? "" : String(v);
@@ -1622,6 +1779,16 @@ function renderYieldGrouped(passRow, groups, allRows) {
     // Item 셀(Pass 행 제외) → Item_detail 링크
     if (cLower === "item" && !isEmpty && String((r && r.bin) ?? "").trim() !== "1") {
       inner = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;
+    }
+    // avg(수율) 셀: Pass(bin1) 행은 게이지 없이 값만. fail 행은 fail bin 최댓값 기준 상대 게이지.
+    if (cLower === "avg" && !isEmpty) {
+      const isPass = String((r && r.bin) ?? "").trim() === "1";
+      if (!isPass) {
+        const val = parseFloat(v) || 0;
+        const pct = maxFailAvg > 0 ? Math.max(0, Math.min(100, val / maxFailAvg * 100)) : 0;
+        inner = `<span class="yield-avg-cell"><span class="yield-avg-val">${esc(txt)}</span>` +
+          `<span class="yield-gauge"><span class="yield-gauge-fill" style="width:${pct}%"></span></span></span>`;
+      }
     }
     // 접기/펼치기 토글은 STEP 셀 오른쪽에 배치(우측 정렬).
     if (toggleHtml && cLower === "step") inner = inner + toggleHtml;
@@ -1704,10 +1871,18 @@ function issueToolbarHtml() {
   const etcBtn = (MODE === "edit")
     ? `<button type="button" class="btn-sm" id="etcAddItemBtn">ETC 에 항목 추가</button>` : "";
   return `<div class="issue-toolbar">` +
-    `<button type="button" class="btn-sm" id="issueExpandAll">전체 펼치기</button>` +
-    `<button type="button" class="btn-sm" id="issueCollapseAll">전체 접기</button>` +
+    `<button type="button" class="btn-sm" id="issueExpandAll">TNO 전체 펼치기</button>` +
+    `<button type="button" class="btn-sm" id="issueCollapseAll">TNO 전체 접기</button>` +
+    `<button type="button" class="btn-sm" data-issue-jump="Yield">Yield 로 이동</button>` +
+    `<button type="button" class="btn-sm" data-issue-jump="CPK">CPK 로 이동</button>` +
+    `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC 로 이동</button>` +
     etcBtn +
     `</div>`;
+}
+// Issue Table 섹션(CPK/ETC) 헤더로 스크롤 이동.
+function jumpToIssueSection(sec) {
+  const row = document.querySelector(`#panel-issues tr.issue-shead-top[data-sec="${sec}"]`);
+  if (row) row.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 // 한 Bin 그룹(대표행)의 detail TNO 행 펼치기/접기.
 function setIssueGroup(gi, expand, btn) {
@@ -1852,15 +2027,30 @@ function waferLayout(m, opts) {
 
 // 모든 소스의 bin_counts 를 합산해 하나의 공통 범례 순서/집계를 만든다.
 // Pass 항상 최상단, 나머지는 전체 합산 count 내림차순.
+// step 분리 맵(m.step 있음)은 Pass 칩이 step 수만큼 중복 등장하므로 Pass 는 소스별
+// step 맵 중 최솟값(=마지막 step 의 Pass = 전체 Pass)만 반영한다. fail bin 은 칩당
+// 한 step 맵에만 나오므로 그대로 합산. step 없는 맵(단일 STEP/legacy)은 현행 합산.
 function buildGlobalBinLegend(maps) {
   const totals = {};
   const order = [];
+  const stepPassBySource = {};   // source → step 맵별 Pass count 목록
   (maps || []).forEach(m => {
+    let stepPass = 0;
     (m.bin_counts || []).forEach(bc => {
       if (!(bc.bin in totals)) { order.push(bc.bin); totals[bc.bin] = { count: 0, is_pass: bc.is_pass }; }
-      totals[bc.bin].count += bc.count;
+      if (bc.is_pass && m.step != null) stepPass += bc.count;
+      else totals[bc.bin].count += bc.count;
     });
+    if (m.step != null) {
+      (stepPassBySource[m.source] = stepPassBySource[m.source] || []).push(stepPass);
+    }
   });
+  const passBin = order.find(b => totals[b].is_pass);
+  if (passBin != null) {
+    Object.values(stepPassBySource).forEach(arr => {
+      totals[passBin].count += Math.min.apply(null, arr);
+    });
+  }
   order.sort((a, b) => {
     const pa = totals[a].is_pass, pb = totals[b].is_pass;
     if (pa !== pb) return pa ? -1 : 1;
@@ -1897,6 +2087,10 @@ function dimColorMap(colorMap, binOrder, selectedBin) {
 
 // source 가 여럿이면 가로 2칸 그리드로 wafer map 을 나열하고, bin 범례는 전체 소스
 // 합산 기준으로 한 번만 만들어 오른쪽에 고정(sticky)한다. 모든 맵이 같은 색상 매핑을 쓴다.
+let mapGridCols = 2;   // Map Analysis 가로 칸수(1=확대, 2~3=한눈에). 숫자 입력으로 조절, 세션 내 유지.
+// 칸수가 적을수록 맵을 크게(높게) 보여준다 — scaleanchor 정사각 맵이라 폭·높이 함께 커져야 확대됨.
+function mapPlotHeight() { return Math.min(720, Math.max(220, Math.round(720 / mapGridCols))); }
+
 function renderMapAnalysis() {
   const panel = document.getElementById("panel-map-analysis");
   const sheets = webReportSheets();
@@ -1911,12 +2105,40 @@ function renderMapAnalysis() {
   const colorMap = globalBinColorMap();   // 세션 전체 공통 색상 (Summary/Fail Bin 과 일치)
   let mapBinFilter = null;   // 범례 클릭으로 선택된 bin (재클릭 시 해제)
 
-  panel.innerHTML = `<div class="wafer-analysis-layout">` +
-    `<div class="wafer-grid">` +
+  const plotH = mapPlotHeight();
+  // 선택 좌표 색 Legend (Map Analysis 전용). 각 항목: 색 스와치 + 좌표 + 제거(×).
+  const selLegend = mapSelChips.length
+    ? `<div class="mapsel-legend"><span class="mapsel-leg-title">선택 좌표</span>` +
+      mapSelChips.map(c =>
+        `<span class="mapsel-leg-item"><span class="mapsel-sw" style="background:${c.color}"></span>` +
+        `X ${esc(c.xpos)}·Y ${esc(c.ypos)} <span class="mapsel-src">${esc(c.source)}</span>` +
+        `<button type="button" class="mapsel-del" data-key="${esc(c.key)}" title="제거">×</button></span>`
+      ).join("") +
+      `<button type="button" id="mapSelClearBtn" class="btn-sm mapsel-clear">전체 해제</button></div>`
+    : "";
+  panel.innerHTML =
+    `<div class="map-toolbar">가로 칸수 ` +
+    `<input type="number" id="mapGridColsInput" min="1" max="8" step="1" value="${mapGridCols}">` +
+    `<span class="map-toolbar-hint">칸 (1 = 확대해서 보기 · 2~3 = 한꺼번에 보기)</span>` +
+    `<span class="mapsel-sep"></span>` +
+    `<button type="button" id="mapSelBtn" class="btn-sm">좌표 선택</button>` +
+    `</div>` +
+    `<div id="mapSelSearchBox" class="mapsel-search" style="display:none">` +
+      `<div class="common-search">` +
+        `<input id="mapSelInput" type="text" placeholder="SERIAL / XPOS / YPOS / DUT 검색" />` +
+        `<button id="mapSelSearchBtn" class="btn-sm">검색</button>` +
+        `<button id="mapSelAddSelected" class="btn-sm primary" disabled>선택 추가</button>` +
+        `<span id="mapSelInfo" class="muted"></span>` +
+      `</div>` +
+      `<div class="common-list mapsel-list" id="mapSelList"><div class="placeholder">SERIAL / XPOS / YPOS / DUT 로 검색해 체크한 좌표를 '선택 추가' 로 한 번에 추가하세요 (여러 개 가능).</div></div>` +
+    `</div>` +
+    selLegend +
+    `<div class="wafer-analysis-layout">` +
+    `<div class="wafer-grid" style="grid-template-columns:repeat(${mapGridCols}, minmax(0, 1fr))">` +
     maps.map((m, i) =>
       `<div class="wafer-card">
-        <div class="wafer-card-title">${esc(m.source)} — ${esc(String(m.total))} dies</div>
-        <div id="wafer-full-${i}" style="width:100%;height:360px;"></div>
+        <div class="wafer-card-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""} — ${esc(String(m.total))} dies</div>
+        <div id="wafer-full-${i}" style="width:100%;height:${plotH}px;"></div>
       </div>`).join("") +
     `</div>` +
     `<div class="wafer-legend-fixed">` +
@@ -1925,13 +2147,38 @@ function renderMapAnalysis() {
     `</div>` +
     `</div>`;
 
+  panel.querySelector("#mapGridColsInput").addEventListener("change", (e) => {
+    const v = parseInt(e.target.value, 10);
+    mapGridCols = isNaN(v) ? 2 : Math.min(8, Math.max(1, v));
+    renderMapAnalysis();   // 칸수 변경 → 그리드·플롯 높이 다시 그림(범례 선택은 초기화됨)
+  });
+
+  // 좌표 선택 툴바 — 검색 패널 토글 + 검색 + 해제.
+  panel.querySelector("#mapSelBtn").addEventListener("click", mapSelToggleSearch);
+  const _mapSelClearBtn = panel.querySelector("#mapSelClearBtn");
+  if (_mapSelClearBtn) _mapSelClearBtn.addEventListener("click", mapSelClear);
+  const _doMapSelSearch = () => mapSelSearch(document.getElementById("mapSelInput").value);
+  panel.querySelector("#mapSelSearchBtn").addEventListener("click", _doMapSelSearch);
+  panel.querySelector("#mapSelAddSelected").addEventListener("click", mapSelAddSelected);
+  panel.querySelector("#mapSelInput").addEventListener("keydown", e => { if (e.key === "Enter") _doMapSelSearch(); });
+  panel.querySelectorAll(".mapsel-del").forEach(b => b.addEventListener("click", () => mapSelRemove(b.dataset.key)));
+
   // colorMap 만 dim 처리해서 다시 넘기면 되므로 waferHeatmap 구조는 그대로 재사용.
   function redraw() {
     const activeColorMap = dimColorMap(colorMap, binOrder, mapBinFilter);
     maps.forEach((m, i) => {
       const built = waferHeatmap(m, { showText: true, textSize: 8, colorMap: activeColorMap, binOrder });
       if (!built) return;
-      Plotly.react(`wafer-full-${i}`, [built.trace], waferLayout(m, {}),
+      const traces = [built.trace];
+      // 이 source 의 map 에 속한 선택 좌표들을 각자 색의 빈 원으로 강조.
+      mapSelChips.forEach(c => {
+        if (c.source === m.source && c.x != null && c.y != null) {
+          traces.push({ type: "scatter", mode: "markers", x: [c.x], y: [c.y],
+            marker: { symbol: "circle-open", size: 20, color: c.color, line: { width: 3, color: c.color } },
+            hovertemplate: `X ${c.x} · Y ${c.y}<extra></extra>` });
+        }
+      });
+      Plotly.react(`wafer-full-${i}`, traces, waferLayout(m, {}),
         { responsive: true, displayModeBar: false });
     });
     const legendBody = panel.querySelector(".wafer-legend-body");
@@ -1945,6 +2192,469 @@ function renderMapAnalysis() {
     });
   }
   redraw();
+}
+
+// ── Compare 모드 (같은 Wafer 2~3 source 비교) ─────────────────────────────────
+const COMPARE_SRC_PALETTE = ["#e11d48", "#2563eb", "#d97706"];
+const CMP_COMMON_COLOR = "#cbd5e1";   // 공통 fail(모든 source fail) — 배경 처리
+const CMP_MIXED_COLOR = "#7c3aed";    // 일부(2개↑ 그러나 전체는 아님) source fail
+
+function _cmpNum(v, digits) {
+  if (v === null || v === undefined || v === "") return "–";
+  if (typeof v !== "number") return esc(String(v));
+  return Number.isInteger(v) ? String(v) : v.toFixed(digits == null ? 3 : digits);
+}
+function _cmpDeltaCell(v, digits) {
+  if (v === null || v === undefined || v === "") return `<td class="num">–</td>`;
+  const cls = v > 0 ? "cmp-up" : (v < 0 ? "cmp-down" : "");
+  const s = v > 0 ? "+" + _cmpNum(v, digits) : _cmpNum(v, digits);
+  return `<td class="num ${cls}">${s}</td>`;
+}
+
+// 공통성 Map: 공통 fail 은 회색 배경, 비공통 fail 은 "어느 source 에서만 fail 했는지"
+// 색으로 구분(before/after). waferHeatmap 을 그대로 재사용하되 bin 값을 분류 라벨로 넣는다.
+function drawCompareCommonMap(cm, sources) {
+  const div = document.getElementById("cmp-common-map");
+  if (!div || !window.Plotly) return;
+  if (cm.x_min == null) { div.innerHTML = '<div class="placeholder">좌표 데이터 없음</div>'; return; }
+  const srcColor = {};
+  sources.forEach((s, i) => { srcColor[s] = COMPARE_SRC_PALETTE[i % COMPARE_SRC_PALETTE.length]; });
+
+  const dies = [];
+  (cm.common_fail || []).forEach(d => dies.push({ x: d.x, y: d.y, bin: "공통Fail" }));
+  (cm.unique_fail || []).forEach(d => {
+    const fs = d.fail_sources || [];
+    dies.push({ x: d.x, y: d.y, bin: fs.length === 1 ? fs[0] : "혼합" });
+  });
+  const binOrder = ["공통Fail", ...sources, "혼합"];
+  const colorMap = { "공통Fail": CMP_COMMON_COLOR, "혼합": CMP_MIXED_COLOR };
+  sources.forEach(s => { colorMap[s] = srcColor[s]; });
+
+  const m = { x_min: cm.x_min, x_max: cm.x_max, y_min: cm.y_min, y_max: cm.y_max, dies };
+  const built = waferHeatmap(m, { colorMap, binOrder });
+  if (!built) { div.innerHTML = '<div class="placeholder">Fail die 없음</div>'; return; }
+  Plotly.newPlot(div, [built.trace], waferLayout(m, {}), { responsive: true, displayModeBar: false });
+
+  // 범례
+  const legend = document.getElementById("cmp-common-legend");
+  if (legend) {
+    const rows = [`<span class="cmp-lg"><i style="background:${CMP_COMMON_COLOR}"></i>공통 Fail</span>`]
+      .concat(sources.map(s => `<span class="cmp-lg"><i style="background:${srcColor[s]}"></i>${esc(s)} 에서만 Fail</span>`))
+      .concat([`<span class="cmp-lg"><i style="background:${CMP_MIXED_COLOR}"></i>혼합(일부만)</span>`]);
+    legend.innerHTML = rows.join("");
+  }
+}
+
+// 동일 좌표 Bin before→after 전이표 (Map 바로 밑). null/빈 rows 면 생략.
+function compareBinTransitionHtml(bt) {
+  if (!bt || !bt.rows || !bt.rows.length) return "";
+  const c = bt.counts || {};
+  const binLabel = b => (String(b) === "1") ? `${esc(String(b))} (Pass)` : esc(String(b));
+  const head = `<thead><tr>
+      <th>Before Bin<div class="gl-sub">${esc(bt.before_source || "")}</div></th>
+      <th>After Bin<div class="gl-sub">${esc(bt.after_source || "")}</div></th>
+      <th class="num">Count</th></tr></thead>`;
+  const body = bt.rows.map(r =>
+    `<tr class="${r.changed ? "bt-changed" : ""}"><td>${binLabel(r.before_bin)}</td>` +
+    `<td>${binLabel(r.after_bin)}</td><td class="num">${_cmpNum(r.count)}</td></tr>`).join("");
+  const summary = `<div class="compare-summary">
+      <span class="cmp-chip">공통 die ${c.common_dies || 0}</span>
+      <span class="cmp-chip cmp-unique">Bin 변경 ${c.changed || 0}</span>
+      <span class="cmp-chip">Pass→Fail ${c.pass_to_fail || 0}</span>
+      <span class="cmp-chip">Fail→Pass ${c.fail_to_pass || 0}</span></div>`;
+  return summary + `<div class="sheet-wrap"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
+}
+
+// 공통 항목 산포(avg/stdev/cpk) before/after 병기 + delta. |Δcpk| 큰 순(백엔드 정렬).
+function compareDistShiftHtml(rows, sources) {
+  if (!rows || !rows.length) return '<div class="placeholder">공통 항목 없음</div>';
+  const after = sources[0] || "", before = sources[1] || "";   // payload sources = [after, before]
+  const gapCell = v => {
+    if (v === null || v === undefined) return `<td class="num">–</td>`;
+    return `<td class="num${Math.abs(v) >= 10 ? " gl-gap-red" : ""}">${_cmpNum(v, 2)}</td>`;
+  };
+  const head = `<thead>
+      <tr><th rowspan="2">Item</th><th rowspan="2">Unit</th>
+          <th colspan="3">After — ${esc(after)}</th><th colspan="3">Before — ${esc(before)}</th>
+          <th class="num" rowspan="2">ΔAvg</th><th class="num" rowspan="2">ΔStdev</th>
+          <th class="num" rowspan="2">ΔCpk</th><th class="num" rowspan="2">평균 gap %</th></tr>
+      <tr><th class="num">Avg</th><th class="num">Stdev</th><th class="num">Cpk</th>
+          <th class="num">Avg</th><th class="num">Stdev</th><th class="num">Cpk</th></tr></thead>`;
+  const body = rows.map(r => {
+    const a = r.after || {}, b = r.before || {};
+    return `<tr><td>${esc(r.subject)}</td><td>${esc(r.units || "")}</td>` +
+      `<td class="num">${_cmpNum(a.average)}</td><td class="num">${_cmpNum(a.stdev)}</td><td class="num">${_cmpNum(a.cpk)}</td>` +
+      `<td class="num">${_cmpNum(b.average)}</td><td class="num">${_cmpNum(b.stdev)}</td><td class="num">${_cmpNum(b.cpk)}</td>` +
+      _cmpDeltaCell(r.delta_average) + _cmpDeltaCell(r.delta_stdev) + _cmpDeltaCell(r.delta_cpk) +
+      gapCell(r.mean_gap_pct) + `</tr>`;
+  }).join("");
+  return `<div class="sheet-wrap"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
+}
+
+function compareBinTableHtml(binDelta, sources) {
+  if (!binDelta || !binDelta.length) return '<div class="placeholder">Bin 데이터 없음</div>';
+  const srcHead = sources.map(s => `<th colspan="2">${esc(s)}</th>`).join("");
+  const subHead = sources.map(() => `<th class="num">Cnt</th><th class="num">%</th>`).join("");
+  const head = `<thead>
+      <tr><th rowspan="2">Bin</th>${srcHead}
+          <th class="num" rowspan="2">Δ%</th><th class="num" rowspan="2">편차%</th></tr>
+      <tr>${subHead}</tr></thead>`;
+  const body = binDelta.map(r => {
+    const perSrc = {};
+    (r.sources || []).forEach(s => { perSrc[s.source] = s; });
+    const cells = sources.map(s => {
+      const d = perSrc[s] || {};
+      return `<td class="num">${_cmpNum(d.count)}</td><td class="num">${_cmpNum(d.pct, 2)}</td>`;
+    }).join("");
+    const binLabel = r.is_pass ? `${esc(String(r.bin))} (Pass)` : esc(String(r.bin));
+    return `<tr class="${r.is_pass ? "cmp-pass-row" : ""}"><td>${binLabel}</td>${cells}` +
+      _cmpDeltaCell(r.delta_pct, 2) +
+      `<td class="num">${_cmpNum(r.range_pct, 2)}</td></tr>`;
+  }).join("");
+  return `<div class="sheet-wrap"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
+}
+
+// ── goodlog(테스트 프로그램 diff) — Honey Compare Mode 이식. after/before 두 파일의
+//    항목명/limit 일치 여부(True 초록/False 빨강) + reference die 값 gap%(|gap|≥10% 빨강).
+//    이상(항목 추가/제거·limit 변경)만 상단 요약 + 항상 표시하고, 나머지 정상 행은
+//    git-diff 식으로 접어둔다(초기 접힘, '전체 펼치기' 토글). ──
+// 행 분류: added(after 만)·removed(before 만)·limitchg(양쪽 존재 & limit 불일치)·normal.
+function goodlogRowType(r) {
+  const aHas = (r.after_item_name || "") !== "";
+  const bHas = (r.before_item_name || "") !== "";
+  if (aHas && !bHas) return "added";
+  if (!aHas && bHas) return "removed";
+  if (aHas && bHas && (r.compare_lolimit === false || r.compare_hilimit === false)) return "limitchg";
+  return "normal";
+}
+
+function goodlogSectionHtml(gl) {
+  if (!gl) return "";   // legacy(3-source 등) 세션 — 섹션 생략
+  const title = `<h3 class="compare-h">테스트 프로그램 비교 (goodlog) — ` +
+    `after: ${esc(gl.after_source || "")} / before: ${esc(gl.before_source || "")}</h3>`;
+  if (gl.identical) {
+    return title + `<div class="gl-identical">두 파일의 테스트 프로그램(항목/limit)이 동일합니다.</div>`;
+  }
+  // 결측(None)은 공백 — Honey goodlog 시트의 _disp 관례와 동일 (한쪽만 존재하는 행 포함).
+  const glNum = v => (v === null || v === undefined) ? "" : _cmpNum(v);
+  const boolCell = v => v === true ? `<td class="gl-true">True</td>`
+    : (v === false ? `<td class="gl-false">False</td>` : `<td></td>`);
+  const gapCell = v => {
+    if (v === null || v === undefined) return `<td class="num"></td>`;
+    return `<td class="num${Math.abs(v) >= 10 ? " gl-gap-red" : ""}">${_cmpNum(v, 2)}</td>`;
+  };
+  const COLS = 15;
+  const rows = gl.rows || [];
+  const types = rows.map(goodlogRowType);
+
+  // ── 이상 요약(항목 추가/제거·limit 변경) ──
+  const added = [], removed = [], limitchg = [];
+  rows.forEach((r, i) => {
+    if (types[i] === "added") added.push(r.after_item_name);
+    else if (types[i] === "removed") removed.push(r.before_item_name);
+    else if (types[i] === "limitchg") limitchg.push(r.after_item_name || r.before_item_name);
+  });
+  const abnCount = added.length + removed.length + limitchg.length;
+  const nameChips = (arr, cls) => arr.map(n => `<span class="gl-ab-item ${cls}">${esc(n)}</span>`).join("");
+  let summary;
+  if (abnCount === 0) {
+    summary = `<div class="gl-ab-summary gl-ab-none">항목/Limit 차이 없음 — 값 gap 만 존재
+      <button class="btn-sm gl-expand-all" type="button">전체 펼치기</button></div>`;
+  } else {
+    summary = `<div class="gl-ab-summary">
+      <div class="gl-ab-head">이상 항목
+        <span class="cmp-chip gl-chip-add">추가 ${added.length}</span>
+        <span class="cmp-chip gl-chip-del">제거 ${removed.length}</span>
+        <span class="cmp-chip gl-chip-lim">Limit 변경 ${limitchg.length}</span>
+        <button class="btn-sm gl-expand-all" type="button">전체 펼치기</button></div>
+      <div class="gl-ab-items">${nameChips(added, "gl-add")}${nameChips(removed, "gl-del")}${nameChips(limitchg, "gl-lim")}</div>
+    </div>`;
+  }
+
+  const head = `<thead>
+      <tr><th colspan="5">After — ${esc(gl.after_source || "")}</th><th colspan="3">Compare</th>
+          <th rowspan="2">Comment</th><th class="num" rowspan="2">Gap %</th>
+          <th colspan="5">Before — ${esc(gl.before_source || "")}</th></tr>
+      <tr><th>Item</th><th class="num">LoLim</th><th class="num">HiLim</th><th>Unit</th><th class="num">Value</th>
+          <th>Item</th><th>LoLim</th><th>HiLim</th>
+          <th>Item</th><th class="num">LoLim</th><th class="num">HiLim</th><th>Unit</th><th class="num">Value</th></tr></thead>`;
+  const rowHtml = (r, t) =>
+    `<tr class="gl-row gl-${t}"><td>${esc(r.after_item_name || "")}</td><td class="num">${glNum(r.after_lolimit)}</td>` +
+    `<td class="num">${glNum(r.after_hilimit)}</td><td>${esc(r.after_unit || "")}</td>` +
+    `<td class="num">${esc(r.after_value || "")}</td>` +
+    boolCell(r.compare_item_name) + boolCell(r.compare_lolimit) + boolCell(r.compare_hilimit) +
+    `<td>${esc(r.comment || "")}</td>` + gapCell(r.gap) +
+    `<td>${esc(r.before_item_name || "")}</td><td class="num">${glNum(r.before_lolimit)}</td>` +
+    `<td class="num">${glNum(r.before_hilimit)}</td><td>${esc(r.before_unit || "")}</td>` +
+    `<td class="num">${esc(r.before_value || "")}</td></tr>`;
+
+  // ── git-diff 식 세그먼트: normal run 은 접힘 tbody, 이상 행은 항상 노출 ──
+  const parts = [];
+  let i = 0;
+  while (i < rows.length) {
+    if (types[i] === "normal") {
+      let j = i; const buf = [];
+      while (j < rows.length && types[j] === "normal") { buf.push(rowHtml(rows[j], "normal")); j++; }
+      parts.push(
+        `<tbody class="gl-fold-summary"><tr class="gl-fold-toggle"><td colspan="${COLS}">` +
+        `<span class="gl-fold-arrow">▸</span> 변화 없음 ${buf.length}개</td></tr></tbody>` +
+        `<tbody class="gl-fold" hidden>${buf.join("")}</tbody>`);
+      i = j;
+    } else {
+      let j = i; const buf = [];
+      while (j < rows.length && types[j] !== "normal") { buf.push(rowHtml(rows[j], types[j])); j++; }
+      parts.push(`<tbody>${buf.join("")}</tbody>`);
+      i = j;
+    }
+  }
+  return title + summary +
+    `<div class="sheet-wrap"><table class="sheet-table compare-table goodlog-table">${head}${parts.join("")}</table></div>`;
+}
+
+// goodlog 접기/펼치기 바인딩 — renderCompare 가 innerHTML 갱신 후 호출(직접 바인딩).
+function bindGoodlogFolding(panel) {
+  const setLabel = (toggleRow, shown) => {
+    const arrow = toggleRow.querySelector(".gl-fold-arrow");
+    if (arrow) arrow.textContent = shown ? "▾" : "▸";
+  };
+  panel.querySelectorAll(".gl-fold-toggle").forEach(row => {
+    row.addEventListener("click", () => {
+      const fold = row.closest(".gl-fold-summary").nextElementSibling;
+      if (!fold || !fold.classList.contains("gl-fold")) return;
+      const show = fold.hasAttribute("hidden");
+      if (show) fold.removeAttribute("hidden"); else fold.setAttribute("hidden", "");
+      setLabel(row, show);
+    });
+  });
+  const btn = panel.querySelector(".gl-expand-all");
+  if (btn) btn.addEventListener("click", () => {
+    const anyHidden = !!panel.querySelector(".gl-fold[hidden]");
+    panel.querySelectorAll(".gl-fold").forEach(f => {
+      if (anyHidden) f.removeAttribute("hidden"); else f.setAttribute("hidden", "");
+    });
+    panel.querySelectorAll(".gl-fold-toggle").forEach(r => setLabel(r, anyHidden));
+    btn.textContent = anyHidden ? "전체 접기" : "전체 펼치기";
+  });
+}
+
+// 소스별 wafer map 을 나란히 (Map Analysis 데이터 재사용, 세션 공통 색상).
+function drawCompareSourceMaps(hostId) {
+  const host = document.getElementById(hostId);
+  const maps = (webReportSheets() || {})["Map Analysis"] || [];
+  if (!host || !window.Plotly || !maps.length) return;
+  const binOrder = buildGlobalBinLegend(maps).map(r => r.bin);
+  const colorMap = globalBinColorMap();
+  host.innerHTML = maps.map((m, i) =>
+    `<div class="wafer-card"><div class="wafer-card-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""} — ${esc(String(m.total))} dies</div>
+       <div id="cmp-src-map-${i}" style="width:100%;height:320px;"></div></div>`).join("");
+  maps.forEach((m, i) => {
+    const built = waferHeatmap(m, { showText: true, textSize: 8, colorMap, binOrder });
+    if (!built) return;
+    Plotly.newPlot(`cmp-src-map-${i}`, [built.trace], waferLayout(m, {}),
+      { responsive: true, displayModeBar: false });
+  });
+}
+
+function renderCompare() {
+  const panel = document.getElementById("panel-compare");
+  const cmp = DATA.web_report && DATA.web_report.compare;
+  if (!cmp) { emptyPanel(panel, "Compare 데이터 없음 (같은 Wafer source 2개 이상 필요)"); return; }
+  panel.classList.add("viz-root");
+  const sources = cmp.sources || [];
+  const cm = cmp.common_map || {};
+  const counts = cm.counts || {};
+
+  panel.innerHTML =
+    `<div class="compare-wrap">
+      <div class="compare-summary">
+        <span class="mk">Sources</span> ${sources.map(esc).join(" · ")}
+        <span class="cmp-chip cmp-common">공통 Fail ${counts.common_fail || 0}</span>
+        <span class="cmp-chip cmp-unique">비공통 Fail ${counts.unique_fail || 0}</span>
+        <span class="cmp-chip">전체 Fail die ${counts.total_fail || 0}</span>
+      </div>
+      ${goodlogSectionHtml(cmp.goodlog)}
+      <h3 class="compare-h">공통성 Map — 공통 Fail 이 아닌 die 강조 (색 = 어느 source 에서만 Fail)</h3>
+      <div class="wafer-card">
+        <div id="cmp-common-map" style="width:100%;height:440px;"></div>
+        <div id="cmp-common-legend" class="cmp-legend"></div>
+      </div>
+      <h3 class="compare-h">Source 별 Wafer Map (나란히)</h3>
+      <div id="cmp-source-maps" class="wafer-grid"></div>
+      <h3 class="compare-h">동일 좌표 Bin 변화 (before → after)</h3>
+      ${compareBinTransitionHtml(cmp.bin_transition)}
+      <h3 class="compare-h">산포 차이 (공통 항목 · |ΔCpk| 큰 순)</h3>
+      ${compareDistShiftHtml(cmp.dist_shift, sources)}
+      <h3 class="compare-h">Bin Yield 비교</h3>
+      ${compareBinTableHtml(cmp.bin_delta, sources)}
+    </div>`;
+
+  drawCompareCommonMap(cm, sources);
+  drawCompareSourceMaps("cmp-source-maps");
+  bindGoodlogFolding(panel);
+}
+
+// ── Map 좌표 선택 (Map Analysis 탭에서 chip 여러 개 골라 각기 다른 색으로 Map 강조 +
+//    Distribution 전 항목 CDF 에 반영). 선택 상태는 전역 — Map redraw 와 Distribution 이 함께 참조. ──
+const MAPSEL_PALETTE = ["#e11d48", "#2563eb", "#059669", "#d97706", "#7c3aed",
+  "#0891b2", "#db2777", "#65a30d", "#ea580c", "#4f46e5"];
+let mapSelChips = [];   // [{serial,shot,dut,xpos,ypos,bin,source,x,y, key, color, items:{subject:{value,cum_pct}}}]
+let _mapSelLastQ = "";  // 직전 검색어 — 추가 후 검색 패널 재실행에 재사용(연속 추가 편의).
+let _mapSelResults = []; // 직전 검색 결과 chip 배열 — 체크박스 index → chip 매핑용.
+
+function mapSelChipKey(c) { return `${c.source || ""}|${c.serial || ""}|${c.xpos || ""}|${c.ypos || ""}`; }
+function mapSelReassignColors() { mapSelChips.forEach((c, i) => { c.color = MAPSEL_PALETTE[i % MAPSEL_PALETTE.length]; }); }
+
+// 한 항목(subject)에 대해 선택된 모든 chip 의 위치 마커(각 chip 색). 단일 선택일 때만
+// 포커싱용 점선 크로스헤어 추가(다중은 점 색으로 구분). 해당 항목 값 없는 chip 은 건너뜀.
+function chipMarkersFor(subject) {
+  if (!mapSelChips.length) return null;
+  const traces = [], shapes = [];
+  mapSelChips.forEach(c => {
+    const it = c.items[subject];
+    if (!it || typeof it.value !== "number" || typeof it.cum_pct !== "number") return;
+    traces.push({ type: "scatter", mode: "markers", x: [it.value], y: [it.cum_pct],
+      marker: { color: c.color, size: 7, line: { width: 1, color: "#fff" } },
+      cliponaxis: false, hoverinfo: "skip", showlegend: false });
+  });
+  if (!traces.length) return null;
+  if (mapSelChips.length === 1) {   // 단일: 해당 색 점선 크로스헤어로 포커싱
+    const c = mapSelChips[0], it = c.items[subject];
+    if (it && typeof it.value === "number" && typeof it.cum_pct === "number") {
+      shapes.push({ type: "line", x0: it.value, x1: it.value, yref: "paper", y0: 0, y1: 1,
+        line: { color: c.color, width: 1, dash: "dot" } });
+      shapes.push({ type: "line", xref: "paper", x0: 0, x1: 1, y0: it.cum_pct, y1: it.cum_pct,
+        line: { color: c.color, width: 1, dash: "dot" } });
+    }
+  }
+  return { traces, shapes };
+}
+
+// 선택 변경 후 Distribution 소비처(보이는 갤러리 카드 + 열려있는 Item_detail) 재렌더.
+function applyChipToDistribution() {
+  document.querySelectorAll('#panel-distribution .distg-card').forEach(c => { c.dataset.rendered = ""; });
+  document.querySelectorAll('#panel-distribution .distg-card[data-visible="1"]').forEach(distQueueRender);
+  if (_itemDetailData) distRenderCdf(_itemDetailData);
+}
+
+// Map Analysis 툴바 '좌표 선택' → 검색 패널 토글.
+function mapSelToggleSearch() {
+  const box = document.getElementById("mapSelSearchBox");
+  if (!box) return;
+  const show = (box.style.display === "none" || !box.style.display);
+  box.style.display = show ? "" : "none";
+  if (show) { ensureDistData(); const inp = document.getElementById("mapSelInput"); if (inp) inp.focus(); }
+}
+
+// 좌표(serial/xpos/ypos/dut) 검색 → 후보 목록(체크박스). 여러 개 체크 후 '선택 추가' 로 일괄 추가.
+// 행 아무 곳이나 클릭하면 그 행 체크박스가 토글되고, 헤더 체크박스로 전체 선택 가능.
+function mapSelSearch(q) {
+  const list = document.getElementById("mapSelList");
+  const info = document.getElementById("mapSelInfo");
+  if (!list) return;
+  _mapSelLastQ = q || "";
+  list.innerHTML = `<div class="placeholder">검색 중...</div>`;
+  const url = `/pe/report/session/${SESSION_ID}/web_report/commonality/chips?q=${encodeURIComponent(q || "")}`;
+  fetch(url, { cache: "no-cache" })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(j => {
+      const chips = j.chips || [];
+      _mapSelResults = chips;
+      if (info) info.textContent = `${chips.length}개${j.truncated ? "+ (잘림)" : ""}`;
+      if (!chips.length) { list.innerHTML = `<div class="placeholder">일치하는 chip 없음</div>`; updateMapSelAddBtn(); return; }
+      const head = `<table class="sheet-table common-chip-table"><thead><tr>
+        <th class="common-chk-col"><input type="checkbox" id="mapSelChkAll" title="전체 선택"></th>
+        <th>SERIAL</th><th>XPOS</th><th>YPOS</th><th>DUT</th><th>BIN</th></tr></thead><tbody>`;
+      const body = chips.map((c, i) => {
+        const added = mapSelChips.some(x => x.key === mapSelChipKey(c));
+        return `<tr class="common-chip-row${added ? " common-chip-added" : ""}" data-i="${i}">
+          <td class="common-chk-col"><input type="checkbox" class="mapsel-chk" data-i="${i}"${added ? " checked disabled" : ""}></td>
+          <td>${esc(c.serial)}</td><td class="num">${esc(c.xpos)}</td><td class="num">${esc(c.ypos)}</td>
+          <td class="num">${esc(c.dut)}</td><td class="num">${esc(c.bin)}</td></tr>`;
+      }).join("");
+      list.innerHTML = head + body + `</tbody></table>`;
+      list.querySelectorAll(".common-chip-row").forEach(tr => {
+        tr.addEventListener("click", e => {
+          const chk = tr.querySelector(".mapsel-chk");
+          if (!chk || chk.disabled) return;
+          if (e.target !== chk) chk.checked = !chk.checked;   // 체크박스 자체 클릭은 기본동작
+          updateMapSelAddBtn();
+        });
+      });
+      const chkAll = list.querySelector("#mapSelChkAll");
+      if (chkAll) chkAll.addEventListener("click", e => {
+        e.stopPropagation();
+        list.querySelectorAll(".mapsel-chk:not(:disabled)").forEach(c => { c.checked = chkAll.checked; });
+        updateMapSelAddBtn();
+      });
+      updateMapSelAddBtn();
+    })
+    .catch(e => { list.innerHTML = `<div class="placeholder">검색 실패: ${esc(e.message)}</div>`; updateMapSelAddBtn(); });
+}
+
+// 체크된 개수로 '선택 추가' 버튼 라벨/활성 상태 갱신.
+function updateMapSelAddBtn() {
+  const btn = document.getElementById("mapSelAddSelected");
+  if (!btn) return;
+  const list = document.getElementById("mapSelList");
+  const n = list ? list.querySelectorAll(".mapsel-chk:not(:disabled):checked").length : 0;
+  btn.textContent = n ? `선택 ${n}개 추가` : "선택 추가";
+  btn.disabled = !n;
+}
+
+// chip 좌표 → /chip 로 항목별 값·누적% 조회. 이미 선택돼 있으면 null 반환(중복 무시).
+function mapSelFetchChip(chip) {
+  const key = mapSelChipKey(chip);
+  if (mapSelChips.some(c => c.key === key)) return Promise.resolve(null);
+  const p = new URLSearchParams({ serial: chip.serial || "", xpos: chip.xpos || "",
+    ypos: chip.ypos || "", source: chip.source || "" });
+  return fetch(`/pe/report/session/${SESSION_ID}/web_report/commonality/chip?${p.toString()}`, { cache: "no-cache" })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(j => {
+      const items = {};
+      (j.items || []).forEach(it => { items[it.subject] = { value: it.value, cum_pct: it.cum_pct }; });
+      return { ...(j.chip || {}), key, items };
+    });
+}
+
+// 체크된 좌표를 일괄 추가 → 색 재배정 → Map 강조 + Distribution 재렌더 → 검색결과 갱신.
+async function mapSelAddSelected() {
+  const list = document.getElementById("mapSelList");
+  if (!list) return;
+  const chips = Array.from(list.querySelectorAll(".mapsel-chk:not(:disabled):checked"))
+    .map(chk => _mapSelResults[Number(chk.dataset.i)]).filter(Boolean);
+  if (!chips.length) { showToast("선택된 좌표가 없습니다"); return; }
+  const btn = document.getElementById("mapSelAddSelected");
+  if (btn) { btn.disabled = true; btn.textContent = "추가 중..."; }
+  let added = 0, failed = 0;
+  for (const chip of chips) {
+    try { const obj = await mapSelFetchChip(chip); if (obj) { mapSelChips.push(obj); added++; } }
+    catch (e) { failed++; }
+  }
+  mapSelReassignColors();
+  renderMapAnalysis();          // Map 강조 반영(전역 상태 읽어 redraw)
+  applyChipToDistribution();    // Distribution 카드+상세 재렌더
+  showToast(`${added}개 추가${failed ? ` · ${failed}개 실패` : ""}`);
+  // renderMapAnalysis 가 패널을 다시 그려 검색 패널이 닫히므로, 다시 열고 재검색(추가된 항목 disabled 반영).
+  const box = document.getElementById("mapSelSearchBox");
+  if (box) {
+    box.style.display = "";
+    const inp = document.getElementById("mapSelInput");
+    if (inp) inp.value = _mapSelLastQ;
+    mapSelSearch(_mapSelLastQ);
+  }
+}
+
+function mapSelRemove(key) {
+  mapSelChips = mapSelChips.filter(c => c.key !== key);
+  mapSelReassignColors();
+  renderMapAnalysis();
+  applyChipToDistribution();
+}
+
+function mapSelClear() {
+  mapSelChips = [];
+  renderMapAnalysis();
+  applyChipToDistribution();
 }
 
 // Major Fail Bin: 전체 average(모든 소스 fail rate 평균) 기준 상위 N개(고정).
@@ -1994,20 +2704,31 @@ function majorFailBinsTableHtml() {
   </table></div>`;
 }
 
+let summaryJumpBound = false;
 function renderWebSummary() {
   const panel = document.getElementById("panel-summary");
   const sheets = webReportSheets();
   if (!window.Plotly || !sheets) { emptyPanel(panel, "Summary 데이터 없음"); return; }
+  // Summary 카드(Yield/Wafer Map) 클릭 → 해당 탭 버튼 클릭 재사용(1회 위임 바인딩).
+  if (!summaryJumpBound) {
+    panel.addEventListener("click", (e) => {
+      const card = e.target.closest(".summary-jump");
+      if (!card) return;
+      const tabBtn = document.querySelector(`.tab[data-tab="${card.dataset.jump}"]`);
+      if (tabBtn) tabBtn.click();
+    });
+    summaryJumpBound = true;
+  }
   const maps = sheets["Map Analysis"] || [];
   panel.classList.add("viz-root");
   panel.innerHTML =
-    `<div class="summary-section-card">` +
-    `<div class="section-title">Yield</div>` + majorFailBinsTableHtml() +
+    `<div class="summary-section-card summary-jump" data-jump="yield" title="Yield 탭으로 이동">` +
+    `<div class="section-title">Yield <span class="summary-jump-hint">▸ 탭 이동</span></div>` + majorFailBinsTableHtml() +
     `</div>` +
-    `<div class="summary-section-card">` +
-    `<div class="section-title">Wafer Map</div><div class="summary-cards">` +
+    `<div class="summary-section-card summary-jump" data-jump="map-analysis" title="Map Analysis 탭으로 이동">` +
+    `<div class="section-title">Wafer Map <span class="summary-jump-hint">▸ 탭 이동</span></div><div class="summary-cards">` +
     maps.map((m, i) =>
-      `<div class="summary-card"><div class="summary-card-title">${esc(m.source)}</div>` +
+      `<div class="summary-card"><div class="summary-card-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""}</div>` +
       `<div id="mini-wafer-${i}" style="width:170px;height:170px;"></div></div>`).join("") +
     `</div></div>`;
   // 미니 웨이퍼도 전역 색상 매핑을 써서 Map Analysis/Fail Bin 차트와 같은 bin=같은 색 유지.
@@ -2135,6 +2856,7 @@ const CPK_NUMERIC = new Set(["lower_limit", "upper_limit", "n", "min", "median",
 const CPK_WARN_THRESHOLD = 1.33;
 const CPK_PAGE_SIZE = 50;     // 페이지당 표시 행 수
 
+let cpkBasisBin1 = false;     // false=전체(모든 die) 기준, true=Bin1(양품) 기준 통계 표시
 let cpkShowLowOnly = true;    // 기본값: CPK < 1.33 항목만 오름차순(최악 우선) 정렬해 보여줌
 let cpkSearchTerm = "";       // subject/source 검색어 (실시간 필터)
 let cpkPage = 1;              // 현재 페이지 (1-base)
@@ -2142,11 +2864,24 @@ let cpkPanelBound = false;    // panel-cpk 페이저 클릭 위임 1회 바인�
 let cpkTargetMode = false;    // "Limit 계산" 토글 — 켜지면 체크박스 열 + 목표 Cpk 역산 컨트롤 노출
 let cpkSelected = new Set();  // 선택된 행 키 (`${subject}||${source}`)
 let cpkTargetVal = 1.33;      // 목표 Cpk 입력값
+let cpkMarginPct = 0;         // 역산 Margin(%) — 0/1/5/10. 각 한계값을 (1-margin) 으로 나눠 확대
 let cpkTargetResults = new Map(); // 역산 결과: 행 키 → {lo, hi}
 
 function cpkRowKey(r) { return `${r.subject}||${r.source}`; }
 
-function cpkFmt(x) { return Number(x.toPrecision(6)); }
+// bin 필터에 따라 값이 달라지는 통계 컬럼(전체 ↔ Bin1). limit/units/subject/source 는 무관.
+const CPK_STAT_FIELDS = ["n", "min", "median", "max", "average", "stdev", "cp", "cpl", "cpu", "cpk"];
+// 활성 기준(전체/Bin1)의 통계값을 base 컬럼 이름에 채운 표시용 복사본을 만든다.
+// Bin1 기준이면 *_bin1 값을 base 이름으로 옮겨, 이후 필터·정렬·렌더·역산이 모두 base 이름만
+// 써도 활성 기준으로 동작하게 한다.
+function cpkBasisRow(r) {
+  if (!cpkBasisBin1) return r;
+  const o = { ...r };
+  for (const f of CPK_STAT_FIELDS) o[f] = r[f + "_bin1"];
+  return o;
+}
+
+function cpkFmt(x) { return Number(x.toFixed(4)); }
 
 // 목표 Cpk 로부터 선택 행의 규격 한계 역산 (평균 중심 대칭: avg ± 3·Cpk·stdev).
 function cpkComputeTargets() {
@@ -2156,12 +2891,18 @@ function cpkComputeTargets() {
   const sheets = webReportSheets();
   const byKey = new Map((sheets ? (sheets["CPK"] || []) : []).map(r => [cpkRowKey(r), r]));
   for (const key of cpkSelected) {
-    const row = byKey.get(key);
-    if (!row) continue;
+    const row0 = byKey.get(key);
+    if (!row0) continue;
+    const row = cpkBasisRow(row0);   // 활성 기준(전체/Bin1)의 average/stdev 로 역산
     const avg = parseFloat(row.average), sd = parseFloat(row.stdev);
     if (isNaN(avg) || isNaN(sd) || sd <= 0) continue;   // 계산 불가 → 빈칸
     const d = 3 * cpk * sd;
-    cpkTargetResults.set(key, { lo: cpkFmt(avg - d), hi: cpkFmt(avg + d) });
+    let lo = avg - d, hi = avg + d;
+    // Margin: 최종 규격이 (역산값)/(1-margin) 가 되도록 각 한계값을 확대.
+    // 예) 역산 -0.95~0.95 에 5% → -1~1 (0.95/0.95 = 1.0).
+    const m = (parseFloat(cpkMarginPct) || 0) / 100;
+    if (m > 0 && m < 1) { lo = lo / (1 - m); hi = hi / (1 - m); }
+    cpkTargetResults.set(key, { lo: cpkFmt(lo), hi: cpkFmt(hi) });
   }
 }
 
@@ -2180,11 +2921,13 @@ function cpkFilterRows(rows) {
 // 표시용 행 목록 생성. 각 행에 _key(원본 subject/source 기준 안정 키)를 붙여 접힌 행도
 // 개별 선택이 가능하게 한다. (select-all 계산과 cpkTableHtml 이 공용으로 사용)
 function cpkBodyRows(rows) {
+  rows = rows.map(cpkBasisRow);   // 활성 기준(전체/Bin1)으로 통계 컬럼 정규화
   if (cpkShowLowOnly) {
+    // cpk 값 내림/오름차순이 아니라 같은 Item name 끼리 묶여 보이도록 항목명(subject) 순으로 정렬.
     return rows
       .filter(r => { const v = parseFloat(r.cpk); return !isNaN(v) && v < CPK_WARN_THRESHOLD; })
       .slice()
-      .sort((a, b) => parseFloat(a.cpk) - parseFloat(b.cpk))
+      .sort((a, b) => String(a.subject).localeCompare(String(b.subject)))
       .map(r => ({ ...r, _key: cpkRowKey(r) }));
   }
   // subject 가 연속으로 반복되면(같은 item, source 별 행) 2번째 행부터 subject/limit/units 를 비움
@@ -2279,13 +3022,20 @@ function renderCpk() {
   const targetBar = cpkTargetMode
     ? `<div class="cpk-target-bar">목표 Cpk ` +
       `<input type="number" id="cpkTargetInput" min="0" step="0.01" value="${esc(String(cpkTargetVal))}">` +
+      `<span class="cpk-margin-wrap">Margin ` +
+      `<select id="cpkMarginSel">` +
+      [0, 1, 5, 10].map(v =>
+        `<option value="${v}"${Number(cpkMarginPct) === v ? " selected" : ""}>${v === 0 ? "없음" : v + "%"}</option>`).join("") +
+      `</select></span>` +
       `<button type="button" id="cpkCalcBtn" class="btn-sm">역산</button>` +
+      `<button type="button" id="cpkCopyBtn" class="btn-sm">역산값 복사</button>` +
       `<button type="button" id="cpkClearSelBtn" class="btn-sm">선택 해제</button>` +
       `<span id="cpkSelInfo" class="cpk-pager-info"></span></div>`
     : "";
   panel.innerHTML =
     `<div class="cpk-toolbar">` +
     `<input type="text" id="cpkSearchInput" placeholder="항목/source 검색" value="${esc(cpkSearchTerm)}">` +
+    `<button type="button" id="cpkBasisBtn" class="btn-sm${cpkBasisBin1 ? " active" : ""}" title="켜짐: Bin1(양품) 기준 · 꺼짐: 전체 die 기준">${cpkBasisBin1 ? "Bin1 기준" : "전체 기준"}</button>` +
     `<button type="button" id="cpkLowBtn" class="btn-sm">` +
     `${cpkShowLowOnly ? "전체 보기" : `CPK &lt; ${CPK_WARN_THRESHOLD}`}</button>` +
     `<button type="button" id="cpkTargetBtn" class="btn-sm${cpkTargetMode ? " active" : ""}">Limit 계산</button></div>` +
@@ -2293,6 +3043,12 @@ function renderCpk() {
     `<div id="cpkTableHost"></div>`;
   renderCpkTable();
   updateCpkSelInfo();
+  document.getElementById("cpkBasisBtn").addEventListener("click", () => {
+    cpkBasisBin1 = !cpkBasisBin1;
+    cpkTargetResults.clear();   // 기준이 바뀌면 이전 역산(Limit 계산) 결과는 무효
+    cpkPage = 1;
+    renderCpk();
+  });
   document.getElementById("cpkLowBtn").addEventListener("click", () => {
     cpkShowLowOnly = !cpkShowLowOnly;
     cpkPage = 1;
@@ -2312,9 +3068,27 @@ function renderCpk() {
     document.getElementById("cpkTargetInput").addEventListener("input", (e) => {
       cpkTargetVal = e.target.value;
     });
+    document.getElementById("cpkMarginSel").addEventListener("change", (e) => {
+      cpkMarginPct = parseFloat(e.target.value) || 0;
+      // 이미 역산 결과가 있으면 Margin 변경 즉시 재계산해 반영.
+      if (cpkTargetResults.size) { cpkComputeTargets(); renderCpkTable(); }
+    });
     document.getElementById("cpkCalcBtn").addEventListener("click", () => {
       cpkComputeTargets();
       renderCpkTable();
+    });
+    document.getElementById("cpkCopyBtn").addEventListener("click", (e) => {
+      // 역산 결과(rowKey→{lo,hi})를 항목명⇥하한⇥상한 TSV 로 복사 → Excel 3열 붙여넣기.
+      const lines = [];
+      for (const [key, res] of cpkTargetResults) {
+        const subject = key.split("||")[0];
+        lines.push(`${subject}\t${res.lo}\t${res.hi}`);
+      }
+      const btn = e.currentTarget;
+      if (!lines.length) { const t = btn.textContent; btn.textContent = "역산값 없음"; setTimeout(() => { btn.textContent = t; }, 1200); return; }
+      navigator.clipboard.writeText(lines.join("\n")).then(() => {
+        const t = btn.textContent; btn.textContent = "복사됨"; setTimeout(() => { btn.textContent = t; }, 1200);
+      });
     });
     document.getElementById("cpkClearSelBtn").addEventListener("click", () => {
       cpkSelected.clear();
@@ -2382,6 +3156,7 @@ let distIndex = [];            // DATA.web_report.distribution_index
 let distCpkOnly = true;        // 기본 진입 cpk<1.33 on
 let distFailOnly = false;
 let distFiltered = [];         // 현재 필터 결과 (갤러리 표시/네비 범위)
+let distSelected = new Set();  // 검색 체크박스로 고른 항목(있으면 갤러리를 이 항목들만으로 필터)
 let distView = "gallery";      // "gallery" | "detail"
 let distGalleryObserver = null;
 let distRenderQueue = [];
@@ -2450,7 +3225,13 @@ function refreshDistConsumers() {
 
 function buildDistColorMap(sources) {
   distColorMap = {};
-  (sources || []).forEach((s, i) => { distColorMap[s.name] = DIST_PALETTE[i % DIST_PALETTE.length]; });
+  // F10 에서 지정한 색(웹리포트 payload.dist_colors)이 있으면 source 순서대로 사용,
+  // 없으면(legacy) 기본 팔레트 자동 배정. 색 번호 i = source i.
+  const custom = (DATA && DATA.web_report && Array.isArray(DATA.web_report.dist_colors))
+    ? DATA.web_report.dist_colors : null;
+  (sources || []).forEach((s, i) => {
+    distColorMap[s.name] = (custom && custom[i]) ? custom[i] : DIST_PALETTE[i % DIST_PALETTE.length];
+  });
 }
 
 function distColorFor(source) { return distColorMap[source] || "#888"; }
@@ -2484,7 +3265,8 @@ function renderDistCell(cell) {
       tickcolor: "#bbb", tickfont: { size: 10 } },
     yaxis: { range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee",
       zeroline: false, tickfont: { size: 10 } },
-    shapes: distSpecShapes(lo, hi, false), annotations: distSpecAnnos(lo, hi, false),
+    shapes: distSpecShapes(lo, hi, false).concat(beforeLimitShapes(subject)),
+    annotations: distSpecAnnos(lo, hi, false),
     margin: { l: 46, r: 14, t: 46, b: 28 }, showlegend: false };
 
   Plotly.newPlot(div, traces, layout, DIST_CFG_STATIC);
@@ -2503,11 +3285,13 @@ function distApplySegment(rows) {
   return out;
 }
 function distSuggestions(q) {
-  const kws = String(q || "").split("%").map(s => s.trim().toLowerCase()).filter(Boolean);
-  if (!kws.length) return [];
+  // 단일어 부분일치(대소문자 무시). 세그먼트(cpk<1.33 등)에 걸리지 않게 전체 항목에서 검색해
+  // 어떤 항목이든 체크박스로 고를 수 있게 한다.
+  const term = String(q || "").trim().toLowerCase();
+  if (!term) return [];
   const out = [];
-  for (const r of distApplySegment(distIndex)) {
-    if (kws.every(k => String(r.subject).toLowerCase().includes(k))) {
+  for (const r of distIndex) {
+    if (String(r.subject).toLowerCase().includes(term)) {
       out.push(r);
       if (out.length >= 30) break;
     }
@@ -2534,6 +3318,44 @@ function distSpecAnnos(lo, hi, mini) {
   if (hi !== null && hi !== undefined) a.push(mk(hi, "USL"));
   if (lo !== null && lo !== undefined) a.push(mk(lo, "LSL"));
   return a;
+}
+
+// ── Compare(goodlog) before-limit 회색 기준선: 이름 같고 limit 만 바뀐 항목의 before
+//    limit 을 distribution 차트에 회색 점선으로 덧그림 (Honey Compare Mode 이식). ─────
+function beforeLimitsFor(subject) {
+  const wr = DATA.web_report;
+  const gl = wr && wr.compare && wr.compare.goodlog;
+  const m = gl && gl.limit_change_map;
+  return (m && m[subject]) || null;   // [before_lo|null, before_hi|null]
+}
+function beforeLimitShapes(subject) {
+  const bl = beforeLimitsFor(subject);
+  if (!bl) return [];
+  const sh = [];
+  bl.forEach(v => { if (v !== null && v !== undefined) sh.push({
+    type: "line", x0: v, x1: v, yref: "paper", y0: 0, y1: 1,
+    line: { color: "#9ca3af", width: 1.2, dash: "dash" } }); });
+  return sh;
+}
+function beforeLimitAnnos(subject) {
+  const bl = beforeLimitsFor(subject);
+  if (!bl) return [];
+  const mk = (v, label) => ({ x: v, yref: "paper", y: 1, text: `${label} ${v}`,
+    showarrow: false, textangle: -90, font: { size: 11.5, color: "#6b7280" },
+    bgcolor: "rgba(255,255,255,.72)", borderpad: 1, xanchor: "left", yanchor: "top" });
+  const a = [];
+  if (bl[1] !== null && bl[1] !== undefined) a.push(mk(bl[1], "이전 USL"));
+  if (bl[0] !== null && bl[0] !== undefined) a.push(mk(bl[0], "이전 LSL"));
+  return a;
+}
+// x축 표시범위에 before limit 포함 (범위 밖이면 회색선이 안 보이는 것 방지).
+function extendRangeForBeforeLimits(range, subject) {
+  const bl = beforeLimitsFor(subject);
+  if (!bl || !range) return range;
+  let x0 = range[0], x1 = range[1];
+  bl.forEach(v => { if (v !== null && v !== undefined) {
+    if (v < x0) x0 = v; if (v > x1) x1 = v; } });
+  return [x0, x1];
 }
 
 // ── 미니셀 표시용 다운샘플 (ECDF 전제: x 오름차순, y 누적%) ────────────────────
@@ -2591,12 +3413,16 @@ function distRenderGalleryCell(cell) {
     traces.push({ type: "scatter", mode: "markers", cliponaxis: false, x: ds.xs, y: ds.ys,
       marker: { color: distColorFor(src), size: 3 } });
   });
+  // 선택 좌표(Map Analysis)가 있으면 이 항목 위치를 점+빨간 점선으로 오버레이.
+  let shapes = distSpecShapes(lo, hi, false).concat(beforeLimitShapes(subject));
+  const cm = chipMarkersFor(subject);
+  if (cm) { traces.push(...cm.traces); shapes = shapes.concat(cm.shapes); }
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: DIST_STATUS_BG[status] || "#FFFFFF",
     xaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, ticks: "outside",
       tickcolor: "#bbb", tickfont: { size: 9 } },
     yaxis: { range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee",
       zeroline: false, tickfont: { size: 9 } },
-    shapes: distSpecShapes(lo, hi, false), annotations: distSpecAnnos(lo, hi, true),
+    shapes, annotations: distSpecAnnos(lo, hi, true),
     margin: { l: 34, r: 10, t: 8, b: 20 }, showlegend: false };
   Plotly.newPlot(plot, traces, layout, DIST_CFG_STATIC);
   cell.dataset.rendered = "1";
@@ -2633,10 +3459,13 @@ function distToolbarHtml() {
   const legend = sources.length ? `<div class="dist-legend">` + sources.map(s =>
     `<span class="dist-leg-item"><span class="dist-leg-sw" style="background:${distColorFor(s.name)}"></span>${esc(s.name)}</span>`
   ).join("") + `</div>` : "";
+  // 검색 체크박스로 고른 항목이 있으면 개수+해제 버튼을 세그먼트 옆에 표시.
+  const selChip = distSelected.size
+    ? `<button class="distseg dist-sel-clear" data-seg="clearsel" title="선택 해제">선택 ${distSelected.size}개 ✕</button>` : "";
   return `<div class="dist-toolbar">
-    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}</div>
+    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${selChip}</div>
     <div class="dist-search-wrap">
-      <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="검색 ( % 로 다중 AND )">
+      <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">
       <div id="distSuggest" class="dist-suggest" style="display:none"></div>
     </div>
     ${legend}
@@ -2652,16 +3481,23 @@ function distRenderGallery() {
   distView = "gallery";
   if (distGalleryObserver) { try { distGalleryObserver.disconnect(); } catch (e) {} distGalleryObserver = null; }
   distRenderQueue = []; distRafScheduled = false;
-  distFiltered = distApplySegment(distIndex);
+  // 검색 체크박스 선택이 있으면 그 항목들만(세그먼트 무시), 없으면 세그먼트 필터.
+  distFiltered = distSelected.size
+    ? distIndex.filter(r => distSelected.has(r.subject))
+    : distApplySegment(distIndex);
   const cards = distFiltered.map(r => {
     const cpk = r.cpk == null ? "-" : r.cpk;
-    const lim = `(${distFmtLimit(r.lower_limit)} ~ ${distFmtLimit(r.upper_limit)})${r.units ? " [" + r.units + "]" : ""}`;
+    const lim = `${distFmtLimit(r.lower_limit)} ~ ${distFmtLimit(r.upper_limit)}${r.units ? " " + r.units : ""}`;
     return `<div class="distg-card" data-subject="${esc(r.subject)}" data-status="${esc(r.status)}" style="background:${DIST_STATUS_BG[r.status] || "#fff"}">
       <div class="distg-head">
-        <span class="distg-tno">${esc(r.test_num || "")}</span>
-        <span class="distg-name" title="${esc(r.subject)}">${esc(r.subject)}</span>
-        <span class="distg-lim">${esc(lim)}</span>
-        <span class="distg-cpk">cpk ${esc(cpk)}</span>
+        <div class="distg-line1">
+          <span class="distg-tno">${esc(r.test_num || "")}</span>
+          <span class="distg-name" title="${esc(r.subject)}">${esc(r.subject)}</span>
+        </div>
+        <div class="distg-line2">
+          <span class="distg-lim">${esc(lim)}</span>
+          <span class="distg-cpk">cpk ${esc(cpk)}</span>
+        </div>
       </div>
       <div class="distg-plot"></div>
     </div>`;
@@ -2698,6 +3534,17 @@ let _itemDetailFailRows = [];
 let _itemDetailFailPage = 1;
 let _itemDetailReq = 0;           // 경합 가드(진행 중 fetch 무효화)
 let _itemDetailBound = false;
+let _itemDetailData = null;        // 현재 상세 응답(scatter_item) — CDF 재렌더에 재사용
+let idetHistMode = "analysis";     // 히스토그램 블록 탭: "analysis"(빈도 폴리곤) | "report"(정규분포 곡선)
+let _idetNormalRendered = false;   // report 정규분포 곡선 1회 렌더 가드(항목 진입마다 리셋)
+// ── CDF 칩 편집(임시, 클라이언트 전용) — 항목 이동/새로고침 시 초기화 ──────────────
+let cdfExcluded = new Set();       // 제외할 칩 키 `${source}||${serial}` → CDF 곡선에서 뺌(분모 감소)
+let cdfHighlighted = new Set();    // 강조할 칩 키 → CDF 점 색/크기 변경
+let cdfEditMode = "none";          // "none" | "exclude" | "highlight" (선택이 어느 Set 에 들어가는지)
+const CDF_HIGHLIGHT_COLOR = "#EF553B";
+function cdfChipKey(source, serial) { return `${source}||${serial}`; }
+function cdfActiveSet() { return cdfEditMode === "exclude" ? cdfExcluded : cdfEditMode === "highlight" ? cdfHighlighted : null; }
+function cdfResetEdits() { cdfExcluded.clear(); cdfHighlighted.clear(); cdfEditMode = "none"; }
 
 function openItemDetail(subject, navList) {
   const dp = document.getElementById("panel-item-detail");
@@ -2713,6 +3560,8 @@ function openItemDetail(subject, navList) {
   _itemDetailSubject = subject;
   _itemDetailNav = Array.isArray(navList) && navList.length ? navList : [subject];
   _itemDetailFailPage = 1;
+  cdfResetEdits();   // 항목이 바뀌면 CDF 제외/강조 편집 초기화
+  _itemDetailData = null;
   const reqId = ++_itemDetailReq;
   window.scrollTo(0, 0);
   dp.innerHTML = `<div class="idet"><div class="idet-head"><button class="btn-sm idet-back">← Back</button>` +
@@ -2727,10 +3576,25 @@ function openItemDetail(subject, navList) {
     });
 }
 
+// 헤더 요약 통계: min/max/average/stdev 를 한 줄로. 다중 source 면 첫 source 값을
+// 소스명과 함께 표시(상세 per-source 값은 아래 통계표에서 전부 확인 가능).
+function idetHeaderStats(stats) {
+  if (!stats || !stats.length) return "";
+  const s = stats[0];
+  const fmt = v => (v === null || v === undefined || v === "") ? "-" : String(v);
+  const src = stats.length > 1 ? `<span class="idet-stat-src">${esc(s.source || "")}</span>` : "";
+  return `<span class="idet-stat">${src}` +
+    `min <b>${esc(fmt(s.min))}</b> · max <b>${esc(fmt(s.max))}</b> · ` +
+    `avg <b>${esc(fmt(s.average))}</b> · σ <b>${esc(fmt(s.stdev))}</b></span>`;
+}
+
 function renderItemDetail(data) {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
   const subject = data.subject;
+  _itemDetailData = data;   // CDF 재렌더(제외/강조 반영)에 재사용
+  idetHistMode = "analysis";      // 항목 진입 시 기본 Analysis 탭
+  _idetNormalRendered = false;
   const navLen = _itemDetailNav.length;
   const pos = _itemDetailNav.indexOf(subject);
   const navHtml = navLen > 1
@@ -2753,15 +3617,28 @@ function renderItemDetail(data) {
         <span class="idet-badge idet-${esc(data.status || "ok")}">${esc(statusLabel)}</span>
         <span class="idet-cpk">cpk ${esc(data.cpk == null ? "-" : data.cpk)}</span>
         <span class="idet-lim">(${esc(distFmtLimit(data.lower_limit))} ~ ${esc(distFmtLimit(data.upper_limit))}${data.units ? " " + esc(data.units) : ""})</span>
+        ${idetHeaderStats(data.stats)}
       </span>
     </div>
+    <div id="cdfEditBar" class="cdf-editbar"></div>
     <div class="idet-charts">
       <div class="idet-chart-block"><div class="dist-chart-cap">누적분포 CDF</div><div id="distCdf" class="dist-chart"></div></div>
-      <div class="idet-chart-block"><div class="dist-chart-cap">분포 히스토그램</div><div id="distHist" class="dist-chart"></div></div>
+      <div class="idet-chart-block">
+        <div class="dist-chart-cap idet-hist-cap">
+          <span>분포 히스토그램</span>
+          <span class="idet-hist-tabs">
+            <button type="button" class="btn-sm idet-hist-mode${idetHistMode === "analysis" ? " active" : ""}" data-hist-mode="analysis">Analysis</button>
+            <button type="button" class="btn-sm idet-hist-mode${idetHistMode === "report" ? " active" : ""}" data-hist-mode="report">Report</button>
+          </span>
+        </div>
+        <div id="distHist" class="dist-chart"${idetHistMode === "report" ? ' style="display:none"' : ""}></div>
+        <div id="distNormal" class="dist-chart"${idetHistMode === "analysis" ? ' style="display:none"' : ""}></div>
+      </div>
     </div>
     ${itemStatsTableHtml(data.stats)}
     ${failTitle}
   </div>`;
+  renderCdfEditBar();
   distRenderDetailCharts(data);   // #distCdf / #distHist (기존 함수 재사용)
   if (data.is_fail) renderItemFailRows();
 }
@@ -2797,11 +3674,21 @@ function renderItemFailRows() {
   if (_itemDetailFailPage < 1) _itemDetailFailPage = 1;
   const start = (_itemDetailFailPage - 1) * ITEM_FAIL_PAGE_SIZE;
   const page = rows.slice(start, start + ITEM_FAIL_PAGE_SIZE);
-  const head = "<thead><tr>" + cols.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
-  const body = "<tbody>" + page.map(r => "<tr>" + cols.map(c => {
-    const v = r[c]; const t = (v === null || v === undefined) ? "" : String(v);
-    return `<td>${esc(t)}</td>`;
-  }).join("") + "</tr>").join("") + "</tbody>";
+  // 체크박스 열: 현재 편집 모드(제외/강조)의 Set 멤버십을 표시·토글. 모드=없음이면 비활성.
+  const editing = cdfEditMode !== "none";
+  const activeSet = cdfActiveSet();
+  const chkLabel = cdfEditMode === "highlight" ? "강조" : cdfEditMode === "exclude" ? "제외" : "칩";
+  const chkTh = `<th class="idet-fail-chk-col">${chkLabel}</th>`;
+  const head = "<thead><tr>" + chkTh + cols.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
+  const body = "<tbody>" + page.map(r => {
+    const key = cdfChipKey(r.SOURCE, r.SERIAL);
+    const checked = activeSet && activeSet.has(key) ? " checked" : "";
+    const chkTd = `<td class="idet-fail-chk-col"><input type="checkbox" class="cdf-fail-chk" data-chipkey="${esc(key)}"${editing ? "" : " disabled"}${checked}></td>`;
+    return "<tr>" + chkTd + cols.map(c => {
+      const v = r[c]; const t = (v === null || v === undefined) ? "" : String(v);
+      return `<td>${esc(t)}</td>`;
+    }).join("") + "</tr>";
+  }).join("") + "</tbody>";
   const end = Math.min(start + ITEM_FAIL_PAGE_SIZE, total);
   const pager = pages > 1
     ? `<div class="cpk-pager">` +
@@ -2847,8 +3734,21 @@ function bindItemDetailPanel() {
     if (e.target.closest(".idet-back")) { closeItemDetail(); return; }
     if (e.target.closest(".idet-prev")) { itemDetailNav(-1); return; }
     if (e.target.closest(".idet-next")) { itemDetailNav(1); return; }
+    const hm = e.target.closest("[data-hist-mode]");
+    if (hm) { setIdetHistMode(hm.dataset.histMode); return; }
+    const mb = e.target.closest("[data-cdf-mode]");
+    if (mb) { cdfEditMode = mb.dataset.cdfMode; cdfAfterEdit(); return; }
+    if (e.target.closest(".cdf-reset")) { cdfResetEdits(); cdfAfterEdit(); return; }
     const pg = e.target.closest("[data-idet-page]");
     if (pg && !pg.disabled) { _itemDetailFailPage = parseInt(pg.dataset.idetPage, 10) || 1; renderItemFailRows(); return; }
+  });
+  dp.addEventListener("change", e => {
+    const chk = e.target.closest(".cdf-fail-chk");
+    if (!chk) return;
+    const set = cdfActiveSet();
+    if (!set) return;
+    if (chk.checked) set.add(chk.dataset.chipkey); else set.delete(chk.dataset.chipkey);
+    cdfAfterEdit();
   });
   document.addEventListener("keydown", e => {
     if (!dp.classList.contains("active")) return;
@@ -2923,34 +3823,108 @@ function distHistXRange(sources, lo, hi, isFail) {
   if (!isFinite(dmin) || !isFinite(dmax)) return undefined;   // 값 전무 → Plotly 자동
   return [dmin, dmax];
 }
+// CDF 편집 툴바 렌더 (모드 세그먼트 + 초기화 + 카운트). 리스너는 bindItemDetailPanel 위임.
+function renderCdfEditBar() {
+  const bar = document.getElementById("cdfEditBar");
+  if (!bar) return;
+  const modeBtn = (m, label, cls) =>
+    `<button type="button" class="btn-sm cdf-mode ${cls}${cdfEditMode === m ? " active" : ""}" data-cdf-mode="${m}">${label}</button>`;
+  bar.innerHTML =
+    `<span class="cdf-eb-label">CDF 편집</span>` +
+    modeBtn("none", "선택 없음", "cdf-mode-none") +
+    modeBtn("exclude", "제외", "cdf-mode-exclude") +
+    modeBtn("highlight", "강조", "cdf-mode-highlight") +
+    `<button type="button" class="btn-sm cdf-reset">초기화</button>` +
+    `<span class="cdf-eb-count">제외 ${cdfExcluded.size} · 강조 ${cdfHighlighted.size}</span>` +
+    (cdfEditMode !== "none"
+      ? `<span class="cdf-eb-hint">점 클릭(단일) 또는 드래그 박스(다중) · 하단 Fail 표 체크박스도 가능</span>` : "");
+}
+function cdfToggleChip(key) {
+  const set = cdfActiveSet();
+  if (!set) return;
+  if (set.has(key)) set.delete(key); else set.add(key);
+}
+// 편집(제외/강조/모드전환) 후 CDF·툴바·Fail표만 다시 그림. 통계표·히스토그램은 불변.
+function cdfAfterEdit() {
+  if (_itemDetailData) distRenderCdf(_itemDetailData);
+  renderCdfEditBar();
+  if (_itemDetailData && _itemDetailData.is_fail) renderItemFailRows();
+}
+// CDF 만 렌더(제외→분모 재계산, 강조→점 색/크기, 편집 모드→dragmode=select + 클릭/박스선택).
+function distRenderCdf(data) {
+  const cdfDiv = document.getElementById("distCdf");
+  if (!cdfDiv) return;
+  const lo = data.lower_limit, hi = data.upper_limit;
+  const bg = DIST_STATUS_BG[data.status] || "#FFFFFF";
+  const multi = (data.sources || []).length > 1;
+  const unit = data.units || "";
+  const xtitle = `측정값${unit ? " (" + unit + ")" : ""}`;
+  const traces = (data.sources || []).map(s => {
+    const hasId = Array.isArray(s.serial) && s.serial.length === s.values.length;
+    // 제외 칩을 뺀 값/식별정보 — 제외는 CDF 곡선에만 반영(분모 n 감소로 곡선 재계산).
+    let vals = s.values, serial = s.serial, xpos = s.xpos, ypos = s.ypos;
+    if (hasId && cdfExcluded.size) {
+      vals = []; serial = []; xpos = []; ypos = [];
+      for (let i = 0; i < s.values.length; i++) {
+        if (cdfExcluded.has(cdfChipKey(s.name, s.serial[i]))) continue;
+        vals.push(s.values[i]); serial.push(s.serial[i]); xpos.push(s.xpos[i]); ypos.push(s.ypos[i]);
+      }
+    }
+    const c = distCdfFromValues(vals);
+    const base = distColorFor(s.name);
+    const trace = { type: "scatter", mode: "markers", cliponaxis: false, name: s.name, x: c.x, y: c.y };
+    if (hasId) {
+      // customdata/hover 는 필터·정렬된 동일 순서 유지(클릭 식별·hover 지속).
+      trace.customdata = c.order.map(i => [serial[i], xpos[i], ypos[i]]);
+      trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<br>SERIAL %{customdata[0]} · X %{customdata[1]} / Y %{customdata[2]}<extra></extra>";
+      if (cdfHighlighted.size) {   // 강조 칩만 색/크기 배열로 표시
+        trace.marker = {
+          color: c.order.map(i => cdfHighlighted.has(cdfChipKey(s.name, serial[i])) ? CDF_HIGHLIGHT_COLOR : base),
+          size: c.order.map(i => cdfHighlighted.has(cdfChipKey(s.name, serial[i])) ? 9 : 5),
+        };
+      } else {
+        trace.marker = { color: base, size: 5 };
+      }
+    } else {
+      trace.marker = { color: base, size: 5 };
+      trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<extra></extra>";
+    }
+    return trace;
+  });
+  // 선택 좌표(Map Analysis)가 있으면 이 항목 위치를 점+빨간 점선으로 오버레이.
+  let cdfShapes = distSpecShapes(lo, hi, true).concat(beforeLimitShapes(data.subject));
+  const cdfCm = chipMarkersFor(data.subject);
+  if (cdfCm) { traces.push(...cdfCm.traces); cdfShapes = cdfShapes.concat(cdfCm.shapes); }
+  const dragmode = cdfEditMode === "none" ? "zoom" : "select";
+  Plotly.newPlot(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg, dragmode,
+    xaxis: { title: { text: xtitle }, showgrid: true, gridcolor: "#eee", zeroline: false },
+    yaxis: { title: { text: "누적 %" }, range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee", zeroline: false },
+    shapes: cdfShapes,
+    annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
+    margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi }, DIST_CFG);
+  // 재렌더마다 중복 방지 후 편집 모드에서만 동작하는 선택 이벤트 바인딩.
+  if (cdfDiv.removeAllListeners) { cdfDiv.removeAllListeners("plotly_click"); cdfDiv.removeAllListeners("plotly_selected"); }
+  cdfDiv.on("plotly_click", ev => {
+    if (!cdfActiveSet() || !ev.points || !ev.points.length) return;
+    const pt = ev.points[0];
+    if (!pt.customdata) return;
+    cdfToggleChip(cdfChipKey(pt.data.name, pt.customdata[0]));
+    cdfAfterEdit();
+  });
+  cdfDiv.on("plotly_selected", ev => {
+    const set = cdfActiveSet();
+    if (!set || !ev || !ev.points || !ev.points.length) return;
+    ev.points.forEach(pt => { if (pt.customdata) set.add(cdfChipKey(pt.data.name, pt.customdata[0])); });
+    cdfAfterEdit();
+  });
+}
 function distRenderDetailCharts(data) {
   const lo = data.lower_limit, hi = data.upper_limit;
   const bg = DIST_STATUS_BG[data.status] || "#FFFFFF";
   const multi = (data.sources || []).length > 1;
   const unit = data.units || "";
   const xtitle = `측정값${unit ? " (" + unit + ")" : ""}`;
-  const cdfDiv = document.getElementById("distCdf");
-  if (cdfDiv) {
-    const traces = (data.sources || []).map(s => {
-      const c = distCdfFromValues(s.values);
-      const trace = { type: "scatter", mode: "markers", cliponaxis: false, name: s.name, x: c.x, y: c.y,
-        marker: { color: distColorFor(s.name), size: 5 } };
-      // CDF hover 전용: die 식별 metadata(serial/xpos/ypos, values 와 동일 순서로 백엔드가 정렬해 보냄).
-      // histogram 은 die 단위 정보가 의미 없어 붙이지 않는다.
-      if (Array.isArray(s.serial) && s.serial.length === s.values.length) {
-        trace.customdata = c.order.map(i => [s.serial[i], s.xpos[i], s.ypos[i]]);
-        trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<br>SERIAL %{customdata[0]} · X %{customdata[1]} / Y %{customdata[2]}<extra></extra>";
-      } else {
-        trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<extra></extra>";
-      }
-      return trace;
-    });
-    Plotly.newPlot(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
-      xaxis: { title: { text: xtitle }, showgrid: true, gridcolor: "#eee", zeroline: false },
-      yaxis: { title: { text: "누적 %" }, range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee", zeroline: false },
-      shapes: distSpecShapes(lo, hi, true), annotations: distSpecAnnos(lo, hi, false),
-      margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi }, DIST_CFG);
-  }
+  distRenderCdf(data);   // #distCdf (제외/강조 편집 반영)
   const hDiv = document.getElementById("distHist");
   if (hDiv) {
     // 막대 대신 빈도 폴리곤: 21bin 중심점-빈도 곡선(양끝 0 패딩), CDF 와 동일한 원본 values 재사용.
@@ -2961,41 +3935,105 @@ function distRenderDetailCharts(data) {
       x: p.centers, y: p.counts, line: { color: distColorFor(p.source), shape: "spline" },
       hovertemplate: "측정값 %{x}<br>빈도 %{y:d}<extra></extra>" }));
     Plotly.newPlot(hDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
-      xaxis: { title: { text: xtitle }, range: distHistXRange(data.sources || [], lo, hi, data.is_fail),
+      xaxis: { title: { text: xtitle },
+        range: extendRangeForBeforeLimits(
+          distHistXRange(data.sources || [], lo, hi, data.is_fail), data.subject),
         showgrid: true, gridcolor: "#eee", zeroline: false },
       yaxis: { title: { text: "빈도" }, range: [0, (ymax || 1) * 1.1], tickformat: "d",
         showgrid: true, gridcolor: "#eee", zeroline: false },
-      shapes: distSpecShapes(lo, hi, false), annotations: distSpecAnnos(lo, hi, false),
+      shapes: distSpecShapes(lo, hi, false).concat(beforeLimitShapes(data.subject)),
+      annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
       margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi }, DIST_CFG);
   }
 }
-// 검색 제안 클릭 시: 상세(item_detail)로 바로 가지 않고 갤러리의 해당 svg 카드로 스크롤·강조.
-function distGotoCard(subject) {
-  if (distView !== "gallery") distRenderGallery();
-  const box = document.getElementById("distSuggest");
-  if (box) { box.innerHTML = ""; box.style.display = "none"; }
+// report용 정규분포 곡선(#distNormal): bin/막대 없이 source별 μ/σ 로 계산한 매끄러운
+// 가우시안 PDF 곡선. degenerate(n<2 or std<=0, 서버 표시) source 는 곡선 대신 x=μ 세로
+// 스파이크(shape). x축은 히스토그램 1단계 규칙(distHistXRange) + 2단계 ±5% 이중 마진.
+function distRenderNormal(data) {
+  const nDiv = document.getElementById("distNormal");
+  if (!nDiv) return;
+  const lo = data.lower_limit, hi = data.upper_limit;
+  const bg = data.is_fail ? "#FEF9E7" : "#FFFFFF";   // 규격 이탈(Fail) → 배경 연노랑
+  const multi = (data.sources || []).length > 1;
+  const unit = data.units || "";
+  const xtitle = `측정값${unit ? " (" + unit + ")" : ""}`;
+  const statByName = {};
+  (data.stats || []).forEach(s => { statByName[s.source] = s; });
+  const traces = [], spikes = [];
+  let ymax = 0;
+  (data.sources || []).forEach(s => {
+    const st = statByName[s.name];
+    if (!st) return;
+    const color = distColorFor(s.name), mean = st.average, std = st.stdev;
+    if (st.degenerate || mean === null || mean === undefined) {
+      // 축퇴 케이스: x=μ 세로 스파이크(축 전체 높이, paper 기준).
+      if (mean !== null && mean !== undefined) spikes.push({
+        type: "line", x0: mean, x1: mean, yref: "paper", y0: 0, y1: 1,
+        line: { color, width: 1.4 } });
+      return;
+    }
+    // 정상 케이스: μ±4σ 256점, 정규분포 PDF (명세 공식).
+    const N = 256, xstart = mean - 4 * std, dx = (8 * std) / (N - 1);
+    const coef = 1 / (std * Math.sqrt(2 * Math.PI));
+    const xs = new Array(N), ys = new Array(N);
+    for (let i = 0; i < N; i++) {
+      const x = xstart + dx * i, z = (x - mean) / std;
+      xs[i] = x; ys[i] = coef * Math.exp(-0.5 * z * z);
+    }
+    if (coef > ymax) ymax = coef;   // PDF 최대값은 x=μ 의 coef
+    traces.push({ type: "scatter", mode: "lines", name: s.name, x: xs, y: ys,
+      hoverinfo: "skip", line: { color, width: 1.4 } });
+  });
+  // x축: 1단계(distHistXRange, bin 버전과 동일) → 2단계(±5% 항상 적용, 이중 마진).
+  let range = distHistXRange(data.sources || [], lo, hi, data.is_fail);
+  if (range) {
+    const span = range[1] - range[0];
+    range = extendRangeForBeforeLimits([range[0] - span * 0.05, range[1] + span * 0.05], data.subject);
+  }
+  Plotly.newPlot(nDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
+    xaxis: { title: { text: xtitle }, range, showgrid: false, zeroline: false },
+    yaxis: { range: [0, ymax > 0 ? ymax * 1.1 : 1],
+      showticklabels: false, showgrid: false, zeroline: false },
+    shapes: distSpecShapes(lo, hi, false).concat(spikes, beforeLimitShapes(data.subject)),
+    annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
+    margin: { l: 24, r: 22, t: 16, b: 46 }, showlegend: multi }, DIST_CFG);
+}
+// 히스토그램 블록 탭 전환(Analysis 폴리곤 ↔ Report 정규분포). report 는 처음 볼 때만 렌더.
+function setIdetHistMode(mode) {
+  if (mode !== "analysis" && mode !== "report") return;
+  idetHistMode = mode;
+  const dp = document.getElementById("panel-item-detail");
+  if (!dp) return;
+  dp.querySelectorAll(".idet-hist-mode").forEach(b =>
+    b.classList.toggle("active", b.dataset.histMode === mode));
+  const hDiv = document.getElementById("distHist"), nDiv = document.getElementById("distNormal");
+  if (hDiv) hDiv.style.display = (mode === "analysis") ? "" : "none";
+  if (nDiv) nDiv.style.display = (mode === "report") ? "" : "none";
+  if (mode === "report" && nDiv && !_idetNormalRendered && _itemDetailData) {
+    distRenderNormal(_itemDetailData);   // display 켠 뒤 렌더(크기 0 방지)
+    _idetNormalRendered = true;
+  }
+}
+// 갤러리 재렌더(툴바가 새로 그려짐) 후 검색 상태(입력값·제안목록·포커스)를 복원한다.
+// 체크박스를 여러 개 연속으로 고를 수 있게 하기 위함.
+function restoreDistSearch(q) {
   const inp = document.getElementById("distSearch");
-  if (inp) inp.blur();
-  const panel = document.getElementById("panel-distribution");
-  if (!panel) return;
-  let card = null;
-  panel.querySelectorAll(".distg-card").forEach(c => { if (c.dataset.subject === subject) card = c; });
-  if (!card) return;
-  card.scrollIntoView({ behavior: "smooth", block: "center" });
-  card.classList.add("distg-flash");
-  setTimeout(() => card.classList.remove("distg-flash"), 1600);
+  if (!inp) return;
+  inp.value = q || "";
+  if (q) { inp.focus(); distRenderSuggest(q); }
 }
 function distRenderSuggest(q) {
   const box = document.getElementById("distSuggest");
   if (!box) return;
   const items = distSuggestions(q);
   if (!String(q).trim() || !items.length) { box.innerHTML = ""; box.style.display = "none"; return; }
+  // 체크박스로 다중 선택 → 선택 항목만 갤러리에 표시. cpk 값은 표시하지 않는다.
   box.innerHTML = items.map(r =>
-    `<div class="dist-sug-item" data-subject="${esc(r.subject)}">
+    `<label class="dist-sug-item">
+      <input type="checkbox" class="dist-sug-chk" data-subject="${esc(r.subject)}"${distSelected.has(r.subject) ? " checked" : ""}>
       <span class="sug-tno">${esc(r.test_num || "")}</span>
       <span class="sug-name">${esc(r.subject)}</span>
-      <span class="sug-cpk">cpk ${esc(r.cpk == null ? "-" : r.cpk)}</span>
-    </div>`).join("");
+    </label>`).join("");
   box.style.display = "block";
 }
 
@@ -3007,15 +4045,26 @@ function distBindPanel() {
   panel.addEventListener("click", e => {
     const seg = e.target.closest(".distseg");
     if (seg) {
-      if (seg.dataset.seg === "cpk") distCpkOnly = !distCpkOnly;
+      if (seg.dataset.seg === "clearsel") distSelected.clear();
+      else if (seg.dataset.seg === "cpk") distCpkOnly = !distCpkOnly;
       else if (seg.dataset.seg === "fail") distFailOnly = !distFailOnly;
+      const q = (document.getElementById("distSearch") || {}).value || "";
       distRenderGallery();
+      restoreDistSearch(q);
       return;
     }
-    const sug = e.target.closest(".dist-sug-item");
-    if (sug) { distGotoCard(sug.dataset.subject); return; }
     const card = e.target.closest(".distg-card");
     if (card) { openItemDetail(card.dataset.subject, distFiltered.map(r => r.subject)); return; }
+  });
+  // 검색 제안 체크박스 토글 → 선택 집합 갱신 후 갤러리를 선택 항목만으로 필터(검색상태 복원).
+  panel.addEventListener("change", e => {
+    const chk = e.target.closest(".dist-sug-chk");
+    if (!chk) return;
+    if (chk.checked) distSelected.add(chk.dataset.subject);
+    else distSelected.delete(chk.dataset.subject);
+    const q = (document.getElementById("distSearch") || {}).value || "";
+    distRenderGallery();
+    restoreDistSearch(q);
   });
   panel.addEventListener("input", e => {
     if (e.target.id === "distSearch") distRenderSuggest(e.target.value);
@@ -3041,7 +4090,6 @@ function renderDistribution() {
 // 다운샘플 static CDF + LSL/USL 점선)으로 축소해 보여주는 용도. 전체점은 데이터에 그대로 유지.
 function renderMiniDistCell(cell) {
   if (cell.dataset.distLoaded === "1") return;
-  if (cell.closest("tr.issue-row-hidden")) return;   // 행별 산포/Map 숨김 상태면 그리지 않음
   const subject = cell.dataset.subject;
   const div = cell.querySelector(".dist-plot");
   if (!div || typeof Plotly === "undefined") return;
@@ -3075,7 +4123,8 @@ function renderMiniDistCell(cell) {
   }
   const layout = {
     xaxis, yaxis: { visible: false, range: [0, 100] },
-    shapes: distSpecShapes(lo, hi, false), margin: { l: 1, r: 1, t: 1, b: 1 },
+    shapes: distSpecShapes(lo, hi, false).concat(beforeLimitShapes(subject)),
+    margin: { l: 1, r: 1, t: 1, b: 1 },
     paper_bgcolor: "transparent", plot_bgcolor: "transparent", showlegend: false,
   };
   Plotly.newPlot(div, traces, layout, DIST_CFG_STATIC);
@@ -3141,7 +4190,6 @@ function renderIssueMiniDist(panel) {
 // lazy 렌더하고 화면 밖은 purge. 색상/범례는 세션 공통(globalBinColorMap) 을 dim 처리해 재사용.
 function renderMiniMapCell(cell) {
   if (cell.dataset.mapLoaded === "1") return;
-  if (cell.closest("tr.issue-row-hidden")) return;   // 행별 산포/Map 숨김 상태면 그리지 않음
   const div = cell.querySelector(".map-plot");
   if (!div || typeof Plotly === "undefined") return;
   const maps = (webReportSheets() || {})["Map Analysis"];
@@ -3149,7 +4197,13 @@ function renderMiniMapCell(cell) {
   const bin = cell.dataset.bin;
   const binOrder = buildGlobalBinLegend(maps).map(r => r.bin);
   const dim = dimColorMap(globalBinColorMap(), binOrder, bin);   // 선택 bin만 원색, 나머지 회색
-  const m = maps[0];   // 접힘(기본): 첫 소스 1개. 펼치기 버튼으로 전 소스 보기.
+  // 접힘(기본): 첫 소스 1개. 펼치기 버튼으로 전 소스 보기.
+  // step 분리 맵이면 해당 bin 의 fail 이 실제로 등장하는 step 맵을 우선 선택
+  // (fail 은 자기 fail step 맵에만 그려지므로 maps[0](첫 step)엔 없을 수 있음).
+  let m = maps[0];
+  if (m.step != null) {
+    m = maps.find(mm => (mm.bin_counts || []).some(bc => String(bc.bin) === String(bin))) || maps[0];
+  }
   const built = waferHeatmap(m, { colorMap: dim, binOrder, mini: true });   // showText 생략 → 숫자 없음
   if (!built) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
   Plotly.newPlot(div, [built.trace], waferLayout(m, { mini: true }), DIST_CFG_STATIC);
@@ -3204,35 +4258,6 @@ function renderIssueMiniMap(panel) {
   cells.forEach(c => issueMapObserver.observe(c));
 }
 
-// ── Issue Table 행별 산포·Map 숨기기 토글 ──────────────────────────────────────
-function toggleIssueRowHidden(btn) {
-  const key = btn.dataset.key;
-  const tr = btn.closest("tr");
-  if (!key || !tr) return;
-  const nowHidden = !issueHiddenRows.has(key);
-  if (nowHidden) issueHiddenRows.add(key); else issueHiddenRows.delete(key);
-  applyIssueRowHidden(tr, nowHidden);
-}
-function applyIssueRowHidden(tr, hidden) {
-  tr.classList.toggle("issue-row-hidden", hidden);
-  tr.querySelectorAll(".btn-hide-dist").forEach(b => {
-    b.textContent = hidden ? "⊞" : "⊟";
-    b.title = "산포·Map " + (hidden ? "보이기" : "숨기기");
-  });
-  if (hidden) {
-    // 차트 정리(메모리 경량화) 후 loaded 플래그 리셋 — 재표시 시 다시 그린다.
-    tr.querySelectorAll(".dist-cell-mini .dist-plot, .map-cell-mini .map-plot").forEach(div => {
-      try { if (window.Plotly) Plotly.purge(div); } catch (e) {}
-    });
-    tr.querySelectorAll(".dist-cell-mini").forEach(c => { c.dataset.distLoaded = ""; });
-    tr.querySelectorAll(".map-cell-mini").forEach(c => { c.dataset.mapLoaded = ""; });
-    closeMapExpand();
-  } else {
-    tr.querySelectorAll(".dist-cell-mini").forEach(c => { if (c.dataset.visible === "1") issueDistQueueRender(c); });
-    tr.querySelectorAll(".map-cell-mini").forEach(c => { if (c.dataset.visible === "1") issueMapQueueRender(c); });
-  }
-}
-
 // ── Issue Table Map 셀 소스별 펼치기 팝오버(전 소스 웨이퍼 가로 나열) ─────────────
 // 표 td 폭을 흔들지 않도록 셀에 앵커된 절대위치 오버레이로 띄운다. 한 번에 하나만 연다.
 let _mapExpandEl = null;
@@ -3258,7 +4283,7 @@ function toggleMapExpand(btn) {
   const pop = document.createElement("div");
   pop.className = "map-expand-pop";
   pop.innerHTML = maps.map((m, i) =>
-    `<div class="map-exp-item"><div class="map-exp-title">${esc(m.source)}</div>` +
+    `<div class="map-exp-item"><div class="map-exp-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""}</div>` +
     `<div class="map-exp-plot" id="mapexp-${i}"></div></div>`).join("");
   // 스크롤 컨테이너에 잘리지 않도록 body 에 fixed 로 띄우고 셀 위치 기준으로 배치.
   const rect = cell.getBoundingClientRect();
@@ -3813,7 +4838,7 @@ const TAB_RENDERERS = {
   "yield": () => {
     destroyYieldGrid();   // 재렌더 전 이전 Tabulator 인스턴스 정리
     renderYield(DATA.yield_text, DATA.summary);
-    if (isWebReportSession()) renderYieldFailBins();
+    // Yield 탭 하단 Fail Bin 막대차트는 표시하지 않는다(avg 셀 가로 게이지로 대체).
   },
   "issues": () => {
     if (MODE === "edit") renderIssuesEdit();
@@ -3822,6 +4847,7 @@ const TAB_RENDERERS = {
   "cpk": renderCpk,
   "distribution": renderDistribution,
   "map-analysis": renderMapAnalysis,
+  "compare": renderCompare,
   // "raw-data" 탭 제거 — rawdata 편집은 Honey 사이드바 'Rawdata 수정'(Excel) 로 이관.
   // 관련 JS(renderRawDataTab 등)와 #panel-raw-data 는 비활성 상태로 남겨둠(참조 안전).
   "trim-analysis": renderPlaceholderTabs,
@@ -3848,7 +4874,7 @@ function schedulePrerender() {
   // map-analysis 는 프리렌더에서 제외한다. wafer map 은 scaleanchor(정사각 고정) 플롯이라
   // 숨김(0폭) 상태에서 그려지면 탭 활성화 시 Plotly.Plots.resize 로도 종횡비/폭이 제대로
   // 복구되지 않아 짤려 보인다 → 탭을 처음 열 때(패널 visible) renderTab 이 정상 폭으로 그리도록 둔다.
-  const queue = ["yield", "issues", "cpk", "distribution", "trim-analysis"];
+  const queue = ["yield", "issues", "cpk", "distribution"];
   const idle = window.requestIdleCallback
     ? (fn => window.requestIdleCallback(fn, { timeout: 1000 }))
     : (fn => setTimeout(fn, 200));
@@ -3888,14 +4914,13 @@ document.querySelector(".content").addEventListener("click", e => {
   // Issue Table Yield 대표행 토글 → 그 Bin 의 detail TNO 행 펼치기/접기.
   const issueToggle = e.target.closest(".issue-toggle");
   if (issueToggle) { toggleIssueGroup(issueToggle); return; }
-  // Issue Table 행별 산포·Map 숨기기 토글.
-  const hideBtn = e.target.closest(".btn-hide-dist");
-  if (hideBtn) { toggleIssueRowHidden(hideBtn); return; }
   // Issue Table Map 셀 소스별 펼치기.
   const mapExpandBtn = e.target.closest(".btn-map-expand");
   if (mapExpandBtn) { toggleMapExpand(mapExpandBtn); return; }
   if (e.target.id === "issueExpandAll") { setAllIssueGroups(true); return; }
   if (e.target.id === "issueCollapseAll") { setAllIssueGroups(false); return; }
+  const jumpBtn = e.target.closest("[data-issue-jump]");
+  if (jumpBtn) { jumpToIssueSection(jumpBtn.dataset.issueJump); return; }
   const etcAddBtn = e.target.closest("#etcAddItemBtn");
   if (etcAddBtn) { openEtcItemModal(); return; }
   const etcDelBtn = e.target.closest(".btn-del-etc-item");
@@ -4191,6 +5216,10 @@ function closeEtcItemModal() { document.getElementById("etcItemModal").classList
 async function openEtcItemModal() {
   document.getElementById("etcItemModal").classList.add("show");
   document.getElementById("etcItemSearch").value = "";
+  const engrName = document.getElementById("etcEngrName");
+  const engrComment = document.getElementById("etcEngrComment");
+  if (engrName) engrName.value = "";
+  if (engrComment) engrComment.value = "";
   const host = document.getElementById("etcItemList");
   host.innerHTML = `<div class="placeholder" style="padding:12px;">불러오는 중...</div>`;
   try {
@@ -4248,6 +5277,38 @@ async function addEtcItem(item) {
   }
 }
 
+// 자유입력 Engr 항목: Item 명(측정항목과 무관)을 etc_items 에 추가하고, comment 가 있으면
+// issue_comments(ETC|<item> / "개발 comment")에 함께 저장한다(둘 다 DB=manifest 적재).
+async function addEtcEngrItem(name, comment) {
+  name = String(name || "").trim();
+  comment = String(comment || "").trim();
+  if (!name) { showToast("Item 명을 입력하세요."); return; }
+  if (!(await flushPendingComments())) return;
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/etc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({ password: verifiedPassword, action: "add", item: name }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    if (comment) {
+      const cres = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+        body: JSON.stringify({ password: verifiedPassword,
+          comments: [{ key: `ETC|${name}`, col: "개발 comment", value: comment }] }),
+      });
+      const cj = await cres.json().catch(() => ({}));
+      if (!cres.ok) throw new Error(cj.error || `comment 저장 실패 (HTTP ${cres.status})`);
+    }
+    showToast(`${name} 추가되었습니다.`);
+    await load(false);
+  } catch (e) {
+    showToast("추가 실패: " + e.message);
+  }
+}
+
 async function removeEtcItem(item) {
   if (!confirm(`"${item}" 항목을 Issue Table 에서 제거할까요?`)) return;
   if (!(await flushPendingComments())) return;
@@ -4291,6 +5352,13 @@ document.getElementById("etcItemList").addEventListener("click", e => {
   if (!btn || btn.disabled) return;
   closeEtcItemModal();
   addEtcItem(btn.dataset.name);
+});
+document.getElementById("etcEngrAdd").addEventListener("click", () => {
+  const name = document.getElementById("etcEngrName").value;
+  const comment = document.getElementById("etcEngrComment").value;
+  if (!String(name || "").trim()) { showToast("Item 명을 입력하세요."); return; }
+  closeEtcItemModal();
+  addEtcEngrItem(name, comment);
 });
 
 // PIN cell auto-advance

@@ -33,18 +33,23 @@ _DIST_CACHE: OrderedDict = OrderedDict()     # (analysis_key, content_hash) -> g
 _REPORT_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_REPORT_CACHE", "8") or 8))
 _REPORT_CACHE: OrderedDict = OrderedDict()   # (akey, chash, manifest_digest, incl_dist) -> report dict
 
+# Commonality 인덱스 캐시 — chip 검색(키스트로크)·백분위(chip 클릭)가 매번 전 item 컬럼을
+# 재변환하던 유일한 무캐시 heavy 경로였다. 메타 리스트 + item별 정렬 배열을 세션 단위로 보관.
+_COMMONALITY_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_COMMONALITY_CACHE", "2") or 2))
+_COMMONALITY_CACHE: OrderedDict = OrderedDict()  # (analysis_key, content_hash) -> build_index 결과
+
 # manifest 인메모리 캐시 — warm 조회(/full·raw_data 등)마다 발생하던 S3 manifest GET 왕복 제거.
 # 단일 프로세스(waitress 1 process) 전제: manifest 를 바꾸는 코드가 전부 이 모듈이라
 # 저장 성공 직후 write-through(_manifest_cache_put) 로 일관성이 유지된다. 값은 canonical
 # JSON bytes 로 보관하고 조회마다 json.loads 로 새 dict 를 만들어 호출자의 in-place 수정이
 # 캐시를 오염시키지 않는다.
 _MANIFEST_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_MANIFEST_CACHE", "16") or 16))
-_MANIFEST_CACHE: OrderedDict = OrderedDict()  # analysis_key -> canonical manifest bytes
+_MANIFEST_CACHE: OrderedDict = OrderedDict()  # analysis_key -> (canonical bytes, sha256 digest)
 
 # analysis_key 를 키 첫 요소로 쓰는 캐시 레지스트리 — 무효화(invalidate_caches, edit_raw_data)가
 # 이 리스트를 순회한다. 파생 캐시를 새로 만들면 여기 append 만 하면 무효화에 자동 편입된다
 # (response_cache.py 가 import 시 자기 캐시를 등록).
-_AKEY_CACHES: list = [_TABLES_CACHE, _DIST_CACHE, _REPORT_CACHE]
+_AKEY_CACHES: list = [_TABLES_CACHE, _DIST_CACHE, _REPORT_CACHE, _COMMONALITY_CACHE]
 
 # 콜드 캐시 동시 진입(stampede) 방지 single-flight 락 — 캐시에 없는 같은 세션을 여러
 # 사용자가 동시에 열면 수 초짜리 CPU-bound 계산이 중복 실행되며 GIL 로 서로 밀어내므로,
@@ -84,7 +89,9 @@ def _keyed_lock(key) -> threading.Lock:
 
 def _manifest_cache_put(analysis_key, manifest: dict):
     if analysis_key:
-        _cache_put(_MANIFEST_CACHE, analysis_key, _canon(manifest), _MANIFEST_CACHE_MAX)
+        blob = _canon(manifest)
+        _cache_put(_MANIFEST_CACHE, analysis_key,
+                   (blob, hashlib.sha256(blob).hexdigest()), _MANIFEST_CACHE_MAX)
 
 
 def invalidate_caches(analysis_key) -> None:
@@ -99,14 +106,25 @@ def invalidate_caches(analysis_key) -> None:
         _MANIFEST_CACHE.pop(analysis_key, None)
 
 
+def _load_manifest_with_digest(analysis_key, upload_root: Path) -> tuple[dict, str]:
+    """(manifest dict, canonical digest) 를 단일 캐시 읽기로 반환.
+
+    digest 는 캐시 엔트리에 동봉돼 있어 warm 요청마다 _canon+sha256 을 재계산하지 않고,
+    manifest 와 digest 가 항상 같은 엔트리에서 나와 편집 경합 시에도 짝이 어긋나지 않는다.
+    """
+    entry = _cache_get(_MANIFEST_CACHE, analysis_key)
+    if entry is None:
+        import storage_gateway
+        manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root=upload_root)
+        blob = _canon(manifest)
+        entry = (blob, hashlib.sha256(blob).hexdigest())
+        _cache_put(_MANIFEST_CACHE, analysis_key, entry, _MANIFEST_CACHE_MAX)
+        return manifest, entry[1]
+    return json.loads(entry[0].decode("utf-8")), entry[1]
+
+
 def _load_manifest_cached(analysis_key, upload_root: Path) -> dict:
-    blob = _cache_get(_MANIFEST_CACHE, analysis_key)
-    if blob is not None:
-        return json.loads(blob.decode("utf-8"))
-    import storage_gateway
-    manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root=upload_root)
-    _manifest_cache_put(analysis_key, manifest)
-    return manifest
+    return _load_manifest_with_digest(analysis_key, upload_root)[0]
 
 
 def _clone_table(t: HoneyformTable) -> HoneyformTable:
@@ -119,6 +137,7 @@ def _clone_table(t: HoneyformTable) -> HoneyformTable:
     return HoneyformTable(
         source=t.source, file_name=t.file_name, df=t.df,
         item_columns=list(t.item_columns),
+        tseq=dict(t.tseq),
         tno=dict(t.tno), step=dict(t.step), units=dict(t.units),
         hilim=dict(t.hilim), lolim=dict(t.lolim), data=t.data)
 
@@ -126,6 +145,47 @@ def _clone_table(t: HoneyformTable) -> HoneyformTable:
 def _canon(obj) -> bytes:
     return json.dumps(obj, sort_keys=True, ensure_ascii=False,
                       separators=(",", ":")).encode("utf-8")
+
+
+def _webreport_colors(opts_raw: str):
+    """세션의 webreport_options JSON → Distribution source 색 팔레트.
+
+    반환 None → 색 미지정(legacy) → 프런트가 기본 팔레트(DIST_PALETTE) 사용.
+    반환 list → 색 hex 리스트. distribution source i 가 리스트[i] 색을 쓴다.
+    """
+    if not opts_raw:
+        return None
+    try:
+        opts = json.loads(opts_raw)
+    except Exception:
+        return None
+    if not isinstance(opts, dict):
+        return None
+    colors = opts.get("colors")
+    return [str(c) for c in colors] if isinstance(colors, list) and colors else None
+
+
+WEB_REPORT_MODES = ("Normal", "Compare", "DUT", "Commonality")
+
+
+def _validate_mode(value) -> str:
+    """manifest.mode 를 허용 모드 중 하나로 정규화. 미지정/불명은 'Normal'."""
+    mode = str(value or "").strip()
+    return mode if mode in WEB_REPORT_MODES else "Normal"
+
+
+def _mode_tables(tables, mode):
+    """세션 모드에 따라 분석용 tables 를 변형한다.
+
+    DUT 모드는 업로드된 단일 source 를 honeyform 의 DUT 컬럼으로 분할해 DUT별 pseudo-source
+    리스트로 만든다 (클라가 아니라 서버에서 분할 — df_honey→honeyform 포맷 변환 회피).
+    Normal/Compare/Commonality 는 tables 를 그대로 쓴다. 반환 tables 는 새 객체(또는 원본
+    클론)이므로 이후 in-place item 필터가 캐시 원본을 오염시키지 않는다.
+    """
+    if mode == "DUT" and len(tables) == 1:
+        from .honeyform import split_table_by_dut
+        return split_table_by_dut(tables[0])
+    return tables
 
 
 def _validate_meta(meta: dict) -> dict:
@@ -164,10 +224,16 @@ def _client_identity(manifest: dict) -> tuple[str, str]:
 def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_root: Path,
                      client_ip: str = "", user_agent: str = "") -> dict:
     meta = _validate_meta(manifest.get("meta") or {})
+    mode = _validate_mode(manifest.get("mode"))
     uploaded_by, client_host = _client_identity(manifest)
     sources_manifest = manifest.get("sources") or []
     selected_items = manifest.get("selected_items") or []
     sheets = manifest.get("sheets") or []
+
+    # Compare 모드는 정확히 2개 파일만 허용 (Honey Compare Mode 관례: after/before 2개).
+    if mode == "Compare" and len(files) != 2:
+        raise ValueError(
+            f"Compare 모드는 입력 파일이 2개일 때만 가능합니다 (현재 {len(files)}개)")
 
     file_hashes = []
     decoded = []
@@ -216,9 +282,21 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         source="web_report",
         uploaded_by=uploaded_by or None,
         client_host=client_host or None,
+        mode=mode,
     )
     report_db.update_session(
         session_id, analysis_key=analysis_key, content_hash=content_hash, status="done")
+
+    # F10 웹리포트 옵션(Distribution source 색)을 세션에 영속화 — 조회 시 동일 재현용.
+    # analysis_key 는 여러 세션이 공유(dedup)할 수 있으나 옵션은 세션 단위이므로 DB 세션행에
+    # 저장한다. {"colors":[...]} 형태이며 조회 시 distribution source 색으로 적용된다.
+    options = manifest.get("options")
+    if isinstance(options, dict) and options:
+        try:
+            report_db.update_session(
+                session_id, webreport_options=json.dumps(options, sort_keys=True))
+        except Exception:
+            pass
 
     try:
         report_db.log_audit(
@@ -246,6 +324,7 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         "session_id": session_id,
         "analysis_key": analysis_key,
         "status": "done",
+        "mode": mode,
         "web_report_url": f"/pe/report/view/{session_id}",
         "sources": [item["source"] for item in decoded],
         "item_count": len({str(v) for v in selected_items if str(v)}),
@@ -329,9 +408,23 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     """
     session, tables, manifest = _load_tables(
         session_id, report_db=report_db, upload_root=upload_root, session=session)
+    # manifest digest 는 캐시 엔트리에 동봉된 값을 재사용 (warm 요청마다 재해싱 방지).
+    # _load_tables 가 write-through 했으므로 사실상 dict 조회 1회 — manifest 도 같은
+    # 엔트리에서 다시 받아 digest 와 짝을 맞춘다.
+    manifest, manifest_digest = _load_manifest_with_digest(
+        session.get("analysis_key"), upload_root)
+
+    # F10 웹리포트 옵션(세션 DB, authoritative): Distribution source 색.
+    # 옵션은 analysis_key 공유(dedup) 세션마다 다를 수 있으므로 report 캐시 키에 포함한다.
+    opts_raw = session.get("webreport_options") or ""
+    dist_colors = _webreport_colors(opts_raw)
+    # 모드는 세션 DB(authoritative). analysis_key 는 여러 세션이 공유(dedup)할 수 있으나
+    # 모드는 세션 단위이므로 report 캐시 키에 포함한다.
+    mode = _validate_mode(session.get("mode"))
+    tables = _mode_tables(tables, mode)
 
     cache_key = (session.get("analysis_key"), str(session.get("content_hash") or ""),
-                 hashlib.sha256(_canon(manifest)).hexdigest())
+                 manifest_digest, opts_raw, mode)
     report = _cache_get(_REPORT_CACHE, cache_key)
     if report is None:
         with _keyed_lock(("report",) + cache_key):
@@ -345,6 +438,8 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                     issue_comments=manifest.get("issue_comments") or {},
                     product_type=session.get("product_type", ""),
                     product=session.get("product", ""),
+                    mode=mode,
+                    dist_colors=dist_colors,
                 )
                 _cache_put(_REPORT_CACHE, cache_key, report, _REPORT_CACHE_MAX)
     public = dict(session)
@@ -361,7 +456,8 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path) -> dict:
     """
     from .tabs.distribution import build_distribution_compact
 
-    _, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
     selected = {str(v) for v in (manifest.get("selected_items") or []) if str(v)}
     if selected:
         for table in tables:
@@ -384,7 +480,9 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> b
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    cache_key = (analysis_key, str(session.get("content_hash") or ""))
+    # DUT 모드는 같은 analysis_key 라도 분할된 ECDF 를 내므로 mode 를 키에 포함한다.
+    cache_key = (analysis_key, str(session.get("content_hash") or ""),
+                 _validate_mode(session.get("mode")))
     blob = _cache_get(_DIST_CACHE, cache_key)
     if blob is not None:
         return blob
@@ -421,8 +519,49 @@ def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path)
     """
     from .tabs.distribution import scatter_item as _scatter_item
 
-    _, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    session, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
     return _scatter_item(tables, subject)
+
+
+def _commonality_index(session: dict, tables):
+    """Commonality 인덱스(메타 리스트 + item별 정렬 배열)를 세션 단위로 캐시해 반환.
+
+    키는 tables 캐시와 동일한 (analysis_key, content_hash) — raw_data 편집 시 content_hash
+    변경으로 자연 무효화되고, _AKEY_CACHES 등록으로 세션 삭제 시에도 정리된다.
+    콜드 미스(전 item 정렬, 수 초 CPU)는 single-flight 락으로 중복 계산을 막는다.
+    """
+    from .tabs.commonality import build_index
+
+    cache_key = (session.get("analysis_key"), str(session.get("content_hash") or ""))
+    idx = _cache_get(_COMMONALITY_CACHE, cache_key)
+    if idx is None:
+        with _keyed_lock(("commonality",) + cache_key):
+            idx = _cache_get(_COMMONALITY_CACHE, cache_key)
+            if idx is None:
+                idx = build_index(tables)
+                _cache_put(_COMMONALITY_CACHE, cache_key, idx, _COMMONALITY_CACHE_MAX)
+    return idx
+
+
+def commonality_chips(session_id: str, *, report_db, upload_root: Path,
+                      q: str = "", limit: int = 300) -> dict:
+    """Commonality chip 검색: serial/xpos/ypos/dut 부분일치 후보 목록."""
+    from .tabs.commonality import search_chips
+
+    session, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    return search_chips(tables, q=q, limit=limit,
+                        index=_commonality_index(session, tables))
+
+
+def commonality_chip(session_id: str, *, report_db, upload_root: Path,
+                     serial: str = "", xpos: str = "", ypos: str = "", source: str = "") -> dict:
+    """선택 chip 의 항목별 값 + 누적%(ECDF 위치) + wafer 좌표. 못 찾으면 KeyError."""
+    from .tabs.commonality import chip_percentiles
+
+    session, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    return chip_percentiles(tables, serial=serial, xpos=xpos, ypos=ypos, source=source,
+                            index=_commonality_index(session, tables))
 
 
 def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
@@ -483,16 +622,14 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
 
     import storage_gateway
 
-    all_items = set()
-    for table in tables:
-        all_items.update(table.item_columns)
-
     etc_items = list(manifest.get("etc_items") or [])
     add = str(add or "").strip()
     remove = str(remove or "").strip()
     if add:
-        if add not in all_items:
-            raise ValueError(f"unknown item: {add}")
+        # 측정항목이 아닌 자유입력 Engr item(Item명 직접 타이핑)도 허용한다 — 이 경우
+        # Bin/TNO/Distribution 은 매칭 데이터가 없어 조회 시 빈 칸으로 채워진다.
+        if len(add) > 120:
+            raise ValueError("item name too long (max 120 chars)")
         if add not in etc_items:
             etc_items.append(add)
     if remove:

@@ -169,6 +169,13 @@
           <property name="maximumSize"><size><width>40</width><height>16777215</height></size></property>
          </widget>
         </item>
+        <item>
+         <widget class="QPushButton" name="btn_csv_clear">
+          <property name="text"><string>Clear</string></property>
+          <property name="toolTip"><string>파일 리스트 전체 비우기</string></property>
+          <property name="maximumSize"><size><width>40</width><height>16777215</height></size></property>
+         </widget>
+        </item>
        </layout>
       </item>
      </layout>
@@ -177,7 +184,7 @@
      <layout class="QHBoxLayout" name="horizontalLayout_analyze">
       <item>
        <widget class="QLabel" name="lbl_outname">
-        <property name="text"><string>Save file name</string></property>
+        <property name="text"><string>Save Name</string></property>
        </widget>
       </item>
       <item>

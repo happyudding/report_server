@@ -25,6 +25,7 @@ class HoneyformTable:
     file_name: str
     df: pd.DataFrame
     item_columns: list[str]
+    tseq: dict[str, object]
     tno: dict[str, object]
     step: dict[str, object]
     units: dict[str, object]
@@ -122,6 +123,61 @@ def read_honeyform_file(path) -> pd.DataFrame:
     return df
 
 
+def _fmt_dut(value) -> str:
+    """DUT 셀 값을 라벨 문자열로 정규화 (float '1.0' → '1', 공백/None → '(blank)')."""
+    if value is None:
+        return "(blank)"
+    try:
+        if pd.isna(value):
+            return "(blank)"
+    except (TypeError, ValueError):
+        pass
+    s = str(value).strip()
+    if not s:
+        return "(blank)"
+    # '1.0' 처럼 소수부가 0 인 실수 표기는 정수로 다듬는다 (DUT/site 는 정수 코드).
+    try:
+        f = float(s)
+        if f.is_integer():
+            return str(int(f))
+    except (TypeError, ValueError):
+        pass
+    return s
+
+
+def split_table_by_dut(table: "HoneyformTable") -> list["HoneyformTable"]:
+    """단일 HoneyformTable 을 DUT 컬럼 값별로 분할 — 각 DUT 가 새 source 가 된다 (DUT 모드).
+
+    meta(tno/step/units/hilim/lolim/item_columns)는 공유하고 data/df 만 필터한다.
+    DUT 종류가 1개 이하면 분할이 무의미하므로 원본을 그대로 담아 반환한다.
+    다운샘플 없음 — 모든 die 를 해당 DUT source 로 보존한다 (규칙 #6).
+    """
+    data = table.data
+    labels = data["DUT"].map(_fmt_dut)
+    uniq = list(dict.fromkeys(labels.tolist()))   # 등장 순서 유지
+    if len(uniq) <= 1:
+        return [table]
+
+    meta_rows = table.df.iloc[:DATA_START_ROW]
+    data_rows = table.df.iloc[DATA_START_ROW:].reset_index(drop=True)
+    out: list[HoneyformTable] = []
+    for label in uniq:
+        mask = (labels == label).to_numpy()
+        sub_data = data[mask].reset_index(drop=True)
+        sub_df = pd.concat([meta_rows, data_rows[mask]], ignore_index=True)
+        out.append(HoneyformTable(
+            source=f"DUT {label}",
+            file_name=f"{table.file_name} · DUT {label}",
+            df=sub_df,
+            item_columns=list(table.item_columns),
+            tseq=dict(table.tseq),
+            tno=dict(table.tno), step=dict(table.step), units=dict(table.units),
+            hilim=dict(table.hilim), lolim=dict(table.lolim),
+            data=sub_data,
+        ))
+    return out
+
+
 def split_honeyform(df: pd.DataFrame, source: str, file_name: str = "") -> HoneyformTable:
     issues = validate_honeyform_df(df)
     if issues:
@@ -135,6 +191,7 @@ def split_honeyform(df: pd.DataFrame, source: str, file_name: str = "") -> Honey
         file_name=file_name or source,
         df=df,
         item_columns=item_cols,
+        tseq={c: df.at[0, c] for c in item_cols},
         tno={c: df.at[1, c] for c in item_cols},
         step={c: df.at[2, c] for c in item_cols},
         units={c: df.at[3, c] for c in item_cols},

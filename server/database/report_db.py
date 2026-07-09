@@ -28,7 +28,9 @@ CREATE TABLE IF NOT EXISTS report_session (
     source        TEXT DEFAULT 'xlsx_upload',
     is_important  INTEGER DEFAULT 0,
     uploaded_by   TEXT,
-    client_host   TEXT
+    client_host   TEXT,
+    webreport_options TEXT,
+    mode          TEXT DEFAULT 'Normal'
 );
 CREATE INDEX IF NOT EXISTS idx_report_session_analysis_key
     ON report_session(analysis_key);
@@ -147,6 +149,11 @@ CREATE TABLE IF NOT EXISTS report_audit_log (
 );
 CREATE INDEX IF NOT EXISTS idx_report_audit_created_at
     ON report_audit_log(created_at);
+-- /pe/admin 대시보드 필터 조회용 (audit 행이 누적돼도 action/session_id 필터가 풀스캔 안 되게)
+CREATE INDEX IF NOT EXISTS idx_report_audit_action
+    ON report_audit_log(action, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_report_audit_session_id
+    ON report_audit_log(session_id);
 """
 
 _SUMMARY_COLUMNS = (
@@ -228,6 +235,7 @@ def _migrate(conn):
             "analysis_key", "content_hash", "error_message",
             "product_type", "process", "product", "revision", "edm_link",
             "dataset_id", "lot_id", "password", "uploaded_by", "client_host",
+            "webreport_options",
         ):
             if col not in sess_cols:
                 conn.execute(f"ALTER TABLE report_session ADD COLUMN {col} TEXT")
@@ -237,6 +245,8 @@ def _migrate(conn):
             conn.execute("ALTER TABLE report_session ADD COLUMN source TEXT DEFAULT 'xlsx_upload'")
         if "is_important" not in sess_cols:
             conn.execute("ALTER TABLE report_session ADD COLUMN is_important INTEGER DEFAULT 0")
+        if "mode" not in sess_cols:
+            conn.execute("ALTER TABLE report_session ADD COLUMN mode TEXT DEFAULT 'Normal'")
 
     if not _table_exists(conn, "report_sheet_data"):
         conn.execute("""
@@ -295,7 +305,7 @@ def _row(row):
 def create_session(session_id, file_name, file_path, product_type=None, dataset_id=None,
                    lot_id=None, password=None, is_debug=0, product=None,
                    process=None, revision=None, edm_link=None, source='xlsx_upload',
-                   uploaded_by=None, client_host=None):
+                   uploaded_by=None, client_host=None, mode='Normal'):
     now = _now()
     file_path_str = str(file_path) if file_path is not None else None
     with get_conn() as conn:
@@ -303,15 +313,16 @@ def create_session(session_id, file_name, file_path, product_type=None, dataset_
             "INSERT INTO report_session "
             "(session_id, file_name, file_path, product_type, process, product, revision, "
             " edm_link, dataset_id, lot_id, password, is_debug, source, uploaded_by, client_host, "
-            " status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            " mode, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
             (session_id, file_name, file_path_str, product_type, process, product, revision,
              edm_link, dataset_id, lot_id, password, is_debug, source, uploaded_by, client_host,
-             now, now),
+             mode or 'Normal', now, now),
         )
 
 
-_SESSION_UPDATABLE = {"analysis_key", "content_hash", "status", "error_message", "file_path", "is_important"}
+_SESSION_UPDATABLE = {"analysis_key", "content_hash", "status", "error_message", "file_path",
+                      "is_important", "webreport_options"}
 
 
 def delete_session(session_id):
@@ -368,8 +379,9 @@ def get_session(session_id):
     return _row(row)
 
 
-def get_history(product_type=None, process=None, product=None, revision=None, lot_id=None,
-                source=None, limit=500):
+def _history_where(product_type=None, process=None, product=None, revision=None,
+                   lot_id=None, source=None):
+    """get_history / count_history 공용 WHERE 절 + 파라미터."""
     conditions = ["s.status IN ('done', 'reused')"]
     params = []
     if product_type:
@@ -390,12 +402,19 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
     if source:
         conditions.append("s.source = ?")
         params.append(source)
-    where = " AND ".join(conditions)
-    params.append(limit)
+    return " AND ".join(conditions), params
+
+
+def get_history(product_type=None, process=None, product=None, revision=None, lot_id=None,
+                source=None, limit=500, offset=0):
+    where, params = _history_where(product_type, process, product, revision, lot_id, source)
+    params.extend([limit, offset])
+    # session_id 를 마지막 정렬키로 두어 offset 페이지 간 순서가 안정되게 한다
     sql = f"""
         SELECT s.session_id, s.file_name, s.product_type, s.process, s.product,
                s.revision, s.edm_link, s.lot_id, s.created_at, s.status, s.dataset_id,
                s.is_debug, s.source, s.uploaded_by, s.client_host,
+               COALESCE(s.mode, 'Normal') AS mode,
                COALESCE(s.is_important, 0) AS is_important,
                CASE WHEN s.password IS NOT NULL THEN 1 ELSE 0 END AS has_password,
                COALESCE(SUM(c.file_size), 0) AS total_file_size
@@ -403,12 +422,22 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
         LEFT JOIN report_csv_files c ON c.analysis_key = s.analysis_key
         WHERE {where}
         GROUP BY s.session_id
-        ORDER BY COALESCE(s.is_important, 0) DESC, s.created_at DESC
-        LIMIT ?
+        ORDER BY COALESCE(s.is_important, 0) DESC, s.created_at DESC, s.session_id
+        LIMIT ? OFFSET ?
     """
     with get_conn() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_history(product_type=None, process=None, product=None, revision=None,
+                  lot_id=None, source=None):
+    """get_history 와 동일 필터의 전체 세션 수 (서버 페이지네이션 total 용)."""
+    where, params = _history_where(product_type, process, product, revision, lot_id, source)
+    with get_conn() as conn:
+        row = conn.execute(
+            f"SELECT COUNT(*) FROM report_session s WHERE {where}", params).fetchone()
+    return int(row[0]) if row else 0
 
 
 # ── retention / cleanup ───────────────────────────────────────────────────────
@@ -498,6 +527,18 @@ def get_audit_logs(action=None, session_id=None, q=None, limit=200, offset=0):
     with get_conn() as conn:
         rows = conn.execute(sql, params).fetchall()
     return [dict(r) for r in rows]
+
+
+def purge_audit_logs(cutoff_epoch):
+    """created_at 이 cutoff 이전인 감사 로그 행 삭제 (롤오프). 삭제 행 수 반환.
+
+    report_audit_log 는 세션 삭제 시에도 의도적으로 보존되어 무한 증가하므로,
+    cleanup 스케줄러가 REPORT_AUDIT_RETENTION_DAYS 기준으로 주기 호출한다.
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            "DELETE FROM report_audit_log WHERE created_at < ?", (int(cutoff_epoch),))
+        return cur.rowcount
 
 
 def get_session_by_dataset_id(dataset_id):

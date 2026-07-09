@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 from .common import fmt_type, round_num
-from ..honeyform import DATA_START_ROW, split_honeyform
-
-_META_COLUMNS = ["SERIAL", "SHOT", "DUT", "XPOS", "YPOS", "BIN", "FAILTNO"]
+from ..honeyform import DATA_START_ROW, META_COLUMNS as _META_COLUMNS, split_honeyform
 
 
 def build_raw_data_rows(tables):

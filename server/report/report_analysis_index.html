@@ -11,7 +11,7 @@ body {
   color: #222;
 }
 .page-header {
-  margin: 0 -20px 16px; padding: 16px 20px;
+  margin: 0 -20px 16px; padding: 11px 20px;
   background: #000; color: #fff;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
@@ -26,16 +26,16 @@ body {
 .top-bar {
   display: flex; align-items: center; gap: 12px;
   background: #fff; border-radius: 10px; padding: 16px 20px;
-  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 16px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 8px;
   flex-wrap: wrap;
 }
 .pt-btn {
-  flex: 0 0 100px; height: 40px; border: 2px solid #d0d5dd;
+  flex: 0 0 132px; height: 40px; border: 2px solid #d0d5dd;
   border-radius: 8px; background: #fff; cursor: pointer;
-  font-size: 16px; font-weight: 800; color: #555;
+  font-size: 18px; font-weight: 800; color: #555;
   transition: all .15s;
 }
-.pt-btn[data-pt="SECURITY"] { font-size: 13px; }
+.pt-btn[data-pt="SECURITY"] { font-size: 15px; }
 .pt-btn:hover { border-color: #4a90e2; color: #4a90e2; background: #f0f6ff; }
 .pt-btn.active {
   border-color: #4a90e2; background: #4a90e2; color: #fff;
@@ -51,6 +51,15 @@ body {
 .pt-badge.SECURITY { background: #9333ea; }
 .pt-badge.TCON { background: #0d9488; }
 .pt-badge.default { background: #64748b; }
+.mode-badge {
+  display: inline-block; padding: 3px 10px; border-radius: 4px;
+  font-size: 12px; font-weight: 700; white-space: nowrap;
+}
+.mode-badge.Normal { background: #e2e8f0; color: #334155; }
+.mode-badge.Compare { background: #fde68a; color: #92400e; }
+.mode-badge.DUT { background: #bfdbfe; color: #1e40af; }
+.mode-badge.Commonality { background: #ddd6fe; color: #5b21b6; }
+.mode-badge.none { background: transparent; color: #94a3b8; font-weight: 400; }
 .star-important { color: #f59e0b; font-size: 15px; margin-right: 5px; }
 .spacer { flex: 1; }
 
@@ -70,7 +79,7 @@ body {
 
 .filter-card {
   background: #fff; border-radius: 10px; padding: 16px 20px;
-  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 16px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 8px;
 }
 .filter-grid {
   display: grid; grid-template-columns: 1fr 1fr 2fr auto; gap: 12px;
@@ -256,6 +265,7 @@ tr.result-row:hover { background: #f5f8ff; }
     <thead>
       <tr>
         <th>Product Type</th>
+        <th>분석 모드</th>
         <th>Product</th>
         <th>Revision</th>
         <th>Process</th>
@@ -267,7 +277,7 @@ tr.result-row:hover { background: #f5f8ff; }
       </tr>
     </thead>
     <tbody id="resultsTbody">
-      <tr class="empty-row"><td colspan="9">데이터를 불러오는 중...</td></tr>
+      <tr class="empty-row"><td colspan="10">데이터를 불러오는 중...</td></tr>
     </tbody>
   </table>
   <div class="pager" id="pager"></div>
@@ -315,6 +325,14 @@ function productTypeBadge(pt) {
   const value = String(pt || "").trim();
   const cls = ["MDDI", "PDDI", "PMIC", "SECURITY", "TCON"].includes(value) ? value : "default";
   return `<span class="pt-badge ${cls}">${esc(value || "-")}</span>`;
+}
+
+// 분석 모드 배지 — web_report 세션에만 의미가 있고, 그 외(xlsx 업로드 등)는 '-'.
+function modeBadge(r) {
+  if (String(r.source || "") !== "web_report") return '<span class="mode-badge none">-</span>';
+  const value = String(r.mode || "Normal").trim();
+  const cls = ["Normal", "Compare", "DUT", "Commonality"].includes(value) ? value : "Normal";
+  return `<span class="mode-badge ${cls}">${esc(value)}</span>`;
 }
 
 // HONEY 설치본 다운로드 버튼: /honey/version 으로 라벨/링크 보정 (없으면 비활성).
@@ -439,19 +457,39 @@ function renderSuggestions() {
 }
 
 // ── load history ──
+// 서버 페이지네이션(limit/offset + total)으로 전체 세션을 배치 로드한다.
+// 구 응답(리스트 500건 고정)과 달리 500건 초과 세션도 빠짐없이 조회되며,
+// 클라이언트 검색/제안/페이지는 기존처럼 전체 행 기준으로 동작한다.
 async function loadHistory() {
-  const params = new URLSearchParams();
-  if (state.productType) params.set("product_type", state.productType);
-  const url = "/pe/report/api/history" + (params.toString() ? "?" + params.toString() : "");
+  const base = new URLSearchParams();
+  if (state.productType) base.set("product_type", state.productType);
+  const BATCH = 500;
   try {
-    const res = await fetch(url);
-    const rows = await res.json();
-    _lastRows = rows;
+    let offset = 0, total = Infinity;
+    const all = [];
+    while (offset < total) {
+      const params = new URLSearchParams(base);
+      params.set("limit", BATCH);
+      params.set("offset", offset);
+      const res = await fetch("/pe/report/api/history?" + params.toString());
+      const data = await res.json();
+      const rows = Array.isArray(data) ? data : (data.rows || []);
+      total = Array.isArray(data) ? rows.length : (data.total ?? rows.length);
+      all.push(...rows);
+      offset += BATCH;
+      if (offset === BATCH) {   // 첫 배치는 즉시 표시 (대량 세션에서도 첫 화면 지연 없음)
+        _lastRows = all.slice();
+        _currentPage = 0;
+        renderResults();
+      }
+      if (rows.length < BATCH) break;
+    }
+    _lastRows = all;
     _currentPage = 0;
     renderResults();
   } catch (e) {
     document.getElementById("resultsTbody").innerHTML =
-      `<tr class="empty-row"><td colspan="9">로드 실패: ${esc(e.message)}</td></tr>`;
+      `<tr class="empty-row"><td colspan="10">로드 실패: ${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -469,11 +507,12 @@ function renderResults() {
 
   const tbody = document.getElementById("resultsTbody");
   if (!slice.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">검색 결과가 없습니다.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">검색 결과가 없습니다.</td></tr>`;
   } else {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row" data-sid="${esc(r.session_id)}">
         <td>${r.is_important ? '<span class="star-important" title="중요">★</span>' : ''}${productTypeBadge(r.product_type)}</td>
+        <td>${modeBadge(r)}</td>
         <td>${esc(r.product || '-')}</td>
         <td>${esc(r.revision || '-')}</td>
         <td>${esc(r.process || '-')}</td>

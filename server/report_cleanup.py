@@ -78,17 +78,38 @@ def _cleanup_one(session, dry_run):
     return True
 
 
+def _purge_audit_logs():
+    """감사 로그 롤오프 (REPORT_AUDIT_RETENTION_DAYS 이전 행 삭제). 삭제 행 수 반환.
+
+    세션 cleanup 의 dry-run 과 무관하게 동작한다 — 감사 행 삭제는 산출물 파괴가 아니고,
+    비활성(0 이하)으로 두면 무한 증가하기 때문. 실패해도 세션 정리를 막지 않는다.
+    """
+    days = int(getattr(config, "REPORT_AUDIT_RETENTION_DAYS", 0) or 0)
+    if days <= 0:
+        return 0
+    cutoff = int(time.time()) - days * 86400
+    try:
+        purged = report_db.purge_audit_logs(cutoff)
+        if purged:
+            _log.info("[cleanup] purged %d audit rows older than %d days", purged, days)
+        return purged
+    except Exception:
+        _log.exception("[cleanup] audit purge failed")
+        return 0
+
+
 def run_cleanup(dry_run=None):
-    """만료 세션을 조회해 정리. dry_run 미지정 시 config 기본값 사용.
-    {'scanned','deleted','dry_run'} 요약 반환."""
+    """만료 세션을 조회해 정리 + 감사 로그 롤오프. dry_run 미지정 시 config 기본값 사용.
+    {'scanned','deleted','dry_run','audit_purged'} 요약 반환."""
     if dry_run is None:
         dry_run = config.REPORT_CLEANUP_DRYRUN
+    audit_purged = _purge_audit_logs()
     cutoff = int(time.time()) - int(config.REPORT_RETENTION_DAYS) * 86400
     try:
         expired = report_db.get_expired_sessions(cutoff)
     except Exception:
         _log.exception("[cleanup] get_expired_sessions failed")
-        return {"scanned": 0, "deleted": 0, "dry_run": dry_run}
+        return {"scanned": 0, "deleted": 0, "dry_run": dry_run, "audit_purged": audit_purged}
 
     deleted = 0
     for session in expired:
@@ -97,9 +118,10 @@ def run_cleanup(dry_run=None):
                 deleted += 1
         except Exception:
             _log.exception("[cleanup] session %s failed", session.get("session_id"))
-    _log.info("[cleanup] done: scanned=%d deleted=%d dry_run=%s retention_days=%d",
-              len(expired), deleted, dry_run, config.REPORT_RETENTION_DAYS)
-    return {"scanned": len(expired), "deleted": deleted, "dry_run": dry_run}
+    _log.info("[cleanup] done: scanned=%d deleted=%d dry_run=%s retention_days=%d audit_purged=%d",
+              len(expired), deleted, dry_run, config.REPORT_RETENTION_DAYS, audit_purged)
+    return {"scanned": len(expired), "deleted": deleted, "dry_run": dry_run,
+            "audit_purged": audit_purged}
 
 
 def start_cleanup_scheduler():

@@ -16,7 +16,7 @@ row_key: Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", ETC 행
 """
 from __future__ import annotations
 
-from .common import fmt_type
+from .common import fmt_type, item_meta as _item_meta
 from .yield_tab import build_yield_bin_groups
 
 _CPK_THRESHOLD = 1.33
@@ -39,14 +39,6 @@ def _blank_row(sources):
     for col in _COMMENT_COLS:
         row[col] = ""
     return row
-
-
-def _item_meta(tables):
-    out = {}
-    for table in tables or []:
-        for item in table.item_columns:
-            out.setdefault(item, {"step": table.step.get(item), "tno": table.tno.get(item)})
-    return out
 
 
 def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None):

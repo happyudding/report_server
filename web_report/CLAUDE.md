@@ -18,6 +18,41 @@ XPOS, YPOS, BIN, FAILTNO + 측정 항목 컬럼, 상단 6행은 TSEQ/TNO/STEP/UN
 보여주는 로직을 담당한다. 기존 xlsx 업로드 흐름(`server/upload_xlsx.py`)과는 별개의
 **신규 병행 흐름**이며, 서버 쪽 진입점은 `server/upload_webreport.py` (외부 파일, 여기 밖).
 
+### 분석 모드 (Normal / Compare / DUT / Commonality) — 2026-07 추가
+
+세션마다 **분석 모드**를 가진다. Honey 클라 업로드 시점에 확정(파일 개수로 가용 모드 제한:
+Compare=정확히 2개(서버 ingest 도 2개 아니면 400 거부), DUT/Commonality=1개)되어
+`manifest.mode` 로 전송되고 `report_session.mode`
+컬럼(외부 `report_db.py`)에 저장된다. mode 는 **analysis_key 산출에 불포함**(PIN 과 동일 —
+같은 데이터면 mode 달라도 같은 key), 대신 report/dist/scatter 캐시 키에 포함한다.
+
+- **Normal**: 기존 동작(회귀 없음). payload 에 `"mode":"Normal"` 만 추가.
+- **DUT**: 업로드된 단일 honeyform 을 **서버에서** DUT 컬럼으로 분할(`honeyform.split_table_by_dut`,
+  클라 분할 아님 — df_honey→honeyform 포맷 변환 회피). `service._mode_tables` 가 load/dist/scatter
+  경로에서 tables 를 DUT별 pseudo-source(`DUT <값>`)로 바꿔 기존 multi-source 렌더 재사용.
+- **Compare**: source 2개↑일 때 `tabs/compare.py::build_compare_payload` 가 `report["compare"]`
+  로 통계 delta(cpk_rows pivot)/bin delta/공통·비공통 fail map(좌표 교차) 제공. 프런트
+  `renderCompare`(report_view.html) 가 Compare 탭에 delta 표 + 공통성 map(비공통 fail 을 어느
+  source 에서만 fail 인지 색 구분) + source map 나란히 렌더.
+  **goodlog (2026-07-09, Honey Compare Mode 이식)**: 정확히 2 source 일 때
+  `tabs/compare.py::build_goodlog` 이 테스트 프로그램 diff 를 `compare["goodlog"]` 로 추가 —
+  after=첫째/before=둘째 파일, 항목명·lolimit·hilimit 일치 여부(True/False) + 공통 die
+  (또는 각자 Bin1 최상단 행) reference 값 기준 gap%, difflib 정렬로 한쪽만 있는 항목은 한쪽
+  셀만 채움. 프로그램 완전 동일이면 `identical: true`(프런트 '차이 없음' 배너). 이름 같고
+  limit 만 바뀐 항목은 `limit_change_map` 으로 내려가 프런트 `beforeLimitShapes` 가 모든
+  distribution 차트(갤러리/미니셀/상세 CDF·히스토그램)에 before limit 회색 점선을 덧그림.
+  goodlog 표 렌더는 `goodlogSectionHtml`(report_view.html). 신규 업로드는 클라
+  `_validate_web_mode`(honey_main.py)와 서버 ingest 가 2개만 허용하고, legacy 3-source
+  세션은 goodlog=None 으로 기존 비교 탭만 유지된다.
+- **Commonality**: 1 source. `tabs/commonality.py::search_chips`(serial/xpos/ypos/dut 검색) +
+  `chip_percentiles`(선택 chip 의 항목별 값·누적%(ECDF 위치)·wafer 좌표). 라우트
+  `.../web_report/commonality/chips`·`/chip`(외부 report_routes.py, 읽기 전용). 프런트
+  `renderCommonality` 가 chip 검색·행선택 → wafer 강조 + 항목별 ECDF 를 chip 백분위 기준
+  색 분리 렌더. chip 선택은 view-time(비영속).
+
+프런트 탭 노출: `syncTabVisibility` 가 `webReportMode()` 로 Compare/Commonality 탭을 각 모드에서만
+표시. 상단 `renderMeta` 는 Normal 이 아닐 때 mode 배지 표시.
+
 ## 1. 디렉토리 인덱스
 
 ```
@@ -37,7 +72,8 @@ web_report/
 │                        CPU 사용(동시 ~10명 대비 핵심), comments/etc 는 manifest 해시로,
 │                        raw_data 편집은 content_hash 로 자연 무효화. 업로드 직후 데몬 스레드
 │                        프리웜(_prewarm). 캐시 크기 env: WEB_REPORT_TABLES_CACHE(4)/
-│                        WEB_REPORT_DIST_CACHE(4)/WEB_REPORT_REPORT_CACHE(8)
+│                        WEB_REPORT_DIST_CACHE(4)/WEB_REPORT_REPORT_CACHE(8)/
+│                        WEB_REPORT_COMMONALITY_CACHE(2, chip 검색·백분위용 사전 계산 인덱스)
 ├── response_cache.py    /full·/scatter 응답의 JSON+gzip bytes LRU 캐시 (_FULL_CACHE /
 │                        _SCATTER_CACHE, env WEB_REPORT_FULL_CACHE(8)/WEB_REPORT_SCATTER_CACHE(16)).
 │                        service._AKEY_CACHES 레지스트리에 등록되어 편집·세션삭제 무효화에
@@ -48,9 +84,6 @@ web_report/
 ├── metrics.py           build_report_payload() — tabs/ 각 모듈을 모아 최종 report dict 조립
 │                        (Summary/Raw Data/Yield/CPK/Issue Table/Distribution/
 │                         Trim Analysis/Histogram/Map Analysis/Fail Bin 시트)
-├── html.py              render_report_html() — 세션 상세 페이지 HTML 렌더 (⚠ 아직 어떤
-│                        라우트에서도 호출되지 않음 — 실제 서빙 중인 세션 상세 페이지는
-│                        server/report/report_view.html, 이 파일은 web_report 밖)
 ├── wafer_frame.py       제품별 기준정보(PRODUCT_WAFER_REF: die pitch+wafer 크기) → 고정 map
 │                        프레임 계산 frame_for(). die pitch 입력된 제품만 Map_analysis 가
 │                        틀을 고정(부분 데이터 방지), 없으면 현행(데이터 min/max) 유지
@@ -96,9 +129,9 @@ UI(체크박스 목록 스타일, 표 컬럼 순서/정렬 화살표/테두리, 
 
 - `report_server/CLAUDE.md` §5 의 불변 규칙(원본 xlsx 미저장, `report_` prefix, analysis_key
   산출 방식 등)은 web_report 흐름에도 동일하게 적용된다.
-- `html.py::render_report_html` 은 아직 미사용 코드다. 세션 상세 UI를 고칠 때 사용자가
-  "세션 페이지"라고 하면 우선 `server/report/report_view.html` (web_report 밖!) 을
-  의미하는지 확인할 것 — 헷갈리기 쉬운 지점.
+- 세션 상세 UI를 고칠 때 사용자가 "세션 페이지"라고 하면 우선
+  `server/report/report_view.html` (web_report 밖!) 을 의미하는지 확인할 것 — 헷갈리기
+  쉬운 지점. (구 `html.py::render_report_html` 은 미사용 코드라 2026-07-09 삭제됨.)
 - **탭 구현 상태 (2026-07-08 기준)**: Yield / CPK / Issue Table / Map Analysis / Fail Bin 은
   계산·렌더 완료 (CPK 탭 렌더 함수 `renderCpk()` 는 report_view.html 에 추가 — web_report 밖
   파일이라 사용자 승인 후 수정함). Raw Data 는 lazy-load 조회/편집 완료. Distribution 은

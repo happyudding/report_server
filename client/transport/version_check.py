@@ -12,6 +12,7 @@ from pathlib import Path
 import requests
 
 from .config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
+from .retry import get_with_retry
 
 
 class DownloadCancelled(Exception):
@@ -21,7 +22,7 @@ class DownloadCancelled(Exception):
 def fetch_latest(base_url=None) -> dict:
     base = (base_url or SERVER_BASE_URL).rstrip("/")
     url = f"{base}/honey/version"
-    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC)
+    resp = get_with_retry(url, timeout=REQUEST_TIMEOUT_SEC)
     resp.raise_for_status()
     return resp.json()
 

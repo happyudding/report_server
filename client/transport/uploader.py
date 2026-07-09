@@ -5,6 +5,7 @@ import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 
 from .config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
+from .retry import get_with_retry
 
 
 def post_grids(sheet_grids, file_name, product_type, product, lot_id, password,
@@ -105,7 +106,7 @@ def fetch_part_ids(base_url=None):
     """
     base = (base_url or SERVER_BASE_URL).rstrip("/")
     url = f"{base}/pe/report/api/part_ids"
-    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC)
+    resp = get_with_retry(url, timeout=REQUEST_TIMEOUT_SEC)
     if not resp.ok:
         raise RuntimeError(f"part_ids fetch failed: HTTP {resp.status_code}")
     return resp.json().get("part_ids", [])
