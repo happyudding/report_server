@@ -464,7 +464,7 @@ function renderDailyChart(rows) {
   const n = rows.length;
   const maxTotal = Math.max(...rows.map(r => r.upload + r.edit + r.delete), 0);
   if (!n || maxTotal === 0) {
-    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#999" font-size="13">기간 내 기록이 없습니다.</text>`;
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#6f737e" font-size="13">기간 내 기록이 없습니다.</text>`;
     return;
   }
   const yMax = niceMax(maxTotal);
@@ -476,8 +476,8 @@ function renderDailyChart(rows) {
   const ticks = 4;
   for (let i = 0; i <= ticks; i++) {
     const v = yMax * i / ticks, yy = y(v);
-    parts.push(`<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#e1e0d9" stroke-width="1"/>`);
-    parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#898781"
+    parts.push(`<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#2b2e36" stroke-width="1"/>`);
+    parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#6f737e"
                  font-variant-numeric="tabular-nums">${Math.round(v).toLocaleString()}</text>`);
   }
   // 막대 (스택: 업로드 → 수정 → 삭제, 세그먼트 사이 2px 표면 간격)
@@ -500,13 +500,13 @@ function renderDailyChart(rows) {
     // x 라벨 (선택적)
     if (i % labelEvery === 0)
       parts.push(`<text x="${padL + slot * i + slot / 2}" y="${H - 8}" text-anchor="middle"
-                   font-size="10" fill="#898781">${r.date.slice(5)}</text>`);
+                   font-size="10" fill="#6f737e">${r.date.slice(5)}</text>`);
     // 호버 히트 영역 (막대보다 크게)
     parts.push(`<rect class="hit" data-i="${i}" x="${padL + slot * i}" y="${padT}"
                  width="${slot}" height="${plotH}" fill="transparent"/>`);
   });
   // 기준선
-  parts.push(`<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="#c3c2b7" stroke-width="1"/>`);
+  parts.push(`<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="#40444e" stroke-width="1"/>`);
   svg.innerHTML = parts.join("");
 
   const tip = $("chartTip");
@@ -533,7 +533,7 @@ async function loadStats() {
       d.rows.map(r => `<tr><td>${esc(r.date)}</td><td class="num">${r.upload}</td>
         <td class="num">${r.edit}</td><td class="num">${r.delete}</td></tr>`).join("") + "</tbody>";
   } catch (e) {
-    $("dailyChart").innerHTML = `<text x="450" y="120" text-anchor="middle" fill="#b91c1c" font-size="13">조회 실패: ${esc(e)}</text>`;
+    $("dailyChart").innerHTML = `<text x="450" y="120" text-anchor="middle" fill="#f87171" font-size="13">조회 실패: ${esc(e)}</text>`;
   }
   try {
     const u = await getJSON("api/stats/users?days=" + days);
@@ -557,7 +557,7 @@ async function loadStats() {
         <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
         <td>${esc(r.lot_id || "-")}</td>
         <td>${esc(r.file_name || r.changed_fields || r.session_id || "-")}</td>
-        <td>${esc(r.client_user || "-")}${r.client_host ? ` <span style="color:#999;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
+        <td>${esc(r.client_user || "-")}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
         <td class="mono">${esc(r.client_ip || "-")}</td></tr>`;
     }).join("") : `<tr class="empty-row"><td colspan="8">기록이 없습니다.</td></tr>`;
   } catch (e) {
@@ -607,7 +607,7 @@ async function loadSessions() {
         <td><span class="badge ${esc(r.status)}">${esc(r.status)}</span>${
             r.error_message ? `<span class="badge-fail" title="${esc(r.error_message)}">!</span>` : ""}</td>
         <td>${esc(r.mode)}</td>
-        <td>${esc(r.uploaded_by || "-")}${r.client_host ? ` <span style="color:#999;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
+        <td>${esc(r.uploaded_by || "-")}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
         <td>${r.has_password
               ? `<span class="badge gray">PIN</span> <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="pin" data-sid="${esc(r.session_id)}">변경/해제</button>`
               : `<button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="pin" data-sid="${esc(r.session_id)}">PIN 설정</button>`}</td>
@@ -863,8 +863,8 @@ async function loadAudit() {
       <td><span class="badge ${esc(act)}">${esc(ACTION_LABEL[act] || act)}</span>${failBadge}</td>
       <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
       <td>${esc(r.lot_id || "-")}</td><td>${esc(r.file_name || "-")}</td>
-      <td style="font-size:12px;color:#555">${esc(r.changed_fields || "-")}</td>
-      <td>${esc(r.client_user || "-")}${r.client_host ? ` <span style="color:#999;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
+      <td style="font-size:12px;color:#a4a8b3">${esc(r.changed_fields || "-")}</td>
+      <td>${esc(r.client_user || "-")}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
       <td class="mono">${esc(r.client_ip || "-")}</td>
       <td class="mono">${esc(r.session_id || "-")}</td></tr>`;
   }).join("") : `<tr class="empty-row"><td colspan="10">기록이 없습니다.</td></tr>`;

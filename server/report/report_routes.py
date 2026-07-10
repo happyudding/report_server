@@ -6,6 +6,7 @@ import secrets
 import sqlite3
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 from flask import Response, abort, jsonify, make_response, request, send_file
 from flask import session as flask_session
@@ -95,15 +96,32 @@ def _password_ok(session, password):
     return (password or "").strip() == stored
 
 
+_HONEY_UA_RE = re.compile(r"HoneyUser/(\S+)")
+
+
+def _current_user():
+    """현재 요청의 PC 사용자 ID — Honey 내장 브라우저가 User-Agent 에 넣은
+    `HoneyUser/<percent-encoded-계정>` 토큰을 파싱한다(검색결과 페이지 JS 와 동일 규칙:
+    decode → trim → lower). Honey 밖 일반 브라우저는 토큰이 없어 "" 반환 → 읽기전용.
+    (구 ID/PW 로그인 폐지 — flask_session["user_id"] 대신 이 값을 신원으로 쓴다.)"""
+    m = _HONEY_UA_RE.search(str(request.user_agent) or "")
+    if not m:
+        return ""
+    try:
+        return unquote(m.group(1)).strip().lower()
+    except Exception:
+        return ""
+
+
 def _uploader_guard(session):
-    """세션 변경(편집/삭제/중요표시) 가드 — 로그인 필수 + 업로더 일치.
+    """세션 변경(편집/삭제/중요표시) 가드 — PC 사용자(HoneyUser) == 업로더.
 
     uploaded_by 는 Honey 가 보낸 'DOMAIN\\user' 또는 'user' 형식이라 뒷부분만 비교.
-    업로더 기록이 없는 legacy 세션은 로그인만 하면 허용.
-    통과하면 None, 거부면 (json, status) 튜플을 반환한다."""
-    uid = flask_session.get("user_id") or ""
+    업로더 기록이 없는 legacy 세션은 신원만 있으면 허용.
+    Honey 밖(신원 없음)은 읽기전용(401). 통과하면 None, 거부면 (json, status)."""
+    uid = _current_user()
     if not uid:
-        return jsonify({"error": "로그인이 필요합니다."}), 401
+        return jsonify({"error": "Honey 를 통해 접속한 사용자만 수정/삭제할 수 있습니다 (읽기 전용)."}), 401
     ub = str((session or {}).get("uploaded_by") or "")
     if ub and ub.split("\\")[-1].strip().lower() != uid:
         return jsonify({"error": "업로더만 수정/삭제할 수 있습니다."}), 403
@@ -758,17 +776,19 @@ def set_session_private(session_id):
 
 @report_bp.post("/session/<session_id>/verify_password")
 def verify_session_password(session_id):
-    """수정/삭제 진입 전 PIN 확인. 비밀번호 미설정 세션은 ok=True."""
+    """수정/삭제 진입 전 권한 확인 — PC 사용자(HoneyUser)==업로더면 ok.
+    (구 PIN 방식 폐지: 비밀번호는 더 이상 확인하지 않는다. 응답 형태는 하위호환 유지.)"""
     _require_csrf()
     _validate_session_id(session_id)
-    body = request.get_json(force=True, silent=True) or {}
-    password = (body.get("password") or "").strip()
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
-    if not _password_ok(session, password):
-        return jsonify({"ok": False, "error": "비밀번호가 일치하지 않습니다."}), 403
-    return jsonify({"ok": True, "has_password": bool(session.get("password"))})
+    denied = _uploader_guard(session)
+    if denied is not None:
+        resp, status = denied
+        payload = resp.get_json() or {}
+        return jsonify({"ok": False, "error": payload.get("error", "수정 권한이 없습니다.")}), status
+    return jsonify({"ok": True, "has_password": False})
 
 
 @report_bp.patch("/session/<session_id>/content")
@@ -897,9 +917,10 @@ def history():
     return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset})
 
 
-# ── 사용자 인증 (ID/PW, report_user 테이블) ───────────────────────────────────
-# 로그인 상태는 Flask 서명 쿠키 세션(flask_session["user_id"])으로 유지한다.
-# 계정은 첫 로그인 시 자동 생성 — 이후 같은 ID 는 PW 가 일치해야 로그인된다.
+# ── 사용자 인증 [폐지됨] ──────────────────────────────────────────────────────
+# ID/PW 로그인은 폐지되고 신원은 Honey 내장 브라우저의 User-Agent(HoneyUser/<계정>)
+# 로 자동 식별한다(_current_user). 아래 _USER_ID_RE/_PIN_RE/_DEFAULT_PIN/
+# _normalize_user_id 와 report_user 테이블 CRUD 는 현재 미사용 — 되돌리기 쉽도록 보존만.
 
 _USER_ID_RE = re.compile(r"^[^\s\\/]{1,64}$")
 _PIN_RE = re.compile(r"^\d{4}$")   # 비밀번호는 숫자 4자리
@@ -914,64 +935,39 @@ def _normalize_user_id(value):
     return uid
 
 
+# [폐지] ID/PW 로그인은 더 이상 사용하지 않는다. 신원은 Honey 내장 브라우저의
+# User-Agent(HoneyUser/<계정>) 로 매 요청 자동 식별한다(_current_user). 아래 라우트는
+# 구 프런트 호환용으로 남겨두되 비밀번호를 확인하지 않는다. report_user 테이블은 보존(미사용).
 @report_bp.post("/api/auth/login")
 def auth_login():
-    """ID + 숫자 4자리 로그인. 신규 ID 는 초기 비밀번호 0000 으로 계정을 만들고
-    같은 규칙으로 검증한다 — 즉 첫 로그인은 반드시 0000 이어야 한다."""
+    """[폐지] 비밀번호 확인 없이 현재 UA 사용자만 돌려준다(호환용)."""
     _require_csrf()
-    body = request.get_json(force=True, silent=True) or {}
-    uid = _normalize_user_id(body.get("user_id"))
-    password = (body.get("password") or "").strip()
-    if not _PIN_RE.match(password):
-        return jsonify({"error": "비밀번호는 숫자 4자리입니다."}), 400
-    user = report_db.get_user(uid)
-    if user is None:
-        report_db.create_user(uid, generate_password_hash(_DEFAULT_PIN))
-        user = report_db.get_user(uid)
-    if not check_password_hash(user["password_hash"], password):
-        return jsonify({"error": "비밀번호가 일치하지 않습니다. (초기 비밀번호는 0000)"}), 403
-    flask_session.permanent = True   # 기본 31일 유지
-    flask_session["user_id"] = uid
-    # 초기 비밀번호로 로그인했으면 프런트가 변경을 안내하도록 플래그를 준다.
-    return jsonify({"ok": True, "user_id": uid, "is_default_password": password == _DEFAULT_PIN})
+    return jsonify({"ok": True, "user_id": _current_user(), "is_default_password": False})
 
 
 @report_bp.post("/api/auth/change_password")
 def auth_change_password():
-    """로그인한 본인의 비밀번호 변경 — 현재 비밀번호 확인 후 새 4자리로 교체."""
+    """[폐지] 비밀번호 로그인 폐지."""
     _require_csrf()
-    uid = flask_session.get("user_id")
-    if not uid:
-        return jsonify({"error": "로그인이 필요합니다."}), 401
-    body = request.get_json(force=True, silent=True) or {}
-    current = (body.get("current_password") or "").strip()
-    new = (body.get("new_password") or "").strip()
-    if not _PIN_RE.match(new):
-        return jsonify({"error": "새 비밀번호는 숫자 4자리입니다."}), 400
-    user = report_db.get_user(uid)
-    if not user or not check_password_hash(user["password_hash"], current):
-        return jsonify({"error": "현재 비밀번호가 일치하지 않습니다."}), 403
-    report_db.update_user_password(uid, generate_password_hash(new))
-    return jsonify({"ok": True})
+    return jsonify({"error": "비밀번호 로그인은 폐지되었습니다 (PC 계정으로 자동 식별)."}), 410
 
 
 @report_bp.post("/api/auth/logout")
 def auth_logout():
     _require_csrf()
-    flask_session.pop("user_id", None)
     return jsonify({"ok": True})
 
 
 @report_bp.get("/api/auth/me")
 def auth_me():
-    return jsonify({"user_id": flask_session.get("user_id")})
+    return jsonify({"user_id": _current_user()})
 
 
 # ── user favorites (검색결과 즐겨찾기, 로그인 계정 별) ────────────────────────
 
 @report_bp.get("/api/favorites")
 def get_favorites():
-    uid = flask_session.get("user_id")
+    uid = _current_user()
     if not uid:
         return jsonify({"user_id": None, "favorites": []})
     return jsonify({"user_id": uid, "favorites": report_db.get_user_favorites(uid)})
@@ -980,9 +976,9 @@ def get_favorites():
 @report_bp.post("/api/favorites")
 def set_favorite():
     _require_csrf()
-    uid = flask_session.get("user_id")
+    uid = _current_user()
     if not uid:
-        return jsonify({"error": "로그인이 필요합니다."}), 401
+        return jsonify({"error": "Honey 를 통해 접속해야 즐겨찾기를 사용할 수 있습니다."}), 401
     body = request.get_json(force=True, silent=True) or {}
     session_id = body.get("session_id", "")
     _validate_session_id(session_id)

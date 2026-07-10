@@ -23,10 +23,10 @@ body {
   background: #000; color: #fff;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
-.page-title { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: 0; }
+.page-title { margin: 0; font-size: 27px; font-weight: 800; letter-spacing: 0; }
 .back-main-btn {
   border: 0; background: transparent; color: #fff;
-  font-size: 13px; font-weight: 700; cursor: pointer;
+  font-size: 20px; font-weight: 700; cursor: pointer;
   padding: 8px 0; white-space: nowrap;
 }
 .back-main-btn:hover { text-decoration: underline; }
@@ -38,12 +38,12 @@ body {
   flex-wrap: wrap;
 }
 .pt-btn {
-  flex: 0 0 132px; height: 34px; border: 2px solid #d0d5dd;
+  flex: 0 0 198px; height: 51px; border: 2px solid #d0d5dd;
   border-radius: 8px; background: #fff; cursor: pointer;
-  font-size: 18px; font-weight: 800; color: #555;
+  font-size: 27px; font-weight: 800; color: #555;
   transition: all .15s;
 }
-.pt-btn[data-pt="SECURITY"] { font-size: 15px; }
+.pt-btn[data-pt="SECURITY"] { font-size: 22px; }
 .pt-btn:hover { border-color: #4a90e2; color: #4a90e2; background: #f0f6ff; }
 .pt-btn.active {
   border-color: #4a90e2; background: #4a90e2; color: #fff;
@@ -51,7 +51,7 @@ body {
 }
 .pt-badge {
   display: inline-block; padding: 2px 9px; border-radius: 4px;
-  font-size: 12px; font-weight: 700; color: #fff; white-space: nowrap;
+  font-size: 18px; font-weight: 700; color: #fff; white-space: nowrap;
 }
 .pt-badge.MDDI { background: #4a90e2; }
 .pt-badge.PDDI { background: #1e3a8a; }
@@ -60,18 +60,19 @@ body {
 .pt-badge.TCON { background: #0d9488; }
 .pt-badge.default { background: #64748b; }
 .mode-badge {
-  display: inline-block; padding: 2px 8px; border-radius: 4px;
-  font-size: 12px; font-weight: 700; white-space: nowrap;
+  display: inline-block; max-width: 100%; padding: 2px 8px; border-radius: 4px;
+  font-size: 18px; font-weight: 700; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; vertical-align: bottom;
 }
 .mode-badge.Normal { background: #e2e8f0; color: #334155; }
 .mode-badge.Compare { background: #fde68a; color: #92400e; }
 .mode-badge.DUT { background: #bfdbfe; color: #1e40af; }
 .mode-badge.Commonality { background: #ddd6fe; color: #5b21b6; }
 .mode-badge.none { background: transparent; color: #94a3b8; font-weight: 400; }
-.star-important { color: #f59e0b; font-size: 14px; margin-right: 4px; }
+.star-important { color: #f59e0b; font-size: 21px; margin-right: 4px; }
 /* 사용자별 즐겨찾기 별표 — 전역 '중요'(amber)와 구분되게 파란색 */
 .star-fav {
-  color: #cbd5e1; font-size: 14px; margin-right: 4px;
+  color: #cbd5e1; font-size: 21px; margin-right: 4px;
   cursor: pointer; user-select: none;
 }
 .star-fav.on { color: #2563eb; }
@@ -80,7 +81,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .user-chip {
   flex: 0 0 auto; height: 34px; padding: 0 12px;
   border: 1px solid #d0d5dd; border-radius: 8px; background: #fff;
-  font-size: 12px; font-weight: 600; color: #475569; cursor: pointer;
+  font-size: 18px; font-weight: 600; color: #475569; cursor: pointer;
   white-space: nowrap;
 }
 .user-chip:hover { border-color: #4a90e2; color: #4a90e2; }
@@ -90,7 +91,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   flex: 0 0 auto; height: 34px; padding: 0 16px;
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: 8px; border: 1px solid #16a34a;
-  background: #16a34a; color: #fff; font-size: 13px; font-weight: 600;
+  background: #16a34a; color: #fff; font-size: 20px; font-weight: 600;
   text-decoration: none; cursor: pointer; transition: all .15s;
   white-space: nowrap;
 }
@@ -110,10 +111,10 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 }
 .filter-group { display: flex; flex-direction: column; gap: 6px; }
 .filter-group.search-group { position: relative; }
-.filter-label { font-size: 12px; color: #666; font-weight: 600; }
+.filter-label { font-size: 18px; color: #666; font-weight: 600; }
 .filter-input, .sel-input {
   height: 36px; padding: 0 10px; border: 1px solid #d0d5dd;
-  border-radius: 6px; font-size: 13px; outline: none;
+  border-radius: 6px; font-size: 20px; outline: none;
   background: #fff;
 }
 .filter-input:focus, .sel-input:focus { border-color: #4a90e2; }
@@ -125,7 +126,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 }
 .suggest-box.show { display: block; }
 .suggest-item {
-  padding: 7px 10px; cursor: pointer; font-size: 12px; color: #333;
+  padding: 7px 10px; cursor: pointer; font-size: 18px; color: #333;
   border-bottom: 1px solid #f1f3f5;
 }
 .suggest-item:last-child { border-bottom: none; }
@@ -135,7 +136,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .filter-actions { display: flex; gap: 8px; align-items: end; }
 .btn-action {
   height: 36px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
-  background: #fff; color: #333; font-size: 13px; cursor: pointer; font-weight: 500;
+  background: #fff; color: #333; font-size: 20px; cursor: pointer; font-weight: 500;
 }
 .btn-action.primary { background: #4a90e2; color: #fff; border-color: #4a90e2; }
 .btn-action.primary:hover { background: #357abd; }
@@ -145,21 +146,26 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   box-shadow: 0 1px 6px rgba(0,0,0,.07);
 }
 .results-header {
-  font-size: 14px; font-weight: 600; color: #333;
+  font-size: 21px; font-weight: 600; color: #333;
   display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
 }
-.results-count { font-size: 12px; color: #888; font-weight: 400; }
+.results-count { font-size: 18px; color: #888; font-weight: 400; }
 
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { padding: 3px 8px; border-bottom: 1px solid #eef0f3; text-align: left; }
-th { background: #fafbfc; font-weight: 600; color: #555; font-size: 12px; }
-tr.empty-row td { text-align: center; color: #999; padding: 30px; }
+table { width: 100%; border-collapse: collapse; font-size: 20px; table-layout: fixed; }
+th, td {
+  padding: 8px 8px; border-bottom: 1px solid #eef0f3; text-align: left;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+th { background: #fafbfc; font-weight: 600; color: #555; font-size: 18px; }
+tr.empty-row td { text-align: center; color: #999; padding: 30px; overflow: visible; white-space: normal; }
+/* 액션칸(자물쇠/삭제)은 버튼이 잘리면 안 되고, 업로드날짜와 시각적 간격을 더 벌린다 */
+th.act-cell, td.act-cell { overflow: visible; white-space: nowrap; padding-left: 20px; }
 tr.result-row { cursor: pointer; transition: background .1s; }
 tr.result-row:hover { background: #f5f8ff; }
 
 .btn-row { display: inline-flex; gap: 6px; }
 .btn-mini {
-  padding: 2px 8px; font-size: 12px; border-radius: 4px;
+  padding: 2px 8px; font-size: 18px; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-mini.edit { color: #1f4d8c; border-color: #bcd3f0; }
@@ -167,30 +173,29 @@ tr.result-row:hover { background: #f5f8ff; }
 .btn-mini.danger { color: #dc2626; border-color: #fca5a5; }
 .btn-mini.danger:hover { background: #fef2f2; }
 
-/* 파일명 셀: 좁게 + 오른쪽 끝(확장자쪽)이 보이도록 앞쪽을 '…' 로 생략.
-   direction:rtl + text-overflow:ellipsis 로 말줄임을 왼쪽(문자열 앞)에 붙인다. */
-td.fname-cell { max-width: 150px; }
+/* 파일명 셀: 오른쪽 끝(확장자쪽)이 보이도록 앞쪽을 '…' 로 생략.
+   direction:rtl + text-overflow:ellipsis 로 말줄임을 왼쪽(문자열 앞)에 붙인다.
+   실제 폭은 colgroup 의 파일명 컬럼(34%)이 결정한다. */
 td.fname-cell .fname-txt {
-  display: block; max-width: 150px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   direction: rtl; text-align: left;
 }
 
 /* 액션칸 아이콘 버튼 (비공개 자물쇠 / 삭제 휴지통) */
 .btn-icon {
-  padding: 2px 6px; font-size: 14px; line-height: 1; border-radius: 4px;
+  padding: 2px 6px; font-size: 21px; line-height: 1; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-icon:hover { background: #f5f8ff; border-color: #4a90e2; }
 .btn-icon.trash:hover { background: #fef2f2; border-color: #fca5a5; }
 .btn-icon.lock.on { border-color: #f0c869; background: #fffbeb; }
-.lock-badge { font-size: 13px; opacity: .7; padding: 0 4px; }
+.lock-badge { font-size: 20px; opacity: .7; padding: 0 4px; }
 
 .pager {
   display: flex; gap: 6px; justify-content: center; margin-top: 14px;
 }
 .pager .pg-btn {
-  min-width: 32px; height: 30px; padding: 0 8px; font-size: 12px;
+  min-width: 32px; height: 30px; padding: 0 8px; font-size: 18px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-radius: 4px;
 }
 .pager .pg-btn.active { background: #4a90e2; color: #fff; border-color: #4a90e2; }
@@ -198,7 +203,7 @@ td.fname-cell .fname-txt {
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
   background: #333; color: #fff; padding: 10px 18px; border-radius: 6px;
-  font-size: 13px; opacity: 0; transition: opacity .2s;
+  font-size: 20px; opacity: 0; transition: opacity .2s;
   pointer-events: none; z-index: 1000;
 }
 .toast.show { opacity: 1; }
@@ -213,11 +218,11 @@ td.fname-cell .fname-txt {
   background: #fff; border-radius: 10px; padding: 24px;
   width: 360px; max-width: 90%;
 }
-.modal-title { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
-.modal-desc { font-size: 13px; color: #666; margin: 0 0 14px; }
+.modal-title { font-size: 24px; font-weight: 600; margin: 0 0 8px; }
+.modal-desc { font-size: 20px; color: #666; margin: 0 0 14px; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
 .modal-btn {
-  padding: 8px 16px; font-size: 13px; border-radius: 6px;
+  padding: 8px 16px; font-size: 20px; border-radius: 6px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .modal-btn.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
@@ -227,7 +232,7 @@ td.fname-cell .fname-txt {
   display: none; align-items: center; justify-content: center; z-index: 9999;
 }
 .load-overlay.show { display: flex; }
-.load-msg { font-size: 13px; color: #475569; }
+.load-msg { font-size: 20px; color: #475569; }
 .load-bar {
   width: 240px; height: 6px; border-radius: 3px; background: #e5e7eb;
   overflow: hidden; margin: 12px auto 0;
@@ -245,7 +250,7 @@ td.fname-cell .fname-txt {
 .theme-toggle {
   flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
   border: 1px solid rgba(255,255,255,.35); background: transparent;
-  font-size: 15px; line-height: 1; padding: 0; cursor: pointer;
+  font-size: 22px; line-height: 1; padding: 0; cursor: pointer;
 }
 .theme-toggle:hover { background: rgba(255,255,255,.15); }
 
@@ -323,8 +328,7 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
   <button class="pt-btn" data-pt="SECURITY">SECURITY</button>
   <button class="pt-btn" data-pt="TCON">TCON</button>
   <div class="spacer"></div>
-  <button class="user-chip" id="userChip">👤 로그인</button>
-  <button class="user-chip" id="pwChangeBtn" style="display:none;">비밀번호 변경</button>
+  <button class="user-chip" id="userChip" title="로그인 시 클릭하면 비밀번호 변경">👤 로그인</button>
   <button class="user-chip" id="logoutBtn" style="display:none;">로그아웃</button>
 </div>
 
@@ -342,7 +346,7 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
     <div class="filter-group search-group">
       <label class="filter-label">검색</label>
       <input type="text" class="filter-input" id="lotIdInput"
-             placeholder="Product / LOT / Revision / Process / 파일명 검색...">
+             placeholder="Product / LOT / Process / 파일명 / 업로더 검색...">
       <div class="suggest-box" id="searchSuggest"></div>
     </div>
     <div class="filter-actions">
@@ -354,22 +358,33 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
 <!-- 결과 -->
 <div class="results-card">
   <div class="results-header">
-    검색결과
     <span class="results-count" id="resultsCount"></span>
   </div>
   <table>
+    <colgroup>
+      <col style="width:8%">
+      <col style="width:4%">
+      <col style="width:10%">
+      <col style="width:4%">
+      <col style="width:6%">
+      <col style="width:8%">
+      <col style="width:34%">
+      <col style="width:9%">
+      <col style="width:10%">
+      <col style="width:7%">
+    </colgroup>
     <thead>
       <tr>
         <th>Product Type</th>
         <th>분석 모드</th>
         <th>Product</th>
-        <th>Revision</th>
+        <th>Rev</th>
         <th>Process</th>
         <th>LOT ID</th>
         <th>파일명</th>
         <th>업로더</th>
         <th>업로드날짜</th>
-        <th></th>
+        <th class="act-cell"></th>
       </tr>
     </thead>
     <tbody id="resultsTbody">
@@ -390,7 +405,7 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
     <input type="password" class="filter-input" id="pwModalInput" inputmode="numeric"
            maxlength="4" autocomplete="off" placeholder="PW (숫자 4자리)"
            style="width:100%; margin-top:8px; letter-spacing:4px;">
-    <p style="font-size:12px; color:#888; margin:8px 0 0;">초기 비밀번호는 <b>0000</b> 입니다. 로그인 후 변경할 수 있습니다.</p>
+    <p style="font-size:18px; color:#888; margin:8px 0 0;">초기 비밀번호는 <b>0000</b> 입니다. 로그인 후 변경할 수 있습니다.</p>
     <div class="modal-actions">
       <button class="modal-btn" id="idModalCancel">취소</button>
       <button class="modal-btn" id="idModalSave"
@@ -433,7 +448,7 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
 </div>
 
 <script>
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 15;
 let _lastRows = [];
 let _currentPage = 0;
 
@@ -523,9 +538,12 @@ let _userId = "";        // 로그인된 ID (서버 쿠키 세션 기준)
 let _favorites = new Set();
 
 function updateUserChip() {
-  document.getElementById("userChip").textContent = _userId ? `👤 ${_userId}` : "👤 로그인";
-  document.getElementById("logoutBtn").style.display = _userId ? "" : "none";
-  document.getElementById("pwChangeBtn").style.display = _userId ? "" : "none";
+  const chip = document.getElementById("userChip");
+  // ID/PW 로그인 폐지 — PC 계정(Honey UA)으로 자동 식별. 신원 없으면(직접 웹) 읽기전용.
+  chip.textContent = _userId ? `👤 ${_userId}` : "👤 읽기전용";
+  chip.title = _userId ? `PC 계정으로 자동 로그인됨 (${_userId})`
+                       : "Honey 를 통해 접속하면 PC 계정으로 자동 로그인됩니다";
+  document.getElementById("logoutBtn").style.display = "none";
 }
 
 async function loadAuth() {
@@ -613,9 +631,11 @@ async function doChangePassword() {
   });
 });
 
-document.getElementById("userChip").addEventListener("click", openIdModal);
+document.getElementById("userChip").addEventListener("click", () => {
+  showToast(_userId ? `PC 계정 '${_userId}' 으로 자동 로그인되어 있습니다.`
+                    : "Honey 를 통해 접속하면 PC 계정으로 자동 로그인됩니다.");
+});
 document.getElementById("logoutBtn").addEventListener("click", doLogout);
-document.getElementById("pwChangeBtn").addEventListener("click", openPwChangeModal);
 document.getElementById("idModalCancel").addEventListener("click", () => {
   document.getElementById("idModal").classList.remove("show");
 });
@@ -645,7 +665,7 @@ async function loadFavorites() {
 }
 
 async function toggleFavorite(sid) {
-  if (!_userId) { openIdModal(); return; }
+  if (!_userId) { showToast("Honey 를 통해 접속하면 즐겨찾기를 사용할 수 있습니다."); return; }
   const fav = !_favorites.has(sid);
   if (fav) _favorites.add(sid); else _favorites.delete(sid);   // 낙관적 반영
   renderResults();
@@ -838,7 +858,7 @@ function renderResults() {
         <td class="fname-cell" title="${esc(r.file_name || '')}"><span class="fname-txt">${esc(r.file_name || '-')}</span></td>
         <td title="${esc(r.client_host || '')}">${esc(r.uploaded_by || '-')}</td>
         <td>${fmtDate(r.created_at)}</td>
-        <td>
+        <td class="act-cell">
           <div class="btn-row">
             ${canModify(r)
               ? `<button class="btn-icon lock ${r.is_private ? 'on' : ''}" data-act="private" data-sid="${esc(r.session_id)}" title="${r.is_private ? '비공개 (클릭 시 공개로)' : '공개 (클릭 시 비공개로)'}">${r.is_private ? '🔒' : '🔓'}</button>`
@@ -954,7 +974,7 @@ updateUserChip();
   updateUserChip();
   await loadFavorites();          // 첫 렌더부터 즐겨찾기 정렬이 반영되도록 먼저 로드
   await loadHistory();
-  if (!_userId) openIdModal();    // 미로그인 시 1회 안내 (취소로 건너뛸 수 있음)
+  // 로그인 모달 폐지 — 신원 없으면 그냥 읽기전용(userChip 이 안내).
 })();
 </script>
 </body>

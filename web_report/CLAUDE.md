@@ -95,6 +95,13 @@ web_report/
 ├── wafer_frame.py       제품별 기준정보(PRODUCT_WAFER_REF: die pitch+wafer 크기) → 고정 map
 │                        프레임 계산 frame_for(). die pitch 입력된 제품만 Map_analysis 가
 │                        틀을 고정(부분 데이터 방지), 없으면 현행(데이터 min/max) 유지
+├── trim_match.py        Trim Analysis 항목명 매칭 순수 모듈 (Flask/pandas 무의존 — 재사용용).
+│                        product_type 별 규칙셋 2종: PMIC4(PMIC/SECURITY/TCON, 기본) =
+│                        정규화→토큰→INIT/CODE/TRIM/VERIFY 판정→stem→orphan 병합,
+│                        TV2(MDDI/PDDI) = 원본 이름의 마커(fuse_/OTP_→무조건 TRIM)/접미사
+│                        (_p1/_trim/_pre→TRIM, _p2/_post→VERIFY) 판정, MDDI 는 제외어
+│                        (CPU80/SCAN/RAM/IOFF). 수동 재배치(manifest.trim_overrides)는
+│                        build_groups 가 자동 결과 위에 우선 적용
 └── tabs/                시트별 row 빌더 (metrics.py 가 호출)
     ├── common.py        json_safe/fmt_type/num/round_num, bin_sort_key(BIN 정렬 공용),
     │                     to_coord((XPOS,YPOS)→int 좌표 정규화 — compare/commonality 공용)
@@ -108,7 +115,9 @@ web_report/
     ├── issue_table.py    build_issue_table_rows (Yield 파생 행 + CPK<1.33(subject 별 worst-case) 파생 행 +
     │                     ETC). PTE/개발 comment 는 manifest.issue_comments 에서 row_key 로 채움
     ├── distribution.py   build_distribution_rows (전량 ECDF — 프런트는 아직 렌더 안 함)
-    ├── trim_analysis.py  build_trim_analysis_rows (placeholder — return [])
+    ├── trim_analysis.py  build_trim_payload(항목 매칭+슬롯별 cpk._stats+initial shift 판정) /
+    │                     build_trim_chart(그룹 1개 chip-to-chip 차트, base 값 서버 정렬, 전 die)
+    │                     — lazy 전용, /full payload 의 sheets["Trim Analysis"] 는 항상 []
     └── Map_analysis.py   build_map_analysis_rows(tables, product_type, product) — wafer map
                           die/bin 집계. 제품 기준정보 있으면 wafer_frame 고정 프레임으로 틀 덮어씀
 ```
@@ -162,10 +171,22 @@ UI(체크박스 목록 스타일, 표 컬럼 순서/정렬 화살표/테두리, 
   분할(`renderIssueMiniDist`→`issueDistQueueRender`/`issueDistFlush`, 화면 밖 purge)로
   보이는 셀만 그린다 — refreshDistConsumers 도 visible 셀만 재큐잉. report_view.html 의 `renderActive` 는
   활성 탭만 즉시 렌더하고 나머지는 tabDirty + requestIdleCallback 프리렌더(`schedulePrerender`).
-  summary / raw_data(payload) /
-  trim_analysis 빌더는 `return []` 플레이스홀더 (Summary 탭 화면은 프런트가
+  summary / raw_data(payload) 빌더는 `return []` 플레이스홀더 (Summary 탭 화면은 프런트가
   Map Analysis + Fail Bin 시트로 자체 구성. tabs/histogram.py 는 어디서도 import 되지 않아
   삭제됨).
+- **Trim Analysis 탭 (2026-07-10 구현)**: 독립 화면 3개(① 항목 매칭 ② 산포 분석 ③ 분석
+  리포트). payload 는 /full 에 싣지 않고(`sheets["Trim Analysis"]`=[] 고정) 탭 첫 진입 시
+  `GET .../web_report/trim_analysis?source=`(gzip+ETag, ETag 에 manifest digest 포함)로 lazy
+  로드, 그룹 차트는 `GET .../web_report/trim_chart?source=&group=` 를 프런트가 동시 8개 큐로
+  병렬 로드(클라 캐시, 화면 밖 Plotly.purge). 매칭 규칙은 `trim_match.py`(product_type 별
+  PMIC4/TV2), 통계는 `tabs/trim_analysis.py`(cpk._stats 재사용 + initial shift: base 분포
+  p20~p80 vs target 평균, PMIC4=(INIT,TRIM)/TV2=(TRIM,VERIFY)). 드래그앤드랍 수동 재배치는
+  `POST .../web_report/trim/overrides`(CSRF+로그인 업로더)로 `manifest.trim_overrides` 에
+  저장(issue_comments 패턴, parquet 불변). 캐시는 cache.py `TRIM_CACHE`(manifest digest 포함
+  키)/`TRIM_CHART_CACHE`(슬롯 구성 digest 키). Excel 내보내기는 vendored
+  `server/report/vendor/exceljs.min.js` 를 첫 클릭 시 동적 로드해 브라우저에서 생성(서버
+  openpyxl 금지 규칙 준수), 차트 PNG 클립보드 복사는 비보안 컨텍스트에서 다운로드 폴백.
+  다운샘플 없음 — n>2000 은 scattergl 로 렌더만 가속.
 - **Issue Table comment 저장**: web_report 세션은 legacy 의 `PATCH /content` 를 쓰지 않는다
   (해당 라우트가 web_report 를 400 거부). PTE/개발 comment 는 프런트가
   `POST .../web_report/issue_table/comments` 로 보내고 `manifest.issue_comments` 에 row_key
