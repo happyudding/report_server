@@ -7,7 +7,7 @@ bytes 반환만으로 끝낸다.
 
 캐시는 전부 프로세스 RAM(LRU 개수 상한, env 로 조절) — 상한 초과 시 오래 안 쓴
 항목부터 자동 퇴출되므로 별도 삭제 주기가 필요 없다. 키 첫 요소가 analysis_key 인
-규약을 지켜 service._AKEY_CACHES 에 등록하면 편집·세션삭제 무효화에 자동 편입된다.
+규약을 지켜 cache.register_akey_cache 로 등록하면 편집·세션삭제 무효화에 자동 편입된다.
 """
 from __future__ import annotations
 
@@ -18,7 +18,8 @@ import os
 from collections import OrderedDict
 from pathlib import Path
 
-from . import service
+from . import cache, service
+from .validation import canon, validate_mode
 
 # /full: 키 (akey, chash, manifest_digest, extras_digest) -> gzip bytes.
 # extras_digest 에 annotations/is_important 등 값싼 부분 전부가 들어가므로
@@ -31,7 +32,8 @@ _FULL_CACHE: OrderedDict = OrderedDict()
 _SCATTER_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_SCATTER_CACHE", "16") or 16))
 _SCATTER_CACHE: OrderedDict = OrderedDict()
 
-service._AKEY_CACHES.extend([_FULL_CACHE, _SCATTER_CACHE])
+cache.register_akey_cache(_FULL_CACHE)
+cache.register_akey_cache(_SCATTER_CACHE)
 
 
 def _gzip_json(obj) -> bytes:
@@ -53,16 +55,16 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
         raise FileNotFoundError(session_id)
     content_hash = str(session.get("content_hash") or "")
     # digest 는 manifest 캐시 엔트리에 동봉된 값 재사용 (요청마다 canonical 재해싱 방지)
-    _, manifest_digest = service._load_manifest_with_digest(analysis_key, upload_root)
-    extras_digest = hashlib.sha256(service._canon(extras)).hexdigest()
+    _, manifest_digest = cache.load_manifest_with_digest(analysis_key, upload_root)
+    extras_digest = hashlib.sha256(canon(extras)).hexdigest()
     cache_key = (analysis_key, content_hash, manifest_digest, extras_digest)
     etag = '"' + hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()[:32] + '"'
 
-    blob = service._cache_get(_FULL_CACHE, cache_key)
+    blob = cache.cache_get(_FULL_CACHE, cache_key)
     if blob is not None:
         return etag, blob
-    with service._keyed_lock(("full",) + cache_key):
-        blob = service._cache_get(_FULL_CACHE, cache_key)
+    with cache.keyed_lock(("full",) + cache_key):
+        blob = cache.cache_get(_FULL_CACHE, cache_key)
         if blob is not None:
             return etag, blob
         _, report = service.load_webreport(
@@ -74,7 +76,7 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
         payload["issue_table_text"] = sheets.get("Issue Table")
         payload["web_report"] = report
         blob = _gzip_json(payload)
-        service._cache_put(_FULL_CACHE, cache_key, blob, _FULL_CACHE_MAX)
+        cache.cache_put(_FULL_CACHE, cache_key, blob, _FULL_CACHE_MAX)
     return etag, blob
 
 
@@ -86,17 +88,17 @@ def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
         raise FileNotFoundError(session_id)
     # DUT 모드는 같은 analysis_key 라도 분할된 소스별 산포를 내므로 mode 를 키에 포함한다.
     cache_key = (analysis_key, str(session.get("content_hash") or ""),
-                 service._validate_mode(session.get("mode")), subject)
+                 validate_mode(session.get("mode")), subject)
 
-    blob = service._cache_get(_SCATTER_CACHE, cache_key)
+    blob = cache.cache_get(_SCATTER_CACHE, cache_key)
     if blob is not None:
         return blob
-    with service._keyed_lock(("scatter",) + cache_key):
-        blob = service._cache_get(_SCATTER_CACHE, cache_key)
+    with cache.keyed_lock(("scatter",) + cache_key):
+        blob = cache.cache_get(_SCATTER_CACHE, cache_key)
         if blob is not None:
             return blob
         result = service.scatter_item(
             session_id, subject, report_db=report_db, upload_root=upload_root)
         blob = _gzip_json(result)
-        service._cache_put(_SCATTER_CACHE, cache_key, blob, _SCATTER_CACHE_MAX)
+        cache.cache_put(_SCATTER_CACHE, cache_key, blob, _SCATTER_CACHE_MAX)
     return blob

@@ -6,6 +6,24 @@ import pandas as pd
 
 from .common import PASS_BIN, bin_types, json_safe, num, round_num
 
+# 이슈 판단 공용 임계값 — Issue Table(CPK 섹션)·Distribution(status 분류)이 공유한다.
+CPK_THRESHOLD = 1.33
+
+
+def worst_cpk_by_subject(cpk_rows) -> dict:
+    """subject 별 모든 source 행 중 최저(worst-case) cpk (None 제외).
+
+    dict 삽입 순서 = cpk_rows 에서 subject 가 처음 등장한 순서."""
+    worst: dict = {}
+    for r in cpk_rows or []:
+        cpk = r.get("cpk")
+        if cpk is None:
+            continue
+        subject = r.get("subject")
+        if subject not in worst or cpk < worst[subject]:
+            worst[subject] = cpk
+    return worst
+
 
 def _stats(series, lo, hi):
     s = pd.to_numeric(series, errors="coerce").dropna()

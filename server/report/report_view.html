@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <title>Report</title>
+<script>
+/* 테마 부트스트랩: 첫 페인트 전에 저장된 다크 테마 적용 (FOUC 방지).
+   localStorage "report_theme" 는 검색결과/세션 상세 페이지가 공유한다. */
+try {
+  if (localStorage.getItem("report_theme") === "dark")
+    document.documentElement.setAttribute("data-theme", "dark");
+} catch (e) {}
+</script>
 <link rel="stylesheet" href="/pe/report/vendor/tabulator.min.css">
 <!-- defer: plotly 4.8MB(gz 1.4MB) 파싱이 HTML 파싱/첫 페인트를 막지 않도록.
      defer 스크립트는 DOMContentLoaded 전에 순서대로 실행되므로, 하단 인라인 스크립트의
@@ -142,8 +150,11 @@ body {
 .mapsel-sep { display: inline-block; width: 1px; height: 16px; background: #d5dbe6; margin: 0 8px; vertical-align: middle; }
 .mapsel-cur { font-size: 12px; color: #0f172a; background: #fee2e2; border: 1px solid #fca5a5;
   border-radius: 5px; padding: 3px 8px; margin: 0 6px; }
-.mapsel-search { max-width: 720px; margin: 4px 0 14px; padding: 8px 10px;
+.mapsel-search { max-width: 900px; margin: 4px 0 14px; padding: 8px 10px;
   border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; }
+.mapsel-search .common-search { flex-wrap: wrap; }
+/* 좌표 개별 검색칸(serial/xpos/ypos) — .common-search input 기본 280px 를 좁게 재정의 */
+.mapsel-field { width: 120px !important; max-width: 120px !important; flex: 0 0 auto; }
 .mapsel-list { max-height: 300px; }
 .mapsel-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 2px 0 12px; }
 .mapsel-leg-title { font-size: 12px; font-weight: 700; color: #475569; }
@@ -486,6 +497,7 @@ tbody tr:hover { background: #f9fbff; }
 .idet-stats { margin: 0 0 16px; }
 .idet-stats table { width: auto; }
 .idet-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
+.idet-legend { margin: 0 0 10px; }   /* 상세 상단 공용 legend (source 多일 때만 렌더) */
 .idet-chart-block { border: 1px solid #e2e4e8; border-radius: 8px; padding: 8px 10px; }
 .idet-fail-title { margin-top: 8px; }
 /* 히스토그램 블록 Analysis/Report 세그먼트 토글 */
@@ -653,7 +665,7 @@ tbody tr:hover { background: #f9fbff; }
 .summary-cards { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 24px; }
 .summary-card { flex: 0 0 auto; text-align: center; }
 .summary-card-title { font-size: 12px; font-weight: 600; color: #555; margin-bottom: 4px; }
-/* Summary 탭: Yield / Wafer Map 섹션을 카드(테두리 박스)로 감싼다. */
+/* Summary 탭: Yield / Engr Comment 섹션을 카드(테두리 박스)로 감싼다. */
 .summary-section-card {
   background: #fff; border: 1px solid #d9dfe6; border-radius: 10px;
   padding: 14px 16px; margin-bottom: 18px; box-shadow: 0 1px 3px rgba(0,0,0,.05);
@@ -664,6 +676,14 @@ tbody tr:hover { background: #f9fbff; }
 .summary-section-card.summary-jump { cursor: pointer; transition: box-shadow .12s, border-color .12s; }
 .summary-section-card.summary-jump:hover { border-color: #4a90e2; box-shadow: 0 3px 12px rgba(74,144,226,.22); }
 .summary-jump-hint { font-size: 11px; font-weight: 500; color: #4a90e2; margin-left: 6px; }
+/* Summary 탭 Engr Comment 폼: 3행(Yield/CPK/ETC) × 2열(라벨 | 큰 입력칸) */
+.engr-comment-grid { display: grid; grid-template-columns: 90px 1fr; gap: 12px 16px; align-items: start; }
+.engr-comment-label { font-weight: 700; color: #333; padding-top: 8px; font-size: 13px; }
+.engr-comment-input {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 84px;
+  padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font: inherit; line-height: 1.5;
+}
+.engr-comment-input:focus { outline: none; border-color: #4a90e2; box-shadow: 0 0 0 2px rgba(74,144,226,.18); }
 
 .error-box {
   background: #fef2f2; color: #991b1b; padding: 12px 16px;
@@ -777,16 +797,6 @@ tbody tr:hover { background: #f9fbff; }
 .modal-desc { font-size: 13px; color: #666; margin: 0 0 14px; }
 .issue-item-link { color: #2a5db0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .issue-item-link:hover { color: #17417f; }
-.pin-row { display: flex; gap: 8px; justify-content: center; }
-.pin-cell {
-  width: 44px; height: 50px; text-align: center; font-size: 22px;
-  border: 1px solid #d0d5dd; border-radius: 6px; outline: none;
-  -moz-appearance: textfield; appearance: textfield;
-}
-.pin-cell::-webkit-outer-spin-button,
-.pin-cell::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.pin-cell:focus { border-color: #4a90e2; }
-.modal-hint { font-size: 11px; color: #888; text-align: center; margin: 8px 0 0; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
 .modal-btn {
   padding: 8px 16px; font-size: 13px; border-radius: 8px;
@@ -835,6 +845,15 @@ tbody tr:hover { background: #f9fbff; }
   background: #fffbeb; box-shadow: 0 2px 6px rgba(0,0,0,.08); transform: translateY(-1px);
 }
 .btn-topbar-star.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.btn-topbar-lock {
+  padding: 5px 10px; border-radius: 8px; border: 1px solid #d8dee6;
+  background: #fff; cursor: pointer; font-size: 13px; line-height: 1;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05); transition: all .15s ease;
+}
+.btn-topbar-lock:hover {
+  background: #fffbeb; box-shadow: 0 2px 6px rgba(0,0,0,.08); transform: translateY(-1px);
+}
+.btn-topbar-lock.active { background: #fffbeb; border-color: #f0c869; }
 
 /* 자동저장 상태 표시 (edit bar 왼쪽) */
 .autosave-dot {
@@ -865,6 +884,304 @@ tbody tr:hover { background: #f9fbff; }
 }
 .load-pct { font-variant-numeric: tabular-nums; font-weight: 700; color: #4a90e2; }
 </style>
+<style>
+/* ══ 라이트/다크 테마 (추가 전용 override) ═══════════════════════════════════
+   기존 규칙은 수정하지 않고 html[data-theme="dark"] 스코프 규칙만 얹는다.
+   테마 상태는 localStorage "report_theme" 로 검색결과 페이지와 공유.
+   Plotly 차트는 "흰 카드 유지" 정책 — 차트가 든 카드(.wafer-card / .distg-card /
+   .dist-chart-block / .idet-chart-block / .dist-cell / .map-cell-mini / .map-expand-pop)와
+   그 안의 캡션 색은 다크에서도 밝은 배경 그대로 두고 override 하지 않는다. */
+.theme-toggle {
+  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid #d0d5dd; background: #fff;
+  font-size: 15px; line-height: 1; padding: 0; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05);
+}
+.theme-toggle:hover { border-color: #4a90e2; background: #f0f6ff; }
+html[data-theme="dark"] .theme-toggle { background: #262a33; border-color: #3a3f4b; }
+html[data-theme="dark"] .theme-toggle:hover { background: #2b3442; border-color: #4a90e2; }
+
+/* ── 페이지 골격: body / sticky 헤더 / 탭 ── */
+html[data-theme="dark"] body { background: #14161a; color: #d7dbe2; }
+html[data-theme="dark"] .sticky-head { background: #1e2128; }
+html[data-theme="dark"] .topbar {
+  background: #1e2128; border-bottom-color: #2a2e37; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+html[data-theme="dark"] .back-btn { background: #262a33; border-color: #3a3f4b; color: #aab3c0; }
+html[data-theme="dark"] .back-btn:hover { background: #2b3442; border-color: #4a90e2; color: #7fb3ef; }
+html[data-theme="dark"] .meta-inline { background: #262a33; color: #c6ccd6; }
+html[data-theme="dark"] .meta-inline .mk { color: #8b94a3; }
+html[data-theme="dark"] .meta-inline-file { color: #c6ccd6; }
+html[data-theme="dark"] .tabs { background: #1e2128; border-bottom-color: #2a2e37; }
+html[data-theme="dark"] .tab { background: #22262e; border-color: #2f3540; color: #8b94a3; }
+html[data-theme="dark"] .tab:hover { background: #262c38; border-color: #33507a; color: #7fb3ef; }
+html[data-theme="dark"] .tab.active {
+  background: #14161a; border-color: #33507a; border-bottom-color: #14161a; color: #7fb3ef;
+  box-shadow: none;
+}
+html[data-theme="dark"] .btn-topbar-edit { background: #262a33; border-color: #33507a; color: #7fb3ef; }
+html[data-theme="dark"] .btn-topbar-edit:hover { background: #243044; }
+html[data-theme="dark"] .btn-topbar-del { background: #262a33; border-color: #6e3030; color: #f28b8b; }
+html[data-theme="dark"] .btn-topbar-del:hover { background: #3a2222; }
+html[data-theme="dark"] .btn-topbar-star { background: #262a33; border-color: #6e5326; color: #e8c96a; }
+html[data-theme="dark"] .btn-topbar-star:hover { background: #38301b; }
+html[data-theme="dark"] .btn-topbar-star.active { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+html[data-theme="dark"] .btn-topbar-lock { background: #262a33; border-color: #3a3f4b; }
+html[data-theme="dark"] .btn-topbar-lock:hover { background: #38301b; }
+html[data-theme="dark"] .btn-topbar-lock.active { background: #38301b; border-color: #6e5326; }
+
+/* ── 공통 텍스트/테이블 ── */
+html[data-theme="dark"] .section-title { color: #c6ccd6; border-bottom-color: #2a2e37; }
+html[data-theme="dark"] th { background: #22262e; color: #9aa3b0; }
+html[data-theme="dark"] th,
+html[data-theme="dark"] td { border-bottom-color: #2a2e37; }
+html[data-theme="dark"] td { color: #d7dbe2; }
+html[data-theme="dark"] tbody tr:hover { background: #20262f; }
+html[data-theme="dark"] .error-box { background: #46201f; color: #f3a3a8; }
+
+/* ── Summary: Yield 개요 / 통합(mfb) 테이블 / 섹션 카드 / Engr Comment ── */
+html[data-theme="dark"] .yield-overview { background: #1c2330; border-color: #2c3a52; }
+html[data-theme="dark"] .yield-overview .yo-pct { color: #7fb3ef; }
+html[data-theme="dark"] .yield-overview .yo-num { color: #d7dbe2; }
+html[data-theme="dark"] .yield-overview .yo-label { color: #8b94a3; }
+html[data-theme="dark"] .yield-by-source { background: #1e2128; border-color: #2c3a52; }
+html[data-theme="dark"] .ybs-table th { background: #1c2330; color: #8b94a3; }
+html[data-theme="dark"] .ybs-table th,
+html[data-theme="dark"] .ybs-table td { border-bottom-color: #2a2e37; }
+html[data-theme="dark"] .ybs-table .ybs-src { color: #7fb3ef; }
+html[data-theme="dark"] .ybs-table .ybs-pct { color: #d7dbe2; }
+html[data-theme="dark"] .ybs-table .ybs-cnt { color: #8b94a3; }
+html[data-theme="dark"] .yield-gauge { background: #2a2e37; }
+html[data-theme="dark"] .mfb-table th,
+html[data-theme="dark"] .mfb-table td { border-color: #3a4150; }
+html[data-theme="dark"] .mfb-table thead th { background: #1c2330; color: #9aa3b0; }
+html[data-theme="dark"] .mfb-table tbody tr:hover { background: transparent; }
+html[data-theme="dark"] .mfb-table .mfb-yield { background: #1c2330; color: #7fb3ef; }
+html[data-theme="dark"] .mfb-table .mfb-src { color: #c6ccd6; }
+html[data-theme="dark"] .mfb-table .mfb-syield { color: #7fb3ef; }
+html[data-theme="dark"] .mfb-table .mfb-rate { color: #f0925f; }
+html[data-theme="dark"] .summary-section-card {
+  background: #1e2128; border-color: #2f3540; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+}
+html[data-theme="dark"] .summary-section-card.summary-jump:hover {
+  border-color: #4a90e2; box-shadow: 0 3px 12px rgba(74,144,226,.25);
+}
+html[data-theme="dark"] .summary-card-title { color: #9aa3b0; }
+html[data-theme="dark"] .engr-comment-label { color: #c6ccd6; }
+html[data-theme="dark"] .engr-comment-input { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+
+/* ── sheet-table (Yield/CPK/Issue 공통 표) ── */
+html[data-theme="dark"] .sheet-table { background: #1e2128; }
+html[data-theme="dark"] .sheet-table th { background: #242c37; border-color: #3a4150; color: #9fb4ce; }
+html[data-theme="dark"] .sheet-table td { border-color: #333a46; color: #d7dbe2; }
+html[data-theme="dark"] .sheet-table tbody tr:nth-child(even) td { background: #22262e; }
+html[data-theme="dark"] .sheet-table tbody tr:hover td { background: #263043; }
+html[data-theme="dark"] .sheet-table td.st-empty { color: #5b6470; }
+html[data-theme="dark"] .sheet-table td.sheet-subhead { background: #242c37 !important; color: #9fb4ce; }
+html[data-theme="dark"] .sheet-table td.cpk-warn { background: #4a3b12 !important; color: #ffd75e; }
+html[data-theme="dark"] .sheet-table td.editing-cell { background: #3a3315 !important; }
+html[data-theme="dark"] .text-lines { background: #1e2128; border-color: #2f3540; color: #c6ccd6; }
+html[data-theme="dark"] .sheet-block-title { background: #1c2330; color: #7fb3ef; }
+
+/* ── CPK 표 freeze panes(sticky 열 불투명 배경) + 툴바 ── */
+html[data-theme="dark"] .sheet-wrap.cpk-sheet { border-color: #333a46; }
+html[data-theme="dark"] .sheet-table.cpk-sheet th:first-child,
+html[data-theme="dark"] .sheet-table.cpk-sheet td:first-child,
+html[data-theme="dark"] .sheet-table.cpk-sheet th:last-child,
+html[data-theme="dark"] .sheet-table.cpk-sheet td:last-child { background: #1e2128; }
+html[data-theme="dark"] .sheet-table.cpk-sheet thead th:first-child,
+html[data-theme="dark"] .sheet-table.cpk-sheet thead th:last-child { background: #242c37; }
+html[data-theme="dark"] .sheet-table.cpk-sheet tbody tr:nth-child(even) td:first-child,
+html[data-theme="dark"] .sheet-table.cpk-sheet tbody tr:nth-child(even) td:last-child { background: #22262e; }
+html[data-theme="dark"] .sheet-table.cpk-sheet td.cpk-warn { background: #4a3b12 !important; }
+html[data-theme="dark"] .sheet-table.cpk-sheet.has-select th:nth-child(2),
+html[data-theme="dark"] .sheet-table.cpk-sheet.has-select td:nth-child(2) { background: #1e2128; }
+html[data-theme="dark"] .sheet-table.cpk-sheet.has-select thead th:nth-child(2) { background: #242c37; }
+html[data-theme="dark"] .sheet-table.cpk-sheet.has-select tbody tr:nth-child(even) td:nth-child(2) { background: #22262e; }
+html[data-theme="dark"] .sheet-table.cpk-sheet td.cpk-target { background: #1f2c44; }
+html[data-theme="dark"] .cpk-pager { color: #9aa3b0; }
+html[data-theme="dark"] .cpk-toolbar input,
+html[data-theme="dark"] .cpk-target-bar input[type="number"],
+html[data-theme="dark"] .cpk-margin-wrap select { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .cpk-target-bar { color: #9aa3b0; }
+
+/* ── Issue Table (sticky 헤더/좌측 고정열/경고 셀/툴바/스크롤바) ── */
+html[data-theme="dark"] .sheet-wrap.kind-issue { border-color: #333a46; }
+html[data-theme="dark"] .sheet-wrap.kind-issue::-webkit-scrollbar-track { background: #1e2128; }
+html[data-theme="dark"] .sheet-wrap.kind-issue::-webkit-scrollbar-thumb { background: #4a5462; border-color: #1e2128; }
+html[data-theme="dark"] .sheet-wrap.kind-issue::-webkit-scrollbar-thumb:hover { background: #5d6879; }
+html[data-theme="dark"] .sheet-table.kind-issue tr.issue-shead-top > th,
+html[data-theme="dark"] .sheet-table.kind-issue tr.issue-shead-bot > th { background: #242c37; }
+html[data-theme="dark"] .sheet-table.kind-issue tbody td:nth-child(-n+4) { background: #1e2128; }
+html[data-theme="dark"] .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+4) { background: #242c37; }
+html[data-theme="dark"] .sheet-table.kind-issue td.sheet-subhead { background: #242c37 !important; }
+html[data-theme="dark"] .sheet-table.kind-issue td.issue-cell-warn { background: #46201f !important; }
+html[data-theme="dark"] .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #20242c; color: #9aa3b0; }
+html[data-theme="dark"] .issue-toolbar { background: #14161a; }
+
+/* ── Yield 표 (pass 행 틴트/접기 버튼) ── */
+html[data-theme="dark"] .sheet-wrap.kind-yield { border-color: #2f3540; }
+html[data-theme="dark"] .sheet-table.kind-yield th { background: #242c37; color: #8fa3bd; }
+html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-pass-row td {
+  background: #14351f !important; color: #6fd694;
+}
+html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-pass-row:hover td { background: #17402b !important; }
+html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-bin-detail td { background: #20242c; color: #9aa3b0; }
+html[data-theme="dark"] .yield-toggle,
+html[data-theme="dark"] .issue-toggle { background: #243044; border-color: #33507a; color: #7fb3ef; }
+html[data-theme="dark"] .yield-toggle:hover,
+html[data-theme="dark"] .issue-toggle:hover { background: #2b3c58; }
+
+/* ── Compare 탭 (pass/fail 틴트 → 다크 대비 색) ── */
+html[data-theme="dark"] .compare-h { color: #aab3c0; }
+html[data-theme="dark"] .cmp-chip { background: #2c3442; color: #c6ccd6; }
+html[data-theme="dark"] .cmp-chip.cmp-common { background: #3a4150; color: #d7dbe2; }
+html[data-theme="dark"] .cmp-chip.cmp-unique { background: #46201f; color: #f3a3a8; }
+html[data-theme="dark"] .compare-table td.cmp-up { color: #f08c8c; }
+html[data-theme="dark"] .compare-table td.cmp-down { color: #7fa8f5; }
+html[data-theme="dark"] .compare-table .cmp-pass-row { background: #16281c; }
+html[data-theme="dark"] .compare-table td.gl-true { background: #1d4527; color: #a7e3b4; }
+html[data-theme="dark"] .compare-table td.gl-false { background: #4d2023; color: #f3a3a8; }
+html[data-theme="dark"] .compare-table td.gl-gap-red { color: #f08c8c; }
+html[data-theme="dark"] .gl-identical { background: #16281c; border-color: #1d4527; color: #a7e3b4; }
+html[data-theme="dark"] .gl-ab-summary { background: #322817; border-color: #6e5326; }
+html[data-theme="dark"] .gl-ab-summary.gl-ab-none { background: #16281c; border-color: #1d4527; color: #a7e3b4; }
+html[data-theme="dark"] .gl-ab-head { color: #eba55f; }
+html[data-theme="dark"] .gl-ab-none .gl-ab-head { color: #a7e3b4; }
+html[data-theme="dark"] .cmp-chip.gl-chip-add { background: #1d4527; color: #a7e3b4; }
+html[data-theme="dark"] .cmp-chip.gl-chip-del { background: #46201f; color: #f3a3a8; }
+html[data-theme="dark"] .cmp-chip.gl-chip-lim { background: #3a3315; color: #e8c96a; }
+html[data-theme="dark"] .gl-ab-item.gl-add { background: #16281c; border-color: #1d4527; color: #a7e3b4; }
+html[data-theme="dark"] .gl-ab-item.gl-del { background: #2c1a1a; border-color: #46201f; color: #f3a3a8; }
+html[data-theme="dark"] .gl-ab-item.gl-lim { background: #292416; border-color: #4a3b12; color: #e8c96a; }
+html[data-theme="dark"] .gl-fold-toggle td { background: #262c36; color: #8b94a3; }
+html[data-theme="dark"] .gl-fold-toggle:hover td { background: #2c3442; }
+html[data-theme="dark"] .goodlog-table tr.gl-added { background: #16241c; }
+html[data-theme="dark"] .goodlog-table tr.gl-removed { background: #2c1a1a; }
+html[data-theme="dark"] .goodlog-table tr.gl-limitchg { background: #292416; }
+html[data-theme="dark"] .compare-table tr.bt-changed { background: #322817; }
+html[data-theme="dark"] .gl-sub { color: #8b94a3; }
+
+/* ── Map Analysis (좌표 선택 UI / 툴바 / 범례 표 — wafer 차트 카드는 흰 카드 유지) ── */
+html[data-theme="dark"] .common-search input { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .common-search .muted { color: #8b94a3; }
+html[data-theme="dark"] .common-list { border-color: #2f3540; }
+html[data-theme="dark"] .common-chip-row:hover { background: #262c38; }
+html[data-theme="dark"] .common-chip-row.is-selected { background: #1f3a5c; }
+html[data-theme="dark"] .common-chip-row.common-chip-added { color: #767f8c; background: #1a1d24; }
+html[data-theme="dark"] .mapsel-sep { background: #3a3f4b; }
+html[data-theme="dark"] .mapsel-cur { background: #46201f; border-color: #6e3030; color: #f3d6d6; }
+html[data-theme="dark"] .mapsel-search { background: #1a1d24; border-color: #2f3540; }
+html[data-theme="dark"] .mapsel-leg-title { color: #9aa3b0; }
+html[data-theme="dark"] .mapsel-leg-item { background: #262a33; border-color: #3a3f4b; }
+html[data-theme="dark"] .mapsel-src { color: #8b94a3; }
+html[data-theme="dark"] .map-toolbar { color: #c6ccd6; }
+html[data-theme="dark"] .map-toolbar input { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .wafer-legend-title { color: #c6ccd6; }
+html[data-theme="dark"] .bin-table th,
+html[data-theme="dark"] .bin-table td { border-bottom-color: #2a2e37; }
+html[data-theme="dark"] .bin-table tbody tr:hover td { background: #262c38; }
+html[data-theme="dark"] .bin-table tbody tr.is-selected td { background: #4a3b12; }
+
+/* ── Distribution 탭 (툴바/검색/상세 헤더 — 갤러리 카드·차트 블록은 흰 카드 유지) ── */
+html[data-theme="dark"] .dist-toolbar { background: #14161a; }
+html[data-theme="dark"] .distseg-group { border-color: #3a3f4b; }
+html[data-theme="dark"] .distseg { background: #262a33; color: #aab3c0; border-right-color: #3a3f4b; }
+html[data-theme="dark"] .dist-leg-item { color: #aab3c0; }
+html[data-theme="dark"] .dist-search { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .dist-suggest {
+  background: #1e2128; border-color: #3a3f4b; box-shadow: 0 6px 20px rgba(0,0,0,.55);
+}
+html[data-theme="dark"] .dist-sug-item:hover { background: #262c38; }
+html[data-theme="dark"] .dist-sug-item .sug-name { color: #d7dbe2; }
+html[data-theme="dark"] .dist-count { color: #8b94a3; }
+/* 원래 배경이 투명이라 다크가 비치는 차트 블록 — 흰 카드로 명시 고정 */
+html[data-theme="dark"] .distg-card { background: #fff; }
+html[data-theme="dark"] .dist-chart-block,
+html[data-theme="dark"] .idet-chart-block { background: #fff; }
+html[data-theme="dark"] .dist-detail-head { background: #14161a; }
+html[data-theme="dark"] .dist-detail-head button { background: #262a33; border-color: #3a3f4b; color: #aab3c0; }
+html[data-theme="dark"] .dist-detail-head button:hover { background: #2b3442; border-color: #4a90e2; }
+html[data-theme="dark"] .dist-detail-title { color: #d7dbe2; }
+html[data-theme="dark"] .dist-navpos { color: #8b94a3; }
+
+/* ── Item_detail (헤더/통계/배지 — 차트 블록은 흰 카드 유지) ── */
+html[data-theme="dark"] .idet-head { background: #14161a; }
+html[data-theme="dark"] .idet-title { color: #d7dbe2; }
+html[data-theme="dark"] .idet-tno { color: #8b94a3; }
+html[data-theme="dark"] .idet-cpk { color: #9aa3b0; }
+html[data-theme="dark"] .idet-lim { color: #d7dbe2; }
+html[data-theme="dark"] .idet-stat { color: #aab3c0; }
+html[data-theme="dark"] .idet-stat b { color: #d7dbe2; }
+html[data-theme="dark"] .idet-stat-src { color: #8b94a3; }
+html[data-theme="dark"] .idet-badge.idet-fail { background: #46201f; color: #f3a3a8; }
+html[data-theme="dark"] .idet-badge.idet-cpk_low { background: #3a3315; color: #e8c96a; }
+html[data-theme="dark"] .idet-badge.idet-ok { background: #16351f; color: #7ed69a; }
+html[data-theme="dark"] .idet-navpos { color: #8b94a3; }
+html[data-theme="dark"] .item-detail-link { color: #7fa8f5; }
+html[data-theme="dark"] .item-detail-link:hover { color: #a5c2f7; }
+html[data-theme="dark"] .issue-item-link { color: #7fa8f5; }
+html[data-theme="dark"] .issue-item-link:hover { color: #a5c2f7; }
+html[data-theme="dark"] .cdf-editbar .cdf-eb-label { color: #8b94a3; }
+html[data-theme="dark"] .cdf-editbar .cdf-eb-count { color: #9aa3b0; }
+
+/* ── Raw Data (필터바/항목 목록/Tabulator 그리드) ── */
+html[data-theme="dark"] .rawdata-filters { background: #14161a; }
+html[data-theme="dark"] .rawdata-filters input,
+html[data-theme="dark"] .rawdata-filters select { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .rawdata-hscroll { background: #14161a; }
+html[data-theme="dark"] .rawdata-selcount,
+html[data-theme="dark"] .rawdata-banner { color: #9aa3b0; }
+html[data-theme="dark"] .rawdata-cols { background: #1e2128; border-color: #2f3540; }
+html[data-theme="dark"] .rawdata-item { background: #1e2128; border-color: #3a3f4b; color: #c6ccd6; }
+html[data-theme="dark"] .rawdata-item:hover:not(:disabled):not(.selected) { background: #262c38; }
+html[data-theme="dark"] .rawdata-item:disabled { color: #5b6470; background: #1a1d24; }
+html[data-theme="dark"] .rawdata-item-meta { color: #767f8c; }
+/* Tabulator — 벤더 CSS 가 라이트 전용이라 다크 배경/글자/보더로 재정의 */
+html[data-theme="dark"] #rawDataGridHost.tabulator,
+html[data-theme="dark"] #rawDataGridHost .tabulator { background: transparent; }
+html[data-theme="dark"] #rawDataGridHost .tabulator-header { background: #242c37; color: #c6ccd6; border-color: #3a3f4b; }
+html[data-theme="dark"] #rawDataGridHost .tabulator-col { background: #242c37; color: #c6ccd6; }
+html[data-theme="dark"] #rawDataGridHost .tabulator-tableholder { background: transparent; }
+html[data-theme="dark"] #rawDataGridHost .tabulator-row { background: #1e2128; color: #d7dbe2; }
+html[data-theme="dark"] #rawDataGridHost .tabulator-row.tabulator-row-even { background: #22262e; }
+html[data-theme="dark"] #rawDataGridHost .tabulator-row:hover { background: #262c38; }
+html[data-theme="dark"] #rawDataGridHost .tabulator-cell,
+html[data-theme="dark"] #rawDataGridHost .tabulator-col { border-bottom: 1px solid #333a46 !important; }
+html[data-theme="dark"] #rawDataGridHost .rd-meta { color: #8b94a3; }
+
+/* ── 편집 입력/버튼/저장 바 ── */
+html[data-theme="dark"] .edit-section-title { color: #9aa3b0; }
+html[data-theme="dark"] .edit-hint { color: #8b94a3; }
+html[data-theme="dark"] .kv-edit label { color: #9aa3b0; }
+html[data-theme="dark"] .cell-input,
+html[data-theme="dark"] .field-input,
+html[data-theme="dark"] .field-textarea { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .btn-sm { background: #262a33; border-color: #3a3f4b; color: #aab3c0; }
+html[data-theme="dark"] .btn-sm:hover { background: #2b3442; border-color: #4a90e2; color: #7fb3ef; }
+html[data-theme="dark"] .edit-bar {
+  background: #1e2128; border-top-color: #2a2e37; box-shadow: 0 -1px 8px rgba(0,0,0,.4);
+}
+html[data-theme="dark"] .edit-bar .bar-msg { color: #e8c96a; }
+html[data-theme="dark"] .btn-cancel { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
+
+/* ── 모달 / 재생성 diff / 로드 오버레이 ── */
+html[data-theme="dark"] .modal-box { background: #1e2128; color: #d7dbe2; }
+html[data-theme="dark"] .modal-desc { color: #9aa3b0; }
+html[data-theme="dark"] .modal-btn { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
+html[data-theme="dark"] .modal-btn.primary { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+html[data-theme="dark"] .modal-btn.danger { background: #dc2626; border-color: #dc2626; color: #fff; }
+html[data-theme="dark"] .raw-regen-diff { border-color: #2f3540; }
+html[data-theme="dark"] .raw-regen-diff th,
+html[data-theme="dark"] .raw-regen-diff td { border-bottom-color: #2a2e37; }
+html[data-theme="dark"] .raw-regen-diff thead th { background: #242c37; color: #9aa3b0; }
+html[data-theme="dark"] .raw-regen-diff td.rd-old { color: #f08c8c; }
+html[data-theme="dark"] .raw-regen-diff td.rd-new { color: #6fd694; }
+html[data-theme="dark"] .load-overlay { background: rgba(10,12,16,.82); }
+html[data-theme="dark"] .load-msg { color: #7fb3ef; }
+html[data-theme="dark"] .load-bar { background: #2a2e37; }
+html[data-theme="dark"] .load-foot { color: #8b94a3; }
+</style>
 </head>
 <body>
 
@@ -883,9 +1200,12 @@ tbody tr:hover { background: #f9fbff; }
       <span class="meta-inline">로드 중...</span>
     </div>
     <div class="topbar-actions" id="topbarActions">
-      <button class="btn-topbar-star" id="btnImportant" title="중요 표시(오래된 세션 자동삭제에서 제외)">☆ 중요</button>
-      <button class="btn-topbar-del"  id="btnDel">삭제</button>
+      <button class="btn-topbar-star" id="btnImportant" title="중요 표시(오래된 세션 자동삭제에서 제외)">☆</button>
+      <button class="btn-topbar-lock" id="btnPrivate" title="비공개 표시">🔓</button>
+      <button class="btn-topbar-del"  id="btnDel" title="삭제">🗑</button>
     </div>
+    <!-- 테마 토글은 topbarActions 밖 — 비-web_report 세션(actions 숨김)에서도 항상 보이게 -->
+    <button class="theme-toggle" id="themeToggle" title="다크 모드로 전환">🌙</button>
   </div>
 
   <div class="tabs" id="tabs">
@@ -894,8 +1214,7 @@ tbody tr:hover { background: #f9fbff; }
     <button class="tab" data-tab="cpk">CPK</button>
     <button class="tab" data-tab="issues">Issue Table</button>
     <button class="tab" data-tab="distribution">Distribution</button>
-    <!-- Trim Analysis 탭 임시 삭제 (사용자 요청) — 재활성화 시 아래 주석 해제
-    <button class="tab" data-tab="trim-analysis">Trim Analysis</button> -->
+    <button class="tab" data-tab="trim-analysis">Trim Analysis</button>
     <button class="tab" data-tab="map-analysis">Map Analysis</button>
     <button class="tab" data-tab="compare" style="display:none">Compare</button>
   </div>
@@ -910,8 +1229,7 @@ tbody tr:hover { background: #f9fbff; }
   <div class="panel" id="panel-issues"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-distribution"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-raw-data"><div class="placeholder">로드 중...</div></div>
-  <!-- Trim Analysis 패널 임시 삭제 (사용자 요청)
-  <div class="panel" id="panel-trim-analysis"><div class="placeholder">로드 중...</div></div> -->
+  <div class="panel" id="panel-trim-analysis"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-map-analysis"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-compare"><div class="placeholder">로드 중...</div></div>
   <!-- Item_detail: 탭 버튼 없이 프로그램으로만 활성화(Yield/CPK/IssueTable/Distribution item 클릭) -->
@@ -919,25 +1237,6 @@ tbody tr:hover { background: #f9fbff; }
 </div>
 
 <div class="toast" id="toast"></div>
-
-<!-- PIN 모달 (수정/삭제 공용) -->
-<div class="modal-overlay" id="pinModal">
-  <div class="modal-box">
-    <p class="modal-title" id="pinTitle">비밀번호 입력</p>
-    <p class="modal-desc" id="pinDesc">비밀번호를 입력하세요.</p>
-    <div class="pin-row">
-      <input class="pin-cell" type="password" inputmode="numeric" autocomplete="off" maxlength="1" id="pin0">
-      <input class="pin-cell" type="password" inputmode="numeric" autocomplete="off" maxlength="1" id="pin1">
-      <input class="pin-cell" type="password" inputmode="numeric" autocomplete="off" maxlength="1" id="pin2">
-      <input class="pin-cell" type="password" inputmode="numeric" autocomplete="off" maxlength="1" id="pin3">
-    </div>
-    <p class="modal-hint">숫자 4자리</p>
-    <div class="modal-actions">
-      <button class="modal-btn" id="pinCancel">취소</button>
-      <button class="modal-btn primary" id="pinConfirm">확인</button>
-    </div>
-  </div>
-</div>
 
 <!-- Issue Table ETC 항목 추가 모달 -->
 <div class="modal-overlay" id="etcItemModal">
@@ -1051,10 +1350,27 @@ function isWebReportSession() {
 function webReportMode() {
   return (((DATA && DATA.session && DATA.session.mode) || "Normal") + "").trim();
 }
-// 보기/수정 모드 개념 제거 — 항상 편집 가능(Raw Data 인라인 편집 + Issue comment 상시 편집).
-// MODE 는 항상 "edit" 로 고정하고, 흩어진 MODE==="edit" 분기가 자동으로 편집 경로를 타게 둔다.
-let MODE = "edit";
-let verifiedPassword = "";      // 수정 모드 진입 시 검증된 PIN (저장에 재사용)
+// 편집 권한: 로그인 ID 가 세션 업로더와 같을 때만 "edit" (업로더 기록 없는 legacy 는
+// 로그인만 하면 허용). 그 외에는 "view" — 흩어진 MODE==="edit" 분기가 읽기전용으로 렌더.
+// 로그인은 검색결과 페이지에서 수행하고, 서버가 편집 라우트에서 같은 규칙으로 재검증한다.
+let MODE = "view";
+let LOGIN_USER = "";            // /api/auth/me 결과 (비로그인이면 "")
+let verifiedPassword = "";      // (구 PIN 흐름 잔재 — 저장 payload 호환용, 항상 "")
+
+async function loadAuth() {
+  try {
+    const res = await fetch("/pe/report/api/auth/me");
+    if (res.ok) LOGIN_USER = (await res.json()).user_id || "";
+  } catch (e) { LOGIN_USER = ""; }
+}
+
+// uploaded_by 는 'DOMAIN\user' 또는 'user' 형식이라 뒷부분만 비교.
+function canEditSession() {
+  if (!LOGIN_USER) return false;
+  const ub = String((DATA && DATA.session && DATA.session.uploaded_by) || "");
+  if (!ub) return true;
+  return ub.split("\\").pop().trim().toLowerCase() === LOGIN_USER;
+}
 let yieldGrid = null;           // 수정 모드 Yield 편집 Tabulator 인스턴스 (없으면 null)
 
 
@@ -1083,6 +1399,29 @@ function splitLines(v) {
   while (a.length && a[a.length - 1].trim() === "") a.pop();
   return a;
 }
+
+// ── 라이트/다크 테마 토글 (head 부트스트랩이 저장값을 먼저 적용해 둔 상태) ──
+(function () {
+  const btn = document.getElementById("themeToggle");
+  if (!btn) return;
+  const root = document.documentElement;
+  function syncThemeBtn() {
+    const dark = root.getAttribute("data-theme") === "dark";
+    btn.textContent = dark ? "☀️" : "🌙";
+    btn.title = dark ? "라이트 모드로 전환" : "다크 모드로 전환";
+  }
+  btn.addEventListener("click", () => {
+    const toDark = root.getAttribute("data-theme") !== "dark";
+    if (toDark) root.setAttribute("data-theme", "dark");
+    else root.removeAttribute("data-theme");
+    try {
+      if (toDark) localStorage.setItem("report_theme", "dark");
+      else localStorage.removeItem("report_theme");
+    } catch (e) {}
+    syncThemeBtn();
+  });
+  syncThemeBtn();
+})();
 
 // ── tab switching ──────────────────────────────────────────────────────────
 document.getElementById("tabs").addEventListener("click", e => {
@@ -1134,6 +1473,7 @@ function renderMeta(session) {
   document.getElementById("topbarMeta").innerHTML =
     `<div class="meta-row">${line1.join("")}</div><div class="meta-row">${line2.join("")}</div>`;
   updateImportantBtn(session);
+  updatePrivateBtn(session);
   syncTabVisibility();
   syncStickyHeadHeight();
 }
@@ -1143,10 +1483,19 @@ function updateImportantBtn(session) {
   if (!btn) return;
   const on = !!(session && session.is_important);
   btn.classList.toggle("active", on);
-  btn.textContent = (on ? "★" : "☆") + " 중요";
+  btn.textContent = on ? "★" : "☆";
   btn.title = on
     ? "중요 표시됨 — 자동삭제 제외 (클릭 시 해제)"
     : "중요 표시(오래된 세션 자동삭제에서 제외)";
+}
+
+function updatePrivateBtn(session) {
+  const btn = document.getElementById("btnPrivate");
+  if (!btn) return;
+  const on = !!(session && session.is_private);
+  btn.classList.toggle("active", on);
+  btn.textContent = on ? "🔒" : "🔓";
+  btn.title = on ? "비공개 표시됨 (클릭 시 공개로)" : "비공개 표시(클릭 시 비공개로)";
 }
 
 // web_report 전용 데이터로만 채워지는 탭(CPK/Map Analysis)은 legacy(xlsx_upload)
@@ -1281,6 +1630,11 @@ function orderColumns(cols, kind) {
     && !(kind === "issue" && String(c).trim().toLowerCase() === "category")
     && !/^_(grp|detail|ndetail)$/.test(String(c)));   // 토글 전용 내부 마킹 필드 제외
 
+  // source(={src}_yield 컬럼 수)가 1개면 avg 는 그 source 값과 동일해 의미가 없으므로
+  // Yield/Issue 표에서 avg 컬럼을 표시하지 않는다(행 데이터의 avg 값은 그대로 유지 —
+  // Issue Table CPK subhead 감지가 avg 값에 의존). 2개 이상(compare/DUT 포함)이면 표시.
+  const singleSource = rest.filter(c => /_yield$/i.test(String(c))).length <= 1;
+
   const PREFIX_ORDER = {
     yield: ["step", "bin", "tno", "item"],
     issue: ["step", "bin", "tno", "item"],
@@ -1301,7 +1655,7 @@ function orderColumns(cols, kind) {
     const isAvgCol = c => String(c).trim().toLowerCase() === "avg";
     const yieldVals = rest.filter(c => !isCntCol(c) && !isAvgCol(c));
     const cntVals = rest.filter(isCntCol);
-    const avgVals = rest.filter(isAvgCol);
+    const avgVals = singleSource ? [] : rest.filter(isAvgCol);
     rest = yieldVals.concat(cntVals).concat(avgVals);
   }
 
@@ -1313,7 +1667,7 @@ function orderColumns(cols, kind) {
     const isYieldCol = c => /_yield$/i.test(String(c));
     const map = rest.filter(isMap);
     const dist = rest.filter(isDist);
-    const avg = rest.filter(isAvgCol);
+    const avg = singleSource ? [] : rest.filter(isAvgCol);
     const yields = rest.filter(isYieldCol);
     const others = rest.filter(c => !isMap(c) && !isDist(c) && !isAvgCol(c) && !isYieldCol(c));
     rest = others.concat(map).concat(dist).concat(avg).concat(yields);
@@ -2125,12 +2479,15 @@ function renderMapAnalysis() {
     `</div>` +
     `<div id="mapSelSearchBox" class="mapsel-search" style="display:none">` +
       `<div class="common-search">` +
-        `<input id="mapSelInput" type="text" placeholder="SERIAL / XPOS / YPOS / DUT 검색" />` +
+        `<input id="mapSelSerial" type="text" class="mapsel-field" placeholder="SERIAL (부분일치)" />` +
+        `<input id="mapSelXpos" type="text" class="mapsel-field" placeholder="XPOS (정확)" />` +
+        `<input id="mapSelYpos" type="text" class="mapsel-field" placeholder="YPOS (정확)" />` +
         `<button id="mapSelSearchBtn" class="btn-sm">검색</button>` +
         `<button id="mapSelAddSelected" class="btn-sm primary" disabled>선택 추가</button>` +
+        `<button id="mapSelCollapseBtn" class="btn-sm" title="검색 패널 접기">접기 ▲</button>` +
         `<span id="mapSelInfo" class="muted"></span>` +
       `</div>` +
-      `<div class="common-list mapsel-list" id="mapSelList"><div class="placeholder">SERIAL / XPOS / YPOS / DUT 로 검색해 체크한 좌표를 '선택 추가' 로 한 번에 추가하세요 (여러 개 가능).</div></div>` +
+      `<div class="common-list mapsel-list" id="mapSelList"><div class="placeholder">SERIAL(부분) / XPOS·YPOS(정확) 칸에 입력해 검색하고, 체크한 좌표를 '선택 추가' 로 한 번에 추가하세요 (여러 개 가능).</div></div>` +
     `</div>` +
     selLegend +
     `<div class="wafer-analysis-layout">` +
@@ -2157,10 +2514,17 @@ function renderMapAnalysis() {
   panel.querySelector("#mapSelBtn").addEventListener("click", mapSelToggleSearch);
   const _mapSelClearBtn = panel.querySelector("#mapSelClearBtn");
   if (_mapSelClearBtn) _mapSelClearBtn.addEventListener("click", mapSelClear);
-  const _doMapSelSearch = () => mapSelSearch(document.getElementById("mapSelInput").value);
+  const _doMapSelSearch = () => mapSelSearch();
   panel.querySelector("#mapSelSearchBtn").addEventListener("click", _doMapSelSearch);
   panel.querySelector("#mapSelAddSelected").addEventListener("click", mapSelAddSelected);
-  panel.querySelector("#mapSelInput").addEventListener("keydown", e => { if (e.key === "Enter") _doMapSelSearch(); });
+  panel.querySelector("#mapSelCollapseBtn").addEventListener("click", () => {
+    const box = document.getElementById("mapSelSearchBox");
+    if (box) box.style.display = "none";   // 검색 패널 접기(명시적 닫기).
+  });
+  ["mapSelSerial", "mapSelXpos", "mapSelYpos"].forEach(id => {
+    const el = panel.querySelector("#" + id);
+    if (el) el.addEventListener("keydown", e => { if (e.key === "Enter") _doMapSelSearch(); });
+  });
   panel.querySelectorAll(".mapsel-del").forEach(b => b.addEventListener("click", () => mapSelRemove(b.dataset.key)));
 
   // colorMap 만 dim 처리해서 다시 넘기면 되므로 waferHeatmap 구조는 그대로 재사용.
@@ -2498,7 +2862,7 @@ function renderCompare() {
 const MAPSEL_PALETTE = ["#e11d48", "#2563eb", "#059669", "#d97706", "#7c3aed",
   "#0891b2", "#db2777", "#65a30d", "#ea580c", "#4f46e5"];
 let mapSelChips = [];   // [{serial,shot,dut,xpos,ypos,bin,source,x,y, key, color, items:{subject:{value,cum_pct}}}]
-let _mapSelLastQ = "";  // 직전 검색어 — 추가 후 검색 패널 재실행에 재사용(연속 추가 편의).
+let _mapSelLastQ = { serial: "", xpos: "", ypos: "" };  // 직전 검색 필드값 — 추가 후 검색 패널 재실행에 재사용(연속 추가 편의).
 let _mapSelResults = []; // 직전 검색 결과 chip 배열 — 체크박스 index → chip 매핑용.
 
 function mapSelChipKey(c) { return `${c.source || ""}|${c.serial || ""}|${c.xpos || ""}|${c.ypos || ""}`; }
@@ -2542,18 +2906,22 @@ function mapSelToggleSearch() {
   if (!box) return;
   const show = (box.style.display === "none" || !box.style.display);
   box.style.display = show ? "" : "none";
-  if (show) { ensureDistData(); const inp = document.getElementById("mapSelInput"); if (inp) inp.focus(); }
+  if (show) { ensureDistData(); const inp = document.getElementById("mapSelSerial"); if (inp) inp.focus(); }
 }
 
-// 좌표(serial/xpos/ypos/dut) 검색 → 후보 목록(체크박스). 여러 개 체크 후 '선택 추가' 로 일괄 추가.
+// 좌표 검색(serial 부분일치 / xpos·ypos 정확일치, AND) → 후보 목록(체크박스). 여러 개 체크 후 '선택 추가' 로 일괄 추가.
 // 행 아무 곳이나 클릭하면 그 행 체크박스가 토글되고, 헤더 체크박스로 전체 선택 가능.
-function mapSelSearch(q) {
+function mapSelSearch() {
   const list = document.getElementById("mapSelList");
   const info = document.getElementById("mapSelInfo");
   if (!list) return;
-  _mapSelLastQ = q || "";
+  const serial = ((document.getElementById("mapSelSerial") || {}).value || "").trim();
+  const xpos = ((document.getElementById("mapSelXpos") || {}).value || "").trim();
+  const ypos = ((document.getElementById("mapSelYpos") || {}).value || "").trim();
+  _mapSelLastQ = { serial, xpos, ypos };
   list.innerHTML = `<div class="placeholder">검색 중...</div>`;
-  const url = `/pe/report/session/${SESSION_ID}/web_report/commonality/chips?q=${encodeURIComponent(q || "")}`;
+  const p = new URLSearchParams({ serial, xpos, ypos });
+  const url = `/pe/report/session/${SESSION_ID}/web_report/commonality/chips?${p.toString()}`;
   fetch(url, { cache: "no-cache" })
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(j => {
@@ -2638,9 +3006,10 @@ async function mapSelAddSelected() {
   const box = document.getElementById("mapSelSearchBox");
   if (box) {
     box.style.display = "";
-    const inp = document.getElementById("mapSelInput");
-    if (inp) inp.value = _mapSelLastQ;
-    mapSelSearch(_mapSelLastQ);
+    const q = _mapSelLastQ || {};
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ""; };
+    setVal("mapSelSerial", q.serial); setVal("mapSelXpos", q.xpos); setVal("mapSelYpos", q.ypos);
+    mapSelSearch();
   }
 }
 
@@ -2709,7 +3078,7 @@ function renderWebSummary() {
   const panel = document.getElementById("panel-summary");
   const sheets = webReportSheets();
   if (!window.Plotly || !sheets) { emptyPanel(panel, "Summary 데이터 없음"); return; }
-  // Summary 카드(Yield/Wafer Map) 클릭 → 해당 탭 버튼 클릭 재사용(1회 위임 바인딩).
+  // Summary 카드(Yield) 클릭 → 해당 탭 버튼 클릭 재사용(1회 위임 바인딩).
   if (!summaryJumpBound) {
     panel.addEventListener("click", (e) => {
       const card = e.target.closest(".summary-jump");
@@ -2719,27 +3088,63 @@ function renderWebSummary() {
     });
     summaryJumpBound = true;
   }
-  const maps = sheets["Map Analysis"] || [];
   panel.classList.add("viz-root");
+  const engr = (DATA.web_report && DATA.web_report.summary_engr) || {};
+  // Engr Comment 편집은 다른 web_report 편집과 동일하게 업로더(edit 모드)만 허용한다.
+  // view 모드에서는 읽기전용으로 렌더하고 저장 바인딩을 하지 않는다(저장 요청은 서버가 거부).
+  const engrEditable = (MODE === "edit");
   panel.innerHTML =
     `<div class="summary-section-card summary-jump" data-jump="yield" title="Yield 탭으로 이동">` +
     `<div class="section-title">Yield <span class="summary-jump-hint">▸ 탭 이동</span></div>` + majorFailBinsTableHtml() +
     `</div>` +
-    `<div class="summary-section-card summary-jump" data-jump="map-analysis" title="Map Analysis 탭으로 이동">` +
-    `<div class="section-title">Wafer Map <span class="summary-jump-hint">▸ 탭 이동</span></div><div class="summary-cards">` +
-    maps.map((m, i) =>
-      `<div class="summary-card"><div class="summary-card-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""}</div>` +
-      `<div id="mini-wafer-${i}" style="width:170px;height:170px;"></div></div>`).join("") +
+    `<div class="summary-section-card">` +
+    `<div class="section-title">Engr Comment</div>` +
+    `<div class="engr-comment-grid">` +
+    ENGR_COMMENT_FIELDS.map(f =>
+      `<label class="engr-comment-label" for="engr-${f.key}">${f.label}</label>` +
+      `<textarea id="engr-${f.key}" class="engr-comment-input" data-engr="${f.key}" rows="4"${engrEditable ? "" : " readonly"}>${esc(engr[f.key] || "")}</textarea>`).join("") +
     `</div></div>`;
-  // 미니 웨이퍼도 전역 색상 매핑을 써서 Map Analysis/Fail Bin 차트와 같은 bin=같은 색 유지.
-  const gColorMap = globalBinColorMap();
-  maps.forEach((m, i) => {
-    const binOrder = (m.bin_counts || []).map(bc => String(bc.bin));
-    const built = waferHeatmap(m, { mini: true, colorMap: gColorMap, binOrder });
-    if (!built) return;
-    Plotly.newPlot(`mini-wafer-${i}`, [built.trace], waferLayout(m, { mini: true }),
-      { responsive: true, displayModeBar: false, staticPlot: true });
+  if (engrEditable) bindEngrComment(panel);
+}
+
+// Summary 탭 Engr Comment 3칸 정의 (manifest.summary_engr 키와 일치).
+const ENGR_COMMENT_FIELDS = [
+  { key: "yield", label: "Yield" },
+  { key: "cpk", label: "CPK" },
+  { key: "etc", label: "ETC" },
+];
+
+// textarea 값이 바뀌면(blur 시 change 발생) 변경분을 manifest.summary_engr 로 저장.
+function bindEngrComment(panel) {
+  panel.querySelectorAll("textarea[data-engr]").forEach(ta => {
+    ta.addEventListener("change", () => { saveSummaryEngr().catch(() => {}); });
   });
+}
+
+// Summary Engr Comment 저장: 3칸 현재값을 원본(DATA.web_report.summary_engr)과 비교해
+// 변경 있을 때만 POST. 성공 시 DATA 에 반영해 재렌더 시 값 유지.
+async function saveSummaryEngr() {
+  if (MODE !== "edit") return;   // 뷰 모드는 저장 시도 안 함(서버도 업로더만 허용).
+  const panel = document.getElementById("panel-summary");
+  if (!panel || !DATA || !DATA.web_report) return;
+  const cur = DATA.web_report.summary_engr || {};
+  const values = {};
+  let changed = false;
+  panel.querySelectorAll("textarea[data-engr]").forEach(ta => {
+    const k = ta.dataset.engr;
+    const v = (ta.value || "").trim();
+    values[k] = v;
+    if (v !== String(cur[k] || "").trim()) changed = true;
+  });
+  if (!changed) return;
+  const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/summary/engr`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: JSON.stringify({ values }),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) { alert(j.error || `Engr Comment 저장 실패 (HTTP ${res.status})`); throw new Error("engr save failed"); }
+  DATA.web_report.summary_engr = j.summary_engr || values;
 }
 
 // 막대 위(바깥)엔 count 를 bold 로, 막대 안엔 yield_pct(%) 를 채워 넣는다.
@@ -3135,6 +3540,34 @@ function renderCpk() {
 // 나가면 일정 시간 후 Plotly.purge 로 해제한다.
 const DIST_PALETTE = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
   "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52"];
+// DIST_PALETTE(10색) 을 넘는 source 폴백 색 — client/chart_colors.py
+// generate_default_colors() 와 동일 공식(진한 원색 7 + 황금비 hue 분산 + S/V 순환)이라
+// dist_colors 미지정 세션의 11번째+ 색이 Honey 기본 48색과 일치한다. i 상한 없음.
+const DIST_GEN_DEEP_HUES = [0.60, 0.33, 0.92, 0.80, 0.00, 0.09, 0.50];
+const DIST_GEN_S_CYCLE = [1.00, 0.82, 0.92];
+const DIST_GEN_V_CYCLE = [0.92, 0.68, 0.80, 0.55];
+function distHsvHex(h, s, v) {
+  // Python colorsys.hsv_to_rgb 1:1 포팅 (int() 절사 포함 — hex 가 바이트 단위로 일치)
+  h = ((h % 1.0) + 1.0) % 1.0;
+  let r, g, b;
+  const i = Math.trunc(h * 6.0) % 6, f = (h * 6.0) - Math.trunc(h * 6.0);
+  const p = v * (1.0 - s), q = v * (1.0 - s * f), t = v * (1.0 - s * (1.0 - f));
+  if (i === 0)      { r = v; g = t; b = p; }
+  else if (i === 1) { r = q; g = v; b = p; }
+  else if (i === 2) { r = p; g = v; b = t; }
+  else if (i === 3) { r = p; g = q; b = v; }
+  else if (i === 4) { r = t; g = p; b = v; }
+  else              { r = v; g = p; b = q; }
+  const hex = n => Math.trunc(n * 255).toString(16).toUpperCase().padStart(2, "0");
+  return "#" + hex(r) + hex(g) + hex(b);
+}
+function distDefaultColor(i) {
+  if (i < DIST_GEN_DEEP_HUES.length) return distHsvHex(DIST_GEN_DEEP_HUES[i], 1.0, 0.85);
+  const j = i - DIST_GEN_DEEP_HUES.length;
+  const h = (0.07 + (j + 1) * 0.61803398875) % 1.0;
+  return distHsvHex(h, DIST_GEN_S_CYCLE[j % DIST_GEN_S_CYCLE.length],
+                       DIST_GEN_V_CYCLE[j % DIST_GEN_V_CYCLE.length]);
+}
 let distDataCache = {};       // subject → {lower_limit, upper_limit, units, bySource:{source:{xs,ys}}} (ECDF, Issue Table 미니분포와 공용)
 let distColorMap = {};        // source → color
 
@@ -3230,11 +3663,20 @@ function buildDistColorMap(sources) {
   const custom = (DATA && DATA.web_report && Array.isArray(DATA.web_report.dist_colors))
     ? DATA.web_report.dist_colors : null;
   (sources || []).forEach((s, i) => {
-    distColorMap[s.name] = (custom && custom[i]) ? custom[i] : DIST_PALETTE[i % DIST_PALETTE.length];
+    // 지정 색 없는 자리: 1~10번째는 기존 DIST_PALETTE 유지(legacy 무회귀),
+    // 그 이후는 모듈로 순환(색 중복) 대신 48색 공식 연장으로 고유 색 보장.
+    distColorMap[s.name] = (custom && custom[i]) ? custom[i]
+      : (i < DIST_PALETTE.length ? DIST_PALETTE[i] : distDefaultColor(i));
   });
 }
 
 function distColorFor(source) { return distColorMap[source] || "#888"; }
+
+// source 가 이 수 이상이면 상세 3개 차트(CDF/히스토그램/정규분포)의 내장 세로 legend 를
+// 끄고 차트 위 공용 legend 스트립 1개로 대체 — 내장 legend 가 차트 폭을 잠식하고
+// 같은 내용이 3중복되는 것을 방지. 미만이면 기존 내장 legend 그대로(무회귀).
+const DIST_EXT_LEGEND_MIN = 8;
+function distUseExtLegend(data) { return ((data && data.sources) || []).length >= DIST_EXT_LEGEND_MIN; }
 
 function distFmtLimit(v) { return (v === null || v === undefined) ? "?" : String(v); }
 
@@ -3588,6 +4030,15 @@ function idetHeaderStats(stats) {
     `avg <b>${esc(fmt(s.average))}</b> · σ <b>${esc(fmt(s.stdev))}</b></span>`;
 }
 
+// 상세 상단 공용 legend 스트립 — distUseExtLegend 일 때만 (툴바 .dist-legend 와 동일
+// 마크업/CSS 재사용, flex-wrap 줄바꿈). 순서는 상세 응답 data.sources 순서.
+function idetLegendHtml(data) {
+  if (!distUseExtLegend(data)) return "";
+  return `<div class="dist-legend idet-legend">` + (data.sources || []).map(s =>
+    `<span class="dist-leg-item"><span class="dist-leg-sw" style="background:${distColorFor(s.name)}"></span>${esc(s.name)}</span>`
+  ).join("") + `</div>`;
+}
+
 function renderItemDetail(data) {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
@@ -3621,6 +4072,7 @@ function renderItemDetail(data) {
       </span>
     </div>
     <div id="cdfEditBar" class="cdf-editbar"></div>
+    ${idetLegendHtml(data)}
     <div class="idet-charts">
       <div class="idet-chart-block"><div class="dist-chart-cap">누적분포 CDF</div><div id="distCdf" class="dist-chart"></div></div>
       <div class="idet-chart-block">
@@ -3897,11 +4349,11 @@ function distRenderCdf(data) {
   if (cdfCm) { traces.push(...cdfCm.traces); cdfShapes = cdfShapes.concat(cdfCm.shapes); }
   const dragmode = cdfEditMode === "none" ? "zoom" : "select";
   Plotly.newPlot(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg, dragmode,
-    xaxis: { title: { text: xtitle }, showgrid: true, gridcolor: "#eee", zeroline: false },
+    xaxis: { title: { text: xtitle }, nticks: 10, showgrid: true, gridcolor: "#eee", zeroline: false },
     yaxis: { title: { text: "누적 %" }, range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee", zeroline: false },
     shapes: cdfShapes,
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
-    margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi }, DIST_CFG);
+    margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
   // 재렌더마다 중복 방지 후 편집 모드에서만 동작하는 선택 이벤트 바인딩.
   if (cdfDiv.removeAllListeners) { cdfDiv.removeAllListeners("plotly_click"); cdfDiv.removeAllListeners("plotly_selected"); }
   cdfDiv.on("plotly_click", ev => {
@@ -3943,7 +4395,7 @@ function distRenderDetailCharts(data) {
         showgrid: true, gridcolor: "#eee", zeroline: false },
       shapes: distSpecShapes(lo, hi, false).concat(beforeLimitShapes(data.subject)),
       annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
-      margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi }, DIST_CFG);
+      margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
   }
 }
 // report용 정규분포 곡선(#distNormal): bin/막대 없이 source별 μ/σ 로 계산한 매끄러운
@@ -3996,7 +4448,7 @@ function distRenderNormal(data) {
       showticklabels: false, showgrid: false, zeroline: false },
     shapes: distSpecShapes(lo, hi, false).concat(spikes, beforeLimitShapes(data.subject)),
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
-    margin: { l: 24, r: 22, t: 16, b: 46 }, showlegend: multi }, DIST_CFG);
+    margin: { l: 24, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
 }
 // 히스토그램 블록 탭 전환(Analysis 폴리곤 ↔ Report 정규분포). report 는 처음 볼 때만 렌더.
 function setIdetHistMode(mode) {
@@ -4895,12 +5347,6 @@ function renderActive() {
   schedulePrerender();
 }
 
-// 모드 개념은 제거됐지만(항상 편집), 렌더 재실행 진입점으로 남겨둔다.
-function setMode(m) {
-  MODE = m || "edit";
-  renderActive();
-}
-
 // add/delete row (편집 테이블 공용 위임)
 document.querySelector(".content").addEventListener("click", e => {
   // Item명 클릭 → Item_detail (Yield/CPK/IssueTable/Bin상세 공용).
@@ -4939,6 +5385,7 @@ document.querySelector(".content").addEventListener("click", e => {
 // PTE/개발 comment 등 dblclick-edit 셀: 더블클릭 전에는 읽기전용 표시, 더블클릭 시에만
 // contenteditable 활성화 (Distribution 등 다른 열이 즉시 편집 가능한 것과 구분).
 document.querySelector(".content").addEventListener("dblclick", e => {
+  if (MODE !== "edit") return;   // 읽기전용(비업로더) 모드에서는 편집 진입 차단
   const cell = e.target.closest("td.dblclick-edit");
   if (!cell || cell.isContentEditable) return;
   cell.contentEditable = "true";
@@ -4947,17 +5394,17 @@ document.querySelector(".content").addEventListener("dblclick", e => {
 
 document.getElementById("btnDel").addEventListener("click", () => {
   if (!DATA) return;
-  const needPw = !!(DATA.session && DATA.session.has_password);
-  if (!needPw) { doDelete(""); return; }
-  openPin("delete");
+  if (confirm("정말 삭제하시겠습니까?")) doDelete("");
 });
 
 document.getElementById("btnImportant").addEventListener("click", () => {
   if (!DATA) return;
-  _importantTarget = !(DATA.session && DATA.session.is_important);  // 토글 목표 상태
-  const needPw = !!(DATA.session && DATA.session.has_password);
-  if (!needPw) { doSetImportant("", _importantTarget); return; }
-  openPin("important");
+  doSetImportant("", !(DATA.session && DATA.session.is_important));
+});
+
+document.getElementById("btnPrivate").addEventListener("click", () => {
+  if (!DATA) return;
+  doSetPrivate(!(DATA.session && DATA.session.is_private));
 });
 
 async function doSetImportant(pin, important) {
@@ -4978,6 +5425,27 @@ async function doSetImportant(pin, important) {
     showToast(j.is_important ? "중요 표시했습니다." : "중요 표시를 해제했습니다.");
   } catch (e) {
     showToast("중요 표시 변경 실패: " + e.message);
+  }
+}
+
+async function doSetPrivate(private_) {
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/private`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({ private: private_ }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      showToast(j.error || "비공개 표시 변경 실패");
+      return;
+    }
+    const j = await res.json();
+    if (DATA.session) DATA.session.is_private = j.is_private;
+    updatePrivateBtn(DATA.session);
+    showToast(j.is_private ? "비공개로 설정했습니다." : "공개로 전환했습니다.");
+  } catch (e) {
+    showToast("비공개 표시 변경 실패: " + e.message);
   }
 }
 
@@ -5117,65 +5585,6 @@ window.addEventListener("beforeunload", e => {
     autoSave();            // keepalive 요청 발사 (비동기, 브라우저가 완료 보장)
     e.preventDefault();
     e.returnValue = "";    // 브라우저 "변경사항이 저장되지 않을 수 있습니다" 경고
-  }
-});
-
-// ── PIN modal ─────────────────────────────────────────────────────────────────
-let _pinPurpose = null;   // "edit" | "delete" | "important"
-let _importantTarget = false;  // "important" 토글 목표 상태
-const PIN_IDS = ["pin0", "pin1", "pin2", "pin3"];
-
-function openPin(purpose) {
-  _pinPurpose = purpose;
-  const titles = { delete: "세션 삭제", important: "중요 표시 변경", edit: "수정 모드 진입" };
-  const descs = {
-    delete: "삭제하려면 비밀번호를 입력하세요.",
-    important: "중요 표시를 변경하려면 비밀번호를 입력하세요.",
-    edit: "수정하려면 비밀번호를 입력하세요.",
-  };
-  document.getElementById("pinTitle").textContent = titles[purpose] || titles.edit;
-  document.getElementById("pinDesc").textContent = descs[purpose] || descs.edit;
-  const confirmBtn = document.getElementById("pinConfirm");
-  confirmBtn.textContent = purpose === "delete" ? "삭제" : "확인";
-  confirmBtn.classList.toggle("danger", purpose === "delete");
-  confirmBtn.classList.toggle("primary", purpose !== "delete");
-  PIN_IDS.forEach(id => document.getElementById(id).value = "");
-  document.getElementById("pinModal").classList.add("show");
-  document.getElementById("pin0").focus();
-}
-
-function closePin() { document.getElementById("pinModal").classList.remove("show"); }
-function readPin() { return PIN_IDS.map(id => document.getElementById(id).value).join(""); }
-
-document.getElementById("pinCancel").addEventListener("click", closePin);
-document.getElementById("pinConfirm").addEventListener("click", async () => {
-  const pin = readPin();
-  if (pin.length !== 4) { showToast("비밀번호 4자리를 입력하세요."); return; }
-  if (_pinPurpose === "delete") {
-    closePin();
-    doDelete(pin);
-  } else if (_pinPurpose === "important") {
-    closePin();
-    doSetImportant(pin, _importantTarget);
-  } else {
-    // 수정: 먼저 검증 후 진입
-    try {
-      const res = await fetch(`/pe/report/session/${SESSION_ID}/verify_password`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-        body: JSON.stringify({ password: pin }),
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        showToast(j.error || "비밀번호가 일치하지 않습니다.");
-        return;
-      }
-      verifiedPassword = pin;
-      closePin();
-      setMode("edit");
-    } catch (e) {
-      showToast("확인 실패: " + e.message);
-    }
   }
 });
 
@@ -5361,19 +5770,6 @@ document.getElementById("etcEngrAdd").addEventListener("click", () => {
   addEtcEngrItem(name, comment);
 });
 
-// PIN cell auto-advance
-document.querySelectorAll(".pin-cell").forEach((c, i, arr) => {
-  c.addEventListener("input", () => {
-    // type=password 는 숫자 강제가 안 되므로 비숫자 제거 후 마지막 한 자리만 유지
-    c.value = c.value.replace(/\D/g, "").slice(-1);
-    if (c.value && i < arr.length - 1) arr[i + 1].focus();
-  });
-  c.addEventListener("keydown", e => {
-    if (e.key === "Backspace" && !c.value && i > 0) arr[i - 1].focus();
-    if (e.key === "Enter") document.getElementById("pinConfirm").click();
-  });
-});
-
 // ── load 오버레이 진행바 (0→100% + 단계 메시지) ────────────────────────────────
 let _loadCreep = null;
 function setLoadProgress(pct, msg) {
@@ -5414,7 +5810,10 @@ async function load(resetMode=true) {
     // 서버가 parquet 재계산(수 초)을 마칠 때까지 첫 바이트가 없어 실제 %를 알 수 없으므로
     // 대기 동안 62% 까지 천천히 채운다.
     startLoadCreep(6, 62, 4500, "리포트 계산·수신 중…");
-    const res = await fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-store" });
+    const [res] = await Promise.all([
+      fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-store" }),
+      loadAuth(),   // 편집 권한(MODE) 판정에 필요 — /full 수신과 병렬로
+    ]);
     if (!res.ok) {
       const box = document.getElementById("errorBox");
       box.style.display = "";
@@ -5449,7 +5848,12 @@ async function load(resetMode=true) {
     ensureDistData();
     buildDistColorMap(webPre.sources || []);
     renderMeta(DATA.session || {});
-    renderActive();   // 항상 편집 가능 화면 (모드 개념 없음)
+    // 편집 권한: 로그인 ID == 업로더(기록 없으면 로그인만으로) 일 때만 edit 렌더.
+    MODE = canEditSession() ? "edit" : "view";
+    document.getElementById("btnImportant").style.display = MODE === "edit" ? "" : "none";
+    document.getElementById("btnPrivate").style.display = MODE === "edit" ? "" : "none";
+    document.getElementById("btnDel").style.display = MODE === "edit" ? "" : "none";
+    renderActive();
     hideLoadOverlay();
   } catch (e) {
     const box = document.getElementById("errorBox");

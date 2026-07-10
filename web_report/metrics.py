@@ -7,13 +7,12 @@ from .tabs.issue_table import build_issue_bin_summary, build_issue_table_rows
 from .tabs.Map_analysis import build_map_analysis_rows
 from .tabs.raw_data import build_raw_data_rows
 from .tabs.summary import build_summary_rows
-from .tabs.trim_analysis import build_trim_analysis_rows
 from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows, fail_bin_ranking,
                              fail_counts_by_source, yield_overview)
 
 
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
-                         issue_comments=None, product_type="", product="",
+                         issue_comments=None, summary_engr=None, product_type="", product="",
                          mode="Normal", dist_colors=None) -> dict:
     """Distribution ECDF(대용량)는 payload 에 싣지 않고 항상 지연 로드한다
     (distribution_deferred=True, sheets["Distribution"]=[]) — 프런트가 별도 lazy 엔드포인트
@@ -42,7 +41,9 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         "Issue Table": build_issue_table_rows(tables, yield_rows, cpk_rows, etc_items=etc_items,
                                           issue_comments=issue_comments),
         "Distribution": [],
-        "Trim Analysis": build_trim_analysis_rows(tables),
+        # Trim Analysis 는 항상 지연 로드 (GET .../web_report/trim_analysis) —
+        # Distribution embed 폐지와 동일 관례. 프런트가 탭 진입 시 lazy fetch 한다.
+        "Trim Analysis": [],
         "Map Analysis": build_map_analysis_rows(tables, product_type, product),
         "Fail Bin": fail_bin_ranking(yield_rows),
     }
@@ -58,6 +59,8 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         "distribution_index": build_distribution_index(tables, cpk_rows),
         "selected_items": sorted(selected_set),
         "requested_sheets": list(sheets or []),
+        # Summary 탭 Engr Comment(Yield/CPK/ETC 3칸) — manifest.summary_engr 에서 채운다.
+        "summary_engr": dict(summary_engr or {}),
         # None → 색 미지정(legacy): 프런트가 기본 팔레트. list → source i 가 dist_colors[i] 색.
         "dist_colors": list(dist_colors) if dist_colors else None,
     }

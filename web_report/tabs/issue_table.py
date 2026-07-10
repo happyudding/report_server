@@ -17,9 +17,8 @@ row_key: Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", ETC 행
 from __future__ import annotations
 
 from .common import fmt_type, item_meta as _item_meta
+from .cpk import CPK_THRESHOLD, worst_cpk_by_subject
 from .yield_tab import build_yield_bin_groups
-
-_CPK_THRESHOLD = 1.33
 
 _COMMENT_COLS = ["PTE comment", "개발 comment"]
 
@@ -70,19 +69,8 @@ def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None):
 
 def _cpk_fail_subjects(cpk_rows):
     """subject 별 모든 source 행 중 최저(worst-case) cpk 를 기준으로 임계값 미만 항목만 반환."""
-    worst = {}
-    order = []
-    for r in cpk_rows or []:
-        cpk = r.get("cpk")
-        if cpk is None:
-            continue
-        subject = r.get("subject")
-        if subject not in worst:
-            order.append(subject)
-            worst[subject] = cpk
-        elif cpk < worst[subject]:
-            worst[subject] = cpk
-    fails = [(subject, worst[subject]) for subject in order if worst[subject] < _CPK_THRESHOLD]
+    worst = worst_cpk_by_subject(cpk_rows)
+    fails = [(subject, cpk) for subject, cpk in worst.items() if cpk < CPK_THRESHOLD]
     # 표의 avg 컬럼(=worst-case cpk) 내림차순으로 정렬(높은 순 위 → 아래).
     fails.sort(key=lambda sc: sc[1], reverse=True)
     return fails

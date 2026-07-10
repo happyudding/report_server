@@ -94,8 +94,7 @@ client/
 3. "분석 시작" → `report_generator.analyzer.analyze()` — DataFrame → xlsx 생성 → 자동 저장
 4. "서버 업로드" 버튼 → 메타 입력 팝업 (product_type / product / lot_id / PIN 4자리)
 5. `report_flow.prepare_upload.prepare_upload_xlsx()` — distribution 시트 제거
-6. `transport.chart_export` — Excel COM 으로 차트 시트 PNG 렌더
-7. `transport.uploader.post_xlsx()` — multipart POST `/pe/report/upload_xlsx`
+6. `transport.uploader.post_xlsx()` — multipart POST `/pe/report/upload_xlsx`
 
 ---
 

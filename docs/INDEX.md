@@ -47,7 +47,7 @@
 | 04 | **Honey 자동 업데이트 채널** (배포/버전/설치) | Server + Client | [04_honey_update.md](04_honey_update.md) | [server/honey_routes.py](../server/honey_routes.py) |
 | 05 | **Honey 클라이언트 UI / 워크플로우** | Client | [05_client_ui.md](05_client_ui.md) | [client/honey_main.py](../client/honey_main.py) |
 | 06 | **로컬 분석 엔진** (CSV→분석→xlsx 생성) | Client | [06_analysis_engine.md](06_analysis_engine.md) | [client/report_generator/](../client/report_generator/) |
-| 07 | **업로드 전송 + 차트 PNG 렌더** | Client | [07_client_upload_chart.md](07_client_upload_chart.md) | [client/transport/uploader.py](../client/transport/uploader.py) |
+| 07 | **업로드 전송** | Client | [07_client_upload_chart.md](07_client_upload_chart.md) | [client/transport/uploader.py](../client/transport/uploader.py) |
 
 > 서버 부팅 자체: [server/wsgi.py](../server/wsgi.py) → `report_bp`([01](01_server_upload.md)/[02](02_server_query_edit.md)) + `honey_bp`([04](04_honey_update.md)) 등록.
 > Blueprint 등록 트리거는 [server/report/report_extension.py](../server/report/report_extension.py) (import 시 DB init + 라우트 평가).
@@ -85,6 +85,7 @@
 | 분석 수식(cpk/yield 등) | [06](06_analysis_engine.md) | [_builders.py](../client/report_generator/_builders.py) |
 | 생성 xlsx 레이아웃/차트 | [06](06_analysis_engine.md) | [xlsx_writer.py](../client/report_generator/xlsx_writer.py) |
 | 업로드 multipart 형식 | [07](07_client_upload_chart.md) | `post_xlsx()` |
+| DB 파일이 뭐가 있는지 / 백업·stdinfo 정책 | [09](09_db_inventory.md) | [db_backup.py](../server/db_backup.py), [config.py](../server/config.py) |
 
 ## 3.1 외부 소유 경계 / 진입점
 

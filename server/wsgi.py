@@ -120,6 +120,18 @@ app = Flask(__name__)
 # 요청 본문 상한 — 미설정 시 무제한이라 대용량 업로드 폭주가 메모리 피크로 직결된다.
 # upload_webreport 는 파일당 512MB 자체 검증만 있으므로 합산 상한을 여기서 건다 (초과 시 413).
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH_MB", "2048")) * 1024 * 1024
+# 로그인 세션 쿠키(HMAC 서명) 키 — 재시작해도 로그인이 풀리지 않게 DB 폴더에 1회 생성·보관.
+from config import REPORT_DB_PATH
+_key_file = Path(REPORT_DB_PATH).parent / "secret_key"
+try:
+    app.config["SECRET_KEY"] = _key_file.read_text(encoding="utf-8").strip()
+except OSError:
+    app.config["SECRET_KEY"] = ""
+if not app.config["SECRET_KEY"]:
+    import secrets
+    _key_file.parent.mkdir(parents=True, exist_ok=True)
+    app.config["SECRET_KEY"] = secrets.token_hex(32)
+    _key_file.write_text(app.config["SECRET_KEY"], encoding="utf-8")
 register_report_server(app, root_redirect=True)
 
 

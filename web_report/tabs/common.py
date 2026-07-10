@@ -62,6 +62,18 @@ def bin_sort_key(value):
         return (1, text)
 
 
+def to_coord(x, y):
+    """(XPOS, YPOS) 값 쌍 → (int, int) die 좌표. 결측("")/비수치는 None.
+
+    compare(공통 map/bin transition)·commonality 가 같은 규칙으로 좌표를 정규화한다."""
+    if x == "" or y == "":
+        return None
+    try:
+        return (int(float(x)), int(float(y)))
+    except (TypeError, ValueError):
+        return None
+
+
 def item_meta(tables) -> dict:
     """item → {"step", "tno"}(fmt_type 적용) 맵 — yield/issue_table 공용.
 
@@ -82,7 +94,7 @@ def bin_types(table) -> list:
 
     한 요청에서 yield/cpk/compare/map 빌더가 같은 BIN 컬럼을 각자 재변환하지 않도록
     HoneyformTable 인스턴스에 결과를 붙여 재사용한다. tables 는 요청마다 새 클론이므로
-    (service._clone_table) 캐시 무효화가 필요 없다.
+    (loader.clone_table) 캐시 무효화가 필요 없다.
     """
     cached = getattr(table, "_bin_types_cache", None)
     if cached is None:

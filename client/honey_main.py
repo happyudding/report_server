@@ -39,6 +39,7 @@ from honey_ui import (
     ColorEditorDialog,
     ElapsedProgress as _ElapsedProgress,
     FileOrderDialog,
+    OptionsDialog,
     ReportSettingsDialog,
     SHEET_OPTIONS,
     UploadDialog,
@@ -428,6 +429,14 @@ class HoneyMainWindow(QMainWindow):
             elif etype == QEvent.Type.Drop:
                 self._handle_csv_drop(event)
                 return True
+        elif obj is getattr(self, "progress_status", None):
+            # 진행바가 보이면 하단 dock 을 펴고, 숨겨지면 접는다 (관찰만 — 이벤트 통과).
+            dock = getattr(self, "dock_log", None)
+            if dock is not None:
+                if event.type() == QEvent.Type.Show:
+                    dock.show()
+                elif event.type() == QEvent.Type.Hide:
+                    dock.hide()
         return super().eventFilter(obj, event)
 
     def _handle_csv_drop(self, event):
@@ -586,6 +595,10 @@ class HoneyMainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, dock)
         self.dock_log = dock
         self.resizeDocks([dock], [40], Qt.Orientation.Vertical)
+        # 진행바가 숨겨진 평소엔 dock 을 접어 하단 흰 빈칸을 없앤다.
+        # progress_status 의 Show/Hide 이벤트를 받아 dock 가시성을 함께 토글한다.
+        self.progress_status.installEventFilter(self)
+        dock.hide()
 
     def _show_controls(self):
         """입력 창을 슬라이드로 띄운다 (File Open 시 호출)."""
@@ -631,6 +644,11 @@ class HoneyMainWindow(QMainWindow):
         m_file.addAction("LOCAL FILE OPEN", self._act_open_local)
         m_file.addAction("Dolphin (D1)에서 불러오기", self._act_browse_d1)
 
+        m_run = mb.addMenu("실행(&R)")
+        m_run.addAction("새 리포트 생성", self._show_controls)
+        m_run.addAction("Rawdata 편집", self.on_rawdata_edit)
+        m_run.addAction("Excel Download", self.on_excel_download)
+
         m_view = mb.addMenu("보기(&V)")
         m_view.addAction("입력 / 설정 창 열기", self._show_controls)
         m_view.addAction("입력 / 설정 창 닫기",
@@ -643,20 +661,21 @@ class HoneyMainWindow(QMainWindow):
         m_view.addAction("새로고침", lambda: self.browser_panel.view.reload())
 
         m_settings = mb.addMenu("설정(&S)")
-        m_settings.addAction("Distribution 색 설정...", self.on_webreport_colors)
+        m_settings.addAction("Options...", self.on_options)
 
         m_help = mb.addMenu("도움말(&H)")
         m_help.addAction("HONEY 도움말", self.on_help_honey)
         m_help.addAction("VOC", self.on_voc)
 
     def _icon_sidebar(self, QAction, QToolBar):
-        """왼쪽 얇은 아이콘 사이드바 — 자주 쓰는 액션(이모지 + tooltip)."""
+        """왼쪽 아이콘 사이드바 — 자주 쓰는 액션(이모지 아이콘 + 밑 라벨 + tooltip)."""
         from PyQt6.QtCore import QSize
+        from PyQt6.QtGui import QIcon
         tb = QToolBar("Quick")
         tb.setMovable(False)
         tb.setOrientation(Qt.Orientation.Vertical)
-        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)  # 이모지를 텍스트로 표시
-        tb.setIconSize(QSize(0, 0))
+        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)  # 아이콘 위·라벨 밑
+        tb.setIconSize(QSize(28, 28))
         tb.setStyleSheet("""
             QToolBar {
                 background: #1f2937;
@@ -666,25 +685,61 @@ class HoneyMainWindow(QMainWindow):
             }
             QToolBar QToolButton {
                 color: #e5e7eb;
-                font-size: 18pt;
-                min-width: 40px;
-                min-height: 40px;
+                font-size: 8pt;
+                min-width: 60px;
+                min-height: 52px;
                 border-radius: 8px;
             }
             QToolBar QToolButton:hover { background: #374151; }
             QToolBar QToolButton:pressed { background: #4b5563; }
         """)
         quick = [
-            ("🆕", "새 리포트 (입력 / 설정 창 접기·펴기)", self._toggle_controls),
-            ("📝", "Rawdata 수정 (Excel)", self.on_rawdata_edit),
-            ("📥", "Excel Download", self.on_excel_download),
+            ("🆕", "New Report",   "새 리포트 (입력 / 설정 창 접기·펴기)", self._toggle_controls),
+            ("📝", "Rawdata edit", "Rawdata 수정 (Excel)",             self.on_rawdata_edit),
+            (self._excel_icon(), "Excel Down", "Excel Download",       self.on_excel_download),
+            ("⚙️", "Options",      "옵션 (색·기본값 설정)",             self.on_options),
         ]
-        for emoji, name, slot in quick:
-            act = QAction(emoji, self)
-            act.setToolTip(name)
+        for icon, label, tip, slot in quick:
+            qicon = icon if isinstance(icon, QIcon) else self._emoji_icon(icon)
+            act = QAction(qicon, label, self)
+            act.setToolTip(tip)
             act.triggered.connect(slot)
             tb.addAction(act)
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, tb)
+
+    @staticmethod
+    def _emoji_icon(emoji, px=28):
+        """이모지 문자를 투명 배경 QPixmap 에 그려 QIcon 으로 반환."""
+        from PyQt6.QtGui import QPixmap, QPainter, QIcon
+        pm = QPixmap(px, px)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        f = p.font()
+        f.setPointSize(int(px * 0.7))
+        p.setFont(f)
+        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, emoji)
+        p.end()
+        return QIcon(pm)
+
+    @staticmethod
+    def _excel_icon(px=28):
+        """Excel 로고풍 아이콘 — 초록 라운드 사각형에 흰색 'X'."""
+        from PyQt6.QtGui import QPixmap, QPainter, QIcon, QColor, QFont
+        pm = QPixmap(px, px)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor("#16a34a"))
+        p.drawRoundedRect(2, 1, px - 4, px - 2, 4, 4)
+        f = QFont(p.font())
+        f.setPointSize(int(px * 0.5))
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QColor("#ffffff"))
+        p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, "X")
+        p.end()
+        return QIcon(pm)
 
     def _disable_engine(self):
         # 분석 관련 기능만 비활성. 로컬 파일 직접 업로드는 엔진 없이도 동작하므로 유지.
@@ -788,20 +843,46 @@ class HoneyMainWindow(QMainWindow):
         w.status.connect(self._on_excel_dl_status)
         w.done.connect(self._on_excel_dl_done)
         w.failed.connect(self._on_excel_dl_failed)
+        # 진행바(하단 dock) — 단계가 병렬이라 % 대신 경과시간 + 단계 메시지(indeterminate).
+        # 워커는 단계별 status 만 보내므로 QTimer 로 경과시간 표시를 계속 갱신한다.
+        self._excel_dl_progress = _ElapsedProgress(
+            self.progress_status, "Excel Download 준비 중...", self._status,
+            busy=True, minimum=0, maximum=0)
+        self._excel_dl_timer = QTimer(self)
+        self._excel_dl_timer.timeout.connect(
+            lambda: self._excel_dl_progress.update())
+        self._excel_dl_timer.start(500)
         self._append_run_log(f"Excel Download 시작 (session {sid}) → {out_path}")
         w.start()
+
+    def _stop_excel_dl_timer(self):
+        timer = getattr(self, "_excel_dl_timer", None)
+        if timer is not None:
+            timer.stop()
+            self._excel_dl_timer = None
 
     def _on_excel_dl_status(self, state, message):
         self._status(message)
         self._append_run_log(f"[ExcelDL] {message}")
+        progress = getattr(self, "_excel_dl_progress", None)
+        if progress is not None:
+            progress.set(message)
 
     def _on_excel_dl_done(self, out_path, elapsed):
+        self._stop_excel_dl_timer()
+        progress = getattr(self, "_excel_dl_progress", None)
+        if progress is not None:
+            progress.success(f"완료: Excel Download ({elapsed:.1f}s)")
         self._status(f"Excel Download 완료 ({elapsed:.1f}s)")
         self._append_run_log(f"[ExcelDL] 완료 ({elapsed:.1f}s): {out_path}")
         QMessageBox.information(
             self, "Excel Download", f"저장 완료 ({elapsed:.1f}초)\n{out_path}")
 
     def _on_excel_dl_failed(self, message):
+        self._stop_excel_dl_timer()
+        progress = getattr(self, "_excel_dl_progress", None)
+        if progress is not None:
+            progress.fail(f"실패: Excel Download - {message}")
         self._status(f"Excel Download 실패: {message}")
         self._append_run_log(f"[ExcelDL] 실패: {message}")
         QMessageBox.warning(self, "Excel Download 실패", message)
@@ -1039,6 +1120,19 @@ class HoneyMainWindow(QMainWindow):
         dlg = ColorEditorDialog(self)
         if dlg.exec():
             self._status("Distribution 색 저장됨")
+
+    def on_options(self):
+        """Options — 기본 Product Type + Distribution 색.
+
+        OK 시 선택한 Product Type 을 메인 UI 라디오에도 즉시 반영한다
+        (라디오 toggled → _save_product_type 로 settings.json 에도 저장됨).
+        """
+        dlg = OptionsDialog(self)
+        if dlg.exec():
+            pt = dlg.selected_product_type()
+            if pt in self._pt_radios:
+                self._pt_radios[pt].setChecked(True)
+            self._status("옵션 저장됨")
 
     def on_web_report(self):
         ctx = self._prepare_web_report_context()

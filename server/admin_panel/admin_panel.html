@@ -7,98 +7,99 @@
 <title>Report Server — 관리자</title>
 <style>
 * { box-sizing: border-box; }
+:root { color-scheme: dark; }
 body {
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: #f0f2f5; margin: 0; padding: 20px;
-  color: #222;
-  --surface-1: #ffffff;
-  --ink-1: #0b0b0b; --ink-2: #52514e; --ink-3: #898781;
-  --grid: #e1e0d9; --axis: #c3c2b7;
-  --s-upload: #008300; --s-edit: #2a78d6; --s-delete: #e34948;
-  --st-warn: #fab219; --st-crit: #d03b3b; --accent: #2a78d6;
+  background: #14161b; margin: 0; padding: 20px;
+  color: #e8e9ec;
+  --surface-1: #1e2128;
+  --ink-1: #e8e9ec; --ink-2: #a4a8b3; --ink-3: #6f737e;
+  --grid: #2b2e36; --axis: #40444e;
+  --s-upload: #22c55e; --s-edit: #3d8bef; --s-delete: #f0605f;
+  --st-warn: #fbbf24; --st-crit: #f0605f; --accent: #3d8bef;
 }
-h1 { margin: 0 0 14px; font-size: 20px; font-weight: 700; color: #1a1a2e; }
-h1 .sub { font-size: 12px; font-weight: 400; color: #888; margin-left: 8px; }
+h1 { margin: 0 0 14px; font-size: 20px; font-weight: 700; color: var(--ink-1); }
+h1 .sub { font-size: 12px; font-weight: 400; color: var(--ink-3); margin-left: 8px; }
 
 .tabs { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; }
 .tab {
   padding: 8px 18px; border-radius: 8px 8px 0 0; border: none; cursor: pointer;
-  background: #e3e6ea; color: #555; font-size: 13px; font-weight: 600;
+  background: #21242b; color: var(--ink-2); font-size: 13px; font-weight: 600;
 }
-.tab.active { background: #fff; color: #1a1a2e; box-shadow: 0 -1px 4px rgba(0,0,0,.06); }
+.tab.active { background: var(--surface-1); color: var(--ink-1); box-shadow: 0 -1px 4px rgba(0,0,0,.3); }
 .panel { display: none; }
 .panel.active { display: block; }
 
 .card {
-  background: var(--surface-1); border-radius: 10px; padding: 16px 20px;
-  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 16px;
+  background: var(--surface-1); border: 1px solid var(--grid); border-radius: 10px; padding: 16px 20px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.2); margin-bottom: 16px;
 }
-.card h2 { margin: 0 0 12px; font-size: 14px; font-weight: 700; color: #333; }
-.card h2 .hint { font-size: 11px; font-weight: 400; color: #999; margin-left: 8px; }
+.card h2 { margin: 0 0 12px; font-size: 14px; font-weight: 700; color: var(--ink-1); }
+.card h2 .hint { font-size: 11px; font-weight: 400; color: var(--ink-3); margin-left: 8px; }
 .row { display: flex; gap: 16px; flex-wrap: wrap; }
 .row > .card { flex: 1 1 260px; margin-bottom: 0; }
 .row { margin-bottom: 16px; }
 
 /* stat tiles */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
-.tile { background: #fff; border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 6px rgba(0,0,0,.07); }
+.tile { background: var(--surface-1); border: 1px solid var(--grid); border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 6px rgba(0,0,0,.2); }
 .tile .lbl { font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
 .tile .val { font-size: 26px; font-weight: 600; color: var(--ink-1); }
 .tile .det { font-size: 11px; color: var(--ink-3); margin-top: 4px; }
-.meter { height: 6px; border-radius: 3px; background: #e8eaee; margin-top: 8px; overflow: hidden; }
+.meter { height: 6px; border-radius: 3px; background: var(--grid); margin-top: 8px; overflow: hidden; }
 .meter > div { height: 100%; border-radius: 3px; background: var(--accent); }
 .meter > div.warn { background: var(--st-warn); }
 .meter > div.crit { background: var(--st-crit); }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { padding: 7px 10px; border-bottom: 1px solid #eef0f3; text-align: left; white-space: nowrap; }
-th { background: #fafbfc; font-weight: 600; color: #555; font-size: 12px; }
+th, td { padding: 7px 10px; border-bottom: 1px solid var(--grid); text-align: left; white-space: nowrap; }
+th { background: #21242b; font-weight: 600; color: var(--ink-2); font-size: 12px; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-tr.empty-row td { text-align: center; color: #999; padding: 24px; }
-td.mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #555; }
+tr.empty-row td { text-align: center; color: var(--ink-3); padding: 24px; }
+td.mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: var(--ink-2); }
 .table-wrap { overflow-x: auto; }
 
 .btn {
-  height: 32px; padding: 0 14px; border-radius: 6px; border: 1px solid #d0d5dd;
-  background: #fff; color: #333; font-size: 13px; cursor: pointer; font-weight: 500;
+  height: 32px; padding: 0 14px; border-radius: 6px; border: 1px solid var(--grid);
+  background: var(--surface-1); color: var(--ink-1); font-size: 13px; cursor: pointer; font-weight: 500;
 }
-.btn:hover { background: #f5f7fa; }
+.btn:hover { background: #262a32; }
 .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
-.btn.primary:hover { background: #1c5cab; }
-.btn.danger { background: #fff; color: #b91c1c; border-color: #f3b4b4; }
-.btn.danger:hover { background: #fef2f2; }
+.btn.primary:hover { background: #2f74cc; }
+.btn.danger { background: var(--surface-1); color: #f87171; border-color: #5c2c2c; }
+.btn.danger:hover { background: #2e1c1c; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .inp, .sel {
-  height: 32px; padding: 0 10px; border: 1px solid #d0d5dd; border-radius: 6px;
-  font-size: 13px; outline: none; background: #fff;
+  height: 32px; padding: 0 10px; border: 1px solid var(--grid); border-radius: 6px;
+  font-size: 13px; outline: none; background: var(--surface-1); color: var(--ink-1);
 }
 .inp:focus, .sel:focus { border-color: var(--accent); }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
 .toolbar .grow { flex: 1; }
-.chip { display: inline-block; background: #eef2f7; color: #555; border-radius: 12px;
+.chip { display: inline-block; background: #262a32; color: var(--ink-2); border-radius: 12px;
         padding: 2px 10px; font-size: 12px; margin-right: 6px; }
 
 .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
-.badge.upload, .badge.done   { background: #dcfce7; color: #166534; }
-.badge.edit, .badge.reused   { background: #dbeafe; color: #1e40af; }
-.badge.delete, .badge.error  { background: #fee2e2; color: #b91c1c; }
-.badge.pending { background: #fef9c3; color: #854d0e; }
-.badge.gray { background: #f1f5f9; color: #64748b; }
-.badge-fail { color: #dc2626; font-size: 11px; font-weight: 600; margin-left: 4px; }
-.star { cursor: pointer; font-size: 15px; color: #cbd5e1; background: none; border: none; padding: 2px; }
+.badge.upload, .badge.done   { background: #143824; color: #4ade80; }
+.badge.edit, .badge.reused   { background: #142c47; color: #60a5fa; }
+.badge.delete, .badge.error  { background: #3a1a1a; color: #f87171; }
+.badge.pending { background: #3a3012; color: #fbbf24; }
+.badge.gray { background: #262a32; color: #9095a0; }
+.badge-fail { color: #f87171; font-size: 11px; font-weight: 600; margin-left: 4px; }
+.star { cursor: pointer; font-size: 15px; color: #4b4f59; background: none; border: none; padding: 2px; }
 .star.on { color: #eda100; }
 
 .msg { font-size: 12px; margin-top: 8px; color: var(--ink-2); white-space: pre-wrap; }
-.msg.err { color: #b91c1c; }
+.msg.err { color: #f87171; }
 pre.logbox {
-  background: #101418; color: #d7dde4; border-radius: 8px; padding: 14px;
+  background: #101418; color: #d7dde4; border: 1px solid var(--grid); border-radius: 8px; padding: 14px;
   font-size: 12px; line-height: 1.5; max-height: 560px; overflow: auto; white-space: pre-wrap;
 }
 .pager { display: flex; gap: 6px; justify-content: center; margin-top: 12px; align-items: center; }
 .pager .pg-btn { min-width: 32px; height: 30px; padding: 0 10px; font-size: 12px;
-  border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-radius: 4px; }
+  border: 1px solid var(--grid); background: var(--surface-1); color: var(--ink-1); cursor: pointer; border-radius: 4px; }
 .pager .pg-btn:disabled { opacity: .4; cursor: not-allowed; }
-.pager .pg-info { font-size: 12px; color: #888; }
+.pager .pg-info { font-size: 12px; color: var(--ink-3); }
 
 /* chart */
 .chart-box { position: relative; }
@@ -107,8 +108,8 @@ pre.logbox {
 .chart-legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
 #chartTip {
   position: absolute; pointer-events: none; display: none; z-index: 5;
-  background: #fff; border: 1px solid #e1e0d9; border-radius: 8px;
-  box-shadow: 0 2px 10px rgba(0,0,0,.12); padding: 8px 12px; font-size: 12px; color: var(--ink-1);
+  background: var(--surface-1); border: 1px solid var(--grid); border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.35); padding: 8px 12px; font-size: 12px; color: var(--ink-1);
 }
 #chartTip .t-date { font-weight: 600; margin-bottom: 4px; }
 #chartTip .t-row { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
@@ -123,6 +124,7 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
   <button class="tab active" data-panel="pHealth">현황</button>
   <button class="tab" data-panel="pStats">통계</button>
   <button class="tab" data-panel="pSessions">세션</button>
+  <button class="tab" data-panel="pUsers">사용자</button>
   <button class="tab" data-panel="pDb">DB</button>
   <button class="tab" data-panel="pLogs">로그</button>
   <button class="tab" data-panel="pAudit">감사로그</button>
@@ -182,6 +184,14 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
       <tbody id="userRankBody"><tr class="empty-row"><td colspan="9">로딩 중…</td></tr></tbody>
     </table></div>
   </div>
+  <div class="card">
+    <h2>최근 활동 <span class="hint">가장 최근 사용 기록 20건 (감사로그)</span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>시각</th><th>작업</th><th>type</th><th>product</th><th>lot_id</th>
+        <th>파일/대상</th><th>사용자(PC)</th><th>IP</th></tr></thead>
+      <tbody id="recentBody"><tr class="empty-row"><td colspan="8">로딩 중…</td></tr></tbody>
+    </table></div>
+  </div>
 </div>
 
 <!-- ═══ 세션 ═══ -->
@@ -211,6 +221,27 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
     </table></div>
     <div class="pager" id="sessPager"></div>
     <div class="msg" id="sessMsg"></div>
+  </div>
+</div>
+
+<!-- ═══ 사용자 ═══ -->
+<div id="pUsers" class="panel">
+  <div class="card">
+    <h2>웹 로그인 계정 <span id="usersSummary" class="hint"></span></h2>
+    <div class="toolbar">
+      <input id="userQ" class="inp" style="width:260px" placeholder="ID 검색…">
+      <button class="btn primary" id="btnUserSearch">검색</button>
+      <span class="grow"></span>
+      <span class="hint">초기 비밀번호는 <b>0000</b> · 로그인 시 없는 ID 는 자동 생성됩니다</span>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>ID</th><th>생성일</th><th class="num">즐겨찾기</th><th class="num">업로드</th><th></th>
+      </tr></thead>
+      <tbody id="userBody"><tr class="empty-row"><td colspan="5">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="pager" id="userPager"></div>
+    <div class="msg" id="userMsg"></div>
   </div>
 </div>
 
@@ -246,6 +277,7 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
       </span>
     </h2>
     <div class="msg" id="diagMsg"></div>
+    <div class="tiles" id="diagOverview" style="margin-bottom:14px"></div>
     <div class="table-wrap"><table id="diagTable"></table></div>
   </div>
 </div>
@@ -339,7 +371,7 @@ async function postJSON(url, body) {
 const loadedTabs = new Set();
 const TAB_LOADERS = {
   pHealth: loadHealth, pStats: loadStats, pSessions: loadSessions,
-  pDb: loadDb, pLogs: loadLogs, pAudit: loadAudit,
+  pUsers: loadUsers, pDb: loadDb, pLogs: loadLogs, pAudit: loadAudit,
 };
 document.querySelectorAll(".tab").forEach(btn => {
   btn.onclick = () => {
@@ -514,6 +546,23 @@ async function loadStats() {
   } catch (e) {
     $("userRankBody").innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
   }
+  try {
+    const rec = await getJSON("api/audit?limit=20");
+    $("recentBody").innerHTML = rec.length ? rec.map(r => {
+      const act = r.action || "";
+      const fail = (r.result && r.result !== "ok") ? `<span class="badge-fail">${esc(r.result)}</span>` : "";
+      return `<tr>
+        <td>${fmtDate(r.created_at)}</td>
+        <td><span class="badge ${esc(act)}">${esc(ACTION_LABEL[act] || act)}</span>${fail}</td>
+        <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
+        <td>${esc(r.lot_id || "-")}</td>
+        <td>${esc(r.file_name || r.changed_fields || r.session_id || "-")}</td>
+        <td>${esc(r.client_user || "-")}${r.client_host ? ` <span style="color:#999;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
+        <td class="mono">${esc(r.client_ip || "-")}</td></tr>`;
+    }).join("") : `<tr class="empty-row"><td colspan="8">기록이 없습니다.</td></tr>`;
+  } catch (e) {
+    $("recentBody").innerHTML = `<tr class="empty-row"><td colspan="8">조회 실패: ${esc(e)}</td></tr>`;
+  }
 }
 $("statsDays").onchange = loadStats;
 
@@ -631,6 +680,73 @@ $("btnBulkDelete").onclick = async () => {
   } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
 };
 
+// ── 사용자 ────────────────────────────────────────────────────────────────────
+const USER_PAGE = 50;
+let userOffset = 0, userTotal = 0;
+async function loadUsers() {
+  const tb = $("userBody");
+  tb.innerHTML = `<tr class="empty-row"><td colspan="5">로딩 중…</td></tr>`;
+  const params = new URLSearchParams({ limit: USER_PAGE, offset: userOffset });
+  const q = $("userQ").value.trim(); if (q) params.set("q", q);
+  let data;
+  try { data = await getJSON("api/users?" + params); }
+  catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="5">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  userTotal = data.total;
+  $("usersSummary").textContent = `총 ${userTotal}명`;
+  if (!data.rows.length) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="5">계정이 없습니다.</td></tr>`;
+  } else {
+    tb.innerHTML = data.rows.map(u => `
+      <tr data-uid="${esc(u.user_id)}">
+        <td class="mono">${esc(u.user_id)}</td>
+        <td>${fmtDate(u.created_at)}</td>
+        <td class="num">${u.fav_count}</td>
+        <td class="num">${u.upload_count}</td>
+        <td>
+          <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="reset" data-uid="${esc(u.user_id)}">비밀번호 초기화(0000)</button>
+          <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="setpw" data-uid="${esc(u.user_id)}">비밀번호 지정</button>
+          <button class="btn danger" style="height:24px;padding:0 8px;font-size:11px" data-act="del" data-uid="${esc(u.user_id)}">삭제</button>
+        </td>
+      </tr>`).join("");
+  }
+  const page = Math.floor(userOffset / USER_PAGE), last = Math.max(0, Math.ceil(userTotal / USER_PAGE) - 1);
+  $("userPager").innerHTML = `
+    <button class="pg-btn" id="userPrev" ${page === 0 ? "disabled" : ""}>← 이전</button>
+    <span class="pg-info">${userTotal}명 중 ${userTotal ? userOffset + 1 : 0}–${Math.min(userOffset + USER_PAGE, userTotal)} (페이지 ${page + 1}/${last + 1})</span>
+    <button class="pg-btn" id="userNext" ${page >= last ? "disabled" : ""}>다음 →</button>`;
+  $("userPrev").onclick = () => { userOffset = Math.max(0, userOffset - USER_PAGE); loadUsers(); };
+  $("userNext").onclick = () => { userOffset += USER_PAGE; loadUsers(); };
+}
+$("btnUserSearch").onclick = () => { userOffset = 0; loadUsers(); };
+$("userQ").addEventListener("keydown", e => { if (e.key === "Enter") { userOffset = 0; loadUsers(); } });
+$("userBody").addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-act]");
+  if (!btn) return;
+  const uid = btn.dataset.uid, msg = $("userMsg");
+  msg.className = "msg"; msg.textContent = "";
+  try {
+    if (btn.dataset.act === "reset") {
+      if (!confirm(`${uid} 의 비밀번호를 초기값 0000 으로 되돌릴까요?`)) return;
+      await postJSON(`api/user/${encodeURIComponent(uid)}/reset_password`, {});
+      msg.textContent = `${uid}: 비밀번호를 0000 으로 초기화했습니다.`;
+    } else if (btn.dataset.act === "setpw") {
+      const pw = prompt(`${uid} 의 새 비밀번호 (숫자 4자리):`, "");
+      if (pw === null) return;
+      if (!/^\d{4}$/.test(pw)) { alert("4자리 숫자만 가능합니다."); return; }
+      await postJSON(`api/user/${encodeURIComponent(uid)}/password`, { password: pw });
+      msg.textContent = `${uid}: 비밀번호를 변경했습니다.`;
+    } else if (btn.dataset.act === "del") {
+      if (!confirm(`계정 ${uid} 을(를) 삭제할까요?\n이 계정의 즐겨찾기도 함께 삭제됩니다.`)) return;
+      await postJSON(`api/user/${encodeURIComponent(uid)}/delete`, {});
+      msg.textContent = `${uid}: 계정을 삭제했습니다.`;
+      loadUsers();
+    }
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+});
+
 // ── DB ──────────────────────────────────────────────────────────────────────
 async function loadDb() { loadBackups(); }
 async function loadBackups() {
@@ -667,6 +783,26 @@ $("btnCleanupReal").onclick = () => {
   const typed = prompt("보존기간이 지난 비중요 세션을 실제로 삭제합니다 (산출물 포함, 복구 불가).\n\n계속하려면 DELETE 를 입력하세요:");
   if (typed === "DELETE") runCleanup(false);
 };
+const AUTO_VACUUM = { 0: "none", 1: "full", 2: "incremental" };
+function renderDiagOverview(o, d) {
+  if (!o) { $("diagOverview").innerHTML = ""; return; }
+  $("diagOverview").innerHTML = `
+    <div class="tile"><div class="lbl">파일 크기</div>
+      <div class="val" style="font-size:20px">${fmtBytes(d.db_file)}</div>
+      <div class="det">-wal ${fmtBytes(d.db_wal)} · -shm ${fmtBytes(d.db_shm)}</div></div>
+    <div class="tile"><div class="lbl">논리 크기</div>
+      <div class="val" style="font-size:20px">${fmtBytes(o.logical_bytes)}</div>
+      <div class="det">${o.page_count.toLocaleString()} 페이지 × ${fmtBytes(o.page_size)}</div></div>
+    <div class="tile"><div class="lbl">회수 가능 (freelist)</div>
+      <div class="val" style="font-size:20px">${fmtBytes(o.free_bytes)}</div>
+      <div class="det">${o.freelist_count.toLocaleString()} 빈 페이지 · VACUUM 시 회수</div></div>
+    <div class="tile"><div class="lbl">저장 설정</div>
+      <div class="val" style="font-size:20px">${esc(o.journal_mode)}</div>
+      <div class="det">auto_vacuum ${esc(AUTO_VACUUM[o.auto_vacuum] || o.auto_vacuum)} · ${esc(o.encoding)}</div></div>
+    <div class="tile"><div class="lbl">인덱스 / 스키마</div>
+      <div class="val" style="font-size:20px">${o.index_count}</div>
+      <div class="det">인덱스 · user_version ${o.user_version}</div></div>`;
+}
 async function runDiag(full) {
   const msg = $("diagMsg");
   msg.className = "msg"; msg.textContent = full ? "integrity_check 실행 중… (수 초~수 분)" : "quick_check 실행 중…";
@@ -676,6 +812,7 @@ async function runDiag(full) {
         ? '<span class="badge done">ok</span>'
         : `<span class="badge error">문제 발견</span> ${esc(d.check_result.join("; "))}`}
       &nbsp;· DB ${fmtBytes(d.db_file)} · -wal ${fmtBytes(d.db_wal)}`;
+    renderDiagOverview(d.overview, d);
     $("diagTable").innerHTML =
       `<thead><tr><th>테이블</th><th class="num">행 수</th></tr></thead><tbody>` +
       d.tables.map(t => `<tr><td class="mono">${esc(t.name)}</td><td class="num">${t.rows.toLocaleString()}</td></tr>`).join("") +

@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 
 from flask import Response, abort, jsonify, make_response, request, send_file
+from flask import session as flask_session
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import report_db
 import storage_gateway
@@ -91,6 +93,21 @@ def _password_ok(session, password):
     if not stored:
         return True
     return (password or "").strip() == stored
+
+
+def _uploader_guard(session):
+    """세션 변경(편집/삭제/중요표시) 가드 — 로그인 필수 + 업로더 일치.
+
+    uploaded_by 는 Honey 가 보낸 'DOMAIN\\user' 또는 'user' 형식이라 뒷부분만 비교.
+    업로더 기록이 없는 legacy 세션은 로그인만 하면 허용.
+    통과하면 None, 거부면 (json, status) 튜플을 반환한다."""
+    uid = flask_session.get("user_id") or ""
+    if not uid:
+        return jsonify({"error": "로그인이 필요합니다."}), 401
+    ub = str((session or {}).get("uploaded_by") or "")
+    if ub and ub.split("\\")[-1].strip().lower() != uid:
+        return jsonify({"error": "업로더만 수정/삭제할 수 있습니다."}), 403
+    return None
 
 
 def _client_meta():
@@ -349,11 +366,106 @@ def web_report_scatter(session_id, subject):
     return Response(body, mimetype="application/json", headers=headers)
 
 
+@report_bp.get("/session/<session_id>/web_report/trim_analysis")
+def web_report_trim_analysis(session_id):
+    """Trim Analysis 탭 payload(항목 매칭 + 그룹 통계/shift) 지연 로드.
+
+    /full 에서 제외된 sheets["Trim Analysis"] 의 대체 — distribution 라우트와 동일하게
+    gzip 과 ETag 조건부 응답을 지원한다. ETag 에 manifest digest 가 포함돼
+    trim_overrides 편집 직후 stale 304 가 나가지 않는다. ?source= 로 소스 선택("" = 첫 소스).
+    """
+    session = _require_web_report_session(session_id)
+    source = (request.args.get("source") or "").strip()
+    if len(source) > 200:
+        abort(400, "invalid source")
+    try:
+        body, mdigest = web_report_service.get_trim_analysis_gzip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            source=source)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report trim_analysis failed for session %s", session_id)
+        abort(500, "trim_analysis failed")
+    etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
+            f'-{mdigest[:16]}"')
+    headers = {"Vary": "Accept-Encoding", "ETag": etag}
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers=headers)
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+    return Response(body, mimetype="application/json", headers=headers)
+
+
+@report_bp.get("/session/<session_id>/web_report/trim_chart")
+def web_report_trim_chart(session_id):
+    """Trim 그룹 1개의 chip-to-chip 차트 데이터(전 die, 다운샘플 없음) 지연 로드.
+
+    ?source=&group= 쿼리 사용 — 그룹 id(stem)에 특수문자가 올 수 있어 path 대신 query.
+    프런트가 그룹 단위로 병렬(동시 8) fetch 하고 클라 캐시로 재조회를 흡수한다.
+    """
+    _require_web_report_session(session_id)
+    source = (request.args.get("source") or "").strip()
+    group = (request.args.get("group") or "").strip()
+    if not group or len(group) > 200 or len(source) > 200:
+        abort(400, "invalid group or source")
+    try:
+        body = web_report_service.get_trim_chart_gzip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            source=source, group_id=group)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report trim group or session data not found")
+    except Exception:
+        _log.exception("web_report trim_chart failed for session %s group %s",
+                       session_id, group)
+        abort(500, "trim_chart failed")
+    headers = {"Vary": "Accept-Encoding"}
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+    return Response(body, mimetype="application/json", headers=headers)
+
+
+@report_bp.post("/session/<session_id>/web_report/trim/overrides")
+def web_report_trim_overrides(session_id):
+    """Trim Analysis 드래그앤드랍 수동 재배치 저장 — manifest.trim_overrides 갱신 (parquet 불변).
+
+    편집은 로그인한 업로더만 가능하다 (CSRF + _uploader_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    ops = body.get("ops")
+    if not isinstance(ops, list) or not ops:
+        return jsonify({"error": "ops가 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_trim_overrides(
+            session_id, ops, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report trim overrides failed for session %s", session_id)
+        abort(500, "trim overrides failed")
+    return jsonify(result)
+
+
 @report_bp.get("/session/<session_id>/web_report/commonality/chips")
 def web_report_commonality_chips(session_id):
-    """Commonality chip 검색: serial/xpos/ypos/dut 부분일치 후보 목록 (읽기 전용)."""
+    """Commonality chip 검색: serial/xpos/ypos 개별 칸(AND) 또는 q(OR, dut 포함) 후보 목록 (읽기 전용)."""
     _require_web_report_session(session_id)
     q = request.args.get("q") or ""
+    serial = request.args.get("serial") or ""
+    xpos = request.args.get("xpos") or ""
+    ypos = request.args.get("ypos") or ""
     try:
         limit = min(max(int(request.args.get("limit") or 300), 1), 2000)
     except (TypeError, ValueError):
@@ -361,7 +473,7 @@ def web_report_commonality_chips(session_id):
     try:
         result = web_report_service.commonality_chips(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
-            q=q, limit=limit)
+            q=q, limit=limit, serial=serial, xpos=xpos, ypos=ypos)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except Exception:
@@ -391,9 +503,12 @@ def web_report_commonality_chip(session_id):
 def web_report_raw_data_edit(session_id):
     """Raw Data 셀 편집 저장 — 저장된 parquet 원본을 직접 덮어쓴다 (버전관리/undo 없음).
 
-    편집은 PIN 없이 누구나 가능하다 (CSRF 토큰만 검증)."""
+    편집은 로그인한 업로더만 가능하다 (CSRF + _uploader_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
     body = request.get_json(force=True, silent=True) or {}
     edits = body.get("edits") or []
     if not isinstance(edits, list) or not edits:
@@ -484,9 +599,12 @@ def web_report_issue_table_etc(session_id):
     """Issue Table ETC 섹션 item 추가/삭제 — manifest.etc_items 갱신 (Bin/TNO/Distribution
     은 저장하지 않고 조회 시마다 자동으로 다시 채워진다).
 
-    편집은 PIN 없이 누구나 가능하다 (CSRF 토큰만 검증)."""
+    편집은 로그인한 업로더만 가능하다 (CSRF + _uploader_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
     body = request.get_json(force=True, silent=True) or {}
     action = (body.get("action") or "add").strip()
     item = (body.get("item") or "").strip()
@@ -514,9 +632,12 @@ def web_report_issue_table_etc(session_id):
 def web_report_issue_table_comments(session_id):
     """Issue Table PTE/개발 comment 저장 — manifest.issue_comments 갱신 (parquet 불변).
 
-    편집은 PIN 없이 누구나 가능하다 (CSRF 토큰만 검증)."""
+    편집은 로그인한 업로더만 가능하다 (CSRF + _uploader_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
     body = request.get_json(force=True, silent=True) or {}
     comments = body.get("comments")
     if not isinstance(comments, list) or not comments:
@@ -536,6 +657,35 @@ def web_report_issue_table_comments(session_id):
     return jsonify(result)
 
 
+@report_bp.post("/session/<session_id>/web_report/summary/engr")
+def web_report_summary_engr(session_id):
+    """Summary 탭 Engr Comment(Yield/CPK/ETC 3칸) 저장 — manifest.summary_engr 갱신 (parquet 불변).
+
+    편집은 로그인한 업로더만 가능하다 (CSRF + _uploader_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    values = body.get("values")
+    if not isinstance(values, dict) or not values:
+        return jsonify({"error": "values가 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_summary_engr(
+            session_id, values, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report summary engr failed for session %s", session_id)
+        abort(500, "summary engr failed")
+    return jsonify(result)
+
+
 def _load_json_object(objects, object_type):
     """objects 인덱스에 object_type 이 있으면 S3 JSON 다운로드, 실패 시 None."""
     return storage_gateway.load_json_object(objects, object_type)
@@ -545,13 +695,12 @@ def _load_json_object(objects, object_type):
 def delete_session_route(session_id):
     _require_csrf()
     _validate_session_id(session_id)
-    body = request.get_json(force=True, silent=True) or {}
-    password = (body.get("password") or "").strip()
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
-    if not _password_ok(session, password):
-        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
     # 마지막 참조 세션이면 산출물(S3 오브젝트·로컬 폴백 파일)과 관련 DB 행까지 정리.
     # best-effort — 정리 실패가 세션 삭제 자체를 막지 않는다 (audit 패턴과 동일).
     akey = session.get("analysis_key")
@@ -573,20 +722,38 @@ def delete_session_route(session_id):
 
 @report_bp.post("/session/<session_id>/important")
 def set_session_important(session_id):
-    """세션 전역 '중요' 플래그 토글. 켜면 오래된 세션 자동정리에서 제외된다. PIN 검증 필요."""
+    """세션 전역 '중요' 플래그 토글. 켜면 오래된 세션 자동정리에서 제외된다. 업로더 로그인 필요."""
     _require_csrf()
     _validate_session_id(session_id)
     body = request.get_json(force=True, silent=True) or {}
-    password = (body.get("password") or "").strip()
     important = 1 if body.get("important") else 0
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
-    if not _password_ok(session, password):
-        return jsonify({"error": "비밀번호가 일치하지 않습니다."}), 403
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
     report_db.update_session(session_id, is_important=important)
     _audit("edit", session=session, changed_fields="is_important")
     return jsonify({"ok": True, "session_id": session_id, "is_important": important})
+
+
+@report_bp.post("/session/<session_id>/private")
+def set_session_private(session_id):
+    """세션 '비공개' 표시 토글. 업로더 로그인 필요. 목록에서 숨기지는 않고 자물쇠 아이콘 마커용."""
+    _require_csrf()
+    _validate_session_id(session_id)
+    body = request.get_json(force=True, silent=True) or {}
+    private = 1 if body.get("private") else 0
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
+    report_db.update_session(session_id, is_private=private)
+    _audit("edit", session=session, changed_fields="is_private")
+    return jsonify({"ok": True, "session_id": session_id, "is_private": private})
 
 
 @report_bp.post("/session/<session_id>/verify_password")
@@ -677,6 +844,7 @@ _VENDOR_MIME = {
     "tabulator.min.js": "application/javascript",
     "tabulator.min.css": "text/css",
     "plotly.min.js": "application/javascript",
+    "exceljs.min.js": "application/javascript",
     "pretendard/PretendardVariable.woff2": "font/woff2",
 }
 
@@ -727,6 +895,103 @@ def history():
     rows = report_db.get_history(**filters, limit=limit, offset=offset)
     total = report_db.count_history(**filters)
     return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset})
+
+
+# ── 사용자 인증 (ID/PW, report_user 테이블) ───────────────────────────────────
+# 로그인 상태는 Flask 서명 쿠키 세션(flask_session["user_id"])으로 유지한다.
+# 계정은 첫 로그인 시 자동 생성 — 이후 같은 ID 는 PW 가 일치해야 로그인된다.
+
+_USER_ID_RE = re.compile(r"^[^\s\\/]{1,64}$")
+_PIN_RE = re.compile(r"^\d{4}$")   # 비밀번호는 숫자 4자리
+_DEFAULT_PIN = "0000"              # 모든 신규 계정의 초기 비밀번호
+
+
+def _normalize_user_id(value):
+    """Windows ID 는 대소문자 무구분 — 소문자 정규화. 형식 불량이면 400."""
+    uid = (value or "").strip().lower()
+    if not _USER_ID_RE.match(uid):
+        abort(400, "invalid user_id")
+    return uid
+
+
+@report_bp.post("/api/auth/login")
+def auth_login():
+    """ID + 숫자 4자리 로그인. 신규 ID 는 초기 비밀번호 0000 으로 계정을 만들고
+    같은 규칙으로 검증한다 — 즉 첫 로그인은 반드시 0000 이어야 한다."""
+    _require_csrf()
+    body = request.get_json(force=True, silent=True) or {}
+    uid = _normalize_user_id(body.get("user_id"))
+    password = (body.get("password") or "").strip()
+    if not _PIN_RE.match(password):
+        return jsonify({"error": "비밀번호는 숫자 4자리입니다."}), 400
+    user = report_db.get_user(uid)
+    if user is None:
+        report_db.create_user(uid, generate_password_hash(_DEFAULT_PIN))
+        user = report_db.get_user(uid)
+    if not check_password_hash(user["password_hash"], password):
+        return jsonify({"error": "비밀번호가 일치하지 않습니다. (초기 비밀번호는 0000)"}), 403
+    flask_session.permanent = True   # 기본 31일 유지
+    flask_session["user_id"] = uid
+    # 초기 비밀번호로 로그인했으면 프런트가 변경을 안내하도록 플래그를 준다.
+    return jsonify({"ok": True, "user_id": uid, "is_default_password": password == _DEFAULT_PIN})
+
+
+@report_bp.post("/api/auth/change_password")
+def auth_change_password():
+    """로그인한 본인의 비밀번호 변경 — 현재 비밀번호 확인 후 새 4자리로 교체."""
+    _require_csrf()
+    uid = flask_session.get("user_id")
+    if not uid:
+        return jsonify({"error": "로그인이 필요합니다."}), 401
+    body = request.get_json(force=True, silent=True) or {}
+    current = (body.get("current_password") or "").strip()
+    new = (body.get("new_password") or "").strip()
+    if not _PIN_RE.match(new):
+        return jsonify({"error": "새 비밀번호는 숫자 4자리입니다."}), 400
+    user = report_db.get_user(uid)
+    if not user or not check_password_hash(user["password_hash"], current):
+        return jsonify({"error": "현재 비밀번호가 일치하지 않습니다."}), 403
+    report_db.update_user_password(uid, generate_password_hash(new))
+    return jsonify({"ok": True})
+
+
+@report_bp.post("/api/auth/logout")
+def auth_logout():
+    _require_csrf()
+    flask_session.pop("user_id", None)
+    return jsonify({"ok": True})
+
+
+@report_bp.get("/api/auth/me")
+def auth_me():
+    return jsonify({"user_id": flask_session.get("user_id")})
+
+
+# ── user favorites (검색결과 즐겨찾기, 로그인 계정 별) ────────────────────────
+
+@report_bp.get("/api/favorites")
+def get_favorites():
+    uid = flask_session.get("user_id")
+    if not uid:
+        return jsonify({"user_id": None, "favorites": []})
+    return jsonify({"user_id": uid, "favorites": report_db.get_user_favorites(uid)})
+
+
+@report_bp.post("/api/favorites")
+def set_favorite():
+    _require_csrf()
+    uid = flask_session.get("user_id")
+    if not uid:
+        return jsonify({"error": "로그인이 필요합니다."}), 401
+    body = request.get_json(force=True, silent=True) or {}
+    session_id = body.get("session_id", "")
+    _validate_session_id(session_id)
+    if not report_db.get_session(session_id):
+        abort(404, "session not found")
+    favorite = bool(body.get("favorite"))
+    report_db.set_user_favorite(uid, session_id, favorite)
+    return jsonify({"ok": True, "user_id": uid, "session_id": session_id,
+                    "favorite": favorite})
 
 
 @report_bp.get("/api/part_ids")

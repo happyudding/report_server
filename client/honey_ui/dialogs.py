@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt, QStringListModel, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QColorDialog,
+    QComboBox,
     QCompleter,
     QDialog,
     QDialogButtonBox,
@@ -21,6 +22,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+import app_settings
 import chart_colors
 from transport import uploader
 
@@ -197,6 +199,47 @@ class ColorEditorDialog(QDialog):
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "저장 실패", f"색상 저장에 실패했습니다:\n{exc}")
             return
+        self.accept()
+
+
+class OptionsDialog(QDialog):
+    """Honey 통합 옵션 — 기본 Product Type + Distribution 차트 색.
+
+    색 편집은 기존 ColorEditorDialog 를 그대로 재사용(버튼 → 모달)한다.
+    """
+    # honey_main._pt_radios 와 동일 집합 — 두 곳이 어긋나지 않도록 함께 관리할 것.
+    PRODUCT_TYPES = ["MDDI", "PDDI", "PMIC", "SECURITY"]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Options")
+        root = QVBoxLayout(self)
+
+        # (1) 기본 Product Type — 다음 실행 때 자동 선택될 값
+        root.addWidget(QLabel("기본 Product Type (다음 실행 때 자동 선택)"))
+        self.cbo_pt = QComboBox()
+        self.cbo_pt.addItems(self.PRODUCT_TYPES)
+        cur = app_settings.get_setting("product_type")
+        if cur in self.PRODUCT_TYPES:
+            self.cbo_pt.setCurrentText(cur)
+        root.addWidget(self.cbo_pt)
+
+        # (2) Distribution 색 — 기존 ColorEditorDialog 재사용
+        btn_colors = QPushButton("Distribution 색 편집...")
+        btn_colors.clicked.connect(lambda: ColorEditorDialog(self).exec())
+        root.addWidget(btn_colors)
+
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                              | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self._on_ok)
+        bb.rejected.connect(self.reject)
+        root.addWidget(bb)
+
+    def selected_product_type(self):
+        return self.cbo_pt.currentText()
+
+    def _on_ok(self):
+        app_settings.set_setting("product_type", self.cbo_pt.currentText())
         self.accept()
 
 

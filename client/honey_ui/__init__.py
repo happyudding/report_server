@@ -2,6 +2,7 @@
 from .dialogs import (
     ColorEditorDialog,
     FileOrderDialog,
+    OptionsDialog,
     ReportSettingsDialog,
     SHEET_OPTIONS,
     UploadDialog,
@@ -12,6 +13,7 @@ __all__ = [
     "ColorEditorDialog",
     "ElapsedProgress",
     "FileOrderDialog",
+    "OptionsDialog",
     "ReportSettingsDialog",
     "SHEET_OPTIONS",
     "UploadDialog",

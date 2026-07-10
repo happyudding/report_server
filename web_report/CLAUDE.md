@@ -58,25 +58,33 @@ Compare=정확히 2개(서버 ingest 도 2개 아니면 400 거부), DUT/Commona
 ```
 web_report/
 ├── __init__.py        패키지 docstring만
-├── service.py          ingest_webreport() — 업로드 처리(해시→analysis_key→DB 세션→
-│                        parquet+manifest 저장), load_webreport() — 세션 재계산 조회,
-│                        get_distribution() — Distribution ECDF lazy 조회(컴팩트 columnar),
-│                        raw_data 조회·편집, update_issue_etc_items/update_issue_comments
-│                        (Issue Table ETC 항목·comment 편집 — manifest 만 재저장).
-│                        decoded tables 는 (analysis_key, content_hash) 키 인메모리 LRU 캐시
-│                        (_TABLES_CACHE, 반환은 _clone_table 클론 — df/data 는 읽기 전용 공유,
-│                        df 를 고치는 편집 경로는 use_cache=False).
-│                        파생 캐시 2개 추가: get_distribution_gzip() 이 dist compact 의
-│                        JSON+gzip bytes 를 (akey, chash) 키로, load_webreport() 이 report
-│                        dict 를 (akey, chash, manifest 해시) 키로 LRU 캐시 — 세션당 첫 1회만
-│                        CPU 사용(동시 ~10명 대비 핵심), comments/etc 는 manifest 해시로,
-│                        raw_data 편집은 content_hash 로 자연 무효화. 업로드 직후 데몬 스레드
-│                        프리웜(_prewarm). 캐시 크기 env: WEB_REPORT_TABLES_CACHE(4)/
-│                        WEB_REPORT_DIST_CACHE(4)/WEB_REPORT_REPORT_CACHE(8)/
-│                        WEB_REPORT_COMMONALITY_CACHE(2, chip 검색·백분위용 사전 계산 인덱스)
+├── service.py          업로드 ingest + 조회/편집 오케스트레이션 (외부 진입점 — 2026-07-10
+│                        계층 분리로 얇아짐, 공개 함수 시그니처 불변):
+│                        ingest_webreport() — 업로드 처리(해시→analysis_key→DB 세션→
+│                        parquet+manifest 저장 + 업로드 직후 데몬 스레드 프리웜 _prewarm),
+│                        load_webreport() — 세션 재계산 조회(report dict 를
+│                        (akey, chash, manifest 해시, opts, mode) 키로 LRU 캐시),
+│                        get_distribution()/get_distribution_gzip() — Distribution ECDF lazy
+│                        조회(컴팩트 columnar, gzip bytes 캐시), raw_data 조회·편집,
+│                        commonality 검색/백분위, update_issue_etc_items/update_issue_comments
+│                        (Issue Table ETC 항목·comment 편집 — manifest 만 재저장),
+│                        invalidate_caches (cache.py 위임 — 외부 호출부용 진입점 유지)
+├── cache.py            인메모리 LRU 캐시 인프라 (2026-07-10 service 에서 분리):
+│                        TABLES/DIST/REPORT/COMMONALITY/MANIFEST 캐시 + 공유 CACHE_LOCK +
+│                        single-flight keyed_lock + AKEY_CACHES 레지스트리(register_akey_cache)
+│                        + evict_akey_caches(편집용, manifest 유지)/invalidate_caches(세션삭제용)
+│                        + manifest write-through(manifest_cache_put/load_manifest_with_digest).
+│                        캐시 크기 env: WEB_REPORT_TABLES_CACHE(4)/WEB_REPORT_DIST_CACHE(4)/
+│                        WEB_REPORT_REPORT_CACHE(8)/WEB_REPORT_COMMONALITY_CACHE(2)/
+│                        WEB_REPORT_MANIFEST_CACHE(16)
+├── validation.py       canon(정준 JSON)·validate_mode/mode_tables(DUT 분할)·validate_meta·
+│                        client_identity·webreport_colors — 캐시·저장소 무의존 순수 헬퍼
+├── loader.py           load_tables() — 세션 → parquet 다운로드·디코드 → HoneyformTable 리스트
+│                        (TABLES_CACHE 결합, 반환은 clone_table 클론 — df/data 읽기 전용 공유,
+│                        df 를 고치는 편집 경로는 use_cache=False)
 ├── response_cache.py    /full·/scatter 응답의 JSON+gzip bytes LRU 캐시 (_FULL_CACHE /
 │                        _SCATTER_CACHE, env WEB_REPORT_FULL_CACHE(8)/WEB_REPORT_SCATTER_CACHE(16)).
-│                        service._AKEY_CACHES 레지스트리에 등록되어 편집·세션삭제 무효화에
+│                        cache.register_akey_cache 로 등록되어 편집·세션삭제 무효화에
 │                        자동 편입. /full 캐시 키에는 manifest digest + extras(annotations 등
 │                        값싼 부분) digest 가 포함되어 comment/annotation 편집이 자연 무효화됨.
 ├── honeyform.py         7-meta honeyform 검증/파싱, parquet 인코딩·디코딩
@@ -88,18 +96,19 @@ web_report/
 │                        프레임 계산 frame_for(). die pitch 입력된 제품만 Map_analysis 가
 │                        틀을 고정(부분 데이터 방지), 없으면 현행(데이터 min/max) 유지
 └── tabs/                시트별 row 빌더 (metrics.py 가 호출)
-    ├── common.py        json_safe/fmt_type/num/round_num, bin_sort_key(BIN 정렬 공용)
+    ├── common.py        json_safe/fmt_type/num/round_num, bin_sort_key(BIN 정렬 공용),
+    │                     to_coord((XPOS,YPOS)→int 좌표 정규화 — compare/commonality 공용)
     ├── summary.py        build_summary_rows (placeholder — return [])
     ├── raw_data.py       build_raw_data_rows(payload 용 placeholder — return []) +
     │                     build_raw_data_columns/query_raw_data/apply_raw_data_edits (lazy-load 조회·편집)
     ├── yield_tab.py      build_yield_rows(comment/count 컬럼 없음), fail_counts_by_source, fail_bin_ranking, yield_overview(상단 요약 박스)
-    ├── cpk.py            build_cpk_rows (source 별 행만 — "total" 합산 행 없음. Issue Table 이
-    │                     subject 당 worst-case(최저) cpk 로 이슈 판단)
+    ├── cpk.py            build_cpk_rows (source 별 행만 — "total" 합산 행 없음) +
+    │                     CPK_THRESHOLD(1.33)·worst_cpk_by_subject (Issue Table/Distribution 공용
+    │                     — subject 당 worst-case(최저) cpk 로 이슈 판단)
     ├── issue_table.py    build_issue_table_rows (Yield 파생 행 + CPK<1.33(subject 별 worst-case) 파생 행 +
     │                     ETC). PTE/개발 comment 는 manifest.issue_comments 에서 row_key 로 채움
     ├── distribution.py   build_distribution_rows (전량 ECDF — 프런트는 아직 렌더 안 함)
     ├── trim_analysis.py  build_trim_analysis_rows (placeholder — return [])
-    ├── histogram.py      build_histogram_rows (placeholder — return [])
     └── Map_analysis.py   build_map_analysis_rows(tables, product_type, product) — wafer map
                           die/bin 집계. 제품 기준정보 있으면 wafer_frame 고정 프레임으로 틀 덮어씀
 ```
@@ -154,8 +163,9 @@ UI(체크박스 목록 스타일, 표 컬럼 순서/정렬 화살표/테두리, 
   보이는 셀만 그린다 — refreshDistConsumers 도 visible 셀만 재큐잉. report_view.html 의 `renderActive` 는
   활성 탭만 즉시 렌더하고 나머지는 tabDirty + requestIdleCallback 프리렌더(`schedulePrerender`).
   summary / raw_data(payload) /
-  trim_analysis / histogram 빌더는 `return []` 플레이스홀더 (Summary 탭 화면은 프런트가
-  Map Analysis + Fail Bin 시트로 자체 구성).
+  trim_analysis 빌더는 `return []` 플레이스홀더 (Summary 탭 화면은 프런트가
+  Map Analysis + Fail Bin 시트로 자체 구성. tabs/histogram.py 는 어디서도 import 되지 않아
+  삭제됨).
 - **Issue Table comment 저장**: web_report 세션은 legacy 의 `PATCH /content` 를 쓰지 않는다
   (해당 라우트가 web_report 를 400 거부). PTE/개발 comment 는 프런트가
   `POST .../web_report/issue_table/comments` 로 보내고 `manifest.issue_comments` 에 row_key

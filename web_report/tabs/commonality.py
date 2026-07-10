@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .common import fmt_type, json_safe, round_num
+from .common import fmt_type, json_safe, round_num, to_coord
 from .distribution import to_numeric_clean
 from ..honeyform import META_COLUMNS as _META
 
@@ -51,20 +51,37 @@ def build_index(tables) -> list:
     return [_index_entry(table) for table in tables]
 
 
-def search_chips(tables, q="", limit=300, index=None) -> dict:
+def search_chips(tables, q="", limit=300, index=None, serial="", xpos="", ypos="") -> dict:
     """검색어로 chip 후보를 찾는다. serial/xpos/ypos/dut 부분일치(대소문자 무시).
 
-    q 가 비면 앞에서부터 limit 개. 결과가 limit 을 넘으면 truncated=True.
+    두 가지 검색 방식을 지원한다:
+    - serial/xpos/ypos 중 하나라도 값이 있으면 **필드별 AND 조건**으로 좁힌다 — 개별 칸
+      검색용(예: serial=A AND xpos=3 AND ypos=-2). serial 은 부분일치(긴 식별자 일부 검색),
+      xpos/ypos 는 **정확일치**(좌표 핀포인트 — 부분일치는 3↔13↔-3 처럼 오검색). 빈 필드는 무시.
+    - 셋 다 비고 q 만 있으면 기존 방식(serial/xpos/ypos/dut OR 부분일치).
+
+    q/필드 모두 비면 앞에서부터 limit 개. 결과가 limit 을 넘으면 truncated=True.
     index 는 build_index 결과(없으면 즉석 계산 — 메타만).
     """
     q = str(q or "").strip().lower()
+    ser = str(serial or "").strip().lower()
+    xp = str(xpos or "").strip().lower()
+    yp = str(ypos or "").strip().lower()
+    field_mode = bool(ser or xp or yp)
     out = []
     for ti, table in enumerate(tables):
         entry = index[ti] if index else _index_entry(table, with_sorted=False)
         meta, meta_lower = entry["meta"], entry["meta_lower"]
         n = len(meta["SERIAL"])
         for i in range(n):
-            if q and not (
+            if field_mode:
+                if ser and ser not in meta_lower["SERIAL"][i]:
+                    continue
+                if xp and xp != meta_lower["XPOS"][i]:
+                    continue
+                if yp and yp != meta_lower["YPOS"][i]:
+                    continue
+            elif q and not (
                 q in meta_lower["SERIAL"][i]
                 or q in meta_lower["XPOS"][i]
                 or q in meta_lower["YPOS"][i]
@@ -132,11 +149,8 @@ def chip_percentiles(tables, *, serial="", xpos="", ypos="", source="", index=No
         "serial": meta["SERIAL"][idx], "shot": meta["SHOT"][idx], "dut": meta["DUT"][idx],
         "xpos": meta["XPOS"][idx], "ypos": meta["YPOS"][idx], "bin": meta["BIN"][idx],
     }
-    try:
-        chip["x"] = int(float(meta["XPOS"][idx]))
-        chip["y"] = int(float(meta["YPOS"][idx]))
-    except (TypeError, ValueError):
-        chip["x"] = chip["y"] = None
+    coord = to_coord(meta["XPOS"][idx], meta["YPOS"][idx])
+    chip["x"], chip["y"] = coord if coord else (None, None)
 
     sorted_vals = entry.get("sorted") or {}
     items = []

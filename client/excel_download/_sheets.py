@@ -68,6 +68,25 @@ def _title_banner(ws, text, *, font=_TITLE_FONT, fill=_TITLE_FILL_RGB):
     _style_range(ws.range((1, 1), (1, _TITLE_ROW_MAX_COL)), fill=fill, font=font)
 
 
+# 세션 웹뷰 링크 — 모든 시트 상단에 삽입. 제목 배너 있는 시트는 배너(연파랑) 안 빈 칸,
+# 없는 시트(Distribution/Histogram/Map)는 흰 셀. H1 은 제목 텍스트 우측·화면에 보이는 위치.
+_SESSION_LINK_CELL = (1, 8)   # H1
+_SESSION_LINK_FONT = {"name": "Calibri", "bold": True, "size": 12, "color": "FF0563C1"}
+
+
+def add_session_link(ws, url, *, text="▶ 웹에서 이 세션 열기"):
+    """시트 상단(H1)에 세션 웹뷰 하이퍼링크 — 클릭 시 기본 브라우저로 /pe/report/view/<sid>."""
+    if not url:
+        return
+    cell = ws.range(_SESSION_LINK_CELL)
+    try:
+        # 위치 인자(Anchor, Address, SubAddress, ScreenTip, TextToDisplay) — pywin32 호환.
+        ws.api.Hyperlinks.Add(cell.api, str(url), "", str(text), str(text))
+    except Exception:
+        cell.value = _safe(f"{text}: {url}")
+    _style_range(cell, font=_SESSION_LINK_FONT)
+
+
 def _write_table(ws, header, rows, *, header_row=_HEADER_ROW, start_col=_START_COL):
     """헤더+데이터 일괄 기입 + honey 공통 스타일. 반환: 마지막 데이터 행 번호."""
     ncol = len(header)
@@ -119,9 +138,10 @@ def write_summary_sheet(ws, yield_summary, fail_bin_rows):
     last = _table(4, ["Source", "Pass", "Fail", "Total", "Yield (%)"], y_rows)
 
     _section(last + 2, "Major Fail Bin")
-    fb_rows = [[r.get("bin"), r.get("item"), r.get("count"), r.get("yield_pct")]
-               for r in (fail_bin_rows or [])]
-    _table(last + 3, ["Bin", "Item", "Count", "Yield (%)"], fb_rows)
+    # 상위 5개 bin 만 · Bin/Item/Yield (웹 summary yield 와 동일 — count desc 정렬 유지, Count 열 생략)
+    fb_rows = [[r.get("bin"), r.get("item"), r.get("yield_pct")]
+               for r in (fail_bin_rows or [])[:5]]
+    _table(last + 3, ["Bin", "Item", "Yield (%)"], fb_rows)
 
     for col, w in ((2, 28), (3, 40), (4, 10), (5, 10), (6, 10)):
         ws.range((1, col)).column_width = w
@@ -246,10 +266,15 @@ def _apply_warn_fill(ws, row_offsets, ncol, *, header_row=_HEADER_ROW, start_col
 
 def write_issue_sheet(ws, issue_rows, source_names):
     """rep/서브헤더/ETC 행만 표시. 접힌 detail 행의 comment 는 같은 bin(rep) 행의
-    comment 셀에 "<Item>: <comment>" 줄로 묶어 나열한다 (rep 자신의 comment 가 맨 위)."""
+    comment 셀에 "<Item>: <comment>" 줄로 묶어 나열한다 (rep 자신의 comment 가 맨 위).
+
+    source yields 뒤 · comment 앞에 'Distribution' 열을 추가한다(값은 비움). 행별 CDF PNG
+    는 오케스트레이터가 add_picture_in_cell 로 부착한다.
+    반환: {"rows": [(item, excel_row), ...], "dist_col": Distribution 열 인덱스}.
+    """
     _title_banner(ws, "Issue Table")
     header = (["Category", "Step", "Bin", "TNO", "Item", "avg"]
-              + list(source_names) + list(_COMMENT_COLS))
+              + list(source_names) + ["Distribution"] + list(_COMMENT_COLS))
 
     # _grp 별 detail comment 수집
     detail_comments = {}
@@ -264,12 +289,14 @@ def write_issue_sheet(ws, issue_rows, source_names):
                     f"{r.get('Item')}: {text}")
 
     rows = []
+    item_rows = []
     for r in issue_rows or []:
         if r.get("_detail"):
             continue
         vals = [r.get("Category"), r.get("Step"), r.get("Bin"), r.get("TNO"),
                 r.get("Item"), r.get("avg")]
         vals += [r.get(f"{s}_yield") for s in source_names]
+        vals.append("")                      # Distribution PNG 자리(비움)
         for col in _COMMENT_COLS:
             parts = []
             own = str(r.get(col) or "").strip()
@@ -277,13 +304,16 @@ def write_issue_sheet(ws, issue_rows, source_names):
                 parts.append(own)
             parts.extend(detail_comments.get((r.get("_grp"), col), []))
             vals.append("\n".join(parts))
+        item_rows.append((r.get("Item"), _HEADER_ROW + 1 + len(rows)))
         rows.append(vals)
 
     _write_table(ws, header, rows)
-    widths = {"Item": _ITEM_COL_WIDTH * 1.8, "Category": 10}
+    dist_col = _START_COL + 6 + len(source_names)
+    widths = {"Item": _ITEM_COL_WIDTH * 1.8, "Category": 10, "Distribution": 28}
     for col in _COMMENT_COLS:
         widths[col] = 40
     _set_col_widths(ws, header, widths, default=_NARROW_COL_WIDTH * 1.6)
+    return {"rows": item_rows, "dist_col": dist_col}
 
 
 # ── PNG 부착 (Distribution / Histogram / Map Analysis) ──────────────────────
@@ -320,6 +350,20 @@ def add_picture_at(ws, path, *, top, width_px, height_px):
     """선계산된 top 위치에 PNG 1장 부착 (as_completed 파이프라인용)."""
     ppp = _png_pt_per_px()
     _add_picture(ws, path, _PIC_MARGIN, top, width_px * ppp, height_px * ppp)
+
+
+def add_picture_in_cell(ws, path, row, col, width_px, height_px):
+    """지정 (row,col) 셀 좌상단에 PNG 를 원본 물리크기로 부착 (Issue Table 행별 CDF).
+
+    행 높이가 PNG 보다 낮으면 PNG 높이에 맞춰 넓힌다(긴 comment 로 이미 높은 행은 유지).
+    """
+    ppp = _png_pt_per_px()
+    w_pt, h_pt = width_px * ppp, height_px * ppp
+    row_rng = ws.range((row, 1))
+    if row_rng.row_height < h_pt + 4:
+        row_rng.row_height = h_pt + 4
+    cell = ws.range((row, col))
+    _add_picture(ws, path, cell.left, cell.top, w_pt, h_pt)
 
 
 def add_map_grid(ws, labeled_pngs):

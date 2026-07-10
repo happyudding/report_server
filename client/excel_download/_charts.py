@@ -24,7 +24,7 @@ import matplotlib
 matplotlib.use("Agg")
 from matplotlib.figure import Figure    # noqa: E402
 from matplotlib.lines import Line2D     # noqa: E402
-from matplotlib.patches import Polygon, Rectangle  # noqa: E402
+from matplotlib.patches import Rectangle  # noqa: E402
 
 # 웹 report_view.html 의 DIST_PALETTE 와 동일 — source i 색이 웹과 일치하도록 유지.
 DIST_PALETTE = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
@@ -38,14 +38,17 @@ ROWS_PER_CHUNK = 16           # 청크당 4열 x 16행 = 64 차트 (PNG 수 = pi
 CELL_W_IN = 3.5               # 셀 크기(inch)
 CELL_H_IN = 2.2
 DPI = 96
+# Issue Table 행별 단일 CDF 썸네일 크기(inch) — 행 높이에 맞춰 작게.
+ISSUE_CELL_W_IN = 2.6
+ISSUE_CELL_H_IN = 1.15
 
 _LIMIT_COLOR = "#d62728"
 _STATUS_TITLE_COLOR = {"fail": "#d62728", "cpk_low": "#e67700", "ok": "#111111"}
 _BORDER_COLOR = "#bbbbbb"
 _GRID_COLOR = "#dddddd"
 _TEXT_COLOR = "#444444"
-_HIST_BINS = 40
 _TITLE_MAX_CHARS = 46
+_MARKER_SIZE = 1.6            # CDF 점(마커) 크기(pt)
 
 # 셀 내부 플롯 영역 여백 (셀 크기에 대한 비율)
 _PAD_L, _PAD_R, _PAD_T, _PAD_B = 0.09, 0.03, 0.17, 0.13
@@ -67,6 +70,14 @@ def _fmt_title(cell):
     if units:
         out += f" [{units}]"
     return out
+
+
+def _fmt_limit_caption(cell):
+    """limit 값 캡션 '(lo ~ hi)' — 둘 다 없으면 빈 문자열."""
+    lo, hi = cell.get("lo"), cell.get("hi")
+    if lo is None and hi is None:
+        return ""
+    return f"({_fmt_num(lo) if lo is not None else '-'} ~ {_fmt_num(hi) if hi is not None else '-'})"
 
 
 def _fmt_num(v):
@@ -106,6 +117,13 @@ def _add_line(fig, xs, ys, color, lw=0.9, ls="-", alpha=1.0):
                           solid_joinstyle="miter"))
 
 
+def _add_markers(fig, xs, ys, color, size=_MARKER_SIZE):
+    """산포 점(마커) — 선 없이 각 포인트를 작은 원으로. 전 포인트 유지(다운샘플 금지)."""
+    fig.add_artist(Line2D(xs, ys, transform=fig.transFigure, color=color,
+                          linestyle="none", marker="o", markersize=size,
+                          markeredgewidth=0))
+
+
 def _cell_frame(fig, cell, box, xr, y_labels):
     """테두리 + 가로 격자 + 제목 + x/y 라벨 텍스트 (Axes/틱 기계 대체)."""
     x0, y0, w, h = box
@@ -114,6 +132,10 @@ def _cell_frame(fig, cell, box, xr, y_labels):
     fig.text(x0, y0 + h + 0.004, _fmt_title(cell), fontsize=7,
              color=_STATUS_TITLE_COLOR.get(cell.get("status"), "#111111"),
              ha="left", va="bottom")
+    cap = _fmt_limit_caption(cell)      # 제목줄 우측에 limit 값 캡션
+    if cap:
+        fig.text(x0 + w, y0 + h + 0.004, cap, fontsize=5, color=_LIMIT_COLOR,
+                 ha="right", va="bottom")
     # 가로 격자(y_labels 위치) + y 라벨
     n = len(y_labels)
     for i, lab in enumerate(y_labels):
@@ -123,9 +145,12 @@ def _cell_frame(fig, cell, box, xr, y_labels):
         if lab is not None:
             fig.text(x0 - 0.002, gy, lab, fontsize=5, color=_TEXT_COLOR,
                      ha="right", va="center")
-    # x 라벨: min / mid / max
+    # x축: 4분할 세로 격자선(눈금선) + min/mid/max 라벨
     if xr is not None:
         xmin, xmax = xr
+        for frac in (0.25, 0.5, 0.75):
+            gx = x0 + w * frac
+            _add_line(fig, (gx, gx), (y0, y0 + h), _GRID_COLOR, lw=0.4)
         for frac, v in ((0.0, xmin), (0.5, (xmin + xmax) / 2), (1.0, xmax)):
             fig.text(x0 + w * frac, y0 - 0.003, _fmt_num(v), fontsize=5,
                      color=_TEXT_COLOR, ha="center", va="top")
@@ -150,58 +175,85 @@ def _draw_cdf_cell(fig, cell, box):
     x0, y0, w, h = box
     xmin, xmax = xr
     span = xmax - xmin
-    for name, color, x, y, _n in cell["sources"]:
+    # ECDF 를 선이 아닌 점(마커)으로 — 전 고유값 포인트를 그대로 찍는다(다운샘플 아님).
+    for src in cell["sources"]:
+        color, x, y = src[1], src[2], src[3]
         if len(x) == 0:
             continue
-        # step(where="post") 경로를 직접 구성 — 전 고유값 포인트 유지(다운샘플 아님)
-        if len(x) == 1:
-            fx = x0 + (float(x[0]) - xmin) / span * w
-            _add_line(fig, (fx, fx), (y0, y0 + float(y[0]) / 100.0 * h), color)
-            continue
-        sx = np.repeat(x, 2)[1:]
-        sy = np.repeat(y, 2)[:-1]
-        _add_line(fig, x0 + (sx - xmin) / span * w, y0 + sy / 100.0 * h, color)
+        px = x0 + (np.asarray(x, dtype="float64") - xmin) / span * w
+        py = y0 + np.asarray(y, dtype="float64") / 100.0 * h
+        _add_markers(fig, px, py, color)
     _limit_lines(fig, cell, box, xr)
 
 
-def _hist_counts(x, y, n):
-    """ECDF(고유값 x, 누적% y) → 고유값별 개수. n(측정 수) 없으면 % 비율."""
-    frac = np.diff(np.concatenate(([0.0], np.asarray(y, dtype="float64")))) / 100.0
-    if n:
-        return np.rint(frac * float(n))
-    return frac * 100.0  # % 단위
+def _normal_x_range(cell):
+    """정규분포 곡선용 x 범위 — 각 source μ±4σ + limit 포함, ±5% 마진. 없으면 None."""
+    los, his = [], []
+    for src in cell["sources"]:
+        n = src[4]
+        avg = src[5] if len(src) > 5 else None
+        std = src[6] if len(src) > 6 else None
+        if avg is None:
+            continue
+        if std is not None and float(std) > 0 and not (n is not None and n < 2):
+            los.append(float(avg) - 4.0 * float(std))
+            his.append(float(avg) + 4.0 * float(std))
+        else:
+            los.append(float(avg))
+            his.append(float(avg))
+    for v in (cell.get("lo"), cell.get("hi")):
+        if v is not None:
+            los.append(float(v))
+            his.append(float(v))
+    if not los:
+        return None
+    xmin, xmax = min(los), max(his)
+    if xmax <= xmin:
+        pad = abs(xmin) * 1e-6 or 0.5
+        return xmin - pad, xmax + pad
+    span = xmax - xmin
+    return xmin - span * 0.05, xmax + span * 0.05
 
 
 def _draw_hist_cell(fig, cell, box):
-    xr = _x_range(cell)
+    """웹 Report 모드(distRenderNormal)와 동일한 정규분포(가우시안 PDF) 곡선.
+
+    source 별 μ/σ 로 매끄러운 곡선(μ±4σ 256점). 축퇴(n<2 또는 σ≤0)는 x=μ 세로 스파이크.
+    y축은 PDF 라 라벨 숨김, limit 세로선 유지.
+    """
+    xr = _normal_x_range(cell)
     if xr is None:
         _cell_frame(fig, cell, box, None, y_labels=(None,))
         return
     xmin, xmax = xr
-    edges = np.linspace(xmin, xmax, _HIST_BINS + 1)
-    percent_axis = any(not s[4] for s in cell["sources"])
-    binned_all = []
-    for name, color, x, y, n in cell["sources"]:
-        if len(x) == 0:
-            continue
-        counts = _hist_counts(x, y, None if percent_axis else n)
-        binned, _ = np.histogram(np.asarray(x, dtype="float64"), bins=edges, weights=counts)
-        binned_all.append((color, binned))
-    ymax = max((float(b.max()) for _, b in binned_all), default=0.0) or 1.0
-    unit = "%" if percent_axis else ""
-    _cell_frame(fig, cell, box, xr,
-                y_labels=("0", None, _fmt_num(ymax) + unit))
-    x0, y0, w, h = box
     span = xmax - xmin
-    ex = x0 + (np.repeat(edges, 2)[1:-1] - xmin) / span * w   # 계단 외곽선 x
-    for color, binned in binned_all:
-        ey = y0 + np.repeat(binned, 2) / ymax * h
-        verts = np.column_stack((
-            np.concatenate(([ex[0]], ex, [ex[-1]])),
-            np.concatenate(([y0], ey, [y0])),
-        ))
-        fig.add_artist(Polygon(verts, closed=True, transform=fig.transFigure,
-                               facecolor=color, edgecolor="none", alpha=0.55))
+    curves, spikes, ymax = [], [], 0.0
+    for src in cell["sources"]:
+        color, n = src[1], src[4]
+        avg = src[5] if len(src) > 5 else None
+        std = src[6] if len(src) > 6 else None
+        if avg is None:
+            continue
+        mu = float(avg)
+        if std is None or float(std) <= 0 or (n is not None and n < 2):
+            spikes.append((color, mu))       # 축퇴 → x=μ 세로 스파이크
+            continue
+        sd = float(std)
+        xs = np.linspace(mu - 4.0 * sd, mu + 4.0 * sd, 256)
+        coef = 1.0 / (sd * np.sqrt(2.0 * np.pi))
+        ys = coef * np.exp(-0.5 * ((xs - mu) / sd) ** 2)
+        curves.append((color, xs, ys))
+        ymax = max(ymax, coef)
+    _cell_frame(fig, cell, box, xr, y_labels=(None,))
+    x0, y0, w, h = box
+    ytop = ymax if ymax > 0 else 1.0
+    for color, xs, ys in curves:
+        px = x0 + (xs - xmin) / span * w
+        py = y0 + ys / ytop * h
+        _add_line(fig, px, py, color, lw=0.9)
+    for color, mu in spikes:
+        fx = x0 + (mu - xmin) / span * w
+        _add_line(fig, (fx, fx), (y0, y0 + h), color, lw=0.9)
     _limit_lines(fig, cell, box, xr)
 
 
@@ -218,7 +270,8 @@ def render_grid_chunk(job) -> str:
 
     {"kind": "cdf"|"hist", "out_path": str,
      "cells": [{"title","test_num","units","lo","hi","status",
-                "sources": [(name, color, x(np.ndarray), y(np.ndarray), n|None), ...]}, ...]}
+                "sources": [(name, color, x(np.ndarray), y(np.ndarray),
+                             n|None, avg|None, std|None), ...]}, ...]}
     반환: out_path. cells 는 최대 NCOLS*ROWS_PER_CHUNK 개.
     """
     cells = job["cells"]
@@ -239,6 +292,24 @@ def render_chunk_pair(job) -> tuple:
     _render_cells(cells, "cdf", job["cdf_path"], nrows)
     _render_cells(cells, "hist", job["hist_path"], nrows)
     return job["cdf_path"], job["hist_path"]
+
+
+def issue_cdf_px_size():
+    """Issue Table 행별 단일 CDF PNG 의 (width_px, height_px)."""
+    return (int(ISSUE_CELL_W_IN * DPI), int(ISSUE_CELL_H_IN * DPI))
+
+
+def render_single_cdf(job) -> str:
+    """Issue Table 행 1개용 단일 CDF PNG. job: {"cell": {...}, "out_path": str}.
+
+    figure 전체를 셀 1칸으로 써서 Distribution 셀과 동일 스타일(점+눈금+limit)로 렌더.
+    반환: out_path.
+    """
+    fig = Figure(figsize=(ISSUE_CELL_W_IN, ISSUE_CELL_H_IN), dpi=DPI)
+    box = (_PAD_L, _PAD_B, 1.0 - _PAD_L - _PAD_R, 1.0 - _PAD_T - _PAD_B)
+    _draw_cdf_cell(fig, job["cell"], box)
+    fig.savefig(job["out_path"], format="png", facecolor="white")
+    return job["out_path"]
 
 
 def render_map_png_job(job) -> str:

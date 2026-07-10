@@ -14,7 +14,7 @@ from __future__ import annotations
 import difflib
 from collections import Counter, defaultdict
 
-from .common import PASS_BIN, bin_sort_key, bin_types, fmt_type, json_safe, num, round_num
+from .common import PASS_BIN, bin_sort_key, bin_types, fmt_type, json_safe, num, round_num, to_coord
 
 
 def build_compare_bin_delta(tables) -> list:
@@ -66,11 +66,8 @@ def _fail_coord_sets(tables):
         bins = bin_types(t)
         pres, fail = set(), set()
         for x, y, b in zip(xs, ys, bins):
-            if x == "" or y == "":
-                continue
-            try:
-                coord = (int(float(x)), int(float(y)))
-            except (TypeError, ValueError):
+            coord = to_coord(x, y)
+            if coord is None:
                 continue
             pres.add(coord)
             xs_all.append(coord[0])
@@ -313,11 +310,8 @@ def _coord_bin_map(table):
     bins = bin_types(table)
     out: dict = {}
     for x, y, b in zip(xs, ys, bins):
-        if x == "" or y == "":
-            continue
-        try:
-            coord = (int(float(x)), int(float(y)))
-        except (TypeError, ValueError):
+        coord = to_coord(x, y)
+        if coord is None:
             continue
         if coord not in out:      # 첫 행 우선
             out[coord] = b

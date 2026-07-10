@@ -14,14 +14,12 @@ import numpy as np
 import pandas as pd
 
 from .common import fmt_type, json_safe, round_num
-from .cpk import _stats
+from .cpk import CPK_THRESHOLD, _stats, worst_cpk_by_subject
 from .raw_data import _META_COLUMNS
 from .yield_tab import _tno_norm, failtno_norms, tno_to_item_map
 
 # Item_detail 의 Fail rawdata 표 상한 (초대형 Fail 항목 페이로드 폭증 방지)
 _FAIL_ROW_CAP = 2000
-
-CPK_THRESHOLD = 1.33
 
 
 def to_numeric_clean(series):
@@ -90,19 +88,6 @@ def fail_items(tables) -> set:
     return failed
 
 
-def _worst_cpk(cpk_rows) -> dict:
-    """subject 별 소스 최저(worst-case) cpk (None 제외)."""
-    worst: dict = {}
-    for r in cpk_rows or []:
-        cpk = r.get("cpk")
-        if cpk is None:
-            continue
-        subject = r.get("subject")
-        if subject not in worst or cpk < worst[subject]:
-            worst[subject] = cpk
-    return worst
-
-
 def _status(is_fail, cpk) -> str:
     if is_fail:
         return "fail"
@@ -144,7 +129,7 @@ def build_distribution_index(tables, cpk_rows) -> list:
     cpk 는 ``cpk_rows`` 재사용(재계산 없음), fail 은 ``fail_items`` 로 귀속.
     항목 순서는 TEST SEQ(TSEQ) 순 — 갤러리가 이 순서대로 표시된다.
     """
-    worst = _worst_cpk(cpk_rows)
+    worst = worst_cpk_by_subject(cpk_rows)
     failed = fail_items(tables)
     all_items = sorted({c for t in tables for c in t.item_columns},
                        key=tseq_sort_key(tables))

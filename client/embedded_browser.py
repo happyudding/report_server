@@ -11,12 +11,37 @@ PyQtWebEngine 미설치 시 이 모듈 import 가 ImportError — 호출부(hone
 Qt.AA_ShareOpenGLContexts 속성이 앱 생성 전에 설정돼 있어야 한다
 (honey_main.main() 에서 설정).
 """
+from urllib.parse import quote
+
 from PyQt6.QtCore import QUrl
+from PyQt6.QtWebEngineCore import QWebEngineProfile
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QLineEdit, QMainWindow, QToolBar, QVBoxLayout, QWidget
 
+import client_identity
+
 # 열린 팝업 창 참조 보관 (GC 로 창이 사라지는 것 방지)
 _open_windows = []
+
+
+def _inject_user_agent():
+    """기본 프로필 User-Agent 에 `HoneyUser/<계정>` 토큰을 1회 추가.
+
+    서버 검색결과 페이지가 navigator.userAgent 에서 파싱해 즐겨찾기·내 업로드
+    우선 정렬의 사용자 ID 로 쓴다. 계정에 공백/한글이 있어도 헤더가 깨지지
+    않도록 percent-encode 하고, JS 쪽에서 decodeURIComponent 로 되돌린다.
+    수집 실패 시 토큰 없이 기존 UA 그대로 둔다 (페이지는 수동 입력으로 폴백).
+    """
+    profile = QWebEngineProfile.defaultProfile()
+    ua = profile.httpUserAgent()
+    if "HoneyUser/" in ua:
+        return
+    try:
+        user = client_identity.collect().get("user", "")
+    except Exception:
+        user = ""
+    if user:
+        profile.setHttpUserAgent(f"{ua} HoneyUser/{quote(user, safe='')}")
 
 # 브라우저 네비게이션 툴바 스타일 (얇고 단정하게)
 _NAV_TOOLBAR_QSS = """
@@ -61,6 +86,7 @@ class BrowserPanel(QWidget):
     def __init__(self, home_url, navigate=False, parent=None):
         super().__init__(parent)
         self._home_url = home_url
+        _inject_user_agent()
         self.view = _WebView(home_url)
 
         tb = QToolBar("Navigation")

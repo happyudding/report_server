@@ -19,13 +19,17 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import numpy as np
 
+import chart_colors
+
 from ._charts import (
     DIST_PALETTE,
     NCOLS,
     ROWS_PER_CHUNK,
     chunk_px_size,
+    issue_cdf_px_size,
     render_chunk_pair,
     render_map_png_job,
+    render_single_cdf,
 )
 from ._fetch import fetch_report_data
 from . import _sheets
@@ -61,6 +65,7 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None) -> dic
     _emit("download", "리포트 데이터 다운로드 중...")
     full, dist = fetch_report_data(server_base, session_id)
     report = full["web_report"]
+    session_url = f"{str(server_base).rstrip('/')}/pe/report/view/{session_id}"
     sheets = report.get("sheets") or {}
     source_names = [s.get("name") for s in (report.get("sources") or [])]
     colors = _source_colors(source_names, report.get("dist_colors"))
@@ -70,7 +75,7 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None) -> dic
     # ── 2. 차트 렌더 잡 구성 + 프로세스풀 시작 ──────────────────────────────
     tmpdir = tempfile.mkdtemp(prefix="honey_exceldl_")
     try:
-        chunk_jobs, n_items = _build_chunk_jobs(report, dist, dict(colors), tmpdir)
+        chunk_jobs, n_items, cell_of = _build_chunk_jobs(report, dist, dict(colors), tmpdir)
         map_jobs = _build_map_jobs(sheets.get("Map Analysis") or [], tmpdir)
         _emit("render", f"차트 잡 구성 완료 ({time.perf_counter() - t_dl:.1f}s, "
                         f"{len(chunk_jobs)}청크 + map {len(map_jobs)})")
@@ -103,8 +108,18 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None) -> dic
                 _sheets.write_yield_sheet(ws["Yield"], sheets.get("Yield"),
                                           report.get("yield_bin_groups"), source_names)
                 _sheets.write_cpk_sheet(ws["CPK"], sheets.get("CPK"))
-                _sheets.write_issue_sheet(ws["Issue Table"], sheets.get("Issue Table"),
-                                          source_names)
+                issue_layout = _sheets.write_issue_sheet(
+                    ws["Issue Table"], sheets.get("Issue Table"), source_names)
+                # Issue Table 행별 CDF PNG 잡(분포 데이터가 있는 항목 행만) — 청크와 병렬 렌더.
+                issue_targets, issue_jobs = [], []
+                for item, excel_row in issue_layout["rows"]:
+                    cell = cell_of.get(item)
+                    if cell is None:
+                        continue
+                    out = os.path.join(tmpdir, f"issue_{excel_row:04d}.png")
+                    issue_jobs.append({"cell": cell, "out_path": out})
+                    issue_targets.append((excel_row, out))
+                issue_futs = [pool.submit(render_single_cdf, j) for j in issue_jobs]
                 t_text = time.perf_counter()
                 _emit("excel", f"텍스트 시트 완료 ({t_text - t_dl:.1f}s) — 차트 대기/부착...")
 
@@ -127,6 +142,18 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None) -> dic
                 for job, fut in zip(map_jobs, map_futs):
                     map_pngs.append((job["title"], fut.result()))
                 _sheets.add_map_grid(ws["Map Analysis"], map_pngs)
+
+                # Issue Table 행별 CDF PNG 부착 (오름차순 — 행 높이 확대가 아래 행 top 에 반영)
+                iw_px, ih_px = issue_cdf_px_size()
+                for (excel_row, out), fut in zip(issue_targets, issue_futs):
+                    fut.result()
+                    _sheets.add_picture_in_cell(ws["Issue Table"], out, excel_row,
+                                                issue_layout["dist_col"], iw_px, ih_px)
+
+                # 모든 시트 상단에 세션 웹뷰 링크 삽입
+                for name in SHEET_ORDER:
+                    _sheets.add_session_link(ws[name], session_url)
+
                 t_render = time.perf_counter()
                 _emit("save", f"차트 부착 완료 ({t_render - t_text:.1f}s) — 저장 중...")
 
@@ -163,11 +190,22 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None) -> dic
 # ── 잡 구성 헬퍼 ──────────────────────────────────────────────────────────────
 
 def _source_colors(source_names, dist_colors):
-    """[(source, hex)] — 웹과 동일 규칙: dist_colors[i] 지정 색, 없으면 기본 팔레트."""
+    """[(source, hex)] — 웹과 동일 규칙: dist_colors[i] 지정 색, 없으면 기본 팔레트.
+
+    10색 초과분 폴백은 모듈로 순환(색 중복) 대신 chart_colors 기본 48색 공식 연장 —
+    report_view.html 의 distDefaultColor 와 동일해 웹↔Excel 색이 일치한다.
+    """
+    defaults = None
     out = []
     for i, name in enumerate(source_names):
         custom = (dist_colors or [])[i] if i < len(dist_colors or []) else None
-        out.append((name, custom or DIST_PALETTE[i % len(DIST_PALETTE)]))
+        if not custom and i >= len(DIST_PALETTE):
+            if defaults is None:
+                defaults = chart_colors.generate_default_colors(
+                    max(len(source_names), chart_colors.N_COLORS))
+            out.append((name, defaults[i]))
+        else:
+            out.append((name, custom or DIST_PALETTE[i]))
     return out
 
 
@@ -175,14 +213,17 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir):
     """distribution_index 순서(TSEQ)로 전 항목 셀을 만들어 32개씩 청크 잡으로 나눈다.
 
     dist items 에만 있고 index 에 없는 항목도 뒤에 붙인다 (데이터 누락 금지).
-    반환: (jobs, n_items).
+    반환: (jobs, n_items, cell_of{subject: cell}).
     """
     index_rows = report.get("distribution_index") or []
     items = (dist.get("items") or {})
-    n_of = {}   # (subject, source) -> n  (히스토그램 절대 개수 복원용)
+    n_of = {}     # (subject, source) -> n  (정규분포 축퇴 판정용)
+    stat_of = {}  # (subject, source) -> (avg, std)  (정규분포 곡선용)
     for r in report.get("sheets", {}).get("CPK") or []:
+        key = (r.get("subject"), r.get("source"))
         if r.get("n") is not None:
-            n_of[(r.get("subject"), r.get("source"))] = r.get("n")
+            n_of[key] = r.get("n")
+        stat_of[key] = (r.get("average"), r.get("stdev"))
 
     ordered = [r.get("subject") for r in index_rows]
     seen = set(ordered)
@@ -195,6 +236,7 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir):
         meta = meta_of.get(subject) or {}
         sources = []
         for src_name, data in (info.get("sources") or {}).items():
+            avg, std = stat_of.get((subject, src_name), (None, None))
             # float32: 플롯(수백 px 폭) 정밀도로 충분 — 자식 프로세스 피클 전송량 절반
             sources.append((
                 src_name,
@@ -202,6 +244,7 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir):
                 np.asarray(data.get("x") or [], dtype="float32"),
                 np.asarray(data.get("y") or [], dtype="float32"),
                 n_of.get((subject, src_name)),
+                avg, std,
             ))
         cells.append({
             "title": subject,
@@ -221,7 +264,7 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir):
             "cdf_path": os.path.join(tmpdir, f"cdf_{idx:03d}.png"),
             "hist_path": os.path.join(tmpdir, f"hist_{idx:03d}.png"),
         })
-    return jobs, len(cells)
+    return jobs, len(cells), {c["title"]: c for c in cells}
 
 
 def _build_map_jobs(map_rows, tmpdir):

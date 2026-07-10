@@ -67,6 +67,8 @@ def diagnostics(full=False):
         "db_file": db.stat().st_size if db.exists() else 0,
         "db_wal": (db.with_name(db.name + "-wal").stat().st_size
                    if db.with_name(db.name + "-wal").exists() else 0),
+        "db_shm": (db.with_name(db.name + "-shm").stat().st_size
+                   if db.with_name(db.name + "-shm").exists() else 0),
         "check_kind": "integrity_check" if full else "quick_check",
     }
     conn = sqlite3.connect(db, timeout=10)
@@ -84,9 +86,34 @@ def diagnostics(full=False):
                 f'SELECT COUNT(*) FROM "{t}"').fetchone()[0]}
             for t in tables
         ]
+        out["overview"] = _db_overview(conn)
     finally:
         conn.close()
     return out
+
+
+def _db_overview(conn):
+    """SQLite pragma 기반 메인 DB 상세. dbstat 미컴파일 빌드라 테이블별 바이트크기는
+    제공하지 않고, 파일/논리/회수가능 크기와 저장 설정만 노출한다. 모두 읽기 전용 pragma."""
+    def _p(name):
+        row = conn.execute(f"PRAGMA {name}").fetchone()
+        return row[0] if row else None
+    page_size = _p("page_size") or 0
+    page_count = _p("page_count") or 0
+    freelist = _p("freelist_count") or 0
+    return {
+        "page_size": page_size,
+        "page_count": page_count,
+        "logical_bytes": page_size * page_count,   # page_size × page_count
+        "freelist_count": freelist,
+        "free_bytes": page_size * freelist,        # VACUUM 시 회수 가능
+        "journal_mode": _p("journal_mode"),
+        "auto_vacuum": _p("auto_vacuum"),          # 0=none 1=full 2=incremental
+        "encoding": _p("encoding"),
+        "user_version": _p("user_version"),
+        "index_count": conn.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index'").fetchone()[0],
+    }
 
 
 # ── 감사로그 CSV ─────────────────────────────────────────────────────────────

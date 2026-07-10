@@ -4,6 +4,13 @@ Distribution(산포) 서버 업로드 재활성화 — 작업 지시 (외부 담
 
 이 문서는 외부 담당자에게 그대로 전달하는 작업 지시(프롬프트)다.
 
+[주의 — 2026-07-10 갱신] 아래에서 "살아있음"으로 표기된
+client/transport/chart_export.py 는 호출부가 없어 죽은 코드 정리로 삭제되었다
+("260709 final" 커밋. PyMuPDF 의존도 client/requirements.txt·build_honey.spec
+에서 함께 제거). 재활성화 착수 시 git 히스토리에서 파일과 의존성 선언을 먼저
+복원할 것:
+  git log --diff-filter=D -- client/transport/chart_export.py
+
 
 ------------------------------------------------------------
 [Context] 왜 하는가

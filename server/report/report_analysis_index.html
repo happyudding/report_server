@@ -3,6 +3,14 @@
 <head>
 <meta charset="utf-8">
 <title>PTE REPORT DASHBOARD</title>
+<script>
+/* 테마 부트스트랩: 첫 페인트 전에 저장된 다크 테마 적용 (FOUC 방지).
+   localStorage "report_theme" 는 검색결과/세션 상세 페이지가 공유한다. */
+try {
+  if (localStorage.getItem("report_theme") === "dark")
+    document.documentElement.setAttribute("data-theme", "dark");
+} catch (e) {}
+</script>
 <style>
 * { box-sizing: border-box; }
 body {
@@ -11,11 +19,11 @@ body {
   color: #222;
 }
 .page-header {
-  margin: 0 -20px 16px; padding: 11px 20px;
+  margin: 0 -20px 8px; padding: 5px 20px;
   background: #000; color: #fff;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
-.page-title { margin: 0; font-size: 24px; font-weight: 800; letter-spacing: 0; }
+.page-title { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: 0; }
 .back-main-btn {
   border: 0; background: transparent; color: #fff;
   font-size: 13px; font-weight: 700; cursor: pointer;
@@ -25,12 +33,12 @@ body {
 
 .top-bar {
   display: flex; align-items: center; gap: 12px;
-  background: #fff; border-radius: 10px; padding: 16px 20px;
-  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 8px;
+  background: #fff; border-radius: 10px; padding: 8px 14px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 6px;
   flex-wrap: wrap;
 }
 .pt-btn {
-  flex: 0 0 132px; height: 40px; border: 2px solid #d0d5dd;
+  flex: 0 0 132px; height: 34px; border: 2px solid #d0d5dd;
   border-radius: 8px; background: #fff; cursor: pointer;
   font-size: 18px; font-weight: 800; color: #555;
   transition: all .15s;
@@ -42,7 +50,7 @@ body {
   box-shadow: 0 2px 8px rgba(74,144,226,.35);
 }
 .pt-badge {
-  display: inline-block; padding: 3px 11px; border-radius: 4px;
+  display: inline-block; padding: 2px 9px; border-radius: 4px;
   font-size: 12px; font-weight: 700; color: #fff; white-space: nowrap;
 }
 .pt-badge.MDDI { background: #4a90e2; }
@@ -52,7 +60,7 @@ body {
 .pt-badge.TCON { background: #0d9488; }
 .pt-badge.default { background: #64748b; }
 .mode-badge {
-  display: inline-block; padding: 3px 10px; border-radius: 4px;
+  display: inline-block; padding: 2px 8px; border-radius: 4px;
   font-size: 12px; font-weight: 700; white-space: nowrap;
 }
 .mode-badge.Normal { background: #e2e8f0; color: #334155; }
@@ -60,11 +68,26 @@ body {
 .mode-badge.DUT { background: #bfdbfe; color: #1e40af; }
 .mode-badge.Commonality { background: #ddd6fe; color: #5b21b6; }
 .mode-badge.none { background: transparent; color: #94a3b8; font-weight: 400; }
-.star-important { color: #f59e0b; font-size: 15px; margin-right: 5px; }
+.star-important { color: #f59e0b; font-size: 14px; margin-right: 4px; }
+/* 사용자별 즐겨찾기 별표 — 전역 '중요'(amber)와 구분되게 파란색 */
+.star-fav {
+  color: #cbd5e1; font-size: 14px; margin-right: 4px;
+  cursor: pointer; user-select: none;
+}
+.star-fav.on { color: #2563eb; }
+/* 별표+배지가 줄바꿈되어 행이 두 줄 높이가 되지 않게 한 줄 고정 */
+td.pt-cell { cursor: pointer; white-space: nowrap; }
+.user-chip {
+  flex: 0 0 auto; height: 34px; padding: 0 12px;
+  border: 1px solid #d0d5dd; border-radius: 8px; background: #fff;
+  font-size: 12px; font-weight: 600; color: #475569; cursor: pointer;
+  white-space: nowrap;
+}
+.user-chip:hover { border-color: #4a90e2; color: #4a90e2; }
 .spacer { flex: 1; }
 
 .honey-dl-btn {
-  flex: 0 0 auto; height: 40px; padding: 0 16px;
+  flex: 0 0 auto; height: 34px; padding: 0 16px;
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: 8px; border: 1px solid #16a34a;
   background: #16a34a; color: #fff; font-size: 13px; font-weight: 600;
@@ -78,8 +101,8 @@ body {
 }
 
 .filter-card {
-  background: #fff; border-radius: 10px; padding: 16px 20px;
-  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 8px;
+  background: #fff; border-radius: 10px; padding: 10px 14px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 6px;
 }
 .filter-grid {
   display: grid; grid-template-columns: 1fr 1fr 2fr auto; gap: 12px;
@@ -118,7 +141,7 @@ body {
 .btn-action.primary:hover { background: #357abd; }
 
 .results-card {
-  background: #fff; border-radius: 10px; padding: 16px 20px;
+  background: #fff; border-radius: 10px; padding: 10px 14px;
   box-shadow: 0 1px 6px rgba(0,0,0,.07);
 }
 .results-header {
@@ -128,7 +151,7 @@ body {
 .results-count { font-size: 12px; color: #888; font-weight: 400; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { padding: 8px 10px; border-bottom: 1px solid #eef0f3; text-align: left; }
+th, td { padding: 3px 8px; border-bottom: 1px solid #eef0f3; text-align: left; }
 th { background: #fafbfc; font-weight: 600; color: #555; font-size: 12px; }
 tr.empty-row td { text-align: center; color: #999; padding: 30px; }
 tr.result-row { cursor: pointer; transition: background .1s; }
@@ -136,13 +159,32 @@ tr.result-row:hover { background: #f5f8ff; }
 
 .btn-row { display: inline-flex; gap: 6px; }
 .btn-mini {
-  padding: 4px 10px; font-size: 12px; border-radius: 4px;
+  padding: 2px 8px; font-size: 12px; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-mini.edit { color: #1f4d8c; border-color: #bcd3f0; }
 .btn-mini.edit:hover { background: #f0f6ff; border-color: #4a90e2; }
 .btn-mini.danger { color: #dc2626; border-color: #fca5a5; }
 .btn-mini.danger:hover { background: #fef2f2; }
+
+/* 파일명 셀: 좁게 + 오른쪽 끝(확장자쪽)이 보이도록 앞쪽을 '…' 로 생략.
+   direction:rtl + text-overflow:ellipsis 로 말줄임을 왼쪽(문자열 앞)에 붙인다. */
+td.fname-cell { max-width: 150px; }
+td.fname-cell .fname-txt {
+  display: block; max-width: 150px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; text-align: left;
+}
+
+/* 액션칸 아이콘 버튼 (비공개 자물쇠 / 삭제 휴지통) */
+.btn-icon {
+  padding: 2px 6px; font-size: 14px; line-height: 1; border-radius: 4px;
+  border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
+}
+.btn-icon:hover { background: #f5f8ff; border-color: #4a90e2; }
+.btn-icon.trash:hover { background: #fef2f2; border-color: #fca5a5; }
+.btn-icon.lock.on { border-color: #f0c869; background: #fffbeb; }
+.lock-badge { font-size: 13px; opacity: .7; padding: 0 4px; }
 
 .pager {
   display: flex; gap: 6px; justify-content: center; margin-top: 14px;
@@ -173,16 +215,6 @@ tr.result-row:hover { background: #f5f8ff; }
 }
 .modal-title { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
 .modal-desc { font-size: 13px; color: #666; margin: 0 0 14px; }
-.pin-row { display: flex; gap: 8px; justify-content: center; }
-.pin-cell {
-  width: 44px; height: 50px; text-align: center; font-size: 22px;
-  border: 1px solid #d0d5dd; border-radius: 6px; outline: none;
-  -moz-appearance: textfield; appearance: textfield;
-}
-.pin-cell::-webkit-outer-spin-button,
-.pin-cell::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.pin-cell:focus { border-color: #4a90e2; }
-.modal-hint { font-size: 11px; color: #888; text-align: center; margin: 8px 0 0; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
 .modal-btn {
   padding: 8px 16px; font-size: 13px; border-radius: 6px;
@@ -206,6 +238,67 @@ tr.result-row:hover { background: #f5f8ff; }
 }
 @keyframes load-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
 </style>
+<style>
+/* ══ 라이트/다크 테마 (추가 전용 override) ═══════════════════════════════════
+   기존 규칙은 수정하지 않고 html[data-theme="dark"] 스코프 규칙만 얹는다.
+   배지(pt-badge/mode-badge)·HONEY 버튼은 포화 배경 + 대비 글자라 다크에서도 그대로 둔다. */
+.theme-toggle {
+  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.35); background: transparent;
+  font-size: 15px; line-height: 1; padding: 0; cursor: pointer;
+}
+.theme-toggle:hover { background: rgba(255,255,255,.15); }
+
+html[data-theme="dark"] body { background: #14161a; color: #d7dbe2; }
+html[data-theme="dark"] .top-bar,
+html[data-theme="dark"] .filter-card,
+html[data-theme="dark"] .results-card {
+  background: #1e2128; box-shadow: 0 1px 6px rgba(0,0,0,.45);
+}
+html[data-theme="dark"] .pt-btn { background: #262a33; border-color: #3a3f4b; color: #aab3c0; }
+html[data-theme="dark"] .pt-btn:hover { background: #2b3442; border-color: #4a90e2; color: #7fb3ef; }
+html[data-theme="dark"] .pt-btn.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+html[data-theme="dark"] .user-chip { background: #262a33; border-color: #3a3f4b; color: #aab3c0; }
+html[data-theme="dark"] .user-chip:hover { border-color: #4a90e2; color: #7fb3ef; }
+html[data-theme="dark"] .star-fav { color: #4a5462; }
+html[data-theme="dark"] .star-fav.on { color: #5b9cf5; }
+html[data-theme="dark"] .filter-label { color: #9aa3b0; }
+html[data-theme="dark"] .filter-input,
+html[data-theme="dark"] .sel-input { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .suggest-box {
+  background: #1e2128; border-color: #3a3f4b; box-shadow: 0 6px 18px rgba(0,0,0,.55);
+}
+html[data-theme="dark"] .suggest-item { color: #c6ccd6; border-bottom-color: #2a2e37; }
+html[data-theme="dark"] .suggest-item:hover { background: #262c38; }
+html[data-theme="dark"] .suggest-sub { color: #8b94a3; }
+html[data-theme="dark"] .btn-action { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
+html[data-theme="dark"] .btn-action.primary { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+html[data-theme="dark"] .results-header { color: #c6ccd6; }
+html[data-theme="dark"] .results-count { color: #8b94a3; }
+html[data-theme="dark"] th { background: #22262e; color: #9aa3b0; }
+html[data-theme="dark"] th,
+html[data-theme="dark"] td { border-bottom-color: #2a2e37; }
+html[data-theme="dark"] tr.empty-row td { color: #767f8c; }
+html[data-theme="dark"] tr.result-row:hover { background: #262c38; }
+html[data-theme="dark"] .btn-mini { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
+html[data-theme="dark"] .btn-mini.edit { color: #7fb3ef; border-color: #33507a; }
+html[data-theme="dark"] .btn-mini.edit:hover { background: #243044; border-color: #4a90e2; }
+html[data-theme="dark"] .btn-mini.danger { color: #f28b8b; border-color: #6e3030; }
+html[data-theme="dark"] .btn-mini.danger:hover { background: #3a2222; }
+html[data-theme="dark"] .btn-icon { background: #262a33; border-color: #3a3f4b; }
+html[data-theme="dark"] .btn-icon:hover { background: #243044; border-color: #4a90e2; }
+html[data-theme="dark"] .btn-icon.trash:hover { background: #3a2222; border-color: #6e3030; }
+html[data-theme="dark"] .btn-icon.lock.on { border-color: #6e5326; background: #38301b; }
+html[data-theme="dark"] .pager .pg-btn { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
+html[data-theme="dark"] .pager .pg-btn.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+html[data-theme="dark"] .modal-box { background: #1e2128; color: #d7dbe2; }
+html[data-theme="dark"] .modal-desc { color: #9aa3b0; }
+html[data-theme="dark"] .modal-btn { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
+html[data-theme="dark"] .modal-btn.danger { background: #dc2626; border-color: #dc2626; color: #fff; }
+html[data-theme="dark"] .load-overlay { background: rgba(10,12,16,.72); }
+html[data-theme="dark"] .load-msg { color: #9aa3b0; }
+html[data-theme="dark"] .load-bar { background: #2a2e37; }
+</style>
 </head>
 <body>
 
@@ -215,7 +308,11 @@ tr.result-row:hover { background: #f5f8ff; }
 
 <header class="page-header">
   <h1 class="page-title">PTE REPORT DASHBOARD</h1>
-  <a class="back-main-btn" href="https://lsipte--github-test-dev.cdep1.samsungds.net">BACK TO MAIN</a>
+  <div style="display:flex; align-items:center; gap:14px;">
+    <a id="honeyDlBtn" class="honey-dl-btn" href="/honey/download">⬇ HONEY 다운로드</a>
+    <a class="back-main-btn" href="https://lsipte--github-test-dev.cdep1.samsungds.net">BACK TO MAIN</a>
+    <button class="theme-toggle" id="themeToggle" title="다크 모드로 전환">🌙</button>
+  </div>
 </header>
 
 <!-- product type 필터 -->
@@ -226,10 +323,9 @@ tr.result-row:hover { background: #f5f8ff; }
   <button class="pt-btn" data-pt="SECURITY">SECURITY</button>
   <button class="pt-btn" data-pt="TCON">TCON</button>
   <div class="spacer"></div>
-  <div style="font-size:12px; color:#888;">
-    업로드는 Honey 클라이언트에서 수행합니다.
-  </div>
-  <a id="honeyDlBtn" class="honey-dl-btn" href="/honey/download">⬇ HONEY 다운로드</a>
+  <button class="user-chip" id="userChip">👤 로그인</button>
+  <button class="user-chip" id="pwChangeBtn" style="display:none;">비밀번호 변경</button>
+  <button class="user-chip" id="logoutBtn" style="display:none;">로그아웃</button>
 </div>
 
 <!-- 검색 필터 -->
@@ -285,18 +381,50 @@ tr.result-row:hover { background: #f5f8ff; }
 
 <div class="toast" id="toast"></div>
 
-<!-- 삭제 비밀번호 모달 -->
+<!-- 로그인 모달 -->
+<div class="modal-overlay" id="idModal">
+  <div class="modal-box">
+    <p class="modal-title">로그인</p>
+    <input type="text" class="filter-input" id="idModalInput"
+           placeholder="ID" style="width:100%;">
+    <input type="password" class="filter-input" id="pwModalInput" inputmode="numeric"
+           maxlength="4" autocomplete="off" placeholder="PW (숫자 4자리)"
+           style="width:100%; margin-top:8px; letter-spacing:4px;">
+    <p style="font-size:12px; color:#888; margin:8px 0 0;">초기 비밀번호는 <b>0000</b> 입니다. 로그인 후 변경할 수 있습니다.</p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="idModalCancel">취소</button>
+      <button class="modal-btn" id="idModalSave"
+              style="background:#4a90e2; color:#fff; border-color:#4a90e2;">로그인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 비밀번호 변경 모달 -->
+<div class="modal-overlay" id="pwChangeModal">
+  <div class="modal-box">
+    <p class="modal-title">비밀번호 변경</p>
+    <input type="password" class="filter-input" id="pwCurInput" inputmode="numeric"
+           maxlength="4" autocomplete="off" placeholder="현재 비밀번호 (숫자 4자리)"
+           style="width:100%; letter-spacing:4px;">
+    <input type="password" class="filter-input" id="pwNewInput" inputmode="numeric"
+           maxlength="4" autocomplete="off" placeholder="새 비밀번호 (숫자 4자리)"
+           style="width:100%; margin-top:8px; letter-spacing:4px;">
+    <input type="password" class="filter-input" id="pwNew2Input" inputmode="numeric"
+           maxlength="4" autocomplete="off" placeholder="새 비밀번호 확인"
+           style="width:100%; margin-top:8px; letter-spacing:4px;">
+    <div class="modal-actions">
+      <button class="modal-btn" id="pwChangeCancel">취소</button>
+      <button class="modal-btn" id="pwChangeSave"
+              style="background:#4a90e2; color:#fff; border-color:#4a90e2;">변경</button>
+    </div>
+  </div>
+</div>
+
+<!-- 삭제 확인 모달 -->
 <div class="modal-overlay" id="delModal">
   <div class="modal-box">
     <p class="modal-title">세션 삭제</p>
-    <p class="modal-desc" id="delModalDesc">삭제하려면 비밀번호를 입력하세요.</p>
-    <div class="pin-row" id="delPinRow">
-      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="delPin0">
-      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="delPin1">
-      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="delPin2">
-      <input class="pin-cell" type="number" min="0" max="9" maxlength="1" id="delPin3">
-    </div>
-    <p class="modal-hint" id="delModalHint">숫자 4자리</p>
+    <p class="modal-desc" id="delModalDesc">정말 삭제하시겠습니까?</p>
     <div class="modal-actions">
       <button class="modal-btn" id="delModalCancel">취소</button>
       <button class="modal-btn danger" id="delModalConfirm">삭제</button>
@@ -308,6 +436,29 @@ tr.result-row:hover { background: #f5f8ff; }
 const PAGE_SIZE = 10;
 let _lastRows = [];
 let _currentPage = 0;
+
+// ── 라이트/다크 테마 토글 (head 부트스트랩이 저장값을 먼저 적용해 둔 상태) ──
+(function () {
+  const btn = document.getElementById("themeToggle");
+  if (!btn) return;
+  const root = document.documentElement;
+  function syncThemeBtn() {
+    const dark = root.getAttribute("data-theme") === "dark";
+    btn.textContent = dark ? "☀️" : "🌙";
+    btn.title = dark ? "라이트 모드로 전환" : "다크 모드로 전환";
+  }
+  btn.addEventListener("click", () => {
+    const toDark = root.getAttribute("data-theme") !== "dark";
+    if (toDark) root.setAttribute("data-theme", "dark");
+    else root.removeAttribute("data-theme");
+    try {
+      if (toDark) localStorage.setItem("report_theme", "dark");
+      else localStorage.removeItem("report_theme");
+    } catch (e) {}
+    syncThemeBtn();
+  });
+  syncThemeBtn();
+})();
 
 // CSRF: 서버가 내려준 double-submit 쿠키를 읽어 변경요청 헤더로 되돌려준다.
 function csrfToken() {
@@ -360,6 +511,171 @@ const state = {
   productType: null,
 };
 
+// ── 사용자 로그인 (즐겨찾기·수정 권한) ──
+// 계정은 서버 DB(report_user) 관리 — 첫 로그인 시 자동 생성, 상태는 서명 쿠키로 유지.
+// Honey 내장 브라우저는 UA 에 HoneyUser/<계정> 을 주입 — 로그인 ID 칸에 미리 채운다.
+const UA_USER = (() => {
+  const m = navigator.userAgent.match(/HoneyUser\/(\S+)/);
+  if (!m) return "";
+  try { return decodeURIComponent(m[1]).trim().toLowerCase(); } catch (e) { return ""; }
+})();
+let _userId = "";        // 로그인된 ID (서버 쿠키 세션 기준)
+let _favorites = new Set();
+
+function updateUserChip() {
+  document.getElementById("userChip").textContent = _userId ? `👤 ${_userId}` : "👤 로그인";
+  document.getElementById("logoutBtn").style.display = _userId ? "" : "none";
+  document.getElementById("pwChangeBtn").style.display = _userId ? "" : "none";
+}
+
+async function loadAuth() {
+  try {
+    const res = await fetch("/pe/report/api/auth/me");
+    if (res.ok) _userId = (await res.json()).user_id || "";
+  } catch (e) { _userId = ""; }
+}
+
+function openIdModal() {
+  if (_userId) return;
+  document.getElementById("idModalInput").value = UA_USER;
+  document.getElementById("pwModalInput").value = "";
+  document.getElementById("idModal").classList.add("show");
+  document.getElementById(UA_USER ? "pwModalInput" : "idModalInput").focus();
+}
+
+async function doLogin() {
+  const id = (document.getElementById("idModalInput").value || "").trim().toLowerCase();
+  const pw = document.getElementById("pwModalInput").value || "";
+  if (!/^[^\s\\/]{1,64}$/.test(id)) { showToast("ID 를 공백 없이 64자 이내로 입력하세요."); return; }
+  if (!/^\d{4}$/.test(pw)) { showToast("비밀번호는 숫자 4자리입니다."); return; }
+  try {
+    const res = await fetch("/pe/report/api/auth/login", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
+      body: JSON.stringify({user_id: id, password: pw}),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(j.error || "로그인 실패"); return; }
+    _userId = j.user_id;
+    document.getElementById("idModal").classList.remove("show");
+    updateUserChip();
+    if (j.is_default_password) showToast("초기 비밀번호(0000)로 로그인했습니다. 비밀번호를 변경하세요.", 3500);
+    await loadFavorites();
+    renderResults();
+  } catch (e) {
+    showToast("로그인 실패: " + e.message);
+  }
+}
+
+async function doLogout() {
+  try {
+    await fetch("/pe/report/api/auth/logout", {
+      method: "POST", headers: {"X-CSRF-Token": csrfToken()},
+    });
+  } catch (e) { /* 로그아웃 요청이 실패해도 화면은 비로그인 상태로 전환 */ }
+  _userId = "";
+  _favorites = new Set();
+  updateUserChip();
+  renderResults();
+}
+
+function openPwChangeModal() {
+  ["pwCurInput", "pwNewInput", "pwNew2Input"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("pwChangeModal").classList.add("show");
+  document.getElementById("pwCurInput").focus();
+}
+
+async function doChangePassword() {
+  const cur = document.getElementById("pwCurInput").value || "";
+  const nw = document.getElementById("pwNewInput").value || "";
+  const nw2 = document.getElementById("pwNew2Input").value || "";
+  if (!/^\d{4}$/.test(nw)) { showToast("새 비밀번호는 숫자 4자리입니다."); return; }
+  if (nw !== nw2) { showToast("새 비밀번호가 서로 다릅니다."); return; }
+  try {
+    const res = await fetch("/pe/report/api/auth/change_password", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
+      body: JSON.stringify({current_password: cur, new_password: nw}),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(j.error || "변경 실패"); return; }
+    document.getElementById("pwChangeModal").classList.remove("show");
+    showToast("비밀번호가 변경되었습니다.");
+  } catch (e) {
+    showToast("변경 실패: " + e.message);
+  }
+}
+
+// 숫자 4자리 입력칸: 비숫자 제거 (붙여넣기 포함)
+["pwModalInput", "pwCurInput", "pwNewInput", "pwNew2Input"].forEach(id => {
+  document.getElementById(id).addEventListener("input", e => {
+    e.target.value = e.target.value.replace(/\D/g, "").slice(0, 4);
+  });
+});
+
+document.getElementById("userChip").addEventListener("click", openIdModal);
+document.getElementById("logoutBtn").addEventListener("click", doLogout);
+document.getElementById("pwChangeBtn").addEventListener("click", openPwChangeModal);
+document.getElementById("idModalCancel").addEventListener("click", () => {
+  document.getElementById("idModal").classList.remove("show");
+});
+document.getElementById("idModalSave").addEventListener("click", doLogin);
+["idModalInput", "pwModalInput"].forEach(id => {
+  document.getElementById(id).addEventListener("keydown", e => {
+    if (e.key === "Enter") doLogin();
+  });
+});
+document.getElementById("pwChangeCancel").addEventListener("click", () => {
+  document.getElementById("pwChangeModal").classList.remove("show");
+});
+document.getElementById("pwChangeSave").addEventListener("click", doChangePassword);
+["pwCurInput", "pwNewInput", "pwNew2Input"].forEach(id => {
+  document.getElementById(id).addEventListener("keydown", e => {
+    if (e.key === "Enter") doChangePassword();
+  });
+});
+
+async function loadFavorites() {
+  _favorites = new Set();
+  if (!_userId) return;
+  try {
+    const res = await fetch("/pe/report/api/favorites");
+    if (res.ok) _favorites = new Set((await res.json()).favorites || []);
+  } catch (e) { /* 즐겨찾기 로드 실패는 목록 표시를 막지 않는다 */ }
+}
+
+async function toggleFavorite(sid) {
+  if (!_userId) { openIdModal(); return; }
+  const fav = !_favorites.has(sid);
+  if (fav) _favorites.add(sid); else _favorites.delete(sid);   // 낙관적 반영
+  renderResults();
+  try {
+    const res = await fetch("/pe/report/api/favorites", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
+      body: JSON.stringify({session_id: sid, favorite: fav}),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+  } catch (e) {
+    if (fav) _favorites.delete(sid); else _favorites.add(sid); // 실패 시 되돌림
+    renderResults();
+    showToast("즐겨찾기 저장 실패: " + e.message);
+  }
+}
+
+// 내 업로드 여부 — uploaded_by 는 'DOMAIN\user' 또는 'user' 형식이라 뒷부분만 비교.
+function isMine(r) {
+  if (!_userId) return false;
+  const ub = String(r.uploaded_by || "");
+  if (!ub) return false;
+  return ub.split("\\").pop().trim().toLowerCase() === _userId;
+}
+
+// 수정/삭제 가능 여부 — 로그인 + (업로더 본인 또는 업로더 기록 없는 legacy 세션).
+function canModify(r) {
+  return !!_userId && (!r.uploaded_by || isMine(r));
+}
+
 // ── product type buttons ──
 document.querySelectorAll(".pt-btn").forEach(btn => {
   btn.addEventListener("click", () => {
@@ -400,11 +716,11 @@ function showToast(msg, ms=2000) {
   setTimeout(() => t.classList.remove("show"), ms);
 }
 
-// ── format date ──
+// ── format date (YYMMDD_HH:MM) ──
 function fmtDate(unix) {
   const d = new Date(unix * 1000);
   const pad = n => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${pad(d.getFullYear() % 100)}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // ── client-side substring search across all columns ──
@@ -495,7 +811,9 @@ async function loadHistory() {
 
 // ── render results ──
 function renderResults() {
-  const filtered = applyClientFilter(_lastRows);
+  // 정렬: ★즐겨찾기 > 내 업로드 > 나머지 (그룹 안에서는 서버 순서 = 중요 > 최신순 유지)
+  const group = r => _favorites.has(r.session_id) ? 0 : (isMine(r) ? 1 : 2);
+  const filtered = applyClientFilter(_lastRows).sort((a, b) => group(a) - group(b));
   const total = filtered.length;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   _currentPage = Math.min(_currentPage, pageCount - 1);
@@ -511,18 +829,21 @@ function renderResults() {
   } else {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row" data-sid="${esc(r.session_id)}">
-        <td>${r.is_important ? '<span class="star-important" title="중요">★</span>' : ''}${productTypeBadge(r.product_type)}</td>
+        <td class="pt-cell" data-act="fav" data-sid="${esc(r.session_id)}" title="클릭하여 즐겨찾기 켜기/끄기"><span class="star-fav ${_favorites.has(r.session_id) ? 'on' : ''}">${_favorites.has(r.session_id) ? '★' : '☆'}</span>${r.is_important ? '<span class="star-important" title="중요">★</span>' : ''}${productTypeBadge(r.product_type)}</td>
         <td>${modeBadge(r)}</td>
         <td>${esc(r.product || '-')}</td>
         <td>${esc(r.revision || '-')}</td>
         <td>${esc(r.process || '-')}</td>
         <td>${esc(r.lot_id || '-')}</td>
-        <td>${esc(r.file_name || '-')}</td>
+        <td class="fname-cell" title="${esc(r.file_name || '')}"><span class="fname-txt">${esc(r.file_name || '-')}</span></td>
         <td title="${esc(r.client_host || '')}">${esc(r.uploaded_by || '-')}</td>
         <td>${fmtDate(r.created_at)}</td>
         <td>
           <div class="btn-row">
-            <button class="btn-mini danger" data-act="del" data-sid="${esc(r.session_id)}" data-pw="${r.has_password ? 1 : 0}">삭제</button>
+            ${canModify(r)
+              ? `<button class="btn-icon lock ${r.is_private ? 'on' : ''}" data-act="private" data-sid="${esc(r.session_id)}" title="${r.is_private ? '비공개 (클릭 시 공개로)' : '공개 (클릭 시 비공개로)'}">${r.is_private ? '🔒' : '🔓'}</button>`
+                + `<button class="btn-icon trash" data-act="del" data-sid="${esc(r.session_id)}" title="삭제">🗑</button>`
+              : (r.is_private ? `<span class="lock-badge" title="비공개">🔒</span>` : "")}
           </div>
         </td>
       </tr>
@@ -550,10 +871,22 @@ function renderResults() {
       location.href = `/pe/report/view/${sid}`;
     });
   });
+  tbody.querySelectorAll("td[data-act='fav']").forEach(td => {
+    td.addEventListener("click", e => {
+      e.stopPropagation();
+      toggleFavorite(td.dataset.sid);
+    });
+  });
   tbody.querySelectorAll("button[data-act='del']").forEach(b => {
     b.addEventListener("click", e => {
       e.stopPropagation();
-      startDelete(b.dataset.sid, b.dataset.pw === "1");
+      startDelete(b.dataset.sid);
+    });
+  });
+  tbody.querySelectorAll("button[data-act='private']").forEach(b => {
+    b.addEventListener("click", e => {
+      e.stopPropagation();
+      togglePrivate(b.dataset.sid);
     });
   });
   pager.querySelectorAll(".pg-btn").forEach(b => {
@@ -566,33 +899,19 @@ function renderResults() {
 
 // ── delete modal ──
 let _delSid = null;
-let _delNeedPw = false;
-function startDelete(sid, needPw) {
+function startDelete(sid) {
   _delSid = sid;
-  _delNeedPw = needPw;
-  const modal = document.getElementById("delModal");
-  document.getElementById("delModalDesc").textContent =
-    needPw ? "삭제하려면 비밀번호를 입력하세요." : "정말 삭제하시겠습니까?";
-  const pinRow = document.getElementById("delPinRow");
-  pinRow.style.display = needPw ? "flex" : "none";
-  ["delPin0","delPin1","delPin2","delPin3"].forEach(id => document.getElementById(id).value = "");
-  modal.classList.add("show");
+  document.getElementById("delModal").classList.add("show");
 }
 document.getElementById("delModalCancel").addEventListener("click", () => {
   document.getElementById("delModal").classList.remove("show");
 });
 document.getElementById("delModalConfirm").addEventListener("click", async () => {
-  const pw = ["delPin0","delPin1","delPin2","delPin3"]
-    .map(id => document.getElementById(id).value).join("");
-  if (_delNeedPw && pw.length !== 4) {
-    showToast("비밀번호 4자리를 입력하세요.");
-    return;
-  }
   try {
     const res = await fetch(`/pe/report/session/${_delSid}`, {
       method: "DELETE",
       headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
-      body: JSON.stringify({password: pw}),
+      body: JSON.stringify({}),
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
@@ -607,18 +926,36 @@ document.getElementById("delModalConfirm").addEventListener("click", async () =>
   }
 });
 
-// PIN cell auto-advance
-document.querySelectorAll(".pin-cell").forEach((c, i, arr) => {
-  c.addEventListener("input", () => {
-    if (c.value && i < arr.length - 1) arr[i+1].focus();
-  });
-  c.addEventListener("keydown", e => {
-    if (e.key === "Backspace" && !c.value && i > 0) arr[i-1].focus();
-  });
-});
+// ── 비공개 토글 (업로더 본인만) ──
+async function togglePrivate(sid) {
+  const row = _lastRows.find(r => r.session_id === sid);
+  if (!row) return;
+  const next = row.is_private ? 0 : 1;
+  try {
+    const res = await fetch(`/pe/report/session/${sid}/private`, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
+      body: JSON.stringify({private: !!next}),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(j.error || "비공개 설정 실패"); return; }
+    row.is_private = j.is_private;
+    renderResults();
+    showToast(j.is_private ? "비공개로 설정했습니다." : "공개로 전환했습니다.");
+  } catch (e) {
+    showToast("비공개 설정 실패: " + e.message);
+  }
+}
 
 // init
-loadHistory();
+updateUserChip();
+(async () => {
+  await loadAuth();               // 로그인 상태 먼저 — 즐겨찾기/삭제버튼 렌더에 필요
+  updateUserChip();
+  await loadFavorites();          // 첫 렌더부터 즐겨찾기 정렬이 반영되도록 먼저 로드
+  await loadHistory();
+  if (!_userId) openIdModal();    // 미로그인 시 1회 안내 (취소로 건너뛸 수 있음)
+})();
 </script>
 </body>
 </html>

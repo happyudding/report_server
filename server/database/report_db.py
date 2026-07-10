@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS report_session (
     is_debug      INTEGER DEFAULT 0,
     source        TEXT DEFAULT 'xlsx_upload',
     is_important  INTEGER DEFAULT 0,
+    is_private    INTEGER DEFAULT 0,
     uploaded_by   TEXT,
     client_host   TEXT,
     webreport_options TEXT,
@@ -154,6 +155,19 @@ CREATE INDEX IF NOT EXISTS idx_report_audit_action
     ON report_audit_log(action, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_report_audit_session_id
     ON report_audit_log(session_id);
+
+CREATE TABLE IF NOT EXISTS report_user_favorite (
+    user_id    TEXT NOT NULL,        -- 웹 사용자 신고 Windows ID (소문자 정규화, 위조 가능)
+    session_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS report_user (
+    user_id       TEXT PRIMARY KEY,  -- 소문자 정규화된 로그인 ID
+    password_hash TEXT NOT NULL,     -- werkzeug generate_password_hash 결과
+    created_at    INTEGER NOT NULL
+);
 """
 
 _SUMMARY_COLUMNS = (
@@ -245,6 +259,8 @@ def _migrate(conn):
             conn.execute("ALTER TABLE report_session ADD COLUMN source TEXT DEFAULT 'xlsx_upload'")
         if "is_important" not in sess_cols:
             conn.execute("ALTER TABLE report_session ADD COLUMN is_important INTEGER DEFAULT 0")
+        if "is_private" not in sess_cols:
+            conn.execute("ALTER TABLE report_session ADD COLUMN is_private INTEGER DEFAULT 0")
         if "mode" not in sess_cols:
             conn.execute("ALTER TABLE report_session ADD COLUMN mode TEXT DEFAULT 'Normal'")
 
@@ -322,7 +338,7 @@ def create_session(session_id, file_name, file_path, product_type=None, dataset_
 
 
 _SESSION_UPDATABLE = {"analysis_key", "content_hash", "status", "error_message", "file_path",
-                      "is_important", "webreport_options"}
+                      "is_important", "is_private", "webreport_options"}
 
 
 def delete_session(session_id):
@@ -416,6 +432,7 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
                s.is_debug, s.source, s.uploaded_by, s.client_host,
                COALESCE(s.mode, 'Normal') AS mode,
                COALESCE(s.is_important, 0) AS is_important,
+               COALESCE(s.is_private, 0) AS is_private,
                CASE WHEN s.password IS NOT NULL THEN 1 ELSE 0 END AS has_password,
                COALESCE(SUM(c.file_size), 0) AS total_file_size
         FROM report_session s
@@ -538,6 +555,67 @@ def purge_audit_logs(cutoff_epoch):
     with get_conn() as conn:
         cur = conn.execute(
             "DELETE FROM report_audit_log WHERE created_at < ?", (int(cutoff_epoch),))
+        return cur.rowcount
+
+
+# ── user favorites (검색결과 즐겨찾기, ID 별) ─────────────────────────────────
+
+def get_user_favorites(user_id):
+    """user_id 의 즐겨찾기 session_id 목록. 삭제된 세션의 잔존 행은 조회에서 무해."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT session_id FROM report_user_favorite "
+            "WHERE user_id=? ORDER BY created_at DESC",
+            (user_id,),
+        ).fetchall()
+    return [r["session_id"] for r in rows]
+
+
+def set_user_favorite(user_id, session_id, favorite):
+    """즐겨찾기 on/off. INSERT OR IGNORE 로 중복 토글에도 안전."""
+    with get_conn() as conn:
+        if favorite:
+            conn.execute(
+                "INSERT OR IGNORE INTO report_user_favorite "
+                "(user_id, session_id, created_at) VALUES (?, ?, ?)",
+                (user_id, session_id, _now()),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM report_user_favorite WHERE user_id=? AND session_id=?",
+                (user_id, session_id),
+            )
+
+
+# ── users (웹 로그인 계정) ────────────────────────────────────────────────────
+
+def get_user(user_id):
+    """로그인 계정 조회. 없으면 None."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT user_id, password_hash, created_at FROM report_user WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+    return _row(row)
+
+
+def create_user(user_id, password_hash):
+    """계정 생성 (첫 로그인 시 초기 비밀번호로 자동 가입). 동시 생성 경합은 IGNORE 로 무해."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO report_user (user_id, password_hash, created_at) "
+            "VALUES (?, ?, ?)",
+            (user_id, password_hash, _now()),
+        )
+
+
+def update_user_password(user_id, password_hash):
+    """비밀번호 변경. 계정이 없으면 no-op (rowcount 0)."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE report_user SET password_hash=? WHERE user_id=?",
+            (password_hash, user_id),
+        )
         return cur.rowcount
 
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from flask import Blueprint, Response, abort, jsonify, request
 
-from admin_panel import maintenance, sessions_admin, stats, sysinfo
+from admin_panel import maintenance, sessions_admin, stats, sysinfo, users_admin
 from database import report_db
 from report.static_pages import send_html_gzip
 
@@ -22,6 +22,7 @@ admin_panel_bp = Blueprint("admin_panel", __name__)
 _ADMIN_HTML = Path(__file__).resolve().parent / "admin_panel.html"
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _PIN_RE = re.compile(r"^\d{4}$")
+_USER_ID_RE = re.compile(r"^[^\s\\/]{1,64}$")
 
 
 @admin_panel_bp.before_request
@@ -158,6 +159,55 @@ def api_session_password(session_id):
     _audit("edit", session=session,
            changed_fields="password(admin:%s)" % ("set" if password else "clear"))
     return jsonify({"ok": True, "session_id": session_id, "has_password": bool(password)})
+
+
+# ── 사용자(웹 로그인 계정) 컨트롤 ───────────────────────────────────────────
+
+def _norm_user_id(user_id):
+    uid = (user_id or "").strip().lower()
+    if not _USER_ID_RE.match(uid):
+        abort(400, "invalid user_id")
+    return uid
+
+
+@admin_panel_bp.get("/api/users")
+def api_users():
+    return jsonify(users_admin.list_users(
+        q=(request.args.get("q") or "").strip() or None,
+        limit=request.args.get("limit", 200),
+        offset=request.args.get("offset", 0),
+    ))
+
+
+@admin_panel_bp.post("/api/user/<user_id>/reset_password")
+def api_user_reset_password(user_id):
+    uid = _norm_user_id(user_id)
+    if not users_admin.reset_password(uid):
+        abort(404, "user not found")
+    _audit("edit", changed_fields="user_password_reset(%s)" % uid)
+    return jsonify({"ok": True, "user_id": uid})
+
+
+@admin_panel_bp.post("/api/user/<user_id>/password")
+def api_user_set_password(user_id):
+    uid = _norm_user_id(user_id)
+    body = request.get_json(force=True, silent=True) or {}
+    password = (body.get("password") or "").strip()
+    if not _PIN_RE.match(password):
+        abort(400, "password must be 4 digits")
+    if not users_admin.set_password(uid, password):
+        abort(404, "user not found")
+    _audit("edit", changed_fields="user_password_set(%s)" % uid)
+    return jsonify({"ok": True, "user_id": uid})
+
+
+@admin_panel_bp.post("/api/user/<user_id>/delete")
+def api_user_delete(user_id):
+    uid = _norm_user_id(user_id)
+    if not users_admin.delete_user(uid):
+        abort(404, "user not found")
+    _audit("delete", changed_fields="user_delete(%s)" % uid)
+    return jsonify({"ok": True, "user_id": uid})
 
 
 # ── DB 컨트롤 ────────────────────────────────────────────────────────────────

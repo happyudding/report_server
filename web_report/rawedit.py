@@ -12,8 +12,9 @@ import io
 import json
 import zipfile
 
-from . import service
+from . import cache
 from .honeyform import decode_honeyform_parquet
+from .validation import canon
 
 
 def export_sources_zip(session_id, *, report_db, upload_root) -> bytes:
@@ -73,7 +74,7 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
     manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root)
 
     content_hash = hashlib.sha256(
-        service._canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
+        canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
     ).hexdigest()
 
     storage_result = storage_gateway.save_webreport_sources(
@@ -82,10 +83,7 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
     report_db.update_session(session_id, content_hash=content_hash)
     # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
     # (edit_raw_data 와 동일한 무효화 로직).
-    with service._TABLES_CACHE_LOCK:
-        for cache in service._AKEY_CACHES:
-            for key in [k for k in cache if k[0] == analysis_key]:
-                cache.pop(key, None)
+    cache.evict_akey_caches(analysis_key)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
