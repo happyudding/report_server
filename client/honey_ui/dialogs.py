@@ -48,9 +48,15 @@ class UploadDialog(QDialog):
     # 백그라운드 fetch 결과 전달 (ids, ok) — cross-thread 라 자동 queued connection
     _part_ids_ready = pyqtSignal(list, bool)
 
-    def __init__(self, parent=None, defaults=None):
+    def __init__(self, parent=None, defaults=None, show_password=True):
         super().__init__(parent)
         uic.loadUi(str(UPLOAD_UI_PATH), self)
+        # Web Report 업로드는 PIN 을 쓰지 않는다(편집/삭제는 로그인·업로더 일치로 인증).
+        # show_password=False 이면 비밀번호 행을 숨겨 입력을 요구하지 않는다 → values()의
+        # password 는 빈 문자열이 되어 서버로 전송되지 않는다.
+        if not show_password:
+            self.label_pw.setVisible(False)
+            self.le_password.setVisible(False)
         # Part ID 목록은 서버 GET(타임아웃 10s)이라 생성자에서 동기 호출하면 팝업이
         # 그만큼 늦게 뜬다 — 백그라운드 스레드로 받고 도착하면 completer 를 붙인다.
         self._part_ids = []
@@ -208,7 +214,7 @@ class OptionsDialog(QDialog):
     색 편집은 기존 ColorEditorDialog 를 그대로 재사용(버튼 → 모달)한다.
     """
     # honey_main._pt_radios 와 동일 집합 — 두 곳이 어긋나지 않도록 함께 관리할 것.
-    PRODUCT_TYPES = ["MDDI", "PDDI", "PMIC", "SECURITY"]
+    PRODUCT_TYPES = ["MDDI", "PDDI", "PMIC", "SECURITY", "TCON"]
 
     def __init__(self, parent=None):
         super().__init__(parent)

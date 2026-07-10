@@ -69,7 +69,7 @@ except Exception as exc:  # noqa: BLE001
     map_analyze = None
     _RG_IMPORT_ERROR = exc
 
-PRODUCT_TYPES = ["MDDI", "PDDI", "PMIC", "SECURITY"]
+PRODUCT_TYPES = ["MDDI", "PDDI", "PMIC", "SECURITY", "TCON"]
 _FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
 
 # 프리징(onedir) 시 _MEIPASS, 아니면 스크립트 폴더에서 .ui 탐색
@@ -267,6 +267,7 @@ class HoneyMainWindow(QMainWindow):
         self._pt_radios = {
             "MDDI": self.rb_pt_MDDI, "PDDI": self.rb_pt_PDDI,
             "PMIC": self.rb_pt_PMIC, "SECURITY": self.rb_pt_SECURITY,
+            "TCON": self.rb_pt_TCON,
         }
         # 지난 실행에서 고른 Product Type 복원 (사용자별 settings.json)
         saved_pt = app_settings.get_setting("product_type")
@@ -396,18 +397,18 @@ class HoneyMainWindow(QMainWindow):
         return max(steps, 1)
 
     def _setup_csv_table(self):
-        """list_csv (QTableWidget) 를 '확장자 | 파일 경로' 2열로 구성하고,
+        """list_csv (QTableWidget) 를 '파일 경로 | 확장자' 2열로 구성하고,
         파일 리스트 영역에 한정한 드래그앤드롭(외부 파일)을 활성화한다."""
         t = self.list_csv
         t.setColumnCount(2)
-        t.setHorizontalHeaderLabels(["확장자", "파일 경로"])
+        t.setHorizontalHeaderLabels(["파일 경로", "확장자"])
         t.verticalHeader().setVisible(False)
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         t.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         hh = t.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # 확장자 좁게
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)       # 긴 경로는 가로 스크롤
+        hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)       # 긴 경로는 가로 스크롤
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # 확장자 좁게(오른쪽)
         hh.setStretchLastSection(False)
         # 드롭은 리스트 영역에서만 받는다 (메인 창엔 setAcceptDrops 를 걸지 않음).
         t.setTextElideMode(Qt.TextElideMode.ElideNone)
@@ -451,6 +452,7 @@ class HoneyMainWindow(QMainWindow):
         # 입력 파일: 선택 후 ▲▼ 로 순서 변경 (맨 위 파일이 기준), Clear 로 전체 비우기
         self.btn_csv_up.clicked.connect(lambda: self._move_file(-1))
         self.btn_csv_down.clicked.connect(lambda: self._move_file(1))
+        self.btn_csv_del.clicked.connect(self._delete_selected_file)
         self.btn_csv_clear.clicked.connect(self._clear_files)
         # Start: 파일 전처리 후 설정 팝업(Select Items/Option/색/Auto Upload) 열기
         self.btn_start.clicked.connect(self.on_start)
@@ -521,6 +523,7 @@ class HoneyMainWindow(QMainWindow):
         move_col = QVBoxLayout()
         move_col.addWidget(self.btn_csv_up)
         move_col.addWidget(self.btn_csv_down)
+        move_col.addWidget(self.btn_csv_del)
         move_col.addWidget(self.btn_csv_clear)
         move_col.addStretch(1)
         file_row.addLayout(move_col)
@@ -929,7 +932,7 @@ class HoneyMainWindow(QMainWindow):
 
     def _refill_csv_list(self):
         """self.csv_paths 순서대로 list_csv(테이블) 다시 채우기.
-        0열=확장자(좁게), 1열=파일 절대경로."""
+        0열=파일 절대경로, 1열=확장자(오른쪽, 좁게)."""
         self.list_csv.setRowCount(len(self.csv_paths))
         for r, p in enumerate(self.csv_paths):
             full_path = str(Path(p).resolve())
@@ -938,13 +941,13 @@ class HoneyMainWindow(QMainWindow):
             path_item = QTableWidgetItem(full_path)
             path_item.setData(Qt.ItemDataRole.UserRole, full_path)
             path_item.setToolTip(full_path)
-            self.list_csv.setItem(r, 0, ext_item)
-            self.list_csv.setItem(r, 1, path_item)
+            self.list_csv.setItem(r, 0, path_item)
+            self.list_csv.setItem(r, 1, ext_item)
             self.list_csv.setRowHeight(r, 20)
         if self.csv_paths:
             fm = self.list_csv.fontMetrics()
             width = max(fm.horizontalAdvance(str(Path(p).resolve())) for p in self.csv_paths)
-            self.list_csv.setColumnWidth(1, max(420, width + 36))
+            self.list_csv.setColumnWidth(0, max(420, width + 36))
             # 파일 리스트를 채우면 긴 경로의 파일명(오른쪽)이 보이도록 가로 스크롤을 끝까지.
             # 스크롤바 range 는 레이아웃 후 갱신되므로 다음 이벤트 루프에서 최대로 민다.
             bar = self.list_csv.horizontalScrollBar()
@@ -958,6 +961,24 @@ class HoneyMainWindow(QMainWindow):
         self.group = None
         self.out_path = None
         self._status("파일 리스트를 비웠습니다.")
+
+    def _delete_selected_file(self):
+        """선택한 입력 파일 1개만 리스트에서 제거한다 (✕ 버튼)."""
+        row = self.list_csv.currentRow()
+        if row < 0 or row >= len(self.csv_paths):
+            self._status("삭제할 파일을 먼저 선택하세요.")
+            return
+        removed = Path(self.csv_paths[row]).name
+        del self.csv_paths[row]
+        self._refill_csv_list()
+        # 파일 구성이 바뀌었으니 그룹은 무효화 — Start 시 재구성된다.
+        self.group = None
+        self.out_path = None
+        if self.csv_paths:
+            self.list_csv.selectRow(min(row, len(self.csv_paths) - 1))
+        else:
+            self.le_outname.clear()
+        self._status(f"'{removed}' 을(를) 리스트에서 제거했습니다.")
 
     def _load_paths(self, paths):
         """선택된 입력 파일들 → 리스트 채우기 + 저장 파일명 제안 (전처리는 Start 까지 보류)."""
@@ -1293,7 +1314,8 @@ class HoneyMainWindow(QMainWindow):
 
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
-        dlg = UploadDialog(self, defaults=defaults)
+        # Web Report 업로드는 PIN 입력을 요구하지 않는다 (비밀번호 행 숨김).
+        dlg = UploadDialog(self, defaults=defaults, show_password=False)
         if not dlg.exec():
             progress.fail("취소됨: 업로드 메타 입력 취소")
             self.btn_start.setEnabled(True)
