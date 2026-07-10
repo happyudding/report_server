@@ -252,6 +252,7 @@ class HoneyMainWindow(QMainWindow):
         uic.loadUi(UI_PATH, self)
         self.status = self.statusbar
         self.setWindowTitle(f"Honey  v{CURRENT_VERSION}")
+        self.setWindowIcon(self._honey_icon(64))   # 꿀단지 실행/창 아이콘
         self.status.showMessage(f"Server: {SERVER_BASE_URL}")
         self.progress_status.hide()
         self.txt_summary.setReadOnly(True)
@@ -519,6 +520,9 @@ class HoneyMainWindow(QMainWindow):
         v.addWidget(self.groupBox_pt)
 
         file_row = QHBoxLayout()
+        # 파일 리스트는 세로로 확장하지 않도록 고정 — 남는 세로 공간이 아래 실행 그리드를
+        # 끝까지 밀지 않고, 그리드가 위로 붙은 뒤 그 아래가 빈 공간이 되게 한다.
+        self.list_csv.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         file_row.addWidget(self.list_csv)
         move_col = QVBoxLayout()
         move_col.addWidget(self.btn_csv_up)
@@ -574,6 +578,8 @@ class HoneyMainWindow(QMainWindow):
         run_row.addWidget(web_box, 1)
         run_row.addWidget(excel_box, 1)
         v.addLayout(run_row)
+        # 실행 그리드 아래는 빈 공간으로 (그리드를 위로 붙인다).
+        v.addStretch(1)
 
         self.slide_controls = SlideInPanel(
             self.browser_panel, container, "입력 파일 / 설정", width=620)
@@ -721,6 +727,31 @@ class HoneyMainWindow(QMainWindow):
         f.setPointSize(int(px * 0.7))
         p.setFont(f)
         p.drawText(pm.rect(), Qt.AlignmentFlag.AlignCenter, emoji)
+        p.end()
+        return QIcon(pm)
+
+    @staticmethod
+    def _honey_icon(px=64):
+        """꿀단지(honey pot)를 벡터로 그린 QIcon — 실행/창 아이콘용.
+
+        컬러 이모지 폰트에 의존하지 않아 어떤 환경에서도 동일하게 렌더된다.
+        """
+        from PyQt6.QtGui import QPixmap, QPainter, QIcon, QColor
+        from PyQt6.QtCore import QRectF
+        pm = QPixmap(px, px)
+        pm.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        u = px / 64.0
+        p.setBrush(QColor("#C6820E"))                                   # 뚜껑
+        p.drawRoundedRect(QRectF(15 * u, 7 * u, 34 * u, 11 * u), 4 * u, 4 * u)
+        p.setBrush(QColor("#F2A81C"))                                   # 항아리 본체
+        p.drawRoundedRect(QRectF(11 * u, 16 * u, 42 * u, 41 * u), 13 * u, 13 * u)
+        p.setBrush(QColor("#FFF3D0"))                                   # 라벨 밴드
+        p.drawRoundedRect(QRectF(16 * u, 30 * u, 32 * u, 16 * u), 3 * u, 3 * u)
+        p.setBrush(QColor("#E38E0C"))                                   # 꿀방울
+        p.drawEllipse(QRectF(28 * u, 32 * u, 8 * u, 11 * u))
         p.end()
         return QIcon(pm)
 
@@ -1118,10 +1149,8 @@ class HoneyMainWindow(QMainWindow):
             "work_group": work_group,
             "selected": selected,
             "sheets": sheets,
-            "auto_upload": dlg.auto_upload(),
             "raw_data": dlg.raw_data(),
             "compare_mode": dlg.mode_compare(),
-            "mode_map": dlg.mode_map(),
         }
 
     def on_start(self):
@@ -1129,8 +1158,8 @@ class HoneyMainWindow(QMainWindow):
         if ctx is None:
             return
         self._run_analysis(
-            ctx["work_group"], ctx["selected"], ctx["sheets"], ctx["auto_upload"],
-            ctx["raw_data"], compare_mode=ctx["compare_mode"], mode_map=ctx["mode_map"])
+            ctx["work_group"], ctx["selected"], ctx["sheets"],
+            ctx["raw_data"], compare_mode=ctx["compare_mode"])
 
     def on_webreport_colors(self):
         """F10 메뉴 → Distribution 색(Legend/source 팔레트) 설정.
@@ -1292,25 +1321,18 @@ class HoneyMainWindow(QMainWindow):
             busy=True, minimum=0, maximum=100)
         QApplication.processEvents()
 
-        try:
-            progress.set("데이터 분석 중... (Web Report)", value=10, status="데이터 분석 중...")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(
-                    rg.analyze,
-                    work_group,
-                    meta=rg.ReportMeta(),
-                    selector=rg.ItemSelector(selected_items=selected),
-                    compare_mode=compare_mode,
-                )
-                self.last_result = _wait_for_future(fut, progress)
-            self._show_summary(self.last_result)
-        except Exception as exc:
-            progress.fail(f"실패: 분석 실패 - {exc}")
-            QMessageBox.critical(self, "분석 실패", str(exc))
-            self._status("Web Report 분석 실패")
-            self.btn_start.setEnabled(True)
-            self.btn_web_report.setEnabled(True)
-            return
+        # 분석·인코딩(수 초)을 업로드 메타 입력과 병렬로 미리 시작한다 — 같은 워커 1개에서
+        # 순차 실행이라 work_group 동시 접근이 없고, 사용자가 대화상자를 입력하는 동안
+        # 대부분 끝난다. 취소 시 결과는 버린다 (읽기 전용 계산이라 부작용 없음).
+        prep_ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        fut_analyze = prep_ex.submit(
+            rg.analyze,
+            work_group,
+            meta=rg.ReportMeta(),
+            selector=rg.ItemSelector(selected_items=selected),
+            compare_mode=compare_mode,
+        )
+        fut_encode = prep_ex.submit(self._build_webreport_parquets, work_group)
 
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
@@ -1318,6 +1340,7 @@ class HoneyMainWindow(QMainWindow):
         dlg = UploadDialog(self, defaults=defaults, show_password=False)
         if not dlg.exec():
             progress.fail("취소됨: 업로드 메타 입력 취소")
+            prep_ex.shutdown(wait=False, cancel_futures=True)
             self.btn_start.setEnabled(True)
             self.btn_web_report.setEnabled(True)
             return
@@ -1327,15 +1350,30 @@ class HoneyMainWindow(QMainWindow):
             self.csv_paths, work_group)
 
         try:
+            progress.set("데이터 분석 중... (Web Report)", value=10, status="데이터 분석 중...")
+            self.last_result = _wait_for_future(fut_analyze, progress)
+            self._show_summary(self.last_result)
+        except Exception as exc:
+            progress.fail(f"실패: 분석 실패 - {exc}")
+            prep_ex.shutdown(wait=False, cancel_futures=True)
+            QMessageBox.critical(self, "분석 실패", str(exc))
+            self._status("Web Report 분석 실패")
+            self.btn_start.setEnabled(True)
+            self.btn_web_report.setEnabled(True)
+            return
+
+        try:
             progress.set("parquet 인코딩 중...", value=35, status="parquet 인코딩 중...")
-            sources, parquet_items = self._build_webreport_parquets(work_group)
+            sources, parquet_items = _wait_for_future(fut_encode, progress)
         except Exception as exc:
             progress.fail(f"실패: parquet 인코딩 실패 - {exc}")
+            prep_ex.shutdown(wait=False)
             QMessageBox.critical(self, "Web Report 실패", str(exc))
             self._status("parquet 인코딩 실패")
             self.btn_start.setEnabled(True)
             self.btn_web_report.setEnabled(True)
             return
+        prep_ex.shutdown(wait=False)
 
         manifest = {
             "sources": sources,
@@ -1397,7 +1435,7 @@ class HoneyMainWindow(QMainWindow):
         except Exception:
             pass
 
-    def _run_analysis(self, work_group, selected, sheets, auto_upload, raw_data=False,
+    def _run_analysis(self, work_group, selected, sheets, raw_data=False,
                       compare_mode=False, mode_map=False):
         self.btn_start.setEnabled(False)
         show_timing_log = bool(getattr(rg, "DEBUG_RUN_TIMING_LOG", False))
@@ -1631,10 +1669,6 @@ class HoneyMainWindow(QMainWindow):
         self._append_run_log(f"저장됨: {out}")
         progress.success(f"완료: {Path(out).name} 저장됨", value=progress.maximum())
         self._status(f"완료: {Path(out).name}  ('서버에 업로드' 가능)")
-
-        # 자동 업로드 옵션
-        if auto_upload:
-            self._do_upload(self.out_path)
 
     def _show_summary(self, r):
         feat = r.summary_feature()
@@ -1888,6 +1922,64 @@ def _install_excepthook():
     sys.excepthook = hook
 
 
+HONEY_QSS = """
+    QMainWindow, QDialog, QDockWidget { background: #FFF8E1; }
+    QLabel { background: transparent; color: #5D4711; }
+    QGroupBox {
+        background: #FFFDF5; border: 1px solid #E8D9A8; border-radius: 6px;
+        margin-top: 10px; color: #6B4E16;
+    }
+    QGroupBox::title {
+        subcontrol-origin: margin; left: 8px; padding: 0 4px; color: #8A6D1D;
+    }
+    QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+        background: #FFFFFF; border: 1px solid #E0CE93; border-radius: 5px;
+        padding: 3px 6px; color: #4A3B1A; selection-background-color: #FFD65A;
+        selection-color: #3A2E12;
+    }
+    QPushButton {
+        background: #F6C445; color: #4A3B1A; border: 1px solid #E0A81E;
+        border-radius: 6px; padding: 5px 12px; font-weight: 600;
+    }
+    QPushButton:hover { background: #FFD65A; }
+    QPushButton:pressed { background: #E9B21E; }
+    QPushButton:disabled { background: #EDE6CF; color: #A89C77; border-color: #E0D9C0; }
+    QRadioButton, QCheckBox { background: transparent; color: #4A3B1A; spacing: 6px; }
+    QTableWidget, QTableView, QListWidget, QTreeWidget {
+        background: #FFFFFF; border: 1px solid #E8D9A8;
+        gridline-color: #F0E6C8; selection-background-color: #FFE29A;
+        selection-color: #3A2E12; alternate-background-color: #FFFBEA;
+    }
+    QHeaderView::section {
+        background: #F3E5B8; color: #6B4E16; border: none;
+        border-right: 1px solid #E8D9A8; padding: 4px 6px; font-weight: 600;
+    }
+    QMenuBar { background: #F3E5B8; color: #6B4E16; }
+    QMenuBar::item:selected { background: #FFD65A; }
+    QMenu { background: #FFFDF5; border: 1px solid #E8D9A8; color: #4A3B1A; }
+    QMenu::item:selected { background: #FFE29A; }
+    QToolBar { background: #F3E5B8; border: none; }
+    QProgressBar {
+        background: #FBF3D6; border: 1px solid #E0CE93; border-radius: 5px;
+        text-align: center; color: #5D4711;
+    }
+    QProgressBar::chunk { background: #F5A623; border-radius: 4px; }
+    QTabBar::tab { background: #F3E5B8; color: #6B4E16; padding: 5px 12px; }
+    QTabBar::tab:selected { background: #FFD65A; }
+    QScrollBar:vertical { background: #FBF3D6; width: 12px; margin: 0; }
+    QScrollBar::handle:vertical { background: #E7CE86; border-radius: 6px; min-height: 24px; }
+    QScrollBar:horizontal { background: #FBF3D6; height: 12px; margin: 0; }
+    QScrollBar::handle:horizontal { background: #E7CE86; border-radius: 6px; min-width: 24px; }
+    QScrollBar::add-line, QScrollBar::sub-line { width: 0; height: 0; }
+    QStatusBar { background: #F3E5B8; color: #6B4E16; }
+"""
+
+
+def _apply_honey_theme(app):
+    """앱 전역을 연노란색 '꿀단지' 톤으로 통일 (개별 위젯 인라인 스타일은 유지된다)."""
+    app.setStyleSheet(HONEY_QSS)
+
+
 def _apply_cute_font(app):
     """앱 전역 글씨체를 귀여운(둥근) 느낌으로. 설치된 첫 후보를 사용."""
     from PyQt6.QtGui import QFontDatabase
@@ -1907,6 +1999,8 @@ def main():
     # QtWebEngine(내장 브라우저)을 앱 생성 후 lazy import 하려면 필수 (없어도 무해)
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
+    app.setWindowIcon(HoneyMainWindow._honey_icon(64))   # 작업표시줄 꿀단지 아이콘
+    _apply_honey_theme(app)
     _apply_cute_font(app)
     _install_excepthook()
     win = HoneyMainWindow()

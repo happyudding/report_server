@@ -7,6 +7,7 @@ row6+  : measurement data
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -61,7 +62,8 @@ def validate_honeyform_df(df: pd.DataFrame) -> list[str]:
             issues.append(f"metadata row labels must be {META_ROW_LABELS}, got {got_labels}")
 
     item_cols = [str(c) for c in list(df.columns[len(META_COLUMNS):])]
-    duplicates = sorted({c for c in item_cols if item_cols.count(c) > 1})
+    counts = Counter(item_cols)
+    duplicates = sorted(c for c, n in counts.items() if n > 1)
     if duplicates:
         issues.append(f"duplicate item columns: {duplicates}")
     if n_rows <= DATA_START_ROW:
@@ -77,10 +79,9 @@ def _require_parquet_engine() -> None:
 
 
 def _string_frame_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
+    # per-column astype 루프(2000+ 컬럼 × 프레임 재배치) 대신 일괄 변환 — 값 동일, 속도만 개선
+    out = df.astype("string")
     out.columns = [str(c).strip() for c in out.columns]
-    for col in out.columns:
-        out[col] = out[col].astype("string")
     return out
 
 
@@ -96,18 +97,95 @@ def encode_honeyform_parquet(df: pd.DataFrame, *, compression: str = "zstd") -> 
     return buf.getvalue()
 
 
-def decode_honeyform_parquet(data: bytes) -> pd.DataFrame:
-    """Decode parquet bytes and restore item data rows to numeric values."""
+def _numeric_item_block(frame: pd.DataFrame, item_labels: list) -> pd.DataFrame:
+    """item 컬럼 블록을 per-column pd.to_numeric 으로 변환해 DataFrame 으로 반환.
+
+    per-column 변환을 유지하는 이유: 정수 전용 컬럼은 int64, 그 외는 float64 로
+    dtype 이 갈리는 기존 동작(payload 의 1 vs 1.0 표기)을 보존해야 한다.
+    다만 2000+ 컬럼 각각을 .loc 로 조회/대입하면 프레임 재배치로 수 초가 걸리므로
+    numpy 블록에서 변환해 한 번에 조립한다 (값·dtype 동일, 속도만 개선).
+    """
+    vals = frame[item_labels].to_numpy(dtype=object)
+    conv = {c: pd.to_numeric(vals[:, j], errors="coerce")
+            for j, c in enumerate(item_labels)}
+    return pd.DataFrame(conv, index=frame.index, columns=item_labels)
+
+
+def _object_with_none(frame: pd.DataFrame) -> pd.DataFrame:
+    # astype(object).where(...) 는 컬럼(2000+) 단위 오버헤드가 커서 numpy 로 일괄 처리
+    vals = frame.to_numpy(dtype=object)
+    vals[pd.isna(vals)] = None
+    return pd.DataFrame(vals, index=frame.index, columns=frame.columns)
+
+
+def _decode_parts(data: bytes):
+    """parquet bytes → 검증 후 (head, tail_meta, num_df, item_labels) 조립 부품.
+
+    item 데이터 셀(전체의 99%)은 어차피 numeric 으로 변환하므로 object+None 변환은
+    메타 행/컬럼에만 적용한다 (전체 프레임 astype(object).where 왕복 제거).
+    """
     _require_parquet_engine()
-    df = pd.read_parquet(BytesIO(data), engine="pyarrow")
-    df = df.astype(object).where(pd.notna(df), None)
-    issues = validate_honeyform_df(df)
+    raw = pd.read_parquet(BytesIO(data), engine="pyarrow")
+    issues = validate_honeyform_df(raw)
     if issues:
         raise ValueError("; ".join(issues))
-    for col in list(df.columns[len(META_COLUMNS):]):
-        numeric = pd.to_numeric(df.loc[DATA_START_ROW:, col], errors="coerce")
-        df.loc[DATA_START_ROW:, col] = numeric.astype(object)
+    item_labels = list(raw.columns[len(META_COLUMNS):])
+    meta_labels = list(raw.columns[:len(META_COLUMNS)])
+    head = _object_with_none(raw.iloc[:DATA_START_ROW])
+    tail = raw.iloc[DATA_START_ROW:]
+    tail_meta = _object_with_none(tail[meta_labels])
+    num_df = _numeric_item_block(tail, item_labels) if item_labels else None
+    return head, tail_meta, num_df, item_labels
+
+
+def _assemble_df(head, tail_meta, num_df) -> pd.DataFrame:
+    if num_df is None:
+        df = pd.concat([head, tail_meta], axis=0)
+    else:
+        df = pd.concat(
+            [head, pd.concat([tail_meta, num_df.astype(object)], axis=1)], axis=0)
+    df.index = pd.RangeIndex(len(df))
     return df
+
+
+def decode_honeyform_parquet(data: bytes) -> pd.DataFrame:
+    """Decode parquet bytes and restore item data rows to numeric values."""
+    head, tail_meta, num_df, _ = _decode_parts(data)
+    return _assemble_df(head, tail_meta, num_df)
+
+
+def decode_split_honeyform_parquet(data: bytes, *, source: str,
+                                   file_name: str = "") -> HoneyformTable:
+    """decode + split 을 한 번에 수행 (loader 전용 빠른 경로).
+
+    ``split_honeyform(decode_honeyform_parquet(data), ...)`` 과 결과가 동일하지만,
+    item 블록 to_numeric 1회분과 재검증을 생략한다 (콜드 로드 시간 절반).
+    """
+    head, tail_meta, num_df, item_labels = _decode_parts(data)
+    df = _assemble_df(head, tail_meta, num_df)
+    item_cols = [str(c) for c in item_labels]
+    if num_df is None:
+        data_frame = tail_meta.reset_index(drop=True)
+    else:
+        data_frame = pd.concat([tail_meta.reset_index(drop=True),
+                                num_df.reset_index(drop=True)], axis=1)
+    # 메타 6행 dict 를 df.at 라벨 조회(항목수×6회) 대신 head 블록에서 일괄 추출
+    meta_rows = head[item_labels].to_numpy(dtype=object)
+    def _row(i):
+        return dict(zip(item_cols, meta_rows[i]))
+    return HoneyformTable(
+        source=source,
+        file_name=file_name or source,
+        df=df,
+        item_columns=item_cols,
+        tseq=_row(0),
+        tno=_row(1),
+        step=_row(2),
+        units=_row(3),
+        hilim=_row(4),
+        lolim=_row(5),
+        data=data_frame,
+    )
 
 
 def read_honeyform_file(path) -> pd.DataFrame:
@@ -183,9 +261,14 @@ def split_honeyform(df: pd.DataFrame, source: str, file_name: str = "") -> Honey
     if issues:
         raise ValueError("; ".join(issues))
     item_cols = [str(c) for c in list(df.columns[len(META_COLUMNS):])]
-    data = df.iloc[DATA_START_ROW:].reset_index(drop=True).copy()
-    for col in item_cols:
-        data[col] = pd.to_numeric(data[col], errors="coerce")
+    meta_labels = list(df.columns[:len(META_COLUMNS)])
+    data = df.iloc[DATA_START_ROW:].reset_index(drop=True)
+    if item_cols:
+        # per-column to_numeric 의 dtype 동작을 유지하며 블록 단위로 변환 (decode 참조)
+        data = pd.concat([data[meta_labels].copy(),
+                          _numeric_item_block(data, item_cols)], axis=1)
+    else:
+        data = data.copy()
     return HoneyformTable(
         source=source,
         file_name=file_name or source,

@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import cache
-from .honeyform import HoneyformTable, decode_honeyform_parquet, split_honeyform
+from .honeyform import HoneyformTable, decode_split_honeyform_parquet
 
 
 def clone_table(t: HoneyformTable) -> HoneyformTable:
@@ -40,11 +40,12 @@ def download_decode_tables(analysis_key, upload_root: Path):
     sources_manifest = manifest.get("sources") or []
     tables = []
     for idx, data in enumerate(sources):
-        df = decode_honeyform_parquet(data)
         source_info = sources_manifest[idx] if idx < len(sources_manifest) else {}
         source_name = str(source_info.get("name") or f"source_{idx + 1}")
         file_name = str(source_info.get("file_name") or source_name)
-        tables.append(split_honeyform(df, source=source_name, file_name=file_name))
+        # decode+split 결합 경로 — to_numeric 중복 변환/재검증 제거 (결과 동일)
+        tables.append(decode_split_honeyform_parquet(
+            data, source=source_name, file_name=file_name))
     return tables, manifest
 
 

@@ -61,9 +61,13 @@ web_report/
 ├── service.py          업로드 ingest + 조회/편집 오케스트레이션 (외부 진입점 — 2026-07-10
 │                        계층 분리로 얇아짐, 공개 함수 시그니처 불변):
 │                        ingest_webreport() — 업로드 처리(해시→analysis_key→DB 세션→
-│                        parquet+manifest 저장 + 업로드 직후 데몬 스레드 프리웜 _prewarm),
+│                        parquet+manifest 저장 + 업로드 직후 데몬 스레드 프리웜 _prewarm.
+│                        검증은 decode_split 겸용이며 결과 tables 를 TABLES_CACHE 에 시딩해
+│                        프리웜/첫 조회의 재디코드를 없앤다),
 │                        load_webreport() — 세션 재계산 조회(report dict 를
-│                        (akey, chash, manifest 해시, opts, mode) 키로 LRU 캐시),
+│                        (akey, chash, manifest 해시, opts, mode) 키로 LRU 캐시.
+│                        tables 로드는 실제 재계산이 필요할 때로 지연 — RAM/디스크 캐시
+│                        히트는 parquet 비용을 내지 않음),
 │                        get_distribution()/get_distribution_gzip() — Distribution ECDF lazy
 │                        조회(컴팩트 columnar, gzip bytes 캐시), raw_data 조회·편집,
 │                        commonality 검색/백분위, update_issue_etc_items/update_issue_comments
@@ -87,8 +91,19 @@ web_report/
 │                        cache.register_akey_cache 로 등록되어 편집·세션삭제 무효화에
 │                        자동 편입. /full 캐시 키에는 manifest digest + extras(annotations 등
 │                        값싼 부분) digest 가 포함되어 comment/annotation 편집이 자연 무효화됨.
+├── disk_cache.py        계산 산출물(report json.gz / dist gzip) 로컬 디스크 캐시 (2026-07-10).
+│                        <upload_root>/web_report/<akey>/cache/ 에 저장 — 서버 재시작·LRU
+│                        퇴출에도 콜드 재계산(수 초)이 디스크 읽기(수십 ms)로 끝난다.
+│                        파일명에 content_hash+키 digest 포함(자연 무효화), 세션 삭제는
+│                        storage_gateway 가 akey 폴더째 지워 별도 훅 불필요. 총량 상한 env
+│                        WEB_REPORT_DISK_CACHE_MAX_GB(기본 500, 0 이하=비활성) — 쓰기 후
+│                        백그라운드 스레드가 mtime 오래된 순 삭제, 히트는 mtime 갱신.
 ├── honeyform.py         7-meta honeyform 검증/파싱, parquet 인코딩·디코딩
-│                        (META_COLUMNS, META_ROW_LABELS 등 스키마 상수)
+│                        (META_COLUMNS, META_ROW_LABELS 등 스키마 상수).
+│                        2026-07-10 벡터화: per-column .loc 루프 제거(numpy 블록 변환,
+│                        정수 컬럼 int64 dtype 보존 위해 per-column to_numeric 은 유지),
+│                        decode_split_honeyform_parquet() — decode+split 결합 빠른 경로
+│                        (loader/ingest 전용, decode→split 과 결과 완전 동일 검증됨)
 ├── metrics.py           build_report_payload() — tabs/ 각 모듈을 모아 최종 report dict 조립
 │                        (Summary/Raw Data/Yield/CPK/Issue Table/Distribution/
 │                         Trim Analysis/Histogram/Map Analysis/Fail Bin 시트)
@@ -147,6 +162,12 @@ UI(체크박스 목록 스타일, 표 컬럼 순서/정렬 화살표/테두리, 
 
 - `report_server/CLAUDE.md` §5 의 불변 규칙(원본 xlsx 미저장, `report_` prefix, analysis_key
   산출 방식 등)은 web_report 흐름에도 동일하게 적용된다.
+- **성능 작업 (2026-07-10)**: 세션 로딩(콜드 14.8s→0.1s/재계산 7s, 웜 페이지 1.34s→0.78s)·
+  최초 생성(업로드→/full 6.9s→4.5s) 최적화 완료 — 서버 벡터화(cpk `_stats_batch`,
+  honeyform numpy 블록 변환)·disk_cache.py·ingest tables 시딩·report_view.html 선행
+  fetch+distribution Worker 청크 로드·honey_main 분석/인코딩 대화상자 병렬화.
+  **tabs/ 통계·honeyform 변환 로직을 고칠 땐 "같은 세션 payload 정준 JSON 완전 일치"가
+  검증 기준** (벡터화는 값을 바꾸지 않는다 — 정수 컬럼 int64 dtype 보존 포함).
 - 세션 상세 UI를 고칠 때 사용자가 "세션 페이지"라고 하면 우선
   `server/report/report_view.html` (web_report 밖!) 을 의미하는지 확인할 것 — 헷갈리기
   쉬운 지점. (구 `html.py::render_report_html` 은 미사용 코드라 2026-07-09 삭제됨.)

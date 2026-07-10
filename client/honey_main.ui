@@ -94,7 +94,7 @@
          </sizepolicy>
         </property>
         <property name="styleSheet">
-         <string notr="true">QPushButton { padding: 6px 14px; font-weight: 600; background: #16a34a; color: white; border-radius: 5px; } QPushButton:hover { background: #15803d; } QPushButton:disabled { background: #aaa; }</string>
+         <string notr="true">QPushButton { padding: 6px 14px; font-weight: 600; background: #A9741C; color: white; border-radius: 5px; } QPushButton:hover { background: #C08A2A; } QPushButton:disabled { background: #C9BE9A; }</string>
         </property>
        </widget>
       </item>
@@ -242,7 +242,7 @@
          <string>선택한 파일을 전처리한 뒤 분석 항목·옵션 설정 창을 엽니다.</string>
         </property>
         <property name="styleSheet">
-         <string notr="true">QPushButton { padding: 6px 14px; font-weight: 600; background: #4a90e2; color: white; border-radius: 5px; } QPushButton:hover { background: #357abd; } QPushButton:disabled { background: #aaa; }</string>
+         <string notr="true">QPushButton { padding: 6px 14px; font-weight: 600; background: #E9A100; color: white; border-radius: 5px; } QPushButton:hover { background: #F7B518; } QPushButton:disabled { background: #C9BE9A; }</string>
         </property>
        </widget>
       </item>
@@ -263,7 +263,7 @@
          <string>xlsx 생성 없이 서버 웹 리포트로 바로 확인</string>
         </property>
         <property name="styleSheet">
-         <string notr="true">QPushButton { padding: 6px 14px; font-weight: 600; background: #7c3aed; color: white; border-radius: 5px; } QPushButton:hover { background: #6d28d9; } QPushButton:disabled { background: #aaa; }</string>
+         <string notr="true">QPushButton { padding: 6px 14px; font-weight: 600; background: #E8871E; color: white; border-radius: 5px; } QPushButton:hover { background: #F59A33; } QPushButton:disabled { background: #C9BE9A; }</string>
         </property>
        </widget>
       </item>

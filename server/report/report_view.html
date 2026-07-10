@@ -19,6 +19,17 @@ try {
   if (_f && _FONTS[_f]) document.documentElement.style.setProperty("--report-font", _FONTS[_f]);
 } catch (e) {}
 </script>
+<script>
+/* /full 선행 fetch: 하단 load() 는 DOMContentLoaded(=plotly 4.8MB 컴파일 완료) 후에야
+   시작되므로, 여기서 즉시 출발시켜 vendor 파싱과 서버 응답 대기를 겹친다 (~0.5s 단축).
+   load() 가 1회 소비하며(소비 시 null 처리), 편집 후 재로드는 새로 fetch 한다. */
+window.__fullPrefetch = (() => {
+  try {
+    const sid = location.pathname.split("/").pop();
+    return fetch(`/pe/report/session/${sid}/full`, { cache: "no-cache" }).catch(() => null);
+  } catch (e) { return null; }
+})();
+</script>
 <link rel="stylesheet" href="/pe/report/vendor/tabulator.min.css">
 <!-- defer: plotly 4.8MB(gz 1.4MB) 파싱이 HTML 파싱/첫 페인트를 막지 않도록.
      defer 스크립트는 DOMContentLoaded 전에 순서대로 실행되므로, 하단 인라인 스크립트의
@@ -3974,13 +3985,57 @@ function buildDistDataFromCompact(payload) {
   return out;
 }
 
+function fetchDistViaWorker(url) {
+  // 수십 MB JSON 을 메인스레드에서 파싱하면 로드 직후 첫 상호작용이 얼어붙는다.
+  // Web Worker 에서 fetch+parse 하고, 결과를 통째로 넘기면 structured clone
+  // 역직렬화(~0.5s)가 다시 메인스레드를 막으므로 items 를 포인트 수 기준 청크로
+  // 쪼개 전송해 블록을 수십 ms 단위로 분산한다. (Worker 실패 시 호출측 폴백.)
+  return new Promise((resolve, reject) => {
+    let blobUrl = null, w = null;
+    const cleanup = () => {
+      try { if (w) w.terminate(); } catch (e) {}
+      try { if (blobUrl) URL.revokeObjectURL(blobUrl); } catch (e) {}
+    };
+    try {
+      const src = 'self.onmessage=function(e){' +
+        'fetch(e.data,{cache:"no-cache"})' +
+        '.then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})' +
+        '.then(function(j){' +
+          'var items=(j&&j.items)||{};var keys=Object.keys(items);' +
+          'var batch={},pts=0;' +
+          'for(var i=0;i<keys.length;i++){var k=keys[i];batch[k]=items[k];' +
+            'var ss=items[k].sources||{};' +
+            'for(var s in ss)pts+=((ss[s].x||[]).length);' +
+            'if(pts>=250000){self.postMessage({chunk:batch});batch={};pts=0;}}' +
+          'self.postMessage({chunk:batch,done:true,format:j&&j.format});' +
+        '})' +
+        '.catch(function(err){self.postMessage({error:String(err&&err.message||err)});});' +
+        '};';
+      blobUrl = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+      w = new Worker(blobUrl);
+    } catch (e) { cleanup(); reject(e); return; }
+    const items = {};
+    w.onmessage = ev => {
+      const d = ev.data || {};
+      if (d.error) { cleanup(); reject(new Error(d.error)); return; }
+      Object.assign(items, d.chunk || {});
+      if (d.done) { cleanup(); resolve({ format: d.format, items }); }
+    };
+    w.onerror = () => { cleanup(); reject(new Error("worker failed")); };
+    // blob URL Worker 의 상대경로 기준이 페이지와 달라질 수 있어 절대 URL 로 전달
+    w.postMessage(new URL(url, location.origin).href);
+  });
+}
+
 function ensureDistData() {
   const ch = (DATA && DATA.session && DATA.session.content_hash) || "";
   if (distDataPromise && ch === _distContentHash) return distDataPromise;   // 로딩 중/완료 재사용
   _distContentHash = ch;
   distDataReady = false;
-  distDataPromise = fetch(`/pe/report/session/${SESSION_ID}/web_report/distribution`, { cache: "no-cache" })
-    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+  const url = `/pe/report/session/${SESSION_ID}/web_report/distribution`;
+  distDataPromise = fetchDistViaWorker(url)
+    .catch(() => fetch(url, { cache: "no-cache" })   // Worker 실패 시 메인스레드 폴백
+      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }))
     .then(j => {
       distDataCache = buildDistDataFromCompact(j);
       distDataReady = true;
@@ -6947,7 +7002,8 @@ function hideLoadOverlay() {
   stopLoadCreep();
   setLoadProgress(100, "완료");
   const ov = document.getElementById("loadOverlay");
-  if (ov) setTimeout(() => ov.classList.remove("show"), 200);
+  // 100% 표시가 한 프레임은 보이도록 최소 지연만 둔다 (체감 지연 최소화: 200→50ms)
+  if (ov) setTimeout(() => ov.classList.remove("show"), 50);
 }
 async function load(resetMode=true) {
   try {
@@ -6955,8 +7011,13 @@ async function load(resetMode=true) {
     // 서버가 parquet 재계산(수 초)을 마칠 때까지 첫 바이트가 없어 실제 %를 알 수 없으므로
     // 대기 동안 62% 까지 천천히 채운다.
     startLoadCreep(6, 62, 4500, "리포트 계산·수신 중…");
+    // head 의 선행 fetch 가 있으면 재사용 (1회성 — 편집 후 재로드는 새로 fetch).
+    // cache:"no-cache" 는 ETag 재검증이라 재방문 시 304 로 다운로드를 생략한다.
+    const prefetched = window.__fullPrefetch;
+    window.__fullPrefetch = null;
+    const freshFull = () => fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-cache" });
     const [res] = await Promise.all([
-      fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-store" }),
+      prefetched ? prefetched.then(r => r || freshFull()) : freshFull(),
       loadAuth(),   // 편집 권한(MODE) 판정에 필요 — /full 수신과 병렬로
     ]);
     if (!res.ok) {

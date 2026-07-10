@@ -24,8 +24,13 @@ _FAIL_ROW_CAP = 2000
 
 def to_numeric_clean(series):
     """Series → float64 배열 (유한값만, NaN·inf 제거)."""
-    arr = pd.to_numeric(series, errors="coerce")
-    return arr[np.isfinite(arr)].to_numpy()
+    # split_honeyform 이 item 컬럼을 이미 numeric dtype 으로 만들므로 대부분 변환 생략
+    # (int/float 만 지름길 — bool 등은 기존 to_numeric 경로 유지).
+    if getattr(series.dtype, "kind", "") in "if":
+        arr = series.to_numpy()
+    else:
+        arr = pd.to_numeric(series, errors="coerce").to_numpy()
+    return arr[np.isfinite(arr)]
 
 
 def cumulative_distribution_full(values):

@@ -72,6 +72,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='honey.ico',   # 꿀단지 실행 파일 아이콘
 )
 coll = COLLECT(
     exe,

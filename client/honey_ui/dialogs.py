@@ -279,6 +279,23 @@ class FileOrderDialog(QDialog):
 
 
 class ReportSettingsDialog(QDialog):
+    # 접기/펴기 그룹: (헤더 QToolButton, 본문 QWidget, 표시 라벨)
+    _COLLAPSIBLE = [
+        ("hdr_chart", "body_chart", "Chart"),
+        ("hdr_stats", "body_stats", "Statistics"),
+        ("hdr_summary", "body_summary", "Summary"),
+        ("hdr_others", "body_others", "Others"),
+        ("hdr_extra", "body_extra", "추가파일생성"),
+    ]
+    # 그룹별 all 체크박스 → 그 그룹의 자식 체크박스 이름들
+    _GROUP_ALL = {
+        "cb_all_chart": ["cb_sheet_distribution", "cb_sheet_histogram", "cb_hist_report"],
+        "cb_all_stats": ["cb_sheet_yield", "cb_sheet_cpk"],
+        "cb_all_summary": ["cb_sheet_summary", "cb_sheet_issue_table", "cb_sheet_fail_item"],
+        "cb_all_others": ["cb_raw_data", "cb_mode_bin1", "cb_mode_compare",
+                          "cb_mode_dut", "cb_outlier"],
+    }
+
     def __init__(self, parent, group, csv_count, product_type=None):
         super().__init__(parent)
         uic.loadUi(str(SETTINGS_UI_PATH), self)
@@ -302,7 +319,6 @@ class ReportSettingsDialog(QDialog):
             lambda it: self._move(self.list_items_sel, self.list_items_avail, [it]))
         self.cb_sheet_yield.toggled.connect(self._sync_yield_dependents)
         self.btn_filename_change.clicked.connect(self.on_edit_filenames)
-        self.btn_chart_colors.clicked.connect(self.on_edit_chart_colors)
         self.btn_confirm.clicked.connect(self._on_confirm)
         self.btn_confirm.setMinimumHeight(36)
         self.btn_confirm.setDefault(True)
@@ -323,10 +339,51 @@ class ReportSettingsDialog(QDialog):
             self.cb_raw_data.setEnabled(not checked),
             self.cb_raw_data.setChecked(False) if checked else None,
         ))
+        # 접기/펴기 그룹 + 그룹별 all 토글 배선, Item 리스트 세로 간격 축소
+        self._wire_collapsible()
+        self._wire_group_all()
+        for lw in (self.list_items_avail, self.list_items_sel):
+            lw.setSpacing(0)
+            lw.setStyleSheet("QListWidget::item { padding: 0px 2px; }")
+            lw.setUniformItemSizes(True)
         self._populate_items()
         self._sync_yield_dependents()
         self._update_dut_mode_availability()
         self._update_compare_mode_availability()
+
+    def _wire_collapsible(self):
+        """각 그룹 헤더(QToolButton) 클릭 시 본문을 접었다 폈다 하고 ▾/▸ 화살표를 갱신."""
+        for hdr_name, body_name, label in self._COLLAPSIBLE:
+            hdr = getattr(self, hdr_name)
+            body = getattr(self, body_name)
+            body.setVisible(hdr.isChecked())
+            self._set_hdr_text(hdr, label)
+            hdr.toggled.connect(
+                lambda checked, h=hdr, b=body, lbl=label:
+                    (b.setVisible(checked), self._set_hdr_text(h, lbl)))
+
+    @staticmethod
+    def _set_hdr_text(hdr, label):
+        hdr.setText(("▾  " if hdr.isChecked() else "▸  ") + label)
+
+    def _wire_group_all(self):
+        """그룹별 'all' 체크박스 ↔ 그 그룹 자식 체크박스 동기화."""
+        for all_name, child_names in self._GROUP_ALL.items():
+            all_cb = getattr(self, all_name)
+            children = [getattr(self, c) for c in child_names]
+            all_cb.clicked.connect(
+                lambda checked, cs=children:
+                    [c.setChecked(checked) for c in cs if c.isEnabled()])
+            for child in children:
+                child.toggled.connect(
+                    lambda _checked=False, a=all_cb, cs=children: self._sync_all_cb(a, cs))
+            self._sync_all_cb(all_cb, children)
+
+    @staticmethod
+    def _sync_all_cb(all_cb, children):
+        all_cb.blockSignals(True)
+        all_cb.setChecked(all(c.isChecked() for c in children))
+        all_cb.blockSignals(False)
 
     def _make_item(self, idx, text):
         it = QListWidgetItem(text)
@@ -405,10 +462,6 @@ class ReportSettingsDialog(QDialog):
     def mode_compare(self):
         return self.cb_mode_compare.isChecked()
 
-    def mode_map(self):
-        """Return whether the Map (wafer bin map) sheet should be generated."""
-        return self.cb_mode_map.isChecked()
-
     def _current_filenames(self):
         names = []
         for i in range(self.csv_count):
@@ -448,10 +501,6 @@ class ReportSettingsDialog(QDialog):
     def filename_overrides(self):
         return self._filename_overrides
 
-    def on_edit_chart_colors(self):
-        dlg = ColorEditorDialog(self)
-        dlg.exec()
-
     def selected_items(self):
         return [self.list_items_sel.item(i).text()
                 for i in range(self.list_items_sel.count())]
@@ -464,9 +513,6 @@ class ReportSettingsDialog(QDialog):
 
     def mode_dut(self):
         return self.cb_mode_dut.isChecked()
-
-    def auto_upload(self):
-        return self.cb_auto_upload.isChecked()
 
     def raw_data(self):
         """Return whether original df_honey data should be added as Raw Data sheets."""

@@ -17,6 +17,7 @@ import time
 from pathlib import Path
 
 from . import cache
+from . import disk_cache
 from .honeyform import encode_honeyform_parquet
 from .loader import load_tables as _load_tables
 from .metrics import build_report_payload
@@ -40,7 +41,7 @@ def invalidate_caches(analysis_key) -> None:
 
 def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_root: Path,
                      client_ip: str = "", user_agent: str = "") -> dict:
-    from .honeyform import decode_honeyform_parquet
+    from .honeyform import decode_split_honeyform_parquet
 
     meta = _validate_meta(manifest.get("meta") or {})
     mode = _validate_mode(manifest.get("mode"))
@@ -62,11 +63,13 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         source_info = sources_manifest[idx] if idx < len(sources_manifest) else {}
         source_name = str(source_info.get("name") or item.get("name") or f"source_{idx + 1}")
         file_name = str(source_info.get("file_name") or item.get("filename") or source_name)
-        df = decode_honeyform_parquet(data)
+        # 검증 겸 decode+split — 이 tables 를 아래에서 TABLES_CACHE 에 시딩해
+        # prewarm 의 재디코드(파일당 ~1s)를 없앤다.
+        table = decode_split_honeyform_parquet(data, source=source_name, file_name=file_name)
         decoded.append({
             "source": source_name,
             "file_name": file_name,
-            "df": df,
+            "table": table,
             "bytes": data,
             "hash": file_hashes[-1],
         })
@@ -85,6 +88,10 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         analysis_key, content_hash, [item["bytes"] for item in decoded], manifest,
         upload_root=upload_root)
     cache.manifest_cache_put(analysis_key, manifest)
+    # ingest 가 이미 디코드한 tables 를 loader 와 같은 키로 시딩 — prewarm/첫 조회의
+    # storage 재다운로드+재디코드 생략. (캐시엔 원본 저장, 소비자는 loader 가 클론 반환.)
+    cache.cache_put(cache.TABLES_CACHE, (analysis_key, content_hash),
+                    [item["table"] for item in decoded], cache.TABLES_CACHE_MAX)
 
     session_dir = Path(upload_root) / "web_report" / analysis_key
     report_db.create_session(
@@ -162,13 +169,19 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     Distribution ECDF(대용량)는 항상 payload 에서 제외되고 프런트가 get_distribution 으로
     지연 로드한다.
     """
-    session, tables, manifest = _load_tables(
-        session_id, report_db=report_db, upload_root=upload_root, session=session)
+    if session is None:
+        session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
     # manifest digest 는 캐시 엔트리에 동봉된 값을 재사용 (warm 요청마다 재해싱 방지).
-    # _load_tables 가 write-through 했으므로 사실상 dict 조회 1회 — manifest 도 같은
-    # 엔트리에서 다시 받아 digest 와 짝을 맞춘다.
-    manifest, manifest_digest = cache.load_manifest_with_digest(
-        session.get("analysis_key"), upload_root)
+    # 콜드 미스 시 storage 에서 manifest 만 읽는다 — tables(parquet 수 초) 로드는
+    # 실제 재계산이 필요한 경우로 지연해, RAM/디스크 캐시 히트가 parquet 비용을 내지
+    # 않게 한다.
+    manifest, manifest_digest = cache.load_manifest_with_digest(analysis_key, upload_root)
 
     # F10 웹리포트 옵션(세션 DB, authoritative): Distribution source 색.
     # 옵션은 analysis_key 공유(dedup) 세션마다 다를 수 있으므로 report 캐시 키에 포함한다.
@@ -177,27 +190,34 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     # 모드는 세션 DB(authoritative). analysis_key 는 여러 세션이 공유(dedup)할 수 있으나
     # 모드는 세션 단위이므로 report 캐시 키에 포함한다.
     mode = _validate_mode(session.get("mode"))
-    tables = _mode_tables(tables, mode)
 
-    cache_key = (session.get("analysis_key"), str(session.get("content_hash") or ""),
+    cache_key = (analysis_key, str(session.get("content_hash") or ""),
                  manifest_digest, opts_raw, mode)
     report = cache.cache_get(cache.REPORT_CACHE, cache_key)
     if report is None:
         with cache.keyed_lock(("report",) + cache_key):
             report = cache.cache_get(cache.REPORT_CACHE, cache_key)
             if report is None:
-                report = build_report_payload(
-                    tables,
-                    selected_items=manifest.get("selected_items") or [],
-                    sheets=manifest.get("sheets") or [],
-                    etc_items=manifest.get("etc_items") or [],
-                    issue_comments=manifest.get("issue_comments") or {},
-                    summary_engr=manifest.get("summary_engr") or {},
-                    product_type=session.get("product_type", ""),
-                    product=session.get("product", ""),
-                    mode=mode,
-                    dist_colors=dist_colors,
-                )
+                # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
+                report = disk_cache.load_report(upload_root, cache_key)
+                if report is None:
+                    session, tables, _ = _load_tables(
+                        session_id, report_db=report_db, upload_root=upload_root,
+                        session=session)
+                    tables = _mode_tables(tables, mode)
+                    report = build_report_payload(
+                        tables,
+                        selected_items=manifest.get("selected_items") or [],
+                        sheets=manifest.get("sheets") or [],
+                        etc_items=manifest.get("etc_items") or [],
+                        issue_comments=manifest.get("issue_comments") or {},
+                        summary_engr=manifest.get("summary_engr") or {},
+                        product_type=session.get("product_type", ""),
+                        product=session.get("product", ""),
+                        mode=mode,
+                        dist_colors=dist_colors,
+                    )
+                    disk_cache.save_report(upload_root, cache_key, report)
                 cache.cache_put(cache.REPORT_CACHE, cache_key, report, cache.REPORT_CACHE_MAX)
     public = dict(session)
     public["has_password"] = bool(public.get("password"))
@@ -247,10 +267,14 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> b
         blob = cache.cache_get(cache.DIST_CACHE, cache_key)
         if blob is not None:
             return blob
-        compact = get_distribution(session_id, report_db=report_db, upload_root=upload_root)
-        blob = gzip.compress(
-            json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-            compresslevel=1)
+        # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
+        blob = disk_cache.load_dist(upload_root, cache_key)
+        if blob is None:
+            compact = get_distribution(session_id, report_db=report_db, upload_root=upload_root)
+            blob = gzip.compress(
+                json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+                compresslevel=1)
+            disk_cache.save_dist(upload_root, cache_key, blob)
         cache.cache_put(cache.DIST_CACHE, cache_key, blob, cache.DIST_CACHE_MAX)
     return blob
 
