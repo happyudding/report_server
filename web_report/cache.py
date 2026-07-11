@@ -143,8 +143,9 @@ def load_manifest_with_digest(analysis_key, upload_root: Path) -> tuple[dict, st
     """
     entry = cache_get(MANIFEST_CACHE, analysis_key)
     if entry is None:
-        import storage_gateway
-        manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root=upload_root)
+        from . import runtime
+        manifest = runtime.storage().load_webreport_manifest(
+            analysis_key, upload_root=upload_root)
         blob = canon(manifest)
         entry = (blob, hashlib.sha256(blob).hexdigest())
         cache_put(MANIFEST_CACHE, analysis_key, entry, MANIFEST_CACHE_MAX)

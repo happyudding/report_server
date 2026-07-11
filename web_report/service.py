@@ -19,6 +19,7 @@ from pathlib import Path
 from . import cache
 from . import disk_cache
 from . import edits
+from . import runtime
 from .honeyform import encode_honeyform_parquet
 from .loader import load_tables as _load_tables
 from .metrics import build_report_payload
@@ -84,8 +85,7 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     content_hash = hashlib.sha256(_canon({"files": file_hashes})).hexdigest()
     session_id = f"{int(time.time())}_{secrets.token_hex(3)}"
 
-    import storage_gateway
-    storage_result = storage_gateway.save_webreport_sources(
+    storage_result = runtime.storage().save_webreport_sources(
         analysis_key, content_hash, [item["bytes"] for item in decoded], manifest,
         upload_root=upload_root)
     cache.manifest_cache_put(analysis_key, manifest)
@@ -380,8 +380,7 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
         _canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
     ).hexdigest()
 
-    import storage_gateway
-    storage_result = storage_gateway.save_webreport_sources(
+    storage_result = runtime.storage().save_webreport_sources(
         analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
 
     report_db.update_session(session_id, content_hash=content_hash)

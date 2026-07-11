@@ -25,6 +25,24 @@ _log = logging.getLogger(__name__)
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 
+def _storage_opts(backend):
+    """object_info.options_json 에 기록할 저장 위치 마커 ('s3' | 'local')."""
+    import json
+    return json.dumps({"storage": backend})
+
+
+def object_backend(obj):
+    """object_info 행에 기록된 저장 위치: 's3' | 'local' | ''(legacy 미기록).
+
+    legacy xlsx 흐름은 options_json 에 meta 스냅샷을 넣으므로 storage 키가 없어
+    '' 로 떨어진다 — 그 경우 호출자는 종전 폴백 동작을 유지한다."""
+    import json
+    try:
+        return str((json.loads((obj or {}).get("options_json") or "{}")).get("storage") or "")
+    except Exception:
+        return ""
+
+
 def _combine_chart_pngs(pngs: list):
     """Compose chart PNG bytes into one grid PNG."""
     if not pngs:
@@ -140,6 +158,8 @@ def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: 
     """web_report parquet 원본 + manifest 저장. S3 우선, 실패 시 로컬 폴백.
 
     sources: list[bytes] (parquet 원본). 반환: {"storage": "s3"|"local", "warnings": [...]}.
+    저장 위치는 object_info.options_json 에 기록되고 load 가 그 기록을 따른다 —
+    로컬 폴백 저장 뒤 S3 가 복구돼도 과거 S3 객체가 되살아나지 않는다.
     """
     warnings = []
     s3_ok = True
@@ -155,16 +175,18 @@ def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: 
                 uri = report_s3.upload_bytes_to_s3(
                     key, data, content_type="application/vnd.apache.parquet")
                 report_db.upsert_object_info(
-                    analysis_key, content_hash, "{}", f"web_report_source_{idx}",
+                    analysis_key, content_hash, _storage_opts("s3"), f"web_report_source_{idx}",
                     report_s3.bucket_name(), key, uri)
             mkey = report_s3.make_webreport_manifest_s3_key(analysis_key)
             muri = report_s3.upload_json_to_s3(mkey, manifest)
             report_db.upsert_object_info(
-                analysis_key, content_hash, "{}", "web_report_manifest",
+                analysis_key, content_hash, _storage_opts("s3"), "web_report_manifest",
                 report_s3.bucket_name(), mkey, muri)
             return {"storage": "s3", "warnings": warnings}
         except Exception as exc:
             warnings.append(f"web_report S3 upload failed, falling back to local: {exc}")
+            _log.warning("web_report S3 upload failed (%s), falling back to local: %s",
+                         analysis_key, exc)
 
     import json as _json
     session_dir = Path(upload_root) / "web_report" / analysis_key
@@ -173,14 +195,27 @@ def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: 
         (session_dir / f"source_{idx}.parquet").write_bytes(data)
     (session_dir / "manifest.json").write_text(
         _json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 로컬 저장 위치를 object_info 에 기록 — load 가 S3 대신 로컬을 읽도록 (부활 방지).
+    # 기록 실패는 best-effort (파일은 이미 써졌고 legacy 경로 폴백으로도 읽힌다).
+    try:
+        for idx in range(len(sources)):
+            report_db.upsert_object_info(
+                analysis_key, content_hash, _storage_opts("local"), f"web_report_source_{idx}",
+                "", f"web_report/{analysis_key}/source_{idx}.parquet", "")
+        report_db.upsert_object_info(
+            analysis_key, content_hash, _storage_opts("local"), "web_report_manifest",
+            "", f"web_report/{analysis_key}/manifest.json", "")
+    except Exception as exc:
+        warnings.append(f"local storage marker record failed: {exc}")
     return {"storage": "local", "warnings": warnings}
 
 
 def save_webreport_manifest(analysis_key, manifest: dict, upload_root) -> dict:
     """web_report manifest 만 갱신 저장 (parquet sources 는 건드리지 않음).
 
-    etc_items / issue_comments 처럼 manifest 필드만 바뀌는 편집용. S3 우선, 실패 시 로컬
-    폴백. sources 가 불변이므로 object_info 의 content_hash 는 기존 값을 유지한다.
+    [현재 미사용 — 2026-07-11] 편집 상태가 세션 단위 DB(report_webreport_edit)로
+    이전되어 manifest 는 업로드 시점 불변 스냅샷이 됐다. 외부 통합(EXTERNAL_OWNER)
+    호환을 위해 API 만 유지한다. 저장 위치는 object_info 에 기록된다.
     """
     warnings = []
     s3_ok = True
@@ -189,38 +224,54 @@ def save_webreport_manifest(analysis_key, manifest: dict, upload_root) -> dict:
     except S3NotConfigured:
         s3_ok = False
 
+    prev = {o["object_type"]: o for o in report_db.get_all_object_infos(analysis_key)}
+    content_hash = (prev.get("web_report_manifest") or {}).get("content_hash", "")
     if s3_ok:
         try:
-            prev = {o["object_type"]: o for o in report_db.get_all_object_infos(analysis_key)}
-            content_hash = (prev.get("web_report_manifest") or {}).get("content_hash", "")
             mkey = report_s3.make_webreport_manifest_s3_key(analysis_key)
             muri = report_s3.upload_json_to_s3(mkey, manifest)
             report_db.upsert_object_info(
-                analysis_key, content_hash, "{}", "web_report_manifest",
+                analysis_key, content_hash, _storage_opts("s3"), "web_report_manifest",
                 report_s3.bucket_name(), mkey, muri)
             return {"storage": "s3", "warnings": warnings}
         except Exception as exc:
             warnings.append(f"web_report manifest S3 upload failed, falling back to local: {exc}")
+            _log.warning("web_report manifest S3 upload failed (%s), falling back to local: %s",
+                         analysis_key, exc)
 
     import json as _json
     session_dir = Path(upload_root) / "web_report" / analysis_key
     session_dir.mkdir(parents=True, exist_ok=True)
     (session_dir / "manifest.json").write_text(
         _json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        report_db.upsert_object_info(
+            analysis_key, content_hash, _storage_opts("local"), "web_report_manifest",
+            "", f"web_report/{analysis_key}/manifest.json", "")
+    except Exception as exc:
+        warnings.append(f"local storage marker record failed: {exc}")
     return {"storage": "local", "warnings": warnings}
 
 
 def load_webreport_manifest(analysis_key, upload_root) -> dict:
-    """web_report manifest 만 재조회 (parquet sources 다운로드 없음). S3 우선, 로컬 폴백."""
+    """web_report manifest 만 재조회 (parquet sources 다운로드 없음).
+
+    object_info 에 기록된 저장 위치를 따른다: 'local' 이면 S3 를 건드리지 않고,
+    's3' 이면 실패 시 침묵 로컬 폴백 대신 예외를 올린다 (과거 파일 부활 방지).
+    legacy 미기록('') 행만 종전 동작(S3 우선 → 경고 로그 후 로컬 폴백)을 유지한다."""
     objs = {o["object_type"]: o for o in report_db.get_all_object_infos(analysis_key)}
-    if "web_report_manifest" in objs:
+    obj = objs.get("web_report_manifest")
+    backend = object_backend(obj) if obj else ""
+    if obj and backend != "local":
         try:
-            return report_s3.download_json_from_s3(objs["web_report_manifest"]["s3_key"])
+            return report_s3.download_json_from_s3(obj["s3_key"])
         except S3NotConfigured:
-            pass
+            if backend == "s3":
+                raise
         except Exception as exc:
-            # 침묵 폴백 금지 — S3 순단 시 로컬 폴백으로 넘어가는 사실이 로그에 남아야
-            # 저장/조회 위치 불일치(편집 소실)를 추적할 수 있다.
+            if backend == "s3":
+                _log.error("webreport manifest S3 load failed (%s): %s", analysis_key, exc)
+                raise
             _log.warning("webreport manifest S3 load failed (%s), falling back to local: %s",
                          analysis_key, exc)
 
@@ -232,8 +283,10 @@ def load_webreport_manifest(analysis_key, upload_root) -> dict:
 
 
 def load_webreport_sources(analysis_key, upload_root):
-    """web_report parquet 원본 + manifest 재조회. S3 우선, 실패 시 로컬 폴백.
+    """web_report parquet 원본 + manifest 재조회.
 
+    object_info 에 기록된 저장 위치를 따른다 (load_webreport_manifest 와 동일 규칙 —
+    'local' 은 S3 미접근, 's3' 은 실패 시 예외, legacy '' 만 경고 후 로컬 폴백).
     반환: (list[bytes] sources, dict manifest). 둘 다 없으면 FileNotFoundError.
     """
     objs = {o["object_type"]: o for o in report_db.get_all_object_infos(analysis_key)}
@@ -241,7 +294,8 @@ def load_webreport_sources(analysis_key, upload_root):
         (k for k in objs if k.startswith("web_report_source_")),
         key=lambda k: int(k.rsplit("_", 1)[1]),
     )
-    if source_keys and "web_report_manifest" in objs:
+    backend = object_backend(objs.get("web_report_manifest"))
+    if source_keys and "web_report_manifest" in objs and backend != "local":
         try:
             # 소스가 여러 개면 병렬 다운로드 (직렬 왕복 누적 방지). boto3 client 는 스레드세이프.
             if len(source_keys) > 1:
@@ -255,8 +309,12 @@ def load_webreport_sources(analysis_key, upload_root):
             manifest = report_s3.download_json_from_s3(objs["web_report_manifest"]["s3_key"])
             return sources, manifest
         except S3NotConfigured:
-            pass
+            if backend == "s3":
+                raise
         except Exception as exc:
+            if backend == "s3":
+                _log.error("webreport sources S3 load failed (%s): %s", analysis_key, exc)
+                raise
             _log.warning("webreport sources S3 load failed (%s), falling back to local: %s",
                          analysis_key, exc)
 
@@ -309,6 +367,8 @@ def delete_report_artifacts(analysis_key, upload_root=None) -> dict:
             key = str(obj.get("s3_key") or "").strip()
             if not key:
                 continue
+            if object_backend(obj) == "local":
+                continue   # 로컬 저장 기록 — s3_key 는 로컬 상대경로라 S3 삭제 대상 아님
             try:
                 report_s3.delete_object_from_s3(key)
             except Exception as exc:

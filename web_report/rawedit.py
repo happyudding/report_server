@@ -13,6 +13,7 @@ import json
 import zipfile
 
 from . import cache
+from . import runtime
 from .honeyform import decode_honeyform_parquet
 from .validation import canon
 
@@ -29,8 +30,7 @@ def export_sources_zip(session_id, *, report_db, upload_root) -> bytes:
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    import storage_gateway
-    sources, manifest = storage_gateway.load_webreport_sources(analysis_key, upload_root)
+    sources, manifest = runtime.storage().load_webreport_sources(analysis_key, upload_root)
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
@@ -70,14 +70,13 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
         raise ValueError(
             f"source 개수 불일치: 기존 {existing}, 업로드 {len(sources_bytes)}")
 
-    import storage_gateway
-    manifest = storage_gateway.load_webreport_manifest(analysis_key, upload_root)
+    manifest = runtime.storage().load_webreport_manifest(analysis_key, upload_root)
 
     content_hash = hashlib.sha256(
         canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
     ).hexdigest()
 
-    storage_result = storage_gateway.save_webreport_sources(
+    storage_result = runtime.storage().save_webreport_sources(
         analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
 
     report_db.update_session(session_id, content_hash=content_hash)

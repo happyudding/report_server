@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import cache
+from . import runtime
 from .honeyform import HoneyformTable, decode_split_honeyform_parquet
 
 
@@ -32,9 +33,8 @@ def download_decode_tables(analysis_key, upload_root: Path):
     sources 와 함께 받은 manifest 를 manifest 캐시에 write-through 해 이어지는 warm 조회의
     S3 manifest GET 을 없앤다.
     """
-    import storage_gateway
-
-    sources, manifest = storage_gateway.load_webreport_sources(analysis_key, upload_root=upload_root)
+    sources, manifest = runtime.storage().load_webreport_sources(
+        analysis_key, upload_root=upload_root)
     cache.manifest_cache_put(analysis_key, manifest)
 
     sources_manifest = manifest.get("sources") or []
