@@ -1,13 +1,15 @@
-"""Web report payload orchestration from 7-meta honeyform tables."""
+"""Web report payload orchestration from 7-meta honeyform tables.
+
+시트 구성은 tabs.TAB_REGISTRY(탭 레지스트리)가 단일 진실 — 여기는 공용 컨텍스트
+(yield/cpk 등 1회 계산)를 조립해 레지스트리를 순회할 뿐, 개별 탭 이름을 모른다.
+새 탭 추가 절차는 tabs/__init__.py 참조.
+"""
 from __future__ import annotations
 
-from .tabs.cpk import build_cpk_rows
+from .tabs import TAB_REGISTRY, TabContext, build_cpk_rows
 from .tabs.distribution import build_distribution_index
-from .tabs.issue_table import build_issue_bin_summary, build_issue_table_rows
-from .tabs.Map_analysis import build_map_analysis_rows
-from .tabs.raw_data import build_raw_data_rows
-from .tabs.summary import build_summary_rows
-from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows, fail_bin_ranking,
+from .tabs.issue_table import build_issue_bin_summary
+from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
                              fail_counts_by_source, yield_overview)
 
 
@@ -33,20 +35,19 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     yield_rows = build_yield_rows(tables, fail_counts)
     cpk_rows = build_cpk_rows(tables, all_items)
 
-    sheets_out = {
-        "Summary": build_summary_rows(tables),
-        "Raw Data": build_raw_data_rows(tables),
-        "Yield": yield_rows,
-        "CPK": cpk_rows,
-        "Issue Table": build_issue_table_rows(tables, yield_rows, cpk_rows, etc_items=etc_items,
-                                          issue_comments=issue_comments),
-        "Distribution": [],
-        # Trim Analysis 는 항상 지연 로드 (GET .../web_report/trim_analysis) —
-        # Distribution embed 폐지와 동일 관례. 프런트가 탭 진입 시 lazy fetch 한다.
-        "Trim Analysis": [],
-        "Map Analysis": build_map_analysis_rows(tables, product_type, product),
-        "Fail Bin": fail_bin_ranking(yield_rows),
-    }
+    ctx = TabContext(
+        tables=tables,
+        all_items=all_items,
+        fail_counts=fail_counts,
+        yield_rows=yield_rows,
+        cpk_rows=cpk_rows,
+        etc_items=list(etc_items or []),
+        issue_comments=dict(issue_comments or {}),
+        product_type=product_type,
+        product=product,
+    )
+    sheets_out = {spec.name: (spec.builder(ctx) if spec.builder else [])
+                  for spec in TAB_REGISTRY}
 
     payload = {
         "mode": mode or "Normal",
@@ -59,7 +60,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         "distribution_index": build_distribution_index(tables, cpk_rows),
         "selected_items": sorted(selected_set),
         "requested_sheets": list(sheets or []),
-        # Summary 탭 Engr Comment(Yield/CPK/ETC 3칸) — manifest.summary_engr 에서 채운다.
+        # Summary 탭 Engr Comment(Yield/CPK/ETC 3칸) — 세션 편집 DB 에서 채운다.
         "summary_engr": dict(summary_engr or {}),
         # None → 색 미지정(legacy): 프런트가 기본 팔레트. list → source i 가 dist_colors[i] 색.
         "dist_colors": list(dist_colors) if dist_colors else None,

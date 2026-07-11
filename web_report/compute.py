@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import threading
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 _WORKERS = max(0, int(os.getenv("WEB_REPORT_COMPUTE_WORKERS", "2") or 2))
@@ -55,11 +56,20 @@ def should_offload(tables_key) -> bool:
 
 
 def run(job, *args):
-    """job 을 워커에서 실행하고 결과를 반환. 풀 비활성/워커 내부면 인라인 실행."""
+    """job 을 워커에서 실행하고 결과를 반환. 풀 비활성/워커 내부면 인라인 실행.
+
+    워커 프로세스 붕괴(BrokenProcessPool — OOM, main 가드 없는 스크립트 등)는
+    풀을 리셋하고 인라인으로 폴백한다 — 요청이 500 으로 죽지 않는다."""
+    global _pool
     pool = _get_pool()
     if pool is None:
         return job(*args)
-    return pool.submit(job, *args).result()
+    try:
+        return pool.submit(job, *args).result()
+    except BrokenProcessPool:
+        with _pool_lock:
+            _pool = None
+        return job(*args)
 
 
 # ── 워커 잡 (모듈 최상위 — spawn pickling 요건). service 를 재사용하므로 값이

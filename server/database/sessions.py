@@ -1,5 +1,6 @@
 """report_session CRUD + 검색결과 히스토리 + retention 조회 (report_db facade 구현)."""
 from .core import get_conn, _now, _row
+from .models import Session
 
 
 def create_session(session_id, file_name, file_path, product_type=None, dataset_id=None,
@@ -74,11 +75,12 @@ def update_session(session_id, **fields):
 
 
 def get_session(session_id):
+    """세션 1건 — models.Session (Mapping 호환: .get/[]/dict() 그대로 동작 + 속성 접근)."""
     with get_conn() as conn:
         row = conn.execute(
             "SELECT * FROM report_session WHERE session_id=?", (session_id,)
         ).fetchone()
-    return _row(row)
+    return Session.from_row(row)
 
 
 def _history_where(product_type=None, process=None, product=None, revision=None,

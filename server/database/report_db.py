@@ -21,6 +21,7 @@ from .core import (  # noqa: F401
     release_analysis_lock,
     try_acquire_analysis_lock,
 )
+from .models import Session  # noqa: F401  (get_session 반환 타입 — Mapping 호환)
 from .sessions import (  # noqa: F401
     count_history,
     count_sessions_for_analysis_key,
