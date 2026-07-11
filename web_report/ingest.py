@@ -48,8 +48,10 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         source_name = str(source_info.get("name") or item.get("name") or f"source_{idx + 1}")
         file_name = str(source_info.get("file_name") or item.get("filename") or source_name)
         # 검증 겸 decode+split — 이 tables 를 아래에서 TABLES_CACHE 에 시딩해
-        # prewarm 의 재디코드(파일당 ~1s)를 없앤다.
-        table = decode_split_honeyform_parquet(data, source=source_name, file_name=file_name)
+        # prewarm 의 재디코드(파일당 ~1s)를 없앤다. 원본 bytes 는 이미 손에 있으므로
+        # df(재인코딩용 전체 프레임)는 만들지 않는다 (읽기 캐시 규약과 동일 슬림 형태).
+        table = decode_split_honeyform_parquet(data, source=source_name, file_name=file_name,
+                                               keep_df=False)
         decoded.append({
             "source": source_name,
             "file_name": file_name,
@@ -73,8 +75,8 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     cache.manifest_cache_put(analysis_key, manifest)
     # ingest 가 이미 디코드한 tables 를 loader 와 같은 키로 시딩 — prewarm/첫 조회의
     # storage 재다운로드+재디코드 생략. (캐시엔 원본 저장, 소비자는 loader 가 클론 반환.)
-    cache.cache_put(cache.TABLES_CACHE, (analysis_key, content_hash),
-                    [item["table"] for item in decoded], cache.TABLES_CACHE_MAX)
+    cache.tables_cache_put((analysis_key, content_hash),
+                           [item["table"] for item in decoded])
 
     session_dir = Path(upload_root) / "web_report" / analysis_key
     report_db.create_session(

@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import cache
+from . import cache_policy
 from . import runtime
 from .honeyform import HoneyformTable, decode_split_honeyform_parquet
 
@@ -27,11 +28,11 @@ def clone_table(t: HoneyformTable) -> HoneyformTable:
         hilim=dict(t.hilim), lolim=dict(t.lolim), data=t.data)
 
 
-def download_decode_tables(analysis_key, upload_root: Path):
+def download_decode_tables(analysis_key, upload_root: Path, *, keep_df: bool = True):
     """parquet 원본 다운로드 + 디코드. 반환 (tables, manifest).
 
     sources 와 함께 받은 manifest 를 manifest 캐시에 write-through 해 이어지는 warm 조회의
-    S3 manifest GET 을 없앤다.
+    S3 manifest GET 을 없앤다. keep_df=False 는 읽기 경로용 슬림 디코드 (honeyform 참조).
     """
     sources, manifest = runtime.storage().load_webreport_sources(
         analysis_key, upload_root=upload_root)
@@ -45,7 +46,7 @@ def download_decode_tables(analysis_key, upload_root: Path):
         file_name = str(source_info.get("file_name") or source_name)
         # decode+split 결합 경로 — to_numeric 중복 변환/재검증 제거 (결과 동일)
         tables.append(decode_split_honeyform_parquet(
-            data, source=source_name, file_name=file_name))
+            data, source=source_name, file_name=file_name, keep_df=keep_df))
     return tables, manifest
 
 
@@ -73,15 +74,17 @@ def load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: boo
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    cache_key = (analysis_key, str(session.get("content_hash") or ""))
+    cache_key = cache_policy.tables_key(session)   # 키 구성 규약: cache_policy
     if use_cache:
         cached = cache.cache_get(cache.TABLES_CACHE, cache_key)
         if cached is None:
             with cache.keyed_lock(("tables",) + cache_key):
                 cached = cache.cache_get(cache.TABLES_CACHE, cache_key)
                 if cached is None:
-                    tables, manifest = download_decode_tables(analysis_key, upload_root)
-                    cache.cache_put(cache.TABLES_CACHE, cache_key, tables, cache.TABLES_CACHE_MAX)
+                    # 읽기 경로는 슬림 디코드(df=None) — 캐시 메모리 절반 이하 (Phase 5)
+                    tables, manifest = download_decode_tables(
+                        analysis_key, upload_root, keep_df=False)
+                    cache.tables_cache_put(cache_key, tables)
                     return session, [clone_table(t) for t in tables], manifest
         manifest = cache.load_manifest_cached(analysis_key, upload_root)
         return session, [clone_table(t) for t in cached], manifest

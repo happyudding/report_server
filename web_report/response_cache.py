@@ -18,8 +18,8 @@ import os
 from collections import OrderedDict
 from pathlib import Path
 
-from . import cache, service
-from .validation import canon, validate_mode
+from . import cache, cache_policy, service
+from .validation import canon
 
 # /full: 키 (akey, chash, "session:edits_rev", extras_digest) -> gzip bytes.
 # comment/override 편집은 세션 편집 rev 증가로, annotations/is_important 등 값싼
@@ -55,10 +55,10 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
         raise FileNotFoundError(session_id)
     content_hash = str(session.get("content_hash") or "")
     # 편집(comment/override)은 세션 단위 DB 가 진실 — manifest 는 불변 스냅샷이므로
-    # digest 대신 (session_id, edits_rev)로 편집 무효화를 잡는다.
+    # digest 대신 (session_id, edits_rev)로 편집 무효화를 잡는다 (키 규약: cache_policy).
     edits_rev = report_db.get_webreport_edit_rev(session_id)
     extras_digest = hashlib.sha256(canon(extras)).hexdigest()
-    cache_key = (analysis_key, content_hash, f"{session_id}:{edits_rev}", extras_digest)
+    cache_key = cache_policy.full_key(session, session_id, edits_rev, extras_digest)
     etag = '"' + hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()[:32] + '"'
 
     blob = cache.cache_get(_FULL_CACHE, cache_key)
@@ -87,9 +87,7 @@ def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
     analysis_key = session.get("analysis_key")
     if not analysis_key:
         raise FileNotFoundError(session_id)
-    # DUT 모드는 같은 analysis_key 라도 분할된 소스별 산포를 내므로 mode 를 키에 포함한다.
-    cache_key = (analysis_key, str(session.get("content_hash") or ""),
-                 validate_mode(session.get("mode")), subject)
+    cache_key = cache_policy.scatter_key(session, subject)   # 키 규약: cache_policy
 
     blob = cache.cache_get(_SCATTER_CACHE, cache_key)
     if blob is not None:

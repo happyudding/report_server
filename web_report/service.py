@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 
 from . import cache
+from . import cache_policy
 from . import disk_cache
 from . import edits
 from . import runtime
@@ -67,15 +68,11 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     edits_rev = report_db.get_webreport_edit_rev(session_id)
 
     # F10 웹리포트 옵션(세션 DB, authoritative): Distribution source 색.
-    # 옵션은 analysis_key 공유(dedup) 세션마다 다를 수 있으므로 report 캐시 키에 포함한다.
-    opts_raw = session.get("webreport_options") or ""
-    dist_colors = _webreport_colors(opts_raw)
-    # 모드는 세션 DB(authoritative). analysis_key 는 여러 세션이 공유(dedup)할 수 있으나
-    # 모드는 세션 단위이므로 report 캐시 키에 포함한다.
+    dist_colors = _webreport_colors(session.get("webreport_options") or "")
     mode = _validate_mode(session.get("mode"))
 
-    cache_key = (analysis_key, str(session.get("content_hash") or ""),
-                 session_id, edits_rev, opts_raw, mode)
+    # 키 구성 규약은 cache_policy 참조 (opts/mode 포함 이유 포함)
+    cache_key = cache_policy.report_key(session, session_id, edits_rev)
     report = cache.cache_get(cache.REPORT_CACHE, cache_key)
     if report is None:
         with cache.keyed_lock(("report",) + cache_key):
@@ -141,9 +138,7 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> b
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    # DUT 모드는 같은 analysis_key 라도 분할된 ECDF 를 내므로 mode 를 키에 포함한다.
-    cache_key = (analysis_key, str(session.get("content_hash") or ""),
-                 _validate_mode(session.get("mode")))
+    cache_key = cache_policy.dist_key(session)
     blob = cache.cache_get(cache.DIST_CACHE, cache_key)
     if blob is not None:
         return blob
@@ -198,7 +193,7 @@ def _commonality_index(session: dict, tables):
     """
     from .tabs.commonality import build_index
 
-    cache_key = (session.get("analysis_key"), str(session.get("content_hash") or ""))
+    cache_key = cache_policy.commonality_key(session)
     idx = cache.cache_get(cache.COMMONALITY_CACHE, cache_key)
     if idx is None:
         with cache.keyed_lock(("commonality",) + cache_key):
@@ -476,8 +471,7 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
     etag_token = hashlib.sha256(f"{session_id}:{edits_rev}".encode("utf-8")).hexdigest()
     mode = _validate_mode(session.get("mode"))
 
-    cache_key = (analysis_key, str(session.get("content_hash") or ""),
-                 session_id, edits_rev, mode, str(source or ""))
+    cache_key = cache_policy.trim_key(session, session_id, edits_rev, source)
     blob = cache.cache_get(cache.TRIM_CACHE, cache_key)
     if blob is not None:
         return blob, etag_token
@@ -532,8 +526,7 @@ def get_trim_chart_gzip(session_id: str, *, report_db, upload_root: Path,
         raise KeyError(str(group_id))
 
     items_digest = hashlib.sha256(_canon({"slots": group["slots"]})).hexdigest()[:16]
-    cache_key = (analysis_key, str(session.get("content_hash") or ""), mode,
-                 table.source, items_digest)
+    cache_key = cache_policy.trim_chart_key(session, table.source, items_digest)
     blob = cache.cache_get(cache.TRIM_CHART_CACHE, cache_key)
     if blob is not None:
         return blob

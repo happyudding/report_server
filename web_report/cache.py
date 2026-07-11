@@ -20,10 +20,15 @@ from .validation import canon
 # ── decoded tables 인메모리 LRU 캐시 ──────────────────────────────────────────
 # parquet decode+split 이 요청당 ~2.4s 로 /full·raw_data·scatter 등 모든 조회의 고정비라
 # (analysis_key, content_hash) 키로 캐시한다. raw_data 편집은 content_hash 를 갱신하므로
-# 키 자체가 바뀌어 자연 무효화되고, etc/comments 편집은 manifest 만 바꾸므로 캐시가 유효하다
-# (manifest 는 아래 MANIFEST_CACHE 에 별도 캐시, 편집 시 write-through 갱신).
+# 키 자체가 바뀌어 자연 무효화되고, comment/override 편집은 세션 편집 DB 만 바꾸므로
+# 캐시가 유효하다. 항목은 슬림 테이블(df=None, loader keep_df=False) 전제.
+# 개수(TABLES_CACHE_MAX)와 추정 바이트 총량(TABLES_CACHE_MAX_MB) 이중 상한 —
+# 대형 세션 몇 개로 OOM 나지 않게 바이트 기준으로도 축출한다 (Phase 5).
 TABLES_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_TABLES_CACHE", "4") or 4))
+TABLES_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_TABLES_CACHE_MB", "4096")
+                                    or 4096)) * 1024 * 1024   # 0 = 바이트 상한 비활성
 TABLES_CACHE: OrderedDict = OrderedDict()   # (analysis_key, content_hash) -> list[HoneyformTable]
+_TABLES_SIZES: dict = {}                    # 키 -> 추정 바이트 (TABLES_CACHE 와 동기)
 CACHE_LOCK = threading.Lock()               # 모든 캐시가 이 락을 공유 (조작 시간 짧음)
 
 # 파생 결과 캐시 — 동시 사용자 대비 핵심. CPU-bound 재계산(distribution compact 수 초,
@@ -89,6 +94,46 @@ def cache_put(cache: OrderedDict, key, value, max_size: int):
             cache.popitem(last=False)
 
 
+def _estimate_tables_bytes(tables) -> int:
+    """HoneyformTable 리스트의 RAM 추정치 (바이트 상한 축출용 — 근사면 충분).
+
+    수치 블록은 memory_usage 그대로, object dtype 컬럼(SERIAL 등 메타)은 셀당
+    파이썬 객체 오버헤드(~56B)를 더한다. df 는 슬림 규약(None)이라 계산하지 않는다."""
+    total = 0
+    for t in tables:
+        try:
+            df = t.data
+            total += int(df.memory_usage(index=False).sum())
+            obj_cols = df.select_dtypes(include="object").shape[1]
+            total += obj_cols * len(df) * 56
+        except Exception:
+            pass
+    return total
+
+
+def tables_cache_put(key, tables) -> None:
+    """TABLES_CACHE 전용 put — 개수 + 추정 바이트 이중 상한으로 축출한다.
+
+    최소 1개는 남긴다 (방금 넣은 세션은 곧바로 조회되므로)."""
+    size = _estimate_tables_bytes(tables)
+    with CACHE_LOCK:
+        TABLES_CACHE[key] = tables
+        TABLES_CACHE.move_to_end(key)
+        _TABLES_SIZES[key] = size
+        while len(TABLES_CACHE) > 1 and (
+                len(TABLES_CACHE) > TABLES_CACHE_MAX
+                or (TABLES_CACHE_MAX_BYTES
+                    and sum(_TABLES_SIZES.values()) > TABLES_CACHE_MAX_BYTES)):
+            old_key, _ = TABLES_CACHE.popitem(last=False)
+            _TABLES_SIZES.pop(old_key, None)
+
+
+def _prune_tables_sizes_locked() -> None:
+    """TABLES_CACHE 에서 빠진 키의 크기 기록 제거 (CACHE_LOCK 보유 상태에서 호출)."""
+    for key in [k for k in _TABLES_SIZES if k not in TABLES_CACHE]:
+        _TABLES_SIZES.pop(key, None)
+
+
 def keyed_lock(key) -> threading.Lock:
     """(종류, ...캐시키) 단위 락을 돌려준다. 레지스트리는 LRU 로 상한 유지."""
     with CACHE_LOCK:
@@ -114,6 +159,7 @@ def evict_akey_caches(analysis_key) -> None:
         for cache in AKEY_CACHES:
             for key in [k for k in cache if k[0] == analysis_key]:
                 cache.pop(key, None)
+        _prune_tables_sizes_locked()
 
 
 def invalidate_caches(analysis_key) -> None:
@@ -126,6 +172,7 @@ def invalidate_caches(analysis_key) -> None:
             for key in [k for k in cache if k[0] == analysis_key]:
                 cache.pop(key, None)
         MANIFEST_CACHE.pop(analysis_key, None)
+        _prune_tables_sizes_locked()
 
 
 def manifest_cache_put(analysis_key, manifest: dict) -> None:

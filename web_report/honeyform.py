@@ -24,7 +24,10 @@ PARQUET_CONTENT_TYPE = "application/vnd.apache.parquet"
 class HoneyformTable:
     source: str
     file_name: str
-    df: pd.DataFrame
+    # 전체 프레임(메타 6행 + 데이터, object dtype) — 편집/재인코딩 경로 전용.
+    # 읽기 경로(decode_split keep_df=False)는 None — data/meta dict 만으로 충분하고
+    # object dtype 프레임이 캐시 메모리의 절반 이상을 차지하기 때문 (Phase 5).
+    df: pd.DataFrame | None
     item_columns: list[str]
     tseq: dict[str, object]
     tno: dict[str, object]
@@ -155,14 +158,19 @@ def decode_honeyform_parquet(data: bytes) -> pd.DataFrame:
 
 
 def decode_split_honeyform_parquet(data: bytes, *, source: str,
-                                   file_name: str = "") -> HoneyformTable:
+                                   file_name: str = "",
+                                   keep_df: bool = True) -> HoneyformTable:
     """decode + split 을 한 번에 수행 (loader 전용 빠른 경로).
 
     ``split_honeyform(decode_honeyform_parquet(data), ...)`` 과 결과가 동일하지만,
     item 블록 to_numeric 1회분과 재검증을 생략한다 (콜드 로드 시간 절반).
+
+    keep_df=False 면 전체 object 프레임(df) 조립을 생략하고 df=None 을 담는다 —
+    읽기 경로(tabs 계산·캐시)는 data/meta dict 만 쓰므로 값이 동일하고 메모리·시간만
+    준다. df 가 필요한 편집/재인코딩 경로는 기본값(keep_df=True)으로 호출할 것.
     """
     head, tail_meta, num_df, item_labels = _decode_parts(data)
-    df = _assemble_df(head, tail_meta, num_df)
+    df = _assemble_df(head, tail_meta, num_df) if keep_df else None
     item_cols = [str(c) for c in item_labels]
     if num_df is None:
         data_frame = tail_meta.reset_index(drop=True)
@@ -236,13 +244,17 @@ def split_table_by_dut(table: "HoneyformTable") -> list["HoneyformTable"]:
     if len(uniq) <= 1:
         return [table]
 
-    meta_rows = table.df.iloc[:DATA_START_ROW]
-    data_rows = table.df.iloc[DATA_START_ROW:].reset_index(drop=True)
+    # df=None(읽기 경로 슬림 테이블)이면 sub_df 도 None — DUT 분할 결과는 읽기 전용
+    # 렌더에만 쓰이므로 data/meta 만으로 충분하다 (Phase 5).
+    meta_rows = table.df.iloc[:DATA_START_ROW] if table.df is not None else None
+    data_rows = (table.df.iloc[DATA_START_ROW:].reset_index(drop=True)
+                 if table.df is not None else None)
     out: list[HoneyformTable] = []
     for label in uniq:
         mask = (labels == label).to_numpy()
         sub_data = data[mask].reset_index(drop=True)
-        sub_df = pd.concat([meta_rows, data_rows[mask]], ignore_index=True)
+        sub_df = (pd.concat([meta_rows, data_rows[mask]], ignore_index=True)
+                  if table.df is not None else None)
         out.append(HoneyformTable(
             source=f"DUT {label}",
             file_name=f"{table.file_name} · DUT {label}",
