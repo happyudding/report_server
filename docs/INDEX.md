@@ -35,6 +35,13 @@
 [별도 채널] (04 Honey 업데이트) GET /honey/version, /honey/download
 ```
 
+> **web_report 병행 흐름 (신규 개발 중심)**: Honey 가 honeyform parquet 를
+> `POST /pe/report/upload_webreport` 로 올리면 서버가 세션 생성 + storage 보관 후
+> 계산해 렌더한다 — 진입점 [server/upload_webreport.py](../server/upload_webreport.py),
+> 구현은 [web_report/](../web_report/) (전용 CLAUDE.md 참조). comment/override 편집은
+> **세션 편집 DB(report_webreport_edit)** 에 저장되고 manifest 는 업로드 시점 불변
+> 스냅샷이다 (2026-07-11).
+
 ---
 
 ## 1. 기능 → 문서 매핑 (큰 기능 7개)
@@ -50,7 +57,10 @@
 | 07 | **업로드 전송** | Client | [07_client_upload_chart.md](07_client_upload_chart.md) | [client/transport/uploader.py](../client/transport/uploader.py) |
 
 > 서버 부팅 자체: [server/wsgi.py](../server/wsgi.py) → `report_bp`([01](01_server_upload.md)/[02](02_server_query_edit.md)) + `honey_bp`([04](04_honey_update.md)) 등록.
-> Blueprint 등록 트리거는 [server/report/report_extension.py](../server/report/report_extension.py) (import 시 DB init + 라우트 평가).
+> Blueprint 등록 트리거는 [server/report/report_extension.py](../server/report/report_extension.py)
+> (import 시 라우트 평가, `init_app` 이 DB init + web_report 저장 포트 주입 — 컴포지션 루트).
+> `report_routes.py` 는 집결자 — 실제 라우트는 `security.py` / `routes_session.py` /
+> `routes_webreport.py` / `routes_misc.py` (2026-07-11 SRP 분리, URL 불변).
 
 ---
 
@@ -62,9 +72,17 @@
 - **session_id** — `"<epoch>_<hex6>"`. 업로드 1건 = 1 세션. 브라우저 조회 단위.
 - **mass_data (df_honey)** — 입력 CSV/시트 1개 = 측정 데이터 1단위, **단일 DataFrame 보유**. 분석 엔진의 기본 객체 → [06](06_analysis_engine.md).
 - **subject** — 측정 항목(컬럼). **bin** — 합격/불량 분류 코드 (`PASS_BIN="1"` 이 합격).
-- **source** (DB 컬럼) — `'xlsx_upload'`(현재 흐름) vs `'analyze'`(legacy CSV 분석, 비활성).
-- **PIN/password** — 업로드 시 필수 4자리. 수정/삭제 시 검증. analysis_key 에는 **불포함**.
-- **object_type** (report_object_info) — `summary_text` / `issue_table_text` / `chart_index` → [03](03_storage.md).
+- **source** (DB 컬럼) — `'web_report'`(신규) / `'xlsx_upload'` / `'analyze'`(legacy, 비활성).
+- **신원(uid)** — Honey 내장 브라우저 UA 의 `HoneyUser/<계정>` 토큰으로 자동 식별
+  ([server/auth_identity.py](../server/auth_identity.py) provider 체인 — `AUTH_SSO_HEADER`
+  env 로 SSO 헤더 전환). 일반 브라우저 = 신원 없음 = 읽기 전용. 구 PIN 검사는 폐지
+  (컬럼은 보존). 신원은 analysis_key 에 **불포함**.
+- **edits_rev** — 세션 편집 DB(report_webreport_edit_rev)의 단조 증가 rev.
+  comment/override 편집 시 증가하며 REPORT/TRIM//full 캐시 키의 무효화 토큰
+  ([web_report/cache_policy.py](../web_report/cache_policy.py) 참조).
+- **object_type** (report_object_info) — `summary_text` / `issue_table_text` / `chart_index` /
+  `web_report_source_<idx>` / `web_report_manifest` → [03](03_storage.md). options_json 에
+  저장 위치(`{"storage":"s3"|"local"}`)가 기록되고 조회가 그 기록을 따른다 (2026-07-11).
 
 ---
 
@@ -74,10 +92,16 @@
 |--------------|------|-----------|
 | 업로드 받는 필드/검증 바꾸기 | [01](01_server_upload.md) | `upload_xlsx()`, `_validate_meta()` |
 | xlsx 시트 파싱 규칙 바꾸기 | [01](01_server_upload.md) | [xlsx_parser.py](../server/xlsx_parser.py) `parse_report_xlsx` |
-| 검색결과 필터/목록 컬럼 | [02](02_server_query_edit.md) | `history()`, `get_history()` |
-| 세션 상세에 데이터 추가 | [02](02_server_query_edit.md) | `session_full()` |
-| 수정 모드 저장 동작 | [02](02_server_query_edit.md) | `update_session_content()` |
-| DB 컬럼/테이블 추가 | [03](03_storage.md) | `SCHEMA`, `_migrate()` |
+| 검색결과 필터/목록 컬럼 | [02](02_server_query_edit.md) | `history()`, `get_history()` ([routes_misc.py](../server/report/routes_misc.py) / [sessions.py](../server/database/sessions.py)) |
+| 세션 상세에 데이터 추가 | [02](02_server_query_edit.md) | `session_full()` ([routes_session.py](../server/report/routes_session.py)) |
+| web_report comment/override 편집 | — | [web_report/edits.py](../web_report/edits.py) + [database/webreport_edits.py](../server/database/webreport_edits.py) (세션 편집 DB — manifest 불변) |
+| 수정 모드 저장 동작 (구 xlsx) | [02](02_server_query_edit.md) | `update_session_content()` — 비활성(항상 405) |
+| DB 컬럼/테이블 추가 | [03](03_storage.md) | [database/core.py](../server/database/core.py) `SCHEMA`, `_migrate()` (report_db.py 는 facade) |
+| web_report 캐시 키/무효화 | — | [web_report/cache_policy.py](../web_report/cache_policy.py) (키 구성 단일 진실) |
+| 콜드 빌드 워커/프리웜 | — | [web_report/compute.py](../web_report/compute.py) (`WEB_REPORT_COMPUTE_WORKERS`) |
+| 새 탭 추가 | — | [web_report/tabs/__init__.py](../web_report/tabs/__init__.py) `TAB_REGISTRY` + 프런트 JS 1개 |
+| 세션 상세 탭 UI (JS) | — | [server/report/static/webreport/](../server/report/static/webreport/) 15개 모듈 (순서 로드 — report_view.html 은 마크업+CSS) |
+| 신원/SSO 전환 | — | [server/auth_identity.py](../server/auth_identity.py) (`AUTH_SSO_HEADER`) |
 | 감사 로그(업/수정/삭제) 기록·조회 | [02](02_server_query_edit.md) | `report_db.log_audit`/`get_audit_logs`, [admin_routes.py](../server/admin_routes.py), 대시보드 `/pe/admin` |
 | S3 키 경로 바꾸기 | [03](03_storage.md) | [_s3.py](../server/storage_gateway/_s3.py) `make_*_key` + [config.py](../server/config.py) |
 | 새 Honey 버전 배포 | [04](04_honey_update.md) | `version.json` + release 스크립트 |
@@ -114,6 +138,11 @@
 5. 실행 중 exe 직접 덮어쓰기 금지 (Windows 락) — 설치본 재설치 방식 → [04](04_honey_update.md).
 6. 신규 개발의 중심은 `web_report/` 웹페이지 구현이다. `web_report/` 밖 기존 서버/클라이언트/분석 엔진 변경은
    먼저 사용자에게 이유와 영향 범위를 설명하고 확인받은 뒤 진행한다.
+7. **manifest 는 업로드 시점 불변 스냅샷** (2026-07-11) — comment/override 편집은 세션
+   편집 DB(report_webreport_edit)에만 기록한다. 편집 경로에서 manifest 를 재저장하는
+   코드를 되살리지 말 것 (lost-update·S3 부활 버그의 근원이었다).
+8. web_report 파생 캐시의 키는 [web_report/cache_policy.py](../web_report/cache_policy.py)
+   빌더로만 만든다 — 키 구성 규약을 호출부 주석으로 흩뿌리지 말 것.
 
 ---
 

@@ -27,28 +27,38 @@
 ```
 report_server/
 ├── server/                     Flask 서버
-│   ├── wsgi.py                  진입점 (report_bp + honey_bp + admin_bp 등록)
+│   ├── wsgi.py                  진입점 (앱 조립 — 컴퓨트 워커 __mp_main__ 재임포트는 스킵 가드)
 │   ├── config.py                환경변수·경로 통합 설정
+│   ├── auth_identity.py         신원 provider 체인 (기본 HoneyUser UA, AUTH_SSO_HEADER 로 SSO 전환)
 │   ├── start.bat / terminate.bat 로컬 기동·종료
 │   ├── requirements.txt
-│   ├── database/report_db.py   SQLite 스키마·CRUD·락
+│   ├── database/                SQLite 계층 (report_db.py 는 전량 재노출 facade — 호출부 무변경)
+│   │   ├── core.py              SCHEMA·마이그레이션·get_conn·analysis lock
+│   │   ├── sessions.py / objects.py / audit.py / users.py / annotations.py
+│   │   ├── webreport_edits.py   web_report 편집 상태 (세션 단위)
+│   │   └── models.py            Session dataclass (Mapping 호환 — get_session 반환 타입)
 │   ├── report/
-│   │   ├── report_extension.py  Blueprint 등록 + DB init
-│   │   ├── report_routes.py     검색결과·세션·주석 (분석 라우트 모두 제거됨)
+│   │   ├── report_extension.py  Blueprint 등록 + DB init + web_report 포트 주입(컴포지션 루트)
+│   │   ├── report_routes.py     라우트 집결자 — 구현은 security.py /
+│   │   │                        routes_session.py / routes_webreport.py / routes_misc.py
+│   │   ├── static/webreport/    세션 상세 JS 모듈 15개 (report_view.html 에서 분할, 순서 로드)
 │   │   ├── report_analysis_index.html  검색결과 페이지 (모달 없음)
-│   │   ├── report_view.html     세션 상세 (text only)
+│   │   ├── report_view.html     세션 상세 (마크업+CSS — JS 는 static/webreport/)
 │   │   └── admin_dashboard.html 감사 로그 대시보드 (/pe/admin)
 │   ├── storage_gateway/         S3 산출물 저장 단일 진입점 (ENTRYPOINT/EXTERNAL_OWNER)
-│   │   ├── __init__.py          facade (공개 API + 예외 재노출)
+│   │   ├── __init__.py          facade (공개 API + 예외 재노출 + 저장 위치 기록)
 │   │   ├── routes.py            이미지 URL 라우트
 │   │   ├── _s3.py              boto3 호환 client + key 빌더 (내부 어댑터)
 │   │   ├── _issue_images.py    이슈 이미지 백엔드 (S3+로컬 폴백)
 │   │   └── _png_drive.py       외부 호환 PNG 스캐폴드 (미사용)
+│   ├── tools/migrate_manifest_edits.py  manifest 편집값 → 세션 편집 DB 일괄 이전 (운영 1회 실행 완료)
 │   ├── upload_xlsx.py           /pe/report/upload_xlsx 라우트
+│   ├── upload_webreport.py      /pe/report/upload_webreport 라우트
 │   ├── xlsx_parser.py           시트 grid → 텍스트 추출 (_GridSheet 셸, openpyxl 미사용)
 │   ├── admin_routes.py          /pe/admin 감사 로그 조회 (인증 없음, 내부망 전용)
 │   ├── honey_routes.py          /honey/version, /honey/download
 │   └── releases/version.json    Honey ZIP 배포 manifest
+├── web_report/                 웹 리포트 구현 (신규 개발 중심 — 상세는 web_report/CLAUDE.md)
 ├── client/                     Honey 클라이언트 (PyQt5)
 │   ├── honey_main.py            QMainWindow + upload 버튼
 │   ├── version_check.py         /honey/version 폴링 + 다운로드
@@ -88,14 +98,20 @@ report_server/
 - `GET /pe/report/view/<session_id>` → 세션 상세 (보기/수정/삭제 모드)
 - `GET /pe/report/session/<sid>/full` → 세션 + summary + objects + annotations + 추출 텍스트
   (응답 session 에서 password 제거, `has_password` 불린만 노출)
-- `POST /pe/report/session/<sid>/verify_password` → 수정 모드 진입 전 PIN 확인
-- `PATCH /pe/report/session/<sid>/content` → 텍스트 콘텐츠 수정 (PIN 검증 후
-  summary_text / issue_rows = S3 JSON 재업로드, yield_rows = DB 행 치환)
-- `DELETE /pe/report/session/<sid>` → 세션 삭제 (PIN 검증)
+- `POST /pe/report/session/<sid>/verify_password` → 수정 진입 전 권한 확인
+  (구 PIN 검사 폐지 — 현재는 HoneyUser 신원==업로더 검사, 응답 형태만 하위호환 유지)
+- `PATCH /pe/report/session/<sid>/content` → [비활성] 항상 405 (구 xlsx 텍스트 수정 폐기)
+- `POST .../session/<sid>/web_report/issue_table/comments|etc`, `.../summary/engr`,
+  `.../trim/overrides` → web_report 편집 — **세션 편집 DB(report_webreport_edit)에 저장**
+  (2026-07-11). manifest 는 업로드 시점 불변 스냅샷이라 편집으로 재저장하지 않는다.
+- `DELETE /pe/report/session/<sid>` → 세션 삭제 (업로더만)
 
-업로드 시 4자리 숫자 PIN 필수 (`report_session.password`). 수정·삭제는 PIN 일치 필요
-(미설정 legacy 세션은 PIN 없이 허용). PIN 은 analysis_key 산출 meta 에 **포함하지 않음**
-— 접근 제어용이라 같은 xlsx+meta 면 PIN 이 달라도 동일 analysis_key (rule #4 유지).
+신원은 Honey 내장 브라우저 User-Agent 의 `HoneyUser/<계정>` 토큰으로 자동 식별한다
+([server/auth_identity.py](server/auth_identity.py) provider 체인 — env `AUTH_SSO_HEADER`
+설정 시 역프록시 SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이 없어 읽기
+전용. 수정·삭제는 업로더(콘텐츠 편집은 위임 편집자도 가능). 구 4자리 PIN
+(`report_session.password`)은 미사용 보존. 신원/PIN 은 analysis_key 산출 meta 에
+**포함하지 않음** (rule #4 유지).
 
 ---
 
@@ -119,6 +135,15 @@ EXISTS` 로 기존 DB 에도 자동 생성(별도 `_migrate()` 불필요). 기�
 삽입 실패가 본 업로드/수정/삭제를 깨뜨리지 않는다. 신원은 IP + User-Agent 만 (클라이언트가
 사용자명을 보내지 않음). `/pe/admin` 대시보드에서 조회 (인증 없음, 내부망 전용).
 
+`report_webreport_edit` / `report_webreport_edit_rev` 테이블 추가 (2026-07-11) —
+web_report comment/ETC item/trim override/Engr comment 편집의 **진실 저장소, 세션 단위**
+(dedup 으로 analysis_key 를 공유하는 세션끼리도 편집을 공유하지 않음 — 의도된 결정).
+`rev` 는 단조 증가 캐시 무효화 토큰 (REPORT/TRIM//full 캐시 키에 포함). manifest 는
+업로드 시점 불변 스냅샷으로 강등. legacy 세션(rev==0)은 조회 시 manifest 폴백 + 첫 편집
+직전 자동 시드 ([web_report/edits.py](web_report/edits.py)). 스키마·CRUD 는
+[server/database/core.py](server/database/core.py) /
+[webreport_edits.py](server/database/webreport_edits.py).
+
 ---
 
 ## 3. S3 키 패턴 (config.py)
@@ -135,6 +160,12 @@ REPORT_S3_CHART_PREFIX     → pe/report_server/chart_png/<analysis_key>/...
 
 기존 plotly prefix (`pe/report/...`) 와 충돌 회피 위해 `pe/report_server/` 사용.
 
+web_report parquet/manifest 는 저장 위치가 `report_object_info.options_json` 에
+`{"storage":"s3"|"local"}` 로 기록되고 **조회는 그 기록을 따른다** (2026-07-11) — 기록이
+s3 인데 다운로드가 실패하면 침묵 로컬 폴백 대신 예외를 올린다 (S3 순단 중 로컬 저장 →
+복구 후 과거 S3 파일 부활 방지). 기록 없는 legacy 행만 종전 폴백(경고 로그 후 로컬)을
+유지한다. manifest 는 업로드 후 불변 — 편집은 DB(§2).
+
 ---
 
 ## 4. 환경변수
@@ -150,6 +181,12 @@ REPORT_S3_REGION      기본 us-east-1
 REPORT_S3_ACCESS_KEY  비우면 boto3 기본 자격증명
 REPORT_S3_SECRET_KEY
 HONEY_RELEASES_DIR    기본 <repo>/server/releases
+AUTH_SSO_HEADER       기본 비움(HoneyUser UA 신원). 역프록시 SSO 신뢰 헤더명(예:
+                      X-Auth-User) 지정 시 그 헤더가 신원으로 우선 사용됨 (auth_identity.py)
+WEB_REPORT_COMPUTE_WORKERS  기본 2 — 콜드 report/dist/trim 빌드를 실행할 워커 프로세스 수.
+                      0 = 전부 인라인(구 동작). tables 캐시가 따뜻하면 항상 인라인 (compute.py)
+WEB_REPORT_TABLES_CACHE_MB  기본 4096 — decoded tables 캐시의 추정 바이트 상한 (개수 상한
+                      WEB_REPORT_TABLES_CACHE 와 이중 적용, cache.py)
 ```
 
 세션/DB 유지보수 (report_cleanup.py / db_backup.py):
@@ -213,11 +250,17 @@ HONEY_SERVER_URL      기본 http://127.0.0.1:8000
 | 클라 Excel COM 추출 | [client/report_flow/upload_prepare.py](client/report_flow/upload_prepare.py) |
 | 클라 업로드 전송 | [client/transport/uploader.py](client/transport/uploader.py) `post_grids` |
 | Honey 다운로드 라우트 | [server/honey_routes.py](server/honey_routes.py) |
-| DB 스키마 | [server/database/report_db.py](server/database/report_db.py) |
+| DB 스키마 | [server/database/core.py](server/database/core.py) `SCHEMA` ([report_db.py](server/database/report_db.py) 는 재노출 facade) |
+| 신원/인증 (SSO 전환) | [server/auth_identity.py](server/auth_identity.py) |
+| web_report 편집 상태 (comment/override) | [web_report/edits.py](web_report/edits.py) + [server/database/webreport_edits.py](server/database/webreport_edits.py) |
+| web_report 캐시 키 규약 | [web_report/cache_policy.py](web_report/cache_policy.py) (키 구성 단일 진실 — 빌더 필수 사용) |
+| 컴퓨트 워커 풀 | [web_report/compute.py](web_report/compute.py) |
+| 새 탭 추가 (레지스트리) | [web_report/tabs/__init__.py](web_report/tabs/__init__.py) `TAB_REGISTRY` |
 | S3 키 빌더 | [server/storage_gateway/_s3.py](server/storage_gateway/_s3.py) |
 | S3 저장 진입점(facade) | [server/storage_gateway/__init__.py](server/storage_gateway/__init__.py) ([README](server/storage_gateway/README.md)) |
 | 검색결과 UI | [server/report/report_analysis_index.html](server/report/report_analysis_index.html) |
-| 세션 상세 UI | [server/report/report_view.html](server/report/report_view.html) |
+| 세션 상세 UI (마크업+CSS) | [server/report/report_view.html](server/report/report_view.html) |
+| 세션 상세 JS 모듈 (탭별 15개) | [server/report/static/webreport/](server/report/static/webreport/) |
 | 감사 로그 라우트 | [server/admin_routes.py](server/admin_routes.py) |
 | 감사 로그 대시보드 UI | [server/report/admin_dashboard.html](server/report/admin_dashboard.html) |
 | 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |
