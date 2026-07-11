@@ -1,0 +1,232 @@
+"""주석·즐겨찾기·페이지·vendor·히스토리·(폐지)인증 스텁·디버그 라우트
+(Phase 4 분리 — 구 report_routes.py)."""
+import logging
+import sqlite3
+
+from flask import abort, jsonify, make_response, request, send_file
+
+from auth_identity import current_user as _current_user
+from config import (
+    REPORT_ANALYSIS_INDEX_HTML,
+    REPORT_VIEW_HTML,
+    STDINFO_DB_PATH,
+)
+from database import report_db
+from report.report_extension import report_bp
+from report.security import (
+    _issue_csrf_cookie,
+    _normalize_user_id,
+    _require_csrf,
+    _validate_session_id,
+)
+from report.static_pages import send_html_gzip
+
+_log = logging.getLogger(__name__)
+
+
+# ── annotations ───────────────────────────────────────────────────────────────
+
+@report_bp.post("/annotation")
+def create_annotation():
+    _require_csrf()
+    body = request.get_json(force=True, silent=True) or {}
+    session_id = body.get("session_id", "")
+    _validate_session_id(session_id)
+    analysis_key = body.get("analysis_key")
+    target = (body.get("target") or "").strip()
+    content = (body.get("content") or "").strip()
+    if not target or not content:
+        abort(400, "target and content are required")
+    ann_id = report_db.create_annotation(session_id, analysis_key, target, content)
+    return jsonify({"id": ann_id, "session_id": session_id, "target": target}), 201
+
+
+@report_bp.get("/annotation/<session_id>")
+def list_annotations(session_id):
+    _validate_session_id(session_id)
+    return jsonify(report_db.get_annotations(session_id))
+
+
+@report_bp.patch("/annotation/<int:aid>")
+def update_annotation(aid):
+    _require_csrf()
+    body = request.get_json(force=True, silent=True) or {}
+    content = (body.get("content") or "").strip()
+    if not content:
+        abort(400, "content is required")
+    report_db.update_annotation(aid, content)
+    return jsonify({"id": aid, "updated": True})
+
+
+@report_bp.delete("/annotation/<int:aid>")
+def delete_annotation(aid):
+    _require_csrf()
+    report_db.delete_annotation(aid)
+    return jsonify({"id": aid, "deleted": True})
+
+
+# ── Report Analysis index / view pages ───────────────────────────────────────
+# gzip+ETag 캐시 서빙 (report_view.html 202KB 비압축 전송 제거) — static_pages 참조.
+
+@report_bp.get("/")
+def index_page():
+    return _issue_csrf_cookie(send_html_gzip(REPORT_ANALYSIS_INDEX_HTML))
+
+
+@report_bp.get("/view/<session_id>")
+def view_page(session_id):
+    _validate_session_id(session_id)
+    return _issue_csrf_cookie(send_html_gzip(REPORT_VIEW_HTML))
+
+
+# ── Vendored 정적 자산 (Tabulator 등) ─────────────────────────────────────────
+# report_view.html 이 send_file 로 통째 전송되고 정적 폴더 라우트가 없으므로, vendoring 한
+# JS/CSS 를 화이트리스트로만 서빙(경로 traversal 차단). CDN/인터넷 불필요(폐쇄망 대응).
+_VENDOR_DIR = REPORT_VIEW_HTML.parent / "vendor"
+_VENDOR_MIME = {
+    "tabulator.min.js": "application/javascript",
+    "tabulator.min.css": "text/css",
+    "plotly.min.js": "application/javascript",
+    "exceljs.min.js": "application/javascript",
+    "pretendard/PretendardVariable.woff2": "font/woff2",
+}
+
+
+@report_bp.get("/vendor/<path:filename>")
+def vendor_asset(filename):
+    mime = _VENDOR_MIME.get(filename)
+    if not mime:
+        abort(404)
+    # 사전압축 .gz 가 있으면 그대로 서빙 (plotly.min.js 4.8MB→1.4MB). 요청마다 압축하지
+    # 않도록 파일은 배포 시 미리 만들어 둔다 (vendor 파일 교체 시 .gz 도 함께 재생성할 것).
+    path = _VENDOR_DIR / filename
+    gz_path = _VENDOR_DIR / (filename + ".gz")
+    if gz_path.exists() and "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        resp = make_response(send_file(gz_path, mimetype=mime))
+        resp.headers["Content-Encoding"] = "gzip"
+    else:
+        resp = make_response(send_file(path, mimetype=mime))
+    resp.headers["Vary"] = "Accept-Encoding"
+    # vendor 는 수동 교체 전까지 불변 — 브라우저 캐시로 재방문 시 재다운로드/재검증 제거
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+@report_bp.get("/api/history")
+def history():
+    filters = {
+        "product_type": request.args.get("product_type") or None,
+        "process": request.args.get("process") or None,
+        "product": request.args.get("product") or None,
+        "revision": request.args.get("revision") or None,
+        "lot_id": request.args.get("lot_id") or None,
+        "source": request.args.get("source") or None,
+    }
+    limit_raw = request.args.get("limit")
+    offset_raw = request.args.get("offset")
+    if limit_raw is None and offset_raw is None:
+        # 하위호환: 페이지네이션 파라미터가 없으면 기존 리스트 응답 (limit=500 고정)
+        return jsonify(report_db.get_history(**filters))
+    try:
+        limit = max(1, min(int(limit_raw or 500), 1000))
+    except (TypeError, ValueError):
+        limit = 500
+    try:
+        offset = max(0, int(offset_raw or 0))
+    except (TypeError, ValueError):
+        offset = 0
+    rows = report_db.get_history(**filters, limit=limit, offset=offset)
+    total = report_db.count_history(**filters)
+    return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset})
+
+
+# ── 사용자 인증 [폐지됨] ──────────────────────────────────────────────────────
+# ID/PW 로그인은 폐지되고 신원은 auth_identity provider 체인(기본 HoneyUser UA)으로
+# 매 요청 자동 식별한다. 아래 라우트는 구 프런트 호환용으로 남겨두되 비밀번호를
+# 확인하지 않는다. report_user 테이블은 보존(미사용).
+
+@report_bp.post("/api/auth/login")
+def auth_login():
+    """[폐지] 비밀번호 확인 없이 현재 UA 사용자만 돌려준다(호환용)."""
+    _require_csrf()
+    return jsonify({"ok": True, "user_id": _current_user(), "is_default_password": False})
+
+
+@report_bp.post("/api/auth/change_password")
+def auth_change_password():
+    """[폐지] 비밀번호 로그인 폐지."""
+    _require_csrf()
+    return jsonify({"error": "비밀번호 로그인은 폐지되었습니다 (PC 계정으로 자동 식별)."}), 410
+
+
+@report_bp.post("/api/auth/logout")
+def auth_logout():
+    _require_csrf()
+    return jsonify({"ok": True})
+
+
+@report_bp.get("/api/auth/me")
+def auth_me():
+    return jsonify({"user_id": _current_user()})
+
+
+# ── user favorites (검색결과 즐겨찾기, 로그인 계정 별) ────────────────────────
+
+@report_bp.get("/api/favorites")
+def get_favorites():
+    uid = _current_user()
+    if not uid:
+        return jsonify({"user_id": None, "favorites": []})
+    return jsonify({"user_id": uid, "favorites": report_db.get_user_favorites(uid)})
+
+
+@report_bp.post("/api/favorites")
+def set_favorite():
+    _require_csrf()
+    uid = _current_user()
+    if not uid:
+        return jsonify({"error": "Honey 를 통해 접속해야 즐겨찾기를 사용할 수 있습니다."}), 401
+    body = request.get_json(force=True, silent=True) or {}
+    session_id = body.get("session_id", "")
+    _validate_session_id(session_id)
+    if not report_db.get_session(session_id):
+        abort(404, "session not found")
+    favorite = bool(body.get("favorite"))
+    report_db.set_user_favorite(uid, session_id, favorite)
+    return jsonify({"ok": True, "user_id": uid, "session_id": session_id,
+                    "favorite": favorite})
+
+
+@report_bp.get("/api/part_ids")
+def part_ids():
+    """stdinfo DB 의 products.part_id 전체 목록. 업로드 다이얼로그 Product 검색용.
+
+    DB 없음/조회 실패는 best-effort 로 빈 리스트 반환(500 안 냄). 서버 로그에만 경고.
+    """
+    ids = []
+    try:
+        con = sqlite3.connect(f"file:{STDINFO_DB_PATH}?mode=ro", uri=True)
+        try:
+            rows = con.execute("SELECT part_id FROM products ORDER BY part_id").fetchall()
+        finally:
+            con.close()
+        ids = [r[0] for r in rows if r[0]]
+    except Exception as exc:  # noqa: BLE001
+        _log.warning("part_ids 조회 실패 (%s): %s", STDINFO_DB_PATH, exc)
+    return jsonify({"part_ids": ids})
+
+
+# ── debug helpers ─────────────────────────────────────────────────────────────
+
+@report_bp.get("/_threads")
+def debug_threads():
+    """모든 스레드의 stack trace 덤프. hang 진단용."""
+    import sys, threading, traceback
+    out = []
+    tid_to_name = {t.ident: t.name for t in threading.enumerate()}
+    for tid, frame in sys._current_frames().items():
+        name = tid_to_name.get(tid, "?")
+        out.append(f"=== Thread {tid} ({name}) ===")
+        out.append("".join(traceback.format_stack(frame)))
+    from flask import Response
+    return Response("\n".join(out), mimetype="text/plain; charset=utf-8")

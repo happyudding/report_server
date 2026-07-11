@@ -1,0 +1,443 @@
+"""web_report 프록시 라우트 (Phase 4 분리 — 구 report_routes.py).
+
+/session/<sid>/web_report/* — raw_data 조회/편집, distribution/scatter,
+trim_analysis/trim_chart/overrides, commonality, rawdata export/replace,
+issue_table etc/comments, summary engr. URL·응답 형태는 분리 전과 동일하다.
+"""
+import gzip
+import logging
+from pathlib import Path
+
+from flask import Response, abort, jsonify, request
+
+from config import REPORT_UPLOAD_DIR
+from database import report_db
+from report.report_extension import report_bp
+from report.security import (
+    _client_meta,
+    _editor_guard,
+    _require_csrf,
+    _require_web_report_session,
+)
+from web_report import service as web_report_service
+from web_report import response_cache as web_report_response_cache
+from web_report import rawedit as web_report_rawedit
+
+_log = logging.getLogger(__name__)
+
+_MAX_WEBREPORT_SOURCE_BYTES = 512 * 1024 * 1024
+
+
+@report_bp.get("/session/<session_id>/web_report/raw_data/columns")
+def web_report_raw_data_columns(session_id):
+    """Raw Data 탭 컬럼 선택 UI용: item 메타 + source 목록 + 전체 die 수."""
+    _require_web_report_session(session_id)
+    try:
+        result = web_report_service.get_raw_data_columns(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report raw_data columns failed for session %s", session_id)
+        abort(500, "raw_data columns failed")
+    return jsonify(result)
+
+
+@report_bp.get("/session/<session_id>/web_report/raw_data")
+def web_report_raw_data(session_id):
+    """Raw Data 탭 lazy-load 조회: columns(콤마구분) + search/bin/source 필터."""
+    _require_web_report_session(session_id)
+    columns = [c for c in (request.args.get("columns") or "").split(",") if c]
+    search = request.args.get("search") or ""
+    bin_filter = request.args.get("bin") or ""
+    source_filter = request.args.get("source") or ""
+    try:
+        result = web_report_service.query_raw_data(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            columns=columns, search=search, bin_filter=bin_filter, source_filter=source_filter)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report raw_data query failed for session %s", session_id)
+        abort(500, "raw_data query failed")
+    return jsonify(result)
+
+
+@report_bp.get("/session/<session_id>/web_report/distribution")
+def web_report_distribution(session_id):
+    """Distribution ECDF 전량(다운샘플 없음)을 컴팩트 columnar JSON 으로 지연 로드.
+
+    /full 에서 제외된 sheets["Distribution"] 의 대체 — 수십 MB 라 gzip(Accept-Encoding 시)과
+    ETag(analysis_key+content_hash) 조건부 응답을 지원한다.
+    """
+    session = _require_web_report_session(session_id)
+    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}"'
+    headers = {"Vary": "Accept-Encoding", "ETag": etag}
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers=headers)
+    try:
+        # 계산+직렬화+gzip 결과가 service 쪽에서 (analysis_key, content_hash) 키로 캐시됨 —
+        # 세션당 1회만 CPU 를 쓰고 이후 요청은 bytes 반환뿐이라 동시 사용자에도 안전.
+        body = web_report_service.get_distribution_gzip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report distribution failed for session %s", session_id)
+        abort(500, "distribution failed")
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+    return Response(body, mimetype="application/json", headers=headers)
+
+
+@report_bp.get("/session/<session_id>/web_report/scatter/<path:subject>")
+def web_report_scatter(session_id, subject):
+    """Item_detail 용: 항목(subject)의 소스별 전체 측정값+hover metadata(다운샘플 없음) 지연 로드.
+
+    values 배열에 serial/xpos/ypos 가 붙어 페이로드가 커질 수 있어(다운샘플은 여전히 금지),
+    /distribution 라우트와 동일하게 gzip(Accept-Encoding 시)을 지원한다.
+    계산+직렬화+gzip 결과는 response_cache 가 (analysis_key, content_hash, subject) 키로
+    캐시 — 같은 항목 반복 클릭 시 bytes 반환뿐이다."""
+    session = _require_web_report_session(session_id)
+    subject = (subject or "").strip()
+    if not subject or len(subject) > 200:
+        abort(400, "invalid subject")
+    try:
+        body = web_report_response_cache.get_scatter_gzip(
+            session_id, subject, session=session,
+            report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report item or session data not found")
+    except Exception:
+        _log.exception("web_report scatter failed for session %s item %s", session_id, subject)
+        abort(500, "scatter failed")
+    headers = {"Vary": "Accept-Encoding"}
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+    return Response(body, mimetype="application/json", headers=headers)
+
+
+@report_bp.get("/session/<session_id>/web_report/trim_analysis")
+def web_report_trim_analysis(session_id):
+    """Trim Analysis 탭 payload(항목 매칭 + 그룹 통계/shift) 지연 로드.
+
+    /full 에서 제외된 sheets["Trim Analysis"] 의 대체 — distribution 라우트와 동일하게
+    gzip 과 ETag 조건부 응답을 지원한다. ETag 에 편집 rev 토큰이 포함돼
+    trim_overrides 편집 직후 stale 304 가 나가지 않는다. ?source= 로 소스 선택("" = 첫 소스).
+    """
+    session = _require_web_report_session(session_id)
+    source = (request.args.get("source") or "").strip()
+    if len(source) > 200:
+        abort(400, "invalid source")
+    try:
+        body, mdigest = web_report_service.get_trim_analysis_gzip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            source=source)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report trim_analysis failed for session %s", session_id)
+        abort(500, "trim_analysis failed")
+    etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
+            f'-{mdigest[:16]}"')
+    headers = {"Vary": "Accept-Encoding", "ETag": etag}
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers=headers)
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+    return Response(body, mimetype="application/json", headers=headers)
+
+
+@report_bp.get("/session/<session_id>/web_report/trim_chart")
+def web_report_trim_chart(session_id):
+    """Trim 그룹 1개의 chip-to-chip 차트 데이터(전 die, 다운샘플 없음) 지연 로드.
+
+    ?source=&group= 쿼리 사용 — 그룹 id(stem)에 특수문자가 올 수 있어 path 대신 query.
+    프런트가 그룹 단위로 병렬(동시 8) fetch 하고 클라 캐시로 재조회를 흡수한다.
+    """
+    _require_web_report_session(session_id)
+    source = (request.args.get("source") or "").strip()
+    group = (request.args.get("group") or "").strip()
+    if not group or len(group) > 200 or len(source) > 200:
+        abort(400, "invalid group or source")
+    try:
+        body = web_report_service.get_trim_chart_gzip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            source=source, group_id=group)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report trim group or session data not found")
+    except Exception:
+        _log.exception("web_report trim_chart failed for session %s group %s",
+                       session_id, group)
+        abort(500, "trim_chart failed")
+    headers = {"Vary": "Accept-Encoding"}
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+    return Response(body, mimetype="application/json", headers=headers)
+
+
+@report_bp.post("/session/<session_id>/web_report/trim/overrides")
+def web_report_trim_overrides(session_id):
+    """Trim Analysis 드래그앤드랍 수동 재배치 저장 — 세션 편집 DB 갱신 (parquet 불변).
+
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    ops = body.get("ops")
+    if not isinstance(ops, list) or not ops:
+        return jsonify({"error": "ops가 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_trim_overrides(
+            session_id, ops, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report trim overrides failed for session %s", session_id)
+        abort(500, "trim overrides failed")
+    return jsonify(result)
+
+
+@report_bp.get("/session/<session_id>/web_report/commonality/chips")
+def web_report_commonality_chips(session_id):
+    """Commonality chip 검색: serial/xpos/ypos 개별 칸(AND) 또는 q(OR, dut 포함) 후보 목록 (읽기 전용)."""
+    _require_web_report_session(session_id)
+    q = request.args.get("q") or ""
+    serial = request.args.get("serial") or ""
+    xpos = request.args.get("xpos") or ""
+    ypos = request.args.get("ypos") or ""
+    try:
+        limit = min(max(int(request.args.get("limit") or 300), 1), 2000)
+    except (TypeError, ValueError):
+        limit = 300
+    try:
+        result = web_report_service.commonality_chips(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            q=q, limit=limit, serial=serial, xpos=xpos, ypos=ypos)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report commonality chips failed for session %s", session_id)
+        abort(500, "commonality chips failed")
+    return jsonify(result)
+
+
+@report_bp.get("/session/<session_id>/web_report/commonality/chip")
+def web_report_commonality_chip(session_id):
+    """선택 chip 의 항목별 값 + 누적%(ECDF 위치) + wafer 좌표 (읽기 전용)."""
+    _require_web_report_session(session_id)
+    try:
+        result = web_report_service.commonality_chip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            serial=request.args.get("serial") or "", xpos=request.args.get("xpos") or "",
+            ypos=request.args.get("ypos") or "", source=request.args.get("source") or "")
+    except (FileNotFoundError, KeyError):
+        abort(404, "chip or session data not found")
+    except Exception:
+        _log.exception("web_report commonality chip failed for session %s", session_id)
+        abort(500, "commonality chip failed")
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/raw_data/edit")
+def web_report_raw_data_edit(session_id):
+    """Raw Data 셀 편집 저장 — 저장된 parquet 원본을 직접 덮어쓴다 (버전관리/undo 없음).
+
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    edits = body.get("edits") or []
+    if not isinstance(edits, list) or not edits:
+        return jsonify({"error": "edits가 비어 있습니다."}), 400
+    if len(edits) > 500:
+        return jsonify({"error": f"편집 개수가 너무 많습니다 ({len(edits)} > 500)"}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.edit_raw_data(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            edits=edits, client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report raw_data edit failed for session %s", session_id)
+        abort(500, "raw_data edit failed")
+    return jsonify(result)
+
+
+def _read_webreport_source_files():
+    """멀티파트 webreport_0..N parquet 필드를 list[bytes] 로 읽는다 (upload_webreport 패턴)."""
+    out = []
+    idx = 0
+    while True:
+        f = request.files.get(f"webreport_{idx}")
+        if f is None:
+            break
+        data = f.read()
+        if not data:
+            abort(400, f"webreport_{idx} is empty")
+        if len(data) > _MAX_WEBREPORT_SOURCE_BYTES:
+            abort(413, f"webreport_{idx} payload is too large")
+        out.append(data)
+        idx += 1
+    if not out:
+        abort(400, "missing webreport parquet files")
+    return out
+
+
+@report_bp.get("/session/<session_id>/web_report/rawdata_export")
+def web_report_rawdata_export(session_id):
+    """Honey 클라 Excel 편집용: 세션의 모든 source parquet + manifest 를 zip 으로 내려준다.
+
+    Honey(브라우저 아님)가 GET 으로 받아 Excel 로 연다 — 조회이므로 CSRF 불필요."""
+    _require_web_report_session(session_id)
+    try:
+        blob = web_report_rawedit.export_sources_zip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report rawdata export failed for session %s", session_id)
+        abort(500, "rawdata export failed")
+    return Response(
+        blob, mimetype="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="rawdata_{session_id}.zip"'})
+
+
+@report_bp.post("/session/<session_id>/web_report/rawdata_replace")
+def web_report_rawdata_replace(session_id):
+    """Honey 가 Excel 편집 후 재인코딩한 parquet 전체를 받아 세션 원본을 덮어쓴다.
+
+    Honey 클라(브라우저 아님)가 호출하므로 CSRF 대신 커스텀 헤더 X-Honey-Agent 를 요구한다
+    (커스텀 헤더는 브라우저 폼 CSRF 로 위조 불가 — preflight 가 필요). 무조건 덮어쓰기."""
+    if request.headers.get("X-Honey-Agent") != "1":
+        abort(403, "X-Honey-Agent header required")
+    _require_web_report_session(session_id)
+    sources = _read_webreport_source_files()
+    ip, ua = _client_meta()
+    try:
+        result = web_report_rawedit.replace_sources(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            sources_bytes=sources, client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report rawdata replace failed for session %s", session_id)
+        abort(500, "rawdata replace failed")
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/issue_table/etc")
+def web_report_issue_table_etc(session_id):
+    """Issue Table ETC 섹션 item 추가/삭제 — 세션 편집 DB 갱신 (Bin/TNO/Distribution
+    은 저장하지 않고 조회 시마다 자동으로 다시 채워진다).
+
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    action = (body.get("action") or "add").strip()
+    item = (body.get("item") or "").strip()
+    if not item:
+        return jsonify({"error": "item이 비어 있습니다."}), 400
+    if action not in ("add", "remove"):
+        return jsonify({"error": f"알 수 없는 action: {action}"}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_issue_etc_items(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            add=item if action == "add" else "", remove=item if action == "remove" else "",
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report issue_table etc failed for session %s", session_id)
+        abort(500, "issue_table etc failed")
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/issue_table/comments")
+def web_report_issue_table_comments(session_id):
+    """Issue Table PTE/개발 comment 저장 — 세션 편집 DB 갱신 (parquet 불변).
+
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    comments = body.get("comments")
+    if not isinstance(comments, list) or not comments:
+        return jsonify({"error": "comments가 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_issue_comments(
+            session_id, comments, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report issue_table comments failed for session %s", session_id)
+        abort(500, "issue_table comments failed")
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/summary/engr")
+def web_report_summary_engr(session_id):
+    """Summary 탭 Engr Comment(Yield/CPK/ETC 3칸) 저장 — 세션 편집 DB 갱신 (parquet 불변).
+
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    values = body.get("values")
+    if not isinstance(values, dict) or not values:
+        return jsonify({"error": "values가 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_summary_engr(
+            session_id, values, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report summary engr failed for session %s", session_id)
+        abort(500, "summary engr failed")
+    return jsonify(result)
