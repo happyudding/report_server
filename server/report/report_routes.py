@@ -6,7 +6,6 @@ import secrets
 import sqlite3
 import sys
 from pathlib import Path
-from urllib.parse import unquote
 
 from flask import Response, abort, jsonify, make_response, request, send_file
 from flask import session as flask_session
@@ -96,32 +95,9 @@ def _password_ok(session, password):
     return (password or "").strip() == stored
 
 
-_HONEY_UA_RE = re.compile(r"HoneyUser/(\S+)")
-
-
-def _current_user():
-    """현재 요청의 PC 사용자 ID — Honey 내장 브라우저가 User-Agent 에 넣은
-    `HoneyUser/<percent-encoded-계정>` 토큰을 파싱한다(검색결과 페이지 JS 와 동일 규칙:
-    decode → trim → lower). Honey 밖 일반 브라우저는 토큰이 없어 "" 반환 → 읽기전용.
-    (구 ID/PW 로그인 폐지 — flask_session["user_id"] 대신 이 값을 신원으로 쓴다.)"""
-    m = _HONEY_UA_RE.search(str(request.user_agent) or "")
-    if not m:
-        return ""
-    try:
-        return unquote(m.group(1)).strip().lower()
-    except Exception:
-        return ""
-
-
-def _is_uploader(session, uid):
-    """uid 가 세션 업로더인지. uploaded_by 는 'DOMAIN\\user' 또는 'user' 형식이라
-    뒷부분만 비교. 업로더 기록이 없는 legacy 세션은 신원만 있으면 True."""
-    if not uid:
-        return False
-    ub = str((session or {}).get("uploaded_by") or "")
-    if not ub:
-        return True
-    return ub.split("\\")[-1].strip().lower() == uid
+# 신원 확인은 auth_identity provider 체인으로 위임 (SSO-ready — AUTH_SSO_HEADER
+# env 설정 시 역프록시 신뢰 헤더 우선, 기본은 현행 HoneyUser UA 토큰).
+from auth_identity import current_user as _current_user, is_uploader as _is_uploader
 
 
 def _uploader_guard(session):
