@@ -225,7 +225,6 @@ def session_full(session_id):
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
-    _record_web_visit(session)
     akey = session.get("analysis_key")
     objects = {}
     if akey:
@@ -847,6 +846,7 @@ def session_my_access(session_id):
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
+    _record_web_visit(session)
     uid = _current_user()
     is_uploader = _is_uploader(session, uid) if uid else False
     can_edit = is_uploader or (bool(uid) and report_db.is_session_editor(session_id, uid))
