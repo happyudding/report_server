@@ -106,14 +106,14 @@ pre.logbox {
 .chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
 .chart-legend .key { display: inline-flex; align-items: center; gap: 6px; }
 .chart-legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-#chartTip {
+#chartTip, #mChartTip {
   position: absolute; pointer-events: none; display: none; z-index: 5;
   background: var(--surface-1); border: 1px solid var(--grid); border-radius: 8px;
   box-shadow: 0 2px 10px rgba(0,0,0,.35); padding: 8px 12px; font-size: 12px; color: var(--ink-1);
 }
-#chartTip .t-date { font-weight: 600; margin-bottom: 4px; }
-#chartTip .t-row { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
-#chartTip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+#chartTip .t-date, #mChartTip .t-date { font-weight: 600; margin-bottom: 4px; }
+#chartTip .t-row, #mChartTip .t-row { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+#chartTip .sw, #mChartTip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer; margin-top: 8px; }
 </style>
 </head>
@@ -136,6 +136,35 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
     <div class="tile"><div class="lbl">로딩 중…</div></div>
   </div>
   <div style="height:16px"></div>
+  <div class="tiles" id="metricsTiles">
+    <div class="tile"><div class="lbl">리소스 계측 로딩 중…</div></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>리소스 시계열 <span class="hint">10초 샘플 · 24시간 보관 · 이 탭이 보일 때만 10초 갱신 (서버 재시작 시 초기화)</span>
+      <select id="metricsWindow" class="sel" style="float:right">
+        <option value="300">최근 5분</option>
+        <option value="3600" selected>최근 1시간</option>
+        <option value="86400">최근 24시간</option>
+      </select></h2>
+    <div class="chart-box">
+      <div class="chart-legend">
+        <span class="key"><span class="sw" style="background:var(--accent)"></span>CPU 평균</span>
+        <span class="key"><span class="sw" style="background:var(--st-warn)"></span>CPU 최대(구간 피크)</span>
+      </div>
+      <svg id="cpuChart" width="100%" height="150" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
+      <div class="chart-legend" style="margin-top:10px">
+        <span class="key"><span class="sw" style="background:var(--s-upload)"></span>시스템 RAM 사용</span>
+        <span class="key"><span class="sw" style="background:var(--s-edit)"></span>서버 프로세스 RSS</span>
+      </div>
+      <svg id="ramChart" width="100%" height="150" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
+      <div class="chart-legend" style="margin-top:10px">
+        <span class="key"><span class="sw" style="background:var(--s-delete)"></span>동시 처리 요청 (구간 피크)</span>
+      </div>
+      <svg id="inflightChart" width="100%" height="110" viewBox="0 0 900 110" preserveAspectRatio="none"></svg>
+      <div id="mChartTip"></div>
+    </div>
+  </div>
   <div class="row">
     <div class="card">
       <h2>스토리지 <span class="hint">디렉토리 크기는 60초 캐시</span>
@@ -408,6 +437,7 @@ async function loadHealth() {
     $("healthTiles").innerHTML = `<div class="tile"><div class="lbl">현황 조회 실패</div><div class="det">${esc(e)}</div></div>`;
   }
   loadStorage(false);
+  loadMetrics();
 }
 async function loadStorage(refresh) {
   const tb = $("storageTable").tBodies[0];
@@ -439,6 +469,105 @@ $("btnS3Check").onclick = async () => {
       $("s3Msg").innerHTML = `<span class="badge error">오류</span> ${esc(r.detail)}`;
   } catch (e) { $("s3Msg").textContent = "확인 실패: " + e; }
 };
+
+// ── 현황: 리소스 시계열 + 피크 (api/metrics/history) ────────────────────────
+function fmtClock(unix) {
+  const d = new Date(unix * 1000);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function renderMetricsChart(svg, ts, series, fmtV, yMaxFixed) {
+  // series: [{arr, color, label, area}] — area 시리즈는 면적 채움, 나머지는 라인만
+  const W = 900, H = +svg.getAttribute("height"), padL = 56, padR = 10, padT = 8, padB = 20;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = ts.length;
+  if (n < 2) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#6f737e" font-size="13">데이터 수집 중… (10초 간격 샘플)</text>`;
+    return;
+  }
+  const rawMax = Math.max(...series.map(s => Math.max(...s.arr)), 1e-9);
+  const yMax = yMaxFixed || niceMax(rawMax);
+  const x = i => padL + plotW * i / (n - 1);
+  const y = v => padT + plotH * (1 - Math.min(v, yMax) / yMax);
+  let parts = [];
+  const ticks = 3;
+  for (let i = 0; i <= ticks; i++) {
+    const v = yMax * i / ticks, yy = y(v);
+    parts.push(`<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="#2b2e36" stroke-width="1"/>`);
+    parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#6f737e"
+                 font-variant-numeric="tabular-nums">${fmtV(v)}</text>`);
+  }
+  const labelEvery = Math.max(1, Math.floor(n / 6));
+  for (let i = 0; i < n; i += labelEvery)
+    parts.push(`<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#6f737e">${fmtClock(ts[i])}</text>`);
+  for (const s of series) {
+    const pts = s.arr.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+    if (s.area)
+      parts.push(`<polygon points="${x(0).toFixed(1)},${padT + plotH} ${pts} ${x(n-1).toFixed(1)},${padT + plotH}"
+                   fill="${s.color}" opacity="0.18"/>`);
+    parts.push(`<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="${s.area ? 1.5 : 1.2}"/>`);
+  }
+  parts.push(`<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="#40444e" stroke-width="1"/>`);
+  parts.push(`<rect class="m-hit" x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="transparent"/>`);
+  svg.innerHTML = parts.join("");
+
+  const tip = $("mChartTip");
+  const hit = svg.querySelector(".m-hit");
+  hit.addEventListener("mousemove", ev => {
+    const svgBox = svg.getBoundingClientRect();
+    const px = (ev.clientX - svgBox.left) / svgBox.width * W - padL;
+    const i = Math.max(0, Math.min(n - 1, Math.round(px / (plotW / (n - 1)))));
+    tip.innerHTML = `<div class="t-date">${fmtClock(ts[i])}</div>` + series.map(s =>
+      `<div class="t-row"><span class="sw" style="background:${s.color}"></span>${s.label} ${fmtV(s.arr[i])}</div>`).join("");
+    const box = svg.parentElement.getBoundingClientRect();
+    tip.style.display = "block";
+    tip.style.left = Math.min(ev.clientX - box.left + 14, box.width - 170) + "px";
+    tip.style.top = (ev.clientY - box.top - 10) + "px";
+  });
+  hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+}
+async function loadMetrics() {
+  try {
+    const m = await getJSON("api/metrics/history?window=" + $("metricsWindow").value);
+    const cur = m.current, pk = m.peaks, thr = m.threads;
+    const inflPct = Math.min(cur.inflight / thr * 100, 100);
+    const pct = v => v.toFixed(0) + "%";
+    $("metricsTiles").innerHTML = `
+      <div class="tile"><div class="lbl">동시 처리 요청</div>
+        <div class="val">${cur.inflight} <span style="font-size:14px;color:var(--ink-3)">/ ${thr} 스레드</span></div>
+        <div class="det">피크 5분 ${pk.w300.inflight} · 1시간 ${pk.w3600.inflight} · 24시간 ${pk.w86400.inflight} · 기동후 ${pk.boot.inflight.v}</div>
+        <div class="meter"><div class="${meterCls(inflPct)}" style="width:${inflPct}%"></div></div></div>
+      <div class="tile"><div class="lbl">CPU 피크 (최근 5분)</div>
+        <div class="val">${pct(pk.w300.cpu)}</div>
+        <div class="det">1시간 ${pct(pk.w3600.cpu)} · 24시간 ${pct(pk.w86400.cpu)} · 기동후 ${pct(pk.boot.cpu.v)} (${fmtDate(pk.boot.cpu.ts)})</div>
+        <div class="meter"><div class="${meterCls(pk.w300.cpu)}" style="width:${Math.min(pk.w300.cpu,100)}%"></div></div></div>
+      <div class="tile"><div class="lbl">RAM 피크 (최근 5분)</div>
+        <div class="val" style="font-size:20px">${fmtBytes(pk.w300.mem_used)}</div>
+        <div class="det">24시간 ${fmtBytes(pk.w86400.mem_used)} · 기동후 ${fmtBytes(pk.boot.mem.v)} (${fmtDate(pk.boot.mem.ts)})</div></div>
+      <div class="tile"><div class="lbl">프로세스 RSS 피크 (최근 5분)</div>
+        <div class="val" style="font-size:20px">${fmtBytes(pk.w300.rss)}</div>
+        <div class="det">24시간 ${fmtBytes(pk.w86400.rss)} · 기동후 ${fmtBytes(pk.boot.rss.v)} (${fmtDate(pk.boot.rss.ts)})</div></div>`;
+    const se = m.series;
+    renderMetricsChart($("cpuChart"), se.ts, [
+      { arr: se.cpu_avg, color: "var(--accent)", label: "CPU 평균", area: true },
+      { arr: se.cpu_max, color: "var(--st-warn)", label: "CPU 최대" },
+    ], pct, 100);
+    renderMetricsChart($("ramChart"), se.ts, [
+      { arr: se.mem_used_max, color: "var(--s-upload)", label: "시스템 RAM", area: true },
+      { arr: se.rss_max, color: "var(--s-edit)", label: "프로세스 RSS" },
+    ], fmtBytes, null);
+    renderMetricsChart($("inflightChart"), se.ts, [
+      { arr: se.inflight_max, color: "var(--s-delete)", label: "동시 요청", area: true },
+    ], v => String(Math.round(v)), Math.max(thr, niceMax(Math.max(...se.inflight_max, 0))));
+  } catch (e) {
+    $("metricsTiles").innerHTML = `<div class="tile"><div class="lbl">리소스 계측 조회 실패</div><div class="det">${esc(e)}</div></div>`;
+  }
+}
+$("metricsWindow").onchange = () => loadMetrics();
+// 현황 탭이 화면에 보일 때만 10초 자동 갱신 — 그 외엔 서버 요청 없음
+setInterval(() => {
+  if (document.visibilityState === "visible" && $("pHealth").classList.contains("active"))
+    loadMetrics();
+}, 10000);
 
 // ── 통계: 스택 막대 차트 ────────────────────────────────────────────────────
 const SERIES = [

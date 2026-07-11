@@ -26,5 +26,7 @@ def register_admin_panel(app):
         return False
     from admin_panel.routes import admin_panel_bp
     app.register_blueprint(admin_panel_bp, url_prefix=f"/pe/admin-{secret}")
+    from admin_panel import metrics
+    metrics.init_app(app)  # app 전역 in-flight 훅 + 리소스 샘플러 (패널과 운명 공유)
     _log.info("[admin-panel] registered at /pe/admin-%s/", secret)
     return True

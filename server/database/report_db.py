@@ -168,6 +168,27 @@ CREATE TABLE IF NOT EXISTS report_user (
     password_hash TEXT NOT NULL,     -- werkzeug generate_password_hash 결과
     created_at    INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS report_session_editor (
+    session_id  TEXT NOT NULL,       -- 편집 권한을 위임한 세션
+    editor_user TEXT NOT NULL,       -- 권한을 받은 PC 계정 (소문자 정규화, _current_user 규칙)
+    granted_by  TEXT,                -- 부여한 업로더 계정
+    granted_at  INTEGER NOT NULL,
+    PRIMARY KEY (session_id, editor_user)
+);
+
+CREATE TABLE IF NOT EXISTS report_web_visitor (
+    user_id    TEXT PRIMARY KEY,     -- web_report 를 연 적 있는 Honey 사용자 (편집자 후보 풀)
+    first_seen INTEGER NOT NULL,
+    last_seen  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS report_user_important (
+    user_id    TEXT NOT NULL,        -- 사용자별 개인 중요표시 (전역 is_important 와 별개)
+    session_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, session_id)
+);
 """
 
 _SUMMARY_COLUMNS = (
@@ -281,6 +302,35 @@ def _migrate(conn):
         for col in ("client_user", "client_host"):
             if col not in audit_cols:
                 conn.execute(f"ALTER TABLE report_audit_log ADD COLUMN {col} TEXT")
+
+    # 편집 권한 위임 / web_report 방문자 / 사용자별 개인 중요표시 (기존 DB 에도 생성)
+    if not _table_exists(conn, "report_session_editor"):
+        conn.execute("""
+            CREATE TABLE report_session_editor (
+                session_id  TEXT NOT NULL,
+                editor_user TEXT NOT NULL,
+                granted_by  TEXT,
+                granted_at  INTEGER NOT NULL,
+                PRIMARY KEY (session_id, editor_user)
+            )
+        """)
+    if not _table_exists(conn, "report_web_visitor"):
+        conn.execute("""
+            CREATE TABLE report_web_visitor (
+                user_id    TEXT PRIMARY KEY,
+                first_seen INTEGER NOT NULL,
+                last_seen  INTEGER NOT NULL
+            )
+        """)
+    if not _table_exists(conn, "report_user_important"):
+        conn.execute("""
+            CREATE TABLE report_user_important (
+                user_id    TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (user_id, session_id)
+            )
+        """)
 
     _migrate_product_type_names(conn)
 
@@ -460,7 +510,10 @@ def count_history(product_type=None, process=None, product=None, revision=None,
 # ── retention / cleanup ───────────────────────────────────────────────────────
 
 def get_expired_sessions(cutoff_epoch):
-    """created_at 이 cutoff 이전이고 중요표시(is_important)가 아닌 세션. 자동정리 대상."""
+    """created_at 이 cutoff 이전이고 중요표시가 없는 세션. 자동정리 대상.
+
+    전역 is_important(legacy) 또는 사용자별 개인 중요표시(report_user_important)가
+    하나라도 있으면 보존한다 — 누군가 중요하다고 표시한 데이터는 지우지 않는다."""
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT session_id, analysis_key, product_type, product, lot_id, "
@@ -468,6 +521,7 @@ def get_expired_sessions(cutoff_epoch):
             "FROM report_session "
             "WHERE created_at < ? AND COALESCE(is_important, 0) = 0 "
             "  AND status IN ('done', 'reused') "
+            "  AND session_id NOT IN (SELECT session_id FROM report_user_important) "
             "ORDER BY created_at ASC",
             (cutoff_epoch,),
         ).fetchall()
@@ -583,6 +637,113 @@ def set_user_favorite(user_id, session_id, favorite):
         else:
             conn.execute(
                 "DELETE FROM report_user_favorite WHERE user_id=? AND session_id=?",
+                (user_id, session_id),
+            )
+
+
+# ── 세션 편집 권한 위임 (업로더 → 특정 사용자) ────────────────────────────────
+
+def list_session_editors(session_id):
+    """세션에 편집 권한을 위임받은 사용자 목록. 최근 부여순."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT editor_user, granted_by, granted_at FROM report_session_editor "
+            "WHERE session_id=? ORDER BY granted_at DESC",
+            (session_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def is_session_editor(session_id, user_id):
+    """user_id 가 이 세션의 위임 편집자인지."""
+    if not user_id:
+        return False
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM report_session_editor WHERE session_id=? AND editor_user=?",
+            (session_id, user_id),
+        ).fetchone()
+    return row is not None
+
+
+def add_session_editor(session_id, editor_user, granted_by):
+    """편집 권한 부여. INSERT OR IGNORE 로 중복 부여에도 안전."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO report_session_editor "
+            "(session_id, editor_user, granted_by, granted_at) VALUES (?, ?, ?, ?)",
+            (session_id, editor_user, granted_by, _now()),
+        )
+
+
+def remove_session_editor(session_id, editor_user):
+    """편집 권한 회수."""
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM report_session_editor WHERE session_id=? AND editor_user=?",
+            (session_id, editor_user),
+        )
+
+
+# ── web_report 방문자 (편집자 후보 풀) ────────────────────────────────────────
+
+def record_web_visitor(user_id):
+    """web_report 세션을 연 Honey 사용자 기록 (UPSERT). first_seen 유지, last_seen 갱신."""
+    if not user_id:
+        return
+    now = _now()
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO report_web_visitor (user_id, first_seen, last_seen) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen",
+            (user_id, now, now),
+        )
+
+
+def search_web_visitors(q="", limit=50):
+    """방문자 검색. q 가 있으면 부분일치, 없으면 최근 방문순 전체. user_id 목록 반환."""
+    q = (q or "").strip().lower()
+    with get_conn() as conn:
+        if q:
+            rows = conn.execute(
+                "SELECT user_id FROM report_web_visitor WHERE user_id LIKE ? "
+                "ORDER BY last_seen DESC LIMIT ?",
+                (f"%{q}%", int(limit)),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT user_id FROM report_web_visitor ORDER BY last_seen DESC LIMIT ?",
+                (int(limit),),
+            ).fetchall()
+    return [r["user_id"] for r in rows]
+
+
+# ── 사용자별 개인 중요표시 (전역 is_important 와 별개) ────────────────────────
+
+def is_user_important(user_id, session_id):
+    """user_id 가 이 세션을 개인 중요표시했는지."""
+    if not user_id:
+        return False
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM report_user_important WHERE user_id=? AND session_id=?",
+            (user_id, session_id),
+        ).fetchone()
+    return row is not None
+
+
+def set_user_important(user_id, session_id, important):
+    """개인 중요표시 on/off. INSERT OR IGNORE 로 중복 토글에도 안전."""
+    with get_conn() as conn:
+        if important:
+            conn.execute(
+                "INSERT OR IGNORE INTO report_user_important "
+                "(user_id, session_id, created_at) VALUES (?, ?, ?)",
+                (user_id, session_id, _now()),
+            )
+        else:
+            conn.execute(
+                "DELETE FROM report_user_important WHERE user_id=? AND session_id=?",
                 (user_id, session_id),
             )
 

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from flask import Blueprint, Response, abort, jsonify, request
 
-from admin_panel import maintenance, sessions_admin, stats, sysinfo, users_admin
+from admin_panel import maintenance, metrics, sessions_admin, stats, sysinfo, users_admin
 from database import report_db
 from report.static_pages import send_html_gzip
 
@@ -85,6 +85,12 @@ def api_storage():
 @admin_panel_bp.get("/api/s3-status")
 def api_s3_status():
     return jsonify(sysinfo.s3_status())
+
+
+@admin_panel_bp.get("/api/metrics/history")
+def api_metrics_history():
+    window = min(max(int(request.args.get("window", 3600)), 60), 86400)
+    return jsonify(metrics.snapshot_history(window))
 
 
 # ── 통계 ─────────────────────────────────────────────────────────────────────

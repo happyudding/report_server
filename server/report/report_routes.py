@@ -113,19 +113,39 @@ def _current_user():
         return ""
 
 
-def _uploader_guard(session):
-    """세션 변경(편집/삭제/중요표시) 가드 — PC 사용자(HoneyUser) == 업로더.
+def _is_uploader(session, uid):
+    """uid 가 세션 업로더인지. uploaded_by 는 'DOMAIN\\user' 또는 'user' 형식이라
+    뒷부분만 비교. 업로더 기록이 없는 legacy 세션은 신원만 있으면 True."""
+    if not uid:
+        return False
+    ub = str((session or {}).get("uploaded_by") or "")
+    if not ub:
+        return True
+    return ub.split("\\")[-1].strip().lower() == uid
 
-    uploaded_by 는 Honey 가 보낸 'DOMAIN\\user' 또는 'user' 형식이라 뒷부분만 비교.
-    업로더 기록이 없는 legacy 세션은 신원만 있으면 허용.
+
+def _uploader_guard(session):
+    """세션 삭제·비공개·권한부여 가드 — PC 사용자(HoneyUser) == 업로더.
+
     Honey 밖(신원 없음)은 읽기전용(401). 통과하면 None, 거부면 (json, status)."""
     uid = _current_user()
     if not uid:
         return jsonify({"error": "Honey 를 통해 접속한 사용자만 수정/삭제할 수 있습니다 (읽기 전용)."}), 401
-    ub = str((session or {}).get("uploaded_by") or "")
-    if ub and ub.split("\\")[-1].strip().lower() != uid:
+    if not _is_uploader(session, uid):
         return jsonify({"error": "업로더만 수정/삭제할 수 있습니다."}), 403
     return None
+
+
+def _editor_guard(session):
+    """콘텐츠 편집·개인 중요표시 가드 — 업로더 본인 또는 위임받은 편집자면 통과.
+    (삭제·비공개·권한부여는 _uploader_guard 로 업로더 전용 유지.)"""
+    uid = _current_user()
+    if not uid:
+        return jsonify({"error": "Honey 를 통해 접속한 사용자만 편집할 수 있습니다 (읽기 전용)."}), 401
+    sid = (session or {}).get("session_id")
+    if _is_uploader(session, uid) or report_db.is_session_editor(sid, uid):
+        return None
+    return jsonify({"error": "편집 권한이 없습니다."}), 403
 
 
 def _client_meta():
@@ -153,6 +173,18 @@ def _audit(action, session=None, session_id=None, changed_fields=None, result="o
             user_agent=ua,
             result=result,
         )
+    except Exception:
+        pass
+
+
+def _record_web_visit(session):
+    """web_report 세션 조회 시 현재 Honey 사용자를 방문자 풀에 기록(best-effort).
+    편집 권한 위임 시 후보 목록(report_web_visitor)에 쓰인다."""
+    try:
+        if (session or {}).get("source") == "web_report":
+            uid = _current_user()
+            if uid:
+                report_db.record_web_visitor(uid)
     except Exception:
         pass
 
@@ -193,6 +225,7 @@ def session_full(session_id):
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
+    _record_web_visit(session)
     akey = session.get("analysis_key")
     objects = {}
     if akey:
@@ -451,10 +484,10 @@ def web_report_trim_chart(session_id):
 def web_report_trim_overrides(session_id):
     """Trim Analysis 드래그앤드랍 수동 재배치 저장 — manifest.trim_overrides 갱신 (parquet 불변).
 
-    편집은 로그인한 업로더만 가능하다 (CSRF + _uploader_guard)."""
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
-    denied = _uploader_guard(session)
+    denied = _editor_guard(session)
     if denied:
         return denied
     body = request.get_json(force=True, silent=True) or {}
@@ -521,10 +554,10 @@ def web_report_commonality_chip(session_id):
 def web_report_raw_data_edit(session_id):
     """Raw Data 셀 편집 저장 — 저장된 parquet 원본을 직접 덮어쓴다 (버전관리/undo 없음).
 
-    편집은 로그인한 업로더만 가능하다 (CSRF + _uploader_guard)."""
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
-    denied = _uploader_guard(session)
+    denied = _editor_guard(session)
     if denied:
         return denied
     body = request.get_json(force=True, silent=True) or {}
@@ -617,10 +650,10 @@ def web_report_issue_table_etc(session_id):
     """Issue Table ETC 섹션 item 추가/삭제 — manifest.etc_items 갱신 (Bin/TNO/Distribution
     은 저장하지 않고 조회 시마다 자동으로 다시 채워진다).
 
-    편집은 로그인한 업로더만 가능하다 (CSRF + _uploader_guard)."""
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
-    denied = _uploader_guard(session)
+    denied = _editor_guard(session)
     if denied:
         return denied
     body = request.get_json(force=True, silent=True) or {}
@@ -650,10 +683,10 @@ def web_report_issue_table_etc(session_id):
 def web_report_issue_table_comments(session_id):
     """Issue Table PTE/개발 comment 저장 — manifest.issue_comments 갱신 (parquet 불변).
 
-    편집은 로그인한 업로더만 가능하다 (CSRF + _uploader_guard)."""
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
-    denied = _uploader_guard(session)
+    denied = _editor_guard(session)
     if denied:
         return denied
     body = request.get_json(force=True, silent=True) or {}
@@ -679,10 +712,10 @@ def web_report_issue_table_comments(session_id):
 def web_report_summary_engr(session_id):
     """Summary 탭 Engr Comment(Yield/CPK/ETC 3칸) 저장 — manifest.summary_engr 갱신 (parquet 불변).
 
-    편집은 로그인한 업로더만 가능하다 (CSRF + _uploader_guard)."""
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
-    denied = _uploader_guard(session)
+    denied = _editor_guard(session)
     if denied:
         return denied
     body = request.get_json(force=True, silent=True) or {}
@@ -740,20 +773,23 @@ def delete_session_route(session_id):
 
 @report_bp.post("/session/<session_id>/important")
 def set_session_important(session_id):
-    """세션 전역 '중요' 플래그 토글. 켜면 오래된 세션 자동정리에서 제외된다. 업로더 로그인 필요."""
+    """사용자별 개인 '중요' 표시 토글 — 누른 사용자 화면에만 적용(전역 is_important 와 별개).
+    개인 중요표시가 하나라도 있는 세션은 자동정리에서 제외된다.
+    업로더 또는 위임받은 편집자면 가능(각자 자기 표시만 바꾼다)."""
     _require_csrf()
     _validate_session_id(session_id)
     body = request.get_json(force=True, silent=True) or {}
-    important = 1 if body.get("important") else 0
+    important = bool(body.get("important"))
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
-    denied = _uploader_guard(session)
+    denied = _editor_guard(session)
     if denied:
         return denied
-    report_db.update_session(session_id, is_important=important)
-    _audit("edit", session=session, changed_fields="is_important")
-    return jsonify({"ok": True, "session_id": session_id, "is_important": important})
+    uid = _current_user()
+    report_db.set_user_important(uid, session_id, important)
+    _audit("edit", session=session, changed_fields="my_important")
+    return jsonify({"ok": True, "session_id": session_id, "important": important})
 
 
 @report_bp.post("/session/<session_id>/private")
@@ -799,6 +835,101 @@ def update_session_content(session_id):
     구 구현(summary/yield/issue 텍스트 치환 + S3 재업로드 체인)은 2026-07-09
     리팩토링에서 제거 — 재활성화 시 git 히스토리 참조."""
     return jsonify({"error": "세션 수정 기능이 비활성화되었습니다."}), 405
+
+
+# ── 편집 권한 위임 / 개인 접근 상태 ───────────────────────────────────────────
+
+@report_bp.get("/session/<session_id>/my_access")
+def session_my_access(session_id):
+    """현재 요청자 기준 이 세션에 대한 권한/개인상태 — 사용자별 값이라 session_full
+    (세션 단위 gzip 응답 캐시)과 분리한 경량 엔드포인트. 프런트가 병렬 호출한다."""
+    _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    uid = _current_user()
+    is_uploader = _is_uploader(session, uid) if uid else False
+    can_edit = is_uploader or (bool(uid) and report_db.is_session_editor(session_id, uid))
+    return jsonify({
+        "user_id": uid,
+        "is_uploader": is_uploader,
+        "can_edit": can_edit,
+        "my_important": report_db.is_user_important(uid, session_id) if uid else False,
+    })
+
+
+@report_bp.get("/session/<session_id>/editors")
+def list_editors(session_id):
+    """세션 편집 권한 위임 목록 (업로더 전용)."""
+    _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
+    return jsonify({"session_id": session_id,
+                    "editors": report_db.list_session_editors(session_id)})
+
+
+@report_bp.post("/session/<session_id>/editors")
+def add_editor(session_id):
+    """편집 권한 부여 (업로더 전용). body: {user}. 위임받은 사용자는 내용 편집·저장 및
+    개인 중요표시만 가능하며 삭제·비공개·권한부여는 못 한다."""
+    _require_csrf()
+    _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    editor = _normalize_user_id(body.get("user"))
+    uploader = _current_user()
+    if editor == uploader:
+        return jsonify({"error": "본인에게는 권한을 부여할 수 없습니다."}), 400
+    report_db.add_session_editor(session_id, editor, uploader)
+    _audit("edit", session=session, changed_fields=f"grant_editor:{editor}")
+    return jsonify({"ok": True, "session_id": session_id, "editor": editor,
+                    "editors": report_db.list_session_editors(session_id)})
+
+
+@report_bp.delete("/session/<session_id>/editors/<editor_user>")
+def remove_editor(session_id, editor_user):
+    """편집 권한 회수 (업로더 전용)."""
+    _require_csrf()
+    _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
+    editor = _normalize_user_id(editor_user)
+    report_db.remove_session_editor(session_id, editor)
+    _audit("edit", session=session, changed_fields=f"revoke_editor:{editor}")
+    return jsonify({"ok": True, "session_id": session_id, "editor": editor,
+                    "editors": report_db.list_session_editors(session_id)})
+
+
+@report_bp.get("/session/<session_id>/editors/candidates")
+def editor_candidates(session_id):
+    """편집 권한 부여 후보 — web_report 방문자 검색 (업로더 전용). 업로더 자신은 제외,
+    이미 편집자인 사용자는 already=True 로 표시."""
+    _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    denied = _uploader_guard(session)
+    if denied:
+        return denied
+    q = request.args.get("q") or ""
+    uploader = _current_user()
+    current = {e["editor_user"] for e in report_db.list_session_editors(session_id)}
+    out = [{"user": uid, "already": uid in current}
+           for uid in report_db.search_web_visitors(q, limit=50) if uid != uploader]
+    return jsonify({"candidates": out})
 
 
 # ── annotations ───────────────────────────────────────────────────────────────

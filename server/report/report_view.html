@@ -1060,6 +1060,41 @@ html[data-theme="dark"] .settings-title { color: #d7dbe2; }
 html[data-theme="dark"] .settings-seg button { background: #262a33; border-color: #3a3f4b; color: #aab3c0; }
 html[data-theme="dark"] .settings-seg button.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
 
+/* 설정 팝오버 탭 (표시 / 권한) */
+.settings-tabs { display: flex; gap: 2px; margin-bottom: 12px; border-bottom: 1px solid #e5e8ee; }
+.settings-tab {
+  flex: 0 0 auto; padding: 5px 12px; font-size: 12px; font-weight: 700;
+  border: none; background: none; color: #888; cursor: pointer;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.settings-tab:hover { color: #4a90e2; }
+.settings-tab.active { color: #4a90e2; border-bottom-color: #4a90e2; }
+/* 권한 탭 목록 */
+.perm-search {
+  width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 12px;
+  border: 1px solid #d0d5dd; border-radius: 6px; margin-bottom: 6px;
+}
+.perm-list { display: flex; flex-direction: column; gap: 4px; max-height: 170px; overflow-y: auto; }
+.perm-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 5px 8px; font-size: 12px; border: 1px solid #e5e8ee; border-radius: 6px; color: #333;
+}
+.perm-item .perm-user { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.perm-item button {
+  flex: 0 0 auto; padding: 3px 10px; font-size: 11px; border-radius: 5px; cursor: pointer;
+  border: 1px solid #4a90e2; background: #4a90e2; color: #fff;
+}
+.perm-item button.revoke { border-color: #e0574a; background: #e0574a; }
+.perm-item button:disabled { border-color: #cfd4dc; background: #eef0f3; color: #9aa2ad; cursor: default; }
+.perm-empty { font-size: 12px; color: #9aa2ad; padding: 4px 2px; }
+html[data-theme="dark"] .settings-tabs { border-bottom-color: #3a3f4b; }
+html[data-theme="dark"] .settings-tab { color: #8b94a3; }
+html[data-theme="dark"] .settings-tab.active { color: #4a90e2; }
+html[data-theme="dark"] .perm-search { background: #262a33; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .perm-item { border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .perm-item button:disabled { background: #2b303a; border-color: #3a3f4b; color: #6b7382; }
+html[data-theme="dark"] .perm-empty { color: #6b7382; }
+
 /* ── 페이지 골격: body / sticky 헤더 / 탭 ── */
 html[data-theme="dark"] body { background: #14161a; color: #d7dbe2; }
 html[data-theme="dark"] .sticky-head { background: #1e2128; }
@@ -1399,24 +1434,40 @@ html[data-theme="dark"] .load-foot { color: #8b94a3; }
 </div>
 
 <div class="settings-panel" id="settingsPanel">
-  <p class="settings-title">화면 설정</p>
-  <div class="settings-row">
-    <span class="settings-label">글씨/UI 크기</span>
-    <div class="settings-seg" id="uiScaleSeg">
-      <button data-scale="0.85">85%</button>
-      <button data-scale="1">100%</button>
-      <button data-scale="1.15">115%</button>
-      <button data-scale="1.3">130%</button>
-      <button data-scale="1.5">150%</button>
+  <div class="settings-tabs" id="settingsTabs">
+    <button class="settings-tab active" data-stab="display">표시</button>
+    <button class="settings-tab" data-stab="perm" id="settingsTabPerm" style="display:none">권한</button>
+  </div>
+  <div class="settings-body" data-sbody="display">
+    <div class="settings-row">
+      <span class="settings-label">글씨/UI 크기</span>
+      <div class="settings-seg" id="uiScaleSeg">
+        <button data-scale="0.85">85%</button>
+        <button data-scale="1">100%</button>
+        <button data-scale="1.15">115%</button>
+        <button data-scale="1.3">130%</button>
+        <button data-scale="1.5">150%</button>
+      </div>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">글꼴</span>
+      <div class="settings-seg" id="uiFontSeg">
+        <button data-font="default">기본</button>
+        <button data-font="malgun">맑은고딕</button>
+        <button data-font="noto">Noto</button>
+        <button data-font="system">시스템</button>
+      </div>
     </div>
   </div>
-  <div class="settings-row">
-    <span class="settings-label">글꼴</span>
-    <div class="settings-seg" id="uiFontSeg">
-      <button data-font="default">기본</button>
-      <button data-font="malgun">맑은고딕</button>
-      <button data-font="noto">Noto</button>
-      <button data-font="system">시스템</button>
+  <div class="settings-body" data-sbody="perm" style="display:none">
+    <div class="settings-row">
+      <span class="settings-label">편집 권한 부여 (내용 편집·저장만, 삭제 불가)</span>
+      <input type="text" id="permSearch" class="perm-search" placeholder="사용자 검색 (PC 계정)" autocomplete="off">
+      <div class="perm-list" id="permCandidates"></div>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">현재 편집 권한</span>
+      <div class="perm-list" id="permCurrent"></div>
     </div>
   </div>
 </div>
@@ -1563,22 +1614,29 @@ function webReportMode() {
 // 로그인만 하면 허용). 그 외에는 "view" — 흩어진 MODE==="edit" 분기가 읽기전용으로 렌더.
 // 로그인은 검색결과 페이지에서 수행하고, 서버가 편집 라우트에서 같은 규칙으로 재검증한다.
 let MODE = "view";
-let LOGIN_USER = "";            // /api/auth/me 결과 (비로그인이면 "")
+let LOGIN_USER = "";            // 현재 PC 사용자 (Honey 밖이면 "")
+let CAN_EDIT = false;           // 이 세션 편집 가능(업로더 또는 위임 편집자) — 서버 판정
+let IS_UPLOADER = false;        // 이 세션 업로더 본인 — 권한부여/비공개/삭제용
+let MY_IMPORTANT = false;       // 내 개인 중요표시 상태(사용자별)
 let verifiedPassword = "";      // (구 PIN 흐름 잔재 — 저장 payload 호환용, 항상 "")
 
+// 세션별 권한·개인상태는 서버가 요청자(User-Agent) 기준으로 판정해 내려준다.
+// (session_full 은 세션 단위 gzip 캐시라 사용자별 값을 섞으면 안 되므로 별도 경량 엔드포인트)
 async function loadAuth() {
   try {
-    const res = await fetch("/pe/report/api/auth/me");
-    if (res.ok) LOGIN_USER = (await res.json()).user_id || "";
-  } catch (e) { LOGIN_USER = ""; }
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/my_access`);
+    if (res.ok) {
+      const j = await res.json();
+      LOGIN_USER = j.user_id || "";
+      CAN_EDIT = !!j.can_edit;
+      IS_UPLOADER = !!j.is_uploader;
+      MY_IMPORTANT = !!j.my_important;
+    }
+  } catch (e) { LOGIN_USER = ""; CAN_EDIT = false; IS_UPLOADER = false; MY_IMPORTANT = false; }
 }
 
-// uploaded_by 는 'DOMAIN\user' 또는 'user' 형식이라 뒷부분만 비교.
 function canEditSession() {
-  if (!LOGIN_USER) return false;
-  const ub = String((DATA && DATA.session && DATA.session.uploaded_by) || "");
-  if (!ub) return true;
-  return ub.split("\\").pop().trim().toLowerCase() === LOGIN_USER;
+  return CAN_EDIT;
 }
 let yieldGrid = null;           // 수정 모드 Yield 편집 Tabulator 인스턴스 (없으면 null)
 
@@ -1678,12 +1736,102 @@ const UI_FONTS = {
     if (sc) { applyScale(sc.dataset.scale); return; }
     const ft = e.target.closest("#uiFontSeg button");
     if (ft) { applyFont(ft.dataset.font); return; }
+    const stab = e.target.closest(".settings-tab");
+    if (stab) { switchSettingsTab(stab.dataset.stab); return; }
+    const grant = e.target.closest("button[data-grant]");
+    if (grant && !grant.disabled) { grantEditor(grant.dataset.grant); return; }
+    const revoke = e.target.closest("button[data-revoke]");
+    if (revoke) { revokeEditor(revoke.dataset.revoke); return; }
   });
   // 팝오버 밖 클릭 시 닫기.
   document.addEventListener("click", (e) => {
     if (panel.classList.contains("open") && !panel.contains(e.target) && e.target !== toggle)
       panel.classList.remove("open");
   });
+
+  // ── 권한 탭 (업로더만 노출) — 편집 권한 위임 부여/회수 ──
+  let _permLoaded = false;
+  function switchSettingsTab(name) {
+    panel.querySelectorAll(".settings-tab").forEach(b =>
+      b.classList.toggle("active", b.dataset.stab === name));
+    panel.querySelectorAll(".settings-body").forEach(b =>
+      b.style.display = b.dataset.sbody === name ? "" : "none");
+    if (name === "perm" && !_permLoaded) {
+      _permLoaded = true;
+      loadEditorsList();
+      searchCandidates("");
+    }
+  }
+  function renderEditorsList(editors) {
+    const box = document.getElementById("permCurrent");
+    if (!box) return;
+    if (!editors.length) { box.innerHTML = `<div class="perm-empty">아직 편집 권한을 준 사용자가 없습니다.</div>`; return; }
+    box.innerHTML = editors.map(ed => `
+      <div class="perm-item">
+        <span class="perm-user" title="${esc(ed.editor_user)}">${esc(ed.editor_user)}</span>
+        <button class="revoke" data-revoke="${esc(ed.editor_user)}">회수</button>
+      </div>`).join("");
+  }
+  async function loadEditorsList() {
+    const box = document.getElementById("permCurrent");
+    if (!box) return;
+    try {
+      const res = await fetch(`/pe/report/session/${SESSION_ID}/editors`);
+      if (!res.ok) { box.innerHTML = `<div class="perm-empty">불러오기 실패</div>`; return; }
+      renderEditorsList((await res.json()).editors || []);
+    } catch (e) { box.innerHTML = `<div class="perm-empty">불러오기 실패</div>`; }
+  }
+  async function searchCandidates(q) {
+    const box = document.getElementById("permCandidates");
+    if (!box) return;
+    try {
+      const res = await fetch(`/pe/report/session/${SESSION_ID}/editors/candidates?q=${encodeURIComponent(q)}`);
+      if (!res.ok) { box.innerHTML = `<div class="perm-empty">검색 실패</div>`; return; }
+      const list = (await res.json()).candidates || [];
+      if (!list.length) { box.innerHTML = `<div class="perm-empty">해당 사용자가 없습니다 (web_report 방문 기록 기준).</div>`; return; }
+      box.innerHTML = list.map(c => `
+        <div class="perm-item">
+          <span class="perm-user" title="${esc(c.user)}">${esc(c.user)}</span>
+          <button data-grant="${esc(c.user)}"${c.already ? " disabled" : ""}>${c.already ? "부여됨" : "부여"}</button>
+        </div>`).join("");
+    } catch (e) { box.innerHTML = `<div class="perm-empty">검색 실패</div>`; }
+  }
+  async function grantEditor(user) {
+    try {
+      const res = await fetch(`/pe/report/session/${SESSION_ID}/editors`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+        body: JSON.stringify({ user }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(j.error || "권한 부여 실패"); return; }
+      renderEditorsList(j.editors || []);
+      searchCandidates((document.getElementById("permSearch") || {}).value || "");
+      showToast(`${user} 에게 편집 권한을 주었습니다.`);
+    } catch (e) { showToast("권한 부여 실패: " + e.message); }
+  }
+  async function revokeEditor(user) {
+    try {
+      const res = await fetch(`/pe/report/session/${SESSION_ID}/editors/${encodeURIComponent(user)}`, {
+        method: "DELETE",
+        headers: { "X-CSRF-Token": csrfToken() },
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast(j.error || "권한 회수 실패"); return; }
+      renderEditorsList(j.editors || []);
+      searchCandidates((document.getElementById("permSearch") || {}).value || "");
+      showToast(`${user} 의 편집 권한을 회수했습니다.`);
+    } catch (e) { showToast("권한 회수 실패: " + e.message); }
+  }
+  const permSearch = document.getElementById("permSearch");
+  if (permSearch) {
+    let _searchTimer = null;
+    permSearch.addEventListener("input", () => {
+      clearTimeout(_searchTimer);
+      _searchTimer = setTimeout(() => searchCandidates(permSearch.value || ""), 250);
+    });
+  }
+
   syncActive();
 })();
 
@@ -1736,21 +1884,22 @@ function renderMeta(session) {
   ];
   document.getElementById("topbarMeta").innerHTML =
     `<div class="meta-row">${line1.join("")}</div><div class="meta-row">${line2.join("")}</div>`;
-  updateImportantBtn(session);
+  updateImportantBtn();
   updatePrivateBtn(session);
   syncTabVisibility();
   syncStickyHeadHeight();
 }
 
-function updateImportantBtn(session) {
+// 중요표시는 사용자별 개인 상태(MY_IMPORTANT) — 각자 자기 화면에만 반영된다.
+function updateImportantBtn() {
   const btn = document.getElementById("btnImportant");
   if (!btn) return;
-  const on = !!(session && session.is_important);
+  const on = !!MY_IMPORTANT;
   btn.classList.toggle("active", on);
   btn.textContent = on ? "★" : "☆";
   btn.title = on
-    ? "중요 표시됨 — 자동삭제 제외 (클릭 시 해제)"
-    : "중요 표시(오래된 세션 자동삭제에서 제외)";
+    ? "내 중요 표시됨 — 내 화면에서만, 자동삭제 제외 (클릭 시 해제)"
+    : "중요 표시(내 화면에서만 표시, 오래된 세션 자동삭제에서 제외)";
 }
 
 function updatePrivateBtn(session) {
@@ -6510,7 +6659,7 @@ async function saveNow() {
 
 document.getElementById("btnImportant").addEventListener("click", () => {
   if (!DATA) return;
-  doSetImportant("", !(DATA.session && DATA.session.is_important));
+  doSetImportant(!MY_IMPORTANT);
 });
 
 document.getElementById("btnPrivate").addEventListener("click", () => {
@@ -6518,12 +6667,13 @@ document.getElementById("btnPrivate").addEventListener("click", () => {
   doSetPrivate(!(DATA.session && DATA.session.is_private));
 });
 
-async function doSetImportant(pin, important) {
+// 개인 중요표시 토글 — 서버가 report_user_important 에 내 계정 기준으로만 저장한다.
+async function doSetImportant(important) {
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/important`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-      body: JSON.stringify({ password: pin, important }),
+      body: JSON.stringify({ important }),
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
@@ -6531,9 +6681,9 @@ async function doSetImportant(pin, important) {
       return;
     }
     const j = await res.json();
-    if (DATA.session) DATA.session.is_important = j.is_important;
-    updateImportantBtn(DATA.session);
-    showToast(j.is_important ? "중요 표시했습니다." : "중요 표시를 해제했습니다.");
+    MY_IMPORTANT = !!j.important;
+    updateImportantBtn();
+    showToast(MY_IMPORTANT ? "중요 표시했습니다 (내 화면에서만)." : "중요 표시를 해제했습니다.");
   } catch (e) {
     showToast("중요 표시 변경 실패: " + e.message);
   }
@@ -7056,10 +7206,14 @@ async function load(resetMode=true) {
     renderMeta(DATA.session || {});
     // 편집 권한: 로그인 ID == 업로더(기록 없으면 로그인만으로) 일 때만 edit 렌더.
     MODE = canEditSession() ? "edit" : "view";
-    document.getElementById("btnSaveComment").style.display = MODE === "edit" ? "" : "none";
-    document.getElementById("btnImportant").style.display = MODE === "edit" ? "" : "none";
-    document.getElementById("btnPrivate").style.display = MODE === "edit" ? "" : "none";
-    document.getElementById("btnDel").style.display = MODE === "edit" ? "" : "none";
+    const canEdit = MODE === "edit";
+    // 저장·중요표시(개인)는 편집 권한자(업로더+위임 편집자) 공통.
+    document.getElementById("btnSaveComment").style.display = canEdit ? "" : "none";
+    document.getElementById("btnImportant").style.display = canEdit ? "" : "none";
+    // 비공개·삭제·권한부여는 업로더 전용.
+    document.getElementById("btnPrivate").style.display = IS_UPLOADER ? "" : "none";
+    document.getElementById("btnDel").style.display = IS_UPLOADER ? "" : "none";
+    document.getElementById("settingsTabPerm").style.display = IS_UPLOADER ? "" : "none";
     renderActive();
     hideLoadOverlay();
   } catch (e) {

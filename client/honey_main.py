@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 )
 
 from transport.config import CURRENT_VERSION, SERVER_BASE_URL
-from transport import updater, uploader, version_check
+from transport import update_policy, updater, uploader, version_check
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
@@ -1798,7 +1798,7 @@ class HoneyMainWindow(QMainWindow):
         self._status(f"업로드 완료 (Issue 이미지 {issue_saved}장)")
         self.btn_upload_local.setEnabled(True)
 
-    # ── version check (기존 로직 무변경) ────────────────────────────────────
+    # ── version check (사용자가 자동/수동 설치 선택) ────────────────────────
     def check_for_update(self):
         try:
             manifest = version_check.fetch_latest()
@@ -1817,20 +1817,42 @@ class HoneyMainWindow(QMainWindow):
                 f"버전 체크 OK — 최신 ({CURRENT_VERSION}). Server: {SERVER_BASE_URL}")
             return
 
-        reply = QMessageBox.question(
-            self, "업데이트 사용 가능",
+        # 설치 방법 선택: [자동 설치] / [ZIP 다운로드] / [나중에]
+        can_auto = updater.can_write_app_dir()
+        box = QMessageBox(self)
+        box.setWindowTitle("업데이트 사용 가능")
+        box.setIcon(QMessageBox.Icon.Question)
+        ask_text = (
             f"신규 버전 {remote} 이(가) 있습니다.\n"
-            f"현재: {CURRENT_VERSION}\n\n지금 다운로드 하시겠습니까?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
+            f"현재: {CURRENT_VERSION}\n\n설치 방법을 선택하세요.\n\n"
+            "· 자동 설치: 다운로드 후 앱을 교체하고 재실행합니다.\n"
+            "· ZIP 다운로드: ZIP 만 다운로드 폴더에 저장합니다 (수동 설치).")
+        if not can_auto:
+            ask_text += "\n\n(설치 폴더에 쓰기 권한이 없어 자동 설치는 사용할 수 없습니다.)"
+        box.setText(ask_text)
+        btn_auto = box.addButton("자동 설치", QMessageBox.ButtonRole.AcceptRole)
+        btn_manual = box.addButton("ZIP 다운로드", QMessageBox.ButtonRole.ActionRole)
+        box.addButton("나중에", QMessageBox.ButtonRole.RejectRole)
+        if not can_auto:
+            btn_auto.setEnabled(False)
+        box.setDefaultButton(btn_auto if can_auto else btn_manual)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_auto:
+            mode = update_policy.MODE_AUTO
+        elif clicked is btn_manual:
+            mode = update_policy.MODE_MANUAL
+        else:  # "나중에" 또는 창 닫기
             return
 
         url = manifest.get("url") or "/honey/download"
         expected = manifest.get("sha256") or None
         package_name = manifest.get("file") or f"Honey-{remote}.zip"
-        dest = Path(tempfile.gettempdir()) / package_name
+        if mode == update_policy.MODE_MANUAL:
+            dest = update_policy.unique_dest(
+                update_policy.downloads_dir(), package_name)
+        else:
+            dest = Path(tempfile.gettempdir()) / package_name
 
         # 다운로드 진행 상태는 메인 UI Status bar 에 표시한다.
         progress = _ElapsedProgress(
@@ -1872,6 +1894,20 @@ class HoneyMainWindow(QMainWindow):
             self.status.showMessage("업데이트 실패")
             return
         progress.success("완료: 업데이트 다운로드 완료", value=100)
+
+        if mode == update_policy.MODE_MANUAL:
+            update_policy.open_folder_select(dest)
+            QMessageBox.information(
+                self, "수동 업데이트 안내",
+                f"업데이트 ZIP 을 저장했습니다:\n{dest}\n\n"
+                "설치 방법:\n"
+                "1) Honey 를 종료\n"
+                "2) ZIP 압축 해제\n"
+                "3) 압축 푼 Honey 폴더 내용을 설치 폴더에 덮어쓰기\n"
+                "4) Honey.exe 다시 실행",
+            )
+            self.status.showMessage(f"업데이트 ZIP 저장됨: {dest}")
+            return
 
         if not updater.is_frozen():
             QMessageBox.information(
@@ -1945,6 +1981,18 @@ HONEY_QSS = """
     QPushButton:pressed { background: #E9B21E; }
     QPushButton:disabled { background: #EDE6CF; color: #A89C77; border-color: #E0D9C0; }
     QRadioButton, QCheckBox { background: transparent; color: #4A3B1A; spacing: 6px; }
+    QRadioButton::indicator, QCheckBox::indicator {
+        width: 15px; height: 15px; border: 2px solid #B98A2E; background: #FFFFFF;
+    }
+    QRadioButton::indicator { border-radius: 9px; }
+    QCheckBox::indicator { border-radius: 3px; }
+    QRadioButton::indicator:checked, QCheckBox::indicator:checked {
+        background: #E9A100; border-color: #9A6B12;
+    }
+    QRadioButton::indicator:hover, QCheckBox::indicator:hover { border-color: #8A6D1D; }
+    QRadioButton::indicator:disabled, QCheckBox::indicator:disabled {
+        border-color: #D8CBA0; background: #F0ECDD;
+    }
     QTableWidget, QTableView, QListWidget, QTreeWidget {
         background: #FFFFFF; border: 1px solid #E8D9A8;
         gridline-color: #F0E6C8; selection-background-color: #FFE29A;
