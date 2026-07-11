@@ -1,6 +1,7 @@
-"""주석·즐겨찾기·페이지·vendor·히스토리·(폐지)인증 스텁·디버그 라우트
+"""주석·즐겨찾기·페이지·vendor·정적모듈·히스토리·(폐지)인증 스텁·디버그 라우트
 (Phase 4 분리 — 구 report_routes.py)."""
 import logging
+import re
 import sqlite3
 
 from flask import abort, jsonify, make_response, request, send_file
@@ -109,6 +110,26 @@ def vendor_asset(filename):
     resp.headers["Vary"] = "Accept-Encoding"
     # vendor 는 수동 교체 전까지 불변 — 브라우저 캐시로 재방문 시 재다운로드/재검증 제거
     resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+# ── web_report 프런트 모듈 (Phase 7b — report_view.html 에서 분할된 classic scripts) ──
+# 파일들은 순서대로 로드되면 분할 전 단일 <script> 와 이어붙인 내용이 동일하다
+# (전역 스코프 공유). 배포마다 바뀔 수 있어 no-cache + 조건부(ETag/mtime) 304 로 서빙.
+_WEBREPORT_STATIC_DIR = REPORT_VIEW_HTML.parent / "static" / "webreport"
+_WEBREPORT_JS_RE = re.compile(r"^[a-z0-9_]+\.js$")
+
+
+@report_bp.get("/static/webreport/<filename>")
+def webreport_static(filename):
+    if not _WEBREPORT_JS_RE.match(filename):
+        abort(404)
+    path = _WEBREPORT_STATIC_DIR / filename
+    if not path.is_file():
+        abort(404)
+    resp = make_response(send_file(path, mimetype="application/javascript",
+                                   conditional=True))
+    resp.headers["Cache-Control"] = "no-cache"
     return resp
 
 
