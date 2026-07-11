@@ -403,23 +403,26 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
 
     import storage_gateway
 
-    etc_items = list(manifest.get("etc_items") or [])
     add = str(add or "").strip()
     remove = str(remove or "").strip()
-    if add:
-        # 측정항목이 아닌 자유입력 Engr item(Item명 직접 타이핑)도 허용한다 — 이 경우
-        # Bin/TNO/Distribution 은 매칭 데이터가 없어 조회 시 빈 칸으로 채워진다.
-        if len(add) > 120:
-            raise ValueError("item name too long (max 120 chars)")
-        if add not in etc_items:
-            etc_items.append(add)
-    if remove:
-        etc_items = [it for it in etc_items if it != remove]
-    manifest["etc_items"] = etc_items
+    if add and len(add) > 120:
+        raise ValueError("item name too long (max 120 chars)")
+    # manifest read-modify-write 직렬화 — 동시 편집 lost update 방지 (락 안에서 재조회)
+    with cache.keyed_lock(("manifest_edit", analysis_key)):
+        manifest = cache.load_manifest_cached(analysis_key, upload_root)
+        etc_items = list(manifest.get("etc_items") or [])
+        if add:
+            # 측정항목이 아닌 자유입력 Engr item(Item명 직접 타이핑)도 허용한다 — 이 경우
+            # Bin/TNO/Distribution 은 매칭 데이터가 없어 조회 시 빈 칸으로 채워진다.
+            if add not in etc_items:
+                etc_items.append(add)
+        if remove:
+            etc_items = [it for it in etc_items if it != remove]
+        manifest["etc_items"] = etc_items
 
-    storage_result = storage_gateway.save_webreport_manifest(
-        analysis_key, manifest, upload_root=upload_root)
-    cache.manifest_cache_put(analysis_key, manifest)
+        storage_result = storage_gateway.save_webreport_manifest(
+            analysis_key, manifest, upload_root=upload_root)
+        cache.manifest_cache_put(analysis_key, manifest)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
@@ -461,38 +464,41 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
         raise ValueError(f"too many comment entries ({len(comments)} > {_COMMENT_MAX_ITEMS})")
 
     import storage_gateway
-    manifest = cache.load_manifest_cached(analysis_key, upload_root)
+    # manifest read-modify-write 직렬화 — 동시 편집 lost update 방지 (락 안에서 조회)
+    with cache.keyed_lock(("manifest_edit", analysis_key)):
+        manifest = cache.load_manifest_cached(analysis_key, upload_root)
 
-    saved = dict(manifest.get("issue_comments") or {})
-    changed = 0
-    for entry in comments:
-        entry = entry or {}
-        key = str(entry.get("key") or "").strip()
-        col = str(entry.get("col") or "")
-        value = str(entry.get("value") or "").strip()
-        if not key or len(key) > 300:
-            raise ValueError(f"invalid comment key: {key!r}")
-        if col not in COMMENT_COLS:
-            raise ValueError(f"unknown comment column: {col!r}")
-        if len(value) > _COMMENT_MAX_LEN:
-            raise ValueError(f"comment too long ({len(value)} > {_COMMENT_MAX_LEN} chars)")
-        row = dict(saved.get(key) or {})
-        if str(row.get(col) or "") == value:
-            continue
-        if value:
-            row[col] = value
-        else:
-            row.pop(col, None)
-        if row:
-            saved[key] = row
-        else:
-            saved.pop(key, None)
-        changed += 1
+        saved = dict(manifest.get("issue_comments") or {})
+        changed = 0
+        for entry in comments:
+            entry = entry or {}
+            key = str(entry.get("key") or "").strip()
+            col = str(entry.get("col") or "")
+            value = str(entry.get("value") or "").strip()
+            if not key or len(key) > 300:
+                raise ValueError(f"invalid comment key: {key!r}")
+            if col not in COMMENT_COLS:
+                raise ValueError(f"unknown comment column: {col!r}")
+            if len(value) > _COMMENT_MAX_LEN:
+                raise ValueError(f"comment too long ({len(value)} > {_COMMENT_MAX_LEN} chars)")
+            row = dict(saved.get(key) or {})
+            if str(row.get(col) or "") == value:
+                continue
+            if value:
+                row[col] = value
+            else:
+                row.pop(col, None)
+            if row:
+                saved[key] = row
+            else:
+                saved.pop(key, None)
+            changed += 1
+        if changed:
+            manifest["issue_comments"] = saved
+            storage_result = storage_gateway.save_webreport_manifest(
+                analysis_key, manifest, upload_root=upload_root)
+            cache.manifest_cache_put(analysis_key, manifest)
     if changed:
-        manifest["issue_comments"] = saved
-        storage_result = storage_gateway.save_webreport_manifest(
-            analysis_key, manifest, upload_root=upload_root)
-        cache.manifest_cache_put(analysis_key, manifest)
         try:
             report_db.log_audit(
                 "edit", session_id=session_id, analysis_key=analysis_key,
@@ -529,28 +535,31 @@ def update_summary_engr(session_id: str, values: dict, *, report_db, upload_root
         raise ValueError("values must be an object")
 
     import storage_gateway
-    manifest = cache.load_manifest_cached(analysis_key, upload_root)
+    # manifest read-modify-write 직렬화 — 동시 편집 lost update 방지 (락 안에서 조회)
+    with cache.keyed_lock(("manifest_edit", analysis_key)):
+        manifest = cache.load_manifest_cached(analysis_key, upload_root)
 
-    saved = dict(manifest.get("summary_engr") or {})
-    changed = 0
-    for key in _ENGR_KEYS:
-        if key not in values:
-            continue
-        val = str(values.get(key) or "").strip()
-        if len(val) > _COMMENT_MAX_LEN:
-            raise ValueError(f"comment too long ({len(val)} > {_COMMENT_MAX_LEN} chars)")
-        if str(saved.get(key) or "") == val:
-            continue
-        if val:
-            saved[key] = val
-        else:
-            saved.pop(key, None)
-        changed += 1
+        saved = dict(manifest.get("summary_engr") or {})
+        changed = 0
+        for key in _ENGR_KEYS:
+            if key not in values:
+                continue
+            val = str(values.get(key) or "").strip()
+            if len(val) > _COMMENT_MAX_LEN:
+                raise ValueError(f"comment too long ({len(val)} > {_COMMENT_MAX_LEN} chars)")
+            if str(saved.get(key) or "") == val:
+                continue
+            if val:
+                saved[key] = val
+            else:
+                saved.pop(key, None)
+            changed += 1
+        if changed:
+            manifest["summary_engr"] = saved
+            storage_result = storage_gateway.save_webreport_manifest(
+                analysis_key, manifest, upload_root=upload_root)
+            cache.manifest_cache_put(analysis_key, manifest)
     if changed:
-        manifest["summary_engr"] = saved
-        storage_result = storage_gateway.save_webreport_manifest(
-            analysis_key, manifest, upload_root=upload_root)
-        cache.manifest_cache_put(analysis_key, manifest)
         try:
             report_db.log_audit(
                 "edit", session_id=session_id, analysis_key=analysis_key,
@@ -683,41 +692,44 @@ def update_trim_overrides(session_id: str, ops: list, *, report_db, upload_root:
         raise ValueError(f"too many override entries ({len(ops)} > {_TRIM_OVERRIDE_MAX})")
 
     import storage_gateway
-    manifest = cache.load_manifest_cached(analysis_key, upload_root)
+    # manifest read-modify-write 직렬화 — 동시 편집 lost update 방지 (락 안에서 조회)
+    with cache.keyed_lock(("manifest_edit", analysis_key)):
+        manifest = cache.load_manifest_cached(analysis_key, upload_root)
 
-    saved = dict(manifest.get("trim_overrides") or {})
-    changed = 0
-    for entry in ops:
-        entry = entry or {}
-        item = str(entry.get("item") or "").strip()
-        if not item or len(item) > _TRIM_NAME_MAX:
-            raise ValueError(f"invalid item name: {item!r}")
-        if entry.get("reset"):
-            if saved.pop(item, None) is not None:
-                changed += 1
-            continue
-        slot = str(entry.get("slot") or "").strip().upper()
-        group = str(entry.get("group") or "").strip().upper()
-        if slot not in _TRIM_SLOTS:
-            raise ValueError(f"unknown slot: {slot!r}")
-        if not group or len(group) > _TRIM_NAME_MAX:
-            raise ValueError(f"invalid group name: {group!r}")
-        spec = {"group": group, "slot": slot}
-        if saved.get(item) == spec:
-            continue
-        saved[item] = spec
-        changed += 1
-    if len(saved) > _TRIM_OVERRIDE_MAX:
-        raise ValueError(f"too many overrides stored ({len(saved)} > {_TRIM_OVERRIDE_MAX})")
+        saved = dict(manifest.get("trim_overrides") or {})
+        changed = 0
+        for entry in ops:
+            entry = entry or {}
+            item = str(entry.get("item") or "").strip()
+            if not item or len(item) > _TRIM_NAME_MAX:
+                raise ValueError(f"invalid item name: {item!r}")
+            if entry.get("reset"):
+                if saved.pop(item, None) is not None:
+                    changed += 1
+                continue
+            slot = str(entry.get("slot") or "").strip().upper()
+            group = str(entry.get("group") or "").strip().upper()
+            if slot not in _TRIM_SLOTS:
+                raise ValueError(f"unknown slot: {slot!r}")
+            if not group or len(group) > _TRIM_NAME_MAX:
+                raise ValueError(f"invalid group name: {group!r}")
+            spec = {"group": group, "slot": slot}
+            if saved.get(item) == spec:
+                continue
+            saved[item] = spec
+            changed += 1
+        if len(saved) > _TRIM_OVERRIDE_MAX:
+            raise ValueError(f"too many overrides stored ({len(saved)} > {_TRIM_OVERRIDE_MAX})")
 
+        if changed:
+            if saved:
+                manifest["trim_overrides"] = saved
+            else:
+                manifest.pop("trim_overrides", None)
+            storage_result = storage_gateway.save_webreport_manifest(
+                analysis_key, manifest, upload_root=upload_root)
+            cache.manifest_cache_put(analysis_key, manifest)
     if changed:
-        if saved:
-            manifest["trim_overrides"] = saved
-        else:
-            manifest.pop("trim_overrides", None)
-        storage_result = storage_gateway.save_webreport_manifest(
-            analysis_key, manifest, upload_root=upload_root)
-        cache.manifest_cache_put(analysis_key, manifest)
         try:
             report_db.log_audit(
                 "edit", session_id=session_id, analysis_key=analysis_key,

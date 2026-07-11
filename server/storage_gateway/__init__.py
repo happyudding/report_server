@@ -11,6 +11,7 @@ Internal modules (외부 담당자 영역):
   ``_png_drive``    — 외부 호환 PNG 헬퍼 스캐폴드 (현재 미사용)
 """
 import io
+import logging
 import math
 from pathlib import Path
 
@@ -18,6 +19,8 @@ from config import REPORT_UPLOAD_DIR
 from database import report_db
 from . import _s3 as report_s3
 from ._s3 import S3NotConfigured, S3ObjectCorrupted
+
+_log = logging.getLogger(__name__)
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
@@ -213,8 +216,13 @@ def load_webreport_manifest(analysis_key, upload_root) -> dict:
     if "web_report_manifest" in objs:
         try:
             return report_s3.download_json_from_s3(objs["web_report_manifest"]["s3_key"])
-        except (S3NotConfigured, Exception):
+        except S3NotConfigured:
             pass
+        except Exception as exc:
+            # 침묵 폴백 금지 — S3 순단 시 로컬 폴백으로 넘어가는 사실이 로그에 남아야
+            # 저장/조회 위치 불일치(편집 소실)를 추적할 수 있다.
+            _log.warning("webreport manifest S3 load failed (%s), falling back to local: %s",
+                         analysis_key, exc)
 
     import json as _json
     manifest_path = Path(upload_root) / "web_report" / analysis_key / "manifest.json"
@@ -246,8 +254,11 @@ def load_webreport_sources(analysis_key, upload_root):
                 sources = [report_s3.download_bytes_from_s3(objs[k]["s3_key"]) for k in source_keys]
             manifest = report_s3.download_json_from_s3(objs["web_report_manifest"]["s3_key"])
             return sources, manifest
-        except (S3NotConfigured, Exception):
+        except S3NotConfigured:
             pass
+        except Exception as exc:
+            _log.warning("webreport sources S3 load failed (%s), falling back to local: %s",
+                         analysis_key, exc)
 
     import json as _json
     session_dir = Path(upload_root) / "web_report" / analysis_key
@@ -343,7 +354,10 @@ def load_json_object(objects, object_type):
         return None
     try:
         return report_s3.download_json_from_s3(objects[object_type]["s3_key"])
-    except (S3NotConfigured, S3ObjectCorrupted, Exception):
+    except (S3NotConfigured, S3ObjectCorrupted):
+        return None
+    except Exception as exc:
+        _log.warning("S3 JSON object load failed (%s): %s", object_type, exc)
         return None
 
 
@@ -367,8 +381,11 @@ def load_distribution_png(analysis_key):
     if "distribution_combined" in objs:
         try:
             return report_s3.download_bytes_from_s3(objs["distribution_combined"]["s3_key"])
-        except (S3NotConfigured, Exception):
+        except S3NotConfigured:
             pass
+        except Exception as exc:
+            _log.warning("distribution PNG S3 load failed (%s), falling back to local: %s",
+                         analysis_key, exc)
     local_path = Path(REPORT_UPLOAD_DIR) / "dist_combined" / f"{analysis_key}.png"
     if local_path.exists():
         return local_path.read_bytes()
