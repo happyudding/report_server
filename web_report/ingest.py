@@ -9,7 +9,6 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
-import threading
 import time
 from pathlib import Path
 
@@ -128,18 +127,11 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         pass
 
     # 캐시 프리웜: 업로더가 곧바로 여는 첫 조회(cold: parquet decode + payload + dist compact
-    # ~10s)를 없애기 위해 백그라운드 데몬 스레드로 미리 계산해 둔다. 실패해도 무해 —
-    # 조회 시 다시 계산될 뿐이다.
-    def _prewarm():
-        try:
-            from . import service
-            service.load_webreport(session_id, report_db=report_db, upload_root=upload_root)
-            service.get_distribution_gzip(session_id, report_db=report_db,
-                                          upload_root=upload_root)
-        except Exception:
-            pass
-
-    threading.Thread(target=_prewarm, name=f"webreport-prewarm-{session_id}", daemon=True).start()
+    # ~10s)를 없애기 위해 미리 계산해 둔다. 컴퓨트 풀에 제출되어 동시성 상한(워커 수)이
+    # 자동 적용된다 — 연속 업로드 폭주 시 무제한 스레드가 생기지 않는다 (Phase 6).
+    # 실패해도 무해 — 조회 시 다시 계산될 뿐이다.
+    from . import compute
+    compute.prewarm(session_id, str(upload_root))
 
     return {
         "session_id": session_id,

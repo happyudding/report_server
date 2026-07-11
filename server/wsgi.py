@@ -1,8 +1,14 @@
+import multiprocessing
 import os
 import socket
 import sys
 import time
 from pathlib import Path
+
+# web_report 컴퓨트 워커(ProcessPoolExecutor spawn)가 이 모듈을 __mp_main__ 으로
+# 재임포트한다 — 자식 프로세스에서는 앱 조립·스케줄러(cleanup/백업/메트릭)·로그 tee 를
+# 전부 건너뛴다 (중복 기동 방지). 워커는 web_report/database 만 직접 import 해 쓴다.
+_IS_MP_CHILD = multiprocessing.parent_process() is not None
 
 # 콘솔 인코딩(예: Windows cp949)이 로그 문자열의 비-인코딩 문자(em-dash 등)를
 # 만나도 서버가 UnicodeEncodeError 로 죽지 않도록 stdout/stderr 를 UTF-8 로 강제.
@@ -78,7 +84,8 @@ def _enable_console_log_file():
         LOG_PATH = None
 
 
-_enable_console_log_file()
+if not _IS_MP_CHILD:
+    _enable_console_log_file()
 
 
 def _log(msg):
@@ -107,35 +114,36 @@ def _lan_ips():
 
 
 _t0 = time.perf_counter()
-if LOG_PATH:
-    _log(f"console log file: {LOG_PATH}")
-_log("importing Flask ...")
-from flask import Flask
+app = None
+if not _IS_MP_CHILD:
+    if LOG_PATH:
+        _log(f"console log file: {LOG_PATH}")
+    _log("importing Flask ...")
+    from flask import Flask
 
-_log(f"importing blueprints ... ({time.perf_counter() - _t0:.2f}s)")
-from plugin import register_report_server
+    _log(f"importing blueprints ... ({time.perf_counter() - _t0:.2f}s)")
+    from plugin import register_report_server
 
-_log(f"creating app ... ({time.perf_counter() - _t0:.2f}s)")
-app = Flask(__name__)
-# 요청 본문 상한 — 미설정 시 무제한이라 대용량 업로드 폭주가 메모리 피크로 직결된다.
-# upload_webreport 는 파일당 512MB 자체 검증만 있으므로 합산 상한을 여기서 건다 (초과 시 413).
-app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH_MB", "2048")) * 1024 * 1024
-# 로그인 세션 쿠키(HMAC 서명) 키 — 재시작해도 로그인이 풀리지 않게 DB 폴더에 1회 생성·보관.
-from config import REPORT_DB_PATH
-_key_file = Path(REPORT_DB_PATH).parent / "secret_key"
-try:
-    app.config["SECRET_KEY"] = _key_file.read_text(encoding="utf-8").strip()
-except OSError:
-    app.config["SECRET_KEY"] = ""
-if not app.config["SECRET_KEY"]:
-    import secrets
-    _key_file.parent.mkdir(parents=True, exist_ok=True)
-    app.config["SECRET_KEY"] = secrets.token_hex(32)
-    _key_file.write_text(app.config["SECRET_KEY"], encoding="utf-8")
-register_report_server(app, root_redirect=True)
+    _log(f"creating app ... ({time.perf_counter() - _t0:.2f}s)")
+    app = Flask(__name__)
+    # 요청 본문 상한 — 미설정 시 무제한이라 대용량 업로드 폭주가 메모리 피크로 직결된다.
+    # upload_webreport 는 파일당 512MB 자체 검증만 있으므로 합산 상한을 여기서 건다 (초과 시 413).
+    app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH_MB", "2048")) * 1024 * 1024
+    # 로그인 세션 쿠키(HMAC 서명) 키 — 재시작해도 로그인이 풀리지 않게 DB 폴더에 1회 생성·보관.
+    from config import REPORT_DB_PATH
+    _key_file = Path(REPORT_DB_PATH).parent / "secret_key"
+    try:
+        app.config["SECRET_KEY"] = _key_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        app.config["SECRET_KEY"] = ""
+    if not app.config["SECRET_KEY"]:
+        import secrets
+        _key_file.parent.mkdir(parents=True, exist_ok=True)
+        app.config["SECRET_KEY"] = secrets.token_hex(32)
+        _key_file.write_text(app.config["SECRET_KEY"], encoding="utf-8")
+    register_report_server(app, root_redirect=True)
 
-
-_log(f"app ready in {time.perf_counter() - _t0:.2f}s")
+    _log(f"app ready in {time.perf_counter() - _t0:.2f}s")
 
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")

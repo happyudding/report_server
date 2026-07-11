@@ -18,6 +18,7 @@ from pathlib import Path
 
 from . import cache
 from . import cache_policy
+from . import compute
 from . import disk_cache
 from . import edits
 from . import runtime
@@ -80,6 +81,10 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
             if report is None:
                 # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
                 report = disk_cache.load_report(upload_root, cache_key)
+                if report is None and compute.should_offload(cache_policy.tables_key(session)):
+                    # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
+                    # 워커가 disk_cache 도 채우므로 여기서는 RAM 캐시만 넣는다.
+                    report = compute.run(compute.report_job, session_id, str(upload_root))
                 if report is None:
                     session, tables, manifest = _load_tables(
                         session_id, report_db=report_db, upload_root=upload_root,
@@ -148,6 +153,9 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> b
             return blob
         # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
         blob = disk_cache.load_dist(upload_root, cache_key)
+        if blob is None and compute.should_offload(cache_policy.tables_key(session)):
+            # 콜드 빌드는 워커 프로세스로 (워커가 disk_cache 도 채움)
+            blob = compute.run(compute.dist_job, session_id, str(upload_root))
         if blob is None:
             compact = get_distribution(session_id, report_db=report_db, upload_root=upload_root)
             blob = gzip.compress(
@@ -464,10 +472,14 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
     """
     from .tabs.trim_analysis import build_trim_payload
 
-    session, tables, manifest = _load_tables(
-        session_id, report_db=report_db, upload_root=upload_root)
-    analysis_key = session.get("analysis_key")
-    edit_state, edits_rev = edits.effective_state(report_db, session_id, manifest)
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    if not session.get("analysis_key"):
+        raise FileNotFoundError(session_id)
+    # 캐시 확인 전에 tables 를 로드하지 않는다 (Phase 6) — warm 요청은 rev SELECT +
+    # bytes 반환으로 끝나고, 콜드 빌드는 워커로 보낼 수 있다.
+    edits_rev = report_db.get_webreport_edit_rev(session_id)
     etag_token = hashlib.sha256(f"{session_id}:{edits_rev}".encode("utf-8")).hexdigest()
     mode = _validate_mode(session.get("mode"))
 
@@ -477,7 +489,13 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
         return blob, etag_token
     with cache.keyed_lock(("trim",) + cache_key):
         blob = cache.cache_get(cache.TRIM_CACHE, cache_key)
+        if blob is None and compute.should_offload(cache_policy.tables_key(session)):
+            blob = compute.run(compute.trim_job, session_id, str(upload_root),
+                               str(source or ""))
         if blob is None:
+            session, tables, manifest = _load_tables(
+                session_id, report_db=report_db, upload_root=upload_root, session=session)
+            edit_state, _ = edits.effective_state(report_db, session_id, manifest)
             tables = _mode_tables(tables, mode)
             selected = {str(v) for v in (manifest.get("selected_items") or []) if str(v)}
             if selected:
@@ -489,7 +507,7 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
             blob = gzip.compress(
                 json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
                 compresslevel=1)
-            cache.cache_put(cache.TRIM_CACHE, cache_key, blob, cache.TRIM_CACHE_MAX)
+        cache.cache_put(cache.TRIM_CACHE, cache_key, blob, cache.TRIM_CACHE_MAX)
     return blob, etag_token
 
 
