@@ -21,9 +21,9 @@ from pathlib import Path
 from . import cache, service
 from .validation import canon, validate_mode
 
-# /full: 키 (akey, chash, manifest_digest, extras_digest) -> gzip bytes.
-# extras_digest 에 annotations/is_important 등 값싼 부분 전부가 들어가므로
-# 그 변경들도 키가 바뀌어 자연 무효화된다 (구 키는 LRU 퇴출로 회수).
+# /full: 키 (akey, chash, "session:edits_rev", extras_digest) -> gzip bytes.
+# comment/override 편집은 세션 편집 rev 증가로, annotations/is_important 등 값싼
+# 부분 변경은 extras_digest 로 키가 바뀌어 자연 무효화된다 (구 키는 LRU 퇴출로 회수).
 _FULL_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_FULL_CACHE", "8") or 8))
 _FULL_CACHE: OrderedDict = OrderedDict()
 
@@ -54,10 +54,11 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
     if not analysis_key:
         raise FileNotFoundError(session_id)
     content_hash = str(session.get("content_hash") or "")
-    # digest 는 manifest 캐시 엔트리에 동봉된 값 재사용 (요청마다 canonical 재해싱 방지)
-    _, manifest_digest = cache.load_manifest_with_digest(analysis_key, upload_root)
+    # 편집(comment/override)은 세션 단위 DB 가 진실 — manifest 는 불변 스냅샷이므로
+    # digest 대신 (session_id, edits_rev)로 편집 무효화를 잡는다.
+    edits_rev = report_db.get_webreport_edit_rev(session_id)
     extras_digest = hashlib.sha256(canon(extras)).hexdigest()
-    cache_key = (analysis_key, content_hash, manifest_digest, extras_digest)
+    cache_key = (analysis_key, content_hash, f"{session_id}:{edits_rev}", extras_digest)
     etag = '"' + hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()[:32] + '"'
 
     blob = cache.cache_get(_FULL_CACHE, cache_key)

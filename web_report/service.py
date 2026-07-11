@@ -18,6 +18,7 @@ from pathlib import Path
 
 from . import cache
 from . import disk_cache
+from . import edits
 from .honeyform import encode_honeyform_parquet
 from .loader import load_tables as _load_tables
 from .metrics import build_report_payload
@@ -124,6 +125,14 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         except Exception:
             pass
 
+    # manifest 에 편집값(comment/override)이 실려 오면 세션 편집 DB 로 시드 —
+    # 이후 manifest 는 불변 스냅샷이고 편집 진실은 DB(세션 단위)다.
+    try:
+        edits.seed_from_manifest(report_db, session_id, manifest,
+                                 updated_by=uploaded_by or None)
+    except Exception:
+        pass
+
     try:
         report_db.log_audit(
             "upload", session_id=session_id, analysis_key=analysis_key,
@@ -160,11 +169,14 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
 
 def load_webreport(session_id: str, *, report_db, upload_root: Path,
                    session: dict | None = None) -> tuple[dict, dict]:
-    """세션 조회: build_report_payload 결과를 (analysis_key, content_hash, manifest 해시)
-    키로 캐시한다 — manifest 해시가 키에 들어가므로 comments/etc 편집은 자연 무효화되고,
-    raw_data 편집은 content_hash 변경으로 무효화된다. 반환 report 는 캐시 공유 객체 —
-    호출자는 읽기 전용(jsonify 직렬화)으로만 쓸 것. 콜드 미스 계산은 single-flight 락으로
-    중복 실행을 막는다. session 은 라우트가 이미 조회한 세션 dict 전달용(재조회 생략).
+    """세션 조회: build_report_payload 결과를 (analysis_key, content_hash, session_id,
+    edits_rev) 키로 캐시한다 — comment/override 편집은 세션 편집 rev 증가로 자연 무효화되고,
+    raw_data 편집은 content_hash 변경으로 무효화된다. 편집 상태는 세션 단위 DB
+    (report_webreport_edit)가 진실이며 manifest 는 업로드 시점 불변 스냅샷이다
+    (rev==0 legacy 세션만 manifest 필드로 폴백 — edits.effective_state). 반환 report 는
+    캐시 공유 객체 — 호출자는 읽기 전용(jsonify 직렬화)으로만 쓸 것. 콜드 미스 계산은
+    single-flight 락으로 중복 실행을 막는다. session 은 라우트가 이미 조회한 세션 dict
+    전달용(재조회 생략).
 
     Distribution ECDF(대용량)는 항상 payload 에서 제외되고 프런트가 get_distribution 으로
     지연 로드한다.
@@ -177,11 +189,9 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    # manifest digest 는 캐시 엔트리에 동봉된 값을 재사용 (warm 요청마다 재해싱 방지).
-    # 콜드 미스 시 storage 에서 manifest 만 읽는다 — tables(parquet 수 초) 로드는
-    # 실제 재계산이 필요한 경우로 지연해, RAM/디스크 캐시 히트가 parquet 비용을 내지
-    # 않게 한다.
-    manifest, manifest_digest = cache.load_manifest_with_digest(analysis_key, upload_root)
+    # 편집 rev 는 작은 인덱스 SELECT 1회 — warm 요청은 manifest/tables 로드 없이
+    # 캐시 키만으로 끝난다. 콜드 미스에서만 manifest(캐시)와 tables 를 로드한다.
+    edits_rev = report_db.get_webreport_edit_rev(session_id)
 
     # F10 웹리포트 옵션(세션 DB, authoritative): Distribution source 색.
     # 옵션은 analysis_key 공유(dedup) 세션마다 다를 수 있으므로 report 캐시 키에 포함한다.
@@ -192,7 +202,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     mode = _validate_mode(session.get("mode"))
 
     cache_key = (analysis_key, str(session.get("content_hash") or ""),
-                 manifest_digest, opts_raw, mode)
+                 session_id, edits_rev, opts_raw, mode)
     report = cache.cache_get(cache.REPORT_CACHE, cache_key)
     if report is None:
         with cache.keyed_lock(("report",) + cache_key):
@@ -201,17 +211,18 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                 # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
                 report = disk_cache.load_report(upload_root, cache_key)
                 if report is None:
-                    session, tables, _ = _load_tables(
+                    session, tables, manifest = _load_tables(
                         session_id, report_db=report_db, upload_root=upload_root,
                         session=session)
+                    edit_state, _ = edits.effective_state(report_db, session_id, manifest)
                     tables = _mode_tables(tables, mode)
                     report = build_report_payload(
                         tables,
                         selected_items=manifest.get("selected_items") or [],
                         sheets=manifest.get("sheets") or [],
-                        etc_items=manifest.get("etc_items") or [],
-                        issue_comments=manifest.get("issue_comments") or {},
-                        summary_engr=manifest.get("summary_engr") or {},
+                        etc_items=edit_state["etc_items"],
+                        issue_comments=edit_state["issue_comments"],
+                        summary_engr=edit_state["summary_engr"],
                         product_type=session.get("product_type", ""),
                         product=session.get("product", ""),
                         mode=mode,
@@ -392,37 +403,40 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
 def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
                            add: str = "", remove: str = "",
                            client_ip: str = "", user_agent: str = "") -> dict:
-    """Issue Table ETC 섹션에 ENGR 가 임의로 추가/삭제한 item 이름을 manifest.etc_items 에 반영한다.
+    """Issue Table ETC 섹션에 ENGR 가 임의로 추가/삭제한 item 이름을 세션 편집 DB
+    (report_webreport_edit, kind=etc_item)에 반영한다. manifest 는 불변 스냅샷.
 
     Bin/TNO/Distribution 값 자체는 저장하지 않는다 — item 이름만 기억해두고, 조회할 때마다
-    build_issue_table_rows 가 tables/yield_rows 에서 그때그때 다시 채운다. sources 원본은
-    불변이므로 manifest 만 재저장한다 (parquet 재업로드 없음, content_hash 도 그대로).
+    build_issue_table_rows 가 tables/yield_rows 에서 그때그때 다시 채운다.
     """
-    session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
     analysis_key = session.get("analysis_key")
-
-    import storage_gateway
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
 
     add = str(add or "").strip()
     remove = str(remove or "").strip()
     if add and len(add) > 120:
         raise ValueError("item name too long (max 120 chars)")
-    # manifest read-modify-write 직렬화 — 동시 편집 lost update 방지 (락 안에서 재조회)
-    with cache.keyed_lock(("manifest_edit", analysis_key)):
-        manifest = cache.load_manifest_cached(analysis_key, upload_root)
-        etc_items = list(manifest.get("etc_items") or [])
-        if add:
-            # 측정항목이 아닌 자유입력 Engr item(Item명 직접 타이핑)도 허용한다 — 이 경우
-            # Bin/TNO/Distribution 은 매칭 데이터가 없어 조회 시 빈 칸으로 채워진다.
-            if add not in etc_items:
-                etc_items.append(add)
-        if remove:
-            etc_items = [it for it in etc_items if it != remove]
-        manifest["etc_items"] = etc_items
 
-        storage_result = storage_gateway.save_webreport_manifest(
-            analysis_key, manifest, upload_root=upload_root)
-        cache.manifest_cache_put(analysis_key, manifest)
+    # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
+    edits.ensure_seeded(report_db, session_id,
+                        lambda: cache.load_manifest_cached(analysis_key, upload_root))
+    etc_items = edits.load_edit_state(report_db, session_id)["etc_items"]
+    changes = []
+    if add and add not in etc_items:
+        # 측정항목이 아닌 자유입력 Engr item(Item명 직접 타이핑)도 허용한다 — 이 경우
+        # Bin/TNO/Distribution 은 매칭 데이터가 없어 조회 시 빈 칸으로 채워진다.
+        changes.append((edits.KIND_ETC_ITEM, add, ""))
+        etc_items.append(add)
+    if remove and remove in etc_items:
+        changes.append((edits.KIND_ETC_ITEM, remove, None))
+        etc_items = [it for it in etc_items if it != remove]
+    if changes:
+        report_db.apply_webreport_edits(session_id, changes,
+                                        updated_by=edits.user_from_ua(user_agent) or None)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
@@ -433,7 +447,8 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
     except Exception:
         pass
 
-    return {"ok": True, "etc_items": etc_items, "storage": storage_result["storage"]}
+    return {"ok": True, "etc_items": etc_items,
+            "storage": "db" if changes else "unchanged"}
 
 
 _COMMENT_MAX_ITEMS = 200
@@ -442,12 +457,12 @@ _COMMENT_MAX_LEN = 2000
 
 def update_issue_comments(session_id: str, comments: list, *, report_db, upload_root: Path,
                           client_ip: str = "", user_agent: str = "") -> dict:
-    """Issue Table 의 PTE/개발 comment 를 manifest.issue_comments 에 저장한다.
+    """Issue Table 의 PTE/개발 comment 를 세션 편집 DB(kind=issue_comment)에 저장한다.
+    manifest 는 불변 스냅샷.
 
     comments: [{"key": row_key, "col": comment 컬럼명, "value": str}, ...].
     row_key 는 tabs/issue_table.py 규칙("Yield|<bin>|<item>", "CPK|<item>", "ETC|<item>")을
-    따르고, 빈 value 는 해당 항목 삭제로 처리한다. sources 원본은 불변이므로 manifest 만
-    재저장한다 (parquet 재업로드 없음).
+    따르고, 빈 value 는 해당 항목 삭제로 처리한다.
     """
     from .tabs.issue_table import COMMENT_COLS
 
@@ -463,42 +478,32 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
     if len(comments) > _COMMENT_MAX_ITEMS:
         raise ValueError(f"too many comment entries ({len(comments)} > {_COMMENT_MAX_ITEMS})")
 
-    import storage_gateway
-    # manifest read-modify-write 직렬화 — 동시 편집 lost update 방지 (락 안에서 조회)
-    with cache.keyed_lock(("manifest_edit", analysis_key)):
-        manifest = cache.load_manifest_cached(analysis_key, upload_root)
-
-        saved = dict(manifest.get("issue_comments") or {})
-        changed = 0
-        for entry in comments:
-            entry = entry or {}
-            key = str(entry.get("key") or "").strip()
-            col = str(entry.get("col") or "")
-            value = str(entry.get("value") or "").strip()
-            if not key or len(key) > 300:
-                raise ValueError(f"invalid comment key: {key!r}")
-            if col not in COMMENT_COLS:
-                raise ValueError(f"unknown comment column: {col!r}")
-            if len(value) > _COMMENT_MAX_LEN:
-                raise ValueError(f"comment too long ({len(value)} > {_COMMENT_MAX_LEN} chars)")
-            row = dict(saved.get(key) or {})
-            if str(row.get(col) or "") == value:
-                continue
-            if value:
-                row[col] = value
-            else:
-                row.pop(col, None)
-            if row:
-                saved[key] = row
-            else:
-                saved.pop(key, None)
-            changed += 1
-        if changed:
-            manifest["issue_comments"] = saved
-            storage_result = storage_gateway.save_webreport_manifest(
-                analysis_key, manifest, upload_root=upload_root)
-            cache.manifest_cache_put(analysis_key, manifest)
+    # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
+    edits.ensure_seeded(report_db, session_id,
+                        lambda: cache.load_manifest_cached(analysis_key, upload_root))
+    saved = edits.load_edit_state(report_db, session_id)["issue_comments"]
+    changes = []
+    changed = 0
+    for entry in comments:
+        entry = entry or {}
+        key = str(entry.get("key") or "").strip()
+        col = str(entry.get("col") or "")
+        value = str(entry.get("value") or "").strip()
+        if not key or len(key) > 300:
+            raise ValueError(f"invalid comment key: {key!r}")
+        if col not in COMMENT_COLS:
+            raise ValueError(f"unknown comment column: {col!r}")
+        if len(value) > _COMMENT_MAX_LEN:
+            raise ValueError(f"comment too long ({len(value)} > {_COMMENT_MAX_LEN} chars)")
+        row = saved.get(key) or {}
+        if str(row.get(col) or "") == value:
+            continue
+        changes.append((edits.KIND_ISSUE_COMMENT, edits.comment_key(key, col),
+                        value if value else None))
+        changed += 1
     if changed:
+        report_db.apply_webreport_edits(session_id, changes,
+                                        updated_by=edits.user_from_ua(user_agent) or None)
         try:
             report_db.log_audit(
                 "edit", session_id=session_id, analysis_key=analysis_key,
@@ -508,7 +513,7 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
                 client_ip=client_ip, user_agent=user_agent)
         except Exception:
             pass
-        storage = storage_result["storage"]
+        storage = "db"
     else:
         storage = "unchanged"
 
@@ -520,10 +525,11 @@ _ENGR_KEYS = ("yield", "cpk", "etc")
 
 def update_summary_engr(session_id: str, values: dict, *, report_db, upload_root: Path,
                         client_ip: str = "", user_agent: str = "") -> dict:
-    """Summary 탭의 Engr Comment(Yield/CPK/ETC 3칸)를 manifest.summary_engr 에 저장한다.
+    """Summary 탭의 Engr Comment(Yield/CPK/ETC 3칸)를 세션 편집 DB(kind=summary_engr)에
+    저장한다. manifest 는 불변 스냅샷.
 
     values: {"yield": str, "cpk": str, "etc": str} 중 온 키만 갱신하고, 빈 값은 삭제로
-    처리한다. sources 원본은 불변이므로 manifest 만 재저장한다 (parquet 재업로드 없음).
+    처리한다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -534,32 +540,29 @@ def update_summary_engr(session_id: str, values: dict, *, report_db, upload_root
     if not isinstance(values, dict):
         raise ValueError("values must be an object")
 
-    import storage_gateway
-    # manifest read-modify-write 직렬화 — 동시 편집 lost update 방지 (락 안에서 조회)
-    with cache.keyed_lock(("manifest_edit", analysis_key)):
-        manifest = cache.load_manifest_cached(analysis_key, upload_root)
-
-        saved = dict(manifest.get("summary_engr") or {})
-        changed = 0
-        for key in _ENGR_KEYS:
-            if key not in values:
-                continue
-            val = str(values.get(key) or "").strip()
-            if len(val) > _COMMENT_MAX_LEN:
-                raise ValueError(f"comment too long ({len(val)} > {_COMMENT_MAX_LEN} chars)")
-            if str(saved.get(key) or "") == val:
-                continue
-            if val:
-                saved[key] = val
-            else:
-                saved.pop(key, None)
-            changed += 1
-        if changed:
-            manifest["summary_engr"] = saved
-            storage_result = storage_gateway.save_webreport_manifest(
-                analysis_key, manifest, upload_root=upload_root)
-            cache.manifest_cache_put(analysis_key, manifest)
+    # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
+    edits.ensure_seeded(report_db, session_id,
+                        lambda: cache.load_manifest_cached(analysis_key, upload_root))
+    saved = edits.load_edit_state(report_db, session_id)["summary_engr"]
+    changes = []
+    changed = 0
+    for key in _ENGR_KEYS:
+        if key not in values:
+            continue
+        val = str(values.get(key) or "").strip()
+        if len(val) > _COMMENT_MAX_LEN:
+            raise ValueError(f"comment too long ({len(val)} > {_COMMENT_MAX_LEN} chars)")
+        if str(saved.get(key) or "") == val:
+            continue
+        changes.append((edits.KIND_SUMMARY_ENGR, key, val if val else None))
+        if val:
+            saved[key] = val
+        else:
+            saved.pop(key, None)
+        changed += 1
     if changed:
+        report_db.apply_webreport_edits(session_id, changes,
+                                        updated_by=edits.user_from_ua(user_agent) or None)
         try:
             report_db.log_audit(
                 "edit", session_id=session_id, analysis_key=analysis_key,
@@ -569,7 +572,7 @@ def update_summary_engr(session_id: str, values: dict, *, report_db, upload_root
                 client_ip=client_ip, user_agent=user_agent)
         except Exception:
             pass
-        storage = storage_result["storage"]
+        storage = "db"
     else:
         storage = "unchanged"
 
@@ -587,23 +590,25 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
                            source: str = "") -> tuple[bytes, str]:
     """Trim Analysis 탭 payload(항목 매칭 + 그룹 통계/shift)를 JSON→gzip bytes 로 캐시해 반환.
 
-    반환은 (gzip bytes, manifest digest) — digest 는 라우트 ETag 용이다 (trim_overrides
-    편집 직후 stale 304 방지). 캐시 키에 manifest digest 가 포함되므로 overrides 저장 시
-    자연 무효화된다. product_type 은 analysis_key 산출 meta 에 이미 포함되어 키에 안 넣는다.
+    반환은 (gzip bytes, etag token) — token 은 라우트 ETag 용이다 (trim_overrides
+    편집 직후 stale 304 방지). overrides 는 세션 편집 DB 가 진실이라 캐시 키·token 에
+    (session_id, edits_rev)가 들어가 저장 시 자연 무효화된다. product_type 은
+    analysis_key 산출 meta 에 이미 포함되어 키에 안 넣는다.
     """
     from .tabs.trim_analysis import build_trim_payload
 
     session, tables, manifest = _load_tables(
         session_id, report_db=report_db, upload_root=upload_root)
     analysis_key = session.get("analysis_key")
-    manifest, manifest_digest = cache.load_manifest_with_digest(analysis_key, upload_root)
+    edit_state, edits_rev = edits.effective_state(report_db, session_id, manifest)
+    etag_token = hashlib.sha256(f"{session_id}:{edits_rev}".encode("utf-8")).hexdigest()
     mode = _validate_mode(session.get("mode"))
 
     cache_key = (analysis_key, str(session.get("content_hash") or ""),
-                 manifest_digest, mode, str(source or ""))
+                 session_id, edits_rev, mode, str(source or ""))
     blob = cache.cache_get(cache.TRIM_CACHE, cache_key)
     if blob is not None:
-        return blob, manifest_digest
+        return blob, etag_token
     with cache.keyed_lock(("trim",) + cache_key):
         blob = cache.cache_get(cache.TRIM_CACHE, cache_key)
         if blob is None:
@@ -613,13 +618,13 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
                 for table in tables:
                     table.item_columns = [c for c in table.item_columns if c in selected]
             payload = build_trim_payload(
-                tables, str(source or ""), manifest.get("trim_overrides") or {},
+                tables, str(source or ""), edit_state["trim_overrides"],
                 session.get("product_type", ""))
             blob = gzip.compress(
                 json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
                 compresslevel=1)
             cache.cache_put(cache.TRIM_CACHE, cache_key, blob, cache.TRIM_CACHE_MAX)
-    return blob, manifest_digest
+    return blob, etag_token
 
 
 def get_trim_chart_gzip(session_id: str, *, report_db, upload_root: Path,
@@ -646,8 +651,9 @@ def get_trim_chart_gzip(session_id: str, *, report_db, upload_root: Path,
     table = _select_table(tables, str(source or ""))
     product_type = session.get("product_type", "")
     rule_set = rule_set_for(product_type)
+    edit_state, _ = edits.effective_state(report_db, session_id, manifest)
     match = build_groups(table.item_columns,
-                         overrides=manifest.get("trim_overrides") or {},
+                         overrides=edit_state["trim_overrides"],
                          rule_set=rule_set, product_type=product_type)
     group = next((g for g in match["groups"] if g["id"] == str(group_id)), None)
     if group is None:
@@ -678,7 +684,7 @@ def update_trim_overrides(session_id: str, ops: list, *, report_db, upload_root:
     ops: [{"item": 항목명, "group": 그룹 id, "slot": INIT|CODE|TRIM|VERIFY|MEMBER} |
           {"item": 항목명, "reset": true}]. reset 은 해당 override 삭제(자동 매칭 복귀).
     수정본은 자동 매칭 결과보다 우선 적용된다(적용 자체는 trim_match._apply_overrides).
-    sources 원본은 불변이므로 manifest 만 재저장한다 (issue_comments 와 동일 패턴).
+    세션 편집 DB(kind=trim_override)에 저장하며 manifest 는 불변 스냅샷이다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -691,45 +697,41 @@ def update_trim_overrides(session_id: str, ops: list, *, report_db, upload_root:
     if len(ops) > _TRIM_OVERRIDE_MAX:
         raise ValueError(f"too many override entries ({len(ops)} > {_TRIM_OVERRIDE_MAX})")
 
-    import storage_gateway
-    # manifest read-modify-write 직렬화 — 동시 편집 lost update 방지 (락 안에서 조회)
-    with cache.keyed_lock(("manifest_edit", analysis_key)):
-        manifest = cache.load_manifest_cached(analysis_key, upload_root)
+    # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
+    edits.ensure_seeded(report_db, session_id,
+                        lambda: cache.load_manifest_cached(analysis_key, upload_root))
+    saved = edits.load_edit_state(report_db, session_id)["trim_overrides"]
+    changes = []
+    changed = 0
+    for entry in ops:
+        entry = entry or {}
+        item = str(entry.get("item") or "").strip()
+        if not item or len(item) > _TRIM_NAME_MAX:
+            raise ValueError(f"invalid item name: {item!r}")
+        if entry.get("reset"):
+            if saved.pop(item, None) is not None:
+                changes.append((edits.KIND_TRIM_OVERRIDE, item, None))
+                changed += 1
+            continue
+        slot = str(entry.get("slot") or "").strip().upper()
+        group = str(entry.get("group") or "").strip().upper()
+        if slot not in _TRIM_SLOTS:
+            raise ValueError(f"unknown slot: {slot!r}")
+        if not group or len(group) > _TRIM_NAME_MAX:
+            raise ValueError(f"invalid group name: {group!r}")
+        spec = {"group": group, "slot": slot}
+        if saved.get(item) == spec:
+            continue
+        saved[item] = spec
+        changes.append((edits.KIND_TRIM_OVERRIDE, item,
+                        json.dumps(spec, sort_keys=True, ensure_ascii=False)))
+        changed += 1
+    if len(saved) > _TRIM_OVERRIDE_MAX:
+        raise ValueError(f"too many overrides stored ({len(saved)} > {_TRIM_OVERRIDE_MAX})")
 
-        saved = dict(manifest.get("trim_overrides") or {})
-        changed = 0
-        for entry in ops:
-            entry = entry or {}
-            item = str(entry.get("item") or "").strip()
-            if not item or len(item) > _TRIM_NAME_MAX:
-                raise ValueError(f"invalid item name: {item!r}")
-            if entry.get("reset"):
-                if saved.pop(item, None) is not None:
-                    changed += 1
-                continue
-            slot = str(entry.get("slot") or "").strip().upper()
-            group = str(entry.get("group") or "").strip().upper()
-            if slot not in _TRIM_SLOTS:
-                raise ValueError(f"unknown slot: {slot!r}")
-            if not group or len(group) > _TRIM_NAME_MAX:
-                raise ValueError(f"invalid group name: {group!r}")
-            spec = {"group": group, "slot": slot}
-            if saved.get(item) == spec:
-                continue
-            saved[item] = spec
-            changed += 1
-        if len(saved) > _TRIM_OVERRIDE_MAX:
-            raise ValueError(f"too many overrides stored ({len(saved)} > {_TRIM_OVERRIDE_MAX})")
-
-        if changed:
-            if saved:
-                manifest["trim_overrides"] = saved
-            else:
-                manifest.pop("trim_overrides", None)
-            storage_result = storage_gateway.save_webreport_manifest(
-                analysis_key, manifest, upload_root=upload_root)
-            cache.manifest_cache_put(analysis_key, manifest)
     if changed:
+        report_db.apply_webreport_edits(session_id, changes,
+                                        updated_by=edits.user_from_ua(user_agent) or None)
         try:
             report_db.log_audit(
                 "edit", session_id=session_id, analysis_key=analysis_key,
@@ -739,7 +741,7 @@ def update_trim_overrides(session_id: str, ops: list, *, report_db, upload_root:
                 client_ip=client_ip, user_agent=user_agent)
         except Exception:
             pass
-        storage = storage_result["storage"]
+        storage = "db"
     else:
         storage = "unchanged"
 
