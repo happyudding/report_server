@@ -1,0 +1,4 @@
+product_name,product_type,family_product,lot_id,wafer_number,revision,item_name,value_type,bin,USL,LSL,average,stdev,human_comment,session_id,human_status,root_cause_category,outcome_action,outcome_condition,outcome_result
+S5E_TEST_0000001,PMIC,SOC,LOT001,3,0.0,VREF_TRIM,V,18,1.4,1.0,1.21,0.09,"site 3 에서만 튐, golden unit 재측정 필요",,MAJOR,equipment,retest,,recovered_normal
+S5E_TEST_0000001,PMIC,SOC,LOT001,3,0.0,SPMI_LDO_POK,P_F,18,,,,,"outlier 5%↑ 동일값 clamp",,,,,,
+S5E_TEST_0000002,PMIC,SOC,LOT002,5,0.0,TRIM_BUCK1_GM,CODE,20,40,20,30,3,"trim code margin 부족, spec 재검토 필요",,MINOR,spec,spec_release,,improved

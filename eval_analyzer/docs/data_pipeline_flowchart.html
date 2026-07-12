@@ -1,0 +1,264 @@
+<meta charset="utf-8">
+<title>eval_analyzer — Data Pipeline</title>
+<style>
+  :root {
+    --bg: #f7f8fa; --fg: #1c1f24; --muted: #6b7280;
+    --card: #ffffff; --line: #cbd2dc; --border: #e2e6ec;
+    --in: #2563eb; --stage: #0f766e; --gate: #b45309;
+    --out: #7c3aed; --db: #475569; --rules: #9333ea;
+    --chip: #eef2f7; --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --fg: #e6e9ee; --muted: #97a1b0;
+      --card: #1c2027; --line: #3a424e; --border: #2a303a;
+      --in: #60a5fa; --stage: #2dd4bf; --gate: #fbbf24;
+      --out: #c084fc; --db: #94a3b8; --rules: #d8b4fe;
+      --chip: #262c36; --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+      --bg: #14171c; --fg: #e6e9ee; --muted: #97a1b0;
+      --card: #1c2027; --line: #3a424e; --border: #2a303a;
+      --in: #60a5fa; --stage: #2dd4bf; --gate: #fbbf24;
+      --out: #c084fc; --db: #94a3b8; --rules: #d8b4fe; --chip: #262c36; --shadow: none;
+  }
+  :root[data-theme="light"] {
+      --bg: #f7f8fa; --fg: #1c1f24; --muted: #6b7280;
+      --card: #ffffff; --line: #cbd2dc; --border: #e2e6ec;
+      --in: #2563eb; --stage: #0f766e; --gate: #b45309;
+      --out: #7c3aed; --db: #475569; --rules: #9333ea; --chip: #eef2f7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: "Segoe UI", -apple-system, "Malgun Gothic", sans-serif;
+    line-height: 1.5; padding: 32px 16px 64px;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 8px; }
+  h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; text-align: center; }
+  .sub code { background: var(--chip); padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+
+  .flow { display: flex; flex-direction: column; align-items: center; }
+  .node {
+    width: 100%; max-width: 620px; background: var(--card);
+    border: 1px solid var(--border); border-left: 4px solid var(--line);
+    border-radius: 10px; padding: 12px 16px; box-shadow: var(--shadow);
+  }
+  .node .top { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .tag {
+    font-size: 11px; font-weight: 700; letter-spacing: .04em;
+    padding: 2px 7px; border-radius: 5px; color: #fff; white-space: nowrap;
+  }
+  .title { font-weight: 650; font-size: 15px; }
+  .fn { font-size: 12px; color: var(--muted); font-family: "Consolas", monospace; }
+  .desc { font-size: 12.5px; color: var(--muted); margin-top: 5px; }
+  .chips { margin-top: 7px; display: flex; flex-wrap: wrap; gap: 5px; }
+  .chip { font-size: 11px; background: var(--chip); color: var(--fg);
+          padding: 2px 8px; border-radius: 20px; border: 1px solid var(--border); }
+
+  /* accents */
+  .in    { border-left-color: var(--in); }    .in .tag    { background: var(--in); }
+  .stage { border-left-color: var(--stage); } .stage .tag { background: var(--stage); }
+  .gate  { border-left-color: var(--gate); }  .gate .tag  { background: var(--gate); }
+  .out   { border-left-color: var(--out); }   .out .tag   { background: var(--out); }
+
+  .arrow { width: 2px; height: 22px; background: var(--line); position: relative; }
+  .arrow::after {
+    content: ""; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+    border: 5px solid transparent; border-top-color: var(--line); border-bottom: 0;
+  }
+  .arrow.lbl::before {
+    content: attr(data-lbl); position: absolute; left: 12px; top: 50%;
+    transform: translateY(-50%); white-space: nowrap;
+    font-size: 11px; color: var(--muted); background: var(--bg); padding: 0 4px;
+  }
+
+  /* side feeds */
+  .row { display: flex; align-items: stretch; gap: 14px; width: 100%;
+         max-width: 620px; justify-content: center; }
+  .side {
+    align-self: center; background: var(--card); border: 1px dashed var(--border);
+    border-radius: 10px; padding: 9px 12px; font-size: 11.5px; color: var(--muted);
+    max-width: 165px; box-shadow: var(--shadow);
+  }
+  .side b { color: var(--fg); font-size: 12px; display: block; margin-bottom: 2px; }
+  .side.rules { border-color: var(--rules); }
+  .side.db { border-color: var(--db); }
+  .feed { color: var(--muted); font-size: 18px; align-self: center; }
+
+  .loopwrap { position: relative; width: 100%; max-width: 620px; }
+  .loopband {
+    position: absolute; left: -14px; top: 0; bottom: 0; width: 3px;
+    background: repeating-linear-gradient(var(--stage) 0 6px, transparent 6px 12px);
+    opacity: .5; border-radius: 2px;
+  }
+  .looplbl {
+    position: absolute; left: -10px; top: 50%; transform: rotate(180deg);
+    writing-mode: vertical-rl; font-size: 11px; color: var(--stage);
+    font-weight: 600; letter-spacing: .02em;
+  }
+  .legend { margin-top: 34px; display: flex; flex-wrap: wrap; gap: 14px;
+            justify-content: center; font-size: 12px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .foot { text-align: center; color: var(--muted); font-size: 11.5px; margin-top: 26px; }
+  .foot code { background: var(--chip); padding: 1px 5px; border-radius: 4px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>eval_analyzer — Data Pipeline</h1>
+  </header>
+  <div class="sub">
+    반도체 Fail-Item 평가 엔진 · <code>evaluate(run_input)</code> 6단계 (L0~L6) 오케스트레이션
+  </div>
+
+  <div class="flow">
+
+    <!-- INPUT -->
+    <div class="node in">
+      <div class="top"><span class="tag">INPUT</span>
+        <span class="title">report_server → run_input</span></div>
+      <div class="desc">파일 1회 run 시 호출. <b>report_server → eval_analyzer 한 방향</b> (import 없음).</div>
+      <div class="chips">
+        <span class="chip">meta (product·lot·wafer·process…)</span>
+        <span class="chip">raw_df (측정 + HILIM/LOLIM + XPOS/YPOS + BIN + FAILTNO/TNO)</span>
+      </div>
+    </div>
+
+    <div class="arrow lbl" data-lbl="persist=True → init_db()"></div>
+
+    <!-- L0 -->
+    <div class="node stage">
+      <div class="top"><span class="tag">L0</span>
+        <span class="title">ingest</span><span class="fn">ingest()</span></div>
+      <div class="desc">run_input → <b>run_id + fail_case 들</b>. 마스터 upsert, item 파싱, 측정 시리즈 메모리 첨부.</div>
+      <div class="chips"><span class="chip">fail 식별: FAILTNO==TNO</span>
+        <span class="chip">item_class = category · value_type · bin</span>
+        <span class="chip">case_id (자연키 sha256)</span></div>
+    </div>
+
+    <div class="arrow lbl" data-lbl="fail_case 마다 반복 ↓"></div>
+
+    <!-- LOOP L1~L6 -->
+    <div class="loopwrap">
+      <div class="loopband"></div>
+      <div class="looplbl">per fail_case</div>
+
+      <div class="flow">
+        <!-- L1 -->
+        <div class="row">
+          <div class="node stage">
+            <div class="top"><span class="tag">L1</span>
+              <span class="title">metrics</span><span class="fn">compute()</span></div>
+            <div class="desc">raw(메모리)에서 요약통계 계산. <b>raw per-DUT 저장 금지</b>.</div>
+            <div class="chips"><span class="chip">cpk / cpl / cpu / cp</span>
+              <span class="chip">mean · stdev · min · max</span>
+              <span class="chip">yield · bimodality</span></div>
+          </div>
+        </div>
+        <div class="arrow"></div>
+
+        <!-- L2 -->
+        <div class="node stage">
+          <div class="top"><span class="tag">L2</span>
+            <span class="title">features</span><span class="fn">compute()</span></div>
+          <div class="desc">engine_version 별 파생 feature.</div>
+          <div class="chips"><span class="chip">robust 산포 (MAD)</span>
+            <span class="chip">spec margin</span>
+            <span class="chip">공간 (edge·center·quadrant·gradient)</span>
+            <span class="chip">site_cpk_delta</span></div>
+        </div>
+        <div class="arrow"></div>
+
+        <!-- L3 -->
+        <div class="row">
+          <div class="node stage" style="flex:1">
+            <div class="top"><span class="tag">L3</span>
+              <span class="title">signatures</span><span class="fn">evaluate()</span></div>
+            <div class="desc">rules(yaml) when_metric 평가 → <b>발화 signature + evidence</b> + bin context.</div>
+          </div>
+          <div class="feed">←</div>
+          <div class="side rules"><b>rules/*.yaml</b>thresholds · signatures · bin_taxonomy<br>(임계값 하드코딩 금지)</div>
+        </div>
+        <div class="arrow"></div>
+
+        <!-- L4 -->
+        <div class="node stage">
+          <div class="top"><span class="tag">L4</span>
+            <span class="title">status</span><span class="fn">decide()</span></div>
+          <div class="desc">severity 집계 + severity_bias + <b>trump</b> + <b>specificity</b>.</div>
+          <div class="chips"><span class="chip">status: MONITOR·MINOR·MAJOR·CRITICAL</span>
+            <span class="chip">confidence</span>
+            <span class="chip">data_completeness</span></div>
+        </div>
+        <div class="arrow"></div>
+
+        <!-- GATE -->
+        <div class="node gate">
+          <div class="top"><span class="tag">GATE</span>
+            <span class="title">should_store ?</span><span class="fn">present.should_store()</span></div>
+          <div class="desc">저장 대상만 통과. <b>미통과 → continue (drop)</b>.</div>
+          <div class="chips"><span class="chip">① yield fail (FAILTNO==TNO)</span>
+            <span class="chip">② cpk &lt; cpk_warn(1.33) marginal (bin=PASS)</span></div>
+        </div>
+        <div class="arrow lbl" data-lbl="통과 시 ↓"></div>
+
+        <!-- L5 -->
+        <div class="row">
+          <div class="node stage" style="flex:1">
+            <div class="top"><span class="tag">L5</span>
+              <span class="title">recommend</span><span class="fn">find_precedents() · make_comment()</span></div>
+            <div class="desc">선례 검색(어댑터) + 템플릿/LLM 합성 → <b>comment</b>.</div>
+          </div>
+          <div class="feed">←</div>
+          <div class="side db"><b>eval.db 선례</b>과거 case_signature · outcome<br>(sql 기본 / rag 교체형)</div>
+        </div>
+        <div class="arrow"></div>
+
+        <!-- L6 -->
+        <div class="row">
+          <div class="node stage" style="flex:1">
+            <div class="top"><span class="tag">L6</span>
+              <span class="title">present</span><span class="fn">persist() · to_result()</span></div>
+            <div class="desc">RunResult dict 직렬화 + <b>persist 시 eval.db 적재</b> (raw 제외).</div>
+          </div>
+          <div class="feed">→</div>
+          <div class="side db"><b>eval.db 적재</b>fail_case · raw_metrics · features · evaluation · evidence · signature</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow"></div>
+
+    <!-- OUTPUT -->
+    <div class="node out">
+      <div class="top"><span class="tag">OUTPUT</span>
+        <span class="title">RunResult → report_server</span></div>
+      <div class="desc">저장 주인은 eval_analyzer. report_server 는 반환값을 UI 표시에 사용(선택).</div>
+      <div class="chips">
+        <span class="chip">run_id · cases[]</span>
+        <span class="chip">status · signature · comment</span>
+        <span class="chip">confidence · evidence · precedents</span>
+        <span class="chip">join 키 = (item_raw, bin)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i class="dot" style="background:var(--in)"></i>입력</span>
+    <span><i class="dot" style="background:var(--stage)"></i>파이프라인 단계 (L0~L6)</span>
+    <span><i class="dot" style="background:var(--gate)"></i>저장 게이트</span>
+    <span><i class="dot" style="background:var(--out)"></i>출력</span>
+    <span><i class="dot" style="background:var(--rules)"></i>룰(yaml)</span>
+    <span><i class="dot" style="background:var(--db)"></i>eval.db</span>
+  </div>
+
+  <div class="foot">
+    소스: <code>eval_engine/api.py</code> · <code>pipeline/{ingest,metrics,features,signatures,status,recommend,present}.py</code>
+    &nbsp;·&nbsp; 계약: <code>docs/INTEGRATION_CONTRACT.md</code>
+  </div>
+</div>

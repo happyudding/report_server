@@ -41,6 +41,8 @@
 > [web_report/](../web_report/). 기능 정본은 docs [10 파이프라인](10_web_report_pipeline.md) ·
 > [11 탭](11_web_report_tabs.md) · [12 캐시](12_web_report_cache.md). comment/override 편집은
 > **세션 편집 DB(report_webreport_edit)** 에 저장되고 manifest 는 업로드 시점 불변 스냅샷.
+> ai_comment 옵션 세션은 콜드 빌드 시 [eval_analyzer](../eval_analyzer/) `evaluate()` 를 호출해
+> IssueTable 에 AI Comment 컬럼을 채운다 → [13 통합 규약](13_eval_analyzer_integration.md).
 
 ---
 
@@ -59,6 +61,7 @@
 | 10 | **web_report 파이프라인** (upload→ingest→저장→로드) | Server | [10_web_report_pipeline.md](10_web_report_pipeline.md) | [server/upload_webreport.py](../server/upload_webreport.py) |
 | 11 | **web_report 탭 계약 & 렌더** | Server | [11_web_report_tabs.md](11_web_report_tabs.md) | [web_report/tabs/](../web_report/tabs/) |
 | 12 | **web_report 캐시 & 컴퓨트** | Server | [12_web_report_cache.md](12_web_report_cache.md) | [web_report/cache.py](../web_report/cache.py) |
+| 13 | **eval_analyzer 통합 (AI Comment)** — 단방향 의존 규약 | Server | [13_eval_analyzer_integration.md](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) |
 
 > 서버 부팅: [server/wsgi.py](../server/wsgi.py) → [plugin.py](../server/plugin.py)
 > `register_report_server` 가 `report_bp` + `honey_bp` + admin_panel + ops 등록.
@@ -104,6 +107,7 @@
 | web_report 캐시 키/무효화 | — | [web_report/cache_policy.py](../web_report/cache_policy.py) (키 구성 단일 진실) |
 | 콜드 빌드 워커/프리웜 | — | [web_report/compute.py](../web_report/compute.py) (`WEB_REPORT_COMPUTE_WORKERS`) |
 | 새 탭 추가 | — | [web_report/tabs/__init__.py](../web_report/tabs/__init__.py) `TAB_REGISTRY` + 프런트 JS 1개 |
+| IssueTable AI Comment / eval_analyzer 연결 | [13](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) `safe_build` (eval_engine import 유일 지점) |
 | 세션 상세 탭 UI (JS) | — | [server/report/static/webreport/](../server/report/static/webreport/) 15개 모듈 (순서 로드 — report_view.html 은 마크업+CSS) |
 | 신원/SSO 전환 | — | [server/auth_identity.py](../server/auth_identity.py) (`AUTH_SSO_HEADER`) |
 | 감사 로그(업/수정/삭제) 기록·조회 | [02](02_server_query_edit.md) | `report_db.log_audit`/`get_audit_logs`, 대시보드 `/pe/admin-pte/` ([admin_panel/](../server/admin_panel/)) |

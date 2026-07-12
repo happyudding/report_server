@@ -503,7 +503,8 @@ class HoneyMainWindow(QMainWindow):
     def _build_controls_panel(self, QWidget, QVBoxLayout, QHBoxLayout):
         """'새 리포트' 입력 창 — 기본 숨김, 사이드바 🆕 로 왼쪽에서 슬라이드.
         파일 열기·D1·Product Type·파일 리스트·저장명·분석 모드·Start/Web Report 를 담는다."""
-        from PyQt6.QtWidgets import QButtonGroup, QGroupBox, QRadioButton, QSizePolicy
+        from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QGroupBox,
+                                     QRadioButton, QSizePolicy)
 
         container = QWidget()
         v = QVBoxLayout(container)
@@ -559,6 +560,17 @@ class HoneyMainWindow(QMainWindow):
             mode_row.addWidget(rb)
         mode_row.addStretch(1)
         web_v.addLayout(mode_row)
+
+        # AI Comment — 서버 eval_analyzer 분석 결과를 Issue Table 에 표시할지 여부.
+        # 값은 settings.json 에 영속(webreport_ai_comment). 서버 파이프라인 검증
+        # 전까지 비활성 노출 — 활성화는 setEnabled(True) 한 줄.
+        self.chk_ai_comment = QCheckBox("AI Comment")
+        self.chk_ai_comment.setChecked(
+            bool(app_settings.get_setting("webreport_ai_comment", False)))
+        self.chk_ai_comment.toggled.connect(
+            lambda v: app_settings.set_setting("webreport_ai_comment", bool(v)))
+        self.chk_ai_comment.setEnabled(False)
+        web_v.addWidget(self.chk_ai_comment)
         web_v.addWidget(self.btn_web_report)
 
         # Excel Report — 로컬 xlsx 생성/분석 (기존 Start 버튼).
@@ -1261,7 +1273,10 @@ class HoneyMainWindow(QMainWindow):
             return None
         # F10 에서 지정한 Distribution 색(chart_colors.json)을 웹리포트에 실어 보낸다.
         # 색 번호 i = distribution source i 의 색. 미지정이면 기본 팔레트가 실린다.
-        options = {"colors": chart_colors.load_colors()}
+        # ai_comment: Issue Table AI Comment 컬럼 표시 여부 — 서버가 세션
+        # webreport_options 에 고정 저장한다 (업로드 후 토글 불가).
+        options = {"colors": chart_colors.load_colors(),
+                   "ai_comment": bool(self.chk_ai_comment.isChecked())}
         # SourceName(legend) 은 파일마다 달라 매번 확인·변경 후 생성.
         # DUT 모드는 서버가 업로드된 단일 honeyform 의 DUT 컬럼으로 분할·명명(DUT <값>)하므로
         # 클라에서는 분할하지 않고 rename 도 건너뛴다 (df_honey→honeyform 포맷 변환 회피).

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>evaluate() 전체 흐름</title>
+<style>
+  :root{
+    --bg:#eef2f3; --paper:#fff; --ink:#15242b; --muted:#5d707a; --faint:#8a9aa1;
+    --line:#d5e0e3; --line-strong:#9fb4bb;
+    --accent:#0d7d89; --accent-deep:#08535c; --wash:#e2eff0;
+    --rs:#7a5cc4; --rs-wash:#efeafb;          /* report_server lane */
+    --yield:#a86a0c; --cpk:#2c65a4; --etc:#0d7d89;
+    --mono:ui-monospace,"Cascadia Code","JetBrains Mono","SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI","Malgun Gothic","Noto Sans KR",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.5}
+  .wrap{max-width:1000px;margin:0 auto;padding:clamp(18px,4vw,40px) clamp(14px,4vw,32px) 72px}
+  h1{font-family:var(--mono);font-size:clamp(18px,3vw,25px);font-weight:600;letter-spacing:-.01em;margin:0 0 4px}
+  h1 .p{color:var(--accent)}
+  .sub{color:var(--muted);font-size:13.5px;margin:0 0 26px}
+
+  /* lane label */
+  .lane{position:relative;border:1px solid var(--line);border-radius:8px;background:var(--paper);padding:20px 18px 22px;margin-top:0}
+  .lane.rs{border-color:#d8cef0;background:linear-gradient(0deg,#faf8ff,#fff)}
+  .lane-tag{position:absolute;top:-10px;left:14px;font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;
+    text-transform:uppercase;font-weight:700;padding:2px 9px;border-radius:20px;background:var(--accent-deep);color:#fff}
+  .lane.rs .lane-tag{background:var(--rs)}
+
+  /* nodes */
+  .row{display:flex;align-items:stretch;justify-content:center;gap:0;flex-wrap:wrap}
+  .node{flex:0 0 auto;border:1px solid var(--line);border-radius:7px;background:var(--paper);
+    padding:10px 14px;text-align:center;min-width:150px}
+  .node .t{font-family:var(--mono);font-size:13px;font-weight:650}
+  .node .d{color:var(--muted);font-size:11.5px;margin-top:2px}
+  .node.rs{border-color:#cebef0;background:var(--rs-wash)}
+
+  /* connectors */
+  .h{display:flex;align-items:center;flex:0 0 auto;padding:0 2px}
+  .h::before{content:"";width:18px;height:2px;background:var(--line-strong)}
+  .h::after{content:"";width:8px;height:8px;border-top:2px solid var(--accent);border-right:2px solid var(--accent);transform:rotate(45deg);margin-left:-6px}
+  .v{display:flex;flex-direction:column;align-items:center;height:32px}
+  .v::before{content:"";flex:1;width:2px;background:var(--line-strong)}
+  .v::after{content:"";width:9px;height:9px;border-right:2px solid var(--accent);border-bottom:2px solid var(--accent);transform:rotate(45deg);margin-top:-6px}
+  .v.lbl{height:44px;position:relative}
+  .v .cap{position:absolute;left:14px;top:50%;transform:translateY(-60%);white-space:nowrap;
+    font-family:var(--mono);font-size:11px;color:var(--accent-deep)}
+
+  /* pipeline stages (horizontal scroll) */
+  .pipe{display:flex;align-items:stretch;overflow-x:auto;padding:4px 2px 8px}
+  .stage{flex:0 0 auto;width:138px;border:1px solid var(--line);border-radius:7px;background:var(--paper);
+    padding:9px 11px;position:relative}
+  .stage .n{font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;background:var(--accent);
+    border-radius:4px;padding:1px 6px;display:inline-block}
+  .stage .t{font-family:var(--mono);font-size:12.5px;font-weight:650;margin-top:5px}
+  .stage .d{color:var(--muted);font-size:11px;margin-top:2px;line-height:1.35}
+  .harr{flex:0 0 auto;align-self:center;width:16px;height:2px;background:var(--line-strong);position:relative}
+  .harr::after{content:"";position:absolute;right:-1px;top:-4px;width:8px;height:8px;border-top:2px solid var(--accent);border-right:2px solid var(--accent);transform:rotate(45deg)}
+
+  /* db side note */
+  .db{display:flex;align-items:center;justify-content:center;gap:10px;margin-top:12px}
+  .cyl{font-family:var(--mono);font-size:12px;font-weight:650;color:var(--accent-deep);
+    border:1px solid var(--accent);background:var(--wash);border-radius:20px;padding:5px 14px}
+  .db .lk{font-family:var(--mono);font-size:11px;color:var(--muted);border-top:2px dashed var(--line-strong);padding-top:3px;min-width:120px;text-align:center}
+
+  /* output card */
+  .out{border:1.5px solid var(--accent);border-radius:8px;background:var(--paper);padding:14px 16px;max-width:640px;margin:0 auto}
+  .out .h3{font-family:var(--mono);font-size:12.5px;font-weight:700;color:var(--accent-deep);margin-bottom:9px}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{font-family:var(--mono);font-size:11.5px;border:1px solid var(--line);border-radius:5px;padding:3px 8px;background:#f4f8f9;color:var(--muted)}
+  .chip b{color:var(--ink);font-weight:600}
+  .chip.key{border-color:var(--accent);background:var(--wash);color:var(--accent-deep)}
+  .chip.key b{color:var(--accent-deep)}
+
+  /* buckets */
+  .buckets{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:4px}
+  @media(max-width:560px){.buckets{grid-template-columns:1fr}}
+  .bk{border:1px solid var(--line);border-top-width:4px;border-radius:7px;background:var(--paper);padding:11px 13px}
+  .bk .t{font-family:var(--mono);font-weight:700;font-size:13px}
+  .bk .d{color:var(--muted);font-size:11.5px;margin-top:3px}
+  .bk.y{border-top-color:var(--yield)} .bk.y .t{color:var(--yield)}
+  .bk.c{border-top-color:var(--cpk)} .bk.c .t{color:var(--cpk)}
+  .bk.e{border-top-color:var(--etc)} .bk.e .t{color:var(--etc)}
+  .bk .auto{display:inline-block;margin-top:6px;font-family:var(--mono);font-size:10px;font-weight:700;
+    color:#fff;background:var(--etc);border-radius:4px;padding:1px 6px}
+
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:26px;font-family:var(--mono);font-size:11px;color:var(--muted)}
+  .legend span{display:flex;align-items:center;gap:6px}
+  .sw{width:12px;height:12px;border-radius:3px;border:1px solid var(--line)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>evaluate<span class="p">()</span> 전체 흐름</h1>
+  <p class="sub">raw 측정 → 6단계 판정 → RunResult → Issue Table. 굵은 칩 = 새로 추가된 join 필드.</p>
+
+  <!-- INPUT -->
+  <div class="lane rs">
+    <span class="lane-tag">report_server</span>
+    <div class="row">
+      <div class="node rs"><div class="t">df_honey</div><div class="d">raw 측정 (메모리)</div></div>
+      <div class="h"></div>
+      <div class="node rs"><div class="t">build_run_input</div><div class="d">어댑터 (report_server 측)</div></div>
+      <div class="h"></div>
+      <div class="node rs"><div class="t">run_input</div><div class="d">{ meta, raw_df }</div></div>
+    </div>
+  </div>
+
+  <div class="v lbl"><span class="cap">evaluate(run_input)</span></div>
+
+  <!-- PIPELINE -->
+  <div class="lane">
+    <span class="lane-tag">eval_analyzer · evaluate()</span>
+    <div class="pipe">
+      <div class="stage"><span class="n">L0</span><div class="t">ingest</div><div class="d">raw_df 파싱 · fail 식별 FAILTNO==TNO · case_id</div></div>
+      <div class="harr"></div>
+      <div class="stage"><span class="n">L1</span><div class="t">metrics</div><div class="d">cpk · mean · stdev · yield</div></div>
+      <div class="harr"></div>
+      <div class="stage"><span class="n">L2</span><div class="t">features</div><div class="d">산포 · spec margin · 공간</div></div>
+      <div class="harr"></div>
+      <div class="stage"><span class="n">L3</span><div class="t">signatures</div><div class="d">룰(yaml) 평가 → 발화</div></div>
+      <div class="harr"></div>
+      <div class="stage"><span class="n">L4</span><div class="t">status</div><div class="d">심각도 · confidence</div></div>
+      <div class="harr"></div>
+      <div class="stage"><span class="n">L5</span><div class="t">recommend</div><div class="d">선례 + comment 합성</div></div>
+      <div class="harr"></div>
+      <div class="stage"><span class="n">L6</span><div class="t">present</div><div class="d">직렬화 + 적재</div></div>
+    </div>
+    <div class="db">
+      <span class="lk">search 선례 ↑ · persist ↓</span>
+      <span class="cyl">eval.db</span>
+      <span class="lk">L5 · L6 연결</span>
+    </div>
+  </div>
+
+  <div class="v"></div>
+
+  <!-- OUTPUT -->
+  <div class="out">
+    <div class="h3">RunResult.cases[ ]  &nbsp;— fail item 당 1개</div>
+    <div class="chips">
+      <span class="chip key"><b>item_raw</b> 원본명</span>
+      <span class="chip"><b>bin</b></span>
+      <span class="chip key"><b>issue_category</b> YIELD|CPK|ETC</span>
+      <span class="chip"><b>status</b> CRITICAL…MONITOR</span>
+      <span class="chip"><b>comment</b> 분석방향</span>
+      <span class="chip">primary_signature</span>
+      <span class="chip">evidence · signatures</span>
+      <span class="chip">precedents</span>
+    </div>
+  </div>
+
+  <div class="v lbl"><span class="cap">join = (item_raw, bin)</span></div>
+
+  <!-- ISSUE TABLE -->
+  <div class="lane rs">
+    <span class="lane-tag">report_server · Issue Table</span>
+    <div class="buckets">
+      <div class="bk y"><div class="t">YIELD</div><div class="d">GROSS_FAIL</div></div>
+      <div class="bk c"><div class="t">CPK</div><div class="d">LOW_CPK · SPEC_TOO_TIGHT</div></div>
+      <div class="bk e"><div class="t">ETC</div><div class="d">EDGE / CLUSTER / SUBPOP / OUTLIER …</div><span class="auto">eval 자동 채움</span></div>
+    </div>
+    <div class="db" style="margin-top:14px">
+      <span class="cyl" style="border-color:var(--rs);background:var(--rs-wash);color:var(--rs)">comment 열 ← case.comment</span>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:var(--rs-wash);border-color:#cebef0"></span> report_server 담당</span>
+    <span><span class="sw" style="background:var(--paper)"></span> eval_analyzer</span>
+    <span><span class="sw" style="background:var(--wash);border-color:var(--accent)"></span> 새 join 필드</span>
+  </div>
+
+</div>
+</body>
+</html>

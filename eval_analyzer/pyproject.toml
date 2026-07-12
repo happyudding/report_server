@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eval-analyzer"
+version = "0.0.1"
+description = "반도체 fail-item 평가 분석 엔진 (report_server 와 독립, in-process 라이브러리)"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pandas",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+packages = ["eval_engine", "eval_engine.pipeline"]
+
+[tool.setuptools.package-data]
+# rules yaml 은 config.py 가 파일경로로 읽는다(패키지 리소스). wheel 에도 동봉.
+eval_engine = ["rules/*.yaml"]

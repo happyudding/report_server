@@ -35,6 +35,21 @@ def webreport_colors(opts_raw: str):
     return [str(c) for c in colors] if isinstance(colors, list) and colors else None
 
 
+def webreport_ai_comment(opts_raw: str) -> bool:
+    """세션의 webreport_options JSON → IssueTable AI Comment 표시 여부.
+
+    업로드 시 manifest.options.ai_comment 로 실려 세션에 고정된다. 없음/파싱
+    실패 = False (기존 세션은 컬럼 미표시 — payload 무변화).
+    """
+    if not opts_raw:
+        return False
+    try:
+        opts = json.loads(opts_raw)
+    except Exception:
+        return False
+    return bool(opts.get("ai_comment")) if isinstance(opts, dict) else False
+
+
 def validate_mode(value) -> str:
     """manifest.mode 를 허용 모드 중 하나로 정규화. 미지정/불명은 'Normal'."""
     mode = str(value or "").strip()

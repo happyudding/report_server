@@ -8,6 +8,7 @@ pandas>=2.2
 pyarrow>=15.0
 numpy>=1.26      # web_report cpk/distribution 계산 (pandas 가 끌어오지만 명시)
 psutil>=5.9
+pyyaml>=6.0      # eval_analyzer(eval_engine) rules/*.yaml 로딩 — web_report/ai_comment.py 경유
 
 # ── 아래는 _reference/ 분석·시각화 파이프라인 재활성화 시에만 필요 ──
 # 현재 활성 서버 코드는 import 하지 않으므로 기본 설치에서 제외.

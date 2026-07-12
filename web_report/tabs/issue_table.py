@@ -22,25 +22,40 @@ from .yield_tab import build_yield_bin_groups
 
 _COMMENT_COLS = ["PTE comment", "개발 comment"]
 
-# service.update_issue_comments 의 컬럼 검증용 공개 이름
+# service.update_issue_comments 의 컬럼 검증용 공개 이름.
+# AI Comment(아래) 는 여기 절대 추가하지 말 것 — 미포함이 곧 읽기전용 보장
+# (서버 편집 검증 + 프런트 ISSUE_COMMENT_COLS 양쪽에서 편집 불가).
 COMMENT_COLS = list(_COMMENT_COLS)
 
+# ai_comment 옵션 세션에만 존재하는 읽기전용 컬럼 (web_report/ai_comment.py 가 값 생성).
+# 이름에 "comment" 가 들어가 프런트 orderColumns 가 comment 블록으로 자동 배치하며,
+# dict 삽입 순서(PTE comment 앞)가 블록 내 표시 순서다 (docs/13).
+AI_COMMENT_COL = "AI Comment"
 
-def _comment_values(issue_comments, row_key):
+
+def _comment_values(issue_comments, row_key, ai_comments=None):
     saved = (issue_comments or {}).get(row_key) or {}
-    return {col: str(saved.get(col) or "") for col in _COMMENT_COLS}
+    out = {}
+    if ai_comments is not None:
+        out[AI_COMMENT_COL] = str(ai_comments.get(row_key) or "")
+    for col in _COMMENT_COLS:
+        out[col] = str(saved.get(col) or "")
+    return out
 
 
-def _blank_row(sources):
+def _blank_row(sources, ai=False):
     row = {f"{src}_yield": "" for src in sources}
     row["Map"] = ""
     row["Distribution"] = ""
+    if ai:
+        row[AI_COMMENT_COL] = ""
     for col in _COMMENT_COLS:
         row[col] = ""
     return row
 
 
-def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None):
+def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None,
+              ai_comments=None):
     if not etc_items:
         return []
     meta = _item_meta(tables)
@@ -62,7 +77,7 @@ def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None):
             data[f"{src}_yield"] = match.get(f"{src}_yield", "")
         data["Map"] = ""
         data["Distribution"] = ""
-        data.update(_comment_values(issue_comments, f"ETC|{item}"))
+        data.update(_comment_values(issue_comments, f"ETC|{item}", ai_comments))
         rows.append(data)
     return rows
 
@@ -97,8 +112,11 @@ def build_issue_bin_summary(yield_rows):
 
 
 def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=None,
-                           issue_comments=None):
+                           issue_comments=None, ai_comments=None):
+    # ai_comments: None = 컬럼 미표시(기존 세션 payload 불변) / dict = AI Comment 컬럼
+    # 표시(값은 row_key 매칭, 빈 dict 면 빈 셀). service 가 옵션 판정 후 전달.
     sources = [t.source for t in (tables or [])]
+    ai = ai_comments is not None
     rows = []
 
     # Yield 섹션: Bin 당 대표(Bin 총합 집계, 식별정보는 most-fail TNO) 행 + 그 Bin 의
@@ -129,7 +147,8 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
                 out[f"{src}_yield"] = gr.get(f"{src}_yield")
             out["Map"] = ""
             out["Distribution"] = ""
-            out.update(_comment_values(issue_comments, f"Yield|{bin_value}|{item}"))
+            out.update(_comment_values(issue_comments, f"Yield|{bin_value}|{item}",
+                                       ai_comments))
             rows.append(out)
 
     cpk_fails = _cpk_fail_subjects(cpk_rows)
@@ -143,7 +162,7 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
             cpk_by[(r.get("subject"), r.get("source"))] = cpk
     cpk_meta = _item_meta(tables)
     subhead = {"Category": "CPK", "Step": "", "Bin": "", "TNO": "", "Item": "item name", "avg": "cpk"}
-    subhead.update(_blank_row(sources))
+    subhead.update(_blank_row(sources, ai))
     for src in sources:
         subhead[f"{src}_yield"] = "CPK"
     rows.append(subhead)
@@ -152,15 +171,16 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
             m = cpk_meta.get(subject, {})
             data = {"Category": "", "Step": fmt_type(m.get("step")), "Bin": "",
                     "TNO": fmt_type(m.get("tno")), "Item": subject, "avg": cpk}
-            data.update(_blank_row(sources))
+            data.update(_blank_row(sources, ai))
             for src in sources:
                 data[f"{src}_yield"] = cpk_by.get((subject, src), "")
-            data.update(_comment_values(issue_comments, f"CPK|{subject}"))
+            data.update(_comment_values(issue_comments, f"CPK|{subject}", ai_comments))
             rows.append(data)
     else:
-        rows.append({"Category": "", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources)})
+        rows.append({"Category": "", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources, ai)})
 
-    etc = {"Category": "ETC", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources)}
+    etc = {"Category": "ETC", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources, ai)}
     rows.append(etc)
-    rows.extend(_etc_rows(tables, yield_rows, etc_items, sources, issue_comments=issue_comments))
+    rows.extend(_etc_rows(tables, yield_rows, etc_items, sources,
+                          issue_comments=issue_comments, ai_comments=ai_comments))
     return rows

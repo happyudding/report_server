@@ -1,0 +1,109 @@
+# Layer2 진단 signature — feature 조합 → named 고장 모드. 선언형.
+# when_all: 모두 발화해야 / when_metric: 수치 조건 / scope: 적용 범위(item_class 등)
+# status_hint: 기본 심각도(bin_taxonomy 로 변조됨) / action_ko: 코멘트 골격 / evidence: 근거 템플릿
+# issue_category: report_server Issue Table 버킷 YIELD|CPK (미지정 시 ETC). primary 로 노출.
+version: ev1
+signatures:
+  - id: WIDE_DISTRIBUTION
+    when_metric: { spread_norm: ">spread_norm_warn" }
+    status_hint: MAJOR
+    action_ko: "산포가 spec 폭 대비 넓음 — 공정 변동 점검"
+    evidence: ["spread_norm {spread_norm}"]
+
+  - id: SEVERE_OUTLIER
+    when_metric: { outlier_ratio: ">outlier_ratio_bad" }
+    status_hint: MAJOR
+    action_ko: "outlier 성 fail 비율 높음 — 개별 die/contact 확인, retest 권장"
+    evidence: ["outlier_ratio {outlier_ratio}"]
+
+  - id: OUTLIER_WARN
+    when_metric: { outlier_ratio: ">outlier_ratio_warn" }
+    status_hint: MINOR
+    action_ko: "outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+    evidence: ["outlier_ratio {outlier_ratio}"]
+
+  - id: TAIL_RISK
+    when_metric: { skewness: "abs>skew_warn", spec_margin_min: "<spec_margin_warn" }
+    status_hint: MAJOR
+    action_ko: "한쪽 꼬리가 spec 근접 — centering/방향성 trim 검토"
+    evidence: ["skewness {skewness}", "nearest {nearest_spec_side}"]
+
+  - id: EQUIPMENT_SUSPECT
+    when_metric: { site_cpk_delta: ">site_cpk_delta_warn" }
+    status_hint: MAJOR
+    action_ko: "site 간 편차 큼 — golden unit 재측정 / handler·site correlation"
+    evidence: ["site_cpk_delta {site_cpk_delta}"]
+
+  - id: EDGE_FAIL
+    when_metric: { edge_fail_ratio: ">edge_fail_ratio_warn" }
+    status_hint: MAJOR
+    action_ko: "wafer edge 불량 집중 — uniformity/edge 보정, 모과제 동일유형 확인"
+    evidence: ["edge_fail_ratio {edge_fail_ratio}"]
+
+  - id: SPEC_TOO_TIGHT
+    when_metric: { spread_norm: "<spread_norm_warn", cpk: "<cpk_warn",
+                   center_bias: "abs<mean_shift_warn", bimodality_score: "<bimodality_warn" }
+    status_hint: MINOR
+    issue_category: CPK
+    action_ko: "분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+    evidence: ["cpk {cpk}", "spread_norm {spread_norm}"]
+
+  - id: GROSS_FAIL
+    when_metric: { yield: "<gross_yield_bad" }
+    status_hint: CRITICAL
+    issue_category: YIELD
+    action_ko: "불량률 매우 높음 — 설계/마스크 등 근본 원인 점검"
+    evidence: ["yield {yield}"]
+
+  - id: SUBPOP_GAP
+    when_metric: { bimodality_score: ">bimodality_warn" }
+    status_hint: MAJOR
+    action_ko: "분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+    evidence: ["bimodality_score {bimodality_score}", "cdf_gap {cdf_gap}"]
+
+  - id: BIDIR_TAIL
+    when_metric: { spec_margin_low: "<spec_margin_warn", spec_margin_high: "<spec_margin_warn" }
+    status_hint: MAJOR
+    action_ko: "양쪽 spec 모두 근접 — 분포 폭이 spec 대비 과대, 공정/설계 재검토"
+    evidence: ["spec_margin_low {spec_margin_low}", "spec_margin_high {spec_margin_high}"]
+
+  - id: LOW_CPK
+    when_metric: { cpk: "<cpk_warn" }
+    status_hint: MAJOR
+    issue_category: CPK
+    action_ko: "공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+    evidence: ["cpk {cpk}"]
+
+  - id: MEAN_SHIFT
+    when_metric: { center_bias: "abs>mean_shift_warn" }
+    status_hint: MINOR
+    action_ko: "분포 중심이 한쪽 spec 으로 치우침 — offset/센터링 trim 검토"
+    evidence: ["center_bias {center_bias}", "nearest {nearest_spec_side}"]
+
+  - id: CENTER_FAIL
+    when_metric: { center_fail_ratio: ">edge_fail_ratio_warn" }
+    status_hint: MAJOR
+    action_ko: "wafer 중심부 불량 집중 — center 공정(증착/CMP 등) 점검"
+    evidence: ["center_fail_ratio {center_fail_ratio}"]
+
+  - id: CLUSTER_FAIL
+    when_metric: { quadrant_imbalance: ">quadrant_imbalance_warn" }
+    status_hint: MAJOR
+    action_ko: "특정 사분면 불량 편중 — 국부 결함/handler/scratch 확인"
+    evidence: ["quadrant_imbalance {quadrant_imbalance}"]
+
+  - id: CODE_RAIL
+    # code_edge_hit 는 value_type=CODE 인 item 에만 계산(그 외 None → applies=False) — CODE 전용 룰
+    when_metric: { code_edge_hit: ">code_edge_hit_warn" }
+    status_hint: MAJOR
+    action_ko: "CODE/TRIM 값이 레일(min/max)에 포화 — trim range/알고리즘·headroom 점검"
+    evidence: ["code_edge_hit {code_edge_hit}", "limit_hit_ratio {limit_hit_ratio}"]
+
+  - id: HEAVY_TAIL
+    when_metric: { kurtosis: ">kurtosis_warn" }
+    status_hint: MINOR
+    action_ko: "분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+    evidence: ["kurtosis {kurtosis}"]
+
+# 보류(구현 시 추가): gradient(radial/x/y — 좌표 스케일 정규화 선행),
+#   TRIM_INEFFECTIVE/RETEST_RECOVERY(family — 이력 기반, 단일 case snapshot 밖)

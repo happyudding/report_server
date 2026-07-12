@@ -24,6 +24,8 @@ web_report/
 ├── honeyform.py        7-meta honeyform 검증/파싱, parquet 인코딩·디코딩 (스키마 상수)
 ├── validation.py       canon·mode/meta 정규화·client_identity — 캐시·저장소 무의존 순수 헬퍼
 ├── edits.py            편집 상태 — 진실은 세션 단위 DB(report_webreport_edit). legacy 폴백/시드
+├── ai_comment.py       eval_analyzer(eval_engine) 통합의 유일한 접점 — IssueTable AI Comment
+│                        (ai_comment 옵션 세션 콜드 빌드에서 evaluate() 호출 → docs/13)
 ├── metrics.py          build_report_payload — 공용 컨텍스트 조립 후 tabs.TAB_REGISTRY 순회
 ├── cache.py            인메모리 LRU 캐시 인프라 (레지스트리·락·무효화)
 ├── cache_policy.py     캐시 키 구성 규약의 단일 진실 (빌더 + 무효화 트리거 표)
@@ -59,6 +61,7 @@ web_report/
 | 세션 상세 페이지 | [report_view.html](../server/report/report_view.html) + [static/webreport/](../server/report/static/webreport/) | 마크업+CSS / 탭별 JS 15모듈 |
 | 저장소(parquet/manifest) | [storage_gateway](../server/storage_gateway/__init__.py) | `save/load_webreport_sources`. **직접 import 금지** — `runtime.storage()` 포트로 접근 |
 | DB CRUD | [database/report_db.py](../server/database/report_db.py) | create/update_session, log_audit, get/apply_webreport_edits, get_webreport_edit_rev |
+| eval_analyzer 엔진 | [eval_analyzer/](../eval_analyzer/) `eval_engine.evaluate()` | **ai_comment.py 에서만 import** (단방향, persist=False) → [docs/13](../docs/13_eval_analyzer_integration.md) |
 
 web_report 안에서 위 연결점의 **호출 시그니처(함수명·인자·반환 dict 키)** 를 바꾸면 바깥
 파일도 맞춰 고쳐야 하므로, 그 경우 함께 반영할 것.

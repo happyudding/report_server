@@ -76,6 +76,8 @@ report_server/
 │   ├── embedded_browser.py     HoneyUser UA 삽입 내장 브라우저
 │   ├── client_identity.py      PC 계정/호스트 신고값
 │   └── config.py               SERVER_BASE_URL, CURRENT_VERSION
+├── eval_analyzer/              독립 fail-item 평가 엔진 (운영 복사본 — 원본 F:\COINAPI\eval_analyzer)
+│                                서버 연결은 web_report/ai_comment.py 1곳만 → [docs/13](docs/13_eval_analyzer_integration.md)
 ├── d1/                         (외부·무수정) D1 입력 provider 경계 — 검증용(로컬 d1_storage 검색)
 ├── d1_storage/                 (외부) D1 로컬 검증 스토리지
 ├── tests/sample_xlsx.py         더미 grids 픽스처 생성기
@@ -215,6 +217,10 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
    - **무수정 원칙 (외부 프로젝트)**: `d1/`·`d1_storage/`·S3(storage_gateway 내부 `_s3`)·
      `client/report_generator/`·`client/honey_parse/`. report_generator·honey_parse 는 수정
      불가피 시 반드시 사전 승인. D1·S3 는 현재 검증용(로컬 폴백)이며 진입점 계약만 유지.
+8. **eval_analyzer 단방향 의존.** `eval_analyzer/` 는 독립 프로젝트의 운영 복사본 —
+   report_server 작업 중 하위 파일 무수정, eval_engine import 는
+   [web_report/ai_comment.py](web_report/ai_comment.py) **1곳만** 허용(양방향 그 외 import 금지).
+   서버 호출은 persist=False(eval.db 무기록). 규약 전문 [docs/13](docs/13_eval_analyzer_integration.md).
 
 ---
 
@@ -238,6 +244,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |
 | Honey 클라 (사전 승인) | [client/honey_main.py](client/honey_main.py), 업로드 [transport/uploader.py](client/transport/uploader.py), 추출 [report_flow/upload_prepare.py](client/report_flow/upload_prepare.py) |
 | 외부 프로젝트 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` → [docs/INDEX.md §3.1](docs/INDEX.md) |
+| eval_analyzer 연결 (AI Comment) | [web_report/ai_comment.py](web_report/ai_comment.py) — eval_engine import 유일 지점 → [docs/13](docs/13_eval_analyzer_integration.md) |
 | 더미 grids 픽스처 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |
 
 ---

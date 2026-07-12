@@ -34,6 +34,9 @@ class TabContext:
     issue_comments: dict = field(default_factory=dict)
     product_type: str = ""
     product: str = ""
+    # ai_comment 옵션 세션만 dict (row_key→텍스트, web_report/ai_comment.py) — None 이면
+    # Issue Table 에 AI Comment 컬럼 자체가 생성되지 않는다.
+    ai_comments: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -49,7 +52,8 @@ TAB_REGISTRY: tuple = (
     TabSpec("CPK", lambda ctx: ctx.cpk_rows),
     TabSpec("Issue Table", lambda ctx: build_issue_table_rows(
         ctx.tables, ctx.yield_rows, ctx.cpk_rows,
-        etc_items=ctx.etc_items, issue_comments=ctx.issue_comments)),
+        etc_items=ctx.etc_items, issue_comments=ctx.issue_comments,
+        ai_comments=ctx.ai_comments)),
     TabSpec("Distribution", None),      # lazy — GET .../web_report/distribution
     TabSpec("Trim Analysis", None),     # lazy — GET .../web_report/trim_analysis
     TabSpec("Map Analysis", lambda ctx: build_map_analysis_rows(

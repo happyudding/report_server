@@ -31,6 +31,7 @@ from .validation import (
     canon as _canon,
     mode_tables as _mode_tables,
     validate_mode as _validate_mode,
+    webreport_ai_comment as _webreport_ai_comment,
     webreport_colors as _webreport_colors,
 )
 
@@ -91,6 +92,15 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                         session=session)
                     edit_state, _ = edits.effective_state(report_db, session_id, manifest)
                     tables = _mode_tables(tables, mode)
+                    # ai_comment 옵션 세션만 eval_analyzer 평가 실행 (콜드 빌드 1회 —
+                    # rawdata 편집은 content_hash 변경으로 자동 재평가). 실패는
+                    # safe_build 가 빈 dict 로 격리해 빌드가 죽지 않는다.
+                    ai_comments = None
+                    if _webreport_ai_comment(session.get("webreport_options") or ""):
+                        from . import ai_comment
+                        ai_comments = ai_comment.safe_build(
+                            tables, session,
+                            manifest.get("selected_items") or [])
                     report = build_report_payload(
                         tables,
                         selected_items=manifest.get("selected_items") or [],
@@ -102,6 +112,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                         product=session.get("product", ""),
                         mode=mode,
                         dist_colors=dist_colors,
+                        ai_comments=ai_comments,
                     )
                     disk_cache.save_report(upload_root, cache_key, report)
                 cache.cache_put(cache.REPORT_CACHE, cache_key, report, cache.REPORT_CACHE_MAX)
