@@ -120,19 +120,24 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 
 ### web_report 데이터/편집 (`/pe/report/session/<sid>/web_report/`)
 
-조회는 공개, 편집(`edit`/`overrides`/`etc`/`comments`/`engr`/`rawdata_replace`)은 CSRF +
-편집자 가드. 계약 상세는 [../docs/11_web_report_tabs.md](../docs/11_web_report_tabs.md).
+조회는 공개, 편집(`edit`/`overrides`/`etc`/`comments`/`engr`/`chart_notes`/`note`/
+`note_image`/`rawdata_replace`)은 CSRF + 편집자 가드. 계약 상세는
+[../docs/11_web_report_tabs.md](../docs/11_web_report_tabs.md).
 
 | 메서드 | 경로 | 접근 | 설명 |
 |--------|------|------|------|
 | `GET` | `/raw_data/columns`, `/raw_data` | 공개 | Raw Data 컬럼 UI / 조회 |
 | `POST` | `/raw_data/edit` | 편집자 | Raw Data 셀 편집 (parquet 재인코딩) |
 | `GET` | `/distribution` | 공개 | Distribution ECDF (컴팩트 gzip, 전 포인트) |
+| `POST` | `/distribution/query` | 공개 | 지정한 최대 70개 항목의 ECDF 배치 조회 (전 포인트) |
 | `GET` | `/scatter/<subject>` | 공개 | 항목 상세 산포 (전 측정값) |
 | `GET` | `/trim_analysis`, `/trim_chart` | 공개 | Trim 매칭·통계 / 그룹 차트 (gzip+ETag) |
 | `POST` | `/trim/overrides` | 편집자 | Trim 수동 재배치 저장 |
 | `GET` | `/commonality/chips`, `/commonality/chip` | 공개 | Commonality chip 검색 / 백분위 |
 | `POST` | `/issue_table/etc`, `/issue_table/comments`, `/summary/engr` | 편집자 | Issue/Summary 편집 |
+| `POST` | `/chart_notes` | 편집자 | 차트 주석(도형/텍스트/코멘트) 저장 (kind=chart_note) |
+| `GET`/`POST` | `/note` | 공개/편집자 | Note 탭 시트 JSON 지연 조회 / 저장 (kind=note_sheet, ≤2MB) |
+| `POST` | `/note_image` | 편집자 | Note 이미지 업로드 (PNG/JPEG raw body, ≤2MB·세션 200장) |
 | `GET` | `/rawdata_export` | 공개 | Raw Data CSV 내보내기 |
 | `POST` | `/rawdata_replace` | 편집자 | Raw Data 소스 교체 |
 
@@ -153,6 +158,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 |--------|------|------|
 | `GET` | `/chart/<sid>/<idx>` | 차트 PNG |
 | `GET` | `/issue_image/<sid>/<row>` | 이슈 이미지 |
+| `GET` | `/note_image/<sid>/<image_id>` | Note 탭 이미지 (세션 단위, nosniff) |
 | `GET` | `/distribution_combined/<sid>` | 합성 분포 PNG |
 
 ### Honey 업데이트 (`/honey/`)
@@ -211,7 +217,8 @@ server/
 │   ├── __init__.py           facade (공개 API + 예외 + 저장 위치 기록)
 │   ├── routes.py             이미지 URL 라우트
 │   ├── _s3.py               boto3 어댑터 + 키 빌더 (내부)
-│   └── _issue_images.py     이슈 이미지 (S3+로컬 폴백)
+│   ├── _issue_images.py     이슈 이미지 (S3+로컬 폴백)
+│   └── _note_images.py      Note 탭 이미지 (S3+로컬 폴백, 세션 단위)
 ├── admin_panel/              /pe/admin-<secret>/ 대시보드 + metrics 샘플러
 │   ├── __init__.py           register_admin_panel() + metrics.init_app
 │   ├── routes.py / sysinfo.py / stats.py / sessions_admin.py / users_admin.py

@@ -3,6 +3,7 @@
 import logging
 import re
 import sqlite3
+from pathlib import Path
 
 from flask import abort, jsonify, make_response, request, send_file
 
@@ -91,16 +92,29 @@ _VENDOR_MIME = {
     "exceljs.min.js": "application/javascript",
     "pretendard/PretendardVariable.woff2": "font/woff2",
 }
+# Luckysheet(Note 탭)는 자산 40여 개(css 가 폰트·스프라이트를 상대경로로 참조)라
+# 파일별 나열 대신 luckysheet/ 하위 트리를 경로 정규식 + 확장자 mime 으로 서빙한다.
+_LUCKYSHEET_PATH_RE = re.compile(r"^luckysheet/[A-Za-z0-9_./-]+$")
+_VENDOR_EXT_MIME = {
+    ".js": "application/javascript", ".css": "text/css",
+    ".png": "image/png", ".gif": "image/gif", ".svg": "image/svg+xml",
+    ".ico": "image/x-icon", ".ttf": "font/ttf", ".woff": "font/woff",
+    ".woff2": "font/woff2", ".eot": "application/vnd.ms-fontobject",
+}
 
 
 @report_bp.get("/vendor/<path:filename>")
 def vendor_asset(filename):
     mime = _VENDOR_MIME.get(filename)
+    if not mime and _LUCKYSHEET_PATH_RE.match(filename) and ".." not in filename:
+        mime = _VENDOR_EXT_MIME.get(Path(filename).suffix.lower())
     if not mime:
         abort(404)
     # 사전압축 .gz 가 있으면 그대로 서빙 (plotly.min.js 4.8MB→1.4MB). 요청마다 압축하지
     # 않도록 파일은 배포 시 미리 만들어 둔다 (vendor 파일 교체 시 .gz 도 함께 재생성할 것).
     path = _VENDOR_DIR / filename
+    if not path.is_file():
+        abort(404)   # luckysheet/ 트리는 정규식 통과라 실재 여부를 여기서 확정
     gz_path = _VENDOR_DIR / (filename + ".gz")
     if gz_path.exists() and "gzip" in (request.headers.get("Accept-Encoding") or ""):
         resp = make_response(send_file(gz_path, mimetype=mime))

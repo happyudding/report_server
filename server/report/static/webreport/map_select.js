@@ -47,7 +47,7 @@ function mapSelToggleSearch() {
   if (!box) return;
   const show = (box.style.display === "none" || !box.style.display);
   box.style.display = show ? "" : "none";
-  if (show) { ensureDistData(); const inp = document.getElementById("mapSelSerial"); if (inp) inp.focus(); }
+  if (show) { const inp = document.getElementById("mapSelSerial"); if (inp) inp.focus(); }
 }
 
 // 좌표 검색(serial 부분일치 / xpos·ypos 정확일치, AND) → 후보 목록(체크박스). 여러 개 체크 후 '선택 추가' 로 일괄 추가.
@@ -393,4 +393,3 @@ function renderYieldFailBins() {
   renderPareto("yield-pareto", majorTop);
   if (rest.length) renderFailBinBar("yield-rest", rest);
 }
-

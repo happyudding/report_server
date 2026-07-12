@@ -47,14 +47,15 @@ report_server/
 │   │   ├── report_extension.py  report_bp 정의 + DB init + web_report 저장 포트 주입
 │   │   ├── report_routes.py     라우트 집결자 — 구현은 security.py /
 │   │   │                        routes_session.py / routes_webreport.py / routes_misc.py
-│   │   ├── static/webreport/    세션 상세 JS 모듈 15개 (순서 로드, 전역 공유)
+│   │   ├── static/webreport/    세션 상세 JS 모듈 17개 (순서 로드, 전역 공유)
 │   │   ├── report_analysis_index.html  검색결과 페이지
 │   │   └── report_view.html     세션 상세 (마크업+CSS — JS 는 static/webreport/)
 │   ├── storage_gateway/         S3 산출물 저장 단일 진입점 (ENTRYPOINT/EXTERNAL_OWNER, S3=외부)
 │   │   ├── __init__.py          facade (공개 API + 예외 재노출 + 저장 위치 기록)
 │   │   ├── routes.py            이미지 URL 라우트
 │   │   ├── _s3.py              boto3 호환 client + key 빌더 (내부 어댑터)
-│   │   └── _issue_images.py    이슈 이미지 백엔드 (S3+로컬 폴백)
+│   │   ├── _issue_images.py    이슈 이미지 백엔드 (S3+로컬 폴백)
+│   │   └── _note_images.py     Note 탭 이미지 백엔드 (S3+로컬 폴백, 세션 단위)
 │   ├── admin_panel/             /pe/admin-<secret>/ 대시보드 + metrics 샘플러
 │   ├── tools/migrate_manifest_edits.py  manifest 편집값 → 세션 편집 DB 이전 (운영 1회 실행 완료)
 │   ├── upload_xlsx.py           POST /pe/report/upload_xlsx
@@ -110,8 +111,10 @@ report_server/
   확인만, 항상 `has_password:false` — 구 PIN 검사 폐지)
 - `PATCH /pe/report/session/<sid>/content` → [비활성] 항상 405 (구 xlsx 텍스트 수정 폐기)
 - `POST .../session/<sid>/web_report/issue_table/comments|etc`, `.../summary/engr`,
-  `.../trim/overrides` → web_report 편집 — **세션 편집 DB(report_webreport_edit)에 저장**.
-  manifest 는 업로드 시점 불변 스냅샷.
+  `.../trim/overrides`, `.../chart_notes`(차트 주석), `.../note`(Note 탭 시트)
+  → web_report 편집 — **세션 편집 DB(report_webreport_edit)에 저장**.
+  manifest 는 업로드 시점 불변 스냅샷. Note 이미지는 `.../note_image` → storage_gateway
+  (세션 단위 저장, 세션 삭제 시 정리).
 - `DELETE /pe/report/session/<sid>` → 세션 삭제 (업로더만)
 
 **인증**: 신원은 Honey 내장 브라우저 User-Agent 의 `HoneyUser/<계정>` 토큰으로 자동 식별한다
@@ -142,8 +145,9 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 - `report_sheet_data` — xlsx 추출 텍스트(summary/yield/issue_table). 텍스트는 여기에만 저장.
 - `report_audit_log` — upload/edit/delete 감사. 메타 스냅샷 + client_ip/user_agent/client_user
   (클라 신고 계정, 위조 가능) + result. best-effort. `/pe/admin-pte/` 대시보드에서 조회.
-- `report_webreport_edit` / `_rev` — web_report 편집(comment/etc/trim override/engr)의 **진실
-  저장소, 세션 단위**. dedup(동일 analysis_key) 세션 간 편집 비공유. `rev` 는 단조 증가 캐시
+- `report_webreport_edit` / `_rev` — web_report 편집(comment/etc/trim override/engr/
+  chart_note(차트 주석)/note_sheet(Note 탭 Luckysheet 시트 JSON ≤2MB))의 **진실 저장소,
+  세션 단위**. dedup(동일 analysis_key) 세션 간 편집 비공유. `rev` 는 단조 증가 캐시
   무효화 토큰. manifest 는 불변 스냅샷 ([web_report/edits.py](web_report/edits.py)).
 - `report_session_editor`(편집 위임) / `report_web_visitor`(편집자 후보 풀) /
   `report_user_important`(개인 중요표시) / `report_user_favorite`(즐겨찾기).

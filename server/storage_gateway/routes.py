@@ -14,6 +14,7 @@ from storage_gateway import (
     load_chart_png,
     load_distribution_png,
     load_issue_image,
+    load_note_image,
 )
 
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -65,6 +66,31 @@ def issue_image(session_id, row):
         abort(404, "image not found")
     return Response(data, mimetype="image/png",
                     headers={"Cache-Control": "private, max-age=3600"})
+
+
+_NOTE_IMAGE_ID_RE = re.compile(r"^[a-f0-9]{32}\.(png|jpg)$")
+
+
+@report_bp.get("/note_image/<session_id>/<image_id>")
+def note_image(session_id, image_id):
+    """Note 탭 이미지 스트리밍 (세션 단위 저장 — _note_images).
+
+    업로드가 uuid 파일명 + 매직바이트 검증을 거치므로 여기서는 고정 mimetype +
+    nosniff 로 서빙한다. 내용 불변(id 재사용 없음)이라 장기 캐시 허용."""
+    _validate_session_id(session_id)
+    if not _NOTE_IMAGE_ID_RE.match(image_id):
+        abort(404, "invalid image id")
+    if not report_db.get_session(session_id):
+        abort(404, "session not found")
+    try:
+        data, mime = load_note_image(session_id, image_id)
+    except S3NotConfigured:
+        abort(503, "S3 not configured")
+    except Exception:
+        abort(404, "image not found")
+    return Response(data, mimetype=mime,
+                    headers={"Cache-Control": "private, max-age=86400",
+                             "X-Content-Type-Options": "nosniff"})
 
 
 @report_bp.get("/distribution_combined/<session_id>")

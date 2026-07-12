@@ -426,6 +426,82 @@ def list_issue_image_rows(analysis_key):
     return list_rows(analysis_key)
 
 
+def save_issue_images(analysis_key, images) -> dict:
+    """issue_table 행별 이미지 저장 (S3 또는 로컬 폴백). {"backend","rows"} 반환.
+
+    save_upload_artifacts 내부에서 쓰는 백엔드를 백필 스크립트가 facade 경유로 쓰도록 승격."""
+    from ._issue_images import save_images
+    return save_images(analysis_key, images)
+
+
+# ── S3 상태 / 저수준 심볼 재노출 (facade 경계 — 내부 _s3/_issue_images 직접 import 금지) ──
+# admin_panel/sysinfo.py, tools/backfill_local_to_s3.py 등 프로젝트 코드가 내부 모듈을
+# 뚫지 않고 이 공개 API 만 쓰도록 승격한 래퍼들.
+
+def s3_available() -> bool:
+    """S3 설정 여부(REPORT_S3_BUCKET). 연결 확인은 하지 않음 — 연결까지는 s3_health()."""
+    try:
+        report_s3._require_config()
+        return True
+    except S3NotConfigured:
+        return False
+
+
+def s3_health() -> dict:
+    """S3 설정·연결 상태. head_bucket 이 connect-timeout 만큼 블록될 수 있어 수동 호출 전용
+    (자동 폴링 금지). 반환: {"status","bucket","endpoint"|"detail"}."""
+    from config import REPORT_S3_ENDPOINT
+    try:
+        client = report_s3.get_s3_client()
+    except S3NotConfigured as exc:
+        return {"status": "not_configured", "detail": str(exc)}
+    try:
+        client.head_bucket(Bucket=report_s3.bucket_name())
+        return {"status": "ok", "bucket": report_s3.bucket_name(),
+                "endpoint": REPORT_S3_ENDPOINT or "(AWS 기본)"}
+    except Exception as exc:
+        return {"status": "error", "bucket": report_s3.bucket_name(), "detail": str(exc)[:300]}
+
+
+def s3_object_exists(key) -> bool:
+    """S3 오브젝트 존재 확인 (미설정 시 S3NotConfigured 전파)."""
+    return report_s3.s3_object_exists(key)
+
+
+def download_bytes_from_s3(key) -> bytes:
+    """S3 객체 bytes 다운로드 (미설정 시 S3NotConfigured, 손상 시 S3ObjectCorrupted)."""
+    return report_s3.download_bytes_from_s3(key)
+
+
+def make_distribution_combined_s3_key(analysis_key) -> str:
+    """distribution_combined PNG 의 S3 키 (백필 검증용)."""
+    return report_s3.make_distribution_combined_s3_key(analysis_key)
+
+
+# ── Note 탭 이미지 (세션 단위 — _note_images.py) ─────────────────────────────
+
+def save_note_image(session_id, image_id, data):
+    from ._note_images import save_image
+    return save_image(session_id, image_id, data)
+
+
+def load_note_image(session_id, image_id):
+    """(bytes, mimetype) 반환. 없으면 예외 (라우트가 404 처리)."""
+    from ._note_images import load_image, mime_for
+    return load_image(session_id, image_id), mime_for(image_id)
+
+
+def count_note_images(session_id):
+    from ._note_images import list_ids
+    return len(list_ids(session_id))
+
+
+def delete_note_images(session_id):
+    """세션 삭제 훅 — best-effort, warnings 리스트 반환."""
+    from ._note_images import delete_all
+    return delete_all(session_id)
+
+
 def load_issue_image(analysis_key, row):
     from ._issue_images import load_image
     return load_image(analysis_key, row)

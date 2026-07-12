@@ -133,8 +133,8 @@ function renderIssueDetail(bin, item) {
     ? renderSheetTable(compRows, { kind: "yield" })
     : `<div class="placeholder">구성 정보 없음</div>`;
 
-  // 분포 데이터 로딩 중엔 셀을 만들어 두면 도착 후 refreshDistConsumers 가 채운다.
-  const hasDist = distDataReady ? !!distDataCache[item] : true;
+  // 인덱스에 존재하면 셀을 만들고, renderDistCell 이 해당 항목만 지연 조회한다.
+  const hasDist = distSubjectAvailable(item);
   panel.innerHTML =
     `<div class="section-title">Issue Table — Bin ${esc(bin)} 상세</div>` +
     `<button type="button" class="btn-sm" id="issueDetailBack">← Issue Table로 돌아가기</button>` +
@@ -152,4 +152,3 @@ function renderIssueDetail(bin, item) {
     else renderIssues(DATA.issue_table_text);
   });
 }
-

@@ -270,7 +270,7 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir):
 def _build_map_jobs(map_rows, tmpdir):
     """Map Analysis 행 → wafer map 렌더 잡. 제목: source (step, yield %).
 
-    좌표(dies)가 없는 행은 건너뛴다 (map_analyze.build_map_pngs 와 동일한 처리).
+    좌표(dies)가 없는 행은 건너뛴다 (map_report.build_map_pngs 와 동일한 처리).
     """
     jobs = []
     for i, row in enumerate(map_rows):

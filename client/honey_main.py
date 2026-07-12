@@ -47,9 +47,7 @@ from honey_ui import (
 )
 from report_flow import (
     build_output_path as _build_output_path,
-    ensure_summary_yield as _ensure_summary_yield,
-    fill_device_if_empty as _fill_device_if_empty,
-    prepare_upload_xlsx as _prepare_upload_xlsx,
+    prepare_report_webreport as _prepare_report_webreport,
     suggest_base_name as _suggest_base_name,
 )
 from web_report.honeyform import encode_honeyform_parquet, read_honeyform_file
@@ -61,12 +59,12 @@ import client_identity
 try:
     import report_generator as rg
     from report_generator import xlsx_writer
-    from report_generator import map_analyze
+    import map_report
     _RG_IMPORT_ERROR = None
 except Exception as exc:  # noqa: BLE001
     rg = None
     xlsx_writer = None
-    map_analyze = None
+    map_report = None
     _RG_IMPORT_ERROR = exc
 
 PRODUCT_TYPES = ["MDDI", "PDDI", "PMIC", "SECURITY", "TCON"]
@@ -201,9 +199,9 @@ class SlideInPanel(QWidget):
             QToolButton#slideClose:hover { background: #374151; }
         """)
 
-        self._anim = QPropertyAnimation(self, b"geometry")
-        self._anim.setDuration(220)
-        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._anim = QPropertyAnimation(self, b"windowOpacity")
+        self._anim.setDuration(180)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self.hide()
 
     def _rects(self):
@@ -214,30 +212,32 @@ class SlideInPanel(QWidget):
         hidden = QRect(origin.x() - self._width, origin.y(), self._width, h)
         return hidden, shown
 
-    def _restart_anim(self, end_rect, on_finished=None):
+    def _fade_to(self, end_opacity, on_finished=None):
         self._anim.stop()
         try:
             self._anim.finished.disconnect()
         except TypeError:
             pass
-        self._anim.setStartValue(self.geometry())
-        self._anim.setEndValue(end_rect)
+        self._anim.setStartValue(self.windowOpacity())
+        self._anim.setEndValue(end_opacity)
         if on_finished is not None:
             self._anim.finished.connect(on_finished)
         self._anim.start()
 
     def show_animated(self):
-        hidden, shown = self._rects()
+        # 창을 화면 밖으로 이동시키지 않고 항상 펼침 위치에 둔 채 투명도만 페이드한다
+        # (좌측 인접 모니터로 슬라이드가 넘어가는 문제 회피 — 모니터 배치 무관).
+        _, shown = self._rects()
+        self.setGeometry(shown)
         if not self.isVisible():
-            self.setGeometry(hidden)
+            self.setWindowOpacity(0.0)
             self.show()
         self.raise_()
         self.activateWindow()
-        self._restart_anim(shown)
+        self._fade_to(1.0)
 
     def hide_animated(self):
-        hidden, _ = self._rects()
-        self._restart_anim(hidden, on_finished=self.hide)
+        self._fade_to(0.0, on_finished=self.hide)
 
     def reposition(self):
         """메인 창 이동/리사이즈 시 표시 중이면 위치 재정렬."""
@@ -1624,9 +1624,9 @@ class HoneyMainWindow(QMainWindow):
         )
         # Map 옵션: 입력 파일별 wafer bin map PNG 생성 (matplotlib, COM 비의존).
         map_pngs, map_tmpdir = [], None
-        if mode_map and map_analyze is not None:
+        if mode_map and map_report is not None:
             try:
-                map_pngs, map_tmpdir = map_analyze.build_map_pngs(
+                map_pngs, map_tmpdir = map_report.build_map_pngs(
                     work_group.mass_data_map, log_cb=self._append_run_log)
             except Exception as exc:  # noqa: BLE001
                 self._append_run_log(f"Map 생성 ERROR - {exc}")
@@ -1638,15 +1638,20 @@ class HoneyMainWindow(QMainWindow):
                 com_module = _init_com_for_worker()
                 try:
                     with _flow_time("xlsx_writer.write.total"):
-                        return xlsx_writer.write(
+                        out_path = xlsx_writer.write(
                             self.last_result, out, sheets=sheets,
                             colors=colors,
                             progress_cb=_sheet_progress, raw_sheets=raw,
                             dist_progress_cb=_dist_progress,
                             attach_progress_cb=_attach_progress,
                             profile_cb=profile_cb,
-                            map_pngs=map_pngs,
                         )
+                    # Map 옵션: xlsx 생성 완료 후 별도 xlwings 세션으로 Map 시트 부착.
+                    # (report_generator 는 map 무관 — 구서버 교체 대비. 같은 COM-init 스레드.)
+                    if map_pngs and map_report is not None:
+                        with _flow_time("map_report.attach_map_sheet"):
+                            map_report.attach_map_sheet(out_path, map_pngs)
+                    return out_path
                 finally:
                     _co_uninitialize(com_module)
 
@@ -1730,32 +1735,38 @@ class HoneyMainWindow(QMainWindow):
         app_settings.set_setting("product_type", self.product_type())
 
     def _do_upload(self, path):
-        """메타 팝업 입력 → xlsx 전처리 → 업로드 → 완료."""
+        """report_generator 보고서 xlsx → Raw Data 복원 → web_report 세션 생성.
+
+        Excel COM 으로 Raw Data 시트를 7-meta honeyform parquet 으로 복원하고
+        Summary/Issue_table 코멘트를 추출해, 기존 web_report 업로드 경로
+        (post_webreport)로 전송한다 — 일반 web_report 세션과 동일한 세션이 만들어진다.
+        """
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
-        dlg = UploadDialog(self, defaults=defaults)
+        # web_report 세션은 PIN 을 쓰지 않는다 (비밀번호 행 숨김).
+        dlg = UploadDialog(self, defaults=defaults, show_password=False)
         if not dlg.exec():
             return
-        v = dlg.values()
-        self._last_upload = v
+        meta = dlg.values()
+        self._last_upload = meta
+        meta["file_name"] = Path(path).stem
 
         self.btn_upload_local.setEnabled(False)
 
-        # ── xlsx 전처리: Excel COM 으로 DRM 해제·시트 grid 추출 ──────────────
-        # 대형/DRM xlsx 는 수 초~수십 초 걸리므로 업로드 구간과 동일하게 워커 스레드에서
-        # 실행한다 (_extract_via_excel_com 이 자체적으로 CoInitialize 하므로 스레드 안전).
+        # ── xlsx 전처리: Excel COM 으로 Raw Data → honeyform + 코멘트 추출 ──────
+        # 대형/DRM xlsx 는 수 초~수십 초 걸리므로 워커 스레드에서 실행한다
+        # (prepare_report_webreport 이 자체적으로 CoInitialize 하므로 스레드 안전).
         prep_progress = _ElapsedProgress(
             self.progress_status, f"xlsx 전처리 중... {Path(path).name}",
             self._status, busy=True, maximum=0)
         QApplication.processEvents()
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(_prepare_upload_xlsx, path)
-                sheet_grids, issue_imgs = _wait_for_future(fut, prep_progress)
-            _fill_device_if_empty(sheet_grids, v["product"])
-            _ensure_summary_yield(sheet_grids, v["lot_id"])
+                fut = ex.submit(_prepare_report_webreport, path)
+                sources, parquet_items, seed, all_items = _wait_for_future(
+                    fut, prep_progress)
         except ValueError as exc:
-            prep_progress.fail(f"실패: 파일 오류 - {exc}")
+            prep_progress.fail("실패: 파일 오류")
             QMessageBox.critical(self, "파일 오류", str(exc))
             self.btn_upload_local.setEnabled(True)
             return
@@ -1766,6 +1777,19 @@ class HoneyMainWindow(QMainWindow):
                 f"xlsx 전처리(Excel COM) 중 오류가 발생했습니다:\n{exc}")
             self.btn_upload_local.setEnabled(True)
             return
+
+        manifest = {
+            "sources": sources,
+            "meta": meta,
+            "client": client_identity.collect(),
+            "selected_items": all_items,
+            "sheets": list(SHEET_OPTIONS),
+            "options": {"colors": chart_colors.load_colors(), "ai_comment": False},
+            "mode": "Normal",
+        }
+        # Summary/Issue_table 코멘트 시드 (issue_comments/etc_items/summary_engr).
+        # ingest 가 seed_from_manifest 로 세션 편집 DB 에 복사한다.
+        manifest.update(seed)
 
         # ── 서버 업로드 ───────────────────────────────────────────────────
         self._append_run_log(f"{Path(path).name} 파일 Upload 진행중입니다...")
@@ -1781,16 +1805,9 @@ class HoneyMainWindow(QMainWindow):
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(
-                    uploader.post_grids,
-                    sheet_grids,
-                    file_name=Path(path).name,
-                    product_type=v["product_type"],
-                    product=v["product"],
-                    lot_id=v["lot_id"],
-                    revision=v["revision"],
-                    process=v["process"],
-                    password=v["password"],
-                    issue_imgs=issue_imgs,
+                    uploader.post_webreport,
+                    manifest,
+                    parquet_items,
                     progress_cb=_on_upload_progress,
                 )
                 result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
@@ -1802,15 +1819,17 @@ class HoneyMainWindow(QMainWindow):
             return
 
         sid = result.get("session_id", "?")
-        issue_saved = result.get("issue_images_saved", 0)
-        progress.success(f"업로드 완료: session_id {sid}, Issue 이미지 {issue_saved}장")
-        QMessageBox.information(
-            self, "업로드 완료",
-            f"session_id: {sid}"
-            f"\nIssue 이미지: {issue_saved}장"
-            + f"\n\n브라우저에서 확인:\n{SERVER_BASE_URL}/pe/report/view/{sid}",
-        )
-        self._status(f"업로드 완료 (Issue 이미지 {issue_saved}장)")
+        url = result.get("web_report_url")
+        if url and str(url).startswith("/"):
+            url = SERVER_BASE_URL.rstrip("/") + str(url)
+        elif not url:
+            url = f"{SERVER_BASE_URL.rstrip('/')}/pe/report/view/{sid}"
+
+        progress.success(f"업로드 완료: session_id {sid}")
+        self._append_run_log(f"Web Report URL: {url}")
+        self._status(f"업로드 완료: {sid}")
+        # 완료 팝업 없이 내장 브라우저(웹 화면)로 바로 전환한다 (_run_web_report 와 동일).
+        self._open_in_embedded(url)
         self.btn_upload_local.setEnabled(True)
 
     # ── version check (사용자가 자동/수동 설치 선택) ────────────────────────

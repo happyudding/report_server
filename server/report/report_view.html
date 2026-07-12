@@ -44,6 +44,9 @@ window.__fullPrefetch = (() => {
   font-display: swap;
 }
 * { box-sizing: border-box; }
+/* 세로 스크롤바 자리를 항상 예약 — 패널 전환/상세 열기로 스크롤바가 생겼다 사라질 때
+   뷰포트 폭이 스크롤바 폭만큼 흔들리는(가로 움찔) 현상 방지. */
+html { overflow-y: scroll; }
 body {
   /* --report-font: 설정(⚙) 팝오버에서 글꼴 변경 시 덮어씀. 미설정이면 기본 스택. */
   font-family: var(--report-font, "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
@@ -250,6 +253,20 @@ body {
 .yield-gauge { display: inline-block; width: 56px; height: 8px; background: #edf0f4;
   border-radius: 4px; overflow: hidden; flex: none; }
 .yield-gauge-fill { display: block; height: 100%; background: #2a78d6; border-radius: 4px; }
+
+/* ── Yield: source별 "원형 대 원형" 파이 (Yield 테이블 아래, 흰 카드 고정) ── */
+.yield-source-charts { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.yield-source-pair {
+  background: #fff; border: 1px solid #dbe6f7; border-radius: 10px; padding: 8px 12px 10px;
+}
+.yield-source-pair .ysp-title { font-size: 12px; color: #1f4d8c; text-align: center; margin-bottom: 4px; }
+.yield-source-pair .ysp-title b { color: #222; font-size: 13px; }
+.ysp-pies { display: flex; gap: 6px; }
+.ysp-pie { width: 150px; height: 150px; position: relative; }
+.ysp-empty {
+  width: 150px; height: 150px; display: flex; align-items: center; justify-content: center;
+  color: #9aa; font-size: 12px;
+}
 
 /* ── Summary: 전체/소스별 Yield + Major Fail Bins 통합 테이블 ─────────────── */
 .mfb-wrap { overflow-x: auto; margin-bottom: 18px; }
@@ -491,7 +508,9 @@ tbody tr:hover { background: #f9fbff; }
 .dist-sug-item .sug-name { flex: 1; font-weight: 600; color: #222; }
 .dist-sug-item .dist-sug-chk { margin: 0; }
 .dist-count { font-size: 12px; color: #888; }
-.distg-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+.distg-virtual { position: relative; width: 100%; }
+.distg-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px;
+  position: absolute; left: 0; right: 0; top: 0; }
 @media (max-width: 1100px) { .distg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .distg-card { border: 1px solid #e2e4e8; border-radius: 8px; overflow: hidden; height: 220px;
   display: flex; flex-direction: column; cursor: pointer; transition: box-shadow .12s; }
@@ -508,6 +527,7 @@ tbody tr:hover { background: #f9fbff; }
 .distg-line2 { display: flex; align-items: baseline; gap: 6px; }
 .distg-tno { color: #999; }
 .distg-name { flex: 1; font-weight: 600; color: #1A1A1F; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.distg-note { flex: 0 0 auto; font-size: 12px; line-height: 1; }   /* Comment 있는 카드 노트 아이콘 */
 .distg-cpk { color: #555; font-size: 11.5px; white-space: nowrap; }
 .distg-lim { color: #6b7280; font-size: 12px; font-weight: 700; white-space: nowrap; margin-right: 6px; }
 .distg-plot { flex: 1; min-height: 0; }
@@ -531,7 +551,42 @@ tbody tr:hover { background: #f9fbff; }
 .trim-source { padding: 6px 10px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 13px; }
 .trim-rule { font-size: 12px; color: #6b7280; }
 .trim-note { font-size: 12.5px; color: #6b7280; margin-bottom: 10px; }
-.trim-match-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+/* 좌우 2단: 왼쪽 = 항목 찾기 팔레트, 오른쪽 = 그룹 카드 그리드 */
+.trim-match-layout { display: flex; gap: 16px; align-items: flex-start; flex-wrap: nowrap; }
+.trim-match-main { flex: 1 1 auto; min-width: 0; }
+.trim-palette { flex: 0 0 264px; width: 264px; display: flex; flex-direction: column;
+  border: 1px solid #e6e8ee; border-radius: 12px; background: #fbfbfd; overflow: hidden;
+  box-shadow: 0 1px 2px rgba(16,24,40,.05);
+  position: sticky; top: calc(var(--sticky-head-h, 96px) + 50px); align-self: flex-start;
+  max-height: calc(100vh - var(--sticky-head-h, 96px) - 70px); }
+.trim-palette-head { padding: 10px 10px 9px; border-bottom: 1px solid #eef0f4; background: #fff; }
+.trim-palette-searchwrap { position: relative; }
+.trim-palette-searchwrap::before { content: ""; position: absolute; left: 11px; top: 50%;
+  width: 14px; height: 14px; transform: translateY(-50%); pointer-events: none; opacity: .55;
+  background: no-repeat center/contain url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23667085' stroke-width='2' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><line x1='21' y1='21' x2='16.5' y2='16.5'/></svg>"); }
+.trim-palette-search { width: 100%; box-sizing: border-box; padding: 8px 12px 8px 32px;
+  border: 1px solid #d7dbe3; border-radius: 9px; font-size: 13px; background: #fff; color: #1f2430;
+  transition: border-color .12s, box-shadow .12s; }
+.trim-palette-search::placeholder { color: #a6acba; }
+.trim-palette-search:focus { outline: none; border-color: #5E6AD2; box-shadow: 0 0 0 3px rgba(94,106,210,.14); }
+.trim-palette-count { margin-top: 7px; font-size: 11px; font-weight: 600; color: #98a2b3; }
+.trim-palette-list { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.trim-palette-list::-webkit-scrollbar { width: 9px; }
+.trim-palette-list::-webkit-scrollbar-thumb { background: #d7dbe3; border-radius: 8px; border: 2px solid #fbfbfd; }
+.trim-palette-item { display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 1px 4px 1px 2px; }
+.trim-palette-item:hover { background: #eef1f8; }
+.trim-palette-item .trim-chip { flex: 1 1 auto; min-width: 0; justify-content: flex-start;
+  background: transparent; border-color: transparent; border-radius: 7px; padding: 5px 6px; }
+.trim-palette-item .trim-chip::before { content: "\2807"; flex: 0 0 auto; margin-right: 4px;
+  color: #c4c9d4; font-size: 12px; line-height: 1; }
+.trim-palette-meta { flex: 0 0 auto; font-size: 10px; font-weight: 700; padding: 2px 8px;
+  border-radius: 9px; background: #eef1f6; color: #667085; white-space: nowrap;
+  max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.trim-palette-meta.assigned { background: #E7F6EC; color: #14703d; }
+.trim-palette-meta.excl { background: #f2f4f7; color: #a3aab6; }
+@media (max-width: 640px) { .trim-match-layout { flex-wrap: wrap; }
+  .trim-palette { position: static; flex-basis: 100%; width: 100%; max-height: 320px; } }
+.trim-match-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .trim-card { border: 1px solid #e2e4e8; border-radius: 8px; padding: 8px 10px; background: #fff; }
 .trim-card.cpk-warn, .trim-gcard.cpk-warn { border: 2px solid #DC2626; }
 .trim-card-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
@@ -603,6 +658,10 @@ tbody tr:hover { background: #f9fbff; }
 .idet-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
 .idet-legend { margin: 0 0 10px; }   /* 상세 상단 공용 legend (source 多일 때만 렌더) */
 .idet-chart-block { border: 1px solid #e2e4e8; border-radius: 8px; padding: 8px 10px; }
+/* 차트 하단 Comment 표시 (chart_notes.js cnRenderChartComments) — 내용 없으면 여백 0 */
+.idet-chart-comment:not(:empty) { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #e5e7eb;
+  font-size: 12px; color: #6b7280; word-break: break-word; }
+html[data-theme="dark"] .idet-chart-comment:not(:empty) { border-top-color: #2f3540; color: #9aa3b0; }
 .idet-fail-title { margin-top: 8px; }
 /* 히스토그램 블록 Analysis/Report 세그먼트 토글 */
 .idet-hist-cap { display: flex; align-items: center; justify-content: space-between; }
@@ -1315,6 +1374,16 @@ html[data-theme="dark"] .trim-table th { background: #1e2128; color: #aab3c0; }
 html[data-theme="dark"] .trim-table th, html[data-theme="dark"] .trim-table td { border-color: #3a3f4b; }
 html[data-theme="dark"] .trim-report-table .trim-row:hover { background: #1c2230; }
 html[data-theme="dark"] .trim-unassigned { border-color: #3a3f4b; }
+html[data-theme="dark"] .trim-palette { background: #14161a; border-color: #2a2f3a; box-shadow: none; }
+html[data-theme="dark"] .trim-palette-head { background: #171a1f; border-bottom-color: #2a2f3a; }
+html[data-theme="dark"] .trim-palette-search { background: #0f1114; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .trim-palette-search::placeholder { color: #6b7280; }
+html[data-theme="dark"] .trim-palette-count { color: #6b7280; }
+html[data-theme="dark"] .trim-palette-item:hover { background: #1c2230; }
+html[data-theme="dark"] .trim-palette-list::-webkit-scrollbar-thumb { background: #3a3f4b; border-color: #14161a; }
+html[data-theme="dark"] .trim-palette-meta { background: #232833; color: #aab3c0; }
+html[data-theme="dark"] .trim-palette-meta.assigned { background: #12331f; color: #6ee7a0; }
+html[data-theme="dark"] .trim-palette-meta.excl { background: #232833; color: #6b7280; }
 
 /* ── Item_detail (헤더/통계/배지 — 차트 블록은 흰 카드 유지) ── */
 html[data-theme="dark"] .idet-head { background: #14161a; }
@@ -1392,6 +1461,36 @@ html[data-theme="dark"] .load-overlay { background: rgba(10,12,16,.82); }
 html[data-theme="dark"] .load-msg { color: #7fb3ef; }
 html[data-theme="dark"] .load-bar { background: #2a2e37; }
 html[data-theme="dark"] .load-foot { color: #8b94a3; }
+
+/* ── 차트 주석 툴바 (chart_notes.js) ─────────────────────────────────────── */
+.cnote-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 6px 8px; margin: 4px 0; border: 1px solid #e5e7eb; border-radius: 8px;
+  background: #fafafa; font-size: 12px; }
+.cnote-bar.view { border: none; background: transparent; padding: 2px 0; }
+.cnote-tool { min-width: 30px; font-weight: 700; }
+.cnote-tool.active, .cnote-toggle.active { background: #DC2626; border-color: #DC2626; color: #fff; }
+.cnote-comment { flex: 1 1 160px; min-width: 120px; padding: 4px 8px;
+  border: 1px solid #d1d5db; border-radius: 6px; font-size: 12px; }
+.cnote-save.dirty, .note-save.dirty { background: #f59e0b; border-color: #f59e0b; color: #fff; }
+.cnote-hint { color: #9ca3af; font-size: 11px; }
+.cnote-view-comment { color: #6b7280; font-size: 12px; margin-right: 10px; }
+html[data-theme="dark"] .cnote-bar { background: #1e2128; border-color: #2f3540; }
+html[data-theme="dark"] .cnote-comment { background: #262a33; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .cnote-hint { color: #6b7280; }
+html[data-theme="dark"] .cnote-view-comment { color: #9aa3b0; }
+
+/* ── Note 탭 (Luckysheet 캔버스 — note.js) ───────────────────────────────── */
+/* .content 의 zoom(var(--ui-zoom)) 을 Note 탭에서만 상쇄해 유효 zoom=1 로 만든다.
+   Luckysheet 2.0.6 은 조상 CSS zoom 을 좌표 계산에 반영하지 못해, UI 배율≠1 이면
+   헤더(A/B/C)·셀 선택이 그리드와 어긋난다. calc 로 역보정해 정합시킴(배율=1 이면 무변화). */
+#panel-note { zoom: calc(1 / var(--ui-zoom, 1)); }
+#panel-note.active { display: flex; flex-direction: column; }
+.note-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 4px; font-size: 12px; }
+.note-meta { color: #6b7280; font-size: 11px; }
+#luckysheetHost { position: relative; width: 100%; flex: 1 1 auto;
+  min-height: 420px; height: calc(100vh - var(--sticky-head-h, 96px) - 56px); }
+html[data-theme="dark"] .note-meta { color: #9aa3b0; }
 </style>
 </head>
 <body>
@@ -1429,6 +1528,7 @@ html[data-theme="dark"] .load-foot { color: #8b94a3; }
     <button class="tab" data-tab="distribution">Distribution</button>
     <button class="tab" data-tab="trim-analysis">Trim Analysis</button>
     <button class="tab" data-tab="map-analysis">Map Analysis</button>
+    <button class="tab" data-tab="note">Note</button>
     <button class="tab" data-tab="compare" style="display:none">Compare</button>
   </div>
 </div>
@@ -1483,6 +1583,7 @@ html[data-theme="dark"] .load-foot { color: #8b94a3; }
   <div class="panel" id="panel-raw-data"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-trim-analysis"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-map-analysis"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-note"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-compare"><div class="placeholder">로드 중...</div></div>
   <!-- Item_detail: 탭 버튼 없이 프로그램으로만 활성화(Yield/CPK/IssueTable/Distribution item 클릭) -->
   <div class="panel" id="panel-item-detail"></div>
@@ -1543,6 +1644,8 @@ html[data-theme="dark"] .load-foot { color: #8b94a3; }
 <script src="/pe/report/static/webreport/issue_dist.js"></script>
 <script src="/pe/report/static/webreport/trim.js"></script>
 <script src="/pe/report/static/webreport/raw_data.js"></script>
+<script src="/pe/report/static/webreport/chart_notes.js"></script>
+<script src="/pe/report/static/webreport/note.js"></script>
 <script src="/pe/report/static/webreport/edit_mode.js"></script>
 <script src="/pe/report/static/webreport/boot.js"></script>
 </body>

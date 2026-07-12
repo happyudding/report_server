@@ -19,6 +19,14 @@ KIND_ISSUE_COMMENT = "issue_comment"
 KIND_ETC_ITEM = "etc_item"
 KIND_TRIM_OVERRIDE = "trim_override"
 KIND_SUMMARY_ENGR = "summary_engr"
+# 2026-07-12 추가 — 차트 주석(도형/텍스트/코멘트, item_key=chart_key) / Note 탭 시트 JSON.
+# 둘 다 manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
+KIND_CHART_NOTE = "chart_note"
+KIND_NOTE_SHEET = "note_sheet"
+
+# 표 payload 빌드에 안 쓰이는 kind — load_edit_state 조회에서 제외해 대용량 값
+# (note_sheet 시트 JSON 최대 2MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
+_STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET)
 
 # issue_comment 의 item_key = row_key + SEP + col (row_key 에 '|' 가 쓰여 제어문자 사용)
 _SEP = "\x1f"
@@ -60,7 +68,8 @@ def load_edit_state(report_db, session_id: str) -> dict:
 
     etc_items 순서는 rowid(삽입) 순서 — get_webreport_edits 가 보장한다."""
     state = {"issue_comments": {}, "etc_items": [], "trim_overrides": {}, "summary_engr": {}}
-    for row in report_db.get_webreport_edits(session_id):
+    for row in report_db.get_webreport_edits(session_id,
+                                             exclude_kinds=_STATE_EXCLUDED_KINDS):
         kind, item_key, value = row["kind"], row["item_key"], row["value"]
         if kind == KIND_ISSUE_COMMENT:
             row_key, _, col = item_key.partition(_SEP)
@@ -89,6 +98,42 @@ def effective_state(report_db, session_id: str, manifest: dict) -> tuple[dict, i
     if rev == 0:
         return state_from_manifest(manifest), 0
     return load_edit_state(report_db, session_id), rev
+
+
+def load_chart_notes(report_db, session_id: str) -> dict:
+    """chart_key → 주석 dict({shapes, texts, comment}). /full extras 조립용 —
+    kind 지정 조회라 note_sheet 등 다른 대용량 값을 끌어오지 않는다."""
+    out = {}
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_CHART_NOTE,)):
+        try:
+            spec = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(spec, dict):
+            spec = dict(spec)
+            spec["updated_by"] = row.get("updated_by") or ""
+            spec["updated_at"] = row.get("updated_at") or ""
+            out[row["item_key"]] = spec
+    return out
+
+
+def load_note_sheet(report_db, session_id: str) -> dict | None:
+    """Note 탭 시트 JSON(단일 행, item_key='sheet') + 메타. 없으면 None.
+
+    시트 본문은 최대 2MB — /full 에는 싣지 않고 lazy GET 라우트만 이 함수를 쓴다."""
+    rows = report_db.get_webreport_edits(session_id, kinds=(KIND_NOTE_SHEET,))
+    for row in rows:
+        if row["item_key"] != "sheet":
+            continue
+        try:
+            sheet = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(sheet, dict):
+            return None
+        return {"sheet": sheet, "updated_by": row.get("updated_by") or "",
+                "updated_at": row.get("updated_at") or ""}
+    return None
 
 
 def _changes_from_state(state: dict) -> list:

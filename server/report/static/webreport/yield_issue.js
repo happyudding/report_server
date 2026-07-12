@@ -94,23 +94,99 @@ function bindYieldPanel() {
   yieldPanelBound = true;
 }
 
+// ── Yield: source별 "원형 대 원형" 파이 (web_report yield_summary.by_source) ─────
+// 소스마다 파이 2개: 왼쪽 전체 Pass/Fail, 오른쪽 fail bin 확대(Bin1 제외 → fail 중 비중).
+// Yield 테이블 아래에 가로로 나열. bin 색은 binColor(wafer_charts.js)로 세션 전체 통일.
+const YIELD_FAIL_COLOR = "#b0413a";   // 전체 파이의 Fail 조각 색(중립 red)
+
+// html/draw 가 같은 순서(div id ↔ 데이터)를 쓰도록 정렬을 한 곳에서 계산.
+function yieldSourcesSorted() {
+  const ov = DATA.web_report && DATA.web_report.yield_summary;
+  const bySrc = ov && Array.isArray(ov.by_source) ? ov.by_source : null;
+  if (!bySrc || !bySrc.length) return [];
+  return bySrc.slice().sort((a, b) => (Number(b.yield_pct) || 0) - (Number(a.yield_pct) || 0));
+}
+
+function yieldSourceChartsHtml() {
+  if (!window.Plotly) return "";
+  const sorted = yieldSourcesSorted();
+  if (!sorted.length) return "";
+  const pairs = sorted.map((s, i) => {
+    const pct = (typeof s.yield_pct === "number") ? s.yield_pct.toFixed(2) : s.yield_pct;
+    return `<div class="yield-source-pair">
+      <div class="ysp-title">${esc(s.source)} · <b>${esc(pct)}%</b></div>
+      <div class="ysp-pies">
+        <div id="yield-pie-all-${i}" class="ysp-pie"></div>
+        <div id="yield-pie-fail-${i}" class="ysp-pie"></div>
+      </div>
+    </div>`;
+  }).join("");
+  return `<div class="yield-source-charts">${pairs}</div>`;
+}
+
+function drawYieldSourceCharts() {
+  if (!window.Plotly) return;
+  const cfg = { responsive: true, displayModeBar: false };
+  const layout = () => ({
+    margin: { l: 6, r: 6, t: 6, b: 6 },
+    paper_bgcolor: "#ffffff", plot_bgcolor: "#ffffff",
+    font: PLOTLY_FONT, showlegend: false,
+  });
+  yieldSourcesSorted().forEach((s, i) => {
+    const allEl = document.getElementById(`yield-pie-all-${i}`);
+    if (allEl) {
+      Plotly.newPlot(allEl, [{
+        type: "pie", labels: ["Pass", "Fail"], values: [Number(s.pass) || 0, Number(s.fail) || 0],
+        marker: { colors: [PASS_COLOR, YIELD_FAIL_COLOR] },
+        sort: false, direction: "clockwise",
+        textinfo: "label+percent", textposition: "inside",
+        hovertemplate: "%{label}<br>%{value} die (%{percent})<extra></extra>",
+      }], layout(), cfg);
+    }
+    const failEl = document.getElementById(`yield-pie-fail-${i}`);
+    if (failEl) {
+      const fb = Array.isArray(s.fail_bins) ? s.fail_bins : [];
+      if (!fb.length) {
+        failEl.innerHTML = `<div class="ysp-empty">Fail 없음</div>`;
+        return;
+      }
+      const total = Number(s.total) || 0;
+      Plotly.newPlot(failEl, [{
+        type: "pie",
+        labels: fb.map(f => `Bin ${f.bin}`),
+        values: fb.map(f => Number(f.count) || 0),
+        marker: { colors: fb.map(f => binColor(f.bin)) },
+        customdata: fb.map(f => total ? (Number(f.count) / total * 100) : 0),
+        sort: false, direction: "clockwise",
+        textinfo: "label+percent", textposition: "inside",
+        hovertemplate: "%{label}<br>%{value} die · fail 중 %{percent} · 전체 %{customdata:.2f}%<extra></extra>",
+      }], layout(), cfg);
+    }
+  });
+}
+
 // ── Yield (read) ──────────────────────────────────────────────────────────────
 function renderYield(yield_text, summary_rows) {
   const panel = document.getElementById("panel-yield");
+  // 재렌더 전 이전 파이 Plotly 인스턴스 정리(리스너/메모리 누수 방지)
+  panel.querySelectorAll('[id^="yield-pie-"]').forEach(d => { if (window.Plotly) Plotly.purge(d); });
   const overview = yieldOverviewHtml();
+  const charts = yieldSourceChartsHtml();
 
   // web_report: Bin 접기/펼치기 그룹 렌더 (yield_bin_groups 가 있을 때)
   const groups = DATA.web_report && DATA.web_report.yield_bin_groups;
   if (Array.isArray(groups) && Array.isArray(yield_text)) {
     const passRow = yield_text.find(r => String(r.bin).trim() === "1") || null;
     bindYieldPanel();
-    panel.innerHTML = overview + yieldToolbarHtml() + renderYieldGrouped(passRow, groups, yield_text);
+    panel.innerHTML = overview + yieldToolbarHtml() + renderYieldGrouped(passRow, groups, yield_text) + charts;
+    drawYieldSourceCharts();
     return;
   }
 
   // list of dicts (그룹 데이터가 없을 때의 폴백)
   if (Array.isArray(yield_text) && yield_text.length) {
-    panel.innerHTML = overview + renderSheetTable(yield_text, { kind: "yield" });
+    panel.innerHTML = overview + renderSheetTable(yield_text, { kind: "yield" }) + charts;
+    drawYieldSourceCharts();
     return;
   }
 

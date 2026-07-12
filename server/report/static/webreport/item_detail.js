@@ -26,14 +26,23 @@ function cdfChipKey(source, serial, xpos, ypos) {
 function cdfActiveSet() { return cdfEditMode === "exclude" ? cdfExcluded : cdfEditMode === "highlight" ? cdfHighlighted : null; }
 function cdfResetEdits() { cdfExcluded.clear(); cdfHighlighted.clear(); cdfEditMode = "none"; }
 
+function purgeItemDetailPlots(root) {
+  if (!root || !window.Plotly) return;
+  root.querySelectorAll(".js-plotly-plot").forEach(plot => {
+    try { Plotly.purge(plot); } catch (e) {}
+  });
+}
+
 function openItemDetail(subject, navList) {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
   bindItemDetailPanel();
+  purgeItemDetailPlots(dp);
   // 상세가 아직 안 열려 있으면 현재 활성 탭 패널을 복귀 대상으로 기억하고 숨긴다.
   if (!dp.classList.contains("active")) {
     const cur = document.querySelector(".content > .panel.active");
     _itemDetailReturnId = cur ? cur.id : "panel-summary";
+    if (cur && cur.id === "panel-distribution") distDeactivateGallery();
     if (cur) cur.classList.remove("active");
     dp.classList.add("active");
   }
@@ -110,9 +119,11 @@ function renderItemDetail(data) {
       </span>
     </div>
     <div id="cdfEditBar" class="cdf-editbar"></div>
+    <div id="chartNoteBar"></div>
     ${idetLegendHtml(data)}
     <div class="idet-charts">
-      <div class="idet-chart-block"><div class="dist-chart-cap">누적분포 CDF</div><div id="distCdf" class="dist-chart"></div></div>
+      <div class="idet-chart-block"><div class="dist-chart-cap">누적분포 CDF</div><div id="distCdf" class="dist-chart"></div>
+        <div class="idet-chart-comment" id="cdfCommentView"></div></div>
       <div class="idet-chart-block">
         <div class="dist-chart-cap idet-hist-cap">
           <span>분포 히스토그램</span>
@@ -123,6 +134,7 @@ function renderItemDetail(data) {
         </div>
         <div id="distHist" class="dist-chart"${idetHistMode === "report" ? ' style="display:none"' : ""}></div>
         <div id="distNormal" class="dist-chart"${idetHistMode === "analysis" ? ' style="display:none"' : ""}></div>
+        <div class="idet-chart-comment" id="histCommentView"></div>
       </div>
     </div>
     ${itemStatsTableHtml(data.stats)}
@@ -131,6 +143,8 @@ function renderItemDetail(data) {
   </div>`;
   renderCdfEditBar();
   distRenderDetailCharts(data);   // #distCdf / #distHist (기존 함수 재사용)
+  if (window.chartNotesBar) chartNotesBar(data);   // 차트 주석 툴바 (chart_notes.js)
+  if (window.cnRenderChartComments) cnRenderChartComments(subject);   // 차트 하단 Comment 표시
   renderIdetChipVals();           // Map Analysis 선택 좌표의 이 항목 값
   if (data.is_fail) renderItemFailRows();
 }
@@ -229,17 +243,24 @@ function closeItemDetail() {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
   _itemDetailReq++;   // 진행 중 fetch 무효화
+  purgeItemDetailPlots(dp);
   dp.classList.remove("active");
   dp.innerHTML = "";
   const back = document.getElementById(_itemDetailReturnId || "panel-summary");
   if (back) back.classList.add("active");
+  if (back && back.id === "panel-distribution") distActivateGallery();
   _itemDetailReturnId = null;
 }
 
 // 탭 버튼 클릭 시: 복원 없이 상세만 닫는다(해당 탭 패널이 이어서 활성화됨).
 function hideItemDetail() {
   const dp = document.getElementById("panel-item-detail");
-  if (dp && dp.classList.contains("active")) { _itemDetailReq++; dp.classList.remove("active"); dp.innerHTML = ""; }
+  if (dp && dp.classList.contains("active")) {
+    _itemDetailReq++;
+    purgeItemDetailPlots(dp);
+    dp.classList.remove("active");
+    dp.innerHTML = "";
+  }
   _itemDetailReturnId = null;
 }
 
@@ -421,7 +442,8 @@ function distRenderCdf(data) {
   if (cdfCm) { traces.push(...cdfCm.traces); cdfShapes = cdfShapes.concat(cdfCm.shapes); }
   const dragmode = cdfEditMode === "none" ? "zoom" : "select";
   const cdfLr = distLimitRange(lo, hi);
-  Plotly.newPlot(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg, dragmode,
+  const renderCdf = cdfDiv.data ? Plotly.react : Plotly.newPlot;
+  renderCdf(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg, dragmode,
     xaxis: { title: { text: xtitle }, nticks: 10, showgrid: true, gridcolor: "#eee", zeroline: false,
       ...(cdfLr ? { range: cdfLr, autorange: false } : {}) },
     yaxis: { title: { text: "누적 %" }, range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee", zeroline: false },
@@ -443,6 +465,8 @@ function distRenderCdf(data) {
     ev.points.forEach(pt => { if (pt.customdata) set.add(cdfChipKey(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2])); });
     cdfAfterEdit();
   });
+  // 차트 주석 오버레이 — 렌더 시점의 shapes 개수를 base 로 기억해야 하므로 항상 마지막에.
+  if (window.chartNotesApply) chartNotesApply("cdf", data.subject, cdfDiv);
 }
 // 히스토그램(빈도 폴리곤)만 렌더 — CDF '제외'(cdfExcluded)를 반영하므로 편집/초기화 때도 재호출.
 function distRenderHist(data) {
@@ -460,7 +484,8 @@ function distRenderHist(data) {
   const traces = polys.map(p => ({ type: "scatter", mode: "lines", name: p.source,
     x: p.centers, y: p.counts, line: { color: distColorFor(p.source), shape: "spline" },
     hovertemplate: "측정값 %{x}<br>빈도 %{y:d}<extra></extra>" }));
-  Plotly.newPlot(hDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
+  const renderHist = hDiv.data ? Plotly.react : Plotly.newPlot;
+  renderHist(hDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
     xaxis: { title: { text: xtitle },
       range: distLimitRange(lo, hi) || extendRangeForBeforeLimits(
         distHistXRange(data.sources || [], lo, hi, data.is_fail), data.subject),
@@ -470,6 +495,8 @@ function distRenderHist(data) {
     shapes: distSpecShapes(lo, hi, false).concat(beforeLimitShapes(data.subject)),
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
     margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
+  // 차트 주석 오버레이 (chart_notes.js) — base shapes 기억을 위해 렌더 직후 호출.
+  if (window.chartNotesApply) chartNotesApply("hist", data.subject, hDiv);
 }
 function distRenderDetailCharts(data) {
   distRenderCdf(data);    // #distCdf (제외/강조 편집 반영)
@@ -601,6 +628,8 @@ function distBindPanel() {
   panel.addEventListener("input", e => {
     if (e.target.id === "distSearch") distRenderSuggest(e.target.value);
   });
+  window.addEventListener("scroll", () => distScheduleVirtualRender(false), { passive: true });
+  window.addEventListener("resize", () => distScheduleVirtualRender(true));
   distPanelBound = true;
 }
 
@@ -625,11 +654,12 @@ function renderMiniDistCell(cell) {
   const subject = cell.dataset.subject;
   const div = cell.querySelector(".dist-plot");
   if (!div || typeof Plotly === "undefined") return;
-  // 분포 데이터 도착 전 — 플래그를 세우지 않고 리턴해야 도착 후 재큐잉으로 그려진다.
-  if (!distDataReady) return;
   const info = distDataCache[subject];
-  // 데이터 없는 항목: 빈 칸으로 확정 (loaded 마킹해 재큐잉 no-op 방지)
-  if (!info) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; return; }
+  if (!info) {
+    if (distMissingSubjects.has(subject)) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; }
+    else ensureDistSubjects([subject]);
+    return;
+  }
 
   const lo = info.lower_limit, hi = info.upper_limit;
   const traces = Object.keys(info.bySource).map(source => {
@@ -719,4 +749,3 @@ function renderIssueMiniDist(panel) {
   }, { rootMargin: "600px 0px", threshold: 0 });
   cells.forEach(c => issueDistObserver.observe(c));
 }
-

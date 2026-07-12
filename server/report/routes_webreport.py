@@ -5,15 +5,19 @@ trim_analysis/trim_chart/overrides, commonality, rawdata export/replace,
 issue_table etc/comments, summary engr. URL·응답 형태는 분리 전과 동일하다.
 """
 import gzip
+import json
 import logging
+import uuid
 from pathlib import Path
 
 from flask import Response, abort, jsonify, request
 
+import storage_gateway
 from config import REPORT_UPLOAD_DIR
 from database import report_db
 from report.report_extension import report_bp
 from report.security import (
+    _audit,
     _client_meta,
     _editor_guard,
     _require_csrf,
@@ -92,6 +96,31 @@ def web_report_distribution(session_id):
     else:
         body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
     return Response(body, mimetype="application/json", headers=headers)
+
+
+@report_bp.post("/session/<session_id>/web_report/distribution/query")
+def web_report_distribution_query(session_id):
+    """화면에 보이는 최대 70개 항목의 ECDF 전량을 배치 조회한다 (읽기 전용)."""
+    _require_web_report_session(session_id)
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        result = web_report_service.get_distribution_items(
+            session_id, body.get("subjects"), report_db=report_db,
+            upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report distribution query failed for session %s", session_id)
+        abort(500, "distribution query failed")
+    raw = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    compressed = gzip.compress(raw, compresslevel=1)
+    headers = {"Vary": "Accept-Encoding"}
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+        raw = compressed
+    return Response(raw, mimetype="application/json", headers=headers)
 
 
 @report_bp.get("/session/<session_id>/web_report/scatter/<path:subject>")
@@ -412,6 +441,126 @@ def web_report_issue_table_comments(session_id):
         _log.exception("web_report issue_table comments failed for session %s", session_id)
         abort(500, "issue_table comments failed")
     return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/chart_notes")
+def web_report_chart_notes(session_id):
+    """차트 주석(도형/텍스트/코멘트) 저장 — 세션 편집 DB(kind=chart_note) 갱신.
+
+    body: {"ops": [{"key": chart_key, "value": {shapes,texts,comment}|null}]}.
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    ops = body.get("ops")
+    if not isinstance(ops, list) or not ops:
+        return jsonify({"error": "ops가 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_chart_notes(
+            session_id, ops, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report chart_notes failed for session %s", session_id)
+        abort(500, "chart_notes failed")
+    return jsonify(result)
+
+
+@report_bp.get("/session/<session_id>/web_report/note")
+def web_report_note_get(session_id):
+    """Note 탭 시트 JSON 지연 로드 (최대 2MB — /full 에서 제외). 읽기는 전원 가능."""
+    _require_web_report_session(session_id)
+    try:
+        result = web_report_service.load_note(session_id, report_db=report_db)
+    except KeyError:
+        abort(404, "session not found")
+    except Exception:
+        _log.exception("web_report note load failed for session %s", session_id)
+        abort(500, "note load failed")
+    body = gzip.compress(
+        json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        compresslevel=1)
+    headers = {"Vary": "Accept-Encoding"}
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)
+    return Response(body, mimetype="application/json", headers=headers)
+
+
+@report_bp.post("/session/<session_id>/web_report/note")
+def web_report_note_save(session_id):
+    """Note 탭 시트 JSON 저장 (전체 치환) — 세션 편집 DB(kind=note_sheet) 갱신.
+
+    body: {"sheet": {...}} — 셀 계산은 전부 클라이언트(Luckysheet), 서버는 저장만.
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.save_note(
+            session_id, body.get("sheet"), report_db=report_db,
+            upload_root=Path(REPORT_UPLOAD_DIR), client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report note save failed for session %s", session_id)
+        abort(500, "note save failed")
+    return jsonify(result)
+
+
+_NOTE_IMAGE_MAX_BYTES = 2 * 1024 * 1024
+_NOTE_IMAGE_MAX_COUNT = 200
+_PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
+_JPEG_MAGIC = b"\xff\xd8\xff"
+
+
+@report_bp.post("/session/<session_id>/web_report/note_image")
+def web_report_note_image(session_id):
+    """Note 탭 이미지 업로드 (raw body, Content-Type image/png|image/jpeg).
+
+    매직바이트 검증 + 2MB/장·세션당 200장 상한. 저장은 S3(로컬 폴백), 파일명은
+    서버가 uuid 로 생성 — 응답 {"image_id","url"} 을 Luckysheet 플로팅 이미지 src 로 쓴다."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    data = request.get_data(cache=False)
+    if not data:
+        return jsonify({"error": "이미지 데이터가 비어 있습니다."}), 400
+    if len(data) > _NOTE_IMAGE_MAX_BYTES:
+        return jsonify({"error": f"이미지가 너무 큽니다 (최대 {_NOTE_IMAGE_MAX_BYTES // (1024*1024)}MB)."}), 413
+    if data[:8] == _PNG_MAGIC:
+        ext = "png"
+    elif data[:3] == _JPEG_MAGIC:
+        ext = "jpg"
+    else:
+        return jsonify({"error": "PNG/JPEG 이미지만 업로드할 수 있습니다."}), 400
+    try:
+        if storage_gateway.count_note_images(session_id) >= _NOTE_IMAGE_MAX_COUNT:
+            return jsonify({"error": f"세션당 이미지 상한({_NOTE_IMAGE_MAX_COUNT}장)을 초과했습니다."}), 400
+        image_id = f"{uuid.uuid4().hex}.{ext}"
+        storage_gateway.save_note_image(session_id, image_id, data)
+    except Exception:
+        _log.exception("web_report note image save failed for session %s", session_id)
+        abort(500, "note image save failed")
+    _audit("edit", session=session, changed_fields=f"note_image({image_id})")
+    return jsonify({"ok": True, "image_id": image_id,
+                    "url": f"/pe/report/note_image/{session_id}/{image_id}"})
 
 
 @report_bp.post("/session/<session_id>/web_report/summary/engr")

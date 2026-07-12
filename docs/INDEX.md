@@ -62,6 +62,7 @@
 | 11 | **web_report 탭 계약 & 렌더** | Server | [11_web_report_tabs.md](11_web_report_tabs.md) | [web_report/tabs/](../web_report/tabs/) |
 | 12 | **web_report 캐시 & 컴퓨트** | Server | [12_web_report_cache.md](12_web_report_cache.md) | [web_report/cache.py](../web_report/cache.py) |
 | 13 | **eval_analyzer 통합 (AI Comment)** — 단방향 의존 규약 | Server | [13_eval_analyzer_integration.md](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) |
+| 14 | **구서버↔신서버 병합 순서** — report_generator/storage_gateway 교체 순서·계약 | Server + Client | [14_merge_order.md](14_merge_order.md) | [client/map_report/](../client/map_report/) |
 
 > 서버 부팅: [server/wsgi.py](../server/wsgi.py) → [plugin.py](../server/plugin.py)
 > `register_report_server` 가 `report_bp` + `honey_bp` + admin_panel + ops 등록.

@@ -31,9 +31,6 @@ except Exception:
 from config import REPORT_UPLOAD_DIR  # noqa: E402
 from database import report_db  # noqa: E402
 import storage_gateway  # noqa: E402
-from storage_gateway import S3NotConfigured  # noqa: E402
-from storage_gateway import _issue_images  # noqa: E402
-from storage_gateway import _s3 as report_s3  # noqa: E402
 
 
 def _fmt_mb(size: int) -> str:
@@ -99,7 +96,7 @@ def backfill_web_report(upload_root: Path, apply: bool, delete_local: bool) -> i
             verified = True
             for idx, data in enumerate(sources_bytes):
                 info = infos.get(f"web_report_source_{idx}")
-                remote = report_s3.download_bytes_from_s3(info["s3_key"]) if info else b""
+                remote = storage_gateway.download_bytes_from_s3(info["s3_key"]) if info else b""
                 if hashlib.sha256(remote).digest() != hashlib.sha256(data).digest():
                     verified = False
                     break
@@ -117,7 +114,7 @@ def backfill_issue_images(upload_root: Path, apply: bool, delete_local: bool) ->
     done = 0
     if not root.is_dir():
         return done
-    s3_on = _issue_images.s3_available()
+    s3_on = storage_gateway.s3_available()
     for d in sorted(root.iterdir()):
         if not d.is_dir():
             continue
@@ -125,7 +122,7 @@ def backfill_issue_images(upload_root: Path, apply: bool, delete_local: bool) ->
         pngs = sorted(d.glob("*.png"), key=lambda p: int(p.stem))
         if not pngs:
             continue
-        if s3_on and _issue_images.list_rows(akey):
+        if s3_on and storage_gateway.list_issue_image_rows(akey):
             continue  # S3 index 존재 - 이미 이관됨
         size = sum(p.stat().st_size for p in pngs)
         print(f"[대상] issue_img  {akey[:12]}…  rows={len(pngs)}  {_fmt_mb(size)}")
@@ -134,7 +131,7 @@ def backfill_issue_images(upload_root: Path, apply: bool, delete_local: bool) ->
             continue
 
         images = [{"row": int(p.stem), "png": p.read_bytes()} for p in pngs]
-        res = _issue_images.save_images(akey, images)
+        res = storage_gateway.save_issue_images(akey, images)
         if res.get("backend") != "s3" or len(res.get("rows", [])) != len(images):
             print(f"  → [FAIL] S3 업로드 실패/부분 성공: {res}")
             continue
@@ -143,7 +140,7 @@ def backfill_issue_images(upload_root: Path, apply: bool, delete_local: bool) ->
 
         if delete_local:
             local_rows = {int(p.stem) for p in pngs}
-            if local_rows.issubset(set(_issue_images.list_rows(akey))):
+            if local_rows.issubset(set(storage_gateway.list_issue_image_rows(akey))):
                 shutil.rmtree(d)
                 print("  → S3 index 확인 - 로컬 삭제 완료")
             else:
@@ -182,8 +179,8 @@ def backfill_dist_combined(upload_root: Path, apply: bool, delete_local: bool) -
         done += 1
 
         if delete_local:
-            key = report_s3.make_distribution_combined_s3_key(akey)
-            if report_s3.s3_object_exists(key):
+            key = storage_gateway.make_distribution_combined_s3_key(akey)
+            if storage_gateway.s3_object_exists(key):
                 png.unlink()
                 print("  → S3 존재 확인 - 로컬 삭제 완료")
             else:
@@ -205,11 +202,7 @@ def main():
     report_db.init_report_db()
     upload_root = Path(REPORT_UPLOAD_DIR)
 
-    s3_configured = True
-    try:
-        report_s3._require_config()
-    except S3NotConfigured:
-        s3_configured = False
+    s3_configured = storage_gateway.s3_available()
 
     if not s3_configured:
         print("[!] REPORT_S3_BUCKET 미설정 - 아래는 이관 대상 목록(dry-run)만 출력한다.")

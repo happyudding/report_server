@@ -7,6 +7,7 @@
 const TRIM = {
   COLORS: { INIT: "#2E6FE8", CODE: "#7C3AED", TRIM: "#16A34A", VERIFY: "#F59E0B" },
   CONCURRENCY: 8, GL_THRESHOLD: 2000, ROOT_MARGIN: "1200px 0px",
+  REPORT_ENABLED: false,    // ③ 분석 리포트 임시 비활성(웹에서 숨김) — renderTrimReport 코드는 보존
 };
 let trimState = {
   view: "match",            // match | scatter | report
@@ -56,7 +57,7 @@ function renderTrimAnalysis() {
       <div class="distseg-group" id="trimSubtabs">
         <button class="distseg" data-tview="match">① 항목 매칭</button>
         <button class="distseg" data-tview="scatter">② 산포 분석</button>
-        <button class="distseg" data-tview="report">③ 분석 리포트</button>
+        ${TRIM.REPORT_ENABLED ? `<button class="distseg" data-tview="report">③ 분석 리포트</button>` : ""}
       </div>
       <select id="trimSource" class="trim-source" style="display:none" title="분석 source 선택"></select>
       <span id="trimRule" class="trim-rule"></span>
@@ -83,6 +84,7 @@ function renderTrimView() {
   const p = trimPayload();
   const body = document.getElementById("trimBody");
   if (!p || !body) return;
+  if (!TRIM.REPORT_ENABLED && trimState.view === "report") trimState.view = "match";
   document.querySelectorAll("#trimSubtabs [data-tview]").forEach(b =>
     b.classList.toggle("active", b.dataset.tview === trimState.view));
   const sel = document.getElementById("trimSource");
@@ -179,12 +181,39 @@ function renderTrimMatch(body, p) {
     <td>${i.override ? "✎ 수동" : ""}</td>
   </tr>`).join("");
 
+  // 왼쪽 팔레트: 전체 항목을 세로 리스트로. 검색으로 필터하고, 칩을 끌어 오른쪽 그룹 슬롯에 놓는다.
+  const paletteItems = (p.items || []).map(i => {
+    const slotTxt = i.slot || (i.group ? "MEMBER" : "");
+    const status = i.group ? (slotTxt ? `${i.group} · ${slotTxt}` : i.group)
+      : (i.excluded ? "제외" : "미배정");
+    const metaCls = i.group ? " assigned" : (i.excluded ? " excl" : "");
+    const key = `${i.name} ${i.group || ""} ${i.normalized || ""}`.toLowerCase();
+    return `<div class="trim-palette-item" data-name="${esc(key)}">
+      ${trimItemChip(i.name, itemsMap, canEdit)}
+      <span class="trim-palette-meta${metaCls}" title="${esc(status)}">${esc(status)}</span>
+    </div>`;
+  }).join("") || `<div class="trim-empty" style="padding:10px">항목 없음</div>`;
+
   body.innerHTML = editNote + invalidNote +
-    (cards ? `<div class="trim-match-grid">${cards}</div>`
-           : `<div class="placeholder">매칭된 그룹이 없습니다</div>`) +
-    `<div class="section-title small" style="margin-top:14px">미배정 항목 (여기로 끌어오면 자동 배치 복귀)</div>
-     <div class="trim-unassigned" data-drop="reset">${unassignedChips}</div>` +
-    (canEdit ? `<div class="trim-newgroup" data-drop="newgroup">+ 새 그룹으로 끌어오기</div>` : "") +
+    `<div class="trim-match-layout">
+       <aside class="trim-palette">
+         <div class="trim-palette-head">
+           <div class="trim-palette-searchwrap">
+             <input class="trim-palette-search" id="trimMatchSearch" type="text" autocomplete="off"
+               placeholder="항목 찾기…">
+           </div>
+           <div class="trim-palette-count" id="trimPaletteCount">전체 ${(p.items || []).length}개</div>
+         </div>
+         <div class="trim-palette-list">${paletteItems}</div>
+       </aside>
+       <div class="trim-match-main">
+         ${cards ? `<div class="trim-match-grid">${cards}</div>`
+                 : `<div class="placeholder">매칭된 그룹이 없습니다</div>`}
+         <div class="section-title small" style="margin-top:14px">미배정 항목 (여기로 끌어오면 자동 배치 복귀)</div>
+         <div class="trim-unassigned" data-drop="reset">${unassignedChips}</div>
+         ${canEdit ? `<div class="trim-newgroup" data-drop="newgroup">+ 새 그룹으로 끌어오기</div>` : ""}
+       </div>
+     </div>` +
     `<div class="section-title small" style="margin-top:16px">항목 매칭 상세</div>
      <div class="trim-table-wrap"><table class="trim-table">
        <thead><tr><th>원본명</th><th>정규화</th><th>토큰</th><th>Phase</th><th>Stem</th><th>그룹</th><th>슬롯</th><th>수동</th></tr></thead>
@@ -197,6 +226,19 @@ function renderTrimMatch(body, p) {
     e.stopPropagation();
     saveTrimOverrides([{ item: b.dataset.item, reset: true }]);
   }));
+  const psearch = document.getElementById("trimMatchSearch");
+  const pcount = document.getElementById("trimPaletteCount");
+  const ptotal = (p.items || []).length;
+  if (psearch) psearch.addEventListener("input", () => {
+    const q = psearch.value.trim().toLowerCase();
+    let vis = 0;
+    body.querySelectorAll(".trim-palette-item").forEach(el => {
+      const show = !q || (el.dataset.name || "").includes(q);
+      el.style.display = show ? "" : "none";
+      if (show) vis++;
+    });
+    if (pcount) pcount.textContent = q ? `${vis} / ${ptotal}개` : `전체 ${ptotal}개`;
+  });
 }
 
 function bindTrimDnD(body) {

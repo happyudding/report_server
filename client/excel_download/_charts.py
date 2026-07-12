@@ -14,7 +14,7 @@ ProcessPoolExecutor 자식 프로세스에서 실행되므로 모든 렌더 함�
   Histogram 은 ECDF 에서 빈도를 수학적으로 복원한다(고유값 x_i 의 개수 = diff(y)/100 × n)
   — 원본 측정값 기준과 동일한 집계이며 다운샘플이 아니다.
 - render_map_png_job: web_report Map Analysis 행(dies) → wafer map PNG
-  (report_generator.map_analyze.render_map_png 재사용 — honey excel Map 과 동일 모양).
+  (map_report.render_map_png 재사용 — honey excel Map 과 동일 모양).
 """
 from __future__ import annotations
 
@@ -319,7 +319,7 @@ def render_map_png_job(job) -> str:
     honey excel 의 render_map_png 를 그대로 재사용해 동일한 모양(bin1 파랑 고정,
     격자, 범례)을 만든다. 반환: out_path. 좌표가 비어 있으면 ValueError.
     """
-    from report_generator.map_analyze import render_map_png
+    from map_report import render_map_png
 
     if not job["xs"]:
         raise ValueError(f"{job['title']}: 좌표가 없습니다.")

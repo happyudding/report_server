@@ -114,6 +114,14 @@ def session_full(session_id):
         "objects": objects,
         "annotations": report_db.get_annotations(session_id),
     }
+    if session.get("source") == "web_report":
+        # 차트 주석(도형/코멘트) + Note 탭 존재 메타 — 세션 편집 DB 의 값싼 조회.
+        # 편집 저장은 edits_rev 증가 + extras digest 변경으로 응답 캐시가 무효화된다.
+        # Note 시트 본문(최대 2MB)은 싣지 않고 GET .../web_report/note 로 지연 로드.
+        extras["chart_notes"] = web_report_service.get_chart_notes(
+            session_id, report_db=report_db)
+        extras["note_info"] = web_report_service.get_note_meta(
+            session_id, report_db=report_db)
 
     if session.get("source") == "web_report":
         # web_report 세션: parquet 원본에서 재계산 (decoded tables 는 service 의 LRU 캐시 활용).
@@ -180,6 +188,12 @@ def delete_session_route(session_id):
             web_report_service.invalidate_caches(akey)
         except Exception:
             _log.exception("artifact cleanup failed for analysis_key %s", akey)
+    # Note 탭 이미지는 세션 단위 저장 — akey 공유 여부와 무관하게 항상 정리 (best-effort).
+    try:
+        for warning in storage_gateway.delete_note_images(session_id):
+            _log.warning("note image cleanup (%s): %s", session_id, warning)
+    except Exception:
+        _log.exception("note image cleanup failed for session %s", session_id)
     report_db.delete_session(session_id)
     _audit("delete", session=session)
     return jsonify({"deleted": True, "session_id": session_id})

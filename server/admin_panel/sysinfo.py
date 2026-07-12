@@ -133,15 +133,6 @@ def storage(refresh=False):
 
 def s3_status():
     """S3 설정·연결 확인. head_bucket 이 connect-timeout 만큼 블록될 수 있어
-    수동 새로고침 전용 (자동 폴링 금지)."""
-    from storage_gateway._s3 import S3NotConfigured, bucket_name, get_s3_client
-    try:
-        client = get_s3_client()
-    except S3NotConfigured as exc:
-        return {"status": "not_configured", "detail": str(exc)}
-    try:
-        client.head_bucket(Bucket=bucket_name())
-        return {"status": "ok", "bucket": bucket_name(),
-                "endpoint": config.REPORT_S3_ENDPOINT or "(AWS 기본)"}
-    except Exception as exc:
-        return {"status": "error", "bucket": bucket_name(), "detail": str(exc)[:300]}
+    수동 새로고침 전용 (자동 폴링 금지). facade 공개 API 만 사용(내부 _s3 직접 import 금지)."""
+    import storage_gateway
+    return storage_gateway.s3_health()

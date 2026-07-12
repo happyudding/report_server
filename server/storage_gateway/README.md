@@ -38,6 +38,12 @@
 | `load_webreport_manifest(analysis_key, upload_root)` | manifest 만 재조회 (parquet 다운로드 없음) |
 | `save_webreport_manifest(...)` | manifest 만 갱신. **현재 미사용**(manifest 불변화) — 외부 통합 호환용 API 만 유지 |
 | `delete_report_artifacts(analysis_key, upload_root=None)` | akey 산출물 삭제 (S3 오브젝트 + 로컬 폴백 파일, best-effort) |
+| `save_issue_images(analysis_key, images)` | issue_table 행별 이미지 저장(S3/로컬 폴백). `{backend, rows}` 반환 |
+| `s3_available()` | S3 설정 여부(bool) — 연결 확인은 안 함 |
+| `s3_health()` | S3 설정+연결 헬스체크. `{status, bucket, endpoint\|detail}` (head_bucket, **수동 호출 전용**) |
+| `s3_object_exists(key)` | S3 오브젝트 존재 확인 |
+| `download_bytes_from_s3(key)` | S3 객체 bytes 다운로드 |
+| `make_distribution_combined_s3_key(analysis_key)` | distribution_combined PNG 의 S3 키 |
 
 **저장 위치 기록 계약 (중요)**: web_report 산출물은 저장 위치를
 `report_object_info.options_json` 에 `{"storage":"s3"|"local"}` 로 기록하고, **조회는 그
@@ -49,6 +55,14 @@ DB(`report_webreport_edit`)에 저장된다(§2 [../CLAUDE.md](../../CLAUDE.md))
 예외(역시 facade 에서 재노출 — 호출부는 `from storage_gateway import S3NotConfigured`):
 - `S3NotConfigured` — `REPORT_S3_BUCKET` 미설정. 호출부가 그레이스풀 폴백.
 - `S3ObjectCorrupted` — 다운로드 JSON 파싱 실패.
+
+**교체본이 지켜야 할 계약**: 구서버 버전으로 이 패키지를 교체할 때 **위 §2 표의 공개 함수
+전체 + 예외 2종의 이름·시그니처를 그대로 노출**해야 프로젝트 코드(라우트·업로드·admin·
+백필)가 무수정으로 동작한다. 특히 신서버가 추가한 함수(`save_webreport_sources` /
+`save_webreport_manifest` / `load_webreport_sources` / `load_webreport_manifest` /
+`delete_report_artifacts` / `save_issue_images` / `s3_available` / `s3_health` /
+`s3_object_exists` / `download_bytes_from_s3` / `make_distribution_combined_s3_key`)이
+교체로 유실되지 않도록 보존 대상임을 명시한다.
 
 이미지 URL 라우트(`/pe/report/chart/...`, `/issue_image/...`,
 `/distribution_combined/...`)는 [routes.py](routes.py) 에 있으며 **공개 URL 계약은 불변**.
@@ -98,6 +112,12 @@ distribution_combined prefix 는 [_s3.py](_s3.py) 상수).
    `download_bytes_from_s3`, `upload_json_to_s3`, `download_json_from_s3`,
    `s3_object_exists`, `make_*_s3_key`, `bucket_name`, 예외)을 그대로 노출할 것.
 3. **facade 시그니처 변경 금지**: 위 공개 함수의 이름/인자가 호출부 계약이다.
+4. **교체본 `_s3.py` 가 반드시 보존할 신서버 상수/env** (신서버가 `_s3.py` 안에 하드코딩·
+   추가한 값 — 구서버 원본에는 없을 수 있으니 이식 시 유지):
+   - prefix 상수 3종(모두 `pe/report_server/` 네임스페이스): `REPORT_S3_DIST_COMBINED_PREFIX`,
+     `REPORT_S3_WEBREPORT_SOURCE_PREFIX`, `REPORT_S3_WEBREPORT_MANIFEST_PREFIX`.
+   - 타임아웃 env: `REPORT_S3_CONNECT_TIMEOUT`(기본 5s), `REPORT_S3_READ_TIMEOUT`(기본 30s) —
+     S3 장애 시 waitress 스레드 잠식 방지용(짧게 잡고 로컬 폴백에 맡김). 제거 금지.
 
 ## 6. 불변 규칙 (반드시 보존)
 

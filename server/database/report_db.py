@@ -79,6 +79,7 @@ from .annotations import (  # noqa: F401
 )
 from .webreport_edits import (  # noqa: F401
     apply_webreport_edits,
+    get_webreport_edit_meta,
     get_webreport_edit_rev,
     get_webreport_edits,
 )

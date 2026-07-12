@@ -38,7 +38,7 @@ _PASS_BIN = "1"
 _COMMENT_COLS = ["PTE comment", "개발 comment"]
 _ADDR_JOIN_MAXLEN = 200           # Range("A1:...,A2:...") 주소 문자열 상한
 
-# PNG 부착 배치 (map_analyze.write_map_sheet 와 동일 상수)
+# PNG 부착 배치 (map_report.write_map_sheet 와 동일 상수)
 _MAP_COLS_PER_ROW = 3
 _MAP_PIC_W = 500
 _MAP_PIC_H = 500

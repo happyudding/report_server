@@ -166,12 +166,20 @@ def yield_overview(tables, yield_rows):
     for t in tables:
         t_total = len(t.data)
         t_pass = int(pass_row.get(f"{t.source}_count") or 0)
+        # 확대 파이용: Bin 별 die 수(BIN 컬럼 die당 1회 집계 = 정확). Pass(Bin1) 제외,
+        # 합계는 fail 과 정확히 일치. FAILTNO 귀속(중복 가능)과 달리 die 기준.
+        counts = Counter(bin_types(t))
+        fail_bins = sorted(
+            ({"bin": b, "count": int(c)} for b, c in counts.items() if b != PASS_BIN),
+            key=lambda d: bin_sort_key(d["bin"]),
+        )
         by_source.append({
             "source": t.source,
             "yield_pct": round(t_pass / t_total * 100.0, 2) if t_total else 0.0,
             "pass": t_pass,
             "fail": max(t_total - t_pass, 0),
             "total": t_total,
+            "fail_bins": fail_bins,
         })
 
     return {"yield_pct": yield_pct, "pass": passed, "fail": failed, "total": total,

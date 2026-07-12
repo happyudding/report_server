@@ -14,6 +14,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from . import cache
@@ -138,6 +139,47 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path) -> dict:
             table.item_columns = [c for c in table.item_columns if c in selected]
     all_items = sorted({c for t in tables for c in t.item_columns})
     return build_distribution_compact(tables, all_items)
+
+
+_DISTRIBUTION_QUERY_MAX_SUBJECTS = 70
+
+
+def _normalize_distribution_subjects(subjects) -> list[str]:
+    """Distribution 배치 조회 항목 검증·중복 제거 (입력 순서 보존)."""
+    if not isinstance(subjects, list):
+        raise ValueError("subjects must be a list")
+    if len(subjects) > _DISTRIBUTION_QUERY_MAX_SUBJECTS:
+        raise ValueError(
+            f"too many subjects ({len(subjects)} > {_DISTRIBUTION_QUERY_MAX_SUBJECTS})")
+    out = []
+    seen = set()
+    for subject in subjects:
+        if not isinstance(subject, str):
+            raise ValueError("subjects must contain strings only")
+        subject = subject.strip()
+        if not subject or len(subject) > 200:
+            raise ValueError("invalid subject")
+        if subject not in seen:
+            seen.add(subject)
+            out.append(subject)
+    return out
+
+
+def get_distribution_items(session_id: str, subjects, *, report_db,
+                           upload_root: Path) -> dict:
+    """화면에 필요한 최대 70개 항목의 ECDF 전량을 기존 columnar 형식으로 반환."""
+    from .tabs.distribution import build_distribution_compact
+
+    requested = _normalize_distribution_subjects(subjects)
+    session, tables, manifest = _load_tables(
+        session_id, report_db=report_db, upload_root=upload_root)
+    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
+    selected = {str(v) for v in (manifest.get("selected_items") or []) if str(v)}
+    available = {c for table in tables for c in table.item_columns}
+    if selected:
+        available &= selected
+    items = [subject for subject in requested if subject in available]
+    return build_distribution_compact(tables, items)
 
 
 def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> bytes:
@@ -463,6 +505,206 @@ def update_summary_engr(session_id: str, values: dict, *, report_db, upload_root
         storage = "unchanged"
 
     return {"ok": True, "updated": changed, "summary_engr": saved, "storage": storage}
+
+
+# ── 차트 주석(chart_note) + Note 탭 시트(note_sheet) — 2026-07-12 ─────────────
+# 둘 다 세션 편집 DB 가 진실. manifest 에 존재한 적 없는 신규 kind 라 legacy 시드
+# (ensure_seeded)가 필요 없다. 저장은 rev 를 올려 REPORT/_FULL 캐시를 무효화하지만
+# payload 재조립은 warm TABLES_CACHE 기반이라 comment 저장과 동일 비용이다.
+
+_CHART_KEY_RE = re.compile(r"^(cdf|hist|trim|map|gap|overlay):.{1,200}$", re.DOTALL)
+_CHART_NOTE_MAX_OPS = 100
+_CHART_NOTE_MAX_SHAPES = 40
+_CHART_NOTE_MAX_BYTES = 16 * 1024
+_CHART_NOTE_TEXT_MAX = 300
+_NOTE_SHEET_MAX_BYTES = 2 * 1024 * 1024
+
+_SHAPE_TYPES = ("circle", "rect", "line", "path")
+_SHAPE_KEYS = ("type", "x0", "x1", "y0", "y1", "path", "xref", "yref",
+               "line", "fillcolor", "opacity")
+_SHAPE_LINE_KEYS = ("color", "width", "dash")
+_TEXT_KEYS = ("x", "y", "xref", "yref", "text", "showarrow", "arrowhead",
+              "ax", "ay", "font", "bgcolor", "bordercolor")
+_TEXT_FONT_KEYS = ("size", "color")
+
+
+def _clean_scalar(v, maxlen=80):
+    """shape/text 필드 값 정리 — 숫자/불리언은 그대로, 문자열은 길이 제한 + 태그 제거."""
+    if isinstance(v, bool) or isinstance(v, (int, float)):
+        return v
+    return str(v)[:maxlen].replace("<", "").replace(">", "")
+
+
+def _sanitize_chart_note(value: dict) -> dict:
+    """저장 전 chart_note 값 정리 — 허용 키만 통과시키고 문자열을 바운드한다.
+
+    Plotly layout.shapes/annotations 서브셋만 저장 (렌더 시 그대로 주입되므로
+    text 의 <, > 는 제거해 HTML 해석 여지를 없앤다)."""
+    shapes_in = value.get("shapes") or []
+    texts_in = value.get("texts") or []
+    if not isinstance(shapes_in, list) or not isinstance(texts_in, list):
+        raise ValueError("shapes/texts must be lists")
+    if len(shapes_in) > _CHART_NOTE_MAX_SHAPES or len(texts_in) > _CHART_NOTE_MAX_SHAPES:
+        raise ValueError(f"too many shapes/texts (max {_CHART_NOTE_MAX_SHAPES})")
+    shapes = []
+    for s in shapes_in:
+        if not isinstance(s, dict):
+            raise ValueError("shape must be an object")
+        if s.get("type") not in _SHAPE_TYPES:
+            raise ValueError(f"unknown shape type: {s.get('type')!r}")
+        out = {}
+        for k in _SHAPE_KEYS:
+            if k not in s:
+                continue
+            if k == "line":
+                line = s.get("line") or {}
+                if isinstance(line, dict):
+                    out["line"] = {lk: _clean_scalar(line[lk])
+                                   for lk in _SHAPE_LINE_KEYS if lk in line}
+            elif k == "path":
+                out[k] = _clean_scalar(s[k], maxlen=4000)
+            else:
+                out[k] = _clean_scalar(s[k])
+        shapes.append(out)
+    texts = []
+    for t in texts_in:
+        if not isinstance(t, dict):
+            raise ValueError("text annotation must be an object")
+        out = {}
+        for k in _TEXT_KEYS:
+            if k not in t:
+                continue
+            if k == "font":
+                font = t.get("font") or {}
+                if isinstance(font, dict):
+                    out["font"] = {fk: _clean_scalar(font[fk])
+                                   for fk in _TEXT_FONT_KEYS if fk in font}
+            elif k == "text":
+                out[k] = _clean_scalar(t[k], maxlen=_CHART_NOTE_TEXT_MAX)
+            else:
+                out[k] = _clean_scalar(t[k])
+        if not str(out.get("text") or "").strip():
+            continue
+        texts.append(out)
+    comment = str(value.get("comment") or "").strip()
+    if len(comment) > _COMMENT_MAX_LEN:
+        raise ValueError(f"comment too long ({len(comment)} > {_COMMENT_MAX_LEN} chars)")
+    return {"shapes": shapes, "texts": texts, "comment": comment}
+
+
+def update_chart_notes(session_id: str, ops: list, *, report_db, upload_root: Path,
+                       client_ip: str = "", user_agent: str = "") -> dict:
+    """차트 주석(도형/텍스트/코멘트) 저장 — 세션 편집 DB(kind=chart_note).
+
+    ops: [{"key": chart_key, "value": {shapes,texts,comment} | null}] — null 은 삭제.
+    chart_key 는 "cdf:<subject>" 형식 (프런트 chart_notes.js 규약과 일치)."""
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+    if not isinstance(ops, list):
+        raise ValueError("ops must be a list")
+    if len(ops) > _CHART_NOTE_MAX_OPS:
+        raise ValueError(f"too many note entries ({len(ops)} > {_CHART_NOTE_MAX_OPS})")
+
+    changes = []
+    for entry in ops:
+        entry = entry or {}
+        key = str(entry.get("key") or "")
+        if not _CHART_KEY_RE.match(key):
+            raise ValueError(f"invalid chart key: {key[:80]!r}")
+        value = entry.get("value")
+        if value is None:
+            changes.append((edits.KIND_CHART_NOTE, key, None))
+            continue
+        if not isinstance(value, dict):
+            raise ValueError("value must be an object or null")
+        clean = _sanitize_chart_note(value)
+        if not clean["shapes"] and not clean["texts"] and not clean["comment"]:
+            changes.append((edits.KIND_CHART_NOTE, key, None))
+            continue
+        blob = json.dumps(clean, ensure_ascii=False, sort_keys=True)
+        if len(blob.encode("utf-8")) > _CHART_NOTE_MAX_BYTES:
+            raise ValueError(f"chart note too large (> {_CHART_NOTE_MAX_BYTES} bytes)")
+        changes.append((edits.KIND_CHART_NOTE, key, blob))
+    rev = report_db.apply_webreport_edits(session_id, changes,
+                                          updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"chart_notes({len(changes)} charts)",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+    return {"ok": True, "updated": len(changes), "rev": rev,
+            "chart_notes": edits.load_chart_notes(report_db, session_id)}
+
+
+def get_chart_notes(session_id: str, *, report_db) -> dict:
+    """/full extras 조립용 — chart_key → {shapes,texts,comment,updated_by,updated_at}."""
+    return edits.load_chart_notes(report_db, session_id)
+
+
+def get_note_meta(session_id: str, *, report_db) -> dict:
+    """/full extras 조립용 Note 존재 여부/최종 수정 메타 — 시트 본문(value)은 읽지 않는다."""
+    for row in report_db.get_webreport_edit_meta(session_id, edits.KIND_NOTE_SHEET):
+        if row.get("item_key") == "sheet":
+            return {"exists": True, "updated_at": row.get("updated_at") or "",
+                    "updated_by": row.get("updated_by") or ""}
+    return {"exists": False}
+
+
+def load_note(session_id: str, *, report_db) -> dict:
+    """Note 탭 lazy GET — {"sheet": dict|None, "updated_at", "updated_by"}."""
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    return edits.load_note_sheet(report_db, session_id) or {"sheet": None}
+
+
+def save_note(session_id: str, sheet, *, report_db, upload_root: Path,
+              client_ip: str = "", user_agent: str = "") -> dict:
+    """Note 탭 시트 JSON 저장 (전체 치환) — 세션 편집 DB(kind=note_sheet, item_key='sheet').
+
+    sheet: Luckysheet 시트 상태 dict (셀 계산은 전부 클라이언트 — 서버는 저장만).
+    null/빈 dict 는 삭제. 직렬화 크기 상한 2MB."""
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    if sheet:
+        if not isinstance(sheet, dict):
+            raise ValueError("sheet must be an object")
+        blob = json.dumps(sheet, ensure_ascii=False, separators=(",", ":"))
+        size = len(blob.encode("utf-8"))
+        if size > _NOTE_SHEET_MAX_BYTES:
+            raise ValueError(
+                f"Note 시트가 너무 큽니다 ({size // 1024}KB > {_NOTE_SHEET_MAX_BYTES // 1024}KB). "
+                "이미지가 아닌 셀 데이터를 줄여주세요.")
+        changes = [(edits.KIND_NOTE_SHEET, "sheet", blob)]
+        action = "save"
+    else:
+        changes = [(edits.KIND_NOTE_SHEET, "sheet", None)]
+        action = "clear"
+    rev = report_db.apply_webreport_edits(session_id, changes,
+                                          updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"note_sheet({action})",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+    return {"ok": True, "rev": rev}
 
 
 # ── Trim Analysis (lazy — 탭 진입 시에만 계산, 세션 open 비용 없음) ────────────

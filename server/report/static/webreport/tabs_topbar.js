@@ -3,12 +3,15 @@ document.getElementById("tabs").addEventListener("click", e => {
   const btn = e.target.closest(".tab");
   if (!btn) return;
   const tab = btn.dataset.tab;
+  const previousTab = activeTabName();
+  if (previousTab === "distribution" && tab !== "distribution") distDeactivateGallery();
   hideItemDetail();   // Item_detail 열려 있으면 닫고 해당 탭으로
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === btn));
   document.querySelectorAll(".panel").forEach(p =>
     p.classList.toggle("active", p.id === `panel-${tab}`));
   // lazy 렌더: 아직 안 그려진(dirty) 탭이면 이 시점에 렌더 (프리렌더가 이미 그렸으면 no-op)
   renderTab(tab);
+  if (tab === "distribution") distActivateGallery();
   // 숨김 상태에서 그려진 Plotly 차트는 0px 로 렌더되므로 활성화 시 리사이즈
   const active = document.getElementById(`panel-${tab}`);
   if (active && window.Plotly) {
@@ -17,6 +20,8 @@ document.getElementById("tabs").addEventListener("click", e => {
   // 프리렌더가 숨김(display:none) 상태에서 그렸으면 헤더 상단행 높이가 0으로 측정되므로,
   // 보이는 시점에 다시 실측한다.
   if (tab === "issues" && active) syncIssueHeadRowHeight(active);
+  // Note 탭(Luckysheet 캔버스)은 숨김 상태에서 크기가 0 — 재진입 시 리사이즈.
+  if (tab === "note" && window.noteOnTabShown) noteOnTabShown();
 });
 
 // ── topbar meta ──────────────────────────────────────────────────────────────
@@ -77,7 +82,7 @@ function updatePrivateBtn(session) {
 // web_report 전용 데이터로만 채워지는 탭(CPK/Map Analysis)은 legacy(xlsx_upload)
 // 세션에서 항상 빈 화면이므로 탭 버튼 자체를 숨긴다. 숨긴 탭이 활성 상태였으면 Summary 로 전환.
 // (Raw Data 탭은 제거됨 — rawdata 편집은 Honey 사이드바 'Rawdata 수정'(Excel) 으로 이관.)
-const WEB_REPORT_ONLY_TABS = ["cpk", "map-analysis", "trim-analysis"];
+const WEB_REPORT_ONLY_TABS = ["cpk", "map-analysis", "trim-analysis", "note"];
 
 function syncTabVisibility() {
   const web = isWebReportSession();
@@ -141,4 +146,3 @@ function deriveCols(rows) {
   (rows || []).forEach(r => Object.keys(r || {}).forEach(k => { if (!seen.includes(k)) seen.push(k); }));
   return seen;
 }
-

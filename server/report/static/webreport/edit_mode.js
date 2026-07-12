@@ -116,6 +116,8 @@ const TAB_RENDERERS = {
   // 관련 JS(renderRawDataTab 등)와 #panel-raw-data 는 비활성 상태로 남겨둠(참조 안전).
   // Trim Analysis 는 탭 진입 시 lazy fetch (프리렌더 큐 제외 — 숨김 Plotly 렌더 회피)
   "trim-analysis": renderTrimAnalysis,
+  // Note(Luckysheet 캔버스)도 탭 진입 시 lazy — 번들(≈4MB) 로드가 첫 페인트를 막지 않게.
+  "note": () => renderNoteTab(),
 };
 const tabDirty = {};
 
@@ -139,7 +141,9 @@ function schedulePrerender() {
   // map-analysis 는 프리렌더에서 제외한다. wafer map 은 scaleanchor(정사각 고정) 플롯이라
   // 숨김(0폭) 상태에서 그려지면 탭 활성화 시 Plotly.Plots.resize 로도 종횡비/폭이 제대로
   // 복구되지 않아 짤려 보인다 → 탭을 처음 열 때(패널 visible) renderTab 이 정상 폭으로 그리도록 둔다.
-  const queue = ["yield", "issues", "cpk", "distribution"];
+  // 비활성 탭은 실제 진입 시에만 그린다. 미리 만들면 초기 DOM과 숨은 차트가
+  // 누적되며, 탭 클릭 시 renderTab이 동일한 lazy 렌더를 수행한다.
+  const queue = [];
   const idle = window.requestIdleCallback
     ? (fn => window.requestIdleCallback(fn, { timeout: 1000 }))
     : (fn => setTimeout(fn, 200));
@@ -210,6 +214,20 @@ document.querySelector(".content").addEventListener("dblclick", e => {
   if (cell.dataset.raw != null) cell.textContent = cell.dataset.raw;
   cell.contentEditable = "true";
   cell.focus();
+});
+
+// comment 셀 편집 종료(focusout): 편집 중 원문(@[항목])을 data-raw 에 되저장하고 링크 표시로
+// 복귀시킨다. 이래야 저장 버튼을 누르지 않아도(=전체 탭 재렌더 없이) 방금 입력한 @멘션이 곧바로
+// 클릭 가능한 Item_detail 링크가 된다. mention 드롭다운 선택은 mousedown+preventDefault 로
+// blur 를 막으므로 여기서 조기 종료되지 않는다.
+document.querySelector(".content").addEventListener("focusout", e => {
+  const cell = e.target.closest("td.dblclick-edit");
+  if (!cell || !cell.isContentEditable || !isCommentCol(cell.dataset.col)) return;
+  const raw = cell.textContent || "";
+  cell.contentEditable = "false";
+  cell.dataset.raw = raw;                  // 저장·재편집 라운드트립용 원문 갱신
+  cell.innerHTML = linkifyComment(raw);    // @[항목] → 링크 표시로 복귀
+  hideMention();
 });
 
 document.getElementById("btnDel").addEventListener("click", () => {
@@ -431,7 +449,10 @@ async function saveIssueComments(opts) {
       const col = td.dataset.col;
       const ri = parseInt(td.dataset.r, 10);
       const orig = String(((rows[ri] || {})[col]) ?? "").trim();
-      const value = (td.textContent || "").trim();
+      // 링크 표시 중인 comment 셀은 textContent 가 대괄호 없는 표시용 문자열(@항목)이므로
+      // 원문(@[항목])을 보관한 data-raw 를 읽는다. 편집 중(contenteditable)이면 textContent 가 원문.
+      const value = ((isCommentCol(col) && !td.isContentEditable && td.dataset.raw != null)
+        ? td.dataset.raw : (td.textContent || "")).trim();
       if (value !== orig) {
         comments.push({ key: td.dataset.key, col, value });
         applied.push({ ri, col, value });
@@ -693,4 +714,3 @@ document.getElementById("etcEngrAdd").addEventListener("click", () => {
   closeEtcItemModal();
   addEtcEngrItem(name, comment);
 });
-

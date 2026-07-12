@@ -71,15 +71,11 @@ async function load(resetMode=true) {
     setLoadProgress(80, "화면 구성 중…");
     _globalBinColors = null;   // 새 데이터 → bin 색상 매핑 재계산
     seedEmptyFrames();
-    // Issue Table 의 미니 분포 차트가 renderDistribution() 보다 먼저 그려질 수 있으므로
-    // distDataCache/distColorMap 은 렌더 순서와 무관하게 데이터 로드 직후 미리 준비해둔다.
-    // distribution_deferred 응답이면 대용량 ECDF 를 백그라운드로 지연 로드하고
-    // (첫 페인트를 막지 않음), 구형 embed 응답이면 기존 경로 그대로 (하위호환).
+    // Distribution 인덱스와 색상만 준비한다. ECDF 는 화면에 보이는 항목을 70개 이하로
+    // 묶어 /distribution/query 에서 가져오며 전체 payload 는 선다운로드하지 않는다.
     const webPre = DATA.web_report || {};
-    // Distribution ECDF 는 항상 지연 로드 (GET .../web_report/distribution 컴팩트 columnar).
-    // 도착 전 그려진 미니셀/갤러리는 refreshDistConsumers 가 다시 채운다.
     setLoadProgress(92, "분포 데이터 준비 중…");
-    ensureDistData();
+    distResetDataIfChanged();
     buildDistColorMap(webPre.sources || []);
     renderMeta(DATA.session || {});
     // 편집 권한: 로그인 ID == 업로더(기록 없으면 로그인만으로) 일 때만 edit 렌더.

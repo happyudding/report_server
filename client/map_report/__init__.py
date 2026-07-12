@@ -5,8 +5,11 @@
 - x·y 축에 정수 좌표 스케일 표시.
 - 좌표가 비어있는 source 는 건너뛰고 log_cb 로 안내 문구 표시.
 
-PyQt/xlwings 비의존(렌더). xlwings 의존은 write_map_sheet(wb, ...) 한 곳뿐 —
-xlsx_writer 의 단일 Excel 세션 안에서 PNG 만 시트로 부착한다(별도 Excel 재오픈 없음).
+신서버 전용 기능 — report_generator(구서버 교체 대상) 밖으로 분리했다. 렌더
+(render_map_png/build_map_pngs)는 PyQt/xlwings 비의존. xlsx 부착은 두 함수뿐:
+write_map_sheet(wb, ...) 는 열려있는 xlwings wb 에 Map 시트를 붙이고,
+attach_map_sheet(path, ...) 는 저장 완료된 xlsx 를 별도 세션으로 열어 부착한다
+(honey_main 이 xlsx_writer.write 반환 후 호출 — report_generator 는 map 무관).
 """
 from __future__ import annotations
 
@@ -174,6 +177,16 @@ _GAP = 24
 _MARGIN = 10
 
 
+def _report_sheet_display_name(name):
+    """report 시트 표시명 — 첫 글자만 대문자화 (report_generator 헬퍼 인라인 복사).
+
+    report_generator._xlsx_table_helpers 의 동명 헬퍼를 인라인했다 — map_report 가
+    교체 대상(report_generator) 을 역참조하지 않도록(교체 후에도 독립 동작).
+    """
+    text = str(name or "")
+    return text[:1].upper() + text[1:] if text else text
+
+
 def _unique_map_sheet_name(wb):
     existing = {s.name for s in wb.sheets}
     name = "Map"
@@ -189,7 +202,6 @@ def _map_sheet_anchor(wb):
 
     cpk 시트가 있으면 그 앞, 없으면 yield 뒤, 그것도 없으면 summary 뒤, 모두 없으면 맨 끝.
     """
-    from ._xlsx_table_helpers import _report_sheet_display_name
     names = {s.name: s for s in wb.sheets}
     cpk = names.get(_report_sheet_display_name("cpk"))
     if cpk is not None:
@@ -226,3 +238,26 @@ def write_map_sheet(wb, map_pngs) -> None:
             width=_PIC_W,
             height=_PIC_H,
         )
+
+
+def attach_map_sheet(xlsx_path, map_pngs) -> None:
+    """저장 완료된 xlsx 를 별도 xlwings 세션으로 열어 'Map' 시트를 부착 후 저장.
+
+    honey_main 이 xlsx_writer.write() 반환 뒤 호출한다 — report_generator 의 단일
+    세션 밖에서 부착하므로 report_generator 는 map 과 완전히 무관(구서버 교체 대비).
+    호출 스레드에 COM 초기화가 되어 있어야 한다(honey_main 은 write 와 같은 워커 스레드
+    에서 호출). xlwings import 는 이 함수 안에서만 — 렌더 경로는 xlwings-free 유지.
+    """
+    if not map_pngs:
+        return
+    import xlwings as xw
+
+    with xw.App(visible=False, add_book=False) as app:
+        app.display_alerts = False
+        app.screen_updating = False
+        wb = app.books.open(str(Path(xlsx_path).resolve()))
+        try:
+            write_map_sheet(wb, map_pngs)
+            wb.save()
+        finally:
+            wb.close()
