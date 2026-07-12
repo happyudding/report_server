@@ -1,74 +1,67 @@
 # 03 · 서버 — 저장소 (SQLite 스키마 + storage_gateway/S3 키)
 
-> 모든 영속 데이터의 실체. 텍스트/메타 = SQLite, 본문(xlsx·이미지·JSON) = storage_gateway(S3 + 로컬 fallback). analysis_key 가 둘을 잇는다.
-> 관련: 쓰는 쪽 [01 업로드](01_server_upload.md) · 읽는 쪽 [02 조회](02_server_query_edit.md)
+> 모든 영속 데이터의 실체. 텍스트/메타 = SQLite, 본문(이미지·parquet·PNG) =
+> storage_gateway(S3 + 로컬 fallback). analysis_key 가 둘을 잇는다. **원본 xlsx 는 저장하지
+> 않는다.** 관련: 쓰는 쪽 [01 업로드](01_server_upload.md) · [10 web_report](10_web_report_pipeline.md) ·
+> 읽는 쪽 [02 조회](02_server_query_edit.md)
 
 ## 파일
-- [server/database/report_db.py](../server/database/report_db.py) — 스키마/마이그레이션/CRUD/락
-- [server/storage_gateway/](../server/storage_gateway/) — 업로드 산출물 저장/조회 **단일 진입점** (`ENTRYPOINT / EXTERNAL_OWNER`, 실무 가이드 [README](../server/storage_gateway/README.md))
-- [server/storage_gateway/_s3.py](../server/storage_gateway/_s3.py) — boto3 클라이언트 + 키 빌더(게이트웨이 내부 기본 어댑터, 구 `s3_storage/report_s3.py`)
+- [server/database/core.py](../server/database/core.py) — **스키마(SCHEMA) 정본**·마이그레이션·get_conn·락 (report_db.py 는 재노출 facade)
+- [server/storage_gateway/](../server/storage_gateway/) — 산출물 저장/조회 **단일 진입점** (`ENTRYPOINT / EXTERNAL_OWNER`, 실무 가이드 [README](../server/storage_gateway/README.md))
 - [server/config.py](../server/config.py) — DB 경로·S3 자격증명·키 prefix
 
-## SQLite 테이블 ([report_db.py `SCHEMA`](../server/database/report_db.py#L7))
+## SQLite 테이블 (정본 [core.py `SCHEMA`](../server/database/core.py), 스냅샷 [report_README.md](../DB/pe/report/report_README.md))
+테이블 16개. 요지 (전체 컬럼은 스냅샷 참조):
+
 | 테이블 | 역할 | 핵심 컬럼 / UNIQUE |
 |--------|------|--------------------|
-| `report_session` | 업로드 1건 = 1행 | `session_id`(UNIQUE), `analysis_key`, `status`, `product_type/product/lot_id`, `password`, `source` |
+| `report_session` | 업로드 1건 = 1행 | `session_id`(UNIQUE), `analysis_key`, `status`, `product_type/product/lot_id`, `source`, `mode`, `uploaded_by`, `client_host`, `webreport_options`, `password`(미사용 보존) |
 | `report_analysis_summary` | yield/항목 표 행 | `UNIQUE(analysis_key,item_name,bin_number)`, `yield_percent/fail_count/cpk_val/mean_val…` |
-| `report_object_info` | S3 객체 포인터 | `UNIQUE(analysis_key,object_type)`, `s3_bucket/s3_key/s3_uri`, `content_hash`, `options_json` |
-| `report_analysis_lock` | analysis_key 동시성 락 | `analysis_key`(PK), `owner`, `expires_at` (TTL 300s) |
-| `report_csv_files` | (legacy) CSV 첨부 | `UNIQUE(analysis_key,filename)` |
+| `report_object_info` | 산출물 포인터 | `UNIQUE(analysis_key,object_type)`, `s3_bucket/s3_key/s3_uri`, `content_hash`, `options_json`(`{"storage":..}`) |
+| `report_sheet_data` | xlsx 추출 텍스트 | `PK(analysis_key,sheet_name)`, `data_json` |
+| `report_audit_log` | upload/edit/delete 감사 | 메타 스냅샷 + `client_ip/user_agent/client_user/client_host/result` |
+| `report_webreport_edit` / `_rev` | web_report 편집 진실 (세션 단위) | `PK(session_id,kind,item_key)` / `rev`(무효화 토큰) |
+| `report_session_editor` | 편집 위임 | `PK(session_id,editor_user)` |
+| `report_web_visitor` | 편집자 후보 풀 | `user_id`(PK) |
+| `report_user_important` / `report_user_favorite` | 개인 중요표시/즐겨찾기 | `PK(user_id,session_id)` |
 | `report_annotation` | 세션 주석 | `session_id` 인덱스 |
-| `report_dashboard_comment` | (legacy Dash) 편집셀 | `UNIQUE(dataset_id,kind,item_key)` |
-
-> 현재 xlsx_upload 흐름에서 실제로 쓰는 건 **session / summary / object_info / annotation**. 나머지는 legacy 보존.
+| `report_analysis_lock` | analysis_key 동시성 락 | `analysis_key`(PK), `expires_at`(TTL 300s) |
+| `report_csv_files` / `report_dashboard_comment` / `report_user` | legacy 보존 | (미사용) |
 
 ### object_type 종류 (report_object_info)
-| object_type | S3 내용 | 키 빌더 |
-|-------------|---------|---------|
-| `summary_text` | summary 시트 추출 JSON | `make_summary_text_s3_key` |
-| `issue_table_text` | issue_table 추출 JSON | `make_issue_text_s3_key` |
-| `chart_index` | `{"count":N}` (차트 장수) | `make_chart_index_s3_key` |
+| object_type | 내용 | 저장 |
+|-------------|------|------|
+| `distribution_combined` | 합성 분포 PNG | S3/로컬 |
+| `web_report_source_<idx>` | web_report parquet 원본 | S3/로컬 (options_json 에 위치 기록) |
+| `web_report_manifest` | web_report manifest JSON | 〃 |
+| `chart_index` | `{"count":N}` (legacy 차트 장수) | S3 |
+| `summary_text` / `issue_table_text` | (legacy) 추출 JSON — 현행은 DB `report_sheet_data` | S3 |
 
-### 마이그레이션 — `_migrate()` [report_db.py:133](../server/database/report_db.py#L133)
-빈 DB 면 no-op(SCHEMA 가 생성). 기존 DB 면:
-- `report_object_info` 옛 PK(analysis_key) → `id` PK + `UNIQUE(analysis_key,object_type)` 재작성.
-- `report_session` 에 누락 컬럼(`analysis_key/content_hash/…/source`) ALTER ADD.
-`init_report_db()` 가 `_migrate` → `executescript(SCHEMA)` → WAL/synchronous=NORMAL PRAGMA. import 시 [report_extension.py](../server/report/report_extension.py) 가 호출.
+### 마이그레이션 — `core.py`
+빈 DB 면 SCHEMA 가 전부 생성(`CREATE TABLE IF NOT EXISTS`). 기존 DB 면 누락 컬럼 ALTER ADD +
+product_type 약어(`MD`→`MDDI` 등) 정규화. `init_report_db()` → SCHEMA 실행 → WAL/synchronous=
+NORMAL PRAGMA. [report_extension.py](../server/report/report_extension.py) 가 호출.
 
 ### 주요 CRUD (전부 `get_conn()` 컨텍스트, row_factory=Row)
-- 세션: `create_session`(source 인자), `update_session`(화이트리스트 `_SESSION_UPDATABLE` 만), `get_session`, `get_history`(필터+JOIN), `delete_session`(+annotation 삭제).
+- 세션: `create_session`(source/mode/uploaded_by 인자), `update_session`(화이트리스트만),
+  `get_session`, `get_history`(필터+JOIN), `delete_session`(+annotation 삭제).
 - summary: `save_summary_batch`(INSERT OR IGNORE), `get_summary_by_analysis_key`.
-  (`replace_summary_batch` 는 세션 수정 기능 폐기(2026-07-09)로 제거.)
-- object: `upsert_object_info`(ON CONFLICT UPDATE), `get_object_info`, `get_all_object_infos`, `touch_object_info`.
-- 락: `try_acquire_analysis_lock`(만료행 청소 후 INSERT, IntegrityError=실패), `release_analysis_lock`.
+- object: `upsert_object_info`(ON CONFLICT UPDATE), `get_object_info`, `get_all_object_infos`.
+- web_report 편집: `get/apply_webreport_edits`, `get_webreport_edit_rev`
+  ([webreport_edits.py](../server/database/webreport_edits.py)).
+- 락: `try_acquire_analysis_lock`, `release_analysis_lock`.
 
-## storage_gateway ([server/storage_gateway/](../server/storage_gateway/))
-- **S3 산출물 저장의 단일 진입점.** 프로젝트 코드(`report_routes.py`·`upload_xlsx.py`·
-  `routes.py`)는 내부 `_s3` 어댑터를 직접 import 하지 않고 이 패키지만 의존한다.
-  예외 `S3NotConfigured`/`S3ObjectCorrupted` 도 facade 에서 재노출한다.
-- 공개 함수: `save_upload_artifacts`, `load_json_object`,
-  `list_issue_image_rows`, `load_issue_image`, `load_chart_png`, `load_distribution_png`.
-  (`save_text_object` 는 세션 수정 기능 폐기(2026-07-09)로 제거.)
-- 이미지 URL 라우트(`/chart`, `/issue_image`, `/distribution_combined`)는
-  [server/storage_gateway/routes.py](../server/storage_gateway/routes.py)에 있으며 기존 URL을 유지한다.
-- 내부 모듈(외부 담당자 영역): `_s3`(boto3 어댑터·키 빌더), `_issue_images`(이슈 이미지
-  백엔드), `_png_drive`(외부 호환 PNG 스캐폴드, 미사용). 외부 S3/server 저장소 프로젝트는
-  이 패키지를 진입점으로 브랜치한다 — 실무 가이드 [README](../server/storage_gateway/README.md).
+## storage_gateway (S3 = 외부 프로젝트, 검증용)
+S3 는 외부 경계다 — 미설정 시 로컬 폴백으로 동작한다. facade 공개 API·저장 위치 기록 계약·
+키 prefix 는 **정본 [storage_gateway/README.md](../server/storage_gateway/README.md)** 참조.
+요지: 프로젝트 코드는 내부 `_s3` 어댑터를 직접 import 하지 않고 facade 만 의존하며,
+web_report parquet/manifest 는 저장 위치를 `report_object_info.options_json` 에 기록하고
+조회가 그 기록을 따른다(s3 기록 다운로드 실패 시 예외 — 로컬 부활 방지).
 
-## S3 기본 어댑터 ([_s3.py](../server/storage_gateway/_s3.py))
-- 클라이언트: `get_s3_client()` 싱글톤. `REPORT_S3_BUCKET` 비면 `S3NotConfigured` raise → 호출측이 그레이스풀 처리. endpoint/access/secret 있으면 호환 스토리지, 없으면 boto3 기본 자격증명·AWS. `max_pool_connections` = config(기본 30).
-- 입출력: `upload_bytes_to_s3` / `download_bytes_from_s3` / `upload_json_to_s3` / `download_json_from_s3`(깨진 JSON 시 `S3ObjectCorrupted`) / `s3_object_exists`(head_object).
-- 키 패턴 (prefix 는 [config.py](../server/config.py#L27), 모두 `pe/report_server/` 네임스페이스로 plotly legacy 와 충돌 회피):
-  ```
-  issue_img/<akey>/<row>.png     issue_img/<akey>/index.json
-  chart_png/<akey>/<idx>.png  +  chart_png/<akey>/index.json
-  ```
-  (구 텍스트 prefix(summary_text 등)는 세션 수정 기능 폐기로 제거 — legacy 객체는
-  report_object_info.s3_key 로 읽는다.)
-
-## 환경변수 (config.py)
-서버: `HOST/PORT`, `REPORT_DB_PATH`, `REPORT_S3_ENDPOINT/BUCKET/REGION/ACCESS_KEY/SECRET_KEY`,
-각 `REPORT_S3_*_PREFIX`, `HONEY_RELEASES_DIR`. `REPORT_S3_BUCKET` 비면 모든 S3 동작이 503/그레이스풀.
+## 환경변수
+전체는 [server/README.md](../server/README.md)(정본). `REPORT_S3_BUCKET` 비면 모든 S3 동작이
+로컬 폴백. S3 키 prefix 는 [config.py](../server/config.py) `REPORT_S3_*_PREFIX`
+(web_report·distribution prefix 는 [_s3.py](../server/storage_gateway/_s3.py) 상수).
 
 ## 주의 (불변 규칙 §1·§3·§4)
 - 원본 xlsx 는 서버로 전송·저장하지 않는다 — 추출 텍스트는 DB(sheet_data), issue PNG 만 S3.

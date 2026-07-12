@@ -10,29 +10,27 @@
 
 | 파일 (패턴) | 정체 | 생성 주체 | 날짜 파일명? |
 |-------------|------|-----------|--------------|
-| `DB/pe/report/report.db` | **메인 세션 DB** — 테이블 10개 전부 여기 | [report_db.py `init_report_db`](../server/database/report_db.py#L279) | 아니오 (고정명) |
-| `DB/pe/report/backup/report_YYYYMMDD_HHMMSS.db` | report.db **자동 백업** (최대 7개 rotation) | [db_backup.py `run_backup`](../server/db_backup.py#L39) | **예 — 의도된 백업** |
+| `DB/pe/report/report.db` | **메인 세션 DB** — 테이블 16개 전부 여기 | `report_db.init_report_db` | 아니오 (고정명) |
+| `DB/pe/report/backup/report_YYYYMMDD_HHMMSS.db` | report.db **자동 백업** (최대 7개 rotation) | `db_backup.run_backup` | **예 — 의도된 백업** |
 | `DB/INFORMATION/stdinfo_YYYYMMDD.db` | 제품 part_id 카탈로그 (**외부 생성**, 읽기전용) | 이 repo 에 생성 코드 없음 — 수동 배치 | **예 — 수동 교체 방식** |
 | `f:\COINAPI\plotly_sqlite\storage\app.db` | **별개 프로젝트**(Dash 데모) 자체 DB | plotly_sqlite/db.py | 아니오. report_server 와 무관 |
 
 - `DB/` 트리 전체는 .gitignore 대상 (런타임 산출물).
 - 날짜 DB 파일명을 만드는 코드 경로는 repo 전체에서 **db_backup.py 하나뿐**
   (그 외 strftime 사용처는 서버/클라 로그·xlsx·PNG 파일명 — DB 아님).
-- `web_report/` 의 캐시(cache.py, response_cache.py 등)는 전부 **in-process RAM** —
-  디스크 DB 파일을 만들지 않는다.
+- `web_report/` 의 캐시(cache.py/response_cache.py = RAM, disk_cache.py = 재계산 가능한 파일)는
+  **DB 파일을 만들지 않는다** (→ [12 캐시](12_web_report_cache.md)).
 
 ## 1. report.db — 세션 관리 단일 DB
 
-- 경로: [config.py `REPORT_DB_PATH`](../server/config.py#L19) (env `REPORT_DB_PATH` 로 변경 가능).
-- 테이블 10개, 전부 `report_` prefix ([SCHEMA](../server/database/report_db.py#L7)):
-  `report_session`(중심) / `report_analysis_summary` / `report_object_info` /
-  `report_analysis_lock` / `report_csv_files` / `report_annotation` /
-  `report_dashboard_comment` / `report_sheet_data` / `report_audit_log` /
-  `report_user_favorite`.
+- 경로: `config.REPORT_DB_PATH` (env `REPORT_DB_PATH` 로 변경 가능).
+- 테이블 16개, 전부 `report_` prefix. 정본 SCHEMA 는
+  [core.py](../server/database/core.py), 목록·컬럼은 [03 저장소](03_storage.md) 참조.
 - 테이블 간 연결 키는 **`session_id`**(업로드 1건) 와 **`analysis_key`**(grid+meta 해시) —
-  별도 DB 파일로 나누지 않고 이 두 키로 조인한다. 상세는 [03 저장소](03_storage.md).
-- 사이드카 문서 파일 `DB/pe/report/report_schema.sql`, `report_README.md` 는 코드가
-  읽지 않는 스냅샷(문서용)이다.
+  별도 DB 파일로 나누지 않고 이 두 키로 조인한다.
+- 사이드카 문서 파일 `DB/pe/report/report_schema.sql`, `report_README.md` 는 코드가 읽지 않는
+  **스냅샷** — read-only 스크립트로 재생성하며 값(샘플 row)은 담지 않는다
+  ([report_README.md](../DB/pe/report/report_README.md) 말미의 재생성 방법 참조).
 
 ## 2. backup/ — 날짜 파일이 생기는 유일한 코드 경로
 
@@ -62,19 +60,17 @@
 
 - 경로: [config.py `STDINFO_DB_PATH`](../server/config.py#L22) — 기본값에 날짜가 포함된
   파일명(`stdinfo_20260511.db`)이 **하드코딩**되어 있다.
-- 읽는 곳은 한 군데: [`/pe/report/api/part_ids`](../server/report/report_routes.py#L794)
-  (업로드 다이얼로그 Product 검색용, `mode=ro` 읽기전용 접속, `products.part_id` SELECT).
+- 읽는 곳은 한 군데: `GET /pe/report/api/part_ids` ([routes_misc.py](../server/report/routes_misc.py),
+  업로드 다이얼로그 Product 검색용, `mode=ro` 읽기전용 접속, `products.part_id` SELECT).
 - **이 repo 는 이 파일을 만들지도 쓰지도 않는다** — 외부 프로세스가 생성한 파일을
   수동으로 갖다 놓는 방식. 스키마 스냅샷은 `DB/INFORMATION/stdinfo_20260511_schema.sql`.
 - **새 버전으로 교체하는 절차**: 새 파일을 `DB/INFORMATION/` 에 배치한 뒤
   [config.py:22](../server/config.py#L22) 기본값을 새 파일명으로 수정하거나
   env `STDINFO_DB_PATH` 를 지정하고 서버 재시작.
-- ⚠️ 경로가 틀리거나 파일이 없으면 **500 없이 조용히 빈 목록**을 반환한다
-  ([report_routes.py:808](../server/report/report_routes.py#L808) 예외 삼킴, 서버 로그 경고만).
-  교체 후 Product 검색이 비어 보이면 이 지점부터 확인할 것.
-- 참고: [client/README.md](../client/README.md) 의 `HONEY_STDINFO_DB` 언급은 stale —
-  클라이언트는 로컬 stdinfo DB 를 열지 않고 HTTP(`GET /pe/report/api/part_ids`)로 조회한다
-  ([uploader.py `fetch_part_ids`](../client/transport/uploader.py)).
+- ⚠️ 경로가 틀리거나 파일이 없으면 **500 없이 조용히 빈 목록**을 반환한다 (예외 삼킴, 서버
+  로그 경고만). 교체 후 Product 검색이 비어 보이면 이 지점부터 확인할 것.
+- 참고: 클라이언트는 로컬 stdinfo DB 를 열지 않고 HTTP(`GET /pe/report/api/part_ids`)로
+  조회한다 (`transport/uploader.py`). stdinfo DB 는 **서버 측** 파일이다.
 
 ## 4. 무관 파일 분류 노트
 

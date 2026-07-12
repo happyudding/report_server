@@ -1,35 +1,24 @@
 # Honey 클라이언트
 
-PyQt5 데스크톱 앱. CSV 데이터를 분석해 xlsx 리포트를 생성하고 Flask 서버에 업로드한다.
+PyQt6 데스크톱 앱. CSV 데이터를 분석해 xlsx 리포트를 생성하고 Flask 서버에 업로드한다.
+
+> **client/ 수정은 사전 승인 필요** ([../CLAUDE.md](../CLAUDE.md) §5). `report_generator/`·
+> `honey_parse/` 는 외부 프로젝트 — 무수정 원칙.
 
 ---
 
-## 요구사항
+## 요구사항 / 실행
 
-- Python 3.10+
-- Windows (Excel COM 의존)
+- Python 3.10+, Windows (Excel COM 의존). 의존성은 [requirements.txt](requirements.txt) 참조.
 
 ```powershell
 cd F:\COINAPI\report_server\client
 pip install -r requirements.txt
-```
-
-| 패키지 | 용도 |
-|--------|------|
-| `PyQt5>=5.15` | GUI 프레임워크 |
-| `requests>=2.28` | HTTP 업로드 |
-| `pywin32>=306` | Excel COM — 시트/이미지 추출 (Windows 전용) |
-| `pandas>=1.5` | 로컬 분석 엔진 (report_generator) |
-| `numpy>=1.23` | CPK / yield / 분포 계산 |
-| `xlwings>=0.30` | xlsx 리포트 생성 — Excel COM (Windows 전용) |
-
----
-
-## 실행
-
-```powershell
 python honey_main.py
 ```
+
+분석/생성엔 pandas·numpy·xlwings + Excel 이 필요하다. 미설치 시 분석 버튼만 비활성되고
+로컬 xlsx 직접 업로드는 유지된다.
 
 ---
 
@@ -38,20 +27,20 @@ python honey_main.py
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `HONEY_SERVER_URL` | `http://127.0.0.1:8000` | Flask 서버 주소 |
-| `HONEY_CONFIG_DIR` | `%APPDATA%\Honey` | 차트 색 팔레트 등 사용자 설정 저장 폴더 |
-| `HONEY_STDINFO_DB` | exe 폴더 또는 `../DB/INFORMATION/` 탐색 | stdinfo SQLite DB 경로 |
+| `HONEY_CONFIG_DIR` | `%APPDATA%\Honey` | 차트 색 팔레트 등 사용자 설정 폴더 |
+| `HONEY_D1_STORAGE` | `<repo>/d1_storage` | D1 로컬 검증 스토리지 폴더 (외부 provider) |
+
+> Product 검색용 기준정보(part_id)는 클라가 로컬 DB 를 열지 않고 서버
+> `GET /pe/report/api/part_ids` 로 HTTP 조회한다.
 
 ---
 
 ## exe 빌드
 
 ```powershell
-cd F:\COINAPI\report_server\client
-pyinstaller --clean --noconfirm build_honey.spec
-# 출력: dist/Honey.exe
+pyinstaller --clean --noconfirm build_honey.spec   # 출력: dist/Honey/
 ```
-
-빌드 후 서버에 배포하려면 [docs/04_honey_update.md](../docs/04_honey_update.md) 참조.
+배포 절차는 [docs/04_honey_update.md](../docs/04_honey_update.md).
 
 ---
 
@@ -59,42 +48,35 @@ pyinstaller --clean --noconfirm build_honey.spec
 
 ```
 client/
-├── honey_main.py          QMainWindow 진입점 — 업로드 버튼 + 버전 체크 트리거
-├── config.py              로컬/UI 설정 (CONFIG_DIR, STDINFO_DB_PATH)
-├── app_settings.py        앱 설정 영속화
-├── chart_colors.py        차트 색 팔레트 유틸리티
-├── honey_ui/              PyQt5 다이얼로그·위젯 모음
-│   ├── dialogs.py         ReportSettings, Upload, FileOrder, ColorEditor 등
-│   └── ...
+├── honey_main.py          진입점 — 메인 윈도우 + 워크플로 + 버전 체크 트리거
+├── config.py / app_settings.py / chart_colors.py   로컬·UI 설정
+├── client_identity.py     PC 계정/호스트 신고값 (web_report 업로더 신원)
+├── embedded_browser.py    세션 열람 내장 브라우저 (HoneyUser/<계정> UA 삽입)
+├── honey_ui/              PyQt6 다이얼로그·위젯 (Upload/ReportSettings/FileOrder 등)
 ├── transport/             서버 통신
-│   ├── config.py          SERVER_BASE_URL, CURRENT_VERSION (HONEY_SERVER_URL 읽음)
-│   ├── uploader.py        multipart POST — xlsx + 차트 PNG 송신
-│   ├── version_check.py   /honey/version 폴링
-│   └── updater.py         exe 자동 교체 로직
-├── report_generator/      로컬 분석 엔진 (CSV→DataFrame→xlsx)
-│   ├── analyzer.py        분석 진입점
-│   ├── csv_loader.py      CSV 읽기·정규화
-│   ├── df_honey.py        df_honey 포맷 정의
-│   ├── _builders.py       CPK / yield / 분포 지표 계산
-│   ├── xlsx_writer.py     xlwings 로 xlsx 작성
-│   └── models.py          AnalysisResult 데이터 클래스
-├── report_flow/           업로드 전처리 (xlsx 준비, 차트 PNG 렌더)
-│   └── prepare_upload.py
-└── d1/                    D1 스토리지 프로바이더 (CSV/xlsx 소스 추상화)
-    ├── __init__.py        get_provider(), list_files()
-    └── README.md
+│   ├── config.py          SERVER_BASE_URL, CURRENT_VERSION
+│   ├── uploader.py        multipart POST — post_grids(grid+PNG) / web_report parquet
+│   ├── version_check.py / update_policy.py / updater.py   자동 업데이트
+│   └── retry.py
+├── report_flow/           업로드 전처리
+│   └── upload_prepare.py  Excel COM 으로 시트 grid + issue image 추출
+├── report_generator/      (외부·무수정) 로컬 분석 엔진 (CSV→df_honey→xlsx) — README 별도
+├── honey_parse/           (외부·무수정) file_to_df 파서 (현재 더미 폴백)
+├── excel_download/ · excel_edit/   Excel COM 헬퍼
+└── (외부) ../d1/          D1 입력 provider — client 의 sibling(루트), 검증용
 ```
 
 ---
 
-## 워크플로 (7단계)
+## 워크플로
 
-1. `d1/` 프로바이더에서 CSV 또는 xlsx 파일 선택
-2. 파일명에서 product / lot_id 자동 추출 (제안)
-3. "분석 시작" → `report_generator.analyzer.analyze()` — DataFrame → xlsx 생성 → 자동 저장
-4. "서버 업로드" 버튼 → 메타 입력 팝업 (product_type / product / lot_id / PIN 4자리)
-5. `report_flow.prepare_upload.prepare_upload_xlsx()` — distribution 시트 제거
-6. `transport.uploader.post_xlsx()` — multipart POST `/pe/report/upload_xlsx`
+1. `d1` provider(외부·검증용)에서 CSV/xlsx 선택 (기본: 로컬 `d1_storage/` 검색).
+2. 파일명에서 product / lot_id 자동 추출(제안).
+3. "분석 시작" → `report_generator` 분석 → xlsx 생성 → 자동 저장.
+4. "서버 업로드" → 메타 입력 팝업(product_type / product / lot_id, password 선택).
+5. `report_flow.upload_prepare.prepare_upload_xlsx()` — Excel COM 으로 grid + issue PNG 추출.
+6. `transport.uploader.post_grids()` → `POST /pe/report/upload_xlsx` (원본 xlsx 미전송).
+   web_report honeyform parquet 는 `POST /pe/report/upload_webreport` 병행 경로.
 
 ---
 
@@ -103,6 +85,6 @@ client/
 | 내용 | 문서 |
 |------|------|
 | UI 워크플로 상세 | [docs/05_client_ui.md](../docs/05_client_ui.md) |
-| 분석 엔진 (CPK/yield/분포) | [docs/06_analysis_engine.md](../docs/06_analysis_engine.md) |
-| 업로드 전송 + 차트 PNG | [docs/07_client_upload_chart.md](../docs/07_client_upload_chart.md) |
+| 분석 엔진 (외부·무수정) | [docs/06_analysis_engine.md](../docs/06_analysis_engine.md) · [report_generator/README.md](report_generator/README.md) |
+| 업로드 전송 | [docs/07_client_upload_chart.md](../docs/07_client_upload_chart.md) |
 | Honey ZIP 배포 절차 | [docs/04_honey_update.md](../docs/04_honey_update.md) |

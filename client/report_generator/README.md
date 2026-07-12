@@ -1,5 +1,9 @@
 # report_generator
 
+> **외부 프로젝트 — 무수정이 원칙.** 이 패키지(및 `honey_parse`)는 report_server 밖에서
+> 소유·교체되며, 수정이 불가피하면 반드시 사전 승인을 받는다 (report_server/CLAUDE.md §5).
+> 이 문서는 df_honey 포맷·dtype·ReportMeta 계약의 정본이다.
+
 Honey 로컬 리포트 분석/생성 엔진이다. CSV/xlsx 측정 데이터를 `df_honey` 표준 포맷으로 정규화하고, yield/CPK/fail/issue/distribution 데이터를 계산한 뒤 Excel COM(xlwings)으로 `.xlsx` 리포트를 만든다.
 
 서버, DB, S3에는 직접 의존하지 않는다. 서버 업로드는 생성된 xlsx를 받은 `client/report_flow/`와 `client/transport/`가 담당한다.
@@ -166,5 +170,5 @@ Distribution chart는 모든 DUT 값을 표시한다. 다운샘플링이나 poin
 - xlsx sheet 이름, header, anchor 문구, 시작 위치를 바꾸면 서버 `server/xlsx_parser.py`와 업로드 문서도 확인한다.
 - Distribution 성능 개선을 하더라도 데이터 포인트 수를 줄이면 안 된다.
 
-더 큰 흐름은 `../../docs/08_report_generator_summary.md`와 `../../docs/06_analysis_engine.md`를 참고한다.
+더 큰 흐름은 [../../docs/06_analysis_engine.md](../../docs/06_analysis_engine.md)를 참고한다.
 

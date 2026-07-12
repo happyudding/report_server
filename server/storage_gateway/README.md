@@ -1,8 +1,13 @@
 # storage_gateway — 서버 산출물 저장소 진입점
 
-> `ENTRYPOINT / EXTERNAL_OWNER`. 리포트 산출물(원본 xlsx·이슈 이미지·분포 PNG·텍스트
-> JSON)을 **S3 + 로컬 폴백**으로 저장/조회하는 서버 측 단일 경계.
+> `ENTRYPOINT / EXTERNAL_OWNER`. 리포트 산출물(이슈 이미지·분포 PNG·web_report
+> parquet/manifest)을 **S3 + 로컬 폴백**으로 저장/조회하는 서버 측 단일 경계.
 > **외부 S3/서버 저장소 담당자는 이 패키지만 보면 된다.**
+>
+> **S3 는 외부 프로젝트 경계이며, 현재 코드에서는 검증용이다.** 기본 구현은 Honey.exe
+> 호환성 테스트를 위해 S3 + 로컬 폴백 동작을 보존한다 — `REPORT_S3_BUCKET` 미설정 시
+> 산출물은 `REPORT_UPLOAD_DIR` 로컬에 저장되고 조회도 로컬을 따른다(§4). 실서버 S3 로
+> 전환하려면 환경변수만 채우거나 `_s3.py` 를 교체한다(§5).
 
 ## 1. 이 패키지가 단일 진입점인 이유
 
@@ -28,6 +33,18 @@
 | `load_distribution_png(analysis_key)` | 합성 분포 PNG bytes(S3→로컬 순) |
 | `list_issue_image_rows(analysis_key)` | 이슈 이미지가 있는 행 인덱스 리스트 |
 | `load_issue_image(analysis_key, row)` | 행별 이슈 이미지 bytes |
+| `save_webreport_sources(analysis_key, content_hash, sources, manifest, upload_root)` | web_report parquet 원본 리스트 + manifest 저장. `{storage:"s3"\|"local", warnings}` 반환 |
+| `load_webreport_sources(analysis_key, upload_root)` | web_report parquet + manifest 재조회 → `(list[bytes], manifest dict)` |
+| `load_webreport_manifest(analysis_key, upload_root)` | manifest 만 재조회 (parquet 다운로드 없음) |
+| `save_webreport_manifest(...)` | manifest 만 갱신. **현재 미사용**(manifest 불변화) — 외부 통합 호환용 API 만 유지 |
+| `delete_report_artifacts(analysis_key, upload_root=None)` | akey 산출물 삭제 (S3 오브젝트 + 로컬 폴백 파일, best-effort) |
+
+**저장 위치 기록 계약 (중요)**: web_report 산출물은 저장 위치를
+`report_object_info.options_json` 에 `{"storage":"s3"|"local"}` 로 기록하고, **조회는 그
+기록을 따른다**. 기록이 `s3` 인데 다운로드가 실패하면 침묵 로컬 폴백 대신 예외를 올린다
+(S3 순단 중 로컬 저장 → 복구 후 과거 S3 파일 부활 방지). 기록 없는 legacy 행(`''`)만 종전
+폴백(경고 로그 후 로컬)을 유지한다. manifest 는 업로드 후 불변 — 편집은 세션 편집
+DB(`report_webreport_edit`)에 저장된다(§2 [../CLAUDE.md](../../CLAUDE.md)).
 
 예외(역시 facade 에서 재노출 — 호출부는 `from storage_gateway import S3NotConfigured`):
 - `S3NotConfigured` — `REPORT_S3_BUCKET` 미설정. 호출부가 그레이스풀 폴백.
@@ -61,14 +78,17 @@ REPORT_S3_MAX_POOL_CONNECTIONS  기본 30
 
 키 prefix(모두 `pe/report_server/` 네임스페이스, plotly legacy 와 충돌 회피):
 ```
-issue_img/<akey>/<row>.png       issue_img/<akey>/index.json
-chart_png/<akey>/<idx>.png       chart_png/<akey>/index.json
+issue_img/<akey>/<row>.png            issue_img/<akey>/index.json
+chart_png/<akey>/<idx>.png            chart_png/<akey>/index.json
 distribution_combined/<akey>.png
+web_report_source/<akey>/source_<idx>.parquet
+web_report_manifest/<akey>/manifest.json
 ```
-(구 `summary_text`/`issue_table_text`/`yield_text` prefix 는 세션 수정 기능
-폐기(2026-07-09)로 제거 — legacy 세션의 기존 객체는 report_object_info.s3_key
-로 계속 읽는다.)
-prefix 별 환경변수(`REPORT_S3_*_PREFIX`)는 [config.py](../config.py) 참조.
+텍스트 JSON(`summary_text`/`issue_table_text`/`yield_text`)은 보관하지 않는다 — 텍스트는
+DB(`report_sheet_data`)에 저장한다. legacy 세션의 기존 S3 텍스트 객체는
+`report_object_info.s3_key` 로 계속 읽는다.
+prefix 별 환경변수(`REPORT_S3_*_PREFIX`)는 [config.py](../config.py) 참조 (web_report·
+distribution_combined prefix 는 [_s3.py](_s3.py) 상수).
 
 ## 5. 외부 담당자 교체 가이드
 

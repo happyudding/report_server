@@ -2,6 +2,9 @@
 
 > CSV/xlsx 측정 데이터 → `df_honey` 정규화 → 통계 분석 → **xlwings 단일 Excel COM 세션**으로
 > xlsx 리포트 생성. 호출은 [05 UI](05_client_ui.md), 업로드는 [07](07_client_upload_chart.md).
+> **`report_generator`·`honey_parse` 는 외부 프로젝트 — 무수정이 원칙**(수정 불가피 시 사전
+> 승인, [../CLAUDE.md](../CLAUDE.md) §5). df_honey 포맷·dtype·ReportMeta 계약의 정본은
+> [client/report_generator/README.md](../client/report_generator/README.md).
 
 ## 계층
 ```
@@ -20,7 +23,8 @@ csvfile_to_df ──정규화──► df_honey (단일 DataFrame 보유)
 ## 파일 / 책임
 | 파일 | 책임 |
 |------|------|
-| [constants.py](../client/report_generator/constants.py) | 5-meta df_honey 포맷 상수. 헤더는 `df.columns` 에만 있고 `row0=Units`, `DATA_START_ROW=5`. |
+| [__init__.py](../client/report_generator/__init__.py) | 공개 진입점 `build_report` / `analyze` — CSV 경로 목록을 분석하거나 `out_path` 있으면 xlsx 까지 생성. |
+| [constants.py](../client/report_generator/constants.py) | 5-meta df_honey 포맷 상수. 헤더는 `df.columns` 에만 있고 `row0=Units`, `DATA_START_ROW=5`, `PASS_BIN="1"`. |
 | [csv_loader.py](../client/report_generator/csv_loader.py) | raw CSV/xlsx 로드 → standard/test_rp 감지 → 헤더 중복 row 제거 → 정규화 DataFrame. |
 | [df_honey.py](../client/report_generator/df_honey.py) | 단일 mass_data. `subjects/units/limits/meta/scores/numeric_scores/fail_mask` 를 cached property 로 파생. |
 | [df_honey_group.py](../client/report_generator/df_honey_group.py) | 다중 source 묶음. source 이름 dedup/rename, item select, Bin1 filter, DUT split, diff split, raw/distribution frame 제공. |
@@ -30,22 +34,16 @@ csvfile_to_df ──정규화──► df_honey (단일 DataFrame 보유)
 | [xlsx_writer.py](../client/report_generator/xlsx_writer.py) | 단일 `xw.App` 세션에서 raw/table/distribution/PNG attach/save 수행. openpyxl fallback 없음. |
 | [profile_run.py](../client/profile_run.py) | PyQt 없이 parse/analyze/xlsx 구간 측정 JSON 저장/비교. |
 
-## df_honey 포맷
-`csvfile_to_df(path)` 반환 df 는 아래 구조를 지킨다.
-```
-columns: DUT, XCoord, YCoord, Bin, Serial, item1, item2, ...
-row0: Units
-row1: Lower Limit
-row2: Upper Limit
-row3: Lower Limit (duplicate)
-row4: Upper Limit (duplicate)
-row5+: DUT 측정 데이터
-```
+## df_honey 포맷 (요약 — 정본은 report_generator/README)
+`csvfile_to_df(path)` 반환 df: `columns: DUT, XCoord, YCoord, Bin, Serial, item…` /
+`row0=Units` / `row1~4=Lower/Upper Limit(중복)` / `row5+=DUT 측정 데이터`. 전체 dtype 계약·
+ReportMeta 는 [client/report_generator/README.md](../client/report_generator/README.md) 참조.
 
 중요 규칙:
 - 헤더명은 `df.columns` 로만 존재한다. row0 에 `DUT/XCoord/...` 헤더를 다시 남기면 units/limit/data 인덱스가 모두 밀린다.
-- `df_honey.to_df()` 는 이 보유 df 그대로 반환한다. Raw Data 시트는 이 df 를 임시 CSV 로 열어 Excel 시트로 복사한다.
 - `df_honey.numeric_frame()` 은 `numeric_scores` 를 subject 이름 컬럼으로 바꾼 DataFrame 이며, distribution all-DUT ECDF 작성에 사용된다.
+- `file_to_df.py` 는 실제 파서를 **외부 `honey_parse.file_to_df`** 에서 import 한다 (현재
+  `client/honey_parse/` 는 더미 폴백). 없으면 호출 시 `ImportError`.
 
 ## df_yield 포맷
 [file_to_df.py](../client/report_generator/file_to_df.py) 가 반환하는 `df_yield` 는
@@ -111,6 +109,18 @@ row5+: DUT 측정 데이터
 - 서버 [xlsx_parser.py](../server/xlsx_parser.py)는 summary/yield/issue_table 을 anchor 기반으로 읽는다.
 - table 시작 위치, 헤더 행, yield/issue_table 컬럼명, summary anchor 문구를 바꾸면 [01_server_upload.md](01_server_upload.md) 파서 계약도 같이 확인해야 한다.
 - Distribution 차트와 Raw Data 시트는 서버 텍스트 파서의 핵심 DB 저장 대상이 아니다. 업로드 시 별도 chart PNG multipart/combined distribution PNG 흐름은 [07](07_client_upload_chart.md) 참고.
+
+## fail 판정 (`df_honey.fail_mask`)
+세 조건을 합친다: `value < lower_limit` / `value > upper_limit` / non-pass DUT 의 stop-on-fail
+break 지점(뒤쪽 값이 비는 구간). 이 mask 는 fail item ranking, issue table, major fail subject,
+fail value section 에서 공통으로 쓰인다.
+
+## 변경 시 체크리스트
+- 계산식 변경 → [_builders.py](../client/report_generator/_builders.py) 먼저 확인.
+- 입력 포맷 변경 → constants.py / csv_loader.py / df_honey.py + 외부 honey_parse 계약.
+- xlsx 레이아웃 변경 → [xlsx_writer.py](../client/report_generator/xlsx_writer.py) + 서버 [xlsx_parser.py](../server/xlsx_parser.py).
+- UI 옵션 변경 → honey_main.py `_apply_modes`/`_run_analysis`.
+- (report_generator·honey_parse 는 외부·무수정 원칙 — 변경 시 사전 승인.)
 
 ## 주의
 - xlsx 생성에는 Excel + xlwings 가 필수다. openpyxl fallback 은 없다.

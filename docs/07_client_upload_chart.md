@@ -1,9 +1,9 @@
-# 07 · 클라이언트 — 업로드 전송
+# 07 · 클라이언트 — 업로드 전송 (xlsx grid)
 
-> 생성/선택한 xlsx 를 서버로 보내는 마지막 단계.
-> 트리거는 [05 UI `_do_upload`](05_client_ui.md), 받는 쪽은 [01 서버 업로드](01_server_upload.md).
-> (구 "차트 PNG 렌더" 단계(chart_export.py)는 호출부가 없어 삭제됨("260709 final" 커밋) —
-> 재활성화 지시서는 distribution_upload_revival.txt, 복원은 git 히스토리.)
+> 생성/선택한 xlsx 에서 추출한 grid 를 서버로 보내는 마지막 단계.
+> 트리거는 [05 UI](05_client_ui.md), 받는 쪽은 [01 서버 업로드](01_server_upload.md).
+> web_report honeyform parquet 전송은 별도 흐름 → [10](10_web_report_pipeline.md).
+> **client/ 수정은 사전 승인 필요** ([../CLAUDE.md](../CLAUDE.md) §5).
 
 ## 파일
 - [client/transport/uploader.py](../client/transport/uploader.py) — `post_grids` multipart POST (grid JSON + issue PNG)
@@ -11,7 +11,7 @@
 - 호출 지점: [honey_main.py `_do_upload`](../client/honey_main.py)
 
 ## 흐름 (`_do_upload` → 두 모듈)
-1. `UploadDialog` 로 메타 입력(product_type/product/lot_id/revision/**PIN 4자리**), `_last_upload` 에 프리필 저장.
+1. `UploadDialog` 로 메타 입력(product_type/product/lot_id/revision, password 선택), `_last_upload` 에 프리필 저장.
 2. **업로드 전처리** — `report_flow.prepare_upload_xlsx(path)` → `(sheet_grids, issue_imgs)`:
    - Excel COM 으로 DRM/일반 xlsx 를 열어 `summary`/`yield`/`issue_table` 셀값을
      `{시트: {"origin":[r0,c0], "values":[[...]]}}` grid 로 추출한다 (xlsx 재구성 없음).
@@ -26,11 +26,11 @@
 4. 결과 메시지박스 — `session_id`, `issue_images_saved`, 브라우저 확인 링크(`/pe/report/view/<sid>`).
 
 ## 계약 (서버와 짝)
-- PIN 은 여기서 평문 전송 → 서버가 `report_session.password` 에 저장(접근제어용, analysis_key 불포함). HTTPS 아니면 평문 노출 주의.
-- `SERVER_BASE_URL` = `HONEY_SERVER_URL` env 또는 `http://127.0.0.1:8000` ([config.py](../client/config.py#L9)). `REQUEST_TIMEOUT_SEC=30`.
+- password 는 선택 입력 — 보내면 서버가 `report_session.password` 에 저장하지만
+  **접근제어에는 미사용**(신원=HoneyUser UA, →[02](02_server_query_edit.md)), analysis_key
+  불포함. HTTPS 아니면 평문 노출 주의.
+- `SERVER_BASE_URL` = `HONEY_SERVER_URL` env 또는 `http://127.0.0.1:8000` ([config.py](../client/config.py)). `REQUEST_TIMEOUT_SEC=30`.
 
 ## 주의
-- **report generator 산출물은 .xlsx 1개**. 클라이언트는 하나의 파일에서 모든 것을 관리하는 정책이므로, 분석 결과물 xlsx 는 단일 파일로만 존재해야 한다.
-- 차트 PNG 업로드 경로(구 chart_export + 서버 `_collect_chart_pngs` 배선)는 현재 비활성 —
-  재활성화 지시서는 distribution_upload_revival.txt, 코드 복원은 git 히스토리 참조.
+- **report generator 산출물은 .xlsx 1개** — 하나의 파일에서 모든 것을 관리하는 정책.
 - 분석 없이 임의 xlsx 직접 업로드(`on_upload_local`)도 같은 경로.
