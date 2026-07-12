@@ -40,8 +40,7 @@ let distColorMap = {};        // source → color
 
 // ── Distribution 산포 탭 (툴바/갤러리/상세) 상태·규격 ─────────────────────────
 const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 1500, PER_FRAME: 3,
-  ROOT_MARGIN: "500px 0px", MAX_CARDS: 70, ROW_HEIGHT: 234, OVERSCAN_ROWS: 3,
-  EXCLUDE: ["chipid", "gpib", "otp", "code"] };
+  ROOT_MARGIN: "1200px 0px", EXCLUDE: ["chipid", "gpib", "otp", "code"] };
 const DIST_STATUS_BG = { fail: "#FDECEC", cpk_low: "#FEF9E7", ok: "#FFFFFF" };  // 연빨강 / 연노랑 / 흰
 const DIST_PLOT_BG = {
   paper_bgcolor: "#FFFFFF", plot_bgcolor: "#FFFFFF",
@@ -73,20 +72,14 @@ let distRafScheduled = false;
 let distNavList = [];          // 상세 <>/Alt 이동용 캡처 목록
 let distNavPos = -1;
 let distPanelBound = false;
-let distVirtualLastKey = "";
-let distVirtualRaf = false;
-let distVirtualForce = false;
-let distGalleryActive = false;
 
-// ── Distribution 항목 배치 로드 ───────────────────────────────────────────────
-// 전체 ECDF(이 세션 기준 gzip 20MB+)를 선다운로드하지 않고 화면에 필요한 항목만 최대 70개씩
-// 요청한다. 각 항목 안의 ECDF 포인트는 전량 유지한다(다운샘플 없음).
-let _distContentHash = "";
-let distLoadQueue = new Set();
-let distPendingSubjects = new Set();
-let distMissingSubjects = new Set();
-let distLoadScheduled = false;
-let distKnownSubjects = new Set();
+// ── Distribution 지연 로드 (distribution_deferred 응답용) ─────────────────────
+// /full 은 대용량 ECDF 를 내려주지 않고, 첫 페인트 후 백그라운드로
+// GET .../web_report/distribution (컴팩트 columnar, 전 포인트) 을 받아 distDataCache 를
+// 채운다. 도착 전에 그려진 미니셀/갤러리는 refreshDistConsumers 가 다시 채운다.
+let distDataReady = false;     // distDataCache 사용 가능 여부 (구형 embed 응답이면 로드 직후 true)
+let distDataPromise = null;    // 진행 중/완료된 fetch (중복 요청 방지)
+let _distContentHash = "";     // 마지막 fetch 시점의 content_hash — 동일하면 재fetch 안 함
 
 function buildDistDataFromCompact(payload) {
   // 컴팩트 columnar → 기존 distDataCache 스키마 그대로 (소비자 코드 무수정)
@@ -102,61 +95,67 @@ function buildDistDataFromCompact(payload) {
   return out;
 }
 
-function distResetDataIfChanged() {
-  const ch = (DATA && DATA.session && DATA.session.content_hash) || "";
-  distKnownSubjects = new Set((((DATA && DATA.web_report) || {}).distribution_index || [])
-    .map(row => String((row && row.subject) || "")).filter(Boolean));
-  if (ch === _distContentHash) return;
-  _distContentHash = ch;
-  distDataCache = {};
-  distLoadQueue.clear();
-  distPendingSubjects.clear();
-  distMissingSubjects.clear();
-}
-
-function distSubjectAvailable(subject) {
-  return distKnownSubjects.has(String(subject || ""));
-}
-
-function ensureDistSubjects(subjects) {
-  distResetDataIfChanged();
-  (subjects || []).forEach(subject => {
-    subject = String(subject || "").trim();
-    if (!subject || distDataCache[subject] || distPendingSubjects.has(subject)
-        || distMissingSubjects.has(subject)) return;
-    distLoadQueue.add(subject);
+function fetchDistViaWorker(url) {
+  // 수십 MB JSON 을 메인스레드에서 파싱하면 로드 직후 첫 상호작용이 얼어붙는다.
+  // Web Worker 에서 fetch+parse 하고, 결과를 통째로 넘기면 structured clone
+  // 역직렬화(~0.5s)가 다시 메인스레드를 막으므로 items 를 포인트 수 기준 청크로
+  // 쪼개 전송해 블록을 수십 ms 단위로 분산한다. (Worker 실패 시 호출측 폴백.)
+  return new Promise((resolve, reject) => {
+    let blobUrl = null, w = null;
+    const cleanup = () => {
+      try { if (w) w.terminate(); } catch (e) {}
+      try { if (blobUrl) URL.revokeObjectURL(blobUrl); } catch (e) {}
+    };
+    try {
+      const src = 'self.onmessage=function(e){' +
+        'fetch(e.data,{cache:"no-cache"})' +
+        '.then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})' +
+        '.then(function(j){' +
+          'var items=(j&&j.items)||{};var keys=Object.keys(items);' +
+          'var batch={},pts=0;' +
+          'for(var i=0;i<keys.length;i++){var k=keys[i];batch[k]=items[k];' +
+            'var ss=items[k].sources||{};' +
+            'for(var s in ss)pts+=((ss[s].x||[]).length);' +
+            'if(pts>=250000){self.postMessage({chunk:batch});batch={};pts=0;}}' +
+          'self.postMessage({chunk:batch,done:true,format:j&&j.format});' +
+        '})' +
+        '.catch(function(err){self.postMessage({error:String(err&&err.message||err)});});' +
+        '};';
+      blobUrl = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+      w = new Worker(blobUrl);
+    } catch (e) { cleanup(); reject(e); return; }
+    const items = {};
+    w.onmessage = ev => {
+      const d = ev.data || {};
+      if (d.error) { cleanup(); reject(new Error(d.error)); return; }
+      Object.assign(items, d.chunk || {});
+      if (d.done) { cleanup(); resolve({ format: d.format, items }); }
+    };
+    w.onerror = () => { cleanup(); reject(new Error("worker failed")); };
+    // blob URL Worker 의 상대경로 기준이 페이지와 달라질 수 있어 절대 URL 로 전달
+    w.postMessage(new URL(url, location.origin).href);
   });
-  if (distLoadQueue.size && !distLoadScheduled) {
-    distLoadScheduled = true;
-    requestAnimationFrame(distFlushLoadQueue);
-  }
 }
 
-function distFlushLoadQueue() {
-  distLoadScheduled = false;
-  const batch = Array.from(distLoadQueue).slice(0, DIST.MAX_CARDS);
-  if (!batch.length) return;
-  batch.forEach(subject => { distLoadQueue.delete(subject); distPendingSubjects.add(subject); });
-  fetch(`/pe/report/session/${SESSION_ID}/web_report/distribution/query`, {
-    method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ subjects: batch }),
-  }).then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+function ensureDistData() {
+  const ch = (DATA && DATA.session && DATA.session.content_hash) || "";
+  if (distDataPromise && ch === _distContentHash) return distDataPromise;   // 로딩 중/완료 재사용
+  _distContentHash = ch;
+  distDataReady = false;
+  const url = `/pe/report/session/${SESSION_ID}/web_report/distribution`;
+  distDataPromise = fetchDistViaWorker(url)
+    .catch(() => fetch(url, { cache: "no-cache" })   // Worker 실패 시 메인스레드 폴백
+      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }))
     .then(j => {
-      const loaded = buildDistDataFromCompact(j);
-      Object.assign(distDataCache, loaded);
-      batch.forEach(subject => { if (!loaded[subject]) distMissingSubjects.add(subject); });
+      distDataCache = buildDistDataFromCompact(j);
+      distDataReady = true;
       refreshDistConsumers();
     })
     .catch(e => {
+      distDataPromise = null;   // 실패 시 다음 호출에서 재시도
       showToast("분포 데이터 로드 실패: " + e.message);
-    })
-    .finally(() => {
-      batch.forEach(subject => distPendingSubjects.delete(subject));
-      if (distLoadQueue.size && !distLoadScheduled) {
-        distLoadScheduled = true;
-        requestAnimationFrame(distFlushLoadQueue);
-      }
     });
+  return distDataPromise;
 }
 
 // 데이터 도착 전에 만들어진 분포 소비처들을 다시 채운다.
@@ -169,8 +168,7 @@ function refreshDistConsumers() {
   const detail = document.getElementById("issueDetailDistCell");
   if (detail && detail.dataset.distLoaded !== "1") {
     if (distDataCache[detail.dataset.subject]) renderDistCell(detail);
-    else if (distMissingSubjects.has(detail.dataset.subject))
-      detail.outerHTML = `<div class="placeholder">분포 데이터 없음</div>`;
+    else detail.outerHTML = `<div class="placeholder">분포 데이터 없음</div>`;
   }
   // Distribution 갤러리 — 화면에 보이는(관측 중) 카드 재큐잉
   document.querySelectorAll('#panel-distribution .distg-card[data-visible="1"]')
@@ -211,8 +209,7 @@ function renderDistCell(cell) {
   const info = distDataCache[subject];
   const div = cell.querySelector(".dist-plot");
   const placeholder = cell.querySelector(".dist-placeholder");
-  if (!info) { ensureDistSubjects([subject]); return; }
-  if (!div || typeof Plotly === "undefined") return;
+  if (!info || !div || typeof Plotly === "undefined") return;
 
   const idx = distIndex.find(x => x.subject === subject);
   const status = (idx && idx.status) || "ok";
@@ -362,21 +359,21 @@ function distDownsampleForDisplay(xs, ys) {
 // ── 갤러리 미니셀(정적 CDF, distDataCache 재사용, 표시용만 1500점 다운샘플) ─────
 function distRenderGalleryCell(cell) {
   if (cell.dataset.rendered === "1") return;
+  // 분포 데이터 도착 전 — rendered 플래그를 세우지 않고 리턴해야 도착 후
+  // refreshDistConsumers 의 재큐잉으로 다시 그려진다 (빈 차트 고정 방지).
+  if (!distDataReady) return;
   const subject = cell.dataset.subject;
   const status = cell.dataset.status || "ok";
   const info = distDataCache[subject];
   const plot = cell.querySelector(".distg-plot");
   if (!plot || typeof Plotly === "undefined") return;
-  if (!info) { ensureDistSubjects([subject]); return; }
   const lo = info ? info.lower_limit : null;
   const hi = info ? info.upper_limit : null;
   const traces = [];
   if (info) Object.keys(info.bySource).forEach(src => {
     // 미니셀 표시용만 다운샘플(통계·상세는 전체점) — 꼬리/계단/갭 보존 규칙 적용
     const ds = distDownsampleForDisplay(info.bySource[src].xs, info.bySource[src].ys);
-    // SVG marker 수천 개가 DOM 노드로 늘어나지 않도록 카드 썸네일만 WebGL로 그린다.
-    // 기존 표시용 포인트 집합은 그대로 사용하므로 추가 다운샘플링은 없다.
-    traces.push({ type: "scattergl", mode: "markers", cliponaxis: false, x: ds.xs, y: ds.ys,
+    traces.push({ type: "scatter", mode: "markers", cliponaxis: false, x: ds.xs, y: ds.ys,
       marker: { color: distColorFor(src), size: 3 } });
   });
   // 선택 좌표(Map Analysis)가 있으면 이 항목 위치를 점+빨간 점선으로 오버레이.
@@ -399,14 +396,6 @@ function distPurgeGalleryCell(cell) {
   const plot = cell.querySelector(".distg-plot");
   try { if (plot && window.Plotly) Plotly.purge(plot); } catch (e) {}
   cell.dataset.rendered = "";
-}
-
-function distPurgeGallery() {
-  const panel = document.getElementById("panel-distribution");
-  if (!panel) return;
-  panel.querySelectorAll(".distg-card").forEach(distPurgeGalleryCell);
-  distRenderQueue = [];
-  distRafScheduled = false;
 }
 
 // ── rAF 분할 렌더(프레임당 PER_FRAME 개) ──────────────────────────────────────
@@ -451,35 +440,41 @@ function distUpdateCount() {
   const el = document.querySelector("#panel-distribution .dist-count");
   if (el) el.textContent = `${distFiltered.length} 개`;
 }
-
-function distGalleryCardHtml(r) {
-  const cpk = r.cpk == null ? "-" : r.cpk;
-  const lim = `${distFmtLimit(r.lower_limit)} ~ ${distFmtLimit(r.upper_limit)}${r.units ? " " + distUnitBr(r.units) : ""}`;
-  const hasComment = typeof cnSavedFor === "function" && !!(cnSavedFor("cdf:" + r.subject) || {}).comment;
-  const noteBadge = hasComment ? `<span class="distg-note" title="Comment 있음">📝</span>` : "";
-  return `<div class="distg-card" data-subject="${esc(r.subject)}" data-status="${esc(r.status)}" style="background:${DIST_STATUS_BG[r.status] || "#fff"}">
-    <div class="distg-head">
-      <div class="distg-line1">
-        <span class="distg-tno">${esc(r.test_num || "")}</span>
-        <span class="distg-name" title="${esc(r.subject)}">${esc(r.subject)}</span>
-        ${noteBadge}
+function distRenderGallery() {
+  const panel = document.getElementById("panel-distribution");
+  distView = "gallery";
+  if (distGalleryObserver) { try { distGalleryObserver.disconnect(); } catch (e) {} distGalleryObserver = null; }
+  distRenderQueue = []; distRafScheduled = false;
+  // 검색 체크박스 선택이 있으면 그 항목들만(세그먼트 무시), 없으면 세그먼트 필터.
+  distFiltered = distSelected.size
+    ? distIndex.filter(r => distSelected.has(r.subject))
+    : distApplySegment(distIndex);
+  const cards = distFiltered.map(r => {
+    const cpk = r.cpk == null ? "-" : r.cpk;
+    const lim = `${distFmtLimit(r.lower_limit)} ~ ${distFmtLimit(r.upper_limit)}${r.units ? " " + distUnitBr(r.units) : ""}`;
+    // Comment(차트 하단 코멘트)가 있으면 카드에 노트 아이콘 배지. cnSavedFor 는 chart_notes.js(런타임 로드).
+    const hasComment = typeof cnSavedFor === "function" && !!(cnSavedFor("cdf:" + r.subject) || {}).comment;
+    const noteBadge = hasComment ? `<span class="distg-note" title="Comment 있음">📝</span>` : "";
+    return `<div class="distg-card" data-subject="${esc(r.subject)}" data-status="${esc(r.status)}" style="background:${DIST_STATUS_BG[r.status] || "#fff"}">
+      <div class="distg-head">
+        <div class="distg-line1">
+          <span class="distg-tno">${esc(r.test_num || "")}</span>
+          <span class="distg-name" title="${esc(r.subject)}">${esc(r.subject)}</span>
+          ${noteBadge}
+        </div>
+        <div class="distg-line2">
+          <span class="distg-lim">${esc(lim)}</span>
+          <span class="distg-cpk">cpk ${esc(cpk)}</span>
+        </div>
       </div>
-      <div class="distg-line2">
-        <span class="distg-lim">${esc(lim)}</span>
-        <span class="distg-cpk">cpk ${esc(cpk)}</span>
-      </div>
-    </div>
-    <div class="distg-plot"></div>
-  </div>`;
-}
-
-function distVirtualColumns() {
-  return window.matchMedia("(max-width: 1100px)").matches ? 2 : 5;
-}
-
-function distObserveVirtualCards(grid) {
+      <div class="distg-plot"></div>
+    </div>`;
+  }).join("");
+  panel.innerHTML = distToolbarHtml() +
+    (distFiltered.length ? `<div class="distg-grid">${cards}</div>`
+                         : `<div class="placeholder">해당 조건의 항목이 없습니다</div>`);
+  distUpdateCount();
   if (typeof Plotly === "undefined" || typeof IntersectionObserver === "undefined") return;
-  if (distGalleryObserver) { try { distGalleryObserver.disconnect(); } catch (e) {} }
   distGalleryObserver = new IntersectionObserver(entries => {
     entries.forEach(en => {
       const cell = en.target;
@@ -492,79 +487,6 @@ function distObserveVirtualCards(grid) {
       }
     });
   }, { rootMargin: DIST.ROOT_MARGIN, threshold: 0 });
-  grid.querySelectorAll(".distg-card").forEach(c => distGalleryObserver.observe(c));
+  panel.querySelectorAll(".distg-card").forEach(c => distGalleryObserver.observe(c));
 }
 
-function distRenderVirtual(force) {
-  const panel = document.getElementById("panel-distribution");
-  const host = panel && panel.querySelector(".distg-virtual");
-  const grid = host && host.querySelector(".distg-grid");
-  if (!distGalleryActive || !panel || !panel.classList.contains("active") || !host || !grid) return;
-  const cols = distVirtualColumns();
-  const totalRows = Math.ceil(distFiltered.length / cols);
-  host.style.height = `${Math.max(0, totalRows * DIST.ROW_HEIGHT - 14)}px`;
-  const docTop = host.getBoundingClientRect().top + window.scrollY;
-  const firstVisible = Math.max(0, Math.floor((window.scrollY - docTop) / DIST.ROW_HEIGHT));
-  const maxRows = Math.max(1, Math.floor(DIST.MAX_CARDS / cols));
-  const visibleRows = Math.min(maxRows, Math.ceil(window.innerHeight / DIST.ROW_HEIGHT) + 1);
-  const windowRows = Math.min(maxRows, visibleRows + DIST.OVERSCAN_ROWS * 2);
-  let startRow = Math.max(0, firstVisible - DIST.OVERSCAN_ROWS);
-  startRow = Math.min(startRow, Math.max(0, totalRows - windowRows));
-  const endRow = Math.min(totalRows, startRow + windowRows);
-  const key = `${cols}:${startRow}:${endRow}:${distFiltered.length}`;
-  if (!force && key === distVirtualLastKey) return;
-  distVirtualLastKey = key;
-  if (distGalleryObserver) { try { distGalleryObserver.disconnect(); } catch (e) {} distGalleryObserver = null; }
-  distPurgeGallery();
-  const start = startRow * cols;
-  const end = Math.min(distFiltered.length, endRow * cols, start + DIST.MAX_CARDS);
-  const rows = distFiltered.slice(start, end);
-  grid.style.top = `${startRow * DIST.ROW_HEIGHT}px`;
-  grid.innerHTML = rows.map(distGalleryCardHtml).join("");
-  ensureDistSubjects(rows.map(r => r.subject));
-  distObserveVirtualCards(grid);
-}
-
-function distScheduleVirtualRender(force) {
-  distVirtualForce = distVirtualForce || !!force;
-  if (distVirtualRaf) return;
-  distVirtualRaf = true;
-  requestAnimationFrame(() => {
-    distVirtualRaf = false;
-    const runForce = distVirtualForce;
-    distVirtualForce = false;
-    distRenderVirtual(runForce);
-  });
-}
-
-function distDeactivateGallery() {
-  distGalleryActive = false;
-  if (distGalleryObserver) { try { distGalleryObserver.disconnect(); } catch (e) {} distGalleryObserver = null; }
-  distPurgeGallery();
-  const grid = document.querySelector("#panel-distribution .distg-grid");
-  if (grid) grid.innerHTML = "";
-  distVirtualLastKey = "";
-}
-
-function distActivateGallery() {
-  distGalleryActive = true;
-  distScheduleVirtualRender(true);
-}
-
-function distRenderGallery() {
-  const panel = document.getElementById("panel-distribution");
-  distGalleryActive = !!(panel && panel.classList.contains("active"));
-  distView = "gallery";
-  if (distGalleryObserver) { try { distGalleryObserver.disconnect(); } catch (e) {} distGalleryObserver = null; }
-  distRenderQueue = []; distRafScheduled = false;
-  // 검색 체크박스 선택이 있으면 그 항목들만(세그먼트 무시), 없으면 세그먼트 필터.
-  distFiltered = distSelected.size
-    ? distIndex.filter(r => distSelected.has(r.subject))
-    : distApplySegment(distIndex);
-  panel.innerHTML = distToolbarHtml() +
-    (distFiltered.length ? `<div class="distg-virtual"><div class="distg-grid"></div></div>`
-                         : `<div class="placeholder">해당 조건의 항목이 없습니다</div>`);
-  distUpdateCount();
-  distVirtualLastKey = "";
-  distScheduleVirtualRender(true);
-}

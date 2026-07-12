@@ -26,23 +26,14 @@ function cdfChipKey(source, serial, xpos, ypos) {
 function cdfActiveSet() { return cdfEditMode === "exclude" ? cdfExcluded : cdfEditMode === "highlight" ? cdfHighlighted : null; }
 function cdfResetEdits() { cdfExcluded.clear(); cdfHighlighted.clear(); cdfEditMode = "none"; }
 
-function purgeItemDetailPlots(root) {
-  if (!root || !window.Plotly) return;
-  root.querySelectorAll(".js-plotly-plot").forEach(plot => {
-    try { Plotly.purge(plot); } catch (e) {}
-  });
-}
-
 function openItemDetail(subject, navList) {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
   bindItemDetailPanel();
-  purgeItemDetailPlots(dp);
   // 상세가 아직 안 열려 있으면 현재 활성 탭 패널을 복귀 대상으로 기억하고 숨긴다.
   if (!dp.classList.contains("active")) {
     const cur = document.querySelector(".content > .panel.active");
     _itemDetailReturnId = cur ? cur.id : "panel-summary";
-    if (cur && cur.id === "panel-distribution") distDeactivateGallery();
     if (cur) cur.classList.remove("active");
     dp.classList.add("active");
   }
@@ -243,24 +234,17 @@ function closeItemDetail() {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
   _itemDetailReq++;   // 진행 중 fetch 무효화
-  purgeItemDetailPlots(dp);
   dp.classList.remove("active");
   dp.innerHTML = "";
   const back = document.getElementById(_itemDetailReturnId || "panel-summary");
   if (back) back.classList.add("active");
-  if (back && back.id === "panel-distribution") distActivateGallery();
   _itemDetailReturnId = null;
 }
 
 // 탭 버튼 클릭 시: 복원 없이 상세만 닫는다(해당 탭 패널이 이어서 활성화됨).
 function hideItemDetail() {
   const dp = document.getElementById("panel-item-detail");
-  if (dp && dp.classList.contains("active")) {
-    _itemDetailReq++;
-    purgeItemDetailPlots(dp);
-    dp.classList.remove("active");
-    dp.innerHTML = "";
-  }
+  if (dp && dp.classList.contains("active")) { _itemDetailReq++; dp.classList.remove("active"); dp.innerHTML = ""; }
   _itemDetailReturnId = null;
 }
 
@@ -442,8 +426,7 @@ function distRenderCdf(data) {
   if (cdfCm) { traces.push(...cdfCm.traces); cdfShapes = cdfShapes.concat(cdfCm.shapes); }
   const dragmode = cdfEditMode === "none" ? "zoom" : "select";
   const cdfLr = distLimitRange(lo, hi);
-  const renderCdf = cdfDiv.data ? Plotly.react : Plotly.newPlot;
-  renderCdf(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg, dragmode,
+  Plotly.newPlot(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg, dragmode,
     xaxis: { title: { text: xtitle }, nticks: 10, showgrid: true, gridcolor: "#eee", zeroline: false,
       ...(cdfLr ? { range: cdfLr, autorange: false } : {}) },
     yaxis: { title: { text: "누적 %" }, range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee", zeroline: false },
@@ -484,8 +467,7 @@ function distRenderHist(data) {
   const traces = polys.map(p => ({ type: "scatter", mode: "lines", name: p.source,
     x: p.centers, y: p.counts, line: { color: distColorFor(p.source), shape: "spline" },
     hovertemplate: "측정값 %{x}<br>빈도 %{y:d}<extra></extra>" }));
-  const renderHist = hDiv.data ? Plotly.react : Plotly.newPlot;
-  renderHist(hDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
+  Plotly.newPlot(hDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
     xaxis: { title: { text: xtitle },
       range: distLimitRange(lo, hi) || extendRangeForBeforeLimits(
         distHistXRange(data.sources || [], lo, hi, data.is_fail), data.subject),
@@ -628,8 +610,6 @@ function distBindPanel() {
   panel.addEventListener("input", e => {
     if (e.target.id === "distSearch") distRenderSuggest(e.target.value);
   });
-  window.addEventListener("scroll", () => distScheduleVirtualRender(false), { passive: true });
-  window.addEventListener("resize", () => distScheduleVirtualRender(true));
   distPanelBound = true;
 }
 
@@ -654,12 +634,11 @@ function renderMiniDistCell(cell) {
   const subject = cell.dataset.subject;
   const div = cell.querySelector(".dist-plot");
   if (!div || typeof Plotly === "undefined") return;
+  // 분포 데이터 도착 전 — 플래그를 세우지 않고 리턴해야 도착 후 재큐잉으로 그려진다.
+  if (!distDataReady) return;
   const info = distDataCache[subject];
-  if (!info) {
-    if (distMissingSubjects.has(subject)) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; }
-    else ensureDistSubjects([subject]);
-    return;
-  }
+  // 데이터 없는 항목: 빈 칸으로 확정 (loaded 마킹해 재큐잉 no-op 방지)
+  if (!info) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; return; }
 
   const lo = info.lower_limit, hi = info.upper_limit;
   const traces = Object.keys(info.bySource).map(source => {
@@ -749,3 +728,4 @@ function renderIssueMiniDist(panel) {
   }, { rootMargin: "600px 0px", threshold: 0 });
   cells.forEach(c => issueDistObserver.observe(c));
 }
+

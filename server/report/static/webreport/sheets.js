@@ -390,11 +390,12 @@ function renderSheetTable(rows, opts) {
       // Distribution 열: web_report 분포(있는 Item)로 작은 산포 카드를 채운다. 없으면 빈 칸.
       if (isDistCol(c)) {
         const item = r && r["Item"];
-        // 인덱스에 존재하는 항목은 셀을 먼저 만들고, 화면에 보일 때 배치 API로 ECDF를 채운다.
+        // 분포 데이터 로딩 중(distDataReady=false)엔 일단 셀을 만들어 두고, 도착 후
+        // refreshDistConsumers 가 채운다 (데이터 없는 항목은 그때 빈 칸으로).
         // Yield/ETC/CPK 섹션의 데이터 행(서브헤더 제외)에 산포 카드 표시.
         if (opts.kind === "issue" && item && !subhead
           && (rowSection[ri] === "Yield" || rowSection[ri] === "ETC" || rowSection[ri] === "CPK")
-          && distSubjectAvailable(item)) {
+          && (distDataReady ? !!distDataCache[item] : true)) {
           return `<td${subhead ? ` class="sheet-subhead"` : ""} data-r="${ri}" data-c="${ci}">` +
             `<div class="dist-cell dist-cell-mini" data-subject="${esc(item)}"><div class="dist-plot"></div></div></td>`;
         }
@@ -554,3 +555,4 @@ function yieldOverviewHtml() {
     ${bySrcHtml}
   </div>`;
 }
+

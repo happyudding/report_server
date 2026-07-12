@@ -3,15 +3,12 @@ document.getElementById("tabs").addEventListener("click", e => {
   const btn = e.target.closest(".tab");
   if (!btn) return;
   const tab = btn.dataset.tab;
-  const previousTab = activeTabName();
-  if (previousTab === "distribution" && tab !== "distribution") distDeactivateGallery();
   hideItemDetail();   // Item_detail 열려 있으면 닫고 해당 탭으로
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === btn));
   document.querySelectorAll(".panel").forEach(p =>
     p.classList.toggle("active", p.id === `panel-${tab}`));
   // lazy 렌더: 아직 안 그려진(dirty) 탭이면 이 시점에 렌더 (프리렌더가 이미 그렸으면 no-op)
   renderTab(tab);
-  if (tab === "distribution") distActivateGallery();
   // 숨김 상태에서 그려진 Plotly 차트는 0px 로 렌더되므로 활성화 시 리사이즈
   const active = document.getElementById(`panel-${tab}`);
   if (active && window.Plotly) {
@@ -146,3 +143,4 @@ function deriveCols(rows) {
   (rows || []).forEach(r => Object.keys(r || {}).forEach(k => { if (!seen.includes(k)) seen.push(k); }));
   return seen;
 }
+

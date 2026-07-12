@@ -141,9 +141,7 @@ function schedulePrerender() {
   // map-analysis 는 프리렌더에서 제외한다. wafer map 은 scaleanchor(정사각 고정) 플롯이라
   // 숨김(0폭) 상태에서 그려지면 탭 활성화 시 Plotly.Plots.resize 로도 종횡비/폭이 제대로
   // 복구되지 않아 짤려 보인다 → 탭을 처음 열 때(패널 visible) renderTab 이 정상 폭으로 그리도록 둔다.
-  // 비활성 탭은 실제 진입 시에만 그린다. 미리 만들면 초기 DOM과 숨은 차트가
-  // 누적되며, 탭 클릭 시 renderTab이 동일한 lazy 렌더를 수행한다.
-  const queue = [];
+  const queue = ["yield", "issues", "cpk", "distribution"];
   const idle = window.requestIdleCallback
     ? (fn => window.requestIdleCallback(fn, { timeout: 1000 }))
     : (fn => setTimeout(fn, 200));
@@ -714,3 +712,4 @@ document.getElementById("etcEngrAdd").addEventListener("click", () => {
   closeEtcItemModal();
   addEtcEngrItem(name, comment);
 });
+

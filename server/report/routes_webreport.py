@@ -98,31 +98,6 @@ def web_report_distribution(session_id):
     return Response(body, mimetype="application/json", headers=headers)
 
 
-@report_bp.post("/session/<session_id>/web_report/distribution/query")
-def web_report_distribution_query(session_id):
-    """화면에 보이는 최대 70개 항목의 ECDF 전량을 배치 조회한다 (읽기 전용)."""
-    _require_web_report_session(session_id)
-    body = request.get_json(force=True, silent=True) or {}
-    try:
-        result = web_report_service.get_distribution_items(
-            session_id, body.get("subjects"), report_db=report_db,
-            upload_root=Path(REPORT_UPLOAD_DIR))
-    except (FileNotFoundError, KeyError):
-        abort(404, "web_report session data not found")
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    except Exception:
-        _log.exception("web_report distribution query failed for session %s", session_id)
-        abort(500, "distribution query failed")
-    raw = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    compressed = gzip.compress(raw, compresslevel=1)
-    headers = {"Vary": "Accept-Encoding"}
-    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
-        headers["Content-Encoding"] = "gzip"
-        raw = compressed
-    return Response(raw, mimetype="application/json", headers=headers)
-
-
 @report_bp.get("/session/<session_id>/web_report/scatter/<path:subject>")
 def web_report_scatter(session_id, subject):
     """Item_detail 용: 항목(subject)의 소스별 전체 측정값+hover metadata(다운샘플 없음) 지연 로드.

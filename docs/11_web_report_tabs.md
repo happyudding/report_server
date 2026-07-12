@@ -22,7 +22,7 @@
 | Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview |
 | CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) |
 | Issue Table | `issue_table.py` | Yield 파생 + CPK<1.33 파생 + ETC. comment 는 편집 DB 에서 채움 |
-| Distribution | — (lazy) | `/full` 은 빈 시트, 화면 항목은 `POST .../web_report/distribution/query`로 최대 70개씩 조회 |
+| Distribution | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/distribution` 지연 로드 |
 | Trim Analysis | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/trim_analysis` 지연 로드 |
 | Map Analysis | `Map_analysis.py` | wafer map die/bin 집계 (제품 기준정보 있으면 고정 프레임) |
 | Fail Bin | `yield_tab.fail_bin_ranking` | Bin 랭킹 |
@@ -40,8 +40,7 @@
   `COMMENT_COLS = ["PTE comment", "개발 comment"]`. 값은 세션 편집 DB 에서 채운다.
 - **Distribution**: `build_distribution_index`(항목별 test_num·worst cpk·fail·status) /
   `scatter_item`(상세 전체 측정값) / `build_distribution_compact`(ECDF 전 포인트 컴팩트
-  columnar, lazy 전용). 화면은 `/distribution/query`에 항목명을 최대 70개씩 보내며,
-  기존 전체 `/distribution`은 하위호환용 전 포인트·gzip·ETag API로 유지한다.
+  columnar, lazy 전용). `/distribution` 은 전 포인트·gzip·ETag.
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
   `build_trim_chart`(그룹 1개 chip-to-chip 차트). 매칭 규칙은
   [trim_match.py](../web_report/trim_match.py)(product_type 별 PMIC4/TV2 규칙셋).
@@ -94,9 +93,8 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
   map_select / wafer_charts / raw_data / chart_notes / note / edit_mode).
 - **classic script 순서 로드(전역 스코프 공유)** — ES module 로 바꾸거나 로드 순서를 바꾸지
   말 것. 정적 서빙은 `GET /pe/report/static/webreport/<filename>`(화이트리스트).
-- 활성 탭만 즉시 렌더, 나머지는 dirty + idle 프리렌더. Distribution은 가상 스크롤로 DOM
-  카드를 최대 70개만 유지하고, Distribution/Issue 미니셀은 IntersectionObserver + rAF 로
-  보이는 셀만 그린다. 탭·Item_detail 이탈 시 숨겨진 Plotly 인스턴스를 purge한다.
+- 활성 탭만 즉시 렌더, 나머지는 dirty + idle 프리렌더. Distribution/Issue 미니셀은
+  IntersectionObserver + rAF 로 보이는 셀만 그린다.
 - 모드별 탭 노출: `syncTabVisibility` 가 Compare/Commonality 탭을 해당 모드에서만 표시.
   legacy(`source != "web_report"`) 세션은 web_report 전용 탭(Raw Data/CPK/Map)을 숨긴다.
 

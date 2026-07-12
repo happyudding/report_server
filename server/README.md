@@ -129,7 +129,6 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `GET` | `/raw_data/columns`, `/raw_data` | 공개 | Raw Data 컬럼 UI / 조회 |
 | `POST` | `/raw_data/edit` | 편집자 | Raw Data 셀 편집 (parquet 재인코딩) |
 | `GET` | `/distribution` | 공개 | Distribution ECDF (컴팩트 gzip, 전 포인트) |
-| `POST` | `/distribution/query` | 공개 | 지정한 최대 70개 항목의 ECDF 배치 조회 (전 포인트) |
 | `GET` | `/scatter/<subject>` | 공개 | 항목 상세 산포 (전 측정값) |
 | `GET` | `/trim_analysis`, `/trim_chart` | 공개 | Trim 매칭·통계 / 그룹 차트 (gzip+ETag) |
 | `POST` | `/trim/overrides` | 편집자 | Trim 수동 재배치 저장 |

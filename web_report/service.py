@@ -141,47 +141,6 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path) -> dict:
     return build_distribution_compact(tables, all_items)
 
 
-_DISTRIBUTION_QUERY_MAX_SUBJECTS = 70
-
-
-def _normalize_distribution_subjects(subjects) -> list[str]:
-    """Distribution 배치 조회 항목 검증·중복 제거 (입력 순서 보존)."""
-    if not isinstance(subjects, list):
-        raise ValueError("subjects must be a list")
-    if len(subjects) > _DISTRIBUTION_QUERY_MAX_SUBJECTS:
-        raise ValueError(
-            f"too many subjects ({len(subjects)} > {_DISTRIBUTION_QUERY_MAX_SUBJECTS})")
-    out = []
-    seen = set()
-    for subject in subjects:
-        if not isinstance(subject, str):
-            raise ValueError("subjects must contain strings only")
-        subject = subject.strip()
-        if not subject or len(subject) > 200:
-            raise ValueError("invalid subject")
-        if subject not in seen:
-            seen.add(subject)
-            out.append(subject)
-    return out
-
-
-def get_distribution_items(session_id: str, subjects, *, report_db,
-                           upload_root: Path) -> dict:
-    """화면에 필요한 최대 70개 항목의 ECDF 전량을 기존 columnar 형식으로 반환."""
-    from .tabs.distribution import build_distribution_compact
-
-    requested = _normalize_distribution_subjects(subjects)
-    session, tables, manifest = _load_tables(
-        session_id, report_db=report_db, upload_root=upload_root)
-    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
-    selected = {str(v) for v in (manifest.get("selected_items") or []) if str(v)}
-    available = {c for table in tables for c in table.item_columns}
-    if selected:
-        available &= selected
-    items = [subject for subject in requested if subject in available]
-    return build_distribution_compact(tables, items)
-
-
 def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> bytes:
     """get_distribution 결과를 JSON→gzip bytes 로 캐시해 반환 (라우트가 그대로 응답).
 
