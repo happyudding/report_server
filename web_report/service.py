@@ -135,6 +135,7 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path) -> dict:
     /full 의 payload 와 동일하게 manifest.selected_items 필터를 적용한다 — 빠뜨리면
     distribution_index 와 항목 집합이 어긋난다. tables 는 캐시 클론이라 필터가 안전하다.
     """
+    from .tabs.common import passfail_or_empty_items
     from .tabs.distribution import build_distribution_compact
 
     session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
@@ -143,7 +144,9 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path) -> dict:
     if selected:
         for table in tables:
             table.item_columns = [c for c in table.item_columns if c in selected]
-    all_items = sorted({c for t in tables for c in t.item_columns})
+    # /full 의 distribution_index 와 항목 집합을 맞춘다 — Pass/Fail unit·측정 data 전무 항목 제외.
+    excluded = passfail_or_empty_items(tables)
+    all_items = sorted({c for t in tables for c in t.item_columns if c not in excluded})
     return build_distribution_compact(tables, all_items)
 
 

@@ -41,18 +41,37 @@ def failtno_norms(table) -> list:
     return cached
 
 
+def _tseq_sort_key(table, item):
+    """항목의 TEST SEQ(TSEQ, 메타 row0) 정렬 키 — 숫자 우선, 비수치는 뒤로(이름순).
+
+    동일 TNO 를 공유하는 항목 중 'TEST SEQ 가 가장 앞선' 하나를 고르는 데 쓴다
+    (distribution.tseq_sort_key 와 동일 규칙, 여기선 단일 table 기준).
+    """
+    try:
+        return (0, float(table.tseq.get(item)), str(item))
+    except (TypeError, ValueError):
+        return (1, 0.0, str(item))
+
+
 def tno_to_item_map(table) -> dict:
     """정규화 TNO → 항목명 리스트 맵 — 테이블 인스턴스 단위 lazy 캐시.
 
     FAILTNO→항목 귀속(yield/distribution 공통 규칙)의 단일 출처.
+    동일 TNO 를 여러 항목이 공유하면 TEST SEQ(TSEQ) 가 가장 앞선 항목 1개만 남긴다
+    — Yield/Issue table 에 같은 fail count 가 여러 item 행으로 중복 표시되는 것을 막는
+    사전 필터(나머지 항목은 이 TNO 에 귀속하지 않는다). 반환 계약(list)은 유지한다.
     """
     cached = getattr(table, "_tno_to_item_cache", None)
     if cached is None:
-        cached = defaultdict(list)
+        grouped = defaultdict(list)
         for item, tno in table.tno.items():
             norm = _tno_norm(tno)
             if norm is not None:
-                cached[norm].append(item)
+                grouped[norm].append(item)
+        cached = {
+            norm: [min(items, key=lambda it: _tseq_sort_key(table, it))]
+            for norm, items in grouped.items()
+        }
         table._tno_to_item_cache = cached
     return cached
 

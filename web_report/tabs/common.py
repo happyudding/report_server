@@ -3,9 +3,14 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pandas as pd
 
 PASS_BIN = "1"
+
+# Pass/Fail 단위 정규화 집합 — 공백·슬래시 제거 후 대문자로 비교하므로
+# "P/F"·"PF"·"pF"·"Pf"·"PassFail"·"Pass/Fail" 등을 모두 포괄한다 (대소문자 무시).
+_PASSFAIL_UNITS = {"PF", "PASSFAIL"}
 
 
 def json_safe(value):
@@ -101,4 +106,56 @@ def bin_types(table) -> list:
         cached = [fmt_type(v) for v in table.data["BIN"].tolist()]
         table._bin_types_cache = cached
     return cached
+
+
+def _is_passfail_unit(unit) -> bool:
+    """unit 이 Pass/Fail 계열(P/F·PF·PassFail 등)인지 판정 (대소문자 무시)."""
+    if unit is None:
+        return False
+    try:
+        if pd.isna(unit):
+            return False
+    except (TypeError, ValueError):
+        pass
+    norm = str(unit).strip().upper().replace(" ", "").replace("/", "")
+    return norm in _PASSFAIL_UNITS
+
+
+def _item_has_data(tables, item) -> bool:
+    """item 의 data 부분(측정 행)에 유한 numeric 값이 한 소스라도 있으면 True.
+
+    to_numeric_clean 과 동일한 유한값 기준(np.isfinite)을 쓴다 — 전부 NaN/비수치이면
+    측정값이 하나도 없는 것으로 본다."""
+    for t in tables:
+        if item not in t.item_columns:
+            continue
+        col = t.data[item]
+        if getattr(col.dtype, "kind", "") in "if":
+            arr = col.to_numpy()
+        else:
+            arr = pd.to_numeric(col, errors="coerce").to_numpy()
+        if np.isfinite(arr).any():
+            return True
+    return False
+
+
+def passfail_or_empty_items(tables) -> set:
+    """cpk·distribution 계산에서 제외할 item 집합.
+
+    다음 중 하나라도 해당하면 제외한다:
+    - unit 이 Pass/Fail 계열(P/F·PF·PassFail, 대소문자 무시) — ``_is_passfail_unit``.
+    - 모든 소스의 data 부분에 유한 numeric 측정값이 하나도 없음 — ``_item_has_data``.
+
+    unit 은 항목이 처음 등장하는 테이블 기준(표시 unit 규칙과 동일)으로 판정한다.
+    """
+    excluded: set = set()
+    for item in {c for t in tables for c in t.item_columns}:
+        passfail = False
+        for t in tables:
+            if item in t.item_columns:
+                passfail = _is_passfail_unit(t.units.get(item))
+                break
+        if passfail or not _item_has_data(tables, item):
+            excluded.add(item)
+    return excluded
 

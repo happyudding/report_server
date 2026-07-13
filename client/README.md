@@ -2,8 +2,10 @@
 
 PyQt6 데스크톱 앱. CSV 데이터를 분석해 xlsx 리포트를 생성하고 Flask 서버에 업로드한다.
 
-> **client/ 수정은 🟡 사전 승인** ([../docs/15_ownership.md](../docs/15_ownership.md)).
-> `report_generator/`·`honey_parse/` 는 🔒 **구서버 — 동결(무수정 원칙)**.
+> **client/ 수정 권한** ([../docs/15_ownership.md](../docs/15_ownership.md)): 자주 쓰는
+> `honey_ui/`·`honey_main.py`·`transport/`·`excel_download/`·`excel_edit/` 는 🟢 **자유 수정**,
+> 나머지 비동결(`report_flow/`·`map_report/` 등)은 🟡 **사전 승인**.
+> `report_generator/`·`honey_parse/` 는 🔒 **외부 담당자 영역 — 동결(무수정 원칙)**.
 
 ---
 
@@ -60,11 +62,11 @@ client/
 │   └── retry.py
 ├── report_flow/           업로드 전처리
 │   └── upload_prepare.py  Excel COM 으로 시트 grid + issue image 추출
-├── report_generator/      (구서버·동결) 로컬 분석 엔진 (CSV→df_honey→xlsx) — README 별도
-├── honey_parse/           (구서버·동결) file_to_df 파서 (현재 더미 폴백)
+├── report_generator/      (외부 담당자·동결) 로컬 분석 엔진 (CSV→df_honey→xlsx) — README 별도
+├── honey_parse/           (외부 담당자·동결) file_to_df 파서 (현재 더미 폴백)
 ├── map_report/            (사전 승인·신규) 웨이퍼 bin map 렌더 + xlsx 부착 → docs/14
 ├── excel_download/ · excel_edit/   Excel COM 헬퍼
-└── (구서버·동결) ../d1/   D1 입력 provider — client 의 sibling(루트), 검증용
+└── (외부 담당자·동결) ../d1/   D1 입력 provider — client 의 sibling(루트), 검증용
 ```
 
 ---
@@ -86,6 +88,6 @@ client/
 | 내용 | 문서 |
 |------|------|
 | UI 워크플로 상세 | [docs/05_client_ui.md](../docs/05_client_ui.md) |
-| 분석 엔진 (구서버·동결) | [docs/06_analysis_engine.md](../docs/06_analysis_engine.md) · [report_generator/README.md](report_generator/README.md) |
+| 분석 엔진 (외부 담당자·동결) | [docs/06_analysis_engine.md](../docs/06_analysis_engine.md) · [report_generator/README.md](report_generator/README.md) |
 | 업로드 전송 | [docs/07_client_upload_chart.md](../docs/07_client_upload_chart.md) |
 | Honey ZIP 배포 절차 | [docs/04_honey_update.md](../docs/04_honey_update.md) |

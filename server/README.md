@@ -48,7 +48,7 @@ pip install -r requirements.txt
 
 ### S3 (선택 — 외부 스토리지, 현재 코드에선 검증용. 미설정 시 로컬 폴백)
 
-> S3/storage_gateway 는 **구서버·동결** 경계다([storage_gateway/README.md](storage_gateway/README.md)).
+> S3/storage_gateway 는 **외부 담당자 영역·동결** 경계다([storage_gateway/README.md](storage_gateway/README.md)).
 > 미설정(`REPORT_S3_BUCKET` 비움)이면 산출물은 `REPORT_UPLOAD_DIR` 로컬에 저장되고 조회도
 > 로컬을 따른다. yield rows 등 DB 저장은 S3 와 무관하게 정상.
 

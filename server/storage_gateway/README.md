@@ -1,7 +1,7 @@
 # storage_gateway — 서버 산출물 저장소 진입점
 
-> **🔒 구서버·동결** — 이 패키지(facade `__init__.py` + `_s3` 내부 전체)는 구서버 소유·교체
-> 영역이라 여기서 수정하지 않는다. 소유권 정본 [../../docs/15_ownership.md](../../docs/15_ownership.md).
+> **🔒 외부 담당자 영역·동결** — 이 패키지(facade `__init__.py` + `_s3` 내부 전체)는 외부 담당자
+> 소유·교체 영역이라 여기서 수정하지 않는다. 소유권 정본 [../../docs/15_ownership.md](../../docs/15_ownership.md).
 > 아래 계약(§2 공개 API·예외, §5 보존 항목)은 **교체본이 지켜야 할 계약**이다.
 >
 > `ENTRYPOINT / EXTERNAL_OWNER`. 리포트 산출물(이슈 이미지·분포 PNG·web_report
@@ -60,9 +60,9 @@ DB(`report_webreport_edit`)에 저장된다(§2 [../CLAUDE.md](../../CLAUDE.md))
 - `S3NotConfigured` — `REPORT_S3_BUCKET` 미설정. 호출부가 그레이스풀 폴백.
 - `S3ObjectCorrupted` — 다운로드 JSON 파싱 실패.
 
-**교체본이 지켜야 할 계약**: 구서버 버전으로 이 패키지를 교체할 때 **위 §2 표의 공개 함수
+**교체본이 지켜야 할 계약**: 외부 담당자 버전으로 이 패키지를 교체할 때 **위 §2 표의 공개 함수
 전체 + 예외 2종의 이름·시그니처를 그대로 노출**해야 프로젝트 코드(라우트·업로드·admin·
-백필)가 무수정으로 동작한다. 특히 신서버가 추가한 함수(`save_webreport_sources` /
+백필)가 무수정으로 동작한다. 특히 이 프로젝트가 추가한 함수(`save_webreport_sources` /
 `save_webreport_manifest` / `load_webreport_sources` / `load_webreport_manifest` /
 `delete_report_artifacts` / `save_issue_images` / `s3_available` / `s3_health` /
 `s3_object_exists` / `download_bytes_from_s3` / `make_distribution_combined_s3_key`)이
@@ -116,8 +116,8 @@ distribution_combined prefix 는 [_s3.py](_s3.py) 상수).
    `download_bytes_from_s3`, `upload_json_to_s3`, `download_json_from_s3`,
    `s3_object_exists`, `make_*_s3_key`, `bucket_name`, 예외)을 그대로 노출할 것.
 3. **facade 시그니처 변경 금지**: 위 공개 함수의 이름/인자가 호출부 계약이다.
-4. **교체본 `_s3.py` 가 반드시 보존할 신서버 상수/env** (신서버가 `_s3.py` 안에 하드코딩·
-   추가한 값 — 구서버 원본에는 없을 수 있으니 이식 시 유지):
+4. **교체본 `_s3.py` 가 반드시 보존할 이 프로젝트 상수/env** (이 프로젝트가 `_s3.py` 안에
+   하드코딩·추가한 값 — 외부 담당자 원본에는 없을 수 있으니 이식 시 유지):
    - prefix 상수 3종(모두 `pe/report_server/` 네임스페이스): `REPORT_S3_DIST_COMBINED_PREFIX`,
      `REPORT_S3_WEBREPORT_SOURCE_PREFIX`, `REPORT_S3_WEBREPORT_MANIFEST_PREFIX`.
    - 타임아웃 env: `REPORT_S3_CONNECT_TIMEOUT`(기본 5s), `REPORT_S3_READ_TIMEOUT`(기본 30s) —
