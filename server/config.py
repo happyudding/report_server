@@ -20,6 +20,7 @@ REPORT_DB_PATH = _path_env("REPORT_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" /
 REPORT_UPLOAD_DIR = _path_env("REPORT_UPLOAD_DIR", ROOT_DIR / "uploads" / "report")
 
 STDINFO_DB_PATH = _path_env("STDINFO_DB_PATH", ROOT_DIR / "DB" / "INFORMATION" / "stdinfo_20260511.db")
+PRODUCT_INFO_CSV_PATH = _path_env("PRODUCT_INFO_CSV_PATH", ROOT_DIR / "server" / "product_info.csv")
 
 REPORT_S3_ENDPOINT   = os.getenv("REPORT_S3_ENDPOINT", "")
 REPORT_S3_BUCKET     = os.getenv("REPORT_S3_BUCKET", "")

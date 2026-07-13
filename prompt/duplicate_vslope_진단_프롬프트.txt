@@ -1,0 +1,58 @@
+구서버/신서버 병합 후 Honey 클라이언트에서 아래 에러가 발생한다.
+아직 코드는 고치지 말고 원인부터 정확히 특정해줘.
+
+## 증상
+- 측정 CSV 여러 개를 import 한 뒤 'Web Report' 버튼 → Product ID 등 입력 → OK 를 누르면
+  parquet 인코딩 실패 - duplicate item columns: ['_Vslope'] 다이얼로그가 뜬다.
+- _Vslope 는 코드 상수가 아니라 실제 측정 항목(test item) 이름이다.
+
+## 에러가 던져지는 곳 (확정)
+- web_report/honeyform.py validate_honeyform_df() 67~71행: META 7컬럼
+  (SERIAL,SHOT,DUT,XPOS,YPOS,BIN,FAILTNO) 이후 item 컬럼에 같은 이름이 2개 이상이면
+  duplicate item columns: [...] 를 issues 에 넣는다.
+- 그 issues 를 encode_honeyform_parquet()(honeyform.py 91~100)가 인코딩 직전
+  raise ValueError("; ".join(issues)) 로 던진다.
+- 호출부: client/honey_main.py _build_webreport_parquets() (1318~1340행)
+    df = read_honeyform_file(source_path) if source_path else (md.to_df() if hasattr(md,'to_df') else md.df)
+    data = encode_honeyform_parquet(df)   # ← 여기서 예외
+  예외는 _run_web_report() 1393~1403행에서 잡혀 'parquet 인코딩 실패' 로 뜬다.
+
+## 반드시 이해하고 갈 핵심 (여기서 원인이 갈린다)
+pandas read_csv/read_excel 는 중복 헤더를 자동으로 '_Vslope.1' 로 개명한다.
+그 경로로 읽었다면 이 에러는 안 난다(대신 _Vslope.1 이 생김).
+'duplicate item columns: [_Vslope]' 처럼 글자 그대로 중복이 남았다는 건
+df 컬럼 라벨이 '직접 대입'된 경로라는 뜻이다:
+  - pd.DataFrame(data, columns=hdr)  또는
+  - df.columns = df.iloc[0].tolist()  (예: report_generator/csv_loader.py _normalize_standard 99행)
+직접 대입은 pandas 가 중복을 그대로 보존한다.
+→ "소스 CSV 에 _Vslope 항목이 물리적으로 2개 있고, 어떤 로더가 read_csv dedup 을
+   거치지 않고 컬럼을 직접 대입해 df 를 만들었다" 가 원인의 골격이다.
+
+## 확인 순서 (이 순서대로)
+1. 전체 traceback 확보: ValueError 가 encode_honeyform_parquet 에서 났는지
+   read_honeyform_file(honeyform.py 199~209)의 validate 에서 났는지 확인 → build 경로 즉시 갈림.
+2. 어느 분기였는지: _build_webreport_parquets 에서 실행된 게
+   read_honeyform_file(source_path) 인지 md.df 인지 확인.
+   - md.report_meta.source_path 값이 채워졌는가? (df_honey.from_csv 는 채움 /
+     from_dataframe 등은 빈 값 → md.df 로 감)
+   - md.df 로 갔다면 5-meta(df_honey)라 META 컬럼/행라벨 에러도 같이 떠야 정상인데
+     duplicate 만 떴다면 컬럼이 이미 7-meta 로 바뀐 상태인지 함께 확인.
+3. 소스 CSV 원본 검사: 문제 CSV 를 pandas 말고 raw 로(첫 줄 직접 열기 또는 csv.reader)
+   열어 헤더에 '_Vslope' 가 정말 2번 있는지 확인. (pandas 로 열면 dedup 돼 안 보인다.)
+   2번 있으면 데이터 자체의 중복 테스트명이 근본 원인.
+4. 컬럼 직접대입 지점 추적: 실행된 경로에서 df.columns 를 직접 세팅하는 곳
+   (csv_loader.py _normalize_standard/_normalize_test_rp, df_honey.py, honeyform.py) 중
+   중복을 통과시키는 지점 특정.
+5. 병합 diff 확인 (가장 중요): git log --oneline / git diff <병합전>..<병합후> -- <파일> 로
+   아래가 어떻게 바뀌었는지 확인:
+     - web_report/honeyform.py  (validate_honeyform_df / read_honeyform_file / encode)
+     - client/report_generator/csv_loader.py  (normalize_raw / _normalize_standard 99행 / file_to_df / _ensure_canonical)
+     - client/report_generator/df_honey.py  (from_csv / to_df / self.df)
+     - client/report_generator/file_to_df.py  (_ensure_canonical, honey_parse 계약)
+     - client/honey_main.py  _build_webreport_parquets (source_path 우선 로직)
+   병합으로 로딩이 read_csv(dedup) 기반→직접대입 기반으로 바뀌었거나,
+   중복 헤더를 제거/개명하던 단계가 사라졌는지가 핵심 용의자다.
+
+## 산출
+아직 코드는 고치지 마. (a) 어느 build 경로에서 (b) 소스의 어떤 데이터가
+(c) 병합의 어떤 변경 때문에 duplicate 가 살아남았는지, 파일:라인 근거와 함께 보고해줘.

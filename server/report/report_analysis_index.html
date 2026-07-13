@@ -38,16 +38,22 @@ body {
   flex-wrap: wrap;
 }
 .pt-btn {
-  flex: 0 0 198px; height: 51px; border: 2px solid #d0d5dd;
-  border-radius: 8px; background: #fff; cursor: pointer;
-  font-size: 27px; font-weight: 800; color: #555;
-  transition: all .15s;
+  flex: 0 0 198px; height: 51px; border: 2px solid var(--pt-color, #d0d5dd);
+  border-radius: 8px; background: var(--pt-color, #fff); cursor: pointer;
+  font-size: 27px; font-weight: 800; color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,.20);
+  transition: all .15s; opacity: .82;
 }
-.pt-btn[data-pt="SECURITY"] { font-size: 22px; }
-.pt-btn:hover { border-color: #4a90e2; color: #4a90e2; background: #f0f6ff; }
+/* 제품별 시그니처 색(검색결과 배지 팔레트와 동일) — 각 버튼 배경에 입힘 */
+.pt-btn[data-pt="MDDI"]     { --pt-color: #4a90e2; }
+.pt-btn[data-pt="PDDI"]     { --pt-color: #1e3a8a; }
+.pt-btn[data-pt="PMIC"]     { --pt-color: #16a34a; }
+.pt-btn[data-pt="SECURITY"] { --pt-color: #9333ea; font-size: 22px; }
+.pt-btn[data-pt="TCON"]     { --pt-color: #0d9488; }
+.pt-btn:hover { opacity: 1; filter: brightness(1.07); }
 .pt-btn.active {
-  border-color: #4a90e2; background: #4a90e2; color: #fff;
-  box-shadow: 0 2px 8px rgba(74,144,226,.35);
+  opacity: 1; border-color: #0f172a;
+  box-shadow: 0 0 0 3px rgba(15,23,42,.35), 0 3px 10px rgba(0,0,0,.28);
 }
 .pt-badge {
   display: inline-block; padding: 2px 9px; border-radius: 4px;
@@ -260,9 +266,9 @@ html[data-theme="dark"] .filter-card,
 html[data-theme="dark"] .results-card {
   background: #1e2128; box-shadow: 0 1px 6px rgba(0,0,0,.45);
 }
-html[data-theme="dark"] .pt-btn { background: #262a33; border-color: #3a3f4b; color: #aab3c0; }
-html[data-theme="dark"] .pt-btn:hover { background: #2b3442; border-color: #4a90e2; color: #7fb3ef; }
-html[data-theme="dark"] .pt-btn.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+html[data-theme="dark"] .pt-btn { background: var(--pt-color, #262a33); border-color: var(--pt-color, #3a3f4b); color: #fff; }
+html[data-theme="dark"] .pt-btn:hover { filter: brightness(1.12); }
+html[data-theme="dark"] .pt-btn.active { border-color: #f8fafc; box-shadow: 0 0 0 3px rgba(248,250,252,.35), 0 3px 10px rgba(0,0,0,.5); }
 html[data-theme="dark"] .user-chip { background: #262a33; border-color: #3a3f4b; color: #aab3c0; }
 html[data-theme="dark"] .user-chip:hover { border-color: #4a90e2; color: #7fb3ef; }
 html[data-theme="dark"] .star-fav { color: #4a5462; }
@@ -363,12 +369,12 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
   <table>
     <colgroup>
       <col style="width:8%">
-      <col style="width:4%">
+      <col style="width:9%">
       <col style="width:10%">
       <col style="width:4%">
       <col style="width:6%">
       <col style="width:8%">
-      <col style="width:34%">
+      <col style="width:29%">
       <col style="width:9%">
       <col style="width:10%">
       <col style="width:7%">
@@ -683,6 +689,11 @@ async function toggleFavorite(sid) {
   }
 }
 
+// 업로더 표시용 — 사내 도메인 접두 'SECDS\' 는 화면에서 생략(전체 이름은 title 로 확인).
+function stripUploader(u) {
+  return String(u || "").replace(/^SECDS\\/i, "");
+}
+
 // 내 업로드 여부 — uploaded_by 는 'DOMAIN\user' 또는 'user' 형식이라 뒷부분만 비교.
 function isMine(r) {
   if (!_userId) return false;
@@ -856,7 +867,7 @@ function renderResults() {
         <td>${esc(r.process || '-')}</td>
         <td>${esc(r.lot_id || '-')}</td>
         <td class="fname-cell" title="${esc(r.file_name || '')}"><span class="fname-txt">${esc(r.file_name || '-')}</span></td>
-        <td title="${esc(r.client_host || '')}">${esc(r.uploaded_by || '-')}</td>
+        <td title="${esc(r.uploaded_by || '')}${r.client_host ? ' (' + esc(r.client_host) + ')' : ''}">${esc(stripUploader(r.uploaded_by) || '-')}</td>
         <td>${fmtDate(r.created_at)}</td>
         <td class="act-cell">
           <div class="btn-row">

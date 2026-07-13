@@ -68,9 +68,10 @@ web_report 안에서 위 연결점의 **호출 시그니처(함수명·인자·�
 
 ## 작업 규칙
 
-- **수정 권한 경계** ([../CLAUDE.md](../CLAUDE.md) §5): `web_report/` + web_report 관련
-  html(report_view.html, static/webreport/) + `server/` 는 **자유 수정**. `client/` 나머지는
-  사전 승인. 외부 프로젝트(d1/·S3·report_generator·honey_parse)는 무수정 원칙.
+- **소유권/수정 권한 경계** (정본 [../docs/15_ownership.md](../docs/15_ownership.md)):
+  `web_report/`(여기) + web_report 관련 html(report_view.html, static/webreport/) + `server/`
+  (단 `storage_gateway/` 제외) 는 🟢 신서버·자유 수정. `client/` 나머지는 🟡 사전 승인.
+  🔒 구서버 동결 = `d1/`·`report_generator/`·`honey_parse/`·`storage_gateway/`.
 - **분할 JS 는 classic script 순서 로드(전역 스코프 공유)** — ES module 로 바꾸거나 로드
   순서를 바꾸지 말 것.
 - 세션 상세 UI 를 고칠 때 사용자가 "세션 페이지"라고 하면 우선 report_view.html(web_report

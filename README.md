@@ -6,15 +6,16 @@ Honey 클라이언트가 추출한 산출물을 업로드하면 Flask 서버가 
 
 ## 구성
 
-| 디렉토리 | 역할 | 상세 |
-|----------|------|------|
-| **[server/](server/)** | Flask 서버 (포트 8000) — `/pe/report/`, `/honey/`, `/pe/admin-pte/` | [server/README.md](server/README.md) |
-| **[web_report/](web_report/)** | web_report honeyform 처리·탭 계산·캐시 | [docs/10](docs/10_web_report_pipeline.md)·[11](docs/11_web_report_tabs.md)·[12](docs/12_web_report_cache.md) |
-| **[client/](client/)** | Honey PyQt6 클라이언트 — CSV 분석 + 업로드 (사전 승인 필요) | [client/README.md](client/README.md) |
-| **[d1/](d1/)** · **client/report_generator/** · **client/honey_parse/** | 외부 프로젝트 (D1·리포트생성·파서) — 무수정/검증용 | [docs/INDEX.md §3.1](docs/INDEX.md) |
-| **tests/sample_xlsx.py** | 더미 sheet_grids 픽스처 생성기 | — |
+| 디렉토리 | 역할 | 소유권 | 상세 |
+|----------|------|--------|------|
+| **[server/](server/)** | Flask 서버 (포트 8000) — `/pe/report/`, `/honey/`, `/pe/admin-pte/` | 🟢 신서버 (단 storage_gateway 는 🔒구서버) | [server/README.md](server/README.md) |
+| **[web_report/](web_report/)** | web_report honeyform 처리·탭 계산·캐시 | 🟢 신서버 | [docs/10](docs/10_web_report_pipeline.md)·[11](docs/11_web_report_tabs.md)·[12](docs/12_web_report_cache.md) |
+| **[client/](client/)** | Honey PyQt6 클라이언트 — CSV 분석 + 업로드 | 🟡 사전 승인 (report_generator·honey_parse 는 🔒구서버) | [client/README.md](client/README.md) |
+| **[d1/](d1/)** · **client/report_generator/** · **client/honey_parse/** · **server/storage_gateway/** | 병합된 구서버 코드 (D1·리포트생성·파서·저장소) | 🔒 구서버 동결 | [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |
+| **tests/sample_xlsx.py** | 더미 sheet_grids 픽스처 생성기 | — | — |
 
-전체 코드 흐름 지도는 [docs/INDEX.md](docs/INDEX.md), 규칙·경계는 [CLAUDE.md](CLAUDE.md).
+전체 코드 흐름 지도는 [docs/INDEX.md](docs/INDEX.md), 규칙·경계는 [CLAUDE.md](CLAUDE.md),
+소유권/수정 권한 정본은 [docs/15_ownership.md](docs/15_ownership.md).
 
 ## 빠른 시작
 

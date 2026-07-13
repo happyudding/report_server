@@ -23,6 +23,9 @@ let _noteReady = false;       // luckysheet.create 완료
 let _noteDirty = false;       // 미저장 시트 편집
 let _noteInitToken = 0;       // 재렌더 경합 가드
 let _notePendingImgs = [];    // Note 미초기화 상태에서 요청된 삽입 이미지 큐 [{url, caption}]
+let _noteResizeObs = null;    // 컨테이너 크기 변화 감시 (ResizeObserver) → 캔버스 재계산
+let _noteResizeRaf = 0;       // resize 프레임 정렬 coalesce 토큰
+let _noteDpr = 0;             // create 시점 devicePixelRatio (런타임 배율 변화 감지용)
 
 function noteLoadLib() {
   if (window.luckysheet) return Promise.resolve();
@@ -77,6 +80,10 @@ function renderNoteTab() {
       .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }),
   ]).then(([, saved]) => {
     if (token !== _noteInitToken) return;   // 그 사이 재렌더됨
+    // 라이브러리(≈4MB)+fetch 로드 중 사용자가 다른 탭으로 이동했으면 host 가
+    // display:none(크기 0)이라 이 상태로 create 하면 캔버스가 0px 로 굳는다. 재렌더
+    // 대상으로 되돌리고 보류 — 탭 재진입 시 renderTab("note")가 정상 크기로 다시 그린다.
+    if (!panel.classList.contains("active")) { tabDirty["note"] = true; return; }
     noteCreate(saved, canEdit);
   }).catch(e => {
     if (token !== _noteInitToken) return;
@@ -95,6 +102,11 @@ function noteCreate(saved, canEdit) {
   if (!sheets.some(s => s.status === 1)) sheets[0].status = 1;
   window.luckysheet.create({
     container: "luckysheetHost",
+    // HiDPI/디스플레이 배율 대응. 명시하지 않으면 번들이 ga.devicePixelRatio 를 1 로 남겨
+    // (실측 확인) 그리드는 1×, 선택 오버레이는 window.devicePixelRatio(예:2×)로 그려져
+    // 좌표계가 어긋난다 → 셀 안 맞음 + 클릭 시 격자 떨림. 실제 비율을 넘겨 Math.ceil 로
+    // 전 캔버스를 같은 정수 배율로 통일한다(125/150/200% 모두 정합).
+    devicePixelRatio: window.devicePixelRatio || 1,
     lang: "en",
     data: sheets,
     showinfobar: false,
@@ -111,10 +123,13 @@ function noteCreate(saved, canEdit) {
   });
   _noteReady = true;
   _noteDirty = false;
+  _noteDpr = window.devicePixelRatio || 1;   // 이후 배율 변화 감지 기준
   noteRenderMeta(saved);
-  // 첫 진입 정합 보강: create 직후 내부 레이아웃이 안정된 뒤 1회 resize
-  // (noteOnTabShown 의 resize 는 재진입 때만 발화하므로 첫 페인트를 여기서 보정).
-  setTimeout(() => { try { window.luckysheet.resize(); } catch (e) {} }, 60);
+  // 첫 진입 정합 + 이후 컨테이너 크기 변화(늦은 레이아웃·창 리사이즈·메타 리플로우·
+  // 숨김→표시)를 모두 캔버스에 반영. 단발 타이머는 폰트·스크롤바 확정이 60ms 뒤면
+  // 놓치므로, 프레임 정렬 resize + host 크기 감시(ResizeObserver)로 대체한다.
+  noteScheduleResize();
+  noteAttachResizeObserver(host);
   // 대기 중인 차트 이미지 삽입 (📋 Note에 붙여넣기 → 탭 전환 직후 도착하는 경우)
   if (canEdit && _notePendingImgs.length) {
     // create 직후 내부 초기화가 끝나도록 다음 틱에 삽입.
@@ -204,9 +219,42 @@ function noteFlushPending() {
   showToast("차트를 Note 에 붙여넣었습니다 — 드래그로 위치를 옮기고 저장하세요.");
 }
 
+// ── 캔버스 정합 resize (프레임 정렬 + ResizeObserver) ─────────────────────────
+// Luckysheet 는 create 시점 host 크기로 캔버스를 그린다. 폰트/스크롤바로 레이아웃이 늦게
+// 확정되거나(첫 진입) 창 리사이즈·메타 리플로우·숨김→표시로 host 크기가 바뀌면 캔버스와
+// CSS 박스가 어긋나 셀이 안 맞고 클릭 시 격자가 떨린다 → 크기 변화를 감지해 재계산한다.
+function noteScheduleResize() {
+  if (_noteResizeRaf) cancelAnimationFrame(_noteResizeRaf);
+  _noteResizeRaf = requestAnimationFrame(() => {
+    _noteResizeRaf = requestAnimationFrame(() => {
+      _noteResizeRaf = 0;
+      if (!_noteReady || !window.luckysheet) return;
+      // 배율이 바뀌면(모니터 이동·브라우저 줌) create 시점 devicePixelRatio 로 그려진
+      // 캔버스가 어긋난다. resize() 로는 배율을 못 바꾸므로 재생성으로 다시 잡는다.
+      // 미저장 편집(_noteDirty)이 있으면 날리지 않도록 건너뛴다(저장/재진입 시 정합).
+      const dpr = window.devicePixelRatio || 1;
+      const panel = document.getElementById("panel-note");
+      if (dpr !== _noteDpr && !_noteDirty && panel && panel.classList.contains("active")) {
+        renderNoteTab();
+        return;
+      }
+      try { window.luckysheet.resize(); } catch (e) {}
+    });
+  });
+}
+
+function noteAttachResizeObserver(host) {
+  if (_noteResizeObs) { try { _noteResizeObs.disconnect(); } catch (e) {} }
+  _noteResizeObs = null;
+  if (typeof ResizeObserver === "undefined" || !host) return;
+  // host 는 renderNoteTab 마다 새로 생기므로 create 마다 재부착. observe 는 현재 크기로도
+  // 즉시 1회 발화하므로 첫 진입 정합도 겸한다. resize() 는 host 자식만 바꿔 host 자신의
+  // 박스는 불변 → 관찰 대상이 안 바뀌어 재발화 루프는 생기지 않는다.
+  _noteResizeObs = new ResizeObserver(() => noteScheduleResize());
+  try { _noteResizeObs.observe(host); } catch (e) {}
+}
+
 // 탭 재진입 시 캔버스 리사이즈 (숨김 상태에서 크기가 0 이었던 경우 복구).
 function noteOnTabShown() {
-  if (_noteReady && window.luckysheet) {
-    try { window.luckysheet.resize(); } catch (e) {}
-  }
+  if (_noteReady && window.luckysheet) noteScheduleResize();
 }

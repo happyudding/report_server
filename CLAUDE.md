@@ -14,18 +14,15 @@ SQLite + S3(또는 로컬 폴백)에 세션 단위로 저장한 뒤 검색결과
 **기능별 코드 흐름 추적은 [docs/INDEX.md](docs/INDEX.md) 참조** — 큰 기능별로 각 흐름을
 정리한 작업용 메모. 무엇을 고칠지 정해지면 INDEX 표에서 해당 문서 1개만 열면 된다.
 
-**외부 프로젝트 경계** (§0 트리에서 `(외부)` 표시): `d1/`·`d1_storage/`·S3·
-`client/report_generator/`·`client/honey_parse/` 는 이 repo 밖에서 소유·교체되는 외부
-프로젝트다.
-- `report_generator`·`honey_parse` 는 **무수정이 원칙** — 수정이 불가피하면 반드시 사전 승인.
-- `D1`·`S3` 는 **현재 코드에서 검증용으로만 사용**한다 (D1=로컬 `d1_storage` 검색 =
-  Honey.exe 호환성 테스트, S3=미설정 시 로컬 폴백). 진입점·유지 계약 상세는
+**소유권 / 수정 권한 경계** — 정본은 [docs/15_ownership.md](docs/15_ownership.md). 3-tier 요약:
+- 🟢 **신서버 (자유 수정)**: `web_report/` + web_report 관련 html(report_view.html,
+  static/webreport/) + `server/`(단 `storage_gateway/` **제외**).
+- 🟡 **사전 승인**: `client/` 나머지 (honey_main.py, honey_ui/, transport/, report_flow/,
+  excel_*, map_report/ 등) — 편집 전 파일·이유·영향 설명.
+- 🔒 **구서버 (동결)**: `d1/`·`d1_storage/`·`client/honey_parse/`·`client/report_generator/`·
+  `server/storage_gateway/`(facade+`_s3` 전체). 병합돼 들어왔으나 구서버 소유·교체 대상이라
+  동결(수정 불가피 시 명시 승인). + `eval_analyzer/`(외부 단방향, 규칙 #8). 진입점·유지 계약은
   [docs/INDEX.md §3.1](docs/INDEX.md).
-
-**수정 권한 경계** (§5 규칙 #7):
-- **자유 수정**: `web_report/` + web_report 관련 html(report_view.html, static/webreport/) + `server/`
-- **사전 승인 필요**: `client/` 나머지 (honey_main.py, honey_ui/, transport/, report_flow/, excel_* 등)
-- **무수정 원칙**: 외부 프로젝트 4종(위)
 
 ---
 
@@ -33,7 +30,7 @@ SQLite + S3(또는 로컬 폴백)에 세션 단위로 저장한 뒤 검색결과
 
 ```
 report_server/
-├── server/                     Flask 서버 (자유 수정 — 상세 [server/README.md](server/README.md))
+├── server/                     Flask 서버 (신서버·자유 수정 — 단 storage_gateway 는 구서버·동결. [server/README.md](server/README.md))
 │   ├── wsgi.py                  진입점 (컴퓨트 워커 __mp_main__ 재임포트 스킵 가드)
 │   ├── plugin.py                register_report_server() — Blueprint 3개 + admin_panel + ops 등록
 │   ├── config.py                환경변수·경로 통합 설정
@@ -50,7 +47,7 @@ report_server/
 │   │   ├── static/webreport/    세션 상세 JS 모듈 17개 (순서 로드, 전역 공유)
 │   │   ├── report_analysis_index.html  검색결과 페이지
 │   │   └── report_view.html     세션 상세 (마크업+CSS — JS 는 static/webreport/)
-│   ├── storage_gateway/         S3 산출물 저장 단일 진입점 (ENTRYPOINT/EXTERNAL_OWNER, S3=외부)
+│   ├── storage_gateway/         S3 산출물 저장 단일 진입점 (구서버·동결 — facade+_s3 전체, 진입점 계약 유지)
 │   │   ├── __init__.py          facade (공개 API + 예외 재노출 + 저장 위치 기록)
 │   │   ├── routes.py            이미지 URL 라우트
 │   │   ├── _s3.py              boto3 호환 client + key 빌더 (내부 어댑터)
@@ -66,12 +63,13 @@ report_server/
 │   └── releases/version.json    Honey 배포 manifest
 ├── web_report/                 웹 리포트 구현 (신규 개발 주 대상 — [web_report/CLAUDE.md](web_report/CLAUDE.md),
 │                                docs/[10](docs/10_web_report_pipeline.md)·[11](docs/11_web_report_tabs.md)·[12](docs/12_web_report_cache.md))
-├── client/                     Honey 클라이언트 (PyQt6 — 사전 승인 필요)
+├── client/                     Honey 클라이언트 (PyQt6 — 사전 승인; report_generator·honey_parse 만 구서버·동결)
 │   ├── honey_main.py            메인 윈도우 + 워크플로
 │   ├── transport/              uploader / version_check / updater / retry
 │   ├── report_flow/            upload_prepare.py (Excel COM 추출) 등
-│   ├── report_generator/       (외부·무수정) 분석·xlsx 생성 — 사용자 담당
-│   ├── honey_parse/            (외부·무수정) file_to_df 파서 — 현재 더미 폴백
+│   ├── report_generator/       (구서버·동결) 분석·xlsx 생성 — 구서버 소유
+│   ├── honey_parse/            (구서버·동결) file_to_df 파서 — 현재 더미 폴백
+│   ├── map_report/             (사전 승인·신규) 웨이퍼 bin map 렌더 + xlsx 부착 (report_generator 밖으로 분리 → [docs/14](docs/14_merge_order.md))
 │   ├── honey_ui/               다이얼로그·위젯
 │   ├── excel_download/ · excel_edit/   Excel COM 헬퍼
 │   ├── embedded_browser.py     HoneyUser UA 삽입 내장 브라우저
@@ -79,8 +77,8 @@ report_server/
 │   └── config.py               SERVER_BASE_URL, CURRENT_VERSION
 ├── eval_analyzer/              독립 fail-item 평가 엔진 (운영 복사본 — 원본 F:\COINAPI\eval_analyzer)
 │                                서버 연결은 web_report/ai_comment.py 1곳만 → [docs/13](docs/13_eval_analyzer_integration.md)
-├── d1/                         (외부·무수정) D1 입력 provider 경계 — 검증용(로컬 d1_storage 검색)
-├── d1_storage/                 (외부) D1 로컬 검증 스토리지
+├── d1/                         (구서버·동결) D1 입력 provider 경계 — 검증용(로컬 d1_storage 검색)
+├── d1_storage/                 (구서버·동결) D1 로컬 검증 스토리지
 ├── tests/sample_xlsx.py         더미 grids 픽스처 생성기
 ├── DB/pe/report/                런타임 자동 생성 (report.db + backup/ + 문서 스냅샷)
 ├── uploads/                     런타임 (업로드/로컬 폴백/디스크 캐시 루트)
@@ -158,10 +156,10 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 
 ---
 
-## 3. S3 저장 (외부 프로젝트, 검증용)
+## 3. S3 저장 (구서버·동결, 검증용)
 
-S3 는 외부 경계다 — 미설정 시 `REPORT_UPLOAD_DIR` 로컬 폴백으로 동작하며 현재 코드에선
-검증용이다. facade·키·저장 위치 기록 계약은 정본
+S3/storage_gateway 는 구서버·동결 경계다 — 미설정 시 `REPORT_UPLOAD_DIR` 로컬 폴백으로
+동작하며 현재 코드에선 검증용이다. facade·키·저장 위치 기록 계약은 정본
 [storage_gateway/README.md](server/storage_gateway/README.md) 참조. 키는 모두
 `pe/report_server/` 네임스페이스(plotly legacy 충돌 회피): `issue_img/` · `chart_png/` ·
 `distribution_combined/` · `web_report_source/` · `web_report_manifest/`. 실제 값은
@@ -213,14 +211,12 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 6. **web_report 편집 상태는 세션 편집 DB 가 진실.** manifest 는 업로드 시점 불변 스냅샷이므로
    편집으로 재저장하지 않는다. 캐시 키는 항상 [cache_policy.py](web_report/cache_policy.py)
    빌더로 만든다(즉석 조립 금지 — [docs/12](docs/12_web_report_cache.md)).
-7. **수정 권한 경계.** 파일 위치에 따라 승인 요구가 다르다:
-   - **자유 수정 (승인 불필요)**: `web_report/` + web_report 관련 html(`report_view.html`,
-     `server/report/static/webreport/`) + `server/` 전반.
-   - **사전 승인 필요**: `client/` 나머지(honey_main.py, honey_ui/, transport/, report_flow/,
-     excel_* 등). Edit/Write 호출 전에 파일·이유·영향 범위를 설명하고 명시적 승인을 받는다.
-   - **무수정 원칙 (외부 프로젝트)**: `d1/`·`d1_storage/`·S3(storage_gateway 내부 `_s3`)·
-     `client/report_generator/`·`client/honey_parse/`. report_generator·honey_parse 는 수정
-     불가피 시 반드시 사전 승인. D1·S3 는 현재 검증용(로컬 폴백)이며 진입점 계약만 유지.
+7. **소유권 / 수정 권한 경계.** 정본 [docs/15_ownership.md](docs/15_ownership.md). 요약:
+   🟢 신서버(자유)=`web_report/`+`server/`(`storage_gateway/` 제외)+web_report html /
+   🟡 사전 승인=`client/` 나머지(편집 전 파일·이유·영향 설명) /
+   🔒 구서버 동결=`d1/`·`d1_storage/`·`client/honey_parse/`·`client/report_generator/`·
+   `server/storage_gateway/`(facade+`_s3` 전체). **경계가 폴더 내부를 가르는 곳**: server/ 는
+   storage_gateway 만 동결, client/ 는 report_generator·honey_parse 만 동결.
 8. **eval_analyzer 단방향 의존.** `eval_analyzer/` 는 독립 프로젝트의 운영 복사본 —
    report_server 작업 중 하위 파일 무수정, eval_engine import 는
    [web_report/ai_comment.py](web_report/ai_comment.py) **1곳만** 허용(양방향 그 외 import 금지).
@@ -232,6 +228,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 
 | 알고 싶은 것 | 어디? |
 |--------------|-------|
+| 소유권/수정 권한 경계 (정본) | [docs/15_ownership.md](docs/15_ownership.md) (신서버/사전승인/구서버 동결) |
 | API 엔드포인트·환경변수 (정본) | [server/README.md](server/README.md) |
 | xlsx 업로드 라우트 | [server/upload_xlsx.py](server/upload_xlsx.py) · grid 파싱 [xlsx_parser.py](server/xlsx_parser.py) |
 | web_report 업로드/파이프라인 | [server/upload_webreport.py](server/upload_webreport.py) → [docs/10](docs/10_web_report_pipeline.md) |
@@ -247,7 +244,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 관리 대시보드 (/pe/admin-pte/) | [server/admin_panel/](server/admin_panel/) (구 admin_routes.py 는 미등록 dead file) |
 | 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |
 | Honey 클라 (사전 승인) | [client/honey_main.py](client/honey_main.py), 업로드 [transport/uploader.py](client/transport/uploader.py), 추출 [report_flow/upload_prepare.py](client/report_flow/upload_prepare.py) |
-| 외부 프로젝트 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` → [docs/INDEX.md §3.1](docs/INDEX.md) |
+| 구서버 동결 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` · `server/storage_gateway/` → [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |
 | eval_analyzer 연결 (AI Comment) | [web_report/ai_comment.py](web_report/ai_comment.py) — eval_engine import 유일 지점 → [docs/13](docs/13_eval_analyzer_integration.md) |
 | 더미 grids 픽스처 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |
 

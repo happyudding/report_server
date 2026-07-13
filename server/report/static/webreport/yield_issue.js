@@ -116,51 +116,80 @@ function yieldSourceChartsHtml() {
     return `<div class="yield-source-pair">
       <div class="ysp-title">${esc(s.source)} · <b>${esc(pct)}%</b></div>
       <div class="ysp-pies">
-        <div id="yield-pie-all-${i}" class="ysp-pie"></div>
-        <div id="yield-pie-fail-${i}" class="ysp-pie"></div>
+        <div class="ysp-col"><div id="yield-pie-all-${i}" class="ysp-pie"></div><div class="ysp-cap">전체 Pass / Fail</div></div>
+        <div class="ysp-col"><div id="yield-pie-fail-${i}" class="ysp-pie ysp-pie-fail"></div><div class="ysp-cap">Fail 확대 · bin별 loss순</div></div>
       </div>
     </div>`;
   }).join("");
   return `<div class="yield-source-charts">${pairs}</div>`;
 }
 
+// Fail 조각을 원의 이 비율(반원)만큼의 부채꼴로 확대해 그린다. 나머지는 투명 slice 로 채운다.
+const YIELD_FAIL_FAN_FRAC = 0.5;
+
 function drawYieldSourceCharts() {
   if (!window.Plotly) return;
   const cfg = { responsive: true, displayModeBar: false };
-  const layout = () => ({
-    margin: { l: 6, r: 6, t: 6, b: 6 },
+  // 좌측(전체 Pass/Fail): 좁은 Fail 조각의 %가 안 보이면 자동으로 바깥으로 빼서(연결선) 표기.
+  const layoutAll = {
+    margin: { l: 30, r: 30, t: 16, b: 16 },
     paper_bgcolor: "#ffffff", plot_bgcolor: "#ffffff",
     font: PLOTLY_FONT, showlegend: false,
-  });
+  };
+  // 우측(Fail 확대 부채꼴): 상단 반원에 Fail bin, 하단 반원은 투명.
+  const layoutFail = {
+    margin: { l: 22, r: 22, t: 14, b: 6 },
+    paper_bgcolor: "#ffffff", plot_bgcolor: "#ffffff",
+    font: PLOTLY_FONT, showlegend: false,
+  };
   yieldSourcesSorted().forEach((s, i) => {
     const allEl = document.getElementById(`yield-pie-all-${i}`);
     if (allEl) {
       Plotly.newPlot(allEl, [{
         type: "pie", labels: ["Pass", "Fail"], values: [Number(s.pass) || 0, Number(s.fail) || 0],
-        marker: { colors: [PASS_COLOR, YIELD_FAIL_COLOR] },
+        marker: { colors: [PASS_COLOR, YIELD_FAIL_COLOR], line: { color: "#fff", width: 1 } },
         sort: false, direction: "clockwise",
-        textinfo: "label+percent", textposition: "inside",
+        textinfo: "label+percent", textposition: "auto",
+        insidetextorientation: "horizontal", automargin: true,
+        outsidetextfont: { size: 12 },
         hovertemplate: "%{label}<br>%{value} die (%{percent})<extra></extra>",
-      }], layout(), cfg);
+      }], layoutAll, cfg);
     }
     const failEl = document.getElementById(`yield-pie-fail-${i}`);
     if (failEl) {
-      const fb = Array.isArray(s.fail_bins) ? s.fail_bins : [];
+      // Yield loss(=die 수) 높은 순 정렬 → 가장 큰 bin 이 부채꼴 시작부터.
+      const fb = (Array.isArray(s.fail_bins) ? s.fail_bins.slice() : [])
+        .sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0));
       if (!fb.length) {
         failEl.innerHTML = `<div class="ysp-empty">Fail 없음</div>`;
         return;
       }
       const total = Number(s.total) || 0;
+      const totalFail = fb.reduce((sum, f) => sum + (Number(f.count) || 0), 0);
+      const frac = YIELD_FAIL_FAN_FRAC;
+      // 투명 remainder 를 붙여 fail 조각을 frac 비율의 부채꼴로 확대(모양은 부채꼴 그대로, 크기만 확대).
+      const remainder = totalFail > 0 ? totalFail * (1 - frac) / frac : 1;
+      const labels = fb.map(f => `Bin ${f.bin}`).concat([""]);
+      const values = fb.map(f => Number(f.count) || 0).concat([remainder]);
+      const colors = fb.map(f => binColor(f.bin)).concat(["rgba(0,0,0,0)"]);
+      const pctText = fb.map(f => `${totalFail ? (Number(f.count) / totalFail * 100).toFixed(1) : 0}%`).concat([""]);
+      // 투명 remainder 조각은 hover 를 skip 해 하단 빈 영역에 툴팁이 뜨지 않게 한다.
+      const hovertext = fb.map(f => {
+        const cnt = Number(f.count) || 0;
+        const inFail = totalFail ? (cnt / totalFail * 100).toFixed(1) : "0";
+        const ofAll = total ? (cnt / total * 100).toFixed(2) : "0";
+        return `Bin ${f.bin}<br>${cnt} die · fail 중 ${inFail}% · 전체 ${ofAll}%`;
+      }).concat([""]);
+      const hoverinfo = fb.map(() => "text").concat(["skip"]);
       Plotly.newPlot(failEl, [{
-        type: "pie",
-        labels: fb.map(f => `Bin ${f.bin}`),
-        values: fb.map(f => Number(f.count) || 0),
-        marker: { colors: fb.map(f => binColor(f.bin)) },
-        customdata: fb.map(f => total ? (Number(f.count) / total * 100) : 0),
+        type: "pie", labels, values,
+        marker: { colors, line: { color: "#fff", width: 1 } },
+        text: pctText, textinfo: "label+text", textposition: "auto",
+        hovertext, hoverinfo, automargin: true,
         sort: false, direction: "clockwise",
-        textinfo: "label+percent", textposition: "inside",
-        hovertemplate: "%{label}<br>%{value} die · fail 중 %{percent} · 전체 %{customdata:.2f}%<extra></extra>",
-      }], layout(), cfg);
+        rotation: -frac * 180,   // 반원 부채꼴을 상단 중앙에 배치
+        hole: 0.34,
+      }], layoutFail, cfg);
     }
   });
 }

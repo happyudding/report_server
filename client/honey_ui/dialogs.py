@@ -344,7 +344,17 @@ class ReportSettingsDialog(QDialog):
         self._wire_group_all()
         for lw in (self.list_items_avail, self.list_items_sel):
             lw.setSpacing(0)
-            lw.setStyleSheet("QListWidget::item { padding: 0px 2px; }")
+            # Item 명 폰트를 1pt 작게 → 항목 세로 간격도 함께 좁아진다(uniform item sizes).
+            f = lw.font()
+            ps = f.pointSizeF()
+            if ps > 0:
+                f.setPointSizeF(max(ps - 1.0, 6.0))
+            else:
+                px = f.pixelSize()
+                if px > 0:
+                    f.setPixelSize(max(px - 1, 8))
+            lw.setFont(f)
+            lw.setStyleSheet("QListWidget::item { padding: 0px 2px; margin: 0px; }")
             lw.setUniformItemSizes(True)
         self._populate_items()
         self._sync_yield_dependents()
@@ -352,15 +362,22 @@ class ReportSettingsDialog(QDialog):
         self._update_compare_mode_availability()
 
     def _wire_collapsible(self):
-        """각 그룹 헤더(QToolButton) 클릭 시 본문을 접었다 폈다 하고 ▾/▸ 화살표를 갱신."""
+        """각 그룹 헤더(QToolButton) 클릭 시 본문 높이만 접었다 폈다 하고 ▾/▸ 화살표를 갱신.
+        본문을 숨기지(setVisible) 않고 높이만 0 으로 접어 가로폭을 그대로 유지한다 →
+        한 열을 접어도 Chart/Statistics/Summary/Others 헤더가 좌우로 밀리지 않는다."""
         for hdr_name, body_name, label in self._COLLAPSIBLE:
             hdr = getattr(self, hdr_name)
             body = getattr(self, body_name)
-            body.setVisible(hdr.isChecked())
+            self._set_body_collapsed(body, not hdr.isChecked())
             self._set_hdr_text(hdr, label)
             hdr.toggled.connect(
                 lambda checked, h=hdr, b=body, lbl=label:
-                    (b.setVisible(checked), self._set_hdr_text(h, lbl)))
+                    (self._set_body_collapsed(b, not checked), self._set_hdr_text(h, lbl)))
+
+    @staticmethod
+    def _set_body_collapsed(body, collapsed):
+        """본문 높이만 0 으로 접는다(가로폭 유지). 접어도 열 폭이 그대로라 헤더가 안 움직인다."""
+        body.setMaximumHeight(0 if collapsed else 16777215)
 
     @staticmethod
     def _set_hdr_text(hdr, label):

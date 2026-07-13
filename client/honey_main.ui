@@ -178,8 +178,8 @@
          <widget class="QPushButton" name="btn_csv_clear">
           <property name="text"><string>Clear</string></property>
           <property name="toolTip"><string>파일 리스트 전체 비우기</string></property>
-          <property name="maximumSize"><size><width>40</width><height>16777215</height></size></property>
-          <property name="styleSheet"><string notr="true">font-size: 7pt;</string></property>
+          <property name="maximumSize"><size><width>46</width><height>16777215</height></size></property>
+          <property name="styleSheet"><string notr="true">QPushButton { font-size: 8pt; font-weight: 800; padding: 2px 2px; }</string></property>
          </widget>
         </item>
        </layout>

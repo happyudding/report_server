@@ -1,5 +1,9 @@
 # storage_gateway — 서버 산출물 저장소 진입점
 
+> **🔒 구서버·동결** — 이 패키지(facade `__init__.py` + `_s3` 내부 전체)는 구서버 소유·교체
+> 영역이라 여기서 수정하지 않는다. 소유권 정본 [../../docs/15_ownership.md](../../docs/15_ownership.md).
+> 아래 계약(§2 공개 API·예외, §5 보존 항목)은 **교체본이 지켜야 할 계약**이다.
+>
 > `ENTRYPOINT / EXTERNAL_OWNER`. 리포트 산출물(이슈 이미지·분포 PNG·web_report
 > parquet/manifest)을 **S3 + 로컬 폴백**으로 저장/조회하는 서버 측 단일 경계.
 > **외부 S3/서버 저장소 담당자는 이 패키지만 보면 된다.**

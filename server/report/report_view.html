@@ -257,8 +257,11 @@ body {
 }
 .yield-source-pair .ysp-title { font-size: 12px; color: #1f4d8c; text-align: center; margin-bottom: 4px; }
 .yield-source-pair .ysp-title b { color: #222; font-size: 13px; }
-.ysp-pies { display: flex; gap: 6px; }
+.ysp-pies { display: flex; gap: 10px; align-items: flex-start; }
+.ysp-col { display: flex; flex-direction: column; align-items: center; }
+.ysp-cap { font-size: 11px; color: #6b7a90; margin-top: 2px; text-align: center; }
 .ysp-pie { width: 150px; height: 150px; position: relative; }
+.ysp-pie-fail { width: 200px; height: 200px; }   /* Fail 확대 부채꼴 — 좌측보다 크게 */
 .ysp-empty {
   width: 150px; height: 150px; display: flex; align-items: center; justify-content: center;
   color: #9aa; font-size: 12px;
@@ -315,9 +318,11 @@ tbody tr:hover { background: #f9fbff; }
   background: #e8eef4 !important; font-weight: 700; color: #1a3a5c;
 }
 .sheet-table td.cpk-warn { background: #fff3bf !important; font-weight: 700; color: #5c4400; }
-/* Issue Table 의 Yield(avg / {src}_yield) · CPK 값 셀은 값 가독성 위해 base 대비 +2px 키움. */
-.sheet-table.kind-issue td[data-col="avg"],
-.sheet-table.kind-issue td[data-col$="_yield"] { font-size: 13px; }
+/* Issue Table: BIN·ITEM 식별 셀 + Yield(avg / {src}_yield)·CPK 값 셀 폰트를 base(11px) 대비 +2px 키움(값 가독성). */
+.sheet-table.kind-issue td[data-col="bin" i],
+.sheet-table.kind-issue td[data-col="item" i],
+.sheet-table.kind-issue td[data-col="avg" i],
+.sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 13px; }
 
 /* ── CPK 표: Excel 식 freeze panes(헤더 상단 고정 + subject 좌측 / cpk 우측 고정) + 페이저 ── */
 .sheet-wrap.cpk-sheet {

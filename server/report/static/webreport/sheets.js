@@ -454,7 +454,10 @@ function renderSheetTable(rows, opts) {
       if (opts.kind === "issue" && c === "Step" && r && r._grp && !r._detail && (Number(r._ndetail) || 0) > 0) {
         cellHtml += ` <button type="button" class="issue-toggle" data-grp="${esc(r._grp)}" aria-expanded="false">▼</button>`;
       }
-      return `<td${cls ? ` class="${cls}"` : ""} data-r="${ri}" data-c="${ci}">${cellHtml}</td>`;
+      // 읽기 모드 Issue Table 셀에만 data-col 부여 → CSS 로 BIN/ITEM/Yield/CPK 폰트 확대(값 가독성).
+      // 편집 모드는 부여하지 않아 collectSheetTable 저장 대상(=comment 셀)이 그대로 유지된다.
+      const colAttr = (opts.kind === "issue" && !opts.edit) ? ` data-col="${esc(c)}"` : "";
+      return `<td${cls ? ` class="${cls}"` : ""}${colAttr} data-r="${ri}" data-c="${ci}">${cellHtml}</td>`;
     }).join("");
     const isPassRow = !subhead && binCol && String((r ? r[binCol] : "") ?? "").trim() === "1";
     let trAttr = isPassRow ? ` class="yield-pass-row"` : "";

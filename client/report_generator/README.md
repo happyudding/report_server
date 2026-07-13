@@ -1,7 +1,8 @@
 # report_generator
 
-> **외부 프로젝트 — 무수정이 원칙.** 이 패키지(및 `honey_parse`)는 report_server 밖에서
-> 소유·교체되며, 수정이 불가피하면 반드시 사전 승인을 받는다 (report_server/CLAUDE.md §5).
+> **🔒 구서버 — 동결(무수정 원칙).** 이 패키지(및 `honey_parse`)는 병합돼 들어왔으나 구서버가
+> 소유·교체하는 영역이라 여기서 수정하지 않는다(불가피 시 명시 승인). 소유권 정본
+> [../../docs/15_ownership.md](../../docs/15_ownership.md) (CLAUDE.md §5).
 > 이 문서는 df_honey 포맷·dtype·ReportMeta 계약의 정본이다.
 
 Honey 로컬 리포트 분석/생성 엔진이다. CSV/xlsx 측정 데이터를 `df_honey` 표준 포맷으로 정규화하고, yield/CPK/fail/issue/distribution 데이터를 계산한 뒤 Excel COM(xlwings)으로 `.xlsx` 리포트를 만든다.

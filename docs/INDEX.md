@@ -55,7 +55,7 @@
 | 03 | **저장소 (SQLite 스키마 + storage_gateway/S3)** | Server / DB | [03_storage.md](03_storage.md) | [server/database/core.py](../server/database/core.py) |
 | 04 | **Honey 자동 업데이트 채널** | Server + Client | [04_honey_update.md](04_honey_update.md) | [server/honey_routes.py](../server/honey_routes.py) |
 | 05 | **Honey 클라이언트 UI / 워크플로우** | Client | [05_client_ui.md](05_client_ui.md) | [client/honey_main.py](../client/honey_main.py) |
-| 06 | **로컬 분석 엔진** (외부·무수정) | Client | [06_analysis_engine.md](06_analysis_engine.md) | [client/report_generator/](../client/report_generator/) |
+| 06 | **로컬 분석 엔진** (구서버·동결) | Client | [06_analysis_engine.md](06_analysis_engine.md) | [client/report_generator/](../client/report_generator/) |
 | 07 | **업로드 전송** (xlsx grid) | Client | [07_client_upload_chart.md](07_client_upload_chart.md) | [client/transport/uploader.py](../client/transport/uploader.py) |
 | 09 | **DB 파일 인벤토리** (백업·stdinfo 정책) | Server / DB | [09_db_inventory.md](09_db_inventory.md) | [server/db_backup.py](../server/db_backup.py) |
 | 10 | **web_report 파이프라인** (upload→ingest→저장→로드) | Server | [10_web_report_pipeline.md](10_web_report_pipeline.md) | [server/upload_webreport.py](../server/upload_webreport.py) |
@@ -63,6 +63,7 @@
 | 12 | **web_report 캐시 & 컴퓨트** | Server | [12_web_report_cache.md](12_web_report_cache.md) | [web_report/cache.py](../web_report/cache.py) |
 | 13 | **eval_analyzer 통합 (AI Comment)** — 단방향 의존 규약 | Server | [13_eval_analyzer_integration.md](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) |
 | 14 | **구서버↔신서버 병합 순서** — report_generator/storage_gateway 교체 순서·계약 | Server + Client | [14_merge_order.md](14_merge_order.md) | [client/map_report/](../client/map_report/) |
+| 15 | **소유권 / 수정 권한 경계** (정본) — 신서버/사전승인/구서버 동결 | 전체 | [15_ownership.md](15_ownership.md) | — |
 
 > 서버 부팅: [server/wsgi.py](../server/wsgi.py) → [plugin.py](../server/plugin.py)
 > `register_report_server` 가 `report_bp` + `honey_bp` + admin_panel + ops 등록.
@@ -115,16 +116,16 @@
 | S3 키 경로 바꾸기 | [03](03_storage.md) | [_s3.py](../server/storage_gateway/_s3.py) `make_*_key` + [config.py](../server/config.py) |
 | 새 Honey 버전 배포 | [04](04_honey_update.md) | `version.json` + release 스크립트 |
 | 클라 화면/버튼 동작 (사전 승인) | [05](05_client_ui.md) | `HoneyMainWindow` 슬롯 |
-| 분석 수식(cpk/yield 등) (외부·무수정) | [06](06_analysis_engine.md) | [_builders.py](../client/report_generator/_builders.py) |
-| 생성 xlsx 레이아웃/차트 (외부·무수정) | [06](06_analysis_engine.md) | [xlsx_writer.py](../client/report_generator/xlsx_writer.py) |
+| 분석 수식(cpk/yield 등) (구서버·동결) | [06](06_analysis_engine.md) | [_builders.py](../client/report_generator/_builders.py) |
+| 생성 xlsx 레이아웃/차트 (구서버·동결) | [06](06_analysis_engine.md) | [xlsx_writer.py](../client/report_generator/xlsx_writer.py) |
 | 업로드 multipart 형식 | [07](07_client_upload_chart.md) | `post_grids()` |
 | DB 파일이 뭐가 있는지 / 백업·stdinfo 정책 | [09](09_db_inventory.md) | [db_backup.py](../server/db_backup.py), [config.py](../server/config.py) |
 
-## 3.1 외부 소유 경계 / 진입점 (무수정 원칙)
+## 3.1 구서버 동결 경계 / 진입점
 
-이 4종은 report_server 밖에서 소유·교체되는 외부 프로젝트다. **`report_generator`·
-`honey_parse` 는 무수정이 원칙**(수정 불가피 시 사전 승인). **`D1`·`S3` 는 현재 코드에서
-검증용으로만 사용**한다.
+이 4종은 병합돼 들어왔으나 **구서버가 소유·교체하는 동결 영역**이다(수정 불가피 시 명시 승인).
+소유권/수정 권한 티어 정본은 [15_ownership.md](15_ownership.md) — 여기 표는 각 경계의 **진입점·
+유지 계약**만 정리한다. `D1`·`S3` 는 현재 코드에서 검증용(로컬 폴백)으로 쓰인다.
 
 | 경계 | 진입점 | 기본(검증용) 구현 | 유지 계약 |
 |------|--------|-------------------|-----------|
@@ -152,5 +153,6 @@
 5. **Distribution 다운샘플 금지** (미니셀 1000점만 예외 → [11](11_web_report_tabs.md)).
 6. web_report 편집 진실 = 세션 편집 DB, manifest 는 불변 스냅샷. 캐시 키는
    [cache_policy.py](../web_report/cache_policy.py) 빌더로만 → [12](12_web_report_cache.md).
-7. **수정 권한 경계**: 자유 수정 = `web_report/` + 관련 html + `server/`; 사전 승인 =
-   `client/` 나머지; 무수정 원칙 = 외부 4종(§3.1). 전문은 [CLAUDE.md §5](../CLAUDE.md).
+7. **소유권/수정 권한 경계** (정본 [15_ownership.md](15_ownership.md)): 신서버 자유 =
+   `web_report/` + 관련 html + `server/`(storage_gateway 제외); 사전 승인 = `client/` 나머지;
+   구서버 동결 = `d1/`·`honey_parse/`·`report_generator/`·`storage_gateway/`(§3.1).

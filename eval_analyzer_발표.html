@@ -1,0 +1,695 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eval_Analyzer — 반도체 평가 분석 AX</title>
+<style>
+  :root {
+    --font-sans: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'Cascadia Code', 'Consolas', ui-monospace, 'SFMono-Regular', monospace;
+
+    --ground: #F4F7F8;
+    --surface: #FFFFFF;
+    --surface-2: #EAF0F2;
+    --ink: #10181D;
+    --ink-soft: #45555E;
+    --ink-faint: #7C8A93;
+    --line: #DBE3E7;
+    --line-strong: #C4D0D6;
+
+    --accent: #0C7C8C;
+    --accent-bright: #159FB2;
+    --accent-wash: rgba(21, 159, 178, 0.10);
+
+    --critical: #CF3F3A;
+    --major: #D9821A;
+    --minor: #B9971F;
+    --monitor: #6C7C87;
+    --ok: #2C9A60;
+
+    --shadow: 0 1px 2px rgba(16,24,29,.05), 0 8px 24px rgba(16,24,29,.06);
+    --radius: 12px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0C1216;
+      --surface: #121B21;
+      --surface-2: #18242C;
+      --ink: #E7EEF1;
+      --ink-soft: #A2B1BB;
+      --ink-faint: #6B7B86;
+      --line: #24323B;
+      --line-strong: #33444E;
+
+      --accent: #2BBED2;
+      --accent-bright: #46D4E7;
+      --accent-wash: rgba(43, 190, 210, 0.12);
+
+      --critical: #EF625B;
+      --major: #EDA243;
+      --minor: #DDC04A;
+      --monitor: #8696A2;
+      --ok: #45C07D;
+
+      --shadow: 0 1px 2px rgba(0,0,0,.30), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #F4F7F8; --surface: #FFFFFF; --surface-2: #EAF0F2;
+    --ink: #10181D; --ink-soft: #45555E; --ink-faint: #7C8A93;
+    --line: #DBE3E7; --line-strong: #C4D0D6;
+    --accent: #0C7C8C; --accent-bright: #159FB2; --accent-wash: rgba(21,159,178,.10);
+    --critical: #CF3F3A; --major: #D9821A; --minor: #B9971F; --monitor: #6C7C87; --ok: #2C9A60;
+    --shadow: 0 1px 2px rgba(16,24,29,.05), 0 8px 24px rgba(16,24,29,.06);
+  }
+  :root[data-theme="dark"] {
+    --ground: #0C1216; --surface: #121B21; --surface-2: #18242C;
+    --ink: #E7EEF1; --ink-soft: #A2B1BB; --ink-faint: #6B7B86;
+    --line: #24323B; --line-strong: #33444E;
+    --accent: #2BBED2; --accent-bright: #46D4E7; --accent-wash: rgba(43,190,210,.12);
+    --critical: #EF625B; --major: #EDA243; --minor: #DDC04A; --monitor: #8696A2; --ok: #45C07D;
+    --shadow: 0 1px 2px rgba(0,0,0,.30), 0 10px 30px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: clamp(28px, 5vw, 64px) clamp(18px, 4vw, 40px) 72px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 26px; height: 2px;
+    background: var(--accent);
+    display: inline-block;
+  }
+
+  h1 {
+    font-size: clamp(34px, 6vw, 60px);
+    line-height: 1.02;
+    letter-spacing: -.02em;
+    margin: 0;
+    font-weight: 800;
+    text-wrap: balance;
+  }
+  h1 .mono {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    letter-spacing: -.03em;
+  }
+
+  .thesis {
+    font-size: clamp(17px, 2.4vw, 22px);
+    color: var(--ink);
+    max-width: 30ch;
+    margin: 22px 0 0;
+    font-weight: 500;
+    text-wrap: balance;
+  }
+  .thesis b { color: var(--accent); font-weight: 700; }
+  .sub {
+    color: var(--ink-soft);
+    font-size: 15px;
+    max-width: 42ch;
+    margin: 14px 0 0;
+  }
+
+  /* ---- HERO ---- */
+  .hero {
+    display: grid;
+    grid-template-columns: 1.15fr .85fr;
+    gap: clamp(24px, 4vw, 48px);
+    align-items: center;
+    padding-bottom: clamp(36px, 5vw, 56px);
+    border-bottom: 1px solid var(--line);
+  }
+  @media (max-width: 760px) {
+    .hero { grid-template-columns: 1fr; }
+  }
+
+  .scope-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 18px 18px 8px;
+    overflow: hidden;
+  }
+  .scope-card .cap {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .08em;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .scope-card svg { width: 100%; height: auto; display: block; }
+  .scope-card .foot {
+    display: flex; gap: 14px; flex-wrap: wrap;
+    font-family: var(--font-mono);
+    font-size: 11px; color: var(--ink-soft);
+    padding: 6px 2px 8px;
+  }
+  .scope-card .foot span { display: inline-flex; align-items: center; gap: 6px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  /* ---- SECTION ---- */
+  section { margin-top: clamp(44px, 6vw, 72px); }
+  .sec-head { margin-bottom: 24px; }
+  .sec-kicker {
+    font-family: var(--font-mono);
+    font-size: 11px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 600; margin: 0 0 8px;
+  }
+  .sec-title {
+    font-size: clamp(21px, 3vw, 28px);
+    margin: 0; font-weight: 700; letter-spacing: -.01em;
+    text-wrap: balance;
+  }
+  .sec-lead { color: var(--ink-soft); margin: 10px 0 0; max-width: 62ch; font-size: 15px; }
+
+  /* ---- WHY: problem -> goal ---- */
+  .why {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 720px) { .why { grid-template-columns: 1fr; } }
+
+  .why-emphasis { display: grid; grid-template-columns: 1fr; gap: 16px; margin-top: 16px; }
+  @media (max-width: 720px) { .why-emphasis { grid-template-columns: 1fr; } }
+  .emph {
+    background: var(--accent-wash);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+  }
+  .emph .ek {
+    font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--accent); font-weight: 700; margin: 0 0 9px;
+  }
+  .emph .eh {
+    font-size: clamp(17px, 2.2vw, 19px); font-weight: 750; letter-spacing: -.01em;
+    margin: 0 0 9px; color: var(--ink); text-wrap: balance; line-height: 1.25;
+  }
+  .emph p { margin: 0; font-size: 13.5px; color: var(--ink-soft); line-height: 1.55; }
+  .emph p code {
+    font-family: var(--font-mono); font-size: 12px;
+    background: var(--surface); color: var(--accent); padding: 1px 5px; border-radius: 4px;
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 22px 22px;
+    box-shadow: var(--shadow);
+  }
+  .panel h3 {
+    margin: 0 0 14px; font-size: 14px; font-weight: 700;
+    display: flex; align-items: center; gap: 9px; letter-spacing: -.01em;
+  }
+  .panel h3 .tag {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em;
+    text-transform: uppercase; padding: 3px 8px; border-radius: 999px;
+    font-weight: 600;
+  }
+  .tag.pain { color: var(--critical); background: color-mix(in srgb, var(--critical) 12%, transparent); }
+  .tag.goal { color: var(--accent); background: var(--accent-wash); }
+
+  ul.pts { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+  ul.pts li {
+    display: grid; grid-template-columns: auto 1fr; gap: 11px;
+    font-size: 14.5px; color: var(--ink-soft); line-height: 1.5;
+  }
+  ul.pts li b { color: var(--ink); font-weight: 650; }
+  ul.pts li .mk {
+    margin-top: 8px; width: 6px; height: 6px; border-radius: 2px;
+    background: var(--line-strong);
+  }
+  .panel.goal ul.pts li .mk { background: var(--accent); }
+
+  /* ---- PIPELINE ---- */
+  .flow {
+    display: grid;
+    gap: 14px;
+  }
+  .io-band {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    box-shadow: var(--shadow);
+  }
+  .io-band .io-label {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--ink-faint);
+    border-right: 1px solid var(--line); padding-right: 18px;
+    white-space: nowrap;
+  }
+  .io-band.out { border-color: var(--accent); background: linear-gradient(0deg, var(--accent-wash), var(--accent-wash)), var(--surface); }
+  .io-band.out .io-label { color: var(--accent); border-color: var(--line-strong); }
+  .io-main { font-size: 15px; font-weight: 600; }
+  .io-sub { color: var(--ink-soft); font-size: 13.5px; }
+  .io-main .code { font-family: var(--font-mono); font-size: 13px; color: var(--accent); }
+
+  .arrow-v {
+    justify-self: center;
+    color: var(--line-strong);
+    line-height: 0;
+  }
+  .arrow-v svg { display: block; }
+
+  .phases {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    align-items: stretch;
+  }
+  @media (max-width: 860px) { .phases { grid-template-columns: 1fr; } }
+
+  .phase {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 16px 16px 18px;
+    box-shadow: var(--shadow);
+    position: relative;
+    display: flex; flex-direction: column;
+  }
+  .phase-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 14px; padding-bottom: 12px;
+    border-bottom: 1px dashed var(--line-strong);
+  }
+  .phase-name { font-size: 15px; font-weight: 750; letter-spacing: -.01em; }
+  .phase-badge {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em;
+    color: var(--accent); background: var(--accent-wash);
+    padding: 3px 8px; border-radius: 6px; font-weight: 600;
+  }
+
+  .stage { display: grid; grid-template-columns: auto 1fr; gap: 12px; padding: 9px 0; }
+  .stage + .stage { border-top: 1px solid var(--line); }
+  .stage .lx {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    color: var(--surface); background: var(--accent);
+    width: 30px; height: 22px; border-radius: 6px;
+    display: inline-flex; align-items: center; justify-content: center;
+    letter-spacing: -.02em; margin-top: 1px;
+  }
+  .stage .st-name { font-size: 13.5px; font-weight: 650; }
+  .stage .st-name .en { font-family: var(--font-mono); font-size: 11px; color: var(--ink-faint); font-weight: 600; letter-spacing: .02em; }
+  .stage .st-desc { font-size: 12.5px; color: var(--ink-soft); line-height: 1.45; margin-top: 2px; }
+  .stage .st-desc code {
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--surface-2); color: var(--ink); padding: 1px 5px; border-radius: 4px;
+  }
+
+  /* status chips row */
+  .status-row {
+    display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px;
+  }
+  .schip {
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 700;
+    letter-spacing: .04em; padding: 3px 9px; border-radius: 999px;
+    border: 1px solid; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .schip .sd { width: 7px; height: 7px; border-radius: 50%; }
+  .schip.c { color: var(--critical); border-color: color-mix(in srgb, var(--critical) 45%, transparent); }
+  .schip.c .sd { background: var(--critical); }
+  .schip.ma { color: var(--major); border-color: color-mix(in srgb, var(--major) 45%, transparent); }
+  .schip.ma .sd { background: var(--major); }
+  .schip.mi { color: var(--minor); border-color: color-mix(in srgb, var(--minor) 45%, transparent); }
+  .schip.mi .sd { background: var(--minor); }
+  .schip.mo { color: var(--monitor); border-color: color-mix(in srgb, var(--monitor) 45%, transparent); }
+  .schip.mo .sd { background: var(--monitor); }
+  .schip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+  .schip.ok .sd { background: var(--ok); }
+
+  /* output example card */
+  .out-example {
+    margin-top: 12px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    color: var(--ink-soft);
+    overflow-x: auto;
+  }
+  .out-example .k { color: var(--ink-faint); }
+  .out-example .badge { color: var(--major); font-weight: 700; }
+  .out-example .cmt { color: var(--ink); }
+
+  /* hybrid + integration cards */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+
+  .hybrid { display: grid; gap: 12px; }
+  .hy {
+    display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: start;
+    padding: 12px 0;
+  }
+  .hy + .hy { border-top: 1px solid var(--line); }
+  .hy .badge2 {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+    padding: 5px 9px; border-radius: 7px; white-space: nowrap;
+    background: var(--accent-wash); color: var(--accent); letter-spacing: .03em;
+  }
+  .hy .t { font-size: 14px; font-weight: 700; }
+  .hy .d { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
+
+  .integ p { font-size: 14px; color: var(--ink-soft); margin: 0 0 14px; }
+  .integ p:last-child { margin-bottom: 0; }
+  .integ .lead { color: var(--ink); font-weight: 600; }
+  .integ .code { font-family: var(--font-mono); font-size: 12.5px; color: var(--accent); background: var(--accent-wash); padding: 1px 6px; border-radius: 5px; }
+  .depflow {
+    font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px 14px; margin: 0 0 14px; line-height: 1.9;
+  }
+  .depflow .srv { color: var(--ink); font-weight: 700; }
+  .depflow .eng { color: var(--accent); font-weight: 700; }
+  .depflow .no { color: var(--critical); }
+
+  /* roadmap status */
+  .road { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 720px) { .road { grid-template-columns: 1fr; } }
+  ul.rl { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  ul.rl li { display: grid; grid-template-columns: auto 1fr; gap: 11px; font-size: 14px; color: var(--ink-soft); }
+  ul.rl li b { color: var(--ink); font-weight: 650; }
+  .pill {
+    font-family: var(--font-mono); font-size: 9.5px; font-weight: 700; letter-spacing: .06em;
+    padding: 2px 7px; border-radius: 999px; height: fit-content; margin-top: 3px; white-space: nowrap;
+  }
+  .pill.done { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
+  .pill.next { color: var(--major); background: color-mix(in srgb, var(--major) 13%, transparent); }
+
+  footer {
+    margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--line);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: .03em;
+  }
+
+  @media print {
+    body { background: #fff; }
+    .panel, .phase, .io-band, .scope-card { box-shadow: none; }
+    section { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div>
+      <p class="eyebrow">반도체 평가 분석 · AX Transformation</p>
+      <h1><span class="mono">(Eval_Analyzer)</span><br>Fail-Item 판단을<br>코드로 옮기다</h1>
+      <p class="thesis">엔지니어가 직접 하던 <b>Fail 판단</b>을 자동 엔진으로.</p>
+      <p class="sub">웨이퍼 테스트 측정 raw 를 받아, fail item 별 <b>심각도(status)</b> 와 <b>분석방향(comment)</b> 을 근거와 함께 자동 산출한다. 사람은 검토·의사결정에, 엔진은 1차 판단·근거 제시에 집중한다.</p>
+    </div>
+
+    <aside class="scope-card" aria-label="측정 분포와 규격 한계 개념도">
+      <div class="cap"><span>MEASUREMENT · DISTRIBUTION</span><span id="cpk-label">cpk 0.65</span></div>
+      <svg id="dist" viewBox="0 0 400 210" role="img" aria-label="정규분포 곡선과 USL을 넘는 fail tail"></svg>
+      <div class="foot">
+        <span><span class="dot" style="background:var(--accent-bright)"></span>측정 분포</span>
+        <span><span class="dot" style="background:var(--critical)"></span>규격 초과 = fail</span>
+        <span>LSL / USL</span>
+      </div>
+    </aside>
+  </header>
+
+  <!-- WHY -->
+  <section id="why">
+    <div class="sec-head">
+      <p class="sec-kicker">Why · 왜 필요한가</p>
+      <h2 class="sec-title">평가 판단 로직은 사람의 머릿속에 있다</h2>
+      <p class="sec-lead">lot·wafer 마다 쏟아지는 수백 개 fail item 을 숙련자가 수동으로 해석한다. 판단 기준이 사람과 시점에 따라 달라지고, 축적된 노하우는 문서 곳곳에 흩어져 재활용되지 않는다. 이 판단 과정을 표준화·자동화하는 것이 이 프로젝트의 AX 목표다.</p>
+    </div>
+    <div class="why">
+      <div class="panel">
+        <h3><span class="tag pain">현재의 한계</span></h3>
+        <ul class="pts">
+          <li><span class="mk"></span><span><b>Person-dependent</b> — 숙련 엔지니어의 경험에 의존, 사람마다 판단 기준이 다름</span></li>
+          <li><span class="mk"></span><span><b>Inconsistent</b> — 같은 데이터도 판단자·시점에 따라 결과가 달라짐</span></li>
+          <li><span class="mk"></span><span><b>Know-how loss</b> — 과거 조치·결과가 흩어져 다음 판단에 이어지지 않음</span></li>
+        </ul>
+      </div>
+      <div class="panel goal">
+        <h3><span class="tag goal">지향점 · AX</span></h3>
+        <ul class="pts">
+          <li><span class="mk"></span><span><b>Standardized rules</b> — 판단 기준을 코드·YAML 임계값으로 명시</span></li>
+          <li><span class="mk"></span><span><b>Experience as data</b> — 과거 선례(RAG)를 검색해 판단에 반영</span></li>
+          <li><span class="mk"></span><span><b>Human-in-the-loop</b> — 엔진이 1차 스크리닝·근거 제시, 사람은 결정</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="why-emphasis">
+      <div class="emph">
+        <p class="ek">Data Asset · 데이터 자산</p>
+        <h3 class="eh">평가 Data에 대한 DB를 쌓는 것이 중요</h3>
+        <p>매 평가의 계산값·판단·근거가 <code>eval.db</code> 에 축적된다. 선례가 쌓일수록 판단은 정교해지고, 데이터 자체가 재사용 가능한 자산이 된다.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- PIPELINE -->
+  <section id="pipeline">
+    <div class="sec-head">
+      <p class="sec-kicker">How · 파이프라인 구조</p>
+      <h2 class="sec-title">Mass_data → Evaluate → Analysis Comment</h2>
+      <p class="sec-lead"><code style="font-family:var(--font-mono);font-size:13px;color:var(--accent)">evaluate()</code> 한 번의 호출이 <b>L0~L6</b> 6단계를 관통한다. 측정값에서 지표·특징을 계산하고(계산), 룰로 심각도를 판정하고(판단), 선례·LLM 으로 분석방향을 합성한다(코멘트). raw 측정은 저장하지 않고 계산값만 자체 DB 로 남긴다.</p>
+    </div>
+
+    <div class="flow">
+      <!-- INPUT -->
+      <div class="io-band">
+        <span class="io-label">Input</span>
+        <div>
+          <div class="io-main">웨이퍼 테스트 측정 raw data <span class="code">stdf · 00F · csv</span></div>
+          <div class="io-sub">chip 별 측정값 · BIN · 좌표(XPOS/YPOS) · 규격(USL/LSL) · fail 정보(FAILTNO)</div>
+        </div>
+      </div>
+
+      <div class="arrow-v" aria-hidden="true">
+        <svg width="20" height="26" viewBox="0 0 20 26" fill="none"><path d="M10 0v20M4 15l6 7 6-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+
+      <!-- ENGINE : 3 phases -->
+      <div class="phases">
+        <div class="phase">
+          <div class="phase-head"><span class="phase-name">측정 · 계산</span><span class="phase-badge">L0–L2</span></div>
+          <div class="stage">
+            <span class="lx">L0</span>
+            <div><div class="st-name">Ingest <span class="en">ingest</span></div><div class="st-desc">입력을 파싱해 <b>fail case</b>(item × bin) 를 식별</div></div>
+          </div>
+          <div class="stage">
+            <span class="lx">L1</span>
+            <div><div class="st-name">Metrics <span class="en">metrics</span></div><div class="st-desc"><code>cpk</code> · 평균 · 산포 · 수율을 메모리에서 계산</div></div>
+          </div>
+          <div class="stage">
+            <span class="lx">L2</span>
+            <div><div class="st-name">Features <span class="en">features</span></div><div class="st-desc">robust 산포 · spec margin · 공간(edge·center·gradient) 특징</div></div>
+          </div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-head"><span class="phase-name">판단</span><span class="phase-badge">L3–L4</span></div>
+          <div class="stage">
+            <span class="lx">L3</span>
+            <div><div class="st-name">Signatures <span class="en">signatures</span></div><div class="st-desc">룰(YAML 임계값) 평가 → 발화 signature <code>LOW_CPK</code> · <code>MEAN_SHIFT</code> · <code>EDGE_FAIL</code></div></div>
+          </div>
+          <div class="stage">
+            <span class="lx">L4</span>
+            <div><div class="st-name">Status <span class="en">status</span></div><div class="st-desc">severity 집계 → 5단계 심각도 + confidence(신뢰도)</div></div>
+          </div>
+          <div class="status-row" aria-label="심각도 5단계">
+            <span class="schip c"><span class="sd"></span>CRITICAL</span>
+            <span class="schip ma"><span class="sd"></span>MAJOR</span>
+            <span class="schip mi"><span class="sd"></span>MINOR</span>
+            <span class="schip mo"><span class="sd"></span>MONITOR</span>
+            <span class="schip ok"><span class="sd"></span>OK</span>
+          </div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-head"><span class="phase-name">Comment</span><span class="phase-badge">L5–L6</span></div>
+          <div class="stage">
+            <span class="lx">L5</span>
+            <div><div class="st-name">Recommend <span class="en">recommend</span></div><div class="st-desc">과거 <b>선례(RAG)</b> 검색 + 룰 템플릿 / <b>LLM</b> 합성 → 분석방향 한 문장</div></div>
+          </div>
+          <div class="stage">
+            <span class="lx">L6</span>
+            <div><div class="st-name">Present <span class="en">present</span></div><div class="st-desc">결과 dict 직렬화 (+ 계산값만 <code>eval.db</code> 적재)</div></div>
+          </div>
+          <div class="out-example" aria-label="출력 예시">
+            <span class="k">item</span> IDDQ_INIT · <span class="k">bin</span> 3<br>
+            <span class="badge">[MAJOR]</span> <span class="cmt">공정능력지수 미달(cpk&lt;1.33) — 산포·센터링 근본 점검</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="arrow-v" aria-hidden="true">
+        <svg width="20" height="26" viewBox="0 0 20 26" fill="none"><path d="M10 0v20M4 15l6 7 6-7" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+
+      <!-- OUTPUT -->
+      <div class="io-band out">
+        <span class="io-label">Output</span>
+        <div>
+          <div class="io-main">fail item 별 · status · signature · comment · evidence</div>
+          <div class="io-sub">Issue Table 에 그대로 붙는 (item, bin) 단위 판단 결과</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HYBRID + INTEGRATION -->
+  <section id="arch">
+    <div class="sec-head">
+      <p class="sec-kicker">Architecture · 판단 엔진</p>
+      <h2 class="sec-title">Rule + RAG 기반 Precedent 검색 + LLM</h2>
+    </div>
+    <div class="panel">
+      <div class="hybrid">
+        <div class="hy">
+          <span class="badge2">RULE</span>
+          <div><div class="t">결정론 룰</div><div class="d">임계값·signature 를 YAML 로 선언 — 하드코딩 없이 재현 가능한 판단 기준</div></div>
+        </div>
+        <div class="hy">
+          <span class="badge2">RAG</span>
+          <div><div class="t">과거 선례 검색</div><div class="d">제품군별 과거 조치·결과를 검색해 판단에 근거로 결합 — 경험의 자산화</div></div>
+        </div>
+        <div class="hy">
+          <span class="badge2">LLM</span>
+          <div><div class="t">자연어 합성</div><div class="d">룰·선례를 엔지니어가 읽는 분석방향 한 문장으로 — 모델 교체형(하드코딩 없음)</div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ROADMAP -->
+  <section id="road">
+    <div class="sec-head">
+      <p class="sec-kicker">Status · 구현 현황과 확장</p>
+      <h2 class="sec-title">Pipeline 설계 및 구현 완료 — DB 확보 및 Rule 설계 예정</h2>
+    </div>
+    <div class="road">
+      <div class="panel">
+        <h3><span class="tag goal">구현 완료</span></h3>
+        <ul class="rl">
+          <li><span class="pill done">DONE</span><span><b>L0~L6 파이프라인</b> — 계산·판단·코멘트 골격 (테스트 통과)</span></li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3><span class="tag pain" style="color:var(--major);background:color-mix(in srgb,var(--major) 12%,transparent)">확장 예정</span></h3>
+        <ul class="rl">
+          <li><span class="pill next">NEXT</span><span><b>룰·임계값</b> YAML + <b>자체 eval.db</b>(계산값만 저장, raw 미저장)</span></li>
+          <li><span class="pill next">NEXT</span><span><b>선례검색(SQL)</b> + <b>분위수 보정(calibration)</b> — 제품군별 임계값 자동 조정</span></li>
+          <li><span class="pill next">NEXT</span><span><b>LLM 합성</b> — 사용자 지정 endpoint 연결(현재 룰 템플릿 fallback)</span></li>
+          <li><span class="pill next">NEXT</span><span><b>RAG 선례 백엔드</b> — 임베딩 기반 유사 사례 검색 고도화</span></li>
+          <li><span class="pill next">NEXT</span><span><b>calibration 코멘트 채굴</b> — 축적 라벨/결과에서 룰 정밀도 검증</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Eval_Analyzer · 반도체 Fail-Item 평가 엔진</span>
+    <span>evaluate() → L0 · L1 · L2 · L3 · L4 · L5 · L6</span>
+  </footer>
+</div>
+
+<script>
+  // 히어로 분포 곡선: 정규분포 + LSL/USL + USL 초과 fail tail
+  (function () {
+    var svg = document.getElementById('dist');
+    if (!svg) return;
+    var base = 168, top = 26;
+    var x0 = 24, x1 = 376;
+    var css = getComputedStyle(document.documentElement);
+    var accent = css.getPropertyValue('--accent-bright').trim() || '#159fb2';
+    var crit = css.getPropertyValue('--critical').trim() || '#cf3f3a';
+    var line = css.getPropertyValue('--line-strong').trim() || '#c4d0d6';
+    var faint = css.getPropertyValue('--ink-faint').trim() || '#7c8a93';
+
+    var mu = 0.35, sigma = 1.0;          // 살짝 오른쪽으로 치우친 분포
+    var lslX = -2.1, uslX = 2.15;        // 규격 한계 (표준화 단위)
+    function g(x) { return Math.exp(-((x - mu) * (x - mu)) / (2 * sigma * sigma)); }
+    function sx(x) { return x0 + (x + 3.6) / 7.2 * (x1 - x0); }
+    function sy(y) { return base - y * (base - top); }
+
+    var N = 120, pts = [];
+    for (var i = 0; i <= N; i++) {
+      var x = -3.6 + 7.2 * i / N;
+      pts.push([sx(x), sy(g(x))]);
+    }
+    function poly(p) { return p.map(function (q, i) { return (i ? 'L' : 'M') + q[0].toFixed(1) + ' ' + q[1].toFixed(1); }).join(' '); }
+
+    var curve = poly(pts);
+    var areaFill = curve + ' L' + sx(3.6).toFixed(1) + ' ' + base + ' L' + sx(-3.6).toFixed(1) + ' ' + base + ' Z';
+
+    // fail tail: x > uslX
+    var tail = [];
+    for (var j = 0; j <= N; j++) {
+      var xt = -3.6 + 7.2 * j / N;
+      if (xt >= uslX) tail.push([sx(xt), sy(g(xt))]);
+    }
+    var tailFill = '';
+    if (tail.length) {
+      tailFill = poly(tail) + ' L' + sx(3.6).toFixed(1) + ' ' + base + ' L' + tail[0][0].toFixed(1) + ' ' + base + ' Z';
+    }
+
+    function vline(x, label, color) {
+      var px = sx(x).toFixed(1);
+      return '<line x1="' + px + '" y1="' + top + '" x2="' + px + '" y2="' + base + '" stroke="' + color + '" stroke-width="1.2" stroke-dasharray="3 3"/>' +
+             '<text x="' + px + '" y="' + (top - 8) + '" fill="' + color + '" font-family="Consolas, ui-monospace, monospace" font-size="11" font-weight="600" text-anchor="middle">' + label + '</text>';
+    }
+
+    svg.innerHTML =
+      '<line x1="' + x0 + '" y1="' + base + '" x2="' + x1 + '" y2="' + base + '" stroke="' + line + '" stroke-width="1.2"/>' +
+      '<path d="' + areaFill + '" fill="' + accent + '" opacity="0.14"/>' +
+      (tailFill ? '<path d="' + tailFill + '" fill="' + crit + '" opacity="0.30"/>' : '') +
+      '<path d="' + curve + '" fill="none" stroke="' + accent + '" stroke-width="2.4" stroke-linejoin="round"/>' +
+      vline(lslX, 'LSL', faint) +
+      vline(uslX, 'USL', crit);
+  })();
+</script>
+</body>
+</html>

@@ -3,22 +3,37 @@ from .core import get_conn, _now, _row
 from .models import Session
 
 
+# product_info.csv lookup 으로 채우는 세션 기준정보 컬럼(화이트리스트 — 오타/미지 키 차단).
+_PRODUCT_INFO_COLUMNS = (
+    "part_id", "sub_part_id", "product_group", "wf_size", "chip_size_x",
+    "chip_size_y", "gross_die", "pkg_type", "e2f_fab_site", "step",
+    "temperature", "equip", "para", "flat_zone",
+)
+
+
 def create_session(session_id, file_name, file_path, product_type=None, dataset_id=None,
                    lot_id=None, password=None, is_debug=0, product=None,
                    process=None, revision=None, edm_link=None, source='xlsx_upload',
-                   uploaded_by=None, client_host=None, mode='Normal'):
+                   uploaded_by=None, client_host=None, mode='Normal', product_info=None):
     now = _now()
     file_path_str = str(file_path) if file_path is not None else None
+    # 기준정보(product_info)는 화이트리스트 컬럼 중 값이 있는 것만 동적 병합한다. 컬럼명은
+    # 코드 상수에서만 오므로 안전하고, 값만 파라미터 바인딩한다. 없으면 기존 INSERT 와 동일.
+    info = product_info or {}
+    extra_cols = [c for c in _PRODUCT_INFO_COLUMNS if info.get(c)]
+    extra_col_sql = "".join(f"{c}, " for c in extra_cols)
+    extra_ph = "?, " * len(extra_cols)
+    extra_vals = [info[c] for c in extra_cols]
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO report_session "
             "(session_id, file_name, file_path, product_type, process, product, revision, "
             " edm_link, dataset_id, lot_id, password, is_debug, source, uploaded_by, client_host, "
-            " mode, status, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)",
+            f" mode, {extra_col_sql}status, created_at, updated_at) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {extra_ph}'pending', ?, ?)",
             (session_id, file_name, file_path_str, product_type, process, product, revision,
              edm_link, dataset_id, lot_id, password, is_debug, source, uploaded_by, client_host,
-             mode or 'Normal', now, now),
+             mode or 'Normal', *extra_vals, now, now),
         )
 
 

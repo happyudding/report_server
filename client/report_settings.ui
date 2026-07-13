@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>780</width>
+    <width>940</width>
     <height>560</height>
    </rect>
   </property>
@@ -215,7 +215,7 @@
 Change</string></property>
           <property name="toolTip"><string>각 입력 파일(Filename)의 legend 명을 콤마로 구분해 직접 지정합니다.</string></property>
           <property name="maximumSize"><size><width>52</width><height>16777215</height></size></property>
-          <property name="styleSheet"><string notr="true">font-size: 8pt; padding: 2px 0px;</string></property>
+          <property name="styleSheet"><string notr="true">QPushButton { font-size: 8pt; font-weight: 700; padding: 3px 0px; background: #16a34a; color: #ffffff; border: 1px solid #12813b; border-radius: 4px; } QPushButton:hover { background: #15803d; } QPushButton:pressed { background: #12813b; }</string></property>
          </widget>
         </item>
         <item>

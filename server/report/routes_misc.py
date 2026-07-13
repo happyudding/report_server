@@ -2,7 +2,6 @@
 (Phase 4 분리 — 구 report_routes.py)."""
 import logging
 import re
-import sqlite3
 from pathlib import Path
 
 from flask import abort, jsonify, make_response, request, send_file
@@ -11,9 +10,9 @@ from auth_identity import current_user as _current_user
 from config import (
     REPORT_ANALYSIS_INDEX_HTML,
     REPORT_VIEW_HTML,
-    STDINFO_DB_PATH,
 )
 from database import report_db
+from product_info import list_search_candidates
 from report.report_extension import report_bp
 from report.security import (
     _issue_csrf_cookie,
@@ -234,21 +233,11 @@ def set_favorite():
 
 @report_bp.get("/api/part_ids")
 def part_ids():
-    """stdinfo DB 의 products.part_id 전체 목록. 업로드 다이얼로그 Product 검색용.
+    """product_info.csv 의 part_id + sub_part_id(중괄호) flatten 검색 후보. 업로드 Product 검색용.
 
-    DB 없음/조회 실패는 best-effort 로 빈 리스트 반환(500 안 냄). 서버 로그에만 경고.
+    파일 없음/파싱 실패는 best-effort 로 빈 리스트 반환(500 안 냄) — product_info 로더가 내부 처리.
     """
-    ids = []
-    try:
-        con = sqlite3.connect(f"file:{STDINFO_DB_PATH}?mode=ro", uri=True)
-        try:
-            rows = con.execute("SELECT part_id FROM products ORDER BY part_id").fetchall()
-        finally:
-            con.close()
-        ids = [r[0] for r in rows if r[0]]
-    except Exception as exc:  # noqa: BLE001
-        _log.warning("part_ids 조회 실패 (%s): %s", STDINFO_DB_PATH, exc)
-    return jsonify({"part_ids": ids})
+    return jsonify({"part_ids": list_search_candidates()})
 
 
 # ── debug helpers ─────────────────────────────────────────────────────────────

@@ -411,7 +411,7 @@ class HoneyMainWindow(QMainWindow):
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)       # 긴 경로는 가로 스크롤
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # 확장자 좁게(오른쪽)
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)             # 행별 ✕ 삭제 버튼(좁게 고정)
-        t.setColumnWidth(2, 28)
+        t.setColumnWidth(2, 32)
         hh.setStretchLastSection(False)
         # 드롭은 리스트 영역에서만 받는다 (메인 창엔 setAcceptDrops 를 걸지 않음).
         t.setTextElideMode(Qt.TextElideMode.ElideNone)
@@ -991,11 +991,12 @@ class HoneyMainWindow(QMainWindow):
             # 행별 ✕ 삭제 버튼 — 그 행의 파일만 리스트에서 제거(경로로 식별해 행 이동에 안전).
             del_btn = QPushButton("✕")
             del_btn.setToolTip("이 파일을 리스트에서 삭제")
-            del_btn.setFixedSize(20, 18)
+            del_btn.setFixedSize(24, 20)
             del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
             del_btn.setStyleSheet(
-                "QPushButton { border:none; color:#b00020; font-size:9pt; }"
-                "QPushButton:hover { color:#ff0000; font-weight:700; }")
+                "QPushButton { border:none; background:transparent; color:#d11a2a;"
+                " font-size:14px; font-weight:800; padding:0px; }"
+                "QPushButton:hover { color:#ff0000; background:#ffe1e1; border-radius:4px; }")
             del_btn.clicked.connect(
                 lambda _checked=False, path=full_path: self._delete_file_by_path(path))
             self.list_csv.setCellWidget(r, 2, del_btn)
@@ -1037,8 +1038,17 @@ class HoneyMainWindow(QMainWindow):
         self._status(f"'{removed}' 을(를) 리스트에서 제거했습니다.")
 
     def _load_paths(self, paths):
-        """선택된 입력 파일들 → 리스트 채우기 + 저장 파일명 제안 (전처리는 Start 까지 보류)."""
-        self.csv_paths = [str(Path(p).resolve()) for p in paths]
+        """선택된 입력 파일들 → 기존 리스트에 이어붙이기(중복 경로 제외) + 저장 파일명 제안.
+        새로 File open(또는 D1/드래그드롭)을 해도 기존 리스트를 지우지 않고 추가한다.
+        전체 비우기는 Clear 버튼, 개별 제거는 각 행의 ✕ 버튼이 담당한다."""
+        new_paths = [str(Path(p).resolve()) for p in paths]
+        merged = list(self.csv_paths or [])
+        seen = set(merged)
+        for p in new_paths:
+            if p not in seen:
+                merged.append(p)
+                seen.add(p)
+        self.csv_paths = merged
         self._refill_csv_list()
         self.le_outname.setText(_suggest_base_name(self.csv_paths))
         self.group = None
@@ -2052,6 +2062,9 @@ HONEY_QSS = """
     QMenuBar { background: #F3E5B8; color: #6B4E16; }
     QMenuBar::item:selected { background: #FFD65A; }
     QMenu { background: #FFFDF5; border: 1px solid #E8D9A8; color: #4A3B1A; }
+    /* QMenu 에 스타일시트가 걸리면 item 패딩을 명시하지 않을 때 Qt 가 우측 글자를 잘라
+       긴 메뉴명이 다 안 보인다 — 좌우 여백을 넉넉히 줘 폭을 확보한다. */
+    QMenu::item { padding: 5px 30px 5px 22px; }
     QMenu::item:selected { background: #FFE29A; }
     QToolBar { background: #F3E5B8; border: none; }
     QProgressBar {

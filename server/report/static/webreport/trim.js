@@ -10,7 +10,7 @@ const TRIM = {
   REPORT_ENABLED: false,    // ③ 분석 리포트 임시 비활성(웹에서 숨김) — renderTrimReport 코드는 보존
 };
 let trimState = {
-  view: "match",            // match | scatter | report
+  view: "scatter",          // match | scatter | report (기본: ② 산포 분석)
   source: "",               // 선택 source ("" = 첫 소스, payload 도착 후 실제 이름으로 확정)
   payloads: {},             // source → payload (클라 캐시)
   payloadPromises: {},      // source → 진행 중 fetch (중복 방지)
