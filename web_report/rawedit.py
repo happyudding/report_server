@@ -61,28 +61,31 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
         except ValueError as exc:
             raise ValueError(f"source_{i}: {exc}") from exc
 
-    # (2) source 개수 일치 검사
-    existing = sum(
-        1 for o in report_db.get_all_object_infos(analysis_key)
-        if str(o.get("object_type", "")).startswith("web_report_source_")
-    )
-    if existing and len(sources_bytes) != existing:
-        raise ValueError(
-            f"source 개수 불일치: 기존 {existing}, 업로드 {len(sources_bytes)}")
+    # 같은 analysis_key 원본의 read-modify-write 직렬화 — service.edit_raw_data 와 같은
+    # 락 키로 동시 편집 lost update 방지 (단일 프로세스 전제, in-process 락).
+    with cache.keyed_lock(("rawedit", analysis_key)):
+        # (2) source 개수 일치 검사
+        existing = sum(
+            1 for o in report_db.get_all_object_infos(analysis_key)
+            if str(o.get("object_type", "")).startswith("web_report_source_")
+        )
+        if existing and len(sources_bytes) != existing:
+            raise ValueError(
+                f"source 개수 불일치: 기존 {existing}, 업로드 {len(sources_bytes)}")
 
-    manifest = runtime.storage().load_webreport_manifest(analysis_key, upload_root)
+        manifest = runtime.storage().load_webreport_manifest(analysis_key, upload_root)
 
-    content_hash = hashlib.sha256(
-        canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
-    ).hexdigest()
+        content_hash = hashlib.sha256(
+            canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
+        ).hexdigest()
 
-    storage_result = runtime.storage().save_webreport_sources(
-        analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
+        storage_result = runtime.storage().save_webreport_sources(
+            analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
 
-    report_db.update_session(session_id, content_hash=content_hash)
-    # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
-    # (edit_raw_data 와 동일한 무효화 로직).
-    cache.evict_akey_caches(analysis_key)
+        report_db.update_session(session_id, content_hash=content_hash)
+        # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
+        # (edit_raw_data 와 동일한 무효화 로직).
+        cache.evict_akey_caches(analysis_key)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,

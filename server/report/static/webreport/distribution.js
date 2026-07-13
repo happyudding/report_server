@@ -1,10 +1,10 @@
 // ── Distribution (ECDF, small-multiples grid) ─────────────────────────────
 // F:\COINAPI\report_webserver\plotly_core_code (figure_builder.py/page_builder.py) 참고:
-// item(subject)별 산점(scattergl, value vs 누적%) + spec 상/하한 점선. 데이터는
-// web_report/tabs/distribution.py 가 이미 전량(다운샘플링 없음) 계산해 sheets["Distribution"]
-// 로 내려준다. item 이 많을 때 WebGL 컨텍스트가 한꺼번에 수십 개 살아있으면 브라우저가
-// 느려지거나 깨질 수 있어 IntersectionObserver 로 화면에 보이는 칸만 그리고, 화면 밖으로
-// 나가면 일정 시간 후 Plotly.purge 로 해제한다.
+// item(subject)별 산점(value vs 누적%) + spec 상/하한 점선. 데이터는
+// web_report/tabs/distribution.py 가 이미 전량(다운샘플링 없음) 계산해 별도 엔드포인트로
+// 내려준다. 갤러리 칸은 SVG scatter(표시용 다운샘플) — IntersectionObserver 로 화면에
+// 보이는 칸만 그리고, 화면 밖으로 나가면 Plotly.purge 로 해제해 plot DOM 상주를 막는다.
+// 상세(item_detail.js)의 CDF 는 전 포인트 렌더라 DIST.CDF_GL 플래그로 scattergl(WebGL) 사용.
 const DIST_PALETTE = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
   "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52"];
 // DIST_PALETTE(10색) 을 넘는 source 폴백 색 — client/chart_colors.py
@@ -40,7 +40,11 @@ let distColorMap = {};        // source → color
 
 // ── Distribution 산포 탭 (툴바/갤러리/상세) 상태·규격 ─────────────────────────
 const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 1500, PER_FRAME: 3,
-  ROOT_MARGIN: "1200px 0px", EXCLUDE: ["chipid", "gpib", "otp", "code"] };
+  ROOT_MARGIN: "1200px 0px", EXCLUDE: ["chipid", "gpib", "otp", "code"],
+  // 상세 CDF(item_detail.js distRenderCdf) 렌더 방식 토글 — true: scattergl(WebGL,
+  // 대량 포인트 SVG 프리즈 방지) / false: 기존 SVG scatter 로 즉시 롤백.
+  // 데이터·배열 생성 코드는 양쪽 동일하고 trace type 만 바뀐다 (다운샘플 없음).
+  CDF_GL: true };
 const DIST_STATUS_BG = { fail: "#FDECEC", cpk_low: "#FEF9E7", ok: "#FFFFFF" };  // 연빨강 / 연노랑 / 흰
 const DIST_PLOT_BG = {
   paper_bgcolor: "#FFFFFF", plot_bgcolor: "#FFFFFF",

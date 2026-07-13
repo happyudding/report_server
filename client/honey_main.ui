@@ -175,13 +175,6 @@
          </widget>
         </item>
         <item>
-         <widget class="QPushButton" name="btn_csv_del">
-          <property name="text"><string>✕</string></property>
-          <property name="toolTip"><string>선택한 파일만 리스트에서 삭제</string></property>
-          <property name="maximumSize"><size><width>40</width><height>16777215</height></size></property>
-         </widget>
-        </item>
-        <item>
          <widget class="QPushButton" name="btn_csv_clear">
           <property name="text"><string>Clear</string></property>
           <property name="toolTip"><string>파일 리스트 전체 비우기</string></property>

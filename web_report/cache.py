@@ -70,7 +70,9 @@ AKEY_CACHES: list = [TABLES_CACHE, DIST_CACHE, REPORT_CACHE, COMMONALITY_CACHE,
 # 사용자가 동시에 열면 수 초짜리 CPU-bound 계산이 중복 실행되며 GIL 로 서로 밀어내므로,
 # 같은 (종류, akey, chash) 계산은 한 스레드만 수행하고 나머지는 대기 후 캐시를 재확인한다.
 _KEYED_LOCKS: OrderedDict = OrderedDict()
-_KEYED_LOCKS_MAX = 32
+# 상한이 동시 진행 키 수보다 작으면 락 보유 중인 키가 축출돼 같은 키에 새 락이 생기며
+# 상호배제가 깨진다(편집 직렬화 rawedit 키 포함) — 넉넉하게 잡는다. 락 객체는 경량.
+_KEYED_LOCKS_MAX = 256
 
 
 def register_akey_cache(cache: OrderedDict) -> None:

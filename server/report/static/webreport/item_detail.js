@@ -44,9 +44,11 @@ function openItemDetail(subject, navList) {
   _itemDetailData = null;
   const reqId = ++_itemDetailReq;
   window.scrollTo(0, 0);
+  purgeItemDetailCharts();   // 항목 이동 시 이전 차트(WebGL 컨텍스트) 해제 후 갈아끼움
   dp.innerHTML = `<div class="idet"><div class="idet-head"><button class="btn-sm idet-back">← Back</button>` +
     `<span class="idet-title"><b>${esc(subject)}</b></span></div><div class="placeholder">로드 중…</div></div>`;
-  fetch(`/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`, { cache: "no-store" })
+  // cache 옵션 없음(기본) — 서버 ETag 조건부 응답으로 재클릭·재방문 시 304 재검증된다.
+  fetch(`/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`)
     .then(res => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
     .then(data => { if (reqId === _itemDetailReq) renderItemDetail(data); })
     .catch(e => {
@@ -230,11 +232,21 @@ function itemDetailNav(delta) {
   if (next && next !== _itemDetailSubject) openItemDetail(next, _itemDetailNav);
 }
 
+// 상세 패널 Plotly 차트 해제 — scattergl(WebGL 컨텍스트)은 innerHTML 교체만으로 회수되지
+// 않으므로 패널을 비우기/갈아끼우기 전에 purge 한다 (SVG 차트에도 무해).
+function purgeItemDetailCharts() {
+  ["distCdf", "distHist", "distNormal"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el && el.data) { try { Plotly.purge(el); } catch (e) { /* no-op */ } }
+  });
+}
+
 function closeItemDetail() {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
   _itemDetailReq++;   // 진행 중 fetch 무효화
   dp.classList.remove("active");
+  purgeItemDetailCharts();
   dp.innerHTML = "";
   const back = document.getElementById(_itemDetailReturnId || "panel-summary");
   if (back) back.classList.add("active");
@@ -244,7 +256,7 @@ function closeItemDetail() {
 // 탭 버튼 클릭 시: 복원 없이 상세만 닫는다(해당 탭 패널이 이어서 활성화됨).
 function hideItemDetail() {
   const dp = document.getElementById("panel-item-detail");
-  if (dp && dp.classList.contains("active")) { _itemDetailReq++; dp.classList.remove("active"); dp.innerHTML = ""; }
+  if (dp && dp.classList.contains("active")) { _itemDetailReq++; dp.classList.remove("active"); purgeItemDetailCharts(); dp.innerHTML = ""; }
   _itemDetailReturnId = null;
 }
 
@@ -383,6 +395,10 @@ function cdfAfterEdit() {
 function distRenderCdf(data) {
   const cdfDiv = document.getElementById("distCdf");
   if (!cdfDiv) return;
+  // 재렌더(제외/강조 편집) 시 이전 plot 을 해제 — scattergl 의 WebGL 컨텍스트 누적 방지
+  // (SVG 에도 무해). newPlot 이 이어서 새로 초기화한다.
+  if (cdfDiv.data) { try { Plotly.purge(cdfDiv); } catch (e) { /* no-op */ } }
+  const useGl = !!DIST.CDF_GL;   // 렌더 방식 토글 — distribution.js DIST 상수 참조
   const lo = data.lower_limit, hi = data.upper_limit;
   const bg = DIST_STATUS_BG[data.status] || "#FFFFFF";
   const multi = (data.sources || []).length > 1;
@@ -401,7 +417,8 @@ function distRenderCdf(data) {
     }
     const c = distCdfFromValues(vals);
     const base = distColorFor(s.name);
-    const trace = { type: "scatter", mode: "markers", cliponaxis: false, name: s.name, x: c.x, y: c.y };
+    const trace = { type: useGl ? "scattergl" : "scatter", mode: "markers", name: s.name, x: c.x, y: c.y };
+    if (!useGl) trace.cliponaxis = false;   // scattergl 미지원 속성 — SVG 분기에만
     if (hasId) {
       // customdata/hover 는 필터·정렬된 동일 순서 유지(클릭 식별·hover 지속).
       trace.customdata = c.order.map(i => [serial[i], xpos[i], ypos[i]]);

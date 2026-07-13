@@ -127,9 +127,9 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         pass
 
     # 캐시 프리웜: 업로더가 곧바로 여는 첫 조회(cold: parquet decode + payload + dist compact
-    # ~10s)를 없애기 위해 미리 계산해 둔다. 컴퓨트 풀에 제출되어 동시성 상한(워커 수)이
-    # 자동 적용된다 — 연속 업로드 폭주 시 무제한 스레드가 생기지 않는다 (Phase 6).
-    # 실패해도 무해 — 조회 시 다시 계산될 뿐이다.
+    # ~10s)를 없애기 위해 미리 계산해 둔다. 부모 데몬 스레드에서 실행되어 위에서 시딩한
+    # TABLES_CACHE 를 그대로 쓰고(재디코드 0회), 동시성은 세마포어(워커 수)로 상한된다
+    # (compute.prewarm docstring 참조). 실패해도 무해 — 조회 시 다시 계산될 뿐이다.
     from . import compute
     compute.prewarm(session_id, str(upload_root))
 

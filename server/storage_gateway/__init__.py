@@ -13,6 +13,7 @@ Internal modules (외부 담당자 영역):
 import io
 import logging
 import math
+import os
 from pathlib import Path
 
 from config import REPORT_UPLOAD_DIR
@@ -29,6 +30,14 @@ def _storage_opts(backend):
     """object_info.options_json 에 기록할 저장 위치 마커 ('s3' | 'local')."""
     import json
     return json.dumps({"storage": backend})
+
+
+def _atomic_write_bytes(path: Path, data: bytes) -> None:
+    """로컬 폴백 저장 원자쓰기 — 쓰는 도중 크래시해도 torn 파일이 정본 경로에 남지 않는다
+    (disk_cache._write 와 동일한 tmp + os.replace 패턴)."""
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_bytes(data)
+    os.replace(tmp, path)
 
 
 def object_backend(obj):
@@ -146,7 +155,7 @@ def save_distribution_png(analysis_key, content_hash, meta_str, data, s3_ok=True
     try:
         local_dir = Path(REPORT_UPLOAD_DIR) / "dist_combined"
         local_dir.mkdir(parents=True, exist_ok=True)
-        (local_dir / f"{analysis_key}.png").write_bytes(data)
+        _atomic_write_bytes(local_dir / f"{analysis_key}.png", data)
         return True
     except Exception as exc:
         warnings.append(f"distribution_sheet local save failed: {exc}")
@@ -170,10 +179,24 @@ def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: 
 
     if s3_ok:
         try:
-            for idx, data in enumerate(sources):
+            def _put_source(item):
+                idx, data = item
                 key = report_s3.make_webreport_source_s3_key(analysis_key, idx)
                 uri = report_s3.upload_bytes_to_s3(
                     key, data, content_type="application/vnd.apache.parquet")
+                return idx, key, uri
+
+            # 소스가 여러 개면 병렬 업로드 — load_webreport_sources 의 병렬 다운로드와
+            # 동일 패턴 (boto3 client 는 스레드세이프). 업로드 임계경로(ingest 동기 구간)라
+            # 직렬 왕복 누적을 줄인다. 하나라도 실패하면 예외 → 기존 로컬 폴백 전체 저장.
+            if len(sources) > 1:
+                from concurrent.futures import ThreadPoolExecutor
+                with ThreadPoolExecutor(max_workers=min(4, len(sources))) as pool:
+                    uploaded = list(pool.map(_put_source, enumerate(sources)))
+            else:
+                uploaded = [_put_source(item) for item in enumerate(sources)]
+            # object_info 기록은 업로드 전부 성공한 뒤에 — 성공-후-기록 규약 유지.
+            for idx, key, uri in uploaded:
                 report_db.upsert_object_info(
                     analysis_key, content_hash, _storage_opts("s3"), f"web_report_source_{idx}",
                     report_s3.bucket_name(), key, uri)
@@ -192,9 +215,10 @@ def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: 
     session_dir = Path(upload_root) / "web_report" / analysis_key
     session_dir.mkdir(parents=True, exist_ok=True)
     for idx, data in enumerate(sources):
-        (session_dir / f"source_{idx}.parquet").write_bytes(data)
-    (session_dir / "manifest.json").write_text(
-        _json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        _atomic_write_bytes(session_dir / f"source_{idx}.parquet", data)
+    _atomic_write_bytes(
+        session_dir / "manifest.json",
+        _json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
     # 로컬 저장 위치를 object_info 에 기록 — load 가 S3 대신 로컬을 읽도록 (부활 방지).
     # 기록 실패는 best-effort (파일은 이미 써졌고 legacy 경로 폴백으로도 읽힌다).
     try:
@@ -242,8 +266,9 @@ def save_webreport_manifest(analysis_key, manifest: dict, upload_root) -> dict:
     import json as _json
     session_dir = Path(upload_root) / "web_report" / analysis_key
     session_dir.mkdir(parents=True, exist_ok=True)
-    (session_dir / "manifest.json").write_text(
-        _json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    _atomic_write_bytes(
+        session_dir / "manifest.json",
+        _json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8"))
     try:
         report_db.upsert_object_info(
             analysis_key, content_hash, _storage_opts("local"), "web_report_manifest",

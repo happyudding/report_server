@@ -157,7 +157,7 @@ function splitLines(v) {
   syncThemeBtn();
 })();
 
-// ── 화면 설정(글꼴·글씨 크기) 팝오버 — head 부트스트랩이 저장값을 먼저 적용해 둔 상태 ──
+// ── 화면 설정(글꼴) 팝오버 — head 부트스트랩이 저장값을 먼저 적용해 둔 상태 ──
 const UI_FONTS = {
   default: "",   // 빈 값 → CSS 기본 스택(--report-font 미설정과 동일 효과)
   malgun: '"Malgun Gothic", sans-serif',
@@ -169,19 +169,8 @@ const UI_FONTS = {
   const panel = document.getElementById("settingsPanel");
   if (!toggle || !panel) return;
   const root = document.documentElement;
-  let curScale = (() => { try { return localStorage.getItem("report_ui_scale") || "1"; } catch (e) { return "1"; } })();
   let curFont = (() => { try { return localStorage.getItem("report_ui_font") || "default"; } catch (e) { return "default"; } })();
 
-  function applyScale(scale) {
-    curScale = String(scale);
-    if (curScale === "1") root.style.removeProperty("--ui-zoom");
-    else root.style.setProperty("--ui-zoom", curScale);
-    try { localStorage.setItem("report_ui_scale", curScale); } catch (e) {}
-    // 상단바 높이가 스케일로 바뀌므로 sticky 오프셋 재실측.
-    if (typeof syncStickyHeadHeight === "function") syncStickyHeadHeight();
-    if (typeof syncIssueStickyOffsets === "function") syncIssueStickyOffsets();
-    syncActive();
-  }
   function applyFont(key) {
     curFont = UI_FONTS[key] != null ? key : "default";
     const stack = UI_FONTS[curFont];
@@ -191,16 +180,12 @@ const UI_FONTS = {
     syncActive();
   }
   function syncActive() {
-    panel.querySelectorAll("#uiScaleSeg button").forEach(b =>
-      b.classList.toggle("active", b.dataset.scale === curScale));
     panel.querySelectorAll("#uiFontSeg button").forEach(b =>
       b.classList.toggle("active", b.dataset.font === curFont));
   }
   toggle.addEventListener("click", (e) => { e.stopPropagation(); panel.classList.toggle("open"); });
   panel.addEventListener("click", (e) => {
     e.stopPropagation();
-    const sc = e.target.closest("#uiScaleSeg button");
-    if (sc) { applyScale(sc.dataset.scale); return; }
     const ft = e.target.closest("#uiFontSeg button");
     if (ft) { applyFont(ft.dataset.font); return; }
     const stab = e.target.closest(".settings-tab");

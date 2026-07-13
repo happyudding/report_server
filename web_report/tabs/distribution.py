@@ -214,17 +214,20 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP) -> dict:
             continue
         data = table.data
         failtno_norm = failtno_norms(table)
-        meta_vals = {c: data[c].tolist() for c in _META_COLUMNS}
-        item_vals = col.tolist()
-        for i, fn in enumerate(failtno_norm):
-            if fn != item_tno:
-                continue
-            fail_total += 1
-            if len(fail_rows) < fail_row_cap:
+        # 매칭 인덱스를 먼저 수집 — fail 0건(대부분의 항목 클릭)이나 cap 도달 시 전 행
+        # meta 컬럼 .tolist() 물질화(O(rows×meta_cols))를 피한다. 값 변환은 기존과
+        # 동일하게 .tolist() 경유(numpy→native)라 payload 표기가 변하지 않는다.
+        idxs = [i for i, fn in enumerate(failtno_norm) if fn == item_tno]
+        fail_total += len(idxs)
+        take = idxs[:max(0, fail_row_cap - len(fail_rows))]
+        if take:
+            meta_slice = {c: data[c].iloc[take].tolist() for c in _META_COLUMNS}
+            vals_slice = col.iloc[take].tolist()
+            for j in range(len(take)):
                 row = {"SOURCE": table.source}
                 for c in _META_COLUMNS:
-                    row[c] = fmt_type(meta_vals[c][i])
-                row["value"] = round_num(item_vals[i])
+                    row[c] = fmt_type(meta_slice[c][j])
+                row["value"] = round_num(vals_slice[j])
                 fail_rows.append(row)
 
     cpk = min(cpks) if cpks else None

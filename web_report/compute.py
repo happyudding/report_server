@@ -17,12 +17,20 @@ GIL 직렬화 제거: **콜드 세션**의 report payload / distribution compact
 """
 from __future__ import annotations
 
+import logging
 import os
 import threading
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
+_log = logging.getLogger(__name__)
+
 _WORKERS = max(0, int(os.getenv("WEB_REPORT_COMPUTE_WORKERS", "2") or 2))
+# 워커 N개 태스크 처리 후 프로세스 재기동 — 워커 프로세스 내 TABLES_CACHE(최대 4GB)로
+# RSS 가 단조 증가하는 것을 막는다. 재기동 비용(모듈 재임포트)은 백그라운드라 무해.
+_TASKS_PER_CHILD = max(1, int(os.getenv("WEB_REPORT_COMPUTE_TASKS_PER_CHILD", "32") or 32))
+# 워커 hang 시 waitress 스레드가 .result() 에서 영구 대기하는 것을 막는 상한.
+_TIMEOUT_SEC = float(os.getenv("WEB_REPORT_COMPUTE_TIMEOUT_SEC", "300") or 300)
 _IN_WORKER = False
 _pool = None
 _pool_lock = threading.Lock()
@@ -41,7 +49,8 @@ def _get_pool():
     with _pool_lock:
         if _pool is None:
             from concurrent.futures import ProcessPoolExecutor
-            _pool = ProcessPoolExecutor(max_workers=_WORKERS, initializer=_init_worker)
+            _pool = ProcessPoolExecutor(max_workers=_WORKERS, initializer=_init_worker,
+                                        max_tasks_per_child=_TASKS_PER_CHILD)
     return _pool
 
 
@@ -59,17 +68,23 @@ def run(job, *args):
     """job 을 워커에서 실행하고 결과를 반환. 풀 비활성/워커 내부면 인라인 실행.
 
     워커 프로세스 붕괴(BrokenProcessPool — OOM, main 가드 없는 스크립트 등)는
-    풀을 리셋하고 인라인으로 폴백한다 — 요청이 500 으로 죽지 않는다."""
+    풀을 리셋하고 인라인으로 폴백한다 — 요청이 500 으로 죽지 않는다.
+    타임아웃(워커 hang)은 raise — 인라인 폴백하면 hang 원인이 데이터일 때 부모
+    GIL 까지 태우므로 요청만 실패시킨다(워커 태스크 자체는 계속 돌 수 있음)."""
     global _pool
     pool = _get_pool()
     if pool is None:
         return job(*args)
     try:
-        return pool.submit(job, *args).result()
+        return pool.submit(job, *args).result(timeout=_TIMEOUT_SEC)
     except BrokenProcessPool:
         with _pool_lock:
             _pool = None
         return job(*args)
+    except TimeoutError:
+        _log.error("compute worker timeout (%ss): %s%r", _TIMEOUT_SEC,
+                   getattr(job, "__name__", job), args)
+        raise
 
 
 # ── 워커 잡 (모듈 최상위 — spawn pickling 요건). service 를 재사용하므로 값이
@@ -98,25 +113,28 @@ def trim_job(session_id: str, upload_root_str: str, source: str) -> bytes:
     return blob
 
 
+# 동시 프리웜 스레드 상한 (연속 업로드 폭주 방지 — 종전 풀 제출 시절의 워커 수 상한과 동등).
+_PREWARM_SLOTS = threading.BoundedSemaphore(max(1, _WORKERS))
+
+
 def _prewarm_job(session_id: str, upload_root_str: str) -> None:
-    try:
-        report_job(session_id, upload_root_str)
-        dist_job(session_id, upload_root_str)
-    except Exception:
-        pass
+    with _PREWARM_SLOTS:
+        try:
+            report_job(session_id, upload_root_str)
+            dist_job(session_id, upload_root_str)
+        except Exception:
+            pass
 
 
 def prewarm(session_id: str, upload_root_str: str) -> None:
-    """업로드 직후 프리웜 — 풀에 제출 (동시성 상한 = 워커 수, 연속 업로드 폭주 방지).
+    """업로드 직후 프리웜 — 부모 데몬 스레드에서 실행 (2026-07-12 워커 제출에서 복귀).
 
-    풀 비활성이면 종전 데몬 스레드 방식으로 폴백한다. 실패는 무해 — 첫 조회가
-    다시 계산할 뿐이다."""
-    pool = _get_pool()
-    if pool is not None:
-        try:
-            pool.submit(_prewarm_job, session_id, upload_root_str)
-            return
-        except Exception:
-            pass
+    워커 제출 시절엔 워커 프로세스가 부모 TABLES_CACHE 시딩을 못 봐 storage 재다운로드+
+    재디코드(업로드당 디코드 2회)가 났고, 업로더가 곧바로 페이지를 열면 부모 인라인 빌드와
+    중복 계산됐다. 부모 스레드면 ingest 가 방금 시딩한 캐시를 그대로 쓰고(재디코드 0회),
+    keyed_lock single-flight 로 직후 /full·/distribution 과도 중복되지 않으며, 결과가 부모
+    RAM 캐시에 직접 들어가 첫 조회가 RAM 히트다. 시딩이 이미 축출된 세션은 load 경로의
+    should_offload 가 자동으로 워커 오프로드를 택한다(자기교정). 세마포어 acquire 는 스레드
+    안에서 하므로 업로드 응답을 블록하지 않는다. 실패는 무해 — 첫 조회가 다시 계산할 뿐이다."""
     threading.Thread(target=_prewarm_job, args=(session_id, upload_root_str),
                      name=f"webreport-prewarm-{session_id}", daemon=True).start()

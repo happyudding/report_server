@@ -111,16 +111,26 @@ def run_cleanup(dry_run=None):
         _log.exception("[cleanup] get_expired_sessions failed")
         return {"scanned": 0, "deleted": 0, "dry_run": dry_run, "audit_purged": audit_purged}
 
+    # ingest 크래시 잔존물(status='pending'·analysis_key 없음) — retention 과 무관하게
+    # 48h 지나면 회수. analysis_key 가 없어 산출물 참조도 없으므로 세션 행만 지워진다.
+    try:
+        orphans = report_db.get_orphan_pending_sessions(int(time.time()) - 48 * 3600)
+    except Exception:
+        orphans = []
+        _log.exception("[cleanup] get_orphan_pending_sessions failed")
+
     deleted = 0
-    for session in expired:
+    for session in expired + orphans:
         try:
             if _cleanup_one(session, dry_run):
                 deleted += 1
         except Exception:
             _log.exception("[cleanup] session %s failed", session.get("session_id"))
-    _log.info("[cleanup] done: scanned=%d deleted=%d dry_run=%s retention_days=%d audit_purged=%d",
-              len(expired), deleted, dry_run, config.REPORT_RETENTION_DAYS, audit_purged)
-    return {"scanned": len(expired), "deleted": deleted, "dry_run": dry_run,
+    _log.info("[cleanup] done: scanned=%d (orphan_pending=%d) deleted=%d dry_run=%s "
+              "retention_days=%d audit_purged=%d",
+              len(expired) + len(orphans), len(orphans), deleted, dry_run,
+              config.REPORT_RETENTION_DAYS, audit_purged)
+    return {"scanned": len(expired) + len(orphans), "deleted": deleted, "dry_run": dry_run,
             "audit_purged": audit_purged}
 
 

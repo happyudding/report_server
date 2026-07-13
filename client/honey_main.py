@@ -26,7 +26,7 @@ from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, Q
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QHeaderView,
-    QMainWindow, QMessageBox, QTableWidgetItem, QWidget,
+    QMainWindow, QMessageBox, QPushButton, QTableWidgetItem, QWidget,
 )
 
 from transport.config import CURRENT_VERSION, SERVER_BASE_URL
@@ -401,8 +401,8 @@ class HoneyMainWindow(QMainWindow):
         """list_csv (QTableWidget) 를 '파일 경로 | 확장자' 2열로 구성하고,
         파일 리스트 영역에 한정한 드래그앤드롭(외부 파일)을 활성화한다."""
         t = self.list_csv
-        t.setColumnCount(2)
-        t.setHorizontalHeaderLabels(["파일 경로", "확장자"])
+        t.setColumnCount(3)
+        t.setHorizontalHeaderLabels(["파일 경로", "확장자", ""])
         t.verticalHeader().setVisible(False)
         t.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         t.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -410,6 +410,8 @@ class HoneyMainWindow(QMainWindow):
         hh = t.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)       # 긴 경로는 가로 스크롤
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # 확장자 좁게(오른쪽)
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)             # 행별 ✕ 삭제 버튼(좁게 고정)
+        t.setColumnWidth(2, 28)
         hh.setStretchLastSection(False)
         # 드롭은 리스트 영역에서만 받는다 (메인 창엔 setAcceptDrops 를 걸지 않음).
         t.setTextElideMode(Qt.TextElideMode.ElideNone)
@@ -451,9 +453,9 @@ class HoneyMainWindow(QMainWindow):
         self.btn_open_local.clicked.connect(self.on_open_local)
         self.btn_pick_csv.clicked.connect(self.on_browse_d1)
         # 입력 파일: 선택 후 ▲▼ 로 순서 변경 (맨 위 파일이 기준), Clear 로 전체 비우기
+        # 개별 파일 삭제는 각 행의 ✕ 버튼(_refill_csv_list)이 담당한다.
         self.btn_csv_up.clicked.connect(lambda: self._move_file(-1))
         self.btn_csv_down.clicked.connect(lambda: self._move_file(1))
-        self.btn_csv_del.clicked.connect(self._delete_selected_file)
         self.btn_csv_clear.clicked.connect(self._clear_files)
         # Start: 파일 전처리 후 설정 팝업(Select Items/Option/색/Auto Upload) 열기
         self.btn_start.clicked.connect(self.on_start)
@@ -528,7 +530,6 @@ class HoneyMainWindow(QMainWindow):
         move_col = QVBoxLayout()
         move_col.addWidget(self.btn_csv_up)
         move_col.addWidget(self.btn_csv_down)
-        move_col.addWidget(self.btn_csv_del)
         move_col.addWidget(self.btn_csv_clear)
         move_col.addStretch(1)
         file_row.addLayout(move_col)
@@ -718,6 +719,7 @@ class HoneyMainWindow(QMainWindow):
             ("🆕", "New Report",   "새 리포트 (입력 / 설정 창 접기·펴기)", self._toggle_controls),
             ("📝", "Rawdata edit", "Rawdata 수정 (Excel)",             self.on_rawdata_edit),
             (self._excel_icon(), "Excel Down", "Excel Download",       self.on_excel_download),
+            ("📤", "Excel Upload", "로컬 xlsx 업로드 (Raw Data → web report 세션)", self.on_upload_local),
             ("⚙️", "Options",      "옵션 (색·기본값 설정)",             self.on_options),
         ]
         for icon, label, tip, slot in quick:
@@ -986,6 +988,17 @@ class HoneyMainWindow(QMainWindow):
             path_item.setToolTip(full_path)
             self.list_csv.setItem(r, 0, path_item)
             self.list_csv.setItem(r, 1, ext_item)
+            # 행별 ✕ 삭제 버튼 — 그 행의 파일만 리스트에서 제거(경로로 식별해 행 이동에 안전).
+            del_btn = QPushButton("✕")
+            del_btn.setToolTip("이 파일을 리스트에서 삭제")
+            del_btn.setFixedSize(20, 18)
+            del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            del_btn.setStyleSheet(
+                "QPushButton { border:none; color:#b00020; font-size:9pt; }"
+                "QPushButton:hover { color:#ff0000; font-weight:700; }")
+            del_btn.clicked.connect(
+                lambda _checked=False, path=full_path: self._delete_file_by_path(path))
+            self.list_csv.setCellWidget(r, 2, del_btn)
             self.list_csv.setRowHeight(r, 20)
         if self.csv_paths:
             fm = self.list_csv.fontMetrics()
@@ -1005,21 +1018,21 @@ class HoneyMainWindow(QMainWindow):
         self.out_path = None
         self._status("파일 리스트를 비웠습니다.")
 
-    def _delete_selected_file(self):
-        """선택한 입력 파일 1개만 리스트에서 제거한다 (✕ 버튼)."""
-        row = self.list_csv.currentRow()
-        if row < 0 or row >= len(self.csv_paths):
-            self._status("삭제할 파일을 먼저 선택하세요.")
+    def _delete_file_by_path(self, path):
+        """행별 ✕ 버튼: 그 행의 파일 1개만 리스트에서 제거한다.
+        행 삭제 후 인덱스가 바뀌므로 클릭 시점의 행 번호가 아니라 경로로 대상을 찾는다."""
+        target = str(Path(path).resolve())
+        idx = next((i for i, p in enumerate(self.csv_paths)
+                    if str(Path(p).resolve()) == target), -1)
+        if idx < 0:
             return
-        removed = Path(self.csv_paths[row]).name
-        del self.csv_paths[row]
+        removed = Path(self.csv_paths[idx]).name
+        del self.csv_paths[idx]
         self._refill_csv_list()
         # 파일 구성이 바뀌었으니 그룹은 무효화 — Start 시 재구성된다.
         self.group = None
         self.out_path = None
-        if self.csv_paths:
-            self.list_csv.selectRow(min(row, len(self.csv_paths) - 1))
-        else:
+        if not self.csv_paths:
             self.le_outname.clear()
         self._status(f"'{removed}' 을(를) 리스트에서 제거했습니다.")
 

@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>720</width>
+    <width>780</width>
     <height>560</height>
    </rect>
   </property>
@@ -20,135 +20,176 @@
    <property name="bottomMargin"><number>12</number></property>
    <property name="spacing"><number>4</number></property>
 
-   <!-- ── Chart ─────────────────────────────────────────── -->
+   <!-- ── 옵션 섹션들(가로 컬럼 배치) ───────────────────────── -->
    <item>
-    <widget class="QToolButton" name="hdr_chart">
-     <property name="text"><string>▾  Chart</string></property>
-     <property name="checkable"><bool>true</bool></property>
-     <property name="checked"><bool>true</bool></property>
-     <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Fixed"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
-     <property name="styleSheet"><string notr="true">QToolButton { border:none; font-weight:700; font-size:10pt; padding:4px 2px; text-align:left; color:#6B4E16; } QToolButton:hover { color:#8A6D1D; }</string></property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QWidget" name="body_chart" native="true">
-     <layout class="QHBoxLayout" name="hbox_chart">
-      <property name="leftMargin"><number>18</number></property>
-      <property name="topMargin"><number>0</number></property>
-      <property name="bottomMargin"><number>2</number></property>
-      <property name="spacing"><number>14</number></property>
-      <item><widget class="QCheckBox" name="cb_all_chart"><property name="text"><string>all</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_sheet_distribution"><property name="text"><string>distribution</string></property><property name="checked"><bool>true</bool></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_sheet_histogram"><property name="text"><string>histogram(분석용)</string></property><property name="toolTip"><string>subject 별 빈도 히스토그램(분석용) 시트.</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_hist_report"><property name="text"><string>histogram(보고서용)</string></property><property name="toolTip"><string>보고서용 히스토그램 — UI 옵션만 제공(동작은 추후 연결).</string></property></widget></item>
-      <item><spacer name="sp_chart"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
-     </layout>
-    </widget>
-   </item>
+    <layout class="QHBoxLayout" name="hbox_sections">
+     <property name="spacing"><number>18</number></property>
 
-   <!-- ── Statistics ────────────────────────────────────── -->
-   <item>
-    <widget class="QToolButton" name="hdr_stats">
-     <property name="text"><string>▾  Statistics</string></property>
-     <property name="checkable"><bool>true</bool></property>
-     <property name="checked"><bool>true</bool></property>
-     <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Fixed"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
-     <property name="styleSheet"><string notr="true">QToolButton { border:none; font-weight:700; font-size:10pt; padding:4px 2px; text-align:left; color:#6B4E16; } QToolButton:hover { color:#8A6D1D; }</string></property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QWidget" name="body_stats" native="true">
-     <layout class="QHBoxLayout" name="hbox_stats">
-      <property name="leftMargin"><number>18</number></property>
-      <property name="topMargin"><number>0</number></property>
-      <property name="bottomMargin"><number>2</number></property>
-      <property name="spacing"><number>14</number></property>
-      <item><widget class="QCheckBox" name="cb_all_stats"><property name="text"><string>all</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_sheet_yield"><property name="text"><string>yield</string></property><property name="checked"><bool>true</bool></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_sheet_cpk"><property name="text"><string>cpk</string></property><property name="checked"><bool>true</bool></property></widget></item>
-      <item><spacer name="sp_stats"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
-     </layout>
-    </widget>
-   </item>
+     <!-- ── Chart ─────────────────────────────────────────── -->
+     <item>
+      <layout class="QVBoxLayout" name="col_chart">
+       <property name="spacing"><number>2</number></property>
+       <item>
+        <widget class="QToolButton" name="hdr_chart">
+         <property name="text"><string>▾  Chart</string></property>
+         <property name="checkable"><bool>true</bool></property>
+         <property name="checked"><bool>true</bool></property>
+         <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Fixed"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+         <property name="styleSheet"><string notr="true">QToolButton { border:none; font-weight:700; font-size:10pt; padding:4px 2px; text-align:left; color:#6B4E16; } QToolButton:hover { color:#8A6D1D; }</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QWidget" name="body_chart" native="true">
+         <layout class="QVBoxLayout" name="vbox_chart">
+          <property name="leftMargin"><number>18</number></property>
+          <property name="topMargin"><number>0</number></property>
+          <property name="bottomMargin"><number>2</number></property>
+          <property name="spacing"><number>4</number></property>
+          <item><widget class="QCheckBox" name="cb_all_chart"><property name="text"><string>all</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_sheet_distribution"><property name="text"><string>distribution</string></property><property name="checked"><bool>true</bool></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_sheet_histogram"><property name="text"><string>histogram(분석용)</string></property><property name="toolTip"><string>subject 별 빈도 히스토그램(분석용) 시트.</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_hist_report"><property name="text"><string>histogram(보고서용)</string></property><property name="toolTip"><string>보고서용 히스토그램 — UI 옵션만 제공(동작은 추후 연결).</string></property></widget></item>
+         </layout>
+        </widget>
+       </item>
+       <item><spacer name="sp_col_chart"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
+      </layout>
+     </item>
 
-   <!-- ── Summary ───────────────────────────────────────── -->
-   <item>
-    <widget class="QToolButton" name="hdr_summary">
-     <property name="text"><string>▾  Summary</string></property>
-     <property name="checkable"><bool>true</bool></property>
-     <property name="checked"><bool>true</bool></property>
-     <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Fixed"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
-     <property name="styleSheet"><string notr="true">QToolButton { border:none; font-weight:700; font-size:10pt; padding:4px 2px; text-align:left; color:#6B4E16; } QToolButton:hover { color:#8A6D1D; }</string></property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QWidget" name="body_summary" native="true">
-     <layout class="QHBoxLayout" name="hbox_summary">
-      <property name="leftMargin"><number>18</number></property>
-      <property name="topMargin"><number>0</number></property>
-      <property name="bottomMargin"><number>2</number></property>
-      <property name="spacing"><number>14</number></property>
-      <item><widget class="QCheckBox" name="cb_all_summary"><property name="text"><string>all</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_sheet_summary"><property name="text"><string>summary</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_sheet_issue_table"><property name="text"><string>issue_table</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_sheet_fail_item"><property name="text"><string>fail_item</string></property></widget></item>
-      <item><spacer name="sp_summary"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
-     </layout>
-    </widget>
-   </item>
+     <!-- ── Statistics ────────────────────────────────────── -->
+     <item>
+      <layout class="QVBoxLayout" name="col_stats">
+       <property name="spacing"><number>2</number></property>
+       <item>
+        <widget class="QToolButton" name="hdr_stats">
+         <property name="text"><string>▾  Statistics</string></property>
+         <property name="checkable"><bool>true</bool></property>
+         <property name="checked"><bool>true</bool></property>
+         <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Fixed"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+         <property name="styleSheet"><string notr="true">QToolButton { border:none; font-weight:700; font-size:10pt; padding:4px 2px; text-align:left; color:#6B4E16; } QToolButton:hover { color:#8A6D1D; }</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QWidget" name="body_stats" native="true">
+         <layout class="QVBoxLayout" name="vbox_stats">
+          <property name="leftMargin"><number>18</number></property>
+          <property name="topMargin"><number>0</number></property>
+          <property name="bottomMargin"><number>2</number></property>
+          <property name="spacing"><number>4</number></property>
+          <item><widget class="QCheckBox" name="cb_all_stats"><property name="text"><string>all</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_sheet_yield"><property name="text"><string>yield</string></property><property name="checked"><bool>true</bool></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_sheet_cpk"><property name="text"><string>cpk</string></property><property name="checked"><bool>true</bool></property></widget></item>
+         </layout>
+        </widget>
+       </item>
+       <item><spacer name="sp_col_stats"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
+      </layout>
+     </item>
 
-   <!-- ── Others ────────────────────────────────────────── -->
-   <item>
-    <widget class="QToolButton" name="hdr_others">
-     <property name="text"><string>▾  Others</string></property>
-     <property name="checkable"><bool>true</bool></property>
-     <property name="checked"><bool>true</bool></property>
-     <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Fixed"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
-     <property name="styleSheet"><string notr="true">QToolButton { border:none; font-weight:700; font-size:10pt; padding:4px 2px; text-align:left; color:#6B4E16; } QToolButton:hover { color:#8A6D1D; }</string></property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QWidget" name="body_others" native="true">
-     <layout class="QHBoxLayout" name="hbox_others">
-      <property name="leftMargin"><number>18</number></property>
-      <property name="topMargin"><number>0</number></property>
-      <property name="bottomMargin"><number>2</number></property>
-      <property name="spacing"><number>12</number></property>
-      <item><widget class="QCheckBox" name="cb_all_others"><property name="text"><string>all</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_raw_data"><property name="text"><string>raw_data</string></property><property name="toolTip"><string>체크하면 df_honey 원본 측정 데이터를 맨 앞 'Raw Data' 시트로 추가.</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_mode_bin1"><property name="text"><string>bin1 only</string></property><property name="toolTip"><string>Bin 이 1(Pass)인 데이터만으로 전체 데이터 정리.</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_mode_compare"><property name="text"><string>Compare_Mode</string></property><property name="toolTip"><string>입력 파일이 2개일 때만 가능. 두 파일 비교(goodlog/회색선).</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_mode_dut"><property name="text"><string>DUT 정리</string></property><property name="toolTip"><string>입력 파일이 1개일 때만 가능. 파일 내 DUT 를 legend 로 정리.</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_outlier"><property name="text"><string>outlier 제거</string></property><property name="toolTip"><string>outlier 제거 — UI 옵션만 제공(동작은 추후 연결).</string></property></widget></item>
-      <item><widget class="QLabel" name="lbl_outlier_cpk"><property name="text"><string>cpk</string></property></widget></item>
-      <item><widget class="QLineEdit" name="le_outlier_cpk"><property name="maximumSize"><size><width>64</width><height>16777215</height></size></property><property name="placeholderText"><string>예:1.33</string></property><property name="toolTip"><string>outlier 판정 cpk 기준 — UI 입력만(동작은 추후 연결).</string></property></widget></item>
-      <item><spacer name="sp_others"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
-     </layout>
-    </widget>
-   </item>
+     <!-- ── Summary ───────────────────────────────────────── -->
+     <item>
+      <layout class="QVBoxLayout" name="col_summary">
+       <property name="spacing"><number>2</number></property>
+       <item>
+        <widget class="QToolButton" name="hdr_summary">
+         <property name="text"><string>▾  Summary</string></property>
+         <property name="checkable"><bool>true</bool></property>
+         <property name="checked"><bool>true</bool></property>
+         <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Fixed"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+         <property name="styleSheet"><string notr="true">QToolButton { border:none; font-weight:700; font-size:10pt; padding:4px 2px; text-align:left; color:#6B4E16; } QToolButton:hover { color:#8A6D1D; }</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QWidget" name="body_summary" native="true">
+         <layout class="QVBoxLayout" name="vbox_summary">
+          <property name="leftMargin"><number>18</number></property>
+          <property name="topMargin"><number>0</number></property>
+          <property name="bottomMargin"><number>2</number></property>
+          <property name="spacing"><number>4</number></property>
+          <item><widget class="QCheckBox" name="cb_all_summary"><property name="text"><string>all</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_sheet_summary"><property name="text"><string>summary</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_sheet_issue_table"><property name="text"><string>issue_table</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_sheet_fail_item"><property name="text"><string>fail_item</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_issue_comment"><property name="text"><string>Issue comment 자동작성</string></property><property name="toolTip"><string>Issue comment 자동작성 — UI 옵션만 제공(동작은 추후 연결).</string></property></widget></item>
+         </layout>
+        </widget>
+       </item>
+       <item><spacer name="sp_col_summary"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
+      </layout>
+     </item>
 
-   <!-- ── 추가파일생성 (기본 접힘) ─────────────────────────── -->
-   <item>
-    <widget class="QToolButton" name="hdr_extra">
-     <property name="text"><string>▸  추가파일생성</string></property>
-     <property name="checkable"><bool>true</bool></property>
-     <property name="checked"><bool>false</bool></property>
-     <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Fixed"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
-     <property name="styleSheet"><string notr="true">QToolButton { border:none; font-weight:700; font-size:10pt; padding:4px 2px; text-align:left; color:#6B4E16; } QToolButton:hover { color:#8A6D1D; }</string></property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QWidget" name="body_extra" native="true">
-     <layout class="QHBoxLayout" name="hbox_extra">
-      <property name="leftMargin"><number>18</number></property>
-      <property name="topMargin"><number>0</number></property>
-      <property name="bottomMargin"><number>2</number></property>
-      <property name="spacing"><number>14</number></property>
-      <item><widget class="QCheckBox" name="cb_limit_xlsx"><property name="text"><string>Limit.xlsx 생성</string></property><property name="toolTip"><string>Limit.xlsx 생성 — UI 옵션만 제공(동작은 추후 연결).</string></property></widget></item>
-      <item><widget class="QCheckBox" name="cb_boxplot_pptx"><property name="text"><string>boxplot.pptx 생성</string></property><property name="toolTip"><string>boxplot.pptx 생성 — UI 옵션만 제공(동작은 추후 연결).</string></property></widget></item>
-      <item><spacer name="sp_extra"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
-     </layout>
-    </widget>
+     <!-- ── Others ────────────────────────────────────────── -->
+     <item>
+      <layout class="QVBoxLayout" name="col_others">
+       <property name="spacing"><number>2</number></property>
+       <item>
+        <widget class="QToolButton" name="hdr_others">
+         <property name="text"><string>▾  Others</string></property>
+         <property name="checkable"><bool>true</bool></property>
+         <property name="checked"><bool>true</bool></property>
+         <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Fixed"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+         <property name="styleSheet"><string notr="true">QToolButton { border:none; font-weight:700; font-size:10pt; padding:4px 2px; text-align:left; color:#6B4E16; } QToolButton:hover { color:#8A6D1D; }</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QWidget" name="body_others" native="true">
+         <layout class="QVBoxLayout" name="vbox_others">
+          <property name="leftMargin"><number>18</number></property>
+          <property name="topMargin"><number>0</number></property>
+          <property name="bottomMargin"><number>2</number></property>
+          <property name="spacing"><number>4</number></property>
+          <item><widget class="QCheckBox" name="cb_all_others"><property name="text"><string>all</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_raw_data"><property name="text"><string>raw_data</string></property><property name="toolTip"><string>체크하면 df_honey 원본 측정 데이터를 맨 앞 'Raw Data' 시트로 추가.</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_mode_bin1"><property name="text"><string>bin1 only</string></property><property name="toolTip"><string>Bin 이 1(Pass)인 데이터만으로 전체 데이터 정리.</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_mode_compare"><property name="text"><string>Compare_Mode</string></property><property name="toolTip"><string>입력 파일이 2개일 때만 가능. 두 파일 비교(goodlog/회색선).</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_mode_dut"><property name="text"><string>DUT 정리</string></property><property name="toolTip"><string>입력 파일이 1개일 때만 가능. 파일 내 DUT 를 legend 로 정리.</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_outlier"><property name="text"><string>outlier 제거</string></property><property name="toolTip"><string>outlier 제거 — UI 옵션만 제공(동작은 추후 연결).</string></property></widget></item>
+          <item>
+           <layout class="QHBoxLayout" name="hbox_outlier_cpk">
+            <property name="leftMargin"><number>2</number></property>
+            <property name="spacing"><number>6</number></property>
+            <item><widget class="QLabel" name="lbl_outlier_cpk"><property name="text"><string>cpk</string></property></widget></item>
+            <item><widget class="QLineEdit" name="le_outlier_cpk"><property name="maximumSize"><size><width>64</width><height>16777215</height></size></property><property name="placeholderText"><string>예:1.33</string></property><property name="toolTip"><string>outlier 판정 cpk 기준 — UI 입력만(동작은 추후 연결).</string></property></widget></item>
+            <item><spacer name="sp_outlier_cpk"><property name="orientation"><enum>Qt::Horizontal</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item><spacer name="sp_col_others"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
+      </layout>
+     </item>
+
+     <!-- ── 추가파일생성 (기본 접힘) ─────────────────────────── -->
+     <item>
+      <layout class="QVBoxLayout" name="col_extra">
+       <property name="spacing"><number>2</number></property>
+       <item>
+        <widget class="QToolButton" name="hdr_extra">
+         <property name="text"><string>▸  추가파일생성</string></property>
+         <property name="checkable"><bool>true</bool></property>
+         <property name="checked"><bool>false</bool></property>
+         <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Fixed"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+         <property name="styleSheet"><string notr="true">QToolButton { border:none; font-weight:700; font-size:10pt; padding:4px 2px; text-align:left; color:#6B4E16; } QToolButton:hover { color:#8A6D1D; }</string></property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QWidget" name="body_extra" native="true">
+         <layout class="QVBoxLayout" name="vbox_extra">
+          <property name="leftMargin"><number>18</number></property>
+          <property name="topMargin"><number>0</number></property>
+          <property name="bottomMargin"><number>2</number></property>
+          <property name="spacing"><number>4</number></property>
+          <item><widget class="QCheckBox" name="cb_limit_xlsx"><property name="text"><string>Limit.xlsx 생성</string></property><property name="toolTip"><string>Limit.xlsx 생성 — UI 옵션만 제공(동작은 추후 연결).</string></property></widget></item>
+          <item><widget class="QCheckBox" name="cb_boxplot_pptx"><property name="text"><string>boxplot.pptx 생성</string></property><property name="toolTip"><string>boxplot.pptx 생성 — UI 옵션만 제공(동작은 추후 연결).</string></property></widget></item>
+         </layout>
+        </widget>
+       </item>
+       <item><spacer name="sp_col_extra"><property name="orientation"><enum>Qt::Vertical</enum></property><property name="sizeHint" stdset="0"><size><width>10</width><height>10</height></size></property></spacer></item>
+      </layout>
+     </item>
+
+    </layout>
    </item>
 
    <!-- ── Select Items ──────────────────────────────────── -->

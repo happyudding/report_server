@@ -103,13 +103,19 @@ def web_report_scatter(session_id, subject):
     """Item_detail 용: 항목(subject)의 소스별 전체 측정값+hover metadata(다운샘플 없음) 지연 로드.
 
     values 배열에 serial/xpos/ypos 가 붙어 페이로드가 커질 수 있어(다운샘플은 여전히 금지),
-    /distribution 라우트와 동일하게 gzip(Accept-Encoding 시)을 지원한다.
+    /distribution 라우트와 동일하게 gzip(Accept-Encoding 시)과 ETag 조건부 응답을 지원한다.
     계산+직렬화+gzip 결과는 response_cache 가 (analysis_key, content_hash, subject) 키로
     캐시 — 같은 항목 반복 클릭 시 bytes 반환뿐이다."""
     session = _require_web_report_session(session_id)
     subject = (subject or "").strip()
     if not subject or len(subject) > 200:
         abort(400, "invalid subject")
+    # subject 는 URL 에, mode 는 세션 불변이라 ETag 는 /distribution 과 동일하게
+    # analysis_key+content_hash 로 충분 — raw_data 편집 시 content_hash 변경으로 재수신.
+    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}"'
+    headers = {"Vary": "Accept-Encoding", "ETag": etag}
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers=headers)
     try:
         body = web_report_response_cache.get_scatter_gzip(
             session_id, subject, session=session,
@@ -119,7 +125,6 @@ def web_report_scatter(session_id, subject):
     except Exception:
         _log.exception("web_report scatter failed for session %s item %s", session_id, subject)
         abort(500, "scatter failed")
-    headers = {"Vary": "Accept-Encoding"}
     if "gzip" in (request.headers.get("Accept-Encoding") or ""):
         headers["Content-Encoding"] = "gzip"
     else:

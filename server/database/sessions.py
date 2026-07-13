@@ -166,6 +166,25 @@ def get_expired_sessions(cutoff_epoch):
     return [dict(r) for r in rows]
 
 
+def get_orphan_pending_sessions(cutoff_epoch):
+    """ingest 크래시 잔존물 — status='pending' 이고 analysis_key 가 없는 세션.
+
+    create_session 과 update_session(status='done') 사이에서 죽으면 남는다.
+    get_expired_sessions 는 status IN ('done','reused') 만 보므로 여기서 별도 회수한다.
+    보수적으로 analysis_key 미기록(산출물 참조 없음 — 세션 행만 삭제)만 대상."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT session_id, analysis_key, product_type, product, lot_id, "
+            "       file_name, created_at "
+            "FROM report_session "
+            "WHERE created_at < ? AND status = 'pending' "
+            "  AND (analysis_key IS NULL OR analysis_key = '') "
+            "ORDER BY created_at ASC",
+            (cutoff_epoch,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_session_by_dataset_id(dataset_id):
     """dataset_id 로 가장 최근 세션 1건과 총 CSV 크기를 함께 반환."""
     sql = """

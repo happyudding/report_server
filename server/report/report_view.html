@@ -9,9 +9,7 @@
 try {
   if (localStorage.getItem("report_theme") === "dark")
     document.documentElement.setAttribute("data-theme", "dark");
-  // 글씨/UI 크기·글꼴 설정도 첫 페인트 전에 적용(깜빡임 방지). 값 처리는 아래 UI_FONTS 와 동일.
-  var _s = localStorage.getItem("report_ui_scale");
-  if (_s) document.documentElement.style.setProperty("--ui-zoom", _s);
+  // 글꼴 설정도 첫 페인트 전에 적용(깜빡임 방지). 값 처리는 아래 UI_FONTS 와 동일.
   var _f = localStorage.getItem("report_ui_font");
   var _FONTS = { malgun: '"Malgun Gothic", sans-serif',
     noto: '"Noto Sans KR", "Malgun Gothic", sans-serif',
@@ -53,8 +51,6 @@ body {
     "Segoe UI", "Malgun Gothic", sans-serif);
   background: #fafafa; margin: 0; color: #222;
 }
-/* --ui-zoom: 설정(⚙) 팝오버의 글씨/UI 크기 스케일. 상단바+본문에만 적용(오버레이/토스트/팝오버 제외). */
-.sticky-head, .content { zoom: var(--ui-zoom, 1); }
 
 /* ── sticky-head: topbar + tabs 를 한 덩어리로 고정 (topbar 가 1~2줄로 높이가
    바뀌어도 tabs 가 항상 그 바로 아래 붙도록 top:49px 같은 매직넘버 대신 부모째 sticky) ── */
@@ -1094,7 +1090,7 @@ html[data-theme="dark"] .idet-chipval-table th, html[data-theme="dark"] .idet-ch
 html[data-theme="dark"] .theme-toggle { background: #262a33; border-color: #3a3f4b; }
 html[data-theme="dark"] .theme-toggle:hover { background: #2b3442; border-color: #4a90e2; }
 
-/* 설정(글꼴·크기) 팝오버 — 상단바 밖 body 직속(fixed)이라 --ui-zoom 영향 안 받음. */
+/* 설정(글꼴) 팝오버 — 상단바 밖 body 직속(fixed). */
 .settings-panel {
   display: none; position: fixed; top: 46px; right: 12px; z-index: 200;
   width: 250px; background: #fff; border: 1px solid #d0d5dd; border-radius: 10px;
@@ -1478,16 +1474,17 @@ html[data-theme="dark"] .cnote-hint { color: #6b7280; }
 html[data-theme="dark"] .cnote-view-comment { color: #9aa3b0; }
 
 /* ── Note 탭 (Luckysheet 캔버스 — note.js) ───────────────────────────────── */
-/* .content 의 zoom(var(--ui-zoom)) 을 Note 탭에서만 상쇄해 유효 zoom=1 로 만든다.
-   Luckysheet 2.0.6 은 조상 CSS zoom 을 좌표 계산에 반영하지 못해, UI 배율≠1 이면
-   헤더(A/B/C)·셀 선택이 그리드와 어긋난다. calc 로 역보정해 정합시킴(배율=1 이면 무변화). */
-#panel-note { zoom: calc(1 / var(--ui-zoom, 1)); }
 #panel-note.active { display: flex; flex-direction: column; }
 .note-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 6px 4px; font-size: 12px; }
 .note-meta { color: #6b7280; font-size: 11px; }
 #luckysheetHost { position: relative; width: 100%; flex: 1 1 auto;
   min-height: 420px; height: calc(100vh - var(--sticky-head-h, 96px) - 56px); }
+/* 전역 * { box-sizing: border-box }(44행)가 Luckysheet 최상위 컨테이너(.luckysheet,
+   border:1px + JS 가 height=Hc-2 로 content-box 전제 설정)에 적용되면 콘텐츠 영역이 2px
+   어긋나 셀 선택이 헤더와 틀어지고 클릭 시 흔들린다. content-box 로 복원해 정합시킨다
+   (.luckysheet * 는 벤더 CSS 가 이미 box-sizing:initial, 자기 자신만 복원 필요). */
+#panel-note .luckysheet { box-sizing: content-box; }
 html[data-theme="dark"] .note-meta { color: #9aa3b0; }
 </style>
 </head>
@@ -1514,7 +1511,7 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
       <button class="btn-topbar-del"  id="btnDel" title="삭제">🗑</button>
     </div>
     <!-- 테마 토글은 topbarActions 밖 — 비-web_report 세션(actions 숨김)에서도 항상 보이게 -->
-    <button class="theme-toggle" id="settingsToggle" title="글꼴·글씨 크기 설정">⚙</button>
+    <button class="theme-toggle" id="settingsToggle" title="글꼴 설정">⚙</button>
     <button class="theme-toggle" id="themeToggle" title="다크 모드로 전환">🌙</button>
   </div>
 
@@ -1537,16 +1534,6 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
     <button class="settings-tab" data-stab="perm" id="settingsTabPerm" style="display:none">권한</button>
   </div>
   <div class="settings-body" data-sbody="display">
-    <div class="settings-row">
-      <span class="settings-label">글씨/UI 크기</span>
-      <div class="settings-seg" id="uiScaleSeg">
-        <button data-scale="0.85">85%</button>
-        <button data-scale="1">100%</button>
-        <button data-scale="1.15">115%</button>
-        <button data-scale="1.3">130%</button>
-        <button data-scale="1.5">150%</button>
-      </div>
-    </div>
     <div class="settings-row">
       <span class="settings-label">글꼴</span>
       <div class="settings-seg" id="uiFontSeg">

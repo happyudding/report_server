@@ -14,6 +14,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 
@@ -35,6 +36,11 @@ from .validation import (
     webreport_ai_comment as _webreport_ai_comment,
     webreport_colors as _webreport_colors,
 )
+
+# dist blob 전용 gzip 레벨 — 세션당 1회 생성 후 캐시(RAM+disk)되므로 레벨을 올려도 CPU 는
+# 1회이고 매 조회 전송량(수십 MB ECDF)이 줄어든다. 실측 후 운영값 결정용 env.
+# 대화형 경로(/full·scatter — response_cache._gzip_json)는 level 1 유지.
+_DIST_GZIP_LEVEL = max(1, min(9, int(os.getenv("WEB_REPORT_DIST_GZIP_LEVEL", "1") or 1)))
 
 
 def invalidate_caches(analysis_key) -> None:
@@ -172,7 +178,7 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> b
             compact = get_distribution(session_id, report_db=report_db, upload_root=upload_root)
             blob = gzip.compress(
                 json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-                compresslevel=1)
+                compresslevel=_DIST_GZIP_LEVEL)
             disk_cache.save_dist(upload_root, cache_key, blob)
         cache.cache_put(cache.DIST_CACHE, cache_key, blob, cache.DIST_CACHE_MAX)
     return blob
@@ -254,26 +260,35 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
     버전관리·undo 없음 — 편집된 source 는 df 기준으로 재인코딩해 기존 analysis_key 의
     web_report_source_<idx> 를 덮어쓴다 (Honey 재업로드 전까지 이전 값은 복구 불가).
     """
-    # apply_raw_data_edits 가 df 를 in-place 수정하므로 캐시 원본 오염 방지 위해 캐시 우회
-    session, tables, manifest = _load_tables(
-        session_id, report_db=report_db, upload_root=upload_root, use_cache=False)
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
     analysis_key = session.get("analysis_key")
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    updated_tables = raw_data_tab.apply_raw_data_edits(tables, edits)
-    sources_bytes = [encode_honeyform_parquet(t.df) for t in updated_tables]
+    # 같은 analysis_key 원본의 read-modify-write 직렬화 — 동시 편집 lost update 방지
+    # (rawedit.replace_sources 와 같은 락 키. 단일 프로세스 전제라 in-process 락으로 충분 —
+    # DB 기반 core.report_analysis_lock 은 멀티프로세스 전환 시에만 배선한다.)
+    with cache.keyed_lock(("rawedit", analysis_key)):
+        # apply_raw_data_edits 가 df 를 in-place 수정하므로 캐시 원본 오염 방지 위해 캐시 우회
+        session, tables, manifest = _load_tables(
+            session_id, report_db=report_db, upload_root=upload_root, use_cache=False,
+            session=session)
 
-    content_hash = hashlib.sha256(
-        _canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
-    ).hexdigest()
+        updated_tables = raw_data_tab.apply_raw_data_edits(tables, edits)
+        sources_bytes = [encode_honeyform_parquet(t.df) for t in updated_tables]
 
-    storage_result = runtime.storage().save_webreport_sources(
-        analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
+        content_hash = hashlib.sha256(
+            _canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
+        ).hexdigest()
 
-    report_db.update_session(session_id, content_hash=content_hash)
-    # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
-    cache.evict_akey_caches(analysis_key)
+        storage_result = runtime.storage().save_webreport_sources(
+            analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
+
+        report_db.update_session(session_id, content_hash=content_hash)
+        # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
+        cache.evict_akey_caches(analysis_key)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
