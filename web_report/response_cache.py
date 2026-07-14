@@ -82,12 +82,15 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
 
 
 def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
-                     report_db, upload_root: Path) -> bytes:
-    """/scatter 응답의 gzip bytes 를 캐시해 반환 (같은 항목 반복 클릭 시 재계산 제거)."""
+                     report_db, upload_root: Path, bin1: bool = False) -> bytes:
+    """/scatter 응답의 gzip bytes 를 캐시해 반환 (같은 항목 반복 클릭 시 재계산 제거).
+
+    ``bin1`` 변형(양품만)은 별도 캐시 키(scatter_key(bin1=True))로 전체 기준과 분리한다.
+    """
     analysis_key = session.get("analysis_key")
     if not analysis_key:
         raise FileNotFoundError(session_id)
-    cache_key = cache_policy.scatter_key(session, subject)   # 키 규약: cache_policy
+    cache_key = cache_policy.scatter_key(session, subject, bin1=bin1)   # 키 규약: cache_policy
 
     blob = cache.cache_get(_SCATTER_CACHE, cache_key)
     if blob is not None:
@@ -97,7 +100,7 @@ def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
         if blob is not None:
             return blob
         result = service.scatter_item(
-            session_id, subject, report_db=report_db, upload_root=upload_root)
+            session_id, subject, report_db=report_db, upload_root=upload_root, bin1=bin1)
         blob = _gzip_json(result)
         cache.cache_put(_SCATTER_CACHE, cache_key, blob, _SCATTER_CACHE_MAX)
     return blob

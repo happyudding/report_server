@@ -7,13 +7,13 @@
 | 캐시               | 키 구성                                          | 무효화 트리거                       |
 |--------------------|--------------------------------------------------|-------------------------------------|
 | TABLES_CACHE       | (akey, chash)                                    | raw_data 편집(chash) / 세션 삭제    |
-| DIST_CACHE         | (akey, chash, mode)                              | 〃 (mode 는 세션 생성 후 불변)      |
+| DIST_CACHE         | (akey, chash, mode[, "bin1"])                    | 〃 (mode 불변; "bin1"=양품만 ECDF)  |
 | COMMONALITY_CACHE  | (akey, chash)                                    | raw_data 편집 / 세션 삭제           |
 | REPORT_CACHE       | (akey, chash, sid, edits_rev, opts, mode, sver)  | comment/override 편집(rev) + payload 스키마 변경 + 위 전부 |
 | TRIM_CACHE         | (akey, chash, sid, edits_rev, mode, source)      | trim override 편집(rev) + 위 전부   |
 | TRIM_CHART_CACHE   | (akey, chash, mode, source, items_digest)        | 그룹 슬롯 구성 변경 / raw_data 편집 |
 | _FULL_CACHE        | (akey, chash, "sid:edits_rev", extras_digest)    | 편집 rev / annotations 등 extras    |
-| _SCATTER_CACHE     | (akey, chash, mode, subject)                     | raw_data 편집 / 세션 삭제           |
+| _SCATTER_CACHE     | (akey, chash, mode, subject[, "bin1"])           | raw_data 편집 / 세션 삭제 ("bin1"=양품만) |
 
 공통 규약:
 - 모든 키의 **첫 요소는 analysis_key** — AKEY_CACHES 무효화(evict/invalidate)의 전제.
@@ -45,16 +45,21 @@ def commonality_key(session) -> tuple:
     return _base(session)
 
 
-def dist_key(session) -> tuple:
-    # DUT 모드는 같은 akey 라도 분할된 ECDF 를 내므로 mode 포함
-    return _base(session) + (_mode(session),)
+def dist_key(session, *, bin1: bool = False) -> tuple:
+    # DUT 모드는 같은 akey 라도 분할된 ECDF 를 내므로 mode 포함.
+    # bin1=True 는 양품(Bin1)만으로 재계산한 ECDF — 전체 기준과 별도 캐시(키에만 추가해
+    # 기존 전체 기준 키는 불변 유지 → 기존 캐시 무효화 없음).
+    base = _base(session) + (_mode(session),)
+    return base + ("bin1",) if bin1 else base
 
 
 # build_report_payload 출력 스키마 버전. payload 구조(최상위 키·그룹 형태)가 바뀌면
 # 이 값을 올려 인메모리 REPORT_CACHE + disk_cache report 파일(같은 데이터의 옛 세대
 # 산출물)을 자연 무효화한다 — 안 올리면 코드가 새 키를 내도 캐시가 stale payload 를
 # 반환한다(예: yield_step_groups 추가 후 옛 캐시엔 그 키가 없어 접기 UI 가 폴백됨).
-REPORT_SCHEMA_VERSION = 2
+# v3: yield_step_groups·yield_summary.by_step 분모를 cascade→전체 rawdata 기준으로 전환
+#     (키는 동일하나 값이 바뀌어 옛 캐시가 stale cascade 값을 반환하는 것을 막는다).
+REPORT_SCHEMA_VERSION = 3
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:
@@ -75,5 +80,7 @@ def full_key(session, session_id: str, edits_rev: int, extras_digest: str) -> tu
     return _base(session) + (f"{session_id}:{edits_rev}", extras_digest)
 
 
-def scatter_key(session, subject: str) -> tuple:
-    return _base(session) + (_mode(session), subject)
+def scatter_key(session, subject: str, *, bin1: bool = False) -> tuple:
+    # bin1=True 는 양품(Bin1)만으로 낸 상세 — 전체 기준과 별도 캐시(키에만 추가).
+    base = _base(session) + (_mode(session), subject)
+    return base + ("bin1",) if bin1 else base

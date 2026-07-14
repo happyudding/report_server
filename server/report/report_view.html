@@ -405,8 +405,15 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-issue tbody td:nth-child(2), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(2) { left: var(--issue-col2-left, 66px); }
 .sheet-table.kind-issue tbody td:nth-child(3), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(3) { left: var(--issue-col3-left, 112px); }
 .sheet-table.kind-issue tbody td:nth-child(4), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(4) { left: var(--issue-col4-left, 175px); }
-.sheet-table.kind-issue tbody td:nth-child(5), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(5) { left: var(--issue-col5-left, 333px); }
-.sheet-table.kind-issue tbody td:nth-child(6), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(6) { left: var(--issue-col6-left, 477px); }
+.sheet-table.kind-issue tbody td:nth-child(5), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(5) { left: var(--issue-col5-left, 299px); }
+.sheet-table.kind-issue tbody td:nth-child(6), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(6) { left: var(--issue-col6-left, 443px); }
+/* Map(5)/Distribution(6) 컬럼 최소폭 보장 — source 가 많아 auto table-layout 이 <col> 힌트폭 밑으로
+   차트 컬럼을 압축해도(미니셀은 content min-width 0) 최소 144px 는 확보한다(사용자 요청: Map/Dist
+   최소값 보장). 리사이즈로 더 넓힐 순 있어도 144 밑으론 안 줄어든다. */
+.sheet-table.kind-issue tbody td:nth-child(5),
+.sheet-table.kind-issue tbody td:nth-child(6),
+.sheet-table.kind-issue tr.issue-shead-top > th:nth-child(5),
+.sheet-table.kind-issue tr.issue-shead-top > th:nth-child(6) { min-width: 144px; }
 /* 컬럼 폭 드래그 리사이즈 핸들 — 섹션 헤더 th 는 이미 sticky(=positioned) 라 절대배치 기준이 된다.
    (여기 th 에 position:relative 를 주면 위의 세로 헤더 sticky 를 덮어 깨지므로 주지 않는다.) */
 .sheet-table.kind-issue .col-resize-handle {
@@ -718,6 +725,10 @@ html[data-theme="dark"] .mention-opt:hover { background: #26303f; color: #7fb3ef
 .cdf-editbar .btn-sm.cdf-mode-highlight.active { background: #EF553B; border-color: #EF553B; }
 .cdf-editbar .cdf-eb-count { color: #555; margin-left: 4px; }
 .cdf-editbar .cdf-eb-hint { color: #9aa0aa; }
+.cdf-axisbar { display: flex; align-items: center; gap: 8px; margin: -2px 0 8px; flex-wrap: wrap; font-size: 12px; }
+.cdf-axisbar .cdf-ax-grp { display: inline-flex; align-items: center; gap: 4px; color: #6b7280; }
+.cdf-axisbar .cdf-ax-in { width: 72px; padding: 3px 6px; border: 1px solid #d0d5dd; border-radius: 5px; font-size: 12px; }
+.cdf-axisbar .cdf-ax-msg { color: #d14343; margin-left: 2px; }
 .idet-fail-chk-col { width: 34px; text-align: center; }
 /* item_detail 하단: Map Analysis 선택 좌표의 이 항목 값 표 */
 .idet-chipval-table { border-collapse: collapse; font-size: 12px; margin: 4px 0 14px; }
@@ -1463,6 +1474,8 @@ html[data-theme="dark"] .issue-item-link { color: #7fa8f5; }
 html[data-theme="dark"] .issue-item-link:hover { color: #a5c2f7; }
 html[data-theme="dark"] .cdf-editbar .cdf-eb-label { color: #8b94a3; }
 html[data-theme="dark"] .cdf-editbar .cdf-eb-count { color: #9aa3b0; }
+html[data-theme="dark"] .cdf-axisbar .cdf-ax-grp { color: #8b94a3; }
+html[data-theme="dark"] .cdf-axisbar .cdf-ax-in { background: #1f232b; border-color: #3a3f4b; color: #d5dae2; }
 
 /* ── Raw Data (필터바/항목 목록/Tabulator 그리드) ── */
 html[data-theme="dark"] .rawdata-filters { background: #14161a; }
@@ -1539,15 +1552,18 @@ html[data-theme="dark"] .cnote-hint { color: #6b7280; }
 html[data-theme="dark"] .cnote-view-comment { color: #9aa3b0; }
 
 /* ── Note 탭 (Luckysheet — iframe 격리, note.js + note_frame.html) ────────────── */
-#panel-note.active { display: flex; flex-direction: column; }
+/* 패널이 뷰포트를 정확히 채우도록 높이를 잡는다: 헤더(실측 --sticky-head-h) + content 상하
+   여백(18+90=108)을 빼면 페이지 총높이가 정확히 100vh → 세로 스크롤 여지 0. iframe 안 셀
+   포커스가 부모 페이지를 스크롤(클릭 시 위아래 흔들림)하는 걸 원천 차단(스크롤할 게 없음). */
+#panel-note.active { display: flex; flex-direction: column;
+  height: calc(100vh - var(--sticky-head-h, 96px) - 108px); }
 .note-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 6px 4px; font-size: 12px; }
 .note-meta { color: #6b7280; font-size: 11px; }
 /* Luckysheet 는 iframe(note_frame.html) 안에서 격리 실행 — 전역 CSS(*{box-sizing})·sticky·
    페이지 스크롤·중앙정렬 여백·배율 오염을 차단해 셀 밀림·격자 떨림을 근본 해결한다. 여기선
    그 iframe 만 Note 패널에 꽉 채운다(부모는 좌표계에 관여하지 않음). */
-#noteFrame { display: block; width: 100%; flex: 1 1 auto; border: 0;
-  min-height: 420px; height: calc(100vh - var(--sticky-head-h, 96px) - 56px); }
+#noteFrame { display: block; width: 100%; flex: 1 1 auto; min-height: 0; border: 0; }
 html[data-theme="dark"] .note-meta { color: #9aa3b0; }
 </style>
 </head>

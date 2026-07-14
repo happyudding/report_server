@@ -231,6 +231,14 @@ def _fmt_dut(value) -> str:
     return s
 
 
+def _dut_sort_key(label: str):
+    """DUT 라벨 정렬 키 — 숫자 라벨은 수치 오름차순(1,2,…,10,11,12), 비숫자는 뒤로 문자순."""
+    try:
+        return (0, float(label))
+    except (TypeError, ValueError):
+        return (1, label)
+
+
 def split_table_by_dut(table: "HoneyformTable") -> list["HoneyformTable"]:
     """단일 HoneyformTable 을 DUT 컬럼 값별로 분할 — 각 DUT 가 새 source 가 된다 (DUT 모드).
 
@@ -240,7 +248,9 @@ def split_table_by_dut(table: "HoneyformTable") -> list["HoneyformTable"]:
     """
     data = table.data
     labels = data["DUT"].map(_fmt_dut)
-    uniq = list(dict.fromkeys(labels.tolist()))   # 등장 순서 유지
+    # DUT legend/series 순서를 전 탭(yield/distribution/issue table/map)에서 수치
+    # 오름차순으로 통일 (1,2,…,10,11,12). 비숫자('(blank)' 등)는 뒤로 문자순.
+    uniq = sorted(dict.fromkeys(labels.tolist()), key=_dut_sort_key)
     if len(uniq) <= 1:
         return [table]
 

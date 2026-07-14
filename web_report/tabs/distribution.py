@@ -42,12 +42,25 @@ def cumulative_distribution_full(values):
     return unique_vals, cum
 
 
-def build_distribution_compact(tables, all_items) -> dict:
+def build_distribution_compact(tables, all_items, *, bin1_only=False) -> dict:
     """ECDF 전량(다운샘플 없음, 불변 규칙 #6)을 columnar 포맷으로 반환.
 
     행마다 반복되던 subject/source/units/limits 키를 제거한 컴팩트 표현으로,
     lazy 엔드포인트 ``GET .../web_report/distribution`` 전용이다 (208MB → 수십 MB).
+
+    ``bin1_only`` 이면 각 소스에서 BIN==PASS_BIN(양품) die 의 측정값만으로 ECDF 를
+    계산한다 — Distribution 탭 "Bin1 only" 토글용. 다운샘플은 여전히 없음(불변 규칙 #6).
+    units/limits(spec)은 bin 과 무관하므로 전체 기준과 동일하게 항목 메타에서 취한다.
     """
+    from .common import PASS_BIN, bin_types
+
+    bin1_masks = {}
+    if bin1_only:
+        # BIN 마스크는 item 과 무관 — 테이블당 1회만 계산 (item 루프 안에서 재계산 금지)
+        for table in tables:
+            bin1_masks[id(table)] = np.asarray(
+                [b == PASS_BIN for b in bin_types(table)], dtype=bool)
+
     items = {}
     for item in all_items:
         sources = {}
@@ -62,7 +75,10 @@ def build_distribution_compact(tables, all_items) -> dict:
                 lo = round_num(table.lolim.get(item))
                 hi = round_num(table.hilim.get(item))
                 first = False
-            values = to_numeric_clean(table.data[item])
+            col = table.data[item]
+            if bin1_only:
+                col = col[bin1_masks[id(table)]]
+            values = to_numeric_clean(col)
             unique_vals, cum = cumulative_distribution_full(values)
             # 수백만 포인트를 파이썬 round_num 루프로 돌리면 요청당 수 초가 걸려 numpy 로
             # 벡터화한다 — to_numeric_clean 이 유한 float64 만 반환하므로(NaN/inf 없음)
@@ -164,9 +180,15 @@ def build_distribution_index(tables, cpk_rows, exclude=None) -> list:
     return rows
 
 
-def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP) -> dict:
+def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
+                 bin1: bool = False) -> dict:
     """Item_detail 용: 항목의 소스별 전체 측정값(다운샘플 없음) + 통계 + cpk/status +
     이 항목으로 Fail 된 die 의 rawdata 행(전 metadata + 측정값).
+
+    ``bin1`` 이면 분포(values/serial/xpos/ypos)·통계·cpk 를 양품(BIN==PASS_BIN) die 만으로
+    낸다("Bin1 only" 상세). ``fail_rows``/``fail_total``/``is_fail`` 은 "이 항목으로 fail 한
+    die" 진단이라 bin 필터와 무관하게 전체 기준을 유지한다(status 는 all-data is_fail +
+    bin1 cpk 조합).
 
     - ``stats``: 소스별 _stats (n/min/median/max/average/stdev/cp/cpl/cpu/cpk).
     - ``sources[].serial/xpos/ypos``: CDF hover 용으로 ``values`` 와 동일 순서·길이로 정렬된
@@ -176,6 +198,8 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP) -> dict:
       ``fail_truncated=True`` (전체 개수는 ``fail_total``).
     항목이 어떤 소스에도 없으면 ``KeyError`` (라우트가 404 처리).
     """
+    from .common import PASS_BIN, bin_types
+
     matched = [t for t in tables if subject in t.item_columns]
     if not matched:
         raise KeyError(subject)
@@ -192,15 +216,22 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP) -> dict:
         # values 와 같은 순서·길이로 정렬한다 (hover 용, Item_detail CDF 전용).
         numeric = pd.to_numeric(col, errors="coerce")
         finite_mask = np.isfinite(numeric.to_numpy())
-        values = numeric.to_numpy()[finite_mask]
+        # Bin1 only: 양품(BIN==PASS_BIN) die 만 분포/통계에 반영 (disp_mask = 유한 ∩ 양품).
+        disp_mask = finite_mask
+        stat_col = col
+        if bin1:
+            bin1_mask = np.asarray([b == PASS_BIN for b in bin_types(table)], dtype=bool)
+            disp_mask = finite_mask & bin1_mask
+            stat_col = col[bin1_mask]
+        values = numeric.to_numpy()[disp_mask]
         sources.append({
             "name": table.source,
             "values": values.round(6).tolist(),
-            "serial": [fmt_type(v) for v in table.data["SERIAL"].to_numpy()[finite_mask]],
-            "xpos": [fmt_type(v) for v in table.data["XPOS"].to_numpy()[finite_mask]],
-            "ypos": [fmt_type(v) for v in table.data["YPOS"].to_numpy()[finite_mask]],
+            "serial": [fmt_type(v) for v in table.data["SERIAL"].to_numpy()[disp_mask]],
+            "xpos": [fmt_type(v) for v in table.data["XPOS"].to_numpy()[disp_mask]],
+            "ypos": [fmt_type(v) for v in table.data["YPOS"].to_numpy()[disp_mask]],
         })
-        st = _stats(col, table.lolim.get(subject), table.hilim.get(subject))
+        st = _stats(stat_col, table.lolim.get(subject), table.hilim.get(subject))
         # report용 정규분포 곡선(프론트)의 축퇴 판정: n<2 또는 std<=0 이면 곡선을
         # 그리지 못하므로 서버가 degenerate 로 표시(프론트는 스파이크로 대체).
         # stdev 는 표본표준편차(ddof=1) — n≤1이면 None, 전부 동일값이면 0.

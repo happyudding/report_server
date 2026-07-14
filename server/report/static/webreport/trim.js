@@ -541,6 +541,17 @@ function trimYRangeCenteredOnTrim(chart, phases) {
   return [trimMean - half, trimMean + half];
 }
 
+// ── y축 범위: USL/LSL 기준 ±15% 창. lo/hi 둘 다 있고 hi>lo 일 때만 유효(아니면 null →
+//    호출부가 폴백). TRIM/VERIFY 가 spec 밴드 안에 오도록 프레이밍하고, CODE(y2)도 같은
+//    방식으로 프레이밍해 두 축의 spec 밴드가 시각적으로 나란히 보이게 한다(스케일 맞춤). ──
+function trimYRangeFromLimits(lo, hi) {
+  if (lo === null || lo === undefined || hi === null || hi === undefined) return null;
+  const span = hi - lo;
+  if (!(span > 0)) return null;                              // lo==hi 등 비정상 → 폴백
+  const pad = span * 0.15;
+  return [lo - pad, hi + pad];
+}
+
 // ── 차트 스펙: chip-to-chip 라인+마커, phase 별 trace 오버레이, CODE 는 y2 ──────
 function drawTrimChart(div, chart, payload) {
   const phases = (payload && payload.phases) || ["INIT", "CODE", "TRIM", "VERIFY"];
@@ -602,7 +613,8 @@ function drawTrimChart(div, chart, payload) {
   }
 
   const layout = { ...DIST_PLOT_BG,
-    legend: { orientation: "h", x: 0, y: 1.14, font: { size: 11 } },
+    legend: { orientation: "h", x: 0, y: 1.14, font: { size: 9 },
+      itemsizing: "constant", itemwidth: 30 },
     xaxis: { title: { text: `chip (${chart.order_by} 오름차순)`, font: { size: 11 } },
       showgrid: true, gridcolor: "#eee", zeroline: false, tickfont: { size: 10 } },
     yaxis: { title: { text: mainSpec.units || "", font: { size: 11 } },
@@ -610,14 +622,26 @@ function drawTrimChart(div, chart, payload) {
     shapes, annotations,
     margin: { l: 54, r: 54, t: 38, b: 38 },
     showlegend: true };
-  // TRIM 평균을 y축 정중앙에 고정(요구사항). TRIM 없으면 autorange 유지.
-  const yRange = trimYRangeCenteredOnTrim(chart, phases);
+  // 메인 y축: USL/LSL ±15% 창(spec 기준)으로 TRIM/VERIFY 를 보이게 한다.
+  // limit 이 없으면 기존 동작(TRIM 평균 중심)으로 폴백.
+  const yRange = trimYRangeFromLimits(mainSpec.lo, mainSpec.hi)
+    || trimYRangeCenteredOnTrim(chart, phases);
   if (yRange) { layout.yaxis.range = yRange; layout.yaxis.autorange = false; }
-  if (codeSpec) layout.yaxis2 = { overlaying: "y", side: "right", showgrid: false,
-    title: { text: `CODE${codeSpec.units ? " (" + codeSpec.units + ")" : ""}`,
-      font: { size: 11, color: TRIM.COLORS.CODE } },
-    tickfont: { size: 10, color: TRIM.COLORS.CODE } };
-  Plotly.newPlot(div, traces, layout, { responsive: true, displaylogo: false, displayModeBar: false });
+  if (codeSpec) {
+    layout.yaxis2 = { overlaying: "y", side: "right", showgrid: false,
+      title: { text: `CODE${codeSpec.units ? " (" + codeSpec.units + ")" : ""}`,
+        font: { size: 11, color: TRIM.COLORS.CODE } },
+      tickfont: { size: 10, color: TRIM.COLORS.CODE } };
+    // CODE 도 자기 USL/LSL ±15% 창으로 프레이밍 — 메인축과 같은 방식이라 시각적으로
+    // 나란히 보인다(스케일 맞춤). limit 없으면 autorange 유지.
+    const y2Range = trimYRangeFromLimits(codeSpec.lo, codeSpec.hi);
+    if (y2Range) { layout.yaxis2.range = y2Range; layout.yaxis2.autorange = false; }
+  }
+  // ±15% spec 창은 기본 뷰일 뿐 축을 잠그지 않는다 — INIT 등 창 밖으로 잘린 데이터를
+  // 사용자가 전체로 보려면 mode bar(hover 시 표시)의 autoscale/줌, 또는 더블클릭
+  // autoscale 로 zoom out 한다. (displayModeBar:false 를 제거해 상호작용 허용.)
+  Plotly.newPlot(div, traces, layout,
+    { responsive: true, displaylogo: false, doubleClick: "reset+autosize" });
 }
 
 // ── 차트 PNG 클립보드 복사 (비보안 컨텍스트/실패 시 PNG 다운로드 폴백) ──────────

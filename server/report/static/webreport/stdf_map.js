@@ -59,11 +59,36 @@ function stdfFmt(v) {
   return String(Math.round(Number(v) * 1000) / 1000);
 }
 
-// 선택 source 의 Map Analysis 프레임(x/y min·max). step 분리 시 같은 source 맵이
-// 여럿이면 합집합. 없으면 null(호출부가 데이터 min/max 로 폴백).
+// DUT 모드 여부. DUT 모드는 하나의 input(파일)이 DUT(site)별 pseudo-source 로 분할돼
+// scatter 응답 sources 가 "DUT 0/1/…" 로 나뉜다. STDF Map 은 Bin Map(Map Analysis)의
+// "All DUT" 병합과 동일하게 이들을 하나로 합쳐 원본 input 기준 맵으로 그린다.
+function stdfIsDut() {
+  return ((DATA.web_report && DATA.web_report.mode) || "Normal") === "DUT";
+}
+
+// scatter 응답에서 그릴 die(xpos/ypos/value)를 뽑는다. DUT 모드면 전체 source 를 concat
+// (원본 하나의 웨이퍼 — DUT 는 site 구분일 뿐 die 좌표는 겹치지 않는다), 아니면 선택 source 하나.
+function stdfExtractDies(data, isDut) {
+  const srcs = data.sources || [];
+  if (isDut) {
+    let xs = [], ys = [], vals = [];
+    srcs.forEach(s => {
+      if (!s.values || !s.values.length) return;
+      xs = xs.concat(s.xpos); ys = ys.concat(s.ypos); vals = vals.concat(s.values);
+    });
+    return vals.length ? { xs, ys, vals } : null;
+  }
+  const srcObj = srcs.find(s => s.name === stdfSource);
+  if (!srcObj || !srcObj.values || !srcObj.values.length) return null;
+  return { xs: srcObj.xpos, ys: srcObj.ypos, vals: srcObj.values };
+}
+
+// Map Analysis 프레임(x/y min·max). srcName=null 이면 전체 맵 합집합(DUT 모드는 "All DUT"
+// 맵 하나뿐이라 이게 곧 병합 프레임). step 분리 시 같은 source 맵이 여럿이면 합집합.
+// 없으면 null(호출부가 데이터 min/max 로 폴백).
 function stdfFrameForSource(srcName) {
   const maps = (webReportSheets() || {})["Map Analysis"] || [];
-  const matched = maps.filter(m => m.source === srcName && m.x_min != null && m.y_min != null);
+  const matched = maps.filter(m => (srcName == null || m.source === srcName) && m.x_min != null && m.y_min != null);
   if (!matched.length) return null;
   let xmin = Infinity, xmax = -Infinity, ymin = Infinity, ymax = -Infinity;
   matched.forEach(m => {
@@ -147,14 +172,19 @@ function renderStdfMap(panel) {
     bindMapModeSeg(panel);
     return;
   }
-  if (!stdfSource || !sources.some(s => s.name === stdfSource)) stdfSource = sources[0].name;
+  const isDut = stdfIsDut();
+  if (!isDut && (!stdfSource || !sources.some(s => s.name === stdfSource))) stdfSource = sources[0].name;
 
-  const srcOpts = sources.map(s =>
-    `<option value="${esc(s.name)}"${s.name === stdfSource ? " selected" : ""}>${esc(s.name)}</option>`).join("");
+  // DUT 모드는 source 를 나누지 않고 하나(All DUT)로 병합하므로 선택 UI 없이 라벨만 표시.
+  const srcControl = isDut
+    ? `<span class="stdf-lbl">Source <b>All DUT</b><span class="map-toolbar-hint" style="margin-left:6px">DUT 병합</span></span>`
+    : `<label class="stdf-lbl">Source <select id="stdfSourceSel">` +
+        sources.map(s => `<option value="${esc(s.name)}"${s.name === stdfSource ? " selected" : ""}>${esc(s.name)}</option>`).join("") +
+      `</select></label>`;
   panel.innerHTML =
     mapModeSegHtml() +
     `<div class="map-toolbar stdf-toolbar">` +
-      `<label class="stdf-lbl">Source <select id="stdfSourceSel">${srcOpts}</select></label>` +
+      srcControl +
       `<div class="dist-search-wrap stdf-search-wrap">` +
         `<input id="stdfItemSearch" class="dist-search" type="text" autocomplete="off" ` +
           `placeholder="Item 검색" value="${stdfItem ? esc(stdfItem) : ""}">` +
@@ -167,7 +197,8 @@ function renderStdfMap(panel) {
     `</div>`;
   bindMapModeSeg(panel);
 
-  panel.querySelector("#stdfSourceSel").addEventListener("change", (e) => {
+  const srcSel = panel.querySelector("#stdfSourceSel");   // DUT 모드면 없음(병합)
+  if (srcSel) srcSel.addEventListener("change", (e) => {
     stdfSource = e.target.value;
     stdfBucketFilter.clear();
     if (stdfItem) stdfRenderMap(panel);
@@ -232,17 +263,20 @@ function stdfRenderMap(panel) {
 }
 
 function stdfDrawMap(body, data) {
-  const srcObj = (data.sources || []).find(s => s.name === stdfSource);
-  if (!srcObj || !srcObj.values || !srcObj.values.length) {
-    body.innerHTML = `<div class="placeholder">이 Source(${esc(stdfSource)}) 에 「${esc(stdfItem)}」 측정값이 없습니다.</div>`;
+  const isDut = stdfIsDut();
+  const dies = stdfExtractDies(data, isDut);
+  if (!dies) {
+    const lbl = isDut ? "All DUT" : stdfSource;
+    body.innerHTML = `<div class="placeholder">${esc(lbl)} 에 「${esc(stdfItem)}」 측정값이 없습니다.</div>`;
     return;
   }
-  const xs = srcObj.xpos, ys = srcObj.ypos, vals = srcObj.values;
-  const frame = stdfFrameForSource(stdfSource) || stdfFrameFromData(xs, ys);
+  const xs = dies.xs, ys = dies.ys, vals = dies.vals;
+  const frame = stdfFrameForSource(isDut ? null : stdfSource) || stdfFrameFromData(xs, ys);
   if (!frame) { body.innerHTML = `<div class="placeholder">좌표 정보가 없어 맵을 그릴 수 없습니다.</div>`; return; }
   const deciles = stdfDecileBuckets(vals);
   const units = data.units || "";
-  const title = `${esc(stdfSource)} — ${esc(stdfItem)}${units ? ` (${esc(units)})` : ""} — ${vals.length} dies`;
+  const srcLabel = isDut ? "All DUT" : stdfSource;
+  const title = `${esc(srcLabel)} — ${esc(stdfItem)}${units ? ` (${esc(units)})` : ""} — ${vals.length} dies`;
 
   body.innerHTML =
     `<div class="wafer-grid" style="grid-template-columns:repeat(1, minmax(0, 1fr))">` +

@@ -32,16 +32,18 @@
 빈 시트로 두고 전용 라우트로 지연 로드한다.
 
 ## 주요 탭 계약
-- **Yield STEP 분리 (2026-07-14)**: Yield 탭은 STEP(P1/P2/P3)별로 표를 나눈다. STEP 은
-  각 fail die 의 `FAILTNO → (TNO 매칭) item → item 의 STEP 메타행(raw 4번째 행)` 으로 정한다
-  (`item_meta`). 각 STEP 표의 bin portion 분모는 **그 STEP 에 진입한 die 수**(fail-stop
-  cascade: P1 진입=전체, P2 진입=전체−P1fail, …) — `build_yield_step_groups`(payload
-  `yield_step_groups`) 가 원본 yield_rows 를 변형하지 않고 재계산한 복사본으로 만든다. 상단
-  요약 박스의 STEP 요약(`yield_summary.by_step`: entered/fail/survivor/step_yield%)은
-  `yield_step_summary`. **Issue Table·Summary·fail_bin_ranking 은 STEP cascade 를 쓰지 않고
-  전체(total) 기준 값(`build_yield_rows`) 그대로** — Issue Table 은 merge 유지(STEP 열 포함,
-  fail 비중 내림차순이라 P1/P3 가 교차 등장). 프런트 원형 파이는 제거. `yield_bin_groups`
-  (전체 기준 merge 그룹)는 Excel 내보내기용으로 유지.
+- **Yield STEP 분리 (2026-07-14, 분모 전체 기준으로 통일)**: Yield 탭은 STEP(P1/P2/P3)별로
+  표를 나눈다. STEP 은 각 fail die 의 `FAILTNO → (TNO 매칭) item → item 의 STEP 메타행
+  (raw 4번째 행)` 으로 정한다 (`item_meta`). 각 STEP 표의 bin portion 분모는 **항상 전체
+  rawdata die 수**(`build_yield_rows` 가 이미 계산한 total 기준 값을 그대로 사용, 재계산 없음)
+  — `build_yield_step_groups`(payload `yield_step_groups`) 는 원본 yield_rows 를 변형하지 않고
+  STEP 별 그룹핑만 한다. 따라서 같은 fail 항목이 Yield 탭·Issue Table·Summary 에서 모두 동일
+  % (pass% + 모든 STEP fail% 합 = 100%). 상단 요약 박스의 STEP 요약
+  (`yield_summary.by_step`: entered/fail/survivor/step_yield%)도 전체 기준 — `yield_step_summary`
+  에서 `entered = 전체 die`(전 STEP 동일), `step_yield% = (전체 − 그 STEP fail)/전체`.
+  **Issue Table·Summary·fail_bin_ranking 도 동일한 전체(total) 기준 값(`build_yield_rows`)**
+  — Issue Table 은 merge 유지(STEP 열 포함, fail 비중 내림차순이라 P1/P3 가 교차 등장).
+  프런트 원형 파이는 제거. `yield_bin_groups`(전체 기준 merge 그룹)는 Excel 내보내기용으로 유지.
 - **CPK 임계값**: `CPK_THRESHOLD = 1.33` ([cpk.py](../web_report/tabs/cpk.py)). Issue
   Table·Distribution 이 공유하며 subject 당 **worst-case(최저) cpk** 로 이슈를 판단한다
   (`worst_cpk_by_subject`).

@@ -21,8 +21,9 @@ function colWidth(name, kind) {
   const s = kind === "issue" ? 1.5 : 1;   // Issue Table 전체 1.5배 확대
   const px = base => `${Math.round(base * s)}px`;
   // Step/Bin 은 최대 3자리라 아주 좁게, TNO 는 조금 넓게, avg/yield 는 xx.xx 라 짧게.
-  // Issue Table 은 Map/Distribution 을 왼쪽에 함께 틀고정하므로 Bin/TNO/Item 을 70% 로 좁혀
-  // 고정 블록 폭을 보완한다(Step 은 유지, Yield 표는 무영향).
+  // Issue Table 은 Map/Distribution 을 왼쪽에 함께 틀고정하므로 식별컬럼을 좁혀 고정 블록 폭을
+  // 줄인다(Step 유지, Yield 표는 무영향). Map/Dist 최소폭은 CSS min-width 로 보장하고, 공간이
+  // 모자라면 Item 을 더 줄이는 방향(사용자 요청) — Bin/TNO 70%, Item 55%.
   if (n === "step")                     return px(44);
   if (n === "bin")                      return px(kind === "issue" ? 44 * 0.7 : 44);
   if (n === "tno")                      return px(kind === "issue" ? 60 * 0.7 : 60);
@@ -31,7 +32,7 @@ function colWidth(name, kind) {
   if (n.endsWith("_count"))             return px(60);
   if (n.endsWith("_yield"))             return px(60);
   if (n === "avg")                      return px(48);
-  if (n === "item")                     return px(kind === "issue" ? 150 * 0.7 : 150);
+  if (n === "item")                     return px(kind === "issue" ? 150 * 0.55 : 150);
   if (n === "category")                 return "50px";
   if (n === "condition & judge limit")  return "185px";
   if (n === "result")                   return "80px";
@@ -582,7 +583,8 @@ function yieldOverviewHtml() {
       <td class="ybs-cnt">${esc(s.pass)} / ${esc(s.total)}</td>
     </tr>`;
   }).join("") + `</tbody></table></div>` : "";
-  // STEP(P1/P2/P3) 별 요약: 그 STEP 진입 die 수(In) 대비 통과(Pass) = step 수율(cascade).
+  // STEP(P1/P2/P3) 별 요약: 분모는 항상 전체 rawdata(In=전체 die, 전 STEP 동일).
+  // Step Yield = (전체 - 그 STEP fail) / 전체 = 그 STEP fail 만 제외한 수율(전체 기준).
   const byStep = Array.isArray(ov.by_step) ? ov.by_step : [];
   const byStepHtml = byStep.length ? `<div class="yield-by-step"><table class="ybs-table">
     <thead><tr><th>Step</th><th>Step Yield</th><th>Pass / In</th><th>Fail</th></tr></thead>

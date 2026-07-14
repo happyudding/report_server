@@ -77,15 +77,19 @@ def web_report_distribution(session_id):
     ETag(analysis_key+content_hash) 조건부 응답을 지원한다.
     """
     session = _require_web_report_session(session_id)
-    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}"'
+    # bin1=1 → 양품(Bin1)만으로 재계산한 ECDF ("Bin1 only"). ETag 에 포함해 전체/양품
+    # 변형이 서로의 304 로 오염되지 않게 한다.
+    bin1 = (request.args.get("bin1") or "") in ("1", "true", "True")
+    variant = "bin1" if bin1 else "all"
+    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}-{variant}"'
     headers = {"Vary": "Accept-Encoding", "ETag": etag}
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers=headers)
     try:
-        # 계산+직렬화+gzip 결과가 service 쪽에서 (analysis_key, content_hash) 키로 캐시됨 —
-        # 세션당 1회만 CPU 를 쓰고 이후 요청은 bytes 반환뿐이라 동시 사용자에도 안전.
+        # 계산+직렬화+gzip 결과가 service 쪽에서 (analysis_key, content_hash, mode[, bin1]) 키로
+        # 캐시됨 — 세션당 변형별 1회만 CPU 를 쓰고 이후 요청은 bytes 반환뿐이라 동시 사용자에도 안전.
         body = web_report_service.get_distribution_gzip(
-            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except Exception:
@@ -110,16 +114,19 @@ def web_report_scatter(session_id, subject):
     subject = (subject or "").strip()
     if not subject or len(subject) > 200:
         abort(400, "invalid subject")
+    # bin1=1 → 양품(Bin1)만으로 낸 분포/통계 상세 ("Bin1 only" 상세). ETag 에 포함.
+    bin1 = (request.args.get("bin1") or "") in ("1", "true", "True")
+    variant = "bin1" if bin1 else "all"
     # subject 는 URL 에, mode 는 세션 불변이라 ETag 는 /distribution 과 동일하게
-    # analysis_key+content_hash 로 충분 — raw_data 편집 시 content_hash 변경으로 재수신.
-    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}"'
+    # analysis_key+content_hash(+변형) 로 충분 — raw_data 편집 시 content_hash 변경으로 재수신.
+    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}-{variant}"'
     headers = {"Vary": "Accept-Encoding", "ETag": etag}
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers=headers)
     try:
         body = web_report_response_cache.get_scatter_gzip(
             session_id, subject, session=session,
-            report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+            report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report item or session data not found")
     except Exception:

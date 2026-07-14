@@ -129,11 +129,12 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     return public, report
 
 
-def get_distribution(session_id: str, *, report_db, upload_root: Path) -> dict:
+def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: bool = False) -> dict:
     """Distribution lazy 엔드포인트용 컴팩트 ECDF (전 포인트, 다운샘플 없음).
 
     /full 의 payload 와 동일하게 manifest.selected_items 필터를 적용한다 — 빠뜨리면
     distribution_index 와 항목 집합이 어긋난다. tables 는 캐시 클론이라 필터가 안전하다.
+    ``bin1`` 이면 양품(BIN==PASS_BIN) die 측정값만으로 ECDF 를 재계산한다("Bin1 only").
     """
     from .tabs.common import passfail_or_empty_items
     from .tabs.distribution import build_distribution_compact
@@ -147,15 +148,18 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path) -> dict:
     # /full 의 distribution_index 와 항목 집합을 맞춘다 — Pass/Fail unit·측정 data 전무 항목 제외.
     excluded = passfail_or_empty_items(tables)
     all_items = sorted({c for t in tables for c in t.item_columns if c not in excluded})
-    return build_distribution_compact(tables, all_items)
+    return build_distribution_compact(tables, all_items, bin1_only=bin1)
 
 
-def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> bytes:
+def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
+                          bin1: bool = False) -> bytes:
     """get_distribution 결과를 JSON→gzip bytes 로 캐시해 반환 (라우트가 그대로 응답).
 
     계산(수 초 CPU)+직렬화+압축을 세션당 1회만 수행 — 동시 사용자·재방문 모두 캐시 히트.
     키는 tables 캐시와 동일한 (analysis_key, content_hash) — manifest.selected_items 는
     업로드 시 확정되어 content_hash 와 함께만 바뀌므로 키에 포함하지 않아도 안전하다.
+    ``bin1`` 변형은 별도 캐시 키(dist_key(session, bin1=True))로 전체 기준과 분리 저장하고,
+    콜드 빌드도 인라인으로만 계산한다(워커 dist_job 은 전체 기준 전용).
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -164,7 +168,7 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> b
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    cache_key = cache_policy.dist_key(session)
+    cache_key = cache_policy.dist_key(session, bin1=bin1)
     blob = cache.cache_get(cache.DIST_CACHE, cache_key)
     if blob is not None:
         return blob
@@ -174,11 +178,13 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path) -> b
             return blob
         # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
         blob = disk_cache.load_dist(upload_root, cache_key)
-        if blob is None and compute.should_offload(cache_policy.tables_key(session)):
-            # 콜드 빌드는 워커 프로세스로 (워커가 disk_cache 도 채움)
+        if blob is None and not bin1 and compute.should_offload(cache_policy.tables_key(session)):
+            # 콜드 빌드는 워커 프로세스로 (워커가 disk_cache 도 채움). bin1 변형은 워커
+            # dist_job 이 전체 기준만 만들므로 오프로드하지 않고 아래 인라인 경로로 간다.
             blob = compute.run(compute.dist_job, session_id, str(upload_root))
         if blob is None:
-            compact = get_distribution(session_id, report_db=report_db, upload_root=upload_root)
+            compact = get_distribution(session_id, report_db=report_db,
+                                       upload_root=upload_root, bin1=bin1)
             blob = gzip.compress(
                 json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
                 compresslevel=_DIST_GZIP_LEVEL)
@@ -201,16 +207,18 @@ def query_raw_data(session_id: str, *, report_db, upload_root: Path, columns,
         tables, columns=columns, search=search, bin_filter=bin_filter, source_filter=source_filter)
 
 
-def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path) -> dict:
+def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path,
+                 bin1: bool = False) -> dict:
     """Distribution 상세용: 항목의 소스별 전체 측정값(다운샘플 없음) + cpk/status 지연 로드.
 
+    ``bin1`` 이면 분포/통계를 양품(BIN==PASS_BIN) die 만으로 낸다("Bin1 only" 상세).
     항목이 어떤 소스에도 없으면 KeyError (라우트가 404 처리).
     """
     from .tabs.distribution import scatter_item as _scatter_item
 
     session, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     tables = _mode_tables(tables, _validate_mode(session.get("mode")))
-    return _scatter_item(tables, subject)
+    return _scatter_item(tables, subject, bin1=bin1)
 
 
 def _commonality_index(session: dict, tables):

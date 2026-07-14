@@ -88,6 +88,15 @@ let distDataReady = false;     // distDataCache 사용 가능 여부 (구형 emb
 let distDataPromise = null;    // 진행 중/완료된 fetch (중복 요청 방지)
 let _distContentHash = "";     // 마지막 fetch 시점의 content_hash — 동일하면 재fetch 안 함
 
+// ── "Bin1 only" (양품 분포) — 갤러리 미니셀 전용 별도 캐시(?bin1=1 지연 로드). ─────
+// Issue Table·item_detail 이 공유하는 전체 기준 distDataCache 와 분리해, 토글 영향이
+// Distribution 갤러리에만 국한되게 한다(다른 탭 분포는 전체 기준 유지).
+let distBin1Only = false;      // 갤러리 미니셀을 양품(BIN==1)만의 ECDF 로 표시
+let distBin1Cache = {};        // subject → {...} (bin1 ECDF, distDataCache 와 동일 스키마)
+let distBin1Ready = false;
+let distBin1Promise = null;
+let _distBin1ContentHash = "";
+
 function buildDistDataFromCompact(payload) {
   // 컴팩트 columnar → 기존 distDataCache 스키마 그대로 (소비자 코드 무수정)
   const out = {};
@@ -178,6 +187,35 @@ function refreshDistConsumers() {
     else detail.outerHTML = `<div class="placeholder">분포 데이터 없음</div>`;
   }
   // Distribution 갤러리 — 화면에 보이는(관측 중) 카드 재큐잉
+  document.querySelectorAll('#panel-distribution .distg-card[data-visible="1"]')
+    .forEach(distQueueRender);
+}
+
+// ── Bin1 only: 양품(BIN==1) ECDF 를 ?bin1=1 로 지연 로드 (전체 캐시와 별도, 최초 토글 시). ──
+function ensureDistBin1Data() {
+  const ch = (DATA && DATA.session && DATA.session.content_hash) || "";
+  if (distBin1Promise && ch === _distBin1ContentHash) return distBin1Promise;   // 로딩 중/완료 재사용
+  _distBin1ContentHash = ch;
+  distBin1Ready = false;
+  const url = `/pe/report/session/${SESSION_ID}/web_report/distribution?bin1=1`;
+  distBin1Promise = fetchDistViaWorker(url)
+    .catch(() => fetch(url, { cache: "no-cache" })   // Worker 실패 시 메인스레드 폴백
+      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }))
+    .then(j => {
+      distBin1Cache = buildDistDataFromCompact(j);
+      distBin1Ready = true;
+      if (distBin1Only) refreshDistGallery();   // 도착 전 비어 있던 갤러리 미니셀을 채운다
+    })
+    .catch(e => {
+      distBin1Promise = null;   // 실패 시 다음 토글에서 재시도
+      showToast("Bin1 분포 로드 실패: " + e.message);
+    });
+  return distBin1Promise;
+}
+
+// 갤러리에 보이는(관측 중) 카드만 재큐잉 — Bin1 데이터 도착 시 미니셀을 다시 채운다.
+// (refreshDistConsumers 와 달리 Issue Table/상세는 건드리지 않아 전체 기준을 보존.)
+function refreshDistGallery() {
   document.querySelectorAll('#panel-distribution .distg-card[data-visible="1"]')
     .forEach(distQueueRender);
 }
@@ -393,15 +431,19 @@ function distPointsForDisplay(xs, ys) {
   return distDownsampleForDisplay(f.xs, f.ys);
 }
 
+// 갤러리 미니셀이 쓸 활성 분포 캐시/준비상태 — Bin1 only 토글 시 양품 캐시로 전환.
+function distGalleryCache() { return distBin1Only ? distBin1Cache : distDataCache; }
+function distGalleryReady() { return distBin1Only ? distBin1Ready : distDataReady; }
+
 // ── 갤러리 미니셀(정적 CDF, distDataCache 재사용, 표시용만 1500점 다운샘플) ─────
 function distRenderGalleryCell(cell) {
   if (cell.dataset.rendered === "1") return;
   // 분포 데이터 도착 전 — rendered 플래그를 세우지 않고 리턴해야 도착 후
-  // refreshDistConsumers 의 재큐잉으로 다시 그려진다 (빈 차트 고정 방지).
-  if (!distDataReady) return;
+  // refreshDistConsumers/refreshDistGallery 의 재큐잉으로 다시 그려진다 (빈 차트 고정 방지).
+  if (!distGalleryReady()) return;
   const subject = cell.dataset.subject;
   const status = cell.dataset.status || "ok";
-  const info = distDataCache[subject];
+  const info = distGalleryCache()[subject];
   const plot = cell.querySelector(".distg-plot");
   if (!plot || typeof Plotly === "undefined") return;
   const lo = info ? info.lower_limit : null;
@@ -464,8 +506,9 @@ function distToolbarHtml() {
   // 검색 체크박스로 고른 항목이 있으면 개수+해제 버튼을 세그먼트 옆에 표시.
   const selChip = distSelected.size
     ? `<button class="distseg dist-sel-clear" data-seg="clearsel" title="선택 해제">선택 ${distSelected.size}개 ✕</button>` : "";
+  const bin1Btn = `<button class="distseg${distBin1Only ? " active" : ""}" data-seg="bin1" title="켜짐: 각 항목 분포를 양품(Bin1, BIN==1) die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
   return `<div class="dist-toolbar">
-    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${selChip}</div>
+    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${selChip}</div>
     <div class="dist-search-wrap">
       <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">
       <div id="distSuggest" class="dist-suggest" style="display:none"></div>

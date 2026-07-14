@@ -17,6 +17,8 @@ let _idetNormalRendered = false;   // report 정규분포 곡선 1회 렌더 가
 let cdfExcluded = new Set();       // 제외할 칩 키 `${source}||${serial}` → CDF 곡선에서 뺌(분모 감소)
 let cdfHighlighted = new Set();    // 강조할 칩 키 → CDF 점 색/크기 변경
 let cdfEditMode = "none";          // "none" | "exclude" | "highlight" (선택이 어느 Set 에 들어가는지)
+// CDF x축 옵션(임시, 클라이언트 전용) — Excel 축옵션식 경계/단위. 항목 이동/새로고침 시 초기화.
+let cdfAxisOverride = null;         // null=자동(autorange). 적용 시 {min, max, major|null, minor|null}
 const CDF_HIGHLIGHT_COLOR = "#EF553B";
 // 칩(die) 고유 식별키 — SERIAL 이 die 간 중복될 수 있어 XPOS/YPOS 까지 포함해야
 // 드래그/클릭 제외가 정확히 그 die 만 겨냥한다(serial 단독이면 같은 serial 전량 오제외).
@@ -41,14 +43,18 @@ function openItemDetail(subject, navList) {
   _itemDetailNav = Array.isArray(navList) && navList.length ? navList : [subject];
   _itemDetailFailPage = 1;
   cdfResetEdits();   // 항목이 바뀌면 CDF 제외/강조 편집 초기화
+  cdfAxisOverride = null;   // 항목이 바뀌면 CDF x축 옵션(경계/단위)도 자동으로 되돌림
   _itemDetailData = null;
   const reqId = ++_itemDetailReq;
   window.scrollTo(0, 0);
   purgeItemDetailCharts();   // 항목 이동 시 이전 차트(WebGL 컨텍스트) 해제 후 갈아끼움
   dp.innerHTML = `<div class="idet"><div class="idet-head"><button class="btn-sm idet-back">← Back</button>` +
     `<span class="idet-title"><b>${esc(subject)}</b></span></div><div class="placeholder">로드 중…</div></div>`;
+  // Bin1 only 가 켜져 있으면 상세도 양품(BIN==1)만으로 낸 분포/통계를 받는다(?bin1=1).
   // cache 옵션 없음(기본) — 서버 ETag 조건부 응답으로 재클릭·재방문 시 304 재검증된다.
-  fetch(`/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`)
+  const scatterUrl = `/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`
+    + (distBin1Only ? "?bin1=1" : "");
+  fetch(scatterUrl)
     .then(res => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
     .then(data => { if (reqId === _itemDetailReq) renderItemDetail(data); })
     .catch(e => {
@@ -112,6 +118,7 @@ function renderItemDetail(data) {
       </span>
     </div>
     <div id="cdfEditBar" class="cdf-editbar"></div>
+    <div id="cdfAxisBar" class="cdf-axisbar"></div>
     <div id="chartNoteBar"></div>
     ${idetLegendHtml(data)}
     <div class="idet-charts">
@@ -135,6 +142,7 @@ function renderItemDetail(data) {
     ${failTitle}
   </div>`;
   renderCdfEditBar();
+  renderCdfAxisBar();
   distRenderDetailCharts(data);   // #distCdf / #distHist (기존 함수 재사용)
   if (window.chartNotesBar) chartNotesBar(data);   // 차트 주석 툴바 (chart_notes.js)
   if (window.cnRenderChartComments) cnRenderChartComments(subject);   // 차트 하단 Comment 표시
@@ -273,6 +281,8 @@ function bindItemDetailPanel() {
     const mb = e.target.closest("[data-cdf-mode]");
     if (mb) { cdfEditMode = mb.dataset.cdfMode; cdfAfterEdit(); return; }
     if (e.target.closest(".cdf-reset")) { cdfResetEdits(); cdfAfterEdit(); return; }
+    const axb = e.target.closest("[data-cdf-axis]");
+    if (axb) { axb.dataset.cdfAxis === "apply" ? cdfAxisApply() : cdfAxisAuto(); return; }
     const pg = e.target.closest("[data-idet-page]");
     if (pg && !pg.disabled) { _itemDetailFailPage = parseInt(pg.dataset.idetPage, 10) || 1; renderItemFailRows(); return; }
   });
@@ -283,6 +293,9 @@ function bindItemDetailPanel() {
     if (!set) return;
     if (chk.checked) set.add(chk.dataset.chipkey); else set.delete(chk.dataset.chipkey);
     cdfAfterEdit();
+  });
+  dp.addEventListener("keydown", e => {   // 축옵션 입력칸에서 Enter → 적용
+    if (e.key === "Enter" && e.target.closest(".cdf-ax-in")) { e.preventDefault(); cdfAxisApply(); }
   });
   document.addEventListener("keydown", e => {
     if (!dp.classList.contains("active")) return;
@@ -384,6 +397,50 @@ function cdfToggleChip(key) {
   if (!set) return;
   if (set.has(key)) set.delete(key); else set.add(key);
 }
+// CDF x축 옵션 툴바(Excel 축옵션식): 경계(min/max) + 단위(기본/보조) + 적용/자동.
+// 정적 마크업만 그림 — 입력 기본값은 렌더 직후 syncCdfAxisInputs 가 '현재 그려진' 축값으로 채운다.
+function renderCdfAxisBar() {
+  const bar = document.getElementById("cdfAxisBar");
+  if (!bar) return;
+  const num = k => `<input type="number" class="cdf-ax-in" data-cdf-ax="${k}" step="any">`;
+  bar.innerHTML =
+    `<span class="cdf-eb-label">CDF x축</span>` +
+    `<span class="cdf-ax-grp">경계 ${num("min")} ~ ${num("max")}</span>` +
+    `<span class="cdf-ax-grp">단위 기본 ${num("major")} 보조 ${num("minor")}</span>` +
+    `<button type="button" class="btn-sm cdf-ax-apply" data-cdf-axis="apply">적용</button>` +
+    `<button type="button" class="btn-sm cdf-ax-auto" data-cdf-axis="auto">자동</button>` +
+    `<span class="cdf-ax-msg"></span>`;
+}
+// 렌더된 실제 x축(자동 계산 포함)을 입력칸 기본값으로 반영 — 자동 모드(override=null)에서만.
+// 사용자가 값을 '적용'한 상태에서는 그 값이 이미 반영돼 있으므로 덮어쓰지 않는다.
+function syncCdfAxisInputs(cdfDiv) {
+  const bar = document.getElementById("cdfAxisBar");
+  if (!bar || cdfAxisOverride) return;
+  const ax = cdfDiv && cdfDiv._fullLayout && cdfDiv._fullLayout.xaxis;
+  if (!ax || !ax.range) return;
+  const fmt = v => (v == null ? "" : Number(v.toPrecision(6)));   // float 잡음 제거
+  const set = (k, v) => { const el = bar.querySelector(`[data-cdf-ax="${k}"]`); if (el) el.value = fmt(v); };
+  set("min", ax.range[0]); set("max", ax.range[1]);
+  set("major", typeof ax.dtick === "number" ? ax.dtick : null);
+  set("minor", null);   // 자동 모드는 보조 눈금 미표시 → 비움(사용자가 입력하면 그때 생성)
+}
+// 적용: 입력 4칸을 읽어 override 확정 후 CDF만 재렌더. 경계 검증 실패 시 인라인 메시지.
+function cdfAxisApply() {
+  const bar = document.getElementById("cdfAxisBar");
+  if (!bar) return;
+  const val = k => { const el = bar.querySelector(`[data-cdf-ax="${k}"]`); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : null; };
+  const min = val("min"), max = val("max"), major = val("major"), minor = val("minor");
+  const msg = bar.querySelector(".cdf-ax-msg");
+  if (min == null || max == null || min >= max) { if (msg) msg.textContent = "경계 최소<최대 확인"; return; }
+  if (msg) msg.textContent = "";
+  cdfAxisOverride = { min, max, major: (major > 0 ? major : null), minor: (minor > 0 ? minor : null) };
+  if (_itemDetailData) distRenderCdf(_itemDetailData);   // CDF만 재렌더(override 반영)
+}
+// 자동: override 해제 후 재렌더 → syncCdfAxisInputs 가 현재값으로 입력칸 재기입.
+function cdfAxisAuto() {
+  cdfAxisOverride = null;
+  if (_itemDetailData) distRenderCdf(_itemDetailData);
+}
 // 편집(제외/강조/모드전환/초기화) 후 CDF·히스토그램·툴바·Fail표를 다시 그림.
 // 히스토그램은 제외(cdfExcluded)를 반영하므로 함께 재렌더해야 초기화 시 원복된다. 통계표는 불변.
 function cdfAfterEdit() {
@@ -443,9 +500,19 @@ function distRenderCdf(data) {
   if (cdfCm) { traces.push(...cdfCm.traces); cdfShapes = cdfShapes.concat(cdfCm.shapes); }
   const dragmode = cdfEditMode === "none" ? "zoom" : "select";
   const cdfLr = distLimitRange(lo, hi);
+  // x축: 사용자 축옵션(경계/단위)이 있으면 우선, 없으면 기존 동작(distLimitOnly 창 → autorange).
+  const ov = cdfAxisOverride;
+  const xaxisCfg = { title: { text: xtitle }, showgrid: true, gridcolor: "#eee", zeroline: false };
+  if (ov) {
+    xaxisCfg.range = [ov.min, ov.max]; xaxisCfg.autorange = false;
+    if (ov.major) { xaxisCfg.dtick = ov.major; xaxisCfg.tick0 = ov.min; } else xaxisCfg.nticks = 10;
+    if (ov.minor) xaxisCfg.minor = { dtick: ov.minor, showgrid: true, gridcolor: "#f2f2f2", ticklen: 3 };
+  } else {
+    xaxisCfg.nticks = 10;
+    if (cdfLr) { xaxisCfg.range = cdfLr; xaxisCfg.autorange = false; }
+  }
   Plotly.newPlot(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg, dragmode,
-    xaxis: { title: { text: xtitle }, nticks: 10, showgrid: true, gridcolor: "#eee", zeroline: false,
-      ...(cdfLr ? { range: cdfLr, autorange: false } : {}) },
+    xaxis: xaxisCfg,
     yaxis: { title: { text: "누적 %" }, range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee", zeroline: false },
     shapes: cdfShapes,
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
@@ -465,6 +532,8 @@ function distRenderCdf(data) {
     ev.points.forEach(pt => { if (pt.customdata) set.add(cdfChipKey(pt.data.name, pt.customdata[0], pt.customdata[1], pt.customdata[2])); });
     cdfAfterEdit();
   });
+  // 렌더된 실제 x축값을 축옵션 입력칸 기본값으로 반영(자동 모드에서만).
+  syncCdfAxisInputs(cdfDiv);
   // 차트 주석 오버레이 — 렌더 시점의 shapes 개수를 base 로 기억해야 하므로 항상 마지막에.
   if (window.chartNotesApply) chartNotesApply("cdf", data.subject, cdfDiv);
 }
@@ -606,6 +675,7 @@ function distBindPanel() {
       else if (seg.dataset.seg === "cpk") distCpkOnly = !distCpkOnly;
       else if (seg.dataset.seg === "fail") distFailOnly = !distFailOnly;
       else if (seg.dataset.seg === "limit") distLimitOnly = !distLimitOnly;
+      else if (seg.dataset.seg === "bin1") { distBin1Only = !distBin1Only; if (distBin1Only) ensureDistBin1Data(); }
       const q = (document.getElementById("distSearch") || {}).value || "";
       distRenderGallery();
       restoreDistSearch(q);

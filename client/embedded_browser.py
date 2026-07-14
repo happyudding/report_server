@@ -14,11 +14,16 @@ Qt.AA_ShareOpenGLContexts 속성이 앱 생성 전에 설정돼 있어야 한다
 from urllib.parse import quote
 
 from PyQt6.QtCore import QUrl
-from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
+from PyQt6.QtWebEngineCore import (
+    QWebEngineDownloadRequest,
+    QWebEnginePage,
+    QWebEngineProfile,
+)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QLineEdit, QMainWindow, QToolBar, QVBoxLayout, QWidget
 
 import client_identity
+from transport import update_policy
 
 # 열린 팝업 창 참조 보관 (GC 로 창이 사라지는 것 방지)
 _open_windows = []
@@ -42,6 +47,43 @@ def _inject_user_agent():
         user = ""
     if user:
         profile.setHttpUserAgent(f"{ua} HoneyUser/{quote(user, safe='')}")
+
+
+_download_handler_installed = False
+
+
+def _install_download_handler():
+    """defaultProfile 의 다운로드 요청을 처리하는 핸들러를 1회만 연결한다.
+
+    핸들러가 없으면 QtWebEngine 은 다운로드를 UI 반응 없이 조용히 취소한다.
+    (HONEY 설치본 다운로드 링크뿐 아니라 내장 브라우저 안의 모든 다운로드가 대상.)
+    """
+    global _download_handler_installed
+    if _download_handler_installed:
+        return
+    _download_handler_installed = True
+    QWebEngineProfile.defaultProfile().downloadRequested.connect(
+        _on_download_requested)
+
+
+def _on_download_requested(download):
+    """다운로드 폴더에 저장하고, 완료되면 탐색기에서 파일을 선택 표시한다.
+
+    경로/탐색기 헬퍼는 업데이트 manual 흐름과 동일하게 update_policy 를 재사용한다.
+    파일명은 크로미움이 제안한 값을 그대로 쓴다(특정 파일 전용 로직 없음).
+    """
+    base = download.downloadFileName() or "download"
+    dest = update_policy.unique_dest(update_policy.downloads_dir(), base)
+    download.setDownloadDirectory(str(dest.parent))
+    download.setDownloadFileName(dest.name)
+
+    def _on_finished():
+        if download.state() == QWebEngineDownloadRequest.DownloadState.DownloadCompleted:
+            update_policy.open_folder_select(dest)
+
+    download.isFinishedChanged.connect(_on_finished)
+    download.accept()
+
 
 # 브라우저 네비게이션 툴바 스타일 (얇고 단정하게)
 _NAV_TOOLBAR_QSS = """
@@ -116,6 +158,7 @@ class BrowserPanel(QWidget):
         super().__init__(parent)
         self._home_url = home_url
         _inject_user_agent()
+        _install_download_handler()
         self.view = _WebView(home_url)
 
         tb = QToolBar("Navigation")

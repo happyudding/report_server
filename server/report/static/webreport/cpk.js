@@ -9,6 +9,7 @@ const CPK_PAGE_SIZE = 50;     // 페이지당 표시 행 수
 let cpkBasisBin1 = false;     // false=전체(모든 die) 기준, true=Bin1(양품) 기준 통계 표시
 let cpkShowLowOnly = true;    // 기본값: CPK < 1.33 항목만 오름차순(최악 우선) 정렬해 보여줌
 let cpkHideAbnormal = true;   // 기본값 ON: Limit 동일·CPK 음수·CPK 없음(비정상) 항목 숨김
+let cpkHideCodeUnit = false;  // 켜면 Unit(단위)이 CODE 인 항목(디지털 code 값) 숨김
 let cpkSearchTerm = "";       // subject/source 검색어 (실시간 필터)
 let cpkSourceFilter = "";     // 특정 source 만 표시 (빈 문자열 = 전체 source)
 let cpkPage = 1;              // 현재 페이지 (1-base)
@@ -75,6 +76,8 @@ function cpkIsAbnormal(r) {
 }
 
 function cpkFilterRows(rows) {
+  if (cpkHideCodeUnit)
+    rows = rows.filter(r => String(r.units || "").trim().toUpperCase() !== "CODE");
   if (cpkSourceFilter) rows = rows.filter(r => String(r.source || "") === cpkSourceFilter);
   const term = cpkSearchTerm.trim().toLowerCase();
   if (!term) return rows;
@@ -212,7 +215,8 @@ function renderCpk() {
     `<button type="button" id="cpkBasisBtn" class="btn-sm${cpkBasisBin1 ? " active" : ""}" title="켜짐: Bin1(양품) 기준 · 꺼짐: 전체 die 기준">기준: ${cpkBasisBin1 ? "Bin1(양품)" : "전체 die"}</button>` +
     `<button type="button" id="cpkLowBtn" class="btn-sm${cpkShowLowOnly ? " active" : ""}" title="켜짐: CPK &lt; ${CPK_WARN_THRESHOLD} 항목만 · 꺼짐: 전체 표시">` +
     `${cpkShowLowOnly ? `표시: CPK &lt; ${CPK_WARN_THRESHOLD} 만` : "표시: 전체"}</button>` +
-    `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkHideAbnormal ? " active" : ""}" title="켜짐: Limit 동일·CPK 음수·CPK 없음 항목 숨김">abnormal 정리</button>` +
+    `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkHideAbnormal ? " active" : ""}" title="비정상(abnormal) 항목을 표에서 숨깁니다. 판정 기준: ① 상·하한(Limit)이 같아 공차가 0인 항목, ② CPK 가 음수, ③ CPK 계산 불가(값 없음). 통계적으로 의미 없는 행을 제외합니다.">abnormal 정리</button>` +
+    `<button type="button" id="cpkCodeUnitBtn" class="btn-sm${cpkHideCodeUnit ? " active" : ""}" title="켜짐: 단위(Unit)가 CODE 인 항목(디지털 code 값, 공정능력 지표가 무의미) 숨김 · 꺼짐: 전체 표시">Unit CODE 제거</button>` +
     `<button type="button" id="cpkTargetBtn" class="btn-sm${cpkTargetMode ? " active" : ""}">Limit 계산</button></div>` +
     targetBar +
     `<div id="cpkTableHost"></div>`;
@@ -231,6 +235,11 @@ function renderCpk() {
   });
   document.getElementById("cpkAbnBtn").addEventListener("click", () => {
     cpkHideAbnormal = !cpkHideAbnormal;
+    cpkPage = 1;
+    renderCpk();
+  });
+  document.getElementById("cpkCodeUnitBtn").addEventListener("click", () => {
+    cpkHideCodeUnit = !cpkHideCodeUnit;
     cpkPage = 1;
     renderCpk();
   });
