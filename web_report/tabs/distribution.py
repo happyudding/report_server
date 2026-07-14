@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .common import fmt_type, json_safe, round_num
+from .common import fmt_type, json_safe, num, round_num
 from .cpk import CPK_THRESHOLD, _stats, worst_cpk_by_subject
 from .raw_data import _META_COLUMNS
 from .yield_tab import _tno_norm, failtno_norms, tno_to_item_map
@@ -48,9 +48,12 @@ def build_distribution_compact(tables, all_items, *, bin1_only=False) -> dict:
     행마다 반복되던 subject/source/units/limits 키를 제거한 컴팩트 표현으로,
     lazy 엔드포인트 ``GET .../web_report/distribution`` 전용이다 (208MB → 수십 MB).
 
-    ``bin1_only`` 이면 각 소스에서 BIN==PASS_BIN(양품) die 의 측정값만으로 ECDF 를
-    계산한다 — Distribution 탭 "Bin1 only" 토글용. 다운샘플은 여전히 없음(불변 규칙 #6).
-    units/limits(spec)은 bin 과 무관하므로 전체 기준과 동일하게 항목 메타에서 취한다.
+    ``bin1_only`` 이면 각 소스에서 BIN==PASS_BIN(양품) **그리고** 이 항목 규격(LSL/USL)
+    이내인 die 의 측정값만으로 ECDF 를 계산한다 — Distribution 탭 "Bin1 only" 토글용.
+    (규격 밖으로 벗어난 양품 die 도 제외해 "양품·규격내 산포"만 남긴다.) 이 규격 필터는
+    성능용 다운샘플이 아니라 bin1 모드 전용 의미 필터다 — 전체 모드는 여전히 전 포인트를
+    빠짐없이 표시한다(불변 규칙 #6). units/limits(spec)은 bin 과 무관하므로 전체 기준과
+    동일하게 항목 메타에서 취한다.
     """
     from .common import PASS_BIN, bin_types
 
@@ -77,8 +80,18 @@ def build_distribution_compact(tables, all_items, *, bin1_only=False) -> dict:
                 first = False
             col = table.data[item]
             if bin1_only:
-                col = col[bin1_masks[id(table)]]
-            values = to_numeric_clean(col)
+                # 양품(BIN==PASS_BIN) & 규격(LSL/USL) 이내 die 만 — 규격 밖 양품 die 도 제외.
+                numeric = pd.to_numeric(col, errors="coerce").to_numpy()
+                m = np.isfinite(numeric) & bin1_masks[id(table)]
+                ilo = num(table.lolim.get(item))
+                ihi = num(table.hilim.get(item))
+                if ilo is not None:
+                    m &= (numeric >= ilo)
+                if ihi is not None:
+                    m &= (numeric <= ihi)
+                values = numeric[m]
+            else:
+                values = to_numeric_clean(col)
             unique_vals, cum = cumulative_distribution_full(values)
             # 수백만 포인트를 파이썬 round_num 루프로 돌리면 요청당 수 초가 걸려 numpy 로
             # 벡터화한다 — to_numeric_clean 이 유한 float64 만 반환하므로(NaN/inf 없음)
@@ -185,10 +198,12 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
     """Item_detail 용: 항목의 소스별 전체 측정값(다운샘플 없음) + 통계 + cpk/status +
     이 항목으로 Fail 된 die 의 rawdata 행(전 metadata + 측정값).
 
-    ``bin1`` 이면 분포(values/serial/xpos/ypos)·통계·cpk 를 양품(BIN==PASS_BIN) die 만으로
-    낸다("Bin1 only" 상세). ``fail_rows``/``fail_total``/``is_fail`` 은 "이 항목으로 fail 한
-    die" 진단이라 bin 필터와 무관하게 전체 기준을 유지한다(status 는 all-data is_fail +
-    bin1 cpk 조합).
+    ``bin1`` 이면 분포(values/serial/xpos/ypos)를 양품(BIN==PASS_BIN) **그리고** 규격
+    (LSL/USL) 이내인 die 만으로 낸다("Bin1 only" 상세, CDF/히스토그램 표시용). 규격 필터는
+    성능 다운샘플이 아니라 이 모드 전용 의미 필터다. ``stats``/``cpk`` 는 규격 클리핑을 하지
+    않고 양품(BIN==PASS_BIN) 기준을 유지한다(규격 클리핑은 cpk 를 왜곡하므로).
+    ``fail_rows``/``fail_total``/``is_fail`` 은 "이 항목으로 fail 한 die" 진단이라 bin 필터와
+    무관하게 전체 기준을 유지한다(status 는 all-data is_fail + bin1 cpk 조합).
 
     - ``stats``: 소스별 _stats (n/min/median/max/average/stdev/cp/cpl/cpu/cpk).
     - ``sources[].serial/xpos/ypos``: CDF hover 용으로 ``values`` 와 동일 순서·길이로 정렬된
@@ -216,12 +231,21 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
         # values 와 같은 순서·길이로 정렬한다 (hover 용, Item_detail CDF 전용).
         numeric = pd.to_numeric(col, errors="coerce")
         finite_mask = np.isfinite(numeric.to_numpy())
-        # Bin1 only: 양품(BIN==PASS_BIN) die 만 분포/통계에 반영 (disp_mask = 유한 ∩ 양품).
+        # Bin1 only: 양품(BIN==PASS_BIN) & 규격(LSL/USL) 이내 die 만 분포(CDF/히스토그램)에
+        # 반영 (disp_mask = 유한 ∩ 양품 ∩ 규격내). 통계(stat_col)는 규격 클리핑 없이 양품
+        # 기준만 유지 — 규격 클리핑은 cpk 를 왜곡하므로("cpk 유지").
         disp_mask = finite_mask
         stat_col = col
         if bin1:
             bin1_mask = np.asarray([b == PASS_BIN for b in bin_types(table)], dtype=bool)
             disp_mask = finite_mask & bin1_mask
+            arr = numeric.to_numpy()
+            ilo = num(table.lolim.get(subject))
+            ihi = num(table.hilim.get(subject))
+            if ilo is not None:
+                disp_mask = disp_mask & (arr >= ilo)
+            if ihi is not None:
+                disp_mask = disp_mask & (arr <= ihi)
             stat_col = col[bin1_mask]
         values = numeric.to_numpy()[disp_mask]
         sources.append({

@@ -10,6 +10,7 @@ const PLOTLY_FONT = { family: 'system-ui, -apple-system, "Segoe UI", sans-serif'
 const MAP_DENSE_DIES = 3000;
 // 회색 die(앞 STEP fail — 모양만 유지)·TNO Map 기타 항목 색.
 const MAP_GRAY_RGB = [200, 204, 208];
+const MAP_GRAY_HEX = "#c8ccd0";
 const TNO_OTHER_COLOR = "#9aa0a6";
 
 function webReportSheets() {
@@ -211,8 +212,7 @@ function dimColorMap(colorMap, binOrder, selected) {
 // source 가 여럿이면 가로 2칸 그리드로 wafer map 을 나열하고, bin 범례는 전체 소스
 // 합산 기준으로 한 번만 만들어 오른쪽에 고정(sticky)한다. 모든 맵이 같은 색상 매핑을 쓴다.
 let mapGridCols = 1;   // Map Analysis 가로 칸수 기본 1칸(확대). 숫자 입력으로 조절, 세션 내 유지.
-// 칸수가 적을수록 맵을 크게(높게) 보여준다 — scaleanchor 정사각 맵이라 폭·높이 함께 커져야 확대됨.
-function mapPlotHeight() { return Math.min(720, Math.max(220, Math.round(720 / mapGridCols))); }
+// 갤러리 카드 크기는 가로 칸수(폭) + canvas aspect-ratio(비율)로 결정된다.
 
 // Map Analysis 서브모드: "bin"=Bin Map(기존), "stdf"=STDF Map(값 기반, stdf_map.js). 세션 내 유지.
 let mapMode = "bin";
@@ -517,48 +517,54 @@ function renderMapAnalysis() {
       });
     });
   }
-  function drawMap(i, activeColorMap) {
+  // 활성 TNO color map(mapTnoFilter dim 반영). Bin dim 은 drawAllMaps 가 activeBinColorMap 로 넘긴다.
+  function tnoActiveColorMap() {
+    if (!mapTnoFilter.size) return tnoInfo.colorMap;
+    const out = {};
+    tnoInfo.items.forEach(it => { out[it] = mapTnoFilter.has(it) ? tnoInfo.colorMap[it] : MAP_BIN_DIM_COLOR; });
+    return out;
+  }
+  function drawMap(i, activeBinColorMap) {
     const m = maps[i];
-    const traces = [];
-    const sel = (mapDutSelected && (m.duts || []).includes(mapDutSelected)) ? mapDutSelected : null;
-    if (sel) {
-      // 선택 DUT = 원색, 나머지 DUT = 같은 bin 색을 흐리게(opacity↓). bin 색 구분 유지.
-      const others = (m.dies || []).filter(d => d.dut !== sel);
-      const selfDies = (m.dies || []).filter(d => d.dut === sel);
-      const faded = waferHeatmap(Object.assign({}, m, { dies: others }),
-        { colorMap: activeColorMap, binOrder });
-      if (faded) { faded.trace.opacity = 0.25; traces.push(faded.trace); }
-      const full = waferHeatmap(Object.assign({}, m, { dies: selfDies }),
-        { showText: true, textSize: 8, colorMap: activeColorMap, binOrder });
-      if (full) traces.push(full.trace);
-      if (!traces.length) return;
-    } else {
-      const built = waferHeatmap(m, { showText: true, textSize: 8, colorMap: activeColorMap, binOrder });
-      if (!built) return;
-      traces.push(built.trace);
+    const wrap = document.getElementById(`wafer-full-${i}`);
+    if (!wrap) return;
+    let canvas = wrap.querySelector("canvas.wafer-thumb");
+    if (!canvas) {
+      wrap.innerHTML = "";
+      canvas = document.createElement("canvas");
+      canvas.className = "wafer-thumb";
+      wrap.appendChild(canvas);
     }
-    // 이 source 의 map 에 속한 선택 좌표들을 각자 색의 빈 원으로 강조.
-    mapSelChips.forEach(c => {
-      if (c.source === m.source && c.x != null && c.y != null) {
-        traces.push({ type: "scatter", mode: "markers", x: [c.x], y: [c.y],
-          marker: { symbol: "circle-open", size: 20, color: c.color, line: { width: 3, color: c.color } },
-          hovertemplate: `X ${c.x} · Y ${c.y}<extra></extra>` });
+    const sel = (mapDutSelected && (m.duts || []).includes(mapDutSelected)) ? mapDutSelected : null;
+    const activeTno = tnoActiveColorMap();
+    function rgbFor(d, cache) {
+      if (d.g) return MAP_GRAY_RGB;   // 앞 step 에서 이미 fail — 회색(모양만 유지)
+      let hex;
+      if (mapColorKey === "tno") {
+        hex = (d.bin === "1" || d.it == null) ? PASS_COLOR : (activeTno[d.it] || TNO_OTHER_COLOR);
+      } else {
+        hex = activeBinColorMap[d.bin] || PASS_COLOR;
       }
-    });
-    Plotly.react(`wafer-full-${i}`, traces, waferLayout(m, {}),
-      { responsive: true, displayModeBar: false });
+      const faded = sel && d.dut !== sel;   // DUT 미선택 die = 흐리게
+      const ckey = hex + (faded ? "F" : "");
+      let rgb = cache[ckey];
+      if (!rgb) { rgb = faded ? fadeRgb(hexToRgb(hex), 0.28) : hexToRgb(hex); cache[ckey] = rgb; }
+      return rgb;
+    }
+    drawWaferThumb(canvas, m, rgbFor);
+    renderThumbMarkers(wrap, m);
   }
   // 맵을 한 프레임에 한 장씩 그려 UI 스레드를 쪼갠다(대량 die freeze 방지) + 진행률 표시.
   function drawAllMaps() {
     const token = ++_mapDrawToken;
-    const activeColorMap = dimColorMap(colorMap, binOrder, mapBinFilter);
+    const activeBinColorMap = dimColorMap(colorMap, binOrder, mapBinFilter);
     const prog = panel.querySelector("#mapRenderProg");
     let i = 0;
     function step() {
       if (token !== _mapDrawToken) return;   // 칸수 변경·chip 추가·재렌더가 시작되면 이전 체인 중단
       if (i >= maps.length) { if (prog) prog.textContent = ""; return; }
       if (prog && maps.length > 1) prog.textContent = `맵 ${i + 1} / ${maps.length} 그리는 중…`;
-      drawMap(i, activeColorMap);
+      drawMap(i, activeBinColorMap);
       i++;
       requestAnimationFrame(step);
     }
@@ -566,6 +572,7 @@ function renderMapAnalysis() {
   }
 
   renderLegendBody();
+  renderTnoLegend();
   renderDutLegend();
   drawAllMaps();
 }
@@ -648,8 +655,8 @@ function bindMapDetailPanel() {
     if (e.target.closest(".idet-back")) { closeMapDetail(); return; }
     if (e.target.closest(".mapd-prev")) { mapDetailNav(-1); return; }
     if (e.target.closest(".mapd-next")) { mapDetailNav(1); return; }
-    const tr = e.target.closest("tbody tr[data-bin]");
-    if (tr) { mapDetailToggleBin(tr.dataset.bin); return; }
+    const tr = e.target.closest("tbody tr[data-bin], tbody tr[data-tno]");
+    if (tr) { mapDetailToggle(tr.dataset.bin || tr.dataset.tno); return; }
   });
   document.addEventListener("keydown", e => {
     if (!dp.classList.contains("active")) return;
@@ -660,11 +667,39 @@ function bindMapDetailPanel() {
   _mapDetailBound = true;
 }
 
-// heatmap trace + 선택 좌표 오버레이. opts 로 forceGap/forceText 를 waferHeatmap 에 전달.
-function mapDetailTraces(m, binOrder, colorMap, opts) {
-  const activeColorMap = dimColorMap(colorMap, binOrder, _mapDetailBinFilter);
+// 현재 mapColorKey 축의 catOf/order/colorMap (회색·Pass 포함, _mapDetailBinFilter dim 반영).
+const _MAP_GRAY_CAT = "__gray__", _MAP_OTHER_CAT = "__other__";
+function mapDetailAxis() {
+  if (mapColorKey === "tno") {
+    const tno = buildTnoInfo();
+    const topSet = {}; tno.top.forEach(it => { topSet[it] = 1; });
+    const order = ["1"].concat(tno.top, [_MAP_OTHER_CAT, _MAP_GRAY_CAT]);
+    const base = { "1": PASS_COLOR, [_MAP_OTHER_CAT]: TNO_OTHER_COLOR, [_MAP_GRAY_CAT]: MAP_GRAY_HEX };
+    tno.top.forEach(it => { base[it] = tno.colorMap[it]; });
+    let colorMap = base;
+    if (_mapDetailBinFilter.size) {   // 선택 항목만 원색, 나머지 dim(Pass·회색·기타 제외)
+      colorMap = {};
+      order.forEach(c => {
+        colorMap[c] = (tno.top.indexOf(c) >= 0 && !_mapDetailBinFilter.has(c)) ? MAP_BIN_DIM_COLOR : base[c];
+      });
+    }
+    const catOf = d => d.g ? _MAP_GRAY_CAT : (d.bin === "1" || d.it == null ? "1" : (topSet[d.it] ? d.it : _MAP_OTHER_CAT));
+    return { catOf, order, colorMap };
+  }
+  const legendRows = buildGlobalBinLegend(mapDetailMaps());
+  const binOrder = legendRows.map(r => r.bin);
+  const dimmed = dimColorMap(globalBinColorMap(), binOrder, _mapDetailBinFilter);
+  const order = binOrder.concat([_MAP_GRAY_CAT]);
+  const colorMap = Object.assign({}, dimmed, { [_MAP_GRAY_CAT]: MAP_GRAY_HEX });
+  const catOf = d => d.g ? _MAP_GRAY_CAT : d.bin;
+  return { catOf, order, colorMap };
+}
+
+// heatmap trace + 선택 좌표 오버레이. opts 로 forceGap 을 waferHeatmap 에 전달. 축은 mapColorKey.
+function mapDetailTraces(m, opts) {
+  const axis = mapDetailAxis();
   const built = waferHeatmap(m, Object.assign(
-    { showText: true, textSize: 9, colorMap: activeColorMap, binOrder }, opts || {}));
+    { catOf: axis.catOf, order: axis.order, colorMap: axis.colorMap }, opts || {}));
   if (!built) return null;
   const traces = [built.trace];
   mapSelChips.forEach(c => {
@@ -682,15 +717,15 @@ const MAP_DETAIL_CONFIG = {
   modeBarButtonsToRemove: ["select2d", "lasso2d", "toImage"],
 };
 
-function drawMapDetail(m, binOrder, colorMap, opts) {
-  const traces = mapDetailTraces(m, binOrder, colorMap, opts);
+function drawMapDetail(m, opts) {
+  const traces = mapDetailTraces(m, opts);
   if (!traces) return;
   Plotly.newPlot("map-detail-plot", traces, waferLayout(m, {}), MAP_DETAIL_CONFIG);
 }
 
-// 확대 시 보이는 die 가 임계 이하로 줄면 격자선+Bin 라벨을 강제 복원하고, 리셋하면 이미지 모드로.
+// 확대 시 보이는 die 가 임계 이하로 줄면 격자선을 복원하고, 리셋하면 이미지 모드로.
 // forced 가드로 상태가 안 바뀌면 재렌더를 생략해 relayout 무한루프를 막는다.
-function bindMapDetailZoom(el, m, binOrder, colorMap) {
+function bindMapDetailZoom(el, m) {
   if (!el || !el.on) return;
   let forced = false;
   el.on("plotly_relayout", () => {
@@ -711,34 +746,38 @@ function bindMapDetailZoom(el, m, binOrder, colorMap) {
     const wantForce = visible <= MAP_DENSE_DIES;
     if (wantForce === forced) return;
     forced = wantForce;
-    const traces = mapDetailTraces(m, binOrder, colorMap,
-      wantForce ? { forceGap: true, forceText: true } : null);
+    const traces = mapDetailTraces(m, wantForce ? { forceGap: true } : null);
     if (traces) Plotly.react("map-detail-plot", traces, el.layout, MAP_DETAIL_CONFIG);
   });
 }
 
-function renderMapDetailLegend(m, legendRows, colorMap) {
+function renderMapDetailLegend() {
   const dp = document.getElementById("panel-map-detail");
   if (!dp) return;
   const legendBody = dp.querySelector(".wafer-legend-body");
-  if (legendBody) legendBody.innerHTML = binLegendHtml(legendRows, colorMap, _mapDetailBinFilter);
+  const title = dp.querySelector(".wafer-legend-title");
+  if (!legendBody) return;
+  if (mapColorKey === "tno") {
+    if (title) title.textContent = "TNO Legend";
+    legendBody.innerHTML = tnoLegendHtml(buildTnoInfo(), _mapDetailBinFilter);
+  } else {
+    if (title) title.textContent = "Bin Legend";
+    legendBody.innerHTML = binLegendHtml(buildGlobalBinLegend(mapDetailMaps()),
+      globalBinColorMap(), _mapDetailBinFilter, buildBinDescMap());
+  }
 }
 
-// 범례 클릭: 색만 restyle(확대/격자 상태 유지). z 재계산·재렌더 없음.
-function mapDetailToggleBin(bin) {
-  const maps = mapDetailMaps();
-  const m = maps[_mapDetailIndex];
+// 범례 클릭: 색만 restyle(확대/격자 상태 유지). bin/tno 축 공용.
+function mapDetailToggle(key) {
+  const m = mapDetailMaps()[_mapDetailIndex];
   if (!m) return;
-  if (_mapDetailBinFilter.has(bin)) _mapDetailBinFilter.delete(bin); else _mapDetailBinFilter.add(bin);
-  const legendRows = buildGlobalBinLegend(maps);
-  const binOrder = legendRows.map(r => r.bin);
-  const colorMap = globalBinColorMap();
+  if (_mapDetailBinFilter.has(key)) _mapDetailBinFilter.delete(key); else _mapDetailBinFilter.add(key);
   const el = document.getElementById("map-detail-plot");
   if (el && el.data) {
-    const activeColorMap = dimColorMap(colorMap, binOrder, _mapDetailBinFilter);
-    try { Plotly.restyle(el, { colorscale: [binColorscale(binOrder, activeColorMap)] }, [0]); } catch (e) {}
+    const axis = mapDetailAxis();
+    try { Plotly.restyle(el, { colorscale: [binColorscale(axis.order, axis.colorMap)] }, [0]); } catch (e) {}
   }
-  renderMapDetailLegend(m, legendRows, colorMap);
+  renderMapDetailLegend();
 }
 
 function renderMapDetail() {
@@ -753,9 +792,6 @@ function renderMapDetail() {
   }
   purgeMapDetailChart();
   dp.classList.add("viz-root");
-  const legendRows = buildGlobalBinLegend(maps);
-  const binOrder = legendRows.map(r => r.bin);
-  const colorMap = globalBinColorMap();
   _mapDetailBinFilter = new Set();   // 맵 진입 시 필터 초기화
 
   const total = maps.length;
@@ -771,7 +807,7 @@ function renderMapDetail() {
         navHtml +
         `<span class="idet-title"><b>${esc(m.source)}${m.step ? " — " + esc(m.step) : ""}</b>` +
         ` — ${esc(String(m.total))} dies` +
-        `<span class="mapd-hint">스크롤/드래그로 확대 · 마우스오버로 X·Y·Bin · 더블클릭 리셋</span></span>` +
+        `<span class="mapd-hint">스크롤/드래그로 확대 · 마우스오버로 X·Y·값 · 더블클릭 리셋</span></span>` +
       `</div>` +
       `<div class="wafer-analysis-layout">` +
         `<div class="wafer-grid" style="grid-template-columns:repeat(1, minmax(0, 1fr))">` +
@@ -780,18 +816,18 @@ function renderMapDetail() {
           `</div>` +
         `</div>` +
         `<div class="wafer-legend-fixed">` +
-          `<div class="wafer-legend-title">Bin Legend</div>` +
+          `<div class="wafer-legend-title">${mapColorKey === "tno" ? "TNO Legend" : "Bin Legend"}</div>` +
           `<div class="wafer-legend-body"></div>` +
         `</div>` +
       `</div>` +
     `</div>`;
 
-  renderMapDetailLegend(m, legendRows, colorMap);
+  renderMapDetailLegend();
   // 셸+placeholder 페인트 후 다음 프레임에 무거운 렌더(로딩 표시가 실제로 보이도록).
   requestAnimationFrame(() => {
     if (mapDetailMaps()[_mapDetailIndex] !== m) return;   // 그 사이 다른 맵으로 이동하면 취소
-    drawMapDetail(m, binOrder, colorMap);
-    bindMapDetailZoom(document.getElementById("map-detail-plot"), m, binOrder, colorMap);
+    drawMapDetail(m);
+    bindMapDetailZoom(document.getElementById("map-detail-plot"), m);
   });
 }
 

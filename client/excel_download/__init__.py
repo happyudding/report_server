@@ -40,11 +40,15 @@ SHEET_ORDER = ["Summary", "Yield", "CPK", "Issue Table",
                "Distribution", "Histogram", "Map Analysis"]
 
 
-def run_excel_download(session_id, server_base, out_path, status_cb=None) -> dict:
+def run_excel_download(session_id, server_base, out_path, status_cb=None,
+                       bin1=False) -> dict:
     """세션 web_report 를 out_path(xlsx)로 저장. 반환 {"out_path", "elapsed", "items"}.
 
     status_cb(state, message): 진행 통지 (state ∈ download/render/excel/save/done).
     호출 스레드에서 COM 초기화(CoInitialize)가 되어 있어야 한다 (worker.py 참조).
+
+    ``bin1`` 이면 Distribution(CDF)·Histogram 시트를 양품(BIN==1) & 규격(LSL/USL) 이내
+    die 만의 산포로 그린다(그 외 시트는 전체 die 기준 그대로).
     """
     import xlwings as xw
     from excel_edit.excel_session import _quit_app
@@ -63,7 +67,7 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None) -> dic
 
     # ── 1. 서버 데이터 수신 (두 GET 동시) ────────────────────────────────────
     _emit("download", "리포트 데이터 다운로드 중...")
-    full, dist = fetch_report_data(server_base, session_id)
+    full, dist = fetch_report_data(server_base, session_id, bin1=bin1)
     report = full["web_report"]
     session_url = f"{str(server_base).rstrip('/')}/pe/report/view/{session_id}"
     sheets = report.get("sheets") or {}
@@ -75,7 +79,8 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None) -> dic
     # ── 2. 차트 렌더 잡 구성 + 프로세스풀 시작 ──────────────────────────────
     tmpdir = tempfile.mkdtemp(prefix="honey_exceldl_")
     try:
-        chunk_jobs, n_items, cell_of = _build_chunk_jobs(report, dist, dict(colors), tmpdir)
+        chunk_jobs, n_items, cell_of = _build_chunk_jobs(
+            report, dist, dict(colors), tmpdir, bin1=bin1)
         product_type = (full.get("session") or {}).get("product_type", "")
         map_jobs = _build_map_jobs(sheets.get("Map Analysis") or [], tmpdir, product_type)
         _emit("render", f"차트 잡 구성 완료 ({time.perf_counter() - t_dl:.1f}s, "
@@ -210,10 +215,37 @@ def _source_colors(source_names, dist_colors):
     return out
 
 
-def _build_chunk_jobs(report, dist, color_of, tmpdir):
+def _ecdf_mean_std(x, y):
+    """ECDF(x=오름차순 고유값, y=누적% 0..100) → (가중평균, 모표준편차).
+
+    bin1(양품·규격내) 히스토그램 가우시안 곡선용 — CPK 시트(전체 die)와 basis 가 달라
+    쓸 수 없으므로 bin1 ECDF 에서 직접 산출한다. 값 분포를 누적%로 온전히 담으므로
+    가중평균=실제 평균, 가중분산=모분산. 단일 고유값이면 std=0(→ 축퇴 스파이크).
+    데이터 없으면 (None, None).
+    """
+    x = np.asarray(x, dtype="float64")
+    y = np.asarray(y, dtype="float64")
+    if x.size == 0:
+        return None, None
+    w = np.empty_like(y)
+    w[0] = y[0] / 100.0
+    if y.size > 1:
+        w[1:] = np.diff(y) / 100.0
+    s = w.sum()
+    if s <= 0:
+        return None, None
+    w = w / s
+    mean = float((w * x).sum())
+    std = float(np.sqrt((w * (x - mean) ** 2).sum()))
+    return mean, std
+
+
+def _build_chunk_jobs(report, dist, color_of, tmpdir, bin1=False):
     """distribution_index 순서(TSEQ)로 전 항목 셀을 만들어 32개씩 청크 잡으로 나눈다.
 
     dist items 에만 있고 index 에 없는 항목도 뒤에 붙인다 (데이터 누락 금지).
+    ``bin1`` 이면 히스토그램 가우시안 통계(avg/std)를 CPK 시트(전체 die) 대신 bin1
+    ECDF 에서 산출한다(dist 가 ?bin1=1 응답이므로 CDF x/y 는 자동으로 bin1 기준).
     반환: (jobs, n_items, cell_of{subject: cell}).
     """
     index_rows = report.get("distribution_index") or []
@@ -237,14 +269,22 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir):
         meta = meta_of.get(subject) or {}
         sources = []
         for src_name, data in (info.get("sources") or {}).items():
-            avg, std = stat_of.get((subject, src_name), (None, None))
+            xs, ys = data.get("x") or [], data.get("y") or []
+            if bin1:
+                # bin1 ECDF 에서 통계 산출(CPK 시트=전체 die 라 불일치). n=None → 다중점은
+                # 곡선, 단일점은 std=0 으로 축퇴 스파이크 처리(_draw_hist_cell).
+                avg, std = _ecdf_mean_std(xs, ys)
+                n = None
+            else:
+                avg, std = stat_of.get((subject, src_name), (None, None))
+                n = n_of.get((subject, src_name))
             # float32: 플롯(수백 px 폭) 정밀도로 충분 — 자식 프로세스 피클 전송량 절반
             sources.append((
                 src_name,
                 color_of.get(src_name, "#888888"),
-                np.asarray(data.get("x") or [], dtype="float32"),
-                np.asarray(data.get("y") or [], dtype="float32"),
-                n_of.get((subject, src_name)),
+                np.asarray(xs, dtype="float32"),
+                np.asarray(ys, dtype="float32"),
+                n,
                 avg, std,
             ))
         cells.append({

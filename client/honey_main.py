@@ -926,20 +926,36 @@ class HoneyMainWindow(QMainWindow):
             QMessageBox.information(self, "Excel Download", "이미 Excel Download 가 진행 중입니다.")
             return
 
+        # 산포(Distribution/Histogram)를 bin1(양품·규격내) 기준으로 그릴지 선택.
+        # 브라우저 토글 상태를 클라가 알 수 없어 여기서 고른다. 체크 시 CDF/히스토그램만
+        # 양품(BIN==1) & 규격 이내 die 로 그리고, 나머지 시트는 전체 die 기준 그대로.
+        from PyQt6.QtWidgets import QCheckBox
+        opt = QMessageBox(self)
+        opt.setWindowTitle("Excel Download")
+        opt.setIcon(QMessageBox.Icon.Question)
+        opt.setText("web report 를 Excel 로 저장합니다.")
+        bin1_cb = QCheckBox("산포(Distribution·Histogram)를 Bin1(양품·규격내) 기준으로 그리기")
+        opt.setCheckBox(bin1_cb)
+        opt.setStandardButtons(
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
+        if opt.exec() != QMessageBox.StandardButton.Ok:
+            return
+        bin1 = bin1_cb.isChecked()
+
         from excel_download._fetch import fetch_session_meta
         meta = fetch_session_meta(SERVER_BASE_URL, sid)
         base = "_".join(
             p for p in (str(meta.get(k) or "").strip() for k in ("product", "lot_id"))
             if p) or "webreport"
         default_path = os.path.join(os.path.expanduser("~"), "Documents",
-                                    f"{base}_{sid}.xlsx")
+                                    f"{base}_{sid}{'_bin1' if bin1 else ''}.xlsx")
         out_path, _ = QFileDialog.getSaveFileName(
             self, "Excel 저장", default_path, "Excel (*.xlsx)")
         if not out_path:
             return
 
         from excel_download.worker import ExcelDownloadWorker
-        self._excel_dl_worker = ExcelDownloadWorker(sid, SERVER_BASE_URL, out_path, self)
+        self._excel_dl_worker = ExcelDownloadWorker(sid, SERVER_BASE_URL, out_path, bin1, self)
         w = self._excel_dl_worker
         w.status.connect(self._on_excel_dl_status)
         w.done.connect(self._on_excel_dl_done)

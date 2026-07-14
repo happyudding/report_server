@@ -24,15 +24,21 @@ def _get_json(url):
     return resp.json()
 
 
-def fetch_report_data(server_base, session_id):
+def fetch_report_data(server_base, session_id, bin1=False):
     """(full_payload, dist_payload) 를 동시에 받아 반환.
 
     full_payload["web_report"] 가 없으면(legacy xlsx 세션 등) ValueError —
     Excel Download 는 web_report 세션 전용이다.
+
+    ``bin1`` 이면 distribution 을 ``?bin1=1`` 로 받아 양품(BIN==1) & 규격(LSL/USL) 이내
+    die 만의 ECDF 를 쓴다(산포 CDF/히스토그램을 bin1 기준으로 저장). full(요약/수율/CPK/
+    이슈)은 전체 die 기준 그대로.
     """
     base = str(server_base).rstrip("/")
     full_url = f"{base}/pe/report/session/{session_id}/full"
     dist_url = f"{base}/pe/report/session/{session_id}/web_report/distribution"
+    if bin1:
+        dist_url += "?bin1=1"
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         full_f = pool.submit(_get_json, full_url)

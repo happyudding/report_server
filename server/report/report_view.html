@@ -686,6 +686,7 @@ tbody tr:hover { background: #f9fbff; }
 .idet-badge.idet-fail { background: #FDECEC; color: #b42318; }
 .idet-badge.idet-cpk_low { background: #FEF9E7; color: #8a6d00; }
 .idet-badge.idet-ok { background: #E7F6EC; color: #14703d; }
+.idet-fail-bins { font-size: 12px; font-weight: 700; color: #b42318; background: #FDECEC; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
 .idet-navpos { font-size: 12px; color: #888; }
 .idet-stats { margin: 0 0 16px; }
 .idet-stats table { width: auto; }
@@ -886,7 +887,13 @@ html[data-theme="dark"] .idet-chipval-table th, html[data-theme="dark"] .idet-ch
 /* Map Detail 헤더 힌트(확대·마우스오버 안내) */
 .mapd-hint { margin-left: 12px; font-size: 12px; font-weight: 400; color: #98a2b3; }
 html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-prog { color: #7ab3f5; }
-.wafer-legend-fixed { flex: 0 0 220px; position: sticky; top: var(--sticky-head-h, 96px); }
+/* Map Analysis 갤러리 canvas 썸네일(die 당 셀+격자선) + 선택 좌표 마커 오버레이 */
+.wafer-thumb-wrap { position: relative; width: 100%; background: #fff; border-radius: 4px; overflow: hidden; }
+.wafer-thumb { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: -webkit-optimize-contrast; }
+.wafer-sel-marker { position: absolute; width: 15px; height: 15px; margin: -8px 0 0 -8px; border: 3px solid #111; border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 1.5px rgba(255,255,255,.7); }
+/* Bin/TNO 색 기준 축 세그먼트(툴바) */
+.map-axis-seg { vertical-align: middle; }
+.wafer-legend-fixed { flex: 0 0 250px; position: sticky; top: var(--sticky-head-h, 96px); }
 .wafer-legend-title { font-size: 13px; font-weight: 700; color: #333; margin: 0 0 8px; }
 .bin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .bin-table th, .bin-table td { padding: 4px 8px; border-bottom: 1px solid #eef0f3; text-align: right; }
@@ -896,6 +903,13 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 .bin-table tbody tr { cursor: pointer; }
 .bin-table tbody tr:hover td { background: #f2f6fb; }
 .bin-table tbody tr.is-selected td { background: #fff3bf; }
+/* Bin Legend description(대표 fail item) 열 — 좌측 정렬 + 말줄임 */
+.bin-table td.bin-desc { text-align: left; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; font-size: 11px; }
+html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
+/* TNO Legend — Bin Legend 아래 병렬 배치. "기타" 행은 클릭 불가 */
+.tno-legend-title { margin-top: 16px; }
+.bin-table tr.tno-other td { cursor: default; color: #888; }
+.bin-table tr.tno-other:hover td { background: transparent; }
 /* DUT Legend (DUT 모드 병합 맵) — Bin Legend 아래에 표시, 클릭 시 해당 DUT 강조 */
 .dut-legend-title { margin-top: 18px; }
 .dut-legend-hint { font-size: 11px; color: #8a9099; margin: 0 0 6px; line-height: 1.4; }
@@ -1469,6 +1483,7 @@ html[data-theme="dark"] .idet-stat-src { color: #8b94a3; }
 html[data-theme="dark"] .idet-badge.idet-fail { background: #46201f; color: #f3a3a8; }
 html[data-theme="dark"] .idet-badge.idet-cpk_low { background: #3a3315; color: #e8c96a; }
 html[data-theme="dark"] .idet-badge.idet-ok { background: #16351f; color: #7ed69a; }
+html[data-theme="dark"] .idet-fail-bins { background: #46201f; color: #f3a3a8; }
 html[data-theme="dark"] .idet-navpos { color: #8b94a3; }
 html[data-theme="dark"] .item-detail-link { color: #7fa8f5; }
 html[data-theme="dark"] .item-detail-link:hover { color: #a5c2f7; }

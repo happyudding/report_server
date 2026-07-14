@@ -88,10 +88,11 @@ let distDataReady = false;     // distDataCache 사용 가능 여부 (구형 emb
 let distDataPromise = null;    // 진행 중/완료된 fetch (중복 요청 방지)
 let _distContentHash = "";     // 마지막 fetch 시점의 content_hash — 동일하면 재fetch 안 함
 
-// ── "Bin1 only" (양품 분포) — 갤러리 미니셀 전용 별도 캐시(?bin1=1 지연 로드). ─────
+// ── "Bin1 only" (양품·규격내 분포) — 갤러리 미니셀 전용 별도 캐시(?bin1=1 지연 로드). ──
 // Issue Table·item_detail 이 공유하는 전체 기준 distDataCache 와 분리해, 토글 영향이
-// Distribution 갤러리에만 국한되게 한다(다른 탭 분포는 전체 기준 유지).
-let distBin1Only = false;      // 갤러리 미니셀을 양품(BIN==1)만의 ECDF 로 표시
+// Distribution 갤러리에만 국한되게 한다(다른 탭 분포는 전체 기준 유지). 서버는 양품
+// (BIN==1) & 규격(LSL/USL) 이내 die 만으로 ECDF 를 재계산한다.
+let distBin1Only = false;      // 갤러리 미니셀을 양품(BIN==1) & 규격내 ECDF 로 표시
 let distBin1Cache = {};        // subject → {...} (bin1 ECDF, distDataCache 와 동일 스키마)
 let distBin1Ready = false;
 let distBin1Promise = null;
@@ -506,7 +507,7 @@ function distToolbarHtml() {
   // 검색 체크박스로 고른 항목이 있으면 개수+해제 버튼을 세그먼트 옆에 표시.
   const selChip = distSelected.size
     ? `<button class="distseg dist-sel-clear" data-seg="clearsel" title="선택 해제">선택 ${distSelected.size}개 ✕</button>` : "";
-  const bin1Btn = `<button class="distseg${distBin1Only ? " active" : ""}" data-seg="bin1" title="켜짐: 각 항목 분포를 양품(Bin1, BIN==1) die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
+  const bin1Btn = `<button class="distseg${distBin1Only ? " active" : ""}" data-seg="bin1" title="켜짐: 각 항목 분포를 양품(Bin1, BIN==1) & 규격(LSL/USL) 이내 die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
   return `<div class="dist-toolbar">
     <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${selChip}</div>
     <div class="dist-search-wrap">

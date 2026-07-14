@@ -15,18 +15,16 @@ let idetHistMode = "analysis";     // 히스토그램 블록 탭: "analysis"(빈
 let _idetNormalRendered = false;   // report 정규분포 곡선 1회 렌더 가드(항목 진입마다 리셋)
 // ── CDF 칩 편집(임시, 클라이언트 전용) — 항목 이동/새로고침 시 초기화 ──────────────
 let cdfExcluded = new Set();       // 제외할 칩 키 `${source}||${serial}` → CDF 곡선에서 뺌(분모 감소)
-let cdfHighlighted = new Set();    // 강조할 칩 키 → CDF 점 색/크기 변경
-let cdfEditMode = "none";          // "none" | "exclude" | "highlight" (선택이 어느 Set 에 들어가는지)
+let cdfEditMode = "none";          // "none" | "exclude" (선택이 cdfExcluded 에 들어가는지)
 // CDF x축 옵션(임시, 클라이언트 전용) — Excel 축옵션식 경계/단위. 항목 이동/새로고침 시 초기화.
 let cdfAxisOverride = null;         // null=자동(autorange). 적용 시 {min, max, major|null, minor|null}
-const CDF_HIGHLIGHT_COLOR = "#EF553B";
 // 칩(die) 고유 식별키 — SERIAL 이 die 간 중복될 수 있어 XPOS/YPOS 까지 포함해야
 // 드래그/클릭 제외가 정확히 그 die 만 겨냥한다(serial 단독이면 같은 serial 전량 오제외).
 function cdfChipKey(source, serial, xpos, ypos) {
   return `${source}||${serial}||${xpos == null ? "" : xpos}||${ypos == null ? "" : ypos}`;
 }
-function cdfActiveSet() { return cdfEditMode === "exclude" ? cdfExcluded : cdfEditMode === "highlight" ? cdfHighlighted : null; }
-function cdfResetEdits() { cdfExcluded.clear(); cdfHighlighted.clear(); cdfEditMode = "none"; }
+function cdfActiveSet() { return cdfEditMode === "exclude" ? cdfExcluded : null; }
+function cdfResetEdits() { cdfExcluded.clear(); cdfEditMode = "none"; }
 
 function openItemDetail(subject, navList) {
   const dp = document.getElementById("panel-item-detail");
@@ -42,7 +40,7 @@ function openItemDetail(subject, navList) {
   _itemDetailSubject = subject;
   _itemDetailNav = Array.isArray(navList) && navList.length ? navList : [subject];
   _itemDetailFailPage = 1;
-  cdfResetEdits();   // 항목이 바뀌면 CDF 제외/강조 편집 초기화
+  cdfResetEdits();   // 항목이 바뀌면 CDF 제외 편집 초기화
   cdfAxisOverride = null;   // 항목이 바뀌면 CDF x축 옵션(경계/단위)도 자동으로 되돌림
   _itemDetailData = null;
   const reqId = ++_itemDetailReq;
@@ -70,10 +68,34 @@ function idetHeaderStats(stats) {
   if (!stats || !stats.length) return "";
   const s = stats[0];
   const fmt = v => (v === null || v === undefined || v === "") ? "-" : String(v);
+  // min/max/avg 는 표시용으로 소수 4자리 반올림(round,4). 숫자가 아니면 원래 표기 유지.
+  const fmt4 = v => (typeof v === "number") ? String(Math.round(v * 1e4) / 1e4) : fmt(v);
   const src = stats.length > 1 ? `<span class="idet-stat-src">${esc(s.source || "")}</span>` : "";
   return `<span class="idet-stat">${src}` +
-    `min <b>${esc(fmt(s.min))}</b> · max <b>${esc(fmt(s.max))}</b> · ` +
-    `avg <b>${esc(fmt(s.average))}</b> · σ <b>${esc(fmt(s.stdev))}</b></span>`;
+    `min <b>${esc(fmt4(s.min))}</b> · max <b>${esc(fmt4(s.max))}</b> · ` +
+    `avg <b>${esc(fmt4(s.average))}</b> · σ <b>${esc(fmt(s.stdev))}</b></span>`;
+}
+
+// Fail 항목이면 Fail 된 die 의 BIN 목록(중복 제거·숫자 우선 정렬)을 헤더에 표시.
+// fail_rows 는 fail_row_cap 상한(fail_truncated)에서 잘릴 수 있어, 그 경우 표시 bin 도
+// 잘린 행 기준이다(항목별 fail die 가 상한을 넘는 드문 경우).
+function idetFailBinsHtml(data) {
+  if (!data || !data.is_fail) return "";
+  const seen = new Set(), bins = [];
+  for (const r of (data.fail_rows || [])) {
+    const b = r.BIN;
+    if (b === null || b === undefined || b === "") continue;
+    const key = String(b);
+    if (!seen.has(key)) { seen.add(key); bins.push(key); }
+  }
+  if (!bins.length) return "";
+  bins.sort((a, b) => {
+    const na = Number(a), nb = Number(b), aNum = !isNaN(na), bNum = !isNaN(nb);
+    if (aNum && bNum) return na - nb;
+    if (aNum !== bNum) return aNum ? -1 : 1;
+    return a < b ? -1 : a > b ? 1 : 0;
+  });
+  return `<span class="idet-fail-bins">Bin ${esc(bins.join(", "))}</span>`;
 }
 
 // 상세 상단 공용 legend 스트립 — distUseExtLegend 일 때만 (툴바 .dist-legend 와 동일
@@ -89,7 +111,7 @@ function renderItemDetail(data) {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
   const subject = data.subject;
-  _itemDetailData = data;   // CDF 재렌더(제외/강조 반영)에 재사용
+  _itemDetailData = data;   // CDF 재렌더(제외 반영)에 재사용
   idetHistMode = "analysis";      // 항목 진입 시 기본 Analysis 탭
   _idetNormalRendered = false;
   const navLen = _itemDetailNav.length;
@@ -112,6 +134,7 @@ function renderItemDetail(data) {
         ${data.test_num ? `<span class="idet-tno">#${esc(data.test_num)}</span>` : ""}
         <b class="idet-subject">${esc(subject)}</b>
         <span class="idet-badge idet-${esc(data.status || "ok")}">${esc(statusLabel)}</span>
+        ${idetFailBinsHtml(data)}
         <span class="idet-cpk">cpk ${esc(data.cpk == null ? "-" : data.cpk)}</span>
         <span class="idet-lim">(${esc(distFmtLimit(data.lower_limit))} ~ ${esc(distFmtLimit(data.upper_limit))}${data.units ? " " + distUnitBr(data.units) : ""})</span>
         ${idetHeaderStats(data.stats)}
@@ -206,10 +229,10 @@ function renderItemFailRows() {
   if (_itemDetailFailPage < 1) _itemDetailFailPage = 1;
   const start = (_itemDetailFailPage - 1) * ITEM_FAIL_PAGE_SIZE;
   const page = rows.slice(start, start + ITEM_FAIL_PAGE_SIZE);
-  // 체크박스 열: 현재 편집 모드(제외/강조)의 Set 멤버십을 표시·토글. 모드=없음이면 비활성.
+  // 체크박스 열: 현재 편집 모드(제외)의 Set 멤버십을 표시·토글. 모드=없음이면 비활성.
   const editing = cdfEditMode !== "none";
   const activeSet = cdfActiveSet();
-  const chkLabel = cdfEditMode === "highlight" ? "강조" : cdfEditMode === "exclude" ? "제외" : "칩";
+  const chkLabel = cdfEditMode === "exclude" ? "제외" : "칩";
   const chkTh = `<th class="idet-fail-chk-col">${chkLabel}</th>`;
   const head = "<thead><tr>" + chkTh + cols.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
   const body = "<tbody>" + page.map(r => {
@@ -386,9 +409,8 @@ function renderCdfEditBar() {
     `<span class="cdf-eb-label">CDF 편집</span>` +
     modeBtn("none", "선택 없음", "cdf-mode-none") +
     modeBtn("exclude", "제외", "cdf-mode-exclude") +
-    modeBtn("highlight", "강조", "cdf-mode-highlight") +
     `<button type="button" class="btn-sm cdf-reset">초기화</button>` +
-    `<span class="cdf-eb-count">제외 ${cdfExcluded.size} · 강조 ${cdfHighlighted.size}</span>` +
+    `<span class="cdf-eb-count">제외 ${cdfExcluded.size}</span>` +
     (cdfEditMode !== "none"
       ? `<span class="cdf-eb-hint">점 클릭(단일) 또는 드래그 박스(다중) · 하단 Fail 표 체크박스도 가능</span>` : "");
 }
@@ -441,14 +463,14 @@ function cdfAxisAuto() {
   cdfAxisOverride = null;
   if (_itemDetailData) distRenderCdf(_itemDetailData);
 }
-// 편집(제외/강조/모드전환/초기화) 후 CDF·히스토그램·툴바·Fail표를 다시 그림.
+// 편집(제외/모드전환/초기화) 후 CDF·히스토그램·툴바·Fail표를 다시 그림.
 // 히스토그램은 제외(cdfExcluded)를 반영하므로 함께 재렌더해야 초기화 시 원복된다. 통계표는 불변.
 function cdfAfterEdit() {
   if (_itemDetailData) { distRenderCdf(_itemDetailData); distRenderHist(_itemDetailData); }
   renderCdfEditBar();
   if (_itemDetailData && _itemDetailData.is_fail) renderItemFailRows();
 }
-// CDF 만 렌더(제외→분모 재계산, 강조→점 색/크기, 편집 모드→dragmode=select + 클릭/박스선택).
+// CDF 만 렌더(제외→분모 재계산, 편집 모드→dragmode=select + 클릭/박스선택).
 function distRenderCdf(data) {
   const cdfDiv = document.getElementById("distCdf");
   if (!cdfDiv) return;
@@ -480,14 +502,7 @@ function distRenderCdf(data) {
       // customdata/hover 는 필터·정렬된 동일 순서 유지(클릭 식별·hover 지속).
       trace.customdata = c.order.map(i => [serial[i], xpos[i], ypos[i]]);
       trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<br>SERIAL %{customdata[0]} · X %{customdata[1]} / Y %{customdata[2]}<extra></extra>";
-      if (cdfHighlighted.size) {   // 강조 칩만 색/크기 배열로 표시
-        trace.marker = {
-          color: c.order.map(i => cdfHighlighted.has(cdfChipKey(s.name, serial[i], xpos[i], ypos[i])) ? CDF_HIGHLIGHT_COLOR : base),
-          size: c.order.map(i => cdfHighlighted.has(cdfChipKey(s.name, serial[i], xpos[i], ypos[i])) ? 9 : 5),
-        };
-      } else {
-        trace.marker = { color: base, size: 5 };
-      }
+      trace.marker = { color: base, size: 5 };
     } else {
       trace.marker = { color: base, size: 5 };
       trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<extra></extra>";
@@ -513,7 +528,7 @@ function distRenderCdf(data) {
   }
   Plotly.newPlot(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg, dragmode,
     xaxis: xaxisCfg,
-    yaxis: { title: { text: "누적 %" }, range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee", zeroline: false },
+    yaxis: { title: { text: "누적 %" }, range: [-2, 102], tick0: 0, dtick: 20, ticksuffix: "%", showgrid: true, gridcolor: "#eee", zeroline: false },
     shapes: cdfShapes,
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
     margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
@@ -567,7 +582,7 @@ function distRenderHist(data) {
   if (window.chartNotesApply) chartNotesApply("hist", data.subject, hDiv);
 }
 function distRenderDetailCharts(data) {
-  distRenderCdf(data);    // #distCdf (제외/강조 편집 반영)
+  distRenderCdf(data);    // #distCdf (제외 편집 반영)
   distRenderHist(data);   // #distHist (제외 반영)
 }
 // report용 정규분포 곡선(#distNormal): bin/막대 없이 source별 μ/σ 로 계산한 매끄러운
