@@ -11,7 +11,8 @@ from .tabs.common import passfail_or_empty_items
 from .tabs.distribution import build_distribution_index
 from .tabs.issue_table import build_issue_bin_summary
 from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
-                             fail_counts_by_source, yield_overview)
+                             build_yield_step_groups, fail_counts_by_source,
+                             yield_overview)
 
 
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
@@ -60,7 +61,10 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         "sources": sources,
         "yield_summary": yield_overview(tables, yield_rows),
         "issue_bin_summary": build_issue_bin_summary(yield_rows),
+        # yield_bin_groups: Bin 병합(전체 기준) 그룹 — Excel 내보내기가 사용(유지).
         "yield_bin_groups": build_yield_bin_groups(yield_rows),
+        # yield_step_groups: STEP(P1/P2/P3) 별 분리 그룹 — Yield 탭 표시 전용(cascade 수율).
+        "yield_step_groups": build_yield_step_groups(yield_rows, tables),
         "sheets": sheets_out,
         "distribution_deferred": True,
         "distribution_index": build_distribution_index(tables, cpk_rows, exclude=excluded_items),

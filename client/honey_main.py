@@ -496,6 +496,11 @@ class HoneyMainWindow(QMainWindow):
         # 중앙: 웹 브라우저가 전체를 차지
         self.browser_panel = embedded_browser.BrowserPanel(url, navigate=True)
         self.setCentralWidget(self.browser_panel)
+        # Rawdata(Excel) 편집 중 세션 이탈(다른 페이지 이동)을 확인 다이얼로그로 가로챈다.
+        try:
+            self.browser_panel.view.page().leave_guard = self._browser_leave_guard
+        except Exception:
+            pass
 
         self._build_controls_panel(QWidget, QVBoxLayout, QHBoxLayout)
         self._build_log_dock(QDockWidget, QWidget)
@@ -850,9 +855,50 @@ class HoneyMainWindow(QMainWindow):
                 self.browser_panel.view.reload()
             except Exception:
                 pass
+        elif message == "취소됨":
+            self._status("Rawdata 수정 취소됨")
+            self._append_run_log("[Rawdata] 취소됨 — Excel 을 닫고 편집을 중단했습니다.")
         else:
             self._status("Rawdata 변경 없음")
             self._append_run_log("[Rawdata] 변경 없음 — 업로드 건너뜀.")
+
+    # ── Rawdata 편집 중 이탈 가드 (브라우저 네비게이션 / 앱 종료 공용) ──────────
+    def _excel_edit_running(self):
+        worker = getattr(self, "_excel_worker", None)
+        return worker is not None and worker.isRunning()
+
+    def _confirm_cancel_edit(self):
+        """Rawdata 편집 중 이탈 확인. 예=취소하고 나감(True)+Excel 종료, 아니오=머무름(False)."""
+        reply = QMessageBox.question(
+            self, "Rawdata 수정",
+            "rawdata 수정이 완료 되지 않았습니다.\n수정을 취소 하시겠습니까?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return False
+        worker = getattr(self, "_excel_worker", None)
+        if worker is not None and worker.isRunning():
+            worker.cancel()   # 워커가 다음 폴링에서 Excel 강제 종료 후 done 시그널
+            self._append_run_log("[Rawdata] 사용자 취소 — Excel 을 닫고 편집을 중단합니다.")
+        return True
+
+    def _browser_leave_guard(self, _url):
+        """내장 브라우저 네비게이션 가드. Rawdata 편집 중이면 목적지와 무관하게 확인.
+        반환 True=이동 허용, False=차단(현재 세션 유지)."""
+        if not self._excel_edit_running():
+            return True
+        return self._confirm_cancel_edit()
+
+    def closeEvent(self, event):
+        if self._excel_edit_running():
+            if not self._confirm_cancel_edit():
+                event.ignore()
+                return
+            # 취소 승인됨 → 워커가 Excel 닫고 종료하길 잠시 대기 (QThread 파괴 경고 방지).
+            worker = getattr(self, "_excel_worker", None)
+            if worker is not None:
+                worker.wait(6000)
+        super().closeEvent(event)
 
     def _on_excel_edit_failed(self, message):
         self._status(f"Rawdata 수정 실패: {message}")
@@ -1325,6 +1371,21 @@ class HoneyMainWindow(QMainWindow):
             pass
         return f"{fallback}.parquet"
 
+    def _lot_id_from_sources(self, work_group):
+        """첫 source 파일명의 head('_' 앞 토큰)를 LOT ID 로 반환. 없으면 빈 문자열.
+
+        예: 'N4XA123_up_a.parquet' → 'N4XA123'. 파싱 실패는 best-effort 로 '' 반환.
+        """
+        try:
+            names = work_group.names()
+            if not names:
+                return ""
+            md = work_group.mass_data_map[names[0]]
+            stem = Path(self._source_file_name(md, names[0])).stem
+            return stem.split("_")[0].strip()
+        except Exception:
+            return ""
+
     def _build_webreport_parquets(self, work_group):
         items = []
         sources = []
@@ -1374,6 +1435,11 @@ class HoneyMainWindow(QMainWindow):
 
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
+        # source 파일명 head('_' 앞) 를 LOT ID 로 자동 채움 (직전 업로드 값보다 우선,
+        # 사용자가 다이얼로그에서 수정 가능). 뽑히지 않으면 기존 defaults 유지.
+        _lot_id = self._lot_id_from_sources(work_group)
+        if _lot_id:
+            defaults["lot_id"] = _lot_id
         # Web Report 업로드는 PIN 입력을 요구하지 않는다 (비밀번호 행 숨김).
         dlg = UploadDialog(self, defaults=defaults, show_password=False)
         if not dlg.exec():

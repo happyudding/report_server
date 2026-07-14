@@ -5,12 +5,15 @@
 커스텀 헤더를 붙일 수 없어 CSRF 가 차단된다 (report_routes 의 쿠키 페어 방식은
 여기선 불필요).
 """
+import hashlib
+import hmac
 import logging
 import re
 from pathlib import Path
 
 from flask import Blueprint, Response, abort, jsonify, request
 
+import config
 from admin_panel import maintenance, metrics, sessions_admin, stats, sysinfo, users_admin
 from database import report_db
 from report.static_pages import send_html_gzip
@@ -20,9 +23,54 @@ _log = logging.getLogger(__name__)
 admin_panel_bp = Blueprint("admin_panel", __name__)
 
 _ADMIN_HTML = Path(__file__).resolve().parent / "admin_panel.html"
+_LOGIN_HTML = Path(__file__).resolve().parent / "admin_login.html"
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _PIN_RE = re.compile(r"^\d{4}$")
 _USER_ID_RE = re.compile(r"^[^\s\\/]{1,64}$")
+
+# ── 접속 비밀번호 게이트 (아무나 못 들어오게 하는 간단한 쿠키 게이트) ─────────
+# 비밀번호가 맞으면 쿠키를 발급하고, before_request 가 매 요청 쿠키를 확인한다.
+# 쿠키 값은 비밀번호 원문이 아니라 sha256 토큰(원문 노출 방지).
+_AUTH_COOKIE = "pe_admin_gate"
+_COOKIE_PATH = f"/pe/admin-{config.REPORT_ADMIN_SECRET}"
+
+
+def _expected_token():
+    return hashlib.sha256(("pe-admin-gate|" + config.REPORT_ADMIN_PASSWORD).encode()).hexdigest()
+
+
+_LOGIN_PAGE_CACHE = None
+
+
+def _login_page():
+    global _LOGIN_PAGE_CACHE
+    if _LOGIN_PAGE_CACHE is None:
+        _LOGIN_PAGE_CACHE = _LOGIN_HTML.read_text(encoding="utf-8")
+    return Response(_LOGIN_PAGE_CACHE, status=401, mimetype="text/html",
+                    headers={"Cache-Control": "no-store"})
+
+
+@admin_panel_bp.before_request
+def _auth_gate():
+    if request.endpoint == "admin_panel.login":
+        return None  # 로그인 처리 엔드포인트는 통과
+    if hmac.compare_digest(request.cookies.get(_AUTH_COOKIE, ""), _expected_token()):
+        return None  # 인증됨
+    if request.endpoint == "admin_panel.dashboard_page":
+        return _login_page()  # 대시보드 진입 → 로그인 화면
+    abort(401, "admin login required")  # API 등 그 외 → 401
+
+
+@admin_panel_bp.post("/login")
+def login():
+    body = request.get_json(force=True, silent=True) or {}
+    if (body.get("password") or "").strip() != config.REPORT_ADMIN_PASSWORD:
+        return jsonify({"ok": False}), 401
+    resp = jsonify({"ok": True})
+    resp.set_cookie(_AUTH_COOKIE, _expected_token(), max_age=12 * 3600,
+                    httponly=True, samesite="Lax", secure=request.is_secure,
+                    path=_COOKIE_PATH)
+    return resp
 
 
 @admin_panel_bp.before_request

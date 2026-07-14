@@ -548,6 +548,19 @@ function yieldOverviewHtml() {
       <td class="ybs-cnt">${esc(s.pass)} / ${esc(s.total)}</td>
     </tr>`;
   }).join("") + `</tbody></table></div>` : "";
+  // STEP(P1/P2/P3) 별 요약: 그 STEP 진입 die 수(In) 대비 통과(Pass) = step 수율(cascade).
+  const byStep = Array.isArray(ov.by_step) ? ov.by_step : [];
+  const byStepHtml = byStep.length ? `<div class="yield-by-step"><table class="ybs-table">
+    <thead><tr><th>Step</th><th>Step Yield</th><th>Pass / In</th><th>Fail</th></tr></thead>
+    <tbody>` + byStep.map(s => {
+    const sp = (typeof s.step_yield_pct === "number") ? s.step_yield_pct.toFixed(2) : s.step_yield_pct;
+    return `<tr>
+      <td class="ybs-src">${esc(s.step)}</td>
+      <td class="ybs-pct">${esc(sp)}%</td>
+      <td class="ybs-cnt">${esc(s.survivor)} / ${esc(s.entered)}</td>
+      <td class="ybs-cnt">${esc(s.fail)}</td>
+    </tr>`;
+  }).join("") + `</tbody></table></div>` : "";
   return `<div class="yield-overview">
     <div class="yo-pct">${esc(pct)}%</div>
     <div class="yo-stats">
@@ -555,6 +568,7 @@ function yieldOverviewHtml() {
       <div class="yo-stat"><span class="yo-num">${esc(ov.total)}</span><span class="yo-label">Total</span></div>
       <div class="yo-stat yo-fail"><span class="yo-num">${esc(ov.fail)}</span><span class="yo-label">Fail</span></div>
     </div>
+    ${byStepHtml}
     ${bySrcHtml}
   </div>`;
 }

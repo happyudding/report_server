@@ -19,6 +19,12 @@ class ExcelEditWorker(QThread):
         super().__init__(parent)
         self._session_id = session_id
         self._server_base = server_base
+        self._cancelled = False
+
+    def cancel(self):
+        """편집 취소 요청. 워커 스레드가 다음 폴링에서 Excel 을 강제 종료하고 끝낸다.
+        (bool 플래그 세팅뿐이라 다른 스레드에서 호출 안전 — GIL 하 원자적.)"""
+        self._cancelled = True
 
     def run(self):
         try:
@@ -29,7 +35,8 @@ class ExcelEditWorker(QThread):
         try:
             result = excel_session.run_excel_edit(
                 self._session_id, self._server_base,
-                status_cb=lambda s, m: self.status.emit(s, m))
+                status_cb=lambda s, m: self.status.emit(s, m),
+                should_cancel=lambda: self._cancelled)
             self.done.emit(bool(result.get("changed")), str(result.get("message") or ""))
         except Exception as exc:
             self.failed.emit(str(exc))

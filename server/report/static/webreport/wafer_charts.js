@@ -96,17 +96,29 @@ function waferHeatmap(m, opts) {
   return { trace, colorMap, binOrder };
 }
 
+// MDDI/PDDI 는 chip 이 세로로 길쭉(die pitch Y>X)해 같은 원형 웨이퍼에서 Y die 수가 적다.
+// 셀을 정사각(scaleratio 1)으로 두면 웨이퍼가 가로로 납작해 보이므로, 격자 폭/높이(W/H)만큼
+// Y 셀을 세로로 늘려(scaleratio) 원형에 가깝게 그린다. 그 외 제품은 1(정사각) 유지.
+function waferCellYScale(m) {
+  const pt = ((DATA && DATA.session && DATA.session.product_type) || "").trim().toUpperCase();
+  if (pt !== "MDDI" && pt !== "PDDI") return 1;
+  if (m.x_min == null || m.y_min == null) return 1;
+  const W = m.x_max - m.x_min + 1, H = m.y_max - m.y_min + 1;
+  return (W > 0 && H > 0) ? W / H : 1;
+}
+
 function waferLayout(m, opts) {
   opts = opts || {};
   const layout = {
     margin: opts.mini ? { l: 2, r: 2, t: 2, b: 2 } : { l: 42, r: 10, t: 8, b: 36 },
     paper_bgcolor: "#ffffff", plot_bgcolor: "#ffffff", font: PLOTLY_FONT,
     showlegend: false,
-    // 셀 정사각(y축 scale 을 x 에 1:1 고정) → 웨이퍼 원형 비율 유지
+    // 셀은 x 에 scale 고정. 정사각(=1)이 기본, MDDI/PDDI 는 tall chip 반영해 y 를 늘림.
     xaxis: { zeroline: false, showgrid: false, constrain: "domain",
              title: opts.mini ? "" : "X", visible: !opts.mini },
+    // 웨이퍼 맵 관례: Y 는 위에서 아래로 내려갈수록 커진다(=y축 역방향).
     yaxis: { zeroline: false, showgrid: false, constrain: "domain",
-             scaleanchor: "x", scaleratio: 1,
+             scaleanchor: "x", scaleratio: waferCellYScale(m), autorange: "reversed",
              title: opts.mini ? "" : "Y", visible: !opts.mini },
   };
   return layout;

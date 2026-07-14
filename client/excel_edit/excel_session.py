@@ -41,11 +41,13 @@ _WRITE_CHUNK_ROWS = 50000
 _INVALID_SHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
 
 
-def run_excel_edit(session_id, server_base, status_cb=None) -> dict:
+def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None) -> dict:
     """세션 rawdata 를 Excel 로 편집하고 서버에 반영. 반환 {"changed": bool, "message": str}.
 
     status_cb(state, message): 진행 상태 통지 콜백 (state ∈ download/excel/editing/
-    reencode/upload/done/done_no_changes). None 이면 무시.
+    reencode/upload/done/done_no_changes/cancelled). None 이면 무시.
+    should_cancel(): True 를 반환하면 편집을 취소하고 열려 있는 Excel 을 강제 종료한 뒤
+    {"changed": False, "cancelled": True} 로 반환. None 이면 취소 없음.
     """
     import xlwings as xw
 
@@ -86,8 +88,13 @@ def run_excel_edit(session_id, server_base, status_cb=None) -> dict:
         # ── 3~4. 편집·닫힘 감시 → 재읽기(형식 오류 시 반복) ────────────────
         while True:
             _emit("editing", "Excel 에서 편집 후 [저장]하고 창을 닫으세요...")
-            _wait_until_closed(wb)
-            _quit_app(app)  # 파일 핸들 해제
+            reason = _wait_until_closed(wb, should_cancel)
+            _quit_app(app)  # 파일 핸들 해제 (취소 시엔 Excel 강제 종료)
+
+            if reason == "cancelled":
+                _cleanup(tmp_dir)
+                _emit("cancelled", "Rawdata 수정 취소됨 — Excel 을 닫았습니다.")
+                return {"changed": False, "cancelled": True, "message": "취소됨"}
 
             current = _file_hash(xlsx_path)
             if current == baseline:
@@ -256,14 +263,19 @@ def _file_hash(path):
     return h.hexdigest()
 
 
-def _wait_until_closed(wb):
-    """workbook 이 닫힐 때까지 폴링. COM 접근이 예외를 내면 닫힌 것으로 본다."""
+def _wait_until_closed(wb, should_cancel=None):
+    """workbook 이 닫힐 때까지 폴링. COM 접근이 예외를 내면 닫힌 것으로 본다.
+
+    should_cancel() 이 True 를 반환하면 "cancelled", 창이 닫히면 "closed" 를 돌려준다.
+    """
     while True:
         time.sleep(_POLL_SEC)
+        if should_cancel is not None and should_cancel():
+            return "cancelled"
         try:
             _ = wb.name
         except Exception:
-            return
+            return "closed"
 
 
 def _pid_alive(pid):

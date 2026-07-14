@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report Server — 관리자 로그인</title>
+<style>
+* { box-sizing: border-box; }
+:root { color-scheme: dark; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #14161b; margin: 0; min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  color: #e8e9ec;
+}
+.box {
+  background: #1e2128; border: 1px solid #2b2e36; border-radius: 12px;
+  padding: 28px 30px; width: 320px; box-shadow: 0 4px 20px rgba(0,0,0,.35);
+}
+h1 { margin: 0 0 4px; font-size: 17px; font-weight: 700; }
+.sub { font-size: 12px; color: #6f737e; margin-bottom: 20px; }
+label { display: block; font-size: 12px; color: #a4a8b3; margin-bottom: 6px; }
+input {
+  width: 100%; padding: 10px 12px; font-size: 15px; border-radius: 8px;
+  border: 1px solid #40444e; background: #14161b; color: #e8e9ec;
+  outline: none;
+}
+input:focus { border-color: #3d8bef; }
+button {
+  width: 100%; margin-top: 16px; padding: 10px; font-size: 14px; font-weight: 600;
+  border: none; border-radius: 8px; background: #3d8bef; color: #fff; cursor: pointer;
+}
+button:disabled { opacity: .5; cursor: default; }
+.err { color: #f0605f; font-size: 12px; margin-top: 12px; min-height: 16px; }
+</style>
+</head>
+<body>
+<form class="box" id="f">
+  <h1>관리자 로그인</h1>
+  <div class="sub">Report Server 관리자 페이지</div>
+  <label for="pw">비밀번호</label>
+  <input type="password" id="pw" autocomplete="off" autofocus inputmode="numeric">
+  <button type="submit" id="btn">입장</button>
+  <div class="err" id="err"></div>
+</form>
+<script>
+const f = document.getElementById('f');
+const err = document.getElementById('err');
+const btn = document.getElementById('btn');
+f.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  err.textContent = '';
+  btn.disabled = true;
+  try {
+    const r = await fetch('login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Request': '1' },
+      body: JSON.stringify({ password: document.getElementById('pw').value }),
+    });
+    if (r.ok) { location.reload(); return; }
+    err.textContent = '비밀번호가 올바르지 않습니다.';
+  } catch (_) {
+    err.textContent = '요청 실패 — 다시 시도해 주세요.';
+  }
+  btn.disabled = false;
+});
+</script>
+</body>
+</html>

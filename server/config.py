@@ -75,3 +75,7 @@ HONEY_VERSION_JSON = HONEY_RELEASES_DIR / "version.json"
 # admin URL 경로 조각. 기본값 'pte' → /pe/admin-pte/ 로 항상 접속 가능.
 # 경로를 숨기고 싶으면 REPORT_ADMIN_SECRET 에 임의 문자열(영숫자/_/- 3~64자) 지정.
 REPORT_ADMIN_SECRET = os.getenv("REPORT_ADMIN_SECRET", "pte").strip()
+
+# admin 패널 접속 비밀번호. 아무나 못 들어오게 하는 간단한 게이트 — 맞으면 쿠키를
+# 발급하고 이후 admin 경로 접근을 허용한다. 바꾸려면 REPORT_ADMIN_PASSWORD 지정.
+REPORT_ADMIN_PASSWORD = os.getenv("REPORT_ADMIN_PASSWORD", "0023")

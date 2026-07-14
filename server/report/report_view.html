@@ -229,8 +229,8 @@ body {
 .yield-overview .yo-num { font-size: 17px; font-weight: 700; color: #222; }
 .yield-overview .yo-label { font-size: 11px; color: #888; margin-top: 2px; }
 .yield-overview .yo-stat.yo-fail .yo-num { color: #d9480f; }
-/* source 별 수율을 메인 Total Yield 오른쪽에 작은 테이블로 이어 붙인다(세로 공간 차지 X). */
-.yield-by-source {
+/* source/step 별 수율을 메인 Total Yield 오른쪽에 작은 테이블로 이어 붙인다(세로 공간 차지 X). */
+.yield-by-source, .yield-by-step {
   align-self: center; max-height: 132px; overflow-y: auto;
   border: 1px solid #dbe6f7; border-radius: 8px; background: #fff;
 }
@@ -250,21 +250,12 @@ body {
   border-radius: 4px; overflow: hidden; flex: none; }
 .yield-gauge-fill { display: block; height: 100%; background: #2a78d6; border-radius: 4px; }
 
-/* ── Yield: source별 "원형 대 원형" 파이 (Yield 테이블 아래, 흰 카드 고정) ── */
-.yield-source-charts { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
-.yield-source-pair {
-  background: #fff; border: 1px solid #dbe6f7; border-radius: 10px; padding: 8px 12px 10px;
-}
-.yield-source-pair .ysp-title { font-size: 12px; color: #1f4d8c; text-align: center; margin-bottom: 4px; }
-.yield-source-pair .ysp-title b { color: #222; font-size: 13px; }
-.ysp-pies { display: flex; gap: 10px; align-items: flex-start; }
-.ysp-col { display: flex; flex-direction: column; align-items: center; }
-.ysp-cap { font-size: 11px; color: #6b7a90; margin-top: 2px; text-align: center; }
-.ysp-pie { width: 150px; height: 150px; position: relative; }
-.ysp-pie-fail { width: 200px; height: 200px; }   /* Fail 확대 부채꼴 — 좌측보다 크게 */
-.ysp-empty {
-  width: 150px; height: 150px; display: flex; align-items: center; justify-content: center;
-  color: #9aa; font-size: 12px;
+/* ── Yield: STEP(P1/P2/P3) 별 표 섹션 ─────────────────────────────────────── */
+.yield-step-section { margin-top: 18px; }
+.yield-step-section:first-of-type { margin-top: 4px; }
+.yield-step-title {
+  font-size: 13px; font-weight: 800; color: #1f4d8c; margin-bottom: 6px;
+  padding-bottom: 3px; border-bottom: 2px solid #dbe6f7;
 }
 
 /* ── Summary: 전체/소스별 Yield + Major Fail Bins 통합 테이블 ─────────────── */
@@ -509,9 +500,12 @@ tbody tr:hover { background: #f9fbff; }
 .dist-sug-item .sug-name { flex: 1; font-weight: 600; color: #222; }
 .dist-sug-item .dist-sug-chk { margin: 0; }
 .dist-count { font-size: 12px; color: #888; }
+/* Distribution 갤러리만 기본 패널(1200px)보다 넓게 — 양옆 여백을 절반으로.
+   여백 = (뷰포트 - 폭)/2 이므로 폭 = (뷰포트 + 1200)/2 이면 여백이 정확히 반이 된다. */
+#panel-distribution { max-width: calc((100vw + 1160px) / 2); }
 .distg-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
 @media (max-width: 1100px) { .distg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-.distg-card { border: 1px solid #e2e4e8; border-radius: 8px; overflow: hidden; height: 220px;
+.distg-card { border: 1px solid #e2e4e8; border-radius: 8px; overflow: hidden; height: 264px;
   display: flex; flex-direction: column; cursor: pointer; transition: box-shadow .12s; }
 .distg-card:hover { box-shadow: 0 4px 14px rgba(0,0,0,.14); }
 /* 검색 제안 클릭으로 이동한 카드 강조(잠깐 깜빡) */
@@ -522,10 +516,12 @@ tbody tr:hover { background: #f9fbff; }
 }
 .distg-head { display: flex; flex-direction: column; gap: 2px; padding: 6px 9px; font-size: 12px;
   border-bottom: 1px solid rgba(0,0,0,.06); background: rgba(255,255,255,.45); }
-.distg-line1 { display: flex; align-items: baseline; gap: 6px; }
+.distg-line1 { display: flex; align-items: flex-start; gap: 6px; }
 .distg-line2 { display: flex; align-items: baseline; gap: 6px; }
 .distg-tno { color: #999; }
-.distg-name { flex: 1; font-weight: 600; color: #1A1A1F; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 긴 항목명(≈36자)도 생략 없이 전부 표시 — 폰트를 약간 줄이고 필요 시 줄바꿈 허용 */
+.distg-name { flex: 1; font-weight: 600; color: #1A1A1F; font-size: 11px; line-height: 1.25;
+  overflow-wrap: anywhere; word-break: break-word; }
 .distg-note { flex: 0 0 auto; font-size: 12px; line-height: 1; }   /* Comment 있는 카드 노트 아이콘 */
 .distg-cpk { color: #555; font-size: 11.5px; white-space: nowrap; }
 .distg-lim { color: #6b7280; font-size: 12px; font-weight: 700; white-space: nowrap; margin-right: 6px; }
@@ -1199,7 +1195,9 @@ html[data-theme="dark"] .yield-overview { background: #1c2330; border-color: #2c
 html[data-theme="dark"] .yield-overview .yo-pct { color: #7fb3ef; }
 html[data-theme="dark"] .yield-overview .yo-num { color: #d7dbe2; }
 html[data-theme="dark"] .yield-overview .yo-label { color: #8b94a3; }
-html[data-theme="dark"] .yield-by-source { background: #1e2128; border-color: #2c3a52; }
+html[data-theme="dark"] .yield-by-source,
+html[data-theme="dark"] .yield-by-step { background: #1e2128; border-color: #2c3a52; }
+html[data-theme="dark"] .yield-step-title { color: #7fb3ef; border-color: #2c3a52; }
 html[data-theme="dark"] .ybs-table th { background: #1c2330; color: #8b94a3; }
 html[data-theme="dark"] .ybs-table th,
 html[data-theme="dark"] .ybs-table td { border-bottom-color: #2a2e37; }

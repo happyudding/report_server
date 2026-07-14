@@ -169,6 +169,108 @@ def build_yield_bin_groups(yield_rows):
     return groups
 
 
+# ── STEP 별 분해 (Yield 탭 전용, cascade 수율) ─────────────────────────────────
+# Yield 탭은 STEP(P1/P2/P3) 별로 표를 나누고, 각 표의 bin portion 은 "그 STEP 에 진입한
+# die 수"를 분모로 쓴다(fail-stop 누적 수율). Issue Table·Summary·fail_bin_ranking 은
+# 여기를 쓰지 않고 build_yield_rows 의 전체(total) 기준 값을 그대로 쓴다 — 이 분해는
+# yield_rows 를 변형하지 않고 재계산한 복사본으로만 동작한다.
+
+def _step_order_key(step):
+    """STEP 정렬 키: P<n> 은 숫자순(P1<P2<P3), 그 외 이름은 알파벳, 빈 값은 맨 뒤."""
+    s = str(step or "").strip().upper()
+    if not s:
+        return (2, 0, "")
+    if s.startswith("P") and s[1:].isdigit():
+        return (0, int(s[1:]), s)
+    return (1, 0, s)
+
+
+def _cascade_denoms(tables, fail_rows):
+    """source 별 STEP 진입 die 수(cascade 분모)를 계산.
+
+    fail_rows: build_yield_rows 가 만든 fail 행(``step`` + ``{source}_count`` 보유).
+    STEP 순서대로 진입 die 수(entered)에서 그 STEP fail 을 빼며 다음 STEP 진입 수를 얻는다
+    (P1 진입=전체 die, P2 진입=전체-P1fail, ...). 반환: (ordered_steps, denom, step_fail, totals).
+    """
+    totals = {t.source: len(t.data) for t in tables}
+    step_fail = {t.source: defaultdict(int) for t in tables}
+    steps = set()
+    for r in fail_rows:
+        step = str(r.get("step") or "")
+        steps.add(step)
+        for t in tables:
+            step_fail[t.source][step] += int(r.get(f"{t.source}_count") or 0)
+    ordered = sorted(steps, key=_step_order_key)
+    denom = {t.source: {} for t in tables}
+    for t in tables:
+        entered = totals[t.source]
+        for step in ordered:
+            denom[t.source][step] = entered
+            entered -= step_fail[t.source][step]
+    return ordered, denom, step_fail, totals
+
+
+def _reyield_row(row, tables, denom):
+    """행의 ``{source}_yield``/``avg`` 를 그 STEP 의 진입 die 수(denom) 기준으로 재계산한
+    복사본을 반환한다(원본 yield_rows 불변 — Issue Table 이 total 기준 값을 계속 쓰게)."""
+    step = str(row.get("step") or "")
+    out = dict(row)
+    portions = []
+    for t in tables:
+        count = int(row.get(f"{t.source}_count") or 0)
+        d = denom[t.source].get(step) or 0
+        portion = round(count / d * 100.0, 2) if d > 0 else 0.0
+        out[f"{t.source}_yield"] = portion
+        portions.append(portion)
+    out["avg"] = round(sum(portions) / len(portions), 2) if portions else 0.0
+    return out
+
+
+def build_yield_step_groups(yield_rows, tables):
+    """STEP 별로 분리한 Bin 그룹 목록. 각 원소 ``{step, groups: [bin group...]}``.
+
+    STEP 순서는 _step_order_key(P1→P2→P3). 각 STEP 내부는 build_yield_bin_groups 와 동일한
+    Bin 대표+펼침 구조지만, portion 은 그 STEP 진입 die 수 기준으로 재계산된다.
+    """
+    fail_rows = [r for r in (yield_rows or [])
+                 if str(r.get("bin")).strip() != PASS_BIN and r.get("Item")]
+    ordered, denom, _, _ = _cascade_denoms(tables, fail_rows)
+    by_step = defaultdict(list)
+    for r in fail_rows:
+        by_step[str(r.get("step") or "")].append(_reyield_row(r, tables, denom))
+    out = []
+    for step in ordered:
+        rows = by_step.get(step) or []
+        if not rows:
+            continue
+        out.append({"step": step, "groups": build_yield_bin_groups(rows)})
+    return out
+
+
+def yield_step_summary(tables, yield_rows):
+    """상단 요약 박스용 STEP 요약 행: STEP 별 진입/fail/통과 die 수 + step 수율%.
+
+    step_yield_pct = 통과(survivor) / 진입(entered) * 100 = 그 STEP 의 실효 수율.
+    소스 여러 개면 소스 합산 기준(전체)으로 집계한다.
+    """
+    fail_rows = [r for r in (yield_rows or [])
+                 if str(r.get("bin")).strip() != PASS_BIN and r.get("Item")]
+    ordered, denom, step_fail, _ = _cascade_denoms(tables, fail_rows)
+    out = []
+    for step in ordered:
+        entered = sum(denom[t.source].get(step, 0) for t in tables)
+        fail = sum(step_fail[t.source].get(step, 0) for t in tables)
+        survivor = max(entered - fail, 0)
+        out.append({
+            "step": step,
+            "entered": entered,
+            "fail": fail,
+            "survivor": survivor,
+            "step_yield_pct": round(survivor / entered * 100.0, 2) if entered else 0.0,
+        })
+    return out
+
+
 def yield_overview(tables, yield_rows):
     """Yield 탭 상단 요약 박스: 전체 pass/fail/total count + 종합 yield% + 소스별 수율.
 
@@ -185,24 +287,16 @@ def yield_overview(tables, yield_rows):
     for t in tables:
         t_total = len(t.data)
         t_pass = int(pass_row.get(f"{t.source}_count") or 0)
-        # 확대 파이용: Bin 별 die 수(BIN 컬럼 die당 1회 집계 = 정확). Pass(Bin1) 제외,
-        # 합계는 fail 과 정확히 일치. FAILTNO 귀속(중복 가능)과 달리 die 기준.
-        counts = Counter(bin_types(t))
-        fail_bins = sorted(
-            ({"bin": b, "count": int(c)} for b, c in counts.items() if b != PASS_BIN),
-            key=lambda d: bin_sort_key(d["bin"]),
-        )
         by_source.append({
             "source": t.source,
             "yield_pct": round(t_pass / t_total * 100.0, 2) if t_total else 0.0,
             "pass": t_pass,
             "fail": max(t_total - t_pass, 0),
             "total": t_total,
-            "fail_bins": fail_bins,
         })
 
     return {"yield_pct": yield_pct, "pass": passed, "fail": failed, "total": total,
-            "by_source": by_source}
+            "by_source": by_source, "by_step": yield_step_summary(tables, yield_rows)}
 
 
 def _row_total_count(row):

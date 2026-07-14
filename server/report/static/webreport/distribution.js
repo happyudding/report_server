@@ -220,8 +220,11 @@ function renderDistCell(cell) {
   const lo = info.lower_limit, hi = info.upper_limit;
   const traces = Object.keys(info.bySource).map(source => {
     const ds = distDownsampleForDisplay(info.bySource[source].xs, info.bySource[source].ys);
-    return { type: "scatter", mode: "markers", cliponaxis: false, name: source,
-      x: ds.xs, y: ds.ys, marker: { color: distColorFor(source), size: 4 } };
+    // 계단형 선(shape:"hv")으로 점을 연결 — 이산(code)값처럼 고유값이 적어도 ECDF 가
+    // 연속 곡선으로 보인다. 정규 산포는 점이 촘촘해 기존과 동일하게 매끈한 곡선.
+    return { type: "scatter", mode: "lines+markers", cliponaxis: false, name: source,
+      x: ds.xs, y: ds.ys, line: { color: distColorFor(source), shape: "hv", width: 1.2 },
+      marker: { color: distColorFor(source), size: 3 } };
   });
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: DIST_STATUS_BG[status] || "#FFFFFF",
     title: {
@@ -377,8 +380,11 @@ function distRenderGalleryCell(cell) {
   if (info) Object.keys(info.bySource).forEach(src => {
     // 미니셀 표시용만 다운샘플(통계·상세는 전체점) — 꼬리/계단/갭 보존 규칙 적용
     const ds = distDownsampleForDisplay(info.bySource[src].xs, info.bySource[src].ys);
-    traces.push({ type: "scatter", mode: "markers", cliponaxis: false, x: ds.xs, y: ds.ys,
-      marker: { color: distColorFor(src), size: 3 } });
+    // 계단형 선(shape:"hv")으로 점을 연결 — 이산(code)값처럼 고유값이 적어도 ECDF 가
+    // 연속 곡선으로 보인다. 정규 산포는 점이 촘촘해 기존과 동일하게 매끈한 곡선.
+    traces.push({ type: "scatter", mode: "lines+markers", cliponaxis: false, x: ds.xs, y: ds.ys,
+      line: { color: distColorFor(src), shape: "hv", width: 1.2 },
+      marker: { color: distColorFor(src), size: 2.5 } });
   });
   // 선택 좌표(Map Analysis)가 있으면 이 항목 위치를 점+빨간 점선으로 오버레이.
   let shapes = distSpecShapes(lo, hi, false).concat(beforeLimitShapes(subject));

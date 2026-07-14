@@ -14,7 +14,7 @@ Qt.AA_ShareOpenGLContexts 속성이 앱 생성 전에 설정돼 있어야 한다
 from urllib.parse import quote
 
 from PyQt6.QtCore import QUrl
-from PyQt6.QtWebEngineCore import QWebEngineProfile
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QLineEdit, QMainWindow, QToolBar, QVBoxLayout, QWidget
 
@@ -68,12 +68,41 @@ QLineEdit {
 """
 
 
+class _GuardedPage(QWebEnginePage):
+    """네비게이션 직전에 leave_guard 로 이탈을 가로챌 수 있는 페이지.
+
+    leave_guard(QUrl) -> bool 을 외부(honey_main)에서 주입한다. True 면 이동 허용,
+    False 면 차단(현재 페이지 유지). Rawdata(Excel) 편집 중 세션 이탈을 막는 데 쓴다.
+    링크 클릭·뒤로/앞으로·새로고침·주소창 입력·프로그래밍 load 가 모두 이 지점을 지난다.
+    """
+
+    def __init__(self, profile, parent=None):
+        super().__init__(profile, parent)
+        self.leave_guard = None
+        self._in_guard = False   # guard 안에서 띄운 다이얼로그 이벤트 루프의 재진입 방지
+
+    def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+        if is_main_frame and self.leave_guard is not None and not self._in_guard:
+            self._in_guard = True
+            try:
+                allowed = self.leave_guard(url)
+            except Exception:
+                allowed = True   # 가드 오류로 브라우저가 잠기지 않게 통과시킨다
+            finally:
+                self._in_guard = False
+            if not allowed:
+                return False
+        return super().acceptNavigationRequest(url, nav_type, is_main_frame)
+
+
 class _WebView(QWebEngineView):
     """target=_blank 링크를 새 내장 브라우저 창으로 여는 뷰."""
 
     def __init__(self, home_url, parent=None):
         super().__init__(parent)
         self._home_url = home_url
+        # 기본 페이지를 이탈 가드용 페이지로 교체 (UA 는 defaultProfile 레벨이라 유지된다).
+        self.setPage(_GuardedPage(QWebEngineProfile.defaultProfile(), self))
 
     def createWindow(self, _window_type):
         win = open_browser(self._home_url, navigate=False)

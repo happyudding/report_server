@@ -19,7 +19,7 @@
 |----|------|------|
 | Summary | `summary.py` | placeholder(`[]`) — 화면은 프런트가 Map/Fail Bin 으로 자체 구성 |
 | Raw Data | `raw_data.py` | payload 는 placeholder — 실제는 lazy 조회/편집 라우트 |
-| Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview |
+| Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`) |
 | CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) |
 | Issue Table | `issue_table.py` | Yield 파생 + CPK<1.33 파생 + ETC. comment 는 편집 DB 에서 채움 |
 | Distribution | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/distribution` 지연 로드 |
@@ -32,6 +32,16 @@
 빈 시트로 두고 전용 라우트로 지연 로드한다.
 
 ## 주요 탭 계약
+- **Yield STEP 분리 (2026-07-14)**: Yield 탭은 STEP(P1/P2/P3)별로 표를 나눈다. STEP 은
+  각 fail die 의 `FAILTNO → (TNO 매칭) item → item 의 STEP 메타행(raw 4번째 행)` 으로 정한다
+  (`item_meta`). 각 STEP 표의 bin portion 분모는 **그 STEP 에 진입한 die 수**(fail-stop
+  cascade: P1 진입=전체, P2 진입=전체−P1fail, …) — `build_yield_step_groups`(payload
+  `yield_step_groups`) 가 원본 yield_rows 를 변형하지 않고 재계산한 복사본으로 만든다. 상단
+  요약 박스의 STEP 요약(`yield_summary.by_step`: entered/fail/survivor/step_yield%)은
+  `yield_step_summary`. **Issue Table·Summary·fail_bin_ranking 은 STEP cascade 를 쓰지 않고
+  전체(total) 기준 값(`build_yield_rows`) 그대로** — Issue Table 은 merge 유지(STEP 열 포함,
+  fail 비중 내림차순이라 P1/P3 가 교차 등장). 프런트 원형 파이는 제거. `yield_bin_groups`
+  (전체 기준 merge 그룹)는 Excel 내보내기용으로 유지.
 - **CPK 임계값**: `CPK_THRESHOLD = 1.33` ([cpk.py](../web_report/tabs/cpk.py)). Issue
   Table·Distribution 이 공유하며 subject 당 **worst-case(최저) cpk** 로 이슈를 판단한다
   (`worst_cpk_by_subject`).
