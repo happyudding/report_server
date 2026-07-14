@@ -585,20 +585,10 @@ class HoneyMainWindow(QMainWindow):
         excel_v = QVBoxLayout(excel_box)
         excel_v.setContentsMargins(8, 6, 8, 6)
         excel_v.addStretch(1)
-
-        # Optional Sheets — 파란 Excel Report 버튼 위에 배치. 실제 기능은 구서버에서 구현 예정.
-        self.btn_optional_sheets = QPushButton("Optional Sheets")
-        self.btn_optional_sheets.setStyleSheet(
-            "QPushButton { padding: 6px 14px; font-weight: 600; background: #e2e8f0;"
-            " color: #1f2937; border: 1px solid #94a3b8; border-radius: 5px; }"
-            " QPushButton:hover { background: #cbd5e1; }"
-            " QPushButton:disabled { background: #aaa; color: white; }")
-        self.btn_optional_sheets.clicked.connect(self.on_optional_sheets)
-        excel_v.addWidget(self.btn_optional_sheets)
         excel_v.addWidget(self.btn_start)
 
         # 각 버튼이 그리드 칸 가로를 꽉 채우도록 (.ui 는 Fixed → Expanding 으로 완화)
-        for _b in (self.btn_web_report, self.btn_start, self.btn_optional_sheets):
+        for _b in (self.btn_web_report, self.btn_start):
             _b.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         # 좌=Web Report / 우=Excel Report (기존 Start·Web Report 위치 스왑)
@@ -1266,10 +1256,6 @@ class HoneyMainWindow(QMainWindow):
         """
         self.btn_start.setEnabled(enabled)
         self.btn_web_report.setEnabled(enabled)
-
-    def on_optional_sheets(self):
-        """Optional Sheets — 선택 시트 옵션. 실제 기능은 구서버에서 구현 예정(placeholder)."""
-        self._status("Optional Sheets — 준비 중")
 
     def on_start(self):
         # 느린 파일 전처리(_prepare_run_context → _rebuild_group)가 시작되기 전에

@@ -363,7 +363,7 @@ function renderTrimScatter(body, p) {
         <span class="trim-card-title" title="${esc(g.id)}">${esc(g.id)}</span>
         ${trimShiftBadge(p, g)}
         ${g.cpk_warn ? `<span class="trim-badge warn">cpk&lt;${p.constants.cpk_threshold}</span>` : ""}
-        <button class="btn-sm trim-png" title="차트를 PNG 로 클립보드 복사">PNG 복사</button>
+        <button class="btn-sm trim-png" title="차트를 PNG 로 클립보드에 복사">클립보드로 복사</button>
       </div>
       <div class="trim-gplot"><div class="placeholder">대기 중…</div></div>
     </div>`).join("");
@@ -613,14 +613,16 @@ function drawTrimChart(div, chart, payload) {
   }
 
   const layout = { ...DIST_PLOT_BG,
-    legend: { orientation: "h", x: 0, y: 1.14, font: { size: 9 },
-      itemsizing: "constant", itemwidth: 30 },
+    // legend 를 차트 위(가로)에서 카드 오른쪽(세로)으로 뺀다 — 플롯을 가리지 않는다.
+    // autoexpand(기본 on)가 오른쪽 여백을 legend 폭만큼 확보한다(CODE y2 축 바깥).
+    legend: { orientation: "v", x: 1.02, xanchor: "left", y: 1, yanchor: "top",
+      font: { size: 9 }, itemsizing: "constant" },
     xaxis: { title: { text: `chip (${chart.order_by} 오름차순)`, font: { size: 11 } },
       showgrid: true, gridcolor: "#eee", zeroline: false, tickfont: { size: 10 } },
     yaxis: { title: { text: mainSpec.units || "", font: { size: 11 } },
       showgrid: true, gridcolor: "#eee", zeroline: false, tickfont: { size: 10 } },
     shapes, annotations,
-    margin: { l: 54, r: 54, t: 38, b: 38 },
+    margin: { l: 54, r: 54, t: 24, b: 38 },
     showlegend: true };
   // 메인 y축: USL/LSL ±15% 창(spec 기준)으로 TRIM/VERIFY 를 보이게 한다.
   // limit 이 없으면 기존 동작(TRIM 평균 중심)으로 폴백.

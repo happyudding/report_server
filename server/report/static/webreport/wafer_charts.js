@@ -7,7 +7,10 @@ const PLOTLY_FONT = { family: 'system-ui, -apple-system, "Segoe UI", sans-serif'
 
 // die 수가 이 값을 넘으면 Bin Map 을 이미지 모드(gap=0, Bin 라벨 off)로 그려 SVG 셀 폭증(freeze)을
 // 막는다. Detail 확대 시엔 보이는 die 가 적어 forceGap/forceText 로 격자선·라벨을 되살린다.
-const MAP_DENSE_DIES = 4000;
+const MAP_DENSE_DIES = 3000;
+// 회색 die(앞 STEP fail — 모양만 유지)·TNO Map 기타 항목 색.
+const MAP_GRAY_RGB = [200, 204, 208];
+const TNO_OTHER_COLOR = "#9aa0a6";
 
 function webReportSheets() {
   return (DATA && DATA.web_report && DATA.web_report.sheets) ? DATA.web_report.sheets : null;
@@ -53,52 +56,46 @@ function binColor(bin) {
   return map[b];
 }
 
-// 소스 map dict → { trace } (die → bin 이산 heatmap). opts.showText: Fail 셀에 bin 번호.
-// opts.binOrder/opts.colorMap 을 넘기면 그 값을 그대로 쓴다 (여러 맵 간 동일 bin 색상 통일용).
+// 소스 map dict → { trace } (die → 이산 heatmap). opts.catOf(die→카테고리, 기본 bin)/order/colorMap
+// 로 Bin·TNO·회색 등 어떤 축이든 색칠(여러 맵 간 색 통일용). Detail(Plotly)·Compare·미니맵 공용.
+// (맵 셀 bin 번호 텍스트는 표시하지 않는다 — Bin 은 Legend/ hover 로 확인.)
 function waferHeatmap(m, opts) {
   opts = opts || {};
   const xMin = m.x_min, xMax = m.x_max, yMin = m.y_min, yMax = m.y_max;
   if (xMin == null || yMin == null) return null;
   const W = xMax - xMin + 1, H = yMax - yMin + 1;
-  const binOrder = opts.binOrder || (m.bin_counts || []).map(bc => bc.bin);
-  const colorMap = opts.colorMap || makeBinColorMap(binOrder);
-  const binIndex = {}; binOrder.forEach((b, i) => { binIndex[b] = i; });
-  const N = binOrder.length || 1;
+  const order = opts.order || opts.binOrder || (m.bin_counts || []).map(bc => bc.bin);
+  const colorMap = opts.colorMap || makeBinColorMap(order);
+  const catOf = opts.catOf || (d => d.bin);   // die → 색 카테고리(기본 bin). TNO/회색은 호출부가 지정.
+  const catIndex = {}; order.forEach((c, i) => { catIndex[c] = i; });
+  const N = order.length || 1;
 
-  // die 가 조밀하면(임계 초과) 셀 gap>0 은 Plotly 가 die 마다 SVG rect(brick)를 만들어 freeze 를
-  // 유발한다 → gap=0 이미지 모드로 그리고 Bin 라벨(SVG text)도 끈다. die 는 전량 유지(다운샘플 아님).
-  // opts.forceGap/forceText 는 Detail 확대 시 격자선·라벨 강제 복원용(보이는 die 가 적어 안전).
+  // die 가 조밀하면(임계 초과) 셀 gap>0 은 Plotly 가 die 마다 SVG rect(brick)를 만들어 무겁다
+  // → gap=0 이미지 모드. opts.forceGap 은 Detail 확대 시 격자선 복원용. die 는 전량 유지(다운샘플 아님).
   const dense = (m.dies || []).length > MAP_DENSE_DIES;
   const useGap = opts.forceGap || !dense;
-  const useText = opts.showText && (opts.forceText || !dense);
 
   const z = Array.from({ length: H }, () => Array(W).fill(null));
-  const cbin = Array.from({ length: H }, () => Array(W).fill(""));
-  const text = useText ? Array.from({ length: H }, () => Array(W).fill("")) : null;
+  const cdata = Array.from({ length: H }, () => Array(W).fill(""));
   (m.dies || []).forEach(d => {
     const c = d.x - xMin, r = d.y - yMin;
     if (r < 0 || r >= H || c < 0 || c >= W) return;
-    const idx = binIndex[d.bin] != null ? binIndex[d.bin] : 0;
+    const cat = catOf(d);
+    const idx = catIndex[cat] != null ? catIndex[cat] : 0;
     z[r][c] = idx + 0.5;
-    cbin[r][c] = d.bin;
-    if (text && d.bin !== "1") text[r][c] = d.bin;   // Fail 셀만 bin 번호, Pass 는 빈칸
+    cdata[r][c] = d.g ? "(prev-fail)" : cat;   // hover 표시(회색 die 는 이전 step fail)
   });
 
   const trace = {
     type: "heatmap", z, zmin: 0, zmax: N,
     x0: xMin, dx: 1, y0: yMin, dy: 1,
-    colorscale: binColorscale(binOrder, colorMap),
+    colorscale: binColorscale(order, colorMap),
     showscale: false, xgap: useGap ? 0.5 : 0, ygap: useGap ? 0.5 : 0, hoverongaps: false,
-    customdata: cbin,
+    customdata: cdata,
   };
-  if (useText) {
-    trace.text = text;
-    trace.texttemplate = "%{text}";
-    trace.textfont = { size: opts.textSize || 8, color: "#0b0b0b" };
-  }
   if (opts.mini) trace.hoverinfo = "skip";
-  else trace.hovertemplate = opts.hovertemplate || "(%{x}, %{y})<br>Bin %{customdata}<extra></extra>";
-  return { trace, colorMap, binOrder };
+  else trace.hovertemplate = opts.hovertemplate || "(%{x}, %{y})<br>%{customdata}<extra></extra>";
+  return { trace, colorMap, binOrder: order };
 }
 
 // bin 이산 colorscale (각 bin 을 두 정지점으로 계단화). waferHeatmap·범례 색 restyle 공용.
@@ -179,15 +176,18 @@ function _binIsSelected(selected, bin) {
   if (selected instanceof Set) return selected.has(bin);
   return selected != null && bin === selected;
 }
-function binLegendHtml(legendRows, colorMap, selected) {
+function binLegendHtml(legendRows, colorMap, selected, descMap) {
+  const desc = descMap || {};
   const body = legendRows.map(bc => {
     const cls = [bc.is_pass ? "is-pass" : "", _binIsSelected(selected, bc.bin) ? "is-selected" : ""]
       .filter(Boolean).join(" ");
+    const d = bc.is_pass ? "" : (desc[String(bc.bin)] || "");
     return `<tr${cls ? ` class="${cls}"` : ""} data-bin="${esc(bc.bin)}">` +
       `<td><span class="bin-swatch" style="background:${colorMap[bc.bin]}"></span>${esc(bc.bin)}${bc.is_pass ? " (Pass)" : ""}</td>` +
+      `<td class="bin-desc" title="${esc(d)}">${esc(d)}</td>` +
       `<td>${bc.count}</td><td>${bc.pct}%</td></tr>`;
   }).join("");
-  return `<table class="bin-table"><thead><tr><th>Bin</th><th>Count</th><th>비율</th></tr></thead>` +
+  return `<table class="bin-table"><thead><tr><th>Bin</th><th>Description</th><th>Count</th><th>비율</th></tr></thead>` +
          `<tbody>${body}</tbody></table>`;
 }
 
@@ -218,6 +218,131 @@ function mapPlotHeight() { return Math.min(720, Math.max(220, Math.round(720 / m
 let mapMode = "bin";
 // Map 초기 그리기(rAF 스텝퍼) 재진입 가드 — 새 렌더가 시작되면 이전 체인을 중단시킨다.
 let _mapDrawToken = 0;
+// 색 기준 축: "bin"=Bin Map(기존), "tno"=die 가 fail 난 항목(FAILTNO)별 색. 세션 내 유지.
+let mapColorKey = "bin";
+
+// ── canvas 썸네일 렌더 (갤러리) ────────────────────────────────────────────────
+// hex → [r,g,b]. 6자리 hex 만 지원(팔레트가 전부 6자리).
+function hexToRgb(hex) {
+  const h = String(hex || "").replace("#", "");
+  return [parseInt(h.slice(0, 2), 16) || 0, parseInt(h.slice(2, 4), 16) || 0, parseInt(h.slice(4, 6), 16) || 0];
+}
+// 흰색과 블렌드해 흐리게(DUT 미선택 die). k=원색 비율.
+function fadeRgb(rgb, k) {
+  return [Math.round(rgb[0] * k + 255 * (1 - k)),
+          Math.round(rgb[1] * k + 255 * (1 - k)),
+          Math.round(rgb[2] * k + 255 * (1 - k))];
+}
+// die 격자를 canvas 에 그린다 — die 당 cellSize px 블록 + 셀 사이 1px 격자선(투명=흰 카드 노출)으로
+// 각 chip 구분·윤곽선을 유지(Plotly xgap brick 과 동일 시각, SVG 없이 픽셀 한 번에 → 빠름).
+// rgbFor(die, cache) → [r,g,b] 또는 null(그리지 않음). Y 는 위=작은 값(웨이퍼 관례).
+function drawWaferThumb(canvas, m, rgbFor) {
+  const xMin = m.x_min, yMin = m.y_min;
+  if (xMin == null || yMin == null) return;
+  const W = m.x_max - xMin + 1, H = m.y_max - yMin + 1;
+  if (!(W > 0) || !(H > 0)) return;
+  // 캔버스 픽셀 상한(~1600px)을 넘지 않게 cellSize 자동 축소, 최소 2(1px 격자선 확보).
+  const MAXPX = 1600;
+  let cell = Math.min(6, Math.floor(MAXPX / Math.max(W, H)) || 2);
+  if (cell < 2) cell = 2;
+  const gap = cell >= 3 ? 1 : 0;   // cell 이 너무 작으면 격자선 생략
+  const CW = W * cell, CH = H * cell;
+  canvas.width = CW; canvas.height = CH;
+  const ctx = canvas.getContext("2d");
+  const img = ctx.createImageData(CW, CH);
+  const data = img.data;
+  const cache = {};
+  const dies = m.dies || [];
+  const w = cell - gap, h = cell - gap;
+  for (let k = 0; k < dies.length; k++) {
+    const d = dies[k];
+    const cx = d.x - xMin, cy = d.y - yMin;
+    if (cx < 0 || cx >= W || cy < 0 || cy >= H) continue;
+    const rgb = rgbFor(d, cache);
+    if (!rgb) continue;
+    const px0 = cx * cell, py0 = cy * cell;
+    for (let yy = 0; yy < h; yy++) {
+      let off = ((py0 + yy) * CW + px0) * 4;
+      for (let xx = 0; xx < w; xx++) {
+        data[off] = rgb[0]; data[off + 1] = rgb[1]; data[off + 2] = rgb[2]; data[off + 3] = 255;
+        off += 4;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// sheets["Yield"] → bin 별 대표 fail item(most fail = avg 최대). Bin Legend description 용.
+function buildBinDescMap() {
+  const yl = (webReportSheets() || {})["Yield"] || [];
+  const best = {};   // bin → {item, avg}
+  yl.forEach(r => {
+    const b = String(r.bin);
+    if (!b || b === "1" || !r.Item) return;
+    const avg = Number(r.avg) || 0;
+    if (!(b in best) || avg > best[b].avg) best[b] = { item: r.Item, avg };
+  });
+  const desc = {};
+  Object.keys(best).forEach(b => { desc[b] = best[b].item; });
+  return desc;
+}
+
+// sheets["Fail Bin"](fail_bin_ranking {bin,item,count}) → fail item count 집계.
+// 상위 FAIL_PALETTE 개만 팔레트 색(top), 나머지는 "기타"(중립색). TNO Map/TNO Legend 용.
+function buildTnoInfo() {
+  const fb = (webReportSheets() || {})["Fail Bin"] || [];
+  const cnt = {};
+  fb.forEach(r => { const it = r.item; if (it) cnt[it] = (cnt[it] || 0) + (Number(r.count) || 0); });
+  const items = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
+  const colorMap = {};
+  items.forEach((it, i) => { colorMap[it] = (i < FAIL_PALETTE.length) ? FAIL_PALETTE[i] : TNO_OTHER_COLOR; });
+  const top = items.slice(0, FAIL_PALETTE.length);
+  const otherCount = items.slice(FAIL_PALETTE.length).reduce((s, it) => s + cnt[it], 0);
+  return { colorMap, items, top, cnt, otherCount };
+}
+
+// TNO Legend 표(상위 항목 색+count, 나머지 "기타" 1행). 클릭 dim 은 상위 항목만(data-tno).
+function tnoLegendHtml(tnoInfo, selected) {
+  const body = tnoInfo.top.map(it => {
+    const sel = selected.has(it);
+    const sw = (selected.size === 0 || sel) ? tnoInfo.colorMap[it] : MAP_BIN_DIM_COLOR;
+    return `<tr${sel ? ` class="is-selected"` : ""} data-tno="${esc(it)}">` +
+      `<td><span class="bin-swatch" style="background:${sw}"></span>${esc(it)}</td>` +
+      `<td>${tnoInfo.cnt[it] || 0}</td></tr>`;
+  }).join("");
+  const other = tnoInfo.otherCount > 0
+    ? `<tr class="tno-other"><td><span class="bin-swatch" style="background:${TNO_OTHER_COLOR}"></span>기타</td>` +
+      `<td>${tnoInfo.otherCount}</td></tr>` : "";
+  if (!body && !other) return `<div class="placeholder" style="padding:12px 4px">fail 항목 없음</div>`;
+  return `<table class="bin-table"><thead><tr><th>Item</th><th>Count</th></tr></thead>` +
+         `<tbody>${body}${other}</tbody></table>`;
+}
+
+// 갤러리 canvas wrap 의 CSS aspect-ratio(W : H*yScale) — Plotly scaleanchor 비율 재현.
+function waferThumbAspect(m) {
+  if (m.x_min == null || m.y_min == null) return "1 / 1";
+  const W = m.x_max - m.x_min + 1, H = m.y_max - m.y_min + 1;
+  const denom = Math.max(1, H * waferCellYScale(m));
+  return `${W} / ${denom}`;
+}
+
+// 선택 좌표 마커를 canvas 위 CSS 절대위치 원으로 오버레이(canvas 는 hover 없음).
+function renderThumbMarkers(wrap, m) {
+  wrap.querySelectorAll(".wafer-sel-marker").forEach(e => e.remove());
+  if (m.x_min == null || m.y_min == null) return;
+  const W = m.x_max - m.x_min + 1, H = m.y_max - m.y_min + 1;
+  mapSelChips.forEach(c => {
+    if (c.source !== m.source || c.x == null || c.y == null) return;
+    const cx = c.x - m.x_min, cy = c.y - m.y_min;
+    if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
+    const mk = document.createElement("div");
+    mk.className = "wafer-sel-marker";
+    mk.style.left = ((cx + 0.5) / W * 100) + "%";
+    mk.style.top = ((cy + 0.5) / H * 100) + "%";
+    mk.style.borderColor = c.color;
+    wrap.appendChild(mk);
+  });
+}
 // 두 서브모드 공통 세그먼트(패널 최상단). renderStdfMap 도 같은 마크업을 쓴다.
 function mapModeSegHtml() {
   const seg = (m, label) => `<button class="distseg${mapMode === m ? " active" : ""}" data-mapmode="${m}">${label}</button>`;
@@ -244,12 +369,14 @@ function renderMapAnalysis() {
   const binOrder = legendRows.map(r => r.bin);
   const colorMap = globalBinColorMap();   // 세션 전체 공통 색상 (Summary/Fail Bin 과 일치)
   const mapBinFilter = new Set();   // 범례 클릭으로 선택된 bin 다중선택(재클릭 시 해제, 없으면 전체 표시)
+  const mapTnoFilter = new Set();   // TNO 축 범례 클릭 필터
+  const binDesc = buildBinDescMap();   // bin → 대표 fail item(Bin Legend description)
+  const tnoInfo = buildTnoInfo();      // {colorMap, items, top, cnt, otherCount} (TNO 축·Legend)
   // DUT 모드: 병합 맵은 die 마다 dut 태그가 있고 row.duts 에 DUT 목록이 온다.
   const isDutMode = webReportMode() === "DUT";
   const dutList = (isDutMode && maps[0] && maps[0].duts) || [];
   let mapDutSelected = null;   // 강조 선택된 DUT (null = 전체 원색)
 
-  const plotH = mapPlotHeight();
   // 선택 좌표 색 Legend (Map Analysis 전용). 각 항목: 색 스와치 + 좌표 + 제거(×).
   const selLegend = mapSelChips.length
     ? `<div class="mapsel-legend"><span class="mapsel-leg-title">선택 좌표</span>` +
@@ -265,6 +392,11 @@ function renderMapAnalysis() {
     `<div class="map-toolbar">가로 칸수 ` +
     `<input type="number" id="mapGridColsInput" min="1" max="8" step="1" value="${mapGridCols}">` +
     `<span class="map-toolbar-hint">칸 (1 = 확대해서 보기 · 2~3 = 한꺼번에 보기)</span>` +
+    `<span class="mapsel-sep"></span>` +
+    `<span class="map-axis-seg distseg-group" title="색 기준 축">` +
+      `<button type="button" class="distseg${mapColorKey === "bin" ? " active" : ""}" data-axis="bin">Bin</button>` +
+      `<button type="button" class="distseg${mapColorKey === "tno" ? " active" : ""}" data-axis="tno">TNO</button>` +
+    `</span>` +
     `<span class="mapsel-sep"></span>` +
     `<button type="button" id="mapSelBtn" class="btn-sm">좌표 선택</button>` +
     `<span id="mapRenderProg" class="muted map-render-prog"></span>` +
@@ -285,14 +417,16 @@ function renderMapAnalysis() {
     `<div class="wafer-analysis-layout">` +
     `<div class="wafer-grid" style="grid-template-columns:repeat(${mapGridCols}, minmax(0, 1fr))">` +
     maps.map((m, i) =>
-      `<div class="wafer-card wafer-card-clickable" data-map-index="${i}" title="클릭하면 크게(확대·격자선·마우스오버) 봅니다">
+      `<div class="wafer-card wafer-card-clickable" data-map-index="${i}" title="클릭하면 크게(확대·마우스오버) 봅니다">
         <div class="wafer-card-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""} — ${esc(String(m.total))} dies<span class="wafer-card-zoom">⤢ 크게 보기</span></div>
-        <div id="wafer-full-${i}" style="width:100%;height:${plotH}px;"><div class="placeholder">맵 로드 중…</div></div>
+        <div id="wafer-full-${i}" class="wafer-thumb-wrap" style="aspect-ratio:${waferThumbAspect(m)}"><div class="placeholder">맵 로드 중…</div></div>
       </div>`).join("") +
     `</div>` +
     `<div class="wafer-legend-fixed">` +
     `<div class="wafer-legend-title">Bin Legend</div>` +
     `<div class="wafer-legend-body"></div>` +
+    `<div class="wafer-legend-title tno-legend-title">TNO Legend</div>` +
+    `<div class="tno-legend-body"></div>` +
     (dutList.length
       ? `<div class="wafer-legend-title dut-legend-title">DUT Legend</div>` +
         `<div class="dut-legend-hint">클릭 시 해당 DUT 강조 (나머지 연하게)</div>` +
@@ -325,34 +459,47 @@ function renderMapAnalysis() {
   });
   panel.querySelectorAll(".mapsel-del").forEach(b => b.addEventListener("click", () => mapSelRemove(b.dataset.key)));
 
-  // 카드 클릭 → Map Detail 전체화면(확대·격자선·마우스오버). 갤러리는 개요(가벼운 이미지 모드).
+  // 카드 클릭 → Map Detail 전체화면(확대·마우스오버). 갤러리는 개요(빠른 canvas 썸네일).
   panel.querySelector(".wafer-grid").addEventListener("click", (e) => {
     const card = e.target.closest(".wafer-card-clickable");
     if (!card) return;
     const idx = parseInt(card.dataset.mapIndex, 10);
     if (!isNaN(idx)) openMapDetail(idx);
   });
+  // Bin / TNO 색 기준 축 전환.
+  panel.querySelectorAll("[data-axis]").forEach(b => b.addEventListener("click", () => {
+    const ax = b.dataset.axis;
+    if (ax !== mapColorKey) { mapColorKey = ax; renderMapAnalysis(); }
+  }));
 
-  // 범례 선택은 색(colorscale)만 바뀌므로 z 재계산·전체 재렌더 없이 restyle 로 즉시 반영.
+  // 갤러리는 canvas 라 색 필터 변경 시 canvas 를 다시 그린다(맵당 <5ms, rAF 스텝퍼).
   function restyleColors() {
-    // DUT 강조 중이면 트레이스가 2겹(faded+full)이라 restyle 대신 전체 재그림.
-    if (mapDutSelected) { drawAllMaps(); renderLegendBody(); return; }
-    const activeColorMap = dimColorMap(colorMap, binOrder, mapBinFilter);
-    const cs = binColorscale(binOrder, activeColorMap);
-    maps.forEach((m, i) => {
-      const el = document.getElementById(`wafer-full-${i}`);
-      if (el && el.data) { try { Plotly.restyle(el, { colorscale: [cs] }, [0]); } catch (e) {} }
-    });
+    drawAllMaps();
     renderLegendBody();
+    renderTnoLegend();
   }
   function renderLegendBody() {
     const legendBody = panel.querySelector(".wafer-legend-body");
     if (!legendBody) return;
-    legendBody.innerHTML = binLegendHtml(legendRows, colorMap, mapBinFilter);
+    legendBody.innerHTML = binLegendHtml(legendRows, colorMap, mapBinFilter, binDesc);
     legendBody.querySelectorAll("tbody tr[data-bin]").forEach(tr => {
       tr.addEventListener("click", () => {
+        if (mapColorKey !== "bin") return;   // TNO 축일 땐 Bin 범례 클릭 무시
         const bin = tr.dataset.bin;
         if (mapBinFilter.has(bin)) mapBinFilter.delete(bin); else mapBinFilter.add(bin);
+        restyleColors();
+      });
+    });
+  }
+  function renderTnoLegend() {
+    const host = panel.querySelector(".tno-legend-body");
+    if (!host) return;
+    host.innerHTML = tnoLegendHtml(tnoInfo, mapTnoFilter);
+    host.querySelectorAll("tbody tr[data-tno]").forEach(tr => {
+      tr.addEventListener("click", () => {
+        if (mapColorKey !== "tno") return;   // Bin 축일 땐 TNO 범례 클릭 무시
+        const it = tr.dataset.tno;
+        if (mapTnoFilter.has(it)) mapTnoFilter.delete(it); else mapTnoFilter.add(it);
         restyleColors();
       });
     });

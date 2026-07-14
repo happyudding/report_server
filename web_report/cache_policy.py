@@ -59,7 +59,9 @@ def dist_key(session, *, bin1: bool = False) -> tuple:
 # 반환한다(예: yield_step_groups 추가 후 옛 캐시엔 그 키가 없어 접기 UI 가 폴백됨).
 # v3: yield_step_groups·yield_summary.by_step 분모를 cascade→전체 rawdata 기준으로 전환
 #     (키는 동일하나 값이 바뀌어 옛 캐시가 stale cascade 값을 반환하는 것을 막는다).
-REPORT_SCHEMA_VERSION = 3
+# v4: Map Analysis die 스키마 확장 — 앞 step fail die 회색 마커({x,y,g}), fail die 대표 항목명
+#     ({..,"it":item}). 옛 캐시엔 이 필드가 없어 회색/TNO Map 이 폴백되는 것을 막는다.
+REPORT_SCHEMA_VERSION = 4
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

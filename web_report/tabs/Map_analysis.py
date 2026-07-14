@@ -17,7 +17,7 @@ from collections import Counter
 import pandas as pd
 
 from .common import PASS_BIN, bin_sort_key, bin_types, fmt_type
-from .yield_tab import _tno_norm, failtno_norms
+from .yield_tab import _tno_norm, failtno_norms, tno_to_item_map
 from ..wafer_frame import frame_for
 
 
@@ -79,9 +79,20 @@ def _fail_step_indexes(table, bins, mask, step_index):
     return out
 
 
-def _die(x, y, b, dut):
-    """map die 항목. DUT 모드에서만 소속 dut 라벨을 함께 단다(프런트 DUT Legend 강조용)."""
+def _die(x, y, b, dut, item=None):
+    """map die 항목. item=이 die 가 fail 난 대표 항목명(TNO Map 색칠용, fail die 만).
+    DUT 모드에서만 소속 dut 라벨을 함께 단다(프런트 DUT Legend 강조용)."""
     d = {"x": x, "y": y, "bin": b}
+    if item is not None:
+        d["it"] = item
+    if dut is not None:
+        d["dut"] = dut
+    return d
+
+
+def _gray_die(x, y, dut):
+    """앞 STEP 에서 이미 fail 한 die — 뒤 STEP 맵엔 모양만 회색으로 남긴다(bin_counts 제외)."""
+    d = {"x": x, "y": y, "g": 1}
     if dut is not None:
         d["dut"] = dut
     return d
@@ -124,6 +135,7 @@ def _merge_dut_rows(rows):
         xmaxs = [r["x_max"] for r in grp if r["x_max"] is not None]
         ymins = [r["y_min"] for r in grp if r["y_min"] is not None]
         ymaxs = [r["y_max"] for r in grp if r["y_max"] is not None]
+        gray_total = sum(1 for d in dies if "bin" not in d)   # 회색 die 는 bin_counts·total 제외
         orig_file = str(grp[0].get("file_name", "")).rsplit(" · DUT ", 1)[0]
         base = {
             "source": "All DUT",
@@ -136,8 +148,9 @@ def _merge_dut_rows(rows):
         }
         if key is not None:
             base["step"] = key
-        bins = [d["bin"] for d in dies]
-        merged.append(dict(base, total=len(dies), dies=dies, bin_counts=_bin_count_rows(bins)))
+        bins = [d["bin"] for d in dies if "bin" in d]   # 회색 die(g, bin 없음) 제외
+        merged.append(dict(base, total=len(dies) - gray_total, dies=dies,
+                           bin_counts=_bin_count_rows(bins)))
     return merged
 
 
@@ -158,6 +171,15 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal"):
         xs = [int(v) for v in x_num[mask].round().tolist()]
         ys = [int(v) for v in y_num[mask].round().tolist()]
         bins = [b for b, m in zip(bin_types(table), mask.tolist()) if m]
+        # per-die FAILTNO → 대표 항목명(TNO Map 색칠용). mask 정렬로 xs/ys/bins 와 일치.
+        fails = [f for f, m in zip(failtno_norms(table), mask.tolist()) if m]
+        item_map = tno_to_item_map(table)
+
+        def _die_item(f):
+            if f is None:
+                return None
+            lst = item_map.get(f)
+            return lst[0] if lst else None
 
         if frame is not None:
             x_min, x_max = frame["x_min"], frame["x_max"]
@@ -183,7 +205,8 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal"):
                        key=_step_sort_key)
         if len(steps) <= 1:
             # STEP 단일(또는 없음) → 현행 그대로 소스당 맵 1개 (row 에 step 키 없음).
-            dies = [_die(x, y, b, dut) for x, y, b in zip(xs, ys, bins)]
+            dies = [_die(x, y, b, dut, item=(_die_item(f) if b != PASS_BIN else None))
+                    for x, y, b, f in zip(xs, ys, bins, fails)]
             row = dict(base, total=len(dies), dies=dies, bin_counts=_bin_count_rows(bins))
             if merge_dut:
                 row["_dut"] = dut
@@ -196,13 +219,18 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal"):
         fail_idx = _fail_step_indexes(table, bins, mask, step_index)
         for k, step_name in enumerate(steps):
             dies = []
-            for x, y, b, fi in zip(xs, ys, bins, fail_idx):
+            count_bins = []   # bin_counts 용 — 회색(앞 step fail) die 는 제외(이 step 결과 아님)
+            for x, y, b, fi, f in zip(xs, ys, bins, fail_idx, fails):
                 if fi is None or fi > k:
                     dies.append(_die(x, y, PASS_BIN, dut))
+                    count_bins.append(PASS_BIN)
                 elif fi == k:
-                    dies.append(_die(x, y, b, dut))
-            row = dict(base, step=step_name, total=len(dies), dies=dies,
-                       bin_counts=_bin_count_rows([d["bin"] for d in dies]))
+                    dies.append(_die(x, y, b, dut, item=_die_item(f)))
+                    count_bins.append(b)
+                else:   # fi < k: 앞 step 에서 이미 fail → 모양만 회색으로 남김
+                    dies.append(_gray_die(x, y, dut))
+            row = dict(base, step=step_name, total=len(count_bins), dies=dies,
+                       bin_counts=_bin_count_rows(count_bins))
             if merge_dut:
                 row["_dut"] = dut
             rows.append(row)
