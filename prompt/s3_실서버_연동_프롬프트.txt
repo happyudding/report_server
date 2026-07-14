@@ -1,0 +1,208 @@
+================================================================================
+[프롬프트] 실서버 S3 실연동 — 변경 대상 코드 & 진입점(entry point) 연결 가이드
+================================================================================
+작성: 2026-07-14 / 대상: report_server 를 실서버(실 S3)로 전환하는 담당자·에이전트
+근거 정본: server/storage_gateway/README.md, docs/15_ownership.md, docs/03_storage.md,
+          docs/10_web_report_pipeline.md, server/config.py, server/report/report_extension.py
+
+
+────────────────────────────────────────────────────────────────────────────
+■ 너의 임무 (GOAL)
+────────────────────────────────────────────────────────────────────────────
+현재 이 서버는 REPORT_S3_BUCKET 미설정 시 "로컬 폴백"으로 조용히 동작한다(에러 아님).
+실서버에서 산출물(web_report parquet/manifest, issue 이미지, distribution 합성 PNG,
+Note 탭 이미지)을 **실제 S3(또는 S3 호환 스토리지)에 저장/조회/삭제**하도록 전환하라.
+
+전환 후 만족해야 할 최종 상태:
+1) 업로드된 산출물이 S3 버킷에 실제로 올라간다.
+2) report_object_info.options_json 에 {"storage":"s3"} 로 기록된다.
+3) 세션 상세 페이지의 이미지/차트가 S3 경유로 정상 표시된다.
+4) 세션/정리 삭제 시 S3 오브젝트가 함께 지워진다.
+5) 기존 로컬 폴백 산출물은 백필로 S3 이관 후 로컬이 비워진다.
+
+
+────────────────────────────────────────────────────────────────────────────
+■ 불변 규칙 (STOP — 이걸 어기면 호출부 전체가 깨진다)
+────────────────────────────────────────────────────────────────────────────
+● storage_gateway 는 🔒 외부 담당자 영역·동결이다. **facade 공개 함수·예외의 이름/시그니처를
+  절대 바꾸지 말 것.** 바꾸는 건 "내부 구현"뿐이다(§B). 프로젝트의 라우트·업로드·admin·
+  백필은 전부 facade 공개 API 에만 의존한다.
+● analysis_key = sha256(canonical(sheet_grids)+canonical(meta)). 저장 경로/키는 바꿔도
+  **analysis_key 산출 로직은 건드리지 말 것.**
+● 이미지 URL 계약 불변: /pe/report/chart/<sid>/<idx>, /issue_image/<sid>/<row>,
+  /distribution_combined/<sid>, /note_image/<sid>/<id> — URL·응답형태 유지.
+● 저장 위치 기록 계약(핵심): web_report 산출물은 저장 위치를
+  report_object_info.options_json 에 {"storage":"s3"|"local"} 로 기록하고 **조회는 그 기록을
+  따른다.** 기록이 s3 인데 다운로드 실패 시 침묵 로컬 폴백 금지 → 예외를 올려야 한다
+  (S3 순단 중 로컬 저장분이 복구 후 과거 S3 파일을 되살리는 것 방지).
+● Distribution 데이터 다운샘플링 절대 금지(CLAUDE.md §5).
+● 텍스트(summary/issue/yield)는 S3 아님 — DB(report_sheet_data) 저장. S3 로 옮기지 말 것.
+
+
+────────────────────────────────────────────────────────────────────────────
+■ A. 가장 흔한 경로: "코드 변경 0" — 환경변수만 채운다
+────────────────────────────────────────────────────────────────────────────
+S3 또는 S3 호환 스토리지(MinIO/Ceph 등)라면 코드 수정 없이 아래 env 만 채우면 즉시 동작한다.
+설정 위치: server/config.py 가 os.getenv 로 읽는다(값은 배포 환경/서비스 매니저에 주입).
+
+  [자격증명/엔드포인트]  server/config.py L25~40
+    REPORT_S3_BUCKET        (필수) 비우면 S3NotConfigured → 로컬 폴백. 채우면 S3 활성.
+    REPORT_S3_ENDPOINT      S3 호환 스토리지 endpoint URL (순정 AWS 면 비움)
+    REPORT_S3_REGION        기본 us-east-1
+    REPORT_S3_ACCESS_KEY    비우면 boto3 기본 자격증명 체인 사용
+    REPORT_S3_SECRET_KEY
+    REPORT_S3_MAX_POOL_CONNECTIONS   기본 30 (동시 사용자/스레드 공유 풀)
+
+  [타임아웃 — _s3.py 가 os.getenv 로 직접 읽음, 제거 금지]
+    REPORT_S3_CONNECT_TIMEOUT   기본 5s
+    REPORT_S3_READ_TIMEOUT      기본 30s
+    ↳ S3 장애 시 waitress 스레드(기본 8개) 잠식을 막으려 일부러 짧게 잡고 실패 시 로컬 폴백.
+
+  [키 prefix — 기본값 그대로 두면 됨. 모두 pe/report_server/ 네임스페이스]
+    REPORT_S3_ISSUE_IMG_PREFIX   = pe/report_server/issue_img
+    REPORT_S3_CHART_PREFIX       = pe/report_server/chart_png
+    REPORT_S3_ISSUE_PREFIX / _FAIL_PREFIX / _THUMB_PREFIX / _CSV_PREFIX / _PREFIX
+    (web_report_source / web_report_manifest / distribution_combined prefix 는
+     _s3.py 상단 상수: REPORT_S3_WEBREPORT_SOURCE_PREFIX 등)
+
+  검증: 서버 부팅 로그 후 관리자 패널 /pe/admin-<secret>/ → 현황 탭 → "S3 상태 확인"
+        버튼이 "연결 OK, bucket=..." 를 보여주면 성공.
+
+→ 여기서 끝나면 아래 B(내부 구현 교체)는 볼 필요 없다. B는 "다른 SDK/스토리지"일 때만.
+
+
+────────────────────────────────────────────────────────────────────────────
+■ B. 저장 백엔드 구현 자체를 갈아끼울 때 (다른 SDK/스토리지)
+────────────────────────────────────────────────────────────────────────────
+건드릴 파일은 storage_gateway "내부"뿐. facade(__init__.py)와 호출부는 무수정.
+
+  1차 교체 대상 (내부 구현):
+    server/storage_gateway/_s3.py           ← boto3 client + 키빌더 + IO. 본문만 교체.
+    server/storage_gateway/_issue_images.py ← 이슈 이미지 백엔드(S3+로컬 폴백)
+    server/storage_gateway/_note_images.py  ← Note 탭 이미지 백엔드(세션 단위)
+
+  _s3.py 교체 시 반드시 "그대로 노출"해야 하는 시그니처(입출력 계약):
+    get_s3_client()  bucket_name()  make_s3_uri(key)
+    upload_bytes_to_s3(key,data,content_type)   download_bytes_from_s3(key)
+    upload_json_to_s3(key,data)                 download_json_from_s3(key)
+    delete_object_from_s3(key)                  s3_object_exists(key)
+    make_issue_image_s3_key / make_issue_image_index_s3_key
+    make_chart_png_s3_key / make_chart_index_s3_key
+    make_distribution_combined_s3_key
+    make_webreport_source_s3_key / make_webreport_manifest_s3_key
+    예외: S3NotConfigured, S3ObjectCorrupted  (facade 가 재노출 → 호출부가 import)
+    상수(이 프로젝트가 _s3.py 안에 추가·하드코딩 — 이식 시 유지):
+      REPORT_S3_DIST_COMBINED_PREFIX, REPORT_S3_WEBREPORT_SOURCE_PREFIX,
+      REPORT_S3_WEBREPORT_MANIFEST_PREFIX
+
+  facade(__init__.py) 공개 함수 = 호출부 계약(이름·인자·반환 dict 키 불변):
+    save_upload_artifacts / save_distribution_png / save_issue_images
+    save_webreport_sources / load_webreport_sources / load_webreport_manifest
+    save_webreport_manifest(현재 미사용, API만 유지) / delete_report_artifacts
+    load_json_object / load_chart_png / load_issue_image / load_distribution_png
+    list_issue_image_rows / save_note_image / load_note_image / count_note_images
+    delete_note_images
+    s3_available / s3_health / s3_object_exists / download_bytes_from_s3
+    make_distribution_combined_s3_key
+
+
+────────────────────────────────────────────────────────────────────────────
+■ C. 연결해야 할 진입점(ENTRY POINT) 지도 — 무엇이 storage_gateway 를 부르나
+────────────────────────────────────────────────────────────────────────────
+facade 만 교체/설정하면 아래 호출부는 전부 자동으로 새 백엔드를 탄다. "무수정"이 정상이다.
+(코드가 어디서 어떻게 연결되는지 확인·검증용 지도)
+
+  ● 컴포지션 루트(포트 주입) — 여기서 web_report ↔ storage_gateway 가 배선된다:
+      server/report/report_extension.py  init_app()
+        report_db.init_report_db()
+        web_report_runtime.configure(storage_gateway)   ← StoragePort 주입
+      ↳ web_report 는 storage_gateway 를 직접 import 안 함. runtime.storage() 포트로 접근.
+        (web_report/runtime.py, web_report/ports.py StoragePort)
+
+  ● 저장(WRITE) 경로:
+      server/upload_xlsx.py:248            save_upload_artifacts(...)      [xlsx 흐름]
+      web_report/ingest.py:71              runtime.storage().save_webreport_sources(...)
+      web_report/service.py:289            save_webreport_sources(...)     [Raw Data 교체 저장]
+      web_report/rawedit.py:82             save_webreport_sources(...)
+      server/report/routes_webreport.py:537  save_note_image(...)          [Note 탭 이미지]
+
+  ● 조회(READ) 경로:
+      web_report/loader.py:37              load_webreport_sources(...)
+      web_report/cache.py:196              load_webreport_manifest(...)
+      web_report/rawedit.py:33,76          load_webreport_sources / manifest
+      server/storage_gateway/routes.py     load_chart_png / load_issue_image /
+                                           load_distribution_png / load_note_image
+                                           (= 이미지 URL 라우트, report_bp 에 마운트)
+      server/report/routes_session.py:37   load_json_object(...)
+      server/report/routes_session.py:94   list_issue_image_rows(...)
+
+  ● 삭제(DELETE) 경로  ※ 셋 다 동일 정리 함수 공유:
+      server/report/routes_session.py:183  delete_report_artifacts(akey, upload_root)
+      server/report/routes_session.py:193  delete_note_images(session_id)
+      server/admin_panel/sessions_admin.py:78   delete_report_artifacts(...)  [관리자/스토리지탭 삭제]
+      server/report_cleanup.py:62          delete_report_artifacts(...)       [retention 정리]
+      ↳ 마지막 참조 세션일 때만 호출(count_sessions_for_analysis_key 가드). S3 오브젝트 +
+        로컬 폴백 파일 + 디스크 캐시 폴더까지 정리. best-effort(warnings 반환).
+
+  ● 상태/헬스(관리자 패널):
+      server/admin_panel/sysinfo.py:138    s3_health()   [현황 탭 "S3 상태 확인"]
+      server/admin_panel/storage_admin.py:167  s3_available()  [스토리지 탭 backend 표시]
+      ↳ 참고: 스토리지 탭 backend 컬럼은 report_object_info.web_report_manifest 의 storage
+        마커로 판별. S3 전환+업로드가 실제로 일어나면 s3/local 이 채워진다.
+        (S3 객체 "용량"은 스토리지 탭이 집계하지 않음 = 로컬 디스크만. 의도된 스코프.)
+
+
+────────────────────────────────────────────────────────────────────────────
+■ D. 키 네임스페이스 (S3 오브젝트 레이아웃)
+────────────────────────────────────────────────────────────────────────────
+  issue_img/<akey>/<row>.png                 issue_img/<akey>/index.json
+  chart_png/<akey>/<idx>.png                 chart_png/<akey>/index.json
+  distribution_combined/<akey>.png
+  web_report_source/<akey>/source_<idx>.parquet
+  web_report_manifest/<akey>/manifest.json
+  (전부 pe/report_server/ prefix — plotly legacy 와 충돌 회피)
+  로컬 폴백 경로는 REPORT_UPLOAD_DIR 하위 동형: web_report/<akey>/, issue_img/<akey>/,
+  dist_combined/<akey>.png
+
+
+────────────────────────────────────────────────────────────────────────────
+■ E. 기존 로컬 폴백분 → S3 백필 (실서버 전환 직후 1회)
+────────────────────────────────────────────────────────────────────────────
+S3 미설정 시절 로컬에만 쌓인 산출물을 S3 로 이관하고 object_info 를 기록한다. 멱등(재실행 안전).
+  실행(server/ 디렉터리에서):
+    python tools/backfill_local_to_s3.py                 # dry-run(기본, 대상만 표시)
+    python tools/backfill_local_to_s3.py --apply         # 실제 업로드
+    python tools/backfill_local_to_s3.py --apply --delete-local
+        # S3 재다운로드/존재 검증 통과 시에만 로컬 파일 삭제
+  ↳ 대상 선정 = "object_info 미기록 = 로컬 유일본". S3 장애 폴백이 생길 때마다 재실행하면
+    로컬이 다시 비워진다.
+
+
+────────────────────────────────────────────────────────────────────────────
+■ F. 검증 절차 (E2E — 순서대로)
+────────────────────────────────────────────────────────────────────────────
+1) env(§A) 주입 후 서버 재시작.
+2) 관리자 패널 현황 탭 → "S3 상태 확인" = 연결 OK 확인.
+3) web_report 업로드 1건(POST /pe/report/upload_webreport) 실행.
+4) DB 확인: report_object_info 에 object_type=web_report_manifest/web_report_source_* 행이
+   생기고 options_json 이 {"storage":"s3"} 인지.
+5) S3 버킷에 web_report_source/<akey>/source_0.parquet, web_report_manifest/<akey>/manifest.json
+   오브젝트가 실제로 존재하는지.
+6) 세션 상세 페이지 열어 차트/이미지/분포 PNG 가 정상 표시되는지(이미지 URL 라우트 경유).
+7) 세션 삭제 → S3 오브젝트가 사라지고 DB 행/캐시가 정리되는지.
+8) (기존 로컬분 있으면) §E 백필 --apply 후 로컬이 비는지.
+
+
+────────────────────────────────────────────────────────────────────────────
+■ G. 최종 체크리스트
+────────────────────────────────────────────────────────────────────────────
+[ ] REPORT_S3_BUCKET 등 env 주입 완료 (§A)
+[ ] s3_health() = ok (현황 탭에서 확인)
+[ ] (SDK 교체 시) _s3.py 시그니처·상수·예외 전부 보존 (§B)
+[ ] facade 공개 함수/예외 이름·시그니처 무변경
+[ ] 업로드 후 object_info.storage = "s3" 기록 확인
+[ ] 이미지 URL 라우트 정상 표시 (URL 계약 불변)
+[ ] 삭제 시 S3 오브젝트 동반 삭제 확인
+[ ] 기존 로컬 폴백분 백필 완료 (§E)
+[ ] analysis_key 산출 로직 무변경 · Distribution 다운샘플 없음 · 텍스트는 DB 유지
+================================================================================

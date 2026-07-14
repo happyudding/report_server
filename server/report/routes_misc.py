@@ -146,6 +146,17 @@ def webreport_static(filename):
     return resp
 
 
+# Note 탭 Luckysheet 격리 iframe 문서 (text/html). Luckysheet 를 전역 CSS·스크롤·배율 오염이
+# 없는 깨끗한 풀페이지로 실행해 셀 밀림·격자 떨림을 근본 차단한다(→ note.js·note_frame.html).
+# 정적 JS 라우트(webreport_static)는 mimetype 을 application/javascript 로 강제하므로 별도.
+@report_bp.get("/note_frame")
+def note_frame_page():
+    resp = make_response(send_file(REPORT_VIEW_HTML.parent / "note_frame.html",
+                                   mimetype="text/html", conditional=True))
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @report_bp.get("/api/history")
 def history():
     filters = {

@@ -73,7 +73,7 @@ single-flight 락으로 콜드 미스 동시 진입의 중복 계산을 막는�
 | 모드 | 파일 수 | 요지 |
 |------|---------|------|
 | **Normal** | 1+ | 기존 동작. payload 에 `"mode":"Normal"`. |
-| **DUT** | 1 | **서버에서** honeyform 을 DUT 컬럼으로 분할(`split_table_by_dut`) — DUT별 pseudo-source(`DUT <값>`)로 기존 multi-source 렌더 재사용. 다운샘플 없음. |
+| **DUT** | 1 | **서버에서** honeyform 을 DUT 컬럼으로 분할(`split_table_by_dut`) — DUT별 pseudo-source(`DUT <값>`)로 Yield/CPK/Distribution 등은 DUT 비교 렌더. **단 Map Analysis 는 예외**: `build_map_analysis_rows(mode="DUT")` 가 DUT 를 하나의 맵(`source="All DUT"`)으로 병합하고 die 마다 `dut` 태그를 달아 프런트가 DUT Legend 로 강조한다. 다운샘플 없음. |
 | **Compare** | 정확히 2 | `tabs/compare.py` 가 통계 delta·bin delta·공통/비공통 fail map + goodlog(테스트 프로그램 diff) 제공. ingest 가 2개 아니면 400. |
 | **Commonality** | 1 | `tabs/commonality.py` chip 검색(serial/xpos/ypos/dut) + 항목별 값·누적%·wafer 좌표. chip 선택은 view-time(비영속). |
 

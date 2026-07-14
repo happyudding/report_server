@@ -34,6 +34,7 @@ class TabContext:
     issue_comments: dict = field(default_factory=dict)
     product_type: str = ""
     product: str = ""
+    mode: str = "Normal"                        # 분석 모드 — Map Analysis 의 DUT 병합 분기용
     # ai_comment 옵션 세션만 dict (row_key→텍스트, web_report/ai_comment.py) — None 이면
     # Issue Table 에 AI Comment 컬럼 자체가 생성되지 않는다.
     ai_comments: dict | None = None
@@ -57,6 +58,6 @@ TAB_REGISTRY: tuple = (
     TabSpec("Distribution", None),      # lazy — GET .../web_report/distribution
     TabSpec("Trim Analysis", None),     # lazy — GET .../web_report/trim_analysis
     TabSpec("Map Analysis", lambda ctx: build_map_analysis_rows(
-        ctx.tables, ctx.product_type, ctx.product)),
+        ctx.tables, ctx.product_type, ctx.product, ctx.mode)),
     TabSpec("Fail Bin", lambda ctx: fail_bin_ranking(ctx.yield_rows)),
 )

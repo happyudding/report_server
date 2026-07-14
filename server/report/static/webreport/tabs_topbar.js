@@ -4,6 +4,7 @@ document.getElementById("tabs").addEventListener("click", e => {
   if (!btn) return;
   const tab = btn.dataset.tab;
   hideItemDetail();   // Item_detail 열려 있으면 닫고 해당 탭으로
+  hideMapDetail();    // Map Detail 열려 있으면 닫고 해당 탭으로
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === btn));
   document.querySelectorAll(".panel").forEach(p =>
     p.classList.toggle("active", p.id === `panel-${tab}`));

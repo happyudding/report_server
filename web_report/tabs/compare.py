@@ -5,8 +5,8 @@ metrics.build_report_payload 가 mode=="Compare" 이고 source 가 2개 이상�
   - stats     : 항목별 source 통계(n/average/median/cpk/stdev) + source 간 delta.
                 이미 계산된 ``cpk_rows`` 를 pivot 해 재사용(재계산 없음).
   - bin_delta : bin 별 source yield% + delta/range.
-  - common_map: die (XPOS,YPOS) 를 source 간 교차해 공통 fail / 비공통 fail 로 분류.
-                비공통 fail(일부 source 에서만 fail)이 강조 대상.
+  - common_map: 공통 좌표의 Bin 을 source 간 비교해 일치(match)/한쪽만 Fail/혼합(mixed)으로
+                분류한 단일 Map. Bin 불일치가 강조 대상.
 다운샘플 없음(규칙 #6) — 모든 die 를 분류에 반영한다.
 """
 from __future__ import annotations
@@ -50,79 +50,63 @@ def build_compare_bin_delta(tables) -> list:
     return rows
 
 
-def _fail_coord_sets(tables):
-    """source 별 die 좌표 집합과 fail 좌표 집합을 만든다.
+def build_common_map(tables) -> dict:
+    """die 를 좌표별 Bin 일치/불일치로 분류해 단일 공통성 Map 을 만든다.
 
-    fail = BIN != PASS_BIN. 같은 (x,y) 가 여러 번(재검) 나오면 하나라도 fail 이면 fail 로 본다.
-    반환: (present[source] -> set[(x,y)], failed[source] -> set[(x,y)], 좌표 bound).
+    모든 source 에 존재하는 공통 좌표만 대상 (before/after 2-source 가 기본):
+      - 모든 source 에서 Bin 동일         → "match" (초록)
+      - Bin 이 다르고 한 source 에서만 Fail → 그 source 이름 (빨강/파랑…)
+      - Bin 이 다르고 2개 이상 source Fail  → "mixed" (보라)
+    한쪽에만 존재하는 좌표는 비교 불가라 제외한다(빈칸). 다운샘플 없음(규칙 #6).
+    맵 프레임(bound)은 웨이퍼 형태 유지를 위해 모든 present 좌표 기준으로 잡는다.
     """
-    present: dict = {}
-    failed: dict = {}
+    source_names = [t.source for t in tables]
+    coord_bins = {t.source: _coord_bin_map(t) for t in tables}
+
     xs_all, ys_all = [], []
-    for t in tables:
-        data = t.data
-        xs = [fmt_type(v) for v in data["XPOS"].tolist()]
-        ys = [fmt_type(v) for v in data["YPOS"].tolist()]
-        bins = bin_types(t)
-        pres, fail = set(), set()
-        for x, y, b in zip(xs, ys, bins):
-            coord = to_coord(x, y)
-            if coord is None:
-                continue
-            pres.add(coord)
-            xs_all.append(coord[0])
-            ys_all.append(coord[1])
-            if b != PASS_BIN:
-                fail.add(coord)
-        present[t.source] = pres
-        failed[t.source] = fail
-    bound = {
+    for s in source_names:
+        for (x, y) in coord_bins[s]:
+            xs_all.append(x)
+            ys_all.append(y)
+
+    # 모든 source 에 존재하는 공통 좌표만 분류
+    common = None
+    for s in source_names:
+        keys = set(coord_bins[s])
+        common = keys if common is None else (common & keys)
+    common = common or set()
+
+    dies = []
+    n_match = n_mixed = 0
+    per_source = {s: 0 for s in source_names}
+    for coord in common:
+        bins = [coord_bins[s][coord] for s in source_names]
+        if all(b == bins[0] for b in bins):
+            cls = "match"
+            n_match += 1
+        else:
+            fail_srcs = [s for s, b in zip(source_names, bins) if b != PASS_BIN]
+            if len(fail_srcs) == 1:
+                cls = fail_srcs[0]
+                per_source[cls] += 1
+            else:
+                cls = "mixed"
+                n_mixed += 1
+        dies.append({"x": coord[0], "y": coord[1], "cls": cls})
+
+    dies.sort(key=lambda d: (d["y"], d["x"]))
+    return {
+        "sources": source_names,
         "x_min": min(xs_all) if xs_all else None,
         "x_max": max(xs_all) if xs_all else None,
         "y_min": min(ys_all) if ys_all else None,
         "y_max": max(ys_all) if ys_all else None,
-    }
-    return present, failed, bound
-
-
-def build_common_map(tables) -> dict:
-    """die 를 source 간 교차 분류: 공통 fail(모든 source 에서 fail) vs 비공통 fail(일부만).
-
-    비공통 fail(unique_fail)이 강조 대상 — 각 좌표에 어느 source 들이 fail 했는지 기록해
-    프런트가 before/after(source 별) 구분 렌더에 쓴다. 공통 fail 은 배경 처리용으로 좌표만.
-    """
-    source_names = [t.source for t in tables]
-    present, failed, bound = _fail_coord_sets(tables)
-
-    # 어느 source 에든 fail 인 좌표 전체
-    any_fail = set()
-    for s in source_names:
-        any_fail |= failed[s]
-
-    n_sources = len(source_names)
-    unique_fail = []
-    common_fail = []
-    for coord in any_fail:
-        fail_sources = [s for s in source_names if coord in failed[s]]
-        if len(fail_sources) == n_sources:
-            common_fail.append({"x": coord[0], "y": coord[1]})
-        else:
-            unique_fail.append({
-                "x": coord[0], "y": coord[1],
-                "fail_sources": fail_sources,
-            })
-
-    unique_fail.sort(key=lambda d: (d["y"], d["x"]))
-    common_fail.sort(key=lambda d: (d["y"], d["x"]))
-    return {
-        "sources": source_names,
-        **bound,
-        "unique_fail": unique_fail,
-        "common_fail": common_fail,
+        "dies": dies,
         "counts": {
-            "common_fail": len(common_fail),
-            "unique_fail": len(unique_fail),
-            "total_fail": len(any_fail),
+            "common_dies": len(common),
+            "match": n_match,
+            "mixed": n_mixed,
+            "per_source": per_source,
         },
     }
 

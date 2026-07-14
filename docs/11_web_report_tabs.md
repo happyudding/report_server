@@ -109,8 +109,15 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
   legacy(`source != "web_report"`) 세션은 web_report 전용 탭(Raw Data/CPK/Map)을 숨긴다.
 
 ## 불변 규칙
-- **Distribution 다운샘플 절대 금지** (프로젝트 CLAUDE.md §5 규칙 #6). 상세·통계는 전
+- **Distribution 다운샘플 절대 금지** (프로젝트 CLAUDE.md §5 규칙 #5). 상세·통계는 전
   포인트. 미니셀(썸네일)만 표시용 1000점 다운샘플이 유일한 예외.
+- **Distribution ECDF 미니셀 렌더는 markers 전용, 선 금지.** 갤러리 카드
+  (`distRenderGalleryCell`)·Bin 상세 셀(`renderDistCell`)·Issue Table 산포 미니셀
+  (`renderMiniDistCell`) 3곳 모두 점만 찍고 어떤 연결선도 긋지 않는다(계단형
+  `line.shape:"hv"` 포함 금지 — x축 수평선은 UX 에 반함). 고유값이 적은 이산(code) 항목의
+  성김은 동일값 구간을 세로 점으로 채우는 보간(`distPointsForDisplay` = `distFillVertical`
+  → `distDownsampleForDisplay` 순서)으로만 보정한다. 상세 CDF(`distRenderCdf`)는 원본 전
+  측정값을 값당 1점으로 그려 이미 세로 점기둥이 되므로 대상 외.
 - **tabs/ 통계·honeyform 변환 로직을 고칠 때 검증 기준은 "같은 세션 payload 의 정준 JSON
   완전 일치"** — 벡터화·리팩토링은 값을 바꾸지 않는다(정수 컬럼 int64 dtype 보존 포함).
 - Excel 내보내기는 vendored `exceljs.min.js` 를 브라우저에서 동적 로드해 생성(서버

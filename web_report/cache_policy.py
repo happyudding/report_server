@@ -9,7 +9,7 @@
 | TABLES_CACHE       | (akey, chash)                                    | raw_data 편집(chash) / 세션 삭제    |
 | DIST_CACHE         | (akey, chash, mode)                              | 〃 (mode 는 세션 생성 후 불변)      |
 | COMMONALITY_CACHE  | (akey, chash)                                    | raw_data 편집 / 세션 삭제           |
-| REPORT_CACHE       | (akey, chash, sid, edits_rev, opts, mode)        | comment/override 편집(rev) + 위 전부 |
+| REPORT_CACHE       | (akey, chash, sid, edits_rev, opts, mode, sver)  | comment/override 편집(rev) + payload 스키마 변경 + 위 전부 |
 | TRIM_CACHE         | (akey, chash, sid, edits_rev, mode, source)      | trim override 편집(rev) + 위 전부   |
 | TRIM_CHART_CACHE   | (akey, chash, mode, source, items_digest)        | 그룹 슬롯 구성 변경 / raw_data 편집 |
 | _FULL_CACHE        | (akey, chash, "sid:edits_rev", extras_digest)    | 편집 rev / annotations 등 extras    |
@@ -50,9 +50,17 @@ def dist_key(session) -> tuple:
     return _base(session) + (_mode(session),)
 
 
+# build_report_payload 출력 스키마 버전. payload 구조(최상위 키·그룹 형태)가 바뀌면
+# 이 값을 올려 인메모리 REPORT_CACHE + disk_cache report 파일(같은 데이터의 옛 세대
+# 산출물)을 자연 무효화한다 — 안 올리면 코드가 새 키를 내도 캐시가 stale payload 를
+# 반환한다(예: yield_step_groups 추가 후 옛 캐시엔 그 키가 없어 접기 UI 가 폴백됨).
+REPORT_SCHEMA_VERSION = 2
+
+
 def report_key(session, session_id: str, edits_rev: int) -> tuple:
     return _base(session) + (session_id, edits_rev,
-                             session.get("webreport_options") or "", _mode(session))
+                             session.get("webreport_options") or "", _mode(session),
+                             REPORT_SCHEMA_VERSION)
 
 
 def trim_key(session, session_id: str, edits_rev: int, source: str) -> tuple:

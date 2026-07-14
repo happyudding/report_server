@@ -79,10 +79,74 @@ def _fail_step_indexes(table, bins, mask, step_index):
     return out
 
 
-def build_map_analysis_rows(tables, product_type="", product=""):
+def _die(x, y, b, dut):
+    """map die 항목. DUT 모드에서만 소속 dut 라벨을 함께 단다(프런트 DUT Legend 강조용)."""
+    d = {"x": x, "y": y, "bin": b}
+    if dut is not None:
+        d["dut"] = dut
+    return d
+
+
+def _dut_label(source):
+    """DUT pseudo-source('DUT <label>')에서 표시용 라벨('<label>')만 추출."""
+    s = str(source)
+    return s[4:] if s.startswith("DUT ") else s
+
+
+def _merge_dut_rows(rows):
+    """DUT별 map row 들을 STEP 기준으로 하나로 합친다 — 원래 단일 source 였던 것처럼.
+
+    같은 STEP(또는 STEP 없음) row 들의 dies 를 이어붙이고 격자 범위·집계를 재계산한다.
+    die 마다 'dut' 태그가 남아 프런트 DUT Legend 강조에 쓰인다. 다운샘플 없음(규칙 #6).
+    """
+    all_duts = []
+    for r in rows:
+        d = r.get("_dut")
+        if d is not None and d not in all_duts:
+            all_duts.append(d)
+
+    groups: dict = {}
+    order = []
+    for r in rows:
+        key = r.get("step")   # None(단일) 또는 STEP 이름
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        groups[key].append(r)
+
+    merged = []
+    for key in order:
+        grp = groups[key]
+        dies = []
+        for r in grp:
+            dies.extend(r["dies"])
+        xmins = [r["x_min"] for r in grp if r["x_min"] is not None]
+        xmaxs = [r["x_max"] for r in grp if r["x_max"] is not None]
+        ymins = [r["y_min"] for r in grp if r["y_min"] is not None]
+        ymaxs = [r["y_max"] for r in grp if r["y_max"] is not None]
+        orig_file = str(grp[0].get("file_name", "")).rsplit(" · DUT ", 1)[0]
+        base = {
+            "source": "All DUT",
+            "file_name": orig_file,
+            "x_min": min(xmins) if xmins else None,
+            "x_max": max(xmaxs) if xmaxs else None,
+            "y_min": min(ymins) if ymins else None,
+            "y_max": max(ymaxs) if ymaxs else None,
+            "duts": list(all_duts),
+        }
+        if key is not None:
+            base["step"] = key
+        bins = [d["bin"] for d in dies]
+        merged.append(dict(base, total=len(dies), dies=dies, bin_counts=_bin_count_rows(bins)))
+    return merged
+
+
+def build_map_analysis_rows(tables, product_type="", product="", mode="Normal"):
     # 제품 기준정보(die pitch+wafer 크기)가 있으면 고정 프레임으로 격자 틀을 덮어쓴다.
     # 없으면 frame=None → 현행(데이터 좌표 min/max) 유지.
+    # DUT 모드는 DUT별 pseudo-source 를 하나의 맵으로 병합한다(die 마다 dut 태그 부여).
     frame = frame_for(product_type, product)
+    merge_dut = mode == "DUT"
     rows = []
     for table in tables:
         data = table.data
@@ -114,13 +178,16 @@ def build_map_analysis_rows(tables, product_type="", product=""):
             "y_max": y_max,
         }
 
+        dut = _dut_label(table.source) if merge_dut else None
         steps = sorted({fmt_type(v) for v in table.step.values() if fmt_type(v)},
                        key=_step_sort_key)
         if len(steps) <= 1:
             # STEP 단일(또는 없음) → 현행 그대로 소스당 맵 1개 (row 에 step 키 없음).
-            dies = [{"x": x, "y": y, "bin": b} for x, y, b in zip(xs, ys, bins)]
-            rows.append(dict(base, total=len(dies), dies=dies,
-                             bin_counts=_bin_count_rows(bins)))
+            dies = [_die(x, y, b, dut) for x, y, b in zip(xs, ys, bins)]
+            row = dict(base, total=len(dies), dies=dies, bin_counts=_bin_count_rows(bins))
+            if merge_dut:
+                row["_dut"] = dut
+            rows.append(row)
             continue
 
         # STEP 2종 이상 → step 당 맵 1개. fail step 이전 = Pass, 해당 step = 실제 BIN,
@@ -131,9 +198,15 @@ def build_map_analysis_rows(tables, product_type="", product=""):
             dies = []
             for x, y, b, fi in zip(xs, ys, bins, fail_idx):
                 if fi is None or fi > k:
-                    dies.append({"x": x, "y": y, "bin": PASS_BIN})
+                    dies.append(_die(x, y, PASS_BIN, dut))
                 elif fi == k:
-                    dies.append({"x": x, "y": y, "bin": b})
-            rows.append(dict(base, step=step_name, total=len(dies), dies=dies,
-                             bin_counts=_bin_count_rows([d["bin"] for d in dies])))
+                    dies.append(_die(x, y, b, dut))
+            row = dict(base, step=step_name, total=len(dies), dies=dies,
+                       bin_counts=_bin_count_rows([d["bin"] for d in dies]))
+            if merge_dut:
+                row["_dut"] = dut
+            rows.append(row)
+
+    if merge_dut:
+        rows = _merge_dut_rows(rows)
     return rows

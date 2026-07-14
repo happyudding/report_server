@@ -41,6 +41,9 @@ let distColorMap = {};        // source → color
 // ── Distribution 산포 탭 (툴바/갤러리/상세) 상태·규격 ─────────────────────────
 const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 1500, PER_FRAME: 3,
   ROOT_MARGIN: "1200px 0px", EXCLUDE: ["chipid", "gpib", "otp", "code"],
+  // ECDF 세로 점 보간 간격(%p). 동일값 구간(riser)을 이 간격의 세로 점으로 채운다.
+  // 반드시 다운샘플 강제보존 임계(0.15%p)보다 크게 유지 — 보간점이 다운샘플에 안 솎임.
+  FILL_STEP_Y: 0.8,
   // 상세 CDF(item_detail.js distRenderCdf) 렌더 방식 토글 — true: scattergl(WebGL,
   // 대량 포인트 SVG 프리즈 방지) / false: 기존 SVG scatter 로 즉시 롤백.
   // 데이터·배열 생성 코드는 양쪽 동일하고 trace type 만 바뀐다 (다운샘플 없음).
@@ -219,12 +222,10 @@ function renderDistCell(cell) {
   const status = (idx && idx.status) || "ok";
   const lo = info.lower_limit, hi = info.upper_limit;
   const traces = Object.keys(info.bySource).map(source => {
-    const ds = distDownsampleForDisplay(info.bySource[source].xs, info.bySource[source].ys);
-    // 계단형 선(shape:"hv")으로 점을 연결 — 이산(code)값처럼 고유값이 적어도 ECDF 가
-    // 연속 곡선으로 보인다. 정규 산포는 점이 촘촘해 기존과 동일하게 매끈한 곡선.
-    return { type: "scatter", mode: "lines+markers", cliponaxis: false, name: source,
-      x: ds.xs, y: ds.ys, line: { color: distColorFor(source), shape: "hv", width: 1.2 },
-      marker: { color: distColorFor(source), size: 3 } };
+    // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
+    const ds = distPointsForDisplay(info.bySource[source].xs, info.bySource[source].ys);
+    return { type: "scatter", mode: "markers", cliponaxis: false, name: source,
+      x: ds.xs, y: ds.ys, marker: { color: distColorFor(source), size: 3 } };
   });
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: DIST_STATUS_BG[status] || "#FFFFFF",
     title: {
@@ -363,6 +364,35 @@ function distDownsampleForDisplay(xs, ys) {
   return { xs: ox, ys: oy };
 }
 
+// ── ECDF 세로 점 보간 (markers 전용, 선 절대 금지 — CLAUDE.md §5) ──────────────
+// 백엔드가 동일값을 1점으로 축약(np.unique)하므로 이산(code)값은 점이 성기게 찍힌다.
+// 각 고유값 x_i 의 riser(prevY→y_i)를 x=x_i 에 stepY 간격 세로 점으로 채워 "연속 분포"로
+// 보이게 한다. 점끼리 잇지 않으므로 x축 수평선(계단 tread)은 자연히 없다.
+// 전제: xs 오름차순, ys 단조 비감소·마지막 100, ECDF 시작 누적 0 (cumulative_distribution_full 보장).
+// Δy<stepY 인 정규 산포는 원점만 남아 기존과 픽셀 동일.
+function distFillVertical(xs, ys, stepY) {
+  const n = xs.length;
+  if (n === 0) return { xs: [], ys: [] };
+  const ox = [], oy = [];
+  let prevY = 0;                               // ECDF 는 0 에서 첫 riser 시작
+  for (let i = 0; i < n; i++) {
+    const x = xs[i], y = ys[i];
+    // riser 중간점: prevY 다음 stepY 지점부터 y_i 미만까지. Δy<stepY(정규 산포)면 루프
+    // 0회 → 실제 점만 남아 기존과 픽셀 동일. 실제 ECDF 점은 항상 마지막에 보존.
+    for (let yy = prevY + stepY; yy < y - 1e-9; yy += stepY) { ox.push(x); oy.push(yy); }
+    ox.push(x); oy.push(y);
+    prevY = y;
+  }
+  return { xs: ox, ys: oy };
+}
+
+// 미니셀 표시용 좌표: 세로 보간 → 표시용 다운샘플 순서(순서 근거 CLAUDE.md §5·docs/11).
+// 반대 순서면 다운샘플 stride 로 Δy 가 오염돼 없던 가짜 세로 줄무늬가 생긴다.
+function distPointsForDisplay(xs, ys) {
+  const f = distFillVertical(xs, ys, DIST.FILL_STEP_Y);
+  return distDownsampleForDisplay(f.xs, f.ys);
+}
+
 // ── 갤러리 미니셀(정적 CDF, distDataCache 재사용, 표시용만 1500점 다운샘플) ─────
 function distRenderGalleryCell(cell) {
   if (cell.dataset.rendered === "1") return;
@@ -378,13 +408,11 @@ function distRenderGalleryCell(cell) {
   const hi = info ? info.upper_limit : null;
   const traces = [];
   if (info) Object.keys(info.bySource).forEach(src => {
-    // 미니셀 표시용만 다운샘플(통계·상세는 전체점) — 꼬리/계단/갭 보존 규칙 적용
-    const ds = distDownsampleForDisplay(info.bySource[src].xs, info.bySource[src].ys);
-    // 계단형 선(shape:"hv")으로 점을 연결 — 이산(code)값처럼 고유값이 적어도 ECDF 가
-    // 연속 곡선으로 보인다. 정규 산포는 점이 촘촘해 기존과 동일하게 매끈한 곡선.
-    traces.push({ type: "scatter", mode: "lines+markers", cliponaxis: false, x: ds.xs, y: ds.ys,
-      line: { color: distColorFor(src), shape: "hv", width: 1.2 },
-      marker: { color: distColorFor(src), size: 2.5 } });
+    // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간(distPointsForDisplay)으로
+    // 이산(code)값의 성김을 세로 점기둥으로 채운다. 정규 산포는 기존과 픽셀 동일.
+    const ds = distPointsForDisplay(info.bySource[src].xs, info.bySource[src].ys);
+    traces.push({ type: "scatter", mode: "markers", cliponaxis: false, x: ds.xs, y: ds.ys,
+      marker: { color: distColorFor(src), size: 3 } });
   });
   // 선택 좌표(Map Analysis)가 있으면 이 항목 위치를 점+빨간 점선으로 오버레이.
   let shapes = distSpecShapes(lo, hi, false).concat(beforeLimitShapes(subject));

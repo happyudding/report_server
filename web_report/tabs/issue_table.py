@@ -16,7 +16,7 @@ row_key: Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", ETC 행
 """
 from __future__ import annotations
 
-from .common import fmt_type, item_meta as _item_meta
+from .common import PASS_BIN, fmt_type, item_meta as _item_meta
 from .cpk import CPK_THRESHOLD, worst_cpk_by_subject
 from .yield_tab import build_yield_bin_groups
 
@@ -119,6 +119,26 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     ai = ai_comments is not None
     rows = []
 
+    # Yield 섹션 최상단: Pass(Bin1) 요약 행 (Yield 탭처럼 전체/소스별 통과율을 맨 위에 표시).
+    # build_yield_rows 가 항상 yield_rows[0] 에 넣는 Pass 행을 Issue Table 컬럼 구조로 옮긴다.
+    # 프런트(sheets.js)가 Bin==1 을 Pass 행으로 인식해 초록 스타일 + Map/Distribution/빨강강조를 뺀다.
+    pass_src = yield_rows[0] if yield_rows else None
+    pass_added = bool(pass_src and str(pass_src.get("bin")).strip() == PASS_BIN)
+    if pass_added:
+        pass_item = pass_src.get("Item") or "Pass"
+        prow = {
+            "Category": "Yield", "Step": pass_src.get("step", ""),
+            "Bin": pass_src.get("bin"), "TNO": pass_src.get("TNO", ""),
+            "Item": pass_item, "avg": pass_src.get("avg"),
+        }
+        for src in sources:
+            prow[f"{src}_yield"] = pass_src.get(f"{src}_yield")
+        prow["Map"] = ""
+        prow["Distribution"] = ""
+        prow.update(_comment_values(
+            issue_comments, f"Yield|{pass_src.get('bin')}|{pass_item}", ai_comments))
+        rows.append(prow)
+
     # Yield 섹션: Bin 당 대표(Bin 총합 집계, 식별정보는 most-fail TNO) 행 + 그 Bin 의
     # 전체 fail TNO 행(detail, 접힘 — most-fail TNO 포함).
     # 프런트가 대표행 STEP 옆 ▼ 토글로 detail 행을 펼친다(Yield 탭과 동일). 정렬은
@@ -132,7 +152,7 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
             bin_value = gr.get("bin")
             item = gr.get("Item")
             out = {
-                "Category": "Yield" if (gi == 0 and j == 0) else "",
+                "Category": "Yield" if (gi == 0 and j == 0 and not pass_added) else "",
                 "Step": gr.get("step", ""),
                 "Bin": bin_value,
                 "TNO": gr.get("TNO", ""),

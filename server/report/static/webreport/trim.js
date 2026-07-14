@@ -6,7 +6,8 @@
 // 드래그앤드랍 수동 재배치는 POST .../web_report/trim/overrides (로그인 업로더만).
 const TRIM = {
   COLORS: { INIT: "#2E6FE8", CODE: "#7C3AED", TRIM: "#16A34A", VERIFY: "#F59E0B" },
-  CONCURRENCY: 8, GL_THRESHOLD: 2000, ROOT_MARGIN: "1200px 0px",
+  CONCURRENCY: 8, GL_THRESHOLD: 2000,
+  PAGE_SIZE: 6,             // ② 산포 분석: 한 페이지 6개(가로3·세로2)로 나눠 렌더
   REPORT_ENABLED: false,    // ③ 분석 리포트 임시 비활성(웹에서 숨김) — renderTrimReport 코드는 보존
 };
 let trimState = {
@@ -18,9 +19,9 @@ let trimState = {
   chartPromises: {},        // 같은 키 fetch 중복 방지
   queue: [], inflight: 0,   // 차트 fetch 동시 CONCURRENCY 개 제한 큐
   filter: "all", search: "",
+  scatterPage: 0,           // ② 산포 현재 페이지(0-index)
+  scatterSel: new Set(),    // ② 산포 검색 체크박스로 고른 그룹 id (있으면 그것만 표시)
 };
-let trimObserver = null;
-
 function trimPayload() { return trimState.payloads[trimState.source || ""] || null; }
 
 function ensureTrimPayload() {
@@ -73,6 +74,8 @@ function renderTrimAnalysis() {
   });
   panel.querySelector("#trimSource").addEventListener("change", e => {
     trimState.source = e.target.value;
+    trimState.scatterPage = 0;         // source 바뀌면 그룹 구성이 달라지므로 산포 상태 초기화
+    trimState.scatterSel.clear();
     document.getElementById("trimBody").innerHTML = `<div class="placeholder">로드 중…</div>`;
     ensureTrimPayload().then(renderTrimView).catch(trimBodyError);
   });
@@ -99,11 +102,17 @@ function renderTrimView() {
   const rule = document.getElementById("trimRule");
   if (rule) rule.textContent = p.rule_set === "TV2"
     ? "TRIM/VERIFY 2-section (MDDI·PDDI)" : "INIT/CODE/TRIM/VERIFY 4-phase";
-  if (trimObserver) { try { trimObserver.disconnect(); } catch (e) {} trimObserver = null; }
   trimState.queue = [];
+  trimPurgePlots(body);   // 뷰 전환 시 남은 산포 차트 정리(누수 방지)
   if (trimState.view === "match") renderTrimMatch(body, p);
   else if (trimState.view === "scatter") renderTrimScatter(body, p);
   else renderTrimReport(body, p);
+}
+
+// body 안에 남아 있는 산포 Plotly 차트를 모두 purge (재렌더/뷰 전환 전 정리).
+function trimPurgePlots(body) {
+  if (!body || !window.Plotly) return;
+  body.querySelectorAll(".trim-plot").forEach(div => { try { Plotly.purge(div); } catch (e) {} });
 }
 
 // ── 공용: shift 배지 (position 을 20~80 스케일로 환산해 "{target} NN%ile") ──────
@@ -282,6 +291,8 @@ async function saveTrimOverrides(ops) {
     trimState.payloads = {};
     trimState.charts = {};
     trimState.chartPromises = {};
+    trimState.scatterPage = 0;         // 그룹 재구성 → 산포 페이지/선택 초기화
+    trimState.scatterSel.clear();
     const body = document.getElementById("trimBody");
     if (body) body.innerHTML = `<div class="placeholder">재계산 중…</div>`;
     ensureTrimPayload().then(renderTrimView).catch(trimBodyError);
@@ -317,16 +328,36 @@ function trimPumpQueue() {
   }
 }
 
-// ── 화면 ② 산포 분석: 그룹 차트 갤러리 (가시 카드만 로드, 화면 밖 purge) ─────────
+// ── 화면 ② 산포 분석: 한 페이지 6개(3×2) 페이지네이션 + Distribution식 검색·선택 ─────
+// 관찰자 purge 방식(스크롤 때 그렸다 지웠다 → 사라짐)을 버리고, 현재 페이지 ≤6개만 직접
+// 렌더해 그대로 유지한다. 검색은 체크박스 제안 드롭다운으로 그룹을 골라 그것만 표시한다.
 function renderTrimScatter(body, p) {
-  const groups = p.groups || [];
+  trimPurgePlots(body);                 // 재렌더 전 이전 페이지 차트 정리(누수 방지)
+  const allGroups = p.groups || [];
+  // 존재하지 않는 그룹 선택은 정리(source/override 변경 대비).
+  if (trimState.scatterSel.size) {
+    const ids = new Set(allGroups.map(g => g.id));
+    [...trimState.scatterSel].forEach(id => { if (!ids.has(id)) trimState.scatterSel.delete(id); });
+  }
+  const sel = trimState.scatterSel;
+  const groups = sel.size ? allGroups.filter(g => sel.has(g.id)) : allGroups;
+  const cnt = document.getElementById("trimCount");
+
   if (!groups.length) {
-    body.innerHTML = `<div class="placeholder">매칭된 그룹이 없습니다</div>`;
-    const c = document.getElementById("trimCount");
-    if (c) c.textContent = "";
+    body.innerHTML = trimScatterToolbarHtml() +
+      `<div class="placeholder">${sel.size ? "선택한 그룹이 없습니다" : "매칭된 그룹이 없습니다"}</div>`;
+    if (cnt) cnt.textContent = "";
+    bindTrimScatterToolbar(body, p, allGroups);
     return;
   }
-  const cards = groups.map(g => `
+
+  const pageCount = Math.max(1, Math.ceil(groups.length / TRIM.PAGE_SIZE));
+  trimState.scatterPage = Math.min(Math.max(trimState.scatterPage, 0), pageCount - 1);
+  const page = trimState.scatterPage;
+  const start = page * TRIM.PAGE_SIZE;
+  const pageGroups = groups.slice(start, start + TRIM.PAGE_SIZE);
+
+  const cards = pageGroups.map(g => `
     <div class="trim-gcard${g.cpk_warn ? " cpk-warn" : ""}" data-group="${esc(g.id)}">
       <div class="trim-gcard-head">
         <span class="trim-card-title" title="${esc(g.id)}">${esc(g.id)}</span>
@@ -336,30 +367,136 @@ function renderTrimScatter(body, p) {
       </div>
       <div class="trim-gplot"><div class="placeholder">대기 중…</div></div>
     </div>`).join("");
-  body.innerHTML = `<div class="trim-gallery">${cards}</div>`;
-  const cnt = document.getElementById("trimCount");
-  if (cnt) cnt.textContent = `그룹 ${groups.length}개`;
 
+  body.innerHTML = trimScatterToolbarHtml() +
+    `<div class="trim-gallery">${cards}</div>` +
+    trimScatterPagerHtml(page, pageCount);
+  if (cnt) cnt.textContent = sel.size
+    ? `그룹 ${groups.length}/${allGroups.length}개` : `그룹 ${groups.length}개`;
+
+  // 현재 페이지 카드만 직접 렌더(관찰자 없음 → purge-on-scroll 없음 → 사라지지 않음).
+  body.querySelectorAll(".trim-gcard").forEach(c => { c.dataset.visible = "1"; trimLoadCard(c); });
+  bindTrimScatterToolbar(body, p, allGroups);
+}
+
+// 검색 툴바(Distribution 클래스 재사용): 선택 해제 칩 + 검색 입력 + 제안 드롭다운.
+function trimScatterToolbarHtml() {
+  const n = trimState.scatterSel.size;
+  const selChip = n
+    ? `<div class="distseg-group"><button class="distseg trim-scatter-clear" title="선택 해제">선택 ${n}개 ✕</button></div>` : "";
+  return `<div class="dist-toolbar">
+    ${selChip}
+    <div class="dist-search-wrap">
+      <input id="trimScatterSearch" class="dist-search" type="text" autocomplete="off" placeholder="그룹/항목 검색 (체크로 선택)">
+      <div id="trimScatterSuggest" class="dist-suggest" style="display:none"></div>
+    </div>
+  </div>`;
+}
+
+// 페이저: ◀ 이전 + 페이지 번호(많으면 …로 축약) + 다음 ▶. 페이지 1개면 숨김.
+function trimScatterPagerHtml(page, pageCount) {
+  if (pageCount <= 1) return "";
+  const btn = (label, target, opts) => {
+    const o = opts || {};
+    return `<button class="trim-pager-btn${o.active ? " active" : ""}" data-tpage="${target}"${o.disabled ? " disabled" : ""}>${label}</button>`;
+  };
+  const nums = trimPageWindow(page, pageCount).map(n =>
+    n === "…" ? `<span class="trim-pager-gap">…</span>` : btn(String(n + 1), n, { active: n === page })).join("");
+  return `<div class="trim-pager">
+    ${btn("◀ 이전", page - 1, { disabled: page <= 0 })}
+    ${nums}
+    ${btn("다음 ▶", page + 1, { disabled: page >= pageCount - 1 })}
+  </div>`;
+}
+
+// 표시할 페이지 번호 배열 — 9개 이하는 전부, 많으면 첫/끝 + 현재±2 만 (…) 로 축약.
+function trimPageWindow(page, pageCount) {
+  if (pageCount <= 9) return Array.from({ length: pageCount }, (_, i) => i);
+  const keep = new Set([0, pageCount - 1, page]);
+  for (let d = 1; d <= 2; d++) { keep.add(Math.max(0, page - d)); keep.add(Math.min(pageCount - 1, page + d)); }
+  const out = [];
+  let prev = null;
+  [...keep].sort((a, b) => a - b).forEach(n => {
+    if (prev !== null && n - prev > 1) out.push("…");
+    out.push(n); prev = n;
+  });
+  return out;
+}
+
+function trimScatterSuggestions(q, allGroups) {
+  const term = String(q || "").trim().toLowerCase();
+  if (!term) return [];
+  const out = [];
+  for (const g of allGroups) {
+    if (String(g.id).toLowerCase().includes(term) ||
+        (g.members || []).some(m => String(m).toLowerCase().includes(term))) {
+      out.push(g);
+      if (out.length >= 30) break;
+    }
+  }
+  return out;
+}
+
+function trimRenderScatterSuggest(q, allGroups) {
+  const box = document.getElementById("trimScatterSuggest");
+  if (!box) return;
+  const items = trimScatterSuggestions(q, allGroups);
+  if (!String(q).trim() || !items.length) { box.innerHTML = ""; box.style.display = "none"; return; }
+  box.innerHTML = items.map(g => {
+    const nMem = (g.members || []).length;
+    return `<label class="dist-sug-item">
+      <input type="checkbox" class="dist-sug-chk" data-group="${esc(g.id)}"${trimState.scatterSel.has(g.id) ? " checked" : ""}>
+      <span class="sug-tno">${nMem ? esc(nMem + "항목") : ""}</span>
+      <span class="sug-name">${esc(g.id)}</span>
+    </label>`;
+  }).join("");
+  box.style.display = "block";
+}
+
+// 재렌더 후 검색 입력값·포커스·드롭다운 복원(체크박스를 연속으로 고를 수 있게).
+function restoreTrimScatterSearch(q, allGroups) {
+  const inp = document.getElementById("trimScatterSearch");
+  if (!inp) return;
+  inp.value = q || "";
+  if (q) { inp.focus(); trimRenderScatterSuggest(q, allGroups); }
+}
+
+// 산포 툴바/페이저/카드 이벤트 바인딩(재렌더마다 재바인딩 — 기존 뷰 방식과 동일).
+function bindTrimScatterToolbar(body, p, allGroups) {
   body.querySelectorAll(".trim-png").forEach(b => b.addEventListener("click", () => {
     const card = b.closest(".trim-gcard");
     const gd = card && card.querySelector(".trim-gplot .js-plotly-plot");
     if (gd) trimCopyPng(gd, card.dataset.group);
     else showToast("차트가 아직 로드되지 않았습니다");
   }));
-
-  const allCards = body.querySelectorAll(".trim-gcard");
-  if (typeof IntersectionObserver === "undefined") {
-    allCards.forEach(c => { c.dataset.visible = "1"; trimLoadCard(c); });
-    return;
-  }
-  trimObserver = new IntersectionObserver(entries => {
-    entries.forEach(en => {
-      const card = en.target;
-      if (en.isIntersecting) { card.dataset.visible = "1"; trimLoadCard(card); }
-      else { card.dataset.visible = ""; trimPurgeCard(card); }
-    });
-  }, { rootMargin: TRIM.ROOT_MARGIN, threshold: 0 });
-  allCards.forEach(c => trimObserver.observe(c));
+  const search = body.querySelector("#trimScatterSearch");
+  if (search) search.addEventListener("input", () => trimRenderScatterSuggest(search.value, allGroups));
+  const suggest = body.querySelector("#trimScatterSuggest");
+  if (suggest) suggest.addEventListener("change", e => {
+    const chk = e.target.closest(".dist-sug-chk");
+    if (!chk) return;
+    if (chk.checked) trimState.scatterSel.add(chk.dataset.group);
+    else trimState.scatterSel.delete(chk.dataset.group);
+    trimState.scatterPage = 0;
+    const q = (body.querySelector("#trimScatterSearch") || {}).value || "";
+    renderTrimScatter(body, p);
+    restoreTrimScatterSearch(q, allGroups);
+  });
+  const clear = body.querySelector(".trim-scatter-clear");
+  if (clear) clear.addEventListener("click", () => {
+    trimState.scatterSel.clear();
+    trimState.scatterPage = 0;
+    renderTrimScatter(body, p);
+  });
+  body.querySelectorAll(".trim-pager-btn").forEach(b => b.addEventListener("click", () => {
+    if (b.disabled) return;
+    const t = parseInt(b.dataset.tpage, 10);
+    if (isNaN(t) || t === trimState.scatterPage) return;
+    trimState.scatterPage = t;
+    renderTrimScatter(body, p);
+    const gal = body.querySelector(".trim-gallery");
+    if (gal) gal.scrollIntoView({ block: "nearest" });
+  }));
 }
 
 function trimLoadCard(card) {
@@ -381,13 +518,27 @@ function trimLoadCard(card) {
     });
 }
 
-function trimPurgeCard(card) {
-  if (card.dataset.rendered !== "1") return;
-  const div = card.querySelector(".trim-plot");
-  try { if (div && window.Plotly) Plotly.purge(div); } catch (e) {}
-  const wrap = card.querySelector(".trim-gplot");
-  if (wrap) wrap.innerHTML = `<div class="placeholder">대기 중…</div>`;
-  card.dataset.rendered = "";
+// ── y축 범위: TRIM 평균이 산포 display 정중앙에 오도록 고정(무조건). 나머지(다른 phase
+//    데이터 + target 평균·base band 기준선)를 그 중심에 대칭으로 맞춰 스케일한다. CODE 는
+//    보조축(y2)이라 제외. TRIM 슬롯/데이터가 없으면 null → 기존 autorange 유지. ──────────
+function trimYRangeCenteredOnTrim(chart, phases) {
+  const trimSpec = chart.phases && chart.phases.TRIM;
+  if (!trimSpec) return null;
+  const trimYs = (trimSpec.y || []).filter(v => Number.isFinite(v));
+  if (!trimYs.length) return null;
+  const trimMean = trimYs.reduce((a, b) => a + b, 0) / trimYs.length;
+  let maxDist = 0;
+  const consider = v => { if (Number.isFinite(v)) { const d = Math.abs(v - trimMean); if (d > maxDist) maxDist = d; } };
+  phases.forEach(ph => {
+    if (ph === "CODE") return;
+    const spec = chart.phases[ph];
+    if (spec) (spec.y || []).forEach(consider);
+  });
+  consider(chart.target_mean);
+  if (chart.base_band) { consider(chart.base_band.p20); consider(chart.base_band.p80); }
+  let half = maxDist * 1.05;                                 // 5% 여백
+  if (!(half > 0)) half = Math.abs(trimMean) * 0.05 || 1;    // 전부 동일값 폴백
+  return [trimMean - half, trimMean + half];
 }
 
 // ── 차트 스펙: chip-to-chip 라인+마커, phase 별 trace 오버레이, CODE 는 y2 ──────
@@ -459,6 +610,9 @@ function drawTrimChart(div, chart, payload) {
     shapes, annotations,
     margin: { l: 54, r: 54, t: 38, b: 38 },
     showlegend: true };
+  // TRIM 평균을 y축 정중앙에 고정(요구사항). TRIM 없으면 autorange 유지.
+  const yRange = trimYRangeCenteredOnTrim(chart, phases);
+  if (yRange) { layout.yaxis.range = yRange; layout.yaxis.autorange = false; }
   if (codeSpec) layout.yaxis2 = { overlaying: "y", side: "right", showgrid: false,
     title: { text: `CODE${codeSpec.units ? " (" + codeSpec.units + ")" : ""}`,
       font: { size: 11, color: TRIM.COLORS.CODE } },

@@ -15,7 +15,7 @@ try {
 * { box-sizing: border-box; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #f0f2f5; margin: 0; padding: 0 20px 24px;
+  background: #fdf6e3; margin: 0; padding: 0 20px 24px;   /* Honey 톤 연노랑 기본 배경 */
   color: #222;
 }
 .page-header {
@@ -159,7 +159,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 
 table { width: 100%; border-collapse: collapse; font-size: 20px; table-layout: fixed; }
 th, td {
-  padding: 8px 8px; border-bottom: 1px solid #eef0f3; text-align: left;
+  padding: 4px 8px; border-bottom: 1px solid #eef0f3; text-align: left;   /* 행 세로폭 ~0.8배 축소 */
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 th { background: #fafbfc; font-weight: 600; color: #555; font-size: 18px; }
@@ -454,7 +454,7 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
 </div>
 
 <script>
-const PAGE_SIZE = 15;
+const PAGE_SIZE = 20;   // 한 페이지 max 20개 (즐겨찾기 상단 정렬 포함 — 아래 filtered slice)
 let _lastRows = [];
 let _currentPage = 0;
 

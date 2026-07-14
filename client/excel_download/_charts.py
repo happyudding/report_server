@@ -14,7 +14,7 @@ ProcessPoolExecutor 자식 프로세스에서 실행되므로 모든 렌더 함�
   Histogram 은 ECDF 에서 빈도를 수학적으로 복원한다(고유값 x_i 의 개수 = diff(y)/100 × n)
   — 원본 측정값 기준과 동일한 집계이며 다운샘플이 아니다.
 - render_map_png_job: web_report Map Analysis 행(dies) → wafer map PNG
-  (map_report.render_map_png 재사용 — honey excel Map 과 동일 모양).
+  (_map.render_wafer_map_png — 웹 Plotly heatmap 과 색/방향/라벨/프레임 일치).
 """
 from __future__ import annotations
 
@@ -124,6 +124,32 @@ def _add_markers(fig, xs, ys, color, size=_MARKER_SIZE):
                           markeredgewidth=0))
 
 
+def _dist_fill_vertical(xs, ys, step_y=0.8):
+    """ECDF riser(동일 x 의 세로 구간)를 step_y(%p) 간격 세로 점으로 채운다.
+
+    웹 distribution.js distFillVertical 포팅 — 이산/코드값 항목이 세로 점기둥으로
+    촘촘해 보이도록(선 없이 점만). 연속값(Δy<step_y)은 내부 루프 0회라 원본 포인트와
+    동일. 다운샘플이 아니라 표시용 포인트 추가(불변규칙 #5 의 sanctioned 세로채움).
+    """
+    n = len(xs)
+    if n == 0:
+        return xs, ys
+    ox, oy = [], []
+    prev_y = 0.0                        # ECDF 는 0 에서 첫 riser 시작
+    for i in range(n):
+        x = xs[i]
+        y = ys[i]
+        yy = prev_y + step_y
+        while yy < y - 1e-9:
+            ox.append(x)
+            oy.append(yy)
+            yy += step_y
+        ox.append(x)
+        oy.append(y)
+        prev_y = y
+    return np.asarray(ox, dtype="float64"), np.asarray(oy, dtype="float64")
+
+
 def _cell_frame(fig, cell, box, xr, y_labels):
     """테두리 + 가로 격자 + 제목 + x/y 라벨 텍스트 (Axes/틱 기계 대체)."""
     x0, y0, w, h = box
@@ -176,10 +202,12 @@ def _draw_cdf_cell(fig, cell, box):
     xmin, xmax = xr
     span = xmax - xmin
     # ECDF 를 선이 아닌 점(마커)으로 — 전 고유값 포인트를 그대로 찍는다(다운샘플 아님).
+    # 그리기 전 세로채움(웹과 동일)으로 이산/코드값 riser 를 세로 점기둥으로 메운다.
     for src in cell["sources"]:
         color, x, y = src[1], src[2], src[3]
         if len(x) == 0:
             continue
+        x, y = _dist_fill_vertical(x, y)
         px = x0 + (np.asarray(x, dtype="float64") - xmin) / span * w
         py = y0 + np.asarray(y, dtype="float64") / 100.0 * h
         _add_markers(fig, px, py, color)
@@ -313,16 +341,19 @@ def render_single_cdf(job) -> str:
 
 
 def render_map_png_job(job) -> str:
-    """Map Analysis 행 1개 → wafer map PNG. job:
+    """Map Analysis 행 1개 → 웹-파리티 wafer map PNG. job:
 
-    {"out_path": str, "title": str, "xs": list, "ys": list, "bins": list}
-    honey excel 의 render_map_png 를 그대로 재사용해 동일한 모양(bin1 파랑 고정,
-    격자, 범례)을 만든다. 반환: out_path. 좌표가 비어 있으면 ValueError.
+    {"out_path","title","dies","frame","color_map","bin_order","product_type"}
+    _map.render_wafer_map_png 으로 웹(Plotly heatmap)과 색/방향/라벨/프레임을 맞춘다
+    (데스크톱 map_report 와 독립). 반환: out_path. 좌표(dies)가 비어 있으면 ValueError.
     """
-    from map_report import render_map_png
+    from ._map import render_wafer_map_png
 
-    if not job["xs"]:
+    if not job.get("dies"):
         raise ValueError(f"{job['title']}: 좌표가 없습니다.")
-    render_map_png(job["xs"], job["ys"], job["bins"],
-                   title=job["title"], out_path=job["out_path"])
+    render_wafer_map_png(
+        job["dies"], job["frame"], job["color_map"], job.get("bin_order") or [],
+        product_type=job.get("product_type", ""),
+        title=job["title"], out_path=job["out_path"],
+    )
     return job["out_path"]

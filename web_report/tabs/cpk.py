@@ -42,9 +42,11 @@ def _stats(series, lo, hi):
     cp = cpl = cpu = cpk = None
     if can:
         cp = (hi_n - lo_n) / (6.0 * stdev)
-        cpl = (avg - lo_n) / (3.0 * stdev)
-        cpu = (hi_n - avg) / (3.0 * stdev)
-        cpk = min(cpl, cpu)
+        # 상·하한이 같으면(공차 0) cpl/cpu/cpk 는 의미가 없어 계산하지 않고 빈칸으로 둔다.
+        if lo_n != hi_n:
+            cpl = (avg - lo_n) / (3.0 * stdev)
+            cpu = (hi_n - avg) / (3.0 * stdev)
+            cpk = min(cpl, cpu)
     return {
         "n": n,
         "min": round_num(s.min() if n else None),
@@ -91,9 +93,11 @@ def _stats_batch(frame: pd.DataFrame, lolim: dict, hilim: dict) -> dict:
         cp = cpl = cpu = cpk = None
         if can:
             cp = (hi_n - lo_n) / (6.0 * stdev)
-            cpl = (avg - lo_n) / (3.0 * stdev)
-            cpu = (hi_n - avg) / (3.0 * stdev)
-            cpk = min(cpl, cpu)
+            # 상·하한이 같으면(공차 0) cpl/cpu/cpk 는 의미가 없어 계산하지 않고 빈칸으로 둔다.
+            if lo_n != hi_n:
+                cpl = (avg - lo_n) / (3.0 * stdev)
+                cpu = (hi_n - avg) / (3.0 * stdev)
+                cpk = min(cpl, cpu)
         out[item] = {
             "n": n,
             "min": round_num(mn[item] if n else None),

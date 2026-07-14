@@ -61,6 +61,20 @@ REPORT_CLEANUP_ENABLED        = _bool_env("REPORT_CLEANUP_ENABLED", True)
 # 0 이하 = 비활성(무기한 보존). 세션 cleanup 의 DRYRUN 과 무관하게 동작한다.
 REPORT_AUDIT_RETENTION_DAYS   = int(os.getenv("REPORT_AUDIT_RETENTION_DAYS", "365"))
 
+# ── 로컬 hot 캐시 → S3 자동 티어링 (report_tiering.py) ────────────────────────
+# 바이너리 산출물(web_report parquet·manifest, issue/dist PNG)을 로컬에 hot 캐시로
+# 두다가, ① 6개월(REPORT_TIER_AGE_DAYS) 이상 됐거나 ② 로컬 티어링대상 총량이
+# REPORT_TIER_LOCAL_MAX_GB 를 넘으면 오래된 순으로 S3 로 이동하고 로컬 원본을 삭제한다.
+# S3 미설정(REPORT_S3_BUCKET 공란)이면 no-op. cleanup 스케줄러 주기에 얹혀 실행된다.
+# disk_cache 의 WEB_REPORT_DISK_CACHE_MAX_GB(계산캐시 500GB LRU)와는 별개다.
+# DRYRUN 이 참(기본)이면 실제 이동 없이 대상만 로그에 남긴다(첫 도입 안전판) —
+# 실이동하려면 REPORT_TIER_DRYRUN=0 으로 명시. 6개월 만료 세션을 삭제하던 종전
+# retention 은 폐지되고(데이터 유실 방지) 이 티어링(S3 아카이브)이 대체한다.
+REPORT_TIER_ENABLED      = _bool_env("REPORT_TIER_ENABLED", True)
+REPORT_TIER_LOCAL_MAX_GB = float(os.getenv("REPORT_TIER_LOCAL_MAX_GB", "1024") or 1024)
+REPORT_TIER_AGE_DAYS     = int(os.getenv("REPORT_TIER_AGE_DAYS", "180"))
+REPORT_TIER_DRYRUN       = _bool_env("REPORT_TIER_DRYRUN", True)
+
 # ── report.db 주기 백업 (db_backup.py) ──────────────────────────────────────
 # WAL 모드라 파일 복사가 아닌 sqlite3 backup API 로 온라인 백업. KEEP 초과분 자동 삭제.
 REPORT_DB_BACKUP_ENABLED        = _bool_env("REPORT_DB_BACKUP_ENABLED", True)

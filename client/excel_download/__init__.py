@@ -76,7 +76,8 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None) -> dic
     tmpdir = tempfile.mkdtemp(prefix="honey_exceldl_")
     try:
         chunk_jobs, n_items, cell_of = _build_chunk_jobs(report, dist, dict(colors), tmpdir)
-        map_jobs = _build_map_jobs(sheets.get("Map Analysis") or [], tmpdir)
+        product_type = (full.get("session") or {}).get("product_type", "")
+        map_jobs = _build_map_jobs(sheets.get("Map Analysis") or [], tmpdir, product_type)
         _emit("render", f"차트 잡 구성 완료 ({time.perf_counter() - t_dl:.1f}s, "
                         f"{len(chunk_jobs)}청크 + map {len(map_jobs)})")
 
@@ -267,11 +268,15 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir):
     return jobs, len(cells), {c["title"]: c for c in cells}
 
 
-def _build_map_jobs(map_rows, tmpdir):
-    """Map Analysis 행 → wafer map 렌더 잡. 제목: source (step, yield %).
+def _build_map_jobs(map_rows, tmpdir, product_type=""):
+    """Map Analysis 행 → 웹-파리티 wafer map 렌더 잡. 제목: source (step, yield %).
 
-    좌표(dies)가 없는 행은 건너뛴다 (map_report.build_map_pngs 와 동일한 처리).
+    좌표(dies)가 없는 행은 건너뛴다. bin→색은 전 소스 합산 기준 전역 색맵(웹과 동일 색)
+    을 한 번만 만들어 모든 맵이 공유한다. frame(고정 웨이퍼 틀)·product_type 도 전달.
     """
+    from ._map import build_bin_color_map
+
+    color_map, order = build_bin_color_map(map_rows)
     jobs = []
     for i, row in enumerate(map_rows):
         dies = row.get("dies") or []
@@ -285,11 +290,15 @@ def _build_map_jobs(map_rows, tmpdir):
         title = " ".join(parts)
         if pass_pct is not None:
             title += f" (yield {pass_pct}%)"
+        present = {str(d.get("bin")) for d in dies}
         jobs.append({
             "out_path": os.path.join(tmpdir, f"map_{i:02d}.png"),
             "title": title,
-            "xs": [d.get("x") for d in dies],
-            "ys": [d.get("y") for d in dies],
-            "bins": [d.get("bin") for d in dies],
+            "dies": dies,
+            "frame": {"x_min": row.get("x_min"), "x_max": row.get("x_max"),
+                      "y_min": row.get("y_min"), "y_max": row.get("y_max")},
+            "color_map": color_map,
+            "bin_order": [b for b in order if b in present],
+            "product_type": product_type,
         })
     return jobs

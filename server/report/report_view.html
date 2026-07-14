@@ -114,6 +114,10 @@ body {
 .cmp-legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 8px 4px; font-size: 12px; }
 .cmp-lg { display: inline-flex; align-items: center; gap: 5px; }
 .cmp-lg i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+/* Compare 서브탭(Map/Log/CPK/Bin) — .distseg 세그먼트 재사용, 하위 패널 토글 */
+.cmp-subtabs { margin: 10px 0 14px; }
+.cmp-subpanel { display: none; }
+.cmp-subpanel.active { display: block; }
 .compare-table td.num, .compare-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .compare-table td.cmp-up { color: #b91c1c; }
 .compare-table td.cmp-down { color: #1d4ed8; }
@@ -309,11 +313,14 @@ tbody tr:hover { background: #f9fbff; }
   background: #e8eef4 !important; font-weight: 700; color: #1a3a5c;
 }
 .sheet-table td.cpk-warn { background: #fff3bf !important; font-weight: 700; color: #5c4400; }
-/* Issue Table: BIN·ITEM 식별 셀 + Yield(avg / {src}_yield)·CPK 값 셀 폰트를 base(11px) 대비 +2px 키움(값 가독성). */
+/* Issue Table: BIN·ITEM 식별 셀 + Yield(avg / {src}_yield)·CPK 값 셀 폰트를 base(11px) 대비 +4px 키움(값 가독성). */
 .sheet-table.kind-issue td[data-col="bin" i],
 .sheet-table.kind-issue td[data-col="item" i],
 .sheet-table.kind-issue td[data-col="avg" i],
-.sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 13px; }
+.sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 15px; }
+/* Issue Table: Yield(avg/{src}_yield)·CPK 숫자 셀 가운데 정렬 (사용자 요청 — st-num 좌측정렬 덮어씀). */
+.sheet-table.kind-issue td[data-col="avg" i],
+.sheet-table.kind-issue td[data-col$="_yield" i] { text-align: center; }
 
 /* ── CPK 표: Excel 식 freeze panes(헤더 상단 고정 + subject 좌측 / cpk 우측 고정) + 페이저 ── */
 .sheet-wrap.cpk-sheet {
@@ -385,18 +392,28 @@ tbody tr:hover { background: #f9fbff; }
   position: sticky; top: 0; z-index: 6; background: #e8eef4; }
 .sheet-table.kind-issue tr.issue-shead-bot > th {
   position: sticky; top: var(--issue-shead-row1-h, 26px); z-index: 6; background: #e8eef4; }
-/* 좌측 고정: 식별컬럼 4개(Step/Bin/TNO/Item) — 데이터 tbody td + 섹션 헤더 상단행 th. */
-.sheet-table.kind-issue tbody td:nth-child(-n+4),
-.sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+4) { position: sticky; z-index: 3; background: #fff; }
-/* 헤더 상단행의 식별컬럼은 상단+좌측 동시 고정(코너)이라 다른 sticky 위로 올린다. */
-.sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+4) { z-index: 7; background: #e8eef4; }
-/* 좌측 고정 오프셋 = 앞 컬럼 폭 누적. colWidth 기본값(step 66 + bin 66 + tno 90)이 fallback 이지만,
-   셀 내용이 길어 컬럼이 늘어나면 고정 px 는 어긋나(셀 겹침/깨짐) 실제 폭을 JS(syncIssueStickyOffsets)로
-   측정해 --issue-colN-left 로 덮어쓴다. */
+/* 좌측 고정: 식별컬럼 4개(Step/Bin/TNO/Item) + Map/Distribution — 데이터 tbody td + 섹션 헤더 상단행 th.
+   Map/Dist 를 함께 고정해야 source(_yield) 가 많아 가로 스크롤 시 두 컬럼이 고정 블록 밑으로 안 가려진다. */
+.sheet-table.kind-issue tbody td:nth-child(-n+6),
+.sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+6) { position: sticky; z-index: 3; background: #fff; }
+/* 헤더 상단행의 고정컬럼은 상단+좌측 동시 고정(코너)이라 다른 sticky 위로 올린다. */
+.sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+6) { z-index: 7; background: #e8eef4; }
+/* 좌측 고정 오프셋 = 앞 컬럼 폭 누적. colWidth 기본값(70% 축소 반영: step66+bin46+tno63+item158+map144)이
+   fallback 이지만, 셀 내용이 길어 컬럼이 늘어나면 고정 px 는 어긋나(셀 겹침/깨짐) 실제 폭을
+   JS(syncIssueStickyOffsets)로 측정해 --issue-colN-left 로 덮어쓴다. */
 .sheet-table.kind-issue tbody td:nth-child(1), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(1) { left: 0; }
 .sheet-table.kind-issue tbody td:nth-child(2), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(2) { left: var(--issue-col2-left, 66px); }
-.sheet-table.kind-issue tbody td:nth-child(3), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(3) { left: var(--issue-col3-left, 132px); }
-.sheet-table.kind-issue tbody td:nth-child(4), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(4) { left: var(--issue-col4-left, 222px); }
+.sheet-table.kind-issue tbody td:nth-child(3), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(3) { left: var(--issue-col3-left, 112px); }
+.sheet-table.kind-issue tbody td:nth-child(4), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(4) { left: var(--issue-col4-left, 175px); }
+.sheet-table.kind-issue tbody td:nth-child(5), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(5) { left: var(--issue-col5-left, 333px); }
+.sheet-table.kind-issue tbody td:nth-child(6), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(6) { left: var(--issue-col6-left, 477px); }
+/* 컬럼 폭 드래그 리사이즈 핸들 — 섹션 헤더 th 는 이미 sticky(=positioned) 라 절대배치 기준이 된다.
+   (여기 th 에 position:relative 를 주면 위의 세로 헤더 sticky 를 덮어 깨지므로 주지 않는다.) */
+.sheet-table.kind-issue .col-resize-handle {
+  position: absolute; top: 0; right: 0; width: 6px; height: 100%;
+  cursor: col-resize; user-select: none; z-index: 8;
+}
+.sheet-table.kind-issue .col-resize-handle:hover { background: rgba(31, 77, 140, 0.25); }
 .sheet-table.kind-issue td.sheet-subhead { background: #e8eef4 !important; }
 /* Bin(2번째)/Item(4번째) 데이터 셀: 기본 12px 보다 3 크게 + Bold (사용자 요청). */
 .sheet-table.kind-issue tbody td:nth-child(2),
@@ -405,6 +422,8 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table th.sheet-src-th[title] { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
 /* 다중 source Issue Table: 문제 있는 소스 셀(cpk<1.33 / Yield≠0) 연빨강 강조. */
 .sheet-table.kind-issue td.issue-cell-warn { background: #fde2e2 !important; }
+/* Yield/ETC fail yield 셀: 값이 클수록(--yw 1 에 가까움) 진한 빨강 그라데이션(표 내 최대 fail yield 기준). */
+.sheet-table.kind-issue td.issue-yield-warn { background: hsl(0, 78%, calc(94% - var(--yw, 0) * 36%)) !important; }
 
 /* ── Yield 시트: Bin 접기/펼치기 ── */
 .yield-toggle, .issue-toggle {
@@ -431,10 +450,12 @@ tbody tr:hover { background: #f9fbff; }
   letter-spacing: .02em; color: #47607d;
 }
 .sheet-table.kind-yield td.st-num { text-align: right; font-variant-numeric: tabular-nums; }
-.sheet-table.kind-yield tbody tr.yield-pass-row td {
+.sheet-table.kind-yield tbody tr.yield-pass-row td,
+.sheet-table.kind-issue tbody tr.yield-pass-row td {
   background: #e9f8ef !important; color: #14703d; font-weight: 700;
 }
-.sheet-table.kind-yield tbody tr.yield-pass-row:hover td { background: #ddf3e5 !important; }
+.sheet-table.kind-yield tbody tr.yield-pass-row:hover td,
+.sheet-table.kind-issue tbody tr.yield-pass-row:hover td { background: #ddf3e5 !important; }
 .sheet-block { margin-bottom: 24px; }
 .sheet-block-title {
   font-size: 12px; font-weight: 700; color: #1f4d8c;
@@ -622,14 +643,23 @@ tbody tr:hover { background: #f9fbff; }
 .trim-cell-cpk { font-size: 11px; color: #667085; }
 .trim-cell-cpk.warn { color: #b42318; font-weight: 700; }
 .trim-cell-sub { font-size: 11px; color: #98a2b3; }
-.trim-gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-@media (max-width: 1100px) { .trim-gallery { grid-template-columns: 1fr; } }
+.trim-gallery { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1400px) { .trim-gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 960px) { .trim-gallery { grid-template-columns: 1fr; } }
 .trim-gcard { border: 1px solid #e2e4e8; border-radius: 8px; overflow: hidden; background: #fff; }
 .trim-gcard-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
   border-bottom: 1px solid rgba(0,0,0,.06); flex-wrap: wrap; }
 .trim-gcard-head .trim-png { margin-left: auto; }
-.trim-gplot { height: 340px; }
+.trim-gplot { height: 260px; }
 .trim-plot { width: 100%; height: 100%; }
+.trim-pager { display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: 6px; margin-top: 16px; }
+.trim-pager-btn { border: 1px solid #d0d5dd; background: #fff; color: #344054; border-radius: 6px;
+  padding: 5px 11px; font-size: 13px; cursor: pointer; min-width: 34px; }
+.trim-pager-btn:hover:not(:disabled) { background: #f2f4ff; }
+.trim-pager-btn.active { background: #5E6AD2; border-color: #5E6AD2; color: #fff; font-weight: 700; }
+.trim-pager-btn:disabled { opacity: .45; cursor: default; }
+.trim-pager-gap { padding: 0 4px; color: #98a2b3; }
 
 /* ── Item_detail (콘텐츠 상세 뷰: 헤더 + 통계 + CDF/히스토그램 + Fail rawdata) ── */
 .idet-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
@@ -826,8 +856,23 @@ html[data-theme="dark"] .idet-chipval-table th, html[data-theme="dark"] .idet-ch
 }
 .map-toolbar input { width: 56px; padding: 3px 6px; border: 1px solid #cbd2da; border-radius: 5px; font-size: 13px; }
 .map-toolbar-hint { font-size: 11px; color: #98a2b3; }
+/* STDF Map 서브모드: Bin/STDF 세그먼트 + Source select + Item 검색 */
+.map-mode-seg { margin: 0 0 12px; }
+.stdf-toolbar { flex-wrap: wrap; }
+.stdf-lbl { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #333; }
+.stdf-toolbar select { padding: 5px 8px; border: 1px solid #cbd2da; border-radius: 5px; font-size: 13px; background: #fff; color: #333; }
+.stdf-toolbar input.dist-search { width: 220px; }
 .wafer-card { border: 1px solid #e3e6ea; border-radius: 8px; padding: 12px; background: #fff; }
 .wafer-card-title { font-size: 12px; font-weight: 700; color: #333; margin: 0 0 8px; }
+/* Map Analysis 갤러리 카드: 클릭하면 Map Detail 전체화면으로 확대. */
+.wafer-card-clickable { cursor: pointer; transition: box-shadow .15s, border-color .15s; }
+.wafer-card-clickable:hover { border-color: #4a90e2; box-shadow: 0 2px 10px rgba(74,144,226,.18); }
+.wafer-card-zoom { float: right; font-size: 11px; font-weight: 600; color: #4a90e2; }
+.wafer-card-clickable:hover .wafer-card-zoom { text-decoration: underline; }
+.map-render-prog { font-size: 12px; color: #4a90e2; font-weight: 600; margin-left: 4px; }
+/* Map Detail 헤더 힌트(확대·마우스오버 안내) */
+.mapd-hint { margin-left: 12px; font-size: 12px; font-weight: 400; color: #98a2b3; }
+html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-prog { color: #7ab3f5; }
 .wafer-legend-fixed { flex: 0 0 220px; position: sticky; top: var(--sticky-head-h, 96px); }
 .wafer-legend-title { font-size: 13px; font-weight: 700; color: #333; margin: 0 0 8px; }
 .bin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -838,6 +883,9 @@ html[data-theme="dark"] .idet-chipval-table th, html[data-theme="dark"] .idet-ch
 .bin-table tbody tr { cursor: pointer; }
 .bin-table tbody tr:hover td { background: #f2f6fb; }
 .bin-table tbody tr.is-selected td { background: #fff3bf; }
+/* DUT Legend (DUT 모드 병합 맵) — Bin Legend 아래에 표시, 클릭 시 해당 DUT 강조 */
+.dut-legend-title { margin-top: 18px; }
+.dut-legend-hint { font-size: 11px; color: #8a9099; margin: 0 0 6px; line-height: 1.4; }
 .chart-box { width: 100%; max-width: 760px; margin-bottom: 8px; }
 /* Fail Bin 차트: 항목명 라벨이 많아 가로를 최대한 넓게(패널 전체폭) 쓴다. */
 .chart-box-wide { max-width: none; margin-bottom: 18px; }
@@ -905,6 +953,10 @@ html[data-theme="dark"] .idet-chipval-table th, html[data-theme="dark"] .idet-ch
   font-size: 12px; min-width: 220px;
 }
 .cpk-toolbar input:focus { border-color: #4a90e2; outline: none; }
+.cpk-toolbar select {
+  padding: 5px 6px; border: 1px solid #d0d5dd; border-radius: 4px; font-size: 12px; background: #fff;
+}
+.cpk-toolbar select:focus { border-color: #4a90e2; outline: none; }
 .cpk-toolbar .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
 .cpk-target-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 12px; color: #555; }
 .cpk-target-bar input[type="number"] {
@@ -1254,6 +1306,7 @@ html[data-theme="dark"] .sheet-table.cpk-sheet.has-select tbody tr:nth-child(eve
 html[data-theme="dark"] .sheet-table.cpk-sheet td.cpk-target { background: #1f2c44; }
 html[data-theme="dark"] .cpk-pager { color: #9aa3b0; }
 html[data-theme="dark"] .cpk-toolbar input,
+html[data-theme="dark"] .cpk-toolbar select,
 html[data-theme="dark"] .cpk-target-bar input[type="number"],
 html[data-theme="dark"] .cpk-margin-wrap select { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
 html[data-theme="dark"] .cpk-target-bar { color: #9aa3b0; }
@@ -1273,16 +1326,19 @@ html[data-theme="dark"] .sheet-table.kind-issue tbody td:nth-child(-n+4) { backg
 html[data-theme="dark"] .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+4) { background: #242c37; }
 html[data-theme="dark"] .sheet-table.kind-issue td.sheet-subhead { background: #242c37 !important; }
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-cell-warn { background: #46201f !important; }
+html[data-theme="dark"] .sheet-table.kind-issue td.issue-yield-warn { background: hsl(0, 55%, calc(20% + var(--yw, 0) * 22%)) !important; }
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #20242c; color: #9aa3b0; }
 html[data-theme="dark"] .issue-toolbar { background: #14161a; }
 
 /* ── Yield 표 (pass 행 틴트/접기 버튼) ── */
 html[data-theme="dark"] .sheet-wrap.kind-yield { border-color: #2f3540; }
 html[data-theme="dark"] .sheet-table.kind-yield th { background: #242c37; color: #8fa3bd; }
-html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-pass-row td {
+html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-pass-row td,
+html[data-theme="dark"] .sheet-table.kind-issue tbody tr.yield-pass-row td {
   background: #14351f !important; color: #6fd694;
 }
-html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-pass-row:hover td { background: #17402b !important; }
+html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-pass-row:hover td,
+html[data-theme="dark"] .sheet-table.kind-issue tbody tr.yield-pass-row:hover td { background: #17402b !important; }
 html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-bin-detail td { background: #20242c; color: #9aa3b0; }
 html[data-theme="dark"] .yield-toggle,
 html[data-theme="dark"] .issue-toggle { background: #243044; border-color: #33507a; color: #7fb3ef; }
@@ -1334,6 +1390,8 @@ html[data-theme="dark"] .mapsel-leg-item { background: #262a33; border-color: #3
 html[data-theme="dark"] .mapsel-src { color: #8b94a3; }
 html[data-theme="dark"] .map-toolbar { color: #c6ccd6; }
 html[data-theme="dark"] .map-toolbar input { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .stdf-lbl { color: #c6ccd6; }
+html[data-theme="dark"] .stdf-toolbar select { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
 html[data-theme="dark"] .wafer-legend-title { color: #c6ccd6; }
 html[data-theme="dark"] .bin-table th,
 html[data-theme="dark"] .bin-table td { border-bottom-color: #2a2e37; }
@@ -1381,6 +1439,10 @@ html[data-theme="dark"] .trim-palette-list::-webkit-scrollbar-thumb { background
 html[data-theme="dark"] .trim-palette-meta { background: #232833; color: #aab3c0; }
 html[data-theme="dark"] .trim-palette-meta.assigned { background: #12331f; color: #6ee7a0; }
 html[data-theme="dark"] .trim-palette-meta.excl { background: #232833; color: #6b7280; }
+html[data-theme="dark"] .trim-pager-btn { background: #14161a; border-color: #3a3f4b; color: #aab3c0; }
+html[data-theme="dark"] .trim-pager-btn:hover:not(:disabled) { background: #262c38; }
+html[data-theme="dark"] .trim-pager-btn.active { background: #5E6AD2; border-color: #5E6AD2; color: #fff; }
+html[data-theme="dark"] .trim-pager-gap { color: #6b7280; }
 
 /* ── Item_detail (헤더/통계/배지 — 차트 블록은 흰 카드 유지) ── */
 html[data-theme="dark"] .idet-head { background: #14161a; }
@@ -1476,18 +1538,16 @@ html[data-theme="dark"] .cnote-comment { background: #262a33; border-color: #3a3
 html[data-theme="dark"] .cnote-hint { color: #6b7280; }
 html[data-theme="dark"] .cnote-view-comment { color: #9aa3b0; }
 
-/* ── Note 탭 (Luckysheet 캔버스 — note.js) ───────────────────────────────── */
+/* ── Note 탭 (Luckysheet — iframe 격리, note.js + note_frame.html) ────────────── */
 #panel-note.active { display: flex; flex-direction: column; }
 .note-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 6px 4px; font-size: 12px; }
 .note-meta { color: #6b7280; font-size: 11px; }
-#luckysheetHost { position: relative; width: 100%; flex: 1 1 auto;
+/* Luckysheet 는 iframe(note_frame.html) 안에서 격리 실행 — 전역 CSS(*{box-sizing})·sticky·
+   페이지 스크롤·중앙정렬 여백·배율 오염을 차단해 셀 밀림·격자 떨림을 근본 해결한다. 여기선
+   그 iframe 만 Note 패널에 꽉 채운다(부모는 좌표계에 관여하지 않음). */
+#noteFrame { display: block; width: 100%; flex: 1 1 auto; border: 0;
   min-height: 420px; height: calc(100vh - var(--sticky-head-h, 96px) - 56px); }
-/* 전역 * { box-sizing: border-box }(44행)가 Luckysheet 최상위 컨테이너(.luckysheet,
-   border:1px + JS 가 height=Hc-2 로 content-box 전제 설정)에 적용되면 콘텐츠 영역이 2px
-   어긋나 셀 선택이 헤더와 틀어지고 클릭 시 흔들린다. content-box 로 복원해 정합시킨다
-   (.luckysheet * 는 벤더 CSS 가 이미 box-sizing:initial, 자기 자신만 복원 필요). */
-#panel-note .luckysheet { box-sizing: content-box; }
 html[data-theme="dark"] .note-meta { color: #9aa3b0; }
 </style>
 </head>
@@ -1575,6 +1635,8 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
   <div class="panel" id="panel-compare"><div class="placeholder">로드 중...</div></div>
   <!-- Item_detail: 탭 버튼 없이 프로그램으로만 활성화(Yield/CPK/IssueTable/Distribution item 클릭) -->
   <div class="panel" id="panel-item-detail"></div>
+  <!-- Map Detail: 탭 버튼 없이 Map Analysis 카드 클릭으로만 활성화(확대·격자선·마우스오버) -->
+  <div class="panel" id="panel-map-detail"></div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1624,6 +1686,7 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
 <script src="/pe/report/static/webreport/sheets.js"></script>
 <script src="/pe/report/static/webreport/yield_issue.js"></script>
 <script src="/pe/report/static/webreport/wafer_charts.js"></script>
+<script src="/pe/report/static/webreport/stdf_map.js"></script>
 <script src="/pe/report/static/webreport/compare.js"></script>
 <script src="/pe/report/static/webreport/map_select.js"></script>
 <script src="/pe/report/static/webreport/cpk.js"></script>

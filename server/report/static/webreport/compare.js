@@ -1,7 +1,7 @@
 // ── Compare 모드 (같은 Wafer 2~3 source 비교) ─────────────────────────────────
-const COMPARE_SRC_PALETTE = ["#e11d48", "#2563eb", "#d97706"];
-const CMP_COMMON_COLOR = "#cbd5e1";   // 공통 fail(모든 source fail) — 배경 처리
-const CMP_MIXED_COLOR = "#7c3aed";    // 일부(2개↑ 그러나 전체는 아님) source fail
+const COMPARE_SRC_PALETTE = ["#e11d48", "#2563eb", "#d97706"];   // source 별 색(빨강/파랑/…)
+const CMP_MATCH_GREEN = "#16a34a";    // 모든 source 에서 Bin 동일 — 초록
+const CMP_MIXED_COLOR = "#7c3aed";    // Bin 다르고 2개↑ source 에서 Fail — 보라(혼합)
 
 function _cmpNum(v, digits) {
   if (v === null || v === undefined || v === "") return "–";
@@ -15,8 +15,13 @@ function _cmpDeltaCell(v, digits) {
   return `<td class="num ${cls}">${s}</td>`;
 }
 
-// 공통성 Map: 공통 fail 은 회색 배경, 비공통 fail 은 "어느 source 에서만 fail 했는지"
-// 색으로 구분(before/after). waferHeatmap 을 그대로 재사용하되 bin 값을 분류 라벨로 넣는다.
+// 공통성 Map(단일): 좌표별 Bin 일치=초록, 한 source 에서만 Fail=그 source 색,
+// 둘 다 Fail(Bin 만 다름)=보라. waferHeatmap 을 재사용하되 bin 자리에 분류 라벨을 넣는다.
+function _cmpClsLabel(cls, sources) {
+  if (cls === "match") return "Bin 일치";
+  if (cls === "mixed") return "혼합 · 둘 다 Fail";
+  return `${cls} 에서만 Fail`;   // cls = source 이름
+}
 function drawCompareCommonMap(cm, sources) {
   const div = document.getElementById("cmp-common-map");
   if (!div || !window.Plotly) return;
@@ -24,27 +29,28 @@ function drawCompareCommonMap(cm, sources) {
   const srcColor = {};
   sources.forEach((s, i) => { srcColor[s] = COMPARE_SRC_PALETTE[i % COMPARE_SRC_PALETTE.length]; });
 
-  const dies = [];
-  (cm.common_fail || []).forEach(d => dies.push({ x: d.x, y: d.y, bin: "공통Fail" }));
-  (cm.unique_fail || []).forEach(d => {
-    const fs = d.fail_sources || [];
-    dies.push({ x: d.x, y: d.y, bin: fs.length === 1 ? fs[0] : "혼합" });
-  });
-  const binOrder = ["공통Fail", ...sources, "혼합"];
-  const colorMap = { "공통Fail": CMP_COMMON_COLOR, "혼합": CMP_MIXED_COLOR };
-  sources.forEach(s => { colorMap[s] = srcColor[s]; });
+  const matchLabel = "Bin 일치", mixedLabel = "혼합 · 둘 다 Fail";
+  const colorMap = { [matchLabel]: CMP_MATCH_GREEN, [mixedLabel]: CMP_MIXED_COLOR };
+  sources.forEach(s => { colorMap[_cmpClsLabel(s, sources)] = srcColor[s]; });
+  const binOrder = [matchLabel, ...sources.map(s => _cmpClsLabel(s, sources)), mixedLabel];
 
+  const dies = (cm.dies || []).map(d => ({ x: d.x, y: d.y, bin: _cmpClsLabel(d.cls, sources) }));
   const m = { x_min: cm.x_min, x_max: cm.x_max, y_min: cm.y_min, y_max: cm.y_max, dies };
-  const built = waferHeatmap(m, { colorMap, binOrder });
-  if (!built) { div.innerHTML = '<div class="placeholder">Fail die 없음</div>'; return; }
+  const built = waferHeatmap(m, { colorMap, binOrder,
+    hovertemplate: "(%{x}, %{y})<br>%{customdata}<extra></extra>" });
+  if (!built) { div.innerHTML = '<div class="placeholder">공통 die 없음</div>'; return; }
   Plotly.newPlot(div, [built.trace], waferLayout(m, {}), { responsive: true, displayModeBar: false });
 
-  // 범례
+  // 범례 — 실제 등장하는 분류만 count 와 함께
   const legend = document.getElementById("cmp-common-legend");
   if (legend) {
-    const rows = [`<span class="cmp-lg"><i style="background:${CMP_COMMON_COLOR}"></i>공통 Fail</span>`]
-      .concat(sources.map(s => `<span class="cmp-lg"><i style="background:${srcColor[s]}"></i>${esc(s)} 에서만 Fail</span>`))
-      .concat([`<span class="cmp-lg"><i style="background:${CMP_MIXED_COLOR}"></i>혼합(일부만)</span>`]);
+    const c = cm.counts || {};
+    const rows = [`<span class="cmp-lg"><i style="background:${CMP_MATCH_GREEN}"></i>Bin 일치 (${c.match || 0})</span>`];
+    sources.forEach(s => {
+      const n = (c.per_source && c.per_source[s]) || 0;
+      rows.push(`<span class="cmp-lg"><i style="background:${srcColor[s]}"></i>${esc(s)} 에서만 Fail (${n})</span>`);
+    });
+    if (c.mixed) rows.push(`<span class="cmp-lg"><i style="background:${CMP_MIXED_COLOR}"></i>혼합 · 둘 다 Fail (${c.mixed})</span>`);
     legend.innerHTML = rows.join("");
   }
 }
@@ -241,21 +247,22 @@ function bindGoodlogFolding(panel) {
   });
 }
 
-// 소스별 wafer map 을 나란히 (Map Analysis 데이터 재사용, 세션 공통 색상).
-function drawCompareSourceMaps(hostId) {
-  const host = document.getElementById(hostId);
-  const maps = (webReportSheets() || {})["Map Analysis"] || [];
-  if (!host || !window.Plotly || !maps.length) return;
-  const binOrder = buildGlobalBinLegend(maps).map(r => r.bin);
-  const colorMap = globalBinColorMap();
-  host.innerHTML = maps.map((m, i) =>
-    `<div class="wafer-card"><div class="wafer-card-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""} — ${esc(String(m.total))} dies</div>
-       <div id="cmp-src-map-${i}" style="width:100%;height:320px;"></div></div>`).join("");
-  maps.forEach((m, i) => {
-    const built = waferHeatmap(m, { showText: true, textSize: 8, colorMap, binOrder });
-    if (!built) return;
-    Plotly.newPlot(`cmp-src-map-${i}`, [built.trace], waferLayout(m, {}),
-      { responsive: true, displayModeBar: false });
+// 서브탭 전환 — Compare 패널 안에서 Map/Log/CPK/Bin 하위 화면을 토글한다.
+function bindCompareSubtabs(panel) {
+  const bar = panel.querySelector(".cmp-subtabs");
+  if (!bar) return;
+  bar.addEventListener("click", e => {
+    const btn = e.target.closest("[data-cmpsub]");
+    if (!btn) return;
+    const key = btn.dataset.cmpsub;
+    bar.querySelectorAll("[data-cmpsub]").forEach(b => b.classList.toggle("active", b === btn));
+    panel.querySelectorAll(".cmp-subpanel").forEach(p =>
+      p.classList.toggle("active", p.dataset.cmppanel === key));
+    // 숨김(0px) 상태에서 그려진 Plotly 맵은 보일 때 리사이즈해야 폭이 복구된다.
+    const active = panel.querySelector(`.cmp-subpanel[data-cmppanel="${key}"]`);
+    if (active && window.Plotly) {
+      active.querySelectorAll(".js-plotly-plot").forEach(d => { try { Plotly.Plots.resize(d); } catch (e) {} });
+    }
   });
 }
 
@@ -266,34 +273,47 @@ function renderCompare() {
   panel.classList.add("viz-root");
   const sources = cmp.sources || [];
   const cm = cmp.common_map || {};
-  const counts = cm.counts || {};
+  const c = cm.counts || {};
+  const mismatch = Math.max(0, (c.common_dies || 0) - (c.match || 0));
 
   panel.innerHTML =
     `<div class="compare-wrap">
       <div class="compare-summary">
         <span class="mk">Sources</span> ${sources.map(esc).join(" · ")}
-        <span class="cmp-chip cmp-common">공통 Fail ${counts.common_fail || 0}</span>
-        <span class="cmp-chip cmp-unique">비공통 Fail ${counts.unique_fail || 0}</span>
-        <span class="cmp-chip">전체 Fail die ${counts.total_fail || 0}</span>
+        <span class="cmp-chip">공통 die ${c.common_dies || 0}</span>
+        <span class="cmp-chip cmp-common">Bin 일치 ${c.match || 0}</span>
+        <span class="cmp-chip cmp-unique">Bin 불일치 ${mismatch}</span>
       </div>
-      ${goodlogSectionHtml(cmp.goodlog)}
-      <h3 class="compare-h">공통성 Map — 공통 Fail 이 아닌 die 강조 (색 = 어느 source 에서만 Fail)</h3>
-      <div class="wafer-card">
-        <div id="cmp-common-map" style="width:100%;height:440px;"></div>
-        <div id="cmp-common-legend" class="cmp-legend"></div>
+      <div class="cmp-subtabs distseg-group">
+        <button class="distseg active" data-cmpsub="map">Map 비교</button>
+        <button class="distseg" data-cmpsub="log">Log 비교</button>
+        <button class="distseg" data-cmpsub="cpk">CPK 비교</button>
+        <button class="distseg" data-cmpsub="bin">Bin 비교</button>
       </div>
-      <h3 class="compare-h">Source 별 Wafer Map (나란히)</h3>
-      <div id="cmp-source-maps" class="wafer-grid"></div>
-      <h3 class="compare-h">동일 좌표 Bin 변화 (before → after)</h3>
-      ${compareBinTransitionHtml(cmp.bin_transition)}
-      <h3 class="compare-h">산포 차이 (공통 항목 · |ΔCpk| 큰 순)</h3>
-      ${compareDistShiftHtml(cmp.dist_shift, sources)}
-      <h3 class="compare-h">Bin Yield 비교</h3>
-      ${compareBinTableHtml(cmp.bin_delta, sources)}
+      <div class="cmp-subpanel active" data-cmppanel="map">
+        <h3 class="compare-h">공통성 Map — Bin 일치=초록 / 한쪽만 Fail=source 색 / 둘 다 Fail=보라</h3>
+        <div class="wafer-card">
+          <div id="cmp-common-map" style="width:100%;height:520px;"></div>
+          <div id="cmp-common-legend" class="cmp-legend"></div>
+        </div>
+      </div>
+      <div class="cmp-subpanel" data-cmppanel="log">
+        ${goodlogSectionHtml(cmp.goodlog) || '<div class="placeholder">테스트 프로그램 비교(goodlog)는 2 source 비교에서만 제공됩니다.</div>'}
+      </div>
+      <div class="cmp-subpanel" data-cmppanel="cpk">
+        <h3 class="compare-h">산포 차이 (공통 항목 · |ΔCpk| 큰 순)</h3>
+        ${compareDistShiftHtml(cmp.dist_shift, sources)}
+      </div>
+      <div class="cmp-subpanel" data-cmppanel="bin">
+        <h3 class="compare-h">동일 좌표 Bin 변화 (before → after)</h3>
+        ${compareBinTransitionHtml(cmp.bin_transition) || '<div class="placeholder">Bin 전이표는 2 source 비교에서만 제공됩니다.</div>'}
+        <h3 class="compare-h">Bin Yield 비교</h3>
+        ${compareBinTableHtml(cmp.bin_delta, sources)}
+      </div>
     </div>`;
 
   drawCompareCommonMap(cm, sources);
-  drawCompareSourceMaps("cmp-source-maps");
   bindGoodlogFolding(panel);
+  bindCompareSubtabs(panel);
 }
 

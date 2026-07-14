@@ -8,7 +8,9 @@ const CPK_PAGE_SIZE = 50;     // 페이지당 표시 행 수
 
 let cpkBasisBin1 = false;     // false=전체(모든 die) 기준, true=Bin1(양품) 기준 통계 표시
 let cpkShowLowOnly = true;    // 기본값: CPK < 1.33 항목만 오름차순(최악 우선) 정렬해 보여줌
+let cpkHideAbnormal = true;   // 기본값 ON: Limit 동일·CPK 음수·CPK 없음(비정상) 항목 숨김
 let cpkSearchTerm = "";       // subject/source 검색어 (실시간 필터)
+let cpkSourceFilter = "";     // 특정 source 만 표시 (빈 문자열 = 전체 source)
 let cpkPage = 1;              // 현재 페이지 (1-base)
 let cpkPanelBound = false;    // panel-cpk 페이저 클릭 위임 1회 바인딩 플래그
 let cpkTargetMode = false;    // "Limit 계산" 토글 — 켜지면 체크박스 열 + 목표 Cpk 역산 컨트롤 노출
@@ -61,17 +63,35 @@ function updateCpkSelInfo() {
   if (el) el.textContent = `선택 ${cpkSelected.size}개`;
 }
 
+// "abnormal 정리" 판정: ① Limit(하한==상한) 동일 ② CPK 음수 ③ CPK 값 없음 → 비정상.
+// cpkBasisRow 로 활성 기준(전체/Bin1)의 cpk 가 채워진 행에 적용한다.
+function cpkIsAbnormal(r) {
+  const lo = parseFloat(r.lower_limit), hi = parseFloat(r.upper_limit);
+  if (!isNaN(lo) && !isNaN(hi) && lo === hi) return true;   // Limit 동일
+  const cpk = parseFloat(r.cpk);
+  if (isNaN(cpk)) return true;   // CPK 값 없음
+  if (cpk < 0) return true;      // CPK 음수
+  return false;
+}
+
 function cpkFilterRows(rows) {
+  if (cpkSourceFilter) rows = rows.filter(r => String(r.source || "") === cpkSourceFilter);
   const term = cpkSearchTerm.trim().toLowerCase();
   if (!term) return rows;
   return rows.filter(r => String(r.subject || "").toLowerCase().includes(term)
     || String(r.source || "").toLowerCase().includes(term));
 }
 
+// CPK 행에서 등장 순서대로 중복 제거한 source 목록 (드롭다운 옵션용).
+function cpkSourceList(rows) {
+  return [...new Set((rows || []).map(r => String(r.source || "")).filter(Boolean))];
+}
+
 // 표시용 행 목록 생성. 각 행에 _key(원본 subject/source 기준 안정 키)를 붙여 접힌 행도
 // 개별 선택이 가능하게 한다. (select-all 계산과 cpkTableHtml 이 공용으로 사용)
 function cpkBodyRows(rows) {
   rows = rows.map(cpkBasisRow);   // 활성 기준(전체/Bin1)으로 통계 컬럼 정규화
+  if (cpkHideAbnormal) rows = rows.filter(r => !cpkIsAbnormal(r));   // abnormal 정리
   if (cpkShowLowOnly) {
     // cpk 값 내림/오름차순이 아니라 같은 Item name 끼리 묶여 보이도록 항목명(subject) 순으로 정렬.
     return rows
@@ -182,12 +202,17 @@ function renderCpk() {
       `<button type="button" id="cpkClearSelBtn" class="btn-sm">선택 해제</button>` +
       `<span id="cpkSelInfo" class="cpk-pager-info"></span></div>`
     : "";
+  const sourceOpts = `<option value="">전체 source</option>` +
+    cpkSourceList(rows).map(s =>
+      `<option value="${esc(s)}"${cpkSourceFilter === s ? " selected" : ""}>${esc(s)}</option>`).join("");
   panel.innerHTML =
     `<div class="cpk-toolbar">` +
     `<input type="text" id="cpkSearchInput" placeholder="항목/source 검색" value="${esc(cpkSearchTerm)}">` +
+    `<select id="cpkSourceSel" title="특정 source 만 표시">${sourceOpts}</select>` +
     `<button type="button" id="cpkBasisBtn" class="btn-sm${cpkBasisBin1 ? " active" : ""}" title="켜짐: Bin1(양품) 기준 · 꺼짐: 전체 die 기준">기준: ${cpkBasisBin1 ? "Bin1(양품)" : "전체 die"}</button>` +
     `<button type="button" id="cpkLowBtn" class="btn-sm${cpkShowLowOnly ? " active" : ""}" title="켜짐: CPK &lt; ${CPK_WARN_THRESHOLD} 항목만 · 꺼짐: 전체 표시">` +
     `${cpkShowLowOnly ? `표시: CPK &lt; ${CPK_WARN_THRESHOLD} 만` : "표시: 전체"}</button>` +
+    `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkHideAbnormal ? " active" : ""}" title="켜짐: Limit 동일·CPK 음수·CPK 없음 항목 숨김">abnormal 정리</button>` +
     `<button type="button" id="cpkTargetBtn" class="btn-sm${cpkTargetMode ? " active" : ""}">Limit 계산</button></div>` +
     targetBar +
     `<div id="cpkTableHost"></div>`;
@@ -204,8 +229,18 @@ function renderCpk() {
     cpkPage = 1;
     renderCpk();
   });
+  document.getElementById("cpkAbnBtn").addEventListener("click", () => {
+    cpkHideAbnormal = !cpkHideAbnormal;
+    cpkPage = 1;
+    renderCpk();
+  });
   document.getElementById("cpkSearchInput").addEventListener("input", (e) => {
     cpkSearchTerm = e.target.value;
+    cpkPage = 1;
+    renderCpkTable();
+  });
+  document.getElementById("cpkSourceSel").addEventListener("change", (e) => {
+    cpkSourceFilter = e.target.value;
     cpkPage = 1;
     renderCpkTable();
   });

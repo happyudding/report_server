@@ -751,12 +751,19 @@ class HoneyMainWindow(QMainWindow):
 
     @staticmethod
     def _honey_icon(px=64):
-        """꿀단지(honey pot)를 벡터로 그린 QIcon — 실행/창 아이콘용.
+        """Honey 이미지(Honey_img.png) 아이콘 — 실행/창 아이콘용.
 
-        컬러 이모지 폰트에 의존하지 않아 어떤 환경에서도 동일하게 렌더된다.
+        repo 루트(dev)/_MEIPASS(frozen)의 Honey_img.png 를 우선 사용하고, 파일이
+        없거나 로드 실패 시 벡터 꿀단지로 폴백한다(어떤 환경에서도 아이콘이 보이도록).
         """
         from PyQt6.QtGui import QPixmap, QPainter, QIcon, QColor
         from PyQt6.QtCore import QRectF
+        for base in (_BASE_DIR, _REPO_ROOT):
+            path = os.path.join(base, "Honey_img.png")
+            if os.path.exists(path):
+                icon = QIcon(path)
+                if not icon.isNull():
+                    return icon
         pm = QPixmap(px, px)
         pm.fill(Qt.GlobalColor.transparent)
         p = QPainter(pm)
@@ -1135,6 +1142,7 @@ class HoneyMainWindow(QMainWindow):
             QApplication.processEvents()
 
             results = []
+            last_status = None
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                     for i, p in enumerate(paths):
@@ -1147,12 +1155,18 @@ class HoneyMainWindow(QMainWindow):
                             elapsed = int(time.monotonic() - file_start)
                             if elapsed >= _SLOW_FILE_SEC:
                                 label = (
-                                    f"({i + 1}/{n_files})  {filename}  "
-                                    f"전처리 계속해서 진행중입니다."
+                                    f"파일 전처리 중... ({i + 1}/{n_files})  {filename}  "
+                                    f"(계속 진행중)"
                                 )
                             else:
-                                label = f"({i + 1}/{n_files})  {filename}"
-                            progress.set(label, value=i)
+                                label = f"파일 전처리 중... ({i + 1}/{n_files})  {filename}"
+                            # 라벨이 바뀔 때만 하단 status 바에도 반영(진행중임을 명확히 표시).
+                            # 진행바 경과시간은 매 폴링마다 계속 갱신된다.
+                            if label != last_status:
+                                progress.set(label, value=i, status=label)
+                                last_status = label
+                            else:
+                                progress.set(label, value=i)
                             if done_set:
                                 break
                         results.append(fut.result())  # 로드 실패 시 여기서 예외 전파
@@ -1234,13 +1248,28 @@ class HoneyMainWindow(QMainWindow):
             "compare_mode": dlg.mode_compare(),
         }
 
+    def _set_run_buttons_enabled(self, enabled):
+        """Web Report / Excel Report 실행 버튼을 함께 활성/비활성한다.
+
+        한 리포트가 진행되는 동안(전처리·분석·업로드 전 구간) 두 버튼을 모두 잠가
+        중복 실행을 막는다. 재활성은 호출부(on_start/on_web_report)의 finally 에서 보장한다.
+        """
+        self.btn_start.setEnabled(enabled)
+        self.btn_web_report.setEnabled(enabled)
+
     def on_start(self):
-        ctx = self._prepare_run_context()
-        if ctx is None:
-            return
-        self._run_analysis(
-            ctx["work_group"], ctx["selected"], ctx["sheets"],
-            ctx["raw_data"], compare_mode=ctx["compare_mode"])
+        # 느린 파일 전처리(_prepare_run_context → _rebuild_group)가 시작되기 전에
+        # 두 실행 버튼을 잠가, 진행 중 중복 클릭을 막는다.
+        self._set_run_buttons_enabled(False)
+        try:
+            ctx = self._prepare_run_context()
+            if ctx is None:
+                return
+            self._run_analysis(
+                ctx["work_group"], ctx["selected"], ctx["sheets"],
+                ctx["raw_data"], compare_mode=ctx["compare_mode"])
+        finally:
+            self._set_run_buttons_enabled(True)
 
     def on_webreport_colors(self):
         """F10 메뉴 → Distribution 색(Legend/source 팔레트) 설정.
@@ -1266,12 +1295,18 @@ class HoneyMainWindow(QMainWindow):
             self._status("옵션 저장됨")
 
     def on_web_report(self):
-        ctx = self._prepare_web_report_context()
-        if ctx is None:
-            return
-        self._run_web_report(ctx["work_group"], ctx["selected"], ctx["sheets"],
-                             compare_mode=ctx["compare_mode"], options=ctx["options"],
-                             mode=ctx["mode"])
+        # 느린 파일 전처리(_prepare_web_report_context → _rebuild_group)가 시작되기 전에
+        # 두 실행 버튼을 잠가, 진행 중 중복 클릭을 막는다.
+        self._set_run_buttons_enabled(False)
+        try:
+            ctx = self._prepare_web_report_context()
+            if ctx is None:
+                return
+            self._run_web_report(ctx["work_group"], ctx["selected"], ctx["sheets"],
+                                 compare_mode=ctx["compare_mode"], options=ctx["options"],
+                                 mode=ctx["mode"])
+        finally:
+            self._set_run_buttons_enabled(True)
 
     def _ask_source_names(self):
         """Web Report 생성 직전 source 별 legend 이름을 매번 확인·변경.
@@ -1412,8 +1447,7 @@ class HoneyMainWindow(QMainWindow):
 
     def _run_web_report(self, work_group, selected, sheets, compare_mode=False, options=None,
                         mode="Normal"):
-        self.btn_start.setEnabled(False)
-        self.btn_web_report.setEnabled(False)
+        # 실행 버튼 잠금/해제는 호출부(on_web_report)의 try/finally 가 전담한다.
         self._init_run_log("Web Report 생성")
         progress = _ElapsedProgress(
             self.progress_status, "Web Report 준비 중...", self._status,
@@ -1445,8 +1479,6 @@ class HoneyMainWindow(QMainWindow):
         if not dlg.exec():
             progress.fail("취소됨: 업로드 메타 입력 취소")
             prep_ex.shutdown(wait=False, cancel_futures=True)
-            self.btn_start.setEnabled(True)
-            self.btn_web_report.setEnabled(True)
             return
         meta = dlg.values()
         self._last_upload = meta
@@ -1462,8 +1494,6 @@ class HoneyMainWindow(QMainWindow):
             prep_ex.shutdown(wait=False, cancel_futures=True)
             QMessageBox.critical(self, "분석 실패", str(exc))
             self._status("Web Report 분석 실패")
-            self.btn_start.setEnabled(True)
-            self.btn_web_report.setEnabled(True)
             return
 
         try:
@@ -1474,8 +1504,6 @@ class HoneyMainWindow(QMainWindow):
             prep_ex.shutdown(wait=False)
             QMessageBox.critical(self, "Web Report 실패", str(exc))
             self._status("parquet 인코딩 실패")
-            self.btn_start.setEnabled(True)
-            self.btn_web_report.setEnabled(True)
             return
         prep_ex.shutdown(wait=False)
 
@@ -1506,8 +1534,6 @@ class HoneyMainWindow(QMainWindow):
             progress.fail(f"실패: Web Report 업로드 실패 - {exc}")
             QMessageBox.critical(self, "Web Report 업로드 실패", str(exc))
             self._status("Web Report 업로드 실패")
-            self.btn_start.setEnabled(True)
-            self.btn_web_report.setEnabled(True)
             return
 
         sid = result.get("session_id", "?")
@@ -1525,8 +1551,6 @@ class HoneyMainWindow(QMainWindow):
         panel = getattr(self, "slide_controls", None)
         if panel is not None:
             panel.hide_animated()
-        self.btn_start.setEnabled(True)
-        self.btn_web_report.setEnabled(True)
 
     def _open_in_embedded(self, url):
         """내장 브라우저(있으면)로 url 이동. 없으면 외부 브라우저 폴백."""
@@ -1541,7 +1565,7 @@ class HoneyMainWindow(QMainWindow):
 
     def _run_analysis(self, work_group, selected, sheets, raw_data=False,
                       compare_mode=False, mode_map=False):
-        self.btn_start.setEnabled(False)
+        # 실행 버튼 잠금/해제는 호출부(on_start)의 try/finally 가 전담한다.
         show_timing_log = bool(getattr(rg, "DEBUG_RUN_TIMING_LOG", False))
         overall_t0 = time.perf_counter()
         self._init_run_log("")
@@ -1619,7 +1643,6 @@ class HoneyMainWindow(QMainWindow):
             progress.fail(f"실패: 분석 실패 - {exc}")
             QMessageBox.critical(self, "분석 실패", str(exc))
             self._status("분석 실패")
-            self.btn_start.setEnabled(True)
             return
         progress.set("데이터 분석 완료", value=2)
 
@@ -1762,7 +1785,6 @@ class HoneyMainWindow(QMainWindow):
             progress.fail(f"실패: xlsx 생성 실패 - {exc}")
             QMessageBox.critical(self, "생성 실패", str(exc))
             self._status("xlsx 생성 실패")
-            self.btn_start.setEnabled(True)
             return
         finally:
             if map_tmpdir:
@@ -1772,7 +1794,6 @@ class HoneyMainWindow(QMainWindow):
         # 5) Excel 파일 저장 마무리
         _step(progress.maximum(), "Excel 파일 저장 마무리 중...")
         self.out_path = out
-        self.btn_start.setEnabled(True)
         if show_timing_log:
             self._append_run_log(f"Overall total: {time.perf_counter() - overall_t0:.2f}s")
         self._append_run_log(f"저장됨: {out}")

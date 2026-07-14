@@ -99,20 +99,18 @@ def _purge_audit_logs():
 
 
 def run_cleanup(dry_run=None):
-    """만료 세션을 조회해 정리 + 감사 로그 롤오프. dry_run 미지정 시 config 기본값 사용.
-    {'scanned','deleted','dry_run','audit_purged'} 요약 반환."""
+    """ingest 크래시 잔존물 회수 + 감사 로그 롤오프. dry_run 미지정 시 config 기본값 사용.
+    {'scanned','deleted','dry_run','audit_purged'} 요약 반환.
+
+    6개월 만료 세션은 더 이상 삭제하지 않는다 — 데이터 유실 방지를 위해 report_tiering 이
+    산출물만 S3 로 아카이브하고(세션/DB 는 유지) 종전 retention 삭제를 대체한다.
+    여기서는 산출물 참조가 없는 orphan pending(48h) 세션 행만 회수한다."""
     if dry_run is None:
         dry_run = config.REPORT_CLEANUP_DRYRUN
     audit_purged = _purge_audit_logs()
-    cutoff = int(time.time()) - int(config.REPORT_RETENTION_DAYS) * 86400
-    try:
-        expired = report_db.get_expired_sessions(cutoff)
-    except Exception:
-        _log.exception("[cleanup] get_expired_sessions failed")
-        return {"scanned": 0, "deleted": 0, "dry_run": dry_run, "audit_purged": audit_purged}
 
-    # ingest 크래시 잔존물(status='pending'·analysis_key 없음) — retention 과 무관하게
-    # 48h 지나면 회수. analysis_key 가 없어 산출물 참조도 없으므로 세션 행만 지워진다.
+    # ingest 크래시 잔존물(status='pending'·analysis_key 없음) — 48h 지나면 회수.
+    # analysis_key 가 없어 산출물 참조도 없으므로 세션 행만 지워진다.
     try:
         orphans = report_db.get_orphan_pending_sessions(int(time.time()) - 48 * 3600)
     except Exception:
@@ -120,17 +118,15 @@ def run_cleanup(dry_run=None):
         _log.exception("[cleanup] get_orphan_pending_sessions failed")
 
     deleted = 0
-    for session in expired + orphans:
+    for session in orphans:
         try:
             if _cleanup_one(session, dry_run):
                 deleted += 1
         except Exception:
             _log.exception("[cleanup] session %s failed", session.get("session_id"))
-    _log.info("[cleanup] done: scanned=%d (orphan_pending=%d) deleted=%d dry_run=%s "
-              "retention_days=%d audit_purged=%d",
-              len(expired) + len(orphans), len(orphans), deleted, dry_run,
-              config.REPORT_RETENTION_DAYS, audit_purged)
-    return {"scanned": len(expired) + len(orphans), "deleted": deleted, "dry_run": dry_run,
+    _log.info("[cleanup] done: orphan_pending=%d deleted=%d dry_run=%s audit_purged=%d",
+              len(orphans), deleted, dry_run, audit_purged)
+    return {"scanned": len(orphans), "deleted": deleted, "dry_run": dry_run,
             "audit_purged": audit_purged}
 
 
@@ -152,9 +148,17 @@ def start_cleanup_scheduler():
                 run_cleanup()
             except Exception:
                 _log.exception("[cleanup] run_cleanup crashed")
+            # 로컬 hot 캐시 → S3 티어링 (같은 주기에 얹어 실행 — S3 미설정이면 no-op).
+            try:
+                import report_tiering
+                report_tiering.run_tiering()
+            except Exception:
+                _log.exception("[tier] run_tiering crashed")
             time.sleep(interval)
 
     threading.Thread(target=_loop, name="report-cleanup", daemon=True).start()
-    _log.info("[cleanup] scheduler started: interval=%.1fh dryrun=%s retention_days=%d",
+    _log.info("[cleanup] scheduler started: interval=%.1fh dryrun=%s | tier: enabled=%s "
+              "dryrun=%s age_days=%d local_max_gb=%.0f",
               config.REPORT_CLEANUP_INTERVAL_HOURS, config.REPORT_CLEANUP_DRYRUN,
-              config.REPORT_RETENTION_DAYS)
+              config.REPORT_TIER_ENABLED, config.REPORT_TIER_DRYRUN,
+              config.REPORT_TIER_AGE_DAYS, config.REPORT_TIER_LOCAL_MAX_GB)

@@ -659,7 +659,8 @@ function renderMiniDistCell(cell) {
 
   const lo = info.lower_limit, hi = info.upper_limit;
   const traces = Object.keys(info.bySource).map(source => {
-    const ds = distDownsampleForDisplay(info.bySource[source].xs, info.bySource[source].ys);
+    // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
+    const ds = distPointsForDisplay(info.bySource[source].xs, info.bySource[source].ys);
     return { type: "scatter", mode: "markers", cliponaxis: false, name: source,
       x: ds.xs, y: ds.ys, marker: { color: distColorFor(source), size: 3 } };
   });

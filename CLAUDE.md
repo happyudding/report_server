@@ -211,6 +211,12 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
    유일 예외: 동일값 구간을 2포인트 선분으로 표현하는 계단형(step) ECDF 변환
    (`client/report_generator/_builders.py` `cumulative_distribution_full()`), web_report 는
    미니셀 썸네일만 표시용 1000점 다운샘플([docs/11](docs/11_web_report_tabs.md)).
+   - **web_report Distribution ECDF 미니셀은 markers(점)만으로 렌더한다.** 점을 잇는 선,
+     특히 Plotly `line.shape:"hv"` 계단형 수평선은 금지 — x축 방향 수평선은 누적분포를
+     왜곡하고 사용자 경험에 반한다. 이산(code unit)값처럼 고유값이 적어 점이 성겨 보이는
+     문제는, 동일값 구간(ECDF riser)을 y축 방향 세로 점기둥으로 채우는 보간
+     (`distFillVertical`)으로만 해결하고 선으로 잇지 않는다. 보간은 표시용 다운샘플보다
+     **먼저** 적용한다(`distPointsForDisplay` = 세로 채움 → 다운샘플).
 6. **web_report 편집 상태는 세션 편집 DB 가 진실.** manifest 는 업로드 시점 불변 스냅샷이므로
    편집으로 재저장하지 않는다. 캐시 키는 항상 [cache_policy.py](web_report/cache_policy.py)
    빌더로 만든다(즉석 조립 금지 — [docs/12](docs/12_web_report_cache.md)).

@@ -21,15 +21,17 @@ function colWidth(name, kind) {
   const s = kind === "issue" ? 1.5 : 1;   // Issue Table 전체 1.5배 확대
   const px = base => `${Math.round(base * s)}px`;
   // Step/Bin 은 최대 3자리라 아주 좁게, TNO 는 조금 넓게, avg/yield 는 xx.xx 라 짧게.
+  // Issue Table 은 Map/Distribution 을 왼쪽에 함께 틀고정하므로 Bin/TNO/Item 을 70% 로 좁혀
+  // 고정 블록 폭을 보완한다(Step 은 유지, Yield 표는 무영향).
   if (n === "step")                     return px(44);
-  if (n === "bin")                      return px(44);
-  if (n === "tno")                      return px(60);
+  if (n === "bin")                      return px(kind === "issue" ? 44 * 0.7 : 44);
+  if (n === "tno")                      return px(kind === "issue" ? 60 * 0.7 : 60);
   if (n === "map")                      return px(96);   // Distribution 과 동일 폭
   if (n === "distribution")             return px(96);   // 기존 120 의 0.8배
   if (n.endsWith("_count"))             return px(60);
   if (n.endsWith("_yield"))             return px(60);
   if (n === "avg")                      return px(48);
-  if (n === "item")                     return px(150);
+  if (n === "item")                     return px(kind === "issue" ? 150 * 0.7 : 150);
   if (n === "category")                 return "50px";
   if (n === "condition & judge limit")  return "185px";
   if (n === "result")                   return "80px";
@@ -142,12 +144,12 @@ function displayLabel(c) {
   if (n === "avg") return "Avg";
   return headerLabel(c);
 }
-// 여러 source 이름을 "…" + 이름 끝 3글자로 축약한다 (사용자 요청 — 소스 이름은 보통
-// 끝부분에서 달라지므로 구분 유지). 이름이 4글자 이하면 그대로 둔다. hover 로 전체이름 확인.
+// 여러 source 이름을 ".." + 이름 끝 6글자로 축약한다 (사용자 요청 — 소스 이름은 보통
+// 끝부분에서 달라지므로 구분 유지). 이름이 8글자 이하면 그대로 둔다. hover 로 전체이름 확인.
 function abbrevSourceLabels(fulls) {
   if (!fulls || fulls.length < 2) return (fulls || []).map(f => ({ short: f, full: f }));
   return fulls.map(full =>
-    (full.length <= 4) ? { short: full, full } : { short: "…" + full.slice(-3), full });
+    (full.length <= 8) ? { short: full, full } : { short: ".." + full.slice(-6), full });
 }
 function buildSheetTableHead(cols) {
   const isAvgCol = c => String(c).trim().toLowerCase() === "avg";
@@ -282,6 +284,10 @@ const ISSUE_SECTION_LABELS = {
 function issueSectionHeadRowsHtml(cols, sec) {
   const lab = ISSUE_SECTION_LABELS[sec] || ISSUE_SECTION_LABELS.Yield;
   const isAvgCol = c => String(c).trim().toLowerCase() === "avg";
+  // 컬럼 폭 드래그 리사이즈 핸들 — 단일 컬럼 th 우측 경계에 붙여 그 col 인덱스를 나른다
+  // (그룹 라벨 colspan th 는 제외). colgroup.children[idx] 와 1:1 대응(bindIssueColResize).
+  const resizeHandle = idx =>
+    `<span class="col-resize-handle" data-col="${idx}" data-col-name="${esc(String(cols[idx]))}"></span>`;
   const groupOf = c => SHEET_HEADER_SUFFIX_GROUPS.find(g => g.re.test(String(c)));
   const groupKeyAt = i =>
     groupOf(cols[i]) ||
@@ -297,11 +303,11 @@ function issueSectionHeadRowsHtml(cols, sec) {
   }
   if (!runs.some(r => r.group)) {
     return `<tr class="issue-shead-top" data-sec="${esc(sec)}">` +
-      cols.map(c => `<th>${esc(displayLabel(c))}</th>`).join("") + `</tr>`;
+      cols.map((c, k) => `<th>${esc(displayLabel(c))}${resizeHandle(k)}</th>`).join("") + `</tr>`;
   }
   const topRow = runs.map(r => r.group
     ? `<th colspan="${r.len}" class="sheet-group-th">${esc(lab.group)}</th>`
-    : `<th rowspan="2">${esc(displayLabel(cols[r.start]))}</th>`
+    : `<th rowspan="2">${esc(displayLabel(cols[r.start]))}${resizeHandle(r.start)}</th>`
   ).join("");
   const botRow = runs.filter(r => r.group).map(r => {
     const runCols = cols.slice(r.start, r.start + r.len);
@@ -309,11 +315,12 @@ function issueSectionHeadRowsHtml(cols, sec) {
     const abbr = abbrevSourceLabels(srcCols.map(sheetHeaderShortLabel));
     const abbrByCol = {};
     srcCols.forEach((c, i) => { abbrByCol[c] = abbr[i]; });
-    return runCols.map(c => {
-      if (isAvgCol(c)) return `<th>${esc(lab.avg)}</th>`;
+    return runCols.map((c, k) => {
+      const idx = r.start + k;
+      if (isAvgCol(c)) return `<th>${esc(lab.avg)}${resizeHandle(idx)}</th>`;
       const a = abbrByCol[c];
       const titleAttr = a.short !== a.full ? ` title="${esc(a.full)}"` : "";
-      return `<th class="sheet-src-th"${titleAttr}>${esc(a.short)}</th>`;
+      return `<th class="sheet-src-th"${titleAttr}>${esc(a.short)}${resizeHandle(idx)}</th>`;
     }).join("");
   }).join("");
   return `<tr class="issue-shead-top" data-sec="${esc(sec)}">${topRow}</tr><tr class="issue-shead-bot">${botRow}</tr>`;
@@ -363,11 +370,31 @@ function renderSheetTable(rows, opts) {
   const issueMultiSource = opts.kind === "issue"
     && cols.filter(c => /_yield$/i.test(String(c))).length > 1;
 
+  // Yield/ETC fail yield 셀 빨강 그라데이션의 기준값 = 표 내 최대 fail yield(>0).
+  // 값이 클수록 진한 빨강(--yw 1 에 가까움). Pass(Bin1) 행·CPK 섹션은 제외.
+  let issueYieldMax = 0;
+  if (issueMultiSource) {
+    bodyRows.forEach((r, ri) => {
+      if (isCpkSubheadRow(r)) return;
+      const sec = rowSection[ri];
+      if (sec !== "Yield" && sec !== "ETC") return;
+      if (String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() === "1") return;   // Pass 행 제외
+      cols.forEach(c => {
+        if (!/_yield$/i.test(String(c))) return;
+        const n = parseFloat(r ? r[c] : "");
+        if (!isNaN(n) && n > issueYieldMax) issueYieldMax = n;
+      });
+    });
+  }
+
   const renderDataRowTr = (r, ri) => {
     const subhead = (opts.kind === "yield" && isHeaderLikeRow(r, cols))
       || (opts.kind === "issue" && isCpkSubheadRow(r));
     // 이 행이 속한 섹션(Issue Table 전용) — Map/Distribution 셀 표시 판단·셀 강조에 쓰인다.
     const issueRowSec = opts.kind === "issue" ? rowSection[ri] : "";
+    // Yield 섹션 최상단 Pass(Bin1) 행 — Map/Distribution/빨강강조 제외, 초록 Pass 스타일.
+    const issuePassRow = opts.kind === "issue" && !subhead
+      && String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() === "1";
     const tds = cols.map((c, ci) => {
       const v = r ? r[c] : "";
       let txt = (v === null || v === undefined) ? "" : String(v);
@@ -378,7 +405,7 @@ function renderSheetTable(rows, opts) {
       if (isMapCol(c)) {
         const binv = r && (r["Bin"] ?? r["bin"]);
         const hasBin = String(binv ?? "").trim() !== "";
-        if (opts.kind === "issue" && !subhead && hasBin
+        if (opts.kind === "issue" && !subhead && hasBin && !issuePassRow
           && (issueRowSec === "Yield" || issueRowSec === "ETC")) {
           const expandBtn = (mapSourceCount() > 1)
             ? `<button type="button" class="btn-map-expand" title="전체 소스 맵 보기">⤢</button>` : "";
@@ -393,7 +420,7 @@ function renderSheetTable(rows, opts) {
         // 분포 데이터 로딩 중(distDataReady=false)엔 일단 셀을 만들어 두고, 도착 후
         // refreshDistConsumers 가 채운다 (데이터 없는 항목은 그때 빈 칸으로).
         // Yield/ETC/CPK 섹션의 데이터 행(서브헤더 제외)에 산포 카드 표시.
-        if (opts.kind === "issue" && item && !subhead
+        if (opts.kind === "issue" && item && !subhead && !issuePassRow
           && (rowSection[ri] === "Yield" || rowSection[ri] === "ETC" || rowSection[ri] === "CPK")
           && (distDataReady ? !!distDataCache[item] : true)) {
           return `<td${subhead ? ` class="sheet-subhead"` : ""} data-r="${ri}" data-c="${ci}">` +
@@ -418,15 +445,21 @@ function renderSheetTable(rows, opts) {
         return `<td class="${cls}" contenteditable="true" data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${esc(txt)}</td>`;
       }
       const clsParts = [];
+      let cellStyle = "";
       if (isEmpty) clsParts.push("st-empty");
       else if (isNum) clsParts.push("st-num");
       if (subhead) clsParts.push("sheet-subhead");
-      // 다중 source 문제 셀 강조(소스별 _yield 컬럼 한정).
-      if (issueMultiSource && !subhead && !isEmpty && /_yield$/i.test(String(c))) {
+      // 다중 source 문제 셀 강조(소스별 _yield 컬럼 한정). CPK 섹션은 임계 미만 연빨강(고정),
+      // Yield/ETC 섹션은 값이 클수록 진한 빨강 그라데이션(표 내 최대 fail yield 기준). Pass 행 제외.
+      if (issueMultiSource && !subhead && !issuePassRow && !isEmpty && /_yield$/i.test(String(c))) {
         const num = parseFloat(v);
         if (!isNaN(num)) {
           if (issueRowSec === "CPK") { if (num <= CPK_WARN_THRESHOLD) clsParts.push("issue-cell-warn"); }
-          else if (num > 0) clsParts.push("issue-cell-warn");
+          else if (num > 0) {
+            const ratio = issueYieldMax > 0 ? Math.min(1, num / issueYieldMax) : 0;
+            clsParts.push("issue-yield-warn");
+            cellStyle = ` style="--yw:${ratio.toFixed(3)}"`;
+          }
         }
       }
       const cls = clsParts.join(" ");
@@ -457,9 +490,10 @@ function renderSheetTable(rows, opts) {
       // 읽기 모드 Issue Table 셀에만 data-col 부여 → CSS 로 BIN/ITEM/Yield/CPK 폰트 확대(값 가독성).
       // 편집 모드는 부여하지 않아 collectSheetTable 저장 대상(=comment 셀)이 그대로 유지된다.
       const colAttr = (opts.kind === "issue" && !opts.edit) ? ` data-col="${esc(c)}"` : "";
-      return `<td${cls ? ` class="${cls}"` : ""}${colAttr} data-r="${ri}" data-c="${ci}">${cellHtml}</td>`;
+      return `<td${cls ? ` class="${cls}"` : ""}${cellStyle}${colAttr} data-r="${ri}" data-c="${ci}">${cellHtml}</td>`;
     }).join("");
-    const isPassRow = !subhead && binCol && String((r ? r[binCol] : "") ?? "").trim() === "1";
+    const isPassRow = !subhead && (issuePassRow
+      || (binCol && String((r ? r[binCol] : "") ?? "").trim() === "1"));
     let trAttr = isPassRow ? ` class="yield-pass-row"` : "";
     if (!isPassRow && opts.kind === "issue" && r && r._grp) {
       trAttr = r._detail

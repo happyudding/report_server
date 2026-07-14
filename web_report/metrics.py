@@ -22,8 +22,9 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     (distribution_deferred=True, sheets["Distribution"]=[]) — 프런트가 별도 lazy 엔드포인트
     (GET .../web_report/distribution)로 받아간다. distribution_index(경량)는 항상 포함.
 
-    mode: 세션 분석 모드(Normal/Compare/DUT/Commonality). Normal/DUT 는 기존 multi-source
-    렌더를 그대로 쓰고(DUT 는 source 가 이미 DUT별로 분할돼 업로드됨), Compare 는 추가
+    mode: 세션 분석 모드(Normal/Compare/DUT/Commonality). Normal 은 기존 multi-source 렌더,
+    DUT 는 source 가 이미 DUT별로 분할돼 있으나 **Map Analysis 만** 하나의 맵으로 병합한다
+    (ctx.mode 로 build_map_analysis_rows 에 전달 — 나머지 탭은 DUT 비교 렌더). Compare 는 추가
     비교 시트(Compare Stats/Compare Bin/Common Map)를 얹는다. Commonality 의 chip 강조는
     프런트가 기존 distribution/scatter 데이터로 처리하므로 payload 분기는 없다."""
     selected_set = {str(v) for v in (selected_items or []) if str(v)}
@@ -50,6 +51,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         issue_comments=dict(issue_comments or {}),
         product_type=product_type,
         product=product,
+        mode=mode or "Normal",
         # None=컬럼 미표시. dict 전달은 ai_comment 옵션 세션의 콜드 빌드(service)만.
         ai_comments=ai_comments,
     )

@@ -202,25 +202,74 @@ function bindIssueHscroll(panel) {
     _issueHscrollSyncing = true; hscroll.scrollLeft = wrap.scrollLeft; _issueHscrollSyncing = false;
   });
 }
-// 좌측 고정열(Step/Bin/TNO/Item)의 left 오프셋을 실제 렌더 폭으로 계산 — 내용이 길어 컬럼이
-// colWidth 힌트보다 넓어져도 셀이 겹치지(깨지지) 않게 한다.
+// 좌측 고정열(Step/Bin/TNO/Item/Map/Distribution)의 left 오프셋을 실제 렌더 폭으로 계산 —
+// 내용이 길어 컬럼이 colWidth 힌트보다 넓어져도 셀이 겹치지(깨지지) 않게 한다.
 function syncIssueStickyOffsets(panel) {
   panel = panel || document.getElementById("panel-issues");
   if (!panel) return;
   const table = panel.querySelector(".sheet-table.kind-issue");
   if (!table) return;
-  // 셀 4개 이상인 대표 tbody 행 하나로 앞 3개 컬럼 실측 폭을 잰다.
+  // 셀 6개 이상인 대표 행 하나로 앞 5개 컬럼(Step/Bin/TNO/Item/Map) 실측 폭을 잰다.
   let row = null;
-  table.querySelectorAll("tbody tr").forEach(tr => { if (!row && tr.children.length >= 4) row = tr; });
+  table.querySelectorAll("tbody tr").forEach(tr => { if (!row && tr.children.length >= 6) row = tr; });
   if (!row) return;
   const w1 = row.children[0].getBoundingClientRect().width;
   const w2 = row.children[1].getBoundingClientRect().width;
   const w3 = row.children[2].getBoundingClientRect().width;
+  const w4 = row.children[3].getBoundingClientRect().width;
+  const w5 = row.children[4].getBoundingClientRect().width;
   if (w1 > 0) table.style.setProperty("--issue-col2-left", w1 + "px");
   if (w1 > 0 && w2 > 0) table.style.setProperty("--issue-col3-left", (w1 + w2) + "px");
   if (w1 > 0 && w2 > 0 && w3 > 0) table.style.setProperty("--issue-col4-left", (w1 + w2 + w3) + "px");
+  if (w1 > 0 && w2 > 0 && w3 > 0 && w4 > 0) table.style.setProperty("--issue-col5-left", (w1 + w2 + w3 + w4) + "px");
+  if (w1 > 0 && w2 > 0 && w3 > 0 && w4 > 0 && w5 > 0) table.style.setProperty("--issue-col6-left", (w1 + w2 + w3 + w4 + w5) + "px");
 }
 window.addEventListener("resize", () => { syncIssueHscrollSpacer(); syncIssueStickyOffsets(); });
+
+// 컬럼 폭 드래그 리사이즈 — 헤더 우측 경계 핸들(.col-resize-handle, data-col=컬럼인덱스)을 끌어
+// 해당 <col> width 를 바꾼다. 저장 없음(새로고침 시 기본 폭 복귀). 폭 변경 시 좌측 고정 오프셋과
+// 상단 프록시 스크롤바 폭을 즉시 재실측하고, Map/Distribution 이면 미니 차트를 새 폭으로 재렌더.
+function bindIssueColResize(panel) {
+  const table = panel.querySelector(".sheet-table.kind-issue");
+  const colgroup = table && table.querySelector("colgroup");
+  if (!table || !colgroup) return;
+  const MIN_W = 24;
+  // mousedown 은 매 렌더마다 새로 만들어진 table 에 건다(리스너 중첩 방지).
+  table.addEventListener("mousedown", e => {
+    const handle = e.target.closest(".col-resize-handle");
+    if (!handle) return;
+    const idx = +handle.dataset.col;
+    const col = colgroup.children[idx];
+    if (!col) return;
+    const th = handle.closest("th");
+    const startW = th ? th.getBoundingClientRect().width : parseFloat(col.style.width) || 80;
+    const startX = e.clientX;
+    const colName = String(handle.dataset.colName || "").toLowerCase();
+    e.preventDefault();   // 드래그 중 텍스트 선택 방지
+
+    let rafPending = false;
+    const applySync = () => {
+      rafPending = false;
+      syncIssueStickyOffsets(panel);
+      syncIssueHscrollSpacer(panel);
+    };
+    const onMove = ev => {
+      const w = Math.max(MIN_W, Math.round(startW + (ev.clientX - startX)));
+      col.style.width = w + "px";
+      if (!rafPending) { rafPending = true; requestAnimationFrame(applySync); }
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      applySync();
+      // Map/Distribution 미니 Plotly 차트는 폭 변경에 자동반응하지 않으므로 재렌더.
+      if (colName === "map") renderIssueMiniMap(panel);
+      else if (colName === "distribution") renderIssueMiniDist(panel);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+}
 
 function renderIssues(issue_table_text) {
   const panel = document.getElementById("panel-issues");
@@ -235,6 +284,7 @@ function renderIssues(issue_table_text) {
     bindIssueHscroll(panel);
     renderIssueMiniDist(panel);
     renderIssueMiniMap(panel);
+    bindIssueColResize(panel);
     return;
   }
   emptyPanel(panel, "Issue Table 데이터 없음");

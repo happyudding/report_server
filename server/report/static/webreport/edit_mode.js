@@ -84,8 +84,12 @@ function renderIssuesEdit() {
       issueToolbarHtml() +
       renderSheetTable(DATA.issue_table_text, { edit: true, kind: "issue", editableCols: ISSUE_COMMENT_COLS });
     syncIssueHeadRowHeight(panel);
+    // 읽기 모드와 동일하게 좌측 고정(Step~Distribution) 오프셋 실측 — 편집 모드에서도 고정열 정렬.
+    syncIssueStickyOffsets(panel);
+    requestAnimationFrame(() => syncIssueStickyOffsets(panel));   // 레이아웃 확정 후 재실측
     renderIssueMiniDist(panel);
     renderIssueMiniMap(panel);
+    bindIssueColResize(panel);
     return;
   }
   emptyPanel(panel, "Issue Table 데이터 없음");

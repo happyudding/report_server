@@ -118,16 +118,17 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
 </style>
 </head>
 <body>
-<h1>Report Server 관리자 <span class="sub">서버 현황 · 통계 · 세션/DB 컨트롤</span></h1>
+<h1>Report Server 관리자 <span class="sub">서버 현황 · 스토리지 · 통계 · 세션/DB 컨트롤</span></h1>
 
 <div class="tabs">
   <button class="tab active" data-panel="pHealth">현황</button>
+  <button class="tab" data-panel="pStorage">스토리지</button>
   <button class="tab" data-panel="pStats">통계</button>
   <button class="tab" data-panel="pSessions">세션</button>
   <button class="tab" data-panel="pUsers">사용자</button>
   <button class="tab" data-panel="pDb">DB</button>
-  <button class="tab" data-panel="pLogs">로그</button>
-  <button class="tab" data-panel="pAudit">감사로그</button>
+  <button class="tab" data-panel="pLogs">console log</button>
+  <button class="tab" data-panel="pAudit">User Action Monitoring</button>
 </div>
 
 <!-- ═══ 현황 ═══ -->
@@ -178,6 +179,47 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
       <button class="btn primary" id="btnS3Check">S3 상태 확인</button>
       <div class="msg" id="s3Msg">아직 확인 안 함</div>
     </div>
+  </div>
+</div>
+
+<!-- ═══ 스토리지 ═══ -->
+<div id="pStorage" class="panel">
+  <div class="tiles" id="stgTiles">
+    <div class="tile"><div class="lbl">로딩 중…</div></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>범주별 로컬 용량 <span class="hint">디렉토리 크기는 60초 캐시 · S3 저장분은 미집계</span>
+      <button class="btn" id="btnStgRescan" style="float:right">다시 스캔</button></h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>범주</th><th class="num">크기</th><th class="num">파일 수</th><th>비중</th></tr></thead>
+      <tbody id="stgCatBody"><tr class="empty-row"><td colspan="4">로딩 중…</td></tr></tbody>
+    </table></div>
+  </div>
+  <div class="card">
+    <h2>세션별 데이터 <span id="stgSummary" class="hint"></span></h2>
+    <div class="toolbar">
+      <input id="stgQ" class="inp" style="width:260px" placeholder="세션ID / 파일명 / product / lot / type 검색…">
+      <select id="stgSort" class="sel">
+        <option value="size" selected>용량순</option>
+        <option value="time">시간순</option>
+        <option value="category">범주순 (제품군)</option>
+      </select>
+      <button class="btn" id="btnStgOrder" title="정렬 방향">내림차순 ▼</button>
+      <button class="btn primary" id="btnStgSearch">검색</button>
+      <span class="grow"></span>
+      <button class="btn danger" id="btnStgBulkDelete" disabled>선택 삭제 (0)</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th><input type="checkbox" id="stgChkAll"></th>
+        <th>생성</th><th>type</th><th>product</th><th>lot</th><th>파일명</th>
+        <th>소스</th><th>백엔드</th><th class="num">로컬 용량</th><th>session_id</th><th></th>
+      </tr></thead>
+      <tbody id="stgBody"><tr class="empty-row"><td colspan="11">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="pager" id="stgPager"></div>
+    <div class="msg" id="stgMsg">삭제 시 마지막 참조 세션이면 S3/로컬 산출물과 캐시가 함께 정리됩니다.</div>
   </div>
 </div>
 
@@ -399,7 +441,7 @@ async function postJSON(url, body) {
 // ── 탭 ──────────────────────────────────────────────────────────────────────
 const loadedTabs = new Set();
 const TAB_LOADERS = {
-  pHealth: loadHealth, pStats: loadStats, pSessions: loadSessions,
+  pHealth: loadHealth, pStorage: loadStorageTab, pStats: loadStats, pSessions: loadSessions,
   pUsers: loadUsers, pDb: loadDb, pLogs: loadLogs, pAudit: loadAudit,
 };
 document.querySelectorAll(".tab").forEach(btn => {
@@ -568,6 +610,132 @@ setInterval(() => {
   if (document.visibilityState === "visible" && $("pHealth").classList.contains("active"))
     loadMetrics();
 }, 10000);
+
+// ── 스토리지 ────────────────────────────────────────────────────────────────
+const STG_PAGE = 100;
+let stgOffset = 0, stgTotal = 0, stgSort = "size", stgOrder = "desc";
+const stgSelected = new Set();
+function stgUpdateBulk() {
+  $("btnStgBulkDelete").textContent = `선택 삭제 (${stgSelected.size})`;
+  $("btnStgBulkDelete").disabled = stgSelected.size === 0;
+}
+async function loadStorageTab() { loadStgOverview(false); loadStgSessions(false); }
+
+async function loadStgOverview(refresh) {
+  try {
+    const o = await getJSON("api/storage/overview" + (refresh ? "?refresh=1" : ""));
+    const d = o.disk;
+    $("stgTiles").innerHTML = `
+      <div class="tile"><div class="lbl">디스크 사용 (${esc(d.percent.toFixed(0))}%)</div>
+        <div class="val">${d.percent.toFixed(0)}%</div>
+        <div class="det">${fmtBytes(d.used)} / ${fmtBytes(d.total)} · 여유 ${fmtBytes(d.free)}</div>
+        <div class="meter"><div class="${meterCls(d.percent)}" style="width:${Math.min(d.percent,100)}%"></div></div></div>
+      <div class="tile"><div class="lbl">report_server 점유 (로컬)</div>
+        <div class="val" style="font-size:22px">${fmtBytes(o.occupied_bytes)}</div>
+        <div class="det">DB + 백업 + 업로드 로컬 실측 (S3 저장분 제외)</div></div>
+      <div class="tile"><div class="lbl">S3 백엔드</div>
+        <div class="val" style="font-size:20px">${o.s3_configured ? "설정됨" : "미설정"}</div>
+        <div class="det">${o.s3_configured ? "산출물은 S3 저장 · 용량 미집계" : "로컬 폴백 사용"}</div></div>`;
+    const cats = o.categories.slice().sort((a, b) => b.bytes - a.bytes);
+    const max = Math.max(...cats.map(c => c.bytes), 1);
+    $("stgCatBody").innerHTML = cats.map(c => `
+      <tr><td>${esc(c.label)}</td>
+        <td class="num">${fmtBytes(c.bytes)}</td>
+        <td class="num">${c.files.toLocaleString()}</td>
+        <td style="min-width:120px"><div class="meter" style="margin:0"><div style="width:${(c.bytes / max * 100).toFixed(1)}%"></div></div></td></tr>`).join("");
+  } catch (e) {
+    $("stgTiles").innerHTML = `<div class="tile"><div class="lbl">스토리지 조회 실패</div><div class="det">${esc(e)}</div></div>`;
+    $("stgCatBody").innerHTML = `<tr class="empty-row"><td colspan="4">조회 실패: ${esc(e)}</td></tr>`;
+  }
+}
+
+async function loadStgSessions(refresh) {
+  const tb = $("stgBody");
+  tb.innerHTML = `<tr class="empty-row"><td colspan="11">로딩 중…</td></tr>`;
+  stgSelected.clear(); stgUpdateBulk(); $("stgChkAll").checked = false;
+  const params = new URLSearchParams({ sort: stgSort, order: stgOrder, limit: STG_PAGE, offset: stgOffset });
+  const q = $("stgQ").value.trim(); if (q) params.set("q", q);
+  if (refresh) params.set("refresh", "1");
+  let data;
+  try { data = await getJSON("api/storage/sessions?" + params); }
+  catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="11">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  stgTotal = data.total;
+  $("stgSummary").textContent = `총 ${stgTotal}개 세션`;
+  if (!data.rows.length) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="11">데이터가 없습니다.</td></tr>`;
+  } else {
+    tb.innerHTML = data.rows.map(r => `
+      <tr>
+        <td><input type="checkbox" class="stgChkRow" data-sid="${esc(r.session_id)}"></td>
+        <td>${fmtDate(r.created_at)}</td>
+        <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
+        <td>${esc(r.lot_id || "-")}</td><td>${esc(r.file_name || "-")}</td>
+        <td>${esc(r.source || "-")}</td>
+        <td>${r.backend ? `<span class="badge gray">${esc(r.backend)}</span>` : "-"}</td>
+        <td class="num">${fmtBytes(r.local_bytes)}${r.shared > 1
+            ? ` <span class="badge gray" title="같은 데이터를 ${r.shared}개 세션이 공유 — 마지막 삭제 시에만 회수">공유 ${r.shared}</span>` : ""}</td>
+        <td class="mono">${esc(r.session_id)}</td>
+        <td><button class="btn danger" style="height:24px;padding:0 8px;font-size:11px"
+             data-act="del" data-sid="${esc(r.session_id)}">삭제</button></td>
+      </tr>`).join("");
+  }
+  const page = Math.floor(stgOffset / STG_PAGE), last = Math.max(0, Math.ceil(stgTotal / STG_PAGE) - 1);
+  $("stgPager").innerHTML = `
+    <button class="pg-btn" id="stgPrev" ${page === 0 ? "disabled" : ""}>← 이전</button>
+    <span class="pg-info">${stgTotal}개 중 ${stgTotal ? stgOffset + 1 : 0}–${Math.min(stgOffset + STG_PAGE, stgTotal)} (페이지 ${page + 1}/${last + 1})</span>
+    <button class="pg-btn" id="stgNext" ${page >= last ? "disabled" : ""}>다음 →</button>`;
+  $("stgPrev").onclick = () => { stgOffset = Math.max(0, stgOffset - STG_PAGE); loadStgSessions(false); };
+  $("stgNext").onclick = () => { stgOffset += STG_PAGE; loadStgSessions(false); };
+}
+$("btnStgSearch").onclick = () => { stgOffset = 0; loadStgSessions(false); };
+$("stgQ").addEventListener("keydown", e => { if (e.key === "Enter") { stgOffset = 0; loadStgSessions(false); } });
+$("stgSort").onchange = () => { stgSort = $("stgSort").value; stgOffset = 0; loadStgSessions(false); };
+$("btnStgOrder").onclick = () => {
+  stgOrder = stgOrder === "desc" ? "asc" : "desc";
+  $("btnStgOrder").textContent = stgOrder === "desc" ? "내림차순 ▼" : "오름차순 ▲";
+  stgOffset = 0; loadStgSessions(false);
+};
+$("btnStgRescan").onclick = () => { loadStgOverview(true); loadStgSessions(true); };
+$("stgChkAll").onchange = () => {
+  document.querySelectorAll(".stgChkRow").forEach(c => {
+    c.checked = $("stgChkAll").checked;
+    if (c.checked) stgSelected.add(c.dataset.sid); else stgSelected.delete(c.dataset.sid);
+  });
+  stgUpdateBulk();
+};
+$("stgBody").addEventListener("change", e => {
+  if (!e.target.classList.contains("stgChkRow")) return;
+  if (e.target.checked) stgSelected.add(e.target.dataset.sid); else stgSelected.delete(e.target.dataset.sid);
+  stgUpdateBulk();
+});
+$("stgBody").addEventListener("click", async e => {
+  const btn = e.target.closest("button[data-act='del']");
+  if (!btn) return;
+  const sid = btn.dataset.sid, msg = $("stgMsg");
+  if (!confirm(`세션 ${sid} 을(를) 삭제할까요?\n마지막 참조 세션이면 S3/로컬 산출물과 캐시도 함께 삭제됩니다.`)) return;
+  msg.className = "msg"; msg.textContent = "삭제 중…";
+  try {
+    const r = await postJSON("api/sessions/delete", { session_ids: [sid] });
+    msg.textContent = r.deleted.length ? `삭제 완료: ${sid}` : `삭제 실패: ${JSON.stringify(r.failed)}`;
+    loadStgOverview(true); loadStgSessions(true);
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+});
+$("btnStgBulkDelete").onclick = async () => {
+  if (!stgSelected.size) return;
+  const typed = prompt(`선택한 ${stgSelected.size}개 세션을 삭제합니다.\n마지막 참조 세션의 S3/로컬 산출물·캐시도 함께 삭제됩니다.\n\n계속하려면 DELETE 를 입력하세요:`);
+  if (typed !== "DELETE") return;
+  const msg = $("stgMsg");
+  msg.className = "msg"; msg.textContent = "삭제 중…";
+  try {
+    const r = await postJSON("api/sessions/delete", { session_ids: [...stgSelected] });
+    msg.textContent = `삭제 ${r.deleted.length}건 완료` +
+      (r.failed.length ? `, 실패 ${r.failed.length}건: ${r.failed.map(f => f.session_id).join(", ")}` : "");
+    loadStgOverview(true); loadStgSessions(true);
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+};
 
 // ── 통계: 스택 막대 차트 ────────────────────────────────────────────────────
 const SERIES = [

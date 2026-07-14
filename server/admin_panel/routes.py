@@ -14,7 +14,8 @@ from pathlib import Path
 from flask import Blueprint, Response, abort, jsonify, request
 
 import config
-from admin_panel import maintenance, metrics, sessions_admin, stats, sysinfo, users_admin
+from admin_panel import (maintenance, metrics, sessions_admin, stats, storage_admin,
+                         sysinfo, users_admin)
 from database import report_db
 from report.static_pages import send_html_gzip
 
@@ -133,6 +134,27 @@ def api_storage():
 @admin_panel_bp.get("/api/s3-status")
 def api_s3_status():
     return jsonify(sysinfo.s3_status())
+
+
+# ── 스토리지 관리 ────────────────────────────────────────────────────────────
+# 세션 삭제는 기존 /api/sessions/delete (artifact-aware) 를 그대로 재사용한다.
+
+@admin_panel_bp.get("/api/storage/overview")
+def api_storage_overview():
+    refresh = request.args.get("refresh") == "1"
+    return jsonify(storage_admin.overview(refresh=refresh))
+
+
+@admin_panel_bp.get("/api/storage/sessions")
+def api_storage_sessions():
+    return jsonify(storage_admin.list_sessions_by_storage(
+        sort=(request.args.get("sort") or "size").strip(),
+        order=(request.args.get("order") or "desc").strip(),
+        q=(request.args.get("q") or "").strip() or None,
+        limit=request.args.get("limit", 100),
+        offset=request.args.get("offset", 0),
+        refresh=request.args.get("refresh") == "1",
+    ))
 
 
 @admin_panel_bp.get("/api/metrics/history")

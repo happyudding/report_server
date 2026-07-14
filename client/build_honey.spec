@@ -32,7 +32,8 @@ a = Analysis(
     datas=_xw_datas + _pa_datas + [('honey_main.ui', '.'), ('upload_dialog.ui', '.'),
                        (_os.path.join(_repo_root, 'd1', 'd1_browser.ui'), 'd1'),
                        ('file_order.ui', '.'),
-                       ('report_settings.ui', '.')],
+                       ('report_settings.ui', '.'),
+                       (_os.path.join(_repo_root, 'Honey_img.png'), '.')],  # 창/작업표시줄 아이콘
     hiddenimports=(
         ['PyQt5.sip', 'PyQt5.uic', 'win32com', 'win32com.client', 'pythoncom',
          'pywintypes', 'pandas', 'numpy']

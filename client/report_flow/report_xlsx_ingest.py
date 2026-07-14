@@ -96,7 +96,7 @@ def _read_workbook_grids(src_path):
     """COM 으로 열어 (raw_sheets, summary_grid, issue_grid) 반환.
 
     raw_sheets = [(sheet_name, grid_2d), ...] (등장 순서), grid = UsedRange.Value 정규화.
-    report_generator 형식(Summary + Issue_table 시트)이 아니면 ValueError.
+    Issue_table 시트(대소문자 무시)가 없으면 Honey excel report 형식이 아니므로 ValueError.
     """
     import pythoncom
     import win32com.client
@@ -111,10 +111,10 @@ def _read_workbook_grids(src_path):
         wb = excel.Workbooks.Open(src_path, UpdateLinks=0, ReadOnly=True)
 
         names_low = {_s(sht.Name).lower() for sht in wb.Worksheets}
-        if "summary" not in names_low or "issue_table" not in names_low:
+        if "issue_table" not in names_low:
             raise ValueError(
-                "report_generator 보고서 형식이 아닙니다.\n"
-                "(Summary·Issue_table 시트를 찾지 못했습니다)")
+                "Honey excel report 형식이 아닙니다.\n"
+                "(Issue_table 시트를 찾지 못했습니다)")
 
         raw_sheets = []
         summary_grid = None
@@ -147,6 +147,51 @@ def _read_workbook_grids(src_path):
         pythoncom.CoUninitialize()
 
 
+# ── honeyform 검증 실패 메시지 (사용자용 한국어 + 형식 설명 + 불일치 위치) ──────
+_FORMAT_HELP_HONEYFORM = (
+    "[honeyform(Raw Data) 필수 형식]\n"
+    "· 1행 헤더: SERIAL, SHOT, DUT, XPOS, YPOS, BIN, FAILTNO + 측정 항목 1개 이상\n"
+    "· 2~7행 A열(순서 고정): TSEQ, TNO, STEP, UNIT, HILIM, LOLIM\n"
+    "· 8행부터: die 별 측정 데이터 (최소 1행)\n"
+    "· 측정 항목 컬럼 이름은 중복될 수 없습니다")
+
+_FORMAT_HELP_RAWDATA = (
+    "[Raw Data 시트 필수 형식]\n"
+    "· 1행 헤더: DUT, XCoord, YCoord, Bin + 측정 항목 1개 이상\n"
+    "· 2행 Units / 3행 Lower Limit / 4행 Upper Limit\n"
+    "· 7행부터: die 별 측정 데이터 (최소 1행)\n"
+    "· 측정 항목 컬럼 이름은 중복될 수 없습니다")
+
+
+def _kor_issue(issue: str) -> str:
+    """validate_honeyform_df 영문 이슈 1건 → 한국어 설명 (어디가 안 맞는지)."""
+    def _after(sep):
+        return issue.split(sep, 1)[1].strip() if sep in issue else ""
+
+    if issue.startswith("first 7 columns must be"):
+        return f"앞 7개 컬럼이 규격과 다릅니다 → 실제: {_after('got')}"
+    if issue.startswith("metadata row labels must be"):
+        return f"메타 행 레이블(A열)이 규격과 다릅니다 → 실제: {_after('got')}"
+    if issue.startswith("duplicate item columns"):
+        return f"측정 항목 컬럼 이름이 중복됩니다: {_after(':')}"
+    if "item column are required" in issue:
+        return "컬럼 부족: 앞 7개 메타 컬럼과 측정 항목 1개 이상이 필요합니다"
+    if "metadata rows are required" in issue:
+        return "메타데이터 행(TSEQ/TNO/STEP/UNIT/HILIM/LOLIM 6행)이 부족합니다"
+    if "data row is required" in issue:
+        return "측정 데이터가 최소 1행 필요합니다"
+    return issue    # 알 수 없는 이슈는 원문 노출
+
+
+def _honeyform_error(issues, *, converted: bool) -> ValueError:
+    """honeyform 검증 이슈 목록 → 형식 설명 + 불일치 위치를 담은 ValueError."""
+    lead = ("Raw Data → honeyform 변환 검증에 실패했습니다."
+            if converted else "honeyform(Raw Data) 형식에 맞지 않습니다.")
+    help_text = _FORMAT_HELP_RAWDATA if converted else _FORMAT_HELP_HONEYFORM
+    where = "\n".join(f"· {_kor_issue(i)}" for i in issues)
+    return ValueError(f"{lead}\n\n{help_text}\n\n[맞지 않는 부분]\n{where}")
+
+
 def _sheet_to_honeyform(grid) -> pd.DataFrame:
     """Raw Data 시트 grid → 7-meta honeyform DataFrame (encode 가 재검증)."""
     hdr = [_s(c) for c in grid[0]]
@@ -157,7 +202,7 @@ def _sheet_to_honeyform(grid) -> pd.DataFrame:
         df = pd.DataFrame(grid[1:], columns=hdr)
         issues = validate_honeyform_df(df)
         if issues:
-            raise ValueError("honeyform 형식 오류: " + "; ".join(issues))
+            raise _honeyform_error(issues, converted=False)
         return df
 
     # 5-meta df_honey 매핑. 메타 컬럼은 이름으로 위치를 찾는다(순서 견고성).
@@ -210,7 +255,7 @@ def _sheet_to_honeyform(grid) -> pd.DataFrame:
     df = pd.DataFrame(meta_rows + data_rows, columns=list(META_COLUMNS) + items)
     issues = validate_honeyform_df(df)
     if issues:
-        raise ValueError("honeyform 변환 검증 실패: " + "; ".join(issues))
+        raise _honeyform_error(issues, converted=True)
     return df
 
 
