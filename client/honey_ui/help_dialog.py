@@ -6,7 +6,12 @@ Web Report / Excel(xlsx) Report 두 갈래로 나눠 전체 사용법을 설명�
 
 honey_main 은 show_help(parent) 진입점만 호출한다 (세부 구현은 이 파일에 격리).
 """
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextBrowser
+from PyQt6.QtCore import QUrl
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QTextBrowser, QPushButton
+
+# VOC 버튼이 여는 Confluence 페이지.
+_VOC_URL = "https://confluence.samsungds.net/pages/editpage.action?pageId=3473285336"
 
 
 # 도움말 본문 (HTML). 앵커는 <a name="..."> 로 두고 목차에서 href="#..." 로 점프.
@@ -126,6 +131,19 @@ class HelpDialog(QDialog):
         self._browser.setHtml(_HELP_HTML)
         self._browser.anchorClicked.connect(self._on_anchor)
         layout.addWidget(self._browser)
+
+        # 하단 버튼 줄: VOC(Confluence 페이지를 기본 브라우저로 연다)
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(8, 6, 8, 8)
+        btn_row.addStretch(1)
+        voc_btn = QPushButton("VOC", self)
+        voc_btn.setToolTip("VOC Confluence 페이지 열기")
+        voc_btn.clicked.connect(self._open_voc)
+        btn_row.addWidget(voc_btn)
+        layout.addLayout(btn_row)
+
+    def _open_voc(self):
+        QDesktopServices.openUrl(QUrl(_VOC_URL))
 
     def _on_anchor(self, url):
         frag = url.fragment()

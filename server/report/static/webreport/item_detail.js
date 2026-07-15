@@ -136,7 +136,7 @@ function renderItemDetail(data) {
         <span class="idet-badge idet-${esc(data.status || "ok")}">${esc(statusLabel)}</span>
         ${idetFailBinsHtml(data)}
         <span class="idet-cpk">cpk ${esc(data.cpk == null ? "-" : data.cpk)}</span>
-        <span class="idet-lim">(${esc(distFmtLimit(data.lower_limit))} ~ ${esc(distFmtLimit(data.upper_limit))}${data.units ? " " + distUnitBr(data.units) : ""})</span>
+        <span class="idet-lim">(${distLimInnerHtml(data.lower_limit, data.upper_limit, data.units)})</span>
         ${idetHeaderStats(data.stats)}
       </span>
     </div>

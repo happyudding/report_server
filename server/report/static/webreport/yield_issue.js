@@ -13,10 +13,23 @@ function yieldColumnsFrom(allRows) {
 }
 
 // 한 STEP 표를 렌더. si = 섹션 인덱스 — 그룹 토글 data-grp 를 표들 사이에서 유일하게 만든다.
-// maxFailAvg = 그 STEP 내 fail bin 대표행 avg 최댓값(게이지 100% 기준, STEP 별 정규화).
-function renderYieldTable(cols, groups, maxFailAvg, si) {
+function renderYieldTable(cols, groups, si) {
   const colgroup = "<colgroup>" + cols.map(c => `<col style="width:${colWidth(c)}">`).join("") + "</colgroup>";
   const head = buildSheetTableHead(cols);
+
+  // 각 source _yield 컬럼 + avg 컬럼별로 빨강 그라데이션(값 클수록 진함) 정규화 기준 =
+  // 그 컬럼 내 최댓값. 표에 실린 모든 행(대표 + detail)을 기준으로 컬럼별 max 를 구한다.
+  const gradCols = cols.filter(c => /_yield$/i.test(String(c)) || String(c).trim().toLowerCase() === "avg");
+  const gradSet = new Set(gradCols);
+  const colMax = {};
+  gradCols.forEach(c => { colMax[c] = 0; });
+  (groups || []).forEach(g => {
+    const rows = [g.rep].concat((g.rows || []).slice(1));
+    rows.forEach(r => gradCols.forEach(c => {
+      const n = parseFloat(r ? r[c] : "");
+      if (!isNaN(n) && n > colMax[c]) colMax[c] = n;
+    }));
+  });
 
   const cellTds = (r, toggleHtml) => cols.map(c => {
     const v = r ? r[c] : "";
@@ -24,22 +37,25 @@ function renderYieldTable(cols, groups, maxFailAvg, si) {
     const isEmpty = txt === "";
     const cLower = String(c).trim().toLowerCase();
     const cls = [];
+    let cellStyle = "";
     if (isEmpty) cls.push("st-empty"); else if (isNumVal(v)) cls.push("st-num");
     let inner = isEmpty ? "" : esc(txt);
     // Item 셀 → Item_detail 링크 (STEP 표는 전부 fail 행이라 Pass 예외 없음)
     if (cLower === "item" && !isEmpty) {
       inner = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;
     }
-    // avg(수율) 셀: STEP 내 최대 fail 비중 기준 상대 게이지.
-    if (cLower === "avg" && !isEmpty) {
-      const val = parseFloat(v) || 0;
-      const pct = maxFailAvg > 0 ? Math.max(0, Math.min(100, val / maxFailAvg * 100)) : 0;
-      inner = `<span class="yield-avg-cell"><span class="yield-avg-val">${esc(txt)}</span>` +
-        `<span class="yield-gauge"><span class="yield-gauge-fill" style="width:${pct}%"></span></span></span>`;
+    // source _yield / avg 셀: 각 컬럼 내 최댓값 대비 빨강 그라데이션(불량률 높을수록 진함).
+    if (!isEmpty && gradSet.has(c)) {
+      const num = parseFloat(v);
+      if (!isNaN(num) && num > 0 && colMax[c] > 0) {
+        const ratio = Math.min(1, num / colMax[c]);
+        cls.push("yield-grad");
+        cellStyle = ` style="--yw:${ratio.toFixed(3)}"`;
+      }
     }
     // 접기/펼치기 토글은 STEP 셀 오른쪽에 배치(우측 정렬).
     if (toggleHtml && cLower === "step") inner = inner + toggleHtml;
-    return `<td${cls.length ? ` class="${cls.join(" ")}"` : ""}>${inner}</td>`;
+    return `<td${cls.length ? ` class="${cls.join(" ")}"` : ""}${cellStyle}>${inner}</td>`;
   }).join("");
 
   let body = "";
@@ -63,12 +79,10 @@ function renderYieldStepSections(stepGroups, allRows) {
   if (!cols.length || !Array.isArray(stepGroups) || !stepGroups.length) return "";
   return stepGroups.map((sg, si) => {
     const groups = sg.groups || [];
-    const maxFailAvg = Math.max(0, ...groups
-      .map(g => parseFloat(g && g.rep && g.rep.avg)).filter(v => !isNaN(v)));
     const label = String(sg.step || "").trim() || "(기타)";
     return `<div class="yield-step-section">` +
       `<div class="yield-step-title">STEP ${esc(label)}</div>` +
-      renderYieldTable(cols, groups, maxFailAvg, si) + `</div>`;
+      renderYieldTable(cols, groups, si) + `</div>`;
   }).join("");
 }
 

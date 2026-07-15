@@ -613,16 +613,16 @@ function drawTrimChart(div, chart, payload) {
   }
 
   const layout = { ...DIST_PLOT_BG,
-    // legend 를 차트 위(가로)에서 카드 오른쪽(세로)으로 뺀다 — 플롯을 가리지 않는다.
-    // autoexpand(기본 on)가 오른쪽 여백을 legend 폭만큼 확보한다(CODE y2 축 바깥).
-    legend: { orientation: "v", x: 1.02, xanchor: "left", y: 1, yanchor: "top",
+    // legend 를 산포 위쪽(가로)으로 올린다 — 플롯을 가리지 않고 상단에 나란히.
+    // autoexpand(기본 on)가 legend 높이만큼 상단 여백을 확보한다.
+    legend: { orientation: "h", x: 0.5, xanchor: "center", y: 1.0, yanchor: "bottom",
       font: { size: 9 }, itemsizing: "constant" },
     xaxis: { title: { text: `chip (${chart.order_by} 오름차순)`, font: { size: 11 } },
       showgrid: true, gridcolor: "#eee", zeroline: false, tickfont: { size: 10 } },
     yaxis: { title: { text: mainSpec.units || "", font: { size: 11 } },
       showgrid: true, gridcolor: "#eee", zeroline: false, tickfont: { size: 10 } },
     shapes, annotations,
-    margin: { l: 54, r: 54, t: 24, b: 38 },
+    margin: { l: 54, r: 54, t: 46, b: 38 },
     showlegend: true };
   // 메인 y축: USL/LSL ±15% 창(spec 기준)으로 TRIM/VERIFY 를 보이게 한다.
   // limit 이 없으면 기존 동작(TRIM 평균 중심)으로 폴백.

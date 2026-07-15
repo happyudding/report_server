@@ -312,16 +312,12 @@ function issueSectionHeadRowsHtml(cols, sec) {
   ).join("");
   const botRow = runs.filter(r => r.group).map(r => {
     const runCols = cols.slice(r.start, r.start + r.len);
-    const srcCols = runCols.filter(c => !isAvgCol(c));
-    const abbr = abbrevSourceLabels(srcCols.map(sheetHeaderShortLabel));
-    const abbrByCol = {};
-    srcCols.forEach((c, i) => { abbrByCol[c] = abbr[i]; });
     return runCols.map((c, k) => {
       const idx = r.start + k;
       if (isAvgCol(c)) return `<th>${esc(lab.avg)}${resizeHandle(idx)}</th>`;
-      const a = abbrByCol[c];
-      const titleAttr = a.short !== a.full ? ` title="${esc(a.full)}"` : "";
-      return `<th class="sheet-src-th"${titleAttr}>${esc(a.short)}${resizeHandle(idx)}</th>`;
+      // Issue Table 은 source 이름을 생략하지 않고 full 로 표시(사용자 요청).
+      const full = sheetHeaderShortLabel(c);
+      return `<th class="sheet-src-th" title="${esc(full)}">${esc(full)}${resizeHandle(idx)}</th>`;
     }).join("");
   }).join("");
   return `<tr class="issue-shead-top" data-sec="${esc(sec)}">${topRow}</tr><tr class="issue-shead-bot">${botRow}</tr>`;
@@ -371,9 +367,9 @@ function renderSheetTable(rows, opts) {
   const issueMultiSource = opts.kind === "issue"
     && cols.filter(c => /_yield$/i.test(String(c))).length > 1;
 
-  // Yield/ETC fail yield 셀 빨강 그라데이션의 기준값 = 표 내 최대 fail yield(>0).
-  // 값이 클수록 진한 빨강(--yw 1 에 가까움). Pass(Bin1) 행·CPK 섹션은 제외.
-  let issueYieldMax = 0;
+  // Yield/ETC fail yield 셀 빨강 그라데이션의 기준값 = 각 source 컬럼 내 최대 fail yield(>0).
+  // 값이 클수록 진한 빨강(--yw 1 에 가까움). 컬럼별로 나눠 정규화한다. Pass(Bin1) 행·CPK 섹션 제외.
+  const issueYieldColMax = {};
   if (issueMultiSource) {
     bodyRows.forEach((r, ri) => {
       if (isCpkSubheadRow(r)) return;
@@ -383,7 +379,7 @@ function renderSheetTable(rows, opts) {
       cols.forEach(c => {
         if (!/_yield$/i.test(String(c))) return;
         const n = parseFloat(r ? r[c] : "");
-        if (!isNaN(n) && n > issueYieldMax) issueYieldMax = n;
+        if (!isNaN(n) && n > (issueYieldColMax[c] || 0)) issueYieldColMax[c] = n;
       });
     });
   }
@@ -457,7 +453,8 @@ function renderSheetTable(rows, opts) {
         if (!isNaN(num)) {
           if (issueRowSec === "CPK") { if (num <= CPK_WARN_THRESHOLD) clsParts.push("issue-cell-warn"); }
           else if (num > 0) {
-            const ratio = issueYieldMax > 0 ? Math.min(1, num / issueYieldMax) : 0;
+            const cmax = issueYieldColMax[c] || 0;
+            const ratio = cmax > 0 ? Math.min(1, num / cmax) : 0;
             clsParts.push("issue-yield-warn");
             cellStyle = ` style="--yw:${ratio.toFixed(3)}"`;
           }

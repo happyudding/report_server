@@ -312,6 +312,14 @@ function distUseExtLegend(data) { return ((data && data.sources) || []).length >
 function distFmtLimit(v) { return (v === null || v === undefined) ? "?" : String(v); }
 // 단위를 대괄호로 감싼다 (예: uA → [uA]). 빈 단위는 "" 반환.
 function distUnitBr(u) { u = (u === null || u === undefined) ? "" : String(u).trim(); return u ? "[" + esc(u) + "]" : ""; }
+// CDF 카드/항목 상세 헤더의 "lo ~ hi [unit]" inner HTML — Limit(lo~hi)은 진한 파랑,
+// 단위 문자(대괄호 안 V 등)는 진한 초록으로 강조한다(대괄호는 기본색). (사용자 요청)
+function distLimInnerHtml(lo, hi, units) {
+  const u = (units === null || units === undefined) ? "" : String(units).trim();
+  const range = `<span class="dist-lim-range">${esc(distFmtLimit(lo))} ~ ${esc(distFmtLimit(hi))}</span>`;
+  const unit = u ? ` [<span class="dist-lim-unit">${esc(u)}</span>]` : "";
+  return range + unit;
+}
 
 // Issue Table Bin 상세의 단일 분포 셀 — 산포탭 갤러리 카드와 동일한 포맷(표시용 다운샘플 static
 // CDF + LSL/USL 점선 + status 배경). distDataCache 재사용(전체점은 데이터에 그대로 유지).
@@ -599,7 +607,7 @@ function distRenderGallery() {
     : distApplySegment(distIndex);
   const cards = distFiltered.map(r => {
     const cpk = r.cpk == null ? "-" : r.cpk;
-    const lim = `${distFmtLimit(r.lower_limit)} ~ ${distFmtLimit(r.upper_limit)}${r.units ? " " + distUnitBr(r.units) : ""}`;
+    const lim = distLimInnerHtml(r.lower_limit, r.upper_limit, r.units);
     // Comment(차트 하단 코멘트)가 있으면 카드에 노트 아이콘 배지. cnSavedFor 는 chart_notes.js(런타임 로드).
     const hasComment = typeof cnSavedFor === "function" && !!(cnSavedFor("cdf:" + r.subject) || {}).comment;
     const noteBadge = hasComment ? `<span class="distg-note" title="Comment 있음">📝</span>` : "";
@@ -611,7 +619,7 @@ function distRenderGallery() {
           ${noteBadge}
         </div>
         <div class="distg-line2">
-          <span class="distg-lim">${esc(lim)}</span>
+          <span class="distg-lim">${lim}</span>
           <span class="distg-cpk">cpk ${esc(cpk)}</span>
         </div>
       </div>

@@ -249,12 +249,8 @@ body {
 .ybs-table .ybs-src { color: #1f4d8c; font-weight: 700; text-align: left; }
 .ybs-table .ybs-pct { color: #222; font-weight: 800; }
 .ybs-table .ybs-cnt { color: #888; }
-/* Yield 표 avg 셀: 값 + 100% 대비 가로 게이지 막대 */
-.yield-avg-cell { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; }
-.yield-avg-val { text-align: right; }
-.yield-gauge { display: inline-block; width: 56px; height: 8px; background: #edf0f4;
-  border-radius: 4px; overflow: hidden; flex: none; }
-.yield-gauge-fill { display: block; height: 100%; background: #2a78d6; border-radius: 4px; }
+/* Yield 표 source _yield / avg 셀: 각 컬럼 내 최댓값 대비 빨강 그라데이션(불량률 높을수록 진함). */
+.sheet-table.kind-yield td.yield-grad { background: hsl(0, 78%, calc(94% - var(--yw, 0) * 36%)) !important; }
 
 /* ── Yield: STEP(P1/P2/P3) 별 표 섹션 ─────────────────────────────────────── */
 .yield-step-section { margin-top: 18px; }
@@ -315,12 +311,19 @@ tbody tr:hover { background: #f9fbff; }
   background: #e8eef4 !important; font-weight: 700; color: #1a3a5c;
 }
 .sheet-table td.cpk-warn { background: #fff3bf !important; font-weight: 700; color: #5c4400; }
-/* Issue Table: BIN·ITEM 식별 셀 + Yield(avg / {src}_yield)·CPK 값 셀 폰트를 base(11px) 대비 +4px 키움(값 가독성). */
+/* Issue Table: Step/Bin/TNO/Item 식별 셀 + Yield(avg / {src}_yield)·CPK 값 셀 폰트를 base(11px)
+   대비 키움(값 가독성). 사용자 요청으로 기존보다 +2px 더 확대(15px → 17px). */
+.sheet-table.kind-issue td[data-col="step" i],
 .sheet-table.kind-issue td[data-col="bin" i],
+.sheet-table.kind-issue td[data-col="tno" i],
 .sheet-table.kind-issue td[data-col="item" i],
 .sheet-table.kind-issue td[data-col="avg" i],
-.sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 15px; }
-/* Issue Table: Yield(avg/{src}_yield)·CPK 숫자 셀 가운데 정렬 (사용자 요청 — st-num 좌측정렬 덮어씀). */
+.sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 17px; }
+/* Issue Table: Yield 식별/값 글자 셀 가운데 정렬 (사용자 요청 — st-num 좌측정렬 덮어씀). */
+.sheet-table.kind-issue td[data-col="step" i],
+.sheet-table.kind-issue td[data-col="bin" i],
+.sheet-table.kind-issue td[data-col="tno" i],
+.sheet-table.kind-issue td[data-col="item" i],
 .sheet-table.kind-issue td[data-col="avg" i],
 .sheet-table.kind-issue td[data-col$="_yield" i] { text-align: center; }
 
@@ -567,6 +570,9 @@ tbody tr:hover { background: #f9fbff; }
 .distg-note { flex: 0 0 auto; font-size: 12px; line-height: 1; }   /* Comment 있는 카드 노트 아이콘 */
 .distg-cpk { color: #555; font-size: 11.5px; white-space: nowrap; }
 .distg-lim { color: #6b7280; font-size: 12px; font-weight: 700; white-space: nowrap; margin-right: 6px; }
+/* CDF 카드/항목 상세 헤더: Limit(lo~hi) 진한 파랑, 단위 문자 진한 초록 강조 (사용자 요청). */
+.dist-lim-range { color: #1d4ed8; }
+.dist-lim-unit { color: #15803d; }
 .distg-plot { flex: 1; min-height: 0; }
 .dist-detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap;
   position: sticky; top: var(--sticky-head-h, 96px); z-index: 90; background: #fff; padding: 6px 0; }
@@ -1295,7 +1301,7 @@ html[data-theme="dark"] .ybs-table td { border-bottom-color: #2a2e37; }
 html[data-theme="dark"] .ybs-table .ybs-src { color: #7fb3ef; }
 html[data-theme="dark"] .ybs-table .ybs-pct { color: #d7dbe2; }
 html[data-theme="dark"] .ybs-table .ybs-cnt { color: #8b94a3; }
-html[data-theme="dark"] .yield-gauge { background: #2a2e37; }
+html[data-theme="dark"] .sheet-table.kind-yield td.yield-grad { background: hsl(0, 55%, calc(20% + var(--yw, 0) * 22%)) !important; }
 html[data-theme="dark"] .mfb-table th,
 html[data-theme="dark"] .mfb-table td { border-color: #3a4150; }
 html[data-theme="dark"] .mfb-table thead th { background: #1c2330; color: #9aa3b0; }
@@ -1489,6 +1495,8 @@ html[data-theme="dark"] .idet-title { color: #d7dbe2; }
 html[data-theme="dark"] .idet-tno { color: #8b94a3; }
 html[data-theme="dark"] .idet-cpk { color: #9aa3b0; }
 html[data-theme="dark"] .idet-lim { color: #d7dbe2; }
+html[data-theme="dark"] .dist-lim-range { color: #60a5fa; }
+html[data-theme="dark"] .dist-lim-unit { color: #4ade80; }
 html[data-theme="dark"] .idet-stat { color: #aab3c0; }
 html[data-theme="dark"] .idet-stat b { color: #d7dbe2; }
 html[data-theme="dark"] .idet-stat-src { color: #8b94a3; }
