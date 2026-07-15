@@ -174,5 +174,11 @@ if __name__ == "__main__":
         from waitress import serve
 
         threads = int(os.getenv("WAITRESS_THREADS", "8"))
-        _log(f"starting waitress on http://{host}:{port} (threads={threads})")
-        serve(app, host=host, port=port, threads=threads)
+        # waitress 기본 max_request_body_size 는 1GB — Flask MAX_CONTENT_LENGTH(기본 2048MB)
+        # 보다 작아 대용량 업로드(parquet+dist blob 첨부)가 Flask 에 닿기 전에 413 으로
+        # 끊긴다. 같은 env(MAX_CONTENT_LENGTH_MB) 하나로 양쪽 상한을 정합시킨다.
+        body_limit = app.config["MAX_CONTENT_LENGTH"]
+        _log(f"starting waitress on http://{host}:{port} "
+             f"(threads={threads}, max_body={body_limit // (1024 * 1024)}MB)")
+        serve(app, host=host, port=port, threads=threads,
+              max_request_body_size=body_limit)

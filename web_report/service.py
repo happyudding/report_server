@@ -201,7 +201,7 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
                 str(analysis_key), bin1, len(compact.get("items") or {}),
                 _dist_blob.count_points(compact), len(raw) / 1048576,
                 len(blob) / 1048576, time.perf_counter() - t0)
-        cache.cache_put(cache.DIST_CACHE, cache_key, blob, cache.DIST_CACHE_MAX)
+        cache.dist_cache_put(cache_key, blob)   # 개수+바이트 이중 상한 (cache.py)
     return blob
 
 

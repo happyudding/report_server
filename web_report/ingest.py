@@ -54,7 +54,7 @@ def _seed_client_dist_blobs(dist_blobs, analysis_key, content_hash, mode,
             continue
         key = cache_policy.dist_key(pseudo_session, bin1=bin1)
         disk_cache.save_dist(Path(upload_root), key, blob)
-        cache.cache_put(cache.DIST_CACHE, key, blob, cache.DIST_CACHE_MAX)
+        cache.dist_cache_put(key, blob)   # 개수+바이트 이중 상한 (cache.py)
         seeded.append(variant)
         _log.info("client dist blob(%s) seeded akey=%.12s gz=%.1fMB raw=%.1fMB",
                   variant, str(analysis_key), len(blob) / 1048576, raw_size / 1048576)

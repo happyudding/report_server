@@ -79,6 +79,24 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_DB_BACKUP_ENABLED` / `_INTERVAL_HOURS` / `_KEEP` / `_DIR` | `1` / `24` / `7` / `<db>/backup` | 온라인 백업 사이클 |
 | `REPORT_ADMIN_SECRET` | `pte` | admin 경로 조각 → `/pe/admin-<secret>/` (기본 `/pe/admin-pte/`) |
 
+### 운영 배포 체크리스트 (8cpu / 32GB / 2TB, 동시 ~5명 기준 — 2026-07-15)
+
+배포·재기동 시 이 순서로 env 를 확인한다. 기본값이 적절한 항목은 "기본 유지"로 표기.
+
+| 확인 항목 | 권장 | 이유 |
+|-----------|------|------|
+| `HOST` | `0.0.0.0` 명시 | 기본 127.0.0.1 은 LAN 접근 불가 |
+| `WAITRESS_THREADS` | 기본(8) 유지 | 8cpu 와 일치. waitress 본문 상한은 `MAX_CONTENT_LENGTH_MB` 와 자동 정합(wsgi.py) |
+| `MAX_CONTENT_LENGTH_MB` | 기본(2048) 유지 | 업로드 본문 상한(parquet + dist blob 첨부 합산). waitress/Flask 공용 |
+| `WEB_REPORT_COMPUTE_WORKERS` | 기본(2) 유지 | 콜드 빌드 워커. 5명 규모 충분 — 워커당 tables 캐시 최대 4GB RAM 감안 |
+| `WEB_REPORT_TABLES_CACHE_MB` / `WEB_REPORT_DIST_CACHE_MB` | 기본(4096 / 1024) 유지 | 부모 프로세스 RAM 상한. 32GB 박스에서 부모+워커2 합산 여유 확보 |
+| `REPORT_CLEANUP_DRYRUN` | 실삭제 원하면 `0` 명시 | **기본 1 = orphan 회수도 로그만** 남김 |
+| `REPORT_TIER_ENABLED`/`REPORT_TIER_DRYRUN` | S3 확정 환경에서 dryrun 해제 검토 | 티어링이 로컬 hot 캐시를 S3 로 내려 2TB 디스크를 지킴 (S3 미설정 시 no-op) |
+| `REPORT_DB_BACKUP_DIR` | **다른 물리 디스크/네트워크 경로 지정 권장** | 기본은 DB 옆 폴더 — 디스크 사망 시 원본과 백업이 함께 유실 |
+| `WEB_REPORT_DIST_GZIP_LEVEL` | 실데이터 실측 후 `6` 검토 | 서버 dist blob 전송량 절감 (클라 프리컴퓨트 blob 은 이미 level 6) |
+| 장기 무중단 실행 | 주기 재시작 or `server/log/` 크기 확인 | 콘솔 로그가 기동당 1파일로 계속 성장(회전 없음 — 볼륨은 작음) |
+| 콜드 빌드 관측 로그 | `dist cold build`/`report cold build` INFO 라인 주시 | 포인트 수가 수천만 급이면 docs 진단의 보류 항목(항목 청크 분할 등) 재검토 |
+
 ---
 
 ## API 엔드포인트

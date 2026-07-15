@@ -33,7 +33,12 @@ CACHE_LOCK = threading.Lock()               # 모든 캐시가 이 락을 공유
 
 # 파생 결과 캐시 — 동시 사용자 대비 핵심. CPU-bound 재계산(distribution compact 수 초,
 # /full payload ~2s)이 GIL 을 잡고 다른 요청까지 밀리게 하므로, 세션당 첫 1회만 계산한다.
+# dist blob 은 worst case(전 값 고유 10k행×1500항목×7소스) 실측 ~505MB/개라 개수 상한만으론
+# RAM 이 GB 급으로 부풀 수 있어 바이트 상한을 이중 적용한다(tables 와 동일 패턴).
+# 축출돼도 디스크 캐시 재읽기(수십 ms)로 복구되므로 공격적으로 잘라도 무해하다.
 DIST_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_DIST_CACHE", "4") or 4))
+DIST_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_DIST_CACHE_MB", "1024")
+                                  or 1024)) * 1024 * 1024   # 0 = 바이트 상한 비활성
 DIST_CACHE: OrderedDict = OrderedDict()     # (analysis_key, content_hash) -> gzip bytes
 REPORT_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_REPORT_CACHE", "8") or 8))
 REPORT_CACHE: OrderedDict = OrderedDict()   # (akey, chash, manifest_digest, incl_dist) -> report dict
@@ -134,6 +139,21 @@ def _prune_tables_sizes_locked() -> None:
     """TABLES_CACHE 에서 빠진 키의 크기 기록 제거 (CACHE_LOCK 보유 상태에서 호출)."""
     for key in [k for k in _TABLES_SIZES if k not in TABLES_CACHE]:
         _TABLES_SIZES.pop(key, None)
+
+
+def dist_cache_put(key, blob: bytes) -> None:
+    """DIST_CACHE 전용 put — 개수 + 바이트(len 합산) 이중 상한으로 축출한다.
+
+    최소 1개는 남긴다 (방금 넣은 blob 은 곧바로 조회되므로). 값이 bytes 라 크기
+    측정이 len() 으로 끝난다 — tables 처럼 별도 크기 기록이 필요 없다."""
+    with CACHE_LOCK:
+        DIST_CACHE[key] = blob
+        DIST_CACHE.move_to_end(key)
+        while len(DIST_CACHE) > 1 and (
+                len(DIST_CACHE) > DIST_CACHE_MAX
+                or (DIST_CACHE_MAX_BYTES
+                    and sum(len(v) for v in DIST_CACHE.values()) > DIST_CACHE_MAX_BYTES)):
+            DIST_CACHE.popitem(last=False)
 
 
 def keyed_lock(key) -> threading.Lock:

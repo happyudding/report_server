@@ -71,6 +71,7 @@
 | `WEB_REPORT_TABLES_CACHE` | `4` | decoded tables 캐시 개수 상한 |
 | `WEB_REPORT_TABLES_CACHE_MB` | `4096` | tables 캐시 추정 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_DIST_CACHE` | `4` | Distribution gzip 캐시 개수 |
+| `WEB_REPORT_DIST_CACHE_MB` | `1024` | dist blob RAM 바이트 상한 (개수와 이중 적용, 0=비활성 — worst case blob ~505MB 실측) |
 | `WEB_REPORT_REPORT_CACHE` | `8` | report dict 캐시 개수 |
 | `WEB_REPORT_COMMONALITY_CACHE` | `2` | Commonality 인덱스 캐시 개수 |
 | `WEB_REPORT_TRIM_CACHE` | `4` | Trim payload 캐시 개수 |
