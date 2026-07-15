@@ -118,7 +118,10 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
   (`renderMiniDistCell`) 3곳 모두 점만 찍고 어떤 연결선도 긋지 않는다(계단형
   `line.shape:"hv"` 포함 금지 — x축 수평선은 UX 에 반함). 고유값이 적은 이산(code) 항목의
   성김은 동일값 구간을 세로 점으로 채우는 보간(`distPointsForDisplay` = `distFillVertical`
-  → `distDownsampleForDisplay` 순서)으로만 보정한다. 상세 CDF(`distRenderCdf`)는 원본 전
+  → `distDownsampleForDisplay` 순서)으로만 보정한다. 채움 간격(stepY)은 고정값이 아니라
+  소스별 "단일 점 1개의 ECDF 증가량"(최소 양의 Δy, `distStepY`)으로 유도한다 — 값이 전부
+  다른 진짜 희소 데이터는 모든 Δy 가 이 값과 같아 채움 0(업샘플링 금지)이고, 동일값이 축약된
+  riser(Δy≫stepY)만 개수에 비례해 채운다. 상세 CDF(`distRenderCdf`)는 원본 전
   측정값을 값당 1점으로 그려 이미 세로 점기둥이 되므로 대상 외.
 - **tabs/ 통계·honeyform 변환 로직을 고칠 때 검증 기준은 "같은 세션 payload 의 정준 JSON
   완전 일치"** — 벡터화·리팩토링은 값을 바꾸지 않는다(정수 컬럼 int64 dtype 보존 포함).

@@ -362,15 +362,16 @@ function renderSheetTable(rows, opts) {
     }
   }
 
-  // Issue Table 다중 source(=_yield 소스 컬럼 2개 이상)일 때만 문제 셀 강조:
-  // CPK 섹션 소스 셀은 cpk < 1.33, Yield/ETC 섹션 소스 셀은 값이 0 이 아닌 셀을 연빨강으로.
+  // Issue Table CPK 섹션 연빨강 강조(cpk < 1.33)는 다중 source(=_yield 소스 컬럼 2개 이상)일
+  // 때만(단일 소스는 cpk 값이 avg 와 동일해 중복). Yield/ETC 섹션 빨강 그라데이션은 소스 수와
+  // 무관하게 Yield 탭과 동일하게 적용한다(아래 issueYieldColMax).
   const issueMultiSource = opts.kind === "issue"
     && cols.filter(c => /_yield$/i.test(String(c))).length > 1;
 
   // Yield/ETC fail yield 셀 빨강 그라데이션의 기준값 = 각 source 컬럼 내 최대 fail yield(>0).
   // 값이 클수록 진한 빨강(--yw 1 에 가까움). 컬럼별로 나눠 정규화한다. Pass(Bin1) 행·CPK 섹션 제외.
   const issueYieldColMax = {};
-  if (issueMultiSource) {
+  if (opts.kind === "issue") {
     bodyRows.forEach((r, ri) => {
       if (isCpkSubheadRow(r)) return;
       const sec = rowSection[ri];
@@ -446,12 +447,13 @@ function renderSheetTable(rows, opts) {
       if (isEmpty) clsParts.push("st-empty");
       else if (isNum) clsParts.push("st-num");
       if (subhead) clsParts.push("sheet-subhead");
-      // 다중 source 문제 셀 강조(소스별 _yield 컬럼 한정). CPK 섹션은 임계 미만 연빨강(고정),
-      // Yield/ETC 섹션은 값이 클수록 진한 빨강 그라데이션(표 내 최대 fail yield 기준). Pass 행 제외.
-      if (issueMultiSource && !subhead && !issuePassRow && !isEmpty && /_yield$/i.test(String(c))) {
+      // 문제 셀 강조(소스별 _yield 컬럼 한정). Yield/ETC 섹션은 값이 클수록 진한 빨강
+      // 그라데이션(표 내 최대 fail yield 기준, Yield 탭과 동일 — 소스 1개여도 적용). CPK 섹션은
+      // 임계 미만 연빨강이되 다중 소스일 때만(단일 소스는 cpk 가 avg 와 동일해 중복). Pass 행 제외.
+      if (opts.kind === "issue" && !subhead && !issuePassRow && !isEmpty && /_yield$/i.test(String(c))) {
         const num = parseFloat(v);
         if (!isNaN(num)) {
-          if (issueRowSec === "CPK") { if (num <= CPK_WARN_THRESHOLD) clsParts.push("issue-cell-warn"); }
+          if (issueRowSec === "CPK") { if (issueMultiSource && num <= CPK_WARN_THRESHOLD) clsParts.push("issue-cell-warn"); }
           else if (num > 0) {
             const cmax = issueYieldColMax[c] || 0;
             const ratio = cmax > 0 ? Math.min(1, num / cmax) : 0;

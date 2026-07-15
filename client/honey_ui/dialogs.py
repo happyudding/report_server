@@ -94,7 +94,6 @@ class UploadDialog(QDialog):
         self.formLayout.insertRow(0, "Family*:", self.cbo_family)
         self.le_product.setText(defaults.get("product", ""))
         self.le_lot_id.setText(defaults.get("lot_id", ""))
-        self.le_revision.setText(defaults.get("revision", ""))
         self.le_process.setText(defaults.get("process", ""))
 
     def _fetch_part_ids_bg(self):
@@ -149,7 +148,7 @@ class UploadDialog(QDialog):
             "family_product": self.cbo_family.currentText(),
             "product": self.le_product.text().strip(),
             "lot_id": self.le_lot_id.text().strip(),
-            "revision": self.le_revision.text().strip(),
+            "revision": "",
             "process": self.le_process.text().strip(),
             "password": self.le_password.text().strip(),
         }

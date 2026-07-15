@@ -86,8 +86,8 @@ def _cpk_fail_subjects(cpk_rows):
     """subject 별 모든 source 행 중 최저(worst-case) cpk 를 기준으로 임계값 미만 항목만 반환."""
     worst = worst_cpk_by_subject(cpk_rows)
     fails = [(subject, cpk) for subject, cpk in worst.items() if cpk < CPK_THRESHOLD]
-    # 표의 avg 컬럼(=worst-case cpk) 내림차순으로 정렬(높은 순 위 → 아래).
-    fails.sort(key=lambda sc: sc[1], reverse=True)
+    # 표의 avg 컬럼(=worst-case cpk) 오름차순으로 정렬(낮은 순 위 → 아래).
+    fails.sort(key=lambda sc: sc[1])
     return fails
 
 

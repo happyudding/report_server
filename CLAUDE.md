@@ -216,7 +216,10 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
      왜곡하고 사용자 경험에 반한다. 이산(code unit)값처럼 고유값이 적어 점이 성겨 보이는
      문제는, 동일값 구간(ECDF riser)을 y축 방향 세로 점기둥으로 채우는 보간
      (`distFillVertical`)으로만 해결하고 선으로 잇지 않는다. 보간은 표시용 다운샘플보다
-     **먼저** 적용한다(`distPointsForDisplay` = 세로 채움 → 다운샘플).
+     **먼저** 적용한다(`distPointsForDisplay` = 세로 채움 → 다운샘플). 채움 간격은 고정값이
+     아니라 소스별 "단일 점 1개의 증가량"(최소 양의 Δy, `distStepY`)으로 유도한다 — 값이
+     전부 다른 진짜 희소 데이터는 채움 없이 있는 그대로 두고(업샘플링 금지), 동일값이
+     축약된 riser 만 개수에 비례해 채운다.
 6. **web_report 편집 상태는 세션 편집 DB 가 진실.** manifest 는 업로드 시점 불변 스냅샷이므로
    편집으로 재저장하지 않는다. 캐시 키는 항상 [cache_policy.py](web_report/cache_policy.py)
    빌더로 만든다(즉석 조립 금지 — [docs/12](docs/12_web_report_cache.md)).

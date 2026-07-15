@@ -41,9 +41,12 @@ let distColorMap = {};        // source → color
 // ── Distribution 산포 탭 (툴바/갤러리/상세) 상태·규격 ─────────────────────────
 const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 1500, PER_FRAME: 3,
   ROOT_MARGIN: "1200px 0px", EXCLUDE: ["chipid", "gpib", "otp", "code"],
-  // ECDF 세로 점 보간 간격(%p). 동일값 구간(riser)을 이 간격의 세로 점으로 채운다.
-  // 반드시 다운샘플 강제보존 임계(0.15%p)보다 크게 유지 — 보간점이 다운샘플에 안 솎임.
+  // ECDF 세로 점 보간 간격은 고정값이 아니라 데이터에서 유도한다(distStepY) — "단일 데이터
+  // 점 1개의 ECDF 증가량". FILL_STEP_Y 는 유효한 riser 가 없는 퇴화 케이스의 폴백 상수일 뿐.
   FILL_STEP_Y: 0.8,
+  // 세로 채움점 총량 상한(성능). stepY 하한 = 100/FILL_MAX_POINTS 로 표본이 매우 클 때
+  // 채움점 폭증을 막는다(총 채움점 ≤ FILL_MAX_POINTS, 뒤 다운샘플 1500 이 다시 솎음).
+  FILL_MAX_POINTS: 3000,
   // 상세 CDF(item_detail.js distRenderCdf) 렌더 방식 토글 — true: scattergl(WebGL,
   // 대량 포인트 SVG 프리즈 방지) / false: 기존 SVG scatter 로 즉시 롤백.
   // 데이터·배열 생성 코드는 양쪽 동일하고 trace type 만 바뀐다 (다운샘플 없음).
@@ -483,8 +486,10 @@ function distDownsampleForDisplay(xs, ys) {
 // 백엔드가 동일값을 1점으로 축약(np.unique)하므로 이산(code)값은 점이 성기게 찍힌다.
 // 각 고유값 x_i 의 riser(prevY→y_i)를 x=x_i 에 stepY 간격 세로 점으로 채워 "연속 분포"로
 // 보이게 한다. 점끼리 잇지 않으므로 x축 수평선(계단 tread)은 자연히 없다.
+// stepY 는 호출부(distStepY)가 데이터에서 유도한 "단일 점 1개의 증가량"이다 — riser Δy 가
+// 그 양자와 같으면(=진짜 희소한 단일 점) 채움 0, 여러 배면(=동일값 다수 축약) 개수에 비례해
+// 채운다. 즉 실제 data 가 없어 성긴 점은 업샘플링하지 않고 있는 그대로 둔다.
 // 전제: xs 오름차순, ys 단조 비감소·마지막 100, ECDF 시작 누적 0 (cumulative_distribution_full 보장).
-// Δy<stepY 인 정규 산포는 원점만 남아 기존과 픽셀 동일.
 function distFillVertical(xs, ys, stepY) {
   const n = xs.length;
   if (n === 0) return { xs: [], ys: [] };
@@ -501,10 +506,25 @@ function distFillVertical(xs, ys, stepY) {
   return { xs: ox, ys: oy };
 }
 
+// 세로 채움 간격(stepY): 소스 내 "단일 데이터 점 1개의 ECDF 증가량" = 최소 양의 Δy
+// (첫 riser 0→ys[0] 포함). 값이 전부 다른 진짜 희소 데이터는 모든 Δy 가 이 값과 같아
+// 채움이 0 이 되고(업샘플링 없음), 동일값이 축약된 riser(Δy≫stepY)만 개수에 비례해 채운다.
+// 표본이 매우 커 stepY 가 지나치게 잘면 100/FILL_MAX_POINTS 하한으로 채움점 폭증을 막는다.
+function distStepY(ys) {
+  let step = Infinity, prev = 0;
+  for (let i = 0; i < ys.length; i++) {
+    const d = ys[i] - prev;
+    if (d > 1e-9 && d < step) step = d;
+    prev = ys[i];
+  }
+  if (!isFinite(step)) step = DIST.FILL_STEP_Y;              // 유효 riser 없음 — 폴백
+  return Math.max(step, 100 / DIST.FILL_MAX_POINTS);
+}
+
 // 미니셀 표시용 좌표: 세로 보간 → 표시용 다운샘플 순서(순서 근거 CLAUDE.md §5·docs/11).
 // 반대 순서면 다운샘플 stride 로 Δy 가 오염돼 없던 가짜 세로 줄무늬가 생긴다.
 function distPointsForDisplay(xs, ys) {
-  const f = distFillVertical(xs, ys, DIST.FILL_STEP_Y);
+  const f = distFillVertical(xs, ys, distStepY(ys));
   return distDownsampleForDisplay(f.xs, f.ys);
 }
 

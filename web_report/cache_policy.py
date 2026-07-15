@@ -66,7 +66,9 @@ def dist_key(session, *, bin1: bool = False) -> tuple:
 #     (USL만→CPU=CPK, LSL만→CPL=CPK, cpk 값 변경) + distribution_index 에 is_passfail 플래그·
 #     P/F 항목 포함(empty 만 제외, 프런트 "P/F 없애기" 토글이 필터). 옛 캐시엔 이 필드가 없어
 #     새 표·토글이 폴백되고 cpk 가 옛값으로 회귀하는 것을 막는다.
-REPORT_SCHEMA_VERSION = 6
+# v7: IssueTable CPK 섹션 정렬을 worst-case cpk 내림차순→오름차순(낮은 순 위)으로 변경.
+#     rows 순서만 바뀌므로 키는 동일 — 옛 캐시가 stale 순서를 반환하는 것을 막는다.
+REPORT_SCHEMA_VERSION = 7
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

@@ -124,16 +124,42 @@ def _add_markers(fig, xs, ys, color, size=_MARKER_SIZE):
                           markeredgewidth=0))
 
 
-def _dist_fill_vertical(xs, ys, step_y=0.8):
-    """ECDF riser(동일 x 의 세로 구간)를 step_y(%p) 간격 세로 점으로 채운다.
+_FILL_MAX_POINTS = 3000     # 세로 채움점 총량 상한 — stepY 하한 100/이값 (웹 DIST.FILL_MAX_POINTS 대칭)
+
+
+def _dist_step_y(ys):
+    """세로 채움 간격 = "단일 데이터 점 1개의 ECDF 증가량"(최소 양의 Δy, 첫 riser 0→ys[0] 포함).
+
+    웹 distribution.js distStepY 포팅. 값이 전부 다른 진짜 희소 데이터는 모든 Δy 가 이 값과
+    같아 채움 0(업샘플링 없음)이고, 동일값이 축약된 riser 만 개수에 비례해 채운다. 표본이
+    매우 커 간격이 잘면 100/_FILL_MAX_POINTS 하한으로 채움점 폭증을 막는다.
+    """
+    step = float("inf")
+    prev = 0.0
+    for v in ys:
+        d = float(v) - prev
+        if 1e-9 < d < step:
+            step = d
+        prev = float(v)
+    if step == float("inf"):
+        step = 0.8                      # 유효 riser 없음 — 폴백
+    return max(step, 100.0 / _FILL_MAX_POINTS)
+
+
+def _dist_fill_vertical(xs, ys, step_y=None):
+    """ECDF riser(동일 x 의 세로 구간)를 세로 점으로 채운다. step_y 미지정 시 데이터에서
+    유도(_dist_step_y) — "단일 점 1개의 증가량".
 
     웹 distribution.js distFillVertical 포팅 — 이산/코드값 항목이 세로 점기둥으로
-    촘촘해 보이도록(선 없이 점만). 연속값(Δy<step_y)은 내부 루프 0회라 원본 포인트와
-    동일. 다운샘플이 아니라 표시용 포인트 추가(불변규칙 #5 의 sanctioned 세로채움).
+    촘촘해 보이도록(선 없이 점만). 값이 전부 다른 진짜 희소 데이터는 각 riser Δy==step_y 라
+    내부 루프 0회 → 채움 없이 원본 포인트만(업샘플링 없음). 다운샘플이 아니라 표시용 포인트
+    추가(불변규칙 #5 의 sanctioned 세로채움).
     """
     n = len(xs)
     if n == 0:
         return xs, ys
+    if step_y is None:
+        step_y = _dist_step_y(ys)
     ox, oy = [], []
     prev_y = 0.0                        # ECDF 는 0 에서 첫 riser 시작
     for i in range(n):

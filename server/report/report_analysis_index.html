@@ -371,10 +371,9 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
       <col style="width:8%">
       <col style="width:9%">
       <col style="width:10%">
-      <col style="width:4%">
       <col style="width:6%">
       <col style="width:8%">
-      <col style="width:29%">
+      <col style="width:33%">
       <col style="width:9%">
       <col style="width:10%">
       <col style="width:7%">
@@ -384,7 +383,6 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
         <th>Product Type</th>
         <th>분석 모드</th>
         <th>Product</th>
-        <th>Rev</th>
         <th>Process</th>
         <th>LOT ID</th>
         <th>파일명</th>
@@ -394,7 +392,7 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
       </tr>
     </thead>
     <tbody id="resultsTbody">
-      <tr class="empty-row"><td colspan="10">데이터를 불러오는 중...</td></tr>
+      <tr class="empty-row"><td colspan="9">데이터를 불러오는 중...</td></tr>
     </tbody>
   </table>
   <div class="pager" id="pager"></div>
@@ -764,7 +762,7 @@ function applyClientFilter(rows) {
     if (product && (r.product || "").toLowerCase() !== product) return false;
     if (!q) return true;
     const haystack = [
-      r.source, r.product_type, r.product, r.revision, r.lot_id,
+      r.source, r.product_type, r.product, r.lot_id,
       r.process, r.file_name, r.session_id, r.uploaded_by, r.client_host,
     ].map(v => String(v || "").toLowerCase()).join(" ");
     return haystack.includes(q);
@@ -786,7 +784,7 @@ function renderSuggestions() {
   box.innerHTML = matches.map(r => `
     <div class="suggest-item" data-sid="${esc(r.session_id)}">
       <div class="suggest-main">${esc(r.product || "-")} / ${esc(r.lot_id || "-")}</div>
-      <div class="suggest-sub">${esc(r.revision || "-")} · ${esc(r.process || "-")} · ${esc(r.file_name || "-")}</div>
+      <div class="suggest-sub">${esc(r.process || "-")} · ${esc(r.file_name || "-")}</div>
     </div>
   `).join("");
   box.classList.add("show");
@@ -856,14 +854,13 @@ function renderResults() {
 
   const tbody = document.getElementById("resultsTbody");
   if (!slice.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">검색 결과가 없습니다.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">검색 결과가 없습니다.</td></tr>`;
   } else {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row" data-sid="${esc(r.session_id)}">
         <td class="pt-cell" data-act="fav" data-sid="${esc(r.session_id)}" title="클릭하여 즐겨찾기 켜기/끄기"><span class="star-fav ${_favorites.has(r.session_id) ? 'on' : ''}">${_favorites.has(r.session_id) ? '★' : '☆'}</span>${r.is_important ? '<span class="star-important" title="중요">★</span>' : ''}${productTypeBadge(r.product_type)}</td>
         <td>${modeBadge(r)}</td>
         <td>${esc(r.product || '-')}</td>
-        <td>${esc(r.revision || '-')}</td>
         <td>${esc(r.process || '-')}</td>
         <td>${esc(r.lot_id || '-')}</td>
         <td class="fname-cell" title="${esc(r.file_name || '')}"><span class="fname-txt">${esc(r.file_name || '-')}</span></td>
