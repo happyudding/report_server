@@ -24,12 +24,15 @@
 | Issue Table | `issue_table.py` | Yield 파생 + CPK<1.33 파생 + ETC. comment 는 편집 DB 에서 채움 |
 | Distribution | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/distribution` 지연 로드 |
 | Trim Analysis | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/trim_analysis` 지연 로드 |
-| Map Analysis | `Map_analysis.py` | wafer map die/bin 집계 (제품 기준정보 있으면 고정 프레임) |
+| Map Analysis | `Map_analysis.py` (하이브리드 lazy) | wafer map die/bin 집계 — `/full` 은 dies 뺀 경량 메타(`strip_dies`), die 전량은 `GET .../web_report/map_analysis` 지연 로드 (schema v8) |
 | Fail Bin | `yield_tab.fail_bin_ranking` | Bin 랭킹 |
 | Note | — (클라 전용) | TAB_REGISTRY 밖 — 프런트 자체구성 Luckysheet 캔버스, 아래 "Note 탭" 절 |
 
 **lazy 탭 관례**: 대용량 payload(Distribution ECDF, Trim 매칭)는 `/full` 에 싣지 않고
-빈 시트로 두고 전용 라우트로 지연 로드한다.
+빈 시트로 두고 전용 라우트로 지연 로드한다. Map Analysis 는 하이브리드 — 범례·격자 틀이
+쓰는 경량 메타(source/x·y min·max/total/bin_counts[/step][/duts])는 `/full` 에 남기고
+dies(STEP 분리 시 수백만 객체 — 메인스레드 JSON 파싱 freeze 의 주범)만 분리한다
+(`map_deferred: true`, 프런트 `ensureMapData`/`fetchMapViaWorker` — wafer_charts.js).
 
 ## 주요 탭 계약
 - **Yield STEP 분리 (2026-07-14, 분모 전체 기준으로 통일)**: Yield 탭은 STEP(P1/P2/P3)별로

@@ -100,8 +100,11 @@ def get_session(session_id):
 
 
 def _history_where(product_type=None, process=None, product=None, revision=None,
-                   lot_id=None, source=None):
-    """get_history / count_history 공용 WHERE 절 + 파라미터."""
+                   lot_id=None, source=None, viewer=None):
+    """get_history / count_history 공용 WHERE 절 + 파라미터.
+
+    viewer: None=비공개 필터 없음(하위호환·관리자용) / ""=신원 없음(비공개 전부 숨김) /
+    "<uid>"=공개 OR legacy(업로더 기록 없음 — is_uploader 규칙) OR 업로더 본인 OR 위임 편집자."""
     conditions = ["s.status IN ('done', 'reused')"]
     params = []
     if product_type:
@@ -122,12 +125,28 @@ def _history_where(product_type=None, process=None, product=None, revision=None,
     if source:
         conditions.append("s.source = ?")
         params.append(source)
+    if viewer is not None:
+        if viewer:
+            # 업로더 비교는 is_uploader(auth_identity)의 'DOMAIN\user' 뒷부분·소문자
+            # 규칙을 SQL 로 근사 — 실데이터는 단일 '\' 라 INSTR(첫 위치) 기준과 동치.
+            conditions.append(
+                "(COALESCE(s.is_private, 0) = 0"
+                " OR s.uploaded_by IS NULL OR s.uploaded_by = ''"
+                " OR LOWER(TRIM(CASE WHEN INSTR(s.uploaded_by, '\\') > 0"
+                " THEN SUBSTR(s.uploaded_by, INSTR(s.uploaded_by, '\\') + 1)"
+                " ELSE s.uploaded_by END)) = ?"
+                " OR EXISTS (SELECT 1 FROM report_session_editor e"
+                " WHERE e.session_id = s.session_id AND e.editor_user = ?))")
+            params.extend([viewer, viewer])
+        else:
+            conditions.append("COALESCE(s.is_private, 0) = 0")
     return " AND ".join(conditions), params
 
 
 def get_history(product_type=None, process=None, product=None, revision=None, lot_id=None,
-                source=None, limit=500, offset=0):
-    where, params = _history_where(product_type, process, product, revision, lot_id, source)
+                source=None, limit=500, offset=0, viewer=None):
+    where, params = _history_where(product_type, process, product, revision, lot_id, source,
+                                   viewer=viewer)
     params.extend([limit, offset])
     # session_id 를 마지막 정렬키로 두어 offset 페이지 간 순서가 안정되게 한다
     sql = f"""
@@ -152,9 +171,10 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
 
 
 def count_history(product_type=None, process=None, product=None, revision=None,
-                  lot_id=None, source=None):
+                  lot_id=None, source=None, viewer=None):
     """get_history 와 동일 필터의 전체 세션 수 (서버 페이지네이션 total 용)."""
-    where, params = _history_where(product_type, process, product, revision, lot_id, source)
+    where, params = _history_where(product_type, process, product, revision, lot_id, source,
+                                   viewer=viewer)
     with get_conn() as conn:
         row = conn.execute(
             f"SELECT COUNT(*) FROM report_session s WHERE {where}", params).fetchone()

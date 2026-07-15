@@ -17,6 +17,138 @@ function webReportSheets() {
   return (DATA && DATA.web_report && DATA.web_report.sheets) ? DATA.web_report.sheets : null;
 }
 
+// ── Map die 데이터 지연 로드 (map_deferred 응답용 — distribution.js 패턴과 대칭) ──
+// /full 의 sheets["Map Analysis"] 는 dies 를 뺀 경량 메타(범례·격자 틀)만 온다(schema v8).
+// die 전량(수백만 개 가능)을 /full 에 실으면 boot 의 res.json() 메인스레드 파싱이 수 초~
+// 10초+ 얼어붙으므로, 첫 페인트 후 백그라운드로 GET .../web_report/map_analysis 를
+// Worker 파싱으로 받아 rows 에 병합한다. 도착 전에 그려진 갤러리/이슈 미니맵/Detail 은
+// refreshMapConsumers 가 다시 채운다. (다운샘플 아님 — die 는 전량 유지, 옮기기만.)
+let mapDataReady = false;     // dies 병합 완료 여부
+let mapDataPromise = null;    // 진행 중/완료된 fetch (중복 요청 방지)
+let _mapContentHash = "";     // 마지막 fetch 시점의 content_hash — 동일하면 재fetch 안 함
+let _mapOnDiesReady = null;   // Map Analysis 갤러리 재드로우 훅 (renderMapAnalysis 가 등록)
+
+function fetchMapViaWorker(url, onProgress) {
+  // fetchDistViaWorker(distribution.js)와 같은 골격 — 수십 MB JSON 을 Worker 에서
+  // fetch+parse 하고, dies 를 맵(row)당·25만 die 단위 청크로 postMessage 해 structured
+  // clone 역직렬화 블록을 수십 ms 단위로 분산한다. (Worker 실패 시 호출측 폴백.)
+  return new Promise((resolve, reject) => {
+    let blobUrl = null, w = null;
+    const cleanup = () => {
+      try { if (w) w.terminate(); } catch (e) {}
+      try { if (blobUrl) URL.revokeObjectURL(blobUrl); } catch (e) {}
+    };
+    try {
+      const src = 'self.onmessage=function(e){' +
+        'fetch(e.data,{cache:"no-cache"})' +
+        '.then(function(r){' +
+          'if(!r.ok)throw new Error("HTTP "+r.status);' +
+          'if(!r.body||!r.body.getReader)return r.json();' +   // 구형 폴백: 진행 없이 통파싱
+          'var reader=r.body.getReader(),chunks=[],loaded=0,lastPost=0;' +
+          'function pump(){return reader.read().then(function(res){' +
+            'if(res.done){' +
+              'var buf=new Uint8Array(loaded),off=0;' +
+              'for(var i=0;i<chunks.length;i++){buf.set(chunks[i],off);off+=chunks[i].length;}' +
+              'return JSON.parse(new TextDecoder("utf-8").decode(buf));}' +
+            'chunks.push(res.value);loaded+=res.value.length;' +
+            'if(loaded-lastPost>=2097152){lastPost=loaded;self.postMessage({progress:loaded});}' +
+            'return pump();});}' +
+          'return pump();' +
+        '})' +
+        '.then(function(j){' +
+          'var maps=(j&&j.maps)||[];var LIM=250000;' +
+          'var metas=maps.map(function(m){return{source:m.source,step:m.step==null?null:m.step};});' +
+          'for(var i=0;i<maps.length;i++){var dies=maps[i].dies||[];var o=0;' +
+            'do{self.postMessage({i:i,dies:dies.slice(o,o+LIM)});o+=LIM;}while(o<dies.length);}' +
+          'self.postMessage({done:true,format:j&&j.format,metas:metas});' +
+        '})' +
+        '.catch(function(err){self.postMessage({error:String(err&&err.message||err)});});' +
+        '};';
+      blobUrl = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+      w = new Worker(blobUrl);
+    } catch (e) { cleanup(); reject(e); return; }
+    const diesByMap = [];
+    w.onmessage = ev => {
+      const d = ev.data || {};
+      if (d.error) { cleanup(); reject(new Error(d.error)); return; }
+      if (d.progress != null) { if (onProgress) onProgress(d.progress); return; }
+      if (d.dies) {
+        // push.apply 는 25만 인자에서 콜스택 상한을 넘으므로 루프로 이어붙인다.
+        const arr = diesByMap[d.i] || (diesByMap[d.i] = []);
+        for (let k = 0; k < d.dies.length; k++) arr.push(d.dies[k]);
+        return;
+      }
+      if (d.done) { cleanup(); resolve({ format: d.format, metas: d.metas || [], diesByMap }); }
+    };
+    w.onerror = () => { cleanup(); reject(new Error("worker failed")); };
+    // blob URL Worker 의 상대경로 기준이 페이지와 달라질 수 있어 절대 URL 로 전달
+    w.postMessage(new URL(url, location.origin).href);
+  });
+}
+
+function ensureMapData() {
+  const maps = (webReportSheets() || {})["Map Analysis"] || [];
+  // 하위호환: 구 스키마(v7 이하)는 dies 가 /full 에 이미 실려 온다 — fetch 없이 즉시 ready.
+  if (!maps.length || maps.every(m => Array.isArray(m.dies))) {
+    mapDataReady = true;
+    return Promise.resolve();
+  }
+  const ch = (DATA && DATA.session && DATA.session.content_hash) || "";
+  if (mapDataPromise && ch === _mapContentHash) return mapDataPromise;   // 로딩 중/완료 재사용
+  _mapContentHash = ch;
+  mapDataReady = false;
+  const url = `/pe/report/session/${SESSION_ID}/web_report/map_analysis`;
+  const label = "맵 데이터 로딩 중…";
+  distBadgeStart(label);
+  mapDataPromise = fetchMapViaWorker(url, loaded => distBadgeProgress(label, loaded))
+    .catch(() => fetch(url, { cache: "no-cache" })   // Worker 실패 시 메인스레드 폴백
+      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(j => ({
+        format: j && j.format,
+        metas: ((j && j.maps) || []).map(m => ({ source: m.source, step: m.step == null ? null : m.step })),
+        diesByMap: ((j && j.maps) || []).map(m => m.dies || []),
+      })))
+    .then(res => {
+      const cur = (webReportSheets() || {})["Map Analysis"] || [];
+      (res.diesByMap || []).forEach((dies, i) => {
+        const m = cur[i], meta = (res.metas || [])[i];
+        // /full 경량 rows 와 같은 빌더(strip_dies 전) 출력이라 인덱스가 일치한다 —
+        // source/step 대조는 안전장치(불일치 row 는 placeholder 유지).
+        if (!m || !meta || m.source !== meta.source ||
+            (m.step == null ? null : m.step) !== meta.step) return;
+        m.dies = dies || [];
+        delete m._compact;   // dies 없이 캐시됐을 수 있는 압축 격자 무효화
+      });
+      mapDataReady = true;
+      distBadgeEnd();
+      refreshMapConsumers();
+    })
+    .catch(e => {
+      mapDataPromise = null;   // 실패 시 다음 호출/재시도 버튼에서 재요청
+      distBadgeFail("맵 데이터 로드 실패", "map");
+      showToast("맵 데이터 로드 실패: " + e.message);
+    });
+  return mapDataPromise;
+}
+
+// dies 도착 전에 만들어진 map 소비처들을 다시 채운다 (refreshDistConsumers 와 대칭).
+function refreshMapConsumers() {
+  // Issue Table Map 미니셀 — 화면에 보이는(관측 중) 셀만 rAF 큐로 재큐잉.
+  document.querySelectorAll('#panel-issues .map-cell-mini[data-visible="1"]')
+    .forEach(issueMapQueueRender);
+  // Map Analysis 갤러리 — 활성 탭이면 캔버스만 재드로우(범례 필터 상태 유지),
+  // 비활성이면 dirty 로 표시해 다음 탭 진입 시 정상 폭으로 새로 그린다(숨김 0폭 드로우 회피).
+  const panel = document.getElementById("panel-map-analysis");
+  if (panel && panel.classList.contains("active")) {
+    if (_mapOnDiesReady) _mapOnDiesReady();
+  } else {
+    tabDirty["map-analysis"] = true;
+  }
+  // Map Detail 이 dies 대기 placeholder 상태면 다시 그림.
+  const dp = document.getElementById("panel-map-detail");
+  if (dp && dp.classList.contains("active") && dp.dataset.mapWaiting === "1") renderMapDetail();
+}
+
 function makeBinColorMap(binList) {
   const map = {}; let fi = 0;
   binList.forEach(b => {
@@ -236,6 +368,7 @@ function fadeRgb(rgb, k) {
 // m._compact 에 캐시(load() 가 DATA 를 통째로 교체하므로 무효화 불필요).
 function waferCompactGrid(m) {
   if (m._compact) return m._compact;
+  if (!Array.isArray(m.dies)) return { xIdx: {}, yIdx: {}, W: 0, H: 0 };   // dies 미도착 — 캐시하지 않음
   const xSeen = {}, ySeen = {};
   (m.dies || []).forEach(d => { xSeen[d.x] = 1; ySeen[d.y] = 1; });
   const xs = Object.keys(xSeen).map(Number).sort((a, b) => a - b);
@@ -544,6 +677,8 @@ function renderMapAnalysis() {
     const m = maps[i];
     const wrap = document.getElementById(`wafer-full-${i}`);
     if (!wrap) return;
+    // dies 지연 로드 중 — placeholder("맵 로드 중…") 유지, 도착 시 refreshMapConsumers 가 재드로우.
+    if (!Array.isArray(m.dies)) { ensureMapData(); return; }
     let canvas = wrap.querySelector("canvas.wafer-thumb");
     if (!canvas) {
       wrap.innerHTML = "";
@@ -590,6 +725,7 @@ function renderMapAnalysis() {
   renderLegendBody();
   renderTnoLegend();
   renderDutLegend();
+  _mapOnDiesReady = drawAllMaps;   // dies 지연 도착 시 갤러리만 재드로우(범례 필터 상태 유지)
   drawAllMaps();
 }
 
@@ -839,6 +975,15 @@ function renderMapDetail() {
     `</div>`;
 
   renderMapDetailLegend();
+  // dies 지연 로드 중 — placeholder 만 표시하고, 도착하면 refreshMapConsumers 가 재호출.
+  if (!Array.isArray(m.dies)) {
+    dp.dataset.mapWaiting = "1";
+    const host = document.getElementById("map-detail-plot");
+    if (host) host.innerHTML = `<div class="placeholder">die 데이터 로딩 중…</div>`;
+    ensureMapData();
+    return;
+  }
+  dp.dataset.mapWaiting = "";
   // 셸+placeholder 페인트 후 다음 프레임에 무거운 렌더(로딩 표시가 실제로 보이도록).
   requestAnimationFrame(() => {
     if (mapDetailMaps()[_mapDetailIndex] !== m) return;   // 그 사이 다른 맵으로 이동하면 취소

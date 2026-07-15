@@ -28,6 +28,9 @@ function renderMiniMapCell(cell) {
   if (m.step != null) {
     m = maps.find(mm => (mm.bin_counts || []).some(bc => String(bc.bin) === String(bin))) || maps[0];
   }
+  // dies 지연 로드 중 — mapLoaded 를 세우지 않고 skip (빈 셀 고착 방지),
+  // 도착하면 refreshMapConsumers(wafer_charts.js) 가 보이는 셀을 재큐잉한다.
+  if (!Array.isArray(m.dies)) { ensureMapData(); return; }
   let canvas = div.querySelector("canvas.wafer-thumb");
   if (!canvas) { div.innerHTML = ""; canvas = document.createElement("canvas"); canvas.className = "wafer-thumb"; div.appendChild(canvas); }
   drawWaferThumb(canvas, m, issueMapRgbFor(dim));
@@ -63,7 +66,9 @@ function renderIssueMiniMap(panel) {
   const cells = panel.querySelectorAll(".map-cell-mini");
   if (!cells.length) return;
   if (typeof IntersectionObserver === "undefined") {
-    cells.forEach(cell => renderMiniMapCell(cell));
+    // IO 폴백은 visible 플래그가 없어 refreshMapConsumers 재큐잉을 못 받으므로
+    // dies 도착을 기다렸다가 전량 렌더한다 (이미 로드됐으면 즉시 resolve).
+    ensureMapData().then(() => cells.forEach(cell => renderMiniMapCell(cell)));
     return;
   }
   issueMapObserver = new IntersectionObserver(entries => {
@@ -97,6 +102,8 @@ function toggleMapExpand(btn) {
   closeMapExpand();
   const maps = (webReportSheets() || {})["Map Analysis"];
   if (!Array.isArray(maps) || maps.length < 2) return;
+  // dies 지연 로드 중 — 로드만 킥하고 열지 않는다(boot 선로드라 드묾, 배지가 진행 표시).
+  if (maps.some(m => !Array.isArray(m.dies))) { ensureMapData(); return; }
   const bin = cell.dataset.bin;
   const binOrder = buildGlobalBinLegend(maps).map(r => r.bin);
   const dim = dimColorMap(globalBinColorMap(), binOrder, bin);

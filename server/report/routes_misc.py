@@ -17,6 +17,7 @@ from report.report_extension import report_bp
 from report.security import (
     _issue_csrf_cookie,
     _normalize_user_id,
+    _private_guard,
     _require_csrf,
     _validate_session_id,
 )
@@ -45,6 +46,9 @@ def create_annotation():
 @report_bp.get("/annotation/<session_id>")
 def list_annotations(session_id):
     _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if session:
+        _private_guard(session)
     return jsonify(report_db.get_annotations(session_id))
 
 
@@ -77,6 +81,10 @@ def index_page():
 @report_bp.get("/view/<session_id>")
 def view_page(session_id):
     _validate_session_id(session_id)
+    # 비공개 세션은 상세 HTML 자체를 숨긴다. 세션이 없으면 기존대로 HTML 서빙(JS 가 에러 표시).
+    session = report_db.get_session(session_id)
+    if session:
+        _private_guard(session)
     return _issue_csrf_cookie(send_html_gzip(REPORT_VIEW_HTML))
 
 
@@ -167,11 +175,13 @@ def history():
         "lot_id": request.args.get("lot_id") or None,
         "source": request.args.get("source") or None,
     }
+    # 비공개 세션 필터: 업로더/위임 편집자 외에는 목록에서 숨긴다 (신원 없음 ""=전부 숨김).
+    viewer = _current_user()
     limit_raw = request.args.get("limit")
     offset_raw = request.args.get("offset")
     if limit_raw is None and offset_raw is None:
         # 하위호환: 페이지네이션 파라미터가 없으면 기존 리스트 응답 (limit=500 고정)
-        return jsonify(report_db.get_history(**filters))
+        return jsonify(report_db.get_history(**filters, viewer=viewer))
     try:
         limit = max(1, min(int(limit_raw or 500), 1000))
     except (TypeError, ValueError):
@@ -180,8 +190,8 @@ def history():
         offset = max(0, int(offset_raw or 0))
     except (TypeError, ValueError):
         offset = 0
-    rows = report_db.get_history(**filters, limit=limit, offset=offset)
-    total = report_db.count_history(**filters)
+    rows = report_db.get_history(**filters, limit=limit, offset=offset, viewer=viewer)
+    total = report_db.count_history(**filters, viewer=viewer)
     return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset})
 
 

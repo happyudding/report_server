@@ -98,8 +98,13 @@ async function loadAuth() {
       CAN_EDIT = !!j.can_edit;
       IS_UPLOADER = !!j.is_uploader;
       MY_IMPORTANT = !!j.my_important;
+    } else {
+      console.warn("my_access 조회 실패 — 읽기 전용으로 표시 (HTTP " + res.status + ")");
     }
-  } catch (e) { LOGIN_USER = ""; CAN_EDIT = false; IS_UPLOADER = false; MY_IMPORTANT = false; }
+  } catch (e) {
+    console.warn("my_access 조회 실패 — 읽기 전용으로 표시", e);
+    LOGIN_USER = ""; CAN_EDIT = false; IS_UPLOADER = false; MY_IMPORTANT = false;
+  }
 }
 
 function canEditSession() {

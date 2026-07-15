@@ -15,6 +15,7 @@ import queue
 import shutil
 import sys
 import tempfile
+import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -22,7 +23,7 @@ from pathlib import Path
 import requests
 
 from PyQt6 import uic
-from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QRect, QUrl
+from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QRect, QUrl, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QHeaderView,
@@ -295,6 +296,10 @@ class SlideInPanel(QWidget):
 
 
 class HoneyMainWindow(QMainWindow):
+    # 백그라운드 버전 체크 결과 전달 (manifest dict 또는 예외) — cross-thread 라
+    # 자동 queued connection (UploadDialog._part_ids_ready 와 같은 패턴)
+    _version_manifest_ready = pyqtSignal(object)
+
     def __init__(self):
         super().__init__()
         uic.loadUi(UI_PATH, self)
@@ -330,6 +335,7 @@ class HoneyMainWindow(QMainWindow):
 
         if rg is None:
             self._disable_engine()
+        self._version_manifest_ready.connect(self._on_version_manifest)
         QTimer.singleShot(500, self.check_for_update)
 
     def _apply_main_ui_tweaks(self):
@@ -2101,16 +2107,33 @@ class HoneyMainWindow(QMainWindow):
 
     # ── version check (사용자가 자동/수동 설치 선택) ────────────────────────
     def check_for_update(self):
-        try:
-            manifest = version_check.fetch_latest()
-        except requests.exceptions.RequestException:
+        """fetch 는 백그라운드 스레드, 결과 처리는 _on_version_manifest 슬롯.
+
+        fetch_latest 는 타임아웃 10s × 재시도 3회 + 백오프라 서버 무응답이면 30초
+        이상 걸린다 — 메인 스레드에서 부르면 시작 직후 창이 그만큼 굳는다.
+        """
+        def _fetch_bg():
+            try:
+                result = version_check.fetch_latest()
+            except Exception as exc:  # noqa: BLE001
+                result = exc
+            try:
+                self._version_manifest_ready.emit(result)
+            except RuntimeError:
+                pass   # 창이 이미 닫혀 C++ 객체가 파괴된 경우
+        threading.Thread(target=_fetch_bg, daemon=True,
+                         name="honey-version-check").start()
+
+    def _on_version_manifest(self, result):
+        if isinstance(result, requests.exceptions.RequestException):
             # 연결 불가/타임아웃 = 서버 오프라인으로 간주, 상태바에 명확히 표시
             self.status.showMessage(
                 f"⚠ 서버 오프라인 — {SERVER_BASE_URL} 에 연결할 수 없습니다")
             return
-        except Exception as exc:
-            self.status.showMessage(f"버전 체크 실패: {exc}")
+        if isinstance(result, Exception):
+            self.status.showMessage(f"버전 체크 실패: {result}")
             return
+        manifest = result
 
         remote = manifest.get("version") or ""
         if not version_check.is_newer(remote, CURRENT_VERSION):
@@ -2227,14 +2250,21 @@ class HoneyMainWindow(QMainWindow):
             "업데이트하는 동안 앱이 잠시 종료되며, 완료되면 자동으로 다시 실행됩니다.\n"
             "잠시만 기다려 주세요.",
         )
+        # ZIP 압축 해제(수백 MB·수천 파일)는 10초+ 걸릴 수 있어 메인 스레드에서
+        # 돌리면 "설치 중" 구간에 창이 굳는다 — 다운로드와 같은 패턴으로 스레드 이관.
+        install_progress = _ElapsedProgress(
+            self.progress_status, "업데이트 설치 중... (파일 압축 해제)",
+            self.status.showMessage, busy=True, minimum=0, maximum=0)
         try:
-            updater.apply_update_zip(dest)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(updater.apply_update_zip, dest)
+                _wait_for_future(fut, install_progress)
         except Exception as exc:
-            progress.fail(f"실패: 업데이트 실행 실패 - {exc}")
+            install_progress.fail(f"실패: 업데이트 실행 실패 - {exc}")
             QMessageBox.critical(self, "업데이트 실행 실패", str(exc))
             self.status.showMessage("업데이트 실패")
             return
-        progress.success("업데이트 적용 중... 앱을 종료합니다.", value=100)
+        install_progress.success("업데이트 적용 중... 앱을 종료합니다.", value=100)
         self.status.showMessage("업데이트 적용 중... 앱을 종료합니다.")
         QApplication.quit()
 

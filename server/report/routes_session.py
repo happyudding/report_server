@@ -20,6 +20,7 @@ from report.security import (
     _audit,
     _editor_guard,
     _normalize_user_id,
+    _private_guard,
     _public_session,
     _record_web_visit,
     _require_csrf,
@@ -43,6 +44,7 @@ def result(session_id):
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
+    _private_guard(session)
     analysis_key = session.get("analysis_key")
     summary = report_db.get_summary_by_analysis_key(analysis_key) if analysis_key else []
     return jsonify({
@@ -61,6 +63,7 @@ def session_info(session_id):
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
+    _private_guard(session)
     return jsonify(_public_session(session))
 
 
@@ -71,6 +74,7 @@ def session_full(session_id):
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
+    _private_guard(session)
     akey = session.get("analysis_key")
     objects = {}
     if akey:
@@ -95,6 +99,7 @@ def session_full(session_id):
                 issue_images.append({"row": int(row),
                                      "url": f"/pe/report/issue_image/{session_id}/{int(row)}"})
         except Exception:
+            _log.exception("issue image 목록 조회 실패 (session=%s)", session_id)
             issue_images = []
     # Distribution 합성 PNG: S3 오브젝트 또는 로컬 폴백 파일이 있으면 프록시 URL 반환.
     distribution_url = None
@@ -222,7 +227,8 @@ def set_session_important(session_id):
 
 @report_bp.post("/session/<session_id>/private")
 def set_session_private(session_id):
-    """세션 '비공개' 표시 토글. 업로더 로그인 필요. 목록에서 숨기지는 않고 자물쇠 아이콘 마커용."""
+    """세션 '비공개' 토글. 업로더만 변경 가능. 비공개 세션은 업로더+위임 편집자만
+    조회 가능 — 목록(history)에서도 숨겨지고 상세/데이터/이미지 조회는 404."""
     _require_csrf()
     _validate_session_id(session_id)
     body = request.get_json(force=True, silent=True) or {}

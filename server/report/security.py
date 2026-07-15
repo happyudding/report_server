@@ -97,6 +97,27 @@ def _editor_guard(session):
     return jsonify({"error": "편집 권한이 없습니다."}), 403
 
 
+def _can_view(session, uid=None):
+    """비공개 세션 조회 가능 여부 — 공개면 항상 True. 비공개면 업로더 본인
+    (legacy: uploaded_by 빈 세션은 Honey 신원 전원 — is_uploader 규칙) 또는
+    위임 편집자만. _editor_guard 와 동일한 판별 프리미티브를 재사용한다."""
+    if not int((session or {}).get("is_private") or 0):
+        return True
+    if uid is None:
+        uid = _current_user()
+    if not uid:
+        return False
+    return _is_uploader(session, uid) or report_db.is_session_editor(
+        (session or {}).get("session_id"), uid)
+
+
+def _private_guard(session):
+    """비공개 세션 조회 가드 — 목록 숨김 정책과 일치하게 존재 자체를 숨긴다(404).
+    (편집 가드의 401/403 JSON 은 세션 존재를 노출 — 조회는 404 스타일.)"""
+    if not _can_view(session):
+        abort(404, "session not found")
+
+
 def _client_meta():
     """감사 로그용 (client_ip, user_agent). 역프록시 뒤면 X-Forwarded-For 첫 IP 사용."""
     fwd = request.headers.get("X-Forwarded-For")
@@ -139,13 +160,15 @@ def _record_web_visit(session):
 
 
 def _require_web_report_session(session_id):
-    """session 조회 + web_report 세션인지 확인. 아니면 404."""
+    """session 조회 + web_report 세션인지 확인. 아니면 404. 비공개 세션은
+    업로더/위임 편집자 외 404 (routes_webreport 전 라우트 공통 진입점)."""
     _validate_session_id(session_id)
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
     if session.get("source") != "web_report":
         abort(404, "not a web_report session")
+    _private_guard(session)
     return session
 
 

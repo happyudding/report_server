@@ -67,7 +67,8 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     전달용(재조회 생략).
 
     Distribution ECDF(대용량)는 항상 payload 에서 제외되고 프런트가 get_distribution 으로
-    지연 로드한다.
+    지연 로드한다. Map Analysis dies(대용량)도 payload 에서 제외(경량 메타만)되고
+    get_map_gzip 으로 지연 로드한다 (schema v8).
     """
     if session is None:
         session = report_db.get_session(session_id)
@@ -202,6 +203,76 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
                 _dist_blob.count_points(compact), len(raw) / 1048576,
                 len(blob) / 1048576, time.perf_counter() - t0)
         cache.dist_cache_put(cache_key, blob)   # 개수+바이트 이중 상한 (cache.py)
+    return blob
+
+
+def get_map_analysis(session_id: str, *, report_db, upload_root: Path) -> dict:
+    """Map Analysis lazy 엔드포인트용 die 전량 rows (다운샘플 없음, 규칙 #6).
+
+    /full 의 sheets["Map Analysis"] 는 dies 를 뺀 경량 메타만 싣는다(strip_dies,
+    schema v8) — 여기서 같은 빌더로 dies 포함 rows 를 만들어 프런트가 지연 로드한다.
+    selected_items 필터는 map 출력에 영향이 없으나 /full 콜드 빌드 경로
+    (build_report_payload)와의 구조적 동일성을 위해 같은 순서로 적용한다.
+    tables 는 캐시 클론이라 필터가 안전하다.
+    """
+    from .tabs.Map_analysis import build_map_analysis_rows
+
+    session, tables, manifest = _load_tables(
+        session_id, report_db=report_db, upload_root=upload_root)
+    mode = _validate_mode(session.get("mode"))
+    tables = _mode_tables(tables, mode)
+    selected_set = {str(v) for v in (manifest.get("selected_items") or []) if str(v)}
+    if selected_set:
+        for table in tables:
+            table.item_columns = [c for c in table.item_columns if c in selected_set]
+    rows = build_map_analysis_rows(
+        tables, session.get("product_type", ""), session.get("product", ""), mode)
+    return {"format": "map-dies-v1", "maps": rows}
+
+
+def get_map_gzip(session_id: str, *, report_db, upload_root: Path) -> bytes:
+    """get_map_analysis 결과를 JSON→gzip bytes 로 캐시해 반환 (라우트가 그대로 응답).
+
+    get_distribution_gzip 과 1:1 대칭 — RAM(MAP_CACHE)→disk→single-flight→콜드 빌드.
+    키는 dist 와 같은 (analysis_key, content_hash, mode) — dies 는 편집(rev)과 무관하고
+    raw_data 편집만 content_hash 변경으로 무효화한다. 콜드 빌드는 워커 오프로드 대상
+    (업로드 프리웜이 미리 채워 첫 조회 콜드가 없도록 한다).
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    cache_key = cache_policy.map_key(session)
+    blob = cache.cache_get(cache.MAP_CACHE, cache_key)
+    if blob is not None:
+        return blob
+    with cache.keyed_lock(("map",) + cache_key):
+        blob = cache.cache_get(cache.MAP_CACHE, cache_key)
+        if blob is not None:
+            return blob
+        # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
+        blob = disk_cache.load_map(upload_root, cache_key)
+        if blob is None and compute.should_offload(cache_policy.tables_key(session)):
+            # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
+            blob = compute.run(compute.map_job, session_id, str(upload_root))
+        if blob is None:
+            t0 = time.perf_counter()
+            payload = get_map_analysis(session_id, report_db=report_db,
+                                       upload_root=upload_root)
+            raw = json.dumps(payload, ensure_ascii=False,
+                             separators=(",", ":")).encode("utf-8")
+            blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)
+            disk_cache.save_map(upload_root, cache_key, blob)
+            # 관측 로그 — die 전량 payload 가 실데이터에서 얼마나 커지는지 진단용.
+            _log.info(
+                "map cold build akey=%.12s maps=%d dies=%d raw=%.1fMB gz=%.1fMB %.1fs",
+                str(analysis_key), len(payload.get("maps") or ()),
+                sum(len(m.get("dies") or ()) for m in payload.get("maps") or ()),
+                len(raw) / 1048576, len(blob) / 1048576, time.perf_counter() - t0)
+        cache.map_cache_put(cache_key, blob)   # 개수+바이트 이중 상한 (cache.py)
     return blob
 
 

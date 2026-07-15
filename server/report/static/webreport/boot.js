@@ -99,6 +99,8 @@ async function load(resetMode=true) {
     // 도착 전 그려진 미니셀/갤러리는 refreshDistConsumers 가 다시 채운다.
     setLoadProgress(92, "분포 데이터 준비 중…");
     ensureDistData();
+    // Map dies(수백만 개 가능)도 /full 에서 제외됨(map_deferred) — 백그라운드 지연 로드.
+    ensureMapData();
     buildDistColorMap(webPre.sources || []);
     renderMeta(DATA.session || {});
     // 편집 권한: 로그인 ID == 업로더(기록 없으면 로그인만으로) 일 때만 edit 렌더.

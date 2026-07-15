@@ -154,6 +154,16 @@ def _merge_dut_rows(rows):
     return merged
 
 
+def strip_dies(rows):
+    """dies 만 뺀 경량 메타 rows (/full 용, schema v8).
+
+    die 전량(수백만 개 가능)은 GET .../web_report/map_analysis 로 지연 로드하고,
+    /full 에는 범례·격자 틀·미니맵 선택이 쓰는 나머지 필드(source/file_name/
+    x·y min·max/total/bin_counts[/step][/duts])만 남긴다. 다운샘플 아님 — 옮기기만.
+    """
+    return [{k: v for k, v in r.items() if k != "dies"} for r in rows]
+
+
 def build_map_analysis_rows(tables, product_type="", product="", mode="Normal"):
     # 제품 기준정보(die pitch+wafer 크기)가 있으면 고정 프레임으로 격자 틀을 덮어쓴다.
     # 없으면 frame=None → 현행(데이터 좌표 min/max) 유지.

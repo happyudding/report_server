@@ -1,14 +1,18 @@
 """Excel Download 용 서버 데이터 수신 — Qt/xlwings 비의존.
 
-서버는 데이터만 내려주고(기존 엔드포인트, 서버 코드 무수정) 연산은 전부 클라이언트가 한다:
+서버는 데이터만 내려주고 연산은 전부 클라이언트가 한다:
   - GET /pe/report/session/<sid>/full                      → 모든 탭 데이터 (gzip JSON)
   - GET /pe/report/session/<sid>/web_report/distribution   → ECDF 전량 columnar (gzip)
+  - GET /pe/report/session/<sid>/web_report/map_analysis   → Map die 전량 (gzip, schema v8 —
+    /full 의 sheets["Map Analysis"] 는 dies 없는 경량 메타라 여기서 받아 병합. 구 서버는
+    404 → /full 에 dies 가 이미 실려 있어 무처리)
 
-두 GET 은 스레드로 동시에 실행한다. requests 가 Content-Encoding: gzip 을 자동 해제한다.
+GET 은 스레드로 동시에 실행한다. requests 가 Content-Encoding: gzip 을 자동 해제한다.
 """
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote
 
 import requests
 
@@ -18,10 +22,54 @@ except Exception:  # 단독 실행/테스트 폴백
     REQUEST_TIMEOUT_SEC = (10, 300)
 
 
+def _honey_headers():
+    """서버 신원 토큰 — embedded_browser 와 동일 규칙(HoneyUser/<percent-encoded 계정>).
+
+    비공개(is_private) 세션은 업로더/위임 편집자 신원이 있어야 조회 가능하다.
+    수집 실패 시 토큰 없이 진행(공개 세션은 무신원으로도 조회됨)."""
+    try:
+        import client_identity
+        user = client_identity.collect().get("user", "")
+    except Exception:
+        user = ""
+    return {"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')}"} if user else {}
+
+
 def _get_json(url):
-    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC)
+    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC, headers=_honey_headers())
     resp.raise_for_status()
     return resp.json()
+
+
+def _get_json_optional(url):
+    """신형 엔드포인트용 — 404(구 서버)는 None 폴백, 그 외 오류는 그대로 raise."""
+    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC, headers=_honey_headers())
+    if resp.status_code == 404:
+        return None
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _merge_map_dies(report, map_payload):
+    """sheets["Map Analysis"] 경량 rows(schema v8)에 map_analysis 응답 dies 를 병합.
+
+    rows 와 maps 는 같은 빌더 출력이라 인덱스가 일치한다 — source/step 대조는 안전장치.
+    map_payload=None(구 서버)이고 rows 에 dies 도 없으면 맵 PNG 를 만들 수 없어 ValueError.
+    """
+    rows = (report.get("sheets") or {}).get("Map Analysis") or []
+    if map_payload is None:
+        if rows and not any(isinstance(r.get("dies"), list) for r in rows):
+            raise ValueError("Map die 데이터를 받지 못했습니다 — 서버가 map_analysis 를 지원하지 않고 /full 에도 dies 가 없습니다.")
+        return
+    if str(map_payload.get("format") or "") != "map-dies-v1":
+        raise ValueError(f"지원하지 않는 map_analysis 포맷: {map_payload.get('format')!r}")
+    maps = map_payload.get("maps") or []
+    for i, row in enumerate(rows):
+        src = maps[i] if i < len(maps) else None
+        if (not src or src.get("source") != row.get("source")
+                or src.get("step") != row.get("step")):
+            continue
+        row["dies"] = src.get("dies") or []
 
 
 def fetch_report_data(server_base, session_id, bin1=False):
@@ -37,20 +85,24 @@ def fetch_report_data(server_base, session_id, bin1=False):
     base = str(server_base).rstrip("/")
     full_url = f"{base}/pe/report/session/{session_id}/full"
     dist_url = f"{base}/pe/report/session/{session_id}/web_report/distribution"
+    map_url = f"{base}/pe/report/session/{session_id}/web_report/map_analysis"
     if bin1:
         dist_url += "?bin1=1"
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         full_f = pool.submit(_get_json, full_url)
         dist_f = pool.submit(_get_json, dist_url)
+        map_f = pool.submit(_get_json_optional, map_url)
         full = full_f.result()
         dist = dist_f.result()
+        map_payload = map_f.result()
 
     report = full.get("web_report")
     if not isinstance(report, dict) or not report.get("sheets"):
         raise ValueError("web_report 세션이 아닙니다 — Excel Download 는 웹 리포트 세션에서만 사용할 수 있습니다.")
     if str(dist.get("format") or "") != "ecdf-columnar-v1":
         raise ValueError(f"지원하지 않는 distribution 포맷: {dist.get('format')!r}")
+    _merge_map_dies(report, map_payload)
     return full, dist
 
 
@@ -61,7 +113,8 @@ def fetch_session_meta(server_base, session_id, timeout=(2, 3)):
     """
     try:
         base = str(server_base).rstrip("/")
-        resp = requests.get(f"{base}/pe/report/session/{session_id}", timeout=timeout)
+        resp = requests.get(f"{base}/pe/report/session/{session_id}", timeout=timeout,
+                            headers=_honey_headers())
         resp.raise_for_status()
         return resp.json() or {}
     except Exception:

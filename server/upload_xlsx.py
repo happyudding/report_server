@@ -14,6 +14,7 @@ CSV 분석 흐름(/pe/report/analyze) 과는 완전 분리됨.
 """
 import hashlib
 import json
+import logging
 import re
 import secrets
 import time
@@ -25,6 +26,8 @@ from database import report_db
 from report.report_extension import report_bp
 from report_utils import to_float as _to_float, to_int as _to_int
 import storage_gateway
+
+_log = logging.getLogger(__name__)
 
 _PRODUCT_TYPES = {"MDDI", "PDDI", "PMIC", "SECURITY", "TCON"}
 _SAFE_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-\.]{1,80}$")
@@ -61,6 +64,7 @@ def _collect_issue_images(files):
             if data[:8] == _PNG_MAGIC:
                 out.append({"row": ri, "png": data})
         except Exception:
+            _log.warning("issue image %r 스킵 (손상/읽기 실패)", key, exc_info=True)
             continue
     return sorted(out, key=lambda x: x["row"])
 
@@ -234,6 +238,8 @@ def upload_xlsx():
             report_db.upsert_sheet_data(analysis_key, sheet_name, data)
             sheet_data_saved.append(sheet_name)
         except Exception as exc:
+            _log.warning("sheet_data[%s] 저장 실패 (session=%s)",
+                         sheet_name, session_id, exc_info=True)
             warnings.append(f"sheet_data[{sheet_name}] save failed: {exc}")
 
     # ── 저장소 산출물(S3/local fallback) : 비치명적 ─────────────────────────

@@ -8,6 +8,7 @@
 |--------------------|--------------------------------------------------|-------------------------------------|
 | TABLES_CACHE       | (akey, chash)                                    | raw_data 편집(chash) / 세션 삭제    |
 | DIST_CACHE         | (akey, chash, mode[, "bin1"])                    | 〃 (mode 불변; "bin1"=양품만 ECDF)  |
+| MAP_CACHE          | (akey, chash, mode)                              | raw_data 편집(chash) / 세션 삭제    |
 | COMMONALITY_CACHE  | (akey, chash)                                    | raw_data 편집 / 세션 삭제           |
 | REPORT_CACHE       | (akey, chash, sid, edits_rev, opts, mode, sver)  | comment/override 편집(rev) + payload 스키마 변경 + 위 전부 |
 | TRIM_CACHE         | (akey, chash, sid, edits_rev, mode, source)      | trim override 편집(rev) + 위 전부   |
@@ -53,6 +54,12 @@ def dist_key(session, *, bin1: bool = False) -> tuple:
     return base + ("bin1",) if bin1 else base
 
 
+def map_key(session) -> tuple:
+    # DUT 모드는 같은 akey 라도 병합 맵(All DUT)이 다르므로 mode 포함 — dist_key 와 동일 이유.
+    # dies 는 편집과 무관하므로 edits_rev 불포함.
+    return _base(session) + (_mode(session),)
+
+
 # build_report_payload 출력 스키마 버전. payload 구조(최상위 키·그룹 형태)가 바뀌면
 # 이 값을 올려 인메모리 REPORT_CACHE + disk_cache report 파일(같은 데이터의 옛 세대
 # 산출물)을 자연 무효화한다 — 안 올리면 코드가 새 키를 내도 캐시가 stale payload 를
@@ -68,7 +75,10 @@ def dist_key(session, *, bin1: bool = False) -> tuple:
 #     새 표·토글이 폴백되고 cpk 가 옛값으로 회귀하는 것을 막는다.
 # v7: IssueTable CPK 섹션 정렬을 worst-case cpk 내림차순→오름차순(낮은 순 위)으로 변경.
 #     rows 순서만 바뀌므로 키는 동일 — 옛 캐시가 stale 순서를 반환하는 것을 막는다.
-REPORT_SCHEMA_VERSION = 7
+# v8: Map Analysis dies 를 /full 에서 제외(경량 메타만 + map_deferred=True) — 별도
+#     GET .../web_report/map_analysis 지연 로드. 안 올리면 옛 disk_cache 가 dies 포함
+#     대형 payload 를 계속 반환해 초기 로드 freeze 수정이 조용히 무효화된다.
+REPORT_SCHEMA_VERSION = 8
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

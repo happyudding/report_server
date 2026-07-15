@@ -21,6 +21,7 @@ import re
 import tempfile
 import time
 import zipfile
+from urllib.parse import quote
 
 import requests
 
@@ -126,9 +127,22 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None) 
 
 
 # ── 다운로드/업로드 ──────────────────────────────────────────────────────────
+def _honey_headers():
+    """서버 신원 토큰 — embedded_browser 와 동일 규칙(HoneyUser/<percent-encoded 계정>).
+
+    비공개(is_private) 세션은 업로더/위임 편집자 신원이 있어야 조회 가능하다.
+    수집 실패 시 토큰 없이 진행(공개 세션은 무신원으로도 조회됨)."""
+    try:
+        import client_identity
+        user = client_identity.collect().get("user", "")
+    except Exception:
+        user = ""
+    return {"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')}"} if user else {}
+
+
 def _download_sources(base, session_id):
     url = f"{base}/pe/report/session/{session_id}/web_report/rawdata_export"
-    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC)
+    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC, headers=_honey_headers())
     resp.raise_for_status()
     zf = zipfile.ZipFile(io.BytesIO(resp.content))
     manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
@@ -153,7 +167,8 @@ def _upload_sources(base, session_id, parquet_list):
         f"webreport_{idx}": (f"source_{idx}.parquet", data, "application/vnd.apache.parquet")
         for idx, data in enumerate(parquet_list)
     }
-    resp = requests.post(url, files=files, headers={"X-Honey-Agent": "1"},
+    resp = requests.post(url, files=files,
+                         headers={"X-Honey-Agent": "1", **_honey_headers()},
                          timeout=REQUEST_TIMEOUT_SEC)
     if resp.status_code != 200:
         detail = ""

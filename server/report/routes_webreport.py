@@ -102,6 +102,36 @@ def web_report_distribution(session_id):
     return Response(body, mimetype="application/json", headers=headers)
 
 
+@report_bp.get("/session/<session_id>/web_report/map_analysis")
+def web_report_map_analysis(session_id):
+    """Map Analysis die 전량(다운샘플 없음)을 JSON 으로 지연 로드.
+
+    /full 의 sheets["Map Analysis"] 는 dies 를 뺀 경량 메타만 싣는다(schema v8) —
+    die 전량(수십 MB 가능)은 여기서 받는다. /distribution 라우트와 동일하게
+    gzip(Accept-Encoding 시)과 ETag(analysis_key+content_hash) 조건부 응답 지원.
+    """
+    session = _require_web_report_session(session_id)
+    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}-map"'
+    headers = {"Vary": "Accept-Encoding", "ETag": etag}
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers=headers)
+    try:
+        # 계산+직렬화+gzip 결과가 service 쪽에서 (analysis_key, content_hash, mode) 키로
+        # 캐시됨 — 세션당 1회만 CPU 를 쓰고 이후 요청은 bytes 반환뿐이라 동시 사용자에도 안전.
+        body = web_report_service.get_map_gzip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report map_analysis failed for session %s", session_id)
+        abort(500, "map_analysis failed")
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+    return Response(body, mimetype="application/json", headers=headers)
+
+
 @report_bp.get("/session/<session_id>/web_report/scatter/<path:subject>")
 def web_report_scatter(session_id, subject):
     """Item_detail 용: 항목(subject)의 소스별 전체 측정값+hover metadata(다운샘플 없음) 지연 로드.

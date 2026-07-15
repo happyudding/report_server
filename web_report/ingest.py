@@ -154,7 +154,8 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
             report_db.update_session(
                 session_id, webreport_options=json.dumps(options, sort_keys=True))
         except Exception:
-            pass
+            _log.warning("webreport options 저장 실패 (session=%s)",
+                         session_id, exc_info=True)
 
     # manifest 에 편집값(comment/override)이 실려 오면 세션 편집 DB 로 시드 —
     # 이후 manifest 는 불변 스냅샷이고 편집 진실은 DB(세션 단위)다.
@@ -162,7 +163,8 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         edits.seed_from_manifest(report_db, session_id, manifest,
                                  updated_by=uploaded_by or None)
     except Exception:
-        pass
+        _log.warning("web_report 편집값 시드 실패 — 업로드 코멘트/override 유실 "
+                     "(session=%s)", session_id, exc_info=True)
 
     # Issue Table 코멘트(시드 포함) → eval_analyzer 스키마 DB 적재 (백그라운드,
     # 실패 무해 — docs/13). 방금 시딩한 TABLES_CACHE 를 그대로 쓴다.

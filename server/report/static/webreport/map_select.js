@@ -278,11 +278,17 @@ async function saveSummaryEngr() {
     if (v !== String(cur[k] || "").trim()) changed = true;
   });
   if (!changed) return;
-  const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/summary/engr`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-    body: JSON.stringify({ values }),
-  });
+  let res;
+  try {
+    res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/summary/engr`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({ values }),
+    });
+  } catch (err) {
+    alert("Engr Comment 저장 실패: 네트워크 오류");
+    throw err;
+  }
   const j = await res.json().catch(() => ({}));
   if (!res.ok) { alert(j.error || `Engr Comment 저장 실패 (HTTP ${res.status})`); throw new Error("engr save failed"); }
   DATA.web_report.summary_engr = j.summary_engr || values;

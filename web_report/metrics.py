@@ -21,6 +21,8 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     """Distribution ECDF(대용량)는 payload 에 싣지 않고 항상 지연 로드한다
     (distribution_deferred=True, sheets["Distribution"]=[]) — 프런트가 별도 lazy 엔드포인트
     (GET .../web_report/distribution)로 받아간다. distribution_index(경량)는 항상 포함.
+    Map Analysis 도 dies(대용량)를 빼고 경량 메타만 싣는다 (map_deferred=True, schema v8
+    — 프런트가 GET .../web_report/map_analysis 로 die 전량을 지연 로드).
 
     mode: 세션 분석 모드(Normal/Compare/DUT/Commonality). Normal 은 기존 multi-source 렌더,
     DUT 는 source 가 이미 DUT별로 분할돼 있으나 **Map Analysis 만** 하나의 맵으로 병합한다
@@ -72,6 +74,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         "yield_step_groups": build_yield_step_groups(yield_rows),
         "sheets": sheets_out,
         "distribution_deferred": True,
+        "map_deferred": True,
         "distribution_index": build_distribution_index(tables, cpk_rows, exclude=dist_excluded),
         "selected_items": sorted(selected_set),
         "requested_sheets": list(sheets or []),

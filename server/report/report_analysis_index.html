@@ -817,6 +817,7 @@ async function loadHistory() {
       params.set("limit", BATCH);
       params.set("offset", offset);
       const res = await fetch("/pe/report/api/history?" + params.toString());
+      if (!res.ok) throw new Error("HTTP " + res.status);
       const data = await res.json();
       const rows = Array.isArray(data) ? data : (data.rows || []);
       total = Array.isArray(data) ? rows.length : (data.total ?? rows.length);

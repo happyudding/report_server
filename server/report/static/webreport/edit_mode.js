@@ -230,6 +230,8 @@ document.querySelector(".content").addEventListener("focusout", e => {
   cell.dataset.raw = raw;                  // 저장·재편집 라운드트립용 원문 갱신
   cell.innerHTML = linkifyComment(raw);    // @[항목] → 링크 표시로 복귀
   hideMention();
+  // 편집 종료 즉시 DB 저장 (web_report 만 — legacy PATCH /content 는 405 폐지).
+  if (MODE === "edit" && _dirty && isWebReportSession()) saveCommentOnBlur();
 });
 
 document.getElementById("btnDel").addEventListener("click", () => {
@@ -488,6 +490,7 @@ async function autoSave() {
     } catch (_) {
       _dirty = true;
       _setDot("dirty");
+      showToast("자동저장 실패 — 변경사항이 저장되지 않았습니다");
     } finally {
       _autoSaving = false;
     }
@@ -502,14 +505,23 @@ async function autoSave() {
       body: JSON.stringify(payload),
       keepalive: true,
     });
-    if (!res.ok) { _dirty = true; _setDot("dirty"); }
+    if (!res.ok) { _dirty = true; _setDot("dirty"); showToast("자동저장 실패 — 변경사항이 저장되지 않았습니다"); }
     else _setDot("saved");
   } catch (_) {
     _dirty = true;
     _setDot("dirty");
+    showToast("자동저장 실패 — 변경사항이 저장되지 않았습니다");
   } finally {
     _autoSaving = false;
   }
+}
+
+// comment 셀 blur 즉시 저장 — autoSave 재사용(dot: dirty→saving→saved, _autoSaving 중복 방지,
+// 실패 시 _dirty 복원). 사용자 조작 직후라 실패를 toast 로 알린다. 다른 저장이 진행 중이면
+// autoSave 가 no-op — 그 경우 거짓 실패 toast 를 내지 않도록 _autoSaving 을 함께 검사.
+async function saveCommentOnBlur() {
+  await autoSave();
+  if (_dirty && !_autoSaving) showToast("comment 저장 실패 — 저장 버튼으로 다시 시도해주세요.");
 }
 
 // 탭이 백그라운드로 가거나 창이 최소화될 때 자동저장

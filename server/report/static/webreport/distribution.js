@@ -188,7 +188,9 @@ function distBadgeEl(create) {
       const b = ev.target.closest("[data-dist-retry]");
       if (!b) return;
       distBadgeHide();
-      if (b.dataset.distRetry === "bin1") ensureDistBin1Data(); else ensureDistData();
+      if (b.dataset.distRetry === "bin1") ensureDistBin1Data();
+      else if (b.dataset.distRetry === "map") ensureMapData();
+      else ensureDistData();
     });
     document.body.appendChild(el);
   }

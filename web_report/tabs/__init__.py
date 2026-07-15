@@ -8,6 +8,8 @@
 metrics.build_report_payload 는 REGISTRY 를 순회할 뿐 개별 탭 이름을 모른다.
 lazy 탭(builder=None)은 /full payload 에 빈 시트로 실리고 전용 라우트로 지연
 로드된다 (Distribution / Trim Analysis 관례 — 대용량 payload 를 /full 에 싣지 않음).
+Map Analysis 는 하이브리드: 경량 메타(strip_dies)는 /full 에 남기고 die 전량은
+GET .../web_report/map_analysis 로 지연 로드한다 (schema v8).
 """
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ from typing import Callable, Optional
 
 from .cpk import build_cpk_rows  # noqa: F401  (metrics 가 ctx 조립에 사용)
 from .issue_table import build_issue_table_rows
-from .Map_analysis import build_map_analysis_rows
+from .Map_analysis import build_map_analysis_rows, strip_dies
 from .raw_data import build_raw_data_rows
 from .summary import build_summary_rows
 from .yield_tab import fail_bin_ranking
@@ -57,7 +59,8 @@ TAB_REGISTRY: tuple = (
         ai_comments=ctx.ai_comments)),
     TabSpec("Distribution", None),      # lazy — GET .../web_report/distribution
     TabSpec("Trim Analysis", None),     # lazy — GET .../web_report/trim_analysis
-    TabSpec("Map Analysis", lambda ctx: build_map_analysis_rows(
-        ctx.tables, ctx.product_type, ctx.product, ctx.mode)),
+    # 하이브리드 lazy — 경량 메타만 /full 에, dies 는 GET .../web_report/map_analysis
+    TabSpec("Map Analysis", lambda ctx: strip_dies(build_map_analysis_rows(
+        ctx.tables, ctx.product_type, ctx.product, ctx.mode))),
     TabSpec("Fail Bin", lambda ctx: fail_bin_ranking(ctx.yield_rows)),
 )

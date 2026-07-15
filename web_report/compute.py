@@ -78,6 +78,8 @@ def run(job, *args):
     try:
         return pool.submit(job, *args).result(timeout=_TIMEOUT_SEC)
     except BrokenProcessPool:
+        _log.error("compute worker pool broken — 풀 리셋 후 인라인 폴백: %s%r",
+                   getattr(job, "__name__", job), args, exc_info=True)
         with _pool_lock:
             _pool = None
         return job(*args)
@@ -106,6 +108,13 @@ def dist_job(session_id: str, upload_root_str: str, bin1: bool = False) -> bytes
         bin1=bool(bin1))
 
 
+def map_job(session_id: str, upload_root_str: str) -> bytes:
+    from database import report_db
+    from . import service
+    return service.get_map_gzip(
+        session_id, report_db=report_db, upload_root=Path(upload_root_str))
+
+
 def trim_job(session_id: str, upload_root_str: str, source: str) -> bytes:
     from database import report_db
     from . import service
@@ -123,6 +132,7 @@ def _prewarm_job(session_id: str, upload_root_str: str) -> None:
         try:
             report_job(session_id, upload_root_str)
             dist_job(session_id, upload_root_str)
+            map_job(session_id, upload_root_str)
         except Exception:
             pass
 

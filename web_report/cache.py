@@ -40,6 +40,12 @@ DIST_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_DIST_CACHE", "4") or 4))
 DIST_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_DIST_CACHE_MB", "1024")
                                   or 1024)) * 1024 * 1024   # 0 = 바이트 상한 비활성
 DIST_CACHE: OrderedDict = OrderedDict()     # (analysis_key, content_hash) -> gzip bytes
+# Map Analysis dies gzip 캐시 — /full 에서 분리한 die 전량 payload (schema v8).
+# dist 와 같은 bytes 캐시라 개수+바이트 이중 상한을 같은 헬퍼로 적용한다.
+MAP_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_MAP_CACHE", "4") or 4))
+MAP_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_MAP_CACHE_MB", "512")
+                                 or 512)) * 1024 * 1024   # 0 = 바이트 상한 비활성
+MAP_CACHE: OrderedDict = OrderedDict()      # (akey, chash, mode) -> gzip bytes
 REPORT_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_REPORT_CACHE", "8") or 8))
 REPORT_CACHE: OrderedDict = OrderedDict()   # (akey, chash, manifest_digest, incl_dist) -> report dict
 
@@ -68,8 +74,8 @@ MANIFEST_CACHE: OrderedDict = OrderedDict()  # analysis_key -> (canonical bytes,
 # analysis_key 를 키 첫 요소로 쓰는 캐시 레지스트리 — 무효화(invalidate_caches,
 # evict_akey_caches)가 이 리스트를 순회한다. 파생 캐시를 새로 만들면 register_akey_cache
 # 로 등록만 하면 무효화에 자동 편입된다 (response_cache.py 가 import 시 자기 캐시를 등록).
-AKEY_CACHES: list = [TABLES_CACHE, DIST_CACHE, REPORT_CACHE, COMMONALITY_CACHE,
-                     TRIM_CACHE, TRIM_CHART_CACHE]
+AKEY_CACHES: list = [TABLES_CACHE, DIST_CACHE, MAP_CACHE, REPORT_CACHE,
+                     COMMONALITY_CACHE, TRIM_CACHE, TRIM_CHART_CACHE]
 
 # 콜드 캐시 동시 진입(stampede) 방지 single-flight 락 — 캐시에 없는 같은 세션을 여러
 # 사용자가 동시에 열면 수 초짜리 CPU-bound 계산이 중복 실행되며 GIL 로 서로 밀어내므로,
@@ -141,19 +147,27 @@ def _prune_tables_sizes_locked() -> None:
         _TABLES_SIZES.pop(key, None)
 
 
-def dist_cache_put(key, blob: bytes) -> None:
-    """DIST_CACHE 전용 put — 개수 + 바이트(len 합산) 이중 상한으로 축출한다.
+def _bytes_capped_put(cache: OrderedDict, key, blob: bytes,
+                      max_n: int, max_bytes: int) -> None:
+    """bytes 값 캐시 공용 put — 개수 + 바이트(len 합산) 이중 상한으로 축출한다.
 
     최소 1개는 남긴다 (방금 넣은 blob 은 곧바로 조회되므로). 값이 bytes 라 크기
     측정이 len() 으로 끝난다 — tables 처럼 별도 크기 기록이 필요 없다."""
     with CACHE_LOCK:
-        DIST_CACHE[key] = blob
-        DIST_CACHE.move_to_end(key)
-        while len(DIST_CACHE) > 1 and (
-                len(DIST_CACHE) > DIST_CACHE_MAX
-                or (DIST_CACHE_MAX_BYTES
-                    and sum(len(v) for v in DIST_CACHE.values()) > DIST_CACHE_MAX_BYTES)):
-            DIST_CACHE.popitem(last=False)
+        cache[key] = blob
+        cache.move_to_end(key)
+        while len(cache) > 1 and (
+                len(cache) > max_n
+                or (max_bytes and sum(len(v) for v in cache.values()) > max_bytes)):
+            cache.popitem(last=False)
+
+
+def dist_cache_put(key, blob: bytes) -> None:
+    _bytes_capped_put(DIST_CACHE, key, blob, DIST_CACHE_MAX, DIST_CACHE_MAX_BYTES)
+
+
+def map_cache_put(key, blob: bytes) -> None:
+    _bytes_capped_put(MAP_CACHE, key, blob, MAP_CACHE_MAX, MAP_CACHE_MAX_BYTES)
 
 
 def keyed_lock(key) -> threading.Lock:

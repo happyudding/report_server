@@ -18,10 +18,20 @@
 `current_user()` = SSO 헤더(`AUTH_SSO_HEADER` 설정 시) → Honey UA `HoneyUser/<계정>`. **일반
 브라우저는 신원이 없어 읽기 전용.**
 
-가드 2단계 ([security.py](../server/report/security.py)):
-- **`_uploader_guard`** — 삭제·비공개·편집자 부여. 신원 없으면 401, 업로더 아니면 403.
+가드 3종 ([security.py](../server/report/security.py)):
+- **`_uploader_guard`** — 삭제·비공개 토글·편집자 부여. 신원 없으면 401, 업로더 아니면 403.
 - **`_editor_guard`** — 콘텐츠 편집·개인 중요표시. 업로더 본인 또는 위임 편집자
   (`report_session_editor`)면 통과.
+- **`_private_guard`** (2026-07-15) — **비공개(is_private) 세션 조회 차단**. 업로더 본인 또는
+  위임 편집자가 아니면 **404**(존재 자체를 숨김 — 편집 가드의 401/403 과 달리 조회는 404).
+  적용 지점: `/result`·`/session/<sid>`·`/full`·`/view`·`/annotation/<sid>`(각 라우트),
+  web_report 데이터 API 전체(`_require_web_report_session` 공통 진입점), 이미지 라우트
+  (`storage_gateway/routes.py` — chart/issue_image/note_image/distribution_combined).
+  목록(history)은 SQL 필터([sessions.py](../server/database/sessions.py) `_history_where`
+  `viewer` 파라미터)로 숨긴다 — 공개 OR legacy(uploaded_by 빈 세션) OR 업로더 OR 위임 편집자.
+  Honey 클라의 Excel Download/Rawdata 수정도 이 가드를 지나므로 plain requests 에
+  `HoneyUser/` UA 토큰을 붙인다([client/excel_download/_fetch.py](../client/excel_download/_fetch.py)·
+  [client/excel_edit/excel_session.py](../client/excel_edit/excel_session.py) `_honey_headers()`).
 
 **legacy 우회 (중요)**: `is_uploader()` 는 `session["uploaded_by"]` 가 **비어 있으면 신원만
 있으면 True**. xlsx 업로드 세션은 `uploaded_by` 를 채우지 않으므로 Honey 접속 사용자 전원이

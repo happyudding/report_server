@@ -187,3 +187,17 @@ def save_dist(upload_root: Path, cache_key: tuple, blob: bytes) -> None:
     if not _enabled():
         return
     _write(_path_for(upload_root, "dist", cache_key, ".gz"), blob)
+
+
+def load_map(upload_root: Path, cache_key: tuple) -> bytes | None:
+    """Map Analysis dies gzip bytes 디스크 캐시 조회. cache_key 는
+    service.get_map_gzip 의 MAP_CACHE 키 (analysis_key, content_hash, mode)."""
+    if not _enabled():
+        return None
+    return _read(_path_for(upload_root, "map", cache_key, ".gz"))
+
+
+def save_map(upload_root: Path, cache_key: tuple, blob: bytes) -> None:
+    if not _enabled():
+        return
+    _write(_path_for(upload_root, "map", cache_key, ".gz"), blob)

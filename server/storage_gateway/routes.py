@@ -9,6 +9,7 @@ from flask import Response, abort, make_response
 
 from database import report_db
 from report.report_extension import report_bp
+from report.security import _private_guard
 from storage_gateway import (
     S3NotConfigured,
     load_chart_png,
@@ -30,6 +31,7 @@ def _session_analysis_key(session_id):
     session = report_db.get_session(session_id)
     if not session:
         abort(404, "session not found")
+    _private_guard(session)
     akey = session.get("analysis_key")
     if not akey:
         abort(404, "no analysis_key for session")
@@ -80,8 +82,10 @@ def note_image(session_id, image_id):
     _validate_session_id(session_id)
     if not _NOTE_IMAGE_ID_RE.match(image_id):
         abort(404, "invalid image id")
-    if not report_db.get_session(session_id):
+    session = report_db.get_session(session_id)
+    if not session:
         abort(404, "session not found")
+    _private_guard(session)
     try:
         data, mime = load_note_image(session_id, image_id)
     except S3NotConfigured:
@@ -104,5 +108,5 @@ def distribution_combined_png(session_id):
 
     resp = make_response(data)
     resp.headers["Content-Type"] = "image/png"
-    resp.headers["Cache-Control"] = "public, max-age=86400"
+    resp.headers["Cache-Control"] = "private, max-age=86400"
     return resp

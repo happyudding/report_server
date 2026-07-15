@@ -27,6 +27,7 @@
 |------|---------|---------------|
 | TABLES_CACHE | (akey, chash) | raw_data 편집(chash) / 세션 삭제 |
 | DIST_CACHE | (akey, chash, mode) | 〃 (mode 는 세션 생성 후 불변) |
+| MAP_CACHE | (akey, chash, mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8) |
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 |
 | REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode) | comment/override 편집(rev) + 위 전부 |
 | TRIM_CACHE | (akey, chash, sid, edits_rev, mode, source) | trim override 편집(rev) + 위 전부 |
@@ -52,8 +53,8 @@
 - **single-flight 락** (`keyed_lock`): 캐시에 없는 같은 세션을 여러 사용자가 동시에 열면
   수 초짜리 CPU-bound 계산이 GIL 로 서로 밀리므로, 같은 `(종류, akey, chash)` 계산은 한
   스레드만 수행하고 나머지는 대기 후 캐시를 재확인한다.
-- **컴퓨트 오프로드** ([compute.py](../web_report/compute.py)): 콜드 report/dist/trim 빌드를
-  `ProcessPoolExecutor` 워커로 보내 waitress 스레드의 GIL 점유를 피한다. dist 는 전체·
+- **컴퓨트 오프로드** ([compute.py](../web_report/compute.py)): 콜드 report/dist/map/trim
+  빌드를 `ProcessPoolExecutor` 워커로 보내 waitress 스레드의 GIL 점유를 피한다. dist 는 전체·
   bin1 변형 모두 오프로드 대상(2026-07-15 — 종전엔 bin1 이 요청 스레드 인라인이었음).
   tables 캐시가 따뜻하면 인라인, 워커 붕괴 시 인라인 폴백. 업로드 직후 `prewarm` 도
   풀에 제출되어 동시성 상한(워커 수)이 자동 적용된다.
@@ -72,6 +73,8 @@
 | `WEB_REPORT_TABLES_CACHE_MB` | `4096` | tables 캐시 추정 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_DIST_CACHE` | `4` | Distribution gzip 캐시 개수 |
 | `WEB_REPORT_DIST_CACHE_MB` | `1024` | dist blob RAM 바이트 상한 (개수와 이중 적용, 0=비활성 — worst case blob ~505MB 실측) |
+| `WEB_REPORT_MAP_CACHE` | `4` | Map dies gzip 캐시 개수 |
+| `WEB_REPORT_MAP_CACHE_MB` | `512` | Map dies blob RAM 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_REPORT_CACHE` | `8` | report dict 캐시 개수 |
 | `WEB_REPORT_COMMONALITY_CACHE` | `2` | Commonality 인덱스 캐시 개수 |
 | `WEB_REPORT_TRIM_CACHE` | `4` | Trim payload 캐시 개수 |

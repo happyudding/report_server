@@ -120,9 +120,11 @@ report_server/
 
 **인증**: 신원은 Honey 내장 브라우저 User-Agent 의 `HoneyUser/<계정>` 토큰으로 자동 식별한다
 ([server/auth_identity.py](server/auth_identity.py) — env `AUTH_SSO_HEADER` 설정 시 역프록시
-SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이 없어 **읽기 전용**. 가드 2단계
-([server/report/security.py](server/report/security.py)): `_uploader_guard`(삭제·비공개·편집자
-부여 — 업로더 전용) / `_editor_guard`(콘텐츠 편집 — 업로더 또는 위임 편집자). **legacy 우회**:
+SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이 없어 **읽기 전용**. 가드 3종
+([server/report/security.py](server/report/security.py)): `_uploader_guard`(삭제·비공개 토글·
+편집자 부여 — 업로더 전용) / `_editor_guard`(콘텐츠 편집 — 업로더 또는 위임 편집자) /
+`_private_guard`(비공개 세션 **조회** 차단 — 업로더+위임 편집자 외 404, 목록도 SQL 필터로
+숨김, 2026-07-15). **legacy 우회**:
 `uploaded_by` 가 빈 세션(= xlsx 업로드 세션)은 Honey 접속 사용자 전원이 편집/삭제 가능하고,
 `uploaded_by` 를 채우는 web_report 세션만 업로더 잠금이 실효한다. 구 4자리 password
 (`report_session.password`)는 저장·전송되나 **접근제어에 미사용**(선택 입력, 형식만 검사).
