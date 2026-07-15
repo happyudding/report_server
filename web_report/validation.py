@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import json
 
-from werkzeug.utils import secure_filename
-
 WEB_REPORT_MODES = ("Normal", "Compare", "DUT", "Commonality")
 
 
@@ -71,6 +69,10 @@ def mode_tables(tables, mode):
 
 
 def validate_meta(meta: dict) -> dict:
+    # werkzeug 는 서버 전용 의존성 — Honey 클라(werkzeug 미설치)가 dist_blob 프리컴퓨트로
+    # validation(mode_tables/validate_mode)을 import 할 수 있도록 여기서만 지연 import 한다.
+    from werkzeug.utils import secure_filename
+
     return {
         "product_type": str(meta.get("product_type") or "").strip(),
         "product": str(meta.get("product") or "").strip(),

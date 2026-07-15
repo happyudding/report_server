@@ -14,14 +14,17 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import logging
 import os
 import re
+import time
 from pathlib import Path
 
 from . import cache
 from . import cache_policy
 from . import compute
 from . import disk_cache
+from . import dist_blob as _dist_blob
 from . import edits
 from . import runtime
 from .honeyform import encode_honeyform_parquet
@@ -41,6 +44,8 @@ from .validation import (
 # 1회이고 매 조회 전송량(수십 MB ECDF)이 줄어든다. 실측 후 운영값 결정용 env.
 # 대화형 경로(/full·scatter — response_cache._gzip_json)는 level 1 유지.
 _DIST_GZIP_LEVEL = max(1, min(9, int(os.getenv("WEB_REPORT_DIST_GZIP_LEVEL", "1") or 1)))
+
+_log = logging.getLogger(__name__)
 
 
 def invalidate_caches(analysis_key) -> None:
@@ -94,6 +99,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                     # 워커가 disk_cache 도 채우므로 여기서는 RAM 캐시만 넣는다.
                     report = compute.run(compute.report_job, session_id, str(upload_root))
                 if report is None:
+                    t0 = time.perf_counter()
                     session, tables, manifest = _load_tables(
                         session_id, report_db=report_db, upload_root=upload_root,
                         session=session)
@@ -122,6 +128,12 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                         ai_comments=ai_comments,
                     )
                     disk_cache.save_report(upload_root, cache_key, report)
+                    # 관측 로그 — 콜드 빌드(디코드 포함)가 실데이터에서 얼마나 걸리는지.
+                    _log.info(
+                        "report cold build akey=%.12s sid=%s sources=%d items=%d %.1fs",
+                        str(analysis_key), session_id, len(tables),
+                        len(report.get("distribution_index") or ()),
+                        time.perf_counter() - t0)
                 cache.cache_put(cache.REPORT_CACHE, cache_key, report, cache.REPORT_CACHE_MAX)
     public = dict(session)
     public["has_password"] = bool(public.get("password"))
@@ -132,23 +144,14 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
 def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: bool = False) -> dict:
     """Distribution lazy 엔드포인트용 컴팩트 ECDF (전 포인트, 다운샘플 없음).
 
-    /full 의 payload 와 동일하게 manifest.selected_items 필터를 적용한다 — 빠뜨리면
+    계산 본체는 dist_blob.compute_dist_compact — Honey 클라의 업로드 시 프리컴퓨트와
+    같은 코드를 공유해 값 일치를 구조적으로 보장한다. selected_items 필터를 빠뜨리면
     distribution_index 와 항목 집합이 어긋난다. tables 는 캐시 클론이라 필터가 안전하다.
     ``bin1`` 이면 양품(BIN==PASS_BIN) die 측정값만으로 ECDF 를 재계산한다("Bin1 only").
     """
-    from .tabs.common import passfail_or_empty_items
-    from .tabs.distribution import build_distribution_compact
-
     session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
-    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
-    selected = {str(v) for v in (manifest.get("selected_items") or []) if str(v)}
-    if selected:
-        for table in tables:
-            table.item_columns = [c for c in table.item_columns if c in selected]
-    # /full 의 distribution_index 와 항목 집합을 맞춘다 — Pass/Fail unit·측정 data 전무 항목 제외.
-    excluded = passfail_or_empty_items(tables)
-    all_items = sorted({c for t in tables for c in t.item_columns if c not in excluded})
-    return build_distribution_compact(tables, all_items, bin1_only=bin1)
+    return _dist_blob.compute_dist_compact(
+        tables, manifest.get("selected_items") or [], session.get("mode"), bin1=bin1)
 
 
 def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
@@ -158,8 +161,9 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
     계산(수 초 CPU)+직렬화+압축을 세션당 1회만 수행 — 동시 사용자·재방문 모두 캐시 히트.
     키는 tables 캐시와 동일한 (analysis_key, content_hash) — manifest.selected_items 는
     업로드 시 확정되어 content_hash 와 함께만 바뀌므로 키에 포함하지 않아도 안전하다.
-    ``bin1`` 변형은 별도 캐시 키(dist_key(session, bin1=True))로 전체 기준과 분리 저장하고,
-    콜드 빌드도 인라인으로만 계산한다(워커 dist_job 은 전체 기준 전용).
+    ``bin1`` 변형은 별도 캐시 키(dist_key(session, bin1=True))로 전체 기준과 분리 저장한다.
+    콜드 빌드는 전체/bin1 모두 워커 오프로드 대상 — Honey 가 업로드 시 프리컴퓨트 blob
+    을 첨부한 세션은 ingest 가 캐시를 미리 시딩해 여기 콜드 경로 자체가 없다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -178,17 +182,25 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
             return blob
         # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
         blob = disk_cache.load_dist(upload_root, cache_key)
-        if blob is None and not bin1 and compute.should_offload(cache_policy.tables_key(session)):
-            # 콜드 빌드는 워커 프로세스로 (워커가 disk_cache 도 채움). bin1 변형은 워커
-            # dist_job 이 전체 기준만 만들므로 오프로드하지 않고 아래 인라인 경로로 간다.
-            blob = compute.run(compute.dist_job, session_id, str(upload_root))
+        if blob is None and compute.should_offload(cache_policy.tables_key(session)):
+            # 콜드 빌드(수십 초 CPU 가능)는 전체/bin1 변형 모두 워커 프로세스로 —
+            # 요청 스레드 GIL 점유를 피한다 (워커가 disk_cache 도 채움).
+            blob = compute.run(compute.dist_job, session_id, str(upload_root), bin1)
         if blob is None:
+            t0 = time.perf_counter()
             compact = get_distribution(session_id, report_db=report_db,
                                        upload_root=upload_root, bin1=bin1)
-            blob = gzip.compress(
-                json.dumps(compact, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-                compresslevel=_DIST_GZIP_LEVEL)
+            raw = json.dumps(compact, ensure_ascii=False,
+                             separators=(",", ":")).encode("utf-8")
+            blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)
             disk_cache.save_dist(upload_root, cache_key, blob)
+            # 관측 로그 — 실데이터가 위험 구간(수천만 포인트)에 닿는지 판단용 (docs 진단).
+            _log.info(
+                "dist cold build akey=%.12s bin1=%s items=%d points=%d raw=%.1fMB "
+                "gz=%.1fMB %.1fs",
+                str(analysis_key), bin1, len(compact.get("items") or {}),
+                _dist_blob.count_points(compact), len(raw) / 1048576,
+                len(blob) / 1048576, time.perf_counter() - t0)
         cache.cache_put(cache.DIST_CACHE, cache_key, blob, cache.DIST_CACHE_MAX)
     return blob
 

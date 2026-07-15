@@ -94,7 +94,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | 메서드 | 경로 | 접근 | 설명 |
 |--------|------|------|------|
 | `POST` | `/upload_xlsx` | Honey | xlsx 추출 grid(JSON) + issue PNG 업로드 |
-| `POST` | `/upload_webreport` | Honey | web_report honeyform parquet + manifest 업로드 |
+| `POST` | `/upload_webreport` | Honey | web_report honeyform parquet + manifest 업로드. 선택 필드 `dist_blob`/`dist_blob_bin1`(클라 프리컴퓨트 Distribution ECDF gzip — 검증 후 dist 캐시 시딩, 미첨부 시 서버 폴백 계산) |
 | `GET` | `/web_report/<sid>` | 공개 | `/view/<sid>` 로 리다이렉트 |
 
 ### 세션 조회/변경 (`/pe/report/`)

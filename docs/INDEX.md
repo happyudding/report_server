@@ -107,6 +107,7 @@
 | 수정 모드 저장 동작 (구 xlsx) | [02](02_server_query_edit.md) | `update_session_content()` — 비활성(항상 405) |
 | DB 컬럼/테이블 추가 | [03](03_storage.md) | [database/core.py](../server/database/core.py) `SCHEMA`, `_migrate()` (report_db.py 는 facade) |
 | web_report 캐시 키/무효화 | — | [web_report/cache_policy.py](../web_report/cache_policy.py) (키 구성 단일 진실) |
+| Distribution ECDF 계산 (서버 폴백=클라 프리컴퓨트 공용) | [10](10_web_report_pipeline.md)·[12](12_web_report_cache.md) | [web_report/dist_blob.py](../web_report/dist_blob.py) `compute_dist_compact` |
 | 콜드 빌드 워커/프리웜 | — | [web_report/compute.py](../web_report/compute.py) (`WEB_REPORT_COMPUTE_WORKERS`) |
 | 새 탭 추가 | — | [web_report/tabs/__init__.py](../web_report/tabs/__init__.py) `TAB_REGISTRY` + 프런트 JS 1개 |
 | IssueTable AI Comment / eval_analyzer 연결 | [13](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) `safe_build` (eval_engine import 유일 지점) |

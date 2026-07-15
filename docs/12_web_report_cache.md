@@ -53,9 +53,16 @@
   수 초짜리 CPU-bound 계산이 GIL 로 서로 밀리므로, 같은 `(종류, akey, chash)` 계산은 한
   스레드만 수행하고 나머지는 대기 후 캐시를 재확인한다.
 - **컴퓨트 오프로드** ([compute.py](../web_report/compute.py)): 콜드 report/dist/trim 빌드를
-  `ProcessPoolExecutor` 워커로 보내 waitress 스레드의 GIL 점유를 피한다. tables 캐시가
-  따뜻하면 인라인, 워커 붕괴 시 인라인 폴백. 업로드 직후 `prewarm` 도 풀에 제출되어
-  동시성 상한(워커 수)이 자동 적용된다.
+  `ProcessPoolExecutor` 워커로 보내 waitress 스레드의 GIL 점유를 피한다. dist 는 전체·
+  bin1 변형 모두 오프로드 대상(2026-07-15 — 종전엔 bin1 이 요청 스레드 인라인이었음).
+  tables 캐시가 따뜻하면 인라인, 워커 붕괴 시 인라인 폴백. 업로드 직후 `prewarm` 도
+  풀에 제출되어 동시성 상한(워커 수)이 자동 적용된다.
+- **클라 프리컴퓨트 시딩** (2026-07-15): Honey 가 업로드에 첨부한 dist blob(전체/bin1,
+  [dist_blob.py](../web_report/dist_blob.py) 공용 빌더)을 ingest 가 DIST_CACHE+디스크
+  캐시에 시딩 — 첨부 세션은 dist 콜드 미스 자체가 없다 → [10](10_web_report_pipeline.md).
+- **콜드 빌드 관측 로그**: report/dist 콜드 빌드가 `akey/항목수/포인트수/크기/소요초`
+  INFO 로그를 남긴다 ([service.py](../web_report/service.py)) — 실데이터 규모가 위험
+  구간(수천만 포인트)에 닿는지 운영 로그로 판단.
 
 ## 환경변수
 | 변수 | 기본값 | 설명 |

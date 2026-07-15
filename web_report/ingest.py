@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 import time
 from pathlib import Path
 
 from . import cache
+from . import cache_policy
+from . import disk_cache
 from . import edits
 from . import runtime
 from .validation import (
@@ -22,9 +25,45 @@ from .validation import (
     validate_mode as _validate_mode,
 )
 
+_log = logging.getLogger(__name__)
+
+
+def _seed_client_dist_blobs(dist_blobs, analysis_key, content_hash, mode,
+                            upload_root: Path) -> list[str]:
+    """Honey 가 업로드에 첨부한 프리컴퓨트 dist blob(전체/bin1)을 dist 캐시에 시딩.
+
+    클라가 서버와 같은 dist_blob.compute_dist_compact 로 만든 gzip 이라 값이 동일하다 —
+    시딩되면 서버 콜드 dist 빌드(수십 초 CPU + RAM 스파이크)가 아예 발생하지 않는다.
+    검증(gzip CRC + 포맷 프리픽스) 실패나 미첨부는 조용히 건너뛰고 기존 서버 계산
+    폴백(prewarm/첫 조회)이 그대로 동작한다. 반환: 시딩된 변형 이름 리스트.
+    """
+    from .dist_blob import validate_dist_blob
+
+    seeded: list[str] = []
+    pseudo_session = {"analysis_key": analysis_key, "content_hash": content_hash,
+                      "mode": mode}
+    for variant, bin1 in (("all", False), ("bin1", True)):
+        blob = (dist_blobs or {}).get(variant)
+        if not blob:
+            continue
+        try:
+            raw_size = validate_dist_blob(blob)
+        except ValueError as exc:
+            _log.warning("client dist blob(%s) rejected akey=%.12s: %s",
+                         variant, str(analysis_key), exc)
+            continue
+        key = cache_policy.dist_key(pseudo_session, bin1=bin1)
+        disk_cache.save_dist(Path(upload_root), key, blob)
+        cache.cache_put(cache.DIST_CACHE, key, blob, cache.DIST_CACHE_MAX)
+        seeded.append(variant)
+        _log.info("client dist blob(%s) seeded akey=%.12s gz=%.1fMB raw=%.1fMB",
+                  variant, str(analysis_key), len(blob) / 1048576, raw_size / 1048576)
+    return seeded
+
 
 def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_root: Path,
-                     client_ip: str = "", user_agent: str = "") -> dict:
+                     client_ip: str = "", user_agent: str = "",
+                     dist_blobs: dict | None = None) -> dict:
     from .honeyform import decode_split_honeyform_parquet
 
     meta = _validate_meta(manifest.get("meta") or {})
@@ -76,6 +115,9 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     # storage 재다운로드+재디코드 생략. (캐시엔 원본 저장, 소비자는 loader 가 클론 반환.)
     cache.tables_cache_put((analysis_key, content_hash),
                            [item["table"] for item in decoded])
+    # 클라 프리컴퓨트 dist blob(전체/bin1) 시딩 — 첨부 시 서버 콜드 dist 빌드 소멸.
+    dist_seeded = _seed_client_dist_blobs(
+        dist_blobs, analysis_key, content_hash, mode, upload_root)
 
     session_dir = Path(upload_root) / "web_report" / analysis_key
     # 선택된 product(part_id/sub_part_id) → product_info.csv 기준정보 lookup 후 세션에 저장.
@@ -147,4 +189,6 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         "sources": [item["source"] for item in decoded],
         "item_count": len({str(v) for v in selected_items if str(v)}),
         "storage": storage_result["storage"],
+        # 클라 첨부 dist blob 중 시딩된 변형(["all","bin1"]) — 구 클라는 빈 리스트.
+        "dist_blob_seeded": dist_seeded,
     }

@@ -14,6 +14,8 @@ import 금지). 서버 진입점은 [server/upload_webreport.py](../server/uploa
 - [server/upload_webreport.py](../server/upload_webreport.py) — 라우트 `POST /pe/report/upload_webreport`, `GET /web_report/<sid>`(→ `/view/<sid>` 리다이렉트)
 - [web_report/ingest.py](../web_report/ingest.py) — `ingest_webreport()` (service 가 재노출)
 - [web_report/honeyform.py](../web_report/honeyform.py) — honeyform 스키마·parquet 인코딩/디코딩
+- [web_report/dist_blob.py](../web_report/dist_blob.py) — Distribution ECDF compact 공용 빌더
+  (서버 폴백 계산 + Honey 클라 업로드 시 프리컴퓨트가 같은 코드 사용 — 값 일치 보장)
 - [web_report/service.py](../web_report/service.py) — `load_webreport()` 및 조회/편집 오케스트레이션
 - [web_report/loader.py](../web_report/loader.py) — 세션 → parquet 다운로드·디코드 → HoneyformTable
 - [web_report/validation.py](../web_report/validation.py) — meta/mode 정규화, `client_identity`
@@ -43,6 +45,13 @@ DataFrame 레이아웃 (`honeyform.py`, `META_COLUMNS`/`META_ROW_LABELS`):
 5. **저장** — `storage.save_webreport_sources(akey, chash, [bytes…], manifest)` (S3 우선,
    실패 시 로컬 폴백, 저장 위치를 object_info 에 기록 → [03](03_storage.md)). 이어서
    manifest·tables 를 인메모리 캐시에 시딩(첫 조회 재디코드 제거).
+   - **클라 dist blob 시딩 (2026-07-15)**: Honey 가 multipart 에 `dist_blob`(전체)/
+     `dist_blob_bin1`(양품만) — 업로드 parquet 로 미리 계산한 Distribution ECDF gzip —
+     을 첨부하면, 검증(gzip CRC + 포맷 프리픽스, `dist_blob.validate_dist_blob`) 후
+     dist 캐시(disk+RAM)에 그대로 시딩한다. 서버 콜드 dist 빌드(대용량 세션 수십 초
+     CPU + RAM 스파이크)가 사라진다. 클라 계산은 서버 폴백과 같은
+     `dist_blob.compute_dist_compact` 공용 코드라 값이 동일하다. 미첨부(구 Honey)/검증
+     실패는 기존 서버 계산 폴백 — 하위호환 무변경.
 6. **세션 생성** — `create_session(source="web_report", uploaded_by, client_host, mode,
    password, …)` → `update_session(analysis_key, content_hash, status="done")`.
    `manifest.options`(Distribution 색 등) 있으면 `webreport_options` 컬럼에 영속.

@@ -57,15 +57,36 @@ def _read_files():
     return items
 
 
+def _read_dist_blobs():
+    """클라 프리컴퓨트 Distribution blob(gzip) 필드 — 선택 첨부(구 클라는 없음).
+
+    dist_blob = 전체 기준 ECDF, dist_blob_bin1 = 양품(Bin1)만 ECDF. 검증·시딩은
+    ingest(web_report.ingest._seed_client_dist_blobs)가 담당한다. 선택 최적화 첨부물이므로
+    크기 초과는 업로드 실패(413)가 아니라 **그 변형만 건너뛰기**(서버 폴백 계산) —
+    실측상 전 값이 고유한 worst case 데이터(10k행×1500항목×7소스)에서 상한 근접.
+    """
+    blobs = {}
+    for variant, field in (("all", "dist_blob"), ("bin1", "dist_blob_bin1")):
+        f = request.files.get(field)
+        if f is None:
+            continue
+        data = f.read()
+        if not data or len(data) > _MAX_WEBREPORT_BYTES:
+            continue
+        blobs[variant] = data
+    return blobs
+
+
 @report_bp.post("/upload_webreport")
 def upload_webreport():
     try:
         manifest = _read_manifest()
         files = _read_files()
+        dist_blobs = _read_dist_blobs()
         ip, ua = _client_meta()
         result = web_report_service.ingest_webreport(
             manifest, files, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
-            client_ip=ip, user_agent=ua)
+            client_ip=ip, user_agent=ua, dist_blobs=dist_blobs)
     except RuntimeError as exc:
         return jsonify({"status": "failed", "error": str(exc)}), 503
     except Exception as exc:

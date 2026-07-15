@@ -316,6 +316,12 @@ async function saveRawDataEdits() {
     source: e.source, row_idx: e.row_idx, column: e.column, value: e.value,
   }));
   if (banner) banner.innerHTML = `<div class="rawdata-banner">저장 중...</div>`;
+  // 재생성은 서버가 parquet 전체를 재디코드·재인코딩하고 캐시를 비워 대용량 세션은
+  // 1분 이상 걸릴 수 있다 — 텍스트 배너만으론 멈춘 것처럼 보여 load 오버레이를 함께 띄운다
+  // (성공 시 이어지는 load(false) 가 오버레이를 이어받고, 실패 catch 가 걷는다).
+  showLoadOverlay();
+  startLoadCreep(4, 60, 30000, "Rawdata 저장 · Report 재생성 중…");
+  scheduleLoadStageMsgs();
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/raw_data/edit`, {
       method: "POST",

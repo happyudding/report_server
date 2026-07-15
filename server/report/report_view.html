@@ -492,6 +492,18 @@ tbody tr:hover { background: #f9fbff; }
 .dist-cell-mini { height: 112px; }
 .dist-placeholder { position: absolute; inset: 0; display: flex; align-items: center;
   justify-content: center; color: #bbb; font-size: 12px; }
+/* 분포 데이터 도착 전 미니셀 placeholder — Plotly 렌더로 자식이 생기면 자동 소멸.
+   전역 수신 진행은 우하단 배지(.dist-load-badge, distribution.js)가 표시한다. */
+.dist-cell-mini .dist-plot:empty::before, .distg-plot:empty::before {
+  content: "분포 로딩 중…"; display: flex; align-items: center; justify-content: center;
+  height: 100%; color: #9aa0a6; font-size: 11px; }
+.dist-load-badge { position: fixed; right: 16px; bottom: 16px; z-index: 900;
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 8px;
+  background: rgba(32,33,36,.92); color: #fff; font-size: 12.5px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.28); }
+.dist-load-badge button { border: 1px solid #8b93a3; background: transparent; color: #fff;
+  border-radius: 5px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
+.dist-load-badge button:hover { background: rgba(255,255,255,.14); }
 
 /* ── Issue Table Map 미니셀 (dist 미니셀과 동일 규격) + 소스별 펼치기 팝오버 ────── */
 .map-plot { width: 100%; height: 100%; }

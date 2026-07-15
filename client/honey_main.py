@@ -140,6 +140,38 @@ def _upload_progress_channel(progress, label_fmt, value_map=None):
     return worker_cb, drain_cb
 
 
+def _build_webreport_dist_blobs(parquet_items, sources, selected_items, mode):
+    """업로드할 parquet 바이트로 Distribution ECDF blob(전체+Bin1) gzip 을 미리 계산.
+
+    서버 dist 캐시 시딩용 — 서버 폴백 계산과 같은 공용 빌더(web_report.dist_blob)를
+    쓰고, 서버 loader 가 디코드할 것과 동일한 bytes 를 여기서도 디코드해 입력 차이를
+    없앤다(값 일치 보장). 반환 {"all": bytes, "bin1": bytes}. 실패는 호출부가 잡아
+    미첨부로 진행한다(서버가 첫 조회 때 폴백 계산 — 업로드는 계속).
+    """
+    from web_report.dist_blob import compute_dist_compact, gzip_dist_blob
+    from web_report.honeyform import decode_split_honeyform_parquet
+
+    tables = []
+    for idx, item in enumerate(parquet_items):
+        src = sources[idx] if idx < len(sources) else {}
+        name = str(src.get("name") or f"source_{idx + 1}")
+        tables.append(decode_split_honeyform_parquet(
+            item["data"], source=name,
+            file_name=str(src.get("file_name") or name), keep_df=False))
+    # compute_dist_compact 의 in-place 변형은 selected 필터(멱등)와 DUT 분할(새 객체)
+    # 뿐이라 같은 tables 로 두 변형을 이어 계산해도 안전하다.
+    # 서버 필드 상한(512MB) 초과 변형은 첨부해도 버려지므로 업로드 낭비 없이 여기서 뺀다
+    # (실측: 전 값 고유 worst case 에서 ~505MB — 실데이터는 수십 MB 수준).
+    max_bytes = 480 * 1024 * 1024
+    blobs = {}
+    for variant, bin1 in (("all", False), ("bin1", True)):
+        blob = gzip_dist_blob(
+            compute_dist_compact(tables, selected_items, mode, bin1=bin1))
+        if len(blob) <= max_bytes:
+            blobs[variant] = blob
+    return blobs
+
+
 class SlideInPanel(QWidget):
     """왼쪽→오른쪽으로 슬라이드되어 나오는 프레임리스 최상위 패널.
 
@@ -1483,6 +1515,14 @@ class HoneyMainWindow(QMainWindow):
         )
         fut_encode = prep_ex.submit(self._build_webreport_parquets, work_group)
 
+        # dist blob 프리컴퓨트(전체+Bin1) — 서버 dist 캐시 시딩용(콜드 dist 빌드 제거).
+        # 같은 워커 1개에서 인코딩 완료 후 순차 실행되므로 fut_encode.result() 는 즉시
+        # 반환된다. 실패해도 업로드는 계속(서버 폴백)이라 결과는 best-effort 로만 쓴다.
+        def _dist_after_encode():
+            sources_, items_ = fut_encode.result()
+            return _build_webreport_dist_blobs(items_, sources_, selected, mode)
+        fut_dist = prep_ex.submit(_dist_after_encode)
+
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
         # source 파일명 head('_' 앞) 를 LOT ID 로 자동 채움 (직전 업로드 값보다 우선,
@@ -1517,10 +1557,18 @@ class HoneyMainWindow(QMainWindow):
             sources, parquet_items = _wait_for_future(fut_encode, progress)
         except Exception as exc:
             progress.fail(f"실패: parquet 인코딩 실패 - {exc}")
-            prep_ex.shutdown(wait=False)
+            prep_ex.shutdown(wait=False, cancel_futures=True)
             QMessageBox.critical(self, "Web Report 실패", str(exc))
             self._status("parquet 인코딩 실패")
             return
+
+        dist_blobs = None
+        try:
+            progress.set("분포 데이터 생성 중...", value=38, status="분포 데이터 생성 중...")
+            dist_blobs = _wait_for_future(fut_dist, progress)
+        except Exception as exc:
+            # 프리컴퓨트 실패는 업로드를 막지 않는다 — 서버가 첫 조회 때 폴백 계산한다.
+            self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
         prep_ex.shutdown(wait=False)
 
         manifest = {
@@ -1544,6 +1592,7 @@ class HoneyMainWindow(QMainWindow):
                     manifest,
                     parquet_items,
                     progress_cb=_on_upload_progress,
+                    dist_blobs=dist_blobs,
                 )
                 result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
         except Exception as exc:
@@ -1904,6 +1953,17 @@ class HoneyMainWindow(QMainWindow):
             self.btn_upload_local.setEnabled(True)
             return
 
+        # dist blob 프리컴퓨트 — 서버 dist 캐시 시딩(실패 시 미첨부, 서버 폴백 계산).
+        dist_blobs = None
+        try:
+            prep_progress.set("분포 데이터 생성 중...", status="분포 데이터 생성 중...")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(_build_webreport_dist_blobs, parquet_items, sources,
+                                all_items, "Normal")
+                dist_blobs = _wait_for_future(fut, prep_progress)
+        except Exception as exc:
+            self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
+
         manifest = {
             "sources": sources,
             "meta": meta,
@@ -1935,6 +1995,7 @@ class HoneyMainWindow(QMainWindow):
                     manifest,
                     parquet_items,
                     progress_cb=_on_upload_progress,
+                    dist_blobs=dist_blobs,
                 )
                 result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
         except Exception as exc:

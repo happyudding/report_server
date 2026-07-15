@@ -112,11 +112,13 @@ function buildDistDataFromCompact(payload) {
   return out;
 }
 
-function fetchDistViaWorker(url) {
+function fetchDistViaWorker(url, onProgress) {
   // 수십 MB JSON 을 메인스레드에서 파싱하면 로드 직후 첫 상호작용이 얼어붙는다.
   // Web Worker 에서 fetch+parse 하고, 결과를 통째로 넘기면 structured clone
   // 역직렬화(~0.5s)가 다시 메인스레드를 막으므로 items 를 포인트 수 기준 청크로
   // 쪼개 전송해 블록을 수십 ms 단위로 분산한다. (Worker 실패 시 호출측 폴백.)
+  // onProgress(loadedBytes): 수신 진행 콜백 — body 스트림의 비압축 바이트 누계를
+  // 2MB 단위로 알린다 (gzip 전송이라 총량 % 는 알 수 없어 바이트만 표시).
   return new Promise((resolve, reject) => {
     let blobUrl = null, w = null;
     const cleanup = () => {
@@ -126,7 +128,20 @@ function fetchDistViaWorker(url) {
     try {
       const src = 'self.onmessage=function(e){' +
         'fetch(e.data,{cache:"no-cache"})' +
-        '.then(function(r){if(!r.ok)throw new Error("HTTP "+r.status);return r.json();})' +
+        '.then(function(r){' +
+          'if(!r.ok)throw new Error("HTTP "+r.status);' +
+          'if(!r.body||!r.body.getReader)return r.json();' +   // 구형 폴백: 진행 없이 통파싱
+          'var reader=r.body.getReader(),chunks=[],loaded=0,lastPost=0;' +
+          'function pump(){return reader.read().then(function(res){' +
+            'if(res.done){' +
+              'var buf=new Uint8Array(loaded),off=0;' +
+              'for(var i=0;i<chunks.length;i++){buf.set(chunks[i],off);off+=chunks[i].length;}' +
+              'return JSON.parse(new TextDecoder("utf-8").decode(buf));}' +
+            'chunks.push(res.value);loaded+=res.value.length;' +
+            'if(loaded-lastPost>=2097152){lastPost=loaded;self.postMessage({progress:loaded});}' +
+            'return pump();});}' +
+          'return pump();' +
+        '})' +
         '.then(function(j){' +
           'var items=(j&&j.items)||{};var keys=Object.keys(items);' +
           'var batch={},pts=0;' +
@@ -145,6 +160,7 @@ function fetchDistViaWorker(url) {
     w.onmessage = ev => {
       const d = ev.data || {};
       if (d.error) { cleanup(); reject(new Error(d.error)); return; }
+      if (d.progress != null) { if (onProgress) onProgress(d.progress); return; }
       Object.assign(items, d.chunk || {});
       if (d.done) { cleanup(); resolve({ format: d.format, items }); }
     };
@@ -154,22 +170,68 @@ function fetchDistViaWorker(url) {
   });
 }
 
+// ── 분포 로딩 상태 배지 (우하단 고정 — Distribution 갤러리·Issue Table 미니셀 공용) ──
+// 대용량 세션은 지연 로드가 수십 초 걸릴 수 있어, 도착 전 빈 미니셀이 "고장"으로
+// 보이지 않도록 전역 배지로 수신 진행(비압축 MB)을 보여준다. 실패 시 재시도 버튼.
+let _distBadgeJobs = 0;   // 진행 중 로드 수 (전체/Bin1 동시 로드 대비)
+function distBadgeEl(create) {
+  let el = document.getElementById("distLoadBadge");
+  if (!el && create) {
+    el = document.createElement("div");
+    el.id = "distLoadBadge";
+    el.className = "dist-load-badge";
+    el.addEventListener("click", ev => {
+      const b = ev.target.closest("[data-dist-retry]");
+      if (!b) return;
+      distBadgeHide();
+      if (b.dataset.distRetry === "bin1") ensureDistBin1Data(); else ensureDistData();
+    });
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function distBadgeShow(html) {
+  const el = distBadgeEl(true);
+  el.innerHTML = html;
+  el.style.display = "";
+}
+function distBadgeHide() {
+  const el = distBadgeEl(false);
+  if (el) el.style.display = "none";
+}
+function distBadgeStart(label) { _distBadgeJobs++; distBadgeShow(esc(label)); }
+function distBadgeEnd() {
+  _distBadgeJobs = Math.max(0, _distBadgeJobs - 1);
+  if (!_distBadgeJobs) distBadgeHide();
+}
+function distBadgeFail(label, variant) {
+  _distBadgeJobs = Math.max(0, _distBadgeJobs - 1);
+  distBadgeShow(`${esc(label)} <button type="button" class="btn-sm" data-dist-retry="${variant}">재시도</button>`);
+}
+function distBadgeProgress(label, loadedBytes) {
+  distBadgeShow(`${esc(label)} ${(loadedBytes / 1048576).toFixed(1)} MB 수신…`);
+}
+
 function ensureDistData() {
   const ch = (DATA && DATA.session && DATA.session.content_hash) || "";
   if (distDataPromise && ch === _distContentHash) return distDataPromise;   // 로딩 중/완료 재사용
   _distContentHash = ch;
   distDataReady = false;
   const url = `/pe/report/session/${SESSION_ID}/web_report/distribution`;
-  distDataPromise = fetchDistViaWorker(url)
+  const label = "분포 데이터 로딩 중…";
+  distBadgeStart(label);
+  distDataPromise = fetchDistViaWorker(url, loaded => distBadgeProgress(label, loaded))
     .catch(() => fetch(url, { cache: "no-cache" })   // Worker 실패 시 메인스레드 폴백
       .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }))
     .then(j => {
       distDataCache = buildDistDataFromCompact(j);
       distDataReady = true;
+      distBadgeEnd();
       refreshDistConsumers();
     })
     .catch(e => {
-      distDataPromise = null;   // 실패 시 다음 호출에서 재시도
+      distDataPromise = null;   // 실패 시 다음 호출/재시도 버튼에서 재요청
+      distBadgeFail("분포 데이터 로드 실패", "all");
       showToast("분포 데이터 로드 실패: " + e.message);
     });
   return distDataPromise;
@@ -199,16 +261,20 @@ function ensureDistBin1Data() {
   _distBin1ContentHash = ch;
   distBin1Ready = false;
   const url = `/pe/report/session/${SESSION_ID}/web_report/distribution?bin1=1`;
-  distBin1Promise = fetchDistViaWorker(url)
+  const label = "Bin1 분포 로딩 중…";
+  distBadgeStart(label);
+  distBin1Promise = fetchDistViaWorker(url, loaded => distBadgeProgress(label, loaded))
     .catch(() => fetch(url, { cache: "no-cache" })   // Worker 실패 시 메인스레드 폴백
       .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }))
     .then(j => {
       distBin1Cache = buildDistDataFromCompact(j);
       distBin1Ready = true;
+      distBadgeEnd();
       if (distBin1Only) refreshDistGallery();   // 도착 전 비어 있던 갤러리 미니셀을 채운다
     })
     .catch(e => {
-      distBin1Promise = null;   // 실패 시 다음 토글에서 재시도
+      distBin1Promise = null;   // 실패 시 다음 토글/재시도 버튼에서 재요청
+      distBadgeFail("Bin1 분포 로드 실패", "bin1");
       showToast("Bin1 분포 로드 실패: " + e.message);
     });
   return distBin1Promise;

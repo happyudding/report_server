@@ -22,7 +22,11 @@ web_report/
 ├── ingest.py           업로드 ingest (해시→저장→세션 생성→편집값 시드→프리웜)
 ├── loader.py           세션 → parquet 다운로드·디코드 → HoneyformTable (TABLES_CACHE 결합)
 ├── honeyform.py        7-meta honeyform 검증/파싱, parquet 인코딩·디코딩 (스키마 상수)
-├── validation.py       canon·mode/meta 정규화·client_identity — 캐시·저장소 무의존 순수 헬퍼
+├── dist_blob.py        Distribution ECDF compact 공용 빌더 — 서버 폴백 계산과 Honey 클라
+│                        업로드 프리컴퓨트(honey_main._build_webreport_dist_blobs)가 공유.
+│                        순수 모듈(캐시·저장소·werkzeug 무의존) — 클라에서 import 됨
+├── validation.py       canon·mode/meta 정규화·client_identity — 순수 헬퍼 (werkzeug 는
+│                        validate_meta 안 지연 import — 클라가 mode_tables 를 쓰기 때문)
 ├── edits.py            편집 상태 — 진실은 세션 단위 DB(report_webreport_edit). legacy 폴백/시드
 ├── ai_comment.py       eval_analyzer(eval_engine) 통합의 유일한 접점 — IssueTable AI Comment
 │                        (ai_comment 옵션 세션 콜드 빌드에서 evaluate() 호출 → docs/13)

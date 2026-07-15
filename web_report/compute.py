@@ -98,11 +98,12 @@ def report_job(session_id: str, upload_root_str: str) -> dict:
     return report
 
 
-def dist_job(session_id: str, upload_root_str: str) -> bytes:
+def dist_job(session_id: str, upload_root_str: str, bin1: bool = False) -> bytes:
     from database import report_db
     from . import service
     return service.get_distribution_gzip(
-        session_id, report_db=report_db, upload_root=Path(upload_root_str))
+        session_id, report_db=report_db, upload_root=Path(upload_root_str),
+        bin1=bool(bin1))
 
 
 def trim_job(session_id: str, upload_root_str: str, source: str) -> bytes:

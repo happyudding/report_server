@@ -21,6 +21,22 @@ function startLoadCreep(from, to, ms, msg) {
     if (k >= 1) stopLoadCreep();
   }, 90);
 }
+// 콜드 빌드(첫 조회 서버 계산)가 길어질 때 62% 정지가 "멈춤"으로 보이지 않도록
+// 시간 경과에 따라 메시지를 갱신하고 아주 느린 2차 creep(62→85, 90s)을 이어간다.
+let _loadStageTimers = [];
+function clearLoadStageTimers() {
+  _loadStageTimers.forEach(t => clearTimeout(t));
+  _loadStageTimers = [];
+}
+function scheduleLoadStageMsgs() {
+  clearLoadStageTimers();
+  _loadStageTimers = [
+    setTimeout(() => startLoadCreep(62, 78, 45000,
+      "서버가 리포트를 계산하고 있습니다…"), 15000),
+    setTimeout(() => startLoadCreep(78, 85, 60000,
+      "대용량 세션은 첫 조회에 1~2분 걸릴 수 있습니다 (이후 조회는 즉시 열립니다)"), 60000),
+  ];
+}
 function showLoadOverlay() {
   const ov = document.getElementById("loadOverlay");
   if (ov) ov.classList.add("show");
@@ -28,6 +44,7 @@ function showLoadOverlay() {
 }
 function hideLoadOverlay() {
   stopLoadCreep();
+  clearLoadStageTimers();
   setLoadProgress(100, "완료");
   const ov = document.getElementById("loadOverlay");
   // 100% 표시가 한 프레임은 보이도록 최소 지연만 둔다 (체감 지연 최소화: 200→50ms)
@@ -37,8 +54,9 @@ async function load(resetMode=true) {
   try {
     showLoadOverlay();
     // 서버가 parquet 재계산(수 초)을 마칠 때까지 첫 바이트가 없어 실제 %를 알 수 없으므로
-    // 대기 동안 62% 까지 천천히 채운다.
+    // 대기 동안 62% 까지 천천히 채우고, 콜드 빌드가 길어지면 단계 메시지로 안내한다.
     startLoadCreep(6, 62, 4500, "리포트 계산·수신 중…");
+    scheduleLoadStageMsgs();
     // head 의 선행 fetch 가 있으면 재사용 (1회성 — 편집 후 재로드는 새로 fetch).
     // cache:"no-cache" 는 ETag 재검증이라 재방문 시 304 로 다운로드를 생략한다.
     const prefetched = window.__fullPrefetch;
@@ -56,6 +74,7 @@ async function load(resetMode=true) {
       return;
     }
     stopLoadCreep();
+    clearLoadStageTimers();   // 응답 도착 — 콜드 대기 단계 메시지 예약 해제
     setLoadProgress(70, "데이터 파싱 중…");
     DATA = await res.json();
     // web_report 전용 뷰어 — xlsx 업로드(legacy) 세션 렌더링은 더 이상 지원하지 않는다.
