@@ -140,17 +140,29 @@ def _upload_progress_channel(progress, label_fmt, value_map=None):
     return worker_cb, drain_cb
 
 
-def _build_webreport_dist_blobs(parquet_items, sources, selected_items, mode):
+def _build_webreport_dist_blobs(parquet_items, sources, selected_items, mode,
+                                stage_cb=None):
     """업로드할 parquet 바이트로 Distribution ECDF blob(전체+Bin1) gzip 을 미리 계산.
 
     서버 dist 캐시 시딩용 — 서버 폴백 계산과 같은 공용 빌더(web_report.dist_blob)를
     쓰고, 서버 loader 가 디코드할 것과 동일한 bytes 를 여기서도 디코드해 입력 차이를
     없앤다(값 일치 보장). 반환 {"all": bytes, "bin1": bytes}. 실패는 호출부가 잡아
     미첨부로 진행한다(서버가 첫 조회 때 폴백 계산 — 업로드는 계속).
+
+    stage_cb(msg): 워커 스레드에서 단계 문자열을 보고(디코드/전체/Bin1). 호출부가
+    queue 로 받아 진행바 라벨을 갱신한다(UI 스레드 직접 접근 금지).
     """
     from web_report.dist_blob import compute_dist_compact, gzip_dist_blob
     from web_report.honeyform import decode_split_honeyform_parquet
 
+    def _stage(msg):
+        if stage_cb is not None:
+            try:
+                stage_cb(msg)
+            except Exception:
+                pass
+
+    _stage("분포 데이터 준비 중... (디코드)")
     tables = []
     for idx, item in enumerate(parquet_items):
         src = sources[idx] if idx < len(sources) else {}
@@ -162,11 +174,15 @@ def _build_webreport_dist_blobs(parquet_items, sources, selected_items, mode):
     # 뿐이라 같은 tables 로 두 변형을 이어 계산해도 안전하다.
     # 서버 필드 상한(512MB) 초과 변형은 첨부해도 버려지므로 업로드 낭비 없이 여기서 뺀다
     # (실측: 전 값 고유 worst case 에서 ~505MB — 실데이터는 수십 MB 수준).
+    # gzip 은 레벨 1 — 클라 CPU 절감(서버는 이 bytes 를 그대로 서빙, LAN 전송량 증가는 미미).
     max_bytes = 480 * 1024 * 1024
+    stages = {"all": "분포 데이터 생성 중... (1/2 전체)",
+              "bin1": "분포 데이터 생성 중... (2/2 Bin1)"}
     blobs = {}
     for variant, bin1 in (("all", False), ("bin1", True)):
+        _stage(stages[variant])
         blob = gzip_dist_blob(
-            compute_dist_compact(tables, selected_items, mode, bin1=bin1))
+            compute_dist_compact(tables, selected_items, mode, bin1=bin1), level=1)
         if len(blob) <= max_bytes:
             blobs[variant] = blob
     return blobs
@@ -630,6 +646,15 @@ class HoneyMainWindow(QMainWindow):
         v.addLayout(run_row)
         # 실행 그리드 아래는 빈 공간으로 (그리드를 위로 붙인다).
         v.addStretch(1)
+
+        # 패널 하단 진행바 — dock 진행바(progress_status)가 이 슬라이드 패널에 가려
+        # 안 보이므로, 패널 기동 흐름(Web/Excel Report·업로드)의 진행을 여기 미러링한다
+        # (_ElapsedProgress(mirror=self.panel_progress)). 평소엔 숨김.
+        from PyQt6.QtWidgets import QProgressBar
+        self.panel_progress = QProgressBar(container)
+        self.panel_progress.setTextVisible(True)
+        self.panel_progress.hide()
+        v.addWidget(self.panel_progress)
 
         self.slide_controls = SlideInPanel(
             self.browser_panel, container, "입력 파일 / 설정", width=620)
@@ -1186,7 +1211,8 @@ class HoneyMainWindow(QMainWindow):
             _SLOW_FILE_SEC = 60
             progress = _ElapsedProgress(
                 self.progress_status, "파일 로딩 준비 중...", self._status,
-                busy=True, minimum=0, maximum=n_files)
+                busy=True, minimum=0, maximum=n_files,
+                mirror=getattr(self, "panel_progress", None))
             QApplication.processEvents()
 
             results = []
@@ -1225,8 +1251,21 @@ class HoneyMainWindow(QMainWindow):
                                 file=sys.stderr,
                                 flush=True,
                             )
+                # 그룹 구성(대용량 concat/인덱싱)·검증도 UI 스레드에서 직접 돌리면 프리즈되므로
+                # 파일 파싱과 동일하게 스레드+폴링(_wait_for_future 의 processEvents)으로 감싼다.
                 with _flow_time("df_honey_group.construct"):
-                    self.group = rg.df_honey_group(results)
+                    progress.set("그룹 구성 중...", value=n_files, status="그룹 구성 중...")
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex2:
+                        self.group = _wait_for_future(
+                            ex2.submit(rg.df_honey_group, results), progress)
+                issues = None
+                if warn:
+                    progress.set("스키마 검증 중...", status="스키마 검증 중...")
+                    with _flow_time("group.validate"):
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex3:
+                            validated = _wait_for_future(
+                                ex3.submit(self.group.validate), progress)
+                    issues = {name: v for name, v in validated.items() if v}
             except Exception as exc:
                 progress.fail(f"실패: 파일 로드 실패 - {exc}")
                 QMessageBox.critical(self, "파일 로드 실패", str(exc))
@@ -1236,12 +1275,9 @@ class HoneyMainWindow(QMainWindow):
 
             progress.success(f"완료: {n_files}개 파일 전처리 완료", value=n_files)
 
-            if warn:
-                with _flow_time("group.validate"):
-                    issues = {name: v for name, v in self.group.validate().items() if v}
-                if issues:
-                    msg = "\n".join(f"- {name}: {', '.join(v)}" for name, v in issues.items())
-                    QMessageBox.warning(self, "스키마 경고", f"일부 파일에 문제가 있습니다:\n{msg}")
+            if issues:
+                msg = "\n".join(f"- {name}: {', '.join(v)}" for name, v in issues.items())
+                QMessageBox.warning(self, "스키마 경고", f"일부 파일에 문제가 있습니다:\n{msg}")
 
             self.out_path = None
             self._status(f"{len(paths)}개 파일 전처리 완료 (기준: {Path(paths[0]).name}).")
@@ -1499,7 +1535,8 @@ class HoneyMainWindow(QMainWindow):
         self._init_run_log("Web Report 생성")
         progress = _ElapsedProgress(
             self.progress_status, "Web Report 준비 중...", self._status,
-            busy=True, minimum=0, maximum=100)
+            busy=True, minimum=0, maximum=100,
+            mirror=getattr(self, "panel_progress", None))
         QApplication.processEvents()
 
         # 분석·인코딩(수 초)을 업로드 메타 입력과 병렬로 미리 시작한다 — 같은 워커 1개에서
@@ -1518,10 +1555,24 @@ class HoneyMainWindow(QMainWindow):
         # dist blob 프리컴퓨트(전체+Bin1) — 서버 dist 캐시 시딩용(콜드 dist 빌드 제거).
         # 같은 워커 1개에서 인코딩 완료 후 순차 실행되므로 fut_encode.result() 는 즉시
         # 반환된다. 실패해도 업로드는 계속(서버 폴백)이라 결과는 best-effort 로만 쓴다.
+        # 단계 진행(디코드/전체/Bin1)은 queue 로 받아 진행바 라벨에 반영(UI 스레드 직접접근 금지).
+        _dist_stage_q = queue.Queue()
+
         def _dist_after_encode():
             sources_, items_ = fut_encode.result()
-            return _build_webreport_dist_blobs(items_, sources_, selected, mode)
+            return _build_webreport_dist_blobs(items_, sources_, selected, mode,
+                                               stage_cb=_dist_stage_q.put)
         fut_dist = prep_ex.submit(_dist_after_encode)
+
+        def _drain_dist_stage():
+            msg = None
+            while True:
+                try:
+                    msg = _dist_stage_q.get_nowait()
+                except queue.Empty:
+                    break
+            if msg is not None:
+                progress.set(msg, status=msg)
 
         defaults = dict(self._last_upload or {})
         defaults["product_type"] = self.product_type()
@@ -1565,7 +1616,7 @@ class HoneyMainWindow(QMainWindow):
         dist_blobs = None
         try:
             progress.set("분포 데이터 생성 중...", value=38, status="분포 데이터 생성 중...")
-            dist_blobs = _wait_for_future(fut_dist, progress)
+            dist_blobs = _wait_for_future(fut_dist, progress, poll_cb=_drain_dist_stage)
         except Exception as exc:
             # 프리컴퓨트 실패는 업로드를 막지 않는다 — 서버가 첫 조회 때 폴백 계산한다.
             self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
@@ -1655,13 +1706,24 @@ class HoneyMainWindow(QMainWindow):
                     break
                 self._log_profile_event(event)
 
-        # Raw Data 시트용 원본 프레임 (체크 시) — source별 df_honey 적재 포맷 그대로
+        # 진행바를 무거운 작업(raw_frames 포함) 시작 전에 먼저 띄운다 — max 는 raw 길이가
+        # 정해진 뒤 set_maximum 으로 확정한다(그 전엔 임시값). 패널에도 미러링.
+        progress = _ElapsedProgress(
+            self.progress_status, "분석 준비 중...", self._status,
+            busy=True, minimum=0, maximum=1,
+            mirror=getattr(self, "panel_progress", None))
+        QApplication.processEvents()
+
+        # Raw Data 시트용 원본 프레임 (체크 시) — source별 df_honey 적재 포맷 그대로.
+        # 대용량이면 수 초~수십 초라 UI 스레드에서 직접 돌리면 프리즈 → 스레드+폴링으로 감싼다.
         raw = None
         if raw_data:
             try:
                 raw_t0 = time.perf_counter()
+                progress.set("Raw Data 준비 중...", status="Raw Data 준비 중...")
                 with _flow_time("raw_frames"):
-                    raw = work_group.raw_frames()
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                        raw = _wait_for_future(ex.submit(work_group.raw_frames), progress)
                 if show_timing_log:
                     self._append_run_log(
                         f"raw_frames done: {time.perf_counter() - raw_t0:.2f}s",
@@ -1673,10 +1735,8 @@ class HoneyMainWindow(QMainWindow):
                 raw = None
         # 진행 단계: 준비(1) → 분석(1) → 요약(1) → 시트별(N, +Raw N) → 저장 마무리(1)
         total = len(sheets) + 4 + (len(raw) if raw else 0)
-        progress = _ElapsedProgress(
-            self.progress_status, "분석 준비 중...", self._status,
-            busy=True, minimum=0, maximum=total)
-        QApplication.processEvents()
+        progress.set_maximum(total)
+        progress.set("분석 준비 중...", value=0, status="분석 준비 중...")
 
         def _step(value, label):
             progress.set(label, value=value, status=label)
@@ -1800,11 +1860,16 @@ class HoneyMainWindow(QMainWindow):
             status=f"xlsx 생성 중... (Excel)  → {Path(out).name}",
         )
         # Map 옵션: 입력 파일별 wafer bin map PNG 생성 (matplotlib, COM 비의존).
+        # 다수 wafer 는 수 초~수십 초라 UI 스레드에서 직접 돌리면 프리즈 → 스레드+폴링으로 감싼다.
         map_pngs, map_tmpdir = [], None
         if mode_map and map_report is not None:
             try:
-                map_pngs, map_tmpdir = map_report.build_map_pngs(
-                    work_group.mass_data_map, log_cb=self._append_run_log)
+                progress.set("Wafer Map 생성 중...", status="Wafer Map 생성 중...")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                    map_pngs, map_tmpdir = _wait_for_future(
+                        ex.submit(map_report.build_map_pngs,
+                                  work_group.mass_data_map, log_cb=self._append_run_log),
+                        progress)
             except Exception as exc:  # noqa: BLE001
                 self._append_run_log(f"Map 생성 ERROR - {exc}")
                 map_pngs, map_tmpdir = [], None
@@ -1933,7 +1998,8 @@ class HoneyMainWindow(QMainWindow):
         # (prepare_report_webreport 이 자체적으로 CoInitialize 하므로 스레드 안전).
         prep_progress = _ElapsedProgress(
             self.progress_status, f"xlsx 전처리 중... {Path(path).name}",
-            self._status, busy=True, maximum=0)
+            self._status, busy=True, maximum=0,
+            mirror=getattr(self, "panel_progress", None))
         QApplication.processEvents()
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
@@ -1954,13 +2020,26 @@ class HoneyMainWindow(QMainWindow):
             return
 
         # dist blob 프리컴퓨트 — 서버 dist 캐시 시딩(실패 시 미첨부, 서버 폴백 계산).
+        # 단계 진행(디코드/전체/Bin1)은 queue 로 받아 진행바 라벨에 반영.
         dist_blobs = None
+        _dist_stage_q = queue.Queue()
+
+        def _drain_dist_stage():
+            msg = None
+            while True:
+                try:
+                    msg = _dist_stage_q.get_nowait()
+                except queue.Empty:
+                    break
+            if msg is not None:
+                prep_progress.set(msg, status=msg)
+
         try:
             prep_progress.set("분포 데이터 생성 중...", status="분포 데이터 생성 중...")
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(_build_webreport_dist_blobs, parquet_items, sources,
-                                all_items, "Normal")
-                dist_blobs = _wait_for_future(fut, prep_progress)
+                                all_items, "Normal", stage_cb=_dist_stage_q.put)
+                dist_blobs = _wait_for_future(fut, prep_progress, poll_cb=_drain_dist_stage)
         except Exception as exc:
             self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
 
@@ -1982,7 +2061,8 @@ class HoneyMainWindow(QMainWindow):
 
         progress = _ElapsedProgress(
             self.progress_status, f"서버 업로드 중... {Path(path).name}",
-            self._status, busy=False, minimum=0, maximum=100)
+            self._status, busy=False, minimum=0, maximum=100,
+            mirror=getattr(self, "panel_progress", None))
         QApplication.processEvents()
 
         _on_upload_progress, _drain_upload_progress = _upload_progress_channel(

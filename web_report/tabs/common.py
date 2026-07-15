@@ -82,11 +82,15 @@ def to_coord(x, y):
 def item_meta(tables) -> dict:
     """item → {"step", "tno"}(fmt_type 적용) 맵 — yield/issue_table 공용.
 
+    키는 원본 전체 메타(table.step) 기준 — selected_items 로 축소된 item_columns 가
+    아니라 전체 item 의 STEP/TNO 를 참조한다. tno_to_item_map(fail 집계)이 전체
+    table.tno 를 쓰므로, 미선택 fail 항목의 STEP/TNO 귀속을 일치시킨다
+    (불일치 시 미선택 fail 행이 빈 STEP 그룹으로 떨어지는 버그 방지).
     항목이 여러 테이블에 있으면 첫 테이블 값 우선 (setdefault).
     """
     out = {}
     for table in tables or []:
-        for item in table.item_columns:
+        for item in table.step:      # 전체 메타 키 (tno.keys() 와 동일 집합)
             out.setdefault(item, {
                 "step": fmt_type(table.step.get(item)),
                 "tno": fmt_type(table.tno.get(item)),

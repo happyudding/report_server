@@ -241,10 +241,15 @@ function drawWaferThumb(canvas, m, rgbFor) {
   if (xMin == null || yMin == null) return;
   const W = m.x_max - xMin + 1, H = m.y_max - yMin + 1;
   if (!(W > 0) || !(H > 0)) return;
-  // 캔버스 픽셀 상한(~1600px)을 넘지 않게 cellSize 자동 축소, 최소 2(1px 격자선 확보).
-  const MAXPX = 1600;
-  let cell = Math.min(6, Math.floor(MAXPX / Math.max(W, H)) || 2);
-  if (cell < 2) cell = 2;
+  // cell 을 실제 표시 폭(device px)에 맞춰 CSS 확대 배율을 1에 가깝게 유지한다 — 고정 해상도
+  // (구 1600px 상한)를 CSS 로 늘리면 bilinear 보간 번짐(blur·눈부심)이 생겼다. floor 라
+  // canvas ≤ 표시폭(축소 없음)이고, 잔여 소수 배율은 CSS image-rendering:pixelated 가 처리.
+  const dpr = window.devicePixelRatio || 1;
+  const wrapW = (canvas.parentElement && canvas.parentElement.clientWidth) || 300;
+  let cell = Math.floor((wrapW * dpr) / W);
+  const cap = Math.floor(4096 / Math.max(W, H));   // 캔버스 픽셀 상한(메모리 보호)
+  if (cell > cap) cell = cap;
+  if (cell < 2) cell = 2;   // 최소 2(1px 격자선 확보)
   const gap = cell >= 3 ? 1 : 0;   // cell 이 너무 작으면 격자선 생략
   const CW = W * cell, CH = H * cell;
   canvas.width = CW; canvas.height = CH;
@@ -423,10 +428,10 @@ function renderMapAnalysis() {
       </div>`).join("") +
     `</div>` +
     `<div class="wafer-legend-fixed">` +
-    `<div class="wafer-legend-title">Bin Legend</div>` +
-    `<div class="wafer-legend-body"></div>` +
-    `<div class="wafer-legend-title tno-legend-title">TNO Legend</div>` +
-    `<div class="tno-legend-body"></div>` +
+    // 색 기준 축(Bin/TNO)에 맞는 Legend 하나만 표시 — 축 전환 시 renderMapAnalysis 재호출로 교체.
+    (mapColorKey === "tno"
+      ? `<div class="wafer-legend-title">TNO Legend</div><div class="tno-legend-body"></div>`
+      : `<div class="wafer-legend-title">Bin Legend</div><div class="wafer-legend-body"></div>`) +
     (dutList.length
       ? `<div class="wafer-legend-title dut-legend-title">DUT Legend</div>` +
         `<div class="dut-legend-hint">클릭 시 해당 DUT 강조 (나머지 연하게)</div>` +
@@ -484,7 +489,6 @@ function renderMapAnalysis() {
     legendBody.innerHTML = binLegendHtml(legendRows, colorMap, mapBinFilter, binDesc);
     legendBody.querySelectorAll("tbody tr[data-bin]").forEach(tr => {
       tr.addEventListener("click", () => {
-        if (mapColorKey !== "bin") return;   // TNO 축일 땐 Bin 범례 클릭 무시
         const bin = tr.dataset.bin;
         if (mapBinFilter.has(bin)) mapBinFilter.delete(bin); else mapBinFilter.add(bin);
         restyleColors();
@@ -497,7 +501,6 @@ function renderMapAnalysis() {
     host.innerHTML = tnoLegendHtml(tnoInfo, mapTnoFilter);
     host.querySelectorAll("tbody tr[data-tno]").forEach(tr => {
       tr.addEventListener("click", () => {
-        if (mapColorKey !== "tno") return;   // Bin 축일 땐 TNO 범례 클릭 무시
         const it = tr.dataset.tno;
         if (mapTnoFilter.has(it)) mapTnoFilter.delete(it); else mapTnoFilter.add(it);
         restyleColors();

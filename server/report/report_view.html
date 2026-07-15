@@ -901,14 +901,15 @@ html[data-theme="dark"] .idet-chipval-table th, html[data-theme="dark"] .idet-ch
 html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-prog { color: #7ab3f5; }
 /* Map Analysis 갤러리 canvas 썸네일(die 당 셀+격자선) + 선택 좌표 마커 오버레이 */
 .wafer-thumb-wrap { position: relative; width: 100%; background: #fff; border-radius: 4px; overflow: hidden; }
-.wafer-thumb { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: -webkit-optimize-contrast; }
+.wafer-thumb { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
 .wafer-sel-marker { position: absolute; width: 15px; height: 15px; margin: -8px 0 0 -8px; border: 3px solid #111; border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 1.5px rgba(255,255,255,.7); }
 /* Bin/TNO 색 기준 축 세그먼트(툴바) */
 .map-axis-seg { vertical-align: middle; }
-.wafer-legend-fixed { flex: 0 0 250px; position: sticky; top: var(--sticky-head-h, 96px); }
+/* Legend 가 화면보다 길면 잘리므로 뷰포트 높이로 제한하고 내부 스크롤 */
+.wafer-legend-fixed { flex: 0 0 250px; position: sticky; top: var(--sticky-head-h, 96px); max-height: calc(100vh - var(--sticky-head-h, 96px) - 16px); overflow-y: auto; }
 .wafer-legend-title { font-size: 13px; font-weight: 700; color: #333; margin: 0 0 8px; }
 .bin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.bin-table th, .bin-table td { padding: 4px 8px; border-bottom: 1px solid #eef0f3; text-align: right; }
+.bin-table th, .bin-table td { padding: 2px 8px; border-bottom: 1px solid #eef0f3; text-align: right; }
 .bin-table th:first-child, .bin-table td:first-child { text-align: left; }
 .bin-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
 .bin-table tr.is-pass td { font-weight: 600; }
@@ -918,8 +919,7 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 /* Bin Legend description(대표 fail item) 열 — 좌측 정렬 + 말줄임 */
 .bin-table td.bin-desc { text-align: left; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; font-size: 11px; }
 html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
-/* TNO Legend — Bin Legend 아래 병렬 배치. "기타" 행은 클릭 불가 */
-.tno-legend-title { margin-top: 16px; }
+/* TNO Legend — "기타" 행은 클릭 불가 */
 .bin-table tr.tno-other td { cursor: default; color: #888; }
 .bin-table tr.tno-other:hover td { background: transparent; }
 /* DUT Legend (DUT 모드 병합 맵) — Bin Legend 아래에 표시, 클릭 시 해당 DUT 강조 */

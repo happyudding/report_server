@@ -7,10 +7,17 @@ from PyQt6.QtWidgets import QApplication
 
 
 class ElapsedProgress:
-    """Status progress bar that continuously renders elapsed time."""
+    """Status progress bar that continuously renders elapsed time.
 
-    def __init__(self, bar, label, status_cb=None, busy=True, minimum=0, maximum=100):
+    mirror: 선택. 같은 진행 상태를 함께 표시할 두 번째 QProgressBar. dock 진행바가
+    슬라이드 패널(입력/설정 창)에 가려 안 보이는 흐름에서, 패널 안 진행바로 같은
+    range/value/format/show/hide 를 미러링해 사용자가 진행 상황을 바로 보게 한다.
+    """
+
+    def __init__(self, bar, label, status_cb=None, busy=True, minimum=0, maximum=100,
+                 mirror=None):
         self.bar = bar
+        self.mirror = mirror
         self.status_cb = status_cb
         self.busy = busy
         self.started = time.monotonic()
@@ -20,11 +27,16 @@ class ElapsedProgress:
         self._last_rendered = None
         self.token = int(self.bar.property("_honey_progress_token") or 0) + 1
         self.bar.setProperty("_honey_progress_token", self.token)
-        self.bar.setRange(0, 0) if busy and maximum == 0 else self.bar.setRange(minimum, maximum)
-        self.bar.setValue(minimum)
-        self.bar.setFormat("")
-        self.bar.show()
+        for b in self._bars():
+            b.setProperty("_honey_progress_token", self.token)
+            b.setRange(0, 0) if busy and maximum == 0 else b.setRange(minimum, maximum)
+            b.setValue(minimum)
+            b.setFormat("")
+            b.show()
         self.update(force=True)
+
+    def _bars(self):
+        return (self.bar, self.mirror) if self.mirror is not None else (self.bar,)
 
     def _elapsed(self):
         secs = int(time.monotonic() - self.started)
@@ -36,7 +48,8 @@ class ElapsedProgress:
         if busy is not None:
             self.busy = busy
         if value is not None:
-            self.bar.setValue(value)
+            for b in self._bars():
+                b.setValue(value)
         if status is not None:
             self.status = status
             if self.status_cb is not None:
@@ -50,7 +63,8 @@ class ElapsedProgress:
         return self.bar.maximum()
 
     def set_maximum(self, value):
-        self.bar.setMaximum(value)
+        for b in self._bars():
+            b.setMaximum(value)
 
     def update(self, force=False):
         secs, elapsed = self._elapsed()
@@ -59,7 +73,8 @@ class ElapsedProgress:
         suffix = " (진행중)" if self.busy else ""
         text = f"{self.label}  [{elapsed}]{suffix}"
         if force or text != self._last_rendered:
-            self.bar.setFormat(text)
+            for b in self._bars():
+                b.setFormat(text)
             self._last_rendered = text
         self._last_secs = secs
         QApplication.processEvents()
@@ -68,24 +83,26 @@ class ElapsedProgress:
         was_indeterminate = self.bar.minimum() == 0 and self.bar.maximum() == 0
         if value is None:
             value = 100 if was_indeterminate else self.bar.maximum()
-        if was_indeterminate:
-            self.bar.setRange(0, 100)
         self.busy = False
-        self.bar.setValue(value)
+        for b in self._bars():
+            if was_indeterminate:
+                b.setRange(0, 100)
+            b.setValue(value)
+            b.setFormat(text)
         self.label = text
-        self.bar.setFormat(text)
         if self.status_cb is not None:
             self.status_cb(text)
         self._hide_later(hide_ms)
         QApplication.processEvents()
 
     def fail(self, text, hide_ms=8000):
-        if self.bar.minimum() == 0 and self.bar.maximum() == 0:
-            self.bar.setRange(0, 100)
         self.busy = False
-        self.bar.setValue(0)
+        for b in self._bars():
+            if b.minimum() == 0 and b.maximum() == 0:
+                b.setRange(0, 100)
+            b.setValue(0)
+            b.setFormat(text)
         self.label = text
-        self.bar.setFormat(text)
         if self.status_cb is not None:
             self.status_cb(text)
         self._hide_later(hide_ms)
@@ -95,10 +112,11 @@ class ElapsedProgress:
         token = self.token
 
         def _hide_if_current():
-            if int(self.bar.property("_honey_progress_token") or 0) != token:
-                return
-            self.bar.hide()
-            self.bar.setFormat("")
+            for b in self._bars():
+                if int(b.property("_honey_progress_token") or 0) != token:
+                    continue
+                b.hide()
+                b.setFormat("")
 
         QTimer.singleShot(ms, _hide_if_current)
 
