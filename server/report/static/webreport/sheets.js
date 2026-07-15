@@ -580,19 +580,30 @@ function yieldOverviewHtml() {
       <td class="ybs-cnt">${esc(s.pass)} / ${esc(s.total)}</td>
     </tr>`;
   }).join("") + `</tbody></table></div>` : "";
-  // STEP(P1/P2/P3) 별 요약: 분모는 항상 전체 rawdata(In=전체 die, 전 STEP 동일).
-  // Step Yield = (전체 - 그 STEP fail) / 전체 = 그 STEP fail 만 제외한 수율(전체 기준).
+  // STEP×Source 표: STEP 셀은 소스 수만큼 rowspan 병합(병합 셀에 STEP 평균 yield 표시).
+  // 분모는 각 소스 전체 die(In). Step Yield = (In - 그 STEP fail) / In. avg = 소스 산술평균.
   const byStep = Array.isArray(ov.by_step) ? ov.by_step : [];
   const byStepHtml = byStep.length ? `<div class="yield-by-step"><table class="ybs-table">
-    <thead><tr><th>Step</th><th>Step Yield</th><th>Pass / In</th><th>Fail</th></tr></thead>
+    <thead><tr><th>Step</th><th>Source</th><th>Step Yield</th><th>Pass / In</th><th>Fail</th></tr></thead>
     <tbody>` + byStep.map(s => {
-    const sp = (typeof s.step_yield_pct === "number") ? s.step_yield_pct.toFixed(2) : s.step_yield_pct;
-    return `<tr>
-      <td class="ybs-src">${esc(s.step)}</td>
+    // sources 가 없으면(옛 payload) pooled 값으로 1행 폴백.
+    const srcs = (Array.isArray(s.sources) && s.sources.length) ? s.sources
+      : [{ source: "", yield_pct: s.step_yield_pct, survivor: s.survivor, entered: s.entered, fail: s.fail }];
+    const avg = (typeof s.avg_yield_pct === "number") ? s.avg_yield_pct.toFixed(2)
+      : (s.avg_yield_pct != null ? s.avg_yield_pct : s.step_yield_pct);
+    return srcs.map((sr, i) => {
+      const sp = (typeof sr.yield_pct === "number") ? sr.yield_pct.toFixed(2) : sr.yield_pct;
+      const stepCell = i === 0
+        ? `<td class="ybs-step" rowspan="${srcs.length}">${esc(s.step)}<span class="ybs-step-avg">avg ${esc(avg)}%</span></td>`
+        : "";
+      return `<tr>
+      ${stepCell}
+      <td class="ybs-src">${esc(sr.source)}</td>
       <td class="ybs-pct">${esc(sp)}%</td>
-      <td class="ybs-cnt">${esc(s.survivor)} / ${esc(s.entered)}</td>
-      <td class="ybs-cnt">${esc(s.fail)}</td>
+      <td class="ybs-cnt">${esc(sr.survivor)} / ${esc(sr.entered)}</td>
+      <td class="ybs-cnt">${esc(sr.fail)}</td>
     </tr>`;
+    }).join("");
   }).join("") + `</tbody></table></div>` : "";
   return `<div class="yield-overview">
     <div class="yo-pct">${esc(pct)}%</div>

@@ -106,12 +106,10 @@ function binColorscale(binOrder, colorMap) {
   return cs.length ? cs : [[0, PASS_COLOR], [1, PASS_COLOR]];
 }
 
-// MDDI/PDDI 는 chip 이 세로로 길쭉(die pitch Y>X)해 같은 원형 웨이퍼에서 Y die 수가 적다.
-// 셀을 정사각(scaleratio 1)으로 두면 웨이퍼가 가로로 납작해 보이므로, 격자 폭/높이(W/H)만큼
-// Y 셀을 세로로 늘려(scaleratio) 원형에 가깝게 그린다. 그 외 제품은 1(정사각) 유지.
+// 웨이퍼는 원형이 표준 — die pitch 가 정사각이 아니거나(tall chip) XPOS/YPOS stride 로 빈
+// 행/열이 끼어 축별 격자 수가 달라도, 격자 폭/높이(W/H)만큼 Y 셀을 늘려(scaleratio) 항상
+// 원형(1:1) 틀로 그린다. (초기엔 MDDI/PDDI 한정 보정이었으나 전 제품으로 일반화.)
 function waferCellYScale(m) {
-  const pt = ((DATA && DATA.session && DATA.session.product_type) || "").trim().toUpperCase();
-  if (pt !== "MDDI" && pt !== "PDDI") return 1;
   if (m.x_min == null || m.y_min == null) return 1;
   const W = m.x_max - m.x_min + 1, H = m.y_max - m.y_min + 1;
   return (W > 0 && H > 0) ? W / H : 1;
@@ -212,7 +210,7 @@ function dimColorMap(colorMap, binOrder, selected) {
 // source 가 여럿이면 가로 2칸 그리드로 wafer map 을 나열하고, bin 범례는 전체 소스
 // 합산 기준으로 한 번만 만들어 오른쪽에 고정(sticky)한다. 모든 맵이 같은 색상 매핑을 쓴다.
 let mapGridCols = 1;   // Map Analysis 가로 칸수 기본 1칸(확대). 숫자 입력으로 조절, 세션 내 유지.
-// 갤러리 카드 크기는 가로 칸수(폭) + canvas aspect-ratio(비율)로 결정된다.
+// 갤러리 카드 크기는 가로 칸수(폭)로 결정되고, 썸네일 wrap 은 항상 1:1(웨이퍼=원형 전제).
 
 // Map Analysis 서브모드: "bin"=Bin Map(기존), "stdf"=STDF Map(값 기반, stdf_map.js). 세션 내 유지.
 let mapMode = "bin";
@@ -233,39 +231,61 @@ function fadeRgb(rgb, k) {
           Math.round(rgb[1] * k + 255 * (1 - k)),
           Math.round(rgb[2] * k + 255 * (1 - k))];
 }
-// die 격자를 canvas 에 그린다 — die 당 cellSize px 블록 + 셀 사이 1px 격자선(투명=흰 카드 노출)으로
-// 각 chip 구분·윤곽선을 유지(Plotly xgap brick 과 동일 시각, SVG 없이 픽셀 한 번에 → 빠름).
-// rgbFor(die, cache) → [r,g,b] 또는 null(그리지 않음). Y 는 위=작은 값(웨이퍼 관례).
+// die 가 실제 존재하는 x/y 값만 남긴 압축 격자 — XPOS/YPOS 가 stride(띄엄띄엄)여도 완전히
+// 빈 행/열을 제거해 갤러리 썸네일이 빈 스트라이프 없이 그려지게 한다. 썸네일·선택 마커 공용.
+// m._compact 에 캐시(load() 가 DATA 를 통째로 교체하므로 무효화 불필요).
+function waferCompactGrid(m) {
+  if (m._compact) return m._compact;
+  const xSeen = {}, ySeen = {};
+  (m.dies || []).forEach(d => { xSeen[d.x] = 1; ySeen[d.y] = 1; });
+  const xs = Object.keys(xSeen).map(Number).sort((a, b) => a - b);
+  const ys = Object.keys(ySeen).map(Number).sort((a, b) => a - b);
+  const xIdx = {}, yIdx = {};
+  xs.forEach((v, i) => { xIdx[v] = i; });
+  ys.forEach((v, i) => { yIdx[v] = i; });
+  m._compact = { xIdx, yIdx, W: xs.length, H: ys.length };
+  return m._compact;
+}
+
+// die 격자(압축)를 canvas 에 그린다 — die 당 cell px 블록 + 셀 사이 1px 격자선(투명=흰 카드
+// 노출)으로 각 chip 구분·윤곽선을 유지(Plotly xgap brick 과 동일 시각, SVG 없이 픽셀 한 번에
+// → 빠름). rgbFor(die, cache) → [r,g,b] 또는 null(그리지 않음). Y 는 위=작은 값(웨이퍼 관례).
 function drawWaferThumb(canvas, m, rgbFor) {
-  const xMin = m.x_min, yMin = m.y_min;
-  if (xMin == null || yMin == null) return;
-  const W = m.x_max - xMin + 1, H = m.y_max - yMin + 1;
+  const g = waferCompactGrid(m);
+  const W = g.W, H = g.H;
   if (!(W > 0) || !(H > 0)) return;
-  // cell 을 실제 표시 폭(device px)에 맞춰 CSS 확대 배율을 1에 가깝게 유지한다 — 고정 해상도
+  // cell 을 실제 표시 크기(device px)에 맞춰 CSS 확대 배율을 1에 가깝게 유지한다 — 고정 해상도
   // (구 1600px 상한)를 CSS 로 늘리면 bilinear 보간 번짐(blur·눈부심)이 생겼다. floor 라
   // canvas ≤ 표시폭(축소 없음)이고, 잔여 소수 배율은 CSS image-rendering:pixelated 가 처리.
+  // wrap 은 항상 1:1 정사각(웨이퍼=원형 전제)이라 X/Y cell 을 wrap 폭 기준으로 따로 잡아
+  // W≠H 여도 격자선이 양축 모두 1px 로 균일하다.
   const dpr = window.devicePixelRatio || 1;
   const wrapW = (canvas.parentElement && canvas.parentElement.clientWidth) || 300;
-  let cell = Math.floor((wrapW * dpr) / W);
-  const cap = Math.floor(4096 / Math.max(W, H));   // 캔버스 픽셀 상한(메모리 보호)
-  if (cell > cap) cell = cap;
-  if (cell < 2) cell = 2;   // 최소 2(1px 격자선 확보)
-  const gap = cell >= 3 ? 1 : 0;   // cell 이 너무 작으면 격자선 생략
-  const CW = W * cell, CH = H * cell;
+  const px = Math.round(wrapW * dpr);
+  function cellFor(n) {
+    let c = Math.floor(px / n);
+    const cap = Math.floor(4096 / n);   // 캔버스 픽셀 상한(메모리 보호)
+    if (c > cap) c = cap;
+    if (c < 2) c = 2;   // 최소 2(1px 격자선 확보)
+    return c;
+  }
+  const cellX = cellFor(W), cellY = cellFor(H);
+  const gapX = cellX >= 3 ? 1 : 0, gapY = cellY >= 3 ? 1 : 0;   // cell 이 너무 작으면 격자선 생략
+  const CW = W * cellX, CH = H * cellY;
   canvas.width = CW; canvas.height = CH;
   const ctx = canvas.getContext("2d");
   const img = ctx.createImageData(CW, CH);
   const data = img.data;
   const cache = {};
   const dies = m.dies || [];
-  const w = cell - gap, h = cell - gap;
+  const w = cellX - gapX, h = cellY - gapY;
   for (let k = 0; k < dies.length; k++) {
     const d = dies[k];
-    const cx = d.x - xMin, cy = d.y - yMin;
-    if (cx < 0 || cx >= W || cy < 0 || cy >= H) continue;
+    const cx = g.xIdx[d.x], cy = g.yIdx[d.y];
+    if (cx == null || cy == null) continue;
     const rgb = rgbFor(d, cache);
     if (!rgb) continue;
-    const px0 = cx * cell, py0 = cy * cell;
+    const px0 = cx * cellX, py0 = cy * cellY;
     for (let yy = 0; yy < h; yy++) {
       let off = ((py0 + yy) * CW + px0) * 4;
       for (let xx = 0; xx < w; xx++) {
@@ -323,27 +343,20 @@ function tnoLegendHtml(tnoInfo, selected) {
          `<tbody>${body}${other}</tbody></table>`;
 }
 
-// 갤러리 canvas wrap 의 CSS aspect-ratio(W : H*yScale) — Plotly scaleanchor 비율 재현.
-function waferThumbAspect(m) {
-  if (m.x_min == null || m.y_min == null) return "1 / 1";
-  const W = m.x_max - m.x_min + 1, H = m.y_max - m.y_min + 1;
-  const denom = Math.max(1, H * waferCellYScale(m));
-  return `${W} / ${denom}`;
-}
-
 // 선택 좌표 마커를 canvas 위 CSS 절대위치 원으로 오버레이(canvas 는 hover 없음).
+// 위치는 썸네일과 동일한 압축 격자 기준(빈 행/열 제거 반영).
 function renderThumbMarkers(wrap, m) {
   wrap.querySelectorAll(".wafer-sel-marker").forEach(e => e.remove());
-  if (m.x_min == null || m.y_min == null) return;
-  const W = m.x_max - m.x_min + 1, H = m.y_max - m.y_min + 1;
+  const g = waferCompactGrid(m);
+  if (!(g.W > 0) || !(g.H > 0)) return;
   mapSelChips.forEach(c => {
     if (c.source !== m.source || c.x == null || c.y == null) return;
-    const cx = c.x - m.x_min, cy = c.y - m.y_min;
-    if (cx < 0 || cx >= W || cy < 0 || cy >= H) return;
+    const cx = g.xIdx[c.x], cy = g.yIdx[c.y];
+    if (cx == null || cy == null) return;
     const mk = document.createElement("div");
     mk.className = "wafer-sel-marker";
-    mk.style.left = ((cx + 0.5) / W * 100) + "%";
-    mk.style.top = ((cy + 0.5) / H * 100) + "%";
+    mk.style.left = ((cx + 0.5) / g.W * 100) + "%";
+    mk.style.top = ((cy + 0.5) / g.H * 100) + "%";
     mk.style.borderColor = c.color;
     wrap.appendChild(mk);
   });
@@ -424,7 +437,7 @@ function renderMapAnalysis() {
     maps.map((m, i) =>
       `<div class="wafer-card wafer-card-clickable" data-map-index="${i}" title="클릭하면 크게(확대·마우스오버) 봅니다">
         <div class="wafer-card-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""} — ${esc(String(m.total))} dies<span class="wafer-card-zoom">⤢ 크게 보기</span></div>
-        <div id="wafer-full-${i}" class="wafer-thumb-wrap" style="aspect-ratio:${waferThumbAspect(m)}"><div class="placeholder">맵 로드 중…</div></div>
+        <div id="wafer-full-${i}" class="wafer-thumb-wrap" style="aspect-ratio:1 / 1"><div class="placeholder">맵 로드 중…</div></div>
       </div>`).join("") +
     `</div>` +
     `<div class="wafer-legend-fixed">` +

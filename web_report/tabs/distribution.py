@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .common import fmt_type, json_safe, num, round_num
+from .common import _is_passfail_unit, fmt_type, json_safe, num, round_num
 from .cpk import CPK_THRESHOLD, _stats, worst_cpk_by_subject
 from .raw_data import _META_COLUMNS
 from .yield_tab import _tno_norm, failtno_norms, tno_to_item_map
@@ -188,6 +188,9 @@ def build_distribution_index(tables, cpk_rows, exclude=None) -> list:
             "n": n,
             "cpk": round_num(cpk, 3),
             "is_fail": is_fail,
+            # Pass/Fail 단위 항목 표시 여부 — 프런트 "P/F 없애기" 토글(기본 ON)이 이 플래그로
+            # 필터한다. 항목은 인덱스/ECDF 에 포함되고 숨김/표시는 프런트가 결정한다.
+            "is_passfail": _is_passfail_unit(meta_t.units.get(item)) if meta_t else False,
             "status": _status(is_fail, cpk),
         })
     return rows

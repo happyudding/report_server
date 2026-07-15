@@ -229,21 +229,42 @@ def yield_step_summary(tables, yield_rows):
 
     분모는 항상 전체 die 수(total). step_yield_pct = (total - 그 STEP fail) / total * 100
     = 그 STEP fail 만 제외했을 때의 수율(전체 기준). 소스 여러 개면 소스 합산 기준으로 집계.
+
+    ``sources``: STEP×Source 표시용 소스별 분해(각 소스 전체 die 기준 step yield).
+    ``avg_yield_pct``: 소스별 yield 의 산술평균(병합 Step 셀에 표시). 소스 순서는 tables 순서
+    유지(모든 STEP 에서 동일 소스 컬럼 위치). 기존 pooled 키(entered/fail/survivor/
+    step_yield_pct)는 하위호환으로 그대로 둔다.
     """
     fail_rows = [r for r in (yield_rows or [])
                  if str(r.get("bin")).strip() != PASS_BIN and r.get("Item")]
     ordered, step_fail = _step_fail_counts(tables, fail_rows)
-    total = sum(len(t.data) for t in tables)
+    src_totals = {t.source: len(t.data) for t in tables}
+    total = sum(src_totals.values())
     out = []
     for step in ordered:
         fail = sum(step_fail[t.source].get(step, 0) for t in tables)
         survivor = max(total - fail, 0)
+        src_rows = []
+        for t in tables:
+            t_total = src_totals[t.source]
+            t_fail = int(step_fail[t.source].get(step, 0))
+            t_surv = max(t_total - t_fail, 0)
+            src_rows.append({
+                "source": t.source,
+                "entered": t_total,
+                "fail": t_fail,
+                "survivor": t_surv,
+                "yield_pct": round(t_surv / t_total * 100.0, 2) if t_total else 0.0,
+            })
+        avg_pct = round(sum(s["yield_pct"] for s in src_rows) / len(src_rows), 2) if src_rows else 0.0
         out.append({
             "step": step,
             "entered": total,
             "fail": fail,
             "survivor": survivor,
             "step_yield_pct": round(survivor / total * 100.0, 2) if total else 0.0,
+            "avg_yield_pct": avg_pct,
+            "sources": src_rows,
         })
     return out
 

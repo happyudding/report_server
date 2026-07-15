@@ -28,11 +28,13 @@ def compute_dist_compact(tables, selected_items, mode, *, bin1=False) -> dict:
     """HoneyformTable 리스트 → Distribution ECDF 컴팩트 dict (전 포인트, 다운샘플 없음).
 
     service.get_distribution 의 계산 본체와 동일: 모드 변형(DUT 분할) →
-    selected_items 필터 → Pass/Fail·무데이터 항목 제외 → build_distribution_compact.
+    selected_items 필터 → 무데이터 항목만 제외 → build_distribution_compact.
+    Pass/Fail 항목은 하드 제외하지 않고 ECDF 를 포함한다 — 프런트 "P/F 없애기" 토글이
+    표시를 제어하며, distribution_index(is_passfail 플래그)와 제외 기준을 맞춘다.
     tables 의 item_columns 를 in-place 필터하므로 호출자는 소모성 tables 를 넘길 것
     (서버는 캐시 클론, 클라는 방금 디코드한 임시 tables).
     """
-    from .tabs.common import passfail_or_empty_items
+    from .tabs.common import empty_items
     from .tabs.distribution import build_distribution_compact
     from .validation import mode_tables, validate_mode
 
@@ -41,7 +43,7 @@ def compute_dist_compact(tables, selected_items, mode, *, bin1=False) -> dict:
     if selected:
         for table in tables:
             table.item_columns = [c for c in table.item_columns if c in selected]
-    excluded = passfail_or_empty_items(tables)
+    excluded = empty_items(tables)
     all_items = sorted({c for t in tables for c in t.item_columns if c not in excluded})
     return build_distribution_compact(tables, all_items, bin1_only=bin1)
 

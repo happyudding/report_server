@@ -61,7 +61,12 @@ def dist_key(session, *, bin1: bool = False) -> tuple:
 #     (키는 동일하나 값이 바뀌어 옛 캐시가 stale cascade 값을 반환하는 것을 막는다).
 # v4: Map Analysis die 스키마 확장 — 앞 step fail die 회색 마커({x,y,g}), fail die 대표 항목명
 #     ({..,"it":item}). 옛 캐시엔 이 필드가 없어 회색/TNO Map 이 폴백되는 것을 막는다.
-REPORT_SCHEMA_VERSION = 4
+# v5: Yield Tab Step FailTNO logic change.
+# v6: yield_summary.by_step 에 sources/avg_yield_pct(STEP×Source) 추가 + CPK 단측 limit 지원
+#     (USL만→CPU=CPK, LSL만→CPL=CPK, cpk 값 변경) + distribution_index 에 is_passfail 플래그·
+#     P/F 항목 포함(empty 만 제외, 프런트 "P/F 없애기" 토글이 필터). 옛 캐시엔 이 필드가 없어
+#     새 표·토글이 폴백되고 cpk 가 옛값으로 회귀하는 것을 막는다.
+REPORT_SCHEMA_VERSION = 6
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

@@ -62,6 +62,7 @@ let distIndex = [];            // DATA.web_report.distribution_index
 // cpk<1.33 / Fail Only 는 독립 토글(동시 on 가능, 둘 다 AND). 둘 다 off 면 전체.
 let distCpkOnly = true;        // 기본 진입 cpk<1.33 on
 let distFailOnly = false;
+let distHidePassfail = true;   // "P/F 없애기" 기본 ON — unit 이 Pass/Fail 인 항목(is_passfail) 카드 숨김
 let distLimitOnly = false;     // 켜면 각 분포 차트 x축을 [LSL,USL] 창으로 클램프(Limit 벗어난 산포 숨김)
 // distLimitOnly 켜짐 + lo/hi 존재 시 x축 표시범위 [lo,hi](±2% pad). 아니면 null(기존 범위 유지).
 function distLimitRange(lo, hi) {
@@ -361,6 +362,7 @@ function renderDistCell(cell) {
 // ── 세그먼트 / 타입어헤드 필터 ─────────────────────────────────────────────────
 function distApplySegment(rows) {
   let out = rows.slice();
+  if (distHidePassfail) out = out.filter(r => !r.is_passfail);
   if (distCpkOnly) {
     out = out.filter(r => r.cpk != null && r.cpk < DIST.CPK_GOOD
       && !DIST.EXCLUDE.some(k => String(r.subject).toLowerCase().includes(k)));
@@ -582,8 +584,9 @@ function distToolbarHtml() {
   const selChip = distSelected.size
     ? `<button class="distseg dist-sel-clear" data-seg="clearsel" title="선택 해제">선택 ${distSelected.size}개 ✕</button>` : "";
   const bin1Btn = `<button class="distseg${distBin1Only ? " active" : ""}" data-seg="bin1" title="켜짐: 각 항목 분포를 양품(Bin1, BIN==1) & 규격(LSL/USL) 이내 die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
+  const nopfBtn = `<button class="distseg${distHidePassfail ? " active" : ""}" data-seg="nopf" title="켜짐: unit 이 Pass/Fail(P/F·P_F) 인 항목 카드를 숨김 · 꺼짐: 표시">P/F 없애기</button>`;
   return `<div class="dist-toolbar">
-    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${selChip}</div>
+    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${nopfBtn}${selChip}</div>
     <div class="dist-search-wrap">
       <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">
       <div id="distSuggest" class="dist-suggest" style="display:none"></div>

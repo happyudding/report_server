@@ -32,21 +32,28 @@ def _stats(series, lo, hi):
     stdev = s.std(ddof=1) if n > 1 else None
     lo_n = num(lo)
     hi_n = num(hi)
-    can = (
+    can_base = (
         n > 1
         and stdev not in (None, 0)
         and num(stdev) is not None
-        and lo_n is not None
-        and hi_n is not None
     )
     cp = cpl = cpu = cpk = None
-    if can:
-        cp = (hi_n - lo_n) / (6.0 * stdev)
-        # 상·하한이 같으면(공차 0) cpl/cpu/cpk 는 의미가 없어 계산하지 않고 빈칸으로 둔다.
-        if lo_n != hi_n:
-            cpl = (avg - lo_n) / (3.0 * stdev)
+    if can_base:
+        if lo_n is not None and hi_n is not None:
+            cp = (hi_n - lo_n) / (6.0 * stdev)
+            # 상·하한이 같으면(공차 0) cpl/cpu/cpk 는 의미가 없어 계산하지 않고 빈칸으로 둔다.
+            if lo_n != hi_n:
+                cpl = (avg - lo_n) / (3.0 * stdev)
+                cpu = (hi_n - avg) / (3.0 * stdev)
+                cpk = min(cpl, cpu)
+        elif hi_n is not None:
+            # USL(상한)만 있으면 CPU = CPK (cp 는 양측 규격폭 필요 → None 유지).
             cpu = (hi_n - avg) / (3.0 * stdev)
-            cpk = min(cpl, cpu)
+            cpk = cpu
+        elif lo_n is not None:
+            # LSL(하한)만 있으면 CPL = CPK.
+            cpl = (avg - lo_n) / (3.0 * stdev)
+            cpk = cpl
     return {
         "n": n,
         "min": round_num(s.min() if n else None),
@@ -83,21 +90,28 @@ def _stats_batch(frame: pd.DataFrame, lolim: dict, hilim: dict) -> dict:
         stdev = std[item] if n > 1 else None
         lo_n = num(lolim.get(item))
         hi_n = num(hilim.get(item))
-        can = (
+        can_base = (
             n > 1
             and stdev not in (None, 0)
             and num(stdev) is not None
-            and lo_n is not None
-            and hi_n is not None
         )
         cp = cpl = cpu = cpk = None
-        if can:
-            cp = (hi_n - lo_n) / (6.0 * stdev)
-            # 상·하한이 같으면(공차 0) cpl/cpu/cpk 는 의미가 없어 계산하지 않고 빈칸으로 둔다.
-            if lo_n != hi_n:
-                cpl = (avg - lo_n) / (3.0 * stdev)
+        if can_base:
+            if lo_n is not None and hi_n is not None:
+                cp = (hi_n - lo_n) / (6.0 * stdev)
+                # 상·하한이 같으면(공차 0) cpl/cpu/cpk 는 의미가 없어 계산하지 않고 빈칸으로 둔다.
+                if lo_n != hi_n:
+                    cpl = (avg - lo_n) / (3.0 * stdev)
+                    cpu = (hi_n - avg) / (3.0 * stdev)
+                    cpk = min(cpl, cpu)
+            elif hi_n is not None:
+                # USL(상한)만 있으면 CPU = CPK (cp 는 양측 규격폭 필요 → None 유지).
                 cpu = (hi_n - avg) / (3.0 * stdev)
-                cpk = min(cpl, cpu)
+                cpk = cpu
+            elif lo_n is not None:
+                # LSL(하한)만 있으면 CPL = CPK.
+                cpl = (avg - lo_n) / (3.0 * stdev)
+                cpk = cpl
         out[item] = {
             "n": n,
             "min": round_num(mn[item] if n else None),

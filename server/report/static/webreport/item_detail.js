@@ -690,6 +690,7 @@ function distBindPanel() {
       else if (seg.dataset.seg === "cpk") distCpkOnly = !distCpkOnly;
       else if (seg.dataset.seg === "fail") distFailOnly = !distFailOnly;
       else if (seg.dataset.seg === "limit") distLimitOnly = !distLimitOnly;
+      else if (seg.dataset.seg === "nopf") distHidePassfail = !distHidePassfail;
       else if (seg.dataset.seg === "bin1") { distBin1Only = !distBin1Only; if (distBin1Only) ensureDistBin1Data(); }
       const q = (document.getElementById("distSearch") || {}).value || "";
       distRenderGallery();

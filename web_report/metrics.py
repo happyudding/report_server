@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from .tabs import TAB_REGISTRY, TabContext, build_cpk_rows
-from .tabs.common import passfail_or_empty_items
+from .tabs.common import empty_items, passfail_or_empty_items
 from .tabs.distribution import build_distribution_index
 from .tabs.issue_table import build_issue_bin_summary
 from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
@@ -34,9 +34,12 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
 
     sources = [{"name": t.source, "file_name": t.file_name} for t in tables]
     all_items = sorted({c for t in tables for c in t.item_columns})
-    # unit 이 Pass/Fail 이거나 측정 data 가 전무한 항목은 cpk·distribution 계산에서 제외.
+    # cpk 는 unit 이 Pass/Fail 이거나 측정 data 가 전무한 항목을 제외한다.
     excluded_items = passfail_or_empty_items(tables)
     stat_items = [i for i in all_items if i not in excluded_items]
+    # distribution_index 는 Pass/Fail 항목을 하드 제외하지 않고 is_passfail 플래그만 붙여
+    # 내려보낸다(프런트 "P/F 없애기" 토글이 필터). data 전무 항목만 제외한다.
+    dist_excluded = empty_items(tables)
     fail_counts = {table.source: fail_counts_by_source(table) for table in tables}
     yield_rows = build_yield_rows(tables, fail_counts)
     cpk_rows = build_cpk_rows(tables, stat_items)
@@ -69,7 +72,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         "yield_step_groups": build_yield_step_groups(yield_rows),
         "sheets": sheets_out,
         "distribution_deferred": True,
-        "distribution_index": build_distribution_index(tables, cpk_rows, exclude=excluded_items),
+        "distribution_index": build_distribution_index(tables, cpk_rows, exclude=dist_excluded),
         "selected_items": sorted(selected_set),
         "requested_sheets": list(sheets or []),
         # Summary 탭 Engr Comment(Yield/CPK/ETC 3칸) — 세션 편집 DB 에서 채운다.

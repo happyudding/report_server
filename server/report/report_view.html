@@ -249,6 +249,10 @@ body {
 .ybs-table .ybs-src { color: #1f4d8c; font-weight: 700; text-align: left; }
 .ybs-table .ybs-pct { color: #222; font-weight: 800; }
 .ybs-table .ybs-cnt { color: #888; }
+/* STEP×Source 표: 병합된 Step 셀(rowspan) — 세로 가운데 정렬 + Step 평균 부기. */
+.ybs-table .ybs-step { color: #1f4d8c; font-weight: 800; text-align: left;
+  vertical-align: middle; border-right: 1px solid #e2e9f4; }
+.ybs-table .ybs-step .ybs-step-avg { display: block; font-size: 10px; color: #888; font-weight: 600; }
 /* Yield 표 source _yield / avg 셀: 각 컬럼 내 최댓값 대비 빨강 그라데이션(불량률 높을수록 진함). */
 .sheet-table.kind-yield td.yield-grad { background: hsl(0, 78%, calc(94% - var(--yw, 0) * 36%)) !important; }
 
@@ -911,8 +915,9 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 .wafer-sel-marker { position: absolute; width: 15px; height: 15px; margin: -8px 0 0 -8px; border: 3px solid #111; border-radius: 50%; pointer-events: none; box-shadow: 0 0 0 1.5px rgba(255,255,255,.7); }
 /* Bin/TNO 색 기준 축 세그먼트(툴바) */
 .map-axis-seg { vertical-align: middle; }
-/* Legend 가 화면보다 길면 잘리므로 뷰포트 높이로 제한하고 내부 스크롤 */
-.wafer-legend-fixed { flex: 0 0 250px; position: sticky; top: var(--sticky-head-h, 96px); max-height: calc(100vh - var(--sticky-head-h, 96px) - 16px); overflow-y: auto; }
+/* Legend 가 화면보다 길면 잘리므로 뷰포트 높이로 제한하고 내부 스크롤.
+   scrollbar-gutter: 세로 스크롤바가 폭을 잠식해 가로 스크롤이 생기는 것 방지. */
+.wafer-legend-fixed { flex: 0 0 340px; position: sticky; top: var(--sticky-head-h, 96px); max-height: calc(100vh - var(--sticky-head-h, 96px) - 16px); overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
 .wafer-legend-title { font-size: 13px; font-weight: 700; color: #333; margin: 0 0 8px; }
 .bin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .bin-table th, .bin-table td { padding: 2px 8px; border-bottom: 1px solid #eef0f3; text-align: right; }
@@ -923,7 +928,7 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 .bin-table tbody tr:hover td { background: #f2f6fb; }
 .bin-table tbody tr.is-selected td { background: #fff3bf; }
 /* Bin Legend description(대표 fail item) 열 — 좌측 정렬 + 말줄임 */
-.bin-table td.bin-desc { text-align: left; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; font-size: 11px; }
+.bin-table td.bin-desc { text-align: left; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; font-size: 11px; }
 html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
 /* TNO Legend — "기타" 행은 클릭 불가 */
 .bin-table tr.tno-other td { cursor: default; color: #888; }
@@ -1301,6 +1306,8 @@ html[data-theme="dark"] .ybs-table td { border-bottom-color: #2a2e37; }
 html[data-theme="dark"] .ybs-table .ybs-src { color: #7fb3ef; }
 html[data-theme="dark"] .ybs-table .ybs-pct { color: #d7dbe2; }
 html[data-theme="dark"] .ybs-table .ybs-cnt { color: #8b94a3; }
+html[data-theme="dark"] .ybs-table .ybs-step { color: #7fb3ef; border-right-color: #2c3a52; }
+html[data-theme="dark"] .ybs-table .ybs-step .ybs-step-avg { color: #8b94a3; }
 html[data-theme="dark"] .sheet-table.kind-yield td.yield-grad { background: hsl(0, 55%, calc(20% + var(--yw, 0) * 22%)) !important; }
 html[data-theme="dark"] .mfb-table th,
 html[data-theme="dark"] .mfb-table td { border-color: #3a4150; }

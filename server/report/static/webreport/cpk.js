@@ -8,7 +8,7 @@ const CPK_PAGE_SIZE = 50;     // 페이지당 표시 행 수
 
 let cpkBasisBin1 = false;     // false=전체(모든 die) 기준, true=Bin1(양품) 기준 통계 표시
 let cpkShowLowOnly = true;    // 기본값: CPK < 1.33 항목만 오름차순(최악 우선) 정렬해 보여줌
-let cpkHideAbnormal = true;   // 기본값 ON: Limit 동일·CPK 음수·CPK 없음(비정상) 항목 숨김
+let cpkAbnormalMode = "all"; // 3상: "all"=전체(기본)·"only"=비정상만·"exclude"=비정상 제외
 let cpkHideCodeUnit = false;  // 켜면 Unit(단위)이 CODE 인 항목(디지털 code 값) 숨김
 let cpkSearchTerm = "";       // subject/source 검색어 (실시간 필터)
 let cpkSourceFilter = "";     // 특정 source 만 표시 (빈 문자열 = 전체 source)
@@ -21,6 +21,10 @@ let cpkMarginPct = 0;         // 역산 Margin(%) — 0/1/5/10. 각 한계값을
 let cpkTargetResults = new Map(); // 역산 결과: 행 키 → {lo, hi}
 
 function cpkRowKey(r) { return `${r.subject}||${r.source}`; }
+
+// abnormal 3상 토글: 버튼 라벨 + 클릭 시 순환 순서(정리 → 제외 → 전체 → …).
+const CPK_ABN_LABELS = { only: "abnormal 정리", exclude: "abnormal 제외", all: "ALL (abnormal 포함)" };
+const CPK_ABN_ORDER = ["only", "exclude", "all"];
 
 // bin 필터에 따라 값이 달라지는 통계 컬럼(전체 ↔ Bin1). limit/units/subject/source 는 무관.
 const CPK_STAT_FIELDS = ["n", "min", "median", "max", "average", "stdev", "cp", "cpl", "cpu", "cpk"];
@@ -64,14 +68,13 @@ function updateCpkSelInfo() {
   if (el) el.textContent = `선택 ${cpkSelected.size}개`;
 }
 
-// "abnormal 정리" 판정: ① Limit(하한==상한) 동일 ② CPK 음수 ③ CPK 값 없음 → 비정상.
+// "abnormal" 판정: ① Limit(하한==상한) 동일 ② CPK 값 없음 → 비정상.
 // cpkBasisRow 로 활성 기준(전체/Bin1)의 cpk 가 채워진 행에 적용한다.
 function cpkIsAbnormal(r) {
   const lo = parseFloat(r.lower_limit), hi = parseFloat(r.upper_limit);
   if (!isNaN(lo) && !isNaN(hi) && lo === hi) return true;   // Limit 동일
   const cpk = parseFloat(r.cpk);
   if (isNaN(cpk)) return true;   // CPK 값 없음
-  if (cpk < 0) return true;      // CPK 음수
   return false;
 }
 
@@ -94,7 +97,8 @@ function cpkSourceList(rows) {
 // 개별 선택이 가능하게 한다. (select-all 계산과 cpkTableHtml 이 공용으로 사용)
 function cpkBodyRows(rows) {
   rows = rows.map(cpkBasisRow);   // 활성 기준(전체/Bin1)으로 통계 컬럼 정규화
-  if (cpkHideAbnormal) rows = rows.filter(r => !cpkIsAbnormal(r));   // abnormal 정리
+  if (cpkAbnormalMode === "exclude") rows = rows.filter(r => !cpkIsAbnormal(r));     // 비정상 제외
+  else if (cpkAbnormalMode === "only") rows = rows.filter(r => cpkIsAbnormal(r));    // 비정상만 (all=필터 없음)
   if (cpkShowLowOnly) {
     // cpk 값 내림/오름차순이 아니라 같은 Item name 끼리 묶여 보이도록 항목명(subject) 순으로 정렬.
     return rows
@@ -215,7 +219,7 @@ function renderCpk() {
     `<button type="button" id="cpkBasisBtn" class="btn-sm${cpkBasisBin1 ? " active" : ""}" title="켜짐: Bin1(양품) 기준 · 꺼짐: 전체 die 기준">기준: ${cpkBasisBin1 ? "Bin1(양품)" : "전체 die"}</button>` +
     `<button type="button" id="cpkLowBtn" class="btn-sm${cpkShowLowOnly ? " active" : ""}" title="켜짐: CPK &lt; ${CPK_WARN_THRESHOLD} 항목만 · 꺼짐: 전체 표시">` +
     `${cpkShowLowOnly ? `표시: CPK &lt; ${CPK_WARN_THRESHOLD} 만` : "표시: 전체"}</button>` +
-    `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkHideAbnormal ? " active" : ""}" title="비정상(abnormal) 항목을 표에서 숨깁니다. 판정 기준: ① 상·하한(Limit)이 같아 공차가 0인 항목, ② CPK 가 음수, ③ CPK 계산 불가(값 없음). 통계적으로 의미 없는 행을 제외합니다.">abnormal 정리</button>` +
+    `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkAbnormalMode !== "all" ? " active" : ""}" title="abnormal 표시 3상 토글(클릭하면 순환): 'abnormal 정리'=비정상 항목만, 'abnormal 제외'=비정상 제외한 나머지, 'ALL(abnormal 포함)'=전체 표시. 비정상 판정 기준: ① 상·하한(Limit)이 같아 공차가 0인 항목, ② CPK 계산 불가(값 없음).">${CPK_ABN_LABELS[cpkAbnormalMode]}</button>` +
     `<button type="button" id="cpkCodeUnitBtn" class="btn-sm${cpkHideCodeUnit ? " active" : ""}" title="켜짐: 단위(Unit)가 CODE 인 항목(디지털 code 값, 공정능력 지표가 무의미) 숨김 · 꺼짐: 전체 표시">Unit CODE 제거</button>` +
     `<button type="button" id="cpkTargetBtn" class="btn-sm${cpkTargetMode ? " active" : ""}">Limit 계산</button></div>` +
     targetBar +
@@ -234,7 +238,7 @@ function renderCpk() {
     renderCpk();
   });
   document.getElementById("cpkAbnBtn").addEventListener("click", () => {
-    cpkHideAbnormal = !cpkHideAbnormal;
+    cpkAbnormalMode = CPK_ABN_ORDER[(CPK_ABN_ORDER.indexOf(cpkAbnormalMode) + 1) % CPK_ABN_ORDER.length];
     cpkPage = 1;
     renderCpk();
   });

@@ -8,8 +8,8 @@ import pandas as pd
 
 PASS_BIN = "1"
 
-# Pass/Fail 단위 정규화 집합 — 공백·슬래시 제거 후 대문자로 비교하므로
-# "P/F"·"PF"·"pF"·"Pf"·"PassFail"·"Pass/Fail" 등을 모두 포괄한다 (대소문자 무시).
+# Pass/Fail 단위 정규화 집합 — 공백·슬래시·언더스코어 제거 후 대문자로 비교하므로
+# "P/F"·"P_F"·"PF"·"pF"·"Pf"·"PassFail"·"Pass/Fail"·"PASS_FAIL" 등을 모두 포괄한다(대소문자 무시).
 _PASSFAIL_UNITS = {"PF", "PASSFAIL"}
 
 
@@ -121,7 +121,7 @@ def _is_passfail_unit(unit) -> bool:
             return False
     except (TypeError, ValueError):
         pass
-    norm = str(unit).strip().upper().replace(" ", "").replace("/", "")
+    norm = str(unit).strip().upper().replace(" ", "").replace("/", "").replace("_", "")
     return norm in _PASSFAIL_UNITS
 
 
@@ -141,6 +141,18 @@ def _item_has_data(tables, item) -> bool:
         if np.isfinite(arr).any():
             return True
     return False
+
+
+def empty_items(tables) -> set:
+    """측정 data 가 전무한(모든 소스에서 유한 numeric 값 0개) item 집합.
+
+    Distribution(카드/ECDF)은 Pass/Fail 항목을 하드 제외하지 않고 프런트 토글로 숨기므로,
+    ``passfail_or_empty_items`` 대신 이 집합(데이터 없는 항목만)으로 제외한다 — Pass/Fail 도
+    data 만 있으면 인덱스·ECDF 에 포함되고 ``is_passfail`` 플래그로 프런트가 필터한다.
+    cpk 계산은 여전히 ``passfail_or_empty_items`` 로 Pass/Fail 을 제외한다.
+    """
+    return {item for item in {c for t in tables for c in t.item_columns}
+            if not _item_has_data(tables, item)}
 
 
 def passfail_or_empty_items(tables) -> set:
