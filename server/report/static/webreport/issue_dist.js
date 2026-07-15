@@ -1,10 +1,21 @@
 // ── Issue Table Map 미니셀 (해당 Bin 만 하이라이트한 웨이퍼) ────────────────────
 // 분포 미니셀과 동일하게 수천 개라, 같은 IntersectionObserver + rAF 분할로 보이는 셀만
 // lazy 렌더하고 화면 밖은 purge. 색상/범례는 세션 공통(globalBinColorMap) 을 dim 처리해 재사용.
+// 렌더는 Map Analysis 갤러리와 동일한 canvas(drawWaferThumb) — Plotly 미사용(대량 die freeze 방지).
+// 색상: 선택 bin 원색, 나머지 dim(#d9d9d9), 앞 step fail die(d.g) 는 회색.
+function issueMapRgbFor(dim) {
+  return (d, cache) => {
+    if (d.g) return MAP_GRAY_RGB;
+    const hex = dim[d.bin] || PASS_COLOR;
+    let rgb = cache[hex];
+    if (!rgb) { rgb = hexToRgb(hex); cache[hex] = rgb; }
+    return rgb;
+  };
+}
 function renderMiniMapCell(cell) {
   if (cell.dataset.mapLoaded === "1") return;
   const div = cell.querySelector(".map-plot");
-  if (!div || typeof Plotly === "undefined") return;
+  if (!div) return;
   const maps = (webReportSheets() || {})["Map Analysis"];
   if (!Array.isArray(maps) || !maps.length) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
   const bin = cell.dataset.bin;
@@ -17,9 +28,9 @@ function renderMiniMapCell(cell) {
   if (m.step != null) {
     m = maps.find(mm => (mm.bin_counts || []).some(bc => String(bc.bin) === String(bin))) || maps[0];
   }
-  const built = waferHeatmap(m, { colorMap: dim, binOrder, mini: true });   // showText 생략 → 숫자 없음
-  if (!built) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
-  Plotly.newPlot(div, [built.trace], waferLayout(m, { mini: true }), DIST_CFG_STATIC);
+  let canvas = div.querySelector("canvas.wafer-thumb");
+  if (!canvas) { div.innerHTML = ""; canvas = document.createElement("canvas"); canvas.className = "wafer-thumb"; div.appendChild(canvas); }
+  drawWaferThumb(canvas, m, issueMapRgbFor(dim));
   cell.dataset.mapLoaded = "1";
 }
 
@@ -43,8 +54,7 @@ function issueMapFlush() {
 function issueMapPurge(cell) {
   if (cell.dataset.mapLoaded !== "1") return;
   const div = cell.querySelector(".map-plot");
-  if (!div) return;
-  try { if (window.Plotly) Plotly.purge(div); } catch (e) {}
+  if (div) div.innerHTML = "";   // canvas 제거해 화면 밖 메모리 반환
   cell.dataset.mapLoaded = "";
 }
 function renderIssueMiniMap(panel) {
@@ -77,9 +87,6 @@ let _mapExpandEl = null;
 let _mapExpandAnchor = null;
 function closeMapExpand() {
   if (!_mapExpandEl) return;
-  _mapExpandEl.querySelectorAll(".map-exp-plot").forEach(div => {
-    try { if (window.Plotly) Plotly.purge(div); } catch (e) {}
-  });
   _mapExpandEl.remove();
   _mapExpandEl = null; _mapExpandAnchor = null;
 }
@@ -109,10 +116,14 @@ function toggleMapExpand(btn) {
   pop.style.maxWidth = maxW + "px";
   document.body.appendChild(pop);
   _mapExpandEl = pop; _mapExpandAnchor = cell;
+  const rgbFor = issueMapRgbFor(dim);
   maps.forEach((m, i) => {
-    const built = waferHeatmap(m, { colorMap: dim, binOrder, mini: true });
-    if (!built) return;
-    Plotly.newPlot(pop.querySelector(`#mapexp-${i}`), [built.trace], waferLayout(m, { mini: true }), DIST_CFG_STATIC);
+    const host = pop.querySelector(`#mapexp-${i}`);
+    if (!host) return;
+    const canvas = document.createElement("canvas");
+    canvas.className = "wafer-thumb";
+    host.appendChild(canvas);
+    drawWaferThumb(canvas, m, rgbFor);   // canvas 라 4 source 동기 루프도 freeze 없음
   });
 }
 // 팝오버 바깥 클릭 / ESC 로 닫기 (여는 클릭 자체는 btn-map-expand 제외 가드로 통과).

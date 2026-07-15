@@ -513,7 +513,7 @@ tbody tr:hover { background: #f9fbff; }
 .dist-load-badge button:hover { background: rgba(255,255,255,.14); }
 
 /* ── Issue Table Map 미니셀 (dist 미니셀과 동일 규격) + 소스별 펼치기 팝오버 ────── */
-.map-plot { width: 100%; height: 100%; }
+.map-plot { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%); aspect-ratio: 1 / 1; }
 .map-cell-mini { position: relative; height: 112px; background: #fff; border: 1px solid #e0e0e0;
   border-radius: 6px; overflow: hidden; }
 .btn-map-expand { position: absolute; top: 2px; right: 2px; z-index: 2;
@@ -526,7 +526,7 @@ tbody tr:hover { background: #f9fbff; }
 .map-exp-item { flex: 0 0 auto; }
 .map-exp-title { font-size: 11px; color: #475467; margin-bottom: 4px; text-align: center;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
-.map-exp-plot { width: 220px; height: 220px; }
+.map-exp-plot { position: relative; width: 220px; height: 220px; }
 
 .dist-toolbar { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap;
   position: sticky; top: var(--sticky-head-h, 96px); z-index: 90; background: #fff; padding: 6px 0; }
