@@ -29,6 +29,17 @@ from transport import uploader
 SHEET_OPTIONS = ["summary", "yield", "cpk", "fail_item", "issue_table", "distribution",
                  "histogram"]
 
+# product_type → family_product 허용 목록. 정본은
+# eval_analyzer/eval_engine/rules/product_taxonomy.yaml (eval.db 검증 기준) — 값 변경 시
+# 그 yaml 과 반드시 동기화할 것(서버 eval _validate_product_meta 가 이 값으로 강제 검증).
+FAMILY_PRODUCTS = {
+    "MDDI":     ["MX", "AQUA", "CHINA", "MDDI_ETC"],
+    "PMIC":     ["SOC", "MEMORY", "DISPLAY", "IF", "PMIC_ETC"],
+    "SECURITY": ["NFC_ESE", "ESE", "Contactless", "SECU_ETC"],
+    "PDDI":     ["LCD", "PDDI_IT", "QDOLED", "PDDI_ETC"],
+    "TCON":     ["TV", "TCON_IT", "TCON_ETC"],
+}
+
 _BASE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
 UPLOAD_UI_PATH = _BASE_DIR / "upload_dialog.ui"
 ORDER_UI_PATH = _BASE_DIR / "file_order.ui"
@@ -69,6 +80,18 @@ class UploadDialog(QDialog):
         # Product Type 은 메인창에서 이미 선택된 값을 그대로 재사용한다 (팝업엔 표시 안 함).
         defaults = defaults or {}
         self._product_type = defaults.get("product_type", "MDDI")
+        # Family Product 드롭다운을 폼 최상단에 추가 (현재 product_type 의 허용 목록).
+        # 기본 선택: 직전 업로드값 → 옵션 저장값(product_type 별) → 첫 항목.
+        self.cbo_family = QComboBox()
+        _families = FAMILY_PRODUCTS.get(self._product_type, [])
+        self.cbo_family.addItems(_families)
+        _saved_families = app_settings.get_setting("family_product")
+        _opt_family = (_saved_families.get(self._product_type)
+                       if isinstance(_saved_families, dict) else None)
+        _default_family = defaults.get("family_product") or _opt_family
+        if _default_family in _families:
+            self.cbo_family.setCurrentText(_default_family)
+        self.formLayout.insertRow(0, "Family*:", self.cbo_family)
         self.le_product.setText(defaults.get("product", ""))
         self.le_lot_id.setText(defaults.get("lot_id", ""))
         self.le_revision.setText(defaults.get("revision", ""))
@@ -123,6 +146,7 @@ class UploadDialog(QDialog):
     def values(self):
         return {
             "product_type": self.product_type(),
+            "family_product": self.cbo_family.currentText(),
             "product": self.le_product.text().strip(),
             "lot_id": self.le_lot_id.text().strip(),
             "revision": self.le_revision.text().strip(),
@@ -221,14 +245,26 @@ class OptionsDialog(QDialog):
         self.setWindowTitle("Options")
         root = QVBoxLayout(self)
 
-        # (1) 기본 Product Type — 다음 실행 때 자동 선택될 값
-        root.addWidget(QLabel("기본 Product Type (다음 실행 때 자동 선택)"))
+        # (1) 기본 Product Type + Family — 다음 실행 때 자동 선택될 값 (나란히 배치)
+        root.addWidget(QLabel("기본 Product Type / Family (다음 실행 때 자동 선택)"))
+        # product_type 별 family 선택을 기억한다 (Honey 꺼져도 settings.json 에 영속).
+        saved_family = app_settings.get_setting("family_product")
+        self._family_sel = dict(saved_family) if isinstance(saved_family, dict) else {}
+        self._pt_prev = None
+
+        pt_row = QHBoxLayout()
         self.cbo_pt = QComboBox()
         self.cbo_pt.addItems(self.PRODUCT_TYPES)
+        self.cbo_family = QComboBox()
+        pt_row.addWidget(self.cbo_pt)
+        pt_row.addWidget(self.cbo_family)
+        root.addLayout(pt_row)
+
         cur = app_settings.get_setting("product_type")
         if cur in self.PRODUCT_TYPES:
             self.cbo_pt.setCurrentText(cur)
-        root.addWidget(self.cbo_pt)
+        self._populate_family(self.cbo_pt.currentText())
+        self.cbo_pt.currentTextChanged.connect(self._on_pt_changed)
 
         # (2) Distribution 색 — 기존 ColorEditorDialog 재사용
         btn_colors = QPushButton("Distribution 색 편집...")
@@ -241,11 +277,33 @@ class OptionsDialog(QDialog):
         bb.rejected.connect(self.reject)
         root.addWidget(bb)
 
+    def _populate_family(self, pt):
+        """pt 의 family 목록으로 콤보를 재구성하고 저장된 선택을 복원(없으면 첫 항목)."""
+        families = FAMILY_PRODUCTS.get(pt, [])
+        self.cbo_family.blockSignals(True)
+        self.cbo_family.clear()
+        self.cbo_family.addItems(families)
+        saved = self._family_sel.get(pt)
+        if saved in families:
+            self.cbo_family.setCurrentText(saved)
+        self.cbo_family.blockSignals(False)
+        self._pt_prev = pt
+
+    def _on_pt_changed(self, pt):
+        # PT 전환 직전 이전 PT 의 family 선택을 기억 → 여러 PT 를 오가며 각각 유지.
+        if self._pt_prev and self.cbo_family.count():
+            self._family_sel[self._pt_prev] = self.cbo_family.currentText()
+        self._populate_family(pt)
+
     def selected_product_type(self):
         return self.cbo_pt.currentText()
 
     def _on_ok(self):
-        app_settings.set_setting("product_type", self.cbo_pt.currentText())
+        pt = self.cbo_pt.currentText()
+        if self.cbo_family.count():
+            self._family_sel[pt] = self.cbo_family.currentText()
+        app_settings.set_setting("product_type", pt)
+        app_settings.set_setting("family_product", self._family_sel)
         self.accept()
 
 

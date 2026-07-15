@@ -15,19 +15,22 @@
 - 제외하고 복사한 것: `.git/`, `__pycache__/`, `*.egg-info/`, `.claude/`·`.agents/`,
   런타임 db(`data/*.db`, `db_input/output/*.db`). 중첩 `.gitignore` 가 런타임 db 를 계속 차단한다.
 
-## 2. 단방향 의존 — import 는 1곳만
+## 2. 단방향 의존 — import 는 2곳만
 
 ```
-report_server ──(web_report/ai_comment.py 1곳)──►  eval_analyzer(eval_engine)
+report_server ──(web_report/ai_comment.py — evaluate 호출)──►  eval_analyzer(eval_engine)
+report_server ──(web_report/eval_export.py — store·ingest 헬퍼)──►  eval_analyzer(eval_engine)
               ◄──────────── 금지 ────────────────
 ```
 
 - eval_analyzer 는 report_server 를 **import 하지 않는다** (eval_analyzer/CLAUDE.md 불변 규칙 1).
-- report_server 에서 eval_engine 을 import 하는 곳은
-  **[web_report/ai_comment.py](../web_report/ai_comment.py) 단 한 곳**이다.
-  pip 미설치 — 이 모듈이 `sys.path.append(<repo>/eval_analyzer)` + 지연 import 로 연결한다
+- report_server 에서 eval_engine 을 import 하는 곳은 **딱 2곳**이다:
+  - [web_report/ai_comment.py](../web_report/ai_comment.py) — `evaluate()` 호출 (AI Comment, §3~§6)
+  - [web_report/eval_export.py](../web_report/eval_export.py) — `store` CRUD + `pipeline.ingest`
+    item 정규화 헬퍼 (사람 코멘트 export, §9)
+  pip 미설치 — 두 모듈 다 `sys.path.append(<repo>/eval_analyzer)` + 지연 import 로 연결한다
   (append 라 report_server 쪽 top-level 이름이 항상 우선, 컴퓨트 워커에서도 호출 시점 성립).
-- 다른 서버 코드가 eval_engine 이 필요하면 **ai_comment.py 의 함수를 거친다**. 위반 = 리뷰 반려.
+- 다른 서버 코드가 eval_engine 이 필요하면 **위 두 모듈의 함수를 거친다**. 위반 = 리뷰 반려.
 
 ## 3. JSON 계약 요약 (정본: eval_analyzer/docs/)
 
@@ -66,6 +69,9 @@ row0 TSEQ  row1 TNO  row2 STEP  row3 UNIT  row4 HILIM(USL)  row5 LOLIM(LSL)  row
   목록을 반환하므로 eval.db 없이도 동작한다 (comment 는 룰 템플릿 기반).
 - persist=True 로 전환하려면: 워커 동시 쓰기(WAL+busy_timeout 은 있음)·콜드 빌드마다
   ingest_run 행 증식·preview↔persist 간 case_id 불일치(엔진 docstring)를 먼저 검토할 것.
+- §9 의 **사람 코멘트 export DB 는 이 규약과 별개** — eval_analyzer 소유 eval.db 가 아니라
+  report_server 소유의 **별도 파일**(`REPORT_EVAL_DB_PATH`)이다. `EVAL_DB_PATH` 는 여전히
+  건드리지 않으며 evaluate 의 선례검색 동작도 무변경이다.
 
 ## 5. 재계산·캐시 규약
 
@@ -105,3 +111,35 @@ row0 TSEQ  row1 TNO  row2 STEP  row3 UNIT  row4 HILIM(USL)  row5 LOLIM(LSL)  row
 ## 8. 의존성
 
 - eval_engine 런타임 의존: numpy·pandas(기존 충족) + **pyyaml** (server/requirements.txt 반영).
+
+## 9. 사람 코멘트 export — Issue Table PTE/개발 comment → eval 스키마 DB (2026-07-15)
+
+eval_analyzer 가 엔지니어 코멘트를 선례(precedent)로 소비할 수 있도록, Issue Table 의
+PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대로의 별도 SQLite**
+로 적재한다. 구현 [web_report/eval_export.py](../web_report/eval_export.py),
+검증 [tests/test_eval_export.py](../tests/test_eval_export.py).
+
+- **DB 파일**: `REPORT_EVAL_DB_PATH` (기본 `DB/pe/report/eval/eval.db`) — report_server
+  소유, session DB(report.db)와 분리. eval_analyzer 쪽은 실행 시 `EVAL_DB_PATH` 를 이
+  파일로 지정해 읽는다(코드 무수정). 스키마는 엔진 `store.SCHEMA` 를 그대로 적용 —
+  **스키마 변경 금지**.
+- **트리거 3곳** (모두 try/except + 데몬 스레드 `export_async` — 실패해도 업로드/저장
+  무영향): ① 세션 업로드 ingest 의 시드 직후, ② `service.update_issue_comments`,
+  ③ `service.update_issue_etc_items`. 매번 세션 **전체 코멘트 상태 재적재**(멱등).
+- **매핑**: PTE+개발 comment 를 `"[PTE] ...\n[개발] ..."` 로 **병합해 label 1행**
+  (labeler=`web_report`, label_quality=`manual`, reviewer=마지막 편집자). row_key →
+  bin: `Yield|<bin>|<item>`→bin, `CPK|<item>`→1(PASS_BIN 관례), `ETC|<item>`→NULL,
+  Pass 요약행(`Yield|1|…`)은 skip. wafer_number=NULL(lot 수준 case).
+  item/unit/limit 은 honeyform tables 에서, fail/total/cpk 통계는 best-effort
+  (rawdata 에 없는 자유입력 ETC 항목은 코멘트만). `ingest_run.session_id` 로 세션
+  역참조, run_case 차집합으로 **삭제된 코멘트의 label 정리**(fail_case 는 보존).
+- **엔진 코드 재사용** (eval_analyzer 무수정): `store` CRUD 는 전부 `conn=` 주입 —
+  `eval_engine.config.DB_PATH` 는 절대 변경하지 않는다. item 정규화는
+  `pipeline.ingest._alias_map/_canonicalize/_classify_category_major/_classify_value_type`
+  재사용(=db_input/import_csv.py 와 동일 패턴 → 선례 fuzzy 매칭 일관).
+  **사설 API 의존 핀**: `store._migrate` / `store._seed_bin_taxonomy` /
+  `pipeline.ingest._*` — 원본 동기화로 시그니처가 바뀌면 eval_export 만 고치면 된다
+  (실패는 safe_export 가 격리).
+- **관리**: `/pe/admin-pte/` **Eval DB 탭** — overview(파일/건수), label 목록 검색,
+  케이스 단위 완전 삭제, 세션 재적재. 세션 삭제 시 export 데이터는 자동 삭제하지
+  않는다(선례 보존) — 정리는 이 탭에서 수동.

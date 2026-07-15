@@ -75,6 +75,7 @@ def validate_meta(meta: dict) -> dict:
 
     return {
         "product_type": str(meta.get("product_type") or "").strip(),
+        "family_product": str(meta.get("family_product") or "").strip(),
         "product": str(meta.get("product") or "").strip(),
         "lot_id": str(meta.get("lot_id") or "").strip(),
         "revision": str(meta.get("revision") or "").strip()[:80],

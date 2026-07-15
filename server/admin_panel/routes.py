@@ -14,8 +14,8 @@ from pathlib import Path
 from flask import Blueprint, Response, abort, jsonify, request
 
 import config
-from admin_panel import (maintenance, metrics, sessions_admin, stats, storage_admin,
-                         sysinfo, users_admin)
+from admin_panel import (eval_admin, maintenance, metrics, sessions_admin, stats,
+                         storage_admin, sysinfo, users_admin)
 from database import report_db
 from report.static_pages import send_html_gzip
 
@@ -155,6 +155,51 @@ def api_storage_sessions():
         offset=request.args.get("offset", 0),
         refresh=request.args.get("refresh") == "1",
     ))
+
+
+# ── Eval DB (Issue Table 코멘트 export — web_report/eval_export.py) ──────────
+
+_CASE_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+@admin_panel_bp.get("/api/eval/overview")
+def api_eval_overview():
+    return jsonify(eval_admin.overview())
+
+
+@admin_panel_bp.get("/api/eval/labels")
+def api_eval_labels():
+    return jsonify(eval_admin.list_labels(
+        q=(request.args.get("q") or "").strip() or None,
+        limit=request.args.get("limit", 100),
+        offset=request.args.get("offset", 0),
+    ))
+
+
+@admin_panel_bp.post("/api/eval/cases/delete")
+def api_eval_cases_delete():
+    body = request.get_json(force=True, silent=True) or {}
+    cids = body.get("case_ids")
+    if not isinstance(cids, list) or not cids or len(cids) > 200:
+        abort(400, "case_ids: 1~200개 리스트 필요")
+    for cid in cids:
+        if not isinstance(cid, str) or not _CASE_ID_RE.match(cid):
+            abort(400, f"invalid case_id: {cid!r}")
+    result = eval_admin.delete_cases(cids)
+    _audit("delete", changed_fields=f"eval_cases({result.get('deleted', 0)})")
+    return jsonify(result)
+
+
+@admin_panel_bp.post("/api/eval/session/<session_id>/reexport")
+def api_eval_reexport(session_id):
+    if not _SESSION_ID_RE.match(session_id):
+        abort(400, "invalid session_id")
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    result = eval_admin.reexport(session_id)
+    _audit("edit", session=session, changed_fields=f"eval_reexport({result})")
+    return jsonify(result)
 
 
 @admin_panel_bp.get("/api/metrics/history")

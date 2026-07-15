@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS report_session (
     updated_at    INTEGER,
     error_message TEXT,
     product_type  TEXT,
+    family_product TEXT,
     process       TEXT,
     product       TEXT,
     part_id       TEXT,
@@ -304,7 +305,7 @@ def _migrate(conn):
         sess_cols = {r[1] for r in sess_info}
         for col in (
             "analysis_key", "content_hash", "error_message",
-            "product_type", "process", "product", "revision", "edm_link",
+            "product_type", "family_product", "process", "product", "revision", "edm_link",
             "dataset_id", "lot_id", "password", "uploaded_by", "client_host",
             "webreport_options",
             "part_id", "sub_part_id", "product_group", "wf_size", "chip_size_x",

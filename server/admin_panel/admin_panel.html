@@ -125,6 +125,7 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
   <button class="tab" data-panel="pStorage">스토리지</button>
   <button class="tab" data-panel="pStats">통계</button>
   <button class="tab" data-panel="pSessions">세션</button>
+  <button class="tab" data-panel="pEval">Eval DB</button>
   <button class="tab" data-panel="pUsers">사용자</button>
   <button class="tab" data-panel="pDb">DB</button>
   <button class="tab" data-panel="pLogs">console log</button>
@@ -220,6 +221,36 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
     </table></div>
     <div class="pager" id="stgPager"></div>
     <div class="msg" id="stgMsg">삭제 시 마지막 참조 세션이면 S3/로컬 산출물과 캐시가 함께 정리됩니다.</div>
+  </div>
+</div>
+
+<!-- ═══ Eval DB ═══ -->
+<div id="pEval" class="panel">
+  <div class="tiles" id="evalTiles">
+    <div class="tile"><div class="lbl">로딩 중…</div></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>코멘트 라벨 목록 <span id="evalSummary" class="hint"></span>
+      <button class="btn" id="btnEvalRefresh" style="float:right">새로고침</button></h2>
+    <div class="toolbar">
+      <input id="evalQ" class="inp" style="width:280px" placeholder="product / lot / item / comment / 세션ID 검색…">
+      <button class="btn primary" id="btnEvalSearch">검색</button>
+      <span class="grow"></span>
+      <input id="evalReexportSid" class="inp" style="width:200px" placeholder="세션ID (재적재)">
+      <button class="btn" id="btnEvalReexport">세션 재적재</button>
+      <button class="btn danger" id="btnEvalBulkDelete" disabled>선택 케이스 삭제 (0)</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th><input type="checkbox" id="evalChkAll"></th>
+        <th>기록</th><th>product</th><th>lot</th><th class="num">Bin</th><th>Item</th>
+        <th>unit</th><th>comment</th><th>편집자</th><th>session_id</th>
+      </tr></thead>
+      <tbody id="evalBody"><tr class="empty-row"><td colspan="10">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="pager" id="evalPager"></div>
+    <div class="msg" id="evalMsg">Issue Table 의 PTE/개발 comment 가 세션 업로드·편집 시마다 자동 적재됩니다 (eval_analyzer 소비용 · report.db 와 분리된 별도 DB).</div>
   </div>
 </div>
 
@@ -442,7 +473,7 @@ async function postJSON(url, body) {
 const loadedTabs = new Set();
 const TAB_LOADERS = {
   pHealth: loadHealth, pStorage: loadStorageTab, pStats: loadStats, pSessions: loadSessions,
-  pUsers: loadUsers, pDb: loadDb, pLogs: loadLogs, pAudit: loadAudit,
+  pEval: loadEvalTab, pUsers: loadUsers, pDb: loadDb, pLogs: loadLogs, pAudit: loadAudit,
 };
 document.querySelectorAll(".tab").forEach(btn => {
   btn.onclick = () => {
@@ -734,6 +765,119 @@ $("btnStgBulkDelete").onclick = async () => {
     msg.textContent = `삭제 ${r.deleted.length}건 완료` +
       (r.failed.length ? `, 실패 ${r.failed.length}건: ${r.failed.map(f => f.session_id).join(", ")}` : "");
     loadStgOverview(true); loadStgSessions(true);
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+};
+
+// ── Eval DB (Issue Table 코멘트 export — eval_analyzer 소비용) ──────────────
+const EVAL_PAGE = 50;
+let evalOffset = 0, evalTotal = 0;
+const evalSelected = new Set();
+function evalUpdateBulk() {
+  $("btnEvalBulkDelete").textContent = `선택 케이스 삭제 (${evalSelected.size})`;
+  $("btnEvalBulkDelete").disabled = evalSelected.size === 0;
+}
+async function loadEvalTab() { loadEvalOverview(); loadEvalLabels(); }
+
+async function loadEvalOverview() {
+  try {
+    const o = await getJSON("api/eval/overview");
+    if (!o.exists) {
+      $("evalTiles").innerHTML = `
+        <div class="tile"><div class="lbl">Eval DB 없음</div>
+          <div class="val" style="font-size:18px">미생성</div>
+          <div class="det">아직 적재된 코멘트가 없습니다 · ${esc(o.path)}</div></div>`;
+      return;
+    }
+    $("evalTiles").innerHTML = `
+      <div class="tile"><div class="lbl">Eval DB 파일 (스키마 v${o.user_version})</div>
+        <div class="val" style="font-size:22px">${fmtBytes(o.bytes)}</div>
+        <div class="det">${esc(o.path)}</div></div>
+      <div class="tile"><div class="lbl">케이스 (fail_case)</div>
+        <div class="val">${o.cases.toLocaleString()}</div></div>
+      <div class="tile"><div class="lbl">코멘트 라벨 (label)</div>
+        <div class="val">${o.labels.toLocaleString()}</div></div>
+      <div class="tile"><div class="lbl">적재 세션</div>
+        <div class="val">${o.sessions.toLocaleString()}</div>
+        <div class="det">ingest_run.session_id 기준</div></div>`;
+  } catch (e) {
+    $("evalTiles").innerHTML = `<div class="tile"><div class="lbl">Eval DB 조회 실패</div><div class="det">${esc(e)}</div></div>`;
+  }
+}
+
+async function loadEvalLabels() {
+  const tb = $("evalBody");
+  tb.innerHTML = `<tr class="empty-row"><td colspan="10">로딩 중…</td></tr>`;
+  evalSelected.clear(); evalUpdateBulk(); $("evalChkAll").checked = false;
+  const params = new URLSearchParams({ limit: EVAL_PAGE, offset: evalOffset });
+  const q = $("evalQ").value.trim(); if (q) params.set("q", q);
+  let data;
+  try { data = await getJSON("api/eval/labels?" + params); }
+  catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="10">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  evalTotal = data.total;
+  $("evalSummary").textContent = `총 ${evalTotal}건`;
+  if (!data.rows.length) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="10">적재된 코멘트가 없습니다.</td></tr>`;
+  } else {
+    tb.innerHTML = data.rows.map(r => `
+      <tr>
+        <td><input type="checkbox" class="evalChkRow" data-cid="${esc(r.case_id)}"></td>
+        <td>${fmtDate(r.created_at)}</td>
+        <td>${esc(r.product_name || "-")}</td><td>${esc(r.lot_id || "-")}</td>
+        <td class="num">${r.bin == null ? "-" : esc(r.bin)}</td>
+        <td>${esc(r.item || "-")}</td><td>${esc(r.unit || "-")}</td>
+        <td style="max-width:340px;white-space:pre-wrap">${esc(r.human_comment || "")}</td>
+        <td>${esc(r.reviewer || "-")}</td>
+        <td class="mono">${esc(r.session_id || "-")}</td>
+      </tr>`).join("");
+  }
+  const page = Math.floor(evalOffset / EVAL_PAGE), last = Math.max(0, Math.ceil(evalTotal / EVAL_PAGE) - 1);
+  $("evalPager").innerHTML = `
+    <button class="pg-btn" id="evalPrev" ${page === 0 ? "disabled" : ""}>← 이전</button>
+    <span class="pg-info">${evalTotal}건 중 ${evalTotal ? evalOffset + 1 : 0}–${Math.min(evalOffset + EVAL_PAGE, evalTotal)} (페이지 ${page + 1}/${last + 1})</span>
+    <button class="pg-btn" id="evalNext" ${page >= last ? "disabled" : ""}>다음 →</button>`;
+  $("evalPrev").onclick = () => { evalOffset = Math.max(0, evalOffset - EVAL_PAGE); loadEvalLabels(); };
+  $("evalNext").onclick = () => { evalOffset += EVAL_PAGE; loadEvalLabels(); };
+}
+$("btnEvalSearch").onclick = () => { evalOffset = 0; loadEvalLabels(); };
+$("evalQ").addEventListener("keydown", e => { if (e.key === "Enter") { evalOffset = 0; loadEvalLabels(); } });
+$("btnEvalRefresh").onclick = () => { loadEvalOverview(); loadEvalLabels(); };
+$("evalChkAll").onchange = () => {
+  document.querySelectorAll(".evalChkRow").forEach(c => {
+    c.checked = $("evalChkAll").checked;
+    if (c.checked) evalSelected.add(c.dataset.cid); else evalSelected.delete(c.dataset.cid);
+  });
+  evalUpdateBulk();
+};
+$("evalBody").addEventListener("change", e => {
+  if (!e.target.classList.contains("evalChkRow")) return;
+  if (e.target.checked) evalSelected.add(e.target.dataset.cid); else evalSelected.delete(e.target.dataset.cid);
+  evalUpdateBulk();
+});
+$("btnEvalBulkDelete").onclick = async () => {
+  if (!evalSelected.size) return;
+  const typed = prompt(`선택한 ${evalSelected.size}개 케이스를 eval DB 에서 삭제합니다.\n(라벨·통계·링크 포함 완전 삭제 — report.db 세션에는 영향 없음)\n\n계속하려면 DELETE 를 입력하세요:`);
+  if (typed !== "DELETE") return;
+  const msg = $("evalMsg");
+  msg.className = "msg"; msg.textContent = "삭제 중…";
+  try {
+    const r = await postJSON("api/eval/cases/delete", { case_ids: [...evalSelected] });
+    msg.textContent = `케이스 ${r.deleted}건 삭제 완료`;
+    loadEvalOverview(); loadEvalLabels();
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+};
+$("btnEvalReexport").onclick = async () => {
+  const sid = $("evalReexportSid").value.trim();
+  const msg = $("evalMsg");
+  if (!sid) { msg.className = "msg err"; msg.textContent = "재적재할 세션ID 를 입력하세요."; return; }
+  msg.className = "msg"; msg.textContent = "재적재 중…";
+  try {
+    const r = await postJSON(`api/eval/session/${encodeURIComponent(sid)}/reexport`, {});
+    msg.textContent = r.skipped ? `건너뜀: ${r.skipped}`
+      : `재적재 완료 — 케이스 ${r.cases}건, 정리 ${r.removed}건`;
+    loadEvalOverview(); loadEvalLabels();
   } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
 };
 

@@ -371,6 +371,14 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
+    if changes:
+        # ETC 항목 추가/삭제 → eval DB 재적재 (삭제된 항목의 코멘트 case 는 stale 정리)
+        try:
+            from . import eval_export
+            eval_export.export_async(session_id, report_db=report_db,
+                                     upload_root=upload_root)
+        except Exception:
+            pass
 
     return {"ok": True, "etc_items": etc_items,
             "storage": "db" if changes else "unchanged"}
@@ -436,6 +444,13 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
                 lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
                 changed_fields=f"issue_comments({changed} cells)",
                 client_ip=client_ip, user_agent=user_agent)
+        except Exception:
+            pass
+        # 코멘트 변경 → eval_analyzer 스키마 DB 재적재 (백그라운드, 실패 무해 — docs/13)
+        try:
+            from . import eval_export
+            eval_export.export_async(session_id, report_db=report_db,
+                                     upload_root=upload_root)
         except Exception:
             pass
         storage = "db"

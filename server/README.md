@@ -36,6 +36,7 @@ pip install -r requirements.txt
 | `PORT` | `8000` | 포트 |
 | `SERVER_BASE_URL` | `http://<HOST>:<PORT>` | 절대 URL 생성 기준 |
 | `REPORT_DB_PATH` | `<repo>/DB/pe/report/report.db` | SQLite DB 파일 |
+| `REPORT_EVAL_DB_PATH` | `<repo>/DB/pe/report/eval/eval.db` | Issue Table PTE/개발 comment export DB (eval.db 스키마, report.db 와 분리 — [docs/13 §9](../docs/13_eval_analyzer_integration.md)) |
 | `REPORT_UPLOAD_DIR` | `<repo>/uploads/report` | 업로드/로컬 폴백/디스크 캐시 루트 |
 | `HONEY_RELEASES_DIR` | `<repo>/server/releases` | Honey exe 릴리스 폴더 |
 | `STDINFO_DB_PATH` | `<repo>/DB/INFORMATION/stdinfo_*.db` | 외부 생성 기준정보 DB (part_ids 조회용) |

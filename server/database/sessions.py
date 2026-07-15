@@ -14,7 +14,8 @@ _PRODUCT_INFO_COLUMNS = (
 def create_session(session_id, file_name, file_path, product_type=None, dataset_id=None,
                    lot_id=None, password=None, is_debug=0, product=None,
                    process=None, revision=None, edm_link=None, source='xlsx_upload',
-                   uploaded_by=None, client_host=None, mode='Normal', product_info=None):
+                   uploaded_by=None, client_host=None, mode='Normal', product_info=None,
+                   family_product=None):
     now = _now()
     file_path_str = str(file_path) if file_path is not None else None
     # 기준정보(product_info)는 화이트리스트 컬럼 중 값이 있는 것만 동적 병합한다. 컬럼명은
@@ -27,11 +28,11 @@ def create_session(session_id, file_name, file_path, product_type=None, dataset_
     with get_conn() as conn:
         conn.execute(
             "INSERT INTO report_session "
-            "(session_id, file_name, file_path, product_type, process, product, revision, "
+            "(session_id, file_name, file_path, product_type, family_product, process, product, revision, "
             " edm_link, dataset_id, lot_id, password, is_debug, source, uploaded_by, client_host, "
             f" mode, {extra_col_sql}status, created_at, updated_at) "
-            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {extra_ph}'pending', ?, ?)",
-            (session_id, file_name, file_path_str, product_type, process, product, revision,
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {extra_ph}'pending', ?, ?)",
+            (session_id, file_name, file_path_str, product_type, family_product, process, product, revision,
              edm_link, dataset_id, lot_id, password, is_debug, source, uploaded_by, client_host,
              mode or 'Normal', *extra_vals, now, now),
         )

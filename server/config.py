@@ -19,6 +19,11 @@ SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", f"http://{_HOST}:{_PORT}")
 REPORT_DB_PATH = _path_env("REPORT_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" / "report.db")
 REPORT_UPLOAD_DIR = _path_env("REPORT_UPLOAD_DIR", ROOT_DIR / "uploads" / "report")
 
+# Issue Table 사람 코멘트(PTE/개발) export 대상 — eval_analyzer eval.db 스키마의
+# report_server 소유 별도 파일. session DB(report.db)와 분리. eval_analyzer 쪽은
+# EVAL_DB_PATH env 로 이 파일을 가리켜 읽는다 (docs/13_eval_analyzer_integration.md).
+REPORT_EVAL_DB_PATH = _path_env("REPORT_EVAL_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" / "eval" / "eval.db")
+
 STDINFO_DB_PATH = _path_env("STDINFO_DB_PATH", ROOT_DIR / "DB" / "INFORMATION" / "stdinfo_20260511.db")
 PRODUCT_INFO_CSV_PATH = _path_env("PRODUCT_INFO_CSV_PATH", ROOT_DIR / "server" / "product_info.csv")
 

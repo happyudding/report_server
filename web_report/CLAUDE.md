@@ -28,8 +28,11 @@ web_report/
 ├── validation.py       canon·mode/meta 정규화·client_identity — 순수 헬퍼 (werkzeug 는
 │                        validate_meta 안 지연 import — 클라가 mode_tables 를 쓰기 때문)
 ├── edits.py            편집 상태 — 진실은 세션 단위 DB(report_webreport_edit). legacy 폴백/시드
-├── ai_comment.py       eval_analyzer(eval_engine) 통합의 유일한 접점 — IssueTable AI Comment
+├── ai_comment.py       eval_analyzer(eval_engine) 통합 접점 1/2 — IssueTable AI Comment
 │                        (ai_comment 옵션 세션 콜드 빌드에서 evaluate() 호출 → docs/13)
+├── eval_export.py      eval_analyzer 통합 접점 2/2 — IssueTable PTE/개발 comment 를
+│                        eval.db 스키마 별도 DB(REPORT_EVAL_DB_PATH)로 export
+│                        (업로드/편집 훅에서 export_async → docs/13 §9)
 ├── metrics.py          build_report_payload — 공용 컨텍스트 조립 후 tabs.TAB_REGISTRY 순회
 ├── cache.py            인메모리 LRU 캐시 인프라 (레지스트리·락·무효화)
 ├── cache_policy.py     캐시 키 구성 규약의 단일 진실 (빌더 + 무효화 트리거 표)
@@ -65,7 +68,8 @@ web_report/
 | 세션 상세 페이지 | [report_view.html](../server/report/report_view.html) + [static/webreport/](../server/report/static/webreport/) | 마크업+CSS / 탭별 JS 17모듈 |
 | 저장소(parquet/manifest) | [storage_gateway](../server/storage_gateway/__init__.py) | `save/load_webreport_sources`. **직접 import 금지** — `runtime.storage()` 포트로 접근 |
 | DB CRUD | [database/report_db.py](../server/database/report_db.py) | create/update_session, log_audit, get/apply_webreport_edits, get_webreport_edit_rev |
-| eval_analyzer 엔진 | [eval_analyzer/](../eval_analyzer/) `eval_engine.evaluate()` | **ai_comment.py 에서만 import** (단방향, persist=False) → [docs/13](../docs/13_eval_analyzer_integration.md) |
+| eval_analyzer 엔진 | [eval_analyzer/](../eval_analyzer/) `eval_engine` | **ai_comment.py(evaluate, persist=False) + eval_export.py(store·ingest 헬퍼) 2곳에서만 import** (단방향) → [docs/13](../docs/13_eval_analyzer_integration.md) |
+| 관리자 Eval DB 탭 | [server/admin_panel/eval_admin.py](../server/admin_panel/eval_admin.py) | eval_export.open_conn/db_path 재사용 (overview/목록/삭제/재적재) |
 
 web_report 안에서 위 연결점의 **호출 시그니처(함수명·인자·반환 dict 키)** 를 바꾸면 바깥
 파일도 맞춰 고쳐야 하므로, 그 경우 함께 반영할 것.

@@ -26,6 +26,7 @@ class Session(Mapping):
     updated_at: int | None = None
     error_message: str | None = None
     product_type: str | None = None
+    family_product: str | None = None
     process: str | None = None
     product: str | None = None
     revision: str | None = None

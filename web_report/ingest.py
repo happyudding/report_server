@@ -129,6 +129,7 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         file_name=meta["file_name"],
         file_path=str(session_dir),
         product_type=meta["product_type"],
+        family_product=meta["family_product"],
         process=meta["process"],
         product=meta["product"],
         revision=meta["revision"],
@@ -160,6 +161,15 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     try:
         edits.seed_from_manifest(report_db, session_id, manifest,
                                  updated_by=uploaded_by or None)
+    except Exception:
+        pass
+
+    # Issue Table 코멘트(시드 포함) → eval_analyzer 스키마 DB 적재 (백그라운드,
+    # 실패 무해 — docs/13). 방금 시딩한 TABLES_CACHE 를 그대로 쓴다.
+    try:
+        from . import eval_export
+        eval_export.export_async(session_id, report_db=report_db,
+                                 upload_root=Path(upload_root))
     except Exception:
         pass
 

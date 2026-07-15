@@ -75,11 +75,12 @@ def _table_to_raw_df(table, items):
 def _session_meta(session, wafer_number):
     """세션 dict → evaluate meta. product_type 이 허용 5종 밖이면 None(평가 스킵).
 
-    세션에 없는 필수 필드는 폴백으로 채운다: family_product=*_ETC,
-    revision 숫자 변환 실패=0.0, wafer_number=소스 순번(실제 wafer 번호 아님).
+    family_product 는 세션 실제값을 우선 사용하고, 비어 있으면(구세션) *_ETC 폴백.
+    그 외 세션에 없는 필수 필드도 폴백으로 채운다: revision 숫자 변환 실패=0.0,
+    wafer_number=소스 순번(실제 wafer 번호 아님).
     """
     product_type = str(session.get("product_type") or "").strip()
-    family = _FAMILY_FALLBACK.get(product_type)
+    family = str(session.get("family_product") or "").strip() or _FAMILY_FALLBACK.get(product_type)
     if not family:
         return None
     try:
