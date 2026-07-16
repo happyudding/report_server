@@ -82,6 +82,19 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_DB_BACKUP_ENABLED` / `_INTERVAL_HOURS` / `_KEEP` / `_DIR` | `1` / `24` / `7` / `<db>/backup` | 온라인 백업 사이클 |
 | `REPORT_ADMIN_SECRET` | `pte` | admin 경로 조각 → `/pe/admin-<secret>/` (기본 `/pe/admin-pte/`) |
 
+### 로그 / 무인 운영 (wsgi.py, watchdog.ps1)
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `LOG_MAX_MB` | `256` | 활성 콘솔 로그(`server/log/server_*.txt`) 크기 상한 — 초과 시 새 파일로 로테이션. `0` 이하 = 비활성 |
+| `LOG_KEEP_FILES` / `LOG_KEEP_DAYS` | `30` / `14` | 로그 파일 정리 상한(개수/일수) — 기동·로테이션 시 초과분 삭제 |
+
+**watchdog 자동 재기동**: [register_watchdog.bat](register_watchdog.bat) 을 관리자 권한으로
+1회 실행하면 작업 스케줄러에 5분 주기 + 부팅 시 감시([watchdog.ps1](watchdog.ps1))가
+등록된다 — 포트 미리스닝이면 즉시, `/healthz` 무응답이면 2연속 실패 시 자동 재기동.
+재기동 이력은 admin 대시보드 현황 탭 또는 `server/log/watchdog_events.log`.
+수동 점검 시간에는 `schtasks /Change /TN report-server-watchdog /DISABLE` 로 먼저 정지할 것.
+
 ### 운영 배포 체크리스트 (8cpu / 32GB / 2TB, 동시 ~5명 기준 — 2026-07-15)
 
 배포·재기동 시 이 순서로 env 를 확인한다. 기본값이 적절한 항목은 "기본 유지"로 표기.
@@ -97,7 +110,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_TIER_ENABLED`/`REPORT_TIER_DRYRUN` | S3 확정 환경에서 dryrun 해제 검토 | 티어링이 로컬 hot 캐시를 S3 로 내려 2TB 디스크를 지킴 (S3 미설정 시 no-op) |
 | `REPORT_DB_BACKUP_DIR` | **다른 물리 디스크/네트워크 경로 지정 권장** | 기본은 DB 옆 폴더 — 디스크 사망 시 원본과 백업이 함께 유실 |
 | `WEB_REPORT_DIST_GZIP_LEVEL` | 실데이터 실측 후 `6` 검토 | 서버 dist blob 전송량 절감 (클라 프리컴퓨트 blob 은 이미 level 6) |
-| 장기 무중단 실행 | 주기 재시작 or `server/log/` 크기 확인 | 콘솔 로그가 기동당 1파일로 계속 성장(회전 없음 — 볼륨은 작음) |
+| 장기 무중단 실행 | `register_watchdog.bat` 1회 등록 | 크래시/재부팅 자동 재기동 (5분 주기 + 부팅 시). 활성 로그는 `LOG_MAX_MB`(기본 256) 초과 시 자동 로테이션 |
 | 콜드 빌드 관측 로그 | `dist cold build`/`report cold build` INFO 라인 주시 | 포인트 수가 수천만 급이면 docs 진단의 보류 항목(항목 청크 분할 등) 재검토 |
 
 ---

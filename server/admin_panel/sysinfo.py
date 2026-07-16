@@ -5,6 +5,7 @@ waitress 멀티스레드에서 요청마다 psutil.cpu_percent(interval=0.5) 를
 priming 없이 연속 interval=None 호출은 0.0 에 가까운 값이 나온다).
 디렉토리 크기 재귀 스캔은 느릴 수 있어 경로별 TTL 캐시(기본 60초) + refresh 우회를 둔다.
 """
+import json
 import logging
 import os
 import threading
@@ -136,3 +137,49 @@ def s3_status():
     수동 새로고침 전용 (자동 폴링 금지). facade 공개 API 만 사용(내부 _s3 직접 import 금지)."""
     import storage_gateway
     return storage_gateway.s3_health()
+
+
+def watchdog_status(limit=10):
+    """watchdog(server/watchdog.ps1) 상태 요약 — 현황 탭 타일용.
+
+    - watchdog.state 의 mtime = 마지막 점검 시각 (파일 없으면 미등록/미실행).
+    - watchdog_events.log(JSON lines) 에서 재기동 이력 집계. 이벤트 파일은
+      watchdog 이 1MB 캡으로 자체 관리하므로 전량 읽어도 가볍다."""
+    log_dir = config.ROOT_DIR / "server" / "log"
+    last_check = None
+    try:
+        last_check = int((log_dir / "watchdog.state").stat().st_mtime)
+    except OSError:
+        pass
+
+    events = []
+    try:
+        with (log_dir / "watchdog_events.log").open("r", encoding="utf-8",
+                                                    errors="replace") as f:
+            lines = f.readlines()[-500:]
+        for ln in lines:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                events.append(json.loads(ln))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+
+    def _epoch(e):
+        try:
+            return time.mktime(time.strptime(e.get("ts", ""), "%Y-%m-%dT%H:%M:%S"))
+        except (ValueError, OverflowError):
+            return 0
+
+    restarts = [e for e in events if e.get("event") in ("restart", "restart_fail")]
+    cutoff = time.time() - 86400
+    return {
+        "registered": last_check is not None,
+        "last_check": last_check,
+        "restarts_24h": sum(1 for e in restarts if _epoch(e) >= cutoff),
+        "restarts_total": len(restarts),
+        "events": events[-limit:][::-1],  # 최신 먼저
+    }

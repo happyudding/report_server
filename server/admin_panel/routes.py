@@ -136,6 +136,11 @@ def api_s3_status():
     return jsonify(sysinfo.s3_status())
 
 
+@admin_panel_bp.get("/api/watchdog")
+def api_watchdog():
+    return jsonify(sysinfo.watchdog_status())
+
+
 # ── 스토리지 관리 ────────────────────────────────────────────────────────────
 # 세션 삭제는 기존 /api/sessions/delete (artifact-aware) 를 그대로 재사용한다.
 

@@ -2,6 +2,7 @@ import multiprocessing
 import os
 import socket
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -20,27 +21,31 @@ for _stream in (sys.stdout, sys.stderr):
 
 _LOG_FILE = None
 LOG_PATH = None
+_LOG_DIR = None
+_LOG_MAX_BYTES = 0  # LOG_MAX_MB env — 활성 파일 크기 상한 (0 = 로테이션 비활성)
+_log_bytes = 0      # 활성 파일 누적 기록량 (len(str) 근사 — 정확한 바이트 아님)
+_log_lock = threading.Lock()
 
 
 class _TeeStream:
-    def __init__(self, console_stream, file_stream):
+    """콘솔 + 활성 로그 파일 동시 기록. 파일 핸들은 전역(_LOG_FILE) 간접 참조 —
+    stdout/stderr 두 인스턴스가 공유하므로 로테이션 스왑이 양쪽에 동시 반영된다."""
+
+    def __init__(self, console_stream):
         self._console = console_stream
-        self._file = file_stream
         self.encoding = getattr(console_stream, "encoding", "utf-8")
         self.errors = getattr(console_stream, "errors", "replace")
 
     def write(self, data):
         self._console.write(data)
-        try:
-            self._file.write(data)
-        except Exception:
-            pass
+        _file_write(data)
         self.flush()
 
     def flush(self):
         self._console.flush()
         try:
-            self._file.flush()
+            if _LOG_FILE is not None:
+                _LOG_FILE.flush()
         except Exception:
             pass
 
@@ -51,8 +56,47 @@ class _TeeStream:
         return getattr(self._console, name)
 
 
+def _file_write(data):
+    """활성 로그 파일 기록 + 상한 초과 시 로테이션 (best-effort)."""
+    global _log_bytes
+    f = _LOG_FILE
+    if f is None:
+        return
+    try:
+        f.write(data)
+        _log_bytes += len(data)
+        if _LOG_MAX_BYTES and _log_bytes >= _LOG_MAX_BYTES:
+            _rotate_log()
+    except Exception:
+        pass
+
+
+def _rotate_log():
+    """활성 로그를 닫고 새 server_<stamp>.txt 로 교체 — 장기 무재시작 운영에서
+    단일 활성 파일이 무한 성장하는 것을 막는다. 실패 시 기존 파일로 계속 기록."""
+    global _LOG_FILE, LOG_PATH, _log_bytes
+    with _log_lock:
+        if _LOG_FILE is None or not _LOG_MAX_BYTES or _log_bytes < _LOG_MAX_BYTES:
+            return  # 다른 스레드가 이미 교체함
+        try:
+            new_path = _LOG_DIR / f"server_{time.strftime('%Y%m%d_%H%M%S')}.txt"
+            new_file = new_path.open("a", encoding="utf-8", buffering=1)
+        except Exception:
+            _log_bytes = 0  # 재시도 폭주 방지 — 다음 상한 도달 때 다시 시도
+            return
+        old = _LOG_FILE
+        _LOG_FILE = new_file
+        LOG_PATH = new_path
+        _log_bytes = 0
+        try:
+            old.close()
+        except Exception:
+            pass
+        _prune_old_logs(_LOG_DIR)
+
+
 def _prune_old_logs(log_dir):
-    """오래된 server_*.txt 정리 (best-effort) — 기동마다 새 파일이라 무한 누적 방지.
+    """오래된 server_*.txt 정리 (best-effort) — 기동/로테이션마다 새 파일이라 무한 누적 방지.
     LOG_KEEP_FILES(기본 30) 초과분 + LOG_KEEP_DAYS(기본 14) 경과분을 삭제."""
     try:
         keep_files = int(os.getenv("LOG_KEEP_FILES", "30"))
@@ -70,15 +114,17 @@ def _prune_old_logs(log_dir):
 
 
 def _enable_console_log_file():
-    global _LOG_FILE, LOG_PATH
+    global _LOG_FILE, LOG_PATH, _LOG_DIR, _LOG_MAX_BYTES
     try:
         log_dir = Path(__file__).resolve().parent / "log"
         log_dir.mkdir(parents=True, exist_ok=True)
+        _LOG_DIR = log_dir
+        _LOG_MAX_BYTES = max(0, int(float(os.getenv("LOG_MAX_MB", "256")) * 1024 * 1024))
         stamp = time.strftime("%Y%m%d_%H%M%S")
         LOG_PATH = log_dir / f"server_{stamp}.txt"
         _LOG_FILE = LOG_PATH.open("a", encoding="utf-8", buffering=1)
-        sys.stdout = _TeeStream(sys.stdout, _LOG_FILE)
-        sys.stderr = _TeeStream(sys.stderr, _LOG_FILE)
+        sys.stdout = _TeeStream(sys.stdout)
+        sys.stderr = _TeeStream(sys.stderr)
         _prune_old_logs(log_dir)
     except Exception:
         LOG_PATH = None

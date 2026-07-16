@@ -490,6 +490,23 @@ function meterCls(pct) { return pct >= 90 ? "crit" : pct >= 70 ? "warn" : ""; }
 async function loadHealth() {
   try {
     const h = await getJSON("api/health");
+    let wdTile = "";
+    try {
+      const w = await getJSON("api/watchdog");
+      if (!w.registered) {
+        wdTile = `
+      <div class="tile"><div class="lbl">Watchdog 자동복구</div>
+        <div class="val" style="font-size:20px;color:#6f737e">미등록</div>
+        <div class="det">server\\register_watchdog.bat 관리자 실행으로 등록</div></div>`;
+      } else {
+        const last = w.events.length ? w.events[0] : null;
+        wdTile = `
+      <div class="tile"><div class="lbl">Watchdog 자동복구</div>
+        <div class="val" style="font-size:20px${w.restarts_24h > 0 ? ";color:#dc2626" : ""}">24h 재기동 ${w.restarts_24h}회</div>
+        <div class="det">기록상 총 ${w.restarts_total}회 · 마지막 점검 ${fmtClock(w.last_check)}${
+          last ? `<br>최근: ${esc((last.ts || "").replace("T", " "))} ${esc(last.event || "")} (${esc(last.reason || "")})` : ""}</div></div>`;
+      }
+    } catch (e) { /* watchdog 타일은 best-effort */ }
     $("healthTiles").innerHTML = `
       <div class="tile"><div class="lbl">CPU</div>
         <div class="val">${h.cpu_percent.toFixed(0)}%</div>
@@ -505,7 +522,7 @@ async function loadHealth() {
         <div class="meter"><div class="${meterCls(h.disk_percent)}" style="width:${Math.min(h.disk_percent,100)}%"></div></div></div>
       <div class="tile"><div class="lbl">서버 업타임</div>
         <div class="val" style="font-size:20px">${fmtUptime(h.uptime_sec)}</div>
-        <div class="det">프로세스 RSS ${fmtBytes(h.proc_rss)} · 스레드 ${h.proc_threads}</div></div>`;
+        <div class="det">프로세스 RSS ${fmtBytes(h.proc_rss)} · 스레드 ${h.proc_threads}</div></div>${wdTile}`;
   } catch (e) {
     $("healthTiles").innerHTML = `<div class="tile"><div class="lbl">현황 조회 실패</div><div class="det">${esc(e)}</div></div>`;
   }
