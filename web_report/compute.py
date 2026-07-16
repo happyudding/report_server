@@ -76,7 +76,8 @@ def run(job, *args):
     if pool is None:
         return job(*args)
     try:
-        return pool.submit(job, *args).result(timeout=_TIMEOUT_SEC)
+        fut = pool.submit(job, *args)
+        return fut.result(timeout=_TIMEOUT_SEC)
     except BrokenProcessPool:
         _log.error("compute worker pool broken — 풀 리셋 후 인라인 폴백: %s%r",
                    getattr(job, "__name__", job), args, exc_info=True)
@@ -84,6 +85,10 @@ def run(job, *args):
             _pool = None
         return job(*args)
     except TimeoutError:
+        # 요청자는 이미 실패했으므로 큐 대기 작업 회수 시도. 풀이 워커 feed 큐에
+        # max_workers+1 개를 선급행하며 그 시점에 RUNNING 마킹되므로, 그보다 뒤에
+        # 대기 중인 작업만 실제로 취소된다 — 선급행/실행 중이면 False 반환(무해).
+        fut.cancel()
         _log.error("compute worker timeout (%ss): %s%r", _TIMEOUT_SEC,
                    getattr(job, "__name__", job), args)
         raise

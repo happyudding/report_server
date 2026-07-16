@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>서버 업로드 정보 입력</string>
+   <string>정보 입력</string>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
    <property name="leftMargin"><number>16</number></property>

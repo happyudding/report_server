@@ -15,6 +15,10 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 import requests_toolbelt  # noqa: F401  transport/uploader.py 가 정적 import
 import xlwings             # noqa: F401
 import pyarrow             # noqa: F401  web_report parquet encoding
+# PyQt6-WebEngine — embedded_browser.py 내장 브라우저(Chromium). 이 import 는 미설치뿐
+# 아니라 PyQt6 ↔ WebEngine Qt6 런타임 버전 어긋남(DLL 로드 실패)도 빌드 시점에 잡아낸다.
+# QApplication 생성 전이라 import 순서는 안전(embedded_browser.py 주석 참조).
+import PyQt6.QtWebEngineWidgets  # noqa: F401  내장 브라우저 미번들 시 broken exe 방지
 
 # xlwings 는 자체 데이터/바이너리(.xlam, dll)를 동봉해야 동작
 _xw_datas, _xw_binaries, _xw_hidden = collect_all('xlwings')

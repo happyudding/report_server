@@ -2142,7 +2142,11 @@ class HoneyMainWindow(QMainWindow):
             return
 
         # 설치 방법 선택: [자동 설치] / [ZIP 다운로드] / [나중에]
-        can_auto = updater.can_write_app_dir()
+        # sha256 없는 배포는 다운로드 무결성 검증이 통째로 생략되므로 자동 설치 금지
+        # (ZIP 수동 설치는 사용자 주도라 허용).
+        can_write = updater.can_write_app_dir()
+        has_hash = bool((manifest.get("sha256") or "").strip())
+        can_auto = can_write and has_hash
         box = QMessageBox(self)
         box.setWindowTitle("업데이트 사용 가능")
         box.setIcon(QMessageBox.Icon.Question)
@@ -2151,8 +2155,11 @@ class HoneyMainWindow(QMainWindow):
             f"현재: {CURRENT_VERSION}\n\n설치 방법을 선택하세요.\n\n"
             "· 자동 설치: 다운로드 후 앱을 교체하고 재실행합니다.\n"
             "· ZIP 다운로드: ZIP 만 다운로드 폴더에 저장합니다 (수동 설치).")
-        if not can_auto:
+        if not can_write:
             ask_text += "\n\n(설치 폴더에 쓰기 권한이 없어 자동 설치는 사용할 수 없습니다.)"
+        elif not has_hash:
+            ask_text += ("\n\n(배포 정보에 무결성 해시(sha256)가 없어 자동 설치는 사용할 수 "
+                         "없습니다. ZIP 다운로드를 이용하세요.)")
         box.setText(ask_text)
         btn_auto = box.addButton("자동 설치", QMessageBox.ButtonRole.AcceptRole)
         btn_manual = box.addButton("ZIP 다운로드", QMessageBox.ButtonRole.ActionRole)

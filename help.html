@@ -1,0 +1,2743 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Honey, report_server, web_report와 세션 사용을 위한 사용자 도움말">
+  <title>HONEY Web Report 사용자 도움말</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #18222f;
+      --muted: #5e6b79;
+      --line: #d9e0e7;
+      --line-strong: #bcc7d2;
+      --paper: #ffffff;
+      --canvas: #f3f6f8;
+      --navy: #10243a;
+      --navy-2: #173552;
+      --navy-3: #244966;
+      --honey: #f5ad23;
+      --honey-soft: #fff4d9;
+      --green: #147d64;
+      --green-soft: #e9f7f2;
+      --blue: #2465a8;
+      --blue-soft: #ebf4ff;
+      --red: #b23a3a;
+      --red-soft: #fff0ef;
+      --purple: #7355a6;
+      --purple-soft: #f4efff;
+      --shadow: 0 12px 30px rgba(16, 36, 58, 0.09);
+      --radius: 16px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      scroll-padding-top: 24px;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--canvas);
+      font-family: "Malgun Gothic", "맑은 고딕", "Noto Sans KR", Arial, sans-serif;
+      font-size: 16px;
+      line-height: 1.75;
+      word-break: keep-all;
+      overflow-wrap: anywhere;
+    }
+
+    a {
+      color: var(--blue);
+      text-underline-offset: 3px;
+    }
+
+    a:hover {
+      color: #174a7d;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    .skip-link {
+      position: fixed;
+      top: 8px;
+      left: 8px;
+      z-index: 1000;
+      padding: 10px 14px;
+      color: #fff;
+      background: var(--navy);
+      border-radius: 8px;
+      transform: translateY(-160%);
+      transition: transform 0.2s ease;
+    }
+
+    .skip-link:focus {
+      transform: translateY(0);
+    }
+
+    :focus-visible {
+      outline: 3px solid rgba(245, 173, 35, 0.75);
+      outline-offset: 3px;
+    }
+
+    .page-shell {
+      display: grid;
+      grid-template-columns: 292px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      color: #eaf1f8;
+      background:
+        radial-gradient(circle at 92% 7%, rgba(245, 173, 35, 0.18), transparent 20%),
+        linear-gradient(155deg, var(--navy-2), var(--navy) 62%);
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+      scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+    }
+
+    .brand {
+      padding: 28px 24px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    .brand-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+      color: #fff;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+    }
+
+    .hex {
+      display: inline-grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      color: var(--navy);
+      background: var(--honey);
+      clip-path: polygon(25% 7%, 75% 7%, 100% 50%, 75% 93%, 25% 93%, 0 50%);
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    .brand small {
+      display: block;
+      color: #aebdcb;
+      line-height: 1.5;
+    }
+
+    .toc-title {
+      margin: 18px 22px 6px;
+      color: var(--honey);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    .toc {
+      padding: 0 12px 26px;
+    }
+
+    .toc ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .toc a {
+      display: block;
+      margin: 2px 0;
+      padding: 7px 10px;
+      color: #cbd7e2;
+      border-left: 3px solid transparent;
+      border-radius: 0 8px 8px 0;
+      font-size: 0.9rem;
+      line-height: 1.45;
+      text-decoration: none;
+      transition: 0.15s ease;
+    }
+
+    .toc a:hover,
+    .toc a.active {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.08);
+      border-left-color: var(--honey);
+    }
+
+    .toc .toc-sub a {
+      padding-left: 24px;
+      color: #aebdcb;
+      font-size: 0.84rem;
+    }
+
+    .sidebar-note {
+      margin: 0 20px 26px;
+      padding: 13px;
+      color: #cbd7e2;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      font-size: 0.78rem;
+      line-height: 1.6;
+    }
+
+    .mobile-bar {
+      display: none;
+    }
+
+    main {
+      min-width: 0;
+    }
+
+    .hero {
+      position: relative;
+      min-height: 410px;
+      padding: 72px clamp(28px, 6vw, 96px) 62px;
+      color: #fff;
+      background:
+        radial-gradient(circle at 86% 18%, rgba(245, 173, 35, 0.22), transparent 18%),
+        radial-gradient(circle at 75% 78%, rgba(83, 155, 191, 0.16), transparent 25%),
+        linear-gradient(125deg, var(--navy) 0%, var(--navy-2) 64%, var(--navy-3) 100%);
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -70px;
+      bottom: -120px;
+      width: 430px;
+      height: 430px;
+      background-image:
+        linear-gradient(30deg, rgba(255, 255, 255, 0.035) 12%, transparent 12.5%, transparent 87%, rgba(255, 255, 255, 0.035) 87.5%),
+        linear-gradient(150deg, rgba(255, 255, 255, 0.035) 12%, transparent 12.5%, transparent 87%, rgba(255, 255, 255, 0.035) 87.5%),
+        linear-gradient(30deg, rgba(255, 255, 255, 0.035) 12%, transparent 12.5%, transparent 87%, rgba(255, 255, 255, 0.035) 87.5%);
+      background-size: 80px 140px;
+      transform: rotate(8deg);
+      pointer-events: none;
+    }
+
+    .hero-inner {
+      position: relative;
+      z-index: 1;
+      max-width: 980px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 16px;
+      color: #ffd783;
+      font-size: 0.84rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+    }
+
+    .hero h1 {
+      max-width: 760px;
+      margin: 0;
+      font-size: clamp(2.2rem, 5vw, 4.1rem);
+      line-height: 1.13;
+      letter-spacing: -0.04em;
+    }
+
+    .hero .lead {
+      max-width: 760px;
+      margin: 24px 0 0;
+      color: #d9e5ef;
+      font-size: clamp(1rem, 2vw, 1.18rem);
+    }
+
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 28px;
+    }
+
+    .hero-meta span {
+      padding: 7px 11px;
+      color: #f4f8fb;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 999px;
+      font-size: 0.8rem;
+    }
+
+    .content {
+      max-width: 1260px;
+      margin: 0 auto;
+      padding: 38px clamp(22px, 5vw, 72px) 96px;
+    }
+
+    section {
+      margin: 0 0 34px;
+      padding: clamp(24px, 4vw, 42px);
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: 0 4px 18px rgba(16, 36, 58, 0.045);
+    }
+
+    section:target {
+      border-color: rgba(245, 173, 35, 0.8);
+      box-shadow: 0 0 0 4px rgba(245, 173, 35, 0.11), var(--shadow);
+    }
+
+    .section-kicker {
+      margin: 0 0 4px;
+      color: var(--blue);
+      font-size: 0.78rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      color: var(--navy);
+      font-size: clamp(1.65rem, 3vw, 2.25rem);
+      line-height: 1.28;
+      letter-spacing: -0.035em;
+    }
+
+    h3 {
+      margin: 34px 0 12px;
+      color: var(--navy-2);
+      font-size: 1.28rem;
+      line-height: 1.4;
+      letter-spacing: -0.02em;
+    }
+
+    h4 {
+      margin: 24px 0 8px;
+      color: var(--navy-3);
+      font-size: 1.02rem;
+    }
+
+    p {
+      margin: 10px 0;
+    }
+
+    .section-intro {
+      max-width: 900px;
+      margin-bottom: 24px;
+      color: var(--muted);
+      font-size: 1.03rem;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .small {
+      font-size: 0.86rem;
+    }
+
+    strong {
+      color: #15273a;
+    }
+
+    code {
+      padding: 2px 6px;
+      color: #164e72;
+      background: #edf5fa;
+      border: 1px solid #d7e7f0;
+      border-radius: 5px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.9em;
+    }
+
+    kbd {
+      display: inline-block;
+      min-width: 1.7em;
+      padding: 1px 6px;
+      color: #243649;
+      background: #f7f8fa;
+      border: 1px solid #cbd3db;
+      border-bottom-width: 2px;
+      border-radius: 5px;
+      font-family: inherit;
+      font-size: 0.82em;
+      text-align: center;
+    }
+
+    ul,
+    ol {
+      padding-left: 1.45em;
+    }
+
+    li + li {
+      margin-top: 7px;
+    }
+
+    .clean-list {
+      padding: 0;
+      list-style: none;
+    }
+
+    .clean-list li {
+      position: relative;
+      padding-left: 25px;
+    }
+
+    .clean-list li::before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      color: var(--green);
+      font-weight: 900;
+    }
+
+    .grid-2,
+    .grid-3,
+    .grid-4 {
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .grid-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid-4 {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .card {
+      padding: 20px;
+      background: #fbfcfd;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+
+    .card h3,
+    .card h4 {
+      margin-top: 0;
+    }
+
+    .card p:last-child,
+    .card ul:last-child {
+      margin-bottom: 0;
+    }
+
+    .number-card {
+      position: relative;
+      padding: 22px 20px 20px 58px;
+      background: linear-gradient(145deg, #fff, #f7fafc);
+      border: 1px solid var(--line);
+      border-radius: 13px;
+    }
+
+    .number-card .num {
+      position: absolute;
+      top: 19px;
+      left: 18px;
+      display: grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      color: var(--navy);
+      background: var(--honey);
+      border-radius: 50%;
+      font-weight: 900;
+    }
+
+    .number-card h3,
+    .number-card h4 {
+      margin: 0 0 6px;
+    }
+
+    .number-card p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 9px;
+      margin: 24px 0;
+    }
+
+    .flow-step {
+      position: relative;
+      padding: 15px 12px;
+      color: #233548;
+      background: var(--blue-soft);
+      border: 1px solid #cadeef;
+      border-radius: 10px;
+      font-size: 0.88rem;
+      text-align: center;
+    }
+
+    .flow-step:not(:last-child)::after {
+      content: "›";
+      position: absolute;
+      top: 50%;
+      right: -9px;
+      z-index: 2;
+      color: var(--blue);
+      font-size: 1.5rem;
+      font-weight: 900;
+      transform: translate(50%, -53%);
+    }
+
+    .callout {
+      margin: 20px 0;
+      padding: 16px 18px;
+      color: #243344;
+      background: var(--blue-soft);
+      border: 1px solid #c9dff4;
+      border-left: 5px solid var(--blue);
+      border-radius: 10px;
+    }
+
+    .callout strong:first-child {
+      color: #174d7b;
+    }
+
+    .callout.warning {
+      background: var(--honey-soft);
+      border-color: #f2d48f;
+      border-left-color: var(--honey);
+    }
+
+    .callout.warning strong:first-child {
+      color: #7b5210;
+    }
+
+    .callout.danger {
+      background: var(--red-soft);
+      border-color: #efc3bf;
+      border-left-color: var(--red);
+    }
+
+    .callout.danger strong:first-child {
+      color: #8e2929;
+    }
+
+    .callout.success {
+      background: var(--green-soft);
+      border-color: #bce0d5;
+      border-left-color: var(--green);
+    }
+
+    .callout.success strong:first-child {
+      color: #0e6953;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      font-size: 0.76rem;
+      font-weight: 800;
+      line-height: 1.4;
+      vertical-align: 1px;
+    }
+
+    .status.ok {
+      color: #0d6b55;
+      background: var(--green-soft);
+      border: 1px solid #b7ddcf;
+    }
+
+    .status.permission {
+      color: #72500e;
+      background: var(--honey-soft);
+      border: 1px solid #ead08d;
+    }
+
+    .status.off {
+      color: #8f3434;
+      background: var(--red-soft);
+      border: 1px solid #efc0bc;
+    }
+
+    .status.temp {
+      color: #5b4385;
+      background: var(--purple-soft);
+      border: 1px solid #d6c7f1;
+    }
+
+    .table-wrap {
+      margin: 18px 0 26px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 11px;
+    }
+
+    table {
+      width: 100%;
+      min-width: 680px;
+      border-collapse: collapse;
+      background: #fff;
+      font-size: 0.91rem;
+    }
+
+    th,
+    td {
+      padding: 13px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    thead th {
+      color: #fff;
+      background: var(--navy-2);
+      font-weight: 800;
+    }
+
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+
+    tbody tr:nth-child(even) {
+      background: #fafbfd;
+    }
+
+    .mini-table {
+      min-width: 520px;
+    }
+
+    .steps {
+      counter-reset: guide-step;
+      margin: 20px 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .steps > li {
+      position: relative;
+      min-height: 52px;
+      margin: 0;
+      padding: 0 0 25px 56px;
+      counter-increment: guide-step;
+    }
+
+    .steps > li::before {
+      content: counter(guide-step);
+      position: absolute;
+      top: 0;
+      left: 0;
+      display: grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      color: var(--navy);
+      background: var(--honey);
+      border-radius: 50%;
+      font-weight: 900;
+    }
+
+    .steps > li::after {
+      content: "";
+      position: absolute;
+      top: 38px;
+      bottom: 2px;
+      left: 17px;
+      width: 2px;
+      background: #e2e7ec;
+    }
+
+    .steps > li:last-child::after {
+      display: none;
+    }
+
+    .steps h4 {
+      margin: 0 0 4px;
+    }
+
+    .steps p,
+    .steps ul {
+      margin-top: 5px;
+    }
+
+    .screen-map {
+      display: grid;
+      grid-template-columns: 188px 1fr;
+      min-height: 280px;
+      margin: 20px 0;
+      color: #e5edf4;
+      background: var(--navy);
+      border: 5px solid #28394b;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    .screen-map .mock-side {
+      padding: 18px 12px;
+      background: #172b40;
+      border-right: 1px solid rgba(255, 255, 255, 0.1);
+    }
+
+    .screen-map .mock-main {
+      position: relative;
+      padding: 20px;
+      background: #f5f7f9;
+    }
+
+    .screen-map .mock-side b {
+      display: block;
+      margin-bottom: 15px;
+      color: var(--honey);
+    }
+
+    .mock-button {
+      margin: 7px 0;
+      padding: 8px;
+      color: #dbe6ef;
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 6px;
+      font-size: 0.76rem;
+    }
+
+    .mock-button.accent {
+      color: #2f250d;
+      background: var(--honey);
+      font-weight: 800;
+    }
+
+    .mock-panel {
+      height: 100%;
+      padding: 18px;
+      color: var(--ink);
+      background: #fff;
+      border: 1px solid #d5dce3;
+      border-radius: 10px;
+    }
+
+    .mock-line {
+      width: 100%;
+      height: 12px;
+      margin: 10px 0;
+      background: #e7ecf0;
+      border-radius: 4px;
+    }
+
+    .mock-line.short {
+      width: 48%;
+    }
+
+    .mock-line.honey {
+      width: 27%;
+      background: #f7c65f;
+    }
+
+    details {
+      margin: 11px 0;
+      background: #fbfcfd;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+
+    details[open] {
+      background: #fff;
+      border-color: var(--line-strong);
+    }
+
+    summary {
+      position: relative;
+      padding: 15px 46px 15px 17px;
+      color: var(--navy-2);
+      cursor: pointer;
+      font-weight: 800;
+      list-style: none;
+    }
+
+    summary::-webkit-details-marker {
+      display: none;
+    }
+
+    summary::after {
+      content: "+";
+      position: absolute;
+      top: 50%;
+      right: 17px;
+      color: var(--blue);
+      font-size: 1.3rem;
+      transform: translateY(-54%);
+    }
+
+    details[open] summary::after {
+      content: "−";
+    }
+
+    .detail-body {
+      padding: 0 17px 17px;
+      color: #364554;
+    }
+
+    .feature-line {
+      display: grid;
+      grid-template-columns: minmax(150px, 0.28fr) 1fr;
+      gap: 20px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .feature-line:last-child {
+      border-bottom: 0;
+    }
+
+    .feature-line dt {
+      color: var(--navy-2);
+      font-weight: 800;
+    }
+
+    .feature-line dd {
+      margin: 0;
+    }
+
+    .anchor-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 18px 0;
+    }
+
+    .anchor-list a {
+      padding: 6px 10px;
+      color: #245171;
+      background: #eef5f9;
+      border: 1px solid #d6e5ee;
+      border-radius: 8px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .checklist {
+      display: grid;
+      gap: 9px;
+      margin: 18px 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .checklist li {
+      position: relative;
+      margin: 0;
+      padding: 12px 14px 12px 44px;
+      background: #fbfcfd;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+    }
+
+    .checklist li::before {
+      content: "□";
+      position: absolute;
+      top: 8px;
+      left: 14px;
+      color: var(--green);
+      font-size: 1.25rem;
+      font-weight: 900;
+    }
+
+    .tab-label {
+      display: inline-block;
+      margin-right: 5px;
+      padding: 2px 8px;
+      color: #23455e;
+      background: #eaf2f7;
+      border-radius: 5px;
+      font-size: 0.82em;
+      font-weight: 800;
+    }
+
+    .footer {
+      padding: 30px clamp(22px, 5vw, 72px);
+      color: #b9c6d2;
+      background: var(--navy);
+      text-align: center;
+    }
+
+    .footer strong {
+      color: #fff;
+    }
+
+    .back-top {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      z-index: 40;
+      display: grid;
+      width: 44px;
+      height: 44px;
+      place-items: center;
+      color: #fff;
+      background: var(--navy-2);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 50%;
+      box-shadow: var(--shadow);
+      cursor: pointer;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(10px);
+      transition: 0.2s ease;
+    }
+
+    .back-top.show {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+
+    .only-print {
+      display: none;
+    }
+
+    @media (max-width: 1180px) {
+      .grid-4 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .flow {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 960px) {
+      html {
+        scroll-padding-top: 72px;
+      }
+
+      .page-shell {
+        display: block;
+      }
+
+      .mobile-bar {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 56px;
+        padding: 8px 14px;
+        color: #fff;
+        background: rgba(16, 36, 58, 0.98);
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+      }
+
+      .mobile-bar b {
+        color: #fff;
+      }
+
+      .menu-button {
+        padding: 7px 10px;
+        color: #fff;
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        border-radius: 7px;
+        cursor: pointer;
+      }
+
+      .sidebar {
+        position: fixed;
+        top: 56px;
+        left: 0;
+        z-index: 90;
+        width: min(340px, 88vw);
+        height: calc(100vh - 56px);
+        box-shadow: 12px 0 28px rgba(0, 0, 0, 0.22);
+        transform: translateX(-105%);
+        transition: transform 0.22s ease;
+      }
+
+      body.toc-open {
+        overflow: hidden;
+      }
+
+      body.toc-open .sidebar {
+        transform: translateX(0);
+      }
+
+      .hero {
+        min-height: 360px;
+        padding-top: 56px;
+      }
+
+      .grid-3 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 680px) {
+      body {
+        font-size: 15px;
+        word-break: normal;
+      }
+
+      .hero {
+        min-height: 340px;
+        padding: 44px 22px;
+      }
+
+      .content {
+        padding: 22px 12px 64px;
+      }
+
+      section {
+        margin-bottom: 20px;
+        padding: 22px 17px;
+        border-radius: 12px;
+      }
+
+      .grid-2,
+      .grid-3,
+      .grid-4,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .flow-step:not(:last-child)::after {
+        top: auto;
+        right: 50%;
+        bottom: -19px;
+        transform: translateX(50%) rotate(90deg);
+      }
+
+      .screen-map {
+        grid-template-columns: 112px 1fr;
+      }
+
+      .feature-line {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+
+      .back-top {
+        right: 13px;
+        bottom: 13px;
+      }
+    }
+
+    @media print {
+      body {
+        color: #000;
+        background: #fff;
+        font-size: 10.5pt;
+      }
+
+      .sidebar,
+      .mobile-bar,
+      .back-top,
+      .skip-link {
+        display: none !important;
+      }
+
+      .page-shell {
+        display: block;
+      }
+
+      .hero {
+        min-height: 0;
+        padding: 24px;
+        color: #000;
+        background: #fff;
+        border-bottom: 3px solid #222;
+      }
+
+      .hero .lead,
+      .hero-meta span,
+      .eyebrow {
+        color: #222;
+      }
+
+      .content {
+        max-width: none;
+        padding: 20px 0;
+      }
+
+      section {
+        padding: 18px 0;
+        break-inside: auto;
+        border: 0;
+        border-bottom: 1px solid #aaa;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .card,
+      .number-card,
+      .callout,
+      details {
+        break-inside: avoid;
+      }
+
+      details > .detail-body {
+        display: block;
+      }
+
+      .screen-map {
+        display: none;
+      }
+
+      a {
+        color: #000;
+        text-decoration: none;
+      }
+
+      .only-print {
+        display: block;
+      }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">본문 바로가기</a>
+
+  <div class="mobile-bar">
+    <b>HONEY 도움말</b>
+    <button class="menu-button" id="toc-toggle" type="button" aria-expanded="false" aria-controls="sidebar">☰ 목차</button>
+  </div>
+
+  <div class="page-shell">
+    <aside class="sidebar" id="sidebar" aria-label="도움말 목차">
+      <div class="brand">
+        <div class="brand-mark"><span class="hex">H</span> HONEY GUIDE</div>
+        <small>Web Report · Session · Server<br>사용자 도움말</small>
+      </div>
+      <p class="toc-title">Contents</p>
+      <nav class="toc">
+        <ul>
+          <li><a href="#quick-start">1. 5분 빠른 시작</a></li>
+          <li><a href="#concepts">2. 먼저 알아둘 개념</a></li>
+          <li><a href="#honey-ui">3. Honey 화면과 파일 준비</a></li>
+          <li><a href="#web-report-create">4. Web Report 만들기</a></li>
+          <li><a href="#excel-workflow">5. Excel 기능</a></li>
+          <li><a href="#dashboard">6. 세션 목록·검색</a></li>
+          <li><a href="#access">7. 권한·공유·보안</a></li>
+          <li><a href="#session-common">8. 세션 공통 화면</a></li>
+          <li class="toc-sub"><a href="#tab-summary">8-1. Summary</a></li>
+          <li class="toc-sub"><a href="#tab-yield">8-2. Yield</a></li>
+          <li class="toc-sub"><a href="#tab-cpk">8-3. CPK</a></li>
+          <li class="toc-sub"><a href="#tab-issue">8-4. Issue Table</a></li>
+          <li class="toc-sub"><a href="#tab-distribution">8-5. Distribution</a></li>
+          <li class="toc-sub"><a href="#tab-map">8-6. Map Analysis</a></li>
+          <li class="toc-sub"><a href="#tab-trim">8-7. Trim Analysis</a></li>
+          <li class="toc-sub"><a href="#tab-note">8-8. Note</a></li>
+          <li class="toc-sub"><a href="#tab-compare">8-9. Compare</a></li>
+          <li><a href="#server-use">9. 서버를 사용자 관점에서 이해하기</a></li>
+          <li><a href="#troubleshooting">10. 문제 해결</a></li>
+          <li><a href="#limits">11. 현재 제한·미지원 기능</a></li>
+          <li><a href="#checklists">12. 업무별 체크리스트</a></li>
+          <li><a href="#glossary">13. 용어 모음</a></li>
+        </ul>
+      </nav>
+      <div class="sidebar-note">
+        원하는 단어는 <kbd>Ctrl</kbd> + <kbd>F</kbd>로 찾으세요.<br>
+        이 문서는 현행 화면과 동작을 기준으로 작성되었습니다.
+      </div>
+    </aside>
+
+    <main id="main-content">
+      <header class="hero">
+        <div class="hero-inner">
+          <p class="eyebrow">SEMICONDUCTOR EVALUATION REPORT GUIDE</p>
+          <h1>HONEY Web Report<br>처음 사용하기</h1>
+          <p class="lead">
+            서버나 HTML을 몰라도 괜찮습니다. 측정 파일을 보고서로 만들고, 세션을 검색·공유하며,
+            Yield·CPK·Issue·Distribution·Map·Trim 결과를 확인하는 전체 흐름을 사용자 입장에서 설명합니다.
+          </p>
+          <div class="hero-meta" aria-label="문서 정보">
+            <span>대상: 반도체 평가·분석 실무자</span>
+            <span>기준일: 2026-07-16</span>
+            <span>별도 로그인 없음</span>
+            <span>Honey PC 계정 자동 인식</span>
+          </div>
+        </div>
+      </header>
+
+      <div class="content">
+        <section id="quick-start">
+          <p class="section-kicker">01 · Quick Start</p>
+          <h2>5분 빠른 시작</h2>
+          <p class="section-intro">
+            처음이라면 아래 순서만 기억하세요. Honey가 파일을 읽고, 서버가 Web Report 세션을 보관하며,
+            Honey 안의 보고서 화면에서 결과를 확인하고 의견을 남깁니다.
+          </p>
+
+          <div class="flow" aria-label="기본 작업 흐름">
+            <div class="flow-step"><strong>1</strong><br>Honey 실행</div>
+            <div class="flow-step"><strong>2</strong><br>파일 추가·순서 확인</div>
+            <div class="flow-step"><strong>3</strong><br>모드·제품 정보 입력</div>
+            <div class="flow-step"><strong>4</strong><br>Web Report 생성</div>
+            <div class="flow-step"><strong>5</strong><br>분석·의견·공유</div>
+          </div>
+
+          <ol class="steps">
+            <li>
+              <h4>Honey를 실행합니다.</h4>
+              <p>Honey 안에서 보고서를 열어야 PC 계정이 자동 인식되고, 본인 세션의 편집·삭제·권한 기능을 사용할 수 있습니다.</p>
+            </li>
+            <li>
+              <h4><span class="tab-label">🆕 New Report</span>를 누르고 파일을 넣습니다.</h4>
+              <p><strong>Local File Open</strong>, <strong>Dolphin D1</strong> 또는 드래그 앤 드롭으로 파일을 추가합니다. 여러 파일이면 위·아래 순서를 확인합니다.</p>
+            </li>
+            <li>
+              <h4>Product Type과 분석 모드를 고릅니다.</h4>
+              <p>일반 분석은 <strong>Normal</strong>, 정확히 두 파일의 전후 비교는 <strong>Compare</strong>, 한 파일 안의 DUT별 비교는 <strong>DUT</strong>를 선택합니다.</p>
+            </li>
+            <li>
+              <h4><span class="tab-label">Web Report</span>를 누르고 업로드 정보를 입력합니다.</h4>
+              <p>Family, 등록된 Product, LOT ID를 확인하고 Process가 있으면 입력합니다. 업로드가 끝나면 새 세션이 자동으로 열립니다.</p>
+            </li>
+            <li>
+              <h4>Summary → Issue Table → Distribution/Map 순으로 검토합니다.</h4>
+              <p>전체 결과를 보고, 이슈를 좁힌 뒤 상세 분포와 위치를 확인하는 순서가 가장 빠릅니다. 수정 후에는 각 화면의 저장 상태를 확인합니다.</p>
+            </li>
+          </ol>
+
+          <div class="callout success">
+            <strong>첫 작업의 권장 경로</strong><br>
+            단일 파일로 Normal Web Report를 하나 만든 뒤, Summary·Yield·CPK·Issue Table·Distribution·Map Analysis를 차례로 열어보세요.
+            서버 주소 입력이나 별도 사용자 가입은 필요하지 않습니다.
+          </div>
+        </section>
+
+        <section id="concepts">
+          <p class="section-kicker">02 · Concepts</p>
+          <h2>먼저 알아둘 개념</h2>
+          <p class="section-intro">
+            웹 경험이 없어도 아래 네 가지를 구분하면 대부분의 화면을 이해할 수 있습니다.
+          </p>
+
+          <div class="grid-4">
+            <article class="card">
+              <h3>Honey</h3>
+              <p>PC에서 파일을 선택하고 보고서를 생성하는 업무 프로그램입니다. 내부 보고서 브라우저도 포함합니다.</p>
+            </article>
+            <article class="card">
+              <h3>Web Report</h3>
+              <p>브라우저 형태로 보는 분석 보고서입니다. 여러 탭, 필터, 차트, Map, 코멘트 기능을 제공합니다.</p>
+            </article>
+            <article class="card">
+              <h3>Session</h3>
+              <p><strong>한 번 업로드한 보고서 한 건</strong>입니다. 고유한 Session ID를 가지며 의견·Note·권한도 이 단위로 저장됩니다.</p>
+            </article>
+            <article class="card">
+              <h3>report_server</h3>
+              <p>세션과 분석 데이터를 보관하고 화면을 제공하는 서버입니다. 일반 사용자가 직접 실행하거나 설정할 필요는 없습니다.</p>
+            </article>
+          </div>
+
+          <h3>세션은 “원본 파일”과 다릅니다</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>구분</th>
+                  <th>의미</th>
+                  <th>사용자에게 중요한 점</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>입력 파일</strong></td>
+                  <td>검사·측정 데이터가 담긴 로컬 파일</td>
+                  <td>첫 번째 파일이 단위, Item, 상·하한 같은 기준을 정의하므로 순서가 중요합니다.</td>
+                </tr>
+                <tr>
+                  <td><strong>분석 데이터</strong></td>
+                  <td>Honey가 읽고 Web Report용으로 변환한 데이터</td>
+                  <td>서버가 계산·표시하며, 큰 데이터는 처음 열 때 준비 시간이 필요합니다.</td>
+                </tr>
+                <tr>
+                  <td><strong>세션 편집 정보</strong></td>
+                  <td>PTE/개발 코멘트, Note, 차트 메모, Trim 매칭, 권한 등</td>
+                  <td>같은 원본을 다시 업로드해도 <strong>새 세션</strong>이므로 이전 코멘트가 자동으로 따라오지 않습니다.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout warning">
+            <strong>꼭 기억하세요</strong><br>
+            URL이 다른 세션은 별도의 보고서입니다. 동일한 파일을 다시 올려도 기존 세션의 의견·Note·표시 설정을 공유하지 않습니다.
+          </div>
+
+          <h3>상태 표시 읽는 법</h3>
+          <p>
+            <span class="status ok">사용 가능</span>
+            현재 화면에서 바로 사용할 수 있는 기능입니다.
+            <span class="status permission">권한 필요</span>
+            Honey 계정 또는 소유자/편집자 권한이 필요합니다.
+            <span class="status temp">임시 표시</span>
+            새로고침하면 초기화되는 분석 보조 기능입니다.
+            <span class="status off">현재 미지원</span>
+            화면에 보이더라도 연결되지 않았거나 제공되지 않는 기능입니다.
+          </p>
+        </section>
+
+        <section id="honey-ui">
+          <p class="section-kicker">03 · Honey UI</p>
+          <h2>Honey 화면과 파일 준비</h2>
+          <p class="section-intro">
+            Honey는 입력 파일을 준비하는 왼쪽 영역과 현재 보고서를 보여주는 중앙 영역으로 구성됩니다.
+            버튼 이름은 버전에 따라 약간 달라질 수 있지만 작업 순서는 같습니다.
+          </p>
+
+          <div class="screen-map" aria-label="Honey 화면 구조 예시">
+            <div class="mock-side">
+              <b>HONEY</b>
+              <div class="mock-button accent">🆕 New Report</div>
+              <div class="mock-button">📝 Rawdata edit</div>
+              <div class="mock-button">Excel Down</div>
+              <div class="mock-button">📤 Excel Upload</div>
+              <div class="mock-button">⚙ Options</div>
+            </div>
+            <div class="mock-main">
+              <div class="mock-panel">
+                <div class="mock-line honey"></div>
+                <div class="mock-line"></div>
+                <div class="mock-line short"></div>
+                <div class="mock-line"></div>
+                <div class="mock-line"></div>
+                <div class="mock-line short"></div>
+              </div>
+            </div>
+          </div>
+
+          <h3>왼쪽 주요 버튼</h3>
+          <dl>
+            <div class="feature-line">
+              <dt>🆕 New Report</dt>
+              <dd>파일 선택, Product Type, 파일 순서, 저장 이름, Normal/Compare/DUT 모드를 설정하는 입력 패널을 열고 닫습니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>📝 Rawdata edit</dt>
+              <dd>현재 열려 있는 Web Report의 Raw Data를 Excel로 열어 수정한 뒤 서버에 반영합니다. <span class="status permission">편집 권한</span></dd>
+            </div>
+            <div class="feature-line">
+              <dt>Excel Down</dt>
+              <dd>현재 Web Report를 Excel 파일로 내보냅니다. 저장할 위치와 차트의 Bin1 조건을 선택할 수 있습니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>📤 Excel Upload</dt>
+              <dd>Honey가 만든 기존 Excel Report의 Raw Data를 읽어 새 Web Report 세션으로 변환합니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>⚙ Options</dt>
+              <dd>기본 Product Type·Family와 Distribution에서 사용할 Source 색상을 지정합니다.</dd>
+            </div>
+          </dl>
+
+          <h3>메뉴에서 찾을 수 있는 기능</h3>
+          <div class="table-wrap">
+            <table class="mini-table">
+              <thead>
+                <tr>
+                  <th>메뉴</th>
+                  <th>기능</th>
+                  <th>언제 사용하는가</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>File</td>
+                  <td>LOCAL FILE OPEN, Dolphin D1</td>
+                  <td>로컬 또는 D1에서 입력 파일을 가져올 때</td>
+                </tr>
+                <tr>
+                  <td>Run</td>
+                  <td>New Report, Rawdata edit, Excel Download</td>
+                  <td>보고서 생성·수정·내보내기 작업을 시작할 때</td>
+                </tr>
+                <tr>
+                  <td>View</td>
+                  <td>입력 패널, 진행 창, 검색 홈, 새로고침</td>
+                  <td>화면을 정리하거나 세션 목록으로 돌아갈 때</td>
+                </tr>
+                <tr>
+                  <td>Settings</td>
+                  <td>Options</td>
+                  <td>기본 제품 설정과 Source 색상을 바꿀 때</td>
+                </tr>
+                <tr>
+                  <td>Help</td>
+                  <td>HONEY help, VOC</td>
+                  <td>도움말을 보거나 문의할 때</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>파일 추가와 순서</h3>
+          <ul>
+            <li><strong>추가:</strong> Local File Open, Dolphin D1 또는 파일 드래그 앤 드롭을 사용합니다.</li>
+            <li><strong>중복:</strong> 같은 파일은 중복으로 추가되지 않습니다.</li>
+            <li><strong>삭제:</strong> 파일 오른쪽의 <strong>✕</strong>를 누르거나 전체 <strong>Clear</strong>를 사용합니다.</li>
+            <li><strong>순서:</strong> 파일을 선택하고 <strong>Up/Down</strong>으로 바꿉니다. 한 번에 여러 파일을 가져오면 순서 확인 창이 표시될 수 있습니다.</li>
+            <li><strong>Save Name:</strong> 기본 이름이 자동 제안되며 필요하면 보고서 목적을 알아보기 쉽게 수정합니다.</li>
+          </ul>
+
+          <div class="callout warning">
+            <strong>첫 번째 파일이 기준입니다.</strong><br>
+            목록의 맨 위 파일이 Item명, 단위, Lower/Upper Limit 등 분석 기준을 결정합니다.
+            서로 구조가 다른 파일을 섞지 말고, 기준으로 삼을 파일을 맨 위로 올린 뒤 생성하세요.
+          </div>
+
+          <h3>Product Type</h3>
+          <p>현재 선택 가능한 Product Type은 <strong>MDDI, PDDI, PMIC, SECURITY, TCON</strong>입니다. 마지막 선택은 다음 실행에도 유지됩니다.</p>
+
+          <h3>Honey 시작 시 업데이트 창</h3>
+          <p>새 버전이 있으면 다음 중 하나를 선택할 수 있습니다.</p>
+          <ul>
+            <li><strong>Auto install:</strong> 자동 설치 후 재실행합니다. 설치 폴더에 쓸 수 없거나 검증 정보가 없으면 비활성화될 수 있습니다.</li>
+            <li><strong>ZIP download:</strong> ZIP을 받은 뒤 Honey를 종료하고 설치 폴더에 덮어쓴 다음 다시 실행합니다.</li>
+            <li><strong>Later:</strong> 현재 버전을 계속 사용합니다.</li>
+          </ul>
+          <p class="small muted">업데이트 또는 HONEY 다운로드 버튼이 비활성이라면 배포 파일이 아직 등록되지 않은 상태일 수 있으므로 운영 담당자에게 문의하세요.</p>
+        </section>
+
+        <section id="web-report-create">
+          <p class="section-kicker">04 · Create Web Report</p>
+          <h2>Web Report 만들기</h2>
+          <p class="section-intro">
+            파일 준비 후 분석 목적에 맞는 모드를 고르고, 업무 식별 정보를 입력하여 서버에 세션을 만듭니다.
+          </p>
+
+          <h3>분석 모드 선택</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>모드</th>
+                  <th>필요 파일 수</th>
+                  <th>목적</th>
+                  <th>주의점</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Normal</strong></td>
+                  <td>1개 이상</td>
+                  <td>단일 Lot 또는 여러 Source의 일반 분석</td>
+                  <td>여러 파일은 동일한 기준으로 비교 가능한 구조여야 합니다.</td>
+                </tr>
+                <tr>
+                  <td><strong>Compare</strong></td>
+                  <td>정확히 2개</td>
+                  <td>변경 전·후 또는 기준·평가 데이터 비교</td>
+                  <td>파일 목록 <strong>첫째가 After, 둘째가 Before</strong>로 표시되므로 순서를 확인합니다.</td>
+                </tr>
+                <tr>
+                  <td><strong>DUT</strong></td>
+                  <td>정확히 1개</td>
+                  <td>한 파일에 포함된 DUT 값별 분리·비교</td>
+                  <td>입력 데이터에 DUT 구분 정보가 있어야 합니다.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>생성 순서</h3>
+          <ol class="steps">
+            <li>
+              <h4>입력 파일과 순서를 최종 확인합니다.</h4>
+              <p>특히 Compare는 두 파일의 전후 관계, 여러 파일 Normal은 첫 파일의 기준값을 확인합니다.</p>
+            </li>
+            <li>
+              <h4>Normal, Compare 또는 DUT를 선택합니다.</h4>
+              <p>조건에 맞지 않는 파일 수이면 Honey가 생성을 중단하고 안내합니다.</p>
+            </li>
+            <li>
+              <h4><span class="tab-label">Web Report</span>를 누릅니다.</h4>
+              <p>Normal/Compare에서는 Source 이름을 쉼표로 구분해 바꾸는 창이 나타날 수 있습니다. 비워두면 원래 이름을 사용하며, 이름이 겹치면 자동으로 구분됩니다. DUT는 DUT 값으로 이름을 만듭니다.</p>
+            </li>
+            <li>
+              <h4>업로드 정보를 입력합니다.</h4>
+              <p>Product Type은 메인 화면 선택값을 사용하고, Family·Product·LOT ID·Process를 지정합니다.</p>
+            </li>
+            <li>
+              <h4>업로드 완료를 기다립니다.</h4>
+              <p>성공하면 새 세션이 Honey 중앙 화면에 자동으로 열립니다. 첫 계산은 데이터 크기에 따라 다소 오래 걸릴 수 있습니다.</p>
+            </li>
+          </ol>
+
+          <h3>업로드 정보의 의미</h3>
+          <dl>
+            <div class="feature-line">
+              <dt>Product Type</dt>
+              <dd>제품 대분류입니다. 메인 화면에서 선택한 값을 사용합니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>Family</dt>
+              <dd>Product Type 안의 제품군입니다. Options에서 기본값을 지정할 수 있습니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>Product</dt>
+              <dd>서버에 등록된 Part ID입니다. 제안 목록 또는 포함 검색으로 찾아 선택합니다. 임의 이름이 아니라 등록된 값을 사용하는 것이 원칙입니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>LOT ID</dt>
+              <dd><strong>필수</strong> 식별 정보입니다. 첫 파일명에서 추정값이 자동 입력될 수 있으므로 실제 Lot과 일치하는지 확인합니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>Process</dt>
+              <dd>공정/평가 단계 정보입니다. 선택 입력이며, 입력하면 목록 필터와 검색에 활용됩니다.</dd>
+            </div>
+          </dl>
+
+          <h4>Family 선택 예시</h4>
+          <div class="table-wrap">
+            <table class="mini-table">
+              <thead>
+                <tr>
+                  <th>Product Type</th>
+                  <th>Family</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>MDDI</td><td>MX, AQUA, CHINA, MDDI_ETC</td></tr>
+                <tr><td>PDDI</td><td>LCD, PDDI_IT, QDOLED, PDDI_ETC</td></tr>
+                <tr><td>PMIC</td><td>SOC, MEMORY, DISPLAY, IF, PMIC_ETC</td></tr>
+                <tr><td>SECURITY</td><td>NFC_ESE, ESE, Contactless, SECU_ETC</td></tr>
+                <tr><td>TCON</td><td>TV, TCON_IT, TCON_ETC</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout">
+            <strong>비밀번호나 PIN은 입력하지 않습니다.</strong><br>
+            현재 Web Report는 Honey가 Windows PC 계정을 자동으로 전달합니다. 별도의 ID/PW 로그인이나 보고서 PIN 절차는 사용하지 않습니다.
+          </div>
+
+          <h3>생성 후 가장 먼저 볼 것</h3>
+          <ul class="clean-list">
+            <li>상단 Product, LOT, Process, Source 정보가 입력 의도와 같은지 확인</li>
+            <li>Summary의 Overall Yield와 Source별 Yield가 원본 검토값과 크게 어긋나지 않는지 확인</li>
+            <li>Yield에서 Step/Bin/TNO 구성이 예상과 맞는지 확인</li>
+            <li>CPK와 Distribution에서 Limit와 Unit이 올바른지 확인</li>
+            <li>Compare라면 Before/After 방향이 맞는지 확인</li>
+          </ul>
+        </section>
+
+        <section id="excel-workflow">
+          <p class="section-kicker">05 · Excel Workflow</p>
+          <h2>Excel 기능</h2>
+          <p class="section-intro">
+            Honey의 Excel 기능은 목적이 서로 다릅니다. 새 Excel 보고서를 만드는 기능, 기존 Honey Excel을 Web Report로 올리는 기능,
+            열린 Web Report를 Excel로 내보내는 기능, 서버 Raw Data를 수정하는 기능을 구분해서 사용하세요.
+          </p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>기능</th>
+                  <th>입력 → 결과</th>
+                  <th>주요 용도</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Excel Report</strong></td>
+                  <td>측정 파일 → 새 로컬 xlsx</td>
+                  <td>정형 Excel 보고서 작성·배포</td>
+                </tr>
+                <tr>
+                  <td><strong>Excel Upload</strong></td>
+                  <td>기존 Honey xlsx → 새 Web Report 세션</td>
+                  <td>기존 Excel 결과를 웹 보고서로 전환</td>
+                </tr>
+                <tr>
+                  <td><strong>Excel Down</strong></td>
+                  <td>현재 Web Report → 새 로컬 xlsx</td>
+                  <td>웹 분석 결과를 Excel로 보관·공유</td>
+                </tr>
+                <tr>
+                  <td><strong>Rawdata edit</strong></td>
+                  <td>현재 세션 Raw Data → Excel 수정 → 같은 세션 반영</td>
+                  <td>오입력 원본값을 책임 있게 정정</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Excel Report 만들기</h3>
+          <p>New Report에서 파일을 준비한 뒤 <strong>Excel Report</strong>를 누르면 보고서 설정 창이 열립니다.</p>
+
+          <h4>Select Items</h4>
+          <ul>
+            <li>기본적으로 모든 Item이 선택됩니다.</li>
+            <li>전체 이동, 선택 이동, 더블 클릭으로 포함할 Item을 조정할 수 있습니다.</li>
+            <li><strong>Fail only</strong>를 사용하면 Fail 관련 Item만 빠르게 고를 수 있습니다.</li>
+          </ul>
+
+          <h4>현재 지원되는 출력 시트</h4>
+          <div class="grid-3">
+            <div class="card"><strong>Summary</strong><p>보고서 개요와 주요 결과</p></div>
+            <div class="card"><strong>Yield</strong><p>전체·Bin·Step 수율</p></div>
+            <div class="card"><strong>CPK</strong><p>Item별 공정능력</p></div>
+            <div class="card"><strong>Fail Item</strong><p>Fail Item 정리. MDDI에서는 제한</p></div>
+            <div class="card"><strong>Issue Table</strong><p>Yield/CPK 이슈 표</p></div>
+            <div class="card"><strong>Distribution</strong><p>분포 차트</p></div>
+            <div class="card"><strong>Histogram (Analysis)</strong><p>분석용 Histogram</p></div>
+            <div class="card"><strong>Raw Data</strong><p>원본 데이터 시트 포함</p></div>
+          </div>
+
+          <p>기본 선택은 <strong>Yield, CPK, Distribution</strong>입니다. Yield를 끄면 Fail Item과 Issue Table도 사용할 수 없습니다.</p>
+
+          <h4>분석 옵션</h4>
+          <ul>
+            <li><strong>Bin1 only:</strong> 모든 분석을 BIN=1 데이터로 제한합니다. Bin1 데이터가 없으면 생성할 수 없습니다.</li>
+            <li><strong>Compare Mode:</strong> 입력 파일이 정확히 2개일 때만 사용할 수 있습니다.</li>
+            <li><strong>DUT organize:</strong> 입력 파일이 정확히 1개일 때만 사용할 수 있으며 Raw Data 포함과 동시에 사용할 수 없습니다.</li>
+            <li><strong>FileName Change:</strong> 차트 범례에 표시할 Source 이름을 변경합니다.</li>
+          </ul>
+
+          <p>완성 파일은 첫 입력 파일이 있는 폴더에 일반적으로 <code>&lt;기본이름&gt;_report_YYMMDD_HHMM.xlsx</code> 형태로 저장됩니다.</p>
+
+          <h3>기존 Honey Excel을 Web Report로 올리기</h3>
+          <ol>
+            <li>왼쪽의 <strong>📤 Excel Upload</strong>를 누릅니다.</li>
+            <li>Honey에서 생성한 xlsx를 선택합니다.</li>
+            <li>Product, LOT 등 업로드 정보를 입력합니다.</li>
+            <li>Raw Data가 변환되어 <strong>새 Normal Web Report 세션</strong>이 생성됩니다.</li>
+          </ol>
+
+          <p>가능한 경우 Summary의 Engineer Comment, Issue Table의 PTE/개발 Comment와 ETC Item도 함께 가져옵니다.</p>
+
+          <div class="callout warning">
+            <strong>Excel Upload 필수 구조</strong><br>
+            Honey 형식의 <strong>Issue_table</strong>과 하나 이상의 <strong>Raw Data</strong> 계열 시트가 필요합니다.
+            Raw Data가 없다면 Excel Report를 다시 만들 때 Raw Data 옵션을 켜세요.
+          </div>
+
+          <p class="small muted">오래된 Raw Data 형식에 FAILTNO가 없으면 CPK·Distribution·Map·Pass Yield는 계산되더라도 Yield의 Fail 상세와 Issue Yield 구역은 비어 있을 수 있습니다.</p>
+
+          <h3>현재 Web Report를 Excel로 내보내기</h3>
+          <ol>
+            <li>내보낼 세션을 Honey 중앙 화면에서 엽니다.</li>
+            <li><strong>Excel Down</strong>을 누릅니다.</li>
+            <li>차트에 적용할 <strong>Distribution/Histogram Bin1</strong> 여부를 선택합니다.</li>
+            <li>저장 위치와 파일명을 지정하고 완료를 기다립니다.</li>
+          </ol>
+          <p>Bin1 옵션은 Distribution/Histogram 차트에만 적용되며, 다른 시트의 데이터 범위는 전체 Die 기준으로 유지됩니다. 이 옵션의 Bin1은 <strong>BIN=1이면서 규격 내 데이터</strong>를 뜻합니다.</p>
+
+          <h3>Rawdata edit로 현재 세션 데이터 수정</h3>
+          <div class="callout danger">
+            <strong>주의: 원본 수정은 되돌리기 이력이 제공되지 않습니다.</strong><br>
+            Rawdata edit는 표시만 바꾸는 기능이 아니라 세션의 분석 원천을 교체하고 다시 계산하는 작업입니다.
+            정정 근거와 백업을 확보한 뒤, 업무상 권한이 있는 세션에서만 사용하세요.
+          </div>
+          <ol>
+            <li>수정할 세션을 Honey 안에서 열고 <strong>📝 Rawdata edit</strong>를 누릅니다.</li>
+            <li>Excel에서 필요한 셀만 수정합니다.</li>
+            <li>Excel 파일을 저장하고 닫습니다.</li>
+            <li>Honey가 변경을 감지하면 서버에 반영하고 현재 페이지를 새로고침합니다.</li>
+          </ol>
+          <ul>
+            <li>변경이 없으면 서버 업로드를 생략합니다.</li>
+            <li>편집 중 다른 세션으로 이동하거나 Honey를 닫으면 취소 경고가 나타납니다. 계속 편집하려면 이동을 취소하세요.</li>
+            <li>반영 후 Overall Yield, Limit, Bin/TNO, 주요 이슈가 의도대로 바뀌었는지 다시 확인하세요.</li>
+          </ul>
+        </section>
+
+        <section id="dashboard">
+          <p class="section-kicker">06 · Dashboard</p>
+          <h2>세션 목록·검색·정리</h2>
+          <p class="section-intro">
+            Dashboard는 서버에 저장된 보고서를 찾는 시작 화면입니다. 행을 클릭하면 해당 세션이 열립니다.
+          </p>
+
+          <h3>목록에서 보이는 정보</h3>
+          <p>Product Type, 분석 모드, Product, Process, LOT, 파일명, 업로더, 업로드 날짜를 한 줄에서 확인할 수 있습니다. 한 페이지에 20개씩 표시됩니다.</p>
+
+          <h3>찾는 방법</h3>
+          <dl>
+            <div class="feature-line">
+              <dt>Product Type 버튼</dt>
+              <dd>MDDI/PDDI/PMIC/SECURITY/TCON을 빠르게 필터링합니다. 활성 버튼을 다시 누르면 필터가 해제됩니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>Process</dt>
+              <dd>등록된 Process 값과 정확히 일치하는 세션만 표시합니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>Product</dt>
+              <dd>등록된 Product와 정확히 일치하는 세션만 표시합니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>검색창</dt>
+              <dd>Source, Product Type, Product, LOT, Process, 파일명, Session ID, 업로더, Host에서 입력 문자열을 포함하는 세션을 찾습니다. 제안 목록이 나타날 수 있습니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>Query / Enter</dt>
+              <dd>입력한 조건으로 검색을 실행합니다.</dd>
+            </div>
+          </dl>
+
+          <h3>목록 정렬과 표시</h3>
+          <ul>
+            <li><strong>☆/★ 즐겨찾기:</strong> 첫 열의 별을 눌러 개인 즐겨찾기로 표시합니다. Honey에서만 사용할 수 있고 본인의 목록 순서에만 영향을 줍니다.</li>
+            <li><strong>내 업로드 우선:</strong> Honey로 열면 본인이 올린 세션이 다른 사용자의 세션보다 앞쪽에 배치됩니다.</li>
+            <li><strong>비공개 🔒:</strong> 소유자에게만 잠금 표시가 보이며, 권한 없는 사람의 검색·직접 접근에서 숨겨집니다.</li>
+            <li><strong>삭제:</strong> 소유자에게만 삭제 버튼이 표시됩니다. 삭제는 복구함 없이 영구 처리되므로 신중히 사용합니다.</li>
+            <li><strong>테마:</strong> 밝은/어두운 화면을 전환할 수 있고 상세 화면과 설정이 이어집니다.</li>
+          </ul>
+
+          <div class="callout">
+            <strong>★ 즐겨찾기와 ★ 중요 세션은 다릅니다.</strong><br>
+            목록의 <strong>즐겨찾기</strong>는 내 정렬 편의용입니다. 세션 안 상단의 <strong>중요 표시</strong>는 개인 중요 세션으로 관리하며,
+            운영 정책에 따른 오래된 세션 정리 대상에서 보호하는 데 사용됩니다.
+          </div>
+
+          <h3>상단 버튼</h3>
+          <ul>
+            <li><strong>HONEY download:</strong> 배포 파일이 등록되어 있으면 Honey 설치/업데이트 파일을 받습니다. “없음” 또는 비활성이면 운영 담당자에게 문의합니다.</li>
+            <li><strong>Back to Main:</strong> 기본 시작 화면으로 돌아갑니다.</li>
+            <li><strong>사용자 표시:</strong> Honey로 접속한 경우 현재 PC 계정이 표시됩니다. 일반 브라우저면 읽기 전용으로 표시됩니다.</li>
+          </ul>
+        </section>
+
+        <section id="access">
+          <p class="section-kicker">07 · Access & Sharing</p>
+          <h2>권한·공유·비공개</h2>
+          <p class="section-intro">
+            현재 시스템은 별도 ID/PW 로그인 대신 Honey가 전달하는 PC 계정으로 사용자를 구분합니다.
+            같은 URL이라도 어디에서 열었는지와 어떤 권한을 받았는지에 따라 버튼이 달라집니다.
+          </p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>사용 방식 / 역할</th>
+                  <th>보기</th>
+                  <th>코멘트·Note 등 편집</th>
+                  <th>비공개·삭제·권한 관리</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>일반 브라우저</strong><br><span class="small muted">사용자 정보 없음</span></td>
+                  <td>공개 세션만 가능</td>
+                  <td>불가 — 읽기 전용</td>
+                  <td>불가</td>
+                </tr>
+                <tr>
+                  <td><strong>Honey + 일반 사용자</strong></td>
+                  <td>공개 세션 가능</td>
+                  <td>본인 소유 또는 위임된 세션만 가능</td>
+                  <td>불가</td>
+                </tr>
+                <tr>
+                  <td><strong>위임 편집자</strong></td>
+                  <td>해당 공개/비공개 세션 가능</td>
+                  <td>가능</td>
+                  <td>불가</td>
+                </tr>
+                <tr>
+                  <td><strong>소유자</strong><br><span class="small muted">세션 업로더</span></td>
+                  <td>가능</td>
+                  <td>가능</td>
+                  <td>가능</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>공유 방법</h3>
+          <ol>
+            <li>공유할 세션을 엽니다.</li>
+            <li>단순 조회 공유라면 세션이 공개 상태인지 확인하고 현재 URL을 전달합니다.</li>
+            <li>상대가 수정해야 한다면 소유자가 <strong>⚙ 설정 → Permissions</strong>에서 해당 PC 계정을 편집자로 추가합니다.</li>
+            <li>비공개 세션은 조회자도 권한이 필요하므로, Honey에서 올바른 계정으로 열도록 안내합니다.</li>
+          </ol>
+
+          <h3>공개와 비공개</h3>
+          <ul>
+            <li><strong>공개:</strong> URL을 아는 사용자는 일반 브라우저에서도 읽을 수 있습니다. 수정 기능은 여전히 Honey 권한이 필요합니다.</li>
+            <li><strong>비공개:</strong> 소유자와 위임 편집자만 접근할 수 있습니다. 권한이 없는 접근에는 세션이 존재하지 않는 것처럼 <strong>404</strong>가 표시될 수 있습니다.</li>
+            <li><strong>전환:</strong> 비공개 잠금 버튼은 소유자에게만 보입니다.</li>
+          </ul>
+
+          <div class="callout warning">
+            <strong>URL을 받았는데 404가 나오면 삭제로 단정하지 마세요.</strong><br>
+            비공개 권한이 없거나 일반 브라우저로 연 경우에도 404가 표시될 수 있습니다.
+            먼저 Honey에서 열고, 그래도 안 되면 세션 소유자에게 조회/편집 권한과 삭제 여부를 확인하세요.
+          </div>
+
+          <h3>권한별로 보이지 않는 버튼</h3>
+          <p>
+            저장·중요 표시·편집 기능은 편집 가능한 사용자에게, 비공개·삭제·Permissions는 소유자에게만 표시됩니다.
+            버튼이 없으면 화면 오류보다 <strong>접속 방식과 권한</strong>을 먼저 확인하세요.
+          </p>
+
+          <h3>세션 삭제</h3>
+          <p>삭제는 업로더만 할 수 있으며 세션의 데이터와 편집 내용을 제거합니다. 휴지통이나 사용자 복구 기능이 없으므로 다음을 확인한 뒤 실행하세요.</p>
+          <ul>
+            <li>다른 사람이 공유 링크로 사용 중이지 않은가</li>
+            <li>필요한 코멘트와 Note를 Excel 또는 별도 기록으로 보관했는가</li>
+            <li>비슷한 이름의 다른 LOT/Process 세션을 선택한 것은 아닌가</li>
+          </ul>
+        </section>
+
+        <section id="session-common">
+          <p class="section-kicker">08 · Session Workspace</p>
+          <h2>세션 공통 화면</h2>
+          <p class="section-intro">
+            세션 상단에는 보고서 식별 정보와 공통 도구가 있고, 아래 탭에서 분석 관점을 전환합니다.
+          </p>
+
+          <h3>상단 정보</h3>
+          <p>
+            Product Type, 분석 모드, Product, Revision, Process, LOT, Wafer Size, Gross Die, PKG, Parameter 수,
+            Equipment, Flat Zone, 파일명/Source, 업로더/Host, 업로드 시간과 상태가 표시됩니다.
+            입력 데이터에 없는 항목은 비어 있을 수 있습니다.
+          </p>
+
+          <h3>상단 공통 도구</h3>
+          <dl>
+            <div class="feature-line">
+              <dt>← Back to search</dt>
+              <dd>세션 목록과 검색 화면으로 돌아갑니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>💾 저장</dt>
+              <dd>Issue Table 등에 아직 저장되지 않은 코멘트를 서버에 저장합니다. <span class="status permission">편집 권한</span></dd>
+            </div>
+            <div class="feature-line">
+              <dt>☆/★ 중요</dt>
+              <dd>개인 중요 세션으로 표시합니다. 오래된 세션 자동 정리 정책에서 보호할 세션에 사용합니다. <span class="status permission">편집 권한</span></dd>
+            </div>
+            <div class="feature-line">
+              <dt>🔒 비공개</dt>
+              <dd>세션을 소유자·위임 편집자에게만 공개합니다. <span class="status permission">소유자만</span></dd>
+            </div>
+            <div class="feature-line">
+              <dt>🗑 삭제</dt>
+              <dd>현재 세션을 영구 삭제합니다. <span class="status permission">소유자만</span></dd>
+            </div>
+            <div class="feature-line">
+              <dt>⚙ 설정</dt>
+              <dd>표시 글꼴을 선택합니다. 소유자에게는 Permissions 탭도 나타납니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>밝게/어둡게</dt>
+              <dd>화면 테마를 전환합니다. 목록 화면과 동일한 브라우저 설정을 공유합니다.</dd>
+            </div>
+          </dl>
+
+          <h3>탭 빠른 이동</h3>
+          <div class="anchor-list">
+            <a href="#tab-summary">Summary</a>
+            <a href="#tab-yield">Yield</a>
+            <a href="#tab-cpk">CPK</a>
+            <a href="#tab-issue">Issue Table</a>
+            <a href="#tab-distribution">Distribution</a>
+            <a href="#tab-map">Map Analysis</a>
+            <a href="#tab-trim">Trim Analysis</a>
+            <a href="#tab-note">Note</a>
+            <a href="#tab-compare">Compare</a>
+          </div>
+
+          <div class="callout">
+            <strong>저장 방식이 화면마다 다릅니다.</strong><br>
+            Issue 코멘트는 자동 저장과 상단 저장을 함께 지원하고, Distribution 차트 코멘트와 Note는 각 화면의 저장을 눌러야 합니다.
+            저장 완료 메시지를 확인한 뒤 이동하는 습관을 권장합니다.
+          </div>
+        </section>
+
+        <section id="tab-summary">
+          <p class="section-kicker">08-1 · Summary</p>
+          <h2>Summary — 전체 결과를 빠르게 파악</h2>
+          <p class="section-intro">보고서를 열었을 때 첫 번째로 보는 화면입니다. 전체 수율, Source별 편차와 대표 Fail을 빠르게 파악합니다.</p>
+
+          <h3>표시 내용</h3>
+          <ul>
+            <li><strong>Overall Yield:</strong> 전체 Die 기준 Pass 비율</li>
+            <li><strong>Source별 Yield:</strong> 파일/Source마다 계산된 수율</li>
+            <li><strong>Major Fail Bins Top 5:</strong> 평균 Fail 비율이 큰 Bin 상위 항목</li>
+            <li><strong>Engineer Comment:</strong> Yield, CPK, ETC 구역별 종합 의견</li>
+          </ul>
+
+          <h3>사용 방법</h3>
+          <ol>
+            <li>Overall Yield로 보고서 전체 상태를 확인합니다.</li>
+            <li>Source별 Yield 편차가 큰지 봅니다.</li>
+            <li>Major Fail Bin으로 주된 손실 원인을 좁힙니다.</li>
+            <li>Yield 카드를 눌러 Yield 탭의 상세 원인으로 이동합니다.</li>
+            <li>편집 권한이 있으면 Engineer Comment에 결론과 후속 조치를 기록합니다.</li>
+          </ol>
+
+          <div class="callout success">
+            <strong>실무 팁</strong><br>
+            Summary 코멘트에는 “무엇이 이상한가”뿐 아니라 기준 대비 변화, 영향 범위, 다음 확인 항목을 함께 적으면 공유받은 사람이 보고서를 다시 해석하는 시간을 줄일 수 있습니다.
+          </div>
+        </section>
+
+        <section id="tab-yield">
+          <p class="section-kicker">08-2 · Yield</p>
+          <h2>Yield — Step·Bin·TNO별 손실 확인</h2>
+          <p class="section-intro">
+            수율 손실을 공정 Step과 Bin, FAILTNO까지 내려가며 확인합니다.
+          </p>
+
+          <h3>화면 구조</h3>
+          <ul>
+            <li>전체 수율과 Step별 요약이 먼저 표시됩니다.</li>
+            <li>상세 표는 데이터에 따라 <strong>P1/P2/P3</strong> 같은 Step 단위로 나뉩니다.</li>
+            <li>각 Bin에는 가장 많이 실패한 대표 TNO가 먼저 표시됩니다.</li>
+            <li><strong>▼</strong>를 누르면 같은 Bin의 나머지 FAILTNO를 펼칠 수 있습니다.</li>
+            <li><strong>전체 펼치기/접기</strong>로 여러 Bin의 상세를 한 번에 전환할 수 있습니다.</li>
+          </ul>
+
+          <h3>권장 분석 순서</h3>
+          <ol>
+            <li>손실이 가장 큰 Step과 Bin을 찾습니다.</li>
+            <li>대표 TNO와 펼친 TNO의 구성비를 비교합니다.</li>
+            <li>Item 이름을 눌러 Distribution 상세로 이동합니다.</li>
+            <li>같은 Item이 CPK 또는 Map에서도 이상한지 교차 확인합니다.</li>
+          </ol>
+
+          <p class="small muted">Fail 비율은 각 행만의 부분 모수가 아니라 전체 Die 수를 기준으로 일관되게 해석하도록 표시됩니다.</p>
+        </section>
+
+        <section id="tab-cpk">
+          <p class="section-kicker">08-3 · CPK</p>
+          <h2>CPK — 공정능력과 관리 대상 Item 선별</h2>
+          <p class="section-intro">
+            Item·Source별 CPK를 검색하고, 기준 미달이나 계산 이상을 분리해서 검토합니다. 한 페이지에 50행씩 표시됩니다.
+          </p>
+
+          <h3>필터</h3>
+          <dl>
+            <div class="feature-line">
+              <dt>검색</dt>
+              <dd>Item 또는 Source 이름을 포함 검색합니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>Source 선택</dt>
+              <dd>특정 파일/Source 결과만 표시합니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>계산 기준</dt>
+              <dd><strong>전체 Die</strong> 또는 <strong>Bin1 good</strong> 데이터로 CPK를 봅니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>CPK 기준</dt>
+              <dd>전체 또는 <strong>CPK &lt; 1.33</strong> Item만 표시합니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>Abnormal 3상태</dt>
+              <dd>공차가 0이거나 CPK를 계산할 수 없는 비정상 행만 보기, 제외하기, 모두 보기 중 선택합니다.</dd>
+            </div>
+            <div class="feature-line">
+              <dt>Unit CODE 제거</dt>
+              <dd>단위가 CODE인 Item을 목록에서 제외합니다.</dd>
+            </div>
+          </dl>
+
+          <h3>Limit Calculation</h3>
+          <p>선택한 Item의 평균·표준편차를 기준으로 목표 CPK를 만족하는 Low/High Limit을 역산하는 보조 도구입니다.</p>
+          <ol>
+            <li>검토할 행을 선택합니다.</li>
+            <li>목표 CPK를 입력합니다.</li>
+            <li>Margin 0%, 1%, 5%, 10% 중 하나를 선택합니다.</li>
+            <li>계산된 목표 Low/High Limit을 검토합니다.</li>
+            <li>필요하면 TSV 형태로 복사해 Excel에 붙여넣습니다.</li>
+          </ol>
+
+          <div class="callout warning">
+            <strong>Limit Calculation은 제안 계산입니다.</strong><br>
+            결과를 계산하거나 복사해도 현재 보고서의 Limit이 자동 변경되지는 않습니다.
+            규격 변경은 승인된 별도 절차에 따라 검토하세요.
+          </div>
+
+          <p>Item 이름을 누르면 해당 Item의 Distribution 상세 화면으로 이동합니다.</p>
+        </section>
+
+        <section id="tab-issue">
+          <p class="section-kicker">08-4 · Issue Table</p>
+          <h2>Issue Table — 이슈와 대응 의견을 한곳에 기록</h2>
+          <p class="section-intro">
+            Yield·CPK·ETC 이슈를 표로 모으고 PTE/개발 의견을 세션에 기록합니다. 공유와 협업의 중심 화면입니다.
+          </p>
+
+          <h3>화면 사용</h3>
+          <ul>
+            <li>상단의 <strong>Yield / CPK / ETC</strong> 버튼으로 각 구역으로 이동합니다.</li>
+            <li>TNO 상세를 펼치거나 접을 수 있습니다.</li>
+            <li>고정 열과 상단 가로 스크롤을 사용해 넓은 표를 탐색합니다.</li>
+            <li>열 제목 경계를 끌어 현재 화면의 열 너비를 조절할 수 있습니다. 새로고침 후에는 초기화될 수 있습니다.</li>
+            <li>Map/Distribution 미니 화면으로 위치와 분포를 빠르게 확인합니다.</li>
+            <li>여러 Source Map의 <strong>⤢</strong>를 누르면 Source별 Map을 한 번에 비교합니다.</li>
+            <li>Item을 누르면 Item 상세로, Yield 이슈를 누르면 Bin/FAILTNO 상세로 이동할 수 있습니다.</li>
+          </ul>
+
+          <h3>코멘트 편집과 저장</h3>
+          <ul>
+            <li>편집자는 <strong>PTE Comment</strong>와 <strong>개발 Comment</strong> 셀을 더블 클릭해 수정합니다. 다른 계산 열은 읽기 전용입니다.</li>
+            <li>셀 밖을 누르면 자동 저장을 시도합니다.</li>
+            <li>상단 디스크 버튼으로 남은 변경을 명시적으로 저장할 수 있습니다.</li>
+            <li>탭 이동이나 화면 이탈 전에도 자동 저장을 시도하지만, 반드시 저장 완료 알림을 확인하세요.</li>
+            <li><code>@</code>를 입력하면 Item 제안이 표시됩니다. <code>@[Item]</code> 형태로 넣은 참조는 클릭 가능한 링크로 사용됩니다.</li>
+          </ul>
+
+          <h3>ETC 이슈 추가</h3>
+          <p>편집자는 계산 결과에 자동으로 잡히지 않은 업무 이슈를 ETC에 추가할 수 있습니다.</p>
+          <ul>
+            <li>자유로운 Engineer Item과 개발 Comment를 기록하거나</li>
+            <li>실제 측정 Item을 선택하고 PTE Comment를 기록할 수 있습니다.</li>
+            <li>불필요한 ETC 행은 <strong>×</strong>로 삭제합니다.</li>
+          </ul>
+
+          <div class="callout">
+            <strong>AI Comment</strong><br>
+            AI Comment가 포함되어 생성된 세션에서는 읽기 전용 결과가 보일 수 있습니다. 다만 현재 Honey의 AI Comment 선택 기능은 비활성화되어 있어 사용자가 새로 켤 수 없습니다.
+          </div>
+        </section>
+
+        <section id="tab-distribution">
+          <p class="section-kicker">08-5 · Distribution</p>
+          <h2>Distribution — 분포·CDF·Fail Die 상세 분석</h2>
+          <p class="section-intro">
+            Item별 분포 카드를 빠르게 훑고, 상세 화면에서 Source별 통계·CDF·Histogram·Fail Die를 확인합니다.
+          </p>
+
+          <h3>Gallery 카드</h3>
+          <p>각 카드에는 Test No, Item, Limit/Unit, 최저 CPK, 상태 배경색, Source별 분포 색상과 저장된 차트 코멘트 여부가 표시됩니다. 카드를 누르면 상세 분석으로 들어갑니다.</p>
+
+          <h3>Gallery 필터</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>필터</th>
+                  <th>동작</th>
+                  <th>해석 주의</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>CPK &lt; 1.33</td>
+                  <td>기준 미달 Item만 표시</td>
+                  <td>Fail Only와 함께 켜면 두 조건을 모두 만족해야 합니다.</td>
+                </tr>
+                <tr>
+                  <td>Fail Only</td>
+                  <td>규격 Fail이 존재하는 Item만 표시</td>
+                  <td>CPK 기준과는 다른 조건입니다.</td>
+                </tr>
+                <tr>
+                  <td>Limit inside data</td>
+                  <td>Limit이 데이터 범위 안에 들어오도록 X축 표시를 조정</td>
+                  <td>데이터나 Limit 값을 변경하지 않고 축만 조정합니다.</td>
+                </tr>
+                <tr>
+                  <td>Bin1 only</td>
+                  <td>BIN=1이면서 규격 내인 데이터만 Gallery 분석에 사용</td>
+                  <td><span class="status temp">Gallery 임시 필터</span></td>
+                </tr>
+                <tr>
+                  <td>P/F 숨김</td>
+                  <td>Pass/Fail 표시를 간소화</td>
+                  <td>계산 결과는 바뀌지 않습니다.</td>
+                </tr>
+                <tr>
+                  <td>Item 검색·체크</td>
+                  <td>검색 결과에서 여러 Item을 골라 표시</td>
+                  <td>선택 해제로 전체 목록으로 돌아갑니다.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Item 상세</h3>
+          <ul>
+            <li><strong>CDF:</strong> 데이터 누적 분포를 Source별로 비교합니다.</li>
+            <li><strong>Histogram:</strong> 분석용 Histogram과 보고서용 정규분포 곡선을 확인합니다.</li>
+            <li><strong>통계:</strong> n, min, median, max, average, stdev, Cp, CPL, CPU, CPK를 확인합니다.</li>
+            <li><strong>Fail Die:</strong> 규격을 벗어난 Die 목록을 확인합니다.</li>
+            <li><strong>이동:</strong> 이전/다음 Item, Back 버튼 또는 <kbd>Alt</kbd> + 방향키로 이동합니다.</li>
+            <li><strong>Map 연동:</strong> Map에서 선택한 좌표가 있으면 그 Die의 값과 누적 백분율이 CDF에 표시됩니다.</li>
+          </ul>
+
+          <h3>CDF 임시 분석</h3>
+          <ul>
+            <li>점 클릭, 영역 선택 또는 Fail 표 체크로 특정 Die를 임시 제외할 수 있습니다.</li>
+            <li>Reset으로 제외를 모두 되돌립니다.</li>
+            <li>X축 Min/Max/Major/Minor를 입력하고 Apply하거나 Auto로 복원할 수 있습니다.</li>
+          </ul>
+
+          <div class="callout warning">
+            <strong>임시 제외와 X축 설정은 저장되지 않습니다.</strong><br>
+            Item을 바꾸거나 새로고침하면 초기화됩니다. 공식 제외 처리가 아니라 원인 가설을 확인하는 분석 보조 기능으로 사용하세요.
+          </div>
+
+          <h3>차트 코멘트와 도형</h3>
+          <p>편집자는 CDF 위에 설명을 남길 수 있습니다.</p>
+          <ul>
+            <li>원, 사각형, 선, 텍스트를 그립니다.</li>
+            <li>Undo로 마지막 작업을 되돌리거나 Clear로 모두 지웁니다.</li>
+            <li>코멘트 문장을 입력하고 <strong>저장</strong>해야 다른 사용자에게도 보입니다.</li>
+            <li>기존 텍스트 코멘트는 클릭하여 삭제할 수 있습니다.</li>
+            <li><strong>Note에 붙여넣기</strong>를 누르면 CDF와 코멘트를 PNG로 캡처해 Note에 삽입합니다. 편집 권한이 필요합니다.</li>
+          </ul>
+        </section>
+
+        <section id="tab-map">
+          <p class="section-kicker">08-6 · Map Analysis</p>
+          <h2>Map Analysis — 위치·Bin·측정값 분포 확인</h2>
+          <p class="section-intro">
+            Die 위치에 따라 Fail이 집중되는지, Bin/TNO와 측정값이 공간적으로 어떤 패턴을 가지는지 확인합니다.
+          </p>
+
+          <h3>Bin Map</h3>
+          <ul>
+            <li>한 화면의 Map 열 수를 <strong>1~8</strong>로 조정합니다.</li>
+            <li>색상 기준을 <strong>Bin</strong> 또는 <strong>TNO</strong>로 바꿉니다.</li>
+            <li>여러 Source와 Step의 Map 카드를 비교합니다.</li>
+            <li>카드를 누르면 상세 화면이 열리고, 휠/드래그로 확대·이동하며 좌표의 X/Y/값을 확인합니다.</li>
+            <li>상세 화면에서 더블 클릭하면 화면 배율이 초기화되고, 이전/다음 Map 또는 <kbd>Alt</kbd> + 방향키로 이동합니다.</li>
+            <li>범례를 누르면 특정 Bin/TNO를 강조합니다. DUT 모드에서는 DUT 범례를 눌러 DUT별 패턴을 강조할 수 있습니다.</li>
+          </ul>
+
+          <h3>좌표 선택과 Distribution 연동</h3>
+          <ol>
+            <li>SERIAL은 일부 문자열, XPOS/YPOS는 정확한 좌표로 검색합니다.</li>
+            <li>여러 필드를 함께 입력하면 모든 조건을 만족하는 결과만 표시됩니다.</li>
+            <li>결과에서 Die를 체크해 여러 개를 선택하고 추가합니다.</li>
+            <li>선택 Die는 고유 색으로 Map에 강조되고, Distribution의 모든 CDF에도 같은 색으로 표시됩니다.</li>
+            <li>필요 없는 좌표는 개별 삭제하거나 Clear로 모두 제거합니다.</li>
+          </ol>
+
+          <div class="callout warning">
+            <strong>좌표 선택은 현재 페이지의 임시 분석 상태입니다.</strong><br>
+            세션에 저장되지 않으며 새로고침하면 사라집니다. 분석 결론이 필요하면 차트 코멘트나 Note에 별도로 기록하세요.
+          </div>
+
+          <h3>STDF Map</h3>
+          <ul>
+            <li>Source를 선택합니다. DUT 모드에서는 DUT 단위로 볼 수 있습니다.</li>
+            <li>Item을 검색해 Die별 측정값을 Map에 표시합니다.</li>
+            <li>값 범위를 10개 구간으로 나눈 색상 범례로 공간적 분포를 봅니다.</li>
+            <li>범례를 눌러 특정 값 구간을 강조하거나 Clear로 해제합니다.</li>
+          </ul>
+          <p class="small muted">STDF Map은 Bin 분류가 아니라 선택 Item의 측정값 크기를 위치별 색으로 나타내는 화면입니다.</p>
+        </section>
+
+        <section id="tab-trim">
+          <p class="section-kicker">08-7 · Trim Analysis</p>
+          <h2>Trim Analysis — Trim 단계 Item 묶음과 변화 분석</h2>
+          <p class="section-intro">
+            INIT/CODE/TRIM/VERIFY 또는 TV2 구조의 연관 Item을 그룹으로 묶고 단계별 분포 변화를 비교합니다.
+          </p>
+
+          <h3>Product Type별 매칭 규칙</h3>
+          <ul>
+            <li><strong>MDDI/PDDI의 TV2:</strong> TRIM / VERIFY의 2구간 규칙을 사용합니다.</li>
+            <li><strong>그 외:</strong> INIT / CODE / TRIM / VERIFY의 4단계 규칙을 사용합니다.</li>
+            <li>여러 Source가 있으면 먼저 분석할 Source를 선택합니다.</li>
+          </ul>
+
+          <h3>① Item Matching</h3>
+          <ul>
+            <li>자동으로 인식된 연관 Item이 그룹 슬롯에 배치됩니다.</li>
+            <li>CPK&lt;1.33, Shift, Complete 같은 배지로 상태를 빠르게 확인합니다.</li>
+            <li>편집자는 Item 칩을 끌어 슬롯/멤버/새 그룹으로 옮길 수 있습니다.</li>
+            <li>검색 팔레트에서 Item을 찾아 추가합니다.</li>
+            <li><strong>↺ Reset</strong>으로 자동 매칭 결과로 되돌립니다.</li>
+            <li>편집 결과는 현재 세션에 저장되며, 조회자는 읽기만 가능합니다.</li>
+          </ul>
+
+          <h3>② Distribution Analysis</h3>
+          <ul>
+            <li>그룹 또는 Item을 체크해 분석 대상을 고릅니다.</li>
+            <li>페이지당 6개 차트를 3×2 배열로 표시합니다.</li>
+            <li>각 단계의 분포선, Limit, Shift 범위를 비교합니다.</li>
+            <li>차트를 PNG로 클립보드에 복사합니다. 환경상 복사가 안 되면 파일 다운로드 방식으로 대체될 수 있습니다.</li>
+            <li>페이지 이동으로 다음 6개 차트를 확인합니다.</li>
+          </ul>
+
+          <h3>Excel Download</h3>
+          <p>Trim Analysis의 Excel Download는 Item 매칭 결과, 분석 표와 차트 이미지를 포함한 별도 통합 문서를 만듭니다.</p>
+        </section>
+
+        <section id="tab-note">
+          <p class="section-kicker">08-8 · Note</p>
+          <h2>Note — 세션 안에 분석 근거와 결론 정리</h2>
+          <p class="section-intro">
+            Excel과 비슷한 셀 기반 작업 공간입니다. 분석 요약, 표, 계산식과 Distribution 캡처를 한 세션에 정리합니다.
+          </p>
+
+          <h3>할 수 있는 일</h3>
+          <ul>
+            <li>셀에 텍스트와 숫자를 입력합니다.</li>
+            <li><code>=A1-B1</code> 같은 기본 수식을 사용합니다.</li>
+            <li>Excel 범위를 복사해 여러 셀에 붙여넣습니다.</li>
+            <li>글꼴, 색상, 정렬, 테두리 등 셀 서식을 적용합니다.</li>
+            <li>Distribution 상세의 <strong>Note에 붙여넣기</strong>로 차트 이미지를 삽입합니다.</li>
+            <li>삽입된 이미지를 끌어 위치를 조정합니다.</li>
+          </ul>
+
+          <div class="callout danger">
+            <strong>Note는 별도 저장입니다.</strong><br>
+            Issue Table 상단 저장과는 다릅니다. Note에서 편집한 뒤 반드시 <strong>Note 저장</strong>을 누르고 완료 메시지를 확인하세요.
+            저장하지 않고 이동하면 경고가 표시될 수 있습니다.
+          </div>
+
+          <h3>현재 용량 기준</h3>
+          <ul>
+            <li>Note JSON 전체: 세션당 최대 2MB</li>
+            <li>이미지 한 장: 최대 2MB</li>
+            <li>이미지: 세션당 최대 200개</li>
+          </ul>
+          <p class="small muted">큰 원본 이미지를 반복해서 붙이면 저장 제한에 걸릴 수 있습니다. 분석에 필요한 영역만 캡처하고 오래된 중복 이미지는 정리하세요.</p>
+        </section>
+
+        <section id="tab-compare">
+          <p class="section-kicker">08-9 · Compare</p>
+          <h2>Compare — 두 데이터의 전후 차이 분석</h2>
+          <p class="section-intro">
+            Compare 모드로 정확히 두 파일을 올린 세션에만 나타납니다. 목록 첫 파일은 After, 둘째 파일은 Before로 해석됩니다.
+          </p>
+
+          <h3>Map</h3>
+          <ul>
+            <li>두 Source에 공통으로 존재하는 Die를 좌표 기준으로 비교합니다.</li>
+            <li>Bin이 같으면 초록 계열, 한쪽만 Fail이면 해당 Source 색, 둘 다 Fail이지만 Bin이 다르면 보라색 계열로 구분합니다.</li>
+            <li>공간적으로 새로 생긴 Fail과 회복된 영역을 찾을 때 유용합니다.</li>
+          </ul>
+
+          <h3>Log</h3>
+          <ul>
+            <li>Item과 Limit을 After 대 Before로 비교합니다.</li>
+            <li>추가, 제거, Limit 변경 Item은 항상 보이고 일반 행은 접힌 상태로 시작합니다.</li>
+            <li>전체 펼치기로 모든 행을 비교합니다.</li>
+            <li>Gap이 10% 이상인 변화는 빨간색으로 강조됩니다.</li>
+          </ul>
+
+          <h3>CPK</h3>
+          <ul>
+            <li>평균, 표준편차, CPK의 Before/After와 변화량을 봅니다.</li>
+            <li>|ΔCPK|가 큰 순서로 우선 검토할 수 있습니다.</li>
+          </ul>
+
+          <h3>Bin</h3>
+          <ul>
+            <li>Before → After의 Bin 이동 건수를 확인합니다.</li>
+            <li>Pass→Fail, Fail→Pass 변화를 분리합니다.</li>
+            <li>Bin별 Yield 차이를 함께 봅니다.</li>
+          </ul>
+
+          <div class="callout warning">
+            <strong>Compare 해석 전 순서 확인</strong><br>
+            세션 상단 Source명과 Compare의 Before/After가 의도와 반대라면 분석을 계속하지 말고 파일 순서를 바로잡아 새 세션을 만드는 것이 안전합니다.
+          </div>
+        </section>
+
+        <section id="server-use">
+          <p class="section-kicker">09 · Server for Users</p>
+          <h2>서버를 사용자 관점에서 이해하기</h2>
+          <p class="section-intro">
+            일반 사용자는 서버 프로그램을 직접 켜거나 주소·포트를 설정하지 않습니다. Honey에 설정된 회사 내부 서버를 이용하면 됩니다.
+          </p>
+
+          <h3>서버가 하는 일</h3>
+          <div class="grid-3">
+            <div class="card">
+              <h3>보관</h3>
+              <p>Web Report 분석 데이터, 세션 정보와 사용자 편집 내용을 저장합니다.</p>
+            </div>
+            <div class="card">
+              <h3>계산</h3>
+              <p>Yield, CPK, Distribution, Map, Trim 등에 필요한 결과와 표시 자료를 준비합니다.</p>
+            </div>
+            <div class="card">
+              <h3>공유</h3>
+              <p>세션 URL, 공개/비공개 상태와 편집 권한을 바탕으로 같은 보고서를 함께 보게 합니다.</p>
+            </div>
+          </div>
+
+          <h3>처음 열 때 느린 이유</h3>
+          <p>
+            큰 세션은 첫 요청에서 분석 결과나 차트용 데이터를 준비하므로 약 1~2분 이상 걸릴 수 있습니다.
+            준비된 결과는 재사용되어 다음 접속은 대체로 빨라집니다. Distribution, Map, Trim은 탭을 열 때 추가로 로딩될 수 있습니다.
+          </p>
+          <div class="callout">
+            <strong>로딩 중에는 기다려 주세요.</strong><br>
+            상태가 진행 중이라면 새로고침을 반복하지 마세요. 같은 계산 요청이 겹치면 오히려 완료 확인이 늦어질 수 있습니다.
+            충분히 기다린 뒤 한 번 새로고침하고, 계속 실패하면 운영 담당자에게 세션 ID와 시각을 전달하세요.
+          </div>
+
+          <h3>서버 연결이 끊기면</h3>
+          <ul>
+            <li>Honey 상태 영역에 서버 오프라인 또는 연결 실패가 표시될 수 있습니다.</li>
+            <li>Web Report 생성, 목록 검색, 업로드, 서버 편집과 Excel Upload/Download 일부 기능을 사용할 수 없습니다.</li>
+            <li>회사 네트워크 또는 VPN 연결을 확인하고 검색 홈을 새로고침합니다.</li>
+            <li>같은 증상이 계속되면 운영 담당자에게 발생 시간과 오류 문구를 전달합니다.</li>
+            <li>로컬 파일만 사용하는 Excel Report는 분석 엔진과 Excel이 정상이라면 서버 없이도 동작할 수 있습니다.</li>
+          </ul>
+
+          <h3>사용자가 지켜야 할 운영 원칙</h3>
+          <ul class="clean-list">
+            <li>회사에서 안내한 Honey와 내부 네트워크를 사용합니다.</li>
+            <li>세션 URL과 분석 자료는 승인된 대상에게만 공유합니다.</li>
+            <li>원본 정정, 공개 전환, 삭제 전에는 영향 범위와 소유권을 확인합니다.</li>
+            <li>중요한 장기 보관 세션은 중요 표시를 하고, 조직의 별도 보관 정책도 따릅니다.</li>
+            <li>오류 문의 시 Product/LOT, Session ID, 발생 시각, 화면 메시지를 함께 전달합니다.</li>
+          </ul>
+        </section>
+
+        <section id="troubleshooting">
+          <p class="section-kicker">10 · Troubleshooting</p>
+          <h2>문제 해결</h2>
+          <p class="section-intro">
+            아래 제목을 눌러 원인과 조치 순서를 확인하세요. 해결되지 않으면 오류 문구를 캡처하고 Session ID, Product/LOT, 발생 시각을 함께 전달합니다.
+          </p>
+
+          <details>
+            <summary>세션 링크에서 404 또는 “찾을 수 없음”이 표시됩니다.</summary>
+            <div class="detail-body">
+              <ol>
+                <li>일반 브라우저가 아니라 Honey 중앙 화면에서 같은 링크를 엽니다.</li>
+                <li>세션이 비공개인지, 본인에게 조회/편집 권한이 있는지 소유자에게 확인합니다.</li>
+                <li>Dashboard로 돌아가 Product/LOT 또는 Session ID로 다시 검색합니다.</li>
+                <li>삭제된 세션인지 소유자에게 확인합니다.</li>
+              </ol>
+              <p>비공개 세션은 권한 없는 사용자에게도 의도적으로 404처럼 보일 수 있습니다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>코멘트 칸이나 저장·삭제·비공개 버튼이 보이지 않습니다.</summary>
+            <div class="detail-body">
+              <ol>
+                <li>상단 사용자 표시가 “읽기 전용”인지 확인합니다.</li>
+                <li>일반 브라우저라면 Honey에서 다시 엽니다.</li>
+                <li>편집이 필요하면 소유자에게 ⚙ Permissions에서 PC 계정을 추가해 달라고 요청합니다.</li>
+                <li>삭제·비공개·권한 관리는 위임 편집자가 아니라 소유자만 할 수 있습니다.</li>
+              </ol>
+            </div>
+          </details>
+
+          <details>
+            <summary>Product 검색 목록을 불러오지 못하거나 업로드 정보가 통과하지 않습니다.</summary>
+            <div class="detail-body">
+              <ol>
+                <li>Honey의 서버 상태와 회사 네트워크/VPN을 확인합니다.</li>
+                <li>Product Type과 Family가 맞는지 확인합니다.</li>
+                <li>Product는 서버에 등록된 Part ID를 제안 목록에서 선택합니다.</li>
+                <li>LOT ID가 비어 있지 않은지, 자동 입력값이 올바른지 확인합니다.</li>
+                <li>계속 실패하면 Product 등록 여부를 운영 담당자에게 문의합니다.</li>
+              </ol>
+            </div>
+          </details>
+
+          <details>
+            <summary>Compare 또는 DUT 모드가 시작되지 않습니다.</summary>
+            <div class="detail-body">
+              <ul>
+                <li>Compare는 파일이 정확히 2개여야 합니다.</li>
+                <li>DUT는 파일이 정확히 1개이고 데이터 안에 DUT 구분값이 있어야 합니다.</li>
+                <li>Normal은 1개 이상을 허용합니다.</li>
+                <li>여러 파일의 Item 구조가 다르면 기준 파일을 맨 위로 옮기거나 호환되는 파일끼리 나누어 생성합니다.</li>
+              </ul>
+            </div>
+          </details>
+
+          <details>
+            <summary>보고서의 Unit, Limit 또는 Item이 예상과 다릅니다.</summary>
+            <div class="detail-body">
+              <p>파일 목록의 첫 번째 파일이 분석 기준을 정의합니다.</p>
+              <ol>
+                <li>현재 세션의 Source와 입력 파일 순서를 확인합니다.</li>
+                <li>기준으로 사용할 파일을 맨 위로 올립니다.</li>
+                <li>서로 다른 제품/형식 파일이 섞였는지 확인합니다.</li>
+                <li>잘못 생성된 세션을 편집으로 억지 수정하기보다 올바른 순서로 새로 생성합니다.</li>
+              </ol>
+            </div>
+          </details>
+
+          <details>
+            <summary>업로드 후 첫 화면이 오래 걸리거나 탭이 비어 보입니다.</summary>
+            <div class="detail-body">
+              <ol>
+                <li>큰 데이터의 첫 계산은 1~2분 이상 걸릴 수 있으므로 진행 상태를 기다립니다.</li>
+                <li>Distribution/Map/Trim은 탭을 처음 열 때 추가 로딩될 수 있습니다.</li>
+                <li>새로고침을 반복하지 말고 충분히 기다린 뒤 한 번만 새로고침합니다.</li>
+                <li>선택된 Source/Item 필터 때문에 결과가 숨겨진 것은 아닌지 Clear 또는 전체 보기를 시도합니다.</li>
+                <li>계속 비어 있으면 Session ID와 탭 이름을 운영 담당자에게 전달합니다.</li>
+              </ol>
+            </div>
+          </details>
+
+          <details>
+            <summary>Excel Report, Excel Upload, Excel Down 또는 Rawdata edit가 실패합니다.</summary>
+            <div class="detail-body">
+              <ol>
+                <li>PC에 Excel이 정상 설치되어 있는지 확인합니다.</li>
+                <li>작업 대상 통합 문서를 모두 닫고 다시 시도합니다.</li>
+                <li>파일이 다른 사용자/프로그램에 의해 잠겼는지 확인합니다.</li>
+                <li>Protected View, 보안 경고 또는 DRM 인증 창이 Excel 뒤에 떠 있는지 확인합니다.</li>
+                <li>저장 폴더에 쓰기 권한이 있는지 확인합니다.</li>
+                <li>오류 창의 전체 문구를 캡처해 문의합니다.</li>
+              </ol>
+            </div>
+          </details>
+
+          <details>
+            <summary>Excel Upload에서 Raw Data 또는 Issue_table이 없다고 나옵니다.</summary>
+            <div class="detail-body">
+              <p>일반 Excel이 아니라 Honey가 생성한 보고서 형식만 지원합니다.</p>
+              <ul>
+                <li><strong>Raw Data 없음:</strong> 원본 파일로 Excel Report를 다시 만들고 Raw Data 옵션을 켭니다.</li>
+                <li><strong>Issue_table 없음:</strong> Honey 형식이 아닌 파일이거나 필요한 시트가 제거된 파일입니다. 원본 Honey Report를 사용합니다.</li>
+                <li>시트 이름을 임의로 바꾸거나 일부 시트만 복사한 파일은 피합니다.</li>
+              </ul>
+            </div>
+          </details>
+
+          <details>
+            <summary>Rawdata edit 중 화면 이동/종료 경고가 나타납니다.</summary>
+            <div class="detail-body">
+              <p>Excel 편집이 아직 끝나지 않았다는 뜻입니다.</p>
+              <ul>
+                <li>계속 편집하려면 화면 이동을 취소하고 Excel로 돌아갑니다.</li>
+                <li>반영하려면 Excel에서 저장한 뒤 통합 문서를 닫습니다.</li>
+                <li>편집을 포기하고 이동하면 Excel이 강제로 닫힐 수 있고 저장하지 않은 변경을 잃을 수 있습니다.</li>
+              </ul>
+            </div>
+          </details>
+
+          <details>
+            <summary>Issue Comment가 저장되지 않은 것 같습니다.</summary>
+            <div class="detail-body">
+              <ol>
+                <li>편집 셀 밖을 클릭해 자동 저장을 실행합니다.</li>
+                <li>상단 디스크 버튼을 누릅니다.</li>
+                <li>저장 완료 알림을 확인합니다.</li>
+                <li>실패 알림이 나오면 내용을 복사해 두고 네트워크 확인 후 다시 저장합니다.</li>
+                <li>저장 완료 전 창이나 Honey를 닫지 않습니다.</li>
+              </ol>
+            </div>
+          </details>
+
+          <details>
+            <summary>Note에 붙인 글이나 그림이 사라졌습니다.</summary>
+            <div class="detail-body">
+              <p>Note는 Issue Comment와 별도 저장입니다. Note 안의 저장 버튼을 눌러 완료를 확인해야 합니다. 용량 제한을 넘겼다는 메시지가 있으면 중복 이미지나 큰 이미지를 줄인 뒤 다시 저장합니다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>Honey 업데이트의 Auto install이 비활성화되어 있습니다.</summary>
+            <div class="detail-body">
+              <p>설치 폴더 쓰기 권한 또는 업데이트 검증 정보 문제일 수 있습니다. ZIP download가 가능하면 Honey를 완전히 종료한 뒤 ZIP 내용을 설치 폴더에 덮어쓰고 다시 실행합니다. 둘 다 사용할 수 없으면 운영 담당자에게 배포 상태를 문의합니다.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>예전에 올린 Excel 세션이 현재 상세 화면에서 열리지 않습니다.</summary>
+            <div class="detail-body">
+              <p>과거 legacy xlsx 세션은 현재 Web Report 상세 화면에서 지원되지 않을 수 있습니다. 원본 Honey Excel에 Issue_table과 Raw Data가 있으면 <strong>Excel Upload</strong>로 새 Web Report 세션을 만드세요.</p>
+            </div>
+          </details>
+
+          <details>
+            <summary>화면이 좁아 파일명이나 표가 잘립니다.</summary>
+            <div class="detail-body">
+              <ul>
+                <li>Honey 창을 최대화합니다.</li>
+                <li>표의 상단/하단 가로 스크롤을 사용합니다.</li>
+                <li>파일명이나 업로더 위에 마우스를 올려 전체 텍스트가 표시되는지 확인합니다.</li>
+                <li>필요하면 화면 확대율을 80~90%로 낮추되, 입력 전 현재 행과 열을 다시 확인합니다.</li>
+              </ul>
+            </div>
+          </details>
+        </section>
+
+        <section id="limits">
+          <p class="section-kicker">11 · Limits</p>
+          <h2>현재 제한·미지원 기능</h2>
+          <p class="section-intro">
+            화면에 항목이 있거나 과거 자료에 언급되어도 현재 사용자 흐름에서 동작하지 않는 기능입니다.
+          </p>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>항목</th>
+                  <th>현재 상태</th>
+                  <th>대신 사용할 방법</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Web Report AI Comment 체크</td>
+                  <td><span class="status off">비활성</span> 사용자가 켤 수 없음</td>
+                  <td>PTE/개발/Engineer Comment를 직접 기록</td>
+                </tr>
+                <tr>
+                  <td>Commonality 모드</td>
+                  <td><span class="status off">Honey UI에서 선택 불가</span></td>
+                  <td>목적에 따라 Normal 또는 Compare 사용</td>
+                </tr>
+                <tr>
+                  <td>Histogram (Report)</td>
+                  <td><span class="status off">Excel 설정과 연결되지 않음</span></td>
+                  <td>지원되는 Histogram (Analysis) 또는 Web Distribution 사용</td>
+                </tr>
+                <tr>
+                  <td>Issue Comment 자동 생성</td>
+                  <td><span class="status off">Excel 설정과 연결되지 않음</span></td>
+                  <td>Issue Table에서 직접 작성</td>
+                </tr>
+                <tr>
+                  <td>Outlier 제거·CPK Threshold</td>
+                  <td><span class="status off">Excel 설정과 연결되지 않음</span></td>
+                  <td>Web Distribution의 임시 제외로 가설만 확인하고 원 데이터 기준 결과 유지</td>
+                </tr>
+                <tr>
+                  <td>Limit.xlsx, boxplot.pptx</td>
+                  <td><span class="status off">현재 생성 기능과 연결되지 않음</span></td>
+                  <td>CPK Limit Calculation 복사 또는 별도 승인 양식 사용</td>
+                </tr>
+                <tr>
+                  <td>Web Report Raw Data 탭</td>
+                  <td><span class="status off">상세 화면에 없음</span></td>
+                  <td>Honey의 Rawdata edit 또는 Excel Down 사용</td>
+                </tr>
+                <tr>
+                  <td>일반 브라우저 로그인/PIN</td>
+                  <td><span class="status off">사용하지 않음</span></td>
+                  <td>편집은 Honey PC 계정으로 접속</td>
+                </tr>
+                <tr>
+                  <td>legacy xlsx 상세 보기</td>
+                  <td><span class="status off">현재 Web Report 화면 미지원</span></td>
+                  <td>Honey Excel Upload로 새 Web Report 세션 생성</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>저장되지 않는 임시 상태</h3>
+          <ul>
+            <li>Distribution CDF의 Die 임시 제외</li>
+            <li>Distribution 상세의 X축 수동 범위</li>
+            <li>Map Analysis의 좌표 선택과 강조</li>
+            <li>Issue Table에서 조정한 열 너비</li>
+            <li>검색·필터의 일부 현재 화면 선택 상태</li>
+          </ul>
+          <p>재현이 필요한 분석 상태는 숫자·좌표·조건을 코멘트나 Note에 적고 필요한 차트를 캡처해 남기세요.</p>
+        </section>
+
+        <section id="checklists">
+          <p class="section-kicker">12 · Checklists</p>
+          <h2>업무별 체크리스트</h2>
+
+          <div class="grid-2">
+            <article class="card">
+              <h3>Web Report 생성 전</h3>
+              <ul class="checklist">
+                <li>Product Type이 맞다.</li>
+                <li>첫 파일이 Limit/Unit 기준 파일이다.</li>
+                <li>파일 순서와 Source명이 의도와 같다.</li>
+                <li>Normal/Compare/DUT 파일 수가 맞다.</li>
+                <li>Product와 LOT ID를 확인했다.</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <h3>생성 직후 검증</h3>
+              <ul class="checklist">
+                <li>상단 Product/LOT/Process가 맞다.</li>
+                <li>Overall Yield가 원 검토값과 일치한다.</li>
+                <li>Step/Bin/TNO 구조가 예상과 같다.</li>
+                <li>주요 Item의 Limit/Unit이 맞다.</li>
+                <li>Compare Before/After 방향이 맞다.</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <h3>공유 전</h3>
+              <ul class="checklist">
+                <li>코멘트와 Note가 저장 완료되었다.</li>
+                <li>공개/비공개 상태가 목적에 맞다.</li>
+                <li>수정할 사람에게 편집 권한을 부여했다.</li>
+                <li>공유 URL이 정확한 세션인지 다시 열어봤다.</li>
+                <li>민감 정보의 공유 대상이 승인되었다.</li>
+              </ul>
+            </article>
+
+            <article class="card">
+              <h3>Raw Data 수정 전·후</h3>
+              <ul class="checklist">
+                <li>정정 근거와 원본 백업이 있다.</li>
+                <li>수정할 세션과 LOT를 재확인했다.</li>
+                <li>필요한 셀만 수정했다.</li>
+                <li>Excel 저장·닫기 후 반영을 기다렸다.</li>
+                <li>Yield/Limit/Bin/주요 이슈를 재검증했다.</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="glossary">
+          <p class="section-kicker">13 · Glossary</p>
+          <h2>용어 모음</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>용어</th>
+                  <th>이 도움말에서의 의미</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>Dashboard</td><td>서버에 저장된 세션을 검색하고 여는 목록 화면</td></tr>
+                <tr><td>Session ID</td><td>업로드 한 건을 유일하게 식별하는 값. 문의와 URL 확인에 유용</td></tr>
+                <tr><td>Source</td><td>분석에 포함된 파일 또는 DUT별 데이터 묶음을 구분하는 표시 이름</td></tr>
+                <tr><td>Owner / 소유자</td><td>세션을 업로드한 사용자. 편집·비공개·삭제·권한 관리 가능</td></tr>
+                <tr><td>Editor / 편집자</td><td>소유자가 편집 권한을 위임한 사용자. 콘텐츠 편집은 가능하나 삭제·권한 관리는 불가</td></tr>
+                <tr><td>Public / 공개</td><td>일반 브라우저에서도 URL로 조회할 수 있는 상태. 편집 권한을 뜻하지 않음</td></tr>
+                <tr><td>Private / 비공개</td><td>소유자와 위임 편집자만 접근 가능한 상태</td></tr>
+                <tr><td>Favorite / 즐겨찾기</td><td>Dashboard에서 본인 목록의 위쪽에 배치하기 위한 개인 표시</td></tr>
+                <tr><td>Important / 중요</td><td>세션 상단의 개인 중요 표시. 오래된 세션 정리 정책에서 보호할 때 사용</td></tr>
+                <tr><td>Cache / 준비된 결과</td><td>처음 계산한 분석 결과를 재사용해 다음 화면을 빠르게 여는 서버 내부 자료</td></tr>
+                <tr><td>Read-only / 읽기 전용</td><td>보고서는 볼 수 있지만 코멘트·Note·권한 등을 바꿀 수 없는 상태</td></tr>
+                <tr><td>Lazy loading</td><td>Distribution/Map/Trim처럼 해당 탭을 열 때 필요한 결과를 추가로 불러오는 방식</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>문의할 때 전달할 정보</h3>
+          <ul>
+            <li>Product Type / Product / LOT / Process</li>
+            <li>Session ID 또는 세션 URL</li>
+            <li>문제가 난 탭과 누른 버튼</li>
+            <li>발생 날짜와 시각</li>
+            <li>오류 문구 전체와 화면 캡처</li>
+            <li>Honey에서 열었는지, 일반 브라우저에서 열었는지</li>
+          </ul>
+
+          <div class="callout success">
+            <strong>가장 안전한 업무 습관</strong><br>
+            첫 파일과 메타데이터를 생성 전에 확인하고, 편집 후 저장 완료를 확인하며, 삭제·Raw Data 수정·공개 전환은 한 번 더 대상 세션을 확인하세요.
+          </div>
+        </section>
+      </div>
+
+      <footer class="footer">
+        <strong>HONEY Web Report 사용자 도움말</strong><br>
+        현행 report_server · web_report · Honey UI 동작 기준
+      </footer>
+    </main>
+  </div>
+
+  <button class="back-top" id="back-top" type="button" aria-label="문서 맨 위로">↑</button>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var body = document.body;
+      var toggle = document.getElementById("toc-toggle");
+      var sidebar = document.getElementById("sidebar");
+      var backTop = document.getElementById("back-top");
+      var tocLinks = Array.prototype.slice.call(document.querySelectorAll(".toc a"));
+      var sections = Array.prototype.slice.call(document.querySelectorAll("main section[id]"));
+
+      function closeToc() {
+        body.classList.remove("toc-open");
+        if (toggle) {
+          toggle.setAttribute("aria-expanded", "false");
+        }
+      }
+
+      if (toggle && sidebar) {
+        toggle.addEventListener("click", function () {
+          var isOpen = body.classList.toggle("toc-open");
+          toggle.setAttribute("aria-expanded", String(isOpen));
+        });
+
+        tocLinks.forEach(function (link) {
+          link.addEventListener("click", closeToc);
+        });
+
+        document.addEventListener("keydown", function (event) {
+          if (event.key === "Escape") {
+            closeToc();
+          }
+        });
+      }
+
+      function updateBackTop() {
+        if (window.scrollY > 700) {
+          backTop.classList.add("show");
+        } else {
+          backTop.classList.remove("show");
+        }
+      }
+
+      backTop.addEventListener("click", function () {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+
+      window.addEventListener("scroll", updateBackTop, { passive: true });
+      updateBackTop();
+
+      if ("IntersectionObserver" in window) {
+        var linkById = {};
+        tocLinks.forEach(function (link) {
+          linkById[link.getAttribute("href").slice(1)] = link;
+        });
+
+        var observer = new IntersectionObserver(function (entries) {
+          entries.forEach(function (entry) {
+            if (entry.isIntersecting) {
+              tocLinks.forEach(function (link) {
+                link.classList.remove("active");
+              });
+              if (linkById[entry.target.id]) {
+                linkById[entry.target.id].classList.add("active");
+              }
+            }
+          });
+        }, {
+          rootMargin: "-18% 0px -72% 0px",
+          threshold: 0
+        });
+
+        sections.forEach(function (section) {
+          observer.observe(section);
+        });
+      }
+    }());
+  </script>
+</body>
+</html>

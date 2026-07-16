@@ -50,6 +50,13 @@ if not exist "%ROOT%.venv\Scripts\python.exe" (
     echo [start] Installing dependencies from requirements.txt ...
     "%ROOT%.venv\Scripts\python.exe" -m pip install --upgrade pip
     "%ROOT%.venv\Scripts\python.exe" -m pip install -r "%ROOT%requirements.txt"
+    if errorlevel 1 (
+        echo [start] ERROR: 의존성 설치 실패 - 네트워크/프록시를 확인하세요.
+        echo [start] 불완전한 .venv 를 제거합니다. 문제 해결 후 start.bat 또는 install.bat 를 다시 실행하세요.
+        rmdir /s /q "%ROOT%.venv"
+        pause
+        exit /b 1
+    )
 )
 rem venv 가 준비됐으니 항상 venv python 으로 고정
 set PY_CMD="%ROOT%.venv\Scripts\python.exe"

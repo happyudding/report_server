@@ -130,6 +130,19 @@ try {
         throw "pip install -r requirements.txt failed with exit code $LASTEXITCODE"
     }
 
+    # PyInstaller 는 빌드 전용 도구라 requirements.txt(런타임 의존성 목록)에 없다. 아무것도
+    # 설치 안 된 새 빌드 PC 에서 자동으로 갖춰지도록 여기서 함께 설치한다 (미설치 시 바로
+    # 아래 python -m PyInstaller 가 'No module named PyInstaller' 로 죽는다).
+    Write-Host "    pip install pyinstaller"
+    if ($IsPyLauncher) {
+        & $PythonCmd.Source -3 -m pip install pyinstaller
+    } else {
+        & $PythonCmd.Source -m pip install pyinstaller
+    }
+    if ($LASTEXITCODE -ne 0) {
+        throw "pip install pyinstaller failed with exit code $LASTEXITCODE"
+    }
+
     if ($IsPyLauncher) {
         & $PythonCmd.Source -3 -m PyInstaller --clean --noconfirm (Split-Path $SpecFile -Leaf)
     } else {

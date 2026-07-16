@@ -9,7 +9,9 @@ Honey 클라이언트가 업로드한 산출물(xlsx 추출 grid / web_report pa
 
 ## 요구사항 / 실행
 
-Python 3.10+. 의존성은 [requirements.txt](requirements.txt) 참조 (버전은 그 파일이 정본).
+Python 3.11+ (web_report 컴퓨트 워커의 `ProcessPoolExecutor(max_tasks_per_child=...)` 가
+3.11 신설이라 3.10 에선 기동 불가). 의존성은 [requirements.txt](requirements.txt) 참조
+(버전은 그 파일이 정본).
 pyyaml 은 eval_analyzer(eval_engine) rules 로딩용 — ai_comment 옵션 세션의 IssueTable
 AI Comment 평가 경로([../web_report/ai_comment.py](../web_report/ai_comment.py),
 [../docs/13](../docs/13_eval_analyzer_integration.md))에서만 쓰인다.

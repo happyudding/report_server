@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>서버 아키텍처 핸드오프 — 도식 버전</title>
+<style>
+  :root{
+    --bg:#f6f7fb; --panel:#ffffff; --ink:#1f2430; --muted:#5b6472; --line:#e2e6ef;
+    --accent:#3b6cf6; --accent-soft:#e7eefe;
+    --sess:#7c4dff; --sess-soft:#efe8ff;
+    --edit:#e8590c; --edit-soft:#ffece0;
+    --ops:#12866f; --ops-soft:#dcf3ee;
+    --misc:#c026a3; --misc-soft:#fbe4f5;
+    --danger:#d6336c; --danger-soft:#ffe3ec;
+    --ok:#2f9e44; --ok-soft:#e3f7e8;
+    --code-bg:#f0f2f7; --shadow:0 1px 3px rgba(20,30,60,.08),0 6px 20px rgba(20,30,60,.06);
+    --radius:14px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0e1117; --panel:#161b25; --ink:#e6e9f0; --muted:#9aa4b4; --line:#28303f;
+      --accent:#6f9bff; --accent-soft:#1b2740;
+      --sess:#b79bff; --sess-soft:#241a3a;
+      --edit:#ff9d5c; --edit-soft:#3a2415;
+      --ops:#4fd1b3; --ops-soft:#123029;
+      --misc:#f27ad6; --misc-soft:#331127;
+      --danger:#ff6b95; --danger-soft:#3a141f;
+      --ok:#69db7c; --ok-soft:#14301c;
+      --code-bg:#0c1119; --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0e1117; --panel:#161b25; --ink:#e6e9f0; --muted:#9aa4b4; --line:#28303f;
+    --accent:#6f9bff; --accent-soft:#1b2740; --sess:#b79bff; --sess-soft:#241a3a;
+    --edit:#ff9d5c; --edit-soft:#3a2415; --ops:#4fd1b3; --ops-soft:#123029;
+    --misc:#f27ad6; --misc-soft:#331127; --danger:#ff6b95; --danger-soft:#3a141f;
+    --ok:#69db7c; --ok-soft:#14301c; --code-bg:#0c1119;
+    --shadow:0 1px 3px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f7fb; --panel:#ffffff; --ink:#1f2430; --muted:#5b6472; --line:#e2e6ef;
+    --accent:#3b6cf6; --accent-soft:#e7eefe; --sess:#7c4dff; --sess-soft:#efe8ff;
+    --edit:#e8590c; --edit-soft:#ffece0; --ops:#12866f; --ops-soft:#dcf3ee;
+    --misc:#c026a3; --misc-soft:#fbe4f5; --danger:#d6336c; --danger-soft:#ffe3ec;
+    --ok:#2f9e44; --ok-soft:#e3f7e8; --code-bg:#f0f2f7;
+    --shadow:0 1px 3px rgba(20,30,60,.08),0 6px 20px rgba(20,30,60,.06);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:"Pretendard","Malgun Gothic","Apple SD Gothic Neo",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    line-height:1.65; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1060px; margin:0 auto; padding:0 20px 96px;}
+  header.top{
+    padding:44px 20px 30px; text-align:center;
+    background:linear-gradient(180deg,var(--accent-soft),transparent);
+    border-bottom:1px solid var(--line); margin-bottom:8px;
+  }
+  header.top h1{margin:0 0 6px; font-size:clamp(24px,4vw,34px); letter-spacing:-.02em;}
+  header.top p{margin:4px auto 0; color:var(--muted); max-width:640px;}
+  .badge{display:inline-block; font-size:12px; font-weight:700; padding:3px 10px; border-radius:999px;
+    background:var(--panel); border:1px solid var(--line); color:var(--muted); margin:10px 4px 0;}
+  .theme-btn{position:fixed; top:14px; right:14px; z-index:50; border:1px solid var(--line);
+    background:var(--panel); color:var(--ink); border-radius:10px; padding:7px 11px; cursor:pointer;
+    font-size:13px; box-shadow:var(--shadow);}
+  nav.toc{
+    position:sticky; top:0; z-index:40; background:var(--panel);
+    background:color-mix(in srgb,var(--panel) 88%,transparent);
+    -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+    border:1px solid var(--line); border-radius:var(--radius);
+    padding:10px 12px; margin:16px 0 28px; display:flex; flex-wrap:wrap; gap:6px; box-shadow:var(--shadow);
+  }
+  nav.toc a{font-size:13px; text-decoration:none; color:var(--muted); padding:5px 10px; border-radius:8px;
+    border:1px solid transparent; white-space:nowrap;}
+  nav.toc a:hover{color:var(--ink); background:var(--bg); border-color:var(--line);}
+  section{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:22px 22px 26px; margin:20px 0; box-shadow:var(--shadow);}
+  section h2{margin:0 0 4px; font-size:20px; display:flex; align-items:center; gap:10px; letter-spacing:-.01em;}
+  section h2 .num{font-size:13px; font-weight:800; color:#fff; background:var(--accent);
+    width:30px; height:30px; border-radius:9px; display:inline-flex; align-items:center; justify-content:center; flex:none;}
+  .lead{color:var(--muted); margin:2px 0 18px; font-size:14.5px;}
+  .note{font-size:13.5px; color:var(--muted); margin-top:14px; padding:11px 14px; background:var(--bg);
+    border-left:3px solid var(--accent); border-radius:0 10px 10px 0;}
+  .note b{color:var(--ink);}
+  .note.warn{border-left-color:var(--danger);}
+  .note.good{border-left-color:var(--ok);}
+  code{background:var(--code-bg); padding:1.5px 6px; border-radius:6px; font-size:.9em;
+    font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Consolas,monospace;}
+
+  /* ---- diagram toolkit ---- */
+  .stack{display:flex; flex-direction:column; align-items:center; gap:0;}
+  .node{background:var(--panel); border:2px solid var(--accent); color:var(--ink);
+    border-radius:12px; padding:11px 16px; text-align:center; min-width:210px; max-width:100%;
+    box-shadow:var(--shadow); font-weight:600;}
+  .node small{display:block; font-weight:500; color:var(--muted); font-size:12px; margin-top:2px;}
+  .node.soft{border-color:var(--line); background:var(--bg); font-weight:600;}
+  .down{width:2px; height:22px; background:var(--accent); position:relative;}
+  .down::after{content:""; position:absolute; left:50%; bottom:-1px; transform:translateX(-50%);
+    border:6px solid transparent; border-top-color:var(--accent); border-bottom:0;}
+  .flow{display:flex; flex-wrap:wrap; align-items:stretch; gap:10px; justify-content:center;}
+  .step{flex:1 1 150px; min-width:140px; background:var(--bg); border:1px solid var(--line);
+    border-radius:12px; padding:12px 12px; position:relative;}
+  .step .k{font-size:11px; font-weight:800; color:var(--accent); letter-spacing:.03em;}
+  .step .t{font-weight:650; margin-top:3px; font-size:14px;}
+  .step .d{font-size:12px; color:var(--muted); margin-top:3px;}
+  .arrow-row{display:flex; align-items:center; justify-content:center; color:var(--muted); font-size:20px;}
+  .grid{display:grid; gap:12px;}
+  .cols-2{grid-template-columns:repeat(auto-fit,minmax(230px,1fr));}
+  .cols-3{grid-template-columns:repeat(auto-fit,minmax(180px,1fr));}
+  .card{background:var(--bg); border:1px solid var(--line); border-radius:12px; padding:13px 15px;}
+  .card h4{margin:0 0 5px; font-size:14.5px; display:flex; align-items:center; gap:7px;}
+  .card p{margin:0; font-size:13px; color:var(--muted);}
+  .chip{display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px;}
+  .c-sess{background:var(--sess-soft); color:var(--sess);}
+  .c-edit{background:var(--edit-soft); color:var(--edit);}
+  .c-ops{background:var(--ops-soft); color:var(--ops);}
+  .c-misc{background:var(--misc-soft); color:var(--misc);}
+  .c-danger{background:var(--danger-soft); color:var(--danger);}
+  .c-ok{background:var(--ok-soft); color:var(--ok);}
+  .accent-sess h2 .num{background:var(--sess);} .accent-sess{border-top:3px solid var(--sess);}
+  .accent-edit h2 .num{background:var(--edit);} .accent-edit{border-top:3px solid var(--edit);}
+  .accent-ops h2 .num{background:var(--ops);} .accent-ops{border-top:3px solid var(--ops);}
+  .accent-misc h2 .num{background:var(--misc);} .accent-misc{border-top:3px solid var(--misc);}
+  .scroll-x{overflow-x:auto; padding-bottom:6px;}
+  .db-hub{display:flex; flex-direction:column; align-items:center; gap:14px;}
+  .db-center{background:var(--sess); color:#fff; border:none; font-weight:800; min-width:240px;}
+  .db-center small{color:rgba(255,255,255,.85);}
+  .legend{display:flex; flex-wrap:wrap; gap:10px; margin-top:12px; font-size:12.5px; color:var(--muted);}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .dot{width:11px; height:11px; border-radius:3px; display:inline-block;}
+  table.actions{width:100%; border-collapse:collapse; font-size:13px; margin-top:4px;}
+  table.actions th,table.actions td{border-bottom:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top;}
+  table.actions th{color:var(--muted); font-weight:700; font-size:12px;}
+  table.actions td code{font-size:12px;}
+  .two-user{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  @media (max-width:560px){ .two-user{grid-template-columns:1fr;} }
+  .u-head{font-weight:800; text-align:center; padding:7px; border-radius:10px 10px 0 0;}
+  .u-a{background:var(--accent-soft); color:var(--accent);}
+  .u-b{background:var(--edit-soft); color:var(--edit);}
+  .footer{color:var(--muted); font-size:12.5px; text-align:center; margin-top:30px;}
+  svg{max-width:100%; height:auto; display:block;}
+</style>
+</head>
+<body>
+<button class="theme-btn" onclick="toggleTheme()" id="themeBtn">🌓 테마</button>
+
+<header class="top">
+  <h1>서버 아키텍처 핸드오프 — 도식 버전</h1>
+  <p>웹에서 문서를 세션 단위로 관리·편집하는 서버를 처음 만드는 분을 위한 그림 설명서.
+     세부 코드는 함께 있는 <code>SERVER_ARCHITECTURE_HANDOFF.md</code> 를 보세요.</p>
+  <div>
+    <span class="badge">Flask + waitress</span>
+    <span class="badge">SQLite (WAL)</span>
+    <span class="badge">ORM 없음</span>
+    <span class="badge">2인 편집 관점 포함</span>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc">
+    <a href="#d1">1 · 전체 구조</a>
+    <a href="#d2">2 · 요청 흐름</a>
+    <a href="#d3">3 · 세션 생명주기</a>
+    <a href="#d4">4 · DB 테이블</a>
+    <a href="#d5">5 · 동시 편집 ★</a>
+    <a href="#d6">6 · 권한 판정</a>
+    <a href="#d7">7 · 자동화</a>
+    <a href="#d8">8 · 신원 전환</a>
+    <a href="#d9">9 · 체크리스트</a>
+  </nav>
+
+  <!-- D1 -->
+  <section id="d1">
+    <h2><span class="num">1</span> 전체 구조 — 요청이 지나가는 층</h2>
+    <p class="lead">브라우저 요청은 위에서 아래로 층층이 내려갔다가 응답으로 올라옵니다. 옆에는 서버가
+      스스로 돌리는 백그라운드 작업 3개가 따로 돕니다.</p>
+    <div class="scroll-x">
+    <div style="display:flex; gap:26px; align-items:flex-start; justify-content:center; min-width:540px;">
+      <div class="stack">
+        <div class="node">🌐 브라우저 <small>GET /session/abc/full</small></div>
+        <div class="down"></div>
+        <div class="node">waitress <small>실제 WSGI 서버 · threads=8</small></div>
+        <div class="down"></div>
+        <div class="node">Flask app <small>URL → 처리 함수 매칭</small></div>
+        <div class="down"></div>
+        <div class="node soft">Blueprint <small>report · honey · admin</small></div>
+        <div class="down"></div>
+        <div class="node" style="border-color:var(--misc)">🛡 보안 가드 <small>신원 확인 → 권한 판정</small></div>
+        <div class="down"></div>
+        <div class="node" style="border-color:var(--sess)">report_db <small>DB 접근 단일 창구 (facade)</small></div>
+        <div class="down"></div>
+        <div class="node soft">🗄 SQLite (WAL) + 파일</div>
+      </div>
+      <div style="align-self:center;">
+        <div class="card" style="border-color:var(--ops); min-width:190px;">
+          <h4><span class="chip c-ops">백그라운드</span></h4>
+          <p style="margin-bottom:8px;">서버 프로세스 안에서 스스로 도는 데몬 스레드</p>
+          <div class="node soft" style="min-width:0; margin-bottom:8px; padding:8px 12px;">💾 DB 자동 백업</div>
+          <div class="node soft" style="min-width:0; margin-bottom:8px; padding:8px 12px;">🧹 오래된 것 청소</div>
+          <div class="node soft" style="min-width:0; padding:8px 12px;">📈 리소스 측정</div>
+        </div>
+      </div>
+    </div>
+    </div>
+    <div class="note"><b>핵심:</b> 코드를 <b>층(진입점·조립·라우트·보안·신원·DB창구·운영)</b>으로 나눠
+      섞이지 않게 했습니다. DB 접근은 전부 <code>report_db</code> 창구 하나만 통과합니다(facade 패턴).</div>
+  </section>
+
+  <!-- D2 -->
+  <section id="d2">
+    <h2><span class="num">2</span> 요청 처리 흐름 — 조회 1건이 거치는 단계</h2>
+    <p class="lead">세션 상세를 불러오는 <code>GET /session/&lt;id&gt;/full</code> 하나가 실제로 밟는 순서입니다.</p>
+    <div class="scroll-x">
+    <div class="flow" style="flex-wrap:nowrap; min-width:620px;">
+      <div class="step"><div class="k">STEP 1</div><div class="t">신원 확인</div><div class="d">current_user() — 누가 요청했나</div></div>
+      <div class="arrow-row">▶</div>
+      <div class="step"><div class="k">STEP 2</div><div class="t">비공개 가드</div><div class="d">볼 권한 없으면 404(존재 은닉)</div></div>
+      <div class="arrow-row">▶</div>
+      <div class="step"><div class="k">STEP 3</div><div class="t">DB 조회</div><div class="d">report_db 로 세션+부속 데이터</div></div>
+      <div class="arrow-row">▶</div>
+      <div class="step"><div class="k">STEP 4</div><div class="t">gzip + ETag</div><div class="d">압축 + 내용 지문 부착</div></div>
+      <div class="arrow-row">▶</div>
+      <div class="step" style="border-color:var(--ok)"><div class="k" style="color:var(--ok)">응답</div><div class="t">200 또는 304</div><div class="d">지문 같으면 본문 생략(304)</div></div>
+    </div>
+    </div>
+    <div class="note"><b>성능 노하우:</b> 모두에게 <b>똑같은 응답</b>(세션 본문)은 캐시하고, <b>사람마다 다른 것</b>
+      (내 권한 <code>my_access</code>)은 따로 뺐습니다. 이렇게 나눠야 캐시가 안 깨집니다.</div>
+  </section>
+
+  <!-- D3 -->
+  <section id="d3" class="accent-sess">
+    <h2><span class="num">3</span> 세션 생명주기 — 태어나서 사라지기까지</h2>
+    <p class="lead">세션(= 업로드된 문서 1건)은 상태(status) 컬럼으로 단계를 표현합니다.</p>
+    <div class="scroll-x">
+    <div class="flow" style="flex-wrap:nowrap; min-width:640px; align-items:center;">
+      <div class="step" style="border-color:var(--sess)"><div class="k" style="color:var(--sess)">생성</div><div class="t">pending</div><div class="d">행 먼저 만들고 처리 시작</div></div>
+      <div class="arrow-row">▶</div>
+      <div class="step" style="border-color:var(--ok)"><div class="k" style="color:var(--ok)">완료</div><div class="t">done / reused</div><div class="d">목록·검색에 노출됨</div></div>
+      <div class="arrow-row">▶</div>
+      <div class="step"><div class="k">운영 중</div><div class="t">편집 · 비공개 토글 · 중요표시</div><div class="d">권한 있는 사람이 변경</div></div>
+      <div class="arrow-row">▶</div>
+      <div class="step" style="border-color:var(--danger)"><div class="k" style="color:var(--danger)">소멸</div><div class="t">삭제 / 자동정리</div><div class="d">마지막 참조일 때만 파일까지</div></div>
+    </div>
+    </div>
+    <div class="grid cols-3" style="margin-top:14px;">
+      <div class="card"><h4>🟣 pending 이 남으면?</h4><p>처리 중 죽은 흔적. 48시간 지난 pending(참조 없는 것)은 청소가 회수합니다.</p></div>
+      <div class="card"><h4>⭐ is_important</h4><p>중요표시가 하나라도 있으면 자동정리에서 <b>제외</b> — 함부로 안 지웁니다.</p></div>
+      <div class="card"><h4>🔗 참조 카운팅</h4><p>같은 데이터를 쓰는 다른 세션이 있으면 파일은 남깁니다.</p></div>
+    </div>
+  </section>
+
+  <!-- D4 -->
+  <section id="d4" class="accent-sess">
+    <h2><span class="num">4</span> DB 테이블 지도 — 중심 하나 + 부속들</h2>
+    <p class="lead">중심은 <code>report_session</code> 한 테이블. 나머지는 그 주위에 딸립니다. 모두 <code>report_</code> 접두어로 묶습니다.</p>
+    <div class="db-hub">
+      <div class="grid cols-3" style="width:100%;">
+        <div class="card" style="border-color:var(--sess)"><h4><span class="chip c-sess">요약</span> report_analysis_summary</h4><p>yield·cpk 등 수치 요약 행</p></div>
+        <div class="card" style="border-color:var(--sess)"><h4><span class="chip c-sess">파일위치</span> report_object_info</h4><p>산출물이 S3/로컬 어디 있나</p></div>
+        <div class="card" style="border-color:var(--misc)"><h4><span class="chip c-misc">감사</span> report_audit_log</h4><p>업로드·편집·삭제 이력(삭제돼도 보존)</p></div>
+      </div>
+      <div class="node db-center">report_session <small>세션 1건 = 이 테이블의 행 1개 (session_id)</small></div>
+      <div class="grid cols-3" style="width:100%;">
+        <div class="card" style="border-color:var(--edit)"><h4><span class="chip c-edit">편집내용</span> report_webreport_edit <small style="color:var(--muted)">(+_rev)</small></h4><p>항목 단위 편집값 + 버전번호(rev)</p></div>
+        <div class="card" style="border-color:var(--misc)"><h4><span class="chip c-misc">권한</span> report_session_editor</h4><p>업로더가 위임한 편집자</p></div>
+        <div class="card"><h4><span class="chip c-sess">개인</span> favorite · important · visitor</h4><p>즐겨찾기·개인 중요표시·방문자</p></div>
+      </div>
+    </div>
+    <div class="note"><b>설계 규칙:</b> 시간은 정수(유닉스 초)로, 검색 컬럼엔 INDEX, 새 테이블은 <code>report_</code> 접두어로 통일.</div>
+  </section>
+
+  <!-- D5 -->
+  <section id="d5" class="accent-edit">
+    <h2><span class="num">5</span> 2인 동시 편집 ★ — 지금 방식과 확장</h2>
+    <p class="lead">여러분 프로젝트의 핵심. 현재는 <b>항목(칸) 단위로 저장 + 마지막 저장이 이김</b> 방식입니다.
+      진짜 실시간 협업(구글 독스)은 아니지만, 소수 인원엔 실용적이고 여기서 키울 수 있습니다.</p>
+
+    <div class="two-user">
+      <div>
+        <div class="u-head u-a">사용자 A</div>
+        <div class="card" style="border-radius:0 0 12px 12px; border-top:none;">
+          <p><b>row_5 코멘트</b> 수정 → 저장</p>
+          <p style="margin-top:6px;">INSERT … <code>ON CONFLICT DO UPDATE</code> (upsert)</p>
+        </div>
+      </div>
+      <div>
+        <div class="u-head u-b">사용자 B</div>
+        <div class="card" style="border-radius:0 0 12px 12px; border-top:none;">
+          <p><b>item_12 값</b> 수정 → 저장</p>
+          <p style="margin-top:6px;">기본키 <code>(session, kind, item_key)</code> 가 달라 <b>서로 다른 행</b></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="stack" style="margin:16px 0 4px;">
+      <div class="down" style="background:var(--edit)"></div>
+    </div>
+    <div class="flow" style="align-items:stretch;">
+      <div class="card" style="flex:1 1 240px; border-color:var(--ok)">
+        <h4><span class="chip c-ok">경우 A</span> 서로 다른 칸</h4>
+        <p>✅ 완전 무충돌. 두 저장 모두 그대로 반영 — 사실상 병렬 편집.</p>
+      </div>
+      <div class="card" style="flex:1 1 240px; border-color:var(--danger)">
+        <h4><span class="chip c-danger">경우 B</span> 같은 칸</h4>
+        <p>⚠️ <b>나중에 저장한 사람이 이김</b>(last-write-wins). 먼저 저장한 값은 <b>조용히 사라짐</b>(경고 없음).</p>
+      </div>
+      <div class="card" style="flex:1 1 240px; border-color:var(--accent)">
+        <h4><span class="chip" style="background:var(--accent-soft); color:var(--accent)">공통</span> rev + 1</h4>
+        <p>저장할 때마다 세션 버전번호(rev)가 오름 → 상대가 재조회 시 "최신 아님"을 감지.</p>
+      </div>
+    </div>
+
+    <div class="note warn"><b>정직한 한계:</b> ① 같은 칸 충돌을 <b>감지하지 못함</b> ② 실시간 푸시 아님(재조회 필요)
+      ③ 칸으로 쪼갤 수 있는 데이터에만 잘 맞음(긴 자유 글엔 부적합).</div>
+
+    <h4 style="margin:20px 0 8px;">🚀 여러분 프로젝트에서 더 나아가는 법 (권장 순서)</h4>
+    <div class="grid cols-2">
+      <div class="card" style="border-color:var(--ok)"><h4>A. 낙관적 락 <span class="chip c-ok">★☆☆ 먼저</span></h4>
+        <p>칸마다 <code>version</code> 을 두고 <code>WHERE version=?</code> 로 저장. 안 맞으면 <b>409</b> 반환 →
+        "누가 먼저 고쳤어요, 다시 저장하세요". <b>조용히 사라지는 편집이 없어짐.</b> 가성비 최고.</p></div>
+      <div class="card" style="border-color:var(--accent)"><h4>B. rev 브로드캐스트 <span class="chip" style="background:var(--accent-soft);color:var(--accent)">★★☆</span></h4>
+        <p>이미 있는 rev 를 알리기만. <b>폴링</b>(3~5초마다 rev 확인) → <b>SSE</b> → <b>WebSocket</b> 순으로 즉각성 ↑.
+        소수 인원엔 폴링이면 충분.</p></div>
+      <div class="card"><h4>C. soft lock <span class="chip c-ops">★☆☆</span></h4>
+        <p>기존 TTL 락 패턴 재활용 → "지금 A가 편집 중" 배지 표시(막지는 않음). 실무 충돌이 크게 줄어듦.</p></div>
+      <div class="card"><h4>D. CRDT(Yjs) <span class="chip c-danger">★★★ 최후</span></h4>
+        <p>같은 문단을 동시에 자유 타이핑해야 할 때만. 별도 편집 서버 필요, 복잡도 급증 — <b>대부분 과함.</b></p></div>
+    </div>
+    <div class="note good"><b>한 줄 권고:</b> 지금의 <b>항목단위 upsert + rev</b> 를 유지하고 → <b>A(낙관적 락)</b>
+      먼저 넣고 → 필요하면 <b>B(폴링)</b> 로 준실시간을 얹으세요. CRDT 는 정말 필요할 때만.</div>
+  </section>
+
+  <!-- D6 -->
+  <section id="d6" class="accent-misc">
+    <h2><span class="num">6</span> 권한 판정 흐름 — 누가 무엇을 할 수 있나</h2>
+    <p class="lead">모든 변경 요청은 이 판정을 거칩니다. 가드는 작은 함수 3개(<code>uploader</code> / <code>editor</code> / <code>private</code>)로 나뉩니다.</p>
+    <div class="scroll-x">
+    <svg viewBox="0 0 760 300" width="760" role="img" aria-label="권한 판정 흐름도">
+      <defs>
+        <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+          <path d="M0,0 L7,3 L0,6 Z" fill="var(--muted)"/>
+        </marker>
+        <style>
+          .b{fill:var(--bg); stroke:var(--line); stroke-width:1.5; rx:10;}
+          .q{fill:var(--panel); stroke:var(--misc); stroke-width:2;}
+          .t{fill:var(--ink); font:600 13px sans-serif;}
+          .tm{fill:var(--muted); font:12px sans-serif;}
+          .ln{stroke:var(--muted); stroke-width:1.6; fill:none; marker-end:url(#ah);}
+          .ok{fill:var(--ok);} .bad{fill:var(--danger);}
+        </style>
+      </defs>
+      <!-- start -->
+      <rect class="q" x="20" y="120" width="150" height="52" rx="10"/>
+      <text class="t" x="95" y="142" text-anchor="middle">신원 있나?</text>
+      <text class="tm" x="95" y="160" text-anchor="middle">current_user()</text>
+      <!-- no identity -->
+      <path class="ln" d="M95,120 L95,64"/>
+      <rect class="b" x="30" y="24" width="130" height="40" rx="10"/>
+      <text class="t bad" x="95" y="48" text-anchor="middle">401 읽기전용</text>
+      <text class="tm" x="182" y="102">신원 없음 ▲</text>
+      <!-- to uploader -->
+      <path class="ln" d="M170,146 L215,146"/>
+      <rect class="q" x="215" y="120" width="150" height="52" rx="10"/>
+      <text class="t" x="290" y="142" text-anchor="middle">업로더 본인?</text>
+      <text class="tm" x="290" y="160" text-anchor="middle">is_uploader</text>
+      <!-- uploader yes -> pass (delete/private/grant) -->
+      <path class="ln" d="M290,120 L290,64"/>
+      <rect class="b" x="225" y="24" width="130" height="40" rx="10"/>
+      <text class="t ok" x="290" y="43" text-anchor="middle">전권 통과</text>
+      <text class="tm" x="290" y="57" text-anchor="middle">삭제·비공개·위임</text>
+      <!-- to editor -->
+      <path class="ln" d="M365,146 L410,146"/>
+      <rect class="q" x="410" y="120" width="160" height="52" rx="10"/>
+      <text class="t" x="490" y="142" text-anchor="middle">위임 편집자?</text>
+      <text class="tm" x="490" y="160" text-anchor="middle">session_editor</text>
+      <!-- editor yes -> edit pass -->
+      <path class="ln" d="M490,120 L490,64"/>
+      <rect class="b" x="420" y="24" width="140" height="40" rx="10"/>
+      <text class="t ok" x="490" y="43" text-anchor="middle">편집만 통과</text>
+      <text class="tm" x="490" y="57" text-anchor="middle">내용 수정 가능</text>
+      <!-- editor no -> 403 -->
+      <path class="ln" d="M570,146 L615,146"/>
+      <rect class="b" x="615" y="120" width="125" height="52" rx="10"/>
+      <text class="t bad" x="677" y="142" text-anchor="middle">403</text>
+      <text class="tm" x="677" y="160" text-anchor="middle">권한 없음</text>
+      <!-- private view branch -->
+      <path class="ln" d="M290,172 L290,222"/>
+      <rect class="q" x="205" y="222" width="170" height="52" rx="10"/>
+      <text class="t" x="290" y="244" text-anchor="middle">비공개 세션 조회?</text>
+      <text class="tm" x="290" y="262" text-anchor="middle">private_guard</text>
+      <path class="ln" d="M375,248 L430,248"/>
+      <rect class="b" x="430" y="222" width="150" height="52" rx="10"/>
+      <text class="t bad" x="505" y="244" text-anchor="middle">404 (존재 은닉)</text>
+      <text class="tm" x="505" y="262" text-anchor="middle">403 아님에 주의</text>
+    </svg>
+    </div>
+    <div class="note"><b>미묘하지만 중요:</b> 편집 거부는 <b>403</b>, 비공개 조회 거부는 <b>404</b>.
+      403 을 주면 "세션이 있긴 하네"가 들통납니다. 비공개는 <b>존재 자체를 숨겨야</b> 하므로 404 로 답하고,
+      목록에서도 SQL 로 아예 제외합니다.</div>
+  </section>
+
+  <!-- D7 -->
+  <section id="d7" class="accent-ops">
+    <h2><span class="num">7</span> 백그라운드 자동화 — 스스로 돌보는 서버</h2>
+    <p class="lead">별도 스케줄러 서버 없이, 서버 프로세스 안 <b>데몬 스레드</b> 3개가 주기적으로 돕니다. 모두 같은 패턴.</p>
+    <div class="grid cols-3">
+      <div class="card" style="border-color:var(--ops)"><h4>💾 DB 백업</h4>
+        <p>온라인 백업 API 로 안전 복사 → <code>integrity_check</code> → 깨진 건 <code>.bad</code> 로 격리.
+        WAL checkpoint 로 -wal 비대 방지.</p></div>
+      <div class="card" style="border-color:var(--ops)"><h4>🧹 청소 + 티어링</h4>
+        <p>고아 세션 회수 · 감사로그 롤오프 · 오래된 파일 S3 이동. <b>DRYRUN 기본 ON</b>(진짜론 안 지움).</p></div>
+      <div class="card" style="border-color:var(--ops)"><h4>📈 리소스 측정</h4>
+        <p>10초마다 CPU/메모리를 24h 링버퍼에 기록. 요청 경로엔 정수 증감만(부담 최소).</p></div>
+    </div>
+    <div class="stack" style="margin-top:16px;">
+      <div class="node soft" style="border-color:var(--ops); min-width:280px;">공통 패턴</div>
+      <div class="down" style="background:var(--ops)"></div>
+      <div class="flow" style="flex-wrap:nowrap;">
+        <div class="step" style="min-width:130px;"><div class="t">daemon 스레드</div><div class="d">메인 죽으면 같이 종료</div></div>
+        <div class="arrow-row">▶</div>
+        <div class="step" style="min-width:130px;"><div class="t">_started 가드</div><div class="d">중복 기동 방지</div></div>
+        <div class="arrow-row">▶</div>
+        <div class="step" style="min-width:130px;"><div class="t">try/except 루프</div><div class="d">한 번 실패해도 계속</div></div>
+        <div class="arrow-row">▶</div>
+        <div class="step" style="min-width:130px; border-color:var(--danger)"><div class="t" >DRYRUN 안전판</div><div class="d">위험작업 기본 미실행</div></div>
+      </div>
+    </div>
+    <div class="note warn"><b>꼭 챙길 것:</b> 되돌릴 수 없는 자동 삭제엔 <b>DRYRUN 기본값</b>을. 로그로 며칠
+      지켜본 뒤 확신 서면 켜세요. 이 프로젝트는 아예 "지우기 → 옮기기(S3 아카이브)"로 정책을 바꿨습니다.</div>
+  </section>
+
+  <!-- D8 -->
+  <section id="d8" class="accent-misc">
+    <h2><span class="num">8</span> 신원 확인 — 로그인 없이, 나중에 SSO 로</h2>
+    <p class="lead">로그인 세션이 없습니다. 요청마다 "누구인지"를 그때그때 알아냅니다(stateless).
+      <b>provider 체인</b>으로 나중에 SSO 로 갈아탈 길을 열어뒀습니다.</p>
+    <div class="scroll-x">
+    <div class="flow" style="flex-wrap:nowrap; min-width:620px; align-items:center;">
+      <div class="node" style="border-color:var(--misc); min-width:170px;">current_user() <small>순서대로 시도</small></div>
+      <div class="arrow-row">▶</div>
+      <div class="step" style="min-width:200px; border-color:var(--misc)">
+        <div class="k" style="color:var(--misc)">우선순위 1</div>
+        <div class="t">SSO 헤더</div>
+        <div class="d"><code>AUTH_SSO_HEADER</code> env 켜졌을 때만</div>
+      </div>
+      <div class="arrow-row">▶</div>
+      <div class="step" style="min-width:200px;">
+        <div class="k">우선순위 2 (기본)</div>
+        <div class="t">User-Agent 토큰</div>
+        <div class="d"><code>HoneyUser/계정</code> 파싱</div>
+      </div>
+      <div class="arrow-row">▶</div>
+      <div class="step" style="min-width:150px; border-color:var(--ok)">
+        <div class="k" style="color:var(--ok)">결과</div>
+        <div class="t">계정 문자열</div>
+        <div class="d">없으면 읽기전용</div>
+      </div>
+    </div>
+    </div>
+    <div class="note"><b>확장 포인트:</b> 회사에 SSO 가 생기면 환경변수 하나만 켜면 전환 — <b>코드 무변경.</b>
+      단, 헤더를 신뢰하려면 앞단 역프록시가 외부에서 온 같은 헤더를 <b>반드시 제거</b>해야 위조를 막습니다.</div>
+  </section>
+
+  <!-- D9 -->
+  <section id="d9">
+    <h2><span class="num">9</span> 그대로 훔쳐 써도 되는 패턴 카드</h2>
+    <p class="lead">새 프로젝트 초석. 아래 카드를 그대로 따라가면 탄탄합니다.</p>
+    <div class="grid cols-2">
+      <div class="card"><h4>🧱 층 나누기 + facade</h4><p>진입점·조립·라우트·보안·신원·DB창구·운영을 분리. DB 접근은 창구 하나로.</p></div>
+      <div class="card"><h4>🗄 SQLite = WAL + 온라인 백업</h4><p>PRAGMA 는 커넥션마다, 백업은 backup API(파일 복사 금지).</p></div>
+      <div class="card"><h4>🔧 손 마이그레이션</h4><p><code>CREATE IF NOT EXISTS</code> + <code>table_info</code> 확인 후 <code>ALTER ADD</code>.</p></div>
+      <div class="card"><h4>🛡 SQL 안전</h4><p>값은 항상 <code>?</code> 바인딩, 컬럼명·수정필드는 코드 화이트리스트.</p></div>
+      <div class="card"><h4>🪪 stateless 신원 + provider 체인</h4><p>나중에 SSO 전환 여지를 env 로 열어두기.</p></div>
+      <div class="card"><h4>🚦 가드 분리</h4><p>조회 거부=404(은닉), 편집 거부=403. CSRF=double-submit 쿠키.</p></div>
+      <div class="card"><h4>🧾 감사 로그 + best-effort</h4><p>부수작업(로그·캐시) 실패가 본 작업을 안 막게 <code>try/except</code>.</p></div>
+      <div class="card"><h4>⏱ 데몬 스케줄러 + DRYRUN</h4><p><code>_started</code> 가드 + 위험작업 기본 미실행.</p></div>
+      <div class="card" style="border-color:var(--edit)"><h4>👥 동시 편집</h4><p>항목단위 upsert + rev → 낙관적 락(409) → 폴링 준실시간.</p></div>
+      <div class="card"><h4>⚡ 응답 성능</h4><p>gzip + ETag(304) + 캐시키에 rev(무효화 토큰).</p></div>
+    </div>
+  </section>
+
+  <p class="footer">이 도식은 <code>report_server</code> 의 서버·세션 관리 부분을 신규 프로젝트 벤치마킹용으로
+    정리한 것입니다. 세부 코드·근거는 함께 있는 <code>SERVER_ARCHITECTURE_HANDOFF.md</code> 와 실제 소스를 확인하세요.</p>
+</div>
+
+<script>
+  // 테마 토글: prefers-color-scheme 기본 + 버튼으로 강제 전환
+  function currentTheme(){
+    return document.documentElement.getAttribute('data-theme')
+      || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
+  }
+  function toggleTheme(){
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+  }
+  // 목차 클릭 시 부드럽게 스크롤
+  document.querySelectorAll('nav.toc a').forEach(function(a){
+    a.addEventListener('click', function(e){
+      var el = document.querySelector(a.getAttribute('href'));
+      if(el){ e.preventDefault(); el.scrollIntoView({behavior:'smooth', block:'start'}); }
+    });
+  });
+</script>
+</body>
+</html>
