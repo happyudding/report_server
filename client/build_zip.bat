@@ -8,9 +8,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ".\release\release_honey.ps1
 if errorlevel 1 (
   echo.
   echo [ERROR] Honey ZIP release build failed.
+  echo [ERROR] 로그: client\release\logs\ 의 최신 release_*.log 파일을 확인하세요.
+  echo         ^(pip/PyInstaller 상세 에러는 위 콘솔 출력에서 확인^)
+  pause
   exit /b 1
 )
 
 echo.
 echo === DONE ===
+pause
 exit /b 0

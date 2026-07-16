@@ -28,6 +28,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# 빌드 전 과정을 로그 파일로 남긴다 — 더블클릭 실행 중 에러로 창이 닫혀도(또는 놓쳐도)
+# 나중에 client\release\logs\release_<시각>.log 로 원인을 확인할 수 있다. 콘솔에도 그대로
+# 출력되고 대화형 릴리스 코멘트 입력도 정상 동작한다. 실패(throw) 시에도 자동으로 저장된다.
+# 주의(PowerShell 5.1 한계): 이 로그는 단계 표시·에러·종료코드는 남기지만 pip/PyInstaller
+# 같은 네이티브 exe 의 상세 출력은 남기지 못한다. 그 상세는 열려 있는 콘솔 창에서 확인.
+$LogDir = Join-Path $PSScriptRoot "logs"
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir | Out-Null }
+$LogPath = Join-Path $LogDir ("release_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
+try { Start-Transcript -Path $LogPath -Force | Out-Null } catch { }
+Write-Host "로그 파일: $LogPath" -ForegroundColor DarkGray
+
 $ClientDir   = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $RepoRoot    = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $ConfigPy    = Join-Path $ClientDir "transport\config.py"
@@ -215,3 +226,4 @@ Write-Host "    -> $ReleaseLog"
 Write-Host ""
 Write-Host "[DONE] Honey $Version ZIP release completed." -ForegroundColor Green
 Write-Host "Server restart is not required. Clients will see the update on next launch." -ForegroundColor Green
+try { Stop-Transcript | Out-Null } catch { }

@@ -194,9 +194,13 @@ function binColor(bin) {
 // (맵 셀 bin 번호 텍스트는 표시하지 않는다 — Bin 은 Legend/ hover 로 확인.)
 function waferHeatmap(m, opts) {
   opts = opts || {};
+  // opts.grid = compact grid(빈 행/열 제거). 있으면 격자를 raw span 대신 distinct 좌표 수로
+  // 잡아 셀 수를 die 수(≈)로 묶는다 — 넓은 span/이상치 좌표에도 메모리 폭증 없음. Detail 전용.
+  const grid = opts.grid || null;
   const xMin = m.x_min, xMax = m.x_max, yMin = m.y_min, yMax = m.y_max;
-  if (xMin == null || yMin == null) return null;
-  const W = xMax - xMin + 1, H = yMax - yMin + 1;
+  if (grid) { if (!(grid.W > 0) || !(grid.H > 0)) return null; }
+  else if (xMin == null || yMin == null) return null;
+  const W = grid ? grid.W : xMax - xMin + 1, H = grid ? grid.H : yMax - yMin + 1;
   const order = opts.order || opts.binOrder || (m.bin_counts || []).map(bc => bc.bin);
   const colorMap = opts.colorMap || makeBinColorMap(order);
   const catOf = opts.catOf || (d => d.bin);   // die → 색 카테고리(기본 bin). TNO/회색은 호출부가 지정.
@@ -211,22 +215,26 @@ function waferHeatmap(m, opts) {
   const z = Array.from({ length: H }, () => Array(W).fill(null));
   const cdata = Array.from({ length: H }, () => Array(W).fill(""));
   (m.dies || []).forEach(d => {
-    const c = d.x - xMin, r = d.y - yMin;
-    if (r < 0 || r >= H || c < 0 || c >= W) return;
+    const c = grid ? grid.xIdx[d.x] : d.x - xMin;
+    const r = grid ? grid.yIdx[d.y] : d.y - yMin;
+    if (r == null || c == null || r < 0 || r >= H || c < 0 || c >= W) return;
     const cat = catOf(d);
     const idx = catIndex[cat] != null ? catIndex[cat] : 0;
     z[r][c] = idx + 0.5;
-    cdata[r][c] = d.g ? "(prev-fail)" : cat;   // hover 표시(회색 die 는 이전 step fail)
+    // compact 는 index 공간이라 %{x}/%{y} 가 실제 좌표가 아니다 → hover 문자열에 실제 좌표를 담는다.
+    const label = d.g ? "(prev-fail)" : cat;   // hover 표시(회색 die 는 이전 step fail)
+    cdata[r][c] = grid ? ("(" + d.x + ", " + d.y + ")<br>" + label) : label;
   });
 
   const trace = {
     type: "heatmap", z, zmin: 0, zmax: N,
-    x0: xMin, dx: 1, y0: yMin, dy: 1,
+    x0: grid ? 0 : xMin, dx: 1, y0: grid ? 0 : yMin, dy: 1,
     colorscale: binColorscale(order, colorMap),
     showscale: false, xgap: useGap ? 0.5 : 0, ygap: useGap ? 0.5 : 0, hoverongaps: false,
     customdata: cdata,
   };
   if (opts.mini) trace.hoverinfo = "skip";
+  else if (grid) trace.hovertemplate = "%{customdata}<extra></extra>";
   else trace.hovertemplate = opts.hovertemplate || "(%{x}, %{y})<br>%{customdata}<extra></extra>";
   return { trace, colorMap, binOrder: order };
 }
@@ -247,8 +255,29 @@ function waferCellYScale(m) {
   return (W > 0 && H > 0) ? W / H : 1;
 }
 
+// compact 축 눈금: index(0..n-1) → 실제 좌표(vals). 양끝 포함 ~8개 균등 샘플.
+function _compactTicks(vals) {
+  const n = (vals || []).length;
+  if (!n) return null;
+  const cnt = Math.min(n, 8);
+  const tickvals = [], ticktext = [], seen = {};
+  for (let i = 0; i < cnt; i++) {
+    const idx = cnt === 1 ? 0 : Math.round(i * (n - 1) / (cnt - 1));
+    if (seen[idx]) continue;
+    seen[idx] = 1;
+    tickvals.push(idx);
+    ticktext.push(String(vals[idx]));
+  }
+  return { tickvals, ticktext };
+}
+
 function waferLayout(m, opts) {
   opts = opts || {};
+  // opts.grid = compact grid → 축이 index 공간이므로 비율은 compact W/H, 눈금은 실제 좌표로.
+  const grid = opts.grid || null;
+  const ratio = grid ? (grid.H > 0 ? grid.W / grid.H : 1) : waferCellYScale(m);
+  const xt = grid ? _compactTicks(grid.xs) : null;
+  const yt = grid ? _compactTicks(grid.ys) : null;
   const layout = {
     margin: opts.mini ? { l: 2, r: 2, t: 2, b: 2 } : { l: 42, r: 10, t: 8, b: 36 },
     paper_bgcolor: "#ffffff", plot_bgcolor: "#ffffff", font: PLOTLY_FONT,
@@ -258,9 +287,11 @@ function waferLayout(m, opts) {
              title: opts.mini ? "" : "X", visible: !opts.mini },
     // 웨이퍼 맵 관례: Y 는 위에서 아래로 내려갈수록 커진다(=y축 역방향).
     yaxis: { zeroline: false, showgrid: false, constrain: "domain",
-             scaleanchor: "x", scaleratio: waferCellYScale(m), autorange: "reversed",
+             scaleanchor: "x", scaleratio: ratio, autorange: "reversed",
              title: opts.mini ? "" : "Y", visible: !opts.mini },
   };
+  if (xt) { layout.xaxis.tickmode = "array"; layout.xaxis.tickvals = xt.tickvals; layout.xaxis.ticktext = xt.ticktext; }
+  if (yt) { layout.yaxis.tickmode = "array"; layout.yaxis.tickvals = yt.tickvals; layout.yaxis.ticktext = yt.ticktext; }
   return layout;
 }
 
@@ -376,7 +407,8 @@ function waferCompactGrid(m) {
   const xIdx = {}, yIdx = {};
   xs.forEach((v, i) => { xIdx[v] = i; });
   ys.forEach((v, i) => { yIdx[v] = i; });
-  m._compact = { xIdx, yIdx, W: xs.length, H: ys.length };
+  // xs/ys = index→실제좌표 역매핑(Detail 축 tick 라벨용). 갤러리·마커는 무시(하위호환).
+  m._compact = { xIdx, yIdx, W: xs.length, H: ys.length, xs, ys };
   return m._compact;
 }
 
@@ -850,16 +882,18 @@ function mapDetailAxis() {
 // heatmap trace + 선택 좌표 오버레이. opts 로 forceGap 을 waferHeatmap 에 전달. 축은 mapColorKey.
 function mapDetailTraces(m, opts) {
   const axis = mapDetailAxis();
+  const g = waferCompactGrid(m);   // 상세는 compact 격자로 그린다(메모리 span 무관 — OOM 방지).
   const built = waferHeatmap(m, Object.assign(
-    { catOf: axis.catOf, order: axis.order, colorMap: axis.colorMap }, opts || {}));
+    { catOf: axis.catOf, order: axis.order, colorMap: axis.colorMap, grid: g }, opts || {}));
   if (!built) return null;
   const traces = [built.trace];
   mapSelChips.forEach(c => {
-    if (c.source === m.source && c.x != null && c.y != null) {
-      traces.push({ type: "scatter", mode: "markers", x: [c.x], y: [c.y],
-        marker: { symbol: "circle-open", size: 22, color: c.color, line: { width: 3, color: c.color } },
-        hovertemplate: `X ${c.x} · Y ${c.y}<extra></extra>` });
-    }
+    if (c.source !== m.source || c.x == null || c.y == null) return;
+    const cx = g.xIdx[c.x], cy = g.yIdx[c.y];   // heatmap 이 index 공간이므로 마커도 index 위치
+    if (cx == null || cy == null) return;
+    traces.push({ type: "scatter", mode: "markers", x: [cx], y: [cy],
+      marker: { symbol: "circle-open", size: 22, color: c.color, line: { width: 3, color: c.color } },
+      hovertemplate: `X ${c.x} · Y ${c.y}<extra></extra>` });
   });
   return traces;
 }
@@ -872,13 +906,14 @@ const MAP_DETAIL_CONFIG = {
 function drawMapDetail(m, opts) {
   const traces = mapDetailTraces(m, opts);
   if (!traces) return;
-  Plotly.newPlot("map-detail-plot", traces, waferLayout(m, {}), MAP_DETAIL_CONFIG);
+  Plotly.newPlot("map-detail-plot", traces, waferLayout(m, { grid: waferCompactGrid(m) }), MAP_DETAIL_CONFIG);
 }
 
 // 확대 시 보이는 die 가 임계 이하로 줄면 격자선을 복원하고, 리셋하면 이미지 모드로.
 // forced 가드로 상태가 안 바뀌면 재렌더를 생략해 relayout 무한루프를 막는다.
 function bindMapDetailZoom(el, m) {
   if (!el || !el.on) return;
+  const g = waferCompactGrid(m);   // 축이 compact index 공간 → die 좌표를 index 로 환산해 비교.
   let forced = false;
   el.on("plotly_relayout", () => {
     const xa = el.layout && el.layout.xaxis, ya = el.layout && el.layout.yaxis;
@@ -892,7 +927,9 @@ function bindMapDetailZoom(el, m) {
       const dies = m.dies || [];
       for (let k = 0; k < dies.length; k++) {
         const d = dies[k];
-        if (d.x >= x0 && d.x <= x1 && d.y >= y0 && d.y <= y1) visible++;
+        const cx = g.xIdx[d.x], cy = g.yIdx[d.y];
+        if (cx == null || cy == null) continue;
+        if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) visible++;
       }
     }
     const wantForce = visible <= MAP_DENSE_DIES;

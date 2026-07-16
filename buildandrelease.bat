@@ -24,5 +24,8 @@ set "REL_EXIT=%ERRORLEVEL%"
 if not "%REL_EXIT%"=="0" (
   echo.
   echo [ERROR] release failed with exit code %REL_EXIT%.
+  echo [ERROR] 로그: client\release\logs\ 의 최신 release_*.log 파일을 확인하세요.
+  echo         ^(pip/PyInstaller 상세 에러는 위 콘솔 출력에서 확인^)
 )
+pause
 exit /b %REL_EXIT%
