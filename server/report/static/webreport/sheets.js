@@ -664,3 +664,138 @@ function yieldOverviewHtml() {
   </div>`;
 }
 
+// ── Excel식 셀 선택/복사 (Issue Table) ─────────────────────────────────────────
+// 클릭 = 1셀, 드래그 = 사각 범위 선택 → Ctrl+C 로 TSV 복사 (Excel 붙여넣기 호환).
+// 이벤트 위임(document)이라 탭 재렌더에도 리스너 재바인딩이 필요 없다.
+// 활성 contenteditable·버튼·select 등 interactive 요소에서는 선택을 시작하지 않아
+// 편집 렌더(dblclick 편집·상태 select·TNO 펼침)와 간섭하지 않는다.
+const CELLSEL_SCOPE = "#panel-issues";  // 적용 패널 — 확장 시 콤마 셀렉터로 추가
+let _cellSel = null;   // {table, r1, c1, r2, c2}
+let _cellDrag = null;  // {table, r1, c1, moved}
+
+function cellSelClear() {
+  if (!_cellSel) return;
+  _cellSel.table.querySelectorAll("td.cell-sel").forEach(td => td.classList.remove("cell-sel"));
+  _cellSel = null;
+}
+
+// 선택 사각형(minR..maxR × minC..maxC)을 .cell-sel 클래스로 표시 (숨김 행 제외).
+function cellSelPaint(sel) {
+  const rA = Math.min(sel.r1, sel.r2), rB = Math.max(sel.r1, sel.r2);
+  const cA = Math.min(sel.c1, sel.c2), cB = Math.max(sel.c1, sel.c2);
+  sel.table.querySelectorAll("td[data-r][data-c]").forEach(td => {
+    const r = +td.dataset.r, c = +td.dataset.c;
+    const on = r >= rA && r <= rB && c >= cA && c <= cB && !!td.offsetParent;
+    td.classList.toggle("cell-sel", on);
+  });
+}
+
+// 셀 표시 텍스트 — select 는 현재 값, 그 외는 렌더 텍스트(개행은 공백으로, TSV 격자 보존).
+function cellSelText(td) {
+  const sel = td.querySelector("select");
+  if (sel) return String(sel.value || "");
+  return String(td.innerText || "").replace(/\s+/g, " ").trim();
+}
+
+// 선택 범위 → TSV. 접힌(display:none) 행은 제외, 행 안의 빈 좌표는 빈 문자열로 채운다.
+function cellSelTsv(sel) {
+  const rA = Math.min(sel.r1, sel.r2), rB = Math.max(sel.r1, sel.r2);
+  const cA = Math.min(sel.c1, sel.c2), cB = Math.max(sel.c1, sel.c2);
+  const grid = new Map();  // r → Map(c → text)
+  let count = 0;
+  sel.table.querySelectorAll("td[data-r][data-c]").forEach(td => {
+    const r = +td.dataset.r, c = +td.dataset.c;
+    if (r < rA || r > rB || c < cA || c > cB || !td.offsetParent) return;
+    if (!grid.has(r)) grid.set(r, new Map());
+    grid.get(r).set(c, cellSelText(td));
+    count++;
+  });
+  const lines = [];
+  // spread 대신 Array.from — QJSEngine 검증 하네스 파서 호환 (js-verify 관례)
+  Array.from(grid.keys()).sort((a, b) => a - b).forEach(r => {
+    const row = grid.get(r), cells = [];
+    for (let c = cA; c <= cB; c++) cells.push(row.has(c) ? row.get(c) : "");
+    lines.push(cells.join("\t"));
+  });
+  return { text: lines.join("\n"), count };
+}
+
+// HTTP LAN 환경에선 navigator.clipboard 가 없어(secure context 아님) execCommand 폴백 필수.
+function cellSelCopyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(() => true, () => _cellSelExecCopy(text));
+  }
+  return Promise.resolve(_cellSelExecCopy(text));
+}
+function _cellSelExecCopy(text) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.cssText = "position:fixed;opacity:0";
+  document.body.appendChild(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+// mousedown 대상이 선택 가능한 셀이면 반환 (interactive 요소 위는 null).
+function _cellSelTarget(ev) {
+  const td = ev.target.closest ? ev.target.closest("td[data-r][data-c]") : null;
+  if (!td || !td.closest(CELLSEL_SCOPE)) return null;
+  if (ev.target.closest("button, select, a, input, textarea, [contenteditable='true']")) return null;
+  return td;
+}
+
+document.addEventListener("mousedown", (ev) => {
+  if (ev.button !== 0) return;
+  const td = _cellSelTarget(ev);
+  if (!td) { cellSelClear(); return; }  // 표 밖/interactive 요소 클릭 → 선택 해제
+  const table = td.closest("table");
+  cellSelClear();
+  _cellDrag = { table, r1: +td.dataset.r, c1: +td.dataset.c, moved: false };
+  _cellSel = { table, r1: _cellDrag.r1, c1: _cellDrag.c1, r2: _cellDrag.r1, c2: _cellDrag.c1 };
+  cellSelPaint(_cellSel);
+});
+
+document.addEventListener("mousemove", (ev) => {
+  if (!_cellDrag) return;
+  const td = ev.target.closest ? ev.target.closest("td[data-r][data-c]") : null;
+  if (!td || td.closest("table") !== _cellDrag.table) return;
+  const r2 = +td.dataset.r, c2 = +td.dataset.c;
+  if (_cellSel && r2 === _cellSel.r2 && c2 === _cellSel.c2) return;  // 같은 셀이면 재도색 생략
+  if (!_cellDrag.moved) {
+    // 드래그 진입 시점에만 네이티브 텍스트 선택 억제 (단일 클릭 셀 내 텍스트 선택은 보존)
+    _cellDrag.moved = true;
+    _cellDrag.table.classList.add("cell-drag");
+    const s = window.getSelection && window.getSelection();
+    if (s) s.removeAllRanges();
+  }
+  _cellSel.r2 = r2;
+  _cellSel.c2 = c2;
+  cellSelPaint(_cellSel);
+});
+
+document.addEventListener("mouseup", () => {
+  if (_cellDrag) { _cellDrag.table.classList.remove("cell-drag"); _cellDrag = null; }
+});
+
+document.addEventListener("keydown", (ev) => {
+  if (!_cellSel) return;
+  if (ev.key === "Escape") { cellSelClear(); return; }
+  if (!(ev.ctrlKey || ev.metaKey) || (ev.key !== "c" && ev.key !== "C")) return;
+  // 사용자가 텍스트를 직접 드래그 선택했거나 편집 중이면 기본 복사에 양보
+  const s = window.getSelection && window.getSelection();
+  if (s && String(s).length) return;
+  const ae = document.activeElement;
+  if (ae && (ae.isContentEditable || ae.tagName === "INPUT" || ae.tagName === "TEXTAREA")) return;
+  const { text, count } = cellSelTsv(_cellSel);
+  if (!count) return;
+  ev.preventDefault();
+  cellSelCopyText(text).then(ok => {
+    if (typeof showToast === "function") {
+      showToast(ok ? `${count}개 셀 복사됨` : "복사 실패 — 브라우저가 클립보드를 차단했습니다");
+    }
+  });
+});
+

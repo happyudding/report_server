@@ -34,12 +34,30 @@ def _stat(path: Path) -> int:
         return 0
 
 
+def _recent_export_failures(days: int = 7) -> int:
+    """최근 N일 eval_export 실패 건수 (report.db 감사 로그, created_at=epoch) —
+    Eval DB 탭 경고 배지용. 조회 실패는 0 (best-effort)."""
+    try:
+        import time
+        from database import report_db
+        cutoff = time.time() - days * 86400
+        rows = report_db.get_audit_logs(action="eval_export", limit=1000)
+        return sum(1 for r in rows
+                   if r.get("result") == "error" and (r.get("created_at") or 0) >= cutoff)
+    except Exception:
+        _log.warning("eval_export 실패 카운트 조회 실패", exc_info=True)
+        return 0
+
+
 def overview() -> dict:
     """상단 카드용: 파일 경로/크기, user_version, 테이블별 건수, 세션/케이스/라벨 수."""
     path = db_path()
+    recent_failures = _recent_export_failures()
     conn = eval_export.open_conn(create=False)
     if conn is None:
-        return {"exists": False, "path": str(path)}
+        # export 가 파일 생성 전에 실패할 수 있어 실패 카운트는 DB 부재 시에도 노출
+        return {"exists": False, "path": str(path),
+                "recent_failures": recent_failures}
     try:
         user_version = conn.execute("PRAGMA user_version").fetchone()[0]
         names = [r["name"] for r in conn.execute(
@@ -61,6 +79,7 @@ def overview() -> dict:
         "user_version": user_version, "table_counts": counts,
         "sessions": sessions,
         "cases": counts.get("fail_case", 0), "labels": counts.get("label", 0),
+        "recent_failures": recent_failures,
     }
 
 

@@ -311,6 +311,12 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table td.editing-cell:focus { box-shadow: inset 0 0 0 2px #4a90e2; }
 .sheet-table td.dblclick-edit { cursor: pointer; }
 .sheet-table td.dblclick-edit[contenteditable="true"] { cursor: text; }
+/* Excel식 셀 선택 (sheets.js 셀 선택/복사) — 반투명 오버레이라 라이트/다크 공용 */
+.sheet-table td.cell-sel {
+  box-shadow: inset 0 0 0 1px #2563eb;
+  background: rgba(37, 99, 235, .13) !important;
+}
+.sheet-table.cell-drag { user-select: none; }  /* 셀 드래그 중 네이티브 텍스트 선택 억제 */
 .sheet-table td.sheet-subhead {
   background: #e8eef4 !important; font-weight: 700; color: #1a3a5c;
 }
@@ -1762,6 +1768,7 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
   </div>
 </div>
 
+<script src="/pe/report/static/webreport/error_beacon.js"></script>
 <script src="/pe/report/static/webreport/core.js"></script>
 <script src="/pe/report/static/webreport/tabs_topbar.js"></script>
 <script src="/pe/report/static/webreport/sheets.js"></script>

@@ -781,11 +781,16 @@ async function loadEvalTab() { loadEvalOverview(); loadEvalLabels(); }
 async function loadEvalOverview() {
   try {
     const o = await getJSON("api/eval/overview");
+    // export 실패 경고 배지 — 0건이면 숨김 (safe_export 가 감사 로그에 남긴 실패)
+    const failTile = (o.recent_failures > 0) ? `
+      <div class="tile"><div class="lbl">⚠ 최근 7일 export 실패</div>
+        <div class="val" style="color:#dc2626">${o.recent_failures.toLocaleString()}</div>
+        <div class="det">User Action Monitoring 에서 action=eval_export 로 상세 조회</div></div>` : "";
     if (!o.exists) {
       $("evalTiles").innerHTML = `
         <div class="tile"><div class="lbl">Eval DB 없음</div>
           <div class="val" style="font-size:18px">미생성</div>
-          <div class="det">아직 적재된 코멘트가 없습니다 · ${esc(o.path)}</div></div>`;
+          <div class="det">아직 적재된 코멘트가 없습니다 · ${esc(o.path)}</div></div>` + failTile;
       return;
     }
     $("evalTiles").innerHTML = `
@@ -798,7 +803,7 @@ async function loadEvalOverview() {
         <div class="val">${o.labels.toLocaleString()}</div></div>
       <div class="tile"><div class="lbl">적재 세션</div>
         <div class="val">${o.sessions.toLocaleString()}</div>
-        <div class="det">ingest_run.session_id 기준</div></div>`;
+        <div class="det">ingest_run.session_id 기준</div></div>` + failTile;
   } catch (e) {
     $("evalTiles").innerHTML = `<div class="tile"><div class="lbl">Eval DB 조회 실패</div><div class="det">${esc(e)}</div></div>`;
   }

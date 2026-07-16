@@ -154,6 +154,23 @@
       border-bottom: 5px solid var(--yellow);
     }
 
+    .hero .back-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 14px;
+      padding: 7px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .hero .back-btn:hover { background: rgba(255, 255, 255, 0.18); }
+
     .hero h1 {
       margin: 0;
       font-size: clamp(1.8rem, 4vw, 2.65rem);
@@ -443,6 +460,7 @@
       aside,
       .mobile-header,
       .top-link,
+      .back-btn,
       dialog { display: none !important; }
       .layout { display: block; }
       .hero { color: #000; background: #fff; border-bottom: 2px solid #000; }
@@ -495,6 +513,8 @@
       </div>
 
       <header class="hero">
+        <button type="button" class="back-btn"
+                onclick="if (history.length > 1) history.back(); else location.href = '/pe/report/';">← 뒤로가기</button>
         <h1>HONEY 기능 도움말</h1>
         <p>보고서 생성 · 검색 · 분석 · 편집 버튼 설명</p>
       </header>

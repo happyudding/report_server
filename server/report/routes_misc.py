@@ -92,6 +92,11 @@ def view_page(session_id):
     return send_html_gzip(REPORT_VIEW_HTML)   # CSRF 쿠키는 after_request 가 발급
 
 
+@report_bp.get("/help")
+def help_page():
+    return send_html_gzip(REPORT_VIEW_HTML.parent / "help.html")
+
+
 # ── Vendored 정적 자산 (Tabulator 등) ─────────────────────────────────────────
 # report_view.html 이 send_file 로 통째 전송되고 정적 폴더 라우트가 없으므로, vendoring 한
 # JS/CSS 를 화이트리스트로만 서빙(경로 traversal 차단). CDN/인터넷 불필요(폐쇄망 대응).
@@ -263,6 +268,60 @@ def part_ids():
     파일 없음/파싱 실패는 best-effort 로 빈 리스트 반환(500 안 냄) — product_info 로더가 내부 처리.
     """
     return jsonify({"part_ids": list_search_candidates()})
+
+
+# ── 클라이언트 JS 에러 beacon (error_beacon.js) ───────────────────────────────
+
+_CLIENT_ERR_MAX_BODY = 8 * 1024
+_CLIENT_ERR_WINDOW = 60.0            # per-IP 스로틀 창(초)
+_CLIENT_ERR_MAX_PER_WINDOW = 10
+_client_err_hits = {}                # {ip: [epoch, ...]} — best-effort in-memory
+
+
+def _client_err_throttled(ip):
+    import time
+    now = time.time()
+    hits = [t for t in _client_err_hits.get(ip, ()) if now - t < _CLIENT_ERR_WINDOW]
+    if len(hits) >= _CLIENT_ERR_MAX_PER_WINDOW:
+        _client_err_hits[ip] = hits
+        return True
+    hits.append(now)
+    if len(_client_err_hits) > 1000:  # dict 비대 방지 (스로틀 리셋 감수)
+        _client_err_hits.clear()
+    _client_err_hits[ip] = hits
+    return False
+
+
+@report_bp.post("/api/client_error")
+def client_error():
+    """브라우저 JS 에러 beacon 수신. CSRF 미적용 — sendBeacon 은 커스텀 헤더를 못
+    붙이고 이 라우트는 로그 기록만 한다. 어떤 입력에도 항상 204 (beacon 은 실패 불가)."""
+    ip = request.remote_addr or "?"
+    if (request.content_length or 0) > _CLIENT_ERR_MAX_BODY or _client_err_throttled(ip):
+        return "", 204
+    body = request.get_json(force=True, silent=True) or {}
+    msg = str(body.get("message") or "")[:500]
+    if not msg:
+        return "", 204
+    session_id = re.sub(r"[^0-9a-zA-Z_\-]", "", str(body.get("session_id") or ""))[:64]
+    detail = " | ".join(p for p in (
+        str(body.get("kind") or "error"),
+        msg,
+        f"{str(body.get('source'))[:300]}:{body.get('line') or ''}" if body.get("source") else "",
+        f"tab={body.get('tab')}" if body.get("tab") else "",
+        str(body.get("url") or "")[:300],
+        str(body.get("stack") or "")[:1000],
+    ) if p)
+    _log.warning("client_error [%s] %s", ip, detail)
+    try:  # 감사 기록은 best-effort — 실패해도 beacon 응답은 정상
+        report_db.log_audit(
+            action="client_error", session_id=session_id or None,
+            changed_fields=detail[:1500], client_ip=ip,
+            user_agent=request.headers.get("User-Agent"),
+            client_user=_current_user(), result="error")
+    except Exception:
+        _log.warning("client_error 감사 기록 실패", exc_info=True)
+    return "", 204
 
 
 # ── debug helpers ─────────────────────────────────────────────────────────────

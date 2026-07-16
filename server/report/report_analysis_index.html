@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>PTE REPORT DASHBOARD</title>
+<script src="/pe/report/static/webreport/error_beacon.js"></script>
 <script>
 /* 테마 부트스트랩: 첫 페인트 전에 저장된 다크 테마 적용 (FOUC 방지).
    localStorage "report_theme" 는 검색결과/세션 상세 페이지가 공유한다. */
@@ -106,6 +107,16 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   background: #e5e7eb; border-color: #d1d5db; color: #9ca3af;
   cursor: not-allowed; pointer-events: none;
 }
+
+.help-btn {
+  flex: 0 0 auto; height: 34px; padding: 0 16px;
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: 8px; border: 1px solid #4a90e2;
+  background: #4a90e2; color: #fff; font-size: 20px; font-weight: 600;
+  text-decoration: none; cursor: pointer; transition: all .15s;
+  white-space: nowrap;
+}
+.help-btn:hover { background: #3a7bc8; border-color: #3a7bc8; }
 
 .filter-card {
   background: #fff; border-radius: 10px; padding: 10px 14px;
@@ -320,6 +331,7 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
 <header class="page-header">
   <h1 class="page-title">PTE REPORT DASHBOARD</h1>
   <div style="display:flex; align-items:center; gap:14px;">
+    <a class="help-btn" href="/pe/report/help">❓ HELP</a>
     <a id="honeyDlBtn" class="honey-dl-btn" href="/honey/download">⬇ HONEY 다운로드</a>
     <a class="back-main-btn" href="https://lsipte--github-test-dev.cdep1.samsungds.net">BACK TO MAIN</a>
     <button class="theme-toggle" id="themeToggle" title="다크 모드로 전환">🌙</button>

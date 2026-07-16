@@ -126,6 +126,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `GET` | `/view/<sid>` | 공개 | 세션 상세 페이지 (HTML) |
 | `GET` | `/api/history` | 공개 | 세션 목록 JSON (필터: product_type/product/lot_id/source) |
 | `GET` | `/api/part_ids` | 공개 | 기준정보 part id 목록 (stdinfo DB) |
+| `POST` | `/api/client_error` | 공개 | 브라우저 JS 에러 beacon 수신 (error_beacon.js — CSRF 미적용, per-IP 스로틀, 감사 action=`client_error`) |
 | `GET` | `/result/<sid>` | 공개 | 세션 요약 JSON |
 | `GET` | `/session/<sid>` | 공개 | 세션 메타 JSON (password 제거, has_password 만) |
 | `GET` | `/session/<sid>/full` | 공개 | 세션 전체 데이터 JSON (summary+objects+주석+추출텍스트) |

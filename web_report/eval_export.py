@@ -346,9 +346,14 @@ def safe_export(session_id: str, *, report_db, upload_root, tables=None) -> dict
     try:
         return export_session_comments(session_id, report_db=report_db,
                                        upload_root=upload_root, tables=tables)
-    except Exception:
+    except Exception as exc:
         logger.warning("eval_export 실패 — 무시하고 진행 (session=%s)", session_id,
                        exc_info=True)
+        try:  # 조용한 적재 누락 방지 — admin User Action Monitoring/Eval DB 탭에서 확인
+            report_db.log_audit(action="eval_export", session_id=session_id,
+                                result="error", changed_fields=repr(exc)[:500])
+        except Exception:
+            pass  # 감사 기록 실패가 업로드/편집을 죽이면 안 됨 (기존 격리 원칙)
         return {"skipped": "error"}
 
 
