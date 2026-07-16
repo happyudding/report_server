@@ -10,6 +10,7 @@ REPORT_CLEANUP_DRYRUN=True(기본) 이면 실제 삭제 없이 대상만 로그/
 실삭제하려면 REPORT_CLEANUP_DRYRUN=0 으로 명시해야 한다.
 """
 import logging
+import re
 import threading
 import time
 from pathlib import Path
@@ -19,6 +20,8 @@ from database import report_db
 
 _log = logging.getLogger(__name__)
 _started = False
+
+_AKEY_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _log_audit(session, result):
@@ -98,9 +101,52 @@ def _purge_audit_logs():
         return 0
 
 
+def _purge_fs_orphans(dry_run):
+    """DB 참조 없는 uploads/web_report/<akey>/ 고아 산출물 회수. 대상 건수 반환.
+
+    ingest 는 저장(파일/S3) 후 세션행을 만들므로(web_report/ingest.py) 그 사이 실패하면
+    산출물이 세션행 없이 남고, 기존 orphan pending 회수(DB 행 기준)로는 발견되지 않는다.
+    세션이 하나도 참조하지 않는 akey 디렉터리를 48h 유예(진행 중 ingest 보호) 후
+    세션 삭제와 동일 경로(delete_report_artifacts + delete_analysis_rows)로 정리한다.
+    로컬 디렉터리 스캔 기준이라 S3 단독 고아는 대상 밖(관리자 스토리지 탭과 동일 정책)."""
+    root = Path(config.REPORT_UPLOAD_DIR) / "web_report"
+    if not root.is_dir():
+        return 0
+    cutoff = time.time() - 48 * 3600
+    found = 0
+    for entry in root.iterdir():
+        try:
+            akey = entry.name
+            if not entry.is_dir() or not _AKEY_RE.match(akey):
+                continue
+            if entry.stat().st_mtime > cutoff:
+                continue
+            if report_db.count_sessions_for_analysis_key(akey) > 0:
+                continue
+            found += 1
+            if dry_run:
+                _log.info("[cleanup:dry-run] would purge orphan artifacts akey=%s", akey)
+                continue
+            import storage_gateway
+            result = storage_gateway.delete_report_artifacts(
+                akey, upload_root=Path(config.REPORT_UPLOAD_DIR))
+            for warning in result.get("warnings", []):
+                _log.warning("orphan purge (%s): %s", akey, warning)
+            report_db.delete_analysis_rows(akey)
+            try:
+                from web_report import service as web_report_service
+                web_report_service.invalidate_caches(akey)
+            except Exception:
+                _log.exception("orphan purge cache invalidate failed for %s", akey)
+            _log.info("[cleanup] purged orphan artifacts akey=%s", akey)
+        except Exception:
+            _log.exception("[cleanup] orphan artifact purge failed for %s", entry)
+    return found
+
+
 def run_cleanup(dry_run=None):
     """ingest 크래시 잔존물 회수 + 감사 로그 롤오프. dry_run 미지정 시 config 기본값 사용.
-    {'scanned','deleted','dry_run','audit_purged'} 요약 반환.
+    {'scanned','deleted','dry_run','audit_purged','fs_orphans'} 요약 반환.
 
     6개월 만료 세션은 더 이상 삭제하지 않는다 — 데이터 유실 방지를 위해 report_tiering 이
     산출물만 S3 로 아카이브하고(세션/DB 는 유지) 종전 retention 삭제를 대체한다.
@@ -124,10 +170,18 @@ def run_cleanup(dry_run=None):
                 deleted += 1
         except Exception:
             _log.exception("[cleanup] session %s failed", session.get("session_id"))
-    _log.info("[cleanup] done: orphan_pending=%d deleted=%d dry_run=%s audit_purged=%d",
-              len(orphans), deleted, dry_run, audit_purged)
+
+    # 세션행 생성 전 실패한 ingest 의 FS 고아 산출물(세션 참조 없는 akey 디렉터리) 회수.
+    try:
+        fs_orphans = _purge_fs_orphans(dry_run)
+    except Exception:
+        fs_orphans = 0
+        _log.exception("[cleanup] fs orphan purge failed")
+
+    _log.info("[cleanup] done: orphan_pending=%d deleted=%d fs_orphans=%d dry_run=%s "
+              "audit_purged=%d", len(orphans), deleted, fs_orphans, dry_run, audit_purged)
     return {"scanned": len(orphans), "deleted": deleted, "dry_run": dry_run,
-            "audit_purged": audit_purged}
+            "audit_purged": audit_purged, "fs_orphans": fs_orphans}
 
 
 def start_cleanup_scheduler():

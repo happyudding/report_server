@@ -13,6 +13,7 @@ from pathlib import Path
 from flask import Response, abort, jsonify, request
 
 import storage_gateway
+from auth_identity import current_user as _current_user
 from config import REPORT_UPLOAD_DIR
 from database import report_db
 from report.report_extension import report_bp
@@ -377,16 +378,22 @@ def web_report_rawdata_replace(session_id):
     """Honey 가 Excel 편집 후 재인코딩한 parquet 전체를 받아 세션 원본을 덮어쓴다.
 
     Honey 클라(브라우저 아님)가 호출하므로 CSRF 대신 커스텀 헤더 X-Honey-Agent 를 요구한다
-    (커스텀 헤더는 브라우저 폼 CSRF 로 위조 불가 — preflight 가 필요). 무조건 덮어쓰기."""
+    (커스텀 헤더는 브라우저 폼 CSRF 로 위조 불가 — preflight 가 필요).
+    편집은 raw_data/edit 와 동일하게 업로더 또는 위임받은 편집자만 가능하다
+    (_editor_guard — Honey 는 HoneyUser UA 로 신원을 보낸다, excel_session._honey_headers)."""
     if request.headers.get("X-Honey-Agent") != "1":
         abort(403, "X-Honey-Agent header required")
-    _require_web_report_session(session_id)
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
     sources = _read_webreport_source_files()
     ip, ua = _client_meta()
     try:
         result = web_report_rawedit.replace_sources(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
-            sources_bytes=sources, client_ip=ip, user_agent=ua)
+            sources_bytes=sources, client_ip=ip, user_agent=ua,
+            client_user=_current_user() or "")
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except ValueError as exc:

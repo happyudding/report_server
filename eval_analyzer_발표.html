@@ -423,6 +423,104 @@
     letter-spacing: .03em;
   }
 
+  /* ---- PRECEDENT · 선례 검색 기준 ---- */
+  .prec-funnel { display: flex; flex-direction: column; align-items: center; gap: 0; }
+  .prec-band {
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 13px 18px;
+    display: flex; align-items: center; gap: 8px 16px; flex-wrap: wrap;
+    justify-content: center; text-align: center;
+    transition: max-width .2s ease;
+  }
+  .prec-band.t1 { max-width: 100%; }
+  .prec-band.t2 { max-width: 86%; }
+  .prec-band.t3 { max-width: 70%; }
+  .prec-band.result {
+    max-width: 56%;
+    border-color: var(--accent);
+    background: linear-gradient(0deg, var(--accent-wash), var(--accent-wash)), var(--surface);
+  }
+  @media (max-width: 720px) {
+    .prec-band.t2, .prec-band.t3, .prec-band.result { max-width: 100%; }
+  }
+  .prec-band .bt {
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ink-faint); white-space: nowrap;
+  }
+  .prec-band .bh { font-size: 14px; font-weight: 700; color: var(--ink); }
+  .prec-band .bh .mono { font-family: var(--font-mono); font-size: 13px; }
+  .prec-band.result .bh { color: var(--accent); }
+
+  .prec-arrow {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 8px 0; color: var(--line-strong);
+  }
+  .prec-arrow .fk {
+    font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+    background: var(--accent-wash);
+    border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+    padding: 2px 11px; border-radius: 999px; margin-bottom: 5px; font-weight: 600;
+    white-space: nowrap;
+  }
+  .prec-arrow svg { display: block; }
+
+  .prec-example {
+    margin-top: 16px;
+    font-family: var(--font-mono); font-size: 12.5px; color: var(--ink-soft);
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 11px 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    overflow-x: auto;
+  }
+  .prec-example .k { color: var(--ink-faint); }
+  .prec-example .v { color: var(--accent); font-weight: 700; }
+  .prec-example .sep { color: var(--ink-faint); }
+  .prec-example .arw { color: var(--accent); font-weight: 700; }
+
+  /* product_type → family_product 매핑 */
+  .fam-grid { display: grid; gap: 0; }
+  .fam-row {
+    display: grid; grid-template-columns: 132px 1fr; gap: 16px; align-items: center;
+    padding: 12px 0;
+  }
+  .fam-row + .fam-row { border-top: 1px solid var(--line); }
+  .fam-pt {
+    font-family: var(--font-mono); font-weight: 700; font-size: 14px;
+    color: var(--accent); letter-spacing: .02em;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .fam-pt .arw { color: var(--line-strong); font-weight: 400; }
+  .fam-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .fam-chip {
+    font-family: var(--font-mono); font-size: 11.5px; font-weight: 600;
+    color: var(--ink); background: var(--surface-2);
+    border: 1px solid var(--line-strong); padding: 3px 9px; border-radius: 6px;
+  }
+  .fam-chip.etc { color: var(--ink-faint); border-style: dashed; font-weight: 500; }
+
+  /* 매칭 규칙 — 단일 카드 리스트 */
+  .match-list { display: grid; gap: 0; }
+  .mitem {
+    display: grid; grid-template-columns: 92px 1fr; gap: 16px; align-items: center;
+    padding: 12px 2px;
+  }
+  .mitem + .mitem { border-top: 1px solid var(--line); }
+  .mitem .tg {
+    font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .05em; font-weight: 700;
+    padding: 3px 0; border-radius: 999px; text-align: center;
+  }
+  .mitem.exact .tg { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
+  .mitem.fuzzy .tg { color: var(--major); background: color-mix(in srgb, var(--major) 13%, transparent); }
+  .mitem .nm { font-size: 14px; font-weight: 700; color: var(--ink); letter-spacing: -.01em; }
+  .subcap {
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--ink-faint); font-weight: 600;
+    margin: 0 0 14px;
+  }
+
   @media print {
     body { background: #fff; }
     .panel, .phase, .io-band, .scope-card { box-shadow: none; }
@@ -600,6 +698,112 @@
           <span class="badge2">LLM</span>
           <div><div class="t">자연어 합성</div><div class="d">룰·선례를 엔지니어가 읽는 분석방향 한 문장으로 — 모델 교체형(하드코딩 없음)</div></div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRECEDENT SEARCH CRITERIA -->
+  <section id="precedent">
+    <div class="sec-head">
+      <p class="sec-kicker">Precedent · 선례 검색 기준</p>
+      <h2 class="sec-title">제품군 → Family Product → Item · Unit 으로 선례를 찾는다</h2>
+      <p class="sec-lead">평가 중인 fail item 과 <b>같은 맥락의 과거 사례</b>만 근거로 삼아야 코멘트가 정확하다. 그래서 선례는 넓은 <b>제품군(product_type)</b>에서 시작해 <b>family product</b> 하위 제품군으로 좁히고, 최종적으로 <b>item 명</b>과 <b>unit(측정 계열)</b>으로 매칭한다. 조건에 맞는 과거 comment·조치(action)·결과(result)만 끌어와 판단 근거로 결합한다.</p>
+    </div>
+
+    <!-- 3단계 좁혀가기 funnel -->
+    <div class="panel">
+      <div class="prec-funnel">
+        <div class="prec-band t1">
+          <span class="bt">Precedent Pool</span>
+          <span class="bh"><code style="font-family:var(--font-mono);font-size:13px;color:var(--accent)">eval.db</code> 에 축적된 전체 선례</span>
+        </div>
+
+        <div class="prec-arrow" aria-hidden="true">
+          <span class="fk">① 제품군 · product_type</span>
+          <svg width="18" height="20" viewBox="0 0 18 20" fill="none"><path d="M9 0v14M4 10l5 6 5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+
+        <div class="prec-band t2">
+          <span class="bt">1차 · 제품군</span>
+          <span class="bh"><span class="mono">MDDI · PDDI · PMIC · SECURITY · TCON</span></span>
+        </div>
+
+        <div class="prec-arrow" aria-hidden="true">
+          <span class="fk">② family_product · 하위 제품군 (정확 일치)</span>
+          <svg width="18" height="20" viewBox="0 0 18 20" fill="none"><path d="M9 0v14M4 10l5 6 5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+
+        <div class="prec-band t3">
+          <span class="bt">2차 · Family Product</span>
+          <span class="bh">제품군 하위 세부군으로 후보 좁힘</span>
+        </div>
+
+        <div class="prec-arrow" aria-hidden="true">
+          <span class="fk">③ item 명 + unit 매칭</span>
+          <svg width="18" height="20" viewBox="0 0 18 20" fill="none"><path d="M9 0v14M4 10l5 6 5-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
+
+        <div class="prec-band result">
+          <span class="bt">Precedent</span>
+          <span class="bh">매칭 선례의 comment · action · result 를 근거로</span>
+        </div>
+      </div>
+
+      <div class="prec-example" aria-label="검색 예시">
+        <span class="k">예시</span>
+        <span class="v">PMIC</span><span class="sep">▸</span>
+        <span class="v">IF</span><span class="sep">▸</span>
+        <span class="k">item</span> <span class="v">IDDQ_INIT</span><span class="sep">·</span>
+        <span class="k">unit</span> <span class="v">uA</span>
+        <span class="arw">→</span> 같은 계열 과거 사례 comment 결합
+      </div>
+    </div>
+
+    <!-- product_type → family_product 매핑 -->
+    <div class="panel" style="margin-top:18px">
+      <p class="subcap">제품군 ↔ Family Product 매핑 <span style="text-transform:none;letter-spacing:0;color:var(--ink-soft);font-weight:500">— 드롭다운 1:1 허용 조합</span></p>
+      <div class="fam-grid">
+        <div class="fam-row">
+          <span class="fam-pt">MDDI <span class="arw">▸</span></span>
+          <div class="fam-chips">
+            <span class="fam-chip">MX</span><span class="fam-chip">AQUA</span><span class="fam-chip">CHINA</span><span class="fam-chip etc">MDDI_ETC</span>
+          </div>
+        </div>
+        <div class="fam-row">
+          <span class="fam-pt">PDDI <span class="arw">▸</span></span>
+          <div class="fam-chips">
+            <span class="fam-chip">LCD</span><span class="fam-chip">PDDI_IT</span><span class="fam-chip">QDOLED</span><span class="fam-chip etc">PDDI_ETC</span>
+          </div>
+        </div>
+        <div class="fam-row">
+          <span class="fam-pt">PMIC <span class="arw">▸</span></span>
+          <div class="fam-chips">
+            <span class="fam-chip">SOC</span><span class="fam-chip">MEMORY</span><span class="fam-chip">DISPLAY</span><span class="fam-chip">IF</span><span class="fam-chip etc">PMIC_ETC</span>
+          </div>
+        </div>
+        <div class="fam-row">
+          <span class="fam-pt">SECURITY <span class="arw">▸</span></span>
+          <div class="fam-chips">
+            <span class="fam-chip">NFC_ESE</span><span class="fam-chip">ESE</span><span class="fam-chip">Contactless</span><span class="fam-chip etc">SECU_ETC</span>
+          </div>
+        </div>
+        <div class="fam-row">
+          <span class="fam-pt">TCON <span class="arw">▸</span></span>
+          <div class="fam-chips">
+            <span class="fam-chip">TV</span><span class="fam-chip">TCON_IT</span><span class="fam-chip etc">TCON_ETC</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 매칭 규칙 -->
+    <div class="panel" style="margin-top:18px">
+      <p class="subcap">매칭 규칙 <span style="text-transform:none;letter-spacing:0;color:var(--ink-soft);font-weight:500">— 무엇을 얼마나 엄격하게 맞추나</span></p>
+      <div class="match-list">
+        <div class="mitem exact"><span class="tg">정확 일치</span><span class="nm">unit (측정 계열)</span></div>
+        <div class="mitem exact"><span class="tg">정확 일치</span><span class="nm">family product</span></div>
+        <div class="mitem fuzzy"><span class="tg">이름 유사도</span><span class="nm">item 명</span></div>
+        <div class="mitem fuzzy"><span class="tg">우선순위</span><span class="nm">comment precedent 우선</span></div>
       </div>
     </div>
   </section>

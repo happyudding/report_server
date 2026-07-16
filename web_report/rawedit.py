@@ -41,7 +41,8 @@ def export_sources_zip(session_id, *, report_db, upload_root) -> bytes:
 
 
 def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
-                    client_ip: str = "", user_agent: str = "") -> dict:
+                    client_ip: str = "", user_agent: str = "",
+                    client_user: str = "") -> dict:
     """Honey 가 Excel 편집 후 재인코딩한 parquet 전체로 세션 원본을 덮어쓴다.
 
     검증은 (1) 각 parquet 가 유효한 honeyform 인지, (2) source 개수가 기존과 일치하는지
@@ -92,7 +93,8 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
             product_type=session.get("product_type", ""), product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
             changed_fields=f"raw_data(excel, {len(sources_bytes)} sources)",
-            client_ip=client_ip, user_agent=user_agent)
+            client_ip=client_ip, user_agent=user_agent,
+            client_user=client_user or None)
     except Exception:
         pass
 

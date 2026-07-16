@@ -48,17 +48,34 @@ def run_backup():
         try:
             with dst:
                 src.backup(dst)
-            row = dst.execute("PRAGMA integrity_check").fetchone()
-            ok = bool(row) and row[0] == "ok"
+            try:
+                row = dst.execute("PRAGMA integrity_check").fetchone()
+                ok = bool(row) and row[0] == "ok"
+            except sqlite3.DatabaseError:
+                # 심하게 손상된 백업본은 integrity_check 가 non-ok 행 대신 예외를
+                # 던진다 — 동일하게 불량 백업으로 취급한다.
+                ok = False
         finally:
             dst.close()
         _maintain_wal(src)
+    except Exception:
+        # backup 도중 예외로 중단된 부분 파일이 rotation glob 에 끼지 않게 제거.
+        dest.unlink(missing_ok=True)
+        raise
     finally:
         src.close()
 
     if ok:
         _log.info("[db-backup] ok: %s", dest)
     else:
+        # 불량 백업은 rotation glob(report_*.db) 밖으로 rename — 그대로 두면 KEEP 계산에
+        # 포함돼 오래된 '정상' 백업이 먼저 삭제된다. .bad 는 사후 조사용으로 남긴다.
+        bad = dest.with_name(dest.name + ".bad")
+        try:
+            dest.rename(bad)
+            dest = bad
+        except OSError:
+            _log.exception("[db-backup] bad backup rename failed: %s", dest)
         _log.error("[db-backup] integrity_check failed: %s", dest)
 
     # 보존 개수 초과분 정리 — 다른 파일 오삭 방지를 위해 report_*.db 만 대상
