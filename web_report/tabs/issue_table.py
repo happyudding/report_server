@@ -13,6 +13,9 @@ ETC 섹션은 ENGR 가 임의로 추가한 item(manifest.etc_items, service.upda
 PTE/개발 comment 는 manifest.issue_comments 에 row_key 단위로 저장된다
 (service.update_issue_comments 가 갱신, 여기서는 조회 시 채우기만 한다).
 row_key: Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", ETC 행 "ETC|<item>".
+행 숨김/Status(edits.KIND_ISSUE_HIDDEN/KIND_ISSUE_STATUS) 키는 이슈 단위:
+Yield 는 bin 단위 "Yield|<bin>"(대표행+상세행 일괄), CPK/ETC 는 "CPK|<item>"/"ETC|<item>".
+프런트 sheets.js issueHideStatusKey 와 반드시 동일해야 한다.
 """
 from __future__ import annotations
 
@@ -47,6 +50,7 @@ def _blank_row(sources, ai=False):
     row = {f"{src}_yield": "" for src in sources}
     row["Map"] = ""
     row["Distribution"] = ""
+    row["Status"] = ""
     if ai:
         row[AI_COMMENT_COL] = ""
     for col in _COMMENT_COLS:
@@ -55,7 +59,7 @@ def _blank_row(sources, ai=False):
 
 
 def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None,
-              ai_comments=None):
+              ai_comments=None, status_of=None):
     if not etc_items:
         return []
     meta = _item_meta(tables)
@@ -77,14 +81,17 @@ def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None,
             data[f"{src}_yield"] = match.get(f"{src}_yield", "")
         data["Map"] = ""
         data["Distribution"] = ""
+        data["Status"] = status_of(f"ETC|{item}") if status_of else "Open"
         data.update(_comment_values(issue_comments, f"ETC|{item}", ai_comments))
         rows.append(data)
     return rows
 
 
 def _cpk_fail_subjects(cpk_rows):
-    """subject 별 모든 source 행 중 최저(worst-case) cpk 를 기준으로 임계값 미만 항목만 반환."""
-    worst = worst_cpk_by_subject(cpk_rows)
+    """subject 별 모든 source 행 중 최저(worst-case) 규격내 cpk(cpk_limited) 기준으로
+    임계값 미만 항목만 반환. 전체 die 가 아니라 [LSL,USL] 안 값만으로 재계산한 cpk 다
+    (2026-07-16 — CPK 탭 '기준: Limit 안' 토글과 동일 통계)."""
+    worst = worst_cpk_by_subject(cpk_rows, field="cpk_limited")
     fails = [(subject, cpk) for subject, cpk in worst.items() if cpk < CPK_THRESHOLD]
     # 표의 avg 컬럼(=worst-case cpk) 오름차순으로 정렬(낮은 순 위 → 아래).
     fails.sort(key=lambda sc: sc[1])
@@ -112,11 +119,20 @@ def build_issue_bin_summary(yield_rows):
 
 
 def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=None,
-                           issue_comments=None, ai_comments=None):
+                           issue_comments=None, ai_comments=None,
+                           hidden_keys=None, statuses=None):
     # ai_comments: None = 컬럼 미표시(기존 세션 payload 불변) / dict = AI Comment 컬럼
     # 표시(값은 row_key 매칭, 빈 dict 면 빈 셀). service 가 옵션 판정 후 전달.
+    # hidden_keys: 숨긴 이슈 키 목록("Yield|<bin>"|"CPK|<item>") — 해당 이슈 행 미출력.
+    # statuses: 이슈 키 → "Close" dict — 부재=Open. 둘 다 세션 편집 DB(edits.py) 유래.
     sources = [t.source for t in (tables or [])]
     ai = ai_comments is not None
+    hidden = set(hidden_keys or ())
+    statuses = statuses or {}
+
+    def _status(key):
+        return "Close" if statuses.get(key) == "Close" else "Open"
+
     rows = []
 
     # Yield 섹션 최상단: Pass(Bin1) 요약 행 (Yield 탭처럼 전체/소스별 통과율을 맨 위에 표시).
@@ -135,6 +151,7 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
             prow[f"{src}_yield"] = pass_src.get(f"{src}_yield")
         prow["Map"] = ""
         prow["Distribution"] = ""
+        prow["Status"] = ""   # Pass 행은 이슈 행이 아님 — Status/숨김 비대상.
         prow.update(_comment_values(
             issue_comments, f"Yield|{pass_src.get('bin')}|{pass_item}", ai_comments))
         rows.append(prow)
@@ -145,7 +162,11 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     # build_yield_bin_groups 순서(= Bin 별 fail 비중 큰 순)를 그대로 쓴다. Category("Yield")는
     # 섹션 첫 행에만 채우고 이후 행은 ""(프런트가 시각적으로 셀 병합).
     # _grp/_detail/_ndetail 은 프런트 토글 전용 내부 필드(orderColumns 가 화면 컬럼에서 제외).
-    for gi, group in enumerate(build_yield_bin_groups(yield_rows)):
+    # 숨긴 bin("Yield|<bin>")은 대표행+상세행을 통째로 제외한다(그 아래 comment 는 DB 에
+    # 남아 '삭제 전체 초기화' 후 재표시). Category 라벨은 필터 후 첫 그룹 기준.
+    groups = [g for g in build_yield_bin_groups(yield_rows)
+              if f"Yield|{g['bin']}" not in hidden]
+    for gi, group in enumerate(groups):
         group_rows = group["rows"]
         grp_id = f"y{gi}"
         for j, gr in enumerate(group_rows):
@@ -167,17 +188,20 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
                 out[f"{src}_yield"] = gr.get(f"{src}_yield")
             out["Map"] = ""
             out["Distribution"] = ""
+            # Status 는 bin 이슈 단위 — 대표행에만 표시(상세행 빈칸).
+            out["Status"] = _status(f"Yield|{bin_value}") if j == 0 else ""
             out.update(_comment_values(issue_comments, f"Yield|{bin_value}|{item}",
                                        ai_comments))
             rows.append(out)
 
-    cpk_fails = _cpk_fail_subjects(cpk_rows)
+    cpk_fails = [(subject, cpk) for subject, cpk in _cpk_fail_subjects(cpk_rows)
+                 if f"CPK|{subject}" not in hidden]
     # CPK 구간은 source 컬럼({src}_yield)에 source 별 CPK 값을 담는다(Yield 값 대신).
     # subhead 행이 그 컬럼을 "CPK"로 재정의(프런트 isCpkSubheadRow 감지). STEP/TNO 는 항목
-    # 메타에서, BIN 은 CPK 항목엔 없어 비운다.
+    # 메타에서, BIN 은 CPK 항목엔 없어 비운다. 값은 선정 기준과 동일한 규격내 cpk(_limited).
     cpk_by = {}
     for r in cpk_rows or []:
-        cpk = r.get("cpk")
+        cpk = r.get("cpk_limited")
         if cpk is not None:
             cpk_by[(r.get("subject"), r.get("source"))] = cpk
     cpk_meta = _item_meta(tables)
@@ -194,6 +218,7 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
             data.update(_blank_row(sources, ai))
             for src in sources:
                 data[f"{src}_yield"] = cpk_by.get((subject, src), "")
+            data["Status"] = _status(f"CPK|{subject}")
             data.update(_comment_values(issue_comments, f"CPK|{subject}", ai_comments))
             rows.append(data)
     else:
@@ -202,5 +227,6 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     etc = {"Category": "ETC", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources, ai)}
     rows.append(etc)
     rows.extend(_etc_rows(tables, yield_rows, etc_items, sources,
-                          issue_comments=issue_comments, ai_comments=ai_comments))
+                          issue_comments=issue_comments, ai_comments=ai_comments,
+                          status_of=_status))
     return rows

@@ -122,6 +122,8 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                         etc_items=edit_state["etc_items"],
                         issue_comments=edit_state["issue_comments"],
                         summary_engr=edit_state["summary_engr"],
+                        issue_hidden=edit_state["issue_hidden"],
+                        issue_status=edit_state["issue_status"],
                         product_type=session.get("product_type", ""),
                         product=session.get("product", ""),
                         mode=mode,
@@ -453,6 +455,106 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
 
     return {"ok": True, "etc_items": etc_items,
             "storage": "db" if changes else "unchanged"}
+
+
+def update_issue_hidden(session_id: str, *, report_db, upload_root: Path,
+                        action: str, key: str = "",
+                        client_ip: str = "", user_agent: str = "") -> dict:
+    """Issue Table 행 숨김(삭제)을 세션 편집 DB(kind=issue_hidden)에 반영한다.
+
+    action="hide": key("Yield|<bin>"|"CPK|<item>") 1건 숨김. ETC 행은 기존 etc_item
+    remove 가 담당하므로 "ETC|" 키는 거부한다. action="reset_all": 숨김 전건 복원
+    (행별 복원 없음 — '삭제 전체 초기화' 버튼 전용). 행 데이터는 저장하지 않고 키만
+    기억한다 — build_issue_table_rows 가 조회 시 해당 이슈 행을 제외할 뿐이라,
+    rawdata 변경(새 세션)이나 초기화 시 원래 행이 그대로 되살아난다.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    action = str(action or "").strip()
+    key = str(key or "").strip()
+    if action not in ("hide", "reset_all"):
+        raise ValueError(f"unknown action: {action!r}")
+    if action == "hide":
+        if not key or len(key) > 300:
+            raise ValueError(f"invalid row key: {key!r}")
+        if not (key.startswith("Yield|") or key.startswith("CPK|")):
+            raise ValueError(f"row not hidable: {key!r}")
+
+    # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
+    edits.ensure_seeded(report_db, session_id,
+                        lambda: cache.load_manifest_cached(analysis_key, upload_root))
+    hidden = edits.load_edit_state(report_db, session_id)["issue_hidden"]
+    changes = []
+    if action == "hide":
+        if key not in hidden:
+            changes.append((edits.KIND_ISSUE_HIDDEN, key, "1"))
+            hidden.append(key)
+    else:
+        changes = [(edits.KIND_ISSUE_HIDDEN, k, None) for k in hidden]
+        hidden = []
+    if changes:
+        report_db.apply_webreport_edits(session_id, changes,
+                                        updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"issue_hidden({action}:{key!r})",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+
+    return {"ok": True, "hidden": hidden,
+            "storage": "db" if changes else "unchanged"}
+
+
+def update_issue_status(session_id: str, *, report_db, upload_root: Path,
+                        key: str, value: str,
+                        client_ip: str = "", user_agent: str = "") -> dict:
+    """Issue Table 행 Status(Open/Close)를 세션 편집 DB(kind=issue_status)에 저장한다.
+
+    key 는 이슈 단위 키("Yield|<bin>"|"CPK|<item>"|"ETC|<item>"). "Close" 만 저장하고
+    Open 은 행 삭제(부재=Open) — 기본상태 무기록으로 DB 를 최소화한다.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    key = str(key or "").strip()
+    value = str(value or "").strip()
+    if not key or len(key) > 300:
+        raise ValueError(f"invalid row key: {key!r}")
+    if not (key.startswith("Yield|") or key.startswith("CPK|") or key.startswith("ETC|")):
+        raise ValueError(f"invalid row key: {key!r}")
+    if value not in ("Open", "Close"):
+        raise ValueError(f"invalid status: {value!r}")
+
+    # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
+    edits.ensure_seeded(report_db, session_id,
+                        lambda: cache.load_manifest_cached(analysis_key, upload_root))
+    changes = [(edits.KIND_ISSUE_STATUS, key, "Close" if value == "Close" else None)]
+    report_db.apply_webreport_edits(session_id, changes,
+                                    updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"issue_status({key!r}={value})",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+
+    return {"ok": True, "key": key, "value": value, "storage": "db"}
 
 
 _COMMENT_MAX_ITEMS = 200

@@ -3,7 +3,7 @@
 # onedir 인 이유: onefile 은 실행마다 임시폴더로 전체 압축해제 → 첫 로딩이 느림.
 # onedir 은 dist/Honey/ 폴더(Honey.exe + _internal/)로 풀려 있어 시작이 훨씬 빠름.
 # 이 폴더를 ZIP 패키지(Honey-<version>.zip)로 묶어 배포한다.
-# PyQt5 plugins 누락 시 hiddenimports / collect 옵션 추가.
+# PyQt6 plugins 누락 시 hiddenimports / collect 옵션 추가.
 
 # -*- mode: python ; coding: utf-8 -*-
 
@@ -39,7 +39,7 @@ a = Analysis(
                        ('report_settings.ui', '.'),
                        (_os.path.join(_repo_root, 'Honey_img.png'), '.')],  # 창/작업표시줄 아이콘
     hiddenimports=(
-        ['PyQt5.sip', 'PyQt5.uic', 'win32com', 'win32com.client', 'pythoncom',
+        ['PyQt6.sip', 'PyQt6.uic', 'win32com', 'win32com.client', 'pythoncom',
          'pywintypes', 'pandas', 'numpy']
         + collect_submodules('requests_toolbelt')
         + _xw_hidden
@@ -56,7 +56,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PyQt5'],  # PyQt5 잔재(PyQt5-Qt5/PyQt5_sip) 가 설치돼 있어도 PyQt6 와
+                         # 'multiple Qt bindings' 충돌 없이 빌드되게 강제 제외. 앱은 PyQt6 전용.
     noarchive=False,
 )
 pyz = PYZ(a.pure)

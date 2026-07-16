@@ -214,6 +214,38 @@ function majorFailBinsTableHtml() {
   </table></div>`;
 }
 
+// Issue Table 카테고리별(Yield/CPK/ETC) Open/Close 카운트 — Status 가 채워진 이슈 행
+// (Yield 대표행/CPK 행/ETC 행)만 집계한다. Status=="" 행(Pass/상세/서브헤더/placeholder)과
+// 숨김 행(서버가 이미 제외)은 자동 비대상. 섹션 추적은 sheets.js rowSection 과 동일 로직.
+function issueStatusCounts() {
+  const rows = (DATA && Array.isArray(DATA.issue_table_text)) ? DATA.issue_table_text : [];
+  const counts = { Yield: { open: 0, close: 0 }, CPK: { open: 0, close: 0 }, ETC: { open: 0, close: 0 } };
+  let sec = "";
+  rows.forEach(r => {
+    if (r && r["Category"]) sec = String(r["Category"]);
+    const st = String((r && r["Status"]) || "");
+    if (!st || !counts[sec]) return;
+    counts[sec][st === "Close" ? "close" : "open"]++;
+  });
+  return counts;
+}
+
+// Summary 의 Issue Status 카드(카테고리별 Open/Close 소표) — 클릭 시 Issue Table 탭 이동.
+function issueStatusCardHtml() {
+  const counts = issueStatusCounts();
+  const rows = ["Yield", "CPK", "ETC"].map(cat => {
+    const c = counts[cat];
+    return `<tr><td class="iss-cat">${cat}</td>` +
+      `<td class="iss-open${c.open ? "" : " st-empty"}">${c.open}</td>` +
+      `<td class="iss-close${c.close ? "" : " st-empty"}">${c.close}</td></tr>`;
+  }).join("");
+  return `<div class="summary-section-card summary-jump" data-jump="issues" title="Issue Table 탭으로 이동">` +
+    `<div class="section-title">Issue Status <span class="summary-jump-hint">▸ 탭 이동</span></div>` +
+    `<div class="iss-status-wrap"><table class="iss-status-table">` +
+    `<thead><tr><th>구분</th><th>Open</th><th>Close</th></tr></thead>` +
+    `<tbody>${rows}</tbody></table></div></div>`;
+}
+
 let summaryJumpBound = false;
 function renderWebSummary() {
   const panel = document.getElementById("panel-summary");
@@ -238,6 +270,7 @@ function renderWebSummary() {
     `<div class="summary-section-card summary-jump" data-jump="yield" title="Yield 탭으로 이동">` +
     `<div class="section-title">Yield <span class="summary-jump-hint">▸ 탭 이동</span></div>` + majorFailBinsTableHtml() +
     `</div>` +
+    issueStatusCardHtml() +
     `<div class="summary-section-card">` +
     `<div class="section-title">Engr Comment</div>` +
     `<div class="engr-comment-grid">` +
@@ -255,16 +288,18 @@ const ENGR_COMMENT_FIELDS = [
   { key: "etc", label: "ETC" },
 ];
 
-// textarea 값이 바뀌면(blur 시 change 발생) 변경분을 manifest.summary_engr 로 저장.
+// textarea 값이 바뀌면(blur 시 change 발생) autoSave 경로로 저장 — dot/dirty/실패복원을
+// Issue comment 와 일원화하고, 탭 전환·페이지 이탈 시에도 autoSave 안전망이 ENGR 를 덮는다.
+// (_dirty 명시 세팅은 .content input 버블링에 의존하지 않기 위한 방어 1줄.)
 function bindEngrComment(panel) {
   panel.querySelectorAll("textarea[data-engr]").forEach(ta => {
-    ta.addEventListener("change", () => { saveSummaryEngr().catch(() => {}); });
+    ta.addEventListener("change", () => { _dirty = true; autoSave(); });
   });
 }
 
 // Summary Engr Comment 저장: 3칸 현재값을 원본(DATA.web_report.summary_engr)과 비교해
 // 변경 있을 때만 POST. 성공 시 DATA 에 반영해 재렌더 시 값 유지.
-async function saveSummaryEngr() {
+async function saveSummaryEngr(opts) {
   if (MODE !== "edit") return;   // 뷰 모드는 저장 시도 안 함(서버도 업로더만 허용).
   const panel = document.getElementById("panel-summary");
   if (!panel || !DATA || !DATA.web_report) return;
@@ -284,13 +319,14 @@ async function saveSummaryEngr() {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
       body: JSON.stringify({ values }),
+      keepalive: !!(opts && opts.keepalive),   // 언로드 중 autoSave 에서도 요청이 완료되게
     });
   } catch (err) {
-    alert("Engr Comment 저장 실패: 네트워크 오류");
+    showToast("Engr Comment 저장 실패: 네트워크 오류");
     throw err;
   }
   const j = await res.json().catch(() => ({}));
-  if (!res.ok) { alert(j.error || `Engr Comment 저장 실패 (HTTP ${res.status})`); throw new Error("engr save failed"); }
+  if (!res.ok) { showToast(j.error || `Engr Comment 저장 실패 (HTTP ${res.status})`); throw new Error("engr save failed"); }
   DATA.web_report.summary_engr = j.summary_engr || values;
 }
 

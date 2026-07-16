@@ -41,9 +41,13 @@ let distColorMap = {};        // source → color
 // ── Distribution 산포 탭 (툴바/갤러리/상세) 상태·규격 ─────────────────────────
 const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 1500, PER_FRAME: 3,
   ROOT_MARGIN: "1200px 0px", EXCLUDE: ["chipid", "gpib", "otp", "code"],
-  // ECDF 세로 점 보간 간격은 고정값이 아니라 데이터에서 유도한다(distStepY) — "단일 데이터
-  // 점 1개의 ECDF 증가량". FILL_STEP_Y 는 유효한 riser 가 없는 퇴화 케이스의 폴백 상수일 뿐.
+  // ECDF 세로 점 보간 간격은 데이터에서 유도한다(distStepY) — "단일 데이터 점 1개의 ECDF
+  // 증가량". FILL_STEP_Y 는 유효한 riser 가 없는 퇴화 케이스의 폴백 상수일 뿐.
   FILL_STEP_Y: 0.8,
+  // 채움 간격의 시각 연속성 상한(%). 표본이 작아 stepY 가 이보다 굵으면(>0.3%) marker(3px)
+  // 세로 점기둥이 점점이 끊겨 보이므로 이 값으로 캡해 썸네일 누적 0~100% 축에 빈 구간이
+  // 없게 한다 — 단일점 riser 도 채우는 표시용 업샘플링(썸네일 한정, 상세 CDF 는 별도 경로).
+  FILL_VISUAL_MAX_DY: 0.3,
   // 세로 채움점 총량 상한(성능). stepY 하한 = 100/FILL_MAX_POINTS 로 표본이 매우 클 때
   // 채움점 폭증을 막는다(총 채움점 ≤ FILL_MAX_POINTS, 뒤 다운샘플 1500 이 다시 솎음).
   FILL_MAX_POINTS: 3000,
@@ -488,9 +492,10 @@ function distDownsampleForDisplay(xs, ys) {
 // 백엔드가 동일값을 1점으로 축약(np.unique)하므로 이산(code)값은 점이 성기게 찍힌다.
 // 각 고유값 x_i 의 riser(prevY→y_i)를 x=x_i 에 stepY 간격 세로 점으로 채워 "연속 분포"로
 // 보이게 한다. 점끼리 잇지 않으므로 x축 수평선(계단 tread)은 자연히 없다.
-// stepY 는 호출부(distStepY)가 데이터에서 유도한 "단일 점 1개의 증가량"이다 — riser Δy 가
-// 그 양자와 같으면(=진짜 희소한 단일 점) 채움 0, 여러 배면(=동일값 다수 축약) 개수에 비례해
-// 채운다. 즉 실제 data 가 없어 성긴 점은 업샘플링하지 않고 있는 그대로 둔다.
+// stepY 는 호출부(distStepY)가 min(단일 점 1개의 증가량, FILL_VISUAL_MAX_DY 0.3%) 로
+// 유도한다 — riser 는 ECDF 계단함수의 실제 세로 구간이므로 단일점 riser 포함 모든 riser 를
+// 0.3% 이하 간격으로 채워 누적 0~100% 에 marker 빈 구간이 없게 한다(x값 조작 없는
+// 세로 방향 표시용 업샘플링). 가로(x) 방향 보간은 계속 금지.
 // 전제: xs 오름차순, ys 단조 비감소·마지막 100, ECDF 시작 누적 0 (cumulative_distribution_full 보장).
 function distFillVertical(xs, ys, stepY) {
   const n = xs.length;
@@ -509,8 +514,10 @@ function distFillVertical(xs, ys, stepY) {
 }
 
 // 세로 채움 간격(stepY): 소스 내 "단일 데이터 점 1개의 ECDF 증가량" = 최소 양의 Δy
-// (첫 riser 0→ys[0] 포함). 값이 전부 다른 진짜 희소 데이터는 모든 Δy 가 이 값과 같아
-// 채움이 0 이 되고(업샘플링 없음), 동일값이 축약된 riser(Δy≫stepY)만 개수에 비례해 채운다.
+// (첫 riser 0→ys[0] 포함)를 FILL_VISUAL_MAX_DY(0.3%)로 캡한다. 표본이 작아 단일점
+// 증가량이 0.3% 를 넘으면(대략 표본<333) 단일점 riser 까지 포함해 모든 riser 가 0.3%
+// 간격으로 채워져 썸네일 누적축이 끊김 없이 보인다. 조밀한 데이터(stepY≤0.3%)는 캡이
+// no-op 라 기존과 픽셀 동일.
 // 표본이 매우 커 stepY 가 지나치게 잘면 100/FILL_MAX_POINTS 하한으로 채움점 폭증을 막는다.
 function distStepY(ys) {
   let step = Infinity, prev = 0;
@@ -520,7 +527,7 @@ function distStepY(ys) {
     prev = ys[i];
   }
   if (!isFinite(step)) step = DIST.FILL_STEP_Y;              // 유효 riser 없음 — 폴백
-  return Math.max(step, 100 / DIST.FILL_MAX_POINTS);
+  return Math.min(Math.max(step, 100 / DIST.FILL_MAX_POINTS), DIST.FILL_VISUAL_MAX_DY);
 }
 
 // 미니셀 표시용 좌표: 세로 보간 → 표시용 다운샘플 순서(순서 근거 CLAUDE.md §5·docs/11).
@@ -528,6 +535,29 @@ function distStepY(ys) {
 function distPointsForDisplay(xs, ys) {
   const f = distFillVertical(xs, ys, distStepY(ys));
   return distDownsampleForDisplay(f.xs, f.ys);
+}
+
+// ── ECDF [lo,hi] 창 재정규화 — Issue Table CPK 섹션 미니셀 전용(data-limitwin) ──
+// 규격(limit) 안 점만 남기고 누적%를 0~100 으로 재정규화한다. 창 내 재정규화 ECDF 는
+// "규격내 부분표본만으로 만든 ECDF"와 수학적으로 동치라, 행의 cpk_limited(규격내 재계산
+// cpk)와 같은 데이터 기준으로 분포가 그려진다. 다운샘플이 아닌 의미적 필터(서버 bin1
+// 스펙필터와 동급)이며 distFillVertical/다운샘플(표시 변환)보다 먼저 적용해야 한다.
+// 전제·반환 모두 distFillVertical 규약 유지: xs 오름차순, ys 단조·마지막 100, 시작 누적 0.
+function distWindowRenorm(xs, ys, lo, hi) {
+  if ((lo === null || lo === undefined) && (hi === null || hi === undefined)) return { xs, ys };
+  const n = xs.length;
+  if (!n) return { xs, ys };
+  let i0 = 0, i1 = n - 1;
+  if (lo !== null && lo !== undefined) { while (i0 < n && xs[i0] < lo) i0++; }
+  if (hi !== null && hi !== undefined) { while (i1 >= 0 && xs[i1] > hi) i1--; }
+  if (i1 < i0) return { xs: [], ys: [] };   // 규격 안 데이터 없음
+  const yBefore = i0 > 0 ? ys[i0 - 1] : 0;
+  const denom = ys[i1] - yBefore;
+  const oxs = xs.slice(i0, i1 + 1);
+  if (denom <= 0) return { xs: oxs, ys: oxs.map(() => 100) };   // 창 내 단일 고유값
+  const oys = [];
+  for (let k = i0; k <= i1; k++) oys.push((ys[k] - yBefore) / denom * 100);
+  return { xs: oxs, ys: oys };
 }
 
 // 갤러리 미니셀이 쓸 활성 분포 캐시/준비상태 — Bin1 only 토글 시 양품 캐시로 전환.

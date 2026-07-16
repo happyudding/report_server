@@ -160,16 +160,70 @@ function syncIssueHeadRowHeight(panel) {
 // ── Issue Table (read) ──────────────────────────────────────────────────────
 // Issue Table 상단 sticky 툴바: Yield 섹션 Bin 그룹 전체 펼치기/접기.
 function issueToolbarHtml() {
-  // 수정모드에서는 "ETC 에 항목 추가" 버튼도 같은 sticky 툴바 한 줄에 함께 둔다.
+  // 수정모드에서는 "ETC 에 항목 추가"·"삭제 전체 초기화" 버튼도 같은 sticky 툴바 한 줄에 함께 둔다.
   const etcBtn = (MODE === "edit")
-    ? `<button type="button" class="btn-sm" id="etcAddItemBtn">ETC 에 항목 추가</button>` : "";
+    ? `<button type="button" class="btn-sm" id="etcAddItemBtn">ETC 에 항목 추가</button>` +
+      `<button type="button" class="btn-sm" id="issueResetHiddenBtn" title="삭제(숨김)한 Yield/CPK 행 전부 복원">삭제 전체 초기화</button>` : "";
   return `<div class="issue-toolbar">` +
     `<button type="button" class="btn-sm" data-issue-jump="Yield">Yield 로 이동</button>` +
     `<button type="button" class="btn-sm" data-issue-jump="CPK">CPK 로 이동</button>` +
     `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC 로 이동</button>` +
     `<button type="button" class="btn-sm" id="issueToggleAll" data-expanded="false">TNO 전체 펼치기</button>` +
+    `<button type="button" class="btn-sm" id="issueExcelBtn" title="Issue Table 을 xlsx 로 다운로드">Excel 다운로드</button>` +
     etcBtn +
     `</div>`;
+}
+
+// ── Issue Table Excel 내보내기 (vendored exceljs — trim.js loadExcelJS 재사용) ──
+// 화면과 동일한 컬럼 도출·순서(orderColumns)를 따르되, 미니차트 전용 Map/Distribution
+// 열은 제외하고 섹션(Yield/CPK/ETC)을 Category 컬럼으로 되살린다. Yield 상세(TNO) 행은
+// 접힘 여부와 무관하게 전부 내보낸다. CPK 섹션의 source 컬럼 값은 화면처럼 cpk 값.
+async function exportIssueExcel() {
+  const rows = (DATA && Array.isArray(DATA.issue_table_text)) ? DATA.issue_table_text : [];
+  const btn = document.getElementById("issueExcelBtn");
+  if (btn) btn.disabled = true;
+  try {
+    let cols = [];
+    rows.forEach(r => Object.keys(r || {}).forEach(k => { if (!cols.includes(k)) cols.push(k); }));
+    cols = orderColumns(cols, "issue").filter(c => !isMapCol(c) && !isDistCol(c));
+
+    // 행별 섹션 — renderSheetTable 의 rowSection 파생과 동일(빈 Category 는 위 행 상속).
+    const section = [];
+    let sec = "";
+    rows.forEach(r => { const cat = (r && r["Category"]) || ""; if (cat) sec = cat; section.push(sec); });
+
+    const dataRows = rows.filter(r =>
+      !isCpkSubheadRow(r) && String((r && r["Item"]) ?? "").trim() !== "");
+    if (!dataRows.length) { showToast("내보낼 Issue Table 행이 없습니다"); return; }
+
+    const ExcelJS = await loadExcelJS();
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Issue Table");
+    ws.addRow(["Category"].concat(cols.map(c =>
+      /_yield$/i.test(String(c)) ? sheetHeaderShortLabel(c) : displayLabel(c))));
+    ws.getRow(1).font = { bold: true };
+    rows.forEach((r, ri) => {
+      if (isCpkSubheadRow(r) || String((r && r["Item"]) ?? "").trim() === "") return;
+      ws.addRow([section[ri]].concat(cols.map(c =>
+        (r[c] === null || r[c] === undefined) ? "" : r[c])));
+    });
+    ws.columns.forEach((c, i) => { c.width = i === 0 ? 10 : 18; });
+
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf],
+      { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    const meta = (DATA && DATA.session) || {};
+    a.download = `issue_table_${meta.lot_id || SESSION_ID}.xlsx`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    showToast("Excel 다운로드 완료");
+  } catch (e) {
+    showToast("Excel 생성 실패: " + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 // Issue Table 섹션(CPK/ETC) 헤더로 스크롤 이동.
 function jumpToIssueSection(sec) {

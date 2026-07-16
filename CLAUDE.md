@@ -218,10 +218,13 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
      왜곡하고 사용자 경험에 반한다. 이산(code unit)값처럼 고유값이 적어 점이 성겨 보이는
      문제는, 동일값 구간(ECDF riser)을 y축 방향 세로 점기둥으로 채우는 보간
      (`distFillVertical`)으로만 해결하고 선으로 잇지 않는다. 보간은 표시용 다운샘플보다
-     **먼저** 적용한다(`distPointsForDisplay` = 세로 채움 → 다운샘플). 채움 간격은 고정값이
-     아니라 소스별 "단일 점 1개의 증가량"(최소 양의 Δy, `distStepY`)으로 유도한다 — 값이
-     전부 다른 진짜 희소 데이터는 채움 없이 있는 그대로 두고(업샘플링 금지), 동일값이
-     축약된 riser 만 개수에 비례해 채운다.
+     **먼저** 적용한다(`distPointsForDisplay` = 세로 채움 → 다운샘플). 채움 간격은
+     소스별 "단일 점 1개의 증가량"(최소 양의 Δy, `distStepY`)을 시각 연속성 캡
+     `FILL_VISUAL_MAX_DY`(0.3%)로 캡해 유도한다 — 표본이 작아 단일점 증가량이 0.3% 를
+     넘으면 단일점 riser 포함 모든 riser 를 0.3% 간격 세로 점으로 채워 썸네일 누적
+     0~100% 에 marker 빈 구간이 없게 한다(세로 방향 표시용 업샘플링 허용, x값을 만들어내는
+     가로 방향 보간은 계속 금지). 조밀한 데이터(stepY≤0.3%)는 캡이 no-op 라 기존과 동일.
+     상세 CDF(`distRenderCdf`)는 원본 전량 렌더 별도 경로로 채움·다운샘플 대상 외.
 6. **web_report 편집 상태는 세션 편집 DB 가 진실.** manifest 는 업로드 시점 불변 스냅샷이므로
    편집으로 재저장하지 않는다. 캐시 키는 항상 [cache_policy.py](web_report/cache_policy.py)
    빌더로 만든다(즉석 조립 금지 — [docs/12](docs/12_web_report_cache.md)).

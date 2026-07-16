@@ -108,23 +108,42 @@ function stdfFrameFromData(xs, ys) {
   return { x_min: xmin, x_max: xmax, y_min: ymin, y_max: ymax };
 }
 
-// die(xpos/ypos)별 값을 격자 heatmap 트레이스로. z=bucket index, customdata=실제 값.
-// activeColors 는 dim 반영된 10색(선택 외 회색). waferHeatmap 과 동일한 이산 colorscale 방식.
-function stdfHeatmapTrace(frame, xs, ys, vals, deciles, activeColors) {
-  const xMin = frame.x_min, xMax = frame.x_max, yMin = frame.y_min, yMax = frame.y_max;
-  const W = xMax - xMin + 1, H = yMax - yMin + 1;
+// STDF 병렬 배열(xs/ys) → compact grid(빈 행/열 제거). waferCompactGrid(m.dies) 의 병렬배열판.
+// 격자를 좌표 span 이 아니라 distinct 좌표 수로 잡아 넓은 span/이상치 좌표에도 z 배열 폭증(OOM)이
+// 없다(Bin Map Detail 수정과 동일 취지). xs/ys = index→실제좌표 역매핑(축 tick 라벨용).
+function stdfCompactGrid(xs, ys) {
+  const xSeen = {}, ySeen = {};
+  for (let i = 0; i < xs.length; i++) {
+    const x = parseInt(xs[i], 10), y = parseInt(ys[i], 10);
+    if (!isNaN(x)) xSeen[x] = 1;
+    if (!isNaN(y)) ySeen[y] = 1;
+  }
+  const xvals = Object.keys(xSeen).map(Number).sort((a, b) => a - b);
+  const yvals = Object.keys(ySeen).map(Number).sort((a, b) => a - b);
+  const xIdx = {}, yIdx = {};
+  xvals.forEach((v, i) => { xIdx[v] = i; });
+  yvals.forEach((v, i) => { yIdx[v] = i; });
+  return { xIdx, yIdx, W: xvals.length, H: yvals.length, xs: xvals, ys: yvals };
+}
+
+// die(xpos/ypos)별 값을 compact 격자 heatmap 트레이스로. z=bucket index, customdata=[실제X,실제Y,값].
+// activeColors 는 dim 반영된 10색(선택 외 회색). waferHeatmap 과 동일한 이산 colorscale·compact 방식.
+function stdfHeatmapTrace(grid, xs, ys, vals, deciles, activeColors) {
+  const W = grid.W, H = grid.H;
   const N = STDF_DECILES;
+  // Bin Map Detail 과 동일: die 가 조밀하면 gap=0 이미지 모드로 SVG brick 폭증(freeze) 방지.
+  const dense = vals.length > MAP_DENSE_DIES;
   const z = Array.from({ length: H }, () => Array(W).fill(null));
-  const cval = Array.from({ length: H }, () => Array(W).fill(null));
+  const cdata = Array.from({ length: H }, () => Array(W).fill(null));
   for (let i = 0; i < vals.length; i++) {
     const x = parseInt(xs[i], 10), y = parseInt(ys[i], 10);
     if (isNaN(x) || isNaN(y)) continue;
-    const c = x - xMin, r = y - yMin;
-    if (r < 0 || r >= H || c < 0 || c >= W) continue;
+    const c = grid.xIdx[x], r = grid.yIdx[y];
+    if (c == null || r == null) continue;
     const b = deciles.indexOf(vals[i]);
     if (b < 0) continue;
     z[r][c] = b + 0.5;
-    cval[r][c] = vals[i];
+    cdata[r][c] = [x, y, vals[i]];   // index 공간이라 %{x}/%{y} 못 씀 → 실제 좌표+값을 customdata 로
   }
   const colorscale = [];
   for (let b = 0; b < N; b++) {
@@ -133,10 +152,10 @@ function stdfHeatmapTrace(frame, xs, ys, vals, deciles, activeColors) {
   }
   return {
     type: "heatmap", z, zmin: 0, zmax: N,
-    x0: xMin, dx: 1, y0: yMin, dy: 1,
-    colorscale, showscale: false, xgap: 0.5, ygap: 0.5, hoverongaps: false,
-    customdata: cval,
-    hovertemplate: "(X %{x}, Y %{y})<br>값 %{customdata}<extra></extra>",
+    x0: 0, dx: 1, y0: 0, dy: 1,
+    colorscale, showscale: false, xgap: dense ? 0 : 0.5, ygap: dense ? 0 : 0.5, hoverongaps: false,
+    customdata: cdata,
+    hovertemplate: "(X %{customdata[0]}, Y %{customdata[1]})<br>값 %{customdata[2]}<extra></extra>",
   };
 }
 
@@ -273,6 +292,7 @@ function stdfDrawMap(body, data) {
   const xs = dies.xs, ys = dies.ys, vals = dies.vals;
   const frame = stdfFrameForSource(isDut ? null : stdfSource) || stdfFrameFromData(xs, ys);
   if (!frame) { body.innerHTML = `<div class="placeholder">좌표 정보가 없어 맵을 그릴 수 없습니다.</div>`; return; }
+  const grid = stdfCompactGrid(xs, ys);   // compact 격자(OOM 방지). 축 비율/눈금도 grid 로.
   const deciles = stdfDecileBuckets(vals);
   const units = data.units || "";
   const srcLabel = isDut ? "All DUT" : stdfSource;
@@ -294,8 +314,8 @@ function stdfDrawMap(body, data) {
   function redraw() {
     const activeColors = deciles.buckets.map((bk, b) =>
       (stdfBucketFilter.size === 0 || stdfBucketFilter.has(b)) ? STDF_BLUES[b] : MAP_BIN_DIM_COLOR);
-    const trace = stdfHeatmapTrace(frame, xs, ys, vals, deciles, activeColors);
-    Plotly.react("stdf-map-plot", [trace], waferLayout(frame, {}), { responsive: true, displayModeBar: false });
+    const trace = stdfHeatmapTrace(grid, xs, ys, vals, deciles, activeColors);
+    Plotly.react("stdf-map-plot", [trace], waferLayout(frame, { grid }), { responsive: true, displayModeBar: false });
     legendBody.innerHTML = stdfLegendHtml(deciles.buckets, stdfBucketFilter);
     legendBody.querySelectorAll("tbody tr[data-bucket]").forEach(tr => {
       tr.addEventListener("click", () => {

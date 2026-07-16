@@ -294,8 +294,11 @@ function cnBindBar(subject) {
 }
 
 // ── 저장: dirty 차트 전부 한 번에 POST (rev 1회 증가) ─────────────────────────
-async function cnSave() {
-  if (!_cnDirty.size) { showToast("변경된 Comment가 없습니다."); return; }
+// cnFlush — 실제 저장 본체. 변경 없으면 요청을 보내지 않고, 실패 시 throw 만 한다
+// (사용자 알림은 호출부 몫). 수동 저장 버튼(cnSave) 외에 edit_mode.js autoSave 의
+// visibilitychange/beforeunload keepalive 저장과 item_detail 항목 이동 flush 가 재사용.
+async function cnFlush(opts) {
+  if (!_cnDirty.size) return { ok: true, updated: 0 };
   // 저장 직전 차트 상태에서 최신 도형 회수 (드래그 직후 미동기 방지).
   _cnDirty.forEach(key => { if (_cnCharts[key]) cnSyncFromChart(key); });
   const ops = [...(_cnDirty)].map(key => {
@@ -303,21 +306,28 @@ async function cnSave() {
     const empty = !st.shapes.length && !st.texts.length && !String(st.comment || "").trim();
     return { key, value: empty ? null : { shapes: st.shapes, texts: st.texts, comment: st.comment } };
   });
+  const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/chart_notes`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: JSON.stringify({ ops }),
+    keepalive: !!(opts && opts.keepalive),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+  if (DATA) DATA.chart_notes = j.chart_notes || {};
+  _cnDirty.clear();
+  _cnPending = {};
+  cnUpdateBarState();
+  if (_itemDetailData) cnRenderChartComments(_itemDetailData.subject);   // 저장값을 차트 하단에 반영
+  return j;
+}
+
+async function cnSave() {
+  if (!_cnDirty.size) { showToast("변경된 Comment가 없습니다."); return; }
   const btn = document.getElementById("cnoteSave");
   if (btn) btn.disabled = true;
   try {
-    const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/chart_notes`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-      body: JSON.stringify({ ops }),
-    });
-    const j = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
-    if (DATA) DATA.chart_notes = j.chart_notes || {};
-    _cnDirty.clear();
-    _cnPending = {};
-    cnUpdateBarState();
-    if (_itemDetailData) cnRenderChartComments(_itemDetailData.subject);   // 저장값을 차트 하단에 반영
+    await cnFlush();
     showToast("Comment를 저장했습니다.");
   } catch (e) {
     showToast("Comment 저장 실패: " + e.message);

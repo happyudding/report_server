@@ -4,13 +4,16 @@ CSRF(double-submit cookie), 신원 가드(_uploader_guard/_editor_guard), 입력
 감사 로그 기록(_audit) 등 routes_* 모듈들이 공유하는 요청-보안 계층.
 신원 자체는 auth_identity provider 체인(SSO-ready)에서 온다.
 """
+import logging
 import re
 import secrets
 
-from flask import abort, jsonify, request
+from flask import abort, jsonify, make_response, request
 
 from auth_identity import current_user as _current_user, is_uploader as _is_uploader
 from database import report_db
+
+_log = logging.getLogger(__name__)
 
 _ANALYSIS_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -37,22 +40,30 @@ _CSRF_HEADER = "X-CSRF-Token"
 
 
 def _issue_csrf_cookie(resp):
-    """토큰 쿠키가 없으면 새로 발급. JS 가 읽어야 하므로 httponly=False."""
-    if not request.cookies.get(_CSRF_COOKIE):
-        resp.set_cookie(
-            _CSRF_COOKIE, secrets.token_urlsafe(32),
-            max_age=86400, samesite="Strict",
-            secure=request.is_secure, httponly=False, path="/",
-        )
+    """토큰 쿠키 발급/만료 연장(sliding). 기존 토큰은 유지하고 max_age 만 갱신 —
+    세션 상세를 하루 이상 열어둔 페이지의 24h 만료 → 저장 전부 403 을 막는다.
+    report_bp.after_request 로 등록되어 모든 응답(403 포함)이 재발급 경로가 되고,
+    클라 csrfToken() 은 쿠키를 라이브로 읽으므로 만료 후 재시도가 자동 복구된다.
+    JS 가 읽어야 하므로 httponly=False."""
+    token = request.cookies.get(_CSRF_COOKIE) or secrets.token_urlsafe(32)
+    resp.set_cookie(
+        _CSRF_COOKIE, token,
+        max_age=86400, samesite="Strict",
+        secure=request.is_secure, httponly=False, path="/",
+    )
     return resp
 
 
 def _require_csrf():
-    """변경요청에서 헤더 토큰이 쿠키와 일치하는지 검증. 불일치 시 403."""
+    """변경요청에서 헤더 토큰이 쿠키와 일치하는지 검증. 불일치 시 403(JSON) —
+    abort(403, msg) 는 HTML 오류 페이지라 클라 toast 가 원인을 표시할 수 없다."""
     cookie = request.cookies.get(_CSRF_COOKIE) or ""
     header = request.headers.get(_CSRF_HEADER) or ""
     if not cookie or not header or not secrets.compare_digest(cookie, header):
-        abort(403, "CSRF token missing or invalid")
+        _log.warning("CSRF reject: %s %s (cookie=%s, header=%s)",
+                     request.method, request.path, bool(cookie), bool(header))
+        abort(make_response(jsonify(
+            {"error": "보안 토큰이 만료되었거나 없습니다 — 페이지를 새로고침 해주세요."}), 403))
 
 
 def _public_session(session):
@@ -87,13 +98,17 @@ def _uploader_guard(session):
 
 def _editor_guard(session):
     """콘텐츠 편집·개인 중요표시 가드 — 업로더 본인 또는 위임받은 편집자면 통과.
-    (삭제·비공개·권한부여는 _uploader_guard 로 업로더 전용 유지.)"""
+    (삭제·비공개·권한부여는 _uploader_guard 로 업로더 전용 유지.)
+    거부는 warning 로그를 남긴다 — "저장이 안 됐다" 신고 시 서버 측 추적 근거."""
     uid = _current_user()
     if not uid:
+        _log.warning("editor guard reject (no identity): %s %s", request.method, request.path)
         return jsonify({"error": "Honey 를 통해 접속한 사용자만 편집할 수 있습니다 (읽기 전용)."}), 401
     sid = (session or {}).get("session_id")
     if _is_uploader(session, uid) or report_db.is_session_editor(sid, uid):
         return None
+    _log.warning("editor guard reject: %s %s user=%r session=%s",
+                 request.method, request.path, uid, sid)
     return jsonify({"error": "편집 권한이 없습니다."}), 403
 
 

@@ -276,12 +276,16 @@ function bindTrimDnD(body) {
   });
 }
 
+let _trimSaving = 0;   // 진행 중 저장 수 — 드롭 직후 페이지 이탈로 요청이 끊기기 전 경고용
+
 async function saveTrimOverrides(ops) {
+  _trimSaving++;
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/trim/overrides`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
       body: JSON.stringify({ ops }),
+      keepalive: true,   // 드롭 직후 이탈해도 요청이 완료된다 (ops 는 1건이라 소형)
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) { showToast(j.error || `저장 실패 (HTTP ${res.status})`); return; }
@@ -298,8 +302,15 @@ async function saveTrimOverrides(ops) {
     ensureTrimPayload().then(renderTrimView).catch(trimBodyError);
   } catch (e) {
     showToast("저장 실패: " + e.message);
+  } finally {
+    _trimSaving--;
   }
 }
+
+// 저장이 서버에 닿기 전 이탈하면 유실 — 진행 중이면 브라우저 경고를 띄운다.
+window.addEventListener("beforeunload", e => {
+  if (_trimSaving) { e.preventDefault(); e.returnValue = ""; }
+});
 
 // ── 그룹 차트 fetch 큐 (동시 CONCURRENCY 개 제한 + 클라 캐시) ──────────────────
 function trimFetchChart(group) {

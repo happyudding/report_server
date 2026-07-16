@@ -438,6 +438,64 @@ def web_report_issue_table_etc(session_id):
     return jsonify(result)
 
 
+@report_bp.post("/session/<session_id>/web_report/issue_table/hidden")
+def web_report_issue_table_hidden(session_id):
+    """Issue Table 행 숨김(삭제)/전체 초기화 — 세션 편집 DB(kind=issue_hidden) 갱신.
+
+    body: {"action": "hide"|"reset_all", "key": "Yield|<bin>"|"CPK|<item>"}.
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    action = (body.get("action") or "").strip()
+    key = (body.get("key") or "").strip()
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_issue_hidden(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            action=action, key=key, client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report issue_table hidden failed for session %s", session_id)
+        abort(500, "issue_table hidden failed")
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/issue_table/status")
+def web_report_issue_table_status(session_id):
+    """Issue Table 행 Status(Open/Close) 저장 — 세션 편집 DB(kind=issue_status) 갱신.
+
+    body: {"key": "Yield|<bin>"|"CPK|<item>"|"ETC|<item>", "value": "Open"|"Close"}.
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    key = (body.get("key") or "").strip()
+    value = (body.get("value") or "").strip()
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_issue_status(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            key=key, value=value, client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report issue_table status failed for session %s", session_id)
+        abort(500, "issue_table status failed")
+    return jsonify(result)
+
+
 @report_bp.post("/session/<session_id>/web_report/issue_table/comments")
 def web_report_issue_table_comments(session_id):
     """Issue Table PTE/개발 comment 저장 — 세션 편집 DB 갱신 (parquet 불변).
@@ -524,17 +582,26 @@ def web_report_note_save(session_id):
     """Note 탭 시트 JSON 저장 (전체 치환) — 세션 편집 DB(kind=note_sheet) 갱신.
 
     body: {"sheet": {...}} — 셀 계산은 전부 클라이언트(Luckysheet), 서버는 저장만.
+    sheet 는 필수·비어있지 않은 dict — 본문 손상/빈 payload 가 기존 Note 를
+    삭제(치환)하는 것을 막기 위해 HTTP 로는 clear 경로를 제공하지 않는다.
     편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
     denied = _editor_guard(session)
     if denied:
         return denied
-    body = request.get_json(force=True, silent=True) or {}
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict) or "sheet" not in body:
+        _log.warning("note save rejected (sheet missing/malformed body) for session %s", session_id)
+        return jsonify({"error": "sheet 데이터가 없습니다 — 저장 요청이 손상되었습니다. 다시 시도해주세요."}), 400
+    sheet = body["sheet"]
+    if not isinstance(sheet, dict) or not sheet:
+        _log.warning("note save rejected (empty sheet) for session %s", session_id)
+        return jsonify({"error": "빈 Note 는 저장할 수 없습니다."}), 400
     ip, ua = _client_meta()
     try:
         result = web_report_service.save_note(
-            session_id, body.get("sheet"), report_db=report_db,
+            session_id, sheet, report_db=report_db,
             upload_root=Path(REPORT_UPLOAD_DIR), client_ip=ip, user_agent=ua)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")

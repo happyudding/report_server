@@ -10,13 +10,14 @@ from .common import PASS_BIN, bin_types, json_safe, num, round_num
 CPK_THRESHOLD = 1.33
 
 
-def worst_cpk_by_subject(cpk_rows) -> dict:
+def worst_cpk_by_subject(cpk_rows, field: str = "cpk") -> dict:
     """subject 별 모든 source 행 중 최저(worst-case) cpk (None 제외).
 
+    field 로 기준 통계를 고른다("cpk"=전체 die / "cpk_limited"=규격내 — Issue Table 이 사용).
     dict 삽입 순서 = cpk_rows 에서 subject 가 처음 등장한 순서."""
     worst: dict = {}
     for r in cpk_rows or []:
-        cpk = r.get("cpk")
+        cpk = r.get(field)
         if cpk is None:
             continue
         subject = r.get("subject")
@@ -127,6 +128,25 @@ def _stats_batch(frame: pd.DataFrame, lolim: dict, hilim: dict) -> dict:
     return out
 
 
+def _limit_masked(frame: pd.DataFrame, lolim: dict, hilim: dict) -> pd.DataFrame:
+    """규격([LSL,USL]) 밖 값을 NaN 으로 마스킹한 복사본.
+
+    _stats_batch 의 reduction 이 전부 NaN-skip 이라 마스킹 후 1회 호출로 규격내
+    통계가 나온다. 단측 limit 은 있는 쪽만 적용(없는 쪽 ±inf), limit 전무 항목은
+    no-op(전체 통계와 동일하나 cpk 는 어차피 None). where 가 int 컬럼을 float64 로
+    승격하지만 복사본이라 원본 frame 은 불변."""
+    lo_map = {}
+    hi_map = {}
+    for c in frame.columns:
+        lo_n = num(lolim.get(c))
+        hi_n = num(hilim.get(c))
+        lo_map[c] = lo_n if lo_n is not None else -np.inf
+        hi_map[c] = hi_n if hi_n is not None else np.inf
+    lo_s = pd.Series(lo_map, dtype="float64")
+    hi_s = pd.Series(hi_map, dtype="float64")
+    return frame.where(frame.ge(lo_s, axis=1) & frame.le(hi_s, axis=1))
+
+
 def build_cpk_rows(tables, all_items):
     rows = []
     per_table = []
@@ -143,14 +163,17 @@ def build_cpk_rows(tables, all_items):
             frame = frame.copy()
             for c in stale:
                 frame[c] = pd.to_numeric(frame[c], errors="coerce")
-        # 전체(모든 die) 기준 통계는 기존 필드 그대로 — Issue Table·Distribution 이
-        # 계속 소비(하위호환). Bin1(BIN==PASS_BIN, 양품) 기준은 *_bin1 로 병기하여
-        # CPK 탭 토글이 클라이언트에서 표시 필드만 바꾸도록 한다.
+        # 전체(모든 die) 기준 통계는 기존 필드 그대로 — Distribution 이 계속 소비
+        # (하위호환). Bin1(BIN==PASS_BIN, 양품) 기준은 *_bin1, 규격내(전체 die 중
+        # [LSL,USL] 안 값만) 기준은 *_limited 로 병기 — CPK 탭 3상 토글이 표시 필드만
+        # 바꾸고, Issue Table CPK 섹션은 cpk_limited 를 기준으로 쓴다.
         stats_full = _stats_batch(frame, table.lolim, table.hilim)
         stats_bin1 = _stats_batch(frame[bin1_mask], table.lolim, table.hilim)
-        per_table.append((table, item_set, stats_full, stats_bin1))
+        stats_limited = _stats_batch(_limit_masked(frame, table.lolim, table.hilim),
+                                     table.lolim, table.hilim)
+        per_table.append((table, item_set, stats_full, stats_bin1, stats_limited))
     for item in all_items:
-        for table, item_set, stats_full, stats_bin1 in per_table:
+        for table, item_set, stats_full, stats_bin1, stats_limited in per_table:
             if item not in item_set:
                 continue
             lo = table.lolim.get(item)
@@ -163,6 +186,7 @@ def build_cpk_rows(tables, all_items):
                 "upper_limit": round_num(hi),
                 **stats_full[item],
                 **{f"{k}_bin1": v for k, v in stats_bin1[item].items()},
+                **{f"{k}_limited": v for k, v in stats_limited[item].items()},
             })
     return rows
 

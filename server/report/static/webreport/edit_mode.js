@@ -191,10 +191,15 @@ document.querySelector(".content").addEventListener("click", e => {
   }
   const jumpBtn = e.target.closest("[data-issue-jump]");
   if (jumpBtn) { jumpToIssueSection(jumpBtn.dataset.issueJump); return; }
+  if (e.target.id === "issueExcelBtn") { exportIssueExcel(); return; }
   const etcAddBtn = e.target.closest("#etcAddItemBtn");
   if (etcAddBtn) { openEtcItemModal(); return; }
   const etcDelBtn = e.target.closest(".btn-del-etc-item");
   if (etcDelBtn) { removeEtcItem(etcDelBtn.dataset.item); return; }
+  // Issue Table Yield 대표행/CPK 행 숨김(삭제) + 숨김 전체 초기화 (편집모드 전용).
+  const rowDelBtn = e.target.closest(".btn-del-issue-row");
+  if (rowDelBtn) { hideIssueRow(rowDelBtn.dataset.hkey); return; }
+  if (e.target.id === "issueResetHiddenBtn") { resetHiddenIssueRows(); return; }
   const addBtn = e.target.closest(".add-row");
   if (addBtn) {
     const table = document.getElementById(addBtn.dataset.table);
@@ -204,6 +209,34 @@ document.querySelector(".content").addEventListener("click", e => {
   }
   const delBtn = e.target.closest(".btn-del-row");
   if (delBtn) { delBtn.closest("tr").remove(); }
+});
+
+// Issue Table Status(Open/Close) 드랍다운 — 변경 즉시 저장 (편집모드 전용, 세션 편집 DB).
+// change 는 버블되므로 위임 1회로 충분. select 의 change 는 comment _dirty 마킹과 무간섭.
+document.querySelector(".content").addEventListener("change", async e => {
+  const sel = e.target.closest("select.issue-status-sel");
+  if (!sel || MODE !== "edit") return;
+  const key = sel.dataset.skey;
+  const value = sel.value;
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({ password: verifiedPassword, key, value }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    // 낙관 반영: 재렌더 없이 rows 데이터만 갱신 → Summary Open/Close 카운트 재계산 유도.
+    const td = sel.closest("td");
+    const ri = td ? parseInt(td.dataset.r, 10) : NaN;
+    if (!isNaN(ri) && Array.isArray(DATA.issue_table_text) && DATA.issue_table_text[ri]) {
+      DATA.issue_table_text[ri]["Status"] = value;
+    }
+    tabDirty["summary"] = true;
+  } catch (err) {
+    sel.value = (value === "Close") ? "Open" : "Close";   // 실패 시 롤백
+    showToast("Status 저장 실패: " + err.message);
+  }
 });
 
 // PTE/개발 comment 등 dblclick-edit 셀: 더블클릭 전에는 읽기전용 표시, 더블클릭 시에만
@@ -242,15 +275,16 @@ document.getElementById("btnDel").addEventListener("click", () => {
 document.getElementById("btnSaveComment").addEventListener("click", () => { saveNow(); });
 
 // 저장 버튼 수동 클릭 — 편집 중인 comment 를 기다리지 않고 즉시 DB 반영.
-// autoSave() 는 web_report 세션이면 saveIssueComments(), 아니면 buildPayload()+PATCH 를 태운다.
+// autoSave() 는 web_report 세션이면 comment/ENGR/차트주석 3채널 병렬 저장,
+// 아니면 buildPayload()+PATCH 를 태운다.
 async function saveNow() {
   if (!DATA || MODE !== "edit" || _autoSaving) return;
-  if (!_dirty) { showToast("변경된 내용이 없습니다."); return; }
+  if (!_dirty && !_cnDirty.size) { showToast("변경된 내용이 없습니다."); return; }
   const btn = document.getElementById("btnSaveComment");
   if (btn) btn.disabled = true;
   await autoSave();
   if (btn) btn.disabled = false;
-  showToast(_dirty ? "저장 실패 — 다시 시도해주세요." : "저장했습니다.");
+  showToast((_dirty || _cnDirty.size) ? "저장 실패 — 다시 시도해주세요." : "저장했습니다.");
 }
 
 document.getElementById("btnImportant").addEventListener("click", () => {
@@ -478,14 +512,22 @@ async function saveIssueComments(opts) {
 
 // 자동저장: 페이지가 숨겨질 때(탭 전환·창 최소화 등) 변경사항 자동 저장.
 // keepalive:true 로 페이지 언로드 중에도 요청이 완료된다.
+// web_report 세션은 3채널(Issue comment / Summary ENGR / 차트 주석)을 병렬로 flush —
+// 언로드 중 직렬 await 는 첫 요청 뒤 중단되므로 병렬이어야 keepalive 요청이 전부 나간다.
+// 각 함수는 자체 diff 로 변경 없으면 요청을 보내지 않는다.
 async function autoSave() {
-  if (!DATA || MODE !== "edit" || !_dirty || _autoSaving) return;
+  if (!DATA || MODE !== "edit" || _autoSaving) return;
+  if (!_dirty && !_cnDirty.size) return;   // 차트 주석은 자체 dirty 채널(_cnDirty, chart_notes.js)
   _autoSaving = true;
   _setDot("saving");
   if (isWebReportSession()) {
     _dirty = false;  // optimistic
     try {
-      await saveIssueComments({ keepalive: true });
+      await Promise.all([
+        saveIssueComments({ keepalive: true }),
+        saveSummaryEngr({ keepalive: true }),   // map_select.js
+        cnFlush({ keepalive: true }),           // chart_notes.js — 차트 주석(원/화살표/텍스트)
+      ]);
       _setDot("saved");
     } catch (_) {
       _dirty = true;
@@ -531,7 +573,7 @@ document.addEventListener("visibilitychange", () => {
 
 // 페이지를 떠날 때: dirty 상태면 브라우저 경고 + keepalive 저장 시도
 window.addEventListener("beforeunload", e => {
-  if (MODE === "edit" && _dirty) {
+  if (MODE === "edit" && (_dirty || _cnDirty.size)) {
     autoSave();            // keepalive 요청 발사 (비동기, 브라우저가 완료 보장)
     e.preventDefault();
     e.returnValue = "";    // 브라우저 "변경사항이 저장되지 않을 수 있습니다" 경고
@@ -669,6 +711,45 @@ async function removeEtcItem(item) {
     await load(false);
   } catch (e) {
     showToast("제거 실패: " + e.message);
+  }
+}
+
+// Issue Table Yield 대표행(bin 단위)/CPK 행 숨김(삭제) — 세션 편집 DB(issue_hidden)에
+// 키만 기록하고 재로드로 반영한다. 행별 복원은 없고 resetHiddenIssueRows(전체 초기화)뿐.
+async function hideIssueRow(key) {
+  if (!key) return;
+  if (!confirm(`이 행을 Issue Table 에서 삭제(숨김)할까요?\n(${key})\n※ 복원은 툴바 "삭제 전체 초기화"로만 가능합니다.`)) return;
+  if (!(await flushPendingComments())) return;
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/hidden`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({ password: verifiedPassword, action: "hide", key }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    showToast("행이 삭제(숨김)되었습니다.");
+    await load(false);
+  } catch (e) {
+    showToast("행 삭제 실패: " + e.message);
+  }
+}
+
+async function resetHiddenIssueRows() {
+  if (!confirm("삭제(숨김)한 Yield/CPK 행을 전부 복원할까요?")) return;
+  if (!(await flushPendingComments())) return;
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/hidden`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({ password: verifiedPassword, action: "reset_all" }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    showToast(j.storage === "unchanged" ? "삭제된 행이 없습니다." : "삭제한 행을 전부 복원했습니다.");
+    if (j.storage !== "unchanged") await load(false);
+  } catch (e) {
+    showToast("초기화 실패: " + e.message);
   }
 }
 

@@ -21,7 +21,7 @@
 | Raw Data | `raw_data.py` | payload 는 placeholder — 실제는 lazy 조회/편집 라우트 |
 | Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`) |
 | CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) |
-| Issue Table | `issue_table.py` | Yield 파생 + CPK<1.33 파생 + ETC. comment 는 편집 DB 에서 채움 |
+| Issue Table | `issue_table.py` | Yield 파생 + 규격내 cpk(`cpk_limited`)<1.33 파생 + ETC. comment/Status/행 숨김은 편집 DB 에서 채움 |
 | Distribution | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/distribution` 지연 로드 |
 | Trim Analysis | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/trim_analysis` 지연 로드 |
 | Map Analysis | `Map_analysis.py` (하이브리드 lazy) | wafer map die/bin 집계 — `/full` 은 dies 뺀 경량 메타(`strip_dies`), die 전량은 `GET .../web_report/map_analysis` 지연 로드 (schema v8) |
@@ -47,12 +47,29 @@ dies(STEP 분리 시 수백만 객체 — 메인스레드 JSON 파싱 freeze 의
   **Issue Table·Summary·fail_bin_ranking 도 동일한 전체(total) 기준 값(`build_yield_rows`)**
   — Issue Table 은 merge 유지(STEP 열 포함, fail 비중 내림차순이라 P1/P3 가 교차 등장).
   프런트 원형 파이는 제거. `yield_bin_groups`(전체 기준 merge 그룹)는 Excel 내보내기용으로 유지.
-- **CPK 임계값**: `CPK_THRESHOLD = 1.33` ([cpk.py](../web_report/tabs/cpk.py)). Issue
-  Table·Distribution 이 공유하며 subject 당 **worst-case(최저) cpk** 로 이슈를 판단한다
-  (`worst_cpk_by_subject`).
+- **CPK 임계값·기준 3종**: `CPK_THRESHOLD = 1.33` ([cpk.py](../web_report/tabs/cpk.py)).
+  subject 당 **worst-case(최저) cpk** 로 이슈를 판단한다(`worst_cpk_by_subject(rows, field)`).
+  `build_cpk_rows` 는 기준 3종을 병기한다: 전체 die(`cpk` 등 base 필드) / Bin1 양품
+  (`*_bin1`, 실제 BIN==1 만) / **규격내**(`*_limited`, BIN 무관 [LSL,USL] 안 값만 —
+  `_limit_masked` NaN 마스킹 후 재계산). CPK 탭 기준 토글(`cpkBasis`)이 3상 순환하고,
+  **Issue Table CPK 섹션은 항상 `cpk_limited` 기준**으로 선정·표시하며 미니 분포도 규격
+  창으로 재정규화(`distWindowRenorm`, `data-limitwin`)해 그린다. Distribution
+  status/index 는 기존 전체 die `cpk` 유지.
 - **Issue Table comment 키**: `row_key` 규약 — Yield 행 `Yield|<bin>|<item>`,
   CPK 데이터 행 `CPK|<item>`, ETC 행 `ETC|<item>`. comment 컬럼은
   `COMMENT_COLS = ["PTE comment", "개발 comment"]`. 값은 세션 편집 DB 에서 채운다.
+- **Issue Table 행 숨김/Status 키** (2026-07-16): 이슈 단위 키 — Yield 는 **bin 단위**
+  `Yield|<bin>`(대표행+상세행 일괄), CPK/ETC 는 `CPK|<item>`/`ETC|<item>`
+  (sheets.js `issueHideStatusKey` ↔ issue_table.py 동기 필수). 숨김(kind `issue_hidden`,
+  Yield/CPK 만 — ETC 는 기존 etc remove)은 행별 복원 없이 툴바 "삭제 전체 초기화"로만
+  일괄 복원. Status(kind `issue_status`)는 Open/Close 드랍다운(편집모드 전용, 기본 Open —
+  **"Close" 만 저장, 부재=Open**). Summary 탭 Issue Status 카드가 카테고리별 Open/Close
+  를 집계한다(`issueStatusCounts`, map_select.js).
+- **Issue Table Excel 다운로드**: 툴바 "Excel 다운로드" 버튼(`exportIssueExcel`,
+  [yield_issue.js](../server/report/static/webreport/yield_issue.js)) — Trim 탭과 같은
+  vendored exceljs(`loadExcelJS`)로 브라우저에서 xlsx 1시트 생성(서버 무관여). 화면과 동일
+  컬럼 순서(`orderColumns`)에서 미니차트 열(Map/Distribution)만 빼고 섹션을 Category
+  컬럼으로 되살리며, Yield 상세(TNO) 행은 접힘과 무관하게 전부 포함.
 - **Distribution**: `build_distribution_index`(항목별 test_num·worst cpk·fail·status) /
   `scatter_item`(상세 전체 측정값) / `build_distribution_compact`(ECDF 전 포인트 컴팩트
   columnar, lazy 전용). `/distribution` 은 전 포인트·gzip·ETag.
@@ -63,15 +80,18 @@ dies(STEP 분리 시 수백만 객체 — 메인스레드 JSON 파싱 freeze 의
 ## 편집 흐름 (세션 편집 DB)
 web_report 편집(comment / ETC item / trim override / Summary Engr comment)의 **진실은
 세션 단위 DB**(`report_webreport_edit` + `_rev`)다. manifest 는 업로드 시점 불변 스냅샷.
-- 라우트: `POST .../web_report/issue_table/{etc,comments}`, `.../summary/engr`,
+- 라우트: `POST .../web_report/issue_table/{etc,comments,hidden,status}`, `.../summary/engr`,
   `.../trim/overrides` (CSRF + 편집자 가드 — [02](02_server_query_edit.md)).
 - Raw Data 셀 편집(`.../raw_data/edit`)은 예외 — parquet 원본을 재인코딩해
   `content_hash` 를 갱신한다(undo 없음).
-- `kind` 6종: `issue_comment` / `etc_item` / `trim_override` / `summary_engr` /
-  `chart_note` / `note_sheet` ([edits.py](../web_report/edits.py) 규약). 편집마다 `rev` 가
+- `kind` 8종: `issue_comment` / `etc_item` / `trim_override` / `summary_engr` /
+  `chart_note` / `note_sheet` / `issue_hidden` / `issue_status`
+  ([edits.py](../web_report/edits.py) 규약). 편집마다 `rev` 가
   단조 증가해 캐시가 자연 무효화된다([12](12_web_report_cache.md)). dedup(동일 analysis_key)
   세션 간 편집 비공유. legacy 세션(rev==0)은 조회 시 manifest 폴백 + 첫 편집 직전 자동 시드
-  (chart_note/note_sheet 는 manifest 에 없던 신규 kind 라 시드 대상 아님).
+  (chart_note/note_sheet/issue_hidden/issue_status 는 manifest 에 없던 신규 kind 라 시드
+  대상 아님). 세션 단위 저장이라 rawdata 수정 → 재업로드(새 세션) 시 숨김/Status 는 자연
+  리셋된다.
 
 ### 차트 주석 (chart_note — 2026-07-12)
 그래프 위 동그라미/사각형/선/텍스트 + 코멘트. Plotly 내장 draw(dragmode drawcircle 등,
@@ -121,10 +141,12 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
   (`renderMiniDistCell`) 3곳 모두 점만 찍고 어떤 연결선도 긋지 않는다(계단형
   `line.shape:"hv"` 포함 금지 — x축 수평선은 UX 에 반함). 고유값이 적은 이산(code) 항목의
   성김은 동일값 구간을 세로 점으로 채우는 보간(`distPointsForDisplay` = `distFillVertical`
-  → `distDownsampleForDisplay` 순서)으로만 보정한다. 채움 간격(stepY)은 고정값이 아니라
-  소스별 "단일 점 1개의 ECDF 증가량"(최소 양의 Δy, `distStepY`)으로 유도한다 — 값이 전부
-  다른 진짜 희소 데이터는 모든 Δy 가 이 값과 같아 채움 0(업샘플링 금지)이고, 동일값이 축약된
-  riser(Δy≫stepY)만 개수에 비례해 채운다. 상세 CDF(`distRenderCdf`)는 원본 전
+  → `distDownsampleForDisplay` 순서)으로만 보정한다. 채움 간격(stepY)은 소스별 "단일 점
+  1개의 ECDF 증가량"(최소 양의 Δy, `distStepY`)을 시각 연속성 캡 `DIST.FILL_VISUAL_MAX_DY`
+  (0.3%)로 캡해 유도한다 — 표본이 작아 단일점 증가량이 0.3% 를 넘으면 단일점 riser 포함
+  모든 riser 를 0.3% 간격 세로 점으로 채워 썸네일 누적 0~100% 에 marker 빈 구간이 없게
+  한다(세로 방향 표시용 업샘플링, x값을 만들어내는 가로 보간은 금지). 조밀한 데이터
+  (stepY≤0.3%)는 캡이 no-op 라 기존과 픽셀 동일. 상세 CDF(`distRenderCdf`)는 원본 전
   측정값을 값당 1점으로 그려 이미 세로 점기둥이 되므로 대상 외.
 - **tabs/ 통계·honeyform 변환 로직을 고칠 때 검증 기준은 "같은 세션 payload 의 정준 JSON
   완전 일치"** — 벡터화·리팩토링은 값을 바꾸지 않는다(정수 컬럼 int64 dtype 보존 포함).

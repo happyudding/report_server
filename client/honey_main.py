@@ -784,6 +784,8 @@ class HoneyMainWindow(QMainWindow):
             QToolBar QToolButton:pressed { background: #4b5563; }
         """)
         quick = [
+            ("🏠", "Home",         "검색결과 홈 (기본 검색결과 목록)",
+             lambda: self.browser_panel.go_home()),
             ("🆕", "New Report",   "새 리포트 (입력 / 설정 창 접기·펴기)", self._toggle_controls),
             ("📝", "Rawdata edit", "Rawdata 수정 (Excel)",             self.on_rawdata_edit),
             (self._excel_icon(), "Excel Down", "Excel Download",       self.on_excel_download),

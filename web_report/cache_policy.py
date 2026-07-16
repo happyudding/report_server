@@ -78,7 +78,10 @@ def map_key(session) -> tuple:
 # v8: Map Analysis dies 를 /full 에서 제외(경량 메타만 + map_deferred=True) — 별도
 #     GET .../web_report/map_analysis 지연 로드. 안 올리면 옛 disk_cache 가 dies 포함
 #     대형 payload 를 계속 반환해 초기 로드 freeze 수정이 조용히 무효화된다.
-REPORT_SCHEMA_VERSION = 8
+# v9: IssueTable 행 Status 컬럼 + 행 숨김(issue_hidden 필터) + CPK 섹션 선정/표시값을
+#     규격내 cpk(cpk_limited) 기준으로 전환, cpk_rows 에 *_limited 통계 병기. 안 올리면
+#     옛 캐시가 Status 없는 rows / 전체 die 기준 CPK 섹션을 반환한다.
+REPORT_SCHEMA_VERSION = 9
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

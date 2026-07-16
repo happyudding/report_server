@@ -29,6 +29,9 @@ function cdfResetEdits() { cdfExcluded.clear(); cdfEditMode = "none"; }
 function openItemDetail(subject, navList) {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
+  // 미저장 차트 주석(원/화살표 등)은 항목 이동 전에 flush — purge 전이라 도형 회수 가능.
+  // 실패해도 _cnPending/_cnDirty 는 key 별로 남아 다음 autoSave/beforeunload 가 재시도.
+  if (_cnDirty.size) cnFlush().catch(e => showToast("차트 Comment 자동저장 실패: " + e.message));
   bindItemDetailPanel();
   // 상세가 아직 안 열려 있으면 현재 활성 탭 패널을 복귀 대상으로 기억하고 숨긴다.
   if (!dp.classList.contains("active")) {
@@ -275,6 +278,8 @@ function purgeItemDetailCharts() {
 function closeItemDetail() {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
+  // 미저장 차트 주석은 상세를 닫기 전에 flush (purge 전 — openItemDetail 과 동일 이유).
+  if (_cnDirty.size) cnFlush().catch(e => showToast("차트 Comment 자동저장 실패: " + e.message));
   _itemDetailReq++;   // 진행 중 fetch 무효화
   dp.classList.remove("active");
   purgeItemDetailCharts();
@@ -286,6 +291,8 @@ function closeItemDetail() {
 
 // 탭 버튼 클릭 시: 복원 없이 상세만 닫는다(해당 탭 패널이 이어서 활성화됨).
 function hideItemDetail() {
+  // 미저장 차트 주석은 탭 전환으로 상세가 사라지기 전에 flush.
+  if (_cnDirty.size) cnFlush().catch(e => showToast("차트 Comment 자동저장 실패: " + e.message));
   const dp = document.getElementById("panel-item-detail");
   if (dp && dp.classList.contains("active")) { _itemDetailReq++; dp.classList.remove("active"); purgeItemDetailCharts(); dp.innerHTML = ""; }
   _itemDetailReturnId = null;
@@ -744,9 +751,18 @@ function renderMiniDistCell(cell) {
   if (!info) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; return; }
 
   const lo = info.lower_limit, hi = info.upper_limit;
-  const traces = Object.keys(info.bySource).map(source => {
+  // Issue Table CPK 섹션 미니셀(data-limitwin): 규격 안 데이터만 재정규화해 그린다 —
+  // 행의 cpk_limited 와 동일 기준. 창 결과는 traces·x범위 양쪽에서 재사용한다.
+  const limitWin = cell.dataset.limitwin === "1";
+  const ptsBySource = {};
+  Object.keys(info.bySource).forEach(source => {
+    const src = info.bySource[source];
+    ptsBySource[source] = limitWin ? distWindowRenorm(src.xs, src.ys, lo, hi)
+      : { xs: src.xs, ys: src.ys };
+  });
+  const traces = Object.keys(ptsBySource).map(source => {
     // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
-    const ds = distPointsForDisplay(info.bySource[source].xs, info.bySource[source].ys);
+    const ds = distPointsForDisplay(ptsBySource[source].xs, ptsBySource[source].ys);
     return { type: "scatter", mode: "markers", cliponaxis: false, name: source,
       x: ds.xs, y: ds.ys, marker: { color: distColorFor(source), size: 3 } };
   });
@@ -754,8 +770,8 @@ function renderMiniDistCell(cell) {
   // 수 있음)까지 x-autorange 에 포함돼 x축이 늘어나 곡선이 한쪽에 뭉쳐 잘린 것처럼 보인다.
   // xs 는 ECDF 라 오름차순(distDownsampleForDisplay 전제) → 양끝값으로 min/max 를 O(1) 로 잡음.
   let xMin = Infinity, xMax = -Infinity;
-  Object.keys(info.bySource).forEach(source => {
-    const xs = info.bySource[source].xs;
+  Object.keys(ptsBySource).forEach(source => {
+    const xs = ptsBySource[source].xs;
     if (xs && xs.length) {
       if (xs[0] < xMin) xMin = xs[0];
       if (xs[xs.length - 1] > xMax) xMax = xs[xs.length - 1];

@@ -25,6 +25,10 @@ from report.static_pages import send_html_gzip
 
 _log = logging.getLogger(__name__)
 
+# CSRF 토큰 쿠키 sliding refresh — 모든 /pe/report/* 응답에서 만료(24h)를 연장한다.
+# 페이지를 하루 이상 열어두면 저장이 전부 403 되던 문제의 재발급 경로(403 응답도 재발급).
+report_bp.after_request(_issue_csrf_cookie)
+
 
 # ── annotations ───────────────────────────────────────────────────────────────
 
@@ -75,7 +79,7 @@ def delete_annotation(aid):
 
 @report_bp.get("/")
 def index_page():
-    return _issue_csrf_cookie(send_html_gzip(REPORT_ANALYSIS_INDEX_HTML))
+    return send_html_gzip(REPORT_ANALYSIS_INDEX_HTML)   # CSRF 쿠키는 after_request 가 발급
 
 
 @report_bp.get("/view/<session_id>")
@@ -85,7 +89,7 @@ def view_page(session_id):
     session = report_db.get_session(session_id)
     if session:
         _private_guard(session)
-    return _issue_csrf_cookie(send_html_gzip(REPORT_VIEW_HTML))
+    return send_html_gzip(REPORT_VIEW_HTML)   # CSRF 쿠키는 after_request 가 발급
 
 
 # ── Vendored 정적 자산 (Tabulator 등) ─────────────────────────────────────────

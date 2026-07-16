@@ -57,9 +57,13 @@ function renderNoteTab() {
     })
     .catch(e => {
       if (token !== _noteInitToken) return;
-      // 로드 실패해도 프레임은 뜬다 → 빈 시트로 진행(조회/편집 가능), 사용자엔 경고.
-      _noteSavedSheets = null; _noteFetched = true;
-      noteMaybeInit(token);
+      // 저장된 Note 를 못 읽은 채 빈 시트로 열면 저장 시 기존 Note 를 빈 내용으로
+      // 덮어쓴다 → 편집/저장을 차단하고 재시도만 허용 (_noteFetched=false 유지라
+      // 늦게 도착한 note:ready 가 있어도 init 되지 않는다).
+      panel.innerHTML = `<div class="placeholder" style="padding:24px;">Note 로드 실패: ${esc(e.message)}
+        <button type="button" class="btn-sm" id="noteRetry" style="margin-left:8px;">다시 시도</button></div>`;
+      const retry = document.getElementById("noteRetry");
+      if (retry) retry.onclick = () => renderNoteTab();
       showToast("Note 로드 실패: " + e.message);
     });
 }
@@ -133,6 +137,9 @@ async function noteSave() {
   if (btn) btn.disabled = true;
   try {
     const sheets = await noteRequestSheets();
+    // 빈 시트 배열을 보내면 서버가 400 으로 거부하지만, 애초에 POST 하지 않는다
+    // (프레임 직렬화 이상 시 기존 Note 를 빈 내용으로 치환하는 사고 방지).
+    if (!Array.isArray(sheets) || !sheets.length) throw new Error("시트 데이터가 비어 있습니다 — 저장하지 않았습니다");
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/note`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },

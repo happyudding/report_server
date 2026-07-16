@@ -23,6 +23,11 @@ KIND_SUMMARY_ENGR = "summary_engr"
 # 둘 다 manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
 KIND_CHART_NOTE = "chart_note"
 KIND_NOTE_SHEET = "note_sheet"
+# 2026-07-16 추가 — Issue Table 행 숨김(item_key="Yield|<bin>"|"CPK|<item>", value="1") /
+# 행 Status(item_key="Yield|<bin>"|"CPK|<item>"|"ETC|<item>", value="Close" 만 저장 —
+# 부재=Open). 둘 다 manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
+KIND_ISSUE_HIDDEN = "issue_hidden"
+KIND_ISSUE_STATUS = "issue_status"
 
 # 표 payload 빌드에 안 쓰이는 kind — load_edit_state 조회에서 제외해 대용량 값
 # (note_sheet 시트 JSON 최대 2MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
@@ -60,6 +65,9 @@ def state_from_manifest(manifest: dict) -> dict:
         "etc_items": list(manifest.get("etc_items") or []),
         "trim_overrides": dict(manifest.get("trim_overrides") or {}),
         "summary_engr": dict(manifest.get("summary_engr") or {}),
+        # issue_hidden/issue_status 는 manifest 에 없는 신규 kind — 빈 기본값만 보장.
+        "issue_hidden": [],
+        "issue_status": {},
     }
 
 
@@ -67,7 +75,8 @@ def load_edit_state(report_db, session_id: str) -> dict:
     """DB 편집행 → manifest 필드와 동일한 형태의 상태 dict.
 
     etc_items 순서는 rowid(삽입) 순서 — get_webreport_edits 가 보장한다."""
-    state = {"issue_comments": {}, "etc_items": [], "trim_overrides": {}, "summary_engr": {}}
+    state = {"issue_comments": {}, "etc_items": [], "trim_overrides": {}, "summary_engr": {},
+             "issue_hidden": [], "issue_status": {}}
     for row in report_db.get_webreport_edits(session_id,
                                              exclude_kinds=_STATE_EXCLUDED_KINDS):
         kind, item_key, value = row["kind"], row["item_key"], row["value"]
@@ -77,6 +86,10 @@ def load_edit_state(report_db, session_id: str) -> dict:
                 state["issue_comments"].setdefault(row_key, {})[col] = value
         elif kind == KIND_ETC_ITEM:
             state["etc_items"].append(item_key)
+        elif kind == KIND_ISSUE_HIDDEN:
+            state["issue_hidden"].append(item_key)
+        elif kind == KIND_ISSUE_STATUS:
+            state["issue_status"][item_key] = value
         elif kind == KIND_TRIM_OVERRIDE:
             try:
                 spec = json.loads(value)
@@ -137,6 +150,7 @@ def load_note_sheet(report_db, session_id: str) -> dict | None:
 
 
 def _changes_from_state(state: dict) -> list:
+    # issue_hidden/issue_status 는 manifest 에 존재한 적 없는 kind — 시드 대상 아님.
     changes = []
     for row_key, cols in (state.get("issue_comments") or {}).items():
         for col, value in (cols or {}).items():

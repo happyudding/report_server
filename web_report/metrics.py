@@ -17,7 +17,8 @@ from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
 
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
                          issue_comments=None, summary_engr=None, product_type="", product="",
-                         mode="Normal", dist_colors=None, ai_comments=None) -> dict:
+                         mode="Normal", dist_colors=None, ai_comments=None,
+                         issue_hidden=None, issue_status=None) -> dict:
     """Distribution ECDF(대용량)는 payload 에 싣지 않고 항상 지연 로드한다
     (distribution_deferred=True, sheets["Distribution"]=[]) — 프런트가 별도 lazy 엔드포인트
     (GET .../web_report/distribution)로 받아간다. distribution_index(경량)는 항상 포함.
@@ -59,6 +60,8 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         mode=mode or "Normal",
         # None=컬럼 미표시. dict 전달은 ai_comment 옵션 세션의 콜드 빌드(service)만.
         ai_comments=ai_comments,
+        issue_hidden=list(issue_hidden or []),
+        issue_status=dict(issue_status or {}),
     )
     sheets_out = {spec.name: (spec.builder(ctx) if spec.builder else [])
                   for spec in TAB_REGISTRY}

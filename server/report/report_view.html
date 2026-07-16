@@ -1023,11 +1023,32 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
   font-size: 16px; cursor: pointer; line-height: 1; padding: 0 6px;
 }
 .btn-del-row:hover { color: #b91c1c; }
-.btn-del-etc-item {
+.btn-del-etc-item, .btn-del-issue-row {
   border: none; background: transparent; color: #dc2626;
   font-size: 13px; cursor: pointer; line-height: 1; padding: 0 4px; vertical-align: middle;
 }
-.btn-del-etc-item:hover { color: #b91c1c; }
+.btn-del-etc-item:hover, .btn-del-issue-row:hover { color: #b91c1c; }
+
+/* Issue Table Status(Open/Close) — 편집모드 드랍다운 + 조회모드 텍스트 색 구분 */
+select.issue-status-sel {
+  width: 100%; padding: 2px 2px; border: 1px solid #d0d5dd; border-radius: 4px;
+  font-size: 12px; background: #fff; cursor: pointer;
+}
+select.issue-status-sel:focus { border-color: #4a90e2; outline: none; }
+td.issue-status.is-open { color: #b45309; font-weight: 600; }
+td.issue-status.is-close { color: #15803d; font-weight: 600; }
+
+/* Summary 탭 Issue Status 카드(카테고리별 Open/Close 소표) */
+.iss-status-wrap { overflow-x: auto; }
+.iss-status-table { border-collapse: collapse; font-size: 13px; min-width: 220px; }
+.iss-status-table th, .iss-status-table td {
+  border: 1px solid #e2e6ea; padding: 5px 14px; text-align: center;
+}
+.iss-status-table th { background: #f4f6f8; font-weight: 600; }
+.iss-status-table td.iss-cat { font-weight: 600; background: #fafbfc; }
+.iss-status-table td.iss-open:not(.st-empty) { color: #b45309; font-weight: 600; }
+.iss-status-table td.iss-close:not(.st-empty) { color: #15803d; font-weight: 600; }
+.iss-status-table td.st-empty { color: #b6bcc4; }
 
 .edit-bar {
   display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 95;

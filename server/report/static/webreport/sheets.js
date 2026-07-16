@@ -32,6 +32,7 @@ function colWidth(name, kind) {
   if (n.endsWith("_count"))             return px(60);
   if (n.endsWith("_yield"))             return px(60);
   if (n === "avg")                      return px(48);
+  if (n === "status")                   return px(56);   // Issue Table Open/Close 드랍다운
   if (n === "item")                     return px(kind === "issue" ? 150 * 0.55 : 150);
   if (n === "category")                 return "50px";
   if (n === "condition & judge limit")  return "185px";
@@ -110,17 +111,21 @@ function orderColumns(cols, kind) {
   }
 
   if (kind === "issue") {
-    // 식별컬럼 뒤: Map → Distribution → Avg → source별 yield 순. (Avg 는 yield 그룹 헤더 아래로 묶임)
+    // 식별컬럼 뒤: Map → Distribution → Avg → source별 yield → Status 순.
+    // (Avg 는 yield 그룹 헤더 아래로 묶임. Status 는 좌측 sticky 6컬럼 뒤 comment 앞 —
+    //  좌측 고정 블록 폭 계산(syncIssueStickyOffsets)에 영향 주지 않는 위치.)
     const isMap = c => String(c).trim().toLowerCase() === "map";
     const isDist = c => String(c).trim().toLowerCase() === "distribution";
     const isAvgCol = c => String(c).trim().toLowerCase() === "avg";
     const isYieldCol = c => /_yield$/i.test(String(c));
+    const isStatus = c => String(c).trim().toLowerCase() === "status";
     const map = rest.filter(isMap);
     const dist = rest.filter(isDist);
     const avg = singleSource ? [] : rest.filter(isAvgCol);
     const yields = rest.filter(isYieldCol);
-    const others = rest.filter(c => !isMap(c) && !isDist(c) && !isAvgCol(c) && !isYieldCol(c));
-    rest = others.concat(map).concat(dist).concat(avg).concat(yields);
+    const status = rest.filter(isStatus);
+    const others = rest.filter(c => !isMap(c) && !isDist(c) && !isAvgCol(c) && !isYieldCol(c) && !isStatus(c));
+    rest = others.concat(map).concat(dist).concat(avg).concat(yields).concat(status);
   }
 
   return rest.concat(comments);
@@ -273,6 +278,20 @@ function issueRowKey(r, section) {
   return "";
 }
 
+// Issue Table 행 숨김/Status 용 이슈 단위 키 — 백엔드 edits.py KIND_ISSUE_HIDDEN/
+// KIND_ISSUE_STATUS 규약과 반드시 동일해야 한다: Yield 는 bin 단위 "Yield|<bin>"
+// (대표행에만 부여 — 상세행/Pass 행 제외), CPK 행 "CPK|<item>", ETC 행 "ETC|<item>".
+function issueHideStatusKey(r, section) {
+  const item = String((r && r["Item"]) ?? "").trim();
+  if (section === "Yield") {
+    const bin = String((r && r["Bin"]) ?? "").trim();
+    return (bin && bin !== "1" && r && r._grp && !r._detail) ? `Yield|${bin}` : "";
+  }
+  if (section === "CPK") return item ? `CPK|${item}` : "";
+  if (section === "ETC") return item ? `ETC|${item}` : "";
+  return "";
+}
+
 // Issue Table 섹션별 2행 헤더 블록. 컬럼 구조(식별/Distribution/Avg+source/comment)는 세 섹션이
 // 동일하고, 그룹 라벨(yield/cpk/etc)과 Avg 라벨(Avg↔cpk)만 섹션마다 다르다. buildSheetTableHead
 // 의 run 로직을 그대로 따르되 라벨만 섹션값으로 채워 <tr.issue-shead-top>/<tr.issue-shead-bot>
@@ -421,10 +440,27 @@ function renderSheetTable(rows, opts) {
         if (opts.kind === "issue" && item && !subhead && !issuePassRow
           && (rowSection[ri] === "Yield" || rowSection[ri] === "ETC" || rowSection[ri] === "CPK")
           && (distDataReady ? !!distDataCache[item] : true)) {
+          // CPK 섹션 미니셀은 규격내(limit 안) 구간만 재정규화해 그린다(data-limitwin) —
+          // 행의 cpk 값(cpk_limited)과 동일 기준. Yield/ETC 는 기존 전체 범위 유지.
+          const limitWin = rowSection[ri] === "CPK" ? ` data-limitwin="1"` : "";
           return `<td${subhead ? ` class="sheet-subhead"` : ""} data-r="${ri}" data-c="${ci}">` +
-            `<div class="dist-cell dist-cell-mini" data-subject="${esc(item)}"><div class="dist-plot"></div></div></td>`;
+            `<div class="dist-cell dist-cell-mini" data-subject="${esc(item)}"${limitWin}><div class="dist-plot"></div></div></td>`;
         }
         return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
+      }
+      // Status 열: 이슈 행(Yield 대표/CPK/ETC — 백엔드가 값 채움)만 Open/Close 표시.
+      // 편집모드는 드랍다운(변경 즉시 저장 — edit_mode.js 위임), 조회모드는 텍스트.
+      if (String(c).trim().toLowerCase() === "status") {
+        const skey = (opts.kind === "issue" && !subhead) ? issueHideStatusKey(r, rowSection[ri]) : "";
+        if (!skey || txt === "") {
+          return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
+        }
+        if (opts.edit) {
+          return `<td data-r="${ri}" data-c="${ci}"><select class="issue-status-sel" data-skey="${esc(skey)}">` +
+            `<option value="Open"${txt !== "Close" ? " selected" : ""}>Open</option>` +
+            `<option value="Close"${txt === "Close" ? " selected" : ""}>Close</option></select></td>`;
+        }
+        return `<td class="issue-status ${txt === "Close" ? "is-close" : "is-open"}" data-r="${ri}" data-c="${ci}">${esc(txt)}</td>`;
       }
       // opts.editableCols 가 있으면 그 컬럼만 편집 가능(더블클릭으로 활성화), 나머지는 읽기전용으로
       // 아래 일반 렌더링을 그대로 탄다. 없으면 기존처럼 opts.edit 전체 컬럼이 즉시 편집 가능.
@@ -472,6 +508,12 @@ function renderSheetTable(rows, opts) {
       // ETC 섹션의 상세 행(ENGR 가 수동 추가한 item) Item 셀: 수정 모드에서만 삭제(×) 버튼 노출.
       const etcDeletable = opts.kind === "issue" && opts.edit && !isEmpty && c === "Item"
         && rowSection[ri] === "ETC" && String(r["Category"] || "") === "";
+      // Yield 대표행(bin 단위)/CPK 행 Item 셀: 수정 모드에서만 행 숨김(×) 버튼 노출.
+      // 복원은 툴바 "삭제 전체 초기화"뿐 — 키 규약은 issueHideStatusKey(백엔드와 동일).
+      const hideKey = (opts.kind === "issue" && opts.edit && c === "Item" && !subhead && !issuePassRow
+        && ((rowSection[ri] === "Yield" && r && r._grp && !r._detail)
+          || (rowSection[ri] === "CPK" && !isEmpty)))
+        ? issueHideStatusKey(r, rowSection[ri]) : "";
       let cellHtml;
       if (itemClickable) {
         cellHtml = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;
@@ -482,6 +524,9 @@ function renderSheetTable(rows, opts) {
       }
       if (etcDeletable) {
         cellHtml += ` <button type="button" class="btn-del-etc-item" data-item="${esc(txt)}" title="ETC 항목 제거">×</button>`;
+      }
+      if (hideKey) {
+        cellHtml += ` <button type="button" class="btn-del-issue-row" data-hkey="${esc(hideKey)}" title="이 행 삭제(숨김) — 복원은 툴바 '삭제 전체 초기화'">×</button>`;
       }
       // Issue Table Yield 대표행 STEP 셀 오른쪽에 접기/펼치기 토글(그 Bin 의 detail TNO 가 있을 때).
       if (opts.kind === "issue" && c === "Step" && r && r._grp && !r._detail && (Number(r._ndetail) || 0) > 0) {
