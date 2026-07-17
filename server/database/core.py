@@ -51,7 +51,9 @@ CREATE TABLE IF NOT EXISTS report_session (
     uploaded_by   TEXT,
     client_host   TEXT,
     webreport_options TEXT,
-    mode          TEXT DEFAULT 'Normal'
+    mode          TEXT DEFAULT 'Normal',
+    deleted_at    INTEGER,
+    deleted_by    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_report_session_analysis_key
     ON report_session(analysis_key);
@@ -59,6 +61,8 @@ CREATE INDEX IF NOT EXISTS idx_report_session_status_created
     ON report_session(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_report_session_product_type
     ON report_session(product_type);
+CREATE INDEX IF NOT EXISTS idx_report_session_deleted_at
+    ON report_session(deleted_at);
 
 CREATE TABLE IF NOT EXISTS report_analysis_summary (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -324,6 +328,11 @@ def _migrate(conn):
             conn.execute("ALTER TABLE report_session ADD COLUMN is_private INTEGER DEFAULT 0")
         if "mode" not in sess_cols:
             conn.execute("ALTER TABLE report_session ADD COLUMN mode TEXT DEFAULT 'Normal'")
+        # 휴지통(soft delete) 컬럼 — deleted_at 은 INTEGER(epoch), deleted_by 는 삭제자 계정.
+        if "deleted_at" not in sess_cols:
+            conn.execute("ALTER TABLE report_session ADD COLUMN deleted_at INTEGER")
+        if "deleted_by" not in sess_cols:
+            conn.execute("ALTER TABLE report_session ADD COLUMN deleted_by TEXT")
 
     if not _table_exists(conn, "report_sheet_data"):
         conn.execute("""

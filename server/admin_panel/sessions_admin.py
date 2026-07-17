@@ -15,9 +15,12 @@ from database import report_db
 _log = logging.getLogger(__name__)
 
 
-def list_sessions(q=None, status=None, limit=100, offset=0):
+def list_sessions(q=None, status=None, limit=100, offset=0, trashed=None):
     """전체 status 세션 목록 (기존 get_history 는 done/reused 만 반환해 사용 불가).
-    password 원문은 절대 노출하지 않고 has_password 만 내려준다."""
+    password 원문은 절대 노출하지 않고 has_password 만 내려준다.
+
+    trashed: None=전체(활성+휴지통) / "1"=휴지통만(deleted_at NOT NULL) / "0"=활성만.
+    내부 관리용 조회라 휴지통 세션도 포함해 보여준다(일반 목록은 get_history 가 제외)."""
     try:
         limit = max(1, min(int(limit), 500))
     except (TypeError, ValueError):
@@ -32,6 +35,10 @@ def list_sessions(q=None, status=None, limit=100, offset=0):
     if status:
         conditions.append("s.status = ?")
         params.append(status)
+    if trashed == "1":
+        conditions.append("s.deleted_at IS NOT NULL")
+    elif trashed == "0":
+        conditions.append("s.deleted_at IS NULL")
     if q:
         conditions.append(
             "(s.file_name LIKE ? OR s.product LIKE ? OR s.lot_id LIKE ? "
@@ -47,6 +54,7 @@ def list_sessions(q=None, status=None, limit=100, offset=0):
             SELECT s.session_id, s.analysis_key, s.file_name, s.product_type, s.process,
                    s.product, s.revision, s.lot_id, s.created_at, s.status, s.source,
                    s.uploaded_by, s.client_host, s.error_message,
+                   s.deleted_at, s.deleted_by,
                    COALESCE(s.mode, 'Normal') AS mode,
                    COALESCE(s.is_important, 0) AS is_important,
                    CASE WHEN s.password IS NOT NULL AND s.password <> '' THEN 1 ELSE 0 END
@@ -108,6 +116,106 @@ def bulk_delete(session_ids, audit):
             failed.append({"session_id": sid, "error": str(exc)[:200]})
             audit(session, "fail")
     return {"deleted": deleted, "failed": failed}
+
+
+def restore_sessions(session_ids, audit):
+    """휴지통 세션 복원 (deleted_at/deleted_by clear). 건별 audit 콜백.
+    실제 휴지통 상태인 것만 복원하고, 아니면 skipped 로 분류한다."""
+    restored, skipped = [], []
+    for sid in session_ids:
+        session = report_db.get_session(sid)
+        if not session:
+            skipped.append({"session_id": sid, "reason": "not found"})
+            continue
+        if not session.get("deleted_at"):
+            skipped.append({"session_id": sid, "reason": "not trashed"})
+            continue
+        report_db.restore_session(sid)
+        restored.append(sid)
+        audit(session, "ok")
+    return {"restored": restored, "skipped": skipped}
+
+
+def _purge_one(session):
+    """휴지통 세션 1건 영구 정리 — 사용자 삭제 라우트와 동일한 완전 정리 경로.
+
+    마지막 참조 세션이면 산출물(S3/로컬)·analysis 메타 행·캐시를 정리하고, Note 이미지는
+    세션 단위라 공유 여부와 무관하게 정리한다. best-effort — 정리 실패가 세션 행 삭제를
+    막지 않는다."""
+    sid = session["session_id"]
+    akey = session.get("analysis_key")
+    if akey and report_db.count_sessions_for_analysis_key(
+            akey, exclude_session_id=sid) == 0:
+        try:
+            result = storage_gateway.delete_report_artifacts(
+                akey, upload_root=Path(config.REPORT_UPLOAD_DIR))
+            for warning in result.get("warnings", []):
+                _log.warning("[admin-panel] purge artifact (%s): %s", akey, warning)
+            report_db.delete_analysis_rows(akey)
+        except Exception:
+            _log.exception("[admin-panel] purge artifact failed for %s", akey)
+        try:
+            from web_report import service as web_report_service
+            web_report_service.invalidate_caches(akey)
+        except Exception:
+            _log.exception("[admin-panel] purge cache invalidate failed for %s", akey)
+    try:
+        for warning in storage_gateway.delete_note_images(sid):
+            _log.warning("[admin-panel] purge note image (%s): %s", sid, warning)
+    except Exception:
+        _log.exception("[admin-panel] purge note image cleanup failed for %s", sid)
+    report_db.delete_session(sid)
+
+
+def purge_trashed(session_ids=None, all_expired=False, dry_run=True, cutoff_days=None,
+                  audit=None):
+    """휴지통 세션 영구 삭제(purge) — deleted_at 이 cutoff_days(기본 REPORT_TRASH_RETENTION_DAYS)
+    이전인 경과분만 대상. 관리자 수동 실행 전용(스케줄러 자동 purge 없음).
+
+    all_expired=True 면 경과분 전체, 아니면 session_ids 중 경과분만(미경과분은 skipped).
+    dry_run=True 면 실제 정리 없이 대상만 집계/감사(result='dryrun'). audit(session, result)
+    는 라우트가 넘기는 감사 콜백. 공유 analysis_key 는 count_sessions_for_analysis_key
+    가드로 마지막 참조일 때만 산출물을 회수한다."""
+    import time
+    days = int(cutoff_days if cutoff_days is not None else config.REPORT_TRASH_RETENTION_DAYS)
+    cutoff = int(time.time()) - days * 86400
+    audit = audit or (lambda s, r: None)
+
+    if all_expired:
+        targets = report_db.get_trashed_sessions(before_epoch=cutoff)
+    else:
+        targets = []
+        skipped_early = []
+        for sid in (session_ids or []):
+            session = report_db.get_session(sid)
+            if not session or not session.get("deleted_at"):
+                skipped_early.append({"session_id": sid, "reason": "not trashed"})
+                continue
+            if int(session.get("deleted_at")) > cutoff:
+                skipped_early.append({"session_id": sid, "reason": "not expired"})
+                continue
+            targets.append(dict(session))
+
+    purged, failed = [], []
+    for session in targets:
+        sid = session["session_id"]
+        if dry_run:
+            audit(session, "dryrun")
+            continue
+        try:
+            _purge_one(session)
+            purged.append(sid)
+            audit(session, "ok")
+        except Exception as exc:
+            _log.exception("[admin-panel] purge failed: %s", sid)
+            failed.append({"session_id": sid, "error": str(exc)[:200]})
+            audit(session, "fail")
+
+    out = {"scanned": len(targets), "purged": purged, "failed": failed,
+           "dry_run": bool(dry_run), "cutoff_days": days}
+    if not all_expired:
+        out["skipped"] = skipped_early
+    return out
 
 
 def set_important(session_id, important):

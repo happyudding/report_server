@@ -309,8 +309,14 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
         <option value="pending">pending</option>
         <option value="error">error</option>
       </select>
+      <select id="sessTrashed" class="sel" title="휴지통 필터">
+        <option value="">전체(활성+휴지통)</option>
+        <option value="0">활성만</option>
+        <option value="1">🗑 휴지통만</option>
+      </select>
       <button class="btn primary" id="btnSessSearch">검색</button>
       <span class="grow"></span>
+      <button class="btn" id="btnPurgeExpired" title="휴지통에서 30일 경과분을 영구 삭제">🗑 경과분 purge</button>
       <button class="btn danger" id="btnBulkDelete" disabled>선택 삭제 (0)</button>
     </div>
     <div class="table-wrap"><table>
@@ -440,6 +446,12 @@ function fmtDate(unix) {
   if (!unix) return "-";
   const d = new Date(unix * 1000);
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+// 휴지통 경과 일수 (deleted_at 기준) — 30일 경과 여부를 배지로 보여준다.
+function trashElapsed(deletedAt) {
+  if (!deletedAt) return "";
+  const days = Math.floor((Date.now() / 1000 - deletedAt) / 86400);
+  return `${days}d`;
 }
 function fmtBytes(n) {
   if (n == null) return "-";
@@ -1049,6 +1061,7 @@ async function loadSessions() {
   const params = new URLSearchParams({ limit: SESS_PAGE, offset: sessOffset });
   const q = $("sessQ").value.trim(); if (q) params.set("q", q);
   const st = $("sessStatus").value; if (st) params.set("status", st);
+  const tr = $("sessTrashed").value; if (tr) params.set("trashed", tr);
   let data;
   try { data = await getJSON("api/sessions?" + params); }
   catch (e) {
@@ -1068,15 +1081,18 @@ async function loadSessions() {
         <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
         <td>${esc(r.lot_id || "-")}</td><td>${esc(r.file_name || "-")}</td>
         <td><span class="badge ${esc(r.status)}">${esc(r.status)}</span>${
-            r.error_message ? `<span class="badge-fail" title="${esc(r.error_message)}">!</span>` : ""}</td>
+            r.error_message ? `<span class="badge-fail" title="${esc(r.error_message)}">!</span>` : ""}${
+            r.deleted_at ? ` <span class="badge gray" title="휴지통 이동 ${fmtDate(r.deleted_at)}${r.deleted_by ? " · " + esc(r.deleted_by) : ""}">🗑 ${trashElapsed(r.deleted_at)}</span>` : ""}</td>
         <td>${esc(r.mode)}</td>
         <td>${esc(r.uploaded_by || "-")}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
         <td>${r.has_password
               ? `<span class="badge gray">PIN</span> <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="pin" data-sid="${esc(r.session_id)}">변경/해제</button>`
               : `<button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="pin" data-sid="${esc(r.session_id)}">PIN 설정</button>`}</td>
         <td class="mono">${esc(r.session_id)}</td>
-        <td><button class="btn danger" style="height:24px;padding:0 8px;font-size:11px"
-             data-act="del" data-sid="${esc(r.session_id)}">삭제</button></td>
+        <td>${r.deleted_at
+              ? `<button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="restore" data-sid="${esc(r.session_id)}">복원</button>`
+                + ` <button class="btn danger" style="height:24px;padding:0 8px;font-size:11px" data-act="purge" data-sid="${esc(r.session_id)}" title="산출물·DB 영구 삭제 (30일 경과분만)">purge</button>`
+              : `<button class="btn danger" style="height:24px;padding:0 8px;font-size:11px" data-act="del" data-sid="${esc(r.session_id)}">삭제</button>`}</td>
       </tr>`).join("");
   }
   // pager
@@ -1091,6 +1107,7 @@ async function loadSessions() {
 $("btnSessSearch").onclick = () => { sessOffset = 0; loadSessions(); };
 $("sessQ").addEventListener("keydown", e => { if (e.key === "Enter") { sessOffset = 0; loadSessions(); } });
 $("sessStatus").onchange = () => { sessOffset = 0; loadSessions(); };
+$("sessTrashed").onchange = () => { sessOffset = 0; loadSessions(); };
 $("chkAll").onchange = () => {
   document.querySelectorAll(".chkRow").forEach(c => {
     c.checked = $("chkAll").checked;
@@ -1126,6 +1143,17 @@ $("sessBody").addEventListener("click", async e => {
       const r = await postJSON("api/sessions/delete", { session_ids: [sid] });
       msg.textContent = r.deleted.length ? `삭제 완료: ${sid}` : `삭제 실패: ${JSON.stringify(r.failed)}`;
       loadSessions();
+    } else if (btn.dataset.act === "restore") {
+      const r = await postJSON("api/sessions/restore", { session_ids: [sid] });
+      msg.textContent = r.restored.length ? `복원 완료: ${sid}`
+        : `복원 안 됨: ${JSON.stringify(r.skipped)}`;
+      loadSessions();
+    } else if (btn.dataset.act === "purge") {
+      if (!confirm(`세션 ${sid} 을(를) 영구 삭제(purge)할까요?\n산출물·DB 가 완전히 정리되며 복구할 수 없습니다.\n(휴지통 이동 후 30일이 지난 세션만 가능)`)) return;
+      const r = await postJSON("api/sessions/purge", { session_ids: [sid], dry_run: false });
+      if (r.purged && r.purged.length) msg.textContent = `purge 완료: ${sid}`;
+      else msg.textContent = `purge 안 됨: ${JSON.stringify(r.skipped || r.failed || r)}`;
+      loadSessions();
     }
   } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
 });
@@ -1139,6 +1167,22 @@ $("btnBulkDelete").onclick = async () => {
     const r = await postJSON("api/sessions/delete", { session_ids: [...selected] });
     msg.textContent = `삭제 ${r.deleted.length}건 완료` +
       (r.failed.length ? `, 실패 ${r.failed.length}건: ${r.failed.map(f => f.session_id).join(", ")}` : "");
+    loadSessions();
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+};
+// 휴지통 30일 경과분 일괄 purge — dry-run 으로 대상 수를 먼저 보여주고 확인 후 실제 실행.
+$("btnPurgeExpired").onclick = async () => {
+  const msg = $("sessMsg");
+  msg.className = "msg"; msg.textContent = "경과분 확인 중…";
+  try {
+    const dry = await postJSON("api/sessions/purge", { all_expired: true, dry_run: true });
+    if (!dry.scanned) { msg.textContent = "purge 대상(30일 경과 휴지통) 없음"; return; }
+    const typed = prompt(`휴지통에서 30일 경과한 ${dry.scanned}개 세션을 영구 삭제(purge)합니다.\n산출물·DB 가 완전히 정리되며 복구할 수 없습니다.\n\n계속하려면 DELETE 를 입력하세요:`);
+    if (typed !== "DELETE") { msg.textContent = "취소됨"; return; }
+    msg.textContent = "purge 중…";
+    const r = await postJSON("api/sessions/purge", { all_expired: true, dry_run: false });
+    msg.textContent = `purge ${r.purged.length}건 완료` +
+      (r.failed.length ? `, 실패 ${r.failed.length}건` : "");
     loadSessions();
   } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
 };

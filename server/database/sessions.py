@@ -50,6 +50,47 @@ def delete_session(session_id):
         conn.execute("DELETE FROM report_session WHERE session_id=?", (session_id,))
 
 
+def trash_session(session_id, deleted_by=None):
+    """세션을 휴지통으로 이동(soft delete) — deleted_at/deleted_by 기록. 산출물·DB 행은
+    유지한다. 실제 산출물/DB 정리는 관리자 purge(30일 경과분)에서만 이뤄진다."""
+    now = _now()
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE report_session SET deleted_at=?, deleted_by=?, updated_at=? "
+            "WHERE session_id=?",
+            (now, deleted_by, now, session_id),
+        )
+    return now
+
+
+def restore_session(session_id):
+    """휴지통 세션 복원 — deleted_at/deleted_by 를 비운다."""
+    now = _now()
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE report_session SET deleted_at=NULL, deleted_by=NULL, updated_at=? "
+            "WHERE session_id=?",
+            (now, session_id),
+        )
+
+
+def get_trashed_sessions(before_epoch=None):
+    """휴지통(deleted_at NOT NULL) 세션 목록 — 내부 관리용 조회(관리자 purge/복원).
+
+    before_epoch 지정 시 deleted_at 이 그 이전인 것만(=purge 경과분 대상). deleted_at 오름차순."""
+    sql = ("SELECT session_id, analysis_key, product_type, product, lot_id, file_name, "
+           "       created_at, deleted_at, deleted_by "
+           "FROM report_session WHERE deleted_at IS NOT NULL")
+    params = []
+    if before_epoch is not None:
+        sql += " AND deleted_at <= ?"
+        params.append(int(before_epoch))
+    sql += " ORDER BY deleted_at ASC"
+    with get_conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
 def count_sessions_for_analysis_key(analysis_key, exclude_session_id=None):
     """analysis_key 를 참조하는 세션 수. 삭제 시 산출물 공유 여부 판단용.
 
@@ -105,7 +146,8 @@ def _history_where(product_type=None, process=None, product=None, revision=None,
 
     viewer: None=비공개 필터 없음(하위호환·관리자용) / ""=신원 없음(비공개 전부 숨김) /
     "<uid>"=공개 OR legacy(업로더 기록 없음 — is_uploader 규칙) OR 업로더 본인 OR 위임 편집자."""
-    conditions = ["s.status IN ('done', 'reused')"]
+    # 휴지통(soft delete)된 세션은 일반 목록 조회에서 항상 제외한다.
+    conditions = ["s.status IN ('done', 'reused')", "s.deleted_at IS NULL"]
     params = []
     if product_type:
         conditions.append("s.product_type = ?")
@@ -194,7 +236,7 @@ def get_expired_sessions(cutoff_epoch):
             "       file_name, created_at "
             "FROM report_session "
             "WHERE created_at < ? AND COALESCE(is_important, 0) = 0 "
-            "  AND status IN ('done', 'reused') "
+            "  AND status IN ('done', 'reused') AND deleted_at IS NULL "
             "  AND session_id NOT IN (SELECT session_id FROM report_user_important) "
             "ORDER BY created_at ASC",
             (cutoff_epoch,),
@@ -213,7 +255,7 @@ def get_orphan_pending_sessions(cutoff_epoch):
             "SELECT session_id, analysis_key, product_type, product, lot_id, "
             "       file_name, created_at "
             "FROM report_session "
-            "WHERE created_at < ? AND status = 'pending' "
+            "WHERE created_at < ? AND status = 'pending' AND deleted_at IS NULL "
             "  AND (analysis_key IS NULL OR analysis_key = '') "
             "ORDER BY created_at ASC",
             (cutoff_epoch,),
@@ -229,7 +271,7 @@ def get_session_by_dataset_id(dataset_id):
                COALESCE(SUM(c.file_size), 0) AS total_file_size
         FROM report_session s
         LEFT JOIN report_csv_files c ON c.analysis_key = s.analysis_key
-        WHERE s.dataset_id = ?
+        WHERE s.dataset_id = ? AND s.deleted_at IS NULL
         GROUP BY s.session_id
         ORDER BY s.created_at DESC
         LIMIT 1

@@ -61,6 +61,12 @@ REPORT_CLEANUP_DRYRUN         = _bool_env("REPORT_CLEANUP_DRYRUN", True)
 REPORT_CLEANUP_INTERVAL_HOURS = float(os.getenv("REPORT_CLEANUP_INTERVAL_HOURS", "24"))
 REPORT_CLEANUP_ENABLED        = _bool_env("REPORT_CLEANUP_ENABLED", True)
 
+# ── 휴지통(soft delete) 보관 기간 ─────────────────────────────────────────────
+# 사용자 DELETE 는 즉시 영구삭제가 아니라 report_session.deleted_at 을 찍어 휴지통으로
+# 보낸다. deleted_at 이후 이 일수가 지난 세션만 관리자 purge 에서 산출물+DB 를 정리한다
+# (자동 purge 없음 — 관리자 수동 실행). 복원은 관리자 패널 또는 업로더/삭제자 권한.
+REPORT_TRASH_RETENTION_DAYS   = int(os.getenv("REPORT_TRASH_RETENTION_DAYS", "30"))
+
 # report_audit_log 롤오프 — 감사 로그는 세션 삭제 후에도 보존되어 무한 증가하므로
 # created_at 이 AUDIT_RETENTION_DAYS(기본 365일) 이전인 행을 cleanup 주기마다 삭제한다.
 # 0 이하 = 비활성(무기한 보존). 세션 cleanup 의 DRYRUN 과 무관하게 동작한다.

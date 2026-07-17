@@ -15,6 +15,7 @@ from database import report_db
 from product_info import list_search_candidates
 from report.report_extension import report_bp
 from report.security import (
+    _active_or_404,
     _issue_csrf_cookie,
     _normalize_user_id,
     _private_guard,
@@ -53,6 +54,7 @@ def list_annotations(session_id):
     session = report_db.get_session(session_id)
     if session:
         _private_guard(session)
+        _active_or_404(session)
     return jsonify(report_db.get_annotations(session_id))
 
 
@@ -85,10 +87,11 @@ def index_page():
 @report_bp.get("/view/<session_id>")
 def view_page(session_id):
     _validate_session_id(session_id)
-    # 비공개 세션은 상세 HTML 자체를 숨긴다. 세션이 없으면 기존대로 HTML 서빙(JS 가 에러 표시).
+    # 비공개·휴지통 세션은 상세 HTML 자체를 숨긴다. 세션이 없으면 기존대로 HTML 서빙(JS 가 에러 표시).
     session = report_db.get_session(session_id)
     if session:
         _private_guard(session)
+        _active_or_404(session)
     return send_html_gzip(REPORT_VIEW_HTML)   # CSRF 쿠키는 after_request 가 발급
 
 

@@ -12,11 +12,12 @@ from pathlib import Path
 from flask import Response, abort, jsonify, request
 
 from auth_identity import current_user as _current_user, is_uploader as _is_uploader
-from config import REPORT_UPLOAD_DIR
+from config import REPORT_TRASH_RETENTION_DAYS, REPORT_UPLOAD_DIR
 from database import report_db
 import storage_gateway
 from report.report_extension import report_bp
 from report.security import (
+    _active_or_404,
     _audit,
     _editor_guard,
     _normalize_user_id,
@@ -45,6 +46,7 @@ def result(session_id):
     if not session:
         abort(404, "session not found")
     _private_guard(session)
+    _active_or_404(session)
     analysis_key = session.get("analysis_key")
     summary = report_db.get_summary_by_analysis_key(analysis_key) if analysis_key else []
     return jsonify({
@@ -64,6 +66,7 @@ def session_info(session_id):
     if not session:
         abort(404, "session not found")
     _private_guard(session)
+    _active_or_404(session)
     return jsonify(_public_session(session))
 
 
@@ -75,6 +78,7 @@ def session_full(session_id):
     if not session:
         abort(404, "session not found")
     _private_guard(session)
+    _active_or_404(session)
     akey = session.get("analysis_key")
     objects = {}
     if akey:
@@ -171,6 +175,11 @@ def session_full(session_id):
 
 @report_bp.delete("/session/<session_id>")
 def delete_session_route(session_id):
+    """세션을 휴지통으로 이동(soft delete). 업로더만 가능.
+
+    산출물·DB 행은 그대로 두고 deleted_at/deleted_by 만 찍는다 — 실제 정리는 30일 경과 후
+    관리자 purge 에서만 이뤄진다(데이터 유실 방지). 응답은 하위호환 deleted=true 를 유지하고
+    trashed·purge_at 을 추가한다."""
     _require_csrf()
     _validate_session_id(session_id)
     session = report_db.get_session(session_id)
@@ -179,29 +188,33 @@ def delete_session_route(session_id):
     denied = _uploader_guard(session)
     if denied:
         return denied
-    # 마지막 참조 세션이면 산출물(S3 오브젝트·로컬 폴백 파일)과 관련 DB 행까지 정리.
-    # best-effort — 정리 실패가 세션 삭제 자체를 막지 않는다 (audit 패턴과 동일).
-    akey = session.get("analysis_key")
-    if akey and report_db.count_sessions_for_analysis_key(
-            akey, exclude_session_id=session_id) == 0:
-        try:
-            result = storage_gateway.delete_report_artifacts(
-                akey, upload_root=Path(REPORT_UPLOAD_DIR))
-            for warning in result.get("warnings", []):
-                _log.warning("artifact cleanup (%s): %s", akey, warning)
-            report_db.delete_analysis_rows(akey)
-            web_report_service.invalidate_caches(akey)
-        except Exception:
-            _log.exception("artifact cleanup failed for analysis_key %s", akey)
-    # Note 탭 이미지는 세션 단위 저장 — akey 공유 여부와 무관하게 항상 정리 (best-effort).
-    try:
-        for warning in storage_gateway.delete_note_images(session_id):
-            _log.warning("note image cleanup (%s): %s", session_id, warning)
-    except Exception:
-        _log.exception("note image cleanup failed for session %s", session_id)
-    report_db.delete_session(session_id)
-    _audit("delete", session=session)
-    return jsonify({"deleted": True, "session_id": session_id})
+    deleted_at = report_db.trash_session(session_id, deleted_by=_current_user())
+    purge_at = deleted_at + REPORT_TRASH_RETENTION_DAYS * 86400
+    _audit("delete", session=session, changed_fields="trash")
+    return jsonify({"deleted": True, "trashed": True, "purge_at": purge_at,
+                    "session_id": session_id})
+
+
+@report_bp.post("/session/<session_id>/restore")
+def restore_session_route(session_id):
+    """휴지통 세션 복원. 원래 업로더(is_uploader) 또는 삭제한 사용자(deleted_by)만 가능.
+    (운영 복원 UI 는 관리자 패널이지만, 요구사항상 업로더/삭제자도 복원할 수 있어야 한다.)"""
+    _require_csrf()
+    _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    if not session.get("deleted_at"):
+        return jsonify({"error": "휴지통에 있는 세션이 아닙니다."}), 400
+    uid = _current_user()
+    if not uid:
+        return jsonify({"error": "Honey 를 통해 접속한 사용자만 복원할 수 있습니다 (읽기 전용)."}), 401
+    deleted_by = str(session.get("deleted_by") or "").strip().lower()
+    if not (_is_uploader(session, uid) or uid == deleted_by):
+        return jsonify({"error": "복원 권한이 없습니다 (업로더 또는 삭제한 사용자만)."}), 403
+    report_db.restore_session(session_id)
+    _audit("edit", session=session, changed_fields="restore")
+    return jsonify({"ok": True, "restored": True, "session_id": session_id})
 
 
 @report_bp.post("/session/<session_id>/important")

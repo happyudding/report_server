@@ -234,6 +234,7 @@ def api_sessions():
         status=(request.args.get("status") or "").strip() or None,
         limit=request.args.get("limit", 100),
         offset=request.args.get("offset", 0),
+        trashed=(request.args.get("trashed") or "").strip() or None,
     ))
 
 
@@ -253,6 +254,42 @@ def api_sessions_delete():
             abort(400, f"invalid session_id: {sid!r}")
     result = sessions_admin.bulk_delete(
         sids, audit=lambda session, res: _audit("delete", session=session, result=res))
+    return jsonify(result)
+
+
+@admin_panel_bp.post("/api/sessions/restore")
+def api_sessions_restore():
+    body = request.get_json(force=True, silent=True) or {}
+    sids = body.get("session_ids")
+    if not isinstance(sids, list) or not sids or len(sids) > 200:
+        abort(400, "session_ids: 1~200개 리스트 필요")
+    for sid in sids:
+        if not isinstance(sid, str) or not _SESSION_ID_RE.match(sid):
+            abort(400, f"invalid session_id: {sid!r}")
+    result = sessions_admin.restore_sessions(
+        sids, audit=lambda session, res: _audit(
+            "edit", session=session, changed_fields="restore", result=res))
+    return jsonify(result)
+
+
+@admin_panel_bp.post("/api/sessions/purge")
+def api_sessions_purge():
+    """휴지통 세션 영구 삭제 — 30일(REPORT_TRASH_RETENTION_DAYS) 경과분만.
+    body: {session_ids:[...]} 또는 {all_expired:true}, dry_run(기본 true)."""
+    body = request.get_json(force=True, silent=True) or {}
+    all_expired = bool(body.get("all_expired"))
+    dry_run = body.get("dry_run", True)
+    sids = body.get("session_ids")
+    if not all_expired:
+        if not isinstance(sids, list) or not sids or len(sids) > 200:
+            abort(400, "session_ids: 1~200개 리스트 필요 (또는 all_expired:true)")
+        for sid in sids:
+            if not isinstance(sid, str) or not _SESSION_ID_RE.match(sid):
+                abort(400, f"invalid session_id: {sid!r}")
+    result = sessions_admin.purge_trashed(
+        session_ids=sids, all_expired=all_expired, dry_run=bool(dry_run),
+        audit=lambda session, res: _audit(
+            "delete", session=session, changed_fields="purge", result=res))
     return jsonify(result)
 
 

@@ -123,11 +123,17 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 6px;
 }
 .filter-grid {
-  display: grid; grid-template-columns: 1fr 1fr 2fr auto; gap: 12px;
+  display: flex; flex-wrap: wrap; gap: 12px;
   align-items: end;
 }
-.filter-group { display: flex; flex-direction: column; gap: 6px; }
-.filter-group.search-group { position: relative; }
+.filter-group { display: flex; flex-direction: column; gap: 6px; min-width: 110px; }
+.filter-group.search-group { position: relative; flex: 1 1 240px; min-width: 200px; }
+.mine-toggle {
+  height: 36px; display: inline-flex; align-items: center; gap: 6px;
+  font-size: 18px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
+}
+.mine-toggle input { width: 18px; height: 18px; cursor: pointer; }
+.filter-actions { margin-left: auto; }
 .filter-label { font-size: 18px; color: #666; font-weight: 600; }
 .filter-input, .sel-input {
   height: 36px; padding: 0 10px; border: 1px solid #d0d5dd;
@@ -259,6 +265,50 @@ td.fname-cell .fname-txt {
   background: #4a90e2; animation: load-slide 1.1s infinite ease-in-out;
 }
 @keyframes load-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
+
+/* ── 반응형: 좁은 폭에서 핵심 정보가 잘리지 않게 ─────────────────────────────
+   >1280px: 기존 테이블 그대로. ≤1280px: 가로 스크롤로 열 크러시 방지(핵심 정보 안 잘림).
+   ≤1024px: 카드형으로 전환 — 세션 정보(파일명·Product·LOT)를 위에, 보조 정보(모드·
+   Process·업로더·날짜)를 그 아래로 라벨과 함께 이동. 데스크톱 열 구성은 그대로 둔다. */
+.table-wrap { overflow-x: auto; }
+
+@media (max-width: 1280px) {
+  table { min-width: 1080px; }   /* 좁아지면 세로 크러시 대신 가로 스크롤 */
+}
+
+@media (max-width: 1024px) {
+  .table-wrap { overflow-x: visible; }
+  table { min-width: 0; table-layout: auto; }
+  thead { display: none; }
+  table, tbody { display: block; width: 100%; }
+  tr.result-row {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    column-gap: 12px; row-gap: 3px;
+    border: 1px solid #eef0f3; border-radius: 8px; margin-bottom: 8px; padding: 10px 12px;
+  }
+  tr.result-row:hover { background: #f5f8ff; }
+  tr.result-row td {
+    border: none; padding: 0; white-space: normal; overflow: visible; text-overflow: clip;
+  }
+  /* 상단 줄: Product Type 배지(+별) 좌측, 액션(자물쇠/휴지통) 우측 */
+  td.pt-cell   { order: 1; white-space: normal; }
+  td.act-cell  { order: 2; margin-left: auto; padding-left: 0; }
+  /* 세션 정보(핵심): 파일명 → Product → LOT (각 줄) */
+  td.fname-cell { order: 3; flex-basis: 100%; font-weight: 700; font-size: 22px; }
+  td.fname-cell .fname-txt { direction: ltr; white-space: normal; }
+  td[data-col="product"] { order: 4; flex-basis: 100%; font-size: 19px; }
+  td[data-col="lot"]     { order: 5; flex-basis: 100%; font-size: 19px; }
+  td[data-col="product"]::before, td[data-col="lot"]::before {
+    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 15px;
+  }
+  /* 보조 정보: 라벨 붙여 세션 정보 아래에 한 줄로 흐른다 */
+  td.sub-cell { order: 6; color: #64748b; font-size: 17px; }
+  td.sub-cell::before {
+    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 14px;
+  }
+  .empty-row td { flex-basis: 100%; }
+  .results-header { flex-wrap: wrap; }
+}
 </style>
 <style>
 /* ══ 라이트/다크 테마 (추가 전용 override) ═══════════════════════════════════
@@ -320,6 +370,12 @@ html[data-theme="dark"] .modal-btn.danger { background: #dc2626; border-color: #
 html[data-theme="dark"] .load-overlay { background: rgba(10,12,16,.72); }
 html[data-theme="dark"] .load-msg { color: #9aa3b0; }
 html[data-theme="dark"] .load-bar { background: #2a2e37; }
+html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
+@media (max-width: 1024px) {
+  html[data-theme="dark"] tr.result-row { border-color: #2a2e37; }
+  html[data-theme="dark"] tr.result-row:hover { background: #262c38; }
+  html[data-theme="dark"] td.sub-cell { color: #9aa3b0; }
+}
 </style>
 </head>
 <body>
@@ -361,13 +417,54 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
       <label class="filter-label">Product</label>
       <input type="text" class="filter-input" id="productInput" placeholder="All">
     </div>
+    <div class="filter-group">
+      <label class="filter-label">분석 모드</label>
+      <select class="sel-input" id="modeSelect">
+        <option value="">전체</option>
+        <option value="Normal">Normal</option>
+        <option value="Compare">Compare</option>
+        <option value="DUT">DUT</option>
+        <option value="Commonality">Commonality</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label">공개 범위</label>
+      <select class="sel-input" id="visSelect">
+        <option value="">전체</option>
+        <option value="public">공개</option>
+        <option value="private">비공개</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label class="filter-label">시작일</label>
+      <input type="date" class="filter-input" id="dateFrom">
+    </div>
+    <div class="filter-group">
+      <label class="filter-label">종료일</label>
+      <input type="date" class="filter-input" id="dateTo">
+    </div>
+    <div class="filter-group">
+      <label class="filter-label">정렬</label>
+      <select class="sel-input" id="sortSelect">
+        <option value="reco">추천순</option>
+        <option value="new">최신순</option>
+        <option value="old">오래된순</option>
+        <option value="product">Product</option>
+        <option value="lot">LOT</option>
+      </select>
+    </div>
+    <div class="filter-group mine-group">
+      <label class="filter-label">내가 업로드</label>
+      <label class="mine-toggle"><input type="checkbox" id="mineCheck"> 내 업로드만</label>
+    </div>
     <div class="filter-group search-group">
-      <label class="filter-label">검색</label>
+      <label class="filter-label">통합 검색</label>
       <input type="text" class="filter-input" id="lotIdInput"
              placeholder="Product / LOT / Process / 파일명 / 업로더 검색...">
       <div class="suggest-box" id="searchSuggest"></div>
     </div>
     <div class="filter-actions">
+      <button class="btn-action" id="resetBtn">초기화</button>
       <button class="btn-action primary" id="searchBtn">조회</button>
     </div>
   </div>
@@ -378,6 +475,7 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
   <div class="results-header">
     <span class="results-count" id="resultsCount"></span>
   </div>
+  <div class="table-wrap">
   <table>
     <colgroup>
       <col style="width:8%">
@@ -407,6 +505,7 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
       <tr class="empty-row"><td colspan="9">데이터를 불러오는 중...</td></tr>
     </tbody>
   </table>
+  </div>
   <div class="pager" id="pager"></div>
 </div>
 
@@ -451,14 +550,15 @@ html[data-theme="dark"] .load-bar { background: #2a2e37; }
   </div>
 </div>
 
-<!-- 삭제 확인 모달 -->
+<!-- 삭제(휴지통 이동) 확인 모달 -->
 <div class="modal-overlay" id="delModal">
   <div class="modal-box">
-    <p class="modal-title">세션 삭제</p>
-    <p class="modal-desc" id="delModalDesc">정말 삭제하시겠습니까?</p>
+    <p class="modal-title">휴지통으로 이동</p>
+    <p class="modal-desc" id="delModalDesc">이 세션을 휴지통으로 이동합니다. 30일간 보관되며,
+      이후 관리자가 영구 삭제할 수 있습니다. (복원은 관리자에게 문의)</p>
     <div class="modal-actions">
       <button class="modal-btn" id="delModalCancel">취소</button>
-      <button class="modal-btn danger" id="delModalConfirm">삭제</button>
+      <button class="modal-btn danger" id="delModalConfirm">휴지통으로 이동</button>
     </div>
   </div>
 </div>
@@ -734,7 +834,7 @@ document.querySelectorAll(".pt-btn").forEach(btn => {
 });
 
 // ── search button ──
-document.getElementById("searchBtn").addEventListener("click", loadHistory);
+document.getElementById("searchBtn").addEventListener("click", () => loadHistory());
 ["processInput", "productInput", "lotIdInput"].forEach(id => {
   const input = document.getElementById(id);
   input.addEventListener("keydown", e => {
@@ -745,6 +845,27 @@ document.getElementById("searchBtn").addEventListener("click", loadHistory);
     renderResults();
     if (id === "lotIdInput") renderSuggestions();
   });
+});
+// 분석 모드/공개 범위/내 업로드/날짜/정렬 — 전부 클라이언트 필터라 renderResults 만 갱신
+// (renderResults 가 URL 상태도 동기화). Product Type 만 서버 필터라 loadHistory 를 탄다.
+["modeSelect", "visSelect", "mineCheck", "dateFrom", "dateTo", "sortSelect"].forEach(id => {
+  document.getElementById(id).addEventListener("change", () => {
+    _currentPage = 0;
+    renderResults();
+  });
+});
+// 초기화 — 모든 필터/정렬/Product Type 를 비우고 재조회
+document.getElementById("resetBtn").addEventListener("click", () => {
+  state.productType = null;
+  document.querySelectorAll(".pt-btn").forEach(b => b.classList.remove("active"));
+  ["processInput", "productInput", "lotIdInput", "dateFrom", "dateTo"].forEach(
+    id => document.getElementById(id).value = "");
+  document.getElementById("modeSelect").value = "";
+  document.getElementById("visSelect").value = "";
+  document.getElementById("sortSelect").value = "reco";
+  document.getElementById("mineCheck").checked = false;
+  _currentPage = 0;
+  loadHistory();
 });
 document.addEventListener("click", e => {
   if (!e.target.closest(".search-group")) hideSuggestions();
@@ -764,14 +885,32 @@ function fmtDate(unix) {
   return `${pad(d.getFullYear() % 100)}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-// ── client-side substring search across all columns ──
+// ── client-side substring search across all columns + 필터(모드/공개범위/내업로드/날짜) ──
 function applyClientFilter(rows) {
   const q = (document.getElementById("lotIdInput").value || "").trim().toLowerCase();
   const process = (document.getElementById("processInput").value || "").trim().toLowerCase();
   const product = (document.getElementById("productInput").value || "").trim().toLowerCase();
+  const mode = document.getElementById("modeSelect").value || "";
+  const vis = document.getElementById("visSelect").value || "";
+  const mine = document.getElementById("mineCheck").checked;
+  const fromStr = document.getElementById("dateFrom").value || "";
+  const toStr = document.getElementById("dateTo").value || "";
+  // 로컬 자정 기준 epoch(초). 종료일은 그날 끝(23:59:59)까지 포함.
+  const from = fromStr ? Math.floor(new Date(fromStr + "T00:00:00").getTime() / 1000) : null;
+  const to = toStr ? Math.floor(new Date(toStr + "T23:59:59").getTime() / 1000) : null;
   return rows.filter(r => {
     if (process && (r.process || "").toLowerCase() !== process) return false;
     if (product && (r.product || "").toLowerCase() !== product) return false;
+    if (mode) {
+      // 분석 모드는 web_report 세션에만 의미가 있다 — 모드 필터 시 그 외 세션은 제외.
+      if (String(r.source || "") !== "web_report") return false;
+      if (String(r.mode || "Normal") !== mode) return false;
+    }
+    if (vis === "public" && r.is_private) return false;
+    if (vis === "private" && !r.is_private) return false;
+    if (mine && !isMine(r)) return false;
+    if (from !== null && (r.created_at || 0) < from) return false;
+    if (to !== null && (r.created_at || 0) > to) return false;
     if (!q) return true;
     const haystack = [
       r.source, r.product_type, r.product, r.lot_id,
@@ -779,6 +918,49 @@ function applyClientFilter(rows) {
     ].map(v => String(v || "").toLowerCase()).join(" ");
     return haystack.includes(q);
   });
+}
+
+// ── URL query string 상태 보존 (필터/정렬/Product Type/페이지) ──
+function currentQuery() {
+  const p = new URLSearchParams();
+  if (state.productType) p.set("pt", state.productType);
+  const process = document.getElementById("processInput").value.trim();
+  if (process) p.set("process", process);
+  const product = document.getElementById("productInput").value.trim();
+  if (product) p.set("product", product);
+  const mode = document.getElementById("modeSelect").value; if (mode) p.set("mode", mode);
+  const vis = document.getElementById("visSelect").value; if (vis) p.set("vis", vis);
+  if (document.getElementById("mineCheck").checked) p.set("mine", "1");
+  const from = document.getElementById("dateFrom").value; if (from) p.set("from", from);
+  const to = document.getElementById("dateTo").value; if (to) p.set("to", to);
+  const q = document.getElementById("lotIdInput").value.trim(); if (q) p.set("q", q);
+  const sort = document.getElementById("sortSelect").value;
+  if (sort && sort !== "reco") p.set("sort", sort);
+  if (_currentPage > 0) p.set("page", _currentPage + 1);
+  return p;
+}
+
+function syncUrl() {
+  const qs = currentQuery().toString();
+  history.replaceState(null, "", qs ? "?" + qs : location.pathname);
+}
+
+function readUrl() {
+  const p = new URLSearchParams(location.search);
+  state.productType = p.get("pt") || null;
+  document.getElementById("processInput").value = p.get("process") || "";
+  document.getElementById("productInput").value = p.get("product") || "";
+  document.getElementById("modeSelect").value = p.get("mode") || "";
+  document.getElementById("visSelect").value = p.get("vis") || "";
+  document.getElementById("mineCheck").checked = p.get("mine") === "1";
+  document.getElementById("dateFrom").value = p.get("from") || "";
+  document.getElementById("dateTo").value = p.get("to") || "";
+  document.getElementById("lotIdInput").value = p.get("q") || "";
+  document.getElementById("sortSelect").value = p.get("sort") || "reco";
+  const pg = parseInt(p.get("page") || "1", 10);
+  _currentPage = (Number.isFinite(pg) && pg > 0) ? pg - 1 : 0;
+  document.querySelectorAll(".pt-btn").forEach(b =>
+    b.classList.toggle("active", b.dataset.pt === state.productType));
 }
 
 function hideSuggestions() {
@@ -817,7 +999,7 @@ function renderSuggestions() {
 // 서버 페이지네이션(limit/offset + total)으로 전체 세션을 배치 로드한다.
 // 구 응답(리스트 500건 고정)과 달리 500건 초과 세션도 빠짐없이 조회되며,
 // 클라이언트 검색/제안/페이지는 기존처럼 전체 행 기준으로 동작한다.
-async function loadHistory() {
+async function loadHistory(preservePage = false) {
   const base = new URLSearchParams();
   if (state.productType) base.set("product_type", state.productType);
   const BATCH = 500;
@@ -837,13 +1019,13 @@ async function loadHistory() {
       offset += BATCH;
       if (offset === BATCH) {   // 첫 배치는 즉시 표시 (대량 세션에서도 첫 화면 지연 없음)
         _lastRows = all.slice();
-        _currentPage = 0;
+        if (!preservePage) _currentPage = 0;   // 새 조회는 1페이지로, 초기 URL 복원은 유지
         renderResults();
       }
       if (rows.length < BATCH) break;
     }
     _lastRows = all;
-    _currentPage = 0;
+    if (!preservePage) _currentPage = 0;
     renderResults();
   } catch (e) {
     document.getElementById("resultsTbody").innerHTML =
@@ -853,9 +1035,22 @@ async function loadHistory() {
 
 // ── render results ──
 function renderResults() {
-  // 정렬: ★즐겨찾기 > 내 업로드 > 나머지 (그룹 안에서는 서버 순서 = 중요 > 최신순 유지)
-  const group = r => _favorites.has(r.session_id) ? 0 : (isMine(r) ? 1 : 2);
-  const filtered = applyClientFilter(_lastRows).sort((a, b) => group(a) - group(b));
+  const filtered = applyClientFilter(_lastRows);
+  // 정렬 드롭다운. 추천순(기본) = ★즐겨찾기 > 내 업로드 > 나머지 (그룹 내 서버 순서=중요>최신 유지).
+  // Array.sort 는 안정 정렬이라 동순위는 기존(서버) 순서를 보존한다.
+  const sortKey = document.getElementById("sortSelect").value || "reco";
+  if (sortKey === "reco") {
+    const group = r => _favorites.has(r.session_id) ? 0 : (isMine(r) ? 1 : 2);
+    filtered.sort((a, b) => group(a) - group(b));
+  } else if (sortKey === "new") {
+    filtered.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
+  } else if (sortKey === "old") {
+    filtered.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
+  } else if (sortKey === "product") {
+    filtered.sort((a, b) => String(a.product || "").localeCompare(String(b.product || "")));
+  } else if (sortKey === "lot") {
+    filtered.sort((a, b) => String(a.lot_id || "").localeCompare(String(b.lot_id || "")));
+  }
   const total = filtered.length;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   _currentPage = Math.min(_currentPage, pageCount - 1);
@@ -872,13 +1067,13 @@ function renderResults() {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row" data-sid="${esc(r.session_id)}">
         <td class="pt-cell" data-act="fav" data-sid="${esc(r.session_id)}" title="클릭하여 즐겨찾기 켜기/끄기"><span class="star-fav ${_favorites.has(r.session_id) ? 'on' : ''}">${_favorites.has(r.session_id) ? '★' : '☆'}</span>${r.is_important ? '<span class="star-important" title="중요">★</span>' : ''}${productTypeBadge(r.product_type)}</td>
-        <td>${modeBadge(r)}</td>
-        <td>${esc(r.product || '-')}</td>
-        <td>${esc(r.process || '-')}</td>
-        <td>${esc(r.lot_id || '-')}</td>
-        <td class="fname-cell" title="${esc(r.file_name || '')}"><span class="fname-txt">${esc(r.file_name || '-')}</span></td>
-        <td title="${esc(r.uploaded_by || '')}${r.client_host ? ' (' + esc(r.client_host) + ')' : ''}">${esc(stripUploader(r.uploaded_by) || '-')}</td>
-        <td>${fmtDate(r.created_at)}</td>
+        <td class="sub-cell" data-col="mode" data-label="모드">${modeBadge(r)}</td>
+        <td data-col="product" data-label="Product">${esc(r.product || '-')}</td>
+        <td class="sub-cell" data-col="process" data-label="Process">${esc(r.process || '-')}</td>
+        <td data-col="lot" data-label="LOT">${esc(r.lot_id || '-')}</td>
+        <td class="fname-cell" data-col="fname" title="${esc(r.file_name || '')}"><span class="fname-txt">${esc(r.file_name || '-')}</span></td>
+        <td class="sub-cell" data-col="uploader" data-label="업로더" title="${esc(r.uploaded_by || '')}${r.client_host ? ' (' + esc(r.client_host) + ')' : ''}">${esc(stripUploader(r.uploaded_by) || '-')}</td>
+        <td class="sub-cell" data-col="date" data-label="날짜">${fmtDate(r.created_at)}</td>
         <td class="act-cell">
           <div class="btn-row">
             ${canModify(r)
@@ -936,6 +1131,9 @@ function renderResults() {
       renderResults();
     });
   });
+
+  // 현재 필터/정렬/페이지 상태를 URL 에 반영 (새로고침·공유 시 복원됨).
+  syncUrl();
 }
 
 // ── delete modal ──
@@ -959,7 +1157,7 @@ document.getElementById("delModalConfirm").addEventListener("click", async () =>
       showToast(j.error || "삭제 실패");
       return;
     }
-    showToast("삭제됨");
+    showToast("휴지통으로 이동됨");
     document.getElementById("delModal").classList.remove("show");
     loadHistory();
   } catch (e) {
@@ -990,11 +1188,12 @@ async function togglePrivate(sid) {
 
 // init
 updateUserChip();
+readUrl();                        // URL query string 에서 필터/정렬/Product Type/페이지 복원
 (async () => {
   await loadAuth();               // 로그인 상태 먼저 — 즐겨찾기/삭제버튼 렌더에 필요
   updateUserChip();
   await loadFavorites();          // 첫 렌더부터 즐겨찾기 정렬이 반영되도록 먼저 로드
-  await loadHistory();
+  await loadHistory(true);        // state.productType(readUrl) 반영해 조회, URL page 유지
   // 로그인 모달 폐지 — 신원 없으면 그냥 읽기전용(userChip 이 안내).
 })();
 </script>

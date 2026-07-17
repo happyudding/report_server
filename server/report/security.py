@@ -133,6 +133,13 @@ def _private_guard(session):
         abort(404, "session not found")
 
 
+def _active_or_404(session):
+    """휴지통(soft delete)된 세션 조회 가드 — 목록 제외 정책과 일치하게 상세도 숨긴다(404).
+    복원/purge 는 별도 라우트(get_session 직접 조회)를 쓰므로 여기서 막지 않는다."""
+    if (session or {}).get("deleted_at"):
+        abort(404, "session not found")
+
+
 def _client_meta():
     """감사 로그용 (client_ip, user_agent). 역프록시 뒤면 X-Forwarded-For 첫 IP 사용."""
     fwd = request.headers.get("X-Forwarded-For")
@@ -184,6 +191,7 @@ def _require_web_report_session(session_id):
     if session.get("source") != "web_report":
         abort(404, "not a web_report session")
     _private_guard(session)
+    _active_or_404(session)
     return session
 
 

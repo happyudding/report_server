@@ -34,6 +34,9 @@ from .sessions import (  # noqa: F401
     get_session,
     get_session_by_dataset_id,
     get_session_path_by_analysis_key,
+    get_trashed_sessions,
+    restore_session,
+    trash_session,
     update_session,
 )
 from .objects import (  # noqa: F401
