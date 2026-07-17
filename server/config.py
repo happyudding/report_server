@@ -24,6 +24,10 @@ REPORT_UPLOAD_DIR = _path_env("REPORT_UPLOAD_DIR", ROOT_DIR / "uploads" / "repor
 # EVAL_DB_PATH env 로 이 파일을 가리켜 읽는다 (docs/13_eval_analyzer_integration.md).
 REPORT_EVAL_DB_PATH = _path_env("REPORT_EVAL_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" / "eval" / "eval.db")
 
+# VOC 게시판 DB — 세션 DB(report.db)·eval DB 와 분리된 report_server 소유 별도 파일
+# (database/voc_db.py 가 자체 커넥션으로 관리, 이미지 파일은 storage_gateway 에 별도 저장).
+REPORT_VOC_DB_PATH = _path_env("REPORT_VOC_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" / "voc" / "voc.db")
+
 STDINFO_DB_PATH = _path_env("STDINFO_DB_PATH", ROOT_DIR / "DB" / "INFORMATION" / "stdinfo_20260511.db")
 PRODUCT_INFO_CSV_PATH = _path_env("PRODUCT_INFO_CSV_PATH", ROOT_DIR / "server" / "product_info.csv")
 

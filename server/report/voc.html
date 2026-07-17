@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>VOC — PTE REPORT</title>
+<script src="/pe/report/static/webreport/error_beacon.js"></script>
+<script>
+/* 테마 부트스트랩: 첫 페인트 전에 저장된 다크 테마 적용 (FOUC 방지).
+   localStorage "report_theme" 는 검색결과/세션 상세/VOC 페이지가 공유한다. */
+try {
+  if (localStorage.getItem("report_theme") === "dark")
+    document.documentElement.setAttribute("data-theme", "dark");
+} catch (e) {}
+</script>
+<style>
+* { box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #fdf6e3; margin: 0; padding: 0 20px 24px;   /* Honey 톤 연노랑 기본 배경 */
+  color: #222;
+}
+.page-header {
+  margin: 0 -20px 12px; padding: 5px 20px;
+  background: #000; color: #fff;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+}
+.page-title { margin: 0; font-size: 27px; font-weight: 800; letter-spacing: 0; }
+.nav-btn {
+  flex: 0 0 auto; height: 34px; padding: 0 16px;
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: 8px; border: 1px solid #4a90e2;
+  background: #4a90e2; color: #fff; font-size: 20px; font-weight: 600;
+  text-decoration: none; cursor: pointer; transition: all .15s;
+  white-space: nowrap;
+}
+.nav-btn:hover { background: #3a7bc8; border-color: #3a7bc8; }
+.theme-toggle {
+  flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.35); background: transparent;
+  font-size: 22px; line-height: 1; padding: 0; cursor: pointer;
+}
+.theme-toggle:hover { background: rgba(255,255,255,.15); }
+
+.card {
+  background: #fff; border-radius: 10px; padding: 14px 18px;
+  box-shadow: 0 1px 6px rgba(0,0,0,.07); margin-bottom: 12px;
+  max-width: 1100px;
+}
+.card h2 { margin: 0 0 12px; font-size: 22px; }
+
+/* ── 등록 폼 ─────────────────────────────────────────────────────────────── */
+.form-row { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.form-row label { display: flex; flex-direction: column; gap: 4px; font-size: 16px; color: #555; }
+.form-row .grow { flex: 1 1 300px; }
+select, input[type="text"], textarea {
+  font: inherit; font-size: 17px; padding: 7px 10px;
+  border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #222;
+}
+textarea { width: 100%; min-height: 110px; resize: vertical; }
+.char-count { font-size: 14px; color: #94a3b8; text-align: right; }
+.form-notice {
+  padding: 10px 12px; border-radius: 8px; background: #f1f5f9; color: #64748b;
+  font-size: 17px; margin-bottom: 8px;
+}
+.form-actions { display: flex; align-items: center; gap: 12px; }
+.submit-btn {
+  height: 38px; padding: 0 22px; border-radius: 8px; border: 1px solid #4a90e2;
+  background: #4a90e2; color: #fff; font-size: 18px; font-weight: 700; cursor: pointer;
+}
+.submit-btn:hover { background: #3a7bc8; }
+.submit-btn:disabled { background: #cbd5e1; border-color: #cbd5e1; cursor: not-allowed; }
+.file-btn {
+  height: 34px; padding: 0 14px; border-radius: 8px; border: 1px solid #d0d5dd;
+  background: #fff; color: #475569; font-size: 16px; font-weight: 600; cursor: pointer;
+}
+.file-btn:hover { border-color: #4a90e2; color: #4a90e2; }
+.file-hint { font-size: 14px; color: #94a3b8; }
+
+/* 선택 즉시 미리보기 + 개별 취소 */
+.preview-row { display: flex; gap: 10px; margin: 8px 0 12px; flex-wrap: wrap; }
+.preview-item { position: relative; }
+.preview-item img {
+  width: 120px; height: 90px; object-fit: cover;
+  border: 1px solid #d0d5dd; border-radius: 8px; display: block;
+}
+.preview-remove {
+  position: absolute; top: -8px; right: -8px; width: 24px; height: 24px;
+  border-radius: 50%; border: 0; background: #dc2626; color: #fff;
+  font-size: 14px; font-weight: 700; line-height: 1; cursor: pointer;
+}
+.preview-remove:hover { background: #b91c1c; }
+
+/* ── 목록 ────────────────────────────────────────────────────────────────── */
+.voc-item { border-bottom: 1px solid #e5e7eb; padding: 12px 2px; }
+.voc-item:last-child { border-bottom: 0; }
+.voc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.voc-title { font-size: 19px; font-weight: 700; }
+.voc-meta { font-size: 15px; color: #94a3b8; margin-left: auto; white-space: nowrap; }
+.voc-content { margin: 8px 0 0; font-size: 17px; white-space: pre-wrap; word-break: break-word; }
+.cat-badge {
+  display: inline-block; padding: 2px 10px; border-radius: 4px;
+  font-size: 15px; font-weight: 700; color: #fff; white-space: nowrap;
+}
+.cat-badge.버그 { background: #dc2626; }
+.cat-badge.개선 { background: #16a34a; }
+.cat-badge.문의 { background: #4a90e2; }
+.cat-badge.기타 { background: #64748b; }
+.thumb-row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+.thumb-row img {
+  width: 150px; height: 100px; object-fit: cover; cursor: zoom-in;
+  border: 1px solid #d0d5dd; border-radius: 8px; display: block;
+}
+.thumb-row img:hover { border-color: #4a90e2; }
+.del-btn {
+  height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid #fca5a5;
+  background: #fff; color: #dc2626; font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.del-btn:hover { background: #fef2f2; border-color: #dc2626; }
+.empty-note { padding: 18px 4px; color: #94a3b8; font-size: 17px; text-align: center; }
+
+/* ── 페이지네이션 ───────────────────────────────────────────────────────── */
+.pager { display: flex; gap: 6px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
+.pg-btn {
+  min-width: 34px; height: 32px; padding: 0 10px; border-radius: 6px;
+  border: 1px solid #d0d5dd; background: #fff; color: #475569;
+  font-size: 16px; cursor: pointer;
+}
+.pg-btn:hover { border-color: #4a90e2; color: #4a90e2; }
+.pg-btn.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+.pg-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── 라이트박스 (원본 확대) ──────────────────────────────────────────────── */
+dialog.lightbox {
+  border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 96vh;
+}
+dialog.lightbox::backdrop { background: rgba(0,0,0,.75); }
+dialog.lightbox img {
+  max-width: 96vw; max-height: 92vh; display: block;
+  border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,.6); cursor: zoom-out;
+}
+
+/* 토스트 */
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  background: #111827; color: #fff; padding: 10px 18px; border-radius: 8px;
+  font-size: 16px; opacity: 0; pointer-events: none; transition: opacity .25s;
+  z-index: 60;
+}
+.toast.show { opacity: .95; }
+</style>
+<style>
+/* ══ 라이트/다크 테마 (추가 전용 override) — 검색결과 페이지와 동일 방식 ══ */
+html[data-theme="dark"] body { background: #14161a; color: #d7dbe2; }
+html[data-theme="dark"] .card { background: #1e2128; box-shadow: 0 1px 6px rgba(0,0,0,.45); }
+html[data-theme="dark"] .form-row label { color: #9aa3b0; }
+html[data-theme="dark"] select,
+html[data-theme="dark"] input[type="text"],
+html[data-theme="dark"] textarea { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .form-notice { background: #262a33; color: #9aa3b0; }
+html[data-theme="dark"] .file-btn { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
+html[data-theme="dark"] .file-btn:hover { border-color: #4a90e2; color: #7fb3ef; }
+html[data-theme="dark"] .preview-item img,
+html[data-theme="dark"] .thumb-row img { border-color: #3a3f4b; }
+html[data-theme="dark"] .voc-item { border-bottom-color: #2a2e37; }
+html[data-theme="dark"] .voc-meta { color: #8b94a3; }
+html[data-theme="dark"] .del-btn { background: #262a33; border-color: #6e3030; color: #f28b8b; }
+html[data-theme="dark"] .del-btn:hover { background: #3a2222; border-color: #dc2626; }
+html[data-theme="dark"] .pg-btn { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
+html[data-theme="dark"] .pg-btn.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+html[data-theme="dark"] .empty-note { color: #767f8c; }
+</style>
+</head>
+<body>
+
+<header class="page-header">
+  <h1 class="page-title">VOC</h1>
+  <div style="display:flex; align-items:center; gap:14px;">
+    <a class="nav-btn" href="/pe/report/">🏠 HOME</a>
+    <a class="nav-btn" href="/pe/report/help">❓ HELP</a>
+    <button class="theme-toggle" id="themeToggle" title="다크 모드로 전환">🌙</button>
+  </div>
+</header>
+
+<div class="card" id="formCard">
+  <h2>VOC 등록</h2>
+  <div class="form-notice" id="anonNotice" hidden>
+    Honey 를 통해 접속하면 VOC 를 등록할 수 있습니다. (일반 브라우저는 조회만 가능)
+  </div>
+  <div class="form-row">
+    <label>분류
+      <select id="vocCategory">
+        <option>버그</option>
+        <option>개선 제안</option>
+        <option>문의</option>
+        <option>기타</option>
+      </select>
+    </label>
+    <label class="grow">제목
+      <input type="text" id="vocTitle" maxlength="120" placeholder="제목 (1~120자)">
+    </label>
+  </div>
+  <div class="form-row" style="flex-direction:column;">
+    <label style="width:100%;">내용
+      <textarea id="vocContent" maxlength="4000" placeholder="내용 (1~4,000자)"></textarea>
+    </label>
+    <div class="char-count" id="charCount">0 / 4000</div>
+  </div>
+  <div class="form-actions">
+    <button type="button" class="file-btn" id="fileBtn">📷 스크린샷 첨부</button>
+    <span class="file-hint">PNG/JPEG · 최대 3장 · 장당 2MB</span>
+    <input type="file" id="fileInput" accept="image/png,image/jpeg" multiple hidden>
+  </div>
+  <div class="preview-row" id="previewRow"></div>
+  <div class="form-actions">
+    <button type="button" class="submit-btn" id="submitBtn">등록</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2 id="listTitle">VOC 목록</h2>
+  <div id="vocList"></div>
+  <div class="pager" id="pager"></div>
+</div>
+
+<dialog class="lightbox" id="lightbox"><img id="lightboxImg" alt="screenshot"></dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const PAGE_SIZE = 20;
+let currentPage = 0;
+let currentUser = "";
+let selectedFiles = [];   // {file, url} — FileList 는 불변이라 배열로 상태 관리
+
+// ── 공용 ──────────────────────────────────────────────────────────────────
+function csrfToken() {
+  const m = document.cookie.match(/(?:^|;\s*)report_csrf=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+let toastTimer = null;
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 3000);
+}
+function fmtTime(epoch) {
+  try { return new Date(epoch * 1000).toLocaleString("ko-KR"); }
+  catch (e) { return ""; }
+}
+
+// ── 테마 토글 (검색결과 페이지와 동일 동작·localStorage 키 공유) ──────────
+(function () {
+  const btn = document.getElementById("themeToggle");
+  const root = document.documentElement;
+  function syncThemeBtn() {
+    const dark = root.getAttribute("data-theme") === "dark";
+    btn.textContent = dark ? "☀️" : "🌙";
+    btn.title = dark ? "라이트 모드로 전환" : "다크 모드로 전환";
+  }
+  btn.addEventListener("click", () => {
+    const toDark = root.getAttribute("data-theme") !== "dark";
+    if (toDark) root.setAttribute("data-theme", "dark");
+    else root.removeAttribute("data-theme");
+    try {
+      if (toDark) localStorage.setItem("report_theme", "dark");
+      else localStorage.removeItem("report_theme");
+    } catch (e) {}
+    syncThemeBtn();
+  });
+  syncThemeBtn();
+})();
+
+// ── 스크린샷 선택: 즉시 미리보기 + 개별 취소 ─────────────────────────────
+const fileInput = document.getElementById("fileInput");
+document.getElementById("fileBtn").addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => {
+  for (const f of fileInput.files) {
+    if (selectedFiles.length >= 3) { toast("스크린샷은 최대 3장입니다."); break; }
+    if (f.type !== "image/png" && f.type !== "image/jpeg") {
+      toast(`PNG/JPEG 만 첨부할 수 있습니다: ${f.name}`); continue;
+    }
+    if (f.size > 2 * 1024 * 1024) {
+      toast(`2MB 를 넘는 파일은 첨부할 수 없습니다: ${f.name}`); continue;
+    }
+    selectedFiles.push({ file: f, url: URL.createObjectURL(f) });
+  }
+  fileInput.value = "";   // 같은 파일 재선택 허용
+  renderPreviews();
+});
+function renderPreviews() {
+  const row = document.getElementById("previewRow");
+  row.replaceChildren();
+  selectedFiles.forEach((sf, idx) => {
+    const item = document.createElement("div");
+    item.className = "preview-item";
+    const img = document.createElement("img");
+    img.src = sf.url;
+    img.alt = "preview";
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "preview-remove";
+    rm.textContent = "✕";
+    rm.title = "이 스크린샷 제거";
+    rm.addEventListener("click", () => {
+      URL.revokeObjectURL(sf.url);
+      selectedFiles.splice(idx, 1);
+      renderPreviews();
+    });
+    item.append(img, rm);
+    row.appendChild(item);
+  });
+}
+
+// ── 등록 ──────────────────────────────────────────────────────────────────
+const contentEl = document.getElementById("vocContent");
+contentEl.addEventListener("input", () => {
+  document.getElementById("charCount").textContent = `${contentEl.value.length} / 4000`;
+});
+document.getElementById("submitBtn").addEventListener("click", async () => {
+  const title = document.getElementById("vocTitle").value.trim();
+  const content = contentEl.value.trim();
+  if (!title) { toast("제목을 입력해주세요."); return; }
+  if (!content) { toast("내용을 입력해주세요."); return; }
+  const btn = document.getElementById("submitBtn");
+  btn.disabled = true;
+  try {
+    const fd = new FormData();
+    fd.append("category", document.getElementById("vocCategory").value);
+    fd.append("title", title);
+    fd.append("content", content);
+    selectedFiles.forEach(sf => fd.append("screenshots", sf.file));
+    // Content-Type 은 브라우저가 boundary 포함 자동 설정 — 수동 지정 금지
+    const r = await fetch("/pe/report/api/voc", {
+      method: "POST", headers: { "X-CSRF-Token": csrfToken() }, body: fd,
+    });
+    if (r.status === 201) {
+      toast("VOC 가 등록되었습니다.");
+      document.getElementById("vocTitle").value = "";
+      contentEl.value = "";
+      document.getElementById("charCount").textContent = "0 / 4000";
+      selectedFiles.forEach(sf => URL.revokeObjectURL(sf.url));
+      selectedFiles = [];
+      renderPreviews();
+      await loadList(0);
+    } else {
+      const body = await r.json().catch(() => ({}));
+      toast(body.error || `등록에 실패했습니다 (HTTP ${r.status}).`);
+    }
+  } catch (e) {
+    toast("등록 요청에 실패했습니다 — 네트워크를 확인해주세요.");
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// ── 삭제 ──────────────────────────────────────────────────────────────────
+async function deleteVoc(id, title) {
+  if (!confirm(`이 VOC 를 삭제할까요?\n\n"${title}"`)) return;
+  try {
+    const r = await fetch(`/pe/report/api/voc/${id}`, {
+      method: "DELETE", headers: { "X-CSRF-Token": csrfToken() },
+    });
+    if (r.ok) {
+      toast("삭제되었습니다.");
+      await loadList(currentPage);
+    } else {
+      const body = await r.json().catch(() => ({}));
+      toast(body.error || `삭제에 실패했습니다 (HTTP ${r.status}).`);
+    }
+  } catch (e) {
+    toast("삭제 요청에 실패했습니다 — 네트워크를 확인해주세요.");
+  }
+}
+
+// ── 라이트박스 ────────────────────────────────────────────────────────────
+const lightbox = document.getElementById("lightbox");
+const lightboxImg = document.getElementById("lightboxImg");
+function openLightbox(url) {
+  lightboxImg.src = url;
+  lightbox.showModal();
+}
+lightbox.addEventListener("click", () => lightbox.close());
+lightbox.addEventListener("close", () => { lightboxImg.src = ""; });
+
+// ── 목록 렌더 (XSS-안전: createElement + textContent 만 사용) ─────────────
+function renderList(data) {
+  currentUser = data.user || "";
+  document.getElementById("anonNotice").hidden = !!currentUser;
+  document.getElementById("formCard").querySelectorAll("select, input, textarea, .submit-btn, .file-btn")
+    .forEach(el => { el.disabled = !currentUser; });
+  document.getElementById("listTitle").textContent = `VOC 목록 (${data.total}건)`;
+
+  const list = document.getElementById("vocList");
+  list.replaceChildren();
+  if (!data.items.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-note";
+    empty.textContent = "등록된 VOC 가 없습니다.";
+    list.appendChild(empty);
+  }
+  for (const it of data.items) {
+    const item = document.createElement("div");
+    item.className = "voc-item";
+
+    const head = document.createElement("div");
+    head.className = "voc-head";
+    const badge = document.createElement("span");
+    // 분류명 첫 토큰("버그"/"개선"/"문의"/"기타")을 색상 클래스로 사용
+    badge.className = `cat-badge ${(it.category || "기타").split(" ")[0]}`;
+    badge.textContent = it.category;
+    const title = document.createElement("span");
+    title.className = "voc-title";
+    title.textContent = it.title;
+    const meta = document.createElement("span");
+    meta.className = "voc-meta";
+    meta.textContent = `${it.user_id} · ${fmtTime(it.created_at)}`;
+    head.append(badge, title, meta);
+    if (it.can_delete) {
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "del-btn";
+      del.textContent = "삭제";
+      del.addEventListener("click", () => deleteVoc(it.id, it.title));
+      head.appendChild(del);
+    }
+
+    const content = document.createElement("div");
+    content.className = "voc-content";
+    content.textContent = it.content;
+
+    item.append(head, content);
+
+    if (it.screenshots && it.screenshots.length) {
+      const thumbs = document.createElement("div");
+      thumbs.className = "thumb-row";
+      for (const s of it.screenshots) {
+        const img = document.createElement("img");
+        img.src = s.url;
+        img.alt = "screenshot";
+        img.loading = "lazy";
+        img.addEventListener("click", () => openLightbox(s.url));
+        thumbs.appendChild(img);
+      }
+      item.appendChild(thumbs);
+    }
+    list.appendChild(item);
+  }
+  renderPager(data.total);
+}
+
+function renderPager(total) {
+  const pager = document.getElementById("pager");
+  pager.replaceChildren();
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (pages <= 1) return;
+  const mk = (label, page, opts = {}) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "pg-btn" + (opts.active ? " active" : "");
+    b.textContent = label;
+    b.disabled = !!opts.disabled;
+    if (!opts.disabled && !opts.active) b.addEventListener("click", () => loadList(page));
+    return b;
+  };
+  pager.appendChild(mk("◀", currentPage - 1, { disabled: currentPage === 0 }));
+  const start = Math.max(0, Math.min(currentPage - 3, pages - 7));
+  const end = Math.min(pages, start + 7);
+  for (let p = start; p < end; p++)
+    pager.appendChild(mk(String(p + 1), p, { active: p === currentPage }));
+  pager.appendChild(mk("▶", currentPage + 1, { disabled: currentPage >= pages - 1 }));
+}
+
+async function loadList(page) {
+  try {
+    const r = await fetch(`/pe/report/api/voc?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    // 삭제로 마지막 페이지가 비면 앞 페이지로 되돌린다
+    if (page > 0 && !data.items.length && data.total > 0) return loadList(page - 1);
+    currentPage = page;
+    renderList(data);
+  } catch (e) {
+    toast("VOC 목록을 불러오지 못했습니다.");
+  }
+}
+
+loadList(0);
+</script>
+</body>
+</html>

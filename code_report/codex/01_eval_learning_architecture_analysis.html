@@ -1,0 +1,753 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>web_report–eval_analyzer 학습 구조 상세 분석</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --font-size-base: 16px;
+      --background: light-dark(rgb(247 249 252), rgb(18 20 24));
+      --foreground: light-dark(rgb(28 34 45), rgb(234 238 245));
+      --card: light-dark(rgb(255 255 255), rgb(29 33 40));
+      --card-foreground: var(--foreground);
+      --secondary: light-dark(rgb(237 242 248), rgb(42 47 57));
+      --secondary-foreground: var(--foreground);
+      --muted: light-dark(rgb(239 242 246), rgb(40 44 53));
+      --muted-foreground: light-dark(rgb(85 96 112), rgb(174 183 197));
+      --accent: light-dark(rgb(226 237 252), rgb(37 54 75));
+      --accent-foreground: var(--foreground);
+      --destructive: light-dark(rgb(157 42 42), rgb(255 132 132));
+      --border: light-dark(rgb(205 213 224), rgb(69 76 88));
+      --input: var(--border);
+      --ring: light-dark(rgb(46 101 178), rgb(115 166 236));
+      --primary: light-dark(rgb(38 82 145), rgb(105 151 216));
+      --primary-foreground: light-dark(rgb(255 255 255), rgb(15 22 32));
+      --viz-series-1: light-dark(rgb(34 102 167), rgb(105 170 238));
+      --viz-series-2: light-dark(rgb(46 125 93), rgb(99 194 145));
+      --viz-series-3: light-dark(rgb(181 104 30), rgb(238 166 89));
+      --viz-series-4: light-dark(rgb(151 55 63), rgb(235 117 125));
+      --viz-series-5: light-dark(rgb(105 74 154), rgb(177 143 231));
+      --viz-series-6: light-dark(rgb(45 126 135), rgb(101 198 207));
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--background);
+      color: var(--foreground);
+      font-family: Pretendard, "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+      font-size: var(--font-size-base);
+      line-height: 1.68;
+    }
+    a { color: var(--primary); text-underline-offset: 0.2em; }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      background: var(--muted);
+      color: var(--foreground);
+      padding: 0.08rem 0.32rem;
+      border-radius: 0.25rem;
+      overflow-wrap: anywhere;
+    }
+    pre {
+      margin: 1rem 0;
+      padding: 1rem;
+      background: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 0.5rem;
+      overflow-x: auto;
+    }
+    pre code { padding: 0; background: transparent; }
+    h1, h2, h3 { font-weight: 500; line-height: 1.3; }
+    h1 { margin: 0; font-size: clamp(1.85rem, 4vw, 3rem); }
+    h2 { margin: 0 0 1rem; font-size: clamp(1.35rem, 2.8vw, 2rem); }
+    h3 { margin: 1.5rem 0 0.65rem; font-size: 1.15rem; }
+    p { margin: 0.7rem 0; }
+    ul, ol { padding-left: 1.35rem; }
+    li + li { margin-top: 0.32rem; }
+    figure { margin: 1.35rem 0; }
+    figcaption { margin-top: 0.55rem; color: var(--muted-foreground); }
+    .shell { width: min(100% - 2rem, 1180px); margin: 0 auto; }
+    .hero { padding: 4.5rem 0 2.5rem; border-bottom: 1px solid var(--border); }
+    .eyebrow { color: var(--primary); font-weight: 500; margin-bottom: 0.75rem; }
+    .hero-copy { max-width: 850px; margin-top: 1rem; color: var(--muted-foreground); }
+    .meta { display: flex; flex-wrap: wrap; gap: 0.45rem 1rem; margin-top: 1.25rem; color: var(--muted-foreground); }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.22rem 0.55rem;
+      background: var(--secondary);
+      color: var(--secondary-foreground);
+      border-radius: 999px;
+    }
+    .toc { padding: 1.25rem 0; border-bottom: 1px solid var(--border); }
+    .toc-links { display: flex; flex-wrap: wrap; gap: 0.55rem; }
+    .toc a { padding: 0.4rem 0.65rem; border: 1px solid var(--border); border-radius: 0.4rem; text-decoration: none; color: var(--foreground); }
+    main section { padding: 3.25rem 0; border-bottom: 1px solid var(--border); }
+    .lead { max-width: 900px; color: var(--muted-foreground); }
+    .conclusion {
+      margin-top: 1.3rem;
+      padding: 1.15rem 1.25rem;
+      border-left: 4px solid var(--viz-series-4);
+      background: color-mix(in srgb, var(--viz-series-4) 9%, transparent);
+    }
+    .grid { display: grid; gap: 1rem; }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .card {
+      background: var(--card);
+      color: var(--card-foreground);
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      padding: 1rem;
+    }
+    .metric-label { color: var(--muted-foreground); }
+    .metric-value { font-size: 1.65rem; font-weight: 500; margin-top: 0.2rem; }
+    .metric-note { margin-top: 0.25rem; color: var(--muted-foreground); }
+    .status-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.35rem 0.62rem;
+      border-radius: 999px;
+      background: var(--secondary);
+    }
+    .status::before { content: ""; width: 0.55rem; height: 0.55rem; border-radius: 50%; background: currentColor; }
+    .status.bad { color: var(--viz-series-4); }
+    .status.warn { color: var(--viz-series-3); }
+    .status.good { color: var(--viz-series-2); }
+    .diagram {
+      width: 100%;
+      height: auto;
+      display: block;
+      color: var(--foreground);
+    }
+    .diagram .node { fill: var(--card); stroke: var(--border); stroke-width: 1.5; rx: 10; }
+    .diagram .node-blue { fill: color-mix(in srgb, var(--viz-series-1) 14%, var(--card)); stroke: var(--viz-series-1); }
+    .diagram .node-green { fill: color-mix(in srgb, var(--viz-series-2) 14%, var(--card)); stroke: var(--viz-series-2); }
+    .diagram .node-orange { fill: color-mix(in srgb, var(--viz-series-3) 14%, var(--card)); stroke: var(--viz-series-3); }
+    .diagram .node-red { fill: color-mix(in srgb, var(--viz-series-4) 14%, var(--card)); stroke: var(--viz-series-4); }
+    .diagram .node-purple { fill: color-mix(in srgb, var(--viz-series-5) 14%, var(--card)); stroke: var(--viz-series-5); }
+    .diagram text { fill: var(--foreground); font-family: inherit; }
+    .diagram .muted-text { fill: var(--muted-foreground); }
+    .diagram .line { stroke: var(--border); stroke-width: 2; fill: none; }
+    .diagram .line-blue { stroke: var(--viz-series-1); stroke-width: 2.5; fill: none; }
+    .diagram .line-red { stroke: var(--viz-series-4); stroke-width: 2.5; fill: none; stroke-dasharray: 7 6; }
+    .diagram .line-green { stroke: var(--viz-series-2); stroke-width: 2.5; fill: none; }
+    .controls { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1rem 0; }
+    button, select {
+      font: inherit;
+      color: var(--foreground);
+      background: var(--card);
+      border: 1px solid var(--input);
+      border-radius: 0.45rem;
+      padding: 0.48rem 0.75rem;
+    }
+    button { cursor: pointer; }
+    button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+    button:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid var(--ring); outline-offset: 2px; }
+    .architecture-panel[hidden] { display: none; }
+    .flow-grid { display: grid; grid-template-columns: repeat(8, minmax(110px, 1fr)); gap: 0.7rem; align-items: stretch; }
+    .flow-step { position: relative; border-top: 4px solid var(--viz-series-1); }
+    .flow-step::after {
+      content: "→";
+      position: absolute;
+      right: -0.62rem;
+      top: 44%;
+      color: var(--muted-foreground);
+    }
+    .flow-step:last-child::after { content: ""; }
+    .flow-step strong { display: block; font-weight: 500; }
+    .flow-step small { display: block; margin-top: 0.35rem; color: var(--muted-foreground); }
+    .table-wrap { overflow-x: auto; margin: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; min-width: 720px; }
+    th, td { padding: 0.7rem 0.65rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+    th { background: var(--muted); font-weight: 500; }
+    .yes { color: var(--viz-series-2); font-weight: 500; }
+    .no { color: var(--viz-series-4); font-weight: 500; }
+    .conditional { color: var(--viz-series-3); font-weight: 500; }
+    .matrix { display: grid; grid-template-columns: 1.55fr repeat(4, minmax(92px, 0.7fr)); border-top: 1px solid var(--border); border-left: 1px solid var(--border); }
+    .matrix > div { padding: 0.62rem; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .matrix .head { background: var(--muted); font-weight: 500; }
+    .matrix .cell-good { background: color-mix(in srgb, var(--viz-series-2) 12%, transparent); }
+    .matrix .cell-warn { background: color-mix(in srgb, var(--viz-series-3) 12%, transparent); }
+    .matrix .cell-bad { background: color-mix(in srgb, var(--viz-series-4) 12%, transparent); }
+    .risk-map { display: grid; grid-template-columns: 7rem repeat(3, 1fr); gap: 0.45rem; align-items: stretch; }
+    .risk-axis { display: grid; place-items: center; color: var(--muted-foreground); }
+    .risk-cell { min-height: 6.5rem; padding: 0.6rem; border: 1px solid var(--border); border-radius: 0.45rem; }
+    .risk-cell.high { background: color-mix(in srgb, var(--viz-series-4) 13%, transparent); }
+    .risk-cell.mid { background: color-mix(in srgb, var(--viz-series-3) 12%, transparent); }
+    .risk-cell.low { background: color-mix(in srgb, var(--viz-series-2) 10%, transparent); }
+    .risk-item[hidden] { display: none; }
+    .risk-item + .risk-item { margin-top: 0.7rem; }
+    .risk-item h3 { margin-top: 0; }
+    .ownership { display: grid; grid-template-columns: 1fr auto 1fr; gap: 1rem; align-items: center; }
+    .boundary-arrow { color: var(--muted-foreground); text-align: center; }
+    .roadmap { display: grid; grid-template-columns: 8rem 1fr; gap: 0.85rem 1rem; }
+    .phase { color: var(--primary); font-weight: 500; padding-top: 0.15rem; }
+    .phase-body { border-left: 3px solid var(--viz-series-1); padding: 0 0 1.25rem 1rem; }
+    .phase-body:last-child { padding-bottom: 0; }
+    .dashboard { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.8rem; }
+    .bar { height: 0.65rem; border-radius: 999px; background: var(--muted); overflow: hidden; margin-top: 0.5rem; }
+    .bar > span { display: block; height: 100%; background: var(--viz-series-1); }
+    .callout { padding: 1rem; background: var(--accent); color: var(--accent-foreground); border-left: 4px solid var(--primary); }
+    .warning { padding: 1rem; background: color-mix(in srgb, var(--viz-series-3) 12%, transparent); border-left: 4px solid var(--viz-series-3); }
+    .danger { padding: 1rem; background: color-mix(in srgb, var(--viz-series-4) 12%, transparent); border-left: 4px solid var(--viz-series-4); }
+    .source-list { columns: 2; column-gap: 2rem; }
+    footer { padding: 2.5rem 0 4rem; color: var(--muted-foreground); }
+    .print-only { display: none; }
+
+    @media (max-width: 900px) {
+      .grid-4, .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .flow-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .flow-step:nth-child(4)::after { content: ""; }
+      .dashboard { grid-template-columns: repeat(2, 1fr); }
+      .matrix { font-size: 0.92rem; }
+    }
+    @media (max-width: 640px) {
+      .shell { width: min(100% - 1rem, 1180px); }
+      .hero { padding-top: 2.5rem; }
+      main section { padding: 2.3rem 0; }
+      .grid-2, .grid-3, .grid-4, .dashboard { grid-template-columns: 1fr; }
+      .flow-grid { grid-template-columns: 1fr; }
+      .flow-step::after { content: "↓"; right: 50%; top: auto; bottom: -0.72rem; }
+      .flow-step:nth-child(4)::after { content: "↓"; }
+      .flow-step:last-child::after { content: ""; }
+      .matrix { grid-template-columns: 1.45fr repeat(4, minmax(72px, 0.6fr)); font-size: 0.78rem; }
+      .matrix > div { padding: 0.38rem; }
+      .risk-map { grid-template-columns: 1fr; }
+      .risk-map > .risk-axis, .risk-map > div:first-child { display: none; }
+      .risk-cell { min-height: auto; }
+      .risk-cell::before {
+        content: attr(data-mobile);
+        display: block;
+        margin-bottom: 0.35rem;
+        color: var(--muted-foreground);
+        font-size: 0.78rem;
+        font-weight: 500;
+      }
+      .ownership { grid-template-columns: 1fr; }
+      .boundary-arrow { transform: rotate(90deg); }
+      .roadmap { grid-template-columns: 1fr; }
+      .phase-body { margin-left: 0.5rem; }
+      .source-list { columns: 1; }
+      .diagram text { font-size: 13px; }
+    }
+    @media print {
+      :root { color-scheme: light; }
+      body { background: var(--background); }
+      .toc, .controls { display: none; }
+      .shell { width: 100%; max-width: none; }
+      main section { break-inside: avoid-page; padding: 1.5rem 0; }
+      .card, figure, table, .risk-map { break-inside: avoid; }
+      .architecture-panel[hidden], .risk-item[hidden] { display: block; }
+      .print-only { display: block; }
+      a { color: var(--foreground); text-decoration: none; }
+      a::after { content: ""; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="shell">
+      <div class="eyebrow">2026-07-17 · 읽기 전용 코드/DB 조사</div>
+      <h1>web_report–eval_analyzer<br>학습 구조 상세 분석</h1>
+      <p class="hero-copy">도메인 경험은 충분하지만 Python·서버는 처음인 독자를 위해, 현재 데이터가 어디에서 어디로 흐르는지, DB가 많아졌을 때 무엇이 실제로 좋아지고 무엇은 그대로인지, 외부 담당 영역을 수정하지 않고 어디까지 확장할 수 있는지를 그림 중심으로 설명한다.</p>
+      <div class="meta">
+        <span class="tag">소스 코드 변경 없음</span>
+        <span class="tag">DB 변경 없음</span>
+        <span class="tag">실제 코멘트 원문 미노출</span>
+        <span class="tag">eval_analyzer 외부 담당 경계 준수</span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="toc" aria-label="보고서 목차">
+    <div class="shell toc-links">
+      <a href="#conclusion">결론</a>
+      <a href="#facts">운영 사실</a>
+      <a href="#current">현행 구조</a>
+      <a href="#learning">학습 여부</a>
+      <a href="#correlation">데이터 상관관계</a>
+      <a href="#risks">위험</a>
+      <a href="#parser">db_input 파서</a>
+      <a href="#boundary">수정 경계</a>
+      <a href="#target">목표 구조</a>
+      <a href="#roadmap">로드맵</a>
+    </div>
+  </nav>
+
+  <main>
+    <section id="conclusion">
+      <div class="shell">
+        <h2>1. 결론: 데이터 길은 있지만 학습 루프는 닫혀 있지 않다</h2>
+        <p class="lead">현재 시스템에는 “web_report raw로 평가하기”와 “사람 코멘트를 eval 스키마 DB에 복사하기”가 각각 구현되어 있다. 그러나 기본 경로가 서로 다른 DB를 가리키고, AI 기능은 비활성이고, 온라인 평가는 무기록이며, 정답 기반 정확도 검증도 없다.</p>
+        <div class="conclusion"><strong>핵심 판단:</strong> 현재는 자동 학습 엔진이 아니라 <strong>정적 룰 엔진 + 조건부 과거 코멘트 검색</strong>이다. DB가 늘어도 status/signature는 자동으로 좋아지지 않는다. 안전장치 없이 코멘트만 늘면 검색 지연·문장 충돌·자기 선례 누출 때문에 오히려 품질이 나빠질 수 있다.</div>
+        <div class="status-row" aria-label="현재 상태">
+          <span class="status bad">기본 DB 경로 분리</span>
+          <span class="status bad">AI 기능 비활성</span>
+          <span class="status bad">자동 학습 미구현</span>
+          <span class="status warn">선례검색 조건부 가능</span>
+          <span class="status good">통합 기능 테스트 통과</span>
+        </div>
+
+        <figure>
+          <svg class="diagram" viewBox="0 0 1120 360" role="img" aria-labelledby="analogy-title analogy-desc">
+            <title id="analogy-title">검사실과 전문가 사례 노트 비유</title>
+            <desc id="analogy-desc">web_report 검사창구에서 평가 전문가를 호출하지만 기록 담당과 전문가가 서로 다른 기본 DB를 사용한다.</desc>
+            <defs>
+              <marker id="arrow-a" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="var(--border)"/></marker>
+              <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="var(--viz-series-1)"/></marker>
+              <marker id="arrow-red" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="var(--viz-series-4)"/></marker>
+            </defs>
+            <rect class="node node-blue" x="20" y="95" width="210" height="105"/>
+            <text x="125" y="132" text-anchor="middle" font-weight="500">web_report</text>
+            <text class="muted-text" x="125" y="160" text-anchor="middle">검사 결과 접수창구</text>
+            <text class="muted-text" x="125" y="184" text-anchor="middle">raw · IssueTable</text>
+            <rect class="node node-purple" x="340" y="25" width="225" height="105"/>
+            <text x="452" y="62" text-anchor="middle" font-weight="500">eval_analyzer</text>
+            <text class="muted-text" x="452" y="90" text-anchor="middle">판정 전문가</text>
+            <text class="muted-text" x="452" y="114" text-anchor="middle">룰 · feature · comment</text>
+            <rect class="node node-green" x="340" y="225" width="225" height="105"/>
+            <text x="452" y="262" text-anchor="middle" font-weight="500">eval_export</text>
+            <text class="muted-text" x="452" y="290" text-anchor="middle">사례 기록 담당</text>
+            <text class="muted-text" x="452" y="314" text-anchor="middle">PTE/개발 comment</text>
+            <rect class="node node-red" x="690" y="20" width="390" height="110"/>
+            <text x="885" y="55" text-anchor="middle" font-weight="500">서랍 A · 엔진 기본 읽기</text>
+            <text class="muted-text" x="885" y="83" text-anchor="middle">eval_analyzer/data/eval.db</text>
+            <text class="muted-text" x="885" y="108" text-anchor="middle">현재 파일 없음</text>
+            <rect class="node node-orange" x="690" y="225" width="390" height="110"/>
+            <text x="885" y="260" text-anchor="middle" font-weight="500">서랍 B · export 기본 쓰기</text>
+            <text class="muted-text" x="885" y="288" text-anchor="middle">DB/pe/report/eval/eval.db</text>
+            <text class="muted-text" x="885" y="313" text-anchor="middle">현재 파일 없음</text>
+            <path class="line-blue" d="M230 122 C275 122 292 78 340 78" marker-end="url(#arrow-blue)"/>
+            <path class="line" d="M230 181 C275 181 292 278 340 278" marker-end="url(#arrow-a)"/>
+            <path class="line-blue" d="M565 78 L690 78" marker-end="url(#arrow-blue)"/>
+            <path class="line" d="M565 278 L690 278" marker-end="url(#arrow-a)"/>
+            <path class="line-red" d="M885 130 L885 225" marker-end="url(#arrow-red)"/>
+            <text x="905" y="181" fill="var(--viz-series-4)">기본 설정상 분리</text>
+          </svg>
+          <figcaption>쉽게 말하면 기록 담당과 전문가가 서로 다른 서랍을 보고 있다. 환경변수로 같은 경로를 지정해야만 선례가 연결된다.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="facts">
+      <div class="shell">
+        <h2>2. 실제 운영 데이터에서 확인한 사실</h2>
+        <p class="lead">`report.db`는 URI read-only 방식으로 확인했다. 실제 코멘트 문장은 읽어 보고서에 옮기지 않았고, 건수·종류·날짜만 사용했다.</p>
+        <div class="grid grid-3">
+          <div class="card"><div class="metric-label">전체 세션</div><div class="metric-value">46</div><div class="metric-note">web_report 15 · xlsx 31</div></div>
+          <div class="card"><div class="metric-label">IssueTable 코멘트</div><div class="metric-value">3</div><div class="metric-note">3개 세션 · 모두 PTE/Yield</div></div>
+          <div class="card"><div class="metric-label">AI 활성 세션</div><div class="metric-value">0</div><div class="metric-note">15개 web_report 모두 off/absent</div></div>
+        </div>
+        <div class="grid grid-3" style="margin-top:1rem">
+          <div class="card"><div class="metric-label">family_product 누락</div><div class="metric-value">15/15</div><div class="metric-note">현재 저장된 web_report 기준</div></div>
+          <div class="card"><div class="metric-label">eval DB 파일</div><div class="metric-value">0</div><div class="metric-note">두 기본 경로 모두 없음</div></div>
+          <div class="card"><div class="metric-label">현행 테스트</div><div class="metric-value">88 + PASS</div><div class="metric-note">기능 회귀 테스트, 정확도 평가는 아님</div></div>
+        </div>
+        <div class="warning" style="margin-top:1rem"><strong>날짜 해석:</strong> 기존 코멘트는 2026-07-11~12에 작성되었고 export 기능은 문서상 2026-07-15에 도입됐다. 오류 감사로그가 없는 점을 함께 보면, 현재 eval DB가 비어 있는 주된 이유는 과거 데이터 자동 백필 부재로 보인다.</div>
+      </div>
+    </section>
+
+    <section id="current">
+      <div class="shell">
+        <h2>3. 현행 구조: 평가 경로와 기록 경로</h2>
+        <div class="controls" aria-label="아키텍처 보기 전환">
+          <button type="button" id="show-current" aria-pressed="true">현행 평가 경로</button>
+          <button type="button" id="show-export" aria-pressed="false">사람 코멘트 기록 경로</button>
+        </div>
+
+        <div id="panel-current" class="architecture-panel">
+          <figure>
+            <svg class="diagram" viewBox="0 0 1160 350" role="img" aria-labelledby="current-title current-desc">
+              <title id="current-title">현행 온라인 AI Comment 평가 경로</title>
+              <desc id="current-desc">web report raw를 변환해 persist false로 평가하고 IssueTable에 표시하며 DB에는 저장하지 않는다.</desc>
+              <defs><marker id="arrow-current" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="var(--viz-series-1)"/></marker></defs>
+              <rect class="node node-blue" x="15" y="100" width="180" height="90"/><text x="105" y="137" text-anchor="middle" font-weight="500">parquet</text><text class="muted-text" x="105" y="165" text-anchor="middle">HoneyformTable</text>
+              <rect class="node" x="245" y="100" width="200" height="90"/><text x="345" y="137" text-anchor="middle" font-weight="500">raw_df 재조립</text><text class="muted-text" x="345" y="165" text-anchor="middle">6 meta행 + 측정</text>
+              <rect class="node node-purple" x="495" y="80" width="215" height="130"/><text x="602" y="122" text-anchor="middle" font-weight="500">evaluate()</text><text class="muted-text" x="602" y="151" text-anchor="middle">persist=False</text><text class="muted-text" x="602" y="179" text-anchor="middle">L0 → L6 계산</text>
+              <rect class="node" x="760" y="100" width="180" height="90"/><text x="850" y="137" text-anchor="middle" font-weight="500">row_key 변환</text><text class="muted-text" x="850" y="165" text-anchor="middle">severity worst</text>
+              <rect class="node node-green" x="990" y="100" width="155" height="90"/><text x="1067" y="137" text-anchor="middle" font-weight="500">IssueTable</text><text class="muted-text" x="1067" y="165" text-anchor="middle">AI Comment</text>
+              <path class="line-blue" d="M195 145 L245 145" marker-end="url(#arrow-current)"/><path class="line-blue" d="M445 145 L495 145" marker-end="url(#arrow-current)"/><path class="line-blue" d="M710 145 L760 145" marker-end="url(#arrow-current)"/><path class="line-blue" d="M940 145 L990 145" marker-end="url(#arrow-current)"/>
+              <rect class="node node-red" x="495" y="260" width="215" height="70"/><text x="602" y="289" text-anchor="middle" font-weight="500">eval DB</text><text class="muted-text" x="602" y="313" text-anchor="middle">feature/evaluation 미기록</text>
+              <path class="line-red" d="M602 210 L602 260"/><text x="620" y="240" fill="var(--viz-series-4)">저장 차단</text>
+            </svg>
+            <figcaption>온라인 평가는 계산 결과를 표시만 한다. 따라서 운영 평가가 많아져도 calibration에 필요한 features가 쌓이지 않는다.</figcaption>
+          </figure>
+        </div>
+
+        <div id="panel-export" class="architecture-panel" hidden>
+          <figure>
+            <svg class="diagram" viewBox="0 0 1160 350" role="img" aria-labelledby="export-title export-desc">
+              <title id="export-title">현행 사람 코멘트 export 경로</title>
+              <desc id="export-desc">IssueTable 사람 코멘트가 report DB에 저장되고 데몬 스레드가 별도 eval DB에 복사한다.</desc>
+              <defs><marker id="arrow-export" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="var(--viz-series-2)"/></marker></defs>
+              <rect class="node node-blue" x="20" y="105" width="190" height="90"/><text x="115" y="142" text-anchor="middle" font-weight="500">PTE/개발 comment</text><text class="muted-text" x="115" y="170" text-anchor="middle">IssueTable 편집</text>
+              <rect class="node" x="265" y="105" width="210" height="90"/><text x="370" y="142" text-anchor="middle" font-weight="500">report_webreport_edit</text><text class="muted-text" x="370" y="170" text-anchor="middle">세션 편집 진실</text>
+              <rect class="node node-orange" x="530" y="85" width="210" height="130"/><text x="635" y="127" text-anchor="middle" font-weight="500">export_async</text><text class="muted-text" x="635" y="156" text-anchor="middle">daemon thread</text><text class="muted-text" x="635" y="184" text-anchor="middle">실패 격리</text>
+              <rect class="node node-green" x="795" y="85" width="210" height="130"/><text x="900" y="127" text-anchor="middle" font-weight="500">eval 스키마 DB</text><text class="muted-text" x="900" y="156" text-anchor="middle">label/fail_case</text><text class="muted-text" x="900" y="184" text-anchor="middle">best-effort metrics</text>
+              <path class="line-green" d="M210 150 L265 150" marker-end="url(#arrow-export)"/><path class="line-green" d="M475 150 L530 150" marker-end="url(#arrow-export)"/><path class="line-green" d="M740 150 L795 150" marker-end="url(#arrow-export)"/>
+              <rect class="node node-red" x="530" y="265" width="475" height="65"/><text x="767" y="292" text-anchor="middle" font-weight="500">durable queue · 자동 재시도 · eval DB 백업 없음</text><text class="muted-text" x="767" y="316" text-anchor="middle">프로세스 종료 시 작업 유실 가능</text>
+              <path class="line-red" d="M635 215 L635 265"/>
+            </svg>
+            <figcaption>코멘트 저장 자체는 멱등성과 reconciliation을 갖췄지만, 비동기 작업의 내구성과 백업이 부족하다.</figcaption>
+          </figure>
+        </div>
+
+        <div class="grid grid-2">
+          <div class="card">
+            <h3>잘 되어 있는 부분</h3>
+            <ul>
+              <li>report_server → eval_analyzer 단방향 의존</li>
+              <li>AI 실패가 web_report 전체를 중단하지 않음</li>
+              <li>코멘트 재적재 멱등성과 삭제 reconciliation</li>
+              <li>AI Comment 읽기전용 보장</li>
+              <li>raw 편집 시 AI report cache 자동 재평가</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>연결이 끊긴 부분</h3>
+            <ul>
+              <li>평가 읽기 DB와 export 쓰기 DB 기본경로 불일치</li>
+              <li>온라인 평가 feature/evaluation 미저장</li>
+              <li>과거 코멘트 자동 백필 없음</li>
+              <li>사람 정답 status/root cause/outcome 미수집</li>
+              <li>raw 편집 후 export metrics 재계산 없음</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="learning">
+      <div class="shell">
+        <h2>4. DB가 쌓이면 무엇이 좋아지고, 무엇은 그대로인가</h2>
+        <p class="lead">“학습”을 룰 판정, 선례검색, 문장 생성, calibration으로 나누면 현재 구조를 오해하지 않을 수 있다.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>영역</th><th>현재 결정 방식</th><th>DB 증가 영향</th><th>결론</th></tr></thead>
+            <tbody>
+              <tr><td>status/signature</td><td>정적 YAML threshold/signature</td><td>직접 영향 없음</td><td class="no">자동 개선 아님</td></tr>
+              <tr><td>선례검색</td><td>value_type + family + item 문자열 유사도</td><td>경로 연결 시 후보 증가</td><td class="conditional">조건부</td></tr>
+              <tr><td>comment 문구</td><td>룰 action_ko + 모든 선례 코멘트</td><td>길이와 충돌도 증가</td><td class="conditional">품질 보장 없음</td></tr>
+              <tr><td>calibration</td><td>수동 feature 분위수 → YAML 재작성</td><td>features가 있어야 가능</td><td class="no">온라인 자동 아님</td></tr>
+              <tr><td>정확도 증명</td><td>precision/recall/holdout 필요</td><td>현재 측정 코드 없음</td><td class="no">증명 불가</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <figure>
+          <svg class="diagram" viewBox="0 0 1120 410" role="img" aria-labelledby="growth-title growth-desc">
+            <title id="growth-title">DB 증가의 두 갈래 결과</title>
+            <desc id="growth-desc">품질 제어가 없으면 데이터 증가가 지연과 충돌과 누출을 키우고, 품질 제어가 있으면 측정 가능한 개선으로 이어진다.</desc>
+            <defs><marker id="arrow-growth" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="var(--border)"/></marker></defs>
+            <rect class="node node-blue" x="25" y="150" width="180" height="90"/><text x="115" y="187" text-anchor="middle" font-weight="500">DB 행 증가</text><text class="muted-text" x="115" y="215" text-anchor="middle">원재료 증가</text>
+            <rect class="node node-orange" x="285" y="140" width="200" height="110"/><text x="385" y="181" text-anchor="middle" font-weight="500">품질 제어?</text><text class="muted-text" x="385" y="209" text-anchor="middle">top-k · 시간컷 · 정답</text><text class="muted-text" x="385" y="233" text-anchor="middle">holdout · version</text>
+            <rect class="node node-red" x="595" y="35" width="230" height="115"/><text x="710" y="74" text-anchor="middle" font-weight="500">제어 없음</text><text class="muted-text" x="710" y="102" text-anchor="middle">중복·오래된·실패 선례</text><text class="muted-text" x="710" y="126" text-anchor="middle">자기 선례 누출</text>
+            <rect class="node node-green" x="595" y="260" width="230" height="115"/><text x="710" y="299" text-anchor="middle" font-weight="500">제어 있음</text><text class="muted-text" x="710" y="327" text-anchor="middle">top-k·검증·승인</text><text class="muted-text" x="710" y="351" text-anchor="middle">rollback</text>
+            <rect class="node node-red" x="910" y="35" width="190" height="115"/><text x="1005" y="74" text-anchor="middle" font-weight="500">품질 하락</text><text class="muted-text" x="1005" y="102" text-anchor="middle">느림·문장 충돌</text><text class="muted-text" x="1005" y="126" text-anchor="middle">가짜 정확도</text>
+            <rect class="node node-green" x="910" y="260" width="190" height="115"/><text x="1005" y="299" text-anchor="middle" font-weight="500">측정 가능한 개선</text><text class="muted-text" x="1005" y="327" text-anchor="middle">F1·hit@k·수용률</text><text class="muted-text" x="1005" y="351" text-anchor="middle">버전 비교</text>
+            <path class="line" d="M205 195 L285 195" marker-end="url(#arrow-growth)"/>
+            <path class="line-red" d="M485 175 C535 175 535 92 595 92" marker-end="url(#arrow-growth)"/><text x="520" y="120" fill="var(--viz-series-4)">아니오</text>
+            <path class="line-green" d="M485 220 C535 220 535 317 595 317" marker-end="url(#arrow-growth)"/><text x="520" y="290" fill="var(--viz-series-2)">예</text>
+            <path class="line-red" d="M825 92 L910 92" marker-end="url(#arrow-growth)"/>
+            <path class="line-green" d="M825 317 L910 317" marker-end="url(#arrow-growth)"/>
+          </svg>
+          <figcaption>데이터의 양은 성능 향상의 필요조건일 수 있지만 충분조건은 아니다.</figcaption>
+        </figure>
+
+        <div class="danger"><strong>선택 편향 주의:</strong> calibration이 읽는 features는 저장 게이팅을 통과한 yield fail 또는 low-CPK case 위주다. 이상 사례만 모은 분포의 상위 분위수를 새 경고선으로 쓰면 경고 기준이 완화되어 이상을 놓칠 수 있다.</div>
+      </div>
+    </section>
+
+    <section id="correlation">
+      <div class="shell">
+        <h2>5. web_report 필드 → eval DB → 판정 사용 매트릭스</h2>
+        <p class="lead">초록은 연결, 주황은 부분 연결, 빨강은 미연결이다. “사람이 입력한 코멘트”는 저장되지만 “사람의 정답”은 충분히 구조화되어 있지 않다.</p>
+        <div class="matrix" role="table" aria-label="데이터 연결 매트릭스">
+          <div class="head" role="columnheader">데이터</div><div class="head" role="columnheader">엔진 입력</div><div class="head" role="columnheader">export DB</div><div class="head" role="columnheader">판정 사용</div><div class="head" role="columnheader">학습·검증</div>
+          <div>per-DUT 측정값</div><div class="cell-good">사용</div><div class="cell-bad">미저장</div><div class="cell-good">직접</div><div class="cell-bad">재현 불가</div>
+          <div>BIN / FAILTNO / TNO</div><div class="cell-good">사용</div><div class="cell-warn">집계</div><div class="cell-good">직접</div><div class="cell-warn">부분</div>
+          <div>XPOS / YPOS</div><div class="cell-good">사용</div><div class="cell-bad">미저장</div><div class="cell-good">공간 feature</div><div class="cell-bad">재계산 불가</div>
+          <div>UNIT / LSL / USL</div><div class="cell-good">사용</div><div class="cell-warn">best-effort</div><div class="cell-good">직접</div><div class="cell-warn">누락 가능</div>
+          <div>family_product</div><div class="cell-good">필수/fallback</div><div class="cell-good">저장</div><div class="cell-good">선례 필터</div><div class="cell-warn">현 DB 15건 누락</div>
+          <div>PTE/개발 comment</div><div class="cell-bad">판정 입력 아님</div><div class="cell-good">human_comment</div><div class="cell-warn">문장 검색</div><div class="cell-warn">정답 아님</div>
+          <div>human_status/root cause</div><div class="cell-bad">미사용</div><div class="cell-bad">web export 미수집</div><div class="cell-bad">미사용</div><div class="cell-bad">정확도 계산 불가</div>
+          <div>outcome action/result</div><div class="cell-bad">미사용</div><div class="cell-bad">web export 미수집</div><div class="cell-warn">수동 seed만</div><div class="cell-bad">피드백 부족</div>
+          <div>AI 수용/수정</div><div class="cell-bad">미수집</div><div class="cell-bad">고정 0</div><div class="cell-bad">미사용</div><div class="cell-bad">comment 품질 불명</div>
+        </div>
+        <div class="callout" style="margin-top:1rem"><strong>핵심:</strong> 코멘트 텍스트가 많아지는 것과 정답 라벨이 많아지는 것은 다르다. 정확도 향상을 위해서는 “당시 AI 예측 + 사람 최종 판정 + 실제 조치·결과 + 엔진 버전 + 평가 시점”이 한 묶음으로 남아야 한다.</div>
+      </div>
+    </section>
+
+    <section id="risks">
+      <div class="shell">
+        <h2>6. 활성화 전 위험 분석</h2>
+        <div class="risk-map" role="img" aria-label="발생 가능성과 영향도 위험 매트릭스">
+          <div></div><div class="risk-axis">영향 낮음</div><div class="risk-axis">영향 중간</div><div class="risk-axis">영향 높음</div>
+          <div class="risk-axis">가능성 높음</div><div class="risk-cell mid" data-mobile="가능성 높음 · 영향 낮음">문서/코드 드리프트</div><div class="risk-cell high" data-mobile="가능성 높음 · 영향 중간">선례 전량 결합<br>검색 지연</div><div class="risk-cell high" data-mobile="가능성 높음 · 영향 높음">DB 경로 분리<br>학습 미작동</div>
+          <div class="risk-axis">가능성 중간</div><div class="risk-cell low" data-mobile="가능성 중간 · 영향 낮음">ETC 자유입력 메타 누락</div><div class="risk-cell mid" data-mobile="가능성 중간 · 영향 중간">raw 편집 통계 stale</div><div class="risk-cell high" data-mobile="가능성 중간 · 영향 높음">자기·미래 선례 누출</div>
+          <div class="risk-axis">가능성 낮음</div><div class="risk-cell low" data-mobile="가능성 낮음 · 영향 낮음">스키마 migration 충돌</div><div class="risk-cell mid" data-mobile="가능성 낮음 · 영향 중간">관리자 import 오용</div><div class="risk-cell high" data-mobile="가능성 낮음 · 영향 높음">데몬 export 유실<br>eval DB 무백업</div>
+        </div>
+
+        <label for="risk-filter" style="display:block;margin-top:1.25rem">위험 목록 필터</label>
+        <select id="risk-filter">
+          <option value="all">전체</option>
+          <option value="now">즉시 해결</option>
+          <option value="before-ai">AI 활성화 전</option>
+          <option value="later">후속 개선</option>
+        </select>
+
+        <div style="margin-top:1rem">
+          <article class="card risk-item" data-risk="now"><h3>DB read/write 기본경로 불일치</h3><p>코멘트는 서랍 B에 쌓이지만 엔진은 서랍 A를 읽는다. 부팅 시 두 절대경로를 비교하고 다르면 AI 기능을 차단해야 한다.</p></article>
+          <article class="card risk-item" data-risk="before-ai"><h3>자기 선례·미래 선례 누출</h3><p>preview와 export의 case ID grain이 달라 현재 세션 코멘트를 선례로 다시 읽을 수 있다. session_id, analysis_key, as_of를 검색 계약에 추가해야 한다.</p></article>
+          <article class="card risk-item" data-risk="before-ai"><h3>선례 top-k와 품질 필터 부재</h3><p>현재는 매칭된 모든 human_comment를 이어 붙인다. DB가 커질수록 느려지고 모순된 조치가 섞일 수 있다.</p></article>
+          <article class="card risk-item" data-risk="now"><h3>데몬 스레드 export와 백업 부재</h3><p>프로세스 종료 시 작업이 유실될 수 있고 eval DB는 report DB 백업 주기에 포함되지 않는다.</p></article>
+          <article class="card risk-item" data-risk="before-ai"><h3>카테고리 매핑 왜곡</h3><p>`issue_category`를 사용하지 않고 worst case를 CPK/ETC에 모두 복제해 의미가 다른 행에 코멘트가 붙을 수 있다.</p></article>
+          <article class="card risk-item" data-risk="later"><h3>calibration 선택 편향</h3><p>저장 게이팅을 통과한 이상 사례 위주의 features 분위수를 정상 경고선으로 사용하면 민감도가 낮아질 수 있다.</p></article>
+        </div>
+
+        <figure>
+          <svg class="diagram" viewBox="0 0 1120 390" role="img" aria-labelledby="leak-title leak-desc">
+            <title id="leak-title">자기 선례 누출 시나리오</title>
+            <desc id="leak-desc">현재 세션 사람이 코멘트를 저장한 뒤 같은 세션 AI 평가가 다른 case id로 그 코멘트를 과거 선례처럼 읽을 수 있다.</desc>
+            <defs><marker id="arrow-leak" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="var(--viz-series-4)"/></marker></defs>
+            <rect class="node node-blue" x="40" y="45" width="210" height="85"/><text x="145" y="80" text-anchor="middle" font-weight="500">현재 세션</text><text class="muted-text" x="145" y="106" text-anchor="middle">PTE comment 저장</text>
+            <rect class="node node-orange" x="340" y="45" width="220" height="85"/><text x="450" y="80" text-anchor="middle" font-weight="500">export case</text><text class="muted-text" x="450" y="106" text-anchor="middle">DB item_id · wafer NULL</text>
+            <rect class="node node-purple" x="340" y="255" width="220" height="85"/><text x="450" y="290" text-anchor="middle" font-weight="500">preview case</text><text class="muted-text" x="450" y="316" text-anchor="middle">hash item_id · wafer 순번</text>
+            <rect class="node node-red" x="675" y="135" width="210" height="105"/><text x="780" y="174" text-anchor="middle" font-weight="500">case_id 불일치</text><text class="muted-text" x="780" y="202" text-anchor="middle">exclude_case_id 실패</text><text class="muted-text" x="780" y="226" text-anchor="middle">가능</text>
+            <rect class="node node-red" x="945" y="135" width="145" height="105"/><text x="1017" y="174" text-anchor="middle" font-weight="500">가짜 선례</text><text class="muted-text" x="1017" y="202" text-anchor="middle">현재 정답을</text><text class="muted-text" x="1017" y="226" text-anchor="middle">미리 본 효과</text>
+            <path class="line-red" d="M250 87 L340 87" marker-end="url(#arrow-leak)"/><path class="line-red" d="M560 87 C620 87 620 165 675 165" marker-end="url(#arrow-leak)"/><path class="line-red" d="M560 297 C620 297 620 215 675 215" marker-end="url(#arrow-leak)"/><path class="line-red" d="M885 187 L945 187" marker-end="url(#arrow-leak)"/>
+          </svg>
+          <figcaption>정확도 검증에서 가장 먼저 막아야 하는 데이터 누출 경로다.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="parser">
+      <div class="shell">
+        <h2>7. db_input: 전체 문서 복사·붙여넣기 파서 방향</h2>
+        <p class="lead">현재 CSV와 구조화 JSON은 가능하지만 원문 텍스트는 명시적으로 미구현이다. 목표는 “AI가 바로 DB에 쓰기”가 아니라 “추출 → 검증 → 사람 승인 → transaction commit”이다.</p>
+
+        <div class="flow-grid" role="list" aria-label="문서 파서 8단계">
+          <div class="card flow-step" role="listitem"><strong>1 원문 접수</strong><small>붙여넣기·파일</small></div>
+          <div class="card flow-step" role="listitem"><strong>2 hash</strong><small>중복·revision</small></div>
+          <div class="card flow-step" role="listitem"><strong>3 블록 분해</strong><small>표·키값·문단</small></div>
+          <div class="card flow-step" role="listitem"><strong>4 구조화</strong><small>JSON Schema</small></div>
+          <div class="card flow-step" role="listitem"><strong>5 검증</strong><small>형식·taxonomy·도메인</small></div>
+          <div class="card flow-step" role="listitem"><strong>6 Preview</strong><small>근거·confidence</small></div>
+          <div class="card flow-step" role="listitem"><strong>7 Diff</strong><small>NEW·CHANGED·CONFLICT</small></div>
+          <div class="card flow-step" role="listitem"><strong>8 Commit</strong><small>transaction·rollback</small></div>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:1rem">
+          <div class="card">
+            <h3>v1 입력</h3>
+            <ul><li>textarea 원문</li><li>TXT / Markdown</li><li>CSV / TSV</li><li>구조화 JSON</li></ul>
+            <h3>v2 입력</h3>
+            <ul><li>DOCX</li><li>텍스트 PDF / OCR PDF</li><li>XLSX</li></ul>
+          </div>
+          <div class="card">
+            <h3>필드마다 남길 것</h3>
+            <ul><li>추출값</li><li>원문 위치·표 셀·페이지</li><li>parser/model version</li><li>confidence</li><li>warning/error</li><li>reviewer override</li></ul>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>검증 층</th><th>예시</th><th>실패 상태</th></tr></thead>
+            <tbody>
+              <tr><td>형식</td><td>필수값, 숫자, 길이</td><td>BLOCKED</td></tr>
+              <tr><td>taxonomy</td><td>product/family, status, outcome</td><td>BLOCKED 또는 REVIEW</td></tr>
+              <tr><td>도메인</td><td>LSL&lt;USL, stdev≥0, unit/value_type</td><td>REVIEW 또는 BLOCKED</td></tr>
+              <tr><td>중복·revision</td><td>source hash, case diff</td><td>UNCHANGED / CHANGED / CONFLICT</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="warning"><strong>현재 멱등의 함정:</strong> `import_csv`는 label/outcome 중복은 막지만 기존 값을 최신 문서로 UPDATE하지 않는다. 권장은 insert-only가 아니라 <strong>revision 이벤트 보존 + active/latest 표시</strong>다.</div>
+
+        <h3>server 소유 staging 제안</h3>
+        <div class="grid grid-4">
+          <div class="card"><strong>report_eval_import_job</strong><p>parser·검수·commit 상태</p></div>
+          <div class="card"><strong>report_eval_import_document</strong><p>source hash·메타·보존 위치</p></div>
+          <div class="card"><strong>report_eval_import_row</strong><p>case 후보·validation</p></div>
+          <div class="card"><strong>report_eval_import_field</strong><p>근거·confidence·override</p></div>
+        </div>
+        <p>staging은 report_server 소유 `report_` prefix 테이블에 두고, 최종 승인된 정규화 값만 `web_report/eval_export.py` facade를 통해 eval 스키마에 적재한다. LLM은 DB 커넥션을 직접 받지 않는다.</p>
+      </div>
+    </section>
+
+    <section id="boundary">
+      <div class="shell">
+        <h2>8. 외부 담당 영역을 수정하지 않는 연결 방법</h2>
+        <div class="ownership">
+          <div class="card">
+            <h3>report_server 자유 수정</h3>
+            <ul><li>web_report</li><li>server / admin_panel</li><li>eval input staging</li><li>job·backup·health</li></ul>
+          </div>
+          <div class="boundary-arrow" aria-hidden="true">→<br>eval_export facade<br>→</div>
+          <div class="card">
+            <h3>외부 담당 영역</h3>
+            <ul><li>eval_analyzer engine</li><li>stable case ID</li><li>precedent ranking</li><li>calibration·RAG·LLM</li></ul>
+          </div>
+        </div>
+        <div class="callout" style="margin-top:1rem"><strong>규칙:</strong> 새 server 모듈이 `eval_engine`을 직접 import하지 않는다. 이미 허용된 `web_report/eval_export.py`를 저장 facade로 유지하면 외부 담당 코드 교체 시 수정 지점이 한 곳으로 모인다.</div>
+
+        <h3>권장 endpoint</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Endpoint</th><th>목적</th><th>핵심 안전장치</th></tr></thead>
+            <tbody>
+              <tr><td><code>GET /api/eval/health</code></td><td>read/write path, schema, backlog, backup 확인</td><td>민감값 마스킹</td></tr>
+              <tr><td><code>POST /api/eval/backfill</code></td><td>전체/필터 세션 재적재 job 시작</td><td>dry-run, idempotency</td></tr>
+              <tr><td><code>GET /api/eval/jobs/&lt;id&gt;</code></td><td>진행률·오류·재시도 조회</td><td>관리자 인증</td></tr>
+              <tr><td><code>POST /api/eval/import/preview</code></td><td>원문 추출·검증, DB 무변경</td><td>크기/MIME 제한</td></tr>
+              <tr><td><code>POST /api/eval/import/commit</code></td><td>승인 행 transaction 적재</td><td>승인자·감사·rollback</td></tr>
+              <tr><td><code>POST /api/eval/backup</code></td><td>온라인 백업 job</td><td>해시·row count</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="danger"><strong>보안:</strong> 관리자 기본 비밀번호를 유지한 채 붙여넣기·파일 업로드 API를 열면 안 된다. 환경변수 비밀번호 강제, 가능하면 SSO, 업로드 제한, 감사로그가 선행되어야 한다.</div>
+      </div>
+    </section>
+
+    <section id="target">
+      <div class="shell">
+        <h2>9. 목표 구조: 온라인 안정성과 오프라인 학습을 분리</h2>
+        <p class="lead">온라인 web_report 응답은 계속 빠르고 안전하게 유지하고, 데이터 적재·백필·보정·검증은 durable job과 오프라인 dataset으로 분리한다.</p>
+        <figure>
+          <svg class="diagram" viewBox="0 0 1180 660" role="img" aria-labelledby="target-title target-desc">
+            <title id="target-title">권장 목표 아키텍처</title>
+            <desc id="target-desc">web report 온라인 평가와 durable export, 문서 staging, 단일 eval DB, 안전한 검색, holdout 보정, canary와 rollback을 연결한다.</desc>
+            <defs><marker id="arrow-target" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="var(--border)"/></marker></defs>
+            <rect class="node node-blue" x="25" y="55" width="210" height="100"/><text x="130" y="94" text-anchor="middle" font-weight="500">web_report</text><text class="muted-text" x="130" y="122" text-anchor="middle">raw + 사람 정답</text>
+            <rect class="node node-purple" x="340" y="35" width="220" height="100"/><text x="450" y="74" text-anchor="middle" font-weight="500">온라인 evaluate</text><text class="muted-text" x="450" y="102" text-anchor="middle">persist=False</text>
+            <rect class="node node-green" x="665" y="35" width="190" height="100"/><text x="760" y="74" text-anchor="middle" font-weight="500">AI Comment</text><text class="muted-text" x="760" y="102" text-anchor="middle">표시·canary</text>
+            <rect class="node node-orange" x="340" y="190" width="220" height="110"/><text x="450" y="230" text-anchor="middle" font-weight="500">durable queue</text><text class="muted-text" x="450" y="258" text-anchor="middle">export · backfill · retry</text><text class="muted-text" x="450" y="282" text-anchor="middle">job state</text>
+            <rect class="node node-blue" x="25" y="210" width="210" height="90"/><text x="130" y="246" text-anchor="middle" font-weight="500">과거 문서</text><text class="muted-text" x="130" y="274" text-anchor="middle">parser staging·검수</text>
+            <rect class="node" x="665" y="190" width="190" height="110"/><text x="760" y="230" text-anchor="middle" font-weight="500">eval_export</text><text class="muted-text" x="760" y="258" text-anchor="middle">단일 facade</text><text class="muted-text" x="760" y="282" text-anchor="middle">스키마 계약</text>
+            <rect class="node node-green" x="940" y="180" width="210" height="130"/><text x="1045" y="220" text-anchor="middle" font-weight="500">canonical eval DB</text><text class="muted-text" x="1045" y="248" text-anchor="middle">labels · outcomes</text><text class="muted-text" x="1045" y="272" text-anchor="middle">features · evaluations</text><text class="muted-text" x="1045" y="296" text-anchor="middle">backup</text>
+            <rect class="node node-purple" x="940" y="35" width="210" height="100"/><text x="1045" y="74" text-anchor="middle" font-weight="500">안전한 top-k 검색</text><text class="muted-text" x="1045" y="102" text-anchor="middle">session/as-of/quality</text>
+            <rect class="node" x="165" y="405" width="200" height="95"/><text x="265" y="443" text-anchor="middle" font-weight="500">시간 snapshot</text><text class="muted-text" x="265" y="471" text-anchor="middle">train/valid/test</text>
+            <rect class="node" x="440" y="405" width="200" height="95"/><text x="540" y="443" text-anchor="middle" font-weight="500">holdout benchmark</text><text class="muted-text" x="540" y="471" text-anchor="middle">F1 · hit@k · 수용률</text>
+            <rect class="node node-orange" x="715" y="405" width="200" height="95"/><text x="815" y="443" text-anchor="middle" font-weight="500">candidate version</text><text class="muted-text" x="815" y="471" text-anchor="middle">calibration·RAG</text>
+            <rect class="node node-green" x="990" y="405" width="160" height="95"/><text x="1070" y="443" text-anchor="middle" font-weight="500">도메인 승인</text><text class="muted-text" x="1070" y="471" text-anchor="middle">version 등록</text>
+            <rect class="node node-blue" x="440" y="555" width="200" height="80"/><text x="540" y="589" text-anchor="middle" font-weight="500">canary</text><text class="muted-text" x="540" y="614" text-anchor="middle">제한 활성</text>
+            <rect class="node node-green" x="715" y="555" width="200" height="80"/><text x="815" y="589" text-anchor="middle" font-weight="500">모니터링</text><text class="muted-text" x="815" y="614" text-anchor="middle">품질·지연·오류</text>
+            <rect class="node node-red" x="990" y="555" width="160" height="80"/><text x="1070" y="589" text-anchor="middle" font-weight="500">rollback</text><text class="muted-text" x="1070" y="614" text-anchor="middle">즉시 복귀</text>
+            <path class="line" d="M235 88 L340 88" marker-end="url(#arrow-target)"/><path class="line" d="M560 88 L665 88" marker-end="url(#arrow-target)"/><path class="line" d="M235 125 C285 125 290 245 340 245" marker-end="url(#arrow-target)"/><path class="line" d="M235 255 L340 255" marker-end="url(#arrow-target)"/><path class="line" d="M560 245 L665 245" marker-end="url(#arrow-target)"/><path class="line" d="M855 245 L940 245" marker-end="url(#arrow-target)"/><path class="line" d="M940 85 C900 85 900 85 855 85" marker-end="url(#arrow-target)"/><path class="line" d="M1045 180 L1045 135" marker-end="url(#arrow-target)"/><path class="line" d="M1045 310 C1045 350 265 350 265 405" marker-end="url(#arrow-target)"/><path class="line" d="M365 452 L440 452" marker-end="url(#arrow-target)"/><path class="line" d="M640 452 L715 452" marker-end="url(#arrow-target)"/><path class="line" d="M915 452 L990 452" marker-end="url(#arrow-target)"/><path class="line" d="M1070 500 C1070 530 540 530 540 555" marker-end="url(#arrow-target)"/><path class="line" d="M640 595 L715 595" marker-end="url(#arrow-target)"/><path class="line" d="M915 595 L990 595" marker-end="url(#arrow-target)"/>
+          </svg>
+          <figcaption>온라인 평가는 조회 안정성을 지키고, 학습 데이터·검증·배포는 별도 오프라인 루프로 관리한다.</figcaption>
+        </figure>
+
+        <h3>운영 대시보드에 보여야 할 것</h3>
+        <div class="dashboard">
+          <div class="card"><strong>DB 연결</strong><p>read/write same path</p><div class="bar"><span style="width:100%"></span></div></div>
+          <div class="card"><strong>세션 반영률</strong><p>comment 세션 대비 export 완료</p><div class="bar"><span style="width:82%"></span></div></div>
+          <div class="card"><strong>Queue backlog</strong><p>queued / failed / retrying</p><div class="bar"><span style="width:28%"></span></div></div>
+          <div class="card"><strong>선례 hit@k</strong><p>제품군·item class 분해</p><div class="bar"><span style="width:68%"></span></div></div>
+          <div class="card"><strong>Status macro-F1</strong><p>engine version별 holdout</p><div class="bar"><span style="width:74%"></span></div></div>
+          <div class="card"><strong>최근 백업</strong><p>해시·복구 점검일</p><div class="bar"><span style="width:92%"></span></div></div>
+        </div>
+        <p class="metric-note">위 막대는 UI 배치 예시이며 실제 수치가 아니다. 실제 구현에서는 값과 단위를 함께 표시해야 한다.</p>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="shell">
+        <h2>10. 단계별 로드맵과 완료 조건</h2>
+        <div class="roadmap">
+          <div class="phase">0 · 연결</div><div class="phase-body"><strong>DB path 단일화, health, backup, durable export, legacy backfill</strong><p>완료: same_path=true, 세션 반영률 대조, 재시작 후 job 복구.</p></div>
+          <div class="phase">1 · 정답</div><div class="phase-body"><strong>human_status, root cause, outcome, AI 수용/수정 수집</strong><p>완료: 엔진 버전별 예측과 사람 정답을 한 query로 비교.</p></div>
+          <div class="phase">2 · Parser</div><div class="phase-body"><strong>텍스트/표 preview, staging, diff, transaction, rollback</strong><p>완료: 같은 문서 중복 0, 변경은 CHANGED, BLOCKED 저장 0.</p></div>
+          <div class="phase">3 · 검색</div><div class="phase-body"><strong>session/as-of 제외, top-k, quality/outcome ranking</strong><p>완료: 누출 0, precision@k baseline, 규모 부하 테스트.</p></div>
+          <div class="phase">4 · 보정</div><div class="phase-body"><strong>정상 모집단, 시간 holdout, candidate version, canary/rollback</strong><p>완료: 현 버전 대비 개선을 수치로 증명.</p></div>
+          <div class="phase">5 · RAG/LLM</div><div class="phase-body"><strong>SQL baseline 대비 RAG 비교, 근거 제한 요약</strong><p>완료: hit@k·수용률 개선과 비용·지연 기준 동시 충족.</p></div>
+        </div>
+
+        <h3>AI Comment 활성화 게이트</h3>
+        <ol>
+          <li>read/write DB path가 동일하다.</li>
+          <li>eval DB backup과 restore-check가 성공한다.</li>
+          <li>legacy 백필 완료율과 실패 목록을 확인할 수 있다.</li>
+          <li>현재 세션·미래 사례·동일 analysis_key 누출 테스트가 통과한다.</li>
+          <li>top-k와 코멘트/prompt 길이 상한이 있다.</li>
+          <li>AI Comment bridge 회귀 테스트가 있다.</li>
+          <li>holdout baseline이 기록되어 있다.</li>
+          <li>빈 결과와 평가 오류를 구별한다.</li>
+          <li>일부 canary 세션만 켤 수 있다.</li>
+          <li>즉시 비활성화 kill switch가 있다.</li>
+        </ol>
+
+        <div class="grid grid-2">
+          <div class="card"><h3>report_server에서 먼저</h3><ul><li>경로·health·backup</li><li>durable job·백필</li><li>parser staging·관리자 UI</li><li>정답 필드 수집</li><li>AI 활성화 게이트</li></ul></div>
+          <div class="card"><h3>외부 담당자에게 요청</h3><ul><li>stable case identity</li><li>안전한 precedent 계약</li><li>비편향 calibration</li><li>precision/recall benchmark</li><li>RAG·LLM·문서 drift</li></ul></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="evidence">
+      <div class="shell">
+        <h2>11. 코드 근거와 해석 제한</h2>
+        <ul class="source-list">
+          <li><code>web_report/ai_comment.py:153</code> — `persist=False`</li>
+          <li><code>web_report/eval_export.py:49-51</code> — export DB path</li>
+          <li><code>web_report/eval_export.py:360-366</code> — daemon thread</li>
+          <li><code>server/config.py:25</code> — `REPORT_EVAL_DB_PATH`</li>
+          <li><code>eval_analyzer/eval_engine/config.py:11-12</code> — `EVAL_DB_PATH`</li>
+          <li><code>client/honey_main.py:632</code> — AI checkbox disabled</li>
+          <li><code>pipeline/present.py:10-22</code> — 저장 게이팅</li>
+          <li><code>store.py:469-518</code> — SQL 선례검색</li>
+          <li><code>pipeline/recommend.py:19-26</code> — 선례 전량 문장 결합</li>
+          <li><code>precedent_client.py:29-41</code> — RAG 스텁</li>
+          <li><code>llm_client.py:12-21</code> — LLM 스텁</li>
+          <li><code>db_input/ai_extract.py:138-142</code> — text parser 스텁</li>
+        </ul>
+        <div class="warning"><strong>제한:</strong> 실제 Windows 서비스 프로세스의 환경변수는 확인하지 못했다. DB 경로 문제는 코드 기본값·현재 셸·기본 `start.bat` 기준이다. 운영 서비스가 별도 `EVAL_DB_PATH`를 주입했다면 실제 연결 상태는 달라질 수 있다.</div>
+        <p>실제 AI 기능은 현재 비활성이고 eval DB도 없어 실운영 정확도를 측정하지 않았다. 이 문서의 endpoint·테이블·코드 변경은 모두 권고이며 구현하지 않았다.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell">web_report–eval_analyzer 학습 구조 상세 분석 · 2026-07-17 · 코드/DB 무변경 조사</div>
+  </footer>
+
+  <script>
+    (() => {
+      const currentButton = document.getElementById('show-current');
+      const exportButton = document.getElementById('show-export');
+      const currentPanel = document.getElementById('panel-current');
+      const exportPanel = document.getElementById('panel-export');
+      const filter = document.getElementById('risk-filter');
+      const riskItems = Array.from(document.querySelectorAll('.risk-item'));
+
+      function showArchitecture(mode) {
+        const isCurrent = mode === 'current';
+        currentButton.setAttribute('aria-pressed', String(isCurrent));
+        exportButton.setAttribute('aria-pressed', String(!isCurrent));
+        currentPanel.hidden = !isCurrent;
+        exportPanel.hidden = isCurrent;
+      }
+
+      currentButton.addEventListener('click', () => showArchitecture('current'));
+      exportButton.addEventListener('click', () => showArchitecture('export'));
+
+      filter.addEventListener('change', () => {
+        const value = filter.value;
+        riskItems.forEach((item) => {
+          item.hidden = value !== 'all' && item.dataset.risk !== value;
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
