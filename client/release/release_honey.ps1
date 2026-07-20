@@ -266,6 +266,35 @@ if (-not (Test-Path $DistExe)) {
 }
 
 Write-Step "3/6 Create ZIP package"
+
+# 서버 주소 정본은 server\env\server.env 의 SERVER_BASE_URL 하나다. 빌드본은 repo 가
+# 없으니 그 값을 Honey.exe 옆 honey.env 로 복사해 넣는다 (transport\config.py 가 읽는다).
+# 값이 없으면 여기서 멈춘다 — 그냥 넘어가면 하드코딩 폴백 주소로 붙는 배포본이 나가서
+# "왜 옛 서버로 가지" 를 나중에 현장에서 디버깅하게 된다.
+$ServerEnv = Join-Path $RepoRoot "server\env\server.env"
+if (-not (Test-Path $ServerEnv)) {
+    throw "서버 설정 파일이 없습니다: $ServerEnv (SERVER_BASE_URL 을 여기서 읽습니다)"
+}
+$BaseUrl = $null
+foreach ($line in (Get-Content -Path $ServerEnv -Encoding UTF8)) {
+    $t = $line.Trim()
+    if ($t -eq "" -or $t.StartsWith("#")) { continue }
+    $m = [regex]::Match($t, '^SERVER_BASE_URL\s*=\s*(\S+)$')
+    if ($m.Success) { $BaseUrl = $m.Groups[1].Value }
+}
+if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
+    throw "SERVER_BASE_URL 을 $ServerEnv 에서 찾지 못했습니다. 'SERVER_BASE_URL=http://<ip>:<port>' 한 줄을 추가하세요."
+}
+$HoneyEnv = Join-Path $DistDir "honey.env"
+$honeyEnvText = @(
+    "# 이 파일은 build_zip 이 server\env\server.env 에서 생성한다 — 직접 고치지 말고",
+    "# server\env\server.env 를 고친 뒤 build_zip 을 다시 실행할 것.",
+    "SERVER_BASE_URL=$BaseUrl",
+    ""
+) -join [Environment]::NewLine
+Write-Utf8NoBomText $HoneyEnv $honeyEnvText
+Write-Host "    server address : $BaseUrl  (-> $HoneyEnv)" -ForegroundColor Green
+
 if (-not (Test-Path $ReleaseDist)) {
     New-Item -ItemType Directory -Path $ReleaseDist | Out-Null
 }

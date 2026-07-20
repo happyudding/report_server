@@ -20,6 +20,10 @@ let _noteSavedSheets = null;   // fetch 로 받은 시트 배열(없으면 null 
 let _noteInitSent = false;     // init 중복 전송 방지
 let _noteReqSeq = 0;           // getSheets 요청 id
 const _noteSaveWaiters = new Map();   // reqId → {resolve, reject}
+// 낙관적 잠금 토큰 — 내가 읽은 시점의 서버 저장본. 저장 시 되돌려 보내 그 사이 남이
+// 저장했는지 서버가 판정한다(불일치 → 409). 시트는 통째로 치환되므로 이 검사가 없으면
+// 동시 편집 시 상대 Note 전체가 조용히 사라진다.
+let _noteBaseToken = null;
 
 // ── 탭 렌더 (edit_mode.js TAB_RENDERERS["note"] → 탭 첫 활성화 시) ─────────────
 function renderNoteTab() {
@@ -32,6 +36,7 @@ function renderNoteTab() {
   _noteCanEdit = canEdit;
   _noteReady = false; _noteFrameReady = false; _noteFetched = false;
   _noteSavedSheets = null; _noteInitSent = false; _noteDirty = false;
+  _noteBaseToken = null;
   panel.innerHTML = `
     <div class="note-bar" id="noteBar">
       ${canEdit ? `<button type="button" class="btn-sm note-save" id="noteSave">💾 Note 저장</button>` : ""}
@@ -51,6 +56,7 @@ function renderNoteTab() {
       if (token !== _noteInitToken) return;   // 그 사이 재렌더됨
       _noteSavedSheets = (saved && saved.sheet && Array.isArray(saved.sheet.sheets) && saved.sheet.sheets.length)
         ? saved.sheet.sheets : null;
+      _noteBaseToken = (saved && saved.base) || null;
       _noteFetched = true;
       noteRenderMeta(saved);
       noteMaybeInit(token);
@@ -131,7 +137,8 @@ function noteMarkDirty() {
 }
 
 // ── 저장: iframe 에 현재 시트 요청 → 받은 JSON 을 서버에 POST ────────────────────
-async function noteSave() {
+// opts.force: 충돌(409) 안내 후 사용자가 덮어쓰기를 택했을 때의 재전송.
+async function noteSave(opts) {
   if (!_noteReady) { showToast("Note 가 아직 준비되지 않았습니다."); return; }
   const btn = document.getElementById("noteSave");
   if (btn) btn.disabled = true;
@@ -140,13 +147,17 @@ async function noteSave() {
     // 빈 시트 배열을 보내면 서버가 400 으로 거부하지만, 애초에 POST 하지 않는다
     // (프레임 직렬화 이상 시 기존 Note 를 빈 내용으로 치환하는 사고 방지).
     if (!Array.isArray(sheets) || !sheets.length) throw new Error("시트 데이터가 비어 있습니다 — 저장하지 않았습니다");
+    const payload = { sheet: { sheets }, base: _noteBaseToken };
+    if (opts && opts.force) payload.force = true;
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/note`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-      body: JSON.stringify({ sheet: { sheets } }),
+      body: JSON.stringify(payload),
     });
     const j = await res.json().catch(() => ({}));
+    if (res.status === 409) { noteResolveConflict(j); return; }
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    _noteBaseToken = j.base || null;
     _noteDirty = false;
     if (btn) btn.classList.remove("dirty");
     if (DATA) DATA.note_info = { exists: true, updated_by: LOGIN_USER, updated_at: "" };
@@ -156,6 +167,20 @@ async function noteSave() {
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+// 409 — 내가 Note 를 연 뒤 다른 사용자가 저장했다. 시트는 통째 치환이라 어느 쪽을
+// 살릴지 사용자가 정해야 한다(자동 병합 불가).
+function noteResolveConflict(j) {
+  const who = (j && j.conflict && j.conflict.updated_by) || "다른 사용자";
+  const overwrite = confirm(
+    `${who} 님이 이 Note 를 먼저 저장했습니다.\n\n` +
+    `[확인] 내 편집으로 덮어쓰기 — ${who} 님의 저장 내용이 사라집니다.\n` +
+    `[취소] 서버 최신본 다시 불러오기 — 내 미저장 편집이 사라집니다.`);
+  if (overwrite) { noteSave({ force: true }); return; }
+  _noteDirty = false;      // renderNoteTab 의 미저장 편집 보존 가드를 풀어야 재로드된다
+  renderNoteTab();
+  showToast("서버 최신 Note 를 다시 불러왔습니다.");
 }
 
 // iframe 에 시트 직렬화 요청 (postMessage 왕복). reqId 로 응답 매칭 + 타임아웃.
@@ -174,6 +199,7 @@ function noteRequestSheets() {
 
 // 미저장 Note 이탈 경고 (chart_notes 의 dirty 와 별개 채널).
 window.addEventListener("beforeunload", e => {
+  if (leaveGuardBypassed()) return;   // 이탈 확인 모달에서 확정
   if (_noteDirty) { e.preventDefault(); e.returnValue = ""; }
 });
 

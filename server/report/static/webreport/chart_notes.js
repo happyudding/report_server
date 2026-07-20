@@ -395,6 +395,7 @@ async function cnSave() {
 
 // 미저장 주석이 있으면 이탈 경고 (edit_mode 의 comment dirty 와 별개 채널).
 window.addEventListener("beforeunload", e => {
+  if (leaveGuardBypassed()) return;   // 이탈 확인 모달에서 확정
   if (_cnDirty.size) { e.preventDefault(); e.returnValue = ""; }
 });
 

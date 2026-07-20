@@ -28,9 +28,23 @@ python honey_main.py
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `HONEY_SERVER_URL` | `http://12.81.220.117:8080` | Flask 서버 주소 |
+| `HONEY_SERVER_URL` | env 파일 값 | Flask 서버 주소 **임시 override**. 평소엔 설정하지 않는다 — 정본은 아래 env 파일 |
 | `HONEY_CONFIG_DIR` | `%APPDATA%\Honey` | 차트 색 팔레트 등 사용자 설정 폴더 |
 | `HONEY_D1_STORAGE` | `<repo>/d1_storage` | D1 로컬 검증 스토리지 폴더 (외부 provider) |
+
+### 서버 주소 정본 — `server/env/server.env` 의 `SERVER_BASE_URL`
+
+주소를 바꿀 때 고칠 곳은 이 **한 줄**이다. 서버는 기동할 때 그 파일을 직접 읽고,
+클라이언트는 실행 위치에 따라 아래처럼 같은 값에 도달한다.
+
+| 실행 형태 | 읽는 곳 |
+|-----------|---------|
+| 개발 (`python honey_main.py`) | repo 의 `server/env/server.env` 를 그대로 읽음 |
+| 빌드본 (`Honey.exe`) | `Honey.exe` 옆 `honey.env` — `build_zip` 이 빌드 시 server.env 에서 생성 |
+
+따라서 IP 를 바꾸면 **server.env 수정 → 서버 재기동 → `build_zip` 재실행 → 클라 재배포**
+순서다. build_zip 은 server.env 에 `SERVER_BASE_URL` 이 없으면 빌드를 중단한다
+(옛 주소로 붙는 배포본이 나가는 것을 막기 위함).
 
 > Product 검색용 기준정보(part_id)는 클라가 로컬 DB 를 열지 않고 서버
 > `GET /pe/report/api/part_ids` 로 HTTP 조회한다.

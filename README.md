@@ -8,7 +8,7 @@ Honey 클라이언트가 추출한 산출물을 업로드하면 Flask 서버가 
 
 | 디렉토리 | 역할 | 소유권 | 상세 |
 |----------|------|--------|------|
-| **[server/](server/)** | Flask 서버 (포트 8000) — `/pe/report/`, `/honey/`, `/pe/admin-pte/` | 🟢 자유 (단 storage_gateway 는 🔒외부 담당자) | [server/README.md](server/README.md) |
+| **[server/](server/)** | Flask 서버 (포트 8080) — `/pe/report/`, `/honey/`, `/pe/admin-pte/` | 🟢 자유 (단 storage_gateway 는 🔒외부 담당자) | [server/README.md](server/README.md) |
 | **[web_report/](web_report/)** | web_report honeyform 처리·탭 계산·캐시 | 🟢 자유 | [docs/10](docs/10_web_report_pipeline.md)·[11](docs/11_web_report_tabs.md)·[12](docs/12_web_report_cache.md) |
 | **[client/](client/)** | Honey PyQt6 클라이언트 — CSV 분석 + 업로드 | 🟢 자유(honey_ui·honey_main·transport·excel_*) / 🟡 사전 승인(나머지) / 🔒외부 담당자(report_generator·honey_parse) | [client/README.md](client/README.md) |
 | **[d1/](d1/)** · **client/report_generator/** · **client/honey_parse/** · **server/storage_gateway/** | 병합된 외부 담당자 코드 (D1·리포트생성·파서·저장소) | 🔒 외부 담당자 영역 동결 | [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |
@@ -27,7 +27,7 @@ pip install -r requirements.txt
 $env:REPORT_S3_BUCKET = "your-bucket"
 .\start.bat
 ```
-`http://127.0.0.1:8000/pe/report/` 에서 검색결과 페이지 확인. 환경변수·API 상세는
+`http://127.0.0.1:8080/pe/report/` 에서 검색결과 페이지 확인. 환경변수·API 상세는
 [server/README.md](server/README.md).
 
 ### 클라이언트
@@ -41,8 +41,8 @@ exe 빌드·배포는 [docs/04_honey_update.md](docs/04_honey_update.md).
 ## 검증 절차 (E2E)
 
 1. **서버 기동** — `DB/pe/report/report.db` 자동 생성 확인.
-2. **검색결과 페이지** — `http://127.0.0.1:8000/pe/report/` 빈 결과 표시.
-3. **버전 응답** — `curl http://127.0.0.1:8000/honey/version` → `version.json` 반환.
+2. **검색결과 페이지** — `http://127.0.0.1:8080/pe/report/` 빈 결과 표시.
+3. **버전 응답** — `curl http://127.0.0.1:8080/honey/version` → `version.json` 반환.
 4. **grid 파서 검증** — `python tests/sample_xlsx.py` (더미 sheet_grids 로
    `xlsx_parser.parse_report_xlsx` 동작 확인).
 5. **업로드** — Honey 앱에서 product_type/product/lot_id 입력 + xlsx 선택 → 업로드

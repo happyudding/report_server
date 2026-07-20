@@ -392,7 +392,7 @@ function dimColorMap(colorMap, binOrder, selected) {
 
 // source 가 여럿이면 가로 2칸 그리드로 wafer map 을 나열하고, bin 범례는 전체 소스
 // 합산 기준으로 한 번만 만들어 오른쪽에 고정(sticky)한다. 모든 맵이 같은 색상 매핑을 쓴다.
-let mapGridCols = 1;   // Map Analysis 가로 칸수 기본 1칸(확대). 숫자 입력으로 조절, 세션 내 유지.
+let mapGridCols = 2;   // Map Analysis 가로 칸수 기본 2칸. 숫자 입력으로 조절, 세션 내 유지.
 // 갤러리 카드 크기는 가로 칸수(폭)로 결정되고, 썸네일 wrap 은 항상 1:1(웨이퍼=원형 전제).
 
 // Map Analysis 서브모드: "bin"=Bin Map(기존), "stdf"=STDF Map(값 기반, stdf_map.js). 세션 내 유지.
@@ -641,7 +641,7 @@ function renderMapAnalysis() {
   bindMapModeSeg(panel);
   panel.querySelector("#mapGridColsInput").addEventListener("change", (e) => {
     const v = parseInt(e.target.value, 10);
-    mapGridCols = isNaN(v) ? 1 : Math.min(8, Math.max(1, v));
+    mapGridCols = isNaN(v) ? 2 : Math.min(8, Math.max(1, v));
     renderMapAnalysis();   // 칸수 변경 → 그리드·플롯 높이 다시 그림(범례 선택은 초기화됨)
   });
 

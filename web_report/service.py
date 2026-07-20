@@ -721,6 +721,17 @@ _CHART_NOTE_MAX_BYTES = 16 * 1024
 _CHART_NOTE_TEXT_MAX = 300
 _NOTE_SHEET_MAX_BYTES = 2 * 1024 * 1024
 
+
+class NoteConflict(Exception):
+    """Note 시트 저장 시 base 토큰 불일치 — 내가 읽은 뒤 남이 먼저 저장했다.
+
+    info: {"updated_by", "updated_at", "base"} (라우트가 409 응답 본문에 실어준다)."""
+
+    def __init__(self, info):
+        super().__init__("note sheet conflict")
+        self.info = info or {}
+
+
 _SHAPE_TYPES = ("circle", "rect", "line", "path")
 _SHAPE_KEYS = ("type", "x0", "x1", "y0", "y1", "path", "xref", "yref",
                "line", "fillcolor", "opacity")
@@ -861,19 +872,28 @@ def get_note_meta(session_id: str, *, report_db) -> dict:
 
 
 def load_note(session_id: str, *, report_db) -> dict:
-    """Note 탭 lazy GET — {"sheet": dict|None, "updated_at", "updated_by"}."""
+    """Note 탭 lazy GET — {"sheet": dict|None, "updated_at", "updated_by", "base"}.
+
+    base 는 낙관적 잠금 토큰 — 클라가 저장 시 되돌려 보내면 그 사이 남이 저장했는지
+    검사한다 (시트가 없으면 None)."""
     session = report_db.get_session(session_id)
     if not session:
         raise KeyError(session_id)
-    return edits.load_note_sheet(report_db, session_id) or {"sheet": None}
+    return edits.load_note_sheet(report_db, session_id) or {"sheet": None, "base": None}
 
 
 def save_note(session_id: str, sheet, *, report_db, upload_root: Path,
+              base=None, check: bool = False, force: bool = False,
               client_ip: str = "", user_agent: str = "") -> dict:
     """Note 탭 시트 JSON 저장 (전체 치환) — 세션 편집 DB(kind=note_sheet, item_key='sheet').
 
     sheet: Luckysheet 시트 상태 dict (셀 계산은 전부 클라이언트 — 서버는 저장만).
-    null/빈 dict 는 삭제. 직렬화 크기 상한 2MB."""
+    null/빈 dict 는 삭제. 직렬화 크기 상한 2MB.
+
+    시트는 통째로 치환되므로 동시 편집 시 상대의 Note 전체가 사라진다. check 이면
+    호출자가 읽었던 base 토큰과 현재 저장본을 비교해 불일치 시 NoteConflict 를 올린다
+    (force 는 사용자가 덮어쓰기를 택한 경우). check=False 는 base 를 보내지 않는
+    구버전 클라용 하위호환 경로 — 종전대로 무검사 저장."""
     session = report_db.get_session(session_id)
     if not session:
         raise KeyError(session_id)
@@ -890,13 +910,15 @@ def save_note(session_id: str, sheet, *, report_db, upload_root: Path,
             raise ValueError(
                 f"Note 시트가 너무 큽니다 ({size // 1024}KB > {_NOTE_SHEET_MAX_BYTES // 1024}KB). "
                 "이미지가 아닌 셀 데이터를 줄여주세요.")
-        changes = [(edits.KIND_NOTE_SHEET, "sheet", blob)]
         action = "save"
     else:
-        changes = [(edits.KIND_NOTE_SHEET, "sheet", None)]
+        blob = None
         action = "clear"
-    rev = report_db.apply_webreport_edits(session_id, changes,
-                                          updated_by=edits.user_from_ua(user_agent) or None)
+    ok, info = report_db.save_note_sheet_checked(
+        session_id, edits.KIND_NOTE_SHEET, "sheet", blob, base,
+        updated_by=edits.user_from_ua(user_agent) or None, check=check, force=force)
+    if not ok:
+        raise NoteConflict(info)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
@@ -906,7 +928,7 @@ def save_note(session_id: str, sheet, *, report_db, upload_root: Path,
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
-    return {"ok": True, "rev": rev}
+    return {"ok": True, "rev": info["rev"], "base": info["base"]}
 
 
 # ── Trim Analysis (lazy — 탭 진입 시에만 계산, 세션 open 비용 없음) ────────────

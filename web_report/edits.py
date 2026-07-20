@@ -145,7 +145,8 @@ def load_note_sheet(report_db, session_id: str) -> dict | None:
         if not isinstance(sheet, dict):
             return None
         return {"sheet": sheet, "updated_by": row.get("updated_by") or "",
-                "updated_at": row.get("updated_at") or ""}
+                "updated_at": row.get("updated_at") or "",
+                "base": report_db.note_base_token(row["value"])}
     return None
 
 

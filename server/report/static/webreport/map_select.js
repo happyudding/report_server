@@ -302,7 +302,9 @@ function bindEngrComment(panel) {
 }
 
 // Summary Engr Comment 저장: 3칸 현재값을 원본(DATA.web_report.summary_engr)과 비교해
-// 변경 있을 때만 POST. 성공 시 DATA 에 반영해 재렌더 시 값 유지.
+// **바뀐 칸만** POST. 3칸을 통째로 보내면 동시 편집 시 내 화면에 남아있던 낡은 값이
+// 상대가 방금 저장한 다른 칸을 덮어쓴다 (서버 update_summary_engr 는 온 키만 병합).
+// 성공 시 DATA 에 반영해 재렌더 시 값 유지.
 async function saveSummaryEngr(opts) {
   if (MODE !== "edit") return;   // 뷰 모드는 저장 시도 안 함(서버도 업로더만 허용).
   const panel = document.getElementById("panel-summary");
@@ -313,8 +315,7 @@ async function saveSummaryEngr(opts) {
   panel.querySelectorAll("textarea[data-engr]").forEach(ta => {
     const k = ta.dataset.engr;
     const v = (ta.value || "").trim();
-    values[k] = v;
-    if (v !== String(cur[k] || "").trim()) changed = true;
+    if (v !== String(cur[k] || "").trim()) { values[k] = v; changed = true; }
   });
   if (!changed) return;
   let res;
@@ -331,7 +332,8 @@ async function saveSummaryEngr(opts) {
   }
   const j = await res.json().catch(() => ({}));
   if (!res.ok) { showToast(j.error || `Engr Comment 저장 실패 (HTTP ${res.status})`); throw new Error("engr save failed"); }
-  DATA.web_report.summary_engr = j.summary_engr || values;
+  // 서버는 병합된 3칸 전체를 돌려준다. 폴백은 부분 payload 라 기존 값 위에 덮어 합친다.
+  DATA.web_report.summary_engr = j.summary_engr || Object.assign({}, cur, values);
 }
 
 // 막대 위(바깥)엔 count 를 bold 로, 막대 안엔 yield_pct(%) 를 채워 넣는다.

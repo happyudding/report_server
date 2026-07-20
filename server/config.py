@@ -8,14 +8,40 @@ def _path_env(name, default):
     return Path(v).expanduser().resolve() if v else default
 
 
+def _server_env_file(name):
+    """env/server.env 에서 name 값을 읽는다 (KEY=VALUE, '#' 은 주석).
+
+    start.bat / watchdog.ps1 은 이 파일을 읽어 환경변수로 export 하므로 그 경로로
+    기동하면 os.getenv 로 이미 잡힌다. 이 함수는 `python wsgi.py` 처럼 bat 없이
+    직접 기동할 때도 같은 파일이 정본이 되게 하는 폴백이다. 없으면 None.
+    """
+    path = ROOT_DIR / "server" / "env" / "server.env"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() == name:
+            return value.strip() or None
+    return None
+
+
 REPORT_ANALYSIS_INDEX_HTML = ROOT_DIR / "server" / "report" / "report_analysis_index.html"
 REPORT_VIEW_HTML           = ROOT_DIR / "server" / "report" / "report_view.html"
 ADMIN_DASHBOARD_HTML       = ROOT_DIR / "server" / "report" / "admin_dashboard.html"
 
 # 절대 URL 생성 기준 — bind 주소(HOST=0.0.0.0)가 아니라 클라이언트가 실제로 접속하는
-# 운영 서버 주소를 기본값으로 쓴다 (client/transport/config.py SERVER_BASE_URL 과 동일 값).
-# bind HOST/PORT 는 env/server.env 가 정본이고 wsgi.py 가 직접 읽는다.
-SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "http://12.81.220.117:8080")
+# 운영 서버 주소. 정본은 env/server.env 의 SERVER_BASE_URL 이고, 환경변수로 덮을 수 있다.
+# 맨 끝 하드코딩 값은 env 파일이 없을 때만 쓰이는 최후 폴백이다.
+SERVER_BASE_URL = (
+    os.getenv("SERVER_BASE_URL")
+    or _server_env_file("SERVER_BASE_URL")
+    or "http://12.81.220.117:8080"
+)
 
 REPORT_DB_PATH = _path_env("REPORT_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" / "report.db")
 REPORT_UPLOAD_DIR = _path_env("REPORT_UPLOAD_DIR", ROOT_DIR / "uploads" / "report")

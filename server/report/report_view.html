@@ -1070,6 +1070,7 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
 .issue-jump-group .btn-sm:last-child { border-radius: 0 8px 8px 0; }
 /* Excel 다운로드는 툴바 우측 끝 */
 .issue-toolbar .issue-excel-btn { margin-left: auto; }
+.yield-toolbar .tab-excel-btn, .cpk-toolbar .tab-excel-btn { margin-left: auto; }
 
 /* Issue Table Status(Open/Close) — 편집모드 드랍다운 + 조회모드 텍스트 색 구분 */
 select.issue-status-sel {
@@ -1156,6 +1157,8 @@ td.issue-status-cell.is-close .status-dot { background: #16a34a; box-shadow: 0 0
 .issue-item-link { color: #2a5db0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .issue-item-link:hover { color: #17417f; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
+/* 이탈 확인 모달은 버튼 3개라 좁은 화면에서 줄바꿈 허용 */
+.leave-actions { flex-wrap: wrap; }
 .modal-btn {
   padding: 8px 16px; font-size: 13px; border-radius: 8px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
@@ -1701,7 +1704,7 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
 
 <div class="sticky-head" id="stickyHead">
   <div class="topbar">
-    <a class="back-btn" href="/pe/report/">← 검색결과</a>
+    <a class="back-btn" href="/pe/report/">← 뒤로가기</a>
     <div class="topbar-meta" id="topbarMeta">
       <span class="meta-inline">로드 중...</span>
     </div>
@@ -1816,6 +1819,19 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
 </div>
 
 <!-- Report 재생성 확인 모달 (Raw Data 변경 diff) -->
+<!-- 세션 이탈 확인 (leave_guard.js) — 미저장 편집이 있을 때 뒤로가기에서 표시 -->
+<div class="modal-overlay" id="leaveConfirmModal">
+  <div class="modal-box modal-box-wide">
+    <p class="modal-title">페이지를 벗어나시겠습니까?</p>
+    <p class="modal-desc">저장이 되지 않은 수정사항이 있습니다.</p>
+    <div class="modal-actions leave-actions">
+      <button class="modal-btn" id="leaveCancel">취소</button>
+      <button class="modal-btn danger" id="leaveDiscardExit">저장하지 않고 나가기</button>
+      <button class="modal-btn primary" id="leaveSaveExit">저장하고 나가기</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="rawRegenModal">
   <div class="modal-box modal-box-wide">
     <p class="modal-title">Report 재생성 확인</p>
@@ -1842,10 +1858,12 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
 <script src="/pe/report/static/webreport/item_detail.js"></script>
 <script src="/pe/report/static/webreport/issue_dist.js"></script>
 <script src="/pe/report/static/webreport/trim.js"></script>
+<script src="/pe/report/static/webreport/excel_export.js"></script>
 <script src="/pe/report/static/webreport/raw_data.js"></script>
 <script src="/pe/report/static/webreport/chart_notes.js"></script>
 <script src="/pe/report/static/webreport/note.js"></script>
 <script src="/pe/report/static/webreport/edit_mode.js"></script>
+<script src="/pe/report/static/webreport/leave_guard.js"></script>
 <script src="/pe/report/static/webreport/boot.js"></script>
 </body>
 </html>

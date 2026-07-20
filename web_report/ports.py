@@ -48,3 +48,14 @@ class SessionRepo(Protocol):
 
     def apply_webreport_edits(self, session_id: str, changes: list,
                               updated_by=None) -> int: ...
+
+    def note_base_token(self, blob) -> str | None:
+        """Note 시트 blob 의 낙관적 잠금 base 토큰 (blob 이 None 이면 None)."""
+        ...
+
+    def save_note_sheet_checked(self, session_id: str, kind: str, item_key: str,
+                                blob, base, updated_by=None, check: bool = True,
+                                force: bool = False) -> tuple:
+        """(ok, info) — base 불일치면 (False, {updated_by, updated_at, base}) 로
+        쓰기 없이 거부하고, 통과하면 (True, {rev, base}). 검사와 쓰기는 한 트랜잭션."""
+        ...

@@ -86,4 +86,6 @@ from .webreport_edits import (  # noqa: F401
     get_webreport_edit_meta,
     get_webreport_edit_rev,
     get_webreport_edits,
+    note_base_token,
+    save_note_sheet_checked,
 )

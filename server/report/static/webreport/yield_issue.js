@@ -109,7 +109,13 @@ function renderYieldStepSections(stepGroups, allRows) {
 function yieldToolbarHtml() {
   return `<div class="yield-toolbar">` +
     `<button type="button" class="btn-sm" id="yieldToggleAll" data-expanded="false">전체 펼치기</button>` +
+    yieldExcelBtnHtml() +
     `</div>`;
+}
+// Yield 탭 우상단 Excel Down (excel_export.js exportYieldExcel).
+function yieldExcelBtnHtml() {
+  return `<button type="button" class="btn-sm tab-excel-btn" id="yieldExcelBtn" ` +
+    `title="Honey Excel Download 의 Yield 시트와 동일한 xlsx 다운로드 (Bin 접힌 상태)">Excel Down</button>`;
 }
 // 한 Bin 그룹(대표행)의 detail FAILTNO 행 펼치기/접기 + 그룹 토글 버튼 상태 갱신.
 function setYieldGroup(gi, expand, btn) {
@@ -156,7 +162,8 @@ function renderYield(yield_text, summary_rows) {
 
   // list of dicts (STEP 그룹이 없거나 fail 이 전혀 없을 때의 폴백 — Pass 행 포함 평면 표)
   if (Array.isArray(yield_text) && yield_text.length) {
-    panel.innerHTML = overview + renderSheetTable(yield_text, { kind: "yield" });
+    panel.innerHTML = overview + `<div class="yield-toolbar">${yieldExcelBtnHtml()}</div>` +
+      renderSheetTable(yield_text, { kind: "yield" });
     return;
   }
 

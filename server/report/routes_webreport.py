@@ -593,9 +593,14 @@ def web_report_note_get(session_id):
 def web_report_note_save(session_id):
     """Note 탭 시트 JSON 저장 (전체 치환) — 세션 편집 DB(kind=note_sheet) 갱신.
 
-    body: {"sheet": {...}} — 셀 계산은 전부 클라이언트(Luckysheet), 서버는 저장만.
-    sheet 는 필수·비어있지 않은 dict — 본문 손상/빈 payload 가 기존 Note 를
-    삭제(치환)하는 것을 막기 위해 HTTP 로는 clear 경로를 제공하지 않는다.
+    body: {"sheet": {...}, "base": <토큰|null>, "force": bool} — 셀 계산은 전부
+    클라이언트(Luckysheet), 서버는 저장만. sheet 는 필수·비어있지 않은 dict —
+    본문 손상/빈 payload 가 기존 Note 를 삭제(치환)하는 것을 막기 위해 HTTP 로는
+    clear 경로를 제공하지 않는다.
+
+    base 는 클라가 GET 으로 읽었던 시점의 낙관적 잠금 토큰이다. 그 사이 남이 저장했으면
+    409 + conflict 메타를 돌려주고, 사용자가 덮어쓰기를 택하면 force 로 재전송한다.
+    base 키가 아예 없는 요청(캐시된 구버전 JS)은 종전대로 무검사 저장한다.
     편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
@@ -614,7 +619,15 @@ def web_report_note_save(session_id):
     try:
         result = web_report_service.save_note(
             session_id, sheet, report_db=report_db,
-            upload_root=Path(REPORT_UPLOAD_DIR), client_ip=ip, user_agent=ua)
+            upload_root=Path(REPORT_UPLOAD_DIR),
+            base=body.get("base"), check=("base" in body), force=bool(body.get("force")),
+            client_ip=ip, user_agent=ua)
+    except web_report_service.NoteConflict as exc:
+        return jsonify({
+            "error": "다른 사용자가 먼저 저장했습니다.",
+            "conflict": {"updated_by": exc.info.get("updated_by", ""),
+                         "updated_at": exc.info.get("updated_at", 0)},
+        }), 409
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except ValueError as exc:

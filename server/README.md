@@ -23,7 +23,7 @@ pip install -r requirements.txt
 .\start.bat        # 또는 python wsgi.py
 ```
 
-기동 후 `http://127.0.0.1:8000/pe/report/` 에서 검색결과 페이지 확인. LAN 전체 노출은
+기동 후 `http://127.0.0.1:8080/pe/report/` 에서 검색결과 페이지 확인. LAN 전체 노출은
 `HOST=0.0.0.0`.
 
 ---
@@ -36,7 +36,7 @@ pip install -r requirements.txt
 |------|--------|------|
 | `HOST` | `0.0.0.0` | 바인드 주소 (모든 인터페이스 = 운영 IP 12.81.220.117 포함) |
 | `PORT` | `8080` | 포트 (클라이언트 `HONEY_SERVER_URL` 과 일치) |
-| `SERVER_BASE_URL` | `http://12.81.220.117:8080` | 절대 URL 생성 기준 (운영 서버 주소) |
+| `SERVER_BASE_URL` | `http://12.81.220.117:8080` | 절대 URL 생성 기준 (운영 서버 주소). **정본은 `env/server.env`** — 서버가 직접 읽고, `build_zip` 도 여기서 읽어 클라 배포본에 넣는다 |
 | `REPORT_DB_PATH` | `<repo>/DB/pe/report/report.db` | SQLite DB 파일 |
 | `REPORT_EVAL_DB_PATH` | `<repo>/DB/pe/report/eval/eval.db` | Issue Table PTE/개발 comment export DB (eval.db 스키마, report.db 와 분리 — [docs/13 §9](../docs/13_eval_analyzer_integration.md)) |
 | `REPORT_UPLOAD_DIR` | `<repo>/uploads/report` | 업로드/로컬 폴백/디스크 캐시 루트 |

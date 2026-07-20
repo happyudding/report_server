@@ -182,7 +182,13 @@ S3 가 아니라 DB `report_sheet_data` 에 저장한다.
 **전체 목록·기본값은 정본 [server/README.md](server/README.md)** (web_report 캐시 env 는
 [docs/12](docs/12_web_report_cache.md)). 여기는 **행동에 영향 주는 함정**만:
 
-- `HOST` 기본 **127.0.0.1** (LAN 노출은 `0.0.0.0`). `PORT` 기본 8000.
+- **서버 주소 정본은 [server/env/server.env](server/env/server.env) 한 파일이다.** `HOST`(bind,
+  기본 `0.0.0.0`) / `PORT`(기본 8080) / `SERVER_BASE_URL`(클라가 접속하는 주소,
+  기본 `http://12.81.220.117:8080`). 서버는 이 파일을 직접 읽고([server/config.py](server/config.py)),
+  클라는 개발 실행 시 같은 파일을, 빌드본은 `build_zip` 이 이 파일에서 생성해 넣은
+  `Honey.exe` 옆 `honey.env` 를 읽는다([client/transport/config.py](client/transport/config.py)).
+  IP 변경 = server.env 1줄 수정 → 서버 재기동 → `build_zip` 재실행 → 클라 재배포.
+  `HOST` 를 운영 IP 로 바꾸지 말 것 — 그 IP 를 가진 PC 외에서 기동이 실패한다(`0.0.0.0` 이 포함).
 - `REPORT_S3_BUCKET` 미설정이면 S3 대신 **로컬 폴백**으로 조용히 동작한다(에러 아님). yield
   rows 등 DB 저장은 정상.
 - `REPORT_CLEANUP_DRYRUN` 기본 **1(참)** — **기본은 실삭제 안 함**(대상만 로그). 실삭제하려면

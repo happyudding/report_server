@@ -70,6 +70,13 @@ dies(STEP 분리 시 수백만 객체 — 메인스레드 JSON 파싱 freeze 의
   vendored exceljs(`loadExcelJS`)로 브라우저에서 xlsx 1시트 생성(서버 무관여). 화면과 동일
   컬럼 순서(`orderColumns`)에서 미니차트 열(Map/Distribution)만 빼고 섹션을 Category
   컬럼으로 되살리며, Yield 상세(TNO) 행은 접힘과 무관하게 전부 포함.
+- **Yield/CPK 탭 Excel Down**: 각 탭 툴바 우상단 "Excel Down" 버튼(`exportYieldExcel` /
+  `exportCpkExcel`, [excel_export.js](../server/report/static/webreport/excel_export.js)) —
+  같은 vendored exceljs 로 시트 1장 생성. 레이아웃·서식은 Honey 클라 Excel Download
+  (`client/excel_download/_sheets.py` `write_yield_sheet`/`write_cpk_sheet`)와 동일하게 맞춘다
+  (B3 헤더행·A1 배너·H1 세션링크·CPK `cpk<1.33` 노란 fill·열너비/행높이). 입력이 같은 /full
+  payload 라 값 파리티는 자동 — Yield 는 Pass 행+`yield_bin_groups[].rep`(접힌 상태), CPK 는
+  `sheets["CPK"]` 전량·원순서(화면 필터·기준 토글 무관, 전체 die 컬럼만).
 - **Distribution**: `build_distribution_index`(항목별 test_num·worst cpk·fail·status) /
   `scatter_item`(상세 전체 측정값) / `build_distribution_compact`(ECDF 전 포인트 컴팩트
   columnar, lazy 전용). `/distribution` 은 전 포인트·gzip·ETag.

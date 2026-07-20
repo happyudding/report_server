@@ -192,6 +192,8 @@ document.querySelector(".content").addEventListener("click", e => {
   const jumpBtn = e.target.closest("[data-issue-jump]");
   if (jumpBtn) { jumpToIssueSection(jumpBtn.dataset.issueJump); return; }
   if (e.target.id === "issueExcelBtn") { exportIssueExcel(); return; }
+  if (e.target.id === "yieldExcelBtn") { exportYieldExcel(); return; }
+  if (e.target.id === "cpkExcelBtn") { exportCpkExcel(); return; }
   const etcAddBtn = e.target.closest("#etcAddItemBtn");
   if (etcAddBtn) { openEtcItemModal(); return; }
   const etcDelBtn = e.target.closest(".btn-del-etc-item");
@@ -584,6 +586,7 @@ document.addEventListener("visibilitychange", () => {
 
 // 페이지를 떠날 때: dirty 상태면 브라우저 경고 + keepalive 저장 시도
 window.addEventListener("beforeunload", e => {
+  if (leaveGuardBypassed()) return;   // 이탈 확인 모달에서 확정 — 중복 경고·재저장 방지
   if (MODE === "edit" && (_dirty || _cnDirty.size)) {
     autoSave();            // keepalive 요청 발사 (비동기, 브라우저가 완료 보장)
     e.preventDefault();
