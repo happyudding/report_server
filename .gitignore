@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 venv/
 env/
+# server/env/ 는 파이썬 가상환경이 아니라 서버 기동 설정(server.env) 폴더 — 추적한다.
+!server/env/
 
 # PyInstaller build output (build_honey.spec is kept as source)
 build/
