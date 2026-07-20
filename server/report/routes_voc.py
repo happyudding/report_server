@@ -1,17 +1,21 @@
-"""VOC 게시판 라우트 — 페이지 + 목록/등록/이미지/삭제 API.
+"""VOC 게시판 라우트 — 페이지 + 목록/등록/상세/수정/상태/댓글/이미지/삭제 API.
 
 데이터는 별도 SQLite(database/voc_db.py, REPORT_VOC_DB_PATH)에 저장하고, 스크린샷
 파일은 동결된 storage_gateway 의 note_image 공개 API 를 voc_<id> 네임스페이스로
-재사용한다(S3/로컬 폴백 그대로). 조회는 공개, 등록·본인 글 삭제는 Honey UA/SSO
-신원 + CSRF. 감사는 voc_create/voc_delete 만 메인 report.db 에 기록한다.
+재사용한다(S3/로컬 폴백 그대로). 조회는 공개, 등록·수정·본인 글 삭제·댓글은 Honey
+UA/SSO 신원 + CSRF. 처리 상태(Open/Close) 전환만 관리자 전용이며, 관리자 판별은
+admin 대시보드 게이트 쿠키의 /pe/report 경로 사본(_is_admin)으로 한다.
+감사는 voc_* 액션으로 메인 report.db 에 기록한다.
 """
 import logging
+import hmac
 import re
 import uuid
 
 from flask import Response, abort, jsonify, request
 
 import storage_gateway
+from admin_panel import GATE_COOKIE_VOC, gate_token
 from auth_identity import current_user as _current_user
 from config import REPORT_VIEW_HTML
 from database import report_db, voc_db
@@ -25,6 +29,7 @@ _log = logging.getLogger(__name__)
 _CATEGORIES = ("버그", "개선 제안", "문의", "기타")
 _TITLE_MAX = 120
 _CONTENT_MAX = 4000
+_COMMENT_MAX = 1000
 _IMAGE_MAX_BYTES = 2 * 1024 * 1024
 _IMAGE_MAX_COUNT = 3
 # Flask 전역 MAX_CONTENT_LENGTH 는 2048MB(wsgi.py) — VOC 는 자체 상한으로 선차단.
@@ -37,6 +42,27 @@ _IMAGE_ID_RE = re.compile(r"^[a-f0-9]{32}\.(png|jpg)$")
 def _ns(voc_id):
     """storage_gateway note_image 네임스페이스 — 세션 id 형식(<epoch>_<hex>)과 충돌 불가."""
     return f"voc_{voc_id}"
+
+
+def _is_admin():
+    """관리자 여부 — admin 대시보드 로그인이 발급한 게이트 쿠키(/pe/report 경로 사본)."""
+    return hmac.compare_digest(request.cookies.get(GATE_COOKIE_VOC, ""), gate_token())
+
+
+def _screenshot_urls(voc_id, images):
+    """이미지 메타 → 프론트가 그대로 쓰는 {image_id, url} 목록."""
+    return [{"image_id": img["image_id"],
+             "url": f"/pe/report/api/voc/{voc_id}/screenshots/{img['image_id']}"}
+            for img in images]
+
+
+def _text_field(body, name, maxlen):
+    """제목/내용 공통 검증 — (값, 에러응답) 중 하나만 채워 반환."""
+    value = (body.get(name) or "").strip()
+    if not 1 <= len(value) <= maxlen:
+        label = {"title": "제목", "content": "내용"}.get(name, name)
+        return None, (jsonify({"error": f"{label}은 1~{maxlen}자입니다."}), 400)
+    return value, None
 
 
 def _audit_voc(action, voc_id, detail, uid, result="ok"):
@@ -59,7 +85,9 @@ def voc_page():
 
 @report_bp.get("/api/voc")
 def voc_list():
-    """VOC 목록 (익명 허용) — 최신순, limit/offset 페이지네이션."""
+    """VOC 목록 (익명 허용) — 최신순, limit/offset 페이지네이션, q 로 제목·번호 검색.
+
+    본문·스크린샷은 싣지 않는다 (상세 API 전용)."""
     try:
         limit = max(1, min(int(request.args.get("limit", 20)), 100))
     except (TypeError, ValueError):
@@ -68,16 +96,32 @@ def voc_list():
         offset = max(0, int(request.args.get("offset", 0)))
     except (TypeError, ValueError):
         offset = 0
-    uid = _current_user()
-    items, total = voc_db.list_voc(limit=limit, offset=offset)
-    for it in items:
-        it["can_delete"] = bool(uid) and it["user_id"] == uid
-        it["screenshots"] = [
-            {"image_id": img["image_id"],
-             "url": f"/pe/report/api/voc/{it['id']}/screenshots/{img['image_id']}"}
-            for img in it.pop("images")]
+    q = (request.args.get("q") or "").strip()[:_TITLE_MAX] or None
+    items, total = voc_db.list_voc(limit=limit, offset=offset, q=q)
     return jsonify({"items": items, "total": total, "limit": limit,
-                    "offset": offset, "user": uid})
+                    "offset": offset, "q": q or "",
+                    "user": _current_user(), "is_admin": _is_admin()})
+
+
+@report_bp.get("/api/voc/<int:voc_id>")
+def voc_detail(voc_id):
+    """VOC 상세 (익명 허용) — 본문 + 스크린샷 + 댓글 + 요청자 권한 플래그."""
+    voc = voc_db.get_voc(voc_id)
+    if not voc:
+        abort(404, "voc not found")
+    uid = _current_user()
+    is_admin = _is_admin()
+    mine = bool(uid) and voc["user_id"] == uid
+    comments = voc_db.list_comments(voc_id)
+    for c in comments:
+        c["can_delete"] = is_admin or (bool(uid) and c["user_id"] == uid)
+    return jsonify({
+        "voc": voc,
+        "screenshots": _screenshot_urls(voc_id, voc_db.list_voc_images(voc_id)),
+        "comments": comments,
+        "user": uid, "is_admin": is_admin,
+        "can_edit": mine, "can_delete": mine,
+    })
 
 
 @report_bp.post("/api/voc")
@@ -95,12 +139,12 @@ def voc_create():
     category = (request.form.get("category") or "").strip()
     if category not in _CATEGORIES:
         return jsonify({"error": "분류가 올바르지 않습니다."}), 400
-    title = (request.form.get("title") or "").strip()
-    if not 1 <= len(title) <= _TITLE_MAX:
-        return jsonify({"error": f"제목은 1~{_TITLE_MAX}자입니다."}), 400
-    content = (request.form.get("content") or "").strip()
-    if not 1 <= len(content) <= _CONTENT_MAX:
-        return jsonify({"error": f"내용은 1~{_CONTENT_MAX}자입니다."}), 400
+    title, err = _text_field(request.form, "title", _TITLE_MAX)
+    if err:
+        return err
+    content, err = _text_field(request.form, "content", _CONTENT_MAX)
+    if err:
+        return err
     files = [f for f in request.files.getlist("screenshots")
              if f and (f.filename or "").strip()]
     if len(files) > _IMAGE_MAX_COUNT:
@@ -139,6 +183,87 @@ def voc_create():
     _audit_voc("voc_create", voc_id,
                f"category={category} images={len(blobs)} title={title[:80]}", uid)
     return jsonify({"ok": True, "id": voc_id}), 201
+
+
+@report_bp.patch("/api/voc/<int:voc_id>")
+def voc_update(voc_id):
+    """VOC 본문 수정 — 작성자 본인만. 스크린샷은 수정 대상이 아니다."""
+    _require_csrf()
+    uid = _current_user()
+    if not uid:
+        return jsonify({"error": "Honey 를 통해 접속한 사용자만 수정할 수 있습니다."}), 401
+    voc = voc_db.get_voc(voc_id)
+    if not voc:
+        abort(404, "voc not found")
+    if voc["user_id"] != uid:
+        return jsonify({"error": "본인이 등록한 VOC 만 수정할 수 있습니다."}), 403
+    body = request.get_json(silent=True) or {}
+    category = (body.get("category") or "").strip()
+    if category not in _CATEGORIES:
+        return jsonify({"error": "분류가 올바르지 않습니다."}), 400
+    title, err = _text_field(body, "title", _TITLE_MAX)
+    if err:
+        return err
+    content, err = _text_field(body, "content", _CONTENT_MAX)
+    if err:
+        return err
+    voc_db.update_voc(voc_id, category, title, content)
+    _audit_voc("voc_edit", voc_id, f"category={category} title={title[:80]}", uid)
+    return jsonify({"ok": True, "id": voc_id})
+
+
+@report_bp.post("/api/voc/<int:voc_id>/status")
+def voc_set_status(voc_id):
+    """처리 상태 전환 (Open ↔ Close) — 관리자 전용."""
+    _require_csrf()
+    if not _is_admin():
+        return jsonify({"error": "관리자만 처리 상태를 변경할 수 있습니다."}), 403
+    body = request.get_json(silent=True) or {}
+    status = (body.get("status") or "").strip()
+    if status not in voc_db.STATUSES:
+        return jsonify({"error": "상태 값이 올바르지 않습니다."}), 400
+    if not voc_db.get_voc(voc_id):
+        abort(404, "voc not found")
+    voc_db.set_voc_status(voc_id, status)
+    _audit_voc("voc_status", voc_id, f"status={status}", _current_user() or "admin-panel")
+    return jsonify({"ok": True, "id": voc_id, "status": status})
+
+
+@report_bp.post("/api/voc/<int:voc_id>/comments")
+def voc_comment_create(voc_id):
+    """댓글 등록 — 신원 필요. Close 된 글에도 남길 수 있다(상태는 잠금이 아니다)."""
+    _require_csrf()
+    uid = _current_user()
+    if not uid:
+        return jsonify({"error": "Honey 를 통해 접속한 사용자만 댓글을 쓸 수 있습니다."}), 401
+    if not voc_db.get_voc(voc_id):
+        abort(404, "voc not found")
+    body = request.get_json(silent=True) or {}
+    content = (body.get("content") or "").strip()
+    if not 1 <= len(content) <= _COMMENT_MAX:
+        return jsonify({"error": f"댓글은 1~{_COMMENT_MAX}자입니다."}), 400
+    comment_id = voc_db.add_comment(voc_id, uid, content)
+    _audit_voc("voc_comment_create", voc_id, f"comment_id={comment_id}", uid)
+    return jsonify({"ok": True, "id": comment_id}), 201
+
+
+@report_bp.delete("/api/voc/<int:voc_id>/comments/<int:comment_id>")
+def voc_comment_delete(voc_id, comment_id):
+    """댓글 삭제 — 작성자 본인 또는 관리자."""
+    _require_csrf()
+    uid = _current_user()
+    is_admin = _is_admin()
+    if not uid and not is_admin:
+        return jsonify({"error": "Honey 를 통해 접속한 사용자만 삭제할 수 있습니다."}), 401
+    comment = voc_db.get_comment(voc_id, comment_id)
+    if not comment:
+        abort(404, "comment not found")
+    if not is_admin and comment["user_id"] != uid:
+        return jsonify({"error": "본인이 쓴 댓글만 삭제할 수 있습니다."}), 403
+    voc_db.delete_comment(comment_id)
+    _audit_voc("voc_comment_delete", voc_id, f"comment_id={comment_id}",
+               uid or "admin-panel")
+    return jsonify({"ok": True, "id": comment_id})
 
 
 @report_bp.get("/api/voc/<int:voc_id>/screenshots/<image_id>")

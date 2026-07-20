@@ -107,4 +107,4 @@ REPORT_ADMIN_SECRET = os.getenv("REPORT_ADMIN_SECRET", "pte").strip()
 
 # admin 패널 접속 비밀번호. 아무나 못 들어오게 하는 간단한 게이트 — 맞으면 쿠키를
 # 발급하고 이후 admin 경로 접근을 허용한다. 바꾸려면 REPORT_ADMIN_PASSWORD 지정.
-REPORT_ADMIN_PASSWORD = os.getenv("REPORT_ADMIN_PASSWORD", "0023")
+REPORT_ADMIN_PASSWORD = os.getenv("REPORT_ADMIN_PASSWORD", "1031")

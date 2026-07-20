@@ -28,7 +28,7 @@ python honey_main.py
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `HONEY_SERVER_URL` | `http://127.0.0.1:8000` | Flask 서버 주소 |
+| `HONEY_SERVER_URL` | `http://12.81.220.117:8080` | Flask 서버 주소 |
 | `HONEY_CONFIG_DIR` | `%APPDATA%\Honey` | 차트 색 팔레트 등 사용자 설정 폴더 |
 | `HONEY_D1_STORAGE` | `<repo>/d1_storage` | D1 로컬 검증 스토리지 폴더 (외부 provider) |
 

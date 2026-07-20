@@ -6,6 +6,7 @@ REPORT_ADMIN_SECRET(영숫자/_/- 3~64자) 을 URL 경로 조각으로 써서
 경로를 숨기고 싶으면 REPORT_ADMIN_SECRET 에 임의 문자열을 지정한다.
 빈 문자열/형식 불일치 시에는 등록하지 않는다.
 """
+import hashlib
 import logging
 import re
 
@@ -14,6 +15,19 @@ import config
 _log = logging.getLogger(__name__)
 
 _SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
+
+# 게이트 쿠키 — routes.py(발급·검증)와 report/routes_voc.py(_is_admin)가 공유한다.
+# 여기(config 만 import 하는 경량 모듈)에 두는 이유: routes_voc 가 admin_panel.routes
+# 를 import 하면 admin 서브모듈 8개가 딸려 온다.
+# VOC 용은 이름·경로가 다른 별도 쿠키 — admin 쿠키는 path=/pe/admin-<secret> 이라
+# /pe/report/* 요청에 실려오지 않기 때문이다 (같은 이름 재발급은 브라우저에서 모호).
+GATE_COOKIE_VOC = "pe_admin_gate_voc"
+GATE_COOKIE_VOC_PATH = "/pe/report"
+
+
+def gate_token():
+    """게이트 쿠키 값 — 비밀번호 원문 대신 sha256 토큰(원문 노출 방지)."""
+    return hashlib.sha256(("pe-admin-gate|" + config.REPORT_ADMIN_PASSWORD).encode()).hexdigest()
 
 
 def register_admin_panel(app):

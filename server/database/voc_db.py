@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS report_voc (
     category   TEXT    NOT NULL,
     title      TEXT    NOT NULL,
     content    TEXT    NOT NULL,
+    status     TEXT    NOT NULL DEFAULT 'open',
     created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_report_voc_created
@@ -33,7 +34,19 @@ CREATE TABLE IF NOT EXISTS report_voc_image (
 );
 CREATE INDEX IF NOT EXISTS idx_report_voc_image_voc
     ON report_voc_image(voc_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS report_voc_comment (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    voc_id     INTEGER NOT NULL REFERENCES report_voc(id) ON DELETE CASCADE,
+    user_id    TEXT    NOT NULL,
+    content    TEXT    NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_report_voc_comment_voc
+    ON report_voc_comment(voc_id, id);
 """
+
+STATUSES = ("open", "close")   # 신규 등록은 항상 'open', 'close' 전환은 관리자만
 
 
 def _now():
@@ -43,6 +56,37 @@ def _now():
 def db_path() -> Path:
     import config  # server/ 가 sys.path 에 있음
     return Path(config.REPORT_VOC_DB_PATH)
+
+
+def _migrate(conn):
+    """status 컬럼이 없던 구 voc.db 를 멱등 보정한다 (CREATE 문에는 이미 포함).
+
+    Flask 는 waitress 단일 프로세스라 경합은 스레드 수준뿐이고, 겹쳐 실행되면 뒤늦은
+    쪽이 duplicate column 오류를 받으므로 그 경우만 무시한다."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(report_voc)")}
+    if "status" in cols:
+        return
+    try:
+        conn.execute("ALTER TABLE report_voc ADD COLUMN status TEXT NOT NULL DEFAULT 'open'")
+    except sqlite3.OperationalError as exc:
+        if "duplicate column" not in str(exc).lower():
+            raise
+
+
+def _like_escape(text):
+    """LIKE 패턴 특수문자 이스케이프 (질의에 ESCAPE '\\' 를 함께 붙인다)."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _search_where(q):
+    """검색어 → (WHERE 조각, 파라미터). 숫자면 번호(id) 일치도 함께 본다."""
+    q = (q or "").strip()
+    if not q:
+        return "", []
+    like = f"%{_like_escape(q)}%"
+    if q.isdigit() and len(q) <= 18:          # 18자리 초과는 SQLite INTEGER 범위 밖
+        return " WHERE (id = ? OR title LIKE ? ESCAPE '\\')", [int(q), like]
+    return " WHERE title LIKE ? ESCAPE '\\'", [like]
 
 
 @contextmanager
@@ -57,6 +101,7 @@ def open_conn():
         conn.execute("PRAGMA busy_timeout=5000")
         conn.execute("PRAGMA foreign_keys=ON")  # report_voc_image CASCADE 용
         conn.executescript(SCHEMA)
+        _migrate(conn)
         yield conn
         conn.commit()
     except Exception:
@@ -89,41 +134,57 @@ def add_voc_images(voc_id, images):
         )
 
 
-def list_voc(limit=20, offset=0):
-    """최신순 VOC 목록 + 각 건의 이미지 메타. (items, total) 반환."""
+def list_voc(limit=20, offset=0, q=None):
+    """최신순 VOC 목록 + 댓글 수. (items, total) 반환.
+
+    목록은 본문·이미지를 싣지 않는다(상세에서만 조회). q 는 제목 부분일치이며
+    숫자면 번호(id) 일치도 함께 본다."""
+    where, params = _search_where(q)
     with open_conn() as conn:
-        total = conn.execute("SELECT COUNT(*) FROM report_voc").fetchone()[0]
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM report_voc{where}", params).fetchone()[0]
         rows = conn.execute(
-            "SELECT id, user_id, category, title, content, created_at"
-            " FROM report_voc ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            "SELECT id, user_id, category, title, status, created_at,"
+            " (SELECT COUNT(*) FROM report_voc_comment c WHERE c.voc_id = report_voc.id)"
+            " AS comment_count"
+            f" FROM report_voc{where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
         ).fetchall()
-        items = [dict(r) for r in rows]
-        if items:
-            ids = [it["id"] for it in items]
-            placeholders = ",".join("?" for _ in ids)
-            img_rows = conn.execute(
-                f"SELECT voc_id, image_id, content_type, sort_order"
-                f" FROM report_voc_image WHERE voc_id IN ({placeholders})"
-                f" ORDER BY voc_id, sort_order",
-                ids,
-            ).fetchall()
-            by_voc = {}
-            for r in img_rows:
-                by_voc.setdefault(r["voc_id"], []).append(
-                    {"image_id": r["image_id"], "content_type": r["content_type"],
-                     "sort_order": r["sort_order"]})
-            for it in items:
-                it["images"] = by_voc.get(it["id"], [])
-        return items, total
+        return [dict(r) for r in rows], total
 
 
 def get_voc(voc_id):
     with open_conn() as conn:
         row = conn.execute(
-            "SELECT id, user_id, category, title, content, created_at"
+            "SELECT id, user_id, category, title, content, status, created_at"
             " FROM report_voc WHERE id = ?", (voc_id,)).fetchone()
         return dict(row) if row else None
+
+
+def list_voc_images(voc_id):
+    """해당 VOC 의 이미지 메타 (sort_order 순) — 상세 조회용."""
+    with open_conn() as conn:
+        rows = conn.execute(
+            "SELECT image_id, content_type, sort_order FROM report_voc_image"
+            " WHERE voc_id = ? ORDER BY sort_order", (voc_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_voc(voc_id, category, title, content):
+    """본문 수정 (작성자 전용 — 스크린샷은 대상 외). 수정됐으면 True."""
+    with open_conn() as conn:
+        cur = conn.execute(
+            "UPDATE report_voc SET category = ?, title = ?, content = ? WHERE id = ?",
+            (category, title, content, voc_id))
+        return cur.rowcount > 0
+
+
+def set_voc_status(voc_id, status):
+    """처리 상태 변경 (관리자 전용). 변경됐으면 True."""
+    with open_conn() as conn:
+        cur = conn.execute("UPDATE report_voc SET status = ? WHERE id = ?",
+                           (status, voc_id))
+        return cur.rowcount > 0
 
 
 def get_voc_image(voc_id, image_id):
@@ -137,7 +198,43 @@ def get_voc_image(voc_id, image_id):
 
 
 def delete_voc(voc_id):
-    """VOC 하드 삭제 (이미지 메타는 FK CASCADE). 삭제됐으면 True."""
+    """VOC 하드 삭제 (이미지·댓글 메타는 FK CASCADE). 삭제됐으면 True."""
     with open_conn() as conn:
         cur = conn.execute("DELETE FROM report_voc WHERE id = ?", (voc_id,))
+        return cur.rowcount > 0
+
+
+def add_comment(voc_id, user_id, content):
+    """댓글 1건 등록 → 새 id 반환."""
+    with open_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO report_voc_comment (voc_id, user_id, content, created_at)"
+            " VALUES (?, ?, ?, ?)",
+            (voc_id, user_id, content, _now()),
+        )
+        return cur.lastrowid
+
+
+def list_comments(voc_id):
+    """해당 VOC 의 댓글 (작성순 = id 오름차순)."""
+    with open_conn() as conn:
+        rows = conn.execute(
+            "SELECT id, user_id, content, created_at FROM report_voc_comment"
+            " WHERE voc_id = ? ORDER BY id", (voc_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_comment(voc_id, comment_id):
+    """해당 VOC 에 달린 댓글 (소속 확인 — 타 VOC 댓글은 None)."""
+    with open_conn() as conn:
+        row = conn.execute(
+            "SELECT id, voc_id, user_id, content, created_at FROM report_voc_comment"
+            " WHERE voc_id = ? AND id = ?", (voc_id, comment_id)).fetchone()
+        return dict(row) if row else None
+
+
+def delete_comment(comment_id):
+    """댓글 삭제. 삭제됐으면 True."""
+    with open_conn() as conn:
+        cur = conn.execute("DELETE FROM report_voc_comment WHERE id = ?", (comment_id,))
         return cur.rowcount > 0

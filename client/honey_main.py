@@ -1137,12 +1137,12 @@ class HoneyMainWindow(QMainWindow):
     def on_help_honey(self):
         """도움말(&H) → HONEY 도움말: 목차형 통합 도움말 창."""
         from honey_ui.help_dialog import show_help
-        show_help(self)
+        show_help(self, open_url=self._open_in_embedded)
 
     def on_voc(self):
-        """도움말(&H) → VOC: 고객의 소리 접수 페이지를 기본 브라우저로 연다."""
-        from config import VOC_URL
-        webbrowser.open(VOC_URL)
+        """도움말(&H) → VOC: 서버 VOC 게시판을 내장 브라우저로 연다
+        (내장 브라우저가 없으면 _open_in_embedded 가 시스템 브라우저로 폴백)."""
+        self._open_in_embedded(SERVER_BASE_URL.rstrip("/") + "/pe/report/voc")
 
     def _intake(self, paths):
         """선택된 파일들 → (2개 이상이면) 순서 지정 팝업 → 메인 창에 로드.

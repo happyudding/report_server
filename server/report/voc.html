@@ -14,6 +14,7 @@ try {
 </script>
 <style>
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }   /* display:flex 가 hidden 을 덮지 않게 */
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: #fdf6e3; margin: 0; padding: 0 20px 24px;   /* Honey 톤 연노랑 기본 배경 */
@@ -48,10 +49,15 @@ body {
 }
 .card h2 { margin: 0 0 12px; font-size: 22px; }
 
-/* ── 등록 폼 ─────────────────────────────────────────────────────────────── */
-.form-row { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
-.form-row label { display: flex; flex-direction: column; gap: 4px; font-size: 16px; color: #555; }
-.form-row .grow { flex: 1 1 300px; }
+/* ── 목록 툴바 (검색 + 등록) ─────────────────────────────────────────────── */
+.list-toolbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.list-toolbar .spacer { flex: 1 1 auto; }
+#searchInput { flex: 0 1 320px; min-width: 180px; }
+.list-count { font-size: 16px; color: #64748b; white-space: nowrap; }
+
 select, input[type="text"], textarea {
   font: inherit; font-size: 17px; padding: 7px 10px;
   border: 1px solid #d0d5dd; border-radius: 8px; background: #fff; color: #222;
@@ -62,7 +68,10 @@ textarea { width: 100%; min-height: 110px; resize: vertical; }
   padding: 10px 12px; border-radius: 8px; background: #f1f5f9; color: #64748b;
   font-size: 17px; margin-bottom: 8px;
 }
-.form-actions { display: flex; align-items: center; gap: 12px; }
+.form-row { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.form-row label { display: flex; flex-direction: column; gap: 4px; font-size: 16px; color: #555; }
+.form-row .grow { flex: 1 1 300px; }
+.form-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .submit-btn {
   height: 38px; padding: 0 22px; border-radius: 8px; border: 1px solid #4a90e2;
   background: #4a90e2; color: #fff; font-size: 18px; font-weight: 700; cursor: pointer;
@@ -74,7 +83,13 @@ textarea { width: 100%; min-height: 110px; resize: vertical; }
   background: #fff; color: #475569; font-size: 16px; font-weight: 600; cursor: pointer;
 }
 .file-btn:hover { border-color: #4a90e2; color: #4a90e2; }
+.file-btn:disabled { opacity: .5; cursor: not-allowed; }
 .file-hint { font-size: 14px; color: #94a3b8; }
+.del-btn {
+  height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid #fca5a5;
+  background: #fff; color: #dc2626; font-size: 15px; font-weight: 600; cursor: pointer;
+}
+.del-btn:hover { background: #fef2f2; border-color: #dc2626; }
 
 /* 선택 즉시 미리보기 + 개별 취소 */
 .preview-row { display: flex; gap: 10px; margin: 8px 0 12px; flex-wrap: wrap; }
@@ -90,13 +105,27 @@ textarea { width: 100%; min-height: 110px; resize: vertical; }
 }
 .preview-remove:hover { background: #b91c1c; }
 
-/* ── 목록 ────────────────────────────────────────────────────────────────── */
-.voc-item { border-bottom: 1px solid #e5e7eb; padding: 12px 2px; }
-.voc-item:last-child { border-bottom: 0; }
-.voc-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.voc-title { font-size: 19px; font-weight: 700; }
-.voc-meta { font-size: 15px; color: #94a3b8; margin-left: auto; white-space: nowrap; }
-.voc-content { margin: 8px 0 0; font-size: 17px; white-space: pre-wrap; word-break: break-word; }
+/* ── 목록 테이블 ─────────────────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; }
+.voc-table { width: 100%; border-collapse: collapse; }
+.voc-table th {
+  font-size: 15px; color: #64748b; font-weight: 700; text-align: left;
+  padding: 8px 10px; border-bottom: 2px solid #e5e7eb; white-space: nowrap;
+}
+.voc-table td {
+  padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 17px;
+  vertical-align: middle;
+}
+.voc-table tbody tr { cursor: pointer; }
+.voc-table tbody tr:hover { background: #f8fafc; }
+.col-no { width: 64px; color: #94a3b8; font-size: 16px; }
+.col-cat, .col-status, .col-user, .col-date { white-space: nowrap; }
+.col-user { font-size: 16px; color: #475569; }
+.col-date { font-size: 15px; color: #94a3b8; }
+.row-title { font-weight: 600; word-break: break-word; }
+.row-title.is-close { color: #94a3b8; font-weight: 500; }
+.comment-count { font-size: 15px; color: #4a90e2; margin-left: 6px; white-space: nowrap; }
+
 .cat-badge {
   display: inline-block; padding: 2px 10px; border-radius: 4px;
   font-size: 15px; font-weight: 700; color: #fff; white-space: nowrap;
@@ -105,18 +134,60 @@ textarea { width: 100%; min-height: 110px; resize: vertical; }
 .cat-badge.개선 { background: #16a34a; }
 .cat-badge.문의 { background: #4a90e2; }
 .cat-badge.기타 { background: #64748b; }
-.thumb-row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+
+.status-badge {
+  display: inline-block; padding: 2px 12px; border-radius: 999px;
+  font-size: 15px; font-weight: 700; white-space: nowrap; border: 1px solid transparent;
+}
+.status-badge.open { background: #dcfce7; color: #15803d; border-color: #86efac; }
+.status-badge.close { background: #f1f5f9; color: #64748b; border-color: #cbd5e1; }
+
+.empty-note { padding: 22px 4px; color: #94a3b8; font-size: 17px; text-align: center; }
+
+/* ── 상세 ────────────────────────────────────────────────────────────────── */
+.detail-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.detail-title { font-size: 22px; font-weight: 800; word-break: break-word; }
+.detail-meta {
+  margin: 8px 0 14px; font-size: 15px; color: #94a3b8;
+  padding-bottom: 12px; border-bottom: 1px solid #e5e7eb;
+}
+.voc-content { font-size: 17px; white-space: pre-wrap; word-break: break-word; min-height: 60px; }
+.thumb-row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
 .thumb-row img {
   width: 150px; height: 100px; object-fit: cover; cursor: zoom-in;
   border: 1px solid #d0d5dd; border-radius: 8px; display: block;
 }
 .thumb-row img:hover { border-color: #4a90e2; }
-.del-btn {
-  height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid #fca5a5;
-  background: #fff; color: #dc2626; font-size: 15px; font-weight: 600; cursor: pointer;
+.detail-actions {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-top: 18px; padding-top: 14px; border-top: 1px solid #e5e7eb;
 }
-.del-btn:hover { background: #fef2f2; border-color: #dc2626; }
-.empty-note { padding: 18px 4px; color: #94a3b8; font-size: 17px; text-align: center; }
+.detail-actions .spacer { flex: 1 1 auto; }
+.close-btn {
+  height: 34px; padding: 0 14px; border-radius: 8px; cursor: pointer;
+  font-size: 16px; font-weight: 600;
+  border: 1px solid #cbd5e1; background: #f1f5f9; color: #475569;
+}
+.close-btn:hover { border-color: #64748b; }
+.reopen-btn {
+  height: 34px; padding: 0 14px; border-radius: 8px; cursor: pointer;
+  font-size: 16px; font-weight: 600;
+  border: 1px solid #86efac; background: #dcfce7; color: #15803d;
+}
+.reopen-btn:hover { border-color: #16a34a; }
+
+/* ── 댓글 ────────────────────────────────────────────────────────────────── */
+.comment-section { margin-top: 22px; padding-top: 14px; border-top: 2px solid #e5e7eb; }
+.comment-section h3 { margin: 0 0 10px; font-size: 19px; }
+.comment-item { padding: 10px 2px; border-bottom: 1px solid #eef1f5; }
+.comment-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.comment-user { font-size: 16px; font-weight: 700; }
+.comment-time { font-size: 14px; color: #94a3b8; }
+.comment-head .spacer { flex: 1 1 auto; }
+.comment-body { margin-top: 4px; font-size: 17px; white-space: pre-wrap; word-break: break-word; }
+.comment-form { margin-top: 12px; }
+.comment-form textarea { min-height: 70px; }
+.comment-empty { padding: 14px 4px; color: #94a3b8; font-size: 16px; }
 
 /* ── 페이지네이션 ───────────────────────────────────────────────────────── */
 .pager { display: flex; gap: 6px; justify-content: center; margin-top: 14px; flex-wrap: wrap; }
@@ -161,8 +232,24 @@ html[data-theme="dark"] .file-btn { background: #262a33; border-color: #3a3f4b; 
 html[data-theme="dark"] .file-btn:hover { border-color: #4a90e2; color: #7fb3ef; }
 html[data-theme="dark"] .preview-item img,
 html[data-theme="dark"] .thumb-row img { border-color: #3a3f4b; }
-html[data-theme="dark"] .voc-item { border-bottom-color: #2a2e37; }
-html[data-theme="dark"] .voc-meta { color: #8b94a3; }
+html[data-theme="dark"] .voc-table th { color: #9aa3b0; border-bottom-color: #2a2e37; }
+html[data-theme="dark"] .voc-table td { border-bottom-color: #2a2e37; }
+html[data-theme="dark"] .voc-table tbody tr:hover { background: #262a33; }
+html[data-theme="dark"] .col-user { color: #c6ccd6; }
+html[data-theme="dark"] .col-no,
+html[data-theme="dark"] .col-date { color: #8b94a3; }
+html[data-theme="dark"] .row-title.is-close { color: #767f8c; }
+html[data-theme="dark"] .status-badge.open { background: #123420; color: #4ade80; border-color: #1d5c36; }
+html[data-theme="dark"] .status-badge.close { background: #262a33; color: #8b94a3; border-color: #3a3f4b; }
+html[data-theme="dark"] .detail-meta { color: #8b94a3; border-bottom-color: #2a2e37; }
+html[data-theme="dark"] .detail-actions { border-top-color: #2a2e37; }
+html[data-theme="dark"] .close-btn { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
+html[data-theme="dark"] .reopen-btn { background: #123420; border-color: #1d5c36; color: #4ade80; }
+html[data-theme="dark"] .comment-section { border-top-color: #2a2e37; }
+html[data-theme="dark"] .comment-item { border-bottom-color: #23262e; }
+html[data-theme="dark"] .comment-time,
+html[data-theme="dark"] .comment-empty { color: #8b94a3; }
+html[data-theme="dark"] .list-count { color: #9aa3b0; }
 html[data-theme="dark"] .del-btn { background: #262a33; border-color: #6e3030; color: #f28b8b; }
 html[data-theme="dark"] .del-btn:hover { background: #3a2222; border-color: #dc2626; }
 html[data-theme="dark"] .pg-btn { background: #262a33; border-color: #3a3f4b; color: #c6ccd6; }
@@ -181,9 +268,42 @@ html[data-theme="dark"] .empty-note { color: #767f8c; }
   </div>
 </header>
 
-<div class="card" id="formCard">
-  <h2>VOC 등록</h2>
+<!-- ═══ 목록 ═══════════════════════════════════════════════════════════════ -->
+<div class="card" id="viewList" hidden>
+  <div class="list-toolbar">
+    <input type="text" id="searchInput" maxlength="120" placeholder="제목 또는 번호 검색">
+    <button type="button" class="file-btn" id="searchBtn">🔍 검색</button>
+    <button type="button" class="file-btn" id="clearSearchBtn" hidden>전체 보기</button>
+    <span class="list-count" id="listCount"></span>
+    <span class="spacer"></span>
+    <button type="button" class="submit-btn" id="newBtn">✏️ VOC 등록</button>
+  </div>
   <div class="form-notice" id="anonNotice" hidden>
+    Honey 를 통해 접속하면 VOC 를 등록할 수 있습니다. (일반 브라우저는 조회만 가능)
+  </div>
+  <div class="table-wrap">
+    <table class="voc-table">
+      <thead>
+        <tr>
+          <th class="col-no">번호</th>
+          <th class="col-cat">분류</th>
+          <th>제목</th>
+          <th class="col-status">Status</th>
+          <th class="col-user">등록자</th>
+          <th class="col-date">등록일</th>
+        </tr>
+      </thead>
+      <tbody id="vocTbody"></tbody>
+    </table>
+  </div>
+  <div class="empty-note" id="listEmpty" hidden></div>
+  <div class="pager" id="pager"></div>
+</div>
+
+<!-- ═══ 등록 / 수정 ════════════════════════════════════════════════════════ -->
+<div class="card" id="viewForm" hidden>
+  <h2 id="formTitle">VOC 등록</h2>
+  <div class="form-notice" id="formAnonNotice" hidden>
     Honey 를 통해 접속하면 VOC 를 등록할 수 있습니다. (일반 브라우저는 조회만 가능)
   </div>
   <div class="form-row">
@@ -201,25 +321,56 @@ html[data-theme="dark"] .empty-note { color: #767f8c; }
   </div>
   <div class="form-row" style="flex-direction:column;">
     <label style="width:100%;">내용
-      <textarea id="vocContent" maxlength="4000" placeholder="내용 (1~4,000자)"></textarea>
+      <textarea id="vocContent" maxlength="4000" placeholder="본문 입력해주세요"></textarea>
     </label>
     <div class="char-count" id="charCount">0 / 4000</div>
   </div>
-  <div class="form-actions">
+  <div class="form-actions" id="attachRow">
     <button type="button" class="file-btn" id="fileBtn">📷 스크린샷 첨부</button>
     <span class="file-hint">PNG/JPEG · 최대 3장 · 장당 2MB</span>
     <input type="file" id="fileInput" accept="image/png,image/jpeg" multiple hidden>
   </div>
   <div class="preview-row" id="previewRow"></div>
+  <div class="form-notice" id="editAttachNotice" hidden>
+    스크린샷은 수정할 수 없습니다. (변경하려면 삭제 후 다시 등록해주세요)
+  </div>
   <div class="form-actions">
     <button type="button" class="submit-btn" id="submitBtn">등록</button>
+    <button type="button" class="file-btn" id="cancelBtn">취소</button>
   </div>
 </div>
 
-<div class="card">
-  <h2 id="listTitle">VOC 목록</h2>
-  <div id="vocList"></div>
-  <div class="pager" id="pager"></div>
+<!-- ═══ 상세 ═══════════════════════════════════════════════════════════════ -->
+<div class="card" id="viewDetail" hidden>
+  <div class="detail-head">
+    <span class="cat-badge" id="detailCat"></span>
+    <span class="status-badge" id="detailStatus"></span>
+    <span class="detail-title" id="detailTitle"></span>
+  </div>
+  <div class="detail-meta" id="detailMeta"></div>
+  <div class="voc-content" id="detailContent"></div>
+  <div class="thumb-row" id="detailThumbs"></div>
+  <div class="detail-actions">
+    <button type="button" class="file-btn" id="backBtn">← 목록</button>
+    <span class="spacer"></span>
+    <button type="button" class="close-btn" id="statusBtn" hidden></button>
+    <button type="button" class="file-btn" id="editBtn" hidden>✏️ 수정</button>
+    <button type="button" class="del-btn" id="deleteBtn" hidden>삭제</button>
+  </div>
+
+  <div class="comment-section">
+    <h3 id="commentTitle">댓글</h3>
+    <div id="commentList"></div>
+    <div class="form-notice" id="commentAnonNotice" hidden>
+      Honey 를 통해 접속하면 댓글을 남길 수 있습니다.
+    </div>
+    <div class="comment-form">
+      <textarea id="commentInput" maxlength="1000" placeholder="댓글을 입력해주세요"></textarea>
+      <div class="form-actions" style="margin-top:8px;">
+        <button type="button" class="submit-btn" id="commentBtn">댓글 등록</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <dialog class="lightbox" id="lightbox"><img id="lightboxImg" alt="screenshot"></dialog>
@@ -228,31 +379,68 @@ html[data-theme="dark"] .empty-note { color: #767f8c; }
 <script>
 "use strict";
 const PAGE_SIZE = 20;
-let currentPage = 0;
-let currentUser = "";
+const API = "/pe/report/api/voc";
+
+// 목록 상태는 메모리에 유지한다 — 상세에서 뒤로가기 시 같은 페이지·검색으로 복귀.
+const state = { page: 0, q: "", user: "", isAdmin: false, identityLoaded: false };
 let selectedFiles = [];   // {file, url} — FileList 는 불변이라 배열로 상태 관리
+let editingId = null;     // null = 등록 모드, 숫자 = 수정 모드
+let detail = null;        // 현재 상세 응답
 
 // ── 공용 ──────────────────────────────────────────────────────────────────
+function $(id) { return document.getElementById(id); }
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;   // XSS-안전: 항상 textContent
+  return n;
+}
 function csrfToken() {
   const m = document.cookie.match(/(?:^|;\s*)report_csrf=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : "";
 }
 let toastTimer = null;
 function toast(msg) {
-  const el = document.getElementById("toast");
-  el.textContent = msg;
-  el.classList.add("show");
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), 3000);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 3000);
 }
 function fmtTime(epoch) {
   try { return new Date(epoch * 1000).toLocaleString("ko-KR"); }
   catch (e) { return ""; }
 }
+function fmtDate(epoch) {
+  try { return new Date(epoch * 1000).toLocaleDateString("ko-KR"); }
+  catch (e) { return ""; }
+}
+function catClass(category) {
+  // 분류명 첫 토큰("버그"/"개선"/"문의"/"기타")을 색상 클래스로 사용
+  return "cat-badge " + String(category || "기타").split(" ")[0];
+}
+async function api(path, options) {
+  const opt = Object.assign({ headers: {} }, options || {});
+  if (opt.method && opt.method !== "GET") opt.headers["X-CSRF-Token"] = csrfToken();
+  if (opt.json !== undefined) {
+    opt.headers["Content-Type"] = "application/json";
+    opt.body = JSON.stringify(opt.json);
+    delete opt.json;
+  }
+  const r = await fetch(path, opt);
+  let body = null;
+  try { body = await r.json(); } catch (e) {}
+  return { ok: r.ok, status: r.status, body: body || {} };
+}
+function applyIdentity(data) {
+  state.user = data.user || "";
+  state.isAdmin = !!data.is_admin;
+  state.identityLoaded = true;
+}
 
 // ── 테마 토글 (검색결과 페이지와 동일 동작·localStorage 키 공유) ──────────
 (function () {
-  const btn = document.getElementById("themeToggle");
+  const btn = $("themeToggle");
   const root = document.documentElement;
   function syncThemeBtn() {
     const dark = root.getAttribute("data-theme") === "dark";
@@ -272,9 +460,176 @@ function fmtTime(epoch) {
   syncThemeBtn();
 })();
 
-// ── 스크린샷 선택: 즉시 미리보기 + 개별 취소 ─────────────────────────────
-const fileInput = document.getElementById("fileInput");
-document.getElementById("fileBtn").addEventListener("click", () => fileInput.click());
+// ── 라이트박스 ────────────────────────────────────────────────────────────
+const lightbox = $("lightbox");
+const lightboxImg = $("lightboxImg");
+lightbox.addEventListener("click", () => lightbox.close());
+lightbox.addEventListener("close", () => { lightboxImg.src = ""; });
+function openLightbox(url) {
+  lightboxImg.src = url;
+  lightbox.showModal();
+}
+
+// ══ 해시 라우팅 ═══════════════════════════════════════════════════════════
+// "" → 목록 / "new" → 등록 / "voc/<id>" → 상세 / "voc/<id>/edit" → 수정
+function showView(id) {
+  for (const v of ["viewList", "viewForm", "viewDetail"]) $(v).hidden = (v !== id);
+  window.scrollTo(0, 0);
+}
+function go(hash) { location.hash = hash; }
+
+async function route() {
+  const h = (location.hash || "").replace(/^#/, "");
+  if (h === "new") return openForm(null);
+  const m = h.match(/^voc\/(\d+)(\/edit)?$/);
+  if (m) return m[2] ? openForm(Number(m[1])) : openDetail(Number(m[1]));
+  showView("viewList");
+  await loadList(state.page);
+}
+window.addEventListener("hashchange", route);
+
+// ══ 목록 ═══════════════════════════════════════════════════════════════════
+async function loadList(page) {
+  const params = new URLSearchParams({ limit: PAGE_SIZE, offset: page * PAGE_SIZE });
+  if (state.q) params.set("q", state.q);
+  const r = await api(`${API}?${params}`);
+  if (!r.ok) { toast("VOC 목록을 불러오지 못했습니다."); return; }
+  const data = r.body;
+  // 삭제로 마지막 페이지가 비면 앞 페이지로 되돌린다
+  if (page > 0 && !data.items.length && data.total > 0) return loadList(page - 1);
+  state.page = page;
+  applyIdentity(data);
+  renderList(data);
+}
+
+function renderList(data) {
+  $("anonNotice").hidden = !!state.user;
+  $("newBtn").disabled = !state.user;
+  $("newBtn").title = state.user ? "" : "Honey 를 통해 접속해야 등록할 수 있습니다.";
+  $("clearSearchBtn").hidden = !state.q;
+  $("listCount").textContent = state.q
+    ? `검색 ${data.total}건` : `전체 ${data.total}건`;
+
+  const tbody = $("vocTbody");
+  tbody.replaceChildren();
+  const empty = $("listEmpty");
+  empty.hidden = data.items.length > 0;
+  if (!data.items.length) {
+    empty.textContent = state.q
+      ? `"${state.q}" 검색 결과가 없습니다.` : "등록된 VOC 가 없습니다.";
+  }
+
+  for (const it of data.items) {
+    const tr = el("tr");
+    tr.appendChild(el("td", "col-no", String(it.id)));
+
+    const catTd = el("td", "col-cat");
+    catTd.appendChild(el("span", catClass(it.category), it.category));
+    tr.appendChild(catTd);
+
+    const titleTd = el("td");
+    const isClose = it.status === "close";
+    titleTd.appendChild(el("span", "row-title" + (isClose ? " is-close" : ""), it.title));
+    if (it.comment_count > 0)
+      titleTd.appendChild(el("span", "comment-count", `💬 ${it.comment_count}`));
+    tr.appendChild(titleTd);
+
+    const stTd = el("td", "col-status");
+    stTd.appendChild(el("span", `status-badge ${isClose ? "close" : "open"}`,
+                        isClose ? "Close" : "Open"));
+    tr.appendChild(stTd);
+
+    tr.appendChild(el("td", "col-user", it.user_id));
+    tr.appendChild(el("td", "col-date", fmtDate(it.created_at)));
+    tr.addEventListener("click", () => go(`#voc/${it.id}`));
+    tbody.appendChild(tr);
+  }
+  renderPager(data.total);
+}
+
+function renderPager(total) {
+  const pager = $("pager");
+  pager.replaceChildren();
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (pages <= 1) return;
+  const mk = (label, page, opts = {}) => {
+    const b = el("button", "pg-btn" + (opts.active ? " active" : ""), label);
+    b.type = "button";
+    b.disabled = !!opts.disabled;
+    if (!opts.disabled && !opts.active) b.addEventListener("click", () => loadList(page));
+    return b;
+  };
+  pager.appendChild(mk("◀", state.page - 1, { disabled: state.page === 0 }));
+  const start = Math.max(0, Math.min(state.page - 3, pages - 7));
+  const end = Math.min(pages, start + 7);
+  for (let p = start; p < end; p++)
+    pager.appendChild(mk(String(p + 1), p, { active: p === state.page }));
+  pager.appendChild(mk("▶", state.page + 1, { disabled: state.page >= pages - 1 }));
+}
+
+function runSearch() {
+  state.q = $("searchInput").value.trim();
+  loadList(0);
+}
+$("searchBtn").addEventListener("click", runSearch);
+$("searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") runSearch(); });
+$("clearSearchBtn").addEventListener("click", () => {
+  $("searchInput").value = "";
+  state.q = "";
+  loadList(0);
+});
+$("newBtn").addEventListener("click", () => go("#new"));
+
+// ══ 등록 / 수정 ════════════════════════════════════════════════════════════
+const contentEl = $("vocContent");
+contentEl.addEventListener("input", () => {
+  $("charCount").textContent = `${contentEl.value.length} / 4000`;
+});
+
+function clearFiles() {
+  selectedFiles.forEach(sf => URL.revokeObjectURL(sf.url));
+  selectedFiles = [];
+  renderPreviews();
+}
+
+async function ensureIdentity() {
+  if (state.identityLoaded) return;
+  const r = await api(`${API}?limit=1`);
+  if (r.ok) applyIdentity(r.body);
+}
+
+async function openForm(vocId) {
+  editingId = vocId;
+  clearFiles();
+  showView("viewForm");
+  const editing = vocId !== null;
+  $("formTitle").textContent = editing ? "VOC 수정" : "VOC 등록";
+  $("submitBtn").textContent = editing ? "저장" : "등록";
+  $("attachRow").hidden = editing;              // 스크린샷은 등록 시에만
+  $("editAttachNotice").hidden = !editing;
+
+  if (editing) {
+    const r = await api(`${API}/${vocId}`);
+    if (!r.ok) { toast("삭제되었거나 없는 VOC 입니다."); go("#"); return; }
+    applyIdentity(r.body);
+    if (!r.body.can_edit) { toast("본인이 등록한 VOC 만 수정할 수 있습니다."); go(`#voc/${vocId}`); return; }
+    $("vocCategory").value = r.body.voc.category;
+    $("vocTitle").value = r.body.voc.title;
+    contentEl.value = r.body.voc.content;
+  } else {
+    await ensureIdentity();
+    $("vocCategory").selectedIndex = 0;
+    $("vocTitle").value = "";
+    contentEl.value = "";
+  }
+  $("charCount").textContent = `${contentEl.value.length} / 4000`;
+  $("formAnonNotice").hidden = !!state.user;
+  $("viewForm").querySelectorAll("select, input[type=text], textarea, .submit-btn, #fileBtn")
+    .forEach(node => { node.disabled = !state.user; });
+}
+
+const fileInput = $("fileInput");
+$("fileBtn").addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", () => {
   for (const f of fileInput.files) {
     if (selectedFiles.length >= 3) { toast("스크린샷은 최대 3장입니다."); break; }
@@ -290,18 +645,15 @@ fileInput.addEventListener("change", () => {
   renderPreviews();
 });
 function renderPreviews() {
-  const row = document.getElementById("previewRow");
+  const row = $("previewRow");
   row.replaceChildren();
   selectedFiles.forEach((sf, idx) => {
-    const item = document.createElement("div");
-    item.className = "preview-item";
-    const img = document.createElement("img");
+    const item = el("div", "preview-item");
+    const img = el("img");
     img.src = sf.url;
     img.alt = "preview";
-    const rm = document.createElement("button");
+    const rm = el("button", "preview-remove", "✕");
     rm.type = "button";
-    rm.className = "preview-remove";
-    rm.textContent = "✕";
     rm.title = "이 스크린샷 제거";
     rm.addEventListener("click", () => {
       URL.revokeObjectURL(sf.url);
@@ -313,180 +665,169 @@ function renderPreviews() {
   });
 }
 
-// ── 등록 ──────────────────────────────────────────────────────────────────
-const contentEl = document.getElementById("vocContent");
-contentEl.addEventListener("input", () => {
-  document.getElementById("charCount").textContent = `${contentEl.value.length} / 4000`;
+$("cancelBtn").addEventListener("click", () => {
+  go(editingId === null ? "#" : `#voc/${editingId}`);
 });
-document.getElementById("submitBtn").addEventListener("click", async () => {
-  const title = document.getElementById("vocTitle").value.trim();
+
+$("submitBtn").addEventListener("click", async () => {
+  const title = $("vocTitle").value.trim();
   const content = contentEl.value.trim();
+  const category = $("vocCategory").value;
   if (!title) { toast("제목을 입력해주세요."); return; }
-  if (!content) { toast("내용을 입력해주세요."); return; }
-  const btn = document.getElementById("submitBtn");
+  if (!content) { toast("본문을 입력해주세요."); return; }
+  const btn = $("submitBtn");
   btn.disabled = true;
   try {
+    if (editingId !== null) {
+      const r = await api(`${API}/${editingId}`, {
+        method: "PATCH", json: { category, title, content },
+      });
+      if (r.ok) { toast("수정되었습니다."); go(`#voc/${editingId}`); }
+      else toast(r.body.error || `수정에 실패했습니다 (HTTP ${r.status}).`);
+      return;
+    }
     const fd = new FormData();
-    fd.append("category", document.getElementById("vocCategory").value);
+    fd.append("category", category);
     fd.append("title", title);
     fd.append("content", content);
     selectedFiles.forEach(sf => fd.append("screenshots", sf.file));
     // Content-Type 은 브라우저가 boundary 포함 자동 설정 — 수동 지정 금지
-    const r = await fetch("/pe/report/api/voc", {
+    const r = await fetch(API, {
       method: "POST", headers: { "X-CSRF-Token": csrfToken() }, body: fd,
     });
     if (r.status === 201) {
+      const body = await r.json();
+      clearFiles();
       toast("VOC 가 등록되었습니다.");
-      document.getElementById("vocTitle").value = "";
-      contentEl.value = "";
-      document.getElementById("charCount").textContent = "0 / 4000";
-      selectedFiles.forEach(sf => URL.revokeObjectURL(sf.url));
-      selectedFiles = [];
-      renderPreviews();
-      await loadList(0);
+      go(`#voc/${body.id}`);
     } else {
       const body = await r.json().catch(() => ({}));
       toast(body.error || `등록에 실패했습니다 (HTTP ${r.status}).`);
     }
   } catch (e) {
-    toast("등록 요청에 실패했습니다 — 네트워크를 확인해주세요.");
+    toast("요청에 실패했습니다 — 네트워크를 확인해주세요.");
   } finally {
     btn.disabled = false;
   }
 });
 
-// ── 삭제 ──────────────────────────────────────────────────────────────────
-async function deleteVoc(id, title) {
-  if (!confirm(`이 VOC 를 삭제할까요?\n\n"${title}"`)) return;
-  try {
-    const r = await fetch(`/pe/report/api/voc/${id}`, {
-      method: "DELETE", headers: { "X-CSRF-Token": csrfToken() },
-    });
-    if (r.ok) {
-      toast("삭제되었습니다.");
-      await loadList(currentPage);
-    } else {
-      const body = await r.json().catch(() => ({}));
-      toast(body.error || `삭제에 실패했습니다 (HTTP ${r.status}).`);
-    }
-  } catch (e) {
-    toast("삭제 요청에 실패했습니다 — 네트워크를 확인해주세요.");
+// ══ 상세 ═══════════════════════════════════════════════════════════════════
+async function openDetail(vocId) {
+  const r = await api(`${API}/${vocId}`);
+  if (!r.ok) { toast("삭제되었거나 없는 VOC 입니다."); go("#"); return; }
+  detail = r.body;
+  applyIdentity(detail);
+  showView("viewDetail");
+  renderDetail();
+}
+
+function renderDetail() {
+  const voc = detail.voc;
+  const isClose = voc.status === "close";
+  $("detailCat").className = catClass(voc.category);
+  $("detailCat").textContent = voc.category;
+  $("detailStatus").className = `status-badge ${isClose ? "close" : "open"}`;
+  $("detailStatus").textContent = isClose ? "Close" : "Open";
+  $("detailTitle").textContent = voc.title;
+  $("detailMeta").textContent =
+    `#${voc.id} · ${voc.user_id} · ${fmtTime(voc.created_at)}`;
+  $("detailContent").textContent = voc.content;
+
+  const thumbs = $("detailThumbs");
+  thumbs.replaceChildren();
+  for (const s of detail.screenshots) {
+    const img = el("img");
+    img.src = s.url;
+    img.alt = "screenshot";
+    img.loading = "lazy";
+    img.addEventListener("click", () => openLightbox(s.url));
+    thumbs.appendChild(img);
   }
+
+  $("editBtn").hidden = !detail.can_edit;
+  $("deleteBtn").hidden = !detail.can_delete;
+  const statusBtn = $("statusBtn");
+  statusBtn.hidden = !detail.is_admin;
+  statusBtn.textContent = isClose ? "다시 열기" : "Close 처리";
+  statusBtn.className = isClose ? "reopen-btn" : "close-btn";
+
+  renderComments();
 }
 
-// ── 라이트박스 ────────────────────────────────────────────────────────────
-const lightbox = document.getElementById("lightbox");
-const lightboxImg = document.getElementById("lightboxImg");
-function openLightbox(url) {
-  lightboxImg.src = url;
-  lightbox.showModal();
-}
-lightbox.addEventListener("click", () => lightbox.close());
-lightbox.addEventListener("close", () => { lightboxImg.src = ""; });
-
-// ── 목록 렌더 (XSS-안전: createElement + textContent 만 사용) ─────────────
-function renderList(data) {
-  currentUser = data.user || "";
-  document.getElementById("anonNotice").hidden = !!currentUser;
-  document.getElementById("formCard").querySelectorAll("select, input, textarea, .submit-btn, .file-btn")
-    .forEach(el => { el.disabled = !currentUser; });
-  document.getElementById("listTitle").textContent = `VOC 목록 (${data.total}건)`;
-
-  const list = document.getElementById("vocList");
+function renderComments() {
+  const list = $("commentList");
   list.replaceChildren();
-  if (!data.items.length) {
-    const empty = document.createElement("div");
-    empty.className = "empty-note";
-    empty.textContent = "등록된 VOC 가 없습니다.";
-    list.appendChild(empty);
+  $("commentTitle").textContent = `댓글 ${detail.comments.length}`;
+  if (!detail.comments.length) {
+    list.appendChild(el("div", "comment-empty",
+                        "아직 댓글이 없습니다 — 첫 댓글을 남겨보세요."));
   }
-  for (const it of data.items) {
-    const item = document.createElement("div");
-    item.className = "voc-item";
-
-    const head = document.createElement("div");
-    head.className = "voc-head";
-    const badge = document.createElement("span");
-    // 분류명 첫 토큰("버그"/"개선"/"문의"/"기타")을 색상 클래스로 사용
-    badge.className = `cat-badge ${(it.category || "기타").split(" ")[0]}`;
-    badge.textContent = it.category;
-    const title = document.createElement("span");
-    title.className = "voc-title";
-    title.textContent = it.title;
-    const meta = document.createElement("span");
-    meta.className = "voc-meta";
-    meta.textContent = `${it.user_id} · ${fmtTime(it.created_at)}`;
-    head.append(badge, title, meta);
-    if (it.can_delete) {
-      const del = document.createElement("button");
+  for (const c of detail.comments) {
+    const item = el("div", "comment-item");
+    const head = el("div", "comment-head");
+    head.appendChild(el("span", "comment-user", c.user_id));
+    head.appendChild(el("span", "comment-time", fmtTime(c.created_at)));
+    head.appendChild(el("span", "spacer"));
+    if (c.can_delete) {
+      const del = el("button", "del-btn", "삭제");
       del.type = "button";
-      del.className = "del-btn";
-      del.textContent = "삭제";
-      del.addEventListener("click", () => deleteVoc(it.id, it.title));
+      del.addEventListener("click", () => deleteComment(c.id));
       head.appendChild(del);
     }
-
-    const content = document.createElement("div");
-    content.className = "voc-content";
-    content.textContent = it.content;
-
-    item.append(head, content);
-
-    if (it.screenshots && it.screenshots.length) {
-      const thumbs = document.createElement("div");
-      thumbs.className = "thumb-row";
-      for (const s of it.screenshots) {
-        const img = document.createElement("img");
-        img.src = s.url;
-        img.alt = "screenshot";
-        img.loading = "lazy";
-        img.addEventListener("click", () => openLightbox(s.url));
-        thumbs.appendChild(img);
-      }
-      item.appendChild(thumbs);
-    }
+    item.append(head, el("div", "comment-body", c.content));
     list.appendChild(item);
   }
-  renderPager(data.total);
+  $("commentAnonNotice").hidden = !!state.user;
+  $("commentInput").disabled = !state.user;
+  $("commentBtn").disabled = !state.user;
 }
 
-function renderPager(total) {
-  const pager = document.getElementById("pager");
-  pager.replaceChildren();
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  if (pages <= 1) return;
-  const mk = (label, page, opts = {}) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "pg-btn" + (opts.active ? " active" : "");
-    b.textContent = label;
-    b.disabled = !!opts.disabled;
-    if (!opts.disabled && !opts.active) b.addEventListener("click", () => loadList(page));
-    return b;
-  };
-  pager.appendChild(mk("◀", currentPage - 1, { disabled: currentPage === 0 }));
-  const start = Math.max(0, Math.min(currentPage - 3, pages - 7));
-  const end = Math.min(pages, start + 7);
-  for (let p = start; p < end; p++)
-    pager.appendChild(mk(String(p + 1), p, { active: p === currentPage }));
-  pager.appendChild(mk("▶", currentPage + 1, { disabled: currentPage >= pages - 1 }));
-}
+$("backBtn").addEventListener("click", () => go("#"));
+$("editBtn").addEventListener("click", () => go(`#voc/${detail.voc.id}/edit`));
 
-async function loadList(page) {
+$("deleteBtn").addEventListener("click", async () => {
+  if (!confirm(`이 VOC 를 삭제할까요?\n\n"${detail.voc.title}"`)) return;
+  const r = await api(`${API}/${detail.voc.id}`, { method: "DELETE" });
+  if (r.ok) { toast("삭제되었습니다."); go("#"); }
+  else toast(r.body.error || `삭제에 실패했습니다 (HTTP ${r.status}).`);
+});
+
+$("statusBtn").addEventListener("click", async () => {
+  const next = detail.voc.status === "close" ? "open" : "close";
+  const r = await api(`${API}/${detail.voc.id}/status`, { method: "POST", json: { status: next } });
+  if (!r.ok) { toast(r.body.error || `상태 변경에 실패했습니다 (HTTP ${r.status}).`); return; }
+  toast(next === "close" ? "Close 처리했습니다." : "다시 열었습니다.");
+  await openDetail(detail.voc.id);
+});
+
+$("commentBtn").addEventListener("click", async () => {
+  const input = $("commentInput");
+  const content = input.value.trim();
+  if (!content) { toast("댓글을 입력해주세요."); return; }
+  const btn = $("commentBtn");
+  btn.disabled = true;
   try {
-    const r = await fetch(`/pe/report/api/voc?limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const data = await r.json();
-    // 삭제로 마지막 페이지가 비면 앞 페이지로 되돌린다
-    if (page > 0 && !data.items.length && data.total > 0) return loadList(page - 1);
-    currentPage = page;
-    renderList(data);
-  } catch (e) {
-    toast("VOC 목록을 불러오지 못했습니다.");
+    const r = await api(`${API}/${detail.voc.id}/comments`, { method: "POST", json: { content } });
+    if (r.ok) {
+      input.value = "";
+      toast("댓글이 등록되었습니다.");
+      await openDetail(detail.voc.id);
+    } else {
+      toast(r.body.error || `댓글 등록에 실패했습니다 (HTTP ${r.status}).`);
+    }
+  } finally {
+    btn.disabled = false;
   }
+});
+
+async function deleteComment(commentId) {
+  if (!confirm("이 댓글을 삭제할까요?")) return;
+  const r = await api(`${API}/${detail.voc.id}/comments/${commentId}`, { method: "DELETE" });
+  if (r.ok) { toast("댓글이 삭제되었습니다."); await openDetail(detail.voc.id); }
+  else toast(r.body.error || `댓글 삭제에 실패했습니다 (HTTP ${r.status}).`);
 }
 
-loadList(0);
+route();
 </script>
 </body>
 </html>

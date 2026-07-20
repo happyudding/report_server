@@ -4,13 +4,17 @@
 목차 링크(#anchor) 클릭 시 해당 섹션으로 스크롤한다. 기능을 크게
 Web Report / Excel(xlsx) Report 두 갈래로 나눠 전체 사용법을 설명한다.
 
-honey_main 은 show_help(parent) 진입점만 호출한다 (세부 구현은 이 파일에 격리).
+honey_main 은 show_help(parent, open_url=...) 진입점만 호출한다 (세부 구현은 이 파일에 격리).
 """
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QTextBrowser, QPushButton
 
-from config import VOC_URL   # VOC 버튼이 여는 Confluence 페이지 (도움말 메뉴와 동일 링크)
+
+def _voc_url():
+    """서버 VOC 게시판 URL (내부 화면 — 구 Confluence 외부 링크 대체)."""
+    from transport.config import SERVER_BASE_URL
+    return SERVER_BASE_URL.rstrip("/") + "/pe/report/voc"
 
 
 # 도움말 본문 (HTML). 앵커는 <a name="..."> 로 두고 목차에서 href="#..." 로 점프.
@@ -116,10 +120,13 @@ PIN 은 이후 수정·삭제 시 본인 확인에 쓰입니다.</p>
 class HelpDialog(QDialog):
     """목차형 통합 도움말 창."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, open_url=None):
         super().__init__(parent)
         self.setWindowTitle("HONEY 도움말")
         self.resize(720, 640)
+        # 메인창이 주입하는 URL 오프너(honey_main._open_in_embedded) — 있으면 VOC 를
+        # 내장 브라우저로 연다. 없으면(단독 호출) 시스템 브라우저 폴백.
+        self._open_url = open_url
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -131,18 +138,23 @@ class HelpDialog(QDialog):
         self._browser.anchorClicked.connect(self._on_anchor)
         layout.addWidget(self._browser)
 
-        # 하단 버튼 줄: VOC(Confluence 페이지를 기본 브라우저로 연다)
+        # 하단 버튼 줄: VOC(서버 VOC 게시판 — 내장 브라우저 우선)
         btn_row = QHBoxLayout()
         btn_row.setContentsMargins(8, 6, 8, 8)
         btn_row.addStretch(1)
         voc_btn = QPushButton("VOC", self)
-        voc_btn.setToolTip("VOC Confluence 페이지 열기")
+        voc_btn.setToolTip("VOC 게시판 열기")
         voc_btn.clicked.connect(self._open_voc)
         btn_row.addWidget(voc_btn)
         layout.addLayout(btn_row)
 
     def _open_voc(self):
-        QDesktopServices.openUrl(QUrl(VOC_URL))
+        url = _voc_url()
+        if self._open_url:
+            self._open_url(url)
+            self.accept()   # 다이얼로그를 닫아 내장 브라우저가 보이게
+            return
+        QDesktopServices.openUrl(QUrl(url))
 
     def _on_anchor(self, url):
         frag = url.fragment()
@@ -150,7 +162,10 @@ class HelpDialog(QDialog):
             self._browser.scrollToAnchor(frag)
 
 
-def show_help(parent=None):
-    """도움말 다이얼로그를 모달로 띄운다 (honey_main 진입점)."""
-    dlg = HelpDialog(parent)
+def show_help(parent=None, open_url=None):
+    """도움말 다이얼로그를 모달로 띄운다 (honey_main 진입점).
+
+    open_url: VOC 버튼용 URL 오프너 주입(메인창의 _open_in_embedded). None 이면
+    시스템 브라우저 폴백."""
+    dlg = HelpDialog(parent, open_url=open_url)
     dlg.exec()

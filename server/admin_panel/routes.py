@@ -5,7 +5,6 @@
 커스텀 헤더를 붙일 수 없어 CSRF 가 차단된다 (report_routes 의 쿠키 페어 방식은
 여기선 불필요).
 """
-import hashlib
 import hmac
 import logging
 import re
@@ -14,7 +13,8 @@ from pathlib import Path
 from flask import Blueprint, Response, abort, jsonify, request
 
 import config
-from admin_panel import (eval_admin, maintenance, metrics, sessions_admin, stats,
+from admin_panel import (GATE_COOKIE_VOC, GATE_COOKIE_VOC_PATH, eval_admin,
+                         gate_token, maintenance, metrics, sessions_admin, stats,
                          storage_admin, sysinfo, users_admin)
 from database import report_db
 from report.static_pages import send_html_gzip
@@ -37,7 +37,7 @@ _COOKIE_PATH = f"/pe/admin-{config.REPORT_ADMIN_SECRET}"
 
 
 def _expected_token():
-    return hashlib.sha256(("pe-admin-gate|" + config.REPORT_ADMIN_PASSWORD).encode()).hexdigest()
+    return gate_token()   # 공식 정본은 admin_panel/__init__.py (VOC 쪽과 공유)
 
 
 _LOGIN_PAGE_CACHE = None
@@ -71,6 +71,11 @@ def login():
     resp.set_cookie(_AUTH_COOKIE, _expected_token(), max_age=12 * 3600,
                     httponly=True, samesite="Lax", secure=request.is_secure,
                     path=_COOKIE_PATH)
+    # VOC 게시판 관리자 권한(상태 Open/Close 전환)용 사본 — 위 쿠키는 admin 경로
+    # 전용이라 /pe/report/* 요청에 실려오지 않는다. report/routes_voc._is_admin 이 검증.
+    resp.set_cookie(GATE_COOKIE_VOC, _expected_token(), max_age=12 * 3600,
+                    httponly=True, samesite="Lax", secure=request.is_secure,
+                    path=GATE_COOKIE_VOC_PATH)
     return resp
 
 
