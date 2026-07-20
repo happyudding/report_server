@@ -12,8 +12,25 @@ function yieldColumnsFrom(allRows) {
   return orderColumns(cols, "yield");
 }
 
+// STEP 표 최상단에 붙일 Bin1(Pass) 행 — Issue Table Yield 섹션 맨 위 Pass 행과 같은 역할.
+// 값은 yield_summary.by_step(서버 yield_step_summary) 의 STEP 별 수율 = (전체 - 그 STEP fail)
+// / 전체 die. 소스별 yield_pct/survivor 를 {src}_yield/{src}_count 컬럼에 옮긴다.
+function yieldStepPassRow(step) {
+  const ov = DATA.web_report && DATA.web_report.yield_summary;
+  const byStep = (ov && Array.isArray(ov.by_step)) ? ov.by_step : [];
+  const st = byStep.find(s => String(s.step || "") === String(step || ""));
+  if (!st) return null;
+  const row = { step: "", bin: "1", TNO: "", Item: "Pass", avg: st.avg_yield_pct };
+  (st.sources || []).forEach(s => {
+    row[`${s.source}_yield`] = s.yield_pct;
+    row[`${s.source}_count`] = s.survivor;
+  });
+  return row;
+}
+
 // 한 STEP 표를 렌더. si = 섹션 인덱스 — 그룹 토글 data-grp 를 표들 사이에서 유일하게 만든다.
-function renderYieldTable(cols, groups, si) {
+// passRow = 표 맨 위 Bin1 행(yieldStepPassRow, 없으면 null).
+function renderYieldTable(cols, groups, si, passRow) {
   const colgroup = "<colgroup>" + cols.map(c => `<col style="width:${colWidth(c)}">`).join("") + "</colgroup>";
   const head = buildSheetTableHead(cols);
 
@@ -31,7 +48,8 @@ function renderYieldTable(cols, groups, si) {
     }));
   });
 
-  const cellTds = (r, toggleHtml) => cols.map(c => {
+  // isPass = Bin1 행 — fail 행 전용 장식(Item 상세 링크 / 빨강 그라데이션)을 뺀다.
+  const cellTds = (r, toggleHtml, isPass) => cols.map(c => {
     const v = r ? r[c] : "";
     const txt = (v === null || v === undefined) ? "" : String(v);
     const isEmpty = txt === "";
@@ -40,12 +58,12 @@ function renderYieldTable(cols, groups, si) {
     let cellStyle = "";
     if (isEmpty) cls.push("st-empty"); else if (isNumVal(v)) cls.push("st-num");
     let inner = isEmpty ? "" : esc(txt);
-    // Item 셀 → Item_detail 링크 (STEP 표는 전부 fail 행이라 Pass 예외 없음)
-    if (cLower === "item" && !isEmpty) {
+    // Item 셀 → Item_detail 링크 (Bin1 Pass 행은 측정 항목이 아니라 제외)
+    if (cLower === "item" && !isEmpty && !isPass) {
       inner = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;
     }
     // source _yield / avg 셀: 각 컬럼 내 최댓값 대비 빨강 그라데이션(불량률 높을수록 진함).
-    if (!isEmpty && gradSet.has(c)) {
+    if (!isEmpty && !isPass && gradSet.has(c)) {
       const num = parseFloat(v);
       if (!isNaN(num) && num > 0 && colMax[c] > 0) {
         const ratio = Math.min(1, num / colMax[c]);
@@ -59,6 +77,7 @@ function renderYieldTable(cols, groups, si) {
   }).join("");
 
   let body = "";
+  if (passRow) body += `<tr class="yield-pass-row">${cellTds(passRow, "", true)}</tr>`;
   (groups || []).forEach((g, gi) => {
     const grp = `${si}_${gi}`;   // 표 간 유일한 그룹 id
     const detail = (g.rows || []).slice(1);   // 대표(most-fail) 제외 나머지 fail TNO
@@ -82,7 +101,7 @@ function renderYieldStepSections(stepGroups, allRows) {
     const label = String(sg.step || "").trim() || "(기타)";
     return `<div class="yield-step-section">` +
       `<div class="yield-step-title">STEP ${esc(label)}</div>` +
-      renderYieldTable(cols, groups, si) + `</div>`;
+      renderYieldTable(cols, groups, si, yieldStepPassRow(sg.step)) + `</div>`;
   }).join("");
 }
 

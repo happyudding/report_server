@@ -13,7 +13,8 @@ Qt.AA_ShareOpenGLContexts 속성이 앱 생성 전에 설정돼 있어야 한다
 """
 from urllib.parse import quote
 
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWebEngineCore import (
     QWebEngineDownloadRequest,
     QWebEnginePage,
@@ -110,6 +111,12 @@ QLineEdit {
 """
 
 
+def _is_external_host(url, home_host):
+    """팝업 대상 URL 이 리포트 서버(홈) 호스트 밖인지 (대소문자 무시)."""
+    host = url.host().lower()
+    return bool(host) and host != str(home_host or "").lower()
+
+
 class _GuardedPage(QWebEnginePage):
     """네비게이션 직전에 leave_guard 로 이탈을 가로챌 수 있는 페이지.
 
@@ -122,8 +129,29 @@ class _GuardedPage(QWebEnginePage):
         super().__init__(profile, parent)
         self.leave_guard = None
         self._in_guard = False   # guard 안에서 띄운 다이얼로그 이벤트 루프의 재진입 방지
+        self._popup = None       # createWindow 로 만든 팝업의 첫 네비게이션 대기 상태
+
+    def arm_popup(self, window, home_host):
+        """createWindow 가 만든(아직 숨겨진) 팝업 창을 첫 네비게이션 대기로 등록한다.
+
+        URL 은 createWindow 시점에 알 수 없으므로 첫 main-frame 네비게이션에서 판정한다:
+        외부 호스트면 시스템 기본 브라우저로 넘기고 이 창은 버리고, 서버 내부 링크면
+        지금까지처럼 내장 브라우저 창으로 띄운다.
+        """
+        self._popup = (window, home_host)
 
     def acceptNavigationRequest(self, url, nav_type, is_main_frame):
+        if is_main_frame and self._popup is not None:
+            window, home_host = self._popup
+            self._popup = None   # 첫 네비게이션에만 적용
+            if _is_external_host(url, home_host):
+                QDesktopServices.openUrl(url)
+                # 창 파괴는 이 콜백(=이 page 실행 중) 밖으로 미룬다.
+                QTimer.singleShot(0, window.close)
+                return False
+            window.show()
+            window.raise_()
+            window.activateWindow()
         if is_main_frame and self.leave_guard is not None and not self._in_guard:
             self._in_guard = True
             try:
@@ -147,7 +175,11 @@ class _WebView(QWebEngineView):
         self.setPage(_GuardedPage(QWebEngineProfile.defaultProfile(), self))
 
     def createWindow(self, _window_type):
-        win = open_browser(self._home_url, navigate=False)
+        # 창은 만들되 숨겨둔 채 넘긴다 — 첫 네비게이션 URL 을 보고 _GuardedPage 가
+        # 내장 창으로 띄울지(서버 내부) 기본 브라우저로 넘길지(외부: VOC 등) 정한다.
+        win = EmbeddedBrowserWindow(self._home_url)
+        _open_windows.append(win)
+        win.panel.view.page().arm_popup(win, QUrl(self._home_url).host())
         return win.panel.view
 
 

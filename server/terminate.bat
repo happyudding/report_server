@@ -1,6 +1,26 @@
 @echo off
+rem 콘솔을 UTF-8 로 맞춘다. 이 파일은 UTF-8(BOM 없음)이라 이 줄이 없으면
+rem 한국어 Windows 기본 코드페이지(949)에서 한글이 깨져 보인다. BOM 을 붙이면
+rem 대신 cmd 가 첫 줄(@echo off)을 못 읽어 에러를 내므로, BOM 없이 이 방식을 쓴다.
+chcp 65001 >nul
+rem 이 파일은 반드시 CRLF 줄바꿈으로 저장할 것 (.gitattributes 가 강제한다).
+rem LF 로 저장되면 cmd.exe 가 바이트 오프셋을 잘못 계산해 줄이 뭉개지고
+rem "was unexpected at this time" / "cannot find the batch label" 로 죽는다.
 setlocal
 
+set "ROOT=%~dp0"
+
+rem 기동 설정 로드 — start.bat 과 같은 정본(env\server.env). 단독 실행될 때도
+rem PORT / WATCHDOG_MANAGE 를 같은 파일에서 읽도록 한다.
+rem 단, start.bat 이 부를 때는 이미 값을 넘겨받은 상태다. 그때 파일을 다시 읽으면
+rem start.bat 이 정한 PORT 를 덮어써 엉뚱한 포트를 종료하려 든다 — PORT 가 이미
+rem 정해져 있으면 건드리지 않는다.
+set "ENV_FILE=%ROOT%env\server.env"
+if defined PORT goto :env_done
+if exist "%ENV_FILE%" (
+    for /f "usebackq eol=# tokens=1,2 delims== " %%A in ("%ENV_FILE%") do set "%%A=%%B"
+)
+:env_done
 if not defined PORT set "PORT=8080"
 rem drain 최대 대기 시간(초). 이 시간을 넘기면 진행 중 요청이 남아 있어도 강제 종료한다.
 if not defined DRAIN_TIMEOUT_SEC set "DRAIN_TIMEOUT_SEC=90"
@@ -18,15 +38,31 @@ rem 1) watchdog 일시 정지
 rem    끄지 않으면 서버를 내려둔 사이 5분 주기 watchdog 이 끼어들어 "옛 코드로" 재기동한다.
 rem    start.bat 이 기동을 마치면 자동으로 다시 켠다.
 rem ---------------------------------------------------------------------------
+rem 이 PC 에서 watchdog 을 아예 다루고 싶지 않으면 env\server.env 에 WATCHDOG_MANAGE=0.
+if "%WATCHDOG_MANAGE%"=="0" goto :wd_skip
+
 echo [terminate] watchdog 일시 정지 (%TASK_WATCHDOG%) ...
-schtasks /Change /TN "%TASK_WATCHDOG%" /DISABLE >nul 2>nul
-if errorlevel 1 goto :wd_none
+rem 먼저 존재 여부를 확인한다 — "등록 안 됨"(정상)과 "권한 부족"(조치 필요)은 전혀 다른
+rem 상황인데, /Change 의 실패 코드만으로는 구분이 안 된다.
+schtasks /Query /TN "%TASK_WATCHDOG%" >nul 2>nul
+if errorlevel 1 goto :wd_absent
+rem 실패 사유를 사용자가 볼 수 있도록 schtasks 출력을 삼키지 않는다.
+schtasks /Change /TN "%TASK_WATCHDOG%" /DISABLE
+if errorlevel 1 goto :wd_denied
 echo [terminate]   - 정지됨. start.bat 으로 다시 열면 자동 재개됩니다.
 echo [terminate]   - start.bat 을 실행하지 않을 거면 반드시 수동으로 재개할 것:
 echo [terminate]       schtasks /Change /TN %TASK_WATCHDOG% /ENABLE
 goto :wd_done
-:wd_none
-echo [terminate]   - 미등록이거나 권한 부족으로 실패. 무시하고 계속합니다.
+:wd_absent
+echo [terminate]   - 이 PC 에는 watchdog 작업이 등록돼 있지 않습니다. 건너뜁니다.
+echo [terminate]     자동 재기동이 필요하면 register_watchdog.bat 를 관리자 권한으로 1회 실행.
+goto :wd_done
+:wd_denied
+echo [terminate]   - 정지 실패. 바로 위 schtasks 메시지가 원인입니다 (대개 관리자 권한 부족).
+echo [terminate]     계속 진행하지만, 교체 중 watchdog 이 옛 코드로 되살릴 수 있습니다.
+goto :wd_done
+:wd_skip
+echo [terminate] watchdog 관리 꺼짐 (WATCHDOG_MANAGE=0) - 건너뜁니다.
 :wd_done
 
 rem ---------------------------------------------------------------------------

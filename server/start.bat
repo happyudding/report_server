@@ -1,4 +1,11 @@
-﻿@echo off
+@echo off
+rem 콘솔을 UTF-8 로 맞춘다. 이 파일은 UTF-8(BOM 없음)이라 이 줄이 없으면
+rem 한국어 Windows 기본 코드페이지(949)에서 한글이 깨져 보인다. BOM 을 붙이면
+rem 대신 cmd 가 첫 줄(@echo off)을 못 읽어 에러를 내므로, BOM 없이 이 방식을 쓴다.
+chcp 65001 >nul
+rem 이 파일은 반드시 CRLF 줄바꿈으로 저장할 것 (.gitattributes 가 강제한다).
+rem LF 로 저장되면 cmd.exe 가 바이트 오프셋을 잘못 계산해 줄이 뭉개지고
+rem "was unexpected at this time" / "cannot find the batch label" 로 죽는다.
 setlocal
 
 set "ROOT=%~dp0"
@@ -126,14 +133,25 @@ endlocal
 exit /b 0
 
 rem --- watchdog 재개 (terminate.bat 이 정지시킨 것을 되돌린다) ------------------
+rem "등록 안 됨"(이 PC 는 watchdog 을 안 쓴다 = 정상)과 "권한 부족"(조치가 필요한 실패)을
+rem 구분해서 알린다. 예전에는 둘 다 한 줄로 뭉뚱그려 원인을 못 찾았다.
 :enable_watchdog
-schtasks /Change /TN "%TASK_WATCHDOG%" /ENABLE >nul 2>nul
-if errorlevel 1 goto :wd_enable_fail
+if "%WATCHDOG_MANAGE%"=="0" goto :wd_enable_skip
+schtasks /Query /TN "%TASK_WATCHDOG%" >nul 2>nul
+if errorlevel 1 goto :wd_enable_absent
+rem 실패 사유가 보이도록 schtasks 출력을 삼키지 않는다.
+schtasks /Change /TN "%TASK_WATCHDOG%" /ENABLE
+if errorlevel 1 goto :wd_enable_denied
 echo [start] watchdog 재개됨 (%TASK_WATCHDOG%).
 exit /b
-:wd_enable_fail
-echo [start] watchdog 재개 실패 또는 미등록.
-echo [start]   - 등록돼 있는데 실패했다면 권한 문제입니다. 관리자 권한으로 실행하거나 수동 재개:
-echo [start]       schtasks /Change /TN %TASK_WATCHDOG% /ENABLE
-echo [start]   - 등록한 적이 없다면 register_watchdog.bat 로 등록할 수 있습니다.
+:wd_enable_absent
+echo [start] watchdog 미등록 - 자동 재기동 없이 그냥 동작합니다 (서버 기동에는 문제 없음).
+echo [start]   자동 재기동이 필요하면 register_watchdog.bat 를 관리자 권한으로 1회 실행.
+exit /b
+:wd_enable_denied
+echo [start] watchdog 재개 실패 - 바로 위 schtasks 메시지가 원인입니다 (대개 관리자 권한 부족).
+echo [start]   수동 재개: schtasks /Change /TN %TASK_WATCHDOG% /ENABLE
+exit /b
+:wd_enable_skip
+echo [start] watchdog 관리 꺼짐 (WATCHDOG_MANAGE=0).
 exit /b

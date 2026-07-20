@@ -230,19 +230,23 @@ function issueStatusCounts() {
   return counts;
 }
 
-// Summary 의 Issue Status 카드(카테고리별 Open/Close 소표) — 클릭 시 Issue Table 탭 이동.
+// Summary 의 Issue Status 카드(카테고리별 Open/Close + 진행률 소표) — 클릭 시 Issue Table 탭 이동.
+// 진행률 = Close / (Open + Close) * 100 (소수 1자리). 이슈 행이 없는 카테고리는 "-".
 function issueStatusCardHtml() {
   const counts = issueStatusCounts();
   const rows = ["Yield", "CPK", "ETC"].map(cat => {
     const c = counts[cat];
+    const total = c.open + c.close;
+    const prog = total ? (c.close / total * 100).toFixed(1) + "%" : "-";
     return `<tr><td class="iss-cat">${cat}</td>` +
       `<td class="iss-open${c.open ? "" : " st-empty"}">${c.open}</td>` +
-      `<td class="iss-close${c.close ? "" : " st-empty"}">${c.close}</td></tr>`;
+      `<td class="iss-close${c.close ? "" : " st-empty"}">${c.close}</td>` +
+      `<td class="iss-prog${total ? "" : " st-empty"}">${prog}</td></tr>`;
   }).join("");
   return `<div class="summary-section-card summary-jump" data-jump="issues" title="Issue Table 탭으로 이동">` +
     `<div class="section-title">Issue Status <span class="summary-jump-hint">▸ 탭 이동</span></div>` +
     `<div class="iss-status-wrap"><table class="iss-status-table">` +
-    `<thead><tr><th>구분</th><th>Open</th><th>Close</th></tr></thead>` +
+    `<thead><tr><th>구분</th><th>Open</th><th>Close</th><th>진행률</th></tr></thead>` +
     `<tbody>${rows}</tbody></table></div></div>`;
 }
 

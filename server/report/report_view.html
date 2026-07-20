@@ -1077,14 +1077,14 @@ select.issue-status-sel {
   font-size: 12px; background: #fff; cursor: pointer;
 }
 select.issue-status-sel:focus { border-color: #4a90e2; outline: none; }
-td.issue-status.is-open { color: #dc2626; font-weight: 600; }
+td.issue-status.is-open { color: #ea580c; font-weight: 600; }
 td.issue-status.is-close { color: #15803d; font-weight: 600; }
-/* 드랍다운(조회모드는 텍스트) 아래 신호등 점 — Open 빨강 / Close 초록 */
+/* 드랍다운(조회모드는 텍스트) 아래 신호등 점 — Open 주황 / Close 초록 */
 td.issue-status-cell { text-align: center; }
 td.issue-status-cell .status-dot {
   display: block; width: 10px; height: 10px; border-radius: 50%; margin: 4px auto 1px;
 }
-td.issue-status-cell.is-open .status-dot { background: #dc2626; box-shadow: 0 0 5px rgba(220,38,38,.75); }
+td.issue-status-cell.is-open .status-dot { background: #f97316; box-shadow: 0 0 5px rgba(249,115,22,.75); }
 td.issue-status-cell.is-close .status-dot { background: #16a34a; box-shadow: 0 0 5px rgba(22,163,74,.75); }
 
 /* Summary 탭 Issue Status 카드(카테고리별 Open/Close 소표) */
@@ -1097,6 +1097,7 @@ td.issue-status-cell.is-close .status-dot { background: #16a34a; box-shadow: 0 0
 .iss-status-table td.iss-cat { font-weight: 600; background: #fafbfc; }
 .iss-status-table td.iss-open:not(.st-empty) { color: #b45309; font-weight: 600; }
 .iss-status-table td.iss-close:not(.st-empty) { color: #15803d; font-weight: 600; }
+.iss-status-table td.iss-prog:not(.st-empty) { color: #1d4ed8; font-weight: 600; }
 .iss-status-table td.st-empty { color: #b6bcc4; }
 
 .edit-bar {
