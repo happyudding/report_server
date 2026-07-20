@@ -144,42 +144,71 @@ if ($oldVersionLine -eq $newVersionLine) {
 
 Write-Step "2/6 Build PyInstaller onedir"
 
-# 파이썬만 갓 설치한 새 PC 대응. Windows 는 %LOCALAPPDATA%\Microsoft\WindowsApps 에
-# Microsoft Store 를 열기만 하는 가짜 python.exe 스텁을 기본 제공한다 — Get-Command 는
-# 이것도 찾아내므로, 스텁을 걸러내고 실제로 --version 이 성공하는 인터프리터를 고른다.
+# python / py 중에서 쓸 인터프리터를 고른다.
+# 원칙: 이 함수는 '고르기'만 하고 '막지' 않는다. 예전에는 Get-Command 결과를 그대로 썼는데,
+# 여기서 실행 가능 여부를 검사해 떨어뜨리기 시작하면 멀쩡히 빌드되던 PC 가 갑자기 막힌다.
+# 그래서 검사에 다 실패해도 첫 후보로 진행하고, 진짜 문제면 뒤의 pip 단계가 제대로 실패하게 둔다.
+# - WindowsApps 경로는 '제외'가 아니라 '뒤로 미루기'. 그 경로에는 Microsoft Store 를 열기만
+#   하는 가짜 스텁도 있지만, Store 로 설치한 진짜 Python 도 같은 경로에 있다. 경로가 아니라
+#   실제 실행 결과로 판단해야 한다.
+# - 프로브는 stderr 까지 합쳐서 본다. 버전을 stderr 로 찍는 래퍼(pyenv-win 셰임 등)가 있고,
+#   $ErrorActionPreference='Stop' 에서는 네이티브 stderr 가 예외로 바뀌어 정상 파이썬이 탈락한다.
 function Resolve-Python {
-    $candidates = @()
+    $ErrorActionPreference = "Continue"   # 함수 지역 — 프로브 중 stderr 로 죽지 않게
+
+    $found = @()
     foreach ($name in @("python", "py")) {
         foreach ($cmd in @(Get-Command $name -All -ErrorAction SilentlyContinue)) {
-            if ($cmd.Source -and $cmd.Source -like "*\WindowsApps\*") { continue }
-            $candidates += $cmd
+            if ($cmd.Source) { $found += $cmd }
         }
     }
-    foreach ($cmd in $candidates) {
+    if ($found.Count -eq 0) { return $null }
+
+    $ordered = @($found | Where-Object { $_.Source -notlike "*\WindowsApps\*" }) +
+               @($found | Where-Object { $_.Source -like "*\WindowsApps\*" })
+
+    $probe = @()
+    foreach ($cmd in $ordered) {
         $isLauncher = ($cmd.Name -ieq "py.exe" -or $cmd.Name -ieq "py")
+        $code = $null
         try {
-            if ($isLauncher) { $ver = & $cmd.Source -3 --version } else { $ver = & $cmd.Source --version }
+            if ($isLauncher) { $raw = & $cmd.Source -3 --version 2>&1 } else { $raw = & $cmd.Source --version 2>&1 }
+            $code = $LASTEXITCODE
         } catch {
-            continue
+            $raw = $_.Exception.Message
         }
-        if ($LASTEXITCODE -eq 0 -and "$ver" -match "Python 3") {
-            return [pscustomobject]@{
-                Source     = $cmd.Source
-                IsLauncher = $isLauncher
-                Version    = ("$ver").Trim()
-            }
+        $text = ((($raw | Out-String) -replace '\s+', ' ')).Trim()
+        if ($text.Length -gt 200) { $text = $text.Substring(0, 200) + "..." }
+        $probe += ("      {0}{1} => exit={2} {3}" -f $cmd.Source, $(if ($isLauncher) { " -3" } else { "" }), $code, $text)
+        if ($code -eq 0) {
+            # stderr 로 찍는 래퍼는 PowerShell 이 에러레코드로 감싸므로 버전 문자열만 뽑아 쓴다.
+            $m = [regex]::Match($text, 'Python\s+\d+\.\d+(\.\d+)?')
+            $version = if ($m.Success) { $m.Value } else { $text }
+            return [pscustomobject]@{ Source = $cmd.Source; IsLauncher = $isLauncher; Version = $version; Probe = $probe }
         }
     }
-    return $null
+
+    # 전부 프로브 실패 — 그래도 막지 않고 첫 후보로 진행한다 (예전 동작과 동일).
+    $first = $ordered[0]
+    return [pscustomobject]@{
+        Source     = $first.Source
+        IsLauncher = ($first.Name -ieq "py.exe" -or $first.Name -ieq "py")
+        Version    = "확인 실패 - 그대로 진행"
+        Probe      = $probe
+    }
 }
 
 $Python = Resolve-Python
 if (-not $Python) {
-    throw "실행 가능한 Python 3 을 찾지 못했습니다. python.org 에서 Python 3 을 설치하고 'Add python.exe to PATH' 를 켠 뒤 다시 실행하세요. (Microsoft Store 스텁은 사용할 수 없습니다.)"
+    throw "python / py 를 PATH 에서 찾지 못했습니다. python.org 에서 Python 3 을 설치할 때 'Add python.exe to PATH' 를 켜고, 설치 후 명령 프롬프트를 새로 열어 다시 실행하세요."
 }
 $PythonExe    = $Python.Source
 $IsPyLauncher = $Python.IsLauncher
 Write-Host "    python : $PythonExe  ($($Python.Version))"
+if ($Python.Version -eq "확인 실패 - 그대로 진행") {
+    Write-Host "    [WARN] python --version 확인에 실패했지만 그대로 진행합니다. 프로브 결과:" -ForegroundColor Yellow
+    $Python.Probe | ForEach-Object { Write-Host $_ -ForegroundColor DarkGray }
+}
 Push-Location $ClientDir
 try {
     # 빌드 PC 에 requirements.txt 의존성이 빠져 있으면 PyInstaller 가 조용히 누락한 채

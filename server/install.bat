@@ -49,6 +49,19 @@ if not exist "%ROOT%.venv\Scripts\python.exe" (
 set PY="%ROOT%.venv\Scripts\python.exe"
 echo [install] venv Python     : %PY%
 echo.
+rem wheelhouse(동봉된 오프라인 wheel 모음)가 있으면 네트워크 없이 설치한다.
+rem report_server_zip.bat 가 압축할 때 만들어 넣는다. 실패하면 네트워크 설치로 폴백하는데,
+rem wheel 은 Python minor 버전(cp313 등)에 묶여 있어 서버 PC 의 Python 버전이 다르면
+rem 여기서 안 맞을 수 있기 때문이다 — 그때도 멈추지 않고 그냥 받아서 설치한다.
+if not exist "%ROOT%wheelhouse\*.whl" goto :net_install
+echo [install] wheelhouse 발견 - 오프라인 설치 시도 ...
+%PY% -m pip install --no-index --find-links="%ROOT%wheelhouse" -r "%ROOT%requirements.txt"
+if not errorlevel 1 goto :deps_ok
+echo.
+echo [install] 오프라인 설치 실패 - 네트워크 설치로 전환합니다.
+echo [install]   (서버 PC 의 Python 버전이 wheel 과 다를 때 발생합니다)
+echo.
+:net_install
 echo [install] pip 업그레이드 ...
 %PY% -m pip install --upgrade pip
 echo.
@@ -60,6 +73,7 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+:deps_ok
 
 echo.
 echo [install] 핵심 모듈 import 점검 ...

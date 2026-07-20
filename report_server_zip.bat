@@ -1,51 +1,100 @@
 @echo off
-rem 콘솔을 UTF-8 로 맞춘다. 이 파일은 UTF-8(BOM 없음)이라 이 줄이 없으면
-rem 한국어 Windows 기본 코드페이지(949)에서 한글이 깨져 보인다. BOM 을 붙이면
-rem 대신 cmd 가 첫 줄(@echo off)을 못 읽어 에러를 내므로, BOM 없이 이 방식을 쓴다.
-chcp 65001 >nul
+REM ============================================================================
+REM KEEP THIS FILE PURE ASCII WITH CRLF LINE ENDINGS.
+REM Korean text in a .bat makes cmd.exe miscount byte offsets on some machines:
+REM it resumes mid-line and runs word fragments as commands ("honey", "eases",
+REM "v is not recognized"). A "chcp 65001" line does not reliably prevent this,
+REM so this file stays ASCII-only. Same rule as client\build_zip.bat.
+REM ============================================================================
+REM Pack the whole report_server folder into a ZIP in the parent folder,
+REM for moving the project to another server PC.
+REM
+REM   Output : ..\report_server_<YYYYMMDD_HHMM>.zip
+REM            If that name exists, _1 / _2 / ... is appended.
+REM   Tool   : 7-Zip if installed (multithreaded), otherwise built-in tar.
+REM
+REM Excluded - regenerated on the new PC, or unrelated to running the server:
+REM   .git/                  git history (including nested web_report\.git)
+REM   server/.venv/          start.bat recreates it on the new PC
+REM   client/data/           local test CSV/xlsx (3GB+)
+REM   dist/ build/           PyInstaller output
+REM   client/release_dist/   Honey ZIP build output
+REM   server/releases/*.zip  Honey release packages (version.json IS included)
+REM   log/ __pycache__/      runtime logs / bytecode
+REM   nsw_mirror_tmp/        temporary merge output
+REM
+REM Included (operational data is carried over):
+REM   DB/        session DB (report.db)
+REM   uploads/   parquet / images and other artifacts
+REM   server/env/server.env  startup config - check HOST on the new PC
+REM   server/wheelhouse/     offline pip wheels, rebuilt by this script (~70MB)
+REM                          so the new PC installs without network access
+REM ============================================================================
 setlocal enabledelayedexpansion
-rem ============================================================================
-rem report_server 폴더 전체를 ZIP 으로 묶어 상위 폴더에 만든다 (서버 PC 이전용).
-rem
-rem   출력 : ..\report_server_<YYYYMMDD_HHMM>.zip
-rem   도구 : 7-Zip 있으면 7z(멀티스레드), 없으면 Windows 내장 tar 로 폴백
-rem
-rem 제외 대상 — 새 서버에서 재생성되거나 서버 구동과 무관한 것들:
-rem   .git/                  git 이력 (중첩 저장소 web_report\.git 포함 - 모든 위치)
-rem   server/.venv/          start.bat 이 새 PC 에서 자동 재생성 (pip 접근 필요)
-rem   client/data/           로컬 테스트 CSV/xlsx (3GB+)
-rem   dist/ build/           PyInstaller 빌드 산출물
-rem   client/release_dist/   Honey ZIP 빌드 산출물
-rem   server/releases/*.zip  Honey 배포 패키지 (version.json 은 포함)
-rem   log/ __pycache__/      런타임 로그·바이트코드
-rem   nsw_mirror_tmp/        병합 폴더의 임시 산출물
-rem
-rem 포함 대상 (운영 데이터 이전):
-rem   DB/        세션 DB(report.db)
-rem   uploads/   parquet·이미지 등 산출물
-rem   server/env/server.env  기동 설정 → 새 PC 에서 HOST 값 확인할 것
-rem ============================================================================
 
 set "PROJ=%~dp0"
 set "PROJ=%PROJ:~0,-1%"
 for %%I in ("%PROJ%") do set "NAME=%%~nxI"
 for %%I in ("%PROJ%") do set "PARENT=%%~dpI"
 
-rem 로케일 무관 타임스탬프
+REM Locale-independent timestamp.
 for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmm"`) do set "STAMP=%%T"
-set "OUT=%PARENT%%NAME%_%STAMP%.zip"
+
+REM Pick a free filename: base.zip, then base_1.zip, base_2.zip, ...
+set "BASE=%PARENT%%NAME%_%STAMP%"
+set "OUT=%BASE%.zip"
+set /a SEQ=0
+:pick_name
+if not exist "%OUT%" goto :name_ok
+set /a SEQ+=1
+set "OUT=%BASE%_%SEQ%.zip"
+if %SEQ% lss 100 goto :pick_name
+echo [zip] ERROR: too many existing archives with the same timestamp.
+pause
+exit /b 1
+:name_ok
 
 echo [zip] Source : %PROJ%
 echo [zip] Output : %OUT%
+if %SEQ% gtr 0 echo [zip] Note   : base name was taken, using suffix _%SEQ%
 echo.
 
-if exist "%OUT%" (
-    echo [zip] ERROR: 같은 이름의 파일이 이미 있습니다. 지우고 다시 실행하세요.
-    pause
-    exit /b 1
-)
+REM --- Offline wheelhouse -----------------------------------------------------
+REM Download every dependency as a .whl into server\wheelhouse so the new PC can
+REM install without network access. install.bat / start.bat use it when present
+REM and fall back to a normal network install if it does not match.
+REM NOTE: wheels are tied to the Python minor version (cp313 etc). Use the same
+REM Python minor version on the new PC, or the fallback will kick in.
+set "WHEELDIR=%PROJ%\server\wheelhouse"
+set "WHEELPY="
+if exist "%PROJ%\server\.venv\Scripts\python.exe" set "WHEELPY=%PROJ%\server\.venv\Scripts\python.exe"
+if defined WHEELPY goto :have_wheelpy
+for /f "delims=" %%P in ('where python.exe 2^>nul') do if not defined WHEELPY set "WHEELPY=%%P"
+if defined WHEELPY goto :have_wheelpy
+echo [zip] WARNING: no Python found - skipping wheelhouse.
+echo [zip]          The new PC will need network access on first start.bat run.
+goto :wheels_done
 
-rem 압축 대상 경로는 아카이브 내부 경로 기준 (부모 폴더에서 실행)
+:have_wheelpy
+echo [zip] Building offline wheelhouse ...
+if exist "%WHEELDIR%" rd /s /q "%WHEELDIR%"
+"%WHEELPY%" -m pip download -r "%PROJ%\server\requirements.txt" -d "%WHEELDIR%" --quiet
+if errorlevel 1 goto :wheels_failed
+set "WHEELCOUNT=0"
+for /f %%C in ('dir /b "%WHEELDIR%\*.whl" 2^>nul ^| find /c /v ""') do set "WHEELCOUNT=%%C"
+REM No ">" in this echo - cmd would treat it as a redirection operator.
+echo [zip] wheelhouse: %WHEELCOUNT% packages in server\wheelhouse
+goto :wheels_done
+
+:wheels_failed
+echo [zip] WARNING: pip download failed - archive will NOT contain a wheelhouse.
+echo [zip]          The new PC will need network access on first start.bat run.
+if exist "%WHEELDIR%" rd /s /q "%WHEELDIR%"
+
+:wheels_done
+echo.
+
+REM Paths inside the archive are relative to the parent folder.
 pushd "%PARENT%"
 
 set "SEVENZIP="
@@ -55,7 +104,7 @@ if exist "%ProgramFiles(x86)%\7-Zip\7z.exe" set "SEVENZIP=%ProgramFiles(x86)%\7-
 if defined SEVENZIP goto :use_7z
 goto :use_tar
 
-rem ── 7-Zip 경로 (-mx=1: 대부분 이미 압축된 산출물이라 속도 우선) ─────────────
+REM --- 7-Zip path (-mx=1: most content is already compressed, favor speed) ----
 :use_7z
 echo [zip] Tool   : 7-Zip (%SEVENZIP%)
 set "EX="
@@ -80,11 +129,11 @@ echo.
 if errorlevel 1 goto :fail
 goto :done
 
-rem ── tar 폴백 (Windows 10+ 내장 bsdtar) ──────────────────────────────────────
+REM --- tar fallback (built-in bsdtar on Windows 10+) --------------------------
 :use_tar
 where tar.exe >nul 2>&1
 if errorlevel 1 (
-    echo [zip] ERROR: 7-Zip 도 tar 도 없습니다. 7-Zip 을 설치하세요.
+    echo [zip] ERROR: neither 7-Zip nor tar is available. Install 7-Zip.
     popd
     pause
     exit /b 1
@@ -115,15 +164,17 @@ if errorlevel 1 goto :fail
 :done
 popd
 echo.
-for %%F in ("%OUT%") do echo [zip] 완료: %%~nxF  (%%~zF bytes)
+for %%F in ("%OUT%") do echo [zip] Done: %%~nxF  (%%~zF bytes)
 echo.
-echo [zip] ===== 새 서버 PC 에서 할 일 =====
-echo [zip]  1. ZIP 을 풀고 server\env\server.env 의 HOST 값을 그 PC 에 맞게 확인
-echo [zip]  2. server\start.bat 실행 - .venv 가 없으므로 자동 생성됩니다
-echo [zip]     (Python 3.11+ 설치 + pip 접근 필요, 첫 실행은 수 분 걸림)
-echo [zip]  3. Honey 배포 ZIP(server\releases\*.zip)은 제외됐습니다.
-echo [zip]     /honey/download 를 쓰려면 수동으로 복사해 넣으세요.
-echo [zip] ==================================
+echo [zip] ===== On the new server PC =====
+echo [zip]  1. Unzip, then check HOST in server\env\server.env for that PC.
+echo [zip]  2. Run server\start.bat - .venv is missing so it is created
+echo [zip]     automatically. server\wheelhouse\ is bundled, so this installs
+echo [zip]     offline with no network access. Use the same Python minor
+echo [zip]     version as this PC, or it falls back to a network install.
+echo [zip]  3. Honey release ZIPs (server\releases\*.zip) were excluded.
+echo [zip]     Copy them in manually if you need /honey/download.
+echo [zip] ===============================
 echo.
 pause
 exit /b 0
@@ -131,7 +182,7 @@ exit /b 0
 :fail
 popd
 echo.
-echo [zip] ERROR: 압축 실패.
+echo [zip] ERROR: archiving failed.
 if exist "%OUT%" del "%OUT%"
 pause
 exit /b 1

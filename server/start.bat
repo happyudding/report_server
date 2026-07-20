@@ -68,9 +68,7 @@ if not exist "%ROOT%.venv\Scripts\python.exe" (
         pause
         exit /b 1
     )
-    echo [start] Installing dependencies from requirements.txt ...
-    "%ROOT%.venv\Scripts\python.exe" -m pip install --upgrade pip
-    "%ROOT%.venv\Scripts\python.exe" -m pip install -r "%ROOT%requirements.txt"
+    call :install_deps
     if errorlevel 1 (
         echo [start] ERROR: 의존성 설치 실패 - 네트워크/프록시를 확인하세요.
         echo [start] 불완전한 .venv 를 제거합니다. 문제 해결 후 start.bat 또는 install.bat 를 다시 실행하세요.
@@ -131,6 +129,23 @@ pause >nul
 
 endlocal
 exit /b 0
+
+rem --- 의존성 설치 (wheelhouse 우선, 실패하면 네트워크) -------------------------
+rem wheelhouse 는 report_server_zip.bat 가 압축할 때 만들어 넣는 오프라인 wheel 모음이다.
+rem wheel 은 Python minor 버전(cp313 등)에 묶여 있어 서버 PC 의 Python 버전이 다르면
+rem 안 맞을 수 있다 — 그때는 멈추지 않고 네트워크 설치로 넘어간다.
+:install_deps
+set "VPY=%ROOT%.venv\Scripts\python.exe"
+if not exist "%ROOT%wheelhouse\*.whl" goto :deps_network
+echo [start] wheelhouse 발견 - 네트워크 없이 설치합니다 ...
+"%VPY%" -m pip install --no-index --find-links="%ROOT%wheelhouse" -r "%ROOT%requirements.txt"
+if not errorlevel 1 exit /b 0
+echo [start] 오프라인 설치 실패 - 네트워크 설치로 전환합니다.
+:deps_network
+echo [start] Installing dependencies from requirements.txt ...
+"%VPY%" -m pip install --upgrade pip
+"%VPY%" -m pip install -r "%ROOT%requirements.txt"
+exit /b %ERRORLEVEL%
 
 rem --- watchdog 재개 (terminate.bat 이 정지시킨 것을 되돌린다) ------------------
 rem "등록 안 됨"(이 PC 는 watchdog 을 안 쓴다 = 정상)과 "권한 부족"(조치가 필요한 실패)을
