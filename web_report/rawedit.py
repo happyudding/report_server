@@ -85,13 +85,43 @@ def remove_backups(analysis_key, upload_root) -> bool:
     return True
 
 
+def _validate_kept_indices(kept_indices, existing, uploaded):
+    """kept_indices(남긴 source 의 원본 idx) 검증 — 위반은 전부 ValueError → 400.
+
+    오름차순·중복 없음·범위 내를 강제하고, 업로드 개수와 길이가 일치해야 한다
+    (kept_indices[i] 가 webreport_i 의 원본 idx). 개수가 늘어나는 요청(시트 추가)은 거부한다.
+    전체 유지(= range(existing))는 통과시킨다 — 클라는 이 경우 필드를 보내지 않지만 받아도
+    삭제 없는 교체와 결과가 같다.
+    """
+    if not kept_indices:
+        raise ValueError("source_indices 가 비어 있습니다 — source 를 전부 지울 수 없습니다.")
+    if len(kept_indices) != uploaded:
+        raise ValueError(
+            f"source_indices 개수 불일치: 업로드 {uploaded}, indices {len(kept_indices)}")
+    if len(kept_indices) > existing:
+        raise ValueError(
+            f"source 추가 불가: 기존 {existing}, 요청 {len(kept_indices)}")
+    if len(set(kept_indices)) != len(kept_indices):
+        raise ValueError("source_indices 에 중복이 있습니다.")
+    if list(kept_indices) != sorted(kept_indices):
+        raise ValueError("source_indices 는 오름차순이어야 합니다.")
+    if any(not 0 <= i < existing for i in kept_indices):
+        raise ValueError(
+            f"source_indices 범위 밖: 기존 source {existing}개, 요청 {list(kept_indices)}")
+
+
 def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
-                    client_ip: str = "", user_agent: str = "",
+                    kept_indices=None, client_ip: str = "", user_agent: str = "",
                     client_user: str = "") -> dict:
     """Honey 가 Excel 편집 후 재인코딩한 parquet 전체로 세션 원본을 덮어쓴다.
 
-    검증은 (1) 각 parquet 가 유효한 honeyform 인지, (2) source 개수가 기존과 일치하는지
-    두 가지뿐 — 그 외에는 무조건 덮어쓴다. manifest 는 불변이라 기존 것을 그대로 재저장한다.
+    kept_indices: 남긴 source 의 원본 idx 리스트(오름차순). None 이면 전체 교체 —
+    개수가 기존과 일치해야 한다(구클라 하위호환). 개수가 줄어드는 요청(Excel 시트 삭제)은
+    kept_indices 가 필수이며, 빠진 source 를 물리 제거하고 manifest 의 sources 목록도
+    함께 축소해 재저장한다 (manifest 불변 스냅샷 규칙의 유일한 예외 — 남기면 idx 와
+    parquet 대응이 어긋난다). 삭제 전 원본은 backup_current_sources 로 1세대 백업된다.
+
+    그 밖의 검증은 각 parquet 가 유효한 honeyform 인지 뿐 — 통과하면 무조건 덮어쓴다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -110,16 +140,33 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
     # 같은 analysis_key 원본의 read-modify-write 직렬화 — service.edit_raw_data 와 같은
     # 락 키로 동시 편집 lost update 방지 (단일 프로세스 전제, in-process 락).
     with cache.keyed_lock(("rawedit", analysis_key)):
-        # (2) source 개수 일치 검사
         existing = sum(
             1 for o in report_db.get_all_object_infos(analysis_key)
             if str(o.get("object_type", "")).startswith("web_report_source_")
         )
-        if existing and len(sources_bytes) != existing:
-            raise ValueError(
-                f"source 개수 불일치: 기존 {existing}, 업로드 {len(sources_bytes)}")
-
         manifest = runtime.storage().load_webreport_manifest(analysis_key, upload_root)
+        old_sources = list(manifest.get("sources") or [])
+        if not existing:
+            # legacy 무기록 세션 — object_info 대신 manifest 로 기존 개수를 잡는다
+            existing = len(old_sources)
+
+        # (2) source 개수 검사 / kept_indices 검증
+        removed_names = []
+        if kept_indices is None:
+            if existing and len(sources_bytes) != existing:
+                raise ValueError(
+                    f"source 개수 불일치: 기존 {existing}, 업로드 {len(sources_bytes)}")
+        else:
+            _validate_kept_indices(kept_indices, existing, len(sources_bytes))
+            if len(kept_indices) < existing:
+                keep = set(kept_indices)
+                removed_names = [
+                    str((old_sources[i] if i < len(old_sources) else {}).get("name")
+                        or f"source_{i}")
+                    for i in range(existing) if i not in keep]
+                manifest = dict(manifest)
+                manifest["sources"] = [old_sources[i] for i in kept_indices
+                                       if i < len(old_sources)]
 
         content_hash = hashlib.sha256(
             canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
@@ -133,19 +180,24 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
         storage_result = runtime.storage().save_webreport_sources(
             analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
 
-        report_db.update_session(session_id, content_hash=content_hash)
+        # dedup 형제 세션까지 갱신 — 물리 원본이 바뀌었으므로 같은 analysis_key 를 쓰는
+        # 다른 세션이 옛 hash 로 stale disk_cache payload 를 서빙하면 안 된다.
+        report_db.update_content_hash_for_analysis_key(analysis_key, content_hash)
         # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
         # (edit_raw_data 와 동일한 무효화 로직).
         cache.evict_akey_caches(analysis_key)
     try:
+        removed_note = f", removed={removed_names}" if removed_names else ""
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
             product_type=session.get("product_type", ""), product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
-            changed_fields=f"raw_data(excel, {len(sources_bytes)} sources, backup={backup_name})",
+            changed_fields=(f"raw_data(excel, {len(sources_bytes)} sources"
+                            f"{removed_note}, backup={backup_name})"),
             client_ip=client_ip, user_agent=user_agent,
             client_user=client_user or None)
     except Exception:
         pass
 
-    return {"ok": True, "sources": len(sources_bytes), "storage": storage_result["storage"]}
+    return {"ok": True, "sources": len(sources_bytes), "removed": len(removed_names),
+            "storage": storage_result["storage"]}

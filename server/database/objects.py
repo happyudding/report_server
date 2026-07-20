@@ -99,6 +99,15 @@ def upsert_object_info(analysis_key, content_hash, options_json,
         )
 
 
+def delete_object_info(analysis_key, object_type):
+    """object_info 행 1건 삭제 — web_report source 축소 시 stale 행 정리용. 없으면 no-op."""
+    with get_conn() as conn:
+        conn.execute(
+            "DELETE FROM report_object_info WHERE analysis_key=? AND object_type=?",
+            (analysis_key, object_type),
+        )
+
+
 def touch_object_info(analysis_key, object_type="plotly"):
     with get_conn() as conn:
         conn.execute(

@@ -74,6 +74,23 @@ DataFrame 레이아웃 (`honeyform.py`, `META_COLUMNS`/`META_ROW_LABELS`):
 single-flight 락으로 콜드 미스 동시 진입의 중복 계산을 막는다. 캐시 키 규약은
 [12](12_web_report_cache.md).
 
+## 원본 교체 흐름 (Honey Excel 왕복 — `rawedit.py`)
+업로드된 parquet 원본을 사후에 고치는 경로. `GET .../web_report/rawdata_export` 로
+zip(manifest + `source_<idx>.parquet`)을 내려받아 Honey 가 **source 1개 = 시트 1장**으로 Excel
+에 펼치고, 저장·닫으면 재인코딩해 `POST .../web_report/rawdata_replace` 로 전량 교체한다
+(브라우저가 아니므로 CSRF 대신 `X-Honey-Agent` 헤더 + 편집자 가드).
+
+- 시트↔source 매칭은 **시트 이름 기준**(`excel_session.match_sheets`) — 순서를 바꿔도 원본
+  순서를 복원한다. 이름이 안 맞고 개수만 같으면 위치 기반 폴백(이름 변경 용인).
+- **시트를 지우면 그 source 를 물리 제거**한다. 남긴 원본 idx 를 form 필드 `source_indices`
+  (JSON 오름차순)로 보내고, 서버가 `manifest["sources"]` 도 함께 축소해 재저장한다
+  (manifest 불변의 유일한 예외). 초과 idx 의 object_info 행·로컬 파일·S3 객체는
+  `save_webreport_sources` 가 정리한다. 시트 추가·전량 삭제는 거부.
+- 덮어쓰기 직전 1세대 백업(`<upload_root>/webreport_backup/<akey>/`) — 앱 내 undo 는 없고
+  복구는 운영자 수동. 백업 실패 시 편집 자체를 거부해 원본을 지킨다.
+- 새 `content_hash` 는 **같은 analysis_key 의 전 세션**에 반영한다(dedup 형제가 옛 hash 로
+  stale 캐시를 서빙하지 않도록). 상세 계약은 [11](11_web_report_tabs.md) 편집 흐름 절.
+
 ## 분석 모드 (Normal / DUT / Compare / Commonality)
 세션마다 모드를 가진다. Honey 업로드 시 파일 개수로 가용 모드가 제한되어 `manifest.mode`
 로 전송되고 `report_session.mode` 컬럼에 저장된다. **mode 는 analysis_key 산출에 불포함,

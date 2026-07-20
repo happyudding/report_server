@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>LSI PTE REPORT FLATFORM</title>
+<title>LSI PTE REPORT SERVER</title>
 <script src="/pe/report/static/webreport/error_beacon.js"></script>
 <script>
 /* 테마 부트스트랩: 첫 페인트 전에 저장된 다크 테마 적용 (FOUC 방지).
@@ -24,10 +24,10 @@ body {
   background: #000; color: #fff;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
-.page-title { margin: 0; font-size: 27px; font-weight: 800; letter-spacing: 0; }
+.page-title { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: 0; }
 .back-main-btn {
   border: 0; background: transparent; color: #fff;
-  font-size: 20px; font-weight: 700; cursor: pointer;
+  font-size: 19px; font-weight: 700; cursor: pointer;
   text-decoration: none;
   padding: 8px 0; white-space: nowrap;
 }
@@ -41,7 +41,7 @@ body {
 .pt-btn {
   flex: 0 0 198px; height: 51px; border: 2px solid var(--pt-color, #d0d5dd);
   border-radius: 8px; background: var(--pt-color, #fff); cursor: pointer;
-  font-size: 27px; font-weight: 800; color: #fff;
+  font-size: 26px; font-weight: 800; color: #fff;
   text-shadow: 0 1px 2px rgba(0,0,0,.20);
   transition: all .15s; opacity: .82;
 }
@@ -49,7 +49,7 @@ body {
 .pt-btn[data-pt="MDDI"]     { --pt-color: #4a90e2; }
 .pt-btn[data-pt="PDDI"]     { --pt-color: #1e3a8a; }
 .pt-btn[data-pt="PMIC"]     { --pt-color: #16a34a; }
-.pt-btn[data-pt="SECURITY"] { --pt-color: #9333ea; font-size: 22px; }
+.pt-btn[data-pt="SECURITY"] { --pt-color: #9333ea; font-size: 21px; }
 .pt-btn[data-pt="TCON"]     { --pt-color: #0d9488; }
 .pt-btn:hover { opacity: 1; filter: brightness(1.07); }
 .pt-btn.active {
@@ -58,7 +58,7 @@ body {
 }
 .pt-badge {
   display: inline-block; padding: 2px 9px; border-radius: 4px;
-  font-size: 18px; font-weight: 700; color: #fff; white-space: nowrap;
+  font-size: 17px; font-weight: 700; color: #fff; white-space: nowrap;
 }
 .pt-badge.MDDI { background: #4a90e2; }
 .pt-badge.PDDI { background: #1e3a8a; }
@@ -68,7 +68,7 @@ body {
 .pt-badge.default { background: #64748b; }
 .mode-badge {
   display: inline-block; max-width: 100%; padding: 2px 8px; border-radius: 4px;
-  font-size: 18px; font-weight: 700; white-space: nowrap;
+  font-size: 17px; font-weight: 700; white-space: nowrap;
   overflow: hidden; text-overflow: ellipsis; vertical-align: bottom;
 }
 .mode-badge.Normal { background: #e2e8f0; color: #334155; }
@@ -76,10 +76,10 @@ body {
 .mode-badge.DUT { background: #bfdbfe; color: #1e40af; }
 .mode-badge.Commonality { background: #ddd6fe; color: #5b21b6; }
 .mode-badge.none { background: transparent; color: #94a3b8; font-weight: 400; }
-.star-important { color: #f59e0b; font-size: 21px; margin-right: 4px; }
+.star-important { color: #f59e0b; font-size: 20px; margin-right: 4px; }
 /* 사용자별 즐겨찾기 별표 — 전역 '중요'(amber)와 구분되게 파란색 */
 .star-fav {
-  color: #cbd5e1; font-size: 21px; margin-right: 4px;
+  color: #cbd5e1; font-size: 20px; margin-right: 4px;
   cursor: pointer; user-select: none;
 }
 .star-fav.on { color: #2563eb; }
@@ -88,7 +88,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .user-chip {
   flex: 0 0 auto; height: 34px; padding: 0 12px;
   border: 1px solid #d0d5dd; border-radius: 8px; background: #fff;
-  font-size: 18px; font-weight: 600; color: #475569; cursor: pointer;
+  font-size: 17px; font-weight: 600; color: #475569; cursor: pointer;
   white-space: nowrap;
 }
 .user-chip:hover { border-color: #4a90e2; color: #4a90e2; }
@@ -98,7 +98,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   flex: 0 0 auto; height: 34px; padding: 0 16px;
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: 8px; border: 1px solid #16a34a;
-  background: #16a34a; color: #fff; font-size: 20px; font-weight: 600;
+  background: #16a34a; color: #fff; font-size: 19px; font-weight: 600;
   text-decoration: none; cursor: pointer; transition: all .15s;
   white-space: nowrap;
 }
@@ -110,7 +110,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 
 .help-btn {
   border: 0; background: transparent; color: #fff;
-  font-size: 20px; font-weight: 700; cursor: pointer;
+  font-size: 19px; font-weight: 700; cursor: pointer;
   text-decoration: none;
   padding: 8px 0; white-space: nowrap;
 }
@@ -127,14 +127,14 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .filter-group.search-group { position: relative; flex: 1 1 480px; min-width: 360px; }
 .mine-toggle {
   height: 36px; display: inline-flex; align-items: center; gap: 6px;
-  font-size: 18px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
+  font-size: 17px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
 }
 .mine-toggle input { width: 18px; height: 18px; cursor: pointer; }
 .filter-actions { margin-left: auto; }
-.filter-label { font-size: 18px; color: #666; font-weight: 600; }
+.filter-label { font-size: 17px; color: #666; font-weight: 600; }
 .filter-input, .sel-input {
   height: 36px; padding: 0 10px; border: 1px solid #d0d5dd;
-  border-radius: 6px; font-size: 20px; outline: none;
+  border-radius: 6px; font-size: 19px; outline: none;
   background: #fff;
 }
 .filter-input:focus, .sel-input:focus { border-color: #4a90e2; }
@@ -146,7 +146,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 }
 .suggest-box.show { display: block; }
 .suggest-item {
-  padding: 7px 10px; cursor: pointer; font-size: 18px; color: #333;
+  padding: 7px 10px; cursor: pointer; font-size: 17px; color: #333;
   border-bottom: 1px solid #f1f3f5;
 }
 .suggest-item:last-child { border-bottom: none; }
@@ -156,7 +156,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .filter-actions { display: flex; gap: 8px; align-items: end; }
 .btn-action {
   height: 36px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
-  background: #fff; color: #333; font-size: 20px; cursor: pointer; font-weight: 500;
+  background: #fff; color: #333; font-size: 19px; cursor: pointer; font-weight: 500;
 }
 .btn-action.primary { background: #4a90e2; color: #fff; border-color: #4a90e2; }
 .btn-action.primary:hover { background: #357abd; }
@@ -166,17 +166,17 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   box-shadow: 0 1px 6px rgba(0,0,0,.07);
 }
 .results-header {
-  font-size: 21px; font-weight: 600; color: #333;
+  font-size: 20px; font-weight: 600; color: #333;
   display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
 }
-.results-count { font-size: 18px; color: #888; font-weight: 400; }
+.results-count { font-size: 17px; color: #888; font-weight: 400; }
 
-table { width: 100%; border-collapse: collapse; font-size: 20px; table-layout: fixed; }
+table { width: 100%; border-collapse: collapse; font-size: 19px; table-layout: fixed; }
 th, td {
   padding: 4px 8px; border-bottom: 1px solid #eef0f3; text-align: left;   /* 행 세로폭 ~0.8배 축소 */
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-th { background: #fafbfc; font-weight: 600; color: #555; font-size: 18px; }
+th { background: #fafbfc; font-weight: 600; color: #555; font-size: 17px; }
 tr.empty-row td { text-align: center; color: #999; padding: 30px; overflow: visible; white-space: normal; }
 /* 액션칸(자물쇠/삭제)은 버튼이 잘리면 안 되고, 업로드날짜와 시각적 간격을 더 벌린다 */
 th.act-cell, td.act-cell { overflow: visible; white-space: nowrap; padding-left: 20px; }
@@ -185,7 +185,7 @@ tr.result-row:hover { background: #f5f8ff; }
 
 .btn-row { display: inline-flex; gap: 6px; }
 .btn-mini {
-  padding: 2px 8px; font-size: 18px; border-radius: 4px;
+  padding: 2px 8px; font-size: 17px; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-mini.edit { color: #1f4d8c; border-color: #bcd3f0; }
@@ -203,19 +203,19 @@ td.fname-cell .fname-txt {
 
 /* 액션칸 아이콘 버튼 (비공개 자물쇠 / 삭제 휴지통) */
 .btn-icon {
-  padding: 2px 6px; font-size: 21px; line-height: 1; border-radius: 4px;
+  padding: 2px 6px; font-size: 20px; line-height: 1; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-icon:hover { background: #f5f8ff; border-color: #4a90e2; }
 .btn-icon.trash:hover { background: #fef2f2; border-color: #fca5a5; }
 .btn-icon.lock.on { border-color: #f0c869; background: #fffbeb; }
-.lock-badge { font-size: 20px; opacity: .7; padding: 0 4px; }
+.lock-badge { font-size: 19px; opacity: .7; padding: 0 4px; }
 
 .pager {
   display: flex; gap: 6px; justify-content: center; margin-top: 14px;
 }
 .pager .pg-btn {
-  min-width: 32px; height: 30px; padding: 0 8px; font-size: 18px;
+  min-width: 32px; height: 30px; padding: 0 8px; font-size: 17px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-radius: 4px;
 }
 .pager .pg-btn.active { background: #4a90e2; color: #fff; border-color: #4a90e2; }
@@ -223,7 +223,7 @@ td.fname-cell .fname-txt {
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
   background: #333; color: #fff; padding: 10px 18px; border-radius: 6px;
-  font-size: 20px; opacity: 0; transition: opacity .2s;
+  font-size: 19px; opacity: 0; transition: opacity .2s;
   pointer-events: none; z-index: 1000;
 }
 .toast.show { opacity: 1; }
@@ -238,11 +238,11 @@ td.fname-cell .fname-txt {
   background: #fff; border-radius: 10px; padding: 24px;
   width: 360px; max-width: 90%;
 }
-.modal-title { font-size: 24px; font-weight: 600; margin: 0 0 8px; }
-.modal-desc { font-size: 20px; color: #666; margin: 0 0 14px; }
+.modal-title { font-size: 23px; font-weight: 600; margin: 0 0 8px; }
+.modal-desc { font-size: 19px; color: #666; margin: 0 0 14px; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
 .modal-btn {
-  padding: 8px 16px; font-size: 20px; border-radius: 6px;
+  padding: 8px 16px; font-size: 19px; border-radius: 6px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .modal-btn.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
@@ -252,7 +252,7 @@ td.fname-cell .fname-txt {
   display: none; align-items: center; justify-content: center; z-index: 9999;
 }
 .load-overlay.show { display: flex; }
-.load-msg { font-size: 20px; color: #475569; }
+.load-msg { font-size: 19px; color: #475569; }
 .load-bar {
   width: 240px; height: 6px; border-radius: 3px; background: #e5e7eb;
   overflow: hidden; margin: 12px auto 0;
@@ -291,17 +291,17 @@ td.fname-cell .fname-txt {
   td.pt-cell   { order: 1; white-space: normal; }
   td.act-cell  { order: 2; margin-left: auto; padding-left: 0; }
   /* 세션 정보(핵심): 파일명 → Product → LOT (각 줄) */
-  td.fname-cell { order: 3; flex-basis: 100%; font-weight: 700; font-size: 22px; }
+  td.fname-cell { order: 3; flex-basis: 100%; font-weight: 700; font-size: 21px; }
   td.fname-cell .fname-txt { direction: ltr; white-space: normal; }
-  td[data-col="product"] { order: 4; flex-basis: 100%; font-size: 19px; }
-  td[data-col="lot"]     { order: 5; flex-basis: 100%; font-size: 19px; }
+  td[data-col="product"] { order: 4; flex-basis: 100%; font-size: 18px; }
+  td[data-col="lot"]     { order: 5; flex-basis: 100%; font-size: 18px; }
   td[data-col="product"]::before, td[data-col="lot"]::before {
-    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 15px;
+    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 14px;
   }
   /* 보조 정보: 라벨 붙여 세션 정보 아래에 한 줄로 흐른다 */
-  td.sub-cell { order: 6; color: #64748b; font-size: 17px; }
+  td.sub-cell { order: 6; color: #64748b; font-size: 16px; }
   td.sub-cell::before {
-    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 14px;
+    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 13px;
   }
   .empty-row td { flex-basis: 100%; }
   .results-header { flex-wrap: wrap; }
@@ -314,7 +314,7 @@ td.fname-cell .fname-txt {
 .theme-toggle {
   flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
   border: 1px solid rgba(255,255,255,.35); background: transparent;
-  font-size: 22px; line-height: 1; padding: 0; cursor: pointer;
+  font-size: 21px; line-height: 1; padding: 0; cursor: pointer;
 }
 .theme-toggle:hover { background: rgba(255,255,255,.15); }
 
@@ -382,7 +382,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 </div>
 
 <header class="page-header">
-  <h1 class="page-title">LSI PTE REPORT FLATFORM</h1>
+  <h1 class="page-title">LSI PTE REPORT SERVER</h1>
   <div style="display:flex; align-items:center; gap:14px;">
     <a class="help-btn" href="/pe/report/help">HELP</a>
     <a class="help-btn" href="/pe/report/voc">VOC</a>
@@ -508,7 +508,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
     <input type="password" class="filter-input" id="pwModalInput" inputmode="numeric"
            maxlength="4" autocomplete="off" placeholder="PW (숫자 4자리)"
            style="width:100%; margin-top:8px; letter-spacing:4px;">
-    <p style="font-size:18px; color:#888; margin:8px 0 0;">초기 비밀번호는 <b>0000</b> 입니다. 로그인 후 변경할 수 있습니다.</p>
+    <p style="font-size:17px; color:#888; margin:8px 0 0;">초기 비밀번호는 <b>0000</b> 입니다. 로그인 후 변경할 수 있습니다.</p>
     <div class="modal-actions">
       <button class="modal-btn" id="idModalCancel">취소</button>
       <button class="modal-btn" id="idModalSave"

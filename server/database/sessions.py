@@ -132,6 +132,20 @@ def update_session(session_id, **fields):
         conn.execute(f"UPDATE report_session SET {cols} WHERE session_id=?", params)
 
 
+def update_content_hash_for_analysis_key(analysis_key, content_hash):
+    """같은 analysis_key 를 공유하는 모든 세션의 content_hash 를 일괄 갱신. 반환: 갱신 행 수.
+
+    raw_data 편집은 analysis_key 단위 물리 원본(parquet)을 교체하므로 편집한 세션 1건만
+    갱신하면 dedup 형제 세션이 옛 hash 로 남아 disk_cache 의 stale payload 를 계속 서빙한다.
+    휴지통(deleted_at) 세션도 같은 원본을 가리키므로 함께 갱신한다(복원 시 정합).
+    """
+    with get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE report_session SET content_hash=?, updated_at=? WHERE analysis_key=?",
+            (content_hash, _now(), analysis_key))
+        return cur.rowcount
+
+
 def get_session(session_id):
     """세션 1건 — models.Session (Mapping 호환: .get/[]/dict() 그대로 동작 + 속성 접근)."""
     with get_conn() as conn:

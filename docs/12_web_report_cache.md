@@ -38,7 +38,11 @@
 공통 규약:
 - **모든 키의 첫 요소는 analysis_key** — `AKEY_CACHES` 무효화(`evict`/`invalidate`)의 전제.
   새 파생 캐시는 `register_akey_cache` 로 등록만 하면 무효화에 자동 편입된다.
-- `content_hash` 는 raw parquet 내용 해시 — raw_data 편집·rawdata_replace 로만 바뀐다.
+- `content_hash` 는 raw parquet 내용 해시 — raw_data 편집·rawdata_replace(Excel 시트 삭제로
+  source 가 줄어드는 경우 포함)로만 바뀐다. 갱신은 편집한 세션 1건이 아니라 **같은
+  analysis_key 의 모든 세션**에 적용한다(`update_content_hash_for_analysis_key`) — 물리
+  원본이 바뀌었는데 dedup 형제 세션이 옛 hash 로 남으면 disk_cache 의 옛 payload 를 계속
+  서빙한다.
 - `edits_rev` 는 세션 편집 DB(`report_webreport_edit_rev`)의 단조 rev — comment/etc/trim
   override/engr 편집으로 바뀐다. 세션 단위 편집이라 `sid` 와 항상 짝으로 들어간다.
 - `mode`/`webreport_options` 는 세션 생성 시 확정되어 불변 — 키에 넣는 이유는 dedup(동일

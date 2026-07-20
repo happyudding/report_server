@@ -37,7 +37,7 @@
 | `load_distribution_png(analysis_key)` | 합성 분포 PNG bytes(S3→로컬 순) |
 | `list_issue_image_rows(analysis_key)` | 이슈 이미지가 있는 행 인덱스 리스트 |
 | `load_issue_image(analysis_key, row)` | 행별 이슈 이미지 bytes |
-| `save_webreport_sources(analysis_key, content_hash, sources, manifest, upload_root)` | web_report parquet 원본 리스트 + manifest 저장. `{storage:"s3"\|"local", warnings}` 반환 |
+| `save_webreport_sources(analysis_key, content_hash, sources, manifest, upload_root)` | web_report parquet 원본 리스트 + manifest 저장. `{storage:"s3"\|"local", warnings}` 반환. 저장 후 `len(sources)` 이상 idx 의 잔존물(object_info 행·S3 객체·로컬 파일)을 best-effort 정리 |
 | `load_webreport_sources(analysis_key, upload_root)` | web_report parquet + manifest 재조회 → `(list[bytes], manifest dict)` |
 | `load_webreport_manifest(analysis_key, upload_root)` | manifest 만 재조회 (parquet 다운로드 없음) |
 | `save_webreport_manifest(...)` | manifest 만 갱신. **현재 미사용**(manifest 불변화) — 외부 통합 호환용 API 만 유지 |
@@ -122,6 +122,17 @@ distribution_combined prefix 는 [_s3.py](_s3.py) 상수).
      `REPORT_S3_WEBREPORT_SOURCE_PREFIX`, `REPORT_S3_WEBREPORT_MANIFEST_PREFIX`.
    - 타임아웃 env: `REPORT_S3_CONNECT_TIMEOUT`(기본 5s), `REPORT_S3_READ_TIMEOUT`(기본 30s) —
      S3 장애 시 waitress 스레드 잠식 방지용(짧게 잡고 로컬 폴백에 맡김). 제거 금지.
+
+## 5-1. 이 프로젝트가 동결 예외로 수정한 이력
+
+동결 영역이지만 사용자 명시 승인 하에 수정한 건. 교체본 이식 시 함께 옮길 것.
+
+- **2026-07-20 web_report source 축소 지원** — `save_webreport_sources` 에
+  `_prune_stale_webreport_sources` 호출 추가(S3 성공 경로 + 로컬 폴백 경로 각 1줄).
+  Excel 왕복 편집에서 시트를 지우면 source 개수가 줄어드는데, 초과 idx 의 object_info 행과
+  로컬 `source_<idx>.parquet` 가 남으면 `load_webreport_sources` 가 삭제한 소스를 되살린다.
+  행 삭제는 S3 삭제 실패와 무관하게 수행(stale 행이 정합성 파괴, 고아 S3 객체는 무해).
+  facade 시그니처·반환 계약은 불변.
 
 ## 6. 불변 규칙 (반드시 보존)
 

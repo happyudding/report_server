@@ -392,7 +392,10 @@ def web_report_rawdata_replace(session_id):
     Honey 클라(브라우저 아님)가 호출하므로 CSRF 대신 커스텀 헤더 X-Honey-Agent 를 요구한다
     (커스텀 헤더는 브라우저 폼 CSRF 로 위조 불가 — preflight 가 필요).
     편집은 raw_data/edit 와 동일하게 업로더 또는 위임받은 편집자만 가능하다
-    (_editor_guard — Honey 는 HoneyUser UA 로 신원을 보낸다, excel_session._honey_headers)."""
+    (_editor_guard — Honey 는 HoneyUser UA 로 신원을 보낸다, excel_session._honey_headers).
+
+    Excel 에서 시트를 지워 source 가 줄었으면 클라가 form 필드 source_indices 에 남긴
+    source 의 원본 idx 배열(JSON, 오름차순)을 함께 보낸다. 없으면 전체 교체(개수 동일)."""
     if request.headers.get("X-Honey-Agent") != "1":
         abort(403, "X-Honey-Agent header required")
     session = _require_web_report_session(session_id)
@@ -400,11 +403,19 @@ def web_report_rawdata_replace(session_id):
     if denied:
         return denied
     sources = _read_webreport_source_files()
+    kept_indices = None
+    raw_indices = request.form.get("source_indices")
+    if raw_indices:
+        try:
+            parsed = json.loads(raw_indices)
+            kept_indices = [int(i) for i in parsed]
+        except (ValueError, TypeError) as exc:
+            return jsonify({"error": f"source_indices 형식 오류: {exc}"}), 400
     ip, ua = _client_meta()
     try:
         result = web_report_rawedit.replace_sources(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
-            sources_bytes=sources, client_ip=ip, user_agent=ua,
+            sources_bytes=sources, kept_indices=kept_indices, client_ip=ip, user_agent=ua,
             client_user=_current_user() or "")
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")

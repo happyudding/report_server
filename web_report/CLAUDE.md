@@ -41,7 +41,8 @@ web_report/
 ├── compute.py          콜드 빌드 ProcessPool 오프로드 (prewarm 포함)
 ├── runtime.py          저장소 포트 주입 지점 (report_extension.init_app 이 주입)
 ├── ports.py            StoragePort/SessionRepo Protocol (DIP 경계)
-├── rawedit.py          Raw Data 소스 교체/내보내기 헬퍼
+├── rawedit.py          Raw Data 소스 내보내기/교체·삭제 헬퍼 (Excel 왕복 — 시트 삭제 시
+│                        kept_indices 로 source 물리 제거 + manifest sources 축소)
 ├── trim_match.py       Trim 항목명 매칭 순수 모듈 (product_type 별 PMIC4/TV2 규칙셋)
 ├── wafer_frame.py      제품 기준정보(die pitch+wafer 크기) → 고정 map 프레임
 └── tabs/               시트별 row 빌더 + TAB_REGISTRY (시트 구성 단일 진실)

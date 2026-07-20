@@ -89,8 +89,26 @@ web_report 편집(comment / ETC item / trim override / Summary Engr comment)의 
 세션 단위 DB**(`report_webreport_edit` + `_rev`)다. manifest 는 업로드 시점 불변 스냅샷.
 - 라우트: `POST .../web_report/issue_table/{etc,comments,hidden,status}`, `.../summary/engr`,
   `.../trim/overrides` (CSRF + 편집자 가드 — [02](02_server_query_edit.md)).
-- Raw Data 셀 편집(`.../raw_data/edit`)은 예외 — parquet 원본을 재인코딩해
-  `content_hash` 를 갱신한다(undo 없음).
+- Raw Data 편집은 예외 — 편집 DB 가 아니라 parquet 원본을 재인코딩해 덮어쓰고
+  `content_hash` 를 갱신한다(undo 없음). 채널 2개: 웹 셀 편집(`.../raw_data/edit`)과
+  Honey Excel 왕복(`GET .../rawdata_export` → `POST .../rawdata_replace`, 아래).
+  둘 다 덮어쓰기 직전 1세대 백업(`webreport_backup/<akey>/`)이 유일한 복구 수단이며,
+  같은 analysis_key 를 공유하는 dedup 형제 세션의 `content_hash` 도 함께 갱신한다
+  (안 하면 형제가 옛 hash 로 stale 캐시를 서빙).
+
+#### Excel 왕복 편집 — 시트 삭제 = source 제거 (2026-07-20)
+source 1개가 Excel 시트 1장이다([excel_session.py](../client/excel_edit/excel_session.py)).
+- **시트↔source 매칭은 시트 이름 기준**(`match_sheets`, 대소문자·앞뒤공백 무시) — 시트
+  순서를 바꿔도 원본 순서로 되돌린다. 이름이 안 맞고 개수만 같으면 위치 기반 폴백
+  (이름 변경 용인). 순서 변경과 이름 변경을 **동시에** 하면 폴백이라 오귀속 위험이 남는다.
+- **시트를 지우면 그 source 를 물리 제거**한다. 클라가 남긴 원본 idx 를 form 필드
+  `source_indices`(JSON 오름차순)로 보내고, 서버는 그 parquet 만 저장한 뒤 **manifest 의
+  sources 목록도 함께 축소**해 재저장한다 — manifest 불변 규칙의 유일한 예외(안 그러면
+  idx↔parquet 대응이 어긋난다). 초과 idx 의 object_info 행·로컬 파일·S3 객체는
+  `storage_gateway.save_webreport_sources` 가 정리한다(남기면 로더가 되살린다).
+- 되돌릴 수 없으므로 Honey 가 업로드 **전에** 확인 다이얼로그를 띄운다(거부 시 전체 취소 —
+  다시 실행하면 서버 원본을 새로 받아 원상복구). 시트 **추가**와 전량 삭제는 계속 거부하고,
+  삭제하면서 남은 시트 이름을 바꾸면 매칭 불가로 재편집 루프로 돌아간다.
 - `kind` 8종: `issue_comment` / `etc_item` / `trim_override` / `summary_engr` /
   `chart_note` / `note_sheet` / `issue_hidden` / `issue_status`
   ([edits.py](../web_report/edits.py) 규약). 편집마다 `rev` 가
@@ -142,7 +160,15 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
 
 ## 불변 규칙
 - **Distribution 다운샘플 절대 금지** (프로젝트 CLAUDE.md §5 규칙 #5). 상세·통계는 전
-  포인트. 미니셀(썸네일)만 표시용 1000점 다운샘플이 유일한 예외.
+  포인트. 미니셀(썸네일)만 표시용 다운샘플(`DIST.DOWNSAMPLE`, 소스별 소프트 상한 2000)이
+  유일한 예외.
+- **미니셀 ECDF 점은 canvas 오버레이로 그린다** (2026-07-20). 축·그리드·LSL/USL 점선·주석·
+  상태 배경은 그대로 Plotly 가 그리고, 점만 `distPaintPoints`(`distribution.js`)가 Plotly 축
+  좌표계(`_offset`+`l2p`)로 canvas 에 찍는다. Plotly 에는 전 소스 통합 min/max x 2점을 담은
+  투명 sentinel trace(`distSentinelTrace`)만 넘겨 x autorange 기여를 그대로 재현한다
+  (표시용 다운샘플이 양끝점을 항상 보존하므로 값이 불변 — 헤드리스 Plotly 로 축 범위
+  동일성 검증 완료). 소스 수만큼 SVG 마커 DOM 이 늘던 병목을 없애기 위한 것이며 좌표·색·
+  점 크기(3px)는 그대로다. 상세 CDF(`distRenderCdf`)는 별개 경로(scattergl)라 무관.
 - **Distribution ECDF 미니셀 렌더는 markers 전용, 선 금지.** 갤러리 카드
   (`distRenderGalleryCell`)·Bin 상세 셀(`renderDistCell`)·Issue Table 산포 미니셀
   (`renderMiniDistCell`) 3곳 모두 점만 찍고 어떤 연결선도 긋지 않는다(계단형

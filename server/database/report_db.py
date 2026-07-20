@@ -37,9 +37,11 @@ from .sessions import (  # noqa: F401
     get_trashed_sessions,
     restore_session,
     trash_session,
+    update_content_hash_for_analysis_key,
     update_session,
 )
 from .objects import (  # noqa: F401
+    delete_object_info,
     get_all_object_infos,
     get_all_sheet_data,
     get_csv_files,

@@ -770,12 +770,17 @@ function renderMiniDistCell(cell) {
     ptsBySource[source] = limitWin ? distWindowRenorm(src.xs, src.ys, lo, hi)
       : { xs: src.xs, ys: src.ys };
   });
-  const traces = Object.keys(ptsBySource).map(source => {
-    // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
-    const ds = distPointsForDisplay(ptsBySource[source].xs, ptsBySource[source].ys);
-    return { type: "scatter", mode: "markers", cliponaxis: false, name: source,
-      x: ds.xs, y: ds.ys, marker: { color: distColorFor(source), size: 3 } };
+  // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
+  // 점은 canvas 로 그린다(distPaintPoints) — Plotly 에는 sentinel 만. limitWin 경로는
+  // 매번 새 배열이 나오므로 메모(distDisplayPoints) 대상이 아니다.
+  const dsBySource = {};
+  Object.keys(ptsBySource).forEach(source => {
+    dsBySource[source] = limitWin
+      ? distPointsForDisplay(ptsBySource[source].xs, ptsBySource[source].ys)
+      : distDisplayPoints(info.bySource[source]);
   });
+  const sentinel = distSentinelTrace(dsBySource);
+  const traces = sentinel ? [sentinel] : [];
   // x축을 데이터 범위로 고정한다. autorange 로 두면 LSL/USL 스펙선 shapes(데이터 범위 밖일
   // 수 있음)까지 x-autorange 에 포함돼 x축이 늘어나 곡선이 한쪽에 뭉쳐 잘린 것처럼 보인다.
   // xs 는 ECDF 라 오름차순(distDownsampleForDisplay 전제) → 양끝값으로 min/max 를 O(1) 로 잡음.
@@ -802,6 +807,7 @@ function renderMiniDistCell(cell) {
     paper_bgcolor: "transparent", plot_bgcolor: "transparent", showlegend: false,
   };
   Plotly.newPlot(div, traces, layout, DIST_CFG_STATIC);
+  distPaintPoints(div, dsBySource, null);
   cell.dataset.distLoaded = "1";
 }
 
@@ -831,7 +837,7 @@ function issueDistPurge(cell) {
   if (cell.dataset.distLoaded !== "1") return;
   const div = cell.querySelector(".dist-plot");
   if (!div) return;   // 데이터 없음으로 비워진 셀 — 확정 상태 유지
-  try { if (window.Plotly) Plotly.purge(div); } catch (e) {}
+  try { if (window.Plotly) { distClearPoints(div); Plotly.purge(div); } } catch (e) {}
   cell.dataset.distLoaded = "";
 }
 

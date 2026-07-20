@@ -931,6 +931,7 @@ class HoneyMainWindow(QMainWindow):
         self._excel_worker = ExcelEditWorker(sid, SERVER_BASE_URL, self)
         w = self._excel_worker
         w.status.connect(self._on_excel_edit_status)
+        w.confirm_request.connect(self._on_excel_edit_confirm)
         w.done.connect(self._on_excel_edit_done)
         w.failed.connect(self._on_excel_edit_failed)
         self._append_run_log(f"Rawdata 수정 시작 (session {sid}) — Excel 을 엽니다...")
@@ -942,6 +943,19 @@ class HoneyMainWindow(QMainWindow):
         self._status(message)
         self._append_run_log(f"[Rawdata] {message}")
 
+    def _on_excel_edit_confirm(self, message):
+        """워커의 시트 삭제 확인 요청 — 메인스레드에서 물어보고 응답을 돌려준다."""
+        reply = QMessageBox.question(
+            self, "Rawdata 수정 — source 제거 확인", message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        accepted = reply == QMessageBox.StandardButton.Yes
+        self._append_run_log(
+            "[Rawdata] 시트 삭제 " + ("승인 — source 를 제거합니다." if accepted else "거부 — 반영하지 않습니다."))
+        worker = getattr(self, "_excel_worker", None)
+        if worker is not None:
+            worker.answer_confirm(accepted)
+
     def _on_excel_edit_done(self, changed, message):
         self._set_busy(False)
         if changed:
@@ -951,6 +965,9 @@ class HoneyMainWindow(QMainWindow):
                 self.browser_panel.view.reload()
             except Exception:
                 pass
+        elif message == "시트 삭제 미승인":
+            self._status("Rawdata 수정 취소됨 — 시트 삭제 미승인")
+            self._append_run_log("[Rawdata] 시트 삭제를 승인하지 않아 반영하지 않았습니다.")
         elif message == "취소됨":
             self._status("Rawdata 수정 취소됨")
             self._append_run_log("[Rawdata] 취소됨 — Excel 을 닫고 편집을 중단했습니다.")
@@ -1135,9 +1152,9 @@ class HoneyMainWindow(QMainWindow):
         self._intake(paths)
 
     def on_help_honey(self):
-        """도움말(&H) → HONEY 도움말: 목차형 통합 도움말 창."""
-        from honey_ui.help_dialog import show_help
-        show_help(self, open_url=self._open_in_embedded)
+        """도움말(&H) → HONEY 도움말: 서버 help.html 을 내장 브라우저로 연다
+        (내장 브라우저가 없으면 _open_in_embedded 가 시스템 브라우저로 폴백)."""
+        self._open_in_embedded(SERVER_BASE_URL.rstrip("/") + "/pe/report/help")
 
     def on_voc(self):
         """도움말(&H) → VOC: 서버 VOC 게시판을 내장 브라우저로 연다

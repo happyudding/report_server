@@ -93,6 +93,12 @@ class FakeReportDB:
     def update_session(self, session_id, **fields):
         self.session.update(fields)
 
+    def update_content_hash_for_analysis_key(self, analysis_key, content_hash):
+        if self.session["analysis_key"] != analysis_key:
+            return 0
+        self.session["content_hash"] = content_hash
+        return 1
+
     def log_audit(self, action, **kw):
         self.audits.append((action, kw))
 

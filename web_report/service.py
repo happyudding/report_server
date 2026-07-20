@@ -399,7 +399,9 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
         storage_result = runtime.storage().save_webreport_sources(
             analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
 
-        report_db.update_session(session_id, content_hash=content_hash)
+        # dedup 형제 세션까지 갱신 — 편집한 세션만 갱신하면 같은 analysis_key 를 공유하는
+        # 다른 세션이 옛 hash 로 stale disk_cache payload 를 계속 서빙한다.
+        report_db.update_content_hash_for_analysis_key(analysis_key, content_hash)
         # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
         cache.evict_akey_caches(analysis_key)
     try:

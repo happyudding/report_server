@@ -218,7 +218,9 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
    `_MAX_CDF_POINTS`, `_downsample`, `max_points` 같은 포인트 상한 로직을 절대 추가하지 말 것.
    유일 예외: 동일값 구간을 2포인트 선분으로 표현하는 계단형(step) ECDF 변환
    (`client/report_generator/_builders.py` `cumulative_distribution_full()`), web_report 는
-   미니셀 썸네일만 표시용 1000점 다운샘플([docs/11](docs/11_web_report_tabs.md)).
+   미니셀 썸네일만 표시용 다운샘플(`DIST.DOWNSAMPLE`, 소스별 소프트 상한 2000
+   — [docs/11](docs/11_web_report_tabs.md)). 미니셀의 점은 Plotly SVG 마커가 아니라
+   canvas 오버레이(`distPaintPoints`)로 그린다(2026-07-20, 좌표·색·점크기 동일).
    - **web_report Distribution ECDF 미니셀은 markers(점)만으로 렌더한다.** 점을 잇는 선,
      특히 Plotly `line.shape:"hv"` 계단형 수평선은 금지 — x축 방향 수평선은 누적분포를
      왜곡하고 사용자 경험에 반한다. 이산(code unit)값처럼 고유값이 적어 점이 성겨 보이는
@@ -232,8 +234,12 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
      가로 방향 보간은 계속 금지). 조밀한 데이터(stepY≤0.3%)는 캡이 no-op 라 기존과 동일.
      상세 CDF(`distRenderCdf`)는 원본 전량 렌더 별도 경로로 채움·다운샘플 대상 외.
 6. **web_report 편집 상태는 세션 편집 DB 가 진실.** manifest 는 업로드 시점 불변 스냅샷이므로
-   편집으로 재저장하지 않는다. 캐시 키는 항상 [cache_policy.py](web_report/cache_policy.py)
-   빌더로 만든다(즉석 조립 금지 — [docs/12](docs/12_web_report_cache.md)).
+   편집으로 재저장하지 않는다. **유일한 예외**: Excel 왕복 편집에서 시트를 지워 source 가
+   줄면 `sources` 목록을 축소해 재저장한다(안 하면 idx↔parquet 대응이 어긋남 —
+   [docs/11](docs/11_web_report_tabs.md)). 캐시 키는 항상
+   [cache_policy.py](web_report/cache_policy.py) 빌더로 만든다(즉석 조립 금지 —
+   [docs/12](docs/12_web_report_cache.md)). raw parquet 을 바꾸는 편집은 `content_hash` 를
+   **같은 analysis_key 의 전 세션**에 반영한다(dedup 형제의 stale 캐시 방지).
 7. **소유권 / 수정 권한 경계.** 정본 [docs/15_ownership.md](docs/15_ownership.md). 요약:
    🟢 자유 수정=`web_report/`+`server/`(`storage_gateway/` 제외)+web_report html
    +client 자주 쓰는 영역(`honey_ui/`·`honey_main.py`·`transport/`·`excel_download/`·`excel_edit/`) /

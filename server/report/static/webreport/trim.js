@@ -19,6 +19,7 @@ let trimState = {
   chartPromises: {},        // 같은 키 fetch 중복 방지
   queue: [], inflight: 0,   // 차트 fetch 동시 CONCURRENCY 개 제한 큐
   filter: "all", search: "",
+  showUnassigned: false,    // ① 매칭: stem 미산출(미배정) 항목 노출 여부 — 기본 숨김
   scatterPage: 0,           // ② 산포 현재 페이지(0-index)
   scatterSel: new Set(),    // ② 산포 검색 체크박스로 고른 그룹 id (있으면 그것만 표시)
 };
@@ -171,7 +172,7 @@ function renderTrimMatch(body, p) {
   const unassignedChips = unassigned.map(i => {
     const badge = i.excluded ? `<span class="trim-badge excl">제외</span>` : "";
     return `<span class="trim-chip-wrap">${trimItemChip(i.name, itemsMap, canEdit)}${badge}</span>`;
-  }).join("") || `<span class="trim-empty">-</span>`;
+  }).join("");
 
   const invalid = p.invalid_overrides || [];
   const invalidNote = invalid.length
@@ -180,7 +181,7 @@ function renderTrimMatch(body, p) {
     ? `<div class="trim-note">항목 칩을 끌어 다른 그룹의 슬롯/MEMBER 에 놓으면 수동 재배치가 서버에 저장됩니다 (자동 매칭보다 우선). ↺ = 자동 배치 복귀.</div>`
     : `<div class="trim-note">수동 재배치는 로그인한 업로더만 가능합니다 (현재 읽기 전용).</div>`;
 
-  const rows = (p.items || []).map(i => `<tr>
+  const rows = (p.items || []).map(i => `<tr class="${i.group ? "" : "is-unassigned"}">
     <td>${esc(i.name)}</td><td>${esc(i.normalized)}</td>
     <td>${esc((i.tokens || []).join(" · "))}</td>
     <td>${i.phase ? `<span style="color:${TRIM.COLORS[i.phase]};font-weight:700">${esc(i.phase)}</span>`
@@ -197,21 +198,30 @@ function renderTrimMatch(body, p) {
       : (i.excluded ? "제외" : "미배정");
     const metaCls = i.group ? " assigned" : (i.excluded ? " excl" : "");
     const key = `${i.name} ${i.group || ""} ${i.normalized || ""}`.toLowerCase();
-    return `<div class="trim-palette-item" data-name="${esc(key)}">
+    return `<div class="trim-palette-item${i.group ? "" : " is-unassigned"}" data-name="${esc(key)}">
       ${trimItemChip(i.name, itemsMap, canEdit)}
       <span class="trim-palette-meta${metaCls}" title="${esc(status)}">${esc(status)}</span>
     </div>`;
   }).join("") || `<div class="trim-empty" style="padding:10px">항목 없음</div>`;
 
+  // 미배정(stem 미산출) 항목은 기본 숨김 — 래퍼 클래스 하나로 팔레트·드롭존·상세표를 함께 제어.
+  // 드롭존 자체는 숨기지 않는다(자동 배치 복귀 타깃). 칩이 안 보일 때만 안내 문구를 띄운다.
+  const nTotal = (p.items || []).length;
+  const nUnassigned = unassigned.length;
+  const dropHint = `<span class="trim-empty trim-drop-hint${nUnassigned ? "" : " always"}">여기로 끌어놓으면 자동 배치로 복귀</span>`;
+
   body.innerHTML = editNote + invalidNote +
-    `<div class="trim-match-layout">
+    `<div id="trimMatchWrap"${trimState.showUnassigned ? "" : ` class="trim-hide-unassigned"`}>
+     <div class="trim-match-layout">
        <aside class="trim-palette">
          <div class="trim-palette-head">
            <div class="trim-palette-searchwrap">
              <input class="trim-palette-search" id="trimMatchSearch" type="text" autocomplete="off"
                placeholder="항목 찾기…">
            </div>
-           <div class="trim-palette-count" id="trimPaletteCount">전체 ${(p.items || []).length}개</div>
+           <div class="trim-palette-count" id="trimPaletteCount"></div>
+           <label class="trim-palette-toggle"><input type="checkbox" id="trimShowUnassigned"${
+             trimState.showUnassigned ? " checked" : ""}>미배정 ${nUnassigned}개 보기</label>
          </div>
          <div class="trim-palette-list">${paletteItems}</div>
        </aside>
@@ -219,17 +229,18 @@ function renderTrimMatch(body, p) {
          ${cards ? `<div class="trim-match-grid">${cards}</div>`
                  : `<div class="placeholder">매칭된 그룹이 없습니다</div>`}
          <div class="section-title small" style="margin-top:14px">미배정 항목 (여기로 끌어오면 자동 배치 복귀)</div>
-         <div class="trim-unassigned" data-drop="reset">${unassignedChips}</div>
+         <div class="trim-unassigned" data-drop="reset">${unassignedChips}${dropHint}</div>
          ${canEdit ? `<div class="trim-newgroup" data-drop="newgroup">+ 새 그룹으로 끌어오기</div>` : ""}
        </div>
      </div>` +
     `<div class="section-title small" style="margin-top:16px">항목 매칭 상세</div>
      <div class="trim-table-wrap"><table class="trim-table">
        <thead><tr><th>원본명</th><th>정규화</th><th>토큰</th><th>Phase</th><th>Stem</th><th>그룹</th><th>슬롯</th><th>수동</th></tr></thead>
-       <tbody>${rows}</tbody></table></div>`;
+       <tbody>${rows}</tbody></table></div></div>`;
 
   const cnt = document.getElementById("trimCount");
-  if (cnt) cnt.textContent = `그룹 ${groups.length}개 · 항목 ${(p.items || []).length}개`;
+  if (cnt) cnt.textContent =
+    `그룹 ${groups.length}개 · 매칭 ${nTotal - nUnassigned}개 · 미배정 ${nUnassigned}개`;
   if (canEdit) bindTrimDnD(body);
   body.querySelectorAll(".trim-reset").forEach(b => b.addEventListener("click", e => {
     e.stopPropagation();
@@ -237,16 +248,30 @@ function renderTrimMatch(body, p) {
   }));
   const psearch = document.getElementById("trimMatchSearch");
   const pcount = document.getElementById("trimPaletteCount");
-  const ptotal = (p.items || []).length;
-  if (psearch) psearch.addEventListener("input", () => {
-    const q = psearch.value.trim().toLowerCase();
-    let vis = 0;
+  // 검색 표시 + 카운트 — 카운트는 현재 모드(미배정 숨김 여부)에서 셀 수 있는 항목만 센다.
+  // display 는 전 항목에 걸되, 숨김 모드의 미배정은 CSS 규칙이 인라인 "" 를 계속 이긴다.
+  const applyPaletteFilter = () => {
+    const q = psearch ? psearch.value.trim().toLowerCase() : "";
+    let vis = 0, total = 0;
     body.querySelectorAll(".trim-palette-item").forEach(el => {
-      const show = !q || (el.dataset.name || "").includes(q);
-      el.style.display = show ? "" : "none";
-      if (show) vis++;
+      const match = !q || (el.dataset.name || "").includes(q);
+      el.style.display = match ? "" : "none";
+      if (trimState.showUnassigned || !el.classList.contains("is-unassigned")) {
+        total++;
+        if (match) vis++;
+      }
     });
-    if (pcount) pcount.textContent = q ? `${vis} / ${ptotal}개` : `전체 ${ptotal}개`;
+    if (pcount) pcount.textContent = q ? `${vis} / ${total}개`
+      : (trimState.showUnassigned ? `전체 ${total}개` : `전체 ${nTotal}개 · 매칭 ${total}개`);
+  };
+  applyPaletteFilter();
+  if (psearch) psearch.addEventListener("input", applyPaletteFilter);
+  const ptoggle = document.getElementById("trimShowUnassigned");
+  const pwrap = document.getElementById("trimMatchWrap");
+  if (ptoggle) ptoggle.addEventListener("change", () => {
+    trimState.showUnassigned = ptoggle.checked;
+    if (pwrap) pwrap.classList.toggle("trim-hide-unassigned", !ptoggle.checked);
+    applyPaletteFilter();
   });
 }
 

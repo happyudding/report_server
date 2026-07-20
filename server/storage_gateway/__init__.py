@@ -162,6 +162,64 @@ def save_distribution_png(analysis_key, content_hash, meta_str, data, s3_ok=True
         return False
 
 
+def _prune_stale_webreport_sources(analysis_key, keep_count, upload_root, warnings):
+    """source 가 N→M(M<N) 로 줄었을 때 idx>=keep_count 의 잔존물 정리 (best-effort).
+
+    정리 대상 3종: (1) object_info 의 web_report_source_<idx> 행 — 남으면
+    load_webreport_sources 가 stale 소스를 그대로 읽는다(정합성 핵심), (2) 그 행이 가리키던
+    S3 객체, (3) 로컬 폴백 source_<idx>.parquet — 로컬 로더는 파일 존재를 순차 스캔하므로
+    남으면 삭제한 소스가 되살아난다. 행 삭제는 S3 삭제 실패와 무관하게 수행한다(고아 S3
+    객체는 무해하지만 stale 행은 유해). 실패는 warnings 로 모으고 예외를 올리지 않는다 —
+    저장 자체는 이미 성공했으므로 되돌리지 않는다.
+    """
+    try:
+        objs = report_db.get_all_object_infos(analysis_key)
+    except Exception as exc:
+        objs = []
+        warnings.append(f"source prune: object_info lookup failed: {exc}")
+
+    for obj in objs:
+        otype = str(obj.get("object_type") or "")
+        if not otype.startswith("web_report_source_"):
+            continue
+        try:
+            idx = int(otype.rsplit("_", 1)[1])
+        except ValueError:
+            continue
+        if idx < keep_count:
+            continue
+        key = str(obj.get("s3_key") or "").strip()
+        if key and object_backend(obj) != "local":
+            try:
+                report_s3.delete_object_from_s3(key)
+            except S3NotConfigured:
+                pass
+            except Exception as exc:
+                warnings.append(f"source prune: S3 delete failed ({key}): {exc}")
+        try:
+            report_db.delete_object_info(analysis_key, otype)
+        except Exception as exc:
+            warnings.append(f"source prune: object_info delete failed ({otype}): {exc}")
+
+    session_dir = Path(upload_root) / "web_report" / analysis_key
+    try:
+        stale_files = list(session_dir.glob("source_*.parquet")) if session_dir.is_dir() else []
+    except Exception as exc:
+        stale_files = []
+        warnings.append(f"source prune: local scan failed: {exc}")
+    for path in stale_files:
+        try:
+            idx = int(path.stem.rsplit("_", 1)[1])
+        except ValueError:
+            continue
+        if idx < keep_count:
+            continue
+        try:
+            path.unlink()
+        except Exception as exc:
+            warnings.append(f"source prune: local delete failed ({path}): {exc}")
+
+
 def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: dict,
                            upload_root) -> dict:
     """web_report parquet 원본 + manifest 저장. S3 우선, 실패 시 로컬 폴백.
@@ -169,6 +227,8 @@ def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: 
     sources: list[bytes] (parquet 원본). 반환: {"storage": "s3"|"local", "warnings": [...]}.
     저장 위치는 object_info.options_json 에 기록되고 load 가 그 기록을 따른다 —
     로컬 폴백 저장 뒤 S3 가 복구돼도 과거 S3 객체가 되살아나지 않는다.
+    소스 개수가 줄어든 재저장(Excel 시트 삭제)이면 저장 후 초과 idx 의 행·파일·S3 객체를
+    best-effort 로 정리한다(_prune_stale_webreport_sources) — 남기면 로더가 되살린다.
     """
     warnings = []
     s3_ok = True
@@ -205,6 +265,7 @@ def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: 
             report_db.upsert_object_info(
                 analysis_key, content_hash, _storage_opts("s3"), "web_report_manifest",
                 report_s3.bucket_name(), mkey, muri)
+            _prune_stale_webreport_sources(analysis_key, len(sources), upload_root, warnings)
             return {"storage": "s3", "warnings": warnings}
         except Exception as exc:
             warnings.append(f"web_report S3 upload failed, falling back to local: {exc}")
@@ -231,6 +292,7 @@ def save_webreport_sources(analysis_key, content_hash, sources: list, manifest: 
             "", f"web_report/{analysis_key}/manifest.json", "")
     except Exception as exc:
         warnings.append(f"local storage marker record failed: {exc}")
+    _prune_stale_webreport_sources(analysis_key, len(sources), upload_root, warnings)
     return {"storage": "local", "warnings": warnings}
 
 

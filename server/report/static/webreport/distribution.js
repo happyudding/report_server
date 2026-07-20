@@ -2,8 +2,9 @@
 // F:\COINAPI\report_webserver\plotly_core_code (figure_builder.py/page_builder.py) 참고:
 // item(subject)별 산점(value vs 누적%) + spec 상/하한 점선. 데이터는
 // web_report/tabs/distribution.py 가 이미 전량(다운샘플링 없음) 계산해 별도 엔드포인트로
-// 내려준다. 갤러리 칸은 SVG scatter(표시용 다운샘플) — IntersectionObserver 로 화면에
-// 보이는 칸만 그리고, 화면 밖으로 나가면 Plotly.purge 로 해제해 plot DOM 상주를 막는다.
+// 내려준다. 갤러리 칸은 축·그리드·스펙선만 Plotly 가 그리고 ECDF 점은 canvas 오버레이
+// (distPaintPoints, 표시용 다운샘플) — IntersectionObserver 로 화면에 보이는 칸만 그리고,
+// 화면 밖으로 나가면 Plotly.purge 로 해제해 plot DOM 상주를 막는다.
 // 상세(item_detail.js)의 CDF 는 전 포인트 렌더라 DIST.CDF_GL 플래그로 scattergl(WebGL) 사용.
 const DIST_PALETTE = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
   "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52"];
@@ -39,7 +40,9 @@ let distDataCache = {};       // subject → {lower_limit, upper_limit, units, b
 let distColorMap = {};        // source → color
 
 // ── Distribution 산포 탭 (툴바/갤러리/상세) 상태·규격 ─────────────────────────
-const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 1500, PER_FRAME: 3,
+// DOWNSAMPLE: 미니셀 표시점 소프트 상한(소스별). 점을 SVG 마커가 아니라 canvas 로 그리게
+// 되어(distPaintPoints) 점 개수 비용이 크게 낮아졌으므로 1500 → 2000 으로 상향(2026-07-20).
+const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 2000, PER_FRAME: 3,
   ROOT_MARGIN: "1200px 0px", EXCLUDE: ["chipid", "gpib", "otp", "code"],
   // ECDF 세로 점 보간 간격은 데이터에서 유도한다(distStepY) — "단일 데이터 점 1개의 ECDF
   // 증가량". FILL_STEP_Y 는 유효한 riser 가 없는 퇴화 케이스의 폴백 상수일 뿐.
@@ -374,12 +377,12 @@ function renderDistCell(cell) {
   const idx = distIndex.find(x => x.subject === subject);
   const status = (idx && idx.status) || "ok";
   const lo = info.lower_limit, hi = info.upper_limit;
-  const traces = Object.keys(info.bySource).map(source => {
-    // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
-    const ds = distPointsForDisplay(info.bySource[source].xs, info.bySource[source].ys);
-    return { type: "scatter", mode: "markers", cliponaxis: false, name: source,
-      x: ds.xs, y: ds.ys, marker: { color: distColorFor(source), size: 3 } };
-  });
+  // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
+  // 점은 canvas 로 그리고 Plotly 에는 축 재현용 sentinel 만 넘긴다(distPaintPoints).
+  const pts = {};
+  Object.keys(info.bySource).forEach(source => { pts[source] = distDisplayPoints(info.bySource[source]); });
+  const sentinel = distSentinelTrace(pts);
+  const traces = sentinel ? [sentinel] : [];
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: DIST_STATUS_BG[status] || "#FFFFFF",
     title: {
       text: `<b>${esc(subject)}</b><br><span style="font-size:10px">` +
@@ -394,6 +397,7 @@ function renderDistCell(cell) {
     margin: { l: 46, r: 14, t: 46, b: 28 }, showlegend: false };
 
   Plotly.newPlot(div, traces, layout, DIST_CFG_STATIC);
+  distPaintPoints(div, pts, null);
   cell.dataset.distLoaded = "1";
   if (placeholder) placeholder.style.display = "none";
 }
@@ -485,19 +489,33 @@ function extendRangeForBeforeLimits(range, subject) {
 
 // ── 미니셀 표시용 다운샘플 (ECDF 전제: x 오름차순, y 누적%) ────────────────────
 // 단순 stride 는 꼬리 outlier·고질량 계단(Δy 큰 점)·x축 고립점을 눈멀고 떨어뜨려
-// 누적산포를 왜곡한다. 규칙: (1) 첫/마지막 + 누적% 상·하위 5% 전량 보존,
-// (2) Δy ≥ 0.15%p(질량 큰 고유값)·x갭 ≥ range×0.5%(갭 양끝) 강제 보존,
-// (3) 나머지만 잔여 budget 으로 균등 stride. 강제 보존 때문에 총점이 1500 을
+// 누적산포를 왜곡한다. 규칙: (1) 첫/마지막 + 누적% 상·하위 3% 전량 보존,
+// (2) Δy ≥ 0.15%p(질량 큰 고유값)·x갭 ≥ range×0.1%(갭 양끝) 강제 보존,
+// (3) 나머지만 잔여 budget 으로 균등 stride. 강제 보존 때문에 총점이 DIST.DOWNSAMPLE 을
 // 다소 넘는 것은 허용(소프트 상한) — 왜곡 없음이 우선.
+//
+// 임계값 근거(2026-07-20, 미니셀 실측 플롯영역 263×189px 기준 — 1px ≒ y 0.53%p / x 범위의
+// 0.38%): 강제 보존은 kept 를 키우고 kept 가 캡을 넘으면 budget 이 아래 하한까지 떨어져
+// **몸통이 성겨진다**. 꼬리가 두꺼운 분포(늘어지는 die 10~35%)에서 옛 5% 밴드는 꼬리에만
+// 예산을 다 써 전량 렌더 대비 픽셀 오차가 10~20% 까지 벌어졌다. 3% 로 좁히면 같은 분포에서
+// 오차가 3% 안팎으로 6배 줄고 점 수도 준다(꼬리 자체는 픽셀상 겹쳐 손실이 안 보임).
+// x갭은 반대로 1.31px→0.26px 상당(0.005→0.001)으로 조여 사람이 구분 못 하는 크기의 고립점
+// 까지 살린다 — 두꺼운 꼬리 10% 에서 오차 0.97%→0.32%, 점은 소스당 +226(1995→2221)이고
+// 캔버스 드로잉은 0.37→0.40ms 로 측정 노이즈 수준이다. 조밀·초조밀·lognormal 은 애초에
+// 이 규칙이 발동하지 않아(xg=0) 무영향이고, 고립점을 일부러 흩뿌린 최악 케이스에서도
+// 0.05% 까지 내려야 점이 +680 늘 뿐이라 폭증 위험은 없다. 더 내리면(0.05%) 이득이 사라지고
+// 꼬리 35% 케이스는 오히려 미세하게 나빠져 0.1% 가 스위트스팟.
+// Δy 0.15%p 는 이미 0.28px(지각 한계 미만)이고, 세로채움 후 이웃 간 Δy 가 항상 stepY
+// (≤0.3%p, 보통 0.03%p)라 실측상 한 번도 발동하지 않는다 — 건드릴 이유가 없어 유지.
 function distDownsampleForDisplay(xs, ys) {
   const n = xs.length;
   if (n <= DIST.DOWNSAMPLE) return { xs, ys };
   const keep = new Uint8Array(n);
   keep[0] = 1; keep[n - 1] = 1;
   const range = xs[n - 1] - xs[0];
-  const gap = range > 0 ? range * 0.005 : Infinity;
+  const gap = range > 0 ? range * 0.001 : Infinity;
   for (let i = 0; i < n; i++) {
-    if (ys[i] <= 5 || ys[i] >= 95) { keep[i] = 1; continue; }             // 꼬리 전량
+    if (ys[i] <= 3 || ys[i] >= 97) { keep[i] = 1; continue; }             // 꼬리 전량
     if (ys[i] - ys[i - 1] >= 0.15) keep[i] = 1;                           // Δy 질량
     if (xs[i] - xs[i - 1] >= gap) { keep[i] = 1; keep[i - 1] = 1; }       // x갭 양끝
   }
@@ -505,8 +523,13 @@ function distDownsampleForDisplay(xs, ys) {
   for (let i = 0; i < n; i++) kept += keep[i];
   const rest = [];
   for (let i = 0; i < n; i++) if (!keep[i]) rest.push(i);
-  // 꼬리에 고유값이 많아 budget 이 소진되어도 중간 몸통이 비지 않도록 최소 200점 보장
-  const budget = Math.max(DIST.DOWNSAMPLE - kept, 200);
+  // 꼬리에 고유값이 많아 budget 이 소진되어도 중간 몸통이 비지 않도록 최소 800점 보장.
+  // 이 하한은 kept 가 캡을 넘는 조밀 분포(고유값 ≳2만)에서만 작동하고, 그 외에는 자연
+  // budget 이 이미 800 언저리라 no-op 이다(실측: 두꺼운 꼬리·롱테일 케이스는 800 까지
+  // 출력 불변). 200 → 800 으로 올리면 전량 렌더 대비 픽셀 오차가 조밀 40k 3.3%→1.1%,
+  // 초조밀 100k 3.8%→2.2% 로 줄고 점은 소스당 600개 안쪽 증가(캔버스 렌더라 비용 무시 가능).
+  // 캡을 올리는 쪽은 대안이 못 된다 — 초조밀에서는 kept 가 어떤 캡보다도 커 하한이 계속 지배한다.
+  const budget = Math.max(DIST.DOWNSAMPLE - kept, 800);
   if (budget > 0 && rest.length > budget) {
     const st = Math.ceil(rest.length / budget);
     for (let j = 0; j < rest.length; j += st) keep[rest[j]] = 1;
@@ -567,6 +590,114 @@ function distPointsForDisplay(xs, ys) {
   return distDownsampleForDisplay(f.xs, f.ys);
 }
 
+// 표시용 좌표 메모 — 스크롤로 purge→재진입할 때마다 소스별 세로채움+다운샘플을 다시
+// 돌리지 않게 한다. 키는 bySource 항목 객체 자체라, 재fetch 로 캐시가 통째로 교체되면
+// (buildDistDataFromCompact) 새 객체가 되어 자동 무효화된다.
+const _distDisplayMemo = new WeakMap();
+function distDisplayPoints(entry) {
+  let v = _distDisplayMemo.get(entry);
+  if (!v) { v = distPointsForDisplay(entry.xs, entry.ys); _distDisplayMemo.set(entry, v); }
+  return v;
+}
+
+// ── 미니셀 점 렌더: 축·그리드·스펙선은 Plotly, ECDF 점만 canvas 오버레이 ────────
+// 표시점 캡(DIST.DOWNSAMPLE)은 소스별이라 소스 S개면 S×캡 만큼 SVG 마커 DOM 이 생겨
+// 소스가 늘수록 카드가 급격히 느려진다.
+// 점만 canvas 로 옮기면 마커 DOM 이 0 이 되고, 좌표·색·점 크기·표시점 계산
+// (distPointsForDisplay)은 그대로라 그림은 기존과 동일하다. 상세 CDF(item_detail.js
+// distRenderCdf, 전량 scattergl)는 별개 경로라 무관.
+const DIST_MARKER_R = 1.5;        // marker.size 3 은 지름 → 반지름 1.5px
+
+// Plotly 에 넘길 투명 sentinel: 전 소스 통합 min/max x 2점. 점을 canvas 로 뺀 뒤에도
+// x autorange 기여를 그대로 재현한다(표시용 다운샘플은 양끝점을 항상 보존 → 값 불변).
+function distSentinelTrace(ptsBySource) {
+  let xMin = Infinity, xMax = -Infinity;
+  Object.keys(ptsBySource).forEach(src => {
+    const xs = ptsBySource[src].xs;
+    if (xs && xs.length) {
+      if (xs[0] < xMin) xMin = xs[0];
+      if (xs[xs.length - 1] > xMax) xMax = xs[xs.length - 1];
+    }
+  });
+  if (xMin === Infinity) return null;
+  return { type: "scatter", mode: "markers", cliponaxis: false, x: [xMin, xMax], y: [0, 100],
+    marker: { color: "#000", size: 3, opacity: 0 }, hoverinfo: "skip", showlegend: false };
+}
+
+// Plotly 축 좌표계(_offset + l2p)로 점을 canvas 에 찍는다. extra 는 Plotly trace 형태의
+// 단일점 마커(chipMarkersFor) — canvas 가 SVG 위에 있어 그대로 두면 점에 가려지므로
+// 같은 좌표에 다시 그려 위로 올린다(autorange 기여 때문에 Plotly trace 로도 남겨둔다).
+function distDrawPoints(plot) {
+  const pts = plot._distPts;
+  const fl = plot._fullLayout;
+  if (!pts || !fl || !fl.xaxis || typeof fl.xaxis.l2p !== "function" || fl.xaxis._offset == null) return false;
+  const xa = fl.xaxis, ya = fl.yaxis;
+  const w = plot.clientWidth, h = plot.clientHeight;
+  if (!w || !h) return false;
+  const dpr = window.devicePixelRatio || 1;
+  let cv = plot.querySelector("canvas.dist-pts");
+  if (!cv) {
+    if (getComputedStyle(plot).position === "static") plot.style.position = "relative";
+    cv = document.createElement("canvas");
+    cv.className = "dist-pts";
+    cv.style.cssText = "position:absolute;left:0;top:0;pointer-events:none;z-index:3;";
+    plot.appendChild(cv);
+  }
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  cv.style.width = w + "px"; cv.style.height = h + "px";
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const ox = xa._offset, oy = ya._offset, TAU = Math.PI * 2;
+  Object.keys(pts).forEach(src => {
+    const xs = pts[src].xs, ys = pts[src].ys;
+    ctx.fillStyle = distColorFor(src);
+    ctx.beginPath();
+    for (let i = 0; i < xs.length; i++) {
+      const px = ox + xa.l2p(xs[i]), py = oy + ya.l2p(ys[i]);
+      ctx.moveTo(px + DIST_MARKER_R, py);
+      ctx.arc(px, py, DIST_MARKER_R, 0, TAU);
+    }
+    ctx.fill();
+  });
+  (plot._distExtra || []).forEach(t => {
+    if (!t.x || !t.x.length) return;
+    const m = t.marker || {}, r = (m.size || 7) / 2;
+    const px = ox + xa.l2p(t.x[0]), py = oy + ya.l2p(t.y[0]);
+    ctx.beginPath(); ctx.arc(px, py, r, 0, TAU);
+    ctx.fillStyle = m.color || "#000"; ctx.fill();
+    if (m.line && m.line.width) {
+      ctx.lineWidth = m.line.width; ctx.strokeStyle = m.line.color || "#fff"; ctx.stroke();
+    }
+  });
+  return true;
+}
+
+// 리사이즈(responsive)·재플롯 후 캔버스가 축과 어긋나지 않게 다시 그린다.
+let _distCanvasRO = null;
+function distPaintPoints(plot, ptsBySource, extraTraces) {
+  plot._distPts = ptsBySource;
+  plot._distExtra = extraTraces || null;
+  if (!distDrawPoints(plot)) requestAnimationFrame(() => distDrawPoints(plot));
+  if (plot._distHooked) return;
+  plot._distHooked = true;
+  if (typeof plot.on === "function") plot.on("plotly_afterplot", () => distDrawPoints(plot));
+  if (typeof ResizeObserver !== "undefined") {
+    if (!_distCanvasRO) _distCanvasRO = new ResizeObserver(ents => {
+      ents.forEach(en => requestAnimationFrame(() => distDrawPoints(en.target)));
+    });
+    _distCanvasRO.observe(plot);
+  }
+}
+function distClearPoints(plot) {
+  if (!plot) return;
+  const cv = plot.querySelector("canvas.dist-pts");
+  if (cv) cv.remove();
+  plot._distPts = null; plot._distExtra = null;
+  if (_distCanvasRO && plot._distHooked) { try { _distCanvasRO.unobserve(plot); } catch (e) {} }
+  plot._distHooked = false;
+}
+
 // ── ECDF [lo,hi] 창 재정규화 — Issue Table CPK 섹션 미니셀 전용(data-limitwin) ──
 // 규격(limit) 안 점만 남기고 누적%를 0~100 으로 재정규화한다. 창 내 재정규화 ECDF 는
 // "규격내 부분표본만으로 만든 ECDF"와 수학적으로 동치라, 행의 cpk_limited(규격내 재계산
@@ -607,14 +738,15 @@ function distRenderGalleryCell(cell) {
   if (!plot || typeof Plotly === "undefined") return;
   const lo = info ? info.lower_limit : null;
   const hi = info ? info.upper_limit : null;
-  const traces = [];
+  // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간(distPointsForDisplay)으로
+  // 이산(code)값의 성김을 세로 점기둥으로 채운다. 점 자체는 canvas 로 그린다(distPaintPoints).
+  const pts = {};
   if (info) Object.keys(info.bySource).forEach(src => {
-    // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간(distPointsForDisplay)으로
-    // 이산(code)값의 성김을 세로 점기둥으로 채운다. 정규 산포는 기존과 픽셀 동일.
-    const ds = distPointsForDisplay(info.bySource[src].xs, info.bySource[src].ys);
-    traces.push({ type: "scatter", mode: "markers", cliponaxis: false, x: ds.xs, y: ds.ys,
-      marker: { color: distColorFor(src), size: 3 } });
+    pts[src] = distDisplayPoints(info.bySource[src]);
   });
+  const traces = [];
+  const sentinel = distSentinelTrace(pts);
+  if (sentinel) traces.push(sentinel);
   // 선택 좌표(Map Analysis)가 있으면 이 항목 위치를 점+빨간 점선으로 오버레이.
   let shapes = distSpecShapes(lo, hi, false).concat(beforeLimitShapes(subject));
   const cm = chipMarkersFor(subject);
@@ -637,12 +769,13 @@ function distRenderGalleryCell(cell) {
     shapes, annotations: distSpecAnnos(lo, hi, true),
     margin: { l: 34, r: 10, t: 8, b: 20 }, showlegend: false };
   Plotly.newPlot(plot, traces, layout, DIST_CFG_STATIC);
+  distPaintPoints(plot, pts, cm ? cm.traces : null);
   cell.dataset.rendered = "1";
 }
 function distPurgeGalleryCell(cell) {
   if (cell.dataset.rendered !== "1") return;
   const plot = cell.querySelector(".distg-plot");
-  try { if (plot && window.Plotly) Plotly.purge(plot); } catch (e) {}
+  try { if (plot && window.Plotly) { distClearPoints(plot); Plotly.purge(plot); } } catch (e) {}
   cell.dataset.rendered = "";
 }
 

@@ -108,7 +108,7 @@ textarea { width: 100%; min-height: 110px; resize: vertical; }
 /* ── 목록 테이블 ─────────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }
 /* table-layout:fixed — 아래 폭 지정이 그대로 먹고, 폭을 안 준 제목이 남는 자리를 전부 갖는다 */
-.voc-table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 620px; }
+.voc-table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 720px; }
 .voc-table th {
   font-size: 15px; color: #64748b; font-weight: 700; text-align: left;
   padding: 8px 8px; border-bottom: 2px solid #e5e7eb; white-space: nowrap;
@@ -120,10 +120,11 @@ textarea { width: 100%; min-height: 110px; resize: vertical; }
 .voc-table tbody tr { cursor: pointer; }
 .voc-table tbody tr:hover { background: #f8fafc; }
 .col-no { width: 52px; color: #94a3b8; font-size: 15px; }
-.col-cat { width: 82px; }
-.col-status { width: 68px; }
-.col-user { width: 96px; font-size: 15px; color: #475569; }
-.col-date { width: 88px; font-size: 14px; color: #94a3b8; }
+/* 분류/Status/등록자/등록일 폭 = 기존 값의 1.3배 (사용자 요청 — 값 잘림 완화) */
+.col-cat { width: 107px; }
+.col-status { width: 88px; }
+.col-user { width: 125px; font-size: 15px; color: #475569; }
+.col-date { width: 114px; font-size: 14px; color: #94a3b8; }
 .col-cat, .col-status, .col-user, .col-date { white-space: nowrap; overflow: hidden; }
 /* 제목: 남는 폭 전부. 길면 말줄임하고 전체는 툴팁(title 속성)으로 본다 */
 .col-title { overflow: hidden; }
