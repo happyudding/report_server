@@ -1,4 +1,7 @@
 @echo off
+REM Standalone dev build (no release/zip). See client\build_zip.bat for releases.
+REM KEEP THIS FILE PURE ASCII WITH CRLF LINE ENDINGS -- cmd.exe mis-parses LF-only
+REM batch files, and the resulting parse error kills the script before any pause.
 setlocal EnableExtensions
 
 if /i not "%~1"=="--inner" (
@@ -38,9 +41,9 @@ if errorlevel 1 (
 )
 
 echo === [1/2] Build Honey with PyInstaller ===
-REM 빌드 PC 에 requirements.txt 의존성이 빠져 있으면 PyInstaller 가 조용히 누락한 채
-REM 빌드를 성공시켜 런타임에 ModuleNotFoundError 로 죽는 깨진 exe 가 나온다
-REM (예: requests_toolbelt). 빌드 직전에 의존성을 보장한다.
+REM If a requirements.txt dependency is missing on the build PC, PyInstaller silently
+REM omits it and still succeeds, shipping an exe that dies at runtime with
+REM ModuleNotFoundError (e.g. requests_toolbelt). Guarantee deps right before building.
 echo --- pip install -r requirements.txt
 %PYTHON_CMD% -m pip install --progress-bar off --disable-pip-version-check -r requirements.txt
 if errorlevel 1 (
@@ -49,11 +52,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM 기본은 캐시 재사용(--clean 없음) — 반복 빌드가 크게 빨라진다.
-REM 캐시를 버리고 전체 재빌드하려면: build_honey.bat --clean
+REM Reuse the build cache by default (no --clean) so repeated builds are much faster.
+REM To discard the cache and rebuild everything: build_honey.bat --clean
 set "PYI_CLEAN="
 if /i "%~1"=="--clean" set "PYI_CLEAN=--clean"
-echo --- PyInstaller %PYI_CLEAN% --noconfirm (COLLECT 단계는 수 분간 출력이 멈춘 것처럼 보일 수 있음)
+echo --- PyInstaller %PYI_CLEAN% --noconfirm ^(the COLLECT step can look frozen for minutes^)
 %PYTHON_CMD% -m PyInstaller %PYI_CLEAN% --noconfirm build_honey.spec
 if errorlevel 1 (
   echo.

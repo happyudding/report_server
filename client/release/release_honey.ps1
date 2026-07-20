@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Build and publish a Honey ZIP release.
 
@@ -34,6 +34,21 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# 어떤 실패든 원인 한 줄과 로그 경로를 마지막에 또렷이 남기고 exit 1 로 끝낸다.
+# 호출한 .bat 이 이 종료코드로 분기해 pause 를 걸어주므로 창이 그냥 닫히지 않는다.
+trap {
+    Write-Host ""
+    Write-Host "[FAILED] $($_.Exception.Message)" -ForegroundColor Red
+    if ($_.InvocationInfo) {
+        Write-Host ("         at line {0}: {1}" -f $_.InvocationInfo.ScriptLineNumber, $_.InvocationInfo.Line.Trim()) -ForegroundColor DarkGray
+    }
+    if ($LogPath) {
+        Write-Host "         로그 파일: $LogPath" -ForegroundColor DarkGray
+    }
+    try { Stop-Transcript | Out-Null } catch { }
+    exit 1
+}
 
 # 빌드 전 과정을 로그 파일로 남긴다 — 더블클릭 실행 중 에러로 창이 닫혀도(또는 놓쳐도)
 # 나중에 client\release\logs\release_<시각>.log 로 원인을 확인할 수 있다. 콘솔에도 그대로
@@ -128,15 +143,43 @@ if ($oldVersionLine -eq $newVersionLine) {
 }
 
 Write-Step "2/6 Build PyInstaller onedir"
-$PythonCmd = Get-Command python -ErrorAction SilentlyContinue
-if (-not $PythonCmd) {
-    $PythonCmd = Get-Command py -ErrorAction SilentlyContinue
-}
-if (-not $PythonCmd) {
-    throw "python/py was not found. Install Python and add it to PATH."
+
+# 파이썬만 갓 설치한 새 PC 대응. Windows 는 %LOCALAPPDATA%\Microsoft\WindowsApps 에
+# Microsoft Store 를 열기만 하는 가짜 python.exe 스텁을 기본 제공한다 — Get-Command 는
+# 이것도 찾아내므로, 스텁을 걸러내고 실제로 --version 이 성공하는 인터프리터를 고른다.
+function Resolve-Python {
+    $candidates = @()
+    foreach ($name in @("python", "py")) {
+        foreach ($cmd in @(Get-Command $name -All -ErrorAction SilentlyContinue)) {
+            if ($cmd.Source -and $cmd.Source -like "*\WindowsApps\*") { continue }
+            $candidates += $cmd
+        }
+    }
+    foreach ($cmd in $candidates) {
+        $isLauncher = ($cmd.Name -ieq "py.exe" -or $cmd.Name -ieq "py")
+        try {
+            if ($isLauncher) { $ver = & $cmd.Source -3 --version } else { $ver = & $cmd.Source --version }
+        } catch {
+            continue
+        }
+        if ($LASTEXITCODE -eq 0 -and "$ver" -match "Python 3") {
+            return [pscustomobject]@{
+                Source     = $cmd.Source
+                IsLauncher = $isLauncher
+                Version    = ("$ver").Trim()
+            }
+        }
+    }
+    return $null
 }
 
-$IsPyLauncher = ($PythonCmd.Name -ieq "py.exe" -or $PythonCmd.Name -ieq "py")
+$Python = Resolve-Python
+if (-not $Python) {
+    throw "실행 가능한 Python 3 을 찾지 못했습니다. python.org 에서 Python 3 을 설치하고 'Add python.exe to PATH' 를 켠 뒤 다시 실행하세요. (Microsoft Store 스텁은 사용할 수 없습니다.)"
+}
+$PythonExe    = $Python.Source
+$IsPyLauncher = $Python.IsLauncher
+Write-Host "    python : $PythonExe  ($($Python.Version))"
 Push-Location $ClientDir
 try {
     # 빌드 PC 에 requirements.txt 의존성이 빠져 있으면 PyInstaller 가 조용히 누락한 채
@@ -147,9 +190,9 @@ try {
 
     Write-Host "    pip install -r requirements.txt"
     if ($IsPyLauncher) {
-        & $PythonCmd.Source -3 -m pip install @PipQuiet -r requirements.txt
+        & $PythonExe -3 -m pip install @PipQuiet -r requirements.txt
     } else {
-        & $PythonCmd.Source -m pip install @PipQuiet -r requirements.txt
+        & $PythonExe -m pip install @PipQuiet -r requirements.txt
     }
     if ($LASTEXITCODE -ne 0) {
         throw "pip install -r requirements.txt failed with exit code $LASTEXITCODE"
@@ -160,9 +203,9 @@ try {
     # 아래 python -m PyInstaller 가 'No module named PyInstaller' 로 죽는다).
     Write-Host "    pip install pyinstaller"
     if ($IsPyLauncher) {
-        & $PythonCmd.Source -3 -m pip install @PipQuiet pyinstaller
+        & $PythonExe -3 -m pip install @PipQuiet pyinstaller
     } else {
-        & $PythonCmd.Source -m pip install @PipQuiet pyinstaller
+        & $PythonExe -m pip install @PipQuiet pyinstaller
     }
     if ($LASTEXITCODE -ne 0) {
         throw "pip install pyinstaller failed with exit code $LASTEXITCODE"
@@ -179,9 +222,9 @@ try {
     Write-Host "    PyInstaller $($PyiArgs -join ' ') $SpecName"
     Write-Host "    ※ 마지막 COLLECT 단계는 6000개 파일을 복사하느라 수 분간 출력이 멈춘 것처럼 보일 수 있습니다." -ForegroundColor DarkGray
     if ($IsPyLauncher) {
-        & $PythonCmd.Source -3 -m PyInstaller @PyiArgs $SpecName
+        & $PythonExe -3 -m PyInstaller @PyiArgs $SpecName
     } else {
-        & $PythonCmd.Source -m PyInstaller @PyiArgs $SpecName
+        & $PythonExe -m PyInstaller @PyiArgs $SpecName
     }
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed with exit code $LASTEXITCODE"

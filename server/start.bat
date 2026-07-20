@@ -2,10 +2,20 @@
 setlocal
 
 set "ROOT=%~dp0"
+
+rem ── 기동 설정 로드 (env\server.env 가 정본) ─────────────────────────────────
+rem HOST/PORT 는 이 bat 이 아니라 env\server.env 에서 관리한다. 미리 정의된
+rem 환경변수는 무시하고 파일 값으로 덮는다 (설정 출처를 파일 하나로 고정).
+set "ENV_FILE=%ROOT%env\server.env"
+set "HOST="
+set "PORT="
+if exist "%ENV_FILE%" (
+    for /f "usebackq eol=# tokens=1,2 delims== " %%A in ("%ENV_FILE%") do set "%%A=%%B"
+) else (
+    echo [start] WARN: 설정 파일 없음 - 기본값으로 기동합니다: %ENV_FILE%
+)
+if not defined HOST set "HOST=0.0.0.0"
 if not defined PORT set "PORT=8080"
-rem LAN 노출 강제: 환경변수에 HOST 가 미리 정의돼 있어도 무시하고 0.0.0.0 으로 bind 한다.
-rem (로컬 전용으로 쓰려면 이 라인을 set "HOST=127.0.0.1" 으로 직접 수정)
-set "HOST=0.0.0.0"
 if not defined DATASET set "DATASET=current"
 
 rem terminate.bat 이 교체 작업 중 오작동을 막으려고 일시 정지시킨 watchdog 을, 기동을
@@ -66,6 +76,7 @@ rem venv 가 준비됐으니 항상 venv python 으로 고정
 set PY_CMD="%ROOT%.venv\Scripts\python.exe"
 
 echo [start] Python    : %PY_CMD%
+echo [start] Config    : %ENV_FILE%
 echo [start] Bind host : %HOST%
 echo [start] Port      : %PORT%
 

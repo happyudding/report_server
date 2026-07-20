@@ -2,3 +2,7 @@
 # 잘못 계산해 줄 앞부분이 잘려 빌드/실행이 깨진다). core.autocrlf 설정과 무관하게 강제.
 *.bat text eol=crlf
 *.cmd text eol=crlf
+# PowerShell 도 동일. 게다가 .ps1 은 한글을 담으므로 반드시 UTF-8 BOM 으로 저장할 것 —
+# BOM 이 없으면 PowerShell 5.1 이 시스템 ANSI(한국어 Windows=cp949)로 읽어 한글이 깨지고,
+# 운 나쁘면 따옴표까지 어긋나 파스 에러가 난다.
+*.ps1 text eol=crlf

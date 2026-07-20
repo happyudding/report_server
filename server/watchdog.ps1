@@ -13,14 +13,30 @@
 # 수동 점검(terminate.bat 로 서버를 내려두는 시간)에는 watchdog 을 먼저 일시 정지할 것:
 #   schtasks /Change /TN report-server-watchdog /DISABLE   (점검 후 /ENABLE)
 
+# HOST/PORT 는 env\server.env 에서 읽는다 (start.bat 과 같은 파일 = 같은 설정).
+# 인자로 넘기면 파일 값보다 우선한다. 파일도 인자도 없으면 0.0.0.0:8080.
 param(
-    [int]$Port = $(if ($env:PORT) { [int]$env:PORT } else { 8080 }),
-    # start.bat 과 동일 규약 — LAN 노출 강제(0.0.0.0). 로컬 전용 운영이면 -BindHost 127.0.0.1
-    [string]$BindHost = '0.0.0.0'
+    [int]$Port = 0,
+    [string]$BindHost = ''
 )
 
 $ErrorActionPreference = 'SilentlyContinue'
 $serverDir  = Split-Path -Parent $MyInvocation.MyCommand.Path   # ...\server
+
+$envFile = Join-Path $serverDir 'env\server.env'
+if (Test-Path $envFile) {
+    foreach ($line in (Get-Content $envFile -ErrorAction SilentlyContinue)) {
+        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([^\s#]+)') {
+            Set-Item -Path ('env:' + $Matches[1]) -Value $Matches[2]
+        }
+    }
+}
+if (-not $BindHost) {
+    if ($env:HOST) { $BindHost = $env:HOST } else { $BindHost = '0.0.0.0' }
+}
+if (-not $Port) {
+    if ($env:PORT) { $Port = [int]$env:PORT } else { $Port = 8080 }
+}
 $logDir     = Join-Path $serverDir 'log'
 $stateFile  = Join-Path $logDir 'watchdog.state'
 $eventsFile = Join-Path $logDir 'watchdog_events.log'
