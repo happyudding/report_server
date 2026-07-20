@@ -387,12 +387,15 @@ def _migrate(conn):
 def init_report_db():
     REPORT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(REPORT_DB_PATH) as conn:
-        _migrate(conn)
-        conn.executescript(SCHEMA)
+        # PRAGMA 를 DDL 앞에 건다 — busy_timeout 없이 ALTER/CREATE INDEX 가 돌면 부팅 시
+        # 다른 커넥션과 겹칠 때 대기 없이 "database is locked" 로 실패한다. journal_mode 는
+        # 트랜잭션 중 변경 불가라 첫 DML 이전이 유일하게 안전한 위치.
+        conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA temp_store = MEMORY")
-        conn.execute("PRAGMA busy_timeout = 5000")
+        _migrate(conn)
+        conn.executescript(SCHEMA)
 
 
 @contextmanager

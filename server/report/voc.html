@@ -107,24 +107,39 @@ textarea { width: 100%; min-height: 110px; resize: vertical; }
 
 /* ── 목록 테이블 ─────────────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }
-.voc-table { width: 100%; border-collapse: collapse; }
+/* table-layout:fixed — 아래 폭 지정이 그대로 먹고, 폭을 안 준 제목이 남는 자리를 전부 갖는다 */
+.voc-table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 620px; }
 .voc-table th {
   font-size: 15px; color: #64748b; font-weight: 700; text-align: left;
-  padding: 8px 10px; border-bottom: 2px solid #e5e7eb; white-space: nowrap;
+  padding: 8px 8px; border-bottom: 2px solid #e5e7eb; white-space: nowrap;
 }
 .voc-table td {
-  padding: 10px; border-bottom: 1px solid #e5e7eb; font-size: 17px;
+  padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 17px;
   vertical-align: middle;
 }
 .voc-table tbody tr { cursor: pointer; }
 .voc-table tbody tr:hover { background: #f8fafc; }
-.col-no { width: 64px; color: #94a3b8; font-size: 16px; }
-.col-cat, .col-status, .col-user, .col-date { white-space: nowrap; }
-.col-user { font-size: 16px; color: #475569; }
-.col-date { font-size: 15px; color: #94a3b8; }
-.row-title { font-weight: 600; word-break: break-word; }
+.col-no { width: 52px; color: #94a3b8; font-size: 15px; }
+.col-cat { width: 82px; }
+.col-status { width: 68px; }
+.col-user { width: 96px; font-size: 15px; color: #475569; }
+.col-date { width: 88px; font-size: 14px; color: #94a3b8; }
+.col-cat, .col-status, .col-user, .col-date { white-space: nowrap; overflow: hidden; }
+/* 제목: 남는 폭 전부. 길면 말줄임하고 전체는 툴팁(title 속성)으로 본다 */
+.col-title { overflow: hidden; }
+.title-cell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.row-title {
+  font-weight: 600; flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .row-title.is-close { color: #94a3b8; font-weight: 500; }
-.comment-count { font-size: 15px; color: #4a90e2; margin-left: 6px; white-space: nowrap; }
+.comment-count { flex: 0 0 auto; font-size: 15px; color: #4a90e2; white-space: nowrap; }
+/* 게스트(이름만 적고 쓴 글) 표시 — Honey 계정 글과 구분해 이름 사칭을 드러낸다 */
+.guest-badge {
+  display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 4px;
+  background: #e2e8f0; color: #64748b; font-size: 12px; font-weight: 700;
+  vertical-align: middle;
+}
 
 .cat-badge {
   display: inline-block; padding: 2px 10px; border-radius: 4px;
@@ -239,6 +254,7 @@ html[data-theme="dark"] .col-user { color: #c6ccd6; }
 html[data-theme="dark"] .col-no,
 html[data-theme="dark"] .col-date { color: #8b94a3; }
 html[data-theme="dark"] .row-title.is-close { color: #767f8c; }
+html[data-theme="dark"] .guest-badge { background: #2f343e; color: #9aa3b0; }
 html[data-theme="dark"] .status-badge.open { background: #123420; color: #4ade80; border-color: #1d5c36; }
 html[data-theme="dark"] .status-badge.close { background: #262a33; color: #8b94a3; border-color: #3a3f4b; }
 html[data-theme="dark"] .detail-meta { color: #8b94a3; border-bottom-color: #2a2e37; }
@@ -279,7 +295,7 @@ html[data-theme="dark"] .empty-note { color: #767f8c; }
     <button type="button" class="submit-btn" id="newBtn">✏️ VOC 등록</button>
   </div>
   <div class="form-notice" id="anonNotice" hidden>
-    Honey 를 통해 접속하면 VOC 를 등록할 수 있습니다. (일반 브라우저는 조회만 가능)
+    Honey 로 접속하면 PC 계정으로 자동 등록됩니다. 일반 브라우저는 등록할 때 이름을 입력해주세요.
   </div>
   <div class="table-wrap">
     <table class="voc-table">
@@ -304,9 +320,12 @@ html[data-theme="dark"] .empty-note { color: #767f8c; }
 <div class="card" id="viewForm" hidden>
   <h2 id="formTitle">VOC 등록</h2>
   <div class="form-notice" id="formAnonNotice" hidden>
-    Honey 를 통해 접속하면 VOC 를 등록할 수 있습니다. (일반 브라우저는 조회만 가능)
+    이름을 입력하면 등록할 수 있습니다. 등록한 글은 <b>이 브라우저에서만</b> 수정·삭제됩니다.
   </div>
   <div class="form-row">
+    <label id="guestNameLabel" hidden>이름
+      <input type="text" id="guestName" maxlength="20" placeholder="이름 (1~20자)">
+    </label>
     <label>분류
       <select id="vocCategory">
         <option>버그</option>
@@ -361,10 +380,9 @@ html[data-theme="dark"] .empty-note { color: #767f8c; }
   <div class="comment-section">
     <h3 id="commentTitle">댓글</h3>
     <div id="commentList"></div>
-    <div class="form-notice" id="commentAnonNotice" hidden>
-      Honey 를 통해 접속하면 댓글을 남길 수 있습니다.
-    </div>
     <div class="comment-form">
+      <input type="text" id="commentGuestName" maxlength="20"
+             placeholder="이름 (1~20자)" style="margin-bottom:8px;" hidden>
       <textarea id="commentInput" maxlength="1000" placeholder="댓글을 입력해주세요"></textarea>
       <div class="form-actions" style="margin-top:8px;">
         <button type="button" class="submit-btn" id="commentBtn">댓글 등록</button>
@@ -437,6 +455,14 @@ function applyIdentity(data) {
   state.isAdmin = !!data.is_admin;
   state.identityLoaded = true;
 }
+// 게스트(일반 브라우저) 이름은 다음 등록 때 다시 치지 않게 브라우저에 기억해둔다.
+// 소유권 증표는 이 값이 아니라 서버가 심는 httponly 쿠키다 — 여기 값을 고쳐도 권한은 안 바뀐다.
+function savedGuestName() {
+  try { return localStorage.getItem("voc_guest_name") || ""; } catch (e) { return ""; }
+}
+function saveGuestName(name) {
+  try { localStorage.setItem("voc_guest_name", name); } catch (e) {}
+}
 
 // ── 테마 토글 (검색결과 페이지와 동일 동작·localStorage 키 공유) ──────────
 (function () {
@@ -503,9 +529,7 @@ async function loadList(page) {
 }
 
 function renderList(data) {
-  $("anonNotice").hidden = !!state.user;
-  $("newBtn").disabled = !state.user;
-  $("newBtn").title = state.user ? "" : "Honey 를 통해 접속해야 등록할 수 있습니다.";
+  $("anonNotice").hidden = !!state.user;   // 등록은 게스트도 가능 — 안내만 다르다
   $("clearSearchBtn").hidden = !state.q;
   $("listCount").textContent = state.q
     ? `검색 ${data.total}건` : `전체 ${data.total}건`;
@@ -527,11 +551,15 @@ function renderList(data) {
     catTd.appendChild(el("span", catClass(it.category), it.category));
     tr.appendChild(catTd);
 
-    const titleTd = el("td");
     const isClose = it.status === "close";
-    titleTd.appendChild(el("span", "row-title" + (isClose ? " is-close" : ""), it.title));
+    const titleTd = el("td", "col-title");
+    const cell = el("div", "title-cell");
+    const titleSpan = el("span", "row-title" + (isClose ? " is-close" : ""), it.title);
+    titleSpan.title = it.title;                 // 말줄임된 긴 제목은 툴팁으로 전체 확인
+    cell.appendChild(titleSpan);
     if (it.comment_count > 0)
-      titleTd.appendChild(el("span", "comment-count", `💬 ${it.comment_count}`));
+      cell.appendChild(el("span", "comment-count", `💬 ${it.comment_count}`));
+    titleTd.appendChild(cell);
     tr.appendChild(titleTd);
 
     const stTd = el("td", "col-status");
@@ -539,7 +567,11 @@ function renderList(data) {
                         isClose ? "Close" : "Open"));
     tr.appendChild(stTd);
 
-    tr.appendChild(el("td", "col-user", it.user_id));
+    const userTd = el("td", "col-user");
+    userTd.appendChild(document.createTextNode(it.user_id));
+    userTd.title = it.user_id + (it.is_guest ? " (게스트)" : "");
+    if (it.is_guest) userTd.appendChild(el("span", "guest-badge", "guest"));
+    tr.appendChild(userTd);
     tr.appendChild(el("td", "col-date", fmtDate(it.created_at)));
     tr.addEventListener("click", () => go(`#voc/${it.id}`));
     tbody.appendChild(tr);
@@ -623,9 +655,11 @@ async function openForm(vocId) {
     contentEl.value = "";
   }
   $("charCount").textContent = `${contentEl.value.length} / 4000`;
-  $("formAnonNotice").hidden = !!state.user;
-  $("viewForm").querySelectorAll("select, input[type=text], textarea, .submit-btn, #fileBtn")
-    .forEach(node => { node.disabled = !state.user; });
+  // Honey 신원이 없으면 이름을 직접 받는다 (등록 자체는 게스트도 가능)
+  const guest = !state.user;
+  $("formAnonNotice").hidden = !guest;
+  $("guestNameLabel").hidden = !guest;
+  if (guest && !$("guestName").value) $("guestName").value = savedGuestName();
 }
 
 const fileInput = $("fileInput");
@@ -673,6 +707,8 @@ $("submitBtn").addEventListener("click", async () => {
   const title = $("vocTitle").value.trim();
   const content = contentEl.value.trim();
   const category = $("vocCategory").value;
+  const guestName = state.user ? "" : $("guestName").value.trim();
+  if (!state.user && !guestName) { toast("이름을 입력해주세요."); return; }
   if (!title) { toast("제목을 입력해주세요."); return; }
   if (!content) { toast("본문을 입력해주세요."); return; }
   const btn = $("submitBtn");
@@ -690,6 +726,7 @@ $("submitBtn").addEventListener("click", async () => {
     fd.append("category", category);
     fd.append("title", title);
     fd.append("content", content);
+    if (guestName) fd.append("guest_name", guestName);
     selectedFiles.forEach(sf => fd.append("screenshots", sf.file));
     // Content-Type 은 브라우저가 boundary 포함 자동 설정 — 수동 지정 금지
     const r = await fetch(API, {
@@ -698,6 +735,7 @@ $("submitBtn").addEventListener("click", async () => {
     if (r.status === 201) {
       const body = await r.json();
       clearFiles();
+      if (guestName) saveGuestName(guestName);
       toast("VOC 가 등록되었습니다.");
       go(`#voc/${body.id}`);
     } else {
@@ -729,8 +767,8 @@ function renderDetail() {
   $("detailStatus").className = `status-badge ${isClose ? "close" : "open"}`;
   $("detailStatus").textContent = isClose ? "Close" : "Open";
   $("detailTitle").textContent = voc.title;
-  $("detailMeta").textContent =
-    `#${voc.id} · ${voc.user_id} · ${fmtTime(voc.created_at)}`;
+  $("detailMeta").textContent = `#${voc.id} · ${voc.user_id}`
+    + (voc.is_guest ? " (게스트)" : "") + ` · ${fmtTime(voc.created_at)}`;
   $("detailContent").textContent = voc.content;
 
   const thumbs = $("detailThumbs");
@@ -766,6 +804,7 @@ function renderComments() {
     const item = el("div", "comment-item");
     const head = el("div", "comment-head");
     head.appendChild(el("span", "comment-user", c.user_id));
+    if (c.is_guest) head.appendChild(el("span", "guest-badge", "guest"));
     head.appendChild(el("span", "comment-time", fmtTime(c.created_at)));
     head.appendChild(el("span", "spacer"));
     if (c.can_delete) {
@@ -777,9 +816,11 @@ function renderComments() {
     item.append(head, el("div", "comment-body", c.content));
     list.appendChild(item);
   }
-  $("commentAnonNotice").hidden = !!state.user;
-  $("commentInput").disabled = !state.user;
-  $("commentBtn").disabled = !state.user;
+  // 댓글도 게스트 허용 — Honey 신원이 없으면 이름 칸을 띄운다
+  const guest = !state.user;
+  const nameEl = $("commentGuestName");
+  nameEl.hidden = !guest;
+  if (guest && !nameEl.value) nameEl.value = savedGuestName();
 }
 
 $("backBtn").addEventListener("click", () => go("#"));
@@ -803,13 +844,17 @@ $("statusBtn").addEventListener("click", async () => {
 $("commentBtn").addEventListener("click", async () => {
   const input = $("commentInput");
   const content = input.value.trim();
+  const guestName = state.user ? "" : $("commentGuestName").value.trim();
+  if (!state.user && !guestName) { toast("이름을 입력해주세요."); return; }
   if (!content) { toast("댓글을 입력해주세요."); return; }
   const btn = $("commentBtn");
   btn.disabled = true;
   try {
-    const r = await api(`${API}/${detail.voc.id}/comments`, { method: "POST", json: { content } });
+    const body = guestName ? { content, guest_name: guestName } : { content };
+    const r = await api(`${API}/${detail.voc.id}/comments`, { method: "POST", json: body });
     if (r.ok) {
       input.value = "";
+      if (guestName) saveGuestName(guestName);
       toast("댓글이 등록되었습니다.");
       await openDetail(detail.voc.id);
     } else {

@@ -45,6 +45,19 @@ def _log_audit(session, result):
         pass
 
 
+def _remove_rawedit_backups(akey):
+    """Raw Data 편집 백업(webreport_backup/<akey>/) 정리 — 마지막 참조가 사라질 때.
+
+    storage_gateway.delete_report_artifacts 는 이 디렉토리를 모른다(백업은 web_report
+    rawedit 소유). best-effort."""
+    try:
+        from web_report import rawedit
+        if rawedit.remove_backups(akey, Path(config.REPORT_UPLOAD_DIR)):
+            _log.info("[cleanup] rawedit backup removed: %s", akey)
+    except Exception:
+        _log.exception("[cleanup] rawedit backup cleanup failed for %s", akey)
+
+
 def _cleanup_one(session, dry_run):
     """만료 세션 1건 처리. 실제 삭제했으면 True 반환."""
     sid = session["session_id"]
@@ -75,6 +88,7 @@ def _cleanup_one(session, dry_run):
             web_report_service.invalidate_caches(akey)
         except Exception:
             _log.exception("cleanup cache invalidate failed for %s", akey)
+        _remove_rawedit_backups(akey)
     report_db.delete_session(sid)
     _log_audit(session, "ok")
     _log.info("[cleanup] deleted session=%s akey=%s last_ref=%s", sid, akey, last_ref)
@@ -138,6 +152,7 @@ def _purge_fs_orphans(dry_run):
                 web_report_service.invalidate_caches(akey)
             except Exception:
                 _log.exception("orphan purge cache invalidate failed for %s", akey)
+            _remove_rawedit_backups(akey)
             _log.info("[cleanup] purged orphan artifacts akey=%s", akey)
         except Exception:
             _log.exception("[cleanup] orphan artifact purge failed for %s", entry)
@@ -145,12 +160,15 @@ def _purge_fs_orphans(dry_run):
 
 
 def run_cleanup(dry_run=None):
-    """ingest 크래시 잔존물 회수 + 감사 로그 롤오프. dry_run 미지정 시 config 기본값 사용.
-    {'scanned','deleted','dry_run','audit_purged','fs_orphans'} 요약 반환.
+    """ingest 크래시 잔존물 회수 + 휴지통 경과분 purge + 감사 로그 롤오프.
+    dry_run 미지정 시 config 기본값 사용.
+    {'scanned','deleted','dry_run','audit_purged','fs_orphans','trash_scanned','trash_purged'}
+    요약 반환.
 
     6개월 만료 세션은 더 이상 삭제하지 않는다 — 데이터 유실 방지를 위해 report_tiering 이
     산출물만 S3 로 아카이브하고(세션/DB 는 유지) 종전 retention 삭제를 대체한다.
-    여기서는 산출물 참조가 없는 orphan pending(48h) 세션 행만 회수한다."""
+    여기서는 산출물 참조가 없는 orphan pending(48h) 세션 행과, 사용자가 삭제해 휴지통에
+    들어간 뒤 REPORT_TRASH_RETENTION_DAYS(기본 30일)가 지난 세션을 회수한다."""
     if dry_run is None:
         dry_run = config.REPORT_CLEANUP_DRYRUN
     audit_purged = _purge_audit_logs()
@@ -171,6 +189,26 @@ def run_cleanup(dry_run=None):
         except Exception:
             _log.exception("[cleanup] session %s failed", session.get("session_id"))
 
+    # 휴지통(soft delete) 경과분 영구 정리 — 관리자 수동 purge 와 같은 경로를 재사용한다.
+    # 사용자 삭제가 soft delete 로 바뀐 뒤 휴지통 세션은 만료 조회에서 제외되므로, 여기서
+    # 걷어가지 않으면 삭제할수록 산출물이 영구 잔존한다.
+    def _trash_audit(session, result):
+        _log_audit(session, result)
+        if result == "dryrun":
+            _log.info("[cleanup:dry-run] would purge trashed session=%s akey=%s deleted_at=%s",
+                      session.get("session_id"), session.get("analysis_key"),
+                      session.get("deleted_at"))
+
+    try:
+        from admin_panel import sessions_admin
+        trash = sessions_admin.purge_trashed(all_expired=True, dry_run=dry_run,
+                                             audit=_trash_audit)
+        if trash["purged"]:
+            _log.info("[cleanup] purged trashed sessions: %s", trash["purged"])
+    except Exception:
+        trash = {"scanned": 0, "purged": []}
+        _log.exception("[cleanup] trash purge failed")
+
     # 세션행 생성 전 실패한 ingest 의 FS 고아 산출물(세션 참조 없는 akey 디렉터리) 회수.
     try:
         fs_orphans = _purge_fs_orphans(dry_run)
@@ -178,10 +216,13 @@ def run_cleanup(dry_run=None):
         fs_orphans = 0
         _log.exception("[cleanup] fs orphan purge failed")
 
-    _log.info("[cleanup] done: orphan_pending=%d deleted=%d fs_orphans=%d dry_run=%s "
-              "audit_purged=%d", len(orphans), deleted, fs_orphans, dry_run, audit_purged)
+    _log.info("[cleanup] done: orphan_pending=%d deleted=%d trash_scanned=%d trash_purged=%d "
+              "fs_orphans=%d dry_run=%s audit_purged=%d",
+              len(orphans), deleted, trash["scanned"], len(trash["purged"]), fs_orphans,
+              dry_run, audit_purged)
     return {"scanned": len(orphans), "deleted": deleted, "dry_run": dry_run,
-            "audit_purged": audit_purged, "fs_orphans": fs_orphans}
+            "audit_purged": audit_purged, "fs_orphans": fs_orphans,
+            "trash_scanned": trash["scanned"], "trash_purged": len(trash["purged"])}
 
 
 def start_cleanup_scheduler():

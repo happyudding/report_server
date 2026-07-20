@@ -45,7 +45,7 @@ os.environ["REPORT_S3_BUCKET"] = ""                             # S3 비활성 �
 from flask import Flask  # noqa: E402
 
 import config  # noqa: E402  (마이그레이션 시나리오에서 DB 경로 교체)
-from admin_panel import GATE_COOKIE_VOC, gate_token  # noqa: E402  (관리자 쿠키 시뮬레이션)
+from admin_panel import GATE_COOKIE_VOC, voc_gate_token  # noqa: E402  (관리자 쿠키 시뮬레이션)
 from report.report_extension import report_bp  # noqa: E402  (전체 라우트 등록 트리거)
 from database import report_db, voc_db  # noqa: E402
 
@@ -131,7 +131,7 @@ def _delete(voc_id, ua_user="tester", csrf=True):
 def _admin(on):
     """관리자 게이트 쿠키(admin 로그인이 /pe/report 경로로 발급하는 사본) 시뮬레이션."""
     if on:
-        client.set_cookie(GATE_COOKIE_VOC, gate_token(), path="/pe/report")
+        client.set_cookie(GATE_COOKIE_VOC, voc_gate_token(), path="/pe/report")
     else:
         client.delete_cookie(GATE_COOKIE_VOC, path="/pe/report")
 

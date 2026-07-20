@@ -42,6 +42,20 @@ def daily_counts(days=30):
     return {"days": days, "rows": out}
 
 
+def client_error_count(hours=24):
+    """최근 N시간 client_error(브라우저 beacon) 감사 행 수 — 현황 탭 경고 타일용.
+
+    get_audit_logs 로 받아 세는 방식은 limit 상한(≤1000)에 걸려 과소집계되므로
+    COUNT 로 직접 센다."""
+    hours = _clamp_days(hours, default=24, lo=1, hi=720)
+    cutoff = int(time.time()) - hours * 3600
+    with report_db.get_conn() as conn:
+        cnt = conn.execute(
+            "SELECT COUNT(*) FROM report_audit_log "
+            "WHERE action = 'client_error' AND created_at >= ?", (cutoff,)).fetchone()[0]
+    return {"hours": hours, "count": int(cnt)}
+
+
 def user_ranking(days=30, limit=50):
     """사용자별 사용량 순위. 신원은 client_user → client_host → client_ip 순 폴백
     (전부 클라이언트 신고값 + IP 라 참고용). 'system' 은 cleanup 스케줄러."""

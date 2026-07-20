@@ -76,6 +76,19 @@ def status_summary():
     return {r["status"] or "(없음)": r["cnt"] for r in rows}
 
 
+def _remove_rawedit_backups(akey):
+    """Raw Data 편집 백업(webreport_backup/<akey>/) 정리 — 마지막 참조 세션 삭제 시.
+
+    storage_gateway.delete_report_artifacts 는 이 디렉토리를 모르므로(백업은 web_report
+    rawedit 소유) 여기서 함께 지운다. best-effort."""
+    try:
+        from web_report import rawedit
+        if rawedit.remove_backups(akey, Path(config.REPORT_UPLOAD_DIR)):
+            _log.info("[admin-panel] rawedit backup removed: %s", akey)
+    except Exception:
+        _log.exception("[admin-panel] rawedit backup cleanup failed for %s", akey)
+
+
 def _delete_one(session):
     """세션 1건 삭제 (PIN 검사 없음). report_routes 삭제 플로우와 동일한 정리 경로."""
     sid = session["session_id"]
@@ -95,6 +108,7 @@ def _delete_one(session):
             web_report_service.invalidate_caches(akey)
         except Exception:
             _log.exception("[admin-panel] cache invalidate failed for %s", akey)
+        _remove_rawedit_backups(akey)
     report_db.delete_session(sid)
 
 
@@ -159,6 +173,7 @@ def _purge_one(session):
             web_report_service.invalidate_caches(akey)
         except Exception:
             _log.exception("[admin-panel] purge cache invalidate failed for %s", akey)
+        _remove_rawedit_backups(akey)
     try:
         for warning in storage_gateway.delete_note_images(sid):
             _log.warning("[admin-panel] purge note image (%s): %s", sid, warning)
@@ -170,7 +185,8 @@ def _purge_one(session):
 def purge_trashed(session_ids=None, all_expired=False, dry_run=True, cutoff_days=None,
                   audit=None):
     """휴지통 세션 영구 삭제(purge) — deleted_at 이 cutoff_days(기본 REPORT_TRASH_RETENTION_DAYS)
-    이전인 경과분만 대상. 관리자 수동 실행 전용(스케줄러 자동 purge 없음).
+    이전인 경과분만 대상. 관리자 수동 실행(라우트)과 cleanup 스케줄러
+    (report_cleanup.run_cleanup — REPORT_CLEANUP_DRYRUN 존중)가 같이 쓴다.
 
     all_expired=True 면 경과분 전체, 아니면 session_ids 중 경과분만(미경과분은 skipped).
     dry_run=True 면 실제 정리 없이 대상만 집계/감사(result='dryrun'). audit(session, result)

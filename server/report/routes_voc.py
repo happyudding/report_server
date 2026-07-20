@@ -3,19 +3,26 @@
 데이터는 별도 SQLite(database/voc_db.py, REPORT_VOC_DB_PATH)에 저장하고, 스크린샷
 파일은 동결된 storage_gateway 의 note_image 공개 API 를 voc_<id> 네임스페이스로
 재사용한다(S3/로컬 폴백 그대로). 조회는 공개, 등록·수정·본인 글 삭제·댓글은 Honey
-UA/SSO 신원 + CSRF. 처리 상태(Open/Close) 전환만 관리자 전용이며, 관리자 판별은
-admin 대시보드 게이트 쿠키의 /pe/report 경로 사본(_is_admin)으로 한다.
-감사는 voc_* 액션으로 메인 report.db 에 기록한다.
+UA/SSO 신원 또는 **게스트 이름**(일반 브라우저) + CSRF. 처리 상태(Open/Close) 전환만
+관리자 전용이며, 관리자 판별은 admin 대시보드 게이트 쿠키의 /pe/report 경로
+사본(_is_admin)으로 한다. 감사는 voc_* 액션으로 메인 report.db 에 기록한다.
+
+**게스트 신원**: Honey UA 가 없는 브라우저는 이름을 직접 적어 등록·댓글을 쓸 수 있다.
+이름은 표시용일 뿐이라 그것만으로는 남의 글을 수정·삭제할 수 있으므로, 첫 게스트
+쓰기에서 무작위 토큰을 발급해 httponly 쿠키(_GUEST_COOKIE)에 심고 글/댓글 행에 저장한다.
+이후 수정·삭제 권한은 **그 토큰을 가진 브라우저**에게만 준다(이름 사칭 무력화).
+게스트 글은 is_guest 로 표시해 Honey 계정 글과 화면에서 구분한다.
 """
 import logging
 import hmac
 import re
+import secrets
 import uuid
 
 from flask import Response, abort, jsonify, request
 
 import storage_gateway
-from admin_panel import GATE_COOKIE_VOC, gate_token
+from admin_panel import GATE_COOKIE_VOC, voc_gate_token
 from auth_identity import current_user as _current_user
 from config import REPORT_VIEW_HTML
 from database import report_db, voc_db
@@ -38,6 +45,13 @@ _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _JPEG_MAGIC = b"\xff\xd8\xff"
 _IMAGE_ID_RE = re.compile(r"^[a-f0-9]{32}\.(png|jpg)$")
 
+# 게스트(일반 브라우저) 신원 — 이름은 표시용, 소유권은 이 쿠키의 토큰이 증명한다.
+_GUEST_COOKIE = "report_voc_guest"
+_GUEST_COOKIE_PATH = "/pe/report"
+_GUEST_COOKIE_MAX_AGE = 180 * 24 * 3600     # 반년 — 자기 글을 나중에 고칠 수 있게
+_GUEST_NAME_MAX = 20
+_GUEST_TOKEN_RE = re.compile(r"^[a-f0-9]{32}$")
+
 
 def _ns(voc_id):
     """storage_gateway note_image 네임스페이스 — 세션 id 형식(<epoch>_<hex>)과 충돌 불가."""
@@ -45,8 +59,8 @@ def _ns(voc_id):
 
 
 def _is_admin():
-    """관리자 여부 — admin 대시보드 로그인이 발급한 게이트 쿠키(/pe/report 경로 사본)."""
-    return hmac.compare_digest(request.cookies.get(GATE_COOKIE_VOC, ""), gate_token())
+    """관리자 여부 — admin 대시보드 로그인이 발급한 VOC 전용 게이트 쿠키(/pe/report 경로)."""
+    return hmac.compare_digest(request.cookies.get(GATE_COOKIE_VOC, ""), voc_gate_token())
 
 
 def _screenshot_urls(voc_id, images):
@@ -54,6 +68,50 @@ def _screenshot_urls(voc_id, images):
     return [{"image_id": img["image_id"],
              "url": f"/pe/report/api/voc/{voc_id}/screenshots/{img['image_id']}"}
             for img in images]
+
+
+def _guest_token():
+    """이 브라우저의 게스트 토큰 (형식 위반·없음이면 "")."""
+    token = request.cookies.get(_GUEST_COOKIE, "")
+    return token if _GUEST_TOKEN_RE.match(token) else ""
+
+
+def _identity():
+    """(uid, guest_token) — Honey 신원이 있으면 게스트 토큰은 쓰지 않는다."""
+    uid = _current_user()
+    return (uid, "") if uid else ("", _guest_token())
+
+
+def _owns(row, uid, gtoken):
+    """이 글/댓글의 작성자인가. Honey 계정 글과 게스트 글은 서로 넘볼 수 없다."""
+    if row["guest_token"]:
+        return bool(gtoken) and hmac.compare_digest(row["guest_token"], gtoken)
+    return bool(uid) and row["user_id"] == uid
+
+
+def _guest_name(body):
+    """게스트 이름 검증 — (이름, 에러응답) 중 하나만 채워 반환."""
+    name = (body.get("guest_name") or "").strip()
+    if not 1 <= len(name) <= _GUEST_NAME_MAX:
+        return None, (jsonify(
+            {"error": f"이름을 입력해주세요 (1~{_GUEST_NAME_MAX}자)."}), 400)
+    return name, None
+
+
+def _issue_guest_cookie(resp, token):
+    """게스트 토큰을 httponly 쿠키로 심는다 (이미 있으면 만료만 갱신)."""
+    resp.set_cookie(_GUEST_COOKIE, token, max_age=_GUEST_COOKIE_MAX_AGE,
+                    httponly=True, samesite="Lax", secure=request.is_secure,
+                    path=_GUEST_COOKIE_PATH)
+    return resp
+
+
+def _public_row(row, **extra):
+    """응답용 글/댓글 — guest_token 을 걷어내고 is_guest 불린만 남긴다."""
+    pub = dict(row)
+    pub["is_guest"] = bool(pub.pop("guest_token", None))
+    pub.update(extra)
+    return pub
 
 
 def _text_field(body, name, maxlen):
@@ -109,14 +167,13 @@ def voc_detail(voc_id):
     voc = voc_db.get_voc(voc_id)
     if not voc:
         abort(404, "voc not found")
-    uid = _current_user()
+    uid, gtoken = _identity()
     is_admin = _is_admin()
-    mine = bool(uid) and voc["user_id"] == uid
-    comments = voc_db.list_comments(voc_id)
-    for c in comments:
-        c["can_delete"] = is_admin or (bool(uid) and c["user_id"] == uid)
+    mine = _owns(voc, uid, gtoken)
+    comments = [_public_row(c, can_delete=is_admin or _owns(c, uid, gtoken))
+                for c in voc_db.list_comments(voc_id)]
     return jsonify({
-        "voc": voc,
+        "voc": _public_row(voc),
         "screenshots": _screenshot_urls(voc_id, voc_db.list_voc_images(voc_id)),
         "comments": comments,
         "user": uid, "is_admin": is_admin,
@@ -126,14 +183,19 @@ def voc_detail(voc_id):
 
 @report_bp.post("/api/voc")
 def voc_create():
-    """VOC 등록 (multipart: category/title/content/screenshots ≤3장).
+    """VOC 등록 (multipart: category/title/content/guest_name/screenshots ≤3장).
 
+    Honey 신원이 없으면 guest_name 이 필요하고, 그 브라우저에 게스트 토큰을 발급한다.
     전 검증 통과 후에만 쓰기 시작하고, 이미지 저장 실패 시 생성분(VOC 행 + 저장된
     이미지)을 정리해 불완전한 글이 남지 않게 한다."""
     _require_csrf()
-    uid = _current_user()
+    uid, gtoken = _identity()
+    author = uid
     if not uid:
-        return jsonify({"error": "Honey 를 통해 접속한 사용자만 등록할 수 있습니다."}), 401
+        author, err = _guest_name(request.form)
+        if err:
+            return err
+        gtoken = gtoken or secrets.token_hex(16)   # 첫 게스트 쓰기면 새로 발급
     if (request.content_length or 0) > _REQUEST_MAX_BYTES:
         return jsonify({"error": f"요청이 너무 큽니다 (스크린샷 최대 {_IMAGE_MAX_COUNT}장, 장당 2MB)."}), 413
     category = (request.form.get("category") or "").strip()
@@ -163,7 +225,8 @@ def voc_create():
         else:
             return jsonify({"error": "PNG/JPEG 이미지만 업로드할 수 있습니다."}), 400
         blobs.append((data, ext))
-    voc_id = voc_db.create_voc(uid, category, title, content)
+    voc_id = voc_db.create_voc(author, category, title, content,
+                               guest_token=gtoken or None)
     try:
         metas = []
         for i, (data, ext) in enumerate(blobs):
@@ -181,21 +244,24 @@ def voc_create():
         voc_db.delete_voc(voc_id)
         return jsonify({"error": "스크린샷 저장에 실패했습니다 — 다시 시도해주세요."}), 500
     _audit_voc("voc_create", voc_id,
-               f"category={category} images={len(blobs)} title={title[:80]}", uid)
-    return jsonify({"ok": True, "id": voc_id}), 201
+               f"category={category} images={len(blobs)} title={title[:80]}",
+               uid or f"guest:{author}")
+    resp = jsonify({"ok": True, "id": voc_id})
+    resp.status_code = 201
+    return _issue_guest_cookie(resp, gtoken) if not uid else resp
 
 
 @report_bp.patch("/api/voc/<int:voc_id>")
 def voc_update(voc_id):
-    """VOC 본문 수정 — 작성자 본인만. 스크린샷은 수정 대상이 아니다."""
+    """VOC 본문 수정 — 작성자 본인만(게스트는 등록한 브라우저에서만).
+
+    스크린샷은 수정 대상이 아니다."""
     _require_csrf()
-    uid = _current_user()
-    if not uid:
-        return jsonify({"error": "Honey 를 통해 접속한 사용자만 수정할 수 있습니다."}), 401
+    uid, gtoken = _identity()
     voc = voc_db.get_voc(voc_id)
     if not voc:
         abort(404, "voc not found")
-    if voc["user_id"] != uid:
+    if not _owns(voc, uid, gtoken):
         return jsonify({"error": "본인이 등록한 VOC 만 수정할 수 있습니다."}), 403
     body = request.get_json(silent=True) or {}
     category = (body.get("category") or "").strip()
@@ -208,7 +274,8 @@ def voc_update(voc_id):
     if err:
         return err
     voc_db.update_voc(voc_id, category, title, content)
-    _audit_voc("voc_edit", voc_id, f"category={category} title={title[:80]}", uid)
+    _audit_voc("voc_edit", voc_id, f"category={category} title={title[:80]}",
+               uid or f"guest:{voc['user_id']}")
     return jsonify({"ok": True, "id": voc_id})
 
 
@@ -231,38 +298,46 @@ def voc_set_status(voc_id):
 
 @report_bp.post("/api/voc/<int:voc_id>/comments")
 def voc_comment_create(voc_id):
-    """댓글 등록 — 신원 필요. Close 된 글에도 남길 수 있다(상태는 잠금이 아니다)."""
+    """댓글 등록 — Honey 신원 또는 guest_name.
+
+    Close 된 글에도 남길 수 있다(상태는 잠금이 아니다)."""
     _require_csrf()
-    uid = _current_user()
-    if not uid:
-        return jsonify({"error": "Honey 를 통해 접속한 사용자만 댓글을 쓸 수 있습니다."}), 401
+    uid, gtoken = _identity()
     if not voc_db.get_voc(voc_id):
         abort(404, "voc not found")
     body = request.get_json(silent=True) or {}
+    author = uid
+    if not uid:
+        author, err = _guest_name(body)
+        if err:
+            return err
+        gtoken = gtoken or secrets.token_hex(16)
     content = (body.get("content") or "").strip()
     if not 1 <= len(content) <= _COMMENT_MAX:
         return jsonify({"error": f"댓글은 1~{_COMMENT_MAX}자입니다."}), 400
-    comment_id = voc_db.add_comment(voc_id, uid, content)
-    _audit_voc("voc_comment_create", voc_id, f"comment_id={comment_id}", uid)
-    return jsonify({"ok": True, "id": comment_id}), 201
+    comment_id = voc_db.add_comment(voc_id, author, content,
+                                    guest_token=gtoken or None)
+    _audit_voc("voc_comment_create", voc_id, f"comment_id={comment_id}",
+               uid or f"guest:{author}")
+    resp = jsonify({"ok": True, "id": comment_id})
+    resp.status_code = 201
+    return _issue_guest_cookie(resp, gtoken) if not uid else resp
 
 
 @report_bp.delete("/api/voc/<int:voc_id>/comments/<int:comment_id>")
 def voc_comment_delete(voc_id, comment_id):
-    """댓글 삭제 — 작성자 본인 또는 관리자."""
+    """댓글 삭제 — 작성자 본인(게스트는 쓴 브라우저에서) 또는 관리자."""
     _require_csrf()
-    uid = _current_user()
+    uid, gtoken = _identity()
     is_admin = _is_admin()
-    if not uid and not is_admin:
-        return jsonify({"error": "Honey 를 통해 접속한 사용자만 삭제할 수 있습니다."}), 401
     comment = voc_db.get_comment(voc_id, comment_id)
     if not comment:
         abort(404, "comment not found")
-    if not is_admin and comment["user_id"] != uid:
+    if not is_admin and not _owns(comment, uid, gtoken):
         return jsonify({"error": "본인이 쓴 댓글만 삭제할 수 있습니다."}), 403
     voc_db.delete_comment(comment_id)
     _audit_voc("voc_comment_delete", voc_id, f"comment_id={comment_id}",
-               uid or "admin-panel")
+               uid or ("admin-panel" if is_admin else f"guest:{comment['user_id']}"))
     return jsonify({"ok": True, "id": comment_id})
 
 
@@ -288,15 +363,15 @@ def voc_screenshot(voc_id, image_id):
 
 @report_bp.delete("/api/voc/<int:voc_id>")
 def voc_delete(voc_id):
-    """VOC 하드 삭제 — 작성자 본인만. 이미지 메타(CASCADE)+실파일 함께 정리."""
+    """VOC 하드 삭제 — 작성자 본인만(게스트는 등록한 브라우저에서만).
+
+    이미지 메타(CASCADE)+실파일 함께 정리."""
     _require_csrf()
-    uid = _current_user()
-    if not uid:
-        return jsonify({"error": "Honey 를 통해 접속한 사용자만 삭제할 수 있습니다."}), 401
+    uid, gtoken = _identity()
     voc = voc_db.get_voc(voc_id)
     if not voc:
         abort(404, "voc not found")
-    if voc["user_id"] != uid:
+    if not _owns(voc, uid, gtoken):
         return jsonify({"error": "본인이 등록한 VOC 만 삭제할 수 있습니다."}), 403
     voc_db.delete_voc(voc_id)   # DB 먼저(진실 원장) — 파일 정리 실패는 고아 파일 + 로그
     try:
@@ -304,5 +379,6 @@ def voc_delete(voc_id):
             _log.warning("VOC 이미지 정리 경고 (voc_id=%s): %s", voc_id, w)
     except Exception:
         _log.warning("VOC 이미지 정리 실패 (voc_id=%s)", voc_id, exc_info=True)
-    _audit_voc("voc_delete", voc_id, f"title={voc['title'][:80]}", uid)
+    _audit_voc("voc_delete", voc_id, f"title={voc['title'][:80]}",
+               uid or f"guest:{voc['user_id']}")
     return jsonify({"ok": True, "id": voc_id})

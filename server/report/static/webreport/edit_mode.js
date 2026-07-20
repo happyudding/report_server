@@ -231,6 +231,7 @@ document.querySelector(".content").addEventListener("change", async e => {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
       body: JSON.stringify({ password: verifiedPassword, key, value }),
+      keepalive: true,   // 변경 직후 탭을 닫아도 요청이 취소되지 않게 (autoSave 채널과 동일)
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);

@@ -338,7 +338,7 @@ def report(ctx, samples, args):
 
 def main():
     ap = argparse.ArgumentParser(description="10인 동시 부하테스트")
-    ap.add_argument("--base", default="http://127.0.0.1:8000")
+    ap.add_argument("--base", default="http://127.0.0.1:8080")
     ap.add_argument("--duration", type=int, default=180)
     ap.add_argument("--items", type=int, default=500)
     ap.add_argument("--dies", type=int, default=1000)

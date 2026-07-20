@@ -15,7 +15,8 @@ from flask import Blueprint, Response, abort, jsonify, request
 import config
 from admin_panel import (GATE_COOKIE_VOC, GATE_COOKIE_VOC_PATH, eval_admin,
                          gate_token, maintenance, metrics, sessions_admin, stats,
-                         storage_admin, sysinfo, users_admin)
+                         storage_admin, sysinfo, users_admin, voc_admin,
+                         voc_gate_token)
 from database import report_db
 from report.static_pages import send_html_gzip
 
@@ -71,9 +72,10 @@ def login():
     resp.set_cookie(_AUTH_COOKIE, _expected_token(), max_age=12 * 3600,
                     httponly=True, samesite="Lax", secure=request.is_secure,
                     path=_COOKIE_PATH)
-    # VOC 게시판 관리자 권한(상태 Open/Close 전환)용 사본 — 위 쿠키는 admin 경로
+    # VOC 게시판 관리자 권한(상태 Open/Close 전환)용 별도 토큰 — 위 쿠키는 admin 경로
     # 전용이라 /pe/report/* 요청에 실려오지 않는다. report/routes_voc._is_admin 이 검증.
-    resp.set_cookie(GATE_COOKIE_VOC, _expected_token(), max_age=12 * 3600,
+    # 값이 admin 토큰과 다른 이유는 voc_gate_token() docstring 참조.
+    resp.set_cookie(GATE_COOKIE_VOC, voc_gate_token(), max_age=12 * 3600,
                     httponly=True, samesite="Lax", secure=request.is_secure,
                     path=GATE_COOKIE_VOC_PATH)
     return resp
@@ -228,6 +230,27 @@ def api_stats_daily():
 @admin_panel_bp.get("/api/stats/users")
 def api_stats_users():
     return jsonify(stats.user_ranking(request.args.get("days", 30)))
+
+
+@admin_panel_bp.get("/api/stats/client_errors")
+def api_stats_client_errors():
+    return jsonify(stats.client_error_count(request.args.get("hours", 24)))
+
+
+# ── VOC 게시판 (읽기 전용 — 등록/수정/상태전환은 /pe/report/voc) ────────────────
+
+@admin_panel_bp.get("/api/voc/overview")
+def api_voc_overview():
+    return jsonify(voc_admin.overview())
+
+
+@admin_panel_bp.get("/api/voc")
+def api_voc_list():
+    return jsonify(voc_admin.list_voc(
+        q=(request.args.get("q") or "").strip() or None,
+        limit=request.args.get("limit", 50),
+        offset=request.args.get("offset", 0),
+    ))
 
 
 # ── 세션 컨트롤 ──────────────────────────────────────────────────────────────

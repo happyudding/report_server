@@ -71,6 +71,20 @@ def backup_current_sources(analysis_key, upload_root, old_content_hash="") -> st
     return name
 
 
+def remove_backups(analysis_key, upload_root) -> bool:
+    """`webreport_backup/<analysis_key>/` 백업 디렉토리 제거 — 마지막 참조 세션 삭제 시.
+
+    산출물(parquet/이미지)은 storage_gateway 가 지우지만 이 백업은 여기서 만들므로 삭제도
+    여기서 제공한다. 있었으면 True. best-effort(rmtree ignore_errors) — 삭제 실패가 세션
+    삭제를 막지 않는다.
+    """
+    root = Path(upload_root) / "webreport_backup" / str(analysis_key)
+    if not root.is_dir():
+        return False
+    shutil.rmtree(root, ignore_errors=True)
+    return True
+
+
 def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
                     client_ip: str = "", user_agent: str = "",
                     client_user: str = "") -> dict:

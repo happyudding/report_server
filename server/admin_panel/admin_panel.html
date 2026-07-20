@@ -127,6 +127,7 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
   <button class="tab" data-panel="pSessions">세션</button>
   <button class="tab" data-panel="pEval">Eval DB</button>
   <button class="tab" data-panel="pUsers">사용자</button>
+  <button class="tab" data-panel="pVoc">VOC</button>
   <button class="tab" data-panel="pDb">DB</button>
   <button class="tab" data-panel="pLogs">console log</button>
   <button class="tab" data-panel="pAudit">User Action Monitoring</button>
@@ -353,6 +354,32 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
   </div>
 </div>
 
+<!-- ═══ VOC (읽기 전용 — 답변/상태전환은 게시판에서) ═══ -->
+<div id="pVoc" class="panel">
+  <div class="tiles" id="vocTiles">
+    <div class="tile"><div class="lbl">로딩 중…</div></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>VOC 게시글 <span class="hint">읽기 전용 — 답변·상태 전환은 /pe/report/voc 게시판에서</span></h2>
+    <div class="toolbar">
+      <input id="vocQ" class="inp" style="width:280px" placeholder="제목 / 번호 검색…">
+      <button class="btn primary" id="btnVocSearch">검색</button>
+      <button class="btn" id="btnVocReset">초기화</button>
+      <span class="grow"></span>
+      <a class="btn" href="/pe/report/voc" target="_blank">게시판 열기</a>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th class="num">번호</th><th>분류</th><th>제목</th><th>작성자</th>
+        <th>상태</th><th class="num">댓글</th><th>작성일</th>
+      </tr></thead>
+      <tbody id="vocBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="pager" id="vocPager"></div>
+  </div>
+</div>
+
 <!-- ═══ DB ═══ -->
 <div id="pDb" class="panel">
   <div class="row">
@@ -417,6 +444,15 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
         <option value="upload">업로드</option>
         <option value="edit">수정</option>
         <option value="delete">삭제</option>
+        <option value="client_error">클라이언트 오류</option>
+        <option value="eval_export">Eval export</option>
+        <option value="tier">S3 티어링</option>
+        <option value="voc_create">VOC 등록</option>
+        <option value="voc_edit">VOC 수정</option>
+        <option value="voc_status">VOC 상태전환</option>
+        <option value="voc_comment_create">VOC 댓글</option>
+        <option value="voc_comment_delete">VOC 댓글삭제</option>
+        <option value="voc_delete">VOC 삭제</option>
       </select>
       <input id="fQuery" class="inp" style="width:280px" placeholder="파일명 / product / lot 부분 일치…">
       <button class="btn primary" id="btnAuditSearch">검색</button>
@@ -485,7 +521,8 @@ async function postJSON(url, body) {
 const loadedTabs = new Set();
 const TAB_LOADERS = {
   pHealth: loadHealth, pStorage: loadStorageTab, pStats: loadStats, pSessions: loadSessions,
-  pEval: loadEvalTab, pUsers: loadUsers, pDb: loadDb, pLogs: loadLogs, pAudit: loadAudit,
+  pEval: loadEvalTab, pUsers: loadUsers, pVoc: loadVocTab, pDb: loadDb, pLogs: loadLogs,
+  pAudit: loadAudit,
 };
 document.querySelectorAll(".tab").forEach(btn => {
   btn.onclick = () => {
@@ -519,6 +556,17 @@ async function loadHealth() {
           last ? `<br>최근: ${esc((last.ts || "").replace("T", " "))} ${esc(last.event || "")} (${esc(last.reason || "")})` : ""}</div></div>`;
       }
     } catch (e) { /* watchdog 타일은 best-effort */ }
+    let ceTile = "";
+    try {
+      const ce = await getJSON("api/stats/client_errors?hours=24");
+      if (ce.count > 0) {
+        ceTile = `
+      <div class="tile"><div class="lbl">클라이언트 오류 (24h)</div>
+        <div class="val" style="color:#dc2626">${ce.count}건</div>
+        <div class="det">브라우저 beacon 수집 · User Action Monitoring 탭에서<br>
+          작업 필터 '클라이언트 오류' 로 상세 확인</div></div>`;
+      }
+    } catch (e) { /* client_error 타일도 best-effort */ }
     $("healthTiles").innerHTML = `
       <div class="tile"><div class="lbl">CPU</div>
         <div class="val">${h.cpu_percent.toFixed(0)}%</div>
@@ -534,7 +582,7 @@ async function loadHealth() {
         <div class="meter"><div class="${meterCls(h.disk_percent)}" style="width:${Math.min(h.disk_percent,100)}%"></div></div></div>
       <div class="tile"><div class="lbl">서버 업타임</div>
         <div class="val" style="font-size:20px">${fmtUptime(h.uptime_sec)}</div>
-        <div class="det">프로세스 RSS ${fmtBytes(h.proc_rss)} · 스레드 ${h.proc_threads}</div></div>${wdTile}`;
+        <div class="det">프로세스 RSS ${fmtBytes(h.proc_rss)} · 스레드 ${h.proc_threads}</div></div>${wdTile}${ceTile}`;
   } catch (e) {
     $("healthTiles").innerHTML = `<div class="tile"><div class="lbl">현황 조회 실패</div><div class="det">${esc(e)}</div></div>`;
   }
@@ -1254,6 +1302,60 @@ $("userBody").addEventListener("click", async e => {
   } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
 });
 
+// ── VOC (읽기 전용) ──────────────────────────────────────────────────────────
+const VOC_PAGE = 50;
+let vocOffset = 0;
+// 상태 라벨은 알려진 값만 배지로, 그 외(게시판에서 상태 체계가 늘어날 경우)는 원문 표시.
+const VOC_STATUS_LABEL = { open: "미처리", close: "처리완료" };
+async function loadVocTab() {
+  try {
+    const o = await getJSON("api/voc/overview");
+    $("vocTiles").innerHTML = `
+      <div class="tile"><div class="lbl">전체 VOC</div><div class="val">${o.total}건</div></div>
+      <div class="tile"><div class="lbl">최근 7일</div><div class="val">${o.last_7d}건</div></div>
+      <div class="tile"><div class="lbl">미처리(open)</div>
+        <div class="val"${o.open > 0 ? ` style="color:#dc2626"` : ""}>${o.open}건</div>
+        <div class="det">게시판에서 Close 로 전환</div></div>`;
+  } catch (e) {
+    $("vocTiles").innerHTML = `<div class="tile"><div class="lbl">VOC 요약 조회 실패</div><div class="det">${esc(e)}</div></div>`;
+  }
+  loadVocList();
+}
+async function loadVocList() {
+  const tb = $("vocBody");
+  tb.innerHTML = `<tr class="empty-row"><td colspan="7">로딩 중…</td></tr>`;
+  const params = new URLSearchParams({ limit: VOC_PAGE, offset: vocOffset });
+  const q = $("vocQ").value.trim(); if (q) params.set("q", q);
+  let data;
+  try { data = await getJSON("api/voc?" + params); }
+  catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="7">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  tb.innerHTML = data.rows.length ? data.rows.map(v => {
+    const st = v.status || "";
+    return `<tr>
+      <td class="num">${esc(v.id)}</td>
+      <td>${esc(v.category || "-")}</td>
+      <td>${esc(v.title || "-")}</td>
+      <td>${esc(v.user_id || "-")}</td>
+      <td${st === "open" ? ` style="color:#dc2626"` : ""}>${esc(VOC_STATUS_LABEL[st] || st || "-")}</td>
+      <td class="num">${esc(v.comment_count)}</td>
+      <td>${fmtDate(v.created_at)}</td></tr>`;
+  }).join("") : `<tr class="empty-row"><td colspan="7">게시글이 없습니다.</td></tr>`;
+  const total = data.total;
+  const page = Math.floor(vocOffset / VOC_PAGE), last = Math.max(0, Math.ceil(total / VOC_PAGE) - 1);
+  $("vocPager").innerHTML = `
+    <button class="pg-btn" id="vocPrev" ${page === 0 ? "disabled" : ""}>← 이전</button>
+    <span class="pg-info">${total}건 중 ${total ? vocOffset + 1 : 0}–${Math.min(vocOffset + VOC_PAGE, total)} (페이지 ${page + 1}/${last + 1})</span>
+    <button class="pg-btn" id="vocNext" ${page >= last ? "disabled" : ""}>다음 →</button>`;
+  $("vocPrev").onclick = () => { vocOffset = Math.max(0, vocOffset - VOC_PAGE); loadVocList(); };
+  $("vocNext").onclick = () => { vocOffset += VOC_PAGE; loadVocList(); };
+}
+$("btnVocSearch").onclick = () => { vocOffset = 0; loadVocList(); };
+$("btnVocReset").onclick = () => { $("vocQ").value = ""; vocOffset = 0; loadVocTab(); };
+$("vocQ").addEventListener("keydown", e => { if (e.key === "Enter") { vocOffset = 0; loadVocList(); } });
+
 // ── DB ──────────────────────────────────────────────────────────────────────
 async function loadDb() { loadBackups(); }
 async function loadBackups() {
@@ -1345,7 +1447,12 @@ $("logBytes").onchange = loadLogs;
 // ── 감사로그 (구 /pe/admin 뷰어 흡수) ───────────────────────────────────────
 const AUDIT_PAGE = 50;
 let auditPage = 0, auditHasMore = false;
-const ACTION_LABEL = { upload: "업로드", edit: "수정", delete: "삭제" };
+const ACTION_LABEL = {
+  upload: "업로드", edit: "수정", delete: "삭제",
+  client_error: "클라이언트 오류", eval_export: "Eval export", tier: "S3 티어링",
+  voc_create: "VOC 등록", voc_edit: "VOC 수정", voc_status: "VOC 상태전환",
+  voc_comment_create: "VOC 댓글", voc_comment_delete: "VOC 댓글삭제", voc_delete: "VOC 삭제",
+};
 async function loadAudit() {
   const tb = $("auditBody");
   tb.innerHTML = `<tr class="empty-row"><td colspan="10">로딩 중…</td></tr>`;

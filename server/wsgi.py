@@ -193,7 +193,7 @@ if not _IS_MP_CHILD:
 
 if __name__ == "__main__":
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "8080"))
     debug = os.getenv("FLASK_DEBUG", "0") == "1"
 
     _log("===== Accessible URLs =====")

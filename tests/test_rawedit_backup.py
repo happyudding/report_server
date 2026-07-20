@@ -10,6 +10,7 @@ Raw Data 편집은 parquet 원본을 덮어쓴다 — 실수 편집 시 복구 �
   (a) 1회 편집 → 백업 디렉토리에 편집 전 parquet + manifest 생성, 내용이 '편집 전' 값
   (b) 2회 편집 → 백업은 항상 1세대만 유지(직전 것으로 교체, 옛 세대 삭제)
   (c) 백업 실패 → 편집 자체가 거부되고 저장된 원본은 그대로 (유실 방지가 목적)
+  (d) 세션 삭제(마지막 참조) 시 remove_backups 로 백업 디렉토리 회수 + 멱등
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert).
 """
@@ -175,7 +176,13 @@ def main():
         assert storage.sources == saved_before, "편집이 거부됐는데 원본이 바뀌었다"
         print(f"(c) 원본 무손상 확인 = {item_values(storage.sources[0])}")
 
-        print("\nPASS — rawedit 백업 1세대 + 실패 시 편집 거부")
+        # ── (d) 백업 정리 — 세션 삭제(마지막 참조) 시 백업 디렉토리 회수 ───────
+        assert rawedit.remove_backups(AKEY, tmp) is True, "백업이 있는데 False 반환"
+        assert backup_dirs(tmp) == [], "백업 디렉토리가 남았다"
+        assert rawedit.remove_backups(AKEY, tmp) is False, "없는 백업에 True 반환(멱등 아님)"
+        print("(d) 백업 정리 확인 — remove_backups 후 디렉토리 없음 + 재호출 False")
+
+        print("\nPASS — rawedit 백업 1세대 + 실패 시 편집 거부 + 삭제 시 정리")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -1417,6 +1417,24 @@ class HoneyMainWindow(QMainWindow):
         for act in self._busy_actions:
             act.setEnabled(not busy)
 
+    def _release_busy_after_cancel(self, future, progress, fail_text):
+        """취소했지만 아직 도는 백그라운드 전처리가 끝난 뒤에 busy 를 푼다.
+
+        Excel COM 전처리는 시작되면 중간 취소가 불가능하다(cancel_futures 는 아직 시작
+        안 한 작업만 취소). busy 를 즉시 풀면 사용자가 곧바로 Excel Download·Rawdata
+        편집을 눌러 아직 살아있는 EXCEL.EXE 와 겹칠 수 있으므로, 완료될 때까지 진입점을
+        잠근 채 진행바에 정리 중임을 표시한다. 이미 끝났으면 바로 해제된다.
+        """
+        def _poll():
+            if future.done():
+                self._set_busy(False)
+                progress.fail(fail_text)
+                return
+            progress.set("취소 정리 중... (Excel 처리가 끝나면 해제됩니다)",
+                         status="취소 정리 중...")
+            QTimer.singleShot(200, _poll)
+        _poll()
+
     def on_start(self):
         # 느린 파일 전처리(_prepare_run_context → _rebuild_group)가 시작되기 전에
         # 새 작업 진입점(실행 버튼·메뉴·사이드바·파일 인테이크)을 함께 잠근다.
@@ -2121,9 +2139,9 @@ class HoneyMainWindow(QMainWindow):
         defaults["product_type"] = self.product_type()
         dlg = UploadDialog(self, defaults=defaults, show_password=False)   # web_report=PIN 없음
         if not dlg.exec():
-            progress.fail("취소됨: 업로드 메타 입력 취소")
-            prep_ex.shutdown(wait=False, cancel_futures=True)
-            self._set_busy(False)
+            prep_ex.shutdown(wait=False, cancel_futures=True)   # 대기 중인 dist 만 취소됨
+            self._release_busy_after_cancel(
+                fut_prep, progress, "취소됨: 업로드 메타 입력 취소")
             return
         meta = dlg.values()
         self._last_upload = meta

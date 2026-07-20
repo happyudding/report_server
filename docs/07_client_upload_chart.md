@@ -29,7 +29,7 @@
 - password 는 선택 입력 — 보내면 서버가 `report_session.password` 에 저장하지만
   **접근제어에는 미사용**(신원=HoneyUser UA, →[02](02_server_query_edit.md)), analysis_key
   불포함. HTTPS 아니면 평문 노출 주의.
-- `SERVER_BASE_URL` = `HONEY_SERVER_URL` env 또는 `http://127.0.0.1:8000` ([config.py](../client/config.py)). `REQUEST_TIMEOUT_SEC=30`.
+- `SERVER_BASE_URL` = `HONEY_SERVER_URL` env 또는 `http://12.81.220.117:8080` ([transport/config.py](../client/transport/config.py)). `REQUEST_TIMEOUT_SEC=(10, 300)`.
 
 ## 주의
 - **report generator 산출물은 .xlsx 1개** — 하나의 파일에서 모든 것을 관리하는 정책.

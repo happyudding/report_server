@@ -30,6 +30,15 @@ def gate_token():
     return hashlib.sha256(("pe-admin-gate|" + config.REPORT_ADMIN_PASSWORD).encode()).hexdigest()
 
 
+def voc_gate_token():
+    """VOC 게이트 쿠키 값 — admin 게이트와 라벨이 달라 값이 다른 별도 토큰.
+
+    이 쿠키는 path=/pe/report 라 web_report API·업로드 등 모든 요청에 실린다. admin
+    토큰과 같은 값이면 평문 HTTP 구간에서 새어나갔을 때 그대로 admin 쿠키로 재사용되므로
+    라벨을 분리한다(한쪽에서 다른 쪽을 유도 불가)."""
+    return hashlib.sha256(("pe-voc-admin-gate|" + config.REPORT_ADMIN_PASSWORD).encode()).hexdigest()
+
+
 def register_admin_panel(app):
     secret = config.REPORT_ADMIN_SECRET
     if not secret:

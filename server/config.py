@@ -12,9 +12,10 @@ REPORT_ANALYSIS_INDEX_HTML = ROOT_DIR / "server" / "report" / "report_analysis_i
 REPORT_VIEW_HTML           = ROOT_DIR / "server" / "report" / "report_view.html"
 ADMIN_DASHBOARD_HTML       = ROOT_DIR / "server" / "report" / "admin_dashboard.html"
 
-_HOST = os.getenv("HOST", "127.0.0.1")
-_PORT = os.getenv("PORT", "8000")
-SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", f"http://{_HOST}:{_PORT}")
+# 절대 URL 생성 기준 — bind 주소(HOST=0.0.0.0)가 아니라 클라이언트가 실제로 접속하는
+# 운영 서버 주소를 기본값으로 쓴다 (client/transport/config.py SERVER_BASE_URL 과 동일 값).
+# bind HOST/PORT 는 env/server.env 가 정본이고 wsgi.py 가 직접 읽는다.
+SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "http://12.81.220.117:8080")
 
 REPORT_DB_PATH = _path_env("REPORT_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" / "report.db")
 REPORT_UPLOAD_DIR = _path_env("REPORT_UPLOAD_DIR", ROOT_DIR / "uploads" / "report")
@@ -67,8 +68,9 @@ REPORT_CLEANUP_ENABLED        = _bool_env("REPORT_CLEANUP_ENABLED", True)
 
 # ── 휴지통(soft delete) 보관 기간 ─────────────────────────────────────────────
 # 사용자 DELETE 는 즉시 영구삭제가 아니라 report_session.deleted_at 을 찍어 휴지통으로
-# 보낸다. deleted_at 이후 이 일수가 지난 세션만 관리자 purge 에서 산출물+DB 를 정리한다
-# (자동 purge 없음 — 관리자 수동 실행). 복원은 관리자 패널 또는 업로더/삭제자 권한.
+# 보낸다. deleted_at 이후 이 일수가 지난 세션만 purge(산출물+DB 정리) 대상이 된다 —
+# 관리자 수동 실행과 cleanup 스케줄러(REPORT_CLEANUP_DRYRUN 존중) 양쪽에서 걷어간다.
+# 복원은 관리자 패널 또는 업로더/삭제자 권한.
 REPORT_TRASH_RETENTION_DAYS   = int(os.getenv("REPORT_TRASH_RETENTION_DAYS", "30"))
 
 # report_audit_log 롤오프 — 감사 로그는 세션 삭제 후에도 보존되어 무한 증가하므로

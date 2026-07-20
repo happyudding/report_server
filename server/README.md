@@ -34,9 +34,9 @@ pip install -r requirements.txt
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `HOST` | `127.0.0.1` | 바인드 주소 (`0.0.0.0` = 모든 인터페이스) |
-| `PORT` | `8000` | 포트 |
-| `SERVER_BASE_URL` | `http://<HOST>:<PORT>` | 절대 URL 생성 기준 |
+| `HOST` | `0.0.0.0` | 바인드 주소 (모든 인터페이스 = 운영 IP 12.81.220.117 포함) |
+| `PORT` | `8080` | 포트 (클라이언트 `HONEY_SERVER_URL` 과 일치) |
+| `SERVER_BASE_URL` | `http://12.81.220.117:8080` | 절대 URL 생성 기준 (운영 서버 주소) |
 | `REPORT_DB_PATH` | `<repo>/DB/pe/report/report.db` | SQLite DB 파일 |
 | `REPORT_EVAL_DB_PATH` | `<repo>/DB/pe/report/eval/eval.db` | Issue Table PTE/개발 comment export DB (eval.db 스키마, report.db 와 분리 — [docs/13 §9](../docs/13_eval_analyzer_integration.md)) |
 | `REPORT_UPLOAD_DIR` | `<repo>/uploads/report` | 업로드/로컬 폴백/디스크 캐시 루트 |
@@ -101,7 +101,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 
 | 확인 항목 | 권장 | 이유 |
 |-----------|------|------|
-| `HOST` | `0.0.0.0` 명시 | 기본 127.0.0.1 은 LAN 접근 불가 |
+| `HOST` / `PORT` | 기본(`0.0.0.0` / `8080`) 유지 | `env/server.env` 가 정본. 포트를 바꾸면 클라이언트 `HONEY_SERVER_URL` 도 함께 바꿔야 한다 |
 | `WAITRESS_THREADS` | 기본(8) 유지 | 8cpu 와 일치. waitress 본문 상한은 `MAX_CONTENT_LENGTH_MB` 와 자동 정합(wsgi.py) |
 | `MAX_CONTENT_LENGTH_MB` | 기본(2048) 유지 | 업로드 본문 상한(parquet + dist blob 첨부 합산). waitress/Flask 공용 |
 | `WEB_REPORT_COMPUTE_WORKERS` | 기본(2) 유지 | 콜드 빌드 워커. 5명 규모 충분 — 워커당 tables 캐시 최대 4GB RAM 감안 |
@@ -208,7 +208,8 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 ### 관리 대시보드 (`/pe/admin-<secret>/`, 기본 `/pe/admin-pte/`) — 인증 없음, 내부망 전용
 
 비-GET 요청은 `X-Admin-Request: 1` 헤더 요구. `GET /` 대시보드 + `GET /api/*`
-(health/storage/s3-status/metrics/stats/sessions/users/audit(.csv)/logs/tail) +
+(health/storage/s3-status/metrics/stats(daily·users·client_errors)/sessions/users/
+voc(overview·목록, 읽기 전용)/audit(.csv)/logs/tail) +
 `POST /api/*` (sessions/delete, session/<sid>/important·password, db/backup·cleanup 등).
 구 공개 `/pe/admin` (`admin_routes.py`)은 **미등록 dead file**.
 
@@ -258,7 +259,7 @@ server/
 │   └── _note_images.py      Note 탭 이미지 (S3+로컬 폴백, 세션 단위)
 ├── admin_panel/              /pe/admin-<secret>/ 대시보드 + metrics 샘플러
 │   ├── __init__.py           register_admin_panel() + metrics.init_app
-│   ├── routes.py / sysinfo.py / stats.py / sessions_admin.py / users_admin.py
+│   ├── routes.py / sysinfo.py / stats.py / sessions_admin.py / users_admin.py / voc_admin.py
 │   ├── maintenance.py / metrics.py / admin_panel.html
 ├── tools/migrate_manifest_edits.py  manifest 편집값 → 세션 편집 DB 이전 (운영 1회 실행 완료)
 └── releases/version.json     Honey 배포 manifest

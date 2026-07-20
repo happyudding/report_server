@@ -52,7 +52,8 @@ def delete_session(session_id):
 
 def trash_session(session_id, deleted_by=None):
     """세션을 휴지통으로 이동(soft delete) — deleted_at/deleted_by 기록. 산출물·DB 행은
-    유지한다. 실제 산출물/DB 정리는 관리자 purge(30일 경과분)에서만 이뤄진다."""
+    유지한다. 실제 산출물/DB 정리는 30일(REPORT_TRASH_RETENTION_DAYS) 경과 후 purge —
+    관리자 수동 실행 또는 cleanup 스케줄러(REPORT_CLEANUP_DRYRUN 존중)."""
     now = _now()
     with get_conn() as conn:
         conn.execute(

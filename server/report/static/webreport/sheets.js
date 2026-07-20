@@ -681,24 +681,45 @@ function yieldOverviewHtml() {
 // 활성 contenteditable·버튼·select 등 interactive 요소에서는 선택을 시작하지 않아
 // 편집 렌더(dblclick 편집·상태 select·TNO 펼침)와 간섭하지 않는다.
 const CELLSEL_SCOPE = "#panel-issues";  // 적용 패널 — 확장 시 콤마 셀렉터로 추가
-let _cellSel = null;   // {table, r1, c1, r2, c2}
+let _cellSel = null;   // {table, grid, r1, c1, r2, c2}
 let _cellDrag = null;  // {table, r1, c1, moved}
+let _cellPainted = []; // 현재 .cell-sel 이 붙은 td — 도색 해제를 표 전체 스캔 없이 하기 위함
+
+// 좌표 → td 맵. 드래그 시작 시 1회만 만든다 (mousemove 마다 표 전체를 훑지 않도록).
+function _cellGrid(table) {
+  const grid = new Map();
+  table.querySelectorAll("td[data-r][data-c]").forEach(td => {
+    grid.set(td.dataset.r + ":" + td.dataset.c, td);
+  });
+  return grid;
+}
 
 function cellSelClear() {
   if (!_cellSel) return;
-  _cellSel.table.querySelectorAll("td.cell-sel").forEach(td => td.classList.remove("cell-sel"));
+  _cellPainted.forEach(td => td.classList.remove("cell-sel"));
+  _cellPainted = [];
   _cellSel = null;
 }
 
 // 선택 사각형(minR..maxR × minC..maxC)을 .cell-sel 클래스로 표시 (숨김 행 제외).
+// 새 사각형만 칠하고 직전 도색분 중 범위 밖만 지운다 — 표가 커도 mousemove 비용이 일정.
 function cellSelPaint(sel) {
   const rA = Math.min(sel.r1, sel.r2), rB = Math.max(sel.r1, sel.r2);
   const cA = Math.min(sel.c1, sel.c2), cB = Math.max(sel.c1, sel.c2);
-  sel.table.querySelectorAll("td[data-r][data-c]").forEach(td => {
+  const next = [];
+  for (let r = rA; r <= rB; r++) {
+    for (let c = cA; c <= cB; c++) {
+      const td = sel.grid.get(r + ":" + c);
+      if (!td || !td.offsetParent) continue;
+      td.classList.add("cell-sel");
+      next.push(td);
+    }
+  }
+  _cellPainted.forEach(td => {
     const r = +td.dataset.r, c = +td.dataset.c;
-    const on = r >= rA && r <= rB && c >= cA && c <= cB && !!td.offsetParent;
-    td.classList.toggle("cell-sel", on);
+    if (r < rA || r > rB || c < cA || c > cB || !td.offsetParent) td.classList.remove("cell-sel");
   });
+  _cellPainted = next;
 }
 
 // 셀 표시 텍스트 — select 는 현재 값, 그 외는 렌더 텍스트(개행은 공백으로, TSV 격자 보존).
@@ -765,7 +786,8 @@ document.addEventListener("mousedown", (ev) => {
   const table = td.closest("table");
   cellSelClear();
   _cellDrag = { table, r1: +td.dataset.r, c1: +td.dataset.c, moved: false };
-  _cellSel = { table, r1: _cellDrag.r1, c1: _cellDrag.c1, r2: _cellDrag.r1, c2: _cellDrag.c1 };
+  _cellSel = { table, grid: _cellGrid(table),
+               r1: _cellDrag.r1, c1: _cellDrag.c1, r2: _cellDrag.r1, c2: _cellDrag.c1 };
   cellSelPaint(_cellSel);
 });
 

@@ -65,8 +65,8 @@ blueprint 는 `report_bp` (`/pe/report`). CSRF 는 `report_bp.after_request` 가
 쿠키를 그대로 재사용**한다.
 
 기존 `pe_admin_gate` 쿠키는 `path=/pe/admin-<secret>` 이라 `/pe/report/*` 요청에 실려오지
-않는다. 그래서 [admin_panel/routes.py](../server/admin_panel/routes.py) `login()` 이 **같은
-토큰의 두 번째 쿠키를 별도 이름·경로로 추가 발급**한다:
+않는다. 그래서 [admin_panel/routes.py](../server/admin_panel/routes.py) `login()` 이 **별도
+이름·경로의 두 번째 쿠키를 추가 발급**한다:
 
 ```
 pe_admin_gate      path=/pe/admin-<secret>   (대시보드 게이트, 기존)
@@ -75,8 +75,14 @@ pe_admin_gate_voc  path=/pe/report           (VOC 상태 전환용, 추가)
 
 둘 다 `httponly` · `SameSite=Lax` · 12시간. 토큰 값과 쿠키 이름의 정본은
 [admin_panel/\_\_init\_\_.py](../server/admin_panel/__init__.py) 의 `gate_token()` /
-`GATE_COOKIE_VOC` — 무거운 `admin_panel.routes`(admin 서브모듈 8개 import) 를 routes_voc 가
-끌어오지 않도록 경량 모듈에 뒀다. `routes_voc._is_admin()` 이 `hmac.compare_digest` 로 검증한다.
+`voc_gate_token()` / `GATE_COOKIE_VOC` — 무거운 `admin_panel.routes`(admin 서브모듈 8개
+import) 를 routes_voc 가 끌어오지 않도록 경량 모듈에 뒀다. `routes_voc._is_admin()` 이
+`hmac.compare_digest` 로 검증한다.
+
+**두 쿠키의 토큰 값은 다르다.** VOC 쿠키는 `path=/pe/report` 라 web_report API·업로드 등
+모든 요청에 실리므로, admin 토큰과 같은 값이면 평문 HTTP 구간에서 새어나갔을 때 그대로 admin
+대시보드 쿠키로 재사용된다. 해시 라벨(`pe-admin-gate|` vs `pe-voc-admin-gate|`)을 분리해 한쪽
+값에서 다른 쪽을 유도할 수 없게 했다.
 
 같은 이름을 다른 path 로 재발급하지 않는 이유: 브라우저에서 쿠키 교체·중복 전송이 모호해진다.
 
@@ -121,7 +127,7 @@ eval_export 와 같은 별도 파일 패턴).
 감사 / XSS 원문 무변조 / 검색(제목·번호·LIKE 이스케이프) / 수정 권한·검증 / 상태 전환
 (비관리자 403 → 관리자 close·open) / 댓글(순서·권한·관리자 삭제·CASCADE) / 구 스키마 마이그레이션.
 
-관리자 쿠키는 `client.set_cookie(GATE_COOKIE_VOC, gate_token(), path="/pe/report")` 로
+관리자 쿠키는 `client.set_cookie(GATE_COOKIE_VOC, voc_gate_token(), path="/pe/report")` 로
 시뮬레이션한다(무거운 admin_panel.routes 등록 불필요).
 
 브라우저 수동 확인 포인트: 익명(조회 전용) / Honey UA 로 등록→상세→수정→댓글→삭제 /
