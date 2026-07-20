@@ -138,6 +138,10 @@ def _prewarm_job(session_id: str, upload_root_str: str) -> None:
             report_job(session_id, upload_root_str)
             dist_job(session_id, upload_root_str)
             map_job(session_id, upload_root_str)
+            # 기본 source("") — Trim 탭 첫 진입 요청과 같은 캐시 키라 그대로 히트한다.
+            # scatter 는 subject 단위(수백~수천)라 전량 프리웜이 비싸고, 위 report_job 이
+            # tables 를 웜으로 만들어 콜드의 지배 비용(재다운로드+디코드)은 이미 사라진다.
+            trim_job(session_id, upload_root_str, "")
         except Exception:
             pass
 

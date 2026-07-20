@@ -25,12 +25,24 @@ from report.security import (
     _require_web_report_session,
 )
 from web_report import service as web_report_service
+from web_report import build_status as web_report_build_status_mod
 from web_report import response_cache as web_report_response_cache
 from web_report import rawedit as web_report_rawedit
 
 _log = logging.getLogger(__name__)
 
 _MAX_WEBREPORT_SOURCE_BYTES = 512 * 1024 * 1024
+
+
+@report_bp.get("/session/<session_id>/web_report/build_status")
+def web_report_build_status(session_id):
+    """콜드 빌드 진행 상태 — 로드 오버레이가 /full 대기 중 폴링한다.
+
+    {"state":"building","stage","elapsed"} 또는 {"state":"idle"}. 레지스트리 dict 조회뿐
+    이라 /full 이 워커/락에 묶여 있어도 즉시 응답한다(진척률이 아니라 사실만 준다).
+    """
+    _require_web_report_session(session_id)
+    return jsonify(web_report_build_status_mod.snapshot(session_id))
 
 
 @report_bp.get("/session/<session_id>/web_report/raw_data/columns")

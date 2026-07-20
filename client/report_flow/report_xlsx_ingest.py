@@ -41,6 +41,7 @@ _KNOWN_EXACT = {"summary", "yield", "cpk", "fail_item", "issue_table",
 # 7-meta honeyform 헤더(pass-through 감지용)와 df_honey 5-meta 필수 메타 컬럼.
 _HONEYFORM_META = ["serial", "shot", "dut", "xpos", "ypos", "bin", "failtno"]
 _DF_HONEY_META = {"dut", "xcoord", "ycoord", "bin", "serial"}
+_N_META_ROWS = 6           # honeyform 메타 행 수 (TSEQ/TNO/STEP/UNIT/HILIM/LOLIM)
 
 # Issue_table 코멘트 4열 → web_report 2열(역할별 병합). dict 삽입 순서 = 병합 순서.
 _ISSUE_COMMENT_SRC = {
@@ -92,14 +93,26 @@ def _is_raw_header(grid) -> bool:
     return all(m in lead for m in ("dut", "xcoord", "ycoord", "bin"))
 
 
-def _read_workbook_grids(src_path):
-    """COM 으로 열어 (raw_sheets, summary_grid, issue_grid) 반환.
+def _read_workbook_grids(src_path, progress_cb=None):
+    """COM 으로 열어 (raw_sheets, summary_grid, issue_grid, skipped) 반환.
 
     raw_sheets = [(sheet_name, grid_2d), ...] (등장 순서), grid = UsedRange.Value 정규화.
+    skipped = 표준 보고서 시트도 아니고 Raw Data 헤더도 아니어서 제외한 시트명 목록
+    (미인식 경고용 — 시트명이 살짝 달라 Raw 로 안 잡힌 경우를 사용자에게 알린다).
     Issue_table 시트(대소문자 무시)가 없으면 Honey excel report 형식이 아니므로 ValueError.
+
+    progress_cb(stage, done, total, name): 워커 스레드에서 시트 읽기 진행을 보고한다
+    (UsedRange.Value 읽기가 지배 비용). UI 스레드 직접 접근 금지 — 호출부가 queue 로 감싼다.
     """
     import pythoncom
     import win32com.client
+
+    def _report(stage, done, total, name):
+        if progress_cb is not None:
+            try:
+                progress_cb(stage, done, total, name)
+            except Exception:  # noqa: BLE001
+                pass
 
     pythoncom.CoInitialize()
     excel = None
@@ -117,11 +130,14 @@ def _read_workbook_grids(src_path):
                 "(Issue_table 시트를 찾지 못했습니다)")
 
         raw_sheets = []
+        skipped = []
         summary_grid = None
         issue_grid = None
-        for sht in wb.Worksheets:
+        total = int(wb.Worksheets.Count)
+        for i, sht in enumerate(wb.Worksheets, start=1):
             name = sht.Name
             nl = _s(name).lower()
+            _report("read", i, total, name)
             if nl == "summary":
                 summary_grid = _normalize_grid(sht.UsedRange.Value)
             elif nl == "issue_table":
@@ -132,7 +148,9 @@ def _read_workbook_grids(src_path):
                 grid = _normalize_grid(sht.UsedRange.Value)
                 if _is_raw_header(grid):
                     raw_sheets.append((name, grid))
-        return raw_sheets, summary_grid, issue_grid
+                else:
+                    skipped.append(name)      # Raw 후보였으나 헤더 불일치 — 조용히 버리지 않고 보고
+        return raw_sheets, summary_grid, issue_grid, skipped
     finally:
         try:
             if wb is not None:
@@ -192,8 +210,12 @@ def _honeyform_error(issues, *, converted: bool) -> ValueError:
     return ValueError(f"{lead}\n\n{help_text}\n\n[맞지 않는 부분]\n{where}")
 
 
-def _sheet_to_honeyform(grid) -> pd.DataFrame:
-    """Raw Data 시트 grid → 7-meta honeyform DataFrame (encode 가 재검증)."""
+def _sheet_to_honeyform(grid):
+    """Raw Data 시트 grid → (7-meta honeyform DataFrame, converted_5meta: bool).
+
+    converted_5meta 는 5-meta df_honey → 7-meta 변환 경로를 탔는지(=FAILTNO 공란이라
+    Yield fail 분해가 비는 형식인지) 여부. encode 가 재검증한다.
+    """
     hdr = [_s(c) for c in grid[0]]
     hdr_low = [h.lower() for h in hdr]
 
@@ -203,7 +225,7 @@ def _sheet_to_honeyform(grid) -> pd.DataFrame:
         issues = validate_honeyform_df(df)
         if issues:
             raise _honeyform_error(issues, converted=False)
-        return df
+        return df, False
 
     # 5-meta df_honey 매핑. 메타 컬럼은 이름으로 위치를 찾는다(순서 견고성).
     def _col(name):
@@ -256,7 +278,7 @@ def _sheet_to_honeyform(grid) -> pd.DataFrame:
     issues = validate_honeyform_df(df)
     if issues:
         raise _honeyform_error(issues, converted=True)
-    return df
+    return df, True
 
 
 def _extract_summary_engr(grid) -> dict:
@@ -340,18 +362,23 @@ def _extract_issue_comments(grid):
     return issue_comments, etc_items
 
 
-def prepare_report_webreport(src_path: str):
-    """report_generator 보고서 xlsx → (sources, parquet_items, seed, all_items).
+def prepare_report_webreport(src_path: str, progress_cb=None):
+    """report_generator 보고서 xlsx → (sources, parquet_items, seed, all_items, report).
 
     sources       = [{index, name, file_name}]        (manifest.sources)
     parquet_items = [{index, name, file_name, data}]   (uploader.post_webreport)
     seed          = {issue_comments?, etc_items?, summary_engr?}  (manifest 편집 시드)
     all_items     = 측정 항목 합집합(등장 순서)          (manifest.selected_items)
+    report        = {raw_sheets:[{name,rows,items}], skipped_sheets:[...],
+                     converted_5meta:[...]}   (업로드 전 확인 다이얼로그용 — 인식 요약·경고)
 
+    progress_cb(stage, done, total, name): 워커 스레드에서 전처리 진행 보고
+    (stage: "read"=시트 읽기 / "convert"=honeyform 변환). UI 스레드 직접 접근 금지.
     Raw Data 시트 없음/형식 오류/COM 실패 시 안내 ValueError.
     """
     try:
-        raw_sheets, summary_grid, issue_grid = _read_workbook_grids(src_path)
+        raw_sheets, summary_grid, issue_grid, skipped = _read_workbook_grids(
+            src_path, progress_cb=progress_cb)
     except ValueError:
         raise
     except Exception:  # noqa: BLE001
@@ -370,14 +397,28 @@ def prepare_report_webreport(src_path: str):
     parquet_items = []
     all_items = []
     seen = set()
+    raw_summary = []
+    converted_5meta = []
+    n_raw = len(raw_sheets)
     for idx, (name, grid) in enumerate(raw_sheets):
-        df = _sheet_to_honeyform(grid)
+        if progress_cb is not None:
+            try:
+                progress_cb("convert", idx + 1, n_raw, name)
+            except Exception:  # noqa: BLE001
+                pass
+        df, converted = _sheet_to_honeyform(grid)
+        items = list(df.columns[len(META_COLUMNS):])
         parquet_items.append({
             "index": idx, "name": name,
             "file_name": f"{name}.parquet", "data": encode_honeyform_parquet(df),
         })
         sources.append({"index": idx, "name": name, "file_name": name})
-        for item in list(df.columns[len(META_COLUMNS):]):
+        raw_summary.append({"name": name,
+                            "rows": max(0, len(df) - _N_META_ROWS),   # 측정 데이터 행수
+                            "items": len(items)})
+        if converted:
+            converted_5meta.append(name)
+        for item in items:
             if item not in seen:
                 seen.add(item)
                 all_items.append(item)
@@ -392,4 +433,6 @@ def prepare_report_webreport(src_path: str):
     if etc_items:
         seed["etc_items"] = etc_items
 
-    return sources, parquet_items, seed, all_items
+    report = {"raw_sheets": raw_summary, "skipped_sheets": skipped,
+              "converted_5meta": converted_5meta}
+    return sources, parquet_items, seed, all_items, report

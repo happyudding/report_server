@@ -270,7 +270,8 @@ def write_issue_sheet(ws, issue_rows, source_names):
 
     source yields 뒤 · comment 앞에 'Distribution' 열을 추가한다(값은 비움). 행별 CDF PNG
     는 오케스트레이터가 add_picture_in_cell 로 부착한다.
-    반환: {"rows": [(item, excel_row), ...], "dist_col": Distribution 열 인덱스}.
+    반환: {"rows": [(item, excel_row, section), ...], "dist_col": Distribution 열 인덱스}.
+    section 은 "Yield"/"CPK"/"ETC" — CPK 섹션 썸네일만 규격창 재정규화(웹과 동일 기준).
     """
     _title_banner(ws, "Issue Table")
     header = (["Category", "Step", "Bin", "TNO", "Item", "avg"]
@@ -290,9 +291,13 @@ def write_issue_sheet(ws, issue_rows, source_names):
 
     rows = []
     item_rows = []
+    section = ""
     for r in issue_rows or []:
         if r.get("_detail"):
             continue
+        # Category 는 섹션 개시행에만 채워진다 (build_issue_table_rows) — 이후 행은 승계.
+        if r.get("Category") in ("Yield", "CPK", "ETC"):
+            section = r["Category"]
         vals = [r.get("Category"), r.get("Step"), r.get("Bin"), r.get("TNO"),
                 r.get("Item"), r.get("avg")]
         vals += [r.get(f"{s}_yield") for s in source_names]
@@ -304,7 +309,7 @@ def write_issue_sheet(ws, issue_rows, source_names):
                 parts.append(own)
             parts.extend(detail_comments.get((r.get("_grp"), col), []))
             vals.append("\n".join(parts))
-        item_rows.append((r.get("Item"), _HEADER_ROW + 1 + len(rows)))
+        item_rows.append((r.get("Item"), _HEADER_ROW + 1 + len(rows), section))
         rows.append(vals)
 
     _write_table(ws, header, rows)
@@ -352,18 +357,57 @@ def add_picture_at(ws, path, *, top, width_px, height_px):
     _add_picture(ws, path, _PIC_MARGIN, top, width_px * ppp, height_px * ppp)
 
 
-def add_picture_in_cell(ws, path, row, col, width_px, height_px):
-    """지정 (row,col) 셀 좌상단에 PNG 를 원본 물리크기로 부착 (Issue Table 행별 CDF).
+def add_picture_in_cell(ws, path, row, col, w_pt, h_pt):
+    """지정 (row,col) 셀 좌상단에 PNG 를 지정 물리크기(pt)로 부착 (Issue Table 행별 CDF).
 
+    썸네일은 렌더 DPI 가 시트 차트와 달라(고해상도) 크기를 호출부가 pt 로 넘긴다.
     행 높이가 PNG 보다 낮으면 PNG 높이에 맞춰 넓힌다(긴 comment 로 이미 높은 행은 유지).
     """
-    ppp = _png_pt_per_px()
-    w_pt, h_pt = width_px * ppp, height_px * ppp
     row_rng = ws.range((row, 1))
     if row_rng.row_height < h_pt + 4:
         row_rng.row_height = h_pt + 4
     cell = ws.range((row, col))
     _add_picture(ws, path, cell.left, cell.top, w_pt, h_pt)
+
+
+_HIDDEN_INDEX_FONT = {"name": "Calibri", "size": 8, "color": "FFFFFFFF"}  # 흰 글씨 = 화면에 안 보임
+_HIDDEN_INDEX_MIN_ROW = 3          # 세션링크(H1)·source 범례(row2) 보호
+
+
+def write_hidden_item_index(ws, entries, tops):
+    """차트 이미지가 덮는 셀에 항목명을 흰 글씨로 기입 — Ctrl+F 로 차트를 찾게 한다.
+
+    Distribution/Histogram 시트는 항목명이 PNG 픽셀 안에만 있어 검색이 안 된다. 그림 아래
+    셀에 텍스트를 심으면 Ctrl+F 가 해당 차트 위치로 점프한다(흰 글씨 + 그림에 가려 비가시).
+
+    entries: [(chunk_idx, cell_idx, subject)] — add_picture_at 과 동일한 tops 를 넘겨야
+    좌표가 어긋나지 않는다. 이 시트들은 행높이·열너비를 바꾸지 않으므로(기본값·균일)
+    pt→(row,col) 은 단순 나눗셈이다. 값·스타일 모두 범위 1회 적용(COM 왕복 최소).
+    """
+    from ._charts import NCOLS, cell_pt_size
+
+    if not entries:
+        return
+    cell_w_pt, cell_h_pt = cell_pt_size()
+    row_h = float(ws.api.StandardHeight)          # 한국어 Excel 기본 16.5pt 등 — 가정 금지
+    col_w = float(ws.range((1, 1)).width)
+    placed = {}
+    for chunk_idx, cell_idx, subject in entries:
+        r, c = divmod(int(cell_idx), NCOLS)
+        y_pt = tops[chunk_idx] + (r + 0.45) * cell_h_pt   # 셀 중앙 부근 = 점프 시 차트가 화면에 걸림
+        x_pt = _PIC_MARGIN + (c + 0.08) * cell_w_pt
+        row = max(_HIDDEN_INDEX_MIN_ROW, int(y_pt // row_h) + 1)
+        col = int(x_pt // col_w) + 1
+        placed.setdefault((row, col), str(subject))       # 충돌 시 먼저 온 항목 유지
+    rows = [r for r, _ in placed]
+    cols = [c for _, c in placed]
+    r_min, r_max, c_max = min(rows), max(rows), max(cols)
+    block = [[None] * c_max for _ in range(r_max - r_min + 1)]
+    for (row, col), subject in placed.items():
+        block[row - r_min][col - 1] = _safe(subject)
+    rng = ws.range((r_min, 1), (r_max, c_max))
+    rng.value = block
+    _style_range(rng, font=_HIDDEN_INDEX_FONT)
 
 
 def add_map_grid(ws, labeled_pngs):
@@ -374,3 +418,36 @@ def add_map_grid(ws, labeled_pngs):
         left = _PIC_MARGIN + col * (_MAP_PIC_W + _PIC_GAP)
         top = _PIC_MARGIN + row * (_MAP_PIC_H + _PIC_GAP)
         _add_picture(ws, path, left, top, _MAP_PIC_W, _MAP_PIC_H)
+
+
+_MAP_LEGEND_HEADER = ["Bin", "Description", "Count", "비율 (%)"]
+_MAP_LEGEND_ROW = 2                # 맵 그리드 상단과 나란히
+
+
+def write_map_legend(ws, legend_rows, desc_map, color_map, n_maps):
+    """맵 그리드 우측에 Bin Legend 표 — 웹 binLegendHtml(Bin/Description/Count/비율) 파리티.
+
+    맵 PNG 는 셀이 아니라 pt 좌표로 부착되므로, 표는 그리드 오른쪽 끝을 열폭으로 환산한
+    위치에 놓는다. 색 스와치는 Bin 셀 배경(웹 .bin-swatch 대응).
+    """
+    if not legend_rows:
+        return
+    used_cols = min(_MAP_COLS_PER_ROW, max(1, n_maps))
+    left_pt = _PIC_MARGIN + used_cols * (_MAP_PIC_W + _PIC_GAP)
+    start_col = int(left_pt // float(ws.range((1, 1)).width)) + 2
+    desc = desc_map or {}
+
+    rows = [[f"{r['bin']} (Pass)" if r.get("is_pass") else r["bin"],
+             "" if r.get("is_pass") else desc.get(str(r["bin"]), ""),
+             r.get("count"), r.get("pct")]
+            for r in legend_rows]
+    _write_table(ws, _MAP_LEGEND_HEADER, rows,
+                 header_row=_MAP_LEGEND_ROW, start_col=start_col)
+    for i, r in enumerate(legend_rows):     # bin 색 스와치 (bin 수는 수십 이하 — COM 부담 없음)
+        color = color_map.get(str(r["bin"]))
+        if color:
+            _style_range(ws.range((_MAP_LEGEND_ROW + 1 + i, start_col)),
+                         fill="FF" + color.lstrip("#").upper())
+    _set_col_widths(ws, _MAP_LEGEND_HEADER,
+                    {"Bin": 12, "Description": 34, "Count": 10, "비율 (%)": 10},
+                    start_col=start_col)

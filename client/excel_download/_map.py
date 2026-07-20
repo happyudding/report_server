@@ -1,15 +1,16 @@
 """Excel Download 전용 web_report 파리티 wafer bin map 렌더러 (matplotlib → PNG).
 
-server/report/static/webreport/wafer_charts.js 의 Plotly heatmap 을 정적 PNG 로 재현한다.
-데스크톱 honey_main 의 map_report.render_map_png 와는 독립(그쪽은 현행 유지) — 이 렌더러는
-Excel Download 경로에서만 쓰며 웹과 색/방향/라벨/프레임을 맞춘다:
+server/report/static/webreport/wafer_charts.js 의 canvas 썸네일(drawWaferThumb)을 정적
+PNG 로 재현한다. 데스크톱 honey_main 의 map_report.render_map_png 와는 독립(그쪽은 현행
+유지) — 이 렌더러는 Excel Download 경로에서만 쓰며 웹과 색/방향/격자를 맞춘다:
 
-- Pass(bin "1") = 초록 고정, fail = 전 소스 합산 count 내림차순 전역 팔레트(세션 전체 공통).
-- Y 는 아래로 증가(웨이퍼 관례, 웹 autorange:"reversed" 대응) — matplotlib origin="upper".
-- fail 셀에 bin 번호 표시(웹 texttemplate), Pass 셀은 빈칸.
-- 고정 웨이퍼 프레임(x_min..x_max/y_min..y_max) 크기로 그리고 빈 셀은 흰색.
-- 정사각 figure 로 저장 → 시트 부착 시 500x500 박스에 넣어도 왜곡 없음.
-- MDDI/PDDI 는 세로로 긴 chip 을 반영해 Y 셀을 늘림(웹 waferCellYScale=W/H).
+- Pass(bin "1") = 초록 고정, fail = 전 맵 합산 count 내림차순 전역 팔레트(세션 전체 공통).
+- 앞 step 에서 이미 fail 난 die(payload 에 bin 없음, g=1) = 회색.
+- 압축 격자(waferCompactGrid): die 가 실제 존재하는 x/y 만 남겨 빈 행/열을 제거한다.
+- die 당 cell px 블록 + 셀 사이 1px 흰 격자선(각 chip 구분·윤곽선) — 웹과 동일 시각.
+- Y 는 아래로 증가(웨이퍼 관례, 웹 autorange:"reversed").
+- 셀에 bin 번호를 쓰지 않는다(웹과 동일 — Bin 은 시트의 Bin Legend 표로 읽는다).
+- 축 눈금은 compact index → 실제 좌표 라벨(웹 Detail _compactTicks).
 
 ProcessPoolExecutor 자식에서 실행되므로 함수는 모듈 최상위·순수 데이터 인자만 받는다.
 """
@@ -20,151 +21,191 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 from matplotlib.figure import Figure          # noqa: E402
-from matplotlib.patches import Patch          # noqa: E402
-from matplotlib.ticker import MultipleLocator  # noqa: E402
 
 # wafer_charts.js 와 동일 값 — 세션 전체 차트(Summary/Fail Bin/Map)와 색을 일치시킨다.
 PASS_COLOR = "#0ca30c"
 PASS_BIN = "1"
 FAIL_PALETTE = ["#2a78d6", "#eda100", "#e34948", "#4a3aa7", "#eb6834", "#e87ba4", "#1baf7a"]
+GRAY_COLOR = "#c8ccd0"              # 앞 step fail die (웹 MAP_GRAY_HEX)
 
-_EMPTY_RGB = (1.0, 1.0, 1.0)        # 빈 셀(die 없음) = 흰색
-_NA_COLOR = "#000000"               # 색맵에 없는 bin
-_CELL_GAP_COLOR = "#ffffff"         # 셀 경계 흰 간격(웹 xgap/ygap 느낌)
-_LABEL_COLOR = "#0b0b0b"
-_MAJOR_TICK = 5
-_MINOR_TICK = 1
+_EMPTY_RGB = (255, 255, 255)        # 빈 셀(die 없음) = 흰색
+_NA_COLOR = "#9aa0a6"               # 색맵에 없는 bin (웹 TNO_OTHER_COLOR 계열 중립 회색)
+_TARGET_PX = 1000                   # 목표 한 변 픽셀 (웹은 표시 폭 기준 — PNG 는 고정)
+_MAX_PX = 4096                      # 축당 픽셀 상한 (웹 cellFor 와 동일 메모리 보호)
+_MAX_TICKS = 8                      # 웹 _compactTicks
+
+
+def build_global_bin_legend(map_rows):
+    """전 맵 bin_counts 합산 → 범례 행 [{bin,count,is_pass,pct}] (Pass 먼저, fail count desc).
+
+    wafer_charts.js buildGlobalBinLegend 포팅. step 분리 맵은 Pass 칩이 step 수만큼 중복
+    등장하므로 Pass 는 소스별 step 맵 중 최솟값(= 마지막 step 의 Pass = 전체 Pass)만 반영하고,
+    fail bin 은 칩당 한 step 맵에만 나오므로 그대로 합산한다.
+    """
+    totals = {}          # bin → {"count", "is_pass"}
+    order = []
+    step_pass_by_source = {}
+    for m in map_rows or []:
+        step_pass = 0
+        for bc in (m.get("bin_counts") or []):
+            b = str(bc.get("bin"))
+            count = int(bc.get("count") or 0)
+            is_pass = bool(bc.get("is_pass")) or b == PASS_BIN
+            if b not in totals:
+                order.append(b)
+                totals[b] = {"count": 0, "is_pass": is_pass}
+            if is_pass and m.get("step") is not None:
+                step_pass += count
+            else:
+                totals[b]["count"] += count
+        if m.get("step") is not None:
+            step_pass_by_source.setdefault(m.get("source"), []).append(step_pass)
+    pass_bin = next((b for b in order if totals[b]["is_pass"]), None)
+    if pass_bin is not None:
+        for arr in step_pass_by_source.values():
+            totals[pass_bin]["count"] += min(arr)
+    order.sort(key=lambda b: (0, 0) if totals[b]["is_pass"] else (1, -totals[b]["count"]))
+    grand = sum(totals[b]["count"] for b in order)
+    return [{"bin": b, "count": totals[b]["count"], "is_pass": totals[b]["is_pass"],
+             "pct": (round(totals[b]["count"] / grand * 10000) / 100) if grand else 0}
+            for b in order]
 
 
 def build_bin_color_map(map_rows):
-    """전 map 행 bin_counts 합산 → 전역 bin 순서(Pass 먼저, fail count 내림차순) → 색맵.
+    """범례 순서 → 색맵. Pass=초록 고정, fail=count 내림차순 팔레트 순환 (웹 makeBinColorMap).
 
-    wafer_charts.js buildGlobalBinLegend + makeBinColorMap 미러. map 에 등장하는 fail bin 의
-    팔레트 인덱스는 이 순서만으로 결정되므로(웹이 뒤에 붙이는 Fail Bin 시트 bin 은 map 색에
-    영향 없음), map 색상이 웹과 동일해진다. Pass count 는 색/순서에 무관해 step 중복 합산해도
-    무방(fail bin 은 칩당 한 step 맵에만 나와 단순 합산이 정확).
-    반환: (color_map: {bin_str: hex}, order: [bin_str, ...]).
+    범례(build_global_bin_legend)와 같은 순서에서 색을 유도하므로 Excel 의 맵·범례·웹 화면이
+    모두 같은 bin=같은 색이 된다. 반환: (color_map {bin_str: hex}, order [bin_str, ...]).
     """
-    totals = {}
-    is_pass = {}
-    for row in map_rows:
-        for bc in (row.get("bin_counts") or []):
-            b = str(bc.get("bin"))
-            totals[b] = totals.get(b, 0) + int(bc.get("count") or 0)
-            is_pass[b] = bool(bc.get("is_pass")) or b == PASS_BIN
-    order = sorted(totals.keys(),
-                   key=lambda b: (0, 0) if is_pass.get(b) else (1, -totals[b]))
+    legend = build_global_bin_legend(map_rows)
     color_map = {}
     fi = 0
-    for b in order:
-        if is_pass.get(b):
-            color_map[b] = PASS_COLOR
+    for row in legend:
+        if row["is_pass"]:
+            color_map[row["bin"]] = PASS_COLOR
         else:
-            color_map[b] = FAIL_PALETTE[fi % len(FAIL_PALETTE)]
+            color_map[row["bin"]] = FAIL_PALETTE[fi % len(FAIL_PALETTE)]
             fi += 1
-    return color_map, order
+    return color_map, [row["bin"] for row in legend]
 
 
-def _hex_to_rgb(hex_color):
-    h = hex_color.lstrip("#")
-    return tuple(int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+def build_bin_desc_map(yield_rows):
+    """bin → 대표 fail item(avg 최대) — 웹 buildBinDescMap 포팅 (Bin Legend Description)."""
+    best = {}
+    for r in yield_rows or []:
+        b = str(r.get("bin") or "")
+        item = r.get("Item")
+        if not b or b == PASS_BIN or not item:
+            continue
+        try:
+            avg = float(r.get("avg") or 0)
+        except (TypeError, ValueError):
+            avg = 0.0
+        if b not in best or avg > best[b][1]:
+            best[b] = (item, avg)
+    return {b: v[0] for b, v in best.items()}
 
 
-def _y_scale(product_type, nx, ny):
-    """MDDI/PDDI 는 세로로 긴 chip 이라 Y 셀을 W/H 배 늘려 원형에 가깝게(웹 waferCellYScale)."""
-    pt = (product_type or "").strip().upper()
-    if pt not in ("MDDI", "PDDI"):
-        return 1.0
-    return (nx / ny) if (nx > 0 and ny > 0) else 1.0
+def _hex_to_rgb255(hex_color):
+    h = str(hex_color).lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
 
 
-def _frame_bounds(frame, dies):
-    """frame 값 우선, None 이면 dies 좌표 min/max 폴백."""
-    xs = [d.get("x") for d in dies if d.get("x") is not None]
-    ys = [d.get("y") for d in dies if d.get("y") is not None]
-    x_min = frame.get("x_min"); x_max = frame.get("x_max")
-    y_min = frame.get("y_min"); y_max = frame.get("y_max")
-    if x_min is None: x_min = min(xs)
-    if x_max is None: x_max = max(xs)
-    if y_min is None: y_min = min(ys)
-    if y_max is None: y_max = max(ys)
-    return int(x_min), int(x_max), int(y_min), int(y_max)
+def _compact_grid(dies):
+    """die 가 실제 존재하는 x/y 만 남긴 압축 격자 — 웹 waferCompactGrid 포팅.
+
+    XPOS/YPOS 가 stride(띄엄띄엄)여도 빈 행/열을 제거해 빈 스트라이프 없이 그린다.
+    반환: (x_idx{좌표:index}, y_idx, xs, ys).
+    """
+    xs = sorted({int(d["x"]) for d in dies if d.get("x") is not None})
+    ys = sorted({int(d["y"]) for d in dies if d.get("y") is not None})
+    return ({v: i for i, v in enumerate(xs)}, {v: i for i, v in enumerate(ys)}, xs, ys)
 
 
-def render_wafer_map_png(dies, frame, color_map, bin_order, *,
-                         product_type="", title="", out_path) -> None:
+def _cell_for(n):
+    """축 die 수 n → die 당 픽셀 (웹 cellFor 미러: 상한 4096/n, 하한 2)."""
+    c = _TARGET_PX // n
+    cap = _MAX_PX // n
+    if c > cap:
+        c = cap
+    return max(c, 2)                 # 최소 2 (1px 격자선 확보)
+
+
+def _compact_ticks(vals):
+    """compact index → 실제 좌표 라벨, 양끝 포함 최대 8개 균등 (웹 _compactTicks)."""
+    n = len(vals)
+    if not n:
+        return [], []
+    cnt = min(n, _MAX_TICKS)
+    ticks, labels, seen = [], [], set()
+    for i in range(cnt):
+        idx = 0 if cnt == 1 else round(i * (n - 1) / (cnt - 1))
+        if idx in seen:
+            continue
+        seen.add(idx)
+        ticks.append(idx + 0.5)      # 셀 중앙
+        labels.append(str(vals[idx]))
+    return ticks, labels
+
+
+def _die_color(die, color_map):
+    """die → hex 색. 앞 step fail(g=1, bin 키 없음)은 회색 — 웹 rgbFor 규칙."""
+    if die.get("g") or "bin" not in die:
+        return GRAY_COLOR
+    return color_map.get(str(die.get("bin")), _NA_COLOR)
+
+
+def render_wafer_map_png(dies, color_map, *, title="", out_path) -> None:
     """웹-파리티 wafer bin map 을 out_path(PNG, 정사각)로 저장.
 
-    dies: [{"x","y","bin"(문자열)}], frame: {"x_min","x_max","y_min","y_max"},
-    color_map/bin_order: build_bin_color_map 산출(전역).
+    dies: [{"x","y","bin"} | {"x","y","g":1}], color_map: build_bin_color_map 산출(전역).
     """
-    x_min, x_max, y_min, y_max = _frame_bounds(frame, dies)
-    nx = x_max - x_min + 1
-    ny = y_max - y_min + 1
+    x_idx, y_idx, xs, ys = _compact_grid(dies)
+    W, H = len(xs), len(ys)
+    if W == 0 or H == 0:
+        raise ValueError(f"{title}: 좌표가 없습니다.")
 
-    # RGB 이미지 합성 (빈 셀 흰색). row 0 = y_min → origin="upper" 로 위쪽 배치 = Y 아래로 증가.
-    img = np.empty((ny, nx, 3), dtype="float64")
-    img[:] = _EMPTY_RGB
-    labels = []              # (x, y, bin) — fail 셀 번호
+    # 색 → 팔레트 인덱스(0=빈 셀 흰색)로 격자를 채운 뒤 블록 확대는 numpy 벡터 연산으로.
+    codes = np.zeros((H, W), dtype="int32")
+    palette = [_EMPTY_RGB]
+    code_of = {}
     for d in dies:
-        x = d.get("x"); y = d.get("y")
-        if x is None or y is None:
+        cx, cy = x_idx.get(d.get("x")), y_idx.get(d.get("y"))
+        if cx is None or cy is None:
             continue
-        c = int(x) - x_min
-        r = int(y) - y_min
-        if not (0 <= c < nx and 0 <= r < ny):
-            continue
-        b = str(d.get("bin"))
-        img[r, c] = _hex_to_rgb(color_map.get(b, _NA_COLOR))
-        if b != PASS_BIN:
-            labels.append((int(x), int(y), b))
+        hex_color = _die_color(d, color_map)
+        code = code_of.get(hex_color)
+        if code is None:
+            code = len(palette)
+            code_of[hex_color] = code
+            palette.append(_hex_to_rgb255(hex_color))
+        codes[cy, cx] = code
+
+    cell_x, cell_y = _cell_for(W), _cell_for(H)
+    gap_x = 1 if cell_x >= 3 else 0        # cell 이 너무 작으면 격자선 생략(웹과 동일)
+    gap_y = 1 if cell_y >= 3 else 0
+    img = np.asarray(palette, dtype="uint8")[codes]
+    img = np.repeat(np.repeat(img, cell_y, axis=0), cell_x, axis=1)
+    # 각 die 블록의 오른쪽/아래 끝 1px 을 흰색으로 — 웹은 w=cellX-gapX 만 칠해 같은 자리가 빈다.
+    if gap_x:
+        img[:, cell_x - 1::cell_x, :] = 255
+    if gap_y:
+        img[cell_y - 1::cell_y, :, :] = 255
 
     fig = Figure(figsize=(6.0, 6.0), dpi=110)      # 정사각 → 500x500 부착 왜곡 없음
     ax = fig.add_subplot(111)
-    ax.imshow(
-        img,
-        origin="upper",
-        extent=(x_min - 0.5, x_max + 0.5, y_max + 0.5, y_min - 0.5),   # y 아래로 증가
-        interpolation="nearest",
-        zorder=0,
-    )
-    ax.set_aspect(_y_scale(product_type, nx, ny))
-
-    # 셀 경계 흰 간격 — 색 셀 사이에만 보인다(빈 셀 흰 배경엔 안 보임 = 웹 gap 과 동일 인상).
-    x_bounds = np.arange(x_min - 0.5, x_max + 1.0, 1.0)
-    y_bounds = np.arange(y_min - 0.5, y_max + 1.0, 1.0)
-    ax.vlines(x_bounds, y_min - 0.5, y_max + 0.5, colors=_CELL_GAP_COLOR, linewidth=0.5, zorder=2)
-    ax.hlines(y_bounds, x_min - 0.5, x_max + 0.5, colors=_CELL_GAP_COLOR, linewidth=0.5, zorder=2)
-
-    # fail 셀 bin 번호 (웹 texttemplate). 셀 크기에 맞춰 폰트 축소.
-    if labels:
-        fs = max(2.0, min(8.0, 300.0 / max(nx, ny)))
-        for x, y, b in labels:
-            ax.text(x, y, b, ha="center", va="center", fontsize=fs,
-                    color=_LABEL_COLOR, zorder=3)
-
-    ax.xaxis.set_major_locator(MultipleLocator(_MAJOR_TICK))
-    ax.xaxis.set_minor_locator(MultipleLocator(_MINOR_TICK))
-    ax.yaxis.set_major_locator(MultipleLocator(_MAJOR_TICK))
-    ax.yaxis.set_minor_locator(MultipleLocator(_MINOR_TICK))
-    ax.set_xlim(x_min - 0.5, x_max + 0.5)
-    ax.set_ylim(y_max + 0.5, y_min - 0.5)          # 반전(위=y_min, 아래=y_max)
+    # extent 로 index 공간(0..W, 0..H) 매핑 + y 반전(위=작은 y, 웨이퍼 관례).
+    # 웹 썸네일도 1:1 wrap 에 채우므로(cellX/cellY 독립) aspect="auto" 가 파리티.
+    ax.imshow(img, extent=(0, W, H, 0), aspect="auto", interpolation="nearest")
+    xt, xl = _compact_ticks(xs)
+    yt, yl = _compact_ticks(ys)
+    ax.set_xticks(xt)
+    ax.set_xticklabels(xl)
+    ax.set_yticks(yt)
+    ax.set_yticklabels(yl)
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_title(title, fontsize=9)
-    ax.tick_params(which="major", labelsize=8)
-    ax.tick_params(which="minor", length=2)
-
-    # 이 맵에 등장하는 bin 을 전역 순서로 범례(하단 가로) — figure 정사각 유지 위해 축 밖 하단.
-    order = bin_order or list(color_map.keys())
-    handles = [
-        Patch(facecolor=color_map.get(b, _NA_COLOR), edgecolor="#888888",
-              label=(f"{b} (Pass)" if b == PASS_BIN else b))
-        for b in order
-    ]
-    fig.subplots_adjust(left=0.11, right=0.97, top=0.92, bottom=0.16)
-    if handles:
-        fig.legend(handles=handles, loc="lower center", ncol=min(len(handles), 8),
-                   fontsize=7, frameon=False, title="Bin", title_fontsize=7,
-                   bbox_to_anchor=(0.5, 0.0))
+    ax.tick_params(labelsize=8)
+    fig.subplots_adjust(left=0.10, right=0.97, top=0.93, bottom=0.09)
     fig.savefig(str(out_path), format="png", facecolor="white")

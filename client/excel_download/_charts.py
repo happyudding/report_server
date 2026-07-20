@@ -41,14 +41,21 @@ DPI = 96
 # Issue Table 행별 단일 CDF 썸네일 크기(inch) — 행 높이에 맞춰 작게.
 ISSUE_CELL_W_IN = 2.6
 ISSUE_CELL_H_IN = 1.15
+ISSUE_DPI = 192               # 썸네일만 2배 해상도(물리 크기는 pt 로 고정 — 확대 시 선명)
 
-_LIMIT_COLOR = "#d62728"
-_STATUS_TITLE_COLOR = {"fail": "#d62728", "cpk_low": "#e67700", "ok": "#111111"}
-_BORDER_COLOR = "#bbbbbb"
-_GRID_COLOR = "#dddddd"
+# 웹 파리티 스타일 (distribution.js distSpecShapes/DIST_STATUS_BG + report_view.html .distg-*)
+_LIMIT_COLOR = "#DC2626"      # 웹 spec line 색
+_BORDER_COLOR = "#e2e4e8"     # 웹 .distg-card border
+_GRID_COLOR = "#eeeeee"       # 웹 gridcolor #eee
 _TEXT_COLOR = "#444444"
 _TITLE_MAX_CHARS = 46
-_MARKER_SIZE = 1.6            # CDF 점(마커) 크기(pt)
+_MARKER_SIZE = 2.25           # CDF 점(마커) 크기(pt) — 웹 marker.size 3px = 3*72/96 pt
+_STATUS_BG = {"fail": "#FDECEC", "cpk_low": "#FEF9E7", "ok": "#FFFFFF"}  # 웹 DIST_STATUS_BG
+_TNO_COLOR = "#999999"        # 웹 .distg-tno
+_NAME_COLOR = "#1A1A1F"       # 웹 .distg-name
+_LIM_RANGE_COLOR = "#1d4ed8"  # 웹 .dist-lim-range
+_LIM_UNIT_COLOR = "#15803d"   # 웹 .dist-lim-unit
+_CPK_COLOR = "#555555"        # 웹 .distg-cpk
 
 # 셀 내부 플롯 영역 여백 (셀 크기에 대한 비율)
 _PAD_L, _PAD_R, _PAD_T, _PAD_B = 0.09, 0.03, 0.17, 0.13
@@ -60,24 +67,34 @@ def chunk_px_size(n_cells):
     return (int(NCOLS * CELL_W_IN * DPI), int(nrows * CELL_H_IN * DPI))
 
 
-def _fmt_title(cell):
+def cell_pt_size():
+    """차트 셀 1칸의 부착 물리 크기 (width_pt, height_pt) — 숨김 항목 인덱스 좌표 계산용."""
+    return (CELL_W_IN * 72.0, CELL_H_IN * 72.0)
+
+
+def _fmt_name(cell):
     title = str(cell.get("title") or "")
     if len(title) > _TITLE_MAX_CHARS:
         title = title[:_TITLE_MAX_CHARS - 1] + "…"
-    tno = cell.get("test_num")
-    out = f"{title} ({tno})" if tno else title
-    units = cell.get("units")
-    if units:
-        out += f" [{units}]"
-    return out
+    return title
 
 
-def _fmt_limit_caption(cell):
-    """limit 값 캡션 '(lo ~ hi)' — 둘 다 없으면 빈 문자열."""
+def _fmt_limit_range(cell):
+    """웹 카드 헤더 2줄째의 limit 범위 'lo ~ hi' — 둘 다 없으면 빈 문자열."""
     lo, hi = cell.get("lo"), cell.get("hi")
     if lo is None and hi is None:
         return ""
-    return f"({_fmt_num(lo) if lo is not None else '-'} ~ {_fmt_num(hi) if hi is not None else '-'})"
+    return f"{_fmt_num(lo) if lo is not None else '-'} ~ {_fmt_num(hi) if hi is not None else '-'}"
+
+
+def _text_w_frac(fig, text, fs, *, bold=False):
+    """텍스트 폭 추정(figure fraction) — 헤더 조각을 이어 붙일 때만 쓴다.
+
+    렌더러 측정(canvas draw)은 셀 수천 개 규모에서 비싸므로 문자폭 근사로 대체한다.
+    조금 어긋나도 겹침만 없으면 되는 용도(웹 카드 헤더의 tno→이름 순서 재현).
+    """
+    per_char = fs * (0.66 if bold else 0.58)
+    return len(str(text)) * per_char / (fig.get_size_inches()[0] * 72.0)
 
 
 def _fmt_num(v):
@@ -92,6 +109,14 @@ def _cell_box(idx, nrows):
     x0 = (c + _PAD_L) * cw
     y0 = (nrows - 1 - r + _PAD_B) * ch
     return x0, y0, cw * (1.0 - _PAD_L - _PAD_R), ch * (1.0 - _PAD_T - _PAD_B)
+
+
+def _cell_outer_box(idx, nrows):
+    """셀 idx 의 전체 영역(헤더 포함) — 상태 배경 fill 용 (웹 카드 배경 대응)."""
+    r, c = divmod(idx, NCOLS)
+    cw = 1.0 / NCOLS
+    ch = 1.0 / nrows
+    return c * cw, (nrows - 1 - r) * ch, cw, ch
 
 
 def _x_range(cell):
@@ -125,6 +150,7 @@ def _add_markers(fig, xs, ys, color, size=_MARKER_SIZE):
 
 
 _FILL_MAX_POINTS = 3000     # 세로 채움점 총량 상한 — stepY 하한 100/이값 (웹 DIST.FILL_MAX_POINTS 대칭)
+_FILL_VISUAL_MAX_DY = 0.3   # 시각 연속성 캡(%) — 웹 DIST.FILL_VISUAL_MAX_DY 와 동일
 
 
 def _dist_step_y(ys):
@@ -132,7 +158,9 @@ def _dist_step_y(ys):
 
     웹 distribution.js distStepY 포팅. 값이 전부 다른 진짜 희소 데이터는 모든 Δy 가 이 값과
     같아 채움 0(업샘플링 없음)이고, 동일값이 축약된 riser 만 개수에 비례해 채운다. 표본이
-    매우 커 간격이 잘면 100/_FILL_MAX_POINTS 하한으로 채움점 폭증을 막는다.
+    매우 커 간격이 잘면 100/_FILL_MAX_POINTS 하한으로 채움점 폭증을 막는다. 반대로 표본이
+    작아 단일점 증가량이 _FILL_VISUAL_MAX_DY 를 넘으면 그 값으로 캡해 누적 0~100% 에 marker
+    빈 구간이 없게 한다(조밀한 데이터는 캡이 no-op — 기존과 픽셀 동일).
     """
     step = float("inf")
     prev = 0.0
@@ -143,7 +171,7 @@ def _dist_step_y(ys):
         prev = float(v)
     if step == float("inf"):
         step = 0.8                      # 유효 riser 없음 — 폴백
-    return max(step, 100.0 / _FILL_MAX_POINTS)
+    return min(max(step, 100.0 / _FILL_MAX_POINTS), _FILL_VISUAL_MAX_DY)
 
 
 def _dist_fill_vertical(xs, ys, step_y=None):
@@ -176,18 +204,63 @@ def _dist_fill_vertical(xs, ys, step_y=None):
     return np.asarray(ox, dtype="float64"), np.asarray(oy, dtype="float64")
 
 
-def _cell_frame(fig, cell, box, xr, y_labels):
-    """테두리 + 가로 격자 + 제목 + x/y 라벨 텍스트 (Axes/틱 기계 대체)."""
+def _cell_bg(fig, cell, outer):
+    """셀 전체를 status 배경색으로 — 웹 카드(.distg-card + plot_bgcolor)와 동일."""
+    if outer is None:
+        return
+    ox0, oy0, ow, oh = outer
+    fig.add_artist(Rectangle((ox0, oy0), ow, oh, transform=fig.transFigure,
+                             facecolor=_STATUS_BG.get(cell.get("status"), "#FFFFFF"),
+                             edgecolor="none", zorder=0))
+
+
+def _cell_header(fig, cell, box, outer):
+    """웹 갤러리 카드 헤더 2줄 — ①tno + 항목명 ②limit 범위[unit] + cpk.
+
+    report_view.html .distg-tno/.distg-name/.distg-lim/.distg-cpk 미러.
+    """
     x0, y0, w, h = box
+    oh = outer[3] if outer else (y0 + h)
+    top = (outer[1] + outer[3]) if outer else (y0 + h)
+
+    # 1줄: test_num(회색) → 항목명(bold)
+    x = x0
+    tno = cell.get("test_num")
+    y1 = top - 0.02 * oh
+    if tno not in (None, ""):
+        fig.text(x, y1, str(tno), fontsize=5.5, color=_TNO_COLOR, ha="left", va="top")
+        x += _text_w_frac(fig, tno, 5.5) + 0.004 * (1.0 / NCOLS)
+    fig.text(x, y1, _fmt_name(cell), fontsize=7, color=_NAME_COLOR,
+             ha="left", va="top", fontweight="bold")
+
+    # 2줄: limit 범위(진한 파랑) + [unit](진한 초록) 좌측, cpk 우측
+    y2 = top - 0.105 * oh
+    x = x0
+    lim = _fmt_limit_range(cell)
+    if lim:
+        fig.text(x, y2, lim, fontsize=5.5, color=_LIM_RANGE_COLOR,
+                 ha="left", va="top", fontweight="bold")
+        x += _text_w_frac(fig, lim, 5.5, bold=True) + 0.004 * (1.0 / NCOLS)
+    units = cell.get("units")
+    if units:
+        fig.text(x, y2, f"[{units}]", fontsize=5.5, color=_LIM_UNIT_COLOR,
+                 ha="left", va="top")
+    cpk = cell.get("cpk")
+    if cpk is not None:
+        try:
+            fig.text(x0 + w, y2, f"cpk {float(cpk):.2f}", fontsize=5.5,
+                     color=_CPK_COLOR, ha="right", va="top")
+        except (TypeError, ValueError):
+            pass
+
+
+def _cell_frame(fig, cell, box, xr, y_labels, outer=None):
+    """상태 배경 + 테두리 + 가로 격자 + 웹 카드 헤더 + x/y 라벨 (Axes/틱 기계 대체)."""
+    x0, y0, w, h = box
+    _cell_bg(fig, cell, outer)
     fig.add_artist(Rectangle((x0, y0), w, h, transform=fig.transFigure,
                              fill=False, edgecolor=_BORDER_COLOR, linewidth=0.6))
-    fig.text(x0, y0 + h + 0.004, _fmt_title(cell), fontsize=7,
-             color=_STATUS_TITLE_COLOR.get(cell.get("status"), "#111111"),
-             ha="left", va="bottom")
-    cap = _fmt_limit_caption(cell)      # 제목줄 우측에 limit 값 캡션
-    if cap:
-        fig.text(x0 + w, y0 + h + 0.004, cap, fontsize=5, color=_LIMIT_COLOR,
-                 ha="right", va="bottom")
+    _cell_header(fig, cell, box, outer)
     # 가로 격자(y_labels 위치) + y 라벨
     n = len(y_labels)
     for i, lab in enumerate(y_labels):
@@ -208,20 +281,27 @@ def _cell_frame(fig, cell, box, xr, y_labels):
                      color=_TEXT_COLOR, ha="center", va="top")
 
 
-def _limit_lines(fig, cell, box, xr):
+def _limit_lines(fig, cell, box, xr, *, labels=True, label_fs=5.5):
+    """LSL/USL 세로 점선 + 세로(-90도) 라벨 — 웹 distSpecShapes/distSpecAnnos 미러."""
     x0, y0, w, h = box
     xmin, xmax = xr
     span = xmax - xmin
-    for v in (cell.get("lo"), cell.get("hi")):
+    for key, tag in (("hi", "USL"), ("lo", "LSL")):
+        v = cell.get(key)
         if v is None:
             continue
         fx = x0 + (float(v) - xmin) / span * w
-        _add_line(fig, (fx, fx), (y0, y0 + h), _LIMIT_COLOR, lw=0.8, ls="--")
+        _add_line(fig, (fx, fx), (y0, y0 + h), _LIMIT_COLOR, lw=0.9, ls="--")
+        if labels:
+            fig.text(fx, y0 + h, f"{tag} {_fmt_num(v)}", rotation=-90,
+                     fontsize=label_fs, color=_LIMIT_COLOR, ha="left", va="top",
+                     bbox=dict(facecolor="white", alpha=0.72, pad=0.6,
+                               edgecolor="none"))
 
 
-def _draw_cdf_cell(fig, cell, box):
+def _draw_cdf_cell(fig, cell, box, outer=None):
     xr = _x_range(cell)
-    _cell_frame(fig, cell, box, xr, y_labels=("0", "50", "100"))
+    _cell_frame(fig, cell, box, xr, y_labels=("0", "50", "100"), outer=outer)
     if xr is None:
         return
     x0, y0, w, h = box
@@ -269,7 +349,7 @@ def _normal_x_range(cell):
     return xmin - span * 0.05, xmax + span * 0.05
 
 
-def _draw_hist_cell(fig, cell, box):
+def _draw_hist_cell(fig, cell, box, outer=None):
     """웹 Report 모드(distRenderNormal)와 동일한 정규분포(가우시안 PDF) 곡선.
 
     source 별 μ/σ 로 매끄러운 곡선(μ±4σ 256점). 축퇴(n<2 또는 σ≤0)는 x=μ 세로 스파이크.
@@ -277,7 +357,7 @@ def _draw_hist_cell(fig, cell, box):
     """
     xr = _normal_x_range(cell)
     if xr is None:
-        _cell_frame(fig, cell, box, None, y_labels=(None,))
+        _cell_frame(fig, cell, box, None, y_labels=(None,), outer=outer)
         return
     xmin, xmax = xr
     span = xmax - xmin
@@ -298,7 +378,7 @@ def _draw_hist_cell(fig, cell, box):
         ys = coef * np.exp(-0.5 * ((xs - mu) / sd) ** 2)
         curves.append((color, xs, ys))
         ymax = max(ymax, coef)
-    _cell_frame(fig, cell, box, xr, y_labels=(None,))
+    _cell_frame(fig, cell, box, xr, y_labels=(None,), outer=outer)
     x0, y0, w, h = box
     ytop = ymax if ymax > 0 else 1.0
     for color, xs, ys in curves:
@@ -315,7 +395,7 @@ def _render_cells(cells, kind, out_path, nrows):
     fig = Figure(figsize=(NCOLS * CELL_W_IN, nrows * CELL_H_IN), dpi=DPI)
     draw = _draw_cdf_cell if kind == "cdf" else _draw_hist_cell
     for idx, cell in enumerate(cells):
-        draw(fig, cell, _cell_box(idx, nrows))
+        draw(fig, cell, _cell_box(idx, nrows), _cell_outer_box(idx, nrows))
     fig.savefig(out_path, format="png", facecolor="white")
 
 
@@ -323,7 +403,7 @@ def render_grid_chunk(job) -> str:
     """CDF/Histogram 그리드 청크 1장 렌더. job:
 
     {"kind": "cdf"|"hist", "out_path": str,
-     "cells": [{"title","test_num","units","lo","hi","status",
+     "cells": [{"title","test_num","units","lo","hi","status","cpk",
                 "sources": [(name, color, x(np.ndarray), y(np.ndarray),
                              n|None, avg|None, std|None), ...]}, ...]}
     반환: out_path. cells 는 최대 NCOLS*ROWS_PER_CHUNK 개.
@@ -348,20 +428,94 @@ def render_chunk_pair(job) -> tuple:
     return job["cdf_path"], job["hist_path"]
 
 
-def issue_cdf_px_size():
-    """Issue Table 행별 단일 CDF PNG 의 (width_px, height_px)."""
-    return (int(ISSUE_CELL_W_IN * DPI), int(ISSUE_CELL_H_IN * DPI))
+def issue_cdf_pt_size():
+    """Issue Table 썸네일의 부착 물리 크기 (width_pt, height_pt) — DPI 와 무관."""
+    return (ISSUE_CELL_W_IN * 72.0, ISSUE_CELL_H_IN * 72.0)
+
+
+def _window_renorm(xs, ys, lo, hi):
+    """ECDF [lo,hi] 창 재정규화 — 웹 distribution.js distWindowRenorm 포팅.
+
+    Issue Table CPK 섹션 미니셀(웹 data-limitwin)이 행의 cpk_limited(규격내 재계산 cpk)와
+    같은 기준으로 그려지도록 규격 안 점만 남기고 누적%를 0~100 으로 재정규화한다. 다운샘플이
+    아닌 의미적 필터라 세로채움(_dist_fill_vertical)보다 **먼저** 적용해야 한다.
+    """
+    if lo is None and hi is None:
+        return xs, ys
+    xs = np.asarray(xs, dtype="float64")
+    ys = np.asarray(ys, dtype="float64")
+    if xs.size == 0:
+        return xs, ys
+    i0 = int(np.searchsorted(xs, float(lo), side="left")) if lo is not None else 0
+    i1 = (int(np.searchsorted(xs, float(hi), side="right")) - 1) if hi is not None else xs.size - 1
+    if i1 < i0:
+        empty = np.empty(0, dtype="float64")
+        return empty, empty                       # 규격 안 데이터 없음
+    y_before = ys[i0 - 1] if i0 > 0 else 0.0
+    denom = ys[i1] - y_before
+    oxs = xs[i0:i1 + 1]
+    if denom <= 0:                                # 창 내 단일 고유값
+        return oxs, np.full(oxs.shape, 100.0)
+    return oxs, (ys[i0:i1 + 1] - y_before) / denom * 100.0
+
+
+def _mini_x_range(pts, cell):
+    """미니셀 x 범위 — 데이터 ∪ limit 에 ±5% 가드밴드 (웹 renderMiniDistCell 과 동일)."""
+    xmin, xmax = float("inf"), float("-inf")
+    for x, _ in pts:
+        if len(x):
+            xmin = min(xmin, float(x[0]))
+            xmax = max(xmax, float(x[-1]))
+    for v in (cell.get("lo"), cell.get("hi")):
+        if v is not None:
+            xmin = min(xmin, float(v))
+            xmax = max(xmax, float(v))
+    if xmin == float("inf"):
+        return None
+    gb = (xmax - xmin) * 0.05 if xmax > xmin else (abs(xmin) * 0.05 or 1.0)
+    return xmin - gb, xmax + gb
+
+
+def _draw_mini_cdf_cell(fig, cell, box, *, limit_window=False):
+    """웹 Issue Table 미니셀(renderMiniDistCell) 미러 — 축·격자·제목 없이 점 + spec 선만.
+
+    limit_window 면 규격창 재정규화(CPK 섹션 = 웹 data-limitwin) 후 렌더.
+    """
+    pts = []
+    for src in cell["sources"]:
+        color, x, y = src[1], src[2], src[3]
+        if len(x) == 0:
+            continue
+        if limit_window:
+            x, y = _window_renorm(x, y, cell.get("lo"), cell.get("hi"))
+            if len(x) == 0:
+                continue
+        pts.append((np.asarray(x, dtype="float64"),
+                    np.asarray(y, dtype="float64"), color))
+    xr = _mini_x_range([(x, y) for x, y, _ in pts], cell)
+    if xr is None:
+        return
+    x0, y0, w, h = box
+    xmin, xmax = xr
+    span = xmax - xmin
+    for x, y, color in pts:
+        fx, fy = _dist_fill_vertical(x, y)
+        px = x0 + (fx - xmin) / span * w
+        py = y0 + fy / 100.0 * h
+        _add_markers(fig, px, py, color)
+    _limit_lines(fig, cell, box, xr, labels=False)   # 웹 미니셀은 라벨 없이 선만
 
 
 def render_single_cdf(job) -> str:
-    """Issue Table 행 1개용 단일 CDF PNG. job: {"cell": {...}, "out_path": str}.
+    """Issue Table 행 1개용 단일 CDF PNG. job:
 
-    figure 전체를 셀 1칸으로 써서 Distribution 셀과 동일 스타일(점+눈금+limit)로 렌더.
-    반환: out_path.
+    {"cell": {...}, "out_path": str, "limit_window": bool}
+    웹 Issue Table 미니셀과 같은 포맷(축 숨김·최소 여백·spec 선). 반환: out_path.
     """
-    fig = Figure(figsize=(ISSUE_CELL_W_IN, ISSUE_CELL_H_IN), dpi=DPI)
-    box = (_PAD_L, _PAD_B, 1.0 - _PAD_L - _PAD_R, 1.0 - _PAD_T - _PAD_B)
-    _draw_cdf_cell(fig, job["cell"], box)
+    fig = Figure(figsize=(ISSUE_CELL_W_IN, ISSUE_CELL_H_IN), dpi=ISSUE_DPI)
+    m = 0.01                                   # 웹 margin 1px 대응(마커 반경만큼만 여유)
+    _draw_mini_cdf_cell(fig, job["cell"], (m, m, 1.0 - 2 * m, 1.0 - 2 * m),
+                        limit_window=bool(job.get("limit_window")))
     fig.savefig(job["out_path"], format="png", facecolor="white")
     return job["out_path"]
 
@@ -369,17 +523,14 @@ def render_single_cdf(job) -> str:
 def render_map_png_job(job) -> str:
     """Map Analysis 행 1개 → 웹-파리티 wafer map PNG. job:
 
-    {"out_path","title","dies","frame","color_map","bin_order","product_type"}
-    _map.render_wafer_map_png 으로 웹(Plotly heatmap)과 색/방향/라벨/프레임을 맞춘다
+    {"out_path","title","dies","color_map"}
+    _map.render_wafer_map_png 으로 웹(canvas 썸네일)과 색/방향/격자를 맞춘다
     (데스크톱 map_report 와 독립). 반환: out_path. 좌표(dies)가 비어 있으면 ValueError.
     """
     from ._map import render_wafer_map_png
 
     if not job.get("dies"):
         raise ValueError(f"{job['title']}: 좌표가 없습니다.")
-    render_wafer_map_png(
-        job["dies"], job["frame"], job["color_map"], job.get("bin_order") or [],
-        product_type=job.get("product_type", ""),
-        title=job["title"], out_path=job["out_path"],
-    )
+    render_wafer_map_png(job["dies"], job["color_map"],
+                         title=job["title"], out_path=job["out_path"])
     return job["out_path"]

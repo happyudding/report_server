@@ -20,12 +20,14 @@ import re
 import time
 from pathlib import Path
 
+from . import build_status
 from . import cache
 from . import cache_policy
 from . import compute
 from . import disk_cache
 from . import dist_blob as _dist_blob
 from . import edits
+from . import rawedit as _rawedit
 from . import runtime
 from .honeyform import encode_honeyform_parquet
 from .ingest import ingest_webreport  # noqa: F401  (외부 진입점 재노출 — upload_webreport.py)
@@ -95,48 +97,57 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
             if report is None:
                 # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
                 report = disk_cache.load_report(upload_root, cache_key)
-                if report is None and compute.should_offload(cache_policy.tables_key(session)):
-                    # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
-                    # 워커가 disk_cache 도 채우므로 여기서는 RAM 캐시만 넣는다.
-                    report = compute.run(compute.report_job, session_id, str(upload_root))
                 if report is None:
-                    t0 = time.perf_counter()
-                    session, tables, manifest = _load_tables(
-                        session_id, report_db=report_db, upload_root=upload_root,
-                        session=session)
-                    edit_state, _ = edits.effective_state(report_db, session_id, manifest)
-                    tables = _mode_tables(tables, mode)
-                    # ai_comment 옵션 세션만 eval_analyzer 평가 실행 (콜드 빌드 1회 —
-                    # rawdata 편집은 content_hash 변경으로 자동 재평가). 실패는
-                    # safe_build 가 빈 dict 로 격리해 빌드가 죽지 않는다.
-                    ai_comments = None
-                    if _webreport_ai_comment(session.get("webreport_options") or ""):
-                        from . import ai_comment
-                        ai_comments = ai_comment.safe_build(
-                            tables, session,
-                            manifest.get("selected_items") or [])
-                    report = build_report_payload(
-                        tables,
-                        selected_items=manifest.get("selected_items") or [],
-                        sheets=manifest.get("sheets") or [],
-                        etc_items=edit_state["etc_items"],
-                        issue_comments=edit_state["issue_comments"],
-                        summary_engr=edit_state["summary_engr"],
-                        issue_hidden=edit_state["issue_hidden"],
-                        issue_status=edit_state["issue_status"],
-                        product_type=session.get("product_type", ""),
-                        product=session.get("product", ""),
-                        mode=mode,
-                        dist_colors=dist_colors,
-                        ai_comments=ai_comments,
-                    )
-                    disk_cache.save_report(upload_root, cache_key, report)
-                    # 관측 로그 — 콜드 빌드(디코드 포함)가 실데이터에서 얼마나 걸리는지.
-                    _log.info(
-                        "report cold build akey=%.12s sid=%s sources=%d items=%d %.1fs",
-                        str(analysis_key), session_id, len(tables),
-                        len(report.get("distribution_index") or ()),
-                        time.perf_counter() - t0)
+                    # 여기부터가 실제 콜드 빌드(워커 오프로드 포함) — 프런트 로드
+                    # 오버레이가 build_status 폴링으로 "계산 중 + 경과초"를 사실대로
+                    # 표시한다 (관측 전용 — 빌드 로직에는 영향 없음).
+                    build_status.begin(session_id, "report")
+                    try:
+                        if compute.should_offload(cache_policy.tables_key(session)):
+                            # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
+                            # 워커가 disk_cache 도 채우므로 여기서는 RAM 캐시만 넣는다.
+                            report = compute.run(compute.report_job, session_id,
+                                                 str(upload_root))
+                        if report is None:
+                            t0 = time.perf_counter()
+                            session, tables, manifest = _load_tables(
+                                session_id, report_db=report_db, upload_root=upload_root,
+                                session=session)
+                            edit_state, _ = edits.effective_state(report_db, session_id, manifest)
+                            tables = _mode_tables(tables, mode)
+                            # ai_comment 옵션 세션만 eval_analyzer 평가 실행 (콜드 빌드 1회 —
+                            # rawdata 편집은 content_hash 변경으로 자동 재평가). 실패는
+                            # safe_build 가 빈 dict 로 격리해 빌드가 죽지 않는다.
+                            ai_comments = None
+                            if _webreport_ai_comment(session.get("webreport_options") or ""):
+                                from . import ai_comment
+                                ai_comments = ai_comment.safe_build(
+                                    tables, session,
+                                    manifest.get("selected_items") or [])
+                            report = build_report_payload(
+                                tables,
+                                selected_items=manifest.get("selected_items") or [],
+                                sheets=manifest.get("sheets") or [],
+                                etc_items=edit_state["etc_items"],
+                                issue_comments=edit_state["issue_comments"],
+                                summary_engr=edit_state["summary_engr"],
+                                issue_hidden=edit_state["issue_hidden"],
+                                issue_status=edit_state["issue_status"],
+                                product_type=session.get("product_type", ""),
+                                product=session.get("product", ""),
+                                mode=mode,
+                                dist_colors=dist_colors,
+                                ai_comments=ai_comments,
+                            )
+                            disk_cache.save_report(upload_root, cache_key, report)
+                            # 관측 로그 — 콜드 빌드(디코드 포함)가 실데이터에서 얼마나 걸리는지.
+                            _log.info(
+                                "report cold build akey=%.12s sid=%s sources=%d items=%d %.1fs",
+                                str(analysis_key), session_id, len(tables),
+                                len(report.get("distribution_index") or ()),
+                                time.perf_counter() - t0)
+                    finally:
+                        build_status.end(session_id)
                 cache.cache_put(cache.REPORT_CACHE, cache_key, report, cache.REPORT_CACHE_MAX)
     public = dict(session)
     public["has_password"] = bool(public.get("password"))
@@ -353,8 +364,9 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
                   client_ip: str = "", user_agent: str = "") -> dict:
     """Raw Data 셀 편집을 저장된 parquet 원본에 그대로 반영한다.
 
-    버전관리·undo 없음 — 편집된 source 는 df 기준으로 재인코딩해 기존 analysis_key 의
-    web_report_source_<idx> 를 덮어쓴다 (Honey 재업로드 전까지 이전 값은 복구 불가).
+    편집된 source 는 df 기준으로 재인코딩해 기존 analysis_key 의 web_report_source_<idx>
+    를 덮어쓴다. 덮어쓰기 직전 현재 원본을 로컬에 1세대 백업하므로(rawedit.
+    backup_current_sources) 실수 편집은 운영자가 수동 복구할 수 있다 — 앱 내 undo 는 없다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -362,6 +374,7 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
     analysis_key = session.get("analysis_key")
     if not analysis_key:
         raise FileNotFoundError(session_id)
+    old_content_hash = session.get("content_hash") or ""
 
     # 같은 analysis_key 원본의 read-modify-write 직렬화 — 동시 편집 lost update 방지
     # (rawedit.replace_sources 와 같은 락 키. 단일 프로세스 전제라 in-process 락으로 충분 —
@@ -379,6 +392,10 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
             _canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
         ).hexdigest()
 
+        # 덮어쓰기 직전 현재 원본 1세대 백업 — 실패 시 예외로 편집 거부(원본 무손상).
+        backup_name = _rawedit.backup_current_sources(
+            analysis_key, upload_root, old_content_hash=old_content_hash)
+
         storage_result = runtime.storage().save_webreport_sources(
             analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
 
@@ -390,7 +407,7 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
             "edit", session_id=session_id, analysis_key=analysis_key,
             product_type=session.get("product_type", ""), product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
-            changed_fields=f"raw_data({len(edits)} cells)",
+            changed_fields=f"raw_data({len(edits)} cells, backup={backup_name})",
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass

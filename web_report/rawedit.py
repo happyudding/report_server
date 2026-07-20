@@ -2,7 +2,8 @@
 
 세션의 web_report parquet 원본을 zip 으로 내보내고(Honey 가 Excel 로 열어 편집),
 Honey 가 재인코딩한 parquet 전체를 받아 기존 analysis_key 원본을 통째로 덮어쓴다.
-버전관리/undo 없음 — service.edit_raw_data 와 동일한 content_hash 산출·캐시 무효화·
+덮어쓰기 직전 현재 원본을 1세대 백업한다(backup_current_sources) — 앱 내 undo 는 없고
+복구는 운영자 수동. service.edit_raw_data 와 동일한 백업·content_hash 산출·캐시 무효화·
 audit 패턴을 그대로 따른다 (여기는 셀 단위가 아니라 source 전체 교체라는 점만 다름).
 """
 from __future__ import annotations
@@ -10,7 +11,10 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
+import time
 import zipfile
+from pathlib import Path
 
 from . import cache
 from . import runtime
@@ -38,6 +42,33 @@ def export_sources_zip(session_id, *, report_db, upload_root) -> bytes:
         for idx, data in enumerate(sources):
             zf.writestr(f"source_{idx}.parquet", data)
     return buf.getvalue()
+
+
+def backup_current_sources(analysis_key, upload_root, old_content_hash="") -> str:
+    """덮어쓰기 직전 현재 parquet 원본+manifest 를 로컬 백업으로 남긴다 (1세대 유지).
+
+    `<upload_root>/webreport_backup/<analysis_key>/<UTC ts>_<old_hash 12자>/` 에
+    source_<idx>.parquet + manifest.json 을 쓰고, 성공 후 같은 analysis_key 의 이전
+    세대 디렉토리를 지워 항상 1세대만 유지한다(akey당 자체 용량 상한). 실패는 예외
+    전파 — 백업 없이 덮어쓰지 않는다(호출부가 편집을 거부, 원본 무손상). 복구는
+    수동(파일 복사) 전제라 복원 API 는 없다. 반환은 백업 디렉토리 이름(감사 로그용).
+    """
+    sources, manifest = runtime.storage().load_webreport_sources(analysis_key, upload_root)
+    root = Path(upload_root) / "webreport_backup" / str(analysis_key)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    name = f"{stamp}_{str(old_content_hash or '')[:12] or 'nohash'}"
+    dest = root / name
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    for idx, data in enumerate(sources):
+        (dest / f"source_{idx}.parquet").write_bytes(data)
+    # 백업 완료 후에만 이전 세대 제거 — 도중 실패 시 남는 부분 디렉토리는 다음
+    # 성공 백업이 지운다(덮어쓰기 자체가 거부되므로 원본 유실과 무관).
+    for sibling in root.iterdir():
+        if sibling.name != name and sibling.is_dir():
+            shutil.rmtree(sibling, ignore_errors=True)
+    return name
 
 
 def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
@@ -80,6 +111,11 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
             canon({"files": [hashlib.sha256(b).hexdigest() for b in sources_bytes]})
         ).hexdigest()
 
+        # 덮어쓰기 직전 현재 원본 1세대 백업 — 실패 시 예외로 편집 거부(원본 무손상).
+        backup_name = backup_current_sources(
+            analysis_key, upload_root,
+            old_content_hash=session.get("content_hash") or "")
+
         storage_result = runtime.storage().save_webreport_sources(
             analysis_key, content_hash, sources_bytes, manifest, upload_root=upload_root)
 
@@ -92,7 +128,7 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
             "edit", session_id=session_id, analysis_key=analysis_key,
             product_type=session.get("product_type", ""), product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
-            changed_fields=f"raw_data(excel, {len(sources_bytes)} sources)",
+            changed_fields=f"raw_data(excel, {len(sources_bytes)} sources, backup={backup_name})",
             client_ip=client_ip, user_agent=user_agent,
             client_user=client_user or None)
     except Exception:

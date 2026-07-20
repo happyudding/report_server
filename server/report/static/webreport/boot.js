@@ -9,6 +9,11 @@ function setLoadProgress(pct, msg) {
   if (pc) pc.textContent = Math.round(pct) + "%";
   if (st && msg != null) st.textContent = msg;
 }
+// 진행률은 그대로 두고 안내 문구만 교체 (creep 이 채우는 %를 건드리지 않는다).
+function setLoadMessage(msg) {
+  const st = document.getElementById("loadStatus");
+  if (st) st.textContent = msg;
+}
 function stopLoadCreep() { if (_loadCreep) { clearInterval(_loadCreep); _loadCreep = null; } }
 // 서버 재계산 대기(첫 바이트 전)엔 실제 진척을 알 수 없어 from→to 로 ease-out 천천히 채운다.
 function startLoadCreep(from, to, ms, msg) {
@@ -23,19 +28,56 @@ function startLoadCreep(from, to, ms, msg) {
 }
 // 콜드 빌드(첫 조회 서버 계산)가 길어질 때 62% 정지가 "멈춤"으로 보이지 않도록
 // 시간 경과에 따라 메시지를 갱신하고 아주 느린 2차 creep(62→85, 90s)을 이어간다.
+// 메시지는 추정이 아니라 서버 build_status 폴링의 실측(계산 중 여부 + 경과초)으로 덮어쓴다.
 let _loadStageTimers = [];
 function clearLoadStageTimers() {
   _loadStageTimers.forEach(t => clearTimeout(t));
   _loadStageTimers = [];
+  stopBuildStatusPoll();
 }
 function scheduleLoadStageMsgs() {
   clearLoadStageTimers();
+  // 폴링이 실측 문구를 대고 있으면(_buildStatusLive) 여기 추정 문구는 넘기지 않고(null)
+  // % creep 만 이어간다 — 두 문구가 서로 덮어써 깜빡이지 않도록.
   _loadStageTimers = [
-    setTimeout(() => startLoadCreep(62, 78, 45000,
+    setTimeout(() => startLoadCreep(62, 78, 45000, _buildStatusLive ? null :
       "서버가 리포트를 계산하고 있습니다…"), 15000),
-    setTimeout(() => startLoadCreep(78, 85, 60000,
+    setTimeout(() => startLoadCreep(78, 85, 60000, _buildStatusLive ? null :
       "대용량 세션은 첫 조회에 1~2분 걸릴 수 있습니다 (이후 조회는 즉시 열립니다)"), 60000),
   ];
+  startBuildStatusPoll();
+}
+
+// ── 콜드 빌드 실측 폴링 ────────────────────────────────────────────────────────
+// /full 은 계산이 끝나야 첫 바이트가 오므로, 그 사이 서버가 실제로 빌드 중인지·몇 초째인지
+// 를 별도 경량 라우트로 물어 안내 문구를 사실로 바꾼다. 응답이 없거나 idle 이면(구서버·
+// 웜 세션) 위 시간 기반 문구를 그대로 두고 조용히 물러난다 — 폴링은 안내 전용이라
+// 실패해도 로드에 영향을 주지 않는다.
+let _buildPoll = null;
+let _buildStatusLive = false;   // 폴링이 "계산 중"을 실제로 확인했는가 (문구 우선순위용)
+function stopBuildStatusPoll() {
+  if (_buildPoll) { clearInterval(_buildPoll); _buildPoll = null; }
+  _buildStatusLive = false;
+}
+function startBuildStatusPoll() {
+  stopBuildStatusPoll();
+  const tick = async () => {
+    try {
+      const r = await fetch(`/pe/report/session/${SESSION_ID}/web_report/build_status`,
+                            { cache: "no-store" });
+      if (!r.ok) { stopBuildStatusPoll(); return; }   // 구서버(404) 등 — 조용히 물러남
+      const s = await r.json();
+      if (s.state !== "building") return;   // 웜이거나 아직 미등록 — 다음 tick 에서 재확인
+      _buildStatusLive = true;
+      const secs = Math.round(s.elapsed || 0);
+      setLoadMessage(`서버가 리포트를 계산하고 있습니다… (${secs}초 경과, `
+        + `첫 조회만 걸리며 이후에는 즉시 열립니다)`);
+    } catch (e) {
+      stopBuildStatusPoll();   // 네트워크 단절 등 — 안내 문구는 기존 것 유지
+    }
+  };
+  _buildPoll = setInterval(tick, 2000);
+  setTimeout(tick, 1500);   // 첫 확인은 조금 일찍 (웜이면 어차피 곧 hide 된다)
 }
 function showLoadOverlay() {
   const ov = document.getElementById("loadOverlay");

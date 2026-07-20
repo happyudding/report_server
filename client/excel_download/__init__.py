@@ -26,12 +26,13 @@ from ._charts import (
     NCOLS,
     ROWS_PER_CHUNK,
     chunk_px_size,
-    issue_cdf_px_size,
+    issue_cdf_pt_size,
     render_chunk_pair,
     render_map_png_job,
     render_single_cdf,
 )
 from ._fetch import fetch_report_data
+from ._map import build_bin_desc_map, build_global_bin_legend
 from . import _sheets
 
 _CHUNK_CELLS = NCOLS * ROWS_PER_CHUNK
@@ -81,8 +82,8 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
     try:
         chunk_jobs, n_items, cell_of = _build_chunk_jobs(
             report, dist, dict(colors), tmpdir, bin1=bin1)
-        product_type = (full.get("session") or {}).get("product_type", "")
-        map_jobs = _build_map_jobs(sheets.get("Map Analysis") or [], tmpdir, product_type)
+        map_rows = sheets.get("Map Analysis") or []
+        map_jobs, map_colors = _build_map_jobs(map_rows, tmpdir)
         _emit("render", f"차트 잡 구성 완료 ({time.perf_counter() - t_dl:.1f}s, "
                         f"{len(chunk_jobs)}청크 + map {len(map_jobs)})")
 
@@ -118,12 +119,14 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
                     ws["Issue Table"], sheets.get("Issue Table"), source_names)
                 # Issue Table 행별 CDF PNG 잡(분포 데이터가 있는 항목 행만) — 청크와 병렬 렌더.
                 issue_targets, issue_jobs = [], []
-                for item, excel_row in issue_layout["rows"]:
+                for item, excel_row, section in issue_layout["rows"]:
                     cell = cell_of.get(item)
                     if cell is None:
                         continue
                     out = os.path.join(tmpdir, f"issue_{excel_row:04d}.png")
-                    issue_jobs.append({"cell": cell, "out_path": out})
+                    # CPK 섹션은 규격창 재정규화 — 웹 미니셀(data-limitwin)과 동일 기준.
+                    issue_jobs.append({"cell": cell, "out_path": out,
+                                       "limit_window": section == "CPK"})
                     issue_targets.append((excel_row, out))
                 issue_futs = [pool.submit(render_single_cdf, j) for j in issue_jobs]
                 t_text = time.perf_counter()
@@ -144,17 +147,26 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
                     _sheets.add_picture_at(ws["Histogram"], hist_path,
                                            top=tops[i], width_px=w_px, height_px=h_px)
 
+                # 차트 이미지가 덮는 셀에 항목명 숨김 기입 — Ctrl+F 로 차트 찾기
+                index_entries = _build_item_index(chunk_jobs)
+                _sheets.write_hidden_item_index(ws["Distribution"], index_entries, tops)
+                _sheets.write_hidden_item_index(ws["Histogram"], index_entries, tops)
+
                 map_pngs = []
                 for job, fut in zip(map_jobs, map_futs):
                     map_pngs.append((job["title"], fut.result()))
                 _sheets.add_map_grid(ws["Map Analysis"], map_pngs)
+                # Bin Legend 표 (웹과 동일 집계·색) — 맵 안 bin 번호 텍스트를 대신한다.
+                _sheets.write_map_legend(
+                    ws["Map Analysis"], build_global_bin_legend(map_rows),
+                    build_bin_desc_map(sheets.get("Yield")), map_colors, len(map_pngs))
 
                 # Issue Table 행별 CDF PNG 부착 (오름차순 — 행 높이 확대가 아래 행 top 에 반영)
-                iw_px, ih_px = issue_cdf_px_size()
+                iw_pt, ih_pt = issue_cdf_pt_size()
                 for (excel_row, out), fut in zip(issue_targets, issue_futs):
                     fut.result()
                     _sheets.add_picture_in_cell(ws["Issue Table"], out, excel_row,
-                                                issue_layout["dist_col"], iw_px, ih_px)
+                                                issue_layout["dist_col"], iw_pt, ih_pt)
 
                 # 모든 시트 상단에 세션 웹뷰 링크 삽입
                 for name in SHEET_ORDER:
@@ -294,6 +306,7 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir, bin1=False):
             "lo": info.get("lo", meta.get("lower_limit")),
             "hi": info.get("hi", meta.get("upper_limit")),
             "status": meta.get("status"),
+            "cpk": meta.get("cpk"),
             "sources": sources,
         })
 
@@ -308,15 +321,25 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir, bin1=False):
     return jobs, len(cells), {c["title"]: c for c in cells}
 
 
-def _build_map_jobs(map_rows, tmpdir, product_type=""):
+def _build_item_index(chunk_jobs):
+    """[(chunk_idx, cell_idx, subject)] — 숨김 항목 인덱스(Ctrl+F)용 셀 좌표 원장.
+
+    차트 제목은 PNG 안에서 46자로 잘리지만 여기 텍스트는 전체 항목명이라 검색이 온전하다.
+    """
+    return [(ci, idx, cell["title"])
+            for ci, job in enumerate(chunk_jobs)
+            for idx, cell in enumerate(job["cells"])]
+
+
+def _build_map_jobs(map_rows, tmpdir):
     """Map Analysis 행 → 웹-파리티 wafer map 렌더 잡. 제목: source (step, yield %).
 
-    좌표(dies)가 없는 행은 건너뛴다. bin→색은 전 소스 합산 기준 전역 색맵(웹과 동일 색)
-    을 한 번만 만들어 모든 맵이 공유한다. frame(고정 웨이퍼 틀)·product_type 도 전달.
+    좌표(dies)가 없는 행은 건너뛴다. bin→색은 전 맵 합산 기준 전역 색맵(웹과 동일 색)
+    을 한 번만 만들어 모든 맵이 공유한다. 반환: (jobs, color_map).
     """
     from ._map import build_bin_color_map
 
-    color_map, order = build_bin_color_map(map_rows)
+    color_map, _order = build_bin_color_map(map_rows)
     jobs = []
     for i, row in enumerate(map_rows):
         dies = row.get("dies") or []
@@ -330,15 +353,10 @@ def _build_map_jobs(map_rows, tmpdir, product_type=""):
         title = " ".join(parts)
         if pass_pct is not None:
             title += f" (yield {pass_pct}%)"
-        present = {str(d.get("bin")) for d in dies}
         jobs.append({
             "out_path": os.path.join(tmpdir, f"map_{i:02d}.png"),
             "title": title,
             "dies": dies,
-            "frame": {"x_min": row.get("x_min"), "x_max": row.get("x_max"),
-                      "y_min": row.get("y_min"), "y_max": row.get("y_max")},
             "color_map": color_map,
-            "bin_order": [b for b in order if b in present],
-            "product_type": product_type,
         })
-    return jobs
+    return jobs, color_map

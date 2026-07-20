@@ -44,6 +44,8 @@ from honey_ui import (
     ReportSettingsDialog,
     SHEET_OPTIONS,
     UploadDialog,
+    show_error as _show_error,
+    show_exc as _show_exc,
     wait_for_future as _wait_for_future,
 )
 from report_flow import (
@@ -317,6 +319,8 @@ class HoneyMainWindow(QMainWindow):
         self.last_result = None    # AnalysisResult
         self.out_path = None       # 생성된 xlsx 경로
         self._last_upload = None   # 마지막 업로드 메타 (팝업 프리필용)
+        self._busy = False         # 무거운 작업 진행 중 (_set_busy)
+        self._busy_actions = []    # busy 중 잠글 메뉴/사이드바 액션 (_build_chrome 이 채움)
 
         self._pt_radios = {
             "MDDI": self.rb_pt_MDDI, "PDDI": self.rb_pt_PDDI,
@@ -673,10 +677,16 @@ class HoneyMainWindow(QMainWindow):
         self.txt_summary.hide()
         self.lbl_progress_status.hide()
 
+        from PyQt6.QtWidgets import QPushButton
+
         container = QWidget()
         row = QHBoxLayout(container)
         row.setContentsMargins(8, 2, 8, 2)
         row.addWidget(self.progress_status, 1, Qt.AlignmentFlag.AlignVCenter)
+        # 취소 버튼 — 취소를 지원하는 작업(현재 업데이트 다운로드)만 필요할 때 보인다.
+        self.btn_progress_cancel = QPushButton("취소")
+        self.btn_progress_cancel.hide()
+        row.addWidget(self.btn_progress_cancel, 0, Qt.AlignmentFlag.AlignVCenter)
 
         dock = QDockWidget(self)
         dock.setTitleBarWidget(QWidget())   # 제목표시줄 제거
@@ -727,17 +737,23 @@ class HoneyMainWindow(QMainWindow):
         self.on_browse_d1()
 
     def _menu_bar_actions(self):
-        """상단 메뉴바 구성 — 기존 슬롯을 그대로 호출 (로직 복제 없음)."""
+        """상단 메뉴바 구성 — 기존 슬롯을 그대로 호출 (로직 복제 없음).
+
+        새 작업을 시작하는 항목은 _busy_actions 에 모아 _set_busy 가 함께 잠근다."""
         mb = self.menuBar()
 
         m_file = mb.addMenu("파일(&F)")
-        m_file.addAction("LOCAL FILE OPEN", self._act_open_local)
-        m_file.addAction("Dolphin (D1)에서 불러오기", self._act_browse_d1)
+        self._busy_actions += [
+            m_file.addAction("LOCAL FILE OPEN", self._act_open_local),
+            m_file.addAction("Dolphin (D1)에서 불러오기", self._act_browse_d1),
+        ]
 
         m_run = mb.addMenu("실행(&R)")
         m_run.addAction("새 리포트 생성", self._show_controls)
-        m_run.addAction("Rawdata 편집", self.on_rawdata_edit)
-        m_run.addAction("Excel Download", self.on_excel_download)
+        self._busy_actions += [
+            m_run.addAction("Rawdata 편집", self.on_rawdata_edit),
+            m_run.addAction("Excel Download", self.on_excel_download),
+        ]
 
         m_view = mb.addMenu("보기(&V)")
         m_view.addAction("입력 / 설정 창 열기", self._show_controls)
@@ -792,12 +808,17 @@ class HoneyMainWindow(QMainWindow):
             ("📤", "Excel Upload", "로컬 xlsx 업로드 (Raw Data → web report 세션)", self.on_upload_local),
             ("⚙️", "Options",      "옵션 (색·기본값 설정)",             self.on_options),
         ]
+        # 새 작업을 시작하는 액션만 busy 중 잠근다 (Home/New Report/Options 는 잠그지 않음 —
+        # 진행 중에도 화면 이동·설정은 자유롭게).
+        busy_labels = {"Rawdata edit", "Excel Down", "Excel Upload"}
         for icon, label, tip, slot in quick:
             qicon = icon if isinstance(icon, QIcon) else self._emoji_icon(icon)
             act = QAction(qicon, label, self)
             act.setToolTip(tip)
             act.triggered.connect(slot)
             tb.addAction(act)
+            if label in busy_labels:
+                self._busy_actions.append(act)
         self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, tb)
 
     @staticmethod
@@ -914,12 +935,15 @@ class HoneyMainWindow(QMainWindow):
         w.failed.connect(self._on_excel_edit_failed)
         self._append_run_log(f"Rawdata 수정 시작 (session {sid}) — Excel 을 엽니다...")
         w.start()
+        # Excel 편집이 끝날 때까지(done/failed) 다른 Excel COM 작업·새 입력을 막는다.
+        self._set_busy(True)
 
     def _on_excel_edit_status(self, state, message):
         self._status(message)
         self._append_run_log(f"[Rawdata] {message}")
 
     def _on_excel_edit_done(self, changed, message):
+        self._set_busy(False)
         if changed:
             self._status("Rawdata 수정 완료 — 페이지 새로고침")
             self._append_run_log("[Rawdata] 완료 — 서버 반영됨. 페이지 새로고침.")
@@ -973,6 +997,7 @@ class HoneyMainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _on_excel_edit_failed(self, message):
+        self._set_busy(False)
         self._status(f"Rawdata 수정 실패: {message}")
         self._append_run_log(f"[Rawdata] 실패: {message}")
         QMessageBox.warning(self, "Rawdata 수정 실패", message)
@@ -1007,8 +1032,27 @@ class HoneyMainWindow(QMainWindow):
             return
         bin1 = bin1_cb.isChecked()
 
+        # 여기서부터 워커 완료(_on_excel_dl_done/_failed)까지 새 작업 진입점을 잠근다.
+        self._set_busy(True)
+
+        # 세션 메타 조회는 네트워크 GET — 메인 스레드에서 부르면 서버가 느릴 때 창이
+        # 굳는다. 다른 무거운 작업과 같은 패턴(스레드 + wait_for_future 폴링)으로 뺀다.
         from excel_download._fetch import fetch_session_meta
-        meta = fetch_session_meta(SERVER_BASE_URL, sid)
+        meta_progress = _ElapsedProgress(
+            self.progress_status, "세션 정보 조회 중...", self._status,
+            busy=True, minimum=0, maximum=0)
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                meta = _wait_for_future(
+                    ex.submit(fetch_session_meta, SERVER_BASE_URL, sid), meta_progress)
+        except Exception as exc:
+            meta_progress.fail(f"실패: 세션 정보 조회 - {exc}")
+            _show_exc(self, "Excel Download 실패", exc,
+                      prefix="세션 정보를 가져오지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.")
+            self._status("세션 정보 조회 실패")
+            self._set_busy(False)
+            return
+        meta_progress.success("세션 정보 조회 완료", hide_ms=1000)
         base = "_".join(
             p for p in (str(meta.get(k) or "").strip() for k in ("product", "lot_id"))
             if p) or "webreport"
@@ -1017,6 +1061,7 @@ class HoneyMainWindow(QMainWindow):
         out_path, _ = QFileDialog.getSaveFileName(
             self, "Excel 저장", default_path, "Excel (*.xlsx)")
         if not out_path:
+            self._set_busy(False)
             return
 
         from excel_download.worker import ExcelDownloadWorker
@@ -1051,6 +1096,7 @@ class HoneyMainWindow(QMainWindow):
             progress.set(message)
 
     def _on_excel_dl_done(self, out_path, elapsed):
+        self._set_busy(False)
         self._stop_excel_dl_timer()
         progress = getattr(self, "_excel_dl_progress", None)
         if progress is not None:
@@ -1061,6 +1107,7 @@ class HoneyMainWindow(QMainWindow):
             self, "Excel Download", f"저장 완료 ({elapsed:.1f}초)\n{out_path}")
 
     def _on_excel_dl_failed(self, message):
+        self._set_busy(False)
         self._stop_excel_dl_timer()
         progress = getattr(self, "_excel_dl_progress", None)
         if progress is not None:
@@ -1098,7 +1145,13 @@ class HoneyMainWindow(QMainWindow):
         self._open_in_embedded(SERVER_BASE_URL.rstrip("/") + "/pe/report/voc")
 
     def _intake(self, paths):
-        """선택된 파일들 → (2개 이상이면) 순서 지정 팝업 → 메인 창에 로드."""
+        """선택된 파일들 → (2개 이상이면) 순서 지정 팝업 → 메인 창에 로드.
+
+        파일 열기·D1·드래그앤드롭이 모두 여기로 합류하므로, busy 중 새 입력 차단도
+        여기 한 곳에서 한다 (드롭은 액션이 아니라 setEnabled 로 막을 수 없다)."""
+        if self._busy:
+            self._status("작업이 진행 중입니다 — 완료 후 파일을 가져와 주세요.")
+            return
         paths = list(paths or [])
         if not paths:
             return
@@ -1276,7 +1329,8 @@ class HoneyMainWindow(QMainWindow):
                     issues = {name: v for name, v in validated.items() if v}
             except Exception as exc:
                 progress.fail(f"실패: 파일 로드 실패 - {exc}")
-                QMessageBox.critical(self, "파일 로드 실패", str(exc))
+                _show_exc(self, "파일 로드 실패", exc,
+                          prefix="선택한 파일을 읽지 못했습니다.")
                 self._status("파일 로드 실패")
                 self.group = None
                 return False
@@ -1349,10 +1403,24 @@ class HoneyMainWindow(QMainWindow):
         self.btn_start.setEnabled(enabled)
         self.btn_web_report.setEnabled(enabled)
 
+    def _set_busy(self, busy):
+        """무거운 작업 진행 구간을 표시하고 새 작업 진입점을 함께 잠근다.
+
+        실행 버튼만 잠그던 종전 방식은 메뉴·사이드바·드래그앤드롭으로 우회할 수 있어,
+        분석 중에 Excel Download 나 파일 인테이크가 겹쳐 들어올 수 있었다. 진입점을
+        한 곳(_busy_actions + _intake 가드)에서 함께 잠근다. 워커별 isRunning 가드는
+        이중 방어로 그대로 둔다.
+        """
+        self._busy = bool(busy)
+        self._set_run_buttons_enabled(not busy)
+        self.btn_upload_local.setEnabled(not busy)
+        for act in self._busy_actions:
+            act.setEnabled(not busy)
+
     def on_start(self):
         # 느린 파일 전처리(_prepare_run_context → _rebuild_group)가 시작되기 전에
-        # 두 실행 버튼을 잠가, 진행 중 중복 클릭을 막는다.
-        self._set_run_buttons_enabled(False)
+        # 새 작업 진입점(실행 버튼·메뉴·사이드바·파일 인테이크)을 함께 잠근다.
+        self._set_busy(True)
         try:
             ctx = self._prepare_run_context()
             if ctx is None:
@@ -1361,7 +1429,7 @@ class HoneyMainWindow(QMainWindow):
                 ctx["work_group"], ctx["selected"], ctx["sheets"],
                 ctx["raw_data"], compare_mode=ctx["compare_mode"])
         finally:
-            self._set_run_buttons_enabled(True)
+            self._set_busy(False)
 
     def on_webreport_colors(self):
         """F10 메뉴 → Distribution 색(Legend/source 팔레트) 설정.
@@ -1388,8 +1456,8 @@ class HoneyMainWindow(QMainWindow):
 
     def on_web_report(self):
         # 느린 파일 전처리(_prepare_web_report_context → _rebuild_group)가 시작되기 전에
-        # 두 실행 버튼을 잠가, 진행 중 중복 클릭을 막는다.
-        self._set_run_buttons_enabled(False)
+        # 새 작업 진입점(실행 버튼·메뉴·사이드바·파일 인테이크)을 함께 잠근다.
+        self._set_busy(True)
         try:
             ctx = self._prepare_web_report_context()
             if ctx is None:
@@ -1398,7 +1466,7 @@ class HoneyMainWindow(QMainWindow):
                                  compare_mode=ctx["compare_mode"], options=ctx["options"],
                                  mode=ctx["mode"])
         finally:
-            self._set_run_buttons_enabled(True)
+            self._set_busy(False)
 
     def _ask_source_names(self):
         """Web Report 생성 직전 source 별 legend 이름을 매번 확인·변경.
@@ -1607,7 +1675,8 @@ class HoneyMainWindow(QMainWindow):
         except Exception as exc:
             progress.fail(f"실패: 분석 실패 - {exc}")
             prep_ex.shutdown(wait=False, cancel_futures=True)
-            QMessageBox.critical(self, "분석 실패", str(exc))
+            _show_exc(self, "분석 실패", exc,
+                      prefix="데이터 분석 중 오류가 발생했습니다.")
             self._status("Web Report 분석 실패")
             return
 
@@ -1617,7 +1686,8 @@ class HoneyMainWindow(QMainWindow):
         except Exception as exc:
             progress.fail(f"실패: parquet 인코딩 실패 - {exc}")
             prep_ex.shutdown(wait=False, cancel_futures=True)
-            QMessageBox.critical(self, "Web Report 실패", str(exc))
+            _show_exc(self, "Web Report 실패", exc,
+                      prefix="업로드할 데이터를 만드는 중 오류가 발생했습니다.")
             self._status("parquet 인코딩 실패")
             return
 
@@ -1656,7 +1726,8 @@ class HoneyMainWindow(QMainWindow):
                 result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
         except Exception as exc:
             progress.fail(f"실패: Web Report 업로드 실패 - {exc}")
-            QMessageBox.critical(self, "Web Report 업로드 실패", str(exc))
+            _show_exc(self, "Web Report 업로드 실패", exc,
+                      prefix="서버에 업로드하지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.")
             self._status("Web Report 업로드 실패")
             return
 
@@ -1774,7 +1845,8 @@ class HoneyMainWindow(QMainWindow):
             _drain_profile_events()
             self._append_run_log(f"Analysis ERROR - {exc}")
             progress.fail(f"실패: 분석 실패 - {exc}")
-            QMessageBox.critical(self, "분석 실패", str(exc))
+            _show_exc(self, "분석 실패", exc,
+                      prefix="데이터 분석 중 오류가 발생했습니다.")
             self._status("분석 실패")
             return
         progress.set("데이터 분석 완료", value=2)
@@ -1921,7 +1993,8 @@ class HoneyMainWindow(QMainWindow):
             _drain_profile_events()
             self._append_run_log(f"XLSX write ERROR - {exc}")
             progress.fail(f"실패: xlsx 생성 실패 - {exc}")
-            QMessageBox.critical(self, "생성 실패", str(exc))
+            _show_exc(self, "생성 실패", exc,
+                      prefix="리포트 xlsx 를 만들지 못했습니다.")
             self._status("xlsx 생성 실패")
             return
         finally:
@@ -1988,51 +2061,52 @@ class HoneyMainWindow(QMainWindow):
         Excel COM 으로 Raw Data 시트를 7-meta honeyform parquet 으로 복원하고
         Summary/Issue_table 코멘트를 추출해, 기존 web_report 업로드 경로
         (post_webreport)로 전송한다 — 일반 web_report 세션과 동일한 세션이 만들어진다.
+
+        전처리(COM 추출·변환·분포 프리컴퓨트)를 메타 입력 다이얼로그와 **병렬**로 미리
+        시작한다(_run_web_report 와 같은 패턴) — 사용자가 입력하는 동안 대부분 끝난다.
+        진행바는 시트 수 기반 실제 진행률을 표시한다(구: 경과시간만 나오는 무한 진행바).
         """
-        defaults = dict(self._last_upload or {})
-        defaults["product_type"] = self.product_type()
-        # web_report 세션은 PIN 을 쓰지 않는다 (비밀번호 행 숨김).
-        dlg = UploadDialog(self, defaults=defaults, show_password=False)
-        if not dlg.exec():
-            return
-        meta = dlg.values()
-        self._last_upload = meta
-        meta["file_name"] = Path(path).stem
+        name = Path(path).name
+        self._set_busy(True)
+        self._append_run_log(f"{name} 전처리/업로드 진행중입니다...")
 
-        self.btn_upload_local.setEnabled(False)
-
-        # ── xlsx 전처리: Excel COM 으로 Raw Data → honeyform + 코멘트 추출 ──────
-        # 대형/DRM xlsx 는 수 초~수십 초 걸리므로 워커 스레드에서 실행한다
-        # (prepare_report_webreport 이 자체적으로 CoInitialize 하므로 스레드 안전).
-        prep_progress = _ElapsedProgress(
-            self.progress_status, f"xlsx 전처리 중... {Path(path).name}",
-            self._status, busy=True, maximum=0,
+        progress = _ElapsedProgress(
+            self.progress_status, f"xlsx 전처리 중... {name}",
+            self._status, busy=True, minimum=0, maximum=100,
             mirror=getattr(self, "panel_progress", None))
         QApplication.processEvents()
-        try:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(_prepare_report_webreport, path)
-                sources, parquet_items, seed, all_items = _wait_for_future(
-                    fut, prep_progress)
-        except ValueError as exc:
-            prep_progress.fail("실패: 파일 오류")
-            QMessageBox.critical(self, "파일 오류", str(exc))
-            self.btn_upload_local.setEnabled(True)
-            return
-        except Exception as exc:
-            prep_progress.fail("실패: xlsx 전처리 오류")
-            QMessageBox.critical(
-                self, "전처리 실패",
-                f"xlsx 전처리(Excel COM) 중 오류가 발생했습니다:\n{exc}")
-            self.btn_upload_local.setEnabled(True)
-            return
 
-        # dist blob 프리컴퓨트 — 서버 dist 캐시 시딩(실패 시 미첨부, 서버 폴백 계산).
-        # 단계 진행(디코드/전체/Bin1)은 queue 로 받아 진행바 라벨에 반영.
-        dist_blobs = None
+        # 전처리 선실행 — 시트 읽기/변환 진행은 q_prep, 분포 프리컴퓨트 단계는 _dist_stage_q.
+        # 같은 워커 1개에서 순차 실행(prep → dist)이라 자원 경합이 없다.
+        q_prep = queue.Queue()
         _dist_stage_q = queue.Queue()
+        prep_ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        fut_prep = prep_ex.submit(_prepare_report_webreport, path, progress_cb=q_prep.put)
 
-        def _drain_dist_stage():
+        def _dist_after_prep():
+            sources_, items_, _seed, all_items_, _report = fut_prep.result()
+            return _build_webreport_dist_blobs(items_, sources_, all_items_, "Normal",
+                                               stage_cb=_dist_stage_q.put)
+        fut_dist = prep_ex.submit(_dist_after_prep)
+
+        def _drain():
+            # 전처리(시트 읽기 5→30% / 변환 30→35%) — 마지막 값만 반영.
+            last = None
+            while True:
+                try:
+                    last = q_prep.get_nowait()
+                except queue.Empty:
+                    break
+            if last is not None:
+                stage, done, total, sheet = last
+                frac = (done / total) if total else 0
+                if stage == "read":
+                    val, tag = 5 + int(25 * frac), "시트 읽는 중"
+                else:
+                    val, tag = 30 + int(5 * frac), "변환 중"
+                msg = f"{tag} ({done}/{total}) {sheet}"
+                progress.set(msg, value=val, status=msg)
+            # 분포 프리컴퓨트 단계(문자열) — 38% 고정 라벨.
             msg = None
             while True:
                 try:
@@ -2040,16 +2114,56 @@ class HoneyMainWindow(QMainWindow):
                 except queue.Empty:
                     break
             if msg is not None:
-                prep_progress.set(msg, status=msg)
+                progress.set(msg, value=38, status=msg)
 
+        # ── 메타 입력 다이얼로그 (전처리가 뒤에서 도는 동안) ──────────────────
+        defaults = dict(self._last_upload or {})
+        defaults["product_type"] = self.product_type()
+        dlg = UploadDialog(self, defaults=defaults, show_password=False)   # web_report=PIN 없음
+        if not dlg.exec():
+            progress.fail("취소됨: 업로드 메타 입력 취소")
+            prep_ex.shutdown(wait=False, cancel_futures=True)
+            self._set_busy(False)
+            return
+        meta = dlg.values()
+        self._last_upload = meta
+        meta["file_name"] = Path(path).stem
+
+        # ── 전처리 결과 대기(실제 진행률) ─────────────────────────────────────
+        progress.set(f"xlsx 전처리 중... {name}", busy=False)
         try:
-            prep_progress.set("분포 데이터 생성 중...", status="분포 데이터 생성 중...")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                fut = ex.submit(_build_webreport_dist_blobs, parquet_items, sources,
-                                all_items, "Normal", stage_cb=_dist_stage_q.put)
-                dist_blobs = _wait_for_future(fut, prep_progress, poll_cb=_drain_dist_stage)
+            sources, parquet_items, seed, all_items, report = _wait_for_future(
+                fut_prep, progress, poll_cb=_drain)
+        except ValueError as exc:
+            # report_flow 의 안내 ValueError — 안내문은 본문, 붙어 온 traceback 은 자세히로.
+            progress.fail("실패: 파일 오류")
+            prep_ex.shutdown(wait=False, cancel_futures=True)
+            _show_exc(self, "파일 오류", exc)
+            self._set_busy(False)
+            return
+        except Exception as exc:
+            progress.fail("실패: xlsx 전처리 오류")
+            prep_ex.shutdown(wait=False, cancel_futures=True)
+            _show_exc(self, "전처리 실패", exc,
+                      prefix="xlsx 전처리(Excel COM) 중 오류가 발생했습니다.")
+            self._set_busy(False)
+            return
+
+        # ── 업로드 전 확인: 인식 시트 요약 + 미인식/FAILTNO 경고 (정확도 안전장치) ──
+        if not self._confirm_upload_report(report):
+            progress.fail("취소됨: 업로드 취소")
+            prep_ex.shutdown(wait=False, cancel_futures=True)
+            self._set_busy(False)
+            return
+
+        # dist blob 프리컴퓨트 대기 — 실패 시 미첨부(서버 폴백 계산), 업로드는 계속.
+        dist_blobs = None
+        try:
+            progress.set("분포 데이터 생성 중...", value=38, status="분포 데이터 생성 중...")
+            dist_blobs = _wait_for_future(fut_dist, progress, poll_cb=_drain)
         except Exception as exc:
             self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
+        prep_ex.shutdown(wait=False)
 
         manifest = {
             "sources": sources,
@@ -2064,17 +2178,10 @@ class HoneyMainWindow(QMainWindow):
         # ingest 가 seed_from_manifest 로 세션 편집 DB 에 복사한다.
         manifest.update(seed)
 
-        # ── 서버 업로드 ───────────────────────────────────────────────────
-        self._append_run_log(f"{Path(path).name} 파일 Upload 진행중입니다...")
-
-        progress = _ElapsedProgress(
-            self.progress_status, f"서버 업로드 중... {Path(path).name}",
-            self._status, busy=False, minimum=0, maximum=100,
-            mirror=getattr(self, "panel_progress", None))
-        QApplication.processEvents()
-
+        # ── 서버 업로드 (byte 진행률 40→100%) ─────────────────────────────────
         _on_upload_progress, _drain_upload_progress = _upload_progress_channel(
-            progress, f"서버 업로드 중... {Path(path).name} ({{pct}}%)")
+            progress, f"서버 업로드 중... {name} ({{pct}}%)",
+            value_map=lambda pct: 40 + int(pct * 0.6))
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
@@ -2088,9 +2195,10 @@ class HoneyMainWindow(QMainWindow):
                 result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
         except Exception as exc:
             progress.fail(f"실패: 업로드 실패 - {exc}")
-            QMessageBox.critical(self, "업로드 실패", str(exc))
+            _show_exc(self, "업로드 실패", exc,
+                      prefix="서버에 업로드하지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.")
             self._status("업로드 실패")
-            self.btn_upload_local.setEnabled(True)
+            self._set_busy(False)
             return
 
         sid = result.get("session_id", "?")
@@ -2100,12 +2208,53 @@ class HoneyMainWindow(QMainWindow):
         elif not url:
             url = f"{SERVER_BASE_URL.rstrip('/')}/pe/report/view/{sid}"
 
-        progress.success(f"업로드 완료: session_id {sid}")
+        progress.success(f"업로드 완료: session_id {sid}", value=100)
         self._append_run_log(f"Web Report URL: {url}")
         self._status(f"업로드 완료: {sid}")
         # 완료 팝업 없이 내장 브라우저(웹 화면)로 바로 전환한다 (_run_web_report 와 동일).
         self._open_in_embedded(url)
-        self.btn_upload_local.setEnabled(True)
+        self._set_busy(False)
+
+    def _confirm_upload_report(self, report):
+        """전처리 결과를 요약해 업로드 전 확인받는다 (정확도 안전장치).
+
+        인식된 Raw 시트(이름·행수·항목수) 요약 + 미인식 시트 경고 + FAILTNO 부재 고지.
+        경고/고지가 있으면 Warning 아이콘. Ok=진행 / Cancel=중단. 반환: 진행 여부(bool).
+        """
+        report = report or {}
+        raw = report.get("raw_sheets") or []
+        skipped = report.get("skipped_sheets") or []
+        converted = report.get("converted_5meta") or []
+
+        lines = [f"인식된 Raw Data 시트: {len(raw)}개"]
+        for r in raw[:10]:
+            lines.append(f"  · {r['name']} — {r['rows']}행, 항목 {r['items']}개")
+        if len(raw) > 10:
+            lines.append(f"  · 외 {len(raw) - 10}개")
+
+        if skipped:
+            lines.append("")
+            lines.append("⚠ 다음 시트는 Raw Data 형식이 아니어서 제외됩니다:")
+            lines.append("  " + ", ".join(skipped))
+
+        if converted:
+            lines.append("")
+            lines.append("⚠ 이 파일은 FAILTNO 정보가 없는 보고서 형식입니다.")
+            lines.append("  웹 리포트의 Yield fail 분해 / Issue Table Yield 섹션이 비게 됩니다")
+            lines.append("  (CPK · Distribution · Map · Pass 수율은 정확).")
+
+        lines.append("")
+        lines.append("업로드를 진행할까요?")
+
+        box = QMessageBox(self)
+        box.setWindowTitle("업로드 확인")
+        box.setIcon(QMessageBox.Icon.Warning if (skipped or converted)
+                    else QMessageBox.Icon.Information)
+        box.setText("\n".join(lines))
+        box.setStandardButtons(QMessageBox.StandardButton.Ok
+                               | QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(QMessageBox.StandardButton.Ok)
+        return box.exec() == QMessageBox.StandardButton.Ok
 
     # ── version check (사용자가 자동/수동 설치 선택) ────────────────────────
     def check_for_update(self):
@@ -2125,6 +2274,41 @@ class HoneyMainWindow(QMainWindow):
                 pass   # 창이 이미 닫혀 C++ 객체가 파괴된 경우
         threading.Thread(target=_fetch_bg, daemon=True,
                          name="honey-version-check").start()
+
+    def _on_download_cancel(self):
+        """업데이트 다운로드 취소 버튼 — 워커의 progress_cb 가 다음 청크에서 중단한다.
+
+        즉시 중단이 아니라 '요청' 이므로 버튼만 잠그고 안내한다 (청크 하나 분량 지연)."""
+        self._dl_cancelled = True
+        btn = getattr(self, "btn_progress_cancel", None)
+        if btn is not None:
+            btn.setEnabled(False)
+        self.status.showMessage("업데이트 다운로드를 취소하는 중...")
+
+    def _show_download_cancel(self):
+        """취소 버튼 노출 + 배선.
+
+        취소 버튼은 진행 dock(_build_log_dock) 안에 있는데, PyQtWebEngine 미설치 시
+        _build_chrome 이 조기 return 해 dock 자체가 없다 — 그 폴백 화면에서는 취소 없이
+        (종전대로) 다운로드만 진행한다."""
+        btn = getattr(self, "btn_progress_cancel", None)
+        if btn is None:
+            return
+        btn.setEnabled(True)
+        btn.clicked.connect(self._on_download_cancel)
+        btn.show()
+
+    def _hide_download_cancel(self):
+        """다운로드 종료(성공/실패/취소) 후 취소 버튼 정리 — 다음 작업에 남지 않도록."""
+        btn = getattr(self, "btn_progress_cancel", None)
+        if btn is None:
+            return
+        btn.hide()
+        btn.setEnabled(True)
+        try:
+            btn.clicked.disconnect(self._on_download_cancel)
+        except TypeError:
+            pass   # 이미 끊겨 있음
 
     def _on_version_manifest(self, result):
         if isinstance(result, requests.exceptions.RequestException):
@@ -2192,10 +2376,15 @@ class HoneyMainWindow(QMainWindow):
             self.progress_status, "업데이트 다운로드 중...",
             self.status.showMessage, busy=True, minimum=0, maximum=100)
         download_events = queue.Queue()
+        # 취소 배선 — 워커 스레드의 _cb 가 False 를 반환하면 version_check.download_to 가
+        # 부분 파일을 지우고 DownloadCancelled 를 올린다(아래 except 가 받는다).
+        # 클릭은 _wait_for_future 의 processEvents 폴링이 메인 스레드로 전달한다.
+        self._dl_cancelled = False
+        self._show_download_cancel()
 
         def _cb(done, total):
             download_events.put((done, total))
-            return True
+            return not self._dl_cancelled
 
         def _drain_download_events():
             while True:
@@ -2223,9 +2412,12 @@ class HoneyMainWindow(QMainWindow):
             return
         except Exception as exc:
             progress.fail(f"실패: 업데이트 다운로드 실패 - {exc}")
-            QMessageBox.critical(self, "다운로드 실패", str(exc))
+            _show_exc(self, "다운로드 실패", exc,
+                      prefix="업데이트를 내려받지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.")
             self.status.showMessage("업데이트 실패")
             return
+        finally:
+            self._hide_download_cancel()
         progress.success("완료: 업데이트 다운로드 완료", value=100)
 
         if mode == update_policy.MODE_MANUAL:
@@ -2270,7 +2462,8 @@ class HoneyMainWindow(QMainWindow):
                 _wait_for_future(fut, install_progress)
         except Exception as exc:
             install_progress.fail(f"실패: 업데이트 실행 실패 - {exc}")
-            QMessageBox.critical(self, "업데이트 실행 실패", str(exc))
+            _show_exc(self, "업데이트 실행 실패", exc,
+                      prefix="업데이트를 설치하지 못했습니다. 기존 버전은 그대로 사용할 수 있습니다.")
             self.status.showMessage("업데이트 실패")
             return
         install_progress.success("업데이트 적용 중... 앱을 종료합니다.", value=100)
@@ -2290,7 +2483,12 @@ def _install_excepthook():
         text = "".join(traceback.format_exception(etype, value, tb))
         print(text, file=sys.stderr)  # tee 된 stderr → 로그 파일에 traceback 기록
         try:
-            QMessageBox.critical(None, "오류가 발생했습니다", text[-3000:])
+            # traceback 은 "자세히 보기" 뒤로 — 본문은 사용자가 읽을 문장만.
+            _show_error(
+                None, "오류가 발생했습니다",
+                "예기치 않은 오류가 발생했습니다.\n"
+                "작업을 다시 시도해 주세요. 반복되면 아래 '자세히 보기' 내용을 담당자에게 전달해 주세요.",
+                detail=text[-3000:])
         except Exception:
             pass
         sys.__excepthook__(etype, value, tb)
