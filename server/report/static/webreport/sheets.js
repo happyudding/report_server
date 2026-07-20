@@ -412,6 +412,15 @@ function renderSheetTable(rows, opts) {
     // Yield 섹션 최상단 Pass(Bin1) 행 — Map/Distribution/빨강강조 제외, 초록 Pass 스타일.
     const issuePassRow = opts.kind === "issue" && !subhead
       && String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() === "1";
+    // 삭제 대상 키 — Yield 대표행/CPK 행은 숨김 키, ETC 상세행은 item 명. 행 단위로 한 번만
+    // 계산해 첫 컬럼(Step) 체크박스와 Item 셀 개별 삭제(×) 버튼이 같은 기준을 쓰게 한다.
+    const rowItemTxt = String((r && r["Item"]) ?? "").trim();
+    const delHideKey = (opts.kind === "issue" && opts.edit && !subhead && !issuePassRow
+      && ((issueRowSec === "Yield" && r && r._grp && !r._detail)
+        || (issueRowSec === "CPK" && rowItemTxt !== "")))
+      ? issueHideStatusKey(r, issueRowSec) : "";
+    const delEtcItem = (opts.kind === "issue" && opts.edit && issueRowSec === "ETC"
+      && String((r && r["Category"]) || "") === "" && rowItemTxt !== "") ? rowItemTxt : "";
     const tds = cols.map((c, ci) => {
       const v = r ? r[c] : "";
       let txt = (v === null || v === undefined) ? "" : String(v);
@@ -455,12 +464,16 @@ function renderSheetTable(rows, opts) {
         if (!skey || txt === "") {
           return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
         }
+        // 드랍다운(또는 텍스트) 아래 신호등 점 — Open 빨강 / Close 초록. 색은 td 의
+        // is-open/is-close 클래스가 결정한다(편집모드 변경 시 edit_mode.js 가 갱신).
+        const statusCls = `issue-status-cell ${txt === "Close" ? "is-close" : "is-open"}`;
         if (opts.edit) {
-          return `<td data-r="${ri}" data-c="${ci}"><select class="issue-status-sel" data-skey="${esc(skey)}">` +
+          return `<td class="${statusCls}" data-r="${ri}" data-c="${ci}"><select class="issue-status-sel" data-skey="${esc(skey)}">` +
             `<option value="Open"${txt !== "Close" ? " selected" : ""}>Open</option>` +
-            `<option value="Close"${txt === "Close" ? " selected" : ""}>Close</option></select></td>`;
+            `<option value="Close"${txt === "Close" ? " selected" : ""}>Close</option></select>` +
+            `<span class="status-dot"></span></td>`;
         }
-        return `<td class="issue-status ${txt === "Close" ? "is-close" : "is-open"}" data-r="${ri}" data-c="${ci}">${esc(txt)}</td>`;
+        return `<td class="issue-status ${statusCls}" data-r="${ri}" data-c="${ci}">${esc(txt)}<span class="status-dot"></span></td>`;
       }
       // opts.editableCols 가 있으면 그 컬럼만 편집 가능(더블클릭으로 활성화), 나머지는 읽기전용으로
       // 아래 일반 렌더링을 그대로 탄다. 없으면 기존처럼 opts.edit 전체 컬럼이 즉시 편집 가능.
@@ -505,15 +518,6 @@ function renderSheetTable(rows, opts) {
         && String((r && r["TNO"]) ?? "").trim() === "";
       const itemClickable = (opts.kind === "issue" || opts.kind === "yield") && !subhead && !isEmpty
         && c === "Item" && String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() !== "1" && !etcFreeform;
-      // ETC 섹션의 상세 행(ENGR 가 수동 추가한 item) Item 셀: 수정 모드에서만 삭제(×) 버튼 노출.
-      const etcDeletable = opts.kind === "issue" && opts.edit && !isEmpty && c === "Item"
-        && rowSection[ri] === "ETC" && String(r["Category"] || "") === "";
-      // Yield 대표행(bin 단위)/CPK 행 Item 셀: 수정 모드에서만 행 숨김(×) 버튼 노출.
-      // 복원은 툴바 "삭제 전체 초기화"뿐 — 키 규약은 issueHideStatusKey(백엔드와 동일).
-      const hideKey = (opts.kind === "issue" && opts.edit && c === "Item" && !subhead && !issuePassRow
-        && ((rowSection[ri] === "Yield" && r && r._grp && !r._detail)
-          || (rowSection[ri] === "CPK" && !isEmpty)))
-        ? issueHideStatusKey(r, rowSection[ri]) : "";
       let cellHtml;
       if (itemClickable) {
         cellHtml = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;
@@ -522,11 +526,18 @@ function renderSheetTable(rows, opts) {
       } else {
         cellHtml = isEmpty ? "" : esc(txt);
       }
-      if (etcDeletable) {
-        cellHtml += ` <button type="button" class="btn-del-etc-item" data-item="${esc(txt)}" title="ETC 항목 제거">×</button>`;
+      // Item 셀 개별 삭제(×) — 삭제 모드에서만 보인다(CSS .issue-del-mode).
+      if (c === "Item" && delEtcItem) {
+        cellHtml += ` <button type="button" class="btn-del-etc-item" data-item="${esc(delEtcItem)}" title="ETC 항목 제거">×</button>`;
       }
-      if (hideKey) {
-        cellHtml += ` <button type="button" class="btn-del-issue-row" data-hkey="${esc(hideKey)}" title="이 행 삭제(숨김) — 복원은 툴바 '삭제 전체 초기화'">×</button>`;
+      if (c === "Item" && delHideKey) {
+        cellHtml += ` <button type="button" class="btn-del-issue-row" data-hkey="${esc(delHideKey)}" title="이 행 삭제(숨김) — 복원은 툴바 '삭제 전체 초기화'">×</button>`;
+      }
+      // 일괄 삭제용 체크박스 — 첫 컬럼(Step) 셀 왼쪽. 삭제 모드에서만 보인다.
+      if (opts.kind === "issue" && ci === 0 && (delHideKey || delEtcItem)) {
+        cellHtml = `<input type="checkbox" class="issue-del-chk"` +
+          (delHideKey ? ` data-hkey="${esc(delHideKey)}"` : ` data-etc="${esc(delEtcItem)}"`) +
+          ` title="삭제 대상 선택">` + cellHtml;
       }
       // Issue Table Yield 대표행 STEP 셀 오른쪽에 접기/펼치기 토글(그 Bin 의 detail TNO 가 있을 때).
       if (opts.kind === "issue" && c === "Step" && r && r._grp && !r._detail && (Number(r._ndetail) || 0) > 0) {

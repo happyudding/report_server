@@ -160,18 +160,52 @@ function syncIssueHeadRowHeight(panel) {
 // ── Issue Table (read) ──────────────────────────────────────────────────────
 // Issue Table 상단 sticky 툴바: Yield 섹션 Bin 그룹 전체 펼치기/접기.
 function issueToolbarHtml() {
-  // 수정모드에서는 "ETC 에 항목 추가"·"삭제 전체 초기화" 버튼도 같은 sticky 툴바 한 줄에 함께 둔다.
-  const etcBtn = (MODE === "edit")
-    ? `<button type="button" class="btn-sm" id="etcAddItemBtn">ETC 에 항목 추가</button>` +
-      `<button type="button" class="btn-sm" id="issueResetHiddenBtn" title="삭제(숨김)한 Yield/CPK 행 전부 복원">삭제 전체 초기화</button>` : "";
+  // 수정모드 버튼: ISSUE ITEM 추가 + 삭제 모드 토글. 삭제 실행/복원 버튼(.issue-del-actions)은
+  // 삭제 모드일 때만 CSS 로 노출된다.
+  const editBtns = (MODE === "edit")
+    ? `<button type="button" class="btn-sm" id="etcAddItemBtn">ISSUE ITEM 추가</button>` +
+      `<button type="button" class="btn-sm" id="issueDelModeBtn" title="행별 체크박스를 켜고 여러 행을 한 번에 삭제">🗑 삭제 모드</button>` +
+      `<span class="issue-del-actions">` +
+        `<button type="button" class="btn-sm" id="issueDelSelectedBtn" title="체크한 행 일괄 삭제">선택 삭제</button>` +
+        `<button type="button" class="btn-sm" id="issueResetHiddenBtn" title="삭제(숨김)한 Yield/CPK 행 전부 복원">삭제 전체 초기화</button>` +
+      `</span>` : "";
   return `<div class="issue-toolbar">` +
-    `<button type="button" class="btn-sm" data-issue-jump="Yield">Yield 로 이동</button>` +
-    `<button type="button" class="btn-sm" data-issue-jump="CPK">CPK 로 이동</button>` +
-    `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC 로 이동</button>` +
+    `<span class="issue-jump-group" title="섹션으로 이동">` +
+      `<button type="button" class="btn-sm" data-issue-jump="Yield">YIELD</button>` +
+      `<button type="button" class="btn-sm" data-issue-jump="CPK">CPK</button>` +
+      `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC</button>` +
+    `</span>` +
     `<button type="button" class="btn-sm" id="issueToggleAll" data-expanded="false">TNO 전체 펼치기</button>` +
-    `<button type="button" class="btn-sm" id="issueExcelBtn" title="Issue Table 을 xlsx 로 다운로드">Excel 다운로드</button>` +
-    etcBtn +
+    editBtns +
+    `<button type="button" class="btn-sm issue-excel-btn" id="issueExcelBtn" title="Issue Table 을 xlsx 로 다운로드">⬇ Excel</button>` +
     `</div>`;
+}
+
+// ── Issue Table 삭제 모드 ────────────────────────────────────────────────────
+// 켜면 행 체크박스·개별 삭제(×)·삭제 실행 버튼이 보인다(CSS #panel-issues.issue-del-mode).
+// 삭제 후 재로드(load)로 표가 다시 그려져도 모드가 유지되도록 모듈 전역에 둔다.
+let issueDelMode = false;
+function applyIssueDelMode(panel) {
+  panel = panel || document.getElementById("panel-issues");
+  if (!panel) return;
+  panel.classList.toggle("issue-del-mode", issueDelMode);
+  const btn = panel.querySelector("#issueDelModeBtn");
+  if (btn) {
+    btn.classList.toggle("active", issueDelMode);
+    btn.textContent = issueDelMode ? "✕ 삭제 모드 종료" : "🗑 삭제 모드";
+  }
+  syncIssueDelCount(panel);
+  syncIssueStickyOffsets(panel);   // 체크박스 노출로 Step 열 폭이 변할 수 있어 재실측
+}
+// 체크 개수를 "선택 삭제 (n)" 라벨에 반영.
+function syncIssueDelCount(panel) {
+  panel = panel || document.getElementById("panel-issues");
+  if (!panel) return;
+  const n = panel.querySelectorAll(".issue-del-chk:checked").length;
+  const btn = panel.querySelector("#issueDelSelectedBtn");
+  if (!btn) return;
+  btn.textContent = n ? `선택 삭제 (${n})` : "선택 삭제";
+  btn.disabled = !n;
 }
 
 // ── Issue Table Excel 내보내기 (vendored exceljs — trim.js loadExcelJS 재사용) ──
@@ -353,6 +387,7 @@ function renderIssues(issue_table_text) {
     renderIssueMiniDist(panel);
     renderIssueMiniMap(panel);
     bindIssueColResize(panel);
+    applyIssueDelMode(panel);   // 재렌더 후에도 삭제 모드 유지
     return;
   }
   emptyPanel(panel, "Issue Table 데이터 없음");

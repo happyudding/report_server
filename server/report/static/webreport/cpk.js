@@ -9,8 +9,10 @@ const CPK_PAGE_SIZE = 50;     // 페이지당 표시 행 수
 // 기준(basis) 3상 토글: 전체(모든 die) → Bin1(양품, BIN==1 만) → Limit 안(규격내 전체 die).
 // "Bin1(양품)"=실제 BIN==1 만 추린 데이터, "Limit 안"=BIN 무관 [LSL,USL] 안 값만 재계산 —
 // 두 정의는 다르다. Issue Table CPK 섹션은 항상 "Limit 안"(cpk_limited) 기준으로 선정·표시.
+// 버튼 라벨은 전부 "현재 적용 중인 값"만 쓴다(누르면 바뀔 값이 아님) — 툴바 왼쪽 라벨이
+// 무슨 구분인지 설명한다.
 const CPK_BASIS_ORDER = ["all", "bin1", "limited"];
-const CPK_BASIS_LABELS = { all: "전체 die", bin1: "Bin1(양품)", limited: "Limit 안" };
+const CPK_BASIS_LABELS = { all: "All", bin1: "Bin1 only", limited: "In Limit only" };
 const CPK_BASIS_SUFFIX = { bin1: "_bin1", limited: "_limited" };
 let cpkBasis = "all";         // 현재 기준 — CPK_BASIS_ORDER 순환
 let cpkShowLowOnly = true;    // 기본값: CPK < 1.33 항목만 오름차순(최악 우선) 정렬해 보여줌
@@ -29,7 +31,7 @@ let cpkTargetResults = new Map(); // 역산 결과: 행 키 → {lo, hi}
 function cpkRowKey(r) { return `${r.subject}||${r.source}`; }
 
 // abnormal 3상 토글: 버튼 라벨 + 클릭 시 순환 순서(정리 → 제외 → 전체 → …).
-const CPK_ABN_LABELS = { only: "abnormal 정리", exclude: "abnormal 제외", all: "ALL (abnormal 포함)" };
+const CPK_ABN_LABELS = { only: "abnormal only", exclude: "abnormal 제외", all: "ALL" };
 const CPK_ABN_ORDER = ["only", "exclude", "all"];
 
 // 기준에 따라 값이 달라지는 통계 컬럼(전체 ↔ Bin1 ↔ Limit안). limit/units/subject/source 는 무관.
@@ -230,10 +232,13 @@ function renderCpk() {
     `<div class="cpk-toolbar">` +
     `<input type="text" id="cpkSearchInput" placeholder="항목/source 검색" value="${esc(cpkSearchTerm)}">` +
     `<select id="cpkSourceSel" title="특정 source 만 표시">${sourceOpts}</select>` +
-    `<button type="button" id="cpkBasisBtn" class="btn-sm${cpkBasis !== "all" ? " active" : ""}" title="기준 3상 토글(클릭하면 순환): '전체 die'=모든 die → 'Bin1(양품)'=실제 BIN==1 만 → 'Limit 안'=BIN 무관 규격([LSL,USL]) 안 값만 재계산. Issue Table CPK 섹션은 항상 'Limit 안' 기준.">기준: ${CPK_BASIS_LABELS[cpkBasis]}</button>` +
-    `<button type="button" id="cpkLowBtn" class="btn-sm${cpkShowLowOnly ? " active" : ""}" title="켜짐: CPK &lt; ${CPK_WARN_THRESHOLD} 항목만 · 꺼짐: 전체 표시">` +
-    `${cpkShowLowOnly ? `표시: CPK &lt; ${CPK_WARN_THRESHOLD} 만` : "표시: 전체"}</button>` +
-    `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkAbnormalMode !== "all" ? " active" : ""}" title="abnormal 표시 3상 토글(클릭하면 순환): 'abnormal 정리'=비정상 항목만, 'abnormal 제외'=비정상 제외한 나머지, 'ALL(abnormal 포함)'=전체 표시. 비정상 판정 기준: ① 상·하한(Limit)이 같아 공차가 0인 항목, ② CPK 계산 불가(값 없음).">${CPK_ABN_LABELS[cpkAbnormalMode]}</button>` +
+    `<span class="cpk-tool-group"><span class="cpk-tool-label">Data 구분</span>` +
+    `<button type="button" id="cpkBasisBtn" class="btn-sm${cpkBasis !== "all" ? " active" : ""}" title="현재 적용 중인 데이터 범위(클릭하면 순환): 'All'=모든 die → 'Bin1 only'=실제 BIN==1 만 → 'In Limit only'=BIN 무관 규격([LSL,USL]) 안 값만 재계산. Issue Table CPK 섹션은 항상 'In Limit only' 기준.">${CPK_BASIS_LABELS[cpkBasis]}</button></span>` +
+    `<span class="cpk-tool-group"><span class="cpk-tool-label">CPK 구분</span>` +
+    `<button type="button" id="cpkLowBtn" class="btn-sm${cpkShowLowOnly ? " active" : ""}" title="현재 적용 중인 CPK 필터(클릭하면 전환): 'ALL'=전체 항목 · 'CPK &lt; ${CPK_WARN_THRESHOLD}'=임계 미만 항목만">` +
+    `${cpkShowLowOnly ? `CPK &lt; ${CPK_WARN_THRESHOLD}` : "ALL"}</button></span>` +
+    `<span class="cpk-tool-group"><span class="cpk-tool-label">Abnormal 구분</span>` +
+    `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkAbnormalMode !== "all" ? " active" : ""}" title="현재 적용 중인 abnormal 필터(클릭하면 순환): 'abnormal only'=비정상 항목만 → 'abnormal 제외'=비정상 제외한 나머지 → 'ALL'=전체 표시. 비정상 판정 기준: ① 상·하한(Limit)이 같아 공차가 0인 항목, ② CPK 계산 불가(값 없음).">${CPK_ABN_LABELS[cpkAbnormalMode]}</button></span>` +
     `<button type="button" id="cpkCodeUnitBtn" class="btn-sm${cpkHideCodeUnit ? " active" : ""}" title="켜짐: 단위(Unit)가 CODE 인 항목(디지털 code 값, 공정능력 지표가 무의미) 숨김 · 꺼짐: 전체 표시">Unit CODE 제거</button>` +
     `<button type="button" id="cpkTargetBtn" class="btn-sm${cpkTargetMode ? " active" : ""}">Limit 계산</button></div>` +
     targetBar +

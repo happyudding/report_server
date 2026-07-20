@@ -200,6 +200,14 @@ document.querySelector(".content").addEventListener("click", e => {
   const rowDelBtn = e.target.closest(".btn-del-issue-row");
   if (rowDelBtn) { hideIssueRow(rowDelBtn.dataset.hkey); return; }
   if (e.target.id === "issueResetHiddenBtn") { resetHiddenIssueRows(); return; }
+  // 삭제 모드 토글 / 체크한 행 일괄 삭제 (편집모드 전용).
+  if (e.target.closest("#issueDelModeBtn")) {
+    issueDelMode = !issueDelMode;
+    applyIssueDelMode();
+    return;
+  }
+  if (e.target.closest("#issueDelSelectedBtn")) { deleteSelectedIssueRows(); return; }
+  if (e.target.closest(".issue-del-chk")) { syncIssueDelCount(); return; }
   const addBtn = e.target.closest(".add-row");
   if (addBtn) {
     const table = document.getElementById(addBtn.dataset.table);
@@ -232,9 +240,11 @@ document.querySelector(".content").addEventListener("change", async e => {
     if (!isNaN(ri) && Array.isArray(DATA.issue_table_text) && DATA.issue_table_text[ri]) {
       DATA.issue_table_text[ri]["Status"] = value;
     }
+    setStatusDot(td, value);   // 드랍다운 아래 신호등 점 갱신
     tabDirty["summary"] = true;
   } catch (err) {
     sel.value = (value === "Close") ? "Open" : "Close";   // 실패 시 롤백
+    setStatusDot(sel.closest("td"), sel.value);
     showToast("Status 저장 실패: " + err.message);
   }
 });
@@ -732,6 +742,53 @@ async function hideIssueRow(key) {
     await load(false);
   } catch (e) {
     showToast("행 삭제 실패: " + e.message);
+  }
+}
+
+// Status 셀 신호등 점 갱신 — 색은 td 의 is-open/is-close 클래스가 결정한다(CSS).
+function setStatusDot(td, value) {
+  if (!td) return;
+  const close = value === "Close";
+  td.classList.toggle("is-close", close);
+  td.classList.toggle("is-open", !close);
+}
+
+// 삭제 모드에서 체크한 행 일괄 삭제 — Yield/CPK 행은 issue_hidden, ETC 항목은 etc remove.
+// 백엔드가 단건 API 라 순차 호출한다(세션 편집 DB read-modify-write 경합 방지). 재로드는 마지막 1회.
+async function deleteSelectedIssueRows() {
+  const panel = document.getElementById("panel-issues");
+  const checked = panel ? [...panel.querySelectorAll(".issue-del-chk:checked")] : [];
+  if (!checked.length) { showToast("삭제할 행을 체크하세요."); return; }
+  if (!confirm(`체크한 ${checked.length}개 행을 Issue Table 에서 삭제할까요?\n※ Yield/CPK 행 복원은 "삭제 전체 초기화"로만 가능합니다.`)) return;
+  if (!(await flushPendingComments())) return;
+  const btn = document.getElementById("issueDelSelectedBtn");
+  if (btn) btn.disabled = true;
+  let done = 0;
+  try {
+    for (const chk of checked) {
+      const hkey = chk.dataset.hkey || "";
+      const item = chk.dataset.etc || "";
+      const url = hkey
+        ? `/pe/report/session/${SESSION_ID}/web_report/issue_table/hidden`
+        : `/pe/report/session/${SESSION_ID}/web_report/issue_table/etc`;
+      const body = hkey
+        ? { password: verifiedPassword, action: "hide", key: hkey }
+        : { password: verifiedPassword, action: "remove", item };
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+        body: JSON.stringify(body),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      done += 1;
+    }
+    showToast(`${done}개 행을 삭제했습니다.`);
+  } catch (e) {
+    showToast(`일괄 삭제 실패 (${done}개 처리 후 중단): ` + e.message);
+  } finally {
+    if (btn) btn.disabled = false;
+    if (done) await load(false);
   }
 }
 

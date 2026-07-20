@@ -129,7 +129,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   align-items: end;
 }
 .filter-group { display: flex; flex-direction: column; gap: 6px; min-width: 110px; }
-.filter-group.search-group { position: relative; flex: 1 1 240px; min-width: 200px; }
+.filter-group.search-group { position: relative; flex: 1 1 480px; min-width: 360px; }
 .mine-toggle {
   height: 36px; display: inline-flex; align-items: center; gap: 6px;
   font-size: 18px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
@@ -413,21 +413,12 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 <div class="filter-card">
   <div class="filter-grid">
     <div class="filter-group">
-      <label class="filter-label">Process</label>
-      <input type="text" class="filter-input" id="processInput" placeholder="All">
-    </div>
-    <div class="filter-group">
-      <label class="filter-label">Product</label>
-      <input type="text" class="filter-input" id="productInput" placeholder="All">
-    </div>
-    <div class="filter-group">
       <label class="filter-label">분석 모드</label>
       <select class="sel-input" id="modeSelect">
         <option value="">전체</option>
         <option value="Normal">Normal</option>
         <option value="Compare">Compare</option>
         <option value="DUT">DUT</option>
-        <option value="Commonality">Commonality</option>
       </select>
     </div>
     <div class="filter-group">
@@ -449,7 +440,6 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
     <div class="filter-group">
       <label class="filter-label">정렬</label>
       <select class="sel-input" id="sortSelect">
-        <option value="reco">추천순</option>
         <option value="new">최신순</option>
         <option value="old">오래된순</option>
         <option value="product">Product</option>
@@ -457,8 +447,8 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
       </select>
     </div>
     <div class="filter-group mine-group">
-      <label class="filter-label">내가 업로드</label>
-      <label class="mine-toggle"><input type="checkbox" id="mineCheck"> 내 업로드만</label>
+      <label class="filter-label">My File</label>
+      <label class="mine-toggle"><input type="checkbox" id="mineCheck"> My Upload</label>
     </div>
     <div class="filter-group search-group">
       <label class="filter-label">통합 검색</label>
@@ -838,7 +828,7 @@ document.querySelectorAll(".pt-btn").forEach(btn => {
 
 // ── search button ──
 document.getElementById("searchBtn").addEventListener("click", () => loadHistory());
-["processInput", "productInput", "lotIdInput"].forEach(id => {
+["lotIdInput"].forEach(id => {
   const input = document.getElementById(id);
   input.addEventListener("keydown", e => {
     if (e.key === "Enter") loadHistory();
@@ -861,11 +851,11 @@ document.getElementById("searchBtn").addEventListener("click", () => loadHistory
 document.getElementById("resetBtn").addEventListener("click", () => {
   state.productType = null;
   document.querySelectorAll(".pt-btn").forEach(b => b.classList.remove("active"));
-  ["processInput", "productInput", "lotIdInput", "dateFrom", "dateTo"].forEach(
+  ["lotIdInput", "dateFrom", "dateTo"].forEach(
     id => document.getElementById(id).value = "");
   document.getElementById("modeSelect").value = "";
   document.getElementById("visSelect").value = "";
-  document.getElementById("sortSelect").value = "reco";
+  document.getElementById("sortSelect").value = "new";
   document.getElementById("mineCheck").checked = false;
   _currentPage = 0;
   loadHistory();
@@ -891,8 +881,6 @@ function fmtDate(unix) {
 // ── client-side substring search across all columns + 필터(모드/공개범위/내업로드/날짜) ──
 function applyClientFilter(rows) {
   const q = (document.getElementById("lotIdInput").value || "").trim().toLowerCase();
-  const process = (document.getElementById("processInput").value || "").trim().toLowerCase();
-  const product = (document.getElementById("productInput").value || "").trim().toLowerCase();
   const mode = document.getElementById("modeSelect").value || "";
   const vis = document.getElementById("visSelect").value || "";
   const mine = document.getElementById("mineCheck").checked;
@@ -902,8 +890,6 @@ function applyClientFilter(rows) {
   const from = fromStr ? Math.floor(new Date(fromStr + "T00:00:00").getTime() / 1000) : null;
   const to = toStr ? Math.floor(new Date(toStr + "T23:59:59").getTime() / 1000) : null;
   return rows.filter(r => {
-    if (process && (r.process || "").toLowerCase() !== process) return false;
-    if (product && (r.product || "").toLowerCase() !== product) return false;
     if (mode) {
       // 분석 모드는 web_report 세션에만 의미가 있다 — 모드 필터 시 그 외 세션은 제외.
       if (String(r.source || "") !== "web_report") return false;
@@ -927,10 +913,6 @@ function applyClientFilter(rows) {
 function currentQuery() {
   const p = new URLSearchParams();
   if (state.productType) p.set("pt", state.productType);
-  const process = document.getElementById("processInput").value.trim();
-  if (process) p.set("process", process);
-  const product = document.getElementById("productInput").value.trim();
-  if (product) p.set("product", product);
   const mode = document.getElementById("modeSelect").value; if (mode) p.set("mode", mode);
   const vis = document.getElementById("visSelect").value; if (vis) p.set("vis", vis);
   if (document.getElementById("mineCheck").checked) p.set("mine", "1");
@@ -938,7 +920,7 @@ function currentQuery() {
   const to = document.getElementById("dateTo").value; if (to) p.set("to", to);
   const q = document.getElementById("lotIdInput").value.trim(); if (q) p.set("q", q);
   const sort = document.getElementById("sortSelect").value;
-  if (sort && sort !== "reco") p.set("sort", sort);
+  if (sort && sort !== "new") p.set("sort", sort);
   if (_currentPage > 0) p.set("page", _currentPage + 1);
   return p;
 }
@@ -951,15 +933,13 @@ function syncUrl() {
 function readUrl() {
   const p = new URLSearchParams(location.search);
   state.productType = p.get("pt") || null;
-  document.getElementById("processInput").value = p.get("process") || "";
-  document.getElementById("productInput").value = p.get("product") || "";
   document.getElementById("modeSelect").value = p.get("mode") || "";
   document.getElementById("visSelect").value = p.get("vis") || "";
   document.getElementById("mineCheck").checked = p.get("mine") === "1";
   document.getElementById("dateFrom").value = p.get("from") || "";
   document.getElementById("dateTo").value = p.get("to") || "";
   document.getElementById("lotIdInput").value = p.get("q") || "";
-  document.getElementById("sortSelect").value = p.get("sort") || "reco";
+  document.getElementById("sortSelect").value = p.get("sort") || "new";
   const pg = parseInt(p.get("page") || "1", 10);
   _currentPage = (Number.isFinite(pg) && pg > 0) ? pg - 1 : 0;
   document.querySelectorAll(".pt-btn").forEach(b =>
@@ -1039,13 +1019,9 @@ async function loadHistory(preservePage = false) {
 // ── render results ──
 function renderResults() {
   const filtered = applyClientFilter(_lastRows);
-  // 정렬 드롭다운. 추천순(기본) = ★즐겨찾기 > 내 업로드 > 나머지 (그룹 내 서버 순서=중요>최신 유지).
-  // Array.sort 는 안정 정렬이라 동순위는 기존(서버) 순서를 보존한다.
-  const sortKey = document.getElementById("sortSelect").value || "reco";
-  if (sortKey === "reco") {
-    const group = r => _favorites.has(r.session_id) ? 0 : (isMine(r) ? 1 : 2);
-    filtered.sort((a, b) => group(a) - group(b));
-  } else if (sortKey === "new") {
+  // 정렬 드롭다운. 기본=최신순. Array.sort 는 안정 정렬이라 동순위는 기존(서버) 순서를 보존한다.
+  const sortKey = document.getElementById("sortSelect").value || "new";
+  if (sortKey === "new") {
     filtered.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   } else if (sortKey === "old") {
     filtered.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));

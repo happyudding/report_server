@@ -27,6 +27,7 @@ let mapDataReady = false;     // dies 병합 완료 여부
 let mapDataPromise = null;    // 진행 중/완료된 fetch (중복 요청 방지)
 let _mapContentHash = "";     // 마지막 fetch 시점의 content_hash — 동일하면 재fetch 안 함
 let _mapOnDiesReady = null;   // Map Analysis 갤러리 재드로우 훅 (renderMapAnalysis 가 등록)
+let _mapLastRes = null;       // 마지막 성공 응답 — load(false) 가 DATA 를 교체한 뒤 새 rows 재병합용
 
 function fetchMapViaWorker(url, onProgress) {
   // fetchDistViaWorker(distribution.js)와 같은 골격 — 수십 MB JSON 을 Worker 에서
@@ -86,6 +87,22 @@ function fetchMapViaWorker(url, onProgress) {
   });
 }
 
+// 응답의 dies 를 현재 DATA 의 Map Analysis rows 에 병합한다.
+// load(false)(편집 후 재로딩)는 DATA 를 통째로 교체하므로, 같은 응답으로 여러 번 호출될 수 있다.
+function mergeMapDies(res) {
+  const cur = (webReportSheets() || {})["Map Analysis"] || [];
+  (res.diesByMap || []).forEach((dies, i) => {
+    const m = cur[i], meta = (res.metas || [])[i];
+    // /full 경량 rows 와 같은 빌더(strip_dies 전) 출력이라 인덱스가 일치한다 —
+    // source/step 대조는 안전장치(불일치 row 는 placeholder 유지).
+    if (!m || !meta || m.source !== meta.source ||
+        (m.step == null ? null : m.step) !== meta.step) return;
+    m.dies = dies || [];
+    delete m._compact;   // dies 없이 캐시됐을 수 있는 압축 격자 무효화
+  });
+  mapDataReady = true;
+}
+
 function ensureMapData() {
   const maps = (webReportSheets() || {})["Map Analysis"] || [];
   // 하위호환: 구 스키마(v7 이하)는 dies 가 /full 에 이미 실려 온다 — fetch 없이 즉시 ready.
@@ -94,8 +111,20 @@ function ensureMapData() {
     return Promise.resolve();
   }
   const ch = (DATA && DATA.session && DATA.session.content_hash) || "";
-  if (mapDataPromise && ch === _mapContentHash) return mapDataPromise;   // 로딩 중/완료 재사용
+  if (mapDataPromise && ch === _mapContentHash) {   // 로딩 중/완료 재사용
+    // load(false) 재로딩으로 DATA 가 교체됐으면 이미 받은 dies 를 새 rows 에 다시 붙인다
+    // (편집은 content_hash 를 바꾸지 않아 재fetch 하지 않으므로, 재병합 없이는 dies 유실).
+    // 아직 로딩 중이면 진행 중 promise 의 .then 이 완료 시점의 현재 rows 에 병합한다.
+    // 재드로우는 마이크로태스크로 미룬다 — load() 의 renderActive 뒤에 돌게 하고,
+    // drawMap 폴백 호출에서 드로우 루프에 재진입하지 않게 한다.
+    if (_mapLastRes) {
+      mergeMapDies(_mapLastRes);
+      Promise.resolve().then(refreshMapConsumers);
+    }
+    return mapDataPromise;
+  }
   _mapContentHash = ch;
+  _mapLastRes = null;   // 다른 content_hash — 옛 응답을 새 rows 에 병합하지 않는다
   mapDataReady = false;
   const url = `/pe/report/session/${SESSION_ID}/web_report/map_analysis`;
   const label = "맵 데이터 로딩 중…";
@@ -109,17 +138,8 @@ function ensureMapData() {
         diesByMap: ((j && j.maps) || []).map(m => m.dies || []),
       })))
     .then(res => {
-      const cur = (webReportSheets() || {})["Map Analysis"] || [];
-      (res.diesByMap || []).forEach((dies, i) => {
-        const m = cur[i], meta = (res.metas || [])[i];
-        // /full 경량 rows 와 같은 빌더(strip_dies 전) 출력이라 인덱스가 일치한다 —
-        // source/step 대조는 안전장치(불일치 row 는 placeholder 유지).
-        if (!m || !meta || m.source !== meta.source ||
-            (m.step == null ? null : m.step) !== meta.step) return;
-        m.dies = dies || [];
-        delete m._compact;   // dies 없이 캐시됐을 수 있는 압축 격자 무효화
-      });
-      mapDataReady = true;
+      _mapLastRes = res;
+      mergeMapDies(res);
       distBadgeEnd();
       refreshMapConsumers();
     })

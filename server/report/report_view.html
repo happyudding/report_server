@@ -1014,6 +1014,10 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
 }
 .cpk-toolbar select:focus { border-color: #4a90e2; outline: none; }
 .cpk-toolbar .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+/* CPK 툴바 필터: 왼쪽 설명 라벨 + 현재 적용값 버튼 한 쌍 */
+.cpk-tool-group { display: inline-flex; align-items: center; gap: 5px; }
+.cpk-tool-group .btn-sm { margin-top: 0; }
+.cpk-tool-label { font-size: 11.5px; color: #667085; white-space: nowrap; }
 .cpk-target-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 12px; color: #555; }
 .cpk-target-bar input[type="number"] {
   width: 74px; padding: 5px 8px; border: 1px solid #d0d5dd; border-radius: 4px; font-size: 12px;
@@ -1035,14 +1039,41 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
 }
 .btn-del-etc-item:hover, .btn-del-issue-row:hover { color: #b91c1c; }
 
+/* Issue Table 삭제 모드 — 행 체크박스·개별 삭제(×)·삭제 실행 버튼은 모드 진입 시에만 노출 */
+#panel-issues .issue-del-chk { display: none; margin-right: 5px; vertical-align: middle; cursor: pointer; }
+#panel-issues .btn-del-etc-item, #panel-issues .btn-del-issue-row { display: none; }
+#panel-issues .issue-del-actions { display: none; gap: 8px; }
+#panel-issues.issue-del-mode .issue-del-chk { display: inline-block; }
+#panel-issues.issue-del-mode .btn-del-etc-item,
+#panel-issues.issue-del-mode .btn-del-issue-row { display: inline-block; }
+#panel-issues.issue-del-mode .issue-del-actions { display: inline-flex; }
+#issueDelModeBtn.active { background: #dc2626; border-color: #dc2626; color: #fff; }
+#issueDelModeBtn.active:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+#issueDelSelectedBtn:disabled { opacity: .5; cursor: default; transform: none; }
+
+/* Issue Table 섹션 이동 버튼 묶음(YIELD/CPK/ETC) — 세그먼트 형태로 붙여 표시 */
+.issue-jump-group { display: inline-flex; }
+.issue-jump-group .btn-sm { margin-top: 0; border-radius: 0; margin-left: -1px; }
+.issue-jump-group .btn-sm:first-child { border-radius: 8px 0 0 8px; margin-left: 0; }
+.issue-jump-group .btn-sm:last-child { border-radius: 0 8px 8px 0; }
+/* Excel 다운로드는 툴바 우측 끝 */
+.issue-toolbar .issue-excel-btn { margin-left: auto; }
+
 /* Issue Table Status(Open/Close) — 편집모드 드랍다운 + 조회모드 텍스트 색 구분 */
 select.issue-status-sel {
   width: 100%; padding: 2px 2px; border: 1px solid #d0d5dd; border-radius: 4px;
   font-size: 12px; background: #fff; cursor: pointer;
 }
 select.issue-status-sel:focus { border-color: #4a90e2; outline: none; }
-td.issue-status.is-open { color: #b45309; font-weight: 600; }
+td.issue-status.is-open { color: #dc2626; font-weight: 600; }
 td.issue-status.is-close { color: #15803d; font-weight: 600; }
+/* 드랍다운(조회모드는 텍스트) 아래 신호등 점 — Open 빨강 / Close 초록 */
+td.issue-status-cell { text-align: center; }
+td.issue-status-cell .status-dot {
+  display: block; width: 10px; height: 10px; border-radius: 50%; margin: 4px auto 1px;
+}
+td.issue-status-cell.is-open .status-dot { background: #dc2626; box-shadow: 0 0 5px rgba(220,38,38,.75); }
+td.issue-status-cell.is-close .status-dot { background: #16a34a; box-shadow: 0 0 5px rgba(22,163,74,.75); }
 
 /* Summary 탭 Issue Status 카드(카테고리별 Open/Close 소표) */
 .iss-status-wrap { overflow-x: auto; }
@@ -1389,6 +1420,7 @@ html[data-theme="dark"] .cpk-toolbar select,
 html[data-theme="dark"] .cpk-target-bar input[type="number"],
 html[data-theme="dark"] .cpk-margin-wrap select { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
 html[data-theme="dark"] .cpk-target-bar { color: #9aa3b0; }
+html[data-theme="dark"] .cpk-tool-label { color: #8a93a0; }
 
 /* ── Issue Table (sticky 헤더/좌측 고정열/경고 셀/툴바/스크롤바) ── */
 html[data-theme="dark"] .sheet-wrap.kind-issue { border-color: #333a46; }
@@ -1731,7 +1763,7 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
 <!-- Issue Table ETC 항목 추가 모달 -->
 <div class="modal-overlay" id="etcItemModal">
   <div class="modal-box modal-box-wide">
-    <p class="modal-title">ETC 항목 추가</p>
+    <p class="modal-title">ISSUE ITEM 추가</p>
     <div class="etc-engr-form">
       <p class="modal-desc">Engr 항목 직접 입력 — 측정항목에 없는 Item 명과 Comment 를 적어 추가합니다.</p>
       <input type="text" id="etcEngrName" class="field-input" placeholder="Item 명 (직접 입력)">
