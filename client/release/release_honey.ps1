@@ -15,6 +15,10 @@
 
 .PARAMETER Notes
     Release comment for version.json and release_log.txt. If omitted, the script prompts.
+
+.PARAMETER Clean
+    Pass --clean to PyInstaller (full rebuild, discards the build cache). Off by default
+    so repeated releases reuse the cache and finish much faster.
 #>
 [CmdletBinding()]
 param(
@@ -23,7 +27,10 @@ param(
 
     [Parameter(Mandatory = $false)]
     [AllowNull()]
-    [string]$Notes = $null
+    [string]$Notes = $null,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$Clean
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,9 +58,13 @@ $VersionJson = Join-Path $ReleasesDir "version.json"
 $ReleaseLog  = Join-Path $ReleasesDir "release_log.txt"
 $Utf8NoBom   = New-Object System.Text.UTF8Encoding($false)
 
+# 단계별 경과시간 — PyInstaller COLLECT 나 ZIP 압축은 수 분 동안 아무 출력이 없어
+# "멈춘 것"처럼 보인다. 각 단계 머리에 누적 경과를 찍어 어디서 오래 걸렸는지 남긴다.
+$Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
 function Write-Step([string]$Message) {
     Write-Host ""
-    Write-Host "==> $Message" -ForegroundColor Cyan
+    Write-Host ("==> {0}  (+{1}s)" -f $Message, [math]::Round($Stopwatch.Elapsed.TotalSeconds)) -ForegroundColor Cyan
 }
 
 function Read-Utf8Text([string]$Path) {
@@ -131,11 +142,14 @@ try {
     # 빌드 PC 에 requirements.txt 의존성이 빠져 있으면 PyInstaller 가 조용히 누락한 채
     # 빌드를 성공시켜 런타임에 ModuleNotFoundError 로 죽는 깨진 exe 가 배포된다
     # (예: requests_toolbelt). 빌드 직전에 의존성을 보장한다.
+    # --progress-bar off: 다운로드 진행바가 콘솔/트랜스크립트에 수만 줄로 쏟아지는 것을 막는다.
+    $PipQuiet = @("--progress-bar", "off", "--disable-pip-version-check")
+
     Write-Host "    pip install -r requirements.txt"
     if ($IsPyLauncher) {
-        & $PythonCmd.Source -3 -m pip install -r requirements.txt
+        & $PythonCmd.Source -3 -m pip install @PipQuiet -r requirements.txt
     } else {
-        & $PythonCmd.Source -m pip install -r requirements.txt
+        & $PythonCmd.Source -m pip install @PipQuiet -r requirements.txt
     }
     if ($LASTEXITCODE -ne 0) {
         throw "pip install -r requirements.txt failed with exit code $LASTEXITCODE"
@@ -146,18 +160,28 @@ try {
     # 아래 python -m PyInstaller 가 'No module named PyInstaller' 로 죽는다).
     Write-Host "    pip install pyinstaller"
     if ($IsPyLauncher) {
-        & $PythonCmd.Source -3 -m pip install pyinstaller
+        & $PythonCmd.Source -3 -m pip install @PipQuiet pyinstaller
     } else {
-        & $PythonCmd.Source -m pip install pyinstaller
+        & $PythonCmd.Source -m pip install @PipQuiet pyinstaller
     }
     if ($LASTEXITCODE -ne 0) {
         throw "pip install pyinstaller failed with exit code $LASTEXITCODE"
     }
 
+    # 기본은 캐시 재사용(--clean 없음) — 반복 릴리스에서 분석/수집 단계가 크게 짧아진다.
+    # 캐시가 의심스러우면 -Clean 스위치로 전체 재빌드.
+    $PyiArgs = @("--noconfirm")
+    if ($Clean) {
+        $PyiArgs = @("--clean") + $PyiArgs
+        Write-Host "    (-Clean) 캐시를 버리고 전체 재빌드합니다"
+    }
+    $SpecName = Split-Path $SpecFile -Leaf
+    Write-Host "    PyInstaller $($PyiArgs -join ' ') $SpecName"
+    Write-Host "    ※ 마지막 COLLECT 단계는 6000개 파일을 복사하느라 수 분간 출력이 멈춘 것처럼 보일 수 있습니다." -ForegroundColor DarkGray
     if ($IsPyLauncher) {
-        & $PythonCmd.Source -3 -m PyInstaller --clean --noconfirm (Split-Path $SpecFile -Leaf)
+        & $PythonCmd.Source -3 -m PyInstaller @PyiArgs $SpecName
     } else {
-        & $PythonCmd.Source -m PyInstaller --clean --noconfirm (Split-Path $SpecFile -Leaf)
+        & $PythonCmd.Source -m PyInstaller @PyiArgs $SpecName
     }
     if ($LASTEXITCODE -ne 0) {
         throw "PyInstaller failed with exit code $LASTEXITCODE"
@@ -177,12 +201,28 @@ if (Test-Path $BuiltZip) {
     Remove-Item $BuiltZip -Force
 }
 
-$stageRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("honey_zip_stage_" + [guid]::NewGuid().ToString("N"))
-$stageHoney = Join-Path $stageRoot "Honey"
-New-Item -ItemType Directory -Path $stageHoney | Out-Null
-Copy-Item (Join-Path $DistDir "*") $stageHoney -Recurse -Force
-Compress-Archive -Path (Join-Path $stageRoot "Honey") -DestinationPath $BuiltZip -CompressionLevel Optimal
-Remove-Item $stageRoot -Recurse -Force
+# PowerShell 5.1 의 Compress-Archive 는 700MB/6000파일 규모에서 극단적으로 느려(수십 분,
+# 그동안 출력 없음) 빌드가 멈춘 것처럼 보였다. .NET ZipFile 로 dist\Honey 를 직접 압축한다
+# — %TEMP% 로 700MB 를 통째 복사하던 스테이징 단계도 함께 사라진다.
+# includeBaseDirectory=$true 라 ZIP 내부 루트는 종전과 같은 Honey\ 유지
+# (transport\updater.py _find_payload_dir 가 기대하는 구조).
+# CreateFromDirectory 를 쓰지 않고 파일별로 엔트리를 만드는 이유: PowerShell 5.1 이 얹힌
+# .NET Framework 의 CreateFromDirectory 는 엔트리 경로를 'Honey\_internal\...' 처럼
+# 역슬래시로 기록한다(ZIP 규격은 '/' 필수). 탐색기 수동 압축해제가 깨지므로 직접 '/' 로 쓴다.
+Write-Host "    압축 중 (수 분 걸릴 수 있고 진행 표시가 없습니다)..." -ForegroundColor DarkGray
+Add-Type -AssemblyName System.IO.Compression          # ZipArchive/ZipArchiveMode
+Add-Type -AssemblyName System.IO.Compression.FileSystem  # ZipFile/ZipFileExtensions
+$zipArchive = [System.IO.Compression.ZipFile]::Open($BuiltZip, [System.IO.Compression.ZipArchiveMode]::Create)
+try {
+    $rootLen = $DistDir.TrimEnd('\').Length + 1
+    foreach ($file in [System.IO.Directory]::EnumerateFiles($DistDir, '*', [System.IO.SearchOption]::AllDirectories)) {
+        $entryName = "Honey/" + $file.Substring($rootLen).Replace('\', '/')
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $zipArchive, $file, $entryName, [System.IO.Compression.CompressionLevel]::Fastest) | Out-Null
+    }
+} finally {
+    $zipArchive.Dispose()
+}
 Write-Host "    -> $BuiltZip"
 
 Write-Step "4/6 Copy ZIP to server releases"

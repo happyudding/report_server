@@ -105,6 +105,19 @@ def init_app(app):
               SAMPLE_INTERVAL, RETENTION_SEC // 3600, _samples.maxlen)
 
 
+def current_inflight():
+    """현재 처리 중인 요청 수(호출자 자신 포함). 비활성/미기동이면 None.
+
+    "모름(None)" 과 "0건" 을 반드시 구분해야 한다 — terminate.bat 의 종료 drain 이
+    이 값을 보고 "지금 내려도 되는가" 를 판정하므로, 카운터가 없는 상태를 0건으로
+    오인하면 진행 중인 업로드를 끊게 된다 (→ ops.healthz).
+    """
+    if not METRICS_ENABLED or not _started:
+        return None
+    with _lock:
+        return _inflight
+
+
 def _window_peaks(rows, now, window_sec):
     cut = now - window_sec
     cpu = rss = mem = infl = 0

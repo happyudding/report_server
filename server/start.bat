@@ -8,6 +8,10 @@ rem (로컬 전용으로 쓰려면 이 라인을 set "HOST=127.0.0.1" 으로 직
 set "HOST=0.0.0.0"
 if not defined DATASET set "DATASET=current"
 
+rem terminate.bat 이 교체 작업 중 오작동을 막으려고 일시 정지시킨 watchdog 을, 기동을
+rem 마친 뒤 이 스크립트가 다시 켠다 (:enable_watchdog).
+set "TASK_WATCHDOG=report-server-watchdog"
+
 rem Resolve Python interpreter.
 set "PY_CMD="
 
@@ -75,12 +79,17 @@ echo [start] Waiting for server to listen (up to 60s) ...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$port = [int]'%PORT%'; for ($i = 0; $i -lt 120; $i++) { if (Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue) { Write-Host '[start] Server is listening.'; exit 0 } ; Start-Sleep -Milliseconds 500 } ; Write-Host '[start] Timeout waiting for server.'; exit 1"
 if errorlevel 1 (
     echo [start] Check the server window for errors.
+    rem 기동 실패해도 watchdog 은 되살린다 — 켜두면 5분 뒤 자동 재시도라도 하지만,
+    rem 꺼진 채로 방치하면 이후 서버가 죽어도 아무도 되살리지 않는다.
+    call :enable_watchdog
     pause
     exit /b 1
 )
 
 rem Health check via localhost (서버 자신에서는 항상 접근 가능) — 경량 /healthz 사용
 powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:%PORT%/healthz' -UseBasicParsing -TimeoutSec 15; Write-Output ('[start] HTTP ' + $r.StatusCode) } catch { Write-Output ('[start] HTTP check failed: ' + $_.Exception.Message) }"
+
+call :enable_watchdog
 
 echo.
 echo [start] ===== Accessible URLs (HOST=%HOST%) =====
@@ -103,3 +112,17 @@ echo [start] 이 창을 닫으려면 아무 키나 누르세요. (서버는 계�
 pause >nul
 
 endlocal
+exit /b 0
+
+rem --- watchdog 재개 (terminate.bat 이 정지시킨 것을 되돌린다) ------------------
+:enable_watchdog
+schtasks /Change /TN "%TASK_WATCHDOG%" /ENABLE >nul 2>nul
+if errorlevel 1 goto :wd_enable_fail
+echo [start] watchdog 재개됨 (%TASK_WATCHDOG%).
+exit /b
+:wd_enable_fail
+echo [start] watchdog 재개 실패 또는 미등록.
+echo [start]   - 등록돼 있는데 실패했다면 권한 문제입니다. 관리자 권한으로 실행하거나 수동 재개:
+echo [start]       schtasks /Change /TN %TASK_WATCHDOG% /ENABLE
+echo [start]   - 등록한 적이 없다면 register_watchdog.bat 로 등록할 수 있습니다.
+exit /b

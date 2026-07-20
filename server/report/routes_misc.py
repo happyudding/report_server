@@ -100,6 +100,26 @@ def help_page():
     return send_html_gzip(REPORT_VIEW_HTML.parent / "help.html")
 
 
+# help.html 안내 스크린샷. 정적 폴더 라우트가 없어 vendor/webreport 와 같은 화이트리스트
+# 방식으로 서빙한다(경로 traversal 차단). help.html 은 /pe/report/static/help_assets/<name>
+# 루트상대 경로로 참조 — 상대경로면 페이지 URL 깊이가 달라질 때 다시 404 가 된다.
+_HELP_ASSETS_DIR = REPORT_VIEW_HTML.parent / "static" / "help_assets"
+_HELP_ASSET_RE = re.compile(r"^[A-Za-z0-9_]+\.png$")
+
+
+@report_bp.get("/static/help_assets/<filename>")
+def help_asset(filename):
+    if not _HELP_ASSET_RE.match(filename):
+        abort(404)
+    path = _HELP_ASSETS_DIR / filename
+    if not path.is_file():
+        abort(404)
+    resp = make_response(send_file(path, mimetype="image/png", conditional=True))
+    # 배포와 함께만 바뀌는 안내 이미지 — vendor 와 동일하게 브라우저 캐시 허용
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
 # ── Vendored 정적 자산 (Tabulator 등) ─────────────────────────────────────────
 # report_view.html 이 send_file 로 통째 전송되고 정적 폴더 라우트가 없으므로, vendoring 한
 # JS/CSS 를 화이트리스트로만 서빙(경로 traversal 차단). CDN/인터넷 불필요(폐쇄망 대응).

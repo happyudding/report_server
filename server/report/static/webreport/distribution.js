@@ -70,13 +70,36 @@ let distIndex = [];            // DATA.web_report.distribution_index
 let distCpkOnly = true;        // 기본 진입 cpk<1.33 on
 let distFailOnly = false;
 let distHidePassfail = true;   // "P/F 없애기" 기본 ON — unit 이 Pass/Fail 인 항목(is_passfail) 카드 숨김
-let distLimitOnly = false;     // 켜면 각 분포 차트 x축을 [LSL,USL] 창으로 클램프(Limit 벗어난 산포 숨김)
-// distLimitOnly 켜짐 + lo/hi 존재 시 x축 표시범위 [lo,hi](±2% pad). 아니면 null(기존 범위 유지).
-function distLimitRange(lo, hi) {
-  if (!distLimitOnly || lo == null || hi == null) return null;
-  const span = (hi - lo) || Math.abs(hi) || 1;
-  const pad = span * 0.02;
-  return [lo - pad, hi + pad];
+let distLimitOnly = false;     // 켜면 각 분포 차트 x축을 Limit 창으로 클램프(Limit 벗어난 산포 숨김)
+// distLimitOnly 켜짐 시 x축 표시범위를 반환(아니면 null → 기존 범위 유지).
+// 양측 스펙: [lo,hi]±2% pad. 단측 스펙(한쪽만 있음): 있는 쪽은 pad 클램프, 없는 쪽은
+// 데이터 끝(dmin/dmax)으로 잡는다 — 한쪽만 있어도 토글이 반응하게. pad 기준 span 은
+// 항상 "보이는 구간"(limit ↔ 반대쪽 경계)이라 양측/단측 비례가 일관된다.
+// dmin/dmax(선택): 소스 합친 데이터 최소/최대. 없거나 span≤0 이면 축퇴 폴백 span.
+function distLimitRange(lo, hi, dmin, dmax) {
+  if (!distLimitOnly) return null;
+  const hasLo = lo != null, hasHi = hi != null;
+  if (!hasLo && !hasHi) return null;
+  const pad = s => ((s > 0 ? s : 0) || Math.abs(hasHi ? hi : lo) || 1) * 0.02;
+  if (hasLo && hasHi) { const p = pad(hi - lo); return [lo - p, hi + p]; }
+  if (hasHi) {                                  // USL 만 — 아래쪽은 데이터 최소
+    const x0 = (dmin != null && isFinite(dmin) && dmin < hi) ? dmin : hi;
+    const p = pad(hi - x0);
+    return [x0 - p, hi + p];
+  }
+  const x1 = (dmax != null && isFinite(dmax) && dmax > lo) ? dmax : lo;   // LSL 만
+  const p = pad(x1 - lo);
+  return [lo - p, x1 + p];
+}
+// 소스 원본 values 의 min/max — 단측 스펙 클램프에서 "없는 쪽" 경계로 쓴다.
+// 토글이 꺼져 있으면 distLimitRange 가 어차피 null 이라 전수 스캔을 생략한다.
+function distSourcesRange(sources) {
+  let min = Infinity, max = -Infinity;
+  if (!distLimitOnly) return { min, max };
+  (sources || []).forEach(s => {
+    for (const v of (s.values || [])) { if (v < min) min = v; if (v > max) max = v; }
+  });
+  return { min, max };
 }
 let distFiltered = [];         // 현재 필터 결과 (갤러리 표시/네비 범위)
 let distSelected = new Set();  // 검색 체크박스로 고른 항목(있으면 갤러리를 이 항목들만으로 필터)
@@ -319,15 +342,22 @@ function distColorFor(source) { return distColorMap[source] || "#888"; }
 const DIST_EXT_LEGEND_MIN = 8;
 function distUseExtLegend(data) { return ((data && data.sources) || []).length >= DIST_EXT_LEGEND_MIN; }
 
-function distFmtLimit(v) { return (v === null || v === undefined) ? "?" : String(v); }
+// Limit 값이 없으면 물음표 대신 공백으로 둔다 (사용자 요청).
+function distFmtLimit(v) { return (v === null || v === undefined) ? "" : String(v); }
+// "lo ~ hi" 텍스트. 상·하한이 모두 없으면 구분자 "~" 만 남지 않도록 통째로 생략한다.
+function distLimText(lo, hi) {
+  const l = distFmtLimit(lo), h = distFmtLimit(hi);
+  return (l === "" && h === "") ? "" : `${l} ~ ${h}`;
+}
 // 단위를 대괄호로 감싼다 (예: uA → [uA]). 빈 단위는 "" 반환.
 function distUnitBr(u) { u = (u === null || u === undefined) ? "" : String(u).trim(); return u ? "[" + esc(u) + "]" : ""; }
 // CDF 카드/항목 상세 헤더의 "lo ~ hi [unit]" inner HTML — Limit(lo~hi)은 진한 파랑,
 // 단위 문자(대괄호 안 V 등)는 진한 초록으로 강조한다(대괄호는 기본색). (사용자 요청)
 function distLimInnerHtml(lo, hi, units) {
   const u = (units === null || units === undefined) ? "" : String(units).trim();
-  const range = `<span class="dist-lim-range">${esc(distFmtLimit(lo))} ~ ${esc(distFmtLimit(hi))}</span>`;
-  const unit = u ? ` [<span class="dist-lim-unit">${esc(u)}</span>]` : "";
+  const t = distLimText(lo, hi);
+  const range = t ? `<span class="dist-lim-range">${esc(t)}</span>` : "";
+  const unit = u ? `${range ? " " : ""}[<span class="dist-lim-unit">${esc(u)}</span>]` : "";
   return range + unit;
 }
 
@@ -353,7 +383,7 @@ function renderDistCell(cell) {
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: DIST_STATUS_BG[status] || "#FFFFFF",
     title: {
       text: `<b>${esc(subject)}</b><br><span style="font-size:10px">` +
-        `(${esc(distFmtLimit(lo))} ~ ${esc(distFmtLimit(hi))} ${distUnitBr(info.units)})</span>`,
+        `(${[esc(distLimText(lo, hi)), distUnitBr(info.units)].filter(Boolean).join(" ")})</span>`,
       font: { size: 12 }, x: 0.5, xanchor: "center" },
     xaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, ticks: "outside",
       tickcolor: "#bbb", tickfont: { size: 10 } },
@@ -589,7 +619,16 @@ function distRenderGalleryCell(cell) {
   let shapes = distSpecShapes(lo, hi, false).concat(beforeLimitShapes(subject));
   const cm = chipMarkersFor(subject);
   if (cm) { traces.push(...cm.traces); shapes = shapes.concat(cm.shapes); }
-  const glr = distLimitRange(lo, hi);
+  // 단측 스펙 클램프용 데이터 끝값 — ECDF xs 는 오름차순이라 양끝만 보면 된다.
+  let gMin = Infinity, gMax = -Infinity;
+  if (info && distLimitOnly) Object.keys(info.bySource).forEach(src => {
+    const xs = info.bySource[src].xs;
+    if (xs && xs.length) {
+      if (xs[0] < gMin) gMin = xs[0];
+      if (xs[xs.length - 1] > gMax) gMax = xs[xs.length - 1];
+    }
+  });
+  const glr = distLimitRange(lo, hi, gMin, gMax);
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: DIST_STATUS_BG[status] || "#FFFFFF",
     xaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, ticks: "outside",
       tickcolor: "#bbb", tickfont: { size: 9 }, ...(glr ? { range: glr, autorange: false } : {}) },

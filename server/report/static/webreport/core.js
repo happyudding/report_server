@@ -169,12 +169,18 @@ const UI_FONTS = {
   noto: '"Noto Sans KR", "Malgun Gothic", sans-serif',
   system: 'system-ui, -apple-system, "Segoe UI", sans-serif',
 };
+// 화면 배율(글자 크기). font-size 가 아니라 zoom 인 이유 — 이 페이지의 font-size 는 전부
+// 절대 px 이고(루트 크기 없음), 열 폭(sheets.js colWidth)·카드 높이·Plotly 글자 크기가 모두
+// 그 px 에 맞춰 손튜닝돼 있다. 글자만 키우면 잘리거나 열이 넘치지만, zoom 은 전부 같은
+// 비율로 확대해 상대 레이아웃을 보존한다. 키는 "100"=기본(스타일 미설정).
+const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
 (function () {
   const toggle = document.getElementById("settingsToggle");
   const panel = document.getElementById("settingsPanel");
   if (!toggle || !panel) return;
   const root = document.documentElement;
   let curFont = (() => { try { return localStorage.getItem("report_ui_font") || "default"; } catch (e) { return "default"; } })();
+  let curZoom = (() => { try { return localStorage.getItem("report_ui_zoom") || "100"; } catch (e) { return "100"; } })();
 
   function applyFont(key) {
     curFont = UI_FONTS[key] != null ? key : "default";
@@ -184,15 +190,37 @@ const UI_FONTS = {
     try { localStorage.setItem("report_ui_font", curFont); } catch (e) {}
     syncActive();
   }
+  function applyZoom(key) {
+    curZoom = UI_ZOOMS[key] != null ? key : "100";
+    const z = UI_ZOOMS[curZoom];
+    // zoom 은 100vh 도 배율만큼 곱해버려(실측 확인) 뷰포트 기준 높이 계산이 화면을 넘친다.
+    // --vph 를 배율로 나눠 넣어 CSS 의 calc(var(--vph) - ...) 들이 다시 뷰포트에 맞게 한다.
+    if (!z) { root.style.removeProperty("zoom"); root.style.removeProperty("--vph"); }
+    else { root.style.zoom = z; root.style.setProperty("--vph", `calc(100vh / ${z})`); }
+    try { localStorage.setItem("report_ui_zoom", curZoom); } catch (e) {}
+    syncActive();
+    // 실측 기반 레이아웃(--sticky-head-h, Issue Table 고정열 left, Plotly responsive)은 전부
+    // window.resize 에만 걸려 있는데 zoom 변경은 resize 를 발생시키지 않는다. 리플로우가
+    // 끝난 다음 프레임에 1회 쏴서 재동기화시킨다.
+    requestAnimationFrame(() => {
+      window.dispatchEvent(new Event("resize"));
+      // Note 탭 Luckysheet 는 iframe 격리라 부모 resize 를 못 받는다 — 직접 알린다.
+      if (typeof noteOnTabShown === "function") noteOnTabShown();
+    });
+  }
   function syncActive() {
     panel.querySelectorAll("#uiFontSeg button").forEach(b =>
       b.classList.toggle("active", b.dataset.font === curFont));
+    panel.querySelectorAll("#uiZoomSeg button").forEach(b =>
+      b.classList.toggle("active", b.dataset.zoom === curZoom));
   }
   toggle.addEventListener("click", (e) => { e.stopPropagation(); panel.classList.toggle("open"); });
   panel.addEventListener("click", (e) => {
     e.stopPropagation();
     const ft = e.target.closest("#uiFontSeg button");
     if (ft) { applyFont(ft.dataset.font); return; }
+    const zm = e.target.closest("#uiZoomSeg button");
+    if (zm) { applyZoom(zm.dataset.zoom); return; }
     const stab = e.target.closest(".settings-tab");
     if (stab) { switchSettingsTab(stab.dataset.stab); return; }
     const grant = e.target.closest("button[data-grant]");

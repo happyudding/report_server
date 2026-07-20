@@ -15,6 +15,13 @@ try {
     noto: '"Noto Sans KR", "Malgun Gothic", sans-serif',
     system: 'system-ui, -apple-system, "Segoe UI", sans-serif' };
   if (_f && _FONTS[_f]) document.documentElement.style.setProperty("--report-font", _FONTS[_f]);
+  // 화면 배율도 첫 페인트 전에. 값 처리는 core.js UI_ZOOMS 와 동일("100"=미적용).
+  var _z = localStorage.getItem("report_ui_zoom");
+  var _ZOOMS = { "110": "1.1", "125": "1.25", "150": "1.5" };
+  if (_z && _ZOOMS[_z]) {
+    document.documentElement.style.zoom = _ZOOMS[_z];
+    document.documentElement.style.setProperty("--vph", "calc(100vh / " + _ZOOMS[_z] + ")");
+  }
 } catch (e) {}
 </script>
 <script>
@@ -44,7 +51,10 @@ window.__fullPrefetch = (() => {
 * { box-sizing: border-box; }
 /* 세로 스크롤바 자리를 항상 예약 — 패널 전환/상세 열기로 스크롤바가 생겼다 사라질 때
    뷰포트 폭이 스크롤바 폭만큼 흔들리는(가로 움찔) 현상 방지. */
-html { overflow-y: scroll; }
+/* --vph: 뷰포트 높이. 화면 배율(zoom)이 걸리면 100vh 가 배율만큼 곱해져 화면보다 커지므로
+   (실측: zoom 1.25 에서 100vh 가 뷰포트의 125%), core.js 가 배율로 나눈 값을 넣어준다.
+   높이를 뷰포트에 맞추는 계산은 100vh 대신 반드시 이 변수를 쓸 것. */
+html { overflow-y: scroll; --vph: 100vh; }
 body {
   /* --report-font: 설정(⚙) 팝오버에서 글꼴 변경 시 덮어씀. 미설정이면 기본 스택. */
   font-family: var(--report-font, "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
@@ -340,7 +350,7 @@ tbody tr:hover { background: #f9fbff; }
 /* ── CPK 표: Excel 식 freeze panes(헤더 상단 고정 + subject 좌측 / cpk 우측 고정) + 페이저 ── */
 .sheet-wrap.cpk-sheet {
   overflow: auto;
-  max-height: calc(100vh - var(--sticky-head-h, 96px) - 150px);
+  max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - 150px);
   border: 1px solid #d0d7de; border-radius: 6px; margin-bottom: 6px;
 }
 .sheet-table.cpk-sheet thead th { position: sticky; top: 0; z-index: 3; }
@@ -375,7 +385,7 @@ tbody tr:hover { background: #f9fbff; }
   overflow: auto;
   position: sticky;
   top: calc(var(--sticky-head-h, 96px) + 40px + var(--issue-hscroll-h, 14px));   /* 툴바 + 상단 프록시 가로스크롤바 높이만큼 내림 */
-  max-height: calc(100vh - var(--sticky-head-h, 96px) - 40px - var(--issue-hscroll-h, 14px) - 24px);
+  max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - 40px - var(--issue-hscroll-h, 14px) - 24px);
   border: 1px solid #d0d7de; border-radius: 6px;
 }
 /* Issue Table 상단 프록시 가로 스크롤바 — 넓은 표에서 하단까지 안 내려가도 상단에서 좌우 스크롤.
@@ -611,7 +621,7 @@ tbody tr:hover { background: #f9fbff; }
   border: 1px solid #e6e8ee; border-radius: 12px; background: #fbfbfd; overflow: hidden;
   box-shadow: 0 1px 2px rgba(16,24,40,.05);
   position: sticky; top: calc(var(--sticky-head-h, 96px) + 50px); align-self: flex-start;
-  max-height: calc(100vh - var(--sticky-head-h, 96px) - 70px); }
+  max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - 70px); }
 .trim-palette-head { padding: 10px 10px 9px; border-bottom: 1px solid #eef0f4; background: #fff; }
 .trim-palette-searchwrap { position: relative; }
 .trim-palette-searchwrap::before { content: ""; position: absolute; left: 11px; top: 50%;
@@ -840,7 +850,7 @@ html[data-theme="dark"] .idet-chipval-table th, html[data-theme="dark"] .idet-ch
 }
 /* 항목검색/전체선택은 상단 sticky 필터바로 이동 — 여기 목록은 그 아래에서 독립 스크롤. */
 .rawdata-cols-scroll {
-  max-height: calc(100vh - var(--sticky-head-h, 96px) - var(--rawdata-filters-h, 0px) - 40px);
+  max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - var(--rawdata-filters-h, 0px) - 40px);
   overflow-y: auto;
 }
 /* 스크롤은 상위 .rawdata-cols-scroll 이 담당 — 목록 자체는 내부 스크롤을 두지 않는다. */
@@ -923,7 +933,7 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 .map-axis-seg { vertical-align: middle; }
 /* Legend 가 화면보다 길면 잘리므로 뷰포트 높이로 제한하고 내부 스크롤.
    scrollbar-gutter: 세로 스크롤바가 폭을 잠식해 가로 스크롤이 생기는 것 방지. */
-.wafer-legend-fixed { flex: 0 0 340px; position: sticky; top: var(--sticky-head-h, 96px); max-height: calc(100vh - var(--sticky-head-h, 96px) - 16px); overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+.wafer-legend-fixed { flex: 0 0 340px; position: sticky; top: var(--sticky-head-h, 96px); max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - 16px); overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
 .wafer-legend-title { font-size: 13px; font-weight: 700; color: #333; margin: 0 0 8px; }
 .bin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .bin-table th, .bin-table td { padding: 2px 8px; border-bottom: 1px solid #eef0f3; text-align: right; }
@@ -1009,6 +1019,8 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
   font-size: 12px; min-width: 220px;
 }
 .cpk-toolbar input:focus { border-color: #4a90e2; outline: none; }
+/* CPK 임계값 입력 — 검색창(min-width 220px)과 달리 숫자 한 칸 폭만 */
+.cpk-toolbar input[type="number"] { min-width: 0; width: 72px; }
 .cpk-toolbar select {
   padding: 5px 6px; border: 1px solid #d0d5dd; border-radius: 4px; font-size: 12px; background: #fff;
 }
@@ -1129,9 +1141,15 @@ td.issue-status-cell.is-close .status-dot { background: #16a34a; box-shadow: 0 0
   align-items: center; justify-content: center;
 }
 .modal-overlay.show { display: flex; }
-.modal-box { background: #fff; border-radius: 10px; padding: 24px; width: 360px; max-width: 90%; }
+.modal-box {
+  background: #fff; border-radius: 10px; padding: 24px; width: 360px; max-width: 90%;
+  /* 내용이 길어도 모달이 화면 밖으로 자라지 않게 — 넘치면 모달 안에서 스크롤 */
+  max-height: calc(var(--vph) * 0.9); overflow-y: auto;
+}
 .modal-box-wide { width: 440px; }
-.modal-box-wide .rawdata-item-list { max-height: 46vh; }
+/* 측정항목 목록은 자체 스크롤(항목 수백 개) — 검색창·확인 버튼이 항상 보이게 한다.
+   Raw Data 탭과 달리 모달에는 스크롤 담당 상위 컨테이너가 없어 여기서 직접 처리. */
+.modal-box-wide .rawdata-item-list { max-height: calc(var(--vph) * 0.46); overflow-y: auto; }
 .modal-title { font-size: 16px; font-weight: 600; margin: 0 0 8px; }
 .modal-desc { font-size: 13px; color: #666; margin: 0 0 14px; }
 .issue-item-link { color: #2a5db0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
@@ -1149,7 +1167,7 @@ td.issue-status-cell.is-close .status-dot { background: #16a34a; box-shadow: 0 0
 .modal-btn.danger:hover { background: #c22020; box-shadow: 0 3px 8px rgba(0,0,0,.2); }
 
 /* ── Report 재생성 확인 diff 표 ─────────────────────────────────────────────── */
-.raw-regen-diff { max-height: 46vh; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; }
+.raw-regen-diff { max-height: calc(var(--vph) * 0.46); overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 6px; }
 .raw-regen-diff table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 0; }
 .raw-regen-diff th, .raw-regen-diff td { padding: 5px 8px; border-bottom: 1px solid #eef0f3; text-align: left; white-space: nowrap; }
 .raw-regen-diff thead th { position: sticky; top: 0; background: #f3f5f8; color: #555; font-weight: 700; z-index: 1; }
@@ -1659,7 +1677,7 @@ html[data-theme="dark"] .cnote-view-comment { color: #9aa3b0; }
    여백(18+90=108)을 빼면 페이지 총높이가 정확히 100vh → 세로 스크롤 여지 0. iframe 안 셀
    포커스가 부모 페이지를 스크롤(클릭 시 위아래 흔들림)하는 걸 원천 차단(스크롤할 게 없음). */
 #panel-note.active { display: flex; flex-direction: column;
-  height: calc(100vh - var(--sticky-head-h, 96px) - 108px); }
+  height: calc(var(--vph) - var(--sticky-head-h, 96px) - 108px); }
 .note-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 6px 4px; font-size: 12px; }
 .note-meta { color: #6b7280; font-size: 11px; }
@@ -1693,7 +1711,7 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
       <button class="btn-topbar-del"  id="btnDel" title="삭제">🗑</button>
     </div>
     <!-- 테마 토글은 topbarActions 밖 — 비-web_report 세션(actions 숨김)에서도 항상 보이게 -->
-    <button class="theme-toggle" id="settingsToggle" title="글꼴 설정">⚙</button>
+    <button class="theme-toggle" id="settingsToggle" title="화면 설정 (글꼴·글자 크기)">⚙</button>
     <button class="theme-toggle" id="themeToggle" title="다크 모드로 전환">🌙</button>
   </div>
 
@@ -1723,6 +1741,15 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
         <button data-font="malgun">맑은고딕</button>
         <button data-font="noto">Noto</button>
         <button data-font="system">시스템</button>
+      </div>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">글자 크기 (화면 전체 배율)</span>
+      <div class="settings-seg" id="uiZoomSeg">
+        <button data-zoom="100">100%</button>
+        <button data-zoom="110">110%</button>
+        <button data-zoom="125">125%</button>
+        <button data-zoom="150">150%</button>
       </div>
     </div>
   </div>

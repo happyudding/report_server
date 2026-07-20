@@ -124,6 +124,8 @@ function renderItemDetail(data) {
       `<button class="btn-sm idet-next" title="다음 (Alt+↓)">›</button>` +
       `<span class="idet-navpos">${pos + 1} / ${navLen}</span>` : "";
   const statusLabel = { fail: "FAIL", cpk_low: "CPK LOW", ok: "OK" }[data.status] || data.status || "";
+  // Limit·단위가 모두 없으면 빈 괄호 "()" 만 남으므로 헤더에서 통째로 뺀다.
+  const limInner = distLimInnerHtml(data.lower_limit, data.upper_limit, data.units);
   _itemDetailFailRows = data.fail_rows || [];
   const failTitle = data.is_fail
     ? `<div class="section-title small idet-fail-title">이 항목으로 Fail 된 die — ${data.fail_total}개` +
@@ -139,7 +141,7 @@ function renderItemDetail(data) {
         <span class="idet-badge idet-${esc(data.status || "ok")}">${esc(statusLabel)}</span>
         ${idetFailBinsHtml(data)}
         <span class="idet-cpk">cpk ${esc(data.cpk == null ? "-" : data.cpk)}</span>
-        <span class="idet-lim">(${distLimInnerHtml(data.lower_limit, data.upper_limit, data.units)})</span>
+        ${limInner ? `<span class="idet-lim">(${limInner})</span>` : ""}
         ${idetHeaderStats(data.stats)}
       </span>
     </div>
@@ -490,6 +492,8 @@ function distRenderCdf(data) {
   const multi = (data.sources || []).length > 1;
   const unit = data.units || "";
   const xtitle = `측정값${unit ? " [" + unit + "]" : ""}`;
+  // 단측 스펙 클램프용 데이터 끝값 — 제외(cdfExcluded) 반영 후 곡선 기준으로 잡는다.
+  let cdfMin = Infinity, cdfMax = -Infinity;
   const traces = (data.sources || []).map(s => {
     const hasId = Array.isArray(s.serial) && s.serial.length === s.values.length;
     // 제외 칩을 뺀 값/식별정보 — 제외는 CDF 곡선에만 반영(분모 n 감소로 곡선 재계산).
@@ -502,6 +506,10 @@ function distRenderCdf(data) {
       }
     }
     const c = distCdfFromValues(vals);
+    if (c.x.length) {   // c.x 는 오름차순 — 양끝만 보면 된다
+      if (c.x[0] < cdfMin) cdfMin = c.x[0];
+      if (c.x[c.x.length - 1] > cdfMax) cdfMax = c.x[c.x.length - 1];
+    }
     const base = distColorFor(s.name);
     const trace = { type: useGl ? "scattergl" : "scatter", mode: "markers", name: s.name, x: c.x, y: c.y };
     if (!useGl) trace.cliponaxis = false;   // scattergl 미지원 속성 — SVG 분기에만
@@ -521,7 +529,7 @@ function distRenderCdf(data) {
   const cdfCm = chipMarkersFor(data.subject);
   if (cdfCm) { traces.push(...cdfCm.traces); cdfShapes = cdfShapes.concat(cdfCm.shapes); }
   const dragmode = cdfEditMode === "none" ? "zoom" : "select";
-  const cdfLr = distLimitRange(lo, hi);
+  const cdfLr = distLimitRange(lo, hi, cdfMin, cdfMax);
   // x축: 사용자 축옵션(경계/단위)이 있으면 우선, 없으면 기존 동작(distLimitOnly 창 → autorange).
   const ov = cdfAxisOverride;
   const xaxisCfg = { title: { text: xtitle }, showgrid: true, gridcolor: "#eee", zeroline: false };
@@ -570,6 +578,7 @@ function distRenderHist(data) {
   const xtitle = `측정값${unit ? " [" + unit + "]" : ""}`;
   // 막대 대신 빈도 폴리곤: 21bin 중심점-빈도 곡선(양끝 0 패딩), CDF 와 동일한 원본 values 재사용.
   const polys = distHistPolygon(data.sources || [], lo, hi, cdfExcluded);
+  const hr = distSourcesRange(data.sources);   // 단측 스펙 클램프용 데이터 끝값
   let ymax = 0;
   polys.forEach(p => p.counts.forEach(c => { if (c > ymax) ymax = c; }));
   const traces = polys.map(p => ({ type: "scatter", mode: "lines", name: p.source,
@@ -577,7 +586,7 @@ function distRenderHist(data) {
     hovertemplate: "측정값 %{x}<br>빈도 %{y:d}<extra></extra>" }));
   Plotly.newPlot(hDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
     xaxis: { title: { text: xtitle },
-      range: distLimitRange(lo, hi) || extendRangeForBeforeLimits(
+      range: distLimitRange(lo, hi, hr.min, hr.max) || extendRangeForBeforeLimits(
         distHistXRange(data.sources || [], lo, hi, data.is_fail), data.subject),
       showgrid: true, gridcolor: "#eee", zeroline: false },
     yaxis: { title: { text: "빈도" }, range: [0, (ymax || 1) * 1.1], tickformat: "d",
@@ -636,7 +645,8 @@ function distRenderNormal(data) {
     const span = range[1] - range[0];
     range = extendRangeForBeforeLimits([range[0] - span * 0.05, range[1] + span * 0.05], data.subject);
   }
-  const normLr = distLimitRange(lo, hi);
+  const nr = distSourcesRange(data.sources);   // 단측 스펙 클램프용 데이터 끝값
+  const normLr = distLimitRange(lo, hi, nr.min, nr.max);
   if (normLr) range = normLr;   // Limit 안 Data만 보기
   Plotly.newPlot(nDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
     xaxis: { title: { text: xtitle }, range, showgrid: false, zeroline: false },

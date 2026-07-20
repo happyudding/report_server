@@ -34,6 +34,20 @@ function cnHasAny(key) {
   return !!(st.shapes.length || st.texts.length || st.comment);
 }
 
+// 텍스트 주석(화살표) 드래그 허용 여부를 차트에 반영한다.
+// 도형(shape)은 개별 속성 editable 로 켜지지만, 주석은 Plotly config 의 edits 로만 켜진다
+// (번들 v3.5: 화살표 있는 주석의 꼬리=annotationTail, 화살표 머리=annotationPosition).
+// config 는 newPlot 시점에 고정이라 런타임 변경 경로가 없어 _context.edits 를 직접 갱신한다 —
+// 주석을 다시 그릴 때(아래 relayout) 이 값을 읽으므로 편집 모드 토글에 바로 따라온다.
+function cnSetEditContext(gd, editable) {
+  try {
+    const ed = gd && gd._context && gd._context.edits;
+    if (!ed) return;
+    ed.annotationTail = editable;      // 텍스트 상자(화살표 꼬리) 이동
+    ed.annotationPosition = editable;  // 화살표 머리(가리키는 지점) 이동
+  } catch (e) { /* 내부 구조가 바뀌면 드래그만 비활성 — 표시/저장은 그대로 */ }
+}
+
 // ── 렌더 훅: 저장/미저장 주석을 차트에 오버레이 (item_detail 렌더 직후 호출) ──────
 function chartNotesApply(kind, subject, gd) {
   if (!gd || !isWebReportSession()) return;
@@ -43,6 +57,7 @@ function chartNotesApply(kind, subject, gd) {
   _cnCharts[key] = { gd, base, baseAnnos };
   const st = cnStateFor(key);
   const editable = _cnEditing && MODE === "edit";
+  cnSetEditContext(gd, editable);
   const relayout = {};
   if (st.shapes.length || editable) {
     relayout.shapes = (gd.layout.shapes || []).slice(0, base)
@@ -63,12 +78,31 @@ function chartNotesApply(kind, subject, gd) {
 
 // 도형 드래그/리사이즈/신규 그리기 → pending 동기화 + dirty 마킹.
 function cnBindChart(key, gd) {
-  if (gd._cnBoundKey === key) return;
-  gd._cnBoundKey = key;
+  // Plotly.purge 는 gd.on/_ev 를 통째로 지운다(CDF 는 축 변경·칩 편집마다 purge→newPlot).
+  // key 만으로 판정하면 purge 뒤에도 "이미 바인딩됨"으로 보여 드래그가 조용히 죽으므로,
+  // newPlot 이 새로 만든 _ev 객체의 동일성까지 함께 본다.
+  if (gd._cnBoundKey !== key || gd._cnBoundEv !== gd._ev) {
+    gd._cnBoundKey = key;
+    gd._cnBoundEv = gd._ev;
+    cnBindPlotEvents(key, gd);
+  }
+  // DOM click 은 purge 와 무관하게 살아남으므로 1회만 — 재등록하면 prompt 가 중복된다.
+  if (!gd._cnClickBound) {
+    gd._cnClickBound = true;
+    cnBindTextClick(gd);
+  }
+}
+
+// 현재 바인딩된 chartKey — purge 재바인딩 후에도 최신 key 로 동작하도록 DOM click 은
+// 이 값을 통해 간접 참조한다(핸들러를 다시 달지 않기 위함).
+function cnBindPlotEvents(key, gd) {
   gd.on("plotly_relayout", ev => {
     if (!_cnEditing || !ev) return;
     const keys = Object.keys(ev);
-    if (!keys.some(k => k === "shapes" || k.startsWith("shapes["))) return;
+    // 도형 드래그/리사이즈뿐 아니라 주석(화살표) 이동도 받는다 — 주석 드래그는
+    // "annotations[0].ax" 같은 키로 온다.
+    if (!keys.some(k => k === "shapes" || k.startsWith("shapes[")
+                     || k === "annotations" || k.startsWith("annotations["))) return;
     cnSyncFromChart(key);
     cnMarkDirty(key);
   });
@@ -85,9 +119,15 @@ function cnBindChart(key, gd) {
     cnMarkDirty(key);
     cnReapply(key);
   });
-  // 텍스트 도구: 차트 여백 클릭 좌표(px)를 데이터 좌표로 변환해 주석 추가.
+}
+
+// 텍스트 도구: 차트 여백 클릭 좌표(px)를 데이터 좌표로 변환해 주석 추가.
+// 1회만 등록되므로 key 를 클로저로 잡지 않고 현재 바인딩된 gd._cnBoundKey 를 그때그때 읽는다.
+function cnBindTextClick(gd) {
   gd.addEventListener("click", ev => {
     if (!_cnEditing || _cnTool !== "text") return;
+    const key = gd._cnBoundKey;
+    if (!key) return;
     const pt = cnPixelToData(gd, ev);
     if (!pt) return;
     const text = prompt("Comment 텍스트를 입력하세요 (최대 300자):", "");
@@ -113,12 +153,14 @@ function cnPixelToData(gd, ev) {
   } catch (e) { return null; }
 }
 
-// 차트 layout 에서 사용자 도형(base 이후)을 pending 으로 회수.
+// 차트 layout 에서 사용자 도형·텍스트 주석(base 이후)을 pending 으로 회수.
+// 텍스트도 함께 회수해야 드래그로 옮긴 화살표 위치(x/y·ax/ay)가 저장에 반영된다.
 function cnSyncFromChart(key) {
   const info = _cnCharts[key];
   if (!info || !info.gd.layout) return;
   const st = cnStateFor(key);
   st.shapes = (info.gd.layout.shapes || []).slice(info.base).map(cnStripShape);
+  st.texts = (info.gd.layout.annotations || []).slice(info.baseAnnos).map(cnStripText);
   _cnPending[key] = st;
 }
 
@@ -129,6 +171,17 @@ function cnStripShape(s) {
     if (s[k] !== undefined) out[k] = s[k];
   });
   if (s.line) out.line = { color: s.line.color, width: s.line.width, dash: s.line.dash };
+  return out;
+}
+
+// 텍스트 주석의 저장 대상 필드만 남긴다 (서버 _TEXT_KEYS 대응).
+// x/y = 화살표가 가리키는 지점, ax/ay = 텍스트 상자까지의 꼬리 offset — 드래그로 바뀌는 값들.
+function cnStripText(t) {
+  const out = { x: t.x, y: t.y, xref: t.xref, yref: t.yref, text: t.text };
+  ["showarrow", "arrowhead", "ax", "ay", "bgcolor", "bordercolor"].forEach(k => {
+    if (t[k] !== undefined) out[k] = t[k];
+  });
+  if (t.font) out.font = { size: t.font.size, color: t.font.color };
   return out;
 }
 
@@ -143,6 +196,7 @@ function cnReapply(key) {
   if (!info) return;
   const st = cnStateFor(key);
   const editable = _cnEditing && MODE === "edit";
+  cnSetEditContext(info.gd, editable);
   try {
     Plotly.relayout(info.gd, {
       shapes: (info.gd.layout.shapes || []).slice(0, info.base)
@@ -281,6 +335,9 @@ function cnBindBar(subject) {
   const cmt = document.getElementById("cnoteComment");
   if (cmt) cmt.oninput = () => {
     const key = `cdf:${subject}`;
+    // 먼저 차트에서 현재 도형·주석 위치를 회수한다. 이걸 빼먹으면 텍스트만 바꿔 저장할 때
+    // 저장돼 있던 옛 좌표가 그대로 올라가 방금 옮긴 위치가 되돌아간다.
+    cnSyncFromChart(key);
     const st = cnStateFor(key);
     st.comment = cmt.value;
     _cnPending[key] = st;

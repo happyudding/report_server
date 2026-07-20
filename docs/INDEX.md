@@ -67,6 +67,7 @@
 | 13 | **eval_analyzer 통합 (AI Comment + 코멘트 export)** — 단방향 의존 규약 | Server | [13_eval_analyzer_integration.md](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) / [web_report/eval_export.py](../web_report/eval_export.py) |
 | 14 | **외부 담당자 영역 ↔ 이 프로젝트 병합 순서** — report_generator/storage_gateway 교체 순서·계약 | Server + Client | [14_merge_order.md](14_merge_order.md) | [client/map_report/](../client/map_report/) |
 | 15 | **소유권 / 수정 권한 경계** (정본) — 자유/사전승인/외부 담당자 영역 | 전체 | [15_ownership.md](15_ownership.md) | — |
+| 16 | **VOC 게시판 UX 개편 설계** — ⏸ **보류**(진입 버튼은 Confluence 링크, 서버 코드는 동면 보존) | Server | [16_voc_board_plan.md](16_voc_board_plan.md) | [server/report/routes_voc.py](../server/report/routes_voc.py) |
 
 > 서버 부팅: [server/wsgi.py](../server/wsgi.py) → [plugin.py](../server/plugin.py)
 > `register_report_server` 가 `report_bp` + `honey_bp` + admin_panel + ops 등록.

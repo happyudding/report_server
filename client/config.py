@@ -17,3 +17,9 @@ def _config_dir():
 # 사용자 설정 디렉토리 + 차트 색 팔레트 파일 경로
 CONFIG_DIR = os.environ.get("HONEY_CONFIG_DIR", _config_dir())
 CHART_COLORS_PATH = str(Path(CONFIG_DIR) / "chart_colors.json")
+
+# VOC(고객의 소리) 접수 페이지 URL — 도움말 메뉴 'VOC' 와 도움말 창의 VOC 버튼이 연다.
+# (배포 시 HONEY_VOC_URL 환경변수로 교체 가능)
+VOC_URL = os.environ.get(
+    "HONEY_VOC_URL",
+    "https://confluence.samsungds.net/pages/editpage.action?pageId=3473285336")

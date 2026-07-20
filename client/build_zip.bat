@@ -4,7 +4,9 @@ REM Usage: double-click or run from a command prompt.
 setlocal
 cd /d "%~dp0"
 
-powershell -NoProfile -ExecutionPolicy Bypass -File ".\release\release_honey.ps1"
+REM [임시/테스트] 버전을 3.0.0 으로 고정한다. 이 -Version 인자를 지우면 원래대로
+REM CURRENT_VERSION 의 patch 자동 증가(3.0.0 -> 3.0.1 -> ...) 로 돌아간다.
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\release\release_honey.ps1" -Version "3.0.0"
 if errorlevel 1 (
   echo.
   echo [ERROR] Honey ZIP release build failed.

@@ -9,7 +9,7 @@ if /i not "%~1"=="--inner" (
   if not defined LOG_TS set "LOG_TS=%RANDOM%"
   set "LOG_FILE=%LOG_DIR%\Honey_build_%LOG_TS%.txt"
 
-  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Transcript -Path '%LOG_FILE%' -Force | Out-Null; & '%~f0' --inner; $code=$LASTEXITCODE; Stop-Transcript | Out-Null; exit $code"
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Transcript -Path '%LOG_FILE%' -Force | Out-Null; & '%~f0' --inner %*; $code=$LASTEXITCODE; Stop-Transcript | Out-Null; exit $code"
   set "BUILD_EXIT=%ERRORLEVEL%"
 
   if "%BUILD_EXIT%"=="0" (
@@ -42,14 +42,19 @@ REM 빌드 PC 에 requirements.txt 의존성이 빠져 있으면 PyInstaller 가
 REM 빌드를 성공시켜 런타임에 ModuleNotFoundError 로 죽는 깨진 exe 가 나온다
 REM (예: requests_toolbelt). 빌드 직전에 의존성을 보장한다.
 echo --- pip install -r requirements.txt
-%PYTHON_CMD% -m pip install -r requirements.txt
+%PYTHON_CMD% -m pip install --progress-bar off --disable-pip-version-check -r requirements.txt
 if errorlevel 1 (
   echo.
   echo [ERROR] pip install -r requirements.txt failed.
   exit /b 1
 )
 
-%PYTHON_CMD% -m PyInstaller --clean --noconfirm build_honey.spec
+REM 기본은 캐시 재사용(--clean 없음) — 반복 빌드가 크게 빨라진다.
+REM 캐시를 버리고 전체 재빌드하려면: build_honey.bat --clean
+set "PYI_CLEAN="
+if /i "%~1"=="--clean" set "PYI_CLEAN=--clean"
+echo --- PyInstaller %PYI_CLEAN% --noconfirm (COLLECT 단계는 수 분간 출력이 멈춘 것처럼 보일 수 있음)
+%PYTHON_CMD% -m PyInstaller %PYI_CLEAN% --noconfirm build_honey.spec
 if errorlevel 1 (
   echo.
   echo [ERROR] PyInstaller build failed.

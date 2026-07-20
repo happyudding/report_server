@@ -17,6 +17,18 @@ _log = logging.getLogger(__name__)
 _STARTED_AT = time.time()
 
 
+def _inflight_excluding_self():
+    """진행 중인 요청 수(이 healthz 요청 자신은 제외). 카운터가 없으면 None."""
+    try:
+        from admin_panel import metrics
+        n = metrics.current_inflight()
+    except Exception:
+        return None
+    if n is None:
+        return None
+    return max(0, n - 1)
+
+
 def init_ops(app):
     from database import report_db
 
@@ -31,6 +43,11 @@ def init_ops(app):
             db_ok = False
         body = {"ok": db_ok, "db": "ok" if db_ok else "fail",
                 "uptime_s": int(time.time() - _STARTED_AT)}
+        # 종료 drain 판정용 — terminate.bat 이 이 값이 0 이 되는 순간을 노려 서버를
+        # 내린다. metrics 가 꺼져 있으면 키 자체를 넣지 않는다("모름"과 "0건"의 구분).
+        inflight = _inflight_excluding_self()
+        if inflight is not None:
+            body["inflight"] = inflight
         return jsonify(body), (200 if db_ok else 503)
 
     @app.errorhandler(Exception)

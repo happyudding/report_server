@@ -641,6 +641,8 @@ async function openEtcItemModal() {
     return;
   }
   renderEtcItemList("");
+  // 항목이 수백 개라 목록을 훑는 것보다 검색이 빠르다 — 열자마자 바로 타이핑되게 포커스.
+  document.getElementById("etcItemSearch").focus();
 }
 
 function renderEtcItemList(filterText) {

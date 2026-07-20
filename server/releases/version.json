@@ -1,7 +1,7 @@
 {
-  "version": "3.0.0",
-  "file": "Honey-0.1.0.zip",
-  "sha256": "",
-  "released_at": "2026-05-28T00:00:00",
-  "notes": "PyInstaller onedir ZIP 배포 방식. release_honey.ps1 실행 시 Honey-<ver>.zip 생성, server/releases/ 복사, version/file/sha256 갱신."
+    "version":  "3.0.0",
+    "file":  "Honey-3.0.0.zip",
+    "sha256":  "adc8b3ceb84a25d03d4bb3d82e15f6a772ec315e7b9030c344502aa7962e96e0",
+    "released_at":  "2026-07-20T12:32:09",
+    "notes":  "build pipeline speed test 3"
 }
