@@ -676,31 +676,34 @@ function renderSheetTable(rows, opts) {
     `<div class="sheet-wrap${kindCls}"><table class="sheet-table${kindCls}">` +
     `${colgroup}${head}<tbody>${bodyHtml}</tbody></table></div>`;
 
-  // chunkInto: 표를 통짜로 만들지 않고 이 host 안에 프레임당 CHUNK_ROWS 행씩 붙인다.
-  // Issue Table 은 행 수백~수천 × 20열이라 한 번에 만들면 수백 ms 를 통으로 블록한다.
-  if (opts.chunkInto) {
-    sheetChunkRender(opts.chunkInto, shell(""), bodyRows.length, emitRows, opts.onChunksDone);
-    return "";
+  // chunk: 본문을 통짜로 만들지 않고, 빈 tbody 를 가진 표 골격 html 과 그것을 채우는
+  // fill(tbody, onDone) 을 돌려준다. Issue Table 은 행 수백~수천 × 20열이라 한 번에 만들면
+  // 수백 ms 를 통으로 블록한다. **DOM 구조는 통짜 렌더와 완전히 같다** — 호출부가 이 html 을
+  // 기존과 같은 자리에 그대로 넣기 때문이다(감싸는 요소를 추가하면 .sheet-wrap.kind-issue 의
+  // position:sticky 기준 부모가 바뀌어 고정 동작이 달라진다).
+  if (opts.chunk) {
+    return {
+      html: shell(""),
+      fill: (tbody, onDone) =>
+        sheetChunkFill(tbody, bodyRows.length, emitRows, onDone),
+    };
   }
   return shell(emitRows(0, bodyRows.length, { curSec: null }));
 }
 
-// ── 표 본문 청크 렌더 ─────────────────────────────────────────────────────────
-// 총 작업량은 같고 프레임 단위로 쪼개기만 한다 — 행 내용·순서·스크롤은 통짜 렌더와 동일.
-// 같은 host 에 새 렌더가 시작되면 토큰이 바뀌어 이전 체인이 스스로 멈춘다.
+// ── 표 본문 청크 채우기 ───────────────────────────────────────────────────────
+// 총 작업량은 같고 프레임 단위로 쪼개기만 한다 — 행 내용·순서·DOM 은 통짜 렌더와 동일.
+// 같은 tbody 에 새 렌더가 시작되면 토큰이 바뀌어 이전 체인이 스스로 멈춘다.
 const SHEET_CHUNK_ROWS = 50;
 const _sheetChunkTokens = new WeakMap();
-function sheetChunkRender(host, shellHtml, total, emitRows, onDone) {
-  if (!host) return;
-  const token = (_sheetChunkTokens.get(host) || 0) + 1;
-  _sheetChunkTokens.set(host, token);
-  host.innerHTML = shellHtml;
-  const tbody = host.querySelector("tbody");
+function sheetChunkFill(tbody, total, emitRows, onDone) {
   if (!tbody) return;
+  const token = (_sheetChunkTokens.get(tbody) || 0) + 1;
+  _sheetChunkTokens.set(tbody, token);
   const state = { curSec: null };
   let i = 0;
   const step = () => {
-    if (_sheetChunkTokens.get(host) !== token) return;   // 새 렌더가 시작됨 — 중단
+    if (_sheetChunkTokens.get(tbody) !== token) return;   // 새 렌더가 시작됨 — 중단
     const end = Math.min(total, i + SHEET_CHUNK_ROWS);
     if (end > i) {
       tbody.insertAdjacentHTML("beforeend", emitRows(i, end, state));
@@ -709,7 +712,7 @@ function sheetChunkRender(host, shellHtml, total, emitRows, onDone) {
     if (i < total) requestAnimationFrame(step);
     else if (onDone) onDone();
   };
-  step();   // 첫 청크는 즉시 — 빈 표가 한 프레임이라도 보이지 않게
+  step();   // 첫 청크는 동기 — 빈 표가 한 프레임이라도 보이지 않게
 }
 
 // ── 컬럼 폭 드래그 리사이즈 (Yield 등 thead 표 공용) ─────────────────────────

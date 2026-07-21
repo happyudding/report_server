@@ -457,25 +457,23 @@ function renderIssues(issue_table_text) {
   const panel = document.getElementById("panel-issues");
 
   if (Array.isArray(issue_table_text) && issue_table_text.length) {
-    // 표 본문은 청크 렌더(프레임당 50행) — 행 수백~수천 × 20열을 통짜 innerHTML 로 만들면
-    // 첫 진입(및 백그라운드 프리렌더)에서 수백 ms 를 통으로 블록한다. 후처리(고정열 오프셋
-    // 실측·미니차트 관측 등록 등)는 행이 다 붙은 뒤 해야 실측이 맞으므로 onChunksDone 에서.
+    // 표 본문은 청크로 채운다(프레임당 50행) — 행 수백~수천 × 20열을 통짜 innerHTML 로
+    // 만들면 첫 진입(및 백그라운드 프리렌더)에서 수백 ms 를 통으로 블록한다. 삽입되는
+    // 마크업·DOM 구조는 통짜 렌더와 동일하다(감싸는 요소를 추가하지 않는다). 후처리(고정열
+    // 오프셋 실측·미니차트 관측 등록 등)는 행이 다 붙은 뒤 해야 실측이 맞다.
+    const table = renderSheetTable(issue_table_text, { kind: "issue", chunk: true });
     panel.innerHTML = issueToolbarHtml() +
       `<div id="issueHscroll" class="issue-hscroll"><div id="issueHscrollSpacer" class="issue-hscroll-spacer"></div></div>` +
-      `<div id="issueTableHost"></div>`;
-    renderSheetTable(issue_table_text, {
-      kind: "issue",
-      chunkInto: document.getElementById("issueTableHost"),
-      onChunksDone: () => {
-        syncIssueHeadRowHeight(panel);
-        syncIssueStickyOffsets(panel);
-        requestAnimationFrame(() => syncIssueStickyOffsets(panel));   // 레이아웃 확정 후 재실측
-        bindIssueHscroll(panel);
-        renderIssueMiniDist(panel);
-        renderIssueMiniMap(panel);
-        bindIssueColResize(panel);
-        applyIssueDelMode(panel);   // 재렌더 후에도 삭제 모드 유지
-      },
+      table.html;
+    table.fill(panel.querySelector(".sheet-table.kind-issue tbody"), () => {
+      syncIssueHeadRowHeight(panel);
+      syncIssueStickyOffsets(panel);
+      requestAnimationFrame(() => syncIssueStickyOffsets(panel));   // 레이아웃 확정 후 재실측
+      bindIssueHscroll(panel);
+      renderIssueMiniDist(panel);
+      renderIssueMiniMap(panel);
+      bindIssueColResize(panel);
+      applyIssueDelMode(panel);   // 재렌더 후에도 삭제 모드 유지
     });
     return;
   }
