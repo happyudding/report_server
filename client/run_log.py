@@ -70,6 +70,15 @@ def setup_run_logging():
         logfile = open(path, "w", encoding="utf-8", buffering=1)
         sys.stdout = _Tee(sys.stdout, logfile)
         sys.stderr = _Tee(sys.stderr, logfile)
+        # 네이티브 크래시(액세스 위반 등)는 파이썬 예외가 아니라 excepthook 도 stderr 도
+        # 안 탄다 — 앱이 흔적 없이 사라진다. faulthandler 는 fd 에 직접 써서 크래시
+        # 순간의 파이썬 스택을 남긴다. _Tee 에는 fileno() 가 없으므로 원본 파일 객체를
+        # 넘겨야 한다.
+        try:
+            import faulthandler
+            faulthandler.enable(file=logfile)
+        except Exception:
+            pass
         return path
     except Exception:
         return None

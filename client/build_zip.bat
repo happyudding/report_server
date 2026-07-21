@@ -18,9 +18,10 @@ if not exist "%PS1%" (
   exit /b 1
 )
 
-REM [TEMPORARY] Version is pinned to 3.0.1. Remove the -Version argument to restore
-REM the automatic patch bump from CURRENT_VERSION.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -Version "3.0.1"
+REM No -Version argument: release_honey.ps1 bumps the patch number from
+REM CURRENT_VERSION automatically. Pinning it here means every release ships the
+REM same version, so clients already on that version never see an update again.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%"
 set "REL_EXIT=%ERRORLEVEL%"
 
 if not "%REL_EXIT%"=="0" (

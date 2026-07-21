@@ -27,7 +27,8 @@ from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, Q
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QFileDialog, QHeaderView,
-    QMainWindow, QMessageBox, QPushButton, QTableWidgetItem, QWidget,
+    QMainWindow, QMessageBox, QProgressDialog, QPushButton, QTableWidgetItem,
+    QWidget,
 )
 
 from transport.config import CURRENT_VERSION, SERVER_BASE_URL
@@ -2377,6 +2378,65 @@ class HoneyMainWindow(QMainWindow):
         except TypeError:
             pass   # 이미 끊겨 있음
 
+    def _update_modal(self, text, cancellable=True):
+        """업데이트 전용 모달 진행 대화상자. 실패해도 업데이트 자체는 계속된다.
+
+        dock 진행바(progress_status)는 화면 하단이라 사용자가 못 보고 "멈췄다" 고
+        인식한다. 업데이트는 수백 MB 라 대기가 길어 중앙 모달이 필요하다.
+        """
+        try:
+            dlg = QProgressDialog(text, "취소", 0, 100, self)
+            dlg.setWindowTitle("Honey 업데이트")
+            dlg.setWindowModality(Qt.WindowModality.WindowModal)
+            dlg.setMinimumWidth(420)
+            dlg.setMinimumDuration(0)    # 바로 표시 (기본 4초 지연)
+            dlg.setAutoClose(False)      # 100% 도달해도 우리가 닫을 때까지 유지
+            dlg.setAutoReset(False)
+            if not cancellable:
+                dlg.setCancelButton(None)
+                dlg.setRange(0, 0)       # 진행률을 모르는 구간 = busy 표시
+            dlg.setValue(0)
+            dlg.show()
+            QApplication.processEvents()
+            return dlg
+        except Exception as exc:   # noqa: BLE001 - 진행 표시 실패가 업데이트를 막지 않게
+            updater.ulog(f"MODAL 생성 실패: {exc}")
+            return None
+
+    def _exit_for_update(self):
+        """업데이트 배치가 부모 PID 종료를 기다리므로 프로세스 종료를 보장한다.
+
+        QApplication.quit() 만으로는 이벤트 루프만 끝나고, QWebEngineView 를 물고 있는
+        상태로 인터프리터 종료에 들어가 QtWebEngine 정리가 지연·정지한다. 그러면 창은
+        사라지는데 프로세스는 남아, 배치가 종료를 120초 헛기다리다 조용히 포기한다
+        (2026-07-21 현장 실패 원인 — honey_update.log 에 'update start' 한 줄만 남았다).
+
+        브라우저를 먼저 정리해 QtWebEngineProcess 가 _internal 안 DLL 을 놓게 한 뒤
+        (안 놓으면 배치의 _internal swap 이 실패한다) os._exit 로 확실히 끝낸다.
+        업데이트 직전이라 저장할 상태가 없으므로 강제 종료가 안전하다.
+        """
+        updater.ulog("EXIT 브라우저 정리 시작")
+        try:
+            panel = getattr(self, "browser_panel", None)
+            if panel is not None:
+                panel.view.stop()
+                panel.view.close()
+                panel.close()
+        except Exception as exc:   # noqa: BLE001
+            updater.ulog(f"EXIT 브라우저 정리 실패(무시): {exc}")
+        # deleteLater/네이티브 창 파괴가 처리되도록 짧게 이벤트를 돌린다.
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.05)
+        updater.ulog("EXIT os._exit(0)")
+        for stream in (sys.stdout, sys.stderr):
+            try:
+                stream.flush()
+            except Exception:
+                pass
+        os._exit(0)
+
     def _on_version_manifest(self, result):
         if isinstance(result, requests.exceptions.RequestException):
             # 연결 불가/타임아웃 = 서버 오프라인으로 간주, 상태바에 명확히 표시
@@ -2400,6 +2460,8 @@ class HoneyMainWindow(QMainWindow):
         can_write = updater.can_write_app_dir()
         has_hash = bool((manifest.get("sha256") or "").strip())
         can_auto = can_write and has_hash
+        updater.ulog(f"OFFER remote={remote} current={CURRENT_VERSION} "
+                     f"can_write={can_write} has_hash={has_hash} file={manifest.get('file')}")
         box = QMessageBox(self)
         box.setWindowTitle("업데이트 사용 가능")
         box.setIcon(QMessageBox.Icon.Question)
@@ -2427,7 +2489,9 @@ class HoneyMainWindow(QMainWindow):
         elif clicked is btn_manual:
             mode = update_policy.MODE_MANUAL
         else:  # "나중에" 또는 창 닫기
+            updater.ulog("CHOICE later/closed")
             return
+        updater.ulog(f"CHOICE mode={mode}")
 
         url = manifest.get("url") or "/honey/download"
         expected = manifest.get("sha256") or None
@@ -2437,11 +2501,15 @@ class HoneyMainWindow(QMainWindow):
                 update_policy.downloads_dir(), package_name)
         else:
             dest = Path(tempfile.gettempdir()) / package_name
+        updater.ulog(f"DOWNLOAD start dest={dest} url={url}")
 
         # 다운로드 진행 상태는 메인 UI Status bar 에 표시한다.
         progress = _ElapsedProgress(
             self.progress_status, "업데이트 다운로드 중...",
             self.status.showMessage, busy=True, minimum=0, maximum=100)
+        # dock 진행바는 눈에 안 띄어 사용자가 "화면이 멈췄다" 고 인식한다 — 업데이트는
+        # 수백 MB 라 대기가 길므로 화면 중앙 모달로도 같은 진행을 보여준다.
+        modal = self._update_modal(f"신규 버전 {remote} 다운로드 준비 중...")
         download_events = queue.Queue()
         # 취소 배선 — 워커 스레드의 _cb 가 False 를 반환하면 version_check.download_to 가
         # 부분 파일을 지우고 DownloadCancelled 를 올린다(아래 except 가 받는다).
@@ -2454,14 +2522,27 @@ class HoneyMainWindow(QMainWindow):
             return not self._dl_cancelled
 
         def _drain_download_events():
+            # 모달의 취소 버튼도 dock 취소 버튼과 같은 플래그를 세운다.
+            if modal is not None and modal.wasCanceled():
+                self._dl_cancelled = True
+            last = None
             while True:
                 try:
-                    done, total = download_events.get_nowait()
+                    last = download_events.get_nowait()
                 except queue.Empty:
                     break
-                label = f"업데이트 다운로드 중... ({done // (1024 * 1024)}MB"
-                label += f" / {total // (1024 * 1024)}MB)" if total else ")"
-                progress.set(label, value=int(done * 100 / total) if total else 0)
+            if last is None:
+                # 청크가 없어도 경과시간·이벤트 펌프는 계속 돌아야 화면이 안 굳는다.
+                QApplication.processEvents()
+                return
+            done, total = last
+            label = f"업데이트 다운로드 중... ({done // (1024 * 1024)}MB"
+            label += f" / {total // (1024 * 1024)}MB)" if total else ")"
+            pct = int(done * 100 / total) if total else 0
+            progress.set(label, value=pct)
+            if modal is not None:
+                modal.setLabelText(f"{label}  {pct}%")
+                modal.setValue(pct)
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
@@ -2474,10 +2555,12 @@ class HoneyMainWindow(QMainWindow):
                 )
                 _wait_for_future(fut, progress, poll_cb=_drain_download_events)
         except version_check.DownloadCancelled:
+            updater.ulog("DOWNLOAD cancelled by user")
             progress.fail("실패: 업데이트 다운로드 취소됨")
             self.status.showMessage("업데이트 취소됨")
             return
         except Exception as exc:
+            updater.ulog(f"DOWNLOAD FAILED {type(exc).__name__}: {exc}")
             progress.fail(f"실패: 업데이트 다운로드 실패 - {exc}")
             _show_exc(self, "다운로드 실패", exc,
                       prefix="업데이트를 내려받지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.")
@@ -2485,7 +2568,14 @@ class HoneyMainWindow(QMainWindow):
             return
         finally:
             self._hide_download_cancel()
+            # 성공·실패·취소 어느 경로로 나가든 모달을 닫는다 (설치 단계는 새로 띄운다).
+            if modal is not None:
+                modal.close()
         progress.success("완료: 업데이트 다운로드 완료", value=100)
+        try:
+            updater.ulog(f"DOWNLOAD ok bytes={dest.stat().st_size}")
+        except OSError:
+            updater.ulog("DOWNLOAD ok (크기 확인 실패)")
 
         if mode == update_policy.MODE_MANUAL:
             update_policy.open_folder_select(dest)
@@ -2512,30 +2602,55 @@ class HoneyMainWindow(QMainWindow):
             self.status.showMessage("다운로드 완료 (개발 모드)")
             return
 
+        updater.ulog("INSTALL 안내창 표시")
         QMessageBox.information(
             self, "업데이트 설치",
             f"새 버전 {remote} 을(를) 설치합니다.\n\n"
             "업데이트하는 동안 앱이 잠시 종료되며, 완료되면 자동으로 다시 실행됩니다.\n"
             "잠시만 기다려 주세요.",
         )
+        updater.ulog("INSTALL 안내창 확인됨")
         # ZIP 압축 해제(수백 MB·수천 파일)는 10초+ 걸릴 수 있어 메인 스레드에서
         # 돌리면 "설치 중" 구간에 창이 굳는다 — 다운로드와 같은 패턴으로 스레드 이관.
         install_progress = _ElapsedProgress(
             self.progress_status, "업데이트 설치 중... (파일 압축 해제)",
             self.status.showMessage, busy=True, minimum=0, maximum=0)
+        # 압축 해제 구간은 진행률을 알 수 없어 busy 표시. 취소 버튼은 두지 않는다
+        # (이미 파일을 건드리기 시작한 뒤라 중간 취소가 더 위험하다).
+        modal = self._update_modal("업데이트 설치 준비 중 (압축 해제)...", cancellable=False)
+        install_start = time.monotonic()
+
+        def _pump_install():
+            # poll_cb 가 없으면 _wait_for_future 는 1초에 한 번만 processEvents 를 부른다
+            # (ElapsedProgress.update 가 초 단위로만 갱신) — 그래서 화면이 굳어 보였다.
+            if modal is not None:
+                secs = int(time.monotonic() - install_start)
+                modal.setLabelText(
+                    "업데이트 설치 준비 중 (압축 해제)...\n"
+                    f"수 분 걸릴 수 있습니다. 경과 {secs // 60:02d}:{secs % 60:02d}")
+            QApplication.processEvents()
+
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(updater.apply_update_zip, dest)
-                _wait_for_future(fut, install_progress)
+                launch = _wait_for_future(fut, install_progress, poll_cb=_pump_install)
         except Exception as exc:
+            updater.ulog(f"APPLY FAILED {type(exc).__name__}: {exc}")
+            if modal is not None:
+                modal.close()
             install_progress.fail(f"실패: 업데이트 실행 실패 - {exc}")
             _show_exc(self, "업데이트 실행 실패", exc,
-                      prefix="업데이트를 설치하지 못했습니다. 기존 버전은 그대로 사용할 수 있습니다.")
+                      prefix="업데이트를 설치하지 못했습니다. 기존 버전은 그대로 사용할 수 있습니다.\n"
+                             f"진단 로그: {updater.log_path()}")
             self.status.showMessage("업데이트 실패")
             return
+        updater.ulog(f"APPLY ok {launch}")
         install_progress.success("업데이트 적용 중... 앱을 종료합니다.", value=100)
         self.status.showMessage("업데이트 적용 중... 앱을 종료합니다.")
-        QApplication.quit()
+        if modal is not None:
+            modal.setLabelText("업데이트 적용 중 — 앱이 종료되고 자동으로 다시 실행됩니다.")
+            QApplication.processEvents()
+        self._exit_for_update()
 
 
 def _install_excepthook():
@@ -2652,6 +2767,9 @@ def _apply_cute_font(app):
 def main():
     import run_log
     run_log.setup_run_logging()
+    # 지난 실행이 업데이트 도중 죽었으면 설치 폴더에 _internal.old 등 잔재가 남는다 —
+    # 다음 실행의 첫 줄에서 그 사실을 기록해 두면 원인 추적이 로그 한 파일로 끝난다.
+    updater.log_startup_state(CURRENT_VERSION)
     # QtWebEngine(내장 브라우저)을 앱 생성 후 lazy import 하려면 필수 (없어도 무해)
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
