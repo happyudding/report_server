@@ -1,6 +1,7 @@
 // ── Yield: STEP(P1/P2/P3) 별 Bin 접기/펼치기 표 렌더 (web_report) ────────────────
 // STEP 마다 표 1개. 각 표는 Bin 당 most-fail TNO 대표 행(접힘) + ▼ 토글로 그 Bin 의 나머지
-// fail TNO 행을 펼친다. bin portion 은 그 STEP 진입 die 수 기준(cascade 수율, 서버 계산).
+// fail TNO 행을 펼친다. bin portion 분모는 그 STEP 진입 die 가 아니라 **전체 rawdata die**
+// (서버 build_yield_rows 값 그대로 — STEP 별 재계산 없음).
 // Pass 행은 표에 넣지 않고 상단 요약 박스가 담당한다(전체 + STEP 별 통과율).
 let yieldPanelBound = false;
 
@@ -13,8 +14,9 @@ function yieldColumnsFrom(allRows) {
 }
 
 // STEP 표 최상단에 붙일 Bin1(Pass) 행 — Issue Table Yield 섹션 맨 위 Pass 행과 같은 역할.
-// 값은 yield_summary.by_step(서버 yield_step_summary) 의 STEP 별 수율 = (전체 - 그 STEP fail)
-// / 전체 die. 소스별 yield_pct/survivor 를 {src}_yield/{src}_count 컬럼에 옮긴다.
+// 값은 yield_summary.by_step(서버 yield_step_summary) 의 STEP 별 **누적** 수율 =
+// (전체 die − 그 STEP 까지의 누적 fail) / 전체 die. 분모는 전 STEP 고정이라 P1→P3 로
+// 갈수록 값이 단조 감소한다. 소스별 yield_pct/survivor 를 {src}_yield/{src}_count 로 옮긴다.
 function yieldStepPassRow(step) {
   const ov = DATA.web_report && DATA.web_report.yield_summary;
   const byStep = (ov && Array.isArray(ov.by_step)) ? ov.by_step : [];

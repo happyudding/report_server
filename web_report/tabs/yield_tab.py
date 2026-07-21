@@ -170,10 +170,14 @@ def build_yield_bin_groups(yield_rows):
 
 
 # ── STEP 별 분해 (Yield 탭 전용, 전체 rawdata 기준 수율) ────────────────────────
-# Yield 탭은 STEP(P1/P2/P3) 별로 표를 나누지만, 각 표의 bin portion 은 build_yield_rows 가
-# 이미 전체(total) die 수를 분모로 계산한 값을 그대로 쓴다(재계산하지 않음). 따라서 같은
-# fail 항목이 Yield 탭·Issue Table·Summary 에서 모두 동일한 % 로 표시된다(pass% + 모든
-# STEP fail% 합 = 100%). 상단 STEP 요약 박스도 전체 기준으로 집계한다.
+# Yield 탭은 STEP(P1/P2/P3) 별로 표를 나누지만, 각 표의 **bin fail 행** portion 은
+# build_yield_rows 가 이미 전체(total) die 수를 분모로 계산한 값을 그대로 쓴다(재계산하지
+# 않음). 따라서 같은 fail 항목이 Yield 탭·Issue Table·Summary 에서 모두 동일한 % 로
+# 표시된다(pass% + 모든 STEP fail% 합 = 100%).
+# 반면 **STEP 요약 수율**(yield_step_summary → 요약 박스 STEP 표 + 각 STEP 표 최상단 Pass
+# 행)은 2026-07-21 부터 **누적** 기준이다: 분모는 똑같이 전체 rawdata 로 고정하고 분자에서만
+# 그 STEP 까지의 fail 을 누적 차감한다 — P1 = (전체 − P1)/전체, P2 = (전체 − P1 − P2)/전체.
+# 개별 bin fail 행의 % 는 이 누적과 무관하게 (그 bin 자신의 fail / 전체) 그대로다.
 
 def _step_order_key(step):
     """STEP 정렬 키: P<n> 은 숫자순(P1<P2<P3), 그 외 이름은 알파벳, 빈 값은 맨 뒤."""
@@ -225,34 +229,47 @@ def build_yield_step_groups(yield_rows):
 
 
 def yield_step_summary(tables, yield_rows):
-    """상단 요약 박스용 STEP 요약 행: STEP 별 fail die 수 + 전체 rawdata 기준 수율%.
+    """상단 요약 박스용 STEP 요약 행: STEP 별 fail die 수 + 전체 rawdata 기준 **누적** 수율%.
 
-    분모는 항상 전체 die 수(total). step_yield_pct = (total - 그 STEP fail) / total * 100
-    = 그 STEP fail 만 제외했을 때의 수율(전체 기준). 소스 여러 개면 소스 합산 기준으로 집계.
+    분모는 항상 전체 die 수(total)로 고정하고, 분자에서만 그 STEP 까지의 fail 을 누적
+    차감한다: step_yield_pct = (total - Σ(P1..이 STEP 의 fail)) / total * 100.
+    예) 1000 die, P1 fail 100 / P2 fail 50 / P3 fail 10 → 90% / 85% / 84%.
+    STEP 순서는 _step_order_key(P1<P2<P3<빈 STEP)이며 빈 STEP("")도 맨 뒤에서 누적에 든다.
+    소스 여러 개면 pooled(소스 합산)와 소스별 누적을 각각 따로 굴린다.
 
-    ``sources``: STEP×Source 표시용 소스별 분해(각 소스 전체 die 기준 step yield).
-    ``avg_yield_pct``: 소스별 yield 의 산술평균(병합 Step 셀에 표시). 소스 순서는 tables 순서
-    유지(모든 STEP 에서 동일 소스 컬럼 위치). 기존 pooled 키(entered/fail/survivor/
-    step_yield_pct)는 하위호환으로 그대로 둔다.
+    ``sources``: STEP×Source 표시용 소스별 분해(각 소스 전체 die 분모 + 그 소스의 누적 fail).
+    ``avg_yield_pct``: 소스별 누적 yield 의 산술평균(병합 Step 셀에 표시). 소스 순서는
+    tables 순서 유지(모든 STEP 에서 동일 소스 컬럼 위치).
+
+    키 계약: ``entered``(=전체 die, 전 STEP 동일)와 ``fail``(=그 STEP **자체** fail)은 의미가
+    그대로고, ``survivor``/``yield_pct``/``step_yield_pct``/``avg_yield_pct`` 가 누적 기준으로
+    바뀐다. ``cum_fail``(누적 fail)을 새로 병기해 survivor + cum_fail == entered 가 pooled·
+    소스별 양쪽에서 항상 성립한다(= 화면의 "Pass / In" 과 "Fail" 이 모순되지 않게 하는 키).
     """
     fail_rows = [r for r in (yield_rows or [])
                  if str(r.get("bin")).strip() != PASS_BIN and r.get("Item")]
     ordered, step_fail = _step_fail_counts(tables, fail_rows)
     src_totals = {t.source: len(t.data) for t in tables}
     total = sum(src_totals.values())
+    cum_by_src = {t.source: 0 for t in tables}   # 소스별 누적 fail (STEP 순회하며 증가)
     out = []
     for step in ordered:
-        fail = sum(step_fail[t.source].get(step, 0) for t in tables)
-        survivor = max(total - fail, 0)
+        for t in tables:
+            cum_by_src[t.source] += int(step_fail[t.source].get(step, 0))
+        fail = sum(int(step_fail[t.source].get(step, 0)) for t in tables)
+        cum_fail = sum(cum_by_src[t.source] for t in tables)
+        survivor = max(total - cum_fail, 0)
         src_rows = []
         for t in tables:
             t_total = src_totals[t.source]
             t_fail = int(step_fail[t.source].get(step, 0))
-            t_surv = max(t_total - t_fail, 0)
+            t_cum = cum_by_src[t.source]
+            t_surv = max(t_total - t_cum, 0)
             src_rows.append({
                 "source": t.source,
                 "entered": t_total,
                 "fail": t_fail,
+                "cum_fail": t_cum,
                 "survivor": t_surv,
                 "yield_pct": round(t_surv / t_total * 100.0, 2) if t_total else 0.0,
             })
@@ -261,6 +278,7 @@ def yield_step_summary(tables, yield_rows):
             "step": step,
             "entered": total,
             "fail": fail,
+            "cum_fail": cum_fail,
             "survivor": survivor,
             "step_yield_pct": round(survivor / total * 100.0, 2) if total else 0.0,
             "avg_yield_pct": avg_pct,

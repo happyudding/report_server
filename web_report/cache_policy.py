@@ -94,7 +94,11 @@ def map_key(session) -> tuple:
 # v11: Map Analysis 에서 STEP 이름에 "eval"(대소문자 무시)이 들어가는 STEP 맵을 제외 —
 #      맵 rows 개수·bin_counts·fail step 귀속 값이 바뀐다(구조는 동일). 안 올리면 옛
 #      disk_cache 가 eval STEP 맵이 포함된 payload 를 계속 반환한다.
-REPORT_SCHEMA_VERSION = 11
+# v12: Yield STEP 요약 수율을 누적 차감 기준으로 전환 — yield_summary.by_step 의
+#      survivor/step_yield_pct/sources[].{survivor,yield_pct}/avg_yield_pct **값**이 바뀌고
+#      cum_fail 키가 추가된다(분모 entered·개별 bin fail% 는 불변). 안 올리면 옛 disk_cache
+#      가 STEP 자체 fail 만 뺀 stale 수율(P1 90/P2 95/P3 99)을 계속 반환한다.
+REPORT_SCHEMA_VERSION = 12
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

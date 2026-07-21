@@ -44,15 +44,21 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
 `REPORT_SCHEMA_VERSION` 을 함께 올렸다 — **서버 재시작 필요**.
 
 ## 주요 탭 계약
-- **Yield STEP 분리 (2026-07-14, 분모 전체 기준으로 통일)**: Yield 탭은 STEP(P1/P2/P3)별로
+- **Yield STEP 분리 (2026-07-14 분모 전체 기준으로 통일 / 2026-07-21 STEP 요약만 누적 차감)**: Yield 탭은 STEP(P1/P2/P3)별로
   표를 나눈다. STEP 은 각 fail die 의 `FAILTNO → (TNO 매칭) item → item 의 STEP 메타행
   (raw 4번째 행)` 으로 정한다 (`item_meta`). 각 STEP 표의 bin portion 분모는 **항상 전체
   rawdata die 수**(`build_yield_rows` 가 이미 계산한 total 기준 값을 그대로 사용, 재계산 없음)
   — `build_yield_step_groups`(payload `yield_step_groups`) 는 원본 yield_rows 를 변형하지 않고
   STEP 별 그룹핑만 한다. 따라서 같은 fail 항목이 Yield 탭·Issue Table·Summary 에서 모두 동일
-  % (pass% + 모든 STEP fail% 합 = 100%). 상단 요약 박스의 STEP 요약
-  (`yield_summary.by_step`: entered/fail/survivor/step_yield%)도 전체 기준 — `yield_step_summary`
-  에서 `entered = 전체 die`(전 STEP 동일), `step_yield% = (전체 − 그 STEP fail)/전체`.
+  % (pass% + 모든 STEP fail% 합 = 100%). 반면 상단 요약 박스의 STEP 요약
+  (`yield_summary.by_step`)과 각 STEP 표 최상단 Pass 행은 **분모 고정 + 분자 누적 차감** —
+  `yield_step_summary` 에서 `entered = 전체 die`(전 STEP 동일, 불변),
+  `step_yield% = (전체 − Σ 그 STEP 까지의 fail)/전체`. 예) 1000 die, P1 100 / P2 50 / P3 10
+  fail → 90% / 85% / 84%. `fail` 은 그 STEP **자체** fail 로 두고 누적은 `cum_fail` 로 병기해
+  `survivor + cum_fail = entered` 가 pooled·소스별 양쪽에서 성립한다(요약 박스 "Pass / In" +
+  "Fail (step / cum)" 열). 빈 STEP(`""`)은 정렬상 맨 뒤라 누적의 마지막 항에 포함된다.
+  **개별 bin fail 행의 % 는 이 누적과 무관하게 (그 bin fail / 전체) 유지**하며, Issue Table 도
+  현행 유지다(맨 위 전체 Pass 행이 이미 최종 누적값과 같아 STEP Pass 행을 추가하지 않는다).
   **Issue Table·Summary·fail_bin_ranking 도 동일한 전체(total) 기준 값(`build_yield_rows`)**
   — Issue Table 은 merge 유지(STEP 열 포함, fail 비중 내림차순이라 P1/P3 가 교차 등장).
   프런트 원형 파이는 제거. `yield_bin_groups`(전체 기준 merge 그룹)는 Excel 내보내기용으로 유지.

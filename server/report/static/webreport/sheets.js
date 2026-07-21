@@ -762,18 +762,24 @@ function yieldOverviewHtml() {
     </tr>`;
   }).join("") + `</tbody></table></div>` : "";
   // STEP×Source 표: STEP 셀은 소스 수만큼 rowspan 병합(병합 셀에 STEP 평균 yield 표시).
-  // 분모는 각 소스 전체 die(In). Step Yield = (In - 그 STEP fail) / In. avg = 소스 산술평균.
+  // 분모는 각 소스 전체 die(In) 로 **고정**하고 분자만 누적 차감한다 —
+  // Cum Yield = (In − 그 STEP 까지의 누적 fail) / In. avg = 소스 산술평균.
+  // Fail 열은 "그 STEP 자체 fail / 누적 fail" 2값 — survivor + cum_fail = In 이 성립한다.
   const byStep = Array.isArray(ov.by_step) ? ov.by_step : [];
   const byStepHtml = byStep.length ? `<div class="yield-by-step"><table class="ybs-table">
-    <thead><tr><th>Step</th><th>Source</th><th>Step Yield</th><th>Pass / In</th><th>Fail</th></tr></thead>
+    <thead><tr><th>Step</th><th>Source</th><th>Cum Yield</th><th>Pass / In</th><th>Fail (step / cum)</th></tr></thead>
     <tbody>` + byStep.map(s => {
     // sources 가 없으면(옛 payload) pooled 값으로 1행 폴백.
     const srcs = (Array.isArray(s.sources) && s.sources.length) ? s.sources
-      : [{ source: "", yield_pct: s.step_yield_pct, survivor: s.survivor, entered: s.entered, fail: s.fail }];
+      : [{ source: "", yield_pct: s.step_yield_pct, survivor: s.survivor, entered: s.entered,
+           fail: s.fail, cum_fail: s.cum_fail }];
     const avg = (typeof s.avg_yield_pct === "number") ? s.avg_yield_pct.toFixed(2)
       : (s.avg_yield_pct != null ? s.avg_yield_pct : s.step_yield_pct);
     return srcs.map((sr, i) => {
       const sp = (typeof sr.yield_pct === "number") ? sr.yield_pct.toFixed(2) : sr.yield_pct;
+      // cum_fail 이 없는 옛 캐시 payload(스키마 bump 전)는 자기 STEP fail 만 표시.
+      const failTxt = (sr.cum_fail === null || sr.cum_fail === undefined)
+        ? `${esc(sr.fail)}` : `${esc(sr.fail)} / ${esc(sr.cum_fail)}`;
       const stepCell = i === 0
         ? `<td class="ybs-step" rowspan="${srcs.length}">${esc(s.step)}<span class="ybs-step-avg">avg ${esc(avg)}%</span></td>`
         : "";
@@ -782,7 +788,7 @@ function yieldOverviewHtml() {
       <td class="ybs-src">${esc(sr.source)}</td>
       <td class="ybs-pct">${esc(sp)}%</td>
       <td class="ybs-cnt">${esc(sr.survivor)} / ${esc(sr.entered)}</td>
-      <td class="ybs-cnt">${esc(sr.fail)}</td>
+      <td class="ybs-cnt">${failTxt}</td>
     </tr>`;
     }).join("");
   }).join("") + `</tbody></table></div>` : "";
