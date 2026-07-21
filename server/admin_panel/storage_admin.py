@@ -68,7 +68,8 @@ def _do_scan():
     img_root = upload_root / "issue_img"
     dist_root = upload_root / "dist_combined"
 
-    per_key = {}   # akey -> 로컬 바이트 합(parquet+cache+issue+dist)
+    per_key = {}        # akey -> 로컬 바이트 합(parquet+cache+issue+dist)
+    per_key_cache = {}   # akey -> 그중 compute 캐시분 (재생성 가능 · 티어링 대상 아님)
     cat = {        # 범주 -> [bytes, files]
         "parquet": [0, 0],
         "cache": [0, 0],
@@ -97,6 +98,7 @@ def _do_scan():
         cat["parquet"][0] += p_bytes; cat["parquet"][1] += p_files
         cat["cache"][0] += c_bytes; cat["cache"][1] += c_files
         per_key[akey] = per_key.get(akey, 0) + p_bytes + c_bytes
+        per_key_cache[akey] = per_key_cache.get(akey, 0) + c_bytes
 
     # issue_img/<akey>/
     for entry in _scandir(img_root):
@@ -117,7 +119,7 @@ def _do_scan():
         except OSError:
             pass
 
-    return {"per_key": per_key, "cat": cat}
+    return {"per_key": per_key, "per_key_cache": per_key_cache, "cat": cat}
 
 
 def _scan(refresh=False):
@@ -141,17 +143,30 @@ def overview(refresh=False):
     scan = _scan(refresh=refresh)
     cat = scan["cat"]
 
-    db = Path(config.REPORT_DB_PATH)
-    db_parts = [db, db.with_name(db.name + "-wal"), db.with_name(db.name + "-shm")]
-    db_bytes = sum(_stat(p) for p in db_parts)
-    db_files = sum(1 for p in db_parts if p.exists())
+    # report.db 뿐 아니라 같이 운영되는 eval.db·voc.db 도 집계한다 — 빠져 있으면
+    # 점유 총량이 실제보다 작게 보인다.
+    def _db_size(path):
+        p = Path(path)
+        parts = [p, p.with_name(p.name + "-wal"), p.with_name(p.name + "-shm")]
+        return sum(_stat(x) for x in parts), sum(1 for x in parts if x.exists())
+
+    db_bytes, db_files = _db_size(config.REPORT_DB_PATH)
+    eval_bytes, eval_files = _db_size(config.REPORT_EVAL_DB_PATH)
+    voc_bytes, voc_files = _db_size(config.REPORT_VOC_DB_PATH)
 
     backup_dir = Path(config.REPORT_DB_BACKUP_DIR)
     backup_bytes, backup_files = _dir_size(backup_dir) if backup_dir.is_dir() else (0, 0)
 
+    # Raw Data Excel 왕복 편집이 남기는 원본 백업 (report_cleanup 이 세션 정리 때 걷어감).
+    rawbak_dir = Path(config.REPORT_UPLOAD_DIR) / "webreport_backup"
+    rawbak_bytes, rawbak_files = _dir_size(rawbak_dir) if rawbak_dir.is_dir() else (0, 0)
+
     categories = [
         {"key": "db", "label": "DB 파일 (report.db + wal/shm)", "bytes": db_bytes, "files": db_files},
+        {"key": "eval_db", "label": "eval.db (코멘트 export)", "bytes": eval_bytes, "files": eval_files},
+        {"key": "voc_db", "label": "voc.db (VOC 게시판)", "bytes": voc_bytes, "files": voc_files},
         {"key": "backup", "label": "DB 백업", "bytes": backup_bytes, "files": backup_files},
+        {"key": "rawedit_backup", "label": "Raw Data 편집 원본 백업", "bytes": rawbak_bytes, "files": rawbak_files},
         {"key": "parquet", "label": "web_report parquet/manifest", "bytes": cat["parquet"][0], "files": cat["parquet"][1]},
         {"key": "cache", "label": "web_report compute 캐시 (재생성 가능)", "bytes": cat["cache"][0], "files": cat["cache"][1]},
         {"key": "issue_img", "label": "issue 이미지", "bytes": cat["issue_img"][0], "files": cat["issue_img"][1]},
@@ -204,6 +219,7 @@ def list_sessions_by_storage(sort="size", order="desc", q=None, limit=100, offse
 
     scan = _scan(refresh=refresh)
     per_key = scan["per_key"]
+    per_key_cache = scan.get("per_key_cache", {})
 
     conditions = ["1=1"]
     params = []
@@ -246,6 +262,10 @@ def list_sessions_by_storage(sort="size", order="desc", q=None, limit=100, offse
             "status": r["status"],
             "source": r["source"],
             "local_bytes": int(per_key.get(akey, 0)),
+            # 티어링(S3 이동) 대상은 캐시를 뺀 실산출물뿐이다. local_bytes 만 보면
+            # 캐시로 부푼 세션을 "옮기면 큰 공간이 빈다"고 오해하게 된다.
+            "cache_bytes": int(per_key_cache.get(akey, 0)),
+            "tierable_bytes": max(0, int(per_key.get(akey, 0)) - int(per_key_cache.get(akey, 0))),
             "backend": backend.get(akey, ""),
             "shared": int(shared.get(akey, 1)) if akey else 1,
         })

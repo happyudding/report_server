@@ -17,6 +17,11 @@ function issueMapRgbFor(dim) {
 // 보이는 셀이 수십 개일 수 있으므로 동시 요청에 상한을 두고, 상한에 걸린 셀은 loaded 를
 // 세우지 않은 채 두었다가 진행 중 요청이 끝날 때 다시 큐에 올린다(rAF 스핀 없음).
 const STDF_MINI_MAX_INFLIGHT = 2;
+// subject 별 연속 실패 횟수. 실패를 기억하지 않으면 finally 의 재큐잉과 맞물려
+// 같은 subject 를 화면에 떠 있는 내내 무한 재요청한다(사용자에겐 빈 셀만 보인 채
+// 서버는 계속 두들겨 맞는다). 이 횟수를 넘기면 포기하고 셀에 실패를 표시한다.
+const STDF_MINI_MAX_TRIES = 2;
+const _stdfMiniFails = {};
 let _stdfMiniInflight = 0;
 function renderMiniStdfCell(cell) {
   const div = cell.querySelector(".map-plot");
@@ -28,13 +33,22 @@ function renderMiniStdfCell(cell) {
     stdfDrawThumb(div, cached, stdfThumbDefaultSource(cached));
     return;
   }
+  if ((_stdfMiniFails[subject] || 0) >= STDF_MINI_MAX_TRIES) {
+    cell.dataset.mapLoaded = "1";   // 재큐잉 대상에서 제외 — 새로고침으로만 재시도
+    div.innerHTML = `<div class="placeholder" style="font-size:11px">로드 실패</div>`;
+    return;
+  }
   if (_stdfMiniInflight >= STDF_MINI_MAX_INFLIGHT) return;   // 아래 finally 가 재큐잉
   cell.dataset.mapLoaded = "1";   // 중복 fetch 방지 — 실패 시 해제해 재시도 가능하게
   _stdfMiniInflight++;
   stdfFetchScatter(subject).then(data => {
+    delete _stdfMiniFails[subject];
     if (!cell.isConnected || cell.dataset.mapLoaded !== "1") return;   // 그 사이 purge 됨
     stdfDrawThumb(div, data, stdfThumbDefaultSource(data));
-  }).catch(() => { cell.dataset.mapLoaded = ""; }).finally(() => {
+  }).catch(() => {
+    _stdfMiniFails[subject] = (_stdfMiniFails[subject] || 0) + 1;
+    cell.dataset.mapLoaded = "";
+  }).finally(() => {
     _stdfMiniInflight--;
     document.querySelectorAll('#panel-issues .map-cell-mini[data-subject][data-visible="1"]')
       .forEach(issueMapQueueRender);
@@ -208,8 +222,9 @@ function renderIssueDetail(bin, item) {
     ? renderSheetTable(compRows, { kind: "yield" })
     : `<div class="placeholder">구성 정보 없음</div>`;
 
-  // 분포 데이터 로딩 중엔 셀을 만들어 두면 도착 후 refreshDistConsumers 가 채운다.
-  const hasDist = distDataReady ? !!distDataCache[item] : true;
+  // 분포 유무는 distribution_index 로 판단 — ECDF 는 보이는 셀만 배치로 받으므로
+  // 캐시 보유 여부로 판단하면 아직 안 받은 항목의 셀이 안 만들어진다.
+  const hasDist = distHasData(item);
   panel.innerHTML =
     `<div class="section-title">Issue Table — Bin ${esc(bin)} 상세</div>` +
     `<button type="button" class="btn-sm" id="issueDetailBack">← Issue Table로 돌아가기</button>` +

@@ -64,6 +64,22 @@ function seedEmptyFrames() {
 }
 
 // CSRF: 서버가 /view 응답에 내려준 double-submit 쿠키를 읽어 변경요청 헤더로 되돌려준다.
+// ── 응답 캐시 개수 상한 (per-item fetch 결과 무한 누적 방지) ──────────────────
+// STDF Map·Trim 그룹 차트·Distribution ECDF 는 항목/그룹 단위로 응답을 받아 객체에
+// 쌓아두는데, 상한이 없어 오래 볼수록 브라우저 메모리가 단조 증가했다. 삽입 순서를
+// 배열로 따로 들고 상한 초과 시 가장 오래된 것부터 버린다(FIFO — 재요청은 저렴하다).
+// onEvict(key): 버린 항목에 딸린 별도 상태(요청 완료 표시 등)를 함께 정리할 때 쓴다.
+function cachePutCapped(store, order, key, value, max, onEvict) {
+  if (!(key in store)) order.push(key);
+  store[key] = value;
+  while (order.length > max) {
+    const old = order.shift();
+    if (old === key) continue;         // 방금 넣은 항목은 남긴다
+    delete store[old];
+    if (onEvict) onEvict(old);
+  }
+}
+
 function csrfToken() {
   const m = document.cookie.match(/(?:^|;\s*)report_csrf=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : "";

@@ -7,6 +7,7 @@ issue_table etc/comments, summary engr. URL·응답 형태는 분리 전과 동�
 import gzip
 import json
 import logging
+import re
 import uuid
 from pathlib import Path
 
@@ -26,12 +27,18 @@ from report.security import (
 )
 from web_report import service as web_report_service
 from web_report import build_status as web_report_build_status_mod
+from web_report import compute as web_report_compute
 from web_report import response_cache as web_report_response_cache
 from web_report import rawedit as web_report_rawedit
 
 _log = logging.getLogger(__name__)
 
 _MAX_WEBREPORT_SOURCE_BYTES = 512 * 1024 * 1024
+
+# distribution_batch 한 요청의 항목 수 상한 — 프런트는 화면에 보이는 만큼(수십 개)만
+# 요청한다. 상한을 두는 이유는 URL 길이/계산량 폭주 차단이며, 초과분은 프런트가 다음
+# 배치로 나눠 보낸다.
+_DIST_BATCH_MAX = 40
 
 
 @report_bp.get("/session/<session_id>/web_report/build_status")
@@ -115,6 +122,47 @@ def web_report_distribution(session_id):
     return Response(body, mimetype="application/json", headers=headers)
 
 
+@report_bp.get("/session/<session_id>/web_report/distribution_batch")
+def web_report_distribution_batch(session_id):
+    """항목 배치 ECDF — ``?subjects=a,b,c`` 로 요청한 항목만 컴팩트 columnar JSON 으로 반환.
+
+    Distribution 갤러리/미니셀은 화면에 보이는 항목만 필요한데, 전체 /distribution 은
+    대형 세션(수천 항목×수천 die)에서 수천만 포인트라 한 번에 받으면 브라우저가 감당하지
+    못한다. 프런트는 IntersectionObserver 로 보이는 항목을 모아 이 라우트를 호출한다.
+    항목 상세(전 포인트+hover 메타)는 기존 /scatter/<subject> 그대로다.
+
+    구분자는 콤마 — 항목명에 콤마가 들어갈 수 있으므로 개행(%0A)도 함께 허용한다.
+    """
+    session = _require_web_report_session(session_id)
+    raw = request.args.get("subjects") or ""
+    # 정렬+중복제거로 정규화 — 같은 집합을 다른 순서로 요청해도 같은 캐시 키/ETag 가 된다.
+    subjects = sorted({s.strip() for s in re.split(r"[,\n]", raw) if s.strip()})
+    if not subjects:
+        abort(400, "subjects required")
+    if len(subjects) > _DIST_BATCH_MAX:
+        abort(400, f"too many subjects (max {_DIST_BATCH_MAX})")
+    if any(len(s) > 200 for s in subjects):
+        abort(400, "invalid subject")
+    bin1 = (request.args.get("bin1") or "") in ("1", "true", "True")
+    try:
+        etag, body = web_report_response_cache.get_dist_batch_gzip(
+            session_id, subjects, session=session, report_db=report_db,
+            upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report distribution_batch failed for session %s", session_id)
+        abort(500, "distribution_batch failed")
+    headers = {"Vary": "Accept-Encoding", "ETag": etag}
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers=headers)
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+    return Response(body, mimetype="application/json", headers=headers)
+
+
 @report_bp.get("/session/<session_id>/web_report/map_analysis")
 def web_report_map_analysis(session_id):
     """Map Analysis die 전량(다운샘플 없음)을 JSON 으로 지연 로드.
@@ -131,8 +179,15 @@ def web_report_map_analysis(session_id):
     try:
         # 계산+직렬화+gzip 결과가 service 쪽에서 (analysis_key, content_hash, mode) 키로
         # 캐시됨 — 세션당 1회만 CPU 를 쓰고 이후 요청은 bytes 반환뿐이라 동시 사용자에도 안전.
+        # 콜드면 202 + 백그라운드 빌드 — /full 과 같은 규약(요청 스레드 비블록).
         body = web_report_service.get_map_gzip(
-            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            build_if_cold=False)
+    except web_report_service.ColdBuildRequired:
+        web_report_compute.request_build(session_id, str(REPORT_UPLOAD_DIR), "map")
+        status = web_report_build_status_mod.snapshot(session_id)
+        return jsonify({"building": True, "stage": status.get("stage", "map"),
+                        "elapsed": status.get("elapsed", 0)}), 202
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except Exception:
@@ -634,6 +689,18 @@ def web_report_note_save(session_id):
             base=body.get("base"), check=("base" in body), force=bool(body.get("force")),
             client_ip=ip, user_agent=ua)
     except web_report_service.NoteConflict as exc:
+        # 충돌은 감사 로그에만 남긴다 — 남지 않으면 동시편집이 실제로 얼마나 일어나는지
+        # 운영자가 알 방법이 없다(사용자는 모달에서 덮어쓰기/새로고침만 고르고 끝).
+        try:
+            report_db.log_audit(
+                "note_conflict", session_id=session_id,
+                analysis_key=session.get("analysis_key"),
+                product_type=session.get("product_type"), product=session.get("product"),
+                lot_id=session.get("lot_id"), file_name=session.get("file_name"),
+                changed_fields=f"note_sheet(선점자={exc.info.get('updated_by', '')})",
+                client_ip=ip, user_agent=ua, result="conflict")
+        except Exception:
+            pass
         return jsonify({
             "error": "다른 사용자가 먼저 저장했습니다.",
             "conflict": {"updated_by": exc.info.get("updated_by", ""),

@@ -34,9 +34,12 @@ Honey 업데이트는 PyInstaller onedir 결과물(`client/dist/Honey/`)을 ZIP�
 6. **ZIP 다운로드**: ZIP을 다운로드 폴더에 저장하고 탐색기로 파일을 선택해 보여준 뒤 끝.
 7. **자동 설치** (frozen exe): `updater.apply_update_zip()`이 ZIP을 임시 폴더에 풀고 외부
    배치 파일을 띄운다. 배치는 현재 Honey 프로세스 종료를 기다린 뒤(최대 약 2분)
-   `_internal/`은 robocopy `/MIR`(구버전 잔재 제거), 루트는 `/E /XD _internal`
-   (`log/` 등 보존)로 복사하고 `Honey.exe`를 다시 실행한다. 복사 실패 시
-   `%TEMP%\honey_update.log`를 메모장으로 띄운다.
+   ① `_internal/`을 `_internal.new`로 스테이징 복사 → ② 디렉토리 rename 2회로 swap
+   (구버전은 `_internal.old`로 밀린 뒤 삭제) → ③ 루트는 `/E /XD _internal log`
+   (미러 아님 — `log/` 등 보존)로 복사 → ④ `Honey.exe` 재실행 순으로 진행한다.
+   각 단계 실패 시 구버전으로 롤백하고(`_internal.old` / `Honey.exe.bak` 복원)
+   `<Honey.exe 폴더>\log\update.log`를 메모장으로 띄운다 — **반쯤 갱신된 설치본은
+   남기지 않는다.**
 
 개발 모드(`python honey_main.py`)에서는 자동 설치를 골라도 ZIP 다운로드까지만 수행하고 자동 교체는 하지 않는다.
 
@@ -73,5 +76,14 @@ cd F:\COINAPI\report_server\client\release
 - UAC 승격은 사용하지 않는다. 설치 폴더가 쓰기 불가면 auto 라도 manual 로 강등된다.
 - 배치 파일은 ANSI(cp949)로 저장된다. 배치 문자열에 cp949 로 표현 안 되는 문자
   (예: em dash `—`)를 넣지 말 것 — 과거 이 문자 때문에 업데이트가 통째로 크래시했다.
+  같은 이유로 **배치의 `echo` 문구는 ASCII 만** 쓴다(사용자가 메모장에서 읽는 안내 1줄 제외).
+- **배치는 `CREATE_NO_WINDOW`로 띄운다 (`DETACHED_PROCESS` 금지).** DETACHED 로 띄운
+  배치는 부모 Honey.exe 가 종료될 때 Ctrl+C 를 받아 **함께 죽는다** — 2026-07-21 현장
+  실패의 직접 원인이었다(로그에 시작 한 줄만 남고 아무 일도 안 일어남).
+- 배치가 부모 종료를 판정하는 `tasklist`/`find` 는 **절대경로**로 부른다. PATH 에 Git 등의
+  GNU `find` 가 먼저 잡히면 판정이 통째로 뒤집힌다(실측 확인).
+- 진단 로그는 파이썬·배치가 `<Honey.exe 폴더>\log\update.log` 한 파일에 함께 남긴다
+  (종전 `%TEMP%\honey_update.log` — 현장 사용자가 `%TEMP%` 를 찾지 못했다).
+  cmd 자체 오류는 `log\update_cmd.log`, robocopy 원문은 `log\update_robocopy.log`.
 - `CURRENT_VERSION`은 빌드 전에 반드시 올려야 한다. 순서가 틀리면 클라이언트가 계속 업데이트를 권유할 수 있다.
 - `version.json`은 BOM 없는 UTF-8로 저장한다. `release_honey.ps1`은 자동으로 그렇게 저장한다.

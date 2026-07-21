@@ -1,4 +1,4 @@
-// ── Distribution (ECDF, small-multiples grid) ─────────────────────────────
+﻿// ── Distribution (ECDF, small-multiples grid) ─────────────────────────────
 // F:\COINAPI\report_webserver\plotly_core_code (figure_builder.py/page_builder.py) 참고:
 // item(subject)별 산점(value vs 누적%) + spec 상/하한 점선. 데이터는
 // web_report/tabs/distribution.py 가 이미 전량(다운샘플링 없음) 계산해 별도 엔드포인트로
@@ -125,9 +125,7 @@ let distPanelBound = false;
 // /full 은 대용량 ECDF 를 내려주지 않고, 첫 페인트 후 백그라운드로
 // GET .../web_report/distribution (컴팩트 columnar, 전 포인트) 을 받아 distDataCache 를
 // 채운다. 도착 전에 그려진 미니셀/갤러리는 refreshDistConsumers 가 다시 채운다.
-let distDataReady = false;     // distDataCache 사용 가능 여부 (구형 embed 응답이면 로드 직후 true)
-let distDataPromise = null;    // 진행 중/완료된 fetch (중복 요청 방지)
-let _distContentHash = "";     // 마지막 fetch 시점의 content_hash — 동일하면 재fetch 안 함
+let distDataReady = false;     // 배치 로더 사용 가능 여부 (항목 보유는 distDataCache 로 판단)
 
 // ── "Bin1 only" (양품·규격내 분포) — 갤러리 미니셀 전용 별도 캐시(?bin1=1 지연 로드). ──
 // Issue Table·item_detail 이 공유하는 전체 기준 distDataCache 와 분리해, 토글 영향이
@@ -136,8 +134,6 @@ let _distContentHash = "";     // 마지막 fetch 시점의 content_hash — 동
 let distBin1Only = false;      // 갤러리 미니셀을 양품(BIN==1) & 규격내 ECDF 로 표시
 let distBin1Cache = {};        // subject → {...} (bin1 ECDF, distDataCache 와 동일 스키마)
 let distBin1Ready = false;
-let distBin1Promise = null;
-let _distBin1ContentHash = "";
 
 function buildDistDataFromCompact(payload) {
   // 컴팩트 columnar → 기존 distDataCache 스키마 그대로 (소비자 코드 무수정)
@@ -151,64 +147,6 @@ function buildDistDataFromCompact(payload) {
     out[subj] = { lower_limit: it.lo, upper_limit: it.hi, units: it.units || "", bySource };
   });
   return out;
-}
-
-function fetchDistViaWorker(url, onProgress) {
-  // 수십 MB JSON 을 메인스레드에서 파싱하면 로드 직후 첫 상호작용이 얼어붙는다.
-  // Web Worker 에서 fetch+parse 하고, 결과를 통째로 넘기면 structured clone
-  // 역직렬화(~0.5s)가 다시 메인스레드를 막으므로 items 를 포인트 수 기준 청크로
-  // 쪼개 전송해 블록을 수십 ms 단위로 분산한다. (Worker 실패 시 호출측 폴백.)
-  // onProgress(loadedBytes): 수신 진행 콜백 — body 스트림의 비압축 바이트 누계를
-  // 2MB 단위로 알린다 (gzip 전송이라 총량 % 는 알 수 없어 바이트만 표시).
-  return new Promise((resolve, reject) => {
-    let blobUrl = null, w = null;
-    const cleanup = () => {
-      try { if (w) w.terminate(); } catch (e) {}
-      try { if (blobUrl) URL.revokeObjectURL(blobUrl); } catch (e) {}
-    };
-    try {
-      const src = 'self.onmessage=function(e){' +
-        'fetch(e.data,{cache:"no-cache"})' +
-        '.then(function(r){' +
-          'if(!r.ok)throw new Error("HTTP "+r.status);' +
-          'if(!r.body||!r.body.getReader)return r.json();' +   // 구형 폴백: 진행 없이 통파싱
-          'var reader=r.body.getReader(),chunks=[],loaded=0,lastPost=0;' +
-          'function pump(){return reader.read().then(function(res){' +
-            'if(res.done){' +
-              'var buf=new Uint8Array(loaded),off=0;' +
-              'for(var i=0;i<chunks.length;i++){buf.set(chunks[i],off);off+=chunks[i].length;}' +
-              'return JSON.parse(new TextDecoder("utf-8").decode(buf));}' +
-            'chunks.push(res.value);loaded+=res.value.length;' +
-            'if(loaded-lastPost>=2097152){lastPost=loaded;self.postMessage({progress:loaded});}' +
-            'return pump();});}' +
-          'return pump();' +
-        '})' +
-        '.then(function(j){' +
-          'var items=(j&&j.items)||{};var keys=Object.keys(items);' +
-          'var batch={},pts=0;' +
-          'for(var i=0;i<keys.length;i++){var k=keys[i];batch[k]=items[k];' +
-            'var ss=items[k].sources||{};' +
-            'for(var s in ss)pts+=((ss[s].x||[]).length);' +
-            'if(pts>=250000){self.postMessage({chunk:batch});batch={};pts=0;}}' +
-          'self.postMessage({chunk:batch,done:true,format:j&&j.format});' +
-        '})' +
-        '.catch(function(err){self.postMessage({error:String(err&&err.message||err)});});' +
-        '};';
-      blobUrl = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
-      w = new Worker(blobUrl);
-    } catch (e) { cleanup(); reject(e); return; }
-    const items = {};
-    w.onmessage = ev => {
-      const d = ev.data || {};
-      if (d.error) { cleanup(); reject(new Error(d.error)); return; }
-      if (d.progress != null) { if (onProgress) onProgress(d.progress); return; }
-      Object.assign(items, d.chunk || {});
-      if (d.done) { cleanup(); resolve({ format: d.format, items }); }
-    };
-    w.onerror = () => { cleanup(); reject(new Error("worker failed")); };
-    // blob URL Worker 의 상대경로 기준이 페이지와 달라질 수 있어 절대 URL 로 전달
-    w.postMessage(new URL(url, location.origin).href);
-  });
 }
 
 // ── 분포 로딩 상태 배지 (우하단 고정 — Distribution 갤러리·Issue Table 미니셀 공용) ──
@@ -255,29 +193,140 @@ function distBadgeProgress(label, loadedBytes) {
   distBadgeShow(`${esc(label)} ${(loadedBytes / 1048576).toFixed(1)} MB 수신…`);
 }
 
-function ensureDistData() {
-  const ch = (DATA && DATA.session && DATA.session.content_hash) || "";
-  if (distDataPromise && ch === _distContentHash) return distDataPromise;   // 로딩 중/완료 재사용
-  _distContentHash = ch;
-  distDataReady = false;
-  const url = `/pe/report/session/${SESSION_ID}/web_report/distribution`;
-  const label = "분포 데이터 로딩 중…";
-  distBadgeStart(label);
-  distDataPromise = fetchDistViaWorker(url, loaded => distBadgeProgress(label, loaded))
-    .catch(() => fetch(url, { cache: "no-cache" })   // Worker 실패 시 메인스레드 폴백
-      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }))
+// ── 항목 배치 지연 로드 (전량 일괄 로드 대체) ────────────────────────────────
+// 종전에는 세션의 ECDF 전량을 한 번에 받았다. 항목·소스·die 가 늘면 수천만 포인트가 되어
+// 다운로드·파싱·JS 힙 상주가 전부 폭증하는데, 실제로 화면에 보이는 미니셀은 수십 개뿐이다.
+// 이제 IntersectionObserver 가 보이는 셀의 항목만 모아 배치로 요청한다
+// (GET .../web_report/distribution_batch?subjects=...). 항목 상세(전 포인트+hover 메타)는
+// 종전대로 /scatter/<subject> 를 쓴다. 표시용 다운샘플·세로 채움은 클라 그대로다(규칙 #6).
+const DIST_BATCH = {
+  SIZE: 30,          // 한 요청 항목 수 (서버 상한 40 — 여유를 둔다)
+  MAX_INFLIGHT: 2,   // 동시 요청 수 — 스크롤을 빨리 내려도 요청이 쌓이지 않게
+  DEBOUNCE_MS: 50,   // 관측 이벤트가 몰려 들어오므로 모아서 한 번에 보낸다
+  CACHE_MAX: 300,    // 보유 항목 상한(LRU) — 오래 스크롤해도 힙이 무한히 자라지 않게
+};
+
+let _distSubjectSet = null;    // distribution_index 항목 Set (ECDF 존재 여부의 단일 진실)
+// distribution_index 는 "측정 data 전무" 항목만 제외하는데, 서버의 ECDF compact 도 같은
+// 기준으로 항목을 고른다 — 즉 인덱스에 있으면 ECDF 가 있고, 없으면 없다. 덕분에 데이터를
+// 받아보지 않고도 "이 항목에 분포가 있는지"를 즉시 알 수 있다(빈 셀 판단이 미리 가능).
+// distIndex 전역이 아니라 DATA 에서 직접 읽는 이유: distIndex 는 Distribution 탭을 그릴
+// 때 채워지는데, Issue Table 이 먼저 그려지면 빈 목록으로 판단이 굳어버린다.
+function distHasData(subject) {
+  if (!_distSubjectSet) {
+    const idx = (DATA && DATA.web_report && DATA.web_report.distribution_index) || [];
+    if (!idx.length) return false;   // 아직 /full 전 — Set 을 굳히지 않는다
+    _distSubjectSet = new Set(idx.map(r => r.subject));
+  }
+  return _distSubjectSet.has(subject);
+}
+
+const _distPending = { all: new Set(), bin1: new Set() };   // 요청 대기(다음 배치)
+const _distHave = { all: new Set(), bin1: new Set() };      // 요청 완료 또는 진행 중
+const _distOrder = { all: [], bin1: [] };                   // LRU 축출 순서
+let _distInflight = 0;
+let _distBatchTimer = null;
+let _distRefreshTimer = null;
+
+function distCacheFor(bin1) { return bin1 ? distBin1Cache : distDataCache; }
+function distVariantKey(bin1) { return bin1 ? "bin1" : "all"; }
+
+// 배치 도착 후 재렌더 — 여러 배치가 연달아 오므로 한 프레임으로 모은다.
+function distScheduleRefresh() {
+  if (_distRefreshTimer) return;
+  _distRefreshTimer = setTimeout(() => {
+    _distRefreshTimer = null;
+    refreshDistConsumers();
+  }, 0);
+}
+
+// 받은 항목을 캐시에 넣되 보유 개수 상한을 유지한다(core.js cachePutCapped 공용).
+// 버린 항목은 _distHave 에서도 빼야 다시 보일 때 재요청이 걸린다.
+function distCachePut(bin1, subject, info) {
+  const key = distVariantKey(bin1);
+  cachePutCapped(distCacheFor(bin1), _distOrder[key], subject, info,
+                 DIST_BATCH.CACHE_MAX, old => _distHave[key].delete(old));
+}
+
+// 이 항목의 ECDF 를 요청 큐에 넣는다 (이미 보유/요청 중이면 no-op).
+// 렌더러는 데이터가 없으면 rendered 플래그를 세우지 않고 리턴하고, 도착 후
+// refreshDistConsumers 재큐잉으로 다시 그려진다 — 기존 지연 로드와 동일한 흐름.
+function distRequestSubject(subject, bin1) {
+  if (!subject || !distHasData(subject)) return;
+  const key = distVariantKey(bin1);
+  if (_distHave[key].has(subject) || _distPending[key].has(subject)) return;
+  _distPending[key].add(subject);
+  if (_distBatchTimer) return;
+  _distBatchTimer = setTimeout(() => { _distBatchTimer = null; distFlushBatch(); },
+                               DIST_BATCH.DEBOUNCE_MS);
+}
+
+// 배치는 보통 수십 ms 라 배지를 바로 띄우면 스크롤 때마다 깜빡인다. 이 시간 넘게 걸릴
+// 때만 띄운다. (전량 로드용 _distBadgeJobs 카운터와 섞지 않고 표시만 직접 제어한다 —
+// 맵 로딩 배지가 떠 있으면 그쪽을 지우지 않도록 hide 전에 jobs 를 확인한다.)
+const DIST_BATCH_BADGE_DELAY_MS = 400;
+let _distBatchBadgeTimer = null;
+let _distBatchFailed = false;   // 실패 안내(재시도 버튼)가 떠 있으면 자동으로 걷지 않는다
+function distBatchBadgeSync() {
+  if (_distInflight > 0) {
+    if (_distBatchFailed) return;   // 실패 안내 유지 (재시도 클릭이 지운다)
+    if (!_distBatchBadgeTimer) {
+      _distBatchBadgeTimer = setTimeout(() => {
+        _distBatchBadgeTimer = null;
+        if (_distInflight > 0 && !_distBatchFailed) distBadgeShow("분포 데이터 로딩 중…");
+      }, DIST_BATCH_BADGE_DELAY_MS);
+    }
+    return;
+  }
+  if (_distBatchBadgeTimer) { clearTimeout(_distBatchBadgeTimer); _distBatchBadgeTimer = null; }
+  if (!_distBadgeJobs && !_distBatchFailed) distBadgeHide();   // 다른 로딩(맵 등)이 없을 때만
+}
+
+function distFlushBatch() {
+  if (_distInflight >= DIST_BATCH.MAX_INFLIGHT) return;   // 도착 시 다시 호출된다
+  // 전체 기준을 먼저 비운다(갤러리·IssueTable 이 공유하는 기본 캐시). 전체가 비면 bin1.
+  const bin1 = _distPending.all.size === 0;
+  const key = distVariantKey(bin1);
+  const pending = _distPending[key];
+  if (!pending.size) return;
+  const subjects = Array.from(pending).slice(0, DIST_BATCH.SIZE);
+  subjects.forEach(s => { pending.delete(s); _distHave[key].add(s); });
+
+  _distInflight++;
+  distBatchBadgeSync();
+  const q = encodeURIComponent(subjects.join(","));
+  const url = `/pe/report/session/${SESSION_ID}/web_report/distribution_batch`
+    + `?subjects=${q}${bin1 ? "&bin1=1" : ""}`;
+  fetch(url, { cache: "no-cache" })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(j => {
-      distDataCache = buildDistDataFromCompact(j);
-      distDataReady = true;
-      distBadgeEnd();
-      refreshDistConsumers();
+      const built = buildDistDataFromCompact(j);
+      Object.keys(built).forEach(s => distCachePut(bin1, s, built[s]));
+      distScheduleRefresh();
     })
     .catch(e => {
-      distDataPromise = null;   // 실패 시 다음 호출/재시도 버튼에서 재요청
-      distBadgeFail("분포 데이터 로드 실패", "all");
+      // 실패한 항목은 보유 표시를 되돌려 다음 관측/재시도에서 다시 요청되게 한다.
+      subjects.forEach(s => _distHave[key].delete(s));
+      _distBatchFailed = true;
+      distBadgeShow("분포 데이터 로드 실패 " +
+        `<button type="button" class="btn-sm" data-dist-retry="${key}">재시도</button>`);
       showToast("분포 데이터 로드 실패: " + e.message);
+    })
+    .then(() => {
+      _distInflight--;
+      distBatchBadgeSync();
+      if (_distPending.all.size || _distPending.bin1.size) distFlushBatch();
     });
-  return distDataPromise;
+  if (_distPending.all.size || _distPending.bin1.size) distFlushBatch();   // 남은 배치
+}
+
+// 배치 로더는 별도 선행 로드가 필요 없다 — 호출 시 보이는 셀들이 각자 필요한 항목을
+// 요청하도록 재큐잉만 한다. (구 전량 로드 진입점과 같은 이름·호출 규약 유지.)
+function ensureDistData() {
+  distDataReady = true;
+  _distBatchFailed = false;   // 재시도 진입점이기도 하다 — 실패 안내를 걷는다
+  refreshDistConsumers();
+  return Promise.resolve();
 }
 
 // 데이터 도착 전에 만들어진 분포 소비처들을 다시 채운다.
@@ -289,7 +338,9 @@ function refreshDistConsumers() {
   // Issue Table Bin 상세의 단일 분포 셀
   const detail = document.getElementById("issueDetailDistCell");
   if (detail && detail.dataset.distLoaded !== "1") {
-    if (distDataCache[detail.dataset.subject]) renderDistCell(detail);
+    // 아직 안 받은 항목이면 renderDistCell 이 배치 요청만 하고 리턴한다(도착 후 재호출).
+    // 인덱스에 없는 항목만 "없음"으로 확정한다.
+    if (distHasData(detail.dataset.subject)) renderDistCell(detail);
     else detail.outerHTML = `<div class="placeholder">분포 데이터 없음</div>`;
   }
   // Distribution 갤러리 — 화면에 보이는(관측 중) 카드 재큐잉
@@ -297,30 +348,14 @@ function refreshDistConsumers() {
     .forEach(distQueueRender);
 }
 
-// ── Bin1 only: 양품(BIN==1) ECDF 를 ?bin1=1 로 지연 로드 (전체 캐시와 별도, 최초 토글 시). ──
+// ── Bin1 only: 양품(BIN==1) ECDF — 전체 기준과 같은 배치 로더를 bin1 변형으로 쓴다. ──
+// 종전에는 토글 시 전 항목 bin1 payload 를 통째로 받았다. 이제 갤러리에 보이는 항목만
+// ?bin1=1 배치로 받아 distBin1Cache 에 쌓는다(전체 기준 캐시와 분리는 그대로).
 function ensureDistBin1Data() {
-  const ch = (DATA && DATA.session && DATA.session.content_hash) || "";
-  if (distBin1Promise && ch === _distBin1ContentHash) return distBin1Promise;   // 로딩 중/완료 재사용
-  _distBin1ContentHash = ch;
-  distBin1Ready = false;
-  const url = `/pe/report/session/${SESSION_ID}/web_report/distribution?bin1=1`;
-  const label = "Bin1 분포 로딩 중…";
-  distBadgeStart(label);
-  distBin1Promise = fetchDistViaWorker(url, loaded => distBadgeProgress(label, loaded))
-    .catch(() => fetch(url, { cache: "no-cache" })   // Worker 실패 시 메인스레드 폴백
-      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }))
-    .then(j => {
-      distBin1Cache = buildDistDataFromCompact(j);
-      distBin1Ready = true;
-      distBadgeEnd();
-      if (distBin1Only) refreshDistGallery();   // 도착 전 비어 있던 갤러리 미니셀을 채운다
-    })
-    .catch(e => {
-      distBin1Promise = null;   // 실패 시 다음 토글/재시도 버튼에서 재요청
-      distBadgeFail("Bin1 분포 로드 실패", "bin1");
-      showToast("Bin1 분포 로드 실패: " + e.message);
-    });
-  return distBin1Promise;
+  distBin1Ready = true;
+  _distBatchFailed = false;   // 재시도 진입점 — 실패 안내를 걷는다
+  refreshDistGallery();
+  return Promise.resolve();
 }
 
 // 갤러리에 보이는(관측 중) 카드만 재큐잉 — Bin1 데이터 도착 시 미니셀을 다시 채운다.
@@ -453,6 +488,8 @@ function renderDistCell(cell) {
   const info = distDataCache[subject];
   const div = cell.querySelector(".dist-plot");
   const placeholder = cell.querySelector(".dist-placeholder");
+  // 아직 안 받은 항목은 배치로 요청 — 도착 후 refreshDistConsumers 가 다시 부른다.
+  if (!info && distHasData(subject)) { distRequestSubject(subject, false); return; }
   if (!info || !div || typeof Plotly === "undefined") return;
 
   const idx = distIndex.find(x => x.subject === subject);
@@ -877,12 +914,14 @@ function distGalleryReady() { return distBin1Only ? distBin1Ready : distDataRead
 // ── 갤러리 미니셀(정적 CDF, distDataCache 재사용, 표시용만 1500점 다운샘플) ─────
 function distRenderGalleryCell(cell) {
   if (cell.dataset.rendered === "1") return;
-  // 분포 데이터 도착 전 — rendered 플래그를 세우지 않고 리턴해야 도착 후
-  // refreshDistConsumers/refreshDistGallery 의 재큐잉으로 다시 그려진다 (빈 차트 고정 방지).
   if (!distGalleryReady()) return;
   const subject = cell.dataset.subject;
   const status = cell.dataset.status || "ok";
   const info = distGalleryCache()[subject];
+  // 이 항목 ECDF 가 아직 없으면 배치로 요청하고 리턴 — rendered 플래그를 세우지 않아야
+  // 도착 후 refreshDistConsumers/refreshDistGallery 재큐잉으로 다시 그려진다.
+  // (인덱스에 아예 없는 항목은 데이터가 없는 것이 확정이라 그대로 빈 축만 그린다.)
+  if (!info && distHasData(subject)) { distRequestSubject(subject, distBin1Only); return; }
   const plot = cell.querySelector(".distg-plot");
   if (!plot || typeof Plotly === "undefined") return;
   const lo = info ? info.lower_limit : null;
@@ -969,7 +1008,7 @@ function distToolbarHtml() {
   const nopfBtn = `<button class="distseg${distHidePassfail ? " active" : ""}" data-seg="nopf" title="켜짐: unit 이 Pass/Fail(P/F·P_F) 인 항목 카드를 숨김 · 꺼짐: 표시">P/F 없애기</button>`;
   return `<div class="dist-toolbar">
     <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${nopfBtn}</div>
-    <div class="dist-search-wrap">
+    <div class="dist-search-wrap" data-no-dirty>
       <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">
       <div id="distSuggest" class="dist-suggest" style="display:none"></div>
     </div>

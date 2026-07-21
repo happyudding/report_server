@@ -17,6 +17,7 @@ GIL 직렬화 제거: **콜드 세션**의 report payload / distribution compact
 """
 from __future__ import annotations
 
+import collections
 import logging
 import os
 import threading
@@ -24,6 +25,12 @@ from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
+
+# 관리자 패널 노출용 누적 카운터 (프로세스 생존 기간). 락 없이 증가시키지만 GIL 하의
+# int 증가라 통계 용도로는 충분하다.
+STATS = {"submitted": 0, "inline": 0, "ok": 0, "timeout": 0, "broken": 0, "error": 0,
+         "prewarm_queued": 0, "prewarm_dropped": 0, "prewarm_done": 0,
+         "ondemand_queued": 0, "ondemand_done": 0, "ondemand_error": 0}
 
 _WORKERS = max(0, int(os.getenv("WEB_REPORT_COMPUTE_WORKERS", "2") or 2))
 # 워커 N개 태스크 처리 후 프로세스 재기동 — 워커 프로세스 내 TABLES_CACHE(최대 4GB)로
@@ -64,34 +71,77 @@ def should_offload(tables_key) -> bool:
     return not warm
 
 
+def _reset_pool(shutdown=False):
+    """현재 풀을 버린다. shutdown=True 면 워커 프로세스도 즉시 정리한다.
+
+    hang 된 워커는 태스크를 끝내지 못해 max_tasks_per_child 재기동에도 걸리지 않으므로,
+    풀을 통째로 버리지 않으면 그 슬롯이 영구히 죽는다(워커 2개면 2번이면 전멸).
+    """
+    global _pool
+    with _pool_lock:
+        pool, _pool = _pool, None
+    if pool is not None and shutdown:
+        try:
+            pool.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            _log.exception("compute pool shutdown failed")
+
+
 def run(job, *args):
     """job 을 워커에서 실행하고 결과를 반환. 풀 비활성/워커 내부면 인라인 실행.
 
-    워커 프로세스 붕괴(BrokenProcessPool — OOM, main 가드 없는 스크립트 등)는
-    풀을 리셋하고 인라인으로 폴백한다 — 요청이 500 으로 죽지 않는다.
-    타임아웃(워커 hang)은 raise — 인라인 폴백하면 hang 원인이 데이터일 때 부모
-    GIL 까지 태우므로 요청만 실패시킨다(워커 태스크 자체는 계속 돌 수 있음)."""
-    global _pool
+    워커 프로세스 붕괴(BrokenProcessPool — 대개 워커 OOM)와 타임아웃(워커 hang) 모두
+    풀을 버리고 raise 한다. 인라인 폴백은 하지 않는다 — 붕괴 원인이 메모리/데이터면
+    같은 작업을 웹 프로세스에서 다시 돌려 GIL 과 RAM 을 그대로 태우고 웹 프로세스까지
+    같이 죽을 수 있다. 호출부는 이 예외를 503 으로 돌려준다.
+    """
     pool = _get_pool()
     if pool is None:
+        STATS["inline"] += 1
         return job(*args)
+    STATS["submitted"] += 1
     try:
         fut = pool.submit(job, *args)
-        return fut.result(timeout=_TIMEOUT_SEC)
+        result = fut.result(timeout=_TIMEOUT_SEC)
+        STATS["ok"] += 1
+        return result
     except BrokenProcessPool:
-        _log.error("compute worker pool broken — 풀 리셋 후 인라인 폴백: %s%r",
+        STATS["broken"] += 1
+        _log.error("compute worker pool broken — 풀 폐기 후 실패 반환: %s%r",
                    getattr(job, "__name__", job), args, exc_info=True)
-        with _pool_lock:
-            _pool = None
-        return job(*args)
-    except TimeoutError:
-        # 요청자는 이미 실패했으므로 큐 대기 작업 회수 시도. 풀이 워커 feed 큐에
-        # max_workers+1 개를 선급행하며 그 시점에 RUNNING 마킹되므로, 그보다 뒤에
-        # 대기 중인 작업만 실제로 취소된다 — 선급행/실행 중이면 False 반환(무해).
-        fut.cancel()
-        _log.error("compute worker timeout (%ss): %s%r", _TIMEOUT_SEC,
-                   getattr(job, "__name__", job), args)
+        _reset_pool(shutdown=True)
         raise
+    except TimeoutError:
+        STATS["timeout"] += 1
+        # fut.cancel() 은 이미 실행 중인 작업을 못 멈춘다(선급행분은 RUNNING 마킹).
+        # hang 워커를 계속 안고 가면 슬롯이 영구 소모되므로 풀 자체를 버린다.
+        _log.error("compute worker timeout (%ss) — 풀 폐기: %s%r", _TIMEOUT_SEC,
+                   getattr(job, "__name__", job), args)
+        _reset_pool(shutdown=True)
+        raise
+    except Exception:
+        STATS["error"] += 1
+        raise
+
+
+def status():
+    """관리자 패널용 컴퓨트 풀 상태 스냅샷."""
+    pool = _pool
+    alive = 0
+    if pool is not None:
+        try:
+            alive = len(getattr(pool, "_processes", {}) or {})
+        except Exception:
+            alive = 0
+    with _prewarm_lock:
+        pending = len(_prewarm_queue)
+    with _ondemand_lock:
+        ondemand_pending = len(_ondemand_pending)
+    return {"workers": _WORKERS, "pool_alive": pool is not None, "processes": alive,
+            "timeout_sec": _TIMEOUT_SEC, "tasks_per_child": _TASKS_PER_CHILD,
+            "prewarm_pending": pending, "prewarm_max": _PREWARM_MAX_PENDING,
+            "ondemand_pending": ondemand_pending, "ondemand_workers": _ONDEMAND_WORKERS,
+            "stats": dict(STATS)}
 
 
 # ── 워커 잡 (모듈 최상위 — spawn pickling 요건). service 를 재사용하므로 값이
@@ -128,33 +178,138 @@ def trim_job(session_id: str, upload_root_str: str, source: str) -> bytes:
     return blob
 
 
-# 동시 프리웜 스레드 상한 (연속 업로드 폭주 방지 — 종전 풀 제출 시절의 워커 수 상한과 동등).
-_PREWARM_SLOTS = threading.BoundedSemaphore(max(1, _WORKERS))
+# ── 프리웜 큐 ────────────────────────────────────────────────────────────────
+# 업로드당 스레드를 띄우면 폭주 시 스레드가 무한히 쌓인다(세마포어는 동시 실행만 제한할 뿐
+# 대기 스레드를 막지 못한다). 단일 소비자 스레드 + 상한 있는 큐로 바꾸고, 넘치면 가장
+# 오래된 대기분을 버린다 — 프리웜은 실패해도 첫 조회가 다시 계산하므로 손실이 무해하다.
+_PREWARM_MAX_PENDING = max(2, int(os.getenv("WEB_REPORT_PREWARM_QUEUE", "8") or 8))
+_prewarm_queue = collections.deque()
+_prewarm_lock = threading.Lock()
+_prewarm_wake = threading.Event()
+_prewarm_thread = None
 
 
-def _prewarm_job(session_id: str, upload_root_str: str) -> None:
-    with _PREWARM_SLOTS:
-        try:
-            report_job(session_id, upload_root_str)
+def _prewarm_one(session_id: str, upload_root_str: str, dist_seeded: bool) -> None:
+    """업로드 직후 워밍업 — **report payload 만** 만든다.
+
+    종전에는 dist/map/trim 풀 payload 까지 전부 만들었다. 열어보지도 않을 탭까지
+    업로드마다 빌드하느라 CPU·디스크 캐시를 태우는 비용이 컸다. report payload 는
+    세션을 열면 반드시 쓰이고(/full), 그 과정에서 tables 가 웜이 되어 콜드의 지배
+    비용(재다운로드+디코드)이 사라지므로 나머지 탭의 첫 진입도 충분히 빨라진다.
+    dist 는 클라가 프리컴퓨트 blob 을 붙여준 경우에만 만든다 — 이미 시딩돼 있어
+    gzip 직렬화만 하면 되는 값싼 작업이다.
+    """
+    try:
+        report_job(session_id, upload_root_str)
+        if dist_seeded:
             dist_job(session_id, upload_root_str)
-            map_job(session_id, upload_root_str)
-            # 기본 source("") — Trim 탭 첫 진입 요청과 같은 캐시 키라 그대로 히트한다.
-            # scatter 는 subject 단위(수백~수천)라 전량 프리웜이 비싸고, 위 report_job 이
-            # tables 를 웜으로 만들어 콜드의 지배 비용(재다운로드+디코드)은 이미 사라진다.
-            trim_job(session_id, upload_root_str, "")
+        STATS["prewarm_done"] += 1
+    except Exception:
+        # 프리웜 실패는 조회 시 재계산으로 복구되지만, 조용히 삼키면 상시 실패를
+        # 아무도 모른다 — 로그로는 남긴다.
+        _log.warning("[prewarm] failed session=%s", session_id, exc_info=True)
+
+
+def _prewarm_loop() -> None:
+    while True:
+        with _prewarm_lock:
+            item = _prewarm_queue.popleft() if _prewarm_queue else None
+        if item is None:
+            _prewarm_wake.wait()
+            _prewarm_wake.clear()
+            continue
+        _prewarm_one(*item)
+
+
+def prewarm(session_id: str, upload_root_str: str, dist_seeded: bool = False) -> None:
+    """업로드 직후 프리웜 요청을 큐에 넣는다 (부모 프로세스 데몬 스레드에서 순차 처리).
+
+    부모 스레드에서 도는 이유: ingest 가 방금 시딩한 TABLES_CACHE 를 그대로 써서 재디코드가
+    0회이고, keyed_lock single-flight 로 직후 /full 과도 중복되지 않으며, 결과가 부모 RAM
+    캐시에 직접 들어가 첫 조회가 RAM 히트다. 시딩이 이미 축출된 세션은 load 경로의
+    should_offload 가 자동으로 워커 오프로드를 택한다(자기교정). 큐잉은 즉시 반환하므로
+    업로드 응답을 블록하지 않는다."""
+    global _prewarm_thread
+    with _prewarm_lock:
+        if len(_prewarm_queue) >= _PREWARM_MAX_PENDING:
+            dropped = _prewarm_queue.popleft()
+            STATS["prewarm_dropped"] += 1
+            _log.warning("[prewarm] 큐 포화(%d) — 가장 오래된 요청 폐기: session=%s",
+                         _PREWARM_MAX_PENDING, dropped[0])
+        _prewarm_queue.append((session_id, upload_root_str, bool(dist_seeded)))
+        STATS["prewarm_queued"] += 1
+        if _prewarm_thread is None:
+            _prewarm_thread = threading.Thread(target=_prewarm_loop,
+                                               name="webreport-prewarm", daemon=True)
+            _prewarm_thread.start()
+    _prewarm_wake.set()
+
+
+# ── 온디맨드 콜드 빌드 큐 (라우트 202 경로) ──────────────────────────────────────
+# 콜드 미스 조회는 지금까지 요청 스레드가 빌드 완료까지 기다렸다(수 초~수십 초). waitress
+# 스레드는 8개뿐이라 서로 다른 신규 세션을 여러 명이 동시에 열면 그 스레드들이 전부 묶여
+# 검색·health 같은 값싼 요청까지 밀린다. 여기서는 라우트가 202 를 즉시 반환하고 빌드는
+# 이 큐의 소비자 스레드가 맡는다 — 프런트는 build_status 폴링 후 재요청한다.
+#
+# 프리웜 큐와 분리한 이유: 프리웜은 포화 시 가장 오래된 요청을 버리는데(무해), 여기 요청은
+# 사용자가 화면에서 대기 중이라 버리면 그 사용자만 영영 로드되지 않는다. 대신 (session,
+# kind) 중복 등록을 막아 재요청 폭주에도 큐가 자라지 않게 한다.
+_ONDEMAND_WORKERS = max(1, int(os.getenv("WEB_REPORT_ONDEMAND_WORKERS", "2") or 2))
+_ondemand_queue = collections.deque()
+_ondemand_pending: set = set()      # (session_id, kind) — 큐 대기 + 실행 중
+_ondemand_lock = threading.Lock()
+_ondemand_wake = threading.Event()
+_ondemand_threads: list = []
+
+_ONDEMAND_JOBS = {
+    "report": lambda sid, root: report_job(sid, root),
+    "map": lambda sid, root: map_job(sid, root),
+}
+
+
+def _ondemand_loop() -> None:
+    while True:
+        with _ondemand_lock:
+            item = _ondemand_queue.popleft() if _ondemand_queue else None
+            if item is None:
+                _ondemand_wake.clear()
+        if item is None:
+            _ondemand_wake.wait()
+            continue
+        session_id, upload_root_str, kind = item
+        try:
+            _ONDEMAND_JOBS[kind](session_id, upload_root_str)
+            STATS["ondemand_done"] += 1
         except Exception:
-            pass
+            # 실패해도 다음 요청이 다시 큐에 넣는다(pending 해제 후). 조용히 삼키면
+            # 프런트가 무한 폴링하므로 로그로는 남긴다.
+            STATS["ondemand_error"] += 1
+            _log.warning("[ondemand] %s build failed session=%s", kind, session_id,
+                         exc_info=True)
+        finally:
+            with _ondemand_lock:
+                _ondemand_pending.discard((session_id, kind))
 
 
-def prewarm(session_id: str, upload_root_str: str) -> None:
-    """업로드 직후 프리웜 — 부모 데몬 스레드에서 실행 (2026-07-12 워커 제출에서 복귀).
+def request_build(session_id: str, upload_root_str: str, kind: str = "report") -> None:
+    """콜드 빌드를 백그라운드에 요청한다 (이미 대기/실행 중이면 무시).
 
-    워커 제출 시절엔 워커 프로세스가 부모 TABLES_CACHE 시딩을 못 봐 storage 재다운로드+
-    재디코드(업로드당 디코드 2회)가 났고, 업로더가 곧바로 페이지를 열면 부모 인라인 빌드와
-    중복 계산됐다. 부모 스레드면 ingest 가 방금 시딩한 캐시를 그대로 쓰고(재디코드 0회),
-    keyed_lock single-flight 로 직후 /full·/distribution 과도 중복되지 않으며, 결과가 부모
-    RAM 캐시에 직접 들어가 첫 조회가 RAM 히트다. 시딩이 이미 축출된 세션은 load 경로의
-    should_offload 가 자동으로 워커 오프로드를 택한다(자기교정). 세마포어 acquire 는 스레드
-    안에서 하므로 업로드 응답을 블록하지 않는다. 실패는 무해 — 첫 조회가 다시 계산할 뿐이다."""
-    threading.Thread(target=_prewarm_job, args=(session_id, upload_root_str),
-                     name=f"webreport-prewarm-{session_id}", daemon=True).start()
+    라우트가 202 를 반환하기 직전에 부른다. 같은 세션을 여러 명이 동시에 열어도 등록은
+    1건이고, 실제 빌드 안에서 keyed_lock single-flight 가 한 번 더 중복을 막는다.
+    """
+    if kind not in _ONDEMAND_JOBS:
+        raise ValueError(f"unknown build kind: {kind}")
+    with _ondemand_lock:
+        key = (session_id, kind)
+        if key in _ondemand_pending:
+            return
+        _ondemand_pending.add(key)
+        _ondemand_queue.append((session_id, upload_root_str, kind))
+        STATS["ondemand_queued"] += 1
+        while len(_ondemand_threads) < _ONDEMAND_WORKERS:
+            th = threading.Thread(target=_ondemand_loop,
+                                  name=f"webreport-ondemand-{len(_ondemand_threads)}",
+                                  daemon=True)
+            _ondemand_threads.append(th)
+            th.start()
+    _ondemand_wake.set()

@@ -27,6 +27,7 @@
 |------|---------|---------------|
 | TABLES_CACHE | (akey, chash) | raw_data 편집(chash) / 세션 삭제 |
 | DIST_CACHE | (akey, chash, mode) | 〃 (mode 는 세션 생성 후 불변) |
+| _DIST_BATCH_CACHE | (akey, chash, mode, subjects_digest[, "bin1"]) | 〃 — 항목 배치 ECDF gzip (`/web_report/distribution_batch`) |
 | MAP_CACHE | (akey, chash, mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8) |
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 |
 | REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode) | comment/override 편집(rev) + 위 전부 |
@@ -68,6 +69,18 @@
 - **콜드 빌드 관측 로그**: report/dist 콜드 빌드가 `akey/항목수/포인트수/크기/소요초`
   INFO 로그를 남긴다 ([service.py](../web_report/service.py)) — 실데이터 규모가 위험
   구간(수천만 포인트)에 닿는지 운영 로그로 판단.
+- **202 + 백그라운드 빌드** (2026-07-21): `/full` 과 `/web_report/map_analysis` 는 콜드
+  미스에서 요청 스레드가 빌드를 기다리지 않는다. `service.ColdBuildRequired` 를 올려
+  `compute.request_build`(전용 큐 + 소비자 스레드 `WEB_REPORT_ONDEMAND_WORKERS`)에 넘기고
+  `202 {"building":true,"stage","elapsed"}` 를 즉시 반환하며, 프런트가 1s→5s 백오프로
+  재요청한다(boot.js `retryWhileBuilding` / wafer_charts.js `fetchMapUntilBuilt`).
+  waitress 스레드는 8개뿐이라 여러 명이 서로 다른 신규 세션을 동시에 열면 값싼 요청까지
+  밀리던 문제를 없앤다. **warm/디스크 히트는 종전대로 200** — 202 는 실제 콜드에서만.
+  프리웜 큐와 분리한 이유: 프리웜은 포화 시 가장 오래된 요청을 버리는데(무해), 여기 요청은
+  사용자가 화면에서 기다리는 중이라 버리면 그 사용자만 영영 로드되지 않는다. 대신
+  `(session, kind)` 중복 등록을 막아 재요청 폭주에도 큐가 자라지 않게 한다.
+  `build_status` 는 (session, stage) 단위로 기록한다 — report/map 콜드가 겹칠 때
+  한쪽 `end()` 가 다른 쪽 기록을 지우지 않게 하기 위함.
 
 ## 환경변수
 | 변수 | 기본값 | 설명 |
@@ -80,6 +93,9 @@
 | `WEB_REPORT_MAP_CACHE` | `4` | Map dies gzip 캐시 개수 |
 | `WEB_REPORT_MAP_CACHE_MB` | `512` | Map dies blob RAM 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_REPORT_CACHE` | `8` | report dict 캐시 개수 |
+| `WEB_REPORT_REPORT_CACHE_MB` | `256` | report dict 캐시 추정 바이트 상한 (개수와 이중 적용, 0=비활성). 크기는 put 시 1회 직렬화 길이로 추정 |
+| `WEB_REPORT_DIST_BATCH_CACHE` | `64` | Distribution 항목 배치 응답 gzip 캐시 개수 (배치 1건 = 항목 수십 개분이라 작다) |
+| `WEB_REPORT_ONDEMAND_WORKERS` | `2` | 콜드 미스 조회가 202 를 반환한 뒤 백그라운드에서 빌드하는 소비자 스레드 수 |
 | `WEB_REPORT_COMMONALITY_CACHE` | `2` | Commonality 인덱스 캐시 개수 |
 | `WEB_REPORT_TRIM_CACHE` | `4` | Trim payload 캐시 개수 |
 | `WEB_REPORT_TRIM_CHART_CACHE` | `64` | Trim 그룹 차트 캐시 개수 |

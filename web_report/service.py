@@ -57,8 +57,17 @@ def invalidate_caches(analysis_key) -> None:
     cache.invalidate_caches(analysis_key)
 
 
+class ColdBuildRequired(Exception):
+    """콜드 빌드가 필요한데 호출자가 대기하지 않기로 한 경우 (build_if_cold=False).
+
+    라우트가 이 신호를 받아 202(building)로 즉시 응답하고, 실제 빌드는 백그라운드
+    (compute.request_build)에서 돈다 — 요청 스레드가 수 초~수십 초 묶이지 않는다.
+    """
+
+
 def load_webreport(session_id: str, *, report_db, upload_root: Path,
-                   session: dict | None = None) -> tuple[dict, dict]:
+                   session: dict | None = None,
+                   build_if_cold: bool = True) -> tuple[dict, dict]:
     """세션 조회: build_report_payload 결과를 (analysis_key, content_hash, session_id,
     edits_rev) 키로 캐시한다 — comment/override 편집은 세션 편집 rev 증가로 자연 무효화되고,
     raw_data 편집은 content_hash 변경으로 무효화된다. 편집 상태는 세션 단위 DB
@@ -97,6 +106,10 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
             if report is None:
                 # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
                 report = disk_cache.load_report(upload_root, cache_key)
+                if report is None and not build_if_cold:
+                    # 캐시 3계층(RAM→disk) 전부 미스 = 실제 콜드 빌드가 필요한 지점.
+                    # 대기하지 않기로 한 호출자(라우트 202 경로)에게 즉시 알린다.
+                    raise ColdBuildRequired(session_id)
                 if report is None:
                     # 여기부터가 실제 콜드 빌드(워커 오프로드 포함) — 프런트 로드
                     # 오버레이가 build_status 폴링으로 "계산 중 + 경과초"를 사실대로
@@ -147,8 +160,8 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 len(report.get("distribution_index") or ()),
                                 time.perf_counter() - t0)
                     finally:
-                        build_status.end(session_id)
-                cache.cache_put(cache.REPORT_CACHE, cache_key, report, cache.REPORT_CACHE_MAX)
+                        build_status.end(session_id, "report")
+                cache.report_cache_put(cache_key, report)   # 개수+바이트 이중 상한 (cache.py)
     public = dict(session)
     public["has_password"] = bool(public.get("password"))
     public.pop("password", None)
@@ -166,6 +179,21 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: boo
     session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     return _dist_blob.compute_dist_compact(
         tables, manifest.get("selected_items") or [], session.get("mode"), bin1=bin1)
+
+
+def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root: Path,
+                           bin1: bool = False) -> dict:
+    """항목 배치 ECDF — 요청한 subject 만 계산한 compact dict (다운샘플 없음).
+
+    전체 dist(get_distribution)는 대형 세션에서 수천만 포인트라 프런트가 한 번에 받으면
+    다운로드·파싱·힙 상주가 모두 폭증한다. 갤러리/미니셀은 화면에 보이는 항목만 필요하므로
+    ``subjects`` 로 좁혀 계산한다. 계산 경로는 전체와 동일한 compute_dist_compact(only=)라
+    결과는 전체 payload 에서 그 항목만 뽑은 것과 정준 JSON 으로 일치한다.
+    """
+    session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    return _dist_blob.compute_dist_compact(
+        tables, manifest.get("selected_items") or [], session.get("mode"),
+        bin1=bin1, only=subjects)
 
 
 def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
@@ -243,13 +271,17 @@ def get_map_analysis(session_id: str, *, report_db, upload_root: Path) -> dict:
     return {"format": "map-dies-v1", "maps": rows}
 
 
-def get_map_gzip(session_id: str, *, report_db, upload_root: Path) -> bytes:
+def get_map_gzip(session_id: str, *, report_db, upload_root: Path,
+                 build_if_cold: bool = True) -> bytes:
     """get_map_analysis 결과를 JSON→gzip bytes 로 캐시해 반환 (라우트가 그대로 응답).
 
     get_distribution_gzip 과 1:1 대칭 — RAM(MAP_CACHE)→disk→single-flight→콜드 빌드.
     키는 dist 와 같은 (analysis_key, content_hash, mode) — dies 는 편집(rev)과 무관하고
     raw_data 편집만 content_hash 변경으로 무효화한다. 콜드 빌드는 워커 오프로드 대상
     (업로드 프리웜이 미리 채워 첫 조회 콜드가 없도록 한다).
+
+    ``build_if_cold=False`` 면 /full 과 같은 규약으로 ColdBuildRequired 를 올린다 —
+    라우트가 202 를 반환하고 빌드는 백그라운드(compute.request_build)가 맡는다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -268,23 +300,34 @@ def get_map_gzip(session_id: str, *, report_db, upload_root: Path) -> bytes:
             return blob
         # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
         blob = disk_cache.load_map(upload_root, cache_key)
-        if blob is None and compute.should_offload(cache_policy.tables_key(session)):
-            # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
-            blob = compute.run(compute.map_job, session_id, str(upload_root))
-        if blob is None:
-            t0 = time.perf_counter()
-            payload = get_map_analysis(session_id, report_db=report_db,
-                                       upload_root=upload_root)
-            raw = json.dumps(payload, ensure_ascii=False,
-                             separators=(",", ":")).encode("utf-8")
-            blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)
-            disk_cache.save_map(upload_root, cache_key, blob)
-            # 관측 로그 — die 전량 payload 가 실데이터에서 얼마나 커지는지 진단용.
-            _log.info(
-                "map cold build akey=%.12s maps=%d dies=%d raw=%.1fMB gz=%.1fMB %.1fs",
-                str(analysis_key), len(payload.get("maps") or ()),
-                sum(len(m.get("dies") or ()) for m in payload.get("maps") or ()),
-                len(raw) / 1048576, len(blob) / 1048576, time.perf_counter() - t0)
+        if blob is None and not build_if_cold:
+            raise ColdBuildRequired(session_id)
+        cold = blob is None
+        if cold:
+            # 콜드 구간만 기록 — 프런트 맵 오버레이가 build_status 폴링으로 진행을 본다
+            # (report 와 같은 레지스트리를 stage 로 구분해 쓴다).
+            build_status.begin(session_id, "map")
+        try:
+            if blob is None and compute.should_offload(cache_policy.tables_key(session)):
+                # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
+                blob = compute.run(compute.map_job, session_id, str(upload_root))
+            if blob is None:
+                t0 = time.perf_counter()
+                payload = get_map_analysis(session_id, report_db=report_db,
+                                           upload_root=upload_root)
+                raw = json.dumps(payload, ensure_ascii=False,
+                                 separators=(",", ":")).encode("utf-8")
+                blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)
+                disk_cache.save_map(upload_root, cache_key, blob)
+                # 관측 로그 — die 전량 payload 가 실데이터에서 얼마나 커지는지 진단용.
+                _log.info(
+                    "map cold build akey=%.12s maps=%d dies=%d raw=%.1fMB gz=%.1fMB %.1fs",
+                    str(analysis_key), len(payload.get("maps") or ()),
+                    sum(len(m.get("dies") or ()) for m in payload.get("maps") or ()),
+                    len(raw) / 1048576, len(blob) / 1048576, time.perf_counter() - t0)
+        finally:
+            if cold:
+                build_status.end(session_id, "map")
         cache.map_cache_put(cache_key, blob)   # 개수+바이트 이중 상한 (cache.py)
     return blob
 

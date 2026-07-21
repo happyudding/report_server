@@ -220,6 +220,42 @@ def api_metrics_history():
     return jsonify(metrics.snapshot_history(window))
 
 
+@admin_panel_bp.get("/api/runtime")
+def api_runtime():
+    """응답시간 백분위 · 컴퓨트 워커 · 캐시 히트율 · DB 잠금 · 스케줄러 상태.
+
+    개별 API 로 쪼개면 화면이 5번 왕복해야 해서 한 번에 묶어 돌려준다. 각 구성요소는
+    실패해도 나머지를 막지 않는다 (모듈 미기동/kill-switch 대비)."""
+    out = {}
+    try:
+        out["latency"] = metrics.latency_snapshot()
+    except Exception:
+        out["latency"] = None
+    try:
+        from web_report import compute
+        out["compute"] = compute.status()
+    except Exception:
+        out["compute"] = None
+    try:
+        from web_report import cache as wr_cache
+        out["cache"] = wr_cache.cache_stats()
+    except Exception:
+        out["cache"] = None
+    try:
+        import ops
+        out["db_lock"] = dict(ops.DB_LOCK_ERRORS)
+    except Exception:
+        out["db_lock"] = None
+    try:
+        import db_backup
+        import report_cleanup
+        out["schedulers"] = {"backup": dict(db_backup.STATE),
+                             "cleanup": dict(report_cleanup.STATE)}
+    except Exception:
+        out["schedulers"] = None
+    return jsonify(out)
+
+
 # ── 통계 ─────────────────────────────────────────────────────────────────────
 
 @admin_panel_bp.get("/api/stats/daily")
@@ -263,6 +299,9 @@ def api_sessions():
         limit=request.args.get("limit", 100),
         offset=request.args.get("offset", 0),
         trashed=(request.args.get("trashed") or "").strip() or None,
+        date_from=(request.args.get("date_from") or "").strip() or None,
+        date_to=(request.args.get("date_to") or "").strip() or None,
+        uploader=(request.args.get("uploader") or "").strip() or None,
     ))
 
 

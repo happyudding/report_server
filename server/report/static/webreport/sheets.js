@@ -530,12 +530,12 @@ function renderSheetTable(rows, opts) {
       // Distribution 열: web_report 분포(있는 Item)로 작은 산포 카드를 채운다. 없으면 빈 칸.
       if (isDistCol(c)) {
         const item = r && r["Item"];
-        // 분포 데이터 로딩 중(distDataReady=false)엔 일단 셀을 만들어 두고, 도착 후
-        // refreshDistConsumers 가 채운다 (데이터 없는 항목은 그때 빈 칸으로).
-        // Yield/ETC/CPK 섹션의 데이터 행(서브헤더 제외)에 산포 카드 표시.
+        // 분포 유무는 distribution_index(=/full 에 이미 있음)로 판단한다 — ECDF 는 보이는
+        // 셀만 배치로 받으므로 캐시 보유 여부로 판단하면 아직 안 받은 항목의 셀이 통째로
+        // 안 만들어진다. Yield/ETC/CPK 섹션의 데이터 행(서브헤더 제외)에 산포 카드 표시.
         if (opts.kind === "issue" && item && !subhead && !issuePassRow
           && (rowSection[ri] === "Yield" || rowSection[ri] === "ETC" || rowSection[ri] === "CPK")
-          && (distDataReady ? !!distDataCache[item] : true)) {
+          && distHasData(item)) {
           // CPK 섹션 미니셀은 규격내(limit 안) 구간만 재정규화해 그린다(data-limitwin) —
           // 행의 cpk 값(cpk_limited)과 동일 기준. Yield/ETC 는 기존 전체 범위 유지.
           const limitWin = rowSection[ri] === "CPK" ? ` data-limitwin="1"` : "";
@@ -649,26 +649,67 @@ function renderSheetTable(rows, opts) {
     return `<tr${trAttr}>${tds}</tr>`;
   };
 
-  let body;
-  if (opts.kind === "issue") {
-    // 섹션이 바뀔 때마다 그 섹션 2행 헤더 블록을 먼저 심고, 헤더가 대체하는 divider 행
-    // (CPK 서브헤더 / ETC 라벨행)은 데이터로 렌더하지 않는다.
+  // 본문 행 생성 — 행 구간(슬라이스) 단위로 부를 수 있게 분리한다(청크 렌더용).
+  // state.curSec 는 "섹션이 바뀌면 그 섹션 2행 헤더 블록을 먼저 심는다"는 판단의 이월
+  // 상태라, 슬라이스를 이어 부를 때 호출자가 같은 객체를 계속 넘겨야 한다.
+  function emitRows(start, end, state) {
     let out = "";
-    let curSec = null;
-    bodyRows.forEach((r, ri) => {
-      const sec = rowSection[ri];
-      if (sec && sec !== curSec) { curSec = sec; out += issueSectionHeadRowsHtml(cols, sec); }
-      if (isCpkSubheadRow(r)) return;
-      if (String((r && r["Category"]) || "").trim() === "ETC") return;
+    for (let ri = start; ri < end; ri++) {
+      const r = bodyRows[ri];
+      if (opts.kind === "issue") {
+        const sec = rowSection[ri];
+        if (sec && sec !== state.curSec) {
+          state.curSec = sec;
+          out += issueSectionHeadRowsHtml(cols, sec);
+        }
+        // 헤더 블록이 대체하는 divider 행(CPK 서브헤더 / ETC 라벨행)은 데이터로 안 그린다.
+        if (isCpkSubheadRow(r)) continue;
+        if (String((r && r["Category"]) || "").trim() === "ETC") continue;
+      }
       out += renderDataRowTr(r, ri);
-    });
-    body = "<tbody>" + out + "</tbody>";
-  } else {
-    body = "<tbody>" + bodyRows.map(renderDataRowTr).join("") + "</tbody>";
+    }
+    return out;
   }
 
   const kindCls = opts.kind ? ` kind-${opts.kind}` : "";
-  return `<div class="sheet-wrap${kindCls}"><table class="sheet-table${kindCls}">${colgroup}${head}${body}</table></div>`;
+  const shell = bodyHtml =>
+    `<div class="sheet-wrap${kindCls}"><table class="sheet-table${kindCls}">` +
+    `${colgroup}${head}<tbody>${bodyHtml}</tbody></table></div>`;
+
+  // chunkInto: 표를 통짜로 만들지 않고 이 host 안에 프레임당 CHUNK_ROWS 행씩 붙인다.
+  // Issue Table 은 행 수백~수천 × 20열이라 한 번에 만들면 수백 ms 를 통으로 블록한다.
+  if (opts.chunkInto) {
+    sheetChunkRender(opts.chunkInto, shell(""), bodyRows.length, emitRows, opts.onChunksDone);
+    return "";
+  }
+  return shell(emitRows(0, bodyRows.length, { curSec: null }));
+}
+
+// ── 표 본문 청크 렌더 ─────────────────────────────────────────────────────────
+// 총 작업량은 같고 프레임 단위로 쪼개기만 한다 — 행 내용·순서·스크롤은 통짜 렌더와 동일.
+// 같은 host 에 새 렌더가 시작되면 토큰이 바뀌어 이전 체인이 스스로 멈춘다.
+const SHEET_CHUNK_ROWS = 50;
+const _sheetChunkTokens = new WeakMap();
+function sheetChunkRender(host, shellHtml, total, emitRows, onDone) {
+  if (!host) return;
+  const token = (_sheetChunkTokens.get(host) || 0) + 1;
+  _sheetChunkTokens.set(host, token);
+  host.innerHTML = shellHtml;
+  const tbody = host.querySelector("tbody");
+  if (!tbody) return;
+  const state = { curSec: null };
+  let i = 0;
+  const step = () => {
+    if (_sheetChunkTokens.get(host) !== token) return;   // 새 렌더가 시작됨 — 중단
+    const end = Math.min(total, i + SHEET_CHUNK_ROWS);
+    if (end > i) {
+      tbody.insertAdjacentHTML("beforeend", emitRows(i, end, state));
+      i = end;
+    }
+    if (i < total) requestAnimationFrame(step);
+    else if (onDone) onDone();
+  };
+  step();   // 첫 청크는 즉시 — 빈 표가 한 프레임이라도 보이지 않게
 }
 
 // ── 컬럼 폭 드래그 리사이즈 (Yield 등 thead 표 공용) ─────────────────────────
@@ -749,8 +790,9 @@ function yieldOverviewHtml() {
   if (!ov) return "";
   const pct = (typeof ov.yield_pct === "number") ? ov.yield_pct.toFixed(2) : ov.yield_pct;
   // 소스가 2개 이상일 때만 소스별 수율을 따로 표시(단일 소스는 Total 과 동일하므로 생략).
-  // 정렬은 orderSummarySources — yield% 내림차순, 단 DUT 모드는 DUT 번호 오름차순.
-  const bySrc = orderSummarySources(ov.by_source);
+  // 정렬하지 않고 payload(by_source) 순서 = source 순서 그대로 — 아래 STEP×Source 표와
+  // 소스 나열 순서를 맞춘다.
+  const bySrc = Array.isArray(ov.by_source) ? ov.by_source : [];
   const bySrcHtml = bySrc.length >= 2 ? `<div class="yield-by-source"><table class="ybs-table">
     <thead><tr><th>Source</th><th>Yield</th><th>Pass / Total</th></tr></thead>
     <tbody>` + bySrc.map(s => {

@@ -29,22 +29,29 @@ def backup_now():
     if not _backup_lock.acquire(blocking=False):
         raise Busy("백업이 이미 실행 중입니다.")
     try:
-        dest = db_backup.run_backup()
-        return {"ok": True, "file": dest.name, "bytes": dest.stat().st_size}
+        # ok 는 run_backup 의 integrity 결과를 그대로 쓴다 — 예전처럼 True 를 박아두면
+        # .bad 로 rename 된 불량 백업도 성공으로 보인다.
+        return db_backup.run_backup()
     finally:
         _backup_lock.release()
 
 
 def list_backups():
+    """백업 목록. 불량본(.bad)도 포함해 bad=true 로 표시한다 — 목록에서 빠지면
+    반복 실패를 관리자가 알아챌 방법이 없다."""
     backup_dir = Path(config.REPORT_DB_BACKUP_DIR)
     if not backup_dir.exists():
         return {"dir": str(backup_dir), "rows": []}
     rows = []
-    for p in sorted(backup_dir.glob("report_*.db"),
+    for p in sorted(list(backup_dir.glob("*.db")) + list(backup_dir.glob("*.db.bad")),
                     key=lambda p: p.stat().st_mtime, reverse=True):
         st = p.stat()
-        rows.append({"name": p.name, "bytes": st.st_size, "mtime": int(st.st_mtime)})
-    return {"dir": str(backup_dir), "keep": config.REPORT_DB_BACKUP_KEEP, "rows": rows}
+        rows.append({"name": p.name, "bytes": st.st_size, "mtime": int(st.st_mtime),
+                     "db": p.name.split("_")[0], "bad": p.name.endswith(".bad")})
+    return {"dir": str(backup_dir), "keep": config.REPORT_DB_BACKUP_KEEP,
+            "external_dir": str(config.REPORT_DB_BACKUP_EXTERNAL_DIR or ""),
+            "bad_count": sum(1 for r in rows if r["bad"]),
+            "state": db_backup.STATE, "rows": rows}
 
 
 def cleanup_now(dry_run):

@@ -21,28 +21,34 @@ import threading
 import time
 
 _LOCK = threading.Lock()
-# session_id -> {"stage": str, "t0": float}
-_ACTIVE: dict[str, dict] = {}
+# (session_id, stage) -> t0.  stage 별로 나눠 담는 이유: report 와 map 콜드 빌드가
+# 겹칠 수 있는데(세션 열자마자 Map 탭), 세션당 1칸이면 나중에 끝난 쪽의 end() 가
+# 아직 진행 중인 다른 stage 의 기록까지 지워 프런트가 "끝났다"고 오판한다.
+_ACTIVE: dict[tuple, float] = {}
 
 
 def begin(session_id: str, stage: str = "report") -> None:
-    """콜드 빌드 시작 기록. 같은 세션 중복 진입은 최초 t0 를 유지한다."""
+    """콜드 빌드 시작 기록. 같은 (세션, stage) 중복 진입은 최초 t0 를 유지한다."""
     with _LOCK:
-        if session_id not in _ACTIVE:
-            _ACTIVE[session_id] = {"stage": stage, "t0": time.monotonic()}
+        _ACTIVE.setdefault((session_id, stage), time.monotonic())
 
 
-def end(session_id: str) -> None:
+def end(session_id: str, stage: str = "report") -> None:
     """콜드 빌드 종료 기록 (성공/실패 무관 — 호출부 finally)."""
     with _LOCK:
-        _ACTIVE.pop(session_id, None)
+        _ACTIVE.pop((session_id, stage), None)
 
 
 def snapshot(session_id: str) -> dict:
-    """현재 상태 — {"state":"building","stage","elapsed"} 또는 {"state":"idle"}."""
+    """현재 상태 — {"state":"building","stage","elapsed"} 또는 {"state":"idle"}.
+
+    여러 stage 가 동시에 도는 경우 **가장 오래 돌고 있는 것**을 보고한다(사용자가 실제로
+    기다리는 시간에 가깝다).
+    """
     with _LOCK:
-        entry = _ACTIVE.get(session_id)
-        if entry is None:
+        entries = [(t0, stage) for (sid, stage), t0 in _ACTIVE.items() if sid == session_id]
+        if not entries:
             return {"state": "idle"}
-        return {"state": "building", "stage": entry["stage"],
-                "elapsed": round(time.monotonic() - entry["t0"], 1)}
+        t0, stage = min(entries)
+    return {"state": "building", "stage": stage,
+            "elapsed": round(time.monotonic() - t0, 1)}

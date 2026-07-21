@@ -8,6 +8,7 @@ const TRIM = {
   COLORS: { INIT: "#2E6FE8", CODE: "#7C3AED", TRIM: "#16A34A", VERIFY: "#F59E0B" },
   CONCURRENCY: 8, GL_THRESHOLD: 2000,
   PAGE_SIZE: 6,             // ② 산포 분석: 한 페이지 6개(가로3·세로2)로 나눠 렌더
+  CHART_CACHE_MAX: 64,      // 그룹 차트 응답 보유 개수 상한(페이지 6개 × 여유)
   REPORT_ENABLED: false,    // ③ 분석 리포트 임시 비활성(웹에서 숨김) — renderTrimReport 코드는 보존
 };
 let trimState = {
@@ -16,6 +17,7 @@ let trimState = {
   payloads: {},             // source → payload (클라 캐시)
   payloadPromises: {},      // source → 진행 중 fetch (중복 방지)
   charts: {},               // `${source}||${group}` → chart payload (재조회 즉시 표시)
+  chartsOrder: [],          // 위 캐시 삽입 순서 (개수 상한 축출용 — 무한 누적 방지)
   chartPromises: {},        // 같은 키 fetch 중복 방지
   queue: [], inflight: 0,   // 차트 fetch 동시 CONCURRENCY 개 제한 큐
   filter: "all", search: "",
@@ -378,7 +380,13 @@ function trimPumpQueue() {
     const q = new URLSearchParams({ source: job.source, group: job.group });
     fetch(`/pe/report/session/${SESSION_ID}/web_report/trim_chart?${q}`, { cache: "no-cache" })
       .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(chart => { trimState.charts[job.key] = chart; job.resolve(chart); })
+      .then(chart => {
+        // 축출된 그룹은 chartPromises 도 함께 지워야 다음 조회에서 재fetch 된다.
+        cachePutCapped(trimState.charts, trimState.chartsOrder, job.key, chart,
+                       TRIM.CHART_CACHE_MAX,
+                       old => { delete trimState.chartPromises[old]; });
+        job.resolve(chart);
+      })
       .catch(err => { delete trimState.chartPromises[job.key]; job.reject(err); })
       .finally(() => { trimState.inflight--; trimPumpQueue(); });
   }
@@ -442,7 +450,7 @@ function trimScatterToolbarHtml() {
     ? `<div class="distseg-group"><button class="distseg trim-scatter-clear" title="선택 해제">선택 ${n}개 ✕</button></div>` : "";
   return `<div class="dist-toolbar">
     ${selChip}
-    <div class="dist-search-wrap">
+    <div class="dist-search-wrap" data-no-dirty>
       <input id="trimScatterSearch" class="dist-search" type="text" autocomplete="off" placeholder="그룹/항목 검색 (체크로 선택)">
       <div id="trimScatterSuggest" class="dist-suggest" style="display:none"></div>
     </div>
@@ -775,7 +783,7 @@ function renderTrimReport(body, p) {
   body.innerHTML = `
     <div class="dist-toolbar">
       <div class="distseg-group">${segs}</div>
-      <input id="trimSearch" class="dist-search" type="text" autocomplete="off"
+      <input id="trimSearch" class="dist-search" type="text" autocomplete="off" data-no-dirty
         placeholder="항목명/그룹 검색" value="${esc(trimState.search)}">
     </div>
     ${groups.length ? `<div class="trim-table-wrap"><table class="trim-table trim-report-table">

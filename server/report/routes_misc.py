@@ -207,6 +207,18 @@ def note_frame_page():
     return resp
 
 
+def _epoch_arg(name, end_of_day=False):
+    """'YYYY-MM-DD' 쿼리 파라미터 → epoch 초(로컬). 없거나 형식 오류면 None."""
+    value = (request.args.get(name) or "").strip()
+    if not value:
+        return None
+    try:
+        ts = int(time.mktime(time.strptime(value, "%Y-%m-%d")))
+    except (TypeError, ValueError):
+        return None
+    return ts + 86399 if end_of_day else ts
+
+
 @report_bp.get("/api/history")
 def history():
     filters = {
@@ -216,6 +228,14 @@ def history():
         "revision": request.args.get("revision") or None,
         "lot_id": request.args.get("lot_id") or None,
         "source": request.args.get("source") or None,
+        # 검색결과 페이지의 필터가 전부 서버로 넘어온다 — 예전엔 전량을 내려받아
+        # 클라이언트에서 걸렀다(세션이 늘수록 첫 화면이 느려지는 구조).
+        "q": (request.args.get("q") or "").strip() or None,
+        "mode": (request.args.get("mode") or "").strip() or None,
+        "date_from": _epoch_arg("date_from"),
+        "date_to": _epoch_arg("date_to", end_of_day=True),
+        "mine": request.args.get("mine") == "1",
+        "visibility": (request.args.get("visibility") or "").strip() or None,
     }
     # 비공개 세션 필터: 업로더/위임 편집자 외에는 목록에서 숨긴다 (신원 없음 ""=전부 숨김).
     viewer = _current_user()
@@ -232,7 +252,9 @@ def history():
         offset = max(0, int(offset_raw or 0))
     except (TypeError, ValueError):
         offset = 0
-    rows = report_db.get_history(**filters, limit=limit, offset=offset, viewer=viewer)
+    sort = (request.args.get("sort") or "new").strip()
+    rows = report_db.get_history(**filters, limit=limit, offset=offset, viewer=viewer,
+                                 sort=sort)
     total = report_db.count_history(**filters, viewer=viewer)
     return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset})
 

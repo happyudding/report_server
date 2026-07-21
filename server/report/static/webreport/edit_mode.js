@@ -80,16 +80,21 @@ const ISSUE_COMMENT_COLS = new Set(["PTE comment", "개발 comment"]);
 function renderIssuesEdit() {
   const panel = document.getElementById("panel-issues");
   if (Array.isArray(DATA.issue_table_text) && DATA.issue_table_text.length) {
-    panel.innerHTML =
-      issueToolbarHtml() +
-      renderSheetTable(DATA.issue_table_text, { edit: true, kind: "issue", editableCols: ISSUE_COMMENT_COLS });
-    syncIssueHeadRowHeight(panel);
-    // 읽기 모드와 동일하게 좌측 고정(Step~Distribution) 오프셋 실측 — 편집 모드에서도 고정열 정렬.
-    syncIssueStickyOffsets(panel);
-    requestAnimationFrame(() => syncIssueStickyOffsets(panel));   // 레이아웃 확정 후 재실측
-    renderIssueMiniDist(panel);
-    renderIssueMiniMap(panel);
-    bindIssueColResize(panel);
+    // 읽기 모드와 동일하게 본문을 청크로 붙인다(대형 표 통짜 렌더 블록 방지).
+    panel.innerHTML = issueToolbarHtml() + `<div id="issueTableHost"></div>`;
+    renderSheetTable(DATA.issue_table_text, {
+      edit: true, kind: "issue", editableCols: ISSUE_COMMENT_COLS,
+      chunkInto: document.getElementById("issueTableHost"),
+      onChunksDone: () => {
+        syncIssueHeadRowHeight(panel);
+        // 읽기 모드와 동일하게 좌측 고정(Step~Distribution) 오프셋 실측 — 편집 모드도 정렬.
+        syncIssueStickyOffsets(panel);
+        requestAnimationFrame(() => syncIssueStickyOffsets(panel));   // 레이아웃 확정 후 재실측
+        renderIssueMiniDist(panel);
+        renderIssueMiniMap(panel);
+        bindIssueColResize(panel);
+      },
+    });
     return;
   }
   emptyPanel(panel, "Issue Table 데이터 없음");
@@ -380,9 +385,12 @@ function _setDot(state) {
   if (saveBtn) saveBtn.classList.toggle("dirty", state === "dirty");
 }
 
-// dirty 마킹: 수정 모드에서 contenteditable 또는 input 변경 시
-document.querySelector(".content").addEventListener("input", () => {
+// dirty 마킹: 수정 모드에서 contenteditable 또는 input 변경 시.
+// 검색·필터 입력은 저장할 내용이 아니므로 data-no-dirty 로 제외한다 — 안 그러면
+// 검색만 하고 나가도 "저장하지 않은 변경" 모달이 떠서 경고를 무시하게 된다.
+document.querySelector(".content").addEventListener("input", e => {
   if (MODE !== "edit") return;
+  if (e.target && e.target.closest("[data-no-dirty]")) return;
   _dirty = true;
   _setDot("dirty");
 });

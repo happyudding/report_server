@@ -32,8 +32,15 @@ _FULL_CACHE: OrderedDict = OrderedDict()
 _SCATTER_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_SCATTER_CACHE", "16") or 16))
 _SCATTER_CACHE: OrderedDict = OrderedDict()
 
+# /distribution_batch: 키 (akey, chash, mode, subjects_digest[, "bin1"]) -> gzip bytes.
+# 갤러리 스크롤이 같은 배치를 되짚는 경우(위/아래 왕복)가 잦아 개수 상한을 넉넉히 둔다 —
+# 배치 하나는 항목 수십 개분이라 blob 이 작다.
+_DIST_BATCH_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_DIST_BATCH_CACHE", "64") or 64))
+_DIST_BATCH_CACHE: OrderedDict = OrderedDict()
+
 cache.register_akey_cache(_FULL_CACHE)
 cache.register_akey_cache(_SCATTER_CACHE)
+cache.register_akey_cache(_DIST_BATCH_CACHE)
 
 
 def _gzip_json(obj) -> bytes:
@@ -43,12 +50,17 @@ def _gzip_json(obj) -> bytes:
 
 
 def get_full_gzip(session_id: str, *, session: dict, extras: dict,
-                  report_db, upload_root: Path) -> tuple[str, bytes]:
+                  report_db, upload_root: Path,
+                  build_if_cold: bool = True) -> tuple[str, bytes]:
     """/full 응답(payload 전체)의 gzip bytes 를 캐시해 (etag, bytes) 로 반환.
 
     extras: 라우트가 조립한 값싼 부분 전부(session public/summary/charts/issue_images/
     distribution_url/csv_files/objects/annotations). 여기에 load_webreport 결과
     (summary_text 계열 + web_report)를 합쳐 기존 payload 와 동일한 형태를 만든다.
+
+    ``build_if_cold=False`` 면 콜드 빌드가 필요한 시점에 service.ColdBuildRequired 를
+    올린다 — 라우트가 202 로 즉시 응답하고 빌드는 백그라운드에 맡기기 위함이다.
+    이 gzip 캐시 자체의 미스는 콜드가 아니다(report 가 웜이면 직렬화만 하면 됨).
     """
     analysis_key = session.get("analysis_key")
     if not analysis_key:
@@ -69,7 +81,8 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
         if blob is not None:
             return etag, blob
         _, report = service.load_webreport(
-            session_id, report_db=report_db, upload_root=upload_root, session=session)
+            session_id, report_db=report_db, upload_root=upload_root, session=session,
+            build_if_cold=build_if_cold)
         sheets = report.get("sheets", {})
         payload = dict(extras)
         payload["summary_text"] = sheets.get("Summary")
@@ -78,6 +91,35 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
         payload["web_report"] = report
         blob = _gzip_json(payload)
         cache.cache_put(_FULL_CACHE, cache_key, blob, _FULL_CACHE_MAX)
+    return etag, blob
+
+
+def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
+                        report_db, upload_root: Path, bin1: bool = False) -> tuple[str, bytes]:
+    """/distribution_batch 응답의 gzip bytes 를 캐시해 (etag, bytes) 로 반환.
+
+    subjects 는 **정렬·중복제거된 리스트**여야 한다(라우트가 정규화) — 같은 항목 집합을
+    다른 순서로 요청해도 같은 캐시 키가 되도록 하기 위함이다. etag 는 캐시 키에서 파생해
+    배치 구성·변형(bin1)이 다르면 서로의 304 로 오염되지 않는다.
+    """
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+    digest = hashlib.sha256("\n".join(subjects).encode("utf-8")).hexdigest()[:32]
+    cache_key = cache_policy.dist_batch_key(session, digest, bin1=bin1)   # 키 규약: cache_policy
+    etag = '"' + hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()[:32] + '"'
+
+    blob = cache.cache_get(_DIST_BATCH_CACHE, cache_key)
+    if blob is not None:
+        return etag, blob
+    with cache.keyed_lock(("dist_batch",) + cache_key):
+        blob = cache.cache_get(_DIST_BATCH_CACHE, cache_key)
+        if blob is not None:
+            return etag, blob
+        result = service.get_distribution_batch(
+            session_id, subjects, report_db=report_db, upload_root=upload_root, bin1=bin1)
+        blob = _gzip_json(result)
+        cache.cache_put(_DIST_BATCH_CACHE, cache_key, blob, _DIST_BATCH_CACHE_MAX)
     return etag, blob
 
 

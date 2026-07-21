@@ -46,8 +46,15 @@ MAP_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_MAP_CACHE", "4") or 4))
 MAP_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_MAP_CACHE_MB", "512")
                                  or 512)) * 1024 * 1024   # 0 = 바이트 상한 비활성
 MAP_CACHE: OrderedDict = OrderedDict()      # (akey, chash, mode) -> gzip bytes
+# report payload dict 캐시. dist/map 과 달리 값이 bytes 가 아니라 dict 라 len() 으로
+# 크기를 알 수 없어 개수 상한만 있었는데, 대형 세션(항목×소스 수천 행의 cpk_rows)이
+# 8개 쌓이면 RAM 이 예측 불가로 커진다 → tables 와 같은 "크기 기록 + 이중 상한" 방식으로
+# 바꾼다. 크기는 put 시 1회 직렬화 길이로 추정한다(콜드 빌드당 1회라 비용이 묻힌다).
 REPORT_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_REPORT_CACHE", "8") or 8))
+REPORT_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_REPORT_CACHE_MB", "256")
+                                    or 256)) * 1024 * 1024   # 0 = 바이트 상한 비활성
 REPORT_CACHE: OrderedDict = OrderedDict()   # (akey, chash, manifest_digest, incl_dist) -> report dict
+_REPORT_SIZES: dict = {}                    # 키 -> 추정 바이트 (REPORT_CACHE 와 동기)
 
 # Commonality 인덱스 캐시 — chip 검색(키스트로크)·백분위(chip 클릭)가 매번 전 item 컬럼을
 # 재변환하던 유일한 무캐시 heavy 경로였다. 메타 리스트 + item별 정렬 배열을 세션 단위로 보관.
@@ -91,12 +98,39 @@ def register_akey_cache(cache: OrderedDict) -> None:
     AKEY_CACHES.append(cache)
 
 
+# 히트/미스 누적 (관리자 패널 노출용). 캐시 객체를 키로 못 쓰므로 전역 2개만 센다 —
+# 캐시별 분해는 필요해질 때 추가한다. 카운터는 CACHE_LOCK 안에서만 만진다.
+STATS = {"hit": 0, "miss": 0, "disk_hit": 0, "disk_miss": 0}
+
+
 def cache_get(cache: OrderedDict, key):
     with CACHE_LOCK:
         value = cache.get(key)
         if value is not None:
             cache.move_to_end(key)
+            STATS["hit"] += 1
+        else:
+            STATS["miss"] += 1
     return value
+
+
+def cache_stats():
+    """캐시별 보유 건수 + 히트/미스 누적."""
+    names = (("tables", TABLES_CACHE), ("dist", DIST_CACHE), ("map", MAP_CACHE),
+             ("report", REPORT_CACHE), ("commonality", COMMONALITY_CACHE),
+             ("trim", TRIM_CACHE), ("trim_chart", TRIM_CHART_CACHE),
+             ("manifest", MANIFEST_CACHE))
+    with CACHE_LOCK:
+        sizes = {name: len(c) for name, c in names}
+        tables_bytes = sum(_TABLES_SIZES.values())
+        report_bytes = sum(_REPORT_SIZES.values())
+        stats = dict(STATS)
+    total = stats["hit"] + stats["miss"]
+    disk_total = stats["disk_hit"] + stats["disk_miss"]
+    return {"sizes": sizes, "tables_bytes": tables_bytes, "report_bytes": report_bytes,
+            **stats,
+            "hit_rate": round(stats["hit"] / total * 100, 1) if total else None,
+            "disk_hit_rate": round(stats["disk_hit"] / disk_total * 100, 1) if disk_total else None}
 
 
 def cache_put(cache: OrderedDict, key, value, max_size: int):
@@ -142,9 +176,14 @@ def tables_cache_put(key, tables) -> None:
 
 
 def _prune_tables_sizes_locked() -> None:
-    """TABLES_CACHE 에서 빠진 키의 크기 기록 제거 (CACHE_LOCK 보유 상태에서 호출)."""
+    """크기 기록을 두는 캐시(TABLES/REPORT)에서 빠진 키의 기록 제거.
+
+    (CACHE_LOCK 보유 상태에서 호출 — 무효화 경로가 캐시에서 직접 pop 하므로 크기 기록만
+    남아 상한 계산이 실제보다 커지는 것을 막는다.)"""
     for key in [k for k in _TABLES_SIZES if k not in TABLES_CACHE]:
         _TABLES_SIZES.pop(key, None)
+    for key in [k for k in _REPORT_SIZES if k not in REPORT_CACHE]:
+        _REPORT_SIZES.pop(key, None)
 
 
 def _bytes_capped_put(cache: OrderedDict, key, blob: bytes,
@@ -160,6 +199,29 @@ def _bytes_capped_put(cache: OrderedDict, key, blob: bytes,
                 len(cache) > max_n
                 or (max_bytes and sum(len(v) for v in cache.values()) > max_bytes)):
             cache.popitem(last=False)
+
+
+def report_cache_put(key, report: dict) -> None:
+    """REPORT_CACHE 전용 put — 개수 + 추정 바이트 이중 상한으로 축출한다.
+
+    크기는 dist 캐시와 같은 직렬화 규약(separators, ensure_ascii=False)의 JSON 길이로
+    잡는다 — 실제 파이썬 dict RAM 은 이보다 크지만 세션 간 상대 크기가 목적이라 충분하다.
+    최소 1개는 남긴다 (방금 넣은 세션은 곧바로 조회되므로)."""
+    try:
+        size = len(json.dumps(report, ensure_ascii=False,
+                              separators=(",", ":")).encode("utf-8"))
+    except (TypeError, ValueError):
+        size = 0   # 직렬화 불가는 크기 미상 취급 — 개수 상한만 적용된다
+    with CACHE_LOCK:
+        REPORT_CACHE[key] = report
+        REPORT_CACHE.move_to_end(key)
+        _REPORT_SIZES[key] = size
+        while len(REPORT_CACHE) > 1 and (
+                len(REPORT_CACHE) > REPORT_CACHE_MAX
+                or (REPORT_CACHE_MAX_BYTES
+                    and sum(_REPORT_SIZES.values()) > REPORT_CACHE_MAX_BYTES)):
+            old_key, _ = REPORT_CACHE.popitem(last=False)
+            _REPORT_SIZES.pop(old_key, None)
 
 
 def dist_cache_put(key, blob: bytes) -> None:

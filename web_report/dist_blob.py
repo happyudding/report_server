@@ -24,7 +24,7 @@ DIST_BLOB_FORMAT = "ecdf-columnar-v1"
 DIST_BLOB_PREFIX = b'{"format":"ecdf-columnar-v1","items":'
 
 
-def compute_dist_compact(tables, selected_items, mode, *, bin1=False) -> dict:
+def compute_dist_compact(tables, selected_items, mode, *, bin1=False, only=None) -> dict:
     """HoneyformTable 리스트 → Distribution ECDF 컴팩트 dict (전 포인트, 다운샘플 없음).
 
     service.get_distribution 의 계산 본체와 동일: 모드 변형(DUT 분할) →
@@ -33,6 +33,11 @@ def compute_dist_compact(tables, selected_items, mode, *, bin1=False) -> dict:
     표시를 제어하며, distribution_index(is_passfail 플래그)와 제외 기준을 맞춘다.
     tables 의 item_columns 를 in-place 필터하므로 호출자는 소모성 tables 를 넘길 것
     (서버는 캐시 클론, 클라는 방금 디코드한 임시 tables).
+
+    ``only`` 는 항목 배치 조회(GET .../web_report/distribution_batch)용 항목 화이트리스트다.
+    항목 집합을 **좁히기만** 하고 계산 자체는 동일하므로, 결과는 전체 계산 결과에서 그
+    항목만 뽑은 것과 정준 JSON 으로 완전히 같다(다운샘플 아님 — 규칙 #6 무관). None 이면
+    기존과 동일하게 전 항목을 계산한다.
     """
     from .tabs.common import empty_items
     from .tabs.distribution import build_distribution_compact
@@ -45,6 +50,9 @@ def compute_dist_compact(tables, selected_items, mode, *, bin1=False) -> dict:
             table.item_columns = [c for c in table.item_columns if c in selected]
     excluded = empty_items(tables)
     all_items = sorted({c for t in tables for c in t.item_columns if c not in excluded})
+    if only is not None:
+        wanted = {str(v) for v in only if str(v)}
+        all_items = [c for c in all_items if c in wanted]
     return build_distribution_compact(tables, all_items, bin1_only=bin1)
 
 

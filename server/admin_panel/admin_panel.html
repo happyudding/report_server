@@ -172,6 +172,15 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
   </div>
   <div style="height:16px"></div>
   <div class="card">
+    <h2>런타임 상태 <span class="hint">응답시간 · 컴퓨트 워커 · 캐시 · DB 잠금 · 스케줄러 (서버 재시작 시 초기화)</span></h2>
+    <div class="tiles" id="runtimeTiles"><div class="tile"><div class="lbl">로딩 중…</div></div></div>
+    <div class="table-wrap" style="margin-top:12px"><table>
+      <thead><tr><th>느린 경로 (평균 기준 상위)</th><th class="num">호출</th><th class="num">평균</th><th class="num">최대</th></tr></thead>
+      <tbody id="slowRouteBody"><tr class="empty-row"><td colspan="4">-</td></tr></tbody>
+    </table></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
     <h2>리소스 시계열 <span class="hint">10초 샘플 · 24시간 보관 · 이 탭이 보일 때만 10초 갱신 (서버 재시작 시 초기화)</span>
       <select id="metricsWindow" class="sel" style="float:right" title="그래프에 표시할 기간">
         <option value="300">최근 5분</option>
@@ -359,7 +368,11 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
         <option value="0">활성만</option>
         <option value="1">🗑 휴지통만</option>
       </select>
+      <input id="sessUploader" class="inp" style="width:150px" placeholder="업로더 계정">
+      <input id="sessFrom" class="inp" type="date" style="width:150px" title="생성일 시작(포함)">
+      <input id="sessTo" class="inp" type="date" style="width:150px" title="생성일 끝(당일 포함)">
       <button class="btn primary" id="btnSessSearch">검색</button>
+      <button class="btn" id="btnSessReset" title="검색·필터 초기화">초기화</button>
       <span class="grow"></span>
       <button class="btn" id="btnPurgeExpired" title="휴지통에서 30일 경과분을 영구 삭제">🗑 경과분 purge</button>
       <button class="btn danger" id="btnBulkDelete" disabled
@@ -439,28 +452,30 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
 <div id="pDb" class="panel">
   <div class="row">
     <div class="card">
-      <h2>백업 <span class="hint">report.db 스냅샷 · 주기 실행되며 아래 버튼으로 즉시 1회 실행도 가능</span></h2>
+      <h2>백업 <span class="hint">report.db + eval.db + voc.db 스냅샷 · 주기 실행되며 아래 버튼으로 즉시 1회 실행도 가능</span></h2>
       <div class="toolbar">
         <button class="btn primary" id="btnBackup"
-                title="지금 즉시 report.db 백업을 1회 만듭니다 (수 초 걸릴 수 있음)">지금 백업 실행</button>
+                title="지금 즉시 DB 백업을 1회 만듭니다 (수 초 걸릴 수 있음)">지금 백업 실행</button>
         <a class="btn" id="btnCsv" href="api/audit.csv" download
            title="User Action Monitoring 의 전체 기록을 CSV 파일로 내려받습니다">감사로그 CSV 다운로드</a>
       </div>
       <div class="msg" id="backupMsg"></div>
+      <div class="tiles" id="backupState" style="margin-bottom:10px"></div>
       <div class="table-wrap"><table>
-        <thead><tr><th>파일</th><th class="num">크기</th><th>생성 시각</th></tr></thead>
-        <tbody id="backupBody"><tr class="empty-row"><td colspan="3">로딩 중…</td></tr></tbody>
+        <thead><tr><th>파일</th><th>DB</th><th class="num">크기</th><th>생성 시각</th></tr></thead>
+        <tbody id="backupBody"><tr class="empty-row"><td colspan="4">로딩 중…</td></tr></tbody>
       </table></div>
     </div>
     <div class="card">
-      <h2>세션 정리 (retention) <span class="hint" id="cleanupHint"></span></h2>
+      <h2>잔존물 정리 <span class="hint" id="cleanupHint"></span></h2>
       <div class="toolbar">
         <button class="btn" id="btnCleanupDry"
-                title="아무것도 지우지 않고 삭제 대상만 목록으로 보여줍니다">Dry-run (대상만 확인)</button>
+                title="아무것도 지우지 않고 정리 대상만 집계해서 보여줍니다 (감사로그 롤오프는 항상 실제 실행)">Dry-run (대상만 확인)</button>
         <button class="btn danger" id="btnCleanupReal"
-                title="보존기간이 지난 비중요 세션을 실제로 삭제합니다 — 중요 표시(★)된 세션은 제외">실제 삭제 실행</button>
+                title="고아 세션행·휴지통 경과분·고아 산출물을 실제로 정리합니다">실제 정리 실행</button>
       </div>
-      <div class="msg" id="cleanupMsg">보존기간이 지난 비중요 세션을 정리합니다. 먼저 dry-run 으로 대상을 확인하세요.</div>
+      <div class="msg" id="cleanupMsg">고아 세션행(48h) · 휴지통 경과분 · 고아 산출물(48h)을 회수합니다.
+        보존기간 만료 세션 삭제는 폐지됐고(티어링이 대체), 감사로그 롤오프는 dry-run 과 무관하게 항상 실행됩니다.</div>
     </div>
   </div>
   <div class="card">
@@ -507,6 +522,7 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
         <option value="edit">수정</option>
         <option value="delete">삭제</option>
         <option value="client_error">클라이언트 오류</option>
+        <option value="note_conflict">Note 편집 충돌</option>
         <option value="eval_export">Eval export</option>
         <option value="tier">S3 티어링</option>
         <option value="voc_create">VOC 등록</option>
@@ -676,6 +692,7 @@ async function loadHealth() {
   }
   loadStorage(false);
   loadMetrics();
+  loadRuntime();
 }
 async function loadStorage(refresh) {
   const tb = $("storageTable").tBodies[0];
@@ -801,10 +818,54 @@ async function loadMetrics() {
   }
 }
 $("metricsWindow").onchange = () => loadMetrics();
+
+function schedTile(label, s) {
+  if (!s) return `<div class="tile"><div class="lbl">${label}</div><div class="val" style="font-size:14px">-</div></div>`;
+  const mark = s.last_ok === false ? "❌ " : (s.last_ok ? "✅ " : "");
+  return `<div class="tile"><div class="lbl">${label}</div>
+    <div class="val" style="font-size:14px">${s.last_run ? fmtDate(s.last_run) : "아직 실행 안 됨"}</div>
+    <div class="det">${mark}${esc(s.last_result || "-")}${s.next_run ? " · 다음 " + fmtDate(s.next_run) : ""}</div></div>`;
+}
+async function loadRuntime() {
+  try {
+    const r = await getJSON("api/runtime");
+    const lat = r.latency || {}, cp = r.compute || {}, ca = r.cache || {}, lk = r.db_lock || {};
+    const cs = cp.stats || {};
+    const sch = r.schedulers || {};
+    $("runtimeTiles").innerHTML = `
+      <div class="tile"><div class="lbl">응답시간 (최근 ${lat.samples || 0}건)</div>
+        <div class="val" style="font-size:20px">${lat.p95 || 0} ms</div>
+        <div class="det">p50 ${lat.p50 || 0} · p99 ${lat.p99 || 0} · 최대 ${lat.max || 0} ms</div></div>
+      <div class="tile"><div class="lbl">컴퓨트 워커</div>
+        <div class="val" style="font-size:20px">${cp.processes || 0} / ${cp.workers || 0}</div>
+        <div class="det">${cp.pool_alive ? "가동" : "미기동"} · 타임아웃 ${cs.timeout || 0} · 붕괴 ${cs.broken || 0} · 오류 ${cs.error || 0}</div></div>
+      <div class="tile"><div class="lbl">프리웜 큐</div>
+        <div class="val" style="font-size:20px">${cp.prewarm_pending || 0} / ${cp.prewarm_max || 0}</div>
+        <div class="det">완료 ${cs.prewarm_done || 0} · 폐기 ${cs.prewarm_dropped || 0}</div></div>
+      <div class="tile"><div class="lbl">캐시 히트율</div>
+        <div class="val" style="font-size:20px">${ca.hit_rate == null ? "-" : ca.hit_rate + "%"}</div>
+        <div class="det">RAM ${ca.hit || 0}/${(ca.hit || 0) + (ca.miss || 0)} · 디스크 ${ca.disk_hit_rate == null ? "-" : ca.disk_hit_rate + "%"} · tables ${fmtBytes(ca.tables_bytes || 0)}</div></div>
+      <div class="tile"><div class="lbl">DB 잠금 경합</div>
+        <div class="val" style="font-size:20px${lk.count ? ";color:#d33" : ""}">${lk.count || 0}</div>
+        <div class="det">busy_timeout(5s) 초과 실패 누적${lk.last ? " · 최근 " + fmtDate(lk.last) : ""}</div></div>
+      ${schedTile("백업 스케줄러", sch.backup)}
+      ${schedTile("정리 스케줄러", sch.cleanup)}`;
+    const slow = lat.slowest || [];
+    $("slowRouteBody").innerHTML = slow.length ? slow.map(s =>
+      `<tr><td class="mono">${esc(s.route)}</td><td class="num">${s.count}</td>` +
+      `<td class="num">${s.avg_ms} ms</td><td class="num">${s.max_ms} ms</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="4">아직 요청 없음</td></tr>`;
+  } catch (e) {
+    $("runtimeTiles").innerHTML = `<div class="tile"><div class="lbl">런타임 상태 조회 실패</div><div class="det">${esc(e)}</div></div>`;
+  }
+}
+
 // 현황 탭이 화면에 보일 때만 10초 자동 갱신 — 그 외엔 서버 요청 없음
 setInterval(() => {
-  if (document.visibilityState === "visible" && $("pHealth").classList.contains("active"))
+  if (document.visibilityState === "visible" && $("pHealth").classList.contains("active")) {
     loadMetrics();
+    loadRuntime();
+  }
 }, 10000);
 
 // ── 스토리지 ────────────────────────────────────────────────────────────────
@@ -871,7 +932,8 @@ async function loadStgSessions(refresh) {
         <td>${esc(r.lot_id || "-")}</td><td>${esc(r.file_name || "-")}</td>
         <td>${esc(r.source || "-")}</td>
         <td>${r.backend ? `<span class="badge gray">${esc(r.backend)}</span>` : "-"}</td>
-        <td class="num">${fmtBytes(r.local_bytes)}${r.shared > 1
+        <td class="num" title="실산출물 ${fmtBytes(r.tierable_bytes || 0)} + 재생성 가능 캐시 ${fmtBytes(r.cache_bytes || 0)}">${fmtBytes(r.local_bytes)}${
+            r.cache_bytes ? ` <span class="badge gray" title="이 중 재생성 가능한 compute 캐시 — S3 티어링 대상이 아님">캐시 ${fmtBytes(r.cache_bytes)}<\span>` : ""}${r.shared > 1
             ? ` <span class="badge gray" title="같은 데이터를 ${r.shared}개 세션이 공유 — 마지막 삭제 시에만 회수">공유 ${r.shared}</span>` : ""}</td>
         <td class="mono">${esc(r.session_id)}</td>
         <td><button class="btn danger" style="height:24px;padding:0 8px;font-size:11px"
@@ -1198,6 +1260,9 @@ async function loadSessions() {
   const q = $("sessQ").value.trim(); if (q) params.set("q", q);
   const st = $("sessStatus").value; if (st) params.set("status", st);
   const tr = $("sessTrashed").value; if (tr) params.set("trashed", tr);
+  const up = $("sessUploader").value.trim(); if (up) params.set("uploader", up);
+  const df = $("sessFrom").value; if (df) params.set("date_from", df);
+  const dt = $("sessTo").value; if (dt) params.set("date_to", dt);
   let data;
   try { data = await getJSON("api/sessions?" + params); }
   catch (e) {
@@ -1241,7 +1306,15 @@ async function loadSessions() {
   $("sessNext").onclick = () => { sessOffset += SESS_PAGE; loadSessions(); };
 }
 $("btnSessSearch").onclick = () => { sessOffset = 0; loadSessions(); };
+$("btnSessReset").onclick = () => {
+  ["sessQ", "sessUploader", "sessFrom", "sessTo"].forEach(id => { $(id).value = ""; });
+  $("sessStatus").value = ""; $("sessTrashed").value = "";
+  sessOffset = 0; loadSessions();
+};
 $("sessQ").addEventListener("keydown", e => { if (e.key === "Enter") { sessOffset = 0; loadSessions(); } });
+$("sessUploader").addEventListener("keydown", e => { if (e.key === "Enter") { sessOffset = 0; loadSessions(); } });
+$("sessFrom").onchange = () => { sessOffset = 0; loadSessions(); };
+$("sessTo").onchange = () => { sessOffset = 0; loadSessions(); };
 $("sessStatus").onchange = () => { sessOffset = 0; loadSessions(); };
 $("sessTrashed").onchange = () => { sessOffset = 0; loadSessions(); };
 $("chkAll").onchange = () => {
@@ -1449,11 +1522,23 @@ async function loadDb() { loadBackups(); }
 async function loadBackups() {
   try {
     const b = await getJSON("api/db/backups");
+    const st = b.state || {};
+    $("backupState").innerHTML = `
+      <div class="tile"><div class="lbl">마지막 백업</div>
+        <div class="val" style="font-size:18px">${st.last_run ? fmtDate(st.last_run) : "-"}</div>
+        <div class="det">${st.last_ok === false ? "❌ " : (st.last_ok ? "✅ " : "")}${esc(st.last_result || "아직 실행 안 됨")}</div></div>
+      <div class="tile"><div class="lbl">불량 백업 (.bad)</div>
+        <div class="val" style="font-size:20px${b.bad_count ? ";color:#d33" : ""}">${b.bad_count || 0}</div>
+        <div class="det">integrity_check 실패본 · 최근 5개만 보존</div></div>
+      <div class="tile"><div class="lbl">외부 복제</div>
+        <div class="val" style="font-size:14px">${b.external_dir ? "설정됨" : "미설정"}</div>
+        <div class="det mono">${esc(b.external_dir || "REPORT_DB_BACKUP_EXTERNAL_DIR 미지정")}</div></div>`;
     $("backupBody").innerHTML = b.rows.length ? b.rows.map(r =>
-      `<tr><td class="mono">${esc(r.name)}</td><td class="num">${fmtBytes(r.bytes)}</td><td>${fmtDate(r.mtime)}</td></tr>`).join("")
-      : `<tr class="empty-row"><td colspan="3">백업 파일 없음 (${esc(b.dir)})</td></tr>`;
+      `<tr${r.bad ? ' style="color:#d33"' : ""}><td class="mono">${esc(r.name)}${r.bad ? " ⚠ 불량" : ""}</td>` +
+      `<td>${esc(r.db)}</td><td class="num">${fmtBytes(r.bytes)}</td><td>${fmtDate(r.mtime)}</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="4">백업 파일 없음 (${esc(b.dir)})</td></tr>`;
   } catch (e) {
-    $("backupBody").innerHTML = `<tr class="empty-row"><td colspan="3">조회 실패: ${esc(e)}</td></tr>`;
+    $("backupBody").innerHTML = `<tr class="empty-row"><td colspan="4">조회 실패: ${esc(e)}</td></tr>`;
   }
 }
 $("btnBackup").onclick = async () => {
@@ -1461,23 +1546,27 @@ $("btnBackup").onclick = async () => {
   $("backupMsg").className = "msg"; $("backupMsg").textContent = "백업 실행 중…";
   try {
     const r = await postJSON("api/db/backup", {});
-    $("backupMsg").textContent = `완료: ${r.file} (${fmtBytes(r.bytes)})`;
+    const detail = (r.results || []).map(x =>
+      `${x.prefix}:${x.ok ? fmtBytes(x.bytes) : "실패"}`).join(" · ");
+    $("backupMsg").className = r.ok ? "msg" : "msg err";
+    $("backupMsg").textContent = (r.ok ? "완료: " : "일부 실패: ") + detail;
     loadBackups();
   } catch (e) { $("backupMsg").className = "msg err"; $("backupMsg").textContent = String(e); }
   $("btnBackup").disabled = false;
 };
 async function runCleanup(dryRun) {
   const msg = $("cleanupMsg");
-  msg.className = "msg"; msg.textContent = (dryRun ? "dry-run" : "실삭제") + " 실행 중…";
+  msg.className = "msg"; msg.textContent = (dryRun ? "dry-run" : "실제 정리") + " 실행 중…";
   try {
     const r = await postJSON("api/db/cleanup", { dry_run: dryRun });
-    msg.textContent = `${r.dry_run ? "[dry-run] " : ""}대상 ${r.scanned}건, 삭제 ${r.deleted}건, ` +
-      `감사로그 롤오프 ${r.audit_purged}행 (보존기간 ${r.retention_days}일)`;
+    msg.textContent = `${r.dry_run ? "[dry-run] " : ""}고아 세션행 ${r.deleted}/${r.scanned}건 · ` +
+      `휴지통 purge ${r.trash_purged}/${r.trash_scanned}건 · 고아 산출물 ${r.fs_orphans}건` +
+      ` · 감사로그 롤오프 ${r.audit_purged}행(dry-run 무관 실제 삭제)`;
   } catch (e) { msg.className = "msg err"; msg.textContent = String(e); }
 }
 $("btnCleanupDry").onclick = () => runCleanup(true);
 $("btnCleanupReal").onclick = () => {
-  const typed = prompt("보존기간이 지난 비중요 세션을 실제로 삭제합니다 (산출물 포함, 복구 불가).\n\n계속하려면 DELETE 를 입력하세요:");
+  const typed = prompt("고아 세션행 · 휴지통 경과분 · 고아 산출물을 실제로 정리합니다 (산출물 포함, 복구 불가).\n\n계속하려면 DELETE 를 입력하세요:");
   if (typed === "DELETE") runCleanup(false);
 };
 const AUTO_VACUUM = { 0: "none", 1: "full", 2: "incremental" };
@@ -1537,7 +1626,8 @@ const AUDIT_PAGE = 50;
 let auditPage = 0, auditHasMore = false;
 const ACTION_LABEL = {
   upload: "업로드", edit: "수정", delete: "삭제",
-  client_error: "클라이언트 오류", eval_export: "Eval export", tier: "S3 티어링",
+  client_error: "클라이언트 오류", note_conflict: "Note 편집 충돌",
+  eval_export: "Eval export", tier: "S3 티어링",
   voc_create: "VOC 등록", voc_edit: "VOC 수정", voc_status: "VOC 상태전환",
   voc_comment_create: "VOC 댓글", voc_comment_delete: "VOC 댓글삭제", voc_delete: "VOC 삭제",
 };

@@ -146,8 +146,24 @@ function cpkBodyRows(rows) {
   });
 }
 
+// 필터+본문행 생성은 전 행(항목×소스)을 매번 다시 매핑·필터·정렬한다. 대형 세션에선
+// 수천 행이라 검색 키입력·페이지 이동마다 돌면 눈에 띄게 뻑뻑해진다. 표시 결과를 정하는
+// 상태(아래 sig)가 그대로면 지난 결과를 그대로 쓴다 — 페이지 이동은 sig 가 안 변하므로
+// 재정렬이 0회가 된다. 원본 rows 는 identity 로 비교한다(payload 교체 시 자동 무효화).
+let _cpkRowsMemo = null;
+function cpkDisplayRows(rows) {
+  const sig = JSON.stringify([cpkBasis, cpkAbnormalMode, cpkShowLowOnly,
+    cpkLowThreshold, cpkHideCodeUnit, cpkSearchTerm, cpkSourceFilter]);
+  if (_cpkRowsMemo && _cpkRowsMemo.rows === rows && _cpkRowsMemo.sig === sig) {
+    return _cpkRowsMemo.out;
+  }
+  const out = cpkBodyRows(cpkFilterRows(rows));
+  _cpkRowsMemo = { rows, sig, out };
+  return out;
+}
+
 function cpkTableHtml(rows) {
-  const bodyRows = cpkBodyRows(rows);
+  const bodyRows = cpkDisplayRows(rows);
 
   if (!bodyRows.length) {
     const msg = cpkSearchTerm.trim() ? "검색 결과 없음"
@@ -213,7 +229,19 @@ function renderCpkTable() {
   const sheets = webReportSheets();
   const rows = sheets ? (sheets["CPK"] || []) : [];
   const host = document.getElementById("cpkTableHost");
-  if (host) host.innerHTML = cpkTableHtml(cpkFilterRows(rows));
+  // 필터는 cpkDisplayRows(메모) 안에서 적용된다 — 여기서 미리 걸면 매 호출 새 배열이 나와
+  // 메모가 항상 미스가 된다.
+  if (host) host.innerHTML = cpkTableHtml(rows);
+}
+
+// 검색·임계값 입력은 키입력마다 수천 행 재필터·재정렬을 유발한다. 입력이 멈춘 뒤 한 번만
+// 그린다 (표만 다시 그리므로 입력 포커스·캐럿은 그대로 유지된다).
+const CPK_INPUT_DEBOUNCE_MS = 150;
+let _cpkTableTimer = null;
+function renderCpkTableDebounced() {
+  if (_cpkTableTimer) clearTimeout(_cpkTableTimer);
+  _cpkTableTimer = setTimeout(() => { _cpkTableTimer = null; renderCpkTable(); },
+                              CPK_INPUT_DEBOUNCE_MS);
 }
 
 function renderCpk() {
@@ -242,7 +270,7 @@ function renderCpk() {
       `<option value="${esc(s)}"${cpkSourceFilter === s ? " selected" : ""}>${esc(s)}</option>`).join("");
   panel.innerHTML =
     `<div class="cpk-toolbar">` +
-    `<input type="text" id="cpkSearchInput" placeholder="항목/source 검색" value="${esc(cpkSearchTerm)}">` +
+    `<input type="text" id="cpkSearchInput" data-no-dirty placeholder="항목/source 검색" value="${esc(cpkSearchTerm)}">` +
     `<select id="cpkSourceSel" title="특정 source 만 표시">${sourceOpts}</select>` +
     `<span class="cpk-tool-group"><span class="cpk-tool-label">Data 구분</span>` +
     `<button type="button" id="cpkBasisBtn" class="btn-sm${cpkBasis !== "all" ? " active" : ""}" title="현재 적용 중인 데이터 범위(클릭하면 순환): 'All'=모든 die → 'Bin1 only'=실제 BIN==1 만 → 'In Limit only'=BIN 무관 규격([LSL,USL]) 안 값만 재계산. Issue Table CPK 섹션은 항상 'In Limit only' 기준.">${CPK_BASIS_LABELS[cpkBasis]}</button></span>` +
@@ -279,7 +307,7 @@ function renderCpk() {
     cpkPage = 1;
     const btn = document.getElementById("cpkLowBtn");
     if (btn) btn.innerHTML = cpkLowBtnLabel();
-    renderCpkTable();
+    renderCpkTableDebounced();
   });
   document.getElementById("cpkAbnBtn").addEventListener("click", () => {
     cpkAbnormalMode = CPK_ABN_ORDER[(CPK_ABN_ORDER.indexOf(cpkAbnormalMode) + 1) % CPK_ABN_ORDER.length];
@@ -294,7 +322,7 @@ function renderCpk() {
   document.getElementById("cpkSearchInput").addEventListener("input", (e) => {
     cpkSearchTerm = e.target.value;
     cpkPage = 1;
-    renderCpkTable();
+    renderCpkTableDebounced();
   });
   document.getElementById("cpkSourceSel").addEventListener("change", (e) => {
     cpkSourceFilter = e.target.value;
@@ -361,7 +389,7 @@ function renderCpk() {
       const t = e.target;
       if (t.id === "cpkSelAll") {
         const sheets = webReportSheets();
-        const keys = cpkBodyRows(cpkFilterRows(sheets ? (sheets["CPK"] || []) : [])).map(r => r._key);
+        const keys = cpkDisplayRows(sheets ? (sheets["CPK"] || []) : []).map(r => r._key);
         // 체크해제해도 역산값(cpkTargetResults)은 지우지 않는다 — 항목별로 다른 Margin 으로
         // 나눠 역산할 수 있게 결과를 누적 보존한다.
         if (t.checked) keys.forEach(k => cpkSelected.add(k));

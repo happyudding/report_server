@@ -58,13 +58,17 @@ def _path_for(upload_root: Path, kind: str, cache_key: tuple, ext: str) -> Path:
 
 
 def _read(path: Path) -> bytes | None:
+    from . import cache as _cache
     try:
         blob = path.read_bytes()
     except FileNotFoundError:
+        _cache.STATS["disk_miss"] += 1
         return None
     except Exception:
+        _cache.STATS["disk_miss"] += 1
         _log.warning("disk cache read failed: %s", path, exc_info=True)
         return None
+    _cache.STATS["disk_hit"] += 1
     try:
         os.utime(path, None)  # LRU 신호 — 최근 사용 파일은 총량 퇴출에서 뒤로 밀린다
     except OSError:

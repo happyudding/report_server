@@ -70,16 +70,21 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 
 캐시 계층·환경변수 전체는 [../docs/12_web_report_cache.md](../docs/12_web_report_cache.md) 가
 정본. 자주 만지는 것: `WEB_REPORT_COMPUTE_WORKERS`(기본 2, 0=인라인),
-`WEB_REPORT_TABLES_CACHE_MB`(기본 4096), `WEB_REPORT_DISK_CACHE_MAX_GB`(기본 500).
+`WEB_REPORT_TABLES_CACHE_MB`(기본 4096), `WEB_REPORT_DISK_CACHE_MAX_GB`(기본 500),
+`WEB_REPORT_REPORT_CACHE_MB`(기본 256 — report dict 바이트 상한),
+`WEB_REPORT_ONDEMAND_WORKERS`(기본 2 — 콜드 202 후 백그라운드 빌드 스레드).
 
 ### 세션/DB 유지보수
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `REPORT_RETENTION_DAYS` | `180` | 이보다 오래된 비중요 세션이 정리 대상 |
-| `REPORT_CLEANUP_DRYRUN` | `1`(참) | **기본은 실삭제 안 함**(대상만 로그). 실삭제는 `0` 으로 명시 |
-| `REPORT_AUDIT_RETENTION_DAYS` | `365` | 감사 로그 롤오프. 0 이하 = 무기한 |
-| `REPORT_DB_BACKUP_ENABLED` / `_INTERVAL_HOURS` / `_KEEP` / `_DIR` | `1` / `24` / `7` / `<db>/backup` | 온라인 백업 사이클 |
+| `REPORT_RETENTION_DAYS` | `180` | (보존기간 만료 **삭제는 폐지** — 티어링이 대체. 값은 표시용으로만 남음) |
+| `REPORT_CLEANUP_DRYRUN` | `1`(참) | **기본은 실삭제 안 함**(대상만 로그). 실삭제는 `0` 으로 명시. 대상=고아 세션행·휴지통 경과분·고아 산출물 |
+| `REPORT_AUDIT_RETENTION_DAYS` | `365` | 감사 로그 롤오프. 0 이하 = 무기한. **cleanup dry-run 과 무관하게 항상 실행** |
+| `REPORT_DB_BACKUP_ENABLED` / `_INTERVAL_HOURS` / `_KEEP` / `_DIR` | `1` / `24` / `7` / `<db>/backup` | 온라인 백업 사이클. 대상은 report.db + eval.db + voc.db (DB 별 prefix 로 rotation) |
+| `REPORT_DB_BACKUP_EXTERNAL_DIR` | (없음) | 지정 시 integrity 통과 백업본을 이 경로로도 복사(best-effort). 같은 디스크 사망 대비 |
+| `REPORT_WEBREPORT_TOTAL_MB` | `1024` | web_report parquet **합계** 상한. 개별 파일은 512MB 고정, 요청 전체는 `MAX_CONTENT_LENGTH_MB` |
+| `WEB_REPORT_PREWARM_QUEUE` | `8` | 업로드 직후 프리웜 대기 큐 상한. 초과 시 가장 오래된 요청 폐기(로그) |
 | `REPORT_ADMIN_SECRET` | `pte` | admin 경로 조각 → `/pe/admin-<secret>/` (기본 `/pe/admin-pte/`) |
 
 ### 로그 / 무인 운영 (wsgi.py, watchdog.ps1)
@@ -142,7 +147,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `POST` | `/api/client_error` | 공개 | 브라우저 JS 에러 beacon 수신 (error_beacon.js — CSRF 미적용, per-IP 스로틀, 감사 action=`client_error`) |
 | `GET` | `/result/<sid>` | 공개 | 세션 요약 JSON |
 | `GET` | `/session/<sid>` | 공개 | 세션 메타 JSON (password 제거, has_password 만) |
-| `GET` | `/session/<sid>/full` | 공개 | 세션 전체 데이터 JSON (summary+objects+주석+추출텍스트) |
+| `GET` | `/session/<sid>/full` | 공개 | 세션 전체 데이터 JSON (summary+objects+주석+추출텍스트). web_report 세션이 **콜드**면 빌드를 백그라운드에 걸고 `202 {"building":true,"stage","elapsed"}` 즉시 반환 — 프런트가 재시도 (warm 은 종전대로 200) |
 | `GET` | `/session/<sid>/my_access` | Honey | 현재 사용자의 이 세션 권한 |
 | `DELETE` | `/session/<sid>` | 업로더 | 세션 삭제 |
 | `POST` | `/session/<sid>/important` | Honey | 개인 중요표시 토글 |
@@ -163,8 +168,9 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 |--------|------|------|------|
 | `GET` | `/raw_data/columns`, `/raw_data` | 공개 | Raw Data 컬럼 UI / 조회 |
 | `POST` | `/raw_data/edit` | 편집자 | Raw Data 셀 편집 (parquet 재인코딩) |
-| `GET` | `/distribution` | 공개 | Distribution ECDF (컴팩트 gzip, 전 포인트) |
-| `GET` | `/map_analysis` | 공개 | Map Analysis die 전량 (gzip+ETag — `/full` 은 dies 뺀 경량 메타, schema v8) |
+| `GET` | `/distribution` | 공개 | Distribution ECDF **전량** (컴팩트 gzip, 전 포인트). 클라 프리컴퓨트 시딩·하위호환 폴백용 — 프런트는 아래 배치를 쓴다 |
+| `GET` | `/distribution_batch?subjects=a,b,c[&bin1=1]` | 공개 | Distribution ECDF **항목 배치** (화면에 보이는 항목만, 최대 40개/요청). 전량 payload 의 부분집합과 값 동일 |
+| `GET` | `/map_analysis` | 공개 | Map Analysis die 전량 (gzip+ETag — `/full` 은 dies 뺀 경량 메타, schema v8). 콜드면 `202 {"building":true}` |
 | `GET` | `/scatter/<subject>` | 공개 | 항목 상세 산포 (전 측정값) |
 | `GET` | `/trim_analysis`, `/trim_chart` | 공개 | Trim 매칭·통계 / 그룹 차트 (gzip+ETag) |
 | `POST` | `/trim/overrides` | 편집자 | Trim 수동 재배치 저장 |

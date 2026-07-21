@@ -34,6 +34,8 @@ from report.security import (
 )
 from web_report import service as web_report_service
 from web_report import response_cache as web_report_response_cache
+from web_report import build_status as web_report_build_status
+from web_report import compute as web_report_compute
 
 _log = logging.getLogger(__name__)
 
@@ -142,10 +144,21 @@ def session_full(session_id):
         # 프런트가 GET .../web_report/distribution 으로 백그라운드 지연 로드.
         # 최종 payload 의 JSON 직렬화+gzip bytes 는 response_cache 가 캐시 — warm 요청은
         # bytes 반환뿐이다. annotations/is_important 등 변경은 extras digest 로 자연 무효화.
+        # 콜드 빌드(수 초~수십 초)를 요청 스레드에서 기다리지 않는다 — waitress 스레드는
+        # 8개뿐이라 여러 명이 서로 다른 신규 세션을 동시에 열면 값싼 요청까지 밀린다.
+        # 콜드면 백그라운드 빌드를 걸고 202 를 즉시 반환하고, 프런트(boot.js)가
+        # build_status 를 폴링한 뒤 다시 요청한다. warm/디스크 히트는 종전대로 200.
         try:
             etag, body = web_report_response_cache.get_full_gzip(
                 session_id, session=session, extras=extras,
-                report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+                report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+                build_if_cold=False)
+        except web_report_service.ColdBuildRequired:
+            web_report_compute.request_build(
+                session_id, str(REPORT_UPLOAD_DIR), "report")
+            status = web_report_build_status.snapshot(session_id)
+            return jsonify({"building": True, "stage": status.get("stage", "report"),
+                            "elapsed": status.get("elapsed", 0)}), 202
         except FileNotFoundError:
             abort(404, "web_report session data not found")
         except KeyError:

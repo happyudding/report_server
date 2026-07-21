@@ -47,6 +47,10 @@ def delete_session(session_id):
         conn.execute("DELETE FROM report_annotation WHERE session_id=?", (session_id,))
         conn.execute("DELETE FROM report_webreport_edit WHERE session_id=?", (session_id,))
         conn.execute("DELETE FROM report_webreport_edit_rev WHERE session_id=?", (session_id,))
+        # 세션을 참조하는 사용자별 부가 테이블 — 안 지우면 purge 후 영구 고아로 남는다.
+        conn.execute("DELETE FROM report_user_favorite WHERE session_id=?", (session_id,))
+        conn.execute("DELETE FROM report_user_important WHERE session_id=?", (session_id,))
+        conn.execute("DELETE FROM report_session_editor WHERE session_id=?", (session_id,))
         conn.execute("DELETE FROM report_session WHERE session_id=?", (session_id,))
 
 
@@ -155,12 +159,41 @@ def get_session(session_id):
     return Session.from_row(row)
 
 
+# 업로더 비교는 is_uploader(auth_identity)의 'DOMAIN\\user' 뒷부분·소문자 규칙을 SQL 로
+# 근사한다 — 실데이터는 단일 '\' 라 INSTR(첫 위치) 기준과 동치. 비공개 필터와 '내 업로드'
+# 필터가 같은 규칙을 써야 해서 한 곳에 둔다.
+_UPLOADER_MATCH = ("LOWER(TRIM(CASE WHEN INSTR(s.uploaded_by, '\\') > 0"
+                   " THEN SUBSTR(s.uploaded_by, INSTR(s.uploaded_by, '\\') + 1)"
+                   " ELSE s.uploaded_by END)) = ?")
+
+# 정렬 화이트리스트. 어떤 키를 골라도 session_id 를 마지막에 붙여 offset 페이지 간
+# 순서가 흔들리지 않게 한다.
+_HISTORY_SORTS = {
+    "new": "s.created_at DESC",
+    "old": "s.created_at ASC",
+    "product": "s.product COLLATE NOCASE ASC",
+    "lot": "s.lot_id COLLATE NOCASE ASC",
+}
+
+# 자유 검색어(q)가 훑는 컬럼 — 종전 클라이언트 필터의 haystack 과 동일하게 맞춘다.
+_HISTORY_Q_COLUMNS = ("s.source", "s.product_type", "s.family_product", "s.product",
+                      "s.lot_id", "s.process", "s.file_name", "s.session_id",
+                      "s.uploaded_by", "s.client_host")
+
+
 def _history_where(product_type=None, process=None, product=None, revision=None,
-                   lot_id=None, source=None, viewer=None):
+                   lot_id=None, source=None, viewer=None, q=None, mode=None,
+                   date_from=None, date_to=None, mine=False, visibility=None):
     """get_history / count_history 공용 WHERE 절 + 파라미터.
 
     viewer: None=비공개 필터 없음(하위호환·관리자용) / ""=신원 없음(비공개 전부 숨김) /
-    "<uid>"=공개 OR legacy(업로더 기록 없음 — is_uploader 규칙) OR 업로더 본인 OR 위임 편집자."""
+    "<uid>"=공개 OR legacy(업로더 기록 없음 — is_uploader 규칙) OR 업로더 본인 OR 위임 편집자.
+    q: 위 _HISTORY_Q_COLUMNS 전체 대상 부분일치.
+    mode: 'Normal'|'Compare'|'DUT'|'Commonality' — web_report 세션에만 의미가 있어
+          source='web_report' 조건이 함께 붙는다(종전 클라 필터와 동일).
+    date_from/date_to: epoch 초 (to 는 그 시각 이하 포함).
+    mine: 참이면 viewer 가 업로더인 세션만. visibility: 'public'|'private'.
+    """
     # 휴지통(soft delete)된 세션은 일반 목록 조회에서 항상 제외한다.
     conditions = ["s.status IN ('done', 'reused')", "s.deleted_at IS NULL"]
     params = []
@@ -182,16 +215,35 @@ def _history_where(product_type=None, process=None, product=None, revision=None,
     if source:
         conditions.append("s.source = ?")
         params.append(source)
+    if q:
+        like = f"%{q}%"
+        conditions.append(
+            "(" + " OR ".join(f"{col} LIKE ?" for col in _HISTORY_Q_COLUMNS) + ")")
+        params.extend([like] * len(_HISTORY_Q_COLUMNS))
+    if mode:
+        conditions.append("s.source = 'web_report' AND COALESCE(s.mode, 'Normal') = ?")
+        params.append(mode)
+    if date_from is not None:
+        conditions.append("s.created_at >= ?")
+        params.append(int(date_from))
+    if date_to is not None:
+        conditions.append("s.created_at <= ?")
+        params.append(int(date_to))
+    if visibility == "public":
+        conditions.append("COALESCE(s.is_private, 0) = 0")
+    elif visibility == "private":
+        conditions.append("COALESCE(s.is_private, 0) = 1")
+    if mine:
+        # 신원이 없으면 '내 업로드'는 공집합이다 (전체 표시로 흘리지 않는다).
+        conditions.append(_UPLOADER_MATCH if viewer else "1=0")
+        if viewer:
+            params.append(viewer)
     if viewer is not None:
         if viewer:
-            # 업로더 비교는 is_uploader(auth_identity)의 'DOMAIN\user' 뒷부분·소문자
-            # 규칙을 SQL 로 근사 — 실데이터는 단일 '\' 라 INSTR(첫 위치) 기준과 동치.
             conditions.append(
                 "(COALESCE(s.is_private, 0) = 0"
                 " OR s.uploaded_by IS NULL OR s.uploaded_by = ''"
-                " OR LOWER(TRIM(CASE WHEN INSTR(s.uploaded_by, '\\') > 0"
-                " THEN SUBSTR(s.uploaded_by, INSTR(s.uploaded_by, '\\') + 1)"
-                " ELSE s.uploaded_by END)) = ?"
+                " OR " + _UPLOADER_MATCH +
                 " OR EXISTS (SELECT 1 FROM report_session_editor e"
                 " WHERE e.session_id = s.session_id AND e.editor_user = ?))")
             params.extend([viewer, viewer])
@@ -201,10 +253,17 @@ def _history_where(product_type=None, process=None, product=None, revision=None,
 
 
 def get_history(product_type=None, process=None, product=None, revision=None, lot_id=None,
-                source=None, limit=500, offset=0, viewer=None):
+                source=None, limit=500, offset=0, viewer=None, q=None, mode=None,
+                date_from=None, date_to=None, mine=False, visibility=None, sort="new"):
     where, params = _history_where(product_type, process, product, revision, lot_id, source,
-                                   viewer=viewer)
-    params.extend([limit, offset])
+                                   viewer=viewer, q=q, mode=mode, date_from=date_from,
+                                   date_to=date_to, mine=mine, visibility=visibility)
+    order_by = _HISTORY_SORTS.get(sort or "new", _HISTORY_SORTS["new"])
+    # 즐겨찾기는 어떤 정렬을 골라도 최상단 고정 — 클라이언트가 전량을 들고 있을 때
+    # 하던 일을 서버 페이지네이션에서도 유지하려면 정렬 자체에 넣어야 한다
+    # (뒤 페이지의 즐겨찾기가 1페이지로 올라오는 종전 동작 보존).
+    fav_params = [viewer or ""]
+    params = fav_params + params + [limit, offset]
     # session_id 를 마지막 정렬키로 두어 offset 페이지 간 순서가 안정되게 한다
     sql = f"""
         SELECT s.session_id, s.file_name, s.product_type, s.family_product, s.process, s.product,
@@ -214,12 +273,15 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
                COALESCE(s.is_important, 0) AS is_important,
                COALESCE(s.is_private, 0) AS is_private,
                CASE WHEN s.password IS NOT NULL THEN 1 ELSE 0 END AS has_password,
+               CASE WHEN f.session_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
                COALESCE(SUM(c.file_size), 0) AS total_file_size
         FROM report_session s
+        LEFT JOIN report_user_favorite f
+               ON f.session_id = s.session_id AND f.user_id = ?
         LEFT JOIN report_csv_files c ON c.analysis_key = s.analysis_key
         WHERE {where}
         GROUP BY s.session_id
-        ORDER BY COALESCE(s.is_important, 0) DESC, s.created_at DESC, s.session_id
+        ORDER BY is_favorite DESC, COALESCE(s.is_important, 0) DESC, {order_by}, s.session_id
         LIMIT ? OFFSET ?
     """
     with get_conn() as conn:
@@ -228,10 +290,12 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
 
 
 def count_history(product_type=None, process=None, product=None, revision=None,
-                  lot_id=None, source=None, viewer=None):
+                  lot_id=None, source=None, viewer=None, q=None, mode=None,
+                  date_from=None, date_to=None, mine=False, visibility=None):
     """get_history 와 동일 필터의 전체 세션 수 (서버 페이지네이션 total 용)."""
     where, params = _history_where(product_type, process, product, revision, lot_id, source,
-                                   viewer=viewer)
+                                   viewer=viewer, q=q, mode=mode, date_from=date_from,
+                                   date_to=date_to, mine=mine, visibility=visibility)
     with get_conn() as conn:
         row = conn.execute(
             f"SELECT COUNT(*) FROM report_session s WHERE {where}", params).fetchone()

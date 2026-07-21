@@ -594,7 +594,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 </div>
 
 <script>
-const PAGE_SIZE = 20;   // 한 페이지 max 20개 (즐겨찾기 상단 정렬 포함 — 아래 filtered slice)
+const PAGE_SIZE = 20;   // 한 페이지 max 20개 (즐겨찾기 상단 정렬은 서버 ORDER BY 가 담당)
 let _lastRows = [];
 let _currentPage = 0;
 
@@ -757,7 +757,7 @@ async function doLogin() {
     document.getElementById("idModal").classList.remove("show");
     updateUserChip();
     await loadFavorites();
-    renderResults();
+    loadHistory(true);   // 신원이 바뀌면 비공개 세션 가시성·즐겨찾기 정렬이 달라진다
   } catch (e) {
     showToast("로그인 실패: " + e.message);
   }
@@ -773,7 +773,7 @@ async function doLogout() {
   _authSource = "";
   _favorites = new Set();
   updateUserChip();
-  renderResults();
+  loadHistory(true);
 }
 
 function openPwChangeModal() {
@@ -906,24 +906,22 @@ document.querySelectorAll(".pt-btn").forEach(btn => {
 
 // ── search button ──
 document.getElementById("searchBtn").addEventListener("click", () => loadHistory());
-["lotIdInput"].forEach(id => {
-  const input = document.getElementById(id);
+(() => {
+  const input = document.getElementById("lotIdInput");
+  let timer = null;
   input.addEventListener("keydown", e => {
-    if (e.key === "Enter") loadHistory();
+    if (e.key === "Enter") { clearTimeout(timer); loadHistory(); }
   });
+  // 타이핑마다 서버를 때리지 않도록 250ms 모아서 한 번 조회한다(직전 요청은 abort).
   input.addEventListener("input", () => {
-    _currentPage = 0;
-    renderResults();
-    if (id === "lotIdInput") renderSuggestions();
+    clearTimeout(timer);
+    // 제안은 조회 결과를 쓰므로 응답 도착 후에 그린다 (먼저 그리면 한 글자 뒤처진다).
+    timer = setTimeout(() => loadHistory().then(renderSuggestions), 250);
   });
-});
-// 분석 모드/공개 범위/내 업로드/날짜/정렬 — 전부 클라이언트 필터라 renderResults 만 갱신
-// (renderResults 가 URL 상태도 동기화). Product Type 만 서버 필터라 loadHistory 를 탄다.
+})();
+// 모든 필터·정렬이 서버 조회 대상이다 (예전에는 Product Type 만 서버였다).
 ["modeSelect", "visSelect", "mineCheck", "dateFrom", "dateTo", "sortSelect"].forEach(id => {
-  document.getElementById(id).addEventListener("change", () => {
-    _currentPage = 0;
-    renderResults();
-  });
+  document.getElementById(id).addEventListener("change", () => loadHistory());
 });
 // 초기화 — 모든 필터/정렬/Product Type 를 비우고 재조회
 document.getElementById("resetBtn").addEventListener("click", () => {
@@ -954,37 +952,6 @@ function fmtDate(unix) {
   const d = new Date(unix * 1000);
   const pad = n => String(n).padStart(2, "0");
   return `${pad(d.getFullYear() % 100)}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-// ── client-side substring search across all columns + 필터(모드/공개범위/내업로드/날짜) ──
-function applyClientFilter(rows) {
-  const q = (document.getElementById("lotIdInput").value || "").trim().toLowerCase();
-  const mode = document.getElementById("modeSelect").value || "";
-  const vis = document.getElementById("visSelect").value || "";
-  const mine = document.getElementById("mineCheck").checked;
-  const fromStr = document.getElementById("dateFrom").value || "";
-  const toStr = document.getElementById("dateTo").value || "";
-  // 로컬 자정 기준 epoch(초). 종료일은 그날 끝(23:59:59)까지 포함.
-  const from = fromStr ? Math.floor(new Date(fromStr + "T00:00:00").getTime() / 1000) : null;
-  const to = toStr ? Math.floor(new Date(toStr + "T23:59:59").getTime() / 1000) : null;
-  return rows.filter(r => {
-    if (mode) {
-      // 분석 모드는 web_report 세션에만 의미가 있다 — 모드 필터 시 그 외 세션은 제외.
-      if (String(r.source || "") !== "web_report") return false;
-      if (String(r.mode || "Normal") !== mode) return false;
-    }
-    if (vis === "public" && r.is_private) return false;
-    if (vis === "private" && !r.is_private) return false;
-    if (mine && !isMine(r)) return false;
-    if (from !== null && (r.created_at || 0) < from) return false;
-    if (to !== null && (r.created_at || 0) > to) return false;
-    if (!q) return true;
-    const haystack = [
-      r.source, r.product_type, r.family_product, r.product, r.lot_id,
-      r.process, r.file_name, r.session_id, r.uploaded_by, r.client_host,
-    ].map(v => String(v || "").toLowerCase()).join(" ");
-    return haystack.includes(q);
-  });
 }
 
 // ── URL query string 상태 보존 (필터/정렬/Product Type/페이지) ──
@@ -1030,11 +997,12 @@ function hideSuggestions() {
   box.innerHTML = "";
 }
 
+// 제안 목록은 현재 조회 결과(서버가 이미 검색어로 거른 페이지)의 앞부분을 쓴다.
 function renderSuggestions() {
   const box = document.getElementById("searchSuggest");
-  const q = (document.getElementById("lotIdInput").value || "").trim().toLowerCase();
+  const q = (document.getElementById("lotIdInput").value || "").trim();
   if (!q) { hideSuggestions(); return; }
-  const matches = applyClientFilter(_lastRows).slice(0, 8);
+  const matches = _lastRows.slice(0, 8);
   if (!matches.length) { hideSuggestions(); return; }
   box.innerHTML = matches.map(r => `
     <div class="suggest-item" data-sid="${esc(r.session_id)}">
@@ -1050,74 +1018,71 @@ function renderSuggestions() {
         document.getElementById("lotIdInput").value = row.lot_id || row.product || "";
       }
       hideSuggestions();
-      _currentPage = 0;
-      renderResults();
+      loadHistory();
     });
   });
 }
 
 // ── load history ──
-// 서버 페이지네이션(limit/offset + total)으로 전체 세션을 배치 로드한다.
-// 구 응답(리스트 500건 고정)과 달리 500건 초과 세션도 빠짐없이 조회되며,
-// 클라이언트 검색/제안/페이지는 기존처럼 전체 행 기준으로 동작한다.
+// 검색·필터·정렬·페이지를 전부 서버에서 처리한다(limit/offset + total). 예전에는 전체
+// 세션을 500건씩 전량 내려받아 클라이언트에서 걸렀는데, 세션이 늘수록 첫 화면이
+// 느려지고 키입력마다 전량 재필터가 돌았다. 즐겨찾기 상단 고정도 서버 ORDER BY 로 옮겨
+// 뒤 페이지의 즐겨찾기가 1페이지로 올라오는 동작을 유지한다.
+let _histAbort = null;
+let _histTotal = 0;
+function historyParams() {
+  const p = new URLSearchParams();
+  if (state.productType) p.set("product_type", state.productType);
+  const q = (document.getElementById("lotIdInput").value || "").trim();
+  if (q) p.set("q", q);
+  const mode = document.getElementById("modeSelect").value; if (mode) p.set("mode", mode);
+  const vis = document.getElementById("visSelect").value; if (vis) p.set("visibility", vis);
+  if (document.getElementById("mineCheck").checked) p.set("mine", "1");
+  const from = document.getElementById("dateFrom").value; if (from) p.set("date_from", from);
+  const to = document.getElementById("dateTo").value; if (to) p.set("date_to", to);
+  const sort = document.getElementById("sortSelect").value; if (sort) p.set("sort", sort);
+  return p;
+}
+
 async function loadHistory(preservePage = false) {
-  const base = new URLSearchParams();
-  if (state.productType) base.set("product_type", state.productType);
-  const BATCH = 500;
+  if (!preservePage) _currentPage = 0;
+  const params = historyParams();
+  params.set("limit", PAGE_SIZE);
+  params.set("offset", _currentPage * PAGE_SIZE);
+  // 이전 조회는 취소한다 — 필터를 빠르게 바꾸면 늦게 도착한 옛 응답이 새 결과를 덮는다.
+  if (_histAbort) _histAbort.abort();
+  _histAbort = new AbortController();
+  const tbody = document.getElementById("resultsTbody");
+  tbody.innerHTML = `<tr class="empty-row"><td colspan="10">조회 중…</td></tr>`;
   try {
-    let offset = 0, total = Infinity;
-    const all = [];
-    while (offset < total) {
-      const params = new URLSearchParams(base);
-      params.set("limit", BATCH);
-      params.set("offset", offset);
-      const res = await fetch("/pe/report/api/history?" + params.toString());
-      if (!res.ok) throw new Error("HTTP " + res.status);
-      const data = await res.json();
-      const rows = Array.isArray(data) ? data : (data.rows || []);
-      total = Array.isArray(data) ? rows.length : (data.total ?? rows.length);
-      all.push(...rows);
-      offset += BATCH;
-      if (offset === BATCH) {   // 첫 배치는 즉시 표시 (대량 세션에서도 첫 화면 지연 없음)
-        _lastRows = all.slice();
-        if (!preservePage) _currentPage = 0;   // 새 조회는 1페이지로, 초기 URL 복원은 유지
-        renderResults();
-      }
-      if (rows.length < BATCH) break;
+    const res = await fetch("/pe/report/api/history?" + params.toString(),
+                            { signal: _histAbort.signal });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const rows = Array.isArray(data) ? data : (data.rows || []);
+    _histTotal = Array.isArray(data) ? rows.length : (data.total ?? rows.length);
+    // 필터가 좁아져 현재 페이지가 범위를 넘으면 마지막 페이지로 당겨 다시 받는다
+    // (빈 표 대신 결과를 보여준다).
+    if (!rows.length && _histTotal > 0 && _currentPage > 0) {
+      _currentPage = Math.max(0, Math.ceil(_histTotal / PAGE_SIZE) - 1);
+      return loadHistory(true);
     }
-    _lastRows = all;
-    if (!preservePage) _currentPage = 0;
+    _lastRows = rows;
+    // 서버가 내려준 즐겨찾기 상태를 로컬 집합에 반영 (별 표시·정렬 근거 일치).
+    rows.forEach(r => { if (r.is_favorite) _favorites.add(r.session_id); });
     renderResults();
   } catch (e) {
-    document.getElementById("resultsTbody").innerHTML =
-      `<tr class="empty-row"><td colspan="10">로드 실패: ${esc(e.message)}</td></tr>`;
+    if (e.name === "AbortError") return;   // 더 새로운 조회가 진행 중 — 화면은 그쪽이 그린다
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">로드 실패: ${esc(e.message)}</td></tr>`;
   }
 }
 
 // ── render results ──
+// 필터·정렬·페이지는 서버가 끝낸 상태로 온다 — 여기서는 그리기만 한다.
 function renderResults() {
-  const filtered = applyClientFilter(_lastRows);
-  // 정렬 드롭다운. 기본=최신순. Array.sort 는 안정 정렬이라 동순위는 기존(서버) 순서를 보존한다.
-  const sortKey = document.getElementById("sortSelect").value || "new";
-  if (sortKey === "new") {
-    filtered.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
-  } else if (sortKey === "old") {
-    filtered.sort((a, b) => (a.created_at || 0) - (b.created_at || 0));
-  } else if (sortKey === "product") {
-    filtered.sort((a, b) => String(a.product || "").localeCompare(String(b.product || "")));
-  } else if (sortKey === "lot") {
-    filtered.sort((a, b) => String(a.lot_id || "").localeCompare(String(b.lot_id || "")));
-  }
-  // 즐겨찾기는 어떤 정렬을 골라도 항상 최상단에 고정한다. 안정 정렬이라 즐겨찾기끼리·
-  // 나머지끼리는 위에서 고른 정렬 순서가 그대로 유지된다. 페이지 슬라이스보다 먼저 해야
-  // 뒤 페이지의 즐겨찾기도 1페이지로 올라온다.
-  filtered.sort((a, b) =>
-    (_favorites.has(b.session_id) ? 1 : 0) - (_favorites.has(a.session_id) ? 1 : 0));
-  const total = filtered.length;
+  const slice = _lastRows;
+  const total = _histTotal;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  _currentPage = Math.min(_currentPage, pageCount - 1);
-  const start = _currentPage * PAGE_SIZE;
-  const slice = filtered.slice(start, start + PAGE_SIZE);
 
   document.getElementById("resultsCount").textContent =
     total ? `(${total}건)` : "";
@@ -1191,7 +1156,7 @@ function renderResults() {
   pager.querySelectorAll(".pg-btn").forEach(b => {
     b.addEventListener("click", () => {
       _currentPage = parseInt(b.dataset.page, 10);
-      renderResults();
+      loadHistory(true);   // 페이지도 서버 조회 — 현재 페이지 유지한 채 그 구간만 받는다
     });
   });
 

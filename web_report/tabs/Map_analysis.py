@@ -179,12 +179,23 @@ def strip_dies(rows):
     return [{k: v for k, v in r.items() if k != "dies"} for r in rows]
 
 
-def build_map_analysis_rows(tables, product_type="", product="", mode="Normal"):
+def build_map_analysis_rows(tables, product_type="", product="", mode="Normal",
+                            *, include_dies=True):
+    """웨이퍼 맵 rows. ``include_dies=False`` 면 die 리스트를 **만들지 않고** 경량 메타
+    (source/좌표틀/total/bin_counts[/step])만 낸다 — /full 이 쓰는 경로다.
+
+    /full 은 dies 를 싣지 않으므로(schema v8) 지금까진 전량 생성 후 strip_dies 로 버렸는데,
+    STEP 이 여러 개면 die dict 수만 개를 만들고 즉시 버리는 낭비가 된다. 반환 값은
+    ``strip_dies(build_map_analysis_rows(...))`` 와 정준 JSON 으로 동일하다.
+    DUT 모드는 dies 를 병합 근거로 쓰므로(_merge_dut_rows) 이 스킵을 적용하지 않는다.
+    """
     # 제품 기준정보(die pitch+wafer 크기)가 있으면 고정 프레임으로 격자 틀을 덮어쓴다.
     # 없으면 frame=None → 현행(데이터 좌표 min/max) 유지.
     # DUT 모드는 DUT별 pseudo-source 를 하나의 맵으로 병합한다(die 마다 dut 태그 부여).
     frame = frame_for(product_type, product)
     merge_dut = mode == "DUT"
+    # DUT 병합은 dies 를 병합 입력으로 쓴다 — 스킵하면 _merge_dut_rows 가 성립하지 않는다.
+    keep_dies = include_dies or merge_dut
     rows = []
     for table in tables:
         data = table.data
@@ -236,9 +247,13 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal"):
 
         if len(steps) <= 1:
             # STEP 단일(또는 없음) → 현행 그대로 소스당 맵 1개 (row 에 step 키 없음).
-            dies = [_die(x, y, b, dut, item=(_die_item(f) if b != PASS_BIN else None))
-                    for x, y, b, f in zip(xs, ys, bins, fails)]
-            row = dict(base, total=len(dies), dies=dies, bin_counts=_bin_count_rows(bins))
+            # die 1개당 유효 좌표 1개라 total 은 dies 생성 여부와 무관하게 len(bins) 다.
+            row = dict(base, total=len(bins))
+            if keep_dies:
+                row["dies"] = [_die(x, y, b, dut,
+                                    item=(_die_item(f) if b != PASS_BIN else None))
+                               for x, y, b, f in zip(xs, ys, bins, fails)]
+            row["bin_counts"] = _bin_count_rows(bins)
             if merge_dut:
                 row["_dut"] = dut
             rows.append(row)
@@ -256,15 +271,19 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal"):
             count_bins = []   # bin_counts 용 — 회색(앞 step fail) die 는 제외(이 step 결과 아님)
             for x, y, b, fi, f in zip(xs, ys, bins, fail_idx, fails):
                 if fi is None or fi > k:
-                    dies.append(_die(x, y, PASS_BIN, dut))
+                    if keep_dies:
+                        dies.append(_die(x, y, PASS_BIN, dut))
                     count_bins.append(PASS_BIN)
                 elif fi == k:
-                    dies.append(_die(x, y, b, dut, item=_die_item(f)))
+                    if keep_dies:
+                        dies.append(_die(x, y, b, dut, item=_die_item(f)))
                     count_bins.append(b)
-                else:   # fi < k: 앞 step 에서 이미 fail → 모양만 회색으로 남김
+                elif keep_dies:   # fi < k: 앞 step 에서 이미 fail → 모양만 회색으로 남김
                     dies.append(_gray_die(x, y, dut))
-            row = dict(base, step=step_name, total=len(count_bins), dies=dies,
-                       bin_counts=_bin_count_rows(count_bins))
+            row = dict(base, step=step_name, total=len(count_bins))
+            if keep_dies:
+                row["dies"] = dies
+            row["bin_counts"] = _bin_count_rows(count_bins)
             if merge_dut:
                 row["_dut"] = dut
             rows.append(row)

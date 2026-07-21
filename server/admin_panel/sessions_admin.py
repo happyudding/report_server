@@ -6,6 +6,7 @@ report_db.py 는 수정하지 않는다. 목록/UPDATE 는 get_conn() 자체 SQL
 → delete_analysis_rows → invalidate_caches → delete_session)를 PIN 검사만 빼고 재사용한다.
 """
 import logging
+import time
 from pathlib import Path
 
 import config
@@ -15,12 +16,25 @@ from database import report_db
 _log = logging.getLogger(__name__)
 
 
-def list_sessions(q=None, status=None, limit=100, offset=0, trashed=None):
+def _day_epoch(value):
+    """'YYYY-MM-DD' → 그날 00:00(로컬)의 epoch 초. 빈 값/형식 오류면 None."""
+    if not value:
+        return None
+    try:
+        return int(time.mktime(time.strptime(str(value).strip(), "%Y-%m-%d")))
+    except (TypeError, ValueError):
+        return None
+
+
+def list_sessions(q=None, status=None, limit=100, offset=0, trashed=None,
+                  date_from=None, date_to=None, uploader=None):
     """전체 status 세션 목록 (기존 get_history 는 done/reused 만 반환해 사용 불가).
     password 원문은 절대 노출하지 않고 has_password 만 내려준다.
 
     trashed: None=전체(활성+휴지통) / "1"=휴지통만(deleted_at NOT NULL) / "0"=활성만.
-    내부 관리용 조회라 휴지통 세션도 포함해 보여준다(일반 목록은 get_history 가 제외)."""
+    내부 관리용 조회라 휴지통 세션도 포함해 보여준다(일반 목록은 get_history 가 제외).
+    date_from/date_to: 'YYYY-MM-DD' (created_at 기준, to 는 그날 끝까지 포함).
+    uploader: uploaded_by 부분일치."""
     try:
         limit = max(1, min(int(limit), 500))
     except (TypeError, ValueError):
@@ -45,6 +59,18 @@ def list_sessions(q=None, status=None, limit=100, offset=0, trashed=None):
             " OR s.session_id LIKE ? OR s.product_type LIKE ?)")
         like = f"%{q}%"
         params.extend([like] * 5)
+    if uploader:
+        conditions.append("s.uploaded_by LIKE ?")
+        params.append(f"%{uploader}%")
+    # created_at 은 epoch 초. 날짜 문자열은 로컬 자정 기준으로 변환한다.
+    ts_from = _day_epoch(date_from)
+    if ts_from is not None:
+        conditions.append("s.created_at >= ?")
+        params.append(ts_from)
+    ts_to = _day_epoch(date_to)
+    if ts_to is not None:
+        conditions.append("s.created_at < ?")
+        params.append(ts_to + 86400)   # 지정일 당일 끝까지 포함
     where = " AND ".join(conditions)
 
     with report_db.get_conn() as conn:

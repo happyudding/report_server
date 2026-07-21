@@ -22,9 +22,9 @@
 | Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`) |
 | CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) |
 | Issue Table | `issue_table.py` | Yield 파생 + 규격내 cpk(`cpk_limited`)<1.33 파생 + ETC. comment/Status/행 숨김은 편집 DB 에서 채움 |
-| Distribution | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/distribution` 지연 로드 |
+| Distribution | — (lazy, 항목 배치) | `/full` 은 빈 시트 + `distribution_index`(항목 목록). ECDF 는 **화면에 보이는 항목만** `GET .../web_report/distribution_batch?subjects=…` 로 받는다 |
 | Trim Analysis | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/trim_analysis` 지연 로드 |
-| Map Analysis | `Map_analysis.py` (하이브리드 lazy) | wafer map die/bin 집계 — `/full` 은 dies 뺀 경량 메타(`strip_dies`), die 전량은 `GET .../web_report/map_analysis` 지연 로드 (schema v8) |
+| Map Analysis | `Map_analysis.py` (하이브리드 lazy) | wafer map die/bin 집계 — `/full` 은 dies 뺀 경량 메타(`include_dies=False`), die 전량은 `GET .../web_report/map_analysis` 지연 로드 (schema v8) |
 | Fail Bin | `yield_tab.fail_bin_ranking` | Bin 랭킹 |
 | Note | — (클라 전용) | TAB_REGISTRY 밖 — 프런트 자체구성 Luckysheet 캔버스, 아래 "Note 탭" 절 |
 
@@ -33,6 +33,10 @@
 쓰는 경량 메타(source/x·y min·max/total/bin_counts[/step][/duts])는 `/full` 에 남기고
 dies(STEP 분리 시 수백만 객체 — 메인스레드 JSON 파싱 freeze 의 주범)만 분리한다
 (`map_deferred: true`, 프런트 `ensureMapData`/`fetchMapViaWorker` — wafer_charts.js).
+`/full` 경로는 `build_map_analysis_rows(include_dies=False)` 로 **die dict 를 애초에 만들지
+않는다** — 종전엔 전량 생성 후 `strip_dies` 로 버렸다(같은 결과, 낭비만 제거).
+DUT 모드만 예외로 dies 를 만든다(`_merge_dut_rows` 가 병합 입력으로 쓴다) — 그래서
+`strip_dies` 는 안전망으로 남아 있다.
 
 **Map Analysis eval STEP 제외** (2026-07-21): STEP 이름에 `eval`(대소문자 무시)이 들어가면
 맵을 그리지 않는다(`_is_eval_step`, [Map_analysis.py](../web_report/tabs/Map_analysis.py)).
@@ -129,7 +133,24 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   `sheets["CPK"]` 전량·원순서(화면 필터·기준 토글 무관, 전체 die 컬럼만).
 - **Distribution**: `build_distribution_index`(항목별 test_num·worst cpk·fail·status) /
   `scatter_item`(상세 전체 측정값) / `build_distribution_compact`(ECDF 전 포인트 컴팩트
-  columnar, lazy 전용). `/distribution` 은 전 포인트·gzip·ETag.
+  columnar, lazy 전용). `/distribution`(전량)과 `/distribution_batch`(항목 배치) 모두
+  전 포인트·gzip·ETag.
+  - **항목 배치 로드 (2026-07-21, 대용량 대응)**: 전량 `/distribution` 은 10 sources ×
+    500 items × 2000 rows 에서 ECDF 970만 포인트 = gz 55MB 라 다운로드·파싱·JS 힙 상주가
+    모두 폭증했다(실측). 프런트는 이제 IntersectionObserver 로 **보이는 항목만** 모아
+    (디바운스 50ms, 배치 ≤30, 동시 ≤2) `distribution_batch` 로 받는다 — 같은 조건에서
+    첫 화면 전송량 gz 3.3MB(17배 감소). 서버는 `compute_dist_compact(only=…)` 로 항목만
+    좁혀 계산하므로 **결과는 전량 payload 에서 그 항목만 뽑은 것과 정준 JSON 일치**
+    (다운샘플 아님 — 규칙 #6 무관). 표시용 다운샘플·세로 채움은 종전대로 클라 담당.
+  - **항목 존재 판단은 `distribution_index`** — 인덱스와 ECDF compact 는 같은 기준
+    (측정 data 전무 항목만 제외)으로 항목을 고르므로, 데이터를 받아보지 않고도 "분포가
+    있는 항목인지"를 알 수 있다. Issue Table 미니셀 생성 여부가 이 판단을 쓴다
+    (`distHasData` — 캐시 보유 여부로 판단하면 아직 안 받은 항목의 셀이 안 만들어진다).
+  - 보유 항목은 LRU 상한(`DIST_BATCH.CACHE_MAX` 300)으로 잘라 오래 스크롤해도 힙이
+    무한히 자라지 않게 한다. 축출된 항목은 다시 보이면 재요청된다.
+  - **전량 `/distribution` 라우트는 유지** — 클라 업로드 프리컴퓨트 dist blob 시딩
+    (ingest)과 하위호환 폴백이 쓴다. 프런트가 더 이상 호출하지 않을 뿐이다.
+  - 항목 상세(전 포인트 + serial/xpos/ypos hover 메타)는 종전대로 `/scatter/<subject>`.
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
   `build_trim_chart`(그룹 1개 chip-to-chip 차트). 매칭 규칙은
   [trim_match.py](../web_report/trim_match.py)(product_type 별 PMIC4/TV2 규칙셋).

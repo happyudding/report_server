@@ -18,7 +18,7 @@ import time
 from collections import deque
 
 import psutil
-from flask import g
+from flask import g, request
 
 from admin_panel.sysinfo import _cpu_percent
 
@@ -39,6 +39,11 @@ _inflight_window_peak = 0  # 샘플 구간 내 순간 최대 동시 요청 (샘�
 _boot_peaks = {"cpu": (0.0, 0.0), "rss": (0, 0.0), "mem": (0, 0.0), "inflight": (0, 0.0)}
 _started = False
 
+# 응답시간 — 최근 요청 소요(ms) 링버퍼(백분위용) + endpoint 별 누적(느린 경로 식별용).
+# endpoint 수는 라우트 수만큼이라 상한이 자연스럽다.
+_lat_recent = deque(maxlen=2000)
+_lat_by_route = {}
+
 
 def _on_request_start():
     global _inflight, _inflight_window_peak
@@ -47,14 +52,26 @@ def _on_request_start():
         if _inflight > _inflight_window_peak:
             _inflight_window_peak = _inflight
     g._mx_counted = True
+    g._mx_t0 = time.perf_counter()
 
 
 def _on_request_teardown(exc=None):
     # 다른 before_request 가 먼저 abort 하면 우리 훅이 안 돌았을 수 있다 — 플래그 확인
     global _inflight
-    if g.pop("_mx_counted", None):
-        with _lock:
-            _inflight -= 1
+    if not g.pop("_mx_counted", None):
+        return
+    t0 = g.pop("_mx_t0", None)
+    ms = (time.perf_counter() - t0) * 1000.0 if t0 is not None else None
+    try:
+        route = request.endpoint or request.path
+    except Exception:
+        route = "?"
+    with _lock:
+        _inflight -= 1
+        if ms is not None:
+            _lat_recent.append(ms)
+            n, total, mx = _lat_by_route.get(route, (0, 0.0, 0.0))
+            _lat_by_route[route] = (n + 1, total + ms, max(mx, ms))
 
 
 def _bump_boot_peak(key, value, ts):
@@ -116,6 +133,32 @@ def current_inflight():
         return None
     with _lock:
         return _inflight
+
+
+def _pct(sorted_vals, q):
+    if not sorted_vals:
+        return 0.0
+    idx = min(len(sorted_vals) - 1, int(round((len(sorted_vals) - 1) * q)))
+    return round(sorted_vals[idx], 1)
+
+
+def latency_snapshot(top=8):
+    """최근 요청 응답시간 백분위 + 평균이 느린 endpoint 상위 목록.
+
+    p95/p99 는 최근 _lat_recent(최대 2000건) 기준이라 "지금 느려졌는지"를 보고,
+    route 별 평균/최대는 기동 이후 누적이라 "원래 무거운 경로"를 본다.
+    """
+    with _lock:
+        recent = sorted(_lat_recent)
+        routes = [(r, n, total / n, mx) for r, (n, total, mx) in _lat_by_route.items() if n]
+    routes.sort(key=lambda x: x[2], reverse=True)
+    return {
+        "samples": len(recent),
+        "p50": _pct(recent, 0.50), "p95": _pct(recent, 0.95), "p99": _pct(recent, 0.99),
+        "max": round(recent[-1], 1) if recent else 0.0,
+        "slowest": [{"route": r, "count": n, "avg_ms": round(avg, 1), "max_ms": round(mx, 1)}
+                    for r, n, avg, mx in routes[:top]],
+    }
 
 
 def _window_peaks(rows, now, window_sec):

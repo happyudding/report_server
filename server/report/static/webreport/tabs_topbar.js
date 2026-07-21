@@ -1,3 +1,12 @@
+// ── 탭별 대용량 지연 데이터 ──────────────────────────────────────────────────
+// 분포 ECDF(수십~수백 MB)와 map dies(수백만 개)는 그 데이터를 쓰는 탭에 들어갈 때만
+// 받는다. 종전에는 페이지 로드 시 무조건 둘 다 받아서, Summary 만 보고 나가는 사용자도
+// 전량 다운로드 비용을 냈다. ensure* 는 멱등이라 중복 호출은 진행 중 promise 를 재사용한다.
+function ensureTabData(tab) {
+  if (tab === "distribution" || tab === "issues") ensureDistData();
+  if (tab === "map-analysis" || tab === "issues") ensureMapData();
+}
+
 // ── tab switching ──────────────────────────────────────────────────────────
 document.getElementById("tabs").addEventListener("click", e => {
   const btn = e.target.closest(".tab");
@@ -8,6 +17,7 @@ document.getElementById("tabs").addEventListener("click", e => {
   document.querySelectorAll(".tab").forEach(b => b.classList.toggle("active", b === btn));
   document.querySelectorAll(".panel").forEach(p =>
     p.classList.toggle("active", p.id === `panel-${tab}`));
+  ensureTabData(tab);
   // lazy 렌더: 아직 안 그려진(dirty) 탭이면 이 시점에 렌더 (프리렌더가 이미 그렸으면 no-op)
   renderTab(tab);
   // 숨김 상태에서 그려진 Plotly 차트는 0px 로 렌더되므로 활성화 시 리사이즈

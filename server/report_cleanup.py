@@ -1,12 +1,19 @@
-"""오래된 세션 자동정리 스케줄러.
+"""잔존물 자동정리 스케줄러.
 
-created_at 이 REPORT_RETENTION_DAYS(기본 180일) 이전이고 중요표시(is_important)가
-아닌 세션을 주기적으로 삭제한다. 세션 삭제 라우트(report_routes.delete_session_route)와
-동일한 산출물 정리 경로(storage_gateway.delete_report_artifacts +
-report_db.delete_analysis_rows)를 재사용하며, 같은 analysis_key 를 참조하는 다른 세션이
-남아있으면(특히 중요표시 세션) 산출물을 보존한다.
+**보존기간(retention) 만료 세션 삭제는 폐지됐다** — 데이터 유실 방지를 위해
+report_tiering 이 산출물만 S3 로 아카이브하고 세션/DB 는 유지한다. 이 모듈이 실제로
+하는 일은 4가지다:
+  1. 감사 로그 롤오프 (REPORT_AUDIT_RETENTION_DAYS, dry-run 무관 항상 실행)
+  2. ingest 크래시 잔존 세션행(orphan pending, 48h) 회수
+  3. 휴지통(soft delete) 경과분(REPORT_TRASH_RETENTION_DAYS) 영구 purge
+  4. 세션 참조 없는 FS 고아 산출물(48h) 회수
 
-REPORT_CLEANUP_DRYRUN=True(기본) 이면 실제 삭제 없이 대상만 로그/감사로그에 남긴다.
+세션 삭제 라우트(report_routes.delete_session_route)와 동일한 산출물 정리 경로
+(storage_gateway.delete_report_artifacts + report_db.delete_analysis_rows)를 재사용하며,
+같은 analysis_key 를 참조하는 다른 세션이 남아있으면 산출물을 보존한다.
+
+REPORT_CLEANUP_DRYRUN=True(기본) 이면 2·3·4 는 실제 삭제 없이 대상만 로그/감사로그에
+남긴다(1 감사 롤오프는 제외 — _purge_audit_logs 주석 참조).
 실삭제하려면 REPORT_CLEANUP_DRYRUN=0 으로 명시해야 한다.
 """
 import logging
@@ -20,6 +27,9 @@ from database import report_db
 
 _log = logging.getLogger(__name__)
 _started = False
+
+# 스케줄러 상태 (관리자 패널 /api/schedulers 노출용). 시간은 epoch 초.
+STATE = {"last_run": None, "last_ok": None, "last_result": None, "next_run": None}
 
 _AKEY_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -240,8 +250,16 @@ def start_cleanup_scheduler():
         time.sleep(30)  # 서버 초기화와 겹치지 않게 첫 실행만 잠깐 지연
         while True:
             try:
-                run_cleanup()
+                summary = run_cleanup()
+                STATE["last_ok"] = True
+                STATE["last_result"] = (
+                    f"orphan {summary['deleted']}/{summary['scanned']} · "
+                    f"trash {summary['trash_purged']} · fs {summary['fs_orphans']} · "
+                    f"audit {summary['audit_purged']}"
+                    + (" (dry-run)" if summary["dry_run"] else ""))
             except Exception:
+                STATE["last_ok"] = False
+                STATE["last_result"] = "run_cleanup crashed"
                 _log.exception("[cleanup] run_cleanup crashed")
             # 로컬 hot 캐시 → S3 티어링 (같은 주기에 얹어 실행 — S3 미설정이면 no-op).
             try:
@@ -249,6 +267,8 @@ def start_cleanup_scheduler():
                 report_tiering.run_tiering()
             except Exception:
                 _log.exception("[tier] run_tiering crashed")
+            STATE["last_run"] = int(time.time())
+            STATE["next_run"] = int(time.time() + interval)
             time.sleep(interval)
 
     threading.Thread(target=_loop, name="report-cleanup", daemon=True).start()

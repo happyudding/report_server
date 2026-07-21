@@ -8,6 +8,7 @@
 |--------------------|--------------------------------------------------|-------------------------------------|
 | TABLES_CACHE       | (akey, chash)                                    | raw_data 편집(chash) / 세션 삭제    |
 | DIST_CACHE         | (akey, chash, mode[, "bin1"])                    | 〃 (mode 불변; "bin1"=양품만 ECDF)  |
+| _DIST_BATCH_CACHE  | (akey, chash, mode, subjects_digest[, "bin1"])    | raw_data 편집 / 세션 삭제           |
 | MAP_CACHE          | (akey, chash, mode)                              | raw_data 편집(chash) / 세션 삭제    |
 | COMMONALITY_CACHE  | (akey, chash)                                    | raw_data 편집 / 세션 삭제           |
 | REPORT_CACHE       | (akey, chash, sid, edits_rev, opts, mode, sver)  | comment/override 편집(rev) + payload 스키마 변경 + 위 전부 |
@@ -51,6 +52,17 @@ def dist_key(session, *, bin1: bool = False) -> tuple:
     # bin1=True 는 양품(Bin1)만으로 재계산한 ECDF — 전체 기준과 별도 캐시(키에만 추가해
     # 기존 전체 기준 키는 불변 유지 → 기존 캐시 무효화 없음).
     base = _base(session) + (_mode(session),)
+    return base + ("bin1",) if bin1 else base
+
+
+def dist_batch_key(session, subjects_digest: str, *, bin1: bool = False) -> tuple:
+    """항목 배치 ECDF(GET .../distribution_batch) 응답 gzip 캐시 키.
+
+    dist_key 와 같은 (akey, chash, mode) 기반에 요청 항목 집합의 digest 를 더한다 —
+    배치 구성이 스크롤에 따라 달라지므로 집합 자체가 키의 일부다. 전체 dist 캐시와
+    같은 세션을 가리키지만 별도 캐시라 서로를 무효화하지 않는다.
+    """
+    base = _base(session) + (_mode(session), str(subjects_digest))
     return base + ("bin1",) if bin1 else base
 
 

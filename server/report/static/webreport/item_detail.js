@@ -838,8 +838,14 @@ function distBindPanel() {
     distRenderGallery();
     restoreDistSearch(q);
   });
+  // 제안 계산은 distIndex 전량 스캔이라 항목이 많은 세션에서 키입력마다 돌면 입력이
+  // 끊긴다. Trim 검색과 같은 250ms debounce 로 맞춘다.
+  let suggestTimer = null;
   panel.addEventListener("input", e => {
-    if (e.target.id === "distSearch") distRenderSuggest(e.target.value);
+    if (e.target.id !== "distSearch") return;
+    const q = e.target.value;
+    clearTimeout(suggestTimer);
+    suggestTimer = setTimeout(() => distRenderSuggest(q), 250);
   });
   distPanelBound = true;
 }
@@ -865,9 +871,11 @@ function renderMiniDistCell(cell) {
   const subject = cell.dataset.subject;
   const div = cell.querySelector(".dist-plot");
   if (!div || typeof Plotly === "undefined") return;
-  // 분포 데이터 도착 전 — 플래그를 세우지 않고 리턴해야 도착 후 재큐잉으로 그려진다.
   if (!distDataReady) return;
   const info = distDataCache[subject];
+  // 아직 안 받은 항목은 배치로 요청하고 플래그를 세우지 않은 채 리턴 — 도착 후
+  // refreshDistConsumers 재큐잉으로 그려진다.
+  if (!info && distHasData(subject)) { distRequestSubject(subject, false); return; }
   // 데이터 없는 항목: 빈 칸으로 확정 (loaded 마킹해 재큐잉 no-op 방지)
   if (!info) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; return; }
 

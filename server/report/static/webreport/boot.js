@@ -79,6 +79,23 @@ function startBuildStatusPoll() {
   _buildPoll = setInterval(tick, 2000);
   setTimeout(tick, 1500);   // 첫 확인은 조금 일찍 (웜이면 어차피 곧 hide 된다)
 }
+// ── 콜드 빌드 202 재시도 ──────────────────────────────────────────────────────
+// 콜드 미스 조회는 서버가 빌드를 백그라운드 큐에 걸고 202 {"building":true} 를 즉시
+// 돌려준다(요청 스레드가 수 초~수십 초 묶이면 waitress 스레드 8개가 금방 고갈된다).
+// 여기서 완료될 때까지 재요청한다. 간격을 조금씩 늘려(1s→5s) 긴 빌드에서 요청이
+// 쌓이지 않게 한다. 202 가 아니면(200/4xx/5xx) 그대로 돌려준다.
+const BUILD_RETRY = { START_MS: 1000, MAX_MS: 5000, GROWTH: 1.4, TIMEOUT_MS: 15 * 60 * 1000 };
+async function retryWhileBuilding(res, refetch) {
+  let wait = BUILD_RETRY.START_MS;
+  const deadline = Date.now() + BUILD_RETRY.TIMEOUT_MS;
+  while (res && res.status === 202 && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, wait));
+    wait = Math.min(BUILD_RETRY.MAX_MS, Math.round(wait * BUILD_RETRY.GROWTH));
+    res = await refetch();
+  }
+  return res;
+}
+
 function showLoadOverlay() {
   const ov = document.getElementById("loadOverlay");
   if (ov) ov.classList.add("show");
@@ -104,10 +121,14 @@ async function load(resetMode=true) {
     const prefetched = window.__fullPrefetch;
     window.__fullPrefetch = null;
     const freshFull = () => fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-cache" });
-    const [res] = await Promise.all([
+    let [res] = await Promise.all([
       prefetched ? prefetched.then(r => r || freshFull()) : freshFull(),
       loadAuth(),   // 편집 권한(MODE) 판정에 필요 — /full 수신과 병렬로
     ]);
+    // 콜드 세션은 서버가 빌드를 백그라운드에 걸고 202 를 즉시 준다(요청 스레드를 붙잡지
+    // 않기 위함). 빌드가 끝날 때까지 재시도한다 — 대기 안내는 기존 오버레이·build_status
+    // 폴링이 그대로 담당한다.
+    res = await retryWhileBuilding(res, freshFull);
     if (!res.ok) {
       const box = document.getElementById("errorBox");
       box.style.display = "";
@@ -137,12 +158,12 @@ async function load(resetMode=true) {
     // distribution_deferred 응답이면 대용량 ECDF 를 백그라운드로 지연 로드하고
     // (첫 페인트를 막지 않음), 구형 embed 응답이면 기존 경로 그대로 (하위호환).
     const webPre = DATA.web_report || {};
-    // Distribution ECDF 는 항상 지연 로드 (GET .../web_report/distribution 컴팩트 columnar).
-    // 도착 전 그려진 미니셀/갤러리는 refreshDistConsumers 가 다시 채운다.
-    setLoadProgress(92, "분포 데이터 준비 중…");
-    ensureDistData();
-    // Map dies(수백만 개 가능)도 /full 에서 제외됨(map_deferred) — 백그라운드 지연 로드.
-    ensureMapData();
+    // Distribution ECDF·Map dies 는 /full 에 실리지 않는 대용량 별도 응답이다. 예전엔
+    // 여기서 무조건 둘 다 받았는데, Summary 만 보고 나가는 사용자에게도 전량 다운로드
+    // 비용을 물렸다. 지금은 그 데이터를 쓰는 탭(Distribution/Map/Issue Table)에 들어갈 때
+    // ensureTabData 가 받는다. 시작 탭이 그중 하나면 여기서 바로 시작한다.
+    setLoadProgress(92, "화면 구성 중…");
+    ensureTabData(activeTabName());
     buildDistColorMap(webPre.sources || []);
     renderMeta(DATA.session || {});
     // 편집 권한: 로그인 ID == 업로더(기록 없으면 로그인만으로) 일 때만 edit 렌더.

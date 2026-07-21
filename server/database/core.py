@@ -258,6 +258,12 @@ def _column_exists(conn, table_name, column_name):
     return any(r[1] == column_name for r in conn.execute(f"PRAGMA table_info({table_name})"))
 
 
+# 마이그레이션 스탬프. _migrate 는 존재-probe 방식이라 매번 재실행해도 안전하지만,
+# 전량 UPDATE 처럼 "이미 끝났으면 스캔 자체가 낭비"인 단계는 이 버전으로 건너뛴다.
+# 새 단계를 추가하면 이 값을 올리고 해당 단계를 버전 비교로 감싼다.
+SCHEMA_USER_VERSION = 1
+
+
 def _migrate_product_type_names(conn):
     for table_name in ("report_session", "report_audit_log"):
         if not _column_exists(conn, table_name, "product_type"):
@@ -391,7 +397,15 @@ def _migrate(conn):
             )
         """)
 
-    _migrate_product_type_names(conn)
+    # 2자리 legacy product_type 치환은 1회성 전량 UPDATE 다. 인덱스가 없는 report_audit_log
+    # (최대 365일치)를 코드당 1회 풀스캔하므로, 스탬프가 찍힌 DB 에서는 건너뛴다.
+    if _user_version(conn) < 1:
+        _migrate_product_type_names(conn)
+
+
+def _user_version(conn):
+    row = conn.execute("PRAGMA user_version").fetchone()
+    return int(row[0]) if row else 0
 
 
 def init_report_db():
@@ -406,6 +420,9 @@ def init_report_db():
         conn.execute("PRAGMA temp_store = MEMORY")
         _migrate(conn)
         conn.executescript(SCHEMA)
+        # 스키마·마이그레이션이 모두 끝난 뒤에만 스탬프를 올린다(중간 실패 시 다음 기동에서 재시도).
+        if _user_version(conn) < SCHEMA_USER_VERSION:
+            conn.execute(f"PRAGMA user_version = {SCHEMA_USER_VERSION}")
 
 
 @contextmanager

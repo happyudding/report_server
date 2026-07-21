@@ -23,7 +23,12 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-_DETACHED = 0x00000008 | 0x00000200
+# CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP.
+# 종전엔 DETACHED_PROCESS(0x8) 였는데, 그렇게 띄운 배치는 **부모가 종료될 때 같이 죽는다**
+# (실측: 부모 종료 대기 루프 첫 회에 Ctrl+C 를 받고 중단 - 로그에 시작 한 줄만 남는다).
+# 2026-07-21 현장 실패의 직접 원인이었다. CREATE_NO_WINDOW 는 창 없이 자기 콘솔을 가져
+# 부모의 Ctrl+C 전파 대상이 아니다 (검증: 부모 사망 후에도 대기->복사->재실행 완주).
+_LAUNCH_FLAGS = 0x08000000 | 0x00000200
 _BAT_CONFIRM_SEC = 5.0          # 배치 진입(flag 파일) 확인에 쓸 최대 대기
 _LOG_ENCODING = "mbcs" if sys.platform == "win32" else "utf-8"
 _LOG_MAX_BYTES = 1_000_000
@@ -137,7 +142,7 @@ def can_write_app_dir() -> bool:
 
 
 def _launch_normal(bat_path: Path, cmd_log: Path):
-    """배치를 detached 로 띄우고 Popen 을 반환.
+    """배치를 창 없이 별도 프로세스 그룹으로 띄우고 Popen 을 반환.
 
     stdout/stderr 를 파일로 받아 cmd.exe 자체 오류(배치 파일을 못 찾음, 실행 차단 등)를
     남긴다. 종전엔 리다이렉트가 없어 이런 오류가 어디에도 안 남았다.
@@ -146,7 +151,7 @@ def _launch_normal(bat_path: Path, cmd_log: Path):
     try:
         return subprocess.Popen(
             ["cmd.exe", "/c", str(bat_path)],
-            creationflags=_DETACHED,
+            creationflags=_LAUNCH_FLAGS,
             close_fds=True,
             stdin=subprocess.DEVNULL,
             stdout=out,
@@ -229,7 +234,10 @@ echo [%date% %time%] BAT src=%SRC% >> "%LOG%"
 set "STAGE=wait_parent_exit"
 set /a TRIES=0
 :wait_for_exit
-tasklist /FI "PID eq {os.getpid()}" /NH 2>NUL | find "{os.getpid()}" >NUL 2>&1
+rem tasklist/find 를 절대경로로 부른다 - PATH 에 Git 등의 GNU find 가 먼저 잡히면
+rem 이 판정이 통째로 오작동한다(실측 확인). 종료 판정이 틀리면 실행 중인 앱 위로
+rem 복사를 시작하거나, 반대로 영원히 기다리게 된다.
+"%SystemRoot%\\System32\\tasklist.exe" /FI "PID eq {os.getpid()}" /NH 2>NUL | "%SystemRoot%\\System32\\find.exe" "{os.getpid()}" >NUL 2>&1
 if errorlevel 1 goto stage_files
 set /a TRIES+=1
 if %TRIES% GEQ 120 goto wait_timeout

@@ -64,7 +64,9 @@ TAB_REGISTRY: tuple = (
     TabSpec("Distribution", None),      # lazy — GET .../web_report/distribution
     TabSpec("Trim Analysis", None),     # lazy — GET .../web_report/trim_analysis
     # 하이브리드 lazy — 경량 메타만 /full 에, dies 는 GET .../web_report/map_analysis
+    # include_dies=False 로 die dict 를 애초에 만들지 않는다(STEP 다수 세션의 낭비 제거).
+    # strip_dies 는 DUT 모드(병합에 dies 가 필요해 생성됨)를 걷어내는 안전망으로 남긴다.
     TabSpec("Map Analysis", lambda ctx: strip_dies(build_map_analysis_rows(
-        ctx.tables, ctx.product_type, ctx.product, ctx.mode))),
+        ctx.tables, ctx.product_type, ctx.product, ctx.mode, include_dies=False))),
     TabSpec("Fail Bin", lambda ctx: fail_bin_ranking(ctx.yield_rows)),
 )

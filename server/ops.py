@@ -8,13 +8,26 @@
 - DB 백업 스케줄러 기동 (db_backup 참조).
 """
 import logging
+import sqlite3
 import time
+from concurrent.futures.process import BrokenProcessPool
 
 from flask import jsonify
 from werkzeug.exceptions import HTTPException
 
 _log = logging.getLogger(__name__)
 _STARTED_AT = time.time()
+
+# SQLite 잠금 경합 누적 카운터 (관리자 패널 노출용). busy_timeout(5s)을 넘겨 실패한
+# 횟수 — 0 이 아니면 동시 쓰기가 실제로 대기 한계를 넘고 있다는 신호다.
+DB_LOCK_ERRORS = {"count": 0, "last": None}
+
+
+def _count_db_lock(exc):
+    if isinstance(exc, sqlite3.OperationalError) and \
+            any(w in str(exc).lower() for w in ("locked", "busy")):
+        DB_LOCK_ERRORS["count"] += 1
+        DB_LOCK_ERRORS["last"] = int(time.time())
 
 
 def _inflight_excluding_self():
@@ -54,6 +67,12 @@ def init_ops(app):
     def _unhandled_exception(e):
         if isinstance(e, HTTPException):
             return e   # abort(...)·404 등 의도된 응답은 그대로
+        _count_db_lock(e)
+        # 컴퓨트 워커 붕괴/타임아웃은 서버 코드 버그가 아니라 일시적 용량 문제다.
+        # 500 으로 뭉뚱그리면 클라·사용자가 "다시 시도"를 못 고른다.
+        if isinstance(e, (BrokenProcessPool, TimeoutError)):
+            _log.error("compute unavailable: %s", type(e).__name__)
+            return jsonify({"error": "리포트 생성이 지연되고 있습니다. 잠시 후 다시 시도해 주세요."}), 503
         _log.exception("unhandled exception")
         return jsonify({"error": "internal server error"}), 500
 

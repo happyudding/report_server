@@ -30,9 +30,9 @@ let _mapOnDiesReady = null;   // Map Analysis 갤러리 재드로우 훅 (render
 let _mapLastRes = null;       // 마지막 성공 응답 — load(false) 가 DATA 를 교체한 뒤 새 rows 재병합용
 
 function fetchMapViaWorker(url, onProgress) {
-  // fetchDistViaWorker(distribution.js)와 같은 골격 — 수십 MB JSON 을 Worker 에서
-  // fetch+parse 하고, dies 를 맵(row)당·25만 die 단위 청크로 postMessage 해 structured
-  // clone 역직렬화 블록을 수십 ms 단위로 분산한다. (Worker 실패 시 호출측 폴백.)
+  // 수십 MB JSON 을 Worker 에서 fetch+parse 하고, dies 를 맵(row)당·25만 die 단위 청크로
+  // postMessage 해 structured clone 역직렬화 블록을 수십 ms 단위로 분산한다.
+  // (Worker 실패 시 호출측 폴백. 콜드 빌드 중이면 202 → {building:true} 로 알린다.)
   return new Promise((resolve, reject) => {
     let blobUrl = null, w = null;
     const cleanup = () => {
@@ -43,6 +43,7 @@ function fetchMapViaWorker(url, onProgress) {
       const src = 'self.onmessage=function(e){' +
         'fetch(e.data,{cache:"no-cache"})' +
         '.then(function(r){' +
+          'if(r.status===202)return{__building:1};' +   // 콜드 빌드 중 — 호출측이 재시도
           'if(!r.ok)throw new Error("HTTP "+r.status);' +
           'if(!r.body||!r.body.getReader)return r.json();' +   // 구형 폴백: 진행 없이 통파싱
           'var reader=r.body.getReader(),chunks=[],loaded=0,lastPost=0;' +
@@ -57,6 +58,7 @@ function fetchMapViaWorker(url, onProgress) {
           'return pump();' +
         '})' +
         '.then(function(j){' +
+          'if(j&&j.__building){self.postMessage({building:true});return;}' +
           'var maps=(j&&j.maps)||[];var LIM=250000;' +
           'var metas=maps.map(function(m){return{source:m.source,step:m.step==null?null:m.step};});' +
           'for(var i=0;i<maps.length;i++){var dies=maps[i].dies||[];var o=0;' +
@@ -72,6 +74,7 @@ function fetchMapViaWorker(url, onProgress) {
     w.onmessage = ev => {
       const d = ev.data || {};
       if (d.error) { cleanup(); reject(new Error(d.error)); return; }
+      if (d.building) { cleanup(); resolve({ building: true }); return; }
       if (d.progress != null) { if (onProgress) onProgress(d.progress); return; }
       if (d.dies) {
         // push.apply 는 25만 인자에서 콜스택 상한을 넘으므로 루프로 이어붙인다.
@@ -103,6 +106,34 @@ function mergeMapDies(res) {
   mapDataReady = true;
 }
 
+// dies 콜드 빌드는 서버가 202 를 즉시 주고 백그라운드에서 만든다(요청 스레드 비블록).
+// 완료될 때까지 재요청한다 — boot.js retryWhileBuilding 과 같은 규약(1s→5s 백오프).
+// Worker 실패 시 메인스레드 폴백도 같은 202 규약을 따른다.
+const MAP_RETRY = { START_MS: 1000, MAX_MS: 5000, GROWTH: 1.4, TIMEOUT_MS: 15 * 60 * 1000 };
+async function fetchMapUntilBuilt(url, label) {
+  const once = () => fetchMapViaWorker(url, loaded => distBadgeProgress(label, loaded))
+    .catch(() => fetch(url, { cache: "no-cache" })   // Worker 실패 시 메인스레드 폴백
+      .then(r => {
+        if (r.status === 202) return { building: true };
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json().then(j => ({
+          format: j && j.format,
+          metas: ((j && j.maps) || []).map(m => ({ source: m.source, step: m.step == null ? null : m.step })),
+          diesByMap: ((j && j.maps) || []).map(m => m.dies || []),
+        }));
+      }));
+  let wait = MAP_RETRY.START_MS;
+  const deadline = Date.now() + MAP_RETRY.TIMEOUT_MS;
+  let res = await once();
+  while (res && res.building && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, wait));
+    wait = Math.min(MAP_RETRY.MAX_MS, Math.round(wait * MAP_RETRY.GROWTH));
+    res = await once();
+  }
+  if (res && res.building) throw new Error("맵 계산이 제한 시간 안에 끝나지 않았습니다");
+  return res;
+}
+
 function ensureMapData() {
   const maps = (webReportSheets() || {})["Map Analysis"] || [];
   // 하위호환: 구 스키마(v7 이하)는 dies 가 /full 에 이미 실려 온다 — fetch 없이 즉시 ready.
@@ -129,14 +160,7 @@ function ensureMapData() {
   const url = `/pe/report/session/${SESSION_ID}/web_report/map_analysis`;
   const label = "맵 데이터 로딩 중…";
   distBadgeStart(label);
-  mapDataPromise = fetchMapViaWorker(url, loaded => distBadgeProgress(label, loaded))
-    .catch(() => fetch(url, { cache: "no-cache" })   // Worker 실패 시 메인스레드 폴백
-      .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-      .then(j => ({
-        format: j && j.format,
-        metas: ((j && j.maps) || []).map(m => ({ source: m.source, step: m.step == null ? null : m.step })),
-        diesByMap: ((j && j.maps) || []).map(m => m.dies || []),
-      })))
+  mapDataPromise = fetchMapUntilBuilt(url, label)
     .then(res => {
       _mapLastRes = res;
       mergeMapDies(res);
@@ -634,7 +658,7 @@ function renderMapAnalysis() {
     `<button type="button" id="mapSelBtn" class="btn-sm">좌표 선택</button>` +
     `<span id="mapRenderProg" class="muted map-render-prog"></span>` +
     `</div>` +
-    `<div id="mapSelSearchBox" class="mapsel-search" style="display:none">` +
+    `<div id="mapSelSearchBox" class="mapsel-search" style="display:none" data-no-dirty>` +
       `<div class="common-search">` +
         `<input id="mapSelSerial" type="text" class="mapsel-field" placeholder="SERIAL (부분일치)" />` +
         `<input id="mapSelXpos" type="text" class="mapsel-field" placeholder="XPOS (정확)" />` +

@@ -63,6 +63,11 @@ STDINFO_DB_PATH = _path_env("STDINFO_DB_PATH", ROOT_DIR / "DB" / "INFORMATION" /
 PRODUCT_INFO_DB_PATH = _path_env("PRODUCT_INFO_DB_PATH",
                                  ROOT_DIR / "DB" / "pe" / "report" / "product_info.db")
 
+# web_report 업로드 parquet **합계** 상한(MB). 개별 파일 상한(512MB)만으로는 파일 수만큼
+# 웹 프로세스 메모리에 그대로 쌓인다(전량 메모리 적재 후 디코드). MAX_CONTENT_LENGTH_MB
+# (요청 전체, 기본 2048)보다 작게 두는 것이 목적.
+REPORT_WEBREPORT_TOTAL_MB = int(os.getenv("REPORT_WEBREPORT_TOTAL_MB", "1024") or 1024)
+
 REPORT_S3_ENDPOINT   = os.getenv("REPORT_S3_ENDPOINT", "")
 REPORT_S3_BUCKET     = os.getenv("REPORT_S3_BUCKET", "")
 REPORT_S3_REGION     = os.getenv("REPORT_S3_REGION", "us-east-1")
@@ -129,6 +134,9 @@ REPORT_DB_BACKUP_ENABLED        = _bool_env("REPORT_DB_BACKUP_ENABLED", True)
 REPORT_DB_BACKUP_INTERVAL_HOURS = float(os.getenv("REPORT_DB_BACKUP_INTERVAL_HOURS", "24"))
 REPORT_DB_BACKUP_KEEP           = int(os.getenv("REPORT_DB_BACKUP_KEEP", "7"))
 REPORT_DB_BACKUP_DIR            = _path_env("REPORT_DB_BACKUP_DIR", REPORT_DB_PATH.parent / "backup")
+# 외부(다른 디스크/UNC) 백업 복제 경로. 지정하면 integrity 통과본만 여기로도 복사한다
+# (같은 디스크가 통째로 죽는 경우 대비). 미설정이면 로컬 백업만.
+REPORT_DB_BACKUP_EXTERNAL_DIR   = _path_env("REPORT_DB_BACKUP_EXTERNAL_DIR", None)
 
 HONEY_RELEASES_DIR = _path_env("HONEY_RELEASES_DIR", ROOT_DIR / "server" / "releases")
 HONEY_VERSION_JSON = HONEY_RELEASES_DIR / "version.json"

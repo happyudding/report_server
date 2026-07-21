@@ -253,9 +253,13 @@ def restore_int_columns(df, int_columns):
             ints = num.astype("Int64")
         except (TypeError, ValueError):
             continue
-        obj = ints.astype(object).where(num.notna(), None)
-        if not obj.equals(col.astype(object)):
-            df.loc[index, c] = obj.to_numpy()
+        # 숫자로 못 읽은 셀(사용자 오타 등)은 원본을 그대로 둔다 — None 으로 덮으면
+        # 뒤따르는 inspect 가 '값이 지워졌다' 로 보고해 진짜 오타 경고를 가린다.
+        new = ints.astype(object).where(num.notna(), col)
+        # object 컬럼끼리는 5 == 5.0 이라 equals() 가 int↔float 변화를 못 잡는다
+        # (그래서 복원이 통째로 건너뛰어졌다). 값이 아니라 타입으로 비교한다.
+        if any(type(a) is not type(b) for a, b in zip(new, col)):
+            df.loc[index, c] = new.to_numpy()
             restored += 1
     return df, restored
 

@@ -16,6 +16,8 @@ let stdfSource = null;             // 선택 source 이름(null = 첫 source 기
 let stdfItem = null;               // 선택 item(subject), null = 미선택
 let stdfBucketFilter = new Set();  // legend 다중선택 bucket index(비었으면 전체 표시)
 const _stdfScatterCache = {};      // subject → scatter 응답(재선택 시 재fetch 회피)
+const _stdfScatterOrder = [];      // 위 캐시의 삽입 순서 (개수 상한 축출용)
+const STDF_SCATTER_CACHE_MAX = 40; // 항목 하나가 die 전량 배열이라 무한 누적은 위험
 
 // 정렬된 배열의 p 분위값(선형보간, numpy 기본과 동일 규약).
 function stdfQuantile(sorted, p) {
@@ -238,7 +240,11 @@ function stdfFetchScatter(subject) {
   if (_stdfScatterCache[subject]) return Promise.resolve(_stdfScatterCache[subject]);
   return fetch(`/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`)
     .then(res => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
-    .then(data => { _stdfScatterCache[subject] = data; return data; });
+    .then(data => {
+      cachePutCapped(_stdfScatterCache, _stdfScatterOrder, subject, data,
+                     STDF_SCATTER_CACHE_MAX);
+      return data;
+    });
 }
 
 // STDF Map 서브모드 진입점(renderMapAnalysis 가 mapMode==="stdf" 일 때 호출).
@@ -264,7 +270,7 @@ function renderStdfMap(panel) {
     mapModeSegHtml() +
     `<div class="map-toolbar stdf-toolbar">` +
       srcControl +
-      `<div class="dist-search-wrap stdf-search-wrap">` +
+      `<div class="dist-search-wrap stdf-search-wrap" data-no-dirty>` +
         `<input id="stdfItemSearch" class="dist-search" type="text" autocomplete="off" ` +
           `placeholder="Item 검색" value="${stdfItem ? esc(stdfItem) : ""}">` +
         `<div id="stdfItemSuggest" class="dist-suggest" style="display:none"></div>` +

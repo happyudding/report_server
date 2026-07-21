@@ -63,8 +63,14 @@ def _seed_client_dist_blobs(dist_blobs, analysis_key, content_hash, mode,
 
 def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_root: Path,
                      client_ip: str = "", user_agent: str = "",
-                     dist_blobs: dict | None = None) -> dict:
+                     dist_blobs: dict | None = None,
+                     request_started: float | None = None) -> dict:
+    """request_started: 라우트에서 잰 time.perf_counter() 시작값 (선택).
+    주면 파일 수신까지 포함한 업로드 소요시간을 감사 로그에 남긴다."""
     from .honeyform import decode_split_honeyform_parquet
+
+    if request_started is None:
+        request_started = time.perf_counter()
 
     meta = _validate_meta(manifest.get("meta") or {})
     mode = _validate_mode(manifest.get("mode"))
@@ -175,22 +181,29 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     except Exception:
         pass
 
+    # 업로드 소요시간·크기를 감사 행에 남긴다 — ingest 가 느려지는 추세를 관리자 화면
+    # (User Action Monitoring)에서 볼 수 있는 유일한 경로다.
+    elapsed = round(time.perf_counter() - request_started, 1)
+    total_mb = round(sum(len(item["bytes"]) for item in decoded) / (1024 * 1024), 1)
     try:
         report_db.log_audit(
             "upload", session_id=session_id, analysis_key=analysis_key,
             product_type=meta["product_type"], product=meta["product"],
             lot_id=meta["lot_id"], file_name=meta["file_name"],
+            changed_fields=f"ingest {elapsed}s / {len(decoded)}파일 {total_mb}MB",
             client_ip=client_ip, user_agent=user_agent,
             client_user=uploaded_by or None, client_host=client_host or None)
     except Exception:
         pass
+    _log.info("[ingest] session=%s elapsed=%.1fs files=%d size=%.1fMB",
+              session_id, elapsed, len(decoded), total_mb)
 
     # 캐시 프리웜: 업로더가 곧바로 여는 첫 조회(cold: parquet decode + payload + dist compact
     # ~10s)를 없애기 위해 미리 계산해 둔다. 부모 데몬 스레드에서 실행되어 위에서 시딩한
     # TABLES_CACHE 를 그대로 쓰고(재디코드 0회), 동시성은 세마포어(워커 수)로 상한된다
     # (compute.prewarm docstring 참조). 실패해도 무해 — 조회 시 다시 계산될 뿐이다.
     from . import compute
-    compute.prewarm(session_id, str(upload_root))
+    compute.prewarm(session_id, str(upload_root), dist_seeded=bool(dist_seeded))
 
     return {
         "session_id": session_id,
