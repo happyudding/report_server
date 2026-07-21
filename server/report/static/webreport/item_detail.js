@@ -18,6 +18,17 @@ let cdfExcluded = new Set();       // 제외할 칩 키 `${source}||${serial}` �
 let cdfEditMode = "none";          // "none" | "exclude" (선택이 cdfExcluded 에 들어가는지)
 // CDF x축 옵션(임시, 클라이언트 전용) — Excel 축옵션식 경계/단위. 항목 이동/새로고침 시 초기화.
 let cdfAxisOverride = null;         // null=자동(autorange). 적용 시 {min, max, major|null, minor|null}
+let histAxisOverride = null;        // 히스토그램 x축 옵션(CDF 와 독립). 항목 이동 시 초기화.
+// 축옵션 바를 차트별로 굴리기 위한 디스패치 — 바 요소 id, 라벨, override 접근자, 재렌더 함수.
+// CDF 는 기존 동작 그대로이고 hist 만 추가된다. (y축이 필요해지면 axis 필드를 얹으면 된다.)
+const IDET_AXIS = {
+  cdf:  { bar: "cdfAxisBar",  label: "CDF x축",
+          get: () => cdfAxisOverride,  set: v => { cdfAxisOverride = v; },
+          render: () => { if (_itemDetailData) distRenderCdf(_itemDetailData); } },
+  hist: { bar: "histAxisBar", label: "히스토그램 x축",
+          get: () => histAxisOverride, set: v => { histAxisOverride = v; },
+          render: () => { if (_itemDetailData) distRenderHist(_itemDetailData); } },
+};
 // 칩(die) 고유 식별키 — SERIAL 이 die 간 중복될 수 있어 XPOS/YPOS 까지 포함해야
 // 드래그/클릭 제외가 정확히 그 die 만 겨냥한다(serial 단독이면 같은 serial 전량 오제외).
 function cdfChipKey(source, serial, xpos, ypos) {
@@ -45,6 +56,7 @@ function openItemDetail(subject, navList) {
   _itemDetailFailPage = 1;
   cdfResetEdits();   // 항목이 바뀌면 CDF 제외 편집 초기화
   cdfAxisOverride = null;   // 항목이 바뀌면 CDF x축 옵션(경계/단위)도 자동으로 되돌림
+  histAxisOverride = null;  // 히스토그램 x축 옵션도 동일
   _itemDetailData = null;
   const reqId = ++_itemDetailReq;
   window.scrollTo(0, 0);
@@ -101,13 +113,13 @@ function idetFailBinsHtml(data) {
   return `<span class="idet-fail-bins">Bin ${esc(bins.join(", "))}</span>`;
 }
 
-// 상세 상단 공용 legend 스트립 — distUseExtLegend 일 때만 (툴바 .dist-legend 와 동일
-// 마크업/CSS 재사용, flex-wrap 줄바꿈). 순서는 상세 응답 data.sources 순서.
+// 상세 상단 공용 legend 스트립 — distUseExtLegend(소스 다수로 내장 legend 를 끈 경우)이거나
+// 강조가 걸려 있을 때 렌더한다(툴바와 같은 distLegendHtml 재사용, 순서는 data.sources 순서).
+// 강조 조건이 필수인 이유: 소스가 8개 미만이면 상세는 Plotly 내장 legend 를 쓰므로,
+// 갤러리에서 건 강조가 해제 UI 없이 따라 들어오는 구멍이 생긴다.
 function idetLegendHtml(data) {
-  if (!distUseExtLegend(data)) return "";
-  return `<div class="dist-legend idet-legend">` + (data.sources || []).map(s =>
-    `<span class="dist-leg-item"><span class="dist-leg-sw" style="background:${distColorFor(s.name)}"></span>${esc(s.name)}</span>`
-  ).join("") + `</div>`;
+  if (!distUseExtLegend(data) && !distSourceFilter.size) return "";
+  return distLegendHtml((data && data.sources) || [], "idet-legend");
 }
 
 function renderItemDetail(data) {
@@ -147,6 +159,7 @@ function renderItemDetail(data) {
     </div>
     <div id="cdfEditBar" class="cdf-editbar"></div>
     <div id="cdfAxisBar" class="cdf-axisbar"></div>
+    <div id="histAxisBar" class="cdf-axisbar"></div>
     <div id="chartNoteBar"></div>
     ${idetLegendHtml(data)}
     <div class="idet-charts">
@@ -170,7 +183,8 @@ function renderItemDetail(data) {
     ${failTitle}
   </div>`;
   renderCdfEditBar();
-  renderCdfAxisBar();
+  renderIdetAxisBar("cdf");
+  renderIdetAxisBar("hist");
   distRenderDetailCharts(data);   // #distCdf / #distHist (기존 함수 재사용)
   if (window.chartNotesBar) chartNotesBar(data);   // 차트 주석 툴바 (chart_notes.js)
   if (window.cnRenderChartComments) cnRenderChartComments(subject);   // 차트 하단 Comment 표시
@@ -305,6 +319,7 @@ function bindItemDetailPanel() {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
   dp.addEventListener("click", e => {
+    if (distLegendClick(e)) return;   // 범례 클릭 → source 강조
     if (e.target.closest(".idet-back")) { closeItemDetail(); return; }
     if (e.target.closest(".idet-prev")) { itemDetailNav(-1); return; }
     if (e.target.closest(".idet-next")) { itemDetailNav(1); return; }
@@ -314,7 +329,12 @@ function bindItemDetailPanel() {
     if (mb) { cdfEditMode = mb.dataset.cdfMode; cdfAfterEdit(); return; }
     if (e.target.closest(".cdf-reset")) { cdfResetEdits(); cdfAfterEdit(); return; }
     const axb = e.target.closest("[data-cdf-axis]");
-    if (axb) { axb.dataset.cdfAxis === "apply" ? cdfAxisApply() : cdfAxisAuto(); return; }
+    if (axb) {   // 감싸는 바에서 어느 차트(cdf|hist)의 축옵션인지 되짚는다
+      const host = axb.closest("[data-axis-key]");
+      const key = host ? host.dataset.axisKey : "cdf";
+      axb.dataset.cdfAxis === "apply" ? idetAxisApply(key) : idetAxisAuto(key);
+      return;
+    }
     const pg = e.target.closest("[data-idet-page]");
     if (pg && !pg.disabled) { _itemDetailFailPage = parseInt(pg.dataset.idetPage, 10) || 1; renderItemFailRows(); return; }
   });
@@ -327,7 +347,12 @@ function bindItemDetailPanel() {
     cdfAfterEdit();
   });
   dp.addEventListener("keydown", e => {   // 축옵션 입력칸에서 Enter → 적용
-    if (e.key === "Enter" && e.target.closest(".cdf-ax-in")) { e.preventDefault(); cdfAxisApply(); }
+    const inp = e.target.closest(".cdf-ax-in");
+    if (e.key === "Enter" && inp) {
+      e.preventDefault();
+      const host = inp.closest("[data-axis-key]");
+      idetAxisApply(host ? host.dataset.axisKey : "cdf");
+    }
   });
   document.addEventListener("keydown", e => {
     if (!dp.classList.contains("active")) return;
@@ -380,12 +405,15 @@ function distHistPolygon(sources, lo, hi, excluded) {
 }
 // 스펙 4장 x축 표시범위(히스토그램 전용): 소스 합친 data min/max·median 기준 4분기 규칙.
 // 가드밴드 5% 기준은 USL-LSL span, median 은 소스 합친 전체값 기준.
-function distHistXRange(sources, lo, hi, isFail) {
+function distHistXRange(sources, lo, hi) {
   const all = [];
   (sources || []).forEach(s => { for (const v of s.values) all.push(v); });
   const hasLo = lo !== null && lo !== undefined, hasHi = hi !== null && hi !== undefined;
   if (hasLo && hasHi) {
-    if (!isFail) return [lo, hi];
+    // 규격 밖 산포가 있으면 그쪽만 span×5% 가드밴드로 넓힌다. 전부 규격 안이면
+    // dmin>=lo · dmax<=hi 라 [lo,hi] 그대로 — 기존 동작과 완전히 동일하다.
+    // (예전엔 is_fail 일 때만 넓혔는데, is_fail 은 FAILTNO 기준이라 규격 이탈 여부와
+    //  무관해 비-fail 항목의 규격 밖 데이터가 축 밖으로 잘려 안 보였다.)
     const span = hi - lo, gb = span * 0.05;
     let dmin = Infinity, dmax = -Infinity;
     for (const v of all) { if (v < dmin) dmin = v; if (v > dmax) dmax = v; }
@@ -415,27 +443,30 @@ function renderCdfEditBar() {
   const modeBtn = (m, label, cls) =>
     `<button type="button" class="btn-sm cdf-mode ${cls}${cdfEditMode === m ? " active" : ""}" data-cdf-mode="${m}">${label}</button>`;
   bar.innerHTML =
-    `<span class="cdf-eb-label">CDF 편집</span>` +
+    `<span class="cdf-eb-label">분포 편집</span>` +
     modeBtn("none", "선택 없음", "cdf-mode-none") +
     modeBtn("exclude", "제외", "cdf-mode-exclude") +
     `<button type="button" class="btn-sm cdf-reset">초기화</button>` +
     `<span class="cdf-eb-count">제외 ${cdfExcluded.size}</span>` +
     (cdfEditMode !== "none"
-      ? `<span class="cdf-eb-hint">점 클릭(단일) 또는 드래그 박스(다중) · 하단 Fail 표 체크박스도 가능</span>` : "");
+      ? `<span class="cdf-eb-hint">CDF: 점 클릭·드래그 박스 · 히스토그램: 드래그로 x구간 제외 · 하단 Fail 표 체크박스</span>` : "");
 }
 function cdfToggleChip(key) {
   const set = cdfActiveSet();
   if (!set) return;
   if (set.has(key)) set.delete(key); else set.add(key);
 }
-// CDF x축 옵션 툴바(Excel 축옵션식): 경계(min/max) + 단위(기본/보조) + 적용/자동.
-// 정적 마크업만 그림 — 입력 기본값은 렌더 직후 syncCdfAxisInputs 가 '현재 그려진' 축값으로 채운다.
-function renderCdfAxisBar() {
-  const bar = document.getElementById("cdfAxisBar");
+// x축 옵션 툴바(Excel 축옵션식): 경계(min/max) + 단위(기본/보조) + 적용/자동. CDF·히스토그램
+// 공용이라 key(IDET_AXIS) 로 굴린다. 정적 마크업만 그림 — 입력 기본값은 렌더 직후
+// syncIdetAxisInputs 가 '현재 그려진' 축값으로 채운다.
+function renderIdetAxisBar(key) {
+  const cfg = IDET_AXIS[key];
+  const bar = cfg && document.getElementById(cfg.bar);
   if (!bar) return;
   const num = k => `<input type="number" class="cdf-ax-in" data-cdf-ax="${k}" step="any">`;
+  bar.dataset.axisKey = key;   // 위임 핸들러가 어느 차트의 바인지 되짚는 표식
   bar.innerHTML =
-    `<span class="cdf-eb-label">CDF x축</span>` +
+    `<span class="cdf-eb-label">${esc(cfg.label)}</span>` +
     `<span class="cdf-ax-grp">경계 ${num("min")} ~ ${num("max")}</span>` +
     `<span class="cdf-ax-grp">단위 기본 ${num("major")} 보조 ${num("minor")}</span>` +
     `<button type="button" class="btn-sm cdf-ax-apply" data-cdf-axis="apply">적용</button>` +
@@ -444,10 +475,11 @@ function renderCdfAxisBar() {
 }
 // 렌더된 실제 x축(자동 계산 포함)을 입력칸 기본값으로 반영 — 자동 모드(override=null)에서만.
 // 사용자가 값을 '적용'한 상태에서는 그 값이 이미 반영돼 있으므로 덮어쓰지 않는다.
-function syncCdfAxisInputs(cdfDiv) {
-  const bar = document.getElementById("cdfAxisBar");
-  if (!bar || cdfAxisOverride) return;
-  const ax = cdfDiv && cdfDiv._fullLayout && cdfDiv._fullLayout.xaxis;
+function syncIdetAxisInputs(key, div) {
+  const cfg = IDET_AXIS[key];
+  const bar = cfg && document.getElementById(cfg.bar);
+  if (!bar || cfg.get()) return;
+  const ax = div && div._fullLayout && div._fullLayout.xaxis;
   if (!ax || !ax.range) return;
   const fmt = v => (v == null ? "" : Number(v.toPrecision(6)));   // float 잡음 제거
   const set = (k, v) => { const el = bar.querySelector(`[data-cdf-ax="${k}"]`); if (el) el.value = fmt(v); };
@@ -455,22 +487,25 @@ function syncCdfAxisInputs(cdfDiv) {
   set("major", typeof ax.dtick === "number" ? ax.dtick : null);
   set("minor", null);   // 자동 모드는 보조 눈금 미표시 → 비움(사용자가 입력하면 그때 생성)
 }
-// 적용: 입력 4칸을 읽어 override 확정 후 CDF만 재렌더. 경계 검증 실패 시 인라인 메시지.
-function cdfAxisApply() {
-  const bar = document.getElementById("cdfAxisBar");
+// 적용: 입력 4칸을 읽어 override 확정 후 해당 차트만 재렌더. 경계 검증 실패 시 인라인 메시지.
+function idetAxisApply(key) {
+  const cfg = IDET_AXIS[key];
+  const bar = cfg && document.getElementById(cfg.bar);
   if (!bar) return;
   const val = k => { const el = bar.querySelector(`[data-cdf-ax="${k}"]`); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : null; };
   const min = val("min"), max = val("max"), major = val("major"), minor = val("minor");
   const msg = bar.querySelector(".cdf-ax-msg");
   if (min == null || max == null || min >= max) { if (msg) msg.textContent = "경계 최소<최대 확인"; return; }
   if (msg) msg.textContent = "";
-  cdfAxisOverride = { min, max, major: (major > 0 ? major : null), minor: (minor > 0 ? minor : null) };
-  if (_itemDetailData) distRenderCdf(_itemDetailData);   // CDF만 재렌더(override 반영)
+  cfg.set({ min, max, major: (major > 0 ? major : null), minor: (minor > 0 ? minor : null) });
+  cfg.render();   // 해당 차트만 재렌더(override 반영)
 }
-// 자동: override 해제 후 재렌더 → syncCdfAxisInputs 가 현재값으로 입력칸 재기입.
-function cdfAxisAuto() {
-  cdfAxisOverride = null;
-  if (_itemDetailData) distRenderCdf(_itemDetailData);
+// 자동: override 해제 후 재렌더 → syncIdetAxisInputs 가 현재값으로 입력칸 재기입.
+function idetAxisAuto(key) {
+  const cfg = IDET_AXIS[key];
+  if (!cfg) return;
+  cfg.set(null);
+  cfg.render();
 }
 // 편집(제외/모드전환/초기화) 후 CDF·히스토그램·툴바·Fail표를 다시 그림.
 // 히스토그램은 제외(cdfExcluded)를 반영하므로 함께 재렌더해야 초기화 시 원복된다. 통계표는 불변.
@@ -510,7 +545,7 @@ function distRenderCdf(data) {
       if (c.x[0] < cdfMin) cdfMin = c.x[0];
       if (c.x[c.x.length - 1] > cdfMax) cdfMax = c.x[c.x.length - 1];
     }
-    const base = distColorFor(s.name);
+    const base = distActiveColorFor(s.name);
     const trace = { type: useGl ? "scattergl" : "scatter", mode: "markers", name: s.name, x: c.x, y: c.y };
     if (!useGl) trace.cliponaxis = false;   // scattergl 미지원 속성 — SVG 분기에만
     if (hasId) {
@@ -563,7 +598,7 @@ function distRenderCdf(data) {
     cdfAfterEdit();
   });
   // 렌더된 실제 x축값을 축옵션 입력칸 기본값으로 반영(자동 모드에서만).
-  syncCdfAxisInputs(cdfDiv);
+  syncIdetAxisInputs("cdf", cdfDiv);
   // 차트 주석 오버레이 — 렌더 시점의 shapes 개수를 base 로 기억해야 하므로 항상 마지막에.
   if (window.chartNotesApply) chartNotesApply("cdf", data.subject, cdfDiv);
 }
@@ -582,18 +617,54 @@ function distRenderHist(data) {
   let ymax = 0;
   polys.forEach(p => p.counts.forEach(c => { if (c > ymax) ymax = c; }));
   const traces = polys.map(p => ({ type: "scatter", mode: "lines", name: p.source,
-    x: p.centers, y: p.counts, line: { color: distColorFor(p.source), shape: "spline" },
+    x: p.centers, y: p.counts, line: { color: distActiveColorFor(p.source), shape: "spline" },
     hovertemplate: "측정값 %{x}<br>빈도 %{y:d}<extra></extra>" }));
+  // x축 우선순위: 사용자 축옵션 > "Limit 안 Data만" 클램프 > 데이터 인지 자동범위 (CDF 와 동일).
+  // CDF else 분기의 nticks:10 은 여기 넣지 않는다 — 원래 없던 값이라 넣으면 기본 경로의
+  // 눈금 배치가 바뀐다.
+  const hov = histAxisOverride;
+  const xaxisCfg = { title: { text: xtitle }, showgrid: true, gridcolor: "#eee", zeroline: false };
+  if (hov) {
+    xaxisCfg.range = [hov.min, hov.max]; xaxisCfg.autorange = false;
+    if (hov.major) { xaxisCfg.dtick = hov.major; xaxisCfg.tick0 = hov.min; }
+    if (hov.minor) xaxisCfg.minor = { dtick: hov.minor, showgrid: true, gridcolor: "#f2f2f2", ticklen: 3 };
+  } else {
+    xaxisCfg.range = distLimitRange(lo, hi, hr.min, hr.max) || extendRangeForBeforeLimits(
+      distHistXRange(data.sources || [], lo, hi), data.subject);
+  }
   Plotly.newPlot(hDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg,
-    xaxis: { title: { text: xtitle },
-      range: distLimitRange(lo, hi, hr.min, hr.max) || extendRangeForBeforeLimits(
-        distHistXRange(data.sources || [], lo, hi, data.is_fail), data.subject),
-      showgrid: true, gridcolor: "#eee", zeroline: false },
+    dragmode: cdfEditMode === "none" ? "zoom" : "select",
+    xaxis: xaxisCfg,
     yaxis: { title: { text: "빈도" }, range: [0, (ymax || 1) * 1.1], tickformat: "d",
       showgrid: true, gridcolor: "#eee", zeroline: false },
     shapes: distSpecShapes(lo, hi, false).concat(beforeLimitShapes(data.subject)),
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
     margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
+  // 히스토그램은 bin 중심점 폴리곤이라 점 1개 = die 1개가 아니다(customdata 없음).
+  // 그래서 박스선택은 x구간만 읽고 원본 values 를 훑어 그 구간 die 를 제외집합에 넣는다.
+  // 라쏘는 ev.range 가 없어(ev.lassoPoints) 무시 — DIST_CFG 가 modeBar 를 숨기고
+  // dragmode 를 select 로 두므로 드래그 도구는 박스뿐이고, 아래 가드가 이중 방어다.
+  // ★ newPlot 은 div 에 걸린 .on 핸들러를 지우지 않는다(CDF 는 앞서 purge 하지만 여기는
+  //   안 한다). 제거하지 않으면 편집마다 핸들러가 누적돼 선택 1회에 cdfAfterEdit 가 N회 돈다.
+  if (hDiv.removeAllListeners) hDiv.removeAllListeners("plotly_selected");
+  hDiv.on("plotly_selected", ev => {
+    const set = cdfActiveSet();
+    if (!set || !ev || !ev.range || !ev.range.x || !_itemDetailData) return;
+    const rx = ev.range.x, x0 = Math.min(rx[0], rx[1]), x1 = Math.max(rx[0], rx[1]);
+    let n = 0;
+    (_itemDetailData.sources || []).forEach(s => {
+      if (!Array.isArray(s.serial) || s.serial.length !== s.values.length) return;
+      for (let i = 0; i < s.values.length; i++) {
+        const v = s.values[i];
+        if (v < x0 || v > x1) continue;
+        set.add(cdfChipKey(s.name, s.serial[i], s.xpos[i], s.ypos[i]));
+        n++;
+      }
+    });
+    if (n) cdfAfterEdit();
+  });
+  // 렌더된 실제 x축값을 축옵션 입력칸 기본값으로 반영(자동 모드에서만).
+  syncIdetAxisInputs("hist", hDiv);
   // 차트 주석 오버레이 (chart_notes.js) — base shapes 기억을 위해 렌더 직후 호출.
   if (window.chartNotesApply) chartNotesApply("hist", data.subject, hDiv);
 }
@@ -604,6 +675,8 @@ function distRenderDetailCharts(data) {
 // report용 정규분포 곡선(#distNormal): bin/막대 없이 source별 μ/σ 로 계산한 매끄러운
 // 가우시안 PDF 곡선. degenerate(n<2 or std<=0, 서버 표시) source 는 곡선 대신 x=μ 세로
 // 스파이크(shape). x축은 히스토그램 1단계 규칙(distHistXRange) + 2단계 ±5% 이중 마진.
+// Report 탭은 서버 통계(μ/σ) 기준이라 CDF/히스토그램의 '제외' 편집을 반영하지 않는다.
+// (반영하려면 μ/σ 를 클라이언트에서 재계산해야 하고, 그러면 아래 통계표와 어긋난다.)
 function distRenderNormal(data) {
   const nDiv = document.getElementById("distNormal");
   if (!nDiv) return;
@@ -619,7 +692,7 @@ function distRenderNormal(data) {
   (data.sources || []).forEach(s => {
     const st = statByName[s.name];
     if (!st) return;
-    const color = distColorFor(s.name), mean = st.average, std = st.stdev;
+    const color = distActiveColorFor(s.name), mean = st.average, std = st.stdev;
     if (st.degenerate || mean === null || mean === undefined) {
       // 축퇴 케이스: x=μ 세로 스파이크(축 전체 높이, paper 기준).
       if (mean !== null && mean !== undefined) spikes.push({
@@ -640,7 +713,7 @@ function distRenderNormal(data) {
       hoverinfo: "skip", line: { color, width: 1.4 } });
   });
   // x축: 1단계(distHistXRange, bin 버전과 동일) → 2단계(±5% 항상 적용, 이중 마진).
-  let range = distHistXRange(data.sources || [], lo, hi, data.is_fail);
+  let range = distHistXRange(data.sources || [], lo, hi);
   if (range) {
     const span = range[1] - range[0];
     range = extendRangeForBeforeLimits([range[0] - span * 0.05, range[1] + span * 0.05], data.subject);
@@ -655,6 +728,19 @@ function distRenderNormal(data) {
     shapes: distSpecShapes(lo, hi, false).concat(spikes, beforeLimitShapes(data.subject)),
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
     margin: { l: 24, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
+}
+// 강조 변경 시 상세 차트의 색만 갈아끼운다 — 재렌더 없이 zoom/선택/주석을 보존.
+// source trace 만 골라야 한다: chipMarkersFor(map_select.js) 가 붙이는 칩 trace 는
+// name 자체가 없고, distNormal 은 degenerate source 를 곡선 대신 shape 로 빼서
+// trace index 와 source index 가 어긋나므로 이름으로 되짚는다.
+function idetRestyleSourceColors(div, prop) {
+  if (!div || !div.data) return;
+  const idx = [], cols = [];
+  div.data.forEach((t, i) => {
+    if (!t.name || !(t.name in distColorMap)) return;
+    idx.push(i); cols.push(distActiveColorFor(t.name));
+  });
+  if (idx.length) { try { Plotly.restyle(div, { [prop]: cols }, idx); } catch (e) { /* no-op */ } }
 }
 // 히스토그램 블록 탭 전환(Analysis 폴리곤 ↔ Report 정규분포). report 는 처음 볼 때만 렌더.
 function setIdetHistMode(mode) {
@@ -683,10 +769,19 @@ function restoreDistSearch(q) {
 function distRenderSuggest(q) {
   const box = document.getElementById("distSuggest");
   if (!box) return;
-  const items = distSuggestions(q);
-  if (!String(q).trim() || !items.length) { box.innerHTML = ""; box.style.display = "none"; return; }
+  const all = distSuggestions(q, 0);              // 전량 — 개수 표시·전체 선택/해제용
+  if (!String(q).trim() || !all.length) { box.innerHTML = ""; box.style.display = "none"; return; }
+  const items = all.length > 30 ? all.slice(0, 30) : all;   // 목록은 기존대로 30개까지
+  // 헤더: 실제 일치 수 + 전체 선택/해제. '전체'는 표시된 30개가 아니라 일치 전량이 대상이라
+  // 개수를 명시해 동작이 놀랍지 않게 한다.
+  const head = `<div class="dist-sug-head">` +
+    `<span class="dist-sug-cnt">일치 <b>${all.length}</b>개` +
+    (all.length > items.length ? ` <span class="dist-sug-more">(상위 ${items.length}개 표시)</span>` : "") +
+    `</span>` +
+    `<button type="button" class="btn-sm" data-sug-all="1">전체 선택</button>` +
+    `<button type="button" class="btn-sm" data-sug-all="0">전체 해제</button></div>`;
   // 체크박스로 다중 선택 → 선택 항목만 갤러리에 표시. cpk 값은 표시하지 않는다.
-  box.innerHTML = items.map(r =>
+  box.innerHTML = head + items.map(r =>
     `<label class="dist-sug-item">
       <input type="checkbox" class="dist-sug-chk" data-subject="${esc(r.subject)}"${distSelected.has(r.subject) ? " checked" : ""}>
       <span class="sug-tno">${esc(r.test_num || "")}</span>
@@ -701,6 +796,21 @@ function distBindPanel() {
   const panel = document.getElementById("panel-distribution");
   if (!panel) return;
   panel.addEventListener("click", e => {
+    if (distLegendClick(e)) return;   // 범례 클릭 → source 강조
+    // 검색 결과 전체 선택/해제 — 표시된 30개가 아니라 현재 검색어의 전 일치 항목이 대상.
+    // '전체 해제'는 이 검색어의 일치 항목만 빼고, 다른 검색으로 고른 선택은 유지한다
+    // (전부 지우는 것은 툴바의 '선택 N개 ✕' 칩).
+    const sa = e.target.closest("[data-sug-all]");
+    if (sa) {
+      const sq = (document.getElementById("distSearch") || {}).value || "";
+      const on = sa.dataset.sugAll === "1";
+      distSuggestions(sq, 0).forEach(r => {
+        if (on) distSelected.add(r.subject); else distSelected.delete(r.subject);
+      });
+      distRenderGallery();
+      restoreDistSearch(sq);
+      return;
+    }
     const seg = e.target.closest(".distseg");
     if (seg) {
       if (seg.dataset.seg === "clearsel") distSelected.clear();
@@ -764,29 +874,29 @@ function renderMiniDistCell(cell) {
   // Issue Table CPK 섹션 미니셀(data-limitwin): 규격 안 데이터만 재정규화해 그린다 —
   // 행의 cpk_limited 와 동일 기준. 창 결과는 traces·x범위 양쪽에서 재사용한다.
   const limitWin = cell.dataset.limitwin === "1";
-  const ptsBySource = {};
-  Object.keys(info.bySource).forEach(source => {
-    const src = info.bySource[source];
-    ptsBySource[source] = limitWin ? distWindowRenorm(src.xs, src.ys, lo, hi)
-      : { xs: src.xs, ys: src.ys };
-  });
   // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
-  // 점은 canvas 로 그린다(distPaintPoints) — Plotly 에는 sentinel 만. limitWin 경로는
-  // 매번 새 배열이 나오므로 메모(distDisplayPoints) 대상이 아니다.
+  // 점은 canvas 로 그린다(distPaintPoints) — Plotly 에는 sentinel 만. 이 칸은 112px 로
+  // 작아 칸 예산(CELL_BUDGET_MINI)을 소스 수로 나눈 캡을 쓴다 — 소스가 적으면 갤러리와
+  // 동일하고 소스 수십 개일 때만 소스별 점이 줄어든다.
+  const srcNames = Object.keys(info.bySource);
+  const cap = distCapFor(srcNames.length, DIST.CELL_BUDGET_MINI);
   const dsBySource = {};
-  Object.keys(ptsBySource).forEach(source => {
+  srcNames.forEach(source => {
     dsBySource[source] = limitWin
-      ? distPointsForDisplay(ptsBySource[source].xs, ptsBySource[source].ys)
-      : distDisplayPoints(info.bySource[source]);
+      ? distDisplayPointsWindowed(info.bySource[source], lo, hi, cap)
+      : distDisplayPoints(info.bySource[source], cap);
   });
   const sentinel = distSentinelTrace(dsBySource);
   const traces = sentinel ? [sentinel] : [];
   // x축을 데이터 범위로 고정한다. autorange 로 두면 LSL/USL 스펙선 shapes(데이터 범위 밖일
   // 수 있음)까지 x-autorange 에 포함돼 x축이 늘어나 곡선이 한쪽에 뭉쳐 잘린 것처럼 보인다.
   // xs 는 ECDF 라 오름차순(distDownsampleForDisplay 전제) → 양끝값으로 min/max 를 O(1) 로 잡음.
+  // 표시점(dsBySource)으로 잡아도 값은 같다 — 채움·다운샘플·하드캡 모두 양끝점을 항상
+  // 보존하므로 재정규화 원본과 min/max 가 동일하다(headless 검증). limitWin 에서 재정규화를
+  // 두 번 돌리지 않으려고 표시점을 쓴다.
   let xMin = Infinity, xMax = -Infinity;
-  Object.keys(ptsBySource).forEach(source => {
-    const xs = ptsBySource[source].xs;
+  srcNames.forEach(source => {
+    const xs = dsBySource[source].xs;
     if (xs && xs.length) {
       if (xs[0] < xMin) xMin = xs[0];
       if (xs[xs.length - 1] > xMax) xMax = xs[xs.length - 1];
@@ -827,7 +937,8 @@ function issueDistQueueRender(cell) {
 function issueDistFlush() {
   issueDistRafScheduled = false;
   let n = 0;
-  while (issueDistQueue.length && n < DIST.PER_FRAME) {
+  const perFrame = distPerFrame();
+  while (issueDistQueue.length && n < perFrame) {
     const cell = issueDistQueue.shift();
     if (cell.isConnected && cell.dataset.visible === "1") { renderMiniDistCell(cell); n++; }
   }

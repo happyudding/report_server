@@ -31,8 +31,11 @@ function yieldStepPassRow(step) {
 // 한 STEP 표를 렌더. si = 섹션 인덱스 — 그룹 토글 data-grp 를 표들 사이에서 유일하게 만든다.
 // passRow = 표 맨 위 Bin1 행(yieldStepPassRow, 없으면 null).
 function renderYieldTable(cols, groups, si, passRow) {
-  const colgroup = "<colgroup>" + cols.map(c => `<col style="width:${colWidth(c)}">`).join("") + "</colgroup>";
-  const head = buildSheetTableHead(cols);
+  // source 가 많으면 헤더가 공통부분을 뗀 짧은 라벨이 되므로 그 컬럼 폭도 함께 좁힌다.
+  const narrowSrc = sourceColCount(cols) >= SRC_ABBREV_MIN;
+  const colgroup = "<colgroup>" + cols.map(c =>
+    `<col style="width:${colWidth(c, undefined, narrowSrc)}">`).join("") + "</colgroup>";
+  const head = buildSheetTableHead(cols, { resize: true });   // 헤더 우측 경계 드래그로 열너비 조절
 
   // 각 source _yield 컬럼 + avg 컬럼별로 빨강 그라데이션(값 클수록 진함) 정규화 기준 =
   // 그 컬럼 내 최댓값. 표에 실린 모든 행(대표 + detail)을 기준으로 컬럼별 max 를 구한다.
@@ -118,14 +121,17 @@ function yieldExcelBtnHtml() {
     `title="Honey Excel Download 의 Yield 시트와 동일한 xlsx 다운로드 (Bin 접힌 상태)">Excel Down</button>`;
 }
 // 한 Bin 그룹(대표행)의 detail FAILTNO 행 펼치기/접기 + 그룹 토글 버튼 상태 갱신.
+// 펼침으로 Item 등 컬럼 폭이 바뀌면 좌측 고정 오프셋이 stale 이 되므로 토글 후 재실측한다.
 function setYieldGroup(gi, expand, btn) {
   if (btn) { btn.setAttribute("aria-expanded", expand ? "true" : "false"); btn.textContent = expand ? "▲" : "▼"; }
   document.querySelectorAll(`#panel-yield tr.yield-bin-detail[data-grp="${gi}"]`).forEach(tr => {
     tr.style.display = expand ? "" : "none";
   });
+  syncYieldStickyOffsets();
 }
 function setAllYieldGroups(expand) {
   document.querySelectorAll("#panel-yield .yield-toggle").forEach(btn => setYieldGroup(btn.dataset.grp, expand, btn));
+  syncYieldStickyOffsets();
 }
 function bindYieldPanel() {
   if (yieldPanelBound) return;
@@ -147,6 +153,34 @@ function bindYieldPanel() {
   yieldPanelBound = true;
 }
 
+// Yield 표 좌측 고정열(Step/Bin/TNO/Item)의 left 오프셋을 실제 렌더 폭으로 계산 —
+// 내용이 길어 컬럼이 colWidth 힌트보다 넓어져도 셀이 겹치지(깨지지) 않게 한다.
+// STEP 별로 표가 여러 개라 표마다 따로 심는다. 탭이 숨겨져 폭이 0 이면 건너뛴다.
+function syncYieldStickyOffsets(panel) {
+  panel = panel || document.getElementById("panel-yield");
+  if (!panel) return;
+  panel.querySelectorAll(".sheet-table.kind-yield").forEach(table => {
+    let row = null;
+    table.querySelectorAll("tbody tr").forEach(tr => {
+      if (!row && tr.children.length >= 4 && tr.offsetParent !== null) row = tr;
+    });
+    if (!row) return;
+    const w = [0, 1, 2].map(i => row.children[i].getBoundingClientRect().width);
+    if (!w.every(v => v > 0)) return;
+    table.style.setProperty("--yield-col2-left", w[0] + "px");
+    table.style.setProperty("--yield-col3-left", (w[0] + w[1]) + "px");
+    table.style.setProperty("--yield-col4-left", (w[0] + w[1] + w[2]) + "px");
+  });
+}
+window.addEventListener("resize", () => syncYieldStickyOffsets());
+
+// Yield 표는 STEP 별로 표가 여러 개라 각 표에 리사이즈를 따로 건다(각자 자기 colgroup 기준).
+// 폭이 바뀌면 좌측 고정열 오프셋을 다시 실측한다.
+function bindYieldColResize(panel) {
+  panel.querySelectorAll(".sheet-table.kind-yield").forEach(table =>
+    bindSheetColResize(table, () => syncYieldStickyOffsets(panel)));
+}
+
 // ── Yield (read) ──────────────────────────────────────────────────────────────
 function renderYield(yield_text, summary_rows) {
   const panel = document.getElementById("panel-yield");
@@ -157,6 +191,9 @@ function renderYield(yield_text, summary_rows) {
   if (Array.isArray(stepGroups) && stepGroups.length && Array.isArray(yield_text)) {
     bindYieldPanel();
     panel.innerHTML = overview + yieldToolbarHtml() + renderYieldStepSections(stepGroups, yield_text);
+    syncYieldStickyOffsets(panel);
+    requestAnimationFrame(() => syncYieldStickyOffsets(panel));   // 레이아웃 확정 후 재실측
+    bindYieldColResize(panel);
     return;
   }
 
@@ -164,6 +201,9 @@ function renderYield(yield_text, summary_rows) {
   if (Array.isArray(yield_text) && yield_text.length) {
     panel.innerHTML = overview + `<div class="yield-toolbar">${yieldExcelBtnHtml()}</div>` +
       renderSheetTable(yield_text, { kind: "yield" });
+    syncYieldStickyOffsets(panel);
+    requestAnimationFrame(() => syncYieldStickyOffsets(panel));
+    bindYieldColResize(panel);
     return;
   }
 
@@ -297,11 +337,23 @@ function setIssueGroup(gi, expand, btn) {
     tr.style.display = expand ? "" : "none";
   });
 }
+// 행 펼침/접힘으로 상세행의 긴 Item 명이 드러나면 Item 열이 넓어지는데, 좌측 고정 오프셋
+// (--issue-colN-left)은 렌더 시점 실측값이라 그대로면 stale 이 된다 → Map/Distribution 이
+// 옛 오프셋에 서서 Item 열 위로 겹쳐 보인다(2026-07-21 재현). 토글 뒤 반드시 재실측한다.
+function afterIssueRowsToggled() {
+  const panel = document.getElementById("panel-issues");
+  if (!panel) return;
+  syncIssueStickyOffsets(panel);
+  syncIssueHscrollSpacer(panel);
+  requestAnimationFrame(() => { syncIssueStickyOffsets(panel); syncIssueHscrollSpacer(panel); });
+}
 function toggleIssueGroup(btn) {
   setIssueGroup(btn.dataset.grp, btn.getAttribute("aria-expanded") !== "true", btn);
+  afterIssueRowsToggled();
 }
 function setAllIssueGroups(expand) {
   document.querySelectorAll("#panel-issues .issue-toggle").forEach(btn => setIssueGroup(btn.dataset.grp, expand, btn));
+  afterIssueRowsToggled();
 }
 
 // 상단 프록시 가로스크롤바 ↔ .sheet-wrap.kind-issue 실제 스크롤 동기화 (피드백 루프 가드).

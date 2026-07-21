@@ -129,6 +129,10 @@ function compareBinTableHtml(binDelta, sources) {
 //    이상(항목 추가/제거·limit 변경)만 상단 요약 + 항상 표시하고, 나머지 정상 행은
 //    git-diff 식으로 접어둔다(초기 접힘, '전체 펼치기' 토글). ──
 // 행 분류: added(after 만)·removed(before 만)·limitchg(양쪽 존재 & limit 불일치)·normal.
+// goodlog 15컬럼 기본 폭(px) — colgroup 순서 = GOODLOG_HEADER 순서(compare.py).
+// [after Item/Lo/Hi/Unit/Value, compare Item/Lo/Hi, Comment, Gap%, before Item/Lo/Hi/Unit/Value]
+const GOODLOG_COLW = [130, 76, 76, 44, 84, 58, 58, 58, 110, 58, 130, 76, 76, 44, 84];
+
 function goodlogRowType(r) {
   const aHas = (r.after_item_name || "") !== "";
   const bHas = (r.before_item_name || "") !== "";
@@ -168,33 +172,39 @@ function goodlogSectionHtml(gl) {
   const nameChips = (arr, cls) => arr.map(n => `<span class="gl-ab-item ${cls}">${esc(n)}</span>`).join("");
   let summary;
   if (abnCount === 0) {
-    summary = `<div class="gl-ab-summary gl-ab-none">항목/Limit 차이 없음 — 값 gap 만 존재
-      <button class="btn-sm gl-expand-all" type="button">전체 펼치기</button></div>`;
+    summary = `<div class="gl-ab-summary gl-ab-none">항목/Limit 차이 없음 — 값 gap 만 존재</div>`;
   } else {
+    // 이상 항목 목록(칩)은 개수가 많으면 표를 밀어내므로 헤드 버튼으로 따로 접었다 편다.
     summary = `<div class="gl-ab-summary">
-      <div class="gl-ab-head">이상 항목
+      <div class="gl-ab-head">
+        <button class="gl-ab-toggle" type="button"><span class="gl-fold-arrow">▾</span> 이상 항목</button>
         <span class="cmp-chip gl-chip-add">추가 ${added.length}</span>
         <span class="cmp-chip gl-chip-del">제거 ${removed.length}</span>
-        <span class="cmp-chip gl-chip-lim">Limit 변경 ${limitchg.length}</span>
-        <button class="btn-sm gl-expand-all" type="button">전체 펼치기</button></div>
+        <span class="cmp-chip gl-chip-lim">Limit 변경 ${limitchg.length}</span></div>
       <div class="gl-ab-items">${nameChips(added, "gl-add")}${nameChips(removed, "gl-del")}${nameChips(limitchg, "gl-lim")}</div>
     </div>`;
   }
 
-  const head = `<thead>
+  // colgroup 기본 폭(px) — 사용자 드래그 리사이즈의 시작값. Item 은 기본이 너무 넓다는
+  // 요청으로 좁게 잡고, 넘치는 이름은 ellipsis + title 툴팁으로 본다(table-layout:fixed).
+  const colgroup = `<colgroup>${GOODLOG_COLW.map(w => `<col style="width:${w}px">`).join("")}</colgroup>`;
+  const rz = i => `<span class="col-resize-handle" data-col="${i}"></span>`;
+  const head = colgroup + `<thead>
       <tr><th colspan="5">After — ${esc(gl.after_source || "")}</th><th colspan="3">Compare</th>
-          <th rowspan="2">Comment</th><th class="num" rowspan="2">Gap %</th>
+          <th rowspan="2">Comment${rz(8)}</th><th class="num" rowspan="2">Gap %${rz(9)}</th>
           <th colspan="5">Before — ${esc(gl.before_source || "")}</th></tr>
-      <tr><th>Item</th><th class="num">LoLim</th><th class="num">HiLim</th><th>Unit</th><th class="num">Value</th>
-          <th>Item</th><th>LoLim</th><th>HiLim</th>
-          <th>Item</th><th class="num">LoLim</th><th class="num">HiLim</th><th>Unit</th><th class="num">Value</th></tr></thead>`;
+      <tr><th>Item${rz(0)}</th><th class="num">LoLim${rz(1)}</th><th class="num">HiLim${rz(2)}</th><th>Unit${rz(3)}</th><th class="num">Value${rz(4)}</th>
+          <th>Item${rz(5)}</th><th>LoLim${rz(6)}</th><th>HiLim${rz(7)}</th>
+          <th>Item${rz(10)}</th><th class="num">LoLim${rz(11)}</th><th class="num">HiLim${rz(12)}</th><th>Unit${rz(13)}</th><th class="num">Value${rz(14)}</th></tr></thead>`;
+  // 폭 고정(fixed layout)이라 긴 Item 명은 잘린다 — title 로 전체 이름을 볼 수 있게 한다.
+  const nameCell = v => `<td title="${esc(v || "")}">${esc(v || "")}</td>`;
   const rowHtml = (r, t) =>
-    `<tr class="gl-row gl-${t}"><td>${esc(r.after_item_name || "")}</td><td class="num">${glNum(r.after_lolimit)}</td>` +
+    `<tr class="gl-row gl-${t}">` + nameCell(r.after_item_name) + `<td class="num">${glNum(r.after_lolimit)}</td>` +
     `<td class="num">${glNum(r.after_hilimit)}</td><td>${esc(r.after_unit || "")}</td>` +
     `<td class="num">${esc(r.after_value || "")}</td>` +
     boolCell(r.compare_item_name) + boolCell(r.compare_lolimit) + boolCell(r.compare_hilimit) +
     `<td>${esc(r.comment || "")}</td>` + gapCell(r.gap) +
-    `<td>${esc(r.before_item_name || "")}</td><td class="num">${glNum(r.before_lolimit)}</td>` +
+    nameCell(r.before_item_name) + `<td class="num">${glNum(r.before_lolimit)}</td>` +
     `<td class="num">${glNum(r.before_hilimit)}</td><td>${esc(r.before_unit || "")}</td>` +
     `<td class="num">${esc(r.before_value || "")}</td></tr>`;
 
@@ -217,8 +227,73 @@ function goodlogSectionHtml(gl) {
       i = j;
     }
   }
+  // 상단 프록시 가로 스크롤바 — 표가 길어 하단까지 내려가지 않아도 좌우로 스크롤할 수 있게
+  // (Issue Table 의 .issue-hscroll 과 동일 패턴, scrollLeft 만 양방향 동기화).
   return title + summary +
-    `<div class="sheet-wrap"><table class="sheet-table compare-table goodlog-table">${head}${parts.join("")}</table></div>`;
+    `<div class="gl-hscroll"><div class="gl-hscroll-spacer"></div></div>` +
+    `<div class="sheet-wrap gl-wrap"><table class="sheet-table compare-table goodlog-table">${head}${parts.join("")}</table></div>`;
+}
+
+// ── goodlog 표: 폭 동기화 / 프록시 가로 스크롤바 / 컬럼 드래그 리사이즈 ──────────
+// table-layout:fixed 는 표 전체 width 를 따로 잡아줘야 컬럼 폭 합이 그대로 반영된다.
+function glSyncTableWidth(table) {
+  const cg = table.querySelector("colgroup");
+  if (!cg) return;
+  let sum = 0;
+  Array.from(cg.children).forEach(c => { sum += parseFloat(c.style.width) || 0; });
+  if (sum > 0) table.style.width = sum + "px";
+}
+function syncGoodlogHscroll(panel) {
+  const wrap = panel.querySelector(".sheet-wrap.gl-wrap");
+  const spacer = panel.querySelector(".gl-hscroll-spacer");
+  if (!wrap || !spacer) return;
+  spacer.style.width = wrap.scrollWidth + "px";
+}
+function bindGoodlogHscroll(panel) {
+  const wrap = panel.querySelector(".sheet-wrap.gl-wrap");
+  const hs = panel.querySelector(".gl-hscroll");
+  if (!wrap || !hs) return;
+  syncGoodlogHscroll(panel);
+  let syncing = false;
+  hs.addEventListener("scroll", () => {
+    if (syncing) return;
+    syncing = true; wrap.scrollLeft = hs.scrollLeft; syncing = false;
+  });
+  wrap.addEventListener("scroll", () => {
+    if (syncing) return;
+    syncing = true; hs.scrollLeft = wrap.scrollLeft; syncing = false;
+  });
+}
+// 헤더 우측 경계 핸들(.col-resize-handle, data-col=컬럼인덱스)을 끌어 <col> width 를 바꾼다.
+// 저장 없음(새로고침 시 기본 폭 복귀) — Issue Table 의 bindIssueColResize 와 같은 관례.
+function bindGoodlogColResize(panel) {
+  const table = panel.querySelector(".goodlog-table");
+  const cg = table && table.querySelector("colgroup");
+  if (!table || !cg) return;
+  glSyncTableWidth(table);
+  const MIN_W = 30;
+  table.addEventListener("mousedown", e => {
+    const handle = e.target.closest(".col-resize-handle");
+    if (!handle) return;
+    const col = cg.children[+handle.dataset.col];
+    if (!col) return;
+    const th = handle.closest("th");
+    const startW = th ? th.getBoundingClientRect().width : parseFloat(col.style.width) || 80;
+    const startX = e.clientX;
+    e.preventDefault();   // 드래그 중 텍스트 선택 방지
+    const onMove = ev => {
+      col.style.width = Math.max(MIN_W, Math.round(startW + (ev.clientX - startX))) + "px";
+      glSyncTableWidth(table);
+      syncGoodlogHscroll(panel);
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      syncGoodlogHscroll(panel);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
 }
 
 // goodlog 접기/펼치기 바인딩 — renderCompare 가 innerHTML 갱신 후 호출(직접 바인딩).
@@ -236,6 +311,18 @@ function bindGoodlogFolding(panel) {
       setLabel(row, show);
     });
   });
+  // 이상 항목 칩 목록만 따로 접기 (표의 '변화 없음' 접기와 독립).
+  panel.querySelectorAll(".gl-ab-toggle").forEach(tbtn => {
+    tbtn.addEventListener("click", () => {
+      const items = tbtn.closest(".gl-ab-summary").querySelector(".gl-ab-items");
+      if (!items) return;
+      const show = items.hasAttribute("hidden");
+      if (show) items.removeAttribute("hidden"); else items.setAttribute("hidden", "");
+      const arrow = tbtn.querySelector(".gl-fold-arrow");
+      if (arrow) arrow.textContent = show ? "▾" : "▸";
+    });
+  });
+  // '전체 펼치기' 는 상단 sticky 툴바에 있다(패널 밖이 아니라 panel 안이라 그대로 찾힌다).
   const btn = panel.querySelector(".gl-expand-all");
   if (btn) btn.addEventListener("click", () => {
     const anyHidden = !!panel.querySelector(".gl-fold[hidden]");
@@ -247,10 +334,12 @@ function bindGoodlogFolding(panel) {
   });
 }
 
-// 서브탭 전환 — Compare 패널 안에서 Map/Log/CPK/Bin 하위 화면을 토글한다.
+// 서브탭 전환 — Compare 패널 안에서 Map/Log/CPK 하위 화면을 토글한다.
+// (Bin 비교는 서브탭 없이 Map 패널 하단에 함께 표시한다.)
 function bindCompareSubtabs(panel) {
   const bar = panel.querySelector(".cmp-subtabs");
   if (!bar) return;
+  const expandBtn = panel.querySelector(".gl-expand-all");
   bar.addEventListener("click", e => {
     const btn = e.target.closest("[data-cmpsub]");
     if (!btn) return;
@@ -258,11 +347,15 @@ function bindCompareSubtabs(panel) {
     bar.querySelectorAll("[data-cmpsub]").forEach(b => b.classList.toggle("active", b === btn));
     panel.querySelectorAll(".cmp-subpanel").forEach(p =>
       p.classList.toggle("active", p.dataset.cmppanel === key));
+    // '전체 펼치기' 는 goodlog 표 전용이라 Log 화면에서만 노출.
+    if (expandBtn) expandBtn.hidden = (key !== "log");
     // 숨김(0px) 상태에서 그려진 Plotly 맵은 보일 때 리사이즈해야 폭이 복구된다.
     const active = panel.querySelector(`.cmp-subpanel[data-cmppanel="${key}"]`);
     if (active && window.Plotly) {
       active.querySelectorAll(".js-plotly-plot").forEach(d => { try { Plotly.Plots.resize(d); } catch (e) {} });
     }
+    // 숨김 상태에선 scrollWidth 가 0 이라 보일 때 프록시 스크롤바 폭을 다시 실측.
+    if (key === "log") syncGoodlogHscroll(panel);
   });
 }
 
@@ -284,17 +377,30 @@ function renderCompare() {
         <span class="cmp-chip cmp-common">Bin 일치 ${c.match || 0}</span>
         <span class="cmp-chip cmp-unique">Bin 불일치 ${mismatch}</span>
       </div>
-      <div class="cmp-subtabs distseg-group">
-        <button class="distseg active" data-cmpsub="map">Map 비교</button>
-        <button class="distseg" data-cmpsub="log">Log 비교</button>
-        <button class="distseg" data-cmpsub="cpk">CPK 비교</button>
-        <button class="distseg" data-cmpsub="bin">Bin 비교</button>
+      <div class="cmp-toolbar">
+        <div class="cmp-subtabs distseg-group">
+          <button class="distseg active" data-cmpsub="map">Map 비교</button>
+          <button class="distseg" data-cmpsub="log">Log 비교</button>
+          <button class="distseg" data-cmpsub="cpk">CPK 비교</button>
+        </div>
+        ${(cmp.goodlog && !cmp.goodlog.identical && (cmp.goodlog.rows || []).length)
+            ? `<button class="btn-sm gl-expand-all" type="button" hidden>전체 펼치기</button>` : ""}
       </div>
       <div class="cmp-subpanel active" data-cmppanel="map">
         <h3 class="compare-h">공통성 Map — Bin 일치=초록 / 한쪽만 Fail=source 색 / 둘 다 Fail=보라</h3>
         <div class="wafer-card">
           <div id="cmp-common-map" style="width:100%;height:520px;"></div>
           <div id="cmp-common-legend" class="cmp-legend"></div>
+        </div>
+        <div class="cmp-bin-grid">
+          <section>
+            <h3 class="compare-h">동일 좌표 Bin 변화 (before → after)</h3>
+            ${compareBinTransitionHtml(cmp.bin_transition) || '<div class="placeholder">Bin 전이표는 2 source 비교에서만 제공됩니다.</div>'}
+          </section>
+          <section>
+            <h3 class="compare-h">Bin Yield 비교</h3>
+            ${compareBinTableHtml(cmp.bin_delta, sources)}
+          </section>
         </div>
       </div>
       <div class="cmp-subpanel" data-cmppanel="log">
@@ -304,16 +410,27 @@ function renderCompare() {
         <h3 class="compare-h">산포 차이 (공통 항목 · |ΔCpk| 큰 순)</h3>
         ${compareDistShiftHtml(cmp.dist_shift, sources)}
       </div>
-      <div class="cmp-subpanel" data-cmppanel="bin">
-        <h3 class="compare-h">동일 좌표 Bin 변화 (before → after)</h3>
-        ${compareBinTransitionHtml(cmp.bin_transition) || '<div class="placeholder">Bin 전이표는 2 source 비교에서만 제공됩니다.</div>'}
-        <h3 class="compare-h">Bin Yield 비교</h3>
-        ${compareBinTableHtml(cmp.bin_delta, sources)}
-      </div>
     </div>`;
 
   drawCompareCommonMap(cm, sources);
   bindGoodlogFolding(panel);
+  bindGoodlogColResize(panel);
+  bindGoodlogHscroll(panel);
   bindCompareSubtabs(panel);
+  syncCompareToolbarH(panel);
 }
+
+// sticky 툴바 실제 높이 → 그 아래 붙는 프록시 가로 스크롤바의 top 오프셋(--cmp-toolbar-h).
+function syncCompareToolbarH(panel) {
+  panel = panel || document.getElementById("panel-compare");
+  if (!panel) return;
+  const bar = panel.querySelector(".cmp-toolbar");
+  if (bar && bar.offsetHeight) panel.style.setProperty("--cmp-toolbar-h", bar.offsetHeight + "px");
+}
+window.addEventListener("resize", () => {
+  const panel = document.getElementById("panel-compare");
+  if (!panel) return;
+  syncCompareToolbarH(panel);
+  syncGoodlogHscroll(panel);
+});
 

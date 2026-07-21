@@ -28,6 +28,16 @@ DataFrame 레이아웃 (`honeyform.py`, `META_COLUMNS`/`META_ROW_LABELS`):
 - 8번째 컬럼부터가 **측정 항목(item)**, 7번째 행부터가 **측정 데이터**
 - item 데이터는 디코드 시 numeric 으로 복원(정수 전용 컬럼 int64 / 그 외 float64 dtype 보존).
   parquet 인코딩 전 `validate_honeyform_df` 로 컬럼/행 라벨·중복·최소 행 검증.
+- **item 컬럼 이름은 메타 컬럼명과 겹칠 수 없다**(예약어) — 겹치면 `tail[meta_labels]` 가
+  같은 라벨로 2개 컬럼을 뽑아 TNO/HILIM 이 엉뚱한 항목에 배정된다. `validate_honeyform_df` 가 거부.
+- **메타 7컬럼 라벨은 encode·decode·split 모두에서 canonical 대문자로 정규화**된다
+  (`canonicalize_meta_columns`). 검증이 대소문자를 무시하므로 'Bin' 같은 표기도 통과하는데,
+  하류는 `data["BIN"]` 대문자 하드코딩이라 정규화가 없으면 저장은 성공하고 조회만 500 이 난다.
+  decode 에도 적용해 이미 저장된 오염 parquet 을 마이그레이션 없이 구제한다.
+- **값(측정값·BIN·좌표 등)은 이 검증 대상이 아니다.** `validate_honeyform_df` 는 조회
+  경로(`_decode_parts`)가 공유하므로 값 규칙을 넣으면 기존 세션이 열리지 않는다. 편집 시
+  값 검증은 [rawvalues.py](../web_report/rawvalues.py) 가 편집 경로에서만 수행한다
+  (→ [11 · Raw Data 값 검증](11_web_report_tabs.md)). ingest 는 종전대로 값을 검증하지 않는다.
 
 ## 업로드 흐름 (`ingest_webreport()`)
 1. **정규화** — `validate_meta`(product_type/product/lot_id/revision/process/edm_link/password/

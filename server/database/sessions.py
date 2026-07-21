@@ -207,7 +207,7 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
     params.extend([limit, offset])
     # session_id 를 마지막 정렬키로 두어 offset 페이지 간 순서가 안정되게 한다
     sql = f"""
-        SELECT s.session_id, s.file_name, s.product_type, s.process, s.product,
+        SELECT s.session_id, s.file_name, s.product_type, s.family_product, s.process, s.product,
                s.revision, s.edm_link, s.lot_id, s.created_at, s.status, s.dataset_id,
                s.is_debug, s.source, s.uploaded_by, s.client_host,
                COALESCE(s.mode, 'Normal') AS mode,

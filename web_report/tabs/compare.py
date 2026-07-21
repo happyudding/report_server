@@ -126,13 +126,17 @@ GOODLOG_HEADER = [
 
 
 def _lim_equal(a, b) -> bool:
-    """두 limit 동일 여부 (둘 다 결측이면 동일로 간주)."""
+    """두 limit 동일 여부 (둘 다 결측이면 동일로 간주).
+
+    부동소수 잔차(예: 1.2000000000000002 vs 1.2)로 표시상 같은 limit 이 False 로 뜨던 것을
+    막기 위해 소수 4자리로 반올림해 비교한다. 저장·표시되는 limit 값 자체는 원본 그대로다.
+    """
     na, nb = num(a), num(b)
     if na is None and nb is None:
         return True
     if na is None or nb is None:
         return False
-    return na == nb
+    return round(na, 4) == round(nb, 4)
 
 
 def _calc_gap(after_num, before_num):

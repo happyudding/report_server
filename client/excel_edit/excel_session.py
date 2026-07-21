@@ -4,9 +4,12 @@
   1. GET .../web_report/rawdata_export → zip(manifest + source_*.parquet) 다운로드·디코드
   2. source 당 시트 1개로 임시 xlsx 작성 → xlwings 로 Excel 창 열기 (visible)
   3. 사용자가 저장·닫을 때까지 폴링. 닫힘 후 파일 해시 비교 (무변경 시 업로드 스킵)
-  4. 시트명으로 원본 source 를 매칭해 재읽기 → honeyform parquet 재인코딩
+  4. 시트명으로 원본 source 를 매칭해 재읽기 → 자동 교정(유령 행/열·메타 컬럼명 케이스) →
+     정수 dtype 복원 → 원본 대비 diff·경고 수집 → honeyform parquet 재인코딩
      (형식 오류면 그 xlsx 를 다시 열어 사용자가 고치도록 반복).
-     시트를 지웠으면 그 source 를 리포트에서 제거 — 되돌릴 수 없으므로 confirm_cb 로 확인받는다
+     시트를 지웠으면 그 source 를 리포트에서 제거.
+  4-1. 되돌릴 수 없으므로 **반영 전에** 변경 요약(셀 diff·자동 교정·경고·시트 삭제)을
+     confirm_cb 로 한 번 확인받는다. 값 검증 규칙·문안은 web_report.rawvalues 가 단일 진실.
   5. POST .../web_report/rawdata_replace 로 전체 교체 (X-Honey-Agent 헤더,
      삭제 시 source_indices 동봉)
 
@@ -27,10 +30,11 @@ from urllib.parse import quote
 
 import requests
 
+from web_report import rawvalues
 from web_report.honeyform import (
     DATA_START_ROW,
     META_COLUMNS,
-    decode_honeyform_parquet,
+    decode_split_honeyform_parquet,
     encode_honeyform_parquet,
 )
 
@@ -69,7 +73,7 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
 
     # ── 1. 다운로드 + 디코드 ──────────────────────────────────────────────
     _emit("download", "rawdata 다운로드 중...")
-    dfs, sheet_titles = _download_sources(base, session_id)
+    dfs, sheet_titles, int_cols = _download_sources(base, session_id)
 
     # ── 2. 임시 xlsx 작성 + Excel 열기 ────────────────────────────────────
     _emit("excel", "Excel 여는 중...")
@@ -112,13 +116,17 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
 
             _emit("reencode", "변경 내용 인코딩 중...")
             try:
-                new_parquets, kept_indices, removed_names = _read_and_encode(
-                    xlsx_path, final_titles, sheet_titles)
-                if removed_names and not _confirm_removal(confirm_cb, removed_names):
+                new_parquets, kept_indices, removed_names, reports, fixes = _read_and_encode(
+                    xlsx_path, final_titles, sheet_titles, dfs, int_cols)
+                # 무엇이 바뀌는지(셀 diff·자동 교정·경고·시트 삭제)를 업로드 전에 한 번 보여준다
+                # — Excel 편집은 서버에서 되돌릴 수 없다.
+                message = rawvalues.build_confirm_message(
+                    reports, removed_names, fixes_by_source=fixes)
+                if message and not _confirm_changes(confirm_cb, message):
                     _cleanup(tmp_dir)
-                    _emit("cancelled", "시트 삭제 미승인 — 반영을 취소했습니다.")
+                    _emit("cancelled", "반영 미승인 — 저장하지 않았습니다.")
                     return {"changed": False, "cancelled": True,
-                            "message": "시트 삭제 미승인"}
+                            "message": "반영 미승인"}
                 break
             except ValueError as exc:
                 # 헤더/메타행 파손 — 다시 열어 사용자가 고치도록 한다
@@ -141,13 +149,12 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
     return {"changed": True, "message": "완료"}
 
 
-def _confirm_removal(confirm_cb, removed_names):
-    """시트 삭제 = source 영구 제거 확인. 콜백이 없으면 승인, 예외는 거부로 본다."""
+def _confirm_changes(confirm_cb, message):
+    """반영 전 변경 내용 확인(셀 diff·자동 교정·경고·시트 삭제 통합).
+
+    콜백이 없으면 승인, 예외는 거부로 본다(파괴적 반영의 기본값은 '안 함')."""
     if confirm_cb is None:
         return True
-    message = ("시트 삭제 감지: " + ", ".join(removed_names)
-               + "\n\n해당 source 데이터가 리포트에서 제거되고 전체 탭이 재계산됩니다.\n"
-                 "서버에서 되돌릴 수 없습니다. 계속할까요?")
     try:
         return bool(confirm_cb(message))
     except Exception:
@@ -169,6 +176,14 @@ def _honey_headers():
 
 
 def _download_sources(base, session_id):
+    """반환 (dfs, titles, int_cols).
+
+    int_cols[i] 는 source i 에서 **원본 parquet 이 int64 였던 item 컬럼** 집합. xlwings 는
+    range.value 로 숫자를 전부 float 로 돌려주므로(1 → 1.0) 왕복 후 편집하지 않은 정수
+    컬럼까지 dtype 이 드리프트한다. 원본 dtype 을 여기서 기억해 두었다가 재인코딩 직전에만
+    되돌린다 — '값이 전부 정수면 int' 로 판정하면 원래 float64 였던 컬럼이 int64 로 뒤집혀
+    회귀 기준(정수 컬럼 int64 보존)을 반대 방향으로 깬다.
+    """
     url = f"{base}/pe/report/session/{session_id}/web_report/rawdata_export"
     resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC, headers=_honey_headers())
     resp.raise_for_status()
@@ -180,13 +195,21 @@ def _download_sources(base, session_id):
     )
     if not names:
         raise ValueError("세션에 rawdata source 가 없습니다.")
-    dfs = [decode_honeyform_parquet(zf.read(n)) for n in names]
+    # decode_split 은 decode 와 같은 _decode_parts 를 쓰므로 typed(.data) 프레임을 함께 얻는
+    # 추가 비용이 없다. dtype 집합만 뽑고 바로 참조를 끊어 피크 메모리를 회수한다.
+    dfs, int_cols = [], []
+    for name in names:
+        table = decode_split_honeyform_parquet(zf.read(name), source=name, keep_df=True)
+        dfs.append(table.df)
+        int_cols.append({c for c in table.item_columns
+                         if getattr(table.data[c].dtype, "kind", "") == "i"})
+        del table
     sources_meta = manifest.get("sources") or []
     titles = []
     for idx in range(len(dfs)):
         info = sources_meta[idx] if idx < len(sources_meta) else {}
         titles.append(str(info.get("name") or f"source_{idx}"))
-    return dfs, titles
+    return dfs, titles, int_cols
 
 
 def _upload_sources(base, session_id, parquet_list, kept_indices=None):
@@ -277,14 +300,21 @@ def match_sheets(sheet_names, expected_titles):
     return pairs, removed
 
 
-def _read_and_encode(xlsx_path, expected_titles, source_names):
-    """저장된 xlsx 를 시트명 매칭 순서로 읽어 honeyform parquet 로 재인코딩.
+def _read_and_encode(xlsx_path, expected_titles, source_names, old_dfs=None, int_cols=None):
+    """저장된 xlsx 를 시트명 매칭 순서로 읽어 교정·검사한 뒤 honeyform parquet 로 재인코딩.
 
-    반환 (parquet list, kept_indices|None, removed_names). kept_indices 는 삭제가 있을
-    때만 채워지고(원본 idx 오름차순, parquet 순서와 1:1), 전체 유지면 None 이다.
+    반환 (parquet list, kept_indices|None, removed_names, reports, fixes_by_source).
+    kept_indices 는 삭제가 있을 때만 채워지고(원본 idx 오름차순, parquet 순서와 1:1),
+    전체 유지면 None. reports/fixes 는 확인창 문안 재료다(rawvalues 참조).
+
+    교정·검사 순서가 중요하다: sanitize(유령 행/열·컬럼명) → int 복원 → inspect(원본 대비
+    diff·경고) → encode. inspect 를 sanitize 뒤에 두어야 '유령 행이 늘었다' 같은 우리가 이미
+    고친 잡음이 사용자에게 보고되지 않는다.
     """
     import xlwings as xw
 
+    old_dfs = old_dfs or []
+    int_cols = int_cols or []
     read_app = xw.App(visible=False, add_book=False)
     try:
         # 읽기 전용 비가시 인스턴스 — 프롬프트가 뜨면 응답할 사용자가 없어 quit 이 막히고
@@ -296,17 +326,33 @@ def _read_and_encode(xlsx_path, expected_titles, source_names):
         wb = read_app.books.open(xlsx_path)
         sheets = list(wb.sheets)
         pairs, removed = match_sheets([s.name for s in sheets], expected_titles)
-        order = [pos for pos, _ in pairs] if pairs is not None else range(len(sheets))
-        out = []
-        for pos in order:
+        # (시트 위치, 원본 idx) — 이름 매칭이 실패한 폴백에서는 위치 = 원본 idx 로 본다.
+        order = pairs if pairs is not None else [(p, p) for p in range(len(sheets))]
+        out, reports, fixes = [], [], {}
+        for pos, src_idx in order:
+            name = (str(source_names[src_idx]) if src_idx < len(source_names)
+                    else f"source_{src_idx}")
             df = _values_to_df(sheets[pos].used_range.value)
+            df, fixed = rawvalues.sanitize_excel_frame(df)
+            # 아주 큰 시트에서는 정수 복원을 건너뛰되 조용히 넘어가지 않고 확인창에 알린다.
+            n_cells = max(len(df) - DATA_START_ROW, 0) * max(len(df.columns), 1)
+            if n_cells <= rawvalues.EXCEL_SCAN_CELL_BUDGET:
+                df, _restored = rawvalues.restore_int_columns(
+                    df, int_cols[src_idx] if src_idx < len(int_cols) else ())
+            else:
+                fixed.append("정수 서식 복원을 생략했습니다 (데이터가 큽니다) — 편집하지 않은 "
+                             "정수 항목이 1 → 1.0 으로 표기될 수 있습니다.")
+            if fixed:
+                fixes[name] = fixed
+            old_df = old_dfs[src_idx] if src_idx < len(old_dfs) else None
+            reports.append(rawvalues.inspect_edited_frame(old_df, df, source_name=name))
             out.append(encode_honeyform_parquet(df))
         wb.close()
         kept_indices = [idx for _, idx in pairs] if removed else None
         removed_names = [
             str(source_names[i]) if i < len(source_names) else f"source_{i}"
             for i in removed]
-        return out, kept_indices, removed_names
+        return out, kept_indices, removed_names, reports, fixes
     finally:
         _quit_app(read_app)
 

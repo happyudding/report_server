@@ -28,6 +28,7 @@ import pandas as pd
 
 from web_report.honeyform import (
     META_COLUMNS,
+    dedupe_item_columns,
     encode_honeyform_parquet,
     validate_honeyform_df,
 )
@@ -222,6 +223,8 @@ def _sheet_to_honeyform(grid):
     # 7-meta honeyform 직접 덤프(미래 규약) — 그대로 통과.
     if hdr_low[:7] == _HONEYFORM_META:
         df = pd.DataFrame(grid[1:], columns=hdr)
+        # 컬럼 라벨 직접 대입은 pandas dedup 을 거치지 않아 중복이 그대로 남는다 → 자동 개명.
+        df, _ = dedupe_item_columns(df)
         issues = validate_honeyform_df(df)
         if issues:
             raise _honeyform_error(issues, converted=False)
@@ -275,6 +278,7 @@ def _sheet_to_honeyform(grid):
         raise ValueError("Raw Data 시트에 측정 데이터 행이 없습니다")
 
     df = pd.DataFrame(meta_rows + data_rows, columns=list(META_COLUMNS) + items)
+    df, _ = dedupe_item_columns(df)
     issues = validate_honeyform_df(df)
     if issues:
         raise _honeyform_error(issues, converted=True)

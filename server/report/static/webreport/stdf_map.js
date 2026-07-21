@@ -173,6 +173,66 @@ function stdfLegendHtml(buckets, selected) {
          `<tbody>${body}</tbody></table>`;
 }
 
+// ── STDF 썸네일 (Issue Table CPK 행 Map 열 — issue_dist.js 가 호출) ──────────────
+// Map Analysis STDF Map 과 같은 10분위 파란 그라데이션을, Bin Map 갤러리와 같은
+// canvas(drawWaferThumb)로 그린다. 미니셀은 수십~수백 개라 Plotly 를 쓰지 않는다.
+
+// scatter 응답의 한 source(srcName=null 이면 전 소스 concat = DUT 병합) →
+// drawWaferThumb 가 먹는 pseudo map 객체. die 의 b = 10분위 bucket index. 값 없으면 null.
+function stdfThumbMap(data, srcName) {
+  const srcs = (data && data.sources) || [];
+  let xs = [], ys = [], vals = [];
+  if (srcName == null) {
+    srcs.forEach(s => {
+      if (!s.values || !s.values.length) return;
+      xs = xs.concat(s.xpos); ys = ys.concat(s.ypos); vals = vals.concat(s.values);
+    });
+  } else {
+    const s = srcs.find(x => x.name === srcName);
+    if (!s || !s.values || !s.values.length) return null;
+    xs = s.xpos; ys = s.ypos; vals = s.values;
+  }
+  if (!vals.length) return null;
+  const deciles = stdfDecileBuckets(vals);
+  const dies = [];
+  for (let i = 0; i < vals.length; i++) {
+    const x = parseInt(xs[i], 10), y = parseInt(ys[i], 10);
+    if (isNaN(x) || isNaN(y)) continue;
+    dies.push({ x, y, b: deciles.indexOf(vals[i]) });
+  }
+  return dies.length ? { dies } : null;
+}
+
+// drawWaferThumb 의 rgbFor 계약 — bucket index → 10분위 색.
+function stdfThumbRgb(d, cache) {
+  const hex = STDF_BLUES[d.b] || MAP_BIN_DIM_COLOR;
+  let rgb = cache[hex];
+  if (!rgb) { rgb = hexToRgb(hex); cache[hex] = rgb; }
+  return rgb;
+}
+
+// host(div) 안에 canvas 하나로 STDF 썸네일을 그린다. 그릴 값이 없으면 비우고 false.
+function stdfDrawThumb(host, data, srcName) {
+  const m = stdfThumbMap(data, srcName);
+  if (!m) { host.innerHTML = ""; return false; }
+  let canvas = host.querySelector("canvas.wafer-thumb");
+  if (!canvas) {
+    host.innerHTML = "";
+    canvas = document.createElement("canvas");
+    canvas.className = "wafer-thumb";
+    host.appendChild(canvas);
+  }
+  drawWaferThumb(canvas, m, stdfThumbRgb);
+  return true;
+}
+
+// 미니셀 기본 source — DUT 모드는 병합(null), 아니면 측정값이 있는 첫 source.
+function stdfThumbDefaultSource(data) {
+  if (stdfIsDut()) return null;
+  const s = ((data && data.sources) || []).find(x => x.values && x.values.length);
+  return s ? s.name : null;
+}
+
 // scatter 엔드포인트(die 별 값)를 캐시와 함께 가져온다 — item_detail.js 와 동일 소스.
 function stdfFetchScatter(subject) {
   if (_stdfScatterCache[subject]) return Promise.resolve(_stdfScatterCache[subject]);

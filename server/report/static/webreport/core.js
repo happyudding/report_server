@@ -77,11 +77,20 @@ function isWebReportSession() {
 function webReportMode() {
   return (((DATA && DATA.session && DATA.session.mode) || "Normal") + "").trim();
 }
+// 요약 박스의 소스별 표 정렬 — 기본은 yield% 내림차순(수율 낮은 소스 찾기)이지만,
+// DUT 모드는 DUT 번호 오름차순(DUT 1,2,…,10)으로 고정한다. 백엔드 split_table_by_dut 가
+// 이미 그 순서로 source 를 만들므로 정렬하지 않고 payload 순서를 그대로 쓴다.
+function orderSummarySources(bySource) {
+  const rows = Array.isArray(bySource) ? bySource.slice() : [];
+  if (webReportMode() === "DUT") return rows;
+  return rows.sort((a, b) => (Number(b.yield_pct) || 0) - (Number(a.yield_pct) || 0));
+}
 // 편집 권한: 로그인 ID 가 세션 업로더와 같을 때만 "edit" (업로더 기록 없는 legacy 는
 // 로그인만 하면 허용). 그 외에는 "view" — 흩어진 MODE==="edit" 분기가 읽기전용으로 렌더.
 // 로그인은 검색결과 페이지에서 수행하고, 서버가 편집 라우트에서 같은 규칙으로 재검증한다.
 let MODE = "view";
-let LOGIN_USER = "";            // 현재 PC 사용자 (Honey 밖이면 "")
+let LOGIN_USER = "";            // 현재 사용자 (Honey UA 또는 웹 로그인, 없으면 "")
+let IDENTITY_SRC = "";          // "honey"|"login"|"sso"|"" — Honey 전용 기능 안내 판단용
 let CAN_EDIT = false;           // 이 세션 편집 가능(업로더 또는 위임 편집자) — 서버 판정
 let IS_UPLOADER = false;        // 이 세션 업로더 본인 — 권한부여/비공개/삭제용
 let MY_IMPORTANT = false;       // 내 개인 중요표시 상태(사용자별)
@@ -95,6 +104,7 @@ async function loadAuth() {
     if (res.ok) {
       const j = await res.json();
       LOGIN_USER = j.user_id || "";
+      IDENTITY_SRC = j.source || "";
       CAN_EDIT = !!j.can_edit;
       IS_UPLOADER = !!j.is_uploader;
       MY_IMPORTANT = !!j.my_important;
@@ -103,8 +113,10 @@ async function loadAuth() {
     }
   } catch (e) {
     console.warn("my_access 조회 실패 — 읽기 전용으로 표시", e);
-    LOGIN_USER = ""; CAN_EDIT = false; IS_UPLOADER = false; MY_IMPORTANT = false;
+    LOGIN_USER = ""; IDENTITY_SRC = ""; CAN_EDIT = false; IS_UPLOADER = false; MY_IMPORTANT = false;
   }
+  // Honey 밖에서만 '전용 기능' 안내 버튼을 툴바에 붙인다 (honey_hint.js).
+  try { HoneyHint.init(IDENTITY_SRC, ".topbar", "theme-toggle", "🍯"); } catch (e) { /* 안내는 부가기능 */ }
 }
 
 function canEditSession() {

@@ -177,9 +177,8 @@ function majorFailBinsTableHtml() {
   const sheets = webReportSheets() || {};
   const fmtPct = v => (typeof v === "number" ? v.toFixed(2) : v);
 
-  // 소스별 Yield (높은 순).
-  const sources = (Array.isArray(ov.by_source) ? ov.by_source.slice() : [])
-    .sort((a, b) => (Number(b.yield_pct) || 0) - (Number(a.yield_pct) || 0));
+  // 소스별 Yield (높은 순 — DUT 모드는 DUT 번호 오름차순).
+  const sources = orderSummarySources(ov.by_source);
 
   // 전체 average 기준 Major Fail Bin Top N (Pass 제외).
   const majors = (sheets["Yield"] || [])

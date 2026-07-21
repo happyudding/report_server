@@ -64,8 +64,10 @@ function cpkSigmaText(v) {
 }
 
 // 목표 Cpk 로부터 선택 행의 규격 한계 역산 (평균 중심 대칭: avg ± 3·Cpk·stdev).
+// 결과는 누적된다 — 이전 역산값을 지우지 않고 현재 선택 행만 덮어쓴다. 항목마다 다른
+// Margin 으로 나눠 역산하려면 체크 → 역산 → 체크해제 → 다른 항목 체크 → 역산 을 반복한다.
+// (전체 초기화는 "역산값 지우기" 버튼 / 기준(Data 구분) 변경 / Limit 계산 모드 해제)
 function cpkComputeTargets() {
-  cpkTargetResults.clear();
   const cpk = parseFloat(cpkTargetVal);
   if (!(cpk > 0)) return;
   const sheets = webReportSheets();
@@ -88,7 +90,8 @@ function cpkComputeTargets() {
 
 function updateCpkSelInfo() {
   const el = document.getElementById("cpkSelInfo");
-  if (el) el.textContent = `선택 ${cpkSelected.size}개`;
+  // 역산값은 체크해제·필터·페이지와 무관하게 남으므로 누적 개수를 함께 보여준다(복사 대상 수).
+  if (el) el.textContent = `선택 ${cpkSelected.size}개 · 역산값 ${cpkTargetResults.size}개`;
 }
 
 // "abnormal" 판정: ① Limit(하한==상한) 동일 ② CPK 값 없음 → 비정상.
@@ -231,6 +234,7 @@ function renderCpk() {
       `<button type="button" id="cpkCalcBtn" class="btn-sm">역산</button>` +
       `<button type="button" id="cpkCopyBtn" class="btn-sm">역산값 복사</button>` +
       `<button type="button" id="cpkClearSelBtn" class="btn-sm">선택 해제</button>` +
+      `<button type="button" id="cpkClearResBtn" class="btn-sm" title="누적된 역산값을 모두 지운다 (체크해제·선택 해제로는 지워지지 않음)">역산값 지우기</button>` +
       `<span id="cpkSelInfo" class="cpk-pager-info"></span></div>`
     : "";
   const sourceOpts = `<option value="">전체 source</option>` +
@@ -310,7 +314,8 @@ function renderCpk() {
     });
     document.getElementById("cpkMarginSel").addEventListener("change", (e) => {
       cpkMarginPct = parseFloat(e.target.value) || 0;
-      // 이미 역산 결과가 있으면 Margin 변경 즉시 재계산해 반영.
+      // Margin 변경 즉시 재계산 — 단 대상은 "지금 체크된 행"뿐이다. 체크 해제한 행의
+      // 역산값은 이전 Margin 으로 계산된 채 그대로 남는다(항목별 Margin 혼용).
       if (cpkTargetResults.size) { cpkComputeTargets(); renderCpkTable(); }
     });
     document.getElementById("cpkCalcBtn").addEventListener("click", () => {
@@ -318,20 +323,27 @@ function renderCpk() {
       renderCpkTable();
     });
     document.getElementById("cpkCopyBtn").addEventListener("click", (e) => {
-      // 역산 결과(rowKey→{lo,hi})를 항목명⇥하한⇥상한 TSV 로 복사 → Excel 3열 붙여넣기.
-      const lines = [];
+      // 누적된 역산 결과 전체를 헤더 포함 4열 TSV 로 복사 → Excel 표 붙여넣기.
+      // units 는 역산 대상이 아니라 원본 CPK 행에서 키로 찾아 붙인다.
+      const sheets = webReportSheets();
+      const unitsByKey = new Map((sheets ? (sheets["CPK"] || []) : []).map(r => [cpkRowKey(r), r.units]));
+      const lines = [["subject", "target_lolimit", "target_hilimit", "units"].join("\t")];
       for (const [key, res] of cpkTargetResults) {
-        const subject = key.split("||")[0];
-        lines.push(`${subject}\t${res.lo}\t${res.hi}`);
+        const u = unitsByKey.get(key);
+        lines.push(`${key.split("||")[0]}\t${res.lo}\t${res.hi}\t${(u === null || u === undefined) ? "" : u}`);
       }
       const btn = e.currentTarget;
-      if (!lines.length) { const t = btn.textContent; btn.textContent = "역산값 없음"; setTimeout(() => { btn.textContent = t; }, 1200); return; }
-      navigator.clipboard.writeText(lines.join("\n")).then(() => {
-        const t = btn.textContent; btn.textContent = "복사됨"; setTimeout(() => { btn.textContent = t; }, 1200);
-      });
+      const flash = (msg) => { const t = btn.textContent; btn.textContent = msg; setTimeout(() => { btn.textContent = t; }, 1200); };
+      if (lines.length <= 1) { flash("역산값 없음"); return; }
+      // HTTP LAN 환경(secure context 아님) 대비 execCommand 폴백이 있는 공용 헬퍼 사용.
+      cellSelCopyText(lines.join("\n")).then(ok => flash(ok ? "복사됨" : "복사 실패"));
     });
     document.getElementById("cpkClearSelBtn").addEventListener("click", () => {
-      cpkSelected.clear();
+      cpkSelected.clear();   // 역산값은 보존 — 지우려면 "역산값 지우기"
+      updateCpkSelInfo();
+      renderCpkTable();
+    });
+    document.getElementById("cpkClearResBtn").addEventListener("click", () => {
       cpkTargetResults.clear();
       updateCpkSelInfo();
       renderCpkTable();
@@ -350,14 +362,16 @@ function renderCpk() {
       if (t.id === "cpkSelAll") {
         const sheets = webReportSheets();
         const keys = cpkBodyRows(cpkFilterRows(sheets ? (sheets["CPK"] || []) : [])).map(r => r._key);
+        // 체크해제해도 역산값(cpkTargetResults)은 지우지 않는다 — 항목별로 다른 Margin 으로
+        // 나눠 역산할 수 있게 결과를 누적 보존한다.
         if (t.checked) keys.forEach(k => cpkSelected.add(k));
-        else keys.forEach(k => { cpkSelected.delete(k); cpkTargetResults.delete(k); });
+        else keys.forEach(k => cpkSelected.delete(k));
         updateCpkSelInfo();
         renderCpkTable();
       } else if (t.classList.contains("cpk-row-chk")) {
         const k = t.dataset.key;
         if (t.checked) cpkSelected.add(k);
-        else { cpkSelected.delete(k); cpkTargetResults.delete(k); }
+        else cpkSelected.delete(k);
         updateCpkSelInfo();
         renderCpkTable();
       }

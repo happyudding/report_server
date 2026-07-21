@@ -44,6 +44,10 @@ _PHASE_PRIORITY = ("CODE", "VERIFY", "TRIM", "INIT")  # 판정 규칙 (3) 검사
 _TV2_MARKERS = {"MDDI": "FUSE_", "PDDI": "OTP_"}
 _TV2_TRIM_SUFFIXES = ("_P1", "_TRIM", "_PRE")
 _TV2_VERIFY_SUFFIXES = ("_P2", "_POST")
+# PRE/POST 꼬리 (뒤에 _P<n> 이 붙어도 하나의 접미사로 본다) — VREF_PRE_P1 ↔ VREF_POST_P2 ↔
+# VREF_POST_P3 처럼 P 번호가 달라도 같은 stem("VREF")으로 묶이게 한다 (2026-07-21).
+# 이 꼬리는 phase 를 명시하므로 마커(FUSE_/OTP_)보다 우선한다 — 마커가 있어도 _POST 는 VERIFY.
+_TV2_PREPOST_RE = re.compile(r"_(PRE|POST)(?:_P\d+)?$")
 _MDDI_EXCLUDE_WORDS = ("CPU80", "SCAN", "RAM", "IOFF")
 
 
@@ -107,10 +111,21 @@ def tv2_excluded(name, product_type) -> bool:
     return any(word in upper for word in _MDDI_EXCLUDE_WORDS)
 
 
+def _tv2_prepost(upper: str):
+    """이름 끝의 _PRE[_P<n>] / _POST[_P<n>] 꼬리 → (phase, 꼬리 길이). 없으면 None."""
+    m = _TV2_PREPOST_RE.search(upper)
+    if not m:
+        return None
+    return ("TRIM" if m.group(1) == "PRE" else "VERIFY"), len(m.group(0))
+
+
 def classify_tv2(name, product_type) -> str | None:
     upper = str(name or "").strip().upper()
     if not upper:
         return None
+    prepost = _tv2_prepost(upper)
+    if prepost:                                  # PRE/POST 는 phase 명시 → 마커보다 우선
+        return prepost[0]
     marker = _TV2_MARKERS.get(str(product_type or "").strip().upper())
     if marker and marker in upper:
         return "TRIM"
@@ -122,12 +137,20 @@ def classify_tv2(name, product_type) -> str | None:
 
 
 def stem_tv2(name, product_type) -> str:
-    """접미사(끝 1개) + 마커 부분 제거 후 대문자 stem — fuse_VREF ↔ VREF_p2 짝 매칭용."""
+    """접미사(끝 1개) + 마커 부분 제거 후 대문자 stem — fuse_VREF ↔ VREF_p2 짝 매칭용.
+
+    PRE/POST 꼬리는 뒤의 _P<n> 까지 통째로 떼어 VREF_PRE_P1 ↔ VREF_POST_P3 가 같은
+    stem("VREF")이 되게 한다.
+    """
     upper = str(name or "").strip().upper()
-    for suffix in _TV2_TRIM_SUFFIXES + _TV2_VERIFY_SUFFIXES:
-        if upper.endswith(suffix):
-            upper = upper[:-len(suffix)]
-            break
+    prepost = _tv2_prepost(upper)
+    if prepost:
+        upper = upper[:-prepost[1]]
+    else:
+        for suffix in _TV2_TRIM_SUFFIXES + _TV2_VERIFY_SUFFIXES:
+            if upper.endswith(suffix):
+                upper = upper[:-len(suffix)]
+                break
     marker = _TV2_MARKERS.get(str(product_type or "").strip().upper())
     if marker:
         upper = upper.replace(marker, "")

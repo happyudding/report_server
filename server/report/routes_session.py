@@ -11,7 +11,11 @@ from pathlib import Path
 
 from flask import Response, abort, jsonify, request
 
-from auth_identity import current_user as _current_user, is_uploader as _is_uploader
+from auth_identity import (
+    current_user as _current_user,
+    identity_source as _identity_source,
+    is_uploader as _is_uploader,
+)
 from config import REPORT_TRASH_RETENTION_DAYS, REPORT_UPLOAD_DIR
 from database import report_db
 import storage_gateway
@@ -208,7 +212,7 @@ def restore_session_route(session_id):
         return jsonify({"error": "휴지통에 있는 세션이 아닙니다."}), 400
     uid = _current_user()
     if not uid:
-        return jsonify({"error": "Honey 를 통해 접속한 사용자만 복원할 수 있습니다 (읽기 전용)."}), 401
+        return jsonify({"error": "로그인한 사용자만 복원할 수 있습니다 (현재 읽기 전용)."}), 401
     deleted_by = str(session.get("deleted_by") or "").strip().lower()
     if not (_is_uploader(session, uid) or uid == deleted_by):
         return jsonify({"error": "복원 권한이 없습니다 (업로더 또는 삭제한 사용자만)."}), 403
@@ -300,6 +304,7 @@ def session_my_access(session_id):
     can_edit = is_uploader or (bool(uid) and report_db.is_session_editor(session_id, uid))
     return jsonify({
         "user_id": uid,
+        "source": _identity_source(),   # 프런트의 'Honey 전용 기능' 안내 판단용
         "is_uploader": is_uploader,
         "can_edit": can_edit,
         "my_important": report_db.is_user_important(uid, session_id) if uid else False,

@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>LSI PTE REPORT SERVER</title>
 <script src="/pe/report/static/webreport/error_beacon.js"></script>
+<script src="/pe/report/static/webreport/honey_hint.js"></script>
 <script>
 /* 테마 부트스트랩: 첫 페인트 전에 저장된 다크 테마 적용 (FOUC 방지).
    localStorage "report_theme" 는 검색결과/세션 상세 페이지가 공유한다. */
@@ -58,7 +59,7 @@ body {
 }
 .pt-badge {
   display: inline-block; padding: 2px 9px; border-radius: 4px;
-  font-size: 17px; font-weight: 700; color: #fff; white-space: nowrap;
+  font-size: 16px; font-weight: 700; color: #fff; white-space: nowrap;
 }
 .pt-badge.MDDI { background: #4a90e2; }
 .pt-badge.PDDI { background: #1e3a8a; }
@@ -66,20 +67,25 @@ body {
 .pt-badge.SECURITY { background: #9333ea; }
 .pt-badge.TCON { background: #0d9488; }
 .pt-badge.default { background: #64748b; }
+/* 모드 배지: 머리글자 1자를 담는 색 채운 원 (N=Normal / C=Compare / D=DUT / M=Commonality).
+   흰 글자 대비를 위해 배경은 파스텔이 아닌 포화 톤을 쓴다. */
 .mode-badge {
-  display: inline-block; max-width: 100%; padding: 2px 8px; border-radius: 4px;
-  font-size: 17px; font-weight: 700; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; vertical-align: bottom;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  font-size: 14px; font-weight: 700; color: #fff; white-space: nowrap;
+  vertical-align: middle;
 }
-.mode-badge.Normal { background: #e2e8f0; color: #334155; }
-.mode-badge.Compare { background: #fde68a; color: #92400e; }
-.mode-badge.DUT { background: #bfdbfe; color: #1e40af; }
-.mode-badge.Commonality { background: #ddd6fe; color: #5b21b6; }
-.mode-badge.none { background: transparent; color: #94a3b8; font-weight: 400; }
-.star-important { color: #f59e0b; font-size: 20px; margin-right: 4px; }
+.mode-badge.Normal { background: #64748b; }
+.mode-badge.Compare { background: #d97706; }
+.mode-badge.DUT { background: #2563eb; }
+.mode-badge.Commonality { background: #7c3aed; }
+.mode-badge.none {
+  width: auto; height: auto; background: transparent; color: #94a3b8; font-weight: 400;
+}
+.star-important { color: #f59e0b; font-size: 19px; margin-right: 4px; }
 /* 사용자별 즐겨찾기 별표 — 전역 '중요'(amber)와 구분되게 파란색 */
 .star-fav {
-  color: #cbd5e1; font-size: 20px; margin-right: 4px;
+  color: #cbd5e1; font-size: 19px; margin-right: 4px;
   cursor: pointer; user-select: none;
 }
 .star-fav.on { color: #2563eb; }
@@ -92,6 +98,11 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   white-space: nowrap;
 }
 .user-chip:hover { border-color: #4a90e2; color: #4a90e2; }
+/* 웹 로그인 비밀번호 미설정 — 🔑 를 눈에 띄게(설정해야 일반 브라우저 접속이 가능) */
+.user-chip.needs-pin {
+  background: #f59e0b; border-color: #f59e0b; color: #fff;
+}
+.user-chip.needs-pin:hover { background: #d97706; border-color: #d97706; color: #fff; }
 .spacer { flex: 1; }
 
 .honey-dl-btn {
@@ -127,14 +138,14 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .filter-group.search-group { position: relative; flex: 1 1 480px; min-width: 360px; }
 .mine-toggle {
   height: 36px; display: inline-flex; align-items: center; gap: 6px;
-  font-size: 17px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
+  font-size: 16px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
 }
 .mine-toggle input { width: 18px; height: 18px; cursor: pointer; }
 .filter-actions { margin-left: auto; }
-.filter-label { font-size: 17px; color: #666; font-weight: 600; }
+.filter-label { font-size: 16px; color: #666; font-weight: 600; }
 .filter-input, .sel-input {
   height: 36px; padding: 0 10px; border: 1px solid #d0d5dd;
-  border-radius: 6px; font-size: 19px; outline: none;
+  border-radius: 6px; font-size: 18px; outline: none;
   background: #fff;
 }
 .filter-input:focus, .sel-input:focus { border-color: #4a90e2; }
@@ -146,7 +157,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 }
 .suggest-box.show { display: block; }
 .suggest-item {
-  padding: 7px 10px; cursor: pointer; font-size: 17px; color: #333;
+  padding: 7px 10px; cursor: pointer; font-size: 16px; color: #333;
   border-bottom: 1px solid #f1f3f5;
 }
 .suggest-item:last-child { border-bottom: none; }
@@ -156,7 +167,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .filter-actions { display: flex; gap: 8px; align-items: end; }
 .btn-action {
   height: 36px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
-  background: #fff; color: #333; font-size: 19px; cursor: pointer; font-weight: 500;
+  background: #fff; color: #333; font-size: 18px; cursor: pointer; font-weight: 500;
 }
 .btn-action.primary { background: #4a90e2; color: #fff; border-color: #4a90e2; }
 .btn-action.primary:hover { background: #357abd; }
@@ -166,26 +177,32 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   box-shadow: 0 1px 6px rgba(0,0,0,.07);
 }
 .results-header {
-  font-size: 20px; font-weight: 600; color: #333;
+  font-size: 19px; font-weight: 600; color: #333;
   display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
 }
-.results-count { font-size: 17px; color: #888; font-weight: 400; }
+.results-count { font-size: 16px; color: #888; font-weight: 400; }
 
-table { width: 100%; border-collapse: collapse; font-size: 19px; table-layout: fixed; }
+/* min-width 는 colgroup 퍼센트가 실제 px 로 환산될 때의 하한이자 열 폭 산정 기준폭이다 —
+   이 값 미만으로 좁아지면 열을 뭉개는 대신 .table-wrap 가로 스크롤로 넘긴다.
+   1440px 는 Owner 13자(대문자 기준 144px)·Mode 헤더 글자폭까지 담기는 실측 하한. */
+table {
+  width: 100%; min-width: 1440px; border-collapse: collapse;
+  font-size: 18px; table-layout: fixed;
+}
 th, td {
   padding: 4px 8px; border-bottom: 1px solid #eef0f3; text-align: left;   /* 행 세로폭 ~0.8배 축소 */
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-th { background: #fafbfc; font-weight: 600; color: #555; font-size: 17px; }
+th { background: #fafbfc; font-weight: 600; color: #555; font-size: 16px; }
 tr.empty-row td { text-align: center; color: #999; padding: 30px; overflow: visible; white-space: normal; }
 /* 액션칸(자물쇠/삭제)은 버튼이 잘리면 안 되고, 업로드날짜와 시각적 간격을 더 벌린다 */
-th.act-cell, td.act-cell { overflow: visible; white-space: nowrap; padding-left: 20px; }
+th.act-cell, td.act-cell { overflow: visible; white-space: nowrap; padding-left: 10px; }
 tr.result-row { cursor: pointer; transition: background .1s; }
 tr.result-row:hover { background: #f5f8ff; }
 
 .btn-row { display: inline-flex; gap: 6px; }
 .btn-mini {
-  padding: 2px 8px; font-size: 17px; border-radius: 4px;
+  padding: 2px 8px; font-size: 16px; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-mini.edit { color: #1f4d8c; border-color: #bcd3f0; }
@@ -203,19 +220,19 @@ td.fname-cell .fname-txt {
 
 /* 액션칸 아이콘 버튼 (비공개 자물쇠 / 삭제 휴지통) */
 .btn-icon {
-  padding: 2px 6px; font-size: 20px; line-height: 1; border-radius: 4px;
+  padding: 2px 6px; font-size: 19px; line-height: 1; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-icon:hover { background: #f5f8ff; border-color: #4a90e2; }
 .btn-icon.trash:hover { background: #fef2f2; border-color: #fca5a5; }
 .btn-icon.lock.on { border-color: #f0c869; background: #fffbeb; }
-.lock-badge { font-size: 19px; opacity: .7; padding: 0 4px; }
+.lock-badge { font-size: 18px; opacity: .7; padding: 0 4px; }
 
 .pager {
   display: flex; gap: 6px; justify-content: center; margin-top: 14px;
 }
 .pager .pg-btn {
-  min-width: 32px; height: 30px; padding: 0 8px; font-size: 17px;
+  min-width: 32px; height: 30px; padding: 0 8px; font-size: 16px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-radius: 4px;
 }
 .pager .pg-btn.active { background: #4a90e2; color: #fff; border-color: #4a90e2; }
@@ -264,14 +281,11 @@ td.fname-cell .fname-txt {
 @keyframes load-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(340%); } }
 
 /* ── 반응형: 좁은 폭에서 핵심 정보가 잘리지 않게 ─────────────────────────────
-   >1280px: 기존 테이블 그대로. ≤1280px: 가로 스크롤로 열 크러시 방지(핵심 정보 안 잘림).
-   ≤1024px: 카드형으로 전환 — 세션 정보(파일명·Product·LOT)를 위에, 보조 정보(모드·
-   Process·업로더·날짜)를 그 아래로 라벨과 함께 이동. 데스크톱 열 구성은 그대로 둔다. */
+   >1360px: 기존 테이블 그대로. ≤1360px(= table 의 min-width): 가로 스크롤로 열 크러시
+   방지(핵심 정보 안 잘림). ≤1024px: 카드형으로 전환 — 세션 정보(파일명·Product·LOT)를
+   위에, 보조 정보(모드·Family·Process·업로더·날짜)를 그 아래로 라벨과 함께 이동.
+   데스크톱 열 구성은 그대로 둔다. */
 .table-wrap { overflow-x: auto; }
-
-@media (max-width: 1280px) {
-  table { min-width: 1080px; }   /* 좁아지면 세로 크러시 대신 가로 스크롤 */
-}
 
 @media (max-width: 1024px) {
   .table-wrap { overflow-x: visible; }
@@ -329,6 +343,8 @@ html[data-theme="dark"] .pt-btn:hover { filter: brightness(1.12); }
 html[data-theme="dark"] .pt-btn.active { border-color: #f8fafc; box-shadow: 0 0 0 3px rgba(248,250,252,.35), 0 3px 10px rgba(0,0,0,.5); }
 html[data-theme="dark"] .user-chip { background: #262a33; border-color: #3a3f4b; color: #aab3c0; }
 html[data-theme="dark"] .user-chip:hover { border-color: #4a90e2; color: #7fb3ef; }
+html[data-theme="dark"] .user-chip.needs-pin { background: #b45309; border-color: #b45309; color: #fff; }
+html[data-theme="dark"] .user-chip.needs-pin:hover { background: #92400e; border-color: #92400e; color: #fff; }
 html[data-theme="dark"] .star-fav { color: #4a5462; }
 html[data-theme="dark"] .star-fav.on { color: #5b9cf5; }
 html[data-theme="dark"] .filter-label { color: #9aa3b0; }
@@ -400,7 +416,8 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
   <button class="pt-btn" data-pt="SECURITY">SECURITY</button>
   <button class="pt-btn" data-pt="TCON">TCON</button>
   <div class="spacer"></div>
-  <button class="user-chip" id="userChip" title="로그인 시 클릭하면 비밀번호 변경">👤 로그인</button>
+  <button class="user-chip" id="userChip" title="사번 + 비밀번호로 로그인">👤 로그인</button>
+  <button class="user-chip" id="pwKeyBtn" style="display:none;" title="웹 로그인 비밀번호 설정">🔑</button>
   <button class="user-chip" id="logoutBtn" style="display:none;">로그아웃</button>
 </div>
 
@@ -465,32 +482,39 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
   </div>
   <div class="table-wrap">
   <table>
+    <!-- 열 폭은 table 의 min-width(1440px) 기준으로 배분한다. 셀 padding 좌우 16px 를 뺀 값이
+         글자에 쓸 수 있는 폭이다. 아래 px 는 18px Segoe UI 로 실측한 값(canvas measureText).
+         Product 13자(142) / Process·LOT ID 8자(86) / File name 32자(300) / Owner 13자(대문자
+         144) / Family 11자 Contactless(91) 수용이 목표. Mode 는 원형 배지(22)보다 헤더
+         글자 "Mode"(43) 가 넓어 그쪽이 하한이다. -->
     <colgroup>
-      <col style="width:8%">
-      <col style="width:9%">
-      <col style="width:10%">
-      <col style="width:6%">
-      <col style="width:8%">
-      <col style="width:33%">
-      <col style="width:9%">
-      <col style="width:10%">
-      <col style="width:7%">
+      <col style="width:10.8%">   <!-- Product Type : 별+배지 -->
+      <col style="width:4.2%">    <!-- Mode         : 원형 배지 -->
+      <col style="width:8%">      <!-- Family -->
+      <col style="width:11.5%">   <!-- Product -->
+      <col style="width:7.7%">    <!-- Process -->
+      <col style="width:7.7%">    <!-- LOT ID -->
+      <col style="width:23.7%">   <!-- File name -->
+      <col style="width:11.5%">   <!-- Owner -->
+      <col style="width:8.9%">    <!-- Date -->
+      <col style="width:6%">      <!-- 액션(자물쇠/삭제) -->
     </colgroup>
     <thead>
       <tr>
         <th>Product Type</th>
-        <th>분석 모드</th>
+        <th>Mode</th>
+        <th>Family</th>
         <th>Product</th>
         <th>Process</th>
         <th>LOT ID</th>
-        <th>파일명</th>
-        <th>업로더</th>
-        <th>업로드날짜</th>
+        <th>File name</th>
+        <th>Owner</th>
+        <th>Date</th>
         <th class="act-cell"></th>
       </tr>
     </thead>
     <tbody id="resultsTbody">
-      <tr class="empty-row"><td colspan="9">데이터를 불러오는 중...</td></tr>
+      <tr class="empty-row"><td colspan="10">데이터를 불러오는 중...</td></tr>
     </tbody>
   </table>
   </div>
@@ -499,16 +523,23 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 
 <div class="toast" id="toast"></div>
 
-<!-- 로그인 모달 -->
+<!-- 로그인 모달 (일반 브라우저 — Honey 는 UA 로 자동 식별되어 불필요) -->
 <div class="modal-overlay" id="idModal">
   <div class="modal-box">
     <p class="modal-title">로그인</p>
-    <input type="text" class="filter-input" id="idModalInput"
-           placeholder="ID" style="width:100%;">
+    <div style="display:flex; align-items:center; gap:0;">
+      <span style="flex:0 0 auto; padding:0 8px; color:#888; font-weight:600;
+                   white-space:nowrap;">SECDS\</span>
+      <input type="text" class="filter-input" id="idModalInput"
+             placeholder="사번" autocomplete="username" style="flex:1 1 auto; min-width:0;">
+    </div>
     <input type="password" class="filter-input" id="pwModalInput" inputmode="numeric"
-           maxlength="4" autocomplete="off" placeholder="PW (숫자 4자리)"
+           maxlength="4" autocomplete="current-password" placeholder="비밀번호 (숫자 4자리)"
            style="width:100%; margin-top:8px; letter-spacing:4px;">
-    <p style="font-size:17px; color:#888; margin:8px 0 0;">초기 비밀번호는 <b>0000</b> 입니다. 로그인 후 변경할 수 있습니다.</p>
+    <p style="font-size:17px; color:#888; margin:8px 0 0;">
+      비밀번호는 <b>Honey 앱</b>에서 설정합니다 (본인 확인 목적).
+      Honey 실행 → 우측 상단 <b>🔑 비밀번호 설정</b>.
+    </p>
     <div class="modal-actions">
       <button class="modal-btn" id="idModalCancel">취소</button>
       <button class="modal-btn" id="idModalSave"
@@ -517,23 +548,25 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
   </div>
 </div>
 
-<!-- 비밀번호 변경 모달 -->
+<!-- 비밀번호 설정 모달 (Honey 접속에서만 열린다) -->
 <div class="modal-overlay" id="pwChangeModal">
   <div class="modal-box">
-    <p class="modal-title">비밀번호 변경</p>
-    <input type="password" class="filter-input" id="pwCurInput" inputmode="numeric"
-           maxlength="4" autocomplete="off" placeholder="현재 비밀번호 (숫자 4자리)"
-           style="width:100%; letter-spacing:4px;">
+    <p class="modal-title">웹 로그인 비밀번호 설정</p>
+    <p style="font-size:17px; color:#888; margin:0 0 10px;">
+      Honey 밖의 <b>일반 브라우저</b>에서 이 계정(<span id="pwSetWho"></span>)으로
+      로그인할 때 쓸 비밀번호입니다. Honey 접속에는 필요 없습니다.<br>
+      PC 비밀번호와 <b>다른 값</b>을 쓰세요.
+    </p>
     <input type="password" class="filter-input" id="pwNewInput" inputmode="numeric"
-           maxlength="4" autocomplete="off" placeholder="새 비밀번호 (숫자 4자리)"
-           style="width:100%; margin-top:8px; letter-spacing:4px;">
+           maxlength="4" autocomplete="new-password" placeholder="비밀번호 (숫자 4자리)"
+           style="width:100%; letter-spacing:4px;">
     <input type="password" class="filter-input" id="pwNew2Input" inputmode="numeric"
-           maxlength="4" autocomplete="off" placeholder="새 비밀번호 확인"
+           maxlength="4" autocomplete="new-password" placeholder="비밀번호 확인"
            style="width:100%; margin-top:8px; letter-spacing:4px;">
     <div class="modal-actions">
-      <button class="modal-btn" id="pwChangeCancel">취소</button>
+      <button class="modal-btn" id="pwChangeCancel">나중에</button>
       <button class="modal-btn" id="pwChangeSave"
-              style="background:#4a90e2; color:#fff; border-color:#4a90e2;">변경</button>
+              style="background:#4a90e2; color:#fff; border-color:#4a90e2;">저장</button>
     </div>
   </div>
 </div>
@@ -597,12 +630,15 @@ function productTypeBadge(pt) {
   return `<span class="pt-badge ${cls}">${esc(value || "-")}</span>`;
 }
 
+// 모드 → 원형 배지에 넣을 머리글자. Commonality 는 C 가 Compare 와 겹쳐 M 을 쓴다.
+const MODE_INITIAL = { Normal: "N", Compare: "C", DUT: "D", Commonality: "M" };
+
 // 분석 모드 배지 — web_report 세션에만 의미가 있고, 그 외(xlsx 업로드 등)는 '-'.
 function modeBadge(r) {
   if (String(r.source || "") !== "web_report") return '<span class="mode-badge none">-</span>';
   const value = String(r.mode || "Normal").trim();
-  const cls = ["Normal", "Compare", "DUT", "Commonality"].includes(value) ? value : "Normal";
-  return `<span class="mode-badge ${cls}">${esc(value)}</span>`;
+  const cls = MODE_INITIAL[value] ? value : "Normal";
+  return `<span class="mode-badge ${cls}" title="${cls}">${MODE_INITIAL[cls]}</span>`;
 }
 
 // HONEY 설치본 다운로드 버튼: /honey/version 으로 라벨/링크 보정 (없으면 비활성).
@@ -638,23 +674,47 @@ const UA_USER = (() => {
   if (!m) return "";
   try { return decodeURIComponent(m[1]).trim().toLowerCase(); } catch (e) { return ""; }
 })();
-let _userId = "";        // 로그인된 ID (서버 쿠키 세션 기준)
+let _userId = "";        // 현재 신원 (Honey UA 또는 웹 로그인 세션)
+let _authSource = "";    // "honey" | "login" | "sso" | "" — 서버 identity_source()
+let _hasPin = false;     // Honey 접속 시에만 의미: 웹 로그인 PIN 을 설정해 뒀는지
 let _favorites = new Set();
 
 function updateUserChip() {
   const chip = document.getElementById("userChip");
-  // ID/PW 로그인 폐지 — PC 계정(Honey UA)으로 자동 식별. 신원 없으면(직접 웹) 읽기전용.
-  chip.textContent = _userId ? `👤 ${_userId}` : "👤 읽기전용";
-  chip.title = _userId ? `PC 계정으로 자동 로그인됨 (${_userId})`
-                       : "Honey 를 통해 접속하면 PC 계정으로 자동 로그인됩니다";
-  document.getElementById("logoutBtn").style.display = "none";
+  if (_userId) {
+    chip.textContent = `👤 ${_userId}`;
+    chip.title = _authSource === "honey"
+      ? `PC 계정으로 자동 로그인됨 (${_userId})`
+      : `${_userId} 계정으로 로그인됨`;
+  } else {
+    chip.textContent = "👤 로그인";
+    chip.title = "사번 + 비밀번호로 로그인 (비밀번호는 Honey 앱에서 설정)";
+  }
+
+  // 🔑 웹 로그인 비밀번호 설정/변경 — Honey 접속에서만 의미가 있다(서버도 재검증).
+  // 칩(👤=신원)과 역할을 분리해 "어디서 바꾸는지" 가 눈에 보이게 한다.
+  const keyBtn = document.getElementById("pwKeyBtn");
+  keyBtn.style.display = _authSource === "honey" ? "" : "none";
+  keyBtn.classList.toggle("needs-pin", _authSource === "honey" && !_hasPin);
+  keyBtn.title = _hasPin
+    ? "웹 로그인 비밀번호 변경 (일반 브라우저 접속용)"
+    : "웹 로그인 비밀번호 설정 — 일반 브라우저에서 접속하려면 필요합니다";
+
+  // 로그아웃은 웹 로그인 세션일 때만 의미가 있다 (Honey UA 는 끌 수 없음).
+  document.getElementById("logoutBtn").style.display =
+    _authSource === "login" ? "" : "none";
 }
 
 async function loadAuth() {
   try {
     const res = await fetch("/pe/report/api/auth/me");
-    if (res.ok) _userId = (await res.json()).user_id || "";
-  } catch (e) { _userId = ""; }
+    if (res.ok) {
+      const j = await res.json();
+      _userId = j.user_id || "";
+      _authSource = j.source || "";
+      _hasPin = !!j.has_pin;
+    }
+  } catch (e) { _userId = ""; _authSource = ""; _hasPin = false; }
 }
 
 function openIdModal() {
@@ -666,9 +726,11 @@ function openIdModal() {
 }
 
 async function doLogin() {
-  const id = (document.getElementById("idModalInput").value || "").trim().toLowerCase();
+  // 폼은 사번만 받는다 (SECDS\ 는 고정 라벨). 붙여넣기 대비로 접두는 떼어낸다.
+  const id = (document.getElementById("idModalInput").value || "")
+               .split("\\").pop().trim().toLowerCase();
   const pw = document.getElementById("pwModalInput").value || "";
-  if (!/^[^\s\\/]{1,64}$/.test(id)) { showToast("ID 를 공백 없이 64자 이내로 입력하세요."); return; }
+  if (!/^[^\s\\/]{1,64}$/.test(id)) { showToast("사번을 공백 없이 입력하세요."); return; }
   if (!/^\d{4}$/.test(pw)) { showToast("비밀번호는 숫자 4자리입니다."); return; }
   try {
     const res = await fetch("/pe/report/api/auth/login", {
@@ -679,9 +741,9 @@ async function doLogin() {
     const j = await res.json().catch(() => ({}));
     if (!res.ok) { showToast(j.error || "로그인 실패"); return; }
     _userId = j.user_id;
+    _authSource = j.source || "login";
     document.getElementById("idModal").classList.remove("show");
     updateUserChip();
-    if (j.is_default_password) showToast("초기 비밀번호(0000)로 로그인했습니다. 비밀번호를 변경하세요.", 3500);
     await loadFavorites();
     renderResults();
   } catch (e) {
@@ -696,49 +758,58 @@ async function doLogout() {
     });
   } catch (e) { /* 로그아웃 요청이 실패해도 화면은 비로그인 상태로 전환 */ }
   _userId = "";
+  _authSource = "";
   _favorites = new Set();
   updateUserChip();
   renderResults();
 }
 
 function openPwChangeModal() {
-  ["pwCurInput", "pwNewInput", "pwNew2Input"].forEach(id => document.getElementById(id).value = "");
+  ["pwNewInput", "pwNew2Input"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("pwSetWho").textContent = _userId || "";
   document.getElementById("pwChangeModal").classList.add("show");
-  document.getElementById("pwCurInput").focus();
+  document.getElementById("pwNewInput").focus();
 }
 
-async function doChangePassword() {
-  const cur = document.getElementById("pwCurInput").value || "";
+// 웹 로그인 비밀번호 설정 — Honey 접속에서만 호출된다(서버도 identity_source 로 재검증).
+async function doSetPin() {
   const nw = document.getElementById("pwNewInput").value || "";
   const nw2 = document.getElementById("pwNew2Input").value || "";
-  if (!/^\d{4}$/.test(nw)) { showToast("새 비밀번호는 숫자 4자리입니다."); return; }
-  if (nw !== nw2) { showToast("새 비밀번호가 서로 다릅니다."); return; }
+  if (!/^\d{4}$/.test(nw)) { showToast("비밀번호는 숫자 4자리입니다."); return; }
+  if (nw !== nw2) { showToast("비밀번호가 서로 다릅니다."); return; }
   try {
-    const res = await fetch("/pe/report/api/auth/change_password", {
+    const res = await fetch("/pe/report/api/auth/set_password", {
       method: "POST",
       headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
-      body: JSON.stringify({current_password: cur, new_password: nw}),
+      body: JSON.stringify({password: nw}),
     });
     const j = await res.json().catch(() => ({}));
-    if (!res.ok) { showToast(j.error || "변경 실패"); return; }
+    if (!res.ok) { showToast(j.error || "설정 실패"); return; }
+    _hasPin = true;
+    updateUserChip();          // 🔑 강조 해제
     document.getElementById("pwChangeModal").classList.remove("show");
-    showToast("비밀번호가 변경되었습니다.");
+    showToast("비밀번호가 설정되었습니다. 일반 브라우저에서 사번 + 비밀번호로 로그인하세요.", 3500);
   } catch (e) {
-    showToast("변경 실패: " + e.message);
+    showToast("설정 실패: " + e.message);
   }
 }
 
 // 숫자 4자리 입력칸: 비숫자 제거 (붙여넣기 포함)
-["pwModalInput", "pwCurInput", "pwNewInput", "pwNew2Input"].forEach(id => {
+["pwModalInput", "pwNewInput", "pwNew2Input"].forEach(id => {
   document.getElementById(id).addEventListener("input", e => {
     e.target.value = e.target.value.replace(/\D/g, "").slice(0, 4);
   });
 });
 
+// 칩 클릭: 비로그인 브라우저 = 로그인 모달 / 그 외 = 현재 신원 안내
+// (비밀번호 설정/변경은 옆의 🔑 버튼이 전담 — 역할을 섞지 않는다)
 document.getElementById("userChip").addEventListener("click", () => {
-  showToast(_userId ? `PC 계정 '${_userId}' 으로 자동 로그인되어 있습니다.`
-                    : "Honey 를 통해 접속하면 PC 계정으로 자동 로그인됩니다.");
+  if (!_userId) { openIdModal(); return; }
+  showToast(_authSource === "honey"
+    ? `PC 계정 '${_userId}' 으로 자동 로그인되어 있습니다.`
+    : `'${_userId}' 계정으로 로그인되어 있습니다.`);
 });
+document.getElementById("pwKeyBtn").addEventListener("click", openPwChangeModal);
 document.getElementById("logoutBtn").addEventListener("click", doLogout);
 document.getElementById("idModalCancel").addEventListener("click", () => {
   document.getElementById("idModal").classList.remove("show");
@@ -752,10 +823,10 @@ document.getElementById("idModalSave").addEventListener("click", doLogin);
 document.getElementById("pwChangeCancel").addEventListener("click", () => {
   document.getElementById("pwChangeModal").classList.remove("show");
 });
-document.getElementById("pwChangeSave").addEventListener("click", doChangePassword);
-["pwCurInput", "pwNewInput", "pwNew2Input"].forEach(id => {
+document.getElementById("pwChangeSave").addEventListener("click", doSetPin);
+["pwNewInput", "pwNew2Input"].forEach(id => {
   document.getElementById(id).addEventListener("keydown", e => {
-    if (e.key === "Enter") doChangePassword();
+    if (e.key === "Enter") doSetPin();
   });
 });
 
@@ -769,7 +840,7 @@ async function loadFavorites() {
 }
 
 async function toggleFavorite(sid) {
-  if (!_userId) { showToast("Honey 를 통해 접속하면 즐겨찾기를 사용할 수 있습니다."); return; }
+  if (!_userId) { showToast("로그인하면 즐겨찾기를 사용할 수 있습니다."); openIdModal(); return; }
   const fav = !_favorites.has(sid);
   if (fav) _favorites.add(sid); else _favorites.delete(sid);   // 낙관적 반영
   renderResults();
@@ -897,7 +968,7 @@ function applyClientFilter(rows) {
     if (to !== null && (r.created_at || 0) > to) return false;
     if (!q) return true;
     const haystack = [
-      r.source, r.product_type, r.product, r.lot_id,
+      r.source, r.product_type, r.family_product, r.product, r.lot_id,
       r.process, r.file_name, r.session_id, r.uploaded_by, r.client_host,
     ].map(v => String(v || "").toLowerCase()).join(" ");
     return haystack.includes(q);
@@ -1041,12 +1112,13 @@ function renderResults() {
 
   const tbody = document.getElementById("resultsTbody");
   if (!slice.length) {
-    tbody.innerHTML = `<tr class="empty-row"><td colspan="9">검색 결과가 없습니다.</td></tr>`;
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="10">검색 결과가 없습니다.</td></tr>`;
   } else {
     tbody.innerHTML = slice.map(r => `
       <tr class="result-row" data-sid="${esc(r.session_id)}">
         <td class="pt-cell" data-act="fav" data-sid="${esc(r.session_id)}" title="클릭하여 즐겨찾기 켜기/끄기"><span class="star-fav ${_favorites.has(r.session_id) ? 'on' : ''}">${_favorites.has(r.session_id) ? '★' : '☆'}</span>${r.is_important ? '<span class="star-important" title="중요">★</span>' : ''}${productTypeBadge(r.product_type)}</td>
         <td class="sub-cell" data-col="mode" data-label="모드">${modeBadge(r)}</td>
+        <td class="sub-cell" data-col="family" data-label="Family">${esc(r.family_product || '-')}</td>
         <td data-col="product" data-label="Product">${esc(r.product || '-')}</td>
         <td class="sub-cell" data-col="process" data-label="Process">${esc(r.process || '-')}</td>
         <td data-col="lot" data-label="LOT">${esc(r.lot_id || '-')}</td>
@@ -1171,9 +1243,21 @@ readUrl();                        // URL query string 에서 필터/정렬/Produ
 (async () => {
   await loadAuth();               // 로그인 상태 먼저 — 즐겨찾기/삭제버튼 렌더에 필요
   updateUserChip();
+  HoneyHint.init(_authSource, ".top-bar", "user-chip");   // Honey 밖에서만 노출
+
+  // Honey 최초 접속(웹 비밀번호 미설정)이면 설정 창을 한 번 띄운다. '나중에' 를 누르면
+  // 계정별로 다시 띄우지 않는다 — 이후 진입점은 상시 노출된 🔑 버튼.
+  if (_authSource === "honey" && !_hasPin) {
+    const seen = `report_pw_prompted:${_userId}`;
+    if (!localStorage.getItem(seen)) {
+      localStorage.setItem(seen, "1");
+      openPwChangeModal();
+    }
+  }
   await loadFavorites();          // 첫 렌더부터 즐겨찾기 정렬이 반영되도록 먼저 로드
   await loadHistory(true);        // state.productType(readUrl) 반영해 조회, URL page 유지
-  // 로그인 모달 폐지 — 신원 없으면 그냥 읽기전용(userChip 이 안내).
+  // 로그인 모달을 자동으로 띄우지는 않는다 — 조회는 로그인 없이도 되고,
+  // 편집이 필요해지는 지점(즐겨찾기·userChip)에서 openIdModal 로 유도한다.
 })();
 </script>
 </body>

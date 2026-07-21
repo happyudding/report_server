@@ -12,8 +12,38 @@ function issueMapRgbFor(dim) {
     return rgb;
   };
 }
+// CPK 행 Map 셀: Bin 이 없으므로 그 Item 의 STDF Map(값 10분위) 썸네일을 그린다.
+// Bin 미니맵과 달리 항목마다 scatter(die 전량 값) 응답이 필요해 셀 하나당 요청 1건이다.
+// 보이는 셀이 수십 개일 수 있으므로 동시 요청에 상한을 두고, 상한에 걸린 셀은 loaded 를
+// 세우지 않은 채 두었다가 진행 중 요청이 끝날 때 다시 큐에 올린다(rAF 스핀 없음).
+const STDF_MINI_MAX_INFLIGHT = 2;
+let _stdfMiniInflight = 0;
+function renderMiniStdfCell(cell) {
+  const div = cell.querySelector(".map-plot");
+  const subject = cell.dataset.subject;
+  if (!div || !subject) return;
+  if (_stdfScatterCache[subject]) {   // 캐시 적중 — 상한과 무관하게 즉시 그림
+    const cached = _stdfScatterCache[subject];
+    cell.dataset.mapLoaded = "1";
+    stdfDrawThumb(div, cached, stdfThumbDefaultSource(cached));
+    return;
+  }
+  if (_stdfMiniInflight >= STDF_MINI_MAX_INFLIGHT) return;   // 아래 finally 가 재큐잉
+  cell.dataset.mapLoaded = "1";   // 중복 fetch 방지 — 실패 시 해제해 재시도 가능하게
+  _stdfMiniInflight++;
+  stdfFetchScatter(subject).then(data => {
+    if (!cell.isConnected || cell.dataset.mapLoaded !== "1") return;   // 그 사이 purge 됨
+    stdfDrawThumb(div, data, stdfThumbDefaultSource(data));
+  }).catch(() => { cell.dataset.mapLoaded = ""; }).finally(() => {
+    _stdfMiniInflight--;
+    document.querySelectorAll('#panel-issues .map-cell-mini[data-subject][data-visible="1"]')
+      .forEach(issueMapQueueRender);
+  });
+}
+
 function renderMiniMapCell(cell) {
   if (cell.dataset.mapLoaded === "1") return;
+  if (cell.dataset.subject) { renderMiniStdfCell(cell); return; }
   const div = cell.querySelector(".map-plot");
   if (!div) return;
   const maps = (webReportSheets() || {})["Map Analysis"];
@@ -95,26 +125,13 @@ function closeMapExpand() {
   _mapExpandEl.remove();
   _mapExpandEl = null; _mapExpandAnchor = null;
 }
-function toggleMapExpand(btn) {
-  const cell = btn.closest(".map-cell-mini");
-  if (!cell) return;
-  if (_mapExpandAnchor === cell) { closeMapExpand(); return; }
-  closeMapExpand();
-  const maps = (webReportSheets() || {})["Map Analysis"];
-  if (!Array.isArray(maps) || maps.length < 2) return;
-  // dies 지연 로드 중 — 로드만 킥하고 열지 않는다(boot 선로드라 드묾, 배지가 진행 표시).
-  if (maps.some(m => !Array.isArray(m.dies))) { ensureMapData(); return; }
-  const bin = cell.dataset.bin;
-  const binOrder = buildGlobalBinLegend(maps).map(r => r.bin);
-  const dim = dimColorMap(globalBinColorMap(), binOrder, bin);
+// 셀 위치 기준으로 빈 팝오버를 띄우고 반환 — Bin/STDF 두 경로가 배치 로직을 공유한다.
+// 스크롤 컨테이너에 잘리지 않도록 body 에 fixed 로 붙인다.
+function openMapExpandPop(cell, count) {
   const pop = document.createElement("div");
   pop.className = "map-expand-pop";
-  pop.innerHTML = maps.map((m, i) =>
-    `<div class="map-exp-item"><div class="map-exp-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""}</div>` +
-    `<div class="map-exp-plot" id="mapexp-${i}"></div></div>`).join("");
-  // 스크롤 컨테이너에 잘리지 않도록 body 에 fixed 로 띄우고 셀 위치 기준으로 배치.
   const rect = cell.getBoundingClientRect();
-  const maxW = Math.min(maps.length * 232 + 16, window.innerWidth - 40);
+  const maxW = Math.min(count * 232 + 16, window.innerWidth - 40);
   let left = rect.right + 4;
   if (left + maxW > window.innerWidth) left = Math.max(20, window.innerWidth - maxW - 20);
   pop.style.position = "fixed";
@@ -123,6 +140,46 @@ function toggleMapExpand(btn) {
   pop.style.maxWidth = maxW + "px";
   document.body.appendChild(pop);
   _mapExpandEl = pop; _mapExpandAnchor = cell;
+  return pop;
+}
+
+// CPK 행 Map 셀 ⤢ — 전 소스의 STDF 썸네일을 가로로 나열(소스별 10분위 독립 계산).
+function openStdfExpand(cell) {
+  const subject = cell.dataset.subject;
+  const names = ((DATA.web_report && DATA.web_report.sources) || []).map(s => s.name);
+  if (!subject || names.length < 2) return;
+  const pop = openMapExpandPop(cell, names.length);
+  pop.innerHTML = names.map((n, i) =>
+    `<div class="map-exp-item"><div class="map-exp-title">${esc(n)}</div>` +
+    `<div class="map-exp-plot" id="mapexp-${i}"></div></div>`).join("");
+  stdfFetchScatter(subject).then(data => {
+    if (_mapExpandEl !== pop) return;   // 그 사이 닫혔거나 다른 셀이 열림
+    names.forEach((n, i) => {
+      const host = pop.querySelector(`#mapexp-${i}`);
+      if (host) stdfDrawThumb(host, data, n);
+    });
+  }).catch(e => {
+    if (_mapExpandEl === pop) pop.innerHTML = `<div class="placeholder">값 로드 실패: ${esc(e.message)}</div>`;
+  });
+}
+
+function toggleMapExpand(btn) {
+  const cell = btn.closest(".map-cell-mini");
+  if (!cell) return;
+  if (_mapExpandAnchor === cell) { closeMapExpand(); return; }
+  closeMapExpand();
+  if (cell.dataset.subject) { openStdfExpand(cell); return; }
+  const maps = (webReportSheets() || {})["Map Analysis"];
+  if (!Array.isArray(maps) || maps.length < 2) return;
+  // dies 지연 로드 중 — 로드만 킥하고 열지 않는다(boot 선로드라 드묾, 배지가 진행 표시).
+  if (maps.some(m => !Array.isArray(m.dies))) { ensureMapData(); return; }
+  const bin = cell.dataset.bin;
+  const binOrder = buildGlobalBinLegend(maps).map(r => r.bin);
+  const dim = dimColorMap(globalBinColorMap(), binOrder, bin);
+  const pop = openMapExpandPop(cell, maps.length);
+  pop.innerHTML = maps.map((m, i) =>
+    `<div class="map-exp-item"><div class="map-exp-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""}</div>` +
+    `<div class="map-exp-plot" id="mapexp-${i}"></div></div>`).join("");
   const rgbFor = issueMapRgbFor(dim);
   maps.forEach((m, i) => {
     const host = pop.querySelector(`#mapexp-${i}`);

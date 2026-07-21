@@ -29,6 +29,15 @@ def _step_sort_key(step):
     return (step, -1)
 
 
+def _is_eval_step(step) -> bool:
+    """STEP 이름에 'eval'(대소문자 무시)이 들어가면 Map Analysis 에서 맵을 그리지 않는다.
+
+    평가용 STEP 은 양산 흐름의 수율 단계가 아니므로 웨이퍼 맵 대상에서 뺀다
+    (2026-07-21 사용자 확정 — 단일 STEP 이 eval 하나뿐이면 그 소스 맵 자체를 만들지 않음).
+    """
+    return "eval" in str(step or "").lower()
+
+
 def _bin_count_rows(bins):
     bin_counter = Counter(bins)
     total = len(bins)
@@ -48,12 +57,16 @@ def _bin_count_rows(bins):
     ]
 
 
-def _fail_step_indexes(table, bins, mask, step_index):
-    """유효 좌표 칩별 fail step index 리스트. None = 전 step Pass.
+def _fail_step_indexes(table, bins, mask, step_index, unknown_idx=0, skip_idx=()):
+    """유효 좌표 칩별 fail step index 리스트. None = (그리는 step 기준) 전 step Pass.
 
     FAILTNO 를 항목 TNO 에 매칭해 그 항목의 STEP index 를 얻는다 (yield_tab 의
     FAILTNO→항목 귀속과 동일 방식). 같은 TNO 가 여러 step 항목에 걸리면 가장
     이른 step. fail 판정은 BIN 기준, fail step 판정은 FAILTNO 기준.
+
+    unknown_idx = fail step 불명(BIN≠1 인데 FAILTNO 없음/미매칭)일 때 귀속시킬 step index
+    (= 그리는 첫 step). skip_idx = 맵을 그리지 않는 step index(eval) — 그 step 에서 fail 한
+    칩은 그리는 맵들에선 Pass 로 남긴다(그 step 이 그려지지 않으므로 회색 처리도 안 함).
     """
     tno_to_idx = {}
     for item, tno in table.tno.items():
@@ -68,14 +81,16 @@ def _fail_step_indexes(table, bins, mask, step_index):
 
     # 전체 FAILTNO 변환(캐시)에서 유효 좌표 행만 추린다 — data.loc[mask] 재변환과 동일 결과
     fails = [f for f, m in zip(failtno_norms(table), mask.tolist()) if m]
+    skip = set(skip_idx)
     out = []
     for b, f in zip(bins, fails):
         if b == PASS_BIN:
             out.append(None)
         elif f is not None and f in tno_to_idx:
-            out.append(tno_to_idx[f])
+            idx = tno_to_idx[f]
+            out.append(None if idx in skip else idx)
         else:
-            out.append(0)   # fail step 불명 → 첫 step 에서 Fail 처리
+            out.append(unknown_idx)   # fail step 불명 → 그리는 첫 step 에서 Fail 처리
     return out
 
 
@@ -213,6 +228,12 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal"):
         dut = _dut_label(table.source) if merge_dut else None
         steps = sorted({fmt_type(v) for v in table.step.values() if fmt_type(v)},
                        key=_step_sort_key)
+        # eval STEP 은 맵을 그리지 않는다. 다만 fail step 귀속(_fail_step_indexes)에는 원래
+        # step 목록을 그대로 써야 앞/뒤 step 판정(Pass·회색)이 어긋나지 않는다.
+        draw_idx = [k for k, s in enumerate(steps) if not _is_eval_step(s)]
+        if steps and not draw_idx:
+            continue   # 이 소스는 전부 eval STEP → 맵 없음
+
         if len(steps) <= 1:
             # STEP 단일(또는 없음) → 현행 그대로 소스당 맵 1개 (row 에 step 키 없음).
             dies = [_die(x, y, b, dut, item=(_die_item(f) if b != PASS_BIN else None))
@@ -226,8 +247,11 @@ def build_map_analysis_rows(tables, product_type="", product="", mode="Normal"):
         # STEP 2종 이상 → step 당 맵 1개. fail step 이전 = Pass, 해당 step = 실제 BIN,
         # 이후 = 미표시(테스트 안 함 → 빈칸).
         step_index = {s: i for i, s in enumerate(steps)}
-        fail_idx = _fail_step_indexes(table, bins, mask, step_index)
-        for k, step_name in enumerate(steps):
+        eval_idx = [k for k, s in enumerate(steps) if _is_eval_step(s)]
+        fail_idx = _fail_step_indexes(table, bins, mask, step_index,
+                                      unknown_idx=draw_idx[0], skip_idx=eval_idx)
+        for k in draw_idx:
+            step_name = steps[k]
             dies = []
             count_bins = []   # bin_counts 용 — 회색(앞 step fail) die 는 제외(이 step 결과 아님)
             for x, y, b, fi, f in zip(xs, ys, bins, fail_idx, fails):

@@ -53,7 +53,8 @@ from report_flow import (
     prepare_report_webreport as _prepare_report_webreport,
     suggest_base_name as _suggest_base_name,
 )
-from web_report.honeyform import encode_honeyform_parquet, read_honeyform_file
+from web_report.honeyform import (
+    dedupe_item_columns, encode_honeyform_parquet, read_honeyform_file)
 import app_settings
 import chart_colors
 import client_identity
@@ -944,14 +945,17 @@ class HoneyMainWindow(QMainWindow):
         self._append_run_log(f"[Rawdata] {message}")
 
     def _on_excel_edit_confirm(self, message):
-        """워커의 시트 삭제 확인 요청 — 메인스레드에서 물어보고 응답을 돌려준다."""
+        """워커의 반영 확인 요청 — 메인스레드에서 변경 요약을 보여주고 응답을 돌려준다.
+
+        내용은 excel_session 이 만든 변경 요약(셀 diff·자동 교정·경고·시트 삭제)이다.
+        기본 버튼은 No — Excel 편집은 서버에서 되돌릴 수 없다."""
         reply = QMessageBox.question(
-            self, "Rawdata 수정 — source 제거 확인", message,
+            self, "Rawdata 수정 — 반영 확인", message,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No)
         accepted = reply == QMessageBox.StandardButton.Yes
         self._append_run_log(
-            "[Rawdata] 시트 삭제 " + ("승인 — source 를 제거합니다." if accepted else "거부 — 반영하지 않습니다."))
+            "[Rawdata] 반영 " + ("승인 — 서버에 저장합니다." if accepted else "거부 — 저장하지 않습니다."))
         worker = getattr(self, "_excel_worker", None)
         if worker is not None:
             worker.answer_confirm(accepted)
@@ -965,9 +969,9 @@ class HoneyMainWindow(QMainWindow):
                 self.browser_panel.view.reload()
             except Exception:
                 pass
-        elif message == "시트 삭제 미승인":
-            self._status("Rawdata 수정 취소됨 — 시트 삭제 미승인")
-            self._append_run_log("[Rawdata] 시트 삭제를 승인하지 않아 반영하지 않았습니다.")
+        elif message == "반영 미승인":
+            self._status("Rawdata 수정 취소됨 — 반영 미승인")
+            self._append_run_log("[Rawdata] 변경 반영을 승인하지 않아 저장하지 않았습니다.")
         elif message == "취소됨":
             self._status("Rawdata 수정 취소됨")
             self._append_run_log("[Rawdata] 취소됨 — Excel 을 닫고 편집을 중단했습니다.")
@@ -1619,14 +1623,21 @@ class HoneyMainWindow(QMainWindow):
     def _build_webreport_parquets(self, work_group):
         items = []
         sources = []
+        # 중복 항목명 자동 개명 내역 — 워커 스레드에서 도는 함수라 여기서 다이얼로그를 띄우면
+        # 안 된다. 모아만 두고 UI 스레드(_run_web_report)가 인코딩 완료 후 안내한다.
+        self._webreport_dup_renames = []
         names = work_group.names()
         for idx, name in enumerate(names):
             md = work_group.mass_data_map[name]
             source_path = getattr(getattr(md, "report_meta", None), "source_path", "") or ""
             df = read_honeyform_file(source_path) if source_path else (
                 md.to_df() if hasattr(md, "to_df") else md.df)
-            data = encode_honeyform_parquet(df)
             file_name = self._source_file_name(md, name)
+            # encode 안에서도 같은 개명이 돌지만(멱등), 무엇이 바뀌었는지 사용자에게 알리려면
+            # 여기서 미리 호출해 목록을 받아둬야 한다.
+            df, renames = dedupe_item_columns(df)
+            self._webreport_dup_renames += [(file_name, old, new) for old, new in renames]
+            data = encode_honeyform_parquet(df)
             items.append({
                 "index": idx,
                 "name": name,
@@ -1639,6 +1650,22 @@ class HoneyMainWindow(QMainWindow):
                 "file_name": file_name,
             })
         return sources, items
+
+    def _warn_duplicate_items(self):
+        """중복 항목명 자동 개명이 있었으면 안내한다 (UI 스레드 전용). 업로드는 계속 진행."""
+        renames = getattr(self, "_webreport_dup_renames", None)
+        if not renames:
+            return
+        lines = [f"· [{fn}] {old} → {new}" for fn, old, new in renames]
+        self._append_run_log("중복 항목명 자동 변경:\n" + "\n".join(lines))
+        shown = lines[:20]
+        if len(lines) > len(shown):
+            shown.append(f"… 외 {len(lines) - len(shown)}건")
+        QMessageBox.warning(
+            self, "항목명 중복 자동 변경",
+            f"측정 항목 이름이 중복되어 {len(renames)}건을 자동으로 바꿨습니다.\n"
+            "같은 이름의 두 번째 항목부터 _2, _3 이 붙습니다 "
+            "(첫 번째 항목의 이름은 그대로입니다).\n\n" + "\n".join(shown))
 
     def _run_web_report(self, work_group, selected, sheets, compare_mode=False, options=None,
                         mode="Normal"):
@@ -1725,6 +1752,7 @@ class HoneyMainWindow(QMainWindow):
                       prefix="업로드할 데이터를 만드는 중 오류가 발생했습니다.")
             self._status("parquet 인코딩 실패")
             return
+        self._warn_duplicate_items()
 
         dist_blobs = None
         try:

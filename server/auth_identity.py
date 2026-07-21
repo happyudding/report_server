@@ -16,9 +16,12 @@ import os
 import re
 from urllib.parse import unquote
 
-from flask import request
+from flask import request, session as _flask_session
 
 _HONEY_UA_RE = re.compile(r"HoneyUser/(\S+)")
+
+# 웹 로그인 세션 쿠키에 담기는 키 (routes_misc.py auth 라우트가 설정/삭제).
+_LOGIN_SESSION_KEY = "uid"
 
 # 역프록시 SSO 신뢰 헤더 이름. 비어 있으면(기본) Honey UA provider 만 사용.
 AUTH_SSO_HEADER = os.getenv("AUTH_SSO_HEADER", "").strip()
@@ -44,11 +47,39 @@ def _from_honey_ua():
         return ""
 
 
+def _from_login_session():
+    """웹 로그인 세션 provider — 일반 브라우저가 사번+PIN 으로 로그인한 경우.
+
+    값은 로그인 시점에 이미 정규화되어 저장되므로 그대로 돌려준다."""
+    try:
+        return (_flask_session.get(_LOGIN_SESSION_KEY) or "").strip().lower()
+    except Exception:
+        # 요청 컨텍스트 밖이거나 SECRET_KEY 미설정 등 — 신원 없음으로 처리
+        return ""
+
+
 def current_user():
-    """현재 요청의 PC 사용자 ID. provider 순서: SSO 신뢰 헤더 → Honey UA.
+    """현재 요청의 사용자 ID. provider 순서: SSO 신뢰 헤더 → Honey UA → 웹 로그인 세션.
+
+    Honey UA 를 로그인 세션보다 **앞에** 둔다 — Honey 사용자는 현행 동작이 그대로
+    유지되고(회귀 0), 로그인 세션은 UA 토큰이 없는 일반 브라우저에서만 발동한다.
 
     신원이 없으면 "" (읽기 전용). 반환값은 소문자 정규화된 계정 문자열."""
-    return _from_sso_header() or _from_honey_ua()
+    return _from_sso_header() or _from_honey_ua() or _from_login_session()
+
+
+def identity_source():
+    """신원의 출처. "sso" | "honey" | "login" | "" (신원 없음).
+
+    용도는 2개뿐이다: (1) 웹 PIN 설정을 Honey 접속으로 제한, (2) 프런트가
+    'Honey 전용 기능' 안내를 띄울지 판단. 접근제어 자체에는 쓰지 않는다."""
+    if _from_sso_header():
+        return "sso"
+    if _from_honey_ua():
+        return "honey"
+    if _from_login_session():
+        return "login"
+    return ""
 
 
 def is_uploader(session, uid):

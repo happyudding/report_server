@@ -2,11 +2,18 @@
 (Phase 4 분리 — 구 report_routes.py)."""
 import logging
 import re
+import time
 from pathlib import Path
 
 from flask import abort, jsonify, make_response, request, send_file
+from flask import session as flask_session
+from werkzeug.security import check_password_hash, generate_password_hash
 
-from auth_identity import current_user as _current_user
+from auth_identity import (
+    _from_login_session,
+    current_user as _current_user,
+    identity_source as _identity_source,
+)
 from config import (
     REPORT_ANALYSIS_INDEX_HTML,
     REPORT_VIEW_HTML,
@@ -15,7 +22,10 @@ from database import report_db
 from product_info import list_search_candidates
 from report.report_extension import report_bp
 from report.security import (
+    _PIN_RE,
+    _USER_ID_RE,
     _active_or_404,
+    _client_meta,
     _issue_csrf_cookie,
     _normalize_user_id,
     _private_guard,
@@ -227,34 +237,139 @@ def history():
     return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset})
 
 
-# ── 사용자 인증 [폐지됨] ──────────────────────────────────────────────────────
-# ID/PW 로그인은 폐지되고 신원은 auth_identity provider 체인(기본 HoneyUser UA)으로
-# 매 요청 자동 식별한다. 아래 라우트는 구 프런트 호환용으로 남겨두되 비밀번호를
-# 확인하지 않는다. report_user 테이블은 보존(미사용).
+# ── 사용자 인증 (웹 로그인) ───────────────────────────────────────────────────
+# 신원은 auth_identity provider 체인으로 매 요청 자동 식별한다:
+#   SSO 헤더 → Honey UA → 웹 로그인 세션.
+# Honey 는 UA 토큰으로 자동 식별되어 로그인이 불필요하고, 일반 브라우저는
+# 사번 + 비밀번호(4자리)로 로그인해 Honey 와 동등한 권한을 얻는다.
+# 비밀번호 설정은 Honey 접속(identity_source()=="honey")에서만 가능하다 — 서버는 SECDS
+# 계정의 실재 여부를 확인할 수단이 없고, Honey 실행 자체가 본인확인 역할을 한다.
+
+_LOGIN_MAX_FAILS = 5
+_LOGIN_LOCK_SEC = 300
+# uid -> [실패횟수, 최초실패 monotonic]. 프로세스 메모리라 재기동 시 초기화되고
+# 멀티프로세스 전환 시 무효 — 실질 탐지는 login_fail 감사로그가 담당한다.
+_login_fails = {}
+
+
+def _normalize_login_id(value):
+    """로그인 폼의 사번 → current_user() 포맷(소문자, 도메인 없음).
+    폼은 SECDS\\ 를 입력받지 않지만 붙여넣기 대비로 도메인 접두를 떼어낸다.
+    (_normalize_user_id 는 백슬래시를 거부하므로 재사용할 수 없다.)"""
+    uid = (value or "").split("\\")[-1].strip().lower()
+    if not _USER_ID_RE.match(uid):
+        abort(400, "invalid user_id")
+    return uid
+
+
+def _auth_audit(action, uid, result="ok"):
+    """인증 이벤트 감사 기록 — best-effort (실패해도 요청을 깨뜨리지 않는다)."""
+    try:
+        ip, ua = _client_meta()
+        report_db.log_audit(action, client_ip=ip, user_agent=ua,
+                            client_user=uid, result=result)
+    except Exception:
+        pass
+
+
+def _login_locked(uid):
+    """5분 창 안에서 _LOGIN_MAX_FAILS 회 실패하면 잠금. 창이 지나면 카운터 초기화."""
+    rec = _login_fails.get(uid)
+    if not rec:
+        return False
+    if time.monotonic() - rec[1] > _LOGIN_LOCK_SEC:
+        _login_fails.pop(uid, None)
+        return False
+    return rec[0] >= _LOGIN_MAX_FAILS
+
+
+def _record_login_fail(uid):
+    """실패 카운터 증가. 존재하지 않는 사번으로 무작위 시도하면 항목이 다시 조회되지
+    않아 영영 남으므로, 커지면 만료분을 일괄 정리해 무한 증식을 막는다."""
+    now = time.monotonic()
+    if len(_login_fails) > 1000:
+        for k in [k for k, v in _login_fails.items() if now - v[1] > _LOGIN_LOCK_SEC]:
+            _login_fails.pop(k, None)
+    rec = _login_fails.setdefault(uid, [0, now])
+    rec[0] += 1
+
 
 @report_bp.post("/api/auth/login")
 def auth_login():
-    """[폐지] 비밀번호 확인 없이 현재 UA 사용자만 돌려준다(호환용)."""
+    """사번 + 비밀번호(4자리) 웹 로그인."""
     _require_csrf()
-    return jsonify({"ok": True, "user_id": _current_user(), "is_default_password": False})
+    body = request.get_json(force=True, silent=True) or {}
+    uid = _normalize_login_id(body.get("user_id"))
+    pin = (body.get("password") or "").strip()
+
+    if _login_locked(uid):
+        _auth_audit("login_fail", uid, result="locked")
+        return jsonify({"error": "로그인 시도가 너무 많습니다 — 5분 후 다시 시도해주세요."}), 429
+
+    row = report_db.get_user(uid)
+    if not row or not _PIN_RE.match(pin) or not check_password_hash(row["password_hash"], pin):
+        _record_login_fail(uid)
+        _auth_audit("login_fail", uid, result="fail")
+        # 사번 존재 여부를 구분하지 않는 단일 메시지 (계정 열거 방지)
+        return jsonify({"error": "사번 또는 비밀번호가 올바르지 않습니다."}), 401
+
+    _login_fails.pop(uid, None)
+    flask_session.clear()               # session fixation 방지
+    flask_session["uid"] = uid
+    flask_session.permanent = True
+    _auth_audit("login", uid)
+    return jsonify({"ok": True, "user_id": uid, "source": "login"})
+
+
+@report_bp.post("/api/auth/set_password")
+def auth_set_password():
+    """웹 로그인 비밀번호(4자리) 설정/변경 — Honey 로 접속한 본인 계정만.
+    비밀번호를 잊으면 Honey 를 열어 다시 설정한다 (구 비밀번호 확인 없음)."""
+    _require_csrf()
+    if _identity_source() != "honey":
+        return jsonify({
+            "error": "비밀번호 설정은 Honey 앱에서만 가능합니다 (본인 확인 목적)."
+        }), 403
+
+    uid = _current_user()
+    pin = ((request.get_json(force=True, silent=True) or {}).get("password") or "").strip()
+    if not _PIN_RE.match(pin):
+        return jsonify({"error": "비밀번호는 숫자 4자리여야 합니다."}), 400
+
+    pw_hash = generate_password_hash(pin)
+    if not report_db.update_user_password(uid, pw_hash):
+        report_db.create_user(uid, pw_hash)
+    _login_fails.pop(uid, None)
+    _auth_audit("password_set", uid)
+    return jsonify({"ok": True, "user_id": uid})
 
 
 @report_bp.post("/api/auth/change_password")
 def auth_change_password():
-    """[폐지] 비밀번호 로그인 폐지."""
+    """[폐지] /api/auth/set_password 로 대체 (Honey 에서 설정)."""
     _require_csrf()
-    return jsonify({"error": "비밀번호 로그인은 폐지되었습니다 (PC 계정으로 자동 식별)."}), 410
+    return jsonify({"error": "비밀번호는 Honey 앱에서 설정해주세요."}), 410
 
 
 @report_bp.post("/api/auth/logout")
 def auth_logout():
     _require_csrf()
+    uid = _from_login_session()
+    flask_session.clear()
+    if uid:
+        _auth_audit("logout", uid)
     return jsonify({"ok": True})
 
 
 @report_bp.get("/api/auth/me")
 def auth_me():
-    return jsonify({"user_id": _current_user()})
+    """현재 신원 + 출처. has_pin 은 Honey 접속 시 '비밀번호 설정' UI 노출 판단용."""
+    uid = _current_user()
+    src = _identity_source()
+    resp = {"user_id": uid, "source": src}
+    if src == "honey" and uid:
+        resp["has_pin"] = bool(report_db.get_user(uid))
+    return jsonify(resp)
 
 
 # ── user favorites (검색결과 즐겨찾기, 로그인 계정 별) ────────────────────────
@@ -272,7 +387,7 @@ def set_favorite():
     _require_csrf()
     uid = _current_user()
     if not uid:
-        return jsonify({"error": "Honey 를 통해 접속해야 즐겨찾기를 사용할 수 있습니다."}), 401
+        return jsonify({"error": "로그인해야 즐겨찾기를 사용할 수 있습니다."}), 401
     body = request.get_json(force=True, silent=True) or {}
     session_id = body.get("session_id", "")
     _validate_session_id(session_id)

@@ -187,6 +187,13 @@ if not _IS_MP_CHILD:
         _key_file.parent.mkdir(parents=True, exist_ok=True)
         app.config["SECRET_KEY"] = secrets.token_hex(32)
         _key_file.write_text(app.config["SECRET_KEY"], encoding="utf-8")
+    # 웹 로그인 세션 쿠키 — 일반 브라우저가 사번+PIN 으로 로그인한 신원을 유지한다.
+    # SECURE 는 운영이 http(12.81.220.117:8080)라 False. TLS 도입 시 True 로 올릴 것.
+    from datetime import timedelta
+    app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=7)
+    app.config["SESSION_COOKIE_HTTPONLY"] = True
+    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SECURE"] = False
     register_report_server(app, root_redirect=True)
 
     _log(f"app ready in {time.perf_counter() - _t0:.2f}s")

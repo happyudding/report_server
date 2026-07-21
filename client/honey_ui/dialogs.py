@@ -115,7 +115,14 @@ class UploadDialog(QDialog):
             _comp.setFilterMode(Qt.MatchFlag.MatchContains)
             _comp.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
             self.le_product.setCompleter(_comp)
-            self.le_product.setPlaceholderText("")
+            # 후보 '개수'와 '실제 값 예시'를 함께 노출한다. 자동완성이 안 뜰 때 ① 목록을
+            # 못 받았다 ② 입력 형식이 목록과 다르다 를 사용자가 스스로 구분할 수 있고,
+            # 예시가 실제 part_id 표기법을 그대로 알려준다.
+            _n = len(self._part_ids)
+            self.le_product.setPlaceholderText(f"Part ID {_n}건 (예: {self._part_ids[0]})")
+            self.le_product.setToolTip(
+                f"서버 Part ID 후보 {_n}건 — 일부를 입력하면 목록이 뜹니다.\n"
+                "예: " + ", ".join(self._part_ids[:3]))
         else:
             self.le_product.setPlaceholderText("Part ID 목록을 불러오지 못했습니다 (서버 확인)")
             if not ok and self.isVisible():
@@ -135,12 +142,30 @@ class UploadDialog(QDialog):
         if err:
             QMessageBox.warning(self, "입력 오류", err)
             return
-        if self._part_ids and product not in self._part_ids:
-            QMessageBox.warning(self, "입력 오류",
-                f"'{product}'은(는) 등록된 Part ID가 아닙니다.\n"
-                "목록에서 선택하거나 검색어를 확인하세요.")
+        if not self._confirm_unknown_part_id(product):
             return
         self.accept()
+
+    def _confirm_unknown_part_id(self, product):
+        """목록에 없는 Product 를 차단하지 않고 확인만 받는다. 진행하면 True.
+
+        _validate_meta 는 '무조건 막는' 하드 검증이고 이쪽은 넘어갈 수 있는 소프트 경고라
+        계약이 달라 분리했다. 미등록 값이어도 업로드는 성공하지만 서버의 product_info
+        lookup(web_report/ingest.py)이 비어 세션 기준정보 컬럼이 NULL 이 되고 web report
+        상단바(WF Size/Gross Die/...)가 빈칸이 된다 — 그 결과를 알리고 고르게 한다.
+        목록을 못 받았을 때(_part_ids 가 빔)는 검사 자체를 건너뛴다(기존 동작).
+        """
+        if not self._part_ids or product in self._part_ids:
+            return True
+        reply = QMessageBox.question(
+            self, "등록되지 않은 Part ID",
+            f"'{product}'은(는) 서버 Part ID 목록({len(self._part_ids)}건)에 없습니다.\n"
+            "이대로 업로드하면 기준정보(Wafer Size / Gross Die / Package 등)가\n"
+            "Web Report 상단에 표시되지 않습니다.\n\n"
+            "그래도 계속할까요?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        return reply == QMessageBox.StandardButton.Yes
 
     def values(self):
         return {

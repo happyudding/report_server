@@ -124,10 +124,20 @@ body {
 .cmp-legend { display: flex; gap: 14px; flex-wrap: wrap; padding: 8px 4px; font-size: 12px; }
 .cmp-lg { display: inline-flex; align-items: center; gap: 5px; }
 .cmp-lg i { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
-/* Compare 서브탭(Map/Log/CPK/Bin) — .distseg 세그먼트 재사용, 하위 패널 토글 */
-.cmp-subtabs { margin: 10px 0 14px; }
+/* Compare 서브탭(Map/Log/CPK) — .distseg 세그먼트 재사용, 하위 패널 토글.
+   서브탭 + '전체 펼치기' 를 한 툴바에 담아 스크롤해도 상단 고정. */
+.cmp-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  position: sticky; top: var(--sticky-head-h, 96px); z-index: 91;
+  background: #fff; padding: 8px 0; margin: 4px 0 10px; }
+.cmp-toolbar .gl-expand-all { margin-left: auto; }
+.cmp-subtabs { margin: 0; }
 .cmp-subpanel { display: none; }
 .cmp-subpanel.active { display: block; }
+/* Map 패널 하단 Bin 비교 2단 — 좌: 동일 좌표 Bin 변화 / 우: Bin Yield 비교.
+   minmax(0,1fr) 이라야 안쪽 .sheet-wrap 의 가로 스크롤이 칸을 넘지 않는다. */
+.cmp-bin-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 18px; align-items: start; }
+@media (max-width: 1100px) { .cmp-bin-grid { grid-template-columns: minmax(0, 1fr); } }
 .compare-table td.num, .compare-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .compare-table td.cmp-up { color: #b91c1c; }
 .compare-table td.cmp-down { color: #1d4ed8; }
@@ -147,8 +157,10 @@ body {
 .cmp-chip.gl-chip-add { background: #dcfce7; color: #166534; }
 .cmp-chip.gl-chip-del { background: #fee2e2; color: #b91c1c; }
 .cmp-chip.gl-chip-lim { background: #fef9c3; color: #854d0e; }
-.gl-ab-summary .gl-expand-all { margin-left: auto; }
+.gl-ab-toggle { border: none; background: none; padding: 0; cursor: pointer;
+  font: inherit; color: inherit; }
 .gl-ab-items { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+.gl-ab-items[hidden] { display: none; }
 .gl-ab-item { font-size: 12px; padding: 1px 7px; border-radius: 4px; border: 1px solid transparent; }
 .gl-ab-item.gl-add { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
 .gl-ab-item.gl-del { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
@@ -163,6 +175,33 @@ body {
 .goodlog-table tr.gl-added { background: #f6fef9; }
 .goodlog-table tr.gl-removed { background: #fef6f6; }
 .goodlog-table tr.gl-limitchg { background: #fffdf5; }
+/* goodlog 표: 컬럼 폭 고정(드래그 리사이즈 가능) — 폭보다 긴 Item 명은 ellipsis(title 로 전체).
+   표 전체 width 는 col 폭 합으로 JS(glSyncTableWidth)가 잡는다. */
+.goodlog-table { table-layout: fixed; }
+.goodlog-table th, .goodlog-table td { overflow: hidden; text-overflow: ellipsis; }
+.goodlog-table th { position: relative; }
+.goodlog-table .col-resize-handle {
+  position: absolute; top: 0; right: 0; width: 6px; height: 100%;
+  cursor: col-resize; user-select: none; z-index: 8;
+}
+.goodlog-table .col-resize-handle:hover { background: rgba(31, 77, 140, 0.25); }
+/* goodlog 상단 프록시 가로 스크롤바 — 표가 길어도 상단에서 좌우 스크롤(Issue Table 과 동일 패턴).
+   실제 스크롤은 .sheet-wrap.gl-wrap 이 하고 여기선 scrollLeft 만 동기화(bindGoodlogHscroll). */
+.gl-hscroll {
+  position: sticky; top: calc(var(--sticky-head-h, 96px) + var(--cmp-toolbar-h, 44px));
+  z-index: 90; height: 14px; overflow-x: auto; overflow-y: hidden; background: #fff;
+}
+.gl-hscroll-spacer { height: 1px; }   /* 폭만 JS 로 실제 표 폭에 맞춰 갱신 */
+/* Win11 Chrome/Edge 오버레이 스크롤바는 스크롤 중에만 보여 "가로 스크롤이 없는 것처럼"
+   보인다 — 커스텀으로 그려 항상 보이게 한다(Issue Table 과 동일 처방). */
+.gl-hscroll::-webkit-scrollbar, .sheet-wrap.gl-wrap::-webkit-scrollbar { height: 12px; }
+.gl-hscroll::-webkit-scrollbar-track,
+.sheet-wrap.gl-wrap::-webkit-scrollbar-track { background: #f0f2f5; border-radius: 6px; }
+.gl-hscroll::-webkit-scrollbar-thumb,
+.sheet-wrap.gl-wrap::-webkit-scrollbar-thumb {
+  background: #9aa7b5; border-radius: 6px; border: 2px solid #f0f2f5; }
+.gl-hscroll::-webkit-scrollbar-thumb:hover,
+.sheet-wrap.gl-wrap::-webkit-scrollbar-thumb:hover { background: #7b8a9b; }
 /* Bin 전이표: 변경된 조합 강조 */
 .compare-table tr.bt-changed { background: #fff7ed; }
 .compare-table tr.bt-changed td:first-child { font-weight: 600; }
@@ -336,9 +375,10 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-issue td[data-col="step" i],
 .sheet-table.kind-issue td[data-col="bin" i],
 .sheet-table.kind-issue td[data-col="tno" i],
-.sheet-table.kind-issue td[data-col="item" i],
+.sheet-table.kind-issue td[data-col="item" i] { font-size: 17px; }
+/* Yield/CPK 값 셀은 식별 셀보다 1pt 작게(16px) — 웹에서 너무 컸다는 사용자 요청 2026-07-21. */
 .sheet-table.kind-issue td[data-col="avg" i],
-.sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 17px; }
+.sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 16px; }
 /* Issue Table: Yield 식별/값 글자 셀 가운데 정렬 (사용자 요청 — st-num 좌측정렬 덮어씀). */
 .sheet-table.kind-issue td[data-col="step" i],
 .sheet-table.kind-issue td[data-col="bin" i],
@@ -450,6 +490,16 @@ tbody tr:hover { background: #f9fbff; }
   cursor: col-resize; user-select: none; z-index: 8;
 }
 .sheet-table.kind-issue .col-resize-handle:hover { background: rgba(31, 77, 140, 0.25); }
+/* comment 열(AI/PTE/개발팀)은 source 컬럼이 아무리 늘어도 폭이 흔들리면 안 된다(사용자 요청
+   2026-07-21) — 긴 코멘트는 줄바꿈으로 흡수하고, 표가 넓어지면 가로 스크롤로 처리한다.
+   auto table-layout 에서 <col> width 는 힌트일 뿐이라 셀에 min/max 를 함께 못박는다.
+   드래그 리사이즈로 폭을 바꿀 땐 <col> 인라인 width 가 아니라 이 값이 이기므로, 리사이즈
+   대상에서 comment 열은 사실상 제외된다(= 항상 고정폭). */
+.sheet-table.kind-issue td.st-comment,
+.sheet-table.kind-issue th.st-comment {
+  min-width: 330px; max-width: 330px;
+  white-space: normal; overflow-wrap: anywhere;
+}
 .sheet-table.kind-issue td.sheet-subhead { background: #e8eef4 !important; }
 /* Bin(2번째)/Item(4번째) 데이터 셀: 기본 12px 보다 3 크게 + Bold (사용자 요청). */
 .sheet-table.kind-issue tbody td:nth-child(2),
@@ -479,8 +529,50 @@ tbody tr:hover { background: #f9fbff; }
 }
 
 /* Yield 탭 전용 다듬기 (다른 sheet-table 은 영향 없음) */
-.sheet-wrap.kind-yield { border: 1px solid #d9dfe6; border-radius: 8px; overflow: hidden; }
+/* overflow 는 auto — 예전 hidden 은 border-radius 클리핑 목적이었으나 상위 .sheet-wrap 의
+   overflow-x:auto 까지 덮어 source 가 많을 때(컬럼 16개↑) 가로 스크롤 자체가 불가능했다. */
+.sheet-wrap.kind-yield { border: 1px solid #d9dfe6; border-radius: 8px; overflow: auto; }
 .sheet-wrap.kind-yield .sheet-table { margin-bottom: 0; }
+/* width:auto 는 auto table-layout 이 컨테이너에 맞추려 모든 컬럼을 min-content 로 압축한다 —
+   압축 대신 colWidth 기본폭 유지 + 횡스크롤 (Issue Table 과 동일 처방). */
+.sheet-table.kind-yield { width: max-content; }
+/* Win11 Chrome/Edge 오버레이 스크롤바는 스크롤 중에만 보여 "가로 스크롤이 없는 것처럼"
+   보인다 — 커스텀으로 그려 항상 보이게 한다. */
+.sheet-wrap.kind-yield::-webkit-scrollbar { height: 12px; width: 12px; }
+.sheet-wrap.kind-yield::-webkit-scrollbar-track { background: #f0f2f5; border-radius: 6px; }
+.sheet-wrap.kind-yield::-webkit-scrollbar-thumb {
+  background: #9aa7b5; border-radius: 6px; border: 2px solid #f0f2f5; }
+.sheet-wrap.kind-yield::-webkit-scrollbar-thumb:hover { background: #7b8a9b; }
+/* 좌측 틀고정: 식별 4열(Step/Bin/TNO/Item). left 오프셋은 앞 컬럼 실측 폭 누적으로,
+   colWidth 기본값(step44+bin44+tno60)이 fallback 이고 실제 폭은 JS(syncYieldStickyOffsets)가
+   --yield-colN-left 로 덮어쓴다(내용이 길어 컬럼이 늘어나면 고정 px 는 셀이 겹친다).
+   헤더는 2행 구조일 때 식별 4열이 상단행 rowspan=2 이므로 첫 행만 잡으면 된다. */
+.sheet-table.kind-yield tbody td:nth-child(-n+4),
+.sheet-table.kind-yield thead tr:first-child > th:nth-child(-n+4) { position: sticky; z-index: 3; }
+.sheet-table.kind-yield thead tr:first-child > th:nth-child(-n+4) { z-index: 5; }
+.sheet-table.kind-yield tbody td:nth-child(1),
+.sheet-table.kind-yield thead tr:first-child > th:nth-child(1) { left: 0; }
+.sheet-table.kind-yield tbody td:nth-child(2),
+.sheet-table.kind-yield thead tr:first-child > th:nth-child(2) { left: var(--yield-col2-left, 44px); }
+.sheet-table.kind-yield tbody td:nth-child(3),
+.sheet-table.kind-yield thead tr:first-child > th:nth-child(3) { left: var(--yield-col3-left, 88px); }
+.sheet-table.kind-yield tbody td:nth-child(4),
+.sheet-table.kind-yield thead tr:first-child > th:nth-child(4) { left: var(--yield-col4-left, 148px); }
+/* 컬럼 폭 드래그 리사이즈 (bindYieldColResize) — 핸들 절대배치 기준이 되도록 th 를 positioned
+   로 만든다. 좌측 고정 4열은 위의 sticky 규칙이 더 구체적이라 그대로 유지된다(sticky 도
+   positioned 라 핸들 배치에 문제 없음). 소스명이 길어 열이 넓어질 때 사용자가 직접 줄인다. */
+.sheet-table.kind-yield thead th { position: relative; }
+.sheet-table.kind-yield .col-resize-handle {
+  position: absolute; top: 0; right: 0; width: 6px; height: 100%;
+  cursor: col-resize; user-select: none; z-index: 8;
+}
+.sheet-table.kind-yield .col-resize-handle:hover { background: rgba(31, 77, 140, 0.25); }
+/* 고정열 밑으로 다른 컬럼이 지나가므로 불투명 배경 필수 — 행 종류별 배경을 그대로 재선언한다
+   (hover 를 맨 뒤에 둬야 동일 특이도에서 이긴다. Pass 행은 !important 라 항상 우선). */
+.sheet-table.kind-yield tbody td:nth-child(-n+4) { background: #fff; }
+.sheet-table.kind-yield tbody tr:nth-child(even) td:nth-child(-n+4) { background: #f7f9fb; }
+.sheet-table.kind-yield tbody tr.yield-bin-detail td:nth-child(-n+4) { background: #fbfcfe; }
+.sheet-table.kind-yield tbody tr:hover td:nth-child(-n+4) { background: #edf3fc; }
 .sheet-table.kind-yield th {
   background: #eef2f7; text-transform: uppercase; font-size: 10.5px;
   letter-spacing: .02em; color: #47607d;
@@ -536,6 +628,9 @@ tbody tr:hover { background: #f9fbff; }
 .map-plot { position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%); aspect-ratio: 1 / 1; }
 .map-cell-mini { position: relative; height: 112px; background: #fff; border: 1px solid #e0e0e0;
   border-radius: 6px; overflow: hidden; }
+/* 미니셀 클릭 → Distribution=Item_detail, Map=Map Analysis 탭 이동 (edit_mode.js 위임) */
+#panel-issues .dist-cell-mini, #panel-issues .map-cell-mini { cursor: pointer; }
+#panel-issues .map-cell-mini:hover { border-color: #9bb4d6; }
 .btn-map-expand { position: absolute; top: 2px; right: 2px; z-index: 2;
   border: 1px solid #cbd2da; background: rgba(255,255,255,.85); color: #445;
   border-radius: 4px; font-size: 10px; line-height: 1; padding: 1px 3px; cursor: pointer; }
@@ -555,9 +650,28 @@ tbody tr:hover { background: #f9fbff; }
   color: #344054; border-right: 1px solid #cbd2dc; }
 .distseg:last-child { border-right: none; }
 .distseg.active { background: #5E6AD2; color: #fff; }
+/* 선택 해제 칩 — 세그먼트 그룹 밖 독립 버튼(토글이 아니라 액션). 그룹 멤버용
+   반쪽 테두리(.distseg border-right) 대신 단독 버튼 외형을 준다. */
+.dist-toolbar > .dist-sel-clear { border: 1px solid #d0d5dd; border-right: 1px solid #d0d5dd;
+  border-radius: 6px; background: #fff; color: #b42318; }
+.dist-toolbar > .dist-sel-clear:hover { background: #FDECEC; border-color: #f0a9a9; }
 .dist-legend { display: inline-flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .dist-leg-item { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: #444; }
 .dist-leg-sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+/* source 범례 — 툴바 flex 행에서 빼내 별도 행의 고정폭 그리드로(소스 40개 정렬).
+   기본 접힘(1행), 펼치면 3행 높이까지 보이고 그 이상은 스크롤. */
+.dist-legend-row { display: flex; align-items: flex-start; gap: 8px; margin: -8px 0 12px; }
+.dist-legend-row .dist-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 3px 10px; flex: 1; min-width: 0; max-height: 22px; overflow: hidden; }
+.dist-legend-row.is-open .dist-legend { max-height: 78px; overflow-y: auto; }
+.dist-legend-row .btn-sm { margin-top: 0; padding: 2px 8px; white-space: nowrap; flex: 0 0 auto; }
+/* 클릭 강조 — Map Analysis bin 범례(.bin-table)와 같은 색 규격 */
+.dist-leg-item { cursor: pointer; padding: 1px 5px; border-radius: 4px; min-width: 0; }
+/* 말줄임은 이름 span 에 건다 — .dist-leg-item 은 inline-flex 라 text-overflow 가 안 먹는다 */
+.dist-leg-nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dist-leg-item:hover { background: #f2f6fb; }
+.dist-leg-item.is-selected { background: #fff3bf; }
+.dist-leg-clear { color: #b42318; }
 .dist-search-wrap { position: relative; }
 .dist-search { padding: 6px 10px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 13px; width: 240px; }
 .dist-suggest { position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid #e0e0e0;
@@ -568,6 +682,14 @@ tbody tr:hover { background: #f9fbff; }
 .dist-sug-item .sug-tno { color: #999; min-width: 34px; }
 .dist-sug-item .sug-name { flex: 1; font-weight: 600; color: #222; }
 .dist-sug-item .dist-sug-chk { margin: 0; }
+/* 검색 드롭다운 헤더 — 일치 수 + 전체 선택/해제. 목록이 길어 스크롤돼도 닿게 sticky. */
+.dist-sug-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border-bottom: 1px solid #eef0f3; font-size: 12px; color: #6b7280;
+  position: sticky; top: 0; background: #fff; z-index: 1; }
+.dist-sug-head .btn-sm { margin-top: 0; padding: 2px 8px; }
+.dist-sug-cnt { flex: 1; }
+.dist-sug-cnt b { color: #222; }
+.dist-sug-more { color: #9aa0aa; }
 .dist-count { font-size: 12px; color: #888; }
 /* Distribution 갤러리만 기본 패널(1200px)보다 넓게 — 양옆 여백을 절반으로.
    여백 = (뷰포트 - 폭)/2 이므로 폭 = (뷰포트 + 1200)/2 이면 여백이 정확히 반이 된다. */
@@ -743,7 +865,7 @@ tbody tr:hover { background: #f9fbff; }
 .idet-stats { margin: 0 0 16px; }
 .idet-stats table { width: auto; }
 .idet-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
-.idet-legend { margin: 0 0 10px; }   /* 상세 상단 공용 legend (source 多일 때만 렌더) */
+.dist-legend-row.idet-legend { margin: 0 0 10px; }   /* 상세 상단 공용 legend (source 多 또는 강조 시 렌더) */
 .idet-chart-block { border: 1px solid #e2e4e8; border-radius: 8px; padding: 8px 10px; }
 /* 차트 하단 Comment 표시 (chart_notes.js cnRenderChartComments) — 내용 없으면 여백 0 */
 .idet-chart-comment:not(:empty) { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #e5e7eb;
@@ -884,7 +1006,13 @@ html[data-theme="dark"] .idet-chipval-table th, html[data-theme="dark"] .idet-ch
 .rawdata-item:disabled { opacity: 1; color: #aaa; background: #f5f5f5; cursor: not-allowed; }
 .rawdata-item-meta { color: #999; font-size: 8px; }
 .rawdata-grid-wrap { flex: 1; min-width: 0; }
-.rawdata-banner { font-size: 9px; color: #666; margin-bottom: 8px; }
+/* white-space: pre-line 필수 — 서버 400 은 위반 셀을 여러 줄로 내려주는데 없으면 한 줄로
+   뭉쳐 읽을 수 없다 (web_report/tabs/raw_data.py apply_raw_data_edits 메시지 포맷과 짝). */
+.rawdata-banner { font-size: 9px; color: #666; margin-bottom: 8px; white-space: pre-line; }
+.rawdata-banner-bad { color: #b91c1c; font-weight: 700; font-size: 11px; }
+/* 편집 대기 셀 표시 — 오류는 빨강(저장 차단), 정상 편집은 초록 배경 */
+.rd-cell-bad { display: block; background: #fde8e8; color: #b91c1c; box-shadow: inset 0 -2px 0 #dc2626; }
+.rd-cell-edited { display: block; background: #eaf7ef; }
 .rawdata-source-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-right: 8px; }
 .rawdata-source-btns .btn-sm { margin-top: 0; }
 .rawdata-source-btns .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
@@ -1192,6 +1320,11 @@ td.issue-status-cell.is-close .status-dot { background: #16a34a; box-shadow: 0 0
 .raw-regen-diff td.rd-old { color: #b91c1c; text-decoration: line-through; }
 .raw-regen-diff td.rd-new { color: #15803d; font-weight: 700; }
 .raw-regen-diff td.rd-arrow { color: #9aa0a6; text-align: center; }
+/* 값 검증 결과 — 오류(저장 차단) / 경고(저장은 되지만 결과가 달라짐) */
+.raw-regen-diff tr.rd-row-bad td { background: #fdf1f1; }
+.raw-regen-diff tr.rd-row-warn td { background: #fffaf0; }
+.raw-regen-diff td.rd-why { color: #b45309; white-space: normal; max-width: 340px; font-size: 11px; }
+.raw-regen-diff tr.rd-row-bad td.rd-why { color: #b91c1c; }
 
 /* ── topbar 수정/삭제 버튼 ─────────────────────────────────────────────────── */
 .topbar-actions { display: flex; gap: 8px; align-items: center; margin-left: auto; }
@@ -1487,6 +1620,14 @@ html[data-theme="dark"] .sheet-table.kind-issue tbody tr.yield-pass-row td {
 html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-pass-row:hover td,
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr.yield-pass-row:hover td { background: #17402b !important; }
 html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-bin-detail td { background: #20242c; color: #9aa3b0; }
+/* Yield 좌측 고정열 불투명 배경 (라이트와 같은 순서 — hover 가 마지막) */
+html[data-theme="dark"] .sheet-table.kind-yield tbody td:nth-child(-n+4) { background: #1e2128; }
+html[data-theme="dark"] .sheet-table.kind-yield tbody tr:nth-child(even) td:nth-child(-n+4) { background: #22262e; }
+html[data-theme="dark"] .sheet-table.kind-yield tbody tr.yield-bin-detail td:nth-child(-n+4) { background: #20242c; }
+html[data-theme="dark"] .sheet-table.kind-yield tbody tr:hover td:nth-child(-n+4) { background: #263043; }
+html[data-theme="dark"] .sheet-wrap.kind-yield::-webkit-scrollbar-track { background: #1e2128; }
+html[data-theme="dark"] .sheet-wrap.kind-yield::-webkit-scrollbar-thumb { background: #4a5462; border-color: #1e2128; }
+html[data-theme="dark"] .sheet-wrap.kind-yield::-webkit-scrollbar-thumb:hover { background: #5d6879; }
 html[data-theme="dark"] .yield-toggle,
 html[data-theme="dark"] .issue-toggle { background: #243044; border-color: #33507a; color: #7fb3ef; }
 html[data-theme="dark"] .yield-toggle:hover,
@@ -1520,6 +1661,13 @@ html[data-theme="dark"] .goodlog-table tr.gl-added { background: #16241c; }
 html[data-theme="dark"] .goodlog-table tr.gl-removed { background: #2c1a1a; }
 html[data-theme="dark"] .goodlog-table tr.gl-limitchg { background: #292416; }
 html[data-theme="dark"] .compare-table tr.bt-changed { background: #322817; }
+html[data-theme="dark"] .cmp-toolbar,
+html[data-theme="dark"] .gl-hscroll { background: #14161a; }
+html[data-theme="dark"] .gl-hscroll::-webkit-scrollbar-track,
+html[data-theme="dark"] .sheet-wrap.gl-wrap::-webkit-scrollbar-track { background: #262a33; }
+html[data-theme="dark"] .gl-hscroll::-webkit-scrollbar-thumb,
+html[data-theme="dark"] .sheet-wrap.gl-wrap::-webkit-scrollbar-thumb {
+  background: #4b5464; border-color: #262a33; }
 html[data-theme="dark"] .gl-sub { color: #8b94a3; }
 
 /* ── Map Analysis (좌표 선택 UI / 툴바 / 범례 표 — wafer 차트 카드는 흰 카드 유지) ── */
@@ -1549,13 +1697,20 @@ html[data-theme="dark"] .bin-table tbody tr.is-selected td { background: #4a3b12
 html[data-theme="dark"] .dist-toolbar { background: #14161a; }
 html[data-theme="dark"] .distseg-group { border-color: #3a3f4b; }
 html[data-theme="dark"] .distseg { background: #262a33; color: #aab3c0; border-right-color: #3a3f4b; }
+html[data-theme="dark"] .dist-toolbar > .dist-sel-clear { background: #1e2128; border-color: #3a3f4b; color: #f3a3a8; }
+html[data-theme="dark"] .dist-toolbar > .dist-sel-clear:hover { background: #46201f; border-color: #6b3230; }
 html[data-theme="dark"] .dist-leg-item { color: #aab3c0; }
+html[data-theme="dark"] .dist-leg-item:hover { background: #262c38; }
+html[data-theme="dark"] .dist-leg-item.is-selected { background: #4a3b12; }
+html[data-theme="dark"] .dist-leg-clear { color: #f3a3a8; }
 html[data-theme="dark"] .dist-search { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
 html[data-theme="dark"] .dist-suggest {
   background: #1e2128; border-color: #3a3f4b; box-shadow: 0 6px 20px rgba(0,0,0,.55);
 }
 html[data-theme="dark"] .dist-sug-item:hover { background: #262c38; }
 html[data-theme="dark"] .dist-sug-item .sug-name { color: #d7dbe2; }
+html[data-theme="dark"] .dist-sug-head { background: #1e2128; border-bottom-color: #2f3540; color: #8b94a3; }
+html[data-theme="dark"] .dist-sug-cnt b { color: #d7dbe2; }
 html[data-theme="dark"] .dist-count { color: #8b94a3; }
 /* 원래 배경이 투명이라 다크가 비치는 차트 블록 — 흰 카드로 명시 고정 */
 html[data-theme="dark"] .distg-card { background: #fff; }
@@ -1623,6 +1778,9 @@ html[data-theme="dark"] .rawdata-filters select { background: #14161a; border-co
 html[data-theme="dark"] .rawdata-hscroll { background: #14161a; }
 html[data-theme="dark"] .rawdata-selcount,
 html[data-theme="dark"] .rawdata-banner { color: #9aa3b0; }
+html[data-theme="dark"] .rawdata-banner-bad { color: #f08c8c; }
+html[data-theme="dark"] .rd-cell-bad { background: #3a1f1f; color: #f08c8c; }
+html[data-theme="dark"] .rd-cell-edited { background: #1c2b22; }
 html[data-theme="dark"] .rawdata-cols { background: #1e2128; border-color: #2f3540; }
 html[data-theme="dark"] .rawdata-item { background: #1e2128; border-color: #3a3f4b; color: #c6ccd6; }
 html[data-theme="dark"] .rawdata-item:hover:not(:disabled):not(.selected) { background: #262c38; }
@@ -1668,6 +1826,10 @@ html[data-theme="dark"] .raw-regen-diff td { border-bottom-color: #2a2e37; }
 html[data-theme="dark"] .raw-regen-diff thead th { background: #242c37; color: #9aa3b0; }
 html[data-theme="dark"] .raw-regen-diff td.rd-old { color: #f08c8c; }
 html[data-theme="dark"] .raw-regen-diff td.rd-new { color: #6fd694; }
+html[data-theme="dark"] .raw-regen-diff tr.rd-row-bad td { background: #2c1c1c; }
+html[data-theme="dark"] .raw-regen-diff tr.rd-row-warn td { background: #2c2718; }
+html[data-theme="dark"] .raw-regen-diff td.rd-why { color: #d9a441; }
+html[data-theme="dark"] .raw-regen-diff tr.rd-row-bad td.rd-why { color: #f08c8c; }
 html[data-theme="dark"] .load-overlay { background: rgba(10,12,16,.82); }
 html[data-theme="dark"] .load-msg { color: #7fb3ef; }
 html[data-theme="dark"] .load-bar { background: #2a2e37; }
@@ -1859,6 +2021,7 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
 </div>
 
 <script src="/pe/report/static/webreport/error_beacon.js"></script>
+<script src="/pe/report/static/webreport/honey_hint.js"></script>
 <script src="/pe/report/static/webreport/core.js"></script>
 <script src="/pe/report/static/webreport/tabs_topbar.js"></script>
 <script src="/pe/report/static/webreport/sheets.js"></script>

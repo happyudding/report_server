@@ -16,7 +16,9 @@ function collectGrid(panelEl, baseGrid) {
 
 // 열 이름 → 고정 너비(px) — xlsx 실측 기준 패턴.
 // kind==="issue" 이면 Issue Table 은 Distribution 셀을 크게 보여줘야 해 전체 컬럼을 1.5배로 키운다.
-function colWidth(name, kind) {
+// narrowSrc: source 컬럼이 SRC_ABBREV_MIN 이상이라 헤더가 공통부분을 뗀 짧은 라벨(01/02/…)로
+// 표시될 때 — 값이 숫자뿐이므로 {src}_yield/_count 폭을 숫자 크기에 맞게 좁힌다.
+function colWidth(name, kind, narrowSrc) {
   const n = String(name || "").toLowerCase().trim();
   const s = kind === "issue" ? 1.5 : 1;   // Issue Table 전체 1.5배 확대
   const px = base => `${Math.round(base * s)}px`;
@@ -29,8 +31,8 @@ function colWidth(name, kind) {
   if (n === "tno")                      return px(kind === "issue" ? 60 * 0.7 : 60);
   if (n === "map")                      return px(96);   // Distribution 과 동일 폭
   if (n === "distribution")             return px(96);   // 기존 120 의 0.8배
-  if (n.endsWith("_count"))             return px(60);
-  if (n.endsWith("_yield"))             return px(60);
+  if (n.endsWith("_count"))             return px(narrowSrc ? 38 : 60);
+  if (n.endsWith("_yield"))             return px(narrowSrc ? 38 : 60);
   if (n === "avg")                      return px(48);
   if (n === "status")                   return px(56);   // Issue Table Open/Close 드랍다운
   if (n === "item")                     return px(kind === "issue" ? 150 * 0.55 : 150);
@@ -66,6 +68,13 @@ function linkifyComment(txt) {
 function mapSourceCount() {
   const maps = (webReportSheets() || {})["Map Analysis"];
   return Array.isArray(maps) ? maps.length : 0;
+}
+
+// 입력 소스(파일) 개수 — CPK 행 STDF 미니맵은 소스별 측정값이라 이 수로 펼치기를 판단한다
+// (Map Analysis 맵 개수는 STEP 분리로 소스 수보다 많을 수 있어 mapSourceCount 와 별개).
+function webReportSourceCount() {
+  const srcs = DATA.web_report && DATA.web_report.sources;
+  return Array.isArray(srcs) ? srcs.length : 0;
 }
 
 // 열 순서 보정: 고정 prefix 컬럼(step/bin/tno/item, issue 는 category 포함 avg 까지)
@@ -145,10 +154,58 @@ function sheetHeaderShortLabel(c) {
   return headerLabel(c).replace(/_(yield|cnt|count)$/i, "");
 }
 // 화면 표시용 헤더 라벨 (avg → Avg 등).
+// COLUMN_DISPLAY_ALIAS: 저장 키(= 편집 DB·eval export·클라 Excel 이 쓰는 컬럼명)는 그대로 두고
+// 화면/Excel 내보내기 헤더 표기만 바꾼다 — 키를 바꾸면 기존 세션의 저장된 comment 가 유실된다.
+const COLUMN_DISPLAY_ALIAS = { "개발 comment": "개발팀 Comment" };
 function displayLabel(c) {
   const n = String(c).trim().toLowerCase();
   if (n === "avg") return "Avg";
-  return headerLabel(c);
+  const alias = COLUMN_DISPLAY_ALIAS[String(c).trim()];
+  return alias !== undefined ? alias : headerLabel(c);
+}
+
+// ── source 헤더 라벨 축약 (사용자 요청 2026-07-21) ────────────────────────────
+// source 컬럼이 이 수 이상이면 헤더에서 공통 부분을 생략하고 서로 다른 부분만 보여준다.
+// 예: kucak_01 … kucak_11 → 첫 컬럼만 "kucak_01" 전체, 나머지는 "02" … "11".
+const SRC_ABBREV_MIN = 8;
+
+// 이름 목록의 공통 접두/접미 길이(문자 수). 이름이 1개 이하면 축약 대상 아님.
+function commonAffixLen(names) {
+  if (!names || names.length < 2) return { pre: 0, suf: 0 };
+  const first = names[0];
+  let pre = first.length;
+  names.forEach(n => {
+    let i = 0;
+    while (i < pre && i < n.length && n[i] === first[i]) i++;
+    pre = i;
+  });
+  let suf = first.length - pre;
+  names.forEach(n => {
+    const cap = Math.min(suf, n.length - pre);
+    let i = 0;
+    while (i < cap && n[n.length - 1 - i] === first[first.length - 1 - i]) i++;
+    suf = i;
+  });
+  return { pre, suf };
+}
+
+// source 전체 이름 목록 → [{short, full}]. SRC_ABBREV_MIN 미만이면 전부 전체 이름 그대로.
+// 이상이면 첫 컬럼만 전체 이름이고 나머지는 공통 접두/접미를 뗀 부분만 남긴다(빈 문자열이
+// 되면 전체 이름으로 폴백 — 이름이 전부 같은 경우).
+function sourceHeaderLabels(fulls) {
+  const names = (fulls || []).map(f => String(f));
+  if (names.length < SRC_ABBREV_MIN) return names.map(f => ({ short: f, full: f }));
+  const { pre, suf } = commonAffixLen(names);
+  return names.map((full, i) => {
+    if (i === 0) return { short: full, full };
+    const core = full.slice(pre, full.length - suf);
+    return { short: core || full, full };
+  });
+}
+
+// 표의 source 컬럼({src}_yield) 수 — 축약·narrow 폭 판단 기준(Yield/Issue 공용).
+function sourceColCount(cols) {
+  return (cols || []).filter(c => /_yield$/i.test(String(c))).length;
 }
 // 여러 source 이름을 ".." + 이름 끝 6글자로 축약한다 (사용자 요청 — 소스 이름은 보통
 // 끝부분에서 달라지므로 구분 유지). 이름이 8글자 이하면 그대로 둔다. hover 로 전체이름 확인.
@@ -157,7 +214,13 @@ function abbrevSourceLabels(fulls) {
   return fulls.map(full =>
     (full.length <= 8) ? { short: full, full } : { short: ".." + full.slice(-6), full });
 }
-function buildSheetTableHead(cols) {
+// opts.resize=true 면 단일 컬럼 th 우측에 폭 드래그 핸들을 심는다(colgroup 인덱스 동반).
+// Yield 표에서 쓰며(bindSheetColResize), 지정 없으면 기존과 동일한 헤더를 그대로 낸다.
+function buildSheetTableHead(cols, opts) {
+  opts = opts || {};
+  const handle = opts.resize
+    ? idx => `<span class="col-resize-handle" data-col="${idx}" data-col-name="${esc(String(cols[idx]))}"></span>`
+    : () => "";
   const isAvgCol = c => String(c).trim().toLowerCase() === "avg";
   // avg 컬럼이 _yield 그룹 바로 앞에 오면 그 yield 그룹에 흡수(= "yield" 헤더 아래 "Avg" 열).
   const groupOf = c => SHEET_HEADER_SUFFIX_GROUPS.find(g => g.re.test(String(c)));
@@ -173,25 +236,31 @@ function buildSheetTableHead(cols) {
     runs.push({ start: i, len: j - i, group: (g && (j - i) >= 2) ? g : null });
     i = j;
   }
+  const commentCls = c => isCommentCol(c) ? ` class="st-comment"` : "";
   if (!runs.some(r => r.group)) {
-    return "<thead><tr>" + cols.map(c => `<th>${esc(displayLabel(c))}</th>`).join("") + "</tr></thead>";
+    return "<thead><tr>" + cols.map((c, k) =>
+      `<th${commentCls(c)}>${esc(displayLabel(c))}${handle(k)}</th>`).join("") + "</tr></thead>";
   }
   const topRow = runs.map(r => r.group
     ? `<th colspan="${r.len}" class="sheet-group-th">${esc(r.group.label)}</th>`
-    : `<th rowspan="2">${esc(displayLabel(cols[r.start]))}</th>`
+    : `<th rowspan="2"${commentCls(cols[r.start])}>${esc(displayLabel(cols[r.start]))}${handle(r.start)}</th>`
   ).join("");
   const botRow = runs.filter(r => r.group).map(r => {
     const runCols = cols.slice(r.start, r.start + r.len);
-    // source 컬럼만 뽑아 공통 뒤글자로 축약(avg 는 "Avg" 고정 라벨).
+    // source 컬럼만 뽑아 축약(avg 는 "Avg" 고정 라벨). source 가 SRC_ABBREV_MIN 이상이면
+    // 공통 접두/접미를 뗀 라벨(첫 컬럼만 전체), 미만이면 기존 뒤글자 축약.
     const srcCols = runCols.filter(c => !isAvgCol(c));
-    const abbr = abbrevSourceLabels(srcCols.map(sheetHeaderShortLabel));
+    const fulls = srcCols.map(sheetHeaderShortLabel);
+    const abbr = srcCols.length >= SRC_ABBREV_MIN
+      ? sourceHeaderLabels(fulls) : abbrevSourceLabels(fulls);
     const abbrByCol = {};
     srcCols.forEach((c, i) => { abbrByCol[c] = abbr[i]; });
-    return runCols.map(c => {
-      if (isAvgCol(c)) return `<th>Avg</th>`;
+    return runCols.map((c, k) => {
+      const idx = r.start + k;
+      if (isAvgCol(c)) return `<th>Avg${handle(idx)}</th>`;
       const a = abbrByCol[c];
       const titleAttr = a.short !== a.full ? ` title="${esc(a.full)}"` : "";
-      return `<th class="sheet-src-th"${titleAttr}>${esc(a.short)}</th>`;
+      return `<th class="sheet-src-th"${titleAttr}>${esc(a.short)}${handle(idx)}</th>`;
     }).join("");
   }).join("");
   return `<thead><tr>${topRow}</tr><tr>${botRow}</tr></thead>`;
@@ -321,22 +390,28 @@ function issueSectionHeadRowsHtml(cols, sec) {
     runs.push({ start: i, len: j - i, group: (g && (j - i) >= 2) ? g : null });
     i = j;
   }
+  const commentCls = c => isCommentCol(c) ? ` class="st-comment"` : "";
   if (!runs.some(r => r.group)) {
     return `<tr class="issue-shead-top" data-sec="${esc(sec)}">` +
-      cols.map((c, k) => `<th>${esc(displayLabel(c))}${resizeHandle(k)}</th>`).join("") + `</tr>`;
+      cols.map((c, k) => `<th${commentCls(c)}>${esc(displayLabel(c))}${resizeHandle(k)}</th>`).join("") + `</tr>`;
   }
   const topRow = runs.map(r => r.group
     ? `<th colspan="${r.len}" class="sheet-group-th">${esc(lab.group)}</th>`
-    : `<th rowspan="2">${esc(displayLabel(cols[r.start]))}${resizeHandle(r.start)}</th>`
+    : `<th rowspan="2"${commentCls(cols[r.start])}>${esc(displayLabel(cols[r.start]))}${resizeHandle(r.start)}</th>`
   ).join("");
   const botRow = runs.filter(r => r.group).map(r => {
     const runCols = cols.slice(r.start, r.start + r.len);
+    // source 이름은 SRC_ABBREV_MIN 미만이면 full 표시(기존 동작), 이상이면 공통 접두/접미를
+    // 뗀 라벨(첫 컬럼만 full) — 소스가 많을 때 열너비를 숫자 크기까지 좁히기 위함.
+    const srcCols = runCols.filter(c => !isAvgCol(c));
+    const labels = sourceHeaderLabels(srcCols.map(sheetHeaderShortLabel));
+    const labByCol = {};
+    srcCols.forEach((c, i) => { labByCol[c] = labels[i]; });
     return runCols.map((c, k) => {
       const idx = r.start + k;
       if (isAvgCol(c)) return `<th>${esc(lab.avg)}${resizeHandle(idx)}</th>`;
-      // Issue Table 은 source 이름을 생략하지 않고 full 로 표시(사용자 요청).
-      const full = sheetHeaderShortLabel(c);
-      return `<th class="sheet-src-th" title="${esc(full)}">${esc(full)}${resizeHandle(idx)}</th>`;
+      const a = labByCol[c];
+      return `<th class="sheet-src-th" title="${esc(a.full)}">${esc(a.short)}${resizeHandle(idx)}</th>`;
     }).join("");
   }).join("");
   return `<tr class="issue-shead-top" data-sec="${esc(sec)}">${topRow}</tr><tr class="issue-shead-bot">${botRow}</tr>`;
@@ -359,8 +434,10 @@ function renderSheetTable(rows, opts) {
   if (opts.kind === "yield" && !opts.edit) bodyRows = reorderYieldRows(bodyRows, cols);
   const binCol = opts.kind === "yield" ? cols.find(c => String(c).trim().toLowerCase() === "bin") : null;
 
+  // source 가 많으면 헤더가 공통부분을 뗀 짧은 라벨이 되므로 그 컬럼 폭도 함께 좁힌다.
+  const narrowSrc = sourceColCount(cols) >= SRC_ABBREV_MIN;
   const colgroup = "<colgroup>" + cols.map(c =>
-    `<col style="width:${colWidth(c, opts.kind)}">`
+    `<col style="width:${colWidth(c, opts.kind, narrowSrc)}">`
   ).join("") + "</colgroup>";
 
   // Issue 는 persistent thead 대신 섹션(Yield/CPK/ETC)별 2행 헤더 블록을 tbody 안에 sticky 로
@@ -436,7 +513,17 @@ function renderSheetTable(rows, opts) {
           const expandBtn = (mapSourceCount() > 1)
             ? `<button type="button" class="btn-map-expand" title="전체 소스 맵 보기">⤢</button>` : "";
           return `<td data-r="${ri}" data-c="${ci}">` +
-            `<div class="map-cell map-cell-mini" data-bin="${esc(String(binv))}"><div class="map-plot"></div>${expandBtn}</div></td>`;
+            `<div class="map-cell map-cell-mini" data-bin="${esc(String(binv))}" ` +
+            `title="클릭하면 Map Analysis 탭에서 이 Bin 을 강조해 봅니다"><div class="map-plot"></div>${expandBtn}</div></td>`;
+        }
+        // CPK 섹션은 Bin 이 없다 — 대신 그 Item 의 STDF Map(측정값 10분위) 미니맵을 넣는다.
+        const cpkItem = String((r && r["Item"]) ?? "").trim();
+        if (opts.kind === "issue" && !subhead && issueRowSec === "CPK" && cpkItem !== "") {
+          const stdfExpand = (webReportSourceCount() > 1)
+            ? `<button type="button" class="btn-map-expand" title="전체 소스 맵 보기">⤢</button>` : "";
+          return `<td data-r="${ri}" data-c="${ci}">` +
+            `<div class="map-cell map-cell-mini map-cell-stdf" data-subject="${esc(cpkItem)}" ` +
+            `title="클릭하면 Map Analysis 탭 STDF Map 으로 이 Item 을 봅니다"><div class="map-plot"></div>${stdfExpand}</div></td>`;
         }
         return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
       }
@@ -479,7 +566,8 @@ function renderSheetTable(rows, opts) {
       // 아래 일반 렌더링을 그대로 탄다. 없으면 기존처럼 opts.edit 전체 컬럼이 즉시 편집 가능.
       if (opts.edit && (!opts.editableCols || opts.editableCols.has(c))) {
         if (opts.editableCols) {
-          const cls = "editing-cell dblclick-edit" + (subhead ? " sheet-subhead" : "");
+          const cls = "editing-cell dblclick-edit" + (subhead ? " sheet-subhead" : "")
+            + (isCommentCol(c) ? " st-comment" : "");
           // web_report comment 저장용 행 식별 키 — 없으면(서브헤더/placeholder 행) 저장 대상 아님.
           const rowKey = (opts.kind === "issue" && !subhead) ? issueRowKey(r, rowSection[ri]) : "";
           const keyAttr = rowKey ? ` data-key="${esc(rowKey)}"` : "";
@@ -488,10 +576,12 @@ function renderSheetTable(rows, opts) {
           const rawAttr = isCommentCol(c) ? ` data-raw="${esc(txt)}"` : "";
           return `<td class="${cls}"${keyAttr}${rawAttr} data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${cInner}</td>`;
         }
-        const cls = "editing-cell" + (isNum ? " st-num" : "") + (subhead ? " sheet-subhead" : "");
+        const cls = "editing-cell" + (isNum ? " st-num" : "") + (subhead ? " sheet-subhead" : "")
+          + (isCommentCol(c) ? " st-comment" : "");
         return `<td class="${cls}" contenteditable="true" data-r="${ri}" data-c="${ci}" data-col="${esc(c)}">${esc(txt)}</td>`;
       }
       const clsParts = [];
+      if (isCommentCol(c)) clsParts.push("st-comment");   // 열너비 고정 (CSS .st-comment)
       let cellStyle = "";
       if (isEmpty) clsParts.push("st-empty");
       else if (isNum) clsParts.push("st-num");
@@ -581,6 +671,40 @@ function renderSheetTable(rows, opts) {
   return `<div class="sheet-wrap${kindCls}"><table class="sheet-table${kindCls}">${colgroup}${head}${body}</table></div>`;
 }
 
+// ── 컬럼 폭 드래그 리사이즈 (Yield 등 thead 표 공용) ─────────────────────────
+// buildSheetTableHead(cols, {resize:true}) 가 심은 .col-resize-handle(data-col=인덱스)을 끌어
+// 그 <col> width 를 바꾼다. 저장 없음(새로고침 시 기본 폭 복귀). Issue Table 은 미니차트
+// 재렌더 등 고유 후처리가 있어 별도 바인더(bindIssueColResize)를 유지한다.
+// afterResize(선택): 드래그 중/끝에 부를 후처리(고정열 오프셋 재실측 등).
+function bindSheetColResize(table, afterResize) {
+  const colgroup = table && table.querySelector("colgroup");
+  if (!table || !colgroup) return;
+  const MIN_W = 24;
+  table.addEventListener("mousedown", e => {
+    const handle = e.target.closest(".col-resize-handle");
+    if (!handle) return;
+    const col = colgroup.children[+handle.dataset.col];
+    if (!col) return;
+    const th = handle.closest("th");
+    const startW = th ? th.getBoundingClientRect().width : parseFloat(col.style.width) || 80;
+    const startX = e.clientX;
+    e.preventDefault();   // 드래그 중 텍스트 선택 방지
+    let rafPending = false;
+    const sync = () => { rafPending = false; if (afterResize) afterResize(); };
+    const onMove = ev => {
+      col.style.width = Math.max(MIN_W, Math.round(startW + (ev.clientX - startX))) + "px";
+      if (!rafPending) { rafPending = true; requestAnimationFrame(sync); }
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      sync();
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+}
+
 // 편집된 sheet-table DOM → rows 재구성
 function collectSheetTable(panelEl, baseRows) {
   if (!baseRows || !baseRows.length) return baseRows;
@@ -625,9 +749,8 @@ function yieldOverviewHtml() {
   if (!ov) return "";
   const pct = (typeof ov.yield_pct === "number") ? ov.yield_pct.toFixed(2) : ov.yield_pct;
   // 소스가 2개 이상일 때만 소스별 수율을 따로 표시(단일 소스는 Total 과 동일하므로 생략).
-  // yield% 내림차순(높은 순 위 → 아래) 정렬. 메인 Total Yield 오른쪽에 작은 테이블로 붙인다.
-  const bySrc = (Array.isArray(ov.by_source) ? ov.by_source.slice() : [])
-    .sort((a, b) => (Number(b.yield_pct) || 0) - (Number(a.yield_pct) || 0));
+  // 정렬은 orderSummarySources — yield% 내림차순, 단 DUT 모드는 DUT 번호 오름차순.
+  const bySrc = orderSummarySources(ov.by_source);
   const bySrcHtml = bySrc.length >= 2 ? `<div class="yield-by-source"><table class="ybs-table">
     <thead><tr><th>Source</th><th>Yield</th><th>Pass / Total</th></tr></thead>
     <tbody>` + bySrc.map(s => {

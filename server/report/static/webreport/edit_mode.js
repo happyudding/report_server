@@ -182,6 +182,21 @@ document.querySelector(".content").addEventListener("click", e => {
   // Issue Table Map 셀 소스별 펼치기.
   const mapExpandBtn = e.target.closest(".btn-map-expand");
   if (mapExpandBtn) { toggleMapExpand(mapExpandBtn); return; }
+  // Issue Table Distribution 미니셀(산포) 클릭 → 그 Item 의 Item_detail.
+  const distMini = e.target.closest("#panel-issues .dist-cell-mini[data-subject]");
+  if (distMini) {
+    const subject = distMini.dataset.subject;
+    flushPendingComments().then(ok => { if (ok && subject) openItemDetail(subject, [subject]); });
+    return;
+  }
+  // Issue Table Map 미니셀 클릭 → Map Analysis 탭. Yield/ETC 행(data-bin)은 Bin Map 에서
+  // 그 Bin 을 범례 선택 상태로, CPK 행(data-subject)은 STDF Map 에서 그 Item 을 선택 상태로.
+  const mapMini = e.target.closest("#panel-issues .map-cell-mini");
+  if (mapMini) {
+    if (mapMini.dataset.subject) openMapAnalysisForItem(mapMini.dataset.subject);
+    else openMapAnalysisForBin(mapMini.dataset.bin);
+    return;
+  }
   if (e.target.id === "issueToggleAll") {
     const expand = e.target.dataset.expanded !== "true";
     e.target.dataset.expanded = expand ? "true" : "false";

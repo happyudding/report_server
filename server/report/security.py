@@ -90,7 +90,7 @@ def _uploader_guard(session):
     Honey 밖(신원 없음)은 읽기전용(401). 통과하면 None, 거부면 (json, status)."""
     uid = _current_user()
     if not uid:
-        return jsonify({"error": "Honey 를 통해 접속한 사용자만 수정/삭제할 수 있습니다 (읽기 전용)."}), 401
+        return jsonify({"error": "로그인한 사용자만 수정/삭제할 수 있습니다 (현재 읽기 전용)."}), 401
     if not _is_uploader(session, uid):
         return jsonify({"error": "업로더만 수정/삭제할 수 있습니다."}), 403
     return None
@@ -103,7 +103,7 @@ def _editor_guard(session):
     uid = _current_user()
     if not uid:
         _log.warning("editor guard reject (no identity): %s %s", request.method, request.path)
-        return jsonify({"error": "Honey 를 통해 접속한 사용자만 편집할 수 있습니다 (읽기 전용)."}), 401
+        return jsonify({"error": "로그인한 사용자만 편집할 수 있습니다 (현재 읽기 전용)."}), 401
     sid = (session or {}).get("session_id")
     if _is_uploader(session, uid) or report_db.is_session_editor(sid, uid):
         return None
@@ -198,8 +198,8 @@ def _require_web_report_session(session_id):
 # ── 사용자 ID 검증 [ID/PW 로그인 폐지 후에도 편집자 위임 입력 검증에 사용] ──────
 
 _USER_ID_RE = re.compile(r"^[^\s\\/]{1,64}$")
-_PIN_RE = re.compile(r"^\d{4}$")   # 비밀번호는 숫자 4자리 (폐지 — 보존만)
-_DEFAULT_PIN = "0000"              # 모든 신규 계정의 초기 비밀번호 (폐지 — 보존만)
+_PIN_RE = re.compile(r"^\d{4}$")   # 웹 로그인 PIN 은 숫자 4자리 (routes_misc auth 라우트)
+_DEFAULT_PIN = "0000"              # 관리자 리셋값 (admin_panel/users_admin.py)
 
 
 def _normalize_user_id(value):

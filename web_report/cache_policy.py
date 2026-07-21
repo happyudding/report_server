@@ -54,10 +54,17 @@ def dist_key(session, *, bin1: bool = False) -> tuple:
     return base + ("bin1",) if bin1 else base
 
 
+# build_map_analysis_rows 출력 세대. map rows 의 **값**이 바뀌는 변경(스키마 확장 포함)마다
+# 올려 MAP_CACHE + disk_cache map 파일을 자연 무효화한다 — map_key 에는 edits_rev 가 없어
+# 이 값 말고는 재계산을 강제할 수단이 없다.
+# v2: STEP 이름에 "eval"(대소문자 무시)이 들어가는 STEP 맵 제외 (2026-07-21).
+MAP_SCHEMA_VERSION = 2
+
+
 def map_key(session) -> tuple:
     # DUT 모드는 같은 akey 라도 병합 맵(All DUT)이 다르므로 mode 포함 — dist_key 와 동일 이유.
     # dies 는 편집과 무관하므로 edits_rev 불포함.
-    return _base(session) + (_mode(session),)
+    return _base(session) + (_mode(session), MAP_SCHEMA_VERSION)
 
 
 # build_report_payload 출력 스키마 버전. payload 구조(최상위 키·그룹 형태)가 바뀌면
@@ -81,7 +88,13 @@ def map_key(session) -> tuple:
 # v9: IssueTable 행 Status 컬럼 + 행 숨김(issue_hidden 필터) + CPK 섹션 선정/표시값을
 #     규격내 cpk(cpk_limited) 기준으로 전환, cpk_rows 에 *_limited 통계 병기. 안 올리면
 #     옛 캐시가 Status 없는 rows / 전체 die 기준 CPK 섹션을 반환한다.
-REPORT_SCHEMA_VERSION = 9
+# v10: Compare goodlog 의 limit 일치 판정(_lim_equal)을 소수 4자리 반올림 비교로 전환 —
+#      compare_lolimit/compare_hilimit 와 limit_change_map 의 **값**이 바뀐다(구조는 동일).
+#      안 올리면 옛 disk_cache 가 부동소수 잔차로 False 가 찍힌 payload 를 계속 반환한다.
+# v11: Map Analysis 에서 STEP 이름에 "eval"(대소문자 무시)이 들어가는 STEP 맵을 제외 —
+#      맵 rows 개수·bin_counts·fail step 귀속 값이 바뀐다(구조는 동일). 안 올리면 옛
+#      disk_cache 가 eval STEP 맵이 포함된 payload 를 계속 반환한다.
+REPORT_SCHEMA_VERSION = 11
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

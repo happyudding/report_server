@@ -20,25 +20,43 @@ body {
   background: #fdf6e3; margin: 0; padding: 0 20px 24px;   /* Honey 톤 연노랑 기본 배경 */
   color: #222;
 }
+/* 상단 Bar 는 검색결과 페이지(report_analysis_index.html)와 동일 마크업·스타일을 쓴다.
+   유일한 차이는 BACK TO MAIN 링크가 /pe/report/ 로 간다는 점. */
 .page-header {
-  margin: 0 -20px 12px; padding: 5px 20px;
+  margin: 0 -20px 8px; padding: 5px 20px;
   background: #000; color: #fff;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
-.page-title { margin: 0; font-size: 27px; font-weight: 800; letter-spacing: 0; }
-.nav-btn {
+.page-title { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: 0; }
+.back-main-btn {
+  border: 0; background: transparent; color: #fff;
+  font-size: 19px; font-weight: 700; cursor: pointer;
+  text-decoration: none;
+  padding: 8px 0; white-space: nowrap;
+}
+.help-btn {
+  border: 0; background: transparent; color: #fff;
+  font-size: 19px; font-weight: 700; cursor: pointer;
+  text-decoration: none;
+  padding: 8px 0; white-space: nowrap;
+}
+.honey-dl-btn {
   flex: 0 0 auto; height: 34px; padding: 0 16px;
   display: inline-flex; align-items: center; gap: 6px;
-  border-radius: 8px; border: 1px solid #4a90e2;
-  background: #4a90e2; color: #fff; font-size: 20px; font-weight: 600;
+  border-radius: 8px; border: 1px solid #16a34a;
+  background: #16a34a; color: #fff; font-size: 19px; font-weight: 600;
   text-decoration: none; cursor: pointer; transition: all .15s;
   white-space: nowrap;
 }
-.nav-btn:hover { background: #3a7bc8; border-color: #3a7bc8; }
+.honey-dl-btn:hover { background: #15803d; border-color: #15803d; }
+.honey-dl-btn.disabled {
+  background: #e5e7eb; border-color: #d1d5db; color: #9ca3af;
+  cursor: not-allowed; pointer-events: none;
+}
 .theme-toggle {
   flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
   border: 1px solid rgba(255,255,255,.35); background: transparent;
-  font-size: 22px; line-height: 1; padding: 0; cursor: pointer;
+  font-size: 21px; line-height: 1; padding: 0; cursor: pointer;
 }
 .theme-toggle:hover { background: rgba(255,255,255,.15); }
 
@@ -277,10 +295,13 @@ html[data-theme="dark"] .empty-note { color: #767f8c; }
 <body>
 
 <header class="page-header">
-  <h1 class="page-title">VOC</h1>
+  <h1 class="page-title">LSI PTE REPORT SERVER</h1>
   <div style="display:flex; align-items:center; gap:14px;">
-    <a class="nav-btn" href="/pe/report/">🏠 HOME</a>
-    <a class="nav-btn" href="/pe/report/help">❓ HELP</a>
+    <a class="help-btn" href="/pe/report/help">HELP</a>
+    <a class="help-btn" href="/pe/report/voc">VOC</a>
+    <a id="honeyDlBtn" class="honey-dl-btn" href="/honey/download">⬇ HONEY 다운로드</a>
+    <!-- 검색결과 페이지와 달리 여기서는 검색결과 페이지로 되돌아간다(사용자 요청). -->
+    <a class="back-main-btn" href="/pe/report/">BACK TO MAIN</a>
     <button class="theme-toggle" id="themeToggle" title="다크 모드로 전환">🌙</button>
   </div>
 </header>
@@ -485,6 +506,27 @@ function saveGuestName(name) {
     syncThemeBtn();
   });
   syncThemeBtn();
+})();
+
+// HONEY 설치본 다운로드 버튼 — 검색결과 페이지와 동일 동작(/honey/version 으로 링크 보정,
+// 배포본이 없으면 비활성). 상단 Bar 를 그 페이지와 동일하게 맞추면서 함께 옮겨왔다.
+(async () => {
+  const btn = $("honeyDlBtn");
+  if (!btn) return;
+  try {
+    const res = await fetch("/honey/version");
+    if (!res.ok) throw new Error("no release");
+    const m = await res.json();
+    if (!m.version) throw new Error("no version");
+    if (m.url) btn.href = m.url;
+    if (m.file) btn.setAttribute("download", m.file);
+    btn.textContent = "⬇ HONEY 다운로드";
+  } catch (e) {
+    btn.classList.add("disabled");
+    btn.removeAttribute("href");
+    btn.title = "배포된 설치본이 없습니다";
+    btn.textContent = "HONEY 다운로드 (없음)";
+  }
 })();
 
 // ── 라이트박스 ────────────────────────────────────────────────────────────

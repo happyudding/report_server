@@ -22,6 +22,7 @@ let trimState = {
   showUnassigned: false,    // ① 매칭: stem 미산출(미배정) 항목 노출 여부 — 기본 숨김
   scatterPage: 0,           // ② 산포 현재 페이지(0-index)
   scatterSel: new Set(),    // ② 산포 검색 체크박스로 고른 그룹 id (있으면 그것만 표시)
+  yBasis: "target",         // ② 산포 y축 범위 기준 슬롯: target(VERIFY/P2, 기본) | base(PRE/INIT)
 };
 function trimPayload() { return trimState.payloads[trimState.source || ""] || null; }
 
@@ -61,6 +62,12 @@ function renderTrimAnalysis() {
         <button class="distseg" data-tview="scatter">② 산포 분석</button>
         ${TRIM.REPORT_ENABLED ? `<button class="distseg" data-tview="report">③ 분석 리포트</button>` : ""}
       </div>
+      <div class="distseg-group" id="trimYBasis" style="display:none">
+        <button class="distseg" data-ybasis="base"
+          title="보이는 차트의 y축 범위를 PRE(INIT) 슬롯 항목의 LSL/USL ±15% 로 잡는다">PRE(INIT) 기준 y축</button>
+        <button class="distseg" data-ybasis="target"
+          title="보이는 차트의 y축 범위를 VERIFY(P2) 슬롯 항목의 LSL/USL ±15% 로 잡는다">VERIFY(P2) 기준 y축</button>
+      </div>
       <select id="trimSource" class="trim-source" style="display:none" title="분석 source 선택"></select>
       <span id="trimRule" class="trim-rule"></span>
       <button class="btn-sm" id="trimExcelBtn" title="현재 탭 데이터(매칭/리포트 표 + 차트 PNG)를 xlsx 로 다운로드">Excel 다운로드</button>
@@ -72,6 +79,12 @@ function renderTrimAnalysis() {
     if (!b) return;
     trimState.view = b.dataset.tview;
     renderTrimView();
+  });
+  panel.querySelector("#trimYBasis").addEventListener("click", e => {
+    const b = e.target.closest("[data-ybasis]");
+    if (!b || b.dataset.ybasis === trimState.yBasis) return;
+    trimState.yBasis = b.dataset.ybasis;
+    renderTrimView();          // 현재 페이지 6개 차트를 캐시된 payload 로 즉시 재렌더
   });
   panel.querySelector("#trimSource").addEventListener("change", e => {
     trimState.source = e.target.value;
@@ -91,6 +104,13 @@ function renderTrimView() {
   if (!TRIM.REPORT_ENABLED && trimState.view === "report") trimState.view = "match";
   document.querySelectorAll("#trimSubtabs [data-tview]").forEach(b =>
     b.classList.toggle("active", b.dataset.tview === trimState.view));
+  // y축 기준 토글은 ② 산포 분석에서만 노출(다른 뷰엔 차트가 없다).
+  const yb = document.getElementById("trimYBasis");
+  if (yb) {
+    yb.style.display = trimState.view === "scatter" ? "" : "none";
+    yb.querySelectorAll("[data-ybasis]").forEach(b =>
+      b.classList.toggle("active", b.dataset.ybasis === trimState.yBasis));
+  }
   const sel = document.getElementById("trimSource");
   if (sel) {
     const sources = p.sources || [];
@@ -661,8 +681,12 @@ function drawTrimChart(div, chart, payload) {
     margin: { l: 54, r: 54, t: 46, b: 38 },
     showlegend: true };
   // 메인 y축: USL/LSL ±15% 창(spec 기준)으로 TRIM/VERIFY 를 보이게 한다.
-  // limit 이 없으면 기존 동작(TRIM 평균 중심)으로 폴백.
-  const yRange = trimYRangeFromLimits(mainSpec.lo, mainSpec.hi)
+  // 기준 슬롯은 상단 토글(trimState.yBasis) — target(VERIFY/P2, 기본) 또는 base(PRE/INIT).
+  // **범위만** 바꾼다: LSL/USL 점선과 y축 단위 제목은 mainSpec(target) 기준 그대로다.
+  // base 기준인데 그 슬롯이 없거나 limit 이 없으면 target limit → TRIM 평균 중심 순 폴백.
+  const rangeSpec = (trimState.yBasis === "base" && chart.phases[chart.base]) || mainSpec;
+  const yRange = trimYRangeFromLimits(rangeSpec.lo, rangeSpec.hi)
+    || trimYRangeFromLimits(mainSpec.lo, mainSpec.hi)
     || trimYRangeCenteredOnTrim(chart, phases);
   if (yRange) { layout.yaxis.range = yRange; layout.yaxis.autorange = false; }
   if (codeSpec) {

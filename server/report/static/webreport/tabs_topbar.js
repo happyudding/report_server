@@ -18,6 +18,8 @@ document.getElementById("tabs").addEventListener("click", e => {
   // 프리렌더가 숨김(display:none) 상태에서 그렸으면 헤더 상단행 높이가 0으로 측정되므로,
   // 보이는 시점에 다시 실측한다.
   if (tab === "issues" && active) syncIssueHeadRowHeight(active);
+  // 같은 이유 — Yield 좌측 고정열 left 오프셋도 숨김 상태에선 0 으로 측정된다.
+  if (tab === "yield" && active) syncYieldStickyOffsets(active);
   // Note 탭(Luckysheet 캔버스)은 숨김 상태에서 크기가 0 — 재진입 시 리사이즈.
   if (tab === "note" && window.noteOnTabShown) noteOnTabShown();
 });

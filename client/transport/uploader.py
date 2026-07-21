@@ -106,7 +106,8 @@ def post_webreport(manifest, parquet_items, base_url=None, progress_cb=None,
 
 
 def fetch_part_ids(base_url=None):
-    """서버 stdinfo DB 의 part_id 전체 목록을 조회. (업로드 다이얼로그 Product 검색용)
+    """서버 product_info.csv 의 part_id/sub_part_id 검색 후보 목록을 조회.
+    (업로드 다이얼로그 Product 검색용)
 
     Returns: list[str]. 실패(네트워크/타임아웃/비200) 시 RuntimeError 발생 —
     호출측에서 잡아 사용자에게 안내한다(무음 실패 금지).

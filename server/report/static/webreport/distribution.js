@@ -44,6 +44,13 @@ let distColorMap = {};        // source → color
 // 되어(distPaintPoints) 점 개수 비용이 크게 낮아졌으므로 1500 → 2000 으로 상향(2026-07-20).
 const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 2000, PER_FRAME: 3,
   ROOT_MARGIN: "1200px 0px", EXCLUDE: ["chipid", "gpib", "otp", "code"],
+  // 칸 하나가 그리는 표시점 총예산 — 소스 수로 나눠 소스별 캡을 정한다(distCapFor).
+  // DOWNSAMPLE 이 소스별 상한이라 소스 40개면 칸 하나가 8만 점이 되는데, IssueTable
+  // 미니셀은 높이 112px 라 찍을 수 있는 픽셀이 ~1.7만개뿐이라 전부 덧칠 낭비였다.
+  // 소스가 적으면 나눗셈 결과가 DOWNSAMPLE 로 클램프돼 현행과 완전히 동일하게 동작한다.
+  CELL_BUDGET_MINI: 4000,    // IssueTable 미니셀(112px) — 작아서 더 과감히 줄인다
+  CELL_BUDGET_CARD: 12000,   // 갤러리 카드 · Bin 상세 셀(263×189px)
+  MIN_PER_SOURCE: 150,       // 소스가 아무리 많아도 ECDF 형태는 남기는 하한
   // ECDF 세로 점 보간 간격은 데이터에서 유도한다(distStepY) — "단일 데이터 점 1개의 ECDF
   // 증가량". FILL_STEP_Y 는 유효한 riser 가 없는 퇴화 케이스의 폴백 상수일 뿐.
   FILL_STEP_Y: 0.8,
@@ -339,11 +346,85 @@ function buildDistColorMap(sources) {
 
 function distColorFor(source) { return distColorMap[source] || "#888"; }
 
+// ── legend 강조(source 필터) — wafer_charts.js dimColorMap 과 같은 규격 ────────
+// 비어 있으면 전 소스 원색(기존과 완전 동일), 하나 이상 고르면 고른 소스만 원색이고
+// 나머지는 회색으로 죽인다. 갤러리 툴바 범례와 item_detail 상단 범례가 이 집합 하나를
+// 공유한다. 서버 저장 없는 표시 설정이라 갤러리↔상세 이동·항목 변경에도 유지하고
+// (cdfExcluded 와 달리 openItemDetail 에서 초기화하지 않는다) 새로고침에서만 풀린다.
+let distSourceFilter = new Set();
+const DIST_DIM_COLOR = "#d9d9d9";        // wafer_charts MAP_BIN_DIM_COLOR 와 동일 값
+function distActiveColorFor(source) {
+  if (!distSourceFilter.size) return distColorFor(source);
+  return distSourceFilter.has(source) ? distColorFor(source) : DIST_DIM_COLOR;
+}
+
 // source 가 이 수 이상이면 상세 3개 차트(CDF/히스토그램/정규분포)의 내장 세로 legend 를
 // 끄고 차트 위 공용 legend 스트립 1개로 대체 — 내장 legend 가 차트 폭을 잠식하고
 // 같은 내용이 3중복되는 것을 방지. 미만이면 기존 내장 legend 그대로(무회귀).
 const DIST_EXT_LEGEND_MIN = 8;
 function distUseExtLegend(data) { return ((data && data.sources) || []).length >= DIST_EXT_LEGEND_MIN; }
+
+// ── source 색 범례 (갤러리 툴바 · item_detail 상단 공용) ──────────────────────
+// 클릭 → 해당 source 강조(distSourceFilter). 스와치는 항상 원색(distColorFor)이다 —
+// 강조 표시는 행 배경으로 하고 스와치까지 죽이면 어떤 소스인지 못 알아본다
+// (wafer map 범례가 dimColorMap 을 맵에만 적용하는 것과 동일 규칙).
+// 소스가 많으면 툴바 flex 행을 밀어내므로 별도 행의 고정폭 그리드로 뽑고 기본 접힘.
+const DIST_LEGEND_COLLAPSE_MIN = 8;
+let distLegendOpen = false;   // 펼침 상태 — 갤러리 재렌더(innerHTML 교체)에도 유지
+function distLegendHtml(sources, cls) {
+  const list = sources || [];
+  if (!list.length) return "";
+  const many = list.length >= DIST_LEGEND_COLLAPSE_MIN;
+  const open = !many || distLegendOpen;
+  const items = list.map(s => {
+    const on = distSourceFilter.has(s.name);
+    return `<span class="dist-leg-item${on ? " is-selected" : ""}" data-dist-src="${esc(s.name)}" title="${esc(s.name)}">` +
+      `<span class="dist-leg-sw" style="background:${distColorFor(s.name)}"></span>` +
+      `<span class="dist-leg-nm">${esc(s.name)}</span></span>`;
+  }).join("");
+  const toggle = many
+    ? `<button type="button" class="btn-sm dist-leg-toggle" data-dist-leg="toggle">${open ? "▴" : "▾"} 범례 ${list.length}개</button>` : "";
+  const clear = distSourceFilter.size
+    ? `<button type="button" class="btn-sm dist-leg-clear" data-dist-leg="clear">강조 ${distSourceFilter.size}개 해제</button>` : "";
+  return `<div class="dist-legend-row${cls ? " " + cls : ""}${open ? " is-open" : ""}">` +
+    toggle + clear + `<div class="dist-legend">${items}</div></div>`;
+}
+// 강조 반영: 그려져 있는 캔버스·상세 차트 색만 갈고 범례 자신의 선택표시를 갱신한다.
+// 갤러리 전체 재렌더(distRenderGallery)를 하지 않으므로 스크롤 위치·렌더된 칸이 보존된다.
+function distApplySourceFilter() {
+  distRepaintPoints();
+  if (typeof idetRestyleSourceColors === "function") {
+    idetRestyleSourceColors(document.getElementById("distCdf"), "marker.color");
+    idetRestyleSourceColors(document.getElementById("distHist"), "line.color");
+    idetRestyleSourceColors(document.getElementById("distNormal"), "line.color");
+  }
+  distRenderLegends();
+}
+// 현재 DOM 에 있는 범례 행만 제자리 교체. 리스너는 패널 위임이라 outerHTML 로 갈아도 안전하다.
+function distRenderLegends() {
+  const g = document.querySelector("#panel-distribution .dist-legend-row");
+  if (g) g.outerHTML = distLegendHtml((DATA.web_report && DATA.web_report.sources) || [], "");
+  // 상세는 idetLegendHtml 을 거쳐야 게이트가 일관된다 — 소스가 적은데 강조를 해제하면
+  // 빈 문자열이 돌아와 행이 사라지고 Plotly 내장 legend 가 다시 그 역할을 맡는다.
+  const d = document.querySelector("#panel-item-detail .dist-legend-row");
+  if (d && _itemDetailData && typeof idetLegendHtml === "function") d.outerHTML = idetLegendHtml(_itemDetailData);
+}
+// 범례 클릭 처리(두 패널 공용) — 처리했으면 true 를 돌려 호출측이 조기 반환하게 한다.
+function distLegendClick(e) {
+  const b = e.target.closest("[data-dist-leg]");
+  if (b) {
+    if (b.dataset.distLeg === "toggle") distLegendOpen = !distLegendOpen;
+    else distSourceFilter.clear();
+    distApplySourceFilter();
+    return true;
+  }
+  const it = e.target.closest("[data-dist-src]");
+  if (!it) return false;
+  const s = it.dataset.distSrc;
+  if (distSourceFilter.has(s)) distSourceFilter.delete(s); else distSourceFilter.add(s);
+  distApplySourceFilter();
+  return true;
+}
 
 // Limit 값이 없으면 물음표 대신 공백으로 둔다 (사용자 요청).
 function distFmtLimit(v) { return (v === null || v === undefined) ? "" : String(v); }
@@ -380,7 +461,9 @@ function renderDistCell(cell) {
   // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
   // 점은 canvas 로 그리고 Plotly 에는 축 재현용 sentinel 만 넘긴다(distPaintPoints).
   const pts = {};
-  Object.keys(info.bySource).forEach(source => { pts[source] = distDisplayPoints(info.bySource[source]); });
+  const srcNames = Object.keys(info.bySource);
+  const cap = distCapFor(srcNames.length, DIST.CELL_BUDGET_CARD);
+  srcNames.forEach(source => { pts[source] = distDisplayPoints(info.bySource[source], cap); });
   const sentinel = distSentinelTrace(pts);
   const traces = sentinel ? [sentinel] : [];
   const layout = { ...DIST_PLOT_BG, plot_bgcolor: DIST_STATUS_BG[status] || "#FFFFFF",
@@ -413,16 +496,19 @@ function distApplySegment(rows) {
   if (distFailOnly) out = out.filter(r => r.is_fail);
   return out;
 }
-function distSuggestions(q) {
+// cap: 반환 상한(기본 30 — 드롭다운 표시용). 0 을 주면 전량 반환 — '전체 선택'이
+// 표시된 30개가 아니라 실제 일치 항목 전부를 담게 하기 위함.
+function distSuggestions(q, cap) {
   // 단일어 부분일치(대소문자 무시). 세그먼트(cpk<1.33 등)에 걸리지 않게 전체 항목에서 검색해
   // 어떤 항목이든 체크박스로 고를 수 있게 한다.
   const term = String(q || "").trim().toLowerCase();
   if (!term) return [];
+  const lim = (cap === undefined) ? 30 : cap;
   const out = [];
   for (const r of distIndex) {
     if (String(r.subject).toLowerCase().includes(term)) {
       out.push(r);
-      if (out.length >= 30) break;
+      if (lim && out.length >= lim) break;
     }
   }
   return out;
@@ -487,6 +573,26 @@ function extendRangeForBeforeLimits(range, subject) {
   return [x0, x1];
 }
 
+// 소스 수로 나눈 소스별 유효 캡. 소스가 적으면 DIST.DOWNSAMPLE 로 클램프되므로 기존
+// 동작과 바이트 단위로 같고, 다소스(수십 개)에서만 칸 예산을 나눠 갖는다.
+function distCapFor(nSources, cellBudget) {
+  const per = Math.floor(cellBudget / Math.max(nSources, 1));
+  return Math.max(Math.min(per, DIST.DOWNSAMPLE), DIST.MIN_PER_SOURCE);
+}
+
+// 강제 보존(꼬리·Δy·x갭)만으로도 캡을 넘을 수 있다. 기본 캡 경로에서는 그 초과를 허용
+// (소프트 상한 — 왜곡 없음이 우선)하지만, 다소스 미니셀처럼 캡이 기본값보다 낮게 잡힌
+// 경우에는 그 초과가 곧 성능 문제라 마지막에 균등 stride 로 캡까지 낮춘다(양끝 유지).
+function distHardCap(xs, ys, cap) {
+  const n = xs.length;
+  if (n <= cap || cap < 3) return { xs, ys };
+  const ox = [xs[0]], oy = [ys[0]];
+  const st = (n - 1) / (cap - 1);
+  for (let i = 1; i < cap - 1; i++) { const j = Math.round(i * st); ox.push(xs[j]); oy.push(ys[j]); }
+  ox.push(xs[n - 1]); oy.push(ys[n - 1]);
+  return { xs: ox, ys: oy };
+}
+
 // ── 미니셀 표시용 다운샘플 (ECDF 전제: x 오름차순, y 누적%) ────────────────────
 // 단순 stride 는 꼬리 outlier·고질량 계단(Δy 큰 점)·x축 고립점을 눈멀고 떨어뜨려
 // 누적산포를 왜곡한다. 규칙: (1) 첫/마지막 + 누적% 상·하위 3% 전량 보존,
@@ -507,9 +613,10 @@ function extendRangeForBeforeLimits(range, subject) {
 // 꼬리 35% 케이스는 오히려 미세하게 나빠져 0.1% 가 스위트스팟.
 // Δy 0.15%p 는 이미 0.28px(지각 한계 미만)이고, 세로채움 후 이웃 간 Δy 가 항상 stepY
 // (≤0.3%p, 보통 0.03%p)라 실측상 한 번도 발동하지 않는다 — 건드릴 이유가 없어 유지.
-function distDownsampleForDisplay(xs, ys) {
+function distDownsampleForDisplay(xs, ys, cap) {
+  const CAP = cap || DIST.DOWNSAMPLE;
   const n = xs.length;
-  if (n <= DIST.DOWNSAMPLE) return { xs, ys };
+  if (n <= CAP) return { xs, ys };
   const keep = new Uint8Array(n);
   keep[0] = 1; keep[n - 1] = 1;
   const range = xs[n - 1] - xs[0];
@@ -529,7 +636,9 @@ function distDownsampleForDisplay(xs, ys) {
   // 출력 불변). 200 → 800 으로 올리면 전량 렌더 대비 픽셀 오차가 조밀 40k 3.3%→1.1%,
   // 초조밀 100k 3.8%→2.2% 로 줄고 점은 소스당 600개 안쪽 증가(캔버스 렌더라 비용 무시 가능).
   // 캡을 올리는 쪽은 대안이 못 된다 — 초조밀에서는 kept 가 어떤 캡보다도 커 하한이 계속 지배한다.
-  const budget = Math.max(DIST.DOWNSAMPLE - kept, 800);
+  // 하한도 캡에 비례시킨다(0.4×) — 기본 캡 2000 에서 정확히 800 이라 기존 경로는 무변경이고,
+  // 다소스 미니셀처럼 캡이 낮으면 하한이 캡을 넘어서는 모순을 막는다.
+  const budget = Math.max(CAP - kept, Math.min(800, Math.round(CAP * 0.4)));
   if (budget > 0 && rest.length > budget) {
     const st = Math.ceil(rest.length / budget);
     for (let j = 0; j < rest.length; j += st) keep[rest[j]] = 1;
@@ -538,6 +647,9 @@ function distDownsampleForDisplay(xs, ys) {
   }
   const ox = [], oy = [];
   for (let i = 0; i < n; i++) if (keep[i]) { ox.push(xs[i]); oy.push(ys[i]); }
+  // 캡이 기본값보다 낮게 잡힌 경우(다소스 미니셀)만 초과분을 마지막에 잘라낸다.
+  // 기본 캡 경로는 이 분기를 타지 않아 기존 출력과 완전히 동일하다.
+  if (CAP < DIST.DOWNSAMPLE) return distHardCap(ox, oy, CAP);
   return { xs: ox, ys: oy };
 }
 
@@ -571,8 +683,11 @@ function distFillVertical(xs, ys, stepY) {
 // 증가량이 0.3% 를 넘으면(대략 표본<333) 단일점 riser 까지 포함해 모든 riser 가 0.3%
 // 간격으로 채워져 썸네일 누적축이 끊김 없이 보인다. 조밀한 데이터(stepY≤0.3%)는 캡이
 // no-op 라 기존과 픽셀 동일.
-// 표본이 매우 커 stepY 가 지나치게 잘면 100/FILL_MAX_POINTS 하한으로 채움점 폭증을 막는다.
-function distStepY(ys) {
+// 표본이 매우 커 stepY 가 지나치게 잘면 100/fillMax 하한으로 채움점 폭증을 막는다.
+// fillMax 는 유효 캡에 연동한다(cap×1.5) — 기본 캡 2000 이면 정확히 FILL_MAX_POINTS(3000)
+// 라 기존과 동일하고, 다소스 미니셀처럼 캡이 낮으면 3000 개를 채웠다가 150 개만 남기는
+// 낭비를 애초에 안 한다(다운샘플 출력뿐 아니라 채움 계산 비용 자체가 준다).
+function distStepY(ys, cap) {
   let step = Infinity, prev = 0;
   for (let i = 0; i < ys.length; i++) {
     const d = ys[i] - prev;
@@ -580,24 +695,44 @@ function distStepY(ys) {
     prev = ys[i];
   }
   if (!isFinite(step)) step = DIST.FILL_STEP_Y;              // 유효 riser 없음 — 폴백
-  return Math.min(Math.max(step, 100 / DIST.FILL_MAX_POINTS), DIST.FILL_VISUAL_MAX_DY);
+  const fillMax = Math.min(DIST.FILL_MAX_POINTS, Math.round((cap || DIST.DOWNSAMPLE) * 1.5));
+  return Math.min(Math.max(step, 100 / fillMax), DIST.FILL_VISUAL_MAX_DY);
 }
 
 // 미니셀 표시용 좌표: 세로 보간 → 표시용 다운샘플 순서(순서 근거 CLAUDE.md §5·docs/11).
 // 반대 순서면 다운샘플 stride 로 Δy 가 오염돼 없던 가짜 세로 줄무늬가 생긴다.
-function distPointsForDisplay(xs, ys) {
-  const f = distFillVertical(xs, ys, distStepY(ys));
-  return distDownsampleForDisplay(f.xs, f.ys);
+function distPointsForDisplay(xs, ys, cap) {
+  const f = distFillVertical(xs, ys, distStepY(ys, cap));
+  return distDownsampleForDisplay(f.xs, f.ys, cap);
 }
 
 // 표시용 좌표 메모 — 스크롤로 purge→재진입할 때마다 소스별 세로채움+다운샘플을 다시
 // 돌리지 않게 한다. 키는 bySource 항목 객체 자체라, 재fetch 로 캐시가 통째로 교체되면
-// (buildDistDataFromCompact) 새 객체가 되어 자동 무효화된다.
+// (buildDistDataFromCompact) 새 객체가 되어 자동 무효화된다. 같은 항목이라도 칸 종류에
+// 따라 캡이 달라지므로(갤러리 vs IssueTable 미니셀) 캡별로 따로 담는다.
 const _distDisplayMemo = new WeakMap();
-function distDisplayPoints(entry) {
-  let v = _distDisplayMemo.get(entry);
-  if (!v) { v = distPointsForDisplay(entry.xs, entry.ys); _distDisplayMemo.set(entry, v); }
+function distDisplayPoints(entry, cap) {
+  const key = cap || DIST.DOWNSAMPLE;
+  let m = _distDisplayMemo.get(entry);
+  if (!m) { m = new Map(); _distDisplayMemo.set(entry, m); }
+  let v = m.get(key);
+  if (!v) { v = distPointsForDisplay(entry.xs, entry.ys, key); m.set(key, v); }
   return v;
+}
+
+// limitWin(IssueTable CPK 미니셀) 전용 메모. distWindowRenorm 이 매번 새 배열을 반환해
+// 위 메모의 WeakMap 키가 매번 바뀌는 탓에 이 경로만 스크롤 재진입마다 전부 재계산됐다.
+// 안정된 entry 객체를 키로 잡고 규격(lo/hi)·캡이 그대로일 때만 재사용한다.
+// 순서는 그대로 유지: 규격창 재정규화 → 세로채움 → 다운샘플 (재정규화가 표시 변환보다 먼저).
+const _distLimitWinMemo = new WeakMap();
+function distDisplayPointsWindowed(entry, lo, hi, cap) {
+  const key = cap || DIST.DOWNSAMPLE;
+  const c = _distLimitWinMemo.get(entry);
+  if (c && c.lo === lo && c.hi === hi && c.cap === key) return c.out;
+  const w = distWindowRenorm(entry.xs, entry.ys, lo, hi);
+  const out = distPointsForDisplay(w.xs, w.ys, key);
+  _distLimitWinMemo.set(entry, { lo, hi, cap: key, out });
+  return out;
 }
 
 // ── 미니셀 점 렌더: 축·그리드·스펙선은 Plotly, ECDF 점만 canvas 오버레이 ────────
@@ -649,9 +784,17 @@ function distDrawPoints(plot) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   const ox = xa._offset, oy = ya._offset, TAU = Math.PI * 2;
-  Object.keys(pts).forEach(src => {
+  // 강조가 걸리면 dim 소스를 먼저 칠해 강조 소스가 항상 위로 오게 한다(40소스 미니셀은
+  // 점이 서로 덮어 강조가 묻힌다). sort 는 ES2019 이후 안정 정렬이라 그룹 내부 순서는
+  // Object.keys 순서 그대로다. 필터가 비면 정렬 자체를 건너뛰어 기존과 그리기 순서·
+  // 출력이 바이트 단위로 같다.
+  const srcs = Object.keys(pts);
+  const order = distSourceFilter.size
+    ? srcs.slice().sort((a, b) => (distSourceFilter.has(a) ? 1 : 0) - (distSourceFilter.has(b) ? 1 : 0))
+    : srcs;
+  order.forEach(src => {
     const xs = pts[src].xs, ys = pts[src].ys;
-    ctx.fillStyle = distColorFor(src);
+    ctx.fillStyle = distActiveColorFor(src);
     ctx.beginPath();
     for (let i = 0; i < xs.length; i++) {
       const px = ox + xa.l2p(xs[i]), py = oy + ya.l2p(ys[i]);
@@ -697,6 +840,12 @@ function distClearPoints(plot) {
   if (_distCanvasRO && plot._distHooked) { try { _distCanvasRO.unobserve(plot); } catch (e) {} }
   plot._distHooked = false;
 }
+// legend 강조 변경 시 이미 그려진 캔버스만 다시 칠한다 — Plotly 재플롯 없음.
+// 좌표·축·표시점(_distPts)은 그대로라 색과 그리기 순서만 바뀐다(§5 다운샘플·markers 무영향).
+// .distg-plot = 갤러리 카드, .dist-plot = Issue Table 미니셀 + Bin 상세 셀.
+function distRepaintPoints() {
+  document.querySelectorAll(".distg-plot, .dist-plot").forEach(p => { if (p._distPts) distDrawPoints(p); });
+}
 
 // ── ECDF [lo,hi] 창 재정규화 — Issue Table CPK 섹션 미니셀 전용(data-limitwin) ──
 // 규격(limit) 안 점만 남기고 누적%를 0~100 으로 재정규화한다. 창 내 재정규화 ECDF 는
@@ -741,9 +890,11 @@ function distRenderGalleryCell(cell) {
   // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간(distPointsForDisplay)으로
   // 이산(code)값의 성김을 세로 점기둥으로 채운다. 점 자체는 canvas 로 그린다(distPaintPoints).
   const pts = {};
-  if (info) Object.keys(info.bySource).forEach(src => {
-    pts[src] = distDisplayPoints(info.bySource[src]);
-  });
+  if (info) {
+    const srcNames = Object.keys(info.bySource);
+    const cap = distCapFor(srcNames.length, DIST.CELL_BUDGET_CARD);
+    srcNames.forEach(src => { pts[src] = distDisplayPoints(info.bySource[src], cap); });
+  }
   const traces = [];
   const sentinel = distSentinelTrace(pts);
   if (sentinel) traces.push(sentinel);
@@ -779,7 +930,17 @@ function distPurgeGalleryCell(cell) {
   cell.dataset.rendered = "";
 }
 
-// ── rAF 분할 렌더(프레임당 PER_FRAME 개) ──────────────────────────────────────
+// ── rAF 분할 렌더(프레임당 distPerFrame() 개) ─────────────────────────────────
+// 셀 1장의 비용이 소스 수에 비례하므로 프레임당 장수를 소스 수로 조절한다. 총 렌더 시간은
+// 같지만 프레임당 초과를 막아 스크롤 끊김이 준다. 실측(40소스·미니셀 150×112px, 칸 예산
+// 적용 후): 셀 1장 콜드 11.3ms / 재스크롤 4.4ms → 3장이면 34ms 로 프레임 예산(16.7ms)을
+// 넘지만 1장이면 들어온다. 소스가 적으면(<8) 셀이 가벼워 기존 3장 그대로.
+function distPerFrame() {
+  const n = ((DATA.web_report && DATA.web_report.sources) || []).length;
+  if (n >= 16) return 1;
+  if (n >= 8) return 2;
+  return DIST.PER_FRAME;
+}
 function distQueueRender(cell) {
   if (cell.dataset.rendered === "1" || distRenderQueue.includes(cell)) return;
   distRenderQueue.push(cell);
@@ -788,7 +949,8 @@ function distQueueRender(cell) {
 function distFlushRender() {
   distRafScheduled = false;
   let n = 0;
-  while (distRenderQueue.length && n < DIST.PER_FRAME) {
+  const perFrame = distPerFrame();
+  while (distRenderQueue.length && n < perFrame) {
     const cell = distRenderQueue.shift();
     if (cell.isConnected && cell.dataset.visible === "1") { distRenderGalleryCell(cell); n++; }
   }
@@ -799,25 +961,24 @@ function distFlushRender() {
 function distToolbarHtml() {
   // cpk<1.33 / Fail Only 독립 토글(둘 다 켜면 교집합). 둘 다 끄면 전체.
   const seg = (on, key, label) => `<button class="distseg${on ? " active" : ""}" data-seg="${key}">${esc(label)}</button>`;
-  // 검색창 오른쪽 범례: 소스별 색상(distColorMap) 을 스와치로 표시(갤러리 미니셀 색과 동일).
-  const sources = (DATA.web_report && DATA.web_report.sources) || [];
-  const legend = sources.length ? `<div class="dist-legend">` + sources.map(s =>
-    `<span class="dist-leg-item"><span class="dist-leg-sw" style="background:${distColorFor(s.name)}"></span>${esc(s.name)}</span>`
-  ).join("") + `</div>` : "";
-  // 검색 체크박스로 고른 항목이 있으면 개수+해제 버튼을 세그먼트 옆에 표시.
+  // 검색 체크박스로 고른 항목이 있으면 개수+해제 버튼을 표시. 세그먼트 그룹 밖(검색창 뒤)에
+  // 둔다 — 그룹 안에 있으면 선택 개수에 따라 그룹 폭이 변해 오른쪽 검색창이 좌우로 밀렸다.
   const selChip = distSelected.size
     ? `<button class="distseg dist-sel-clear" data-seg="clearsel" title="선택 해제">선택 ${distSelected.size}개 ✕</button>` : "";
   const bin1Btn = `<button class="distseg${distBin1Only ? " active" : ""}" data-seg="bin1" title="켜짐: 각 항목 분포를 양품(Bin1, BIN==1) & 규격(LSL/USL) 이내 die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
   const nopfBtn = `<button class="distseg${distHidePassfail ? " active" : ""}" data-seg="nopf" title="켜짐: unit 이 Pass/Fail(P/F·P_F) 인 항목 카드를 숨김 · 꺼짐: 표시">P/F 없애기</button>`;
   return `<div class="dist-toolbar">
-    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${nopfBtn}${selChip}</div>
+    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${nopfBtn}</div>
     <div class="dist-search-wrap">
       <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">
       <div id="distSuggest" class="dist-suggest" style="display:none"></div>
     </div>
-    ${legend}
+    ${selChip}
     <span class="dist-count"></span>
-  </div>`;
+  </div>` +
+  // 범례는 sticky 툴바 바깥 별도 행 — 소스 40개면 툴바 안에서 여러 줄로 부풀어
+  // sticky 헤더가 갤러리 세로 공간을 계속 잡아먹는다(한 번 설정하고 잊는 컨트롤).
+  distLegendHtml((DATA.web_report && DATA.web_report.sources) || [], "");
 }
 function distUpdateCount() {
   const el = document.querySelector("#panel-distribution .dist-count");

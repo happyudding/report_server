@@ -397,6 +397,10 @@ let mapGridCols = 2;   // Map Analysis 가로 칸수 기본 2칸. 숫자 입력�
 
 // Map Analysis 서브모드: "bin"=Bin Map(기존), "stdf"=STDF Map(값 기반, stdf_map.js). 세션 내 유지.
 let mapMode = "bin";
+// Issue Table Map 미니셀 → Map Analysis 탭 이동 시 넘겨줄 초기 선택 Bin (1회성 — 첫
+// renderMapAnalysis 가 범례 선택으로 소비하고 비운다. 가로 칸수 변경 등 이후 재렌더는
+// 기존대로 선택이 초기화된다).
+let mapBinPreselect = null;
 // Map 초기 그리기(rAF 스텝퍼) 재진입 가드 — 새 렌더가 시작되면 이전 체인을 중단시킨다.
 let _mapDrawToken = 0;
 // 색 기준 축: "bin"=Bin Map(기존), "tno"=die 가 fail 난 항목(FAILTNO)별 색. 세션 내 유지.
@@ -558,9 +562,34 @@ function bindMapModeSeg(panel) {
   }));
 }
 
+// Map Analysis 탭으로 전환 — 이미 그려져 있어도 새 선택 상태를 반영하도록 dirty 로 되돌린다.
+function gotoMapAnalysisTab() {
+  const btn = document.querySelector('.tab[data-tab="map-analysis"]');
+  if (!btn) return;
+  tabDirty["map-analysis"] = true;
+  btn.click();   // 탭 리스너가 패널 전환 + renderTab 까지 처리
+}
+// Issue Table Yield/ETC 행 Map 미니셀 클릭 → Bin Map 으로 이동(그 Bin 을 범례 선택 상태로).
+function openMapAnalysisForBin(bin) {
+  mapMode = "bin";
+  mapBinPreselect = (bin === null || bin === undefined || bin === "") ? null : String(bin);
+  gotoMapAnalysisTab();
+}
+// Issue Table CPK 행 Map 미니셀(STDF) 클릭 → STDF Map 으로 이동(그 Item 을 선택 상태로).
+function openMapAnalysisForItem(subject) {
+  if (!subject) return;
+  mapMode = "stdf";
+  stdfItem = subject;
+  stdfBucketFilter.clear();
+  gotoMapAnalysisTab();
+}
+
 function renderMapAnalysis() {
   const panel = document.getElementById("panel-map-analysis");
   if (mapMode === "stdf") { renderStdfMap(panel); return; }
+  // Issue Table Map 셀에서 넘어온 초기 선택 Bin (1회성) — 아래 어느 경로로 빠지든 소비한다.
+  const preselectBin = mapBinPreselect;
+  mapBinPreselect = null;
   const sheets = webReportSheets();
   const maps = sheets ? sheets["Map Analysis"] : null;
   if (!window.Plotly || !maps || !maps.length) {
@@ -572,6 +601,7 @@ function renderMapAnalysis() {
   const binOrder = legendRows.map(r => r.bin);
   const colorMap = globalBinColorMap();   // 세션 전체 공통 색상 (Summary/Fail Bin 과 일치)
   const mapBinFilter = new Set();   // 범례 클릭으로 선택된 bin 다중선택(재클릭 시 해제, 없으면 전체 표시)
+  if (preselectBin != null) mapBinFilter.add(preselectBin);   // Issue Table 에서 넘어온 Bin 강조
   const mapTnoFilter = new Set();   // TNO 축 범례 클릭 필터
   const binDesc = buildBinDescMap();   // bin → 대표 fail item(Bin Legend description)
   const tnoInfo = buildTnoInfo();      // {colorMap, items, top, cnt, otherCount} (TNO 축·Legend)

@@ -115,22 +115,50 @@ pre.logbox {
 #chartTip .t-row, #mChartTip .t-row { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
 #chartTip .sw, #mChartTip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer; margin-top: 8px; }
+
+/* 클릭 가능한 현황 타일 — 관련 상세 탭으로 이동 */
+.tile.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
+.tile.clickable:hover { border-color: var(--accent); background: #262a32; }
+.tile .go { font-size: 11px; color: var(--accent); margin-top: 6px; }
+
+/* 세로 스크롤 시에도 가로 스크롤바가 화면 안에 남는 표 컨테이너 + 고정 헤더 */
+.table-wrap.scroll-both { max-height: 68vh; overflow: auto; }
+.table-wrap.scroll-both thead th { position: sticky; top: 0; z-index: 1; }
+
+/* 긴 본문 셀 — 2줄로 접고 클릭하면 펼침 */
+td.detail-cell { white-space: normal; font-size: 12px; color: #a4a8b3; }
+td.detail-cell .clamp {
+  max-width: 420px;  /* td 에 걸면 auto 테이블 레이아웃이 무시한다 — 내부 블록에 걸어야 확실 */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; word-break: break-all; cursor: pointer;
+}
+td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
 </style>
 </head>
 <body>
 <h1>Report Server 관리자 <span class="sub">서버 현황 · 스토리지 · 통계 · 세션/DB 컨트롤</span></h1>
 
 <div class="tabs">
-  <button class="tab active" data-panel="pHealth">현황</button>
-  <button class="tab" data-panel="pStorage">스토리지</button>
-  <button class="tab" data-panel="pStats">통계</button>
-  <button class="tab" data-panel="pSessions">세션</button>
-  <button class="tab" data-panel="pEval">Eval DB</button>
-  <button class="tab" data-panel="pUsers">사용자</button>
-  <button class="tab" data-panel="pVoc">VOC</button>
-  <button class="tab" data-panel="pDb">DB</button>
-  <button class="tab" data-panel="pLogs">console log</button>
-  <button class="tab" data-panel="pAudit">User Action Monitoring</button>
+  <button class="tab active" data-panel="pHealth"
+          title="서버 CPU·RAM·디스크·업타임과 리소스 시계열 — 서버가 건강한지 먼저 보는 곳">현황</button>
+  <button class="tab" data-panel="pStorage"
+          title="로컬 디스크 사용량을 범주별·세션별로 보고 용량 큰 세션을 정리">스토리지</button>
+  <button class="tab" data-panel="pStats"
+          title="날짜별·사용자별 사용량 통계와 최근 활동 20건">통계</button>
+  <button class="tab" data-panel="pSessions"
+          title="업로드된 세션의 중요표시·PIN·삭제/복구 관리">세션</button>
+  <button class="tab" data-panel="pEval"
+          title="Issue Table 코멘트가 쌓이는 eval_analyzer 학습 라벨 DB (report.db 와 별도)">Eval DB</button>
+  <button class="tab" data-panel="pUsers"
+          title="웹 로그인 계정 목록과 비밀번호 초기화">사용자</button>
+  <button class="tab" data-panel="pVoc"
+          title="사용자 문의(VOC) 게시글 현황 — 읽기 전용">VOC</button>
+  <button class="tab" data-panel="pDb"
+          title="DB 백업 실행·백업 목록, 보존기간 세션 정리, 무결성 진단">DB</button>
+  <button class="tab" data-panel="pLogs"
+          title="서버 로그 파일의 마지막 부분 보기">console log</button>
+  <button class="tab" data-panel="pAudit"
+          title="누가 언제 무엇을 했는지 전체 감사 기록 · 클라이언트 오류도 여기서 확인">User Action Monitoring</button>
 </div>
 
 <!-- ═══ 현황 ═══ -->
@@ -145,7 +173,7 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
   <div style="height:16px"></div>
   <div class="card">
     <h2>리소스 시계열 <span class="hint">10초 샘플 · 24시간 보관 · 이 탭이 보일 때만 10초 갱신 (서버 재시작 시 초기화)</span>
-      <select id="metricsWindow" class="sel" style="float:right">
+      <select id="metricsWindow" class="sel" style="float:right" title="그래프에 표시할 기간">
         <option value="300">최근 5분</option>
         <option value="3600" selected>최근 1시간</option>
         <option value="86400">최근 24시간</option>
@@ -171,14 +199,16 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
   <div class="row">
     <div class="card">
       <h2>스토리지 <span class="hint">디렉토리 크기는 60초 캐시</span>
-        <button class="btn" id="btnStorageRefresh" style="float:right">새로 스캔</button></h2>
+        <button class="btn" id="btnStorageRefresh" style="float:right"
+                title="60초 캐시를 무시하고 디렉토리 크기를 지금 다시 계산합니다">새로 스캔</button></h2>
       <div class="table-wrap"><table id="storageTable">
         <tbody><tr class="empty-row"><td>로딩 중…</td></tr></tbody>
       </table></div>
     </div>
     <div class="card" style="max-width:380px">
       <h2>S3 연결 <span class="hint">수동 확인 (endpoint 다운 시 수 초 걸릴 수 있음)</span></h2>
-      <button class="btn primary" id="btnS3Check">S3 상태 확인</button>
+      <button class="btn primary" id="btnS3Check"
+              title="S3 endpoint 에 실제로 접속해 버킷 접근이 되는지 확인합니다">S3 상태 확인</button>
       <div class="msg" id="s3Msg">아직 확인 안 함</div>
     </div>
   </div>
@@ -192,14 +222,16 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
   <div style="height:16px"></div>
   <div class="card">
     <h2>범주별 로컬 용량 <span class="hint">디렉토리 크기는 60초 캐시 · S3 저장분은 미집계</span>
-      <button class="btn" id="btnStgRescan" style="float:right">다시 스캔</button></h2>
+      <button class="btn" id="btnStgRescan" style="float:right"
+              title="60초 캐시를 무시하고 디렉토리 크기를 지금 다시 계산합니다">다시 스캔</button></h2>
     <div class="table-wrap"><table>
       <thead><tr><th>범주</th><th class="num">크기</th><th class="num">파일 수</th><th>비중</th></tr></thead>
       <tbody id="stgCatBody"><tr class="empty-row"><td colspan="4">로딩 중…</td></tr></tbody>
     </table></div>
   </div>
   <div class="card">
-    <h2>세션별 데이터 <span id="stgSummary" class="hint"></span></h2>
+    <h2>세션별 데이터 <span class="hint">세션 단위로 로컬 용량을 확인하고 정리합니다 · 용량 큰 순</span>
+      <span id="stgSummary" class="hint"></span></h2>
     <div class="toolbar">
       <input id="stgQ" class="inp" style="width:260px" placeholder="세션ID / 파일명 / product / lot / type 검색…">
       <select id="stgSort" class="sel">
@@ -210,13 +242,18 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
       <button class="btn" id="btnStgOrder" title="정렬 방향">내림차순 ▼</button>
       <button class="btn primary" id="btnStgSearch">검색</button>
       <span class="grow"></span>
-      <button class="btn danger" id="btnStgBulkDelete" disabled>선택 삭제 (0)</button>
+      <button class="btn danger" id="btnStgBulkDelete" disabled
+              title="체크한 세션을 삭제합니다 — 마지막 참조 세션이면 S3/로컬 산출물과 캐시까지 함께 정리됩니다">선택 삭제 (0)</button>
     </div>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th><input type="checkbox" id="stgChkAll"></th>
-        <th>생성</th><th>type</th><th>product</th><th>lot</th><th>파일명</th>
-        <th>소스</th><th>백엔드</th><th class="num">로컬 용량</th><th>session_id</th><th></th>
+        <th><input type="checkbox" id="stgChkAll" title="현재 페이지의 모든 행 선택/해제"></th>
+        <th title="세션이 만들어진 시각">생성</th><th title="제품 유형">type</th>
+        <th title="제품명">product</th><th title="로트 번호">lot</th><th title="업로드된 파일명">파일명</th>
+        <th title="업로드 경로 (xlsx 추출 / web_report)">소스</th>
+        <th title="산출물이 실제로 저장된 곳 (s3 또는 로컬 디스크)">백엔드</th>
+        <th class="num" title="로컬 디스크가 차지하는 용량 · S3 저장분은 미집계">로컬 용량</th>
+        <th title="세션 고유 ID">session_id</th><th title="행별 작업">작업</th>
       </tr></thead>
       <tbody id="stgBody"><tr class="empty-row"><td colspan="11">로딩 중…</td></tr></tbody>
     </table></div>
@@ -238,15 +275,21 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
       <input id="evalQ" class="inp" style="width:280px" placeholder="product / lot / item / comment / 세션ID 검색…">
       <button class="btn primary" id="btnEvalSearch">검색</button>
       <span class="grow"></span>
-      <input id="evalReexportSid" class="inp" style="width:200px" placeholder="세션ID (재적재)">
-      <button class="btn" id="btnEvalReexport">세션 재적재</button>
-      <button class="btn danger" id="btnEvalBulkDelete" disabled>선택 케이스 삭제 (0)</button>
+      <input id="evalReexportSid" class="inp" style="width:200px" placeholder="세션ID (재적재)"
+             title="해당 세션의 코멘트를 Eval DB 로 다시 내보낼 세션 ID">
+      <button class="btn" id="btnEvalReexport"
+              title="입력한 세션의 Issue Table 코멘트를 Eval DB 에 다시 적재합니다 (적재 누락 복구용)">세션 재적재</button>
+      <button class="btn danger" id="btnEvalBulkDelete" disabled
+              title="체크한 라벨을 Eval DB 에서 삭제합니다 — 원본 세션의 코멘트는 그대로 남습니다">선택 케이스 삭제 (0)</button>
     </div>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th><input type="checkbox" id="evalChkAll"></th>
-        <th>기록</th><th>product</th><th>lot</th><th class="num">Bin</th><th>Item</th>
-        <th>unit</th><th>comment</th><th>편집자</th><th>session_id</th>
+        <th><input type="checkbox" id="evalChkAll" title="현재 페이지의 모든 행 선택/해제"></th>
+        <th title="이 라벨이 적재된 시각">기록</th><th title="제품명">product</th><th title="로트 번호">lot</th>
+        <th class="num" title="fail 이 묶인 Bin 번호">Bin</th><th title="fail 이 난 테스트 항목">Item</th>
+        <th title="측정값 단위">unit</th>
+        <th title="Issue Table 에 입력된 PTE/개발 코멘트 — eval_analyzer 학습 라벨로 쓰입니다">comment</th>
+        <th title="코멘트를 마지막으로 저장한 사용자">편집자</th><th title="출처 세션 ID">session_id</th>
       </tr></thead>
       <tbody id="evalBody"><tr class="empty-row"><td colspan="10">로딩 중…</td></tr></tbody>
     </table></div>
@@ -258,8 +301,8 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
 <!-- ═══ 통계 ═══ -->
 <div id="pStats" class="panel">
   <div class="card">
-    <h2>일별 사용량
-      <select id="statsDays" class="sel" style="float:right">
+    <h2>일별 사용량 <span class="hint">날짜별 업로드·수정·삭제 건수 · 막대에 마우스를 올리면 정확한 수치가 보입니다</span>
+      <select id="statsDays" class="sel" style="float:right" title="집계 기간 선택">
         <option value="7">최근 7일</option>
         <option value="30" selected>최근 30일</option>
         <option value="90">최근 90일</option>
@@ -300,7 +343,8 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
 <!-- ═══ 세션 ═══ -->
 <div id="pSessions" class="panel">
   <div class="card">
-    <h2>세션 컨트롤 <span id="sessSummary" class="hint"></span></h2>
+    <h2>세션 컨트롤 <span class="hint">업로드된 세션의 중요표시·PIN·삭제/복구를 관리합니다 · 삭제는 휴지통으로 이동하며 30일 후 purge 대상</span>
+      <span id="sessSummary" class="hint"></span></h2>
     <div class="toolbar">
       <input id="sessQ" class="inp" style="width:260px" placeholder="세션ID / 파일명 / product / lot 검색…">
       <select id="sessStatus" class="sel">
@@ -318,13 +362,21 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
       <button class="btn primary" id="btnSessSearch">검색</button>
       <span class="grow"></span>
       <button class="btn" id="btnPurgeExpired" title="휴지통에서 30일 경과분을 영구 삭제">🗑 경과분 purge</button>
-      <button class="btn danger" id="btnBulkDelete" disabled>선택 삭제 (0)</button>
+      <button class="btn danger" id="btnBulkDelete" disabled
+              title="체크한 세션을 휴지통으로 보냅니다 (30일 안에는 복구 가능)">선택 삭제 (0)</button>
     </div>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th><input type="checkbox" id="chkAll"></th>
-        <th>생성</th><th>중요</th><th>type</th><th>product</th><th>lot</th><th>파일명</th>
-        <th>status</th><th>mode</th><th>업로더(PC)</th><th>PIN</th><th>session_id</th><th></th>
+        <th><input type="checkbox" id="chkAll" title="현재 페이지의 모든 행 선택/해제"></th>
+        <th title="세션이 만들어진 시각">생성</th>
+        <th title="★ 를 누르면 중요 표시 — 중요 세션은 보존기간 정리에서 제외됩니다">중요</th>
+        <th title="제품 유형">type</th><th title="제품명">product</th><th title="로트 번호">lot</th>
+        <th title="업로드된 파일명">파일명</th>
+        <th title="처리 상태 (done 완료 / reused 중복재사용 / pending 처리중 / error 실패)">status</th>
+        <th title="리포트 모드">mode</th>
+        <th title="업로드한 사용자 계정과 PC 호스트명">업로더(PC)</th>
+        <th title="구 4자리 비밀번호 — 현재 접근제어에는 쓰이지 않습니다">PIN</th>
+        <th title="세션 고유 ID">session_id</th><th title="행별 작업">작업</th>
       </tr></thead>
       <tbody id="sessBody"><tr class="empty-row"><td colspan="13">로딩 중…</td></tr></tbody>
     </table></div>
@@ -336,7 +388,8 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
 <!-- ═══ 사용자 ═══ -->
 <div id="pUsers" class="panel">
   <div class="card">
-    <h2>웹 로그인 계정 <span id="usersSummary" class="hint"></span></h2>
+    <h2>웹 로그인 계정 <span class="hint">현재 접근제어는 Honey 클라이언트 신원(UA)으로 하며, 이 계정은 즐겨찾기·중요표시 보관용입니다</span>
+      <span id="usersSummary" class="hint"></span></h2>
     <div class="toolbar">
       <input id="userQ" class="inp" style="width:260px" placeholder="ID 검색…">
       <button class="btn primary" id="btnUserSearch">검색</button>
@@ -345,7 +398,9 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
     </div>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th>ID</th><th>생성일</th><th class="num">즐겨찾기</th><th class="num">업로드</th><th></th>
+        <th title="웹 로그인 계정 ID">ID</th><th title="계정이 만들어진 날짜">생성일</th>
+        <th class="num" title="이 사용자가 즐겨찾기한 세션 수">즐겨찾기</th>
+        <th class="num" title="이 사용자가 업로드한 세션 수">업로드</th><th title="행별 작업">작업</th>
       </tr></thead>
       <tbody id="userBody"><tr class="empty-row"><td colspan="5">로딩 중…</td></tr></tbody>
     </table></div>
@@ -384,10 +439,12 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
 <div id="pDb" class="panel">
   <div class="row">
     <div class="card">
-      <h2>백업</h2>
+      <h2>백업 <span class="hint">report.db 스냅샷 · 주기 실행되며 아래 버튼으로 즉시 1회 실행도 가능</span></h2>
       <div class="toolbar">
-        <button class="btn primary" id="btnBackup">지금 백업 실행</button>
-        <a class="btn" id="btnCsv" href="api/audit.csv" download>감사로그 CSV 다운로드</a>
+        <button class="btn primary" id="btnBackup"
+                title="지금 즉시 report.db 백업을 1회 만듭니다 (수 초 걸릴 수 있음)">지금 백업 실행</button>
+        <a class="btn" id="btnCsv" href="api/audit.csv" download
+           title="User Action Monitoring 의 전체 기록을 CSV 파일로 내려받습니다">감사로그 CSV 다운로드</a>
       </div>
       <div class="msg" id="backupMsg"></div>
       <div class="table-wrap"><table>
@@ -398,17 +455,21 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
     <div class="card">
       <h2>세션 정리 (retention) <span class="hint" id="cleanupHint"></span></h2>
       <div class="toolbar">
-        <button class="btn" id="btnCleanupDry">Dry-run (대상만 확인)</button>
-        <button class="btn danger" id="btnCleanupReal">실제 삭제 실행</button>
+        <button class="btn" id="btnCleanupDry"
+                title="아무것도 지우지 않고 삭제 대상만 목록으로 보여줍니다">Dry-run (대상만 확인)</button>
+        <button class="btn danger" id="btnCleanupReal"
+                title="보존기간이 지난 비중요 세션을 실제로 삭제합니다 — 중요 표시(★)된 세션은 제외">실제 삭제 실행</button>
       </div>
       <div class="msg" id="cleanupMsg">보존기간이 지난 비중요 세션을 정리합니다. 먼저 dry-run 으로 대상을 확인하세요.</div>
     </div>
   </div>
   <div class="card">
-    <h2>DB 진단
+    <h2>DB 진단 <span class="hint">SQLite 무결성 점검과 테이블별 행 수 · 이상이 의심될 때만 실행하세요</span>
       <span style="float:right">
-        <button class="btn" id="btnDiagQuick">quick_check</button>
-        <button class="btn" id="btnDiagFull">integrity_check (느림)</button>
+        <button class="btn" id="btnDiagQuick"
+                title="빠른 무결성 점검 (수 초) — 평소엔 이것으로 충분합니다">quick_check</button>
+        <button class="btn" id="btnDiagFull"
+                title="전체 무결성 점검 — DB 크기에 따라 수 분 걸리고 그동안 서버가 느려질 수 있습니다">integrity_check (느림)</button>
       </span>
     </h2>
     <div class="msg" id="diagMsg"></div>
@@ -420,14 +481,14 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
 <!-- ═══ 로그 ═══ -->
 <div id="pLogs" class="panel">
   <div class="card">
-    <h2>서버 로그 tail
+    <h2>서버 로그 tail <span class="hint">서버 로그 파일의 마지막 부분 · 자동 갱신되지 않으니 새로고침을 눌러 최신 내용을 봅니다</span>
       <span style="float:right">
-        <select id="logBytes" class="sel">
+        <select id="logBytes" class="sel" title="로그 파일 끝에서 읽어올 크기">
           <option value="16384">16 KB</option>
           <option value="65536" selected>64 KB</option>
           <option value="262144">256 KB</option>
         </select>
-        <button class="btn primary" id="btnLogRefresh">새로고침</button>
+        <button class="btn primary" id="btnLogRefresh" title="지금 로그를 다시 읽어옵니다">새로고침</button>
       </span>
     </h2>
     <div class="msg" id="logInfo"></div>
@@ -438,8 +499,9 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
 <!-- ═══ 감사로그 ═══ -->
 <div id="pAudit" class="panel">
   <div class="card">
+    <h2>사용자 활동 기록 <span class="hint">업로드·수정·삭제·VOC·클라이언트 오류 등 모든 작업의 감사 기록 · 최신순 50건씩</span></h2>
     <div class="toolbar">
-      <select id="fAction" class="sel">
+      <select id="fAction" class="sel" title="특정 작업 종류만 골라 봅니다">
         <option value="">전체 작업</option>
         <option value="upload">업로드</option>
         <option value="edit">수정</option>
@@ -454,16 +516,25 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
         <option value="voc_comment_delete">VOC 댓글삭제</option>
         <option value="voc_delete">VOC 삭제</option>
       </select>
-      <input id="fQuery" class="inp" style="width:280px" placeholder="파일명 / product / lot 부분 일치…">
+      <input id="fQuery" class="inp" style="width:280px" placeholder="파일명 / product / lot 부분 일치…"
+             title="파일명·product·lot_id 부분 일치 검색 (변경 필드 본문은 검색 대상이 아닙니다)">
       <button class="btn primary" id="btnAuditSearch">검색</button>
-      <button class="btn" id="btnAuditReset">초기화</button>
+      <button class="btn" id="btnAuditReset" title="작업 필터와 검색어를 모두 지우고 처음부터 다시 조회">초기화</button>
       <span class="grow"></span>
       <span id="auditCount" class="hint"></span>
     </div>
-    <div class="table-wrap"><table>
+    <div class="table-wrap scroll-both"><table>
       <thead><tr>
-        <th>시각</th><th>작업</th><th>type</th><th>product</th><th>lot_id</th><th>파일명</th>
-        <th>변경 필드</th><th>사용자(PC)</th><th>IP</th><th>session_id</th>
+        <th title="기록이 남은 시각">시각</th>
+        <th title="수행된 작업 종류">작업</th>
+        <th title="제품 유형 (MDDI / PDDI / PMIC / SECURITY / TCON)">type</th>
+        <th title="제품명">product</th>
+        <th title="로트 번호">lot_id</th>
+        <th title="업로드된 파일명">파일명</th>
+        <th title="작업의 상세 내용 — 클라이언트 오류는 오류 메시지·발생 위치가 담깁니다. 셀을 클릭하면 전체가 펼쳐집니다">변경 필드</th>
+        <th title="작업한 사용자 계정과 PC 호스트명 (클라이언트 신고값이라 위조 가능)">사용자(PC)</th>
+        <th title="요청이 들어온 IP 주소">IP</th>
+        <th title="대상 세션 ID">session_id</th>
       </tr></thead>
       <tbody id="auditBody"><tr class="empty-row"><td colspan="10">로딩 중…</td></tr></tbody>
     </table></div>
@@ -534,6 +605,19 @@ document.querySelectorAll(".tab").forEach(btn => {
   };
 });
 
+// 현황 타일 → User Action Monitoring 탭으로 필터를 건 채 이동.
+// loadedTabs 때문에 재방문 시엔 로더가 안 돌아, 그때만 직접 재조회한다.
+function showAuditFor(action) {
+  const btn = document.querySelector('.tab[data-panel="pAudit"]');
+  if (!btn) return;
+  $("fAction").value = action;
+  $("fQuery").value = "";
+  auditPage = 0;
+  const wasLoaded = loadedTabs.has("pAudit");
+  btn.click();
+  if (wasLoaded) loadAudit();
+}
+
 // ── 현황 ────────────────────────────────────────────────────────────────────
 function meterCls(pct) { return pct >= 90 ? "crit" : pct >= 70 ? "warn" : ""; }
 async function loadHealth() {
@@ -561,10 +645,12 @@ async function loadHealth() {
       const ce = await getJSON("api/stats/client_errors?hours=24");
       if (ce.count > 0) {
         ceTile = `
-      <div class="tile"><div class="lbl">클라이언트 오류 (24h)</div>
+      <div class="tile clickable" id="ceTile"
+           title="클릭하면 User Action Monitoring 탭에서 클라이언트 오류만 필터링해 보여줍니다">
+        <div class="lbl">클라이언트 오류 (24h)</div>
         <div class="val" style="color:#dc2626">${ce.count}건</div>
-        <div class="det">브라우저 beacon 수집 · User Action Monitoring 탭에서<br>
-          작업 필터 '클라이언트 오류' 로 상세 확인</div></div>`;
+        <div class="det">사용자 브라우저에서 발생한 JS 오류를 beacon 으로 수집한 건수</div>
+        <div class="go">클릭 → 상세 보기 ›</div></div>`;
       }
     } catch (e) { /* client_error 타일도 best-effort */ }
     $("healthTiles").innerHTML = `
@@ -583,6 +669,8 @@ async function loadHealth() {
       <div class="tile"><div class="lbl">서버 업타임</div>
         <div class="val" style="font-size:20px">${fmtUptime(h.uptime_sec)}</div>
         <div class="det">프로세스 RSS ${fmtBytes(h.proc_rss)} · 스레드 ${h.proc_threads}</div></div>${wdTile}${ceTile}`;
+    // 타일은 조건부라 innerHTML 이후에 핸들러를 붙인다
+    if ($("ceTile")) $("ceTile").onclick = () => showAuditFor("client_error");
   } catch (e) {
     $("healthTiles").innerHTML = `<div class="tile"><div class="lbl">현황 조회 실패</div><div class="det">${esc(e)}</div></div>`;
   }
@@ -777,7 +865,7 @@ async function loadStgSessions(refresh) {
   } else {
     tb.innerHTML = data.rows.map(r => `
       <tr>
-        <td><input type="checkbox" class="stgChkRow" data-sid="${esc(r.session_id)}"></td>
+        <td><input type="checkbox" class="stgChkRow" data-sid="${esc(r.session_id)}" title="선택 삭제 대상으로 체크"></td>
         <td>${fmtDate(r.created_at)}</td>
         <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
         <td>${esc(r.lot_id || "-")}</td><td>${esc(r.file_name || "-")}</td>
@@ -905,7 +993,7 @@ async function loadEvalLabels() {
   } else {
     tb.innerHTML = data.rows.map(r => `
       <tr>
-        <td><input type="checkbox" class="evalChkRow" data-cid="${esc(r.case_id)}"></td>
+        <td><input type="checkbox" class="evalChkRow" data-cid="${esc(r.case_id)}" title="선택 삭제 대상으로 체크"></td>
         <td>${fmtDate(r.created_at)}</td>
         <td>${esc(r.product_name || "-")}</td><td>${esc(r.lot_id || "-")}</td>
         <td class="num">${r.bin == null ? "-" : esc(r.bin)}</td>
@@ -1122,7 +1210,7 @@ async function loadSessions() {
   } else {
     tb.innerHTML = data.rows.map(r => `
       <tr data-sid="${esc(r.session_id)}">
-        <td><input type="checkbox" class="chkRow" data-sid="${esc(r.session_id)}"></td>
+        <td><input type="checkbox" class="chkRow" data-sid="${esc(r.session_id)}" title="선택 삭제 대상으로 체크"></td>
         <td>${fmtDate(r.created_at)}</td>
         <td><button class="star ${r.is_important ? "on" : ""}" data-act="imp"
              data-sid="${esc(r.session_id)}" data-cur="${r.is_important}" title="중요 표시 토글">★</button></td>
@@ -1477,7 +1565,7 @@ async function loadAudit() {
       <td><span class="badge ${esc(act)}">${esc(ACTION_LABEL[act] || act)}</span>${failBadge}</td>
       <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
       <td>${esc(r.lot_id || "-")}</td><td>${esc(r.file_name || "-")}</td>
-      <td style="font-size:12px;color:#a4a8b3">${esc(r.changed_fields || "-")}</td>
+      <td class="detail-cell"><div class="clamp" title="클릭하면 전체 내용을 펼치거나 접습니다">${esc(r.changed_fields || "-")}</div></td>
       <td>${esc(r.client_user || "-")}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
       <td class="mono">${esc(r.client_ip || "-")}</td>
       <td class="mono">${esc(r.session_id || "-")}</td></tr>`;
@@ -1488,6 +1576,11 @@ async function loadAudit() {
   $("auditPrev").onclick = () => { if (auditPage > 0) { auditPage--; loadAudit(); } };
   $("auditNext").onclick = () => { if (auditHasMore) { auditPage++; loadAudit(); } };
 }
+// 긴 '변경 필드' 셀 펼치기/접기 — tbody 는 유지되므로 위임 핸들러 1회 등록
+$("auditBody").addEventListener("click", e => {
+  const cell = e.target.closest(".detail-cell .clamp");
+  if (cell) cell.classList.toggle("open");
+});
 $("btnAuditSearch").onclick = () => { auditPage = 0; loadAudit(); };
 $("fQuery").addEventListener("keydown", e => { if (e.key === "Enter") { auditPage = 0; loadAudit(); } });
 $("fAction").onchange = () => { auditPage = 0; loadAudit(); };

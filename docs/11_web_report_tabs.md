@@ -34,6 +34,15 @@
 dies(STEP 분리 시 수백만 객체 — 메인스레드 JSON 파싱 freeze 의 주범)만 분리한다
 (`map_deferred: true`, 프런트 `ensureMapData`/`fetchMapViaWorker` — wafer_charts.js).
 
+**Map Analysis eval STEP 제외** (2026-07-21): STEP 이름에 `eval`(대소문자 무시)이 들어가면
+맵을 그리지 않는다(`_is_eval_step`, [Map_analysis.py](../web_report/tabs/Map_analysis.py)).
+STEP 이 eval 하나뿐인 소스는 맵 자체가 없다. fail step 귀속(`_fail_step_indexes`)에는
+원래 STEP 목록을 그대로 써 앞/뒤 step 판정(Pass·회색)이 어긋나지 않게 하되, **eval STEP 에서
+fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail step 불명 die 는 첫 step 이
+아니라 **그리는 첫 step**에 귀속시킨다(`unknown_idx`). 맵 rows 값이 바뀌므로
+`cache_policy.MAP_SCHEMA_VERSION`(map_key 는 edits_rev 가 없어 이 값만이 무효화 수단) +
+`REPORT_SCHEMA_VERSION` 을 함께 올렸다 — **서버 재시작 필요**.
+
 ## 주요 탭 계약
 - **Yield STEP 분리 (2026-07-14, 분모 전체 기준으로 통일)**: Yield 탭은 STEP(P1/P2/P3)별로
   표를 나눈다. STEP 은 각 fail die 의 `FAILTNO → (TNO 매칭) item → item 의 STEP 메타행
@@ -65,6 +74,41 @@ dies(STEP 분리 시 수백만 객체 — 메인스레드 JSON 파싱 freeze 의
   일괄 복원. Status(kind `issue_status`)는 Open/Close 드랍다운(편집모드 전용, 기본 Open —
   **"Close" 만 저장, 부재=Open**). Summary 탭 Issue Status 카드가 카테고리별 Open/Close
   를 집계한다(`issueStatusCounts`, map_select.js).
+- **Issue Table Map/Distribution 미니셀 클릭 이동** (2026-07-21): 미니셀 그림 자체가 링크다
+  ([edit_mode.js](../server/report/static/webreport/edit_mode.js) `.content` 위임).
+  Distribution 셀 → 그 Item 의 Item_detail(`openItemDetail`). Map 셀 → Map Analysis 탭
+  (`openMapAnalysisForBin` / `openMapAnalysisForItem`, wafer_charts.js) — 탭을 dirty 로
+  되돌린 뒤 탭 버튼을 click 해 새 선택 상태로 재렌더한다. Yield/ETC 행(`data-bin`)은
+  Bin Map 에서 그 Bin 을 범례 선택 상태로 시작하고(1회성 `mapBinPreselect`), CPK 행
+  (`data-subject`)은 STDF Map 에서 그 Item 을 선택 상태로 연다. 우상단 ⤢(전체 소스
+  펼치기)는 클릭 위임 순서상 먼저 처리돼 기존 팝오버 동작을 유지한다.
+- **Issue Table CPK 행 Map 열 = STDF Map 썸네일** (2026-07-21): CPK 행엔 Bin 이 없으므로
+  Bin 미니맵 대신 그 Item 의 측정값 10분위 맵을 그린다(`renderMiniStdfCell` →
+  `stdfThumbMap`/`stdfDrawThumb`, [stdf_map.js](../server/report/static/webreport/stdf_map.js)).
+  Map Analysis STDF Map 과 같은 색·분위 기준이되 렌더는 갤러리와 같은 canvas
+  (`drawWaferThumb`) — Plotly 미사용. 소스가 여럿이면 첫 소스(값 있는)를 그리고 ⤢ 로 전
+  소스를 나열한다(DUT 모드는 Bin Map 과 동일하게 병합해 1장). 데이터는 항목별
+  `GET .../web_report/scatter/<subject>` 라 셀당 요청 1건이며, 동시 요청은
+  `STDF_MINI_MAX_INFLIGHT`(2)로 제한하고 상한에 걸린 셀은 요청 완료 시 재큐잉한다.
+- **Issue Table/Yield 컬럼 표시 규칙** (2026-07-21, [sheets.js](../server/report/static/webreport/sheets.js)):
+  - **좌측 틀고정 재실측**: 고정열(Step/Bin/TNO/Item/Map/Distribution) left 오프셋은 렌더
+    시점 실측값(`--issue-colN-left`)이라, TNO 상세행을 펼쳐 Item 열이 넓어지면 stale 이 되어
+    Map/Distribution 이 Item 위로 겹친다. `toggleIssueGroup`/`setAllIssueGroups` 는
+    `afterIssueRowsToggled()` 로 반드시 재실측한다(Yield 는 `setYieldGroup` 에서 동일).
+    **행 표시/폭을 바꾸는 새 동작을 추가하면 여기에 합류시킬 것.**
+  - **source 헤더 축약**: source 컬럼이 `SRC_ABBREV_MIN`(8) 이상이면 공통 접두/접미를 떼고
+    다른 부분만 표시한다(첫 컬럼만 전체 이름, `sourceHeaderLabels`). 전체 이름은 th `title`
+    에 남는다. 이때 `{src}_yield/_count` 열너비도 숫자 크기로 좁힌다(`colWidth(..., narrowSrc)`).
+  - **comment 열 고정폭**: AI/PTE/개발팀 comment 셀·헤더에 `st-comment` 클래스를 달고 CSS 로
+    `min/max-width: 330px` 를 못박는다 — source 가 늘어도 폭이 흔들리지 않고 대신 가로
+    스크롤이 길어진다(사용자 요청).
+  - **컬럼 폭 드래그**: Issue Table 은 `bindIssueColResize`(미니차트 재렌더 포함), Yield 는
+    `buildSheetTableHead(cols, {resize:true})` + 공용 `bindSheetColResize`.
+  - **"개발 comment" 표기**: 화면·Excel 내보내기 헤더만 `COLUMN_DISPLAY_ALIAS` 로
+    "개발팀 Comment" 로 보인다. **저장 키는 `"개발 comment"` 그대로** — 편집 DB
+    (`issue_comments[row_key]`)·[eval_export.py](../web_report/eval_export.py) `_COMMENT_PREFIX`·
+    클라 [excel_download/_sheets.py](../client/excel_download/_sheets.py) 가 이 키를 쓰므로
+    바꾸면 기존 세션 comment 가 유실된다.
 - **Issue Table Excel 다운로드**: 툴바 "Excel 다운로드" 버튼(`exportIssueExcel`,
   [yield_issue.js](../server/report/static/webreport/yield_issue.js)) — Trim 탭과 같은
   vendored exceljs(`loadExcelJS`)로 브라우저에서 xlsx 1시트 생성(서버 무관여). 화면과 동일
@@ -83,6 +127,12 @@ dies(STEP 분리 시 수백만 객체 — 메인스레드 JSON 파싱 freeze 의
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
   `build_trim_chart`(그룹 1개 chip-to-chip 차트). 매칭 규칙은
   [trim_match.py](../web_report/trim_match.py)(product_type 별 PMIC4/TV2 규칙셋).
+  TV2(MDDI/PDDI) 는 이름 끝의 `_PRE[_P<n>]` → TRIM / `_POST[_P<n>]` → VERIFY 꼬리를
+  **통째로** 떼어 stem 을 잡는다(`_TV2_PREPOST_RE`, 2026-07-21) — `VREF_PRE_P1` ↔
+  `VREF_POST_P2` ↔ `VREF_POST_P3` 가 P 번호와 무관하게 같은 그룹(`VREF`)이 된다.
+  이 꼬리는 phase 를 명시하므로 마커(`FUSE_`/`OTP_`)보다 **우선**한다(마커가 있어도
+  `_POST` 는 VERIFY). 한 그룹에 POST 가 둘 이상이면 TV2 는 2-slot 이라 입력순 첫 항목만
+  VERIFY 슬롯을 갖고 나머지는 members 로 남는다.
 
 ## 편집 흐름 (세션 편집 DB)
 web_report 편집(comment / ETC item / trim override / Summary Engr comment)의 **진실은
@@ -109,6 +159,44 @@ source 1개가 Excel 시트 1장이다([excel_session.py](../client/excel_edit/e
 - 되돌릴 수 없으므로 Honey 가 업로드 **전에** 확인 다이얼로그를 띄운다(거부 시 전체 취소 —
   다시 실행하면 서버 원본을 새로 받아 원상복구). 시트 **추가**와 전량 삭제는 계속 거부하고,
   삭제하면서 남은 시트 이름을 바꾸면 매칭 불가로 재편집 루프로 돌아간다.
+
+#### Raw Data 값 검증 (2026-07-21)
+정본은 [rawvalues.py](../web_report/rawvalues.py). **값 규칙을 `validate_honeyform_df` 에
+넣지 말 것** — 그 함수는 `_decode_parts` 에서 저장된 parquet 을 **읽을 때마다** 실행되므로
+값 규칙을 넣으면 기존 세션이 열리지 않는다. 그래서 값 검증은 별도 순수 모듈에만 둔다
+(pandas 무의존 셀 함수 + 지연 import 하는 프레임 함수, 클라 excel_session 이 공유).
+
+| 컬럼 | 규칙 | 위반 시 |
+|------|------|---------|
+| item(측정값) | 숫자 또는 빈값(=결측). `nan`/`inf`/`0x10` 등은 거부 | 웹=400, Excel=경고 |
+| BIN | 정수, 빈값 금지. `01`/`1.0`/` 1 ` → `1` 로 정규화 | 〃 |
+| SHOT·DUT·XPOS·YPOS·FAILTNO | 정수(음수 허용), 빈값 허용 | 〃 |
+| SERIAL | 자유 문자열(선행 0 보존), 빈값·개행·200자 초과 금지 | 〃 |
+
+- **채널별 정책이 다르다.** 웹은 편집한 셀이 특정되므로 **하드 거부**(400, 위반 위치를
+  한국어로 나열, 한 셀도 쓰지 않음)하고, Excel 은 자유 편집 도구라 셀 단위로 막지 않고
+  **자동 교정 + 확인창 경고**로 처리한다. 검증 대상은 **편집한 셀/변경된 부분뿐** —
+  업로드 당시 통과한 기존 데이터를 소급 거부하지 않는다(ingest 정책도 그대로).
+- **판정은 프런트와 서버가 반드시 같아야 한다.** 규칙 테이블·문안은 서버가 단일 진실이고
+  (`/raw_data/columns` 응답의 `value_rules`), [raw_data.js](../server/report/static/webreport/raw_data.js)
+  는 판정 프리미티브만 복제한다. 파이썬 `float()` 은 `1_000`·전각숫자·`infinity` 를,
+  JS `Number()` 는 `0x10`·`0b101` 을 받아들여 판정이 갈리므로 **양쪽 모두 동일한 정규식**
+  (`_NUM_RE` ↔ `RAW_NUM_RE`, `\d` 가 아니라 `[0-9]`)으로 표기를 먼저 좁힌다. 이 둘을
+  고칠 땐 반드시 같이 고칠 것(`tests/test_rawvalues_cell.py` 의 NUMERIC_TRAPS 가 고정).
+- Excel 채널이 **조용히 교정**하는 것(확인창에 보고): used_range 확장으로 들어온 유령 행/
+  무명 빈 컬럼 제거(안 지우면 유효 die 로 저장돼 수율이 희석된다), 메타 컬럼명 대소문자
+  복원, 정수 dtype 복원(xlwings 가 숫자를 전부 float 로 돌려줘 편집 안 한 int 컬럼까지
+  `1`→`1.0` 이 된다 — **원본 dtype 기준**으로만 되돌린다).
+- Excel 채널이 **경고만** 하는 것: LOLIM>HILIM(규격내 CPK 미계산 → Issue Table 에서 항목이
+  사라짐), TNO 빈값·0·중복(fail 이 Yield 표에 집계 안 됨), 비수치 측정값, BIN 비정수,
+  SERIAL 빈값, XY 비좌표, item 컬럼명 변경·추가. 셀 단위 diff 도 함께 보여준다
+  (형태가 같고 `EXCEL_SCAN_CELL_BUDGET` 이내일 때만 — 초과 시 생략을 **명시 보고**).
+- 메타 컬럼명은 encode/decode/split 모두에서 canonical 대문자로 정규화한다
+  ([honeyform.canonicalize_meta_columns](../web_report/honeyform.py)). 없으면 `BIN`→`Bin`
+  케이스 변경이 검증을 통과해 저장된 뒤 조회만 `data["BIN"]` KeyError→500 이 난다
+  ("저장은 됐는데 세션이 안 열리는" 상태). decode 에도 넣어 **이미 오염된 parquet 도
+  마이그레이션 없이 구제**한다. item 컬럼명이 메타 컬럼명과 겹치는 것은 구조 검증
+  (`validate_honeyform_df`)에서 거부한다 — 그런 파일은 지금도 컬럼이 밀려 깨지므로 회귀가 아니다.
 - `kind` 8종: `issue_comment` / `etc_item` / `trim_override` / `summary_engr` /
   `chart_note` / `note_sheet` / `issue_hidden` / `issue_status`
   ([edits.py](../web_report/edits.py) 규약). 편집마다 `rev` 가
@@ -169,6 +257,23 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
   (표시용 다운샘플이 양끝점을 항상 보존하므로 값이 불변 — 헤드리스 Plotly 로 축 범위
   동일성 검증 완료). 소스 수만큼 SVG 마커 DOM 이 늘던 병목을 없애기 위한 것이며 좌표·색·
   점 크기(3px)는 그대로다. 상세 CDF(`distRenderCdf`)는 별개 경로(scattergl)라 무관.
+  **주의: `Plotly.toImage` 는 Plotly 자체 SVG 만 직렬화하므로 canvas 오버레이의 점을 담지
+  못한다.** 현재 `chartNotesApply`(차트 주석·Note 붙여넣기 PNG)는 상세 CDF·히스토그램에만
+  붙어 있어 안전하지만(chart_notes.js ← item_detail.js), 이를 미니셀로 확장하면 **점 없는
+  PNG** 가 조용히 나간다 — 확장 시 canvas 를 합성하는 별도 경로가 필요하다.
+- **표시점 캡은 칸 예산을 소스 수로 나눈다** (2026-07-21, 다소스 대응). `DIST.DOWNSAMPLE`
+  (2000)은 **소스별** 상한이라 소스 40개 세션에서는 칸 하나가 8만 점이 됐다. IssueTable
+  미니셀은 112px 라 찍히는 픽셀이 ~1.7만개뿐이라 전부 덧칠 낭비. 이제 `distCapFor(소스수,
+  칸예산)` 이 소스별 유효 캡을 정한다 — 칸 예산은 `CELL_BUDGET_MINI`(4000, IssueTable) /
+  `CELL_BUDGET_CARD`(12000, 갤러리·Bin 상세), 하한 `MIN_PER_SOURCE`(150).
+  소스가 적으면 나눗셈 결과가 `DOWNSAMPLE` 로 클램프돼 **기존 출력과 완전히 동일**하다
+  (회귀 검증 완료). 캡이 기본값보다 낮을 때만 `distHardCap` 이 마지막에 균등 stride 로
+  캡을 강제한다(양끝 유지) — 기본 캡 경로는 강제 보존 초과를 그대로 허용하는 소프트 상한.
+  `distStepY` 의 채움 예산(`cap×1.5`)과 budget 하한(`cap×0.4`)도 캡에 연동돼 기본 캡에서
+  각각 3000·800 으로 기존과 같다. rAF 프레임당 렌더 장수도 `distPerFrame()` 이 소스 수로
+  조절한다(≥16 → 1장, ≥8 → 2장). 실측 40소스 미니셀 1장: 44.6ms → 11.3ms(콜드),
+  재스크롤 4.4ms. 표시점 메모(`distDisplayPoints` / limitWin 전용 `distDisplayPointsWindowed`)
+  는 **캡별로 분리 저장**한다 — 같은 항목도 칸 종류에 따라 캡이 다르기 때문.
 - **Distribution ECDF 미니셀 렌더는 markers 전용, 선 금지.** 갤러리 카드
   (`distRenderGalleryCell`)·Bin 상세 셀(`renderDistCell`)·Issue Table 산포 미니셀
   (`renderMiniDistCell`) 3곳 모두 점만 찍고 어떤 연결선도 긋지 않는다(계단형

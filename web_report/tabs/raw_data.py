@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .common import fmt_type, round_num
+from .. import rawvalues
 from ..honeyform import DATA_START_ROW, META_COLUMNS as _META_COLUMNS, split_honeyform
 
 
@@ -24,6 +25,9 @@ def build_raw_data_columns(tables) -> dict:
         "items": list(items.values()),
         "sources": [t.source for t in tables],
         "total_dies": sum(len(t.data) for t in tables),
+        # 프런트가 전송 전 1차 차단에 쓰는 값 규칙 — 규칙 테이블·문안의 단일 진실은 서버다
+        # (raw_data.js 는 판정 프리미티브만 복제한다). 세션당 1회만 조회되는 응답이라 비용 무시.
+        "value_rules": rawvalues.rules_spec(),
     }
 
 
@@ -97,6 +101,30 @@ def query_raw_data(tables, *, columns, search="", bin_filter="", source_filter="
     return {"rows": rows, "total_matched": total_matched, "truncated": truncated}
 
 
+_ERROR_LIST_CAP = 5      # 배너가 좁아 이 건수까지만 나열하고 나머지는 건수로만 알린다
+
+
+def _row_label(table, row_idx) -> str:
+    """편집 위치를 사람이 읽는 문자열로 — 프런트 rawRowLabel 과 같은 조합.
+
+    diff 모달의 '위치' 컬럼과 서버 오류 메시지가 같은 표기를 써야 사용자가 어느 줄인지
+    바로 찾는다 (SOURCE · SHOT · DUT · (X,Y) · BIN).
+    """
+    row = table.data.iloc[row_idx]
+    parts = [table.source]
+    for label in ("SHOT", "DUT"):
+        value = fmt_type(row.get(label))
+        if value:
+            parts.append(f"{label} {value}")
+    x, y = fmt_type(row.get("XPOS")), fmt_type(row.get("YPOS"))
+    if x or y:
+        parts.append(f"(X,Y)=({x},{y})")
+    bin_value = fmt_type(row.get("BIN"))
+    if bin_value:
+        parts.append(f"BIN {bin_value}")
+    return " · ".join(parts)
+
+
 def apply_raw_data_edits(tables, edits):
     """편집 목록을 tables 에 반영한 HoneyformTable 리스트를 반환한다.
 
@@ -108,16 +136,22 @@ def apply_raw_data_edits(tables, edits):
     하나와 일치해야 하고, column 은 그 테이블의 item_columns 또는 메타 컬럼이어야 한다.
     편집이 있었던 source 는 df(원본 7-meta 프레임) 를 고쳐 split_honeyform 으로 재구성해
     .data 등 파생 필드까지 일관되게 갱신한다.
+
+    **값 검증(rawvalues.check_cell_value)은 편집한 셀만 본다** — 업로드 당시 통과한 기존
+    데이터를 나중 편집이 소급 거부하면 안 되기 때문. 전건을 먼저 검증하고 위반이 하나라도
+    있으면 **한 셀도 쓰지 않고** ValueError 를 올린다(라우트에서 400, 원본 무손상).
     """
     by_source = {t.source: t for t in tables}
-    touched = set()
+    planned = []          # (table, row_idx, column, 정규화된 값)
+    errors = []
     for e in edits or []:
         source = str(e.get("source") or "")
         table = by_source.get(source)
         if table is None:
             raise ValueError(f"unknown source: {source}")
         column = str(e.get("column") or "")
-        if column not in table.item_columns and column not in _META_COLUMNS:
+        is_item = column in table.item_columns
+        if not is_item and column not in _META_COLUMNS:
             raise ValueError(f"unknown column: {column}")
         try:
             row_idx = int(e.get("row_idx"))
@@ -125,8 +159,31 @@ def apply_raw_data_edits(tables, edits):
             raise ValueError(f"invalid row_idx: {e.get('row_idx')!r}")
         if not (0 <= row_idx < len(table.data)):
             raise ValueError(f"row_idx out of range: {row_idx}")
-        table.df.at[DATA_START_ROW + row_idx, column] = e.get("value")
-        touched.add(source)
+
+        value = e.get("value")
+        reason = rawvalues.check_cell_value(column, value, is_item=is_item)
+        if reason:
+            # 라벨 조립은 나열할 건수까지만 — 위반이 수백 건이면 라벨 비용이 아깝다.
+            if len(errors) < _ERROR_LIST_CAP:
+                errors.append(f"{_row_label(table, row_idx)} → [{column}] {reason}")
+            else:
+                errors.append("")
+            continue
+        planned.append((table, row_idx, column,
+                        rawvalues.normalize_cell_value(column, value, is_item=is_item)))
+
+    if errors:
+        listed = [m for m in errors if m][:_ERROR_LIST_CAP]
+        head = "\n".join(f"· {m}" for m in listed)
+        more = f"\n· 외 {len(errors) - len(listed)}건" if len(errors) > len(listed) else ""
+        raise ValueError(
+            f"값이 올바르지 않아 저장하지 않았습니다 "
+            f"({len(errors)}건 / 전체 {len(edits or [])}건).\n{head}{more}")
+
+    touched = set()
+    for table, row_idx, column, value in planned:
+        table.df.at[DATA_START_ROW + row_idx, column] = value
+        touched.add(table.source)
 
     for source in touched:
         t = by_source[source]

@@ -43,6 +43,9 @@ web_report/
 ├── ports.py            StoragePort/SessionRepo Protocol (DIP 경계)
 ├── rawedit.py          Raw Data 소스 내보내기/교체·삭제 헬퍼 (Excel 왕복 — 시트 삭제 시
 │                        kept_indices 로 source 물리 제거 + manifest sources 축소)
+├── rawvalues.py        Raw Data 편집 **값** 검증 — 셀 규칙(웹 400)·Excel 프레임 자동 교정/
+│                        diff·경고. 순수 모듈(셀 함수는 pandas 무의존, 프레임 함수만 지연
+│                        import) — 클라 excel_edit/excel_session.py 가 import 한다
 ├── trim_match.py       Trim 항목명 매칭 순수 모듈 (product_type 별 PMIC4/TV2 규칙셋)
 ├── wafer_frame.py      제품 기준정보(die pitch+wafer 크기) → 고정 map 프레임
 └── tabs/               시트별 row 빌더 + TAB_REGISTRY (시트 구성 단일 진실)
@@ -88,5 +91,9 @@ web_report 안에서 위 연결점의 **호출 시그니처(함수명·인자·�
   밖!)을 의미하는지 확인할 것 — 헷갈리기 쉬운 지점.
 - `../CLAUDE.md` §5 불변 규칙(원본 xlsx 미저장, `report_` prefix, analysis_key 산출,
   Distribution 다운샘플 금지)은 web_report 흐름에도 동일 적용.
+- **값 검증은 `rawvalues.py` 에만 둔다** — `honeyform.validate_honeyform_df` 는 조회 경로
+  (`_decode_parts`)가 저장된 parquet 을 읽을 때마다 호출하므로, 거기에 값 규칙을 넣으면
+  기존 세션이 열리지 않는다. 프런트(raw_data.js)와 판정이 갈리면 사용자가 통과시킨 값이
+  400 으로 튕기므로 `_NUM_RE` ↔ `RAW_NUM_RE` 는 **문자 그대로 동일**하게 유지할 것.
 - **검증 기준**: tabs 통계·honeyform 변환을 고칠 땐 "같은 세션 payload 정준 JSON 완전
   일치"로 회귀 없음을 확인한다(값 불변 — 정수 컬럼 int64 dtype 보존 포함).

@@ -14,6 +14,81 @@ function destroyRawDataGrid() {
   if (rawDataGrid) { try { rawDataGrid.destroy(); } catch (e) {} rawDataGrid = null; }
 }
 
+// ── 값 검증 (서버 web_report/rawvalues.py 와 동기 필수) ──────────────────────────
+// 규칙 테이블·문안은 서버가 단일 진실이고 rawDataMeta.value_rules 로 내려온다. 여기 복제하는
+// 것은 '판정 프리미티브'뿐 — rawParseNumber/rawParseInt 가 서버 _parse_number/_parse_int 와
+// 달라지면 사용자가 통과시킨 값이 400 으로 튕기므로 고칠 땐 **양쪽을 같이** 고칠 것.
+// value_rules 가 없는 구 페이지에서는 사전 검증을 건너뛰고 서버 400 에 맡긴다(안전한 폴백).
+const RAW_META_FIELDS = new Set(["SERIAL", "SHOT", "DUT", "XPOS", "YPOS", "BIN", "FAILTNO"]);
+
+function rawRules() { return (rawDataMeta && rawDataMeta.value_rules) || null; }
+
+// 서버 rawvalues._NUM_RE 와 **문자 그대로 동일**해야 한다 — Number() 는 '0x10'/'0b101' 을,
+// 파이썬 float() 은 '1_000'/전각숫자/'infinity' 를 받아들여 양쪽 판정이 갈리기 때문이다
+// (갈리면 여기서 통과한 값이 서버 400 으로 튕긴다).
+const RAW_NUM_RE = /^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$/;
+
+function rawParseNumber(text) {
+  const s = String(text).trim();
+  if (!RAW_NUM_RE.test(s)) return null;    // '' / 'nan' / '0x10' / '1_000' 전부 여기서 탈락
+  const f = Number(s);
+  if (!Number.isFinite(f)) return null;    // '1e999' → Infinity
+  return f;
+}
+
+function rawParseInt(text) {
+  const f = rawParseNumber(text);
+  if (f === null || !Number.isInteger(f) || Math.abs(f) >= Math.pow(2, 53)) return null;
+  return f;
+}
+
+// 반환: 위반 사유 문자열 | null
+function checkRawCell(column, value, isItem) {
+  const rules = rawRules();
+  if (!rules) return null;
+  const msg = rules.messages || {};
+  const text = (value === null || value === undefined) ? "" : String(value);
+  if (text.indexOf("\n") >= 0 || text.indexOf("\r") >= 0) return msg.newline || "줄바꿈 문자는 넣을 수 없습니다.";
+  const s = text.trim();
+  const show = s === "" ? "(빈값)" : (s.length <= 40 ? s : s.slice(0, 40) + "…");
+  if (isItem) {
+    if (s === "") return null;             // 결측 허용
+    return rawParseNumber(s) === null ? String(msg.number || "").replace("{value}", show) : null;
+  }
+  const kind = (rules.meta_kind || {})[column];
+  if (!kind) return null;
+  if (s === "") return (rules.required_meta || []).indexOf(column) >= 0 ? (msg.required || "비울 수 없습니다.") : null;
+  if (kind === "int") return rawParseInt(s) === null ? String(msg.int || "").replace("{value}", show) : null;
+  if (s.length > (rules.max_text_len || 200)) return msg.too_long || "값이 너무 깁니다.";
+  return null;
+}
+
+// 저장될 정규형 (서버 normalize_cell_value 와 동기) — diff 모달이 실제 저장값을 보여주도록.
+function normalizeRawCell(column, value, isItem) {
+  const s = ((value === null || value === undefined) ? "" : String(value)).trim();
+  if (isItem || s === "") return s;
+  if (((rawRules() || {}).meta_kind || {})[column] === "int") {
+    const n = rawParseInt(s);
+    if (n !== null) return String(n);
+  }
+  return s;
+}
+
+// 차단하지는 않지만 결과가 달라진다고 알려야 하는 변경 (diff 모달 '확인' 컬럼)
+function rawCellWarning(column, oldValue, newValue, isItem) {
+  const w = (rawRules() || {}).warnings || {};
+  const s = ((newValue === null || newValue === undefined) ? "" : String(newValue)).trim();
+  if (isItem) return s === "" ? (w.item_blank || null) : null;
+  if (column === "BIN") {
+    const before = ((oldValue === null || oldValue === undefined) ? "" : String(oldValue)).trim();
+    const wasPass = rawParseInt(before) === 1, isPass = rawParseInt(s) === 1;
+    return wasPass !== isPass ? (w.bin_change || null) : null;
+  }
+  if ((column === "XPOS" || column === "YPOS") && s === "") return w.coord_blank || null;
+  if (column === "SERIAL") return w.serial_change || null;
+  return null;
+}
+
 async function fetchRawDataMeta() {
   const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/raw_data/columns`, { cache: "no-store" });
   const j = await res.json().catch(() => ({}));
@@ -63,11 +138,30 @@ function updateRawSelCount() {
   if (el) el.textContent = `선택 ${rawDataSelected.size}/${RAW_DATA_COLUMN_CAP}`;
 }
 
+function rawBadEditCount() {
+  let bad = 0;
+  rawDataPendingEdits.forEach(e => { if (e.error) bad += 1; });
+  return bad;
+}
+
 function updateRawEditBtn() {
   const btn = document.getElementById("rawSaveBtn");
   const cnt = document.getElementById("rawEditCount");
+  const bad = rawBadEditCount();
   if (cnt) cnt.textContent = String(rawDataPendingEdits.size);
-  if (btn) btn.disabled = rawDataPendingEdits.size === 0;
+  // 잘못된 값이 하나라도 있으면 저장을 막는다 — 서버도 400 으로 거부하지만, 재생성이
+  // 수십 초 걸리는 작업이라 왕복 전에 여기서 끊는 게 낫다.
+  if (btn) {
+    btn.disabled = rawDataPendingEdits.size === 0 || bad > 0;
+    btn.title = bad ? `잘못된 값 ${bad}건을 고쳐야 저장할 수 있습니다.` : "";
+  }
+  const banner = document.getElementById("rawDataBanner");
+  if (banner && bad) {
+    banner.innerHTML = `<div class="rawdata-banner rawdata-banner-bad">잘못된 값 ${bad}건 — ` +
+      `빨간 셀을 고쳐야 저장할 수 있습니다.</div>`;
+  } else if (banner && banner.querySelector(".rawdata-banner-bad")) {
+    banner.innerHTML = "";
+  }
 }
 
 function renderRawItemList(filterText) {
@@ -211,7 +305,7 @@ async function runRawDataQuery() {
     .map(d => ({
       title: d.rownum ? metaHead("#", "UNIT", "LOLIM", "HILIM") : metaHead(d.label, "", "", ""),
       field: d.field, resizable: true, headerSort: false, frozen: true,
-      formatter: d.rownum ? "rownum" : undefined,
+      formatter: d.rownum ? "rownum" : rawCellFormatter,
       editor: (editable && !d.rownum) ? "input" : false,
     }));
   const itemCols = [...rawDataSelected].filter(c => present.has(c)).map(c => {
@@ -221,6 +315,7 @@ async function runRawDataQuery() {
       title: metaHead(c, unit, m.lolim, m.hilim), field: c,
       resizable: true, headerSort: false, frozen: false,
       editor: editable ? "input" : false,
+      formatter: rawCellFormatter,
     };
   });
   rawDataGrid = new Tabulator("#rawDataGridHost", {
@@ -239,15 +334,22 @@ async function runRawDataQuery() {
   if (editable) {
     rawDataGrid.on("cellEdited", cell => {
       const row = cell.getData();
-      const key = `${row.SOURCE}|${row._row_idx}|${cell.getField()}`;
+      const field = cell.getField();
+      const key = `${row.SOURCE}|${row._row_idx}|${field}`;
       const prev = rawDataPendingEdits.get(key);
+      const isItem = !RAW_META_FIELDS.has(field);
+      // diff 표시용(서버 전송 안 함): 같은 셀을 여러 번 고쳐도 최초 기존값을 유지한다.
+      const oldValue = prev ? prev.old : cell.getOldValue();
       rawDataPendingEdits.set(key, {
         source: row.SOURCE, row_idx: row._row_idx,
-        column: cell.getField(), value: cell.getValue(),
-        // diff 표시용(서버 전송 안 함): 같은 셀을 여러 번 고쳐도 최초 기존값을 유지한다.
-        old: prev ? prev.old : cell.getOldValue(),
+        column: field, value: cell.getValue(),
+        old: oldValue,
         where: rawRowLabel(row),
+        isItem: isItem,
+        error: checkRawCell(field, cell.getValue(), isItem),
+        warn: rawCellWarning(field, oldValue, cell.getValue(), isItem),
       });
+      cell.getRow().reformat();     // 오류/편집 표시를 즉시 반영
       updateRawEditBtn();
     });
   }
@@ -267,6 +369,18 @@ async function runRawDataQuery() {
   rawDataGrid.on("columnResized", syncRawHscrollSpacer);
 }
 
+// 편집 대기열 상태(오류/정상 편집)를 셀에 칠한다. classList 직접 조작은 Tabulator 가상
+// 렌더에서 페이지 이동·스크롤 시 지워지므로, 렌더될 때마다 다시 그리는 formatter 로 둔다.
+function rawCellFormatter(cell) {
+  const row = cell.getData();
+  const value = cell.getValue();
+  const shown = (value === null || value === undefined) ? "" : String(value);
+  const pend = rawDataPendingEdits.get(`${row.SOURCE}|${row._row_idx}|${cell.getField()}`);
+  if (!pend) return esc(shown);
+  if (pend.error) return `<span class="rd-cell-bad" title="${esc(pend.error)}">${esc(shown)}</span>`;
+  return `<span class="rd-cell-edited">${esc(shown)}</span>`;
+}
+
 // Raw Data 편집 행을 사람이 읽을 수 있는 위치 문자열로 (diff 표 "위치" 컬럼용).
 function rawRowLabel(row) {
   const parts = [];
@@ -282,23 +396,34 @@ function rawRowLabel(row) {
 function openRawRegenConfirm() {
   if (!rawDataPendingEdits.size) return;
   const edits = [...rawDataPendingEdits.values()];
+  const bad = rawBadEditCount();
   const rows = edits.map(e => {
     const oldTxt = (e.old === null || e.old === undefined || e.old === "") ? "(빈값)" : String(e.old);
-    const newTxt = (e.value === null || e.value === undefined || e.value === "") ? "(빈값)" : String(e.value);
-    return `<tr>` +
+    // 실제 저장될 정규형을 보여준다 — ' 1 '/'01' 을 넣었는데 '1' 로 저장되는 괴리 방지.
+    const normalized = normalizeRawCell(e.column, e.value, e.isItem);
+    const newTxt = normalized === "" ? "(빈값)" : normalized;
+    const cls = e.error ? " class=\"rd-row-bad\"" : (e.warn ? " class=\"rd-row-warn\"" : "");
+    return `<tr${cls}>` +
       `<td>${esc(e.where || e.source || "")}</td>` +
       `<td>${esc(e.column)}</td>` +
       `<td class="rd-old">${esc(oldTxt)}</td>` +
       `<td class="rd-arrow">→</td>` +
       `<td class="rd-new">${esc(newTxt)}</td>` +
+      `<td class="rd-why">${esc(e.error || e.warn || "")}</td>` +
     `</tr>`;
   }).join("");
   const host = document.getElementById("rawRegenDiff");
   if (host) {
-    host.innerHTML =
-      `<table><thead><tr><th>위치</th><th>항목</th><th>기존값</th><th></th><th>바뀐값</th></tr></thead>` +
-      `<tbody>${rows}</tbody></table>`;
+    const notice = bad
+      ? `<div class="rawdata-banner rawdata-banner-bad">잘못된 값 ${bad}건이 있어 저장할 수 없습니다 — ` +
+        `아래 빨간 줄을 고쳐 주세요.</div>`
+      : "";
+    host.innerHTML = notice +
+      `<table><thead><tr><th>위치</th><th>항목</th><th>기존값</th><th></th><th>바뀐값</th>` +
+      `<th>확인</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
+  const okBtn = document.getElementById("rawRegenConfirm");
+  if (okBtn) okBtn.disabled = bad > 0;
   const modal = document.getElementById("rawRegenModal");
   if (modal) modal.classList.add("show");
 }
@@ -311,6 +436,16 @@ function closeRawRegenConfirm() {
 async function saveRawDataEdits() {
   if (!rawDataPendingEdits.size) return;
   const banner = document.getElementById("rawDataBanner");
+  // 모달을 우회해 호출되더라도 잘못된 값은 보내지 않는다(서버도 400 으로 막지만 이중 방어).
+  const bad = rawBadEditCount();
+  if (bad) {
+    hideLoadOverlay();
+    if (banner) {
+      banner.innerHTML = `<div class="rawdata-banner rawdata-banner-bad">잘못된 값 ${bad}건이 있어 ` +
+        `저장하지 않았습니다 — 빨간 셀을 고쳐 주세요.</div>`;
+    }
+    return;
+  }
   // 서버에는 기존처럼 source/row_idx/column/value 4필드만 전송 (old/where 는 diff 표시 전용).
   const edits = [...rawDataPendingEdits.values()].map(e => ({
     source: e.source, row_idx: e.row_idx, column: e.column, value: e.value,
