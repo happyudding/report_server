@@ -36,6 +36,9 @@ client/log/
 # 프로파일러 산출물 (profile_run.py 가 생성)
 client/_profiles/
 
+# 기준정보 임포터 산출물 (Excel PC 에서 생성 → 서버로 수동 복사)
+tools/product_info_import/output/
+
 # MS Office lock/owner files (e.g. ~$sample.xlsx when opened in Excel)
 ~$*
 

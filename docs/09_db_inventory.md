@@ -12,7 +12,9 @@
 |-------------|------|-----------|--------------|
 | `DB/pe/report/report.db` | **메인 세션 DB** — 테이블 16개 전부 여기 | `report_db.init_report_db` | 아니오 (고정명) |
 | `DB/pe/report/backup/report_YYYYMMDD_HHMMSS.db` | report.db **자동 백업** (최대 7개 rotation) | `db_backup.run_backup` | **예 — 의도된 백업** |
-| `DB/INFORMATION/stdinfo_YYYYMMDD.db` | 제품 part_id 카탈로그 (**외부 생성**, 읽기전용) | 이 repo 에 생성 코드 없음 — 수동 배치 | **예 — 수동 교체 방식** |
+| `DB/pe/report/product_info.db` | **기준정보 카탈로그** — part_ids 검색 후보 + 세션 기준정보 lookup (읽기전용) | [tools/product_info_import](../tools/product_info_import/README.md) (Excel PC) → 수동 복사 | 아니오 (고정명) |
+| `DB/pe/report/voc/voc.db` · `eval/eval.db` | VOC 게시판 / 코멘트 export — report_server 소유 별도 파일 | `voc_db.py` / `eval_export.py` | 아니오 (고정명) |
+| `DB/INFORMATION/stdinfo_YYYYMMDD.db` | 제품 part_id 카탈로그 (**외부 생성**) — **현재 읽는 코드 없음**, §3 참조 | 이 repo 에 생성 코드 없음 — 수동 배치 | **예 — 수동 교체 방식** |
 | `f:\COINAPI\plotly_sqlite\storage\app.db` | **별개 프로젝트**(Dash 데모) 자체 DB | plotly_sqlite/db.py | 아니오. report_server 와 무관 |
 
 - `DB/` 트리 전체는 .gitignore 대상 (런타임 산출물).
@@ -56,21 +58,41 @@
 | `REPORT_DB_BACKUP_KEEP` | 7 | 보존 개수 (초과분 자동 삭제) |
 | `REPORT_DB_BACKUP_DIR` | `<REPORT_DB_PATH 폴더>/backup` | 백업 저장 위치 |
 
-## 3. stdinfo — 외부 생성 제품 카탈로그 (읽기전용)
+## 3. product_info.db — 기준정보 카탈로그 (DRM 때문에 오프라인 생성)
 
-- 경로: [config.py `STDINFO_DB_PATH`](../server/config.py#L22) — 기본값에 날짜가 포함된
-  파일명(`stdinfo_20260511.db`)이 **하드코딩**되어 있다.
-- 읽는 곳은 한 군데: `GET /pe/report/api/part_ids` ([routes_misc.py](../server/report/routes_misc.py),
-  업로드 다이얼로그 Product 검색용, `mode=ro` 읽기전용 접속, `products.part_id` SELECT).
-- **이 repo 는 이 파일을 만들지도 쓰지도 않는다** — 외부 프로세스가 생성한 파일을
-  수동으로 갖다 놓는 방식. 스키마 스냅샷은 `DB/INFORMATION/stdinfo_20260511_schema.sql`.
-- **새 버전으로 교체하는 절차**: 새 파일을 `DB/INFORMATION/` 에 배치한 뒤
-  [config.py:22](../server/config.py#L22) 기본값을 새 파일명으로 수정하거나
-  env `STDINFO_DB_PATH` 를 지정하고 서버 재시작.
-- ⚠️ 경로가 틀리거나 파일이 없으면 **500 없이 조용히 빈 목록**을 반환한다 (예외 삼킴, 서버
-  로그 경고만). 교체 후 Product 검색이 비어 보이면 이 지점부터 확인할 것.
-- 참고: 클라이언트는 로컬 stdinfo DB 를 열지 않고 HTTP(`GET /pe/report/api/part_ids`)로
-  조회한다 (`transport/uploader.py`). stdinfo DB 는 **서버 측** 파일이다.
+`GET /pe/report/api/part_ids`(업로드 다이얼로그 Product 검색)와 업로드 시 세션 기준정보
+14컬럼 저장이 이 파일을 쓴다. 읽는 곳은 [server/product_info.py](../server/product_info.py)
+**한 모듈뿐**이고, 공개 API 는 `list_search_candidates()` / `lookup()` 2개다
+(소비처: [routes_misc.py](../server/report/routes_misc.py) `/api/part_ids`,
+[web_report/ingest.py](../web_report/ingest.py) `create_session`).
+
+- 경로: [config.py `PRODUCT_INFO_DB_PATH`](../server/config.py) (env 로 변경 가능).
+- **왜 오프라인 생성인가**: 원본 기준정보 CSV 가 **NASCA DRM 으로 암호화**돼 서버가 평문으로
+  읽을 수 없다. 서버는 Excel 을 쓰지 않으므로([CLAUDE.md §5 규칙 1](../CLAUDE.md)) 직접 열 수
+  없어, **Excel 이 설치된 별도 PC** 에서 win32com 으로 변환한다.
+- 생성: [tools/product_info_import](../tools/product_info_import/README.md) — `run_import.bat`
+  → `output/product_info.db` → 서버 `DB/pe/report/` 로 **수동 복사**. 절차 정본은 그 README.
+- 테이블: `report_product_info`(CSV 41컬럼 전부 TEXT + `row_no`) + `report_product_info_meta`
+  (`imported_at`/`row_count`/`source_csv` 등 — **지금 서버가 어느 시점 DB 를 쓰는지** 판별용).
+  별도 .db 파일이어도 `report_` prefix 를 유지한다(§4).
+- **서버 재기동 불필요**: `(mtime, size)` 가 바뀌면 다음 호출에서 자동 재로딩된다. 성공 시
+  `product_info.db 로드: 후보 N건 rows=... imported_at=...` 로그 1줄이 찍힌다.
+- **WAL 아님** — 손으로 복사하는 단일 자족 파일이어야 해서 임포터가 의도적으로 WAL 을 끈다
+  (`-wal` 사이드카를 빠뜨리고 복사하면 마지막 커밋이 유실된다).
+- **백업 대상 아님** — 마스터 CSV 에서 재실행으로 100% 재생성되는 파생물이다
+  (`db_backup.py` 는 report.db 만 백업한다).
+- ⚠️ 파일이 없거나 읽기 실패면 **500 없이 조용히 빈 목록**을 반환한다(예외 삼킴, 서버 로그
+  경고 1회). 교체 후 Product 검색이 비어 보이면 이 지점부터 확인할 것.
+- 참고: 클라이언트는 이 DB 를 직접 열지 않고 HTTP(`GET /pe/report/api/part_ids`)로 조회한다
+  (`transport/uploader.py`). **서버 측** 파일이다.
+
+### 3-1. stdinfo — 미사용 잔존 상수 (읽는 코드 없음)
+
+`DB/INFORMATION/stdinfo_YYYYMMDD.db` 는 **더 이상 어디서도 읽히지 않는다.**
+[config.py `STDINFO_DB_PATH`](../server/config.py) 정의만 남아 있고 참조하는 코드가 0곳이다
+(전수 grep 확인, 2026-07-21). 과거 `/api/part_ids` 가 이 파일을 읽었으나 그 역할은
+`product_info` 로 넘어갔다 — 이 문서의 옛 설명이 그 사실을 반영하지 못한 채 남아 있었다.
+상수 자체의 제거는 별도 판단 사항으로 남긴다.
 
 ## 4. 무관 파일 분류 노트
 
@@ -79,3 +101,10 @@
   report_server 정리 대상 아님.
 - 새 디스크 DB 를 추가하고 싶다면: 원칙은 **report.db 안에 `report_` prefix 테이블 추가**
   ([CLAUDE.md §5 규칙 3](../CLAUDE.md)) — 새 .db 파일을 만들지 말 것.
+- **예외로 인정된 별도 .db 3개**와 그 사유 (전부 테이블명 `report_` prefix 는 유지):
+  - `voc.db` — 게시판. 세션 생명주기와 무관하고 세션 삭제에 딸려가면 안 됨.
+  - `eval.db` — eval_analyzer 스키마의 코멘트 export. 외부 프로젝트 스키마라 섞을 수 없음.
+  - `product_info.db` — **원본 CSV 가 DRM 이고 서버는 Excel 을 못 쓴다**. 서버 밖(Excel PC)에서
+    만들어 통째로 복사하는 산출물이라 report.db 안에 넣을 방법이 없다(복사 단위가 파일).
+  새 .db 를 추가하려면 "서버 프로세스가 스스로 못 만드는 파일인가?" 를 먼저 답할 것 —
+  아니라면 report.db 테이블로 충분하다.

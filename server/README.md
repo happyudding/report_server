@@ -41,7 +41,7 @@ pip install -r requirements.txt
 | `REPORT_EVAL_DB_PATH` | `<repo>/DB/pe/report/eval/eval.db` | Issue Table PTE/개발 comment export DB (eval.db 스키마, report.db 와 분리 — [docs/13 §9](../docs/13_eval_analyzer_integration.md)) |
 | `REPORT_UPLOAD_DIR` | `<repo>/uploads/report` | 업로드/로컬 폴백/디스크 캐시 루트 |
 | `HONEY_RELEASES_DIR` | `<repo>/server/releases` | Honey exe 릴리스 폴더 |
-| `PRODUCT_INFO_CSV_PATH` | `<repo>/server/product_info.csv` | 기준정보 CSV — Product 검색 후보(part_ids)와 세션 기준정보 lookup. mtime 바뀌면 자동 재로딩. utf-8/cp949 자동 판별 |
+| `PRODUCT_INFO_DB_PATH` | `<repo>/DB/pe/report/product_info.db` | 기준정보 DB — Product 검색 후보(part_ids)와 세션 기준정보 lookup. **읽기 전용**. 원본 CSV 가 DRM 이라 Excel 있는 별도 PC 에서 [tools/product_info_import](../tools/product_info_import/README.md) 로 만들어 수동 복사한다. (mtime, size) 바뀌면 자동 재로딩(재기동 불필요) |
 
 ### 인증 (SSO 전환)
 
@@ -138,7 +138,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `GET` | `/` | 공개 | 검색결과 페이지 (HTML) |
 | `GET` | `/view/<sid>` | 공개 | 세션 상세 페이지 (HTML) |
 | `GET` | `/api/history` | 공개 | 세션 목록 JSON (필터: product_type/product/lot_id/source) |
-| `GET` | `/api/part_ids` | 공개 | 기준정보 part id 목록 (product_info.csv 의 part_id + sub_part_id flatten) |
+| `GET` | `/api/part_ids` | 공개 | 기준정보 part id 목록 (product_info.db 의 part_id + sub_part_id flatten) |
 | `POST` | `/api/client_error` | 공개 | 브라우저 JS 에러 beacon 수신 (error_beacon.js — CSRF 미적용, per-IP 스로틀, 감사 action=`client_error`) |
 | `GET` | `/result/<sid>` | 공개 | 세션 요약 JSON |
 | `GET` | `/session/<sid>` | 공개 | 세션 메타 JSON (password 제거, has_password 만) |

@@ -380,7 +380,7 @@ def _migrate(conn):
                 PRIMARY KEY (user_id, session_id)
             )
         """)
-    # 웹 로그인 계정 (사번 + PIN 4자리). SCHEMA 에는 있으나 구 DB 에는 없을 수 있어
+    # 웹 로그인 계정 (singleID + PIN 4자리). SCHEMA 에는 있으나 구 DB 에는 없을 수 있어
     # 여기서도 생성한다 — 일반 브라우저 로그인이 이 테이블을 사용한다.
     if not _table_exists(conn, "report_user"):
         conn.execute("""

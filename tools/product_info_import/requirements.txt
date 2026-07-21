@@ -1,0 +1,4 @@
+﻿# 기준정보 CSV(DRM) → product_info.db 오프라인 임포터 전용.
+# 이 도구는 Excel 이 설치된 별도 PC 에서 사람이 손으로 돌린다 — 서버와 무관하며,
+# server/requirements.txt 에는 넣지 않는다(서버는 Excel 을 쓰지 않는다).
+pywin32>=306   ; sys_platform == "win32"   # Excel COM (win32com.client, pythoncom)

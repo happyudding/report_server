@@ -241,7 +241,7 @@ def history():
 # 신원은 auth_identity provider 체인으로 매 요청 자동 식별한다:
 #   SSO 헤더 → Honey UA → 웹 로그인 세션.
 # Honey 는 UA 토큰으로 자동 식별되어 로그인이 불필요하고, 일반 브라우저는
-# 사번 + 비밀번호(4자리)로 로그인해 Honey 와 동등한 권한을 얻는다.
+# singleID + 비밀번호(4자리)로 로그인해 Honey 와 동등한 권한을 얻는다.
 # 비밀번호 설정은 Honey 접속(identity_source()=="honey")에서만 가능하다 — 서버는 SECDS
 # 계정의 실재 여부를 확인할 수단이 없고, Honey 실행 자체가 본인확인 역할을 한다.
 
@@ -253,7 +253,7 @@ _login_fails = {}
 
 
 def _normalize_login_id(value):
-    """로그인 폼의 사번 → current_user() 포맷(소문자, 도메인 없음).
+    """로그인 폼의 singleID → current_user() 포맷(소문자, 도메인 없음).
     폼은 SECDS\\ 를 입력받지 않지만 붙여넣기 대비로 도메인 접두를 떼어낸다.
     (_normalize_user_id 는 백슬래시를 거부하므로 재사용할 수 없다.)"""
     uid = (value or "").split("\\")[-1].strip().lower()
@@ -284,7 +284,7 @@ def _login_locked(uid):
 
 
 def _record_login_fail(uid):
-    """실패 카운터 증가. 존재하지 않는 사번으로 무작위 시도하면 항목이 다시 조회되지
+    """실패 카운터 증가. 존재하지 않는 singleID 로 무작위 시도하면 항목이 다시 조회되지
     않아 영영 남으므로, 커지면 만료분을 일괄 정리해 무한 증식을 막는다."""
     now = time.monotonic()
     if len(_login_fails) > 1000:
@@ -296,7 +296,7 @@ def _record_login_fail(uid):
 
 @report_bp.post("/api/auth/login")
 def auth_login():
-    """사번 + 비밀번호(4자리) 웹 로그인."""
+    """singleID + 비밀번호(4자리) 웹 로그인."""
     _require_csrf()
     body = request.get_json(force=True, silent=True) or {}
     uid = _normalize_login_id(body.get("user_id"))
@@ -310,8 +310,8 @@ def auth_login():
     if not row or not _PIN_RE.match(pin) or not check_password_hash(row["password_hash"], pin):
         _record_login_fail(uid)
         _auth_audit("login_fail", uid, result="fail")
-        # 사번 존재 여부를 구분하지 않는 단일 메시지 (계정 열거 방지)
-        return jsonify({"error": "사번 또는 비밀번호가 올바르지 않습니다."}), 401
+        # singleID 존재 여부를 구분하지 않는 단일 메시지 (계정 열거 방지)
+        return jsonify({"error": "singleID 또는 비밀번호가 올바르지 않습니다."}), 401
 
     _login_fails.pop(uid, None)
     flask_session.clear()               # session fixation 방지
@@ -401,9 +401,9 @@ def set_favorite():
 
 @report_bp.get("/api/part_ids")
 def part_ids():
-    """product_info.csv 의 part_id + sub_part_id(중괄호) flatten 검색 후보. 업로드 Product 검색용.
+    """product_info.db 의 part_id + sub_part_id(중괄호) flatten 검색 후보. 업로드 Product 검색용.
 
-    파일 없음/파싱 실패는 best-effort 로 빈 리스트 반환(500 안 냄) — product_info 로더가 내부 처리.
+    파일 없음/읽기 실패는 best-effort 로 빈 리스트 반환(500 안 냄) — product_info 로더가 내부 처리.
     """
     return jsonify({"part_ids": list_search_candidates()})
 

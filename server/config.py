@@ -56,7 +56,12 @@ REPORT_EVAL_DB_PATH = _path_env("REPORT_EVAL_DB_PATH", ROOT_DIR / "DB" / "pe" / 
 REPORT_VOC_DB_PATH = _path_env("REPORT_VOC_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" / "voc" / "voc.db")
 
 STDINFO_DB_PATH = _path_env("STDINFO_DB_PATH", ROOT_DIR / "DB" / "INFORMATION" / "stdinfo_20260511.db")
-PRODUCT_INFO_CSV_PATH = _path_env("PRODUCT_INFO_CSV_PATH", ROOT_DIR / "server" / "product_info.csv")
+
+# 기준정보 DB — 원본 CSV 가 DRM(NASCA)으로 암호화돼 서버가 평문으로 못 읽는다(서버는 Excel 을
+# 쓰지 않는다, CLAUDE.md 규칙 #1). Excel 이 설치된 별도 PC 에서 tools/product_info_import 로
+# 만들어 이 경로에 손으로 복사한다. 서버는 읽기 전용으로만 연다 — product_info.py 참조.
+PRODUCT_INFO_DB_PATH = _path_env("PRODUCT_INFO_DB_PATH",
+                                 ROOT_DIR / "DB" / "pe" / "report" / "product_info.db")
 
 REPORT_S3_ENDPOINT   = os.getenv("REPORT_S3_ENDPOINT", "")
 REPORT_S3_BUCKET     = os.getenv("REPORT_S3_BUCKET", "")

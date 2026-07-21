@@ -3,7 +3,7 @@ from .core import get_conn, _now, _row
 from .models import Session
 
 
-# product_info.csv lookup 으로 채우는 세션 기준정보 컬럼(화이트리스트 — 오타/미지 키 차단).
+# product_info.db lookup 으로 채우는 세션 기준정보 컬럼(화이트리스트 — 오타/미지 키 차단).
 _PRODUCT_INFO_COLUMNS = (
     "part_id", "sub_part_id", "product_group", "wf_size", "chip_size_x",
     "chip_size_y", "gross_die", "pkg_type", "e2f_fab_site", "step",

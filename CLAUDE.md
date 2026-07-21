@@ -82,6 +82,8 @@ report_server/
 │                                서버 연결은 web_report/ai_comment.py + eval_export.py 2곳만 → [docs/13](docs/13_eval_analyzer_integration.md)
 ├── d1/                         (외부 담당자·동결) D1 입력 provider 경계 — 검증용(로컬 d1_storage 검색)
 ├── d1_storage/                 (외부 담당자·동결) D1 로컬 검증 스토리지
+├── tools/product_info_import/  기준정보 CSV(DRM) → product_info.db 오프라인 임포터
+│                                (standalone — Excel 있는 별도 PC 에서 실행 후 .db 를 서버로 수동 복사)
 ├── tests/sample_xlsx.py         더미 grids 픽스처 생성기
 ├── DB/pe/report/                런타임 자동 생성 (report.db + backup/ + 문서 스냅샷)
 ├── uploads/                     런타임 (업로드/로컬 폴백/디스크 캐시 루트)
@@ -208,6 +210,10 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 1. 원본 xlsx 는 서버로 전송·저장하지 않는다. 클라이언트가 Excel COM 으로 추출한
    summary/yield/issue_table grid(JSON)와 issue PNG 만 업로드하고, 텍스트는 DB(sheet_data),
    PNG 는 S3(로컬 폴백)에 보관한다. **서버는 openpyxl·Excel 을 쓰지 않는다.**
+   - 기준정보 CSV(DRM/NASCA)도 같은 이유로 서버에서 열지 않는다. Excel 이 있는 별도 PC 에서
+     [tools/product_info_import](tools/product_info_import/README.md) 로 만든
+     `product_info.db` 를 수동 배치하고 서버는 읽기 전용으로만 연다
+     ([server/product_info.py](server/product_info.py), [docs/09 §3](docs/09_db_inventory.md)).
 2. `report_` prefix 없는 새 테이블 만들지 말 것.
 3. analysis_key 산출은 `canonical(sheet_grids) + canonical(meta)` 의 sha256 — 메타 변경 시
    같은 데이터라도 다른 키가 됨. canonical 은 `json.dumps(sort_keys=True)`. password·신원·
@@ -292,6 +298,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | Honey 클라 (자유: honey_ui/honey_main/transport/excel_*) | [client/honey_main.py](client/honey_main.py), 업로드 [transport/uploader.py](client/transport/uploader.py), 추출 [report_flow/upload_prepare.py](client/report_flow/upload_prepare.py) |
 | 외부 담당자 영역 동결 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` · `server/storage_gateway/` → [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |
 | eval_analyzer 연결 (AI Comment / 코멘트 export) | [web_report/ai_comment.py](web_report/ai_comment.py) + [web_report/eval_export.py](web_report/eval_export.py) — eval_engine import 2곳 → [docs/13](docs/13_eval_analyzer_integration.md) |
+| 기준정보(part_ids) 갱신 — DRM CSV → product_info.db | [tools/product_info_import/](tools/product_info_import/README.md) (Excel PC) → [server/product_info.py](server/product_info.py) 가 읽기전용 로드 |
 | 더미 grids 픽스처 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |
 
 ---

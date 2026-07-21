@@ -120,7 +120,7 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         dist_blobs, analysis_key, content_hash, mode, upload_root)
 
     session_dir = Path(upload_root) / "web_report" / analysis_key
-    # 선택된 product(part_id/sub_part_id) → product_info.csv 기준정보 lookup 후 세션에 저장.
+    # 선택된 product(part_id/sub_part_id) → product_info.db 기준정보 lookup 후 세션에 저장.
     # product_info 는 config 급 정적 참조 데이터 로더(server/ sys.path). 기준정보는 위
     # key_meta/analysis_key 산출에 미포함이므로 dedup 키는 불변(규칙 #3).
     from product_info import lookup as _product_info_lookup

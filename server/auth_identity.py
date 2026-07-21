@@ -48,7 +48,7 @@ def _from_honey_ua():
 
 
 def _from_login_session():
-    """웹 로그인 세션 provider — 일반 브라우저가 사번+PIN 으로 로그인한 경우.
+    """웹 로그인 세션 provider — 일반 브라우저가 singleID+PIN 으로 로그인한 경우.
 
     값은 로그인 시점에 이미 정규화되어 저장되므로 그대로 돌려준다."""
     try:

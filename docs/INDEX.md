@@ -60,7 +60,7 @@
 | 05 | **Honey 클라이언트 UI / 워크플로우** | Client | [05_client_ui.md](05_client_ui.md) | [client/honey_main.py](../client/honey_main.py) |
 | 06 | **로컬 분석 엔진** (외부 담당자·동결) | Client | [06_analysis_engine.md](06_analysis_engine.md) | [client/report_generator/](../client/report_generator/) |
 | 07 | **업로드 전송** (xlsx grid) | Client | [07_client_upload_chart.md](07_client_upload_chart.md) | [client/transport/uploader.py](../client/transport/uploader.py) |
-| 09 | **DB 파일 인벤토리** (백업·stdinfo 정책) | Server / DB | [09_db_inventory.md](09_db_inventory.md) | [server/db_backup.py](../server/db_backup.py) |
+| 09 | **DB 파일 인벤토리** (백업·기준정보(product_info) 정책) | Server / DB | [09_db_inventory.md](09_db_inventory.md) | [server/db_backup.py](../server/db_backup.py) |
 | 10 | **web_report 파이프라인** (upload→ingest→저장→로드) | Server | [10_web_report_pipeline.md](10_web_report_pipeline.md) | [server/upload_webreport.py](../server/upload_webreport.py) |
 | 11 | **web_report 탭 계약 & 렌더** | Server | [11_web_report_tabs.md](11_web_report_tabs.md) | [web_report/tabs/](../web_report/tabs/) |
 | 12 | **web_report 캐시 & 컴퓨트** | Server | [12_web_report_cache.md](12_web_report_cache.md) | [web_report/cache.py](../web_report/cache.py) |
@@ -124,7 +124,8 @@
 | 분석 수식(cpk/yield 등) (외부 담당자·동결) | [06](06_analysis_engine.md) | [_builders.py](../client/report_generator/_builders.py) |
 | 생성 xlsx 레이아웃/차트 (외부 담당자·동결) | [06](06_analysis_engine.md) | [xlsx_writer.py](../client/report_generator/xlsx_writer.py) |
 | 업로드 multipart 형식 | [07](07_client_upload_chart.md) | `post_grids()` |
-| DB 파일이 뭐가 있는지 / 백업·stdinfo 정책 | [09](09_db_inventory.md) | [db_backup.py](../server/db_backup.py), [config.py](../server/config.py) |
+| DB 파일이 뭐가 있는지 / 백업 정책 | [09](09_db_inventory.md) | [db_backup.py](../server/db_backup.py), [config.py](../server/config.py) |
+| 기준정보(part_ids/제품 카탈로그) 갱신하려면 | [09 §3](09_db_inventory.md) | [tools/product_info_import/](../tools/product_info_import/README.md), [server/product_info.py](../server/product_info.py) |
 
 ## 3.1 외부 담당자 영역 (동결) / 진입점
 

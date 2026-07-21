@@ -43,7 +43,7 @@ function renderMeta(session) {
     `<span class="meta-inline"><span class="mk">Revision</span>${esc(session.revision || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Process</span>${esc(session.process || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">LOT</span>${esc(session.lot_id || "-")}</span>`,
-    // product_info.csv 기준정보 — 업로드 시 선택 product 로 서버 lookup 되어 세션에 저장됨.
+    // product_info.db 기준정보 — 업로드 시 선택 product 로 서버 lookup 되어 세션에 저장됨.
     `<span class="meta-inline"><span class="mk">WF Size</span>${esc(session.wf_size || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Gross Die</span>${esc(session.gross_die || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">PKG</span>${esc(session.pkg_type || "-")}</span>`,
