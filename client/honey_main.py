@@ -53,8 +53,7 @@ from report_flow import (
     prepare_report_webreport as _prepare_report_webreport,
     suggest_base_name as _suggest_base_name,
 )
-from web_report.honeyform import (
-    dedupe_item_columns, encode_honeyform_parquet, read_honeyform_file)
+from web_report.honeyform import dedupe_item_columns, encode_honeyform_parquet
 import app_settings
 import chart_colors
 import client_identity
@@ -1629,15 +1628,20 @@ class HoneyMainWindow(QMainWindow):
         names = work_group.names()
         for idx, name in enumerate(names):
             md = work_group.mass_data_map[name]
-            source_path = getattr(getattr(md, "report_meta", None), "source_path", "") or ""
-            df = read_honeyform_file(source_path) if source_path else (
-                md.to_df() if hasattr(md, "to_df") else md.df)
+            # honey_parse 산출물(7-meta honeyform)이 곧 parquet 소스다. 원본 파일을 디스크에서
+            # 다시 읽지 않는다 — 여러 input 의 병합이 honey_parse 안에서 일어나므로, 원본을
+            # 재-read 하면 병합 결과를 버리고 파일 1개만 올리게 된다.
+            df = md.to_df() if hasattr(md, "to_df") else md.df
             file_name = self._source_file_name(md, name)
             # encode 안에서도 같은 개명이 돌지만(멱등), 무엇이 바뀌었는지 사용자에게 알리려면
             # 여기서 미리 호출해 목록을 받아둬야 한다.
             df, renames = dedupe_item_columns(df)
             self._webreport_dup_renames += [(file_name, old, new) for old, new in renames]
-            data = encode_honeyform_parquet(df)
+            try:
+                data = encode_honeyform_parquet(df)
+            except ValueError as exc:
+                # 어느 source 가 걸렸는지 없으면 사용자가 원인 파일을 못 찾는다.
+                raise ValueError(f"[{file_name}] honeyform 형식이 맞지 않습니다.\n{exc}") from exc
             items.append({
                 "index": idx,
                 "name": name,

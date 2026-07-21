@@ -3,12 +3,18 @@
 > CSV/xlsx 측정 데이터 → `df_honey` 정규화 → 통계 분석 → **xlwings 단일 Excel COM 세션**으로
 > xlsx 리포트 생성. 호출은 [05 UI](05_client_ui.md), 업로드는 [07](07_client_upload_chart.md).
 > **`report_generator`·`honey_parse` 는 외부 프로젝트 — 무수정이 원칙**(수정 불가피 시 사전
-> 승인, [../CLAUDE.md](../CLAUDE.md) §5). df_honey 포맷·dtype·ReportMeta 계약의 정본은
-> [client/report_generator/README.md](../client/report_generator/README.md).
+> 승인, [../CLAUDE.md](../CLAUDE.md) §5).
+>
+> ⚠️ **입력 계약은 7-meta honeyform 이다 (2026-07-21 확정).** `honey_parse.file_to_df` 가
+> 돌려주는 df 는 **7-meta honeyform**(`SERIAL,SHOT,DUT,XPOS,YPOS,BIN,FAILTNO` + `TSEQ~LOLIM`
+> 6행)이며, 반환 df 개수는 source 개수와 같다(병합은 honey_parse 안에서 일어난다).
+> 아래 "df_honey 포맷" 절과 [report_generator/README.md](../client/report_generator/README.md)·
+> [constants.py](../client/report_generator/constants.py) 의 **5-meta 서술은 폐기된 구형 계약**이다 —
+> 외부 담당자 소유라 이 저장소에서 고치지 않고 남겨둔다. 상세는 아래 "알려진 격차".
 
 ## 계층
 ```
-csvfile_to_df ──정규화──► df_honey (단일 DataFrame 보유)
+honey_parse.file_to_df ──7-meta honeyform──► df_honey (단일 DataFrame 보유)
                                │
                          df_honey_group
                                │ select/filter/split/rename
@@ -24,7 +30,7 @@ csvfile_to_df ──정규화──► df_honey (단일 DataFrame 보유)
 | 파일 | 책임 |
 |------|------|
 | [__init__.py](../client/report_generator/__init__.py) | 공개 진입점 `build_report` / `analyze` — CSV 경로 목록을 분석하거나 `out_path` 있으면 xlsx 까지 생성. |
-| [constants.py](../client/report_generator/constants.py) | 5-meta df_honey 포맷 상수. 헤더는 `df.columns` 에만 있고 `row0=Units`, `DATA_START_ROW=5`, `PASS_BIN="1"`. |
+| [constants.py](../client/report_generator/constants.py) | **구형 5-meta 상수** (`META_COLUMNS` 5개, `DATA_START_ROW=5`, `PASS_BIN="1"`). 현행 입력은 7-meta 라 어긋나 있다 — "알려진 격차" 참조. |
 | [csv_loader.py](../client/report_generator/csv_loader.py) | raw CSV/xlsx 로드 → standard/test_rp 감지 → 헤더 중복 row 제거 → 정규화 DataFrame. |
 | [df_honey.py](../client/report_generator/df_honey.py) | 단일 mass_data. `subjects/units/limits/meta/scores/numeric_scores/fail_mask` 를 cached property 로 파생. |
 | [df_honey_group.py](../client/report_generator/df_honey_group.py) | 다중 source 묶음. source 이름 dedup/rename, item select, Bin1 filter, DUT split, diff split, raw/distribution frame 제공. |
@@ -34,16 +40,47 @@ csvfile_to_df ──정규화──► df_honey (단일 DataFrame 보유)
 | [xlsx_writer.py](../client/report_generator/xlsx_writer.py) | 단일 `xw.App` 세션에서 raw/table/distribution/PNG attach/save 수행. openpyxl fallback 없음. |
 | [profile_run.py](../client/profile_run.py) | PyQt 없이 parse/analyze/xlsx 구간 측정 JSON 저장/비교. |
 
-## df_honey 포맷 (요약 — 정본은 report_generator/README)
-`csvfile_to_df(path)` 반환 df: `columns: DUT, XCoord, YCoord, Bin, Serial, item…` /
-`row0=Units` / `row1~4=Lower/Upper Limit(중복)` / `row5+=DUT 측정 데이터`. 전체 dtype 계약·
-ReportMeta 는 [client/report_generator/README.md](../client/report_generator/README.md) 참조.
+## 입력 포맷 — 7-meta honeyform (현행 계약)
+
+`honey_parse.file_to_df(path, product_type=None, all_paths=None)` 반환 df 는
+[web_report/honeyform.py](../web_report/honeyform.py) 의 **7-meta honeyform** 과 같은 규격이다:
+
+```
+columns : SERIAL, SHOT, DUT, XPOS, YPOS, BIN, FAILTNO, item…
+row 0~5 : TSEQ, TNO, STEP, UNIT, HILIM, LOLIM
+row 6+  : die 측정 데이터
+```
+
+- 반환 df **개수 = source 개수**. 여러 input 파일의 병합은 honey_parse 안에서 일어나며,
+  호출부는 병합 결과를 그대로 1 source 로 받는다.
+- `file_to_df.py` 는 실제 파서를 **외부 `honey_parse.file_to_df`** 에서 import 한다.
+  없으면 호출 시 `ImportError`.
+- [csv_loader.py](../client/report_generator/csv_loader.py) `file_to_df` 는 `_ensure_canonical`
+  만 통과시킨다(row0 이 헤더 중복이면 1행 드롭). **`normalize_raw`(5-meta 변환)는 호출하지
+  않는다** — 그건 더미 honey_parse 안에서만 불린다.
+- 이 산출물(`md.df`)이 **곧 web_report parquet 소스**다. 원본 파일을 디스크에서 다시 읽지
+  않는다 → [10](10_web_report_pipeline.md).
+
+### 구형 5-meta (폐기)
+`columns: DUT, XCoord, YCoord, Bin, Serial, item…` / `row0=Units` / `row1~4=Lower/Upper
+Limit(중복)` / `row5+=데이터`. 더 이상 쓰지 않는 계약이다.
+[report_generator/README.md](../client/report_generator/README.md) 와 `constants.py` 가 아직
+이 포맷을 정본이라 서술하지만 **외부 담당자 소유라 이 저장소에서 고치지 않는다.**
+
+### ⚠️ 알려진 격차 (미해결)
+`report_generator` 의 계산부는 여전히 `N_META_COLUMNS=5` / `DATA_START_ROW=5` 를 쓴다.
+7-meta 프레임에 이를 적용하면 앞 5칸(`SERIAL,SHOT,DUT,XPOS,YPOS`)을 메타로 보고
+**`BIN`·`FAILTNO` 를 측정 항목으로 오인**하며 데이터 시작행도 1칸 밀린다 → Excel 리포트의
+yield/cpk/issue table 이 잘못된 컬럼 위에서 계산된다. **외부 담당자의 최신 사본을 받아야
+해소된다** (이 저장소에서 재작성 금지). web_report(parquet) 경로는 7-meta 를 직접 다루므로
+영향받지 않는다.
+
+또한 `client/honey_parse/` 더미 폴백은 아직 5-meta 를 반환하므로, 실제 honey_parse 가 없는
+**개발 PC 에서는 Web Report 업로드가 실패하는 것이 정상**이다.
 
 중요 규칙:
-- 헤더명은 `df.columns` 로만 존재한다. row0 에 `DUT/XCoord/...` 헤더를 다시 남기면 units/limit/data 인덱스가 모두 밀린다.
+- 헤더명은 `df.columns` 로만 존재한다. row0 에 헤더를 다시 남기면 메타 행 인덱스가 모두 밀린다.
 - `df_honey.numeric_frame()` 은 `numeric_scores` 를 subject 이름 컬럼으로 바꾼 DataFrame 이며, distribution all-DUT ECDF 작성에 사용된다.
-- `file_to_df.py` 는 실제 파서를 **외부 `honey_parse.file_to_df`** 에서 import 한다 (현재
-  `client/honey_parse/` 는 더미 폴백). 없으면 호출 시 `ImportError`.
 
 ## df_yield 포맷
 [file_to_df.py](../client/report_generator/file_to_df.py) 가 반환하는 `df_yield` 는

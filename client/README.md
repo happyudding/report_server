@@ -77,7 +77,9 @@ client/
 ├── report_flow/           업로드 전처리
 │   └── upload_prepare.py  Excel COM 으로 시트 grid + issue image 추출
 ├── report_generator/      (외부 담당자·동결) 로컬 분석 엔진 (CSV→df_honey→xlsx) — README 별도
-├── honey_parse/           (외부 담당자·동결) file_to_df 파서 (현재 더미 폴백)
+├── honey_parse/           (외부 담당자·동결) file_to_df 파서 — 반환 df = **7-meta honeyform**,
+│                           df 개수 = source 개수(병합은 파서 내부). 현재 더미 폴백은 구형
+│                           5-meta 라 개발 PC Web Report 업로드는 실패가 정상 (→ docs/06)
 ├── map_report/            (사전 승인·신규) 웨이퍼 bin map 렌더 + xlsx 부착 → docs/14
 ├── excel_download/ · excel_edit/   Excel COM 헬퍼
 └── (외부 담당자·동결) ../d1/   D1 입력 provider — client 의 sibling(루트), 검증용

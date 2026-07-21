@@ -21,11 +21,12 @@ let cdfAxisOverride = null;         // null=자동(autorange). 적용 시 {min, 
 let histAxisOverride = null;        // 히스토그램 x축 옵션(CDF 와 독립). 항목 이동 시 초기화.
 // 축옵션 바를 차트별로 굴리기 위한 디스패치 — 바 요소 id, 라벨, override 접근자, 재렌더 함수.
 // CDF 는 기존 동작 그대로이고 hist 만 추가된다. (y축이 필요해지면 axis 필드를 얹으면 된다.)
+// 바가 각 차트 블록 안(차트 바로 아래)에 있어 라벨은 "x축" 만으로 어느 차트인지 자명하다.
 const IDET_AXIS = {
-  cdf:  { bar: "cdfAxisBar",  label: "CDF x축",
+  cdf:  { bar: "cdfAxisBar",  label: "x축",
           get: () => cdfAxisOverride,  set: v => { cdfAxisOverride = v; },
           render: () => { if (_itemDetailData) distRenderCdf(_itemDetailData); } },
-  hist: { bar: "histAxisBar", label: "히스토그램 x축",
+  hist: { bar: "histAxisBar", label: "x축",
           get: () => histAxisOverride, set: v => { histAxisOverride = v; },
           render: () => { if (_itemDetailData) distRenderHist(_itemDetailData); } },
 };
@@ -158,12 +159,11 @@ function renderItemDetail(data) {
       </span>
     </div>
     <div id="cdfEditBar" class="cdf-editbar"></div>
-    <div id="cdfAxisBar" class="cdf-axisbar"></div>
-    <div id="histAxisBar" class="cdf-axisbar"></div>
     <div id="chartNoteBar"></div>
     ${idetLegendHtml(data)}
     <div class="idet-charts">
       <div class="idet-chart-block"><div class="dist-chart-cap">누적분포 CDF</div><div id="distCdf" class="dist-chart"></div>
+        <div id="cdfAxisBar" class="cdf-axisbar"></div>
         <div class="idet-chart-comment" id="cdfCommentView"></div></div>
       <div class="idet-chart-block">
         <div class="dist-chart-cap idet-hist-cap">
@@ -175,6 +175,7 @@ function renderItemDetail(data) {
         </div>
         <div id="distHist" class="dist-chart"${idetHistMode === "report" ? ' style="display:none"' : ""}></div>
         <div id="distNormal" class="dist-chart"${idetHistMode === "analysis" ? ' style="display:none"' : ""}></div>
+        <div id="histAxisBar" class="cdf-axisbar"></div>
         <div class="idet-chart-comment" id="histCommentView"></div>
       </div>
     </div>

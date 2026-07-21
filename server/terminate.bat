@@ -74,7 +74,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$pids = @(Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique); " ^
   "if ($pids.Count -eq 0) { Write-Host '[terminate] No LISTENING process on port %PORT%.'; exit 1 }; " ^
   "Write-Host ('[terminate] LISTENING PID: ' + ($pids -join ', ')); exit 0"
-if errorlevel 1 goto :done
+rem 리스너가 없어도 :kill 로 간다 — 과거 재기동에서 남은 고아 워커 회수는 해야 한다.
+if errorlevel 1 goto :kill
 
 rem ---------------------------------------------------------------------------
 rem 3) graceful drain
@@ -100,18 +101,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 
 rem ---------------------------------------------------------------------------
 rem 4) 종료 + 포트 해제 확인
+rem    서버 프로세스 하나만 죽이면 안 된다 — web_report 컴퓨트 워커(ProcessPoolExecutor,
+rem    기본 2개)는 포트를 LISTEN 하지 않아 고아로 남고, 워커당 tables 캐시가 최대 4GB 다.
+rem    실제 종료 로직은 watchdog.ps1 과 공유한다 (kill_server_tree.ps1 — 중복 방지).
 rem ---------------------------------------------------------------------------
+:kill
 echo.
 echo [terminate] Stopping server on port %PORT% ...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$pids = @(Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique); " ^
-  "if ($pids.Count -eq 0) { Write-Host '[terminate] 이미 종료됨.'; exit 0 }; " ^
-  "foreach ($procId in $pids) { Write-Host ('[terminate] Killing PID ' + $procId); Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue }; " ^
-  "for ($i = 0; $i -lt 40; $i++) { " ^
-  "  if (-not (Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue)) { Write-Host '[terminate] Done. 포트 해제 확인.'; exit 0 }; " ^
-  "  Start-Sleep -Milliseconds 250 " ^
-  "}; " ^
-  "Write-Host '[terminate] WARNING: 포트가 아직 LISTEN 상태입니다. 남은 프로세스를 확인하세요.'; exit 1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%kill_server_tree.ps1" -Port %PORT% -Tag terminate
 
 :done
 endlocal

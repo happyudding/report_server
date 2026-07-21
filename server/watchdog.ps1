@@ -85,10 +85,20 @@ function Test-Healthz {
 }
 
 function Restart-Server([string]$reason) {
-    # 기존 리스너 강제 종료 (terminate.bat 준용 — healthz 무응답 hang 프로세스 정리)
-    $pids = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
-              Select-Object -ExpandProperty OwningProcess -Unique)
-    foreach ($procId in $pids) { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue }
+    # 기존 리스너 + 컴퓨트 워커 강제 종료 (terminate.bat 과 kill_server_tree.ps1 을 공유).
+    # 리스너만 죽이면 web_report 컴퓨트 워커(포트를 LISTEN 하지 않는 별도 python.exe)가
+    # 재기동마다 2개씩 고아로 쌓인다. 워커당 tables 캐시가 최대 4GB 라 메모리를 잠식하고,
+    # 그 지연이 다시 healthz 오판 -> 재기동을 부르는 악순환이 된다.
+    $killScript = Join-Path $serverDir 'kill_server_tree.ps1'
+    if (Test-Path $killScript) {
+        $killLog = ((& $killScript -Port $Port -Tag 'watchdog' 2>&1 | Out-String).Trim() -replace '\s*\r?\n\s*', ' | ')
+    } else {
+        # 배포 누락 폴백 — 워커는 못 잡아도 리스너는 반드시 정리해야 포트 충돌을 피한다.
+        $pids = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+                  Select-Object -ExpandProperty OwningProcess -Unique)
+        foreach ($procId in $pids) { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue }
+        $killLog = "WARNING: kill_server_tree.ps1 없음 - 리스너만 종료(워커 고아 가능)"
+    }
 
     if (-not (Test-Path $python)) {
         Write-Event 'error' $reason ".venv python 없음: $python — start.bat 로 venv 를 먼저 생성할 것"
@@ -107,9 +117,9 @@ function Restart-Server([string]$reason) {
         Start-Sleep -Milliseconds 500
     }
     if (Test-Listening) {
-        Write-Event 'restart' $reason '재기동 성공 (listening)'
+        Write-Event 'restart' $reason "재기동 성공 (listening). $killLog"
     } else {
-        Write-Event 'restart_fail' $reason '재기동 후 60초 내 미리스닝 — server\log\server_*.txt 확인 필요'
+        Write-Event 'restart_fail' $reason "재기동 후 60초 내 미리스닝 — server\log\server_*.txt 확인 필요. $killLog"
     }
     Set-FailCount 0
 }

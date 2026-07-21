@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <title>LSI PTE REPORT SERVER</title>
 <script src="/pe/report/static/webreport/error_beacon.js"></script>
-<script src="/pe/report/static/webreport/honey_hint.js"></script>
 <script>
 /* 테마 부트스트랩: 첫 페인트 전에 저장된 다크 테마 적용 (FOUC 방지).
    localStorage "report_theme" 는 검색결과/세션 상세 페이지가 공유한다. */
@@ -416,7 +415,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
   <button class="pt-btn" data-pt="SECURITY">SECURITY</button>
   <button class="pt-btn" data-pt="TCON">TCON</button>
   <div class="spacer"></div>
-  <button class="user-chip" id="userChip" title="사번 + 비밀번호로 로그인">👤 로그인</button>
+  <button class="user-chip" id="userChip" title="single ID + 비밀번호로 로그인">👤 로그인</button>
   <button class="user-chip" id="pwKeyBtn" style="display:none;" title="웹 로그인 비밀번호 설정">🔑</button>
   <button class="user-chip" id="logoutBtn" style="display:none;">로그아웃</button>
 </div>
@@ -488,15 +487,15 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
          144) / Family 11자 Contactless(91) 수용이 목표. Mode 는 원형 배지(22)보다 헤더
          글자 "Mode"(43) 가 넓어 그쪽이 하한이다. -->
     <colgroup>
-      <col style="width:10.8%">   <!-- Product Type : 별+배지 -->
+      <col style="width:7%">      <!-- Product Type : 별+2글자 배지 -->
       <col style="width:4.2%">    <!-- Mode         : 원형 배지 -->
       <col style="width:8%">      <!-- Family -->
       <col style="width:11.5%">   <!-- Product -->
       <col style="width:7.7%">    <!-- Process -->
       <col style="width:7.7%">    <!-- LOT ID -->
-      <col style="width:23.7%">   <!-- File name -->
-      <col style="width:11.5%">   <!-- Owner -->
-      <col style="width:8.9%">    <!-- Date -->
+      <col style="width:32.9%">   <!-- File name : 위 3열에서 아낀 폭을 모두 흡수 -->
+      <col style="width:8%">      <!-- Owner -->
+      <col style="width:7%">      <!-- Date -->
       <col style="width:6%">      <!-- 액션(자물쇠/삭제) -->
     </colgroup>
     <thead>
@@ -527,20 +526,23 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 <div class="modal-overlay" id="idModal">
   <div class="modal-box">
     <p class="modal-title">로그인</p>
-    <div style="display:flex; align-items:center; gap:0;">
-      <span style="flex:0 0 auto; padding:0 8px; color:#888; font-weight:600;
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span style="flex:0 0 auto; color:#888; font-weight:600;
                    white-space:nowrap;">SECDS\</span>
       <input type="text" class="filter-input" id="idModalInput"
-             placeholder="사번" autocomplete="username" style="flex:1 1 auto; min-width:0;">
+             placeholder="single ID" autocomplete="username" style="flex:1 1 auto; min-width:0;">
+      <input type="password" class="filter-input" id="pwModalInput" inputmode="numeric"
+             maxlength="4" autocomplete="current-password" placeholder="PW"
+             style="flex:0 0 76px; width:76px; padding:0 6px; letter-spacing:3px; text-align:center;">
     </div>
-    <input type="password" class="filter-input" id="pwModalInput" inputmode="numeric"
-           maxlength="4" autocomplete="current-password" placeholder="비밀번호 (숫자 4자리)"
-           style="width:100%; margin-top:8px; letter-spacing:4px;">
-    <p style="font-size:17px; color:#888; margin:8px 0 0;">
-      비밀번호는 <b>Honey 앱</b>에서 설정합니다 (본인 확인 목적).
-      Honey 실행 → 우측 상단 <b>🔑 비밀번호 설정</b>.
+    <p style="font-size:14px; color:#888; margin:10px 0 0; line-height:1.55;">
+      계정생성 : 최초 접속은 Honey 앱을 다운 받아 진행해주세요<br>
+      web 환경에서는 수정이 제한됩니다. (조회전용)<br>
+      session 수정은 Honey 앱을 통해 접속해주세요
     </p>
     <div class="modal-actions">
+      <a class="modal-btn" href="/honey/download" style="margin-right:auto; text-decoration:none;
+         color:#16a34a; border-color:#16a34a;">⬇ Honey 다운로드</a>
       <button class="modal-btn" id="idModalCancel">취소</button>
       <button class="modal-btn" id="idModalSave"
               style="background:#4a90e2; color:#fff; border-color:#4a90e2;">로그인</button>
@@ -624,10 +626,13 @@ function esc(v) {
   }[c]));
 }
 
+// 검색결과 배지는 2글자 약어로 표기해 열 폭을 아낀다(풀네임은 title 툴팁).
+const PT_ABBR = { PMIC: "PM", MDDI: "MD", PDDI: "PD", SECURITY: "SE", TCON: "TC" };
+
 function productTypeBadge(pt) {
   const value = String(pt || "").trim();
-  const cls = ["MDDI", "PDDI", "PMIC", "SECURITY", "TCON"].includes(value) ? value : "default";
-  return `<span class="pt-badge ${cls}">${esc(value || "-")}</span>`;
+  const cls = PT_ABBR[value] ? value : "default";
+  return `<span class="pt-badge ${cls}" title="${esc(value)}">${esc(PT_ABBR[value] || value || "-")}</span>`;
 }
 
 // 모드 → 원형 배지에 넣을 머리글자. Commonality 는 C 가 Compare 와 겹쳐 M 을 쓴다.
@@ -688,7 +693,7 @@ function updateUserChip() {
       : `${_userId} 계정으로 로그인됨`;
   } else {
     chip.textContent = "👤 로그인";
-    chip.title = "사번 + 비밀번호로 로그인 (비밀번호는 Honey 앱에서 설정)";
+    chip.title = "single ID + 비밀번호로 로그인 (비밀번호는 Honey 앱에서 설정)";
   }
 
   // 🔑 웹 로그인 비밀번호 설정/변경 — Honey 접속에서만 의미가 있다(서버도 재검증).
@@ -726,11 +731,11 @@ function openIdModal() {
 }
 
 async function doLogin() {
-  // 폼은 사번만 받는다 (SECDS\ 는 고정 라벨). 붙여넣기 대비로 접두는 떼어낸다.
+  // 폼은 single ID 만 받는다 (SECDS\ 는 고정 라벨). 붙여넣기 대비로 접두는 떼어낸다.
   const id = (document.getElementById("idModalInput").value || "")
                .split("\\").pop().trim().toLowerCase();
   const pw = document.getElementById("pwModalInput").value || "";
-  if (!/^[^\s\\/]{1,64}$/.test(id)) { showToast("사번을 공백 없이 입력하세요."); return; }
+  if (!/^[^\s\\/]{1,64}$/.test(id)) { showToast("single ID 를 공백 없이 입력하세요."); return; }
   if (!/^\d{4}$/.test(pw)) { showToast("비밀번호는 숫자 4자리입니다."); return; }
   try {
     const res = await fetch("/pe/report/api/auth/login", {
@@ -1243,7 +1248,6 @@ readUrl();                        // URL query string 에서 필터/정렬/Produ
 (async () => {
   await loadAuth();               // 로그인 상태 먼저 — 즐겨찾기/삭제버튼 렌더에 필요
   updateUserChip();
-  HoneyHint.init(_authSource, ".top-bar", "user-chip");   // Honey 밖에서만 노출
 
   // Honey 최초 접속(웹 비밀번호 미설정)이면 설정 창을 한 번 띄운다. '나중에' 를 누르면
   // 계정별로 다시 띄우지 않는다 — 이후 진입점은 상시 노출된 🔑 버튼.

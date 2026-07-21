@@ -906,6 +906,13 @@ html[data-theme="dark"] .mention-opt:hover { background: #26303f; color: #7fb3ef
 .cdf-axisbar .cdf-ax-grp { display: inline-flex; align-items: center; gap: 4px; color: #6b7280; }
 .cdf-axisbar .cdf-ax-in { width: 72px; padding: 3px 6px; border: 1px solid #d0d5dd; border-radius: 5px; font-size: 12px; }
 .cdf-axisbar .cdf-ax-msg { color: #d14343; margin-left: 2px; }
+/* 축옵션 바는 각 차트 블록 안(차트 바로 아래)에 있다 — 반반 그리드 한 칸을 넘지 않게 압축.
+   min-width:0 이 없으면 바의 min-content 폭이 1fr 트랙을 밀어 그리드가 넘친다. */
+.idet-charts > * { min-width: 0; }
+.idet-chart-block .cdf-axisbar { margin: 6px 0 0; gap: 6px; }
+.idet-chart-block .cdf-axisbar .cdf-ax-in { width: 58px; }
+/* 차트 블록은 다크에서도 흰 카드를 유지하므로 라벨 색을 명시한다(상속하면 다크에서 흰 글자) */
+.idet-chart-block .cdf-axisbar .cdf-eb-label { color: #6b7280; }
 .idet-fail-chk-col { width: 34px; text-align: center; }
 /* item_detail 하단: Map Analysis 선택 좌표의 이 항목 값 표 */
 .idet-chipval-table { border-collapse: collapse; font-size: 12px; margin: 4px 0 14px; }

@@ -137,7 +137,7 @@
 | D1 입력 (검증용) | [d1/](../d1/) `get_provider`/`list_files`/`D1BrowserDialog` | `HONEY_D1_STORAGE` 또는 `d1_storage/` 로컬 검색 (Honey.exe 호환성 테스트) | Honey UI 는 provider 결과 경로 목록만 사용 |
 | 서버 저장소/S3 (검증용) | [storage_gateway/](../server/storage_gateway/) ([README](../server/storage_gateway/README.md)) | 내부 `_s3` 어댑터 + 로컬 fallback (미설정 시 로컬) | `/pe/report/...` URL·multipart·응답 JSON·저장 위치 기록 계약 |
 | 리포트 생성 (무수정) | [client/report_generator/](../client/report_generator/) ([README](../client/report_generator/README.md)) | 분석/xlsx 생성 | 분석 수식·xlsx 레이아웃·DB 스키마 불변 |
-| 입력 파서 (무수정) | [client/honey_parse/](../client/honey_parse/) `file_to_df` | 현재 더미 폴백 (실제 프로젝트로 교체 시 덮어씀) | `(df, df_yield)` 반환 계약 |
+| 입력 파서 (무수정) | [client/honey_parse/](../client/honey_parse/) `file_to_df` | 현재 더미 폴백 (실제 프로젝트로 교체 시 덮어씀) — **더미는 아직 구형 5-meta 반환** | `(df, df_yield)` 반환 계약. **df = 7-meta honeyform**, 반환 df 개수 = source 개수(병합은 파서 내부) → [06](06_analysis_engine.md) |
 
 ## 3.2 컴포넌트별 README (설정·실행·환경변수)
 

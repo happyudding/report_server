@@ -57,6 +57,6 @@ SERVER_BASE_URL = (
     or "http://12.81.220.117:8080"
 )
 
-CURRENT_VERSION = "3.0.1"
+CURRENT_VERSION = "3.0.2"
 
 REQUEST_TIMEOUT_SEC = (10, 300)  # (connect_timeout, read_timeout)

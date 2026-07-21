@@ -101,7 +101,9 @@ report_server/
    meta)` → analysis_key → 세션 생성 → grid 파싱 → yield_rows·sheet_data DB 저장, issue PNG
    는 S3(로컬 폴백). **원본 xlsx 는 저장하지 않는다.** 상세 [docs/01](docs/01_server_upload.md).
    - **web_report 흐름**: honeyform parquet + manifest → `POST /pe/report/upload_webreport`.
-     상세 [docs/10](docs/10_web_report_pipeline.md).
+     parquet 소스는 **`honey_parse.file_to_df` 가 돌려준 7-meta honeyform(`md.df`) 그대로**다 —
+     원본 입력 파일을 디스크에서 다시 읽지 않는다(병합이 honey_parse 안에서 일어나므로 원본을
+     재-read 하면 병합 결과를 버린다). 상세 [docs/10](docs/10_web_report_pipeline.md).
 
 **검색결과 조회 / 편집**
 - `GET /pe/report/` → 검색결과 페이지, `GET /pe/report/api/history?product_type=MDDI&...` → 세션 목록
@@ -255,6 +257,16 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
    **2곳만** 허용(양방향 그 외 import 금지). 서버의 evaluate 호출은 persist=False(운영
    eval.db 무기록) — 코멘트 export 는 report_server 소유 별도 파일 `REPORT_EVAL_DB_PATH`
    에만 쓴다. 규약 전문 [docs/13](docs/13_eval_analyzer_integration.md).
+9. **입력 계약은 7-meta honeyform 이다 (2026-07-21 확정).** `honey_parse.file_to_df` 반환 df =
+   `SERIAL,SHOT,DUT,XPOS,YPOS,BIN,FAILTNO` + `TSEQ~LOLIM` 6행, 반환 df 개수 = source 개수
+   (병합은 honey_parse 내부에서). **이 산출물(`md.df`)이 곧 web_report parquet 소스**이며,
+   원본 입력 파일을 다시 읽어 검증하지 말 것 — 병합 결과를 버리게 된다.
+   - 구 5-meta df_honey(`DUT,XCoord,YCoord,Bin,Serial`)는 **폐기된 계약**이다.
+   - ⚠️ **알려진 격차**: `client/report_generator/`(constants.py `DATA_START_ROW=5` 등)는 아직
+     5-meta 를 가정한다 → 7-meta 프레임에서 `BIN`·`FAILTNO` 를 측정 항목으로 오인한다.
+     외부 담당자 소유라 **이 저장소에서 고치지 않는다**(최신 사본 수령으로 해소).
+     `client/honey_parse/` 더미 폴백도 5-meta 라 **개발 PC 로컬 Web Report 업로드는 실패가
+     정상**이다. 상세 [docs/06](docs/06_analysis_engine.md).
 
 ---
 

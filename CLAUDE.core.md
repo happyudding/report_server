@@ -36,7 +36,7 @@
 | D1 입력 (검증용) | `d1/` `get_provider`/`list_files`/`D1BrowserDialog` | Honey UI 는 provider 결과 경로 목록만 사용 |
 | 서버 저장소/S3 (검증용) | `server/storage_gateway/` ([README](server/storage_gateway/README.md)) | `/pe/report/...` URL · multipart · 응답 JSON · 저장 위치 기록 계약. 이 프로젝트가 추가한 보존 함수(`save_webreport_sources`/`save_webreport_manifest`)와 S3 prefix env 유지 |
 | 리포트 생성 (무수정) | `client/report_generator/` ([README](client/report_generator/README.md)) | 분석 수식 · xlsx 레이아웃 · DB 스키마 불변 |
-| 입력 파서 (무수정) | `client/honey_parse/` `file_to_df` | `(df, df_yield)` 반환 계약 |
+| 입력 파서 (무수정) | `client/honey_parse/` `file_to_df` | `(df, df_yield)` 반환 계약. **df = 7-meta honeyform** (`SERIAL,SHOT,DUT,XPOS,YPOS,BIN,FAILTNO` + `TSEQ~LOLIM` 6행), 반환 df 개수 = source 개수(병합은 파서 내부에서) |
 
 ---
 

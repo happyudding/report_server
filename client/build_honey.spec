@@ -37,6 +37,10 @@ a = Analysis(
                        (_os.path.join(_repo_root, 'd1', 'd1_browser.ui'), 'd1'),
                        ('file_order.ui', '.'),
                        ('report_settings.ui', '.'),
+                       # honey_parse 패키지 내부 .ui — 런타임에 패키지 경로 기준으로 로드하므로
+                       # 대상 폴더를 소스와 같은 트리로 유지한다.
+                       ('honey_parse/mddi/datalog_parser/ui/optional_sheets_dialog.ui',
+                        'honey_parse/mddi/datalog_parser/ui'),
                        (_os.path.join(_repo_root, 'Honey_img.png'), '.')],  # 창/작업표시줄 아이콘
     hiddenimports=(
         ['PyQt6.sip', 'PyQt6.uic', 'win32com', 'win32com.client', 'pythoncom',

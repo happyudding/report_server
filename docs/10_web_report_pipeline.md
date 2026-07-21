@@ -39,6 +39,20 @@ DataFrame 레이아웃 (`honeyform.py`, `META_COLUMNS`/`META_ROW_LABELS`):
   값 검증은 [rawvalues.py](../web_report/rawvalues.py) 가 편집 경로에서만 수행한다
   (→ [11 · Raw Data 값 검증](11_web_report_tabs.md)). ingest 는 종전대로 값을 검증하지 않는다.
 
+## parquet 소스는 어디서 오나 (클라 측)
+[client/honey_main.py](../client/honey_main.py) `_build_webreport_parquets` 가
+`work_group.names()` 를 순회하며 **source 1개당 parquet 1개**를 만든다. 각 source 의 df 는
+**`honey_parse.file_to_df` 가 돌려준 7-meta honeyform(`md.df`) 그대로**다 (→ [06](06_analysis_engine.md)).
+
+- **원본 입력 파일을 디스크에서 다시 읽지 않는다.** 여러 input 의 병합은 honey_parse 안에서
+  일어나므로, 원본을 재-read 하면 병합 결과를 버리고 파일 1개만 올리게 된다.
+  (2026-07-21 이전에는 `read_honeyform_file(source_path)` 로 원본을 재-read 했고, 그래서 raw
+  입력 파일이 honeyform 규격으로 검증되어 "컬럼 부족/메타 행 레이블" 에러가 났다.)
+- 검증은 `encode_honeyform_parquet` 안의 `validate_honeyform_df` 1회 — 즉 **parquet 으로
+  넘어가는 순간의 honeyform** 이 검증 대상이다. 실패하면 `[파일명]` 이 앞에 붙어 표시된다.
+- ⚠️ `client/honey_parse/` 더미 폴백은 아직 구형 5-meta 를 반환하므로 **개발 PC 에서는 이
+  단계가 실패하는 것이 정상**이다(실제 honey_parse 가 붙은 운영은 정상).
+
 ## 업로드 흐름 (`ingest_webreport()`)
 1. **정규화** — `validate_meta`(product_type/product/lot_id/revision/process/edm_link/password/
    file_name), `validate_mode`(Normal/Compare/DUT/Commonality), `client_identity(manifest)` →
