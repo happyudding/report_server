@@ -36,10 +36,12 @@ function drawCompareCommonMap(cm, sources) {
 
   const dies = (cm.dies || []).map(d => ({ x: d.x, y: d.y, bin: _cmpClsLabel(d.cls, sources) }));
   const m = { x_min: cm.x_min, x_max: cm.x_max, y_min: cm.y_min, y_max: cm.y_max, dies };
-  const built = waferHeatmap(m, { colorMap, binOrder,
-    hovertemplate: "(%{x}, %{y})<br>%{customdata}<extra></extra>" });
+  // compact 격자로 그린다(메모리 span 무관 — 좌표 span 이 넓어도 OOM 방지. Map Detail 과 동일).
+  // grid 모드에선 hovertemplate 이 무시되고 customdata 에 담긴 실좌표가 표시된다.
+  const g = waferCompactGrid(m);
+  const built = waferHeatmap(m, { colorMap, binOrder, grid: g });
   if (!built) { div.innerHTML = '<div class="placeholder">공통 die 없음</div>'; return; }
-  Plotly.newPlot(div, [built.trace], waferLayout(m, {}), { responsive: true, displayModeBar: false });
+  Plotly.newPlot(div, [built.trace], waferLayout(m, { grid: g }), { responsive: true, displayModeBar: false });
 
   // 범례 — 실제 등장하는 분류만 count 와 함께
   const legend = document.getElementById("cmp-common-legend");

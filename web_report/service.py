@@ -972,7 +972,7 @@ def save_note(session_id: str, sheet, *, report_db, upload_root: Path,
             changed_fields=f"note_sheet({action})",
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
-        pass
+        _log.warning("note_sheet 감사 기록 실패 (session=%s)", session_id, exc_info=True)
     return {"ok": True, "rev": info["rev"], "base": info["base"]}
 
 

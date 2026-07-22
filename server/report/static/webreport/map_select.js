@@ -134,15 +134,15 @@ async function mapSelAddSelected() {
   if (!chips.length) { showToast("선택된 좌표가 없습니다"); return; }
   const btn = document.getElementById("mapSelAddSelected");
   if (btn) { btn.disabled = true; btn.textContent = "추가 중..."; }
-  let added = 0, failed = 0;
+  let added = 0, failed = 0, lastErr = null;
   for (const chip of chips) {
     try { const obj = await mapSelFetchChip(chip); if (obj) { mapSelChips.push(obj); added++; } }
-    catch (e) { failed++; }
+    catch (e) { failed++; lastErr = e; console.warn("chip 조회 실패", chip, e); }
   }
   mapSelReassignColors();
   renderMapAnalysis();          // Map 강조 반영(전역 상태 읽어 redraw)
   applyChipToDistribution();    // Distribution 카드+상세 재렌더
-  showToast(`${added}개 추가${failed ? ` · ${failed}개 실패` : ""}`);
+  showToast(`${added}개 추가${failed ? ` · ${failed}개 실패 (${(lastErr && lastErr.message) || "네트워크 오류"})` : ""}`);
   // renderMapAnalysis 가 패널을 다시 그려 검색 패널이 닫히므로, 다시 열고 재검색(추가된 항목 disabled 반영).
   const box = document.getElementById("mapSelSearchBox");
   if (box) {

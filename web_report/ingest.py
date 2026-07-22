@@ -179,7 +179,8 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         eval_export.export_async(session_id, report_db=report_db,
                                  upload_root=Path(upload_root))
     except Exception:
-        pass
+        _log.warning("eval export 시작 실패 — 코멘트 eval DB 적재 누락 (session=%s)",
+                     session_id, exc_info=True)
 
     # 업로드 소요시간·크기를 감사 행에 남긴다 — ingest 가 느려지는 추세를 관리자 화면
     # (User Action Monitoring)에서 볼 수 있는 유일한 경로다.

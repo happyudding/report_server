@@ -37,7 +37,7 @@ def cumulative_distribution_full(values):
     """고유값별 누적 분포(ECDF) 계산. 반환: (unique_vals, cumulative_percent)."""
     if values.size == 0:
         return np.empty(0), np.empty(0)
-    unique_vals, counts = np.unique(np.sort(values), return_counts=True)
+    unique_vals, counts = np.unique(values, return_counts=True)
     cum = np.cumsum(counts) / values.size * 100.0
     return unique_vals, cum
 
