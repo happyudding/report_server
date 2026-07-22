@@ -178,6 +178,19 @@ def trim_job(session_id: str, upload_root_str: str, source: str) -> bytes:
     return blob
 
 
+def prewarm_job(session_id: str, upload_root_str: str, dist_seeded: bool = False) -> None:
+    """프리웜 전용 잡 — report(+시딩된 dist)를 빌드하고 **None 을 반환**한다.
+
+    report_job 결과(payload dict, 수 MB)는 부모 RAM 캐시 적재 외엔 쓸모가 없어 IPC
+    반송(pickle) 비용만 크다. 워커가 disk_cache 를 채우므로 부모의 첫 조회는 디스크
+    캐시로 열린다. dist 는 시딩된 blob 이 disk_cache 에 이미 있어 값싼 작업이다.
+    """
+    report_job(session_id, upload_root_str)
+    if dist_seeded:
+        dist_job(session_id, upload_root_str)
+    return None
+
+
 # ── 프리웜 큐 ────────────────────────────────────────────────────────────────
 # 업로드당 스레드를 띄우면 폭주 시 스레드가 무한히 쌓인다(세마포어는 동시 실행만 제한할 뿐
 # 대기 스레드를 막지 못한다). 단일 소비자 스레드 + 상한 있는 큐로 바꾸고, 넘치면 가장
@@ -198,11 +211,15 @@ def _prewarm_one(session_id: str, upload_root_str: str, dist_seeded: bool) -> No
     비용(재다운로드+디코드)이 사라지므로 나머지 탭의 첫 진입도 충분히 빨라진다.
     dist 는 클라가 프리컴퓨트 blob 을 붙여준 경우에만 만든다 — 이미 시딩돼 있어
     gzip 직렬화만 하면 되는 값싼 작업이다.
+
+    실행은 run(prewarm_job) 경유 (2026-07-22): 업로드 직후엔 ingest 가 부모
+    TABLES_CACHE 를 시딩해 둬 should_offload 가 False 라, 직접 호출하면 수 초 CPU 가
+    waitress 프로세스에서 돌며 GIL 로 세션 밖 요청(홈·VOC)까지 지연시켰다. 운영
+    (WEB_REPORT_COMPUTE_WORKERS=2)에서는 워커 프로세스가 계산하고,
+    =0(테스트)이면 run() 인라인 폴백으로 종전과 동일하다.
     """
     try:
-        report_job(session_id, upload_root_str)
-        if dist_seeded:
-            dist_job(session_id, upload_root_str)
+        run(prewarm_job, session_id, upload_root_str, bool(dist_seeded))
         STATS["prewarm_done"] += 1
     except Exception:
         # 프리웜 실패는 조회 시 재계산으로 복구되지만, 조용히 삼키면 상시 실패를
@@ -222,13 +239,14 @@ def _prewarm_loop() -> None:
 
 
 def prewarm(session_id: str, upload_root_str: str, dist_seeded: bool = False) -> None:
-    """업로드 직후 프리웜 요청을 큐에 넣는다 (부모 프로세스 데몬 스레드에서 순차 처리).
+    """업로드 직후 프리웜 요청을 큐에 넣는다 (소비자 스레드가 순차로 run() 에 넘긴다).
 
-    부모 스레드에서 도는 이유: ingest 가 방금 시딩한 TABLES_CACHE 를 그대로 써서 재디코드가
-    0회이고, keyed_lock single-flight 로 직후 /full 과도 중복되지 않으며, 결과가 부모 RAM
-    캐시에 직접 들어가 첫 조회가 RAM 히트다. 시딩이 이미 축출된 세션은 load 경로의
-    should_offload 가 자동으로 워커 오프로드를 택한다(자기교정). 큐잉은 즉시 반환하므로
-    업로드 응답을 블록하지 않는다."""
+    계산은 run(prewarm_job) 이 워커 프로세스로 보낸다 (2026-07-22 변경) — 종전에는 부모
+    스레드가 직접 돌려 TABLES_CACHE 재사용(재디코드 0회)·부모 RAM 히트 이점이 있었지만,
+    그 수 초 CPU 가 waitress 프로세스 GIL 을 잡아 세션 밖 값싼 요청까지 밀렸다. 지금은
+    워커가 재디코드해 disk_cache 를 채우고, 부모 첫 조회는 디스크 캐시로 열린다
+    (약간 느린 대신 GIL 해방 — 승인된 트레이드오프). 큐잉은 즉시 반환하므로 업로드
+    응답을 블록하지 않는다."""
     global _prewarm_thread
     with _prewarm_lock:
         if len(_prewarm_queue) >= _PREWARM_MAX_PENDING:

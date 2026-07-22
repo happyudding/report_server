@@ -107,7 +107,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | 확인 항목 | 권장 | 이유 |
 |-----------|------|------|
 | `HOST` / `PORT` | 기본(`0.0.0.0` / `8080`) 유지 | `env/server.env` 가 정본. 포트를 바꾸면 클라이언트 `HONEY_SERVER_URL` 도 함께 바꿔야 한다 |
-| `WAITRESS_THREADS` | 기본(8) 유지 | 8cpu 와 일치. waitress 본문 상한은 `MAX_CONTENT_LENGTH_MB` 와 자동 정합(wsgi.py) |
+| `WAITRESS_THREADS` | 기본(13) 유지 | 동접 처리용. waitress 본문 상한은 `MAX_CONTENT_LENGTH_MB` 와 자동 정합(wsgi.py) |
 | `MAX_CONTENT_LENGTH_MB` | 기본(2048) 유지 | 업로드 본문 상한(parquet + dist blob 첨부 합산). waitress/Flask 공용 |
 | `WEB_REPORT_COMPUTE_WORKERS` | 기본(2) 유지 | 콜드 빌드 워커. 5명 규모 충분 — 워커당 tables 캐시 최대 4GB RAM 감안 |
 | `WEB_REPORT_TABLES_CACHE_MB` / `WEB_REPORT_DIST_CACHE_MB` | 기본(4096 / 1024) 유지 | 부모 프로세스 RAM 상한. 32GB 박스에서 부모+워커2 합산 여유 확보 |

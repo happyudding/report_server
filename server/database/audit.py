@@ -11,7 +11,7 @@ _AUDIT_COLUMNS = (
 def log_audit(action, session_id=None, analysis_key=None, product_type=None,
               product=None, lot_id=None, file_name=None, changed_fields=None,
               client_ip=None, user_agent=None, client_user=None, client_host=None,
-              result="ok"):
+              result="ok", busy_timeout_ms=5000):
     """업로드/수정/삭제 감사 기록 1행 추가. user_agent 는 과도하게 길면 잘라 저장."""
     if user_agent and len(user_agent) > 500:
         user_agent = user_agent[:500]
@@ -22,7 +22,7 @@ def log_audit(action, session_id=None, analysis_key=None, product_type=None,
     )
     placeholders = ", ".join("?" for _ in _AUDIT_COLUMNS)
     cols = ", ".join(_AUDIT_COLUMNS)
-    with get_conn() as conn:
+    with get_conn(busy_timeout_ms=busy_timeout_ms) as conn:
         conn.execute(
             f"INSERT INTO report_audit_log ({cols}) VALUES ({placeholders})",
             values,

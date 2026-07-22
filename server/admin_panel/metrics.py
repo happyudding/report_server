@@ -28,7 +28,7 @@ METRICS_ENABLED = os.getenv("REPORT_METRICS_ENABLED", "1") != "0"
 SAMPLE_INTERVAL = max(1.0, float(os.getenv("REPORT_METRICS_INTERVAL_SEC", "10")))
 RETENTION_SEC = 24 * 3600
 # wsgi.py 와 동일 규칙 — in-flight 점유율 분모용
-WAITRESS_THREADS = int(os.getenv("WAITRESS_THREADS", "8"))
+WAITRESS_THREADS = int(os.getenv("WAITRESS_THREADS", "13"))
 
 _proc = psutil.Process()
 _lock = threading.Lock()  # 카운터·링버퍼 공용 (임계구역은 정수 연산·append 뿐)

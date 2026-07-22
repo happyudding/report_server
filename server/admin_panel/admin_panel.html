@@ -158,7 +158,7 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
   <button class="tab" data-panel="pEval"
           title="Issue Table 코멘트가 쌓이는 eval_analyzer 학습 라벨 DB (report.db 와 별도)">Eval DB</button>
   <button class="tab" data-panel="pUsers"
-          title="웹 로그인 계정 목록과 비밀번호 초기화">사용자</button>
+          title="실사용자(활동 기준) 목록 + 웹 로그인 계정 목록·비밀번호 초기화">사용자</button>
   <button class="tab" data-panel="pVoc"
           title="사용자 문의(VOC) 게시글 현황 — 읽기 전용">VOC</button>
   <button class="tab" data-panel="pDb"
@@ -413,6 +413,27 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
 <!-- ═══ 사용자 ═══ -->
 <div id="pUsers" class="panel">
   <div class="card">
+    <h2>실사용자 (활동 기준) <span class="hint">통계 탭과 동일 기준 — report_audit_log 의 client_user → PC명 → IP 순 폴백 (클라이언트 신고값)</span></h2>
+    <div class="toolbar">
+      <label class="hint">기간
+        <select id="activeUserDays" class="inp" style="width:110px;height:28px">
+          <option value="7">최근 7일</option>
+          <option value="30" selected>최근 30일</option>
+          <option value="90">최근 90일</option>
+          <option value="365">최근 1년</option>
+        </select>
+      </label>
+      <span class="grow"></span>
+      <span class="hint">사용량(합계) 상위 50명 · 사용자 클릭 시 활동 기록으로 이동</span>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>#</th><th>사용자</th><th>PC</th><th>IP</th>
+        <th class="num">업로드</th><th class="num">수정</th><th class="num">삭제</th>
+        <th class="num">합계</th><th>마지막 활동</th></tr></thead>
+      <tbody id="activeUserBody"><tr class="empty-row"><td colspan="9">로딩 중…</td></tr></tbody>
+    </table></div>
+  </div>
+  <div class="card">
     <h2>웹 로그인 계정 <span class="hint">현재 접근제어는 Honey 클라이언트 신원(UA)으로 하며, 이 계정은 즐겨찾기·중요표시 보관용입니다</span>
       <span id="usersSummary" class="hint"></span></h2>
     <div class="toolbar">
@@ -635,7 +656,7 @@ async function postJSON(url, body) {
 const loadedTabs = new Set();
 const TAB_LOADERS = {
   pHealth: loadHealth, pStorage: loadStorageTab, pStats: loadStats, pSessions: loadSessions,
-  pEval: loadEvalTab, pUsers: loadUsers, pVoc: loadVocTab, pDb: loadDb, pLogs: loadLogs,
+  pEval: loadEvalTab, pUsers: loadUsersTab, pVoc: loadVocTab, pDb: loadDb, pLogs: loadLogs,
   pAudit: loadAudit,
 };
 document.querySelectorAll(".tab").forEach(btn => {
@@ -1523,6 +1544,36 @@ $("btnPurgeExpired").onclick = async () => {
 };
 
 // ── 사용자 ────────────────────────────────────────────────────────────────────
+// 사용자 탭 진입 시 실사용자(활동 기준) + 웹 로그인 계정 둘 다 로드.
+function loadUsersTab() { loadActiveUsers(); loadUsers(); }
+
+// 실사용자 = report_audit_log 의 client_user 집계 (통계 탭 사용자 순위와 동일 소스).
+async function loadActiveUsers() {
+  const tb = $("activeUserBody");
+  tb.innerHTML = `<tr class="empty-row"><td colspan="9">로딩 중…</td></tr>`;
+  let u;
+  try { u = await getJSON("api/stats/users?days=" + $("activeUserDays").value); }
+  catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  tb.innerHTML = u.rows.length ? u.rows.map((r, i) => `
+    <tr><td>${i + 1}</td>
+      <td><b class="who-link" data-who="${esc(r.who)}" title="이 사용자의 활동 기록 보기"
+            style="cursor:pointer;color:var(--accent)">${esc(r.who)}</b></td>
+      <td>${esc(r.host || "-")}</td>
+      <td class="mono">${esc(r.ip || "-")}</td>
+      <td class="num">${r.upload}</td><td class="num">${r.edit}</td><td class="num">${r.delete}</td>
+      <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
+    : `<tr class="empty-row"><td colspan="9">기간 내 활동 기록이 없습니다.</td></tr>`;
+}
+$("activeUserDays").onchange = loadActiveUsers;
+// 실사용자 클릭 → 활동 기록(감사) 탭에서 그 사용자만 필터
+$("activeUserBody").addEventListener("click", e => {
+  const cell = e.target.closest(".who-link");
+  if (cell && cell.dataset.who) showAuditQuery(cell.dataset.who);
+});
+
 const USER_PAGE = 50;
 let userOffset = 0, userTotal = 0;
 async function loadUsers() {

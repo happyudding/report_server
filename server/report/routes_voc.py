@@ -124,13 +124,18 @@ def _text_field(body, name, maxlen):
 
 
 def _audit_voc(action, voc_id, detail, uid, result="ok"):
-    """voc_create/voc_delete 감사 — 메인 DB report_audit_log (best-effort)."""
+    """voc_create/voc_delete 감사 — 메인 DB report_audit_log (best-effort).
+
+    VOC 본문은 이미 별도 voc.db 에 확정된 뒤다. 메인 report.db 가 업로드/편집으로 바쁠 때
+    감사 1행 때문에 사용자 응답을 최대 5초 붙잡지 않도록 100ms 안에 기록하거나 포기한다.
+    """
     try:
         ip, ua = _client_meta()
         report_db.log_audit(
             action,
             changed_fields=f"voc_id={voc_id} {detail}"[:1500],
             client_ip=ip, user_agent=ua, client_user=uid, result=result,
+            busy_timeout_ms=100,
         )
     except Exception:
         _log.warning("VOC 감사 기록 실패 (voc_id=%s)", voc_id, exc_info=True)

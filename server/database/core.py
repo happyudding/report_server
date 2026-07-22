@@ -426,10 +426,16 @@ def init_report_db():
 
 
 @contextmanager
-def get_conn():
-    conn = sqlite3.connect(REPORT_DB_PATH, timeout=10)
+def get_conn(busy_timeout_ms=5000):
+    """요청별 DB 커넥션.
+
+    busy_timeout_ms 는 기본 쓰기 경합 대기 상한이다. 응답을 막으면 안 되는 best-effort
+    기록(VOC 감사 등)은 짧은 값을 넘겨 빠르게 포기할 수 있다.
+    """
+    busy_timeout_ms = max(0, int(busy_timeout_ms))
+    conn = sqlite3.connect(REPORT_DB_PATH, timeout=busy_timeout_ms / 1000.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout = 5000")
+    conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
     # synchronous/temp_store 는 커넥션 단위 설정이라 init_report_db 만으로는 적용되지 않는다
     # (WAL 은 DB 파일 영속). 미설정 시 요청 커넥션이 synchronous=FULL 로 동작해 쓰기가 느려짐.
     conn.execute("PRAGMA synchronous = NORMAL")
