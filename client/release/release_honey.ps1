@@ -11,7 +11,8 @@
     6) Append server/releases/release_log.txt after all release steps succeed.
 
 .PARAMETER Version
-    Release semver in x.y.z format. If omitted, patch is bumped from CURRENT_VERSION.
+    Release semver in x.y.z format. If omitted, patch is bumped from CURRENT_VERSION
+    (or, with -NoBump, CURRENT_VERSION is used as-is).
 
 .PARAMETER Notes
     Release comment for version.json and release_log.txt. If omitted, the script prompts.
@@ -19,6 +20,11 @@
 .PARAMETER Clean
     Pass --clean to PyInstaller (full rebuild, discards the build cache). Off by default
     so repeated releases reuse the cache and finish much faster.
+
+.PARAMETER NoBump
+    Rebuild at the current CURRENT_VERSION without incrementing it, then run the rest of
+    the pipeline as usual (zip, copy to server\releases, refresh version.json, log).
+    build_zip.bat uses this. Ignored when an explicit -Version is given.
 #>
 [CmdletBinding()]
 param(
@@ -28,6 +34,9 @@ param(
     [Parameter(Mandatory = $false)]
     [AllowNull()]
     [string]$Notes = $null,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$NoBump,
 
     [Parameter(Mandatory = $false)]
     [switch]$Clean
@@ -106,9 +115,14 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
     if ($currentVersion -notmatch '^\d+\.\d+\.\d+$') {
         throw "CURRENT_VERSION must be x.y.z, got: $currentVersion"
     }
-    $parts = $currentVersion.Split(".")
-    $Version = "{0}.{1}.{2}" -f $parts[0], $parts[1], ([int]$parts[2] + 1)
-    Write-Host "Auto version bump: $currentVersion -> $Version" -ForegroundColor Green
+    if ($NoBump) {
+        $Version = $currentVersion
+        Write-Host "No version bump: rebuild at $Version" -ForegroundColor Green
+    } else {
+        $parts = $currentVersion.Split(".")
+        $Version = "{0}.{1}.{2}" -f $parts[0], $parts[1], ([int]$parts[2] + 1)
+        Write-Host "Auto version bump: $currentVersion -> $Version" -ForegroundColor Green
+    }
 }
 
 if ($Version -notmatch '^\d+\.\d+\.\d+$') {

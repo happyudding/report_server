@@ -264,7 +264,7 @@ function noteRenderTagPanel() {
         <input type="text" id="noteTagName" maxlength="40" placeholder="태그 이름" data-no-dirty />
         <button type="button" class="btn-sm" id="noteTagAdd">현재 셀에 태그</button>
       </div>
-      <div class="note-tag-note">선택한 셀에 이름을 붙입니다. 같은 이름은 위치가 갱신됩니다. 셀 내용은 Note 저장을 눌러야 함께 보존됩니다.</div>`;
+      <div class="note-tag-note">선택한 셀에 태그 이름을 텍스트로 적고 앵커를 겁니다. 같은 이름은 위치가 갱신됩니다. 셀 내용은 Note 저장을 눌러야 보존됩니다.</div>`;
   }
   panel.innerHTML = html;
   panel.onclick = noteTagPanelClick;
@@ -290,6 +290,13 @@ async function noteCreateTag(name) {
   try { sel = await noteRequestSelection(); }
   catch (e) { showToast("선택 셀 조회 실패: " + e.message); return; }
   if (!sel) { showToast("먼저 Note 에서 셀을 선택하세요."); return; }
+  // 태그 이름을 선택 셀에 텍스트로 기록한다. 이미 다른 내용이 있으면 덮어쓸지 확인.
+  let writeCell = true;
+  const curVal = String(sel.v == null ? "" : sel.v).trim();
+  if (curVal && curVal !== name) {
+    writeCell = confirm(`선택한 셀에 이미 내용이 있습니다:\n"${curVal.slice(0, 60)}"\n\n` +
+      `[확인] 태그 이름 "${name}" 으로 덮어쓰기\n[취소] 셀 내용은 두고 태그(앵커)만 걸기`);
+  }
   const target = { tab: "note", sheet: sel.sheet, sheet_name: sel.sheetName, r: sel.r, c: sel.c };
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/note_tags`, {
@@ -300,11 +307,21 @@ async function noteCreateTag(name) {
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
     if (DATA) DATA.note_tags = j.note_tags || {};
+    if (writeCell) noteWriteCell(sel, name);   // 셀에 이름 기록 (iframe → note:dirty)
     noteRenderTagPanel();
-    showToast(`태그 #${name} 저장 — comment 에서 #${name} 로 링크됩니다.`);
+    showToast(writeCell
+      ? `태그 #${name} 저장 — 셀에 이름을 적었습니다. Note 저장을 눌러야 셀 내용이 보존됩니다.`
+      : `태그 #${name} 저장 — comment 에서 #${name} 로 링크됩니다.`);
   } catch (e) {
     showToast("태그 저장 실패: " + e.message);
   }
+}
+// 선택 셀에 태그 이름 텍스트 기록 요청 (iframe 이 setCellValue + note:dirty).
+function noteWriteCell(sel, value) {
+  const frame = document.getElementById("noteFrame");
+  if (!frame || !frame.contentWindow) return;
+  frame.contentWindow.postMessage(
+    { type: "note:setCell", sheet: sel.sheet, r: sel.r, c: sel.c, value: String(value) }, NOTE_ORIGIN);
 }
 async function noteDeleteTag(name) {
   name = String(name || "");

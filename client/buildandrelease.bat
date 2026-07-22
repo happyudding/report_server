@@ -1,5 +1,5 @@
 @echo off
-REM Honey ZIP rebuild at CURRENT version (NO bump): PyInstaller(onedir) -> Honey-<version>.zip
+REM Honey ZIP build AND release (bump version): PyInstaller(onedir) -> Honey-<version>.zip
 REM Usage: double-click, or run from a command prompt.
 REM
 REM KEEP THIS FILE PURE ASCII WITH CRLF LINE ENDINGS.
@@ -18,12 +18,12 @@ if not exist "%PS1%" (
   exit /b 1
 )
 
-REM -NoBump: rebuild the ZIP at the CURRENT CURRENT_VERSION (no version increment),
-REM then republish it (copy to server\releases, refresh version.json sha256, append log).
-REM For a real client-facing update use buildandrelease.bat instead: it increments the
-REM version so clients (which compare by version) actually see the update. A same-version
-REM rebuild here does not trigger their updater; it only refreshes the served ZIP.
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" -NoBump
+REM No -Version and no -NoBump: release_honey.ps1 bumps the patch number from
+REM CURRENT_VERSION automatically (e.g. 3.1.0 -> 3.1.1) and publishes it as a new
+REM client-facing release. To rebuild the CURRENT version WITHOUT bumping, use
+REM build_zip.bat instead. To set an explicit version (e.g. a minor bump 3.1.0 -> 3.2.0),
+REM run release\release_honey.ps1 -Version x.y.z directly.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%"
 set "REL_EXIT=%ERRORLEVEL%"
 
 if not "%REL_EXIT%"=="0" (

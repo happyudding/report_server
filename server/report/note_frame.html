@@ -74,14 +74,30 @@
   }
 
   // ── 앵커 태그: 현재 선택 셀 조회 / 특정 셀로 이동 ─────────────────────────────
-  // 현재 시트 + 마지막 선택 range 의 좌상단 셀 → {sheet(index), sheetName, r, c}. 선택 없으면 null.
+  // 현재 시트 + 마지막 선택 range 의 좌상단 셀 → {sheet(index), sheetName, r, c, v}. 선택 없으면 null.
+  // v = 그 셀의 현재 표시값 (부모가 태그 이름 기록 전 덮어쓰기 확인에 쓴다).
   function currentSelection() {
     const sh = window.luckysheet.getSheet() || {};
     const rg = window.luckysheet.getRange();
     const last = Array.isArray(rg) && rg.length ? rg[rg.length - 1] : null;
     if (!last || !Array.isArray(last.row) || !Array.isArray(last.column)) return null;
-    return { sheet: String(sh.index == null ? "" : sh.index), sheetName: sh.name || "",
-             r: last.row[0], c: last.column[0] };
+    const r = last.row[0], c = last.column[0];
+    let v = "";
+    try { const cv = window.luckysheet.getCellValue(r, c); v = (cv == null) ? "" : String(cv); } catch (e) {}
+    return { sheet: String(sh.index == null ? "" : sh.index), sheetName: sh.name || "", r, c, v };
+  }
+
+  // {sheet, r, c, value} → 그 셀에 텍스트 기록 (태그 이름을 Note 셀에 남긴다). 시트가
+  // 현재와 다르면 활성화 후 기록. setCellValue 는 isRefresh 기본 true 라 즉시 반영된다.
+  function setCell(msg) {
+    const files = window.luckysheet.getLuckysheetfile() || [];
+    const pos = files.findIndex(s => String(s.index) === String(msg.sheet));
+    const r = Number(msg.r) || 0, c = Number(msg.c) || 0;
+    const val = msg.value == null ? "" : String(msg.value);
+    const write = () => { window.luckysheet.setCellValue(r, c, val); post("note:dirty"); };
+    const cur = window.luckysheet.getSheet() || {};
+    if (pos === -1 || String(cur.index) === String((files[pos] || {}).index)) write();
+    else window.luckysheet.setSheetActive(pos, { success: () => requestAnimationFrame(write) });
   }
 
   // {sheet, sheetName, r, c} → 해당 시트 활성화 + 셀 선택표시 + 스크롤.
@@ -123,6 +139,10 @@
       case "note:goto":
         try { gotoCell(msg); }
         catch (e) { post("note:error", { message: "태그 이동 실패: " + ((e && e.message) || e) }); }
+        break;
+      case "note:setCell":
+        try { setCell(msg); }
+        catch (e) { post("note:error", { message: "셀 기록 실패: " + ((e && e.message) || e) }); }
         break;
       case "note:insertImage":
         try { window.luckysheet.insertImage(msg.url, { rowIndex: 1, colIndex: 1 }); post("note:dirty"); }
