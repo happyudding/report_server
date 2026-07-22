@@ -182,7 +182,36 @@ def main():
     finally:
         conn.close()
 
-    # (c) 코멘트 수정 → 해당 label 만 교체 ──────────────────────────────────
+    # (b2) tables 미주입 운영 경로: loader 반환 3-tuple 에서 tables 만 사용해야 한다.
+    from web_report import loader
+    original_load_tables = loader.load_tables
+    loader_calls = []
+
+    def fake_load_tables(loaded_session_id, *, report_db, upload_root,
+                         use_cache=True, session=None):
+        loader_calls.append((loaded_session_id, report_db, Path(upload_root), session))
+        return session, [make_table()], {}
+
+    loader.load_tables = fake_load_tables
+    try:
+        r = eval_export.export_session_comments(
+            SID, report_db=db, upload_root=_TMP)
+    finally:
+        loader.load_tables = original_load_tables
+
+    assert len(loader_calls) == 1, loader_calls
+    assert loader_calls[0][0] == SID and loader_calls[0][1] is db, loader_calls[0]
+    assert loader_calls[0][2] == _TMP and loader_calls[0][3] is db.session, loader_calls[0]
+    assert r == {"cases": 3, "labels": 3, "removed": 0}, r
+    conn = eval_export.open_conn(create=False)
+    try:
+        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 3
+        assert qv(conn, "SELECT COUNT(*) FROM label") == 3
+        assert qv(conn, "SELECT COUNT(*) FROM ingest_run") == 1
+    finally:
+        conn.close()
+
+    # (c) 코멘트 수정 → 해당 label 만 교체
     db.edit_rows[0] = comment_row("Yield|4|ItemA", "PTE comment", "수정된 코멘트",
                                   at=300, by="user3")
     export()

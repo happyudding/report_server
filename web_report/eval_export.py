@@ -246,8 +246,8 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
     if tables is None and parsed:
         try:
             from . import loader
-            tables = loader.load_tables(session_id, report_db=report_db,
-                                        upload_root=upload_root, session=session)
+            _, tables, _ = loader.load_tables(session_id, report_db=report_db,
+                                              upload_root=upload_root, session=session)
         except Exception:
             logger.warning("eval_export: tables 로드 실패 — 코멘트만 적재 (session=%s)",
                            session_id, exc_info=True)
