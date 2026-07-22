@@ -298,10 +298,12 @@ html[data-theme="dark"] .empty-note { color: #767f8c; }
   <h1 class="page-title">LSI PTE REPORT SERVER</h1>
   <div style="display:flex; align-items:center; gap:14px;">
     <a class="help-btn" href="/pe/report/help">HELP</a>
-    <a class="help-btn" href="/pe/report/voc">VOC</a>
+    <a class="help-btn" href="https://confluence.samsungds.net/pages/editpage.action?pageId=3473285336" target="_blank" rel="noopener">VOC</a>
     <a id="honeyDlBtn" class="honey-dl-btn" href="/honey/download">⬇ HONEY 다운로드</a>
-    <!-- 검색결과 페이지와 달리 여기서는 검색결과 페이지로 되돌아간다(사용자 요청). -->
-    <a class="back-main-btn" href="/pe/report/">BACK TO MAIN</a>
+    <!-- 검색결과 페이지와 달리 여기서는 검색결과 페이지로 되돌아간다(사용자 요청).
+         같은 출처에서 왔으면 히스토리 복귀(BFCache 즉시 복원), 직접 진입은 앵커 폴백. -->
+    <a class="back-main-btn" href="/pe/report/"
+       onclick="try { if (history.length > 1 && document.referrer && new URL(document.referrer).origin === location.origin) { history.back(); return false; } } catch (e) {} return true;">BACK TO MAIN</a>
     <button class="theme-toggle" id="themeToggle" title="다크 모드로 전환">🌙</button>
   </div>
 </header>

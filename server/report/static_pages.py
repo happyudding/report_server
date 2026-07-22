@@ -18,6 +18,16 @@ from flask import Response, request
 _CACHE: dict = {}   # path str -> (mtime_ns, size, etag, raw bytes, gz bytes)
 _LOCK = threading.Lock()
 
+# error_beacon.js 참조를 콘텐츠 버전 URL(?v=mtime)로 바꿔 서빙한다 — webreport_static 이
+# v 있는 요청을 immutable 로 응답해 재방문 시 재검증 왕복이 사라진다(head 렌더블로킹 스크립트).
+# 버전은 프로세스 시작 시 1회 계산: 배포=재시작이라 충분하고, 파일만 바꾸면 반영이 안 된다.
+_BEACON_PATH = Path(__file__).parent / "static" / "webreport" / "error_beacon.js"
+try:
+    _BEACON_SUB = (b'error_beacon.js"',
+                   b'error_beacon.js?v=%d"' % int(_BEACON_PATH.stat().st_mtime))
+except OSError:
+    _BEACON_SUB = None
+
 
 def _load(path: Path):
     st = os.stat(path)
@@ -27,6 +37,8 @@ def _load(path: Path):
         if cached and cached[0] == st.st_mtime_ns and cached[1] == st.st_size:
             return cached
     raw = path.read_bytes()
+    if _BEACON_SUB:
+        raw = raw.replace(*_BEACON_SUB)
     etag = '"' + hashlib.sha256(raw).hexdigest()[:32] + '"'
     gz = gzip.compress(raw, compresslevel=6)   # 파일 변경 시 1회만 — 고압축이 이득
     entry = (st.st_mtime_ns, st.st_size, etag, raw, gz)

@@ -30,6 +30,7 @@ from .sessions import (  # noqa: F401
     delete_session,
     get_expired_sessions,
     get_history,
+    get_history_page,
     get_orphan_pending_sessions,
     get_session,
     get_session_by_dataset_id,

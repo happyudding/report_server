@@ -70,12 +70,26 @@ document.addEventListener("keydown", e => {
 });
 
 // ── 상단 '뒤로가기' 버튼 ─────────────────────────────────────────────────────
+// 같은 출처에서 들어온 경우 앵커 전방 이동 대신 브라우저 히스토리로 복귀한다 — BFCache 가
+// 살아 있으면 이전 화면 DOM 이 통째로 즉시 복원된다(메인은 pageshow 에서 목록만 조용히 갱신).
+// -2 인 이유: 아래 브라우저 뒤로가기 흡수용 더미 항목 1칸 + 이 세션 항목 1칸.
+// 직접 링크로 열어 돌아갈 히스토리가 없으면 기존 앵커 주소(/pe/report/)로 폴백한다.
 const _lgBackBtn = document.querySelector(".back-btn");
+
+function lgGoBack() {
+  let sameOrigin = false;
+  try {
+    sameOrigin = !!document.referrer && new URL(document.referrer).origin === location.origin;
+  } catch (e) { /* referrer 파싱 실패 — 폴백 */ }
+  if (sameOrigin && history.length > 2) { _lgTrapArmed = false; history.go(-2); return; }
+  location.href = _lgBackBtn ? _lgBackBtn.getAttribute("href") : "/pe/report/";
+}
+
 if (_lgBackBtn) {
   _lgBackBtn.addEventListener("click", e => {
-    if (!hasUnsavedEdits()) return;
     e.preventDefault();
-    openLeaveConfirm(() => { location.href = _lgBackBtn.getAttribute("href"); });
+    if (!hasUnsavedEdits()) { lgGoBack(); return; }
+    openLeaveConfirm(lgGoBack);
   });
 }
 

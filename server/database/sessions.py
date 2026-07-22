@@ -302,6 +302,44 @@ def count_history(product_type=None, process=None, product=None, revision=None,
     return int(row[0]) if row else 0
 
 
+def get_history_page(product_type=None, process=None, product=None, revision=None,
+                     lot_id=None, source=None, limit=500, offset=0, viewer=None, q=None,
+                     mode=None, date_from=None, date_to=None, mine=False, visibility=None,
+                     sort="new"):
+    """서버 페이지네이션 전용: 목록 + 전체 건수를 커넥션 1개로 조회. -> (rows, total)
+
+    get_history 와 결과 동일하되 total_file_size 는 CSV JOIN/GROUP BY 대신
+    idx_report_csv_files_analysis_key 를 타는 상관 집계로 구한다 (favorite JOIN 은
+    PK(user_id,session_id)라 팬아웃이 없어 GROUP BY 없이도 세션당 1행)."""
+    where, params = _history_where(product_type, process, product, revision, lot_id, source,
+                                   viewer=viewer, q=q, mode=mode, date_from=date_from,
+                                   date_to=date_to, mine=mine, visibility=visibility)
+    order_by = _HISTORY_SORTS.get(sort or "new", _HISTORY_SORTS["new"])
+    sql = f"""
+        SELECT s.session_id, s.file_name, s.product_type, s.family_product, s.process, s.product,
+               s.revision, s.edm_link, s.lot_id, s.created_at, s.status, s.dataset_id,
+               s.is_debug, s.source, s.uploaded_by, s.client_host,
+               COALESCE(s.mode, 'Normal') AS mode,
+               COALESCE(s.is_important, 0) AS is_important,
+               COALESCE(s.is_private, 0) AS is_private,
+               CASE WHEN s.password IS NOT NULL THEN 1 ELSE 0 END AS has_password,
+               CASE WHEN f.session_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
+               (SELECT COALESCE(SUM(c.file_size), 0) FROM report_csv_files c
+                 WHERE c.analysis_key = s.analysis_key) AS total_file_size
+        FROM report_session s
+        LEFT JOIN report_user_favorite f
+               ON f.session_id = s.session_id AND f.user_id = ?
+        WHERE {where}
+        ORDER BY is_favorite DESC, COALESCE(s.is_important, 0) DESC, {order_by}, s.session_id
+        LIMIT ? OFFSET ?
+    """
+    with get_conn() as conn:
+        rows = conn.execute(sql, [viewer or ""] + params + [limit, offset]).fetchall()
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM report_session s WHERE {where}", params).fetchone()
+    return [dict(r) for r in rows], int(total[0]) if total else 0
+
+
 # ── retention / cleanup ───────────────────────────────────────────────────────
 
 def get_expired_sessions(cutoff_epoch):

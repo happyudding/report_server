@@ -192,7 +192,12 @@ def webreport_static(filename):
         abort(404)
     resp = make_response(send_file(path, mimetype="application/javascript",
                                    conditional=True))
-    resp.headers["Cache-Control"] = "no-cache"
+    # error_beacon.js 만 콘텐츠 버전 URL(?v= — static_pages 가 HTML 에 주입)로 오면
+    # immutable 장기 캐시. 나머지 모듈 17종은 순서·내용 결합이 있어 no-cache 유지.
+    if filename == "error_beacon.js" and request.args.get("v"):
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    else:
+        resp.headers["Cache-Control"] = "no-cache"
     return resp
 
 
@@ -253,10 +258,14 @@ def history():
     except (TypeError, ValueError):
         offset = 0
     sort = (request.args.get("sort") or "new").strip()
-    rows = report_db.get_history(**filters, limit=limit, offset=offset, viewer=viewer,
-                                 sort=sort)
-    total = report_db.count_history(**filters, viewer=viewer)
-    return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset})
+    rows, total = report_db.get_history_page(**filters, limit=limit, offset=offset,
+                                             viewer=viewer, sort=sort)
+    # 신원을 함께 실어 첫 화면의 /api/auth/me 왕복을 없앤다 (auth_me 와 동일 규칙).
+    viewer_info = {"user_id": viewer, "source": _identity_source()}
+    if viewer_info["source"] == "honey" and viewer:
+        viewer_info["has_pin"] = bool(report_db.get_user(viewer))
+    return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset,
+                    "viewer": viewer_info})
 
 
 # ── 사용자 인증 (웹 로그인) ───────────────────────────────────────────────────

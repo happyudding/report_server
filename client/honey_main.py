@@ -1161,9 +1161,9 @@ class HoneyMainWindow(QMainWindow):
         self._open_in_embedded(SERVER_BASE_URL.rstrip("/") + "/pe/report/help")
 
     def on_voc(self):
-        """도움말(&H) → VOC: 서버 VOC 게시판을 내장 브라우저로 연다
-        (내장 브라우저가 없으면 _open_in_embedded 가 시스템 브라우저로 폴백)."""
-        self._open_in_embedded(SERVER_BASE_URL.rstrip("/") + "/pe/report/voc")
+        """도움말(&H) → VOC: 구 Confluence VOC 페이지를 기본(시스템) 브라우저로 연다.
+        외부 링크라 SSO 세션이 있는 시스템 브라우저에서 열어야 한다(내장 브라우저 X)."""
+        webbrowser.open("https://confluence.samsungds.net/pages/editpage.action?pageId=3473285336")
 
     def _intake(self, paths):
         """선택된 파일들 → (2개 이상이면) 순서 지정 팝업 → 메인 창에 로드.
