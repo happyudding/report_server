@@ -893,6 +893,43 @@ html[data-theme="dark"] .idet-chart-comment:not(:empty) { border-top-color: #2f3
 html[data-theme="dark"] .mention-dd { background: #1e2128; border-color: #3a3f4b; }
 html[data-theme="dark"] .mention-opt { color: #d7dbe2; }
 html[data-theme="dark"] .mention-opt:hover { background: #26303f; color: #7fb3ef; }
+.mention-empty { padding: 6px 8px; font-size: 12px; color: #98a2b3; white-space: nowrap; }
+html[data-theme="dark"] .mention-empty { color: #8b93a1; }
+/* comment #[태그] → Note 셀 앵커 링크 (@ 링크와 구분되는 보라 pill). missing=삭제된 태그 */
+.note-tag-link { color: #7c3aed; background: rgba(124,58,237,.08); border-radius: 3px;
+  padding: 0 3px; cursor: pointer; white-space: nowrap; }
+.note-tag-link:hover { background: rgba(124,58,237,.18); }
+.note-tag-link.missing { color: #98a2b3; background: rgba(148,163,184,.12); text-decoration: line-through; }
+html[data-theme="dark"] .note-tag-link { color: #b794f6; background: rgba(183,148,246,.12); }
+html[data-theme="dark"] .note-tag-link:hover { background: rgba(183,148,246,.22); }
+html[data-theme="dark"] .note-tag-link.missing { color: #8b93a1; background: rgba(139,147,161,.15); }
+/* Note 탭 [🔖 태그] 팝오버 — note-bar 안 절대위치 */
+.note-tag-panel { position: absolute; z-index: 320; top: 100%; left: 0; margin-top: 4px;
+  min-width: 260px; max-width: 360px; max-height: 320px; overflow-y: auto;
+  background: #fff; border: 1px solid #d0d5dd; border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.18); padding: 8px; font-size: 12px; }
+.note-tag-head { display: flex; justify-content: space-between; align-items: center;
+  font-weight: 700; color: #344054; margin-bottom: 6px; }
+.note-tag-close { cursor: pointer; color: #98a2b3; padding: 0 4px; }
+.note-tag-close:hover { color: #475467; }
+.note-tag-empty { color: #98a2b3; padding: 4px 2px; }
+.note-tag-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.note-tag-row { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 5px; }
+.note-tag-row:hover { background: #f2f4f7; }
+.note-tag-go { color: #7c3aed; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.note-tag-go:hover { text-decoration: underline; }
+.note-tag-loc { color: #98a2b3; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-tag-del { cursor: pointer; opacity: .6; }
+.note-tag-del:hover { opacity: 1; }
+.note-tag-add { display: flex; gap: 4px; margin-top: 4px; }
+.note-tag-add input { flex: 1; min-width: 0; padding: 4px 6px; border: 1px solid #d0d5dd;
+  border-radius: 5px; font-size: 12px; }
+.note-tag-note { color: #98a2b3; margin-top: 6px; line-height: 1.4; }
+html[data-theme="dark"] .note-tag-panel { background: #1e2128; border-color: #3a3f4b; }
+html[data-theme="dark"] .note-tag-head { color: #d7dbe2; }
+html[data-theme="dark"] .note-tag-row:hover { background: #26303f; }
+html[data-theme="dark"] .note-tag-go { color: #b794f6; }
+html[data-theme="dark"] .note-tag-add input { background: #14171d; border-color: #3a3f4b; color: #d7dbe2; }
 /* ETC 항목추가 모달: 선택된 측정항목 하이라이트 */
 .rawdata-item.picked { border-color: #4a90e2; background: #eaf3ff; color: #1f4d8c; font-weight: 700; }
 /* CDF 칩 편집(제외/강조) 툴바 — 임시(클라이언트), 새로고침/항목이동 시 초기화 */
@@ -1866,7 +1903,7 @@ html[data-theme="dark"] .cnote-view-comment { color: #9aa3b0; }
 #panel-note.active { display: flex; flex-direction: column;
   height: calc(var(--vph) - var(--sticky-head-h, 96px) - 108px); }
 .note-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  padding: 6px 4px; font-size: 12px; }
+  padding: 6px 4px; font-size: 12px; position: relative; }
 .note-meta { color: #6b7280; font-size: 11px; }
 /* Luckysheet 는 iframe(note_frame.html) 안에서 격리 실행 — 전역 CSS(*{box-sizing})·sticky·
    페이지 스크롤·중앙정렬 여백·배율 오염을 차단해 셀 밀림·격자 떨림을 근본 해결한다. 여기선

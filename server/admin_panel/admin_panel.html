@@ -120,6 +120,14 @@ details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer;
 .tile.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
 .tile.clickable:hover { border-color: var(--accent); background: #262a32; }
 .tile .go { font-size: 11px; color: var(--accent); margin-top: 6px; }
+.log-link { cursor: pointer; color: var(--accent); }
+.warn-chip { display: inline-block; border-radius: 12px; padding: 4px 12px; font-size: 12px;
+             font-weight: 600; margin: 3px 6px 3px 0; }
+.warn-chip.warn { background: #3a3012; color: #fbbf24; }
+.warn-chip.crit { background: #3a1a1a; color: #f87171; }
+.warn-chip.ok   { background: #143824; color: #4ade80; }
+.warn-chip.clickable { cursor: pointer; }
+.warn-chip.clickable:hover { filter: brightness(1.15); }
 
 /* 세로 스크롤 시에도 가로 스크롤바가 화면 안에 남는 표 컨테이너 + 고정 헤더 */
 .table-wrap.scroll-both { max-height: 68vh; overflow: auto; }
@@ -163,6 +171,10 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
 
 <!-- ═══ 현황 ═══ -->
 <div id="pHealth" class="panel active">
+  <div class="card" id="healthWarn" style="margin-bottom:16px">
+    <h2>이상 징후 요약 <span class="hint">현재 데이터로 감지한 경고만 모음 · 외부 알림 없음(수동 확인용)</span></h2>
+    <div id="healthWarnBody">점검 중…</div>
+  </div>
   <div class="tiles" id="healthTiles">
     <div class="tile"><div class="lbl">로딩 중…</div></div>
   </div>
@@ -496,12 +508,20 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
 <!-- ═══ 로그 ═══ -->
 <div id="pLogs" class="panel">
   <div class="card">
-    <h2>서버 로그 tail <span class="hint">서버 로그 파일의 마지막 부분 · 자동 갱신되지 않으니 새로고침을 눌러 최신 내용을 봅니다</span>
+    <h2>서버 로그 tail <span class="hint">서버 로그 파일의 마지막 부분 · 레벨/검색은 받아온 범위 안에서 즉시 필터(재조회 없음) · 더 과거는 크기를 늘려 새로고침</span>
       <span style="float:right">
+        <select id="logLevel" class="sel" title="표시할 최소 로그 레벨 — 에러만 골라 봅니다 (Traceback 블록 포함)">
+          <option value="">전체</option>
+          <option value="warn">WARNING+</option>
+          <option value="error">ERROR+</option>
+        </select>
+        <input id="logGrep" class="inp" style="width:180px" placeholder="로그 내용 검색…"
+               title="대소문자 무시 부분일치 (Traceback 블록 단위로 매칭)">
         <select id="logBytes" class="sel" title="로그 파일 끝에서 읽어올 크기">
           <option value="16384">16 KB</option>
           <option value="65536" selected>64 KB</option>
           <option value="262144">256 KB</option>
+          <option value="1048576">1 MB</option>
         </select>
         <button class="btn primary" id="btnLogRefresh" title="지금 로그를 다시 읽어옵니다">새로고침</button>
       </span>
@@ -532,8 +552,8 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
         <option value="voc_comment_delete">VOC 댓글삭제</option>
         <option value="voc_delete">VOC 삭제</option>
       </select>
-      <input id="fQuery" class="inp" style="width:280px" placeholder="파일명 / product / lot 부분 일치…"
-             title="파일명·product·lot_id 부분 일치 검색 (변경 필드 본문은 검색 대상이 아닙니다)">
+      <input id="fQuery" class="inp" style="width:320px" placeholder="파일명 / product / lot / 사용자 / PC / IP / 변경필드 …"
+             title="파일명·product·lot_id·사용자(client_user)·PC(client_host)·IP·변경 필드 본문 부분 일치 검색">
       <button class="btn primary" id="btnAuditSearch">검색</button>
       <button class="btn" id="btnAuditReset" title="작업 필터와 검색어를 모두 지우고 처음부터 다시 조회">초기화</button>
       <span class="grow"></span>
@@ -565,6 +585,13 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? "" : s)
   .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const pad = n => String(n).padStart(2, "0");
+// session_id → 세션 상세(새 탭) 링크. 관리자 경로 비밀 prefix 와 무관한 절대 경로.
+// 비공개 세션은 신원 없는 접근 시 404 날 수 있음(허용).
+function sessionLink(sid) {
+  if (!sid) return "-";
+  return `<a href="/pe/report/view/${encodeURIComponent(sid)}" target="_blank" rel="noopener"
+            class="mono" title="세션 상세 열기 (새 탭)">${esc(sid)}</a>`;
+}
 function fmtDate(unix) {
   if (!unix) return "-";
   const d = new Date(unix * 1000);
@@ -633,15 +660,62 @@ function showAuditFor(action) {
   btn.click();
   if (wasLoaded) loadAudit();
 }
+// 특정 사용자/검색어로 감사 탭 이동 (통계 사용자 순위 클릭 등)
+function showAuditQuery(q) {
+  const btn = document.querySelector('.tab[data-panel="pAudit"]');
+  if (!btn) return;
+  $("fAction").value = "";
+  $("fQuery").value = q;
+  auditPage = 0;
+  const wasLoaded = loadedTabs.has("pAudit");
+  btn.click();
+  if (wasLoaded) loadAudit();
+}
+// 특정 키워드/레벨로 console log 탭 이동 (런타임 에러 타일 드릴다운). 로그를 새로
+// 받아온 뒤(loadLogs) renderLog 가 설정한 레벨/검색을 적용한다.
+function showLogsFor(grep, level) {
+  const btn = document.querySelector('.tab[data-panel="pLogs"]');
+  if (!btn) return;
+  $("logLevel").value = level || "error";
+  $("logGrep").value = grep || "";
+  const wasLoaded = loadedTabs.has("pLogs");
+  btn.click();
+  if (wasLoaded) loadLogs();
+}
 
 // ── 현황 ────────────────────────────────────────────────────────────────────
 function meterCls(pct) { return pct >= 90 ? "crit" : pct >= 70 ? "warn" : ""; }
+
+// 이상 징후 요약 — loadHealth/loadRuntime 가 각자 채우고, 둘 중 끝나는 쪽마다 재렌더.
+let _warnHealth = [], _warnRuntime = [];
+function renderWarnings() {
+  const box = $("healthWarnBody");
+  if (!box) return;
+  const all = [..._warnHealth, ..._warnRuntime];
+  if (!all.length) { box.innerHTML = `<span class="warn-chip ok">정상 — 감지된 이상 없음</span>`; return; }
+  all.sort((a, b) => (b.level === "crit") - (a.level === "crit"));
+  box.innerHTML = all.map(w =>
+    `<span class="warn-chip ${w.level}${w.go ? " clickable" : ""}"${w.go ? ` data-go="${esc(w.go)}"` : ""}>${esc(w.text)}</span>`
+  ).join("");
+}
+$("healthWarnBody").addEventListener("click", e => {
+  const chip = e.target.closest(".warn-chip[data-go]");
+  if (!chip) return;
+  const go = chip.dataset.go;
+  if (go === "audit:client_error") showAuditFor("client_error");
+  else if (go === "logs:locked") showLogsFor("locked", "error");
+  else if (go === "logs:compute") showLogsFor("compute", "error");
+  else if (go === "tab:pDb") document.querySelector('.tab[data-panel="pDb"]').click();
+});
+
 async function loadHealth() {
   try {
     const h = await getJSON("api/health");
     let wdTile = "";
+    let ceCount = 0, wdRestarts24 = 0, badBackups = 0;
     try {
       const w = await getJSON("api/watchdog");
+      wdRestarts24 = w.registered ? (w.restarts_24h || 0) : 0;
       if (!w.registered) {
         wdTile = `
       <div class="tile"><div class="lbl">Watchdog 자동복구</div>
@@ -659,6 +733,7 @@ async function loadHealth() {
     let ceTile = "";
     try {
       const ce = await getJSON("api/stats/client_errors?hours=24");
+      ceCount = ce.count || 0;
       if (ce.count > 0) {
         ceTile = `
       <div class="tile clickable" id="ceTile"
@@ -687,6 +762,22 @@ async function loadHealth() {
         <div class="det">프로세스 RSS ${fmtBytes(h.proc_rss)} · 스레드 ${h.proc_threads}</div></div>${wdTile}${ceTile}`;
     // 타일은 조건부라 innerHTML 이후에 핸들러를 붙인다
     if ($("ceTile")) $("ceTile").onclick = () => showAuditFor("client_error");
+
+    try {
+      const b = await getJSON("api/db/backups");
+      badBackups = b.bad_count || 0;
+    } catch (e) { /* 백업 실패본 카운트는 best-effort */ }
+
+    // 이상 징후 수집 (디스크/RAM · watchdog · 클라 오류 · 백업 실패본)
+    _warnHealth = [];
+    if (h.disk_percent >= 90) _warnHealth.push({ level: "crit", text: `디스크 ${h.disk_percent.toFixed(0)}% 사용` });
+    else if (h.disk_percent >= 80) _warnHealth.push({ level: "warn", text: `디스크 ${h.disk_percent.toFixed(0)}%` });
+    if (h.mem_percent >= 90) _warnHealth.push({ level: "crit", text: `RAM ${h.mem_percent.toFixed(0)}%` });
+    else if (h.mem_percent >= 85) _warnHealth.push({ level: "warn", text: `RAM ${h.mem_percent.toFixed(0)}%` });
+    if (wdRestarts24 > 0) _warnHealth.push({ level: "warn", text: `Watchdog 재기동 ${wdRestarts24}회(24h)` });
+    if (ceCount > 0) _warnHealth.push({ level: "warn", text: `클라이언트 오류 ${ceCount}건(24h)`, go: "audit:client_error" });
+    if (badBackups > 0) _warnHealth.push({ level: "warn", text: `백업 실패본 ${badBackups}개`, go: "tab:pDb" });
+    renderWarnings();
   } catch (e) {
     $("healthTiles").innerHTML = `<div class="tile"><div class="lbl">현황 조회 실패</div><div class="det">${esc(e)}</div></div>`;
   }
@@ -819,12 +910,21 @@ async function loadMetrics() {
 }
 $("metricsWindow").onchange = () => loadMetrics();
 
+// next_run 이 GRACE(초) 넘게 지났는데 안 돌면 스케줄러 정지/지연 의심.
+const SCHED_OVERDUE_GRACE = 600;
+function schedOverdue(s) {
+  return !!(s && s.next_run && s.next_run < Date.now() / 1000 - SCHED_OVERDUE_GRACE);
+}
 function schedTile(label, s) {
   if (!s) return `<div class="tile"><div class="lbl">${label}</div><div class="val" style="font-size:14px">-</div></div>`;
+  const overdue = schedOverdue(s);
   const mark = s.last_ok === false ? "❌ " : (s.last_ok ? "✅ " : "");
-  return `<div class="tile"><div class="lbl">${label}</div>
+  const nextTxt = s.next_run
+    ? ` · 다음 <span style="${overdue ? "color:var(--st-warn)" : ""}">${fmtDate(s.next_run)}${overdue ? " ⚠ 지연" : ""}</span>`
+    : "";
+  return `<div class="tile"><div class="lbl">${label}${overdue ? ' <span style="color:var(--st-warn)">⚠</span>' : ""}</div>
     <div class="val" style="font-size:14px">${s.last_run ? fmtDate(s.last_run) : "아직 실행 안 됨"}</div>
-    <div class="det">${mark}${esc(s.last_result || "-")}${s.next_run ? " · 다음 " + fmtDate(s.next_run) : ""}</div></div>`;
+    <div class="det">${mark}${esc(s.last_result || "-")}${nextTxt}</div></div>`;
 }
 async function loadRuntime() {
   try {
@@ -838,7 +938,9 @@ async function loadRuntime() {
         <div class="det">p50 ${lat.p50 || 0} · p99 ${lat.p99 || 0} · 최대 ${lat.max || 0} ms</div></div>
       <div class="tile"><div class="lbl">컴퓨트 워커</div>
         <div class="val" style="font-size:20px">${cp.processes || 0} / ${cp.workers || 0}</div>
-        <div class="det">${cp.pool_alive ? "가동" : "미기동"} · 타임아웃 ${cs.timeout || 0} · 붕괴 ${cs.broken || 0} · 오류 ${cs.error || 0}</div></div>
+        <div class="det">${cp.pool_alive ? "가동" : "미기동"} · 타임아웃 ${cs.timeout || 0} · 붕괴 ${cs.broken || 0} · 오류 ${cs.error || 0}${
+          ((cs.timeout || 0) + (cs.broken || 0) + (cs.error || 0)) > 0
+            ? ` · <span class="log-link" data-grep="compute" title="관련 로그를 console log 에서 보기">로그 ›</span>` : ""}</div></div>
       <div class="tile"><div class="lbl">프리웜 큐</div>
         <div class="val" style="font-size:20px">${cp.prewarm_pending || 0} / ${cp.prewarm_max || 0}</div>
         <div class="det">완료 ${cs.prewarm_done || 0} · 폐기 ${cs.prewarm_dropped || 0}</div></div>
@@ -847,9 +949,19 @@ async function loadRuntime() {
         <div class="det">RAM ${ca.hit || 0}/${(ca.hit || 0) + (ca.miss || 0)} · 디스크 ${ca.disk_hit_rate == null ? "-" : ca.disk_hit_rate + "%"} · tables ${fmtBytes(ca.tables_bytes || 0)}</div></div>
       <div class="tile"><div class="lbl">DB 잠금 경합</div>
         <div class="val" style="font-size:20px${lk.count ? ";color:#d33" : ""}">${lk.count || 0}</div>
-        <div class="det">busy_timeout(5s) 초과 실패 누적${lk.last ? " · 최근 " + fmtDate(lk.last) : ""}</div></div>
+        <div class="det">busy_timeout(5s) 초과 실패 누적${lk.last ? " · 최근 " + fmtDate(lk.last) : ""}${
+          lk.count ? ` · <span class="log-link" data-grep="locked" title="관련 로그를 console log 에서 보기">로그 ›</span>` : ""}</div></div>
       ${schedTile("백업 스케줄러", sch.backup)}
       ${schedTile("정리 스케줄러", sch.cleanup)}`;
+    // 이상 징후 수집 (스케줄러 지연/실패 · DB 잠금 · 컴퓨트 붕괴)
+    _warnRuntime = [];
+    if (sch.backup && sch.backup.last_ok === false) _warnRuntime.push({ level: "crit", text: "백업 마지막 실행 실패" });
+    if (sch.cleanup && sch.cleanup.last_ok === false) _warnRuntime.push({ level: "crit", text: "정리 마지막 실행 실패" });
+    if (schedOverdue(sch.backup)) _warnRuntime.push({ level: "warn", text: "백업 스케줄러 지연" });
+    if (schedOverdue(sch.cleanup)) _warnRuntime.push({ level: "warn", text: "정리 스케줄러 지연" });
+    if (lk.count) _warnRuntime.push({ level: "warn", text: `DB 잠금 경합 ${lk.count}건`, go: "logs:locked" });
+    if (cs.broken) _warnRuntime.push({ level: "crit", text: `컴퓨트 워커 붕괴 ${cs.broken}건`, go: "logs:compute" });
+    renderWarnings();
     const slow = lat.slowest || [];
     $("slowRouteBody").innerHTML = slow.length ? slow.map(s =>
       `<tr><td class="mono">${esc(s.route)}</td><td class="num">${s.count}</td>` +
@@ -859,6 +971,12 @@ async function loadRuntime() {
     $("runtimeTiles").innerHTML = `<div class="tile"><div class="lbl">런타임 상태 조회 실패</div><div class="det">${esc(e)}</div></div>`;
   }
 }
+// 런타임 타일의 "로그 ›" 클릭 → console log 탭으로 관련 키워드 프리필 이동 (타일은
+// 10초마다 재렌더되므로 컨테이너에 위임 1회 등록)
+$("runtimeTiles").addEventListener("click", e => {
+  const link = e.target.closest(".log-link");
+  if (link) showLogsFor(link.dataset.grep || "", "error");
+});
 
 // 현황 탭이 화면에 보일 때만 10초 자동 갱신 — 그 외엔 서버 요청 없음
 setInterval(() => {
@@ -933,9 +1051,9 @@ async function loadStgSessions(refresh) {
         <td>${esc(r.source || "-")}</td>
         <td>${r.backend ? `<span class="badge gray">${esc(r.backend)}</span>` : "-"}</td>
         <td class="num" title="실산출물 ${fmtBytes(r.tierable_bytes || 0)} + 재생성 가능 캐시 ${fmtBytes(r.cache_bytes || 0)}">${fmtBytes(r.local_bytes)}${
-            r.cache_bytes ? ` <span class="badge gray" title="이 중 재생성 가능한 compute 캐시 — S3 티어링 대상이 아님">캐시 ${fmtBytes(r.cache_bytes)}<\span>` : ""}${r.shared > 1
+            r.cache_bytes ? ` <span class="badge gray" title="이 중 재생성 가능한 compute 캐시 — S3 티어링 대상이 아님">캐시 ${fmtBytes(r.cache_bytes)}</span>` : ""}${r.shared > 1
             ? ` <span class="badge gray" title="같은 데이터를 ${r.shared}개 세션이 공유 — 마지막 삭제 시에만 회수">공유 ${r.shared}</span>` : ""}</td>
-        <td class="mono">${esc(r.session_id)}</td>
+        <td>${sessionLink(r.session_id)}</td>
         <td><button class="btn danger" style="height:24px;padding:0 8px;font-size:11px"
              data-act="del" data-sid="${esc(r.session_id)}">삭제</button></td>
       </tr>`).join("");
@@ -1062,7 +1180,7 @@ async function loadEvalLabels() {
         <td>${esc(r.item || "-")}</td><td>${esc(r.unit || "-")}</td>
         <td style="max-width:340px;white-space:pre-wrap">${esc(r.human_comment || "")}</td>
         <td>${esc(r.reviewer || "-")}</td>
-        <td class="mono">${esc(r.session_id || "-")}</td>
+        <td>${sessionLink(r.session_id)}</td>
       </tr>`).join("");
   }
   const page = Math.floor(evalOffset / EVAL_PAGE), last = Math.max(0, Math.ceil(evalTotal / EVAL_PAGE) - 1);
@@ -1211,7 +1329,10 @@ async function loadStats() {
   try {
     const u = await getJSON("api/stats/users?days=" + days);
     $("userRankBody").innerHTML = u.rows.length ? u.rows.map((r, i) => `
-      <tr><td>${i + 1}</td><td><b>${esc(r.who)}</b></td><td>${esc(r.host || "-")}</td>
+      <tr><td>${i + 1}</td>
+        <td><b class="who-link" data-who="${esc(r.who)}" title="이 사용자의 활동 기록 보기"
+              style="cursor:pointer;color:var(--accent)">${esc(r.who)}</b></td>
+        <td>${esc(r.host || "-")}</td>
         <td class="mono">${esc(r.ip || "-")}</td>
         <td class="num">${r.upload}</td><td class="num">${r.edit}</td><td class="num">${r.delete}</td>
         <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
@@ -1238,6 +1359,11 @@ async function loadStats() {
   }
 }
 $("statsDays").onchange = loadStats;
+// 사용자 순위 클릭 → 감사 탭에서 그 사용자만 필터 (tbody 유지되므로 위임 1회 등록)
+$("userRankBody").addEventListener("click", e => {
+  const cell = e.target.closest(".who-link");
+  if (cell && cell.dataset.who) showAuditQuery(cell.dataset.who);
+});
 
 // ── 세션 ────────────────────────────────────────────────────────────────────
 const SESS_PAGE = 100;
@@ -1289,7 +1415,7 @@ async function loadSessions() {
         <td>${r.has_password
               ? `<span class="badge gray">PIN</span> <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="pin" data-sid="${esc(r.session_id)}">변경/해제</button>`
               : `<button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="pin" data-sid="${esc(r.session_id)}">PIN 설정</button>`}</td>
-        <td class="mono">${esc(r.session_id)}</td>
+        <td>${sessionLink(r.session_id)}</td>
         <td>${r.deleted_at
               ? `<button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="restore" data-sid="${esc(r.session_id)}">복원</button>`
                 + ` <button class="btn danger" style="height:24px;padding:0 8px;font-size:11px" data-act="purge" data-sid="${esc(r.session_id)}" title="산출물·DB 영구 삭제 (30일 경과분만)">purge</button>`
@@ -1609,17 +1735,62 @@ $("btnDiagQuick").onclick = () => runDiag(false);
 $("btnDiagFull").onclick = () => runDiag(true);
 
 // ── 로그 ────────────────────────────────────────────────────────────────────
+// 로그 텍스트를 "레코드" 단위로 쪼갠다 — 한 레코드 = 헤더 줄 + 그에 딸린 Traceback
+// 연속줄(들여쓰기 스택프레임 + 예외 요약 줄). 로그가 구조화 Formatter 없이 stdout/stderr
+// Tee 라(포맷 무관) 레벨 토큰·Traceback 패턴으로만 판별한다.
+function _splitLogBlocks(lines) {
+  const blocks = [];
+  let cur = null, inTb = false;
+  for (const ln of lines) {
+    const tbStart = ln.indexOf("Traceback (most recent call last)") >= 0;
+    let cont = false;
+    if (cur) {
+      if (tbStart) cont = true;                 // Traceback 줄은 현재 레코드에 붙는다
+      else if (inTb) {
+        if (/^\s/.test(ln)) cont = true;        // 스택 프레임(들여쓰기)
+        else { inTb = false; cont = true; }     // 예외 요약/빈 줄 → tb 종료하며 이 줄까지 포함
+      } else if (/^\s/.test(ln)) cont = true;   // 떠도는 들여쓰기 연속줄
+    }
+    if (cont) cur.lines.push(ln);
+    else { cur = { lines: [ln] }; blocks.push(cur); }
+    if (tbStart) inTb = true;
+  }
+  return blocks.map(b => b.lines.join("\n"));
+}
+function filterLog(text, level, grep) {
+  if (!level && !grep) return { text: text, matched: null, total: null };
+  const total = text.split("\n").length;
+  const blocks = _splitLogBlocks(text.split("\n"));
+  const levelRe = level === "error" ? /\b(?:ERROR|CRITICAL)\b/
+                : level === "warn" ? /\b(?:ERROR|CRITICAL|WARNING)\b/ : null;
+  const g = grep ? grep.toLowerCase() : "";
+  const kept = blocks.filter(b =>
+    (!levelRe || levelRe.test(b)) && (!g || b.toLowerCase().includes(g)));
+  const keptLines = kept.reduce((n, b) => n + b.split("\n").length, 0);
+  return { text: kept.join("\n"), matched: keptLines, total: total };
+}
+let _logRaw = "", _logFile = "", _logSize = 0;
 async function loadLogs() {
   $("logBox").textContent = "로딩 중…";
   try {
     const r = await getJSON("api/logs/tail?bytes=" + $("logBytes").value);
-    $("logInfo").textContent = r.file ? `${r.file} (전체 ${fmtBytes(r.size)})` : "";
-    $("logBox").textContent = r.text || "(비어 있음)";
+    _logRaw = r.text || ""; _logFile = r.file || ""; _logSize = r.size || 0;
+    renderLog();
     $("logBox").scrollTop = $("logBox").scrollHeight;
-  } catch (e) { $("logBox").textContent = "조회 실패: " + e; }
+  } catch (e) { $("logBox").textContent = "조회 실패: " + e; _logRaw = ""; }
+}
+function renderLog() {
+  const base = _logFile ? `${_logFile} (전체 ${fmtBytes(_logSize)})` : "";
+  if (!_logRaw) { $("logBox").textContent = "(비어 있음)"; $("logInfo").textContent = base; return; }
+  const f = filterLog(_logRaw, $("logLevel").value, $("logGrep").value.trim());
+  $("logBox").textContent = f.text || "(조건에 맞는 줄 없음)";
+  $("logInfo").textContent = (f.matched == null) ? base
+    : `${base} · ${f.matched}줄 매칭 / 전체 ${f.total}줄`;
 }
 $("btnLogRefresh").onclick = loadLogs;
 $("logBytes").onchange = loadLogs;
+$("logLevel").onchange = renderLog;
+$("logGrep").addEventListener("input", renderLog);
 
 // ── 감사로그 (구 /pe/admin 뷰어 흡수) ───────────────────────────────────────
 const AUDIT_PAGE = 50;
@@ -1658,7 +1829,7 @@ async function loadAudit() {
       <td class="detail-cell"><div class="clamp" title="클릭하면 전체 내용을 펼치거나 접습니다">${esc(r.changed_fields || "-")}</div></td>
       <td>${esc(r.client_user || "-")}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
       <td class="mono">${esc(r.client_ip || "-")}</td>
-      <td class="mono">${esc(r.session_id || "-")}</td></tr>`;
+      <td>${sessionLink(r.session_id)}</td></tr>`;
   }).join("") : `<tr class="empty-row"><td colspan="10">기록이 없습니다.</td></tr>`;
   $("auditPager").innerHTML = `
     <button class="pg-btn" id="auditPrev" ${auditPage === 0 ? "disabled" : ""}>← 이전</button>

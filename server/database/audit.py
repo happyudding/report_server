@@ -30,7 +30,7 @@ def log_audit(action, session_id=None, analysis_key=None, product_type=None,
 
 
 def get_audit_logs(action=None, session_id=None, q=None, limit=200, offset=0):
-    """감사 로그 조회. action/session_id 필터 + q(파일명/product/lot_id 부분일치)."""
+    """감사 로그 조회. action/session_id 필터 + q(파일명/product/lot_id/사용자/PC/IP/변경필드 부분일치)."""
     conditions = []
     params = []
     if action:
@@ -40,9 +40,12 @@ def get_audit_logs(action=None, session_id=None, q=None, limit=200, offset=0):
         conditions.append("session_id = ?")
         params.append(session_id)
     if q:
-        conditions.append("(file_name LIKE ? OR product LIKE ? OR lot_id LIKE ?)")
+        conditions.append(
+            "(file_name LIKE ? OR product LIKE ? OR lot_id LIKE ? "
+            " OR client_user LIKE ? OR client_host LIKE ? OR client_ip LIKE ? "
+            " OR changed_fields LIKE ?)")
         like = f"%{q}%"
-        params.extend([like, like, like])
+        params.extend([like] * 7)
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     try:
         limit = max(1, min(int(limit), 1000))

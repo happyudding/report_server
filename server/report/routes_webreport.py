@@ -633,6 +633,40 @@ def web_report_chart_notes(session_id):
     return jsonify(result)
 
 
+@report_bp.post("/session/<session_id>/web_report/note_tags")
+def web_report_note_tags(session_id):
+    """앵커 태그 생성/삭제 — 세션 편집 DB(kind=note_tag) 갱신.
+
+    body: {"action": "set"|"delete", "name": str,
+           "target": {"tab":"note","sheet":str,"sheet_name":str,"r":int,"c":int}}.
+    IssueTable comment 의 #[태그명] 이 이 태그를 가리켜 Note 특정 셀로 점프한다.
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    action = (body.get("action") or "").strip()
+    name = (body.get("name") or "").strip()
+    if not name:
+        return jsonify({"error": "태그 이름이 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_note_tag(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            action=action, name=name, target=body.get("target"),
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report note_tags failed for session %s", session_id)
+        abort(500, "note_tags failed")
+    return jsonify(result)
+
+
 @report_bp.get("/session/<session_id>/web_report/note")
 def web_report_note_get(session_id):
     """Note 탭 시트 JSON 지연 로드 (최대 2MB — /full 에서 제외). 읽기는 전원 가능."""

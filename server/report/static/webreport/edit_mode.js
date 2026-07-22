@@ -179,6 +179,13 @@ document.querySelector(".content").addEventListener("click", e => {
     flushPendingComments().then(ok => { if (ok && subject) openItemDetail(subject, [subject]); });
     return;
   }
+  // comment 의 #[태그] 클릭 → Note 탭 + 해당 셀로 이동 (미저장 comment 먼저 flush).
+  const tagLink = e.target.closest(".note-tag-link");
+  if (tagLink) {
+    const name = tagLink.dataset.tag;
+    flushPendingComments().then(ok => { if (ok && name) noteJumpToTag(name); });
+    return;
+  }
   // Issue Table Yield 대표행 토글 → 그 Bin 의 detail TNO 행 펼치기/접기.
   const issueToggle = e.target.closest(".issue-toggle");
   if (issueToggle) { toggleIssueGroup(issueToggle); return; }
@@ -414,7 +421,7 @@ function _mentionDD() {
       const btn = ev.target.closest(".mention-opt");
       if (!btn) return;
       ev.preventDefault();
-      if (_mentionCell) mentionInsert(_mentionCell, btn.dataset.name);
+      if (_mentionCell) mentionInsert(_mentionCell, btn.dataset.name, dd.dataset.trigger || "@");
       hideMention();
     });
   }
@@ -428,20 +435,20 @@ function mentionQueryAtCaret(cell) {
   if (!cell.contains(range.startContainer)) return null;
   const node = range.startContainer;
   const before = (node.nodeType === 3) ? node.textContent.slice(0, range.startOffset) : (cell.textContent || "");
-  const m = before.match(/@([^\[\]@\n]*)$/);   // 완결(@[..]) 안 된 마지막 @query
-  return m ? m[1] : null;
+  const m = before.match(/([@#])([^\[\]@#\n]*)$/);   // 완결(@[..]/#[..]) 안 된 마지막 트리거+query
+  return m ? { trigger: m[1], q: m[2] } : null;
 }
-function mentionInsert(cell, item) {
+function mentionInsert(cell, item, trigger) {
   const sel = window.getSelection();
-  const token = `@[${item}] `;
+  const token = `${trigger || "@"}[${item}] `;
   if (!sel.rangeCount) return;
   const range = sel.getRangeAt(0);
   const node = range.startContainer;
   if (node.nodeType !== 3) {
-    cell.textContent = (cell.textContent || "").replace(/@([^\[\]@\n]*)$/, "") + token;
+    cell.textContent = (cell.textContent || "").replace(/[@#]([^\[\]@#\n]*)$/, "") + token;
   } else {
     const off = range.startOffset, text = node.textContent;
-    const nb = text.slice(0, off).replace(/@([^\[\]@\n]*)$/, token);
+    const nb = text.slice(0, off).replace(/[@#]([^\[\]@#\n]*)$/, token);
     node.textContent = nb + text.slice(off);
     const r = document.createRange();
     r.setStart(node, Math.min(nb.length, node.textContent.length)); r.collapse(true);
@@ -449,12 +456,26 @@ function mentionInsert(cell, item) {
   }
   cell.dispatchEvent(new Event("input", { bubbles: true }));   // _dirty 마킹(기존 리스너)
 }
-function showMention(cell, query) {
-  const cands = mentionCandidates()
-    .filter(n => !query || n.toLowerCase().includes(query.toLowerCase())).slice(0, 20);
+// @ = Testitem 검색(Item_detail 링크), # = Note 앵커 태그(Note 셀 점프).
+function showMention(cell, query, trigger) {
+  trigger = trigger || "@";
   const dd = _mentionDD();
-  if (!cands.length) { hideMention(); return; }
-  dd.innerHTML = cands.map(n => `<button type="button" class="mention-opt" data-name="${esc(n)}">${esc(n)}</button>`).join("");
+  let cands, emptyMsg = "";
+  if (trigger === "#") {
+    const tags = (typeof DATA !== "undefined" && DATA && DATA.note_tags) || {};
+    cands = Object.keys(tags)
+      .filter(n => !query || n.toLowerCase().includes(query.toLowerCase())).slice(0, 20);
+    if (!cands.length) emptyMsg = "등록된 태그 없음 — Note 탭 [🔖 태그]로 생성";
+  } else {
+    cands = mentionCandidates()
+      .filter(n => !query || n.toLowerCase().includes(query.toLowerCase())).slice(0, 20);
+  }
+  if (!cands.length && !emptyMsg) { hideMention(); return; }
+  dd.dataset.trigger = trigger;
+  const pre = trigger === "#" ? "#" : "";
+  dd.innerHTML = cands.length
+    ? cands.map(n => `<button type="button" class="mention-opt" data-name="${esc(n)}">${pre}${esc(n)}</button>`).join("")
+    : `<div class="mention-empty">${esc(emptyMsg)}</div>`;
   const rect = cell.getBoundingClientRect();
   dd.style.left = (window.scrollX + rect.left) + "px";
   dd.style.top = (window.scrollY + rect.bottom) + "px";
@@ -465,7 +486,7 @@ document.querySelector(".content").addEventListener("input", e => {
   const cell = e.target.closest("td.dblclick-edit");
   if (!cell || !cell.isContentEditable || !isCommentCol(cell.dataset.col)) { hideMention(); return; }
   const q = mentionQueryAtCaret(cell);
-  if (q === null) hideMention(); else showMention(cell, q);
+  if (q === null) hideMention(); else showMention(cell, q.q, q.trigger);
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") hideMention(); });
 document.addEventListener("click", e => {

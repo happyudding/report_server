@@ -392,6 +392,14 @@ function distActiveColorFor(source) {
   if (!distSourceFilter.size) return distColorFor(source);
   return distSourceFilter.has(source) ? distColorFor(source) : DIST_DIM_COLOR;
 }
+// 강조가 걸리면 dim 소스가 먼저(=아래에) 그려지도록 정렬한 사본 — 산포가 겹치면 색만
+// 바꿔서는 강조 소스가 뒤 trace 에 깔려 안 보인다(distDrawPoints 의 order 정렬과 같은
+// 규칙, 안정 정렬이라 그룹 내부는 원래 순서 유지). 필터가 비면 원본 그대로(그리기 순서 불변).
+function distOrderedSources(list) {
+  list = list || [];
+  if (!distSourceFilter.size) return list;
+  return list.slice().sort((a, b) => (distSourceFilter.has(a.name) ? 1 : 0) - (distSourceFilter.has(b.name) ? 1 : 0));
+}
 
 // source 가 이 수 이상이면 상세 3개 차트(CDF/히스토그램/정규분포)의 내장 세로 legend 를
 // 끄고 차트 위 공용 legend 스트립 1개로 대체 — 내장 legend 가 차트 폭을 잠식하고

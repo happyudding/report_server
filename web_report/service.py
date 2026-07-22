@@ -766,6 +766,13 @@ _CHART_NOTE_MAX_BYTES = 16 * 1024
 _CHART_NOTE_TEXT_MAX = 300
 _NOTE_SHEET_MAX_BYTES = 2 * 1024 * 1024
 
+_NOTE_TAG_MAX = 200
+# 태그명 1~40자, linkify 토큰(#[..]/@[..])·드롭다운 쿼리와 충돌하는 문자 금지.
+_NOTE_TAG_NAME_RE = re.compile(r"^[^\[\]#@\x00-\x1f\x7f]{1,40}$")
+_NOTE_TAG_SHEET_MAX = 64
+_NOTE_TAG_SHEET_NAME_MAX = 80
+_NOTE_TAG_COORD_MAX = 99999
+
 
 class NoteConflict(Exception):
     """Note 시트 저장 시 base 토큰 불일치 — 내가 읽은 뒤 남이 먼저 저장했다.
@@ -914,6 +921,88 @@ def get_note_meta(session_id: str, *, report_db) -> dict:
             return {"exists": True, "updated_at": row.get("updated_at") or "",
                     "updated_by": row.get("updated_by") or ""}
     return {"exists": False}
+
+
+def _clean_note_tag_target(target) -> dict:
+    """태그 위치 spec 검증·정리 — 1단계는 Note 셀만(tab=="note").
+
+    좌표(r/c)는 Note 시트에 행/열이 삽입되면 어긋날 수 있다(1단계 한계) —
+    같은 이름으로 재태그(upsert)하면 앵커가 갱신돼 복구된다. sheet(=시트 index)가
+    안정 ID 이고 sheet_name 은 시트가 재생성돼 index 가 바뀐 경우의 폴백이다."""
+    if not isinstance(target, dict):
+        raise ValueError("target must be an object")
+    tab = str(target.get("tab") or "note")
+    if tab != "note":
+        raise ValueError(f"unsupported tag target tab: {tab!r}")
+    sheet = str(target.get("sheet") or "").strip()
+    if not sheet or len(sheet) > _NOTE_TAG_SHEET_MAX:
+        raise ValueError("invalid sheet index")
+    sheet_name = str(target.get("sheet_name") or "")[:_NOTE_TAG_SHEET_NAME_MAX]
+    try:
+        r = int(target.get("r"))
+        c = int(target.get("c"))
+    except (TypeError, ValueError):
+        raise ValueError("invalid cell coordinates")
+    if not (0 <= r <= _NOTE_TAG_COORD_MAX) or not (0 <= c <= _NOTE_TAG_COORD_MAX):
+        raise ValueError("cell coordinates out of range")
+    return {"tab": "note", "sheet": sheet, "sheet_name": sheet_name, "r": r, "c": c}
+
+
+def update_note_tag(session_id: str, *, report_db, upload_root: Path,
+                    action: str, name: str, target=None,
+                    client_ip: str = "", user_agent: str = "") -> dict:
+    """앵커 태그 생성/삭제 — 세션 편집 DB(kind=note_tag, item_key=태그명).
+
+    action=="set": target(Note 셀 위치)로 태그를 만들거나 재지정(upsert).
+    action=="delete": 태그 삭제. 반환의 note_tags 는 전체 맵이라 클라 DATA.note_tags 를
+    권위 갱신한다 (chart_notes 와 동형)."""
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    name = str(name or "").strip()
+    if not _NOTE_TAG_NAME_RE.match(name):
+        raise ValueError(f"invalid tag name: {name[:40]!r}")
+    if action not in ("set", "delete"):
+        raise ValueError(f"unknown action: {action!r}")
+
+    existing = edits.load_note_tags(report_db, session_id)
+    if action == "set":
+        clean = _clean_note_tag_target(target)
+        if name not in existing and len(existing) >= _NOTE_TAG_MAX:
+            raise ValueError(f"too many tags (max {_NOTE_TAG_MAX})")
+        blob = json.dumps(clean, ensure_ascii=False, sort_keys=True)
+        changes = [(edits.KIND_NOTE_TAG, name, blob)]
+    else:
+        if name not in existing:
+            return {"ok": True, "rev": report_db.get_webreport_edit_rev(session_id),
+                    "note_tags": existing}
+        changes = [(edits.KIND_NOTE_TAG, name, None)]
+
+    # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
+    edits.ensure_seeded(report_db, session_id,
+                        lambda: cache.load_manifest_cached(analysis_key, upload_root))
+    rev = report_db.apply_webreport_edits(session_id, changes,
+                                          updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"note_tag({action}:{name!r})",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+    return {"ok": True, "rev": rev,
+            "note_tags": edits.load_note_tags(report_db, session_id)}
+
+
+def get_note_tags(session_id: str, *, report_db) -> dict:
+    """/full extras 조립용 — 태그명 → {tab,sheet,sheet_name,r,c,updated_by,updated_at}."""
+    return edits.load_note_tags(report_db, session_id)
 
 
 def load_note(session_id: str, *, report_db) -> dict:

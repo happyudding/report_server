@@ -530,7 +530,12 @@ function distRenderCdf(data) {
   const xtitle = `측정값${unit ? " [" + unit + "]" : ""}`;
   // 단측 스펙 클램프용 데이터 끝값 — 제외(cdfExcluded) 반영 후 곡선 기준으로 잡는다.
   let cdfMin = Infinity, cdfMax = -Infinity;
-  const traces = (data.sources || []).map(s => {
+  // 강조 소스가 겹침에 묻히지 않게 dim 소스 먼저 그린다(distOrderedSources).
+  // legendrank 는 원본 sources 순서로 고정 — 그리기 순서를 바꿔도(여기·moveTraces)
+  // 내장 legend 항목이 섞이지 않는다.
+  const srcRank = {};
+  (data.sources || []).forEach((s, i) => { srcRank[s.name] = i; });
+  const traces = distOrderedSources(data.sources).map(s => {
     const hasId = Array.isArray(s.serial) && s.serial.length === s.values.length;
     // 제외 칩을 뺀 값/식별정보 — 제외는 CDF 곡선에만 반영(분모 n 감소로 곡선 재계산).
     let vals = s.values, serial = s.serial, xpos = s.xpos, ypos = s.ypos;
@@ -547,7 +552,8 @@ function distRenderCdf(data) {
       if (c.x[c.x.length - 1] > cdfMax) cdfMax = c.x[c.x.length - 1];
     }
     const base = distActiveColorFor(s.name);
-    const trace = { type: useGl ? "scattergl" : "scatter", mode: "markers", name: s.name, x: c.x, y: c.y };
+    const trace = { type: useGl ? "scattergl" : "scatter", mode: "markers", name: s.name,
+      legendrank: 1000 + srcRank[s.name], x: c.x, y: c.y };
     if (!useGl) trace.cliponaxis = false;   // scattergl 미지원 속성 — SVG 분기에만
     if (hasId) {
       // customdata/hover 는 필터·정렬된 동일 순서 유지(클릭 식별·hover 지속).
@@ -613,11 +619,15 @@ function distRenderHist(data) {
   const unit = data.units || "";
   const xtitle = `측정값${unit ? " [" + unit + "]" : ""}`;
   // 막대 대신 빈도 폴리곤: 21bin 중심점-빈도 곡선(양끝 0 패딩), CDF 와 동일한 원본 values 재사용.
-  const polys = distHistPolygon(data.sources || [], lo, hi, cdfExcluded);
+  // 강조 시 dim 소스 먼저 그리기 + legendrank 로 legend 순서 고정 (CDF 와 동일 규칙).
+  const srcRank = {};
+  (data.sources || []).forEach((s, i) => { srcRank[s.name] = i; });
+  const polys = distHistPolygon(distOrderedSources(data.sources), lo, hi, cdfExcluded);
   const hr = distSourcesRange(data.sources);   // 단측 스펙 클램프용 데이터 끝값
   let ymax = 0;
   polys.forEach(p => p.counts.forEach(c => { if (c > ymax) ymax = c; }));
   const traces = polys.map(p => ({ type: "scatter", mode: "lines", name: p.source,
+    legendrank: 1000 + srcRank[p.source],
     x: p.centers, y: p.counts, line: { color: distActiveColorFor(p.source), shape: "spline" },
     hovertemplate: "측정값 %{x}<br>빈도 %{y:d}<extra></extra>" }));
   // x축 우선순위: 사용자 축옵션 > "Limit 안 Data만" 클램프 > 데이터 인지 자동범위 (CDF 와 동일).
@@ -690,7 +700,10 @@ function distRenderNormal(data) {
   (data.stats || []).forEach(s => { statByName[s.source] = s; });
   const traces = [], spikes = [];
   let ymax = 0;
-  (data.sources || []).forEach(s => {
+  // 강조 시 dim 소스 먼저 그리기 + legendrank 로 legend 순서 고정 (CDF 와 동일 규칙).
+  const srcRank = {};
+  (data.sources || []).forEach((s, i) => { srcRank[s.name] = i; });
+  distOrderedSources(data.sources).forEach(s => {
     const st = statByName[s.name];
     if (!st) return;
     const color = distActiveColorFor(s.name), mean = st.average, std = st.stdev;
@@ -710,8 +723,8 @@ function distRenderNormal(data) {
       xs[i] = x; ys[i] = coef * Math.exp(-0.5 * z * z);
     }
     if (coef > ymax) ymax = coef;   // PDF 최대값은 x=μ 의 coef
-    traces.push({ type: "scatter", mode: "lines", name: s.name, x: xs, y: ys,
-      hoverinfo: "skip", line: { color, width: 1.4 } });
+    traces.push({ type: "scatter", mode: "lines", name: s.name, legendrank: 1000 + srcRank[s.name],
+      x: xs, y: ys, hoverinfo: "skip", line: { color, width: 1.4 } });
   });
   // x축: 1단계(distHistXRange, bin 버전과 동일) → 2단계(±5% 항상 적용, 이중 마진).
   let range = distHistXRange(data.sources || [], lo, hi);
@@ -742,6 +755,28 @@ function idetRestyleSourceColors(div, prop) {
     idx.push(i); cols.push(distActiveColorFor(t.name));
   });
   if (idx.length) { try { Plotly.restyle(div, { [prop]: cols }, idx); } catch (e) { /* no-op */ } }
+  idetReorderSourceTraces(div);
+}
+// 강조 소스 trace 를 dim 소스 뒤(=위)로 이동 — 산포가 겹치면 색만 갈아서는 강조가
+// 아래 trace 에 깔려 안 보인다(distDrawPoints 의 dim-먼저 정렬과 같은 규칙). 목표 순서를
+// 항상 원본 sources 순서 기준으로 계산하므로 강조 해제 시 원래 그리기 순서로 복원된다.
+// source trace 끼리 같은 슬롯 집합 안에서만 자리를 바꿔, 뒤에 붙는 칩 마커(이름 없음)는
+// 계속 최상단이다. legend 순서는 legendrank 로 고정이라 안 섞인다. moveTraces 는
+// layout 을 건드리지 않아 zoom/주석 보존.
+function idetReorderSourceTraces(div) {
+  if (!div || !div.data || !_itemDetailData) return;
+  const rank = {};
+  (_itemDetailData.sources || []).forEach((s, i) => { rank[s.name] = i; });
+  const slots = [];   // source trace 가 차지한 현재 인덱스(오름차순)
+  div.data.forEach((t, i) => { if (t.name && (t.name in rank)) slots.push(i); });
+  if (slots.length < 2) return;
+  const want = slots.slice().sort((a, b) => {
+    const na = div.data[a].name, nb = div.data[b].name;
+    const ha = distSourceFilter.has(na) ? 1 : 0, hb = distSourceFilter.has(nb) ? 1 : 0;
+    return (ha - hb) || (rank[na] - rank[nb]);
+  });
+  if (want.every((v, i) => v === slots[i])) return;   // 이미 원하는 순서 — redraw 생략
+  try { Plotly.moveTraces(div, want, slots); } catch (e) { /* no-op */ }
 }
 // 히스토그램 블록 탭 전환(Analysis 폴리곤 ↔ Report 정규분포). report 는 처음 볼 때만 렌더.
 function setIdetHistMode(mode) {

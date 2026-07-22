@@ -28,10 +28,15 @@ KIND_NOTE_SHEET = "note_sheet"
 # 부재=Open). 둘 다 manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
 KIND_ISSUE_HIDDEN = "issue_hidden"
 KIND_ISSUE_STATUS = "issue_status"
+# 2026-07-22 추가 — 앵커/북마크 태그(item_key=태그명, value=JSON 위치 spec).
+# IssueTable comment 의 #[태그명] 토큰이 이 태그를 가리켜 Note 특정 셀로 점프한다.
+# manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
+KIND_NOTE_TAG = "note_tag"
 
 # 표 payload 빌드에 안 쓰이는 kind — load_edit_state 조회에서 제외해 대용량 값
 # (note_sheet 시트 JSON 최대 2MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
-_STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET)
+# note_tag 는 /full extras 로 별도 조회(load_note_tags)라 표 상태에 싣지 않는다.
+_STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG)
 
 # issue_comment 의 item_key = row_key + SEP + col (row_key 에 '|' 가 쓰여 제어문자 사용)
 _SEP = "\x1f"
@@ -118,6 +123,23 @@ def load_chart_notes(report_db, session_id: str) -> dict:
     kind 지정 조회라 note_sheet 등 다른 대용량 값을 끌어오지 않는다."""
     out = {}
     for row in report_db.get_webreport_edits(session_id, kinds=(KIND_CHART_NOTE,)):
+        try:
+            spec = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(spec, dict):
+            spec = dict(spec)
+            spec["updated_by"] = row.get("updated_by") or ""
+            spec["updated_at"] = row.get("updated_at") or ""
+            out[row["item_key"]] = spec
+    return out
+
+
+def load_note_tags(report_db, session_id: str) -> dict:
+    """태그명 → 위치 spec dict. /full extras 조립용 — kind 지정 조회라
+    note_sheet 등 다른 대용량 값을 끌어오지 않는다. (load_chart_notes 와 동형.)"""
+    out = {}
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_NOTE_TAG,)):
         try:
             spec = json.loads(row["value"])
         except (json.JSONDecodeError, TypeError):

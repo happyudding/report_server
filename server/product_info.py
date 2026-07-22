@@ -28,6 +28,10 @@ INFO_COLUMNS = (
 
 _TABLE = "report_product_info"
 
+# 원본 기준정보에서 `{6,6,6,6,6}` 처럼 중괄호 다중값으로 저장될 수 있는 컬럼 —
+# 세션에는 첫 값만 취해 저장한다.
+_FIRST_OF_BRACES = ("equip", "para", "flat_zone")
+
 _lock = threading.Lock()
 # 캐시 무효화 키 = (st_mtime_ns, st_size). mtime 단독으로 보지 않는 이유: 이 파일은 사람이
 # 손으로 복사해 오는데, mtime 을 보존하는 복사 도구(xcopy /d 등)를 쓰면 교체를 놓친다.
@@ -95,6 +99,10 @@ def _load():
             conn.close()
         for row in rows:
             info = {c: (row[c] or "").strip() for c in INFO_COLUMNS}
+            # equip/para/flat_zone 이 `{6,6,6,6,6}` 형태면 첫 값만 취한다.
+            for c in _FIRST_OF_BRACES:
+                items = _parse_braces(info[c])
+                info[c] = items[0] if items else ""
             # 검색 후보 = 대표 part_id(단일) + sub_part_id 중괄호 개별 항목.
             # 어느 후보를 고르든 그 행의 원본 기준정보(info) 를 세션에 저장한다.
             keys = [info["part_id"]] if info["part_id"] else []

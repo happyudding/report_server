@@ -13,6 +13,7 @@ let _noteReady = false;        // iframe 에 init 전송 완료(= luckysheet 생
 let _noteDirty = false;        // 미저장 시트 편집
 let _noteInitToken = 0;        // 재렌더 경합 가드
 let _notePendingImgs = [];     // 준비 전 요청된 삽입 이미지 큐 [{url, caption}]
+let _notePendingGoto = null;   // 준비 전 요청된 셀 이동 {sheet, sheetName, r, c}
 let _noteCanEdit = false;      // 현재 렌더의 편집 가능 여부
 let _noteFrameReady = false;   // iframe 이 note:ready 전송함
 let _noteFetched = false;      // 저장 시트 fetch 완료
@@ -40,14 +41,18 @@ function renderNoteTab() {
   panel.innerHTML = `
     <div class="note-bar" id="noteBar">
       ${canEdit ? `<button type="button" class="btn-sm note-save" id="noteSave">💾 Note 저장</button>` : ""}
+      <button type="button" class="btn-sm" id="noteTagBtn" title="셀 앵커 태그 — IssueTable comment 의 #[태그] 로 링크됩니다">🔖 태그</button>
       <span class="note-meta" id="noteMeta"></span>
       <span class="cnote-hint">${canEdit
         ? "차트는 각 항목 상세의 [📋 Note에 붙여넣기]로 담고, 셀에는 텍스트·수식(=A1-B1)·엑셀 붙여넣기가 됩니다. 저장 버튼을 눌러야 서버에 반영됩니다."
         : "읽기 전용 — 편집 권한자가 정리한 Note 입니다."}</span>
+      <div class="note-tag-panel" id="noteTagPanel" style="display:none;"></div>
     </div>
     <iframe id="noteFrame" src="${NOTE_FRAME_SRC}" title="Note 시트"></iframe>`;
   const saveBtn = document.getElementById("noteSave");
   if (saveBtn) saveBtn.onclick = () => noteSave();
+  const tagBtn = document.getElementById("noteTagBtn");
+  if (tagBtn) tagBtn.onclick = () => noteToggleTagPanel();
 
   // 저장 시트 fetch 와 iframe 로드는 병렬 — 둘 다 완료되면 noteMaybeInit 이 init 전송.
   fetch(`/pe/report/session/${SESSION_ID}/web_report/note`, { cache: "no-store" })
@@ -85,6 +90,7 @@ function noteMaybeInit(token) {
   frame.contentWindow.postMessage(
     { type: "note:init", canEdit: _noteCanEdit, sheets: _noteSavedSheets }, NOTE_ORIGIN);
   noteFlushPending();
+  noteFlushGoto();
 }
 
 // ── iframe → 부모 메시지 (모듈 로드 시 1회 등록) ──────────────────────────────
@@ -103,6 +109,11 @@ window.addEventListener("message", ev => {
     case "note:sheets": {
       const w = _noteSaveWaiters.get(msg.reqId);
       if (w) { _noteSaveWaiters.delete(msg.reqId); w.resolve(msg.sheets); }
+      break;
+    }
+    case "note:selection": {
+      const w = _noteSaveWaiters.get(msg.reqId);
+      if (w) { _noteSaveWaiters.delete(msg.reqId); w.resolve(msg.sel); }
       break;
     }
     case "note:error": {
@@ -195,6 +206,145 @@ function noteRequestSheets() {
     }, 10000);
     frame.contentWindow.postMessage({ type: "note:getSheets", reqId }, NOTE_ORIGIN);
   });
+}
+
+// iframe 에 현재 선택 셀 조회 요청 (getSheets 와 동일 왕복 구조). null=선택 없음.
+function noteRequestSelection() {
+  const frame = document.getElementById("noteFrame");
+  if (!frame || !frame.contentWindow) return Promise.reject(new Error("Note 프레임이 없습니다."));
+  const reqId = ++_noteReqSeq;
+  return new Promise((resolve, reject) => {
+    _noteSaveWaiters.set(reqId, { resolve, reject });
+    setTimeout(() => {
+      if (_noteSaveWaiters.has(reqId)) { _noteSaveWaiters.delete(reqId); reject(new Error("선택 응답 시간 초과")); }
+    }, 10000);
+    frame.contentWindow.postMessage({ type: "note:getSelection", reqId }, NOTE_ORIGIN);
+  });
+}
+
+// ── 앵커 태그 팝오버 (note-bar [🔖 태그]) ─────────────────────────────────────
+// 태그 목록(전원 조회·클릭 이동) + 편집자만 이름 입력·현재 셀 태그·삭제. 저장은 즉시
+// (kind=note_tag DB) — Note 시트 저장(base 잠금)과 독립 채널이다.
+function noteToggleTagPanel() {
+  const panel = document.getElementById("noteTagPanel");
+  if (!panel) return;
+  if (panel.style.display === "none" || !panel.style.display) {
+    noteRenderTagPanel();
+    panel.style.display = "block";
+  } else {
+    panel.style.display = "none";
+  }
+}
+function noteHideTagPanel() {
+  const panel = document.getElementById("noteTagPanel");
+  if (panel) panel.style.display = "none";
+}
+function noteRenderTagPanel() {
+  const panel = document.getElementById("noteTagPanel");
+  if (!panel) return;
+  const tags = (DATA && DATA.note_tags) || {};
+  const names = Object.keys(tags).sort((a, b) => a.localeCompare(b));
+  const canEdit = _noteCanEdit;
+  let html = `<div class="note-tag-head">🔖 앵커 태그<span class="note-tag-close" id="noteTagClose" title="닫기">✕</span></div>`;
+  if (!names.length) {
+    html += `<div class="note-tag-empty">등록된 태그가 없습니다.${canEdit ? " 셀을 선택하고 아래에서 추가하세요." : ""}</div>`;
+  } else {
+    html += `<div class="note-tag-list">` + names.map(n => {
+      const t = tags[n] || {};
+      const loc = t.sheet_name ? esc(t.sheet_name) : "";
+      return `<div class="note-tag-row">
+        <span class="note-tag-go" data-name="${esc(n)}" title="이 셀로 이동">#${esc(n)}</span>
+        <span class="note-tag-loc">${loc}</span>
+        ${canEdit ? `<span class="note-tag-del" data-name="${esc(n)}" title="삭제">🗑</span>` : ""}
+      </div>`;
+    }).join("") + `</div>`;
+  }
+  if (canEdit) {
+    html += `<div class="note-tag-add">
+        <input type="text" id="noteTagName" maxlength="40" placeholder="태그 이름" data-no-dirty />
+        <button type="button" class="btn-sm" id="noteTagAdd">현재 셀에 태그</button>
+      </div>
+      <div class="note-tag-note">선택한 셀에 이름을 붙입니다. 같은 이름은 위치가 갱신됩니다. 셀 내용은 Note 저장을 눌러야 함께 보존됩니다.</div>`;
+  }
+  panel.innerHTML = html;
+  panel.onclick = noteTagPanelClick;
+}
+function noteTagPanelClick(e) {
+  if (e.target.closest("#noteTagClose")) { noteHideTagPanel(); return; }
+  const del = e.target.closest(".note-tag-del");
+  if (del) { noteDeleteTag(del.dataset.name); return; }
+  if (e.target.closest("#noteTagAdd")) {
+    const inp = document.getElementById("noteTagName");
+    noteCreateTag((inp && inp.value) || "");
+    return;
+  }
+  const go = e.target.closest(".note-tag-go");
+  if (go) { noteHideTagPanel(); noteJumpToTag(go.dataset.name); return; }
+}
+async function noteCreateTag(name) {
+  name = String(name || "").trim();
+  if (!name) { showToast("태그 이름을 입력하세요."); return; }
+  if (/[\[\]#@]/.test(name)) { showToast("태그 이름에 [ ] # @ 는 쓸 수 없습니다."); return; }
+  if (!_noteReady) { showToast("Note 가 아직 준비되지 않았습니다."); return; }
+  let sel;
+  try { sel = await noteRequestSelection(); }
+  catch (e) { showToast("선택 셀 조회 실패: " + e.message); return; }
+  if (!sel) { showToast("먼저 Note 에서 셀을 선택하세요."); return; }
+  const target = { tab: "note", sheet: sel.sheet, sheet_name: sel.sheetName, r: sel.r, c: sel.c };
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/note_tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({ action: "set", name, target }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    if (DATA) DATA.note_tags = j.note_tags || {};
+    noteRenderTagPanel();
+    showToast(`태그 #${name} 저장 — comment 에서 #${name} 로 링크됩니다.`);
+  } catch (e) {
+    showToast("태그 저장 실패: " + e.message);
+  }
+}
+async function noteDeleteTag(name) {
+  name = String(name || "");
+  if (!confirm(`태그 #${name} 을(를) 삭제할까요? comment 의 링크는 남지만 이동할 수 없게 됩니다.`)) return;
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/note_tags`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({ action: "delete", name }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    if (DATA) DATA.note_tags = j.note_tags || {};
+    noteRenderTagPanel();
+    showToast(`태그 #${name} 삭제.`);
+  } catch (e) {
+    showToast("태그 삭제 실패: " + e.message);
+  }
+}
+
+// ── comment 의 #[태그] 클릭 → Note 탭 전환 + 해당 셀로 이동 (noteQueueImage 패턴) ──
+function noteJumpToTag(name) {
+  const tags = (DATA && DATA.note_tags) || {};
+  const tag = tags[String(name)];
+  if (!tag) { showToast(`태그 #${name} 을(를) 찾을 수 없습니다 (삭제되었을 수 있습니다).`); return; }
+  if (tag.tab && tag.tab !== "note") { showToast("이 태그는 Note 셀 태그가 아닙니다."); return; }
+  _notePendingGoto = { sheet: tag.sheet, sheetName: tag.sheet_name, r: tag.r, c: tag.c };
+  const panel = document.getElementById("panel-note");
+  const active = panel && panel.classList.contains("active");
+  if (_noteReady && active) { noteFlushGoto(); return; }
+  const tabBtn = document.querySelector('.tab[data-tab="note"]');
+  if (tabBtn) tabBtn.click();   // renderTab("note") → iframe init 후 noteFlushGoto
+  if (_noteReady) setTimeout(() => noteFlushGoto(), 150);
+}
+function noteFlushGoto() {
+  if (!_noteReady || !_notePendingGoto) return;
+  const frame = document.getElementById("noteFrame");
+  if (!frame || !frame.contentWindow) return;
+  const g = _notePendingGoto; _notePendingGoto = null;
+  frame.contentWindow.postMessage(Object.assign({ type: "note:goto" }, g), NOTE_ORIGIN);
 }
 
 // 미저장 Note 이탈 경고 (chart_notes 의 dirty 와 별개 채널).

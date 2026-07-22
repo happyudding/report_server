@@ -137,6 +137,9 @@ def session_full(session_id):
             session_id, report_db=report_db)
         extras["note_info"] = web_report_service.get_note_meta(
             session_id, report_db=report_db)
+        # 앵커 태그(태그명→Note 셀 위치) — comment 의 #[태그명] 점프 대상.
+        extras["note_tags"] = web_report_service.get_note_tags(
+            session_id, report_db=report_db)
 
     if session.get("source") == "web_report":
         # web_report 세션: parquet 원본에서 재계산 (decoded tables 는 service 의 LRU 캐시 활용).

@@ -73,6 +73,37 @@
     return sheets;
   }
 
+  // ── 앵커 태그: 현재 선택 셀 조회 / 특정 셀로 이동 ─────────────────────────────
+  // 현재 시트 + 마지막 선택 range 의 좌상단 셀 → {sheet(index), sheetName, r, c}. 선택 없으면 null.
+  function currentSelection() {
+    const sh = window.luckysheet.getSheet() || {};
+    const rg = window.luckysheet.getRange();
+    const last = Array.isArray(rg) && rg.length ? rg[rg.length - 1] : null;
+    if (!last || !Array.isArray(last.row) || !Array.isArray(last.column)) return null;
+    return { sheet: String(sh.index == null ? "" : sh.index), sheetName: sh.name || "",
+             r: last.row[0], c: last.column[0] };
+  }
+
+  // {sheet, sheetName, r, c} → 해당 시트 활성화 + 셀 선택표시 + 스크롤.
+  // setRangeShow 는 선택만 하고 스크롤을 안 하므로 scroll 과 병행한다.
+  function gotoCell(msg) {
+    const files = window.luckysheet.getLuckysheetfile() || [];
+    let pos = files.findIndex(s => String(s.index) === String(msg.sheet));
+    if (pos === -1 && msg.sheetName) pos = files.findIndex(s => s.name === msg.sheetName);
+    if (pos === -1) { post("note:error", { message: "태그가 가리키는 시트를 찾을 수 없습니다." }); return; }
+    const f = files[pos] || {};
+    const maxR = (f.row || 1) - 1, maxC = (f.column || 1) - 1;
+    const r = Math.max(0, Math.min(maxR, Number(msg.r) || 0));
+    const c = Math.max(0, Math.min(maxC, Number(msg.c) || 0));
+    const show = () => {
+      try { window.luckysheet.setRangeShow({ row: [r, r], column: [c, c] }); } catch (e) {}
+      try { window.luckysheet.scroll({ targetRow: Math.max(0, r - 2), targetColumn: Math.max(0, c - 1) }); } catch (e) {}
+    };
+    const cur = window.luckysheet.getSheet() || {};
+    if (String(cur.index) === String(f.index)) show();
+    else window.luckysheet.setSheetActive(pos, { success: () => requestAnimationFrame(show) });
+  }
+
   window.addEventListener("message", ev => {
     if (ev.origin !== ORIGIN) return;
     const msg = ev.data || {};
@@ -84,6 +115,14 @@
       case "note:getSheets":
         try { post("note:sheets", { reqId: msg.reqId, sheets: collectSheets() }); }
         catch (e) { post("note:error", { reqId: msg.reqId, message: String((e && e.message) || e) }); }
+        break;
+      case "note:getSelection":
+        try { post("note:selection", { reqId: msg.reqId, sel: currentSelection() }); }
+        catch (e) { post("note:error", { reqId: msg.reqId, message: String((e && e.message) || e) }); }
+        break;
+      case "note:goto":
+        try { gotoCell(msg); }
+        catch (e) { post("note:error", { message: "태그 이동 실패: " + ((e && e.message) || e) }); }
         break;
       case "note:insertImage":
         try { window.luckysheet.insertImage(msg.url, { rowIndex: 1, colIndex: 1 }); post("note:dirty"); }

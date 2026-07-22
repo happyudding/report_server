@@ -49,15 +49,24 @@ function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNa
 function isDistCol(c) { return String(c || "").toLowerCase() === "distribution"; }
 function isMapCol(c) { return String(c || "").toLowerCase() === "map"; }
 function isCommentCol(c) { return /comment/i.test(String(c || "")); }
-// comment 텍스트의 @[항목명] 토큰을 Item_detail 링크로 변환(그 외 텍스트는 이스케이프).
-// 저장은 항상 @[항목명] 평문으로(td.textContent), 표시할 때만 링크로 보인다.
+// comment 텍스트의 @[항목명]→Item_detail 링크, #[태그명]→Note 셀 앵커 링크로 변환
+// (그 외 텍스트는 전부 esc). 저장은 항상 @[..]/#[..] 평문으로(td.textContent),
+// 표시할 때만 링크로 보인다. #[..] 는 DATA.note_tags 에 없으면 .missing(삭제된 태그).
 function linkifyComment(txt) {
   const s = String(txt == null ? "" : txt);
   let out = "", last = 0, m;
-  const re = /@\[([^\]]+)\]/g;
+  const re = /([@#])\[([^\]]+)\]/g;
   while ((m = re.exec(s))) {
     out += esc(s.slice(last, m.index));
-    out += `<span class="item-detail-link" data-subject="${esc(m[1])}">@${esc(m[1])}</span>`;
+    const name = m[2];
+    if (m[1] === "@") {
+      out += `<span class="item-detail-link" data-subject="${esc(name)}">@${esc(name)}</span>`;
+    } else {
+      const tags = (typeof DATA !== "undefined" && DATA && DATA.note_tags) || {};
+      const missing = !Object.prototype.hasOwnProperty.call(tags, name);
+      out += `<span class="note-tag-link${missing ? " missing" : ""}" data-tag="${esc(name)}"`
+           + `${missing ? ' title="삭제되었거나 아직 만들어지지 않은 태그"' : ""}>#${esc(name)}</span>`;
+    }
     last = m.index + m[0].length;
   }
   out += esc(s.slice(last));
