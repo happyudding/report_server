@@ -72,6 +72,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 정본. 자주 만지는 것: `WEB_REPORT_COMPUTE_WORKERS`(기본 2, 0=인라인),
 `WEB_REPORT_TABLES_CACHE_MB`(기본 4096), `WEB_REPORT_DISK_CACHE_MAX_GB`(기본 500),
 `WEB_REPORT_REPORT_CACHE_MB`(기본 256 — report dict 바이트 상한),
+`WEB_REPORT_TRIM_CHART_CACHE_MB`(기본 256 — Trim 그룹 차트 gzip 바이트 상한),
 `WEB_REPORT_ONDEMAND_WORKERS`(기본 2 — 콜드 202 후 백그라운드 빌드 스레드).
 
 ### 세션/DB 유지보수
@@ -92,13 +93,40 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `LOG_MAX_MB` | `256` | 활성 콘솔 로그(`server/log/server_*.txt`) 크기 상한 — 초과 시 새 파일로 로테이션. `0` 이하 = 비활성 |
-| `LOG_KEEP_FILES` / `LOG_KEEP_DAYS` | `30` / `14` | 로그 파일 정리 상한(개수/일수) — 기동·로테이션 시 초과분 삭제 |
+| `LOG_KEEP_FILES` / `LOG_KEEP_DAYS` | `30` / `14` | 로그 파일 정리 상한(개수/일수) — 기동·로테이션 시 초과분 삭제. faulthandler·metrics 파일도 `LOG_KEEP_DAYS` 준용 |
+| `REPORT_METRICS_FILE_KEEP_DAYS` | `14` | flight recorder(`metrics_YYYYMMDD.log`, 분당 1줄 리소스 추이) 보존 일수. `0` = 비활성 |
+
+**`server/log/` 파일 종류** (모두 위 정리 정책으로 자동 회수):
+
+| 파일 | 생성 주체 | 내용 |
+|------|-----------|------|
+| `server_<stamp>.txt` | wsgi(부모) | 콘솔 로그 tee. 기동마다 새 파일 = **파일 수가 재기동 횟수**. 이제 `logging` INFO 도 타임스탬프 포함해 여기 남는다 |
+| `faulthandler_<stamp>.txt` | wsgi(부모) | 네이티브 크래시(세그폴트/OS 강제종료) 스택. server_ 와 stamp 공유. **크래시 없으면 0바이트→다음 기동 시 삭제** |
+| `faulthandler_worker_<pid>.txt` | 컴퓨트 워커 | 워커 프로세스 네이티브 크래시(OOM 등) 스택. per-PID |
+| `metrics_YYYYMMDD.log` | metrics 샘플러 | flight recorder — `ts,cpu,rss,mem_used,inflight,win_peak` (분당 1줄). 크래시 직전 리소스 추이 부검용 |
+| `watchdog_events.log` | watchdog | 재기동/실패 이벤트(JSON lines) — admin 대시보드 현황 탭이 읽음 |
+| `watchdog_checks.log` | watchdog | **매 실행 1줄**(JSON lines) — 실행 빈도 자체. `mutex_busy` = 태스크 겹쳐 뜬 직접 증거 |
+| `watchdog_snap_<stamp>.txt` | watchdog | 재기동 직전 프로세스 부검 + 최신 `server_*.txt` 마지막 20줄 스냅샷(죽은 이유 원문) |
+| `diagnose_<stamp>.txt` | diagnose_watchdog.ps1 | 진단 스크립트 리포트(수동 실행 시) |
 
 **watchdog 자동 재기동**: [register_watchdog.bat](register_watchdog.bat) 을 관리자 권한으로
 1회 실행하면 작업 스케줄러에 5분 주기 + 부팅 시 감시([watchdog.ps1](watchdog.ps1))가
 등록된다 — 포트 미리스닝이면 즉시, `/healthz` 무응답이면 2연속 실패 시 자동 재기동.
 재기동 이력은 admin 대시보드 현황 탭 또는 `server/log/watchdog_events.log`.
 수동 점검 시간에는 `schtasks /Change /TN report-server-watchdog /DISABLE` 로 먼저 정지할 것.
+
+**재기동 폭주 진단** (짧은 시간 다수 재기동이 의심될 때): 운영 PC 에서 관리자 권한으로
+[diagnose_watchdog.ps1](diagnose_watchdog.ps1) 을 1회 실행하면(read-only) events 간격 분석 ·
+예약 작업 중복 여부 · **TaskScheduler operational 로그의 실제 기동 횟수**(핵심 증거) ·
+`server_*.txt` 생성 클러스터 · python 크래시/PC 재부팅 이벤트를 한 리포트로 모아
+`server/log/diagnose_<stamp>.txt` 에 남긴다:
+`powershell -NoProfile -ExecutionPolicy Bypass -File .\diagnose_watchdog.ps1 -Hours 48`
+> 참고: TaskScheduler operational 로그가 비활성이면 실기동 횟수를 확인할 수 없다 —
+> 리포트가 활성화 명령을 안내한다.
+
+> **반영 시점**: watchdog.ps1 강화는 재기동 없이 다음 5분 주기부터 적용된다. 그러나
+> Python 측 강화(faulthandler·`logging` INFO·flight recorder)는 **서버 재기동 후에만**
+> 적용된다(terminate.bat → start.bat, 이때 watchdog 일시 정지 절차 준수).
 
 ### 운영 배포 체크리스트 (8cpu / 32GB / 2TB, 동시 ~5명 기준 — 2026-07-15)
 
@@ -172,7 +200,8 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `GET` | `/distribution_batch?subjects=a,b,c[&bin1=1]` | 공개 | Distribution ECDF **항목 배치** (화면에 보이는 항목만, 최대 40개/요청). 전량 payload 의 부분집합과 값 동일 |
 | `GET` | `/map_analysis` | 공개 | Map Analysis die 전량 (gzip+ETag — `/full` 은 dies 뺀 경량 메타, schema v8). 콜드면 `202 {"building":true}` |
 | `GET` | `/scatter/<subject>` | 공개 | 항목 상세 산포 (전 측정값) |
-| `GET` | `/trim_analysis`, `/trim_chart` | 공개 | Trim 매칭·통계 / 그룹 차트 (gzip+ETag) |
+| `GET` | `/trim_analysis`, `/trim_chart` | 공개 | Trim 매칭·통계 / 그룹 차트 1개 (gzip+ETag). 프런트는 배치를 쓰고 이 단일 경로는 폴백·하위호환용 |
+| `GET` | `/trim_chart_batch?source=&group=A&group=B&group=C` | 공개 | Trim 그룹 차트 **배치** (1~3개, `group` 반복 param **순서 유지**) → `{"charts":[...]}` gzip. 각 chart 는 단일 `/trim_chart` 결과와 값 동일. 콜드면 컴퓨트 워커로 오프로드 |
 | `POST` | `/trim/overrides` | 편집자 | Trim 수동 재배치 저장 |
 | `GET` | `/commonality/chips`, `/commonality/chip` | 공개 | Commonality chip 검색 / 백분위 |
 | `POST` | `/issue_table/etc`, `/issue_table/comments`, `/summary/engr` | 편집자 | Issue/Summary 편집 |

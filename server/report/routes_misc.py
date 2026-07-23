@@ -26,6 +26,7 @@ from report.security import (
     _USER_ID_RE,
     _active_or_404,
     _client_meta,
+    _is_master,
     _issue_csrf_cookie,
     _normalize_user_id,
     _private_guard,
@@ -243,12 +244,14 @@ def history():
         "visibility": (request.args.get("visibility") or "").strip() or None,
     }
     # 비공개 세션 필터: 업로더/위임 편집자 외에는 목록에서 숨긴다 (신원 없음 ""=전부 숨김).
+    # master PC(admin 로그인 4h)는 비공개도 목록에 노출한다.
     viewer = _current_user()
+    master = _is_master()
     limit_raw = request.args.get("limit")
     offset_raw = request.args.get("offset")
     if limit_raw is None and offset_raw is None:
         # 하위호환: 페이지네이션 파라미터가 없으면 기존 리스트 응답 (limit=500 고정)
-        return jsonify(report_db.get_history(**filters, viewer=viewer))
+        return jsonify(report_db.get_history(**filters, viewer=viewer, see_all_private=master))
     try:
         limit = max(1, min(int(limit_raw or 500), 1000))
     except (TypeError, ValueError):
@@ -259,9 +262,10 @@ def history():
         offset = 0
     sort = (request.args.get("sort") or "new").strip()
     rows, total = report_db.get_history_page(**filters, limit=limit, offset=offset,
-                                             viewer=viewer, sort=sort)
+                                             viewer=viewer, sort=sort,
+                                             see_all_private=master)
     # 신원을 함께 실어 첫 화면의 /api/auth/me 왕복을 없앤다 (auth_me 와 동일 규칙).
-    viewer_info = {"user_id": viewer, "source": _identity_source()}
+    viewer_info = {"user_id": viewer, "source": _identity_source(), "is_master": master}
     if viewer_info["source"] == "honey" and viewer:
         viewer_info["has_pin"] = bool(report_db.get_user(viewer))
     return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset,

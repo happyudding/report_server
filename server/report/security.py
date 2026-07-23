@@ -10,10 +10,17 @@ import secrets
 
 from flask import abort, jsonify, make_response, request
 
+from admin_panel import MASTER_COOKIE, master_value_valid
 from auth_identity import current_user as _current_user, is_uploader as _is_uploader
 from database import report_db
 
 _log = logging.getLogger(__name__)
+
+
+def _is_master():
+    """admin 로그인한 PC 인가 — 서명·미만료된 master 게이트 쿠키(4h). 통과 시 전 세션
+    편집 + 비공개 세션 조회/목록표시 권한. 삭제·비공개토글 등 업로더 전용 권한은 불포함."""
+    return master_value_valid(request.cookies.get(MASTER_COOKIE, ""))
 
 _ANALYSIS_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -100,6 +107,8 @@ def _editor_guard(session):
     """콘텐츠 편집·개인 중요표시 가드 — 업로더 본인 또는 위임받은 편집자면 통과.
     (삭제·비공개·권한부여는 _uploader_guard 로 업로더 전용 유지.)
     거부는 warning 로그를 남긴다 — "저장이 안 됐다" 신고 시 서버 측 추적 근거."""
+    if _is_master():
+        return None  # admin 로그인한 master PC 는 전 세션 편집 허용 (Honey 신원 불요)
     uid = _current_user()
     if not uid:
         _log.warning("editor guard reject (no identity): %s %s", request.method, request.path)
@@ -114,10 +123,12 @@ def _editor_guard(session):
 
 def _can_view(session, uid=None):
     """비공개 세션 조회 가능 여부 — 공개면 항상 True. 비공개면 업로더 본인
-    (legacy: uploaded_by 빈 세션은 Honey 신원 전원 — is_uploader 규칙) 또는
-    위임 편집자만. _editor_guard 와 동일한 판별 프리미티브를 재사용한다."""
+    (legacy: uploaded_by 빈 세션은 Honey 신원 전원 — 단 web_report 세션은 제외,
+    is_uploader 규칙) 또는 위임 편집자만. _editor_guard 와 동일한 판별 프리미티브를 재사용한다."""
     if not int((session or {}).get("is_private") or 0):
         return True
+    if _is_master():
+        return True  # master PC 는 비공개 세션도 조회 가능
     if uid is None:
         uid = _current_user()
     if not uid:

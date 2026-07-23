@@ -67,7 +67,11 @@ COMMONALITY_CACHE: OrderedDict = OrderedDict()  # (analysis_key, content_hash) -
 # 바꾸지 않은 차트는 캐시가 그대로 살아있다.
 TRIM_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_TRIM_CACHE", "4") or 4))
 TRIM_CACHE: OrderedDict = OrderedDict()      # (akey, chash, mdigest, mode, source) -> gzip bytes
+# 그룹 차트는 전 die 전 포인트라 세션에 따라 1건이 수 MB 가 되고, 개수 상한(64)만으로는
+# RAM 이 예측 불가로 부푼다 → dist/map 과 같은 바이트 이중 상한을 적용한다.
 TRIM_CHART_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_TRIM_CHART_CACHE", "64") or 64))
+TRIM_CHART_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_TRIM_CHART_CACHE_MB", "256")
+                                        or 256)) * 1024 * 1024   # 0 = 바이트 상한 비활성
 TRIM_CHART_CACHE: OrderedDict = OrderedDict()  # (akey, chash, mode, source, items_digest) -> gzip bytes
 
 # manifest 인메모리 캐시 — warm 조회(/full·raw_data 등)마다 발생하던 S3 manifest GET 왕복 제거.
@@ -230,6 +234,11 @@ def dist_cache_put(key, blob: bytes) -> None:
 
 def map_cache_put(key, blob: bytes) -> None:
     _bytes_capped_put(MAP_CACHE, key, blob, MAP_CACHE_MAX, MAP_CACHE_MAX_BYTES)
+
+
+def trim_chart_cache_put(key, blob: bytes) -> None:
+    _bytes_capped_put(TRIM_CHART_CACHE, key, blob,
+                      TRIM_CHART_CACHE_MAX, TRIM_CHART_CACHE_MAX_BYTES)
 
 
 def keyed_lock(key) -> threading.Lock:

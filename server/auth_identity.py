@@ -10,7 +10,9 @@ env ``AUTH_SSO_HEADER=X-Auth-User`` 설정만으로 그 헤더가 UA 보다 우�
 위조를 막을 수 있다 (헤더 신뢰의 전제).
 
 [SSO 전환 시 재검토] ``uploaded_by`` 가 비어 있는 legacy 세션은 is_uploader 가
-신원만 있으면 True 를 반환한다 (현행 동작 유지) — SSO 도입 시 이 우회를 제거할 것.
+신원만 있으면 True 를 반환한다 — 단 이 우회는 **xlsx_upload 세션에만** 적용하고,
+web_report 세션에서 uploaded_by 가 비면 '업로더 없음'으로 취급한다(신원 미기록
+web_report 세션이 전원에게 편집 개방되던 구멍 차단). SSO 도입 시 이 우회를 제거할 것.
 """
 import os
 import re
@@ -84,11 +86,18 @@ def identity_source():
 
 def is_uploader(session, uid):
     """uid 가 세션 업로더인지. uploaded_by 는 'DOMAIN\\user' 또는 'user' 형식이라
-    뒷부분만 비교. 업로더 기록이 없는 legacy 세션은 신원만 있으면 True
-    ([SSO 전환 시 재검토] — 모듈 docstring 참조)."""
+    뒷부분만 비교.
+
+    업로더 기록이 없는 legacy 세션은 신원만 있으면 True 지만, 이 하위호환 우회는
+    **xlsx_upload 세션에만** 적용한다 — 그 흐름은 업로더를 기록하지 않는 게 정상이고
+    편집 라우트(web_report 전용)에 도달하지도 않기 때문이다. web_report 세션에서
+    uploaded_by 가 비면 '업로더 없음(= 편집·삭제·권한부여 불가)'으로 취급한다 — 클라가
+    manifest 에 신원을 넣기 전(구/신원 미기록) 업로드된 세션이 Honey 접속자 전원에게
+    편집 개방되던 구멍을 막는다([SSO 전환 시 재검토] — 모듈 docstring 참조).
+    (이런 세션의 정리는 관리자 패널 삭제/purge 경로가 담당한다 — uploader 가드 무관.)"""
     if not uid:
         return False
     ub = str((session or {}).get("uploaded_by") or "")
     if not ub:
-        return True
+        return str((session or {}).get("source") or "") != "web_report"
     return ub.split("\\")[-1].strip().lower() == uid

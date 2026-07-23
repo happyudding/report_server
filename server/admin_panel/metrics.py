@@ -16,6 +16,7 @@ import os
 import threading
 import time
 from collections import deque
+from pathlib import Path
 
 import psutil
 from flask import g, request
@@ -29,6 +30,14 @@ SAMPLE_INTERVAL = max(1.0, float(os.getenv("REPORT_METRICS_INTERVAL_SEC", "10"))
 RETENTION_SEC = 24 * 3600
 # wsgi.py 와 동일 규칙 — in-flight 점유율 분모용
 WAITRESS_THREADS = int(os.getenv("WAITRESS_THREADS", "13"))
+
+# flight recorder — 링버퍼(_samples)는 메모리 전용이라 프로세스가 죽으면 크래시 직전
+# 리소스 추이가 함께 사라진다. 그 부검을 위해 1분에 1줄씩 metrics_YYYYMMDD.log 에 남긴다.
+# REPORT_METRICS_FILE_KEEP_DAYS=0 이면 비활성.
+METRICS_FILE_KEEP_DAYS = float(os.getenv("REPORT_METRICS_FILE_KEEP_DAYS", "14"))
+_fr_last_minute = None   # 마지막 기록한 분 — 분이 바뀔 때만 append
+_fr_last_date = None     # 마지막 기록 날짜 — 롤오버 시 오래된 파일 prune
+_fr_warned = False       # 기록 실패 반복 경고 억제 (디스크 풀 시 로그 폭주 방지)
 
 _proc = psutil.Process()
 _lock = threading.Lock()  # 카운터·링버퍼 공용 (임계구역은 정수 연산·append 뿐)
@@ -79,6 +88,49 @@ def _bump_boot_peak(key, value, ts):
         _boot_peaks[key] = (value, ts)
 
 
+def _prune_flight_files(log_dir):
+    """오래된 metrics_*.log 정리 (best-effort)."""
+    try:
+        cutoff = time.time() - METRICS_FILE_KEEP_DAYS * 86400
+        for p in log_dir.glob("metrics_*.log"):
+            try:
+                if p.stat().st_mtime < cutoff:
+                    p.unlink()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _flight_record(ts, cpu, mem_used, rss, inflight, win_peak):
+    """분이 바뀔 때만 metrics_YYYYMMDD.log 에 1줄 append (기록마다 open/close — 1회/분이라
+    비용 무시 가능, 핸들 상시 보유 없이 외부 삭제·수집과 충돌 없음)."""
+    global _fr_last_minute, _fr_last_date, _fr_warned
+    if METRICS_FILE_KEEP_DAYS <= 0:
+        return
+    minute = int(ts // 60)
+    if minute == _fr_last_minute:
+        return
+    _fr_last_minute = minute
+    try:
+        import config
+        log_dir = Path(config.ROOT_DIR) / "server" / "log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        lt = time.localtime(ts)
+        date = time.strftime("%Y%m%d", lt)
+        if date != _fr_last_date:      # 날짜 롤오버(+ 샘플러 시작 첫 기록) 시 prune
+            _fr_last_date = date
+            _prune_flight_files(log_dir)
+        line = "%s,%.1f,%d,%d,%d,%d\n" % (
+            time.strftime("%Y-%m-%dT%H:%M:%S", lt), cpu, rss, mem_used, inflight, win_peak)
+        with (log_dir / f"metrics_{date}.log").open("a", encoding="utf-8") as f:
+            f.write(line)
+    except Exception:
+        if not _fr_warned:
+            _fr_warned = True
+            _log.warning("[metrics] flight recorder write failed (further warnings suppressed)", exc_info=True)
+
+
 def _sample():
     ts = time.time()
     cpu = _cpu_percent()
@@ -94,6 +146,8 @@ def _sample():
         _bump_boot_peak("mem", mem_used, ts)
         _bump_boot_peak("rss", rss, ts)
         _bump_boot_peak("inflight", win_peak, ts)
+    # 파일 IO 는 락 밖에서 (요청 경로의 in-flight 카운터를 막지 않도록)
+    _flight_record(ts, cpu, mem_used, rss, inflight, win_peak)
 
 
 def _loop():

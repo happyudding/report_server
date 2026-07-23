@@ -1122,20 +1122,18 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
     return blob, etag_token
 
 
-def get_trim_chart_gzip(session_id: str, *, report_db, upload_root: Path,
-                        source: str = "", group_id: str = "") -> bytes:
-    """Trim 그룹 1개의 chip-to-chip 차트 payload 를 gzip bytes 로 캐시해 반환.
+def _trim_chart_ctx(session_id: str, *, report_db, upload_root: Path, source: str = ""):
+    """Trim 차트 계산의 **요청당 1회** 준비 — (session, table, rule_set, match) 반환.
 
-    그룹 재도출(build_groups)은 문자열 연산(ms 단위)이라 요청마다 수행하고, 캐시 키는
-    슬롯 구성 digest — overrides 편집이 구성을 바꾸지 않은 그룹의 차트는 캐시가 살아있다.
-    그룹/소스가 없으면 KeyError (라우트 404).
+    tables 로드 → mode/selected 필터 → source 선택 → 그룹 재도출(build_groups)까지.
+    배치 요청이 그룹 수만큼 이 준비를 반복하지 않도록 분리한 것이고, 단일 요청의
+    동작·산출은 종전과 동일하다.
     """
-    from .tabs.trim_analysis import _select_table, build_trim_chart
+    from .tabs.trim_analysis import _select_table
     from .trim_match import build_groups, rule_set_for
 
     session, tables, manifest = _load_tables(
         session_id, report_db=report_db, upload_root=upload_root)
-    analysis_key = session.get("analysis_key")
     mode = _validate_mode(session.get("mode"))
     tables = _mode_tables(tables, mode)
     selected = {str(v) for v in (manifest.get("selected_items") or []) if str(v)}
@@ -1150,9 +1148,24 @@ def get_trim_chart_gzip(session_id: str, *, report_db, upload_root: Path,
     match = build_groups(table.item_columns,
                          overrides=edit_state["trim_overrides"],
                          rule_set=rule_set, product_type=product_type)
+    return session, table, rule_set, match
+
+
+def _pick_trim_group(match, group_id: str):
+    """match 결과에서 그룹 1개를 고른다. 없으면 KeyError (라우트 404)."""
     group = next((g for g in match["groups"] if g["id"] == str(group_id)), None)
     if group is None:
         raise KeyError(str(group_id))
+    return group
+
+
+def _trim_chart_gzip(session, table, group, rule_set) -> bytes:
+    """그룹 1개 차트를 gzip bytes 로 (캐시 히트면 그대로) 반환 — 단일/배치 공용.
+
+    캐시 키는 슬롯 구성 digest — overrides 편집이 구성을 바꾸지 않은 그룹의 차트는
+    캐시가 살아있다. 단일 라우트와 배치 라우트가 **같은 캐시 엔트리를 공유**한다.
+    """
+    from .tabs.trim_analysis import build_trim_chart
 
     items_digest = hashlib.sha256(_canon({"slots": group["slots"]})).hexdigest()[:16]
     cache_key = cache_policy.trim_chart_key(session, table.source, items_digest)
@@ -1166,9 +1179,52 @@ def get_trim_chart_gzip(session_id: str, *, report_db, upload_root: Path,
             blob = gzip.compress(
                 json.dumps(chart, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
                 compresslevel=1)
-            cache.cache_put(cache.TRIM_CHART_CACHE, cache_key, blob,
-                            cache.TRIM_CHART_CACHE_MAX)
+            cache.trim_chart_cache_put(cache_key, blob)
     return blob
+
+
+def get_trim_chart_gzip(session_id: str, *, report_db, upload_root: Path,
+                        source: str = "", group_id: str = "") -> bytes:
+    """Trim 그룹 1개의 chip-to-chip 차트 payload 를 gzip bytes 로 캐시해 반환.
+
+    그룹 재도출(build_groups)은 문자열 연산(ms 단위)이라 요청마다 수행한다.
+    그룹/소스가 없으면 KeyError (라우트 404). 프런트는 배치 라우트를 쓰지만 이 단일
+    경로는 배치 실패 시 폴백 + 하위호환으로 유지한다.
+    """
+    session, table, rule_set, match = _trim_chart_ctx(
+        session_id, report_db=report_db, upload_root=upload_root, source=source)
+    return _trim_chart_gzip(session, table, _pick_trim_group(match, group_id), rule_set)
+
+
+def get_trim_charts_batch(session_id: str, *, report_db, upload_root: Path,
+                          source: str = "", group_ids=()) -> bytes:
+    """Trim 그룹 여러 개(화면 1페이지 = 3개)의 차트를 **한 응답**으로 묶어 gzip 반환.
+
+    `{"charts":[...]}` 를 **요청 순서 그대로** 담는다. 그룹당 요청 1건이던 종전 방식은
+    요청마다 _trim_chart_ctx(tables 로드 + build_groups)를 반복했는데, 여기서는 그 준비를
+    1회만 하고 그룹만 순회한다. 각 조각은 단일 라우트가 돌려주는 본문과 **바이트 동일**
+    (같은 `_trim_chart_gzip` 산출을 풀어 이어 붙일 뿐)이라 프런트 렌더 코드가 그대로 쓴다.
+
+    콜드(tables 캐시 미스)면 배치 전체를 컴퓨트 워커로 넘긴다 — payload 쪽
+    get_trim_analysis_gzip 과 같은 규약이다. **_load_tables 전에** 판정해야 웹 프로세스가
+    미리 디코드해버리는 일이 없다.
+    """
+    ids = [str(g) for g in (group_ids or [])]
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    if not session.get("analysis_key"):
+        raise FileNotFoundError(session_id)
+    if ids and compute.should_offload(cache_policy.tables_key(session)):
+        return compute.run(compute.trim_chart_batch_job, session_id, str(upload_root),
+                           str(source or ""), ids)
+
+    session, table, rule_set, match = _trim_chart_ctx(
+        session_id, report_db=report_db, upload_root=upload_root, source=source)
+    parts = [gzip.decompress(
+        _trim_chart_gzip(session, table, _pick_trim_group(match, gid), rule_set))
+        for gid in ids]
+    return gzip.compress(b'{"charts":[' + b",".join(parts) + b"]}", compresslevel=1)
 
 
 def update_trim_overrides(session_id: str, ops: list, *, report_db, upload_root: Path,

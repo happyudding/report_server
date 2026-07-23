@@ -7,8 +7,10 @@ REPORT_ADMIN_SECRET(영숫자/_/- 3~64자) 을 URL 경로 조각으로 써서
 빈 문자열/형식 불일치 시에는 등록하지 않는다.
 """
 import hashlib
+import hmac
 import logging
 import re
+import time
 
 import config
 
@@ -24,10 +26,40 @@ _SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
 GATE_COOKIE_VOC = "pe_admin_gate_voc"
 GATE_COOKIE_VOC_PATH = "/pe/report"
 
+# master 게이트 쿠키 — admin 로그인한 PC 에 한시적(4h) '전 세션 편집 + 비공개 조회/목록
+# 표시' 권한을 준다. report/security._is_master 가 /pe/report/* 요청에서 검증한다.
+# admin/VOC 게이트(고정 해시)와 달리 만료시각을 서명해 박아 서버가 4h 를 직접 강제한다
+# (브라우저 max_age 에만 의존하지 않음 — 쿠키를 붙잡아둬도 exp 지나면 서버가 거부).
+MASTER_COOKIE = "pe_master_gate"
+MASTER_COOKIE_PATH = "/pe/report"
+MASTER_TTL_SECONDS = 4 * 3600
+
 
 def gate_token():
     """게이트 쿠키 값 — 비밀번호 원문 대신 sha256 토큰(원문 노출 방지)."""
     return hashlib.sha256(("pe-admin-gate|" + config.REPORT_ADMIN_PASSWORD).encode()).hexdigest()
+
+
+def _master_sig(exp_str):
+    """만료시각 문자열에 대한 HMAC-SHA256 서명 (키=admin 비밀번호 파생, 라벨 분리)."""
+    key = ("pe-master-gate|" + config.REPORT_ADMIN_PASSWORD).encode()
+    return hmac.new(key, ("master|" + exp_str).encode(), hashlib.sha256).hexdigest()
+
+
+def issue_master_value(now=None):
+    """master 쿠키 값 = "<exp_epoch>.<hmac>" — 발급 시각 + 4h 를 서명해 박는다."""
+    exp_str = str(int((now if now is not None else time.time()) + MASTER_TTL_SECONDS))
+    return exp_str + "." + _master_sig(exp_str)
+
+
+def master_value_valid(value, now=None):
+    """master 쿠키 검증 — 서명 일치 + 미만료면 True. 위조·형식오류·만료면 False."""
+    exp_str, _, sig = (value or "").partition(".")
+    if not exp_str.isdigit() or not sig:
+        return False
+    if not hmac.compare_digest(sig, _master_sig(exp_str)):
+        return False
+    return int(exp_str) > (now if now is not None else time.time())
 
 
 def voc_gate_token():

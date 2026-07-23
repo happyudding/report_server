@@ -1,3 +1,6 @@
+import atexit
+import faulthandler
+import logging
 import multiprocessing
 import os
 import socket
@@ -22,6 +25,8 @@ for _stream in (sys.stdout, sys.stderr):
 _LOG_FILE = None
 LOG_PATH = None
 _LOG_DIR = None
+_LOG_STAMP = None   # 이 프로세스 기동 타임스탬프 — server_/faulthandler_ 파일이 이름으로 짝지어진다
+_FAULT_FILE = None  # faulthandler 전용 파일 핸들 (전역 보관 — GC 로 fd 가 닫히면 덤프 유실)
 _LOG_MAX_BYTES = 0  # LOG_MAX_MB env — 활성 파일 크기 상한 (0 = 로테이션 비활성)
 _log_bytes = 0      # 활성 파일 누적 기록량 (len(str) 근사 — 정확한 바이트 아님)
 _log_lock = threading.Lock()
@@ -114,14 +119,14 @@ def _prune_old_logs(log_dir):
 
 
 def _enable_console_log_file():
-    global _LOG_FILE, LOG_PATH, _LOG_DIR, _LOG_MAX_BYTES
+    global _LOG_FILE, LOG_PATH, _LOG_DIR, _LOG_STAMP, _LOG_MAX_BYTES
     try:
         log_dir = Path(__file__).resolve().parent / "log"
         log_dir.mkdir(parents=True, exist_ok=True)
         _LOG_DIR = log_dir
         _LOG_MAX_BYTES = max(0, int(float(os.getenv("LOG_MAX_MB", "256")) * 1024 * 1024))
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        LOG_PATH = log_dir / f"server_{stamp}.txt"
+        _LOG_STAMP = time.strftime("%Y%m%d_%H%M%S")
+        LOG_PATH = log_dir / f"server_{_LOG_STAMP}.txt"
         _LOG_FILE = LOG_PATH.open("a", encoding="utf-8", buffering=1)
         sys.stdout = _TeeStream(sys.stdout)
         sys.stderr = _TeeStream(sys.stderr)
@@ -130,8 +135,60 @@ def _enable_console_log_file():
         LOG_PATH = None
 
 
+def _prune_fault_files(log_dir):
+    """빈 faulthandler 파일(크래시 없이 남은 0바이트)과 오래된 것 정리 (best-effort).
+    열려 있는 파일은 Windows 공유 위반으로 unlink 실패 = 사용 중 보호로 자연히 스킵된다."""
+    try:
+        keep_days = float(os.getenv("LOG_KEEP_DAYS", "14"))
+        cutoff = time.time() - keep_days * 86400
+        for path in log_dir.glob("faulthandler_*.txt"):
+            try:
+                st = path.stat()
+                if st.st_size == 0 or st.st_mtime < cutoff:
+                    path.unlink()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _enable_faulthandler():
+    """네이티브 크래시(세그폴트/액세스 위반) 시 스택을 파일에 남긴다. 현재 서버에는
+    faulthandler/excepthook 가 없어 C 확장(pyarrow/pandas) 크래시나 OS 강제종료 시
+    흔적이 사라진다. server_ 로그와 stamp 를 공유해 크래시 덤프 ↔ 콘솔 로그가 이름으로 짝지어진다.
+    tee 스트림은 fd 위임이 불안정하므로 전용 파일에 직접 쓴다(파일 객체는 전역 보관 — GC 방지)."""
+    global _FAULT_FILE
+    try:
+        if _LOG_DIR is None or _LOG_STAMP is None:
+            return
+        _prune_fault_files(_LOG_DIR)
+        path = _LOG_DIR / f"faulthandler_{_LOG_STAMP}.txt"
+        _FAULT_FILE = path.open("a", encoding="utf-8")
+        faulthandler.enable(file=_FAULT_FILE)
+    except Exception:
+        pass
+
+
+def _init_root_logging():
+    """루트 로거 핸들러 설정 — 저장소 전역의 logging.getLogger 는 핸들러 미설정 상태라
+    INFO 로그가 전량 소실되고 WARNING+ 만 무포맷으로 stderr 에 나온다. tee(sys.stderr)
+    설치 이후에 호출해야 핸들러가 tee 스트림을 캡처해 파일에도 남는다."""
+    try:
+        logging.basicConfig(level=logging.INFO, stream=sys.stderr,
+                            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+                            datefmt="%Y-%m-%d %H:%M:%S")
+        # boto3 계열은 INFO 가 시끄럽다 — 나머지는 진단 가치가 있어 그대로 둔다.
+        for noisy in ("botocore", "urllib3", "s3transfer"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
+    except Exception:
+        pass
+
+
 if not _IS_MP_CHILD:
     _enable_console_log_file()
+    _init_root_logging()   # tee 설치 이후 — basicConfig 가 tee stderr 를 캡처하도록
+    _enable_faulthandler()
+    atexit.register(lambda: _log("process exiting (interpreter shutdown)"))
 
 
 def _log(msg):

@@ -305,19 +305,25 @@ function renderStdfMap(panel) {
   if (stdfItem) stdfRenderMap(panel);
 }
 
-// 검색어에 맞는 후보(최대 30) 표시. 빈 검색이면 앞부분 목록. 클릭 시 item 선택 → 재렌더.
+// 검색어에 맞는 후보 표시(최대 100, 드롭다운은 스크롤됨). 빈 검색이면 앞부분 목록.
+// 매칭이 표시분을 넘으면 절단을 헤더로 명시한다(Distribution distRenderSuggest 미러) —
+// 조용히 자르면 뒤 항목이 "없는 것"처럼 보인다. 클릭 시 item 선택 → 재렌더.
 function stdfShowSuggest(search, suggest) {
   const term = String(search.value || "").trim().toLowerCase();
   const distIndex = (DATA.web_report && DATA.web_report.distribution_index) || [];
-  const rows = [];
+  const CAP = 100;
+  const matched = [];
   for (const r of distIndex) {
-    if (!term || String(r.subject).toLowerCase().includes(term)) {
-      rows.push(r);
-      if (rows.length >= 30) break;
-    }
+    if (!term || String(r.subject).toLowerCase().includes(term)) matched.push(r);
   }
-  if (!rows.length) { suggest.style.display = "none"; return; }
-  suggest.innerHTML = rows.map(r =>
+  if (!matched.length) { suggest.style.display = "none"; return; }
+  const rows = matched.length > CAP ? matched.slice(0, CAP) : matched;
+  const head = matched.length > rows.length
+    ? `<div class="dist-sug-head"><span class="dist-sug-cnt">일치 <b>${matched.length}</b>개 ` +
+      `<span class="dist-sug-more">(상위 ${rows.length}개 표시 — 검색어를 좁히세요)</span>` +
+      `</span></div>`
+    : "";
+  suggest.innerHTML = head + rows.map(r =>
     `<div class="dist-sug-item stdf-sug-item" data-subject="${esc(r.subject)}">` +
       `<span class="sug-tno">${esc(r.test_num || "")}</span>` +
       `<span class="sug-name">${esc(r.subject)}</span></div>`).join("");

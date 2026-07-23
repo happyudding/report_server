@@ -40,28 +40,45 @@ if (-not $Port) {
 $logDir     = Join-Path $serverDir 'log'
 $stateFile  = Join-Path $logDir 'watchdog.state'
 $eventsFile = Join-Path $logDir 'watchdog_events.log'
+$checksFile = Join-Path $logDir 'watchdog_checks.log'   # 매 실행 기록 (재기동 폭주 진단용, events 와 분리)
 $python     = Join-Path $serverDir '.venv\Scripts\python.exe'   # start.bat 과 동일 (server\.venv)
 $wsgi       = Join-Path $serverDir 'wsgi.py'
 $maxEventsBytes = 1MB
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
+# JSON line 1건을 파일에 append + 1MB 캡(초과 시 최근 절반 유지). events/checks 공용.
+# mutex 밖에서도 불릴 수 있어(동시 append) 파일 IO 는 try/catch 로 감싼다 — $ErrorActionPreference
+# 는 .NET 메서드 예외에 적용되지 않으므로 여기서 명시적으로 삼킨다(수 ms 창, 유실 허용).
+function Write-JsonLine([string]$file, $rec) {
+    try {
+        $json = ($rec | ConvertTo-Json -Compress)
+        $utf8 = New-Object System.Text.UTF8Encoding($false)
+        [System.IO.File]::AppendAllText($file, $json + "`r`n", $utf8)
+        $fi = Get-Item $file -ErrorAction SilentlyContinue
+        if ($fi -and $fi.Length -gt $maxEventsBytes) {
+            $lines = [System.IO.File]::ReadAllLines($file)
+            $keep = $lines[[int]($lines.Count / 2)..($lines.Count - 1)]
+            [System.IO.File]::WriteAllLines($file, $keep)
+        }
+    } catch { }
+}
+
+# 재기동/실패 이벤트 — 대시보드 현황 탭이 이 파일을 읽는다 (포맷·키 불변).
 function Write-Event([string]$evt, [string]$reason, [string]$detail) {
-    $rec = @{
+    Write-JsonLine $eventsFile @{
         ts     = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')
         event  = $evt
         reason = $reason
         detail = $detail
-    } | ConvertTo-Json -Compress
-    $utf8 = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::AppendAllText($eventsFile, $rec + "`r`n", $utf8)
-    # 크기 캡 — 초과 시 최근 절반만 유지 (이벤트 파일 자체의 무한 성장 방지)
-    $fi = Get-Item $eventsFile -ErrorAction SilentlyContinue
-    if ($fi -and $fi.Length -gt $maxEventsBytes) {
-        $lines = [System.IO.File]::ReadAllLines($eventsFile)
-        $keep = $lines[[int]($lines.Count / 2)..($lines.Count - 1)]
-        [System.IO.File]::WriteAllLines($eventsFile, $keep)
     }
+}
+
+# 매 실행 1줄 — 실행 빈도 자체가 남아야 '16회/5분' 재발 시 태스크 과다실행 vs 집계착시를
+# 즉시 판별할 수 있다. events 와 분리해 대시보드 최근 이벤트가 check 로 덮이지 않게 한다.
+function Write-Check($rec) {
+    $rec['ts'] = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')
+    Write-JsonLine $checksFile $rec
 }
 
 function Get-FailCount {
@@ -77,14 +94,73 @@ function Test-Listening {
     return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
 }
 
+# 판정은 .ok 만 쓴다(로직 불변). 진단을 위해 코드(503=DB fail)·소요시간·오류를 함께 반환.
 function Test-Healthz {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/healthz" -UseBasicParsing -TimeoutSec 30
-        return ($r.StatusCode -eq 200)
-    } catch { return $false }
+        $sw.Stop()
+        return @{ ok = ($r.StatusCode -eq 200); code = [int]$r.StatusCode; ms = $sw.ElapsedMilliseconds; err = '' }
+    } catch {
+        $sw.Stop()
+        $code = 0
+        if ($_.Exception.Response) { try { $code = [int]$_.Exception.Response.StatusCode } catch { } }
+        return @{ ok = $false; code = $code; ms = $sw.ElapsedMilliseconds; err = $_.Exception.Message }
+    }
+}
+
+# 킬 이전에 서버 프로세스 상태 요약 (부검). 비정상 경로에서만 호출(정상 no-op 은 비용 유지).
+# "procs=0"(프로세스 사망) 인지 "procs=N, 리스너 없음"(포트만 소실) 인지 즉시 판별하게 한다.
+function Get-ServerProcSummary {
+    $procs = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+               Where-Object { $_.ExecutablePath -eq $python })
+    if ($procs.Count -eq 0) { return 'procs=0' }
+    $parts = @()
+    foreach ($p in $procs) {
+        $rssMB = [math]::Round($p.WorkingSetSize / 1MB, 0)
+        $tag = if ($p.CommandLine -match 'spawn_main.*?parent_pid=(\d+)') { 'worker' } else { 'parent' }
+        $parts += ("{0}:{1}MB:{2}" -f $p.ProcessId, $rssMB, $tag)
+    }
+    return ("procs={0} [{1}]" -f $procs.Count, ($parts -join ' '))
+}
+
+# 킬 이전에 최신 server_*.txt 의 마지막 20줄을 스냅샷 파일로 보존 (죽은 이유 원문).
+# 큰 텍스트를 이벤트 detail 에 넣으면 1MB 캡이 이벤트 이력을 조기 삭제하므로 별도 파일로 둔다.
+function Save-Snapshot([string]$reason, [string]$autopsy) {
+    try {
+        $latest = Get-ChildItem -Path $logDir -Filter 'server_*.txt' -ErrorAction SilentlyContinue |
+                  Sort-Object CreationTime | Select-Object -Last 1
+        $snapPath = Join-Path $logDir ("watchdog_snap_{0}.txt" -f (Get-Date).ToString('yyyyMMdd_HHmmss'))
+        $content = @(
+            ("reason : {0}" -f $reason),
+            ("autopsy: {0}" -f $autopsy),
+            ("ts     : {0}" -f (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss'))
+        )
+        if ($latest) {
+            $content += ("--- {0} (마지막 20줄) ---" -f $latest.Name)
+            $content += @(Get-Content $latest.FullName -Tail 20 -ErrorAction SilentlyContinue)
+        } else {
+            $content += '(server_*.txt 없음)'
+        }
+        $utf8bom = New-Object System.Text.UTF8Encoding($true)
+        [System.IO.File]::WriteAllLines($snapPath, $content, $utf8bom)
+        # 최신 30개 초과분 prune
+        $snaps = @(Get-ChildItem -Path $logDir -Filter 'watchdog_snap_*.txt' -ErrorAction SilentlyContinue | Sort-Object CreationTime)
+        if ($snaps.Count -gt 30) {
+            $snaps[0..($snaps.Count - 31)] | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+        }
+        return (Split-Path -Leaf $snapPath)
+    } catch { return '' }
 }
 
 function Restart-Server([string]$reason) {
+    # 부검 — 킬 이전에 프로세스 상태·서버 로그 tail 을 확보한다 (재기동 원인 보존).
+    # 결과는 script 변수로 남겨 본체의 check 레코드가 함께 기록한다.
+    $autopsy = Get-ServerProcSummary
+    $snap = Save-Snapshot $reason $autopsy
+    $script:lastAutopsy = $autopsy
+    $script:lastSnap = $snap
+
     # 기존 리스너 + 컴퓨트 워커 강제 종료 (terminate.bat 과 kill_server_tree.ps1 을 공유).
     # 리스너만 죽이면 web_report 컴퓨트 워커(포트를 LISTEN 하지 않는 별도 python.exe)가
     # 재기동마다 2개씩 고아로 쌓인다. 워커당 tables 캐시가 최대 4GB 라 메모리를 잠식하고,
@@ -103,6 +179,7 @@ function Restart-Server([string]$reason) {
     if (-not (Test-Path $python)) {
         Write-Event 'error' $reason ".venv python 없음: $python — start.bat 로 venv 를 먼저 생성할 것"
         Set-FailCount 0
+        $script:lastRestartResult = 'restart_fail'
         return
     }
 
@@ -117,28 +194,46 @@ function Restart-Server([string]$reason) {
         Start-Sleep -Milliseconds 500
     }
     if (Test-Listening) {
-        Write-Event 'restart' $reason "재기동 성공 (listening). $killLog"
+        Write-Event 'restart' $reason "재기동 성공 (listening). autopsy=[$autopsy] snap=$snap. $killLog"
+        $script:lastRestartResult = 'restart_ok'
     } else {
-        Write-Event 'restart_fail' $reason "재기동 후 60초 내 미리스닝 — server\log\server_*.txt 확인 필요. $killLog"
+        Write-Event 'restart_fail' $reason "재기동 후 60초 내 미리스닝 — snap=$snap 확인. autopsy=[$autopsy]. $killLog"
+        $script:lastRestartResult = 'restart_fail'
     }
     Set-FailCount 0
 }
 
 # ── 본체 (5분 주기 태스크와 부팅 태스크의 동시 실행 방지 mutex) ──────────────
 $mutex = New-Object System.Threading.Mutex($false, 'Global\report-server-watchdog')
-if (-not $mutex.WaitOne(0)) { exit 0 }
+if (-not $mutex.WaitOne(0)) {
+    # 다른 watchdog 인스턴스가 실행 중 = 태스크가 겹쳐서 떴다는 직접 증거.
+    # 현재는 무기록 exit 였으나, 이 1줄이 '태스크 과다기동 vs 집계착시' 판별의 핵심이다.
+    Write-Check @{ result = 'mutex_busy'; detail = '다른 watchdog 인스턴스 실행 중(동시 기동)' }
+    exit 0
+}
+$swRun = [System.Diagnostics.Stopwatch]::StartNew()
 try {
     if (-not (Test-Listening)) {
         Restart-Server 'not_listening'
-    } elseif (Test-Healthz) {
-        Set-FailCount 0
+        Write-Check @{ result = $script:lastRestartResult; reason = 'not_listening'; listen = 0
+                       procs = $script:lastAutopsy; snap = $script:lastSnap; elapsed_ms = $swRun.ElapsedMilliseconds }
     } else {
-        $fails = (Get-FailCount) + 1
-        if ($fails -ge 2) {
-            Restart-Server 'healthz_fail_x2'
+        $hz = Test-Healthz
+        if ($hz.ok) {
+            Set-FailCount 0
+            Write-Check @{ result = 'ok'; listen = 1; code = $hz.code; ms = $hz.ms; elapsed_ms = $swRun.ElapsedMilliseconds }
         } else {
-            Set-FailCount $fails
-            Write-Event 'healthz_fail' 'healthz_timeout' "healthz 무응답 ($fails/2) — 다음 주기에도 실패 시 재기동"
+            $fails = (Get-FailCount) + 1
+            $hzReason = if ($hz.code -eq 503) { 'healthz_503' } else { 'healthz_timeout' }
+            if ($fails -ge 2) {
+                Restart-Server 'healthz_fail_x2'
+                Write-Check @{ result = $script:lastRestartResult; reason = $hzReason; listen = 1; code = $hz.code; ms = $hz.ms
+                               fails = $fails; procs = $script:lastAutopsy; snap = $script:lastSnap; elapsed_ms = $swRun.ElapsedMilliseconds }
+            } else {
+                Set-FailCount $fails
+                Write-Event 'healthz_fail' $hzReason "healthz 무응답 ($fails/2) code=$($hz.code) ms=$($hz.ms) — 다음 주기에도 실패 시 재기동"
+                Write-Check @{ result = 'healthz_fail'; listen = 1; code = $hz.code; ms = $hz.ms; fails = $fails; elapsed_ms = $swRun.ElapsedMilliseconds }
+            }
         }
     }
 } finally {

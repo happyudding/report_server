@@ -24,6 +24,7 @@ from report.security import (
     _active_or_404,
     _audit,
     _editor_guard,
+    _is_master,
     _normalize_user_id,
     _private_guard,
     _public_session,
@@ -316,12 +317,15 @@ def session_my_access(session_id):
         abort(404, "session not found")
     _record_web_visit(session)
     uid = _current_user()
+    is_master = _is_master()
     is_uploader = _is_uploader(session, uid) if uid else False
-    can_edit = is_uploader or (bool(uid) and report_db.is_session_editor(session_id, uid))
+    # master PC 는 전 세션 편집 허용(편집만 — 삭제·비공개토글은 is_uploader 로 업로더 전용 유지).
+    can_edit = is_master or is_uploader or (bool(uid) and report_db.is_session_editor(session_id, uid))
     return jsonify({
         "user_id": uid,
         "source": _identity_source(),   # 프런트의 'Honey 전용 기능' 안내 판단용
         "is_uploader": is_uploader,
+        "is_master": is_master,
         "can_edit": can_edit,
         "my_important": report_db.is_user_important(uid, session_id) if uid else False,
     })

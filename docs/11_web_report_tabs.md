@@ -23,7 +23,7 @@
 | CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) |
 | Issue Table | `issue_table.py` | Yield 파생 + 규격내 cpk(`cpk_limited`)<1.33 파생 + ETC. comment/Status/행 숨김은 편집 DB 에서 채움 |
 | Distribution | — (lazy, 항목 배치) | `/full` 은 빈 시트 + `distribution_index`(항목 목록). ECDF 는 **화면에 보이는 항목만** `GET .../web_report/distribution_batch?subjects=…` 로 받는다 |
-| Trim Analysis | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/trim_analysis` 지연 로드 |
+| Trim Analysis | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/trim_analysis` 지연 로드. 그룹 차트는 기본 화면(① 항목 매칭)에선 안 받고, ② 산포 분석에서 `GET .../web_report/trim_chart_batch` 로 **한 페이지 3개씩** |
 | Map Analysis | `Map_analysis.py` (하이브리드 lazy) | wafer map die/bin 집계 — `/full` 은 dies 뺀 경량 메타(`include_dies=False`), die 전량은 `GET .../web_report/map_analysis` 지연 로드 (schema v8) |
 | Fail Bin | `yield_tab.fail_bin_ranking` | Bin 랭킹 |
 | Note | — (클라 전용) | TAB_REGISTRY 밖 — 프런트 자체구성 Luckysheet 캔버스, 아래 "Note 탭" 절 |
@@ -152,7 +152,16 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     (ingest)과 하위호환 폴백이 쓴다. 프런트가 더 이상 호출하지 않을 뿐이다.
   - 항목 상세(전 포인트 + serial/xpos/ypos hover 메타)는 종전대로 `/scatter/<subject>`.
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
-  `build_trim_chart`(그룹 1개 chip-to-chip 차트). 매칭 규칙은
+  `build_trim_chart`(그룹 1개 chip-to-chip 차트).
+  **탭 진입 기본 화면은 ① 항목 매칭**(표)이라 진입만으로는 차트를 계산하지 않는다
+  (2026-07-23 — 종전엔 ② 산포 분석이 기본이라 탭 클릭 1번에 차트 요청 6건이 나갔다).
+  ② 산포 분석은 한 페이지 **3개**(`TRIM.PAGE_SIZE`, 갤러리 CSS 가로 3칸과 일치)를
+  `GET .../web_report/trim_chart_batch` **요청 1건**으로 받는다 — 서버가 tables 로드 +
+  `build_groups` 를 그룹 수만큼 반복하던 것을 1회로 줄이는 것이 목적이다
+  (`service._trim_chart_ctx` 1회 + 그룹별 `service._trim_chart_gzip`).
+  배치 응답 `{"charts":[...]}` 는 **보낸 group 순서 그대로**이고 각 chart 는 단일
+  `/trim_chart` 결과와 값이 같다. 배치 실패 시 프런트가 그룹별 단일 요청으로 폴백한다
+  ([trim.js](../server/report/static/webreport/trim.js) `trimPrefetchBatch`). 매칭 규칙은
   [trim_match.py](../web_report/trim_match.py)(product_type 별 PMIC4/TV2 규칙셋).
   TV2(MDDI/PDDI) 는 이름 끝의 `_PRE[_P<n>]` → TRIM / `_POST[_P<n>]` → VERIFY 꼬리를
   **통째로** 떼어 stem 을 잡는다(`_TV2_PREPOST_RE`, 2026-07-21) — `VREF_PRE_P1` ↔

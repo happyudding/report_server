@@ -183,7 +183,8 @@ _HISTORY_Q_COLUMNS = ("s.source", "s.product_type", "s.family_product", "s.produ
 
 def _history_where(product_type=None, process=None, product=None, revision=None,
                    lot_id=None, source=None, viewer=None, q=None, mode=None,
-                   date_from=None, date_to=None, mine=False, visibility=None):
+                   date_from=None, date_to=None, mine=False, visibility=None,
+                   see_all_private=False):
     """get_history / count_history 공용 WHERE 절 + 파라미터.
 
     viewer: None=비공개 필터 없음(하위호환·관리자용) / ""=신원 없음(비공개 전부 숨김) /
@@ -193,6 +194,8 @@ def _history_where(product_type=None, process=None, product=None, revision=None,
           source='web_report' 조건이 함께 붙는다(종전 클라 필터와 동일).
     date_from/date_to: epoch 초 (to 는 그 시각 이하 포함).
     mine: 참이면 viewer 가 업로더인 세션만. visibility: 'public'|'private'.
+    see_all_private: 참이면(master PC) 비공개 숨김 조건을 적용하지 않는다 — viewer 는
+                     mine/favorite 판별에만 쓰이고 비공개 세션도 목록에 노출된다.
     """
     # 휴지통(soft delete)된 세션은 일반 목록 조회에서 항상 제외한다.
     conditions = ["s.status IN ('done', 'reused')", "s.deleted_at IS NULL"]
@@ -238,7 +241,9 @@ def _history_where(product_type=None, process=None, product=None, revision=None,
         conditions.append(_UPLOADER_MATCH if viewer else "1=0")
         if viewer:
             params.append(viewer)
-    if viewer is not None:
+    if see_all_private:
+        pass  # master PC: 비공개 숨김 미적용 (viewer 는 mine/favorite 에만 사용)
+    elif viewer is not None:
         if viewer:
             conditions.append(
                 "(COALESCE(s.is_private, 0) = 0"
@@ -254,10 +259,12 @@ def _history_where(product_type=None, process=None, product=None, revision=None,
 
 def get_history(product_type=None, process=None, product=None, revision=None, lot_id=None,
                 source=None, limit=500, offset=0, viewer=None, q=None, mode=None,
-                date_from=None, date_to=None, mine=False, visibility=None, sort="new"):
+                date_from=None, date_to=None, mine=False, visibility=None, sort="new",
+                see_all_private=False):
     where, params = _history_where(product_type, process, product, revision, lot_id, source,
                                    viewer=viewer, q=q, mode=mode, date_from=date_from,
-                                   date_to=date_to, mine=mine, visibility=visibility)
+                                   date_to=date_to, mine=mine, visibility=visibility,
+                                   see_all_private=see_all_private)
     order_by = _HISTORY_SORTS.get(sort or "new", _HISTORY_SORTS["new"])
     # 즐겨찾기는 어떤 정렬을 골라도 최상단 고정 — 클라이언트가 전량을 들고 있을 때
     # 하던 일을 서버 페이지네이션에서도 유지하려면 정렬 자체에 넣어야 한다
@@ -291,11 +298,13 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
 
 def count_history(product_type=None, process=None, product=None, revision=None,
                   lot_id=None, source=None, viewer=None, q=None, mode=None,
-                  date_from=None, date_to=None, mine=False, visibility=None):
+                  date_from=None, date_to=None, mine=False, visibility=None,
+                  see_all_private=False):
     """get_history 와 동일 필터의 전체 세션 수 (서버 페이지네이션 total 용)."""
     where, params = _history_where(product_type, process, product, revision, lot_id, source,
                                    viewer=viewer, q=q, mode=mode, date_from=date_from,
-                                   date_to=date_to, mine=mine, visibility=visibility)
+                                   date_to=date_to, mine=mine, visibility=visibility,
+                                   see_all_private=see_all_private)
     with get_conn() as conn:
         row = conn.execute(
             f"SELECT COUNT(*) FROM report_session s WHERE {where}", params).fetchone()
@@ -305,7 +314,7 @@ def count_history(product_type=None, process=None, product=None, revision=None,
 def get_history_page(product_type=None, process=None, product=None, revision=None,
                      lot_id=None, source=None, limit=500, offset=0, viewer=None, q=None,
                      mode=None, date_from=None, date_to=None, mine=False, visibility=None,
-                     sort="new"):
+                     sort="new", see_all_private=False):
     """서버 페이지네이션 전용: 목록 + 전체 건수를 커넥션 1개로 조회. -> (rows, total)
 
     get_history 와 결과 동일하되 total_file_size 는 CSV JOIN/GROUP BY 대신
@@ -313,7 +322,8 @@ def get_history_page(product_type=None, process=None, product=None, revision=Non
     PK(user_id,session_id)라 팬아웃이 없어 GROUP BY 없이도 세션당 1행)."""
     where, params = _history_where(product_type, process, product, revision, lot_id, source,
                                    viewer=viewer, q=q, mode=mode, date_from=date_from,
-                                   date_to=date_to, mine=mine, visibility=visibility)
+                                   date_to=date_to, mine=mine, visibility=visibility,
+                                   see_all_private=see_all_private)
     order_by = _HISTORY_SORTS.get(sort or "new", _HISTORY_SORTS["new"])
     sql = f"""
         SELECT s.session_id, s.file_name, s.product_type, s.family_product, s.process, s.product,

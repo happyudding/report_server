@@ -32,7 +32,7 @@
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 |
 | REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode) | comment/override 편집(rev) + 위 전부 |
 | TRIM_CACHE | (akey, chash, sid, edits_rev, mode, source) | trim override 편집(rev) + 위 전부 |
-| TRIM_CHART_CACHE | (akey, chash, mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 |
+| TRIM_CHART_CACHE | (akey, chash, mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 — 단일 `/trim_chart` 와 배치 `/trim_chart_batch` 가 **같은 엔트리를 공유**한다(배치는 그룹별로 이 캐시를 조회·적재할 뿐) |
 | _FULL_CACHE | (akey, chash, "sid:edits_rev", extras_digest) | 편집 rev / annotations 등 extras |
 | _SCATTER_CACHE | (akey, chash, mode, subject) | raw_data 편집 / 세션 삭제 |
 
@@ -61,8 +61,10 @@
 - **컴퓨트 오프로드** ([compute.py](../web_report/compute.py)): 콜드 report/dist/map/trim
   빌드를 `ProcessPoolExecutor` 워커로 보내 waitress 스레드의 GIL 점유를 피한다. dist 는 전체·
   bin1 변형 모두 오프로드 대상(2026-07-15 — 종전엔 bin1 이 요청 스레드 인라인이었음).
-  tables 캐시가 따뜻하면 인라인, 워커 붕괴 시 인라인 폴백. 업로드 직후 `prewarm` 도
-  풀에 제출되어 동시성 상한(워커 수)이 자동 적용된다.
+  **Trim 그룹 차트도 배치 경로(`trim_chart_batch_job`)로 오프로드 대상**이다(2026-07-23 —
+  종전엔 그룹당 1요청이 전부 요청 스레드 인라인이었다). tables 캐시가 따뜻하면 인라인,
+  워커 붕괴 시 인라인 폴백. 업로드 직후 `prewarm` 도 풀에 제출되어 동시성 상한(워커 수)이
+  자동 적용된다.
 - **클라 프리컴퓨트 시딩** (2026-07-15): Honey 가 업로드에 첨부한 dist blob(전체/bin1,
   [dist_blob.py](../web_report/dist_blob.py) 공용 빌더)을 ingest 가 DIST_CACHE+디스크
   캐시에 시딩 — 첨부 세션은 dist 콜드 미스 자체가 없다 → [10](10_web_report_pipeline.md).
@@ -99,6 +101,7 @@
 | `WEB_REPORT_COMMONALITY_CACHE` | `2` | Commonality 인덱스 캐시 개수 |
 | `WEB_REPORT_TRIM_CACHE` | `4` | Trim payload 캐시 개수 |
 | `WEB_REPORT_TRIM_CHART_CACHE` | `64` | Trim 그룹 차트 캐시 개수 |
+| `WEB_REPORT_TRIM_CHART_CACHE_MB` | `256` | Trim 그룹 차트 gzip 바이트 상한 (개수와 이중 적용, 0=비활성). 차트 1건이 전 die 전 포인트라 개수 상한만으론 RAM 이 예측 불가 |
 | `WEB_REPORT_MANIFEST_CACHE` | `16` | manifest 캐시 개수 |
 | `WEB_REPORT_FULL_CACHE` | `8` | `/full` 응답 gzip 캐시 개수 |
 | `WEB_REPORT_SCATTER_CACHE` | `16` | `/scatter` 응답 gzip 캐시 개수 |

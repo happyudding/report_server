@@ -300,6 +300,38 @@ def web_report_trim_chart(session_id):
     return Response(body, mimetype="application/json", headers=headers)
 
 
+@report_bp.get("/session/<session_id>/web_report/trim_chart_batch")
+def web_report_trim_chart_batch(session_id):
+    """Trim 산포 한 페이지(그룹 1~3개) 차트를 한 번에 반환 — `{"charts":[...]}`.
+
+    ?source=&group=A&group=B&group=C — group 은 **반복 파라미터**라 보낸 순서가 그대로
+    유지된다(distribution_batch 의 comma+정렬 방식은 순서를 잃어 쓰지 않는다). 그룹당
+    요청 1건이던 종전 방식은 요청마다 tables 로드 + 그룹 재도출을 반복했다.
+    """
+    _require_web_report_session(session_id)
+    source = (request.args.get("source") or "").strip()
+    groups = [g.strip() for g in request.args.getlist("group") if g.strip()]
+    if (not groups or len(groups) > 3 or len(source) > 200
+            or any(len(g) > 200 for g in groups)):
+        abort(400, "invalid group(s) or source")
+    try:
+        body = web_report_service.get_trim_charts_batch(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            source=source, group_ids=groups)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report trim group or session data not found")
+    except Exception:
+        _log.exception("web_report trim_chart_batch failed for session %s groups %r",
+                       session_id, groups)
+        abort(500, "trim_chart_batch failed")
+    headers = {"Vary": "Accept-Encoding"}
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)
+    return Response(body, mimetype="application/json", headers=headers)
+
+
 @report_bp.post("/session/<session_id>/web_report/trim/overrides")
 def web_report_trim_overrides(session_id):
     """Trim Analysis 드래그앤드랍 수동 재배치 저장 — 세션 편집 DB 갱신 (parquet 불변).

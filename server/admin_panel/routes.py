@@ -13,10 +13,11 @@ from pathlib import Path
 from flask import Blueprint, Response, abort, jsonify, request
 
 import config
-from admin_panel import (GATE_COOKIE_VOC, GATE_COOKIE_VOC_PATH, eval_admin,
-                         gate_token, maintenance, metrics, sessions_admin, stats,
-                         storage_admin, sysinfo, users_admin, voc_admin,
-                         voc_gate_token)
+from admin_panel import (GATE_COOKIE_VOC, GATE_COOKIE_VOC_PATH, MASTER_COOKIE,
+                         MASTER_COOKIE_PATH, MASTER_TTL_SECONDS, eval_admin,
+                         gate_token, issue_master_value, maintenance, metrics,
+                         sessions_admin, stats, storage_admin, sysinfo,
+                         users_admin, voc_admin, voc_gate_token)
 from database import report_db
 from report.static_pages import send_html_gzip
 
@@ -78,6 +79,11 @@ def login():
     resp.set_cookie(GATE_COOKIE_VOC, voc_gate_token(), max_age=12 * 3600,
                     httponly=True, samesite="Lax", secure=request.is_secure,
                     path=GATE_COOKIE_VOC_PATH)
+    # master 권한 — 로그인한 PC 에 4h 동안 '전 세션 편집 + 비공개 조회/목록표시'.
+    # 값에 만료시각이 서명돼 있어 서버가 4h 를 직접 강제한다(report/security._is_master).
+    resp.set_cookie(MASTER_COOKIE, issue_master_value(), max_age=MASTER_TTL_SECONDS,
+                    httponly=True, samesite="Lax", secure=request.is_secure,
+                    path=MASTER_COOKIE_PATH)
     return resp
 
 

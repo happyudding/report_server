@@ -18,9 +18,11 @@ GIL 직렬화 제거: **콜드 세션**의 report payload / distribution compact
 from __future__ import annotations
 
 import collections
+import faulthandler
 import logging
 import os
 import threading
+import time
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
@@ -41,12 +43,49 @@ _TIMEOUT_SEC = float(os.getenv("WEB_REPORT_COMPUTE_TIMEOUT_SEC", "300") or 300)
 _IN_WORKER = False
 _pool = None
 _pool_lock = threading.Lock()
+_WORKER_FAULT_FILE = None  # 워커 faulthandler 파일 핸들 (전역 보관 — GC 로 fd 가 닫히면 덤프 유실)
 
 
 def _init_worker():
-    """워커 프로세스 초기화 — 재귀 오프로드 방지 플래그."""
+    """워커 프로세스 초기화 — 재귀 오프로드 방지 플래그 + 네이티브 크래시 로깅."""
     global _IN_WORKER
     _IN_WORKER = True
+    _enable_worker_faulthandler()
+
+
+def _enable_worker_faulthandler():
+    """워커의 네이티브 크래시(OOM/세그폴트)를 per-PID 파일에 기록한다. 워커 stdout 은
+    부모 tee(server_*.txt)로 흐르지 않아(__mp_main__ 가드) 크래시 흔적이 사라지므로
+    별도 파일이 필요하다. 공유 append 대신 per-PID 파일 — 동시 크래시 시 인터리브·PID
+    귀속 불가 문제를 피한다. 전체 best-effort(실패해도 워커 초기화는 계속)."""
+    global _WORKER_FAULT_FILE
+    try:
+        import config
+        log_dir = Path(config.ROOT_DIR) / "server" / "log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        _prune_worker_fault_files(log_dir)
+        path = log_dir / f"faulthandler_worker_{os.getpid()}.txt"
+        _WORKER_FAULT_FILE = path.open("a", encoding="utf-8")
+        faulthandler.enable(file=_WORKER_FAULT_FILE)
+    except Exception:
+        pass
+
+
+def _prune_worker_fault_files(log_dir):
+    """빈 워커 덤프 파일(리사이클로 PID 가 계속 바뀌어 다발) + LOG_KEEP_DAYS 경과분 정리.
+    살아있는 워커의 파일은 Windows 공유 위반으로 unlink 실패 = in-use 보호로 스킵된다."""
+    try:
+        keep_days = float(os.getenv("LOG_KEEP_DAYS", "14"))
+        cutoff = time.time() - keep_days * 86400
+        for p in log_dir.glob("faulthandler_worker_*.txt"):
+            try:
+                st = p.stat()
+                if st.st_size == 0 or st.st_mtime < cutoff:
+                    p.unlink()
+            except Exception:
+                pass
+    except Exception:
+        pass
 
 
 def _get_pool():
@@ -176,6 +215,20 @@ def trim_job(session_id: str, upload_root_str: str, source: str) -> bytes:
     blob, _ = service.get_trim_analysis_gzip(
         session_id, report_db=report_db, upload_root=Path(upload_root_str), source=source)
     return blob
+
+
+def trim_chart_batch_job(session_id: str, upload_root_str: str, source: str,
+                         group_ids: list) -> bytes:
+    """Trim 산포 1페이지(≤3그룹) 차트 배치 — 콜드일 때만 여기로 온다.
+
+    그룹 1개짜리 차트는 웹 프로세스 인라인이라 waitress 스레드가 GIL 을 잡고 있었다.
+    배치는 tables 디코드까지 워커에서 끝내고 gzip bytes 만 돌려준다.
+    """
+    from database import report_db
+    from . import service
+    return service.get_trim_charts_batch(
+        session_id, report_db=report_db, upload_root=Path(upload_root_str),
+        source=source, group_ids=list(group_ids))
 
 
 def prewarm_job(session_id: str, upload_root_str: str, dist_seeded: bool = False) -> None:
