@@ -36,12 +36,21 @@ KIND_NOTE_TAG = "note_tag"
 # 원본 parquet 을 바꾸지 않고 조회 시점에만 적용되는 되돌릴 수 있는 편집 (preprocess.py).
 KIND_PREPROCESS = "preprocess"
 _PREPROCESS_KEY = "spec"
+# 2026-07-23 추가 — 수율 분모 기준(item_key='basis', value='gross'|'test').
+# 행이 없으면 기본 'gross'(제품 기준정보 Gross Die, 값이 없으면 rawdata 폴백).
+# preprocess spec 에 넣지 않는 이유: preprocess digest 가 바뀌면 Distribution pack
+# (정렬 전가) 경로가 폴백으로 떨어지는데, 수율 분모는 ECDF 와 아무 상관이 없다.
+KIND_YIELD_BASIS = "yield_basis"
+_YIELD_BASIS_KEY = "basis"
+YIELD_BASIS_GROSS = "gross"
+YIELD_BASIS_TEST = "test"
 
 # 표 payload 빌드에 안 쓰이는 kind — load_edit_state 조회에서 제외해 대용량 값
 # (note_sheet 시트 JSON 최대 2MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
 # note_tag 는 /full extras 로 별도 조회(load_note_tags)라 표 상태에 싣지 않는다.
 # preprocess 는 loader 가 별도 조회(load_preprocess)해 캐시 키에 쓰므로 표 상태 밖이다.
-_STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG, KIND_PREPROCESS)
+_STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG, KIND_PREPROCESS,
+                         KIND_YIELD_BASIS)
 
 # issue_comment 의 item_key = row_key + SEP + col (row_key 에 '|' 가 쓰여 제어문자 사용)
 _SEP = "\x1f"
@@ -186,6 +195,29 @@ def save_preprocess(report_db, session_id: str, spec: dict, updated_by=None) -> 
     value = json.dumps(norm, sort_keys=True, ensure_ascii=False) if norm else None
     return report_db.apply_webreport_edits(
         session_id, [(KIND_PREPROCESS, _PREPROCESS_KEY, value)], updated_by=updated_by)
+
+
+def normalize_yield_basis(value) -> str:
+    """'test' 만 test, 그 외(빈 값 포함)는 기본 'gross'."""
+    return YIELD_BASIS_TEST if str(value or "").strip().lower() == YIELD_BASIS_TEST \
+        else YIELD_BASIS_GROSS
+
+
+def load_yield_basis(report_db, session_id: str) -> str:
+    """수율 분모 기준 ('gross'|'test'). 행이 없으면 기본 'gross'.
+
+    kind 지정 조회(작은 인덱스 SELECT 1회) — 표 상태(load_edit_state) 밖이다."""
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_YIELD_BASIS,)):
+        if row["item_key"] == _YIELD_BASIS_KEY:
+            return normalize_yield_basis(row["value"])
+    return YIELD_BASIS_GROSS
+
+
+def save_yield_basis(report_db, session_id: str, basis, updated_by=None) -> int:
+    """수율 분모 기준 저장. 새 rev 반환 — rev 증가로 REPORT//full 캐시가 무효화된다."""
+    return report_db.apply_webreport_edits(
+        session_id, [(KIND_YIELD_BASIS, _YIELD_BASIS_KEY, normalize_yield_basis(basis))],
+        updated_by=updated_by)
 
 
 def load_note_sheet(report_db, session_id: str) -> dict | None:

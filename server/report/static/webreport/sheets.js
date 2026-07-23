@@ -545,11 +545,11 @@ function renderSheetTable(rows, opts) {
         if (opts.kind === "issue" && item && !subhead && !issuePassRow
           && (rowSection[ri] === "Yield" || rowSection[ri] === "ETC" || rowSection[ri] === "CPK")
           && distHasData(item)) {
-          // CPK 섹션 미니셀은 규격내(limit 안) 구간만 재정규화해 그린다(data-limitwin) —
-          // 행의 cpk 값(cpk_limited)과 동일 기준. Yield/ETC 는 기존 전체 범위 유지.
-          const limitWin = rowSection[ri] === "CPK" ? ` data-limitwin="1"` : "";
+          // CPK 섹션 미니셀은 Bin1(양품) ECDF 로 그린다(data-bin1) — 행의 cpk 값이 Bin1
+          // 기준이라 그림과 숫자의 데이터 기준을 맞춘다. Yield/ETC 는 기존 전체 범위 유지.
+          const distBin1 = rowSection[ri] === "CPK" ? ` data-bin1="1"` : "";
           return `<td${subhead ? ` class="sheet-subhead"` : ""} data-r="${ri}" data-c="${ci}">` +
-            `<div class="dist-cell dist-cell-mini" data-subject="${esc(item)}"${limitWin}><div class="dist-plot"></div></div></td>`;
+            `<div class="dist-cell dist-cell-mini" data-subject="${esc(item)}"${distBin1}><div class="dist-plot"></div></div></td>`;
         }
         return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
       }
@@ -796,6 +796,28 @@ function isSummaryBlocks(o) {
   return !!(o && typeof o === "object" && Array.isArray(o.blocks) && o.blocks.length > 0);
 }
 
+// ── 수율 분모 기준 (payload.yield_basis) ────────────────────────────────────────
+// basis="gross" 면 분모가 제품 기준정보 Gross Die, "test" 면 소스별 rawdata 행 수다
+// (Gross Die 가 비어 있어 폴백한 경우도 "test"). Pass/Fail 은 어느 경우에도 실측 die 수라,
+// Gross Die 기준에서는 미측정 die 만큼 Pass+Fail < Total 이 될 수 있다 — 그래서 배지로
+// 분모가 무엇인지와 실제 측정 die 수를 함께 보여준다.
+function yieldBasisInfo() {
+  return (DATA.web_report && DATA.web_report.yield_basis) || null;
+}
+function yieldTotalLabel() {
+  const b = yieldBasisInfo();
+  return (b && b.basis === "gross") ? "Gross Die" : "Total";
+}
+function yieldBasisBadgeHtml(ov) {
+  const b = yieldBasisInfo();
+  if (!b) return "";   // 옛 캐시 payload — 배지 없이 종전 표시
+  const tested = (ov && ov.tested != null) ? ov.tested : null;
+  const txt = (b.basis === "gross")
+    ? `분모: Gross Die ${b.gross_die}` + (tested != null ? ` · 측정 die ${tested}` : "")
+    : `분모: Test data 개수` + (tested != null ? ` ${tested}` : "");
+  return `<div class="yo-basis" title="수율 % 의 분모 기준 (Honey → Rawdata edit 에서 변경)">${esc(txt)}</div>`;
+}
+
 // Yield 상단 요약 박스 HTML (web_report 세션의 yield_summary 가 있을 때만).
 function yieldOverviewHtml() {
   const ov = DATA.web_report && DATA.web_report.yield_summary;
@@ -850,9 +872,10 @@ function yieldOverviewHtml() {
     <div class="yo-pct">${esc(pct)}%</div>
     <div class="yo-stats">
       <div class="yo-stat"><span class="yo-num">${esc(ov.pass)}</span><span class="yo-label">Pass</span></div>
-      <div class="yo-stat"><span class="yo-num">${esc(ov.total)}</span><span class="yo-label">Total</span></div>
+      <div class="yo-stat"><span class="yo-num">${esc(ov.total)}</span><span class="yo-label">${esc(yieldTotalLabel())}</span></div>
       <div class="yo-stat yo-fail"><span class="yo-num">${esc(ov.fail)}</span><span class="yo-label">Fail</span></div>
     </div>
+    ${yieldBasisBadgeHtml(ov)}
     ${byStepHtml}
     ${bySrcHtml}
   </div>`;

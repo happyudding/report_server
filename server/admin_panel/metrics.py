@@ -11,6 +11,7 @@ CPU 는 sysinfo._cpu_percent() 를 재사용한다 — psutil.cpu_percent(interv
 
 REPORT_METRICS_ENABLED=0 이면 init_app 이 no-op (kill-switch).
 """
+import json
 import logging
 import os
 import threading
@@ -38,6 +39,15 @@ METRICS_FILE_KEEP_DAYS = float(os.getenv("REPORT_METRICS_FILE_KEEP_DAYS", "14"))
 _fr_last_minute = None   # 마지막 기록한 분 — 분이 바뀔 때만 append
 _fr_last_date = None     # 마지막 기록 날짜 — 롤오버 시 오래된 파일 prune
 _fr_warned = False       # 기록 실패 반복 경고 억제 (디스크 풀 시 로그 폭주 방지)
+
+# runtime 이력 — "무엇이 서버에 부담을 주는가"(느린 경로/느린 요청)는 지금까지 in-memory
+# 라 재기동마다 사라졌다. watchdog 재기동이 잦을수록 정작 필요한 순간에 비어 있으므로
+# runtime_YYYYMMDD.log(JSON lines)에 남긴다. 보관은 metrics_*.log 와 같은 정책.
+RUNTIME_LOG_INTERVAL = max(60.0, float(os.getenv("REPORT_RUNTIME_LOG_INTERVAL_SEC", "300")))
+SLOW_REQ_MS = float(os.getenv("REPORT_SLOW_REQ_MS", "10000"))
+_slow_pending = deque(maxlen=200)  # (ts, route, ms) — 요청 훅이 넣고 샘플러가 비운다
+_rt_last_write = 0.0
+_rt_warned = False
 
 _proc = psutil.Process()
 _lock = threading.Lock()  # 카운터·링버퍼 공용 (임계구역은 정수 연산·append 뿐)
@@ -81,6 +91,9 @@ def _on_request_teardown(exc=None):
             _lat_recent.append(ms)
             n, total, mx = _lat_by_route.get(route, (0, 0.0, 0.0))
             _lat_by_route[route] = (n + 1, total + ms, max(mx, ms))
+            # 느린 요청은 큐에만 넣는다 — 파일 IO 는 샘플러 스레드가 락 밖에서 처리
+            if SLOW_REQ_MS > 0 and ms >= SLOW_REQ_MS:
+                _slow_pending.append((time.time(), route, ms))
 
 
 def _bump_boot_peak(key, value, ts):
@@ -89,15 +102,16 @@ def _bump_boot_peak(key, value, ts):
 
 
 def _prune_flight_files(log_dir):
-    """오래된 metrics_*.log 정리 (best-effort)."""
+    """오래된 metrics_*.log / runtime_*.log 정리 (best-effort)."""
     try:
         cutoff = time.time() - METRICS_FILE_KEEP_DAYS * 86400
-        for p in log_dir.glob("metrics_*.log"):
-            try:
-                if p.stat().st_mtime < cutoff:
-                    p.unlink()
-            except Exception:
-                pass
+        for pattern in ("metrics_*.log", "runtime_*.log"):
+            for p in log_dir.glob(pattern):
+                try:
+                    if p.stat().st_mtime < cutoff:
+                        p.unlink()
+                except Exception:
+                    pass
     except Exception:
         pass
 
@@ -131,6 +145,45 @@ def _flight_record(ts, cpu, mem_used, rss, inflight, win_peak):
             _log.warning("[metrics] flight recorder write failed (further warnings suppressed)", exc_info=True)
 
 
+def _runtime_record(ts):
+    """runtime_YYYYMMDD.log 에 (a) 쌓인 느린 요청 이벤트 (b) 주기적 응답시간 스냅샷을
+    JSON line 으로 append. 샘플러 스레드에서 락 밖으로 호출한다 (요청 경로 무영향 —
+    느린 요청은 최대 SAMPLE_INTERVAL 만큼 늦게 기록되고 종료 시 마지막 구간은 유실 허용)."""
+    global _rt_last_write, _rt_warned
+    if METRICS_FILE_KEEP_DAYS <= 0:
+        return
+    with _lock:
+        pending = list(_slow_pending)
+        _slow_pending.clear()
+    due = (ts - _rt_last_write) >= RUNTIME_LOG_INTERVAL
+    if not pending and not due:
+        return
+    lines = []
+    for s_ts, route, ms in pending:
+        lines.append(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(s_ts)),
+                                 "type": "slow", "route": route, "ms": round(ms, 1)},
+                                ensure_ascii=False))
+    if due:
+        _rt_last_write = ts
+        lat = latency_snapshot(top=5)
+        lines.append(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts)),
+                                 "type": "lat", "n": lat["samples"], "p50": lat["p50"],
+                                 "p95": lat["p95"], "p99": lat["p99"], "max": lat["max"],
+                                 "top": lat["slowest"]}, ensure_ascii=False))
+    try:
+        import config
+        log_dir = Path(config.ROOT_DIR) / "server" / "log"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        date = time.strftime("%Y%m%d", time.localtime(ts))
+        with (log_dir / f"runtime_{date}.log").open("a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except Exception:
+        if not _rt_warned:
+            _rt_warned = True
+            _log.warning("[metrics] runtime history write failed (further warnings suppressed)",
+                         exc_info=True)
+
+
 def _sample():
     ts = time.time()
     cpu = _cpu_percent()
@@ -148,6 +201,7 @@ def _sample():
         _bump_boot_peak("inflight", win_peak, ts)
     # 파일 IO 는 락 밖에서 (요청 경로의 in-flight 카운터를 막지 않도록)
     _flight_record(ts, cpu, mem_used, rss, inflight, win_peak)
+    _runtime_record(ts)
 
 
 def _loop():
@@ -267,3 +321,113 @@ def snapshot_history(window_sec, max_points=360):
     return {"now": round(now), "interval": SAMPLE_INTERVAL, "threads": WAITRESS_THREADS,
             "enabled": METRICS_ENABLED, "current": current,
             "series": series, "peaks": peaks}
+
+
+# ── 파일 기반 이력 (재시작과 무관) ────────────────────────────────────────────
+
+FILE_HISTORY_MAX_HOURS = 24 * 14  # 파일 보관 기간(14일) 과 동일
+
+
+def _hist_epoch(text):
+    try:
+        return time.mktime(time.strptime(text, "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, OverflowError, TypeError):
+        return 0
+
+
+def _hist_files(log_dir, prefix, hours, now):
+    """구간에 걸치는 날짜 파일만 고른다 (일별 파일 — 경계 하루를 여유로 포함)."""
+    days = int(hours // 24) + 2
+    names = [time.strftime(f"{prefix}_%Y%m%d.log", time.localtime(now - d * 86400))
+             for d in range(days)]
+    return [log_dir / n for n in reversed(names) if (log_dir / n).exists()]
+
+
+def file_history(hours=24, max_points=500):
+    """metrics_*.log(1분 해상도 리소스) + runtime_*.log(응답시간·느린 요청)를 읽어
+    재시작과 무관한 이력을 돌려준다. in-memory snapshot_history 를 대체하지 않고 병행한다
+    (현황 탭 = 10초 해상도 실시간 / 이력 탭 = 1분 해상도 최대 14일)."""
+    try:
+        hours = max(1, min(int(hours), FILE_HISTORY_MAX_HOURS))
+    except (TypeError, ValueError):
+        hours = 24
+    now = time.time()
+    cutoff = now - hours * 3600
+    import config
+    log_dir = Path(config.ROOT_DIR) / "server" / "log"
+    used = []
+
+    rows = []
+    for path in _hist_files(log_dir, "metrics", hours, now):
+        used.append(path.name)
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    parts = ln.strip().split(",")
+                    if len(parts) < 6:
+                        continue
+                    ts = _hist_epoch(parts[0])
+                    if ts < cutoff:
+                        continue
+                    try:
+                        rows.append((ts, float(parts[1]), int(parts[2]),
+                                     int(parts[3]), int(parts[4]), int(parts[5])))
+                    except ValueError:
+                        pass
+        except OSError:
+            pass
+    rows.sort(key=lambda r: r[0])
+
+    # 버킷 다운샘플 — 버킷별 max 를 보존해 피크가 사라지지 않게 (snapshot_history 와 동일 규칙)
+    resource = {"ts": [], "cpu_max": [], "mem_used_max": [], "rss_max": [], "inflight_max": []}
+    if rows:
+        bucket = max(1, (len(rows) + max_points - 1) // max_points)
+        for i in range(0, len(rows), bucket):
+            chunk = rows[i:i + bucket]
+            resource["ts"].append(int(chunk[-1][0]))
+            resource["cpu_max"].append(max(c[1] for c in chunk))
+            resource["rss_max"].append(max(c[2] for c in chunk))
+            resource["mem_used_max"].append(max(c[3] for c in chunk))
+            resource["inflight_max"].append(max(c[5] for c in chunk))
+
+    lat = {"ts": [], "p95": [], "p99": []}
+    slow = []
+    routes = {}
+    for path in _hist_files(log_dir, "runtime", hours, now):
+        used.append(path.name)
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        rec = json.loads(ln)
+                    except ValueError:
+                        continue
+                    ts = _hist_epoch(rec.get("ts"))
+                    if ts < cutoff:
+                        continue
+                    if rec.get("type") == "lat":
+                        lat["ts"].append(int(ts))
+                        lat["p95"].append(rec.get("p95") or 0)
+                        lat["p99"].append(rec.get("p99") or 0)
+                        for t in rec.get("top") or []:
+                            r = t.get("route") or "?"
+                            n, mx = routes.get(r, (0, 0.0))
+                            routes[r] = (n + (t.get("count") or 0),
+                                         max(mx, t.get("max_ms") or 0))
+                    elif rec.get("type") == "slow":
+                        slow.append({"ts": int(ts), "route": rec.get("route"),
+                                     "ms": rec.get("ms")})
+        except OSError:
+            pass
+    slow.sort(key=lambda d: d["ts"], reverse=True)
+    top_routes = sorted(({"route": r, "count": n, "max_ms": mx}
+                         for r, (n, mx) in routes.items()),
+                        key=lambda d: d["max_ms"], reverse=True)[:10]
+
+    return {"hours": hours, "now": round(now), "resource": resource, "lat": lat,
+            "slow": slow[:100], "top_routes": top_routes,
+            "slow_threshold_ms": SLOW_REQ_MS, "files": used,
+            "coverage_from": int(rows[0][0]) if rows else None}

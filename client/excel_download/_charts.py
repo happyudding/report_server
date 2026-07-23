@@ -42,6 +42,7 @@ DPI = 96
 ISSUE_CELL_W_IN = 2.6
 ISSUE_CELL_H_IN = 1.15
 ISSUE_DPI = 192               # 썸네일만 2배 해상도(물리 크기는 pt 로 고정 — 확대 시 선명)
+ISSUE_MAP_IN = ISSUE_CELL_H_IN   # Map 썸네일은 정사각(행 높이 = CDF 썸네일 높이)
 
 # 웹 파리티 스타일 (distribution.js distSpecShapes/DIST_STATUS_BG + report_view.html .distg-*)
 _LIMIT_COLOR = "#DC2626"      # 웹 spec line 색
@@ -433,32 +434,6 @@ def issue_cdf_pt_size():
     return (ISSUE_CELL_W_IN * 72.0, ISSUE_CELL_H_IN * 72.0)
 
 
-def _window_renorm(xs, ys, lo, hi):
-    """ECDF [lo,hi] 창 재정규화 — 웹 distribution.js distWindowRenorm 포팅.
-
-    Issue Table CPK 섹션 미니셀(웹 data-limitwin)이 행의 cpk_limited(규격내 재계산 cpk)와
-    같은 기준으로 그려지도록 규격 안 점만 남기고 누적%를 0~100 으로 재정규화한다. 다운샘플이
-    아닌 의미적 필터라 세로채움(_dist_fill_vertical)보다 **먼저** 적용해야 한다.
-    """
-    if lo is None and hi is None:
-        return xs, ys
-    xs = np.asarray(xs, dtype="float64")
-    ys = np.asarray(ys, dtype="float64")
-    if xs.size == 0:
-        return xs, ys
-    i0 = int(np.searchsorted(xs, float(lo), side="left")) if lo is not None else 0
-    i1 = (int(np.searchsorted(xs, float(hi), side="right")) - 1) if hi is not None else xs.size - 1
-    if i1 < i0:
-        empty = np.empty(0, dtype="float64")
-        return empty, empty                       # 규격 안 데이터 없음
-    y_before = ys[i0 - 1] if i0 > 0 else 0.0
-    denom = ys[i1] - y_before
-    oxs = xs[i0:i1 + 1]
-    if denom <= 0:                                # 창 내 단일 고유값
-        return oxs, np.full(oxs.shape, 100.0)
-    return oxs, (ys[i0:i1 + 1] - y_before) / denom * 100.0
-
-
 def _mini_x_range(pts, cell):
     """미니셀 x 범위 — 데이터 ∪ limit 에 ±5% 가드밴드 (웹 renderMiniDistCell 과 동일)."""
     xmin, xmax = float("inf"), float("-inf")
@@ -476,20 +451,17 @@ def _mini_x_range(pts, cell):
     return xmin - gb, xmax + gb
 
 
-def _draw_mini_cdf_cell(fig, cell, box, *, limit_window=False):
+def _draw_mini_cdf_cell(fig, cell, box):
     """웹 Issue Table 미니셀(renderMiniDistCell) 미러 — 축·격자·제목 없이 점 + spec 선만.
 
-    limit_window 면 규격창 재정규화(CPK 섹션 = 웹 data-limitwin) 후 렌더.
+    셀에 담긴 ECDF 를 그대로 그린다 — CPK 섹션 행은 호출부가 이미 Bin1(양품) ECDF 로
+    갈아끼운 셀을 넘긴다(웹 data-bin1 미러).
     """
     pts = []
     for src in cell["sources"]:
         color, x, y = src[1], src[2], src[3]
         if len(x) == 0:
             continue
-        if limit_window:
-            x, y = _window_renorm(x, y, cell.get("lo"), cell.get("hi"))
-            if len(x) == 0:
-                continue
         pts.append((np.asarray(x, dtype="float64"),
                     np.asarray(y, dtype="float64"), color))
     xr = _mini_x_range([(x, y) for x, y, _ in pts], cell)
@@ -509,13 +481,12 @@ def _draw_mini_cdf_cell(fig, cell, box, *, limit_window=False):
 def render_single_cdf(job) -> str:
     """Issue Table 행 1개용 단일 CDF PNG. job:
 
-    {"cell": {...}, "out_path": str, "limit_window": bool}
+    {"cell": {...}, "out_path": str}
     웹 Issue Table 미니셀과 같은 포맷(축 숨김·최소 여백·spec 선). 반환: out_path.
     """
     fig = Figure(figsize=(ISSUE_CELL_W_IN, ISSUE_CELL_H_IN), dpi=ISSUE_DPI)
     m = 0.01                                   # 웹 margin 1px 대응(마커 반경만큼만 여유)
-    _draw_mini_cdf_cell(fig, job["cell"], (m, m, 1.0 - 2 * m, 1.0 - 2 * m),
-                        limit_window=bool(job.get("limit_window")))
+    _draw_mini_cdf_cell(fig, job["cell"], (m, m, 1.0 - 2 * m, 1.0 - 2 * m))
     fig.savefig(job["out_path"], format="png", facecolor="white")
     return job["out_path"]
 
@@ -534,3 +505,28 @@ def render_map_png_job(job) -> str:
     render_wafer_map_png(job["dies"], job["color_map"],
                          title=job["title"], out_path=job["out_path"])
     return job["out_path"]
+
+
+def render_issue_maps_job(job) -> dict:
+    """Issue Table Map 셀 썸네일을 한 맵의 dies 로 여러 bin 만큼 렌더. job:
+
+    {"dies","color_map","targets": [(bin, out_path), ...]}
+    같은 맵을 쓰는 행끼리 묶어 한 잡으로 보낸다 — die 목록을 bin 마다 자식 프로세스로
+    피클 전송하지 않기 위함. 반환: {bin: out_path} (좌표 없으면 빈 dict).
+    """
+    from ._map import render_issue_map_png
+
+    dies = job.get("dies") or []
+    out = {}
+    if not dies:
+        return out
+    for bin_value, out_path in job.get("targets") or []:
+        render_issue_map_png(dies, job["color_map"], bin_value, out_path=out_path,
+                             size_in=ISSUE_MAP_IN)
+        out[str(bin_value)] = out_path
+    return out
+
+
+def issue_map_pt_size():
+    """Issue Table Map 썸네일의 부착 물리 크기 (width_pt, height_pt) — 정사각."""
+    return (ISSUE_MAP_IN * 72.0, ISSUE_MAP_IN * 72.0)

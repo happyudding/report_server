@@ -4,8 +4,10 @@
 데몬 스케줄러와 겹치지 않게 non-blocking Lock 으로 감싸고 실행 중이면 busy 를 돌려준다.
 """
 import csv
+import fnmatch
 import io
 import logging
+import re
 import sqlite3
 import threading
 from pathlib import Path
@@ -155,18 +157,70 @@ def audit_csv_iter(action=None, q=None):
 
 # ── 서버 로그 tail ───────────────────────────────────────────────────────────
 
-def log_tail(nbytes=65536):
-    """server/log/server_*.txt 중 최신 파일 꼬리를 텍스트로 반환."""
-    log_dir = config.ROOT_DIR / "server" / "log"
+# 열람 허용 파일 (server/log/ 안). 서버 로그 외에 watchdog 재기동 원인 추적에 필요한
+# 파일들을 포함한다 — 재기동 폭주 시 대시보드만 보고 원인을 못 찾던 문제 대응.
+_LOG_GLOBS = ("server_*.txt", "watchdog_events.log", "watchdog_checks.log",
+              "watchdog_snap_*.txt", "metrics_*.log", "runtime_*.log",
+              "faulthandler_*.txt", "diagnose_*.txt")
+_LOG_LIST_MAX = 500
+_LOG_NAME_RE = re.compile(r"[A-Za-z0-9_.\-]+")
+
+
+def _log_dir():
+    return config.ROOT_DIR / "server" / "log"
+
+
+def _resolve_log(name):
+    """열람 요청 파일명을 검증해 실제 경로로. 화이트리스트 밖이면 ValueError.
+
+    경로 조작 차단 3중: 파일명 문자 제한(구분자 원천 배제) + glob 화이트리스트 +
+    최종 경로의 부모가 log 디렉토리인지 확인."""
+    log_dir = _log_dir()
+    if not _LOG_NAME_RE.fullmatch(name or ""):
+        raise ValueError("허용되지 않는 파일명입니다.")
+    if not any(fnmatch.fnmatch(name, g) for g in _LOG_GLOBS):
+        raise ValueError("열람 대상 로그가 아닙니다.")
+    path = (log_dir / name).resolve()
+    if path.parent != log_dir.resolve():
+        raise ValueError("허용되지 않는 경로입니다.")
+    return path
+
+
+def log_list():
+    """열람 가능한 로그 파일 목록 (최신 mtime 먼저)."""
+    log_dir = _log_dir()
+    if not log_dir.exists():
+        return []
+    seen = {}
+    for g in _LOG_GLOBS:
+        for p in log_dir.glob(g):
+            try:
+                st = p.stat()
+            except OSError:
+                continue
+            seen[p.name] = {"name": p.name, "bytes": st.st_size,
+                            "mtime": int(st.st_mtime)}
+    items = sorted(seen.values(), key=lambda d: d["mtime"], reverse=True)
+    return items[:_LOG_LIST_MAX]
+
+
+def log_tail(nbytes=65536, name=None):
+    """로그 파일 꼬리를 텍스트로 반환. name 이 없으면 최신 server_*.txt (기존 동작)."""
+    log_dir = _log_dir()
     try:
         nbytes = max(1024, min(int(nbytes), 1024 * 1024))
     except (TypeError, ValueError):
         nbytes = 65536
-    files = sorted(log_dir.glob("server_*.txt"),
-                   key=lambda p: p.stat().st_mtime, reverse=True) if log_dir.exists() else []
-    if not files:
-        return {"file": None, "text": "(로그 파일 없음: %s)" % log_dir}
-    target = files[0]
+    if name:
+        target = _resolve_log(name)
+        if not target.exists():
+            return {"file": None, "text": "(파일 없음: %s)" % name}
+    else:
+        files = sorted(log_dir.glob("server_*.txt"),
+                       key=lambda p: p.stat().st_mtime, reverse=True) if log_dir.exists() else []
+        if not files:
+            return {"file": None, "text": "(로그 파일 없음: %s)" % log_dir}
+        target = files[0]
     size = target.stat().st_size
     with open(target, "rb") as f:
         if size > nbytes:
@@ -175,4 +229,4 @@ def log_tail(nbytes=65536):
     text = data.decode("utf-8", errors="replace")
     if size > nbytes:  # 잘린 첫 줄 제거
         text = text.split("\n", 1)[-1]
-    return {"file": target.name, "size": size, "text": text}
+    return {"file": target.name, "size": size, "text": text.lstrip("﻿")}

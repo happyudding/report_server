@@ -60,7 +60,11 @@ UPLOAD_ROOT = Path(os.environ["REPORT_UPLOAD_DIR"])
 
 
 def _make_parquet():
-    """ItemA/ItemB 각각 fail die 1개 + ItemA 에 극단값 1개(outlier 대상)."""
+    """ItemA/ItemB 각각 fail die 1개 + ItemA 극단값 2개(outlier 대상).
+
+    극단값 하나는 **양품(BIN 1) die** 에 둔다 — CPK 통계가 Bin1 기준이라(2026-07-23 통일)
+    fail die 에만 극단값이 있으면 outlier 마스킹이 CPK 에 아무 변화도 주지 못한다.
+    """
     cols = META_COLUMNS + ["ItemA", "ItemB"]
     rows = [
         ["TSEQ", "", "", "", "", "", "", 1, 2],
@@ -72,6 +76,8 @@ def _make_parquet():
     ]
     for i in range(20):
         a, b, bin_code, failtno = 10 + (i % 5) * 0.1, 10 + (i % 7) * 0.1, 1, ""
+        if i == 17:                       # 양품(BIN 1)인데 값만 극단 — CPK(Bin1) outlier 대상
+            a = 100.0
         if i == 18:                       # ItemA fail (BIN 5)
             a, bin_code, failtno = 100.0, 5, 100
         if i == 19:                       # ItemB fail (BIN 6)
@@ -115,6 +121,15 @@ def _full():
     raise AssertionError(f"/full 이 200 이 아님: {r.status_code} {r.data[:200]}")
 
 
+def _get_spec():
+    """서버가 보관 중인 필터 — Honey 허브가 여는 조회 라우트와 같은 경로.
+
+    (/full 응답에는 싣지 않는다 — 세션 상단 배지를 두지 않기로 했다.)"""
+    r = client.get(f"/pe/report/session/{SID}/web_report/preprocess", headers=_headers())
+    assert r.status_code == 200, (r.status_code, r.data[:200])
+    return r.get_json()
+
+
 def _save_spec(spec):
     r = client.post(f"/pe/report/session/{SID}/web_report/preprocess",
                     json=spec, headers=_headers())
@@ -154,7 +169,8 @@ def main():
     base = _full()
     base_canon = _canon_report(base)
     assert _dist_items(base) == ["ItemA", "ItemB"], _dist_items(base)
-    assert base["preprocess"]["summary"] == "", base["preprocess"]
+    assert _get_spec()["summary"] == "", _get_spec()
+    assert "preprocess" not in base, "/full 에 전처리 상태를 싣지 않기로 했다 (상단 배지 제거)"
     yield_before = _sheet_json(base, "Yield")
     cpk_before = _sheet_json(base, "CPK")
     assert "ItemB" in cpk_before and "ItemB" in yield_before
@@ -167,7 +183,6 @@ def main():
     after = _full()
     assert _dist_items(after) == ["ItemA"], _dist_items(after)
     assert "ItemB" not in _sheet_json(after, "CPK"), "CPK 에 제외 항목이 남았다"
-    assert after["preprocess"]["summary"], "배지용 summary 가 비었다"
     # Yield 는 그대로 — 제외 항목의 fail die 도 여전히 fail 이다 (표 합 = 수율)
     assert _sheet_json(after, "Yield") == yield_before, "제외가 Yield 표를 바꿨다 (행 합 불일치)"
     assert after["web_report"]["yield_summary"] == base["web_report"]["yield_summary"]
@@ -179,7 +194,7 @@ def main():
     _clear_all_caches()
     reopened = _full()
     assert _dist_items(reopened) == ["ItemA"], _dist_items(reopened)
-    assert reopened["preprocess"]["spec"] == {"exclude_items": ["ItemB"]}, reopened["preprocess"]
+    assert _get_spec()["spec"] == {"exclude_items": ["ItemB"]}, _get_spec()
     assert wr_edits.load_preprocess(report_db, SID) == {"exclude_items": ["ItemB"]}
     print("(c) 캐시 전부 비우고 재조회 — 필터가 DB 에서 복원됨")
 
@@ -197,7 +212,7 @@ def main():
     _save_spec({})
     _clear_all_caches()
     restored = _full()
-    assert restored["preprocess"]["summary"] == ""
+    assert _get_spec()["summary"] == ""
     assert _canon_report(restored) == base_canon, "해제 후 원래 payload 로 돌아오지 않음"
     print("(e) 해제 — 원래 payload 와 정준 JSON 완전 일치")
 

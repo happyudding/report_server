@@ -11,10 +11,11 @@
   "use strict";
 
   var ITEMS = [
+    ["세션 정보 수정 (✏️)", "업로드 때 쓰는 Part ID 검색 다이얼로그를 그대로 재사용 — Honey 앱 전용"],
     ["Excel Upload", "로컬 xlsx 를 열어 파싱해야 해서 브라우저에서 불가"],
     ["새 리포트 생성", "MS Excel(COM) 로 원본을 읽어 분석 — 로컬 앱 필요"],
     ["Rawdata Excel 편집", "Excel 로 내려받아 편집 후 되돌리는 왕복 — 로컬 Excel 필요"],
-    ["Excel Download (전체본)", "차트 PNG·Map 을 로컬에서 생성해 합침. 웹은 Yield/CPK 시트만 제공"],
+    ["Excel Download (전체본)", "차트 PNG·Map 을 로컬에서 생성해 합침. 웹은 Yield/CPK/Issue Table 시트를 같은 서식으로 제공(썸네일 이미지는 전체본에만)"],
     ["로컬 파일 열기", "브라우저는 PC 파일시스템에 접근할 수 없음"],
     ["D1(Dolphin) 불러오기", "사내 D1 저장소 접근 — 클라이언트 전용"],
     ["Options (색·기본값)", "클라이언트 로컬 설정"],

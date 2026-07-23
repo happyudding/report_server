@@ -30,6 +30,7 @@ GRAY_COLOR = "#c8ccd0"              # 앞 step fail die (웹 MAP_GRAY_HEX)
 
 _EMPTY_RGB = (255, 255, 255)        # 빈 셀(die 없음) = 흰색
 _NA_COLOR = "#9aa0a6"               # 색맵에 없는 bin (웹 TNO_OTHER_COLOR 계열 중립 회색)
+DIM_COLOR = "#d9d9d9"               # 선택 bin 외 dim (웹 MAP_BIN_DIM_COLOR)
 _TARGET_PX = 1000                   # 목표 한 변 픽셀 (웹은 표시 폭 기준 — PNG 는 고정)
 _MAX_PX = 4096                      # 축당 픽셀 상한 (웹 cellFor 와 동일 메모리 보호)
 _MAX_TICKS = 8                      # 웹 _compactTicks
@@ -155,15 +156,16 @@ def _die_color(die, color_map):
     return color_map.get(str(die.get("bin")), _NA_COLOR)
 
 
-def render_wafer_map_png(dies, color_map, *, title="", out_path) -> None:
-    """웹-파리티 wafer bin map 을 out_path(PNG, 정사각)로 저장.
+def _map_image(dies, color_of):
+    """die 목록 → (RGB 블록 이미지, xs, ys). color_of(die) 가 die 색(hex)을 돌려준다.
 
-    dies: [{"x","y","bin"} | {"x","y","g":1}], color_map: build_bin_color_map 산출(전역).
+    xs/ys 는 압축 격자의 실제 좌표값(축 눈금 라벨용). 격자 압축·die 당 픽셀 블록·
+    1px 흰 격자선은 웹 drawWaferThumb 와 동일.
     """
     x_idx, y_idx, xs, ys = _compact_grid(dies)
     W, H = len(xs), len(ys)
     if W == 0 or H == 0:
-        raise ValueError(f"{title}: 좌표가 없습니다.")
+        return None, xs, ys
 
     # 색 → 팔레트 인덱스(0=빈 셀 흰색)로 격자를 채운 뒤 블록 확대는 numpy 벡터 연산으로.
     codes = np.zeros((H, W), dtype="int32")
@@ -173,7 +175,7 @@ def render_wafer_map_png(dies, color_map, *, title="", out_path) -> None:
         cx, cy = x_idx.get(d.get("x")), y_idx.get(d.get("y"))
         if cx is None or cy is None:
             continue
-        hex_color = _die_color(d, color_map)
+        hex_color = color_of(d)
         code = code_of.get(hex_color)
         if code is None:
             code = len(palette)
@@ -191,12 +193,26 @@ def render_wafer_map_png(dies, color_map, *, title="", out_path) -> None:
         img[:, cell_x - 1::cell_x, :] = 255
     if gap_y:
         img[cell_y - 1::cell_y, :, :] = 255
+    return img, xs, ys
+
+
+def render_wafer_map_png(dies, color_map, *, title="", out_path) -> None:
+    """웹-파리티 wafer bin map 을 out_path(PNG, 정사각)로 저장.
+
+    dies: [{"x","y","bin"} | {"x","y","g":1}], color_map: build_bin_color_map 산출(전역).
+    """
+    img, xs, ys = _map_image(dies, lambda d: _die_color(d, color_map))
+    if img is None:
+        raise ValueError(f"{title}: 좌표가 없습니다.")
+    W, H = len(xs), len(ys)
 
     fig = Figure(figsize=(6.0, 6.0), dpi=110)      # 정사각 → 500x500 부착 왜곡 없음
     ax = fig.add_subplot(111)
     # extent 로 index 공간(0..W, 0..H) 매핑 + y 반전(위=작은 y, 웨이퍼 관례).
-    # 웹 썸네일도 1:1 wrap 에 채우므로(cellX/cellY 독립) aspect="auto" 가 파리티.
+    # 격자를 축 영역 비율대로 늘리지 않도록(웨이퍼가 타원으로 보임) 플롯 박스를 정사각으로
+    # 고정한다(2026-07-23 요청). aspect="auto" 는 그 정사각 박스를 die 격자로 채우는 용도.
     ax.imshow(img, extent=(0, W, H, 0), aspect="auto", interpolation="nearest")
+    ax.set_box_aspect(1)
     xt, xl = _compact_ticks(xs)
     yt, yl = _compact_ticks(ys)
     ax.set_xticks(xt)
@@ -208,4 +224,29 @@ def render_wafer_map_png(dies, color_map, *, title="", out_path) -> None:
     ax.set_title(title, fontsize=9)
     ax.tick_params(labelsize=8)
     fig.subplots_adjust(left=0.10, right=0.97, top=0.93, bottom=0.09)
+    fig.savefig(str(out_path), format="png", facecolor="white")
+
+
+def dim_color_map(color_map, bin_value):
+    """선택 bin 만 원색, 나머지는 dim 회색인 색맵 — 웹 dimColorMap 포팅."""
+    return {b: (c if str(b) == str(bin_value) else DIM_COLOR)
+            for b, c in (color_map or {}).items()}
+
+
+def render_issue_map_png(dies, color_map, bin_value, *, out_path,
+                         size_in=1.15, dpi=192) -> None:
+    """Issue Table Map 셀용 미니 웨이퍼 맵 — 해당 bin 만 원색, 나머지 dim (웹 미니셀 미러).
+
+    축·제목·bin 번호 없이 격자만 정사각 PNG 로 그린다(웹 map-cell-mini 와 동일).
+    앞 step 에서 이미 fail 난 die(g=1)는 회색 그대로.
+    """
+    dim = dim_color_map(color_map, bin_value)
+    img, xs, ys = _map_image(dies, lambda d: _die_color(d, dim))
+    if img is None:
+        raise ValueError(f"bin {bin_value}: 좌표가 없습니다.")
+    fig = Figure(figsize=(size_in, size_in), dpi=dpi)
+    ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+    ax.imshow(img, extent=(0, len(xs), len(ys), 0), aspect="auto",
+              interpolation="nearest")
+    ax.set_axis_off()
     fig.savefig(str(out_path), format="png", facecolor="white")

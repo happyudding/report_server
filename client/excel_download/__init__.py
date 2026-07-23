@@ -27,11 +27,13 @@ from ._charts import (
     ROWS_PER_CHUNK,
     chunk_px_size,
     issue_cdf_pt_size,
+    issue_map_pt_size,
     render_chunk_pair,
+    render_issue_maps_job,
     render_map_png_job,
     render_single_cdf,
 )
-from ._fetch import fetch_report_data
+from ._fetch import fetch_distribution_bin1, fetch_report_data
 from ._map import build_bin_desc_map, build_global_bin_legend
 from . import _sheets
 
@@ -81,7 +83,7 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
     tmpdir = tempfile.mkdtemp(prefix="honey_exceldl_")
     try:
         chunk_jobs, n_items, cell_of = _build_chunk_jobs(
-            report, dist, dict(colors), tmpdir, bin1=bin1)
+            report, dist, dict(colors), tmpdir)
         map_rows = sheets.get("Map Analysis") or []
         map_jobs, map_colors = _build_map_jobs(map_rows, tmpdir)
         _emit("render", f"차트 잡 구성 완료 ({time.perf_counter() - t_dl:.1f}s, "
@@ -112,54 +114,81 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
 
                 _sheets.write_summary_sheet(ws["Summary"], report.get("yield_summary"),
                                             sheets.get("Fail Bin"))
-                _sheets.write_yield_sheet(ws["Yield"], sheets.get("Yield"),
-                                          report.get("yield_bin_groups"), source_names)
+                _sheets.write_yield_sheet(
+                    ws["Yield"], sheets.get("Yield"), report.get("yield_bin_groups"),
+                    source_names,
+                    step_groups=report.get("yield_step_groups"),
+                    step_summary=(report.get("yield_summary") or {}).get("by_step"))
                 _sheets.write_cpk_sheet(ws["CPK"], sheets.get("CPK"))
                 issue_layout = _sheets.write_issue_sheet(
                     ws["Issue Table"], sheets.get("Issue Table"), source_names)
                 # Issue Table 행별 CDF PNG 잡(분포 데이터가 있는 항목 행만) — 청크와 병렬 렌더.
+                # CPK 섹션 썸네일만 Bin1(양품) ECDF 로 그린다 — 그 행의 cpk 가 Bin1 기준이라
+                # 웹 미니셀(data-bin1)과 같은 데이터를 쓴다. bin1 모드면 이미 받은 dist 가
+                # Bin1 이라 재수신하지 않고, 배치 수신이 실패하면 전체 기준 셀로 폴백한다.
+                cpk_subjects = [item for item, _r, section in issue_layout["rows"]
+                                if section == "CPK" and item in cell_of]
+                bin1_items = {} if bin1 else fetch_distribution_bin1(
+                    server_base, session_id, cpk_subjects)
                 issue_targets, issue_jobs = [], []
                 for item, excel_row, section in issue_layout["rows"]:
                     cell = cell_of.get(item)
                     if cell is None:
                         continue
+                    if section == "CPK" and item in bin1_items:
+                        cell = _bin1_cell(cell, bin1_items[item])
                     out = os.path.join(tmpdir, f"issue_{excel_row:04d}.png")
-                    # CPK 섹션은 규격창 재정규화 — 웹 미니셀(data-limitwin)과 동일 기준.
-                    issue_jobs.append({"cell": cell, "out_path": out,
-                                       "limit_window": section == "CPK"})
+                    issue_jobs.append({"cell": cell, "out_path": out})
                     issue_targets.append((excel_row, out))
                 issue_futs = [pool.submit(render_single_cdf, j) for j in issue_jobs]
+                # Issue Table Map 셀(해당 Bin 만 원색인 웨이퍼) — 같은 맵을 쓰는 bin 끼리 묶어 렌더.
+                issue_map_jobs, issue_map_paths = _build_issue_map_jobs(
+                    map_rows, issue_layout["map_rows"], map_colors, tmpdir)
+                issue_map_futs = [pool.submit(render_issue_maps_job, j)
+                                  for j in issue_map_jobs]
                 t_text = time.perf_counter()
                 _emit("excel", f"텍스트 시트 완료 ({t_text - t_dl:.1f}s) — 차트 대기/부착...")
 
                 # ── 4. PNG 를 완료되는 순서대로 즉시 부착 (렌더 꼬리와 겹침) ──
+                # 차트 시트도 시트명 제목 배너 + B3 기준 부착 (표 시트와 시작 위치 통일).
+                for name in ("Distribution", "Histogram", "Map Analysis"):
+                    _sheets.write_sheet_title(ws[name], name)
                 _sheets.write_source_legend(ws["Distribution"], colors)
                 _sheets.write_source_legend(ws["Histogram"], colors)
+                dist_left, dist_top = _sheets.chart_anchor(ws["Distribution"])
+                hist_left, hist_top = _sheets.chart_anchor(ws["Histogram"])
                 sizes = [chunk_px_size(len(j["cells"])) for j in chunk_jobs]
-                tops = _sheets.picture_stack_tops([h for _, h in sizes])
+                heights = [h for _, h in sizes]
+                dist_tops = _sheets.picture_stack_tops(heights, dist_top)
+                hist_tops = _sheets.picture_stack_tops(heights, hist_top)
                 idx_of = {fut: i for i, fut in enumerate(chunk_futs)}
                 for fut in as_completed(chunk_futs):
                     i = idx_of[fut]
                     cdf_path, hist_path = fut.result()
                     w_px, h_px = sizes[i]
-                    _sheets.add_picture_at(ws["Distribution"], cdf_path,
-                                           top=tops[i], width_px=w_px, height_px=h_px)
-                    _sheets.add_picture_at(ws["Histogram"], hist_path,
-                                           top=tops[i], width_px=w_px, height_px=h_px)
+                    _sheets.add_picture_at(ws["Distribution"], cdf_path, left=dist_left,
+                                           top=dist_tops[i], width_px=w_px, height_px=h_px)
+                    _sheets.add_picture_at(ws["Histogram"], hist_path, left=hist_left,
+                                           top=hist_tops[i], width_px=w_px, height_px=h_px)
 
                 # 차트 이미지가 덮는 셀에 항목명 숨김 기입 — Ctrl+F 로 차트 찾기
                 index_entries = _build_item_index(chunk_jobs)
-                _sheets.write_hidden_item_index(ws["Distribution"], index_entries, tops)
-                _sheets.write_hidden_item_index(ws["Histogram"], index_entries, tops)
+                _sheets.write_hidden_item_index(ws["Distribution"], index_entries, dist_tops,
+                                                left=dist_left, top=dist_top)
+                _sheets.write_hidden_item_index(ws["Histogram"], index_entries, hist_tops,
+                                                left=hist_left, top=hist_top)
 
                 map_pngs = []
                 for job, fut in zip(map_jobs, map_futs):
                     map_pngs.append((job["title"], fut.result()))
-                _sheets.add_map_grid(ws["Map Analysis"], map_pngs)
+                map_left, map_top = _sheets.chart_anchor(ws["Map Analysis"])
+                _sheets.add_map_grid(ws["Map Analysis"], map_pngs,
+                                     left=map_left, top=map_top)
                 # Bin Legend 표 (웹과 동일 집계·색) — 맵 안 bin 번호 텍스트를 대신한다.
                 _sheets.write_map_legend(
                     ws["Map Analysis"], build_global_bin_legend(map_rows),
-                    build_bin_desc_map(sheets.get("Yield")), map_colors, len(map_pngs))
+                    build_bin_desc_map(sheets.get("Yield")), map_colors, len(map_pngs),
+                    left=map_left)
 
                 # Issue Table 행별 CDF PNG 부착 (오름차순 — 행 높이 확대가 아래 행 top 에 반영)
                 iw_pt, ih_pt = issue_cdf_pt_size()
@@ -167,6 +196,15 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
                     fut.result()
                     _sheets.add_picture_in_cell(ws["Issue Table"], out, excel_row,
                                                 issue_layout["dist_col"], iw_pt, ih_pt)
+                # Map 썸네일은 CDF 부착 뒤에(행 높이가 확정된 상태) 같은 방식으로 칸에 맞춰 부착
+                for fut in issue_map_futs:
+                    fut.result()
+                mw_pt, mh_pt = issue_map_pt_size()
+                for bin_value, excel_row in issue_layout["map_rows"]:
+                    png = issue_map_paths.get(str(bin_value))
+                    if png and os.path.exists(png):
+                        _sheets.add_picture_in_cell(ws["Issue Table"], png, excel_row,
+                                                    issue_layout["map_col"], mw_pt, mh_pt)
 
                 # 모든 시트 상단에 세션 웹뷰 링크 삽입
                 for name in SHEET_ORDER:
@@ -230,8 +268,8 @@ def _source_colors(source_names, dist_colors):
 def _ecdf_mean_std(x, y):
     """ECDF(x=오름차순 고유값, y=누적% 0..100) → (가중평균, 모표준편차).
 
-    bin1(양품·규격내) 히스토그램 가우시안 곡선용 — CPK 시트(전체 die)와 basis 가 달라
-    쓸 수 없으므로 bin1 ECDF 에서 직접 산출한다. 값 분포를 누적%로 온전히 담으므로
+    히스토그램 가우시안 곡선용 — 곡선이 **그 칸에 그린 분포**와 어긋나지 않도록 CPK 시트
+    통계(Bin1·규격 클리핑 없음) 대신 여기서 직접 산출한다. 값 분포를 누적%로 온전히 담으므로
     가중평균=실제 평균, 가중분산=모분산. 단일 고유값이면 std=0(→ 축퇴 스파이크).
     데이터 없으면 (None, None).
     """
@@ -252,24 +290,33 @@ def _ecdf_mean_std(x, y):
     return mean, std
 
 
-def _build_chunk_jobs(report, dist, color_of, tmpdir, bin1=False):
+def _bin1_cell(cell, info):
+    """셀의 소스별 ECDF 를 Bin1 배치 응답 값으로 갈아끼운 얕은 복사본.
+
+    미니 CDF 렌더는 (색, x, y) 와 셀의 lo/hi 만 쓰므로 나머지 필드(n/avg/std)는 그대로 둔다.
+    Bin1 응답에 없는 소스는 양품 die 가 없다는 뜻이라 빈 배열 — 그 소스만 안 그려진다.
+    """
+    src_map = info.get("sources") or {}
+    sources = []
+    for s in cell["sources"]:
+        d = src_map.get(s[0]) or {}
+        sources.append((s[0], s[1],
+                        np.asarray(d.get("x") or [], dtype="float32"),
+                        np.asarray(d.get("y") or [], dtype="float32"),
+                        s[4], s[5], s[6]))
+    return {**cell, "sources": sources}
+
+
+def _build_chunk_jobs(report, dist, color_of, tmpdir):
     """distribution_index 순서(TSEQ)로 전 항목 셀을 만들어 32개씩 청크 잡으로 나눈다.
 
     dist items 에만 있고 index 에 없는 항목도 뒤에 붙인다 (데이터 누락 금지).
-    ``bin1`` 이면 히스토그램 가우시안 통계(avg/std)를 CPK 시트(전체 die) 대신 bin1
-    ECDF 에서 산출한다(dist 가 ?bin1=1 응답이므로 CDF x/y 는 자동으로 bin1 기준).
+    히스토그램 가우시안 통계(avg/std)는 넘겨받은 ``dist`` 의 ECDF 에서 산출하므로
+    전체 die / bin1(?bin1=1) 어느 응답이든 곡선이 그 칸의 분포와 같은 표본을 따른다.
     반환: (jobs, n_items, cell_of{subject: cell}).
     """
     index_rows = report.get("distribution_index") or []
     items = (dist.get("items") or {})
-    n_of = {}     # (subject, source) -> n  (정규분포 축퇴 판정용)
-    stat_of = {}  # (subject, source) -> (avg, std)  (정규분포 곡선용)
-    for r in report.get("sheets", {}).get("CPK") or []:
-        key = (r.get("subject"), r.get("source"))
-        if r.get("n") is not None:
-            n_of[key] = r.get("n")
-        stat_of[key] = (r.get("average"), r.get("stdev"))
-
     ordered = [r.get("subject") for r in index_rows]
     seen = set(ordered)
     ordered += [k for k in items.keys() if k not in seen]
@@ -282,14 +329,11 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir, bin1=False):
         sources = []
         for src_name, data in (info.get("sources") or {}).items():
             xs, ys = data.get("x") or [], data.get("y") or []
-            if bin1:
-                # bin1 ECDF 에서 통계 산출(CPK 시트=전체 die 라 불일치). n=None → 다중점은
-                # 곡선, 단일점은 std=0 으로 축퇴 스파이크 처리(_draw_hist_cell).
-                avg, std = _ecdf_mean_std(xs, ys)
-                n = None
-            else:
-                avg, std = stat_of.get((subject, src_name), (None, None))
-                n = n_of.get((subject, src_name))
+            # 가우시안 곡선 통계는 **그리는 ECDF 에서 직접** 산출한다 — CPK 시트 통계는
+            # Bin1(규격 클리핑 없음) 기준이라 여기 분포(전체 die 또는 bin1·규격내)와
+            # 표본이 다르다. n=None → 다중점은 곡선, 단일점은 std=0 으로 축퇴 스파이크.
+            avg, std = _ecdf_mean_std(xs, ys)
+            n = None
             # float32: 플롯(수백 px 폭) 정밀도로 충분 — 자식 프로세스 피클 전송량 절반
             sources.append((
                 src_name,
@@ -360,3 +404,34 @@ def _build_map_jobs(map_rows, tmpdir):
             "color_map": color_map,
         })
     return jobs, color_map
+
+
+def _build_issue_map_jobs(map_rows, targets, color_map, tmpdir):
+    """Issue Table Map 셀 렌더 잡 — bin 별 썸네일을 **같은 맵을 쓰는 것끼리 묶어** 만든다.
+
+    맵 선택은 웹 renderMiniMapCell 과 동일: step 분리 맵이면 그 bin 의 fail 이 실제로
+    등장하는 step 맵을(fail 은 자기 step 맵에만 그려진다), 아니면 첫 맵을 쓴다.
+    die 목록을 bin 마다 자식 프로세스로 피클 전송하지 않도록 맵 단위 1잡으로 묶는다.
+    반환: (jobs, {bin: out_path}).
+    """
+    rows = [m for m in (map_rows or []) if m.get("dies")]
+    if not rows or not targets:
+        return [], {}
+    stepwise = rows[0].get("step") is not None
+    by_map = {}
+    path_of = {}
+    for bin_value, _excel_row in targets:
+        b = str(bin_value)
+        if b in path_of:
+            continue
+        idx = 0
+        if stepwise:
+            idx = next((i for i, m in enumerate(rows)
+                        if any(str(bc.get("bin")) == b
+                               for bc in (m.get("bin_counts") or []))), 0)
+        out = os.path.join(tmpdir, f"issuemap_{len(path_of):03d}.png")
+        path_of[b] = out
+        by_map.setdefault(idx, []).append((b, out))
+    jobs = [{"dies": rows[i]["dies"], "color_map": color_map, "targets": t}
+            for i, t in by_map.items()]
+    return jobs, path_of

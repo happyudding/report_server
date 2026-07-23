@@ -57,7 +57,8 @@ DataFrame 레이아웃 (`honeyform.py`, `META_COLUMNS`/`META_ROW_LABELS`):
 1. **정규화** — `validate_meta`(product_type/product/lot_id/revision/process/edm_link/password/
    file_name), `validate_mode`(Normal/Compare/DUT/Commonality), `client_identity(manifest)` →
    `(uploaded_by, client_host)`.
-2. **모드 파일 수 검증** — Compare 는 파일이 **정확히 2개** 아니면 400 거부.
+2. **모드 source 수 검증** — Compare 는 source(=업로드 parquet)가 **2개 미만**이면 400 거부
+   (상한 없음 — Before/After 두 그룹으로 나눈다).
 3. **디코드·검증·시딩** — 각 parquet 를 `decode_split_honeyform_parquet(keep_df=False)` 로
    검증하며 슬림 테이블로 만들고, 원본 bytes 는 그대로 보관.
 4. **키 산출** —
@@ -126,15 +127,16 @@ zip(manifest + `source_<idx>.parquet`)을 내려받아 Honey 가 **source 1개 =
   업로드 경로와 같은 `dist_pack.build_pack_from_parquet`). 미첨부면 서버 폴백 계산.
 
 ## 분석 모드 (Normal / DUT / Compare / Commonality)
-세션마다 모드를 가진다. Honey 업로드 시 파일 개수로 가용 모드가 제한되어 `manifest.mode`
+세션마다 모드를 가진다. Honey 업로드 시 **source 개수**(= `honey_parse.file_to_df` 가 돌려준
+df 개수 = 업로드 parquet 개수, 입력 파일 개수가 아니다)로 가용 모드가 제한되어 `manifest.mode`
 로 전송되고 `report_session.mode` 컬럼에 저장된다. **mode 는 analysis_key 산출에 불포함,
 캐시 키에는 포함**(dedup 세션 간 충돌 방지 — `cache_policy.py`).
 
-| 모드 | 파일 수 | 요지 |
-|------|---------|------|
+| 모드 | source 수 | 요지 |
+|------|-----------|------|
 | **Normal** | 1+ | 기존 동작. payload 에 `"mode":"Normal"`. |
 | **DUT** | 1 | **서버에서** honeyform 을 DUT 컬럼으로 분할(`split_table_by_dut`) — DUT별 pseudo-source(`DUT <값>`)로 Yield/CPK/Distribution 등은 DUT 비교 렌더. **단 Map Analysis 는 예외**: `build_map_analysis_rows(mode="DUT")` 가 DUT 를 하나의 맵(`source="All DUT"`)으로 병합하고 die 마다 `dut` 태그를 달아 프런트가 DUT Legend 로 강조한다. 다운샘플 없음. |
-| **Compare** | 정확히 2 | `tabs/compare.py` 가 통계 delta·bin delta·공통/비공통 fail map + goodlog(테스트 프로그램 diff) 제공. ingest 가 2개 아니면 400. |
+| **Compare** | 2+ | source 를 **Before / After 두 그룹**으로 나눠 비교 (2026-07-23 재정의). 배치는 Honey `CompareArrangeDialog` 가 정해 `manifest.options.compare = {"before":[이름…],"after":[이름…]}` 로 싣고 세션 `webreport_options` 에 저장된다. **업로드 순서 = [After…, Before…]** 라 `tables[0]` = After 최상단이고, 이것이 web_report 전체의 limit(HiLIM/LoLIM) 기준 source 다(`_first_table_for`/`item_meta` 가 첫 등장 테이블을 쓰므로 서버 분기 없음). `tabs/compare.py` 가 공통성 Map(전 source·die hover 에 source 별 Bin)·Bin Yield·Bin 불일치 좌표표·goodlog(그룹 대표 2개)·산포 비교/동일성 검증(그룹 pool)을 만든다. 옵션이 없는 legacy 세션은 `after=[s0], before=[s1]` 폴백. ingest 는 2개 미만이면 400. |
 | **Commonality** | 1 | `tabs/commonality.py` chip 검색(serial/xpos/ypos/dut) + 항목별 값·누적%·wafer 좌표. chip 선택은 view-time(비영속). |
 
 ## 신원 / 업로더 잠금

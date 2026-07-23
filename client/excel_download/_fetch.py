@@ -106,6 +106,38 @@ def fetch_report_data(server_base, session_id, bin1=False):
     return full, dist
 
 
+_DIST_BATCH_CHUNK = 40      # 서버 distribution_batch 의 subjects 상한과 동일
+
+
+def fetch_distribution_bin1(server_base, session_id, subjects):
+    """지정 항목만 Bin1(양품) ECDF 로 받아 ``{subject: {sources:{src:{x,y}}, ...}}`` 반환.
+
+    Issue Table **CPK 섹션** 썸네일 전용 — 그 행의 cpk 가 Bin1 기준이라 그림도 같은 기준으로
+    그린다(웹 미니셀 data-bin1 미러). 전량 재수신을 피하려고 웹과 같은
+    ``/web_report/distribution_batch?subjects=...&bin1=1`` 을 40개씩 나눠 부른다.
+    실패(구 서버 404 포함)하면 **빈 dict** — 호출부가 전체 기준 셀로 폴백한다.
+    """
+    names = [s for s in dict.fromkeys(subjects or []) if s]
+    if not names:
+        return {}
+    base = str(server_base).rstrip("/")
+    url = f"{base}/pe/report/session/{session_id}/web_report/distribution_batch"
+    chunks = [names[i:i + _DIST_BATCH_CHUNK]
+              for i in range(0, len(names), _DIST_BATCH_CHUNK)]
+
+    def _one(chunk):
+        return _get_json(f"{url}?subjects={quote(','.join(chunk), safe='')}&bin1=1")
+
+    out = {}
+    try:
+        with ThreadPoolExecutor(max_workers=min(3, len(chunks))) as pool:
+            for payload in pool.map(_one, chunks):
+                out.update((payload or {}).get("items") or {})
+    except Exception:
+        return {}
+    return out
+
+
 def fetch_session_meta(server_base, session_id, timeout=(2, 3)):
     """세션 메타(product/lot_id 등)만 가볍게 조회 — 저장 기본 파일명용.
 

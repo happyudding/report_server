@@ -470,6 +470,8 @@ def web_report_save_preprocess(session_id):
     """조회 전처리 옵션 저장 — 원본 parquet 은 그대로 두고 조회 시점에만 적용된다.
 
     body: {"exclude_items": [...], "outlier": {"mode":"stdev","k":50}} — 빈 spec 이면 해제.
+    같은 허브 다이얼로그가 보내는 수율 분모 기준 {"yield_basis": "gross"|"test"} 도 함께
+    받는다(저장은 별도 kind — preprocess digest 를 건드리지 않는다).
     Honey 클라(브라우저 아님)도 호출하므로 rawdata_replace 와 같이 X-Honey-Agent 헤더를
     CSRF 대체로 허용한다. 편집 권한은 다른 편집 채널과 동일(_editor_guard)."""
     if request.headers.get("X-Honey-Agent") != "1":

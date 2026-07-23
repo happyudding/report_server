@@ -48,6 +48,32 @@ def webreport_ai_comment(opts_raw: str) -> bool:
     return bool(opts.get("ai_comment")) if isinstance(opts, dict) else False
 
 
+def webreport_compare_groups(opts_raw: str, source_names):
+    """세션의 webreport_options JSON → Compare 모드 Before/After 그룹 (source 이름 기준).
+
+    업로드 시 Honey 배치 다이얼로그가 manifest.options.compare 로 실어 보낸다.
+    index 가 아니라 **이름**으로 저장하므로 Excel 왕복에서 source 가 제거돼도 안전하다.
+    반환 {"before": [...], "after": [...]} / 판단 불가면 None (호출부가 legacy 폴백:
+    after=sources[0], before=sources[1] — 종전 goodlog 관례와 동일).
+    """
+    names = [str(n) for n in (source_names or [])]
+    if not opts_raw or len(names) < 2:
+        return None
+    try:
+        opts = json.loads(opts_raw)
+    except Exception:
+        return None
+    cmp_opt = opts.get("compare") if isinstance(opts, dict) else None
+    if not isinstance(cmp_opt, dict):
+        return None
+    present = set(names)
+    before = [str(n) for n in (cmp_opt.get("before") or []) if str(n) in present]
+    after = [str(n) for n in (cmp_opt.get("after") or []) if str(n) in present]
+    if not before or not after:
+        return None
+    return {"before": before, "after": after}
+
+
 def validate_mode(value) -> str:
     """manifest.mode 를 허용 모드 중 하나로 정규화. 미지정/불명은 'Normal'."""
     mode = str(value or "").strip()

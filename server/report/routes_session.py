@@ -7,6 +7,7 @@ my_access/editors — 권한·위임. URL·응답 형태는 분리 전과 동일
 import gzip
 import json
 import logging
+import re
 from pathlib import Path
 
 from flask import Response, abort, jsonify, request
@@ -18,6 +19,7 @@ from auth_identity import (
 )
 from config import REPORT_TRASH_RETENTION_DAYS, REPORT_UPLOAD_DIR
 from database import report_db
+import product_info
 import storage_gateway
 from report.report_extension import report_bp
 from report.security import (
@@ -34,6 +36,7 @@ from report.security import (
     _validate_session_id,
 )
 from web_report import service as web_report_service
+from web_report.validation import validate_meta as _validate_upload_meta
 from web_report import response_cache as web_report_response_cache
 from web_report import build_status as web_report_build_status
 from web_report import compute as web_report_compute
@@ -140,10 +143,6 @@ def session_full(session_id):
             session_id, report_db=report_db)
         # 앵커 태그(태그명→Note 셀 위치) — comment 의 #[태그명] 점프 대상.
         extras["note_tags"] = web_report_service.get_note_tags(
-            session_id, report_db=report_db)
-        # 조회 전처리(항목 제외·outlier) 적용 여부 — 화면 배지용. 값이 왜 원본과 다른지
-        # 사용자가 알 수 있어야 한다. 전처리가 없으면 summary 가 빈 문자열이다.
-        extras["preprocess"] = web_report_service.get_preprocess(
             session_id, report_db=report_db)
 
     if session.get("source") == "web_report":
@@ -297,6 +296,65 @@ def verify_session_password(session_id):
         payload = resp.get_json() or {}
         return jsonify({"ok": False, "error": payload.get("error", "수정 권한이 없습니다.")}), status
     return jsonify({"ok": True, "has_password": False})
+
+
+# ── 세션 메타(이름/Family/Product/LOT/Process) 수정 ──────────────────────────
+
+# 표시명(file_name)에서 걸러낼 문자 — 경로 구분자/Windows 금지문자/제어문자.
+# secure_filename 을 쓰지 않는 이유: 한글 이름이 통째로 사라진다(표시용 값이라 불필요).
+_NAME_BAD_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]')
+
+
+def _clean_session_name(value):
+    """세션 이름 정규화. 빈 값이면 None (호출부가 400)."""
+    name = _NAME_BAD_CHARS.sub("", str(value or "")).strip()
+    return name[:120] or None
+
+
+@report_bp.patch("/session/<session_id>/meta")
+def update_session_meta_route(session_id):
+    """세션 메타 수정 — Honey 편집창 전용 (업로드 다이얼로그 재사용).
+
+    Honey 클라(브라우저 아님)가 호출하므로 CSRF 대신 커스텀 헤더 X-Honey-Agent 를 요구한다
+    (rawdata_replace 선례 — 커스텀 헤더는 브라우저 폼으로 위조 불가). 이 헤더 요구가
+    "수정은 Honey 에서만" 을 서버가 강제하는 지점이다.
+
+    product 가 바뀌면 product_info.db 를 다시 lookup 해 세션 기준정보 14컬럼을 갱신한다
+    (미등록 part_id 면 비운다 — 옛 제품 값이 남으면 상단바가 틀린 정보를 보여준다).
+
+    analysis_key 는 재산출하지 않는다 — 산출물(parquet/manifest/summary)이 전부 그 키로
+    저장돼 있어 키를 바꾸면 세션이 자기 데이터를 잃는다. 불변 규칙 #3 의 산출식은 '업로드
+    시점' 규약이며, 수정 후에는 dedup(같은 데이터 재업로드) 매칭만 어긋난다.
+    """
+    if request.headers.get("X-Honey-Agent") != "1":
+        abort(403, "X-Honey-Agent header required")
+    _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+
+    body = request.get_json(force=True, silent=True) or {}
+    # family/product/lot/process 정규화는 업로드 ingest 와 같은 규칙(strip + 길이 제한)을 쓴다.
+    norm = _validate_upload_meta(body)
+    name = _clean_session_name(body.get("file_name"))
+    if not name:
+        return jsonify({"error": "세션 이름을 입력하세요."}), 400
+    if not norm["product"] or not norm["lot_id"]:
+        return jsonify({"error": "Product 와 LOT ID 를 모두 입력하세요."}), 400
+
+    meta = {"file_name": name, "family_product": norm["family_product"],
+            "product": norm["product"], "lot_id": norm["lot_id"],
+            "process": norm["process"]}
+    changed = [k for k, v in meta.items() if (session.get(k) or "") != v]
+    report_db.update_session_meta(session_id, meta,
+                                  product_info=product_info.lookup(norm["product"]))
+    _audit("edit", session=session,
+           changed_fields="meta:" + (",".join(changed) if changed else "none"))
+    return jsonify({"ok": True, "session_id": session_id, "changed": changed,
+                    **meta})
 
 
 @report_bp.patch("/session/<session_id>/content")

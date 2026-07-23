@@ -160,7 +160,7 @@ def tseq_sort_key(tables):
 def build_distribution_index(tables, cpk_rows, exclude=None) -> list:
     """갤러리/툴바/타입어헤드용 항목 인덱스. subject 당 1행 (경량, 점 배열 없음).
 
-    cpk 는 ``cpk_rows`` 재사용(재계산 없음), fail 은 ``fail_items`` 로 귀속.
+    cpk 는 ``cpk_rows`` 재사용(재계산 없음 — Bin1 기준 단일 값), fail 은 ``fail_items`` 로 귀속.
     항목 순서는 TEST SEQ(TSEQ) 순 — 갤러리가 이 순서대로 표시된다.
     ``exclude`` 에 담긴 항목(Pass/Fail unit·측정 data 전무)은 인덱스에서 제외한다.
     """
@@ -203,8 +203,12 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
 
     ``bin1`` 이면 분포(values/serial/xpos/ypos)를 양품(BIN==PASS_BIN) **그리고** 규격
     (LSL/USL) 이내인 die 만으로 낸다("Bin1 only" 상세, CDF/히스토그램 표시용). 규격 필터는
-    성능 다운샘플이 아니라 이 모드 전용 의미 필터다. ``stats``/``cpk`` 는 규격 클리핑을 하지
-    않고 양품(BIN==PASS_BIN) 기준을 유지한다(규격 클리핑은 cpk 를 왜곡하므로).
+    성능 다운샘플이 아니라 이 모드 전용 의미 필터다.
+    ``stats``/``cpk`` 는 ``bin1`` 여부와 무관하게 **항상 양품(BIN==PASS_BIN) 기준**이고
+    규격 클리핑은 하지 않는다 — CPK 탭/Issue Table/CPK 시트와 같은 통계여야 같은 항목의
+    CPK 가 화면마다 달라 보이지 않는다 (2026-07-23 통일, tabs/cpk.py 와 동일 기준).
+    그래서 기본(전체 die) 모드에서는 표시 분포(전체 die)와 통계 표본(양품)이 다르다 —
+    분포까지 양품으로 맞추려면 "Bin1 only" 토글을 쓴다.
     ``fail_rows``/``fail_total``/``is_fail`` 은 "이 항목으로 fail 한 die" 진단이라 bin 필터와
     무관하게 전체 기준을 유지한다(status 는 all-data is_fail + bin1 cpk 조합).
 
@@ -234,13 +238,14 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
         # values 와 같은 순서·길이로 정렬한다 (hover 용, Item_detail CDF 전용).
         numeric = pd.to_numeric(col, errors="coerce")
         finite_mask = np.isfinite(numeric.to_numpy())
-        # Bin1 only: 양품(BIN==PASS_BIN) & 규격(LSL/USL) 이내 die 만 분포(CDF/히스토그램)에
-        # 반영 (disp_mask = 유한 ∩ 양품 ∩ 규격내). 통계(stat_col)는 규격 클리핑 없이 양품
-        # 기준만 유지 — 규격 클리핑은 cpk 를 왜곡하므로("cpk 유지").
+        # 통계(stat_col)는 항상 양품(BIN==PASS_BIN) 기준 — CPK 탭과 같은 값(위 docstring).
+        # 규격 클리핑은 하지 않는다(클리핑은 cpk 를 왜곡한다).
+        # Bin1 only 모드는 여기에 더해 **표시 분포**도 양품 & 규격(LSL/USL) 이내로 좁힌다
+        # (disp_mask = 유한 ∩ 양품 ∩ 규격내).
+        bin1_mask = np.asarray([b == PASS_BIN for b in bin_types(table)], dtype=bool)
+        stat_col = col[bin1_mask]
         disp_mask = finite_mask
-        stat_col = col
         if bin1:
-            bin1_mask = np.asarray([b == PASS_BIN for b in bin_types(table)], dtype=bool)
             disp_mask = finite_mask & bin1_mask
             arr = numeric.to_numpy()
             ilo = num(table.lolim.get(subject))
@@ -249,7 +254,6 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
                 disp_mask = disp_mask & (arr >= ilo)
             if ihi is not None:
                 disp_mask = disp_mask & (arr <= ihi)
-            stat_col = col[bin1_mask]
         values = numeric.to_numpy()[disp_mask]
         sources.append({
             "name": table.source,

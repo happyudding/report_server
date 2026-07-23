@@ -40,6 +40,7 @@ from .sessions import (  # noqa: F401
     trash_session,
     update_content_hash_for_analysis_key,
     update_session,
+    update_session_meta,
 )
 from .objects import (  # noqa: F401
     delete_object_info,

@@ -43,6 +43,7 @@ from .validation import (
     validate_mode as _validate_mode,
     webreport_ai_comment as _webreport_ai_comment,
     webreport_colors as _webreport_colors,
+    webreport_compare_groups as _webreport_compare_groups,
 )
 
 # dist blob 전용 gzip 레벨 — 세션당 1회 생성 후 캐시(RAM+disk)되므로 레벨을 올려도 CPU 는
@@ -141,6 +142,12 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 ai_comments = ai_comment.safe_build(
                                     tables, session,
                                     manifest.get("selected_items") or [])
+                            # 수율 분모: 기본은 제품 기준정보 Gross Die, 세션 옵션이
+                            # "Test data 개수"(basis=test)면 None 을 넘겨 rawdata 행 수로.
+                            # gross_die 가 비어 있으면 build_report_payload 안에서 폴백한다.
+                            gross_die = (session.get("gross_die")
+                                         if edits.load_yield_basis(report_db, session_id)
+                                         == edits.YIELD_BASIS_GROSS else None)
                             report = build_report_payload(
                                 tables,
                                 selected_items=manifest.get("selected_items") or [],
@@ -155,6 +162,12 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 mode=mode,
                                 dist_colors=dist_colors,
                                 ai_comments=ai_comments,
+                                gross_die=gross_die,
+                                # Compare 모드 Before/After 배치(업로드 시 Honey 가 지정).
+                                # 없으면 compare 빌더가 legacy 폴백(after=0, before=1).
+                                compare_groups=_webreport_compare_groups(
+                                    session.get("webreport_options") or "",
+                                    [t.source for t in tables]),
                             )
                             disk_cache.save_report(upload_root, cache_key, report)
                             # 관측 로그 — 콜드 빌드(디코드 포함)가 실데이터에서 얼마나 걸리는지.
@@ -560,12 +573,23 @@ def get_preprocess(session_id: str, *, report_db) -> dict:
         raise KeyError(session_id)
     spec = edits.load_preprocess(report_db, session_id)
     return {"spec": spec, "summary": _preprocess.describe(spec),
-            "digest": _preprocess.digest(spec)}
+            "digest": _preprocess.digest(spec),
+            **_yield_basis_view(session, edits.load_yield_basis(report_db, session_id))}
+
+
+def _yield_basis_view(session, basis: str) -> dict:
+    """수율 분모 기준 응답 조각 — 허브 다이얼로그 체크박스 상태 + 안내용 gross_die."""
+    from .tabs.yield_tab import gross_die_value
+
+    return {"yield_basis": basis, "gross_die": gross_die_value(session.get("gross_die"))}
 
 
 def save_preprocess(session_id: str, *, report_db, spec: dict,
                     client_ip: str = "", user_agent: str = "") -> dict:
     """조회 전처리 옵션 저장 (빈 spec = 해제). 원본 parquet 은 건드리지 않는다.
+
+    body 에 ``yield_basis``('gross'|'test')가 함께 오면 수율 분모 기준도 저장한다 —
+    같은 허브 다이얼로그의 [저장] 한 번에 묶여 오기 때문이다(저장 위치는 별도 kind).
 
     rev 증가로 REPORT//full/TRIM 캐시가, digest 변화로 tables/dist/map/scatter 캐시가
     각각 자연 무효화된다 — 여기서 evict 를 부르지 않는 이유다(되돌리면 옛 캐시가 그대로
@@ -579,19 +603,30 @@ def save_preprocess(session_id: str, *, report_db, spec: dict,
         raise FileNotFoundError(session_id)
 
     norm = _preprocess.normalize(spec)
-    rev = edits.save_preprocess(report_db, session_id, norm,
-                                updated_by=edits.user_from_ua(user_agent) or None)
+    updated_by = edits.user_from_ua(user_agent) or None
+    rev = edits.save_preprocess(report_db, session_id, norm, updated_by=updated_by)
+
+    basis_changed = ""
+    if isinstance(spec, dict) and spec.get("yield_basis") is not None:
+        basis = edits.normalize_yield_basis(spec.get("yield_basis"))
+        if basis != edits.load_yield_basis(report_db, session_id):
+            rev = edits.save_yield_basis(report_db, session_id, basis, updated_by=updated_by)
+            basis_changed = f" yield_basis({basis})"
+    else:
+        basis = edits.load_yield_basis(report_db, session_id)
+
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
             product_type=session.get("product_type", ""), product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
-            changed_fields=f"preprocess({_preprocess.describe(norm) or 'off'})",
+            changed_fields=f"preprocess({_preprocess.describe(norm) or 'off'}){basis_changed}",
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
     return {"ok": True, "spec": norm, "summary": _preprocess.describe(norm),
-            "digest": _preprocess.digest(norm), "rev": rev}
+            "digest": _preprocess.digest(norm), "rev": rev,
+            **_yield_basis_view(session, basis)}
 
 
 def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,

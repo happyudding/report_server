@@ -102,18 +102,39 @@ def _rotate_log():
 
 def _prune_old_logs(log_dir):
     """오래된 server_*.txt 정리 (best-effort) — 기동/로테이션마다 새 파일이라 무한 누적 방지.
-    LOG_KEEP_FILES(기본 30) 초과분 + LOG_KEEP_DAYS(기본 14) 경과분을 삭제."""
+
+    watchdog 재기동이 폭주하면 기동 1회당 파일 1개가 생겨(2026-07 관측 142회/일) 개수 상한만
+    두면 몇 시간 만에 원인 구간 로그가 밀려난다 — 폭주가 스스로 증거를 지운다. 그래서
+    LOG_MIN_KEEP_HOURS(기본 48) 안쪽 파일은 개수·용량과 무관하게 보존하고, 그 밖에서만
+    총 용량(LOG_KEEP_TOTAL_MB 기본 4096) 과 개수(LOG_KEEP_FILES 기본 30) 상한을 적용한다.
+    LOG_KEEP_DAYS(기본 14) 경과분은 무조건 삭제."""
     try:
         keep_files = int(os.getenv("LOG_KEEP_FILES", "30"))
         keep_days = float(os.getenv("LOG_KEEP_DAYS", "14"))
-        cutoff = time.time() - keep_days * 86400
-        logs = sorted(log_dir.glob("server_*.txt"), key=lambda p: p.stat().st_mtime)
+        min_keep_hours = float(os.getenv("LOG_MIN_KEEP_HOURS", "48"))
+        keep_total = float(os.getenv("LOG_KEEP_TOTAL_MB", "4096")) * 1024 * 1024
+        now = time.time()
+        old_cutoff = now - keep_days * 86400
+        recent_cutoff = now - min_keep_hours * 3600
+        # 최신 -> 과거 순회하며 누적 용량을 센다 (캡을 넘어선 지점부터 과거는 삭제 대상)
+        logs = sorted(log_dir.glob("server_*.txt"),
+                      key=lambda p: p.stat().st_mtime, reverse=True)
+        total = 0
         for i, path in enumerate(logs):
-            if len(logs) - i > keep_files or path.stat().st_mtime < cutoff:
-                try:
-                    path.unlink()
-                except Exception:
-                    pass
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            total += st.st_size
+            if st.st_mtime >= old_cutoff:
+                if st.st_mtime >= recent_cutoff:
+                    continue  # 최근 구간은 무조건 보존 (재기동 폭주 원인 추적용)
+                if total <= keep_total and i < keep_files:
+                    continue
+            try:
+                path.unlink()
+            except Exception:
+                pass
     except Exception:
         pass
 

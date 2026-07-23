@@ -1,7 +1,7 @@
 """Issue Table tab payload builder.
 
 레이아웃은 client/report_generator/_xlsx_sheets.py::_fill_issue_table 와 동일한
-Category 그룹 구조를 따른다: Yield(Pass bin 포함 전체 bin) → CPK(항목별 worst-case cpk < 임계값) →
+Category 그룹 구조를 따른다: Yield(Pass bin 포함 전체 bin) → CPK(항목별 worst-case Bin1 cpk < 임계값) →
 ETC(placeholder). cpk_rows 에는 source="total"(합산) 행이 없으므로, 항목(subject)별로
 모든 source 행 중 가장 낮은 cpk 값을 기준으로 이슈 여부를 판단한다.
 프런트(server/report/report_view.html) 의 renderSheetTable(kind="issue") 가 이 컬럼 순서
@@ -88,10 +88,10 @@ def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None,
 
 
 def _cpk_fail_subjects(cpk_rows):
-    """subject 별 모든 source 행 중 최저(worst-case) 규격내 cpk(cpk_limited) 기준으로
-    임계값 미만 항목만 반환. 전체 die 가 아니라 [LSL,USL] 안 값만으로 재계산한 cpk 다
-    (2026-07-16 — CPK 탭 '기준: Limit 안' 토글과 동일 통계)."""
-    worst = worst_cpk_by_subject(cpk_rows, field="cpk_limited")
+    """subject 별 모든 source 행 중 최저(worst-case) cpk 기준으로 임계값 미만 항목만 반환.
+
+    cpk 는 Bin1(양품) 기준 단일 값이다 (2026-07-23 통일 — CPK 탭과 같은 통계)."""
+    worst = worst_cpk_by_subject(cpk_rows)
     fails = [(subject, cpk) for subject, cpk in worst.items() if cpk < CPK_THRESHOLD]
     # 표의 avg 컬럼(=worst-case cpk) 오름차순으로 정렬(낮은 순 위 → 아래).
     fails.sort(key=lambda sc: sc[1])
@@ -198,10 +198,10 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
                  if f"CPK|{subject}" not in hidden]
     # CPK 구간은 source 컬럼({src}_yield)에 source 별 CPK 값을 담는다(Yield 값 대신).
     # subhead 행이 그 컬럼을 "CPK"로 재정의(프런트 isCpkSubheadRow 감지). STEP/TNO 는 항목
-    # 메타에서, BIN 은 CPK 항목엔 없어 비운다. 값은 선정 기준과 동일한 규격내 cpk(_limited).
+    # 메타에서, BIN 은 CPK 항목엔 없어 비운다. 값은 선정 기준과 동일한 Bin1 기준 cpk.
     cpk_by = {}
     for r in cpk_rows or []:
-        cpk = r.get("cpk_limited")
+        cpk = r.get("cpk")
         if cpk is not None:
             cpk_by[(r.get("subject"), r.get("source"))] = cpk
     cpk_meta = _item_meta(tables)

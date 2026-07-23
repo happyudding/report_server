@@ -64,6 +64,10 @@ WARN_MESSAGES = {
 # 이 상한은 '우리가 추가하는 비용'만 제어하면 충분하다.
 EXCEL_SCAN_CELL_BUDGET = 20_000_000
 
+# 평문 셀 목록(cells)의 상한. 구조화 행(cell_rows)은 표 UI 가 전량을 다루므로 호출부가
+# 넘긴 cell_limit 을 따르고, 문자열은 구 평문 빌더/전문 저장용이라 여기서 짧게 끊는다.
+_CELL_TEXT_LIMIT = 200
+
 
 def rules_spec() -> dict:
     """프런트(raw_data.js)가 같은 규칙으로 사전 검증하도록 내려주는 스펙.
@@ -303,8 +307,8 @@ def _meta_row_warnings(df, item_cols, *, cap=8):
 
     out = []
     if swapped:
-        out.append(f"규격 상하한이 뒤집힌 항목 {len(swapped)}개 [{_list(swapped)}] — 규격내 CPK "
-                   f"(cpk_limited)가 계산되지 않아 Issue Table 에서 그 항목이 사라집니다.")
+        out.append(f"규격 상하한이 뒤집힌 항목 {len(swapped)}개 [{_list(swapped)}] — CPK 가 "
+                   f"음수로 계산돼 Issue Table CPK 섹션에 항상 이슈로 올라옵니다.")
     if bad_limit:
         out.append(f"규격을 숫자로 읽을 수 없는 항목 {len(bad_limit)}개 [{_list(bad_limit)}] — "
                    f"CPK 가 계산되지 않습니다.")
@@ -365,26 +369,57 @@ def _value_warnings(df, item_cols, *, cap=8):
     return out
 
 
-def _row_label_from_frame(body, pos) -> str:
-    """데이터 행 위치(0-base) → 사람이 읽는 위치 문자열 (웹 diff 표와 같은 조합)."""
-    row = body.iloc[pos]
+def _cell_getter(body):
+    """(컬럼, 행위치) → 문자열 접근자. 컬럼 Series 만 캐시하고 값은 그때그때 읽는다.
 
-    def _v(col):
-        return _as_text(row.get(col)).strip()
+    행마다 `body.iloc[pos]` 로 Series 를 만들면 수만 건 diff 에서 느리고, 반대로 전 컬럼을
+    문자열 리스트로 펼치면 대형 프레임에서 메모리가 터진다. 그 사이를 취한다.
+    """
+    cache = {}
 
+    def get(col, pos) -> str:
+        s = cache.get(col)
+        if s is None:
+            if col not in body.columns:
+                return ""
+            s = cache[col] = body[col]
+        return _as_text(s.iat[pos])
+
+    return get
+
+
+def _row_loc(get, pos) -> dict:
+    """데이터 행 위치(0-base) → 위치 메타 값 (표의 SHOT/DUT/X/Y/BIN 열)."""
+    return {
+        "row": pos + 1,
+        "shot": get("SHOT", pos).strip(),
+        "dut": get("DUT", pos).strip(),
+        "x": get("XPOS", pos).strip(),
+        "y": get("YPOS", pos).strip(),
+        "bin": get("BIN", pos).strip(),
+    }
+
+
+def _row_label(loc) -> str:
+    """위치 메타 → 사람이 읽는 위치 문자열 (웹 diff 표와 같은 조합)."""
     parts = []
-    for label in ("SHOT", "DUT"):
-        if _v(label):
-            parts.append(f"{label} {_v(label)}")
-    if _v("XPOS") or _v("YPOS"):
-        parts.append(f"(X,Y)=({_v('XPOS')},{_v('YPOS')})")
-    if _v("BIN"):
-        parts.append(f"BIN {_v('BIN')}")
-    return " · ".join(parts) or f"{pos + 1}번째 행"
+    for label, key in (("SHOT", "shot"), ("DUT", "dut")):
+        if loc[key]:
+            parts.append(f"{label} {loc[key]}")
+    if loc["x"] or loc["y"]:
+        parts.append(f"(X,Y)=({loc['x']},{loc['y']})")
+    if loc["bin"]:
+        parts.append(f"BIN {loc['bin']}")
+    return " · ".join(parts) or f"{loc['row']}번째 행"
 
 
 def _cell_diff(old_df, new_df, *, cell_limit):
-    """형태가 같은 두 프레임의 셀 단위 차이 → (표시용 문자열 리스트, 전체 건수)."""
+    """형태가 같은 두 프레임의 셀 단위 차이 → (표시용 문자열, 구조화 행, 전체 건수).
+
+    구조화 행은 확인창의 표(열 = 위치/항목/이전/이후)용이고, 문자열은 같은 행에서
+    파생시킨다 — 두 표현이 갈라지지 않게 조립 지점을 한 곳에 둔다. 문자열은 구 평문
+    빌더·전문 저장용이라 `_CELL_TEXT_LIMIT` 에서 끊고, 행은 cell_limit 까지 담는다.
+    """
     import numpy as np
     import pandas as pd
 
@@ -410,19 +445,24 @@ def _cell_diff(old_df, new_df, *, cell_limit):
     blocks.append((meta_cols, a_m != b_m))
 
     total = sum(int(mask.sum()) for _, mask in blocks)
-    lines = []
+    old_get, new_get = _cell_getter(old_body), _cell_getter(new_body)
+    lines, rows = [], []
     for names, mask in blocks:
-        if len(lines) >= cell_limit or not mask.any():
+        if len(rows) >= cell_limit or not mask.any():
             continue
-        flat = np.flatnonzero(mask.ravel())[:cell_limit - len(lines)]
+        flat = np.flatnonzero(mask.ravel())[:cell_limit - len(rows)]
         n_cols = len(names)
         for f in flat:
             r, c = int(f) // n_cols, int(f) % n_cols
-            col = names[c]
-            lines.append(f"{_row_label_from_frame(old_body, r)} → [{col}] "
-                         f"{_show(_as_text(old_body.iloc[r][col]))} → "
-                         f"{_show(_as_text(new_body.iloc[r][col]))}")
-    return lines, total
+            col = str(names[c])
+            # 위치 라벨은 원본(old) 기준 — 편집으로 좌표가 바뀌어도 '어느 행이었는지'가 남는다.
+            loc = _row_loc(old_get, r)
+            old_text = _show(old_get(col, r))
+            new_text = _show(new_get(col, r))
+            rows.append({**loc, "item": col, "old": old_text, "new": new_text})
+            if len(lines) < _CELL_TEXT_LIMIT:
+                lines.append(f"{_row_label(loc)} → [{col}] {old_text} → {new_text}")
+    return lines, rows, total
 
 
 def inspect_edited_frame(old_df, new_df, *, source_name="", cell_limit=20,
@@ -430,13 +470,17 @@ def inspect_edited_frame(old_df, new_df, *, source_name="", cell_limit=20,
     """원본 대비 편집 프레임을 비교해 확인창용 요약을 만든다. **절대 raise 하지 않는다**
     (하드 거부는 encode_honeyform_parquet 이 담당하고 재편집 루프가 받는다).
 
+    cell_limit 은 **구조화 행(cell_rows)** 의 상한이다 — 표 UI 가 전량을 다루므로 호출부가
+    크게 잡는다. 평문 목록(cells)은 `_CELL_TEXT_LIMIT` 에서 따로 끊는다.
+
     반환 {"source", "structure":[], "meta_warnings":[], "value_warnings":[],
-          "cells":[], "cell_total":int, "skipped_cell_diff":bool}
+          "cells":[], "cell_rows":[], "cell_total":int, "skipped_cell_diff":bool}
     """
     from .honeyform import DATA_START_ROW, META_COLUMNS
 
     out = {"source": source_name, "structure": [], "meta_warnings": [],
-           "value_warnings": [], "cells": [], "cell_total": 0, "skipped_cell_diff": False}
+           "value_warnings": [], "cells": [], "cell_rows": [], "cell_total": 0,
+           "skipped_cell_diff": False}
     # 뼈대가 깨진 입력(메타 6행 부족 등)은 여기서 판단하지 않는다 — encode 가 거부한다.
     if new_df is None or len(new_df) <= DATA_START_ROW or len(new_df.columns) <= len(META_COLUMNS):
         out["skipped_cell_diff"] = True
@@ -484,7 +528,8 @@ def inspect_edited_frame(old_df, new_df, *, source_name="", cell_limit=20,
     if not same_shape or n_cells > cell_budget:
         out["skipped_cell_diff"] = True
         return out
-    out["cells"], out["cell_total"] = _cell_diff(old_df, new_df, cell_limit=cell_limit)
+    out["cells"], out["cell_rows"], out["cell_total"] = _cell_diff(
+        old_df, new_df, cell_limit=cell_limit)
     return out
 
 
@@ -496,7 +541,7 @@ def build_confirm_sections(reports, removed_names=(), fixes_by_source=None) -> d
     스크롤 가능한 다이얼로그는 전량을 보여줄 수 있으므로 자르지 않는다.
 
     반환 {"totals": {...}, "sections": [{"name", "structure", "fixes", "cells",
-    "cell_total", "skipped_cell_diff", "warnings"}], "removed": [...]}
+    "cell_rows", "cell_total", "skipped_cell_diff", "warnings"}], "removed": [...]}
     — 표시 문안(불릿 접두어·순서)은 UI 소관이고 여기서는 **재료만** 준다.
     변경이 전혀 없으면 sections/removed 가 모두 비고 totals 가 0 이다(호출부가 확인창 생략).
     """
@@ -512,6 +557,7 @@ def build_confirm_sections(reports, removed_names=(), fixes_by_source=None) -> d
             "structure": list(rep.get("structure") or []),
             "fixes": fixes,
             "cells": list(rep.get("cells") or []),
+            "cell_rows": list(rep.get("cell_rows") or []),
             "cell_total": int(rep.get("cell_total") or 0),
             "skipped_cell_diff": bool(rep.get("skipped_cell_diff")),
             "warnings": warnings,

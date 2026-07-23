@@ -46,17 +46,9 @@ function renderMeta(session) {
   const mode = (session.mode || "Normal").trim();
   const modeBadge = (isWebReportSession() && mode && mode !== "Normal")
     ? `<span class="mode-badge ${esc(mode)}" title="분석 모드">${esc(mode)}</span>` : "";
-  // 조회 전처리(항목 제외·outlier 제거) 배지 — 값이 원본과 다른 이유를 화면에서 알 수
-  // 있어야 한다. 전처리가 없으면 summary 가 빈 문자열이라 배지도 없다 (Honey 의
-  // Rawdata > Item Select / Outlier 제거 에서 켜고 끈다).
-  const prep = ((DATA && DATA.preprocess) || {}).summary || "";
-  const prepBadge = prep
-    ? `<span class="prep-badge" title="Honey ▸ Rawdata 에서 설정한 조회 전처리 — 원본 데이터는 그대로입니다">전처리: ${esc(prep)}</span>`
-    : "";
   const line1 = [
     `<span class="pt-badge ${ptCls}">${esc(pt || "-")}</span>`,
     modeBadge,
-    prepBadge,
     `<span class="meta-inline"><span class="mk">Product</span>${esc(session.product || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Revision</span>${esc(session.revision || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Process</span>${esc(session.process || "-")}</span>`,
@@ -70,6 +62,10 @@ function renderMeta(session) {
     `<span class="meta-inline"><span class="mk">Flat Zone</span>${esc(session.flat_zone || "-")}</span>`,
   ];
   const line2 = [
+    // Session_name = report_session.file_name — 메인 검색결과 목록의 파일명 칸과 같은 값이고
+    // ✏️(Honey 편집창)에서 바꾸는 대상. 오른쪽 Filename(manifest 의 원본 소스 파일명)과는
+    // 별개 값이라 서로 덮어쓰지 않는다.
+    `<span class="meta-inline" title="세션 이름 (검색결과 목록에 표시)"><span class="mk">Session_name</span>${esc(session.file_name || "-")}</span>`,
     `<span class="meta-inline-file" title="${esc(fnameTitle)}"><span class="mk">Filename</span>${esc(fname)}</span>`,
     `<span class="meta-inline" title="${esc(session.client_host || "")}"><span class="mk">Uploader</span>${esc(session.uploaded_by || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Uploaded</span>${esc(fmtDate(session.created_at))}</span>`,

@@ -17,8 +17,13 @@ let _idetNormalRendered = false;   // report 정규분포 곡선 1회 렌더 가
 let cdfExcluded = new Set();       // 제외할 칩 키 `${source}||${serial}` → CDF 곡선에서 뺌(분모 감소)
 let cdfEditMode = "none";          // "none" | "exclude" (선택이 cdfExcluded 에 들어가는지)
 // CDF x축 옵션(임시, 클라이언트 전용) — Excel 축옵션식 경계/단위. 항목 이동/새로고침 시 초기화.
-let cdfAxisOverride = null;         // null=자동(autorange). 적용 시 {min, max, major|null, minor|null}
+// 적용 시 {min, max, major|null, minorDiv|null} — minorDiv 는 "기본 단위를 몇 등분할지"의
+// 정수(n≥2)라 보조 눈금 간격은 항상 major/n 이다(기본 단위보다 커져 안 보이는 일이 없다).
+let cdfAxisOverride = null;         // null=자동(autorange)
 let histAxisOverride = null;        // 히스토그램 x축 옵션(CDF 와 독립). 항목 이동 시 초기화.
+// 격자 색 — 종전 #eee/#f2f2f2 는 흰 배경·status 배경색 위에서 사실상 보이지 않았다.
+const IDET_GRID_MAJOR = "#b9c0cc";
+const IDET_GRID_MINOR = "#dbe0e8";
 // 축옵션 바를 차트별로 굴리기 위한 디스패치 — 바 요소 id, 라벨, override 접근자, 재렌더 함수.
 // CDF 는 기존 동작 그대로이고 hist 만 추가된다. (y축이 필요해지면 axis 필드를 얹으면 된다.)
 // 바가 각 차트 블록 안(차트 바로 아래)에 있어 라벨은 "x축" 만으로 어느 차트인지 자명하다.
@@ -165,7 +170,7 @@ function renderItemDetail(data) {
       <div class="idet-chart-block">
         <div class="dist-chart-cap idet-hist-cap">
           <span>누적분포 CDF</span>
-          <button type="button" class="btn-sm idet-png" data-idet-png="cdf" title="지금 보이는 CDF 차트를 PNG 로 클립보드에 복사 (클립보드 차단 시 PNG 다운로드)">차트 복사</button>
+          <button type="button" class="btn-sm idet-png" data-idet-png="cdf" title="지금 보이는 CDF 차트를 PNG 로 클립보드에 복사 (클립보드 차단 시 PNG 다운로드)">클립보드로 복사</button>
         </div>
         <div id="distCdf" class="dist-chart"></div>
         <div id="cdfAxisBar" class="cdf-axisbar"></div>
@@ -178,7 +183,7 @@ function renderItemDetail(data) {
               <button type="button" class="btn-sm idet-hist-mode${idetHistMode === "analysis" ? " active" : ""}" data-hist-mode="analysis">Analysis</button>
               <button type="button" class="btn-sm idet-hist-mode${idetHistMode === "report" ? " active" : ""}" data-hist-mode="report">Report</button>
             </span>
-            <button type="button" class="btn-sm idet-png" data-idet-png="hist" title="지금 보이는 히스토그램(Analysis/Report)을 PNG 로 클립보드에 복사 (클립보드 차단 시 PNG 다운로드)">차트 복사</button>
+            <button type="button" class="btn-sm idet-png" data-idet-png="hist" title="지금 보이는 히스토그램(Analysis/Report)을 PNG 로 클립보드에 복사 (클립보드 차단 시 PNG 다운로드)">클립보드로 복사</button>
           </span>
         </div>
         <div id="distHist" class="dist-chart"${idetHistMode === "report" ? ' style="display:none"' : ""}></div>
@@ -302,8 +307,41 @@ function purgeItemDetailCharts() {
 
 // ── 차트 PNG 클립보드 복사 (CDF / 히스토그램) ───────────────────────────────
 // 히스토그램 블록은 Analysis(#distHist)·Report(#distNormal) 두 차트를 번갈아 감추므로
-// "지금 보이는 쪽"을 복사한다. 비보안 컨텍스트(HTTP LAN)나 클립보드 차단 시 PNG 파일
-// 다운로드로 폴백 — Trim 탭 차트 복사(trimCopyPng)와 같은 방식.
+// "지금 보이는 쪽"을 복사한다. 폴백 3단: navigator.clipboard → execCommand → PNG 다운로드.
+// 2단계가 실질 주경로다 — 운영 서버가 http(LAN) 라 **비보안 컨텍스트**여서
+// navigator.clipboard 자체가 없고, 그래서 종전에는 누를 때마다 파일 다운로드로 빠졌다
+// (Issue Table 셀 복사가 execCommand 폴백을 필수로 두는 것과 같은 이유).
+function idetExecCopyImage(dataUrl) {
+  // contenteditable 안의 <img> 를 선택해 execCommand("copy") — Chromium 계열은 이미지가
+  // 담긴 HTML 을 클립보드에 넣어 Excel/PPT/Word 붙여넣기에서 그림으로 들어간다.
+  // 클릭에서 여기까지 오는 사이 PNG 를 굽기 때문에 브라우저의 임시 사용자 활성화(~5초)가
+  // 만료되면 false 가 돌아온다 — 그때는 호출부가 종전처럼 파일 다운로드로 떨어진다.
+  return new Promise(resolve => {
+    const host = document.createElement("div");
+    host.setAttribute("contenteditable", "true");
+    host.style.cssText = "position:fixed;left:-10000px;top:0;opacity:0;user-select:text";
+    const img = new Image();
+    const finish = () => {
+      let ok = false;
+      try {
+        host.appendChild(img);
+        document.body.appendChild(host);
+        const range = document.createRange();
+        range.selectNodeContents(host);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        ok = document.execCommand("copy");
+        sel.removeAllRanges();
+      } catch (e) { ok = false; }
+      host.remove();
+      resolve(ok);
+    };
+    img.onload = finish;
+    img.onerror = () => resolve(false);
+    img.src = dataUrl;
+  });
+}
 async function idetCopyChartPng(kind) {
   const id = kind === "cdf" ? "distCdf" : (idetHistMode === "report" ? "distNormal" : "distHist");
   const gd = document.getElementById(id);
@@ -313,19 +351,27 @@ async function idetCopyChartPng(kind) {
   let url = null;
   try {
     url = await Plotly.toImage(gd, { format: "png", width: w, height: h, scale: 2 });
+  } catch (e) {
+    showToast("PNG 생성 실패: " + e.message);
+    return;
+  }
+  try {
     if (!window.isSecureContext || !navigator.clipboard || !navigator.clipboard.write
         || typeof ClipboardItem === "undefined") throw new Error("clipboard unavailable");
     const blob = await (await fetch(url)).blob();
     await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-    showToast("차트 PNG 를 클립보드에 복사했습니다");
-  } catch (e) {
-    if (!url) { showToast("PNG 생성 실패: " + e.message); return; }
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${String(_itemDetailSubject || "item").replace(/[\\/:*?"<>|]/g, "_")}_${id}.png`;
-    document.body.appendChild(a); a.click(); a.remove();
-    showToast("클립보드 복사 불가 — PNG 파일로 다운로드했습니다");
+    showToast("차트를 클립보드에 복사했습니다");
+    return;
+  } catch (e) { /* execCommand 폴백으로 */ }
+  if (await idetExecCopyImage(url)) {
+    showToast("차트를 클립보드에 복사했습니다 (붙여넣기: Ctrl+V)");
+    return;
   }
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${String(_itemDetailSubject || "item").replace(/[\\/:*?"<>|]/g, "_")}_${id}.png`;
+  document.body.appendChild(a); a.click(); a.remove();
+  showToast("클립보드 복사 불가 — PNG 파일로 다운로드했습니다");
 }
 
 function closeItemDetail() {
@@ -503,11 +549,13 @@ function renderIdetAxisBar(key) {
   const bar = cfg && document.getElementById(cfg.bar);
   if (!bar) return;
   const num = k => `<input type="number" class="cdf-ax-in" data-cdf-ax="${k}" step="any">`;
+  // 보조는 간격이 아니라 **등분 수(정수 n≥2)** 를 받는다 — 보조 눈금 간격 = 기본 단위 / n.
+  const div = `<input type="number" class="cdf-ax-in" data-cdf-ax="minor" step="1" min="2" placeholder="n">`;
   bar.dataset.axisKey = key;   // 위임 핸들러가 어느 차트의 바인지 되짚는 표식
   bar.innerHTML =
     `<span class="cdf-eb-label">${esc(cfg.label)}</span>` +
     `<span class="cdf-ax-grp">경계 ${num("min")} ~ ${num("max")}</span>` +
-    `<span class="cdf-ax-grp">단위 기본 ${num("major")} 보조 ${num("minor")}</span>` +
+    `<span class="cdf-ax-grp" title="보조 눈금 간격 = 기본 단위 ÷ n (정수 2 이상)">단위 기본 ${num("major")} 보조 1/${div}</span>` +
     `<button type="button" class="btn-sm cdf-ax-apply" data-cdf-axis="apply">적용</button>` +
     `<button type="button" class="btn-sm cdf-ax-auto" data-cdf-axis="auto">자동</button>` +
     `<span class="cdf-ax-msg"></span>`;
@@ -526,17 +574,49 @@ function syncIdetAxisInputs(key, div) {
   set("major", typeof ax.dtick === "number" ? ax.dtick : null);
   set("minor", null);   // 자동 모드는 보조 눈금 미표시 → 비움(사용자가 입력하면 그때 생성)
 }
-// 적용: 입력 4칸을 읽어 override 확정 후 해당 차트만 재렌더. 경계 검증 실패 시 인라인 메시지.
+// 보조 눈금 간격 = 기본 단위 ÷ 등분 수. 기본 단위를 모르면(자동 눈금) 보조도 만들지 않는다 —
+// 기준 없이 그은 보조선은 주 눈금과 어긋나 보이기 때문이다.
+function idetMinorDtick(ov) {
+  if (!ov || !ov.major || !ov.minorDiv || ov.minorDiv < 2) return null;
+  return ov.major / ov.minorDiv;
+}
+// 보조 눈금 layout 조각 — 격자선은 주 눈금과 같이 플롯 높이 전체를 가로지른다.
+function idetMinorAxis(dtick) {
+  return { dtick, showgrid: true, gridcolor: IDET_GRID_MINOR, gridwidth: 1, ticks: "" };
+}
+// 적용: 입력 4칸을 읽어 override 확정 후 해당 차트만 재렌더. 검증 실패 시 인라인 메시지.
+// 기본 단위를 비워 둔 채 보조만 넣으면 지금 그려진 축의 자동 눈금 간격을 기본 단위로 삼는다
+// (그래야 "기본의 1/n" 이 성립한다).
 function idetAxisApply(key) {
   const cfg = IDET_AXIS[key];
   const bar = cfg && document.getElementById(cfg.bar);
   if (!bar) return;
-  const val = k => { const el = bar.querySelector(`[data-cdf-ax="${k}"]`); const v = el ? parseFloat(el.value) : NaN; return isFinite(v) ? v : null; };
-  const min = val("min"), max = val("max"), major = val("major"), minor = val("minor");
+  const raw = k => { const el = bar.querySelector(`[data-cdf-ax="${k}"]`); return el ? String(el.value).trim() : ""; };
+  const val = k => { const v = parseFloat(raw(k)); return isFinite(v) ? v : null; };
+  const min = val("min"), max = val("max");
   const msg = bar.querySelector(".cdf-ax-msg");
   if (min == null || max == null || min >= max) { if (msg) msg.textContent = "경계 최소<최대 확인"; return; }
+  let major = val("major");
+  if (!(major > 0)) major = null;
+  const minorTxt = raw("minor");
+  let minorDiv = null;
+  if (minorTxt) {
+    const n = Number(minorTxt);
+    if (!Number.isInteger(n) || n < 2) { if (msg) msg.textContent = "보조는 2 이상 정수"; return; }
+    minorDiv = n;
+    if (major == null) {
+      // 기본 단위 미입력 → 현재 그려진 축의 dtick 을 그대로 채택(입력칸에도 되비춘다).
+      const div = document.getElementById(key === "cdf" ? "distCdf" : "distHist");
+      const ax = div && div._fullLayout && div._fullLayout.xaxis;
+      if (ax && typeof ax.dtick === "number" && ax.dtick > 0) {
+        major = ax.dtick;
+        const el = bar.querySelector('[data-cdf-ax="major"]');
+        if (el) el.value = Number(major.toPrecision(6));
+      } else { if (msg) msg.textContent = "보조를 쓰려면 기본 단위를 입력하세요"; return; }
+    }
+  }
   if (msg) msg.textContent = "";
-  cfg.set({ min, max, major: (major > 0 ? major : null), minor: (minor > 0 ? minor : null) });
+  cfg.set({ min, max, major, minorDiv });
   cfg.render();   // 해당 차트만 재렌더(override 반영)
 }
 // 자동: override 해제 후 재렌더 → syncIdetAxisInputs 가 현재값으로 입력칸 재기입.
@@ -612,18 +692,19 @@ function distRenderCdf(data) {
   const cdfLr = distLimitRange(lo, hi, cdfMin, cdfMax);
   // x축: 사용자 축옵션(경계/단위)이 있으면 우선, 없으면 기존 동작(distLimitOnly 창 → autorange).
   const ov = cdfAxisOverride;
-  const xaxisCfg = { title: { text: xtitle }, showgrid: true, gridcolor: "#eee", zeroline: false };
+  const xaxisCfg = { title: { text: xtitle }, showgrid: true, gridcolor: IDET_GRID_MAJOR, zeroline: false };
   if (ov) {
     xaxisCfg.range = [ov.min, ov.max]; xaxisCfg.autorange = false;
     if (ov.major) { xaxisCfg.dtick = ov.major; xaxisCfg.tick0 = ov.min; } else xaxisCfg.nticks = 10;
-    if (ov.minor) xaxisCfg.minor = { dtick: ov.minor, showgrid: true, gridcolor: "#f2f2f2", ticklen: 3 };
+    const mdt = idetMinorDtick(ov);
+    if (mdt) { xaxisCfg.minor = idetMinorAxis(mdt); xaxisCfg.minor.tick0 = ov.min; }
   } else {
     xaxisCfg.nticks = 10;
     if (cdfLr) { xaxisCfg.range = cdfLr; xaxisCfg.autorange = false; }
   }
   Plotly.newPlot(cdfDiv, traces, { ...DIST_PLOT_BG, plot_bgcolor: bg, dragmode,
     xaxis: xaxisCfg,
-    yaxis: { title: { text: "누적 %" }, range: [-2, 102], tick0: 0, dtick: 20, ticksuffix: "%", showgrid: true, gridcolor: "#eee", zeroline: false },
+    yaxis: { title: { text: "누적 %" }, range: [-2, 102], tick0: 0, dtick: 20, ticksuffix: "%", showgrid: true, gridcolor: IDET_GRID_MAJOR, zeroline: false },
     shapes: cdfShapes,
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
     margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
@@ -672,11 +753,12 @@ function distRenderHist(data) {
   // CDF else 분기의 nticks:10 은 여기 넣지 않는다 — 원래 없던 값이라 넣으면 기본 경로의
   // 눈금 배치가 바뀐다.
   const hov = histAxisOverride;
-  const xaxisCfg = { title: { text: xtitle }, showgrid: true, gridcolor: "#eee", zeroline: false };
+  const xaxisCfg = { title: { text: xtitle }, showgrid: true, gridcolor: IDET_GRID_MAJOR, zeroline: false };
   if (hov) {
     xaxisCfg.range = [hov.min, hov.max]; xaxisCfg.autorange = false;
     if (hov.major) { xaxisCfg.dtick = hov.major; xaxisCfg.tick0 = hov.min; }
-    if (hov.minor) xaxisCfg.minor = { dtick: hov.minor, showgrid: true, gridcolor: "#f2f2f2", ticklen: 3 };
+    const mdt = idetMinorDtick(hov);
+    if (mdt) { xaxisCfg.minor = idetMinorAxis(mdt); xaxisCfg.minor.tick0 = hov.min; }
   } else {
     xaxisCfg.range = distLimitRange(lo, hi, hr.min, hr.max) || extendRangeForBeforeLimits(
       distHistXRange(data.sources || [], lo, hi), data.subject);
@@ -685,7 +767,7 @@ function distRenderHist(data) {
     dragmode: cdfEditMode === "none" ? "zoom" : "select",
     xaxis: xaxisCfg,
     yaxis: { title: { text: "빈도" }, range: [0, (ymax || 1) * 1.1], tickformat: "d",
-      showgrid: true, gridcolor: "#eee", zeroline: false },
+      showgrid: true, gridcolor: IDET_GRID_MAJOR, zeroline: false },
     shapes: distSpecShapes(lo, hi, false).concat(beforeLimitShapes(data.subject)),
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
     margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
@@ -945,17 +1027,18 @@ function renderMiniDistCell(cell) {
   const div = cell.querySelector(".dist-plot");
   if (!div || typeof Plotly === "undefined") return;
   if (!distDataReady) return;
-  const info = distDataCache[subject];
+  // Issue Table CPK 섹션 미니셀(data-bin1)은 Bin1(양품) ECDF 캐시를 쓴다 — 행의 cpk 가
+  // Bin1 기준이라 그림과 숫자의 데이터 기준을 맞춘다(갤러리 "Bin1 only" 와 같은 변형·
+  // 같은 배치 로더). 나머지 셀은 종전대로 전체 기준 캐시.
+  const useBin1 = cell.dataset.bin1 === "1";
+  const info = (useBin1 ? distBin1Cache : distDataCache)[subject];
   // 아직 안 받은 항목은 배치로 요청하고 플래그를 세우지 않은 채 리턴 — 도착 후
   // refreshDistConsumers 재큐잉으로 그려진다.
-  if (!info && distHasData(subject)) { distRequestSubject(subject, false); return; }
+  if (!info && distHasData(subject)) { distRequestSubject(subject, useBin1); return; }
   // 데이터 없는 항목: 빈 칸으로 확정 (loaded 마킹해 재큐잉 no-op 방지)
   if (!info) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; return; }
 
   const lo = info.lower_limit, hi = info.upper_limit;
-  // Issue Table CPK 섹션 미니셀(data-limitwin): 규격 안 데이터만 재정규화해 그린다 —
-  // 행의 cpk_limited 와 동일 기준. 창 결과는 traces·x범위 양쪽에서 재사용한다.
-  const limitWin = cell.dataset.limitwin === "1";
   // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
   // 점은 canvas 로 그린다(distPaintPoints) — Plotly 에는 sentinel 만. 이 칸은 112px 로
   // 작아 칸 예산(CELL_BUDGET_MINI)을 소스 수로 나눈 캡을 쓴다 — 소스가 적으면 갤러리와
@@ -964,9 +1047,7 @@ function renderMiniDistCell(cell) {
   const cap = distCapFor(srcNames.length, DIST.CELL_BUDGET_MINI);
   const dsBySource = {};
   srcNames.forEach(source => {
-    dsBySource[source] = limitWin
-      ? distDisplayPointsWindowed(info.bySource[source], lo, hi, cap)
-      : distDisplayPoints(info.bySource[source], cap);
+    dsBySource[source] = distDisplayPoints(info.bySource[source], cap);
   });
   const sentinel = distSentinelTrace(dsBySource);
   const traces = sentinel ? [sentinel] : [];
@@ -974,8 +1055,7 @@ function renderMiniDistCell(cell) {
   // 수 있음)까지 x-autorange 에 포함돼 x축이 늘어나 곡선이 한쪽에 뭉쳐 잘린 것처럼 보인다.
   // xs 는 ECDF 라 오름차순(distDownsampleForDisplay 전제) → 양끝값으로 min/max 를 O(1) 로 잡음.
   // 표시점(dsBySource)으로 잡아도 값은 같다 — 채움·다운샘플·하드캡 모두 양끝점을 항상
-  // 보존하므로 재정규화 원본과 min/max 가 동일하다(headless 검증). limitWin 에서 재정규화를
-  // 두 번 돌리지 않으려고 표시점을 쓴다.
+  // 보존하므로 원본과 min/max 가 동일하다(headless 검증).
   let xMin = Infinity, xMax = -Infinity;
   srcNames.forEach(source => {
     const xs = dsBySource[source].xs;

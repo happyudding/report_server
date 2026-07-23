@@ -136,6 +136,27 @@ def update_session(session_id, **fields):
         conn.execute(f"UPDATE report_session SET {cols} WHERE session_id=?", params)
 
 
+_SESSION_META_UPDATABLE = ("file_name", "family_product", "product", "lot_id", "process")
+
+
+def update_session_meta(session_id, meta, product_info=None):
+    """세션 메타(이름/Family/Product/LOT/Process) + 기준정보 14컬럼을 갱신한다.
+
+    범용 update_session 의 화이트리스트를 넓히지 않고 별도 함수로 둔다 — 다른 호출부가
+    실수로 메타를 덮어쓰는 경로를 만들지 않기 위해서다.
+
+    product_info 는 product_info.lookup() 결과. **미매칭이면 14컬럼을 비운다** — 옛 제품의
+    Wafer Size/Gross Die 가 남아 있으면 상단바가 잘못된 기준정보를 계속 보여준다.
+    """
+    fields = {k: meta[k] for k in _SESSION_META_UPDATABLE if k in meta}
+    info = product_info or {}
+    cols = list(fields.items()) + [(c, info.get(c) or None) for c in _PRODUCT_INFO_COLUMNS]
+    set_sql = ", ".join(f"{c}=?" for c, _ in cols) + ", updated_at=?"
+    params = [v for _, v in cols] + [_now(), session_id]
+    with get_conn() as conn:
+        conn.execute(f"UPDATE report_session SET {set_sql} WHERE session_id=?", params)
+
+
 def update_content_hash_for_analysis_key(analysis_key, content_hash):
     """같은 analysis_key 를 공유하는 모든 세션의 content_hash 를 일괄 갱신. 반환: 갱신 행 수.
 

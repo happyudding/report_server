@@ -81,6 +81,25 @@
 `report_web_visitor` 풀(`/editors/candidates`)에서 고른다. 위임받은 계정은 `_editor_guard`
 통과(콘텐츠 편집 가능, 삭제·비공개는 여전히 업로더 전용).
 
+### 세션 메타 수정 — `PATCH /session/<sid>/meta` (Honey 편집창)
+세션 상세 우상단 ✏️ → **Honey 앱**의 편집창(업로드 다이얼로그 재사용, `SessionMetaDialog`)
+→ 이 라우트. 바꾸는 값은 `file_name`(= 상단바 `Session_name` = 검색결과 목록 파일명 칸) ·
+`family_product` · `product` · `lot_id` · `process` 다섯이다.
+
+- **웹 → 클라 브리지**: 웹 버튼은 `/pe/report/honey/session_meta/<sid>` 로 *이동*을 시도하고,
+  Honey 내장 브라우저가 `_browser_leave_guard`(honey_main)에서 그 이동을 취소한 뒤 편집창을
+  띄운다 — 별도 통신 채널이 없다. 일반 브라우저에서는 `HoneyHint` 안내 모달만 뜬다.
+- 서버는 `X-Honey-Agent: 1` 을 **요구**해 "수정은 Honey 에서만" 을 강제한다(CSRF 대체 —
+  `rawdata_replace` 선례). 권한은 `_editor_guard`(업로더 + 위임 편집자 + master).
+- `product` 가 바뀌면 `product_info.lookup()` 을 다시 돌려 세션 기준정보 14컬럼을 갱신하고,
+  **미등록 Part ID 면 비운다**(옛 제품의 WF Size/Gross Die 가 남으면 상단바가 틀린 정보를
+  보여준다).
+- `product_type` 은 편집 대상이 아니고, **`analysis_key` 는 재산출하지 않는다** — 산출물이
+  전부 그 키로 저장돼 있어 키를 바꾸면 세션이 자기 데이터를 잃는다. 규칙 #3 의 산출식은
+  '업로드 시점' 규약이며, 수정 후에는 dedup(같은 데이터 재업로드) 매칭만 어긋난다.
+- `/full` 응답 캐시는 키의 `extras_digest` 에 세션 행이 통째로 들어가 **자동 무효화**된다.
+- 계약 테스트: [tests/test_session_meta.py](../tests/test_session_meta.py).
+
 ### 수정 저장 — `update_session_content()` (비활성, 항상 405)
 구 xlsx 텍스트 수정 기능은 차단됐다. report_view.html 이 아직 이 경로를 호출하므로 405
 스텁으로만 유지. 재활성화 시 git 히스토리 참조.

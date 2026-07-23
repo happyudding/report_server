@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
@@ -177,6 +178,41 @@ class UploadDialog(QDialog):
             "process": self.le_process.text().strip(),
             "password": self.le_password.text().strip(),
         }
+
+
+class SessionMetaDialog(UploadDialog):
+    """업로드한 세션의 메타를 나중에 고치는 창 — 업로드 다이얼로그를 그대로 재사용한다.
+
+    Part ID 백그라운드 조회·자동완성·미등록 Part ID 확인 경고·Family 콤보가 전부 부모 것이다.
+    다른 점은 셋뿐: (1) 맨 위 Session Name 칸, (2) 비밀번호 행 숨김, (3) Product Type 은
+    세션 값 고정(편집 대상 아님 — 부모가 defaults 에서 받은 값을 그대로 쓴다).
+    """
+
+    def __init__(self, parent, session):
+        super().__init__(parent, defaults={
+            "product_type": (session.get("product_type") or "MDDI"),
+            "family_product": session.get("family_product") or "",
+            "product": session.get("product") or "",
+            "lot_id": session.get("lot_id") or "",
+            "process": session.get("process") or "",
+        }, show_password=False)
+        self.setWindowTitle("세션 정보 수정")
+        # 세션 이름 = 서버 report_session.file_name (검색결과 목록의 파일명 칸 = 상단바
+        # Session_name). 세션 안 Filename(원본 소스 파일명)과는 별개 값이다.
+        self.le_session_name = QLineEdit(str(session.get("file_name") or ""))
+        self.le_session_name.setToolTip("검색결과 목록과 세션 상단바(Session_name)에 표시되는 이름")
+        self.formLayout.insertRow(0, "Session Name*:", self.le_session_name)
+
+    def _on_ok(self):
+        if not self.le_session_name.text().strip():
+            QMessageBox.warning(self, "입력 오류", "Session Name 을 입력하세요.")
+            return
+        super()._on_ok()
+
+    def values(self):
+        v = super().values()
+        v["file_name"] = self.le_session_name.text().strip()
+        return v
 
 
 def _is_light(hex_color):
@@ -378,11 +414,13 @@ class ReportSettingsDialog(QDialog):
                           "cb_mode_dut", "cb_outlier"],
     }
 
-    def __init__(self, parent, group, csv_count, product_type=None):
+    def __init__(self, parent, group, source_count, product_type=None):
+        # source_count = honey_parse 가 돌려준 df(=source) 개수. 입력 파일 개수가 아니다
+        # (여러 파일이 하나로 병합되거나 한 파일이 여러 source 로 나뉠 수 있다).
         super().__init__(parent)
         uic.loadUi(str(SETTINGS_UI_PATH), self)
         self.group = group
-        self.csv_count = csv_count
+        self.source_count = source_count
         self.product_type = product_type or ""
         self._fail_item_blocked = self.product_type == "MDDI"
         self._filename_overrides = None
@@ -546,14 +584,14 @@ class ReportSettingsDialog(QDialog):
 
     def _update_dut_mode_availability(self):
         raw_on = self.cb_raw_data.isChecked()
-        one_file = self.csv_count == 1
-        self.cb_mode_dut.setEnabled(one_file and not raw_on)
+        one_source = self.source_count == 1
+        self.cb_mode_dut.setEnabled(one_source and not raw_on)
         if not self.cb_mode_dut.isEnabled():
             self.cb_mode_dut.setChecked(False)
 
     def _update_compare_mode_availability(self):
-        """입력 파일이 정확히 2개일 때만 Compare Mode 활성화."""
-        ok = self.csv_count == 2
+        """source(honey_parse 반환 df)가 정확히 2개일 때만 Compare Mode 활성화."""
+        ok = self.source_count == 2
         if not ok:
             self.cb_mode_compare.setChecked(False)
         self.cb_mode_compare.setEnabled(ok)
@@ -563,7 +601,7 @@ class ReportSettingsDialog(QDialog):
 
     def _current_filenames(self):
         names = []
-        for i in range(self.csv_count):
+        for i in range(self.source_count):
             try:
                 names.append(self.group.names()[i])
             except Exception:
@@ -575,18 +613,18 @@ class ReportSettingsDialog(QDialog):
         text, ok = QInputDialog.getText(
             self,
             "FileName Change",
-            "입력 파일별 Legend 이름을 쉼표(,)로 구분해 입력하세요.\n"
+            "source 별 Legend 이름을 쉼표(,)로 구분해 입력하세요.\n"
             "빈칸은 기존 이름을 유지합니다.",
             text=", ".join(current),
         )
         if not ok:
             return
         parts = [p.strip() for p in text.split(",")]
-        while len(parts) < self.csv_count:
+        while len(parts) < self.source_count:
             parts.append("")
         overrides = []
         seen = {}
-        for i, part in enumerate(parts[:self.csv_count]):
+        for i, part in enumerate(parts[:self.source_count]):
             base = part or current[i]
             key = base
             if key in seen:

@@ -20,8 +20,8 @@
 | Summary | `summary.py` | placeholder(`[]`) — 화면은 프런트가 Map/Fail Bin 으로 자체 구성 |
 | Raw Data | `raw_data.py` | payload 는 placeholder — 실제는 lazy 조회/편집 라우트 |
 | Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`) |
-| CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) |
-| Issue Table | `issue_table.py` | Yield 파생 + 규격내 cpk(`cpk_limited`)<1.33 파생 + ETC. comment/Status/행 숨김은 편집 DB 에서 채움 |
+| CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) — 통계는 **Bin1(양품) 기준 단일 값** |
+| Issue Table | `issue_table.py` | Yield 파생 + cpk<1.33 파생(Bin1 기준) + ETC. comment/Status/행 숨김은 편집 DB 에서 채움 |
 | Distribution | — (lazy, 항목 배치) | `/full` 은 빈 시트 + `distribution_index`(항목 목록). ECDF 는 **화면에 보이는 항목만** `GET .../web_report/distribution_batch?subjects=…` 로 받는다 |
 | Trim Analysis | — (lazy, **버튼 시작**) | `/full` 은 빈 시트. **탭 진입만으로는 아무 요청도 안 한다** — 「분석 시작」을 눌러야 `GET .../web_report/trim_analysis` 를 받고, 그 뒤 차트는 `GET .../web_report/trim_chart_batch` 로 **한 페이지 6개씩** |
 | Map Analysis | `Map_analysis.py` (하이브리드 lazy) | wafer map die/bin 집계 — `/full` 은 dies 뺀 경량 메타(`include_dies=False`), die 전량은 `GET .../web_report/map_analysis` 지연 로드 (schema v8) |
@@ -66,14 +66,34 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   **Issue Table·Summary·fail_bin_ranking 도 동일한 전체(total) 기준 값(`build_yield_rows`)**
   — Issue Table 은 merge 유지(STEP 열 포함, fail 비중 내림차순이라 P1/P3 가 교차 등장).
   프런트 원형 파이는 제거. `yield_bin_groups`(전체 기준 merge 그룹)는 Excel 내보내기용으로 유지.
-- **CPK 임계값·기준 3종**: `CPK_THRESHOLD = 1.33` ([cpk.py](../web_report/tabs/cpk.py)).
-  subject 당 **worst-case(최저) cpk** 로 이슈를 판단한다(`worst_cpk_by_subject(rows, field)`).
-  `build_cpk_rows` 는 기준 3종을 병기한다: 전체 die(`cpk` 등 base 필드) / Bin1 양품
-  (`*_bin1`, 실제 BIN==1 만) / **규격내**(`*_limited`, BIN 무관 [LSL,USL] 안 값만 —
-  `_limit_masked` NaN 마스킹 후 재계산). CPK 탭 기준 토글(`cpkBasis`)이 3상 순환하고,
-  **Issue Table CPK 섹션은 항상 `cpk_limited` 기준**으로 선정·표시하며 미니 분포도 규격
-  창으로 재정규화(`distWindowRenorm`, `data-limitwin`)해 그린다. Distribution
-  status/index 는 기존 전체 die `cpk` 유지.
+- **Yield 분모 = Gross Die (2026-07-23)**: 위의 "전체 die"(분모)는 기본이 **제품 기준정보
+  `report_session.gross_die`**(product_info.db lookup 값)다. 값이 없거나 형식이 이상하면
+  종전처럼 소스별 rawdata 행 수로 **폴백**한다 (`yield_tab.source_totals` /
+  `gross_die_value` — 소스마다 같은 gross_die 를 쓴다). **분자(pass/fail die 수)는 언제나
+  실측**이라 Gross Die 기준에선 `pass + fail < total`(미측정 die) 일 수 있고, 그래서
+  `yield_summary.tested`(실측 die 수)와 payload `yield_basis = {basis:"gross"|"test",
+  gross_die}` 를 병기해 요약 박스가 분모를 배지로 표시한다(`sheets.js yieldBasisBadgeHtml`).
+  세션별 선택은 Honey **Rawdata 허브 체크박스 "Yield 계산 기준 - Test data 개수"** →
+  `POST .../web_report/preprocess` 의 `yield_basis` 필드 → 세션 편집 DB
+  (`edits.KIND_YIELD_BASIS`, item_key `basis`). **preprocess spec 과 분리한 이유**: preprocess
+  digest 가 붙으면 Distribution pack(정렬 전가) 경로가 폴백으로 떨어지는데 수율 분모는
+  ECDF 와 무관하다. rev 증가로 REPORT//full 캐시만 무효화된다.
+  회귀 고정: [tests/test_yield_gross_die.py](../tests/test_yield_gross_die.py)(계산) +
+  [tests/test_yield_basis_session.py](../tests/test_yield_basis_session.py)(저장·재오픈·폴백).
+- **CPK 임계값·기준 통일 (2026-07-23)**: `CPK_THRESHOLD = 1.33` ([cpk.py](../web_report/tabs/cpk.py)).
+  subject 당 **worst-case(최저) cpk** 로 이슈를 판단한다(`worst_cpk_by_subject`).
+  **모든 CPK 통계는 Bin1(양품, BIN==1) die 기준 하나**다 — `build_cpk_rows` 의 base 필드
+  (`n/min/median/max/average/stdev/cp/cpl/cpu/cpk`)가 곧 Bin1 값이고 `*_bin1`/`*_limited`
+  병기는 없앴다(구 3종 기준: 전체 die / Bin1 / 규격내). 이 값을 CPK 탭·**Issue Table CPK
+  섹션**(1.33 미만 선정 + 표시값)·`distribution_index` 의 cpk/status·Excel(웹 Excel Down,
+  Honey Excel Download) 이 그대로 쓴다 — 리포트 어디서나 같은 항목의 CPK 가 같은 값이다.
+  CPK 탭의 기준 토글("Data 구분")은 제거했다(UX 간편화). Issue Table CPK 섹션 미니 분포도
+  같은 기준을 따라 **Bin1 ECDF**(`data-bin1` → `distBin1Cache`, 갤러리 "Bin1 only" 와 같은
+  배치 변형)로 그린다 — Honey Excel Download 는 그 섹션 항목만
+  `distribution_batch?bin1=1` 로 따로 받아 같은 그림을 만든다(`fetch_distribution_bin1`,
+  실패 시 전체 기준 폴백). 서버 bin1 ECDF 는 양품 **그리고** 규격내라 cpk 통계(규격 클리핑
+  없음)와 표본이 완전히 같지는 않다.
+  회귀 고정: [tests/test_cpk_bin1_basis.py](../tests/test_cpk_bin1_basis.py).
 - **Issue Table comment 키**: `row_key` 규약 — Yield 행 `Yield|<bin>|<item>`,
   CPK 데이터 행 `CPK|<item>`, ETC 행 `ETC|<item>`. comment 컬럼은
   `COMMENT_COLS = ["PTE comment", "개발 comment"]`. 값은 세션 편집 DB 에서 채운다.
@@ -131,6 +151,30 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   (B3 헤더행·A1 배너·H1 세션링크·CPK `cpk<1.33` 노란 fill·열너비/행높이). 입력이 같은 /full
   payload 라 값 파리티는 자동 — Yield 는 Pass 행+`yield_bin_groups[].rep`(접힌 상태), CPK 는
   `sheets["CPK"]` 전량·원순서(화면 필터·기준 토글 무관, 전체 die 컬럼만).
+- **Compare 탭 (2026-07-23 재정의, Before/After 그룹)**: source 2개 이상을 Before/After 두
+  그룹으로 나눈다(배치·업로드 순서는 [10](10_web_report_pipeline.md) 분석 모드 표). 그룹은
+  `webreport_options.compare` → `validation.webreport_compare_groups` → `build_compare_payload`
+  로 흐르고, 옵션이 없으면 `after=[s0], before=[s1]` 로 폴백해 **기존 세션 화면이 바뀌지 않는다**.
+  서브탭 4개 = `Map 비교` / `Log 비교` / `CPK 비교` / `동일성 검증`
+  ([compare.js](../server/report/static/webreport/compare.js)).
+  - 산출물마다 **비교 대상이 다르다**: 공통성 Map·Bin Yield·Bin 불일치 좌표표는 **전 source**,
+    goodlog 는 **그룹 대표 2개**(After 최상단 vs Before 최상단), 산포 비교(`dist_shift`)와
+    동일성 검증은 **그룹 pool**(그룹 전체 die 를 합친 가상 테이블, `_pool_tables`).
+    그룹이 1 source 씩이면 pool 이 그 테이블 자체라 **CPK 탭 값과 완전히 같다**(복사도 없음).
+  - `bin_matrix`(구 `bin_transition` 대체): 모든 source 에 있는 공통 좌표 중 **BIN 이 전부
+    같지는 않은 die 를 좌표 1행씩** 나열하고 컬럼을 Before/After 그룹으로 묶는다.
+    `counts.pass_to_fail`/`fail_to_pass` 만 **그룹 대표 기준**이다(화면에도 그렇게 표기).
+  - `common_map.dies[].bins` — die 마다 source 별 BIN 을 실어 **마우스오버로 확인**한다.
+    hover 문자열은 `waferHeatmap` 의 `opts.labelOf` 훅으로 갈아끼운다(미지정이면 종전과 동일).
+  - **동일성 검증**(`build_equivalence`): 항목별 `AVG차 = |After−Before|`,
+    `AVG차(%) = |After−Before| / |Before| × 100` (**둘 다 절대값** — Grade1 이 "5% 이하"라
+    부호가 섞이면 판정이 어긋난다). Grade1 = AVG차(%) ≤ `EQUIV_AVG_PCT_LIMIT`(5) /
+    Grade2 = 초과 & `min(CPK_Before, CPK_After) ≥ EQUIV_CPK_LIMIT`(5) / Grade3 = 그 외.
+    **판정 불가(Before 평균 0·한쪽 결측)도 Grade3 으로 집계**해 `Total = G1+G2+G3` 가 항상
+    성립한다. 대상은 양쪽 pool 공통 항목이고 통계는 pooled `build_cpk_rows` 재사용(Bin1 기준).
+    강조 3종: `AVG차(%)>5` / `CPK<5`(Before·After 각각) / `Grade 3`.
+    **stdev 는 화면에서도 반올림하지 않는다**(`_cmpRaw`) — 서버가 원값을 주는 것과 짝.
+    회귀 고정: [tests/test_compare_equivalence.py](../tests/test_compare_equivalence.py).
 - **Distribution**: `build_distribution_index`(항목별 test_num·worst cpk·fail·status) /
   `scatter_item`(상세 전체 측정값) / `build_distribution_compact`(ECDF 전 포인트 컴팩트
   columnar, lazy 전용). `/distribution`(전량)과 `/distribution_batch`(항목 배치) 모두
@@ -241,8 +285,8 @@ Honey 의 `Rawdata edit` 은 Excel 을 바로 띄우지 않고 **허브 다이�
   기존 세션 무회귀, 껐다 켜면 옛 캐시가 다시 히트 ([12](12_web_report_cache.md)).
   Distribution pack 은 업로드 시점(전처리 없음) 기준이라 **전처리 세션은 pack 을 쓰지 않고**
   기존 계산 경로로 폴백한다.
-- 화면: `/full` extras 의 `preprocess.summary` 로 상단에 `전처리: …` 배지를 띄운다 — 값이
-  원본과 다른 이유를 사용자가 알아야 하기 때문.
+- 화면 표시는 없다 — 세션 상단에 상태 배지를 두지 않는다(사용자 요청, 2026-07-23).
+  현재 적용값은 Honey 의 Rawdata 허브를 열면 `GET .../web_report/preprocess` 로 확인된다.
 
 #### Raw Data 값 검증 (2026-07-21)
 정본은 [rawvalues.py](../web_report/rawvalues.py). **값 규칙을 `validate_honeyform_df` 에
@@ -275,6 +319,12 @@ Honey 의 `Rawdata edit` 은 Excel 을 바로 띄우지 않고 **허브 다이�
   사라짐), TNO 빈값·0·중복(fail 이 Yield 표에 집계 안 됨), 비수치 측정값, BIN 비정수,
   SERIAL 빈값, XY 비좌표, item 컬럼명 변경·추가. 셀 단위 diff 도 함께 보여준다
   (형태가 같고 `EXCEL_SCAN_CELL_BUDGET` 이내일 때만 — 초과 시 생략을 **명시 보고**).
+  - diff 는 **구조화 행**(`inspect_edited_frame` 의 `cell_rows` — 위치/항목/이전/이후가 열로
+    분리)이 정본이고, 확인창이 그걸 표로 그린다(→[05](05_client_ui.md) `ChangeReviewDialog`).
+    같은 행에서 파생시킨 평문 `cells` 는 구 평문 빌더·전문 저장용이라 `_CELL_TEXT_LIMIT`
+    (200)에서 끊는다. 행 상한은 호출부(`excel_session._CELL_DETAIL_LIMIT` = 50,000)가 정하고,
+    걸리면 `cell_total > len(cell_rows)` 로 드러나 확인창이 "외 N건"을 띄운다 —
+    **침묵 잘림 금지**(1,500건 수정에서 200건만 보이던 것이 원래 문제였다).
 - 메타 컬럼명은 encode/decode/split 모두에서 canonical 대문자로 정규화한다
   ([honeyform.canonicalize_meta_columns](../web_report/honeyform.py)). 없으면 `BIN`→`Bin`
   케이스 변경이 검증을 통과해 저장된 뒤 조회만 `data["BIN"]` KeyError→500 이 난다
@@ -332,7 +382,7 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
 
 ## 불변 규칙
 - **Distribution 다운샘플 절대 금지** (프로젝트 CLAUDE.md §5 규칙 #5). 상세·통계는 전
-  포인트. 미니셀(썸네일)만 표시용 다운샘플(`DIST.DOWNSAMPLE`, 소스별 소프트 상한 2000)이
+  포인트. 미니셀(썸네일)만 표시용 다운샘플(`DIST.DOWNSAMPLE`, 소스별 소프트 상한 1500)이
   유일한 예외.
 - **미니셀 ECDF 점은 canvas 오버레이로 그린다** (2026-07-20). 축·그리드·LSL/USL 점선·주석·
   상태 배경은 그대로 Plotly 가 그리고, 점만 `distPaintPoints`(`distribution.js`)가 Plotly 축
@@ -346,15 +396,16 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
   붙어 있어 안전하지만(chart_notes.js ← item_detail.js), 이를 미니셀로 확장하면 **점 없는
   PNG** 가 조용히 나간다 — 확장 시 canvas 를 합성하는 별도 경로가 필요하다.
 - **표시점 캡은 칸 예산을 소스 수로 나눈다** (2026-07-21, 다소스 대응). `DIST.DOWNSAMPLE`
-  (2000)은 **소스별** 상한이라 소스 40개 세션에서는 칸 하나가 8만 점이 됐다. IssueTable
+  은 **소스별** 상한이라 소스 40개 세션에서는 칸 하나가 수만 점이 됐다. IssueTable
   미니셀은 112px 라 찍히는 픽셀이 ~1.7만개뿐이라 전부 덧칠 낭비. 이제 `distCapFor(소스수,
-  칸예산)` 이 소스별 유효 캡을 정한다 — 칸 예산은 `CELL_BUDGET_MINI`(4000, IssueTable) /
-  `CELL_BUDGET_CARD`(12000, 갤러리·Bin 상세), 하한 `MIN_PER_SOURCE`(150).
-  소스가 적으면 나눗셈 결과가 `DOWNSAMPLE` 로 클램프돼 **기존 출력과 완전히 동일**하다
-  (회귀 검증 완료). 캡이 기본값보다 낮을 때만 `distHardCap` 이 마지막에 균등 stride 로
+  칸예산)` 이 소스별 유효 캡을 정한다 — 칸 예산은 `CELL_BUDGET_MINI`(3000, IssueTable) /
+  `CELL_BUDGET_CARD`(8000, 갤러리·Bin 상세), 하한 `MIN_PER_SOURCE`(150).
+  소스가 적으면 나눗셈 결과가 `DOWNSAMPLE`(1500)로 클램프된다(카드 ≤5소스 / 미니 ≤2소스).
+  캡이 기본값보다 낮을 때만 `distHardCap` 이 마지막에 균등 stride 로
   캡을 강제한다(양끝 유지) — 기본 캡 경로는 강제 보존 초과를 그대로 허용하는 소프트 상한.
-  `distStepY` 의 채움 예산(`cap×1.5`)과 budget 하한(`cap×0.4`)도 캡에 연동돼 기본 캡에서
-  각각 3000·800 으로 기존과 같다. rAF 프레임당 렌더 장수도 `distPerFrame()` 이 소스 수로
+  `distStepY` 의 채움 예산(`cap×1.5`)과 budget 하한(`cap×0.4`)도 캡에 연동돼 기본 캡
+  1500 에서 각각 2250·600 이다(`FILL_MAX_POINTS` 3000 은 절대 천장이라 미도달).
+  rAF 프레임당 렌더 장수도 `distPerFrame()` 이 소스 수로
   조절한다(≥16 → 1장, ≥8 → 2장). 실측 40소스 미니셀 1장: 44.6ms → 11.3ms(콜드),
   재스크롤 4.4ms. 표시점 메모(`distDisplayPoints` / limitWin 전용 `distDisplayPointsWindowed`)
   는 **캡별로 분리 저장**한다 — 같은 항목도 칸 종류에 따라 캡이 다르기 때문.

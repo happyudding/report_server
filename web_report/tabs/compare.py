@@ -1,12 +1,16 @@
-"""Compare 모드 payload 빌더 — 같은 Wafer 에 대한 2~3 source 비교 분석.
+"""Compare 모드 payload 빌더 — Before / After 두 그룹으로 나뉜 N source 비교 분석.
 
 metrics.build_report_payload 가 mode=="Compare" 이고 source 가 2개 이상일 때만 호출한다.
-세 가지 비교 산출물을 제공한다:
-  - stats     : 항목별 source 통계(n/average/median/cpk/stdev) + source 간 delta.
-                이미 계산된 ``cpk_rows`` 를 pivot 해 재사용(재계산 없음).
-  - bin_delta : bin 별 source yield% + delta/range.
-  - common_map: 공통 좌표의 Bin 을 source 간 비교해 일치(match)/한쪽만 Fail/혼합(mixed)으로
-                분류한 단일 Map. Bin 불일치가 강조 대상.
+source 는 **몇 개든** 될 수 있고 업로드 시 Honey 배치 다이얼로그가 정한
+``compare_groups = {"before": [source명…], "after": [source명…]}`` 로 두 그룹에 나뉜다
+(옵션이 없는 legacy 세션은 ``after=[sources[0]], before=[sources[1]]`` 폴백 — 종전 관례와 동일).
+
+산출물별 비교 대상이 다르다:
+  - common_map : **전 source** (좌표별 Bin 일치/불일치 분류).
+  - bin_delta  : **전 source** (bin 별 yield%).
+  - bin_matrix : **전 source** — Bin 이 전부 같지는 않은 공통 좌표를 1행씩 나열.
+  - goodlog    : **그룹 대표 2개** (After 최상단 vs Before 최상단) — 테스트 프로그램 diff.
+  - dist_shift / equivalence : **그룹 pool 2개** (그룹 전체 die 를 합친 통계).
 다운샘플 없음(규칙 #6) — 모든 die 를 분류에 반영한다.
 """
 from __future__ import annotations
@@ -14,7 +18,16 @@ from __future__ import annotations
 import difflib
 from collections import Counter, defaultdict
 
-from .common import PASS_BIN, bin_sort_key, bin_types, fmt_type, json_safe, num, round_num, to_coord
+import pandas as pd
+
+from ..honeyform import HoneyformTable
+from .common import (PASS_BIN, bin_sort_key, bin_types, fmt_type, item_meta, json_safe, num,
+                     round_num, to_coord)
+from .cpk import build_cpk_rows
+
+# 동일성 검증 임계값 — Grade 판정과 셀 강조가 같은 값을 쓴다(프런트에도 thresholds 로 내려감).
+EQUIV_AVG_PCT_LIMIT = 5.0    # Grade1 경계: AVG차(%) 5 이하
+EQUIV_CPK_LIMIT = 5.0        # Grade2 조건: Before/After CPK 가 둘 다 5 이상
 
 
 def build_compare_bin_delta(tables) -> list:
@@ -59,6 +72,7 @@ def build_common_map(tables) -> dict:
       - Bin 이 다르고 2개 이상 source Fail  → "mixed" (보라)
     한쪽에만 존재하는 좌표는 비교 불가라 제외한다(빈칸). 다운샘플 없음(규칙 #6).
     맵 프레임(bound)은 웨이퍼 형태 유지를 위해 모든 present 좌표 기준으로 잡는다.
+    die 마다 ``bins``(sources 순서의 source 별 BIN)를 함께 담아 마우스오버로 확인할 수 있게 한다.
     """
     source_names = [t.source for t in tables]
     coord_bins = {t.source: _coord_bin_map(t) for t in tables}
@@ -92,7 +106,7 @@ def build_common_map(tables) -> dict:
             else:
                 cls = "mixed"
                 n_mixed += 1
-        dies.append({"x": coord[0], "y": coord[1], "cls": cls})
+        dies.append({"x": coord[0], "y": coord[1], "cls": cls, "bins": bins})
 
     dies.sort(key=lambda d: (d["y"], d["x"]))
     return {
@@ -187,14 +201,15 @@ def _cell_value(table, row_idx, col):
     return fmt_type(raw), num(raw)
 
 
-def build_goodlog(tables):
-    """Honey Compare Mode 의 테스트 프로그램 diff. 정확히 2 source 일 때만 (아니면 None).
+def build_goodlog(t_after, t_before):
+    """Honey Compare Mode 의 테스트 프로그램 diff. **그룹 대표 2개**를 받는다.
 
+    (구: tables 리스트를 받아 2 source 일 때만 동작. 지금은 After 최상단 / Before 최상단
+    source 를 호출자가 골라 넘기므로 source 가 3개 이상이어도 항상 생성된다.)
     프로그램(항목명/limit)이 완전히 같으면 {"identical": True} — 프런트가 '차이 없음' 표시.
     """
-    if len(tables) != 2:
+    if t_after is None or t_before is None:
         return None
-    t_after, t_before = tables[0], tables[1]
     a_names = list(t_after.item_columns)
     b_names = list(t_before.item_columns)
 
@@ -306,49 +321,62 @@ def _coord_bin_map(table):
     return out
 
 
-def build_bin_transition(tables) -> dict:
-    """동일 좌표에서 Bin 이 before→after 로 어떻게 바뀌었는지 집계. 2 source 일 때만 (아니면 None).
+def build_bin_matrix(tables, before_names, after_names) -> dict:
+    """공통 좌표 중 **Bin 이 전부 같지는 않은** die 를 좌표 1행씩 나열한다.
 
-    after=tables[0], before=tables[1] (goodlog 관례). 공통 좌표(둘 다 present)만 대상으로
-    (before_bin, after_bin) 조합을 카운트한다. 다운샘플 없음(규칙 #6) — 전량 집계.
+    (구 ``build_bin_transition`` 대체 — 2 source 의 (before_bin, after_bin) 조합 집계였다.
+    source 가 몇 개든 "어느 die 가 어떻게 갈렸는지"를 그대로 보여 달라는 요구에 맞춰
+    조합 집계가 아니라 좌표별 나열로 바꿨다.)
+
+    - 대상: **모든 source 에 존재하는** 좌표 (한쪽에만 있는 좌표는 비교 불가라 제외).
+    - 행: 그 좌표의 source 별 BIN 값 리스트(``sources`` 순서와 같은 순서).
+    - 정렬: (y, x).
+    ``counts.pass_to_fail`` / ``fail_to_pass`` 는 **그룹 대표**(Before 최상단 → After 최상단)
+    기준이다 — 그룹이 여러 장이면 대표 1장씩의 전이만 센다.
+    다운샘플 없음(규칙 #6) — 불일치 좌표 전량.
     """
-    if len(tables) != 2:
+    if len(tables) < 2:
         return None
-    t_after, t_before = tables[0], tables[1]
-    after_map = _coord_bin_map(t_after)
-    before_map = _coord_bin_map(t_before)
-    common = set(after_map) & set(before_map)
+    source_names = [t.source for t in tables]
+    coord_bins = {t.source: _coord_bin_map(t) for t in tables}
 
-    pair_counts: Counter = Counter()
-    pass_to_fail = fail_to_pass = 0
-    for coord in common:
-        a_bin = after_map[coord]
-        b_bin = before_map[coord]
-        pair_counts[(b_bin, a_bin)] += 1
-        if b_bin == PASS_BIN and a_bin != PASS_BIN:
-            pass_to_fail += 1
-        elif b_bin != PASS_BIN and a_bin == PASS_BIN:
-            fail_to_pass += 1
+    common = None
+    for s in source_names:
+        keys = set(coord_bins[s])
+        common = keys if common is None else (common & keys)
+    common = common or set()
 
     rows = []
-    for (b_bin, a_bin), cnt in pair_counts.items():
-        rows.append({
-            "before_bin": b_bin,
-            "after_bin": a_bin,
-            "count": cnt,
-            "changed": b_bin != a_bin,
-        })
-    # 변경된 조합 먼저, 그 안에서 건수 많은 순.
-    rows.sort(key=lambda r: (0 if r["changed"] else 1, -r["count"],
-                             bin_sort_key(r["before_bin"]), bin_sort_key(r["after_bin"])))
-    changed = sum(r["count"] for r in rows if r["changed"])
+    for coord in sorted(common, key=lambda c: (c[1], c[0])):
+        bins = [coord_bins[s][coord] for s in source_names]
+        if all(b == bins[0] for b in bins):
+            continue                      # 전 source 동일 = 볼 것 없음
+        rows.append({"x": coord[0], "y": coord[1], "bins": bins})
+
+    # Pass→Fail / Fail→Pass 요약은 그룹 대표 1장씩으로만 센다(그룹이 여러 장일 때의 정의를
+    # 억지로 만들지 않는다 — 화면에도 "대표 기준" 으로 표기).
+    rep_before = before_names[0] if before_names else None
+    rep_after = after_names[0] if after_names else None
+    pass_to_fail = fail_to_pass = 0
+    if rep_before and rep_after:
+        b_map, a_map = coord_bins[rep_before], coord_bins[rep_after]
+        for coord in common:
+            b_bin, a_bin = b_map[coord], a_map[coord]
+            if b_bin == PASS_BIN and a_bin != PASS_BIN:
+                pass_to_fail += 1
+            elif b_bin != PASS_BIN and a_bin == PASS_BIN:
+                fail_to_pass += 1
+
     return {
-        "after_source": t_after.source,
-        "before_source": t_before.source,
+        "sources": source_names,
+        "before_sources": list(before_names),
+        "after_sources": list(after_names),
+        "rep_before": rep_before,
+        "rep_after": rep_after,
         "rows": rows,
         "counts": {
             "common_dies": len(common),
-            "changed": changed,
+            "mismatch": len(rows),
             "pass_to_fail": pass_to_fail,
             "fail_to_pass": fail_to_pass,
         },
@@ -356,10 +384,12 @@ def build_bin_transition(tables) -> dict:
 
 
 def build_dist_shift(tables, cpk_rows) -> list:
-    """양쪽 source 에 모두 있는 항목의 산포(average/stdev/cpk) before/after 병기 + delta.
+    """양쪽에 모두 있는 항목의 산포(average/stdev/cpk) before/after 병기 + delta.
 
-    2 source 일 때만 (아니면 []). cpk_rows(이미 계산됨)를 subject×source 로 pivot 해 재사용.
-    after=tables[0], before=tables[1]. 필터 없음 — 공통 항목 전부 나열하고 |Δcpk| 큰 순 정렬.
+    호출자가 넘기는 tables 는 **그룹 pool 2개**(``[pool_after, pool_before]``)이고 cpk_rows 도
+    그 pool 로 계산한 것이다. 그룹이 1 source 씩이면 pool == 그 source 라 값이 CPK 탭과 같다.
+    cpk_rows 를 subject×source 로 pivot 해 재사용한다(재계산 없음).
+    필터 없음 — 공통 항목 전부 나열하고 |Δcpk| 큰 순 정렬.
     """
     if len(tables) != 2:
         return []
@@ -408,16 +438,173 @@ def _sub(after, before):
     return None if a is None or b is None else round_num(a - b, 6)
 
 
-def build_compare_payload(tables, all_items, cpk_rows) -> dict:
-    """Compare 모드 통합 payload. metrics 가 report["compare"] 로 내려준다."""
+# ── Before/After 그룹 ────────────────────────────────────────────────────────
+
+def resolve_groups(tables, compare_groups):
+    """세션 옵션의 그룹(source 이름) → (before_tables, after_tables).
+
+    ``compare_groups`` 는 {"before": [이름…], "after": [이름…]} (Honey 배치 다이얼로그가
+    업로드 시 넣는다). 이름 기준이라 Excel 왕복으로 source 가 제거돼 index 가 밀려도 안전하다.
+    옵션이 없거나(=legacy 세션) 한쪽이 비면 **종전 관례로 폴백**한다
+    (after=tables[0], before=tables[1]) — 기존 Compare 세션의 화면이 바뀌지 않는다.
+    """
+    by_name = {t.source: t for t in tables}
+    before, after = [], []
+    if isinstance(compare_groups, dict):
+        before = [by_name[n] for n in (compare_groups.get("before") or []) if n in by_name]
+        after = [by_name[n] for n in (compare_groups.get("after") or []) if n in by_name]
+    if not before or not after:
+        after, before = [tables[0]], [tables[1]]
+    return before, after
+
+
+def _pool_tables(group, label):
+    """그룹의 die 를 하나로 합친 가상 테이블. 1개면 **그 테이블을 그대로** 반환(복사 없음).
+
+    메타(tno/step/units/hilim/lolim)는 최상단 source 우선(setdefault) — 그룹 대표의 limit 이
+    기준이다. ``df=None`` 이라 실수로 재인코딩 경로를 탈 수 없다(preprocess 와 같은 관례).
+    """
+    if len(group) == 1:
+        return group[0]
+    item_columns, seen = [], set()
+    tseq, tno, step, units, hilim, lolim = {}, {}, {}, {}, {}, {}
+    for t in group:
+        for c in t.item_columns:
+            if c not in seen:
+                seen.add(c)
+                item_columns.append(c)
+        for dst, src in ((tseq, t.tseq), (tno, t.tno), (step, t.step),
+                         (units, t.units), (hilim, t.hilim), (lolim, t.lolim)):
+            for k, v in src.items():
+                dst.setdefault(k, v)
+    data = pd.concat([t.data for t in group], ignore_index=True)
+    return HoneyformTable(source=label, file_name=label, df=None,
+                          item_columns=item_columns, tseq=tseq, tno=tno, step=step,
+                          units=units, hilim=hilim, lolim=lolim, data=data)
+
+
+# ── 동일성 검증 ──────────────────────────────────────────────────────────────
+
+def _equiv_delta(before_avg, after_avg):
+    """|After − Before| — **절대값**. 한쪽이라도 결측이면 None."""
+    b, a = num(before_avg), num(after_avg)
+    return None if b is None or a is None else round_num(abs(a - b), 6)
+
+
+def _equiv_pct(before_avg, after_avg):
+    """|After − Before| / |Before| × 100 — **절대값**(Grade 경계가 '5% 이하'라 부호를 남기면
+    판정이 어긋난다). Before 가 0 이거나 한쪽이 결측이면 판정 불가(None)."""
+    b, a = num(before_avg), num(after_avg)
+    if b is None or a is None or b == 0:
+        return None
+    return round_num(abs(a - b) / abs(b) * 100.0, 4)
+
+
+def _equiv_grade(pct, cpk_before, cpk_after) -> int:
+    """Grade1: AVG차(%) ≤ 5 / Grade2: 5 초과 & 양쪽 CPK ≥ 5 / Grade3: 그 외(판정 불가 포함)."""
+    if pct is None:
+        return 3
+    if pct <= EQUIV_AVG_PCT_LIMIT:
+        return 1
+    cb, ca = num(cpk_before), num(cpk_after)
+    if cb is not None and ca is not None and min(cb, ca) >= EQUIV_CPK_LIMIT:
+        return 2
+    return 3
+
+
+def build_equivalence(pool_before, pool_after, pooled_cpk_rows, tables) -> dict:
+    """Before/After pool 의 항목별 동일성 등급 판정 표 + 등급별 개수 요약.
+
+    통계는 ``pooled_cpk_rows``(=Bin1 기준, build_cpk_rows 산출) 재사용 — 재계산 없음.
+    대상은 **양쪽 pool 에 모두 있는 공통 항목 전부**이며, 통계가 없어 판정할 수 없는 항목도
+    행을 남기고 Grade3 으로 집계한다(Total = G1+G2+G3 가 항상 성립).
+    행 순서는 After pool 의 item 순서(=테스트 프로그램 순서) — STEP 이 첫 컬럼이라 자연히
+    STEP 별로 뭉친다. Pass/Fail·데이터 전무 항목은 cpk 행이 없어 자동으로 빠진다(CPK 탭과 동일).
+    """
+    before_src, after_src = pool_before.source, pool_after.source
+    by_item: dict = defaultdict(dict)
+    for r in pooled_cpk_rows or []:
+        by_item[r.get("subject")][r.get("source")] = r
+    meta = item_meta(tables)
+
+    def _pick(r):
+        return {"average": r.get("average"), "stdev": r.get("stdev"), "cpk": r.get("cpk")}
+
+    rows = []
+    counts = {1: 0, 2: 0, 3: 0}
+    for subject in pool_after.item_columns:
+        per_src = by_item.get(subject) or {}
+        if before_src not in per_src or after_src not in per_src:
+            continue                     # 공통 항목만
+        rb, ra = per_src[before_src], per_src[after_src]
+        before, after = _pick(rb), _pick(ra)
+        pct = _equiv_pct(before["average"], after["average"])
+        grade = _equiv_grade(pct, before["cpk"], after["cpk"])
+        counts[grade] += 1
+        # limit/unit 은 After(=limit 기준 그룹) 우선, 없으면 Before.
+        rows.append({
+            "step": (meta.get(subject) or {}).get("step", ""),
+            "subject": subject,
+            "units": json_safe(ra.get("units")) or json_safe(rb.get("units")) or "",
+            "hilim": ra.get("upper_limit") if ra.get("upper_limit") is not None
+                     else rb.get("upper_limit"),
+            "lolim": ra.get("lower_limit") if ra.get("lower_limit") is not None
+                     else rb.get("lower_limit"),
+            "before": before,
+            "after": after,
+            "delta_avg": _equiv_delta(before["average"], after["average"]),
+            "delta_pct": pct,
+            "grade": grade,
+        })
+
+    return {
+        "before": before_src,
+        "after": after_src,
+        "thresholds": {"avg_pct": EQUIV_AVG_PCT_LIMIT, "cpk": EQUIV_CPK_LIMIT},
+        "summary": {"total": len(rows), "grade1": counts[1],
+                    "grade2": counts[2], "grade3": counts[3]},
+        "rows": rows,
+    }
+
+
+def build_compare_payload(tables, all_items, cpk_rows, stat_items=None,
+                          compare_groups=None) -> dict:
+    """Compare 모드 통합 payload. metrics 가 report["compare"] 로 내려준다.
+
+    stat_items: CPK 통계 대상 항목(Pass/Fail·데이터 전무 제외) — pool 통계를 CPK 탭과 같은
+    기준으로 내기 위해 metrics 가 넘긴다. 미지정이면 all_items.
+    """
+    before_tables, after_tables = resolve_groups(tables, compare_groups)
+    before_names = [t.source for t in before_tables]
+    after_names = [t.source for t in after_tables]
+    groups = {n: "before" for n in before_names}
+    groups.update({n: "after" for n in after_names})
+
+    # dist_shift/equivalence 는 그룹 pool 기준 — 그룹이 1 source 씩이면 pool 이 그 테이블
+    # 자체라 CPK 탭 값과 완전히 동일하다.
+    pool_before = _pool_tables(before_tables, "Before")
+    pool_after = _pool_tables(after_tables, "After")
+    items = list(stat_items if stat_items is not None else all_items)
+    if pool_before is before_tables[0] and pool_after is after_tables[0]:
+        pooled_cpk_rows = cpk_rows      # 이미 계산된 source 별 행 재사용(재계산 없음)
+    else:
+        pooled_cpk_rows = build_cpk_rows([pool_after, pool_before], items)
+
+    common_map = build_common_map(tables)
+    common_map["groups"] = groups
     return {
         "sources": [t.source for t in tables],
+        "groups": groups,
+        "before_sources": before_names,
+        "after_sources": after_names,
         "bin_delta": build_compare_bin_delta(tables),
-        "common_map": build_common_map(tables),
-        # Honey Compare Mode 성격(테스트 프로그램 diff). 2 source 가 아니면 None.
-        "goodlog": build_goodlog(tables),
-        # 동일 좌표 Bin before→after 전이. 2 source 가 아니면 None.
-        "bin_transition": build_bin_transition(tables),
-        # 공통 항목 산포(avg/stdev/cpk) before/after 병기. 2 source 가 아니면 [].
-        "dist_shift": build_dist_shift(tables, cpk_rows),
+        "common_map": common_map,
+        # Honey Compare Mode 성격(테스트 프로그램 diff) — 그룹 대표 2개.
+        "goodlog": build_goodlog(after_tables[0], before_tables[0]),
+        # Bin 이 전부 같지는 않은 공통 좌표 나열(전 source).
+        "bin_matrix": build_bin_matrix(tables, before_names, after_names),
+        # 공통 항목 산포(avg/stdev/cpk) before/after 병기 — 그룹 pool 기준.
+        "dist_shift": build_dist_shift([pool_after, pool_before], pooled_cpk_rows),
+        # 항목별 동일성 등급(Grade 1/2/3) 판정 — 그룹 pool 기준.
+        "equivalence": build_equivalence(pool_before, pool_after, pooled_cpk_rows, tables),
     }

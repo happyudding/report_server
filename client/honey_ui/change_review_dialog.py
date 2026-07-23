@@ -1,12 +1,15 @@
-"""ChangeReviewDialog — Rawdata 반영 전 변경 내용 확인 (스크롤 가능).
+"""ChangeReviewDialog — Rawdata 반영 전 변경 내용 확인.
 
 종전에는 QMessageBox.question 본문에 변경 요약을 통째로 넣었다. 수정이 많아지면
 본문이 길어져 창이 화면 밖으로 커지고 [예]/[아니오] 버튼이 보이지 않았다(그래서
 rawvalues.build_confirm_message 가 40줄에서 잘라야 했고, 잘린 내용은 볼 방법이 없었다).
+그 다음 단계인 스크롤 QTextBrowser 도 셀 변경이 수백~수천 건이면 한 줄짜리 위치 문자열이
+창 폭을 넘어 접히면서 수천 줄의 벽이 되어 사실상 읽을 수 없었다.
 
 여기서는
   - 상단에 고정 요약 한 줄 (source/셀/경고/자동교정/시트삭제 건수)
-  - 본문은 스크롤되는 QTextBrowser (전량 표시 — 자르지 않는다)
+  - 본문은 탭 2개 — [개요] 구조 변경·자동 교정·경고·시트 삭제(짧은 텍스트) /
+    [셀 변경] 열이 분리된 표(검색·정렬·복사·CSV 저장, 수만 행 가능)
   - 하단에 고정 버튼 [반영] [취소] [전문 저장…], 기본 포커스는 취소
   - 창 크기를 사용 가능한 화면의 70% 로 상한 → 버튼이 화면 밖으로 나가지 않는다
 """
@@ -14,8 +17,6 @@ from __future__ import annotations
 
 import html
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -23,11 +24,16 @@ from PyQt6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QTabWidget,
     QTextBrowser,
     QVBoxLayout,
 )
 
-_MAX_SCREEN_RATIO = 0.7
+from .table_list_dialog import TableListView, fit_dialog_to_screen
+
+# 셀 변경 표의 열 — rawvalues.inspect_edited_frame 의 cell_rows 키 순서와 맞춘다.
+_CELL_HEADERS = ("source", "SHOT", "DUT", "X", "Y", "BIN", "항목", "이전", "이후")
+_CELL_KEYS = ("shot", "dut", "x", "y", "bin", "item", "old", "new")
 
 
 def summary_line(totals: dict) -> str:
@@ -90,13 +96,10 @@ def _sections_to_html(payload: dict) -> str:
         for text in sec.get("fixes") or []:
             out.append(f"<li><b>[자동 교정]</b> {esc(text)}</li>")
         cell_total = int(sec.get("cell_total") or 0)
-        cells = sec.get("cells") or []
         if cell_total:
-            out.append(f"<li>셀 <b>{cell_total:,}</b>개가 바뀌었습니다:<ul>")
-            out.extend(f"<li><code>{esc(c)}</code></li>" for c in cells)
-            if cell_total > len(cells):
-                out.append(f"<li>… 외 {cell_total - len(cells):,}건</li>")
-            out.append("</ul></li>")
+            # 셀 목록 자체는 [셀 변경] 탭의 표가 맡는다 — 여기 나열하면 다시 수천 줄이 된다.
+            out.append(f"<li>셀 <b>{cell_total:,}</b>개가 바뀌었습니다 "
+                       "— <b>[셀 변경]</b> 탭에서 확인하세요.</li>")
         elif sec.get("skipped_cell_diff"):
             out.append("<li>셀 단위 비교를 생략했습니다 (구조가 바뀌었거나 데이터가 큽니다).</li>")
         for text in sec.get("warnings") or []:
@@ -109,6 +112,20 @@ def _sections_to_html(payload: dict) -> str:
                    f"<p style='color:#b91c1c'>{esc(', '.join(removed))} — 해당 source 데이터가 "
                    "리포트에서 제거되고 전체 탭이 재계산됩니다. <b>서버에서 되돌릴 수 없습니다.</b></p>")
     return "".join(out) or "<p>변경 내용이 없습니다.</p>"
+
+
+def cell_table_rows(payload: dict) -> tuple[list, int]:
+    """전 source 의 cell_rows → 표 행(source 열을 앞에 붙임) + 전체 변경 건수.
+
+    전체 건수가 행 수보다 크면 수집 상한(excel_session._CELL_DETAIL_LIMIT)에 걸린 것이다."""
+    rows = []
+    total = 0
+    for sec in (payload or {}).get("sections") or []:
+        name = sec.get("name") or "source"
+        total += int(sec.get("cell_total") or 0)
+        for cell in sec.get("cell_rows") or []:
+            rows.append([name] + [cell.get(k, "") for k in _CELL_KEYS])
+    return rows, total
 
 
 class ChangeReviewDialog(QDialog):
@@ -129,7 +146,20 @@ class ChangeReviewDialog(QDialog):
         body = QTextBrowser()
         body.setHtml(_sections_to_html(self._payload))
         body.setOpenExternalLinks(False)
-        layout.addWidget(body, 1)
+
+        tabs = QTabWidget()
+        tabs.addTab(body, "개요")
+        # 셀 변경은 수천 건이 될 수 있어 표로만 다룬다. 0건이면 탭을 만들지 않는다.
+        rows, cell_total = cell_table_rows(self._payload)
+        self._cell_table = None
+        if rows:
+            hidden = cell_total - len(rows)
+            note_text = (f"변경 {cell_total:,}건 중 {len(rows):,}건만 표시합니다 "
+                         f"(… 외 {hidden:,}건은 수집 상한을 넘어 생략)." if hidden > 0 else "")
+            self._cell_table = TableListView(_CELL_HEADERS, rows, note=note_text)
+            tabs.addTab(self._cell_table, f"셀 변경 {cell_total:,}건")
+            tabs.setCurrentWidget(self._cell_table)
+        layout.addWidget(tabs, 1)
 
         note = QLabel("위 내용으로 서버에 반영할까요? (Excel 편집은 서버에서 되돌릴 수 없습니다)")
         note.setWordWrap(True)
@@ -150,26 +180,22 @@ class ChangeReviewDialog(QDialog):
         cancel_btn.setDefault(True)
         cancel_btn.setFocus()
 
-        self._fit_to_screen()
-
-    def _fit_to_screen(self):
-        """화면의 70% 를 넘지 않게 크기를 잡는다 — 버튼이 화면 밖으로 나가지 않도록."""
-        screen = self.screen() or QGuiApplication.primaryScreen()
-        avail = screen.availableGeometry() if screen else None
-        if avail is None:
-            self.resize(760, 560)
-            return
-        max_w = int(avail.width() * _MAX_SCREEN_RATIO)
-        max_h = int(avail.height() * _MAX_SCREEN_RATIO)
-        self.setMaximumSize(max_w, max_h)
-        self.resize(min(860, max_w), min(620, max_h))
+        fit_dialog_to_screen(self, 1040, 680)
 
     def _save_full_text(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "변경 내역 저장", "rawdata_changes.txt", "텍스트 (*.txt)")
+        """전문 저장. 셀 변경 표가 있으면 CSV 도 고를 수 있다(표는 평문보다 건수가 많다)."""
+        filters = "텍스트 (*.txt)"
+        name = "rawdata_changes.txt"
+        if self._cell_table is not None:
+            filters = "CSV — 셀 변경 표 (*.csv);;텍스트 — 요약 전문 (*.txt)"
+            name = "rawdata_changes.csv"
+        path, _ = QFileDialog.getSaveFileName(self, "변경 내역 저장", name, filters)
         if not path:
             return
         try:
+            if path.lower().endswith(".csv") and self._cell_table is not None:
+                self._cell_table.save_csv(path)
+                return
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(summary_line(self._payload.get("totals")) + "\n\n")
                 fh.write(sections_to_text(self._payload))

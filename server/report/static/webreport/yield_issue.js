@@ -120,7 +120,7 @@ function yieldToolbarHtml() {
 // Yield 탭 우상단 Excel Down (excel_export.js exportYieldExcel).
 function yieldExcelBtnHtml() {
   return `<button type="button" class="btn-sm tab-excel-btn" id="yieldExcelBtn" ` +
-    `title="Honey Excel Download 의 Yield 시트와 동일한 xlsx 다운로드 (Bin 접힌 상태)">Excel Down</button>`;
+    `title="Honey Excel Download 의 Yield 시트와 동일한 xlsx 다운로드 (STEP 별 표 분리·Bin 접힌 상태)">Excel Down</button>`;
 }
 // 한 Bin 그룹(대표행)의 detail FAILTNO 행 펼치기/접기 + 그룹 토글 버튼 상태 갱신.
 // 펼침으로 Item 등 컬럼 폭이 바뀌면 좌측 고정 오프셋이 stale 이 되므로 토글 후 재실측한다.
@@ -245,7 +245,7 @@ function issueToolbarHtml() {
     `</span>` +
     `<button type="button" class="btn-sm" id="issueToggleAll" data-expanded="false">TNO 전체 펼치기</button>` +
     editBtns +
-    `<button type="button" class="btn-sm issue-excel-btn" id="issueExcelBtn" title="Issue Table 을 xlsx 로 다운로드">⬇ Excel</button>` +
+    `<button type="button" class="btn-sm issue-excel-btn" id="issueExcelBtn" title="Honey Excel Download 의 Issue Table 시트와 동일한 xlsx 다운로드 (Map/Distribution 썸네일 제외)">⬇ Excel</button>` +
     `</div>`;
 }
 
@@ -276,57 +276,9 @@ function syncIssueDelCount(panel) {
   btn.disabled = !n;
 }
 
-// ── Issue Table Excel 내보내기 (vendored exceljs — trim.js loadExcelJS 재사용) ──
-// 화면과 동일한 컬럼 도출·순서(orderColumns)를 따르되, 미니차트 전용 Map/Distribution
-// 열은 제외하고 섹션(Yield/CPK/ETC)을 Category 컬럼으로 되살린다. Yield 상세(TNO) 행은
-// 접힘 여부와 무관하게 전부 내보낸다. CPK 섹션의 source 컬럼 값은 화면처럼 cpk 값.
-async function exportIssueExcel() {
-  const rows = (DATA && Array.isArray(DATA.issue_table_text)) ? DATA.issue_table_text : [];
-  const btn = document.getElementById("issueExcelBtn");
-  if (btn) btn.disabled = true;
-  try {
-    let cols = [];
-    rows.forEach(r => Object.keys(r || {}).forEach(k => { if (!cols.includes(k)) cols.push(k); }));
-    cols = orderColumns(cols, "issue").filter(c => !isMapCol(c) && !isDistCol(c));
+// Issue Table Excel 내보내기는 excel_export.js exportIssueExcel — Yield/CPK 탭과 같은
+// 헬퍼(hxl*)를 써서 Honey 전체본 Excel Download 의 Issue Table 시트와 서식을 맞춘다.
 
-    // 행별 섹션 — renderSheetTable 의 rowSection 파생과 동일(빈 Category 는 위 행 상속).
-    const section = [];
-    let sec = "";
-    rows.forEach(r => { const cat = (r && r["Category"]) || ""; if (cat) sec = cat; section.push(sec); });
-
-    const dataRows = rows.filter(r =>
-      !isCpkSubheadRow(r) && String((r && r["Item"]) ?? "").trim() !== "");
-    if (!dataRows.length) { showToast("내보낼 Issue Table 행이 없습니다"); return; }
-
-    const ExcelJS = await loadExcelJS();
-    const wb = new ExcelJS.Workbook();
-    const ws = wb.addWorksheet("Issue Table");
-    ws.addRow(["Category"].concat(cols.map(c =>
-      /_yield$/i.test(String(c)) ? sheetHeaderShortLabel(c) : displayLabel(c))));
-    ws.getRow(1).font = { bold: true };
-    rows.forEach((r, ri) => {
-      if (isCpkSubheadRow(r) || String((r && r["Item"]) ?? "").trim() === "") return;
-      ws.addRow([section[ri]].concat(cols.map(c =>
-        (r[c] === null || r[c] === undefined) ? "" : r[c])));
-    });
-    ws.columns.forEach((c, i) => { c.width = i === 0 ? 10 : 18; });
-
-    const buf = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buf],
-      { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    const meta = (DATA && DATA.session) || {};
-    a.download = `issue_table_${meta.lot_id || SESSION_ID}.xlsx`;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    showToast("Excel 다운로드 완료");
-  } catch (e) {
-    showToast("Excel 생성 실패: " + e.message);
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
 // Issue Table 섹션(CPK/ETC) 헤더로 스크롤 이동.
 function jumpToIssueSection(sec) {
   const row = document.querySelector(`#panel-issues tr.issue-shead-top[data-sec="${sec}"]`);

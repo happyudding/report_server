@@ -44,8 +44,9 @@ except Exception:  # 단독 실행/테스트 폴백
     REQUEST_TIMEOUT_SEC = (10, 300)
 
 _POLL_SEC = 1.5
-# 확인창에 나열할 source 당 셀 변경 상세 최대 건수 (초과분은 "… 외 N건").
-_CELL_DETAIL_LIMIT = 200
+# 확인창 표에 담을 source 당 셀 변경 상세 최대 건수. 표는 수만 행도 다루므로 사실상
+# 전량을 담고, 이 값은 메모리 폭주 방지선이다 (초과분은 확인창이 "… 외 N건"으로 명시).
+_CELL_DETAIL_LIMIT = 50_000
 _WRITE_CHUNK_ROWS = 50000
 _INVALID_SHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
 
@@ -433,7 +434,7 @@ def _read_and_encode(xlsx_path, expected_titles, source_names, old_dfs=None, int
             if fixed:
                 fixes[name] = fixed
             old_df = old_dfs[src_idx] if src_idx < len(old_dfs) else None
-            # 확인창이 스크롤되므로 셀 목록을 넉넉히 담는다(구 QMessageBox 시절엔 20개를
+            # 확인창이 표라 셀 목록을 전량에 가깝게 담는다(구 QMessageBox 시절엔 20개를
             # 넘으면 창이 화면을 벗어나 버튼이 사라졌다). 넘치는 건수는 "… 외 N건"으로 표기.
             reports.append(rawvalues.inspect_edited_frame(
                 old_df, df, source_name=name, cell_limit=_CELL_DETAIL_LIMIT))

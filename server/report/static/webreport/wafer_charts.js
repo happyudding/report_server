@@ -266,7 +266,10 @@ function waferHeatmap(m, opts) {
     const idx = catIndex[cat] != null ? catIndex[cat] : 0;
     z[r][c] = idx + 0.5;
     // compact 는 index 공간이라 %{x}/%{y} 가 실제 좌표가 아니다 → hover 문자열에 실제 좌표를 담는다.
-    const label = d.g ? "(prev-fail)" : cat;   // hover 표시(회색 die 는 이전 step fail)
+    // opts.labelOf 는 hover 문자열을 갈아끼우는 훅 (Compare 공통성 Map 이 source 별 Bin 을
+    // 덧붙이는 데 쓴다). 미지정이면 종전과 동일.
+    const label = opts.labelOf ? opts.labelOf(d, cat)
+      : (d.g ? "(prev-fail)" : cat);           // hover 표시(회색 die 는 이전 step fail)
     cdata[r][c] = grid ? ("(" + d.x + ", " + d.y + ")<br>" + label) : label;
   });
 

@@ -5,7 +5,7 @@
 > **세션 시작 규칙**: 새 대화가 시작될 때마다 [docs/INDEX.md](docs/INDEX.md)를
 > 먼저 읽어라. 기능별 코드 흐름·파일 위치·불변 규칙이 모두 INDEX에 있다.
 
-**주의사항** : service 중인 server 이기 때문에 코드 변경하였을때 기존 session 이 안열리거나 지장을 주면안됨.
+**주의사항** : service 중인 server 이기 때문에 코드 변경하였을때 기존 session 이 안열리거나 지장을 주면안됨. 그렇게 되면 사용자에게 반드시 코드 변경을 하기 전에 진짜 변경할건지 확인 질문을 하라.
 
 이 프로젝트는 Honey 클라이언트가 추출한 산출물을 서버로 업로드하고, Flask 서버가
 SQLite + S3(또는 로컬 폴백)에 세션 단위로 저장한 뒤 검색결과·세션 상세 페이지로 조회하게
@@ -116,6 +116,10 @@ report_server/
   (응답 session 에서 password 제거, `has_password` 불린만 노출)
 - `POST /pe/report/session/<sid>/verify_password` → **하위호환 스텁** (HoneyUser 신원==업로더
   확인만, 항상 `has_password:false` — 구 PIN 검사 폐지)
+- `PATCH /pe/report/session/<sid>/meta` → 세션 메타(이름=file_name·family·product·lot·process)
+  수정. 세션 상세 ✏️ → **Honey 편집창**(업로드 다이얼로그 재사용) 전용 — 서버가
+  `X-Honey-Agent` 헤더를 요구해 강제한다. product 변경 시 product_info 재lookup.
+  `analysis_key`·`product_type` 은 불변 → [docs/02](docs/02_server_query_edit.md)
 - `PATCH /pe/report/session/<sid>/content` → [비활성] 항상 405 (구 xlsx 텍스트 수정 폐기)
 - `POST .../session/<sid>/web_report/issue_table/comments|etc`, `.../summary/engr`,
   `.../trim/overrides`, `.../chart_notes`(차트 주석), `.../note`(Note 탭 시트)
@@ -221,6 +225,10 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
    같은 데이터라도 다른 키가 됨. canonical 은 `json.dumps(sort_keys=True)`. password·신원·
    mode 는 **불포함**. (web_report 는 `sha256(canon({files, meta, selected_items}))` —
    [docs/10](docs/10_web_report_pipeline.md).)
+   - 이 산출식은 **업로드 시점** 규약이다. 업로드 후 메타를 고치는
+     `PATCH /session/<sid>/meta` 는 **analysis_key 를 재산출하지 않는다** — 산출물
+     (parquet·manifest·summary)이 전부 그 키로 저장돼 있어 키를 바꾸면 세션이 자기 데이터를
+     잃는다. 어긋나는 건 dedup(같은 데이터 재업로드) 매칭뿐이다.
 4. 클라이언트 자동 업데이트는 batch 스크립트 + 외부 다운로드 방식. 실행 중인 exe
    에 직접 쓰지 말 것 (Windows 락).
 5. **Distribution 차트 데이터 다운샘플링 절대 금지.**
@@ -228,7 +236,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
    `_MAX_CDF_POINTS`, `_downsample`, `max_points` 같은 포인트 상한 로직을 절대 추가하지 말 것.
    유일 예외: 동일값 구간을 2포인트 선분으로 표현하는 계단형(step) ECDF 변환
    (`client/report_generator/_builders.py` `cumulative_distribution_full()`), web_report 는
-   미니셀 썸네일만 표시용 다운샘플(`DIST.DOWNSAMPLE`, 소스별 소프트 상한 2000
+   미니셀 썸네일만 표시용 다운샘플(`DIST.DOWNSAMPLE`, 소스별 소프트 상한 1500
    — [docs/11](docs/11_web_report_tabs.md)). 미니셀의 점은 Plotly SVG 마커가 아니라
    canvas 오버레이(`distPaintPoints`)로 그린다(2026-07-20, 좌표·색·점크기 동일).
    - **web_report Distribution ECDF 미니셀은 markers(점)만으로 렌더한다.** 점을 잇는 선,

@@ -106,6 +106,21 @@ def view_page(session_id):
     return send_html_gzip(REPORT_VIEW_HTML)   # CSRF 쿠키는 after_request 가 발급
 
 
+# Honey 액션 브리지의 폴백 페이지. 세션 상세의 ✏️ 버튼은 이 URL 로 이동을 시도하고,
+# Honey 내장 브라우저는 그 네비게이션을 가로채 취소한 뒤(honey_main._browser_leave_guard)
+# 편집 다이얼로그를 띄우므로 실제 요청은 오지 않는다. 가드가 없는 환경(일반 브라우저,
+# 구버전 Honey)에서 눌렸을 때 막다른 404 대신 이유를 알려주기 위한 라우트다.
+@report_bp.get("/honey/session_meta/<session_id>")
+def honey_session_meta_fallback(session_id):
+    _validate_session_id(session_id)
+    return make_response((
+        '<meta charset="utf-8"><body style="font:16px/1.6 sans-serif;padding:40px">'
+        '<h3>세션 정보 수정은 Honey 앱에서만 가능합니다.</h3>'
+        '<p>Honey 앱으로 이 세션을 연 뒤 우상단 ✏️ 버튼을 눌러 주세요.</p>'
+        f'<p><a href="/pe/report/view/{session_id}">← 세션으로 돌아가기</a></p>'
+        '</body>'), 200)
+
+
 @report_bp.get("/help")
 def help_page():
     return send_html_gzip(REPORT_VIEW_HTML.parent / "help.html")

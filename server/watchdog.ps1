@@ -6,6 +6,11 @@
 #   3) 리스닝 + /healthz 무응답 -> 2연속 실패 시에만 재기동
 #      (waitress 8스레드가 전부 heavy 작업에 점유된 일시 지연을 재기동으로 오판하지 않는 완충)
 #
+# 백오프(2026-07-23): 재기동해도 낫지 않는 상태에서 10분마다 재기동을 반복하면(관측 142회/일)
+#   서버가 종일 기동 중이라 오히려 복구를 막고 server_*.txt 로그를 밀어내 원인 추적까지 없앤다.
+#   최근 1시간 재기동이 임계를 넘으면 재기동을 '건너뛰고'(backoff_skip) 판정만 기록한다.
+#   판정 로직(포트/healthz/2연속) 자체는 불변 — 억제 중에도 gap 이 지나면 즉시 재기동한다.
+#
 # 기록:
 #   server\log\watchdog_events.log — 재기동/실패 이벤트 (JSON lines, admin 대시보드 현황 탭 표시)
 #   server\log\watchdog.state      — 연속 실패 카운터 (mtime = 마지막 점검 시각)
@@ -44,6 +49,17 @@ $checksFile = Join-Path $logDir 'watchdog_checks.log'   # 매 실행 기록 (재
 $python     = Join-Path $serverDir '.venv\Scripts\python.exe'   # start.bat 과 동일 (server\.venv)
 $wsgi       = Join-Path $serverDir 'wsgi.py'
 $maxEventsBytes = 1MB
+
+# 백오프 임계 (env\server.env 로 조정 가능, 미설정 시 아래 기본값)
+function Get-EnvInt([string]$name, [int]$fallback) {
+    $v = [Environment]::GetEnvironmentVariable($name)
+    if ($v) { try { return [int]$v } catch { } }
+    return $fallback
+}
+$backoffMaxPerHour = Get-EnvInt 'WATCHDOG_BACKOFF_MAX_PER_HOUR' 3    # healthz 계열: 1시간 재기동 허용 횟수
+$backoffGapMin     = Get-EnvInt 'WATCHDOG_BACKOFF_GAP_MIN'      30   # 초과 시 다음 재기동까지 간격(분)
+$backoffNlMax      = Get-EnvInt 'WATCHDOG_BACKOFF_NL_MAX'       6    # not_listening: 가용성 우선이라 더 관대
+$backoffNlGapMin   = Get-EnvInt 'WATCHDOG_BACKOFF_NL_GAP_MIN'   15
 
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
@@ -153,6 +169,47 @@ function Save-Snapshot([string]$reason, [string]$autopsy) {
     } catch { return '' }
 }
 
+# 최근 $minutes 분 내 재기동(restart/restart_fail) 시각 배열. 별도 상태 파일을 두지 않고
+# events 로그를 재활용한다 — 이벤트에 ts 가 이미 있고 1MB 캡이 '최근 절반 유지'라 1시간분은
+# 항상 살아있다. 폭주 시 파일이 수천 줄이 되므로 마지막 400줄만 파싱한다.
+function Get-RecentRestarts([int]$minutes) {
+    $out = @()
+    try {
+        if (-not (Test-Path $eventsFile)) { return $out }
+        $lines = [System.IO.File]::ReadAllLines($eventsFile)
+        if ($lines.Count -gt 400) { $lines = $lines[($lines.Count - 400)..($lines.Count - 1)] }
+        $cut = (Get-Date).AddMinutes(-$minutes)
+        foreach ($ln in $lines) {
+            if (-not $ln) { continue }
+            try { $rec = $ln | ConvertFrom-Json } catch { continue }
+            if ($rec.event -ne 'restart' -and $rec.event -ne 'restart_fail') { continue }
+            try {
+                $t = [datetime]::ParseExact($rec.ts, 'yyyy-MM-ddTHH:mm:ss', $null)
+            } catch { continue }
+            if ($t -ge $cut) { $out += $t }
+        }
+    } catch { }
+    return $out
+}
+
+# 재기동을 억제할지 판정. 억제면 사유 문자열, 아니면 $null.
+# not_listening(서버 완전 다운)은 가용성 우선이라 더 관대한 임계를 쓴다.
+function Test-BackoffSkip([string]$reason) {
+    if ($reason -eq 'not_listening') {
+        $max = $backoffNlMax; $gap = $backoffNlGapMin
+    } else {
+        $max = $backoffMaxPerHour; $gap = $backoffGapMin
+    }
+    if ($max -le 0) { return $null }   # 0 이하면 백오프 비활성
+    $recent = @(Get-RecentRestarts 60)
+    if ($recent.Count -lt $max) { return $null }
+    $last = ($recent | Sort-Object)[-1]
+    $next = $last.AddMinutes($gap)
+    if ((Get-Date) -ge $next) { return $null }
+    return ("재기동 억제: 최근1h {0}회(임계 {1}) — 다음 허용 {2}" -f `
+            $recent.Count, $max, $next.ToString('HH:mm'))
+}
+
 function Restart-Server([string]$reason) {
     # 부검 — 킬 이전에 프로세스 상태·서버 로그 tail 을 확보한다 (재기동 원인 보존).
     # 결과는 script 변수로 남겨 본체의 check 레코드가 함께 기록한다.
@@ -214,9 +271,16 @@ if (-not $mutex.WaitOne(0)) {
 $swRun = [System.Diagnostics.Stopwatch]::StartNew()
 try {
     if (-not (Test-Listening)) {
-        Restart-Server 'not_listening'
-        Write-Check @{ result = $script:lastRestartResult; reason = 'not_listening'; listen = 0
-                       procs = $script:lastAutopsy; snap = $script:lastSnap; elapsed_ms = $swRun.ElapsedMilliseconds }
+        $skip = Test-BackoffSkip 'not_listening'
+        if ($skip) {
+            Write-Event 'backoff_skip' 'not_listening' $skip
+            Write-Check @{ result = 'backoff_skip'; reason = 'not_listening'; listen = 0
+                           detail = $skip; elapsed_ms = $swRun.ElapsedMilliseconds }
+        } else {
+            Restart-Server 'not_listening'
+            Write-Check @{ result = $script:lastRestartResult; reason = 'not_listening'; listen = 0
+                           procs = $script:lastAutopsy; snap = $script:lastSnap; elapsed_ms = $swRun.ElapsedMilliseconds }
+        }
     } else {
         $hz = Test-Healthz
         if ($hz.ok) {
@@ -226,9 +290,18 @@ try {
             $fails = (Get-FailCount) + 1
             $hzReason = if ($hz.code -eq 503) { 'healthz_503' } else { 'healthz_timeout' }
             if ($fails -ge 2) {
-                Restart-Server 'healthz_fail_x2'
-                Write-Check @{ result = $script:lastRestartResult; reason = $hzReason; listen = 1; code = $hz.code; ms = $hz.ms
-                               fails = $fails; procs = $script:lastAutopsy; snap = $script:lastSnap; elapsed_ms = $swRun.ElapsedMilliseconds }
+                $skip = Test-BackoffSkip 'healthz_fail_x2'
+                if ($skip) {
+                    # fail 카운터는 리셋하지 않는다 — gap 이 지나면 다음 주기에 곧바로 재기동된다.
+                    Set-FailCount $fails
+                    Write-Event 'backoff_skip' $hzReason "$skip (code=$($hz.code) ms=$($hz.ms))"
+                    Write-Check @{ result = 'backoff_skip'; reason = $hzReason; listen = 1; code = $hz.code; ms = $hz.ms
+                                   fails = $fails; detail = $skip; elapsed_ms = $swRun.ElapsedMilliseconds }
+                } else {
+                    Restart-Server 'healthz_fail_x2'
+                    Write-Check @{ result = $script:lastRestartResult; reason = $hzReason; listen = 1; code = $hz.code; ms = $hz.ms
+                                   fails = $fails; procs = $script:lastAutopsy; snap = $script:lastSnap; elapsed_ms = $swRun.ElapsedMilliseconds }
+                }
             } else {
                 Set-FailCount $fails
                 Write-Event 'healthz_fail' $hzReason "healthz 무응답 ($fails/2) code=$($hz.code) ms=$($hz.ms) — 다음 주기에도 실패 시 재기동"

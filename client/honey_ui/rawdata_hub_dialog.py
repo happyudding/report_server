@@ -10,7 +10,12 @@ outlier 제거도 걸 수 없었는데, 그 둘은 원본을 고치지 않고 **
     [Outlier 제거]       | mean ± [stdev] × σ
     [Rawdata 원본 수정]  | (주황 — Excel 로 원본을 직접 고치는 유일한 버튼)
     ------------------------------------------------------
+    [ ] Yield 계산 기준 - Test data 개수
                                             [저장] [닫기]
+
+체크박스는 수율 **분모**를 고른다: 해제(기본)면 제품 기준정보 Gross Die, 체크면 종전처럼
+그 소스의 rawdata 개수. Gross Die 가 비어 있으면 서버가 자동으로 rawdata 개수로 폴백한다.
+저장 위치는 위 두 필터와 같은 세션 편집 DB(kind='yield_basis')라 다음에 열 때도 적용된다.
 
 왼쪽 열의 Item Select / Outlier 제거 버튼은 [저장] 과 같이 **화면에 보이는 상태를 저장**한다
 (행별 부분 저장은 다른 행을 되돌려야 해서 작업이 조용히 사라진다 — `_save` 참조).
@@ -27,6 +32,7 @@ from urllib.parse import quote
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
@@ -172,6 +178,8 @@ class RawdataHubDialog(QDialog):
         self.changed = False          # 전처리 옵션을 저장했는가 (호출부가 새로고침 판단)
         self._items = []
         self._spec = {}
+        self._gross_die = None        # 서버가 알려준 제품 기준정보 Gross Die (없으면 None)
+        self._gross_die = None        # 세션 제품 기준정보 Gross Die (없으면 None)
 
         self.setWindowTitle("Rawdata")
         self.resize(720, 560)
@@ -220,6 +228,15 @@ class RawdataHubDialog(QDialog):
         grid.setColumnStretch(1, 1)
         grid.setRowStretch(0, 1)
 
+        # ── 하단: Yield 분모 기준 체크박스 ───────────────────────────────────
+        # 체크 = 종전대로 그 소스의 rawdata(test data) 개수를 분모로. 해제(기본) = 제품
+        # 기준정보의 Gross Die 를 분모로 — Gross Die 가 비어 있으면 서버가 자동으로
+        # rawdata 개수로 폴백한다. 값은 세션 DB 에 남아 다음에 열 때도 적용된다.
+        self.chk_test_basis = QCheckBox("Yield 계산 기준 - Test data 개수")
+        self.chk_test_basis.setToolTip(
+            "체크: 수율 분모 = 그 소스의 rawdata 개수 (종전 동작)\n"
+            "해제: 수율 분모 = 제품 기준정보 Gross Die (없으면 rawdata 개수로 폴백)")
+
         # ── 하단: 저장 / 닫기 ────────────────────────────────────────────────
         self.lbl_state = QLabel("")
         self.lbl_state.setWordWrap(True)
@@ -233,6 +250,7 @@ class RawdataHubDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addLayout(grid, 1)
+        layout.addWidget(self.chk_test_basis)
         layout.addWidget(self.lbl_state)
         layout.addWidget(buttons)
 
@@ -248,7 +266,9 @@ class RawdataHubDialog(QDialog):
                 f"{self.base}/pe/report/session/{self.session_id}/web_report/preprocess",
                 headers=_headers(), timeout=_TIMEOUT)
             r.raise_for_status()
-            self._spec = (r.json() or {}).get("spec") or {}
+            info = r.json() or {}
+            self._spec = info.get("spec") or {}
+            self._set_basis(info)
 
             r = requests.get(
                 f"{self.base}/pe/report/session/{self.session_id}/web_report/raw_data/columns",
@@ -262,6 +282,11 @@ class RawdataHubDialog(QDialog):
         self.item_list.populate(self._items, self._spec.get("exclude_items") or [])
         self._set_k((self._spec.get("outlier") or {}).get("k"))
         self._refresh_state()
+
+    def _set_basis(self, info):
+        """서버 응답(yield_basis/gross_die)을 체크박스 상태로 반영."""
+        self._gross_die = (info or {}).get("gross_die")
+        self.chk_test_basis.setChecked(str((info or {}).get("yield_basis") or "") == "test")
 
     def _set_k(self, k):
         self.edit_k.setText("" if not k else (str(int(k)) if float(k).is_integer()
@@ -286,6 +311,12 @@ class RawdataHubDialog(QDialog):
         parts = [f"전체 {len(self._items)}개",
                  f"표시 {self.item_list.shown_count()} / 제외 {len(excluded)}"]
         parts.append(f"outlier ±{k:g}σ 적용 중" if k else "outlier 미적용")
+        if self.chk_test_basis.isChecked():
+            parts.append("Yield 분모 = Test data 개수")
+        elif self._gross_die:
+            parts.append(f"Yield 분모 = Gross Die {self._gross_die}")
+        else:
+            parts.append("Yield 분모 = Gross Die 정보 없음 → Test data 개수")
         self.lbl_state.setText(" · ".join(parts))
 
     def _apply_items(self):
@@ -308,7 +339,8 @@ class RawdataHubDialog(QDialog):
         except ValueError as exc:
             QMessageBox.warning(self, "Outlier 제거", str(exc))
             return
-        spec = {"exclude_items": self.item_list.excluded_items()}
+        spec = {"exclude_items": self.item_list.excluded_items(),
+                "yield_basis": "test" if self.chk_test_basis.isChecked() else "gross"}
         if k:
             spec["outlier"] = {"mode": "stdev", "k": k}
         self._post(spec)
@@ -341,6 +373,7 @@ class RawdataHubDialog(QDialog):
         self.changed = True
         self.item_list.populate(self._items, self._spec.get("exclude_items") or [])
         self._set_k((self._spec.get("outlier") or {}).get("k"))
+        self._set_basis(result)
         self._refresh_state()
         QMessageBox.information(
             self, "Rawdata",

@@ -82,7 +82,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_RETENTION_DAYS` | `180` | (보존기간 만료 **삭제는 폐지** — 티어링이 대체. 값은 표시용으로만 남음) |
 | `REPORT_CLEANUP_DRYRUN` | `1`(참) | **기본은 실삭제 안 함**(대상만 로그). 실삭제는 `0` 으로 명시. 대상=고아 세션행·휴지통 경과분·고아 산출물 |
 | `REPORT_AUDIT_RETENTION_DAYS` | `365` | 감사 로그 롤오프. 0 이하 = 무기한. **cleanup dry-run 과 무관하게 항상 실행** |
-| `REPORT_DB_BACKUP_ENABLED` / `_INTERVAL_HOURS` / `_KEEP` / `_DIR` | `1` / `24` / `7` / `<db>/backup` | 온라인 백업 사이클. 대상은 report.db + eval.db + voc.db (DB 별 prefix 로 rotation) |
+| `REPORT_DB_BACKUP_ENABLED` / `_INTERVAL_HOURS` / `_KEEP` / `_DIR` | `1` / `24` / `7` / `<db>/backup` | 온라인 백업 사이클. 대상은 report.db + eval.db (voc.db 는 VOC 미사용 중이라 제외, DB 별 prefix 로 rotation) |
 | `REPORT_DB_BACKUP_EXTERNAL_DIR` | (없음) | 지정 시 integrity 통과 백업본을 이 경로로도 복사(best-effort). 같은 디스크 사망 대비 |
 | `REPORT_WEBREPORT_TOTAL_MB` | `1024` | web_report parquet **합계** 상한. 개별 파일은 512MB 고정, 요청 전체는 `MAX_CONTENT_LENGTH_MB` |
 | `WEB_REPORT_PREWARM_QUEUE` | `8` | 업로드 직후 프리웜 대기 큐 상한. 초과 시 가장 오래된 요청 폐기(로그) |
@@ -94,7 +94,13 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 |------|--------|------|
 | `LOG_MAX_MB` | `256` | 활성 콘솔 로그(`server/log/server_*.txt`) 크기 상한 — 초과 시 새 파일로 로테이션. `0` 이하 = 비활성 |
 | `LOG_KEEP_FILES` / `LOG_KEEP_DAYS` | `30` / `14` | 로그 파일 정리 상한(개수/일수) — 기동·로테이션 시 초과분 삭제. faulthandler·metrics 파일도 `LOG_KEEP_DAYS` 준용 |
-| `REPORT_METRICS_FILE_KEEP_DAYS` | `14` | flight recorder(`metrics_YYYYMMDD.log`, 분당 1줄 리소스 추이) 보존 일수. `0` = 비활성 |
+| `LOG_MIN_KEEP_HOURS` | `48` | **이 시간 안쪽 `server_*.txt` 는 개수·용량 상한과 무관하게 보존** — 재기동 폭주(기동 1회=파일 1개)가 원인 구간 로그를 밀어내지 못하게 하는 안전장치 |
+| `LOG_KEEP_TOTAL_MB` | `4096` | `LOG_MIN_KEEP_HOURS` 밖 구간에 적용되는 총 용량 상한 (넘어선 지점부터 과거를 삭제) |
+| `REPORT_METRICS_FILE_KEEP_DAYS` | `14` | flight recorder(`metrics_YYYYMMDD.log`, 분당 1줄 리소스 추이) + `runtime_YYYYMMDD.log` 보존 일수. `0` = 비활성 |
+| `REPORT_RUNTIME_LOG_INTERVAL_SEC` | `300` | `runtime_*.log` 응답시간 스냅샷(p50/p95/p99 + 느린 경로 top5) 기록 주기. 최소 60 |
+| `REPORT_SLOW_REQ_MS` | `10000` | 이 시간을 넘긴 요청을 `runtime_*.log` 에 개별 기록. `0` 이하 = 비활성 |
+| `WATCHDOG_BACKOFF_MAX_PER_HOUR` / `_GAP_MIN` | `3` / `30` | (watchdog.ps1) healthz 계열 재기동 백오프 — 최근 1시간 재기동이 임계 이상이면 마지막 재기동 후 지정 분이 지날 때까지 재기동을 건너뛴다 |
+| `WATCHDOG_BACKOFF_NL_MAX` / `_NL_GAP_MIN` | `6` / `15` | (watchdog.ps1) `not_listening`(프로세스 사망) 백오프 — 가용성 우선이라 더 관대 |
 
 **`server/log/` 파일 종류** (모두 위 정리 정책으로 자동 회수):
 
@@ -104,6 +110,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `faulthandler_<stamp>.txt` | wsgi(부모) | 네이티브 크래시(세그폴트/OS 강제종료) 스택. server_ 와 stamp 공유. **크래시 없으면 0바이트→다음 기동 시 삭제** |
 | `faulthandler_worker_<pid>.txt` | 컴퓨트 워커 | 워커 프로세스 네이티브 크래시(OOM 등) 스택. per-PID |
 | `metrics_YYYYMMDD.log` | metrics 샘플러 | flight recorder — `ts,cpu,rss,mem_used,inflight,win_peak` (분당 1줄). 크래시 직전 리소스 추이 부검용 |
+| `runtime_YYYYMMDD.log` | metrics 샘플러 | 응답시간 스냅샷(`type:lat`, 5분마다) + 느린 요청 개별 기록(`type:slow`, JSON lines). **재시작으로 초기화되지 않는 부하 이력** — admin '이력' 탭이 읽음 |
 | `watchdog_events.log` | watchdog | 재기동/실패 이벤트(JSON lines) — admin 대시보드 현황 탭이 읽음 |
 | `watchdog_checks.log` | watchdog | **매 실행 1줄**(JSON lines) — 실행 빈도 자체. `mutex_busy` = 태스크 겹쳐 뜬 직접 증거 |
 | `watchdog_snap_<stamp>.txt` | watchdog | 재기동 직전 프로세스 부검 + 최신 `server_*.txt` 마지막 20줄 스냅샷(죽은 이유 원문) |
@@ -114,6 +121,22 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 등록된다 — 포트 미리스닝이면 즉시, `/healthz` 무응답이면 2연속 실패 시 자동 재기동.
 재기동 이력은 admin 대시보드 현황 탭 또는 `server/log/watchdog_events.log`.
 수동 점검 시간에는 `schtasks /Change /TN report-server-watchdog /DISABLE` 로 먼저 정지할 것.
+
+**재기동 백오프**(2026-07-23): 재기동해도 낫지 않는 상태에서 10분마다 재기동을 반복하면
+(관측 142회/일 — healthz 상시 실패 시의 이론 최대치 144회에 근접) 서버가 종일 기동 중이라
+오히려 복구를 막고 `server_*.txt` 를 밀어내 원인 추적까지 없앤다. 최근 1시간 재기동이
+`WATCHDOG_BACKOFF_MAX_PER_HOUR` 이상이면 재기동을 건너뛰고(`backoff_skip` 이벤트) 판정만
+기록한다. **판정 로직(포트/healthz/2연속)은 불변**이고 연속 실패 카운터도 유지하므로
+gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 현황 탭 watchdog 타일과
+'이상 징후 요약' 칩에 표시된다.
+
+**원인 추적 (admin 대시보드)**: 현황 탭 **Watchdog 상세** 카드에서 24시간 점검 결과 분포
+(정상/healthz 실패/백오프 억제/재기동/태스크 겹침) · `/healthz` 응답시간 추이 · 최근 점검
+20건(코드·소요·연속실패·부검 스냅샷 링크)을 본다. 스냅샷 링크를 누르면 **console log 탭**이
+그 파일을 연다 — 이 탭은 `server_*.txt` 외에 `watchdog_*` · `metrics_*` · `runtime_*` ·
+`faulthandler_*` · `diagnose_*` 도 선택해 볼 수 있다(그 외 파일은 열람 거부).
+재기동 원인 판별: `healthz_503` = `/healthz` 의 DB 체크 실패(report.db 잠금/디스크),
+`healthz_timeout`(code=0, ms≈30000) = 스레드 고갈·CPU 포화, `not_listening` = 프로세스 사망.
 
 **재기동 폭주 진단** (짧은 시간 다수 재기동이 의심될 때): 운영 PC 에서 관리자 권한으로
 [diagnose_watchdog.ps1](diagnose_watchdog.ps1) 을 1회 실행하면(read-only) events 간격 분석 ·
@@ -180,6 +203,8 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `DELETE` | `/session/<sid>` | 업로더 | 세션 삭제 |
 | `POST` | `/session/<sid>/important` | Honey | 개인 중요표시 토글 |
 | `POST` | `/session/<sid>/private` | 업로더 | 비공개 토글 |
+| `PATCH` | `/session/<sid>/meta` | 편집자 + Honey | 세션 메타 수정 — `{file_name, family_product, product, lot_id, process}`. **`X-Honey-Agent: 1` 필수**(= Honey 앱 전용 강제, CSRF 대체). product 변경 시 product_info.db 재lookup(미등록이면 기준정보 14컬럼 비움). product_type·analysis_key 는 불변 |
+| `GET` | `/honey/session_meta/<sid>` | 공개 | 위 편집창의 **진입 URL** — Honey 내장 브라우저가 네비게이션을 가로채 편집창을 띄우므로 실제로는 요청되지 않는다. 가드 없는 환경용 안내 HTML |
 | `POST` | `/session/<sid>/verify_password` | Honey | **하위호환 스텁** — UA 업로더 확인만, 항상 `has_password:false` |
 | `PATCH` | `/session/<sid>/content` | — | **비활성, 항상 405** (구 xlsx 텍스트 수정 폐기) |
 | `GET`/`POST` | `/session/<sid>/editors` | 업로더 | 편집자 위임 조회/부여 |
@@ -248,8 +273,12 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 
 비-GET 요청은 `X-Admin-Request: 1` 헤더 요구. `GET /` 대시보드 + `GET /api/*`
 (health/storage/s3-status/metrics/stats(daily·users·client_errors)/sessions/users/
-voc(overview·목록, 읽기 전용)/audit(.csv)/logs/tail) +
+voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail) +
 `POST /api/*` (sessions/delete, session/<sid>/important·password, db/backup·cleanup 등).
+운영 진단용 GET 4개: `watchdog`(재기동 이력+reason 분포) · `watchdog/checks?hours=`(매 점검
+기록 요약) · `metrics/history?window=`(in-memory 10초 해상도) · `metrics/file_history?hours=`
+(**파일 기반, 재시작과 무관한 1분 해상도 이력** — 최대 336시간). `logs/tail?file=` 은
+`server/log/` 화이트리스트(server_·watchdog_·metrics_·runtime_·faulthandler_·diagnose_) 밖이면 400.
 구 공개 `/pe/admin` (`admin_routes.py`)은 **미등록 dead file**.
 
 ### 기타

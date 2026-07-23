@@ -65,12 +65,14 @@ web_report/
     ├── summary.py         build_summary_rows (placeholder)
     ├── raw_data.py        build_raw_data_rows(placeholder) + lazy 조회/편집
     ├── yield_tab.py       build_yield_rows / fail_counts / fail_bin_ranking / yield_overview
-    ├── cpk.py             build_cpk_rows(기준 3종: 전체/*_bin1/*_limited) + CPK_THRESHOLD(1.33) + worst_cpk_by_subject
-    ├── issue_table.py     build_issue_table_rows (Yield + 규격내 cpk<1.33 + ETC, comment/Status/숨김은 편집 DB)
+    ├── cpk.py             build_cpk_rows(**Bin1 기준 단일**) + CPK_THRESHOLD(1.33) + worst_cpk_by_subject
+    ├── issue_table.py     build_issue_table_rows (Yield + cpk<1.33 + ETC, comment/Status/숨김은 편집 DB)
     ├── distribution.py    build_distribution_index / scatter_item / build_distribution_compact (lazy)
     ├── trim_analysis.py   build_trim_payload / build_trim_chart (lazy)
     ├── commonality.py     search_chips / chip_percentiles (Commonality 모드)
-    ├── compare.py         build_compare_payload / build_goodlog (Compare 모드)
+    ├── compare.py         build_compare_payload (Compare 모드 — Before/After 그룹 N source.
+    │                       common_map/bin_delta/bin_matrix=전 source, goodlog=그룹 대표 2개,
+    │                       dist_shift/equivalence(동일성 검증 Grade1/2/3)=그룹 pool)
     └── Map_analysis.py    build_map_analysis_rows (wafer map die/bin 집계)
 ```
 

@@ -40,16 +40,18 @@ let distDataCache = {};       // subject → {lower_limit, upper_limit, units, b
 let distColorMap = {};        // source → color
 
 // ── Distribution 산포 탭 (툴바/갤러리/상세) 상태·규격 ─────────────────────────
-// DOWNSAMPLE: 미니셀 표시점 소프트 상한(소스별). 점을 SVG 마커가 아니라 canvas 로 그리게
-// 되어(distPaintPoints) 점 개수 비용이 크게 낮아졌으므로 1500 → 2000 으로 상향(2026-07-20).
-const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 2000, PER_FRAME: 3,
+// DOWNSAMPLE: 미니셀 표시점 소프트 상한(소스별). canvas 전환(distPaintPoints)으로 점 비용이
+// 낮아져 1500 → 2000 으로 올렸다가(2026-07-20), 갤러리·미니셀 렌더 체감을 더 가볍게 하려고
+// 2026-07-23 에 1500 으로 되돌렸다. 이 캡은 표시(브라우저)에만 걸리고 서버 페이로드·상세
+// CDF(item_detail distRenderCdf, 전량 렌더)에는 영향이 없다.
+const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 1500, PER_FRAME: 3,
   ROOT_MARGIN: "1200px 0px", EXCLUDE: ["chipid", "gpib", "otp", "code"],
   // 칸 하나가 그리는 표시점 총예산 — 소스 수로 나눠 소스별 캡을 정한다(distCapFor).
-  // DOWNSAMPLE 이 소스별 상한이라 소스 40개면 칸 하나가 8만 점이 되는데, IssueTable
+  // DOWNSAMPLE 이 소스별 상한이라 소스 40개면 칸 하나가 6만 점이 되는데, IssueTable
   // 미니셀은 높이 112px 라 찍을 수 있는 픽셀이 ~1.7만개뿐이라 전부 덧칠 낭비였다.
-  // 소스가 적으면 나눗셈 결과가 DOWNSAMPLE 로 클램프돼 현행과 완전히 동일하게 동작한다.
-  CELL_BUDGET_MINI: 4000,    // IssueTable 미니셀(112px) — 작아서 더 과감히 줄인다
-  CELL_BUDGET_CARD: 12000,   // 갤러리 카드 · Bin 상세 셀(263×189px)
+  // 소스가 적으면 나눗셈 결과가 DOWNSAMPLE 로 클램프된다(카드 ≤5소스 / 미니 ≤2소스).
+  CELL_BUDGET_MINI: 3000,    // IssueTable 미니셀(112px) — 작아서 더 과감히 줄인다
+  CELL_BUDGET_CARD: 8000,    // 갤러리 카드 · Bin 상세 셀(263×189px)
   MIN_PER_SOURCE: 150,       // 소스가 아무리 많아도 ECDF 형태는 남기는 하한
   // ECDF 세로 점 보간 간격은 데이터에서 유도한다(distStepY) — "단일 데이터 점 1개의 ECDF
   // 증가량". FILL_STEP_Y 는 유효한 riser 가 없는 퇴화 케이스의 폴백 상수일 뿐.
@@ -58,8 +60,9 @@ const DIST = { CPK_GOOD: 1.33, DOWNSAMPLE: 2000, PER_FRAME: 3,
   // 세로 점기둥이 점점이 끊겨 보이므로 이 값으로 캡해 썸네일 누적 0~100% 축에 빈 구간이
   // 없게 한다 — 단일점 riser 도 채우는 표시용 업샘플링(썸네일 한정, 상세 CDF 는 별도 경로).
   FILL_VISUAL_MAX_DY: 0.3,
-  // 세로 채움점 총량 상한(성능). stepY 하한 = 100/FILL_MAX_POINTS 로 표본이 매우 클 때
-  // 채움점 폭증을 막는다(총 채움점 ≤ FILL_MAX_POINTS, 뒤 다운샘플 1500 이 다시 솎음).
+  // 세로 채움점 총량의 절대 상한(성능). 실제 상한은 distStepY 가 유효 캡에 연동해
+  // min(FILL_MAX_POINTS, cap×1.5) 로 잡으므로, 기본 캡 1500 에서는 2250 이 지배하고
+  // 이 3000 은 도달하지 않는다(캡을 다시 2000 이상으로 올릴 때를 위한 천장).
   FILL_MAX_POINTS: 3000,
   // 상세 CDF(item_detail.js distRenderCdf) 렌더 방식 토글 — true: scattergl(WebGL,
   // 대량 포인트 SVG 프리즈 방지) / false: 기존 SVG scatter 로 즉시 롤백.
@@ -681,8 +684,8 @@ function distDownsampleForDisplay(xs, ys, cap) {
   // 출력 불변). 200 → 800 으로 올리면 전량 렌더 대비 픽셀 오차가 조밀 40k 3.3%→1.1%,
   // 초조밀 100k 3.8%→2.2% 로 줄고 점은 소스당 600개 안쪽 증가(캔버스 렌더라 비용 무시 가능).
   // 캡을 올리는 쪽은 대안이 못 된다 — 초조밀에서는 kept 가 어떤 캡보다도 커 하한이 계속 지배한다.
-  // 하한도 캡에 비례시킨다(0.4×) — 기본 캡 2000 에서 정확히 800 이라 기존 경로는 무변경이고,
-  // 다소스 미니셀처럼 캡이 낮으면 하한이 캡을 넘어서는 모순을 막는다.
+  // 하한도 캡에 비례시킨다(0.4×) — 캡이 낮을 때 하한이 캡을 넘어서는 모순을 막는다.
+  // 기본 캡 1500 에서는 600 이 적용된다(캡 2000 시절의 800 에서 같은 비율로 내려감).
   const budget = Math.max(CAP - kept, Math.min(800, Math.round(CAP * 0.4)));
   if (budget > 0 && rest.length > budget) {
     const st = Math.ceil(rest.length / budget);
@@ -729,9 +732,9 @@ function distFillVertical(xs, ys, stepY) {
 // 간격으로 채워져 썸네일 누적축이 끊김 없이 보인다. 조밀한 데이터(stepY≤0.3%)는 캡이
 // no-op 라 기존과 픽셀 동일.
 // 표본이 매우 커 stepY 가 지나치게 잘면 100/fillMax 하한으로 채움점 폭증을 막는다.
-// fillMax 는 유효 캡에 연동한다(cap×1.5) — 기본 캡 2000 이면 정확히 FILL_MAX_POINTS(3000)
-// 라 기존과 동일하고, 다소스 미니셀처럼 캡이 낮으면 3000 개를 채웠다가 150 개만 남기는
-// 낭비를 애초에 안 한다(다운샘플 출력뿐 아니라 채움 계산 비용 자체가 준다).
+// fillMax 는 유효 캡에 연동한다(cap×1.5) — 기본 캡 1500 이면 2250(절대 천장
+// FILL_MAX_POINTS 3000 미만이라 이쪽이 지배), 다소스 미니셀처럼 캡이 낮으면 수천 개를
+// 채웠다가 150 개만 남기는 낭비를 애초에 안 한다(채움 계산 비용 자체가 준다).
 function distStepY(ys, cap) {
   let step = Infinity, prev = 0;
   for (let i = 0; i < ys.length; i++) {
@@ -763,21 +766,6 @@ function distDisplayPoints(entry, cap) {
   let v = m.get(key);
   if (!v) { v = distPointsForDisplay(entry.xs, entry.ys, key); m.set(key, v); }
   return v;
-}
-
-// limitWin(IssueTable CPK 미니셀) 전용 메모. distWindowRenorm 이 매번 새 배열을 반환해
-// 위 메모의 WeakMap 키가 매번 바뀌는 탓에 이 경로만 스크롤 재진입마다 전부 재계산됐다.
-// 안정된 entry 객체를 키로 잡고 규격(lo/hi)·캡이 그대로일 때만 재사용한다.
-// 순서는 그대로 유지: 규격창 재정규화 → 세로채움 → 다운샘플 (재정규화가 표시 변환보다 먼저).
-const _distLimitWinMemo = new WeakMap();
-function distDisplayPointsWindowed(entry, lo, hi, cap) {
-  const key = cap || DIST.DOWNSAMPLE;
-  const c = _distLimitWinMemo.get(entry);
-  if (c && c.lo === lo && c.hi === hi && c.cap === key) return c.out;
-  const w = distWindowRenorm(entry.xs, entry.ys, lo, hi);
-  const out = distPointsForDisplay(w.xs, w.ys, key);
-  _distLimitWinMemo.set(entry, { lo, hi, cap: key, out });
-  return out;
 }
 
 // ── 미니셀 점 렌더: 축·그리드·스펙선은 Plotly, ECDF 점만 canvas 오버레이 ────────
@@ -890,29 +878,6 @@ function distClearPoints(plot) {
 // .distg-plot = 갤러리 카드, .dist-plot = Issue Table 미니셀 + Bin 상세 셀.
 function distRepaintPoints() {
   document.querySelectorAll(".distg-plot, .dist-plot").forEach(p => { if (p._distPts) distDrawPoints(p); });
-}
-
-// ── ECDF [lo,hi] 창 재정규화 — Issue Table CPK 섹션 미니셀 전용(data-limitwin) ──
-// 규격(limit) 안 점만 남기고 누적%를 0~100 으로 재정규화한다. 창 내 재정규화 ECDF 는
-// "규격내 부분표본만으로 만든 ECDF"와 수학적으로 동치라, 행의 cpk_limited(규격내 재계산
-// cpk)와 같은 데이터 기준으로 분포가 그려진다. 다운샘플이 아닌 의미적 필터(서버 bin1
-// 스펙필터와 동급)이며 distFillVertical/다운샘플(표시 변환)보다 먼저 적용해야 한다.
-// 전제·반환 모두 distFillVertical 규약 유지: xs 오름차순, ys 단조·마지막 100, 시작 누적 0.
-function distWindowRenorm(xs, ys, lo, hi) {
-  if ((lo === null || lo === undefined) && (hi === null || hi === undefined)) return { xs, ys };
-  const n = xs.length;
-  if (!n) return { xs, ys };
-  let i0 = 0, i1 = n - 1;
-  if (lo !== null && lo !== undefined) { while (i0 < n && xs[i0] < lo) i0++; }
-  if (hi !== null && hi !== undefined) { while (i1 >= 0 && xs[i1] > hi) i1--; }
-  if (i1 < i0) return { xs: [], ys: [] };   // 규격 안 데이터 없음
-  const yBefore = i0 > 0 ? ys[i0 - 1] : 0;
-  const denom = ys[i1] - yBefore;
-  const oxs = xs.slice(i0, i1 + 1);
-  if (denom <= 0) return { xs: oxs, ys: oxs.map(() => 100) };   // 창 내 단일 고유값
-  const oys = [];
-  for (let k = i0; k <= i1; k++) oys.push((ys[k] - yBefore) / denom * 100);
-  return { xs: oxs, ys: oys };
 }
 
 // 갤러리 미니셀이 쓸 활성 분포 캐시/준비상태 — Bin1 only 토글 시 양품 캐시로 전환.

@@ -128,7 +128,20 @@ def map_key(session, prep_digest: str = "") -> tuple:
 # v13: CPK 행의 stdev 를 반올림 없이(원값) 내보낸다 — CPK/Compare 시트의 stdev **값**이
 #      바뀐다(구조 동일). 안 올리면 옛 disk_cache 가 round(3) 된 stdev 를 계속 반환해
 #      Limit 역산이 예전 값 그대로 나온다.
-REPORT_SCHEMA_VERSION = 13
+# v14: 수율 **분모**를 제품 기준정보 Gross Die 기준으로 전환(세션 옵션 yield_basis=test 면
+#      종전 rawdata 행 수). yield_rows/yield_bin_groups/yield_step_groups/yield_summary 의
+#      % 값이 바뀌고 yield_summary.tested·by_source[].tested·payload.yield_basis 가 추가된다.
+#      안 올리면 옛 disk_cache 가 rawdata 분모로 계산된 payload 를 계속 반환한다.
+# v15: CPK 통계를 **Bin1(양품) 기준 하나로 통일** — cpk_rows 의 base 필드(n/min/median/max/
+#      average/stdev/cp/cpl/cpu/cpk)가 Bin1 값이 되고 *_bin1/*_limited 병기가 사라진다.
+#      CPK 시트 값, Issue Table CPK 섹션 선정·표시값, distribution_index 의 cpk/status,
+#      Compare dist_shift 값이 모두 바뀐다. 안 올리면 옛 disk_cache 가 전체 die 기준 base
+#      필드 + 사라진 *_limited 를 계속 반환해 통일이 조용히 무효화된다.
+# v16: Compare 모드 재정의 — payload["compare"] 에 groups/before_sources/after_sources·
+#      bin_matrix(구 bin_transition 대체)·equivalence(동일성 검증) 추가, common_map.dies 에
+#      source 별 bins 병기, dist_shift 대상이 source 2개→그룹 pool 2개로 바뀐다. 안 올리면
+#      옛 disk_cache 가 bin_transition 만 든 payload 를 반환해 Bin/동일성 탭이 빈 화면이 된다.
+REPORT_SCHEMA_VERSION = 16
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

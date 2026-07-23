@@ -12,6 +12,7 @@ import concurrent.futures
 import contextlib
 import os
 import queue
+import re
 import shutil
 import sys
 import tempfile
@@ -994,12 +995,89 @@ class HoneyMainWindow(QMainWindow):
             self._append_run_log("[Rawdata] 사용자 취소 — Excel 을 닫고 편집을 중단합니다.")
         return True
 
-    def _browser_leave_guard(self, _url):
+    def _browser_leave_guard(self, url):
         """내장 브라우저 네비게이션 가드. Rawdata 편집 중이면 목적지와 무관하게 확인.
-        반환 True=이동 허용, False=차단(현재 세션 유지)."""
+        반환 True=이동 허용, False=차단(현재 세션 유지).
+
+        먼저 'Honey 액션 URL'(웹 버튼 → 클라 기능 호출)인지 본다 — 맞으면 페이지를 옮기지
+        않고 해당 다이얼로그만 띄운다."""
+        if self._handle_honey_action(url):
+            return False
         if not self._excel_edit_running():
             return True
         return self._confirm_cancel_edit()
+
+    # ── 웹 → 클라 액션 브리지 ─────────────────────────────────────────────────
+    # 세션 페이지의 ✏️ 버튼은 /pe/report/honey/session_meta/<sid> 로 '이동'을 시도한다.
+    # 여기서 그 이동을 가로채 취소하고(가드가 False 반환) 편집창을 대신 띄운다 — 별도
+    # 통신 채널(커스텀 스킴·웹소켓)을 만들지 않으려는 선택이다. 커스텀 스킴(honey://)은
+    # QtWebEngine 버전에 따라 이 콜백까지 오지 않을 수 있어 평범한 http 경로를 쓴다.
+    _HONEY_ACTION_RE = re.compile(r"^/pe/report/honey/(?P<action>[a-z_]+)/(?P<sid>[A-Za-z0-9_-]+)$")
+
+    def _handle_honey_action(self, url):
+        """액션 URL 이면 처리를 예약하고 True. 아니면 False(평범한 네비게이션)."""
+        try:
+            m = self._HONEY_ACTION_RE.match(url.path())
+        except Exception:
+            return False
+        if not m or m.group("action") != "session_meta":
+            return False
+        sid = m.group("sid")
+        # 다이얼로그를 이 콜백 안에서 바로 열지 않는다 — Chromium 네비게이션 콜백 안에서
+        # 중첩 이벤트 루프(exec)를 돌리면 안 된다. 콜백이 끝난 뒤 실행하도록 미룬다.
+        QTimer.singleShot(0, lambda: self.on_session_meta_edit(sid))
+        return True
+
+    def on_session_meta_edit(self, session_id):
+        """세션 정보(이름·Family·Product·LOT·Process) 수정 — 업로드 다이얼로그 재사용.
+
+        Product Type 은 바꾸지 않는다(세션 값 고정). 저장하면 서버가 product_info.db 를 다시
+        lookup 해 기준정보(WF Size/Gross Die/PKG/...)까지 갱신하므로 페이지를 새로고침한다."""
+        # 신원 헤더 규칙(HoneyUser/<percent-encoded 계정>)은 Rawdata 허브와 같은 것을 쓴다.
+        from honey_ui.dialogs import SessionMetaDialog
+        from honey_ui.rawdata_hub_dialog import _headers as _honey_headers
+
+        base = SERVER_BASE_URL.rstrip("/")
+        try:
+            r = requests.get(f"{base}/pe/report/session/{session_id}",
+                             headers=_honey_headers(), timeout=(10, 30))
+            r.raise_for_status()
+            session = r.json() or {}
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "세션 정보 수정",
+                                f"세션 정보를 가져오지 못했습니다.\n{exc}")
+            return
+
+        dlg = SessionMetaDialog(self, session)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        v = dlg.values()
+        payload = {k: v[k] for k in
+                   ("file_name", "family_product", "product", "lot_id", "process")}
+        try:
+            r = requests.patch(
+                f"{base}/pe/report/session/{session_id}/meta", json=payload,
+                headers=_honey_headers({"X-Honey-Agent": "1"}), timeout=(10, 30))
+            if r.status_code != 200:
+                detail = ""
+                try:
+                    detail = (r.json() or {}).get("error") or ""
+                except Exception:
+                    detail = r.text[:200]
+                raise RuntimeError(f"({r.status_code}) {detail}")
+        except Exception as exc:  # noqa: BLE001
+            self._append_run_log(f"[세션정보] 저장 실패: {exc}")
+            QMessageBox.warning(self, "세션 정보 수정", f"저장하지 못했습니다.\n{exc}")
+            return
+
+        self._status("세션 정보 수정 완료 — 페이지 새로고침")
+        self._append_run_log(
+            f"[세션정보] 저장 완료 (session {session_id}) — {payload['product']} / "
+            f"{payload['lot_id']}")
+        try:
+            self.browser_panel.view.reload()
+        except Exception:
+            pass
 
     def closeEvent(self, event):
         if self._excel_edit_running():
@@ -1370,8 +1448,10 @@ class HoneyMainWindow(QMainWindow):
                                           for md in work.mass_data_map.values()):
                 raise ValueError("Bin1 Only: Bin 이 1(Pass)인 데이터가 없습니다.")
         if mode_dut:
-            if len(self.csv_paths) != 1:
-                raise ValueError("DUT 정리는 입력 파일이 1개일 때만 가능합니다.")
+            # 기준은 입력 파일 개수가 아니라 honey_parse 가 돌려준 source(df) 개수다.
+            if len(work) != 1:
+                raise ValueError(
+                    f"DUT 정리는 source 가 1개일 때만 가능합니다. (현재 {len(work)}개)")
             work = work.split_by_dut()
         return work
 
@@ -1384,8 +1464,9 @@ class HoneyMainWindow(QMainWindow):
         if not self._rebuild_group(warn=True) or self.group is None:
             return None
 
+        # 모드 활성 조건은 source(honey_parse 반환 df) 개수 기준 — 입력 파일 개수가 아니다.
         dlg = ReportSettingsDialog(
-            self, self.group, len(self.csv_paths), product_type=self.product_type())
+            self, self.group, len(self.group), product_type=self.product_type())
         if not dlg.exec():
             self._status("설정 취소됨 — 다시 Start 로 진행할 수 있습니다.")
             return None
@@ -1498,7 +1579,7 @@ class HoneyMainWindow(QMainWindow):
                 return
             self._run_web_report(ctx["work_group"], ctx["selected"], ctx["sheets"],
                                  compare_mode=ctx["compare_mode"], options=ctx["options"],
-                                 mode=ctx["mode"])
+                                 mode=ctx["mode"], source_order=ctx.get("source_order"))
         finally:
             self._set_busy(False)
 
@@ -1539,22 +1620,26 @@ class HoneyMainWindow(QMainWindow):
                 return key
         return "Normal"
 
-    def _validate_web_mode(self, mode):
-        """선택 모드가 입력 파일 개수에 맞는지 검사. 문제 시 경고 후 False.
+    def _validate_web_mode(self, mode, n_sources):
+        """선택 모드가 source 개수에 맞는지 검사. 문제 시 경고 후 False.
+
+        기준은 입력 파일 개수가 아니라 **honey_parse 가 돌려준 source(df) 개수**다 —
+        여러 입력 파일이 하나로 병합되거나 한 파일이 여러 source 로 나뉠 수 있어,
+        업로드되는 parquet(=source) 개수가 유일한 기준이다.
 
         - Normal: 제한 없음
-        - Compare: 입력 2개 (after/before 비교 — Honey Compare Mode 관례)
-        - DUT: 입력 1개 (DUT/site 별 분할)
-        - Commonality: 입력 1개 (강조 chip 을 웹에서 선택)
+        - Compare: source 2개 이상 (Before/After 두 그룹으로 나눠 비교 — 개수 상한 없음)
+        - DUT: source 1개 (DUT/site 별 분할)
+        - Commonality: source 1개 (강조 chip 을 웹에서 선택)
         """
-        n = len(self.csv_paths)
+        n = n_sources
         if mode in ("DUT", "Commonality") and n != 1:
             QMessageBox.warning(self, "모드 적용 불가",
-                                f"{mode} 모드는 입력 파일이 1개일 때만 가능합니다. (현재 {n}개)")
+                                f"{mode} 모드는 source 가 1개일 때만 가능합니다. (현재 {n}개)")
             return False
-        if mode == "Compare" and n != 2:
+        if mode == "Compare" and n < 2:
             QMessageBox.warning(self, "모드 적용 불가",
-                                f"Compare 모드는 입력 파일이 2개일 때만 가능합니다. (현재 {n}개)")
+                                f"Compare 모드는 source 가 2개 이상일 때만 가능합니다. (현재 {n}개)")
             return False
         return True
 
@@ -1562,12 +1647,13 @@ class HoneyMainWindow(QMainWindow):
         if not self.csv_paths:
             QMessageBox.warning(self, "입력 누락", "먼저 파일을 가져오세요.")
             return None
-        # 분석 모드는 파일 전처리 전에 검증 (개수만 필요)
         mode = self._selected_web_mode()
-        if not self._validate_web_mode(mode):
-            self._status("모드 적용 불가")
-            return None
         if not self._rebuild_group(warn=True) or self.group is None:
+            return None
+        # 모드 검증은 전처리 **후**에 한다 — 기준이 입력 파일 개수가 아니라 honey_parse 가
+        # 돌려준 source 개수라서, 그룹이 만들어져야 개수를 알 수 있다.
+        if not self._validate_web_mode(mode, len(self.group)):
+            self._status("모드 적용 불가")
             return None
         # F10 에서 지정한 Distribution 색(chart_colors.json)을 웹리포트에 실어 보낸다.
         # 색 번호 i = distribution source i 의 색. 미지정이면 기본 팔레트가 실린다.
@@ -1578,7 +1664,16 @@ class HoneyMainWindow(QMainWindow):
         # SourceName(legend) 은 파일마다 달라 매번 확인·변경 후 생성.
         # DUT 모드는 서버가 업로드된 단일 honeyform 의 DUT 컬럼으로 분할·명명(DUT <값>)하므로
         # 클라에서는 분할하지 않고 rename 도 건너뛴다 (df_honey→honeyform 포맷 변환 회피).
-        if mode != "DUT":
+        # Compare 모드는 이름 변경 창 대신 Before/After 배치 창을 띄운다 (이름 변경 포함).
+        source_order = None
+        if mode == "Compare":
+            arranged = self._ask_compare_groups()
+            if arranged is None:
+                return None                      # 취소 = 실행 중단
+            self.group.rename_sources(arranged["names"])
+            options["compare"] = {"before": arranged["before"], "after": arranged["after"]}
+            source_order = arranged["order"]
+        elif mode != "DUT":
             overrides = self._ask_source_names()
             if overrides is not None:
                 self.group.rename_sources(overrides)
@@ -1589,7 +1684,22 @@ class HoneyMainWindow(QMainWindow):
             "compare_mode": (mode == "Compare"),
             "mode": mode,
             "options": options,
+            # Compare 모드의 업로드 순서(After 먼저) — 서버 tables 순서가 곧 이 순서다.
+            "source_order": source_order,
         }
+
+    def _ask_compare_groups(self):
+        """Compare 모드 Before/After 배치. 취소면 None.
+
+        업로드 순서가 [After…, Before…] 가 되므로 서버의 ``tables[0]`` = After 최상단이고,
+        web_report 가 쓰는 limit(HiLIM/LoLIM) 기준·goodlog 의 after 대표가 그 source 가 된다.
+        """
+        from honey_ui.compare_arrange_dialog import CompareArrangeDialog
+        dlg = CompareArrangeDialog(self, list(self.group.names()))
+        if not dlg.exec():
+            self._status("Compare 배치 취소")
+            return None
+        return dlg.result_groups()
 
     def _source_file_name(self, md, fallback):
         try:
@@ -1615,13 +1725,15 @@ class HoneyMainWindow(QMainWindow):
         except Exception:
             return ""
 
-    def _build_webreport_parquets(self, work_group):
+    def _build_webreport_parquets(self, work_group, order=None):
         items = []
         sources = []
         # 중복 항목명 자동 개명 내역 — 워커 스레드에서 도는 함수라 여기서 다이얼로그를 띄우면
         # 안 된다. 모아만 두고 UI 스레드(_run_web_report)가 인코딩 완료 후 안내한다.
         self._webreport_dup_renames = []
-        names = work_group.names()
+        # order: 업로드 순서 지정(Compare 모드의 After→Before). 서버는 이 순서를 그대로
+        # tables 순서로 쓰므로 tables[0] 이 limit 기준 source 가 된다.
+        names = list(order) if order else work_group.names()
         for idx, name in enumerate(names):
             md = work_group.mass_data_map[name]
             # honey_parse 산출물(7-meta honeyform)이 곧 parquet 소스다. 원본 파일을 디스크에서
@@ -1658,17 +1770,20 @@ class HoneyMainWindow(QMainWindow):
             return
         lines = [f"· [{fn}] {old} → {new}" for fn, old, new in renames]
         self._append_run_log("중복 항목명 자동 변경:\n" + "\n".join(lines))
-        shown = lines[:20]
-        if len(lines) > len(shown):
-            shown.append(f"… 외 {len(lines) - len(shown)}건")
-        QMessageBox.warning(
+        # 개명이 수백 건이 되면 QMessageBox 본문으로는 읽을 수 없다(구 구현은 20줄에서
+        # 잘랐다) — 검색·정렬되는 표로 전량을 보여준다.
+        from honey_ui.table_list_dialog import TableListDialog
+        TableListDialog(
             self, "항목명 중복 자동 변경",
-            f"측정 항목 이름이 중복되어 {len(renames)}건을 자동으로 바꿨습니다.\n"
+            f"측정 항목 이름이 중복되어 {len(renames)}건을 자동으로 바꿨습니다. "
             "같은 이름의 두 번째 항목부터 _2, _3 이 붙습니다 "
-            "(첫 번째 항목의 이름은 그대로입니다).\n\n" + "\n".join(shown))
+            "(첫 번째 항목의 이름은 그대로입니다).",
+            ("source", "원본 항목명", "바뀐 이름"),
+            [[fn, old, new] for fn, old, new in renames],
+            csv_name="duplicate_items.csv").exec()
 
     def _run_web_report(self, work_group, selected, sheets, compare_mode=False, options=None,
-                        mode="Normal"):
+                        mode="Normal", source_order=None):
         # 실행 버튼 잠금/해제는 호출부(on_web_report)의 try/finally 가 전담한다.
         self._init_run_log("Web Report 생성")
         progress = _ElapsedProgress(
@@ -1688,7 +1803,7 @@ class HoneyMainWindow(QMainWindow):
             selector=rg.ItemSelector(selected_items=selected),
             compare_mode=compare_mode,
         )
-        fut_encode = prep_ex.submit(self._build_webreport_parquets, work_group)
+        fut_encode = prep_ex.submit(self._build_webreport_parquets, work_group, source_order)
 
         # Distribution pack 프리컴퓨트 — 서버가 영구 저장해 조회·재조회 모두 재정렬 없이
         # 서빙한다. 같은 워커 1개에서 인코딩 완료 후 순차 실행되므로 fut_encode.result() 는

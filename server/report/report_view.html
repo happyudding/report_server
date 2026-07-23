@@ -112,13 +112,6 @@ body {
 .mode-badge.Compare { background: #db2777; }
 .mode-badge.DUT { background: #2563eb; }
 .mode-badge.Commonality { background: #d97706; }
-/* 조회 전처리 배지 (Honey ▸ Rawdata 의 Item Select / Outlier 제거 적용 시에만 표시).
-   원본 데이터가 아니라 '표시 값'이 걸러졌다는 신호라 경고색을 쓴다. */
-.prep-badge {
-  display: inline-block; padding: 3px 11px; border-radius: 4px;
-  font-size: 12px; font-weight: 700; color: #7c2d12;
-  background: #fed7aa; border: 1px solid #fb923c;
-}
 /* ── Compare 탭 ─────────────────────────────────────────────────────────── */
 .compare-wrap { padding: 4px 2px 40px; }
 .compare-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -149,6 +142,22 @@ body {
 .compare-table td.cmp-up { color: #b91c1c; }
 .compare-table td.cmp-down { color: #1d4ed8; }
 .compare-table .cmp-pass-row { background: #f0fdf4; }
+.compare-table td.cmp-pass-cell { background: #f0fdf4; }
+/* 동일성 검증 — 강조 3종: AVG차(%)>임계 / CPK<임계 / Grade3 */
+.compare-table td.eq-bad { background: #fee2e2; color: #b91c1c; font-weight: 600; }
+.compare-table td.eq-grade { text-align: center; }
+.compare-table td.eq-grade3 { background: #fecaca; color: #7f1d1d; font-weight: 700; }
+.eq-summary { margin-bottom: 10px; }
+.eq-legend { margin: 0 0 10px; }
+/* Compare 표 가로 스크롤 — Win11 오버레이 스크롤바는 스크롤 중에만 보여 "가로 스크롤이
+   없는 것처럼" 보인다. goodlog(.gl-hscroll)와 같은 처방으로 항상 보이게 그린다. */
+.cmp-scroll { overflow-x: auto; }
+.cmp-scroll::-webkit-scrollbar { height: 12px; }
+.cmp-scroll::-webkit-scrollbar-track { background: #f0f2f5; border-radius: 6px; }
+.cmp-scroll::-webkit-scrollbar-thumb { background: #9aa7b5; border-radius: 6px; border: 2px solid #f0f2f5; }
+.cmp-scroll::-webkit-scrollbar-thumb:hover { background: #7b8a9b; }
+/* Bin 불일치 좌표는 die 수만큼 길어질 수 있어 칸 안에서 세로로도 스크롤한다. */
+.cmp-binmatrix-wrap { max-height: 520px; overflow-y: auto; }
 /* goodlog(테스트 프로그램 diff) — Honey Compare Mode 색상 관례: True 초록/False 빨강 배경 */
 .compare-table td.gl-true { background: #c6efce; color: #1e6b30; text-align: center; }
 .compare-table td.gl-false { background: #ffc7ce; color: #9c0006; text-align: center; }
@@ -291,6 +300,12 @@ body {
 .yield-overview .yo-num { font-size: 17px; font-weight: 700; color: #222; }
 .yield-overview .yo-label { font-size: 11px; color: #888; margin-top: 2px; }
 .yield-overview .yo-stat.yo-fail .yo-num { color: #d9480f; }
+/* 수율 분모 기준 배지 — Gross Die 기준이면 미측정 die 때문에 Pass+Fail < Total 일 수 있어
+   무엇을 분모로 썼는지 항상 눈에 보이게 한다. */
+.yield-overview .yo-basis {
+  font-size: 11px; color: #4a6da8; background: #eaf1fd; border: 1px solid #cddcf5;
+  border-radius: 999px; padding: 3px 10px; white-space: nowrap;
+}
 /* source/step 별 수율을 메인 Total Yield 오른쪽에 작은 테이블로 이어 붙인다(세로 공간 차지 X). */
 .yield-by-source, .yield-by-step {
   align-self: center; max-height: 132px; overflow-y: auto;
@@ -1587,6 +1602,9 @@ html[data-theme="dark"] .yield-overview { background: #1c2330; border-color: #2c
 html[data-theme="dark"] .yield-overview .yo-pct { color: #7fb3ef; }
 html[data-theme="dark"] .yield-overview .yo-num { color: #d7dbe2; }
 html[data-theme="dark"] .yield-overview .yo-label { color: #8b94a3; }
+html[data-theme="dark"] .yield-overview .yo-basis {
+  color: #9dc0ef; background: #22304a; border-color: #33456a;
+}
 html[data-theme="dark"] .yield-by-source,
 html[data-theme="dark"] .yield-by-step { background: #1e2128; border-color: #2c3a52; }
 html[data-theme="dark"] .yield-step-title { color: #7fb3ef; border-color: #2c3a52; }
@@ -1704,6 +1722,12 @@ html[data-theme="dark"] .cmp-chip.cmp-unique { background: #46201f; color: #f3a3
 html[data-theme="dark"] .compare-table td.cmp-up { color: #f08c8c; }
 html[data-theme="dark"] .compare-table td.cmp-down { color: #7fa8f5; }
 html[data-theme="dark"] .compare-table .cmp-pass-row { background: #16281c; }
+html[data-theme="dark"] .compare-table td.cmp-pass-cell { background: #16281c; }
+html[data-theme="dark"] .compare-table td.eq-bad { background: #46201f; color: #f3a3a8; }
+html[data-theme="dark"] .compare-table td.eq-grade3 { background: #5a1f22; color: #ffb4b8; }
+html[data-theme="dark"] .cmp-scroll::-webkit-scrollbar-track { background: #1c2029; }
+html[data-theme="dark"] .cmp-scroll::-webkit-scrollbar-thumb { background: #4a5261; border-color: #1c2029; }
+html[data-theme="dark"] .cmp-scroll::-webkit-scrollbar-thumb:hover { background: #5d6879; }
 html[data-theme="dark"] .compare-table td.gl-true { background: #1d4527; color: #a7e3b4; }
 html[data-theme="dark"] .compare-table td.gl-false { background: #4d2023; color: #f3a3a8; }
 html[data-theme="dark"] .compare-table td.gl-gap-red { color: #f08c8c; }
@@ -1950,6 +1974,7 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
     <div class="topbar-actions" id="topbarActions">
       <button class="btn-topbar-save" id="btnSaveComment" title="변경사항 저장">💾</button>
       <button class="btn-topbar-star" id="btnImportant" title="중요 표시(오래된 세션 자동삭제에서 제외)">☆</button>
+      <button class="btn-topbar-edit" id="btnMetaEdit" title="세션 정보 수정 (이름·Product·LOT·Process — Honey 앱)">✏️</button>
       <button class="btn-topbar-lock" id="btnPrivate" title="비공개 표시">🔓</button>
       <button class="btn-topbar-del"  id="btnDel" title="삭제">🗑</button>
     </div>

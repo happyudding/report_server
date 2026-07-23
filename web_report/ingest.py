@@ -134,10 +134,12 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     sources_manifest = manifest.get("sources") or []
     selected_items = manifest.get("selected_items") or []
 
-    # Compare 모드는 정확히 2개 파일만 허용 (Honey Compare Mode 관례: after/before 2개).
-    if mode == "Compare" and len(files) != 2:
+    # Compare 모드는 source 2개 이상(상한 없음) — Before/After 두 그룹으로 나눠 비교한다
+    # (배치는 Honey 가 options.compare 로 실어 보낸다). files = 업로드된 parquet = source 1:1
+    # 이므로 입력 파일 개수가 아니라 source 개수 기준이다.
+    if mode == "Compare" and len(files) < 2:
         raise ValueError(
-            f"Compare 모드는 입력 파일이 2개일 때만 가능합니다 (현재 {len(files)}개)")
+            f"Compare 모드는 source 가 2개 이상일 때만 가능합니다 (현재 {len(files)}개)")
 
     file_hashes = []
     decoded = []

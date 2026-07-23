@@ -1,4 +1,4 @@
-"""DB 주기 백업 스케줄러 (report.db + eval.db + voc.db).
+"""DB 주기 백업 스케줄러 (report.db + eval.db).
 
 WAL 모드에서는 파일 단순 복사(shutil.copy)가 -wal 미반영/파손 위험이 있으므로
 반드시 sqlite3 backup API(src.backup(dst))로 온라인 백업한다 (백업 중 쓰기는
@@ -35,11 +35,11 @@ def _targets():
 
     product_info.db 는 외부 PC 에서 만들어 손으로 배치하는 읽기전용 사본이라 제외한다
     (유실돼도 원본에서 재생성 — config.py PRODUCT_INFO_DB_PATH 주석 참조).
+    voc.db 는 VOC 기능 미사용 중이라 백업 제외 (재사용 시 이 목록에 복원).
     """
     pairs = [
         (config.REPORT_DB_PATH, "report"),
         (config.REPORT_EVAL_DB_PATH, "eval"),
-        (config.REPORT_VOC_DB_PATH, "voc"),
     ]
     return [(p, prefix) for p, prefix in pairs if p.exists()]
 

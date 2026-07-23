@@ -139,12 +139,41 @@ def s3_status():
     return storage_gateway.s3_health()
 
 
+def _wd_epoch(rec):
+    """watchdog 로그의 ts('2026-07-23T13:50:25') → epoch. 파싱 실패는 0."""
+    try:
+        return time.mktime(time.strptime(rec.get("ts", ""), "%Y-%m-%dT%H:%M:%S"))
+    except (ValueError, OverflowError):
+        return 0
+
+
+def _read_json_lines(path, tail):
+    """watchdog 이 남긴 JSON lines 파일의 마지막 tail 줄을 파싱 (best-effort)."""
+    out = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()[-tail:]
+    except OSError:
+        return out
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            out.append(json.loads(ln))
+        except ValueError:
+            pass
+    return out
+
+
 def watchdog_status(limit=10):
     """watchdog(server/watchdog.ps1) 상태 요약 — 현황 탭 타일용.
 
     - watchdog.state 의 mtime = 마지막 점검 시각 (파일 없으면 미등록/미실행).
     - watchdog_events.log(JSON lines) 에서 재기동 이력 집계. 이벤트 파일은
-      watchdog 이 1MB 캡으로 자체 관리하므로 전량 읽어도 가볍다."""
+      watchdog 이 1MB 캡으로 자체 관리하므로 전량 읽어도 가볍다.
+    - reason 분포는 "왜 재기동했나"(healthz_503=DB 체크 실패 / healthz_timeout=지연 /
+      not_listening=프로세스 사망)를 대시보드에서 바로 가르기 위한 것이다."""
     log_dir = config.ROOT_DIR / "server" / "log"
     last_check = None
     try:
@@ -152,34 +181,62 @@ def watchdog_status(limit=10):
     except OSError:
         pass
 
-    events = []
-    try:
-        with (log_dir / "watchdog_events.log").open("r", encoding="utf-8",
-                                                    errors="replace") as f:
-            lines = f.readlines()[-500:]
-        for ln in lines:
-            ln = ln.strip()
-            if not ln:
-                continue
-            try:
-                events.append(json.loads(ln))
-            except ValueError:
-                pass
-    except OSError:
-        pass
-
-    def _epoch(e):
-        try:
-            return time.mktime(time.strptime(e.get("ts", ""), "%Y-%m-%dT%H:%M:%S"))
-        except (ValueError, OverflowError):
-            return 0
+    # backoff_skip 이벤트가 늘어 500줄로는 24h 를 못 덮을 수 있어 2000줄까지 읽는다
+    # (파일 자체가 1MB 캡이라 전량 읽어도 가볍다).
+    events = _read_json_lines(log_dir / "watchdog_events.log", 2000)
 
     restarts = [e for e in events if e.get("event") in ("restart", "restart_fail")]
     cutoff = time.time() - 86400
+    reasons = {}
+    for e in restarts:
+        if _wd_epoch(e) >= cutoff:
+            r = e.get("reason") or "?"
+            reasons[r] = reasons.get(r, 0) + 1
+    skips = [e for e in events if e.get("event") == "backoff_skip"]
     return {
         "registered": last_check is not None,
         "last_check": last_check,
-        "restarts_24h": sum(1 for e in restarts if _epoch(e) >= cutoff),
+        "restarts_24h": sum(1 for e in restarts if _wd_epoch(e) >= cutoff),
         "restarts_total": len(restarts),
+        "reasons_24h": reasons,
+        "backoff_skips_24h": sum(1 for e in skips if _wd_epoch(e) >= cutoff),
+        "last_backoff": skips[-1] if skips else None,
         "events": events[-limit:][::-1],  # 최신 먼저
+    }
+
+
+def watchdog_checks(hours=24, max_points=300):
+    """watchdog_checks.log(매 점검 1줄) 요약 — 재기동 원인 추적용.
+
+    events 가 '재기동했다'만 남기는 데 비해 checks 는 매 5분 점검 결과 전부를 남긴다.
+    ok 가 한 건도 없으면 폭주(healthz 상시 실패), mutex_busy 가 많으면 태스크 겹침이다.
+    checks 도 1MB 캡이라 요청 구간이 파일보다 길 수 있어 coverage_from(가장 오래된 ts)을
+    함께 돌려준다."""
+    log_dir = config.ROOT_DIR / "server" / "log"
+    recs = _read_json_lines(log_dir / "watchdog_checks.log", 4000)
+    cutoff = time.time() - max(1, hours) * 3600
+    win = [r for r in recs if _wd_epoch(r) >= cutoff]
+
+    counts = {}
+    for r in win:
+        k = r.get("result") or "?"
+        counts[k] = counts.get(k, 0) + 1
+
+    # healthz 응답시간 추이 — 리스닝 상태에서 실제로 healthz 를 호출한 점검만
+    hz = [r for r in win if r.get("ms") is not None]
+    if len(hz) > max_points:  # 스트라이드 다운샘플 (추이만 보면 되므로 균등 간격)
+        step = (len(hz) + max_points - 1) // max_points
+        hz = hz[::step]
+    series = {
+        "ts": [int(_wd_epoch(r)) for r in hz],
+        "ms": [r.get("ms") or 0 for r in hz],
+        "code": [r.get("code") or 0 for r in hz],
+    }
+    return {
+        "hours": hours,
+        "total": len(win),
+        "counts": counts,
+        "hz_series": series,
+        "recent": win[-30:][::-1],  # 최신 먼저
+        "coverage_from": int(_wd_epoch(recs[0])) if recs else None,
     }

@@ -12,13 +12,14 @@ from .tabs.distribution import build_distribution_index
 from .tabs.issue_table import build_issue_bin_summary
 from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
                              build_yield_step_groups, fail_counts_by_source,
-                             yield_overview)
+                             gross_die_value, source_totals, yield_overview)
 
 
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
                          issue_comments=None, summary_engr=None, product_type="", product="",
                          mode="Normal", dist_colors=None, ai_comments=None,
-                         issue_hidden=None, issue_status=None) -> dict:
+                         issue_hidden=None, issue_status=None, gross_die=None,
+                         compare_groups=None) -> dict:
     """Distribution ECDF(대용량)는 payload 에 싣지 않고 항상 지연 로드한다
     (distribution_deferred=True, sheets["Distribution"]=[]) — 프런트가 별도 lazy 엔드포인트
     (GET .../web_report/distribution)로 받아간다. distribution_index(경량)는 항상 포함.
@@ -29,7 +30,11 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     DUT 는 source 가 이미 DUT별로 분할돼 있으나 **Map Analysis 만** 하나의 맵으로 병합한다
     (ctx.mode 로 build_map_analysis_rows 에 전달 — 나머지 탭은 DUT 비교 렌더). Compare 는 추가
     비교 시트(Compare Stats/Compare Bin/Common Map)를 얹는다. Commonality 의 chip 강조는
-    프런트가 기존 distribution/scatter 데이터로 처리하므로 payload 분기는 없다."""
+    프런트가 기존 distribution/scatter 데이터로 처리하므로 payload 분기는 없다.
+
+    gross_die: 수율 **분모**로 쓸 제품 기준정보 Gross Die (None 이거나 값이 유효하지 않으면
+    종전처럼 소스별 rawdata 행 수). 세션 옵션이 "Test data 개수" 면 호출자(service)가
+    None 을 넘긴다 — 여기서는 값 유무만 본다."""
     selected_set = {str(v) for v in (selected_items or []) if str(v)}
     if selected_set:
         for table in tables:
@@ -44,7 +49,10 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     # 내려보낸다(프런트 "P/F 없애기" 토글이 필터). data 전무 항목만 제외한다.
     dist_excluded = empty_items(tables)
     fail_counts = {table.source: fail_counts_by_source(table) for table in tables}
-    yield_rows = build_yield_rows(tables, fail_counts)
+    # 수율 분모: Gross Die(있으면) → 없으면 소스별 rawdata 행 수 폴백.
+    gross = gross_die_value(gross_die)
+    totals = source_totals(tables, gross)
+    yield_rows = build_yield_rows(tables, fail_counts, totals=totals)
     cpk_rows = build_cpk_rows(tables, stat_items)
 
     ctx = TabContext(
@@ -69,7 +77,10 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     payload = {
         "mode": mode or "Normal",
         "sources": sources,
-        "yield_summary": yield_overview(tables, yield_rows),
+        "yield_summary": yield_overview(tables, yield_rows, totals=totals),
+        # 수율 분모 기준(프런트 요약 박스 배지·Excel 주석용). basis="gross" 면 gross_die 가
+        # 분모, "test" 면 소스별 rawdata 행 수. gross_die 가 없어 폴백한 경우도 "test".
+        "yield_basis": {"basis": "gross" if gross else "test", "gross_die": gross},
         "issue_bin_summary": build_issue_bin_summary(yield_rows),
         # yield_bin_groups: Bin 병합(전체 기준) 그룹 — Excel 내보내기가 사용(유지).
         "yield_bin_groups": build_yield_bin_groups(yield_rows),
@@ -88,8 +99,11 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     }
 
     # Compare 모드: source 2개 이상일 때만 비교 분석을 얹는다 (단일 source 는 비교 대상 없음).
+    # compare_groups(세션 옵션의 Before/After 배치)가 없으면 compare 쪽이 legacy 폴백한다.
     if mode == "Compare" and len(tables) >= 2:
         from .tabs.compare import build_compare_payload
-        payload["compare"] = build_compare_payload(tables, all_items, cpk_rows)
+        payload["compare"] = build_compare_payload(
+            tables, all_items, cpk_rows, stat_items=stat_items,
+            compare_groups=compare_groups)
 
     return payload

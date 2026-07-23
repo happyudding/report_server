@@ -106,14 +106,14 @@ pre.logbox {
 .chart-legend { display: flex; gap: 16px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
 .chart-legend .key { display: inline-flex; align-items: center; gap: 6px; }
 .chart-legend .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-#chartTip, #mChartTip {
+#chartTip, .m-tip {
   position: absolute; pointer-events: none; display: none; z-index: 5;
   background: var(--surface-1); border: 1px solid var(--grid); border-radius: 8px;
   box-shadow: 0 2px 10px rgba(0,0,0,.35); padding: 8px 12px; font-size: 12px; color: var(--ink-1);
 }
-#chartTip .t-date, #mChartTip .t-date { font-weight: 600; margin-bottom: 4px; }
-#chartTip .t-row, #mChartTip .t-row { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
-#chartTip .sw, #mChartTip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+#chartTip .t-date, .m-tip .t-date { font-weight: 600; margin-bottom: 4px; }
+#chartTip .t-row, .m-tip .t-row { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
+#chartTip .sw, .m-tip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer; margin-top: 8px; }
 
 /* 클릭 가능한 현황 타일 — 관련 상세 탭으로 이동 */
@@ -149,6 +149,8 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
 <div class="tabs">
   <button class="tab active" data-panel="pHealth"
           title="서버 CPU·RAM·디스크·업타임과 리소스 시계열 — 서버가 건강한지 먼저 보는 곳">현황</button>
+  <button class="tab" data-panel="pHistory"
+          title="파일로 남은 부하 이력 — 서버가 재시작돼도 사라지지 않는 리소스·응답시간·느린 요청">이력</button>
   <button class="tab" data-panel="pStorage"
           title="로컬 디스크 사용량을 범주별·세션별로 보고 용량 큰 세션을 정리">스토리지</button>
   <button class="tab" data-panel="pStats"
@@ -214,8 +216,27 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
         <span class="key"><span class="sw" style="background:var(--s-delete)"></span>동시 처리 요청 (구간 피크)</span>
       </div>
       <svg id="inflightChart" width="100%" height="110" viewBox="0 0 900 110" preserveAspectRatio="none"></svg>
-      <div id="mChartTip"></div>
+      <div id="mChartTip" class="m-tip"></div>
     </div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card" id="wdDetailCard">
+    <h2>Watchdog 상세 <span class="hint">매 5분 점검 기록 — 재기동 원인을 여기서 확인 (자동 갱신 없음)</span>
+      <button class="btn" id="btnWdRefresh" style="float:right"
+              title="watchdog_checks.log 를 다시 읽습니다">새로고침</button></h2>
+    <div id="wdCounts" class="det" style="margin-bottom:10px">불러오려면 새로고침을 누르세요.</div>
+    <div class="chart-box">
+      <div class="chart-legend">
+        <span class="key"><span class="sw" style="background:var(--accent)"></span>/healthz 응답시간</span>
+      </div>
+      <svg id="wdHzChart" width="100%" height="110" viewBox="0 0 900 110" preserveAspectRatio="none"></svg>
+      <div class="m-tip"></div>
+    </div>
+    <div class="table-wrap" style="margin-top:12px"><table>
+      <thead><tr><th>점검 시각</th><th>결과</th><th class="num">code</th><th class="num">ms</th>
+        <th class="num">연속실패</th><th>부검 스냅샷</th></tr></thead>
+      <tbody id="wdChecksBody"><tr class="empty-row"><td colspan="6">-</td></tr></tbody>
+    </table></div>
   </div>
   <div class="row">
     <div class="card">
@@ -231,6 +252,60 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
       <button class="btn primary" id="btnS3Check"
               title="S3 endpoint 에 실제로 접속해 버킷 접근이 되는지 확인합니다">S3 상태 확인</button>
       <div class="msg" id="s3Msg">아직 확인 안 함</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 이력 (파일 기반 — 서버 재시작 무관) ═══ -->
+<div id="pHistory" class="panel">
+  <div class="card">
+    <h2>부하 이력 <span class="hint">1분 해상도 · 파일에 기록되어 서버가 재시작돼도 사라지지 않음 (현황 탭 시계열은 10초 해상도 실시간)</span>
+      <span style="float:right">
+        <select id="histHours" class="sel" title="조회 기간">
+          <option value="24" selected>최근 24시간</option>
+          <option value="72">최근 3일</option>
+          <option value="168">최근 7일</option>
+          <option value="336">최근 14일</option>
+        </select>
+        <button class="btn primary" id="btnHistRefresh" title="이력 파일을 다시 읽습니다">새로고침</button>
+      </span></h2>
+    <div class="msg" id="histInfo">로딩 중…</div>
+    <div class="chart-box">
+      <div class="chart-legend">
+        <span class="key"><span class="sw" style="background:var(--st-warn)"></span>CPU 최대(분 단위)</span>
+      </div>
+      <svg id="histCpuChart" width="100%" height="130" viewBox="0 0 900 130" preserveAspectRatio="none"></svg>
+      <div class="chart-legend" style="margin-top:10px">
+        <span class="key"><span class="sw" style="background:var(--s-upload)"></span>시스템 RAM</span>
+        <span class="key"><span class="sw" style="background:var(--s-edit)"></span>프로세스 RSS</span>
+      </div>
+      <svg id="histRamChart" width="100%" height="130" viewBox="0 0 900 130" preserveAspectRatio="none"></svg>
+      <div class="chart-legend" style="margin-top:10px">
+        <span class="key"><span class="sw" style="background:var(--s-delete)"></span>동시 처리 요청(피크)</span>
+      </div>
+      <svg id="histInflightChart" width="100%" height="110" viewBox="0 0 900 110" preserveAspectRatio="none"></svg>
+      <div class="chart-legend" style="margin-top:10px">
+        <span class="key"><span class="sw" style="background:var(--accent)"></span>응답시간 p95</span>
+        <span class="key"><span class="sw" style="background:var(--st-warn)"></span>p99</span>
+      </div>
+      <svg id="histLatChart" width="100%" height="110" viewBox="0 0 900 110" preserveAspectRatio="none"></svg>
+      <div class="m-tip"></div>
+    </div>
+  </div>
+  <div class="row">
+    <div class="card">
+      <h2>느린 요청 <span class="hint" id="histSlowHint">임계 초과 요청만 기록</span></h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>시각</th><th>경로</th><th class="num">소요</th></tr></thead>
+        <tbody id="histSlowBody"><tr class="empty-row"><td colspan="3">-</td></tr></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <h2>무거운 경로 <span class="hint">기간 내 스냅샷에 상위로 잡힌 endpoint</span></h2>
+      <div class="table-wrap"><table>
+        <thead><tr><th>경로</th><th class="num">호출</th><th class="num">최대</th></tr></thead>
+        <tbody id="histRouteBody"><tr class="empty-row"><td colspan="3">-</td></tr></tbody>
+      </table></div>
     </div>
   </div>
 </div>
@@ -531,6 +606,10 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
   <div class="card">
     <h2>서버 로그 tail <span class="hint">서버 로그 파일의 마지막 부분 · 레벨/검색은 받아온 범위 안에서 즉시 필터(재조회 없음) · 더 과거는 크기를 늘려 새로고침</span>
       <span style="float:right">
+        <select id="logFile" class="sel" style="max-width:260px"
+                title="server 로그 외에 watchdog 이벤트·점검 기록·재기동 직전 부검 스냅샷도 볼 수 있습니다">
+          <option value="">(최신 server 로그)</option>
+        </select>
         <select id="logLevel" class="sel" title="표시할 최소 로그 레벨 — 에러만 골라 봅니다 (Traceback 블록 포함)">
           <option value="">전체</option>
           <option value="warn">WARNING+</option>
@@ -655,9 +734,9 @@ async function postJSON(url, body) {
 // ── 탭 ──────────────────────────────────────────────────────────────────────
 const loadedTabs = new Set();
 const TAB_LOADERS = {
-  pHealth: loadHealth, pStorage: loadStorageTab, pStats: loadStats, pSessions: loadSessions,
-  pEval: loadEvalTab, pUsers: loadUsersTab, pVoc: loadVocTab, pDb: loadDb, pLogs: loadLogs,
-  pAudit: loadAudit,
+  pHealth: loadHealth, pHistory: loadHistoryTab, pStorage: loadStorageTab, pStats: loadStats,
+  pSessions: loadSessions, pEval: loadEvalTab, pUsers: loadUsersTab, pVoc: loadVocTab,
+  pDb: loadDb, pLogs: () => { loadLogFileList(); loadLogs(); }, pAudit: loadAudit,
 };
 document.querySelectorAll(".tab").forEach(btn => {
   btn.onclick = () => {
@@ -694,14 +773,19 @@ function showAuditQuery(q) {
 }
 // 특정 키워드/레벨로 console log 탭 이동 (런타임 에러 타일 드릴다운). 로그를 새로
 // 받아온 뒤(loadLogs) renderLog 가 설정한 레벨/검색을 적용한다.
-function showLogsFor(grep, level) {
+// file 을 주면 그 로그 파일(예: watchdog 부검 스냅샷)을 열고 레벨 필터는 끈다.
+async function showLogsFor(grep, level, file) {
   const btn = document.querySelector('.tab[data-panel="pLogs"]');
   if (!btn) return;
-  $("logLevel").value = level || "error";
+  $("logLevel").value = (level === "all") ? "" : (level || "error");
   $("logGrep").value = grep || "";
   const wasLoaded = loadedTabs.has("pLogs");
   btn.click();
-  if (wasLoaded) loadLogs();
+  if (file) {
+    await loadLogFileList();
+    $("logFile").value = file;
+  }
+  if (wasLoaded || file) loadLogs();
 }
 
 // ── 현황 ────────────────────────────────────────────────────────────────────
@@ -724,6 +808,7 @@ $("healthWarnBody").addEventListener("click", e => {
   if (!chip) return;
   const go = chip.dataset.go;
   if (go === "audit:client_error") showAuditFor("client_error");
+  else if (go === "wd:detail") { loadWatchdogDetail(); $("wdDetailCard").scrollIntoView({ behavior: "smooth", block: "center" }); }
   else if (go === "logs:locked") showLogsFor("locked", "error");
   else if (go === "logs:compute") showLogsFor("compute", "error");
   else if (go === "tab:pDb") document.querySelector('.tab[data-panel="pDb"]').click();
@@ -733,7 +818,7 @@ async function loadHealth() {
   try {
     const h = await getJSON("api/health");
     let wdTile = "";
-    let ceCount = 0, wdRestarts24 = 0, badBackups = 0;
+    let ceCount = 0, wdRestarts24 = 0, badBackups = 0, wdSkips = 0;
     try {
       const w = await getJSON("api/watchdog");
       wdRestarts24 = w.registered ? (w.restarts_24h || 0) : 0;
@@ -744,10 +829,16 @@ async function loadHealth() {
         <div class="det">server\\register_watchdog.bat 관리자 실행으로 등록</div></div>`;
       } else {
         const last = w.events.length ? w.events[0] : null;
+        // reason 분포 — healthz_503(DB 체크 실패) / healthz_timeout(지연) / not_listening(프로세스
+        // 사망) 중 무엇인지가 원인 추적의 출발점이라 타일에서 바로 보여준다.
+        const reasons = Object.entries(w.reasons_24h || {}).sort((a, b) => b[1] - a[1]);
+        wdSkips = w.backoff_skips_24h || 0;
         wdTile = `
       <div class="tile"><div class="lbl">Watchdog 자동복구</div>
         <div class="val" style="font-size:20px${w.restarts_24h > 0 ? ";color:#dc2626" : ""}">24h 재기동 ${w.restarts_24h}회</div>
         <div class="det">기록상 총 ${w.restarts_total}회 · 마지막 점검 ${fmtClock(w.last_check)}${
+          reasons.length ? `<br>원인(24h): ${reasons.map(([r, n]) => `${esc(r)} ${n}`).join(" · ")}` : ""}${
+          wdSkips ? `<br><span style="color:#f59e0b">⏸ 백오프 억제 ${wdSkips}회 — 재기동해도 낫지 않아 간격을 늘림</span>` : ""}${
           last ? `<br>최근: ${esc((last.ts || "").replace("T", " "))} ${esc(last.event || "")} (${esc(last.reason || "")})` : ""}</div></div>`;
       }
     } catch (e) { /* watchdog 타일은 best-effort */ }
@@ -795,7 +886,9 @@ async function loadHealth() {
     else if (h.disk_percent >= 80) _warnHealth.push({ level: "warn", text: `디스크 ${h.disk_percent.toFixed(0)}%` });
     if (h.mem_percent >= 90) _warnHealth.push({ level: "crit", text: `RAM ${h.mem_percent.toFixed(0)}%` });
     else if (h.mem_percent >= 85) _warnHealth.push({ level: "warn", text: `RAM ${h.mem_percent.toFixed(0)}%` });
-    if (wdRestarts24 > 0) _warnHealth.push({ level: "warn", text: `Watchdog 재기동 ${wdRestarts24}회(24h)` });
+    if (wdRestarts24 >= 10) _warnHealth.push({ level: "crit", text: `Watchdog 재기동 폭주 ${wdRestarts24}회(24h)`, go: "wd:detail" });
+    else if (wdRestarts24 > 0) _warnHealth.push({ level: "warn", text: `Watchdog 재기동 ${wdRestarts24}회(24h)`, go: "wd:detail" });
+    if (wdSkips > 0) _warnHealth.push({ level: "warn", text: `Watchdog 백오프 억제중 ${wdSkips}회(24h)`, go: "wd:detail" });
     if (ceCount > 0) _warnHealth.push({ level: "warn", text: `클라이언트 오류 ${ceCount}건(24h)`, go: "audit:client_error" });
     if (badBackups > 0) _warnHealth.push({ level: "warn", text: `백업 실패본 ${badBackups}개`, go: "tab:pDb" });
     renderWarnings();
@@ -842,8 +935,10 @@ function fmtClock(unix) {
   const d = new Date(unix * 1000);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-function renderMetricsChart(svg, ts, series, fmtV, yMaxFixed) {
+function renderMetricsChart(svg, ts, series, fmtV, yMaxFixed, fmtX) {
   // series: [{arr, color, label, area}] — area 시리즈는 면적 채움, 나머지는 라인만
+  // fmtX: x축/툴팁 시각 포맷 (생략 시 HH:MM — 하루 넘는 구간은 날짜까지 넣어 전달)
+  const fx = fmtX || fmtClock;
   const W = 900, H = +svg.getAttribute("height"), padL = 56, padR = 10, padT = 8, padB = 20;
   const plotW = W - padL - padR, plotH = H - padT - padB;
   const n = ts.length;
@@ -865,7 +960,7 @@ function renderMetricsChart(svg, ts, series, fmtV, yMaxFixed) {
   }
   const labelEvery = Math.max(1, Math.floor(n / 6));
   for (let i = 0; i < n; i += labelEvery)
-    parts.push(`<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#6f737e">${fmtClock(ts[i])}</text>`);
+    parts.push(`<text x="${x(i)}" y="${H - 6}" text-anchor="middle" font-size="10" fill="#6f737e">${fx(ts[i])}</text>`);
   for (const s of series) {
     const pts = s.arr.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
     if (s.area)
@@ -877,13 +972,16 @@ function renderMetricsChart(svg, ts, series, fmtV, yMaxFixed) {
   parts.push(`<rect class="m-hit" x="${padL}" y="${padT}" width="${plotW}" height="${plotH}" fill="transparent"/>`);
   svg.innerHTML = parts.join("");
 
-  const tip = $("mChartTip");
+  // 툴팁은 같은 chart-box 안의 것을 쓴다 (카드마다 하나 — 없으면 툴팁 없이 차트만)
+  const box0 = svg.closest(".chart-box");
+  const tip = box0 ? box0.querySelector(".m-tip") : null;
   const hit = svg.querySelector(".m-hit");
+  if (!tip) return;
   hit.addEventListener("mousemove", ev => {
     const svgBox = svg.getBoundingClientRect();
     const px = (ev.clientX - svgBox.left) / svgBox.width * W - padL;
     const i = Math.max(0, Math.min(n - 1, Math.round(px / (plotW / (n - 1)))));
-    tip.innerHTML = `<div class="t-date">${fmtClock(ts[i])}</div>` + series.map(s =>
+    tip.innerHTML = `<div class="t-date">${fx(ts[i])}</div>` + series.map(s =>
       `<div class="t-row"><span class="sw" style="background:${s.color}"></span>${s.label} ${fmtV(s.arr[i])}</div>`).join("");
     const box = svg.parentElement.getBoundingClientRect();
     tip.style.display = "block";
@@ -930,6 +1028,100 @@ async function loadMetrics() {
   }
 }
 $("metricsWindow").onchange = () => loadMetrics();
+
+// ── 이력 탭 (파일 기반 — 재시작과 무관) ──────────────────────────────────────
+// 현황 탭 시계열은 in-memory 라 재기동마다 초기화된다. watchdog 재기동이 잦을수록
+// 정작 필요한 순간에 비어 있으므로, 파일에 남은 1분 해상도 이력을 여기서 본다.
+function fmtDayClock(unix) {
+  const d = new Date(unix * 1000);
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+async function loadHistoryTab() {
+  const info = $("histInfo");
+  info.textContent = "불러오는 중…";
+  try {
+    const h = await getJSON("api/metrics/file_history?hours=" + $("histHours").value);
+    const r = h.resource, fx = h.hours > 24 ? fmtDayClock : fmtClock;
+    info.innerHTML = r.ts.length
+      ? `${r.ts.length}개 구간 · 기록 시작 ${fmtDate(h.coverage_from)} · 파일 ${h.files.length}개`
+      : `이력 파일이 아직 없습니다 — 샘플러가 분당 1줄씩 쌓습니다 (server/log/metrics_*.log)`;
+    renderMetricsChart($("histCpuChart"), r.ts, [
+      { arr: r.cpu_max, color: "var(--st-warn)", label: "CPU 최대", area: true },
+    ], v => v.toFixed(0) + "%", 100, fx);
+    renderMetricsChart($("histRamChart"), r.ts, [
+      { arr: r.mem_used_max, color: "var(--s-upload)", label: "시스템 RAM", area: true },
+      { arr: r.rss_max, color: "var(--s-edit)", label: "프로세스 RSS" },
+    ], fmtBytes, null, fx);
+    renderMetricsChart($("histInflightChart"), r.ts, [
+      { arr: r.inflight_max, color: "var(--s-delete)", label: "동시 요청", area: true },
+    ], v => String(Math.round(v)), null, fx);
+    renderMetricsChart($("histLatChart"), h.lat.ts, [
+      { arr: h.lat.p95, color: "var(--accent)", label: "p95", area: true },
+      { arr: h.lat.p99, color: "var(--st-warn)", label: "p99" },
+    ], v => Math.round(v) + "ms", null, fx);
+
+    $("histSlowHint").textContent = `${Math.round(h.slow_threshold_ms)}ms 초과 요청만 기록 · 최근 100건`;
+    $("histSlowBody").innerHTML = (h.slow || []).map(s =>
+      `<tr><td>${fmtDate(s.ts)}</td><td>${esc(s.route || "-")}</td>
+        <td class="num">${(s.ms / 1000).toFixed(1)}s</td></tr>`).join("")
+      || `<tr class="empty-row"><td colspan="3">임계 초과 요청 없음</td></tr>`;
+    $("histRouteBody").innerHTML = (h.top_routes || []).map(t =>
+      `<tr><td>${esc(t.route)}</td><td class="num">${t.count}</td>
+        <td class="num">${Math.round(t.max_ms)}ms</td></tr>`).join("")
+      || `<tr class="empty-row"><td colspan="3">-</td></tr>`;
+  } catch (e) {
+    info.textContent = "조회 실패: " + e;
+  }
+}
+$("btnHistRefresh").onclick = () => loadHistoryTab();
+$("histHours").onchange = () => loadHistoryTab();
+
+// ── Watchdog 상세 (재기동 원인 추적) ─────────────────────────────────────────
+// 자동 갱신 루프에 넣지 않는다 — 1MB 로그 파싱을 10초마다 돌릴 이유가 없고,
+// 이 카드는 '문제가 생겼을 때 열어보는' 화면이다.
+const WD_RESULT_LABEL = {
+  ok: "정상", healthz_fail: "healthz 실패", restart_ok: "재기동",
+  restart_fail: "재기동 실패", backoff_skip: "백오프 억제", mutex_busy: "태스크 겹침",
+};
+async function loadWatchdogDetail() {
+  const body = $("wdChecksBody"), counts = $("wdCounts");
+  counts.textContent = "불러오는 중…";
+  try {
+    const c = await getJSON("api/watchdog/checks?hours=24");
+    const order = ["ok", "healthz_fail", "backoff_skip", "restart_ok", "restart_fail", "mutex_busy"];
+    const seen = Object.keys(c.counts || {});
+    const parts = order.concat(seen.filter(k => !order.includes(k)))
+      .filter(k => c.counts[k]).map(k => `${WD_RESULT_LABEL[k] || k} ${c.counts[k]}`);
+    counts.innerHTML = `최근 24시간 점검 ${c.total}회 — ${parts.join(" · ") || "기록 없음"}`
+      + (c.coverage_from ? ` <span class="hint">(로그 보존 시작 ${fmtDate(c.coverage_from)})</span>` : "");
+    const s = c.hz_series;
+    renderMetricsChart($("wdHzChart"), s.ts, [
+      { arr: s.ms, color: "var(--accent)", label: "healthz", area: true },
+    ], v => Math.round(v) + "ms", null);
+    body.innerHTML = (c.recent || []).slice(0, 20).map(r => {
+      const bad = r.result !== "ok";
+      const snap = r.snap
+        ? `<a href="#" class="wd-snap" data-file="${esc(r.snap)}" title="재기동 직전 서버 로그 20줄">${esc(r.snap)}</a>`
+        : (r.detail ? `<span class="hint">${esc(r.detail)}</span>` : "-");
+      return `<tr><td>${esc((r.ts || "").replace("T", " "))}</td>
+        <td${bad ? ' style="color:#dc2626"' : ""}>${esc(WD_RESULT_LABEL[r.result] || r.result || "-")}</td>
+        <td class="num">${r.code == null ? "-" : r.code}</td>
+        <td class="num">${r.ms == null ? "-" : r.ms}</td>
+        <td class="num">${r.fails == null ? "-" : r.fails}</td>
+        <td>${snap}</td></tr>`;
+    }).join("") || `<tr class="empty-row"><td colspan="6">점검 기록 없음 (watchdog 미등록?)</td></tr>`;
+  } catch (e) {
+    counts.textContent = "조회 실패: " + e;
+    body.innerHTML = `<tr class="empty-row"><td colspan="6">-</td></tr>`;
+  }
+}
+$("btnWdRefresh").onclick = () => loadWatchdogDetail();
+$("wdChecksBody").addEventListener("click", e => {
+  const a = e.target.closest("a.wd-snap");
+  if (!a) return;
+  e.preventDefault();
+  showLogsFor("", "all", a.dataset.file);   // 부검 스냅샷을 console log 탭에서 열기
+});
 
 // next_run 이 GRACE(초) 넘게 지났는데 안 돌면 스케줄러 정지/지연 의심.
 const SCHED_OVERDUE_GRACE = 600;
@@ -1821,10 +2013,24 @@ function filterLog(text, level, grep) {
   return { text: kept.join("\n"), matched: keptLines, total: total };
 }
 let _logRaw = "", _logFile = "", _logSize = 0;
+// 파일 목록 — server 로그뿐 아니라 watchdog 이벤트/점검/부검 스냅샷·metrics·runtime 도 포함.
+// 재기동 폭주 시 원인을 이 화면에서 끝까지 추적할 수 있게 하는 것이 목적이다.
+async function loadLogFileList() {
+  const sel = $("logFile"), keep = sel.value;
+  try {
+    const r = await getJSON("api/logs/list");
+    sel.innerHTML = `<option value="">(최신 server 로그)</option>` + (r.files || []).map(f =>
+      `<option value="${esc(f.name)}">${esc(f.name)} · ${fmtBytes(f.bytes)} · ${fmtDate(f.mtime)}</option>`).join("");
+    sel.value = keep;
+    if (sel.value !== keep) sel.value = "";   // 목록에서 사라진 파일(정리됨)
+  } catch (e) { /* 목록은 best-effort — 실패해도 최신 server 로그는 볼 수 있다 */ }
+}
 async function loadLogs() {
   $("logBox").textContent = "로딩 중…";
   try {
-    const r = await getJSON("api/logs/tail?bytes=" + $("logBytes").value);
+    const name = $("logFile").value;
+    const r = await getJSON("api/logs/tail?bytes=" + $("logBytes").value
+                            + (name ? "&file=" + encodeURIComponent(name) : ""));
     _logRaw = r.text || ""; _logFile = r.file || ""; _logSize = r.size || 0;
     renderLog();
     $("logBox").scrollTop = $("logBox").scrollHeight;
@@ -1838,8 +2044,9 @@ function renderLog() {
   $("logInfo").textContent = (f.matched == null) ? base
     : `${base} · ${f.matched}줄 매칭 / 전체 ${f.total}줄`;
 }
-$("btnLogRefresh").onclick = loadLogs;
+$("btnLogRefresh").onclick = () => { loadLogFileList(); loadLogs(); };
 $("logBytes").onchange = loadLogs;
+$("logFile").onchange = loadLogs;
 $("logLevel").onchange = renderLog;
 $("logGrep").addEventListener("input", renderLog);
 

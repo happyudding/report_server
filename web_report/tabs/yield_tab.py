@@ -90,9 +90,31 @@ def fail_counts_by_source(table) -> Counter:
     return counts
 
 
-def build_yield_rows(tables, fail_counts):
+def gross_die_value(gross_die):
+    """세션 기준정보 gross_die(TEXT) → 양의 정수 또는 None(사용 불가 → rawdata 폴백)."""
+    if gross_die is None:
+        return None
+    try:
+        value = int(float(str(gross_die).strip().replace(",", "")))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def source_totals(tables, gross_die=None) -> dict:
+    """소스별 수율 **분모**.
+
+    gross_die(제품 기준정보, product_info.db)가 유효하면 소스마다 그 값을 쓰고, 없거나
+    형식이 이상하면 종전처럼 그 소스의 rawdata 행 수로 폴백한다. 분자(pass/fail die 수)는
+    어느 경우에도 실측값 그대로다 — 여기서 바꾸는 것은 분모뿐이다.
+    """
+    denom = gross_die_value(gross_die)
+    return {t.source: (denom if denom else len(t.data)) for t in tables}
+
+
+def build_yield_rows(tables, fail_counts, totals=None):
     rows = []
-    totals = {t.source: len(t.data) for t in tables}
+    totals = dict(totals) if totals else {t.source: len(t.data) for t in tables}
     item_meta = _item_meta(tables)
 
     pass_row = {"step": "", "bin": PASS_BIN, "TNO": "", "Item": "Pass"}
@@ -178,6 +200,8 @@ def build_yield_bin_groups(yield_rows):
 # 행)은 2026-07-21 부터 **누적** 기준이다: 분모는 똑같이 전체 rawdata 로 고정하고 분자에서만
 # 그 STEP 까지의 fail 을 누적 차감한다 — P1 = (전체 − P1)/전체, P2 = (전체 − P1 − P2)/전체.
 # 개별 bin fail 행의 % 는 이 누적과 무관하게 (그 bin 자신의 fail / 전체) 그대로다.
+# 2026-07-23: "전체"(분모)는 기본이 **제품 기준정보의 Gross Die** 이고, 값이 없거나 세션
+# 옵션이 "Test data 개수" 면 rawdata 행 수로 폴백한다(source_totals). 분자는 항상 실측이다.
 
 def _step_order_key(step):
     """STEP 정렬 키: P<n> 은 숫자순(P1<P2<P3), 그 외 이름은 알파벳, 빈 값은 맨 뒤."""
@@ -228,7 +252,7 @@ def build_yield_step_groups(yield_rows):
     return out
 
 
-def yield_step_summary(tables, yield_rows):
+def yield_step_summary(tables, yield_rows, totals=None):
     """상단 요약 박스용 STEP 요약 행: STEP 별 fail die 수 + 전체 rawdata 기준 **누적** 수율%.
 
     분모는 항상 전체 die 수(total)로 고정하고, 분자에서만 그 STEP 까지의 fail 을 누적
@@ -245,11 +269,14 @@ def yield_step_summary(tables, yield_rows):
     그대로고, ``survivor``/``yield_pct``/``step_yield_pct``/``avg_yield_pct`` 가 누적 기준으로
     바뀐다. ``cum_fail``(누적 fail)을 새로 병기해 survivor + cum_fail == entered 가 pooled·
     소스별 양쪽에서 항상 성립한다(= 화면의 "Pass / In" 과 "Fail" 이 모순되지 않게 하는 키).
+
+    ``totals`` 로 소스별 분모를 주면 그 값을 entered 로 쓴다(Gross Die 기준, source_totals).
+    주지 않으면 종전처럼 rawdata 행 수다.
     """
     fail_rows = [r for r in (yield_rows or [])
                  if str(r.get("bin")).strip() != PASS_BIN and r.get("Item")]
     ordered, step_fail = _step_fail_counts(tables, fail_rows)
-    src_totals = {t.source: len(t.data) for t in tables}
+    src_totals = dict(totals) if totals else {t.source: len(t.data) for t in tables}
     total = sum(src_totals.values())
     cum_by_src = {t.source: 0 for t in tables}   # 소스별 누적 fail (STEP 순회하며 증가)
     out = []
@@ -287,32 +314,42 @@ def yield_step_summary(tables, yield_rows):
     return out
 
 
-def yield_overview(tables, yield_rows):
+def yield_overview(tables, yield_rows, totals=None):
     """Yield 탭 상단 요약 박스: 전체 pass/fail/total count + 종합 yield% + 소스별 수율.
 
     yield_rows[0] 은 build_yield_rows 가 항상 추가하는 Pass 행이므로 그 값을 소스별로 합산한다.
-    by_source: 소스마다 {source, yield_pct, pass, fail, total} (Total Yield 소스별 표시용).
+    by_source: 소스마다 {source, yield_pct, pass, fail, total, tested} (Total Yield 소스별 표시용).
+
+    ``totals`` 로 소스별 분모(Gross Die 기준)를 주면 ``total``·``yield_pct`` 가 그 값을 쓴다.
+    ``pass``/``fail`` 은 **언제나 실측 die 수**(fail = 측정 die − pass)이므로, Gross Die 기준
+    에서는 pass + fail < total 일 수 있다(= 미측정 die). 그 간극을 감추지 않도록 실제 측정
+    die 수를 ``tested`` 로 병기한다.
     """
-    total = sum(len(t.data) for t in tables)
+    src_totals = dict(totals) if totals else {t.source: len(t.data) for t in tables}
+    total = sum(src_totals.get(t.source, len(t.data)) for t in tables)
+    tested = sum(len(t.data) for t in tables)
     pass_row = yield_rows[0] if yield_rows else {}
     passed = sum(int(pass_row.get(f"{t.source}_count") or 0) for t in tables)
-    failed = max(total - passed, 0)
+    failed = max(tested - passed, 0)
     yield_pct = round(passed / total * 100.0, 2) if total else 0.0
 
     by_source = []
     for t in tables:
-        t_total = len(t.data)
+        t_total = src_totals.get(t.source, len(t.data))
+        t_tested = len(t.data)
         t_pass = int(pass_row.get(f"{t.source}_count") or 0)
         by_source.append({
             "source": t.source,
             "yield_pct": round(t_pass / t_total * 100.0, 2) if t_total else 0.0,
             "pass": t_pass,
-            "fail": max(t_total - t_pass, 0),
+            "fail": max(t_tested - t_pass, 0),
             "total": t_total,
+            "tested": t_tested,
         })
 
     return {"yield_pct": yield_pct, "pass": passed, "fail": failed, "total": total,
-            "by_source": by_source, "by_step": yield_step_summary(tables, yield_rows)}
+            "tested": tested, "by_source": by_source,
+            "by_step": yield_step_summary(tables, yield_rows, totals=src_totals)}
 
 
 def _row_total_count(row):

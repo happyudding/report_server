@@ -108,6 +108,7 @@
 | 검색결과 필터/목록 컬럼 | [02](02_server_query_edit.md) | `history()`, `get_history()` ([routes_misc.py](../server/report/routes_misc.py) / [sessions.py](../server/database/sessions.py)) |
 | 세션 상세에 데이터 추가 | [02](02_server_query_edit.md) | `session_full()` ([routes_session.py](../server/report/routes_session.py)) |
 | web_report comment/override 편집 | — | [web_report/edits.py](../web_report/edits.py) + [database/webreport_edits.py](../server/database/webreport_edits.py) (세션 편집 DB — manifest 불변) |
+| 세션 메타(이름·Product·LOT·Process) 수정 | [02](02_server_query_edit.md) | `PATCH /session/<sid>/meta` ([routes_session.py](../server/report/routes_session.py)) + Honey `SessionMetaDialog` ([05](05_client_ui.md)) — 웹 ✏️ → 내장 브라우저 가드 브리지 |
 | 수정 모드 저장 동작 (구 xlsx) | [02](02_server_query_edit.md) | `update_session_content()` — 비활성(항상 405) |
 | DB 컬럼/테이블 추가 | [03](03_storage.md) | [database/core.py](../server/database/core.py) `SCHEMA`, `_migrate()` (report_db.py 는 facade) |
 | web_report 캐시 키/무효화 | — | [web_report/cache_policy.py](../web_report/cache_policy.py) (키 구성 단일 진실) |

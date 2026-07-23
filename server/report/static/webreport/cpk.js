@@ -6,22 +6,20 @@ const CPK_NUMERIC = new Set(["lower_limit", "upper_limit", "n", "min", "median",
 const CPK_WARN_THRESHOLD = 1.33;   // 기본 임계값 (item_detail/Issue Table 하이라이트는 이 고정값 사용)
 const CPK_PAGE_SIZE = 100;    // 페이지당 표시 행 수
 
-// 기준(basis) 3상 토글: 전체(모든 die) → Bin1(양품, BIN==1 만) → Limit 안(규격내 전체 die).
-// "Bin1(양품)"=실제 BIN==1 만 추린 데이터, "Limit 안"=BIN 무관 [LSL,USL] 안 값만 재계산 —
-// 두 정의는 다르다. Issue Table CPK 섹션은 항상 "Limit 안"(cpk_limited) 기준으로 선정·표시.
+// 기준(basis)은 **Bin1(양품, BIN==1) 하나로 통일**돼 있다 (2026-07-23, UX 간편화).
+// 종전 3상 토글(전체/Bin1/Limit 안)은 제거했다 — 서버 cpk_rows 의 base 필드가 곧 Bin1
+// 통계이며(web_report/tabs/cpk.py), Issue Table·Distribution·Excel 도 같은 값을 쓴다.
 // 버튼 라벨은 전부 "현재 적용 중인 값"만 쓴다(누르면 바뀔 값이 아님) — 툴바 왼쪽 라벨이
 // 무슨 구분인지 설명한다.
-const CPK_BASIS_ORDER = ["all", "bin1", "limited"];
-const CPK_BASIS_LABELS = { all: "All", bin1: "Bin1 only", limited: "In Limit only" };
-const CPK_BASIS_SUFFIX = { bin1: "_bin1", limited: "_limited" };
-let cpkBasis = "all";         // 현재 기준 — CPK_BASIS_ORDER 순환
 let cpkShowLowOnly = true;    // 기본값: 임계 미만 항목만 항목명 순으로 정렬해 보여줌
 // CPK 임계값 — 사용자가 툴바에서 직접 입력한다(기본 1.33). 필터·셀 강조·빈 메시지가 이 값을 쓴다.
 // cpkLowInputRaw 는 입력 중 원문(빈 문자열·"1." 같은 중간 상태 허용), cpkLowThreshold 는
 // 마지막으로 유효했던 숫자 — 입력이 잠깐 비어도 필터가 튀지 않게 분리해 둔다.
 let cpkLowThreshold = CPK_WARN_THRESHOLD;
 let cpkLowInputRaw = String(CPK_WARN_THRESHOLD);
-let cpkAbnormalMode = "all"; // 3상: "all"=전체(기본)·"only"=비정상만·"exclude"=비정상 제외
+// "동일Limit" 3상: "exclude"=제외(기본)·"all"=전체·"only"=그 항목만.
+// 판정 기준은 cpkIsAbnormal 참조(상·하한 동일 또는 CPK 계산 불가) — 화면 라벨만 "동일Limit".
+let cpkAbnormalMode = "exclude";
 let cpkHideCodeUnit = false;  // 켜면 Unit(단위)이 CODE 인 항목(디지털 code 값) 숨김
 let cpkSearchTerm = "";       // subject/source 검색어 (실시간 필터)
 let cpkSourceFilter = "";     // 특정 source 만 표시 (빈 문자열 = 전체 source)
@@ -35,22 +33,9 @@ let cpkTargetResults = new Map(); // 역산 결과: 행 키 → {lo, hi}
 
 function cpkRowKey(r) { return `${r.subject}||${r.source}`; }
 
-// abnormal 3상 토글: 버튼 라벨 + 클릭 시 순환 순서(정리 → 제외 → 전체 → …).
-const CPK_ABN_LABELS = { only: "abnormal only", exclude: "abnormal 제외", all: "ALL" };
-const CPK_ABN_ORDER = ["only", "exclude", "all"];
-
-// 기준에 따라 값이 달라지는 통계 컬럼(전체 ↔ Bin1 ↔ Limit안). limit/units/subject/source 는 무관.
-const CPK_STAT_FIELDS = ["n", "min", "median", "max", "average", "stdev", "cp", "cpl", "cpu", "cpk"];
-// 활성 기준(전체/Bin1/Limit안)의 통계값을 base 컬럼 이름에 채운 표시용 복사본을 만든다.
-// Bin1 기준이면 *_bin1, Limit안 기준이면 *_limited 값을 base 이름으로 옮겨, 이후
-// 필터·정렬·렌더·역산이 모두 base 이름만 써도 활성 기준으로 동작하게 한다.
-function cpkBasisRow(r) {
-  const suf = CPK_BASIS_SUFFIX[cpkBasis];
-  if (!suf) return r;
-  const o = { ...r };
-  for (const f of CPK_STAT_FIELDS) o[f] = r[f + suf];
-  return o;
-}
+// 동일Limit 3상 토글: 버튼 라벨 + 클릭 시 순환 순서(제외(기본) → 전체 → 그 항목만 → …).
+const CPK_ABN_LABELS = { exclude: "동일Limit 제외", all: "ALL", only: "동일Limit only" };
+const CPK_ABN_ORDER = ["exclude", "all", "only"];
 
 function cpkFmt(x) { return Number(x.toFixed(4)); }
 
@@ -66,7 +51,7 @@ function cpkSigmaText(v) {
 // 목표 Cpk 로부터 선택 행의 규격 한계 역산 (평균 중심 대칭: avg ± 3·Cpk·stdev).
 // 결과는 누적된다 — 이전 역산값을 지우지 않고 현재 선택 행만 덮어쓴다. 항목마다 다른
 // Margin 으로 나눠 역산하려면 체크 → 역산 → 체크해제 → 다른 항목 체크 → 역산 을 반복한다.
-// (전체 초기화는 "역산값 지우기" 버튼 / 기준(Data 구분) 변경 / Limit 계산 모드 해제)
+// (전체 초기화는 "역산값 지우기" 버튼 / Limit 계산 모드 해제)
 // 단 **복사는 누적분 전체가 아니라 지금 체크된 행만** 대상이다 — 누적 역산 후 원하는 행을
 // 다시 체크하고 "역산값 복사"를 누르면 그 행들만 나온다.
 function cpkComputeTargets() {
@@ -75,9 +60,9 @@ function cpkComputeTargets() {
   const sheets = webReportSheets();
   const byKey = new Map((sheets ? (sheets["CPK"] || []) : []).map(r => [cpkRowKey(r), r]));
   for (const key of cpkSelected) {
-    const row0 = byKey.get(key);
-    if (!row0) continue;
-    const row = cpkBasisRow(row0);   // 활성 기준(전체/Bin1/Limit안)의 average/stdev 로 역산
+    const row = byKey.get(key);
+    if (!row) continue;
+    // average/stdev 는 Bin1 기준 단일 값(서버 통일) — 표에 보이는 값 그대로 역산한다.
     const avg = parseFloat(row.average), sd = parseFloat(row.stdev);
     if (isNaN(avg) || isNaN(sd) || sd <= 0) continue;   // 계산 불가 → 빈칸
     const d = 3 * cpk * sd;
@@ -100,8 +85,8 @@ function updateCpkSelInfo() {
   el.textContent = `선택 ${cpkSelected.size}개 · 역산값 ${cpkTargetResults.size}개 · 복사 대상 ${copyable}개`;
 }
 
-// "abnormal" 판정: ① Limit(하한==상한) 동일 ② CPK 값 없음 → 비정상.
-// cpkBasisRow 로 활성 기준(전체/Bin1)의 cpk 가 채워진 행에 적용한다.
+// "동일Limit" 판정: ① Limit(하한==상한) 동일 ② CPK 값 없음 → 대상.
+// cpk 는 Bin1 기준 단일 값이라 별도 기준 정규화 없이 행을 그대로 본다.
 function cpkIsAbnormal(r) {
   const lo = parseFloat(r.lower_limit), hi = parseFloat(r.upper_limit);
   if (!isNaN(lo) && !isNaN(hi) && lo === hi) return true;   // Limit 동일
@@ -128,9 +113,8 @@ function cpkSourceList(rows) {
 // 표시용 행 목록 생성. 각 행에 _key(원본 subject/source 기준 안정 키)를 붙여 접힌 행도
 // 개별 선택이 가능하게 한다. (select-all 계산과 cpkTableHtml 이 공용으로 사용)
 function cpkBodyRows(rows) {
-  rows = rows.map(cpkBasisRow);   // 활성 기준(전체/Bin1)으로 통계 컬럼 정규화
-  if (cpkAbnormalMode === "exclude") rows = rows.filter(r => !cpkIsAbnormal(r));     // 비정상 제외
-  else if (cpkAbnormalMode === "only") rows = rows.filter(r => cpkIsAbnormal(r));    // 비정상만 (all=필터 없음)
+  if (cpkAbnormalMode === "exclude") rows = rows.filter(r => !cpkIsAbnormal(r));     // 동일Limit 제외
+  else if (cpkAbnormalMode === "only") rows = rows.filter(r => cpkIsAbnormal(r));    // 동일Limit 만 (all=필터 없음)
   if (cpkShowLowOnly) {
     // cpk 값 내림/오름차순이 아니라 같은 Item name 끼리 묶여 보이도록 항목명(subject) 순으로 정렬.
     return rows
@@ -158,7 +142,7 @@ function cpkBodyRows(rows) {
 // 재정렬이 0회가 된다. 원본 rows 는 identity 로 비교한다(payload 교체 시 자동 무효화).
 let _cpkRowsMemo = null;
 function cpkDisplayRows(rows) {
-  const sig = JSON.stringify([cpkBasis, cpkAbnormalMode, cpkShowLowOnly,
+  const sig = JSON.stringify([cpkAbnormalMode, cpkShowLowOnly,
     cpkLowThreshold, cpkHideCodeUnit, cpkSearchTerm, cpkSourceFilter]);
   if (_cpkRowsMemo && _cpkRowsMemo.rows === rows && _cpkRowsMemo.sig === sig) {
     return _cpkRowsMemo.out;
@@ -278,27 +262,19 @@ function renderCpk() {
     `<div class="cpk-toolbar">` +
     `<input type="text" id="cpkSearchInput" data-no-dirty placeholder="항목/source 검색" value="${esc(cpkSearchTerm)}">` +
     `<select id="cpkSourceSel" title="특정 source 만 표시">${sourceOpts}</select>` +
-    `<span class="cpk-tool-group"><span class="cpk-tool-label">Data 구분</span>` +
-    `<button type="button" id="cpkBasisBtn" class="btn-sm${cpkBasis !== "all" ? " active" : ""}" title="현재 적용 중인 데이터 범위(클릭하면 순환): 'All'=모든 die → 'Bin1 only'=실제 BIN==1 만 → 'In Limit only'=BIN 무관 규격([LSL,USL]) 안 값만 재계산. Issue Table CPK 섹션은 항상 'In Limit only' 기준.">${CPK_BASIS_LABELS[cpkBasis]}</button></span>` +
     `<span class="cpk-tool-group"><span class="cpk-tool-label">CPK 구분</span>` +
     `<input type="number" id="cpkLowInput" min="0" step="0.01" value="${esc(cpkLowInputRaw)}" title="CPK 임계값 — 이 값 미만인 항목만 추려 보거나(버튼) 표에서 노랗게 강조한다.">` +
     `<button type="button" id="cpkLowBtn" class="btn-sm${cpkShowLowOnly ? " active" : ""}" title="현재 적용 중인 CPK 필터(클릭하면 전환): 'ALL'=전체 항목 · 'CPK &lt; 임계값'=임계 미만 항목만 항목명 순 정렬">` +
     `${cpkLowBtnLabel()}</button></span>` +
-    `<span class="cpk-tool-group"><span class="cpk-tool-label">Abnormal 구분</span>` +
-    `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkAbnormalMode !== "all" ? " active" : ""}" title="현재 적용 중인 abnormal 필터(클릭하면 순환): 'abnormal only'=비정상 항목만 → 'abnormal 제외'=비정상 제외한 나머지 → 'ALL'=전체 표시. 비정상 판정 기준: ① 상·하한(Limit)이 같아 공차가 0인 항목, ② CPK 계산 불가(값 없음).">${CPK_ABN_LABELS[cpkAbnormalMode]}</button></span>` +
+    `<span class="cpk-tool-group"><span class="cpk-tool-label">동일Limit 구분</span>` +
+    `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkAbnormalMode !== "all" ? " active" : ""}" title="현재 적용 중인 동일Limit 필터(클릭하면 순환): '동일Limit 제외'(기본)=해당 항목을 뺀 나머지 → 'ALL'=전체 표시 → '동일Limit only'=해당 항목만. 판정 기준: ① 상·하한(Limit)이 같아 공차가 0인 항목, ② CPK 계산 불가(값 없음).">${CPK_ABN_LABELS[cpkAbnormalMode]}</button></span>` +
     `<button type="button" id="cpkCodeUnitBtn" class="btn-sm${cpkHideCodeUnit ? " active" : ""}" title="켜짐: 단위(Unit)가 CODE 인 항목(디지털 code 값, 공정능력 지표가 무의미) 숨김 · 꺼짐: 전체 표시">Unit CODE 제거</button>` +
     `<button type="button" id="cpkTargetBtn" class="btn-sm${cpkTargetMode ? " active" : ""}">Limit 계산</button>` +
-    `<button type="button" class="btn-sm tab-excel-btn" id="cpkExcelBtn" title="Honey Excel Download 의 CPK 시트와 동일한 xlsx 다운로드 (전체 기준·화면 필터 무관)">Excel Down</button></div>` +
+    `<button type="button" class="btn-sm tab-excel-btn" id="cpkExcelBtn" title="Honey Excel Download 의 CPK 시트와 동일한 xlsx 다운로드 (Bin1 기준·화면 필터 무관)">Excel Down</button></div>` +
     targetBar +
     `<div id="cpkTableHost"></div>`;
   renderCpkTable();
   updateCpkSelInfo();
-  document.getElementById("cpkBasisBtn").addEventListener("click", () => {
-    cpkBasis = CPK_BASIS_ORDER[(CPK_BASIS_ORDER.indexOf(cpkBasis) + 1) % CPK_BASIS_ORDER.length];
-    cpkTargetResults.clear();   // 기준이 바뀌면 이전 역산(Limit 계산) 결과는 무효
-    cpkPage = 1;
-    renderCpk();
-  });
   document.getElementById("cpkLowBtn").addEventListener("click", () => {
     cpkShowLowOnly = !cpkShowLowOnly;
     cpkPage = 1;

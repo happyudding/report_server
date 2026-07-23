@@ -8,6 +8,12 @@ function _cmpNum(v, digits) {
   if (typeof v !== "number") return esc(String(v));
   return Number.isInteger(v) ? String(v) : v.toFixed(digits == null ? 3 : digits);
 }
+// 반올림 없이 서버가 준 값 그대로 (stdev 전용 — 서버도 stdev 만 round 하지 않는다,
+// web_report/tabs/cpk.py `_stats_batch`). 표시상 자릿수를 줄이면 Limit 역산이 어긋난다.
+function _cmpRaw(v) {
+  if (v === null || v === undefined || v === "") return "–";
+  return esc(String(v));
+}
 function _cmpDeltaCell(v, digits) {
   if (v === null || v === undefined || v === "") return `<td class="num">–</td>`;
   const cls = v > 0 ? "cmp-up" : (v < 0 ? "cmp-down" : "");
@@ -19,27 +25,42 @@ function _cmpDeltaCell(v, digits) {
 // 둘 다 Fail(Bin 만 다름)=보라. waferHeatmap 을 재사용하되 bin 자리에 분류 라벨을 넣는다.
 function _cmpClsLabel(cls, sources) {
   if (cls === "match") return "Bin 일치";
-  if (cls === "mixed") return "혼합 · 둘 다 Fail";
+  if (cls === "mixed") return "혼합 · 2개↑ Fail";
   return `${cls} 에서만 Fail`;   // cls = source 이름
+}
+// source 이름 뒤에 Before/After 그룹을 괄호로 (groups 없으면 이름 그대로 — legacy payload).
+function _cmpSrcLabel(src, groups) {
+  const g = groups && groups[src];
+  return g ? `${src} (${g === "after" ? "After" : "Before"})` : String(src);
 }
 function drawCompareCommonMap(cm, sources) {
   const div = document.getElementById("cmp-common-map");
   if (!div || !window.Plotly) return;
   if (cm.x_min == null) { div.innerHTML = '<div class="placeholder">좌표 데이터 없음</div>'; return; }
+  const groups = cm.groups || {};
   const srcColor = {};
   sources.forEach((s, i) => { srcColor[s] = COMPARE_SRC_PALETTE[i % COMPARE_SRC_PALETTE.length]; });
 
-  const matchLabel = "Bin 일치", mixedLabel = "혼합 · 둘 다 Fail";
+  const matchLabel = "Bin 일치", mixedLabel = "혼합 · 2개↑ Fail";
   const colorMap = { [matchLabel]: CMP_MATCH_GREEN, [mixedLabel]: CMP_MIXED_COLOR };
   sources.forEach(s => { colorMap[_cmpClsLabel(s, sources)] = srcColor[s]; });
   const binOrder = [matchLabel, ...sources.map(s => _cmpClsLabel(s, sources)), mixedLabel];
 
-  const dies = (cm.dies || []).map(d => ({ x: d.x, y: d.y, bin: _cmpClsLabel(d.cls, sources) }));
+  // bins(= source 별 BIN, sources 순서)를 die 에 실어 hover 에서 볼 수 있게 한다.
+  const dies = (cm.dies || []).map(d => ({
+    x: d.x, y: d.y, bin: _cmpClsLabel(d.cls, sources), bins: d.bins }));
   const m = { x_min: cm.x_min, x_max: cm.x_max, y_min: cm.y_min, y_max: cm.y_max, dies };
   // compact 격자로 그린다(메모리 span 무관 — 좌표 span 이 넓어도 OOM 방지. Map Detail 과 동일).
   // grid 모드에선 hovertemplate 이 무시되고 customdata 에 담긴 실좌표가 표시된다.
   const g = waferCompactGrid(m);
-  const built = waferHeatmap(m, { colorMap, binOrder, grid: g });
+  // hover: 분류 + source 별 Bin 한 줄씩 ("WF3 (After): 1"). bins 가 없으면(legacy payload)
+  // 종전처럼 분류만 보여준다.
+  const labelOf = (d, cat) => {
+    if (!d.bins) return cat;
+    const lines = sources.map((s, i) => `${esc(_cmpSrcLabel(s, groups))}: ${esc(String(d.bins[i]))}`);
+    return cat + "<br>" + lines.join("<br>");
+  };
+  const built = waferHeatmap(m, { colorMap, binOrder, grid: g, labelOf });
   if (!built) { div.innerHTML = '<div class="placeholder">공통 die 없음</div>'; return; }
   Plotly.newPlot(div, [built.trace], waferLayout(m, { grid: g }), { responsive: true, displayModeBar: false });
 
@@ -50,37 +71,56 @@ function drawCompareCommonMap(cm, sources) {
     const rows = [`<span class="cmp-lg"><i style="background:${CMP_MATCH_GREEN}"></i>Bin 일치 (${c.match || 0})</span>`];
     sources.forEach(s => {
       const n = (c.per_source && c.per_source[s]) || 0;
-      rows.push(`<span class="cmp-lg"><i style="background:${srcColor[s]}"></i>${esc(s)} 에서만 Fail (${n})</span>`);
+      rows.push(`<span class="cmp-lg"><i style="background:${srcColor[s]}"></i>${esc(_cmpSrcLabel(s, groups))} 에서만 Fail (${n})</span>`);
     });
-    if (c.mixed) rows.push(`<span class="cmp-lg"><i style="background:${CMP_MIXED_COLOR}"></i>혼합 · 둘 다 Fail (${c.mixed})</span>`);
+    if (c.mixed) rows.push(`<span class="cmp-lg"><i style="background:${CMP_MIXED_COLOR}"></i>혼합 · 2개↑ Fail (${c.mixed})</span>`);
     legend.innerHTML = rows.join("");
   }
 }
 
-// 동일 좌표 Bin before→after 전이표 (Map 바로 밑). null/빈 rows 면 생략.
-function compareBinTransitionHtml(bt) {
-  if (!bt || !bt.rows || !bt.rows.length) return "";
-  const c = bt.counts || {};
-  const binLabel = b => (String(b) === "1") ? `${esc(String(b))} (Pass)` : esc(String(b));
-  const head = `<thead><tr>
-      <th>Before Bin<div class="gl-sub">${esc(bt.before_source || "")}</div></th>
-      <th>After Bin<div class="gl-sub">${esc(bt.after_source || "")}</div></th>
-      <th class="num">Count</th></tr></thead>`;
-  const body = bt.rows.map(r =>
-    `<tr class="${r.changed ? "bt-changed" : ""}"><td>${binLabel(r.before_bin)}</td>` +
-    `<td>${binLabel(r.after_bin)}</td><td class="num">${_cmpNum(r.count)}</td></tr>`).join("");
+// 동일 좌표 Bin 비교표 (Map 바로 밑) — Bin 이 전 source 에서 같지는 않은 좌표를 1행씩.
+// 컬럼은 Before 그룹 / After 그룹으로 묶는다. null/빈 rows 면 생략.
+function compareBinMatrixHtml(bm) {
+  if (!bm || !bm.rows) return "";
+  const c = bm.counts || {};
+  const before = bm.before_sources || [], after = bm.after_sources || [];
+  const order = bm.sources || [];
+  const binCell = b => {
+    const s = String(b);
+    return `<td class="num${s === "1" ? " cmp-pass-cell" : ""}">${esc(s)}</td>`;
+  };
   const summary = `<div class="compare-summary">
       <span class="cmp-chip">공통 die ${c.common_dies || 0}</span>
-      <span class="cmp-chip cmp-unique">Bin 변경 ${c.changed || 0}</span>
+      <span class="cmp-chip cmp-unique">Bin 불일치 ${c.mismatch || 0}</span>
       <span class="cmp-chip">Pass→Fail ${c.pass_to_fail || 0}</span>
-      <span class="cmp-chip">Fail→Pass ${c.fail_to_pass || 0}</span></div>`;
-  return summary + `<div class="sheet-wrap"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
+      <span class="cmp-chip">Fail→Pass ${c.fail_to_pass || 0}</span>
+      <span class="gl-sub">Pass→Fail / Fail→Pass 는 그룹 대표(${esc(bm.rep_before || "")} → ${esc(bm.rep_after || "")}) 기준</span>
+    </div>`;
+  if (!bm.rows.length) {
+    return summary + `<div class="gl-identical">공통 좌표의 Bin 이 모든 source 에서 동일합니다.</div>`;
+  }
+  // 서버는 sources 순서(=업로드 순서, After 먼저)로 bins 를 담는다. 표는 Before→After 로
+  // 묶어 보여주므로 표시 순서에 맞춰 인덱스를 다시 잡는다.
+  const idxOf = {}; order.forEach((s, i) => { idxOf[s] = i; });
+  const shown = before.concat(after);
+  const grpHead = (before.length ? `<th colspan="${before.length}">Before</th>` : "") +
+    (after.length ? `<th colspan="${after.length}">After</th>` : "");
+  const head = `<thead>
+      <tr><th class="num" rowspan="2">X</th><th class="num" rowspan="2">Y</th>${grpHead}</tr>
+      <tr>${shown.map(s => `<th class="num">${esc(s)}</th>`).join("")}</tr></thead>`;
+  const body = bm.rows.map(r =>
+    `<tr><td class="num">${_cmpNum(r.x)}</td><td class="num">${_cmpNum(r.y)}</td>` +
+    shown.map(s => binCell(r.bins[idxOf[s]])).join("") + `</tr>`).join("");
+  return summary +
+    `<div class="sheet-wrap cmp-scroll cmp-binmatrix-wrap"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
 }
 
 // 공통 항목 산포(avg/stdev/cpk) before/after 병기 + delta. |Δcpk| 큰 순(백엔드 정렬).
-function compareDistShiftHtml(rows, sources) {
+// 대상은 **그룹 pool** — 그룹이 1 source 씩이면 CPK 탭 값과 같다(compare.py build_dist_shift).
+// stdev 는 서버가 반올림하지 않는 값이라 화면에서도 원값 그대로 쓴다(_cmpRaw).
+function compareDistShiftHtml(rows, eq) {
   if (!rows || !rows.length) return '<div class="placeholder">공통 항목 없음</div>';
-  const after = sources[0] || "", before = sources[1] || "";   // payload sources = [after, before]
+  const after = (eq && eq.after) || "", before = (eq && eq.before) || "";
   const gapCell = v => {
     if (v === null || v === undefined) return `<td class="num">–</td>`;
     return `<td class="num${Math.abs(v) >= 10 ? " gl-gap-red" : ""}">${_cmpNum(v, 2)}</td>`;
@@ -95,17 +135,75 @@ function compareDistShiftHtml(rows, sources) {
   const body = rows.map(r => {
     const a = r.after || {}, b = r.before || {};
     return `<tr><td>${esc(r.subject)}</td><td>${esc(r.units || "")}</td>` +
-      `<td class="num">${_cmpNum(a.average)}</td><td class="num">${_cmpNum(a.stdev)}</td><td class="num">${_cmpNum(a.cpk)}</td>` +
-      `<td class="num">${_cmpNum(b.average)}</td><td class="num">${_cmpNum(b.stdev)}</td><td class="num">${_cmpNum(b.cpk)}</td>` +
+      `<td class="num">${_cmpNum(a.average)}</td><td class="num">${_cmpRaw(a.stdev)}</td><td class="num">${_cmpNum(a.cpk)}</td>` +
+      `<td class="num">${_cmpNum(b.average)}</td><td class="num">${_cmpRaw(b.stdev)}</td><td class="num">${_cmpNum(b.cpk)}</td>` +
       _cmpDeltaCell(r.delta_average) + _cmpDeltaCell(r.delta_stdev) + _cmpDeltaCell(r.delta_cpk) +
       gapCell(r.mean_gap_pct) + `</tr>`;
   }).join("");
-  return `<div class="sheet-wrap"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
+  return `<div class="sheet-wrap cmp-scroll"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
 }
 
-function compareBinTableHtml(binDelta, sources) {
+// ── 동일성 검증 — 항목별 Grade 판정 (Before pool vs After pool) ─────────────
+// Grade1: AVG차(%) ≤ 5 / Grade2: 5 초과 & 양쪽 CPK ≥ 5 / Grade3: 그 외(판정 불가 포함).
+// 판정 규칙·임계값은 서버(compare.py build_equivalence)가 정본이고 여기서는 표시만 한다.
+function compareEquivHtml(eq) {
+  if (!eq || !eq.rows) {
+    return '<div class="placeholder">동일성 검증 데이터 없음</div>';
+  }
+  const th = eq.thresholds || {};
+  const pctLimit = th.avg_pct == null ? 5 : th.avg_pct;
+  const cpkLimit = th.cpk == null ? 5 : th.cpk;
+  const s = eq.summary || {};
+  const pair = `${esc(eq.before || "")} vs ${esc(eq.after || "")}`;
+  const summary = `<div class="sheet-wrap eq-summary"><table class="sheet-table compare-table">
+      <thead><tr><th>구분</th><th class="num">TestITEM</th>
+        <th class="num">Grade1</th><th class="num">Grade2</th><th class="num">Grade3</th></tr></thead>
+      <tbody><tr><td>${pair}</td><td class="num">${s.total || 0}</td>
+        <td class="num">${s.grade1 || 0}</td><td class="num">${s.grade2 || 0}</td>
+        <td class="num">${s.grade3 || 0}</td></tr></tbody></table></div>`;
+  if (!eq.rows.length) {
+    return summary + '<div class="placeholder">공통 항목 없음</div>';
+  }
+
+  const cpkCell = v => {
+    const bad = (typeof v === "number") && v < cpkLimit;
+    return `<td class="num${bad ? " eq-bad" : ""}">${_cmpNum(v)}</td>`;
+  };
+  const pctCell = v => {
+    if (v === null || v === undefined) return `<td class="num">–</td>`;
+    return `<td class="num${v > pctLimit ? " eq-bad" : ""}">${_cmpNum(v, 2)}</td>`;
+  };
+  const head = `<thead>
+      <tr><th rowspan="2">STEP</th><th rowspan="2">Item</th><th rowspan="2">UNIT</th>
+          <th class="num" rowspan="2">HiLIM</th><th class="num" rowspan="2">LoLIM</th>
+          <th colspan="3">Before — ${esc(eq.before || "")}</th>
+          <th colspan="3">After — ${esc(eq.after || "")}</th>
+          <th class="num" rowspan="2">AVG차</th><th class="num" rowspan="2">AVG차(%)</th>
+          <th rowspan="2">동일성</th></tr>
+      <tr><th class="num">AVG</th><th class="num">STD</th><th class="num">CPK</th>
+          <th class="num">AVG</th><th class="num">STD</th><th class="num">CPK</th></tr></thead>`;
+  const body = eq.rows.map(r => {
+    const b = r.before || {}, a = r.after || {};
+    const g3 = r.grade === 3;
+    return `<tr><td>${esc(r.step || "")}</td><td>${esc(r.subject)}</td><td>${esc(r.units || "")}</td>` +
+      `<td class="num">${_cmpNum(r.hilim)}</td><td class="num">${_cmpNum(r.lolim)}</td>` +
+      `<td class="num">${_cmpNum(b.average)}</td><td class="num">${_cmpRaw(b.stdev)}</td>${cpkCell(b.cpk)}` +
+      `<td class="num">${_cmpNum(a.average)}</td><td class="num">${_cmpRaw(a.stdev)}</td>${cpkCell(a.cpk)}` +
+      `<td class="num">${_cmpNum(r.delta_avg)}</td>` + pctCell(r.delta_pct) +
+      `<td class="eq-grade${g3 ? " eq-grade3" : ""}">Grade ${r.grade}</td></tr>`;
+  }).join("");
+  const legend = `<div class="compare-summary eq-legend">
+      <span class="cmp-chip">Grade1 · AVG차(%) ${pctLimit} 이하</span>
+      <span class="cmp-chip">Grade2 · AVG차(%) ${pctLimit} 초과 &amp; 양쪽 CPK ${cpkLimit} 이상</span>
+      <span class="cmp-chip cmp-unique">Grade3 · 그 외</span></div>`;
+  return summary + legend +
+    `<div class="sheet-wrap cmp-scroll"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
+}
+
+function compareBinTableHtml(binDelta, sources, groups) {
   if (!binDelta || !binDelta.length) return '<div class="placeholder">Bin 데이터 없음</div>';
-  const srcHead = sources.map(s => `<th colspan="2">${esc(s)}</th>`).join("");
+  const srcHead = sources.map(s =>
+    `<th colspan="2">${esc(s)}<div class="gl-sub">${esc(((groups || {})[s] === "after") ? "After" : ((groups || {})[s] === "before" ? "Before" : ""))}</div></th>`).join("");
   const subHead = sources.map(() => `<th class="num">Cnt</th><th class="num">%</th>`).join("");
   const head = `<thead>
       <tr><th rowspan="2">Bin</th>${srcHead}
@@ -367,14 +465,21 @@ function renderCompare() {
   if (!cmp) { emptyPanel(panel, "Compare 데이터 없음 (같은 Wafer source 2개 이상 필요)"); return; }
   panel.classList.add("viz-root");
   const sources = cmp.sources || [];
+  const groups = cmp.groups || {};
   const cm = cmp.common_map || {};
   const c = cm.counts || {};
   const mismatch = Math.max(0, (c.common_dies || 0) - (c.match || 0));
+  const eq = cmp.equivalence;
+  const groupChips = (cmp.before_sources || []).length
+    ? `<span class="cmp-chip">Before ${(cmp.before_sources || []).map(esc).join(" · ")}</span>` +
+      `<span class="cmp-chip">After ${(cmp.after_sources || []).map(esc).join(" · ")}</span>`
+    : "";
 
   panel.innerHTML =
     `<div class="compare-wrap">
       <div class="compare-summary">
         <span class="mk">Sources</span> ${sources.map(esc).join(" · ")}
+        ${groupChips}
         <span class="cmp-chip">공통 die ${c.common_dies || 0}</span>
         <span class="cmp-chip cmp-common">Bin 일치 ${c.match || 0}</span>
         <span class="cmp-chip cmp-unique">Bin 불일치 ${mismatch}</span>
@@ -384,33 +489,39 @@ function renderCompare() {
           <button class="distseg active" data-cmpsub="map">Map 비교</button>
           <button class="distseg" data-cmpsub="log">Log 비교</button>
           <button class="distseg" data-cmpsub="cpk">CPK 비교</button>
+          <button class="distseg" data-cmpsub="equiv">동일성 검증</button>
         </div>
         ${(cmp.goodlog && !cmp.goodlog.identical && (cmp.goodlog.rows || []).length)
             ? `<button class="btn-sm gl-expand-all" type="button" hidden>전체 펼치기</button>` : ""}
       </div>
       <div class="cmp-subpanel active" data-cmppanel="map">
-        <h3 class="compare-h">공통성 Map — Bin 일치=초록 / 한쪽만 Fail=source 색 / 둘 다 Fail=보라</h3>
+        <h3 class="compare-h">공통성 Map — Bin 일치=초록 / 한쪽만 Fail=source 색 / 2개↑ Fail=보라
+          <span class="gl-sub">(die 에 마우스를 올리면 source 별 Bin 이 보입니다)</span></h3>
         <div class="wafer-card">
           <div id="cmp-common-map" style="width:100%;height:520px;"></div>
           <div id="cmp-common-legend" class="cmp-legend"></div>
         </div>
         <div class="cmp-bin-grid">
           <section>
-            <h3 class="compare-h">동일 좌표 Bin 변화 (before → after)</h3>
-            ${compareBinTransitionHtml(cmp.bin_transition) || '<div class="placeholder">Bin 전이표는 2 source 비교에서만 제공됩니다.</div>'}
+            <h3 class="compare-h">동일 좌표 Bin 비교 (불일치 die)</h3>
+            ${compareBinMatrixHtml(cmp.bin_matrix) || '<div class="placeholder">Bin 비교 데이터 없음</div>'}
           </section>
           <section>
             <h3 class="compare-h">Bin Yield 비교</h3>
-            ${compareBinTableHtml(cmp.bin_delta, sources)}
+            ${compareBinTableHtml(cmp.bin_delta, sources, groups)}
           </section>
         </div>
       </div>
       <div class="cmp-subpanel" data-cmppanel="log">
-        ${goodlogSectionHtml(cmp.goodlog) || '<div class="placeholder">테스트 프로그램 비교(goodlog)는 2 source 비교에서만 제공됩니다.</div>'}
+        ${goodlogSectionHtml(cmp.goodlog) || '<div class="placeholder">테스트 프로그램 비교(goodlog) 데이터 없음</div>'}
       </div>
       <div class="cmp-subpanel" data-cmppanel="cpk">
-        <h3 class="compare-h">산포 차이 (공통 항목 · |ΔCpk| 큰 순)</h3>
-        ${compareDistShiftHtml(cmp.dist_shift, sources)}
+        <h3 class="compare-h">산포 차이 (공통 항목 · |ΔCpk| 큰 순 · 그룹 전체 die 기준)</h3>
+        ${compareDistShiftHtml(cmp.dist_shift, eq)}
+      </div>
+      <div class="cmp-subpanel" data-cmppanel="equiv">
+        <h3 class="compare-h">동일성 검증 (Before vs After · 그룹 전체 die 기준)</h3>
+        ${compareEquivHtml(eq)}
       </div>
     </div>`;
 

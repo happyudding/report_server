@@ -154,6 +154,12 @@ def api_watchdog():
     return jsonify(sysinfo.watchdog_status())
 
 
+@admin_panel_bp.get("/api/watchdog/checks")
+def api_watchdog_checks():
+    hours = min(max(int(request.args.get("hours", 24)), 1), 168)
+    return jsonify(sysinfo.watchdog_checks(hours=hours))
+
+
 # ── 스토리지 관리 ────────────────────────────────────────────────────────────
 # 세션 삭제는 기존 /api/sessions/delete (artifact-aware) 를 그대로 재사용한다.
 
@@ -224,6 +230,13 @@ def api_eval_reexport(session_id):
 def api_metrics_history():
     window = min(max(int(request.args.get("window", 3600)), 60), 86400)
     return jsonify(metrics.snapshot_history(window))
+
+
+@admin_panel_bp.get("/api/metrics/file_history")
+def api_metrics_file_history():
+    """파일 기반 이력 — 서버 재시작으로 초기화되지 않는다 (현황 탭 실시간 차트와 병행)."""
+    hours = min(max(int(request.args.get("hours", 24)), 1), metrics.FILE_HISTORY_MAX_HOURS)
+    return jsonify(metrics.file_history(hours))
 
 
 @admin_panel_bp.get("/api/runtime")
@@ -502,6 +515,15 @@ def api_audit_csv():
 
 # ── 서버 로그 ────────────────────────────────────────────────────────────────
 
+@admin_panel_bp.get("/api/logs/list")
+def api_logs_list():
+    return jsonify({"files": maintenance.log_list()})
+
+
 @admin_panel_bp.get("/api/logs/tail")
 def api_logs_tail():
-    return jsonify(maintenance.log_tail(request.args.get("bytes", 65536)))
+    name = (request.args.get("file") or "").strip() or None
+    try:
+        return jsonify(maintenance.log_tail(request.args.get("bytes", 65536), name=name))
+    except ValueError as e:
+        abort(400, str(e))

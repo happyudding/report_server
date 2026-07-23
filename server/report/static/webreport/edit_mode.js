@@ -310,6 +310,14 @@ document.getElementById("btnDel").addEventListener("click", () => {
   if (confirm("정말 삭제하시겠습니까?")) doDelete("");
 });
 
+// 세션 정보 수정 — 편집 UI 는 Honey 앱(업로드 다이얼로그 재사용)에만 있다.
+// Honey 안에서는 이 이동을 내장 브라우저가 가로채 취소하고(honey_main._browser_leave_guard)
+// 편집창을 띄우므로 실제 요청은 나가지 않는다. 웹에서는 기존 Honey 전용 기능 안내를 띄운다.
+document.getElementById("btnMetaEdit").addEventListener("click", () => {
+  if (IDENTITY_SRC !== "honey") { try { HoneyHint.open(); } catch (e) {} return; }
+  location.href = `/pe/report/honey/session_meta/${SESSION_ID}`;
+});
+
 document.getElementById("btnSaveComment").addEventListener("click", () => { saveNow(); });
 
 // 저장 버튼 수동 클릭 — 편집 중인 comment 를 기다리지 않고 즉시 DB 반영.

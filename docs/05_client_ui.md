@@ -19,10 +19,13 @@
 | `HoneyMainWindow` | 메인: ProductType 라디오·입력목록·저장명·Status·버튼 |
 | `ReportSettingsDialog` | 출력 시트·항목 선택·FileName·Color·Auto Upload |
 | `UploadDialog` | 업로드 메타(ProductType/Product/LOT/Revision, password 선택) |
+| `SessionMetaDialog` | 업로드 **후** 세션 메타 수정 — `UploadDialog` 상속(Part ID 자동완성·Family 콤보 그대로) + 맨 위 `Session Name`(서버 file_name) 칸, password 행 숨김, ProductType 은 세션 값 고정. 세션 페이지 ✏️ → `honey_main._handle_honey_action` → `on_session_meta_edit` → `PATCH .../meta` → [02](02_server_query_edit.md) |
 | `D1BrowserDialog` | `d1_storage` 검색·다중선택 (외부 provider 결과) |
 | `FileOrderDialog` | 입력 2개↑ 시 순서 확정(첫 파일=기준 스키마) |
-| `RawdataHubDialog` | 열린 세션의 Rawdata 진입 허브 (세로 grid 1장) — `Item Select`+Item List / `Outlier 제거`+stdev 입력 / `Rawdata 원본 수정`(주황, Excel) + 저장·닫기. 앞의 둘은 원본을 고치지 않는 **조회 필터**(서버 `.../web_report/preprocess`)라 전 탭이 그 기준으로 재계산된다 → [11](11_web_report_tabs.md) |
-| `ChangeReviewDialog` | Excel 왕복 반영 전 변경 확인 — 스크롤·전문 저장 지원(구 QMessageBox 는 수정이 많으면 버튼이 화면 밖으로 나갔다) |
+| `CompareArrangeDialog` | **Compare 모드 전용** — source 를 Before/After 두 리스트로 배치(`>>` `>` `<` `<<`)하고 `↑`/`↓` 로 그룹 안 순서를 정한다. 항목 더블클릭 = Legend 이름 변경(중복은 `_2`,`_3`) — Compare 모드에선 이 창이 기존 "SourceName 변경" 창을 **대신한다**. 순서가 의미를 가지므로(After 최상단 = limit 기준 + goodlog 대표) `RawdataHubDialog` 의 Item Select 와 달리 **이동 후 재정렬하지 않는다**. Confirm 시 양쪽 최소 1개 검증. 결과 → `rename_sources(names)`(원본 순서) + `options.compare` + 업로드 순서(After→Before) → [10](10_web_report_pipeline.md)·[11](11_web_report_tabs.md) |
+| `RawdataHubDialog` | 열린 세션의 Rawdata 진입 허브 (세로 grid 1장) — `Item Select`+Item List / `Outlier 제거`+stdev 입력 / `Rawdata 원본 수정`(주황, Excel) + 저장·닫기. 앞의 둘은 원본을 고치지 않는 **조회 필터**(서버 `.../web_report/preprocess`)라 전 탭이 그 기준으로 재계산된다 → [11](11_web_report_tabs.md). 하단 체크박스 **"Yield 계산 기준 - Test data 개수"** 는 수율 **분모**를 고른다(해제=기본: 제품 기준정보 Gross Die, 체크: rawdata 개수) — 같은 저장 요청의 `yield_basis` 필드로 세션 DB 에 남는다 |
+| `ChangeReviewDialog` | Excel 왕복 반영 전 변경 확인. 탭 2개 — **개요**(구조 변경·자동 교정·경고·시트 삭제) / **셀 변경**(`TableListView` 표, 열 = source·SHOT·DUT·X·Y·BIN·항목·이전·이후). 셀 변경 0건이면 표 탭을 만들지 않는다. 하단 [반영] [취소] [전문 저장…](CSV=표 / txt=요약 평문), 기본 버튼은 **취소** |
+| `TableListDialog` / `TableListView` | 긴 목록 공용 표 — 검색(디바운스 250ms)·정렬(숫자는 숫자로)·Ctrl+C TSV 복사·CSV 저장(UTF-8 BOM). 5만 행에서도 생성/검색/정렬 각 0.2초 미만(정렬·검색을 파이썬 리스트 위에서 처리). 쓰는 곳: `ChangeReviewDialog` 셀 변경, `honey_main._warn_duplicate_items`(항목명 중복 자동 개명 내역) |
 
 > **Product Type 라벨**(불변): 화면 표시·내부 키·서버 전송값 모두
 > `MDDI / PDDI / PMIC / SECURITY / TCON` 을 그대로 사용한다.
