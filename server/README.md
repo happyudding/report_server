@@ -201,7 +201,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `GET` | `/map_analysis` | 공개 | Map Analysis die 전량 (gzip+ETag — `/full` 은 dies 뺀 경량 메타, schema v8). 콜드면 `202 {"building":true}` |
 | `GET` | `/scatter/<subject>` | 공개 | 항목 상세 산포 (전 측정값) |
 | `GET` | `/trim_analysis`, `/trim_chart` | 공개 | Trim 매칭·통계 / 그룹 차트 1개 (gzip+ETag). 프런트는 배치를 쓰고 이 단일 경로는 폴백·하위호환용 |
-| `GET` | `/trim_chart_batch?source=&group=A&group=B&group=C` | 공개 | Trim 그룹 차트 **배치** (1~3개, `group` 반복 param **순서 유지**) → `{"charts":[...]}` gzip. 각 chart 는 단일 `/trim_chart` 결과와 값 동일. 콜드면 컴퓨트 워커로 오프로드 |
+| `GET` | `/trim_chart_batch?source=&group=A&group=B…` | 공개 | Trim 그룹 차트 **배치** (1~6개=산포 한 페이지, `group` 반복 param **순서 유지**) → `{"charts":[...]}` gzip. 각 chart 는 단일 `/trim_chart` 결과와 값 동일. 콜드면 컴퓨트 워커로 오프로드. **Trim 탭은 「분석 시작」 버튼을 눌러야 호출된다**(탭 진입만으로는 요청 0건) |
 | `POST` | `/trim/overrides` | 편집자 | Trim 수동 재배치 저장 |
 | `GET` | `/commonality/chips`, `/commonality/chip` | 공개 | Commonality chip 검색 / 백분위 |
 | `POST` | `/issue_table/etc`, `/issue_table/comments`, `/summary/engr` | 편집자 | Issue/Summary 편집 |

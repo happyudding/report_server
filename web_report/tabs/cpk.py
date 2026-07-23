@@ -119,7 +119,9 @@ def _stats_batch(frame: pd.DataFrame, lolim: dict, hilim: dict) -> dict:
             "median": round_num(med[item] if n else None),
             "max": round_num(mx[item] if n else None),
             "average": round_num(avg, 4),
-            "stdev": round_num(stdev, 3),
+            # stdev 는 반올림하지 않는다 — CPK 탭 Limit 역산(avg ± 3·Cpk·stdev)이 이 값을
+            # 그대로 쓰므로 소수 3자리로 자르면 역산 한계값이 어긋난다.
+            "stdev": num(stdev),
             "cp": round_num(cp, 3),
             "cpl": round_num(cpl, 3),
             "cpu": round_num(cpu, 3),

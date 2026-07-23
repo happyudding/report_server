@@ -41,6 +41,10 @@ _MAX_WEBREPORT_SOURCE_BYTES = 512 * 1024 * 1024
 # 배치로 나눠 보낸다.
 _DIST_BATCH_MAX = 40
 
+# trim_chart_batch 한 요청의 그룹 수 상한 — 프런트 산포 한 페이지 크기(TRIM.PAGE_SIZE=6)와
+# 같은 값. 페이지를 키우면 두 곳을 함께 올려야 한다.
+_TRIM_BATCH_MAX = 6
+
 
 def _prep_tag(session_id):
     """ETag 에 붙일 전처리 digest 조각 (전처리 없으면 빈 문자열).
@@ -316,16 +320,17 @@ def web_report_trim_chart(session_id):
 
 @report_bp.get("/session/<session_id>/web_report/trim_chart_batch")
 def web_report_trim_chart_batch(session_id):
-    """Trim 산포 한 페이지(그룹 1~3개) 차트를 한 번에 반환 — `{"charts":[...]}`.
+    """Trim 산포 한 페이지(그룹 1~6개) 차트를 한 번에 반환 — `{"charts":[...]}`.
 
     ?source=&group=A&group=B&group=C — group 은 **반복 파라미터**라 보낸 순서가 그대로
     유지된다(distribution_batch 의 comma+정렬 방식은 순서를 잃어 쓰지 않는다). 그룹당
     요청 1건이던 종전 방식은 요청마다 tables 로드 + 그룹 재도출을 반복했다.
+    상한은 프런트 한 페이지 크기(`TRIM.PAGE_SIZE`=6)와 같은 값이다.
     """
     _require_web_report_session(session_id)
     source = (request.args.get("source") or "").strip()
     groups = [g.strip() for g in request.args.getlist("group") if g.strip()]
-    if (not groups or len(groups) > 3 or len(source) > 200
+    if (not groups or len(groups) > _TRIM_BATCH_MAX or len(source) > 200
             or any(len(g) > 200 for g in groups)):
         abort(400, "invalid group(s) or source")
     try:

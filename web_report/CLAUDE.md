@@ -54,7 +54,9 @@ web_report/
 ├── preprocess.py       **조회 전처리** (항목 제외 + outlier `mean ± k·stdev` 마스킹, 2026-07-23).
 │                        원본 parquet 불변 — 세션 편집 DB(kind=preprocess)의 spec 을 loader 가
 │                        조회 시점에 적용하고 digest 를 캐시 키에 덧붙인다(옵션 없으면 빈
-│                        문자열 = 종전 키). 순수 모듈 — Honey 허브 다이얼로그가 쓰는 값과 동일
+│                        문자열 = 종전 키). 항목 제외는 item_columns 만 줄인다(메타·data 유지
+│                        = selected_items 와 같은 의미론 — 안 그러면 Yield 표 합이 깨진다).
+│                        순수 모듈 — Honey 허브 다이얼로그가 쓰는 값과 동일
 ├── trim_match.py       Trim 항목명 매칭 순수 모듈 (product_type 별 PMIC4/TV2 규칙셋)
 ├── wafer_frame.py      제품 기준정보(die pitch+wafer 크기) → 고정 map 프레임
 └── tabs/               시트별 row 빌더 + TAB_REGISTRY (시트 구성 단일 진실)

@@ -140,12 +140,16 @@ def test_outlier_yield_unchanged():
 
 # ── 항목 제외 ────────────────────────────────────────────────────────────────
 def test_exclude_items_removes_from_report():
-    """제외한 항목이 item_columns/data/메타에서 빠지고 리포트에도 나오지 않는다."""
+    """제외한 항목은 item_columns 에서만 빠진다 — 메타/data 는 유지 (Yield 정합).
+
+    메타(tno/step)까지 지우면 Yield 의 fail 집계(전체 table.tno 기준)가 그 항목의 fail die 를
+    잃어 표 행 합과 수율이 어긋난다. manifest.selected_items 필터와 같은 의미론이다
+    (tests/test_yield_step_selected_items.py 가 그 동작을 고정한다)."""
     out, _ = preprocess.apply_tables([make_table()], {"exclude_items": ["ItemB"]})
     table = out[0]
     assert table.item_columns == ["ItemA"]
-    assert "ItemB" not in table.data.columns
-    assert "ItemB" not in table.units and "ItemB" not in table.tno
+    assert "ItemB" in table.data.columns, "data 컬럼까지 지우면 안 된다"
+    assert "ItemB" in table.tno and "ItemB" in table.step, "메타까지 지우면 Yield 가 깨진다"
     payload = build_report_payload(out)
     items = {row.get("subject") for row in payload.get("distribution_index") or []}
     assert items == {"ItemA"}, f"제외가 리포트에 반영되지 않았다: {items}"

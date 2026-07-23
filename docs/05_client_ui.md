@@ -21,7 +21,7 @@
 | `UploadDialog` | 업로드 메타(ProductType/Product/LOT/Revision, password 선택) |
 | `D1BrowserDialog` | `d1_storage` 검색·다중선택 (외부 provider 결과) |
 | `FileOrderDialog` | 입력 2개↑ 시 순서 확정(첫 파일=기준 스키마) |
-| `RawdataHubDialog` | 열린 세션의 Rawdata 진입 허브 — Item Select / Outlier 제거 / Rawdata Edit(Excel). 앞의 둘은 원본을 고치지 않는 **조회 전처리**(서버 `.../web_report/preprocess`) → [11](11_web_report_tabs.md) |
+| `RawdataHubDialog` | 열린 세션의 Rawdata 진입 허브 (세로 grid 1장) — `Item Select`+Item List / `Outlier 제거`+stdev 입력 / `Rawdata 원본 수정`(주황, Excel) + 저장·닫기. 앞의 둘은 원본을 고치지 않는 **조회 필터**(서버 `.../web_report/preprocess`)라 전 탭이 그 기준으로 재계산된다 → [11](11_web_report_tabs.md) |
 | `ChangeReviewDialog` | Excel 왕복 반영 전 변경 확인 — 스크롤·전문 저장 지원(구 QMessageBox 는 수정이 많으면 버튼이 화면 밖으로 나갔다) |
 
 > **Product Type 라벨**(불변): 화면 표시·내부 키·서버 전송값 모두

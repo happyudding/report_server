@@ -1,16 +1,24 @@
-"""RawdataHubDialog — Rawdata edit 진입 허브 (Item Select / Outlier 제거 / Rawdata Edit).
+"""RawdataHubDialog — Rawdata 진입 허브 (Item Select / Outlier 제거 / Rawdata 원본 수정).
 
 종전에는 `Rawdata edit` 을 누르면 곧바로 Excel 이 떴다. 업로드가 끝난 세션에는 항목 선택도
-outlier 제거도 걸 수 없었는데, 그 둘은 원본을 고치지 않고 **조회 시점에만 적용되는 옵션**
-(서버 web_report/preprocess.py)이라 Excel 왕복 없이 처리할 수 있다.
+outlier 제거도 걸 수 없었는데, 그 둘은 원본을 고치지 않고 **조회 시점에만 적용되는 필터**
+(서버 web_report/preprocess.py)라 Excel 왕복 없이 처리할 수 있다.
 
-  - Item Select  : 리포트에 표시할 측정 항목을 좌/우 리스트로 고른다 (되돌리기 가능)
-  - Outlier 제거 : 항목별 mean ± k·stdev 밖 **측정값만** 결측 처리 (BIN/좌표/행 불변 →
-                   수율·wafer map 은 그대로, CPK/Distribution 만 달라진다)
-  - Rawdata Edit : 기존과 동일하게 Excel 로 열어 원본을 직접 편집한다
+레이아웃은 세로 grid 1장 — 페이지 전환 없이 전부 한눈에 보인다:
 
-두 옵션은 세션 편집 DB 에 저장되고 원본 parquet 은 건드리지 않는다 — 비우면 즉시 원래
-값으로 돌아온다. 그래서 Excel 편집(원본 대상)과 달리 확인 없이 저장해도 안전하다.
+    [Item Select]        | Item List (제외 ↔ 표시 2리스트)
+    [Outlier 제거]       | mean ± [stdev] × σ
+    [Rawdata 원본 수정]  | (주황 — Excel 로 원본을 직접 고치는 유일한 버튼)
+    ------------------------------------------------------
+                                            [저장] [닫기]
+
+왼쪽 열의 Item Select / Outlier 제거 버튼은 [저장] 과 같이 **화면에 보이는 상태를 저장**한다
+(행별 부분 저장은 다른 행을 되돌려야 해서 작업이 조용히 사라진다 — `_save` 참조).
+저장하면 서버가 Summary/Yield/CPK/Issue Table/Distribution/Trim/Map 을 그 기준으로 다시
+계산하고, 필터는 세션 DB 에 남아 다음에 열 때도 그대로 적용된다.
+
+Item Select / Outlier 는 원본 parquet 을 건드리지 않으므로 비우고 저장하면 원상복구된다 —
+그래서 Excel 편집(원본 대상, 되돌릴 수 없음)과 달리 확인창이 없다.
 """
 from __future__ import annotations
 
@@ -22,7 +30,6 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -30,7 +37,6 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -39,6 +45,18 @@ from PyQt6.QtWidgets import (
 ACTION_EXCEL = "excel"
 
 _TIMEOUT = (10, 60)
+_ROW_BTN_W = 150
+
+# 원본을 실제로 고치는 유일한 버튼 — 되돌릴 수 없으므로 주황으로 구분한다
+# (나머지 둘은 조회 필터라 언제든 해제 가능).
+_DANGER_BTN_QSS = """
+QPushButton {
+  background: #f97316; color: #ffffff; font-weight: 700;
+  border: 1px solid #c2410c; border-radius: 5px; padding: 8px 14px;
+}
+QPushButton:hover { background: #fb923c; }
+QPushButton:pressed { background: #ea580c; }
+"""
 
 
 def _headers(extra=None):
@@ -53,7 +71,7 @@ def _headers(extra=None):
     return headers
 
 
-class _ItemSelectPage(QWidget):
+class _ItemListWidget(QWidget):
     """좌(제외) / 우(표시) 2리스트 — ReportSettingsDialog 의 항목 선택과 같은 조작 규칙.
 
     리스트 항목은 UserRole 에 원본 순서를 담아, 옮긴 뒤에도 원래 순서로 다시 정렬한다.
@@ -87,12 +105,13 @@ class _ItemSelectPage(QWidget):
         mid = QVBoxLayout()
         mid.addStretch(1)
         for b in (btn_all_right, btn_sel_right, btn_sel_left, btn_all_left):
-            b.setFixedWidth(44)
+            b.setFixedWidth(36)
             mid.addWidget(b)
         mid.addStretch(1)
 
         grid = QGridLayout(self)
-        grid.addWidget(QLabel("제외 (리포트에 표시 안 함)"), 0, 0)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.addWidget(QLabel("제외"), 0, 0)
         grid.addWidget(QLabel("표시"), 0, 2)
         grid.addWidget(self.list_excluded, 1, 0)
         grid.addLayout(mid, 1, 1)
@@ -142,56 +161,6 @@ class _ItemSelectPage(QWidget):
             lw.addItem(it)
 
 
-class _OutlierPage(QWidget):
-    """k(σ 배수) 한 칸. 비우면 해제 — 값 규칙은 서버 preprocess.normalize 가 정본."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.edit_k = QLineEdit()
-        self.edit_k.setPlaceholderText("예: 50")
-        self.edit_k.setMaximumWidth(120)
-
-        row = QHBoxLayout()
-        row.addWidget(QLabel("mean ±"))
-        row.addWidget(self.edit_k)
-        row.addWidget(QLabel("× stdev 밖의 측정값을 제거"))
-        row.addStretch(1)
-
-        box = QGroupBox("Outlier 제거 기준")
-        box.setLayout(row)
-
-        note = QLabel(
-            "· 항목마다 평균과 표준편차를 구해 그 범위를 벗어난 <b>측정값만</b> 결측 처리합니다.<br>"
-            "· die(행)·BIN·좌표는 그대로라 <b>수율과 Wafer Map 은 바뀌지 않고</b>, "
-            "CPK·Distribution 의 n·평균·σ 만 달라집니다.<br>"
-            "· 원본 데이터는 그대로 보관되므로 <b>칸을 비우고 저장하면 즉시 원래대로</b> 돌아옵니다.<br>"
-            "· 표준편차가 0 인 항목(값이 모두 같음)은 대상이 없습니다.")
-        note.setWordWrap(True)
-        note.setTextFormat(Qt.TextFormat.RichText)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(box)
-        layout.addWidget(note)
-        layout.addStretch(1)
-
-    def value(self):
-        """입력값 → k(float) 또는 None(해제). 형식 오류는 ValueError."""
-        text = self.edit_k.text().strip()
-        if not text:
-            return None
-        try:
-            k = float(text)
-        except ValueError:
-            raise ValueError(f"숫자를 입력하세요 (입력값: {text})") from None
-        if k <= 0:
-            raise ValueError("0 보다 큰 값을 입력하세요 (비우면 해제됩니다).")
-        return k
-
-    def set_value(self, k):
-        self.edit_k.setText("" if not k else (str(int(k)) if float(k).is_integer()
-                                              else f"{float(k):g}"))
-
-
 class RawdataHubDialog(QDialog):
     """세 동작의 진입 허브. exec() 후 self.action 이 ACTION_EXCEL 이면 Excel 편집으로 간다."""
 
@@ -205,55 +174,73 @@ class RawdataHubDialog(QDialog):
         self._spec = {}
 
         self.setWindowTitle("Rawdata")
-        self.resize(720, 520)
+        self.resize(720, 560)
 
+        # ── 행 1: Item Select | Item List ────────────────────────────────────
         self.btn_items = QPushButton("Item Select")
+        self.btn_items.setToolTip("선택한 항목만 남기고 저장 (원본은 그대로, 언제든 되돌릴 수 있음)")
+        self.btn_items.clicked.connect(self._apply_items)
+        self.item_list = _ItemListWidget()
+
+        # ── 행 2: Outlier 제거 | mean ± [stdev] × σ ─────────────────────────
         self.btn_outlier = QPushButton("Outlier 제거")
-        self.btn_excel = QPushButton("Rawdata Edit")
-        for b in (self.btn_items, self.btn_outlier, self.btn_excel):
-            b.setMinimumHeight(40)
-            b.setCheckable(b is not self.btn_excel)
-        self.btn_items.clicked.connect(lambda: self._show_page(0))
-        self.btn_outlier.clicked.connect(lambda: self._show_page(1))
+        self.btn_outlier.setToolTip("mean ± (입력값)×stdev 밖의 측정값만 결측 처리 — 비우면 해제")
+        self.btn_outlier.clicked.connect(self._apply_outlier)
+        self.edit_k = QLineEdit()
+        self.edit_k.setPlaceholderText("예: 50")
+        self.edit_k.setFixedWidth(90)
+        self.edit_k.returnPressed.connect(self._apply_outlier)
+        outlier_row = QHBoxLayout()
+        outlier_row.setContentsMargins(0, 0, 0, 0)
+        outlier_row.addWidget(QLabel("mean ±"))
+        outlier_row.addWidget(self.edit_k)
+        outlier_row.addWidget(QLabel("× stdev 밖의 측정값 제거 (비우면 해제)"))
+        outlier_row.addStretch(1)
+        outlier_box = QWidget()
+        outlier_box.setLayout(outlier_row)
+
+        # ── 행 3: Rawdata 원본 수정 (Excel) ─────────────────────────────────
+        self.btn_excel = QPushButton("Rawdata 원본 수정")
+        self.btn_excel.setStyleSheet(_DANGER_BTN_QSS)
+        self.btn_excel.setToolTip("Excel 로 원본 데이터를 직접 편집합니다 (되돌릴 수 없음)")
         self.btn_excel.clicked.connect(self._start_excel)
 
-        top = QHBoxLayout()
-        top.addWidget(self.btn_items, 1)
-        top.addWidget(self.btn_outlier, 1)
-        top.addWidget(self.btn_excel, 1)
+        for b in (self.btn_items, self.btn_outlier, self.btn_excel):
+            b.setMinimumHeight(38)
+            b.setMinimumWidth(_ROW_BTN_W)
 
-        self.page_items = _ItemSelectPage()
-        self.page_outlier = _OutlierPage()
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self.page_items)
-        self.stack.addWidget(self.page_outlier)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(10)
+        grid.addWidget(self.btn_items, 0, 0, Qt.AlignmentFlag.AlignTop)
+        grid.addWidget(self.item_list, 0, 1)
+        grid.addWidget(self.btn_outlier, 1, 0)
+        grid.addWidget(outlier_box, 1, 1)
+        grid.addWidget(self.btn_excel, 2, 0)
+        grid.setColumnStretch(1, 1)
+        grid.setRowStretch(0, 1)
 
+        # ── 하단: 저장 / 닫기 ────────────────────────────────────────────────
         self.lbl_state = QLabel("")
         self.lbl_state.setWordWrap(True)
-
-        self.buttons = QDialogButtonBox()
+        buttons = QDialogButtonBox()
         self.btn_save = QPushButton("저장")
         self.btn_close = QPushButton("닫기")
-        self.buttons.addButton(self.btn_save, QDialogButtonBox.ButtonRole.AcceptRole)
-        self.buttons.addButton(self.btn_close, QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.addButton(self.btn_save, QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton(self.btn_close, QDialogButtonBox.ButtonRole.RejectRole)
         self.btn_save.clicked.connect(self._save)
         self.btn_close.clicked.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(top)
-        layout.addWidget(QLabel(
-            "Item Select / Outlier 는 <b>원본을 고치지 않고</b> 리포트 표시에만 적용됩니다 "
-            "(Excel 편집에는 원본 전체가 그대로 열립니다)."))
-        layout.addWidget(self.stack, 1)
+        layout.addLayout(grid, 1)
         layout.addWidget(self.lbl_state)
-        layout.addWidget(self.buttons)
+        layout.addWidget(buttons)
 
         self._load()
-        self._show_page(0)
 
     # ── 서버 통신 ────────────────────────────────────────────────────────────
     def _load(self):
-        """현재 항목 목록 + 저장된 전처리 옵션을 읽어 화면을 채운다."""
+        """현재 항목 목록 + 저장된 필터를 읽어 화면을 채운다."""
         import requests
 
         try:
@@ -272,32 +259,66 @@ class RawdataHubDialog(QDialog):
             QMessageBox.warning(self, "Rawdata", f"세션 정보를 가져오지 못했습니다.\n{exc}")
             self._items, self._spec = [], {}
 
-        self.page_items.populate(self._items, self._spec.get("exclude_items") or [])
-        self.page_outlier.set_value((self._spec.get("outlier") or {}).get("k"))
+        self.item_list.populate(self._items, self._spec.get("exclude_items") or [])
+        self._set_k((self._spec.get("outlier") or {}).get("k"))
         self._refresh_state()
 
+    def _set_k(self, k):
+        self.edit_k.setText("" if not k else (str(int(k)) if float(k).is_integer()
+                                              else f"{float(k):g}"))
+
+    def _k_value(self):
+        """입력값 → k(float) 또는 None(해제). 형식 오류는 ValueError."""
+        text = self.edit_k.text().strip()
+        if not text:
+            return None
+        try:
+            k = float(text)
+        except ValueError:
+            raise ValueError(f"숫자를 입력하세요 (입력값: {text})") from None
+        if k <= 0:
+            raise ValueError("0 보다 큰 값을 입력하세요 (비우면 해제됩니다).")
+        return k
+
     def _refresh_state(self):
-        excluded = self.page_items.excluded_items()
+        excluded = self.item_list.excluded_items()
         k = (self._spec.get("outlier") or {}).get("k")
-        parts = [f"전체 항목 {len(self._items)}개",
-                 f"표시 {self.page_items.shown_count()}개 / 제외 {len(excluded)}개"]
+        parts = [f"전체 {len(self._items)}개",
+                 f"표시 {self.item_list.shown_count()} / 제외 {len(excluded)}"]
         parts.append(f"outlier ±{k:g}σ 적용 중" if k else "outlier 미적용")
         self.lbl_state.setText(" · ".join(parts))
 
-    def _save(self):
-        """전처리 옵션 저장 — 두 페이지의 현재 값을 함께 보낸다(부분 저장 없음)."""
-        import requests
+    def _apply_items(self):
+        """Item Select 행 적용 — 화면에 보이는 상태 그대로 저장한다."""
+        self._save()
 
+    def _apply_outlier(self):
+        """Outlier 행 적용 — 화면에 보이는 상태 그대로 저장한다."""
+        self._save()
+
+    def _save(self):
+        """두 필터를 함께 저장 — **화면에 보이는 상태 그대로**.
+
+        행 버튼(Item Select / Outlier 제거)도 여기로 온다. 행별로 '그 행만' 저장하면
+        다른 행을 저장된 값으로 되돌려야 하는데, 그러면 옮겨 둔 항목이나 입력한 값이
+        경고 없이 사라진다 — 저장 대상은 언제나 화면 상태 하나뿐이다.
+        """
         try:
-            k = self.page_outlier.value()
+            k = self._k_value()
         except ValueError as exc:
             QMessageBox.warning(self, "Outlier 제거", str(exc))
             return
-        spec = {"exclude_items": self.page_items.excluded_items()}
+        spec = {"exclude_items": self.item_list.excluded_items()}
         if k:
             spec["outlier"] = {"mode": "stdev", "k": k}
+        self._post(spec)
 
-        if not self.page_items.shown_count():
+    def _post(self, spec):
+        """필터 저장 — 서버가 전 탭(Summary/Yield/CPK/Issue/Distribution/Trim/Map)을
+        이 기준으로 다시 계산하고, 세션 DB 에 남아 다음에 열 때도 그대로 적용된다."""
+        import requests
+
+        if not self.item_list.shown_count():
             QMessageBox.warning(self, "Item Select", "표시할 항목을 1개 이상 남겨 주세요.")
             return
         try:
@@ -318,19 +339,14 @@ class RawdataHubDialog(QDialog):
 
         self._spec = result.get("spec") or {}
         self.changed = True
+        self.item_list.populate(self._items, self._spec.get("exclude_items") or [])
+        self._set_k((self._spec.get("outlier") or {}).get("k"))
         self._refresh_state()
         QMessageBox.information(
             self, "Rawdata",
-            "저장했습니다 — " + (result.get("summary") or "전처리 해제") +
-            "\n리포트를 새로고침하면 반영됩니다.")
+            "저장했습니다 — " + (result.get("summary") or "필터 해제") +
+            "\n전 탭이 이 기준으로 다시 계산됩니다.")
 
     def _start_excel(self):
         self.action = ACTION_EXCEL
         self.accept()
-
-    # ── UI ───────────────────────────────────────────────────────────────────
-    def _show_page(self, index):
-        self.stack.setCurrentIndex(index)
-        self.btn_items.setChecked(index == 0)
-        self.btn_outlier.setChecked(index == 1)
-        self._refresh_state()

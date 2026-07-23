@@ -23,7 +23,7 @@
 | CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) |
 | Issue Table | `issue_table.py` | Yield 파생 + 규격내 cpk(`cpk_limited`)<1.33 파생 + ETC. comment/Status/행 숨김은 편집 DB 에서 채움 |
 | Distribution | — (lazy, 항목 배치) | `/full` 은 빈 시트 + `distribution_index`(항목 목록). ECDF 는 **화면에 보이는 항목만** `GET .../web_report/distribution_batch?subjects=…` 로 받는다 |
-| Trim Analysis | — (lazy) | `/full` 은 빈 시트, `GET .../web_report/trim_analysis` 지연 로드. 그룹 차트는 기본 화면(① 항목 매칭)에선 안 받고, ② 산포 분석에서 `GET .../web_report/trim_chart_batch` 로 **한 페이지 3개씩** |
+| Trim Analysis | — (lazy, **버튼 시작**) | `/full` 은 빈 시트. **탭 진입만으로는 아무 요청도 안 한다** — 「분석 시작」을 눌러야 `GET .../web_report/trim_analysis` 를 받고, 그 뒤 차트는 `GET .../web_report/trim_chart_batch` 로 **한 페이지 6개씩** |
 | Map Analysis | `Map_analysis.py` (하이브리드 lazy) | wafer map die/bin 집계 — `/full` 은 dies 뺀 경량 메타(`include_dies=False`), die 전량은 `GET .../web_report/map_analysis` 지연 로드 (schema v8) |
 | Fail Bin | `yield_tab.fail_bin_ranking` | Bin 랭킹 |
 | Note | — (클라 전용) | TAB_REGISTRY 밖 — 프런트 자체구성 Luckysheet 캔버스, 아래 "Note 탭" 절 |
@@ -153,9 +153,12 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   - 항목 상세(전 포인트 + serial/xpos/ypos hover 메타)는 종전대로 `/scatter/<subject>`.
 - **Trim Analysis**: `build_trim_payload`(항목 매칭 + 슬롯별 통계 + initial shift 판정) /
   `build_trim_chart`(그룹 1개 chip-to-chip 차트).
-  **탭 진입 기본 화면은 ① 항목 매칭**(표)이라 진입만으로는 차트를 계산하지 않는다
-  (2026-07-23 — 종전엔 ② 산포 분석이 기본이라 탭 클릭 1번에 차트 요청 6건이 나갔다).
-  ② 산포 분석은 한 페이지 **3개**(`TRIM.PAGE_SIZE`, 갤러리 CSS 가로 3칸과 일치)를
+  **탭 진입만으로는 서버를 전혀 부르지 않는다** (2026-07-23) — 진입 시엔 sticky 툴바만
+  그리고, 초록색 「분석 시작」(`#trimStartBtn`)을 눌러야 payload 부터 받는다. 종전엔 탭
+  클릭 1번에 payload + 차트 6건이 즉시 나가서, 탭을 스쳐 지나가기만 해도 무거운 계산이
+  시작됐다. 기본 화면은 종전대로 **② 산포 분석**이고, 시작 전 서브탭 클릭은 선택 표시만
+  바꾼다(`trimMarkSubtabs`). 분석이 시작되면 버튼은 감춰지고 이후는 종전과 동일하다.
+  ② 산포 분석은 한 페이지 **6개**(`TRIM.PAGE_SIZE` = 라우트 `_TRIM_BATCH_MAX`)를
   `GET .../web_report/trim_chart_batch` **요청 1건**으로 받는다 — 서버가 tables 로드 +
   `build_groups` 를 그룹 수만큼 반복하던 것을 1회로 줄이는 것이 목적이다
   (`service._trim_chart_ctx` 1회 + 그룹별 `service._trim_chart_gzip`).
@@ -208,8 +211,11 @@ source 1개가 Excel 시트 1장이다([excel_session.py](../client/excel_edit/e
 
 #### 조회 전처리 — Item Select / Outlier 제거 (2026-07-23)
 Honey 의 `Rawdata edit` 은 Excel 을 바로 띄우지 않고 **허브 다이얼로그**
-([rawdata_hub_dialog.py](../client/honey_ui/rawdata_hub_dialog.py))를 먼저 연다:
-`Item Select` / `Outlier 제거` / `Rawdata Edit`(= 종전 Excel 왕복).
+([rawdata_hub_dialog.py](../client/honey_ui/rawdata_hub_dialog.py))를 먼저 연다. 세로 grid
+1장에 전부 보인다(페이지 전환 없음): `Item Select`+Item List / `Outlier 제거`+stdev 입력 /
+`Rawdata 원본 수정`(주황 — Excel 로 원본을 고치는 유일한 버튼) + 하단 `저장`·`닫기`.
+`Item Select`·`Outlier 제거` 버튼은 `저장` 과 같이 **화면 상태 전체**를 저장한다(행별 부분
+저장은 다른 행을 되돌려야 해서 옮겨 둔 항목이 조용히 사라진다).
 
 앞의 둘은 **원본 parquet 을 고치지 않는 되돌릴 수 있는 옵션**이다 — Raw Data 편집과 정반대
 성격이라 백업·content_hash 갱신이 없다.
@@ -217,9 +223,16 @@ Honey 의 `Rawdata edit` 은 Excel 을 바로 띄우지 않고 **허브 다이�
   `{"exclude_items":[...], "outlier":{"mode":"stdev","k":50}}`. 라우트
   `GET/POST .../web_report/preprocess`. 빈 spec 저장 = 해제.
 - 적용: [loader.load_tables](../web_report/loader.py) 한 곳에서 `preprocess.apply_tables` —
-  그 아래 모든 탭이 자동으로 같은 값을 본다. **Raw Data 탭 조회/편집과 Excel 왕복은
-  `apply_prep=False`** 로 원본을 본다(제외한 항목을 되돌릴 수 있어야 하고, 재인코딩 대상은
-  언제나 원본이어야 한다). 전처리된 테이블은 `df=None` 이라 실수로 재인코딩될 수 없다.
+  그 아래 모든 탭(Summary/Yield/CPK/Issue Table/Distribution/Trim/Map)이 자동으로 같은 값을
+  본다. **Raw Data 탭 조회/편집과 Excel 왕복은 `apply_prep=False`** 로 원본을 본다(제외한
+  항목을 되돌릴 수 있어야 하고, 재인코딩 대상은 언제나 원본이어야 한다). 전처리된 테이블은
+  `df=None` 이라 실수로 재인코딩될 수 없다.
+- **항목 제외는 `item_columns` 만 줄인다** — 메타(tno/step/units/limit)와 data 프레임 컬럼은
+  그대로 둔다. `manifest.selected_items` 필터와 **같은 의미론**이며, 여기서 메타까지 지우면
+  Yield 의 fail 집계(`fail_counts` 는 전체 `table.tno` 기준)가 제외 항목의 fail die 를 잃어
+  **표 행 합(90+5+5=100%)과 수율이 어긋난다**. 제외는 "그 항목을 분석에서 뺀다"이지
+  "그 die 를 없앤다"가 아니다 → CPK·Distribution·Trim·TNO Map 에서는 사라지고 **Yield 표와
+  수율은 불변**. 회귀 고정: [test_preprocess_tabs.py](../tests/test_preprocess_tabs.py).
 - outlier 규칙: 항목별 `mean ± k·stdev`(ddof=1) 밖 **측정값만 결측(NaN)**. die(행)·BIN·좌표는
   불변이라 **수율·Wafer Map 은 그대로**고 CPK·Distribution 의 n·평균·σ 만 달라진다.
   σ=0(값이 모두 같음)·표본 1개 이하 항목은 대상 없음.

@@ -125,7 +125,10 @@ def map_key(session, prep_digest: str = "") -> tuple:
 #      survivor/step_yield_pct/sources[].{survivor,yield_pct}/avg_yield_pct **값**이 바뀌고
 #      cum_fail 키가 추가된다(분모 entered·개별 bin fail% 는 불변). 안 올리면 옛 disk_cache
 #      가 STEP 자체 fail 만 뺀 stale 수율(P1 90/P2 95/P3 99)을 계속 반환한다.
-REPORT_SCHEMA_VERSION = 12
+# v13: CPK 행의 stdev 를 반올림 없이(원값) 내보낸다 — CPK/Compare 시트의 stdev **값**이
+#      바뀐다(구조 동일). 안 올리면 옛 disk_cache 가 round(3) 된 stdev 를 계속 반환해
+#      Limit 역산이 예전 값 그대로 나온다.
+REPORT_SCHEMA_VERSION = 13
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

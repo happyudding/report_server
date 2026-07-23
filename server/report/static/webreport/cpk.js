@@ -4,7 +4,7 @@ const CPK_COLUMNS = ["subject", "lower_limit", "upper_limit", "units", "source",
 const CPK_NUMERIC = new Set(["lower_limit", "upper_limit", "n", "min", "median", "max",
   "average", "stdev", "cpl", "cpu", "cp", "cpk"]);
 const CPK_WARN_THRESHOLD = 1.33;   // 기본 임계값 (item_detail/Issue Table 하이라이트는 이 고정값 사용)
-const CPK_PAGE_SIZE = 50;     // 페이지당 표시 행 수
+const CPK_PAGE_SIZE = 100;    // 페이지당 표시 행 수
 
 // 기준(basis) 3상 토글: 전체(모든 die) → Bin1(양품, BIN==1 만) → Limit 안(규격내 전체 die).
 // "Bin1(양품)"=실제 BIN==1 만 추린 데이터, "Limit 안"=BIN 무관 [LSL,USL] 안 값만 재계산 —
@@ -67,6 +67,8 @@ function cpkSigmaText(v) {
 // 결과는 누적된다 — 이전 역산값을 지우지 않고 현재 선택 행만 덮어쓴다. 항목마다 다른
 // Margin 으로 나눠 역산하려면 체크 → 역산 → 체크해제 → 다른 항목 체크 → 역산 을 반복한다.
 // (전체 초기화는 "역산값 지우기" 버튼 / 기준(Data 구분) 변경 / Limit 계산 모드 해제)
+// 단 **복사는 누적분 전체가 아니라 지금 체크된 행만** 대상이다 — 누적 역산 후 원하는 행을
+// 다시 체크하고 "역산값 복사"를 누르면 그 행들만 나온다.
 function cpkComputeTargets() {
   const cpk = parseFloat(cpkTargetVal);
   if (!(cpk > 0)) return;
@@ -90,8 +92,12 @@ function cpkComputeTargets() {
 
 function updateCpkSelInfo() {
   const el = document.getElementById("cpkSelInfo");
-  // 역산값은 체크해제·필터·페이지와 무관하게 남으므로 누적 개수를 함께 보여준다(복사 대상 수).
-  if (el) el.textContent = `선택 ${cpkSelected.size}개 · 역산값 ${cpkTargetResults.size}개`;
+  if (!el) return;
+  // 역산값은 체크해제·필터·페이지와 무관하게 누적으로 남지만 복사 대상은 "체크된 행 ∩
+  // 역산값 있는 행" 뿐이므로, 실제 복사될 개수를 따로 보여준다.
+  let copyable = 0;
+  for (const k of cpkSelected) if (cpkTargetResults.has(k)) copyable++;
+  el.textContent = `선택 ${cpkSelected.size}개 · 역산값 ${cpkTargetResults.size}개 · 복사 대상 ${copyable}개`;
 }
 
 // "abnormal" 판정: ① Limit(하한==상한) 동일 ② CPK 값 없음 → 비정상.
@@ -171,7 +177,7 @@ function cpkTableHtml(rows) {
     return `<div class="placeholder">${msg}</div>`;
   }
 
-  // 50개씩 페이지네이션 (subject/source 컬럼 좌측 고정, cpk 컬럼 우측 고정, 헤더 상단 고정).
+  // 100개씩 페이지네이션 (subject/source 컬럼 좌측 고정, cpk 컬럼 우측 고정, 헤더 상단 고정).
   const totalPages = Math.max(1, Math.ceil(bodyRows.length / CPK_PAGE_SIZE));
   if (cpkPage > totalPages) cpkPage = totalPages;
   if (cpkPage < 1) cpkPage = 1;
@@ -260,7 +266,7 @@ function renderCpk() {
         `<option value="${v}"${Number(cpkMarginPct) === v ? " selected" : ""}>${v === 0 ? "없음" : v + "%"}</option>`).join("") +
       `</select></span>` +
       `<button type="button" id="cpkCalcBtn" class="btn-sm">역산</button>` +
-      `<button type="button" id="cpkCopyBtn" class="btn-sm">역산값 복사</button>` +
+      `<button type="button" id="cpkCopyBtn" class="btn-sm" title="지금 체크된 행의 역산값만 TSV 로 복사 (체크 해제된 행의 누적 역산값은 복사되지 않음)">역산값 복사</button>` +
       `<button type="button" id="cpkClearSelBtn" class="btn-sm">선택 해제</button>` +
       `<button type="button" id="cpkClearResBtn" class="btn-sm" title="누적된 역산값을 모두 지운다 (체크해제·선택 해제로는 지워지지 않음)">역산값 지우기</button>` +
       `<span id="cpkSelInfo" class="cpk-pager-info"></span></div>`
@@ -351,18 +357,23 @@ function renderCpk() {
       renderCpkTable();
     });
     document.getElementById("cpkCopyBtn").addEventListener("click", (e) => {
-      // 누적된 역산 결과 전체를 헤더 포함 4열 TSV 로 복사 → Excel 표 붙여넣기.
-      // units 는 역산 대상이 아니라 원본 CPK 행에서 키로 찾아 붙인다.
+      // **지금 체크된 행**의 역산값만 헤더 포함 4열 TSV 로 복사 → Excel 표 붙여넣기.
+      // 역산값(cpkTargetResults)은 항목별 Margin 혼용을 위해 체크 해제 후에도 누적 보존되지만,
+      // 복사 대상은 그 누적분 전체가 아니라 "체크된 행 ∩ 역산값 있는 행"이다.
+      // 원본 CPK 행 순서로 훑어 화면 필터·페이지와 무관하게 선택분을 빠짐없이 담는다.
       const sheets = webReportSheets();
-      const unitsByKey = new Map((sheets ? (sheets["CPK"] || []) : []).map(r => [cpkRowKey(r), r.units]));
       const lines = [["subject", "target_lolimit", "target_hilimit", "units"].join("\t")];
-      for (const [key, res] of cpkTargetResults) {
-        const u = unitsByKey.get(key);
-        lines.push(`${key.split("||")[0]}\t${res.lo}\t${res.hi}\t${(u === null || u === undefined) ? "" : u}`);
+      for (const r of (sheets ? (sheets["CPK"] || []) : [])) {
+        const key = cpkRowKey(r);
+        if (!cpkSelected.has(key)) continue;
+        const res = cpkTargetResults.get(key);
+        if (!res) continue;   // 체크만 하고 역산 안 한 행은 제외
+        const u = r.units;
+        lines.push(`${r.subject}\t${res.lo}\t${res.hi}\t${(u === null || u === undefined) ? "" : u}`);
       }
       const btn = e.currentTarget;
       const flash = (msg) => { const t = btn.textContent; btn.textContent = msg; setTimeout(() => { btn.textContent = t; }, 1200); };
-      if (lines.length <= 1) { flash("역산값 없음"); return; }
+      if (lines.length <= 1) { flash(cpkSelected.size ? "역산값 없음" : "선택 없음"); return; }
       // HTTP LAN 환경(secure context 아님) 대비 execCommand 폴백이 있는 공용 헬퍼 사용.
       cellSelCopyText(lines.join("\n")).then(ok => flash(ok ? "복사됨" : "복사 실패"));
     });

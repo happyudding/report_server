@@ -1,23 +1,25 @@
 // ── Trim Analysis 탭 ─────────────────────────────────────────────────────────
-// 독립 화면 3개(① 항목 매칭 ② 산포 분석 ③ 분석 리포트). payload(매칭+통계)는 탭 첫
-// 진입 시 GET .../web_report/trim_analysis 로 lazy 로드(세션 open 비용 없음)한다.
-// **탭 진입 기본 화면은 ① 항목 매칭** — 차트는 계산이 무거워 진입만으로 서버를 때리지
-// 않는다(종전엔 ②가 기본이라 탭 클릭 1번에 차트 요청 6건이 나갔다). 사용자가 ② 를 고르면
-// 그때 페이지의 3개를 GET .../web_report/trim_chart_batch **요청 1건**으로 받아 클라
-// 캐시에 채운다(서버가 tables 로드+그룹 재도출을 그룹 수만큼 반복하지 않게 하는 것이 핵심).
+// 독립 화면 3개(① 항목 매칭 ② 산포 분석 ③ 분석 리포트).
+// **탭을 여는 것만으로는 아무 계산도 하지 않는다** — 진입 시엔 sticky 툴바만 그리고,
+// 사용자가 「분석 시작」(초록 버튼)을 눌러야 그때 payload(GET .../web_report/trim_analysis)를
+// 받아 기본 화면인 ② 산포 분석을 그린다. 종전엔 탭 클릭 1번에 payload + 차트 6건이 바로
+// 나가서, 탭을 스쳐 지나가기만 해도 서버가 무거운 계산을 시작했다.
+// 차트는 페이지 6개를 GET .../web_report/trim_chart_batch **요청 1건**으로 받아 클라 캐시에
+// 채운다(서버가 tables 로드+그룹 재도출을 그룹 수만큼 반복하지 않게 하는 것이 핵심).
 // 배치가 실패하면 그룹별 단일 .../web_report/trim_chart 큐(동시 8)로 자동 폴백한다.
 // 데이터 다운샘플 절대 없음(불변 규칙 #6) — 대량 chip 은 scattergl 로 렌더만 가속.
 // 드래그앤드랍 수동 재배치는 POST .../web_report/trim/overrides (로그인 업로더만).
 const TRIM = {
   COLORS: { INIT: "#2E6FE8", CODE: "#7C3AED", TRIM: "#16A34A", VERIFY: "#F59E0B" },
   CONCURRENCY: 8, GL_THRESHOLD: 2000,
-  PAGE_SIZE: 3,             // ② 산포 분석: 한 페이지 3개(가로3 한 줄)로 나눠 렌더
-  BATCH_MAX: 3,             // trim_chart_batch 1회 그룹 수 상한(서버 라우트와 동일 값)
-  CHART_CACHE_MAX: 12,      // 그룹 차트 응답 보유 개수 상한(페이지 3개 × 4페이지분)
+  PAGE_SIZE: 6,             // ② 산포 분석: 한 페이지 6개(가로3·세로2)로 나눠 렌더
+  BATCH_MAX: 6,             // trim_chart_batch 1회 그룹 수 상한(서버 라우트와 동일 값)
+  CHART_CACHE_MAX: 64,      // 그룹 차트 응답 보유 개수 상한(페이지 6개 × 여유)
   REPORT_ENABLED: false,    // ③ 분석 리포트 임시 비활성(웹에서 숨김) — renderTrimReport 코드는 보존
 };
 let trimState = {
-  view: "match",            // match | scatter | report (기본: ① 항목 매칭 — 진입 시 차트 요청 0건)
+  view: "scatter",          // match | scatter | report (기본: ② 산포 분석)
+  started: false,           // 「분석 시작」을 눌렀는가 — false 면 툴바만 그리고 계산하지 않는다
   source: "",               // 선택 source ("" = 첫 소스, payload 도착 후 실제 이름으로 확정)
   payloads: {},             // source → payload (클라 캐시)
   payloadPromises: {},      // source → 진행 중 fetch (중복 방지)
@@ -69,6 +71,8 @@ function renderTrimAnalysis() {
         <button class="distseg" data-tview="scatter">② 산포 분석</button>
         ${TRIM.REPORT_ENABLED ? `<button class="distseg" data-tview="report">③ 분석 리포트</button>` : ""}
       </div>
+      <button class="trim-start-btn" id="trimStartBtn"
+        title="Trim 매칭·산포 분석을 계산한다 — 탭을 여는 것만으로는 계산하지 않는다">분석 시작</button>
       <div class="distseg-group" id="trimYBasis" style="display:none">
         <button class="distseg" data-ybasis="base"
           title="보이는 차트의 y축 범위를 PRE(INIT) 슬롯 항목의 LSL/USL ±15% 로 잡는다">PRE(INIT) 기준 y축</button>
@@ -80,18 +84,20 @@ function renderTrimAnalysis() {
       <button class="btn-sm" id="trimExcelBtn" title="현재 탭 데이터(매칭/리포트 표 + 차트 PNG)를 xlsx 로 다운로드">Excel 다운로드</button>
       <span class="dist-count" id="trimCount"></span>
     </div>
-    <div id="trimBody"><div class="placeholder">Trim 매칭 계산 중…</div></div>`;
+    <div id="trimBody"><div class="placeholder">「분석 시작」을 누르면 Trim 매칭·산포 분석을 계산합니다.</div></div>`;
   panel.querySelector("#trimSubtabs").addEventListener("click", e => {
     const b = e.target.closest("[data-tview]");
     if (!b) return;
     trimState.view = b.dataset.tview;
-    renderTrimView();
+    // 시작 전이면 선택 표시만 바꾸고 계산하지 않는다 (분석 시작 후 그 화면으로 열린다).
+    if (trimState.started) renderTrimView();
+    else trimMarkSubtabs();
   });
   panel.querySelector("#trimYBasis").addEventListener("click", e => {
     const b = e.target.closest("[data-ybasis]");
     if (!b || b.dataset.ybasis === trimState.yBasis) return;
     trimState.yBasis = b.dataset.ybasis;
-    renderTrimView();          // 현재 페이지 3개 차트를 캐시된 payload 로 즉시 재렌더
+    renderTrimView();          // 현재 페이지 6개 차트를 캐시된 payload 로 즉시 재렌더
   });
   panel.querySelector("#trimSource").addEventListener("change", e => {
     trimState.source = e.target.value;
@@ -101,7 +107,37 @@ function renderTrimAnalysis() {
     ensureTrimPayload().then(renderTrimView).catch(trimBodyError);
   });
   panel.querySelector("#trimExcelBtn").addEventListener("click", exportTrimExcel);
-  ensureTrimPayload().then(renderTrimView).catch(trimBodyError);
+  panel.querySelector("#trimStartBtn").addEventListener("click", startTrimAnalysis);
+  trimMarkSubtabs();
+  // 탭 진입만으로는 payload 조차 받지 않는다 — 모든 계산은 「분석 시작」 뒤로 미룬다.
+  // 이미 분석을 시작한 뒤 편집 등으로 탭이 재렌더되면 그 상태를 그대로 복원한다.
+  if (trimState.started) { trimHideStartBtn(); ensureTrimPayload().then(renderTrimView).catch(trimBodyError); }
+}
+
+// 서브탭 활성 표시만 갱신 (분석 시작 전에도 어떤 화면이 선택됐는지 보이게 한다).
+function trimMarkSubtabs() {
+  document.querySelectorAll("#trimSubtabs [data-tview]").forEach(b =>
+    b.classList.toggle("active", b.dataset.tview === trimState.view));
+}
+
+function trimHideStartBtn() {
+  const b = document.getElementById("trimStartBtn");
+  if (b) b.style.display = "none";
+}
+
+// 「분석 시작」 — 여기서 처음으로 서버 계산이 시작된다(payload → 선택된 화면 렌더).
+function startTrimAnalysis() {
+  const btn = document.getElementById("trimStartBtn");
+  const body = document.getElementById("trimBody");
+  if (btn) { btn.disabled = true; btn.textContent = "분석 중…"; }
+  if (body) body.innerHTML = `<div class="placeholder">Trim 매칭 계산 중…</div>`;
+  ensureTrimPayload()
+    .then(() => { trimState.started = true; trimHideStartBtn(); renderTrimView(); })
+    .catch(err => {
+      // 실패하면 다시 누를 수 있도록 버튼을 되돌린다(started 는 false 유지).
+      if (btn) { btn.disabled = false; btn.textContent = "분석 시작"; }
+      trimBodyError(err);
+    });
 }
 
 function renderTrimView() {
@@ -109,8 +145,7 @@ function renderTrimView() {
   const body = document.getElementById("trimBody");
   if (!p || !body) return;
   if (!TRIM.REPORT_ENABLED && trimState.view === "report") trimState.view = "match";
-  document.querySelectorAll("#trimSubtabs [data-tview]").forEach(b =>
-    b.classList.toggle("active", b.dataset.tview === trimState.view));
+  trimMarkSubtabs();
   // y축 기준 토글은 ② 산포 분석에서만 노출(다른 뷰엔 차트가 없다).
   const yb = document.getElementById("trimYBasis");
   if (yb) {
@@ -397,7 +432,7 @@ function trimPumpQueue() {
   }
 }
 
-// ── 페이지 배치 프리페치: 그룹 ≤3개를 요청 1건으로 받아 클라 캐시에 채운다 ──────────
+// ── 페이지 배치 프리페치: 그룹 ≤6개를 요청 1건으로 받아 클라 캐시에 채운다 ──────────
 // 카드별 fetch 를 대체하는 게 아니라 **앞서 채워두는** 방식이다 — 이 함수가 캐시를 채우면
 // 이어지는 trimLoadCard→trimFetchChart 가 캐시 히트로 끝나고, 배치가 실패하면 그 경로가
 // 그대로 그룹별 단일 /trim_chart 폴백이 된다(그래서 항상 resolve 한다).
@@ -423,8 +458,8 @@ function trimPrefetchBatch(groupIds) {
     .catch(() => {});   // 폴백: 카드별 trimFetchChart 가 단일 /trim_chart 로 받아온다
 }
 
-// ── 화면 ② 산포 분석: 한 페이지 3개(가로3 한 줄) 페이지네이션 + Distribution식 검색·선택 ─
-// 관찰자 purge 방식(스크롤 때 그렸다 지웠다 → 사라짐)을 버리고, 현재 페이지 ≤3개만 직접
+// ── 화면 ② 산포 분석: 한 페이지 6개(3×2) 페이지네이션 + Distribution식 검색·선택 ─────
+// 관찰자 purge 방식(스크롤 때 그렸다 지웠다 → 사라짐)을 버리고, 현재 페이지 ≤6개만 직접
 // 렌더해 그대로 유지한다. 검색은 체크박스 제안 드롭다운으로 그룹을 골라 그것만 표시한다.
 function renderTrimScatter(body, p) {
   trimPurgePlots(body);                 // 재렌더 전 이전 페이지 차트 정리(누수 방지)
@@ -470,7 +505,7 @@ function renderTrimScatter(body, p) {
     ? `그룹 ${groups.length}/${allGroups.length}개` : `그룹 ${groups.length}개`;
 
   // 현재 페이지 카드만 직접 렌더(관찰자 없음 → purge-on-scroll 없음 → 사라지지 않음).
-  // 렌더 전에 페이지의 ≤3개를 배치 1건으로 받아둔다 — 카드별 fetch 는 캐시 히트가 되고,
+  // 렌더 전에 페이지의 ≤6개를 배치 1건으로 받아둔다 — 카드별 fetch 는 캐시 히트가 되고,
   // 배치가 실패하면 카드별 단일 fetch 가 그대로 폴백으로 동작한다.
   const pageCards = Array.from(body.querySelectorAll(".trim-gcard"));
   pageCards.forEach(c => { c.dataset.visible = "1"; });

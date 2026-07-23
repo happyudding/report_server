@@ -126,20 +126,20 @@ def apply_tables(tables, spec):
 
 
 def _apply_one(table, excluded, outlier, stats):
+    """항목 제외는 **item_columns 만** 줄인다 — manifest.selected_items 필터와 동일 의미론.
+
+    메타 dict(tno/step/units/hilim/lolim)와 data 프레임 컬럼은 그대로 둔다. 여기서 메타까지
+    지우면 Yield 표의 fail 집계(fail_counts 는 전체 table.tno 기준)가 제외 항목의 fail die 를
+    잃어버려 **표 행 합과 수율이 어긋난다** — 제외한 항목의 fail die 도 BIN 상으로는 여전히
+    fail 이기 때문이다. 제외는 "그 항목을 분석 대상에서 뺀다"이지 "그 die 를 없앤다"가 아니다.
+    (같은 이유로 test_yield_step_selected_items 가 selected_items 경로의 이 동작을 고정한다.)
+    """
     from .honeyform import HoneyformTable
 
     item_columns = [c for c in table.item_columns if c not in excluded]
     data = table.data
-    if excluded:
-        drop = [c for c in data.columns if c in excluded]
-        if drop:
-            data = data.drop(columns=drop)
-
     if outlier and item_columns:
         data = _mask_outliers(data, item_columns, float(outlier["k"]), stats)
-
-    def _meta(d):
-        return {k: v for k, v in d.items() if k not in excluded} if excluded else dict(d)
 
     return HoneyformTable(
         source=table.source,
@@ -147,12 +147,12 @@ def _apply_one(table, excluded, outlier, stats):
         # 전처리 결과는 표시 전용 — 재인코딩 경로가 실수로 쓰지 못하게 df 를 지운다.
         df=None,
         item_columns=item_columns,
-        tseq=_meta(table.tseq),
-        tno=_meta(table.tno),
-        step=_meta(table.step),
-        units=_meta(table.units),
-        hilim=_meta(table.hilim),
-        lolim=_meta(table.lolim),
+        tseq=dict(table.tseq),
+        tno=dict(table.tno),
+        step=dict(table.step),
+        units=dict(table.units),
+        hilim=dict(table.hilim),
+        lolim=dict(table.lolim),
         data=data,
     )
 

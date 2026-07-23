@@ -195,14 +195,18 @@ def main():
     # ── (d) 상한·검증 ────────────────────────────────────────────────────────
     assert client.get(f"{base}/trim_chart_batch?source={source}",
                       headers=UA).status_code == 400, "group 0개가 400 이 아님"
-    four = "".join(f"&group={g}" for g in (gids * 2)[:4])
-    assert client.get(f"{base}/trim_chart_batch?source={source}{four}",
-                      headers=UA).status_code == 400, "group 4개 상한 미적용"
+    # 상한 = 프런트 한 페이지 크기(TRIM.PAGE_SIZE=6) — 6개는 통과, 7개는 거부.
+    six = "".join(f"&group={g}" for g in (gids * 3)[:6])
+    assert client.get(f"{base}/trim_chart_batch?source={source}{six}",
+                      headers=UA).status_code == 200, "group 6개(상한)가 거부됨"
+    seven = "".join(f"&group={g}" for g in (gids * 3)[:7])
+    assert client.get(f"{base}/trim_chart_batch?source={source}{seven}",
+                      headers=UA).status_code == 400, "group 7개 상한 미적용"
     assert client.get(f"{base}/trim_chart_batch?source={source}&group={'x' * 201}",
                       headers=UA).status_code == 400, "group 길이 상한 미적용"
     batch(["__nope__"], expect=404)
     batch([picked[0], "__nope__"], expect=404)
-    print("(d) 검증 OK — 0개/4개/201자 → 400, 미존재 그룹 → 404")
+    print("(d) 검증 OK — 0개/7개/201자 → 400, 6개(상한) → 200, 미존재 그룹 → 404")
     ok += 1
 
     # ── (e) 워커 잡이 라우트와 같은 bytes ────────────────────────────────────

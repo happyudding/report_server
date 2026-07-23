@@ -746,6 +746,15 @@ tbody tr:hover { background: #f9fbff; }
   position: sticky; top: var(--sticky-head-h, 96px); z-index: 90; background: #fff; padding: 6px 0; }
 .trim-source { padding: 6px 10px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 13px; }
 .trim-rule { font-size: 12px; color: #6b7280; }
+/* 「분석 시작」 — 탭을 여는 것만으로는 계산하지 않고 이 버튼을 눌러야 시작한다.
+   서브탭(.distseg.active 인디고)·Excel 다운로드(.btn-sm 회색)와 확실히 구분되는 녹색. */
+.trim-start-btn { padding: 6px 16px; border: 1px solid #15803D; background: #16A34A; color: #fff;
+  border-radius: 6px; font-size: 13px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0,0,0,.06); transition: all .15s ease; }
+.trim-start-btn:hover { background: #15803D; border-color: #166534;
+  box-shadow: 0 2px 6px rgba(0,0,0,.12); transform: translateY(-1px); }
+.trim-start-btn:disabled { background: #9CA3AF; border-color: #9CA3AF; cursor: default;
+  transform: none; box-shadow: none; }
 .trim-note { font-size: 12.5px; color: #6b7280; margin-bottom: 10px; }
 /* 좌우 2단: 왼쪽 = 항목 찾기 팔레트, 오른쪽 = 그룹 카드 그리드 */
 .trim-match-layout { display: flex; gap: 16px; align-items: flex-start; flex-wrap: nowrap; }
@@ -879,8 +888,11 @@ tbody tr:hover { background: #f9fbff; }
   font-size: 12px; color: #6b7280; word-break: break-word; }
 html[data-theme="dark"] .idet-chart-comment:not(:empty) { border-top-color: #2f3540; color: #9aa3b0; }
 .idet-fail-title { margin-top: 8px; }
+/* 차트 캡션 줄(제목 왼쪽 · 컨트롤 오른쪽) — CDF·히스토그램 블록 공용 */
+.idet-hist-cap { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.idet-cap-right { display: inline-flex; align-items: center; gap: 8px; }
+.idet-png { margin-top: 0; padding: 2px 10px; white-space: nowrap; }
 /* 히스토그램 블록 Analysis/Report 세그먼트 토글 */
-.idet-hist-cap { display: flex; align-items: center; justify-content: space-between; }
 .idet-hist-tabs { display: inline-flex; }
 .idet-hist-tabs .btn-sm { margin-top: 0; padding: 2px 10px; border-radius: 0; }
 .idet-hist-tabs .btn-sm:first-child { border-radius: 8px 0 0 8px; }

@@ -897,10 +897,10 @@ class HoneyMainWindow(QMainWindow):
         return m.group(1) if m else ""
 
     def on_rawdata_edit(self):
-        """Rawdata 허브를 연다 — Item Select / Outlier 제거 / Rawdata Edit(Excel).
+        """Rawdata 허브를 연다 — Item Select / Outlier 제거 / Rawdata 원본 수정(Excel).
 
-        앞의 둘은 원본을 고치지 않는 조회 전처리 옵션이라 허브 안에서 끝나고, Excel 편집을
-        고른 경우에만 종전 워커를 띄운다."""
+        앞의 둘은 원본을 고치지 않는 조회 필터라 허브 안에서 끝나고(전 탭이 그 기준으로
+        재계산된다), 'Rawdata 원본 수정' 을 고른 경우에만 종전 Excel 워커를 띄운다."""
         sid = self._current_session_id()
         if not sid:
             QMessageBox.information(

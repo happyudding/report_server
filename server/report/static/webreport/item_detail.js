@@ -162,15 +162,23 @@ function renderItemDetail(data) {
     <div id="chartNoteBar"></div>
     ${idetLegendHtml(data)}
     <div class="idet-charts">
-      <div class="idet-chart-block"><div class="dist-chart-cap">누적분포 CDF</div><div id="distCdf" class="dist-chart"></div>
+      <div class="idet-chart-block">
+        <div class="dist-chart-cap idet-hist-cap">
+          <span>누적분포 CDF</span>
+          <button type="button" class="btn-sm idet-png" data-idet-png="cdf" title="지금 보이는 CDF 차트를 PNG 로 클립보드에 복사 (클립보드 차단 시 PNG 다운로드)">차트 복사</button>
+        </div>
+        <div id="distCdf" class="dist-chart"></div>
         <div id="cdfAxisBar" class="cdf-axisbar"></div>
         <div class="idet-chart-comment" id="cdfCommentView"></div></div>
       <div class="idet-chart-block">
         <div class="dist-chart-cap idet-hist-cap">
           <span>분포 히스토그램</span>
-          <span class="idet-hist-tabs">
-            <button type="button" class="btn-sm idet-hist-mode${idetHistMode === "analysis" ? " active" : ""}" data-hist-mode="analysis">Analysis</button>
-            <button type="button" class="btn-sm idet-hist-mode${idetHistMode === "report" ? " active" : ""}" data-hist-mode="report">Report</button>
+          <span class="idet-cap-right">
+            <span class="idet-hist-tabs">
+              <button type="button" class="btn-sm idet-hist-mode${idetHistMode === "analysis" ? " active" : ""}" data-hist-mode="analysis">Analysis</button>
+              <button type="button" class="btn-sm idet-hist-mode${idetHistMode === "report" ? " active" : ""}" data-hist-mode="report">Report</button>
+            </span>
+            <button type="button" class="btn-sm idet-png" data-idet-png="hist" title="지금 보이는 히스토그램(Analysis/Report)을 PNG 로 클립보드에 복사 (클립보드 차단 시 PNG 다운로드)">차트 복사</button>
           </span>
         </div>
         <div id="distHist" class="dist-chart"${idetHistMode === "report" ? ' style="display:none"' : ""}></div>
@@ -292,6 +300,34 @@ function purgeItemDetailCharts() {
   });
 }
 
+// ── 차트 PNG 클립보드 복사 (CDF / 히스토그램) ───────────────────────────────
+// 히스토그램 블록은 Analysis(#distHist)·Report(#distNormal) 두 차트를 번갈아 감추므로
+// "지금 보이는 쪽"을 복사한다. 비보안 컨텍스트(HTTP LAN)나 클립보드 차단 시 PNG 파일
+// 다운로드로 폴백 — Trim 탭 차트 복사(trimCopyPng)와 같은 방식.
+async function idetCopyChartPng(kind) {
+  const id = kind === "cdf" ? "distCdf" : (idetHistMode === "report" ? "distNormal" : "distHist");
+  const gd = document.getElementById(id);
+  if (!gd || !gd.data) { showToast("차트가 아직 로드되지 않았습니다"); return; }
+  // 화면에 그려진 크기 그대로 2배 해상도로 — 축 범위·제외 편집 등 현재 뷰가 그대로 담긴다.
+  const w = Math.round(gd.clientWidth || 900), h = Math.round(gd.clientHeight || 420);
+  let url = null;
+  try {
+    url = await Plotly.toImage(gd, { format: "png", width: w, height: h, scale: 2 });
+    if (!window.isSecureContext || !navigator.clipboard || !navigator.clipboard.write
+        || typeof ClipboardItem === "undefined") throw new Error("clipboard unavailable");
+    const blob = await (await fetch(url)).blob();
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    showToast("차트 PNG 를 클립보드에 복사했습니다");
+  } catch (e) {
+    if (!url) { showToast("PNG 생성 실패: " + e.message); return; }
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${String(_itemDetailSubject || "item").replace(/[\\/:*?"<>|]/g, "_")}_${id}.png`;
+    document.body.appendChild(a); a.click(); a.remove();
+    showToast("클립보드 복사 불가 — PNG 파일로 다운로드했습니다");
+  }
+}
+
 function closeItemDetail() {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
@@ -336,6 +372,8 @@ function bindItemDetailPanel() {
       axb.dataset.cdfAxis === "apply" ? idetAxisApply(key) : idetAxisAuto(key);
       return;
     }
+    const png = e.target.closest("[data-idet-png]");
+    if (png) { idetCopyChartPng(png.dataset.idetPng); return; }
     const pg = e.target.closest("[data-idet-page]");
     if (pg && !pg.disabled) { _itemDetailFailPage = parseInt(pg.dataset.idetPage, 10) || 1; renderItemFailRows(); return; }
   });
