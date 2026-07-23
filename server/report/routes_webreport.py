@@ -486,7 +486,8 @@ def web_report_save_preprocess(session_id):
     ip, ua = _client_meta()
     try:
         result = web_report_service.save_preprocess(
-            session_id, report_db=report_db, spec=body, client_ip=ip, user_agent=ua)
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            spec=body, client_ip=ip, user_agent=ua)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except ValueError as exc:

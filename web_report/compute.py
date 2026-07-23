@@ -32,7 +32,8 @@ _log = logging.getLogger(__name__)
 # int 증가라 통계 용도로는 충분하다.
 STATS = {"submitted": 0, "inline": 0, "ok": 0, "timeout": 0, "broken": 0, "error": 0,
          "prewarm_queued": 0, "prewarm_dropped": 0, "prewarm_done": 0,
-         "ondemand_queued": 0, "ondemand_done": 0, "ondemand_error": 0}
+         "ondemand_queued": 0, "ondemand_done": 0, "ondemand_error": 0,
+         "distpack_queued": 0, "distpack_done": 0, "distpack_error": 0}
 
 _WORKERS = max(0, int(os.getenv("WEB_REPORT_COMPUTE_WORKERS", "2") or 2))
 # 워커 N개 태스크 처리 후 프로세스 재기동 — 워커 프로세스 내 TABLES_CACHE(최대 4GB)로
@@ -176,10 +177,13 @@ def status():
         pending = len(_prewarm_queue)
     with _ondemand_lock:
         ondemand_pending = len(_ondemand_pending)
+    with _distpack_lock:
+        distpack_pending = len(_distpack_pending)
     return {"workers": _WORKERS, "pool_alive": pool is not None, "processes": alive,
             "timeout_sec": _TIMEOUT_SEC, "tasks_per_child": _TASKS_PER_CHILD,
             "prewarm_pending": pending, "prewarm_max": _PREWARM_MAX_PENDING,
             "ondemand_pending": ondemand_pending, "ondemand_workers": _ONDEMAND_WORKERS,
+            "distpack_pending": distpack_pending,
             "stats": dict(STATS)}
 
 
@@ -229,6 +233,15 @@ def trim_chart_batch_job(session_id: str, upload_root_str: str, source: str,
     return service.get_trim_charts_batch(
         session_id, report_db=report_db, upload_root=Path(upload_root_str),
         source=source, group_ids=list(group_ids))
+
+
+def dist_pack_job(session_id: str, upload_root_str: str, base: bool = False) -> None:
+    """Distribution pack 생성 잡 — 결과는 dist_pack_store 에 영구 저장되므로 반환값 없음."""
+    from database import report_db
+    from . import service
+    service.materialize_dist_pack(
+        session_id, report_db=report_db, upload_root=Path(upload_root_str), base=bool(base))
+    return None
 
 
 def prewarm_job(session_id: str, upload_root_str: str, dist_seeded: bool = False) -> None:
@@ -384,3 +397,69 @@ def request_build(session_id: str, upload_root_str: str, kind: str = "report") -
             _ondemand_threads.append(th)
             th.start()
     _ondemand_wake.set()
+
+
+# ── Distribution pack 생성 큐 (2026-07-23) ───────────────────────────────────
+# 전처리(preprocess)를 켠 세션은 업로드 시점 pack 이 안 맞아 조회마다 서버가 다시
+# 정렬했다. 그 세션용 pack 을 한 번만 만들어 영구 저장하는 잡을 여기서 돌린다.
+#
+# 프리웜/온디맨드 큐와 분리한 이유: 프리웜은 포화 시 오래된 요청을 버리고 중복도 막지
+# 않아, 폴백 조회가 반복 요청하면 남의 업로드 프리웜을 밀어낸다. 온디맨드는 사용자가
+# 화면에서 202 를 기다리는 경로라 최대 300s 걸리는 pack 빌드가 슬롯(2개)을 점유하면
+# 그 사용자들이 멈춘 화면을 본다. 여기는 아무도 기다리지 않고(그 사이 조회는 폴백으로
+# 정상 응답) 중복도 무의미하므로, 단일 소비자 + pending 집합으로 동시 1건만 돈다.
+_distpack_queue = collections.deque()
+_distpack_pending: set = set()      # (session_id, base) — 큐 대기 + 실행 중
+_distpack_lock = threading.Lock()
+_distpack_wake = threading.Event()
+_distpack_thread = None
+
+
+def _distpack_loop() -> None:
+    while True:
+        with _distpack_lock:
+            item = _distpack_queue.popleft() if _distpack_queue else None
+            if item is None:
+                _distpack_wake.clear()
+        if item is None:
+            _distpack_wake.wait()
+            continue
+        session_id, upload_root_str, base = item
+        try:
+            run(dist_pack_job, session_id, upload_root_str, base)
+            STATS["distpack_done"] += 1
+        except Exception:
+            # 실패해도 조회는 기존 계산 폴백으로 정상 동작한다. pending 해제 후 다음
+            # 폴백 조회가 다시 요청하므로 재시도는 자연히 일어난다.
+            STATS["distpack_error"] += 1
+            _log.warning("[distpack] build failed session=%s base=%s", session_id, base,
+                         exc_info=True)
+        finally:
+            with _distpack_lock:
+                _distpack_pending.discard((session_id, bool(base)))
+
+
+def request_dist_pack(session_id: str, upload_root_str: str, base: bool = False) -> None:
+    """Distribution pack 생성을 백그라운드에 요청한다 (이미 대기/실행 중이면 무시).
+
+    base=True 면 전처리 미적용 원본 pack (raw 셀 편집 후 재생성용),
+    False 면 세션의 현 전처리 spec 을 적용한 variant.
+
+    워커 프로세스 안에서는 무시한다 — dist_job 경유로 워커에서도 pack 조회 경로가
+    돌기 때문에, 워커가 또 잡을 예약해 되먹임하는 것을 여기서 한 번에 막는다.
+    """
+    global _distpack_thread
+    if _IN_WORKER:
+        return
+    key = (session_id, bool(base))
+    with _distpack_lock:
+        if key in _distpack_pending:
+            return
+        _distpack_pending.add(key)
+        _distpack_queue.append((session_id, upload_root_str, bool(base)))
+        STATS["distpack_queued"] += 1
+        if _distpack_thread is None:
+            _distpack_thread = threading.Thread(target=_distpack_loop,
+                                                name="webreport-distpack", daemon=True)
+            _distpack_thread.start()
+    _distpack_wake.set()

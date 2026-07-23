@@ -10,10 +10,15 @@
   (c) pack 세션은 서버가 ECDF 를 다시 정렬하지 않는다
       (build_distribution_compact 를 폭파시켜도 응답이 나온다).
   (d) 손상 chunk / 미지 index 포맷은 폐기되고 기존 계산 폴백으로 열린다.
-  (e) 전처리(항목 제외·outlier) 세션은 pack 을 쓰지 않고 폴백 계산한다 — pack 은 업로드
-      시점(전처리 없음) 기준이라 값이 다르기 때문.
+  (e) 전처리(항목 제외·outlier) 세션은 업로드된 pack 을 쓰지 않고 폴백 계산한다 — pack 은
+      업로드 시점(전처리 없음) 기준이라 값이 다르기 때문.
   (f) raw 편집으로 content_hash 가 바뀌면 구 pack 이 조회되지 않고 디렉토리도 회수된다.
   (g) 서버 재시작·캐시 전멸 후에도 pack 으로 응답한다(영구 저장 — 캐시가 아님).
+  (h) 전처리 세션용 variant 를 서버가 1회 만들면(materialize_dist_pack) 이후 조회는
+      재정렬 없이 **폴백 계산과 같은 값**을 낸다.
+  (i) variant 생성은 원본 pack 을 건드리지 않고, 전처리를 해제하면 원본 pack 으로 복귀한다.
+  (j) 전처리 spec 을 바꾸면 구 digest variant 가 회수되고 새 digest 로 다시 만들어진다.
+  (k) 웹 셀 편집 후 서버가 새 세대 base pack 을 다시 만들고 프리웜을 예약한다.
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert).
 """
@@ -25,6 +30,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import numpy as np
@@ -42,9 +48,11 @@ os.environ["WEB_REPORT_COMPUTE_WORKERS"] = "0"   # 인라인 — 테스트 결�
 
 from database import report_db  # noqa: E402
 from web_report import cache as wr_cache  # noqa: E402
+from web_report import compute as wr_compute  # noqa: E402
 from web_report import dist_pack, dist_pack_store  # noqa: E402
 from web_report import edits as wr_edits  # noqa: E402
 from web_report import ingest as wr_ingest  # noqa: E402
+from web_report import preprocess as wr_preprocess  # noqa: E402
 from web_report import service as wr_service  # noqa: E402
 from web_report.honeyform import (  # noqa: E402
     META_COLUMNS, META_ROW_LABELS, decode_split_honeyform_parquet,
@@ -155,6 +163,39 @@ def expected_compact(files, *, bin1=False, only=None, mode="Normal"):
     return compute_dist_compact(tables, [], mode, bin1=bin1, only=only)
 
 
+def expected_prep_compact(files, session_id, *, bin1=False, only=None, mode="Normal"):
+    """전처리를 적용한 폴백 계산 결과 (비교 기준).
+
+    loader 와 같은 순서(전처리 적용 → compute_dist_compact)로, 세션에 **저장된** spec 을
+    그대로 쓴다 — 서버가 조회할 때 하는 일과 동일하다.
+    """
+    from web_report.dist_blob import compute_dist_compact
+
+    tables = [decode_split_honeyform_parquet(
+        f["data"], source=f["name"], file_name=f["filename"], keep_df=False)
+        for f in files]
+    spec = wr_edits.load_preprocess(report_db, session_id)
+    tables, _ = wr_preprocess.apply_tables(tables, spec)
+    return compute_dist_compact(tables, [], mode, bin1=bin1, only=only)
+
+
+def variant_dir(session_id, *, prep_digest=""):
+    session = report_db.get_session(session_id)
+    return dist_pack_store.pack_dir(
+        UPLOAD_ROOT, session["analysis_key"], session["content_hash"], "Normal",
+        prep_digest)
+
+
+def wait_for(cond, timeout=60.0):
+    """백그라운드 잡(단일 소비자 스레드) 완료 대기 — 성공 여부 반환."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if cond():
+            return True
+        time.sleep(0.1)
+    return cond()
+
+
 def served(session_id, *, bin1=False, subjects=None):
     if subjects is None:
         return wr_service.get_distribution(
@@ -256,7 +297,9 @@ check(bad2.get("dist_pack_saved") is False, "(d) 미지 index 포맷 → 저장 
 check(canon(served(bad2["session_id"])) == canon(expected_compact(files)),
       "(d) 미지 포맷 세션도 폴백 계산으로 정상 응답")
 
-# ── (e) 전처리 세션은 pack 을 쓰지 않는다 ───────────────────────────────────
+# ── (e) 전처리 세션은 업로드된 pack 을 쓰지 않는다 ──────────────────────────
+# (variant 가 아직 없는 첫 조회 — 값은 폴백 계산과 같아야 한다. 이 조회가 백그라운드
+#  variant 생성을 예약하지만, 생성되든 말든 값은 동일하므로 아래 검증에 영향이 없다.)
 prep_sid = create_session(with_pack=True, files=files)["session_id"]
 wr_edits.save_preprocess(report_db, prep_sid, {"exclude_items": ["IT03"]})
 clear_caches()
@@ -289,6 +332,105 @@ check(canon(edited) != canon(expected_compact(files)),
       "(f) raw 편집 값이 반영됨 (구 pack 을 재사용하지 않음)")
 check(2.75 in (edited["items"]["IT03"]["sources"]["Lot0"]["x"]),
       "(f) 편집한 값이 ECDF x 에 존재")
+
+# ── (h) 전처리 variant 를 서버가 1회 생성 → 재정렬 없이 폴백과 같은 값 ──────
+var_sid = create_session(with_pack=True, files=files)["session_id"]
+var_spec = {"exclude_items": ["IT03"], "outlier": {"mode": "stdev", "k": 2}}
+wr_edits.save_preprocess(report_db, var_sid, var_spec)
+var_digest = wr_preprocess.session_digest(report_db, var_sid)
+check(bool(var_digest), "(h) 전처리 digest 가 생성됨")
+# 기대값은 pack 생성·패치 전에 폴백 계산으로 확보한다.
+_want_prep_full = canon(expected_prep_compact(files, var_sid))
+_want_prep_bin1 = canon(expected_prep_compact(files, var_sid, bin1=True))
+_want_prep_batch = canon(expected_prep_compact(files, var_sid, only=subjects))
+
+check(wr_service.materialize_dist_pack(
+        var_sid, report_db=report_db, upload_root=UPLOAD_ROOT) == "saved",
+      "(h) 전처리 variant 생성 성공")
+check(variant_dir(var_sid, prep_digest=var_digest).is_dir(),
+      "(h) variant 디렉토리 존재 (<chash>_<mode>_p<digest8>)")
+
+clear_caches()
+dist_tab.build_distribution_compact = _boom
+try:
+    check(canon(served(var_sid)) == _want_prep_full,
+          "(h) 전처리 전체 응답이 재정렬 없이 폴백과 일치")
+    check(canon(served(var_sid, bin1=True)) == _want_prep_bin1,
+          "(h) 전처리 Bin1 응답이 재정렬 없이 폴백과 일치")
+    check(canon(served(var_sid, subjects=subjects)) == _want_prep_batch,
+          "(h) 전처리 배치 응답이 재정렬 없이 폴백과 일치")
+except AssertionError as exc:
+    check(False, f"(h) {exc}")
+finally:
+    dist_tab.build_distribution_compact = _real_compact
+
+# ── (i) 원본 pack 불변 + 전처리 해제 시 복귀 ────────────────────────────────
+check(variant_dir(var_sid).is_dir(), "(i) 원본 pack 디렉토리는 그대로")
+check(wr_service.materialize_dist_pack(
+        var_sid, report_db=report_db, upload_root=UPLOAD_ROOT) == "exists",
+      "(i) 이미 있으면 재생성하지 않음(exists)")
+
+wr_edits.save_preprocess(report_db, var_sid, {})
+check(wr_preprocess.session_digest(report_db, var_sid) == "",
+      "(i) 해제 → digest 가 빈 문자열 (기존 키로 복귀)")
+check(variant_dir(var_sid).is_dir(), "(i) 해제 후에도 원본 pack 이 남아있음")
+_want_base_full = canon(expected_compact(files))     # 패치 전에 확보 ((c) 와 같은 이유)
+clear_caches()
+dist_tab.build_distribution_compact = _boom
+try:
+    check(canon(served(var_sid)) == _want_base_full,
+          "(i) 전처리 해제 → 재정렬 없이 원본 pack 으로 복귀")
+except AssertionError as exc:
+    check(False, f"(i) {exc}")
+finally:
+    dist_tab.build_distribution_compact = _real_compact
+
+# ── (j) spec 변경 → 구 variant 회수 + 새 digest 로 재생성 ───────────────────
+wr_edits.save_preprocess(report_db, var_sid, var_spec)          # 다시 (h) 의 spec
+old_variant = variant_dir(var_sid, prep_digest=var_digest)
+check(old_variant.is_dir(), "(j) 변경 전 variant 존재")
+wr_service.save_preprocess(
+    var_sid, report_db=report_db, upload_root=UPLOAD_ROOT,
+    spec={"exclude_items": ["IT03"], "outlier": {"mode": "stdev", "k": 3}})
+new_digest = wr_preprocess.session_digest(report_db, var_sid)
+check(new_digest and new_digest != var_digest, "(j) spec 변경으로 digest 가 바뀜")
+check(not old_variant.is_dir(), "(j) 구 digest variant 회수됨")
+
+_want_new_spec = canon(expected_prep_compact(files, var_sid))
+check(wr_service.materialize_dist_pack(
+        var_sid, report_db=report_db, upload_root=UPLOAD_ROOT) in ("saved", "exists"),
+      "(j) 새 digest variant 생성")
+clear_caches()
+dist_tab.build_distribution_compact = _boom
+try:
+    check(canon(served(var_sid)) == _want_new_spec,
+          "(j) 새 spec 응답이 재정렬 없이 폴백과 일치")
+except AssertionError as exc:
+    check(False, f"(j) {exc}")
+finally:
+    dist_tab.build_distribution_compact = _real_compact
+
+# ── (k) 웹 셀 편집 → 새 세대 base pack 재생성 + 프리웜 예약 ─────────────────
+mk_sid = create_session(with_pack=True, files=files)["session_id"]
+_prewarm_before = wr_compute.STATS["prewarm_queued"]
+wr_service.edit_raw_data(
+    mk_sid, report_db=report_db, upload_root=UPLOAD_ROOT,
+    edits=[{"source": "Lot0", "row_idx": 1, "column": "IT04", "value": "1.25"}])
+check(wr_compute.STATS["prewarm_queued"] > _prewarm_before,
+      "(k) 편집 후 프리웜 예약됨")
+check(wait_for(lambda: variant_dir(mk_sid).is_dir()),
+      "(k) 새 세대 base pack 이 백그라운드로 재생성됨")
+
+clear_caches()
+dist_tab.build_distribution_compact = _boom
+try:
+    got_edit = served(mk_sid)
+    check(1.25 in got_edit["items"]["IT04"]["sources"]["Lot0"]["x"],
+          "(k) 재생성된 pack 에 편집 값이 반영됨 (재정렬 없음)")
+except AssertionError as exc:
+    check(False, f"(k) {exc}")
+finally:
+    dist_tab.build_distribution_compact = _real_compact
 
 print()
 if _failures:

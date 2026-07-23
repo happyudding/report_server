@@ -186,16 +186,15 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
 
 
 def pack_available(session, session_id, *, report_db, upload_root: Path) -> bool:
-    """이 세션이 pack 으로 서빙되는가 (index 존재 + 전처리 없음). 작은 파일 읽기 1회.
+    """이 세션이 pack 으로 서빙되는가 (해당 세대 index 존재). 작은 파일 읽기 1회.
 
     콜드 빌드 워커 오프로드 여부를 정할 때 쓴다 — pack 이 있으면 계산이 덧셈뿐이라
-    워커 프로세스를 띄우는 비용이 더 크다.
+    워커 프로세스를 띄우는 비용이 더 크다. 전처리 세션은 그 spec 의 variant 를 본다.
     """
-    if _preprocess.session_digest(report_db, session_id):
-        return False
     return dist_pack_store.load_index(
         upload_root, session.get("analysis_key"), session.get("content_hash"),
-        _validate_mode(session.get("mode"))) is not None
+        _validate_mode(session.get("mode")),
+        prep_digest=_preprocess.session_digest(report_db, session_id)) is not None
 
 
 def _pack_items(session, session_id, *, report_db, upload_root: Path, subjects=None):
@@ -204,17 +203,21 @@ def _pack_items(session, session_id, *, report_db, upload_root: Path, subjects=N
     pack 은 정렬(np.unique)까지 끝난 영구 파생 데이터라, 서버는 chunk 를 읽어 덧셈만 하면
     된다 — tables 디코드도 하지 않는다. ``subjects`` 를 주면 그 항목이 든 chunk 만 읽는다.
 
-    **전처리(preprocess) 세션은 pack 을 쓰지 않는다** — pack 은 업로드 시점(전처리 없음)의
-    원본 기준이라 항목 제외·outlier 마스킹이 반영돼 있지 않다. 그 세션은 기존 계산 경로로
-    폴백한다(전처리는 되돌릴 수 있는 표시 전용 옵션이라 해제하면 다시 pack 을 쓴다).
+    **전처리(preprocess) 세션은 전용 variant 를 쓴다** — Honey 가 올린 pack 은 업로드
+    시점(전처리 없음) 기준이라 항목 제외·outlier 마스킹이 반영돼 있지 않다. 그 spec 의
+    variant 가 아직 없으면 백그라운드 생성을 예약하고 이번 조회만 기존 계산으로 폴백한다
+    (전처리는 되돌릴 수 있는 옵션이라 해제하면 digest 가 비어 원본 pack 으로 돌아온다).
     """
-    if _preprocess.session_digest(report_db, session_id):
-        return None
     analysis_key = session.get("analysis_key")
     content_hash = session.get("content_hash")
     mode = _validate_mode(session.get("mode"))
-    index = dist_pack_store.load_index(upload_root, analysis_key, content_hash, mode)
+    prep = _preprocess.session_digest(report_db, session_id)
+    index = dist_pack_store.load_index(upload_root, analysis_key, content_hash, mode,
+                                       prep_digest=prep)
     if not index:
+        if prep:
+            # 전처리 variant 미생성 — 1회 생성 예약(중복 요청은 큐가 무시).
+            compute.request_dist_pack(session_id, str(upload_root))
         return None
 
     chunk_ids = None
@@ -231,11 +234,63 @@ def _pack_items(session, session_id, *, report_db, upload_root: Path, subjects=N
     items = {}
     for chunk_id in chunk_ids:
         part = dist_pack_store.load_chunk_items(
-            upload_root, analysis_key, content_hash, mode, chunk_id)
+            upload_root, analysis_key, content_hash, mode, chunk_id, prep_digest=prep)
         if part is None:
             return None            # 일부 chunk 손상/누락 — 부분 응답 대신 폴백
         items.update(part)
     return items
+
+
+def materialize_dist_pack(session_id: str, *, report_db, upload_root: Path,
+                          base: bool = False) -> str:
+    """Distribution pack 을 서버가 1회 만들어 영구 저장한다 (백그라운드 잡 전용).
+
+    Honey 가 pack 을 붙일 수 없는 두 경우를 메운다:
+    - ``base=False``: 조회 전처리를 켠 세션의 variant (spec 적용 tables 기준)
+    - ``base=True``: 웹 셀 편집으로 content_hash 가 바뀐 뒤의 원본 pack
+
+    값이 폴백 계산과 어긋나지 않는 근거는 **같은 입력 tables 를 쓴다**는 것이다 —
+    폴백(dist_blob.compute_dist_compact)도 여기도 load_tables(apply_prep) 결과를 받고,
+    두 빌더의 정준 JSON 일치는 dist_pack.py 의 계약이다.
+
+    반환값은 관측·테스트용 문자열: saved/exists/empty/stale/failed/no-session.
+    어느 값이든 실패는 무해하다 — pack 이 없으면 조회가 기존 계산으로 폴백한다.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        return "no-session"
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        return "no-session"
+    mode = _validate_mode(session.get("mode"))
+    content_hash = session.get("content_hash")
+    prep = "" if base else _preprocess.session_digest(report_db, session_id)
+    if dist_pack_store.load_index(upload_root, analysis_key, content_hash, mode,
+                                  prep_digest=prep) is not None:
+        return "exists"
+
+    with cache.keyed_lock(("dist_pack_build", analysis_key, content_hash, mode, prep)):
+        if dist_pack_store.load_index(upload_root, analysis_key, content_hash, mode,
+                                      prep_digest=prep) is not None:
+            return "exists"
+        _, tables, manifest = _load_tables(session_id, report_db=report_db,
+                                           upload_root=upload_root, apply_prep=not base)
+        index, chunk_iter = _dist_pack.build_dist_pack(
+            tables, manifest.get("selected_items") or [], mode)
+        # chunk 를 만드는 즉시 gzip — 전체 항목 payload 를 한 번에 들고 있지 않는다.
+        # level 은 클라(1)보다 높다: 서버는 1회 생성 후 영구 보관이라 압축률이 이득.
+        chunks = {cid: _dist_pack.gzip_pack_chunk(chunk) for cid, chunk in chunk_iter}
+        if not chunks:
+            return "empty"
+        # 저장 직전 세대 재확인 — 빌드 중 raw 편집이 끼어들었으면 이 pack 은 옛 원본
+        # 기준이라 버린다(다음 조회가 새 세대로 다시 예약한다).
+        fresh = report_db.get_session(session_id)
+        if not fresh or (fresh.get("content_hash") or "") != (content_hash or ""):
+            return "stale"
+        saved = dist_pack_store.save(upload_root, analysis_key, content_hash, mode,
+                                     _dist_pack.dumps_pack_index(index), chunks,
+                                     prep_digest=prep)
+    return "saved" if saved else "failed"
 
 
 def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: bool = False) -> dict:
@@ -313,8 +368,13 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
         # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
         blob = disk_cache.load_dist(upload_root, cache_key)
         # pack 세션은 계산이 chunk 읽기+덧셈뿐이라 워커 프로세스를 띄우는 편이 손해다.
-        if blob is None and not pack_available(session, session_id, report_db=report_db,
-                                               upload_root=upload_root) \
+        has_pack = pack_available(session, session_id, report_db=report_db,
+                                  upload_root=upload_root)
+        if blob is None and not has_pack and prep:
+            # 전처리 variant 미생성 — 이번 조회는 폴백으로 계산하고, 다음부터 덧셈만 하도록
+            # 생성을 예약한다(워커 오프로드 경로는 _pack_items 를 부모에서 타지 않는다).
+            compute.request_dist_pack(session_id, str(upload_root))
+        if blob is None and not has_pack \
                 and compute.should_offload(cache_policy.tables_key(session, prep)):
             # 콜드 빌드(수십 초 CPU 가능)는 전체/bin1 변형 모두 워커 프로세스로 —
             # 요청 스레드 GIL 점유를 피한다 (워커가 disk_cache 도 채움).
@@ -549,7 +609,7 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
         # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
         cache.evict_akey_caches(analysis_key)
         # 구 세대 Distribution pack 회수 — 새 chash 로는 조회되지 않지만(디렉토리명에 chash)
-        # 남겨두면 용량만 먹는다. 이후 조회는 pack 없이 기존 계산 폴백으로 동작한다.
+        # 남겨두면 용량만 먹는다. 새 세대 pack 은 아래에서 백그라운드로 다시 만든다.
         dist_pack_store.delete_stale(upload_root, analysis_key, content_hash)
     try:
         report_db.log_audit(
@@ -560,6 +620,15 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
+
+    # 편집 후 재계산은 백그라운드 — 응답을 늦추지 않는다 (rawedit.replace_sources 와 동일).
+    # 새 세대 pack 을 서버가 다시 만들어 둬야 Honey 왕복 없이도 이후 Distribution 조회가
+    # 덧셈만 한다(구 pack 은 위에서 회수됐다). 전처리 variant 는 다음 조회가 예약한다.
+    try:
+        compute.request_dist_pack(session_id, str(upload_root), base=True)
+        compute.prewarm(session_id, str(upload_root))
+    except Exception:
+        _log.warning("raw_data 편집 후 재계산 예약 실패 session=%s", session_id, exc_info=True)
 
     return {"ok": True, "edited_cells": len(edits), "storage": storage_result["storage"]}
 
@@ -584,7 +653,7 @@ def _yield_basis_view(session, basis: str) -> dict:
     return {"yield_basis": basis, "gross_die": gross_die_value(session.get("gross_die"))}
 
 
-def save_preprocess(session_id: str, *, report_db, spec: dict,
+def save_preprocess(session_id: str, *, report_db, upload_root: Path, spec: dict,
                     client_ip: str = "", user_agent: str = "") -> dict:
     """조회 전처리 옵션 저장 (빈 spec = 해제). 원본 parquet 은 건드리지 않는다.
 
@@ -593,7 +662,8 @@ def save_preprocess(session_id: str, *, report_db, spec: dict,
 
     rev 증가로 REPORT//full/TRIM 캐시가, digest 변화로 tables/dist/map/scatter 캐시가
     각각 자연 무효화된다 — 여기서 evict 를 부르지 않는 이유다(되돌리면 옛 캐시가 그대로
-    다시 히트한다).
+    다시 히트한다). Distribution pack 은 캐시가 아니라 세대별 영구 데이터라 이 규칙 밖이다:
+    새 spec 의 variant 생성을 예약하고, 더 이상 쓰이지 않는 구 spec variant 만 회수한다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -603,8 +673,21 @@ def save_preprocess(session_id: str, *, report_db, spec: dict,
         raise FileNotFoundError(session_id)
 
     norm = _preprocess.normalize(spec)
+    old_digest = _preprocess.session_digest(report_db, session_id)
     updated_by = edits.user_from_ua(user_agent) or None
     rev = edits.save_preprocess(report_db, session_id, norm, updated_by=updated_by)
+
+    new_digest = _preprocess.digest(norm)
+    if old_digest and old_digest != new_digest:
+        dist_pack_store.delete_variant(upload_root, analysis_key,
+                                       session.get("content_hash"),
+                                       _validate_mode(session.get("mode")), old_digest)
+    if new_digest:
+        # 첫 조회부터 덧셈만 하도록 미리 만들어 둔다 (이미 있으면 잡이 즉시 끝난다).
+        try:
+            compute.request_dist_pack(session_id, str(upload_root))
+        except Exception:
+            _log.warning("전처리 pack 생성 예약 실패 session=%s", session_id, exc_info=True)
 
     basis_changed = ""
     if isinstance(spec, dict) and spec.get("yield_basis") is not None:

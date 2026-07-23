@@ -38,9 +38,23 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   (`tabs.distribution.build_distribution_compact`)과 **정준 JSON 완전 일치**여야 한다.
   항목 정렬(사전순)·소스 순서·반올림 순서를 바꾸면 깨진다 (`tests/test_dist_pack.py`).
 - **응답 형식은 종전과 동일**(`ecdf-columnar-v1`) — 프런트는 pack 세션인지 알지 못한다.
-- **전처리(preprocess) 세션은 pack 을 쓰지 않는다** — pack 은 업로드 시점(전처리 없음)
-  기준이라 항목 제외·outlier 가 반영돼 있지 않다. `service.pack_available` 이 digest 로
-  가드하고 폴백 계산한다(전처리 해제 시 자동 복귀).
+- **전처리(preprocess) 세션은 전용 variant 를 쓴다** (2026-07-23). Honey 가 올린 pack 은
+  업로드 시점(전처리 없음) 기준이라 항목 제외·outlier 가 반영돼 있지 않다. 그래서 그 spec
+  전용 pack 을 **서버가 1회 만들어** `<chash12>_<mode>_p<digest8>/` 에 영구 저장하고, 이후
+  조회는 원본 pack 과 똑같이 덧셈만 한다.
+  - 생성은 백그라운드 전용 큐(`compute.request_dist_pack` → `service.materialize_dist_pack`)
+    — 프리웜 큐(포화 시 폐기·중복 허용)와 온디맨드 큐(사용자가 202 를 기다리는 경로)를
+    쓰지 않는다. 예약 지점은 전처리 저장 시점과, variant 가 아직 없는 Distribution 조회.
+  - 생성 전(첫 조회)이나 실패 시엔 종전대로 폴백 계산한다 — 사용자는 기다리지 않는다.
+  - 값 일치 근거는 **입력 tables 가 같다는 것**이다. 폴백도 variant 빌드도
+    `loader.load_tables(apply_prep=True)` 결과를 받는다(전처리 로직 재구현 없음).
+  - spec 을 바꾸면 digest 가 바뀌어 새 variant 가 만들어지고, 구 variant 는
+    `dist_pack_store.delete_variant` 로 회수한다(chash 가 그대로라 `delete_stale` 로는
+    안 지워진다). 전처리를 해제하면 digest 가 빈 문자열이라 원본 pack 으로 자동 복귀.
+- **웹 셀 편집(`service.edit_raw_data`) 후에도 서버가 새 세대 pack 을 다시 만든다** — 편집으로
+  content_hash 가 바뀌면 구 pack 은 회수되는데, 종전에는 Honey 로 Excel 왕복을 다시 하기
+  전까지 그 세션이 영구히 폴백 계산으로 열렸다. 이제 `request_dist_pack(base=True)` +
+  `compute.prewarm` 을 백그라운드로 예약한다(응답은 기다리지 않는다).
 - 미첨부(구 Honey)·검증 실패·chunk 손상은 전부 조용히 **기존 계산 폴백** — 기존 세션은
   종전과 완전히 동일하게 열린다.
 - 구 `dist_blob` 시딩 경로(2026-07-15, DIST_CACHE+disk 시딩)는 구 Honey 하위호환으로 남는다.

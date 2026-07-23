@@ -29,6 +29,8 @@ web_report/
 │                        순수 모듈 — 클라 honey_main._build_webreport_dist_pack 이 import
 ├── dist_pack_store.py  pack **영구** 저장 (캐시 아님 — 축출·재시작에도 생존).
 │                        <upload_root>/web_report/<akey>/dist_pack/<chash12>_<mode>/
+│                        전처리 세션은 `_p<digest8>` 붙은 variant 를 서버가 1회 생성
+│                        (service.materialize_dist_pack ← compute.request_dist_pack 큐)
 ├── validation.py       canon·mode/meta 정규화·client_identity — 순수 헬퍼 (werkzeug 는
 │                        validate_meta 안 지연 import — 클라가 mode_tables 를 쓰기 때문)
 ├── edits.py            편집 상태 — 진실은 세션 단위 DB(report_webreport_edit). legacy 폴백/시드

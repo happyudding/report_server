@@ -125,6 +125,10 @@ zip(manifest + `source_<idx>.parquet`)을 내려받아 Honey 가 **source 1개 =
   `dist_pack_store.delete_stale` 이 회수하고, 클라가 **편집 결과로 다시 만든 pack** 을
   `dist_pack_index`/`dist_pack_chunk_<n>` 로 동봉한다(`excel_session._build_dist_pack` —
   업로드 경로와 같은 `dist_pack.build_pack_from_parquet`). 미첨부면 서버 폴백 계산.
+- **웹 표 셀 편집(`service.edit_raw_data`)에는 클라가 붙여줄 pack 이 없다** — 브라우저에서
+  고치는 경로라서다. 그래서 편집 후 서버가 새 세대 pack 재생성과 프리웜을 백그라운드로
+  예약한다(`compute.request_dist_pack(base=True)` + `compute.prewarm`, 응답은 대기하지 않음).
+  안 하면 Honey 로 Excel 왕복을 다시 하기 전까지 그 세션이 영구히 폴백 계산으로 열린다.
 
 ## 분석 모드 (Normal / DUT / Compare / Commonality)
 세션마다 모드를 가진다. Honey 업로드 시 **source 개수**(= `honey_parse.file_to_df` 가 돌려준
