@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import shutil
 import time
 import zipfile
@@ -18,8 +19,38 @@ from pathlib import Path
 
 from . import cache
 from . import runtime
-from .honeyform import decode_honeyform_parquet
+from .honeyform import validate_parquet_bytes
 from .validation import canon
+
+_log = logging.getLogger(__name__)
+
+
+def _save_dist_pack(dist_pack, analysis_key, content_hash, mode, upload_root) -> bool:
+    """클라 첨부 Distribution pack 저장 (업로드 경로와 같은 구현).
+
+    실패는 무해 — 서버가 조회 때 폴백 계산한다(느릴 뿐 결과는 같다)."""
+    if not dist_pack:
+        return False
+    try:
+        from .ingest import save_client_dist_pack
+        from .validation import validate_mode
+
+        return save_client_dist_pack(dist_pack, analysis_key, content_hash,
+                                     validate_mode(mode), Path(upload_root))
+    except Exception:
+        _log.warning("rawdata_replace dist pack 저장 실패 akey=%.12s",
+                     str(analysis_key), exc_info=True)
+        return False
+
+
+def export_etag(session) -> str:
+    """rawdata_export 응답의 ETag — 원본 parquet 내용 해시(content_hash) 그대로.
+
+    Honey 가 temp 에 받아둔 zip 을 재사용할 수 있는지 판정하는 유일한 기준이다:
+    content_hash 는 raw parquet 이 바뀔 때만(셀 편집·Excel 왕복) 바뀌므로, 같으면
+    내려줄 내용이 100% 동일하다. 값이 없는 legacy 세션은 빈 문자열(=캐시 불가).
+    """
+    return str((session or {}).get("content_hash") or "")
 
 
 def export_sources_zip(session_id, *, report_db, upload_root) -> bytes:
@@ -112,7 +143,7 @@ def _validate_kept_indices(kept_indices, existing, uploaded):
 
 def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
                     kept_indices=None, client_ip: str = "", user_agent: str = "",
-                    client_user: str = "") -> dict:
+                    client_user: str = "", dist_pack=None) -> dict:
     """Honey 가 Excel 편집 후 재인코딩한 parquet 전체로 세션 원본을 덮어쓴다.
 
     kept_indices: 남긴 source 의 원본 idx 리스트(오름차순). None 이면 전체 교체 —
@@ -122,6 +153,10 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
     parquet 대응이 어긋난다). 삭제 전 원본은 backup_current_sources 로 1세대 백업된다.
 
     그 밖의 검증은 각 parquet 가 유효한 honeyform 인지 뿐 — 통과하면 무조건 덮어쓴다.
+
+    dist_pack: Honey 가 재인코딩한 parquet 으로 미리 만든 Distribution pack
+    ({"index": json str, "chunks": {id: gzip bytes}}). 있으면 새 content_hash 로 영구
+    저장해 서버의 콜드 dist 정렬(수십 초 CPU)을 없앤다 — 업로드 경로와 같은 구조다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -130,10 +165,12 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    # (1) 각 parquet 가 유효한 honeyform 인지 검증 (실패 시 ValueError → 400)
+    # (1) 각 parquet 가 유효한 honeyform 인지 검증 (실패 시 ValueError → 400).
+    # 뼈대(스키마+메타 6행)만 읽는다 — 클라가 encode 시 이미 같은 규칙으로 검증했고,
+    # 여기서 전량 디코드하면 수백만 셀 to_numeric 을 하고 결과를 버리게 된다.
     for i, data in enumerate(sources_bytes):
         try:
-            decode_honeyform_parquet(data)
+            validate_parquet_bytes(data)
         except ValueError as exc:
             raise ValueError(f"source_{i}: {exc}") from exc
 
@@ -186,6 +223,15 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
         # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
         # (edit_raw_data 와 동일한 무효화 로직).
         cache.evict_akey_caches(analysis_key)
+        # 구 세대 Distribution pack 회수 — 새 chash 로는 조회되지 않지만(디렉토리명에 chash)
+        # 남겨두면 용량만 먹는다. 이후 조회는 pack 없이 기존 계산 폴백으로 동작한다.
+        from . import dist_pack_store
+
+        dist_pack_store.delete_stale(Path(upload_root), analysis_key, content_hash)
+        # 클라가 새 parquet 으로 만들어 보낸 pack 을 새 chash 로 저장 — 있으면 이후 조회가
+        # 정렬 없이 덧셈만 한다(업로드 직후와 같은 상태). delete_stale 뒤에 저장할 것.
+        pack_saved = _save_dist_pack(dist_pack, analysis_key, content_hash,
+                                     session.get("mode"), upload_root)
     try:
         removed_note = f", removed={removed_names}" if removed_names else ""
         report_db.log_audit(
@@ -199,5 +245,14 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
     except Exception:
         pass
 
+    # 캐시를 통째로 비웠으므로 다음 조회자가 콜드 리빌드 전부를 부담한다 — 업로드 경로와
+    # 같이 프리웜을 걸어 그 계산을 컴퓨트 워커로 넘긴다(요청 스레드 GIL 비점유, 즉시 반환).
+    try:
+        from . import compute
+        compute.prewarm(session_id, str(upload_root))
+    except Exception:
+        _log.warning("rawdata_replace 프리웜 시작 실패 (session=%s)", session_id,
+                     exc_info=True)
+
     return {"ok": True, "sources": len(sources_bytes), "removed": len(removed_names),
-            "storage": storage_result["storage"]}
+            "storage": storage_result["storage"], "dist_pack_saved": pack_saved}

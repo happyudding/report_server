@@ -32,11 +32,16 @@ KIND_ISSUE_STATUS = "issue_status"
 # IssueTable comment 의 #[태그명] 토큰이 이 태그를 가리켜 Note 특정 셀로 점프한다.
 # manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
 KIND_NOTE_TAG = "note_tag"
+# 2026-07-23 추가 — 조회 전처리 옵션(item_key='spec', value=JSON: exclude_items/outlier).
+# 원본 parquet 을 바꾸지 않고 조회 시점에만 적용되는 되돌릴 수 있는 편집 (preprocess.py).
+KIND_PREPROCESS = "preprocess"
+_PREPROCESS_KEY = "spec"
 
 # 표 payload 빌드에 안 쓰이는 kind — load_edit_state 조회에서 제외해 대용량 값
 # (note_sheet 시트 JSON 최대 2MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
 # note_tag 는 /full extras 로 별도 조회(load_note_tags)라 표 상태에 싣지 않는다.
-_STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG)
+# preprocess 는 loader 가 별도 조회(load_preprocess)해 캐시 키에 쓰므로 표 상태 밖이다.
+_STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG, KIND_PREPROCESS)
 
 # issue_comment 의 item_key = row_key + SEP + col (row_key 에 '|' 가 쓰여 제어문자 사용)
 _SEP = "\x1f"
@@ -150,6 +155,37 @@ def load_note_tags(report_db, session_id: str) -> dict:
             spec["updated_at"] = row.get("updated_at") or ""
             out[row["item_key"]] = spec
     return out
+
+
+def load_preprocess(report_db, session_id: str) -> dict:
+    """조회 전처리 spec (없으면 빈 dict) — preprocess.normalize 를 통과한 정규형.
+
+    kind 지정 조회(작은 인덱스 SELECT 1회)라 note_sheet 등 대용량 값을 끌어오지 않는다.
+    반환 빈 dict = 전처리 없음 = 캐시 키·코드 경로가 종전과 완전히 동일."""
+    from .preprocess import normalize
+
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_PREPROCESS,)):
+        if row["item_key"] != _PREPROCESS_KEY:
+            continue
+        try:
+            spec = json.loads(row["value"])
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        return normalize(spec)
+    return {}
+
+
+def save_preprocess(report_db, session_id: str, spec: dict, updated_by=None) -> int:
+    """전처리 spec 저장 (정규화 후 빈 dict 면 행 삭제 = 해제). 새 rev 반환.
+
+    rev 증가로 REPORT/TRIM//full 캐시가, digest 변화로 tables/dist/map/scatter 캐시가
+    각각 무효화된다 (cache_policy 참조)."""
+    from .preprocess import normalize
+
+    norm = normalize(spec)
+    value = json.dumps(norm, sort_keys=True, ensure_ascii=False) if norm else None
+    return report_db.apply_webreport_edits(
+        session_id, [(KIND_PREPROCESS, _PREPROCESS_KEY, value)], updated_by=updated_by)
 
 
 def load_note_sheet(report_db, session_id: str) -> dict | None:

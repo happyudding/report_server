@@ -29,6 +29,7 @@ from web_report import service as web_report_service
 from web_report import build_status as web_report_build_status_mod
 from web_report import compute as web_report_compute
 from web_report import response_cache as web_report_response_cache
+from web_report import preprocess as web_report_preprocess
 from web_report import rawedit as web_report_rawedit
 
 _log = logging.getLogger(__name__)
@@ -39,6 +40,16 @@ _MAX_WEBREPORT_SOURCE_BYTES = 512 * 1024 * 1024
 # 요청한다. 상한을 두는 이유는 URL 길이/계산량 폭주 차단이며, 초과분은 프런트가 다음
 # 배치로 나눠 보낸다.
 _DIST_BATCH_MAX = 40
+
+
+def _prep_tag(session_id):
+    """ETag 에 붙일 전처리 digest 조각 (전처리 없으면 빈 문자열).
+
+    dist/map/scatter 응답은 (analysis_key, content_hash, 변형) 만으로 ETag 를 만들었는데,
+    전처리는 content_hash 를 바꾸지 않는다(원본 parquet 불변) — 이 조각이 없으면 옵션을
+    켜거나 끈 직후 브라우저가 stale 304 를 받아 옛 값을 계속 보게 된다."""
+    digest = web_report_preprocess.session_digest(report_db, session_id)
+    return f"-{digest}" if digest else ""
 
 
 @report_bp.get("/session/<session_id>/web_report/build_status")
@@ -101,7 +112,8 @@ def web_report_distribution(session_id):
     # 변형이 서로의 304 로 오염되지 않게 한다.
     bin1 = (request.args.get("bin1") or "") in ("1", "true", "True")
     variant = "bin1" if bin1 else "all"
-    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}-{variant}"'
+    etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
+            f'-{variant}{_prep_tag(session_id)}"')
     headers = {"Vary": "Accept-Encoding", "ETag": etag}
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers=headers)
@@ -172,7 +184,8 @@ def web_report_map_analysis(session_id):
     gzip(Accept-Encoding 시)과 ETag(analysis_key+content_hash) 조건부 응답 지원.
     """
     session = _require_web_report_session(session_id)
-    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}-map"'
+    etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
+            f'-map{_prep_tag(session_id)}"')
     headers = {"Vary": "Accept-Encoding", "ETag": etag}
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers=headers)
@@ -217,7 +230,8 @@ def web_report_scatter(session_id, subject):
     variant = "bin1" if bin1 else "all"
     # subject 는 URL 에, mode 는 세션 불변이라 ETag 는 /distribution 과 동일하게
     # analysis_key+content_hash(+변형) 로 충분 — raw_data 편집 시 content_hash 변경으로 재수신.
-    etag = f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}-{variant}"'
+    etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
+            f'-{variant}{_prep_tag(session_id)}"')
     headers = {"Vary": "Accept-Encoding", "ETag": etag}
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers=headers)
@@ -433,6 +447,49 @@ def web_report_raw_data_edit(session_id):
     return jsonify(result)
 
 
+@report_bp.get("/session/<session_id>/web_report/preprocess")
+def web_report_get_preprocess(session_id):
+    """조회 전처리 옵션(항목 제외 / outlier) 현재 값 — Honey 허브 다이얼로그가 그린다.
+
+    DB 만 읽는 값싼 조회라 CSRF/편집자 가드 없이 세션 조회 권한만 요구한다."""
+    _require_web_report_session(session_id)
+    try:
+        result = web_report_service.get_preprocess(session_id, report_db=report_db)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session not found")
+    return jsonify(result)
+
+
+@report_bp.post("/session/<session_id>/web_report/preprocess")
+def web_report_save_preprocess(session_id):
+    """조회 전처리 옵션 저장 — 원본 parquet 은 그대로 두고 조회 시점에만 적용된다.
+
+    body: {"exclude_items": [...], "outlier": {"mode":"stdev","k":50}} — 빈 spec 이면 해제.
+    Honey 클라(브라우저 아님)도 호출하므로 rawdata_replace 와 같이 X-Honey-Agent 헤더를
+    CSRF 대체로 허용한다. 편집 권한은 다른 편집 채널과 동일(_editor_guard)."""
+    if request.headers.get("X-Honey-Agent") != "1":
+        _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    if not isinstance(body, dict):
+        return jsonify({"error": "본문 형식 오류"}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.save_preprocess(
+            session_id, report_db=report_db, spec=body, client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report preprocess save failed for session %s", session_id)
+        abort(500, "preprocess save failed")
+    return jsonify(result)
+
+
 def _read_webreport_source_files():
     """멀티파트 webreport_0..N parquet 필드를 list[bytes] 로 읽는다 (upload_webreport 패턴)."""
     out = []
@@ -453,12 +510,50 @@ def _read_webreport_source_files():
     return out
 
 
+def _read_dist_pack_fields():
+    """선택 첨부 Distribution pack — upload_webreport._read_dist_pack 과 같은 규약.
+
+    dist_pack_index(form JSON) + dist_pack_chunk_<n>(파일). 최적화용 첨부물이라 크기 초과·
+    결손은 요청 실패가 아니라 **pack 전체 건너뛰기**(서버 폴백 계산)다 — 부분 pack 을
+    저장하면 조회가 항목을 잃는다. 내용 검증·저장은 ingest.save_client_dist_pack 이 한다."""
+    index_text = request.form.get("dist_pack_index")
+    if not index_text:
+        return None
+    chunks = {}
+    idx = 0
+    total = 0
+    while True:
+        f = request.files.get(f"dist_pack_chunk_{idx}")
+        if f is None:
+            break
+        data = f.read()
+        if not data or len(data) > _MAX_WEBREPORT_SOURCE_BYTES:
+            return None
+        total += len(data)
+        if total > _MAX_WEBREPORT_SOURCE_BYTES:
+            return None
+        chunks[idx] = data
+        idx += 1
+    if not chunks:
+        return None
+    return {"index": index_text, "chunks": chunks}
+
+
 @report_bp.get("/session/<session_id>/web_report/rawdata_export")
 def web_report_rawdata_export(session_id):
     """Honey 클라 Excel 편집용: 세션의 모든 source parquet + manifest 를 zip 으로 내려준다.
 
-    Honey(브라우저 아님)가 GET 으로 받아 Excel 로 연다 — 조회이므로 CSRF 불필요."""
-    _require_web_report_session(session_id)
+    Honey(브라우저 아님)가 GET 으로 받아 Excel 로 연다 — 조회이므로 CSRF 불필요.
+
+    ETag = content_hash. Honey 가 temp 에 받아둔 zip 을 If-None-Match 로 물어보면
+    내용이 그대로일 때 **304 + 본문 0바이트**로 끝난다 — 전 소스를 storage 에서 다시
+    메모리에 올려 zip 으로 싸는 비용(응답 크기의 수 배 RAM) 자체가 발생하지 않는다.
+    """
+    session = _require_web_report_session(session_id)
+    etag_value = web_report_rawedit.export_etag(session)
+    etag = f'"{etag_value}"' if etag_value else ""
+    if etag and request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
     try:
         blob = web_report_rawedit.export_sources_zip(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
@@ -467,9 +562,11 @@ def web_report_rawdata_export(session_id):
     except Exception:
         _log.exception("web_report rawdata export failed for session %s", session_id)
         abort(500, "rawdata export failed")
-    return Response(
-        blob, mimetype="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="rawdata_{session_id}.zip"'})
+    headers = {"Content-Disposition": f'attachment; filename="rawdata_{session_id}.zip"',
+               "Cache-Control": "no-cache"}
+    if etag:
+        headers["ETag"] = etag
+    return Response(blob, mimetype="application/zip", headers=headers)
 
 
 @report_bp.post("/session/<session_id>/web_report/rawdata_replace")
@@ -482,7 +579,11 @@ def web_report_rawdata_replace(session_id):
     (_editor_guard — Honey 는 HoneyUser UA 로 신원을 보낸다, excel_session._honey_headers).
 
     Excel 에서 시트를 지워 source 가 줄었으면 클라가 form 필드 source_indices 에 남긴
-    source 의 원본 idx 배열(JSON, 오름차순)을 함께 보낸다. 없으면 전체 교체(개수 동일)."""
+    source 의 원본 idx 배열(JSON, 오름차순)을 함께 보낸다. 없으면 전체 교체(개수 동일).
+
+    선택 필드 dist_pack_index + dist_pack_chunk_<n> — 클라가 재인코딩한 parquet 으로 미리
+    만든 Distribution pack. 첨부되면 새 content_hash 로 영구 저장해 서버 콜드 dist 정렬을
+    없앤다 (업로드 라우트와 동일 규약)."""
     if request.headers.get("X-Honey-Agent") != "1":
         abort(403, "X-Honey-Agent header required")
     session = _require_web_report_session(session_id)
@@ -490,6 +591,7 @@ def web_report_rawdata_replace(session_id):
     if denied:
         return denied
     sources = _read_webreport_source_files()
+    dist_pack = _read_dist_pack_fields()
     kept_indices = None
     raw_indices = request.form.get("source_indices")
     if raw_indices:
@@ -503,7 +605,7 @@ def web_report_rawdata_replace(session_id):
         result = web_report_rawedit.replace_sources(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             sources_bytes=sources, kept_indices=kept_indices, client_ip=ip, user_agent=ua,
-            client_user=_current_user() or "")
+            client_user=_current_user() or "", dist_pack=dist_pack)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except ValueError as exc:

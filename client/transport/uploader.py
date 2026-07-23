@@ -59,13 +59,16 @@ def post_grids(sheet_grids, file_name, product_type, product, lot_id, password,
 
 
 def post_webreport(manifest, parquet_items, base_url=None, progress_cb=None,
-                   dist_blobs=None):
+                   dist_blobs=None, dist_pack=None):
     """7-meta honeyform parquet 묶음을 /pe/report/upload_webreport 로 전송.
 
     manifest: {sources, meta, selected_items, sheets}
     parquet_items: [{"index", "name", "file_name", "data": bytes}, ...]
     dist_blobs: {"all": gzip bytes, "bin1": gzip bytes} — 프리컴퓨트 Distribution ECDF
                 (web_report.dist_blob 로 계산). None/빈 값이면 미첨부(서버가 폴백 계산).
+    dist_pack: {"index": json str, "chunks": {id: gzip bytes}} — 정렬까지 끝낸
+               Distribution pack (web_report.dist_pack). 서버가 **영구** 저장해 조회·
+               재조회 모두 재정렬 없이 서빙한다. None 이면 미첨부(서버 폴백 계산).
     """
     base = (base_url or SERVER_BASE_URL).rstrip("/")
     url = f"{base}/pe/report/upload_webreport"
@@ -85,6 +88,11 @@ def post_webreport(manifest, parquet_items, base_url=None, progress_cb=None,
         data = (dist_blobs or {}).get(variant)
         if data:
             fields[field] = (f"{field}.json.gz", data, "application/gzip")
+    if dist_pack and dist_pack.get("index") and dist_pack.get("chunks"):
+        fields["dist_pack_index"] = dist_pack["index"]
+        for chunk_id, blob in sorted(dist_pack["chunks"].items()):
+            fields[f"dist_pack_chunk_{int(chunk_id)}"] = (
+                f"chunk_{int(chunk_id)}.json.gz", blob, "application/gzip")
 
     encoder = MultipartEncoder(fields=fields)
     body = encoder

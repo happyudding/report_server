@@ -277,14 +277,24 @@ def history():
 #   SSO 헤더 → Honey UA → 웹 로그인 세션.
 # Honey 는 UA 토큰으로 자동 식별되어 로그인이 불필요하고, 일반 브라우저는
 # singleID + 비밀번호(4자리)로 로그인해 Honey 와 동등한 권한을 얻는다.
-# 비밀번호 설정은 Honey 접속(identity_source()=="honey")에서만 가능하다 — 서버는 SECDS
-# 계정의 실재 여부를 확인할 수단이 없고, Honey 실행 자체가 본인확인 역할을 한다.
+# 계정 생성 경로는 2개다:
+#   (1) Honey 접속에서 /api/auth/set_password — 실행 자체가 본인확인 역할.
+#   (2) 웹 /api/auth/signup — 서버는 SECDS 계정 실재 여부를 확인할 수단이 없으므로
+#       'Honey 사용 이력이 없는 미사용 singleID' 만 자유 가입시킨다(선점 차단).
+# 이미 계정이 있는 사람의 비밀번호 재설정은 여전히 Honey(또는 관리자 초기화)뿐이다.
 
 _LOGIN_MAX_FAILS = 5
 _LOGIN_LOCK_SEC = 300
 # uid -> [실패횟수, 최초실패 monotonic]. 프로세스 메모리라 재기동 시 초기화되고
 # 멀티프로세스 전환 시 무효 — 실질 탐지는 login_fail 감사로그가 담당한다.
 _login_fails = {}
+
+# 웹 회원가입(계정 생성) — IP 당 시간창 제한 + 자동완성 힌트 조회 범위.
+_SIGNUP_MAX_PER_IP = 5
+_SIGNUP_WINDOW_SEC = 3600
+_SIGNUP_HINT_WINDOW_SEC = 180 * 86400
+# ip -> [가입횟수, 창 시작 monotonic] (_login_fails 와 동일한 프로세스 메모리 한계)
+_signup_ips = {}
 
 
 def _normalize_login_id(value):
@@ -316,6 +326,31 @@ def _login_locked(uid):
         _login_fails.pop(uid, None)
         return False
     return rec[0] >= _LOGIN_MAX_FAILS
+
+
+def _signup_flooded(ip):
+    """같은 IP 의 가입이 1시간 안에 _SIGNUP_MAX_PER_IP 회를 넘었는지. _login_fails 와
+    같은 프로세스 메모리라 재기동 시 초기화된다 — 실질 추적은 감사로그 signup 행."""
+    if not ip:
+        return False
+    rec = _signup_ips.get(ip)
+    if not rec:
+        return False
+    if time.monotonic() - rec[1] > _SIGNUP_WINDOW_SEC:
+        _signup_ips.pop(ip, None)
+        return False
+    return rec[0] >= _SIGNUP_MAX_PER_IP
+
+
+def _record_signup(ip):
+    if not ip:
+        return
+    now = time.monotonic()
+    if len(_signup_ips) > 1000:
+        for k in [k for k, v in _signup_ips.items() if now - v[1] > _SIGNUP_WINDOW_SEC]:
+            _signup_ips.pop(k, None)
+    rec = _signup_ips.setdefault(ip, [0, now])
+    rec[0] += 1
 
 
 def _record_login_fail(uid):
@@ -394,6 +429,65 @@ def auth_logout():
     if uid:
         _auth_audit("logout", uid)
     return jsonify({"ok": True})
+
+
+@report_bp.post("/api/auth/signup")
+def auth_signup():
+    """웹 회원가입 — Honey 없이 일반 브라우저에서 계정을 만든다.
+
+    본인 확인 수단이 없으므로 '아직 쓰인 적 없는 singleID' 만 자유 가입시킨다:
+    이미 Honey 로 업로드/방문한 계정은 본인이 Honey 에서 설정하면 되고, 그 계정을
+    타인이 선점하는 것을 막는다. (잘못 선점된 계정 회수는 관리자 패널 계정 탭 삭제.)"""
+    _require_csrf()
+    body = request.get_json(force=True, silent=True) or {}
+    uid = _normalize_login_id(body.get("user_id"))
+    pin = (body.get("password") or "").strip()
+    if not _PIN_RE.match(pin):
+        return jsonify({"error": "비밀번호는 숫자 4자리여야 합니다."}), 400
+
+    ip, _ua = _client_meta()
+    if _signup_flooded(ip):
+        _auth_audit("signup", uid, result="ratelimit")
+        return jsonify({"error": "가입 시도가 너무 많습니다 — 잠시 후 다시 시도해주세요."}), 429
+
+    if report_db.get_user(uid):
+        return jsonify({
+            "error": "이미 가입된 계정입니다. 비밀번호를 잊었다면 Honey 앱에서 재설정하세요."
+        }), 409
+    if report_db.has_honey_history(uid):
+        return jsonify({
+            "error": "이 계정은 Honey 사용 이력이 있습니다 — 비밀번호는 Honey 앱에서 설정해주세요."
+        }), 403
+
+    if not report_db.create_user(uid, generate_password_hash(pin)):
+        # 동시 가입 경합 — 위 존재 확인과 INSERT 사이에 다른 요청이 만든 경우
+        return jsonify({"error": "이미 가입된 계정입니다."}), 409
+
+    _record_signup(ip)
+    _login_fails.pop(uid, None)
+    flask_session.clear()               # session fixation 방지 (로그인과 동일)
+    flask_session["uid"] = uid
+    flask_session.permanent = True
+    _auth_audit("signup", uid)
+    return jsonify({"ok": True, "user_id": uid, "source": "login"})
+
+
+@report_bp.get("/api/auth/signup_hint")
+def auth_signup_hint():
+    """회원가입 창의 singleID 자동완성 힌트 — **요청자 자신의 IP** 로만 조회한다
+    (IP 를 파라미터로 받지 않아 타인 IP 열거 불가). 신원 판단에는 쓰지 않는다.
+
+    힌트의 출처가 Honey 업로드 기록이므로 잡히는 계정은 대개 가입 차단 대상이다
+    (honey_seen) — 프런트는 그 경우 'Honey 앱에서 설정' 안내를 함께 띄운다."""
+    ip, _ua = _client_meta()
+    try:
+        uid = report_db.recent_upload_user_by_ip(ip, int(time.time()) - _SIGNUP_HINT_WINDOW_SEC)
+    except Exception:
+        uid = None
+    if not uid:
+        return jsonify({})
+    uid = uid.split("\\")[-1].strip().lower()
+    return jsonify({"user_id": uid, "honey_seen": True})
 
 
 @report_bp.get("/api/auth/me")

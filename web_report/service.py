@@ -26,7 +26,10 @@ from . import cache_policy
 from . import compute
 from . import disk_cache
 from . import dist_blob as _dist_blob
+from . import dist_pack as _dist_pack
+from . import dist_pack_store
 from . import edits
+from . import preprocess as _preprocess
 from . import rawedit as _rawedit
 from . import runtime
 from .honeyform import encode_honeyform_parquet
@@ -116,7 +119,8 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                     # 표시한다 (관측 전용 — 빌드 로직에는 영향 없음).
                     build_status.begin(session_id, "report")
                     try:
-                        if compute.should_offload(cache_policy.tables_key(session)):
+                        if compute.should_offload(cache_policy.tables_key(
+                                session, _preprocess.session_digest(report_db, session_id))):
                             # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
                             # 워커가 disk_cache 도 채우므로 여기서는 RAM 캐시만 넣는다.
                             report = compute.run(compute.report_job, session_id,
@@ -168,6 +172,59 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     return public, report
 
 
+def pack_available(session, session_id, *, report_db, upload_root: Path) -> bool:
+    """이 세션이 pack 으로 서빙되는가 (index 존재 + 전처리 없음). 작은 파일 읽기 1회.
+
+    콜드 빌드 워커 오프로드 여부를 정할 때 쓴다 — pack 이 있으면 계산이 덧셈뿐이라
+    워커 프로세스를 띄우는 비용이 더 크다.
+    """
+    if _preprocess.session_digest(report_db, session_id):
+        return False
+    return dist_pack_store.load_index(
+        upload_root, session.get("analysis_key"), session.get("content_hash"),
+        _validate_mode(session.get("mode"))) is not None
+
+
+def _pack_items(session, session_id, *, report_db, upload_root: Path, subjects=None):
+    """Honey 가 업로드에 첨부한 Distribution pack 에서 항목 데이터를 읽는다 (없으면 None).
+
+    pack 은 정렬(np.unique)까지 끝난 영구 파생 데이터라, 서버는 chunk 를 읽어 덧셈만 하면
+    된다 — tables 디코드도 하지 않는다. ``subjects`` 를 주면 그 항목이 든 chunk 만 읽는다.
+
+    **전처리(preprocess) 세션은 pack 을 쓰지 않는다** — pack 은 업로드 시점(전처리 없음)의
+    원본 기준이라 항목 제외·outlier 마스킹이 반영돼 있지 않다. 그 세션은 기존 계산 경로로
+    폴백한다(전처리는 되돌릴 수 있는 표시 전용 옵션이라 해제하면 다시 pack 을 쓴다).
+    """
+    if _preprocess.session_digest(report_db, session_id):
+        return None
+    analysis_key = session.get("analysis_key")
+    content_hash = session.get("content_hash")
+    mode = _validate_mode(session.get("mode"))
+    index = dist_pack_store.load_index(upload_root, analysis_key, content_hash, mode)
+    if not index:
+        return None
+
+    chunk_ids = None
+    if subjects is not None:
+        chunk_of = _dist_pack.item_chunk_map(index)
+        wanted = {str(s) for s in subjects if str(s)}
+        chunk_ids = sorted({chunk_of[s] for s in wanted if s in chunk_of})
+        if not chunk_ids:
+            # 요청 항목이 pack 에 하나도 없다 — pack 세대가 어긋났을 수 있으니 폴백한다.
+            return None
+    else:
+        chunk_ids = [int(e["id"]) for e in index.get("chunks") or ()]
+
+    items = {}
+    for chunk_id in chunk_ids:
+        part = dist_pack_store.load_chunk_items(
+            upload_root, analysis_key, content_hash, mode, chunk_id)
+        if part is None:
+            return None            # 일부 chunk 손상/누락 — 부분 응답 대신 폴백
+        items.update(part)
+    return items
+
+
 def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: bool = False) -> dict:
     """Distribution lazy 엔드포인트용 컴팩트 ECDF (전 포인트, 다운샘플 없음).
 
@@ -175,7 +232,15 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: boo
     같은 코드를 공유해 값 일치를 구조적으로 보장한다. selected_items 필터를 빠뜨리면
     distribution_index 와 항목 집합이 어긋난다. tables 는 캐시 클론이라 필터가 안전하다.
     ``bin1`` 이면 양품(BIN==PASS_BIN) die 측정값만으로 ECDF 를 재계산한다("Bin1 only").
+
+    Honey 가 pack 을 첨부한 세션은 정렬을 다시 하지 않고 pack 에서 덧셈만으로 만든다
+    (값은 아래 폴백 계산과 정준 JSON 으로 동일 — dist_pack.py 참조).
     """
+    session = report_db.get_session(session_id)
+    if session:
+        items = _pack_items(session, session_id, report_db=report_db, upload_root=upload_root)
+        if items is not None:
+            return _dist_pack.ecdf_from_pack_items(items, bin1=bin1)
     session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     return _dist_blob.compute_dist_compact(
         tables, manifest.get("selected_items") or [], session.get("mode"), bin1=bin1)
@@ -189,7 +254,16 @@ def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root:
     다운로드·파싱·힙 상주가 모두 폭증한다. 갤러리/미니셀은 화면에 보이는 항목만 필요하므로
     ``subjects`` 로 좁혀 계산한다. 계산 경로는 전체와 동일한 compute_dist_compact(only=)라
     결과는 전체 payload 에서 그 항목만 뽑은 것과 정준 JSON 으로 일치한다.
+
+    pack 세션은 요청 항목이 든 chunk 만 읽어 덧셈으로 만든다 — **tables 디코드조차 하지
+    않는다**(스크롤할 때마다 반복되던 서버 재정렬이 사라지는 지점).
     """
+    session = report_db.get_session(session_id)
+    if session:
+        items = _pack_items(session, session_id, report_db=report_db,
+                            upload_root=upload_root, subjects=subjects)
+        if items is not None:
+            return _dist_pack.ecdf_from_pack_items(items, bin1=bin1, only=subjects)
     session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     return _dist_blob.compute_dist_compact(
         tables, manifest.get("selected_items") or [], session.get("mode"),
@@ -214,7 +288,8 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    cache_key = cache_policy.dist_key(session, bin1=bin1)
+    prep = _preprocess.session_digest(report_db, session_id)
+    cache_key = cache_policy.dist_key(session, bin1=bin1, prep_digest=prep)
     blob = cache.cache_get(cache.DIST_CACHE, cache_key)
     if blob is not None:
         return blob
@@ -224,7 +299,10 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
             return blob
         # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
         blob = disk_cache.load_dist(upload_root, cache_key)
-        if blob is None and compute.should_offload(cache_policy.tables_key(session)):
+        # pack 세션은 계산이 chunk 읽기+덧셈뿐이라 워커 프로세스를 띄우는 편이 손해다.
+        if blob is None and not pack_available(session, session_id, report_db=report_db,
+                                               upload_root=upload_root) \
+                and compute.should_offload(cache_policy.tables_key(session, prep)):
             # 콜드 빌드(수십 초 CPU 가능)는 전체/bin1 변형 모두 워커 프로세스로 —
             # 요청 스레드 GIL 점유를 피한다 (워커가 disk_cache 도 채움).
             blob = compute.run(compute.dist_job, session_id, str(upload_root), bin1)
@@ -290,7 +368,8 @@ def get_map_gzip(session_id: str, *, report_db, upload_root: Path,
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    cache_key = cache_policy.map_key(session)
+    prep = _preprocess.session_digest(report_db, session_id)
+    cache_key = cache_policy.map_key(session, prep)
     blob = cache.cache_get(cache.MAP_CACHE, cache_key)
     if blob is not None:
         return blob
@@ -308,7 +387,7 @@ def get_map_gzip(session_id: str, *, report_db, upload_root: Path,
             # (report 와 같은 레지스트리를 stage 로 구분해 쓴다).
             build_status.begin(session_id, "map")
         try:
-            if blob is None and compute.should_offload(cache_policy.tables_key(session)):
+            if blob is None and compute.should_offload(cache_policy.tables_key(session, prep)):
                 # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
                 blob = compute.run(compute.map_job, session_id, str(upload_root))
             if blob is None:
@@ -333,15 +412,23 @@ def get_map_gzip(session_id: str, *, report_db, upload_root: Path,
 
 
 def get_raw_data_columns(session_id: str, *, report_db, upload_root: Path) -> dict:
-    """Raw Data 탭 컬럼 선택 UI용: item 메타 + source 목록 + 전체 die 수."""
-    _, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    """Raw Data 탭 컬럼 선택 UI용: item 메타 + source 목록 + 전체 die 수.
+
+    apply_prep=False — 전처리로 제외한 항목도 목록에 남아야 Item Select 에서 되돌릴 수 있다.
+    """
+    _, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root,
+                                apply_prep=False)
     return raw_data_tab.build_raw_data_columns(tables)
 
 
 def query_raw_data(session_id: str, *, report_db, upload_root: Path, columns,
                    search="", bin_filter="", source_filter="") -> dict:
-    """Raw Data 탭 조회: 선택된 columns + 필터로 행을 반환 (60개 컬럼 상한, ValueError 로 초과 통지)."""
-    _, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    """Raw Data 탭 조회: 선택된 columns + 필터로 행을 반환 (60개 컬럼 상한, ValueError 로 초과 통지).
+
+    apply_prep=False — Raw Data 탭은 저장된 원본을 보여주는 자리다 (전처리는 표시용 필터라
+    여기까지 적용하면 편집 대상 값과 화면 값이 어긋난다)."""
+    _, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root,
+                                apply_prep=False)
     return raw_data_tab.query_raw_data(
         tables, columns=columns, search=search, bin_filter=bin_filter, source_filter=source_filter)
 
@@ -423,10 +510,11 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
     # (rawedit.replace_sources 와 같은 락 키. 단일 프로세스 전제라 in-process 락으로 충분 —
     # DB 기반 core.report_analysis_lock 은 멀티프로세스 전환 시에만 배선한다.)
     with cache.keyed_lock(("rawedit", analysis_key)):
-        # apply_raw_data_edits 가 df 를 in-place 수정하므로 캐시 원본 오염 방지 위해 캐시 우회
+        # apply_raw_data_edits 가 df 를 in-place 수정하므로 캐시 원본 오염 방지 위해 캐시 우회.
+        # apply_prep=False — 편집·재인코딩 대상은 언제나 저장된 원본이다 (전처리는 표시용).
         session, tables, manifest = _load_tables(
             session_id, report_db=report_db, upload_root=upload_root, use_cache=False,
-            session=session)
+            session=session, apply_prep=False)
 
         updated_tables = raw_data_tab.apply_raw_data_edits(tables, edits)
         sources_bytes = [encode_honeyform_parquet(t.df) for t in updated_tables]
@@ -447,6 +535,9 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
         report_db.update_content_hash_for_analysis_key(analysis_key, content_hash)
         # 구 content_hash 키 엔트리는 더 이상 조회되지 않으므로 메모리 회수용으로만 정리
         cache.evict_akey_caches(analysis_key)
+        # 구 세대 Distribution pack 회수 — 새 chash 로는 조회되지 않지만(디렉토리명에 chash)
+        # 남겨두면 용량만 먹는다. 이후 조회는 pack 없이 기존 계산 폴백으로 동작한다.
+        dist_pack_store.delete_stale(upload_root, analysis_key, content_hash)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
@@ -458,6 +549,49 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
         pass
 
     return {"ok": True, "edited_cells": len(edits), "storage": storage_result["storage"]}
+
+
+def get_preprocess(session_id: str, *, report_db) -> dict:
+    """세션의 조회 전처리 옵션 (항목 제외 / outlier). 없으면 빈 spec.
+
+    Honey 의 Rawdata 허브 다이얼로그가 현재 상태를 그리기 위해 부른다 — DB 만 읽는다."""
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    spec = edits.load_preprocess(report_db, session_id)
+    return {"spec": spec, "summary": _preprocess.describe(spec),
+            "digest": _preprocess.digest(spec)}
+
+
+def save_preprocess(session_id: str, *, report_db, spec: dict,
+                    client_ip: str = "", user_agent: str = "") -> dict:
+    """조회 전처리 옵션 저장 (빈 spec = 해제). 원본 parquet 은 건드리지 않는다.
+
+    rev 증가로 REPORT//full/TRIM 캐시가, digest 변화로 tables/dist/map/scatter 캐시가
+    각각 자연 무효화된다 — 여기서 evict 를 부르지 않는 이유다(되돌리면 옛 캐시가 그대로
+    다시 히트한다).
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    norm = _preprocess.normalize(spec)
+    rev = edits.save_preprocess(report_db, session_id, norm,
+                                updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"preprocess({_preprocess.describe(norm) or 'off'})",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+    return {"ok": True, "spec": norm, "summary": _preprocess.describe(norm),
+            "digest": _preprocess.digest(norm), "rev": rev}
 
 
 def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
@@ -1100,7 +1234,8 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
         return blob, etag_token
     with cache.keyed_lock(("trim",) + cache_key):
         blob = cache.cache_get(cache.TRIM_CACHE, cache_key)
-        if blob is None and compute.should_offload(cache_policy.tables_key(session)):
+        if blob is None and compute.should_offload(cache_policy.tables_key(
+                session, _preprocess.session_digest(report_db, session_id))):
             blob = compute.run(compute.trim_job, session_id, str(upload_root),
                                str(source or ""))
         if blob is None:
@@ -1123,15 +1258,16 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
 
 
 def _trim_chart_ctx(session_id: str, *, report_db, upload_root: Path, source: str = ""):
-    """Trim 차트 계산의 **요청당 1회** 준비 — (session, table, rule_set, match) 반환.
+    """Trim 차트 계산의 **요청당 1회** 준비 — (session, table, rule_set, match, prep) 반환.
 
     tables 로드 → mode/selected 필터 → source 선택 → 그룹 재도출(build_groups)까지.
     배치 요청이 그룹 수만큼 이 준비를 반복하지 않도록 분리한 것이고, 단일 요청의
-    동작·산출은 종전과 동일하다.
+    동작·산출은 종전과 동일하다. prep 은 차트 캐시 키에 쓰는 전처리 digest.
     """
     from .tabs.trim_analysis import _select_table
     from .trim_match import build_groups, rule_set_for
 
+    prep = _preprocess.session_digest(report_db, session_id)
     session, tables, manifest = _load_tables(
         session_id, report_db=report_db, upload_root=upload_root)
     mode = _validate_mode(session.get("mode"))
@@ -1148,7 +1284,7 @@ def _trim_chart_ctx(session_id: str, *, report_db, upload_root: Path, source: st
     match = build_groups(table.item_columns,
                          overrides=edit_state["trim_overrides"],
                          rule_set=rule_set, product_type=product_type)
-    return session, table, rule_set, match
+    return session, table, rule_set, match, prep
 
 
 def _pick_trim_group(match, group_id: str):
@@ -1159,16 +1295,18 @@ def _pick_trim_group(match, group_id: str):
     return group
 
 
-def _trim_chart_gzip(session, table, group, rule_set) -> bytes:
+def _trim_chart_gzip(session, table, group, rule_set, prep: str = "") -> bytes:
     """그룹 1개 차트를 gzip bytes 로 (캐시 히트면 그대로) 반환 — 단일/배치 공용.
 
     캐시 키는 슬롯 구성 digest — overrides 편집이 구성을 바꾸지 않은 그룹의 차트는
     캐시가 살아있다. 단일 라우트와 배치 라우트가 **같은 캐시 엔트리를 공유**한다.
+    prep 은 전처리 digest — 슬롯 구성이 같아도 outlier 마스킹으로 **값**이 달라지므로
+    키에 함께 넣는다 (전처리 없으면 빈 문자열 = 종전 키).
     """
     from .tabs.trim_analysis import build_trim_chart
 
     items_digest = hashlib.sha256(_canon({"slots": group["slots"]})).hexdigest()[:16]
-    cache_key = cache_policy.trim_chart_key(session, table.source, items_digest)
+    cache_key = cache_policy.trim_chart_key(session, table.source, items_digest, prep)
     blob = cache.cache_get(cache.TRIM_CHART_CACHE, cache_key)
     if blob is not None:
         return blob
@@ -1191,9 +1329,9 @@ def get_trim_chart_gzip(session_id: str, *, report_db, upload_root: Path,
     그룹/소스가 없으면 KeyError (라우트 404). 프런트는 배치 라우트를 쓰지만 이 단일
     경로는 배치 실패 시 폴백 + 하위호환으로 유지한다.
     """
-    session, table, rule_set, match = _trim_chart_ctx(
+    session, table, rule_set, match, prep = _trim_chart_ctx(
         session_id, report_db=report_db, upload_root=upload_root, source=source)
-    return _trim_chart_gzip(session, table, _pick_trim_group(match, group_id), rule_set)
+    return _trim_chart_gzip(session, table, _pick_trim_group(match, group_id), rule_set, prep)
 
 
 def get_trim_charts_batch(session_id: str, *, report_db, upload_root: Path,
@@ -1215,14 +1353,15 @@ def get_trim_charts_batch(session_id: str, *, report_db, upload_root: Path,
         raise KeyError(session_id)
     if not session.get("analysis_key"):
         raise FileNotFoundError(session_id)
-    if ids and compute.should_offload(cache_policy.tables_key(session)):
+    if ids and compute.should_offload(cache_policy.tables_key(
+            session, _preprocess.session_digest(report_db, session_id))):
         return compute.run(compute.trim_chart_batch_job, session_id, str(upload_root),
                            str(source or ""), ids)
 
-    session, table, rule_set, match = _trim_chart_ctx(
+    session, table, rule_set, match, prep = _trim_chart_ctx(
         session_id, report_db=report_db, upload_root=upload_root, source=source)
     parts = [gzip.decompress(
-        _trim_chart_gzip(session, table, _pick_trim_group(match, gid), rule_set))
+        _trim_chart_gzip(session, table, _pick_trim_group(match, gid), rule_set, prep))
         for gid in ids]
     return gzip.compress(b'{"charts":[' + b",".join(parts) + b"]}", compresslevel=1)
 

@@ -15,6 +15,11 @@ from pathlib import Path
 MODE_AUTO = "auto"
 MODE_MANUAL = "manual"
 
+# 자동 설치 일시 비활성화 (2026-07-23). False 인 동안 업데이트 안내창에서
+# [자동 설치] 버튼 자체가 나오지 않고 ZIP 수동 설치만 제공한다.
+# 되살리려면 이 값만 True 로 돌리면 된다 (updater.apply_update_zip 경로는 그대로 보존).
+AUTO_INSTALL_ENABLED = False
+
 
 class _GUID(ctypes.Structure):
     _fields_ = [

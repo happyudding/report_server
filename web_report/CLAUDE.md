@@ -22,9 +22,13 @@ web_report/
 ├── ingest.py           업로드 ingest (해시→저장→세션 생성→편집값 시드→프리웜)
 ├── loader.py           세션 → parquet 다운로드·디코드 → HoneyformTable (TABLES_CACHE 결합)
 ├── honeyform.py        7-meta honeyform 검증/파싱, parquet 인코딩·디코딩 (스키마 상수)
-├── dist_blob.py        Distribution ECDF compact 공용 빌더 — 서버 폴백 계산과 Honey 클라
-│                        업로드 프리컴퓨트(honey_main._build_webreport_dist_blobs)가 공유.
-│                        순수 모듈(캐시·저장소·werkzeug 무의존) — 클라에서 import 됨
+├── dist_blob.py        Distribution ECDF compact 공용 빌더 — 서버 폴백 계산과 (구) 클라
+│                        dist blob 프리컴퓨트가 공유. 순수 모듈 — 클라에서 import 됨
+├── dist_pack.py        Distribution **정렬 pack** 빌더/검증/ECDF 변환 (2026-07-23) —
+│                        Honey 가 정렬(np.unique)까지 끝내 올리고 서버는 덧셈(cumsum)만.
+│                        순수 모듈 — 클라 honey_main._build_webreport_dist_pack 이 import
+├── dist_pack_store.py  pack **영구** 저장 (캐시 아님 — 축출·재시작에도 생존).
+│                        <upload_root>/web_report/<akey>/dist_pack/<chash12>_<mode>/
 ├── validation.py       canon·mode/meta 정규화·client_identity — 순수 헬퍼 (werkzeug 는
 │                        validate_meta 안 지연 import — 클라가 mode_tables 를 쓰기 때문)
 ├── edits.py            편집 상태 — 진실은 세션 단위 DB(report_webreport_edit). legacy 폴백/시드
@@ -44,8 +48,13 @@ web_report/
 ├── rawedit.py          Raw Data 소스 내보내기/교체·삭제 헬퍼 (Excel 왕복 — 시트 삭제 시
 │                        kept_indices 로 source 물리 제거 + manifest sources 축소)
 ├── rawvalues.py        Raw Data 편집 **값** 검증 — 셀 규칙(웹 400)·Excel 프레임 자동 교정/
-│                        diff·경고. 순수 모듈(셀 함수는 pandas 무의존, 프레임 함수만 지연
-│                        import) — 클라 excel_edit/excel_session.py 가 import 한다
+│                        diff·경고 + 반영 확인 요약(build_confirm_sections=구조화/
+│                        build_confirm_message=구 평문). 순수 모듈(셀 함수는 pandas 무의존,
+│                        프레임 함수만 지연 import) — 클라 excel_edit/excel_session.py 가 import
+├── preprocess.py       **조회 전처리** (항목 제외 + outlier `mean ± k·stdev` 마스킹, 2026-07-23).
+│                        원본 parquet 불변 — 세션 편집 DB(kind=preprocess)의 spec 을 loader 가
+│                        조회 시점에 적용하고 digest 를 캐시 키에 덧붙인다(옵션 없으면 빈
+│                        문자열 = 종전 키). 순수 모듈 — Honey 허브 다이얼로그가 쓰는 값과 동일
 ├── trim_match.py       Trim 항목명 매칭 순수 모듈 (product_type 별 PMIC4/TV2 규칙셋)
 ├── wafer_frame.py      제품 기준정보(die pitch+wafer 크기) → 고정 map 프레임
 └── tabs/               시트별 row 빌더 + TAB_REGISTRY (시트 구성 단일 진실)

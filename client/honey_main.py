@@ -26,7 +26,7 @@ from PyQt6 import uic
 from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QRect, QUrl, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QApplication, QFileDialog, QHeaderView,
+    QAbstractItemView, QApplication, QDialog, QFileDialog, QHeaderView,
     QMainWindow, QMessageBox, QProgressDialog, QPushButton, QTableWidgetItem,
     QWidget,
 )
@@ -144,52 +144,33 @@ def _upload_progress_channel(progress, label_fmt, value_map=None):
     return worker_cb, drain_cb
 
 
-def _build_webreport_dist_blobs(parquet_items, sources, selected_items, mode,
-                                stage_cb=None):
-    """업로드할 parquet 바이트로 Distribution ECDF blob(전체+Bin1) gzip 을 미리 계산.
+def _build_webreport_dist_pack(parquet_items, sources, selected_items, mode,
+                               stage_cb=None):
+    """업로드할 parquet 바이트로 Distribution pack(정렬 완료)을 미리 계산.
 
-    서버 dist 캐시 시딩용 — 서버 폴백 계산과 같은 공용 빌더(web_report.dist_blob)를
-    쓰고, 서버 loader 가 디코드할 것과 동일한 bytes 를 여기서도 디코드해 입력 차이를
-    없앤다(값 일치 보장). 반환 {"all": bytes, "bin1": bytes}. 실패는 호출부가 잡아
-    미첨부로 진행한다(서버가 첫 조회 때 폴백 계산 — 업로드는 계속).
+    서버는 이 pack 을 **영구 저장**하고 조회 때 덧셈만 해서 ECDF 를 만든다 — 콜드
+    빌드의 수십 초 정렬도, 스크롤할 때마다의 배치 재정렬도, 재시작 후 재계산도
+    사라진다(web_report/dist_pack.py). 서버 폴백 계산과 같은 공용 빌더를 쓰고, 서버
+    loader 가 디코드할 것과 동일한 bytes 를 여기서도 디코드해 입력 차이를 없앤다
+    (값 일치 보장 — 검증은 정준 JSON 비교).
 
-    stage_cb(msg): 워커 스레드에서 단계 문자열을 보고(디코드/전체/Bin1). 호출부가
-    queue 로 받아 진행바 라벨을 갱신한다(UI 스레드 직접 접근 금지).
+    반환 {"index": json str, "chunks": {id: gzip bytes}}. 실패는 호출부가 잡아 미첨부로
+    진행한다(서버가 조회 때 폴백 계산 — 업로드는 계속).
+
+    stage_cb(msg): 워커 스레드에서 단계 문자열을 보고. 호출부가 queue 로 받아 진행바
+    라벨을 갱신한다(UI 스레드 직접 접근 금지).
+
+    실제 조립은 web_report.dist_pack.build_pack_from_parquet — Excel 왕복 반영
+    (excel_edit)도 같은 함수를 쓴다(두 경로가 만드는 pack 의 값이 같아야 한다).
     """
-    from web_report.dist_blob import compute_dist_compact, gzip_dist_blob
-    from web_report.honeyform import decode_split_honeyform_parquet
+    from web_report.dist_pack import build_pack_from_parquet
 
-    def _stage(msg):
-        if stage_cb is not None:
-            try:
-                stage_cb(msg)
-            except Exception:
-                pass
-
-    _stage("분포 데이터 준비 중... (디코드)")
-    tables = []
+    items = []
     for idx, item in enumerate(parquet_items):
         src = sources[idx] if idx < len(sources) else {}
-        name = str(src.get("name") or f"source_{idx + 1}")
-        tables.append(decode_split_honeyform_parquet(
-            item["data"], source=name,
-            file_name=str(src.get("file_name") or name), keep_df=False))
-    # compute_dist_compact 의 in-place 변형은 selected 필터(멱등)와 DUT 분할(새 객체)
-    # 뿐이라 같은 tables 로 두 변형을 이어 계산해도 안전하다.
-    # 서버 필드 상한(512MB) 초과 변형은 첨부해도 버려지므로 업로드 낭비 없이 여기서 뺀다
-    # (실측: 전 값 고유 worst case 에서 ~505MB — 실데이터는 수십 MB 수준).
-    # gzip 은 레벨 1 — 클라 CPU 절감(서버는 이 bytes 를 그대로 서빙, LAN 전송량 증가는 미미).
-    max_bytes = 480 * 1024 * 1024
-    stages = {"all": "분포 데이터 생성 중... (1/2 전체)",
-              "bin1": "분포 데이터 생성 중... (2/2 Bin1)"}
-    blobs = {}
-    for variant, bin1 in (("all", False), ("bin1", True)):
-        _stage(stages[variant])
-        blob = gzip_dist_blob(
-            compute_dist_compact(tables, selected_items, mode, bin1=bin1), level=1)
-        if len(blob) <= max_bytes:
-            blobs[variant] = blob
-    return blobs
+        items.append({"data": item["data"], "name": src.get("name"),
+                      "file_name": src.get("file_name")})
+    return build_pack_from_parquet(items, selected_items, mode, stage_cb=stage_cb)
 
 
 class SlideInPanel(QWidget):
@@ -916,7 +897,10 @@ class HoneyMainWindow(QMainWindow):
         return m.group(1) if m else ""
 
     def on_rawdata_edit(self):
-        """현재 열린 세션의 rawdata 를 Excel 창으로 열어 편집 → 저장·닫으면 서버 반영."""
+        """Rawdata 허브를 연다 — Item Select / Outlier 제거 / Rawdata Edit(Excel).
+
+        앞의 둘은 원본을 고치지 않는 조회 전처리 옵션이라 허브 안에서 끝나고, Excel 편집을
+        고른 경우에만 종전 워커를 띄운다."""
         sid = self._current_session_id()
         if not sid:
             QMessageBox.information(
@@ -926,6 +910,19 @@ class HoneyMainWindow(QMainWindow):
         worker = getattr(self, "_excel_worker", None)
         if worker is not None and worker.isRunning():
             QMessageBox.information(self, "Rawdata 수정", "이미 Excel 편집이 진행 중입니다.")
+            return
+
+        from honey_ui.rawdata_hub_dialog import ACTION_EXCEL, RawdataHubDialog
+        hub = RawdataHubDialog(self, sid, SERVER_BASE_URL)
+        accepted = hub.exec() == QDialog.DialogCode.Accepted
+        if hub.changed:
+            # 전처리 옵션이 바뀌었으면 현재 보고 있는 리포트를 다시 그린다.
+            self._append_run_log("[Rawdata] 전처리 옵션 저장 — 페이지 새로고침.")
+            try:
+                self.browser_panel.view.reload()
+            except Exception:
+                pass
+        if not (accepted and hub.action == ACTION_EXCEL):
             return
 
         from excel_edit.worker import ExcelEditWorker
@@ -944,16 +941,14 @@ class HoneyMainWindow(QMainWindow):
         self._status(message)
         self._append_run_log(f"[Rawdata] {message}")
 
-    def _on_excel_edit_confirm(self, message):
+    def _on_excel_edit_confirm(self, payload):
         """워커의 반영 확인 요청 — 메인스레드에서 변경 요약을 보여주고 응답을 돌려준다.
 
         내용은 excel_session 이 만든 변경 요약(셀 diff·자동 교정·경고·시트 삭제)이다.
-        기본 버튼은 No — Excel 편집은 서버에서 되돌릴 수 없다."""
-        reply = QMessageBox.question(
-            self, "Rawdata 수정 — 반영 확인", message,
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        accepted = reply == QMessageBox.StandardButton.Yes
+        수정이 많으면 QMessageBox 는 창이 화면을 넘어가 버튼이 안 보였다 — 스크롤 가능한
+        전용 확인창을 쓴다. 기본 버튼은 취소 — Excel 편집은 서버에서 되돌릴 수 없다."""
+        from honey_ui.change_review_dialog import ask_change_review
+        accepted = ask_change_review(self, payload)
         self._append_run_log(
             "[Rawdata] 반영 " + ("승인 — 서버에 저장합니다." if accepted else "거부 — 저장하지 않습니다."))
         worker = getattr(self, "_excel_worker", None)
@@ -1695,16 +1690,16 @@ class HoneyMainWindow(QMainWindow):
         )
         fut_encode = prep_ex.submit(self._build_webreport_parquets, work_group)
 
-        # dist blob 프리컴퓨트(전체+Bin1) — 서버 dist 캐시 시딩용(콜드 dist 빌드 제거).
-        # 같은 워커 1개에서 인코딩 완료 후 순차 실행되므로 fut_encode.result() 는 즉시
-        # 반환된다. 실패해도 업로드는 계속(서버 폴백)이라 결과는 best-effort 로만 쓴다.
-        # 단계 진행(디코드/전체/Bin1)은 queue 로 받아 진행바 라벨에 반영(UI 스레드 직접접근 금지).
+        # Distribution pack 프리컴퓨트 — 서버가 영구 저장해 조회·재조회 모두 재정렬 없이
+        # 서빙한다. 같은 워커 1개에서 인코딩 완료 후 순차 실행되므로 fut_encode.result() 는
+        # 즉시 반환된다. 실패해도 업로드는 계속(서버 폴백)이라 결과는 best-effort 로만 쓴다.
+        # 단계 진행은 queue 로 받아 진행바 라벨에 반영(UI 스레드 직접접근 금지).
         _dist_stage_q = queue.Queue()
 
         def _dist_after_encode():
             sources_, items_ = fut_encode.result()
-            return _build_webreport_dist_blobs(items_, sources_, selected, mode,
-                                               stage_cb=_dist_stage_q.put)
+            return _build_webreport_dist_pack(items_, sources_, selected, mode,
+                                              stage_cb=_dist_stage_q.put)
         fut_dist = prep_ex.submit(_dist_after_encode)
 
         def _drain_dist_stage():
@@ -1759,10 +1754,10 @@ class HoneyMainWindow(QMainWindow):
             return
         self._warn_duplicate_items()
 
-        dist_blobs = None
+        dist_pack = None
         try:
             progress.set("분포 데이터 생성 중...", value=38, status="분포 데이터 생성 중...")
-            dist_blobs = _wait_for_future(fut_dist, progress, poll_cb=_drain_dist_stage)
+            dist_pack = _wait_for_future(fut_dist, progress, poll_cb=_drain_dist_stage)
         except Exception as exc:
             # 프리컴퓨트 실패는 업로드를 막지 않는다 — 서버가 첫 조회 때 폴백 계산한다.
             self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
@@ -1789,7 +1784,7 @@ class HoneyMainWindow(QMainWindow):
                     manifest,
                     parquet_items,
                     progress_cb=_on_upload_progress,
-                    dist_blobs=dist_blobs,
+                    dist_pack=dist_pack,
                 )
                 result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
         except Exception as exc:
@@ -2153,8 +2148,8 @@ class HoneyMainWindow(QMainWindow):
 
         def _dist_after_prep():
             sources_, items_, _seed, all_items_, _report = fut_prep.result()
-            return _build_webreport_dist_blobs(items_, sources_, all_items_, "Normal",
-                                               stage_cb=_dist_stage_q.put)
+            return _build_webreport_dist_pack(items_, sources_, all_items_, "Normal",
+                                              stage_cb=_dist_stage_q.put)
         fut_dist = prep_ex.submit(_dist_after_prep)
 
         def _drain():
@@ -2224,11 +2219,11 @@ class HoneyMainWindow(QMainWindow):
             self._set_busy(False)
             return
 
-        # dist blob 프리컴퓨트 대기 — 실패 시 미첨부(서버 폴백 계산), 업로드는 계속.
-        dist_blobs = None
+        # Distribution pack 프리컴퓨트 대기 — 실패 시 미첨부(서버 폴백 계산), 업로드는 계속.
+        dist_pack = None
         try:
             progress.set("분포 데이터 생성 중...", value=38, status="분포 데이터 생성 중...")
-            dist_blobs = _wait_for_future(fut_dist, progress, poll_cb=_drain)
+            dist_pack = _wait_for_future(fut_dist, progress, poll_cb=_drain)
         except Exception as exc:
             self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
         prep_ex.shutdown(wait=False)
@@ -2258,7 +2253,7 @@ class HoneyMainWindow(QMainWindow):
                     manifest,
                     parquet_items,
                     progress_cb=_on_upload_progress,
-                    dist_blobs=dist_blobs,
+                    dist_pack=dist_pack,
                 )
                 result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
         except Exception as exc:
@@ -2455,36 +2450,43 @@ class HoneyMainWindow(QMainWindow):
             return
 
         # 설치 방법 선택: [자동 설치] / [ZIP 다운로드] / [나중에]
+        # [자동 설치] 는 update_policy.AUTO_INSTALL_ENABLED 가 False 면 아예 만들지 않는다
+        # (현재 일시 비활성 — ZIP 다운로드/나중에 2버튼).
         # sha256 없는 배포는 다운로드 무결성 검증이 통째로 생략되므로 자동 설치 금지
         # (ZIP 수동 설치는 사용자 주도라 허용).
+        auto_enabled = update_policy.AUTO_INSTALL_ENABLED
         can_write = updater.can_write_app_dir()
         has_hash = bool((manifest.get("sha256") or "").strip())
-        can_auto = can_write and has_hash
+        can_auto = auto_enabled and can_write and has_hash
         updater.ulog(f"OFFER remote={remote} current={CURRENT_VERSION} "
+                     f"auto_enabled={auto_enabled} "
                      f"can_write={can_write} has_hash={has_hash} file={manifest.get('file')}")
         box = QMessageBox(self)
         box.setWindowTitle("업데이트 사용 가능")
         box.setIcon(QMessageBox.Icon.Question)
         ask_text = (
             f"신규 버전 {remote} 이(가) 있습니다.\n"
-            f"현재: {CURRENT_VERSION}\n\n설치 방법을 선택하세요.\n\n"
-            "· 자동 설치: 다운로드 후 앱을 교체하고 재실행합니다.\n"
-            "· ZIP 다운로드: ZIP 만 다운로드 폴더에 저장합니다 (수동 설치).")
-        if not can_write:
+            f"현재: {CURRENT_VERSION}\n\n설치 방법을 선택하세요.\n\n")
+        if auto_enabled:
+            ask_text += "· 자동 설치: 다운로드 후 앱을 교체하고 재실행합니다.\n"
+        ask_text += "· ZIP 다운로드: ZIP 만 다운로드 폴더에 저장합니다 (수동 설치)."
+        if auto_enabled and not can_write:
             ask_text += "\n\n(설치 폴더에 쓰기 권한이 없어 자동 설치는 사용할 수 없습니다.)"
-        elif not has_hash:
+        elif auto_enabled and not has_hash:
             ask_text += ("\n\n(배포 정보에 무결성 해시(sha256)가 없어 자동 설치는 사용할 수 "
                          "없습니다. ZIP 다운로드를 이용하세요.)")
         box.setText(ask_text)
-        btn_auto = box.addButton("자동 설치", QMessageBox.ButtonRole.AcceptRole)
+        btn_auto = None
+        if auto_enabled:
+            btn_auto = box.addButton("자동 설치", QMessageBox.ButtonRole.AcceptRole)
+            if not can_auto:
+                btn_auto.setEnabled(False)
         btn_manual = box.addButton("ZIP 다운로드", QMessageBox.ButtonRole.ActionRole)
         box.addButton("나중에", QMessageBox.ButtonRole.RejectRole)
-        if not can_auto:
-            btn_auto.setEnabled(False)
         box.setDefaultButton(btn_auto if can_auto else btn_manual)
         box.exec()
         clicked = box.clickedButton()
-        if clicked is btn_auto:
+        if btn_auto is not None and clicked is btn_auto:
             mode = update_policy.MODE_AUTO
         elif clicked is btn_manual:
             mode = update_policy.MODE_MANUAL

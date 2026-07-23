@@ -70,6 +70,25 @@ def get_audit_logs(action=None, session_id=None, q=None, limit=200, offset=0):
     return [dict(r) for r in rows]
 
 
+def recent_upload_user_by_ip(client_ip, since_epoch):
+    """같은 IP 에서 마지막으로 Honey 업로드한 계정 (없으면 None) — 웹 회원가입 창의
+    ID 자동완성 힌트용. 신원 판단에는 쓰지 않는다(공유 PC·DHCP 재할당에서 어긋남).
+
+    idx_report_audit_action(action, created_at DESC) 를 타고, since_epoch 로 스캔 범위를
+    제한한다."""
+    if not client_ip:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT client_user FROM report_audit_log "
+            " WHERE action='upload' AND client_ip=? AND client_user IS NOT NULL "
+            "   AND client_user<>'' AND created_at>=? "
+            " ORDER BY created_at DESC, id DESC LIMIT 1",
+            (client_ip, int(since_epoch)),
+        ).fetchone()
+    return row["client_user"] if row else None
+
+
 def purge_audit_logs(cutoff_epoch):
     """created_at 이 cutoff 이전인 감사 로그 행 삭제 (롤오프). 삭제 행 수 반환.
 

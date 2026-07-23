@@ -488,6 +488,48 @@ def inspect_edited_frame(old_df, new_df, *, source_name="", cell_limit=20,
     return out
 
 
+def build_confirm_sections(reports, removed_names=(), fixes_by_source=None) -> dict:
+    """확인 UI 용 **구조화** 요약 — 줄 수 상한 없이 source 별 섹션으로 돌려준다.
+
+    build_confirm_message 는 QMessageBox 한 칸에 다 넣느라 40줄에서 잘라야 했다(잘린
+    나머지는 사용자가 볼 방법이 없었고, 그 전에 창이 화면을 넘어가 버튼이 사라졌다).
+    스크롤 가능한 다이얼로그는 전량을 보여줄 수 있으므로 자르지 않는다.
+
+    반환 {"totals": {...}, "sections": [{"name", "structure", "fixes", "cells",
+    "cell_total", "skipped_cell_diff", "warnings"}], "removed": [...]}
+    — 표시 문안(불릿 접두어·순서)은 UI 소관이고 여기서는 **재료만** 준다.
+    변경이 전혀 없으면 sections/removed 가 모두 비고 totals 가 0 이다(호출부가 확인창 생략).
+    """
+    fixes_by_source = fixes_by_source or {}
+    sections = []
+    totals = {"sources": 0, "cells": 0, "warnings": 0, "fixes": 0, "removed": 0}
+    for rep in reports or []:
+        name = rep.get("source") or ""
+        warnings = list(rep.get("meta_warnings") or []) + list(rep.get("value_warnings") or [])
+        fixes = list(fixes_by_source.get(name) or [])
+        section = {
+            "name": name,
+            "structure": list(rep.get("structure") or []),
+            "fixes": fixes,
+            "cells": list(rep.get("cells") or []),
+            "cell_total": int(rep.get("cell_total") or 0),
+            "skipped_cell_diff": bool(rep.get("skipped_cell_diff")),
+            "warnings": warnings,
+        }
+        if not (section["structure"] or fixes or section["cell_total"]
+                or section["skipped_cell_diff"] or warnings):
+            continue                      # 이 source 는 변경 없음 — 섹션을 만들지 않는다
+        sections.append(section)
+        totals["sources"] += 1
+        totals["cells"] += section["cell_total"]
+        totals["warnings"] += len(warnings)
+        totals["fixes"] += len(fixes)
+
+    removed = [str(n) for n in (removed_names or [])]
+    totals["removed"] = len(removed)
+    return {"totals": totals, "sections": sections, "removed": removed}
+
+
 def build_confirm_message(reports, removed_names=(), fixes_by_source=None,
                           *, max_lines=40) -> str:
     """source 별 inspect 결과 + 자동 교정 + 시트 삭제 목록 → 확인 다이얼로그 본문(한국어).

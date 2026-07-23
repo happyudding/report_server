@@ -60,12 +60,14 @@ from .audit import (  # noqa: F401
     get_audit_logs,
     log_audit,
     purge_audit_logs,
+    recent_upload_user_by_ip,
 )
 from .users import (  # noqa: F401
     add_session_editor,
     create_user,
     get_user,
     get_user_favorites,
+    has_honey_history,
     is_session_editor,
     is_user_important,
     list_session_editors,

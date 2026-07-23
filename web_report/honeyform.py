@@ -209,6 +209,48 @@ def encode_honeyform_parquet(df: pd.DataFrame, *, compression: str = "zstd") -> 
     return buf.getvalue()
 
 
+def validate_parquet_bytes(data: bytes) -> None:
+    """parquet bytes 의 **뼈대만** 검증 (전량 디코드 없이). 위반 시 한국어 ValueError.
+
+    Excel 왕복(rawdata_replace)에서 클라가 이미 encode_honeyform_parquet 으로 검증해 만든
+    parquet 을 서버가 다시 받는다. 종전에는 이걸 decode_honeyform_parquet 으로 **전량**
+    풀어(수백만 셀 to_numeric) 검증하고 결과를 버렸다 — 같은 판정을 스키마(컬럼 라벨)와
+    메타 6행 + 행 수만 읽어 내린다.
+
+    판정 기준은 validate_honeyform_df 와 동일하다(같은 함수를 재사용):
+    앞 7컬럼 라벨 · item 중복/메타명 충돌 · 메타 6행 라벨 · 데이터 최소 1행.
+    **값 규칙은 여기 넣지 않는다** — 값 검증의 단일 진실은 rawvalues.py 다.
+    """
+    _require_parquet_engine()
+    import pyarrow.parquet as pq
+
+    try:
+        pf = pq.ParquetFile(BytesIO(data))
+    except Exception as exc:                       # 손상 파일·비 parquet
+        raise ValueError(f"parquet 을 읽을 수 없습니다: {exc}") from exc
+
+    columns = [str(c) for c in pf.schema_arrow.names]
+    n_rows = int(pf.metadata.num_rows)
+    # 메타 6행만 읽으면 되므로 첫 배치만 뽑는다 (row group 전체를 풀지 않는다).
+    probe = pd.DataFrame(columns=columns)
+    if n_rows:
+        try:
+            probe = next(pf.iter_batches(batch_size=DATA_START_ROW)).to_pandas()
+        except StopIteration:
+            pass
+    # validate_honeyform_df 는 (컬럼 라벨, A열 메타 라벨, 행 수)만 본다 — 데이터 행은
+    # "최소 1행" 여부만 보므로 메타 6행 뒤에 더미 1행을 붙여 같은 판정을 만든다.
+    if n_rows > DATA_START_ROW:
+        probe = pd.concat([probe, pd.DataFrame([[None] * len(columns)], columns=columns)],
+                          ignore_index=True)
+    # 구클라가 올린 중복 item 컬럼은 조회 경로(_decode_parts)가 개명으로 구제하므로
+    # 여기서도 같은 순서로 개명 후 판정한다 — 저장은 되는데 검증만 거부하는 비대칭 방지.
+    probe, _ = dedupe_item_columns(probe)
+    issues = validate_honeyform_df(probe)
+    if issues:
+        raise ValueError(kor_issues(issues))
+
+
 def _numeric_item_block(frame: pd.DataFrame, item_labels: list) -> pd.DataFrame:
     """item 컬럼 블록을 per-column pd.to_numeric 으로 변환해 DataFrame 으로 반환.
 

@@ -19,22 +19,48 @@
 캐시에 별도 삭제 훅이 필요 없다. 디스크 캐시는 재계산 가능한 파생물이라 모든 실패는
 조용히 무시(best-effort).
 
+## Distribution pack — 캐시가 아닌 영구 파생 데이터 (2026-07-23)
+
+**Distribution 은 서버 최대 병목이었다** — 항목×소스마다 `np.unique`(정렬)를 돌리는 콜드
+빌드가 수십 초 CPU + GiB급 RAM 스파이크를 냈고, 스크롤할 때마다의 `distribution_batch` 도
+tables 에서 매번 다시 정렬했다. 이제 **Honey 가 업로드 시점에 정렬·중복묶기까지 끝낸
+pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
+
+- 저장 위치: `<upload_root>/web_report/<akey>/dist_pack/<chash12>_<mode>/`
+  (`index.json` + `chunk_<n>.gz`, 항목 30개/chunk = 프런트 배치 크기).
+  **`cache/` 하위가 아니라 축출 대상 밖**이고 세션 삭제(akey 디렉토리째) 시 함께 지워진다.
+  디렉토리명의 content_hash 가 곧 무효화 수단 — raw 편집 후엔 구조적으로 조회되지 않고
+  `dist_pack_store.delete_stale` 이 구 세대를 회수한다.
+- pack 내용: 항목·소스별 `x`(round6 고유값) + `c`(전체 count) + `c1`(bin1·규격내 count).
+  y(누적%)는 저장하지 않는다 — count 에서 만들고, bin1 은 `c1>0` 행만 골라 같은 방법으로
+  만들면 "필터 후 unique" 와 결과가 수학적으로 동일하다.
+- 값 일치: `dist_pack.ecdf_from_pack_items` 결과는 서버 폴백
+  (`tabs.distribution.build_distribution_compact`)과 **정준 JSON 완전 일치**여야 한다.
+  항목 정렬(사전순)·소스 순서·반올림 순서를 바꾸면 깨진다 (`tests/test_dist_pack.py`).
+- **응답 형식은 종전과 동일**(`ecdf-columnar-v1`) — 프런트는 pack 세션인지 알지 못한다.
+- **전처리(preprocess) 세션은 pack 을 쓰지 않는다** — pack 은 업로드 시점(전처리 없음)
+  기준이라 항목 제외·outlier 가 반영돼 있지 않다. `service.pack_available` 이 digest 로
+  가드하고 폴백 계산한다(전처리 해제 시 자동 복귀).
+- 미첨부(구 Honey)·검증 실패·chunk 손상은 전부 조용히 **기존 계산 폴백** — 기존 세션은
+  종전과 완전히 동일하게 열린다.
+- 구 `dist_blob` 시딩 경로(2026-07-15, DIST_CACHE+disk 시딩)는 구 Honey 하위호환으로 남는다.
+
 ## 캐시 키 규약 (단일 진실 = cache_policy.py)
 [cache_policy.py](../web_report/cache_policy.py) 가 캐시별 키 빌더를 제공하고 **호출부는
 반드시 이 빌더로 키를 만든다**. 새 캐시를 추가하면 여기 빌더와 아래 표를 함께 추가할 것.
 
 | 캐시 | 키 구성 | 무효화 트리거 |
 |------|---------|---------------|
-| TABLES_CACHE | (akey, chash) | raw_data 편집(chash) / 세션 삭제 |
-| DIST_CACHE | (akey, chash, mode) | 〃 (mode 는 세션 생성 후 불변) |
-| _DIST_BATCH_CACHE | (akey, chash, mode, subjects_digest[, "bin1"]) | 〃 — 항목 배치 ECDF gzip (`/web_report/distribution_batch`) |
-| MAP_CACHE | (akey, chash, mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8) |
-| COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 |
-| REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode) | comment/override 편집(rev) + 위 전부 |
-| TRIM_CACHE | (akey, chash, sid, edits_rev, mode, source) | trim override 편집(rev) + 위 전부 |
-| TRIM_CHART_CACHE | (akey, chash, mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 — 단일 `/trim_chart` 와 배치 `/trim_chart_batch` 가 **같은 엔트리를 공유**한다(배치는 그룹별로 이 캐시를 조회·적재할 뿐) |
+| TABLES_CACHE | (akey, chash[, prep]) | raw_data 편집(chash) / 전처리 / 세션 삭제 |
+| DIST_CACHE | (akey, chash[, prep], mode) | 〃 (mode 는 세션 생성 후 불변) |
+| _DIST_BATCH_CACHE | (akey, chash[, prep], mode, subjects_digest[, "bin1"]) | 〃 — 항목 배치 ECDF gzip (`/web_report/distribution_batch`) |
+| MAP_CACHE | (akey, chash[, prep], mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8) |
+| COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 (메타만 쓰므로 전처리 무관) |
+| REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode) | comment/override/전처리 편집(rev) + 위 전부 |
+| TRIM_CACHE | (akey, chash, sid, edits_rev, mode, source) | trim override/전처리 편집(rev) + 위 전부 |
+| TRIM_CHART_CACHE | (akey, chash[, prep], mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 — 단일 `/trim_chart` 와 배치 `/trim_chart_batch` 가 **같은 엔트리를 공유**한다(배치는 그룹별로 이 캐시를 조회·적재할 뿐) |
 | _FULL_CACHE | (akey, chash, "sid:edits_rev", extras_digest) | 편집 rev / annotations 등 extras |
-| _SCATTER_CACHE | (akey, chash, mode, subject) | raw_data 편집 / 세션 삭제 |
+| _SCATTER_CACHE | (akey, chash[, prep], mode, subject) | raw_data 편집 / 전처리 / 세션 삭제 |
 
 공통 규약:
 - **모든 키의 첫 요소는 analysis_key** — `AKEY_CACHES` 무효화(`evict`/`invalidate`)의 전제.
@@ -48,6 +74,14 @@
   override/engr 편집으로 바뀐다. 세션 단위 편집이라 `sid` 와 항상 짝으로 들어간다.
 - `mode`/`webreport_options` 는 세션 생성 시 확정되어 불변 — 키에 넣는 이유는 dedup(동일
   akey 공유 세션)과의 충돌 방지.
+- **`prep`** 은 조회 전처리(항목 제외·outlier 마스킹) spec 의 digest —
+  [preprocess.py](../web_report/preprocess.py) `digest()`. 전처리가 **없으면 빈 문자열이고
+  키에 아무것도 덧붙이지 않는다** → 옵션을 안 쓰는 세션의 키는 도입(2026-07-23) 전과 완전히
+  동일하다(무회귀). 옵션을 켰다 끄면 원래 키로 돌아와 **옛 캐시가 그대로 다시 히트**한다.
+  `edits_rev` 를 이미 가진 키(REPORT/TRIM/_FULL)에는 넣지 않는다 — 전처리 저장 시 rev 가
+  함께 증가해 같은 역할을 하기 때문. 전처리는 `content_hash` 를 바꾸지 않으므로
+  (원본 parquet 불변) dist/map/scatter **라우트 ETag** 에도 이 digest 를 붙인다
+  (`routes_webreport._prep_tag` — 없으면 옵션 토글 직후 브라우저가 stale 304 를 받는다).
 - `selected_items` 는 analysis_key 산출에 포함되므로 어떤 키에도 따로 넣지 않는다.
 
 **무효화 두 종류**: `evict_akey_caches`(raw_data 편집 — content_hash 만 바뀌어 구 키가 안

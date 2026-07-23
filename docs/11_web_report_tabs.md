@@ -195,6 +195,41 @@ source 1개가 Excel 시트 1장이다([excel_session.py](../client/excel_edit/e
 - 되돌릴 수 없으므로 Honey 가 업로드 **전에** 확인 다이얼로그를 띄운다(거부 시 전체 취소 —
   다시 실행하면 서버 원본을 새로 받아 원상복구). 시트 **추가**와 전량 삭제는 계속 거부하고,
   삭제하면서 남은 시트 이름을 바꾸면 매칭 불가로 재편집 루프로 돌아간다.
+- 확인창은 **스크롤되는 전용 다이얼로그**([change_review_dialog.py](../client/honey_ui/change_review_dialog.py),
+  2026-07-23). 종전 QMessageBox 는 수정이 많아지면 창이 화면을 넘어가 버튼이 사라졌다 —
+  그래서 `build_confirm_message` 가 40줄에서 잘라야 했다. 지금은 UI 가
+  `build_confirm_sections`(구조화, 상한 없음)를 받아 렌더하고 셀 상세도 source 당 200건까지
+  담는다. 평문 빌더는 하위호환으로 남는다.
+- **서버 부하** (2026-07-23): export 는 `ETag = content_hash` 로 304 를 지원해 Honey 가 temp
+  캐시(`%TEMP%/honey_exceledit/<sid>/export_<etag>.zip`)를 재사용한다. replace 는 전량 pandas
+  디코드 대신 `honeyform.validate_parquet_bytes`(스키마+메타 6행)로 검증하고, 클라가 새
+  parquet 으로 만든 **Distribution pack** 을 함께 받아 저장한 뒤 프리웜을 걸어 리빌드를
+  컴퓨트 워커로 넘긴다.
+
+#### 조회 전처리 — Item Select / Outlier 제거 (2026-07-23)
+Honey 의 `Rawdata edit` 은 Excel 을 바로 띄우지 않고 **허브 다이얼로그**
+([rawdata_hub_dialog.py](../client/honey_ui/rawdata_hub_dialog.py))를 먼저 연다:
+`Item Select` / `Outlier 제거` / `Rawdata Edit`(= 종전 Excel 왕복).
+
+앞의 둘은 **원본 parquet 을 고치지 않는 되돌릴 수 있는 옵션**이다 — Raw Data 편집과 정반대
+성격이라 백업·content_hash 갱신이 없다.
+- 저장소: 세션 편집 DB `kind=preprocess`, `item_key='spec'`, value JSON
+  `{"exclude_items":[...], "outlier":{"mode":"stdev","k":50}}`. 라우트
+  `GET/POST .../web_report/preprocess`. 빈 spec 저장 = 해제.
+- 적용: [loader.load_tables](../web_report/loader.py) 한 곳에서 `preprocess.apply_tables` —
+  그 아래 모든 탭이 자동으로 같은 값을 본다. **Raw Data 탭 조회/편집과 Excel 왕복은
+  `apply_prep=False`** 로 원본을 본다(제외한 항목을 되돌릴 수 있어야 하고, 재인코딩 대상은
+  언제나 원본이어야 한다). 전처리된 테이블은 `df=None` 이라 실수로 재인코딩될 수 없다.
+- outlier 규칙: 항목별 `mean ± k·stdev`(ddof=1) 밖 **측정값만 결측(NaN)**. die(행)·BIN·좌표는
+  불변이라 **수율·Wafer Map 은 그대로**고 CPK·Distribution 의 n·평균·σ 만 달라진다.
+  σ=0(값이 모두 같음)·표본 1개 이하 항목은 대상 없음.
+- 캐시: spec digest 를 tables/dist/map/scatter/trim_chart 키와 dist/map/scatter 라우트 ETag 에
+  덧붙인다. **옵션이 없으면 digest 가 빈 문자열이라 키가 종전과 완전히 동일** →
+  기존 세션 무회귀, 껐다 켜면 옛 캐시가 다시 히트 ([12](12_web_report_cache.md)).
+  Distribution pack 은 업로드 시점(전처리 없음) 기준이라 **전처리 세션은 pack 을 쓰지 않고**
+  기존 계산 경로로 폴백한다.
+- 화면: `/full` extras 의 `preprocess.summary` 로 상단에 `전처리: …` 배지를 띄운다 — 값이
+  원본과 다른 이유를 사용자가 알아야 하기 때문.
 
 #### Raw Data 값 검증 (2026-07-21)
 정본은 [rawvalues.py](../web_report/rawvalues.py). **값 규칙을 `validate_honeyform_df` 에

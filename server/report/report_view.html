@@ -112,6 +112,13 @@ body {
 .mode-badge.Compare { background: #db2777; }
 .mode-badge.DUT { background: #2563eb; }
 .mode-badge.Commonality { background: #d97706; }
+/* 조회 전처리 배지 (Honey ▸ Rawdata 의 Item Select / Outlier 제거 적용 시에만 표시).
+   원본 데이터가 아니라 '표시 값'이 걸러졌다는 신호라 경고색을 쓴다. */
+.prep-badge {
+  display: inline-block; padding: 3px 11px; border-radius: 4px;
+  font-size: 12px; font-weight: 700; color: #7c2d12;
+  background: #fed7aa; border: 1px solid #fb923c;
+}
 /* ── Compare 탭 ─────────────────────────────────────────────────────────── */
 .compare-wrap { padding: 4px 2px 40px; }
 .compare-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

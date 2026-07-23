@@ -13,8 +13,11 @@ from . import excel_session
 
 
 class ExcelEditWorker(QThread):
-    status = pyqtSignal(str, str)      # (state, message)
-    confirm_request = pyqtSignal(str)  # 시트 삭제 확인 요청 (메인스레드가 answer_confirm 로 응답)
+    status = pyqtSignal(str, str)         # (state, message)
+    # 반영 확인 요청 — payload 는 rawvalues.build_confirm_sections 의 구조화 dict
+    # (메인스레드가 확인창을 띄우고 answer_confirm 로 응답). str 이 아니라 object 여야
+    # dict 가 그대로 전달된다.
+    confirm_request = pyqtSignal(object)
     done = pyqtSignal(bool, str)       # (changed, message)
     failed = pyqtSignal(str)           # error message
 
@@ -39,14 +42,14 @@ class ExcelEditWorker(QThread):
         if self._confirm_event is not None:
             self._confirm_event.set()
 
-    def _confirm(self, message):
+    def _confirm(self, payload):
         """워커 스레드에서 실행 — 시그널로 질의하고 응답을 기다린다.
 
         응답이 영영 안 올 수도 있으므로(창 닫힘 등) 취소 플래그를 주기적으로 확인해
         교착을 피한다. 취소되면 거부로 본다."""
         self._confirm_event = threading.Event()
         self._confirm_result = False
-        self.confirm_request.emit(message)
+        self.confirm_request.emit(payload)
         while not self._confirm_event.wait(0.2):
             if self._cancelled:
                 return False

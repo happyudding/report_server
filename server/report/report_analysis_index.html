@@ -263,9 +263,10 @@ td.fname-cell .fname-txt {
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .modal-btn.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
-/* 로그인 모달만 버튼이 3개(Honey 다운로드/취소/로그인)라 19px·padding 16px 로는 합계 360px
-   > modal-box 안쪽 312px 라 줄바꿈·넘침이 났다. 이 모달에 한해 글자·여백을 줄여 한 줄에
-   담는다(13px·padding 10px·gap 6px = 244px). 다른 모달의 .modal-btn 은 건드리지 않는다. */
+/* 로그인 모달만 버튼이 4개(Honey 다운로드/회원가입/취소/로그인)라 19px·padding 16px 로는
+   modal-box 안쪽 폭을 넘겨 줄바꿈·넘침이 났다. 이 모달에 한해 글자·여백을 줄이고(13px·
+   padding 10px·gap 6px) 박스를 넓혀 한 줄에 담는다. 다른 모달은 건드리지 않는다. */
+#idModal .modal-box { width: 420px; }
 #idModal .modal-actions { gap: 6px; }
 #idModal .modal-btn { font-size: 13px; padding: 8px 10px; white-space: nowrap; }
 /* ── 세션 로드 오버레이 ─────────────────────────────────────────────── */
@@ -545,16 +546,47 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
              style="flex:0 0 76px; width:76px; padding:0 6px; letter-spacing:3px; text-align:center;">
     </div>
     <p style="font-size:14px; color:#888; margin:10px 0 0; line-height:1.55;">
-      계정생성 : 최초 접속은 Honey 앱을 다운 받아 진행해주세요<br>
+      계정이 없으면 [회원가입] 을 눌러 만드세요 (Honey 사용 이력이 있는 계정은
+      Honey 앱에서 비밀번호를 설정합니다)<br>
       web 환경에서는 수정이 제한됩니다. (조회전용)<br>
       session 수정은 Honey 앱을 통해 접속해주세요
     </p>
     <div class="modal-actions">
       <a class="modal-btn" href="/honey/download" style="margin-right:auto; text-decoration:none;
          color:#16a34a; border-color:#16a34a;">⬇ Honey 다운로드</a>
+      <button class="modal-btn" id="signupOpenBtn">회원가입</button>
       <button class="modal-btn" id="idModalCancel">취소</button>
       <button class="modal-btn" id="idModalSave"
               style="background:#4a90e2; color:#fff; border-color:#4a90e2;">로그인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 회원가입 모달 (일반 브라우저 — Honey 이력이 없는 미사용 singleID 만 가입된다) -->
+<div class="modal-overlay" id="signupModal">
+  <div class="modal-box">
+    <p class="modal-title">회원가입</p>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span style="flex:0 0 auto; color:#888; font-weight:600;
+                   white-space:nowrap;">SECDS\</span>
+      <input type="text" class="filter-input" id="signupIdInput"
+             placeholder="singleID" autocomplete="username" style="flex:1 1 auto; min-width:0;">
+    </div>
+    <input type="password" class="filter-input" id="signupPwInput" inputmode="numeric"
+           maxlength="4" autocomplete="new-password" placeholder="비밀번호 (숫자 4자리)"
+           style="width:100%; margin-top:8px; letter-spacing:4px;">
+    <input type="password" class="filter-input" id="signupPw2Input" inputmode="numeric"
+           maxlength="4" autocomplete="new-password" placeholder="비밀번호 확인"
+           style="width:100%; margin-top:8px; letter-spacing:4px;">
+    <p style="font-size:14px; color:#888; margin:10px 0 0; line-height:1.55;">
+      본인의 singleID 로 가입해주세요. PC 비밀번호와 <b>다른 값</b>을 쓰세요.
+    </p>
+    <p id="signupHint" style="display:none; font-size:14px; color:#b45309; margin:8px 0 0;
+       line-height:1.55;"></p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="signupCancel">취소</button>
+      <button class="modal-btn" id="signupSave"
+              style="background:#4a90e2; color:#fff; border-color:#4a90e2;">가입</button>
     </div>
   </div>
 </div>
@@ -831,6 +863,64 @@ async function doLogout() {
   loadHistory(true);
 }
 
+// ── 회원가입 (일반 브라우저) ──
+// 서버는 'Honey 사용 이력이 없는 미사용 singleID' 만 가입시킨다 — 이력이 있으면 403 과
+// 함께 Honey 안내를 돌려주므로, 여기서는 그 메시지를 그대로 보여준다.
+function openSignupModal() {
+  ["signupIdInput", "signupPwInput", "signupPw2Input"]
+    .forEach(id => document.getElementById(id).value = "");
+  const hint = document.getElementById("signupHint");
+  hint.style.display = "none";
+  hint.textContent = "";
+  document.getElementById("idModal").classList.remove("show");
+  document.getElementById("signupModal").classList.add("show");
+  document.getElementById("signupIdInput").focus();
+  // 같은 IP 에서 Honey 로 업로드한 계정이 있으면 ID 를 채워준다(자동완성 힌트일 뿐,
+  // 그 계정은 대개 가입 차단 대상이라 안내 문구를 함께 띄운다).
+  fetch("/pe/report/api/auth/signup_hint")
+    .then(r => r.json())
+    .then(j => {
+      if (!j || !j.user_id) return;
+      const input = document.getElementById("signupIdInput");
+      if (!input.value) input.value = j.user_id;
+      if (j.honey_seen) {
+        hint.textContent = `이 PC 는 '${j.user_id}' 계정으로 Honey 를 사용한 이력이 있습니다.`
+          + " 본인 계정이라면 가입 대신 Honey 앱에서 비밀번호를 설정하세요.";
+        hint.style.display = "";
+      }
+    })
+    .catch(() => { /* 힌트는 부가 기능 — 실패해도 직접 입력하면 된다 */ });
+}
+
+async function doSignup() {
+  const id = (document.getElementById("signupIdInput").value || "")
+               .split("\\").pop().trim().toLowerCase();
+  const pw = document.getElementById("signupPwInput").value || "";
+  const pw2 = document.getElementById("signupPw2Input").value || "";
+  if (!/^[^\s\\/]{1,64}$/.test(id)) { showToast("singleID 를 공백 없이 입력하세요."); return; }
+  if (!/^\d{4}$/.test(pw)) { showToast("비밀번호는 숫자 4자리입니다."); return; }
+  if (pw !== pw2) { showToast("비밀번호가 서로 다릅니다."); return; }
+  try {
+    const res = await fetch("/pe/report/api/auth/signup", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
+      body: JSON.stringify({user_id: id, password: pw}),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) { showToast(j.error || "가입 실패", 4000); return; }
+    _userId = j.user_id;
+    _authSource = j.source || "login";
+    document.getElementById("signupModal").classList.remove("show");
+    updateUserChip();
+    histCacheClear();    // 신원이 바뀌었다 — 이전 신원으로 받은 목록 캐시는 폐기
+    await loadFavorites();
+    loadHistory(true);
+    showToast(`'${_userId}' 계정으로 가입되어 로그인되었습니다.`, 3500);
+  } catch (e) {
+    showToast("가입 실패: " + e.message);
+  }
+}
+
 function openPwChangeModal() {
   ["pwNewInput", "pwNew2Input"].forEach(id => document.getElementById(id).value = "");
   document.getElementById("pwSetWho").textContent = _userId || "";
@@ -862,7 +952,8 @@ async function doSetPin() {
 }
 
 // 숫자 4자리 입력칸: 비숫자 제거 (붙여넣기 포함)
-["pwModalInput", "pwNewInput", "pwNew2Input"].forEach(id => {
+["pwModalInput", "pwNewInput", "pwNew2Input",
+ "signupPwInput", "signupPw2Input"].forEach(id => {
   document.getElementById(id).addEventListener("input", e => {
     e.target.value = e.target.value.replace(/\D/g, "").slice(0, 4);
   });
@@ -885,6 +976,17 @@ document.getElementById("idModalSave").addEventListener("click", doLogin);
 ["idModalInput", "pwModalInput"].forEach(id => {
   document.getElementById(id).addEventListener("keydown", e => {
     if (e.key === "Enter") doLogin();
+  });
+});
+document.getElementById("signupOpenBtn").addEventListener("click", openSignupModal);
+document.getElementById("signupCancel").addEventListener("click", () => {
+  document.getElementById("signupModal").classList.remove("show");
+  openIdModal();          // 로그인 모달에서 넘어왔으므로 되돌려준다 (막다른 화면 방지)
+});
+document.getElementById("signupSave").addEventListener("click", doSignup);
+["signupIdInput", "signupPwInput", "signupPw2Input"].forEach(id => {
+  document.getElementById(id).addEventListener("keydown", e => {
+    if (e.key === "Enter") doSignup();
   });
 });
 document.getElementById("pwChangeCancel").addEventListener("click", () => {

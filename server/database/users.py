@@ -152,13 +152,37 @@ def get_user(user_id):
 
 
 def create_user(user_id, password_hash):
-    """계정 생성 (첫 로그인 시 초기 비밀번호로 자동 가입). 동시 생성 경합은 IGNORE 로 무해."""
+    """계정 생성 (첫 로그인 시 초기 비밀번호로 자동 가입). 동시 생성 경합은 IGNORE 로 무해.
+    실제로 삽입됐으면 1, 이미 있어서 무시됐으면 0 (웹 회원가입의 경합 판정용)."""
     with get_conn() as conn:
-        conn.execute(
+        cur = conn.execute(
             "INSERT OR IGNORE INTO report_user (user_id, password_hash, created_at) "
             "VALUES (?, ?, ?)",
             (user_id, password_hash, _now()),
         )
+        return cur.rowcount
+
+
+def has_honey_history(user_id):
+    """이 계정으로 Honey 를 쓴 적이 있는지 — 업로드(uploaded_by 꼬리 일치) 또는
+    web_report 방문(report_web_visitor). 웹 자유가입의 계정 선점 차단 판정용:
+    이력이 있으면 본인은 Honey 에서 비밀번호를 설정하면 되므로 웹 가입을 막는다."""
+    if not user_id:
+        return False
+    with get_conn() as conn:
+        row = conn.execute("""
+            SELECT 1 FROM report_session
+             WHERE lower(
+                   CASE WHEN instr(uploaded_by, '\\') > 0
+                        THEN substr(uploaded_by, instr(uploaded_by, '\\') + 1)
+                        ELSE uploaded_by END) = ?
+             LIMIT 1
+        """, (user_id,)).fetchone()
+        if row:
+            return True
+        row = conn.execute(
+            "SELECT 1 FROM report_web_visitor WHERE user_id=?", (user_id,)).fetchone()
+    return bool(row)
 
 
 def update_user_password(user_id, password_hash):

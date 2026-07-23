@@ -8,8 +8,9 @@
 어긋난다), (3) 삭제 전 원본이 백업되는지, (4) dedup 형제 세션의 content_hash 까지 갱신되는지를
 확인한다.
 
-parquet 디코딩은 스텁으로 대체한다 — 여기서 검증할 대상은 replace_sources 의 검증·장부
-처리이지 honeyform 인코딩이 아니다(그쪽은 test_rawedit_backup.py 가 실물로 다룬다).
+parquet 검증(뼈대)과 반영 후 프리웜은 스텁으로 대체한다 — 여기서 검증할 대상은
+replace_sources 의 검증·장부 처리이지 honeyform 인코딩이나 캐시 워밍이 아니다
+(그쪽은 test_rawedit_backup.py 가 실물로 다룬다).
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert).
 """
@@ -126,8 +127,12 @@ def main():
     except Exception:
         pass
 
-    # 디코딩 검증은 이 테스트의 대상이 아니다 — 통과시키고 장부 처리만 본다.
-    rawedit.decode_honeyform_parquet = lambda data: None
+    # parquet 뼈대 검증은 이 테스트의 대상이 아니다 — 통과시키고 장부 처리만 본다.
+    rawedit.validate_parquet_bytes = lambda data: None
+    # 반영 후 프리웜은 컴퓨트 워커 프로세스를 띄운다 — 가짜 DB/스토리지로는 의미가 없고
+    # 테스트가 프로세스 풀을 붙잡으므로 막는다(호출 여부 자체는 검증 대상이 아니다).
+    from web_report import compute as _compute
+    _compute.prewarm = lambda *a, **kw: None
 
     tmp = Path(tempfile.mkdtemp(prefix="rawedit_delete_test_"))
     try:

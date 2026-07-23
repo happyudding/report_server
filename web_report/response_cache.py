@@ -18,7 +18,7 @@ import os
 from collections import OrderedDict
 from pathlib import Path
 
-from . import cache, cache_policy, service
+from . import cache, cache_policy, preprocess, service
 from .validation import canon
 
 # /full: 키 (akey, chash, "session:edits_rev", extras_digest) -> gzip bytes.
@@ -106,7 +106,9 @@ def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
     if not analysis_key:
         raise FileNotFoundError(session_id)
     digest = hashlib.sha256("\n".join(subjects).encode("utf-8")).hexdigest()[:32]
-    cache_key = cache_policy.dist_batch_key(session, digest, bin1=bin1)   # 키 규약: cache_policy
+    cache_key = cache_policy.dist_batch_key(   # 키 규약: cache_policy
+        session, digest, bin1=bin1,
+        prep_digest=preprocess.session_digest(report_db, session_id))
     etag = '"' + hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()[:32] + '"'
 
     blob = cache.cache_get(_DIST_BATCH_CACHE, cache_key)
@@ -132,7 +134,9 @@ def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
     analysis_key = session.get("analysis_key")
     if not analysis_key:
         raise FileNotFoundError(session_id)
-    cache_key = cache_policy.scatter_key(session, subject, bin1=bin1)   # 키 규약: cache_policy
+    cache_key = cache_policy.scatter_key(   # 키 규약: cache_policy
+        session, subject, bin1=bin1,
+        prep_digest=preprocess.session_digest(report_db, session_id))
 
     blob = cache.cache_get(_SCATTER_CACHE, cache_key)
     if blob is not None:

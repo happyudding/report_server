@@ -69,7 +69,13 @@ DataFrame 레이아웃 (`honeyform.py`, `META_COLUMNS`/`META_ROW_LABELS`):
 5. **저장** — `storage.save_webreport_sources(akey, chash, [bytes…], manifest)` (S3 우선,
    실패 시 로컬 폴백, 저장 위치를 object_info 에 기록 → [03](03_storage.md)). 이어서
    manifest·tables 를 인메모리 캐시에 시딩(첫 조회 재디코드 제거).
-   - **클라 dist blob 시딩 (2026-07-15)**: Honey 가 multipart 에 `dist_blob`(전체)/
+   - **클라 Distribution pack 저장 (2026-07-23, 현행)**: Honey 가 multipart 에
+     `dist_pack_index`(form JSON) + `dist_pack_chunk_<n>`(gzip) 을 첨부하면
+     `ingest.save_client_dist_pack` 이 검증(index 포맷 + chunk gzip CRC/프리픽스) 후
+     **영구 저장**한다(`dist_pack_store`, 캐시 아님 → 재조회·재시작에도 재정렬 없음).
+     정렬(np.unique)이 클라에서 끝나 서버는 조회 때 덧셈만 한다 →
+     [12](12_web_report_cache.md). 미첨부/검증 실패는 기존 계산 폴백.
+   - **클라 dist blob 시딩 (2026-07-15, 구 Honey 하위호환)**: Honey 가 multipart 에 `dist_blob`(전체)/
      `dist_blob_bin1`(양품만) — 업로드 parquet 로 미리 계산한 Distribution ECDF gzip —
      을 첨부하면, 검증(gzip CRC + 포맷 프리픽스, `dist_blob.validate_dist_blob`) 후
      dist 캐시(disk+RAM)에 그대로 시딩한다. 서버 콜드 dist 빌드(대용량 세션 수십 초
@@ -114,6 +120,10 @@ zip(manifest + `source_<idx>.parquet`)을 내려받아 Honey 가 **source 1개 =
   복구는 운영자 수동. 백업 실패 시 편집 자체를 거부해 원본을 지킨다.
 - 새 `content_hash` 는 **같은 analysis_key 의 전 세션**에 반영한다(dedup 형제가 옛 hash 로
   stale 캐시를 서빙하지 않도록). 상세 계약은 [11](11_web_report_tabs.md) 편집 흐름 절.
+- content_hash 가 바뀌면 구 Distribution pack 은 조회되지 않으므로(디렉토리명에 chash)
+  `dist_pack_store.delete_stale` 이 회수하고, 클라가 **편집 결과로 다시 만든 pack** 을
+  `dist_pack_index`/`dist_pack_chunk_<n>` 로 동봉한다(`excel_session._build_dist_pack` —
+  업로드 경로와 같은 `dist_pack.build_pack_from_parquet`). 미첨부면 서버 폴백 계산.
 
 ## 분석 모드 (Normal / DUT / Compare / Commonality)
 세션마다 모드를 가진다. Honey 업로드 시 파일 개수로 가용 모드가 제한되어 `manifest.mode`

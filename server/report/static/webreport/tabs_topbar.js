@@ -46,9 +46,17 @@ function renderMeta(session) {
   const mode = (session.mode || "Normal").trim();
   const modeBadge = (isWebReportSession() && mode && mode !== "Normal")
     ? `<span class="mode-badge ${esc(mode)}" title="분석 모드">${esc(mode)}</span>` : "";
+  // 조회 전처리(항목 제외·outlier 제거) 배지 — 값이 원본과 다른 이유를 화면에서 알 수
+  // 있어야 한다. 전처리가 없으면 summary 가 빈 문자열이라 배지도 없다 (Honey 의
+  // Rawdata > Item Select / Outlier 제거 에서 켜고 끈다).
+  const prep = ((DATA && DATA.preprocess) || {}).summary || "";
+  const prepBadge = prep
+    ? `<span class="prep-badge" title="Honey ▸ Rawdata 에서 설정한 조회 전처리 — 원본 데이터는 그대로입니다">전처리: ${esc(prep)}</span>`
+    : "";
   const line1 = [
     `<span class="pt-badge ${ptCls}">${esc(pt || "-")}</span>`,
     modeBadge,
+    prepBadge,
     `<span class="meta-inline"><span class="mk">Product</span>${esc(session.product || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Revision</span>${esc(session.revision || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Process</span>${esc(session.process || "-")}</span>`,

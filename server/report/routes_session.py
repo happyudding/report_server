@@ -141,6 +141,10 @@ def session_full(session_id):
         # 앵커 태그(태그명→Note 셀 위치) — comment 의 #[태그명] 점프 대상.
         extras["note_tags"] = web_report_service.get_note_tags(
             session_id, report_db=report_db)
+        # 조회 전처리(항목 제외·outlier) 적용 여부 — 화면 배지용. 값이 왜 원본과 다른지
+        # 사용자가 알 수 있어야 한다. 전처리가 없으면 summary 가 빈 문자열이다.
+        extras["preprocess"] = web_report_service.get_preprocess(
+            session_id, report_db=report_db)
 
     if session.get("source") == "web_report":
         # web_report 세션: parquet 원본에서 재계산 (decoded tables 는 service 의 LRU 캐시 활용).

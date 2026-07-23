@@ -9,6 +9,8 @@ from pathlib import Path
 
 from . import cache
 from . import cache_policy
+from . import edits
+from . import preprocess
 from . import runtime
 from .honeyform import HoneyformTable, decode_split_honeyform_parquet
 
@@ -51,18 +53,23 @@ def download_decode_tables(analysis_key, upload_root: Path, *, keep_df: bool = T
 
 
 def load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: bool = True,
-                session: dict | None = None):
+                session: dict | None = None, apply_prep: bool = True):
     """세션 → analysis_key → parquet 원본 디코드 → HoneyformTable 리스트.
 
     manifest.selected_items 필터는 적용하지 않는다 (build_report_payload 가 이후 그 필터를
     in-place 로 적용하므로, 이 헬퍼는 raw data 조회처럼 전체 item 컬럼이 필요한 호출자에도
     안전하게 재사용된다).
 
-    use_cache=True 면 (analysis_key, content_hash) 키의 LRU 캐시를 사용하고, 반환 tables 는
-    캐시 원본의 클론이다 (df/data 공유 — 수정 금지). df 를 수정하는 편집 경로는
+    use_cache=True 면 (analysis_key, content_hash[, prep]) 키의 LRU 캐시를 사용하고, 반환
+    tables 는 캐시 원본의 클론이다 (df/data 공유 — 수정 금지). df 를 수정하는 편집 경로는
     use_cache=False 로 호출할 것. 콜드 미스는 single-flight 락으로 같은 키의 다운로드+디코드를
     한 스레드만 수행한다. manifest 는 content_hash 없이 바뀔 수 있어(etc/comments) 별도
     MANIFEST_CACHE 에 두고 편집 시 write-through 로 갱신한다.
+
+    apply_prep=True(기본)면 세션 전처리 옵션(항목 제외·outlier 마스킹, preprocess.py)을
+    적용한 tables 를 캐시·반환한다. 옵션이 없으면 digest 가 빈 문자열이라 키·경로가 종전과
+    완전히 동일하다. **Raw Data 탭 조회와 편집 경로는 apply_prep=False** 로 원본을 본다 —
+    제외한 항목을 되돌릴 수 있어야 하고, Excel 왕복/셀 편집은 원본 parquet 을 다루기 때문.
 
     session: 호출자(라우트)가 이미 조회한 세션 dict 를 주면 재조회를 생략한다.
     """
@@ -74,7 +81,8 @@ def load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: boo
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    cache_key = cache_policy.tables_key(session)   # 키 구성 규약: cache_policy
+    prep = edits.load_preprocess(report_db, session_id) if apply_prep else {}
+    cache_key = cache_policy.tables_key(session, preprocess.digest(prep))  # 규약: cache_policy
     if use_cache:
         cached = cache.cache_get(cache.TABLES_CACHE, cache_key)
         if cached is None:
@@ -84,10 +92,14 @@ def load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: boo
                     # 읽기 경로는 슬림 디코드(df=None) — 캐시 메모리 절반 이하 (Phase 5)
                     tables, manifest = download_decode_tables(
                         analysis_key, upload_root, keep_df=False)
+                    if prep:
+                        tables, _ = preprocess.apply_tables(tables, prep)
                     cache.tables_cache_put(cache_key, tables)
                     return session, [clone_table(t) for t in tables], manifest
         manifest = cache.load_manifest_cached(analysis_key, upload_root)
         return session, [clone_table(t) for t in cached], manifest
 
     tables, manifest = download_decode_tables(analysis_key, upload_root)
+    if prep:
+        tables, _ = preprocess.apply_tables(tables, prep)
     return session, tables, manifest

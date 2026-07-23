@@ -16,6 +16,8 @@ from pathlib import Path
 from . import cache
 from . import cache_policy
 from . import disk_cache
+from . import dist_pack as _dist_pack
+from . import dist_pack_store
 from . import edits
 from . import runtime
 from .validation import (
@@ -28,9 +30,11 @@ from .validation import (
 _log = logging.getLogger(__name__)
 
 
-def _seed_client_dist_blobs(dist_blobs, analysis_key, content_hash, mode,
-                            upload_root: Path) -> list[str]:
-    """Honey 가 업로드에 첨부한 프리컴퓨트 dist blob(전체/bin1)을 dist 캐시에 시딩.
+def seed_client_dist_blobs(dist_blobs, analysis_key, content_hash, mode,
+                           upload_root: Path) -> list[str]:
+    """Honey 가 첨부한 프리컴퓨트 dist blob(전체/bin1)을 dist 캐시에 시딩.
+
+    업로드(ingest)와 Excel 왕복 반영(rawedit.replace_sources) 두 경로가 공유한다.
 
     클라가 서버와 같은 dist_blob.compute_dist_compact 로 만든 gzip 이라 값이 동일하다 —
     시딩되면 서버 콜드 dist 빌드(수십 초 CPU + RAM 스파이크)가 아예 발생하지 않는다.
@@ -61,9 +65,61 @@ def _seed_client_dist_blobs(dist_blobs, analysis_key, content_hash, mode,
     return seeded
 
 
+def save_client_dist_pack(dist_pack: dict | None, analysis_key, content_hash, mode,
+                          upload_root: Path) -> bool:
+    """Honey 가 첨부한 Distribution pack(index + chunk gzip)을 **영구** 저장한다.
+
+    pack 은 ECDF 계산 중 비싼 앞단(정렬·중복 묶기)이 끝난 상태라, 서버는 조회 때 덧셈만
+    하면 된다(service._pack_items). dist blob 시딩과 달리 캐시가 아니라 dist_pack_store
+    영역이라 총량 축출·재시작에도 살아남아 **세션 재조회에도 재정렬이 없다**.
+
+    검증은 dist blob 과 같은 수준(index 포맷 + chunk gzip CRC + 포맷 프리픽스)이다 —
+    수십 MB JSON 을 파싱하면 프리컴퓨트 이득이 사라지고, 값 정합성은 클라가 서버와 같은
+    dist_pack 코드를 쓰는 것으로 보장한다. 어떤 이유로든 거부되면 조용히 False 를 돌려
+    기존 계산 경로로 폴백한다(구 Honey·손상 첨부 모두 동일).
+    """
+    if not dist_pack:
+        return False
+    index_text = dist_pack.get("index")
+    chunks = dist_pack.get("chunks") or {}
+    if not index_text or not chunks:
+        return False
+    try:
+        index = _dist_pack.parse_pack_index(index_text)
+    except ValueError as exc:
+        _log.warning("client dist pack index rejected akey=%.12s: %s",
+                     str(analysis_key), exc)
+        return False
+
+    expected = {int(e["id"]) for e in index.get("chunks") or ()}
+    got = {int(k) for k in chunks}
+    if expected != got:
+        _log.warning("client dist pack chunk 개수 불일치 akey=%.12s index=%d files=%d",
+                     str(analysis_key), len(expected), len(got))
+        return False
+
+    raw_total = 0
+    for chunk_id, blob in chunks.items():
+        try:
+            raw_total += _dist_pack.validate_pack_chunk(blob)
+        except ValueError as exc:
+            _log.warning("client dist pack chunk(%s) rejected akey=%.12s: %s",
+                         chunk_id, str(analysis_key), exc)
+            return False
+
+    if not dist_pack_store.save(upload_root, analysis_key, content_hash, mode,
+                                index_text, chunks):
+        return False
+    gz_total = sum(len(b) for b in chunks.values())
+    _log.info("client dist pack saved akey=%.12s chunks=%d gz=%.1fMB raw=%.1fMB",
+              str(analysis_key), len(chunks), gz_total / 1048576, raw_total / 1048576)
+    return True
+
+
 def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_root: Path,
                      client_ip: str = "", user_agent: str = "",
                      dist_blobs: dict | None = None,
+                     dist_pack: dict | None = None,
                      request_started: float | None = None) -> dict:
     """request_started: 라우트에서 잰 time.perf_counter() 시작값 (선택).
     주면 파일 수신까지 포함한 업로드 소요시간을 감사 로그에 남긴다."""
@@ -122,8 +178,11 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     cache.tables_cache_put((analysis_key, content_hash),
                            [item["table"] for item in decoded])
     # 클라 프리컴퓨트 dist blob(전체/bin1) 시딩 — 첨부 시 서버 콜드 dist 빌드 소멸.
-    dist_seeded = _seed_client_dist_blobs(
+    dist_seeded = seed_client_dist_blobs(
         dist_blobs, analysis_key, content_hash, mode, upload_root)
+    # 클라 Distribution pack(정렬 완료) 영구 저장 — 첨부 시 조회·재조회 모두 재정렬 없음.
+    pack_saved = save_client_dist_pack(
+        dist_pack, analysis_key, content_hash, mode, upload_root)
 
     session_dir = Path(upload_root) / "web_report" / analysis_key
     # 선택된 product(part_id/sub_part_id) → product_info.db 기준정보 lookup 후 세션에 저장.
@@ -217,4 +276,6 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         "storage": storage_result["storage"],
         # 클라 첨부 dist blob 중 시딩된 변형(["all","bin1"]) — 구 클라는 빈 리스트.
         "dist_blob_seeded": dist_seeded,
+        # 클라 첨부 Distribution pack 영구 저장 여부 — 구 클라/거부 시 False.
+        "dist_pack_saved": pack_saved,
     }

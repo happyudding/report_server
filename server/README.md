@@ -189,7 +189,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 ### web_report 데이터/편집 (`/pe/report/session/<sid>/web_report/`)
 
 조회는 공개, 편집(`edit`/`overrides`/`etc`/`comments`/`engr`/`chart_notes`/`note`/
-`note_image`/`rawdata_replace`)은 CSRF + 편집자 가드. 계약 상세는
+`note_image`/`rawdata_replace`/`preprocess`)은 CSRF + 편집자 가드. 계약 상세는
 [../docs/11_web_report_tabs.md](../docs/11_web_report_tabs.md).
 
 | 메서드 | 경로 | 접근 | 설명 |
@@ -210,18 +210,22 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `POST` | `/chart_notes` | 편집자 | 차트 주석(도형/텍스트/코멘트) 저장 (kind=chart_note) |
 | `GET`/`POST` | `/note` | 공개/편집자 | Note 탭 시트 JSON 지연 조회 / 저장 (kind=note_sheet, ≤2MB) |
 | `POST` | `/note_image` | 편집자 | Note 이미지 업로드 (PNG/JPEG raw body, ≤2MB·세션 200장) |
-| `GET` | `/rawdata_export` | 공개 | Honey Excel 편집용 zip(manifest + source_*.parquet) 내보내기 |
-| `POST` | `/rawdata_replace` | 편집자 | Raw Data 소스 전체 교체 (Honey 전용, `X-Honey-Agent`). Excel 시트를 지워 source 가 줄면 form 필드 `source_indices`(남긴 원본 idx JSON 배열, 오름차순)를 함께 받아 그 source 를 물리 제거 |
+| `GET` | `/rawdata_export` | 공개 | Honey Excel 편집용 zip(manifest + source_*.parquet) 내보내기. **ETag = content_hash** — Honey 가 temp 에 받아둔 zip 을 `If-None-Match` 로 물어보면 내용 무변경 시 **304**(서버가 원본을 메모리에 올려 zip 으로 싸는 작업 자체를 안 함) |
+| `POST` | `/rawdata_replace` | 편집자 | Raw Data 소스 전체 교체 (Honey 전용, `X-Honey-Agent`). Excel 시트를 지워 source 가 줄면 form 필드 `source_indices`(남긴 원본 idx JSON 배열, 오름차순)를 함께 받아 그 source 를 물리 제거. 선택 첨부 `dist_pack_index`+`dist_pack_chunk_<n>`(클라가 새 parquet 으로 만든 Distribution pack — 업로드 라우트와 같은 규약)을 받으면 새 content_hash 로 영구 저장해 반영 후 콜드 dist 정렬을 없앤다. 반영 후 프리웜을 걸어 리빌드를 컴퓨트 워커로 넘긴다 |
+| `GET`/`POST` | `/preprocess` | 공개/편집자 | **조회 전처리** 옵션(항목 제외 / outlier `mean ± k·stdev`) 조회·저장 (kind=preprocess). 원본 parquet 은 그대로 두고 조회 시점에만 적용 — 빈 spec 저장 = 해제, 되돌리기 가능. Honey 는 `X-Honey-Agent` 로 CSRF 대체 |
 
-### 주석 / 즐겨찾기 / 인증 스텁 (`/pe/report/`)
+### 주석 / 즐겨찾기 / 인증 (`/pe/report/`)
 
 | 메서드 | 경로 | 접근 | 설명 |
 |--------|------|------|------|
 | `POST`/`GET`/`PATCH`/`DELETE` | `/annotation`, `/annotation/<sid>`, `/annotation/<aid>` | 공개* | 주석 CRUD (*변경은 CSRF) |
 | `GET`/`POST` | `/api/favorites` | Honey | 개인 즐겨찾기 |
-| `POST` | `/api/auth/login` | 공개 | **폐지 스텁** — 비밀번호 확인 없이 UA 사용자 반환 |
-| `POST` | `/api/auth/change_password` | — | **410 Gone** |
-| `POST`/`GET` | `/api/auth/logout`, `/api/auth/me` | 공개 | 신원 확인 스텁 |
+| `POST` | `/api/auth/login` | 공개 | 웹 로그인 (singleID + 비밀번호 4자리). 5회/5분 실패 시 429 |
+| `POST` | `/api/auth/signup` | 공개 | **웹 회원가입** — Honey 사용 이력(업로드·web_report 방문)이 **없는 미사용 singleID** 만 자유 가입(403/409로 차단), 가입 즉시 로그인. IP 당 5회/1시간 |
+| `GET` | `/api/auth/signup_hint` | 공개 | 회원가입 창 ID 자동완성 힌트 — **요청자 자신의 IP** 로 최근 180일 Honey 업로드 계정 1건 (`{user_id, honey_seen}` / 없으면 `{}`). 신원 판단에는 미사용 |
+| `POST` | `/api/auth/set_password` | Honey | 웹 로그인 비밀번호 설정/변경 (Honey 접속 전용 — 본인확인) |
+| `POST` | `/api/auth/change_password` | — | **410 Gone** (set_password 로 대체) |
+| `POST`/`GET` | `/api/auth/logout`, `/api/auth/me` | 공개 | 로그아웃 / 현재 신원·출처 확인 |
 | `GET` | `/_threads` | 공개 | 진단 (스레드 덤프) |
 
 ### 이미지 스트리밍 (`/pe/report/`, storage_gateway)

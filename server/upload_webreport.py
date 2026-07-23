@@ -90,6 +90,39 @@ def _read_dist_blobs():
     return blobs
 
 
+def _read_dist_pack():
+    """클라 Distribution pack 필드 — 선택 첨부(구 클라는 없음).
+
+    dist_pack_index(form JSON) + dist_pack_chunk_<n>(파일). 검증·영구 저장은
+    ingest(web_report.ingest.save_client_dist_pack)가 담당한다. dist_blob 과 같은 이유로
+    크기 초과·결손은 업로드 실패가 아니라 **pack 전체 건너뛰기**(서버 폴백 계산)다 —
+    부분 pack 을 저장하면 조회가 항목을 잃는다.
+    """
+    index_text = request.form.get("dist_pack_index")
+    if not index_text:
+        return None
+    # chunk 는 전부 메모리에 쌓이므로 parquet 과 같은 합계 상한을 건다.
+    budget = max(1, int(config.REPORT_WEBREPORT_TOTAL_MB)) * 1024 * 1024
+    chunks = {}
+    idx = 0
+    total = 0
+    while True:
+        f = request.files.get(f"dist_pack_chunk_{idx}")
+        if f is None:
+            break
+        data = f.read()
+        if not data or len(data) > _MAX_WEBREPORT_BYTES:
+            return None
+        total += len(data)
+        if total > budget:
+            return None
+        chunks[idx] = data
+        idx += 1
+    if not chunks:
+        return None
+    return {"index": index_text, "chunks": chunks}
+
+
 @report_bp.post("/upload_webreport")
 def upload_webreport():
     started = time.perf_counter()
@@ -97,10 +130,11 @@ def upload_webreport():
         manifest = _read_manifest()
         files = _read_files()
         dist_blobs = _read_dist_blobs()
+        dist_pack = _read_dist_pack()
         ip, ua = _client_meta()
         result = web_report_service.ingest_webreport(
             manifest, files, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
-            client_ip=ip, user_agent=ua, dist_blobs=dist_blobs,
+            client_ip=ip, user_agent=ua, dist_blobs=dist_blobs, dist_pack=dist_pack,
             request_started=started)
     except HTTPException:
         # abort() 가 정한 상태코드(413 등)를 아래 catch-all 이 400 으로 뭉개지 않게 통과시킨다.

@@ -10,13 +10,29 @@
 - [security.py](../server/report/security.py) — CSRF·신원 가드·입력 검증·감사 헬퍼
 - [routes_session.py](../server/report/routes_session.py) — 세션 조회/삭제/권한·편집자 위임
 - [routes_webreport.py](../server/report/routes_webreport.py) — web_report 데이터/편집 (→[11](11_web_report_tabs.md))
-- [routes_misc.py](../server/report/routes_misc.py) — 페이지·history·주석·favorites·auth 스텁·정적
+- [routes_misc.py](../server/report/routes_misc.py) — 페이지·history·주석·favorites·auth(로그인/회원가입)·정적
 - DB 접근은 [database/report_db.py](../server/database/report_db.py), S3 조회는 [storage_gateway](../server/storage_gateway/)
 
 ## 접근제어 (핵심)
 신원은 provider 체인([auth_identity.py](../server/auth_identity.py))에서 온다:
-`current_user()` = SSO 헤더(`AUTH_SSO_HEADER` 설정 시) → Honey UA `HoneyUser/<계정>`. **일반
-브라우저는 신원이 없어 읽기 전용.**
+`current_user()` = SSO 헤더(`AUTH_SSO_HEADER` 설정 시) → Honey UA `HoneyUser/<계정>` →
+웹 로그인 세션. **셋 다 없는 일반 브라우저는 읽기 전용.**
+
+**웹 로그인 계정(`report_user`, singleID + 비밀번호 4자리)** — 라우트는
+[routes_misc.py](../server/report/routes_misc.py) 의 auth 블록. 계정 생성 경로는 2개:
+- `/api/auth/set_password` — **Honey 접속 전용**(`identity_source()=="honey"`). 실행 자체가
+  본인확인이라 기존 계정의 비밀번호 재설정도 이 경로(또는 관리자 초기화)뿐이다.
+- `/api/auth/signup` — **웹 회원가입**(2026-07-23). 브라우저는 PC 계정/호스트명을 알 수 없고
+  서버에 AD·메일 연동도 없어 자동 검증 수단이 없다 → **Honey 사용 이력이 없는 미사용
+  singleID 만** 자유 가입시킨다: 이미 계정이 있으면 409, `has_honey_history()`(업로드
+  `uploaded_by` 꼬리 일치 또는 `report_web_visitor` 방문 기록)면 403. 활동 중인 사용자의
+  계정 선점을 막고, 그 사람은 Honey 에서 설정하면 된다. 가입 즉시 로그인 세션을 준다.
+  IP 당 5회/1시간(프로세스 메모리) + 감사 `signup` 행 기록. 잘못 선점된 계정 회수는
+  관리자 패널 계정 탭 삭제.
+- `/api/auth/signup_hint` — 가입 창 ID 자동완성. **요청자 자신의 IP** 로만 최근 180일 `upload`
+  감사기록의 계정 1건을 돌려준다(타인 IP 열거 불가). 힌트 출처가 Honey 업로드라 잡히는 계정은
+  대개 위 403 대상 — 프런트는 "Honey 앱에서 설정" 안내를 함께 띄운다. **신원 판단에는 미사용**
+  (공유 PC·DHCP 재할당에서 어긋남).
 
 가드 3종 ([security.py](../server/report/security.py)):
 - **`_uploader_guard`** — 삭제·비공개 토글·편집자 부여. 신원 없으면 401, 업로더 아니면 403.

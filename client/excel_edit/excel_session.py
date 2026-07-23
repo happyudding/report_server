@@ -44,6 +44,8 @@ except Exception:  # 단독 실행/테스트 폴백
     REQUEST_TIMEOUT_SEC = (10, 300)
 
 _POLL_SEC = 1.5
+# 확인창에 나열할 source 당 셀 변경 상세 최대 건수 (초과분은 "… 외 N건").
+_CELL_DETAIL_LIMIT = 200
 _WRITE_CHUNK_ROWS = 50000
 _INVALID_SHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
 
@@ -73,11 +75,12 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
 
     # ── 1. 다운로드 + 디코드 ──────────────────────────────────────────────
     _emit("download", "rawdata 다운로드 중...")
-    dfs, sheet_titles, int_cols = _download_sources(base, session_id)
+    dfs, sheet_titles, int_cols, manifest = _download_sources(base, session_id)
 
     # ── 2. 임시 xlsx 작성 + Excel 열기 ────────────────────────────────────
+    # 작업 폴더는 캐시 폴더의 하위 work/ — 끝나고 이걸 지워도 export zip 캐시(상위)는 남는다.
     _emit("excel", "Excel 여는 중...")
-    tmp_dir = os.path.join(tempfile.gettempdir(), "honey_exceledit", _safe_name(session_id))
+    tmp_dir = os.path.join(_cache_dir(session_id), "work")
     os.makedirs(tmp_dir, exist_ok=True)
     xlsx_path = os.path.join(tmp_dir, "rawdata.xlsx")
 
@@ -119,10 +122,12 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
                 new_parquets, kept_indices, removed_names, reports, fixes = _read_and_encode(
                     xlsx_path, final_titles, sheet_titles, dfs, int_cols)
                 # 무엇이 바뀌는지(셀 diff·자동 교정·경고·시트 삭제)를 업로드 전에 한 번 보여준다
-                # — Excel 편집은 서버에서 되돌릴 수 없다.
-                message = rawvalues.build_confirm_message(
+                # — Excel 편집은 서버에서 되돌릴 수 없다. UI 는 스크롤되는 확인창이라 줄 수를
+                # 자르지 않는 구조화 payload 를 넘긴다(문안 조립은 UI 소관).
+                payload = rawvalues.build_confirm_sections(
                     reports, removed_names, fixes_by_source=fixes)
-                if message and not _confirm_changes(confirm_cb, message):
+                has_changes = bool(payload["sections"] or payload["removed"])
+                if has_changes and not _confirm_changes(confirm_cb, payload):
                     _cleanup(tmp_dir)
                     _emit("cancelled", "반영 미승인 — 저장하지 않았습니다.")
                     return {"changed": False, "cancelled": True,
@@ -140,8 +145,16 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
         raise
 
     # ── 5. 업로드 (전체 교체) ────────────────────────────────────────────
+    # 편집 결과로 Distribution pack 을 다시 만들어 함께 보낸다 — 안 보내면 content_hash 가
+    # 바뀌어 구 pack 이 무효화되므로 서버가 조회 때 정렬을 다시 하게 된다.
+    kept_titles = ([sheet_titles[i] for i in kept_indices if i < len(sheet_titles)]
+                   if kept_indices else sheet_titles)
+    dist_pack = _build_dist_pack(
+        new_parquets, kept_titles, manifest,
+        emit=lambda msg: _emit("upload", msg))
     _emit("upload", "서버 반영 중...")
-    _upload_sources(base, session_id, new_parquets, kept_indices=kept_indices)
+    _upload_sources(base, session_id, new_parquets, kept_indices=kept_indices,
+                    dist_pack=dist_pack)
     _cleanup(tmp_dir)
     msg = ("Rawdata 수정 완료 — 서버에 반영됨"
            + (f" (source {len(removed_names)}개 제거)." if removed_names else "."))
@@ -149,14 +162,15 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
     return {"changed": True, "message": "완료"}
 
 
-def _confirm_changes(confirm_cb, message):
+def _confirm_changes(confirm_cb, payload):
     """반영 전 변경 내용 확인(셀 diff·자동 교정·경고·시트 삭제 통합).
 
-    콜백이 없으면 승인, 예외는 거부로 본다(파괴적 반영의 기본값은 '안 함')."""
+    payload 는 rawvalues.build_confirm_sections 의 구조화 dict — UI 가 스크롤 가능한
+    확인창으로 렌더한다. 콜백이 없으면 승인, 예외는 거부로 본다(파괴적 반영의 기본값은 '안 함')."""
     if confirm_cb is None:
         return True
     try:
-        return bool(confirm_cb(message))
+        return bool(confirm_cb(payload))
     except Exception:
         return False
 
@@ -175,8 +189,58 @@ def _honey_headers():
     return {"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')}"} if user else {}
 
 
+def _cache_dir(session_id):
+    return os.path.join(tempfile.gettempdir(), "honey_exceledit", _safe_name(session_id))
+
+
+def _fetch_export_zip(base, session_id):
+    """rawdata zip 을 받는다 — temp 캐시가 유효하면 재사용(서버는 304 만 응답).
+
+    서버 ETag = content_hash 라 raw parquet 이 안 바뀌었으면 내려줄 내용이 100% 같다.
+    캐시 히트 시 서버는 전 source 를 storage 에서 메모리로 올려 zip 으로 싸는 작업 자체를
+    하지 않는다(이 경로의 서버 부하 대부분이 거기 있다).
+
+    캐시 파일: `<temp>/honey_exceledit/<sid>/export_<etag>.zip` + `.etag` (ETag 원문).
+    쓰기·읽기 실패는 전부 무시하고 그냥 새로 받는다 — 캐시는 최적화일 뿐이다.
+    """
+    cache_dir = _cache_dir(session_id)
+    etag_path = os.path.join(cache_dir, "export.etag")
+    headers = dict(_honey_headers())
+    cached_etag = ""
+    try:
+        with open(etag_path, encoding="utf-8") as fh:
+            cached_etag = fh.read().strip()
+    except OSError:
+        cached_etag = ""
+    cached_zip = os.path.join(cache_dir, f"export_{_safe_name(cached_etag)}.zip")
+    if cached_etag and os.path.exists(cached_zip):
+        headers["If-None-Match"] = cached_etag
+
+    url = f"{base}/pe/report/session/{session_id}/web_report/rawdata_export"
+    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC, headers=headers)
+    if resp.status_code == 304 and cached_etag:
+        with open(cached_zip, "rb") as fh:
+            return fh.read()
+    resp.raise_for_status()
+    blob = resp.content
+    etag = (resp.headers.get("ETag") or "").strip()
+    if etag:
+        try:
+            os.makedirs(cache_dir, exist_ok=True)
+            new_zip = os.path.join(cache_dir, f"export_{_safe_name(etag)}.zip")
+            with open(new_zip, "wb") as fh:
+                fh.write(blob)
+            with open(etag_path, "w", encoding="utf-8") as fh:
+                fh.write(etag)
+            if cached_zip != new_zip and os.path.exists(cached_zip):
+                os.remove(cached_zip)      # 세대는 항상 1개만 유지
+        except OSError:
+            pass
+    return blob
+
+
 def _download_sources(base, session_id):
-    """반환 (dfs, titles, int_cols).
+    """반환 (dfs, titles, int_cols, manifest).
 
     int_cols[i] 는 source i 에서 **원본 parquet 이 int64 였던 item 컬럼** 집합. xlwings 는
     range.value 로 숫자를 전부 float 로 돌려주므로(1 → 1.0) 왕복 후 편집하지 않은 정수
@@ -184,10 +248,7 @@ def _download_sources(base, session_id):
     되돌린다 — '값이 전부 정수면 int' 로 판정하면 원래 float64 였던 컬럼이 int64 로 뒤집혀
     회귀 기준(정수 컬럼 int64 보존)을 반대 방향으로 깬다.
     """
-    url = f"{base}/pe/report/session/{session_id}/web_report/rawdata_export"
-    resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC, headers=_honey_headers())
-    resp.raise_for_status()
-    zf = zipfile.ZipFile(io.BytesIO(resp.content))
+    zf = zipfile.ZipFile(io.BytesIO(_fetch_export_zip(base, session_id)))
     manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
     names = sorted(
         (n for n in zf.namelist() if n.startswith("source_") and n.endswith(".parquet")),
@@ -209,18 +270,45 @@ def _download_sources(base, session_id):
     for idx in range(len(dfs)):
         info = sources_meta[idx] if idx < len(sources_meta) else {}
         titles.append(str(info.get("name") or f"source_{idx}"))
-    return dfs, titles, int_cols
+    return dfs, titles, int_cols, manifest
 
 
-def _upload_sources(base, session_id, parquet_list, kept_indices=None):
-    """parquet 전체 업로드. kept_indices 가 있으면(= 시트 삭제) 남긴 원본 idx 를 동봉한다."""
+def _build_dist_pack(parquet_list, titles, manifest, emit=None):
+    """편집 결과 parquet 으로 Distribution pack 을 다시 만든다 (업로드 경로와 같은 코드).
+
+    첨부하지 않으면 서버가 조회 때 수십 초짜리 정렬을 다시 한다 — 클라는 이미 데이터를
+    손에 들고 있으므로 여기서 만들어 보내는 편이 서버·사용자 모두에게 싸다.
+    실패는 무해(None 반환) — 서버가 폴백 계산한다."""
+    try:
+        from web_report.dist_pack import build_pack_from_parquet
+
+        sources = [{"data": data, "name": titles[idx] if idx < len(titles) else "",
+                    "file_name": titles[idx] if idx < len(titles) else ""}
+                   for idx, data in enumerate(parquet_list)]
+        return build_pack_from_parquet(
+            sources, (manifest or {}).get("selected_items") or [],
+            (manifest or {}).get("mode") or "Normal", stage_cb=emit)
+    except Exception:
+        return None
+
+
+def _upload_sources(base, session_id, parquet_list, kept_indices=None, dist_pack=None):
+    """parquet 전체 업로드. kept_indices 가 있으면(= 시트 삭제) 남긴 원본 idx 를 동봉한다.
+
+    dist_pack 이 있으면 업로드 라우트와 같은 필드명(dist_pack_index + dist_pack_chunk_<n>)
+    으로 함께 보낸다 — 서버가 영구 저장해 반영 후 첫 조회의 dist 정렬이 사라진다."""
     url = f"{base}/pe/report/session/{session_id}/web_report/rawdata_replace"
     files = {
         f"webreport_{idx}": (f"source_{idx}.parquet", data, "application/vnd.apache.parquet")
         for idx, data in enumerate(parquet_list)
     }
-    data = {"source_indices": json.dumps(kept_indices)} if kept_indices else None
-    resp = requests.post(url, files=files, data=data,
+    data = {"source_indices": json.dumps(kept_indices)} if kept_indices else {}
+    if dist_pack and dist_pack.get("index") and dist_pack.get("chunks"):
+        data["dist_pack_index"] = dist_pack["index"]
+        for chunk_id, blob in sorted(dist_pack["chunks"].items()):
+            files[f"dist_pack_chunk_{int(chunk_id)}"] = (
+                f"chunk_{int(chunk_id)}.json.gz", blob, "application/gzip")
+    resp = requests.post(url, files=files, data=data or None,
                          headers={"X-Honey-Agent": "1", **_honey_headers()},
                          timeout=REQUEST_TIMEOUT_SEC)
     if resp.status_code != 200:
@@ -345,7 +433,10 @@ def _read_and_encode(xlsx_path, expected_titles, source_names, old_dfs=None, int
             if fixed:
                 fixes[name] = fixed
             old_df = old_dfs[src_idx] if src_idx < len(old_dfs) else None
-            reports.append(rawvalues.inspect_edited_frame(old_df, df, source_name=name))
+            # 확인창이 스크롤되므로 셀 목록을 넉넉히 담는다(구 QMessageBox 시절엔 20개를
+            # 넘으면 창이 화면을 벗어나 버튼이 사라졌다). 넘치는 건수는 "… 외 N건"으로 표기.
+            reports.append(rawvalues.inspect_edited_frame(
+                old_df, df, source_name=name, cell_limit=_CELL_DETAIL_LIMIT))
             out.append(encode_honeyform_parquet(df))
         wb.close()
         kept_indices = [idx for _, idx in pairs] if removed else None
