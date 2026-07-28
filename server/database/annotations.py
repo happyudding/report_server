@@ -25,6 +25,17 @@ def get_annotations(session_id):
     return [dict(r) for r in rows]
 
 
+def get_annotation(annotation_id):
+    """id 로 단건 조회 — 편집/삭제 라우트가 소속 세션의 편집 권한을 확인할 때 쓴다."""
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT id, session_id, analysis_key, target, content, created_at, updated_at "
+            "FROM report_annotation WHERE id=?",
+            (annotation_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def update_annotation(annotation_id, content):
     with get_conn() as conn:
         conn.execute(

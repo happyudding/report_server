@@ -54,10 +54,13 @@ def tables_key(session, prep_digest: str = "") -> tuple:
     return _base(session, prep_digest)
 
 
-def commonality_key(session) -> tuple:
-    # Commonality 는 SERIAL/BIN 등 메타만 쓰고 측정값·item 구성을 보지 않는다 —
-    # 전처리로 결과가 달라지지 않으므로 prep 을 넣지 않는다.
-    return _base(session)
+def commonality_key(session, prep_digest: str = "") -> tuple:
+    # Commonality 는 SERIAL/BIN 등 메타만 쓰지만, 전처리의 셀 패치·조건 규칙은 그 메타와
+    # die 구성(행) 자체를 바꾼다(die 제외·BIN 변경) → prep 을 키에 넣어야 stale 이 안 나온다.
+    # 항목 제외/outlier 만 걸린 세션은 인덱스 내용이 실제로 같지만 다른 키로 갈린다 —
+    # 다른 빌더와 같은 규약(전처리 digest 통째로)을 지키는 편이 낫다고 보고 감수한 비용이다
+    # (그 세션이 Commonality 모드일 때 인덱스를 한 번 더 만드는 정도).
+    return _base(session, prep_digest)
 
 
 def dist_key(session, *, bin1: bool = False, prep_digest: str = "") -> tuple:

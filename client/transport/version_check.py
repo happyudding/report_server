@@ -5,6 +5,9 @@ Flow:
 2) is_newer(remote, CURRENT_VERSION) tells the UI whether to ask the user.
 3) download_to(target, url, expected_sha256, progress_cb) downloads Honey ZIP.
 4) updater.apply_update_zip() applies the ZIP after the app exits.
+
+fetch_announcement(base_url) 은 위 흐름과 별개로, 최신 버전을 실행 중일 때
+릴리스 공지(announcement.txt 원문)를 가져온다.
 """
 import hashlib
 from pathlib import Path
@@ -25,6 +28,19 @@ def fetch_latest(base_url=None) -> dict:
     resp = get_with_retry(url, timeout=REQUEST_TIMEOUT_SEC)
     resp.raise_for_status()
     return resp.json()
+
+
+def fetch_announcement(base_url=None) -> str:
+    """릴리스 공지 원문(/honey/announcement)을 서버가 준 그대로 돌려준다.
+
+    공지는 실패해도 앱 동작에 영향이 없고 다음 실행 때 다시 시도하면 되므로
+    get_with_retry(최대 30초 지연) 대신 짧은 타임아웃으로 한 번만 요청한다.
+    """
+    base = (base_url or SERVER_BASE_URL).rstrip("/")
+    resp = requests.get(f"{base}/honey/announcement", timeout=(5, 15))
+    resp.raise_for_status()
+    resp.encoding = "utf-8"
+    return resp.text
 
 
 def is_newer(remote: str, local: str) -> bool:

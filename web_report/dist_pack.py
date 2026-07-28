@@ -30,10 +30,18 @@ import json
 
 import numpy as np
 
+# ⚠️ 세대(리비전) 토큰. 값 계산 로직(정렬·count·bin1 필터·반올림 순서)을 바꾸면 아래 두
+# 버전 문자열을 **반드시 올려라**(v1→v2 …). 클라와 서버가 이 파일을 공유하므로, 배포
+# 시차로 구세대 Honey 가 올린 pack 은 포맷 문자열이 달라 parse_pack_index /
+# validate_pack_chunk 에서 거부되고 서버가 폴백 계산한다 — 틀린 분포를 dist_pack_store(영구)
+# 에 저장해 전 사용자에게 조용히 서빙하는 것을 막는다. (blob 은 응답 포맷 "ecdf-columnar-v1"
+# 이 프런트 계약이라 여기처럼 버전을 못 박으므로, 값 로직 변경 시 pack 버전을 올려 클라
+# 재빌드를 유도하고 blob 은 캐시라 삭제 후 서버 재계산으로 자정된다.)
 DIST_PACK_FORMAT = "dist-pack-v1"
 DIST_PACK_INDEX_FORMAT = "dist-pack-index-v1"
 # chunk dict 를 separators=(",",":") 로 직렬화한 선두 — 서버가 전체 파싱 없이 포맷만 검증한다.
-DIST_PACK_PREFIX = b'{"format":"dist-pack-v1","items":'
+# FORMAT 에서 파생 → 리비전을 올릴 때 이 선두를 따로 고칠 필요가 없다(단일 지점).
+DIST_PACK_PREFIX = ('{"format":"' + DIST_PACK_FORMAT + '","items":').encode("utf-8")
 
 # chunk 당 항목 수. 프런트 배치 크기(distribution.js DIST_BATCH.SIZE=30)와 맞춰,
 # 화면에 보이는 한 배치가 대체로 chunk 1~2개만 읽고 끝나게 한다.

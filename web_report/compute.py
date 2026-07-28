@@ -31,6 +31,7 @@ _log = logging.getLogger(__name__)
 # 관리자 패널 노출용 누적 카운터 (프로세스 생존 기간). 락 없이 증가시키지만 GIL 하의
 # int 증가라 통계 용도로는 충분하다.
 STATS = {"submitted": 0, "inline": 0, "ok": 0, "timeout": 0, "broken": 0, "error": 0,
+         "worker_killed": 0,
          "prewarm_queued": 0, "prewarm_dropped": 0, "prewarm_done": 0,
          "ondemand_queued": 0, "ondemand_done": 0, "ondemand_error": 0,
          "distpack_queued": 0, "distpack_done": 0, "distpack_error": 0}
@@ -116,15 +117,39 @@ def _reset_pool(shutdown=False):
 
     hang 된 워커는 태스크를 끝내지 못해 max_tasks_per_child 재기동에도 걸리지 않으므로,
     풀을 통째로 버리지 않으면 그 슬롯이 영구히 죽는다(워커 2개면 2번이면 전멸).
+
+    ⚠️ shutdown(wait=False, cancel_futures=True) 은 아직 RUNNING 인 워커 프로세스를
+    끝내지 못한다 — hang(병리적 입력으로 인한 무한 루프/데드락) 워커는 최대 4GB(TABLES_CACHE)
+    를 쥔 채 영구 잔존하고, 타임아웃이 반복되면 그 프로세스가 누적돼 RAM 을 고갈시킨다.
+    그래서 풀을 버리기 전에 자식 프로세스 핸들을 확보해 terminate 로 강제 회수한다.
+    (워커 잡은 순수 pandas/numpy CPU 연산이라 손자 프로세스가 없어 terminate 로 충분.)
     """
     global _pool
     with _pool_lock:
         pool, _pool = _pool, None
-    if pool is not None and shutdown:
+    if pool is None or not shutdown:
+        return
+    # shutdown 이 _processes 를 비우기 전에 프로세스 핸들을 먼저 확보한다.
+    try:
+        procs = list((getattr(pool, "_processes", None) or {}).values())
+    except Exception:
+        procs = []
+    try:
+        pool.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        _log.exception("compute pool shutdown failed")
+    killed = 0
+    for p in procs:
         try:
-            pool.shutdown(wait=False, cancel_futures=True)
+            if p.is_alive():
+                p.terminate()          # Windows: TerminateProcess / POSIX: SIGTERM
+                p.join(timeout=2)       # best-effort — 좀비(defunct) 회수, 블록 최소화
+                killed += 1
         except Exception:
-            _log.exception("compute pool shutdown failed")
+            pass
+    if killed:
+        STATS["worker_killed"] += killed
+        _log.warning("compute pool: %d 워커 프로세스 강제 종료(terminate)", killed)
 
 
 def run(job, *args):

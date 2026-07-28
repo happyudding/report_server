@@ -205,17 +205,21 @@ def _bytes_capped_put(cache: OrderedDict, key, blob: bytes,
             cache.popitem(last=False)
 
 
-def report_cache_put(key, report: dict) -> None:
+def report_cache_put(key, report: dict, size: int | None = None) -> None:
     """REPORT_CACHE 전용 put — 개수 + 추정 바이트 이중 상한으로 축출한다.
 
     크기는 dist 캐시와 같은 직렬화 규약(separators, ensure_ascii=False)의 JSON 길이로
     잡는다 — 실제 파이썬 dict RAM 은 이보다 크지만 세션 간 상대 크기가 목적이라 충분하다.
-    최소 1개는 남긴다 (방금 넣은 세션은 곧바로 조회되므로)."""
-    try:
-        size = len(json.dumps(report, ensure_ascii=False,
-                              separators=(",", ":")).encode("utf-8"))
-    except (TypeError, ValueError):
-        size = 0   # 직렬화 불가는 크기 미상 취급 — 개수 상한만 적용된다
+    최소 1개는 남긴다 (방금 넣은 세션은 곧바로 조회되므로).
+
+    size 를 주면(콜드 경로가 disk_cache.dumps_report 로 이미 직렬화한 bytes 길이) 여기서
+    재직렬화하지 않는다 — 같은 payload 를 크기추정용으로 또 dumps 하던 낭비를 없앤다."""
+    if size is None:
+        try:
+            size = len(json.dumps(report, ensure_ascii=False,
+                                  separators=(",", ":")).encode("utf-8"))
+        except (TypeError, ValueError):
+            size = 0   # 직렬화 불가는 크기 미상 취급 — 개수 상한만 적용된다
     with CACHE_LOCK:
         REPORT_CACHE[key] = report
         REPORT_CACHE.move_to_end(key)

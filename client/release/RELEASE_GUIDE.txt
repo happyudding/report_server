@@ -20,6 +20,14 @@ client/release/에서 실행:
 5. server/releases/version.json 갱신
 6. server/releases/release_log.txt 기록
 
+배포 후 손으로 할 것
+--------------------
+
+server/releases/announcement.txt 를 이번 버전 내용으로 갱신한다 (공지가 없으면
+파일을 비운다). 이 파일 내용이 그대로, 업데이트를 마친 사용자에게 PC 계정별 1회
+팝업된다. 스크립트는 이 파일을 건드리지 않으므로 갱신을 잊으면 이전 공지가 다시
+뜬다. 서버 재시작은 필요 없다.
+
 더블클릭 빌드
 -------------
 

@@ -469,7 +469,10 @@ def web_report_get_preprocess(session_id):
 def web_report_save_preprocess(session_id):
     """조회 전처리 옵션 저장 — 원본 parquet 은 그대로 두고 조회 시점에만 적용된다.
 
-    body: {"exclude_items": [...], "outlier": {"mode":"stdev","k":50}} — 빈 spec 이면 해제.
+    body: {"exclude_items": [...], "outlier": {"mode":"stdev","k":50},
+           "edits": [{"source","row_idx","column","value"}], "rules": [...]} — 빈 spec 이면 해제.
+    edits(빠른 수정 셀 패치)/rules(조건 일괄 수정)는 **키가 없으면 저장값 유지**다 — 이 두 키를
+    모르는 구버전 Honey 허브의 저장이 빠른 수정 결과를 지우지 않게 하기 위함(service 참조).
     같은 허브 다이얼로그가 보내는 수율 분모 기준 {"yield_basis": "gross"|"test"} 도 함께
     받는다(저장은 별도 kind — preprocess digest 를 건드리지 않는다).
     Honey 클라(브라우저 아님)도 호출하므로 rawdata_replace 와 같이 X-Honey-Agent 헤더를

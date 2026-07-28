@@ -14,6 +14,7 @@ report_server 소유 별도 SQLite(config.REPORT_EVAL_DB_PATH, eval.db 스키마
 """
 from __future__ import annotations
 
+import collections
 import logging
 import sqlite3
 import sys
@@ -357,10 +358,51 @@ def safe_export(session_id: str, *, report_db, upload_root, tables=None) -> dict
         return {"skipped": "error"}
 
 
+# ── eval export 큐 (단일 소비자) ──────────────────────────────────────────────
+# 종전엔 export_async 가 호출마다 데몬 스레드를 띄웠다 — 코멘트 자동저장/연속 편집
+# 버스트에서 세션마다 스레드가 쌓이고, keyed_lock(("eval_export", sid)) 대기 스레드가
+# 적체됐다. compute 의 prewarm/distpack 과 같은 단일 소비자 + pending dedup 으로 바꾼다.
+# dedup 은 "큐 대기 중"만 막는다 — 실행을 시작하면 pending 에서 빼, 실행 중 들어온 새
+# 편집이 다시 큐에 올라 최신 상태로 재-export 되게 한다(eval_export 는 세션 편집 상태를
+# 읽어 멱등 재적재하므로 last-write 반영이 필요하다).
+_EXPORT_QUEUE = collections.deque()
+_EXPORT_PENDING: set = set()        # session_id — 큐 대기 중만
+_EXPORT_LOCK = threading.Lock()
+_EXPORT_WAKE = threading.Event()
+_EXPORT_THREAD = None
+
+
+def _export_loop() -> None:
+    while True:
+        with _EXPORT_LOCK:
+            item = _EXPORT_QUEUE.popleft() if _EXPORT_QUEUE else None
+            if item is None:
+                _EXPORT_WAKE.clear()
+        if item is None:
+            _EXPORT_WAKE.wait()
+            continue
+        session_id, report_db, upload_root = item
+        with _EXPORT_LOCK:
+            _EXPORT_PENDING.discard(session_id)   # 실행 시작 → 대기 해제(실행 중 새 편집 재큐 허용)
+        # safe_export 는 자체 예외 격리를 하지만, 소비자 스레드가 죽지 않게 한 번 더 감싼다.
+        try:
+            safe_export(session_id, report_db=report_db, upload_root=upload_root)
+        except Exception:
+            logger.warning("eval export 소비자 처리 실패 (session=%s)", session_id,
+                           exc_info=True)
+
+
 def export_async(session_id: str, *, report_db, upload_root) -> None:
-    """훅 전용 — 데몬 스레드에서 safe_export (콜드 tables 로드가 응답을 늦추지 않게)."""
-    threading.Thread(
-        target=safe_export, args=(session_id,),
-        kwargs={"report_db": report_db, "upload_root": Path(upload_root)},
-        daemon=True, name=f"eval-export-{session_id}",
-    ).start()
+    """훅 전용 — 단일 소비자 스레드가 순차로 safe_export 한다 (콜드 tables 로드가 응답을
+    늦추지 않게, 그리고 편집 버스트에 스레드가 무한히 쌓이지 않게)."""
+    global _EXPORT_THREAD
+    with _EXPORT_LOCK:
+        if session_id in _EXPORT_PENDING:
+            return   # 이미 대기 중 — 소비자가 최신 상태를 읽어 export 하므로 재등록 불요
+        _EXPORT_PENDING.add(session_id)
+        _EXPORT_QUEUE.append((session_id, report_db, Path(upload_root)))
+        if _EXPORT_THREAD is None:
+            _EXPORT_THREAD = threading.Thread(target=_export_loop, name="eval-export",
+                                              daemon=True)
+            _EXPORT_THREAD.start()
+    _EXPORT_WAKE.set()

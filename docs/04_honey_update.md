@@ -5,7 +5,8 @@ Honey 업데이트는 PyInstaller onedir 결과물(`client/dist/Honey/`)을 ZIP�
 
 ## 관련 파일
 
-- 서버: `server/honey_routes.py`, `server/releases/version.json`
+- 서버: `server/honey_routes.py`, `server/releases/version.json`,
+  `server/releases/announcement.txt`(업데이트 공지 원문)
 - 클라이언트: `client/transport/version_check.py`, `client/transport/update_policy.py`,
   `client/transport/updater.py`, `client/honey_main.py`
 - 빌드/배포: `client/build_honey.spec`, `client/build_zip.bat`,
@@ -60,6 +61,40 @@ cd F:\COINAPI\report_server\client\release
 6. `server/releases/release_log.txt` 기록
 
 더블클릭 빌드가 필요하면 `client/build_zip.bat`을 실행한다.
+
+## 업데이트 공지 팝업 (announcement.txt)
+
+새 버전을 설치한 뒤 **처음 실행할 때 무엇이 바뀌었는지 1회 알려주는** 안내창이다.
+업데이트 권유창(위 3버튼)과는 별개 — 이건 업데이트를 마친 사람에게 뜬다.
+
+- 내용 정본: `server/releases/announcement.txt` **1개**. 운영자가 직접 편집하며
+  `GET /honey/announcement` 가 **가공 없이 그대로**(text/plain) 서빙한다. 파일 내용이
+  곧 팝업 본문이므로 주석·머리말 문법 같은 건 없다. 서버 재시작 없이 즉시 반영된다.
+- 인코딩: UTF-8 권장. BOM 이 있어도, 메모장에서 "ANSI"(cp949)로 저장해도 서버가
+  읽어낸다 ([honey_routes.py](../server/honey_routes.py) `get_announcement`).
+- 표시 조건 (클라 [honey_main.py](../client/honey_main.py) `_maybe_show_announcement`):
+  1. `/honey/version` 비교 결과 **업데이트할 게 없을 때**(= 최신을 실행 중). 업데이트가
+     남아 있으면 공지 대신 업데이트 권유창이 뜨고, 공지는 업데이트 후 첫 실행에서 뜬다
+     → 구버전 사용자에게 신버전 공지가 새는 일이 없다.
+  2. `%APPDATA%\Honey\settings.json` 의 `announcement_seen_version` != `CURRENT_VERSION`.
+     기록은 Windows **계정별**이라 같은 PC 라도 계정이 다르면 각각 1회 뜨고, 같은 계정은
+     재실행해도 다시 뜨지 않는다. 다시 띄우고 싶으면 이 키를 지우면 된다.
+  3. 파일이 비어 있으면(공백만이어도) 아무 것도 띄우지 않는다 — 공지 없는 릴리스는
+     파일을 비워두면 된다.
+- fetch 실패(서버 오프라인 등)는 조용히 넘어가고 다음 실행 때 다시 시도한다.
+
+> ⚠️ **릴리스마다 announcement.txt 를 갱신하거나 비워라.** 갱신을 잊으면 새 버전
+> 사용자에게 **이전 버전 공지가 새 공지처럼 1회** 뜬다(파일에 버전 표기가 없어 서버가
+> 구분하지 못한다). `release_honey.ps1` 은 이 파일을 건드리지 않는다.
+
+작성 예 (이 내용이 그대로 팝업된다):
+
+```
+Honey 3.1.1 업데이트
+
+· 웹 리포트 첫 로딩 속도 개선
+· Map Analysis 크게보기 오류 수정
+```
 
 ## version.json 필드
 

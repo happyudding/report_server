@@ -66,17 +66,23 @@ def seed_client_dist_blobs(dist_blobs, analysis_key, content_hash, mode,
 
 
 def save_client_dist_pack(dist_pack: dict | None, analysis_key, content_hash, mode,
-                          upload_root: Path) -> bool:
+                          upload_root: Path, selected_items=None) -> bool:
     """Honey 가 첨부한 Distribution pack(index + chunk gzip)을 **영구** 저장한다.
 
     pack 은 ECDF 계산 중 비싼 앞단(정렬·중복 묶기)이 끝난 상태라, 서버는 조회 때 덧셈만
     하면 된다(service._pack_items). dist blob 시딩과 달리 캐시가 아니라 dist_pack_store
     영역이라 총량 축출·재시작에도 살아남아 **세션 재조회에도 재정렬이 없다**.
 
-    검증은 dist blob 과 같은 수준(index 포맷 + chunk gzip CRC + 포맷 프리픽스)이다 —
-    수십 MB JSON 을 파싱하면 프리컴퓨트 이득이 사라지고, 값 정합성은 클라가 서버와 같은
-    dist_pack 코드를 쓰는 것으로 보장한다. 어떤 이유로든 거부되면 조용히 False 를 돌려
-    기존 계산 경로로 폴백한다(구 Honey·손상 첨부 모두 동일).
+    검증은 dist blob 과 같은 수준(index 포맷 + chunk gzip CRC + 포맷 프리픽스)에 더해,
+    pack 이 담은 항목이 이 업로드의 selected_items 범위 안인지 **교차검증**한다(아래).
+    수십 MB JSON 을 파싱하지는 않으므로 값 자체의 정합성은 여전히 클라가 서버와 같은
+    dist_pack 코드(같은 세대)를 쓰는 것으로 보장한다 — 포맷 버전 거부가 그 세대 방어다.
+    어떤 이유로든 거부되면 조용히 False 를 돌려 기존 계산 경로로 폴백한다(구 Honey·손상
+    첨부·항목 불일치 모두 동일).
+
+    selected_items: 이 업로드가 선택한 항목 목록(있으면 교차검증에 사용). 원본 전체 교체
+    (Excel 왕복)처럼 선택 맥락이 없는 호출은 None 으로 두어 교차검증을 건너뛴다 —
+    포맷 버전·CRC 검증은 그 경우에도 그대로 적용된다.
     """
     if not dist_pack:
         return False
@@ -90,6 +96,19 @@ def save_client_dist_pack(dist_pack: dict | None, analysis_key, content_hash, mo
         _log.warning("client dist pack index rejected akey=%.12s: %s",
                      str(analysis_key), exc)
         return False
+
+    # item 교차검증: pack 이 담은 항목이 selected_items 를 벗어나면, 클라가 다른 선택/다른
+    # 세대 코드로 만든 pack 이다 → 거부하고 서버 폴백 계산(틀린 분포 영구 저장 방지).
+    # pack 항목은 selected_items 로 필터 + 무데이터 제외를 거친 것이라 항상 부분집합이어야 한다.
+    wanted = {str(v) for v in (selected_items or []) if str(v)}
+    if wanted:
+        pack_items = set(_dist_pack.item_chunk_map(index))
+        extra = pack_items - wanted
+        if extra:
+            _log.warning("client dist pack item 집합이 selected_items 를 벗어남 "
+                         "akey=%.12s extra=%d 예=%s — 거부(폴백)",
+                         str(analysis_key), len(extra), sorted(extra)[:3])
+            return False
 
     expected = {int(e["id"]) for e in index.get("chunks") or ()}
     got = {int(k) for k in chunks}
@@ -177,14 +196,18 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     cache.manifest_cache_put(analysis_key, manifest)
     # ingest 가 이미 디코드한 tables 를 loader 와 같은 키로 시딩 — prewarm/첫 조회의
     # storage 재다운로드+재디코드 생략. (캐시엔 원본 저장, 소비자는 loader 가 클론 반환.)
-    cache.tables_cache_put((analysis_key, content_hash),
+    # 키는 cache_policy 빌더로 만든다(즉석 조립 금지) — loader 도 tables_key 로 조회하므로
+    # 미래에 키 포맷이 바뀌어도 시드/조회가 함께 움직인다(전처리 없는 업로드 시점이라 prep="").
+    pseudo_session = {"analysis_key": analysis_key, "content_hash": content_hash}
+    cache.tables_cache_put(cache_policy.tables_key(pseudo_session),
                            [item["table"] for item in decoded])
     # 클라 프리컴퓨트 dist blob(전체/bin1) 시딩 — 첨부 시 서버 콜드 dist 빌드 소멸.
     dist_seeded = seed_client_dist_blobs(
         dist_blobs, analysis_key, content_hash, mode, upload_root)
     # 클라 Distribution pack(정렬 완료) 영구 저장 — 첨부 시 조회·재조회 모두 재정렬 없음.
     pack_saved = save_client_dist_pack(
-        dist_pack, analysis_key, content_hash, mode, upload_root)
+        dist_pack, analysis_key, content_hash, mode, upload_root,
+        selected_items=selected_items)
 
     session_dir = Path(upload_root) / "web_report" / analysis_key
     # 선택된 product(part_id/sub_part_id) → product_info.db 기준정보 lookup 후 세션에 저장.

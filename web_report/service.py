@@ -31,6 +31,7 @@ from . import dist_pack_store
 from . import edits
 from . import preprocess as _preprocess
 from . import rawedit as _rawedit
+from . import rawvalues
 from . import runtime
 from .honeyform import encode_honeyform_parquet
 from .ingest import ingest_webreport  # noqa: F401  (외부 진입점 재노출 — upload_webreport.py)
@@ -114,6 +115,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                     # 캐시 3계층(RAM→disk) 전부 미스 = 실제 콜드 빌드가 필요한 지점.
                     # 대기하지 않기로 한 호출자(라우트 202 경로)에게 즉시 알린다.
                     raise ColdBuildRequired(session_id)
+                report_size = None   # 인라인 빌드에서 직렬화한 bytes 길이(크기추정 재사용)
                 if report is None:
                     # 여기부터가 실제 콜드 빌드(워커 오프로드 포함) — 프런트 로드
                     # 오버레이가 build_status 폴링으로 "계산 중 + 경과초"를 사실대로
@@ -169,7 +171,11 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                     session.get("webreport_options") or "",
                                     [t.source for t in tables]),
                             )
-                            disk_cache.save_report(upload_root, cache_key, report)
+                            # payload 를 한 번만 직렬화해 gzip 디스크 저장과 아래 RAM
+                            # 캐시 크기추정에 함께 재사용한다(콜드 1회 3중 직렬화 제거).
+                            report_bytes = disk_cache.dumps_report(report)
+                            disk_cache.save_report_gz(upload_root, cache_key, report_bytes)
+                            report_size = len(report_bytes)
                             # 관측 로그 — 콜드 빌드(디코드 포함)가 실데이터에서 얼마나 걸리는지.
                             _log.info(
                                 "report cold build akey=%.12s sid=%s sources=%d items=%d %.1fs",
@@ -178,7 +184,9 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 time.perf_counter() - t0)
                     finally:
                         build_status.end(session_id, "report")
-                cache.report_cache_put(cache_key, report)   # 개수+바이트 이중 상한 (cache.py)
+                # size: 인라인 빌드면 위에서 잰 bytes 길이 재사용, 그 외(disk hit·워커
+                # 오프로드)는 None → report_cache_put 이 자체 추정(현행 유지).
+                cache.report_cache_put(cache_key, report, size=report_size)   # 이중 상한 (cache.py)
     public = dict(session)
     public["has_password"] = bool(public.get("password"))
     public.pop("password", None)
@@ -520,16 +528,18 @@ def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path,
     return _scatter_item(tables, subject, bin1=bin1)
 
 
-def _commonality_index(session: dict, tables):
+def _commonality_index(session: dict, tables, prep_digest: str = ""):
     """Commonality 인덱스(메타 리스트 + item별 정렬 배열)를 세션 단위로 캐시해 반환.
 
-    키는 tables 캐시와 동일한 (analysis_key, content_hash) — raw_data 편집 시 content_hash
-    변경으로 자연 무효화되고, AKEY_CACHES 등록으로 세션 삭제 시에도 정리된다.
+    키는 tables 캐시와 동일한 (analysis_key, content_hash[, prep]) — raw_data 편집 시
+    content_hash 변경으로, 전처리 변경 시 digest 변경으로 각각 자연 무효화되고,
+    AKEY_CACHES 등록으로 세션 삭제 시에도 정리된다. 전처리 digest 가 키에 필요한 이유는
+    셀 패치·조건 규칙이 이 인덱스가 읽는 SERIAL/BIN·die 구성을 바꾸기 때문이다.
     콜드 미스(전 item 정렬, 수 초 CPU)는 single-flight 락으로 중복 계산을 막는다.
     """
     from .tabs.commonality import build_index
 
-    cache_key = cache_policy.commonality_key(session)
+    cache_key = cache_policy.commonality_key(session, prep_digest)
     idx = cache.cache_get(cache.COMMONALITY_CACHE, cache_key)
     if idx is None:
         with cache.keyed_lock(("commonality",) + cache_key):
@@ -549,7 +559,9 @@ def commonality_chips(session_id: str, *, report_db, upload_root: Path,
 
     session, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     return search_chips(tables, q=q, limit=limit,
-                        index=_commonality_index(session, tables),
+                        index=_commonality_index(
+                            session, tables,
+                            _preprocess.session_digest(report_db, session_id)),
                         serial=serial, xpos=xpos, ypos=ypos)
 
 
@@ -560,7 +572,9 @@ def commonality_chip(session_id: str, *, report_db, upload_root: Path,
 
     session, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     return chip_percentiles(tables, serial=serial, xpos=xpos, ypos=ypos, source=source,
-                            index=_commonality_index(session, tables))
+                            index=_commonality_index(
+                                session, tables,
+                                _preprocess.session_digest(report_db, session_id)))
 
 
 def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
@@ -611,12 +625,18 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
         # 구 세대 Distribution pack 회수 — 새 chash 로는 조회되지 않지만(디렉토리명에 chash)
         # 남겨두면 용량만 먹는다. 새 세대 pack 은 아래에서 백그라운드로 다시 만든다.
         dist_pack_store.delete_stale(upload_root, analysis_key, content_hash)
+        # 행 위치 기반 전처리 셀 패치는 원본이 바뀌면 엉뚱한 행을 가리킨다 — 형제까지 해제.
+        # (이 함수의 `edits` 파라미터가 모듈명을 가리므로 별칭으로 받는다.)
+        from . import edits as _edits
+
+        dropped = _edits.drop_preprocess_edits_for_akey(report_db, analysis_key, user_agent)
     try:
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
             product_type=session.get("product_type", ""), product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
-            changed_fields=f"raw_data({len(edits)} cells, backup={backup_name})",
+            changed_fields=(f"raw_data({len(edits)} cells, backup={backup_name}"
+                            + (f", quick_edits_cleared={dropped}" if dropped else "") + ")"),
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
@@ -660,6 +680,12 @@ def save_preprocess(session_id: str, *, report_db, upload_root: Path, spec: dict
     body 에 ``yield_basis``('gross'|'test')가 함께 오면 수율 분모 기준도 저장한다 —
     같은 허브 다이얼로그의 [저장] 한 번에 묶여 오기 때문이다(저장 위치는 별도 kind).
 
+    **셀 패치(edits)·조건 규칙(rules)은 키가 없으면 저장값을 유지**한다(빈 리스트로 보내면
+    해제). 구버전 Honey 허브가 화면 상태 전체를 보내면서 이 두 키를 모르기 때문에, 종전처럼
+    통짜 replace 로 두면 구 클라의 [저장] 한 번이 빠른 수정 결과를 조용히 지운다.
+    레거시 키(exclude_items/outlier/yield_basis)는 종전 replace 의미론 그대로다 — 허브가
+    "화면에 보이는 상태를 그대로 저장"하는 계약이라 부재 = 해제여야 한다.
+
     rev 증가로 REPORT//full/TRIM 캐시가, digest 변화로 tables/dist/map/scatter 캐시가
     각각 자연 무효화된다 — 여기서 evict 를 부르지 않는 이유다(되돌리면 옛 캐시가 그대로
     다시 히트한다). Distribution pack 은 캐시가 아니라 세대별 영구 데이터라 이 규칙 밖이다:
@@ -672,7 +698,10 @@ def save_preprocess(session_id: str, *, report_db, upload_root: Path, spec: dict
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
+    spec = _merge_preprocess_spec(edits.load_preprocess(report_db, session_id), spec)
     norm = _preprocess.normalize(spec)
+    stats = _validate_preprocess(norm, session_id, report_db=report_db,
+                                 upload_root=upload_root, session=session)
     old_digest = _preprocess.session_digest(report_db, session_id)
     updated_by = edits.user_from_ua(user_agent) or None
     rev = edits.save_preprocess(report_db, session_id, norm, updated_by=updated_by)
@@ -708,8 +737,84 @@ def save_preprocess(session_id: str, *, report_db, upload_root: Path, spec: dict
     except Exception:
         pass
     return {"ok": True, "spec": norm, "summary": _preprocess.describe(norm),
-            "digest": _preprocess.digest(norm), "rev": rev,
+            "digest": _preprocess.digest(norm), "rev": rev, "stats": stats,
             **_yield_basis_view(session, basis)}
+
+
+# 저장 spec 상한 — 상한을 넘으면 400. 셀 패치는 spec JSON 크기(편집 DB 1행)와 조회 때마다의
+# 적용 비용을 함께 제한하는 값이고, 규칙은 소스마다 전량 스캔이라 개수 자체를 작게 잡는다.
+_PREP_MAX_EDITS = 10_000
+_PREP_MAX_RULES = 50
+
+
+def _merge_preprocess_spec(saved: dict, incoming) -> dict:
+    """저장된 spec 위에 요청 body 를 얹는다 — **신규 키(edits/rules)만 부재=유지**.
+
+    구버전 Honey 허브는 exclude_items/outlier/yield_basis 만 보내므로, 그 저장이 빠른
+    수정 결과(edits/rules)를 지우지 않게 하는 것이 목적이다. 해제하려면 빈 리스트를
+    명시적으로 보내면 된다.
+    """
+    incoming = dict(incoming) if isinstance(incoming, dict) else {}
+    for key in ("edits", "rules"):
+        if key not in incoming and saved.get(key):
+            incoming[key] = saved[key]
+    return incoming
+
+
+def _validate_preprocess(norm: dict, session_id: str, *, report_db, upload_root: Path,
+                         session) -> dict:
+    """정규화된 spec 이 이 세션에 실제로 적용 가능한지 검사하고 적용 통계를 돌려준다.
+
+    조회 경로(preprocess.apply_tables)는 이상한 spec 을 조용히 건너뛰도록 만들어져 있지만,
+    저장 시점에는 사용자에게 알려야 한다 — 오타난 source/컬럼이 조용히 무시되면 "저장했는데
+    아무 일도 안 일어난다"가 된다. 여기서 tables 를 한 번 로드해(대개 캐시 히트) 실제로
+    적용해 보고, 결과가 비면 ValueError(라우트에서 400)를 올린다.
+    """
+    if not norm:
+        return {}
+    if len(norm.get("edits") or ()) > _PREP_MAX_EDITS:
+        raise ValueError(f"셀 수정이 너무 많습니다 ({len(norm['edits'])} > {_PREP_MAX_EDITS}).")
+    if len(norm.get("rules") or ()) > _PREP_MAX_RULES:
+        raise ValueError(f"일괄 규칙이 너무 많습니다 ({len(norm['rules'])} > {_PREP_MAX_RULES}).")
+    if not (norm.get("edits") or norm.get("rules")):
+        return {}          # 레거시 옵션만 — 종전대로 검증 없이 저장(비용 0)
+
+    _, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root,
+                                session=session, apply_prep=False)
+    _check_edit_targets(norm.get("edits") or (), tables)
+    applied, stats = _preprocess.apply_tables(tables, norm)
+    for table in applied:
+        if not len(table.data):
+            raise ValueError(
+                f"'{table.source}' 의 die 가 모두 제외됩니다 — 조건을 좁혀 주세요.")
+    if norm.get("rules") and not (stats["rule_hits"] or stats["excluded_dies"]):
+        raise ValueError("조건에 맞는 die 가 없습니다 — 조건을 확인해 주세요.")
+    return {"edited_cells": stats["edited_cells"], "rule_hits": stats["rule_hits"],
+            "excluded_dies": stats["excluded_dies"]}
+
+
+def _check_edit_targets(edit_list, tables) -> None:
+    """셀 패치의 source/column/row_idx 가 실제로 존재하는지 + 값이 규칙에 맞는지 검사.
+
+    값 규칙은 웹 셀 편집(raw_data_tab.apply_raw_data_edits)과 같은 rawvalues 를 쓴다 —
+    저장 경로가 둘로 갈려도 사용자가 겪는 판정은 하나여야 한다.
+    """
+    from .honeyform import META_COLUMNS
+
+    by_source = {t.source: t for t in tables}
+    for edit in edit_list:
+        table = by_source.get(edit["source"])
+        if table is None:
+            raise ValueError(f"알 수 없는 source: {edit['source']}")
+        column = edit["column"]
+        is_item = column in table.item_columns
+        if not is_item and column not in META_COLUMNS:
+            raise ValueError(f"알 수 없는 컬럼: {column}")
+        if not (0 <= edit["row_idx"] < len(table.data)):
+            raise ValueError(f"행 위치가 범위를 벗어났습니다: {edit['row_idx']}")
+        reason = rawvalues.check_cell_value(column, edit["value"], is_item=is_item)
+        if reason:
+            raise ValueError(f"[{column}] {reason}")
 
 
 def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
@@ -765,7 +870,10 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
             eval_export.export_async(session_id, report_db=report_db,
                                      upload_root=upload_root)
         except Exception:
-            pass
+            # 트리거 실패를 조용히 삼키면 ETC 편집 후 eval DB 동기화가 상시 누락돼도
+            # 아무도 모른다 — export 자체는 safe_export 에서 감사하지만 트리거 실패는 별개.
+            _log.warning("eval export 재적재 트리거 실패 — ETC 항목 편집 후 코멘트 "
+                         "eval DB 동기화 누락 (session=%s)", session_id, exc_info=True)
 
     return {"ok": True, "etc_items": etc_items,
             "storage": "db" if changes else "unchanged"}
@@ -939,7 +1047,8 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
             eval_export.export_async(session_id, report_db=report_db,
                                      upload_root=upload_root)
         except Exception:
-            pass
+            _log.warning("eval export 재적재 트리거 실패 — 코멘트 편집 후 eval DB "
+                         "동기화 누락 (session=%s)", session_id, exc_info=True)
         storage = "db"
     else:
         storage = "unchanged"

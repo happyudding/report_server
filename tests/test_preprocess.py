@@ -1,4 +1,4 @@
-"""조회 전처리(항목 제외 + outlier 마스킹) 테스트.
+"""조회 전처리(항목 제외 · outlier 마스킹 · 셀 패치 · 조건 일괄 규칙) 테스트.
 
 실행:
     python tests/test_preprocess.py
@@ -6,7 +6,9 @@
 핵심 회귀 기준은 **"옵션이 없으면 도입 전과 완전히 같다"** 이다:
   - preprocess.digest({}) == "" 이고 cache_policy 각 빌더가 종전과 동일한 튜플을 낸다
   - apply_tables 가 입력 객체를 그대로 돌려준다 (비용 0)
-그 위에 실제 동작(마스킹 대상/미대상, 수율 불변, 되돌리기)을 확인한다.
+  - **레거시 spec(항목 제외/outlier)의 정규형·digest 가 패치 계층 도입 전과 문자 그대로 동일**
+    (여기가 깨지면 배포 순간 기존 세션의 tables/dist 캐시가 통째로 무효화된다)
+그 위에 실제 동작(마스킹 대상/미대상, 수율 불변, 되돌리기, 셀 패치·규칙 적용)을 확인한다.
 
 pytest 미사용(그건 eval_analyzer 전용) — 자체 실행 + assert 스타일(web_report tests/ 관례).
 """
@@ -24,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from web_report import cache_policy, preprocess  # noqa: E402
 from web_report.honeyform import META_COLUMNS, split_honeyform  # noqa: E402
 from web_report.metrics import build_report_payload  # noqa: E402
+from web_report.tabs.common import fmt_type  # noqa: E402
 
 # ItemA 는 10 근처 값 9개 + 극단값 1개(1000) → k=2 에서 그 1건만 제거된다.
 # (표본이 작고 극단값이 하나면 그 값이 mean/σ 를 끌어올려 k 를 크게 잡을수록 안 걸린다 —
@@ -230,6 +233,203 @@ def test_preprocessed_table_has_no_df():
     assert out[0].df is None
 
 
+# ── 셀 패치 (edits) ──────────────────────────────────────────────────────────
+def test_legacy_spec_normal_form_is_frozen():
+    """패치 계층 도입 전 spec 의 정규형·digest 가 문자 그대로 같아야 한다.
+
+    digest 가 바뀌면 배포 즉시 기존 전처리 세션의 tables/dist/map 캐시가 전부 콜드가 되고
+    Distribution pack variant 도 헛돈다 — 아래 hex 는 패치 계층 도입 전 커밋(HEAD)의
+    preprocess.py 로 직접 산출해 대조한 값이다."""
+    legacy = {"exclude_items": ["B", "A"], "outlier": {"mode": "stdev", "k": 50}}
+    assert preprocess.normalize(legacy) == {
+        "exclude_items": ["A", "B"], "outlier": {"mode": "stdev", "k": 50.0}}
+    assert preprocess.digest(legacy) == "bbcc680289a5", preprocess.digest(legacy)
+    assert preprocess.digest({"outlier": {"k": 3}}) == "317b562d209e"
+
+
+def test_edits_patch_values_and_keep_dtype():
+    """셀 패치가 item/메타에 반영되고, 정수만 들어오면 int dtype 을 유지한다."""
+    out, stats = preprocess.apply_tables([make_table()], {"edits": [
+        {"source": "src0", "row_idx": 0, "column": "ItemA", "value": "3.5"},
+        {"source": "src0", "row_idx": 1, "column": "BIN", "value": "7"},
+        {"source": "src0", "row_idx": 2, "column": "ItemB", "value": ""},   # 결측 처리
+    ]})
+    data = out[0].data
+    assert stats["edited_cells"] == 3
+    assert abs(float(data["ItemA"][0]) - 3.5) < 1e-9
+    assert fmt_type(data["BIN"][1]) == "7"
+    assert math.isnan(float(data["ItemB"][2])), "빈값은 결측이어야 한다"
+    # 손대지 않은 값은 그대로
+    assert list(data["ItemA"])[1:] == _A_VALUES[1:]
+
+    ints, _ = preprocess.apply_tables([make_table()], {"edits": [
+        {"source": "src0", "row_idx": 0, "column": "ItemA", "value": "7"}]})
+    assert ints[0].data["ItemA"].dtype.kind == "i", "정수만 넣었는데 dtype 이 넓어졌다"
+
+
+def test_edits_ignore_unknown_targets():
+    """없는 source/컬럼·범위 밖 row_idx 는 조회를 죽이지 않고 조용히 무시된다.
+
+    (저장 시점에는 service._check_edit_targets 가 400 으로 막는다 — 여기는 원본이
+    Excel 왕복으로 줄어든 뒤 남아 있던 패치를 만난 조회 경로의 방어선이다.)"""
+    out, stats = preprocess.apply_tables([make_table()], {"edits": [
+        {"source": "nope", "row_idx": 0, "column": "ItemA", "value": "1"},
+        {"source": "src0", "row_idx": 999, "column": "ItemA", "value": "1"},
+        {"source": "src0", "row_idx": 0, "column": "NoSuchItem", "value": "1"},
+    ]})
+    assert stats["edited_cells"] == 0
+    assert list(out[0].data["ItemA"]) == _A_VALUES
+
+
+def test_edits_digest_is_order_independent():
+    """같은 편집 집합이면 클라가 보낸 순서와 무관하게 같은 digest (캐시 헛돌기 방지)."""
+    a = {"edits": [{"source": "b", "row_idx": 2, "column": "X", "value": "1"},
+                   {"source": "a", "row_idx": 1, "column": "Y", "value": "2"}]}
+    b = {"edits": [{"source": "a", "row_idx": 1, "column": "Y", "value": "2"},
+                   {"source": "b", "row_idx": 2, "column": "X", "value": "1"}]}
+    assert preprocess.digest(a) == preprocess.digest(b)
+    # 같은 셀을 두 번 고치면 마지막 값만 남는다
+    dup = preprocess.normalize({"edits": [
+        {"source": "a", "row_idx": 1, "column": "Y", "value": "1"},
+        {"source": "a", "row_idx": 1, "column": "Y", "value": "9"}]})
+    assert dup["edits"] == [{"source": "a", "row_idx": 1, "column": "Y", "value": "9"}]
+
+
+# ── 조건 일괄 규칙 (rules) ───────────────────────────────────────────────────
+def _rule(conds, action, source=None):
+    where = {"conds": conds}
+    if source:
+        where["source"] = source
+    return {"where": where, "action": action}
+
+
+def test_rule_exclude_rows_bin1_only():
+    """BIN ∉ [1] → die 제외 = 'Bin1 only'. 행이 실제로 사라지고 수율이 100% 가 된다."""
+    spec = {"rules": [_rule([{"field": "BIN", "op": "not_in", "values": ["1"]}],
+                            {"op": "exclude_rows"})]}
+    out, stats = preprocess.apply_tables([make_table()], spec)
+    assert stats["excluded_dies"] == 1
+    assert len(out[0].data) == len(_A_VALUES) - 1
+    assert set(fmt_type(v) for v in out[0].data["BIN"]) == {"1"}
+
+
+def test_rule_spec_out_clear():
+    """HILIM 밖 측정값만 결측 처리 (ItemA HILIM=2000 이므로 여기선 미적중, ItemB=10)."""
+    spec = {"rules": [_rule([{"field": "item", "item": "ItemB", "op": "spec_out"}],
+                            {"op": "clear", "target": "ItemB"})]}
+    out, stats = preprocess.apply_tables([make_table()], spec)
+    assert stats["rule_hits"] == 0, "규격 안 값이 규격 밖으로 잡혔다"
+    # ItemA 는 1000 하나가 HILIM(2000) 안이라 미적중 → LOLIM 밖 조건으로 바꿔 확인
+    spec = {"rules": [_rule([{"field": "item", "item": "ItemA", "op": ">", "value": 100}],
+                            {"op": "clear", "target": "ItemA"})]}
+    out, stats = preprocess.apply_tables([make_table()], spec)
+    assert stats["rule_hits"] == 1 and math.isnan(float(out[0].data["ItemA"].iloc[-1]))
+
+
+def test_rule_and_conds_with_offset():
+    """한 규칙 안 조건은 AND — DUT==1 이면서 ItemA>10 인 행만 -1."""
+    spec = {"rules": [_rule([{"field": "DUT", "op": "in", "values": ["1"]},
+                             {"field": "item", "item": "ItemA", "op": ">", "value": 10}],
+                            {"op": "offset", "target": "ItemA", "value": -1})]}
+    out, stats = preprocess.apply_tables([make_table()], spec)
+    got = list(out[0].data["ItemA"])
+    # DUT 는 make_table 에서 전 행 1 → ItemA>10 인 11,12,11,1000 네 건이 대상
+    assert stats["rule_hits"] == 4
+    assert [g for g, o in zip(got, _A_VALUES) if g != o] == [10.0, 11.0, 10.0, 999.0]
+
+
+def test_rule_scale_and_set():
+    """scale(×)·set(동일 값) 동작."""
+    spec = {"rules": [_rule([{"field": "BIN", "op": "in", "values": ["5"]}],
+                            {"op": "scale", "target": "ItemA", "value": 0.5})]}
+    out, _ = preprocess.apply_tables([make_table()], spec)
+    assert abs(float(out[0].data["ItemA"].iloc[-1]) - 500.0) < 1e-9
+
+    spec = {"rules": [_rule([{"field": "BIN", "op": "in", "values": ["5"]}],
+                            {"op": "set", "target": "BIN", "value": "9"})]}
+    out, _ = preprocess.apply_tables([make_table()], spec)
+    assert fmt_type(out[0].data["BIN"].iloc[-1]) == "9"
+
+
+def test_rule_source_scope():
+    """where.source 가 다른 소스면 그 테이블에는 적용되지 않는다."""
+    spec = {"rules": [_rule([{"field": "BIN", "op": "in", "values": ["5"]}],
+                            {"op": "exclude_rows"}, source="other")]}
+    out, stats = preprocess.apply_tables([make_table()], spec)
+    assert stats["excluded_dies"] == 0 and len(out[0].data) == len(_A_VALUES)
+
+
+def test_rule_numeric_cond_skips_missing():
+    """결측(NaN)은 숫자 비교 어느 쪽에도 걸리지 않는다."""
+    spec = {"edits": [{"source": "src0", "row_idx": 0, "column": "ItemA", "value": ""}],
+            "rules": [_rule([{"field": "item", "item": "ItemA", "op": "<", "value": 1e9}],
+                            {"op": "clear", "target": "ItemB"})]}
+    out, stats = preprocess.apply_tables([make_table()], spec)
+    assert stats["rule_hits"] == len(_A_VALUES) - 1, "결측 행이 비교에 걸렸다"
+
+
+def test_apply_order_edits_then_rules():
+    """규칙은 셀 패치가 반영된 값 위에서 평가된다 (① edits → ② rules)."""
+    spec = {"edits": [{"source": "src0", "row_idx": 0, "column": "BIN", "value": "9"}],
+            "rules": [_rule([{"field": "BIN", "op": "in", "values": ["9"]}],
+                            {"op": "exclude_rows"})]}
+    out, stats = preprocess.apply_tables([make_table()], spec)
+    assert stats["edited_cells"] == 1 and stats["excluded_dies"] == 1
+    assert len(out[0].data) == len(_A_VALUES) - 1
+
+
+def test_rules_are_reversible():
+    """규칙을 지우면 원래 payload 와 정준 JSON 이 완전히 일치한다 (되돌리기)."""
+    before = _canon(build_report_payload([make_table()]))
+    spec = {"rules": [_rule([{"field": "BIN", "op": "not_in", "values": ["1"]}],
+                            {"op": "exclude_rows"})]}
+    patched, _ = preprocess.apply_tables([make_table()], spec)
+    assert _canon(build_report_payload(patched)) != before, "규칙이 payload 에 반영 안 됨"
+    restored, _ = preprocess.apply_tables([make_table()], {})
+    assert _canon(build_report_payload(restored)) == before, "해제 후 원래 값으로 안 돌아옴"
+
+
+def test_bad_rules_are_dropped():
+    """해석 불가 규칙은 정규화에서 사라진다 (조회 경로를 죽이지 않는다)."""
+    for bad in ([{"where": {"conds": []}, "action": {"op": "exclude_rows"}}],   # 조건 없음
+                [_rule([{"field": "NOPE", "op": "in", "values": ["1"]}],
+                       {"op": "exclude_rows"})],                                # 없는 필드
+                [_rule([{"field": "BIN", "op": "??", "values": ["1"]}],
+                       {"op": "exclude_rows"})],                                # 없는 연산
+                [_rule([{"field": "BIN", "op": "in", "values": ["1"]}],
+                       {"op": "clear"})],                                       # target 없음
+                [_rule([{"field": "BIN", "op": "spec_out"}],
+                       {"op": "exclude_rows"})]):                               # 메타 spec_out
+        assert preprocess.normalize({"rules": bad}) == {}, bad
+
+
+def test_describe_covers_patch_layers():
+    spec = {"exclude_items": ["ItemB"],
+            "edits": [{"source": "src0", "row_idx": 0, "column": "ItemA", "value": "1"}],
+            "rules": [_rule([{"field": "BIN", "op": "not_in", "values": ["1"]}],
+                            {"op": "exclude_rows"})]}
+    text = preprocess.describe(spec)
+    assert "항목 1개 제외" in text and "셀 수정 1건" in text and "일괄 규칙 1건" in text
+    assert preprocess.describe_rule(spec["rules"][0]) == "BIN ∉ [1] → die 제외"
+
+
+def test_drop_preprocess_edits_keeps_rules():
+    """원본 교체 시 셀 패치만 해제되고 규칙·항목 제외는 남는다."""
+    from web_report import edits
+
+    db = FakeEditDB()
+    spec = {"exclude_items": ["ItemB"],
+            "edits": [{"source": "src0", "row_idx": 0, "column": "ItemA", "value": "1"}],
+            "rules": [_rule([{"field": "BIN", "op": "not_in", "values": ["1"]}],
+                            {"op": "exclude_rows"})]}
+    edits.save_preprocess(db, "sid", spec)
+    dropped = edits.drop_preprocess_edits(db, ["sid", "sid2"])
+    assert dropped == 1
+    left = edits.load_preprocess(db, "sid")
+    assert "edits" not in left
+    assert left["exclude_items"] == ["ItemB"] and len(left["rules"]) == 1
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -247,6 +447,21 @@ def main():
         test_edits_roundtrip_and_clear,
         test_preprocess_kind_excluded_from_edit_state,
         test_preprocessed_table_has_no_df,
+        test_legacy_spec_normal_form_is_frozen,
+        test_edits_patch_values_and_keep_dtype,
+        test_edits_ignore_unknown_targets,
+        test_edits_digest_is_order_independent,
+        test_rule_exclude_rows_bin1_only,
+        test_rule_spec_out_clear,
+        test_rule_and_conds_with_offset,
+        test_rule_scale_and_set,
+        test_rule_source_scope,
+        test_rule_numeric_cond_skips_missing,
+        test_apply_order_edits_then_rules,
+        test_rules_are_reversible,
+        test_bad_rules_are_dropped,
+        test_describe_covers_patch_layers,
+        test_drop_preprocess_edits_keeps_rules,
     ]
     for fn in checks:
         fn()

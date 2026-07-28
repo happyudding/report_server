@@ -140,6 +140,8 @@ REPORT_DB_BACKUP_EXTERNAL_DIR   = _path_env("REPORT_DB_BACKUP_EXTERNAL_DIR", Non
 
 HONEY_RELEASES_DIR = _path_env("HONEY_RELEASES_DIR", ROOT_DIR / "server" / "releases")
 HONEY_VERSION_JSON = HONEY_RELEASES_DIR / "version.json"
+# 릴리스 공지 원문. 운영자가 직접 편집하며 /honey/announcement 가 그대로 서빙한다.
+HONEY_ANNOUNCEMENT_TXT = HONEY_RELEASES_DIR / "announcement.txt"
 
 # ── admin 대시보드 (admin_panel/) ────────────────────────────────────────────
 # admin URL 경로 조각. 기본값 'pte' → /pe/admin-pte/ 로 항상 접속 가능.

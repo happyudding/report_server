@@ -284,6 +284,8 @@ class HoneyMainWindow(QMainWindow):
     # 백그라운드 버전 체크 결과 전달 (manifest dict 또는 예외) — cross-thread 라
     # 자동 queued connection (UploadDialog._part_ids_ready 와 같은 패턴)
     _version_manifest_ready = pyqtSignal(object)
+    # 릴리스 공지 원문 전달 (announcement.txt 그대로) — 같은 cross-thread 패턴
+    _announcement_ready = pyqtSignal(str)
 
     def __init__(self):
         super().__init__()
@@ -323,6 +325,7 @@ class HoneyMainWindow(QMainWindow):
         if rg is None:
             self._disable_engine()
         self._version_manifest_ready.connect(self._on_version_manifest)
+        self._announcement_ready.connect(self._on_announcement)
         QTimer.singleShot(500, self.check_for_update)
 
     def _apply_main_ui_tweaks(self):
@@ -898,10 +901,10 @@ class HoneyMainWindow(QMainWindow):
         return m.group(1) if m else ""
 
     def on_rawdata_edit(self):
-        """Rawdata 허브를 연다 — Item Select / Outlier 제거 / Rawdata 원본 수정(Excel).
+        """Rawdata 허브를 연다 — 현재 상태 / Item Select / Outlier / 빠른 수정 / Excel.
 
-        앞의 둘은 원본을 고치지 않는 조회 필터라 허브 안에서 끝나고(전 탭이 그 기준으로
-        재계산된다), 'Rawdata 원본 수정' 을 고른 경우에만 종전 Excel 워커를 띄운다."""
+        Excel 왕복만 원본을 실제로 바꾼다. 나머지는 원본을 그대로 두고 조회 시점에만
+        적용되는 전처리(항목 제외·outlier·셀 패치·조건 규칙)라 언제든 되돌릴 수 있다."""
         sid = self._current_session_id()
         if not sid:
             QMessageBox.information(
@@ -913,10 +916,13 @@ class HoneyMainWindow(QMainWindow):
             QMessageBox.information(self, "Rawdata 수정", "이미 Excel 편집이 진행 중입니다.")
             return
 
-        from honey_ui.rawdata_hub_dialog import ACTION_EXCEL, RawdataHubDialog
+        from honey_ui.rawdata_hub_dialog import ACTION_EXCEL, ACTION_QUICK, RawdataHubDialog
         hub = RawdataHubDialog(self, sid, SERVER_BASE_URL)
         accepted = hub.exec() == QDialog.DialogCode.Accepted
-        if hub.changed:
+        changed = hub.changed
+        if accepted and hub.action == ACTION_QUICK:
+            changed = self._run_quick_edit(sid) or changed
+        if changed:
             # 전처리 옵션이 바뀌었으면 현재 보고 있는 리포트를 다시 그린다.
             self._append_run_log("[Rawdata] 전처리 옵션 저장 — 페이지 새로고침.")
             try:
@@ -937,6 +943,21 @@ class HoneyMainWindow(QMainWindow):
         w.start()
         # Excel 편집이 끝날 때까지(done/failed) 다른 Excel COM 작업·새 입력을 막는다.
         self._set_busy(True)
+
+    def _run_quick_edit(self, sid) -> bool:
+        """빠른 수정 다이얼로그 — 저장했으면 True (호출부가 브라우저 새로고침).
+
+        Excel 워커와 달리 이 다이얼로그는 원본을 바꾸지 않고 전처리 spec 만 저장하므로
+        앱을 busy 로 잠그지 않는다 (다이얼로그가 모달이라 중복 실행도 없다). 무거운
+        다운로드·디코드·미리보기 계산은 다이얼로그 내부에서 스레드로 돌린다."""
+        from honey_ui.rawdata_quick_dialog import RawdataQuickDialog
+
+        self._append_run_log(f"[Rawdata] 빠른 수정 열기 (session {sid})")
+        dialog = RawdataQuickDialog(self, sid, SERVER_BASE_URL)
+        dialog.exec()
+        if dialog.changed:
+            self._append_run_log("[Rawdata] 빠른 수정 저장 — 원본은 그대로입니다.")
+        return bool(dialog.changed)
 
     def _on_excel_edit_status(self, state, message):
         self._status(message)
@@ -2453,6 +2474,46 @@ class HoneyMainWindow(QMainWindow):
         threading.Thread(target=_fetch_bg, daemon=True,
                          name="honey-version-check").start()
 
+    # ── 릴리스 공지 (버전당 1회) ──────────────────────────────────────────
+    def _maybe_show_announcement(self):
+        """이 버전의 공지를 아직 안 봤으면 서버에서 받아 팝업한다.
+
+        '봤음' 기록은 %APPDATA%/Honey/settings.json 이라 Windows 계정별로 남는다
+        — 같은 PC 라도 계정이 다르면 각각 1회 뜨고, 같은 계정이면 재실행해도 다시
+        뜨지 않는다. fetch 는 버전 체크와 같은 이유(네트워크 대기)로 백그라운드.
+        """
+        if app_settings.get_setting("announcement_seen_version") == CURRENT_VERSION:
+            return
+
+        def _fetch_bg():
+            try:
+                text = version_check.fetch_announcement()
+            except Exception:   # noqa: BLE001 - 공지 실패는 앱 동작과 무관, 다음 실행 때 재시도
+                return
+            try:
+                self._announcement_ready.emit(text)
+            except RuntimeError:
+                pass   # 창이 이미 닫혀 C++ 객체가 파괴된 경우
+        threading.Thread(target=_fetch_bg, daemon=True,
+                         name="honey-announcement").start()
+
+    def _on_announcement(self, text):
+        """공지 원문을 그대로 보여주고 '봤음' 을 기록한다 (내용이 비면 아무 것도 안 함).
+
+        기록은 팝업을 닫은 뒤에 한다 — 표시 전에 강제 종료되면 다음 실행 때 다시 뜨는
+        편이 조용히 건너뛰는 것보다 낫다.
+        """
+        body = (text or "").strip()
+        if not body:
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle(f"Honey {CURRENT_VERSION} 업데이트 안내")
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText(body)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
+        app_settings.set_setting("announcement_seen_version", CURRENT_VERSION)
+
     def _on_download_cancel(self):
         """업데이트 다운로드 취소 버튼 — 워커의 progress_cb 가 다음 청크에서 중단한다.
 
@@ -2562,6 +2623,9 @@ class HoneyMainWindow(QMainWindow):
         if not version_check.is_newer(remote, CURRENT_VERSION):
             self.status.showMessage(
                 f"버전 체크 OK — 최신 ({CURRENT_VERSION}). Server: {SERVER_BASE_URL}")
+            # 최신을 실행 중일 때만 공지 확인 — 업데이트가 남아 있으면 구버전 사용자에게
+            # 신버전 공지가 먼저 뜨게 되므로, 업데이트를 마친 뒤 첫 실행에서 뜬다.
+            self._maybe_show_announcement()
             return
 
         # 설치 방법 선택: [자동 설치] / [ZIP 다운로드] / [나중에]

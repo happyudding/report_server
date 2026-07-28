@@ -114,6 +114,20 @@ def count_sessions_for_analysis_key(analysis_key, exclude_session_id=None):
     return int(row[0])
 
 
+def session_ids_for_analysis_key(analysis_key):
+    """analysis_key 를 공유하는 세션 id 목록 (dedup 형제 포함).
+
+    물리 원본(parquet)이 교체되면 그 원본을 가리키는 **모든** 세션의 행 위치 기반 상태
+    (전처리 셀 패치)가 무효가 된다 — update_content_hash_for_analysis_key 와 같은 이유로
+    형제 전체를 대상으로 잡아야 한다. 휴지통 세션도 복원 시 정합을 위해 포함한다.
+    """
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT session_id FROM report_session WHERE analysis_key=?",
+            (analysis_key,)).fetchall()
+    return [r[0] for r in rows]
+
+
 def delete_analysis_rows(analysis_key):
     """analysis_key 에 매달린 산출물 메타 행 삭제 (마지막 참조 세션 삭제 시에만 호출).
 

@@ -26,6 +26,7 @@ from report.security import (
     _USER_ID_RE,
     _active_or_404,
     _client_meta,
+    _editor_guard,
     _is_master,
     _issue_csrf_cookie,
     _normalize_user_id,
@@ -50,6 +51,16 @@ def create_annotation():
     body = request.get_json(force=True, silent=True) or {}
     session_id = body.get("session_id", "")
     _validate_session_id(session_id)
+    # 소속 세션의 편집 권한을 확인한다 — CSRF 만으로는 인가가 아니라, 무권한자가
+    # 임의(비공개 포함) 세션에 주석을 다는 IDOR 이 열린다. 조회 라우트와 동일한 가드.
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    _private_guard(session)
+    _active_or_404(session)
+    guard = _editor_guard(session)
+    if guard:
+        return guard
     analysis_key = body.get("analysis_key")
     target = (body.get("target") or "").strip()
     content = (body.get("content") or "").strip()
@@ -69,9 +80,26 @@ def list_annotations(session_id):
     return jsonify(report_db.get_annotations(session_id))
 
 
+def _annotation_session_or_404(aid):
+    """주석 id → 소속 세션 조회. 무권한자가 정수 id 를 열거해 남의 주석을 수정/삭제하는
+    IDOR 을 막기 위해, 편집/삭제 전 소속 세션의 편집 권한을 확인한다."""
+    ann = report_db.get_annotation(aid)
+    if not ann:
+        abort(404, "annotation not found")
+    session = report_db.get_session(ann["session_id"])
+    if not session:
+        abort(404, "session not found")
+    _private_guard(session)
+    return session
+
+
 @report_bp.patch("/annotation/<int:aid>")
 def update_annotation(aid):
     _require_csrf()
+    session = _annotation_session_or_404(aid)
+    guard = _editor_guard(session)
+    if guard:
+        return guard
     body = request.get_json(force=True, silent=True) or {}
     content = (body.get("content") or "").strip()
     if not content:
@@ -83,6 +111,10 @@ def update_annotation(aid):
 @report_bp.delete("/annotation/<int:aid>")
 def delete_annotation(aid):
     _require_csrf()
+    session = _annotation_session_or_404(aid)
+    guard = _editor_guard(session)
+    if guard:
+        return guard
     report_db.delete_annotation(aid)
     return jsonify({"id": aid, "deleted": True})
 
@@ -610,7 +642,10 @@ def client_error():
 
 @report_bp.get("/_threads")
 def debug_threads():
-    """모든 스레드의 stack trace 덤프. hang 진단용."""
+    """모든 스레드의 stack trace 덤프. hang 진단용. 스택·파일 경로가 노출되므로
+    admin 로그인(master 게이트) PC 에서만 — 그 외엔 존재 자체를 숨긴다(404)."""
+    if not _is_master():
+        abort(404)
     import sys, threading, traceback
     out = []
     tid_to_name = {t.ident: t.name for t in threading.enumerate()}

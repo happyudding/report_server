@@ -77,13 +77,20 @@ def _read(path: Path) -> bytes | None:
 
 
 def _write(path: Path, data: bytes) -> None:
+    # tmp 이름에 pid+스레드 id 를 박는다 — 프리웜 워커/온디맨드 워커/부모가 서로 다른
+    # 프로세스에서 같은 report/map 키를 동시에 쓸 때 고정 ".tmp" 를 공유하면 os.replace
+    # 경쟁·간헐 write 실패가 난다(dist_pack_store 가 이미 pid 접미사로 해결한 것과 동일).
+    tmp = path.with_name(f"{path.name}.{os.getpid()}-{threading.get_ident()}.tmp")
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(path.name + ".tmp")
         tmp.write_bytes(data)
         os.replace(tmp, path)
     except Exception:
         _log.warning("disk cache write failed: %s", path, exc_info=True)
+        try:
+            tmp.unlink(missing_ok=True)   # 유니크 tmp 라 실패 시 잔여를 직접 회수
+        except OSError:
+            pass
         return
     _cleanup_stale_generations(path)
     threading.Thread(target=_enforce_cap, args=(path.parent.parent.parent,),
@@ -166,17 +173,35 @@ def load_report(upload_root: Path, cache_key: tuple) -> dict | None:
         return None
 
 
-def save_report(upload_root: Path, cache_key: tuple, report: dict) -> None:
+def dumps_report(report: dict) -> bytes:
+    """report dict → 캐시 직렬화 bytes. 콜드 경로가 이 bytes 를 gzip 저장(save_report_gz)과
+    RAM 캐시 크기추정(cache.report_cache_put size=)에 **함께** 재사용해, 같은 payload 를
+    레이어마다 다시 직렬화하던 낭비(콜드 1회당 3중 → 1중)를 없앤다."""
+    return json.dumps(report, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+
+def save_report_gz(upload_root: Path, cache_key: tuple, report_bytes: bytes) -> None:
+    """이미 직렬화된 report bytes(dumps_report 결과)를 gzip 해 디스크에 저장."""
     if not _enabled():
         return
     try:
-        data = gzip.compress(
-            json.dumps(report, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
-            compresslevel=1)
+        data = gzip.compress(report_bytes, compresslevel=1)
     except Exception:
         _log.warning("disk cache serialize failed", exc_info=True)
         return
     _write(_path_for(upload_root, "report", cache_key, ".json.gz"), data)
+
+
+def save_report(upload_root: Path, cache_key: tuple, report: dict) -> None:
+    """dict 를 직렬화해 저장 (bytes 를 이미 가진 콜드 경로는 dumps_report+save_report_gz 사용)."""
+    if not _enabled():
+        return
+    try:
+        report_bytes = dumps_report(report)
+    except Exception:
+        _log.warning("disk cache serialize failed", exc_info=True)
+        return
+    save_report_gz(upload_root, cache_key, report_bytes)
 
 
 def load_dist(upload_root: Path, cache_key: tuple) -> bytes | None:

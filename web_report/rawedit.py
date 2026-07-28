@@ -18,6 +18,7 @@ import zipfile
 from pathlib import Path
 
 from . import cache
+from . import edits
 from . import runtime
 from .honeyform import validate_parquet_bytes
 from .validation import canon
@@ -232,6 +233,9 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
         # 정렬 없이 덧셈만 한다(업로드 직후와 같은 상태). delete_stale 뒤에 저장할 것.
         pack_saved = _save_dist_pack(dist_pack, analysis_key, content_hash,
                                      session.get("mode"), upload_root)
+        # 행 위치 기반 전처리 셀 패치는 원본이 바뀌면 엉뚱한 행을 가리킨다 — 형제까지 해제
+        # (service.edit_raw_data 와 같은 헬퍼 · 같은 판단).
+        dropped = edits.drop_preprocess_edits_for_akey(report_db, analysis_key, user_agent)
     try:
         removed_note = f", removed={removed_names}" if removed_names else ""
         report_db.log_audit(
@@ -239,7 +243,8 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
             product_type=session.get("product_type", ""), product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
             changed_fields=(f"raw_data(excel, {len(sources_bytes)} sources"
-                            f"{removed_note}, backup={backup_name})"),
+                            f"{removed_note}, backup={backup_name}"
+                            + (f", quick_edits_cleared={dropped}" if dropped else "") + ")"),
             client_ip=client_ip, user_agent=user_agent,
             client_user=client_user or None)
     except Exception:

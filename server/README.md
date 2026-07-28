@@ -268,6 +268,7 @@ gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 �
 |--------|------|------|
 | `GET` | `/honey/version` | 버전 정보 JSON (`version.json` 반환) |
 | `GET` | `/honey/download` | Honey exe/ZIP 다운로드 |
+| `GET` | `/honey/announcement` | 릴리스 공지 원문 (`releases/announcement.txt` 그대로, text/plain). 클라가 최신 버전 실행 중일 때 PC 계정별 1회 팝업 → [docs/04](../docs/04_honey_update.md) |
 
 ### 관리 대시보드 (`/pe/admin-<secret>/`, 기본 `/pe/admin-pte/`) — 인증 없음, 내부망 전용
 
@@ -298,7 +299,7 @@ server/
 ├── upload_xlsx.py            POST /upload_xlsx 핸들러
 ├── upload_webreport.py       POST /upload_webreport 핸들러 (web_report.ingest 호출)
 ├── xlsx_parser.py            시트 grid → 텍스트 추출 (_GridSheet 셸, openpyxl 미사용)
-├── honey_routes.py           /honey/version, /honey/download
+├── honey_routes.py           /honey/version, /honey/download, /honey/announcement
 ├── admin_routes.py           [미등록 dead file — /pe/admin 구현, admin_panel 로 흡수됨]
 ├── report_cleanup.py         오래된 세션·감사로그 정리 (DRYRUN 기본)
 ├── db_backup.py              report.db 온라인 백업 사이클

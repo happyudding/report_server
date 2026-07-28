@@ -13,7 +13,10 @@ report_webreport_edit_rev 의 단조 증가 rev 로 한다 (service 캐시 키�
 from __future__ import annotations
 
 import json
+import logging
 import re
+
+_log = logging.getLogger(__name__)
 
 KIND_ISSUE_COMMENT = "issue_comment"
 KIND_ETC_ITEM = "etc_item"
@@ -195,6 +198,44 @@ def save_preprocess(report_db, session_id: str, spec: dict, updated_by=None) -> 
     value = json.dumps(norm, sort_keys=True, ensure_ascii=False) if norm else None
     return report_db.apply_webreport_edits(
         session_id, [(KIND_PREPROCESS, _PREPROCESS_KEY, value)], updated_by=updated_by)
+
+
+def drop_preprocess_edits(report_db, session_ids, updated_by=None) -> int:
+    """원본 parquet 이 교체된 뒤 **행 위치 기반 셀 패치(edits)만** 해제한다. 해제 건수 반환.
+
+    Excel 왕복·웹 셀 편집은 행을 지우거나 순서를 바꿀 수 있어 ``(source, row_idx)`` 가
+    가리키는 die 가 달라진다 — 그대로 두면 패치가 엉뚱한 행에 걸린다. 조건 기반인 rules
+    와 이름 기반인 exclude_items/outlier 는 원본이 바뀌어도 의미가 유지되므로 남긴다.
+
+    dedup 형제 세션도 같은 물리 원본을 가리키므로 함께 해제한다(session_ids 로 받는다).
+    """
+    from .preprocess import normalize
+
+    dropped = 0
+    for session_id in session_ids or ():
+        spec = load_preprocess(report_db, session_id)
+        if not spec.get("edits"):
+            continue
+        dropped += len(spec["edits"])
+        rest = normalize({k: v for k, v in spec.items() if k != "edits"})
+        save_preprocess(report_db, session_id, rest, updated_by=updated_by)
+    return dropped
+
+
+def drop_preprocess_edits_for_akey(report_db, analysis_key: str, user_agent: str = "") -> int:
+    """analysis_key 를 공유하는 전 세션의 셀 패치 해제 (원본 교체 직후 호출). 실패는 무해.
+
+    Excel 왕복(rawedit.replace_sources)과 웹 셀 편집(service.edit_raw_data)이 같이 쓴다 —
+    "원본이 바뀌면 행 위치 패치는 못 믿는다"는 판단이 두 경로에서 갈리면 안 된다.
+    해제 실패로 원본 교체 자체를 되돌리지는 않는다(교체는 이미 성공했다).
+    """
+    try:
+        return drop_preprocess_edits(
+            report_db, report_db.session_ids_for_analysis_key(analysis_key),
+            updated_by=user_from_ua(user_agent) or None)
+    except Exception:
+        _log.warning("전처리 셀 패치 해제 실패 akey=%s", analysis_key, exc_info=True)
+        return 0
 
 
 def normalize_yield_basis(value) -> str:

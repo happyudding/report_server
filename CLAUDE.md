@@ -64,8 +64,8 @@ report_server/
 │   ├── upload_webreport.py      POST /pe/report/upload_webreport (web_report.ingest 호출)
 │   ├── xlsx_parser.py           시트 grid → 텍스트 추출 (_GridSheet 셸, openpyxl 미사용)
 │   ├── admin_routes.py          [미등록 dead file — 구 /pe/admin, admin_panel 로 흡수됨]
-│   ├── honey_routes.py          /honey/version, /honey/download
-│   └── releases/version.json    Honey 배포 manifest
+│   ├── honey_routes.py          /honey/version, /honey/download, /honey/announcement
+│   └── releases/                version.json(배포 manifest) + announcement.txt(업데이트 공지 원문)
 ├── web_report/                 웹 리포트 구현 (신규 개발 주 대상 — [web_report/CLAUDE.md](web_report/CLAUDE.md),
 │                                docs/[10](docs/10_web_report_pipeline.md)·[11](docs/11_web_report_tabs.md)·[12](docs/12_web_report_cache.md))
 ├── client/                     Honey 클라이언트 (PyQt6 — honey_ui/honey_main/transport/excel_* 자유, 나머지 사전 승인; report_generator·honey_parse 만 외부 담당자·동결)
@@ -126,6 +126,10 @@ report_server/
   → web_report 편집 — **세션 편집 DB(report_webreport_edit)에 저장**.
   manifest 는 업로드 시점 불변 스냅샷. Note 이미지는 `.../note_image` → storage_gateway
   (세션 단위 저장, 세션 삭제 시 정리).
+- `POST .../session/<sid>/web_report/preprocess` → **조회 전처리**(항목 제외·outlier·
+  빠른 수정 셀 패치·조건 일괄 규칙 + 수율 분모 기준). **원본 parquet 을 바꾸지 않고** 조회
+  시점에만 적용되는 되돌릴 수 있는 편집이라, 원본을 실제로 교체하는 `raw_data/edit`(웹 셀
+  편집)·`rawdata_replace`(Excel 왕복)와 성격이 정반대다 → [docs/11](docs/11_web_report_tabs.md).
 - `DELETE /pe/report/session/<sid>` → 세션 삭제 (업로더만)
 
 **인증**: 신원은 Honey 내장 브라우저 User-Agent 의 `HoneyUser/<계정>` 토큰으로 자동 식별한다
@@ -159,7 +163,8 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 - `report_audit_log` — upload/edit/delete 감사. 메타 스냅샷 + client_ip/user_agent/client_user
   (클라 신고 계정, 위조 가능) + result. best-effort. `/pe/admin-pte/` 대시보드에서 조회.
 - `report_webreport_edit` / `_rev` — web_report 편집(comment/etc/trim override/engr/
-  chart_note(차트 주석)/note_sheet(Note 탭 Luckysheet 시트 JSON ≤2MB))의 **진실 저장소,
+  chart_note(차트 주석)/note_sheet(Note 탭 Luckysheet 시트 JSON ≤2MB)/preprocess(조회 전처리
+  spec — 항목 제외·outlier·셀 패치·조건 규칙)/yield_basis)의 **진실 저장소,
   세션 단위**. dedup(동일 analysis_key) 세션 간 편집 비공유. `rev` 는 단조 증가 캐시
   무효화 토큰. manifest 는 불변 스냅샷 ([web_report/edits.py](web_report/edits.py)).
 - `report_session_editor`(편집 위임) / `report_web_visitor`(편집자 후보 풀) /

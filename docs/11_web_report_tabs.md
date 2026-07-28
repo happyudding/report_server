@@ -253,19 +253,45 @@ source 1개가 Excel 시트 1장이다([excel_session.py](../client/excel_edit/e
   parquet 으로 만든 **Distribution pack** 을 함께 받아 저장한 뒤 프리웜을 걸어 리빌드를
   컴퓨트 워커로 넘긴다.
 
-#### 조회 전처리 — Item Select / Outlier 제거 (2026-07-23)
+#### 조회 전처리 — Item Select / Outlier / 빠른 수정 (2026-07-23, 패치 계층 2026-07-28)
 Honey 의 `Rawdata edit` 은 Excel 을 바로 띄우지 않고 **허브 다이얼로그**
-([rawdata_hub_dialog.py](../client/honey_ui/rawdata_hub_dialog.py))를 먼저 연다. 세로 grid
-1장에 전부 보인다(페이지 전환 없음): `Item Select`+Item List / `Outlier 제거`+stdev 입력 /
-`Rawdata 원본 수정`(주황 — Excel 로 원본을 고치는 유일한 버튼) + 하단 `저장`·`닫기`.
-`Item Select`·`Outlier 제거` 버튼은 `저장` 과 같이 **화면 상태 전체**를 저장한다(행별 부분
-저장은 다른 행을 되돌려야 해서 옮겨 둔 항목이 조용히 사라진다).
+([rawdata_hub_dialog.py](../client/honey_ui/rawdata_hub_dialog.py))를 먼저 연다. 레이아웃은
+**좌측 기능 버튼 + 우측 활성 패널**(QStackedWidget)이다 — 5개 페이지: `현재 상태`(적용 중인
+전처리 목록 + 개별/전체 해제) / `Item Select`(2-리스트 + 검색) / `Outlier 제거` /
+`빠른 수정`(→ 별도 다이얼로그) / `Rawdata 원본 수정`(주황 — Excel 로 원본을 고치는 유일한
+버튼) + 하단 `Yield 계산 기준` 체크박스·`저장`·`닫기`. `저장` 은 **화면 상태 전체**를 저장한다
+(행별 부분 저장은 다른 행을 되돌려야 해서 옮겨 둔 항목이 조용히 사라진다).
 
-앞의 둘은 **원본 parquet 을 고치지 않는 되돌릴 수 있는 옵션**이다 — Raw Data 편집과 정반대
-성격이라 백업·content_hash 갱신이 없다.
-- 저장소: 세션 편집 DB `kind=preprocess`, `item_key='spec'`, value JSON
-  `{"exclude_items":[...], "outlier":{"mode":"stdev","k":50}}`. 라우트
-  `GET/POST .../web_report/preprocess`. 빈 spec 저장 = 해제.
+Excel 을 뺀 나머지는 전부 **원본 parquet 을 고치지 않는 되돌릴 수 있는 옵션**이다 —
+Raw Data 편집과 정반대 성격이라 백업·content_hash 갱신이 없다.
+- 저장소: 세션 편집 DB `kind=preprocess`, `item_key='spec'`, value JSON — 라우트
+  `GET/POST .../web_report/preprocess`. 빈 spec 저장 = 해제. 키 4종:
+  ```json
+  {"exclude_items": ["ITEM_A"], "outlier": {"mode":"stdev","k":50},
+   "edits": [{"source":"CP1","row_idx":12,"column":"VREF","value":"3.3"}],
+   "rules": [{"where": {"source":"CP1", "conds":[{"field":"DUT","op":"in","values":["3"]},
+                                                 {"field":"item","item":"VREF","op":">","value":4.5}]},
+              "action": {"op":"clear","target":"VREF"}}]}
+  ```
+  적용 순서는 **① edits → ② rules → ③ exclude_items → ④ outlier**(규칙은 셀 패치가 반영된
+  값 위에서 평가, outlier 통계는 규칙으로 걸러진 잔존 die 기준).
+- **edits/rules 는 저장 시 "키 부재 = 유지"**, 빈 리스트 = 해제다
+  ([service.save_preprocess](../web_report/service.py) `_merge_preprocess_spec`). 이 두 키를
+  모르는 구버전 Honey 허브의 `저장` 한 번이 빠른 수정 결과를 조용히 지우는 것을 막는다.
+  레거시 키(exclude_items/outlier/yield_basis)는 종전 replace 의미론 그대로 — 허브가
+  "화면 상태를 그대로 저장"하는 계약이라 부재 = 해제여야 한다. 그래서 **빠른 수정
+  다이얼로그는 저장된 레거시 키를 그대로 되돌려 보내고**, 허브는 edits/rules 를 항상 명시해
+  보낸다(현재 상태 페이지에서 해제할 수 있으므로).
+- 저장 시 검증(`_validate_preprocess`): tables 를 한 번 적용해 보고 없는 source/컬럼·범위 밖
+  row_idx·값 규칙 위반(rawvalues)·적중 0 규칙·die 전멸을 **400** 으로 막는다. 조회 경로는
+  반대로 이상한 spec 을 조용히 건너뛴다(원본이 Excel 왕복으로 줄어든 뒤 남은 패치 방어).
+  상한: edits 10,000 / rules 50.
+- **원본 수정이 들어오면 `edits` 만 자동 해제**된다 — 행이 지워지거나 순서가 바뀌면
+  `(source, row_idx)` 가 다른 die 를 가리키기 때문. 조건 기반인 rules 와 이름 기반인
+  exclude_items/outlier 는 유지된다. dedup 형제 세션까지 해제하며
+  ([edits.drop_preprocess_edits_for_akey](../web_report/edits.py)), Excel 왕복
+  (`rawedit.replace_sources`)·웹 셀 편집(`service.edit_raw_data`) 둘 다 같은 헬퍼를 쓴다.
+  허브는 Excel 진입 전에 "셀 N건이 해제된다"고 먼저 확인받는다.
 - 적용: [loader.load_tables](../web_report/loader.py) 한 곳에서 `preprocess.apply_tables` —
   그 아래 모든 탭(Summary/Yield/CPK/Issue Table/Distribution/Trim/Map)이 자동으로 같은 값을
   본다. **Raw Data 탭 조회/편집과 Excel 왕복은 `apply_prep=False`** 로 원본을 본다(제외한
@@ -280,13 +306,44 @@ Honey 의 `Rawdata edit` 은 Excel 을 바로 띄우지 않고 **허브 다이�
 - outlier 규칙: 항목별 `mean ± k·stdev`(ddof=1) 밖 **측정값만 결측(NaN)**. die(행)·BIN·좌표는
   불변이라 **수율·Wafer Map 은 그대로**고 CPK·Distribution 의 n·평균·σ 만 달라진다.
   σ=0(값이 모두 같음)·표본 1개 이하 항목은 대상 없음.
+- **셀 패치(`edits`)·조건 규칙(`rules`)은 data 프레임의 값·행 자체를 바꾼다** — 항목 제외와
+  달리 BIN·수율·Wafer Map 까지 달라진다. 조건 필드는 메타 7열 + `item`, 연산은
+  `in/not_in`(fmt_type 정규형 일치) · `> >= < <=`(결측은 어느 쪽에도 미적중) · `spec_out`
+  (item 전용, HILIM/LOLIM 밖). 동작은 `set/clear/offset/scale/exclude_rows`. 한 규칙 안
+  `conds` 는 AND, 규칙 리스트는 **적힌 순서대로** 적용된다. dtype 은 함부로 넓히지 않는다
+  (정수 컬럼에 정수만 들어오면 int64 유지 — 리포트 표기 회귀 방지).
+- 조회 필터와 규칙 조건은 **같은 구조·같은 판정**을 쓴다(`preprocess.normalize_where` /
+  `match_rows` 공개). 빠른 수정 다이얼로그가 화면에 띄운 "대상 N행"이 곧 저장 후 바뀌는
+  행이라는 계약이다(예외: SERIAL 은 조회에서만 부분일치 — 규칙은 정확히 일치).
 - 캐시: spec digest 를 tables/dist/map/scatter/trim_chart 키와 dist/map/scatter 라우트 ETag 에
   덧붙인다. **옵션이 없으면 digest 가 빈 문자열이라 키가 종전과 완전히 동일** →
   기존 세션 무회귀, 껐다 켜면 옛 캐시가 다시 히트 ([12](12_web_report_cache.md)).
   Distribution pack 은 업로드 시점(전처리 없음) 기준이라 **전처리 세션은 pack 을 쓰지 않고**
   기존 계산 경로로 폴백한다.
+- 캐시(추가): `commonality_key` 에도 prep digest 가 붙는다(2026-07-28) — 셀 패치·규칙이
+  Commonality 인덱스가 읽는 SERIAL/BIN·die 구성을 바꾸므로. 전처리 없는 세션은 종전 키 그대로.
 - 화면 표시는 없다 — 세션 상단에 상태 배지를 두지 않는다(사용자 요청, 2026-07-23).
-  현재 적용값은 Honey 의 Rawdata 허브를 열면 `GET .../web_report/preprocess` 로 확인된다.
+  현재 적용값은 Honey 의 Rawdata 허브 **현재 상태** 페이지에서 목록으로 보고 개별 해제할 수
+  있다(`GET .../web_report/preprocess`).
+
+#### 빠른 수정 다이얼로그 (2026-07-28)
+[rawdata_quick_dialog.py](../client/honey_ui/rawdata_quick_dialog.py) — Excel 없이 표·조건으로
+고치는 화면. **웹이 아니라 Honey UI 에 둔 이유**: 서버 부하를 늘리지 않기 위해서다. 원본이
+불변이라 `content_hash` 가 그대로고, 그래서 `rawdata_export` 의 ETag 캐시가 계속 유효해
+**두 번째부터는 서버가 304 만 응답한다**(전 source 를 메모리에 올려 zip 으로 싸는 작업 소멸).
+저장도 작은 JSON POST 1회다.
+
+흐름: ① source 체크 선택 → 체크한 것만 디코드
+([excel_session.fetch_rawdata_tables](../client/excel_edit/excel_session.py), Excel 왕복과 같은
+zip·같은 ETag 캐시) → ② 필터 조회 → 표에서 셀 수정 / 선택 영역 값 지정·빈값·오프셋·배율 /
+클립보드 TSV 붙여넣기 / 찾아 바꾸기 / 조건 일괄 규칙(대상 건수 확인 후 추가) / 빠른 동작
+(Bin1 only · Spec Out 빈값) → ③ 수율·worst CPK **미리보기**(저장된 상태 → 저장하면 될 상태) →
+④ 저장.
+
+- 값 검증·조건 판정·규칙 적용·미리보기 통계 전부 **서버와 같은 모듈**(`rawvalues`,
+  `preprocess`, `tabs.cpk`, `tabs.common`)을 그대로 돌린다 — 값 일치를 구조적으로 보장.
+- 무거운 작업(다운로드·디코드, 미리보기 CPK 계산)은 QThread 로 뺀다(honey_ui freeze 규칙).
+- 표 상한은 웹 Raw Data 와 같은 값(행 20,000 / item 컬럼 60).
 
 #### Raw Data 값 검증 (2026-07-21)
 정본은 [rawvalues.py](../web_report/rawvalues.py). **값 규칙을 `validate_honeyform_df` 에

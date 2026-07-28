@@ -53,12 +53,17 @@ web_report/
 │                        diff·경고 + 반영 확인 요약(build_confirm_sections=구조화/
 │                        build_confirm_message=구 평문). 순수 모듈(셀 함수는 pandas 무의존,
 │                        프레임 함수만 지연 import) — 클라 excel_edit/excel_session.py 가 import
-├── preprocess.py       **조회 전처리** (항목 제외 + outlier `mean ± k·stdev` 마스킹, 2026-07-23).
+├── preprocess.py       **조회 전처리** (항목 제외 + outlier `mean ± k·stdev` 마스킹, 2026-07-23
+│                        + 셀 패치 `edits` · 조건 일괄 규칙 `rules`, 2026-07-28).
 │                        원본 parquet 불변 — 세션 편집 DB(kind=preprocess)의 spec 을 loader 가
 │                        조회 시점에 적용하고 digest 를 캐시 키에 덧붙인다(옵션 없으면 빈
 │                        문자열 = 종전 키). 항목 제외는 item_columns 만 줄인다(메타·data 유지
 │                        = selected_items 와 같은 의미론 — 안 그러면 Yield 표 합이 깨진다).
-│                        순수 모듈 — Honey 허브 다이얼로그가 쓰는 값과 동일
+│                        edits/rules 는 그와 달리 data 프레임의 **값·행 자체**를 바꾼다.
+│                        적용 순서 ① edits → ② rules → ③ exclude_items → ④ outlier.
+│                        공개 API: normalize/digest/describe/describe_rule/normalize_where/
+│                        match_rows/apply_tables. 순수 모듈 — Honey 허브·빠른 수정
+│                        다이얼로그가 같은 코드를 돌려 값 일치를 구조적으로 보장
 ├── trim_match.py       Trim 항목명 매칭 순수 모듈 (product_type 별 PMIC4/TV2 규칙셋)
 ├── wafer_frame.py      제품 기준정보(die pitch+wafer 크기) → 고정 map 프레임
 └── tabs/               시트별 row 빌더 + TAB_REGISTRY (시트 구성 단일 진실)

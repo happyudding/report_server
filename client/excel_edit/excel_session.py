@@ -274,6 +274,52 @@ def _download_sources(base, session_id):
     return dfs, titles, int_cols, manifest
 
 
+def fetch_rawdata_tables(server_base, session_id, indices=None, status_cb=None):
+    """rawdata export zip → HoneyformTable 리스트 (빠른 수정 다이얼로그용 공개 헬퍼).
+
+    Excel 왕복과 **같은 zip·같은 ETag 캐시**(_fetch_export_zip)를 쓴다 — 빠른 수정은
+    원본을 바꾸지 않으므로 content_hash 가 그대로고, 두 번째부터는 서버가 304 만 응답한다
+    (전 source 를 메모리에 올려 zip 으로 싸는 서버 작업이 통째로 사라진다).
+
+    indices: 디코드할 source 원본 idx 목록(None 이면 전부). 다운로드는 어차피 zip 통짜지만
+    디코드가 비용의 대부분이라, 고를 source 만 푸는 것이 여는 속도를 좌우한다.
+    반환 (tables, manifest, names) — names 는 원본 idx 순서의 전체 source 이름.
+    """
+    from web_report.honeyform import decode_split_honeyform_parquet
+
+    def _emit(message):
+        if status_cb:
+            try:
+                status_cb(message)
+            except Exception:
+                pass
+
+    _emit("rawdata 내려받는 중...")
+    zf = zipfile.ZipFile(io.BytesIO(_fetch_export_zip(server_base, session_id)))
+    manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+    names_in_zip = sorted(
+        (n for n in zf.namelist() if n.startswith("source_") and n.endswith(".parquet")),
+        key=lambda n: int(n[len("source_"):-len(".parquet")]),
+    )
+    if not names_in_zip:
+        raise ValueError("세션에 rawdata source 가 없습니다.")
+    sources_meta = manifest.get("sources") or []
+    names = [str((sources_meta[i] if i < len(sources_meta) else {}).get("name")
+                 or f"source_{i}") for i in range(len(names_in_zip))]
+
+    wanted = list(range(len(names_in_zip))) if indices is None else list(indices)
+    tables = []
+    for pos, idx in enumerate(wanted):
+        if not (0 <= idx < len(names_in_zip)):
+            continue
+        _emit(f"{names[idx]} 읽는 중... ({pos + 1}/{len(wanted)})")
+        # keep_df=False — 표시·미리보기 전용이라 재인코딩용 전체 프레임이 필요 없다
+        # (메모리 절반 이하. 저장은 patch spec 만 보내므로 df 를 쓸 일이 없다).
+        tables.append(decode_split_honeyform_parquet(
+            zf.read(names_in_zip[idx]), source=names[idx], keep_df=False))
+    return tables, manifest, names
+
+
 def _build_dist_pack(parquet_list, titles, manifest, emit=None):
     """편집 결과 parquet 으로 Distribution pack 을 다시 만든다 (업로드 경로와 같은 코드).
 

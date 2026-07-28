@@ -67,7 +67,10 @@ def _stats(series, lo, hi):
         "median": round_num(s.median() if n else None),
         "max": round_num(s.max() if n else None),
         "average": round_num(avg, 4),
-        "stdev": round_num(stdev, 3),
+        # stdev 는 반올림하지 않는다 — _stats_batch(CPK 탭)와 규약을 통일한다. 종전엔 여기만
+        # 3자리로 잘라 같은 항목의 σ 가 CPK 시트(무반올림)와 항목 상세(scatter)·Trim 에서
+        # 다르게 보였다. scatter/trim/eval_export 가 이 함수를 공유하므로 이제 전부 동일 값.
+        "stdev": num(stdev),
         "cp": round_num(cp, 3),
         "cpl": round_num(cpl, 3),
         "cpu": round_num(cpu, 3),

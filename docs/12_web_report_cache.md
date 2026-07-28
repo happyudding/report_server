@@ -88,7 +88,7 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   override/engr 편집으로 바뀐다. 세션 단위 편집이라 `sid` 와 항상 짝으로 들어간다.
 - `mode`/`webreport_options` 는 세션 생성 시 확정되어 불변 — 키에 넣는 이유는 dedup(동일
   akey 공유 세션)과의 충돌 방지.
-- **`prep`** 은 조회 전처리(항목 제외·outlier 마스킹) spec 의 digest —
+- **`prep`** 은 조회 전처리(항목 제외·outlier 마스킹 + 셀 패치·조건 규칙) spec 의 digest —
   [preprocess.py](../web_report/preprocess.py) `digest()`. 전처리가 **없으면 빈 문자열이고
   키에 아무것도 덧붙이지 않는다** → 옵션을 안 쓰는 세션의 키는 도입(2026-07-23) 전과 완전히
   동일하다(무회귀). 옵션을 켰다 끄면 원래 키로 돌아와 **옛 캐시가 그대로 다시 히트**한다.
@@ -96,6 +96,11 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   함께 증가해 같은 역할을 하기 때문. 전처리는 `content_hash` 를 바꾸지 않으므로
   (원본 parquet 불변) dist/map/scatter **라우트 ETag** 에도 이 digest 를 붙인다
   (`routes_webreport._prep_tag` — 없으면 옵션 토글 직후 브라우저가 stale 304 를 받는다).
+  **COMMONALITY 키에도 붙는다**(2026-07-28) — 종전엔 "전처리는 메타를 안 바꾼다"는 전제로
+  뺐지만, 셀 패치·조건 규칙이 그 인덱스가 읽는 SERIAL/BIN·die 구성을 바꾼다.
+  **레거시 spec 의 digest 값은 패치 계층 도입 후에도 문자 그대로 같다** — 기존 전처리 세션의
+  캐시·pack variant 가 배포 순간 통째로 무효화되지 않도록
+  `tests/test_preprocess.py::test_legacy_spec_normal_form_is_frozen` 이 hex 를 박아 고정한다.
 - `selected_items` 는 analysis_key 산출에 포함되므로 어떤 키에도 따로 넣지 않는다.
 
 **무효화 두 종류**: `evict_akey_caches`(raw_data 편집 — content_hash 만 바뀌어 구 키가 안
