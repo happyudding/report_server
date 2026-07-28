@@ -8,18 +8,39 @@ function _cmpNum(v, digits) {
   if (typeof v !== "number") return esc(String(v));
   return Number.isInteger(v) ? String(v) : v.toFixed(digits == null ? 3 : digits);
 }
-// 반올림 없이 서버가 준 값 그대로 (stdev 전용 — 서버도 stdev 만 round 하지 않는다,
-// web_report/tabs/cpk.py `_stats_batch`). 표시상 자릿수를 줄이면 Limit 역산이 어긋난다.
-function _cmpRaw(v) {
+// 서버가 이미 반올림한 값(average 4자리 / cpk·cp 3자리 / limit 6자리 — web_report/tabs/cpk.py
+// `_stats_batch`)은 **그대로** 찍는다. 여기서 toFixed 를 한 번 더 걸면 이중 반올림이 되어
+// 같은 값을 String(v) 로 찍는 CPK 탭(cpk.js)과 표시가 갈린다.
+function _cmpServer(v) {
   if (v === null || v === undefined || v === "") return "–";
   return esc(String(v));
 }
-function _cmpDeltaCell(v, digits, extraCls) {
-  if (v === null || v === undefined || v === "") return `<td class="num">–</td>`;
+// stdev 는 서버가 유일하게 반올림하지 않고 내려보내는 값이라(Limit 역산이 원값에 의존)
+// 표시할 때만 유효숫자를 맞춘다 — CPK 탭·Item_detail 과 같은 fmtStdev(core.js)를 쓴다.
+function _cmpStdev(v) {
+  if (v === null || v === undefined || v === "") return "–";
+  return esc(fmtStdev(v));
+}
+function _cmpDeltaCell(v, digits, extraCls, title) {
+  const tip = title ? ` title="${esc(title)}"` : "";
+  if (v === null || v === undefined || v === "") return `<td class="num"${tip}>–</td>`;
   const cls = [(v > 0 ? "cmp-up" : (v < 0 ? "cmp-down" : "")), extraCls || ""]
     .filter(Boolean).join(" ");
   const s = v > 0 ? "+" + _cmpNum(v, digits) : _cmpNum(v, digits);
-  return `<td class="num ${cls}">${s}</td>`;
+  return `<td class="num ${cls}"${tip}>${s}</td>`;
+}
+
+// 유의성 표시 — 서버가 준 p 가 alpha 이상이면 "통계적으로 노이즈와 구분 안 됨"(ns).
+// p 는 억제 판단에만 쓰는 값이라(compare.py significance.py) 값 자체는 툴팁으로만 보여준다.
+function _cmpIsNs(p, alpha) {
+  return p !== null && p !== undefined && alpha != null && p >= alpha;
+}
+function _cmpPTip(label, p, alpha, na, nb) {
+  if (p === null || p === undefined) return "";
+  const ps = p === 0 ? "<0.000001" : String(p);
+  const n = `n=${na == null ? "–" : na}/${nb == null ? "–" : nb}`;
+  return `${label} p=${ps} · ${n}` +
+    (_cmpIsNs(p, alpha) ? ` — 표본이 작아 노이즈와 구분되지 않음 (p≥${alpha}, ns)` : "");
 }
 
 // 공통성 Map(단일): 좌표별 Bin 일치=초록, 한 source 에서만 Fail=그 source 색,
@@ -117,12 +138,90 @@ function compareBinMatrixHtml(bm) {
 }
 
 // ── 산포 비교 (dist_shift) — Before 분모 정규화 지표 + 서버 focus 필터 ────────
-// 지표 6종(MeanShift σ / Cpk% / Stdev증가율 / Median Shift / IQR변화 / KS D)·focus 판정·
+// 표시 지표 4종(MeanShift σ / Cpk% / Stdev증가율 / Median Shift)·유의성 2종·focus 판정·
 // 정렬(MeanShift σ 큰 순)은 전부 서버(compare.py build_dist_shift)가 정본이고, 여기서는
-// 표시 + focus 플래그 필터 토글만 한다. 대상은 **그룹 pool(Bin1)** — 그룹이 1 source 씩이면
-// avg/stdev/cpk 가 CPK 탭 값과 같다. stdev 는 서버가 반올림하지 않는 값이라 화면에서도
-// 원값 그대로 쓴다(_cmpRaw). 임계값은 dist.thresholds 만 참조(하드코딩 금지).
+// 표시 + focus 플래그 필터 토글 + 페이지 넘김만 한다. (서버가 함께 내려주는 iqr_delta_pct·
+// ks_d 는 2026-07-28 사용자 요청으로 **화면에서 뺐다** — 값 자체는 payload 에 남는다.)
+// p 는 전용 컬럼 없이 해당 값 셀의 ns 마커와 툴팁으로만 보여준다(n 이 수천이면 p 컬럼은
+// 0.000 벽이 되어 정보가 없다).
+// 대상은 **그룹 pool(Bin1)** — 그룹이 1 source 씩이면 avg/stdev/cpk 가 CPK 탭 값과 같다.
+// 그래서 avg/cpk 는 서버 반올림값을 그대로(_cmpServer), stdev 는 CPK 탭과 같은 유효숫자
+// 포맷(_cmpStdev)으로 찍어 **두 탭의 표시가 문자 단위로 일치**하게 한다.
+// 임계값은 dist.thresholds 만 참조(하드코딩 금지).
 let cmpDistFocusOnly = true;   // 필터 기본 ON — 관심(focus) 항목만 표시
+const CMP_DIST_PAGE_SIZE = 20; // 한 페이지 행 수 — Distribution 미니차트가 붙어 무한 스크롤이 무겁다
+let cmpDistPage = 1;
+
+// Distribution 열(미니 ECDF 카드) — Distribution 탭 갤러리 카드와 같은 규격을 1/2 크기로.
+// 데이터·표시점 계산은 distribution.js 공용 경로 그대로 쓴다(distDataCache = 전체 die 기준,
+// Issue Table 미니셀과 같은 캐시). 점은 canvas 오버레이(distPaintPoints) — 규칙 #5 준수.
+function cmpDistRenderCell(cell) {
+  if (!cell || cell.dataset.rendered === "1") return;
+  const subject = cell.dataset.subject;
+  const info = distDataCache[subject];
+  // 아직 안 받은 항목은 배치로 요청만 하고 리턴 — 도착하면 refreshDistConsumers 가 다시 부른다.
+  if (!info) { if (distHasData(subject)) distRequestSubject(subject, false); return; }
+  const plot = cell.querySelector(".dist-plot");
+  if (!plot || typeof Plotly === "undefined") return;
+  const lo = info.lower_limit, hi = info.upper_limit;
+  const pts = {};
+  const srcNames = Object.keys(info.bySource);
+  const cap = distCapFor(srcNames.length, DIST.CELL_BUDGET_MINI);
+  srcNames.forEach(s => { pts[s] = distDisplayPoints(info.bySource[s], cap); });
+  const traces = [];
+  const sentinel = distSentinelTrace(pts);
+  if (sentinel) traces.push(sentinel);
+  const layout = { ...DIST_PLOT_BG,
+    xaxis: { showgrid: true, gridcolor: "#eee", zeroline: false, ticks: "outside",
+      tickcolor: "#bbb", tickfont: { size: 8 } },
+    yaxis: { range: [0, 100], ticksuffix: "%", showgrid: true, gridcolor: "#eee",
+      zeroline: false, tickfont: { size: 8 } },
+    shapes: distSpecShapes(lo, hi, false).concat(beforeLimitShapes(subject)),
+    annotations: distSpecAnnos(lo, hi, true),
+    margin: { l: 30, r: 8, t: 6, b: 18 }, showlegend: false };
+  Plotly.newPlot(plot, traces, layout, DIST_CFG_STATIC);
+  distPaintPoints(plot, pts, null);
+  cell.dataset.rendered = "1";
+}
+
+// 보이는 셀만 rAF 로 나눠 그린다(한 페이지 20칸이라 IntersectionObserver + 프레임당 2칸).
+let cmpDistObserver = null;
+let cmpDistQueue = [];
+let cmpDistRaf = false;
+function cmpDistQueueRender(cell) {
+  if (cell.dataset.rendered === "1" || cmpDistQueue.includes(cell)) return;
+  cmpDistQueue.push(cell);
+  if (!cmpDistRaf) { cmpDistRaf = true; requestAnimationFrame(cmpDistFlushRender); }
+}
+function cmpDistFlushRender() {
+  cmpDistRaf = false;
+  let n = 0;
+  while (cmpDistQueue.length && n < 2) {
+    const cell = cmpDistQueue.shift();
+    if (cell.isConnected && cell.dataset.visible === "1") { cmpDistRenderCell(cell); n++; }
+  }
+  if (cmpDistQueue.length) { cmpDistRaf = true; requestAnimationFrame(cmpDistFlushRender); }
+}
+// 페이지 전환 전 정리 — innerHTML 교체로 DOM 만 지우면 Plotly 인스턴스·캔버스 옵저버가 남는다.
+function cmpDistPurgeCells(sec) {
+  cmpDistQueue = [];
+  if (cmpDistObserver) { try { cmpDistObserver.disconnect(); } catch (e) {} cmpDistObserver = null; }
+  sec.querySelectorAll('.cmp-dist-cell[data-rendered="1"]').forEach(cell => {
+    const plot = cell.querySelector(".dist-plot");
+    try { if (plot && window.Plotly) { distClearPoints(plot); Plotly.purge(plot); } } catch (e) {}
+  });
+}
+function cmpDistObserveCells(sec) {
+  if (typeof IntersectionObserver === "undefined") return;
+  cmpDistObserver = new IntersectionObserver(entries => {
+    entries.forEach(en => {
+      const cell = en.target;
+      if (en.isIntersecting) { cell.dataset.visible = "1"; cmpDistQueueRender(cell); }
+      else cell.dataset.visible = "";
+    });
+  }, { rootMargin: "600px 0px", threshold: 0 });
+  sec.querySelectorAll(".cmp-dist-cell").forEach(c => cmpDistObserver.observe(c));
+}
 
 function cmpDistSectionHtml(dist) {
   if (!dist) return '<div class="placeholder">산포 비교 데이터 없음</div>';
@@ -133,23 +232,41 @@ function cmpDistSectionHtml(dist) {
   if (!rows.length) return '<div class="placeholder">공통 항목 없음</div>';
   const th = dist.thresholds || {};
   const shown = (!legacy && cmpDistFocusOnly) ? rows.filter(r => r.focus) : rows;
+  // 소스 색 범례 — Distribution 열의 ECDF 색이 어느 source 인지 알아야 한다(Distribution 탭과 같은 색).
+  const srcs = (DATA.web_report && DATA.web_report.sources) || [];
+  const grp = (DATA.web_report && DATA.web_report.compare && DATA.web_report.compare.groups) || {};
+  const legendHtml = (typeof distColorFor === "function" && srcs.length)
+    ? `<span class="cmp-dist-legend">${srcs.map(s =>
+        `<span class="cmp-lg"><i style="background:${distColorFor(s)}"></i>${esc(_cmpSrcLabel(s, grp))}</span>`).join("")}</span>`
+    : "";
   const toolbar = legacy ? "" : `<div class="compare-summary">
-      <button type="button" id="cmpDistFocusBtn" class="btn-sm${cmpDistFocusOnly ? " active" : ""}"
+      <button type="button" id="cmpDistFocusBtn" class="btn-sm cmp-fbtn${cmpDistFocusOnly ? " active" : ""}"
         title="클릭 전환 — 관심 항목만 ↔ ALL(전체)">${cmpDistFocusOnly ? "관심 항목만" : "ALL"}</button>
       <span class="cmp-chip">${shown.length}/${rows.length} 항목</span>
-      <span class="gl-sub">관심 판정(서버): 한쪽 Cpk&lt;${th.cpk_low} 또는 |Stdev증가율|≥${th.stdev_delta_pct}% · 양쪽 Cpk&gt;${th.cpk_high}(여유 과대)·양쪽 고정값은 항상 제외</span>
+      ${legendHtml}
+      <span class="gl-sub">관심 판정(서버): 한쪽 Cpk&lt;${th.cpk_low} 또는 |Stdev증가율|≥${th.stdev_delta_pct}%(단 유의할 때 — p&lt;${th.alpha}) · 양쪽 Cpk&gt;${th.cpk_high}(여유 과대)·양쪽 고정값은 항상 제외. <b>ns</b>=표본이 작아 노이즈와 구분 안 되는 값(셀에 마우스를 올리면 p·n)</span>
     </div>`;
   if (!shown.length) {
     return toolbar +
       `<div class="placeholder">관심 항목 없음 — ALL 로 전환하면 전체 ${rows.length}개 항목을 표시합니다</div>`;
   }
+  // 페이지 분할(20행) — Distribution 미니차트가 행마다 붙어 전량 렌더는 무겁다.
+  const pages = Math.max(1, Math.ceil(shown.length / CMP_DIST_PAGE_SIZE));
+  if (cmpDistPage > pages) cmpDistPage = pages;
+  if (cmpDistPage < 1) cmpDistPage = 1;
+  const start = (cmpDistPage - 1) * CMP_DIST_PAGE_SIZE;
+  const pageRows = shown.slice(start, start + CMP_DIST_PAGE_SIZE);
+  const pager = pages <= 1 ? "" : `<div class="cmp-pager">
+      <button type="button" class="btn-sm cmp-page-prev"${cmpDistPage <= 1 ? " disabled" : ""}>‹ 이전</button>
+      <span class="cmp-page-info">${start + 1}–${start + pageRows.length} / ${shown.length} 항목 · ${cmpDistPage} / ${pages} 페이지</span>
+      <button type="button" class="btn-sm cmp-page-next"${cmpDistPage >= pages ? " disabled" : ""}>다음 ›</button>
+    </div>`;
   const metricHead = legacy ? "" :
     `<th class="num" rowspan="2" title="|Avg(A)−Avg(B)| / Stdev(B) — 평균 이동을 σ 단위로 정규화">MeanShift(σ)</th>` +
     `<th class="num" rowspan="2" title="Cpk(A) / Cpk(B) × 100 — 100% 미만이면 악화">Cpk(%)</th>` +
     `<th class="num" rowspan="2" title="(Stdev(A)−Stdev(B)) / Stdev(B) × 100 — 양수면 After 산포 증가">Stdev증가율(%)</th>` +
     `<th class="num" rowspan="2" title="|Median(A)−Median(B)| / IQR(B) — outlier 에 강건한 이동량">Median Shift</th>` +
-    `<th class="num" rowspan="2" title="(IQR(A)−IQR(B)) / IQR(B) × 100">IQR변화(%)</th>` +
-    `<th class="num" rowspan="2" title="두 분포 ECDF 최대거리(0~1) — 평균/σ 로 못 잡는 형태 차이">KS D</th>`;
+    `<th rowspan="2" title="Distribution 탭 카드와 같은 ECDF(전체 die 기준) — 빨간 점선 LSL/USL, 색은 위 범례의 source 색">Distribution</th>`;
   const head = `<thead>
       <tr><th rowspan="2">Item</th><th rowspan="2">Unit</th>
           <th colspan="3">After — ${esc(dist.after || "")}</th>
@@ -157,39 +274,49 @@ function cmpDistSectionHtml(dist) {
       <tr><th class="num">Avg</th><th class="num">Stdev</th><th class="num">Cpk</th>
           <th class="num">Avg</th><th class="num">Stdev</th><th class="num">Cpk</th></tr></thead>`;
   const cpkCell = v =>
-    `<td class="num${v != null && th.cpk_low != null && v < th.cpk_low ? " cpk-warn" : ""}">${_cmpNum(v)}</td>`;
+    `<td class="num${v != null && th.cpk_low != null && v < th.cpk_low ? " cpk-warn" : ""}">${_cmpServer(v)}</td>`;
   const ratioCell = v => {   // cmp-up/cmp-down 은 색 재사용(빨강=악화/파랑=개선)
     if (v === null || v === undefined) return `<td class="num">–</td>`;
     const cls = v < 100 ? " cmp-up" : (v > 100 ? " cmp-down" : "");
     return `<td class="num${cls}">${_cmpNum(v, 1)}</td>`;
   };
-  const body = shown.map(r => {
+  // Distribution 미니 카드 셀 — ECDF 가 없는 항목(측정 data 전무)은 빈 칸으로 둔다.
+  const distCell = subject => (typeof distHasData === "function" && distHasData(subject))
+    ? `<td class="cmp-dist-td"><div class="cmp-dist-cell" data-subject="${esc(subject)}"><div class="dist-plot"></div></div></td>`
+    : `<td class="cmp-dist-td"><span class="gl-sub">–</span></td>`;
+  const body = pageRows.map(r => {
     const a = r.after || {}, b = r.before || {};
     const nTip = (a.n != null || b.n != null)
       ? ` title="After n=${a.n == null ? "–" : a.n} · Before n=${b.n == null ? "–" : b.n}"` : "";
     const base = `<tr><td${nTip}>${esc(r.subject)}</td><td>${esc(r.units || "")}</td>` +
-      `<td class="num">${_cmpNum(a.average)}</td><td class="num">${_cmpRaw(a.stdev)}</td>${cpkCell(a.cpk)}` +
-      `<td class="num">${_cmpNum(b.average)}</td><td class="num">${_cmpRaw(b.stdev)}</td>${cpkCell(b.cpk)}`;
+      `<td class="num">${_cmpServer(a.average)}</td><td class="num">${_cmpStdev(a.stdev)}</td>${cpkCell(a.cpk)}` +
+      `<td class="num">${_cmpServer(b.average)}</td><td class="num">${_cmpStdev(b.stdev)}</td>${cpkCell(b.cpk)}`;
     if (legacy) return base + `</tr>`;
     const sdRed = (r.stdev_delta_pct != null && th.stdev_delta_pct != null &&
                    Math.abs(r.stdev_delta_pct) >= th.stdev_delta_pct) ? "gl-gap-red" : "";
+    const sdNs = _cmpIsNs(r.p_stdev, th.alpha), msNs = _cmpIsNs(r.p_mean, th.alpha);
+    const msTip = _cmpPTip("평균차", r.p_mean, th.alpha, a.n, b.n);
     return base +
-      `<td class="num">${_cmpNum(r.meanshift_sigma)}</td>` + ratioCell(r.cpk_ratio_pct) +
-      _cmpDeltaCell(r.stdev_delta_pct, 2, sdRed) +
-      `<td class="num">${_cmpNum(r.median_shift)}</td>` + _cmpDeltaCell(r.iqr_delta_pct, 2) +
-      `<td class="num">${_cmpNum(r.ks_d)}</td></tr>`;
+      `<td class="num${msNs ? " cmp-ns" : ""}"${msTip ? ` title="${esc(msTip)}"` : ""}>` +
+      `${_cmpNum(r.meanshift_sigma)}</td>` + ratioCell(r.cpk_ratio_pct) +
+      _cmpDeltaCell(r.stdev_delta_pct, 2, [sdRed, sdNs ? "cmp-ns" : ""].filter(Boolean).join(" "),
+                    _cmpPTip("산포차", r.p_stdev, th.alpha, a.n, b.n)) +
+      `<td class="num">${_cmpNum(r.median_shift)}</td>` + distCell(r.subject) + `</tr>`;
   }).join("");
-  return toolbar +
-    `<div class="sheet-wrap cmp-scroll"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
+  return toolbar + pager +
+    `<div class="sheet-wrap cmp-scroll"><table class="sheet-table compare-table cmp-dist-table">${head}<tbody>${body}</tbody></table></div>` +
+    pager;
 }
 
 // 산포 비교 섹션만 부분 재렌더 — renderCompare 전체 재호출은 Plotly Map 재그리기·goodlog
-// 리바인딩을 유발하므로 필터 토글 시엔 이 섹션 innerHTML 만 교체한다.
+// 리바인딩을 유발하므로 필터/페이지 전환 시엔 이 섹션 innerHTML 만 교체한다.
 function renderCmpDistSection(panel) {
   const sec = panel.querySelector("#cmp-dist-section");
   if (!sec) return;
+  cmpDistPurgeCells(sec);
   const cmp = DATA.web_report && DATA.web_report.compare;
   sec.innerHTML = cmpDistSectionHtml(cmp && cmp.dist_shift);
+  cmpDistObserveCells(sec);
 }
 
 // ── 동일성 검증 — 항목별 Grade 판정 (Before pool vs After pool) ─────────────
@@ -216,7 +343,7 @@ function compareEquivHtml(eq) {
 
   const cpkCell = v => {
     const bad = (typeof v === "number") && v < cpkLimit;
-    return `<td class="num${bad ? " eq-bad" : ""}">${_cmpNum(v)}</td>`;
+    return `<td class="num${bad ? " eq-bad" : ""}">${_cmpServer(v)}</td>`;
   };
   const pctCell = v => {
     if (v === null || v === undefined) return `<td class="num">–</td>`;
@@ -227,7 +354,8 @@ function compareEquivHtml(eq) {
           <th class="num" rowspan="2">HiLIM</th><th class="num" rowspan="2">LoLIM</th>
           <th colspan="3">Before — ${esc(eq.before || "")}</th>
           <th colspan="3">After — ${esc(eq.after || "")}</th>
-          <th class="num" rowspan="2">AVG차</th><th class="num" rowspan="2">AVG차(%)</th>
+          <th class="num" rowspan="2">AVG차<span class="eq-formula">|After − Before|</span></th>
+          <th class="num" rowspan="2">AVG차(%)<span class="eq-formula">|After − Before| / |Before| × 100</span></th>
           <th rowspan="2">동일성</th></tr>
       <tr><th class="num">AVG</th><th class="num">STD</th><th class="num">CPK</th>
           <th class="num">AVG</th><th class="num">STD</th><th class="num">CPK</th></tr></thead>`;
@@ -235,9 +363,9 @@ function compareEquivHtml(eq) {
     const b = r.before || {}, a = r.after || {};
     const g3 = r.grade === 3;
     return `<tr><td>${esc(r.step || "")}</td><td>${esc(r.subject)}</td><td>${esc(r.units || "")}</td>` +
-      `<td class="num">${_cmpNum(r.hilim)}</td><td class="num">${_cmpNum(r.lolim)}</td>` +
-      `<td class="num">${_cmpNum(b.average)}</td><td class="num">${_cmpRaw(b.stdev)}</td>${cpkCell(b.cpk)}` +
-      `<td class="num">${_cmpNum(a.average)}</td><td class="num">${_cmpRaw(a.stdev)}</td>${cpkCell(a.cpk)}` +
+      `<td class="num">${_cmpServer(r.hilim)}</td><td class="num">${_cmpServer(r.lolim)}</td>` +
+      `<td class="num">${_cmpServer(b.average)}</td><td class="num">${_cmpStdev(b.stdev)}</td>${cpkCell(b.cpk)}` +
+      `<td class="num">${_cmpServer(a.average)}</td><td class="num">${_cmpStdev(a.stdev)}</td>${cpkCell(a.cpk)}` +
       `<td class="num">${_cmpNum(r.delta_avg)}</td>` + pctCell(r.delta_pct) +
       `<td class="eq-grade${g3 ? " eq-grade3" : ""}">Grade ${r.grade}</td></tr>`;
   }).join("");
@@ -275,6 +403,8 @@ function compareBinTableHtml(binDelta, sources, groups) {
 
 // ── goodlog(테스트 프로그램 diff) — Honey Compare Mode 이식. after/before 두 파일의
 //    항목명/limit 일치 여부(True 초록/False 빨강) + reference die 값 gap%(|gap|≥10% 빨강).
+//    **limit 이 하나도 안 바뀌어도 표 전체를 그린다** — Gap% 를 보는 화면이기도 하기 때문
+//    (2026-07-28, 서버 build_goodlog 이 identical 이어도 rows 를 채운다).
 //    이상(항목 추가/제거·limit 변경)만 상단 요약 + 항상 표시하고, 나머지 정상 행은
 //    git-diff 식으로 접어둔다(초기 접힘, '전체 펼치기' 토글). ──
 // 행 분류: added(after 만)·removed(before 만)·limitchg(양쪽 존재 & limit 불일치)·normal.
@@ -282,12 +412,25 @@ function compareBinTableHtml(binDelta, sources, groups) {
 // [after Item/Lo/Hi/Unit/Value, compare Item/Lo/Hi, Comment, Gap%, before Item/Lo/Hi/Unit/Value]
 const GOODLOG_COLW = [130, 76, 76, 44, 84, 58, 58, 58, 110, 58, 130, 76, 76, 44, 84];
 
+// Gap% 강조/필터 임계값 — 셀 빨강과 'Gap 큰 항목만' 버튼이 같은 값을 쓴다.
+const GL_GAP_LIMIT = 10;
+// 표시 필터 2종(독립 토글, 둘 다 켜면 AND). 필터가 걸리면 '변화 없음' 접기 없이 평평하게 그린다.
+let glDiffOnly = false;   // Item/LoLim/HiLim 비교가 False 인 행(+항목 추가·제거)만
+let glGapOnly = false;    // |Gap%| ≥ GL_GAP_LIMIT 인 행만
+function glFilterOn() { return glDiffOnly || glGapOnly; }
+function glRowPass(r, t) {
+  if (glDiffOnly && t === "normal") return false;
+  if (glGapOnly && !(r.gap !== null && r.gap !== undefined && Math.abs(r.gap) >= GL_GAP_LIMIT)) return false;
+  return true;
+}
+
 function goodlogRowType(r) {
   const aHas = (r.after_item_name || "") !== "";
   const bHas = (r.before_item_name || "") !== "";
   if (aHas && !bHas) return "added";
   if (!aHas && bHas) return "removed";
-  if (aHas && bHas && (r.compare_lolimit === false || r.compare_hilimit === false)) return "limitchg";
+  if (aHas && bHas && (r.compare_item_name === false ||
+      r.compare_lolimit === false || r.compare_hilimit === false)) return "limitchg";
   return "normal";
 }
 
@@ -295,7 +438,8 @@ function goodlogSectionHtml(gl) {
   if (!gl) return "";   // legacy(3-source 등) 세션 — 섹션 생략
   const title = `<h3 class="compare-h">테스트 프로그램 비교 (goodlog) — ` +
     `after: ${esc(gl.after_source || "")} / before: ${esc(gl.before_source || "")}</h3>`;
-  if (gl.identical) {
+  // 구 payload(스키마 v19 이전)는 identical 이면 rows 가 비어 있다 — 그때만 종전 안내를 낸다.
+  if (gl.identical && !(gl.rows || []).length) {
     return title + `<div class="gl-identical">두 파일의 테스트 프로그램(항목/limit)이 동일합니다.</div>`;
   }
   // 결측(None)은 공백 — Honey goodlog 시트의 _disp 관례와 동일 (한쪽만 존재하는 행 포함).
@@ -304,7 +448,7 @@ function goodlogSectionHtml(gl) {
     : (v === false ? `<td class="gl-false">False</td>` : `<td></td>`);
   const gapCell = v => {
     if (v === null || v === undefined) return `<td class="num"></td>`;
-    return `<td class="num${Math.abs(v) >= 10 ? " gl-gap-red" : ""}">${_cmpNum(v, 2)}</td>`;
+    return `<td class="num${Math.abs(v) >= GL_GAP_LIMIT ? " gl-gap-red" : ""}">${_cmpNum(v, 2)}</td>`;
   };
   const COLS = 15;
   const rows = gl.rows || [];
@@ -321,7 +465,7 @@ function goodlogSectionHtml(gl) {
   const nameChips = (arr, cls) => arr.map(n => `<span class="gl-ab-item ${cls}">${esc(n)}</span>`).join("");
   let summary;
   if (abnCount === 0) {
-    summary = `<div class="gl-ab-summary gl-ab-none">항목/Limit 차이 없음 — 값 gap 만 존재</div>`;
+    summary = `<div class="gl-ab-summary gl-ab-none">항목/Limit 차이 없음 — 아래 표에서 항목별 Gap % 를 확인하세요</div>`;
   } else {
     // 이상 항목 목록(칩)은 개수가 많으면 표를 밀어내므로 헤드 버튼으로 따로 접었다 편다.
     summary = `<div class="gl-ab-summary">
@@ -357,30 +501,77 @@ function goodlogSectionHtml(gl) {
     `<td class="num">${glNum(r.before_hilimit)}</td><td>${esc(r.before_unit || "")}</td>` +
     `<td class="num">${esc(r.before_value || "")}</td></tr>`;
 
-  // ── git-diff 식 세그먼트: normal run 은 접힘 tbody, 이상 행은 항상 노출 ──
+  // ── 표시 필터 툴바 (버튼 라벨=기능, active=적용 중) ──
+  const nShown = rows.reduce((n, r, k) => n + (glRowPass(r, types[k]) ? 1 : 0), 0);
+  const filterBar = `<div class="compare-summary gl-filterbar">
+      <button type="button" class="btn-sm cmp-fbtn gl-fbtn-diff${glDiffOnly ? " active" : ""}"
+        title="Item/LoLim/HiLim 비교가 False 인 행(항목 추가·제거 포함)만 표시">Item·Limit 차이만</button>
+      <button type="button" class="btn-sm cmp-fbtn gl-fbtn-gap${glGapOnly ? " active" : ""}"
+        title="|Gap %| 가 ${GL_GAP_LIMIT} 이상인 행만 표시">Gap ≥ ${GL_GAP_LIMIT}% 만</button>
+      <span class="cmp-chip">${nShown}/${rows.length} 항목</span>
+      ${glFilterOn() ? `<span class="gl-sub">필터 적용 중 — '변화 없음' 접기는 해제됩니다</span>` : ""}
+    </div>`;
+
+  // ── 본문: 필터가 걸리면 평평한 목록, 아니면 git-diff 식 세그먼트
+  //    (normal run 은 접힘 tbody, 이상 행은 항상 노출) ──
   const parts = [];
-  let i = 0;
-  while (i < rows.length) {
-    if (types[i] === "normal") {
-      let j = i; const buf = [];
-      while (j < rows.length && types[j] === "normal") { buf.push(rowHtml(rows[j], "normal")); j++; }
-      parts.push(
-        `<tbody class="gl-fold-summary"><tr class="gl-fold-toggle"><td colspan="${COLS}">` +
-        `<span class="gl-fold-arrow">▸</span> 변화 없음 ${buf.length}개</td></tr></tbody>` +
-        `<tbody class="gl-fold" hidden>${buf.join("")}</tbody>`);
-      i = j;
-    } else {
-      let j = i; const buf = [];
-      while (j < rows.length && types[j] !== "normal") { buf.push(rowHtml(rows[j], types[j])); j++; }
-      parts.push(`<tbody>${buf.join("")}</tbody>`);
-      i = j;
+  if (glFilterOn()) {
+    const buf = [];
+    rows.forEach((r, k) => { if (glRowPass(r, types[k])) buf.push(rowHtml(r, types[k])); });
+    parts.push(buf.length
+      ? `<tbody>${buf.join("")}</tbody>`
+      : `<tbody><tr><td colspan="${COLS}" class="gl-fold-empty">조건에 맞는 항목이 없습니다</td></tr></tbody>`);
+  } else {
+    let i = 0;
+    while (i < rows.length) {
+      if (types[i] === "normal") {
+        let j = i; const buf = [];
+        while (j < rows.length && types[j] === "normal") { buf.push(rowHtml(rows[j], "normal")); j++; }
+        parts.push(
+          `<tbody class="gl-fold-summary"><tr class="gl-fold-toggle"><td colspan="${COLS}">` +
+          `<span class="gl-fold-arrow">▸</span> 변화 없음 ${buf.length}개</td></tr></tbody>` +
+          `<tbody class="gl-fold" hidden>${buf.join("")}</tbody>`);
+        i = j;
+      } else {
+        let j = i; const buf = [];
+        while (j < rows.length && types[j] !== "normal") { buf.push(rowHtml(rows[j], types[j])); j++; }
+        parts.push(`<tbody>${buf.join("")}</tbody>`);
+        i = j;
+      }
     }
   }
   // 상단 프록시 가로 스크롤바 — 표가 길어 하단까지 내려가지 않아도 좌우로 스크롤할 수 있게
   // (Issue Table 의 .issue-hscroll 과 동일 패턴, scrollLeft 만 양방향 동기화).
-  return title + summary +
+  return title + summary + filterBar +
     `<div class="gl-hscroll"><div class="gl-hscroll-spacer"></div></div>` +
     `<div class="sheet-wrap gl-wrap"><table class="sheet-table compare-table goodlog-table">${head}${parts.join("")}</table></div>`;
+}
+
+// Log 비교 섹션만 부분 재렌더 (필터 토글) — 산포 비교의 renderCmpDistSection 과 같은 관례.
+// 접기·리사이즈·프록시 스크롤바는 섹션 안 요소에 직접 바인딩돼 있어 교체 후 다시 건다
+// ('전체 펼치기' 는 섹션 밖 툴바라 renderCompare 에서 1회만 바인딩 — 중복 방지).
+function renderGoodlogSection(panel) {
+  const sec = panel.querySelector("#cmp-log-section");
+  if (!sec) return;
+  const cmp = DATA.web_report && DATA.web_report.compare;
+  sec.innerHTML = goodlogSectionHtml(cmp && cmp.goodlog) ||
+    '<div class="placeholder">테스트 프로그램 비교(goodlog) 데이터 없음</div>';
+  bindGoodlogFolding(panel);
+  bindGoodlogColResize(panel);
+  bindGoodlogHscroll(panel);
+  // 표를 다시 그리면 접힘 세그먼트도 초기(접힘) 상태로 돌아간다 — 버튼 라벨을 맞춰준다.
+  const expandBtn = panel.querySelector(".gl-expand-all");
+  if (expandBtn) expandBtn.textContent = "전체 펼치기";
+  glSyncExpandBtn(panel);
+}
+
+// '전체 펼치기' 는 goodlog 표의 접힘 세그먼트 전용 — Log 서브탭이 활성이고 필터가 꺼진
+// (=접힘 세그먼트가 존재하는) 동안에만 노출한다.
+function glSyncExpandBtn(panel) {
+  const btn = panel.querySelector(".gl-expand-all");
+  if (!btn) return;
+  const logActive = !!panel.querySelector('.cmp-subpanel[data-cmppanel="log"].active');
+  btn.hidden = !logActive || glFilterOn();
 }
 
 // ── goodlog 표: 폭 동기화 / 프록시 가로 스크롤바 / 컬럼 드래그 리사이즈 ──────────
@@ -445,7 +636,8 @@ function bindGoodlogColResize(panel) {
   });
 }
 
-// goodlog 접기/펼치기 바인딩 — renderCompare 가 innerHTML 갱신 후 호출(직접 바인딩).
+// goodlog 접기/펼치기 바인딩 — renderCompare / renderGoodlogSection 이 innerHTML 갱신 후 호출
+// (섹션 안 요소에 직접 바인딩이라 표를 다시 그릴 때마다 필요).
 function bindGoodlogFolding(panel) {
   const setLabel = (toggleRow, shown) => {
     const arrow = toggleRow.querySelector(".gl-fold-arrow");
@@ -471,14 +663,22 @@ function bindGoodlogFolding(panel) {
       if (arrow) arrow.textContent = show ? "▾" : "▸";
     });
   });
-  // '전체 펼치기' 는 상단 sticky 툴바에 있다(패널 밖이 아니라 panel 안이라 그대로 찾힌다).
+}
+
+// '전체 펼치기' 버튼은 섹션 밖(sticky 툴바)이라 표를 다시 그려도 살아 있다 —
+// renderCompare 에서 1회만 바인딩한다(bindGoodlogFolding 과 함께 걸면 리스너가 중복된다).
+function bindGoodlogExpandAll(panel) {
   const btn = panel.querySelector(".gl-expand-all");
-  if (btn) btn.addEventListener("click", () => {
+  if (!btn) return;
+  btn.addEventListener("click", () => {
     const anyHidden = !!panel.querySelector(".gl-fold[hidden]");
     panel.querySelectorAll(".gl-fold").forEach(f => {
       if (anyHidden) f.removeAttribute("hidden"); else f.setAttribute("hidden", "");
     });
-    panel.querySelectorAll(".gl-fold-toggle").forEach(r => setLabel(r, anyHidden));
+    panel.querySelectorAll(".gl-fold-toggle").forEach(row => {
+      const arrow = row.querySelector(".gl-fold-arrow");
+      if (arrow) arrow.textContent = anyHidden ? "▾" : "▸";
+    });
     btn.textContent = anyHidden ? "전체 접기" : "전체 펼치기";
   });
 }
@@ -488,7 +688,6 @@ function bindGoodlogFolding(panel) {
 function bindCompareSubtabs(panel) {
   const bar = panel.querySelector(".cmp-subtabs");
   if (!bar) return;
-  const expandBtn = panel.querySelector(".gl-expand-all");
   bar.addEventListener("click", e => {
     const btn = e.target.closest("[data-cmpsub]");
     if (!btn) return;
@@ -496,8 +695,8 @@ function bindCompareSubtabs(panel) {
     bar.querySelectorAll("[data-cmpsub]").forEach(b => b.classList.toggle("active", b === btn));
     panel.querySelectorAll(".cmp-subpanel").forEach(p =>
       p.classList.toggle("active", p.dataset.cmppanel === key));
-    // '전체 펼치기' 는 goodlog 표 전용이라 Log 화면에서만 노출.
-    if (expandBtn) expandBtn.hidden = (key !== "log");
+    // '전체 펼치기' 는 goodlog 표의 접힘 세그먼트 전용 — Log 화면 + 필터 꺼짐일 때만 노출.
+    glSyncExpandBtn(panel);
     // 숨김(0px) 상태에서 그려진 Plotly 맵은 보일 때 리사이즈해야 폭이 복구된다.
     const active = panel.querySelector(`.cmp-subpanel[data-cmppanel="${key}"]`);
     if (active && window.Plotly) {
@@ -540,7 +739,7 @@ function renderCompare() {
           <button class="distseg" data-cmpsub="dist">산포 비교</button>
           <button class="distseg" data-cmpsub="equiv">동일성 검증</button>
         </div>
-        ${(cmp.goodlog && !cmp.goodlog.identical && (cmp.goodlog.rows || []).length)
+        ${(cmp.goodlog && (cmp.goodlog.rows || []).length)
             ? `<button class="btn-sm gl-expand-all" type="button" hidden>전체 펼치기</button>` : ""}
       </div>
       <div class="cmp-subpanel active" data-cmppanel="map">
@@ -562,7 +761,7 @@ function renderCompare() {
         </div>
       </div>
       <div class="cmp-subpanel" data-cmppanel="log">
-        ${goodlogSectionHtml(cmp.goodlog) || '<div class="placeholder">테스트 프로그램 비교(goodlog) 데이터 없음</div>'}
+        <div id="cmp-log-section"></div>
       </div>
       <div class="cmp-subpanel" data-cmppanel="dist">
         <h3 class="compare-h">산포 비교 (공통 항목 · MeanShift σ 큰 순 · 그룹 전체 die · Bin1 기준)</h3>
@@ -575,17 +774,26 @@ function renderCompare() {
     </div>`;
 
   drawCompareCommonMap(cm, sources);
+  cmpDistPage = 1;
   renderCmpDistSection(panel);
-  // 필터 토글 — wrapper 에 위임 1회 바인딩(innerHTML 교체에도 리스너 유지).
+  renderGoodlogSection(panel);
+  // 필터/페이지 토글 — wrapper 에 위임 1회 바인딩(innerHTML 교체에도 리스너 유지).
   const distSec = panel.querySelector("#cmp-dist-section");
   if (distSec) distSec.addEventListener("click", e => {
-    if (!e.target.closest("#cmpDistFocusBtn")) return;
-    cmpDistFocusOnly = !cmpDistFocusOnly;
+    if (e.target.closest("#cmpDistFocusBtn")) { cmpDistFocusOnly = !cmpDistFocusOnly; cmpDistPage = 1; }
+    else if (e.target.closest(".cmp-page-prev")) { if (cmpDistPage <= 1) return; cmpDistPage--; }
+    else if (e.target.closest(".cmp-page-next")) cmpDistPage++;
+    else return;
     renderCmpDistSection(panel);
   });
-  bindGoodlogFolding(panel);
-  bindGoodlogColResize(panel);
-  bindGoodlogHscroll(panel);
+  const logSec = panel.querySelector("#cmp-log-section");
+  if (logSec) logSec.addEventListener("click", e => {
+    if (e.target.closest(".gl-fbtn-diff")) glDiffOnly = !glDiffOnly;
+    else if (e.target.closest(".gl-fbtn-gap")) glGapOnly = !glGapOnly;
+    else return;
+    renderGoodlogSection(panel);
+  });
+  bindGoodlogExpandAll(panel);
   bindCompareSubtabs(panel);
   syncCompareToolbarH(panel);
 }

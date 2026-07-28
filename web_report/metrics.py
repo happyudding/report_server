@@ -12,14 +12,14 @@ from .tabs.distribution import build_distribution_index
 from .tabs.issue_table import build_issue_bin_summary
 from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
                              build_yield_step_groups, fail_counts_by_source,
-                             gross_die_value, source_totals, yield_overview)
+                             resolve_source_basis, yield_basis_payload, yield_overview)
 
 
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
                          issue_comments=None, summary_engr=None, product_type="", product="",
                          mode="Normal", dist_colors=None, ai_comments=None,
                          issue_hidden=None, issue_status=None, gross_die=None,
-                         compare_groups=None) -> dict:
+                         compare_groups=None, yield_basis=None) -> dict:
     """Distribution ECDF(대용량)는 payload 에 싣지 않고 항상 지연 로드한다
     (distribution_deferred=True, sheets["Distribution"]=[]) — 프런트가 별도 lazy 엔드포인트
     (GET .../web_report/distribution)로 받아간다. distribution_index(경량)는 항상 포함.
@@ -32,9 +32,11 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     비교 시트(Compare Stats/Compare Bin/Common Map)를 얹는다. Commonality 의 chip 강조는
     프런트가 기존 distribution/scatter 데이터로 처리하므로 payload 분기는 없다.
 
-    gross_die: 수율 **분모**로 쓸 제품 기준정보 Gross Die (None 이거나 값이 유효하지 않으면
-    종전처럼 소스별 rawdata 행 수). 세션 옵션이 "Test data 개수" 면 호출자(service)가
-    None 을 넘긴다 — 여기서는 값 유무만 본다."""
+    gross_die: 수율 **분모**의 기준이 될 제품 기준정보 Gross Die (없거나 값이 유효하지
+    않으면 소스별 rawdata 행 수로 폴백).
+    yield_basis: 세션에 저장된 소스별 분모 선택 {"mode","sources"} (edits.load_yield_basis_map).
+    실제 분모 판정은 yield_tab.resolve_source_basis 한 곳이다 — Gross Die 가 측정 die 수와
+    크게 어긋나면(수율 100% 초과 등) 그 소스만 자동으로 test die 기준이 된다."""
     selected_set = {str(v) for v in (selected_items or []) if str(v)}
     if selected_set:
         for table in tables:
@@ -49,9 +51,9 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     # 내려보낸다(프런트 "P/F 없애기" 토글이 필터). data 전무 항목만 제외한다.
     dist_excluded = empty_items(tables)
     fail_counts = {table.source: fail_counts_by_source(table) for table in tables}
-    # 수율 분모: Gross Die(있으면) → 없으면 소스별 rawdata 행 수 폴백.
-    gross = gross_die_value(gross_die)
-    totals = source_totals(tables, gross)
+    # 수율 분모: 소스마다 Gross Die / test die 중 하나 (자동 판정 + 사용자 선택).
+    basis_info = resolve_source_basis(tables, gross_die, yield_basis)
+    totals = {src: info["total"] for src, info in basis_info.items()}
     yield_rows = build_yield_rows(tables, fail_counts, totals=totals)
     cpk_rows = build_cpk_rows(tables, stat_items)
 
@@ -78,9 +80,10 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         "mode": mode or "Normal",
         "sources": sources,
         "yield_summary": yield_overview(tables, yield_rows, totals=totals),
-        # 수율 분모 기준(프런트 요약 박스 배지·Excel 주석용). basis="gross" 면 gross_die 가
-        # 분모, "test" 면 소스별 rawdata 행 수. gross_die 가 없어 폴백한 경우도 "test".
-        "yield_basis": {"basis": "gross" if gross else "test", "gross_die": gross},
+        # 수율 분모 기준(프런트 요약 박스 배지·소스별 표). basis 는 전 소스가 같을 때 그 값,
+        # 소스마다 다르면 "mixed" — 소스별 분해는 by_source 에 있다.
+        "yield_basis": yield_basis_payload(basis_info,
+                                           (yield_basis or {}).get("mode") or "auto"),
         "issue_bin_summary": build_issue_bin_summary(yield_rows),
         # yield_bin_groups: Bin 병합(전체 기준) 그룹 — Excel 내보내기가 사용(유지).
         "yield_bin_groups": build_yield_bin_groups(yield_rows),

@@ -72,6 +72,8 @@ web_report/
     ├── summary.py         build_summary_rows (placeholder)
     ├── raw_data.py        build_raw_data_rows(placeholder) + lazy 조회/편집
     ├── yield_tab.py       build_yield_rows / fail_counts / fail_bin_ranking / yield_overview
+    │                       + **수율 분모 판정 정본** resolve_source_basis(소스별 Gross Die ↔
+    │                       test die, 100% 초과·부족분 100 예외) / source_totals / auto_basis
     ├── cpk.py             build_cpk_rows(**Bin1 기준 단일**) + CPK_THRESHOLD(1.33) + worst_cpk_by_subject
     ├── issue_table.py     build_issue_table_rows (Yield + cpk<1.33 + ETC, comment/Status/숨김은 편집 DB)
     ├── distribution.py    build_distribution_index / scatter_item / build_distribution_compact (lazy)
@@ -80,8 +82,11 @@ web_report/
     ├── compare.py         build_compare_payload (Compare 모드 — Before/After 그룹 N source.
     │                       common_map/bin_delta/bin_matrix=전 source, goodlog=그룹 대표 2개,
     │                       dist_shift(산포 비교 — Before 분모 지표 6종 meanshift σ/Cpk%/
-    │                       stdev 증가율/median·IQR/KS D + focus 판정)·equivalence(동일성
-    │                       검증 Grade1/2/3)=그룹 pool)
+    │                       stdev 증가율/median·IQR/KS D + 유의성 2종 + focus 판정)·
+    │                       equivalence(동일성 검증 Grade1/2/3)=그룹 pool)
+    ├── significance.py     2표본 유의성 검정 (scipy 없이 — 불완전베타→Student-t CDF,
+    │                       Welch t / Brown-Forsythe). dist_shift 의 **노이즈 게이트** 전용:
+    │                       die 공간상관·거대 n 때문에 p 는 "노이즈다" 한 방향만 신뢰 가능
     └── Map_analysis.py    build_map_analysis_rows (wafer map die/bin 집계)
 ```
 

@@ -188,13 +188,18 @@ function majorFailBinsTableHtml() {
     .slice(0, MAJOR_FAIL_TOP_N);
 
   const rowCount = Math.max(sources.length, majors.length, 1);
+  const basisBySrc = yieldBasisBySource();
   let body = "";
   for (let i = 0; i < rowCount; i++) {
     const cells = [];
     if (i === 0) cells.push(`<td class="mfb-yield" rowspan="${rowCount}">${esc(fmtPct(ov.yield_pct))}%</td>`);
     const s = sources[i];
+    // 분모 기준은 소스마다 다를 수 있어(Gross Die / Test data) 툴팁으로 병기한다.
+    const bi = s ? basisBySrc.get(String(s.source)) : null;
+    const bTip = bi ? ` title="분모 ${esc(bi.basis === "gross" ? "Gross Die" : "Test data")} `
+      + `${esc(bi.total)} · ${esc(yieldBasisReasonText(bi))}"` : "";
     cells.push(s
-      ? `<td class="mfb-src">${esc(s.source)}</td><td class="mfb-syield">${esc(fmtPct(s.yield_pct))}%</td>`
+      ? `<td class="mfb-src">${esc(s.source)}</td><td class="mfb-syield"${bTip}>${esc(fmtPct(s.yield_pct))}%</td>`
       : `<td class="mfb-src"></td><td class="mfb-syield"></td>`);
     const m = majors[i];
     cells.push(m

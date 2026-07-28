@@ -191,7 +191,10 @@ function cpkTableHtml(rows) {
         return `<td class="${cls}">${esc(String(tv))}</td>`;
       }
       const v = row[c];
-      const txt = (v === null || v === undefined) ? "" : String(v);
+      // stdev 만 서버가 반올림하지 않고 내려보내므로 표시할 때 유효숫자를 맞춘다(core.js).
+      // row.stdev 원값은 그대로 남아 cpkComputeTargets 의 Limit 역산이 계속 쓴다.
+      const txt = (v === null || v === undefined) ? ""
+        : (c === "stdev" ? fmtStdev(v) : String(v));
       const cls = [];
       if (txt === "") cls.push("st-empty");
       else if (CPK_NUMERIC.has(c)) cls.push("st-num");

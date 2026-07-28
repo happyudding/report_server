@@ -933,7 +933,9 @@ class HoneyMainWindow(QMainWindow):
             return
 
         from excel_edit.worker import ExcelEditWorker
-        self._excel_worker = ExcelEditWorker(sid, SERVER_BASE_URL, self)
+        # hub.excel_indices: 허브에서 체크한 source 만 Excel 로 연다 (None = 전체).
+        self._excel_worker = ExcelEditWorker(sid, SERVER_BASE_URL, self,
+                                             indices=hub.excel_indices)
         w = self._excel_worker
         w.status.connect(self._on_excel_edit_status)
         w.confirm_request.connect(self._on_excel_edit_confirm)

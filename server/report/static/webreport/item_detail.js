@@ -91,10 +91,12 @@ function idetHeaderStats(stats) {
   const fmt = v => (v === null || v === undefined || v === "") ? "-" : String(v);
   // min/max/avg 는 표시용으로 소수 4자리 반올림(round,4). 숫자가 아니면 원래 표기 유지.
   const fmt4 = v => (typeof v === "number") ? String(Math.round(v * 1e4) / 1e4) : fmt(v);
+  // stdev 만 서버가 반올림하지 않는다 → 표시 시 유효숫자를 맞춘다(core.js fmtStdev).
+  const fmtSd = v => (v === null || v === undefined || v === "") ? "-" : fmtStdev(v);
   const src = stats.length > 1 ? `<span class="idet-stat-src">${esc(s.source || "")}</span>` : "";
   return `<span class="idet-stat">${src}` +
     `min <b>${esc(fmt4(s.min))}</b> · max <b>${esc(fmt4(s.max))}</b> · ` +
-    `avg <b>${esc(fmt4(s.average))}</b> · σ <b>${esc(fmt(s.stdev))}</b></span>`;
+    `avg <b>${esc(fmt4(s.average))}</b> · σ <b>${esc(fmtSd(s.stdev))}</b></span>`;
 }
 
 // Fail 항목이면 Fail 된 die 의 BIN 목록(중복 제거·숫자 우선 정렬)을 헤더에 표시.
@@ -240,7 +242,9 @@ function itemStatsTableHtml(stats) {
   const body = "<tbody>" + stats.map(s => {
     const warn = (s.cpk != null && parseFloat(s.cpk) < CPK_WARN_THRESHOLD);
     const tds = ITEM_STAT_COLS.map(c => {
-      const v = s[c]; const t = (v === null || v === undefined) ? "" : String(v);
+      const v = s[c];
+      // stdev 만 서버 무반올림 → 표시용 유효숫자 포맷. 곡선(가우시안 PDF)은 원값을 계속 쓴다.
+      const t = (v === null || v === undefined) ? "" : (c === "stdev" ? fmtStdev(v) : String(v));
       const cls = "st-num" + (c === "cpk" && warn ? " cpk-warn" : "");
       return `<td class="${cls}">${esc(t)}</td>`;
     }).join("");

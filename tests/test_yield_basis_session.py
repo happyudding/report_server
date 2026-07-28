@@ -3,13 +3,14 @@
 실행:
     python tests/test_yield_basis_session.py
 
-Honey 의 Rawdata 허브 체크박스("Yield 계산 기준 - Test data 개수")가 보내는 값이
-세션 편집 DB 에 남고, /full payload 의 수율 분모에 그대로 반영되는지를 고정한다:
+Honey 의 Rawdata 허브 [Yield 계산] 이 보내는 값이 세션 편집 DB 에 남고, /full payload 의
+수율 분모에 그대로 반영되는지를 고정한다:
 
-  (a) 기본(옵션 미저장) = 제품 기준정보 Gross Die 분모
-  (b) 체크(basis=test) 저장 → rawdata 개수 분모, 캐시를 전부 비우고 다시 열어도 유지
+  (a) 기본(옵션 미저장) = 자동 판정 → 이 픽스처는 Gross Die 분모
+  (b) 구 클라의 문자열 basis=test 저장 → rawdata 개수 분모, 캐시를 전부 비워도 유지
   (c) 해제(basis=gross) 저장 → (a) 의 payload 와 정준 JSON 완전 일치 (되돌리기)
   (d) Gross Die 가 없는 세션은 옵션과 무관하게 rawdata 분모(폴백)
+  (e) 소스별 선택 {"mode":"auto","sources":{...}} 저장·조회 + GET .../web_report/yield_basis
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert).
 """
@@ -123,6 +124,13 @@ def _save_opts(sid, body):
     return r.get_json()
 
 
+def _basis3(payload):
+    """payload.yield_basis 에서 소스별 분해를 뺀 요약 3필드."""
+    b = dict(payload["yield_basis"])
+    b.pop("by_source", None)
+    return b
+
+
 def _clear_all_caches(akey):
     wr_cache.invalidate_caches(akey)
     for sub in ("report", "dist", "map"):
@@ -139,22 +147,24 @@ def main():
     sid, akey = "s-basis", "a" * 64
     _setup(sid, akey, {"part_id": "P1", "gross_die": GROSS_DIE})
 
-    # (a) 기본 = Gross Die 분모
+    # (a) 기본(자동 판정) = Gross Die 분모 — 부족분 20 < 100 이라 규칙 4 에 안 걸린다
     gross = _full(sid)
     ov = gross["yield_summary"]
-    assert gross["yield_basis"] == {"basis": "gross", "gross_die": 40}, gross["yield_basis"]
+    assert _basis3(gross) == {"basis": "gross", "mode": "auto", "gross_die": 40}, \
+        gross["yield_basis"]
     assert (ov["total"], ov["tested"], ov["pass"], ov["yield_pct"]) == (40, 20, 18, 45.0), ov
-    assert _get_opts(sid)["yield_basis"] == "gross", _get_opts(sid)
+    assert _get_opts(sid)["yield_basis"] == "auto", _get_opts(sid)
     assert _get_opts(sid)["gross_die"] == 40, _get_opts(sid)
     gross_canon = json.dumps(gross, sort_keys=True, ensure_ascii=False, default=str)
     print(f"(a) 기본 — Gross Die {GROSS_DIE} 분모, 수율 {ov['yield_pct']}% (측정 {ov['tested']})")
 
-    # (b) 체크(Test data 개수) → rawdata 분모 + 세션 재오픈에도 유지
+    # (b) 구 클라 문자열(Test data 개수) → rawdata 분모 + 세션 재오픈에도 유지
     result = _save_opts(sid, {"exclude_items": [], "yield_basis": "test"})
     assert result["yield_basis"] == "test", result
     test_basis = _full(sid)
     ov2 = test_basis["yield_summary"]
-    assert test_basis["yield_basis"] == {"basis": "test", "gross_die": None}, test_basis["yield_basis"]
+    assert _basis3(test_basis) == {"basis": "test", "mode": "test", "gross_die": 40}, \
+        test_basis["yield_basis"]
     assert (ov2["total"], ov2["tested"], ov2["yield_pct"]) == (20, 20, 90.0), ov2
     _clear_all_caches(akey)
     assert _full(sid)["yield_summary"]["yield_pct"] == 90.0, "캐시 비운 뒤 옵션이 사라졌다"
@@ -173,12 +183,36 @@ def main():
     sid2, akey2 = "s-nogross", "b" * 64
     _setup(sid2, akey2, None)
     nog = _full(sid2)
-    assert nog["yield_basis"] == {"basis": "test", "gross_die": None}, nog["yield_basis"]
+    assert _basis3(nog) == {"basis": "test", "mode": "auto", "gross_die": None}, nog["yield_basis"]
     assert nog["yield_summary"]["yield_pct"] == 90.0, nog["yield_summary"]
     assert _get_opts(sid2)["gross_die"] is None, _get_opts(sid2)
     print("(d) Gross Die 없는 세션 — rawdata 분모로 폴백")
 
-    print("\nPASS — 분모 기준 저장·적용·되돌리기·폴백")
+    # (e) 소스별 선택 — 허브 [Yield 계산] 이 보내는 형식
+    r = client.get(f"/pe/report/session/{sid}/web_report/yield_basis", headers=_headers(sid))
+    assert r.status_code == 200, (r.status_code, r.data[:200])
+    info = r.get_json()
+    src0 = info["sources"][0]
+    assert (src0["source"], src0["tested"], src0["pass"], src0["gross"]) == ("Lot1", 20, 18, 40), src0
+    assert src0["basis"] == "gross" and src0["gross_allowed"] is True, src0
+    assert info["shortfall_limit"] == 100, info
+
+    saved = _save_opts(sid, {"exclude_items": [],
+                             "yield_basis": {"mode": "auto", "sources": {"Lot1": "test"}}})
+    assert saved["yield_basis_sources"] == {"Lot1": "test"}, saved
+    assert _full(sid)["yield_summary"]["yield_pct"] == 90.0, "소스별 test 선택이 반영 안 됨"
+    _clear_all_caches(akey)
+    assert _get_opts(sid)["yield_basis_sources"] == {"Lot1": "test"}, _get_opts(sid)
+
+    # 자동으로 되돌리면 (a) 와 정준 JSON 완전 일치 (소스 행이 지워진다)
+    _save_opts(sid, {"exclude_items": [], "yield_basis": {"mode": "auto", "sources": {}}})
+    _clear_all_caches(akey)
+    assert json.dumps(_full(sid), sort_keys=True, ensure_ascii=False, default=str) == gross_canon, \
+        "소스별 선택 해제 후 자동 판정 payload 로 돌아오지 않음"
+    assert _get_opts(sid)["yield_basis_sources"] == {}, _get_opts(sid)
+    print("(e) 소스별 선택 — 저장·적용·해제 + GET yield_basis 수치")
+
+    print("\nPASS — 분모 기준 저장·적용·되돌리기·폴백·소스별 선택")
     return 0
 
 

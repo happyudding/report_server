@@ -1,10 +1,14 @@
-"""Excel 왕복 편집의 시트↔source 매칭 규칙 검증 (excel_session.match_sheets 순수 함수).
+"""Excel 왕복 편집의 시트↔source 매칭·병합 규칙 검증 (excel_session 순수 함수 2개).
 
 실행:
     python tests/test_excel_sheet_match.py
 
 시트 순서를 바꿔도 원본 순서를 복원해야 하고(순서 기반 매칭의 오귀속 방지), 시트를 지우면
 그 source 를 삭제 대상으로 잡아야 한다. 이름만 바뀐 경우는 기존 동작(위치 기반)으로 폴백한다.
+
+_merge_sources 는 **일부 source 만 Excel 로 연 경우**(허브에서 체크) 편집 결과와 손대지 않은
+원본 bytes 를 원본 idx 순서로 합친다 — 서버는 업로드 목록에 없는 source 를 지우므로 여기서
+빠뜨리면 안 연 source 가 사라진다.
 
 xlwings/Excel 불필요 — 순수 함수만 호출한다. pytest 미사용 (tests/ 관례).
 """
@@ -27,9 +31,16 @@ for _name in ("requests", "pandas"):
     except ImportError:
         sys.modules[_name] = types.ModuleType(_name)
 
-from excel_edit.excel_session import match_sheets  # noqa: E402
+from excel_edit.excel_session import _Sources, _merge_sources, match_sheets  # noqa: E402
 
 TITLES = ["LotA", "LotB", "LotC"]
+
+
+def _src(sel):
+    """원본 3개 중 sel 만 Excel 로 연 상태의 _Sources (others = 원본 bytes)."""
+    return _Sources(dfs=[], titles=[TITLES[i] for i in sel], int_cols=[], manifest={},
+                    sel=sel, others={i: f"raw{i}".encode() for i in range(3) if i not in sel},
+                    all_titles=TITLES)
 
 
 def expect_error(sheet_names, titles, hint):
@@ -87,7 +98,27 @@ def main():
     expect_error(["LotA", "LotB", "LotC", "LotD"], TITLES, "시트 추가")
     expect_error([], TITLES, "시트 없음")
 
-    print("\nPASS — 시트명 매칭(순서 복원·삭제 감지·이름변경 폴백·거부 3종)")
+    # ── _merge_sources: 부분 선택 편집 결과 병합 ────────────────────────────
+    # (h) 전체 선택·삭제 없음 → 구 경로 그대로 (kept=None = 전체 교체)
+    parquets, kept, titles = _merge_sources(_src([0, 1, 2]), [b"n0", b"n1", b"n2"], None)
+    print(f"(h) 전체 선택: kept={kept} titles={titles}")
+    assert parquets == [b"n0", b"n1", b"n2"] and kept is None and titles == TITLES
+
+    # (i) 가운데 1개만 선택 → 안 연 source 는 원본 bytes 그대로, kept 는 None(삭제 없음)
+    parquets, kept, titles = _merge_sources(_src([1]), [b"edited"], None)
+    print(f"(i) 1개만 선택: parquets={parquets} kept={kept}")
+    assert parquets == [b"raw0", b"edited", b"raw2"], parquets
+    assert kept is None and titles == TITLES
+
+    # (j) 2개 선택 후 그중 1개 시트 삭제 → 원본 idx 로 환산된 kept + 안 연 source 보존
+    #     sel=[0,2] 에서 로컬 idx 1(=원본 2)만 남김 → kept=[0,1] (1 은 안 연 source)
+    parquets, kept, titles = _merge_sources(_src([0, 2]), [b"edited2"], [1])
+    print(f"(j) 부분 선택 + 시트 삭제: parquets={parquets} kept={kept} titles={titles}")
+    assert parquets == [b"raw1", b"edited2"], parquets
+    assert kept == [1, 2], kept
+    assert titles == ["LotB", "LotC"], titles
+
+    print("\nPASS — 시트명 매칭(순서 복원·삭제 감지·이름변경 폴백·거부 3종) + 부분 선택 병합 3종")
 
 
 if __name__ == "__main__":

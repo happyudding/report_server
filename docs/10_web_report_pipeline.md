@@ -113,6 +113,13 @@ zip(manifest + `source_<idx>.parquet`)을 내려받아 Honey 가 **source 1개 =
 
 - 시트↔source 매칭은 **시트 이름 기준**(`excel_session.match_sheets`) — 순서를 바꿔도 원본
   순서를 복원한다. 이름이 안 맞고 개수만 같으면 위치 기반 폴백(이름 변경 용인).
+- **고칠 source 만 골라 열 수 있다**(2026-07-28, 허브 Excel 페이지 체크리스트 →
+  `run_excel_edit(indices=)`). 고른 source 만 디코드·시트 작성하고, 나머지는 zip 에서 읽은
+  **원본 parquet bytes 를 그대로 되올린다**(`_merge_sources`) — 서버는 업로드 목록에 없는
+  source 를 지우므로 편집분만 올리면 안 연 source 가 사라진다. 시트 삭제 판정도 **고른
+  source 안에서만** 하므로(`_read_and_encode` 의 expected_titles = 선택분), 안 연 source 가
+  '삭제됨' 으로 오인되지 않는다. 회귀 고정:
+  [tests/test_excel_sheet_match.py](../tests/test_excel_sheet_match.py) (h)~(j).
 - **시트를 지우면 그 source 를 물리 제거**한다. 남긴 원본 idx 를 form 필드 `source_indices`
   (JSON 오름차순)로 보내고, 서버가 `manifest["sources"]` 도 함께 축소해 재저장한다
   (manifest 불변의 유일한 예외). 초과 idx 의 object_info 행·로컬 파일·S3 객체는

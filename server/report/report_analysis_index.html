@@ -1410,6 +1410,10 @@ if (_histCached) {
 // 방금 받아 둔 목록이면 갱신도 생략한다 — 세션을 열었다 바로 뒤로가기 하는 흐름에서
 // 같은 조회가 연속으로 나가던 것을 없앤다(DOM·신원은 BFCache 가 그대로 복원해 준다).
 window.addEventListener("pageshow", e => {
+  // BFCache 복원은 DOM 을 통째로 되살린다 — 세션으로 이탈하며 켠 loadOverlay(행 클릭 핸들러)가
+  // show 인 채 돌아와 이미 그려진 목록을 영구히 덮는다(그 상태로 F5 하면 즉시 보이던 이유).
+  // persisted 판정보다 **먼저** 무조건 걷는다.
+  document.getElementById("loadOverlay").classList.remove("show");
   if (!e.persisted) return;
   if (histCacheFresh(histCacheLoad(histCurrentQs()))) return;
   loadHistory(true, true);

@@ -808,14 +808,49 @@ function yieldTotalLabel() {
   const b = yieldBasisInfo();
   return (b && b.basis === "gross") ? "Gross Die" : "Total";
 }
+// 소스별 분모 분해 (payload.yield_basis.by_source) — 없으면 빈 Map(옛 캐시 payload).
+function yieldBasisBySource() {
+  const b = yieldBasisInfo();
+  const map = new Map();
+  ((b && Array.isArray(b.by_source)) ? b.by_source : []).forEach(
+    r => map.set(String(r.source), r));
+  return map;
+}
+const YIELD_BASIS_REASON = {
+  no_gross: "제품 기준정보에 Gross Die 가 없습니다",
+  gross_lt_tested: "Gross Die 가 측정 die 보다 적습니다 (수율 100% 초과 방지)",
+  tested_short: "측정 die 가 Gross Die 보다 100 개 이상 적습니다",
+};
+function yieldBasisReasonText(bi) {
+  const parts = [];
+  if (bi.forced) {
+    parts.push("지정한 Gross Die 를 쓸 수 없어 Test data 기준으로 내렸습니다");
+    if (YIELD_BASIS_REASON[bi.reason]) parts.push(YIELD_BASIS_REASON[bi.reason]);
+  } else if (bi.override) {
+    parts.push("Rawdata edit 에서 지정: "
+      + (bi.override === "gross" ? "Gross Die" : "Test data 개수"));
+  } else {
+    parts.push("자동 판정");
+    if (YIELD_BASIS_REASON[bi.reason]) parts.push(YIELD_BASIS_REASON[bi.reason]);
+  }
+  parts.push(`측정 die ${bi.tested}`);
+  return parts.join(" · ");
+}
 function yieldBasisBadgeHtml(ov) {
   const b = yieldBasisInfo();
   if (!b) return "";   // 옛 캐시 payload — 배지 없이 종전 표시
   const tested = (ov && ov.tested != null) ? ov.tested : null;
-  const txt = (b.basis === "gross")
-    ? `분모: Gross Die ${b.gross_die}` + (tested != null ? ` · 측정 die ${tested}` : "")
-    : `분모: Test data 개수` + (tested != null ? ` ${tested}` : "");
-  return `<div class="yo-basis" title="수율 % 의 분모 기준 (Honey → Rawdata edit 에서 변경)">${esc(txt)}</div>`;
+  const rows = Array.isArray(b.by_source) ? b.by_source : [];
+  const nGross = rows.filter(r => r.basis === "gross").length;
+  let txt;
+  if (b.basis === "mixed")
+    txt = `분모: 소스별 — Gross Die ${b.gross_die} ${nGross}개 / Test data ${rows.length - nGross}개`
+      + (tested != null ? ` · 측정 die ${tested}` : "");
+  else if (b.basis === "gross")
+    txt = `분모: Gross Die ${b.gross_die}` + (tested != null ? ` · 측정 die ${tested}` : "");
+  else
+    txt = `분모: Test data 개수` + (tested != null ? ` ${tested}` : "");
+  return `<div class="yo-basis" title="수율 % 의 분모 기준 (Honey → Rawdata edit → [Yield 계산] 에서 변경)">${esc(txt)}</div>`;
 }
 
 // Yield 상단 요약 박스 HTML (web_report 세션의 yield_summary 가 있을 때만).
@@ -826,15 +861,21 @@ function yieldOverviewHtml() {
   // 소스가 2개 이상일 때만 소스별 수율을 따로 표시(단일 소스는 Total 과 동일하므로 생략).
   // 정렬하지 않고 payload(by_source) 순서 = source 순서 그대로 — 아래 STEP×Source 표와
   // 소스 나열 순서를 맞춘다.
+  // 분모 열: 소스마다 분모 기준이 다를 수 있으므로(Gross Die / Test data) 무엇으로 나눈
+  // 값인지 표에서 바로 보이게 한다 — "소스별 yield 가 왜 다른가"에 화면이 답하도록.
   const bySrc = Array.isArray(ov.by_source) ? ov.by_source : [];
+  const basisBySrc = yieldBasisBySource();
   const bySrcHtml = bySrc.length >= 2 ? `<div class="yield-by-source"><table class="ybs-table">
-    <thead><tr><th>Source</th><th>Yield</th><th>Pass / Total</th></tr></thead>
+    <thead><tr><th>Source</th><th>Yield</th><th>Pass / Total</th><th>분모</th></tr></thead>
     <tbody>` + bySrc.map(s => {
     const sp = (typeof s.yield_pct === "number") ? s.yield_pct.toFixed(2) : s.yield_pct;
+    const bi = basisBySrc.get(String(s.source));
+    const bTxt = bi ? ((bi.basis === "gross" ? "Gross " : "Test ") + bi.total) : "";
     return `<tr>
       <td class="ybs-src">${esc(s.source)}</td>
       <td class="ybs-pct">${esc(sp)}%</td>
       <td class="ybs-cnt">${esc(s.pass)} / ${esc(s.total)}</td>
+      <td class="ybs-cnt"${bi ? ` title="${esc(yieldBasisReasonText(bi))}"` : ""}>${esc(bTxt)}</td>
     </tr>`;
   }).join("") + `</tbody></table></div>` : "";
   // STEP×Source 표: STEP 셀은 소스 수만큼 rowspan 병합(병합 셀에 STEP 평균 yield 표시).

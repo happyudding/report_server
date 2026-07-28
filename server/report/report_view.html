@@ -139,14 +139,44 @@ body {
   gap: 18px; align-items: start; }
 @media (max-width: 1100px) { .cmp-bin-grid { grid-template-columns: minmax(0, 1fr); } }
 .compare-table td.num, .compare-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
-.compare-table td.cmp-up { color: #b91c1c; }
-.compare-table td.cmp-down { color: #1d4ed8; }
+/* 색이 붙는 값 셀은 배경까지 칠한다 — 글씨색만으로는 표에서 눈에 띄지 않는다.
+   background 에 !important 가 붙는 이유: zebra(.sheet-table tbody tr:nth-child(even) td)와
+   hover(.sheet-table tbody tr:hover td)가 특이도 (0,2,2) 로 여기(0,2,1)를 이겨,
+   짝수 행·마우스오버에서 배경만 덮이고 글씨색만 남던 문제가 있었다(cpk-warn 과 같은 처방). */
+.compare-table td.cmp-up { color: #b91c1c; background: #fee2e2 !important; }
+.compare-table td.cmp-down { color: #1d4ed8; background: #eff6ff !important; }
 .compare-table .cmp-pass-row { background: #f0fdf4; }
-.compare-table td.cmp-pass-cell { background: #f0fdf4; }
-/* 동일성 검증 — 강조 3종: AVG차(%)>임계 / CPK<임계 / Grade3 */
-.compare-table td.eq-bad { background: #fee2e2; color: #b91c1c; font-weight: 600; }
+.compare-table td.cmp-pass-cell { background: #f0fdf4 !important; }
+/* 산포 비교 — 통계적으로 유의하지 않은 값(p≥alpha). 값 자체는 남기고 흐리게+ns 로 표시해
+   "표본이 작아 노이즈일 수 있다"를 알린다. opacity 라 라이트/다크 공통. */
+.compare-table td.cmp-ns { opacity: .5; }
+.compare-table td.cmp-ns::after { content: " ns"; font-size: 9px; vertical-align: super; }
+/* Compare 필터 토글 버튼 — 적용 중이면 파랑(라벨은 기능명 고정, 상태는 색으로). */
+.cmp-fbtn { margin-top: 0; }
+.cmp-fbtn.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
+/* 산포 비교 Distribution 열 — Distribution 갤러리 카드(높이 264px)의 1/2 규격 미니 ECDF. */
+.compare-table td.cmp-dist-td { padding: 3px 4px; }
+.cmp-dist-cell { position: relative; width: 200px; height: 132px; background: #fff;
+  border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; }
+.cmp-dist-cell .dist-plot { width: 100%; height: 100%; }
+.cmp-dist-legend { display: inline-flex; gap: 12px; flex-wrap: wrap; font-size: 12px; }
+/* 페이지 넘김 (한 페이지 20행) */
+.cmp-pager { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 12.5px; }
+.cmp-pager .btn-sm { margin-top: 0; }
+.cmp-pager .btn-sm[disabled] { opacity: .45; cursor: default; transform: none; }
+.cmp-page-info { color: #667085; }
+.gl-filterbar { margin: 8px 0 6px; }
+.compare-table td.gl-fold-empty { color: #98a2b3; text-align: center; padding: 14px; }
+/* 동일성 검증 — 강조 3종: AVG차(%)>임계 / CPK<임계 / Grade3.
+   **글씨가 빨간 셀은 예외 없이 배경도 칠한다** — !important 사유는 위 cmp-up 주석 참조. */
+.compare-table td.eq-bad { background: #fee2e2 !important; color: #b91c1c; font-weight: 600; }
 .compare-table td.eq-grade { text-align: center; }
-.compare-table td.eq-grade3 { background: #fecaca; color: #7f1d1d; font-weight: 700; }
+.compare-table td.eq-grade3 { background: #fecaca !important; color: #7f1d1d; font-weight: 700; }
+/* 동일성 검증 헤더 보조 수식 — 라벨 밑 작은 글씨(정본은 compare.py _equiv_delta/_equiv_pct) */
+.compare-table th .eq-formula {
+  display: block; font-size: 9px; font-weight: 400; color: #5a6b7d;
+  margin-top: 2px; white-space: nowrap;
+}
 .eq-summary { margin-bottom: 10px; }
 .eq-legend { margin: 0 0 10px; }
 /* Compare 표 가로 스크롤 — Win11 오버레이 스크롤바는 스크롤 중에만 보여 "가로 스크롤이
@@ -159,9 +189,9 @@ body {
 /* Bin 불일치 좌표는 die 수만큼 길어질 수 있어 칸 안에서 세로로도 스크롤한다. */
 .cmp-binmatrix-wrap { max-height: 520px; overflow-y: auto; }
 /* goodlog(테스트 프로그램 diff) — Honey Compare Mode 색상 관례: True 초록/False 빨강 배경 */
-.compare-table td.gl-true { background: #c6efce; color: #1e6b30; text-align: center; }
-.compare-table td.gl-false { background: #ffc7ce; color: #9c0006; text-align: center; }
-.compare-table td.gl-gap-red { color: #b91c1c; font-weight: 600; }
+.compare-table td.gl-true { background: #c6efce !important; color: #1e6b30; text-align: center; }
+.compare-table td.gl-false { background: #ffc7ce !important; color: #9c0006; text-align: center; }
+.compare-table td.gl-gap-red { color: #b91c1c; font-weight: 600; background: #fee2e2 !important; }
 .gl-identical { margin: 8px 0; padding: 10px 12px; background: #f0fdf4;
   border: 1px solid #bbf7d0; border-radius: 6px; color: #166534; font-size: 13px; }
 /* goodlog 이상 요약 + git-diff 식 접기 */
@@ -635,7 +665,8 @@ tbody tr:hover { background: #f9fbff; }
   justify-content: center; color: #bbb; font-size: 12px; }
 /* 분포 데이터 도착 전 미니셀 placeholder — Plotly 렌더로 자식이 생기면 자동 소멸.
    전역 수신 진행은 우하단 배지(.dist-load-badge, distribution.js)가 표시한다. */
-.dist-cell-mini .dist-plot:empty::before, .distg-plot:empty::before {
+.dist-cell-mini .dist-plot:empty::before, .distg-plot:empty::before,
+.cmp-dist-cell .dist-plot:empty::before {
   content: "분포 로딩 중…"; display: flex; align-items: center; justify-content: center;
   height: 100%; color: #9aa0a6; font-size: 11px; }
 .dist-load-badge { position: fixed; right: 16px; bottom: 16px; z-index: 900;
@@ -1486,8 +1517,8 @@ td.issue-status-cell.is-close .status-dot { background: #16a34a; box-shadow: 0 0
    기존 규칙은 수정하지 않고 html[data-theme="dark"] 스코프 규칙만 얹는다.
    테마 상태는 localStorage "report_theme" 로 검색결과 페이지와 공유.
    Plotly 차트는 "흰 카드 유지" 정책 — 차트가 든 카드(.wafer-card / .distg-card /
-   .dist-chart-block / .idet-chart-block / .dist-cell / .map-cell-mini / .map-expand-pop)와
-   그 안의 캡션 색은 다크에서도 밝은 배경 그대로 두고 override 하지 않는다. */
+   .dist-chart-block / .idet-chart-block / .dist-cell / .cmp-dist-cell / .map-cell-mini /
+   .map-expand-pop)와 그 안의 캡션 색은 다크에서도 밝은 배경 그대로 두고 override 하지 않는다. */
 .theme-toggle {
   flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
   border: 1px solid #d0d5dd; background: #fff;
@@ -1719,18 +1750,19 @@ html[data-theme="dark"] .compare-h { color: #aab3c0; }
 html[data-theme="dark"] .cmp-chip { background: #2c3442; color: #c6ccd6; }
 html[data-theme="dark"] .cmp-chip.cmp-common { background: #3a4150; color: #d7dbe2; }
 html[data-theme="dark"] .cmp-chip.cmp-unique { background: #46201f; color: #f3a3a8; }
-html[data-theme="dark"] .compare-table td.cmp-up { color: #f08c8c; }
-html[data-theme="dark"] .compare-table td.cmp-down { color: #7fa8f5; }
+html[data-theme="dark"] .compare-table td.cmp-up { color: #f08c8c; background: #46201f !important; }
+html[data-theme="dark"] .compare-table td.cmp-down { color: #7fa8f5; background: #1b2a44 !important; }
 html[data-theme="dark"] .compare-table .cmp-pass-row { background: #16281c; }
-html[data-theme="dark"] .compare-table td.cmp-pass-cell { background: #16281c; }
-html[data-theme="dark"] .compare-table td.eq-bad { background: #46201f; color: #f3a3a8; }
-html[data-theme="dark"] .compare-table td.eq-grade3 { background: #5a1f22; color: #ffb4b8; }
+html[data-theme="dark"] .compare-table td.cmp-pass-cell { background: #16281c !important; }
+html[data-theme="dark"] .compare-table td.eq-bad { background: #46201f !important; color: #f3a3a8; }
+html[data-theme="dark"] .compare-table td.eq-grade3 { background: #5a1f22 !important; color: #ffb4b8; }
+html[data-theme="dark"] .compare-table th .eq-formula { color: #8b97a8; }
 html[data-theme="dark"] .cmp-scroll::-webkit-scrollbar-track { background: #1c2029; }
 html[data-theme="dark"] .cmp-scroll::-webkit-scrollbar-thumb { background: #4a5261; border-color: #1c2029; }
 html[data-theme="dark"] .cmp-scroll::-webkit-scrollbar-thumb:hover { background: #5d6879; }
-html[data-theme="dark"] .compare-table td.gl-true { background: #1d4527; color: #a7e3b4; }
-html[data-theme="dark"] .compare-table td.gl-false { background: #4d2023; color: #f3a3a8; }
-html[data-theme="dark"] .compare-table td.gl-gap-red { color: #f08c8c; }
+html[data-theme="dark"] .compare-table td.gl-true { background: #1d4527 !important; color: #a7e3b4; }
+html[data-theme="dark"] .compare-table td.gl-false { background: #4d2023 !important; color: #f3a3a8; }
+html[data-theme="dark"] .compare-table td.gl-gap-red { color: #f08c8c; background: #46201f !important; }
 html[data-theme="dark"] .gl-identical { background: #16281c; border-color: #1d4527; color: #a7e3b4; }
 html[data-theme="dark"] .gl-ab-summary { background: #322817; border-color: #6e5326; }
 html[data-theme="dark"] .gl-ab-summary.gl-ab-none { background: #16281c; border-color: #1d4527; color: #a7e3b4; }
@@ -1756,6 +1788,8 @@ html[data-theme="dark"] .gl-hscroll::-webkit-scrollbar-thumb,
 html[data-theme="dark"] .sheet-wrap.gl-wrap::-webkit-scrollbar-thumb {
   background: #4b5464; border-color: #262a33; }
 html[data-theme="dark"] .gl-sub { color: #8b94a3; }
+html[data-theme="dark"] .cmp-page-info { color: #8b94a3; }
+html[data-theme="dark"] .compare-table td.gl-fold-empty { color: #8b94a3; }
 
 /* ── Map Analysis (좌표 선택 UI / 툴바 / 범례 표 — wafer 차트 카드는 흰 카드 유지) ── */
 html[data-theme="dark"] .common-search input { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }

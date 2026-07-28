@@ -43,10 +43,16 @@ _PREPROCESS_KEY = "spec"
 # 행이 없으면 기본 'gross'(제품 기준정보 Gross Die, 값이 없으면 rawdata 폴백).
 # preprocess spec 에 넣지 않는 이유: preprocess digest 가 바뀌면 Distribution pack
 # (정렬 전가) 경로가 폴백으로 떨어지는데, 수율 분모는 ECDF 와 아무 상관이 없다.
+# 2026-07-28 확장 — 기준을 **소스별**로 고를 수 있게 됐다(Honey 허브 [Yield 계산] 탭).
+#   item_key='basis'            : 전역 모드 'auto'(신규 기본) | 'test'(구 전역 스위치)
+#   item_key='src\x1f<source>'  : 그 소스의 override 'gross' | 'test'
+# 구 값 'gross' 는 auto 로 승격해 읽는다 — auto 는 "Gross Die 기준 + 100% 초과·대량 미측정
+# 예외만 test 로 회피"라 구 기본값의 의도를 포함한다 (판정 규칙은 tabs/yield_tab.py).
 KIND_YIELD_BASIS = "yield_basis"
 _YIELD_BASIS_KEY = "basis"
 YIELD_BASIS_GROSS = "gross"
 YIELD_BASIS_TEST = "test"
+YIELD_BASIS_AUTO = "auto"
 
 # 표 payload 빌드에 안 쓰이는 kind — load_edit_state 조회에서 제외해 대용량 값
 # (note_sheet 시트 JSON 최대 2MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
@@ -57,6 +63,9 @@ _STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG, KIND_P
 
 # issue_comment 의 item_key = row_key + SEP + col (row_key 에 '|' 가 쓰여 제어문자 사용)
 _SEP = "\x1f"
+# yield_basis 소스별 행의 item_key 접두어 — source 이름에 무엇이 들어와도 전역 키('basis')와
+# 섞이지 않게 같은 제어문자를 쓴다.
+_YIELD_BASIS_SRC_PREFIX = "src" + _SEP
 
 _HONEY_UA_RE = re.compile(r"HoneyUser/(\S+)")
 
@@ -245,20 +254,67 @@ def normalize_yield_basis(value) -> str:
 
 
 def load_yield_basis(report_db, session_id: str) -> str:
-    """수율 분모 기준 ('gross'|'test'). 행이 없으면 기본 'gross'.
+    """저장된 **전역 모드 행**의 구 형식 값 ('gross'|'test') — 하위호환 조회용.
 
-    kind 지정 조회(작은 인덱스 SELECT 1회) — 표 상태(load_edit_state) 밖이다."""
+    소스별 기준까지 보려면 load_yield_basis_map 을 쓴다(조회 경로는 그쪽만 쓴다)."""
     for row in report_db.get_webreport_edits(session_id, kinds=(KIND_YIELD_BASIS,)):
         if row["item_key"] == _YIELD_BASIS_KEY:
             return normalize_yield_basis(row["value"])
     return YIELD_BASIS_GROSS
 
 
-def save_yield_basis(report_db, session_id: str, basis, updated_by=None) -> int:
-    """수율 분모 기준 저장. 새 rev 반환 — rev 증가로 REPORT//full 캐시가 무효화된다."""
-    return report_db.apply_webreport_edits(
-        session_id, [(KIND_YIELD_BASIS, _YIELD_BASIS_KEY, normalize_yield_basis(basis))],
-        updated_by=updated_by)
+def normalize_yield_basis_map(value) -> dict:
+    """사용자 입력 → {"mode": 'auto'|'test', "sources": {name: 'gross'|'test'}}.
+
+    문자열('gross'/'test')만 오는 구 클라 요청도 받는다 — 'test' 는 전역 test, 그 외는 auto.
+    """
+    if not isinstance(value, dict):
+        return {"mode": normalize_yield_basis_mode(value), "sources": {}}
+    sources = {}
+    for name, basis in (value.get("sources") or {}).items():
+        basis = str(basis or "").strip().lower()
+        if str(name) and basis in (YIELD_BASIS_GROSS, YIELD_BASIS_TEST):
+            sources[str(name)] = basis
+    return {"mode": normalize_yield_basis_mode(value.get("mode")), "sources": sources}
+
+
+def normalize_yield_basis_mode(value) -> str:
+    """전역 모드 — 'test' 만 test, 그 외(구 'gross'·빈 값 포함)는 'auto'."""
+    return YIELD_BASIS_TEST if str(value or "").strip().lower() == YIELD_BASIS_TEST \
+        else YIELD_BASIS_AUTO
+
+
+def load_yield_basis_map(report_db, session_id: str) -> dict:
+    """수율 분모 기준 — {"mode": 'auto'|'test', "sources": {source: 'gross'|'test'}}.
+
+    행이 없으면 전 소스 auto(= Gross Die 기준 + 예외 자동 회피). kind 지정 조회 1회."""
+    mode, sources = YIELD_BASIS_AUTO, {}
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_YIELD_BASIS,)):
+        key = str(row["item_key"] or "")
+        value = str(row["value"] or "").strip().lower()
+        if key == _YIELD_BASIS_KEY:
+            mode = normalize_yield_basis_mode(value)
+        elif key.startswith(_YIELD_BASIS_SRC_PREFIX):
+            name = key[len(_YIELD_BASIS_SRC_PREFIX):]
+            if name and value in (YIELD_BASIS_GROSS, YIELD_BASIS_TEST):
+                sources[name] = value
+    return {"mode": mode, "sources": sources}
+
+
+def save_yield_basis_map(report_db, session_id: str, basis_map, updated_by=None) -> int:
+    """소스별 수율 분모 기준 저장 — 새 map 에 없는 소스 행은 삭제한다. 새 rev 반환.
+
+    rev 증가로 REPORT//full 캐시가 무효화된다(preprocess digest 는 건드리지 않는다)."""
+    norm = normalize_yield_basis_map(basis_map)
+    changes = [(KIND_YIELD_BASIS, _YIELD_BASIS_KEY, norm["mode"])]
+    changes += [(KIND_YIELD_BASIS, _YIELD_BASIS_SRC_PREFIX + name, basis)
+                for name, basis in sorted(norm["sources"].items())]
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_YIELD_BASIS,)):
+        key = str(row["item_key"] or "")
+        if (key.startswith(_YIELD_BASIS_SRC_PREFIX)
+                and key[len(_YIELD_BASIS_SRC_PREFIX):] not in norm["sources"]):
+            changes.append((KIND_YIELD_BASIS, key, None))
+    return report_db.apply_webreport_edits(session_id, changes, updated_by=updated_by)
 
 
 def load_note_sheet(report_db, session_id: str) -> dict | None:

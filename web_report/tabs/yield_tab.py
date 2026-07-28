@@ -101,15 +101,97 @@ def gross_die_value(gross_die):
     return value if value > 0 else None
 
 
-def source_totals(tables, gross_die=None) -> dict:
-    """소스별 수율 **분모**.
+# ── 수율 분모 기준 (2026-07-28) ────────────────────────────────────────────────
+# 분모는 **소스마다 따로** 정해진다: 기본은 제품 기준정보 Gross Die 지만, 그 값이 실제 측정
+# die 수(test die)와 크게 어긋나면 자동으로 test die 로 내려간다. 규칙(사용자 확정):
+#   1. 분모는 Gross Die 가 기준이다.
+#   2. 수율은 100% 를 넘을 수 없다 — 넘으면 분모가 잘못된 것이므로 다른 기준을 쓴다.
+#   3. 그 source 의 Gross Die 가 test die 보다 작으면(=2번 상황) test die 를 분모로.
+#   4. test die 가 Gross Die 보다 100 개 이상 적으면 test die 를 분모로.
+# 3번은 **강제**(사용자가 Gross 를 골라도 test 로 내린다 — 규칙 2 는 표시 불변식이다),
+# 4번은 **기본값**(사용자가 Gross 를 명시하면 존중한다 — 100% 를 넘지 않으므로).
+GROSS_SHORTFALL_LIMIT = 100
+BASIS_GROSS = "gross"          # edits.YIELD_BASIS_GROSS 와 같은 문자열 (저장 계층은 edits)
+BASIS_TEST = "test"
 
-    gross_die(제품 기준정보, product_info.db)가 유효하면 소스마다 그 값을 쓰고, 없거나
-    형식이 이상하면 종전처럼 그 소스의 rawdata 행 수로 폴백한다. 분자(pass/fail die 수)는
-    어느 경우에도 실측값 그대로다 — 여기서 바꾸는 것은 분모뿐이다.
+
+def auto_basis(gross, tested):
+    """사용자 선택이 없을 때의 (기준, 사유코드). gross 는 gross_die_value 결과(None 가능)."""
+    if not gross:
+        return BASIS_TEST, "no_gross"
+    if gross < tested:
+        return BASIS_TEST, "gross_lt_tested"      # 규칙 2·3 — gross 분모면 수율 100% 초과
+    if gross - tested >= GROSS_SHORTFALL_LIMIT:
+        return BASIS_TEST, "tested_short"         # 규칙 4
+    return BASIS_GROSS, ""
+
+
+def resolve_source_basis(tables, gross_die=None, basis_map=None) -> dict:
+    """소스별 분모 결정 — {source: {source,basis,auto,override,forced,gross,tested,total,
+    reason,gross_allowed}}.
+
+    basis_map: 세션에 저장된 사용자 선택 ``{"mode": "auto|gross|test", "sources": {name: basis}}``
+    (edits.load_yield_basis_map). None 이면 전 소스 auto. mode 가 gross/test 면 소스별 지정이
+    없는 소스의 override 로 쓴다(구 세션의 전역 스위치 하위호환).
+
+    ``gross_allowed`` 는 그 소스에 Gross 기준을 고를 수 있는지 — 규칙 2 때문에 UI 가 선택지를
+    막는 데 쓴다. 분자(pass/fail die 수)는 어느 경우에도 실측값 그대로다.
     """
-    denom = gross_die_value(gross_die)
-    return {t.source: (denom if denom else len(t.data)) for t in tables}
+    gross = gross_die_value(gross_die)
+    basis_map = basis_map or {}
+    mode = str(basis_map.get("mode") or "auto").strip().lower()
+    overrides = basis_map.get("sources") or {}
+    out = {}
+    for table in tables:
+        tested = len(table.data)
+        auto, reason = auto_basis(gross, tested)
+        override = overrides.get(table.source)
+        if override is None and mode in (BASIS_GROSS, BASIS_TEST):
+            override = mode
+        override = override if override in (BASIS_GROSS, BASIS_TEST) else None
+        gross_allowed = bool(gross and gross >= tested)
+        basis, forced = (override or auto), False
+        if basis == BASIS_GROSS and not gross_allowed:
+            basis, forced = BASIS_TEST, bool(override)   # 규칙 2 — 선택보다 우선
+        out[table.source] = {
+            "source": table.source,
+            "basis": basis,
+            "auto": auto,
+            "override": override,
+            "forced": forced,
+            "gross": gross,
+            "tested": tested,
+            "total": gross if basis == BASIS_GROSS else tested,
+            "reason": reason,
+            "gross_allowed": gross_allowed,
+        }
+    return out
+
+
+def source_totals(tables, gross_die=None, basis_map=None) -> dict:
+    """소스별 수율 **분모** — resolve_source_basis 의 total 만 뽑은 것.
+
+    basis_map 을 주지 않으면 전 소스 auto 판정(위 규칙)이다.
+    """
+    return {src: info["total"]
+            for src, info in resolve_source_basis(tables, gross_die, basis_map).items()}
+
+
+def yield_basis_payload(basis_info, mode="auto") -> dict:
+    """payload["yield_basis"] — 프런트 배지/소스별 표가 "이 % 의 분모가 무엇인지" 를 그린다.
+
+    ``basis``(전 소스가 같으면 그 값, 섞이면 "mixed")와 ``gross_die`` 는 소스별 분해가 없던
+    옛 프런트가 읽던 키라 그대로 둔다.
+    """
+    infos = list(basis_info.values())
+    kinds = {i["basis"] for i in infos}
+    return {
+        "basis": (kinds.pop() if len(kinds) == 1 else "mixed") if kinds else BASIS_TEST,
+        "mode": mode or "auto",
+        "gross_die": infos[0]["gross"] if infos else None,
+        "by_source": [{k: i[k] for k in ("source", "basis", "auto", "override", "forced",
+                                         "total", "tested", "reason")} for i in infos],
+    }
 
 
 def build_yield_rows(tables, fail_counts, totals=None):
@@ -202,6 +284,8 @@ def build_yield_bin_groups(yield_rows):
 # 개별 bin fail 행의 % 는 이 누적과 무관하게 (그 bin 자신의 fail / 전체) 그대로다.
 # 2026-07-23: "전체"(분모)는 기본이 **제품 기준정보의 Gross Die** 이고, 값이 없거나 세션
 # 옵션이 "Test data 개수" 면 rawdata 행 수로 폴백한다(source_totals). 분자는 항상 실측이다.
+# 2026-07-28: 그 분모를 **소스마다** 정한다(resolve_source_basis) — Gross Die 가 test die 와
+# 크게 어긋나면 자동으로 test die 로 내려가고, 사용자가 소스별로 고를 수도 있다.
 
 def _step_order_key(step):
     """STEP 정렬 키: P<n> 은 숫자순(P1<P2<P3), 그 외 이름은 알파벳, 빈 값은 맨 뒤."""

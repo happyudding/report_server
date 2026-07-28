@@ -25,6 +25,7 @@ from ..honeyform import HoneyformTable
 from .common import (PASS_BIN, bin_sort_key, bin_types, fmt_type, item_meta, json_safe, num,
                      round_num, to_coord)
 from .cpk import CPK_THRESHOLD, build_cpk_rows
+from .significance import brown_forsythe_p, welch_p
 
 # 동일성 검증 임계값 — Grade 판정과 셀 강조가 같은 값을 쓴다(프런트에도 thresholds 로 내려감).
 EQUIV_AVG_PCT_LIMIT = 5.0    # Grade1 경계: AVG차(%) 5 이하
@@ -34,6 +35,7 @@ EQUIV_CPK_LIMIT = 5.0        # Grade2 조건: Before/After CPK 가 둘 다 5 이
 # cpk_low(관심 경계)는 별도 상수 없이 CPK_THRESHOLD(1.33) 를 그대로 쓴다(값 정본 1곳).
 DIST_CPK_HIGH = 100.0            # 양쪽 Cpk 가 이 값 초과면 여유 과대 — 무조건 focus 제외
 DIST_STDEV_DELTA_PCT = 15.0      # |stdev 증가율(%)| 이 이 값 이상이면 focus
+DIST_ALPHA = 0.05                # 노이즈 게이트 유의수준 (_dist_focus 참조)
 
 
 def build_compare_bin_delta(tables) -> list:
@@ -212,7 +214,9 @@ def build_goodlog(t_after, t_before):
 
     (구: tables 리스트를 받아 2 source 일 때만 동작. 지금은 After 최상단 / Before 최상단
     source 를 호출자가 골라 넘기므로 source 가 3개 이상이어도 항상 생성된다.)
-    프로그램(항목명/limit)이 완전히 같으면 {"identical": True} — 프런트가 '차이 없음' 표시.
+    프로그램(항목명/limit)이 완전히 같으면 ``identical: True`` 지만 **표(rows)는 그대로
+    만든다** — limit 이 안 바뀌어도 항목별 값 gap% 를 봐야 한다는 요구 때문(2026-07-28).
+    identical 은 프런트의 '차이 없음' 안내용 플래그일 뿐 표 생략 조건이 아니다.
     """
     if t_after is None or t_before is None:
         return None
@@ -229,10 +233,8 @@ def build_goodlog(t_after, t_before):
                 return False
         return True
 
-    base = {"after_source": t_after.source, "before_source": t_before.source}
-    if _identical():
-        return {**base, "identical": True, "rows": [], "limit_change_map": {},
-                "header": GOODLOG_HEADER}
+    base = {"after_source": t_after.source, "before_source": t_before.source,
+            "identical": _identical()}
 
     # compare_reference row (source 당 1행): 공통 die 좌표 우선, 없으면 각자 Bin1 최상단.
     common_xy = _common_xy(t_after, t_before)
@@ -308,7 +310,7 @@ def build_goodlog(t_after, t_before):
                 num(t_before.hilim.get(c)) if hi_changed else None,
             ]
 
-    return {**base, "identical": False, "header": GOODLOG_HEADER, "rows": rows,
+    return {**base, "header": GOODLOG_HEADER, "rows": rows,
             "limit_change_map": limit_change_map}
 
 
@@ -468,8 +470,18 @@ def _dist_focus(row) -> bool:
     """산포 비교 focus(관심 항목) 판정 — 서버가 정본, 프런트는 이 플래그로 필터만 한다.
 
     ① 무조건 제외: 양쪽 Cpk>DIST_CPK_HIGH(여유 과대) / 양쪽 σ=0·결측(고정값).
-    ② 관심: 한쪽 Cpk<CPK_THRESHOLD 또는 |stdev 증가율|≥DIST_STDEV_DELTA_PCT. ③ 그 외 제외.
-    Cpk None(limit 없음·n≤1 등)은 어느 조건도 발동하지 않는다.
+    ② 관심: 한쪽 Cpk<CPK_THRESHOLD — **절대 품질 조건이라 유의성 게이트를 걸지 않는다**
+       (before/after 비교와 무관하게 낮은 Cpk 는 봐야 한다).
+    ③ 관심: |stdev 증가율|≥DIST_STDEV_DELTA_PCT **이고** 그 산포 변화가 유의(p<DIST_ALPHA)할 때.
+       게이트를 거는 이유: σ 추정치의 변동계수는 1/√(2(n−1)) 이라 n=15 면 ≈19% 다 —
+       표본이 작으면 15% 변화가 추정 노이즈와 구분되지 않아 오경보가 된다. n 이 수천인
+       보통의 pool 에서는 15% 변화가 언제나 유의해 이 게이트가 사실상 무동작이고,
+       작은 n(수율 낮은 항목·outlier 마스킹 후)에서만 일한다.
+       p 를 낼 수 없으면(n<3·양쪽 고정값) 종전대로 효과크기만 보고 판정한다.
+    ④ 그 외 제외. Cpk None(limit 없음·n≤1 등)은 어느 조건도 발동하지 않는다.
+
+    p 는 **억제에만** 쓰고 포함 근거로는 쓰지 않는다 — die 는 공간 상관이 있어 p 가 실제보다
+    작게 나오므로 "유의하다→진짜"는 신뢰할 수 없다(significance.py 모듈 docstring).
     """
     ca, cb = num(row["after"]["cpk"]), num(row["before"]["cpk"])
     sa, sb = num(row["after"]["stdev"]), num(row["before"]["stdev"])
@@ -480,12 +492,15 @@ def _dist_focus(row) -> bool:
     if (ca is not None and ca < CPK_THRESHOLD) or (cb is not None and cb < CPK_THRESHOLD):
         return True
     sd = num(row["stdev_delta_pct"])
-    return sd is not None and abs(sd) >= DIST_STDEV_DELTA_PCT
+    if sd is None or abs(sd) < DIST_STDEV_DELTA_PCT:
+        return False
+    pv = num(row["p_stdev"])
+    return pv is None or pv < DIST_ALPHA
 
 
 def _dist_thresholds() -> dict:
     return {"cpk_high": DIST_CPK_HIGH, "cpk_low": CPK_THRESHOLD,
-            "stdev_delta_pct": DIST_STDEV_DELTA_PCT}
+            "stdev_delta_pct": DIST_STDEV_DELTA_PCT, "alpha": DIST_ALPHA}
 
 
 def build_dist_shift(tables, cpk_rows) -> dict:
@@ -503,7 +518,9 @@ def build_dist_shift(tables, cpk_rows) -> dict:
       median_shift    = |med_a−med_b| / IQR_b      (robust 이동량)
       iqr_delta_pct   = (IQR_a−IQR_b) / IQR_b × 100
       ks_d            = 두 pool ECDF 최대거리(0~1, 분포 형태 차이)
-    정렬: meanshift_sigma 내림차순(None 최하단, tie |Δσ%|). focus 규칙은 _dist_focus 참조.
+    유의성 2종(`p_mean`=Welch t, `p_stdev`=Brown-Forsythe)은 표시(ns 마커)와 **노이즈 게이트**
+    용이다 — 해석 한계와 게이트 규칙은 significance.py 모듈 docstring · _dist_focus 참조.
+    정렬: meanshift_sigma 내림차순(None 최하단, tie |Δσ%|).
     """
     empty = {"after": "", "before": "", "thresholds": _dist_thresholds(),
              "summary": {"total": 0, "focus": 0}, "rows": []}
@@ -536,6 +553,9 @@ def build_dist_shift(tables, cpk_rows) -> dict:
         rob_a = robust_a.get(subject) or {}
         rob_b = robust_b.get(subject) or {}
         iqr_b = rob_b.get("iqr")
+        # 정렬 배열은 KS(_ks_d)와 Brown-Forsythe(p_stdev)가 함께 쓴다 — 항목당 1회만 만든다.
+        sorted_a = _sorted_values(frame_a, subject)
+        sorted_b = _sorted_values(frame_b, subject)
         row = {
             "subject": subject,
             "units": json_safe(ra.get("units")) or json_safe(rb.get("units")) or "",
@@ -548,8 +568,13 @@ def build_dist_shift(tables, cpk_rows) -> dict:
             "stdev_delta_pct": _calc_gap(after["stdev"], before["stdev"]),
             "median_shift": _norm_shift(rob_a.get("median"), rob_b.get("median"), iqr_b),
             "iqr_delta_pct": _calc_gap(rob_a.get("iqr"), iqr_b),
-            "ks_d": round_num(_ks_d(_sorted_values(frame_a, subject),
-                                    _sorted_values(frame_b, subject)), 4),
+            "ks_d": round_num(_ks_d(sorted_a, sorted_b), 4),
+            # 유의성 — 표시(ns 마커)와 노이즈 게이트용. 평균은 Welch t(표시된 avg/stdev/n 을
+            # 그대로 써 화면 값과 어긋나지 않게), 산포는 Brown-Forsythe(비정규에 강건).
+            "p_mean": round_num(welch_p(num(after["average"]), num(after["stdev"]), after["n"],
+                                        num(before["average"]), num(before["stdev"]),
+                                        before["n"]), 6),
+            "p_stdev": round_num(brown_forsythe_p(sorted_a, sorted_b), 6),
         }
         row["focus"] = _dist_focus(row)
         if row["focus"]:

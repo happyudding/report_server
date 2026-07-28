@@ -171,7 +171,21 @@ def map_key(session, prep_digest: str = "") -> tuple:
 #      focus 플래그·after/before.n 추가, 정렬이 meanshift_sigma 내림차순으로 바뀐다.
 #      안 올리면 옛 disk_cache 가 list 형 dist_shift 를 반환해 산포 비교 탭이 지표·필터
 #      없는 legacy 표로 폴백된다.
-REPORT_SCHEMA_VERSION = 17
+# v18: Compare dist_shift 에 유의성 2종(p_mean=Welch t, p_stdev=Brown-Forsythe)·
+#      thresholds.alpha 추가 + focus 판정에 **노이즈 게이트** 도입 — |Δσ%|≥15 트리거가
+#      p_stdev<alpha 일 때만 관심으로 잡힌다(표본이 작은 항목의 오경보 제거, 큰 n 에선 무동작).
+#      안 올리면 옛 disk_cache 가 p 없는 rows 를 반환해 ns 마커가 안 뜨고 게이트도 적용되지
+#      않은 focus 를 계속 쓴다.
+# v19: 수율 **분모를 소스별로** 정한다 — Gross Die 가 기본이지만 그 소스의 측정 die 수보다
+#      작거나(수율 100% 초과) 100 개 이상 크면 자동으로 test die 로 내려가고, 사용자가
+#      소스별로 고를 수도 있다(yield_tab.resolve_source_basis). yield_rows/yield_bin_groups/
+#      yield_step_groups/yield_summary 의 % **값**이 바뀌고 payload.yield_basis 에 mode·
+#      by_source 가 추가된다. 안 올리면 옛 disk_cache 가 전 소스 동일 Gross Die 분모로 계산된
+#      payload(수율 100% 초과 포함)를 계속 반환한다.
+# v20: Compare goodlog 이 **테스트 프로그램이 완전히 같아도 rows 를 채운다**(limit 변경이
+#      없어도 항목별 값 gap% 를 봐야 한다는 요구). identical 은 안내 플래그로만 남는다.
+#      안 올리면 옛 disk_cache 가 rows=[] 인 payload 를 계속 반환해 표가 비어 보인다.
+REPORT_SCHEMA_VERSION = 20
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

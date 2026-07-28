@@ -349,6 +349,11 @@ function refreshDistConsumers() {
   // Distribution 갤러리 — 화면에 보이는(관측 중) 카드 재큐잉
   document.querySelectorAll('#panel-distribution .distg-card[data-visible="1"]')
     .forEach(distQueueRender);
+  // Compare 산포 비교 표의 Distribution 미니셀 (compare.js — 로드 순서 무관하게 가드)
+  if (typeof cmpDistQueueRender === "function") {
+    document.querySelectorAll('#cmp-dist-section .cmp-dist-cell[data-visible="1"]')
+      .forEach(cmpDistQueueRender);
+  }
 }
 
 // ── Bin1 only: 양품(BIN==1) ECDF — 전체 기준과 같은 배치 로더를 bin1 변형으로 쓴다. ──

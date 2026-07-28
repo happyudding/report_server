@@ -21,10 +21,11 @@ class ExcelEditWorker(QThread):
     done = pyqtSignal(bool, str)       # (changed, message)
     failed = pyqtSignal(str)           # error message
 
-    def __init__(self, session_id, server_base, parent=None):
+    def __init__(self, session_id, server_base, parent=None, indices=None):
         super().__init__(parent)
         self._session_id = session_id
         self._server_base = server_base
+        self._indices = indices        # Excel 로 열 source 원본 idx (None = 전체)
         self._cancelled = False
         self._confirm_event = None
         self._confirm_result = False
@@ -66,7 +67,8 @@ class ExcelEditWorker(QThread):
                 self._session_id, self._server_base,
                 status_cb=lambda s, m: self.status.emit(s, m),
                 should_cancel=lambda: self._cancelled,
-                confirm_cb=self._confirm)
+                confirm_cb=self._confirm,
+                indices=self._indices)
             self.done.emit(bool(result.get("changed")), str(result.get("message") or ""))
         except Exception as exc:
             self.failed.emit(str(exc))

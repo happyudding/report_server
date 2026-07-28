@@ -16,6 +16,10 @@
      stdev_delta_pct/median_shift/iqr_delta_pct/ks_d) 수식, focus 판정(양쪽 cpk>100·양쪽
      고정값 제외 / 한쪽 cpk<1.33·|Δσ%|≥15 포함), meanshift 내림차순 정렬(None 최하단),
      IQR/KS 모집단이 cpk 통계와 같은 Bin1 임(fail die 주입 불변).
+  9. dist_shift 노이즈 게이트 — |Δσ%|≥15 트리거는 Brown-Forsythe p<alpha 일 때만 focus.
+     같은 +20% 라도 n=15 면 억제되고 n=150 이면 통과한다. 절대 조건(Cpk<1.33)은 게이트 제외.
+ 10. goodlog(2026-07-28) — 항목·limit 이 완전히 같아도(identical) rows 를 채운다. Gap 수식은
+     (After−Before)/Before×100 유지.
 
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례). pytest 로 수집해도 동작한다.
 """
@@ -136,6 +140,11 @@ def test_single_source_group_matches_cpk_sheet():
             ref = cpk[(subject, src)]
             for key in ("average", "stdev", "cpk"):
                 assert row[side][key] == ref[key], (subject, side, key, row[side][key], ref[key])
+        # limit 도 cpk_rows 에서 그대로 가져온다 — 프런트가 두 탭을 같은 문자열로 찍으려면
+        # (compare.js `_cmpServer` = cpk.js `String(v)`) 값이 먼저 동일해야 한다.
+        ref_after = cpk[(subject, "WF_A")]
+        assert row["hilim"] == ref_after["upper_limit"], (subject, row["hilim"])
+        assert row["lolim"] == ref_after["lower_limit"], (subject, row["lolim"])
 
 
 def test_pooled_group_uses_concat_frame():
@@ -182,6 +191,26 @@ def test_bin_matrix_lists_only_mismatch_coords():
     assert bm["rows"][0]["bins"] == ["5", "1"], bm["rows"][0]
     # Pass→Fail 은 그룹 대표 기준
     assert bm["counts"]["pass_to_fail"] == 1 and bm["counts"]["fail_to_pass"] == 0, bm["counts"]
+
+
+def test_goodlog_rows_present_even_when_identical():
+    """항목·limit 이 완전히 같아도(goodlog identical) 표 행은 채워진다 (2026-07-28).
+
+    limit 변경이 없어도 항목별 Gap %(=(After−Before)/Before×100)를 봐야 한다는 요구.
+    identical 은 프런트 안내용 플래그로만 남고 rows 생략 조건이 아니다.
+    """
+    gl = _payload(make_pair(), {"before": ["WF_B"], "after": ["WF_A"]})["compare"]["goodlog"]
+    assert gl["identical"] is True, gl                      # 항목·limit 은 실제로 동일
+    assert len(gl["rows"]) == 4, gl["rows"]                 # 그래도 전 항목 행이 있다
+    assert gl["limit_change_map"] == {}, gl["limit_change_map"]
+    by_item = {r["after_item_name"]: r for r in gl["rows"]}
+    for r in gl["rows"]:                                    # 비교 3컬럼은 모두 True
+        assert (r["compare_item_name"], r["compare_lolimit"], r["compare_hilimit"]) \
+            == (True, True, True), r
+    # Gap 부호·크기 — Honey 원본 수식 (After−Before)/Before×100 을 유지한다.
+    assert by_item["G1_UP"]["gap"] == 4.0, by_item["G1_UP"]
+    assert by_item["G1_DOWN"]["gap"] == -4.0, by_item["G1_DOWN"]
+    assert by_item["G2_ITEM"]["gap"] == 10.0, by_item["G2_ITEM"]   # |gap|≥10 → 화면 빨강
 
 
 def test_common_map_carries_per_source_bins():
@@ -262,11 +291,18 @@ def test_dist_shift_ks_hand_cases():
 
 
 def test_dist_shift_focus_rules():
-    """focus — 양쪽 cpk>100 제외 / 한쪽 cpk<1.33 포함 / |Δσ%|≥15 포함 / 고정값 제외 / 평온 제외."""
-    before = {"HIGHCPK": list(_TIGHT), "LOWCPK": list(_LOW), "SPREAD": list(_WIDE),
-              "CONST": list(_CONST), "CALM": list(_WIDE)}
-    after = {"HIGHCPK": list(_TIGHT), "LOWCPK": list(_LOW), "SPREAD": _spread(_WIDE, 1.2),
-             "CONST": list(_CONST), "CALM": _spread(_WIDE, 1.05)}
+    """focus — 양쪽 cpk>100 제외 / 한쪽 cpk<1.33 포함 / |Δσ%|≥15 포함 / 고정값 제외 / 평온 제외.
+
+    표본을 ×10(n=150)으로 키운다 — SPREAD 의 Δσ +20% 가 **유의성 게이트를 통과**해야
+    효과크기 규칙을 검증할 수 있다. n=15 에서는 같은 +20% 가 p≈0.45 라 게이트에 걸린다
+    (그 억제 동작 자체는 test_dist_shift_significance_gate 가 따로 고정한다).
+    """
+    big = 10
+    before = {"HIGHCPK": _TIGHT * big, "LOWCPK": _LOW * big, "SPREAD": _WIDE * big,
+              "CONST": _CONST * big, "CALM": _WIDE * big}
+    after = {"HIGHCPK": _TIGHT * big, "LOWCPK": _LOW * big,
+             "SPREAD": _spread(_WIDE * big, 1.2),
+             "CONST": _CONST * big, "CALM": _spread(_WIDE * big, 1.05)}
     dist = _payload([_make_table("WF_A", after), _make_table("WF_B", before)],
                     {"before": ["WF_B"], "after": ["WF_A"]})["compare"]["dist_shift"]
     rows = {r["subject"]: r for r in dist["rows"]}
@@ -279,18 +315,52 @@ def test_dist_shift_focus_rules():
 
     assert rows["HIGHCPK"]["focus"] is False, rows["HIGHCPK"]   # 여유 과대 — 무조건 제외
     assert rows["LOWCPK"]["focus"] is True, rows["LOWCPK"]      # 한쪽 cpk<1.33
-    assert rows["SPREAD"]["focus"] is True, rows["SPREAD"]      # Δσ +20% ≥ 15
+    assert rows["SPREAD"]["focus"] is True, rows["SPREAD"]      # Δσ +20% ≥ 15 (n=150 → 유의)
     assert rows["CONST"]["focus"] is False, rows["CONST"]       # 양쪽 고정값
     assert rows["CALM"]["focus"] is False, rows["CALM"]         # Δσ +5% < 15
 
-    # 고정값 항목은 정규화 지표를 낼 수 없다.
+    # 고정값 항목은 정규화 지표도 유의성도 낼 수 없다.
     assert rows["CONST"]["meanshift_sigma"] is None and rows["CONST"]["cpk_ratio_pct"] is None
+    assert rows["CONST"]["p_mean"] is None and rows["CONST"]["p_stdev"] is None, rows["CONST"]
 
     assert dist["thresholds"] == {"cpk_high": 100.0, "cpk_low": 1.33,
-                                  "stdev_delta_pct": 15.0}, dist["thresholds"]
+                                  "stdev_delta_pct": 15.0, "alpha": 0.05}, dist["thresholds"]
     s = dist["summary"]
     assert s["total"] == len(dist["rows"]) == 5, s
     assert s["focus"] == sum(1 for r in dist["rows"] if r["focus"]) == 2, s
+
+
+def test_dist_shift_significance_gate():
+    """노이즈 게이트 — 같은 Δσ +20% 라도 표본이 작으면 focus 에서 빠진다.
+
+    σ 추정치의 변동계수는 1/√(2(n−1)) 이라 n=15 면 ≈19% — 15% 변화가 노이즈와 구분되지
+    않는다. 게이트는 **변화 기반 트리거에만** 걸리고 절대 조건(Cpk<1.33)에는 안 걸린다.
+    """
+    groups = {"before": ["WF_B"], "after": ["WF_A"]}
+
+    def _spread_focus(rep):
+        cols_b = {"SPREAD": _WIDE * rep}
+        cols_a = {"SPREAD": _spread(_WIDE * rep, 1.2)}
+        rows = _dist_rows(_payload(
+            [_make_table("WF_A", cols_a), _make_table("WF_B", cols_b)], groups))
+        return rows["SPREAD"]
+
+    small = _spread_focus(1)      # n=15
+    large = _spread_focus(10)     # n=150
+    # 효과크기(Δσ%)는 표본 크기와 무관하게 같다 — 갈리는 건 유의성뿐이다.
+    assert abs(small["stdev_delta_pct"] - 20.0) < 1e-6, small
+    assert abs(large["stdev_delta_pct"] - 20.0) < 1e-6, large
+    assert small["p_stdev"] > 0.05 and small["focus"] is False, small
+    assert large["p_stdev"] < 0.05 and large["focus"] is True, large
+
+    # 절대 조건(Cpk<1.33)은 게이트 대상이 아니다 — 작은 n 이어도 그대로 관심.
+    low = _dist_rows(_payload([_make_table("WF_A", {"LOWCPK": list(_LOW)}),
+                               _make_table("WF_B", {"LOWCPK": list(_LOW)})], groups))["LOWCPK"]
+    assert low["before"]["cpk"] < 1.33 and low["focus"] is True, low
+    assert low["p_mean"] == 1.0 and low["p_stdev"] == 1.0, low   # 완전 동일 표본
+
+    # 게이트는 큰 n 에서 사실상 무동작 — 유의성이 거의 항상 성립한다.
+    assert large["p_mean"] == 1.0, large      # 평균은 고정(_spread 는 산포만 바꾼다)
 
 
 def test_dist_shift_sort_none_last():
@@ -354,11 +424,12 @@ def main():
                test_undecidable_item_is_grade3, test_single_source_group_matches_cpk_sheet,
                test_pooled_group_uses_concat_frame, test_legacy_fallback_without_groups,
                test_bin_matrix_lists_only_mismatch_coords,
+               test_goodlog_rows_present_even_when_identical,
                test_common_map_carries_per_source_bins,
                test_compare_groups_option_parsing,
                test_dist_shift_metrics_formulas, test_dist_shift_ks_hand_cases,
-               test_dist_shift_focus_rules, test_dist_shift_sort_none_last,
-               test_dist_shift_bin1_population,
+               test_dist_shift_focus_rules, test_dist_shift_significance_gate,
+               test_dist_shift_sort_none_last, test_dist_shift_bin1_population,
                test_dist_shift_cpk_ratio_none_when_before_nonpositive,
                test_dist_shift_pooled_group_robust):
         fn()

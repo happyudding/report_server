@@ -465,6 +465,24 @@ def web_report_get_preprocess(session_id):
     return jsonify(result)
 
 
+@report_bp.get("/session/<session_id>/web_report/yield_basis")
+def web_report_get_yield_basis(session_id):
+    """소스별 수율 분모 기준 + 판정에 쓰인 수치 — Honey 허브 [Yield 계산] 탭이 그린다.
+
+    저장은 별도 라우트가 없다 — 허브 [저장] 이 preprocess POST 에 yield_basis 를 실어 보낸다.
+    조회 전용이라 preprocess GET 과 같이 세션 조회 권한만 요구한다."""
+    _require_web_report_session(session_id)
+    try:
+        result = web_report_service.get_yield_basis(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report yield_basis load failed for session %s", session_id)
+        abort(500, "yield_basis load failed")
+    return jsonify(result)
+
+
 @report_bp.post("/session/<session_id>/web_report/preprocess")
 def web_report_save_preprocess(session_id):
     """조회 전처리 옵션 저장 — 원본 parquet 은 그대로 두고 조회 시점에만 적용된다.

@@ -1,4 +1,5 @@
-"""RawdataHubDialog — Rawdata 진입 허브 (현재 상태 / Item Select / Outlier / 빠른 수정 / Excel).
+"""RawdataHubDialog — Rawdata 진입 허브 (현재 상태 / Options / Item Select / Outlier /
+Yield 계산 / Excel).
 
 종전에는 `Rawdata edit` 을 누르면 곧바로 Excel 이 떴다. 업로드가 끝난 세션에는 항목 선택도
 outlier 제거도 걸 수 없었는데, 그 둘은 원본을 고치지 않고 **조회 시점에만 적용되는 필터**
@@ -8,33 +9,33 @@ outlier 제거도 걸 수 없었는데, 그 둘은 원본을 고치지 않고 **
 2-리스트가 창을 다 먹는다):
 
     [현재 상태]        |  지금 적용 중인 전처리 목록 + 항목별 [해제] / [전체 해제]
+    [Options]          |  Bin1 only 처럼 조건을 짤 필요 없는 한 줄 옵션
     [Item Select]      |  Item List (제외 ↔ 표시 2리스트) + 검색
     [Outlier 제거]     |  mean ± [stdev] × σ
-    [빠른 수정]        |  → 별도 다이얼로그 (표에서 고치기 / 조건 일괄 수정)
-    [Rawdata 원본 수정]|  → Excel 왕복 (주황 — 원본을 직접 고치는 유일한 버튼)
+    [Yield 계산]       |  소스별 수율 **분모** (자동 / Gross Die / Test data) + 실시간 수율
+    [Rawdata 원본 수정]|  고칠 source 선택 → Excel 왕복 (주황 — 원본을 직접 고치는 유일한 버튼)
     ---------------------------------------------------------------------
-    [ ] Yield 계산 기준 - Test data 개수            [저장] [닫기]
+                                                     [저장] [닫기]
 
-체크박스는 수율 **분모**를 고른다: 해제(기본)면 제품 기준정보 Gross Die, 체크면 종전처럼
-그 소스의 rawdata 개수. Gross Die 가 비어 있으면 서버가 자동으로 rawdata 개수로 폴백한다.
-저장 위치는 위 두 필터와 같은 세션 편집 DB(kind='yield_basis')라 다음에 열 때도 적용된다.
+서버 조회는 **창을 띄운 뒤 스레드**에서 한다(`_HubLoadWorker`) — 생성자에서 동기 GET 을 돌면
+데이터가 큰 세션에서 버튼을 누른 뒤 창이 뜨기까지 UI 가 멈춘다.
 
 [저장]은 **화면에 보이는 상태를 저장**한다 — 페이지가 나뉘어도 다이얼로그가 들고 있는 상태는
 하나라 부분 저장 함정이 없다(`_save` 참조). 저장하면 서버가 Summary/Yield/CPK/Issue Table/
 Distribution/Trim/Map 을 그 기준으로 다시 계산하고, 필터는 세션 DB 에 남아 다음에도 적용된다.
 
-빠른 수정이 만든 셀 패치·조건 규칙도 같은 전처리 spec 에 들어간다. 이 다이얼로그는 그 두 키를
-**건드리지 않고 그대로 유지**한다 — 서버가 edits/rules 를 "키 부재 = 유지"로 처리하기 때문
-(레거시 키인 exclude_items/outlier 만 화면 상태로 덮어쓴다).
+빠른 수정이 만든 셀 패치·조건 규칙도 같은 전처리 spec 에 들어간다. 빠른 수정 화면은 현재
+비활성이지만(아래 페이지 등록부 주석), 이미 저장된 셀 패치·규칙은 [현재 상태] 에서 그대로
+보이고 해제할 수 있다.
 
-Item Select / Outlier / 빠른 수정은 원본 parquet 을 건드리지 않으므로 비우고 저장하면
-원상복구된다 — 그래서 Excel 편집(원본 대상, 되돌릴 수 없음)과 달리 확인창이 없다.
+Item Select / Outlier / Options / Yield 계산은 원본 parquet 을 건드리지 않으므로 비우고
+저장하면 원상복구된다 — 그래서 Excel 편집(원본 대상, 되돌릴 수 없음)과 달리 확인창이 없다.
 """
 from __future__ import annotations
 
 from urllib.parse import quote
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -43,6 +44,7 @@ from PyQt6.QtWidgets import (
     QDialogButtonBox,
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -50,6 +52,8 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -60,6 +64,13 @@ ACTION_QUICK = "quick"
 
 _TIMEOUT = (10, 60)
 _ROW_BTN_W = 170
+
+# 수율 분모 자동 판정 사유 (서버 yield_tab.auto_basis 의 reason 코드) — 사람이 읽는 문구.
+_YIELD_REASON = {
+    "no_gross": "기준정보에 Gross die 없음",
+    "gross_lt_tested": "Gross die < Test die — 수율 100% 초과",
+    "tested_short": "Test die 가 100 개 이상 적음",
+}
 
 # 원본을 실제로 고치는 유일한 버튼 — 되돌릴 수 없으므로 주황으로 구분한다
 # (나머지는 조회 필터·패치라 언제든 해제 가능).
@@ -91,6 +102,43 @@ def _headers(extra=None):
     headers = {"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')}"} if user else {}
     headers.update(extra or {})
     return headers
+
+
+class _HubLoadWorker(QThread):
+    """허브가 필요한 서버 조회 3건 — 창을 띄운 뒤 백그라운드로 돈다.
+
+    항목이 수천 개인 세션에서는 raw_data/columns 만으로도 수 초가 걸린다. 생성자에서
+    동기 호출하면 [Rawdata edit] 를 누른 뒤 창이 뜨기까지 UI 가 통째로 멈춘다.
+    yield_basis 는 실패해도 나머지 화면은 쓸 수 있어야 하므로 따로 감싼다.
+    """
+
+    done = pyqtSignal(object, str)      # (info dict, error)
+
+    def __init__(self, base, session_id, parent=None):
+        super().__init__(parent)
+        self.base, self.session_id = base, session_id
+
+    def _get(self, path):
+        import requests
+
+        r = requests.get(
+            f"{self.base}/pe/report/session/{self.session_id}/web_report/{path}",
+            headers=_headers(), timeout=_TIMEOUT)
+        r.raise_for_status()
+        return r.json() or {}
+
+    def run(self):
+        try:
+            info = {"preprocess": self._get("preprocess"),
+                    "columns": self._get("raw_data/columns")}
+        except Exception as exc:                     # noqa: BLE001 (UI 로 그대로 전달)
+            self.done.emit(None, str(exc))
+            return
+        try:
+            info["yield"] = self._get("yield_basis")
+        except Exception:
+            info["yield"] = {}
+        self.done.emit(info, "")
 
 
 class _ItemListWidget(QWidget):
@@ -208,11 +256,16 @@ class RawdataHubDialog(QDialog):
         self.base = str(server_base).rstrip("/")
         self.action = ""
         self.changed = False          # 전처리 옵션을 저장했는가 (호출부가 새로고침 판단)
+        self.excel_indices = None     # Excel 왕복에 넘길 source idx (None = 전체)
         self._items = []
+        self._sources = []            # source 이름 (원본 idx 순서)
         self._spec = {}
         self._edits = []              # 빠른 수정 셀 패치 (여기선 표시·해제만)
         self._rules = []              # 조건 일괄 규칙 (여기선 표시·해제만)
         self._gross_die = None        # 세션 제품 기준정보 Gross Die (없으면 None)
+        self._yield_rows = []         # 소스별 수율 분모 판정 (서버 yield_basis 응답)
+        self._basis_combos = []       # Yield 계산 표의 기준 콤보 (행 순서 = _yield_rows)
+        self._loader = None
 
         self.setWindowTitle("Rawdata")
         self.resize(860, 600)
@@ -256,33 +309,41 @@ class RawdataHubDialog(QDialog):
         self._add_page(nav, "Outlier 제거", outlier_page,
                        "mean ± (입력값)×stdev 밖의 측정값만 결측 처리 — 비우면 해제")
 
-        # ── 페이지 4: 빠른 수정 (별도 다이얼로그로 이동) ─────────────────────
-        quick_page = QWidget()
-        quick_layout = QVBoxLayout(quick_page)
-        quick_layout.addWidget(QLabel(
-            "표에서 필요한 행만 조회해 값을 고치거나, 조건으로 한 번에 수정합니다.\n"
-            "· 셀 직접 수정 / 붙여넣기 / 선택 영역 값 지정·빈값·오프셋·배율 / 찾아 바꾸기\n"
-            "· 조건 일괄 수정 (예: DUT 3 의 VREF > 4.5 인 die 를 빈값으로)\n"
-            "· 저장 전에 수율·CPK 변화를 미리 봅니다\n\n"
-            "Bin1 only · Spec Out 빈값처럼 조건을 짤 필요 없는 것은 [Options] 에 있습니다.\n"
-            "Excel 을 열지 않고 원본도 바꾸지 않습니다 — 언제든 되돌릴 수 있습니다."))
-        btn_quick_go = QPushButton("빠른 수정 열기")
-        btn_quick_go.setMinimumHeight(38)
-        btn_quick_go.clicked.connect(self._start_quick)
-        quick_layout.addWidget(btn_quick_go)
-        quick_layout.addStretch(1)
-        self._add_page(nav, "빠른 수정", quick_page,
-                       "Excel 없이 표·조건으로 고칩니다 (원본 불변, 되돌릴 수 있음)")
+        # ── 페이지 4: Yield 계산 (소스별 수율 분모) ──────────────────────────
+        self._add_page(nav, "Yield 계산", self._build_yield_page(),
+                       "소스별 수율 분모 — 자동 / Gross Die / Test data 개수")
+
+        # ── [빠른 수정] 페이지는 잠시 비활성 (2026-07-28, 사용자 요청) ───────
+        # 되살릴 때: 아래 3줄 주석을 풀면 된다 (다이얼로그·호출부는 그대로 살아 있다 —
+        # honey_main._run_quick_edit / honey_ui/rawdata_quick_dialog.py).
+        # 이미 저장된 셀 패치·조건 규칙은 계속 적용되고 [현재 상태] 에서 해제할 수 있다.
+        #   quick_page = self._build_quick_page()
+        #   self._add_page(nav, "빠른 수정", quick_page,
+        #                  "Excel 없이 표·조건으로 고칩니다 (원본 불변, 되돌릴 수 있음)")
 
         # ── 페이지 5: Rawdata 원본 수정 (Excel) ──────────────────────────────
         excel_page = QWidget()
         excel_layout = QVBoxLayout(excel_page)
         excel_layout.addWidget(QLabel(
-            "전체 rawdata 를 Excel 로 내려받아 직접 편집한 뒤 서버에 반영합니다.\n\n"
+            "고를 source 만 Excel 로 내려받아 직접 편집한 뒤 서버에 반영합니다.\n\n"
             "· 시트(=source) 삭제, 복잡한 수식 작업처럼 표로는 안 되는 일에 씁니다.\n"
-            "· 데이터가 크면 Excel 을 여는 것만으로도 오래 걸립니다 — 값 수정·조건 일괄\n"
-            "  수정은 [빠른 수정] 이 훨씬 빠릅니다.\n"
+            "· 체크하지 않은 source 는 내려받지도, 손대지도 않습니다 (그대로 보존).\n"
+            "· 데이터가 크면 Excel 을 여는 것만으로도 오래 걸립니다 — 고칠 source 만\n"
+            "  체크하는 것이 여는 속도를 좌우합니다.\n"
             "· **원본을 실제로 바꿉니다. 되돌릴 수 없습니다.**"))
+        excel_layout.addWidget(QLabel("Excel 로 열 Source (체크한 것만)"))
+        self.list_excel_source = QListWidget()
+        self.list_excel_source.setMaximumHeight(150)
+        excel_layout.addWidget(self.list_excel_source)
+        src_row = QHBoxLayout()
+        btn_src_all = QPushButton("전체 선택")
+        btn_src_none = QPushButton("전체 해제")
+        btn_src_all.clicked.connect(lambda: self._check_excel_sources(True))
+        btn_src_none.clicked.connect(lambda: self._check_excel_sources(False))
+        src_row.addWidget(btn_src_all)
+        src_row.addWidget(btn_src_none)
+        src_row.addStretch(1)
+        excel_layout.addLayout(src_row)
         self.btn_excel = QPushButton("Rawdata 원본 수정 (Excel 열기)")
         self.btn_excel.setStyleSheet(_DANGER_BTN_QSS)
         self.btn_excel.setMinimumHeight(38)
@@ -305,15 +366,6 @@ class RawdataHubDialog(QDialog):
         body.addWidget(nav_holder)
         body.addWidget(self.pages, 1)
 
-        # ── 하단: Yield 분모 기준 체크박스 ───────────────────────────────────
-        # 체크 = 종전대로 그 소스의 rawdata(test data) 개수를 분모로. 해제(기본) = 제품
-        # 기준정보의 Gross Die 를 분모로 — Gross Die 가 비어 있으면 서버가 자동으로
-        # rawdata 개수로 폴백한다. 값은 세션 DB 에 남아 다음에 열 때도 적용된다.
-        self.chk_test_basis = QCheckBox("Yield 계산 기준 - Test data 개수")
-        self.chk_test_basis.setToolTip(
-            "체크: 수율 분모 = 그 소스의 rawdata 개수 (종전 동작)\n"
-            "해제: 수율 분모 = 제품 기준정보 Gross Die (없으면 rawdata 개수로 폴백)")
-
         # ── 하단: 저장 / 닫기 ────────────────────────────────────────────────
         self.lbl_state = QLabel("")
         self.lbl_state.setWordWrap(True)
@@ -327,12 +379,11 @@ class RawdataHubDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addLayout(body, 1)
-        layout.addWidget(self.chk_test_basis)
         layout.addWidget(self.lbl_state)
         layout.addWidget(buttons)
 
         self.nav_buttons[0].setChecked(True)
-        self._load()
+        self._load()   # 창은 바로 뜨고 서버 조회는 스레드에서 (_HubLoadWorker)
 
     def _add_page(self, nav_layout, title, widget, tooltip):
         """좌측 네비 버튼 1개 + 우측 페이지 1개를 짝지어 등록한다."""
@@ -385,26 +436,76 @@ class RawdataHubDialog(QDialog):
         self.chk_bin1_only.toggled.connect(self._toggle_bin1_only)
         layout.addWidget(self.chk_bin1_only)
         layout.addWidget(QLabel(
-            "    fail die 를 빼고 양품만으로 분포·CPK 를 봅니다. die 자체가 빠지므로\n"
-            "    수율·Wafer Map 도 함께 달라집니다."))
+            "    fail die 를 빼고 양품만으로 분포·CPK 를 봅니다."))
         layout.addSpacing(14)
 
-        layout.addWidget(QLabel("Spec Out 빈값 — 규격(LOLIM~HILIM) 밖 측정값을 결측 처리"))
-        spec_row = QHBoxLayout()
-        self.cmb_specout = QComboBox()
+        # [Spec Out 빈값] 은 잠시 비활성 (2026-07-28, 사용자 요청). 위젯과 _add_spec_out_option
+        # 은 그대로 두고 **레이아웃에만 붙이지 않는다** — 되살릴 때 아래 3줄만 복구하면 된다.
+        # 이미 저장된 spec_out 규칙은 계속 적용되고 [현재 상태] 에서 해제할 수 있다.
+        self.cmb_specout = QComboBox()      # _sync_options 가 항목을 채운다 (화면엔 없음)
         self.cmb_specout.setMinimumWidth(240)
-        btn_specout = QPushButton("추가")
-        btn_specout.clicked.connect(self._add_spec_out_option)
-        spec_row.addWidget(QLabel("    항목"))
-        spec_row.addWidget(self.cmb_specout)
-        spec_row.addWidget(btn_specout)
-        spec_row.addStretch(1)
-        layout.addLayout(spec_row)
-        layout.addWidget(QLabel(
-            "    그 항목의 규격 밖 값만 빈칸이 됩니다 — die 는 남으므로 수율은 그대로고\n"
-            "    CPK·Distribution 의 n·평균·σ 만 달라집니다. 항목마다 하나씩 추가하세요."))
+        #   layout.addWidget(QLabel("Spec Out 빈값 — 규격(LOLIM~HILIM) 밖 측정값을 결측 처리"))
+        #   spec_row = ... (self.cmb_specout + [추가] btn → self._add_spec_out_option)
+        #   layout.addWidget(QLabel("    그 항목의 규격 밖 값만 빈칸이 됩니다 ..."))
+
         layout.addStretch(1)
         layout.addWidget(QLabel("추가한 옵션은 [현재 상태] 에서 확인·해제할 수 있습니다."))
+        return page
+
+    def _build_yield_page(self):
+        """소스별 수율 **분모** 선택 + 실시간 수율.
+
+        기본은 [자동] 이다 — 제품 기준정보 Gross Die 를 쓰되, 그 값이 그 소스의 측정 die 수
+        보다 작거나(그대로 쓰면 수율이 100% 를 넘는다) 100 개 이상 크면 Test data 개수로
+        내려간다. 판정 규칙의 정본은 서버(web_report/tabs/yield_tab.resolve_source_basis)이고,
+        여기서는 서버가 준 pass/tested/gross 로 **화면 값만** 즉시 다시 계산한다(왕복 없음).
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(QLabel(
+            "수율(Yield) 의 **분모**를 source 마다 고릅니다. Yield 탭·Issue Table·Summary 가\n"
+            "모두 여기서 고른 기준으로 계산됩니다."))
+        self.tbl_yield = QTableWidget(0, 5)
+        self.tbl_yield.setHorizontalHeaderLabels(
+            ["Source", "Test die", "Gross die", "분모 기준", "Yield"])
+        self.tbl_yield.verticalHeader().setVisible(False)
+        self.tbl_yield.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_yield.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        header = self.tbl_yield.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for col in range(1, 5):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        layout.addWidget(self.tbl_yield, 1)
+
+        row = QHBoxLayout()
+        for text, basis in (("전체 자동", ""), ("전체 Gross die", "gross"),
+                            ("전체 Test die", "test")):
+            btn = QPushButton(text)
+            btn.clicked.connect(lambda _=False, b=basis: self._set_all_basis(b))
+            row.addWidget(btn)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        self.lbl_yield_sum = QLabel("")
+        self.lbl_yield_sum.setWordWrap(True)
+        layout.addWidget(self.lbl_yield_sum)
+        return page
+
+    def _build_quick_page(self):
+        """[빠른 수정] 페이지 — 현재 비활성(생성자의 등록부 주석 참조)."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.addWidget(QLabel(
+            "표에서 필요한 행만 조회해 값을 고치거나, 조건으로 한 번에 수정합니다.\n"
+            "· 셀 직접 수정 / 붙여넣기 / 선택 영역 값 지정·빈값·오프셋·배율 / 찾아 바꾸기\n"
+            "· 조건 일괄 수정 (예: DUT 3 의 VREF > 4.5 인 die 를 빈값으로)\n"
+            "· 저장 전에 수율·CPK 변화를 미리 봅니다\n\n"
+            "Excel 을 열지 않고 원본도 바꾸지 않습니다 — 언제든 되돌릴 수 있습니다."))
+        btn_quick_go = QPushButton("빠른 수정 열기")
+        btn_quick_go.setMinimumHeight(38)
+        btn_quick_go.clicked.connect(self._start_quick)
+        layout.addWidget(btn_quick_go)
+        layout.addStretch(1)
         return page
 
     # ── Options 페이지 동작 ──────────────────────────────────────────────────
@@ -477,26 +578,24 @@ class RawdataHubDialog(QDialog):
 
     # ── 서버 통신 ────────────────────────────────────────────────────────────
     def _load(self):
-        """현재 항목 목록 + 저장된 필터를 읽어 화면을 채운다."""
-        import requests
+        """현재 항목 목록 + 저장된 필터·수율 기준을 **스레드로** 읽어 화면을 채운다."""
+        self._set_busy(True, "세션 정보를 불러오는 중...")
+        self._loader = _HubLoadWorker(self.base, self.session_id, self)
+        self._loader.done.connect(self._on_loaded)
+        self._loader.start()
 
-        try:
-            r = requests.get(
-                f"{self.base}/pe/report/session/{self.session_id}/web_report/preprocess",
-                headers=_headers(), timeout=_TIMEOUT)
-            r.raise_for_status()
-            info = r.json() or {}
-            self._spec = info.get("spec") or {}
-            self._set_basis(info)
-
-            r = requests.get(
-                f"{self.base}/pe/report/session/{self.session_id}/web_report/raw_data/columns",
-                headers=_headers(), timeout=_TIMEOUT)
-            r.raise_for_status()
-            self._items = (r.json() or {}).get("items") or []
-        except Exception as exc:
-            QMessageBox.warning(self, "Rawdata", f"세션 정보를 가져오지 못했습니다.\n{exc}")
-            self._items, self._spec = [], {}
+    def _on_loaded(self, info, error):
+        """_HubLoadWorker 결과 반영 (메인스레드)."""
+        self._set_busy(False)
+        if error or info is None:
+            QMessageBox.warning(self, "Rawdata", f"세션 정보를 가져오지 못했습니다.\n{error}")
+            self._items, self._sources, self._spec = [], [], {}
+        else:
+            self._spec = (info.get("preprocess") or {}).get("spec") or {}
+            columns = info.get("columns") or {}
+            self._items = columns.get("items") or []
+            self._sources = [str(s) for s in (columns.get("sources") or [])]
+            self._set_yield_info(info.get("yield") or info.get("preprocess") or {})
 
         self.item_list.populate(self._items, self._spec.get("exclude_items") or [])
         self._set_k((self._spec.get("outlier") or {}).get("k"))
@@ -504,14 +603,119 @@ class RawdataHubDialog(QDialog):
         # 페이지에서 켜고 끌 수도 있다.
         self._edits = list(self._spec.get("edits") or [])
         self._rules = list(self._spec.get("rules") or [])
+        self._populate_excel_sources()
         self._render_state_list()
         self._sync_options()
         self._refresh_state()
 
-    def _set_basis(self, info):
-        """서버 응답(yield_basis/gross_die)을 체크박스 상태로 반영."""
+    def _set_busy(self, busy, message=""):
+        """로드 중에는 저장·Excel 진입을 막는다 (화면이 빈 상태로 저장되는 사고 방지)."""
+        for widget in (self.btn_save, self.btn_excel):
+            widget.setEnabled(not busy)
+        if message:
+            self.lbl_state.setText(message)
+
+    # ── Yield 계산 페이지 ────────────────────────────────────────────────────
+    def _set_yield_info(self, info):
+        """서버 yield_basis 응답 → 소스별 표. gross_die 는 안내 문구에도 쓴다."""
         self._gross_die = (info or {}).get("gross_die")
-        self.chk_test_basis.setChecked(str((info or {}).get("yield_basis") or "") == "test")
+        self._yield_rows = [dict(r) for r in ((info or {}).get("sources") or [])]
+        self._render_yield_table()
+
+    def _render_yield_table(self):
+        """소스 1행 = [이름 / test die / gross die / 기준 콤보 / 수율]."""
+        self._basis_combos = []
+        self.tbl_yield.setRowCount(len(self._yield_rows))
+        for row, entry in enumerate(self._yield_rows):
+            self.tbl_yield.setItem(row, 0, QTableWidgetItem(str(entry.get("source") or "")))
+            self.tbl_yield.setItem(row, 1, QTableWidgetItem(f"{entry.get('tested') or 0:,}"))
+            gross = entry.get("gross")
+            self.tbl_yield.setItem(row, 2, QTableWidgetItem(f"{gross:,}" if gross else "—"))
+
+            combo = QComboBox()
+            combo.addItem(self._auto_label(entry), "")
+            combo.addItem("Gross die", "gross")
+            combo.addItem("Test die", "test")
+            if not entry.get("gross_allowed"):
+                # 규칙: 수율은 100% 를 넘을 수 없다 — Gross 를 고를 수 없는 소스는 막는다.
+                item = combo.model().item(1)
+                item.setEnabled(False)
+                item.setToolTip(_YIELD_REASON.get(entry.get("reason") or "", "")
+                                or "Gross die 를 분모로 쓸 수 없습니다.")
+            override = str(entry.get("override") or "")
+            if override == "gross" and not entry.get("gross_allowed"):
+                override = ""      # 고를 수 없는 선택 — [자동] 로 표시(서버도 test 로 내린다)
+            pos = combo.findData(override)
+            combo.setCurrentIndex(pos if pos >= 0 else 0)
+            combo.currentIndexChanged.connect(self._on_basis_changed)
+            self._basis_combos.append(combo)
+            self.tbl_yield.setCellWidget(row, 3, combo)
+            self.tbl_yield.setItem(row, 4, QTableWidgetItem(""))
+        self._refresh_yield_values()
+
+    @staticmethod
+    def _auto_label(entry):
+        basis = "Gross die" if entry.get("auto") == "gross" else "Test die"
+        reason = _YIELD_REASON.get(entry.get("reason") or "", "")
+        return f"자동 → {basis}" + (f" ({reason})" if reason else "")
+
+    def _basis_of(self, row_idx):
+        """그 행에 지금 적용될 기준 — 콤보가 [자동] 이면 서버가 준 auto 판정."""
+        entry = self._yield_rows[row_idx]
+        combo = self._basis_combos[row_idx]
+        basis = str(combo.currentData() or "") or str(entry.get("auto") or "test")
+        # 서버와 같은 안전장치: Gross 를 못 쓰는 소스는 어떤 선택이든 test 로 내린다.
+        return "test" if basis == "gross" and not entry.get("gross_allowed") else basis
+
+    def _on_basis_changed(self):
+        self._refresh_yield_values()
+        self._refresh_state()
+
+    def _refresh_yield_values(self):
+        """분모 선택 → 소스별 수율·전체 수율을 즉시 다시 계산한다 (서버 왕복 없음)."""
+        passed = total = 0
+        for row, entry in enumerate(self._yield_rows):
+            basis = self._basis_of(row)
+            denom = int(entry.get("gross") or 0) if basis == "gross" \
+                else int(entry.get("tested") or 0)
+            n_pass = int(entry.get("pass") or 0)
+            pct = (n_pass / denom * 100.0) if denom else 0.0
+            # 고를 수 있는 기준일 때만 "다른 기준" 값을 병기한다 — 막힌 Gross 값을 보여주면
+            # 고르면 그 수율이 될 것처럼 읽힌다.
+            other = (int(entry.get("tested") or 0) if basis == "gross"
+                     else (int(entry.get("gross") or 0) if entry.get("gross_allowed") else 0))
+            other_txt = (f"  (다른 기준 {n_pass / other * 100.0:.2f}%)" if other else "")
+            cell = QTableWidgetItem(f"{pct:.2f}%   {n_pass:,} / {denom:,}{other_txt}")
+            self.tbl_yield.setItem(row, 4, cell)
+            passed += n_pass
+            total += denom
+        if not self._yield_rows:
+            self.lbl_yield_sum.setText(
+                "소스 정보를 읽지 못했습니다 — 수율 분모는 서버 기본값(자동)으로 계산됩니다.")
+            return
+        pooled = (passed / total * 100.0) if total else 0.0
+        self.lbl_yield_sum.setText(
+            f"전체 Yield {pooled:.2f}%  ({passed:,} / {total:,})   ·   "
+            f"Gross die 기준 {sum(1 for i in range(len(self._yield_rows)) if self._basis_of(i) == 'gross')}"
+            f" / Test die 기준 {sum(1 for i in range(len(self._yield_rows)) if self._basis_of(i) == 'test')}"
+            "   ·   [저장] 을 눌러야 리포트에 반영됩니다.")
+
+    def _set_all_basis(self, basis):
+        for row, combo in enumerate(self._basis_combos):
+            if basis == "gross" and not self._yield_rows[row].get("gross_allowed"):
+                continue                      # 못 쓰는 소스는 [자동] 그대로 둔다
+            pos = combo.findData(basis)
+            if pos >= 0:
+                combo.setCurrentIndex(pos)
+
+    def _basis_overrides(self):
+        """저장 payload 의 sources — [자동] 인 소스는 넣지 않는다(= 서버 자동 판정)."""
+        out = {}
+        for row, entry in enumerate(self._yield_rows):
+            chosen = str(self._basis_combos[row].currentData() or "")
+            if chosen:
+                out[str(entry.get("source") or "")] = chosen
+        return out
 
     def _set_k(self, k):
         self.edit_k.setText("" if not k else (str(int(k)) if float(k).is_integer()
@@ -538,13 +742,39 @@ class RawdataHubDialog(QDialog):
         parts.append(f"outlier ±{k:g}σ 적용 중" if k else "outlier 미적용")
         if self._edits or self._rules:
             parts.append(f"빠른 수정 셀 {len(self._edits)} / 규칙 {len(self._rules)}")
-        if self.chk_test_basis.isChecked():
-            parts.append("Yield 분모 = Test data 개수")
-        elif self._gross_die:
-            parts.append(f"Yield 분모 = Gross Die {self._gross_die}")
-        else:
-            parts.append("Yield 분모 = Gross Die 정보 없음 → Test data 개수")
+        parts.append(self._basis_summary())
         self.lbl_state.setText(" · ".join(parts))
+
+    def _basis_summary(self):
+        """하단 한 줄 요약용 수율 분모 상태."""
+        if not self._yield_rows:
+            return (f"Yield 분모 = Gross Die {self._gross_die}" if self._gross_die
+                    else "Yield 분모 = 자동")
+        n_gross = sum(1 for i in range(len(self._yield_rows)) if self._basis_of(i) == "gross")
+        if n_gross == len(self._yield_rows):
+            return f"Yield 분모 = Gross die {self._gross_die}"
+        if n_gross == 0:
+            return "Yield 분모 = Test die (소스별 측정 die 수)"
+        return f"Yield 분모 = 소스별 (Gross {n_gross} / Test {len(self._yield_rows) - n_gross})"
+
+    # ── Excel 원본 수정 source 선택 ──────────────────────────────────────────
+    def _populate_excel_sources(self):
+        """Excel 로 열 source 체크리스트 — 기본은 전체 선택(종전 동작과 같음)."""
+        self.list_excel_source.clear()
+        for name in self._sources:
+            it = QListWidgetItem(str(name))
+            it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            it.setCheckState(Qt.CheckState.Checked)
+            self.list_excel_source.addItem(it)
+
+    def _check_excel_sources(self, checked):
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for i in range(self.list_excel_source.count()):
+            self.list_excel_source.item(i).setCheckState(state)
+
+    def _checked_excel_indices(self):
+        return [i for i in range(self.list_excel_source.count())
+                if self.list_excel_source.item(i).checkState() == Qt.CheckState.Checked]
 
     # ── 현재 상태 목록 ───────────────────────────────────────────────────────
     def _state_entries(self):
@@ -630,8 +860,10 @@ class RawdataHubDialog(QDialog):
         except ValueError as exc:
             QMessageBox.warning(self, "Outlier 제거", str(exc))
             return
+        # yield_basis: mode 는 항상 auto 로 두고 **소스별 선택만** 명시한다 — [자동] 인
+        # 소스는 서버가 매번 규칙(Gross die 우선 + 100% 초과·대량 미측정 회피)으로 정한다.
         spec = {"exclude_items": self.item_list.excluded_items(),
-                "yield_basis": "test" if self.chk_test_basis.isChecked() else "gross",
+                "yield_basis": {"mode": "auto", "sources": self._basis_overrides()},
                 "edits": list(self._edits), "rules": list(self._rules)}
         if k:
             spec["outlier"] = {"mode": "stdev", "k": k}
@@ -667,7 +899,9 @@ class RawdataHubDialog(QDialog):
         self._set_k((self._spec.get("outlier") or {}).get("k"))
         self._edits = list(self._spec.get("edits") or [])
         self._rules = list(self._spec.get("rules") or [])
-        self._set_basis(result)
+        # 수율 표는 다시 그리지 않는다 — 화면 선택이 곧 방금 저장한 값이고, POST 응답에는
+        # 표를 채울 수치(pass/tested)가 없다. gross_die 안내값만 최신으로 맞춘다.
+        self._gross_die = result.get("gross_die", self._gross_die)
         self._render_state_list()
         self._sync_options()
         self._refresh_state()
@@ -685,7 +919,13 @@ class RawdataHubDialog(QDialog):
 
         Excel 편집은 행을 지우거나 순서를 바꿀 수 있어 행 위치 기반 셀 패치가 무효가 되고,
         서버가 반영 시점에 그 패치를 해제한다(web_report/edits.drop_preprocess_edits).
-        나중에 알면 "고쳐둔 게 사라졌다" 가 되므로 들어가기 전에 확인받는다."""
+        나중에 알면 "고쳐둔 게 사라졌다" 가 되므로 들어가기 전에 확인받는다.
+
+        체크한 source 만 Excel 로 연다 — 나머지는 내려받지도 않고 서버 원본 그대로 남는다."""
+        indices = self._checked_excel_indices()
+        if not indices:
+            QMessageBox.warning(self, "Rawdata 원본 수정", "Source 를 1개 이상 선택하세요.")
+            return
         if self._edits and QMessageBox.question(
                 self, "Rawdata 원본 수정",
                 f"빠른 수정으로 저장해 둔 셀 {len(self._edits)}건이 있습니다.\n\n"
@@ -693,5 +933,8 @@ class RawdataHubDialog(QDialog):
                 "자동으로 해제됩니다 (조건 일괄 규칙은 유지됩니다).\n\n계속할까요?"
         ) != QMessageBox.StandardButton.Yes:
             return
+        # 전부 선택이면 None — 종전(전체 교체) 경로를 그대로 타게 한다.
+        self.excel_indices = (None if len(indices) == self.list_excel_source.count()
+                              else indices)
         self.action = ACTION_EXCEL
         self.accept()

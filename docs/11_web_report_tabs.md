@@ -66,20 +66,37 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   **Issue Table·Summary·fail_bin_ranking 도 동일한 전체(total) 기준 값(`build_yield_rows`)**
   — Issue Table 은 merge 유지(STEP 열 포함, fail 비중 내림차순이라 P1/P3 가 교차 등장).
   프런트 원형 파이는 제거. `yield_bin_groups`(전체 기준 merge 그룹)는 Excel 내보내기용으로 유지.
-- **Yield 분모 = Gross Die (2026-07-23)**: 위의 "전체 die"(분모)는 기본이 **제품 기준정보
-  `report_session.gross_die`**(product_info.db lookup 값)다. 값이 없거나 형식이 이상하면
-  종전처럼 소스별 rawdata 행 수로 **폴백**한다 (`yield_tab.source_totals` /
-  `gross_die_value` — 소스마다 같은 gross_die 를 쓴다). **분자(pass/fail die 수)는 언제나
-  실측**이라 Gross Die 기준에선 `pass + fail < total`(미측정 die) 일 수 있고, 그래서
-  `yield_summary.tested`(실측 die 수)와 payload `yield_basis = {basis:"gross"|"test",
-  gross_die}` 를 병기해 요약 박스가 분모를 배지로 표시한다(`sheets.js yieldBasisBadgeHtml`).
-  세션별 선택은 Honey **Rawdata 허브 체크박스 "Yield 계산 기준 - Test data 개수"** →
-  `POST .../web_report/preprocess` 의 `yield_basis` 필드 → 세션 편집 DB
-  (`edits.KIND_YIELD_BASIS`, item_key `basis`). **preprocess spec 과 분리한 이유**: preprocess
-  digest 가 붙으면 Distribution pack(정렬 전가) 경로가 폴백으로 떨어지는데 수율 분모는
-  ECDF 와 무관하다. rev 증가로 REPORT//full 캐시만 무효화된다.
-  회귀 고정: [tests/test_yield_gross_die.py](../tests/test_yield_gross_die.py)(계산) +
-  [tests/test_yield_basis_session.py](../tests/test_yield_basis_session.py)(저장·재오픈·폴백).
+- **Yield 분모 = Gross Die, 소스별 판정 (2026-07-23 도입 / 2026-07-28 소스별로 확장)**:
+  위의 "전체 die"(분모)는 기본이 **제품 기준정보 `report_session.gross_die`**(product_info.db
+  lookup 값)이며, **source 마다 따로** 정한다 (`yield_tab.resolve_source_basis` 가 정본,
+  `source_totals` 는 그 `total` 만 뽑는다). 판정 규칙(사용자 확정):
+  1. 분모는 Gross Die 가 기준이다.
+  2. **수율은 100% 를 넘을 수 없다** — 넘으면 분모가 잘못된 것이다.
+  3. 그 source 의 Gross Die < 그 source 의 test die → test die 분모 (2번의 구현, **강제**:
+     사용자가 Gross 를 골라도 test 로 내린다 = `forced`).
+  4. test die 가 Gross Die 보다 **100개 이상**(`GROSS_SHORTFALL_LIMIT`) 적으면 test die 분모
+     (**기본값**일 뿐이라 사용자가 Gross 를 명시하면 존중한다 — 100% 를 넘지 않으므로).
+
+  **분자(pass/fail die 수)는 언제나 실측**이라 Gross Die 기준에선 `pass + fail < total`
+  (미측정 die) 일 수 있고, 그래서 `yield_summary.tested`(실측 die 수)와 payload
+  `yield_basis = {basis:"gross"|"test"|"mixed", mode, gross_die, by_source[]}` 를 병기한다.
+  요약 박스 배지 + **소스별 표의 "분모" 열**(`sheets.js yieldBasisBadgeHtml` /
+  `yieldOverviewHtml`)과 Summary 탭 소스별 Yield 툴팁(`map_select.js`)이 그 값을 그대로
+  보여준다 — 소스마다 분모가 다를 수 있으므로 화면에서 분모를 감추지 않는다.
+  세션별 선택은 Honey **Rawdata 허브 [Yield 계산] 탭**(소스별 자동/Gross/Test) →
+  `POST .../web_report/preprocess` 의 `yield_basis`
+  (`{"mode":"auto|test","sources":{"<source>":"gross|test"}}`, 구 클라의 문자열도 수용) →
+  세션 편집 DB (`edits.KIND_YIELD_BASIS`, item_key `basis` = 전역 모드 /
+  `src\x1f<source>` = 소스별 override). 구 값 `'gross'` 는 읽을 때 `auto` 로 승격한다
+  (auto = Gross Die 기준 + 위 예외 회피라 구 기본값의 의도를 포함).
+  허브가 실시간 수율을 그리는 수치(pass/tested/gross)는 `GET .../web_report/yield_basis`
+  (`service.get_yield_basis`) 1회로 받고, 체크를 바꿀 때는 **왕복 없이** 클라가 다시 계산한다.
+  **preprocess spec 과 분리한 이유**: preprocess digest 가 붙으면 Distribution pack(정렬 전가)
+  경로가 폴백으로 떨어지는데 수율 분모는 ECDF 와 무관하다. rev 증가로 REPORT//full 캐시만
+  무효화된다(payload 구조가 바뀌므로 `REPORT_SCHEMA_VERSION` 도 함께 올렸다 — v19).
+  회귀 고정: [tests/test_yield_basis_auto.py](../tests/test_yield_basis_auto.py)(판정 규칙·경계) +
+  [tests/test_yield_gross_die.py](../tests/test_yield_gross_die.py)(계산) +
+  [tests/test_yield_basis_session.py](../tests/test_yield_basis_session.py)(저장·재오픈·폴백·소스별).
 - **CPK 임계값·기준 통일 (2026-07-23)**: `CPK_THRESHOLD = 1.33` ([cpk.py](../web_report/tabs/cpk.py)).
   subject 당 **worst-case(최저) cpk** 로 이슈를 판단한다(`worst_cpk_by_subject`).
   **모든 CPK 통계는 Bin1(양품, BIN==1) die 기준 하나**다 — `build_cpk_rows` 의 base 필드
@@ -166,6 +183,16 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     `counts.pass_to_fail`/`fail_to_pass` 만 **그룹 대표 기준**이다(화면에도 그렇게 표기).
   - `common_map.dies[].bins` — die 마다 source 별 BIN 을 실어 **마우스오버로 확인**한다.
     hover 문자열은 `waferHeatmap` 의 `opts.labelOf` 훅으로 갈아끼운다(미지정이면 종전과 동일).
+  - **Log 비교(goodlog) 표는 항상 전 항목을 그린다** (2026-07-28). 종전에는 항목·limit 이
+    완전히 같으면(`identical`) `rows=[]` 로 내려 '차이 없음' 안내만 띄웠는데, limit 이 안
+    바뀌어도 **항목별 Gap %** 를 봐야 한다는 요구로 `build_goodlog` 이 identical 이어도 행을
+    채운다. `identical` 은 안내용 플래그로만 남는다(payload 구조 변경 → `REPORT_SCHEMA_VERSION`
+    20). Gap 수식은 Honey 원본 그대로 `(After−Before)/Before×100` 이고 화면 표시는 소수 2자리,
+    `|Gap|≥10%` 면 빨강(`GL_GAP_LIMIT`, 셀 강조와 필터가 같은 상수를 쓴다).
+    프런트 표시 필터 2종(독립 토글, 둘 다 켜면 AND — [compare.js](../server/report/static/webreport/compare.js)):
+    `Item·Limit 차이만`(행 분류 ≠ normal = Item/LoLim/HiLim 비교가 False 이거나 항목 추가·제거) /
+    `Gap ≥10% 만`. 필터가 걸리면 git-diff 식 '변화 없음' 접기를 풀고 평평한 목록으로 그리며,
+    접기 전용인 '전체 펼치기' 버튼은 숨긴다(`glSyncExpandBtn`).
   - **산포 비교**(`build_dist_shift`, 2026-07-28 개편 — 구 "CPK 비교"): 공통 항목의 After/
     Before pool 통계(Avg·Stdev·Cpk) 병기 + **Before(b) 분모** 정규화 지표 6종.
     a=After, b=Before: `meanshift_sigma=|avg_a−avg_b|/σ_b` · `cpk_ratio_pct=cpk_a/cpk_b×100`
@@ -176,9 +203,42 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     avg/stdev/cpk/n 은 pooled `build_cpk_rows` 재사용이고, **median/IQR/KS 만** 같은 Bin1
     pooled frame(`_bin1_frame` — `build_cpk_rows` 의 마스크·numeric 강제를 복제)에서 직접
     계산한다(모집단 일치를 테스트로 고정).
+    **화면 컬럼은 4종**(MeanShift σ / Cpk% / Stdev증가율 / Median Shift) — `iqr_delta_pct`·
+    `ks_d` 는 2026-07-28 사용자 요청으로 표에서 뺐다. **payload 에는 그대로 남는다**
+    (median_shift 의 분모 IQR·p_stdev 의 정렬배열을 어차피 계산하므로 지우는 이득이 없고,
+    되살릴 때 서버를 안 건드려도 된다).
+  - **Distribution 열 + 페이지 넘김**(산포 비교, 2026-07-28): 행마다 Distribution 탭 갤러리
+    카드와 같은 ECDF 미니차트를 **1/2 크기**(200×132px, `.cmp-dist-cell`)로 붙인다.
+    데이터는 Distribution 탭·Issue Table 미니셀과 **같은 `distDataCache`(전체 die 기준)**
+    이고 표시점 계산(`distDisplayPoints`)·canvas 점 렌더(`distPaintPoints`)도 공용 경로라
+    규칙 #5(다운샘플 금지/markers 전용)를 그대로 따른다. 셀은 IntersectionObserver 로 보이는
+    것만 rAF 2칸/프레임으로 그리고, 아직 안 받은 항목은 `distRequestSubject` 배치 요청 후
+    `refreshDistConsumers` 가 다시 그린다(그 훅에 Compare 셀 셀렉터를 추가했다).
+    표는 **한 페이지 20행**(`CMP_DIST_PAGE_SIZE`) — 미니차트가 붙어 전량 렌더가 무겁다.
+    페이지 전환·필터 토글 시 `renderCmpDistSection` 이 이전 셀을 `Plotly.purge` 하고 다시
+    관측을 건다(인스턴스 누수 방지). 소스 색은 Distribution 탭과 같은 `distColorFor` 라
+    표 상단에 source 색 범례를 함께 띄운다.
+  - **유의성 검정 + 노이즈 게이트**(2026-07-28, [significance.py](../web_report/tabs/significance.py)):
+    `p_mean`(Welch t — 표시된 avg/stdev/n 을 그대로 써 화면 값과 어긋나지 않게) ·
+    `p_stdev`(**Brown-Forsythe** = `|x−median|` 에 대한 Welch t). scipy 없이 `math.lgamma`
+    기반 정규화 불완전베타로 Student-t CDF 를 직접 구현했다(폐쇄망 wheelhouse 배포라 의존성
+    추가 비용이 크다). F-test 를 쓰지 않는 이유는 규격 절단·bimodal 분포에서 오경보율이
+    폭증해 게이트가 무력화되기 때문.
+    ⚠ **p 는 억제에만 쓰고 포함 근거로는 쓰지 않는다** — 같은 wafer 의 die 는 공간 상관이
+    있어 독립 표본이 아니라 p 가 실제보다 작게 나오고, pooled n 이 수천~수만이라 무의미한
+    차이도 거의 항상 유의해진다. "p 가 커서 낙관적으로 봐도 유의하지 않다 → 노이즈" 라는
+    한 방향만 신뢰할 수 있다. 다중비교(FDR) 보정은 하지 않는다 — 억제 게이트라 관대한 쪽이
+    실제 열화 누락을 막는다.
+    화면에는 **p 전용 컬럼을 두지 않는다**(n 이 크면 0.000 벽이라 정보가 없다). 유의하지 않은
+    값만 해당 셀에 `cmp-ns`(흐리게+ns)를 붙이고 p·n 은 title 툴팁으로 보여준다.
     **focus(관심 항목) 판정은 서버가 정본**이고 프런트는 그 불린으로 필터 토글만 한다:
     양쪽 `Cpk>DIST_CPK_HIGH`(100, 여유 과대) 또는 양쪽 σ=0·결측(고정값)이면 **무조건 제외**,
-    한쪽 `Cpk<CPK_THRESHOLD`(1.33) 또는 `|stdev_delta_pct|≥DIST_STDEV_DELTA_PCT`(15)면 포함.
+    한쪽 `Cpk<CPK_THRESHOLD`(1.33)면 포함(**절대 품질 조건이라 게이트 미적용**),
+    `|stdev_delta_pct|≥DIST_STDEV_DELTA_PCT`(15) **이고** `p_stdev<DIST_ALPHA`(0.05)면 포함.
+    σ 추정치의 변동계수가 `1/√(2(n−1))` 이라 n=15 면 ≈19% — 표본이 작으면 15% 변화가 추정
+    노이즈와 구분되지 않아 오경보가 된다. n 이 수천인 보통의 pool 에서는 게이트가 사실상
+    무동작이고, 작은 n(수율 낮은 항목·outlier 마스킹 후)에서만 일한다. p 를 낼 수 없으면
+    (n<3·양쪽 고정값) 종전대로 효과크기만 본다.
     화면 기본값은 "관심 항목만" ON(버튼으로 ALL 전환, 라벨=현재 적용 값 — cpk.js 관례),
     `N/M 항목` 카운트 표시. 정렬은 `meanshift_sigma` 내림차순(None 최하단, tie `|Δσ%|`).
     임계값은 `thresholds` 로 내려 프런트가 하드코딩하지 않는다(동일성 검증과 같은 패턴).
@@ -188,9 +248,18 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     Grade2 = 초과 & `min(CPK_Before, CPK_After) ≥ EQUIV_CPK_LIMIT`(5) / Grade3 = 그 외.
     **판정 불가(Before 평균 0·한쪽 결측)도 Grade3 으로 집계**해 `Total = G1+G2+G3` 가 항상
     성립한다. 대상은 양쪽 pool 공통 항목이고 통계는 pooled `build_cpk_rows` 재사용(Bin1 기준).
-    강조 3종: `AVG차(%)>5` / `CPK<5`(Before·After 각각) / `Grade 3`.
-    **stdev 는 화면에서도 반올림하지 않는다**(`_cmpRaw`) — 서버가 원값을 주는 것과 짝.
-    회귀 고정: [tests/test_compare_equivalence.py](../tests/test_compare_equivalence.py).
+    강조 3종: `AVG차(%)>5` / `CPK<5`(Before·After 각각) / `Grade 3`. **글씨에 색이 붙는 셀은
+    예외 없이 배경도 칠한다** — 배경 규칙에 `!important` 가 붙어 있는데, 이는 sheet-table 의
+    zebra(`tr:nth-child(even) td`)·hover 가 특이도 (0,2,2) 로 `.compare-table td.eq-bad`(0,2,1)를
+    이겨 짝수 행·마우스오버에서 배경만 사라지던 문제 때문이다(`cpk-warn` 과 같은 처방).
+    `AVG차`·`AVG차(%)` 헤더에는 위 수식을 `.eq-formula` 작은 글씨로 병기한다.
+    **표시 규약**: 서버가 이미 반올림한 값(average 4자리·cpk 3자리·limit 6자리)은 프런트에서
+    다시 반올림하지 않고 그대로 찍는다(`_cmpServer` = cpk.js `String(v)`) — 이중 반올림하면
+    같은 값을 보여주는 CPK 탭과 표시가 갈린다. 서버가 유일하게 반올림하지 않는 stdev 만
+    표시 시점에 유효숫자를 맞춘다(`_cmpStdev` → core.js `fmtStdev`: 소수 3자리, |v|<1 이면
+    유효숫자 3자리까지 자리수 확장 — 원값은 CPK Limit 역산이 계속 쓰므로 불변).
+    회귀 고정: [tests/test_compare_equivalence.py](../tests/test_compare_equivalence.py)
+    (`test_single_source_group_matches_cpk_sheet` 이 average/stdev/cpk + limit 을 CPK 시트와 대조).
 - **Distribution**: `build_distribution_index`(항목별 test_num·worst cpk·fail·status) /
   `scatter_item`(상세 전체 측정값) / `build_distribution_compact`(ECDF 전 포인트 컴팩트
   columnar, lazy 전용). `/distribution`(전량)과 `/distribution_batch`(항목 배치) 모두
@@ -272,18 +341,26 @@ source 1개가 Excel 시트 1장이다([excel_session.py](../client/excel_edit/e
 #### 조회 전처리 — Item Select / Outlier / 빠른 수정 (2026-07-23, 패치 계층 2026-07-28)
 Honey 의 `Rawdata edit` 은 Excel 을 바로 띄우지 않고 **허브 다이얼로그**
 ([rawdata_hub_dialog.py](../client/honey_ui/rawdata_hub_dialog.py))를 먼저 연다. 레이아웃은
-**좌측 기능 버튼 + 우측 활성 패널**(QStackedWidget)이다 — 6개 페이지: `현재 상태`(적용 중인
-전처리 목록 + 개별/전체 해제) / `Options`(Bin1 only · Spec Out 빈값) / `Item Select`(2-리스트
-+ 검색) / `Outlier 제거` / `빠른 수정`(→ 별도 다이얼로그) / `Rawdata 원본 수정`(주황 — Excel 로
-원본을 고치는 유일한 버튼) + 하단 `Yield 계산 기준` 체크박스·`저장`·`닫기`. `저장` 은
-**화면 상태 전체**를 저장한다(행별 부분 저장은 다른 행을 되돌려야 해서 옮겨 둔 항목이 조용히
-사라진다).
+**좌측 기능 버튼 + 우측 활성 패널**(QStackedWidget)이다 — 페이지: `현재 상태`(적용 중인
+전처리 목록 + 개별/전체 해제) / `Options`(Bin1 only) / `Item Select`(2-리스트 + 검색) /
+`Outlier 제거` / `Yield 계산`(소스별 수율 분모) / `Rawdata 원본 수정`(주황 — Excel 로 원본을
+고치는 유일한 버튼) + 하단 `저장`·`닫기`. `저장` 은 **화면 상태 전체**를 저장한다(행별 부분
+저장은 다른 행을 되돌려야 해서 옮겨 둔 항목이 조용히 사라진다).
+
+**서버 조회는 창을 띄운 뒤 스레드**(`_HubLoadWorker`)에서 GET 3건(preprocess /
+raw_data/columns / yield_basis)을 돌린다 — 생성자에서 동기 호출하면 항목이 수천 개인 세션에서
+버튼을 누른 뒤 창이 뜨기까지 UI 가 멈춘다(2026-07-28). 로드가 끝날 때까지 `저장`·Excel 진입은
+비활성이다.
 
 `Options` 페이지는 **조건을 짤 필요가 없는 옵션**을 모아 둔 곳이다 — `Bin1 only`(BIN ∉ [1] →
-die 제외)는 체크박스, `Spec Out 빈값`은 항목을 고르고 [추가]. 둘 다 내부적으로는 조건 규칙
-(`rules`)을 만들 뿐이라 `현재 상태` 목록에 그대로 나타나고, 거기서 해제하면 체크박스도 함께
-풀린다(`_sync_options` — 규칙 정규형끼리 비교해 동기화한다. 표시 문자열 비교가 아니다).
-빠른 수정 다이얼로그(표·필터가 있는 큰 화면)를 열지 않고도 켜고 끌 수 있어야 해서 허브에 둔다.
+die 제외) 체크박스. 내부적으로는 조건 규칙(`rules`)을 만들 뿐이라 `현재 상태` 목록에 그대로
+나타나고, 거기서 해제하면 체크박스도 함께 풀린다(`_sync_options` — 규칙 정규형끼리 비교해
+동기화한다. 표시 문자열 비교가 아니다).
+
+> **2026-07-28 임시 비활성(사용자 요청)**: `빠른 수정` 페이지와 `Options` 의 `Spec Out 빈값`
+> 은 허브에서 **화면만 뺐다**(코드·다이얼로그·규칙 생성 함수는 그대로 — 등록/레이아웃 3줄만
+> 복구하면 되살아난다). 이미 저장된 셀 패치·spec_out 규칙은 **계속 적용되고** `현재 상태`
+> 에서 해제할 수 있다.
 
 Excel 을 뺀 나머지는 전부 **원본 parquet 을 고치지 않는 되돌릴 수 있는 옵션**이다 —
 Raw Data 편집과 정반대 성격이라 백업·content_hash 갱신이 없다.
@@ -349,7 +426,7 @@ Raw Data 편집과 정반대 성격이라 백업·content_hash 갱신이 없다.
   현재 적용값은 Honey 의 Rawdata 허브 **현재 상태** 페이지에서 목록으로 보고 개별 해제할 수
   있다(`GET .../web_report/preprocess`).
 
-#### 빠른 수정 다이얼로그 (2026-07-28)
+#### 빠른 수정 다이얼로그 (2026-07-28) — **현재 허브에서 진입 비활성**
 [rawdata_quick_dialog.py](../client/honey_ui/rawdata_quick_dialog.py) — Excel 없이 표·조건으로
 고치는 화면. **웹이 아니라 Honey UI 에 둔 이유**: 서버 부하를 늘리지 않기 위해서다. 원본이
 불변이라 `content_hash` 가 그대로고, 그래서 `rawdata_export` 의 ETag 캐시가 계속 유효해
@@ -369,7 +446,9 @@ zip·같은 ETag 캐시) → ② 필터 조회 → 표에서 셀 수정 / 선택
 - 화면이 빽빽해지기 쉬운 창이라 **조회 조건·수정·적용 대기·미리보기를 접이식 구역**
   (`_Section`)으로 두고, 접으면 제목 옆에 요약(대상 행수 / 대기 중인 셀·규칙 수)만 남긴다.
   항목 목록은 우측 패널에서 최소 340px 폭·세로 대부분을 갖는다. 창 전체 폰트는 11px.
-- 조건을 짤 필요 없는 Bin1 only · Spec Out 빈값은 여기가 아니라 **허브 [Options]** 에 있다.
+- 조건을 짤 필요 없는 Bin1 only 는 여기가 아니라 **허브 [Options]** 에 있다.
+- 진입점(허브 `빠른 수정` 페이지)은 2026-07-28 사용자 요청으로 **잠시 비활성**이다. 코드는
+  그대로라 허브 생성자의 등록 3줄 주석을 풀면 되살아난다.
 
 #### Raw Data 값 검증 (2026-07-21)
 정본은 [rawvalues.py](../web_report/rawvalues.py). **값 규칙을 `validate_honeyform_df` 에

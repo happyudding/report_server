@@ -243,7 +243,8 @@ gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 �
 | `POST` | `/note_image` | 편집자 | Note 이미지 업로드 (PNG/JPEG raw body, ≤2MB·세션 200장) |
 | `GET` | `/rawdata_export` | 공개 | Honey Excel 편집용 zip(manifest + source_*.parquet) 내보내기. **ETag = content_hash** — Honey 가 temp 에 받아둔 zip 을 `If-None-Match` 로 물어보면 내용 무변경 시 **304**(서버가 원본을 메모리에 올려 zip 으로 싸는 작업 자체를 안 함) |
 | `POST` | `/rawdata_replace` | 편집자 | Raw Data 소스 전체 교체 (Honey 전용, `X-Honey-Agent`). Excel 시트를 지워 source 가 줄면 form 필드 `source_indices`(남긴 원본 idx JSON 배열, 오름차순)를 함께 받아 그 source 를 물리 제거. 선택 첨부 `dist_pack_index`+`dist_pack_chunk_<n>`(클라가 새 parquet 으로 만든 Distribution pack — 업로드 라우트와 같은 규약)을 받으면 새 content_hash 로 영구 저장해 반영 후 콜드 dist 정렬을 없앤다. 반영 후 프리웜을 걸어 리빌드를 컴퓨트 워커로 넘긴다 |
-| `GET`/`POST` | `/preprocess` | 공개/편집자 | **조회 전처리** 옵션(항목 제외 / outlier `mean ± k·stdev`) 조회·저장 (kind=preprocess). 원본 parquet 은 그대로 두고 조회 시점에만 적용 — 빈 spec 저장 = 해제, 되돌리기 가능. Honey 는 `X-Honey-Agent` 로 CSRF 대체 |
+| `GET`/`POST` | `/preprocess` | 공개/편집자 | **조회 전처리** 옵션(항목 제외 / outlier `mean ± k·stdev` / 셀 패치 / 조건 규칙) 조회·저장 (kind=preprocess). 원본 parquet 은 그대로 두고 조회 시점에만 적용 — 빈 spec 저장 = 해제, 되돌리기 가능. 같은 body 의 `yield_basis`(수율 분모 기준, 별도 kind)도 함께 저장한다. Honey 는 `X-Honey-Agent` 로 CSRF 대체 |
+| `GET` | `/yield_basis` | 공개 | 소스별 **수율 분모 기준**(자동 판정 결과 + 사용자 선택)과 그 판정에 쓰인 수치(pass/tested/gross die). Honey 허브 [Yield 계산] 탭이 이 값으로 기준을 바꿔 가며 수율을 **왕복 없이** 다시 계산한다. 저장은 `/preprocess` POST 의 `yield_basis` 필드 |
 
 ### 주석 / 즐겨찾기 / 인증 (`/pe/report/`)
 

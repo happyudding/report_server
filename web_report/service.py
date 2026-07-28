@@ -151,12 +151,10 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 ai_comments = ai_comment.safe_build(
                                     tables, session,
                                     manifest.get("selected_items") or [])
-                            # 수율 분모: 기본은 제품 기준정보 Gross Die, 세션 옵션이
-                            # "Test data 개수"(basis=test)면 None 을 넘겨 rawdata 행 수로.
-                            # gross_die 가 비어 있으면 build_report_payload 안에서 폴백한다.
-                            gross_die = (session.get("gross_die")
-                                         if edits.load_yield_basis(report_db, session_id)
-                                         == edits.YIELD_BASIS_GROSS else None)
+                            # 수율 분모: 기준정보 Gross Die 와 세션에 저장된 소스별 선택을
+                            # 함께 넘기고, 실제 판정(자동 예외 포함)은 yield_tab 이 한다.
+                            gross_die = session.get("gross_die")
+                            yield_basis = edits.load_yield_basis_map(report_db, session_id)
                             report = build_report_payload(
                                 tables,
                                 selected_items=manifest.get("selected_items") or [],
@@ -172,6 +170,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 dist_colors=dist_colors,
                                 ai_comments=ai_comments,
                                 gross_die=gross_die,
+                                yield_basis=yield_basis,
                                 # Compare 모드 Before/After 배치(업로드 시 Honey 가 지정).
                                 # 없으면 compare 빌더가 legacy 폴백(after=0, before=1).
                                 compare_groups=_webreport_compare_groups(
@@ -673,22 +672,53 @@ def get_preprocess(session_id: str, *, report_db) -> dict:
     spec = edits.load_preprocess(report_db, session_id)
     return {"spec": spec, "summary": _preprocess.describe(spec),
             "digest": _preprocess.digest(spec),
-            **_yield_basis_view(session, edits.load_yield_basis(report_db, session_id))}
+            **_yield_basis_view(session, edits.load_yield_basis_map(report_db, session_id))}
 
 
-def _yield_basis_view(session, basis: str) -> dict:
-    """수율 분모 기준 응답 조각 — 허브 다이얼로그 체크박스 상태 + 안내용 gross_die."""
+def _yield_basis_view(session, basis_map: dict) -> dict:
+    """수율 분모 기준 응답 조각 — 허브 다이얼로그 상태 복원 + 안내용 gross_die.
+
+    ``yield_basis``(전역 모드)는 구 허브가 체크박스 복원에 쓰던 키라 문자열 그대로 둔다."""
     from .tabs.yield_tab import gross_die_value
 
-    return {"yield_basis": basis, "gross_die": gross_die_value(session.get("gross_die"))}
+    return {"yield_basis": basis_map.get("mode") or edits.YIELD_BASIS_AUTO,
+            "yield_basis_sources": dict(basis_map.get("sources") or {}),
+            "gross_die": gross_die_value(session.get("gross_die"))}
+
+
+def get_yield_basis(session_id: str, *, report_db, upload_root: Path) -> dict:
+    """소스별 수율 분모 기준 + 그 기준을 고르는 데 필요한 수치 (Honey 허브 [Yield 계산] 탭).
+
+    ``pass``/``tested``/``gross`` 를 함께 내려주면 클라가 두 기준의 수율을 **서버 왕복 없이**
+    계산할 수 있다 — 체크를 바꿀 때마다 실시간으로 바뀌는 값이라 왕복하면 안 된다.
+    수치는 리포트와 같아야 하므로 전처리를 적용한 tables(기본)로 센다.
+    """
+    from .tabs.common import PASS_BIN, bin_types
+    from .tabs.yield_tab import GROSS_SHORTFALL_LIMIT, resolve_source_basis
+
+    session, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
+    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
+    basis_map = edits.load_yield_basis_map(report_db, session_id)
+    info = resolve_source_basis(tables, session.get("gross_die"), basis_map)
+    sources = []
+    for table in tables:
+        entry = dict(info[table.source])
+        entry["pass"] = sum(1 for b in bin_types(table) if b == PASS_BIN)
+        sources.append(entry)
+    return {"mode": basis_map.get("mode") or edits.YIELD_BASIS_AUTO,
+            "shortfall_limit": GROSS_SHORTFALL_LIMIT,
+            "sources": sources,
+            **_yield_basis_view(session, basis_map)}
 
 
 def save_preprocess(session_id: str, *, report_db, upload_root: Path, spec: dict,
                     client_ip: str = "", user_agent: str = "") -> dict:
     """조회 전처리 옵션 저장 (빈 spec = 해제). 원본 parquet 은 건드리지 않는다.
 
-    body 에 ``yield_basis``('gross'|'test')가 함께 오면 수율 분모 기준도 저장한다 —
-    같은 허브 다이얼로그의 [저장] 한 번에 묶여 오기 때문이다(저장 위치는 별도 kind).
+    body 에 ``yield_basis`` 가 함께 오면 수율 분모 기준도 저장한다 — 같은 허브 다이얼로그의
+    [저장] 한 번에 묶여 오기 때문이다(저장 위치는 별도 kind). 형식은
+    ``{"mode":"auto|test", "sources":{"<source>":"gross|test"}}`` 이며, 구 클라가 보내는
+    문자열('gross'|'test')도 그대로 받는다(normalize_yield_basis_map).
 
     **셀 패치(edits)·조건 규칙(rules)은 키가 없으면 저장값을 유지**한다(빈 리스트로 보내면
     해제). 구버전 Honey 허브가 화면 상태 전체를 보내면서 이 두 키를 모르기 때문에, 종전처럼
@@ -729,13 +759,17 @@ def save_preprocess(session_id: str, *, report_db, upload_root: Path, spec: dict
             _log.warning("전처리 pack 생성 예약 실패 session=%s", session_id, exc_info=True)
 
     basis_changed = ""
+    saved_basis = edits.load_yield_basis_map(report_db, session_id)
     if isinstance(spec, dict) and spec.get("yield_basis") is not None:
-        basis = edits.normalize_yield_basis(spec.get("yield_basis"))
-        if basis != edits.load_yield_basis(report_db, session_id):
-            rev = edits.save_yield_basis(report_db, session_id, basis, updated_by=updated_by)
-            basis_changed = f" yield_basis({basis})"
+        basis = edits.normalize_yield_basis_map(spec.get("yield_basis"))
+        if basis != saved_basis:
+            rev = edits.save_yield_basis_map(report_db, session_id, basis,
+                                             updated_by=updated_by)
+            basis_changed = " yield_basis(%s%s)" % (
+                basis["mode"],
+                f"+소스 {len(basis['sources'])}" if basis["sources"] else "")
     else:
-        basis = edits.load_yield_basis(report_db, session_id)
+        basis = saved_basis
 
     try:
         report_db.log_audit(

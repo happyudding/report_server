@@ -148,6 +148,21 @@ function esc(v) {
     .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
+// stdev 표시 전용 포맷 — 소수 3자리가 기본, |v|<1 이라 3자리로는 유효숫자가 모자라면
+// 유효숫자 3자리가 나올 때까지 소수 자리수를 늘린다.
+//   0.33234623463246 → 0.332 / 1235213.3331212 → 1235213.333 / 0.00000023422 → 0.000000234
+// toPrecision 은 1e-7 미만에서 지수표기(2.34e-7)로 새기 때문에 자리수를 직접 계산해 toFixed 를 쓴다.
+// **표시 전용**이다 — 원값(row.stdev)은 CPK Limit 역산(cpk.js cpkComputeTargets)과
+// Item_detail 가우시안 곡선이 그대로 쓰므로 데이터를 반올림해서는 안 된다.
+function fmtStdev(v) {
+  const n = typeof v === "number" ? v : Number(v);
+  if (!Number.isFinite(n)) return String(v ?? "");
+  const a = Math.abs(n);
+  // 2 - floor(log10|v|) = 유효숫자 3자리에 필요한 소수 자리수. toFixed 상한(100)으로 캡.
+  const digits = (a > 0 && a < 1) ? Math.min(100, 2 - Math.floor(Math.log10(a))) : 3;
+  return n.toFixed(digits);
+}
+
 function fmtDate(unix) {
   if (!unix) return "-";
   const d = new Date(unix * 1000);

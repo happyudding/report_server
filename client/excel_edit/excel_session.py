@@ -2,6 +2,8 @@
 
 흐름 (run_excel_edit):
   1. GET .../web_report/rawdata_export → zip(manifest + source_*.parquet) 다운로드·디코드
+     (indices 를 주면 **그 source 만** 디코드하고 나머지는 parquet bytes 그대로 보관한다 —
+      디코드·시트 작성이 비용의 대부분이라 여는 속도가 여기서 갈린다)
   2. source 당 시트 1개로 임시 xlsx 작성 → xlwings 로 Excel 창 열기 (visible)
   3. 사용자가 저장·닫을 때까지 폴링. 닫힘 후 파일 해시 비교 (무변경 시 업로드 스킵)
   4. 시트명으로 원본 source 를 매칭해 재읽기 → 자동 교정(유령 행/열·메타 컬럼명 케이스) →
@@ -10,8 +12,10 @@
      시트를 지웠으면 그 source 를 리포트에서 제거.
   4-1. 되돌릴 수 없으므로 **반영 전에** 변경 요약(셀 diff·자동 교정·경고·시트 삭제)을
      confirm_cb 로 한 번 확인받는다. 값 검증 규칙·문안은 web_report.rawvalues 가 단일 진실.
-  5. POST .../web_report/rawdata_replace 로 전체 교체 (X-Honey-Agent 헤더,
-     삭제 시 source_indices 동봉)
+  5. 손대지 않은 source 의 원본 bytes 와 합쳐 원본 idx 순서로 정렬한 뒤
+     POST .../web_report/rawdata_replace 로 전체 교체 (X-Honey-Agent 헤더,
+     삭제 시 source_indices 동봉). 서버는 업로드 목록에 없는 source 를 **지우므로**
+     선택하지 않은 source 도 반드시 함께 올려야 한다.
 
 honeyform 스키마(메타 7열 SERIAL..FAILTNO + 메타 6행 TSEQ..LOLIM + 데이터)는
 web_report.honeyform 공유 모듈을 그대로 재사용한다 (클라·서버 동일 인코딩).
@@ -26,6 +30,7 @@ import re
 import tempfile
 import time
 import zipfile
+from collections import namedtuple
 from urllib.parse import quote
 
 import requests
@@ -50,10 +55,19 @@ _CELL_DETAIL_LIMIT = 50_000
 _WRITE_CHUNK_ROWS = 50000
 _INVALID_SHEET_CHARS = re.compile(r"[\[\]:*?/\\]")
 
+# 다운로드 결과 — 선택분(dfs/titles/int_cols, 원본 idx 는 sel)과 손대지 않는 source 의
+# 원본 parquet bytes(others: {원본 idx: bytes})를 함께 들고 다닌다.
+_Sources = namedtuple("_Sources",
+                      "dfs titles int_cols manifest sel others all_titles")
+
 
 def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
-                   confirm_cb=None) -> dict:
+                   confirm_cb=None, indices=None) -> dict:
     """세션 rawdata 를 Excel 로 편집하고 서버에 반영. 반환 {"changed": bool, "message": str}.
+
+    indices: Excel 로 열 source 의 원본 idx 목록 (None 이면 전체). 고르지 않은 source 는
+    디코드도 시트 작성도 하지 않고 원본 parquet 을 그대로 되올린다 — 시트 삭제 판정도
+    고른 source 안에서만 한다(안 그러면 안 연 source 가 '삭제됨' 으로 오인된다).
 
     status_cb(state, message): 진행 상태 통지 콜백 (state ∈ download/excel/editing/
     reencode/upload/done/done_no_changes/cancelled). None 이면 무시.
@@ -74,9 +88,10 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
 
     base = str(server_base).rstrip("/")
 
-    # ── 1. 다운로드 + 디코드 ──────────────────────────────────────────────
+    # ── 1. 다운로드 + 디코드 (고른 source 만) ─────────────────────────────
     _emit("download", "rawdata 다운로드 중...")
-    dfs, sheet_titles, int_cols, manifest = _download_sources(base, session_id)
+    src = _download_sources(base, session_id, indices)
+    dfs, sheet_titles, int_cols, manifest = src.dfs, src.titles, src.int_cols, src.manifest
 
     # ── 2. 임시 xlsx 작성 + Excel 열기 ────────────────────────────────────
     # 작업 폴더는 캐시 폴더의 하위 work/ — 끝나고 이걸 지워도 export zip 캐시(상위)는 남는다.
@@ -120,7 +135,7 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
 
             _emit("reencode", "변경 내용 인코딩 중...")
             try:
-                new_parquets, kept_indices, removed_names, reports, fixes = _read_and_encode(
+                new_parquets, kept_local, removed_names, reports, fixes = _read_and_encode(
                     xlsx_path, final_titles, sheet_titles, dfs, int_cols)
                 # 무엇이 바뀌는지(셀 diff·자동 교정·경고·시트 삭제)를 업로드 전에 한 번 보여준다
                 # — Excel 편집은 서버에서 되돌릴 수 없다. UI 는 스크롤되는 확인창이라 줄 수를
@@ -146,15 +161,16 @@ def run_excel_edit(session_id, server_base, status_cb=None, should_cancel=None,
         raise
 
     # ── 5. 업로드 (전체 교체) ────────────────────────────────────────────
+    # 고르지 않은 source 의 원본 bytes 와 합쳐 원본 idx 순서로 올린다 — 서버는 업로드
+    # 목록에 없는 source 를 지우므로 편집한 것만 올리면 나머지가 사라진다.
+    parquets, kept_indices, kept_titles = _merge_sources(src, new_parquets, kept_local)
     # 편집 결과로 Distribution pack 을 다시 만들어 함께 보낸다 — 안 보내면 content_hash 가
     # 바뀌어 구 pack 이 무효화되므로 서버가 조회 때 정렬을 다시 하게 된다.
-    kept_titles = ([sheet_titles[i] for i in kept_indices if i < len(sheet_titles)]
-                   if kept_indices else sheet_titles)
     dist_pack = _build_dist_pack(
-        new_parquets, kept_titles, manifest,
+        parquets, kept_titles, manifest,
         emit=lambda msg: _emit("upload", msg))
     _emit("upload", "서버 반영 중...")
-    _upload_sources(base, session_id, new_parquets, kept_indices=kept_indices,
+    _upload_sources(base, session_id, parquets, kept_indices=kept_indices,
                     dist_pack=dist_pack)
     _cleanup(tmp_dir)
     msg = ("Rawdata 수정 완료 — 서버에 반영됨"
@@ -240,10 +256,14 @@ def _fetch_export_zip(base, session_id):
     return blob
 
 
-def _download_sources(base, session_id):
-    """반환 (dfs, titles, int_cols, manifest).
+def _download_sources(base, session_id, indices=None):
+    """반환 _Sources(dfs, titles, int_cols, manifest, sel, others, all_titles).
 
-    int_cols[i] 는 source i 에서 **원본 parquet 이 int64 였던 item 컬럼** 집합. xlwings 는
+    indices 를 주면 그 원본 idx 만 디코드하고(dfs/titles/int_cols 는 **그 순서**), 나머지는
+    parquet bytes 그대로 others 에 담는다 — 손대지 않을 source 를 디코드·재인코딩할 이유가
+    없다(업로드 때 그 bytes 를 그대로 되올린다).
+
+    int_cols[i] 는 그 source 에서 **원본 parquet 이 int64 였던 item 컬럼** 집합. xlwings 는
     range.value 로 숫자를 전부 float 로 돌려주므로(1 → 1.0) 왕복 후 편집하지 않은 정수
     컬럼까지 dtype 이 드리프트한다. 원본 dtype 을 여기서 기억해 두었다가 재인코딩 직전에만
     되돌린다 — '값이 전부 정수면 int' 로 판정하면 원래 float64 였던 컬럼이 int64 로 뒤집혀
@@ -257,21 +277,44 @@ def _download_sources(base, session_id):
     )
     if not names:
         raise ValueError("세션에 rawdata source 가 없습니다.")
+    sources_meta = manifest.get("sources") or []
+    all_titles = [str((sources_meta[i] if i < len(sources_meta) else {}).get("name")
+                      or f"source_{i}") for i in range(len(names))]
+
+    sel = sorted({i for i in (indices if indices is not None else range(len(names)))
+                  if 0 <= i < len(names)})
+    if not sel:
+        raise ValueError("Excel 로 열 source 가 없습니다.")
     # decode_split 은 decode 와 같은 _decode_parts 를 쓰므로 typed(.data) 프레임을 함께 얻는
     # 추가 비용이 없다. dtype 집합만 뽑고 바로 참조를 끊어 피크 메모리를 회수한다.
     dfs, int_cols = [], []
-    for name in names:
-        table = decode_split_honeyform_parquet(zf.read(name), source=name, keep_df=True)
+    for idx in sel:
+        table = decode_split_honeyform_parquet(zf.read(names[idx]), source=names[idx],
+                                               keep_df=True)
         dfs.append(table.df)
         int_cols.append({c for c in table.item_columns
                          if getattr(table.data[c].dtype, "kind", "") == "i"})
         del table
-    sources_meta = manifest.get("sources") or []
-    titles = []
-    for idx in range(len(dfs)):
-        info = sources_meta[idx] if idx < len(sources_meta) else {}
-        titles.append(str(info.get("name") or f"source_{idx}"))
-    return dfs, titles, int_cols, manifest
+    others = {i: zf.read(names[i]) for i in range(len(names)) if i not in set(sel)}
+    return _Sources(dfs=dfs, titles=[all_titles[i] for i in sel], int_cols=int_cols,
+                    manifest=manifest, sel=sel, others=others, all_titles=all_titles)
+
+
+def _merge_sources(src, new_parquets, kept_local):
+    """편집한 source 와 손대지 않은 source 를 **원본 idx 순서**로 합친다 (순수 함수).
+
+    kept_local: _read_and_encode 가 돌려준 '남긴 시트의 로컬 idx'(삭제가 있을 때만, 없으면
+    None). new_parquets[j] 는 그 목록의 j 번째 — 즉 원본 idx 는 src.sel[kept_local[j]] 다.
+    반환 (parquet list, kept_indices|None, titles): kept_indices 는 **삭제가 있을 때만**
+    채운다(전체 유지면 None = 구 경로 그대로).
+    """
+    order = kept_local if kept_local is not None else list(range(len(new_parquets)))
+    edited = {src.sel[local]: new_parquets[pos] for pos, local in enumerate(order)}
+    kept = sorted(set(edited) | set(src.others))
+    parquets = [edited[i] if i in edited else src.others[i] for i in kept]
+    titles = [src.all_titles[i] if i < len(src.all_titles) else f"source_{i}" for i in kept]
+    removed = len(src.all_titles) - len(kept)
+    return parquets, (kept if removed else None), titles
 
 
 def fetch_rawdata_tables(server_base, session_id, indices=None, status_cb=None):
@@ -438,9 +481,11 @@ def match_sheets(sheet_names, expected_titles):
 def _read_and_encode(xlsx_path, expected_titles, source_names, old_dfs=None, int_cols=None):
     """저장된 xlsx 를 시트명 매칭 순서로 읽어 교정·검사한 뒤 honeyform parquet 로 재인코딩.
 
-    반환 (parquet list, kept_indices|None, removed_names, reports, fixes_by_source).
-    kept_indices 는 삭제가 있을 때만 채워지고(원본 idx 오름차순, parquet 순서와 1:1),
-    전체 유지면 None. reports/fixes 는 확인창 문안 재료다(rawvalues 참조).
+    반환 (parquet list, kept_local|None, removed_names, reports, fixes_by_source).
+    kept_local 은 삭제가 있을 때만 채워지고(expected_titles 안의 idx 오름차순, parquet 순서와
+    1:1), 전체 유지면 None. **expected_titles 는 Excel 로 연 source 만**이므로 여기서 나온
+    idx 는 원본 idx 가 아니다 — 원본 idx 로의 환산은 _merge_sources 가 한다.
+    reports/fixes 는 확인창 문안 재료다(rawvalues 참조).
 
     교정·검사 순서가 중요하다: sanitize(유령 행/열·컬럼명) → int 복원 → inspect(원본 대비
     diff·경고) → encode. inspect 를 sanitize 뒤에 두어야 '유령 행이 늘었다' 같은 우리가 이미
@@ -486,11 +531,11 @@ def _read_and_encode(xlsx_path, expected_titles, source_names, old_dfs=None, int
                 old_df, df, source_name=name, cell_limit=_CELL_DETAIL_LIMIT))
             out.append(encode_honeyform_parquet(df))
         wb.close()
-        kept_indices = [idx for _, idx in pairs] if removed else None
+        kept_local = [idx for _, idx in pairs] if removed else None
         removed_names = [
             str(source_names[i]) if i < len(source_names) else f"source_{i}"
             for i in removed]
-        return out, kept_indices, removed_names, reports, fixes
+        return out, kept_local, removed_names, reports, fixes
     finally:
         _quit_app(read_app)
 
