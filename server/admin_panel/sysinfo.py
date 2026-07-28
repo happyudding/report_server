@@ -36,11 +36,47 @@ def _cpu_percent():
         return _cpu_cached
 
 
+# ── 컴퓨트 워커 RSS (2초 캐시) ───────────────────────────────────────────────
+# 부모 프로세스 RSS 만 보면 컴퓨트 워커(ProcessPoolExecutor 자식)가 쓰는 RAM 이 통째로
+# 안 보인다. 시스템 전체 RAM(virtual_memory)에는 잡히지만 같은 박스의 다른 서비스와
+# 섞여 "report_server 가 얼마나 쓰는지"를 분리할 수 없다 — 워커 수를 늘릴 때 판단
+# 근거가 되는 값이라 자식 RSS 합을 따로 집계한다.
+# 자식 열거는 Windows 에서 전체 프로세스 스캔이라 값싸지 않다 → CPU 와 같은 TTL 캐시.
+_ch_lock = threading.Lock()
+_ch_cached = (0, 0)   # (rss 합, 자식 수)
+_ch_ts = 0.0
+_CHILDREN_TTL = 2.0
+
+
+def children_rss():
+    """컴퓨트 워커(자식 프로세스) RSS 합계와 개수. 실패 시 (0, 0)."""
+    global _ch_cached, _ch_ts
+    with _ch_lock:
+        now = time.time()
+        if now - _ch_ts < _CHILDREN_TTL:
+            return _ch_cached
+        total = n = 0
+        try:
+            for child in psutil.Process().children(recursive=True):
+                try:
+                    total += child.memory_info().rss
+                    n += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue    # 리사이클(max_tasks_per_child)로 방금 죽은 워커
+        except Exception:
+            total = n = 0
+        _ch_cached = (total, n)
+        _ch_ts = now
+        return _ch_cached
+
+
 def health():
     """현황 카드용 스냅샷. 무거운 디스크 스캔 없이 즉시 응답."""
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage(str(config.ROOT_DIR))
     proc = psutil.Process()
+    proc_rss = proc.memory_info().rss
+    workers_rss, workers_n = children_rss()
     return {
         "cpu_percent": _cpu_percent(),
         "cpu_count": psutil.cpu_count(),
@@ -52,8 +88,12 @@ def health():
         "disk_percent": disk.percent,
         "disk_path": str(config.ROOT_DIR),
         "uptime_sec": int(time.time() - proc.create_time()),
-        "proc_rss": proc.memory_info().rss,
+        "proc_rss": proc_rss,
         "proc_threads": proc.num_threads(),
+        # 서버 전체(부모+워커) — 같은 박스의 다른 서비스와 섞이지 않은 우리 몫
+        "workers_rss": workers_rss,
+        "workers_n": workers_n,
+        "total_rss": proc_rss + workers_rss,
     }
 
 

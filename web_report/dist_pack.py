@@ -315,10 +315,19 @@ def ecdf_from_pack_items(pack_items: dict, *, bin1: bool = False, only=None) -> 
     return {"format": "ecdf-columnar-v1", "items": items}
 
 
-def load_chunk_items(blob: bytes) -> dict:
-    """chunk gzip bytes → items dict (서버 조회 경로)."""
-    text = gzip.decompress(blob).decode("utf-8")
-    chunk = json.loads(text)
+def load_chunk_items_sized(blob: bytes) -> tuple[dict, int]:
+    """chunk gzip bytes → (items dict, 비압축 JSON 바이트 수).
+
+    크기는 dist_pack_store 의 디코드 캐시가 바이트 상한을 걸 때 쓴다 — 여기서 이미
+    비압축 text 를 만들므로 호출부가 재직렬화할 필요가 없다.
+    """
+    raw = gzip.decompress(blob)
+    chunk = json.loads(raw.decode("utf-8"))
     if not isinstance(chunk, dict) or chunk.get("format") != DIST_PACK_FORMAT:
         raise ValueError("unexpected dist pack chunk format")
-    return chunk.get("items") or {}
+    return chunk.get("items") or {}, len(raw)
+
+
+def load_chunk_items(blob: bytes) -> dict:
+    """chunk gzip bytes → items dict (서버 조회 경로)."""
+    return load_chunk_items_sized(blob)[0]

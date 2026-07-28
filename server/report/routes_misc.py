@@ -122,8 +122,24 @@ def delete_annotation(aid):
 # ── Report Analysis index / view pages ───────────────────────────────────────
 # gzip+ETag 캐시 서빙 (report_view.html 202KB 비압축 전송 제거) — static_pages 참조.
 
+def _record_page_visit(kind):
+    """접속 사용량 집계 (best-effort) — 관리자 통계 탭 '접속 사용량' 카드용.
+
+    신원(HoneyUser UA / 웹 로그인)이 없으면 IP 로 집계. 실패해도 페이지 서빙을
+    막지 않는다."""
+    try:
+        uid = _current_user()
+        if not uid:
+            ip, _ = _client_meta()
+            uid = f"ip:{ip}" if ip else ""
+        report_db.record_usage(kind, uid)
+    except Exception:
+        pass
+
+
 @report_bp.get("/")
 def index_page():
+    _record_page_visit("web_index")
     return send_html_gzip(REPORT_ANALYSIS_INDEX_HTML)   # CSRF 쿠키는 after_request 가 발급
 
 
@@ -135,6 +151,7 @@ def view_page(session_id):
     if session:
         _private_guard(session)
         _active_or_404(session)
+    _record_page_visit("web_view")
     return send_html_gzip(REPORT_VIEW_HTML)   # CSRF 쿠키는 after_request 가 발급
 
 

@@ -108,8 +108,26 @@ def load_index(upload_root: Path, analysis_key, content_hash, mode,
 
 def load_chunk_items(upload_root: Path, analysis_key, content_hash, mode,
                      chunk_id: int, prep_digest: str = "") -> dict | None:
-    """chunk 1개의 items dict. 없거나 손상이면 None."""
-    from .dist_pack import load_chunk_items as _decode
+    """chunk 1개의 items dict. 없거나 손상이면 None.
+
+    ⚠ **반환 dict 는 읽기 전용** — 디코드 결과를 요청 간 공유 캐시(DIST_CHUNK_CACHE)에
+    담아 돌려주므로 호출부가 in-place 로 고치면 다른 요청까지 오염된다. 현재 소비자
+    (dist_pack.ecdf_from_pack_items)는 새 dict/list 만 만든다.
+
+    디코드(gunzip+json.loads)는 대형 세션에서 chunk 1개가 비압축 수십 MB 라 순수
+    GIL 점유 구간이다 — 갤러리 스크롤이 같은 chunk 를 반복해서 건드리므로 캐시한다.
+    chunk 단위 keyed_lock 은 **잡지 않는다**: 락 레지스트리(LRU 256)에 chunk 키가 대량
+    유입되면 보유 중인 빌드·편집 락이 축출돼 상호배제가 깨진다. 동시 미스로 인한 중복
+    디코드는 상위 ("dist_batch",) 락이 대부분 흡수한다.
+    """
+    from . import cache, cache_policy
+    from .dist_pack import load_chunk_items_sized as _decode
+
+    cache_key = cache_policy.dist_chunk_key(analysis_key, content_hash, mode,
+                                            chunk_id, prep_digest)
+    items = cache.cache_get(cache.DIST_CHUNK_CACHE, cache_key)
+    if items is not None:
+        return items
 
     path = (pack_dir(upload_root, analysis_key, content_hash, mode, prep_digest)
             / f"chunk_{int(chunk_id)}.gz")
@@ -121,10 +139,12 @@ def load_chunk_items(upload_root: Path, analysis_key, content_hash, mode,
         _log.warning("dist pack chunk read failed: %s", path, exc_info=True)
         return None
     try:
-        return _decode(blob)
+        items, size = _decode(blob)
     except Exception:
         _log.warning("dist pack chunk invalid: %s", path, exc_info=True)
         return None
+    cache.dist_chunk_cache_put(cache_key, items, size)
+    return items
 
 
 def delete_stale(upload_root: Path, analysis_key, keep_content_hash, keep_mode=None) -> int:

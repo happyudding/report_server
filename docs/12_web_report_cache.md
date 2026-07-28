@@ -136,28 +136,46 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   `(session, kind)` 중복 등록을 막아 재요청 폭주에도 큐가 자라지 않게 한다.
   `build_status` 는 (session, stage) 단위로 기록한다 — report/map 콜드가 겹칠 때
   한쪽 `end()` 가 다른 쪽 기록을 지우지 않게 하기 위함.
+  - **콜드 판정은 single-flight 락 밖에서** (2026-07-28): 빌드 중인 세션의
+    `("report"/"map",)+key` 락은 온디맨드 소비자가 빌드 내내 잡고 있다. 락에 들어간 뒤
+    판정하면 202 로 돌려보내려던 폴링이 빌드가 끝날 때까지 waitress 스레드를 물고
+    대기했다(같은 세션을 N명이 열면 스레드 N개가 묶임). 지금은
+    `disk_cache.report_exists`/`map_exists`(stat 1회)로 락 **전에** 판정한다. 락 안의
+    기존 판정은 TOCTOU 안전망으로 남겨 둔다.
+- **dist pack chunk 디코드 캐시** (2026-07-28): `distribution_batch` 는 요청마다 chunk
+  파일을 read+gunzip+json.loads 했다(대형 세션은 chunk 1개가 비압축 15~20MB, 순수 GIL
+  점유). 디코드 결과를 `DIST_CHUNK_CACHE` 에 담아 갤러리 스크롤이 같은 chunk 를 되짚을 때
+  파일·디코드를 건너뛴다. **반환 dict 는 읽기 전용 공유** — 소비자
+  (`dist_pack.ecdf_from_pack_items`)가 입력을 변경하지 않는다는 계약 위에서만 성립한다.
+  chunk 단위 keyed_lock 은 잡지 않는다(락 레지스트리 LRU 256 에 chunk 키가 대량 유입되면
+  보유 중인 빌드·편집 락이 축출돼 상호배제가 깨진다).
 
 ## 환경변수
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `WEB_REPORT_COMPUTE_WORKERS` | `2` | 콜드 빌드 워커 프로세스 수. `0` = 전부 인라인(구 동작) |
-| `WEB_REPORT_TABLES_CACHE` | `4` | decoded tables 캐시 개수 상한 |
-| `WEB_REPORT_TABLES_CACHE_MB` | `4096` | tables 캐시 추정 바이트 상한 (개수와 이중 적용, 0=비활성) |
+| `WEB_REPORT_COMPUTE_WORKERS` | `2` (운영 `4`) | 콜드 빌드 워커 프로세스 수. `0` = 전부 인라인(구 동작). 운영값은 [server/env/server.env](../server/env/server.env) — `_ONDEMAND_WORKERS` 와 **짝으로** 올려야 효과가 있다. 제약은 RAM 이 아니라 CPU(유휴 워커 ≈100MB 실측) |
+| `WEB_REPORT_TABLES_CACHE` | `4` | decoded tables 캐시 개수 상한. **실데이터 규모에선 이쪽이 먼저 걸린다** (세션 1건 ≈ 229MB → 4건 ≈ 0.9GB) |
+| `WEB_REPORT_TABLES_CACHE_MB` | `4096` (운영 `2048`) | tables 캐시 추정 바이트 상한 (개수와 이중 적용, 0=비활성). **부모와 워커가 각자 갖는 상한**이라 실효 천장 = 값 × (1+워커수). 실데이터에선 개수 상한이 먼저 걸려 이 값은 발동하지 않는다(= 성능 손실 없이 천장만 절반) |
 | `WEB_REPORT_DIST_CACHE` | `4` | Distribution gzip 캐시 개수 |
 | `WEB_REPORT_DIST_CACHE_MB` | `1024` | dist blob RAM 바이트 상한 (개수와 이중 적용, 0=비활성 — worst case blob ~505MB 실측) |
 | `WEB_REPORT_MAP_CACHE` | `4` | Map dies gzip 캐시 개수 |
 | `WEB_REPORT_MAP_CACHE_MB` | `512` | Map dies blob RAM 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_REPORT_CACHE` | `8` | report dict 캐시 개수 |
 | `WEB_REPORT_REPORT_CACHE_MB` | `256` | report dict 캐시 추정 바이트 상한 (개수와 이중 적용, 0=비활성). 크기는 put 시 1회 직렬화 길이로 추정 |
-| `WEB_REPORT_DIST_BATCH_CACHE` | `64` | Distribution 항목 배치 응답 gzip 캐시 개수 (배치 1건 = 항목 수십 개분이라 작다) |
-| `WEB_REPORT_ONDEMAND_WORKERS` | `2` | 콜드 미스 조회가 202 를 반환한 뒤 백그라운드에서 빌드하는 소비자 스레드 수 |
+| `WEB_REPORT_DIST_BATCH_CACHE` | `64` | Distribution 항목 배치 응답 gzip 캐시 개수 |
+| `WEB_REPORT_DIST_BATCH_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성). 소스·die 가 많은 세션은 배치 1건이 수 MB |
+| `WEB_REPORT_DIST_CHUNK_CACHE` | `64` | dist pack chunk **디코드 결과** 캐시 개수 (distribution_batch 의 gunzip+json.loads 반복 제거) |
+| `WEB_REPORT_DIST_CHUNK_CACHE_MB` | `512` | 〃 비압축 바이트 상한 (개수와 이중 적용, 0=비활성) |
+| `WEB_REPORT_ONDEMAND_WORKERS` | `2` (운영 `3`) | 콜드 미스 조회가 202 를 반환한 뒤 백그라운드에서 빌드하는 소비자 스레드 수 |
 | `WEB_REPORT_COMMONALITY_CACHE` | `2` | Commonality 인덱스 캐시 개수 |
 | `WEB_REPORT_TRIM_CACHE` | `4` | Trim payload 캐시 개수 |
 | `WEB_REPORT_TRIM_CHART_CACHE` | `64` | Trim 그룹 차트 캐시 개수 |
 | `WEB_REPORT_TRIM_CHART_CACHE_MB` | `256` | Trim 그룹 차트 gzip 바이트 상한 (개수와 이중 적용, 0=비활성). 차트 1건이 전 die 전 포인트라 개수 상한만으론 RAM 이 예측 불가 |
 | `WEB_REPORT_MANIFEST_CACHE` | `16` | manifest 캐시 개수 |
 | `WEB_REPORT_FULL_CACHE` | `8` | `/full` 응답 gzip 캐시 개수 |
+| `WEB_REPORT_FULL_CACHE_MB` | `512` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_SCATTER_CACHE` | `16` | `/scatter` 응답 gzip 캐시 개수 |
+| `WEB_REPORT_SCATTER_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_DISK_CACHE_MAX_GB` | `500` | 디스크 캐시 총량 상한 (0 이하 = 비활성) |
 
 ## 불변 규칙

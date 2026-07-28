@@ -11,6 +11,7 @@ fetch_announcement(base_url) 은 위 흐름과 별개로, 최신 버전을 실�
 """
 import hashlib
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 
@@ -22,10 +23,23 @@ class DownloadCancelled(Exception):
     """Raised when progress_cb returns False."""
 
 
+def _honey_headers():
+    """신원 토큰 UA — excel_download._fetch 와 동일 규칙(HoneyUser/<percent-encoded 계정>).
+
+    서버가 /honey/version 호출을 'Honey 실행'으로 사용자별 집계하는 데 쓴다
+    (server/honey_routes.py). 수집 실패 시 토큰 없이 진행 — 서버는 IP 로 집계."""
+    try:
+        import client_identity
+        user = client_identity.collect().get("user", "")
+    except Exception:
+        user = ""
+    return {"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')}"} if user else {}
+
+
 def fetch_latest(base_url=None) -> dict:
     base = (base_url or SERVER_BASE_URL).rstrip("/")
     url = f"{base}/honey/version"
-    resp = get_with_retry(url, timeout=REQUEST_TIMEOUT_SEC)
+    resp = get_with_retry(url, timeout=REQUEST_TIMEOUT_SEC, headers=_honey_headers())
     resp.raise_for_status()
     return resp.json()
 

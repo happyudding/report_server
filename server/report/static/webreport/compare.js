@@ -14,9 +14,10 @@ function _cmpRaw(v) {
   if (v === null || v === undefined || v === "") return "–";
   return esc(String(v));
 }
-function _cmpDeltaCell(v, digits) {
+function _cmpDeltaCell(v, digits, extraCls) {
   if (v === null || v === undefined || v === "") return `<td class="num">–</td>`;
-  const cls = v > 0 ? "cmp-up" : (v < 0 ? "cmp-down" : "");
+  const cls = [(v > 0 ? "cmp-up" : (v < 0 ? "cmp-down" : "")), extraCls || ""]
+    .filter(Boolean).join(" ");
   const s = v > 0 ? "+" + _cmpNum(v, digits) : _cmpNum(v, digits);
   return `<td class="num ${cls}">${s}</td>`;
 }
@@ -115,32 +116,80 @@ function compareBinMatrixHtml(bm) {
     `<div class="sheet-wrap cmp-scroll cmp-binmatrix-wrap"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
 }
 
-// 공통 항목 산포(avg/stdev/cpk) before/after 병기 + delta. |Δcpk| 큰 순(백엔드 정렬).
-// 대상은 **그룹 pool** — 그룹이 1 source 씩이면 CPK 탭 값과 같다(compare.py build_dist_shift).
-// stdev 는 서버가 반올림하지 않는 값이라 화면에서도 원값 그대로 쓴다(_cmpRaw).
-function compareDistShiftHtml(rows, eq) {
-  if (!rows || !rows.length) return '<div class="placeholder">공통 항목 없음</div>';
-  const after = (eq && eq.after) || "", before = (eq && eq.before) || "";
-  const gapCell = v => {
-    if (v === null || v === undefined) return `<td class="num">–</td>`;
-    return `<td class="num${Math.abs(v) >= 10 ? " gl-gap-red" : ""}">${_cmpNum(v, 2)}</td>`;
-  };
+// ── 산포 비교 (dist_shift) — Before 분모 정규화 지표 + 서버 focus 필터 ────────
+// 지표 6종(MeanShift σ / Cpk% / Stdev증가율 / Median Shift / IQR변화 / KS D)·focus 판정·
+// 정렬(MeanShift σ 큰 순)은 전부 서버(compare.py build_dist_shift)가 정본이고, 여기서는
+// 표시 + focus 플래그 필터 토글만 한다. 대상은 **그룹 pool(Bin1)** — 그룹이 1 source 씩이면
+// avg/stdev/cpk 가 CPK 탭 값과 같다. stdev 는 서버가 반올림하지 않는 값이라 화면에서도
+// 원값 그대로 쓴다(_cmpRaw). 임계값은 dist.thresholds 만 참조(하드코딩 금지).
+let cmpDistFocusOnly = true;   // 필터 기본 ON — 관심(focus) 항목만 표시
+
+function cmpDistSectionHtml(dist) {
+  if (!dist) return '<div class="placeholder">산포 비교 데이터 없음</div>';
+  // legacy payload(스키마 v16 이전, list 형) — 새 지표가 없어 기본 통계만 표시.
+  const legacy = Array.isArray(dist);
+  if (legacy) dist = { rows: dist, after: "", before: "", thresholds: {} };
+  const rows = dist.rows || [];
+  if (!rows.length) return '<div class="placeholder">공통 항목 없음</div>';
+  const th = dist.thresholds || {};
+  const shown = (!legacy && cmpDistFocusOnly) ? rows.filter(r => r.focus) : rows;
+  const toolbar = legacy ? "" : `<div class="compare-summary">
+      <button type="button" id="cmpDistFocusBtn" class="btn-sm${cmpDistFocusOnly ? " active" : ""}"
+        title="클릭 전환 — 관심 항목만 ↔ ALL(전체)">${cmpDistFocusOnly ? "관심 항목만" : "ALL"}</button>
+      <span class="cmp-chip">${shown.length}/${rows.length} 항목</span>
+      <span class="gl-sub">관심 판정(서버): 한쪽 Cpk&lt;${th.cpk_low} 또는 |Stdev증가율|≥${th.stdev_delta_pct}% · 양쪽 Cpk&gt;${th.cpk_high}(여유 과대)·양쪽 고정값은 항상 제외</span>
+    </div>`;
+  if (!shown.length) {
+    return toolbar +
+      `<div class="placeholder">관심 항목 없음 — ALL 로 전환하면 전체 ${rows.length}개 항목을 표시합니다</div>`;
+  }
+  const metricHead = legacy ? "" :
+    `<th class="num" rowspan="2" title="|Avg(A)−Avg(B)| / Stdev(B) — 평균 이동을 σ 단위로 정규화">MeanShift(σ)</th>` +
+    `<th class="num" rowspan="2" title="Cpk(A) / Cpk(B) × 100 — 100% 미만이면 악화">Cpk(%)</th>` +
+    `<th class="num" rowspan="2" title="(Stdev(A)−Stdev(B)) / Stdev(B) × 100 — 양수면 After 산포 증가">Stdev증가율(%)</th>` +
+    `<th class="num" rowspan="2" title="|Median(A)−Median(B)| / IQR(B) — outlier 에 강건한 이동량">Median Shift</th>` +
+    `<th class="num" rowspan="2" title="(IQR(A)−IQR(B)) / IQR(B) × 100">IQR변화(%)</th>` +
+    `<th class="num" rowspan="2" title="두 분포 ECDF 최대거리(0~1) — 평균/σ 로 못 잡는 형태 차이">KS D</th>`;
   const head = `<thead>
       <tr><th rowspan="2">Item</th><th rowspan="2">Unit</th>
-          <th colspan="3">After — ${esc(after)}</th><th colspan="3">Before — ${esc(before)}</th>
-          <th class="num" rowspan="2">ΔAvg</th><th class="num" rowspan="2">ΔStdev</th>
-          <th class="num" rowspan="2">ΔCpk</th><th class="num" rowspan="2">평균 gap %</th></tr>
+          <th colspan="3">After — ${esc(dist.after || "")}</th>
+          <th colspan="3">Before — ${esc(dist.before || "")}</th>${metricHead}</tr>
       <tr><th class="num">Avg</th><th class="num">Stdev</th><th class="num">Cpk</th>
           <th class="num">Avg</th><th class="num">Stdev</th><th class="num">Cpk</th></tr></thead>`;
-  const body = rows.map(r => {
+  const cpkCell = v =>
+    `<td class="num${v != null && th.cpk_low != null && v < th.cpk_low ? " cpk-warn" : ""}">${_cmpNum(v)}</td>`;
+  const ratioCell = v => {   // cmp-up/cmp-down 은 색 재사용(빨강=악화/파랑=개선)
+    if (v === null || v === undefined) return `<td class="num">–</td>`;
+    const cls = v < 100 ? " cmp-up" : (v > 100 ? " cmp-down" : "");
+    return `<td class="num${cls}">${_cmpNum(v, 1)}</td>`;
+  };
+  const body = shown.map(r => {
     const a = r.after || {}, b = r.before || {};
-    return `<tr><td>${esc(r.subject)}</td><td>${esc(r.units || "")}</td>` +
-      `<td class="num">${_cmpNum(a.average)}</td><td class="num">${_cmpRaw(a.stdev)}</td><td class="num">${_cmpNum(a.cpk)}</td>` +
-      `<td class="num">${_cmpNum(b.average)}</td><td class="num">${_cmpRaw(b.stdev)}</td><td class="num">${_cmpNum(b.cpk)}</td>` +
-      _cmpDeltaCell(r.delta_average) + _cmpDeltaCell(r.delta_stdev) + _cmpDeltaCell(r.delta_cpk) +
-      gapCell(r.mean_gap_pct) + `</tr>`;
+    const nTip = (a.n != null || b.n != null)
+      ? ` title="After n=${a.n == null ? "–" : a.n} · Before n=${b.n == null ? "–" : b.n}"` : "";
+    const base = `<tr><td${nTip}>${esc(r.subject)}</td><td>${esc(r.units || "")}</td>` +
+      `<td class="num">${_cmpNum(a.average)}</td><td class="num">${_cmpRaw(a.stdev)}</td>${cpkCell(a.cpk)}` +
+      `<td class="num">${_cmpNum(b.average)}</td><td class="num">${_cmpRaw(b.stdev)}</td>${cpkCell(b.cpk)}`;
+    if (legacy) return base + `</tr>`;
+    const sdRed = (r.stdev_delta_pct != null && th.stdev_delta_pct != null &&
+                   Math.abs(r.stdev_delta_pct) >= th.stdev_delta_pct) ? "gl-gap-red" : "";
+    return base +
+      `<td class="num">${_cmpNum(r.meanshift_sigma)}</td>` + ratioCell(r.cpk_ratio_pct) +
+      _cmpDeltaCell(r.stdev_delta_pct, 2, sdRed) +
+      `<td class="num">${_cmpNum(r.median_shift)}</td>` + _cmpDeltaCell(r.iqr_delta_pct, 2) +
+      `<td class="num">${_cmpNum(r.ks_d)}</td></tr>`;
   }).join("");
-  return `<div class="sheet-wrap cmp-scroll"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
+  return toolbar +
+    `<div class="sheet-wrap cmp-scroll"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
+}
+
+// 산포 비교 섹션만 부분 재렌더 — renderCompare 전체 재호출은 Plotly Map 재그리기·goodlog
+// 리바인딩을 유발하므로 필터 토글 시엔 이 섹션 innerHTML 만 교체한다.
+function renderCmpDistSection(panel) {
+  const sec = panel.querySelector("#cmp-dist-section");
+  if (!sec) return;
+  const cmp = DATA.web_report && DATA.web_report.compare;
+  sec.innerHTML = cmpDistSectionHtml(cmp && cmp.dist_shift);
 }
 
 // ── 동일성 검증 — 항목별 Grade 판정 (Before pool vs After pool) ─────────────
@@ -434,7 +483,7 @@ function bindGoodlogFolding(panel) {
   });
 }
 
-// 서브탭 전환 — Compare 패널 안에서 Map/Log/CPK 하위 화면을 토글한다.
+// 서브탭 전환 — Compare 패널 안에서 Map/Log/산포 비교/동일성 하위 화면을 토글한다.
 // (Bin 비교는 서브탭 없이 Map 패널 하단에 함께 표시한다.)
 function bindCompareSubtabs(panel) {
   const bar = panel.querySelector(".cmp-subtabs");
@@ -488,7 +537,7 @@ function renderCompare() {
         <div class="cmp-subtabs distseg-group">
           <button class="distseg active" data-cmpsub="map">Map 비교</button>
           <button class="distseg" data-cmpsub="log">Log 비교</button>
-          <button class="distseg" data-cmpsub="cpk">CPK 비교</button>
+          <button class="distseg" data-cmpsub="dist">산포 비교</button>
           <button class="distseg" data-cmpsub="equiv">동일성 검증</button>
         </div>
         ${(cmp.goodlog && !cmp.goodlog.identical && (cmp.goodlog.rows || []).length)
@@ -515,9 +564,9 @@ function renderCompare() {
       <div class="cmp-subpanel" data-cmppanel="log">
         ${goodlogSectionHtml(cmp.goodlog) || '<div class="placeholder">테스트 프로그램 비교(goodlog) 데이터 없음</div>'}
       </div>
-      <div class="cmp-subpanel" data-cmppanel="cpk">
-        <h3 class="compare-h">산포 차이 (공통 항목 · |ΔCpk| 큰 순 · 그룹 전체 die 기준)</h3>
-        ${compareDistShiftHtml(cmp.dist_shift, eq)}
+      <div class="cmp-subpanel" data-cmppanel="dist">
+        <h3 class="compare-h">산포 비교 (공통 항목 · MeanShift σ 큰 순 · 그룹 전체 die · Bin1 기준)</h3>
+        <div id="cmp-dist-section"></div>
       </div>
       <div class="cmp-subpanel" data-cmppanel="equiv">
         <h3 class="compare-h">동일성 검증 (Before vs After · 그룹 전체 die 기준)</h3>
@@ -526,6 +575,14 @@ function renderCompare() {
     </div>`;
 
   drawCompareCommonMap(cm, sources);
+  renderCmpDistSection(panel);
+  // 필터 토글 — wrapper 에 위임 1회 바인딩(innerHTML 교체에도 리스너 유지).
+  const distSec = panel.querySelector("#cmp-dist-section");
+  if (distSec) distSec.addEventListener("click", e => {
+    if (!e.target.closest("#cmpDistFocusBtn")) return;
+    cmpDistFocusOnly = !cmpDistFocusOnly;
+    renderCmpDistSection(panel);
+  });
   bindGoodlogFolding(panel);
   bindGoodlogColResize(panel);
   bindGoodlogHscroll(panel);

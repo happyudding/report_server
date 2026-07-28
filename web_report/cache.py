@@ -8,10 +8,12 @@ service.py 에 있던 캐시 프리미티브를 분리한 모듈. 규약:
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
 
@@ -56,6 +58,19 @@ REPORT_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_REPORT_CACHE_MB", "256
 REPORT_CACHE: OrderedDict = OrderedDict()   # (akey, chash, manifest_digest, incl_dist) -> report dict
 _REPORT_SIZES: dict = {}                    # 키 -> 추정 바이트 (REPORT_CACHE 와 동기)
 
+# dist pack chunk **디코드 결과** 캐시 — distribution_batch 는 요청마다 chunk 파일을
+# read+gunzip+json.loads 로 되풀이 디코드했다(대형 세션은 chunk 1개가 비압축 15~20MB).
+# 갤러리 스크롤 중 같은 chunk 를 여러 배치가 반복해서 건드리므로, 디코드 결과를 캐시하면
+# 그 GIL 점유가 첫 1회로 줄어든다. 값은 dict 라 크기를 len() 으로 못 재므로 report 와
+# 같은 "크기 기록 + 이중 상한" 방식(크기는 디코드 시 얻은 비압축 길이).
+# ⚠ 캐시 값은 **읽기 전용 공유** — 소비자(dist_pack.ecdf_from_pack_items)가 입력을
+# 변경하지 않는다는 계약 위에서만 성립한다.
+DIST_CHUNK_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_DIST_CHUNK_CACHE", "64") or 64))
+DIST_CHUNK_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_DIST_CHUNK_CACHE_MB", "512")
+                                        or 512)) * 1024 * 1024   # 0 = 바이트 상한 비활성
+DIST_CHUNK_CACHE: OrderedDict = OrderedDict()  # (akey, chash[, prep], mode, chunk_id) -> items dict
+_DIST_CHUNK_SIZES: dict = {}                   # 키 -> 비압축 바이트 (DIST_CHUNK_CACHE 와 동기)
+
 # Commonality 인덱스 캐시 — chip 검색(키스트로크)·백분위(chip 클릭)가 매번 전 item 컬럼을
 # 재변환하던 유일한 무캐시 heavy 경로였다. 메타 리스트 + item별 정렬 배열을 세션 단위로 보관.
 COMMONALITY_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_COMMONALITY_CACHE", "2") or 2))
@@ -86,7 +101,7 @@ MANIFEST_CACHE: OrderedDict = OrderedDict()  # analysis_key -> (canonical bytes,
 # evict_akey_caches)가 이 리스트를 순회한다. 파생 캐시를 새로 만들면 register_akey_cache
 # 로 등록만 하면 무효화에 자동 편입된다 (response_cache.py 가 import 시 자기 캐시를 등록).
 AKEY_CACHES: list = [TABLES_CACHE, DIST_CACHE, MAP_CACHE, REPORT_CACHE,
-                     COMMONALITY_CACHE, TRIM_CACHE, TRIM_CHART_CACHE]
+                     COMMONALITY_CACHE, TRIM_CACHE, TRIM_CHART_CACHE, DIST_CHUNK_CACHE]
 
 # 콜드 캐시 동시 진입(stampede) 방지 single-flight 락 — 캐시에 없는 같은 세션을 여러
 # 사용자가 동시에 열면 수 초짜리 CPU-bound 계산이 중복 실행되며 GIL 로 서로 밀어내므로,
@@ -106,6 +121,24 @@ def register_akey_cache(cache: OrderedDict) -> None:
 # 캐시별 분해는 필요해질 때 추가한다. 카운터는 CACHE_LOCK 안에서만 만진다.
 STATS = {"hit": 0, "miss": 0, "disk_hit": 0, "disk_miss": 0}
 
+# single-flight 락 경합 누적 (관리자 패널 노출용) — 종류(키 첫 요소) -> [횟수, 누적 ms].
+# **경합이 실제로 난 경우에만** 기록한다(무경합은 시간 측정조차 하지 않음 — keyed_lock_ctx).
+LOCK_WAITS: dict = {}
+
+# cache_stats() 에 자기 통계를 얹고 싶은 외부 모듈(response_cache 등)이 등록하는 콜백.
+# response_cache → cache 단방향 import 를 유지하기 위한 장치 — cache 가 response_cache 를
+# import 하면 순환이 된다.
+STATS_PROVIDERS: list = []
+
+
+def register_stats_provider(fn) -> None:
+    """cache_stats() 의 ``response`` 항목에 병합할 dict 를 돌려주는 콜백 등록.
+
+    콜백은 **CACHE_LOCK 밖에서** 호출된다 (콜백 내부가 CACHE_LOCK 을 다시 잡는 것이
+    정상 — 비재진입 Lock 이라 락 안에서 부르면 데드락).
+    """
+    STATS_PROVIDERS.append(fn)
+
 
 def cache_get(cache: OrderedDict, key):
     with CACHE_LOCK:
@@ -119,19 +152,30 @@ def cache_get(cache: OrderedDict, key):
 
 
 def cache_stats():
-    """캐시별 보유 건수 + 히트/미스 누적."""
+    """캐시별 보유 건수 + 히트/미스 누적 + 락 경합 + 등록된 외부 캐시 통계."""
     names = (("tables", TABLES_CACHE), ("dist", DIST_CACHE), ("map", MAP_CACHE),
              ("report", REPORT_CACHE), ("commonality", COMMONALITY_CACHE),
              ("trim", TRIM_CACHE), ("trim_chart", TRIM_CHART_CACHE),
-             ("manifest", MANIFEST_CACHE))
+             ("manifest", MANIFEST_CACHE), ("dist_chunk", DIST_CHUNK_CACHE))
     with CACHE_LOCK:
         sizes = {name: len(c) for name, c in names}
         tables_bytes = sum(_TABLES_SIZES.values())
         report_bytes = sum(_REPORT_SIZES.values())
+        chunk_bytes = sum(_DIST_CHUNK_SIZES.values())
         stats = dict(STATS)
+        lock_waits = {kind: {"count": n, "total_ms": round(ms, 1)}
+                      for kind, (n, ms) in LOCK_WAITS.items()}
+    # provider 는 락 밖에서 — 콜백 내부가 CACHE_LOCK 을 다시 잡는다(비재진입).
+    response = {}
+    for fn in STATS_PROVIDERS:
+        try:
+            response.update(fn() or {})
+        except Exception:
+            pass
     total = stats["hit"] + stats["miss"]
     disk_total = stats["disk_hit"] + stats["disk_miss"]
     return {"sizes": sizes, "tables_bytes": tables_bytes, "report_bytes": report_bytes,
+            "chunk_bytes": chunk_bytes, "lock_waits": lock_waits, "response": response,
             **stats,
             "hit_rate": round(stats["hit"] / total * 100, 1) if total else None,
             "disk_hit_rate": round(stats["disk_hit"] / disk_total * 100, 1) if disk_total else None}
@@ -180,7 +224,7 @@ def tables_cache_put(key, tables) -> None:
 
 
 def _prune_tables_sizes_locked() -> None:
-    """크기 기록을 두는 캐시(TABLES/REPORT)에서 빠진 키의 기록 제거.
+    """크기 기록을 두는 캐시(TABLES/REPORT/DIST_CHUNK)에서 빠진 키의 기록 제거.
 
     (CACHE_LOCK 보유 상태에서 호출 — 무효화 경로가 캐시에서 직접 pop 하므로 크기 기록만
     남아 상한 계산이 실제보다 커지는 것을 막는다.)"""
@@ -188,6 +232,8 @@ def _prune_tables_sizes_locked() -> None:
         _TABLES_SIZES.pop(key, None)
     for key in [k for k in _REPORT_SIZES if k not in REPORT_CACHE]:
         _REPORT_SIZES.pop(key, None)
+    for key in [k for k in _DIST_CHUNK_SIZES if k not in DIST_CHUNK_CACHE]:
+        _DIST_CHUNK_SIZES.pop(key, None)
 
 
 def _bytes_capped_put(cache: OrderedDict, key, blob: bytes,
@@ -195,7 +241,8 @@ def _bytes_capped_put(cache: OrderedDict, key, blob: bytes,
     """bytes 값 캐시 공용 put — 개수 + 바이트(len 합산) 이중 상한으로 축출한다.
 
     최소 1개는 남긴다 (방금 넣은 blob 은 곧바로 조회되므로). 값이 bytes 라 크기
-    측정이 len() 으로 끝난다 — tables 처럼 별도 크기 기록이 필요 없다."""
+    측정이 len() 으로 끝난다 — tables 처럼 별도 크기 기록이 필요 없다.
+    (dist/map/trim_chart 외에 response_cache 의 full/scatter/dist_batch 도 사용)"""
     with CACHE_LOCK:
         cache[key] = blob
         cache.move_to_end(key)
@@ -232,6 +279,24 @@ def report_cache_put(key, report: dict, size: int | None = None) -> None:
             _REPORT_SIZES.pop(old_key, None)
 
 
+def dist_chunk_cache_put(key, items: dict, size: int) -> None:
+    """DIST_CHUNK_CACHE 전용 put — 개수 + 비압축 바이트 이중 상한으로 축출한다.
+
+    size 는 디코드 시 이미 알고 있는 비압축 JSON 길이 (실제 dict RAM 은 그보다 크지만
+    chunk 간 상대 크기가 목적이라 충분 — report_cache_put 과 같은 관례).
+    최소 1개는 남긴다 (방금 넣은 chunk 는 곧바로 조회되므로)."""
+    with CACHE_LOCK:
+        DIST_CHUNK_CACHE[key] = items
+        DIST_CHUNK_CACHE.move_to_end(key)
+        _DIST_CHUNK_SIZES[key] = int(size)
+        while len(DIST_CHUNK_CACHE) > 1 and (
+                len(DIST_CHUNK_CACHE) > DIST_CHUNK_CACHE_MAX
+                or (DIST_CHUNK_CACHE_MAX_BYTES
+                    and sum(_DIST_CHUNK_SIZES.values()) > DIST_CHUNK_CACHE_MAX_BYTES)):
+            old_key, _ = DIST_CHUNK_CACHE.popitem(last=False)
+            _DIST_CHUNK_SIZES.pop(old_key, None)
+
+
 def dist_cache_put(key, blob: bytes) -> None:
     _bytes_capped_put(DIST_CACHE, key, blob, DIST_CACHE_MAX, DIST_CACHE_MAX_BYTES)
 
@@ -256,6 +321,31 @@ def keyed_lock(key) -> threading.Lock:
         while len(_KEYED_LOCKS) > _KEYED_LOCKS_MAX:
             _KEYED_LOCKS.popitem(last=False)
     return lock
+
+
+@contextlib.contextmanager
+def keyed_lock_ctx(key):
+    """keyed_lock + **경합 계측**. ``with cache.keyed_lock(k):`` 의 대체재.
+
+    무경합(= 곧바로 획득)이면 시도 1회로 끝나고 시간 측정도 카운터 조작도 하지 않는다 —
+    관측 때문에 정상 경로가 느려지지 않게 하기 위함. 획득에 실패한 경우에만 대기 시간을
+    재서 LOCK_WAITS 에 종류별로 누적한다(어느 캐시가 stampede 를 겪는지 = 콜드 빌드가
+    사용자 대기로 이어지는 지점이 관리자 화면에 드러난다).
+    """
+    lock = keyed_lock(key)
+    if not lock.acquire(blocking=False):
+        t0 = time.perf_counter()
+        lock.acquire()
+        waited = (time.perf_counter() - t0) * 1000.0
+        kind = str(key[0]) if isinstance(key, tuple) and key else "?"
+        with CACHE_LOCK:
+            entry = LOCK_WAITS.setdefault(kind, [0, 0.0])
+            entry[0] += 1
+            entry[1] += waited
+    try:
+        yield
+    finally:
+        lock.release()
 
 
 def evict_akey_caches(analysis_key) -> None:

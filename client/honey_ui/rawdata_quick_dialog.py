@@ -30,7 +30,6 @@ from PyQt6.QtCore import QAbstractTableModel, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QGuiApplication
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -45,6 +44,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSplitter,
     QTableView,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -57,6 +57,18 @@ _MAX_ROWS = 20000          # 표에 올릴 최대 행수 (서버 raw_data 조회
 _MAX_ITEM_COLS = 60        # 표에 올릴 최대 item 컬럼수 (같은 이유)
 _EDITED_BG = QColor("#fff3cd")
 _META_SET = set(META_COLUMNS)
+_SIDE_MIN_W = 340          # 우측(항목/규칙/미리보기) 패널 최소 폭
+
+# 이 창은 표·필터·동작 버튼이 한 화면에 모여 있어 기본 폰트로는 글자만 커 보인다.
+# 창 전체를 한 단계 작게 깔고, 설명 라벨은 더 작고 흐리게 둔다.
+_DIALOG_QSS = """
+QDialog, QLabel, QPushButton, QToolButton, QComboBox, QLineEdit,
+QListWidget, QTableView, QGroupBox { font-size: 11px; }
+QGroupBox { font-weight: 600; margin-top: 8px; }
+QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 4px; }
+QLabel[hint="1"] { color: #6b7280; font-size: 10px; }
+QToolButton#sectionHeader { font-weight: 600; border: none; padding: 2px 0; }
+"""
 
 # 표시용 컬럼 라벨 — 웹 Raw Data 표와 같은 표기(X/Y/TNO).
 _META_LABELS = {"XPOS": "X", "YPOS": "Y", "FAILTNO": "TNO"}
@@ -112,6 +124,48 @@ class _LoadWorker(QThread):
             self.done.emit(tables, "")
         except Exception as exc:                     # noqa: BLE001 (UI 로 그대로 전달)
             self.done.emit(None, str(exc))
+
+
+class _Section(QWidget):
+    """접었다 펼 수 있는 구역 — 제목 줄을 누르면 본문이 접힌다.
+
+    조회 조건·수정 동작은 한 번 정하고 나면 계속 볼 필요가 없는데, 펼친 채로 두면
+    정작 봐야 할 표가 눌린다. 접힘 상태에서는 제목 옆에 요약(예: 대상 행수)만 남긴다.
+    """
+
+    def __init__(self, title, parent=None, expanded=True):
+        super().__init__(parent)
+        self.header = QToolButton()
+        self.header.setObjectName("sectionHeader")
+        self.header.setText(title)
+        self.header.setCheckable(True)
+        self.header.setChecked(expanded)
+        self.header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.header.setArrowType(Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self.header.clicked.connect(self._toggle)
+        self.summary = QLabel("")
+        self.summary.setProperty("hint", "1")
+
+        self.body = QWidget()
+        self.body.setVisible(expanded)
+
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.addWidget(self.header)
+        head.addWidget(self.summary, 1)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addLayout(head)
+        layout.addWidget(self.body)
+
+    def _toggle(self, checked):
+        self.body.setVisible(checked)
+        self.header.setArrowType(Qt.ArrowType.DownArrow if checked
+                                 else Qt.ArrowType.RightArrow)
+
+    def set_summary(self, text):
+        self.summary.setText(text)
 
 
 class _PreviewWorker(QThread):
@@ -256,13 +310,14 @@ class RawdataQuickDialog(QDialog):
 
     # ── UI 구성 ──────────────────────────────────────────────────────────────
     def _build_ui(self):
+        self.setStyleSheet(_DIALOG_QSS)
         root = QVBoxLayout(self)
 
         # (1) source 선택 — 체크한 것만 디코드한다
         self.box_source = QGroupBox("① 고칠 Source 선택 (체크한 것만 불러옵니다)")
         src_layout = QVBoxLayout(self.box_source)
         self.list_source = QListWidget()
-        self.list_source.setMaximumHeight(150)
+        self.list_source.setMaximumHeight(110)
         btn_all = QPushButton("전체 선택")
         btn_none = QPushButton("전체 해제")
         self.btn_load = QPushButton("불러오기")
@@ -283,19 +338,30 @@ class RawdataQuickDialog(QDialog):
         self.body.setVisible(False)
         body_layout = QVBoxLayout(self.body)
         body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.addWidget(self._build_filter_box())
+
+        # 조회 조건·수정 동작은 접을 수 있게 — 펼친 채로 두면 정작 봐야 할 표가 눌린다.
+        self.sec_filter = _Section("② 조회 조건 — 필요한 행만 표에 올립니다"
+                                   " (이 조건이 곧 일괄 수정 조건)")
+        self._build_filter_box(self.sec_filter.body)
+        body_layout.addWidget(self.sec_filter)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         self.table = QTableView()
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectItems)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setAlternatingRowColors(True)
+        side = self._build_side_panel()
+        side.setMinimumWidth(_SIDE_MIN_W)
         splitter.addWidget(self.table)
-        splitter.addWidget(self._build_side_panel())
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
+        splitter.addWidget(side)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        splitter.setSizes([700, _SIDE_MIN_W + 40])
         body_layout.addWidget(splitter, 1)
-        body_layout.addWidget(self._build_action_box())
+
+        self.sec_action = _Section("③ 수정 — 표에서 직접 고치거나, 선택 영역·조회 조건에 일괄 적용")
+        self._build_action_box(self.sec_action.body)
+        body_layout.addWidget(self.sec_action)
         root.addWidget(self.body, 1)
 
         # (3) 하단 — 상태 + 저장/닫기
@@ -311,9 +377,10 @@ class RawdataQuickDialog(QDialog):
         root.addWidget(self.lbl_state)
         root.addWidget(buttons)
 
-    def _build_filter_box(self):
-        box = QGroupBox("② 조회 조건 — 필요한 행만 표에 올립니다 (이 조건이 곧 일괄 수정 조건)")
+    def _build_filter_box(self, box):
         grid = QGridLayout(box)
+        grid.setContentsMargins(4, 2, 4, 2)
+        grid.setVerticalSpacing(4)
         self.cmb_source = QComboBox()
         self.f_serial = QLineEdit()
         self.f_serial.setPlaceholderText("부분일치")
@@ -352,28 +419,35 @@ class RawdataQuickDialog(QDialog):
         holder = QWidget()
         holder.setLayout(cond)
         grid.addWidget(holder, 1, 0, 1, len(pairs) * 2)
-        return box
 
     def _build_side_panel(self):
+        """우측 패널 — **항목 목록이 주인공**이라 세로 공간의 대부분을 준다.
+
+        규칙 목록·미리보기는 접을 수 있는 구역으로 둬서, 항목을 고르는 동안에는 접어 두고
+        목록을 넓게 볼 수 있게 한다."""
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
 
         item_box = QGroupBox(f"표에 볼 항목 (최대 {_MAX_ITEM_COLS}개)")
         item_layout = QVBoxLayout(item_box)
+        item_layout.setContentsMargins(6, 4, 6, 6)
         self.item_search = QLineEdit()
         self.item_search.setPlaceholderText("항목 검색")
         self.item_search.textChanged.connect(self._render_items)
         self.list_items = QListWidget()
         self.list_items.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.list_items.setMinimumHeight(220)
         item_layout.addWidget(self.item_search)
-        item_layout.addWidget(self.list_items)
+        item_layout.addWidget(self.list_items, 1)
         layout.addWidget(item_box, 1)
 
-        rule_box = QGroupBox("적용 대기")
-        rule_layout = QVBoxLayout(rule_box)
+        self.sec_rules = _Section("적용 대기")
+        rule_layout = QVBoxLayout(self.sec_rules.body)
+        rule_layout.setContentsMargins(4, 2, 4, 2)
         self.list_rules = QListWidget()
-        self.list_rules.setMaximumHeight(120)
+        self.list_rules.setMaximumHeight(90)
         btn_del_rule = QPushButton("선택 규칙 삭제")
         btn_del_rule.clicked.connect(self._remove_rule)
         btn_clear = QPushButton("전체 비우기")
@@ -383,22 +457,24 @@ class RawdataQuickDialog(QDialog):
         rrow.addWidget(btn_clear)
         rule_layout.addWidget(self.list_rules)
         rule_layout.addLayout(rrow)
-        layout.addWidget(rule_box)
+        layout.addWidget(self.sec_rules)
 
-        prev_box = QGroupBox("미리보기 (저장 전, 로컬 계산)")
-        prev_layout = QVBoxLayout(prev_box)
+        self.sec_preview = _Section("미리보기 (저장 전, 로컬 계산)")
+        prev_layout = QVBoxLayout(self.sec_preview.body)
+        prev_layout.setContentsMargins(4, 2, 4, 2)
         self.lbl_preview = QLabel("변경을 넣고 [다시 계산] 을 누르세요.")
         self.lbl_preview.setWordWrap(True)
         btn_preview = QPushButton("다시 계산")
         btn_preview.clicked.connect(self._run_preview)
         prev_layout.addWidget(self.lbl_preview)
         prev_layout.addWidget(btn_preview)
-        layout.addWidget(prev_box)
+        layout.addWidget(self.sec_preview)
         return panel
 
-    def _build_action_box(self):
-        box = QGroupBox("③ 수정 — 표에서 직접 고치거나, 선택 영역·조회 조건에 일괄 적용")
+    def _build_action_box(self, box):
         layout = QVBoxLayout(box)
+        layout.setContentsMargins(4, 2, 4, 2)
+        layout.setSpacing(4)
 
         self.edit_value = QLineEdit()
         self.edit_value.setPlaceholderText("적용할 값 / 오프셋 / 배율")
@@ -439,19 +515,13 @@ class RawdataQuickDialog(QDialog):
         btn_bulk.clicked.connect(self._add_rule_from_filter)
         bulk.addWidget(self.cmb_bulk)
         bulk.addWidget(btn_bulk)
-        bulk.addSpacing(20)
-        bulk.addWidget(QLabel("빠른 동작:"))
-        btn_bin1 = QPushButton("Bin1 only")
-        btn_bin1.setToolTip("Pass(BIN 1) die 만 남기고 나머지를 제외하는 규칙 추가")
-        btn_bin1.clicked.connect(self._add_bin1_rule)
-        btn_specout = QPushButton("Spec Out 빈값")
-        btn_specout.setToolTip("선택한 항목의 규격 밖 측정값을 전부 결측 처리하는 규칙 추가")
-        btn_specout.clicked.connect(self._add_spec_out_rule)
-        bulk.addWidget(btn_bin1)
-        bulk.addWidget(btn_specout)
         bulk.addStretch(1)
+        # Bin1 only · Spec Out 빈값은 조건을 짤 필요가 없어 Rawdata 허브 [Options] 로 옮겼다
+        # (이 창을 열지 않고 켜고 끌 수 있어야 하는 옵션이라).
+        hint = QLabel("Bin1 only · Spec Out 빈값은 Rawdata 허브 [Options] 에 있습니다.")
+        hint.setProperty("hint", "1")
+        bulk.addWidget(hint)
         layout.addLayout(bulk)
-        return box
 
     # ── 로드 ─────────────────────────────────────────────────────────────────
     def _load_meta(self):
@@ -638,7 +708,10 @@ class RawdataQuickDialog(QDialog):
         total = sum(len(t.data) for t in self._tables)
         pct = (matched / total * 100.0) if total else 0.0
         note = f" — 앞 {_MAX_ROWS:,}행만 표시" if truncated else ""
-        self.lbl_count.setText(f"대상 {matched:,}행 / 전체 {total:,}행 ({pct:.1f}%){note}")
+        summary = f"대상 {matched:,}행 / 전체 {total:,}행 ({pct:.1f}%){note}"
+        self.lbl_count.setText(summary)
+        # 접었을 때도 무엇으로 조회했는지 보이도록 제목 옆에 요약을 남긴다.
+        self.sec_filter.set_summary(summary)
 
         items = self._selected_items()[:_MAX_ITEM_COLS]
         columns = list(META_COLUMNS) + items
@@ -804,24 +877,6 @@ class RawdataQuickDialog(QDialog):
                     return
         self._add_rule(where, action)
 
-    def _add_bin1_rule(self):
-        where = {"conds": [{"field": "BIN", "op": "not_in", "values": ["1"]}]}
-        source = self.cmb_source.currentData()
-        if source:
-            where["source"] = source
-        self._add_rule(where, {"op": "exclude_rows"})
-
-    def _add_spec_out_rule(self):
-        item = self.cmb_item.currentData()
-        if not item:
-            QMessageBox.warning(self, "Spec Out", "대상 항목을 '항목 조건' 에서 고르세요.")
-            return
-        where = {"conds": [{"field": "item", "item": item, "op": "spec_out"}]}
-        source = self.cmb_source.currentData()
-        if source:
-            where["source"] = source
-        self._add_rule(where, {"op": "clear", "target": item})
-
     def _render_rules(self):
         self.list_rules.clear()
         for rule in self._rules:
@@ -914,6 +969,8 @@ class RawdataQuickDialog(QDialog):
             parts.append(f"불러온 source {len(self._tables)}개")
         parts.append("원본은 바뀌지 않습니다 — 언제든 되돌릴 수 있습니다.")
         self.lbl_state.setText(" · ".join(parts))
+        # 접힌 상태에서도 대기 중인 변경량이 보이게 한다.
+        self.sec_rules.set_summary(f"셀 {len(self._pending):,} · 규칙 {len(self._rules):,}")
 
     def _save(self):
         import requests

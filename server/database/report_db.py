@@ -8,6 +8,7 @@
 - objects.py         summary 행 / object_info(S3 참조) / csv_files / sheet_data
 - audit.py           감사 로그 기록·조회·롤오프
 - users.py           즐겨찾기 / 편집 권한 위임 / 방문자 / 개인 중요표시 / (폐지) 로그인 계정
+- usage.py           접속 사용량 일별 집계 (Honey 실행 · 웹페이지 방문)
 - annotations.py     주석 + Dash 대시보드 편집 셀
 - webreport_edits.py web_report 편집 상태 (세션 단위)
 
@@ -80,6 +81,7 @@ from .users import (  # noqa: F401
     set_user_important,
     update_user_password,
 )
+from .usage import record_usage  # noqa: F401
 from .annotations import (  # noqa: F401
     create_annotation,
     delete_annotation,

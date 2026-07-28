@@ -38,6 +38,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
@@ -225,12 +226,16 @@ class RawdataHubDialog(QDialog):
         self._add_page(nav, "현재 상태", self._build_state_page(),
                        "지금 이 리포트에 적용 중인 전처리 목록 — 여기서 개별/전체 해제")
 
-        # ── 페이지 1: Item Select ────────────────────────────────────────────
+        # ── 페이지 1: Options (자주 쓰는 한 줄 옵션) ─────────────────────────
+        self._add_page(nav, "Options", self._build_options_page(),
+                       "Bin1 only · Spec Out 빈값 — 조건을 짜지 않고 켜고 끄는 옵션")
+
+        # ── 페이지 2: Item Select ────────────────────────────────────────────
         self.item_list = _ItemListWidget()
         self._add_page(nav, "Item Select", self.item_list,
                        "선택한 항목만 남기고 저장 (원본은 그대로, 언제든 되돌릴 수 있음)")
 
-        # ── 페이지 2: Outlier 제거 ───────────────────────────────────────────
+        # ── 페이지 3: Outlier 제거 ───────────────────────────────────────────
         self.edit_k = QLineEdit()
         self.edit_k.setPlaceholderText("예: 50")
         self.edit_k.setFixedWidth(90)
@@ -251,15 +256,15 @@ class RawdataHubDialog(QDialog):
         self._add_page(nav, "Outlier 제거", outlier_page,
                        "mean ± (입력값)×stdev 밖의 측정값만 결측 처리 — 비우면 해제")
 
-        # ── 페이지 3: 빠른 수정 (별도 다이얼로그로 이동) ─────────────────────
+        # ── 페이지 4: 빠른 수정 (별도 다이얼로그로 이동) ─────────────────────
         quick_page = QWidget()
         quick_layout = QVBoxLayout(quick_page)
         quick_layout.addWidget(QLabel(
             "표에서 필요한 행만 조회해 값을 고치거나, 조건으로 한 번에 수정합니다.\n"
             "· 셀 직접 수정 / 붙여넣기 / 선택 영역 값 지정·빈값·오프셋·배율 / 찾아 바꾸기\n"
             "· 조건 일괄 수정 (예: DUT 3 의 VREF > 4.5 인 die 를 빈값으로)\n"
-            "· 빠른 동작 — Bin1 only, Spec Out 빈값\n"
             "· 저장 전에 수율·CPK 변화를 미리 봅니다\n\n"
+            "Bin1 only · Spec Out 빈값처럼 조건을 짤 필요 없는 것은 [Options] 에 있습니다.\n"
             "Excel 을 열지 않고 원본도 바꾸지 않습니다 — 언제든 되돌릴 수 있습니다."))
         btn_quick_go = QPushButton("빠른 수정 열기")
         btn_quick_go.setMinimumHeight(38)
@@ -269,7 +274,7 @@ class RawdataHubDialog(QDialog):
         self._add_page(nav, "빠른 수정", quick_page,
                        "Excel 없이 표·조건으로 고칩니다 (원본 불변, 되돌릴 수 있음)")
 
-        # ── 페이지 4: Rawdata 원본 수정 (Excel) ──────────────────────────────
+        # ── 페이지 5: Rawdata 원본 수정 (Excel) ──────────────────────────────
         excel_page = QWidget()
         excel_layout = QVBoxLayout(excel_page)
         excel_layout.addWidget(QLabel(
@@ -367,6 +372,109 @@ class RawdataHubDialog(QDialog):
         layout.addWidget(QLabel("해제한 뒤 아래 [저장] 을 눌러야 서버에 반영됩니다."))
         return page
 
+    def _build_options_page(self):
+        """조건을 짤 필요 없는 한 줄 옵션 — 내부적으로는 조건 규칙(rules)을 만든다.
+
+        빠른 수정 다이얼로그(표·필터가 있는 큰 화면)를 열지 않아도 켜고 끌 수 있어야 하는
+        것들이라 허브에 둔다. 만들어진 규칙은 [현재 상태] 페이지에 그대로 나타난다."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        self.chk_bin1_only = QCheckBox("Bin1 only — Pass(BIN 1) die 만 남기기")
+        self.chk_bin1_only.setToolTip("BIN 이 1 이 아닌 die 를 리포트에서 제외합니다.")
+        self.chk_bin1_only.toggled.connect(self._toggle_bin1_only)
+        layout.addWidget(self.chk_bin1_only)
+        layout.addWidget(QLabel(
+            "    fail die 를 빼고 양품만으로 분포·CPK 를 봅니다. die 자체가 빠지므로\n"
+            "    수율·Wafer Map 도 함께 달라집니다."))
+        layout.addSpacing(14)
+
+        layout.addWidget(QLabel("Spec Out 빈값 — 규격(LOLIM~HILIM) 밖 측정값을 결측 처리"))
+        spec_row = QHBoxLayout()
+        self.cmb_specout = QComboBox()
+        self.cmb_specout.setMinimumWidth(240)
+        btn_specout = QPushButton("추가")
+        btn_specout.clicked.connect(self._add_spec_out_option)
+        spec_row.addWidget(QLabel("    항목"))
+        spec_row.addWidget(self.cmb_specout)
+        spec_row.addWidget(btn_specout)
+        spec_row.addStretch(1)
+        layout.addLayout(spec_row)
+        layout.addWidget(QLabel(
+            "    그 항목의 규격 밖 값만 빈칸이 됩니다 — die 는 남으므로 수율은 그대로고\n"
+            "    CPK·Distribution 의 n·평균·σ 만 달라집니다. 항목마다 하나씩 추가하세요."))
+        layout.addStretch(1)
+        layout.addWidget(QLabel("추가한 옵션은 [현재 상태] 에서 확인·해제할 수 있습니다."))
+        return page
+
+    # ── Options 페이지 동작 ──────────────────────────────────────────────────
+    @staticmethod
+    def _bin1_only_rule():
+        return {"where": {"conds": [{"field": "BIN", "op": "not_in", "values": ["1"]}]},
+                "action": {"op": "exclude_rows"}}
+
+    def _find_rule(self, rule):
+        """같은 뜻의 규칙이 이미 있으면 그 위치, 없으면 -1 (정규형끼리 비교)."""
+        from web_report import preprocess
+
+        target = preprocess.normalize({"rules": [rule]}).get("rules") or []
+        if not target:
+            return -1
+        for idx, existing in enumerate(self._rules):
+            if (preprocess.normalize({"rules": [existing]}).get("rules") or []) == target:
+                return idx
+        return -1
+
+    def _toggle_bin1_only(self, checked):
+        """체크박스 ↔ 규칙 목록 동기화. _sync_options 가 부를 땐 신호를 막아 재진입이 없다."""
+        rule = self._bin1_only_rule()
+        idx = self._find_rule(rule)
+        if checked and idx < 0:
+            self._rules.append(rule)
+        elif not checked and idx >= 0:
+            self._rules.pop(idx)
+        else:
+            return
+        self._render_state_list()
+        self._refresh_state()
+
+    def _add_spec_out_option(self):
+        item = self.cmb_specout.currentData()
+        if not item:
+            QMessageBox.warning(self, "Spec Out", "항목을 고르세요.")
+            return
+        rule = {"where": {"conds": [{"field": "item", "item": item, "op": "spec_out"}]},
+                "action": {"op": "clear", "target": item}}
+        if self._find_rule(rule) >= 0:
+            QMessageBox.information(self, "Spec Out", f"'{item}' 은 이미 적용 중입니다.")
+            return
+        self._rules.append(rule)
+        self._render_state_list()
+        self._refresh_state()
+        QMessageBox.information(
+            self, "Spec Out",
+            f"'{item}' 규격 밖 값을 빈값 처리하는 옵션을 추가했습니다.\n"
+            "아래 [저장] 을 눌러야 서버에 반영됩니다.")
+
+    def _sync_options(self):
+        """저장된 규칙 → Options 화면 상태 (항목 콤보 채우기 + Bin1 only 체크)."""
+        current = self.cmb_specout.currentData()
+        self.cmb_specout.clear()
+        self.cmb_specout.addItem("(선택)", "")
+        for item in self._items:
+            name = str(item.get("name") or "")
+            if name:
+                self.cmb_specout.addItem(name, name)
+        if current:
+            pos = self.cmb_specout.findData(current)
+            if pos >= 0:
+                self.cmb_specout.setCurrentIndex(pos)
+        checked = self._find_rule(self._bin1_only_rule()) >= 0
+        if self.chk_bin1_only.isChecked() != checked:
+            self.chk_bin1_only.blockSignals(True)
+            self.chk_bin1_only.setChecked(checked)
+            self.chk_bin1_only.blockSignals(False)
+
     # ── 서버 통신 ────────────────────────────────────────────────────────────
     def _load(self):
         """현재 항목 목록 + 저장된 필터를 읽어 화면을 채운다."""
@@ -392,10 +500,12 @@ class RawdataHubDialog(QDialog):
 
         self.item_list.populate(self._items, self._spec.get("exclude_items") or [])
         self._set_k((self._spec.get("outlier") or {}).get("k"))
-        # 빠른 수정이 만든 셀 패치·규칙 — 이 화면에서는 목록 표시와 해제만 한다.
+        # 빠른 수정이 만든 셀 패치·규칙 — 셀 패치는 목록 표시와 해제만, 규칙은 Options
+        # 페이지에서 켜고 끌 수도 있다.
         self._edits = list(self._spec.get("edits") or [])
         self._rules = list(self._spec.get("rules") or [])
         self._render_state_list()
+        self._sync_options()
         self._refresh_state()
 
     def _set_basis(self, info):
@@ -490,6 +600,7 @@ class RawdataHubDialog(QDialog):
         elif kind.startswith("rule:"):
             self._rules.pop(int(kind.split(":", 1)[1]))
         self._render_state_list()
+        self._sync_options()          # Options 의 Bin1 only 체크도 함께 풀린다
         self._refresh_state()
 
     def _drop_all_state(self):
@@ -503,6 +614,7 @@ class RawdataHubDialog(QDialog):
         self.edit_k.clear()
         self._edits, self._rules = [], []
         self._render_state_list()
+        self._sync_options()
         self._refresh_state()
 
     # ── 저장 ─────────────────────────────────────────────────────────────────
@@ -557,6 +669,7 @@ class RawdataHubDialog(QDialog):
         self._rules = list(self._spec.get("rules") or [])
         self._set_basis(result)
         self._render_state_list()
+        self._sync_options()
         self._refresh_state()
         QMessageBox.information(
             self, "Rawdata",

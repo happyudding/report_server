@@ -69,11 +69,14 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 ### web_report 캐시 / 컴퓨트
 
 캐시 계층·환경변수 전체는 [../docs/12_web_report_cache.md](../docs/12_web_report_cache.md) 가
-정본. 자주 만지는 것: `WEB_REPORT_COMPUTE_WORKERS`(기본 2, 0=인라인),
-`WEB_REPORT_TABLES_CACHE_MB`(기본 4096), `WEB_REPORT_DISK_CACHE_MAX_GB`(기본 500),
+정본. 자주 만지는 것: `WEB_REPORT_COMPUTE_WORKERS`(기본 2 / **운영 4**, 0=인라인),
+`WEB_REPORT_TABLES_CACHE_MB`(기본 4096 / **운영 2048** — 부모·워커가 각자 갖는 상한),
+`WEB_REPORT_DISK_CACHE_MAX_GB`(기본 500),
 `WEB_REPORT_REPORT_CACHE_MB`(기본 256 — report dict 바이트 상한),
 `WEB_REPORT_TRIM_CHART_CACHE_MB`(기본 256 — Trim 그룹 차트 gzip 바이트 상한),
-`WEB_REPORT_ONDEMAND_WORKERS`(기본 2 — 콜드 202 후 백그라운드 빌드 스레드).
+`WEB_REPORT_ONDEMAND_WORKERS`(기본 2 / **운영 4** — 콜드 202 후 백그라운드 빌드 스레드),
+`WEB_REPORT_DIST_CHUNK_CACHE_MB`(기본 512 — dist pack chunk 디코드 결과 캐시).
+컴퓨트 워커 2종은 **짝으로** 올려야 한다 — 풀만 늘리면 소비자 스레드 수가 새 상한이 된다.
 
 ### 세션/DB 유지보수
 
@@ -109,7 +112,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `server_<stamp>.txt` | wsgi(부모) | 콘솔 로그 tee. 기동마다 새 파일 = **파일 수가 재기동 횟수**. 이제 `logging` INFO 도 타임스탬프 포함해 여기 남는다 |
 | `faulthandler_<stamp>.txt` | wsgi(부모) | 네이티브 크래시(세그폴트/OS 강제종료) 스택. server_ 와 stamp 공유. **크래시 없으면 0바이트→다음 기동 시 삭제** |
 | `faulthandler_worker_<pid>.txt` | 컴퓨트 워커 | 워커 프로세스 네이티브 크래시(OOM 등) 스택. per-PID |
-| `metrics_YYYYMMDD.log` | metrics 샘플러 | flight recorder — `ts,cpu,rss,mem_used,inflight,win_peak` (분당 1줄). 크래시 직전 리소스 추이 부검용 |
+| `metrics_YYYYMMDD.log` | metrics 샘플러 | flight recorder — `ts,cpu,rss,mem_used,inflight,win_peak,workers_rss` (분당 1줄). 크래시 직전 리소스 추이 부검용. 7번째(컴퓨트 워커 RSS 합)는 2026-07-28 추가 — **뒤에 붙여** 6컬럼 구파일도 그대로 파싱된다 |
 | `runtime_YYYYMMDD.log` | metrics 샘플러 | 응답시간 스냅샷(`type:lat`, 5분마다) + 느린 요청 개별 기록(`type:slow`, JSON lines). **재시작으로 초기화되지 않는 부하 이력** — admin '이력' 탭이 읽음 |
 | `watchdog_events.log` | watchdog | 재기동/실패 이벤트(JSON lines) — admin 대시보드 현황 탭이 읽음 |
 | `watchdog_checks.log` | watchdog | **매 실행 1줄**(JSON lines) — 실행 빈도 자체. `mutex_busy` = 태스크 겹쳐 뜬 직접 증거 |
@@ -160,8 +163,11 @@ gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 �
 | `HOST` / `PORT` | 기본(`0.0.0.0` / `8080`) 유지 | `env/server.env` 가 정본. 포트를 바꾸면 클라이언트 `HONEY_SERVER_URL` 도 함께 바꿔야 한다 |
 | `WAITRESS_THREADS` | 기본(13) 유지 | 동접 처리용. waitress 본문 상한은 `MAX_CONTENT_LENGTH_MB` 와 자동 정합(wsgi.py) |
 | `MAX_CONTENT_LENGTH_MB` | 기본(2048) 유지 | 업로드 본문 상한(parquet + dist blob 첨부 합산). waitress/Flask 공용 |
-| `WEB_REPORT_COMPUTE_WORKERS` | 기본(2) 유지 | 콜드 빌드 워커. 5명 규모 충분 — 워커당 tables 캐시 최대 4GB RAM 감안 |
-| `WEB_REPORT_TABLES_CACHE_MB` / `WEB_REPORT_DIST_CACHE_MB` | 기본(4096 / 1024) 유지 | 부모 프로세스 RAM 상한. 32GB 박스에서 부모+워커2 합산 여유 확보 |
+| `WEB_REPORT_COMPUTE_WORKERS` + `_ONDEMAND_WORKERS` | **4 / 4** (server.env 에 명시) | 콜드 빌드 워커. **둘을 짝으로** 올릴 것(풀만 늘리면 소비자 스레드가 새 상한). 제약은 RAM 이 아니라 CPU — 유휴 워커 약 100MB 실측, 8코어에서 4건 동시 콜드 빌드 시 4코어를 버스트로 쓴다. `_ONDEMAND_WORKERS` 는 부모 tables 가 웜인 세션을 **부모에서 인라인** 빌드하므로(should_offload=False) 값이 크면 부모 GIL 경합도 는다 |
+| 적정성 판단 | admin 현황 탭 "온디맨드 대기" | 상시 0 = 워커 과잉(줄여도 됨) / 자주 1 이상 = 늘린 값이 실제로 일하는 중. CPU 피크와 함께 볼 것 |
+| `WEB_REPORT_TABLES_CACHE_MB` | **2048** (server.env 에 명시) | **부모와 워커가 각자** 갖는 상한이라 실효 천장 = 값 × (1+워커수). 실데이터(세션 ≈229MB)에선 개수 상한(4건 ≈0.9GB)이 먼저 걸려 2048 은 발동하지 않는다 = 성능 손실 없이 천장만 절반 |
+| `WEB_REPORT_DIST_CACHE_MB` | 기본(1024) 유지 | 부모 프로세스 RAM 상한 |
+| 서버 RAM 실측 | admin 현황 탭 "report_server RSS (부모+워커)" | 같은 박스의 다른 서비스와 섞이지 않은 우리 몫. 워커 증설 판단은 이 값으로 |
 | `REPORT_CLEANUP_DRYRUN` | 실삭제 원하면 `0` 명시 | **기본 1 = orphan 회수도 로그만** 남김 |
 | `REPORT_TIER_ENABLED`/`REPORT_TIER_DRYRUN` | S3 확정 환경에서 dryrun 해제 검토 | 티어링이 로컬 hot 캐시를 S3 로 내려 2TB 디스크를 지킴 (S3 미설정 시 no-op) |
 | `REPORT_DB_BACKUP_DIR` | **다른 물리 디스크/네트워크 경로 지정 권장** | 기본은 DB 옆 폴더 — 디스크 사망 시 원본과 백업이 함께 유실 |
@@ -266,14 +272,15 @@ gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 �
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| `GET` | `/honey/version` | 버전 정보 JSON (`version.json` 반환) |
+| `GET` | `/honey/version` | 버전 정보 JSON (`version.json` 반환). 호출을 'Honey 실행'으로 사용자별 집계 (`report_usage_daily`, 신원은 HoneyUser UA — 구버전 클라는 IP) |
 | `GET` | `/honey/download` | Honey exe/ZIP 다운로드 |
 | `GET` | `/honey/announcement` | 릴리스 공지 원문 (`releases/announcement.txt` 그대로, text/plain). 클라가 최신 버전 실행 중일 때 PC 계정별 1회 팝업 → [docs/04](../docs/04_honey_update.md) |
 
 ### 관리 대시보드 (`/pe/admin-<secret>/`, 기본 `/pe/admin-pte/`) — 인증 없음, 내부망 전용
 
 비-GET 요청은 `X-Admin-Request: 1` 헤더 요구. `GET /` 대시보드 + `GET /api/*`
-(health/storage/s3-status/metrics/stats(daily·users·client_errors)/sessions/users/
+(health/storage/s3-status/metrics/stats(daily·users·client_errors·usage(접속 사용량 —
+Honey 실행·웹 방문 순위))/sessions/users/
 voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail) +
 `POST /api/*` (sessions/delete, session/<sid>/important·password, db/backup·cleanup 등).
 운영 진단용 GET 4개: `watchdog`(재기동 이력+reason 분포) · `watchdog/checks?hours=`(매 점검
@@ -318,6 +325,7 @@ server/
 ├── database/                 SQLite 계층 (report_db.py 는 재노출 facade)
 │   ├── core.py               SCHEMA(정본)·마이그레이션·get_conn·analysis lock
 │   ├── sessions.py / objects.py / audit.py / users.py / annotations.py
+│   ├── usage.py              접속 사용량 일별 집계 (Honey 실행·웹 방문)
 │   ├── webreport_edits.py    web_report 편집 상태 (세션 단위)
 │   └── models.py             Session dataclass (Mapping 호환)
 ├── storage_gateway/          S3 산출물 저장 단일 진입점 (ENTRYPOINT/EXTERNAL_OWNER)

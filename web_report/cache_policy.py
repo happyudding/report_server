@@ -16,6 +16,7 @@
 | TRIM_CHART_CACHE   | (akey, chash[, prep], mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 |
 | _FULL_CACHE        | (akey, chash, "sid:edits_rev", extras_digest)    | 편집 rev / annotations 등 extras    |
 | _SCATTER_CACHE     | (akey, chash[, prep], mode, subject[, "bin1"])   | raw_data 편집 / 전처리 / 세션 삭제 ("bin1"=양품만) |
+| DIST_CHUNK_CACHE   | (akey, chash[, prep], mode, chunk_id)            | raw_data 편집 / 전처리 / 세션 삭제  |
 
 공통 규약:
 - 모든 키의 **첫 요소는 analysis_key** — AKEY_CACHES 무효화(evict/invalidate)의 전제.
@@ -83,6 +84,26 @@ def dist_batch_key(session, subjects_digest: str, *, bin1: bool = False,
     return base + ("bin1",) if bin1 else base
 
 
+def dist_chunk_key(analysis_key, content_hash, mode, chunk_id: int,
+                   prep_digest: str = "") -> tuple:
+    """dist pack chunk **디코드 결과** 캐시 키.
+
+    다른 빌더와 달리 session dict 가 아니라 원시 인자를 받는다 — 호출부
+    (dist_pack_store.load_chunk_items)가 pack 디렉토리 인자만 가지고 session 을 모른다.
+    구성은 pack 디렉토리 세대(chash+mode+prep)와 1:1 이라, raw 편집·전처리로 pack
+    디렉토리가 갈리면 캐시 키도 함께 갈린다.
+
+    mode 는 validate_mode 가 아니라 **dist_pack_store._gen_name 과 같은 정규화**
+    (``str(mode or "Normal")``)를 쓴다 — 이 키가 가리키는 것은 세션 모드가 아니라
+    디스크의 pack 디렉토리이고, 둘의 정규화가 어긋나면 서로 다른 디렉토리가 같은 키로
+    뭉쳐 다른 세대의 데이터를 돌려줄 수 있다.
+    """
+    base = (analysis_key, str(content_hash or ""))
+    if prep_digest:
+        base += (str(prep_digest),)
+    return base + (str(mode or "Normal"), int(chunk_id))
+
+
 # build_map_analysis_rows 출력 세대. map rows 의 **값**이 바뀌는 변경(스키마 확장 포함)마다
 # 올려 MAP_CACHE + disk_cache map 파일을 자연 무효화한다 — map_key 에는 edits_rev 가 없어
 # 이 값 말고는 재계산을 강제할 수단이 없다.
@@ -144,7 +165,13 @@ def map_key(session, prep_digest: str = "") -> tuple:
 #      bin_matrix(구 bin_transition 대체)·equivalence(동일성 검증) 추가, common_map.dies 에
 #      source 별 bins 병기, dist_shift 대상이 source 2개→그룹 pool 2개로 바뀐다. 안 올리면
 #      옛 disk_cache 가 bin_transition 만 든 payload 를 반환해 Bin/동일성 탭이 빈 화면이 된다.
-REPORT_SCHEMA_VERSION = 16
+# v17: Compare dist_shift 를 list→dict(after/before/thresholds/summary/rows)로 변경 —
+#      Δ 4필드(delta_average/delta_stdev/delta_cpk/mean_gap_pct) 제거, Before 분모 지표 6종
+#      (meanshift_sigma/cpk_ratio_pct/stdev_delta_pct/median_shift/iqr_delta_pct/ks_d)·
+#      focus 플래그·after/before.n 추가, 정렬이 meanshift_sigma 내림차순으로 바뀐다.
+#      안 올리면 옛 disk_cache 가 list 형 dist_shift 를 반환해 산포 비교 탭이 지표·필터
+#      없는 legacy 표로 폴백된다.
+REPORT_SCHEMA_VERSION = 17
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

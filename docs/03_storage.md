@@ -11,7 +11,7 @@
 - [server/config.py](../server/config.py) — DB 경로·S3 자격증명·키 prefix
 
 ## SQLite 테이블 (정본 [core.py `SCHEMA`](../server/database/core.py), 스냅샷 [report_README.md](../DB/pe/report/report_README.md))
-테이블 16개. 요지 (전체 컬럼은 스냅샷 참조):
+테이블 17개. 요지 (전체 컬럼은 스냅샷 참조):
 
 | 테이블 | 역할 | 핵심 컬럼 / UNIQUE |
 |--------|------|--------------------|
@@ -23,6 +23,7 @@
 | `report_webreport_edit` / `_rev` | web_report 편집 진실 (세션 단위) | `PK(session_id,kind,item_key)` / `rev`(무효화 토큰) |
 | `report_session_editor` | 편집 위임 | `PK(session_id,editor_user)` |
 | `report_web_visitor` | 편집자 후보 풀 | `user_id`(PK) |
+| `report_usage_daily` | 접속 사용량 일별 카운터 (Honey 실행·웹 방문 — 관리자 통계 탭) | `PK(day,kind,user_id)`, `kind`=`honey_run/web_index/web_view`, 무신원은 `ip:<addr>` ([database/usage.py](../server/database/usage.py)) |
 | `report_user_important` / `report_user_favorite` | 개인 중요표시/즐겨찾기 | `PK(user_id,session_id)` |
 | `report_annotation` | 세션 주석 | `session_id` 인덱스 |
 | `report_analysis_lock` | analysis_key 동시성 락 | `analysis_key`(PK), `expires_at`(TTL 300s) |

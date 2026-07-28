@@ -16,13 +16,13 @@ import logging
 import os
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from pathlib import Path
 
 import psutil
 from flask import g, request
 
-from admin_panel.sysinfo import _cpu_percent
+from admin_panel.sysinfo import _cpu_percent, children_rss as _children_rss
 
 _log = logging.getLogger(__name__)
 
@@ -51,17 +51,32 @@ _rt_warned = False
 
 _proc = psutil.Process()
 _lock = threading.Lock()  # 카운터·링버퍼 공용 (임계구역은 정수 연산·append 뿐)
-# 샘플: (ts, cpu%, mem_used, proc_rss, inflight, inflight_window_peak)
+# 샘플: (ts, cpu%, mem_used, proc_rss, inflight, inflight_window_peak, workers_rss)
+# workers_rss = 컴퓨트 워커(자식 프로세스) RSS 합 — proc_rss 에는 안 잡힌다.
 _samples = deque(maxlen=int(RETENTION_SEC / SAMPLE_INTERVAL))
 _inflight = 0
 _inflight_window_peak = 0  # 샘플 구간 내 순간 최대 동시 요청 (샘플러가 읽고 리셋)
-_boot_peaks = {"cpu": (0.0, 0.0), "rss": (0, 0.0), "mem": (0, 0.0), "inflight": (0, 0.0)}
+_boot_peaks = {"cpu": (0.0, 0.0), "rss": (0, 0.0), "mem": (0, 0.0), "inflight": (0, 0.0),
+               "total_rss": (0, 0.0)}   # total_rss = 부모 + 컴퓨트 워커
 _started = False
 
 # 응답시간 — 최근 요청 소요(ms) 링버퍼(백분위용) + endpoint 별 누적(느린 경로 식별용).
 # endpoint 수는 라우트 수만큼이라 상한이 자연스럽다.
 _lat_recent = deque(maxlen=2000)
 _lat_by_route = {}
+
+# 동시 열람 세션 — "지금 몇 명이 어떤 세션을 보고 있나"가 부하 원인 파악의 출발점인데
+# 지금까지 계측이 없었다. 별도 heartbeat 엔드포인트를 두는 대신(프런트 배포 + 상시
+# 트래픽이 필요) **세션 데이터를 실제로 요청한 흔적**을 endpoint 화이트리스트로 줍는다.
+# 화면을 열어만 두고 아무 요청도 안 하는 열람자는 안 잡히지만, 그런 세션은 부하가 아니다.
+_VIEWER_ENDPOINTS = frozenset((
+    "report.session_full", "report.web_report_distribution",
+    "report.web_report_distribution_batch", "report.web_report_scatter",
+    "report.web_report_map_analysis", "report.web_report_raw_data",
+    "report.web_report_trim_analysis", "report.web_report_trim_chart_batch"))
+_VIEWERS_MAX = 500          # 상한 — 초과 시 가장 오래된 것부터 버린다
+VIEWER_WINDOW_SEC = 300     # "최근 N초 안에 요청이 있었으면 열람 중"
+_viewers: OrderedDict = OrderedDict()   # session_id -> 마지막 요청 ts (_lock 공유)
 
 
 def _on_request_start():
@@ -85,8 +100,19 @@ def _on_request_teardown(exc=None):
         route = request.endpoint or request.path
     except Exception:
         route = "?"
+    sid = None
+    if route in _VIEWER_ENDPOINTS:      # 락 밖에서 뽑는다 (dict 조회 2회)
+        try:
+            sid = (request.view_args or {}).get("session_id")
+        except Exception:
+            sid = None
     with _lock:
         _inflight -= 1
+        if sid:
+            _viewers[sid] = time.time()
+            _viewers.move_to_end(sid)
+            while len(_viewers) > _VIEWERS_MAX:
+                _viewers.popitem(last=False)
         if ms is not None:
             _lat_recent.append(ms)
             n, total, mx = _lat_by_route.get(route, (0, 0.0, 0.0))
@@ -116,9 +142,12 @@ def _prune_flight_files(log_dir):
         pass
 
 
-def _flight_record(ts, cpu, mem_used, rss, inflight, win_peak):
+def _flight_record(ts, cpu, mem_used, rss, inflight, win_peak, workers_rss=0):
     """분이 바뀔 때만 metrics_YYYYMMDD.log 에 1줄 append (기록마다 open/close — 1회/분이라
-    비용 무시 가능, 핸들 상시 보유 없이 외부 삭제·수집과 충돌 없음)."""
+    비용 무시 가능, 핸들 상시 보유 없이 외부 삭제·수집과 충돌 없음).
+
+    workers_rss 는 **7번째 컬럼으로 뒤에 붙인다** — 6컬럼짜리 기존 파일도 그대로 파싱되게
+    하기 위함이다(file_history 가 7번째를 옵셔널로 읽는다)."""
     global _fr_last_minute, _fr_last_date, _fr_warned
     if METRICS_FILE_KEEP_DAYS <= 0:
         return
@@ -135,8 +164,9 @@ def _flight_record(ts, cpu, mem_used, rss, inflight, win_peak):
         if date != _fr_last_date:      # 날짜 롤오버(+ 샘플러 시작 첫 기록) 시 prune
             _fr_last_date = date
             _prune_flight_files(log_dir)
-        line = "%s,%.1f,%d,%d,%d,%d\n" % (
-            time.strftime("%Y-%m-%dT%H:%M:%S", lt), cpu, rss, mem_used, inflight, win_peak)
+        line = "%s,%.1f,%d,%d,%d,%d,%d\n" % (
+            time.strftime("%Y-%m-%dT%H:%M:%S", lt), cpu, rss, mem_used, inflight, win_peak,
+            workers_rss)
         with (log_dir / f"metrics_{date}.log").open("a", encoding="utf-8") as f:
             f.write(line)
     except Exception:
@@ -165,11 +195,18 @@ def _runtime_record(ts):
                                 ensure_ascii=False))
     if due:
         _rt_last_write = ts
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts))
         lat = latency_snapshot(top=5)
-        lines.append(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(ts)),
+        lines.append(json.dumps({"ts": stamp,
                                  "type": "lat", "n": lat["samples"], "p50": lat["p50"],
                                  "p95": lat["p95"], "p99": lat["p99"], "max": lat["max"],
                                  "top": lat["slowest"]}, ensure_ascii=False))
+        # 부하 스냅샷 — 캐시 히트/미스는 **기동 이후 누적**이라 구간 증분은 화면에서
+        # 환산한다(재시작으로 카운터가 리셋되면 음수가 되므로 그때는 0 취급).
+        load = dict(load_snapshot())
+        load["ts"] = stamp
+        load["type"] = "load"
+        lines.append(json.dumps(load, ensure_ascii=False))
     try:
         import config
         log_dir = Path(config.ROOT_DIR) / "server" / "log"
@@ -189,18 +226,20 @@ def _sample():
     cpu = _cpu_percent()
     mem_used = psutil.virtual_memory().used
     rss = _proc.memory_info().rss
+    wrss, _wn = _children_rss()      # 컴퓨트 워커 RSS 합 (부모 RSS 에는 안 잡힌다)
     with _lock:
         global _inflight_window_peak
         inflight = _inflight
         win_peak = _inflight_window_peak
         _inflight_window_peak = inflight
-        _samples.append((ts, cpu, mem_used, rss, inflight, win_peak))
+        _samples.append((ts, cpu, mem_used, rss, inflight, win_peak, wrss))
         _bump_boot_peak("cpu", cpu, ts)
         _bump_boot_peak("mem", mem_used, ts)
         _bump_boot_peak("rss", rss, ts)
         _bump_boot_peak("inflight", win_peak, ts)
+        _bump_boot_peak("total_rss", rss + wrss, ts)
     # 파일 IO 는 락 밖에서 (요청 경로의 in-flight 카운터를 막지 않도록)
-    _flight_record(ts, cpu, mem_used, rss, inflight, win_peak)
+    _flight_record(ts, cpu, mem_used, rss, inflight, win_peak, wrss)
     _runtime_record(ts)
 
 
@@ -243,6 +282,51 @@ def current_inflight():
         return _inflight
 
 
+def viewers(window_sec=VIEWER_WINDOW_SEC):
+    """최근 window_sec 안에 세션 데이터를 요청한 세션 목록 (동시 열람 근사).
+
+    prune 은 관리자 조회 시점에만 한다 — 요청 경로에 O(n) 을 얹지 않기 위함이다.
+    """
+    now = time.time()
+    cut = now - window_sec
+    with _lock:
+        for sid in [s for s, ts in _viewers.items() if ts < cut]:
+            _viewers.pop(sid, None)
+        rows = [(sid, ts) for sid, ts in _viewers.items() if ts >= cut]
+    rows.sort(key=lambda r: r[1], reverse=True)
+    return {"count": len(rows), "window_sec": window_sec,
+            "sessions": [{"session_id": sid, "ago": round(now - ts, 1)} for sid, ts in rows]}
+
+
+def load_snapshot():
+    """부하 요약 — 동시 열람 + 컴퓨트 큐 + 진행 중 콜드 빌드 + 캐시 누적 히트/미스.
+
+    api/runtime 집계와 시계열 기록(_runtime_record)이 같은 함수를 쓴다. web_report 는
+    지연 import + 개별 try — 미기동/kill-switch 여도 나머지 값은 살린다.
+    """
+    out = {"viewers": viewers()["count"]}
+    try:
+        from web_report import compute
+        st = compute.status()
+        out.update(ondemand=st.get("ondemand_pending"), distpack=st.get("distpack_pending"),
+                   prewarm=st.get("prewarm_pending"))
+    except Exception:
+        pass
+    try:
+        from web_report import build_status
+        out["builds"] = len(build_status.snapshot_all())
+    except Exception:
+        pass
+    try:
+        from web_report import cache as wr_cache
+        cs = wr_cache.cache_stats()
+        out.update(hit=cs.get("hit"), miss=cs.get("miss"),
+                   disk_hit=cs.get("disk_hit"), disk_miss=cs.get("disk_miss"))
+    except Exception:
+        pass
+    return out
+
+
 def _pct(sorted_vals, q):
     if not sorted_vals:
         return 0.0
@@ -271,8 +355,10 @@ def latency_snapshot(top=8):
 
 def _window_peaks(rows, now, window_sec):
     cut = now - window_sec
-    cpu = rss = mem = infl = 0
-    for ts, c, m, r, _i, wp in rows:
+    cpu = rss = mem = infl = total = 0
+    for row in rows:
+        ts, c, m, r, _i, wp = row[:6]
+        wrss = row[6] if len(row) > 6 else 0
         if ts < cut:
             continue
         if c > cpu:
@@ -283,18 +369,24 @@ def _window_peaks(rows, now, window_sec):
             rss = r
         if wp > infl:
             infl = wp
-    return {"cpu": cpu, "mem_used": mem, "rss": rss, "inflight": infl}
+        if r + wrss > total:
+            total = r + wrss
+    return {"cpu": cpu, "mem_used": mem, "rss": rss, "inflight": infl,
+            "total_rss": total}
 
 
 def snapshot_history(window_sec, max_points=360):
     """window_sec 구간 시계열 + 피크 요약. 초과 시 버킷 다운샘플(버킷별 max/avg —
     max 를 보존해 피크가 차트에서 사라지지 않게 함)."""
     now = time.time()
+    wrss, wn = _children_rss()
     with _lock:
         rows = list(_samples)
+        rss_now = _proc.memory_info().rss
         current = {"inflight": _inflight, "cpu": _cpu_percent(),
                    "mem_used": psutil.virtual_memory().used,
-                   "rss": _proc.memory_info().rss}
+                   "rss": rss_now, "workers_rss": wrss, "workers_n": wn,
+                   "total_rss": rss_now + wrss}
         boot = {k: {"v": v, "ts": ts} for k, (v, ts) in _boot_peaks.items()}
 
     peaks = {"w300": _window_peaks(rows, now, 300),
@@ -305,7 +397,7 @@ def snapshot_history(window_sec, max_points=360):
     cut = now - window_sec
     win = [r for r in rows if r[0] >= cut]
     series = {"ts": [], "cpu_avg": [], "cpu_max": [],
-              "mem_used_max": [], "rss_max": [], "inflight_max": []}
+              "mem_used_max": [], "rss_max": [], "inflight_max": [], "total_rss_max": []}
     if win:
         bucket = max(1, (len(win) + max_points - 1) // max_points)
         for i in range(0, len(win), bucket):
@@ -317,6 +409,8 @@ def snapshot_history(window_sec, max_points=360):
             series["mem_used_max"].append(max(c[2] for c in chunk))
             series["rss_max"].append(max(c[3] for c in chunk))
             series["inflight_max"].append(max(c[5] for c in chunk))
+            series["total_rss_max"].append(
+                max(c[3] + (c[6] if len(c) > 6 else 0) for c in chunk))
 
     return {"now": round(now), "interval": SAMPLE_INTERVAL, "threads": WAITRESS_THREADS,
             "enabled": METRICS_ENABLED, "current": current,
@@ -370,8 +464,10 @@ def file_history(hours=24, max_points=500):
                     if ts < cutoff:
                         continue
                     try:
+                        # 7번째(워커 RSS)는 2026-07-28 추가 — 없는 구파일은 0 으로 읽는다
                         rows.append((ts, float(parts[1]), int(parts[2]),
-                                     int(parts[3]), int(parts[4]), int(parts[5])))
+                                     int(parts[3]), int(parts[4]), int(parts[5]),
+                                     int(parts[6]) if len(parts) > 6 else 0))
                     except ValueError:
                         pass
         except OSError:
@@ -379,7 +475,8 @@ def file_history(hours=24, max_points=500):
     rows.sort(key=lambda r: r[0])
 
     # 버킷 다운샘플 — 버킷별 max 를 보존해 피크가 사라지지 않게 (snapshot_history 와 동일 규칙)
-    resource = {"ts": [], "cpu_max": [], "mem_used_max": [], "rss_max": [], "inflight_max": []}
+    resource = {"ts": [], "cpu_max": [], "mem_used_max": [], "rss_max": [],
+                "inflight_max": [], "total_rss_max": []}
     if rows:
         bucket = max(1, (len(rows) + max_points - 1) // max_points)
         for i in range(0, len(rows), bucket):
@@ -389,8 +486,14 @@ def file_history(hours=24, max_points=500):
             resource["rss_max"].append(max(c[2] for c in chunk))
             resource["mem_used_max"].append(max(c[3] for c in chunk))
             resource["inflight_max"].append(max(c[5] for c in chunk))
+            resource["total_rss_max"].append(max(c[2] + c[6] for c in chunk))
 
     lat = {"ts": [], "p95": [], "p99": []}
+    # 부하 시계열 — 큐/빌드/열람은 순간값 그대로, 캐시 히트율만 구간 증분으로 환산한다
+    # (기록값이 기동 이후 누적이라, 재시작 리셋 구간은 증분이 음수가 되므로 건너뛴다).
+    load = {"ts": [], "ondemand": [], "distpack": [], "builds": [], "viewers": [],
+            "hit_rate": []}
+    _prev_hit = _prev_miss = None
     slow = []
     routes = {}
     for path in _hist_files(log_dir, "runtime", hours, now):
@@ -420,6 +523,19 @@ def file_history(hours=24, max_points=500):
                     elif rec.get("type") == "slow":
                         slow.append({"ts": int(ts), "route": rec.get("route"),
                                      "ms": rec.get("ms")})
+                    elif rec.get("type") == "load":
+                        load["ts"].append(int(ts))
+                        for key in ("ondemand", "distpack", "builds", "viewers"):
+                            load[key].append(rec.get(key) or 0)
+                        hit, miss = rec.get("hit"), rec.get("miss")
+                        rate = None
+                        if hit is not None and miss is not None:
+                            if _prev_hit is not None:
+                                d_hit, d_miss = hit - _prev_hit, miss - _prev_miss
+                                if d_hit >= 0 and d_miss >= 0 and (d_hit + d_miss) > 0:
+                                    rate = round(d_hit / (d_hit + d_miss) * 100, 1)
+                            _prev_hit, _prev_miss = hit, miss
+                        load["hit_rate"].append(rate)
         except OSError:
             pass
     slow.sort(key=lambda d: d["ts"], reverse=True)
@@ -428,6 +544,6 @@ def file_history(hours=24, max_points=500):
                         key=lambda d: d["max_ms"], reverse=True)[:10]
 
     return {"hours": hours, "now": round(now), "resource": resource, "lat": lat,
-            "slow": slow[:100], "top_routes": top_routes,
+            "load": load, "slow": slow[:100], "top_routes": top_routes,
             "slow_threshold_ms": SLOW_REQ_MS, "files": used,
             "coverage_from": int(rows[0][0]) if rows else None}

@@ -56,6 +56,26 @@ def client_error_count(hours=24):
     return {"hours": hours, "count": int(cnt)}
 
 
+def usage_ranking(days=30, limit=50):
+    """접속 사용량 순위 — report_usage_daily 집계 (database/usage.py 가 기록).
+
+    honey_run = Honey 실행(시작 시 버전체크), web_index = 검색결과 페이지,
+    web_view = 세션 상세 페이지. 신원 없는 접속은 'ip:<addr>' 행으로 집계된다."""
+    days = _clamp_days(days)
+    cutoff_day = (date.today() - timedelta(days=days - 1)).isoformat()
+    with report_db.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT user_id, "
+            "       SUM(CASE WHEN kind='honey_run' THEN count ELSE 0 END) AS honey_run, "
+            "       SUM(CASE WHEN kind='web_index' THEN count ELSE 0 END) AS web_index, "
+            "       SUM(CASE WHEN kind='web_view'  THEN count ELSE 0 END) AS web_view, "
+            "       SUM(count) AS total, MAX(last_at) AS last_at "
+            "FROM report_usage_daily WHERE day >= ? "
+            "GROUP BY user_id ORDER BY total DESC LIMIT ?",
+            (cutoff_day, int(limit))).fetchall()
+    return {"days": days, "rows": [dict(r) for r in rows]}
+
+
 def user_ranking(days=30, limit=50):
     """사용자별 사용량 순위. 신원은 client_user → client_host → client_ip 순 폴백
     (전부 클라이언트 신고값 + IP 라 참고용). 'system' 은 cleanup 스케줄러."""

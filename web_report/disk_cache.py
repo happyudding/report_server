@@ -173,6 +173,31 @@ def load_report(upload_root: Path, cache_key: tuple) -> dict | None:
         return None
 
 
+def report_exists(upload_root: Path, cache_key: tuple) -> bool:
+    """report 디스크 캐시 파일이 있는지만 stat 1회로 확인 (읽지 않는다).
+
+    콜드 판정을 single-flight 락 **밖에서** 하기 위한 용도다. 파일이 없으면 = 아직
+    콜드(빌드 중이거나 시작 전) → 호출자가 락을 기다리지 않고 즉시 202 로 응답한다.
+    있으면 종전대로 락 안에서 한 스레드만 디코드한다(중복 디코드 방지 유지).
+    """
+    if not _enabled():
+        return False
+    try:
+        return _path_for(upload_root, "report", cache_key, ".json.gz").is_file()
+    except OSError:
+        return False
+
+
+def map_exists(upload_root: Path, cache_key: tuple) -> bool:
+    """map 디스크 캐시 파일 존재 확인 (report_exists 와 같은 용도)."""
+    if not _enabled():
+        return False
+    try:
+        return _path_for(upload_root, "map", cache_key, ".gz").is_file()
+    except OSError:
+        return False
+
+
 def dumps_report(report: dict) -> bytes:
     """report dict → 캐시 직렬화 bytes. 콜드 경로가 이 bytes 를 gzip 저장(save_report_gz)과
     RAM 캐시 크기추정(cache.report_cache_put size=)에 **함께** 재사용해, 같은 payload 를

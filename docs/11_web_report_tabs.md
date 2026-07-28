@@ -155,7 +155,7 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   그룹으로 나눈다(배치·업로드 순서는 [10](10_web_report_pipeline.md) 분석 모드 표). 그룹은
   `webreport_options.compare` → `validation.webreport_compare_groups` → `build_compare_payload`
   로 흐르고, 옵션이 없으면 `after=[s0], before=[s1]` 로 폴백해 **기존 세션 화면이 바뀌지 않는다**.
-  서브탭 4개 = `Map 비교` / `Log 비교` / `CPK 비교` / `동일성 검증`
+  서브탭 4개 = `Map 비교` / `Log 비교` / `산포 비교` / `동일성 검증`
   ([compare.js](../server/report/static/webreport/compare.js)).
   - 산출물마다 **비교 대상이 다르다**: 공통성 Map·Bin Yield·Bin 불일치 좌표표는 **전 source**,
     goodlog 는 **그룹 대표 2개**(After 최상단 vs Before 최상단), 산포 비교(`dist_shift`)와
@@ -166,6 +166,22 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     `counts.pass_to_fail`/`fail_to_pass` 만 **그룹 대표 기준**이다(화면에도 그렇게 표기).
   - `common_map.dies[].bins` — die 마다 source 별 BIN 을 실어 **마우스오버로 확인**한다.
     hover 문자열은 `waferHeatmap` 의 `opts.labelOf` 훅으로 갈아끼운다(미지정이면 종전과 동일).
+  - **산포 비교**(`build_dist_shift`, 2026-07-28 개편 — 구 "CPK 비교"): 공통 항목의 After/
+    Before pool 통계(Avg·Stdev·Cpk) 병기 + **Before(b) 분모** 정규화 지표 6종.
+    a=After, b=Before: `meanshift_sigma=|avg_a−avg_b|/σ_b` · `cpk_ratio_pct=cpk_a/cpk_b×100`
+    (>100%=개선, `cpk_b≤0`/결측이면 None) · `stdev_delta_pct=(σ_a−σ_b)/σ_b×100`(양수=After
+    산포 증가) · `median_shift=|med_a−med_b|/IQR_b` · `iqr_delta_pct` · `ks_d`(두 pool ECDF
+    최대거리 0~1 — 평균·σ 로 못 잡는 분포 형태 차이). 반환은 dict
+    `{after, before, thresholds, summary{total,focus}, rows[]}`.
+    avg/stdev/cpk/n 은 pooled `build_cpk_rows` 재사용이고, **median/IQR/KS 만** 같은 Bin1
+    pooled frame(`_bin1_frame` — `build_cpk_rows` 의 마스크·numeric 강제를 복제)에서 직접
+    계산한다(모집단 일치를 테스트로 고정).
+    **focus(관심 항목) 판정은 서버가 정본**이고 프런트는 그 불린으로 필터 토글만 한다:
+    양쪽 `Cpk>DIST_CPK_HIGH`(100, 여유 과대) 또는 양쪽 σ=0·결측(고정값)이면 **무조건 제외**,
+    한쪽 `Cpk<CPK_THRESHOLD`(1.33) 또는 `|stdev_delta_pct|≥DIST_STDEV_DELTA_PCT`(15)면 포함.
+    화면 기본값은 "관심 항목만" ON(버튼으로 ALL 전환, 라벨=현재 적용 값 — cpk.js 관례),
+    `N/M 항목` 카운트 표시. 정렬은 `meanshift_sigma` 내림차순(None 최하단, tie `|Δσ%|`).
+    임계값은 `thresholds` 로 내려 프런트가 하드코딩하지 않는다(동일성 검증과 같은 패턴).
   - **동일성 검증**(`build_equivalence`): 항목별 `AVG차 = |After−Before|`,
     `AVG차(%) = |After−Before| / |Before| × 100` (**둘 다 절대값** — Grade1 이 "5% 이하"라
     부호가 섞이면 판정이 어긋난다). Grade1 = AVG차(%) ≤ `EQUIV_AVG_PCT_LIMIT`(5) /
@@ -256,11 +272,18 @@ source 1개가 Excel 시트 1장이다([excel_session.py](../client/excel_edit/e
 #### 조회 전처리 — Item Select / Outlier / 빠른 수정 (2026-07-23, 패치 계층 2026-07-28)
 Honey 의 `Rawdata edit` 은 Excel 을 바로 띄우지 않고 **허브 다이얼로그**
 ([rawdata_hub_dialog.py](../client/honey_ui/rawdata_hub_dialog.py))를 먼저 연다. 레이아웃은
-**좌측 기능 버튼 + 우측 활성 패널**(QStackedWidget)이다 — 5개 페이지: `현재 상태`(적용 중인
-전처리 목록 + 개별/전체 해제) / `Item Select`(2-리스트 + 검색) / `Outlier 제거` /
-`빠른 수정`(→ 별도 다이얼로그) / `Rawdata 원본 수정`(주황 — Excel 로 원본을 고치는 유일한
-버튼) + 하단 `Yield 계산 기준` 체크박스·`저장`·`닫기`. `저장` 은 **화면 상태 전체**를 저장한다
-(행별 부분 저장은 다른 행을 되돌려야 해서 옮겨 둔 항목이 조용히 사라진다).
+**좌측 기능 버튼 + 우측 활성 패널**(QStackedWidget)이다 — 6개 페이지: `현재 상태`(적용 중인
+전처리 목록 + 개별/전체 해제) / `Options`(Bin1 only · Spec Out 빈값) / `Item Select`(2-리스트
++ 검색) / `Outlier 제거` / `빠른 수정`(→ 별도 다이얼로그) / `Rawdata 원본 수정`(주황 — Excel 로
+원본을 고치는 유일한 버튼) + 하단 `Yield 계산 기준` 체크박스·`저장`·`닫기`. `저장` 은
+**화면 상태 전체**를 저장한다(행별 부분 저장은 다른 행을 되돌려야 해서 옮겨 둔 항목이 조용히
+사라진다).
+
+`Options` 페이지는 **조건을 짤 필요가 없는 옵션**을 모아 둔 곳이다 — `Bin1 only`(BIN ∉ [1] →
+die 제외)는 체크박스, `Spec Out 빈값`은 항목을 고르고 [추가]. 둘 다 내부적으로는 조건 규칙
+(`rules`)을 만들 뿐이라 `현재 상태` 목록에 그대로 나타나고, 거기서 해제하면 체크박스도 함께
+풀린다(`_sync_options` — 규칙 정규형끼리 비교해 동기화한다. 표시 문자열 비교가 아니다).
+빠른 수정 다이얼로그(표·필터가 있는 큰 화면)를 열지 않고도 켜고 끌 수 있어야 해서 허브에 둔다.
 
 Excel 을 뺀 나머지는 전부 **원본 parquet 을 고치지 않는 되돌릴 수 있는 옵션**이다 —
 Raw Data 편집과 정반대 성격이라 백업·content_hash 갱신이 없다.
@@ -336,14 +359,17 @@ Raw Data 편집과 정반대 성격이라 백업·content_hash 갱신이 없다.
 흐름: ① source 체크 선택 → 체크한 것만 디코드
 ([excel_session.fetch_rawdata_tables](../client/excel_edit/excel_session.py), Excel 왕복과 같은
 zip·같은 ETag 캐시) → ② 필터 조회 → 표에서 셀 수정 / 선택 영역 값 지정·빈값·오프셋·배율 /
-클립보드 TSV 붙여넣기 / 찾아 바꾸기 / 조건 일괄 규칙(대상 건수 확인 후 추가) / 빠른 동작
-(Bin1 only · Spec Out 빈값) → ③ 수율·worst CPK **미리보기**(저장된 상태 → 저장하면 될 상태) →
-④ 저장.
+클립보드 TSV 붙여넣기 / 찾아 바꾸기 / 조건 일괄 규칙(대상 건수 확인 후 추가) →
+③ 수율·worst CPK **미리보기**(저장된 상태 → 저장하면 될 상태) → ④ 저장.
 
 - 값 검증·조건 판정·규칙 적용·미리보기 통계 전부 **서버와 같은 모듈**(`rawvalues`,
   `preprocess`, `tabs.cpk`, `tabs.common`)을 그대로 돌린다 — 값 일치를 구조적으로 보장.
 - 무거운 작업(다운로드·디코드, 미리보기 CPK 계산)은 QThread 로 뺀다(honey_ui freeze 규칙).
 - 표 상한은 웹 Raw Data 와 같은 값(행 20,000 / item 컬럼 60).
+- 화면이 빽빽해지기 쉬운 창이라 **조회 조건·수정·적용 대기·미리보기를 접이식 구역**
+  (`_Section`)으로 두고, 접으면 제목 옆에 요약(대상 행수 / 대기 중인 셀·규칙 수)만 남긴다.
+  항목 목록은 우측 패널에서 최소 340px 폭·세로 대부분을 갖는다. 창 전체 폰트는 11px.
+- 조건을 짤 필요 없는 Bin1 only · Spec Out 빈값은 여기가 아니라 **허브 [Options]** 에 있다.
 
 #### Raw Data 값 검증 (2026-07-21)
 정본은 [rawvalues.py](../web_report/rawvalues.py). **값 규칙을 `validate_honeyform_df` 에

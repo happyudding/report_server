@@ -18,16 +18,22 @@ from __future__ import annotations
 import difflib
 from collections import Counter, defaultdict
 
+import numpy as np
 import pandas as pd
 
 from ..honeyform import HoneyformTable
 from .common import (PASS_BIN, bin_sort_key, bin_types, fmt_type, item_meta, json_safe, num,
                      round_num, to_coord)
-from .cpk import build_cpk_rows
+from .cpk import CPK_THRESHOLD, build_cpk_rows
 
 # 동일성 검증 임계값 — Grade 판정과 셀 강조가 같은 값을 쓴다(프런트에도 thresholds 로 내려감).
 EQUIV_AVG_PCT_LIMIT = 5.0    # Grade1 경계: AVG차(%) 5 이하
 EQUIV_CPK_LIMIT = 5.0        # Grade2 조건: Before/After CPK 가 둘 다 5 이상
+
+# 산포 비교(dist_shift) focus 판정 임계값 — 프런트에도 thresholds 로 내려간다.
+# cpk_low(관심 경계)는 별도 상수 없이 CPK_THRESHOLD(1.33) 를 그대로 쓴다(값 정본 1곳).
+DIST_CPK_HIGH = 100.0            # 양쪽 Cpk 가 이 값 초과면 여유 과대 — 무조건 focus 제외
+DIST_STDEV_DELTA_PCT = 15.0      # |stdev 증가율(%)| 이 이 값 이상이면 focus
 
 
 def build_compare_bin_delta(tables) -> list:
@@ -383,16 +389,126 @@ def build_bin_matrix(tables, before_names, after_names) -> dict:
     }
 
 
-def build_dist_shift(tables, cpk_rows) -> list:
-    """양쪽에 모두 있는 항목의 산포(average/stdev/cpk) before/after 병기 + delta.
+def _bin1_frame(table, items):
+    """Bin1(양품) die 만의 item 프레임 — cpk.build_cpk_rows 와 동일 모집단(정본: cpk.py).
+
+    마스크(`b == PASS_BIN`)·stale 컬럼 numeric 강제를 build_cpk_rows 와 문자 그대로 맞춘다 —
+    어긋나면 IQR/KS 모집단이 avg/stdev/cpk(cpk_rows) 통계와 갈린다(회귀 테스트로 고정).
+    """
+    bin1_mask = [b == PASS_BIN for b in bin_types(table)]
+    item_set = set(table.item_columns)
+    present = [i for i in items if i in item_set]
+    frame = table.data[present]
+    stale = [c for c in present if frame[c].dtype.kind not in "if"]
+    if stale:
+        frame = frame.copy()
+        for c in stale:
+            frame[c] = pd.to_numeric(frame[c], errors="coerce")
+    return frame[bin1_mask]
+
+
+def _robust_stats(frame):
+    """{item: {"median","iqr"}} — robust 지표용 quantile 배치 계산(프레임당 1회).
+
+    pandas quantile(linear 보간)의 **무반올림** 값이다 — cpk_rows 의 median 은 round_num 되어
+    있어 정규화 분자로 재사용하지 않는다.
+    """
+    if frame.shape[1] == 0:
+        return {}
+    q = frame.quantile([0.25, 0.5, 0.75])
+    out = {}
+    for item in frame.columns:
+        p25, p50, p75 = (num(q.loc[p, item]) for p in (0.25, 0.5, 0.75))
+        out[item] = {"median": p50,
+                     "iqr": None if p25 is None or p75 is None else p75 - p25}
+    return out
+
+
+def _sorted_values(frame, item):
+    """item 컬럼의 NaN 제외 오름차순 ndarray (KS 용).
+
+    프레임 전체를 한 번에 정렬하지 않고 **컬럼 1개씩** 만든다 — 항목 수백×die 수만의 pool 에서
+    정렬 결과를 전부 들고 있으면 피크 메모리가 프레임 2배가 된다.
+    """
+    if item not in frame.columns:
+        return np.empty(0)
+    col = frame[item].to_numpy(dtype=float)
+    return np.sort(col[~np.isnan(col)])
+
+
+def _ks_d(sa, sb):
+    """KS D 통계량(0~1) — 두 정렬 배열의 ECDF 최대거리. 어느 쪽이든 값이 없으면 None."""
+    na, nb = len(sa), len(sb)
+    if na == 0 or nb == 0:
+        return None
+    grid = np.concatenate([sa, sb])
+    cdf_a = np.searchsorted(sa, grid, side="right") / na
+    cdf_b = np.searchsorted(sb, grid, side="right") / nb
+    return float(np.abs(cdf_a - cdf_b).max())
+
+
+def _norm_shift(a, b, denom):
+    """|a−b|/denom — σ·IQR 단위 정규화 이동량. denom 결측·0 이면 None."""
+    an, bn, dn = num(a), num(b), num(denom)
+    if an is None or bn is None or dn is None or dn == 0:
+        return None
+    return round_num(abs(an - bn) / dn, 4)
+
+
+def _ratio_pct(a, b):
+    """a/b×100 — Cpk 비율(%). b 가 결측·0 이하면 None(0·음수 Cpk 대비 비율은 무의미 —
+    그런 행은 cpk<1.33 조건으로 어차피 focus 에 잡힌다)."""
+    an, bn = num(a), num(b)
+    if an is None or bn is None or bn <= 0:
+        return None
+    return round_num(an / bn * 100.0, 2)
+
+
+def _dist_focus(row) -> bool:
+    """산포 비교 focus(관심 항목) 판정 — 서버가 정본, 프런트는 이 플래그로 필터만 한다.
+
+    ① 무조건 제외: 양쪽 Cpk>DIST_CPK_HIGH(여유 과대) / 양쪽 σ=0·결측(고정값).
+    ② 관심: 한쪽 Cpk<CPK_THRESHOLD 또는 |stdev 증가율|≥DIST_STDEV_DELTA_PCT. ③ 그 외 제외.
+    Cpk None(limit 없음·n≤1 등)은 어느 조건도 발동하지 않는다.
+    """
+    ca, cb = num(row["after"]["cpk"]), num(row["before"]["cpk"])
+    sa, sb = num(row["after"]["stdev"]), num(row["before"]["stdev"])
+    if ca is not None and cb is not None and ca > DIST_CPK_HIGH and cb > DIST_CPK_HIGH:
+        return False
+    if (sa is None or sa == 0) and (sb is None or sb == 0):
+        return False
+    if (ca is not None and ca < CPK_THRESHOLD) or (cb is not None and cb < CPK_THRESHOLD):
+        return True
+    sd = num(row["stdev_delta_pct"])
+    return sd is not None and abs(sd) >= DIST_STDEV_DELTA_PCT
+
+
+def _dist_thresholds() -> dict:
+    return {"cpk_high": DIST_CPK_HIGH, "cpk_low": CPK_THRESHOLD,
+            "stdev_delta_pct": DIST_STDEV_DELTA_PCT}
+
+
+def build_dist_shift(tables, cpk_rows) -> dict:
+    """산포 비교 — 공통 항목의 Before/After pool 통계 병기 + 정규화 지표 + focus 판정.
 
     호출자가 넘기는 tables 는 **그룹 pool 2개**(``[pool_after, pool_before]``)이고 cpk_rows 도
     그 pool 로 계산한 것이다. 그룹이 1 source 씩이면 pool == 그 source 라 값이 CPK 탭과 같다.
-    cpk_rows 를 subject×source 로 pivot 해 재사용한다(재계산 없음).
-    필터 없음 — 공통 항목 전부 나열하고 |Δcpk| 큰 순 정렬.
+    avg/stdev/cpk/n 은 cpk_rows 를 subject×source pivot 해 재사용(재계산 없음)하고,
+    median/IQR/KS 만 같은 Bin1 pooled frame(_bin1_frame)으로 직접 계산한다.
+
+    지표는 전부 **Before(b) 분모** (a=After):
+      meanshift_sigma = |avg_a−avg_b| / σ_b        (평균 이동을 σ 단위로 정규화)
+      cpk_ratio_pct   = cpk_a / cpk_b × 100        (>100% = 개선)
+      stdev_delta_pct = (σ_a−σ_b) / σ_b × 100      (양수 = After 산포 증가)
+      median_shift    = |med_a−med_b| / IQR_b      (robust 이동량)
+      iqr_delta_pct   = (IQR_a−IQR_b) / IQR_b × 100
+      ks_d            = 두 pool ECDF 최대거리(0~1, 분포 형태 차이)
+    정렬: meanshift_sigma 내림차순(None 최하단, tie |Δσ%|). focus 규칙은 _dist_focus 참조.
     """
+    empty = {"after": "", "before": "", "thresholds": _dist_thresholds(),
+             "summary": {"total": 0, "focus": 0}, "rows": []}
     if len(tables) != 2:
-        return []
+        return empty
     after_src = tables[0].source
     before_src = tables[1].source
     by_item: dict = defaultdict(dict)
@@ -400,42 +516,55 @@ def build_dist_shift(tables, cpk_rows) -> list:
         by_item[r.get("subject")][r.get("source")] = r
 
     def _pick(r):
-        return {"average": r.get("average"), "stdev": r.get("stdev"), "cpk": r.get("cpk")}
+        return {"average": r.get("average"), "stdev": r.get("stdev"),
+                "cpk": r.get("cpk"), "n": r.get("n")}
+
+    subjects = [s for s, per in by_item.items()
+                if after_src in per and before_src in per]     # 공통 항목만
+    frame_a = _bin1_frame(tables[0], subjects)
+    frame_b = _bin1_frame(tables[1], subjects)
+    robust_a = _robust_stats(frame_a)
+    robust_b = _robust_stats(frame_b)
 
     rows = []
-    for subject, per_src in by_item.items():
-        if after_src not in per_src or before_src not in per_src:
-            continue   # 공통 항목만
+    focus_count = 0
+    for subject in subjects:
+        per_src = by_item[subject]
         ra, rb = per_src[after_src], per_src[before_src]
         after = _pick(ra)
         before = _pick(rb)
-        rows.append({
+        rob_a = robust_a.get(subject) or {}
+        rob_b = robust_b.get(subject) or {}
+        iqr_b = rob_b.get("iqr")
+        row = {
             "subject": subject,
             "units": json_safe(ra.get("units")) or json_safe(rb.get("units")) or "",
             "lower_limit": ra.get("lower_limit"),
             "upper_limit": ra.get("upper_limit"),
             "after": after,
             "before": before,
-            "delta_average": _sub(after["average"], before["average"]),
-            "delta_stdev": _sub(after["stdev"], before["stdev"]),
-            "delta_cpk": _sub(after["cpk"], before["cpk"]),
-            "mean_gap_pct": _calc_gap(after["average"], before["average"]),
-        })
+            "meanshift_sigma": _norm_shift(after["average"], before["average"], before["stdev"]),
+            "cpk_ratio_pct": _ratio_pct(after["cpk"], before["cpk"]),
+            "stdev_delta_pct": _calc_gap(after["stdev"], before["stdev"]),
+            "median_shift": _norm_shift(rob_a.get("median"), rob_b.get("median"), iqr_b),
+            "iqr_delta_pct": _calc_gap(rob_a.get("iqr"), iqr_b),
+            "ks_d": round_num(_ks_d(_sorted_values(frame_a, subject),
+                                    _sorted_values(frame_b, subject)), 4),
+        }
+        row["focus"] = _dist_focus(row)
+        if row["focus"]:
+            focus_count += 1
+        rows.append(row)
 
     def _sort_key(r):
-        dc = num(r["delta_cpk"])
-        gp = num(r["mean_gap_pct"])
-        return (0 if dc is not None else 1, -abs(dc) if dc is not None else 0.0,
-                -abs(gp) if gp is not None else 0.0)
+        ms = num(r["meanshift_sigma"])
+        sd = num(r["stdev_delta_pct"])
+        return (0 if ms is not None else 1, -(ms if ms is not None else 0.0),
+                -abs(sd) if sd is not None else 0.0)
 
     rows.sort(key=_sort_key)
-    return rows
-
-
-def _sub(after, before):
-    """after - before (둘 다 수치일 때만). 하나라도 None 이면 None."""
-    a, b = num(after), num(before)
-    return None if a is None or b is None else round_num(a - b, 6)
+    return {"after": after_src, "before": before_src, "thresholds": _dist_thresholds(),
+            "summary": {"total": len(rows), "focus": focus_count}, "rows": rows}
 
 
 # ── Before/After 그룹 ────────────────────────────────────────────────────────
@@ -603,7 +732,8 @@ def build_compare_payload(tables, all_items, cpk_rows, stat_items=None,
         "goodlog": build_goodlog(after_tables[0], before_tables[0]),
         # Bin 이 전부 같지는 않은 공통 좌표 나열(전 source).
         "bin_matrix": build_bin_matrix(tables, before_names, after_names),
-        # 공통 항목 산포(avg/stdev/cpk) before/after 병기 — 그룹 pool 기준.
+        # 산포 비교 — 공통 항목 Before/After 통계 병기 + Before 분모 정규화 지표
+        # (meanshift σ·Cpk%·stdev 증가율·median/IQR·KS D) + focus 판정. 그룹 pool 기준.
         "dist_shift": build_dist_shift([pool_after, pool_before], pooled_cpk_rows),
         # 항목별 동일성 등급(Grade 1/2/3) 판정 — 그룹 pool 기준.
         "equivalence": build_equivalence(pool_before, pool_after, pooled_cpk_rows, tables),

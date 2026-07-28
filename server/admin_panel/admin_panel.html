@@ -186,8 +186,12 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
   </div>
   <div style="height:16px"></div>
   <div class="card">
-    <h2>런타임 상태 <span class="hint">응답시간 · 컴퓨트 워커 · 캐시 · DB 잠금 · 스케줄러 (서버 재시작 시 초기화)</span></h2>
+    <h2>런타임 상태 <span class="hint">응답시간 · 컴퓨트 워커 · 캐시 · DB 잠금 · 열람/빌드 · 스케줄러 (서버 재시작 시 초기화)</span></h2>
     <div class="tiles" id="runtimeTiles"><div class="tile"><div class="lbl">로딩 중…</div></div></div>
+    <div class="table-wrap" style="margin-top:12px"><table>
+      <thead><tr><th>진행 중 콜드 빌드</th><th>단계</th><th class="num">경과</th></tr></thead>
+      <tbody id="buildBody"><tr class="empty-row"><td colspan="3">-</td></tr></tbody>
+    </table></div>
     <div class="table-wrap" style="margin-top:12px"><table>
       <thead><tr><th>느린 경로 (평균 기준 상위)</th><th class="num">호출</th><th class="num">평균</th><th class="num">최대</th></tr></thead>
       <tbody id="slowRouteBody"><tr class="empty-row"><td colspan="4">-</td></tr></tbody>
@@ -208,8 +212,9 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
       </div>
       <svg id="cpuChart" width="100%" height="150" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
       <div class="chart-legend" style="margin-top:10px">
-        <span class="key"><span class="sw" style="background:var(--s-upload)"></span>시스템 RAM 사용</span>
-        <span class="key"><span class="sw" style="background:var(--s-edit)"></span>서버 프로세스 RSS</span>
+        <span class="key"><span class="sw" style="background:var(--s-upload)"></span>시스템 RAM 사용 (다른 서비스 포함)</span>
+        <span class="key"><span class="sw" style="background:var(--st-warn)"></span>report_server 합계 (부모+워커)</span>
+        <span class="key"><span class="sw" style="background:var(--s-edit)"></span>부모 프로세스 RSS</span>
       </div>
       <svg id="ramChart" width="100%" height="150" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
       <div class="chart-legend" style="margin-top:10px">
@@ -277,7 +282,8 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
       <svg id="histCpuChart" width="100%" height="130" viewBox="0 0 900 130" preserveAspectRatio="none"></svg>
       <div class="chart-legend" style="margin-top:10px">
         <span class="key"><span class="sw" style="background:var(--s-upload)"></span>시스템 RAM</span>
-        <span class="key"><span class="sw" style="background:var(--s-edit)"></span>프로세스 RSS</span>
+        <span class="key"><span class="sw" style="background:var(--st-warn)"></span>report_server 합계 (부모+워커)</span>
+        <span class="key"><span class="sw" style="background:var(--s-edit)"></span>부모 RSS</span>
       </div>
       <svg id="histRamChart" width="100%" height="130" viewBox="0 0 900 130" preserveAspectRatio="none"></svg>
       <div class="chart-legend" style="margin-top:10px">
@@ -289,6 +295,17 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
         <span class="key"><span class="sw" style="background:var(--st-warn)"></span>p99</span>
       </div>
       <svg id="histLatChart" width="100%" height="110" viewBox="0 0 900 110" preserveAspectRatio="none"></svg>
+      <div class="chart-legend" style="margin-top:10px">
+        <span class="key"><span class="sw" style="background:var(--s-upload)"></span>동시 열람 세션</span>
+        <span class="key"><span class="sw" style="background:var(--s-delete)"></span>진행 중 콜드 빌드</span>
+        <span class="key"><span class="sw" style="background:var(--st-warn)"></span>온디맨드 대기</span>
+        <span class="key"><span class="sw" style="background:var(--s-edit)"></span>distpack 대기</span>
+      </div>
+      <svg id="histBuildChart" width="100%" height="110" viewBox="0 0 900 110" preserveAspectRatio="none"></svg>
+      <div class="chart-legend" style="margin-top:10px">
+        <span class="key"><span class="sw" style="background:var(--accent)"></span>캐시 히트율 (구간 %)</span>
+      </div>
+      <svg id="histLoadChart" width="100%" height="110" viewBox="0 0 900 110" preserveAspectRatio="none"></svg>
       <div class="m-tip"></div>
     </div>
   </div>
@@ -424,6 +441,17 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
         <th class="num">업로드</th><th class="num">수정</th><th class="num">삭제</th>
         <th class="num">합계</th><th>마지막 사용</th></tr></thead>
       <tbody id="userRankBody"><tr class="empty-row"><td colspan="9">로딩 중…</td></tr></tbody>
+    </table></div>
+  </div>
+  <div class="card">
+    <h2>접속 사용량 <span class="hint">서버에 페이지를 요청한 횟수 기준 — 신원 없는 브라우저·구버전 Honey 는 IP(ip:주소) 행으로 집계</span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>#</th><th>사용자</th>
+        <th class="num" title="Honey 앱 실행 횟수 (시작 시 버전체크 1회 기준)">Honey 실행</th>
+        <th class="num" title="검색결과 페이지(/pe/report/) 방문 횟수">검색페이지</th>
+        <th class="num" title="세션 상세 페이지(/pe/report/view/…) 방문 횟수">세션 상세</th>
+        <th class="num">합계</th><th>마지막 접속</th></tr></thead>
+      <tbody id="usageRankBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
     </table></div>
   </div>
   <div class="card">
@@ -871,7 +899,7 @@ async function loadHealth() {
         <div class="meter"><div class="${meterCls(h.disk_percent)}" style="width:${Math.min(h.disk_percent,100)}%"></div></div></div>
       <div class="tile"><div class="lbl">서버 업타임</div>
         <div class="val" style="font-size:20px">${fmtUptime(h.uptime_sec)}</div>
-        <div class="det">프로세스 RSS ${fmtBytes(h.proc_rss)} · 스레드 ${h.proc_threads}</div></div>${wdTile}${ceTile}`;
+        <div class="det">서버 RSS ${fmtBytes(h.total_rss || h.proc_rss)} (부모 ${fmtBytes(h.proc_rss)} + 워커 ${fmtBytes(h.workers_rss || 0)}/${h.workers_n || 0}개) · 스레드 ${h.proc_threads}</div></div>${wdTile}${ceTile}`;
     // 타일은 조건부라 innerHTML 이후에 핸들러를 붙인다
     if ($("ceTile")) $("ceTile").onclick = () => showAuditFor("client_error");
 
@@ -1008,9 +1036,9 @@ async function loadMetrics() {
       <div class="tile"><div class="lbl">RAM 피크 (최근 5분)</div>
         <div class="val" style="font-size:20px">${fmtBytes(pk.w300.mem_used)}</div>
         <div class="det">24시간 ${fmtBytes(pk.w86400.mem_used)} · 기동후 ${fmtBytes(pk.boot.mem.v)} (${fmtDate(pk.boot.mem.ts)})</div></div>
-      <div class="tile"><div class="lbl">프로세스 RSS 피크 (최근 5분)</div>
-        <div class="val" style="font-size:20px">${fmtBytes(pk.w300.rss)}</div>
-        <div class="det">24시간 ${fmtBytes(pk.w86400.rss)} · 기동후 ${fmtBytes(pk.boot.rss.v)} (${fmtDate(pk.boot.rss.ts)})</div></div>`;
+      <div class="tile"><div class="lbl">report_server RSS (부모+워커)</div>
+        <div class="val" style="font-size:20px">${fmtBytes(cur.total_rss || cur.rss)}</div>
+        <div class="det">부모 ${fmtBytes(cur.rss)} · 워커 ${fmtBytes(cur.workers_rss || 0)} (${cur.workers_n || 0}개)<br>피크 5분 ${fmtBytes((pk.w300.total_rss) || pk.w300.rss)} · 24시간 ${fmtBytes((pk.w86400.total_rss) || pk.w86400.rss)} · 기동후 ${fmtBytes((pk.boot.total_rss && pk.boot.total_rss.v) || pk.boot.rss.v)}</div></div>`;
     const se = m.series;
     renderMetricsChart($("cpuChart"), se.ts, [
       { arr: se.cpu_avg, color: "var(--accent)", label: "CPU 평균", area: true },
@@ -1018,7 +1046,8 @@ async function loadMetrics() {
     ], pct, 100);
     renderMetricsChart($("ramChart"), se.ts, [
       { arr: se.mem_used_max, color: "var(--s-upload)", label: "시스템 RAM", area: true },
-      { arr: se.rss_max, color: "var(--s-edit)", label: "프로세스 RSS" },
+      { arr: se.total_rss_max || se.rss_max, color: "var(--st-warn)", label: "서버 합계(부모+워커)" },
+      { arr: se.rss_max, color: "var(--s-edit)", label: "부모 RSS" },
     ], fmtBytes, null);
     renderMetricsChart($("inflightChart"), se.ts, [
       { arr: se.inflight_max, color: "var(--s-delete)", label: "동시 요청", area: true },
@@ -1050,7 +1079,8 @@ async function loadHistoryTab() {
     ], v => v.toFixed(0) + "%", 100, fx);
     renderMetricsChart($("histRamChart"), r.ts, [
       { arr: r.mem_used_max, color: "var(--s-upload)", label: "시스템 RAM", area: true },
-      { arr: r.rss_max, color: "var(--s-edit)", label: "프로세스 RSS" },
+      { arr: r.total_rss_max || r.rss_max, color: "var(--st-warn)", label: "서버 합계(부모+워커)" },
+      { arr: r.rss_max, color: "var(--s-edit)", label: "부모 RSS" },
     ], fmtBytes, null, fx);
     renderMetricsChart($("histInflightChart"), r.ts, [
       { arr: r.inflight_max, color: "var(--s-delete)", label: "동시 요청", area: true },
@@ -1059,6 +1089,20 @@ async function loadHistoryTab() {
       { arr: h.lat.p95, color: "var(--accent)", label: "p95", area: true },
       { arr: h.lat.p99, color: "var(--st-warn)", label: "p99" },
     ], v => Math.round(v) + "ms", null, fx);
+    const ld = h.load || { ts: [] };
+    renderMetricsChart($("histBuildChart"), ld.ts || [], [
+      { arr: ld.viewers, color: "var(--s-upload)", label: "열람 세션", area: true },
+      { arr: ld.builds, color: "var(--s-delete)", label: "콜드 빌드" },
+      { arr: ld.ondemand, color: "var(--st-warn)", label: "온디맨드 대기" },
+      { arr: ld.distpack, color: "var(--s-edit)", label: "distpack 대기" },
+    ], v => String(Math.round(v)), null, fx);
+    // hit_rate 는 구간 증분이라 첫 구간·재시작 직후가 null(계산 불가)이다 — 차트는 gap 을
+    // 못 그리므로 직전 값을 이어 붙인다(0 으로 떨구면 히트율이 폭락한 것처럼 보인다).
+    let prevRate = 0;
+    const rates = (ld.hit_rate || []).map(v => (v == null ? prevRate : (prevRate = v)));
+    renderMetricsChart($("histLoadChart"), ld.ts || [], [
+      { arr: rates, color: "var(--accent)", label: "캐시 히트율", area: true },
+    ], v => Math.round(v) + "%", 100, fx);
 
     $("histSlowHint").textContent = `${Math.round(h.slow_threshold_ms)}ms 초과 요청만 기록 · 최근 100건`;
     $("histSlowBody").innerHTML = (h.slow || []).map(s =>
@@ -1145,21 +1189,34 @@ async function loadRuntime() {
     const lat = r.latency || {}, cp = r.compute || {}, ca = r.cache || {}, lk = r.db_lock || {};
     const cs = cp.stats || {};
     const sch = r.schedulers || {};
+    const vw = r.viewers || {}, builds = r.builds || [];
+    const resp = ca.response || {};
+    const respBytes = ["full", "scatter", "dist_batch"].reduce((a, k) => a + ((resp[k] || {}).bytes || 0), 0);
+    const lockWaits = Object.values(ca.lock_waits || {}).reduce((a, v) => a + (v.count || 0), 0);
+    const ondemandPending = cp.ondemand_pending || 0, distpackPending = cp.distpack_pending || 0;
+    const longBuilds = builds.filter(b => (b.elapsed || 0) >= 60);
     $("runtimeTiles").innerHTML = `
       <div class="tile"><div class="lbl">응답시간 (최근 ${lat.samples || 0}건)</div>
         <div class="val" style="font-size:20px">${lat.p95 || 0} ms</div>
         <div class="det">p50 ${lat.p50 || 0} · p99 ${lat.p99 || 0} · 최대 ${lat.max || 0} ms</div></div>
+      <div class="tile"><div class="lbl">동시 열람 세션</div>
+        <div class="val" style="font-size:20px">${vw.count || 0}</div>
+        <div class="det">최근 ${Math.round((vw.window_sec || 300) / 60)}분 내 데이터 요청 기준${
+          (vw.sessions || []).length ? " · " + (vw.sessions || []).slice(0, 3).map(s => esc(String(s.session_id).slice(0, 8))).join(", ") : ""}</div></div>
       <div class="tile"><div class="lbl">컴퓨트 워커</div>
         <div class="val" style="font-size:20px">${cp.processes || 0} / ${cp.workers || 0}</div>
-        <div class="det">${cp.pool_alive ? "가동" : "미기동"} · 타임아웃 ${cs.timeout || 0} · 붕괴 ${cs.broken || 0} · 오류 ${cs.error || 0}${
+        <div class="det">${cp.pool_alive ? "가동" : "미기동"} · 온디맨드 대기 <span style="${ondemandPending ? "color:var(--st-warn)" : ""}">${ondemandPending}</span>/${cp.ondemand_workers || 0} · distpack 대기 <span style="${distpackPending ? "color:var(--st-warn)" : ""}">${distpackPending}</span><br>타임아웃 ${cs.timeout || 0} · 붕괴 ${cs.broken || 0} · 오류 ${cs.error || 0}${
           ((cs.timeout || 0) + (cs.broken || 0) + (cs.error || 0)) > 0
             ? ` · <span class="log-link" data-grep="compute" title="관련 로그를 console log 에서 보기">로그 ›</span>` : ""}</div></div>
+      <div class="tile"><div class="lbl">진행 중 콜드 빌드</div>
+        <div class="val" style="font-size:20px${longBuilds.length ? ";color:var(--st-warn)" : ""}">${builds.length}</div>
+        <div class="det">${builds.length ? `최장 ${builds[0].elapsed}s (${esc(builds[0].stage || "")})` : "없음"}${longBuilds.length ? ` · 60s 초과 ${longBuilds.length}건` : ""}</div></div>
       <div class="tile"><div class="lbl">프리웜 큐</div>
         <div class="val" style="font-size:20px">${cp.prewarm_pending || 0} / ${cp.prewarm_max || 0}</div>
         <div class="det">완료 ${cs.prewarm_done || 0} · 폐기 ${cs.prewarm_dropped || 0}</div></div>
       <div class="tile"><div class="lbl">캐시 히트율</div>
         <div class="val" style="font-size:20px">${ca.hit_rate == null ? "-" : ca.hit_rate + "%"}</div>
-        <div class="det">RAM ${ca.hit || 0}/${(ca.hit || 0) + (ca.miss || 0)} · 디스크 ${ca.disk_hit_rate == null ? "-" : ca.disk_hit_rate + "%"} · tables ${fmtBytes(ca.tables_bytes || 0)}</div></div>
+        <div class="det">RAM ${ca.hit || 0}/${(ca.hit || 0) + (ca.miss || 0)} · 디스크 ${ca.disk_hit_rate == null ? "-" : ca.disk_hit_rate + "%"} · tables ${fmtBytes(ca.tables_bytes || 0)}<br>응답 ${fmtBytes(respBytes)} · chunk ${fmtBytes(ca.chunk_bytes || 0)} · 잠금대기 ${lockWaits}회</div></div>
       <div class="tile"><div class="lbl">DB 잠금 경합</div>
         <div class="val" style="font-size:20px${lk.count ? ";color:#d33" : ""}">${lk.count || 0}</div>
         <div class="det">busy_timeout(5s) 초과 실패 누적${lk.last ? " · 최근 " + fmtDate(lk.last) : ""}${
@@ -1174,7 +1231,13 @@ async function loadRuntime() {
     if (schedOverdue(sch.cleanup)) _warnRuntime.push({ level: "warn", text: "정리 스케줄러 지연" });
     if (lk.count) _warnRuntime.push({ level: "warn", text: `DB 잠금 경합 ${lk.count}건`, go: "logs:locked" });
     if (cs.broken) _warnRuntime.push({ level: "crit", text: `컴퓨트 워커 붕괴 ${cs.broken}건`, go: "logs:compute" });
+    if (longBuilds.length) _warnRuntime.push({ level: "warn", text: `콜드 빌드 장기화 ${longBuilds.length}건` });
+    if (ondemandPending) _warnRuntime.push({ level: "warn", text: `콜드 빌드 대기 ${ondemandPending}건 (워커 포화)` });
     renderWarnings();
+    $("buildBody").innerHTML = builds.length ? builds.map(b =>
+      `<tr><td class="mono">${esc(b.session_id || "")}</td><td>${esc(b.stage || "")}</td>` +
+      `<td class="num"${(b.elapsed || 0) >= 60 ? ' style="color:var(--st-warn)"' : ""}>${b.elapsed}s</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="3">없음</td></tr>`;
     const slow = lat.slowest || [];
     $("slowRouteBody").innerHTML = slow.length ? slow.map(s =>
       `<tr><td class="mono">${esc(s.route)}</td><td class="num">${s.count}</td>` +
@@ -1552,6 +1615,17 @@ async function loadStats() {
       : `<tr class="empty-row"><td colspan="9">기간 내 기록이 없습니다.</td></tr>`;
   } catch (e) {
     $("userRankBody").innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
+  }
+  try {
+    const g = await getJSON("api/stats/usage?days=" + days);
+    $("usageRankBody").innerHTML = g.rows.length ? g.rows.map((r, i) => `
+      <tr><td>${i + 1}</td><td><b>${esc(r.user_id)}</b></td>
+        <td class="num">${r.honey_run}</td><td class="num">${r.web_index}</td>
+        <td class="num">${r.web_view}</td>
+        <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="7">기간 내 기록이 없습니다.</td></tr>`;
+  } catch (e) {
+    $("usageRankBody").innerHTML = `<tr class="empty-row"><td colspan="7">조회 실패: ${esc(e)}</td></tr>`;
   }
   try {
     const rec = await getJSON("api/audit?limit=20");

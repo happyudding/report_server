@@ -86,7 +86,7 @@ def load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: boo
     if use_cache:
         cached = cache.cache_get(cache.TABLES_CACHE, cache_key)
         if cached is None:
-            with cache.keyed_lock(("tables",) + cache_key):
+            with cache.keyed_lock_ctx(("tables",) + cache_key):
                 cached = cache.cache_get(cache.TABLES_CACHE, cache_key)
                 if cached is None:
                     # 읽기 경로는 슬림 디코드(df=None) — 캐시 메모리 절반 이하 (Phase 5)

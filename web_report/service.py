@@ -105,8 +105,15 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     # 키 구성 규약은 cache_policy 참조 (opts/mode 포함 이유 포함)
     cache_key = cache_policy.report_key(session, session_id, edits_rev)
     report = cache.cache_get(cache.REPORT_CACHE, cache_key)
+    if report is None and not build_if_cold:
+        # 콜드 판정을 락 **밖에서** 먼저 한다 — 온디맨드 소비자가 빌드 내내 같은 키의
+        # keyed_lock 을 잡고 있어, 락에 들어간 뒤 판정하면 202 로 즉시 돌려보내려던
+        # 폴링 요청이 빌드가 끝날 때까지 waitress 스레드를 물고 대기했다(같은 세션을
+        # 여러 명이 열면 스레드가 그만큼 묶임). stat 1회면 "아직 산출물 없음"을 알 수 있다.
+        if not disk_cache.report_exists(upload_root, cache_key):
+            raise ColdBuildRequired(session_id)
     if report is None:
-        with cache.keyed_lock(("report",) + cache_key):
+        with cache.keyed_lock_ctx(("report",) + cache_key):
             report = cache.cache_get(cache.REPORT_CACHE, cache_key)
             if report is None:
                 # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
@@ -277,7 +284,7 @@ def materialize_dist_pack(session_id: str, *, report_db, upload_root: Path,
                                   prep_digest=prep) is not None:
         return "exists"
 
-    with cache.keyed_lock(("dist_pack_build", analysis_key, content_hash, mode, prep)):
+    with cache.keyed_lock_ctx(("dist_pack_build", analysis_key, content_hash, mode, prep)):
         if dist_pack_store.load_index(upload_root, analysis_key, content_hash, mode,
                                       prep_digest=prep) is not None:
             return "exists"
@@ -369,7 +376,7 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
     blob = cache.cache_get(cache.DIST_CACHE, cache_key)
     if blob is not None:
         return blob
-    with cache.keyed_lock(("dist",) + cache_key):
+    with cache.keyed_lock_ctx(("dist",) + cache_key):
         blob = cache.cache_get(cache.DIST_CACHE, cache_key)
         if blob is not None:
             return blob
@@ -454,7 +461,10 @@ def get_map_gzip(session_id: str, *, report_db, upload_root: Path,
     blob = cache.cache_get(cache.MAP_CACHE, cache_key)
     if blob is not None:
         return blob
-    with cache.keyed_lock(("map",) + cache_key):
+    if not build_if_cold and not disk_cache.map_exists(upload_root, cache_key):
+        # load_webreport 와 같은 이유 — 빌드 중인 키의 락을 기다리지 않고 즉시 202.
+        raise ColdBuildRequired(session_id)
+    with cache.keyed_lock_ctx(("map",) + cache_key):
         blob = cache.cache_get(cache.MAP_CACHE, cache_key)
         if blob is not None:
             return blob
@@ -542,7 +552,7 @@ def _commonality_index(session: dict, tables, prep_digest: str = ""):
     cache_key = cache_policy.commonality_key(session, prep_digest)
     idx = cache.cache_get(cache.COMMONALITY_CACHE, cache_key)
     if idx is None:
-        with cache.keyed_lock(("commonality",) + cache_key):
+        with cache.keyed_lock_ctx(("commonality",) + cache_key):
             idx = cache.cache_get(cache.COMMONALITY_CACHE, cache_key)
             if idx is None:
                 idx = build_index(tables)
@@ -596,7 +606,7 @@ def edit_raw_data(session_id: str, *, report_db, upload_root: Path, edits: list,
     # 같은 analysis_key 원본의 read-modify-write 직렬화 — 동시 편집 lost update 방지
     # (rawedit.replace_sources 와 같은 락 키. 단일 프로세스 전제라 in-process 락으로 충분 —
     # DB 기반 core.report_analysis_lock 은 멀티프로세스 전환 시에만 배선한다.)
-    with cache.keyed_lock(("rawedit", analysis_key)):
+    with cache.keyed_lock_ctx(("rawedit", analysis_key)):
         # apply_raw_data_edits 가 df 를 in-place 수정하므로 캐시 원본 오염 방지 위해 캐시 우회.
         # apply_prep=False — 편집·재인코딩 대상은 언제나 저장된 원본이다 (전처리는 표시용).
         session, tables, manifest = _load_tables(
@@ -1459,7 +1469,7 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
     blob = cache.cache_get(cache.TRIM_CACHE, cache_key)
     if blob is not None:
         return blob, etag_token
-    with cache.keyed_lock(("trim",) + cache_key):
+    with cache.keyed_lock_ctx(("trim",) + cache_key):
         blob = cache.cache_get(cache.TRIM_CACHE, cache_key)
         if blob is None and compute.should_offload(cache_policy.tables_key(
                 session, _preprocess.session_digest(report_db, session_id))):
@@ -1537,7 +1547,7 @@ def _trim_chart_gzip(session, table, group, rule_set, prep: str = "") -> bytes:
     blob = cache.cache_get(cache.TRIM_CHART_CACHE, cache_key)
     if blob is not None:
         return blob
-    with cache.keyed_lock(("trim_chart",) + cache_key):
+    with cache.keyed_lock_ctx(("trim_chart",) + cache_key):
         blob = cache.cache_get(cache.TRIM_CHART_CACHE, cache_key)
         if blob is None:
             chart = build_trim_chart(table, group, rule_set)

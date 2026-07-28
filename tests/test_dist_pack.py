@@ -19,6 +19,8 @@
   (i) variant 생성은 원본 pack 을 건드리지 않고, 전처리를 해제하면 원본 pack 으로 복귀한다.
   (j) 전처리 spec 을 바꾸면 구 digest variant 가 회수되고 새 digest 로 다시 만들어진다.
   (k) 웹 셀 편집 후 서버가 새 세대 base pack 을 다시 만들고 프리웜을 예약한다.
+  (l) chunk 디코드 결과 캐시 — 같은 chunk 재조회 시 파일을 다시 읽지 않고, 캐시 유/무
+      응답이 정준 JSON 으로 완전히 같다. akey 무효화면 다시 읽는다.
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert).
 """
@@ -53,6 +55,7 @@ from web_report import dist_pack, dist_pack_store  # noqa: E402
 from web_report import edits as wr_edits  # noqa: E402
 from web_report import ingest as wr_ingest  # noqa: E402
 from web_report import preprocess as wr_preprocess  # noqa: E402
+from web_report import response_cache  # noqa: E402
 from web_report import service as wr_service  # noqa: E402
 from web_report.honeyform import (  # noqa: E402
     META_COLUMNS, META_ROW_LABELS, decode_split_honeyform_parquet,
@@ -268,6 +271,48 @@ finally:
 clear_caches()
 check(canon(served(sid)) == canon(expected_compact(files)),
       "(g) 캐시 전멸 후에도 pack 으로 응답 (영구 저장)")
+
+# ── (l) chunk 디코드 캐시 — 값 동일 + 파일 재읽기 없음 (2026-07-28) ──────────
+# distribution_batch 는 요청마다 chunk 를 read+gunzip+json.loads 했다(대형 세션은
+# chunk 1개가 비압축 수십 MB — 순수 GIL 점유). 디코드 결과를 캐시해 첫 1회로 줄인다.
+_want_batch_l = canon(expected_compact(files, only=subjects))
+clear_caches()
+_real_read = Path.read_bytes
+_reads = {"n": 0}
+
+
+def _counting_read(self):
+    if self.name.startswith("chunk_"):
+        _reads["n"] += 1
+    return _real_read(self)
+
+
+Path.read_bytes = _counting_read
+try:
+    got1 = canon(served(sid, subjects=subjects))
+    first_reads = _reads["n"]
+    response_cache._DIST_BATCH_CACHE.clear()   # 응답 gzip 캐시를 비워 재계산을 강제
+    wr_cache.DIST_CACHE.clear()
+    got2 = canon(served(sid, subjects=subjects))
+    check(first_reads > 0, f"(l) 첫 조회는 chunk 파일을 읽는다 ({first_reads}회)")
+    check(_reads["n"] == first_reads,
+          f"(l) 두 번째 조회는 chunk 파일을 다시 읽지 않는다 ({_reads['n']}회)")
+    check(got1 == _want_batch_l and got2 == _want_batch_l,
+          "(l) 캐시 유/무 응답 정준 JSON 완전 일치")
+finally:
+    Path.read_bytes = _real_read
+
+wr_cache.evict_akey_caches(report_db.get_session(sid)["analysis_key"])
+check(not wr_cache.DIST_CHUNK_CACHE, "(l) akey 무효화가 chunk 캐시를 회수")
+Path.read_bytes = _counting_read
+try:
+    before = _reads["n"]
+    response_cache._DIST_BATCH_CACHE.clear()
+    check(canon(served(sid, subjects=subjects)) == _want_batch_l,
+          "(l) 무효화 후 재디코드해도 같은 값")
+    check(_reads["n"] > before, "(l) 무효화 후에는 파일을 다시 읽는다")
+finally:
+    Path.read_bytes = _real_read
 
 # ── (d) 손상 chunk / 미지 index 포맷 → 폐기 + 폴백 ──────────────────────────
 def _corrupt_chunk(pack):

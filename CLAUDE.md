@@ -42,7 +42,7 @@ report_server/
 │   ├── auth_identity.py         신원 provider 체인 (기본 HoneyUser UA, AUTH_SSO_HEADER 로 SSO 전환)
 │   ├── database/                SQLite 계층 (report_db.py 는 재노출 facade — 호출부 무변경)
 │   │   ├── core.py              SCHEMA(정본)·마이그레이션·get_conn·analysis lock
-│   │   ├── sessions.py / objects.py / audit.py / users.py / annotations.py
+│   │   ├── sessions.py / objects.py / audit.py / users.py / annotations.py / usage.py
 │   │   ├── webreport_edits.py   web_report 편집 상태 (세션 단위)
 │   │   └── models.py            Session dataclass (Mapping 호환)
 │   ├── report/
@@ -151,7 +151,7 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 
 **정본은 [server/database/core.py](server/database/core.py) 의 `SCHEMA`.** 전체 테이블·컬럼은
 [docs/03](docs/03_storage.md) 와 스냅샷 [DB/pe/report/report_README.md](DB/pe/report/report_README.md)
-참조. 테이블 16개 요지:
+참조. 테이블 17개 요지:
 
 - `report_session` — 세션 1건. `source`('xlsx_upload'|'web_report'), `mode`('Normal' 기본),
   `uploaded_by`·`client_host`(신원), `webreport_options`, `password`(미사용 보존) 컬럼 포함.
@@ -169,6 +169,8 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
   무효화 토큰. manifest 는 불변 스냅샷 ([web_report/edits.py](web_report/edits.py)).
 - `report_session_editor`(편집 위임) / `report_web_visitor`(편집자 후보 풀) /
   `report_user_important`(개인 중요표시) / `report_user_favorite`(즐겨찾기).
+- `report_usage_daily` — 접속 사용량 일별 카운터(Honey 실행·웹 방문, 관리자 통계 탭).
+  `kind`=`honey_run/web_index/web_view`, 무신원은 `ip:<addr>` 행.
 - `report_annotation` / `report_dashboard_comment` / `report_csv_files` /
   `report_analysis_lock` / `report_user`(ID/PW 로그인 폐지 — 미사용 보존).
 
@@ -209,7 +211,9 @@ S3 가 아니라 DB `report_sheet_data` 에 저장한다.
 - `REPORT_CLEANUP_DRYRUN` 기본 **1(참)** — **기본은 실삭제 안 함**(대상만 로그). 실삭제하려면
   `0` 으로 명시.
 - `AUTH_SSO_HEADER` 지정 시 그 역프록시 헤더가 신원으로 우선(기본은 HoneyUser UA).
-- `WEB_REPORT_COMPUTE_WORKERS` 기본 2, `0` = 콜드 빌드 전부 인라인(구 동작).
+- `WEB_REPORT_COMPUTE_WORKERS` 기본 2(**운영 server.env 는 3**), `0` = 콜드 빌드 전부
+  인라인(구 동작). `WEB_REPORT_ONDEMAND_WORKERS`(202 후 백그라운드 빌드 소비자 스레드)와
+  **짝으로** 올려야 한다 — 풀만 늘리면 소비자 스레드 수가 새 상한이 된다.
 
 DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + `PRAGMA optimize` 로
 -wal 비대를 막는다. VACUUM 은 장시간 잠금이라 자동 실행 안 함(수동).

@@ -12,6 +12,10 @@
   5. 그룹이 2+1 이면 pool 통계가 concat 프레임 기준 (직접 계산한 기대값과 일치).
   6. compare 옵션이 없으면(legacy) after=sources[0] / before=sources[1] 폴백 — 종전 관례.
   7. bin_matrix — 전 source 의 BIN 이 같은 좌표는 행에 없고, 하나라도 다르면 있다.
+  8. dist_shift(산포 비교, 2026-07-28) — Before 분모 지표 6종(meanshift_sigma/cpk_ratio_pct/
+     stdev_delta_pct/median_shift/iqr_delta_pct/ks_d) 수식, focus 판정(양쪽 cpk>100·양쪽
+     고정값 제외 / 한쪽 cpk<1.33·|Δσ%|≥15 포함), meanshift 내림차순 정렬(None 최하단),
+     IQR/KS 모집단이 cpk 통계와 같은 Bin1 임(fail die 주입 불변).
 
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례). pytest 로 수집해도 동작한다.
 """
@@ -200,6 +204,146 @@ def test_compare_groups_option_parsing():
     assert webreport_compare_groups('{"colors": []}', ["WF_A", "WF_B"]) is None
 
 
+# ── 산포 비교 (dist_shift) ───────────────────────────────────────────────────
+# fixture 의 limit 은 HILIM=20 / LOLIM=0 고정 — 값 구성으로 cpk 를 원하는 구간에 넣는다.
+_LOW = [6.0, 8.0, 10.0, 12.0, 14.0] * 3    # σ≈2.93 → cpk≈1.14 (<1.33)
+_CONST = [5.0] * 15                        # σ=0 → cpk None (고정값)
+
+
+def _spread(values, factor):
+    """평균은 그대로 두고 산포만 factor 배."""
+    m = sum(values) / len(values)
+    return [round(m + (v - m) * factor, 6) for v in values]
+
+
+def _dist_rows(payload):
+    return {r["subject"]: r for r in payload["compare"]["dist_shift"]["rows"]}
+
+
+def test_dist_shift_metrics_formulas():
+    """Before 분모 지표 수식 — CPK 시트 값·직접 계산 기대값과 대조."""
+    before_vals = list(_WIDE)
+    after_vals = _shift(_WIDE, 1.10)         # 평균 +10%, σ 도 ×1.1 (선형 스케일)
+    payload = _payload(
+        [_make_table("WF_A", {"IT": after_vals}), _make_table("WF_B", {"IT": before_vals})],
+        {"before": ["WF_B"], "after": ["WF_A"]})
+    dist = payload["compare"]["dist_shift"]
+    assert dist["after"] == "WF_A" and dist["before"] == "WF_B", (dist["after"], dist["before"])
+    row = _dist_rows(payload)["IT"]
+
+    cpk = {(r["subject"], r["source"]): r for r in payload["sheets"]["CPK"]}
+    ra, rb = cpk[("IT", "WF_A")], cpk[("IT", "WF_B")]
+    assert row["after"]["n"] == row["before"]["n"] == 15, row
+    assert row["meanshift_sigma"] == round(abs(ra["average"] - rb["average"]) / rb["stdev"], 4)
+    assert row["cpk_ratio_pct"] == round(ra["cpk"] / rb["cpk"] * 100.0, 2), row
+    assert row["stdev_delta_pct"] == round(
+        (ra["stdev"] - rb["stdev"]) / rb["stdev"] * 100.0, 6), row
+
+    sa = pd.Series(after_vals, dtype="float64")
+    sb = pd.Series(before_vals, dtype="float64")
+    iqr_a = sa.quantile(0.75) - sa.quantile(0.25)
+    iqr_b = sb.quantile(0.75) - sb.quantile(0.25)
+    assert row["median_shift"] == round(abs(sa.median() - sb.median()) / iqr_b, 4), row
+    assert row["iqr_delta_pct"] == round((iqr_a - iqr_b) / iqr_b * 100.0, 6), row
+    # 손계산 KS: x=12 에서 F_before=1.0, F_after=0.6 → D=0.4 가 최대.
+    assert row["ks_d"] == 0.4, row["ks_d"]
+
+
+def test_dist_shift_ks_hand_cases():
+    """KS D — 완전 분리 분포=1.0 / 동일 분포=0.0."""
+    lo = [1.0, 2.0, 3.0] * 5
+    hi = [10.0, 11.0, 12.0] * 5
+    rows = _dist_rows(_payload(
+        [_make_table("WF_A", {"SEP": hi, "SAME": list(_WIDE)}),
+         _make_table("WF_B", {"SEP": lo, "SAME": list(_WIDE)})],
+        {"before": ["WF_B"], "after": ["WF_A"]}))
+    assert rows["SEP"]["ks_d"] == 1.0, rows["SEP"]
+    assert rows["SAME"]["ks_d"] == 0.0, rows["SAME"]
+
+
+def test_dist_shift_focus_rules():
+    """focus — 양쪽 cpk>100 제외 / 한쪽 cpk<1.33 포함 / |Δσ%|≥15 포함 / 고정값 제외 / 평온 제외."""
+    before = {"HIGHCPK": list(_TIGHT), "LOWCPK": list(_LOW), "SPREAD": list(_WIDE),
+              "CONST": list(_CONST), "CALM": list(_WIDE)}
+    after = {"HIGHCPK": list(_TIGHT), "LOWCPK": list(_LOW), "SPREAD": _spread(_WIDE, 1.2),
+             "CONST": list(_CONST), "CALM": _spread(_WIDE, 1.05)}
+    dist = _payload([_make_table("WF_A", after), _make_table("WF_B", before)],
+                    {"before": ["WF_B"], "after": ["WF_A"]})["compare"]["dist_shift"]
+    rows = {r["subject"]: r for r in dist["rows"]}
+
+    # 전제: HIGHCPK 양쪽 >100 / LOWCPK <1.33 / SPREAD·CALM 은 1.33~100 / CONST σ=0.
+    assert rows["HIGHCPK"]["after"]["cpk"] > 100 and rows["HIGHCPK"]["before"]["cpk"] > 100
+    assert rows["LOWCPK"]["before"]["cpk"] < 1.33, rows["LOWCPK"]
+    assert 1.33 <= rows["SPREAD"]["after"]["cpk"] <= 100, rows["SPREAD"]
+    assert rows["CONST"]["after"]["cpk"] is None and rows["CONST"]["after"]["stdev"] == 0
+
+    assert rows["HIGHCPK"]["focus"] is False, rows["HIGHCPK"]   # 여유 과대 — 무조건 제외
+    assert rows["LOWCPK"]["focus"] is True, rows["LOWCPK"]      # 한쪽 cpk<1.33
+    assert rows["SPREAD"]["focus"] is True, rows["SPREAD"]      # Δσ +20% ≥ 15
+    assert rows["CONST"]["focus"] is False, rows["CONST"]       # 양쪽 고정값
+    assert rows["CALM"]["focus"] is False, rows["CALM"]         # Δσ +5% < 15
+
+    # 고정값 항목은 정규화 지표를 낼 수 없다.
+    assert rows["CONST"]["meanshift_sigma"] is None and rows["CONST"]["cpk_ratio_pct"] is None
+
+    assert dist["thresholds"] == {"cpk_high": 100.0, "cpk_low": 1.33,
+                                  "stdev_delta_pct": 15.0}, dist["thresholds"]
+    s = dist["summary"]
+    assert s["total"] == len(dist["rows"]) == 5, s
+    assert s["focus"] == sum(1 for r in dist["rows"] if r["focus"]) == 2, s
+
+
+def test_dist_shift_sort_none_last():
+    """정렬 — meanshift_sigma 내림차순, None(고정값) 최하단."""
+    before = {"BIG": list(_WIDE), "SMALL": list(_WIDE), "CONST": list(_CONST)}
+    after = {"BIG": _shift(_WIDE, 1.20), "SMALL": _shift(_WIDE, 1.02), "CONST": list(_CONST)}
+    dist = _payload([_make_table("WF_A", after), _make_table("WF_B", before)],
+                    {"before": ["WF_B"], "after": ["WF_A"]})["compare"]["dist_shift"]
+    order = [r["subject"] for r in dist["rows"]]
+    assert order == ["BIG", "SMALL", "CONST"], order
+
+
+def test_dist_shift_bin1_population():
+    """fail die(999.0) 주입 후에도 모든 지표 불변 — IQR/KS 모집단이 cpk 와 같은 Bin1 임을 고정
+    (_bin1_frame 이 cpk.build_cpk_rows 마스크를 복제한 데 대한 드리프트 방어)."""
+    groups = {"before": ["WF_B"], "after": ["WF_A"]}
+    before = {"G1_UP": list(_TIGHT), "G3_ITEM": list(_WIDE)}
+    after = {"G1_UP": _shift(_TIGHT, 1.04), "G3_ITEM": _shift(_WIDE, 1.10)}
+    clean = _dist_rows(_payload(
+        [_make_table("WF_A", after), _make_table("WF_B", before)], groups))
+    dirty = _dist_rows(_payload(
+        [_make_table("WF_A", after, n_extra_fail=5),
+         _make_table("WF_B", before, n_extra_fail=7)], groups))
+    assert clean == dirty, (clean, dirty)
+
+
+def test_dist_shift_cpk_ratio_none_when_before_nonpositive():
+    """Before Cpk ≤ 0 (평균이 limit 밖) → cpk_ratio_pct None (비율 무의미)."""
+    bad_before = [20.5, 21.0, 21.5] * 5          # 평균 21 > HILIM 20 → cpk < 0
+    row = _dist_rows(_payload(
+        [_make_table("WF_A", {"IT": list(_WIDE)}), _make_table("WF_B", {"IT": bad_before})],
+        {"before": ["WF_B"], "after": ["WF_A"]}))["IT"]
+    assert row["before"]["cpk"] < 0, row["before"]
+    assert row["cpk_ratio_pct"] is None, row
+    assert row["focus"] is True, row             # cpk<1.33 조건으로 잡힌다
+
+
+def test_dist_shift_pooled_group_robust():
+    """After 2장 pool — median/IQR 지표가 concat 프레임 기대값과 일치."""
+    vals_a1 = list(_WIDE)
+    vals_a2 = _shift(_WIDE, 1.30)
+    vals_b = list(_WIDE)
+    tables = [_make_table("WF_A1", {"IT": vals_a1}), _make_table("WF_A2", {"IT": vals_a2}),
+              _make_table("WF_B", {"IT": vals_b})]
+    row = _dist_rows(_payload(tables, {"before": ["WF_B"], "after": ["WF_A1", "WF_A2"]}))["IT"]
+    sa = pd.Series(vals_a1 + vals_a2, dtype="float64")
+    sb = pd.Series(vals_b, dtype="float64")
+    iqr_a = sa.quantile(0.75) - sa.quantile(0.25)
+    iqr_b = sb.quantile(0.75) - sb.quantile(0.25)
+    assert row["median_shift"] == round(abs(sa.median() - sb.median()) / iqr_b, 4), row
+    assert row["iqr_delta_pct"] == round((iqr_a - iqr_b) / iqr_b * 100.0, 6), row
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -211,7 +355,12 @@ def main():
                test_pooled_group_uses_concat_frame, test_legacy_fallback_without_groups,
                test_bin_matrix_lists_only_mismatch_coords,
                test_common_map_carries_per_source_bins,
-               test_compare_groups_option_parsing):
+               test_compare_groups_option_parsing,
+               test_dist_shift_metrics_formulas, test_dist_shift_ks_hand_cases,
+               test_dist_shift_focus_rules, test_dist_shift_sort_none_last,
+               test_dist_shift_bin1_population,
+               test_dist_shift_cpk_ratio_none_when_before_nonpositive,
+               test_dist_shift_pooled_group_robust):
         fn()
         checks += 1
     print(f"PASS: test_compare_equivalence ({checks} checks)")

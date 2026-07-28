@@ -241,15 +241,25 @@ def api_metrics_file_history():
 
 @admin_panel_bp.get("/api/runtime")
 def api_runtime():
-    """응답시간 백분위 · 컴퓨트 워커 · 캐시 히트율 · DB 잠금 · 스케줄러 상태.
+    """응답시간 백분위 · 컴퓨트 워커 · 캐시 히트율 · DB 잠금 · 스케줄러 ·
+    동시 열람 세션 · 진행 중 콜드 빌드.
 
-    개별 API 로 쪼개면 화면이 5번 왕복해야 해서 한 번에 묶어 돌려준다. 각 구성요소는
+    개별 API 로 쪼개면 화면이 여러 번 왕복해야 해서 한 번에 묶어 돌려준다. 각 구성요소는
     실패해도 나머지를 막지 않는다 (모듈 미기동/kill-switch 대비)."""
     out = {}
     try:
         out["latency"] = metrics.latency_snapshot()
     except Exception:
         out["latency"] = None
+    try:
+        out["viewers"] = metrics.viewers()
+    except Exception:
+        out["viewers"] = None
+    try:
+        from web_report import build_status
+        out["builds"] = build_status.snapshot_all()
+    except Exception:
+        out["builds"] = None
     try:
         from web_report import compute
         out["compute"] = compute.status()
@@ -290,6 +300,12 @@ def api_stats_users():
 @admin_panel_bp.get("/api/stats/client_errors")
 def api_stats_client_errors():
     return jsonify(stats.client_error_count(request.args.get("hours", 24)))
+
+
+@admin_panel_bp.get("/api/stats/usage")
+def api_stats_usage():
+    """접속 사용량 순위 — Honey 실행 · 웹페이지 방문 (report_usage_daily 집계)."""
+    return jsonify(stats.usage_ranking(request.args.get("days", 30)))
 
 
 # ── VOC 게시판 (읽기 전용 — 등록/수정/상태전환은 /pe/report/voc) ────────────────

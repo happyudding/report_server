@@ -52,3 +52,18 @@ def snapshot(session_id: str) -> dict:
         t0, stage = min(entries)
     return {"state": "building", "stage": stage,
             "elapsed": round(time.monotonic() - t0, 1)}
+
+
+def snapshot_all() -> list[dict]:
+    """진행 중인 콜드 빌드 전부 — 오래 걸리는 순. 관리자 부하 모니터링 전용.
+
+    snapshot() 은 프런트가 자기 세션만 보는 용도라 세션 단위인데, 관리자 화면은
+    "지금 서버가 몇 개 세션을 동시에 빌드 중인가"(= 컴퓨트 워커 포화 원인)를 봐야 한다.
+    """
+    with _LOCK:
+        entries = list(_ACTIVE.items())
+    now = time.monotonic()
+    out = [{"session_id": sid, "stage": stage, "elapsed": round(now - t0, 1)}
+           for (sid, stage), t0 in entries]
+    out.sort(key=lambda d: d["elapsed"], reverse=True)
+    return out

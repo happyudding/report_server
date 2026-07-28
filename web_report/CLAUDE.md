@@ -79,7 +79,9 @@ web_report/
     ├── commonality.py     search_chips / chip_percentiles (Commonality 모드)
     ├── compare.py         build_compare_payload (Compare 모드 — Before/After 그룹 N source.
     │                       common_map/bin_delta/bin_matrix=전 source, goodlog=그룹 대표 2개,
-    │                       dist_shift/equivalence(동일성 검증 Grade1/2/3)=그룹 pool)
+    │                       dist_shift(산포 비교 — Before 분모 지표 6종 meanshift σ/Cpk%/
+    │                       stdev 증가율/median·IQR/KS D + focus 판정)·equivalence(동일성
+    │                       검증 Grade1/2/3)=그룹 pool)
     └── Map_analysis.py    build_map_analysis_rows (wafer map die/bin 집계)
 ```
 

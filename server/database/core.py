@@ -232,6 +232,17 @@ CREATE TABLE IF NOT EXISTS report_webreport_edit_rev (
     session_id TEXT PRIMARY KEY,
     rev        INTEGER NOT NULL
 );
+
+-- 접속 사용량 일별 집계 (관리자 통계 탭) — Honey 실행·웹페이지 방문 횟수.
+-- 행 1개 = (날짜, 종류, 사용자) 카운터. 기록은 best-effort UPSERT (database/usage.py).
+CREATE TABLE IF NOT EXISTS report_usage_daily (
+    day     TEXT NOT NULL,           -- 'YYYY-MM-DD' (서버 localtime)
+    kind    TEXT NOT NULL,           -- honey_run | web_index | web_view
+    user_id TEXT NOT NULL,           -- 소문자 계정. 신원 없으면 'ip:<addr>'
+    count   INTEGER NOT NULL DEFAULT 0,
+    last_at INTEGER NOT NULL,
+    PRIMARY KEY (day, kind, user_id)
+);
 """
 
 _PRODUCT_TYPE_NAMES = ("MDDI", "PDDI", "PMIC", "SECURITY", "TCON")

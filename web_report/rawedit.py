@@ -177,7 +177,7 @@ def replace_sources(session_id, *, report_db, upload_root, sources_bytes,
 
     # 같은 analysis_key 원본의 read-modify-write 직렬화 — service.edit_raw_data 와 같은
     # 락 키로 동시 편집 lost update 방지 (단일 프로세스 전제, in-process 락).
-    with cache.keyed_lock(("rawedit", analysis_key)):
+    with cache.keyed_lock_ctx(("rawedit", analysis_key)):
         existing = sum(
             1 for o in report_db.get_all_object_infos(analysis_key)
             if str(o.get("object_type", "")).startswith("web_report_source_")

@@ -257,7 +257,7 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
     store, engine_ingest = _engine()
     alias = engine_ingest._alias_map()
 
-    with cache.keyed_lock(("eval_export", session_id)):
+    with cache.keyed_lock_ctx(("eval_export", session_id)):
         conn = open_conn()
         try:
             run_id = _find_run_id(conn, session_id)

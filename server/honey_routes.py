@@ -6,15 +6,34 @@
 """
 import json
 
-from flask import Blueprint, Response, abort, jsonify, send_file
+from flask import Blueprint, Response, abort, jsonify, request, send_file
 
+from auth_identity import current_user
 from config import HONEY_ANNOUNCEMENT_TXT, HONEY_RELEASES_DIR, HONEY_VERSION_JSON
+from database import report_db
 
 honey_bp = Blueprint("honey", __name__, url_prefix="/honey")
 
 
+def _record_run():
+    """Honey 실행 집계 (best-effort) — 버전체크는 앱 시작 시 1회 호출된다.
+
+    신원은 HoneyUser UA 토큰(transport/version_check 가 부착, 구버전 클라는 없음).
+    없으면 IP 로 집계한다 (역프록시 뒤면 X-Forwarded-For 첫 IP)."""
+    try:
+        uid = current_user()
+        if not uid:
+            fwd = request.headers.get("X-Forwarded-For")
+            ip = fwd.split(",")[0].strip() if fwd else (request.remote_addr or "")
+            uid = f"ip:{ip}" if ip else ""
+        report_db.record_usage("honey_run", uid)
+    except Exception:
+        pass
+
+
 @honey_bp.get("/version")
 def get_version():
+    _record_run()
     if not HONEY_VERSION_JSON.exists():
         return jsonify({"error": "version.json not found", "version": None}), 404
     try:
