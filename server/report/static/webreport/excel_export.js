@@ -43,7 +43,7 @@ const CPK_SHEET_HEADER = ["TEST NAME", "LOW SPEC", "HIGH SPEC", "SCALE", "계열
   "cpl", "cpu", "cp", "cpk", "comment"];
 const CPK_LABEL_NCOL = 4;    // TEST NAME/LOW SPEC/HIGH SPEC/SCALE — 계열 간 공통이라 병합
 // 전체본(_sheets.py _COMMENT_COLS)과 같은 2개만 — AI Comment 는 양쪽 모두 내보내지 않는다.
-const ISSUE_COMMENT_COLS = ["PTE comment", "개발 comment"];
+const HXL_ISSUE_COMMENT_COLS = ["PTE comment", "개발 comment"];
 const ISSUE_ID_COLS = ["Category", "Step", "Bin", "TNO", "Item"];
 
 // ── 순수 빌더 (DOM/ExcelJS 무의존) ──────────────────────────────────────────
@@ -158,7 +158,7 @@ function blankRepeatedCpkLabels(rows) {
 // 반환 offset 은 데이터 행 기준(0=첫 데이터 행) — 기입 시 HEADER_ROW+1 을 더한다.
 function buildIssueSheetData(issueRows, srcs) {
   const header = ISSUE_ID_COLS.concat(["Map", "Distribution", "avg"])
-    .concat(srcs).concat(["Status"]).concat(ISSUE_COMMENT_COLS);
+    .concat(srcs).concat(["Status"]).concat(HXL_ISSUE_COMMENT_COLS);
   const rows = [];
   const fails = [];        // [[rowOffset, colOffset], ...] — colOffset 은 header 기준
   const warns = [];
@@ -171,7 +171,7 @@ function buildIssueSheetData(issueRows, srcs) {
   (issueRows || []).forEach(r0 => {
     const r = r0 || {};
     if (!r._detail) return;
-    ISSUE_COMMENT_COLS.forEach(col => {
+    HXL_ISSUE_COMMENT_COLS.forEach(col => {
       const text = String(r[col] || "").trim();
       if (!text) return;
       const key = `${r._grp} ${col}`;
@@ -195,7 +195,7 @@ function buildIssueSheetData(issueRows, srcs) {
     const srcVals = subhead ? srcs.slice() : srcs.map(s => r[`${s}_yield`]);
     const vals = [r.Category, r.Step, r.Bin, r.TNO, r.Item, "", "", r.avg]
       .concat(srcVals).concat([r.Status || ""]);
-    ISSUE_COMMENT_COLS.forEach(col => {
+    HXL_ISSUE_COMMENT_COLS.forEach(col => {
       const parts = [];
       const own = String(r[col] || "").trim();
       if (own) parts.push(own);
@@ -431,7 +431,7 @@ async function exportIssueExcel() {
     });
     const widths = { "Item": 36, "Category": 10, "Status": 10,
       "Map": HXL.ISSUE_MAP_COL_W, "Distribution": HXL.ISSUE_DIST_COL_W };
-    ISSUE_COMMENT_COLS.forEach(c => { widths[c] = 40; });
+    HXL_ISSUE_COMMENT_COLS.forEach(c => { widths[c] = 40; });
     hxlSetColWidths(ws, d.header, widths, HXL.YIELD_COL_W);
     await hxlDownload(wsx.wb, "issue_table");
   } catch (e) {
