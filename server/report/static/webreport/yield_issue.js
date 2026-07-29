@@ -228,14 +228,22 @@ function syncIssueHeadRowHeight(panel) {
 // ── Issue Table (read) ──────────────────────────────────────────────────────
 // Issue Table 상단 sticky 툴바: Yield 섹션 Bin 그룹 전체 펼치기/접기.
 function issueToolbarHtml() {
-  // 수정모드 버튼: ISSUE ITEM 추가 + 삭제 모드 토글. 삭제 실행/복원 버튼(.issue-del-actions)은
-  // 삭제 모드일 때만 CSS 로 노출된다.
+  // 수정모드 버튼: ISSUE ITEM 추가 + 선택 모드 토글 + Status 전체 일괄. 선택 실행 버튼
+  // (.issue-del-actions)은 선택 모드일 때만 CSS 로 노출된다.
   const editBtns = (MODE === "edit")
     ? `<button type="button" class="btn-sm" id="etcAddItemBtn">ISSUE ITEM 추가</button>` +
-      `<button type="button" class="btn-sm" id="issueDelModeBtn" title="행별 체크박스를 켜고 여러 행을 한 번에 삭제">🗑 삭제 모드</button>` +
+      `<button type="button" class="btn-sm" id="issueDelModeBtn" title="행을 선택해 한 번에 삭제하거나 Status 를 Open/Close 로 바꾼다 (Step 셀 클릭 = 선택)">☑ 선택 모드</button>` +
       `<span class="issue-del-actions">` +
+        `<button type="button" class="btn-sm" id="issueSelAllBtn" title="보이는 행 전체 선택">전체 선택</button>` +
+        `<button type="button" class="btn-sm" id="issueSelNoneBtn" title="선택 모두 해제">선택 해제</button>` +
+        `<button type="button" class="btn-sm" id="issueSelOpenBtn" title="선택한 행 Status 를 Open 으로">선택 Open</button>` +
+        `<button type="button" class="btn-sm" id="issueSelCloseBtn" title="선택한 행 Status 를 Close 로">선택 Close</button>` +
         `<button type="button" class="btn-sm" id="issueDelSelectedBtn" title="체크한 행 일괄 삭제">선택 삭제</button>` +
         `<button type="button" class="btn-sm" id="issueResetHiddenBtn" title="삭제(숨김)한 Yield/CPK 행 전부 복원">삭제 전체 초기화</button>` +
+      `</span>` +
+      `<span class="issue-status-actions">` +
+        `<button type="button" class="btn-sm" id="issueAllOpenBtn" title="Issue Table 전체 행 Status 를 Open 으로">All Open</button>` +
+        `<button type="button" class="btn-sm" id="issueAllCloseBtn" title="Issue Table 전체 행 Status 를 Close 로">All Close</button>` +
       `</span>` : "";
   return `<div class="issue-toolbar">` +
     `<span class="issue-jump-group" title="섹션으로 이동">` +
@@ -249,8 +257,8 @@ function issueToolbarHtml() {
     `</div>`;
 }
 
-// ── Issue Table 삭제 모드 ────────────────────────────────────────────────────
-// 켜면 행 체크박스·개별 삭제(×)·삭제 실행 버튼이 보인다(CSS #panel-issues.issue-del-mode).
+// ── Issue Table 선택 모드 (일괄 삭제 / Status 일괄 변경) ─────────────────────
+// 켜면 행 체크박스·개별 삭제(×)·선택 실행 버튼이 보인다(CSS #panel-issues.issue-del-mode).
 // 삭제 후 재로드(load)로 표가 다시 그려져도 모드가 유지되도록 모듈 전역에 둔다.
 let issueDelMode = false;
 function applyIssueDelMode(panel) {
@@ -260,17 +268,36 @@ function applyIssueDelMode(panel) {
   const btn = panel.querySelector("#issueDelModeBtn");
   if (btn) {
     btn.classList.toggle("active", issueDelMode);
-    btn.textContent = issueDelMode ? "✕ 삭제 모드 종료" : "🗑 삭제 모드";
+    btn.textContent = issueDelMode ? "✕ 선택 모드 종료" : "☑ 선택 모드";
   }
   syncIssueDelCount(panel);
   syncIssueStickyOffsets(panel);   // 체크박스 노출로 Step 열 폭이 변할 수 있어 재실측
 }
-// 체크 개수를 "선택 삭제 (n)" 라벨에 반영.
+// 체크 상태를 행 강조(tr.issue-row-sel)에 반영 — 체크박스가 작아 행 전체로 선택을 보인다.
+function markIssueRowSelected(chk) {
+  const tr = chk && chk.closest("tr");
+  if (tr) tr.classList.toggle("issue-row-sel", chk.checked);
+}
+// 전체 선택 / 선택 해제.
+function setAllIssueDelChecked(checked) {
+  const panel = document.getElementById("panel-issues");
+  if (!panel) return;
+  panel.querySelectorAll(".issue-del-chk").forEach(chk => {
+    chk.checked = checked;
+    markIssueRowSelected(chk);
+  });
+  syncIssueDelCount(panel);
+}
+// 체크 개수를 "선택 삭제 (n)" 라벨에 반영 + 선택 대상 버튼 활성/비활성.
 function syncIssueDelCount(panel) {
   panel = panel || document.getElementById("panel-issues");
   if (!panel) return;
   const n = panel.querySelectorAll(".issue-del-chk:checked").length;
   const btn = panel.querySelector("#issueDelSelectedBtn");
+  ["#issueSelOpenBtn", "#issueSelCloseBtn"].forEach(sel => {
+    const b = panel.querySelector(sel);
+    if (b) b.disabled = !n;
+  });
   if (!btn) return;
   btn.textContent = n ? `선택 삭제 (${n})` : "선택 삭제";
   btn.disabled = !n;

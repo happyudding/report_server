@@ -14,7 +14,8 @@
 | `test_store.py` | store CRUD + `make_case_id` idempotent + `search_precedents` + 스키마 v4(eval_precedent/updated_at). |
 | `test_e2e.py` | `evaluate()` 전 구간 E2E + 입력키 검증(raw_df/raw_table/items 부재 시 ValueError). |
 | `test_calibrate.py` | `recalibrate()` 분위수 → thresholds item_class 갱신 + 버전 등록 (**thresholds 는 tmp 복사본으로 격리**). |
-| `test_db_input_import.py` | db_input label(human_status/root_cause)+case_outcome 적재·idempotent. |
+| `test_db_input_import.py` | db_input **레거시 20컬럼** label(human_status/root_cause)+case_outcome 적재·idempotent. |
+| `test_db_input_simple_format.py` | db_input **단순 5컬럼** 포맷 — 헤더 감지·unit alias(VOLTS/HERTZ/AMPS)·사전 전수검사(부분 적재 금지)·코멘트 수정 재적재. |
 | `integration/test_df_honey_eval.py` | df_honey → run_input 어댑터 경로(raw_table) 대량 평가. |
 | `integration/adapter.py` | `df_honey_to_run_input` — report_server 쪽 어댑터 모사(eval_engine import 안 함). |
 

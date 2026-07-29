@@ -5,6 +5,8 @@ eval DB 는 report.db(세션 DB)와 분리된 report_server 소유 파일이다
 eval_engine 은 여기서 import 하지 않는다(허용 지점 2곳 규약 유지) — 커넥션은
 eval_export.open_conn 경유(스키마 보장), 조회/삭제는 직접 SELECT/DELETE.
 """
+import csv
+import io
 import logging
 import re
 import sys
@@ -98,13 +100,15 @@ def list_labels(q=None, limit=100, offset=0) -> dict:
     params = []
     if q:
         where = ("(fc.product_name LIKE ? OR fc.lot_id LIKE ? OR im.item_name_raw LIKE ?"
-                 " OR l.human_comment LIKE ? OR ir.session_id LIKE ?)")
-        params = [f"%{q}%"] * 5
+                 " OR l.human_comment LIKE ? OR ir.session_id LIKE ?"
+                 " OR pm.family_product LIKE ?)")
+        params = [f"%{q}%"] * 6
 
     base = f"""
         FROM label l
         JOIN fail_case fc ON fc.case_id = l.case_id
         JOIN item_master im ON im.item_id = fc.item_id
+        LEFT JOIN product_master pm ON pm.product_name = fc.product_name
         LEFT JOIN run_case rc ON rc.case_id = l.case_id
         LEFT JOIN ingest_run ir ON ir.run_id = rc.run_id
         WHERE {where}"""
@@ -120,6 +124,7 @@ def list_labels(q=None, limit=100, offset=0) -> dict:
             SELECT l.label_id, l.case_id, l.human_comment, l.labeler, l.reviewer,
                    l.label_quality, l.created_at,
                    fc.product_name, fc.lot_id, fc.bin,
+                   pm.product_type, pm.family_product,
                    im.item_name_raw AS item, im.value_type, im.unit,
                    MAX(ir.session_id) AS session_id
             {base}
@@ -128,6 +133,55 @@ def list_labels(q=None, limit=100, offset=0) -> dict:
             LIMIT ? OFFSET ?""", params + [limit, offset]).fetchall()
         return {"total": total, "limit": limit, "offset": offset,
                 "rows": [dict(r) for r in rows], "exists": True}
+    finally:
+        conn.close()
+
+
+# ── 코멘트 CSV export (db_input 단순 5컬럼 포맷 — run_import.bat 재적재용) ────
+
+_CSV_COLUMNS = ("Product type", "Family Product", "unit", "Item", "comment")
+_CSV_CHUNK = 1000
+_CSV_MAX_ROWS = 100000  # 폭주 방지 상한
+
+
+def labels_csv_iter():
+    """코멘트 라벨 → db_input 단순 포맷 CSV generator (첫 청크에 UTF-8 BOM + 헤더).
+
+    unit 은 화면에 보이는 `im.unit`(원문, 예 "mV") 이 아니라 `im.value_type`(엔진 어휘
+    V/A/Hz/CODE/Ohm/Sec/P_F)을 내보낸다 — 어휘값은 전부 import_csv 의 alias 표에 있어
+    받은 파일을 그대로 재적재할 수 있다. 코멘트가 빈 라벨은 제외(단순 포맷 필수값).
+    """
+    def _line(values):
+        buf = io.StringIO()
+        csv.writer(buf, lineterminator="\r\n").writerow(values)
+        return buf.getvalue()
+
+    yield "\ufeff" + _line(_CSV_COLUMNS)
+    conn = eval_export.open_conn(create=False)
+    if conn is None:
+        return
+    sql = """
+        SELECT pm.product_type, pm.family_product, im.value_type,
+               im.item_name_raw AS item, l.human_comment
+        FROM label l
+        JOIN fail_case fc ON fc.case_id = l.case_id
+        JOIN item_master im ON im.item_id = fc.item_id
+        LEFT JOIN product_master pm ON pm.product_name = fc.product_name
+        WHERE l.human_comment IS NOT NULL AND l.human_comment <> ''
+        ORDER BY l.label_id
+        LIMIT ? OFFSET ?"""
+    try:
+        offset = 0
+        while offset < _CSV_MAX_ROWS:
+            rows = conn.execute(sql, (_CSV_CHUNK, offset)).fetchall()
+            if not rows:
+                break
+            for r in rows:
+                yield _line([r["product_type"] or "", r["family_product"] or "",
+                             r["value_type"] or "", r["item"] or "", r["human_comment"]])
+            if len(rows) < _CSV_CHUNK:
+                break
+            offset += _CSV_CHUNK
     finally:
         conn.close()
 

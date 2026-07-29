@@ -1302,7 +1302,7 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
 }
 .btn-del-etc-item:hover, .btn-del-issue-row:hover { color: #b91c1c; }
 
-/* Issue Table 삭제 모드 — 행 체크박스·개별 삭제(×)·삭제 실행 버튼은 모드 진입 시에만 노출 */
+/* Issue Table 선택 모드 — 행 체크박스·개별 삭제(×)·선택 실행 버튼은 모드 진입 시에만 노출 */
 #panel-issues .issue-del-chk { display: none; margin-right: 5px; vertical-align: middle; cursor: pointer; }
 #panel-issues .btn-del-etc-item, #panel-issues .btn-del-issue-row { display: none; }
 #panel-issues .issue-del-actions { display: none; gap: 8px; }
@@ -1312,7 +1312,17 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
 #panel-issues.issue-del-mode .issue-del-actions { display: inline-flex; }
 #issueDelModeBtn.active { background: #dc2626; border-color: #dc2626; color: #fff; }
 #issueDelModeBtn.active:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
-#issueDelSelectedBtn:disabled { opacity: .5; cursor: default; transform: none; }
+#issueDelSelectedBtn:disabled, #issueSelOpenBtn:disabled, #issueSelCloseBtn:disabled {
+  opacity: .5; cursor: default; transform: none;
+}
+/* Step 셀 전체가 체크 클릭 영역 — 체크박스가 작아 정확히 누르기 어렵다는 요청(2026-07-28). */
+#panel-issues.issue-del-mode td.issue-sel-cell { cursor: pointer; user-select: none; }
+#panel-issues.issue-del-mode td.issue-sel-cell:hover { outline: 1px dashed #94a3b8; outline-offset: -2px; }
+/* 선택된 행 강조. background 에 !important 가 붙는 이유는 zebra/hover/좌측 고정열(#fff)이
+   특이도로 이기기 때문 (cpk-warn·compare-table 과 같은 처방). */
+#panel-issues.issue-del-mode tbody tr.issue-row-sel > td { background: #fff3d6 !important; }
+/* Status 전체 일괄(All Open/All Close) — 선택과 무관하게 편집모드 상시 노출 */
+.issue-status-actions { display: inline-flex; gap: 8px; }
 
 /* Issue Table 섹션 이동 버튼 묶음(YIELD/CPK/ETC) — 세그먼트 형태로 붙여 표시 */
 .issue-jump-group { display: inline-flex; }
@@ -1720,6 +1730,8 @@ html[data-theme="dark"] .sheet-table.kind-issue td.sheet-subhead { background: #
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-cell-warn { background: #46201f !important; }
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-yield-warn { background: hsl(0, 55%, calc(20% + var(--yw, 0) * 22%)) !important; }
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #20242c; color: #9aa3b0; }
+html[data-theme="dark"] #panel-issues.issue-del-mode tbody tr.issue-row-sel > td { background: #4a3d18 !important; }
+html[data-theme="dark"] #panel-issues.issue-del-mode td.issue-sel-cell:hover { outline-color: #64748b; }
 html[data-theme="dark"] .issue-toolbar { background: #14161a; }
 
 /* ── Yield 표 (pass 행 틴트/접기 버튼) ── */

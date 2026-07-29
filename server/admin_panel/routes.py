@@ -200,6 +200,16 @@ def api_eval_labels():
     ))
 
 
+@admin_panel_bp.get("/api/eval/labels.csv")
+def api_eval_labels_csv():
+    """코멘트 라벨 전체 → db_input 단순 5컬럼 CSV (수정 후 run_import.bat 재적재용)."""
+    return Response(eval_admin.labels_csv_iter(), mimetype="text/csv; charset=utf-8",
+                    headers={
+                        "Content-Disposition": "attachment; filename=eval_labels.csv",
+                        "Cache-Control": "no-store",
+                    })
+
+
 @admin_panel_bp.post("/api/eval/cases/delete")
 def api_eval_cases_delete():
     body = request.get_json(force=True, silent=True) or {}

@@ -980,6 +980,19 @@ def update_issue_hidden(session_id: str, *, report_db, upload_root: Path,
             "storage": "db" if changes else "unchanged"}
 
 
+def _norm_issue_status(key, value):
+    """Issue Table Status 키/값 검증 — 단건·일괄 저장 공용. 반환 (key, value)."""
+    key = str(key or "").strip()
+    value = str(value or "").strip()
+    if not key or len(key) > 300:
+        raise ValueError(f"invalid row key: {key!r}")
+    if not (key.startswith("Yield|") or key.startswith("CPK|") or key.startswith("ETC|")):
+        raise ValueError(f"invalid row key: {key!r}")
+    if value not in ("Open", "Close"):
+        raise ValueError(f"invalid status: {value!r}")
+    return key, value
+
+
 def update_issue_status(session_id: str, *, report_db, upload_root: Path,
                         key: str, value: str,
                         client_ip: str = "", user_agent: str = "") -> dict:
@@ -995,14 +1008,7 @@ def update_issue_status(session_id: str, *, report_db, upload_root: Path,
     if not analysis_key:
         raise FileNotFoundError(session_id)
 
-    key = str(key or "").strip()
-    value = str(value or "").strip()
-    if not key or len(key) > 300:
-        raise ValueError(f"invalid row key: {key!r}")
-    if not (key.startswith("Yield|") or key.startswith("CPK|") or key.startswith("ETC|")):
-        raise ValueError(f"invalid row key: {key!r}")
-    if value not in ("Open", "Close"):
-        raise ValueError(f"invalid status: {value!r}")
+    key, value = _norm_issue_status(key, value)
 
     # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
     edits.ensure_seeded(report_db, session_id,
@@ -1021,6 +1027,55 @@ def update_issue_status(session_id: str, *, report_db, upload_root: Path,
         pass
 
     return {"ok": True, "key": key, "value": value, "storage": "db"}
+
+
+_ISSUE_STATUS_MAX_ITEMS = 3000
+
+
+def update_issue_status_bulk(session_id: str, *, report_db, upload_root: Path,
+                             items, client_ip: str = "", user_agent: str = "") -> dict:
+    """Issue Table 행 Status 를 여러 건 한 번에 저장 — update_issue_status 의 일괄판.
+
+    items: [{"key": ..., "value": "Open"|"Close"}, ...]. 키 검증·저장 규약("Close" 만
+    저장, Open 은 행 삭제)은 단건과 완전히 동일하고, 편집 DB write 만 1회로 묶는다
+    (전체 Open/Close 는 행이 수백 개라 단건 요청을 반복하면 느리고 경합이 난다).
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    if not isinstance(items, list) or not items:
+        raise ValueError("items must be a non-empty list")
+    if len(items) > _ISSUE_STATUS_MAX_ITEMS:
+        raise ValueError(f"too many items: {len(items)}")
+
+    changes, seen = [], set()
+    for it in items:
+        key, value = _norm_issue_status((it or {}).get("key"), (it or {}).get("value"))
+        if key in seen:
+            continue
+        seen.add(key)
+        changes.append((edits.KIND_ISSUE_STATUS, key, "Close" if value == "Close" else None))
+
+    # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
+    edits.ensure_seeded(report_db, session_id,
+                        lambda: cache.load_manifest_cached(analysis_key, upload_root))
+    report_db.apply_webreport_edits(session_id, changes,
+                                    updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"issue_status(bulk {len(changes)} rows)",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+
+    return {"ok": True, "count": len(changes), "storage": "db"}
 
 
 _COMMENT_MAX_ITEMS = 200

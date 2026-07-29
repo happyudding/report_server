@@ -140,6 +140,31 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   **사설 API 의존 핀**: `store._migrate` / `store._seed_bin_taxonomy` /
   `pipeline.ingest._*` — 원본 동기화로 시그니처가 바뀌면 eval_export 만 고치면 된다
   (실패는 safe_export 가 격리).
-- **관리**: `/pe/admin-pte/` **Eval DB 탭** — overview(파일/건수), label 목록 검색,
-  케이스 단위 완전 삭제, 세션 재적재. 세션 삭제 시 export 데이터는 자동 삭제하지
+- **관리**: `/pe/admin-pte/` **Eval DB 탭** — overview(파일/건수), label 목록 검색
+  (product/family/lot/item/comment/세션ID), 컬럼 표시 토글(lot 기본 숨김, 선택은
+  localStorage `adminEvalHiddenCols`), 케이스 단위 완전 삭제, 세션 재적재,
+  **코멘트 CSV 다운로드**(§10). 세션 삭제 시 export 데이터는 자동 삭제하지
   않는다(선례 보존) — 정리는 이 탭에서 수동.
+
+## 10. 과거 사례 수동 적재 — db_input 5컬럼 CSV (2026-07-28)
+
+엔지니어가 손으로 정리한 과거 코멘트를 같은 eval DB(`REPORT_EVAL_DB_PATH`)에 넣는 경로.
+구현은 **`eval_analyzer/db_input/` 안에서만** 한다(엔진 무수정 — §2 규약 유지).
+
+- **입력 계약**: `Product type, Family Product, unit, Item, comment` 5컬럼(헤더 대소문자·
+  공백 유연). 기존 20컬럼 레거시 CSV 도 헤더 자동감지로 계속 동작한다.
+  정본 설명은 [eval_analyzer/db_input/CLAUDE.md](../eval_analyzer/db_input/CLAUDE.md).
+- **unit 정규화**: 원문(VOLTS/HERTZ/AMPS…)을 엔진 어휘(V/A/Hz/CODE/Ohm/Sec/P_F)로 매핑한다.
+  매핑표 = 엔진 `UNIT_TO_VALUE_TYPE` + db_input `EXTRA_UNIT_ALIASES`.
+  **모르는 단위가 하나라도 있으면 아무것도 적재하지 않고 중단**(행번호+원문 출력) —
+  `search_precedents` 가 `value_type` 을 등호 하드필터로 쓰기 때문에 조용한 P_F 폴백은
+  선례를 영구 미매칭으로 만든다.
+- **실행**: 서버에서 `eval_analyzer\db_input\run_import.bat` 더블클릭 → CSV 선택.
+  bat 이 report_server 안의 사본임을 감지해(`..\..\server\config.py`) `EVAL_DB_PATH` 를
+  서버 소유 eval.db 로 잡고 `--to-eval-db` 를 붙인다 → 관리자 탭에 바로 보인다.
+  원본 저장소(F:\COINAPI\eval_analyzer) 단독 실행은 기존 per-family output 동작 그대로.
+- **왕복**: 관리자 탭 **CSV 다운로드**(`GET /api/eval/labels.csv`)가 같은 5컬럼으로 내보내고
+  (unit 은 `im.value_type` = 엔진 어휘), 고쳐서 재적재하면 같은 case 의 label 이 갱신된다.
+  ⚠ 단순 포맷은 lot/wafer/bin 이 없어 `product_name=<pt>_<fp>`·`bin=0` 으로 **case 를 합성**
+  하므로 왕복은 의도적으로 lossy 다 — web_report 라벨을 재적재하면 합성 case 가 1건 생긴다
+  (labeler 가 달라 서로 지우지 않는다: 세션 재적재 reconcile 은 `labeler='web_report'` 만 본다).

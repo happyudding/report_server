@@ -23,10 +23,15 @@ REM Excluded on purpose - operational data owned by the SERVER PC:
 REM   DB/                    session DB (report.db + -wal/-shm), eval, voc,
 REM                          product_info.db, backup/
 REM   uploads/               parquet / images / disk cache
-REM   server/env/            server.env - the single source of truth for
-REM                          HOST/PORT on that machine
 REM   server/wheelhouse/     offline wheels (see the note printed at the end)
 REM   server/releases/*.zip  Honey release packages served by /honey/download
+REM
+REM INCLUDED on purpose - server/env/server.env:
+REM   This repo copy is the single source of truth for HOST / PORT /
+REM   SERVER_BASE_URL and the worker tuning, so it ships with the code.
+REM   CAUTION: unpacking OVERWRITES the copy on the server PC. If that machine
+REM   carries hand-edited values, save the file first and re-check HOST after
+REM   unpacking.
 REM
 REM Excluded as usual - regenerated, or unrelated to running the server:
 REM   .git/  server/.venv/  client/data/  dist/  build/  client/release_dist/
@@ -65,7 +70,7 @@ set "LIST=%TEMP%\%NAME%_code_zip_list.txt"
 echo [code-zip] Source : %PROJ%
 echo [code-zip] Output : %OUT%
 if %SEQ% gtr 0 echo [code-zip] Note   : base name was taken, using suffix _%SEQ%
-echo [code-zip] Mode   : CODE ONLY - DB, uploads and server\env are NOT packed.
+echo [code-zip] Mode   : CODE ONLY - DB and uploads are NOT packed (env IS).
 echo.
 
 REM Paths inside the archive are relative to the parent folder, so the archive
@@ -86,7 +91,6 @@ set "EX="
 REM -- operational data (the whole point of this script) --
 set "EX=!EX! -x^!%NAME%\DB"
 set "EX=!EX! -x^!%NAME%\uploads"
-set "EX=!EX! -x^!%NAME%\server\env"
 set "EX=!EX! -x^!%NAME%\server\wheelhouse"
 REM -- regenerated / irrelevant --
 set "EX=!EX! -xr^!.git"
@@ -126,8 +130,6 @@ tar.exe -a -c -f "%OUT%" ^
   --exclude="%NAME%/DB/*" ^
   --exclude="%NAME%/uploads" ^
   --exclude="%NAME%/uploads/*" ^
-  --exclude="%NAME%/server/env" ^
-  --exclude="%NAME%/server/env/*" ^
   --exclude="%NAME%/server/wheelhouse" ^
   --exclude="%NAME%/server/wheelhouse/*" ^
   --exclude="*/.git" ^
@@ -162,16 +164,20 @@ goto :verify_scan
 :verify_7z
 "%SEVENZIP%" l -ba "%OUT%" > "%LIST%"
 :verify_scan
-findstr /I /C:"%NAME%\DB" /C:"%NAME%/DB" /C:"%NAME%\uploads" /C:"%NAME%/uploads" /C:"%NAME%\server\env" /C:"%NAME%/server/env" "%LIST%" >nul
+findstr /I /C:"%NAME%\DB" /C:"%NAME%/DB" /C:"%NAME%\uploads" /C:"%NAME%/uploads" "%LIST%" >nul
 if not errorlevel 1 goto :leak
+echo [code-zip]   OK - no DB / uploads entries.
+REM server.env is supposed to be IN here - warn if an exclusion swallowed it.
+findstr /I /C:"server\env\server.env" /C:"server/env/server.env" "%LIST%" >nul
+if errorlevel 1 echo [code-zip]   WARNING: server\env\server.env is MISSING from the archive.
+if not errorlevel 1 echo [code-zip]   OK - server\env\server.env is packed.
 del "%LIST%" >nul 2>&1
-echo [code-zip]   OK - no DB / uploads / server\env entries.
 goto :done
 
 :leak
 echo.
 echo [code-zip] ERROR: the archive contains operational data. Offending entries:
-findstr /I /C:"%NAME%\DB" /C:"%NAME%/DB" /C:"%NAME%\uploads" /C:"%NAME%/uploads" /C:"%NAME%\server\env" /C:"%NAME%/server/env" "%LIST%"
+findstr /I /C:"%NAME%\DB" /C:"%NAME%/DB" /C:"%NAME%\uploads" /C:"%NAME%/uploads" "%LIST%"
 del "%LIST%" >nul 2>&1
 if exist "%OUT%" del "%OUT%"
 popd
@@ -194,8 +200,11 @@ echo [code-zip]  2. server\terminate.bat
 echo [code-zip]     This also PAUSES the watchdog. Skip it and the watchdog
 echo [code-zip]     restarts the server on the OLD code within 5 minutes.
 echo [code-zip]  3. Unpack this ZIP over the parent of the server folder,
-echo [code-zip]     overwriting. DB\, uploads\ and server\env\ are not in the
-echo [code-zip]     archive, so they survive untouched.
+echo [code-zip]     overwriting. DB\ and uploads\ are not in the archive, so
+echo [code-zip]     they survive untouched.
+echo [code-zip]     server\env\server.env IS in the archive and WILL be
+echo [code-zip]     overwritten. Back up that file first if the server PC has
+echo [code-zip]     hand-edited values, and re-check HOST after unpacking.
 echo [code-zip]  4. If server\requirements.txt changed: server\install.bat
 echo [code-zip]     wheelhouse is NOT bundled here. An offline server PC needs
 echo [code-zip]     server\wheelhouse\ carried over from report_server_zip.bat.

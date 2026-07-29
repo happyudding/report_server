@@ -9,9 +9,8 @@ outlier 제거도 걸 수 없었는데, 그 둘은 원본을 고치지 않고 **
 2-리스트가 창을 다 먹는다):
 
     [현재 상태]        |  지금 적용 중인 전처리 목록 + 항목별 [해제] / [전체 해제]
-    [Options]          |  Bin1 only 처럼 조건을 짤 필요 없는 한 줄 옵션
+    [Options]          |  Bin1 only · Outlier 제거 — 조건을 짤 필요 없는 한 줄 옵션
     [Item Select]      |  Item List (제외 ↔ 표시 2리스트) + 검색
-    [Outlier 제거]     |  mean ± [stdev] × σ
     [Yield 계산]       |  소스별 수율 **분모** (자동 / Gross Die / Test data) + 실시간 수율
     [Rawdata 원본 수정]|  고칠 source 선택 → Excel 왕복 (주황 — 원본을 직접 고치는 유일한 버튼)
     ---------------------------------------------------------------------
@@ -36,6 +35,7 @@ from __future__ import annotations
 from urllib.parse import quote
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QBrush, QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -279,37 +279,16 @@ class RawdataHubDialog(QDialog):
         self._add_page(nav, "현재 상태", self._build_state_page(),
                        "지금 이 리포트에 적용 중인 전처리 목록 — 여기서 개별/전체 해제")
 
-        # ── 페이지 1: Options (자주 쓰는 한 줄 옵션) ─────────────────────────
+        # ── 페이지 1: Options (자주 쓰는 한 줄 옵션 — Outlier 제거 포함) ─────
         self._add_page(nav, "Options", self._build_options_page(),
-                       "Bin1 only · Spec Out 빈값 — 조건을 짜지 않고 켜고 끄는 옵션")
+                       "Bin1 only · Outlier 제거 — 조건을 짜지 않고 켜고 끄는 옵션")
 
         # ── 페이지 2: Item Select ────────────────────────────────────────────
         self.item_list = _ItemListWidget()
         self._add_page(nav, "Item Select", self.item_list,
                        "선택한 항목만 남기고 저장 (원본은 그대로, 언제든 되돌릴 수 있음)")
 
-        # ── 페이지 3: Outlier 제거 ───────────────────────────────────────────
-        self.edit_k = QLineEdit()
-        self.edit_k.setPlaceholderText("예: 50")
-        self.edit_k.setFixedWidth(90)
-        self.edit_k.returnPressed.connect(self._save)
-        outlier_page = QWidget()
-        outlier_layout = QVBoxLayout(outlier_page)
-        outlier_row = QHBoxLayout()
-        outlier_row.addWidget(QLabel("mean ±"))
-        outlier_row.addWidget(self.edit_k)
-        outlier_row.addWidget(QLabel("× stdev 밖의 측정값 제거 (비우면 해제)"))
-        outlier_row.addStretch(1)
-        outlier_layout.addLayout(outlier_row)
-        outlier_layout.addWidget(QLabel(
-            "항목별로 평균 ± (입력값)×표준편차 밖의 **측정값만** 결측 처리합니다.\n"
-            "BIN·좌표·die 는 손대지 않으므로 수율·Wafer Map 은 그대로이고, "
-            "CPK/Distribution 의 n·평균·σ 만 달라집니다."))
-        outlier_layout.addStretch(1)
-        self._add_page(nav, "Outlier 제거", outlier_page,
-                       "mean ± (입력값)×stdev 밖의 측정값만 결측 처리 — 비우면 해제")
-
-        # ── 페이지 4: Yield 계산 (소스별 수율 분모) ──────────────────────────
+        # ── 페이지 3: Yield 계산 (소스별 수율 분모) ──────────────────────────
         self._add_page(nav, "Yield 계산", self._build_yield_page(),
                        "소스별 수율 분모 — 자동 / Gross Die / Test data 개수")
 
@@ -321,20 +300,22 @@ class RawdataHubDialog(QDialog):
         #   self._add_page(nav, "빠른 수정", quick_page,
         #                  "Excel 없이 표·조건으로 고칩니다 (원본 불변, 되돌릴 수 있음)")
 
-        # ── 페이지 5: Rawdata 원본 수정 (Excel) ──────────────────────────────
+        # ── 페이지 4: Rawdata 원본 수정 (Excel) ──────────────────────────────
         excel_page = QWidget()
         excel_layout = QVBoxLayout(excel_page)
         excel_layout.addWidget(QLabel(
-            "고를 source 만 Excel 로 내려받아 직접 편집한 뒤 서버에 반영합니다.\n\n"
-            "· 시트(=source) 삭제, 복잡한 수식 작업처럼 표로는 안 되는 일에 씁니다.\n"
-            "· 체크하지 않은 source 는 내려받지도, 손대지도 않습니다 (그대로 보존).\n"
-            "· 데이터가 크면 Excel 을 여는 것만으로도 오래 걸립니다 — 고칠 source 만\n"
-            "  체크하는 것이 여는 속도를 좌우합니다.\n"
-            "· **원본을 실제로 바꿉니다. 되돌릴 수 없습니다.**"))
+            "source 만 Excel 로 받아 직접 편집한 뒤 서버에 반영합니다 — "
+            "**원본을 실제로 바꿉니다.**"))
         excel_layout.addWidget(QLabel("Excel 로 열 Source (체크한 것만)"))
         self.list_excel_source = QListWidget()
-        self.list_excel_source.setMaximumHeight(150)
-        excel_layout.addWidget(self.list_excel_source)
+        # 체크박스만으로는 선택 여부가 눈에 안 띈다는 피드백 (2026-07-28) — 체크 표시를
+        # 키우고, 체크된 행은 색·굵기로도 구분한다 (_style_excel_item).
+        self.list_excel_source.setStyleSheet(
+            "QListWidget::item { padding: 5px 6px; }"
+            "QListWidget::indicator { width: 18px; height: 18px; }")
+        self.list_excel_source.setMinimumHeight(260)
+        self.list_excel_source.itemChanged.connect(self._style_excel_item)
+        excel_layout.addWidget(self.list_excel_source, 1)
         src_row = QHBoxLayout()
         btn_src_all = QPushButton("전체 선택")
         btn_src_none = QPushButton("전체 해제")
@@ -349,7 +330,6 @@ class RawdataHubDialog(QDialog):
         self.btn_excel.setMinimumHeight(38)
         self.btn_excel.clicked.connect(self._start_excel)
         excel_layout.addWidget(self.btn_excel)
-        excel_layout.addStretch(1)
         self._add_page(nav, "Rawdata 원본 수정", excel_page,
                        "Excel 로 원본 데이터를 직접 편집합니다 (되돌릴 수 없음)")
         self.nav_buttons[-1].setStyleSheet(_NAV_BTN_QSS + """
@@ -439,6 +419,23 @@ class RawdataHubDialog(QDialog):
             "    fail die 를 빼고 양품만으로 분포·CPK 를 봅니다."))
         layout.addSpacing(14)
 
+        # Outlier 제거 — 종전 별도 페이지에서 Options 로 이동 (2026-07-28, 사용자 요청).
+        self.edit_k = QLineEdit()
+        self.edit_k.setPlaceholderText("예: 50")
+        self.edit_k.setFixedWidth(90)
+        self.edit_k.returnPressed.connect(self._save)
+        outlier_row = QHBoxLayout()
+        outlier_row.addWidget(QLabel("Outlier 제거 — mean ±"))
+        outlier_row.addWidget(self.edit_k)
+        outlier_row.addWidget(QLabel("× stdev 밖의 측정값 제거 (비우면 해제)"))
+        outlier_row.addStretch(1)
+        layout.addLayout(outlier_row)
+        layout.addWidget(QLabel(
+            "    항목별로 평균 ± (입력값)×표준편차 밖의 측정값만 결측 처리합니다. "
+            "BIN·좌표·die 는 손대지 않으므로\n    수율·Wafer Map 은 그대로이고, "
+            "CPK/Distribution 의 n·평균·σ 만 달라집니다."))
+        layout.addSpacing(14)
+
         # [Spec Out 빈값] 은 잠시 비활성 (2026-07-28, 사용자 요청). 위젯과 _add_spec_out_option
         # 은 그대로 두고 **레이아웃에만 붙이지 않는다** — 되살릴 때 아래 3줄만 복구하면 된다.
         # 이미 저장된 spec_out 규칙은 계속 적용되고 [현재 상태] 에서 해제할 수 있다.
@@ -471,10 +468,12 @@ class RawdataHubDialog(QDialog):
         self.tbl_yield.verticalHeader().setVisible(False)
         self.tbl_yield.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tbl_yield.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        # Source 를 Stretch 로 두면 남는 폭을 다 먹어 표가 벙벙해진다 — 내용 폭만 쓰고,
+        # 남는 폭은 마지막 Yield 열이 가져간다.
         header = self.tbl_yield.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        for col in range(1, 5):
+        for col in range(0, 4):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.tbl_yield, 1)
 
         row = QHBoxLayout()
@@ -485,6 +484,14 @@ class RawdataHubDialog(QDialog):
             row.addWidget(btn)
         row.addStretch(1)
         layout.addLayout(row)
+
+        # [자동] 판정 사유는 콤보 문구에 넣지 않고 여기서 한 번만 설명한다 (콤보가 길어져
+        # 분모 기준 열이 벙벙해지던 문제 — 2026-07-28).
+        layout.addWidget(QLabel(
+            "[자동] 은 기본으로 Gross die 를 분모로 쓰고, 아래의 경우에는 Test die 로 내려갑니다.\n"
+            "  · 기준정보에 Gross die 가 없음\n"
+            "  · Gross die < Test die (그대로 쓰면 수율이 100% 를 넘음)\n"
+            "  · Test die 가 Gross die 보다 100 개 이상 적음 (대량 미측정)"))
 
         self.lbl_yield_sum = QLabel("")
         self.lbl_yield_sum.setWordWrap(True)
@@ -636,6 +643,9 @@ class RawdataHubDialog(QDialog):
             combo.addItem(self._auto_label(entry), "")
             combo.addItem("Gross die", "gross")
             combo.addItem("Test die", "test")
+            reason = _YIELD_REASON.get(entry.get("reason") or "", "")
+            if reason:
+                combo.setToolTip(f"자동 판정 사유: {reason}")
             if not entry.get("gross_allowed"):
                 # 규칙: 수율은 100% 를 넘을 수 없다 — Gross 를 고를 수 없는 소스는 막는다.
                 item = combo.model().item(1)
@@ -655,9 +665,9 @@ class RawdataHubDialog(QDialog):
 
     @staticmethod
     def _auto_label(entry):
+        """사유는 콤보에 넣지 않는다 — 열이 벙벙해진다. 사유는 표 아래 설명 + 툴팁."""
         basis = "Gross die" if entry.get("auto") == "gross" else "Test die"
-        reason = _YIELD_REASON.get(entry.get("reason") or "", "")
-        return f"자동 → {basis}" + (f" ({reason})" if reason else "")
+        return f"자동 → {basis}"
 
     def _basis_of(self, row_idx):
         """그 행에 지금 적용될 기준 — 콤보가 [자동] 이면 서버가 준 auto 판정."""
@@ -766,6 +776,25 @@ class RawdataHubDialog(QDialog):
             it.setFlags(it.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             it.setCheckState(Qt.CheckState.Checked)
             self.list_excel_source.addItem(it)
+            self._style_excel_item(it)
+
+    def _style_excel_item(self, it):
+        """체크 여부를 체크박스 외에 색·굵기로도 보여준다 — 체크 [선택됨] / 미체크 회색.
+
+        setFont/setBackground 도 itemChanged 를 다시 쏘므로 스타일링 동안 신호를 막는다."""
+        checked = it.checkState() == Qt.CheckState.Checked
+        self.list_excel_source.blockSignals(True)
+        try:
+            font = it.font()
+            font.setBold(checked)
+            it.setFont(font)
+            base = str(it.text()).replace("   [선택됨]", "")
+            it.setText(base + ("   [선택됨]" if checked else ""))
+            it.setBackground(QBrush(QColor("#dcfce7")) if checked else QBrush())
+            it.setForeground(QBrush(QColor("#166534")) if checked
+                             else QBrush(QColor("#9ca3af")))
+        finally:
+            self.list_excel_source.blockSignals(False)
 
     def _check_excel_sources(self, checked):
         state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked

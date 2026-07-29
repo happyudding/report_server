@@ -121,6 +121,15 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   일괄 복원. Status(kind `issue_status`)는 Open/Close 드랍다운(편집모드 전용, 기본 Open —
   **"Close" 만 저장, 부재=Open**). Summary 탭 Issue Status 카드가 카테고리별 Open/Close
   를 집계한다(`issueStatusCounts`, map_select.js).
+- **Issue Table 선택 모드 = 일괄 삭제 + Status 일괄** (2026-07-28): 툴바 "☑ 선택 모드"(구
+  "🗑 삭제 모드", id/CSS 클래스는 `issueDelMode`/`.issue-del-mode` 그대로)를 켜면 행 체크박스가
+  뜬다. 체크박스가 작아 **Step 셀 아무 곳이나 클릭해도 토글**되고(`td.issue-sel-cell`,
+  Step 셀 안 ▼ 는 클릭 위임에서 먼저 처리), 선택 행은 `tr.issue-row-sel` 로 강조한다.
+  선택 대상 동작: 전체 선택/선택 해제 · 선택 Open/선택 Close · 선택 삭제 · 삭제 전체 초기화.
+  Status 전체 일괄(All Open/All Close)은 선택과 무관해 편집모드 툴바에 상시 노출된다.
+  Status 일괄은 `/issue_table/status` 에 `items:[{key,value},…]` 로 보내
+  (`service.update_issue_status_bulk`) 편집 DB write·rev 증가를 1회로 묶고, 프런트는
+  재렌더 없이 드랍다운·신호등·`DATA.issue_table_text` 만 낙관 갱신한다(단건 경로와 동일).
 - **Issue Table Map/Distribution 미니셀 클릭 이동** (2026-07-21): 미니셀 그림 자체가 링크다
   ([edit_mode.js](../server/report/static/webreport/edit_mode.js) `.content` 위임).
   Distribution 셀 → 그 Item 의 Item_detail(`openItemDetail`). Map 셀 → Map Analysis 탭

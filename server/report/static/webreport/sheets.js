@@ -610,6 +610,9 @@ function renderSheetTable(rows, opts) {
           }
         }
       }
+      // 선택 모드에서 체크박스를 다는 Step 셀 — 셀 전체가 체크 클릭 영역이다(edit_mode.js).
+      const isSelCell = opts.kind === "issue" && ci === 0 && (delHideKey || delEtcItem);
+      if (isSelCell) clsParts.push("issue-sel-cell");
       const cls = clsParts.join(" ");
       // Item 셀: 클릭 시 Item_detail 로 이동(항목명 = 측정항목). issue + yield(Bin 상세 구성표) 공용.
       // Pass(Bin 1) 행과 자유입력 Engr ETC 항목(TNO 없음 = 측정항목 아님)은 제외.
@@ -632,11 +635,11 @@ function renderSheetTable(rows, opts) {
       if (c === "Item" && delHideKey) {
         cellHtml += ` <button type="button" class="btn-del-issue-row" data-hkey="${esc(delHideKey)}" title="이 행 삭제(숨김) — 복원은 툴바 '삭제 전체 초기화'">×</button>`;
       }
-      // 일괄 삭제용 체크박스 — 첫 컬럼(Step) 셀 왼쪽. 삭제 모드에서만 보인다.
-      if (opts.kind === "issue" && ci === 0 && (delHideKey || delEtcItem)) {
+      // 일괄 삭제/Status 용 체크박스 — 첫 컬럼(Step) 셀 왼쪽. 선택 모드에서만 보인다.
+      if (isSelCell) {
         cellHtml = `<input type="checkbox" class="issue-del-chk"` +
           (delHideKey ? ` data-hkey="${esc(delHideKey)}"` : ` data-etc="${esc(delEtcItem)}"`) +
-          ` title="삭제 대상 선택">` + cellHtml;
+          ` title="선택 (일괄 삭제 / Status 일괄 변경) — Step 셀 아무 곳이나 클릭">` + cellHtml;
       }
       // Issue Table Yield 대표행 STEP 셀 오른쪽에 접기/펼치기 토글(그 Bin 의 detail TNO 가 있을 때).
       if (opts.kind === "issue" && c === "Step" && r && r._grp && !r._detail && (Number(r._ndetail) || 0) > 0) {

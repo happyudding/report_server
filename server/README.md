@@ -237,7 +237,7 @@ gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 �
 | `GET` | `/commonality/chips`, `/commonality/chip` | 공개 | Commonality chip 검색 / 백분위 |
 | `POST` | `/issue_table/etc`, `/issue_table/comments`, `/summary/engr` | 편집자 | Issue/Summary 편집 |
 | `POST` | `/issue_table/hidden` | 편집자 | Issue 행 숨김/전체 초기화 (kind=issue_hidden, Yield/CPK 만) |
-| `POST` | `/issue_table/status` | 편집자 | Issue 행 Status Open/Close (kind=issue_status, Close 만 저장) |
+| `POST` | `/issue_table/status` | 편집자 | Issue 행 Status Open/Close (kind=issue_status, Close 만 저장). 단건 `{key,value}` / 일괄 `{items:[{key,value},…]}` (전체·선택 Open/Close, DB write 1회) |
 | `POST` | `/chart_notes` | 편집자 | 차트 주석(도형/텍스트/코멘트) 저장 (kind=chart_note) |
 | `GET`/`POST` | `/note` | 공개/편집자 | Note 탭 시트 JSON 지연 조회 / 저장 (kind=note_sheet, ≤2MB) |
 | `POST` | `/note_image` | 편집자 | Note 이미지 업로드 (PNG/JPEG raw body, ≤2MB·세션 200장) |
@@ -282,8 +282,11 @@ gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 �
 비-GET 요청은 `X-Admin-Request: 1` 헤더 요구. `GET /` 대시보드 + `GET /api/*`
 (health/storage/s3-status/metrics/stats(daily·users·client_errors·usage(접속 사용량 —
 Honey 실행·웹 방문 순위))/sessions/users/
-voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail) +
-`POST /api/*` (sessions/delete, session/<sid>/important·password, db/backup·cleanup 등).
+voc(overview·목록, 읽기 전용)/eval(overview·labels·**labels.csv**)/audit(.csv)/logs/list·tail) +
+`POST /api/*` (sessions/delete, session/<sid>/important·password, db/backup·cleanup,
+eval/cases/delete·eval/session/<sid>/reexport 등).
+`GET /api/eval/labels.csv` = 코멘트 라벨 전체를 db_input 5컬럼 CSV 로 export
+(고쳐서 `eval_analyzer\db_input\run_import.bat` 으로 재적재 — [docs/13 §10](../docs/13_eval_analyzer_integration.md)).
 운영 진단용 GET 4개: `watchdog`(재기동 이력+reason 분포) · `watchdog/checks?hours=`(매 점검
 기록 요약) · `metrics/history?window=`(in-memory 10초 해상도) · `metrics/file_history?hours=`
 (**파일 기반, 재시작과 무관한 1분 해상도 이력** — 최대 336시간). `logs/tail?file=` 은

@@ -227,14 +227,30 @@ document.querySelector(".content").addEventListener("click", e => {
   const rowDelBtn = e.target.closest(".btn-del-issue-row");
   if (rowDelBtn) { hideIssueRow(rowDelBtn.dataset.hkey); return; }
   if (e.target.id === "issueResetHiddenBtn") { resetHiddenIssueRows(); return; }
-  // 삭제 모드 토글 / 체크한 행 일괄 삭제 (편집모드 전용).
+  // 선택 모드 토글 / 체크한 행 일괄 삭제 (편집모드 전용).
   if (e.target.closest("#issueDelModeBtn")) {
     issueDelMode = !issueDelMode;
     applyIssueDelMode();
     return;
   }
   if (e.target.closest("#issueDelSelectedBtn")) { deleteSelectedIssueRows(); return; }
-  if (e.target.closest(".issue-del-chk")) { syncIssueDelCount(); return; }
+  if (e.target.closest("#issueSelAllBtn")) { setAllIssueDelChecked(true); return; }
+  if (e.target.closest("#issueSelNoneBtn")) { setAllIssueDelChecked(false); return; }
+  // Status 일괄 변경 — 선택한 행만 / Issue Table 전체.
+  if (e.target.closest("#issueSelOpenBtn")) { bulkSetIssueStatus("Open", "selected"); return; }
+  if (e.target.closest("#issueSelCloseBtn")) { bulkSetIssueStatus("Close", "selected"); return; }
+  if (e.target.closest("#issueAllOpenBtn")) { bulkSetIssueStatus("Open", "all"); return; }
+  if (e.target.closest("#issueAllCloseBtn")) { bulkSetIssueStatus("Close", "all"); return; }
+  const delChk = e.target.closest(".issue-del-chk");
+  if (delChk) { markIssueRowSelected(delChk); syncIssueDelCount(); return; }
+  // 선택 모드: Step 셀 아무 곳이나 클릭해도 체크된다 — 체크박스가 작아 정확히 누르기 어렵다.
+  // (Step 셀 안의 TNO 펼치기 ▼ 버튼은 위에서 먼저 처리되고 여기까지 오지 않는다.)
+  const selCell = issueDelMode ? e.target.closest("#panel-issues td.issue-sel-cell") : null;
+  if (selCell) {
+    const chk = selCell.querySelector(".issue-del-chk");
+    if (chk) { chk.checked = !chk.checked; markIssueRowSelected(chk); syncIssueDelCount(); }
+    return;
+  }
   const addBtn = e.target.closest(".add-row");
   if (addBtn) {
     const table = document.getElementById(addBtn.dataset.table);
@@ -845,6 +861,52 @@ async function deleteSelectedIssueRows() {
   } finally {
     if (btn) btn.disabled = false;
     if (done) await load(false);
+  }
+}
+
+// Issue Table Status 일괄 변경 (편집모드 전용) — scope "selected" = 체크한 행, "all" = 표 전체.
+// 대상 행의 Status 드랍다운을 모아 배치 API(items)로 한 번에 저장하고, 재렌더 없이 화면
+// (드랍다운·신호등·DATA)만 갱신한다 — 단건 변경(change 위임)과 같은 낙관 반영 방식.
+async function bulkSetIssueStatus(value, scope) {
+  const panel = document.getElementById("panel-issues");
+  if (!panel) return;
+  let sels;
+  if (scope === "selected") {
+    const checked = [...panel.querySelectorAll(".issue-del-chk:checked")];
+    if (!checked.length) { showToast("Status 를 바꿀 행을 선택하세요."); return; }
+    sels = checked.map(chk => chk.closest("tr").querySelector("select.issue-status-sel")).filter(Boolean);
+  } else {
+    sels = [...panel.querySelectorAll("select.issue-status-sel")];
+  }
+  const targets = sels.filter(sel => sel.value !== value && sel.dataset.skey);
+  if (!targets.length) { showToast(`바꿀 행이 없습니다 (이미 모두 ${value}).`); return; }
+  const what = scope === "selected" ? "선택한" : "전체";
+  if (!confirm(`${what} ${targets.length}개 행의 Status 를 ${value} 로 변경할까요?`)) return;
+  if (!(await flushPendingComments())) return;
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({
+        password: verifiedPassword,
+        items: targets.map(sel => ({ key: sel.dataset.skey, value })),
+      }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    targets.forEach(sel => {
+      sel.value = value;
+      const td = sel.closest("td");
+      const ri = td ? parseInt(td.dataset.r, 10) : NaN;
+      if (!isNaN(ri) && Array.isArray(DATA.issue_table_text) && DATA.issue_table_text[ri]) {
+        DATA.issue_table_text[ri]["Status"] = value;
+      }
+      setStatusDot(td, value);
+    });
+    tabDirty["summary"] = true;
+    showToast(`${targets.length}개 행을 ${value} 로 바꿨습니다.`);
+  } catch (err) {
+    showToast("Status 일괄 저장 실패: " + err.message);
   }
 }
 

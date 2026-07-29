@@ -713,6 +713,8 @@ def web_report_issue_table_status(session_id):
     """Issue Table 행 Status(Open/Close) 저장 — 세션 편집 DB(kind=issue_status) 갱신.
 
     body: {"key": "Yield|<bin>"|"CPK|<item>"|"ETC|<item>", "value": "Open"|"Close"}.
+    일괄 변경(전체/선택 Open·Close)은 {"items": [{"key":..., "value":...}, ...]} 로 보내
+    편집 DB write 1회로 처리한다 — 검증 규칙은 단건과 동일.
     편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
@@ -720,13 +722,19 @@ def web_report_issue_table_status(session_id):
     if denied:
         return denied
     body = request.get_json(force=True, silent=True) or {}
+    items = body.get("items")
     key = (body.get("key") or "").strip()
     value = (body.get("value") or "").strip()
     ip, ua = _client_meta()
     try:
-        result = web_report_service.update_issue_status(
-            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
-            key=key, value=value, client_ip=ip, user_agent=ua)
+        if items is not None:
+            result = web_report_service.update_issue_status_bulk(
+                session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+                items=items, client_ip=ip, user_agent=ua)
+        else:
+            result = web_report_service.update_issue_status(
+                session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+                key=key, value=value, client_ip=ip, user_agent=ua)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except ValueError as exc:
