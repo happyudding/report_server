@@ -29,8 +29,13 @@ def log_audit(action, session_id=None, analysis_key=None, product_type=None,
         )
 
 
-def get_audit_logs(action=None, session_id=None, q=None, limit=200, offset=0):
-    """감사 로그 조회. action/session_id 필터 + q(파일명/product/lot_id/사용자/PC/IP/변경필드 부분일치)."""
+def get_audit_logs(action=None, session_id=None, q=None, limit=200, offset=0,
+                   extra_ips=None):
+    """감사 로그 조회. action/session_id 필터 + q(파일명/product/lot_id/사용자/PC/IP/변경필드 부분일치).
+
+    extra_ips: q 와 **OR** 로 묶을 client_ip 목록. 관리자 화면이 "IP 가 같으면 같은 사용자"
+    규칙으로 계정명 검색에 그 사람의 IP 기록까지 포함시킬 때 쓴다(신원 토큰 없이 남은 행은
+    client_user 가 비어 있어 계정명으로는 안 걸린다)."""
     conditions = []
     params = []
     if action:
@@ -40,12 +45,18 @@ def get_audit_logs(action=None, session_id=None, q=None, limit=200, offset=0):
         conditions.append("session_id = ?")
         params.append(session_id)
     if q:
-        conditions.append(
-            "(file_name LIKE ? OR product LIKE ? OR lot_id LIKE ? "
-            " OR client_user LIKE ? OR client_host LIKE ? OR client_ip LIKE ? "
-            " OR changed_fields LIKE ?)")
+        clause = ("file_name LIKE ? OR product LIKE ? OR lot_id LIKE ? "
+                  " OR client_user LIKE ? OR client_host LIKE ? OR client_ip LIKE ? "
+                  " OR changed_fields LIKE ?")
         like = f"%{q}%"
         params.extend([like] * 7)
+        ips = [ip for ip in (extra_ips or []) if ip]
+        if ips:
+            # 계정명으로 찾을 때, 그 계정의 IP 에서 남은 무신원 기록도 같이 보이게 한다.
+            clause += " OR (client_ip IN (%s) AND COALESCE(TRIM(client_user),'') = '')" % (
+                ",".join("?" * len(ips)))
+            params.extend(ips)
+        conditions.append("(" + clause + ")")
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     try:
         limit = max(1, min(int(limit), 1000))

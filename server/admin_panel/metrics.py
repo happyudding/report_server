@@ -358,11 +358,25 @@ def viewers(window_sec=VIEWER_WINDOW_SEC):
             "sessions": [{"session_id": sid, "ago": round(now - ts, 1)} for sid, ts in rows]}
 
 
+def live_identity_pairs():
+    """지금 추적 중인 (계정, IP) 짝 — identity_merge 가 매핑 근거로 쓴다.
+
+    감사 기록이 아직 없는 새 PC 도 접속하는 순간 매핑에 잡히게 하는 용도라, 윈도우와
+    무관하게 보유 중인 항목 전부를 준다."""
+    with _lock:
+        return [(v["uid"], v["ip"]) for v in _active_users.values() if v.get("uid")]
+
+
 def active_users(window_sec=ACTIVE_USER_WINDOW_SEC):
     """최근 window_sec 안에 요청을 보낸 접속 사용자 목록 (실시간 현황).
 
-    신원(Honey UA/SSO/웹 로그인)이 있으면 계정으로, 없으면 ip:<addr> 로 묶인다. viewers()
-    와 같은 이유로 prune 은 관리자 조회 시점에만 한다 (요청 경로에 O(n) 을 얹지 않는다).
+    신원(Honey UA/SSO/웹 로그인)이 있으면 계정으로, 없으면 ip:<addr> 로 묶는다. 단
+    **IP 가 같으면 같은 사람**이므로, 그 IP 가 계정 하나로 확정되면(identity_merge)
+    익명 행을 그 계정 행에 합친다 — 한 사람이 Honey 와 일반 브라우저를 같이 쓸 때
+    두 줄로 갈라져 보이던 문제를 없앤다.
+
+    viewers() 와 같은 이유로 prune 은 관리자 조회 시점에만 한다 (요청 경로에 O(n) 을
+    얹지 않는다).
     """
     try:
         window_sec = max(30, min(int(window_sec), 24 * 3600))
@@ -375,13 +389,47 @@ def active_users(window_sec=ACTIVE_USER_WINDOW_SEC):
             _active_users.pop(key, None)
         rows = [(k, dict(v)) for k, v in _active_users.items() if v["last"] >= cut]
     rows.sort(key=lambda r: r[1]["last"], reverse=True)
-    out = []
+
+    from admin_panel import identity_merge
+    mapping = identity_merge.ip_to_user()
+
+    merged = OrderedDict()   # 표시 키 -> 누적 행 (최근 활동 순서 유지)
     for key, v in rows:
-        out.append({"key": key, "user": v["uid"] or "", "ip": v["ip"],
-                    "honey": bool(v["honey"]), "requests": v["count"],
-                    "ago": round(now - v["last"], 1),
-                    "since": round(now - v["first"], 1),
-                    "route": v.get("route") or "", "session_id": v.get("session_id")})
+        name, was_merged = identity_merge.resolve(v["uid"] or key, v["ip"], mapping)
+        cur = merged.get(name)
+        if cur is None:
+            merged[name] = {
+                "key": name, "user": name if (v["uid"] or was_merged) else "",
+                "ip": v["ip"], "ips": [v["ip"]], "honey": bool(v["honey"]),
+                "requests": v["count"], "last": v["last"], "first": v["first"],
+                "route": v.get("route") or "", "session_id": v.get("session_id"),
+                "merged": was_merged,
+            }
+            continue
+        # 합치기 — 요청 수는 더하고, 마지막 활동/보는 세션은 더 최근 쪽을 남긴다.
+        cur["requests"] += v["count"]
+        cur["first"] = min(cur["first"], v["first"])
+        cur["honey"] = cur["honey"] or bool(v["honey"])
+        cur["merged"] = True
+        if v["ip"] not in cur["ips"]:
+            cur["ips"].append(v["ip"])
+        if v["last"] > cur["last"]:
+            cur["last"] = v["last"]
+            cur["route"] = v.get("route") or ""
+            cur["ip"] = v["ip"]
+            if v.get("session_id"):
+                cur["session_id"] = v["session_id"]
+        elif not cur.get("session_id") and v.get("session_id"):
+            cur["session_id"] = v["session_id"]
+
+    out = []
+    for rec in sorted(merged.values(), key=lambda r: r["last"], reverse=True):
+        out.append({"key": rec["key"], "user": rec["user"], "ip": rec["ip"],
+                    "ips": rec["ips"], "honey": rec["honey"], "merged": rec["merged"],
+                    "requests": rec["requests"],
+                    "ago": round(now - rec["last"], 1),
+                    "since": round(now - rec["first"], 1),
+                    "route": rec["route"], "session_id": rec["session_id"]})
     return {"count": len(out), "window_sec": window_sec,
             "named": sum(1 for r in out if r["user"]),
             "honey": sum(1 for r in out if r["honey"]),

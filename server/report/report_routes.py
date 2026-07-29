@@ -9,6 +9,7 @@
 - routes_webreport.py  /session/<sid>/web_report/* 프록시 전부
 - routes_misc.py       주석·즐겨찾기·페이지·vendor·히스토리·(폐지)인증·디버그
 - routes_voc.py        VOC 게시판 (페이지 + 목록/등록/이미지/삭제 API, 별도 voc.db)
+- routes_eval_input.py Honey 'DB Input' — 선례 CSV 검증/적재 (별도 eval DB)
 """
 import sys
 from pathlib import Path
@@ -23,3 +24,4 @@ from report import routes_session  # noqa: E402,F401
 from report import routes_webreport  # noqa: E402,F401
 from report import routes_misc  # noqa: E402,F401
 from report import routes_voc  # noqa: E402,F401
+from report import routes_eval_input  # noqa: E402,F401

@@ -282,6 +282,13 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
    **2곳만** 허용(양방향 그 외 import 금지). 서버의 evaluate 호출은 persist=False(운영
    eval.db 무기록) — 코멘트 export 는 report_server 소유 별도 파일 `REPORT_EVAL_DB_PATH`
    에만 쓴다. 규약 전문 [docs/13](docs/13_eval_analyzer_integration.md).
+   - 서버가 `eval_analyzer/db_input/import_csv.py` 를 **subprocess 로 실행**하는 것은
+     import 가 아니므로 2곳 규약 위반이 아니다 (Honey 'DB Input' —
+     [server/report/routes_eval_input.py](server/report/routes_eval_input.py),
+     [docs/13 §10](docs/13_eval_analyzer_integration.md)). 별도 프로세스인 이유는
+     `import_csv._import_group` 이 `eval_engine.config.DB_PATH` 를 모듈 전역에 대입하기
+     때문 — 장수명 Flask 프로세스를 오염시키지 않으려면 프로세스 경계가 필요하다.
+   - `eval_analyzer/db_input/` 은 이 규칙의 **명시적 예외**다(엔진 무수정 유지 조건).
 9. **입력 계약은 7-meta honeyform 이다 (2026-07-21 확정).** `honey_parse.file_to_df` 반환 df =
    `SERIAL,SHOT,DUT,XPOS,YPOS,BIN,FAILTNO` + `TSEQ~LOLIM` 6행, 반환 df 개수 = source 개수
    (병합은 honey_parse 내부에서). **이 산출물(`md.df`)이 곧 web_report parquet 소스**이며,

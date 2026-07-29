@@ -1,11 +1,29 @@
 """서버 업로드 헬퍼."""
 import json
+from urllib.parse import quote
 
 import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 
 from .config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
 from .retry import get_with_retry
+
+
+def _upload_headers(content_type):
+    """multipart Content-Type + 신원 토큰 UA (version_check._honey_headers 와 동일 규칙).
+
+    UA 가 없으면 서버 관리자 화면의 '지금 접속 중' 에서 업로드 중인 사람이 계정이 아니라
+    IP(익명)로 잡힌다. 접근제어에는 쓰이지 않는다 — 세션 소유자(uploaded_by)는 예전처럼
+    manifest 의 신고값에서만 온다."""
+    headers = {"Content-Type": content_type}
+    try:
+        import client_identity
+        user = client_identity.collect().get("user", "")
+    except Exception:
+        user = ""
+    if user:
+        headers["User-Agent"] = f"python-requests HoneyUser/{quote(user, safe='')}"
+    return headers
 
 
 def post_grids(sheet_grids, file_name, product_type, product, lot_id, password,
@@ -46,7 +64,7 @@ def post_grids(sheet_grids, file_name, product_type, product, lot_id, password,
             encoder, lambda monitor: progress_cb(monitor.bytes_read, monitor.len))
 
     resp = requests.post(
-        url, data=body, headers={"Content-Type": body.content_type},
+        url, data=body, headers=_upload_headers(body.content_type),
         timeout=REQUEST_TIMEOUT_SEC)
 
     if not resp.ok:
@@ -101,7 +119,7 @@ def post_webreport(manifest, parquet_items, base_url=None, progress_cb=None,
             encoder, lambda monitor: progress_cb(monitor.bytes_read, monitor.len))
 
     resp = requests.post(
-        url, data=body, headers={"Content-Type": body.content_type},
+        url, data=body, headers=_upload_headers(body.content_type),
         timeout=REQUEST_TIMEOUT_SEC)
 
     if not resp.ok:

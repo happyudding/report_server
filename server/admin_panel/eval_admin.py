@@ -125,7 +125,7 @@ def list_labels(q=None, limit=100, offset=0) -> dict:
                    l.label_quality, l.created_at,
                    fc.product_name, fc.lot_id, fc.bin,
                    pm.product_type, pm.family_product,
-                   im.item_name_raw AS item, im.value_type, im.unit,
+                   im.item_id, im.item_name_raw AS item, im.value_type, im.unit,
                    MAX(ir.session_id) AS session_id
             {base}
             GROUP BY l.label_id
@@ -135,6 +135,92 @@ def list_labels(q=None, limit=100, offset=0) -> dict:
                 "rows": [dict(r) for r in rows], "exists": True}
     finally:
         conn.close()
+
+
+# ── Unit(value_type) 그룹 수정 ──────────────────────────────────────────────
+# value_type 은 선례검색(store.search_precedents)이 등호 하드필터로 쓰는 값이라
+# 오분류되면 그 item 의 선례가 통째로 안 잡힌다. item_master.value_type 과
+# fail_case.item_class("<category_major>|<value_type>|<bin>") 를 **함께** 고친다.
+
+VALUE_TYPES = eval_export.VALUE_TYPES
+
+
+def _apply_value_type(conn, item_id: int, value_type: str) -> int:
+    """item_master.value_type 갱신 + 그 item 의 fail_case.item_class 재구성 → 갱신 case 수."""
+    import time
+    row = conn.execute("SELECT category_major FROM item_master WHERE item_id=?",
+                       (item_id,)).fetchone()
+    if row is None:
+        return 0
+    conn.execute("UPDATE item_master SET value_type=? WHERE item_id=?",
+                 (value_type, item_id))
+    cat = row["category_major"] or ""
+    now = int(time.time())
+    cases = conn.execute("SELECT case_id, bin FROM fail_case WHERE item_id=?",
+                         (item_id,)).fetchall()
+    for c in cases:
+        bin_ = c["bin"]
+        item_class = f"{cat}|{value_type}|{'' if bin_ is None else bin_}"
+        conn.execute("UPDATE fail_case SET item_class=?, updated_at=? WHERE case_id=?",
+                     (item_class, now, c["case_id"]))
+    return len(cases)
+
+
+def set_item_value_type(item_ids, value_type: str) -> dict:
+    """선택한 item 들의 Unit 그룹(value_type)을 수동 지정."""
+    if value_type not in VALUE_TYPES:
+        raise ValueError(f"unknown value_type: {value_type!r}")
+    conn = eval_export.open_conn(create=False)
+    if conn is None:
+        return {"updated": 0, "cases": 0, "exists": False}
+    updated = cases = 0
+    try:
+        for iid in item_ids:
+            n = _apply_value_type(conn, int(iid), value_type)
+            updated += 1
+            cases += n
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {"updated": updated, "cases": cases, "exists": True}
+
+
+def remap_unit_aliases(dry_run: bool = False) -> dict:
+    """저장된 unit 원문에 별칭 규칙(VOLT→V / AMP→A / HERTZ→Hz)을 일괄 재적용.
+
+    규칙에 걸리지 않는 unit 은 손대지 않는다(수동 지정값 보존). dry_run 이면
+    바뀔 목록만 돌려준다.
+    """
+    conn = eval_export.open_conn(create=False)
+    if conn is None:
+        return {"changed": 0, "cases": 0, "items": [], "exists": False}
+    changes = []
+    cases = 0
+    try:
+        rows = conn.execute(
+            "SELECT item_id, item_name_raw, unit, value_type FROM item_master").fetchall()
+        for r in rows:
+            want = eval_export.unit_group(r["unit"])
+            if not want or want == r["value_type"]:
+                continue
+            changes.append({"item_id": r["item_id"], "item": r["item_name_raw"],
+                            "unit": r["unit"], "from": r["value_type"], "to": want})
+            if not dry_run:
+                cases += _apply_value_type(conn, r["item_id"], want)
+        if dry_run:
+            conn.rollback()
+        else:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {"changed": len(changes), "cases": cases,
+            "items": changes[:50], "exists": True}
 
 
 # ── 코멘트 CSV export (db_input 단순 5컬럼 포맷 — run_import.bat 재적재용) ────

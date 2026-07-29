@@ -39,6 +39,7 @@ pip install -r requirements.txt
 | `SERVER_BASE_URL` | `http://12.81.220.117:8080` | 절대 URL 생성 기준 (운영 서버 주소). **정본은 `env/server.env`** — 서버가 직접 읽고, `build_zip` 도 여기서 읽어 클라 배포본에 넣는다 |
 | `REPORT_DB_PATH` | `<repo>/DB/pe/report/report.db` | SQLite DB 파일 |
 | `REPORT_EVAL_DB_PATH` | `<repo>/DB/pe/report/eval/eval.db` | Issue Table PTE/개발 comment export DB (eval.db 스키마, report.db 와 분리 — [docs/13 §9](../docs/13_eval_analyzer_integration.md)) |
+| `REPORT_EVAL_IMPORT_PYTHON` | `sys.executable` | Honey 'DB Input' 이 `db_input/import_csv.py` 를 돌릴 인터프리터. 서버가 파이썬 호스트가 **아닐** 때만 지정 ([docs/13 §10](../docs/13_eval_analyzer_integration.md)) |
 | `REPORT_UPLOAD_DIR` | `<repo>/uploads/report` | 업로드/로컬 폴백/디스크 캐시 루트 |
 | `HONEY_RELEASES_DIR` | `<repo>/server/releases` | Honey exe 릴리스 폴더 |
 | `PRODUCT_INFO_DB_PATH` | `<repo>/DB/pe/report/product_info.db` | 기준정보 DB — Product 검색 후보(part_ids)와 세션 기준정보 lookup. **읽기 전용**. 원본 CSV 가 DRM 이라 Excel 있는 별도 PC 에서 [tools/product_info_import](../tools/product_info_import/README.md) 로 만들어 수동 복사한다. (mtime, size) 바뀌면 자동 재로딩(재기동 불필요) |
@@ -120,6 +121,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `watchdog_checks.log` | watchdog | **매 실행 1줄**(JSON lines) — 실행 빈도 자체. `mutex_busy` = 태스크 겹쳐 뜬 직접 증거 |
 | `watchdog_snap_<stamp>.txt` | watchdog | 재기동 직전 프로세스 부검 + **스레드 덤프**(사이드 진단 리스너에서 채집) + 최신 `server_*.txt` 마지막 20줄 스냅샷(죽은 이유 원문) |
 | `diagnose_<stamp>.txt` | diagnose_watchdog.ps1 | 진단 스크립트 리포트(수동 실행 시) |
+| `diagnose_port_<stamp>.txt` | diagnose_port.bat | 포트 점유 진단 리포트 — 바인딩 주소·포트 주인·TCP 접속 시험(수동 실행 시) |
 
 **watchdog 자동 재기동**: [register_watchdog.bat](register_watchdog.bat) 을 관리자 권한으로
 1회 실행하면 작업 스케줄러에 5분 주기 + 부팅 시 감시([watchdog.ps1](watchdog.ps1))가
@@ -152,7 +154,18 @@ gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 �
 | `code=0, ms≈30000, wstat=Timeout` | inflight ≥ `WAITRESS_THREADS`, 스냅샷 스레드 덤프에서 다수 스레드가 같은 지점 대기 | **스레드 고갈** — 덤프의 공통 대기 지점이 근본 원인 |
 | `code=0, ms≈30000, wstat=Timeout` | inflight 낮음, cpu≈100%, `runtime_*.log` 에 slow 다수 | **CPU 포화 / GIL 경합** |
 | `code=503, ms<6000` | server 로그에 healthz db check 실패, DB 잠금 카운터 증가 | **DB 잠금** (report.db busy_timeout 5s 초과 — 백업 체크포인트 등) |
-| `wstat=ConnectFailure` (사유 `healthz_connect`), ms 작음 | `server_*.txt` 신규 다수 + `faulthandler_*` 존재, 부검 `procs=0` | **크래시 루프** (리스닝 확인~healthz 사이에 프로세스 사망) |
+| `wstat=ConnectFailure` (사유 `healthz_connect`), **ms≈2000 고정** | LISTEN 은 있는데 `LocalAddress` 가 특정 IP (127.0.0.1/0.0.0.0 아님) | **바인딩 주소 문제** — 사용자는 정상인데 점검만 실패해 재기동이 무한 반복. `HOST=0.0.0.0` 으로 되돌릴 것 |
+| `wstat=ConnectFailure`, 부검 `procs=0` | `server_*.txt` 신규 다수 + `faulthandler_*` 존재 | **크래시 루프** (리스닝 확인~healthz 사이에 프로세스 사망) |
+
+> ⚠️ **ms 로 거부/무응답을 가르지 말 것.** Windows 에서는 **접속 거부도 약 2초**가 걸린다(실측
+> 2033ms). `ms≈2000` + `ConnectFailure` 는 "느린 것"이 아니라 **"그 주소:포트에 아무도 없다"**
+> 는 뜻이다. 거부와 무응답의 구분은 소켓 오류 코드(`ConnectionRefused` vs `TimedOut`)로 한다
+> — [diagnose_port.ps1](diagnose_port.ps1) `[10]` 항목이 이걸 재본다.
+
+**포트 진단** ([diagnose_port.bat](diagnose_port.bat) 더블클릭, 읽기 전용): `healthz_connect` 가
+보이면 이걸 먼저 돌린다. 바인딩 주소·포트 주인 PID·진단 포트 대조·TCP 접속 시험(주소별)·
+watchdog 최근 기록을 한 파일(`log/diagnose_port_<stamp>.txt`)로 모은다. `[4] 판정` 이
+바인딩 주소 문제와 포트 가로채기를 자동으로 짚어준다.
 | `not_listening` 반복 + 부검 `procs=N` | 프로세스는 살아있는데 리스너 소켓만 소실 | 포트/소켓 이상 |
 
 판정 순서: ① `diagnose_watchdog.ps1 -Hours 48` 로 태스크 중복·집계 착시를 먼저 배제
@@ -228,6 +241,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `GET` | `/api/history` | 공개 | 세션 목록 JSON (필터: product_type/product/lot_id/source) |
 | `GET` | `/api/part_ids` | 공개 | 기준정보 part id 목록 (product_info.db 의 part_id + sub_part_id flatten) |
 | `POST` | `/api/client_error` | 공개 | 브라우저 JS 에러 beacon 수신 (error_beacon.js — CSRF 미적용, per-IP 스로틀, 감사 action=`client_error`) |
+| `POST` | `/api/eval/labels_import` | Honey | **선례 CSV 검증/적재** (Honey 'DB Input'). multipart `file` + `mode=validate\|commit`. **`X-Honey-Agent: 1` 필수**(CSRF 대체), Honey 신원 있으면 누구나, ≤5MB, 단순 5컬럼만. CSV **내용** 오류는 4xx 가 아니라 `200 {"ok":false,"errors":[…]}`. `db_input/import_csv.py` 를 subprocess 로 실행(→ [docs/13 §10](../docs/13_eval_analyzer_integration.md)). 관리자 `GET /api/eval/labels.csv` 의 반대 방향. 감사 action=`eval_db_input` |
 | `GET` | `/result/<sid>` | 공개 | 세션 요약 JSON |
 | `GET` | `/session/<sid>` | 공개 | 세션 메타 JSON (password 제거, has_password 만) |
 | `GET` | `/session/<sid>/full` | 공개 | 세션 전체 데이터 JSON (summary+objects+주석+추출텍스트). web_report 세션이 **콜드**면 빌드를 백그라운드에 걸고 `202 {"building":true,"stage","elapsed"}` 즉시 반환 — 프런트가 재시도 (warm 은 종전대로 200) |
@@ -310,17 +324,40 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 Honey 실행·웹 방문 순위))/sessions/users/
 voc(overview·목록, 읽기 전용)/eval(overview·labels·**labels.csv**)/audit(.csv)/logs/list·tail) +
 `POST /api/*` (sessions/delete·restore·purge, session/<sid>/important·password, db/backup·cleanup,
-eval/cases/delete·eval/session/<sid>/reexport 등).
+eval/cases/delete·eval/session/<sid>/reexport·eval/items/value_type·eval/items/remap_units 등).
 **세션 삭제 3종 구분**: `sessions/delete` = 관리자 **즉시 영구 삭제**(휴지통을 거치지 않고
 행·산출물·캐시 회수) / 사용자 웹 삭제(`DELETE /pe/report/session/<sid>`) = 휴지통(soft) /
 `sessions/purge` = 휴지통 세션 영구 정리. purge 는 기본이 `REPORT_TRASH_RETENTION_DAYS`(30일)
-경과분만이라 방금 버린 세션은 `not expired` 로 스킵되고, **`force:true`(명시 `session_ids`
-전용, 관리자 화면의 행별 purge 버튼)** 를 줘야 경과일과 무관하게 지운다.
-`all_expired:true` + `force` 조합은 휴지통 전체가 즉시 날아가므로 400 으로 거부한다.
-`GET /api/runtime` 은 응답시간·컴퓨트·캐시와 함께 **`active_users`(실시간 접속 사용자 —
-최근 `user_window` 초 안에 요청을 보낸 신원 목록, 무신원은 `ip:<addr>`)** 를 돌려준다.
+경과분만이라 방금 버린 세션은 `not expired` 로 스킵된다. 대상 지정은 3가지(배타):
+`all_expired:true`(경과분 전체 — **cleanup 스케줄러가 쓰는 자동 경로**) /
+`all_trashed:true`(휴지통 **전체**, 미경과분 포함 — 세션 탭 `🗑 휴지통 비우기` 버튼. dry-run 이
+`scanned_expired`·`scanned_recent` 로 쪼개 보고한다) / `session_ids` + `force:true`(그 세션만
+경과일 무시 — 행별 purge 버튼). `all_expired` 와 `force`, `all_expired` 와 `all_trashed` 조합은
+의미가 모호해 400. **자동 경로는 계속 `all_expired` 만 쓴다** — 스케줄러가 미경과분을 지우면
+사용자의 30일 복구 창이 통째로 사라진다.
+**실시간 접속 사용자**: `GET /api/active_users?window=` (사용자 탭 10초 폴링 전용 경량 API) —
+최근 `window` 초 안에 요청을 보낸 신원 목록. 신원은 `auth_identity.current_user()`
+(Honey UA / SSO 헤더 / 웹 로그인), 없으면 `ip:<addr>` 로 묶는다. 관리자 자신·`/healthz`
+(watchdog 폴링)·정적 파일은 집계에서 제외. `GET /api/runtime` 응답에도 같은 값이
+`active_users` 로 실린다(현황 탭 요약 타일용, `?user_window=`).
+관리자 화면에서 **사용자 관련 화면은 전부 `사용자` 탭에 모여 있다** — 지금 접속 중(실시간) /
+누적 사용량(작업 활동·접속 횟수) / 웹 로그인 계정. 통계 탭은 일별 추이와 최근 활동만 담당한다.
+
+**"IP 가 같으면 같은 사용자" 병합** ([admin_panel/identity_merge.py](admin_panel/identity_merge.py)):
+신원 토큰 없는 접속은 `ip:<addr>` 로 잡혀 한 사람이 계정 행 + IP 행으로 갈라져 보인다.
+`report_audit_log` 의 (client_user, client_ip) 짝 + 현재 접속자에서 **IP→계정** 매핑을 만들고
+(TTL 60초 캐시, 90일 창), IP 로 표시되는 행을 그 계정에 합친다. 적용 범위는 관리자 화면 전체 —
+실시간 접속자 / 누적 사용량 2종 / 감사 기록(표시 `resolved_user` + 계정명 검색이 그 IP 의
+무신원 기록까지 포함). **한 IP 에 계정이 2개 이상이면 병합하지 않는다**(공용 PC·NAT 에서
+남의 활동을 특정 계정에 붙이지 않기 위함) — 그 행은 예전처럼 익명으로 남는다.
+`admin-panel`·`system` 은 사람이 아니라 매핑 근거에서 제외한다. 순위표의 LIMIT 은 **병합 후**
+적용된다(자르고 합치면 조각이 사라지므로).
 `GET /api/eval/labels.csv` = 코멘트 라벨 전체를 db_input 5컬럼 CSV 로 export
 (고쳐서 `eval_analyzer\db_input\run_import.bat` 으로 재적재 — [docs/13 §10](../docs/13_eval_analyzer_integration.md)).
+**Unit 그룹 교정 2종**: `POST /api/eval/items/value_type`(선택 항목의 value_type 수동 지정) /
+`POST /api/eval/items/remap_units`(`dry_run` 미리보기 → 별칭 규칙 VOLT/AMP/HERTZ 일괄 재적용).
+둘 다 `item_master.value_type` 과 `fail_case.item_class` 를 함께 고친다 — 선례검색이
+value_type 을 등호 하드필터로 쓰기 때문 ([docs/13 §9](../docs/13_eval_analyzer_integration.md)).
 운영 진단용 GET 4개: `watchdog`(재기동 이력+reason 분포) · `watchdog/checks?hours=`(매 점검
 기록 요약) · `metrics/history?window=`(in-memory 10초 해상도) · `metrics/file_history?hours=`
 (**파일 기반, 재시작과 무관한 1분 해상도 이력** — 최대 336시간). `logs/tail?file=` 은

@@ -4,16 +4,26 @@
   python db_input/import_csv.py <csv_path>                # 제품군별 output/<pt>_<fp>.db 로 분리 적재
   python db_input/import_csv.py <csv_path> --to-eval-db   # 운영 eval.db(config.DB_PATH) 하나로 통합 적재
                                                           # → evaluate() 의 search_precedents 가 바로 참조
+  ... --dry-run                                           # 검증만 (DB 를 열지 않는다)
+  ... --json                                              # 기계 판독 모드: stdout 마지막 줄에 JSON 1줄,
+                                                          # 종료코드 0=정상 / 2=CSV 오류.
+                                                          # report_server 의 Honey 'DB Input' 이 이 계약에
+                                                          # 의존한다 — 깨지 말 것 (../../docs/13 §10).
 
 CSV 포맷 2종 — **헤더로 자동 감지**한다.
 
 1) 단순 포맷 (정식, template_example.csv):
      Product type, Family Product, unit, Item, comment          (5컬럼, 전부 필수)
    헤더는 대소문자·공백에 유연하다(strip+소문자+공백→'_' 로 정규화 후 비교).
-   - `unit` 은 실측 단위 원문(VOLTS/HERTZ/AMPS/mA …) 을 그대로 적으면 되고, 엔진 어휘
-     (V/A/Hz/CODE/Ohm/Sec/P_F)로 매핑해 저장한다. 매핑표는 엔진 UNIT_TO_VALUE_TYPE +
-     EXTRA_UNIT_ALIASES. **모르는 단위가 하나라도 있으면 아무것도 적재하지 않고 중단**한다
+   - `unit` 은 실측 단위 원문(VOLTS/HERTZ/AMPS/mA/PCT …) 을 그대로 적으면 되고, 어휘
+     (V/A/Hz/CODE/Ohm/Sec/P_F/%)로 매핑해 저장한다. 매핑은 2단계 — ① 정확일치
+     (엔진 UNIT_TO_VALUE_TYPE + EXTRA_UNIT_ALIASES) ② 부분일치(UNIT_STEMS: volt/amp/
+     hertz/hz/ohm/sec/code/percent/pct/% 가 포함되면 그 그룹).
+     **모르는 단위가 하나라도 있으면 아무것도 적재하지 않고 중단**한다
      (행번호 + 원문 목록 출력 → alias 를 보강한 뒤 재실행). 빈 unit 은 엔진과 같이 P_F.
+     ⚠ 부분일치와 '%' 는 **이 파일(선례 적재)에만** 있다 — 엔진 live-run 경로
+       (_classify_value_type)는 정확일치 + P_F 폴백이라 value_type 이 어긋날 수 있다
+       (search_precedents 가 등호 하드필터). 상세 ../../docs/13 §10.
    - lot/wafer/bin/limit/통계가 없는 요약 선례이므로 case 는 다음 값으로 합성한다:
      product_name=`<Product type>_<Family Product>`, bin=0, lot/wafer 없음, revision=0.0.
      따라서 같은 (product_type, family_product, item) 은 **하나의 case 로 접힌다** —
@@ -38,6 +48,7 @@ item_canonical/category_major 분류는 eval_engine 운영 파이프라인(pipel
 재실행해도 안전(자연키 기반 upsert, case_id 재현 가능 — 같은 case 의 label 은 갱신).
 """
 import csv
+import json
 import os
 import re
 import sys
@@ -73,10 +84,36 @@ EXTRA_UNIT_ALIASES = {
     "ampere": "A", "amperes": "A",
     "second": "Sec", "seconds": "Sec",
     "pass_fail": "P_F",
+    "%": "%", "pct": "%", "percent": "%",
 }
+
+# 부분일치 stem — 정확일치가 실패했을 때 문자열에 **포함**되면 그 그룹으로 본다.
+# 순서대로 첫 매치가 이긴다(hertz 를 hz 보다 앞에 둘 필요는 없으나 의도를 드러내려 앞에 둔다).
+# 한 글자 stem(v/a/s)은 넣지 않는다 — 거의 모든 문자열에 걸려 오탐이 된다.
+# 한 글자 표기는 UNIT_TO_VALUE_TYPE 정확일치가 담당한다.
+# ⚠ 오탐 예: 'samples' 는 'amp' 를 포함해 A 로 잡힌다. 실측에 그런 unit 이 나오면
+#   UNIT_TO_VALUE_TYPE/EXTRA_UNIT_ALIASES 정확일치에 먼저 등록해 우회한다.
+UNIT_STEMS = (
+    ("volt", "V"), ("amp", "A"), ("hertz", "Hz"), ("hz", "Hz"),
+    ("ohm", "Ohm"), ("sec", "Sec"), ("code", "CODE"),
+    ("percent", "%"), ("pct", "%"), ("%", "%"),
+)
 
 # 단순 포맷 case 합성값 — lot/wafer/bin/limit 이 없는 요약 선례라 고정한다(docstring 참조).
 SIMPLE_BIN = "0"
+
+
+class CsvValidationError(ValueError):
+    """행 단위 에러 목록을 들고 있는 검증 실패.
+
+    str(e) 는 종전과 **글자 그대로 동일** — 콘솔 출력·기존 테스트가 그대로 산다.
+    .errors 는 기계 판독용(report_server 의 DB Input 이 목록을 그대로 사용자에게 보여준다).
+    """
+
+    def __init__(self, errors):
+        self.errors = list(errors)
+        super().__init__("CSV 오류 {}건 — 아무것도 적재하지 않았습니다.\n  {}".format(
+            len(self.errors), "\n  ".join(self.errors)))
 
 
 def _to_float(s):
@@ -105,14 +142,28 @@ def _norm_header(name):
 
 
 def _map_unit(unit):
-    """실측 단위 원문 → 엔진 어휘(V/A/Hz/CODE/Ohm/Sec/P_F). 모르는 단위면 None.
+    """실측 단위 원문 → 어휘(V/A/Hz/CODE/Ohm/Sec/P_F/%). 모르는 단위면 None.
 
-    엔진 UNIT_TO_VALUE_TYPE 을 먼저 보고 EXTRA_UNIT_ALIASES 로 보완한다
-    (_classify_value_type 과 달리 미등록 단위를 조용히 P_F 로 만들지 않는다 — 호출측이 에러 처리).
-    빈 문자열은 엔진 표에 P_F 로 들어 있어 그대로 통과한다.
+    2단계로 본다:
+      1) 정확일치 — 엔진 UNIT_TO_VALUE_TYPE 을 먼저 보고 EXTRA_UNIT_ALIASES 로 보완.
+      2) 부분일치 — UNIT_STEMS 의 stem 이 문자열에 포함되면 그 그룹
+         (VOLTS/MILLIVOLT→V, AMPERE→A, KiloHertz→Hz, MOhm→Ohm, mSec→Sec, TCODE→CODE, PCT→%).
+    _classify_value_type 과 달리 미등록 단위를 조용히 P_F 로 만들지 않는다 — 호출측이 에러 처리.
+    빈 문자열은 엔진 표에 P_F 로 들어 있어 1단계에서 그대로 통과한다.
+
+    ⚠ 엔진 live-run 경로(_classify_value_type)는 여전히 정확일치 + P_F 폴백이다. 부분일치는
+      선례 적재(db_input) 쪽만 넓힌 것이라, 엔진이 P_F 로 본 표기를 여기서 V 로 적재하면
+      search_precedents 의 value_type 등호 필터에서 서로 매칭되지 않는다. 새 값 '%' 도
+      엔진은 생성하지 않는다 → 선례 조회/관리 용도. 자세한 건 ../../docs/13 §10.
     """
     key = str(unit or "").strip().lower()
-    return UNIT_TO_VALUE_TYPE.get(key) or EXTRA_UNIT_ALIASES.get(key)
+    exact = UNIT_TO_VALUE_TYPE.get(key) or EXTRA_UNIT_ALIASES.get(key)
+    if exact:
+        return exact
+    for stem, value_type in UNIT_STEMS:
+        if stem in key:
+            return value_type
+    return None
 
 
 def _convert_simple_rows(rows, header_map):
@@ -157,9 +208,27 @@ def _convert_simple_rows(rows, header_map):
             errors.append(str(e))
 
     if errors:
-        raise ValueError("CSV 오류 {}건 — 아무것도 적재하지 않았습니다.\n  {}".format(
-            len(errors), "\n  ".join(errors)))
+        raise CsvValidationError(errors)
     return converted
+
+
+def _is_simple_header(header_map):
+    """정규화 헤더 map 이 단순 5컬럼 포맷인가 (중복 헤더도 걸러진다)."""
+    return (set(header_map.values()) == set(SIMPLE_COLUMNS)
+            and len(header_map) == len(SIMPLE_COLUMNS))
+
+
+def _detect_format(path):
+    """헤더만 읽어 포맷 판정 — "simple" | "legacy" | "" (헤더 없음).
+
+    _read_rows 와 같은 규칙(_is_simple_header)을 쓴다. 적재하지 않고 포맷만 알고 싶은
+    호출자용 (report_server DB Input 은 단순 포맷만 받는다 → docs/13 §10).
+    """
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        fieldnames = [c for c in (csv.DictReader(f).fieldnames or []) if _norm_header(c)]
+    if not fieldnames:
+        return ""
+    return "simple" if _is_simple_header({c: _norm_header(c) for c in fieldnames}) else "legacy"
 
 
 def _read_rows(path):
@@ -172,7 +241,7 @@ def _read_rows(path):
     if not rows:
         raise ValueError("빈 CSV 파일입니다.")
     header_map = {c: _norm_header(c) for c in fieldnames}
-    if set(header_map.values()) == set(SIMPLE_COLUMNS) and len(header_map) == len(SIMPLE_COLUMNS):
+    if _is_simple_header(header_map):
         return _convert_simple_rows(rows, header_map)
     missing = [c for c in REQUIRED_COLUMNS if c not in rows[0]]
     if missing:
@@ -321,20 +390,78 @@ def import_rows(rows, source_path, unified=False):
     return results
 
 
+def _summarize(rows):
+    """(product_type, family_product) 그룹별 행 수 — dry-run 미리보기용."""
+    counts = {}
+    for r in rows:
+        key = (_require(r, "product_type"), _require(r, "family_product"))
+        counts[key] = counts.get(key, 0) + 1
+    return [{"product_type": pt, "family_product": fp, "rows": n}
+            for (pt, fp), n in sorted(counts.items())]
+
+
+def run(csv_path, unified=False, dry_run=False):
+    """검증(dry_run) / 적재 결과를 dict 로 반환 — CLI `--json` 과 프로그램 호출 공용.
+
+    dry_run 이면 _read_rows 의 사전 전수검사만 하고 **DB 를 열지 않는다**
+    (_import_group 미호출 → config.DB_PATH 전역도 건드리지 않는다).
+    ⚠ 전수검사는 단순 포맷 전용이다. 레거시 20컬럼은 행 검증이 _import_group 안에서
+      일어나므로 dry_run 이 통과해도 적재가 실패할 수 있다.
+
+    반환 키: ok / mode / format / rows / groups / errors / db_path.
+      groups[i] = {product_type, family_product, rows} (+ 적재 시 db_path, session_id)
+    """
+    out = {"ok": True, "mode": "dry-run" if dry_run else "commit",
+           "format": "", "rows": 0, "groups": [], "errors": [],
+           "db_path": str(config.DB_PATH)}   # import_rows 가 전역을 덮기 전에 캡처
+    try:
+        out["format"] = _detect_format(csv_path)
+        rows = _read_rows(csv_path)
+        out["rows"] = len(rows)
+        if dry_run:
+            out["groups"] = _summarize(rows)
+        else:
+            for product_type, family_product, n, db_path, session_id in import_rows(
+                    rows, csv_path, unified):
+                out["groups"].append({
+                    "product_type": product_type, "family_product": family_product,
+                    "rows": n, "db_path": str(db_path), "session_id": session_id})
+    except (ValueError, OSError) as exc:
+        out["ok"] = False
+        out["errors"] = list(getattr(exc, "errors", None) or [str(exc)])
+    return out
+
+
 def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
-    unified = "--to-eval-db" in argv
-    argv = [a for a in argv if a != "--to-eval-db"]
-    if not argv:
+    # 종전엔 "--to-eval-db" 만 걸러내고 argv[0] 을 경로로 썼다 — 새 플래그를 앞에 붙이면
+    # 그걸 CSV 경로로 잡는다. 이제 '--' 로 시작하는 것은 전부 플래그로 본다.
+    flags = {a for a in argv if a.startswith("--")}
+    positional = [a for a in argv if not a.startswith("--")]
+    unified, dry_run = "--to-eval-db" in flags, "--dry-run" in flags
+    if not positional:
         print(__doc__)
-        return
-    csv_path = argv[0]
-    rows = _read_rows(csv_path)
+        return 0
+    csv_path = positional[0]
+
+    if "--json" in flags:
+        # 기계 판독 모드 — stdout 마지막 줄에 JSON 한 줄, 종료코드 0(정상)/2(CSV 오류).
+        # report_server 의 DB Input 라우트가 이 계약에 의존한다 (docs/13 §10).
+        result = run(csv_path, unified=unified, dry_run=dry_run)
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if result["ok"] else 2
+
+    rows = _read_rows(csv_path)          # 사람용 출력 — 예외는 종전처럼 그대로 노출
+    if dry_run:
+        for g in _summarize(rows):
+            print(f"[{g['product_type']}_{g['family_product']}] {g['rows']}건 (검증만)")
+        return 0
     for product_type, family_product, n, db_path, session_id in import_rows(
             rows, csv_path, unified):
         print(f"[{product_type}_{family_product}] {n}건 적재 -> {db_path}"
               + (f" (session_id={session_id})" if session_id else ""))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

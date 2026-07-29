@@ -7,6 +7,7 @@
   (b) purge force — 경과일과 무관하게 즉시 영구 삭제 (관리자 수동 전용)
   (c) 라우트 계약 — force 는 session_ids 지정 시에만 허용(all_expired+force = 400)
   (d) 관리자 삭제(api/sessions/delete)는 휴지통을 거치지 않는 즉시 영구 삭제다
+  (g) 휴지통 비우기(all_trashed) — 경과분 + 아직 복구 가능한 것까지 한꺼번에
   (e) 접속 사용자 계측 — HoneyUser UA 는 계정으로, 신원 없으면 ip:<addr> 로 묶임.
       admin/healthz/static 요청은 집계 제외, 윈도우 밖은 조회 시 prune
   (f) GET api/runtime 이 active_users 를 실제로 직렬화해 돌려준다
@@ -128,12 +129,52 @@ def test_routes():
                  json={"all_expired": True, "dry_run": False, "force": True})
     check(res.status_code == 400, f"(c) all_expired + force 는 거부 ({res.status_code})")
 
+    res = c.post("/pe/admin-pte/api/sessions/purge", headers=_HDR,
+                 json={"all_expired": True, "all_trashed": True, "dry_run": True})
+    check(res.status_code == 400, f"(c) all_expired + all_trashed 는 거부 ({res.status_code})")
+
     _make_session("S_del")
     res = c.post("/pe/admin-pte/api/sessions/delete", headers=_HDR,
                  json={"session_ids": ["S_del"]})
     check(res.status_code == 200 and (res.get_json() or {}).get("deleted") == ["S_del"],
           f"(d) 관리자 삭제 200 ({res.status_code} {res.get_json()})")
     check(not _exists("S_del"), "(d) 관리자 삭제는 휴지통이 아니라 즉시 영구 삭제")
+
+
+# ── (g) 휴지통 비우기 (all_trashed) ──────────────────────────────────────────
+
+def test_purge_all_trashed():
+    """세션 탭 '🗑 휴지통 비우기' — 경과분 + 아직 복구 가능한 것까지 한꺼번에."""
+    c = _client()
+    _make_session("S_t_old")
+    _make_session("S_t_new")
+    _make_session("S_t_live")            # 휴지통 아님 — 대상에서 빠져야 한다
+    report_db.trash_session("S_t_old", deleted_by="tester")
+    report_db.trash_session("S_t_new", deleted_by="tester")
+    with report_db.get_conn() as conn:
+        conn.execute("UPDATE report_session SET deleted_at=? WHERE session_id=?",
+                     (int(time.time()) - 40 * 86400, "S_t_old"))
+
+    res = c.post("/pe/admin-pte/api/sessions/purge", headers=_HDR,
+                 json={"all_trashed": True, "dry_run": True})
+    dry = res.get_json() or {}
+    check(dry.get("scanned") == 2 and dry.get("scanned_expired") == 1
+          and dry.get("scanned_recent") == 1,
+          f"(g) dry-run 이 경과/미경과를 쪼개서 보고 ({dry})")
+    check(_exists("S_t_new"), "(g) dry-run 은 지우지 않는다")
+
+    res = c.post("/pe/admin-pte/api/sessions/purge", headers=_HDR,
+                 json={"all_trashed": True, "dry_run": False})
+    r = res.get_json() or {}
+    check(sorted(r.get("purged") or []) == ["S_t_new", "S_t_old"],
+          f"(g) 경과분 + 미경과분 모두 영구 삭제 ({r})")
+    check(not _exists("S_t_old") and not _exists("S_t_new"), "(g) 휴지통이 비워졌다")
+    check(_exists("S_t_live"), "(g) 활성 세션은 건드리지 않는다")
+
+    res = c.post("/pe/admin-pte/api/sessions/purge", headers=_HDR,
+                 json={"all_trashed": True, "dry_run": True})
+    check((res.get_json() or {}).get("scanned") == 0, "(g) 빈 휴지통은 대상 0건")
+    report_db.delete_session("S_t_live")
 
 
 # ── (e) 실시간 접속 사용자 계측 ──────────────────────────────────────────────
@@ -163,7 +204,10 @@ def test_active_users():
     honey = {"User-Agent": "Mozilla/5.0 HoneyUser/HONG.GILDONG"}
     cl.get("/pe/report/session/SID1/full", headers=honey)
     cl.get("/pe/report/", headers=honey)
-    cl.get("/pe/report/")                     # 신원 없는 일반 브라우저
+    # 신원 없는 일반 브라우저 — **다른 PC** 에서. 같은 IP 면 "IP 가 같으면 같은 사용자"
+    # 규칙으로 위 계정에 합쳐지는 게 정상이라(→ tests/test_identity_merge.py) 여기서
+    # 익명 행을 확인하려면 IP 를 다르게 줘야 한다.
+    cl.get("/pe/report/", environ_base={"REMOTE_ADDR": "10.9.9.9"})
     cl.get("/healthz")                        # watchdog 폴링 — 집계 제외
     cl.get("/pe/admin-pte/api/runtime")       # 관리자 자신 — 집계 제외
 
@@ -195,13 +239,24 @@ def test_api_runtime_users():
                                     "count": 3, "route": "report.session_full",
                                     "session_id": "S1"}
     try:
-        res = _client().get("/pe/admin-pte/api/runtime")
+        c = _client()
+        res = c.get("/pe/admin-pte/api/runtime")
         data = res.get_json() or {}
         au = data.get("active_users") or {}
         check(res.status_code == 200 and au.get("count") == 1,
               f"(f) api/runtime active_users 반환 ({res.status_code} {au})")
         check((au.get("users") or [{}])[0].get("user") == "kim",
               f"(f) 사용자 행 직렬화 ({au.get('users')})")
+
+        # 사용자 탭 전용 경량 엔드포인트 (10초 폴링용)
+        res = c.get("/pe/admin-pte/api/active_users?window=60")
+        au2 = res.get_json() or {}
+        check(res.status_code == 200 and au2.get("count") == 1
+              and au2.get("window_sec") == 60,
+              f"(f) api/active_users 단독 조회 ({res.status_code} {au2})")
+        row = (au2.get("users") or [{}])[0]
+        check(row.get("route") == "report.session_full" and row.get("session_id") == "S1",
+              f"(f) 활동 경로·열람 세션 노출 (화면 활동 라벨의 입력) ({row})")
     finally:
         metrics._active_users.clear()
 
@@ -209,6 +264,7 @@ def test_api_runtime_users():
 if __name__ == "__main__":
     test_purge_force()
     test_routes()
+    test_purge_all_trashed()
     test_active_users()
     test_api_runtime_users()
     print()

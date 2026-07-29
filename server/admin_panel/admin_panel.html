@@ -51,6 +51,23 @@ h1 .sub { font-size: 12px; font-weight: 400; color: var(--ink-3); margin-left: 8
 .meter > div.warn { background: var(--st-warn); }
 .meter > div.crit { background: var(--st-crit); }
 
+/* 카드 안 하위 전환 (누적 사용량: 작업 활동 ↔ 접속 횟수) */
+.subtabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.subtab {
+  padding: 5px 14px; border-radius: 6px; border: 1px solid var(--grid); cursor: pointer;
+  background: #21242b; color: var(--ink-2); font-size: 12px; font-weight: 600;
+}
+.subtab.active { background: var(--accent); border-color: var(--accent); color: #0d1117; }
+
+/* 실시간 접속자 상태 점 — 초록=1분 내 활동, 노랑=그보다 오래됨 */
+.live-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--st-warn); }
+.live-dot.on { background: #4ade80; box-shadow: 0 0 0 0 rgba(74,222,128,.7); animation: livePulse 2s infinite; }
+@keyframes livePulse {
+  70%  { box-shadow: 0 0 0 7px rgba(74,222,128,0); }
+  100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
+}
+@media (prefers-reduced-motion: reduce) { .live-dot.on { animation: none; } }
+
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { padding: 7px 10px; border-bottom: 1px solid var(--grid); text-align: left; white-space: nowrap; }
 th { background: #21242b; font-weight: 600; color: var(--ink-2); font-size: 12px; }
@@ -155,6 +172,22 @@ td.detail-cell .clamp {
   overflow: hidden; word-break: break-all; cursor: pointer;
 }
 td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
+
+/* Eval DB: 모든 행을 1줄로 고정하고, 잘린 셀만 클릭해서 펼친다.
+   max-width 는 td 가 아니라 내부 요소에 걸어야 auto 테이블 레이아웃이 존중한다.
+   펼치기 화살표는 clip 밖에 둔다 — 안에 넣으면 ellipsis 에 같이 잘려 안 보인다. */
+.clip { display: inline-block; vertical-align: top; max-width: 340px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clip.item { max-width: 220px; }
+td.clipcell { cursor: pointer; }
+td.clipcell .cliptog { color: var(--accent); margin-right: 5px; user-select: none; }
+td.clipcell .cliptog::before { content: "▸"; }
+td.clipcell.open .cliptog::before { content: "▾"; }
+td.clipcell.open .clip { white-space: pre-wrap; word-break: break-word;
+                         max-width: 560px; }
+.unit-vt { background: #21242b; color: var(--ink-2); border: 1px solid var(--grid);
+           border-radius: 6px; font-size: 12px; padding: 2px 4px; }
+.unit-raw { color: var(--ink-3); font-size: 11px; margin-right: 6px; }
 </style>
 </head>
 <body>
@@ -168,13 +201,13 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
   <button class="tab" data-panel="pStorage"
           title="로컬 디스크 사용량을 범주별·세션별로 보고 용량 큰 세션을 정리">스토리지</button>
   <button class="tab" data-panel="pStats"
-          title="날짜별·사용자별 사용량 통계와 최근 활동 20건">통계</button>
+          title="날짜별 업로드·수정·삭제 추이와 최근 활동 20건 (사용자별 집계는 사용자 탭)">통계</button>
   <button class="tab" data-panel="pSessions"
           title="업로드된 세션의 중요표시·PIN·삭제/복구 관리">세션</button>
   <button class="tab" data-panel="pEval"
           title="Issue Table 코멘트가 쌓이는 eval_analyzer 학습 라벨 DB (report.db 와 별도)">Eval DB</button>
   <button class="tab" data-panel="pUsers"
-          title="실사용자(활동 기준) 목록 + 웹 로그인 계정 목록·비밀번호 초기화">사용자</button>
+          title="지금 접속 중인 사람(실시간) + 기간별 누적 사용량 + 웹 로그인 계정 관리">👤 사용자</button>
   <button class="tab" data-panel="pVoc"
           title="사용자 문의(VOC) 게시글 현황 — 읽기 전용">VOC</button>
   <button class="tab" data-panel="pDb"
@@ -209,28 +242,6 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
     <div class="table-wrap" style="margin-top:12px"><table>
       <thead><tr><th>느린 경로 (평균 기준 상위)</th><th class="num">호출</th><th class="num">평균</th><th class="num">최대</th></tr></thead>
       <tbody id="slowRouteBody"><tr class="empty-row"><td colspan="4">-</td></tr></tbody>
-    </table></div>
-  </div>
-  <div style="height:16px"></div>
-  <div class="card">
-    <h2>실시간 접속 사용자 <span class="hint" id="auSummary">선택한 기간 안에 요청을 보낸 사람 목록 · 10초마다 갱신 (서버 재시작 시 초기화)</span>
-      <select id="auWindow" class="sel" style="float:right" title="이 기간 안에 요청이 있었으면 '접속 중'으로 봅니다">
-        <option value="60">최근 1분</option>
-        <option value="300" selected>최근 5분</option>
-        <option value="1800">최근 30분</option>
-        <option value="3600">최근 1시간</option>
-      </select></h2>
-    <div class="table-wrap"><table>
-      <thead><tr>
-        <th title="Honey 내장 브라우저 계정 / SSO / 웹 로그인 신원 · 신원이 없으면 IP 로 묶입니다">사용자</th>
-        <th title="접속 경로 — Honey 내장 브라우저인지 일반 브라우저인지">접속</th>
-        <th title="클라이언트 IP">IP</th>
-        <th title="가장 최근에 보고 있던 세션">보는 세션</th>
-        <th title="마지막 요청의 서버 경로">마지막 요청</th>
-        <th class="num" title="이 기간 동안 보낸 요청 수">요청</th>
-        <th class="num" title="마지막 요청 이후 경과">최근</th>
-      </tr></thead>
-      <tbody id="auBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
     </table></div>
   </div>
   <div style="height:16px"></div>
@@ -429,6 +440,8 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
       </details>
       <a class="btn" id="btnEvalCsv" href="api/eval/labels.csv" download
          title="코멘트 전체를 db_input 5컬럼 CSV(Product type/Family Product/unit/Item/comment)로 내려받습니다. unit 은 엔진 어휘(V/A/Hz…)로 나가며, 수정 후 run_import.bat 으로 그대로 재적재할 수 있습니다">CSV 다운로드</a>
+      <button class="btn" id="btnEvalRemapUnits"
+              title="이미 적재된 항목의 unit 원문에 별칭 규칙(VOLT→V / AMP→A / HERTZ→Hz)을 일괄 재적용합니다. 규칙에 걸리지 않는 unit 과 손으로 지정한 값은 건드리지 않습니다">Unit 별칭 재적용</button>
       <span class="grow"></span>
       <input id="evalReexportSid" class="inp" style="width:200px" placeholder="세션ID (재적재)"
              title="해당 세션의 코멘트를 Eval DB 로 다시 내보낼 세션 ID">
@@ -445,9 +458,9 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
         <th data-col="family" title="제품군 (product_type / family_product)">family</th>
         <th data-col="lot" title="로트 번호">lot</th>
         <th data-col="bin" class="num" title="fail 이 묶인 Bin 번호">Bin</th>
-        <th data-col="item" title="fail 이 난 테스트 항목">Item</th>
-        <th data-col="unit" title="측정값 단위 (원문 · 괄호는 엔진 어휘)">unit</th>
-        <th data-col="comment" title="Issue Table 에 입력된 PTE/개발 코멘트 — eval_analyzer 학습 라벨로 쓰입니다">comment</th>
+        <th data-col="item" title="fail 이 난 테스트 항목 — 길면 셀을 클릭해 펼칩니다">Item</th>
+        <th data-col="unit" title="단위 원문(회색)과 Unit 그룹(value_type). 그룹이 틀렸으면 드롭다운에서 바로 고칠 수 있습니다 — 선례검색이 이 값으로 걸러집니다">unit</th>
+        <th data-col="comment" title="Issue Table 에 입력된 PTE/개발 코멘트 — eval_analyzer 학습 라벨로 쓰입니다. 길면 셀을 클릭해 펼칩니다">comment</th>
         <th data-col="reviewer" title="코멘트를 마지막으로 저장한 사용자">편집자</th>
         <th data-col="session" title="출처 세션 ID">session_id</th>
       </tr></thead>
@@ -482,27 +495,9 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
     </details>
   </div>
   <div class="card">
-    <h2>사용자별 사용량 <span class="hint">client_user → PC명 → IP 순 폴백 (클라이언트 신고값)</span></h2>
-    <div class="table-wrap"><table>
-      <thead><tr><th>#</th><th>사용자</th><th>PC</th><th>IP</th>
-        <th class="num">업로드</th><th class="num">수정</th><th class="num">삭제</th>
-        <th class="num">합계</th><th>마지막 사용</th></tr></thead>
-      <tbody id="userRankBody"><tr class="empty-row"><td colspan="9">로딩 중…</td></tr></tbody>
-    </table></div>
-  </div>
-  <div class="card">
-    <h2>접속 사용량 <span class="hint">서버에 페이지를 요청한 횟수 기준 — 신원 없는 브라우저·구버전 Honey 는 IP(ip:주소) 행으로 집계</span></h2>
-    <div class="table-wrap"><table>
-      <thead><tr><th>#</th><th>사용자</th>
-        <th class="num" title="Honey 앱 실행 횟수 (시작 시 버전체크 1회 기준)">Honey 실행</th>
-        <th class="num" title="검색결과 페이지(/pe/report/) 방문 횟수">검색페이지</th>
-        <th class="num" title="세션 상세 페이지(/pe/report/view/…) 방문 횟수">세션 상세</th>
-        <th class="num">합계</th><th>마지막 접속</th></tr></thead>
-      <tbody id="usageRankBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
-    </table></div>
-  </div>
-  <div class="card">
-    <h2>최근 활동 <span class="hint">가장 최근 사용 기록 20건 (감사로그)</span></h2>
+    <h2>최근 활동 <span class="hint">가장 최근 사용 기록 20건 (감사로그)</span>
+      <span class="hint" style="float:right">사용자별 집계·실시간 접속자는
+        <b class="who-link" id="goUsersTab" style="cursor:pointer;color:var(--accent)">사용자 탭</b> 으로 옮겼습니다</span></h2>
     <div class="table-wrap"><table>
       <thead><tr><th>시각</th><th>작업</th><th>type</th><th>product</th><th>lot_id</th>
         <th>파일/대상</th><th>사용자(PC)</th><th>IP</th></tr></thead>
@@ -536,7 +531,9 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
       <button class="btn primary" id="btnSessSearch">검색</button>
       <button class="btn" id="btnSessReset" title="검색·필터 초기화">초기화</button>
       <span class="grow"></span>
-      <button class="btn" id="btnPurgeExpired" title="휴지통에서 30일 경과분을 영구 삭제">🗑 경과분 purge</button>
+      <button class="btn" id="btnPurgeExpired" title="휴지통에서 30일이 지난 것만 영구 삭제 (자동 정리와 같은 기준)">🗑 경과분 purge</button>
+      <button class="btn danger" id="btnPurgeAllTrash"
+              title="휴지통에 있는 세션을 경과일과 무관하게 전부 영구 삭제합니다 — 아직 30일이 안 된 복구 가능 세션도 함께 지워집니다">🗑 휴지통 비우기</button>
       <button class="btn danger" id="btnBulkDelete" disabled
               title="체크한 세션을 즉시 영구 삭제합니다 — 산출물·DB·캐시까지 정리되며 복구할 수 없습니다">선택 영구삭제 (0)</button>
     </div>
@@ -562,26 +559,70 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
 
 <!-- ═══ 사용자 ═══ -->
 <div id="pUsers" class="panel">
-  <div class="card">
-    <h2>실사용자 (활동 기준) <span class="hint">통계 탭과 동일 기준 — report_audit_log 의 client_user → PC명 → IP 순 폴백 (클라이언트 신고값)</span></h2>
-    <div class="toolbar">
-      <label class="hint">기간
-        <select id="activeUserDays" class="inp" style="width:110px;height:28px">
-          <option value="7">최근 7일</option>
-          <option value="30" selected>최근 30일</option>
-          <option value="90">최근 90일</option>
-          <option value="365">최근 1년</option>
+  <!-- 지금 접속 중 — 서버 메모리 기준 실시간. 아래 '누적 활동' 카드들과 성격이 다르다
+       (실시간 = 지금 누가 쓰고 있나 / 누적 = 기간 동안 누가 얼마나 썼나). -->
+  <div class="card" id="liveCard">
+    <h2>🟢 지금 접속 중 <span class="hint" id="auSummary">불러오는 중…</span>
+      <span style="float:right">
+        <select id="auWindow" class="sel" title="이 기간 안에 요청이 있었으면 '접속 중'으로 봅니다">
+          <option value="60">최근 1분</option>
+          <option value="300" selected>최근 5분</option>
+          <option value="1800">최근 30분</option>
+          <option value="3600">최근 1시간</option>
         </select>
-      </label>
-      <span class="grow"></span>
-      <span class="hint">사용량(합계) 상위 50명 · 사용자 클릭 시 활동 기록으로 이동</span>
-    </div>
+        <button class="btn" id="btnAuRefresh" title="지금 즉시 새로고침">↻</button>
+      </span></h2>
+    <div class="tiles" id="auTiles" style="margin-bottom:12px"></div>
     <div class="table-wrap"><table>
+      <thead><tr>
+        <th style="width:26px" title="1분 안에 요청이 있었으면 초록, 그보다 오래되면 노랑"></th>
+        <th title="Honey 계정 / SSO / 웹 로그인 신원 · 신원이 없으면 IP 로 묶어 '익명' 으로 표시합니다 · 클릭하면 이 사용자의 활동 기록으로 이동">사용자</th>
+        <th title="접속 경로 — Honey 앱/내장 브라우저인지 일반 웹 브라우저인지">접속</th>
+        <th title="지금 무엇을 하고 있는지 (마지막 요청 기준)">지금 하는 일</th>
+        <th title="가장 최근에 열어본 세션">보는 세션</th>
+        <th class="num" title="이 기간 동안 보낸 요청 수">요청</th>
+        <th class="num" title="이 기간 안에서 처음 요청한 뒤 지난 시간">접속</th>
+        <th class="num" title="마지막 요청 이후 경과">최근 활동</th>
+        <th title="클라이언트 IP">IP</th>
+      </tr></thead>
+      <tbody id="auBody"><tr class="empty-row"><td colspan="9">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="msg">서버 메모리 기준이라 <b>서버를 재시작하면 초기화</b>됩니다. 화면을 열어만 두고 아무 요청도 하지 않는 사람은 기간이 지나면 목록에서 빠집니다.
+      같은 IP 에서 온 접속은 계정이 하나로 확정되면 한 사람으로 합쳐 보여줍니다 (<span class="badge gray">IP 병합</span>).</div>
+  </div>
+
+  <!-- 누적 — 아래 두 카드는 기간 선택(usersDays)을 공유한다. -->
+  <div class="card">
+    <h2>누적 사용량 <span class="hint">기간 동안 누가 얼마나 썼는지 · 사용자 이름을 클릭하면 그 사람의 활동 기록으로 이동합니다</span>
+      <select id="usersDays" class="sel" style="float:right" title="아래 두 표의 집계 기간">
+        <option value="7">최근 7일</option>
+        <option value="30" selected>최근 30일</option>
+        <option value="90">최근 90일</option>
+        <option value="365">최근 1년</option>
+      </select></h2>
+    <div class="subtabs" id="usersSubtabs">
+      <button class="subtab active" data-view="act"
+              title="업로드·수정·삭제 등 실제 작업 건수 (report_audit_log)">작업 활동</button>
+      <button class="subtab" data-view="visit"
+              title="Honey 실행·웹페이지 방문 횟수 (report_usage_daily)">접속 횟수</button>
+    </div>
+    <div class="table-wrap" id="usersActView"><table>
       <thead><tr><th>#</th><th>사용자</th><th>PC</th><th>IP</th>
         <th class="num">업로드</th><th class="num">수정</th><th class="num">삭제</th>
         <th class="num">합계</th><th>마지막 활동</th></tr></thead>
       <tbody id="activeUserBody"><tr class="empty-row"><td colspan="9">로딩 중…</td></tr></tbody>
     </table></div>
+    <div class="table-wrap" id="usersVisitView" style="display:none"><table>
+      <thead><tr><th>#</th><th>사용자</th>
+        <th class="num" title="Honey 앱 실행 횟수 (시작 시 버전체크 1회 기준)">Honey 실행</th>
+        <th class="num" title="검색결과 페이지(/pe/report/) 방문 횟수">검색페이지</th>
+        <th class="num" title="세션 상세 페이지(/pe/report/view/…) 방문 횟수">세션 상세</th>
+        <th class="num">합계</th><th>마지막 접속</th></tr></thead>
+      <tbody id="usageRankBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="msg">신원 없는 브라우저·구버전 Honey 는 <span class="mono">ip:주소</span> 행으로 집계되지만,
+      <b>그 IP 를 쓰는 계정이 하나로 확정되면 같은 사람으로 합칩니다</b> (<span class="badge gray">IP 병합</span> 표시).
+      한 IP 를 여러 계정이 쓰면(공용 PC·NAT) 누구 것인지 알 수 없으므로 합치지 않습니다.</div>
   </div>
   <div class="card">
     <h2>웹 로그인 계정 <span class="hint">현재 접근제어는 Honey 클라이언트 신원(UA)으로 하며, 이 계정은 즐겨찾기·중요표시 보관용입니다</span>
@@ -719,6 +760,7 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
         <option value="client_error">클라이언트 오류</option>
         <option value="note_conflict">Note 편집 충돌</option>
         <option value="eval_export">Eval export</option>
+        <option value="eval_db_input">선례 DB 적재</option>
         <option value="tier">S3 티어링</option>
         <option value="voc_create">VOC 등록</option>
         <option value="voc_edit">VOC 수정</option>
@@ -1242,6 +1284,22 @@ function schedTile(label, s) {
     <div class="val" style="font-size:14px">${s.last_run ? fmtDate(s.last_run) : "아직 실행 안 됨"}</div>
     <div class="det">${mark}${esc(s.last_result || "-")}${nextTxt}</div></div>`;
 }
+// "IP 가 같으면 같은 사용자" 병합 표시 — 서버(identity_merge)가 합친 행에 붙는 꼬리표.
+// 어떤 IP 가 합쳐졌는지 툴팁으로 보여줘야 관리자가 오병합을 알아챌 수 있다.
+function mergeBadge(list) {
+  const arr = (list || []).filter(Boolean);
+  if (!arr.length) return "";
+  return ` <span class="badge gray" title="같은 IP 라서 한 사람으로 합쳤습니다: ${esc(arr.join(", "))}">IP 병합</span>`;
+}
+// 감사 기록의 사용자 칸 — 신원이 비었는데 IP 로 계정이 확정되면 '(IP 추정)' 으로 보여준다.
+function auditWho(r) {
+  if (r.client_user) return esc(r.client_user);
+  if (r.resolved_user) {
+    return `<span title="이 기록에는 신원이 없지만 같은 IP(${esc(r.client_ip || "")})를 쓰는 계정이 하나뿐이라 추정한 값입니다">`
+      + `${esc(r.resolved_user)} <span style="color:var(--ink-3);font-size:11px">(IP 추정)</span></span>`;
+  }
+  return "-";
+}
 // 경과 초 → 사람이 읽는 짧은 표기 (실시간 접속 사용자 표에서 사용)
 function fmtAgo(sec) {
   if (sec == null) return "-";
@@ -1249,27 +1307,9 @@ function fmtAgo(sec) {
   if (sec < 3600) return `${Math.floor(sec / 60)}분 전`;
   return `${Math.floor(sec / 3600)}시간 ${Math.floor((sec % 3600) / 60)}분 전`;
 }
-function renderActiveUsers(au) {
-  const rows = (au && au.users) || [];
-  $("auSummary").textContent =
-    `최근 ${Math.round((au && au.window_sec || 300) / 60)}분 기준 ${rows.length}명`
-    + ` (계정 확인 ${au && au.named || 0}명 · Honey ${au && au.honey || 0}명) · 10초마다 갱신`;
-  $("auBody").innerHTML = rows.length ? rows.map(u => `
-    <tr>
-      <td>${u.user ? `<b>${esc(u.user)}</b>` : `<span style="color:#6f737e" title="신원 없는 일반 브라우저 — IP 로 묶어 표시">익명</span>`}</td>
-      <td>${u.honey ? `<span class="badge done">Honey</span>` : `<span class="badge gray">브라우저</span>`}</td>
-      <td class="mono">${esc(u.ip || "-")}</td>
-      <td>${u.session_id ? sessionLink(u.session_id) : "-"}</td>
-      <td class="mono" style="font-size:11px">${esc(u.route || "-")}</td>
-      <td class="num">${u.requests}</td>
-      <td class="num">${fmtAgo(u.ago)}</td>
-    </tr>`).join("")
-    : `<tr class="empty-row"><td colspan="7">해당 기간에 접속한 사용자가 없습니다</td></tr>`;
-}
 async function loadRuntime() {
   try {
-    const uw = ($("auWindow") && $("auWindow").value) || 300;
-    const r = await getJSON("api/runtime?user_window=" + encodeURIComponent(uw));
+    const r = await getJSON("api/runtime");
     const lat = r.latency || {}, cp = r.compute || {}, ca = r.cache || {}, lk = r.db_lock || {};
     const cs = cp.stats || {};
     const sch = r.schedulers || {};
@@ -1283,9 +1323,10 @@ async function loadRuntime() {
       <div class="tile"><div class="lbl">응답시간 (최근 ${lat.samples || 0}건)</div>
         <div class="val" style="font-size:20px">${lat.p95 || 0} ms</div>
         <div class="det">p50 ${lat.p50 || 0} · p99 ${lat.p99 || 0} · 최대 ${lat.max || 0} ms</div></div>
-      <div class="tile"><div class="lbl">실시간 접속 사용자</div>
-        <div class="val" style="font-size:20px">${au.count || 0}</div>
-        <div class="det">최근 ${Math.round((au.window_sec || 300) / 60)}분 내 요청 기준 · 계정 확인 ${au.named || 0} · Honey ${au.honey || 0}</div></div>
+      <div class="tile" id="auTile" style="cursor:pointer" title="사용자 탭에서 누가 접속 중인지 자세히 봅니다">
+        <div class="lbl">지금 접속 중</div>
+        <div class="val" style="font-size:20px">${au.count || 0}<span style="font-size:12px;color:var(--ink-3)">명</span></div>
+        <div class="det">최근 ${Math.round((au.window_sec || 300) / 60)}분 내 요청 기준 · Honey ${au.honey || 0} · 익명 ${(au.count || 0) - (au.named || 0)}<br><span class="log-link" data-go="users">사용자 탭에서 보기 ›</span></div></div>
       <div class="tile"><div class="lbl">동시 열람 세션</div>
         <div class="val" style="font-size:20px">${vw.count || 0}</div>
         <div class="det">최근 ${Math.round((vw.window_sec || 300) / 60)}분 내 데이터 요청 기준${
@@ -1325,7 +1366,6 @@ async function loadRuntime() {
       `<tr><td class="mono">${esc(b.session_id || "")}</td><td>${esc(b.stage || "")}</td>` +
       `<td class="num"${(b.elapsed || 0) >= 60 ? ' style="color:var(--st-warn)"' : ""}>${b.elapsed}s</td></tr>`).join("")
       : `<tr class="empty-row"><td colspan="3">없음</td></tr>`;
-    renderActiveUsers(au);
     const slow = lat.slowest || [];
     $("slowRouteBody").innerHTML = slow.length ? slow.map(s =>
       `<tr><td class="mono">${esc(s.route)}</td><td class="num">${s.count}</td>` +
@@ -1338,11 +1378,10 @@ async function loadRuntime() {
 // 런타임 타일의 "로그 ›" 클릭 → console log 탭으로 관련 키워드 프리필 이동 (타일은
 // 10초마다 재렌더되므로 컨테이너에 위임 1회 등록)
 $("runtimeTiles").addEventListener("click", e => {
+  if (e.target.closest("#auTile")) { goUsersTab(); return; }   // 타일 전체가 클릭 대상
   const link = e.target.closest(".log-link");
   if (link) showLogsFor(link.dataset.grep || "", "error");
 });
-// 접속 기간 변경 즉시 반영 (다음 10초 갱신을 기다리지 않게)
-$("auWindow").onchange = () => loadRuntime();
 
 // 현황 탭이 화면에 보일 때만 10초 자동 갱신 — 그 외엔 서버 요청 없음
 setInterval(() => {
@@ -1492,8 +1531,11 @@ const EVAL_COLS = [
   { key: "unit", label: "unit" }, { key: "comment", label: "comment" },
   { key: "reviewer", label: "편집자" }, { key: "session", label: "session_id" },
 ];
-const EVAL_COLS_KEY = "adminEvalHiddenCols";
-let evalHidden = new Set(["lot"]);   // lot 은 기본 숨김 (저장된 선택이 있으면 아래에서 덮어씀)
+// 키에 버전(v2)을 둔 이유: 기본 숨김 목록이 바뀌었는데 옛 저장값이 남아 있으면
+// 기존 사용자에게는 새 기본값이 적용되지 않는다.
+const EVAL_COLS_KEY = "adminEvalHiddenCols.v2";
+// lot / product / Bin 은 기본 숨김 (컬럼 표시 메뉴에서 다시 켤 수 있음)
+let evalHidden = new Set(["lot", "product", "bin"]);
 try {
   const saved = localStorage.getItem(EVAL_COLS_KEY);
   if (saved) evalHidden = new Set(JSON.parse(saved));
@@ -1564,11 +1606,33 @@ function evalFamilyCell(r) {
   const parts = [r.product_type, r.family_product].filter(Boolean);
   return parts.length ? esc(parts.join(" / ")) : "-";
 }
+// Unit 그룹(value_type) 어휘 — 서버 eval_export.VALUE_TYPES 와 같은 집합.
+const EVAL_VALUE_TYPES = ["V", "A", "Hz", "CODE", "Ohm", "Sec", "P_F"];
+
 function evalUnitCell(r) {
-  // 원문 unit(im.unit)과 엔진 어휘(value_type)가 다르면 둘 다 보인다 (CSV 는 어휘로 나감).
-  if (r.unit && r.value_type && r.unit !== r.value_type)
-    return `${esc(r.unit)} (${esc(r.value_type)})`;
-  return esc(r.unit || r.value_type || "-");
+  // 원문 unit(im.unit) 은 회색으로 참고 표시, 그룹(value_type)은 그 자리에서 고칠 수 있게
+  // 드롭다운으로 낸다. item_id 가 없으면(옛 행) 읽기 전용.
+  const raw = r.unit ? `<span class="unit-raw" title="unit 원문">${esc(r.unit)}</span>` : "";
+  if (r.item_id == null) return raw + esc(r.value_type || "-");
+  const cur = r.value_type || "";
+  const opts = EVAL_VALUE_TYPES.map(v =>
+    `<option value="${v}"${v === cur ? " selected" : ""}>${v}</option>`).join("");
+  // 어휘 밖 값·미분류는 첫 옵션(V)이 선택된 것처럼 보이면 안 되므로 자리표시 옵션을 둔다.
+  const placeholder = EVAL_VALUE_TYPES.includes(cur)
+    ? "" : `<option value="" selected>${esc(cur || "-")}</option>`;
+  return `${raw}<select class="unit-vt evalVt" data-iid="${r.item_id}"
+    title="이 항목의 Unit 그룹을 바꿉니다 (같은 항목의 모든 케이스에 적용)">${placeholder}${opts}</select>`;
+}
+
+// 잘릴 만큼 긴 셀만 펼치기 대상(td.clipcell)으로 낸다 — 짧은 셀에 화살표가 붙으면 지저분.
+// td 통째로 돌려주는 이유: 펼침 상태 class 를 td 에 걸어야 화살표와 본문이 함께 바뀐다.
+function evalClipCell(col, text, extraClass) {
+  const t = text == null ? "" : String(text);
+  const cls = "clip" + (extraClass ? " " + extraClass : "");
+  const body = `<span class="${cls}" title="${esc(t)}">${esc(t)}</span>`;
+  if (t.length <= 30 && !t.includes("\n")) return `<td data-col="${col}">${body}</td>`;
+  return `<td data-col="${col}" class="clipcell">`
+       + `<span class="cliptog" title="클릭하면 펼쳐집니다"></span>${body}</td>`;
 }
 
 async function loadEvalLabels() {
@@ -1596,9 +1660,9 @@ async function loadEvalLabels() {
         <td data-col="family">${evalFamilyCell(r)}</td>
         <td data-col="lot">${esc(r.lot_id || "-")}</td>
         <td data-col="bin" class="num">${r.bin == null ? "-" : esc(r.bin)}</td>
-        <td data-col="item">${esc(r.item || "-")}</td>
+        ${evalClipCell("item", r.item || "-", "item")}
         <td data-col="unit">${evalUnitCell(r)}</td>
-        <td data-col="comment" style="max-width:340px;white-space:pre-wrap">${esc(r.human_comment || "")}</td>
+        ${evalClipCell("comment", r.human_comment || "")}
         <td data-col="reviewer">${esc(r.reviewer || "-")}</td>
         <td data-col="session">${sessionLink(r.session_id)}</td>
       </tr>`).join("");
@@ -1622,11 +1686,52 @@ $("evalChkAll").onchange = () => {
   });
   evalUpdateBulk();
 };
-$("evalBody").addEventListener("change", e => {
-  if (!e.target.classList.contains("evalChkRow")) return;
-  if (e.target.checked) evalSelected.add(e.target.dataset.cid); else evalSelected.delete(e.target.dataset.cid);
-  evalUpdateBulk();
+$("evalBody").addEventListener("change", async e => {
+  if (e.target.classList.contains("evalChkRow")) {
+    if (e.target.checked) evalSelected.add(e.target.dataset.cid); else evalSelected.delete(e.target.dataset.cid);
+    evalUpdateBulk();
+    return;
+  }
+  if (!e.target.classList.contains("evalVt")) return;
+  // Unit 그룹 변경 — item 단위라 같은 항목의 다른 행에도 반영된다(저장 후 목록 재조회).
+  const sel = e.target, vt = sel.value, msg = $("evalMsg");
+  if (!vt) return;
+  sel.disabled = true;
+  msg.className = "msg"; msg.textContent = "Unit 그룹 변경 중…";
+  try {
+    const r = await postJSON("api/eval/items/value_type",
+                             { item_ids: [Number(sel.dataset.iid)], value_type: vt });
+    msg.textContent = `Unit 그룹을 ${vt} 로 변경 (항목 ${r.updated}건 · 케이스 ${r.cases}건 갱신)`;
+    loadEvalLabels();
+  } catch (err) {
+    msg.className = "msg err"; msg.textContent = String(err);
+    sel.disabled = false;
+  }
 });
+// 긴 셀 펼치기/접기 (셀 단위 — 다른 행·다른 셀은 1줄을 그대로 유지)
+$("evalBody").addEventListener("click", e => {
+  const cell = e.target.closest("td.clipcell");
+  if (cell) cell.classList.toggle("open");
+});
+$("btnEvalRemapUnits").onclick = async () => {
+  const msg = $("evalMsg");
+  msg.className = "msg"; msg.textContent = "변경 대상 확인 중…";
+  let preview;
+  try { preview = await postJSON("api/eval/items/remap_units", { dry_run: true }); }
+  catch (err) { msg.className = "msg err"; msg.textContent = String(err); return; }
+  if (!preview.changed) { msg.textContent = "별칭 규칙으로 바뀔 항목이 없습니다."; return; }
+  const sample = preview.items.slice(0, 10)
+    .map(i => `· ${i.item} (${i.unit}): ${i.from || "-"} → ${i.to}`).join("\n");
+  if (!confirm(`${preview.changed}개 항목의 Unit 그룹이 바뀝니다.\n\n${sample}`
+               + (preview.changed > 10 ? `\n… 외 ${preview.changed - 10}건` : "")
+               + "\n\n적용할까요?")) { msg.textContent = "취소되었습니다."; return; }
+  msg.textContent = "재적용 중…";
+  try {
+    const r = await postJSON("api/eval/items/remap_units", {});
+    msg.textContent = `Unit 별칭 재적용 완료 — 항목 ${r.changed}건, 케이스 ${r.cases}건 갱신`;
+    loadEvalLabels();
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+};
 $("btnEvalBulkDelete").onclick = async () => {
   if (!evalSelected.size) return;
   const typed = prompt(`선택한 ${evalSelected.size}개 케이스를 eval DB 에서 삭제합니다.\n(라벨·통계·링크 포함 완전 삭제 — report.db 세션에는 영향 없음)\n\n계속하려면 DELETE 를 입력하세요:`);
@@ -1747,31 +1852,7 @@ async function loadStats() {
   } catch (e) {
     $("dailyChart").innerHTML = `<text x="450" y="120" text-anchor="middle" fill="#f87171" font-size="13">조회 실패: ${esc(e)}</text>`;
   }
-  try {
-    const u = await getJSON("api/stats/users?days=" + days);
-    $("userRankBody").innerHTML = u.rows.length ? u.rows.map((r, i) => `
-      <tr><td>${i + 1}</td>
-        <td><b class="who-link" data-who="${esc(r.who)}" title="이 사용자의 활동 기록 보기"
-              style="cursor:pointer;color:var(--accent)">${esc(r.who)}</b></td>
-        <td>${esc(r.host || "-")}</td>
-        <td class="mono">${esc(r.ip || "-")}</td>
-        <td class="num">${r.upload}</td><td class="num">${r.edit}</td><td class="num">${r.delete}</td>
-        <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
-      : `<tr class="empty-row"><td colspan="9">기간 내 기록이 없습니다.</td></tr>`;
-  } catch (e) {
-    $("userRankBody").innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
-  }
-  try {
-    const g = await getJSON("api/stats/usage?days=" + days);
-    $("usageRankBody").innerHTML = g.rows.length ? g.rows.map((r, i) => `
-      <tr><td>${i + 1}</td><td><b>${esc(r.user_id)}</b></td>
-        <td class="num">${r.honey_run}</td><td class="num">${r.web_index}</td>
-        <td class="num">${r.web_view}</td>
-        <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
-      : `<tr class="empty-row"><td colspan="7">기간 내 기록이 없습니다.</td></tr>`;
-  } catch (e) {
-    $("usageRankBody").innerHTML = `<tr class="empty-row"><td colspan="7">조회 실패: ${esc(e)}</td></tr>`;
-  }
+  // 사용자별 집계(작업 활동·접속 횟수)는 사용자 탭으로 이동했다 — 여기선 안 그린다.
   try {
     const rec = await getJSON("api/audit?limit=20");
     $("recentBody").innerHTML = rec.length ? rec.map(r => {
@@ -1783,7 +1864,7 @@ async function loadStats() {
         <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
         <td>${esc(r.lot_id || "-")}</td>
         <td>${esc(r.file_name || r.changed_fields || r.session_id || "-")}</td>
-        <td>${esc(r.client_user || "-")}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
+        <td>${auditWho(r)}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
         <td class="mono">${esc(r.client_ip || "-")}</td></tr>`;
     }).join("") : `<tr class="empty-row"><td colspan="8">기록이 없습니다.</td></tr>`;
   } catch (e) {
@@ -1791,11 +1872,7 @@ async function loadStats() {
   }
 }
 $("statsDays").onchange = loadStats;
-// 사용자 순위 클릭 → 감사 탭에서 그 사용자만 필터 (tbody 유지되므로 위임 1회 등록)
-$("userRankBody").addEventListener("click", e => {
-  const cell = e.target.closest(".who-link");
-  if (cell && cell.dataset.who) showAuditQuery(cell.dataset.who);
-});
+$("goUsersTab").onclick = goUsersTab;
 
 // ── 세션 ────────────────────────────────────────────────────────────────────
 const SESS_PAGE = 100;
@@ -1939,6 +2016,29 @@ $("btnBulkDelete").onclick = async () => {
     loadSessions();
   } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
 };
+// 휴지통 전체 비우기 — 경과일과 무관하게 삭제 진행 중(30일 안)인 세션까지 한꺼번에 영구 삭제.
+// 경과분 purge 와 같은 절차(dry-run 으로 대상 수 확인 → DELETE 입력)를 쓰되, 아직 복구
+// 가능한 세션이 몇 건 섞였는지 확인창에 명시한다.
+$("btnPurgeAllTrash").onclick = async () => {
+  const msg = $("sessMsg");
+  msg.className = "msg"; msg.textContent = "휴지통 확인 중…";
+  try {
+    const dry = await postJSON("api/sessions/purge", { all_trashed: true, dry_run: true });
+    if (!dry.scanned) { msg.textContent = "휴지통이 비어 있습니다"; return; }
+    const recent = dry.scanned_recent || 0;
+    const typed = prompt(
+      `휴지통에 있는 ${dry.scanned}개 세션을 전부 영구 삭제(purge)합니다.\n`
+      + ` · 30일 경과: ${dry.scanned_expired || 0}건\n`
+      + ` · 아직 복구 가능(삭제 진행 중): ${recent}건  ← 이것도 함께 지워집니다\n\n`
+      + `산출물·DB·캐시가 완전히 정리되며 되돌릴 수 없습니다.\n\n계속하려면 DELETE 를 입력하세요:`);
+    if (typed !== "DELETE") { msg.textContent = "취소됨"; return; }
+    msg.textContent = "휴지통 비우는 중…";
+    const r = await postJSON("api/sessions/purge", { all_trashed: true, dry_run: false });
+    msg.textContent = `휴지통 비우기 완료 — ${r.purged.length}건 영구 삭제`
+      + (r.failed.length ? `, 실패 ${r.failed.length}건` : "");
+    loadSessions();
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+};
 // 휴지통 30일 경과분 일괄 purge — dry-run 으로 대상 수를 먼저 보여주고 확인 후 실제 실행.
 $("btnPurgeExpired").onclick = async () => {
   const msg = $("sessMsg");
@@ -1957,32 +2057,155 @@ $("btnPurgeExpired").onclick = async () => {
 };
 
 // ── 사용자 ────────────────────────────────────────────────────────────────────
-// 사용자 탭 진입 시 실사용자(활동 기준) + 웹 로그인 계정 둘 다 로드.
-function loadUsersTab() { loadActiveUsers(); loadUsers(); }
+// 사용자 관련 화면은 전부 이 탭에 모았다 (실시간 접속 / 누적 사용량 / 웹 로그인 계정).
+// 이전에는 현황·통계·사용자 세 탭에 흩어져 있었고 통계 탭 '사용자별 사용량' 은 여기
+// '작업 활동' 표와 같은 API 를 두 번 그리는 중복이었다.
+function loadUsersTab() { loadLiveUsers(); loadUsageTables(); loadUsers(); }
 
-// 실사용자 = report_audit_log 의 client_user 집계 (통계 탭 사용자 순위와 동일 소스).
-async function loadActiveUsers() {
-  const tb = $("activeUserBody");
-  tb.innerHTML = `<tr class="empty-row"><td colspan="9">로딩 중…</td></tr>`;
-  let u;
-  try { u = await getJSON("api/stats/users?days=" + $("activeUserDays").value); }
+function goUsersTab() {
+  const btn = document.querySelector('.tab[data-panel="pUsers"]');
+  if (!btn) return;
+  const wasLoaded = loadedTabs.has("pUsers");
+  btn.click();
+  if (wasLoaded) loadUsersTab();
+}
+
+// endpoint → 사람이 읽는 활동. 관리자가 "지금 뭘 하고 있나"를 경로 이름으로 유추하지
+// 않아도 되게 한다. 접두사 매칭이라 세부 라우트가 늘어도 그대로 동작한다.
+const ACTIVITY_RULES = [
+  ["honey.get_version", "Honey 실행"],
+  ["honey.download", "Honey 업데이트 내려받기"],
+  ["report.upload_webreport", "리포트 업로드"],
+  ["report.upload_xlsx", "리포트 업로드"],
+  ["report.web_report_raw_data", "Raw Data 보기"],
+  ["report.web_report_map", "Map 보기"],
+  ["report.web_report_scatter", "Scatter 보기"],
+  ["report.web_report_distribution", "Distribution 보기"],
+  ["report.web_report_trim", "Trim 보기"],
+  ["report.web_report_preprocess", "전처리 편집"],
+  ["report.web_report_note", "Note 편집"],
+  ["report.web_report_rawdata_replace", "Raw Data 편집"],
+  ["report.web_report_raw_data_edit", "Raw Data 편집"],
+  ["report.web_report", "리포트 열람"],
+  ["report.session_full", "세션 열기"],
+  ["report.view_session", "세션 열기"],
+  ["report.session_", "세션 작업"],
+  ["report.voc", "VOC 게시판"],
+  ["report.index", "목록 검색"],
+  ["report.api_history", "목록 검색"],
+  ["report.", "리포트 이용"],
+  ["storage_gateway.", "이미지 보기"],
+];
+function activityLabel(route) {
+  if (!route) return "-";
+  for (const [prefix, label] of ACTIVITY_RULES) if (route.startsWith(prefix)) return label;
+  return route;
+}
+
+// 경과 초 → "방금 / N분째" 처럼 읽히는 접속 지속 표기
+function fmtDur(sec) {
+  if (sec == null) return "-";
+  if (sec < 60) return "방금";
+  if (sec < 3600) return `${Math.floor(sec / 60)}분째`;
+  return `${Math.floor(sec / 3600)}시간 ${Math.floor((sec % 3600) / 60)}분째`;
+}
+
+// 실시간 접속 사용자 — 서버 메모리(in-flight 훅)가 소스라 감사로그와 무관하다.
+async function loadLiveUsers() {
+  const win = $("auWindow").value;
+  let au;
+  try { au = await getJSON("api/active_users?window=" + encodeURIComponent(win)); }
   catch (e) {
-    tb.innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
+    $("auSummary").textContent = "조회 실패";
+    $("auBody").innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
     return;
   }
-  tb.innerHTML = u.rows.length ? u.rows.map((r, i) => `
-    <tr><td>${i + 1}</td>
-      <td><b class="who-link" data-who="${esc(r.who)}" title="이 사용자의 활동 기록 보기"
-            style="cursor:pointer;color:var(--accent)">${esc(r.who)}</b></td>
-      <td>${esc(r.host || "-")}</td>
-      <td class="mono">${esc(r.ip || "-")}</td>
-      <td class="num">${r.upload}</td><td class="num">${r.edit}</td><td class="num">${r.delete}</td>
-      <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
-    : `<tr class="empty-row"><td colspan="9">기간 내 활동 기록이 없습니다.</td></tr>`;
+  const rows = au.users || [], anon = (au.count || 0) - (au.named || 0);
+  const mins = Math.round((au.window_sec || 300) / 60);
+  $("auSummary").textContent = `최근 ${mins}분 안에 서버에 요청을 보낸 사람 · 10초마다 자동 갱신`;
+  $("auTiles").innerHTML = `
+    <div class="tile"><div class="lbl">접속 중</div>
+      <div class="val">${au.count || 0}<span style="font-size:13px;color:var(--ink-3)">명</span></div>
+      <div class="det">최근 ${mins}분 기준</div></div>
+    <div class="tile"><div class="lbl">Honey 사용자</div>
+      <div class="val">${au.honey || 0}<span style="font-size:13px;color:var(--ink-3)">명</span></div>
+      <div class="det">Honey 앱·내장 브라우저 (계정 확인됨)</div></div>
+    <div class="tile"><div class="lbl">익명 (일반 브라우저)</div>
+      <div class="val">${anon}<span style="font-size:13px;color:var(--ink-3)">명</span></div>
+      <div class="det">신원 토큰이 없어 IP 로 구분 · 읽기 전용</div></div>
+    <div class="tile"><div class="lbl">세션 열람 중</div>
+      <div class="val">${rows.filter(u => u.session_id).length}<span style="font-size:13px;color:var(--ink-3)">명</span></div>
+      <div class="det">리포트 세션을 열어 본 사람</div></div>`;
+  $("auBody").innerHTML = rows.length ? rows.map(u => `
+    <tr>
+      <td><span class="live-dot ${u.ago < 60 ? "on" : ""}" title="${u.ago < 60 ? "1분 안에 활동" : "잠시 조용함"}"></span></td>
+      <td>${u.user
+            ? `<b class="who-link" data-who="${esc(u.user)}" title="이 사용자의 활동 기록 보기"
+                  style="cursor:pointer;color:var(--accent)">${esc(u.user)}</b>`
+            : `<span style="color:var(--ink-3)" title="신원 토큰이 없고 같은 IP 를 쓰는 계정도 특정되지 않아 IP 로만 구분합니다">익명</span>`
+          }${u.merged ? mergeBadge(u.ips) : ""}</td>
+      <td>${u.honey ? `<span class="badge done">Honey</span>` : `<span class="badge gray">브라우저</span>`}</td>
+      <td>${esc(activityLabel(u.route))}</td>
+      <td>${u.session_id ? sessionLink(u.session_id) : "-"}</td>
+      <td class="num">${u.requests}</td>
+      <td class="num">${fmtDur(u.since)}</td>
+      <td class="num">${fmtAgo(u.ago)}</td>
+      <td class="mono">${esc((u.ips && u.ips.length > 1) ? u.ips.join(", ") : (u.ip || "-"))}</td>
+    </tr>`).join("")
+    : `<tr class="empty-row"><td colspan="9">최근 ${mins}분 안에 접속한 사용자가 없습니다.</td></tr>`;
 }
-$("activeUserDays").onchange = loadActiveUsers;
-// 실사용자 클릭 → 활동 기록(감사) 탭에서 그 사용자만 필터
-$("activeUserBody").addEventListener("click", e => {
+$("auWindow").onchange = loadLiveUsers;
+$("btnAuRefresh").onclick = loadLiveUsers;
+// 사용자 탭이 보이는 동안만 10초 자동 갱신 (현황 탭과 동일 규칙 — 그 외엔 요청 없음)
+setInterval(() => {
+  if (document.visibilityState === "visible" && $("pUsers").classList.contains("active")) {
+    loadLiveUsers();
+  }
+}, 10000);
+
+// 누적 사용량 2종 — 기간 선택 하나로 함께 갱신한다.
+async function loadUsageTables() {
+  const days = $("usersDays").value;
+  try {
+    const u = await getJSON("api/stats/users?days=" + days);
+    $("activeUserBody").innerHTML = u.rows.length ? u.rows.map((r, i) => `
+      <tr><td>${i + 1}</td>
+        <td><b class="who-link" data-who="${esc(r.who)}" title="이 사용자의 활동 기록 보기"
+              style="cursor:pointer;color:var(--accent)">${esc(r.who)}</b>${mergeBadge(r.merged_from)}</td>
+        <td>${esc(r.host || "-")}</td>
+        <td class="mono">${esc(r.ip || "-")}</td>
+        <td class="num">${r.upload}</td><td class="num">${r.edit}</td><td class="num">${r.delete}</td>
+        <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="9">기간 내 활동 기록이 없습니다.</td></tr>`;
+  } catch (e) {
+    $("activeUserBody").innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
+  }
+  try {
+    const g = await getJSON("api/stats/usage?days=" + days);
+    $("usageRankBody").innerHTML = g.rows.length ? g.rows.map((r, i) => `
+      <tr><td>${i + 1}</td>
+        <td><b class="who-link" data-who="${esc(r.user_id)}" title="이 사용자의 활동 기록 보기"
+              style="cursor:pointer;color:var(--accent)">${esc(r.user_id)}</b>${mergeBadge(r.merged_from)}</td>
+        <td class="num">${r.honey_run}</td><td class="num">${r.web_index}</td>
+        <td class="num">${r.web_view}</td>
+        <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="7">기간 내 접속 기록이 없습니다.</td></tr>`;
+  } catch (e) {
+    $("usageRankBody").innerHTML = `<tr class="empty-row"><td colspan="7">조회 실패: ${esc(e)}</td></tr>`;
+  }
+}
+$("usersDays").onchange = loadUsageTables;
+// 누적 사용량 하위 전환 (작업 활동 ↔ 접속 횟수) — 데이터는 이미 둘 다 받아뒀다.
+$("usersSubtabs").addEventListener("click", e => {
+  const btn = e.target.closest(".subtab");
+  if (!btn) return;
+  document.querySelectorAll("#usersSubtabs .subtab").forEach(b => b.classList.toggle("active", b === btn));
+  const act = btn.dataset.view === "act";
+  $("usersActView").style.display = act ? "" : "none";
+  $("usersVisitView").style.display = act ? "none" : "";
+});
+// 사용자 이름 클릭 → 활동 기록(감사) 탭에서 그 사용자만 필터 (3개 표 공통)
+$("pUsers").addEventListener("click", e => {
   const cell = e.target.closest(".who-link");
   if (cell && cell.dataset.who) showAuditQuery(cell.dataset.who);
 });
@@ -2277,7 +2500,7 @@ let auditPage = 0, auditHasMore = false;
 const ACTION_LABEL = {
   upload: "업로드", edit: "수정", delete: "삭제",
   client_error: "클라이언트 오류", note_conflict: "Note 편집 충돌",
-  eval_export: "Eval export", tier: "S3 티어링",
+  eval_export: "Eval export", eval_db_input: "선례 DB 적재", tier: "S3 티어링",
   voc_create: "VOC 등록", voc_edit: "VOC 수정", voc_status: "VOC 상태전환",
   voc_comment_create: "VOC 댓글", voc_comment_delete: "VOC 댓글삭제", voc_delete: "VOC 삭제",
 };
@@ -2306,7 +2529,7 @@ async function loadAudit() {
       <td>${esc(r.product_type || "-")}</td><td>${esc(r.product || "-")}</td>
       <td>${esc(r.lot_id || "-")}</td><td>${esc(r.file_name || "-")}</td>
       <td class="detail-cell"><div class="clamp" title="클릭하면 전체 내용을 펼치거나 접습니다">${esc(r.changed_fields || "-")}</div></td>
-      <td>${esc(r.client_user || "-")}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
+      <td>${auditWho(r)}${r.client_host ? ` <span style="color:#6f737e;font-size:11px">(${esc(r.client_host)})</span>` : ""}</td>
       <td class="mono">${esc(r.client_ip || "-")}</td>
       <td>${sessionLink(r.session_id)}</td></tr>`;
   }).join("") : `<tr class="empty-row"><td colspan="10">기록이 없습니다.</td></tr>`;

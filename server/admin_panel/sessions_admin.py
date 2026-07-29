@@ -216,15 +216,17 @@ def _purge_one(session):
 
 
 def purge_trashed(session_ids=None, all_expired=False, dry_run=True, cutoff_days=None,
-                  audit=None, force=False):
+                  audit=None, force=False, all_trashed=False):
     """휴지통 세션 영구 삭제(purge) — deleted_at 이 cutoff_days(기본 REPORT_TRASH_RETENTION_DAYS)
     이전인 경과분만 대상. 관리자 수동 실행(라우트)과 cleanup 스케줄러
     (report_cleanup.run_cleanup — REPORT_CLEANUP_DRYRUN 존중)가 같이 쓴다.
 
-    all_expired=True 면 경과분 전체, 아니면 session_ids 중 경과분만(미경과분은 skipped).
-    force=True(관리자 수동 + 명시 session_ids 전용)면 경과일 검사를 건너뛴다 — 방금 휴지통에
-    넣은 세션도 즉시 영구 삭제해야 할 때가 있어서다. all_expired 경로와 스케줄러는 force 를
-    쓰지 않는다(자동 경로가 미경과분을 지우면 복구 창이 사라진다).
+    대상 지정 3가지 (배타):
+      all_expired=True   경과분(30일 지난 휴지통) 전체 — **스케줄러가 쓰는 자동 경로**
+      all_trashed=True   휴지통 **전체**(경과 여부 무시) — 관리자가 휴지통을 비울 때만.
+                         자동 경로에는 절대 쓰지 않는다(복구 창이 통째로 사라진다).
+      session_ids        지정한 것 중 경과분만. force=True 면 경과일 검사를 건너뛴다
+                         (방금 휴지통에 넣은 세션을 즉시 지워야 할 때).
     dry_run=True 면 실제 정리 없이 대상만 집계/감사(result='dryrun'). audit(session, result)
     는 라우트가 넘기는 감사 콜백. 공유 analysis_key 는 count_sessions_for_analysis_key
     가드로 마지막 참조일 때만 산출물을 회수한다."""
@@ -233,7 +235,9 @@ def purge_trashed(session_ids=None, all_expired=False, dry_run=True, cutoff_days
     cutoff = int(time.time()) - days * 86400
     audit = audit or (lambda s, r: None)
 
-    if all_expired:
+    if all_trashed:
+        targets = report_db.get_trashed_sessions()
+    elif all_expired:
         targets = report_db.get_trashed_sessions(before_epoch=cutoff)
     else:
         targets = []
@@ -265,7 +269,13 @@ def purge_trashed(session_ids=None, all_expired=False, dry_run=True, cutoff_days
 
     out = {"scanned": len(targets), "purged": purged, "failed": failed,
            "dry_run": bool(dry_run), "cutoff_days": days, "force": bool(force)}
-    if not all_expired:
+    if all_trashed:
+        # 확인창이 "그중 아직 복구 가능한 게 몇 건인지" 를 보여줄 수 있게 쪼개서 준다.
+        out["all_trashed"] = True
+        out["scanned_expired"] = sum(
+            1 for s in targets if int(s.get("deleted_at") or 0) <= cutoff)
+        out["scanned_recent"] = len(targets) - out["scanned_expired"]
+    elif not all_expired:
         out["skipped"] = skipped_early
     return out
 

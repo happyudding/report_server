@@ -16,6 +16,7 @@
 | `test_calibrate.py` | `recalibrate()` 분위수 → thresholds item_class 갱신 + 버전 등록 (**thresholds 는 tmp 복사본으로 격리**). |
 | `test_db_input_import.py` | db_input **레거시 20컬럼** label(human_status/root_cause)+case_outcome 적재·idempotent. |
 | `test_db_input_simple_format.py` | db_input **단순 5컬럼** 포맷 — 헤더 감지·unit alias(VOLTS/HERTZ/AMPS)·사전 전수검사(부분 적재 금지)·코멘트 수정 재적재. |
+| `test_db_input_json_mode.py` | db_input `--dry-run`/`--json` 계약(stdout JSON·종료코드 0/2·플래그 파싱) + unit 부분일치(UNIT_STEMS)·`%` 어휘. **report_server 의 Honey 'DB Input' 이 이 계약에 의존** → ../../docs/13 §10. |
 | `integration/test_df_honey_eval.py` | df_honey → run_input 어댑터 경로(raw_table) 대량 평가. |
 | `integration/adapter.py` | `df_honey_to_run_input` — report_server 쪽 어댑터 모사(eval_engine import 안 함). |
 

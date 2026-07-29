@@ -15,8 +15,8 @@ from flask import Blueprint, Response, abort, jsonify, request
 import config
 from admin_panel import (GATE_COOKIE_VOC, GATE_COOKIE_VOC_PATH, MASTER_COOKIE,
                          MASTER_COOKIE_PATH, MASTER_TTL_SECONDS, eval_admin,
-                         gate_token, issue_master_value, maintenance, metrics,
-                         sessions_admin, stats, storage_admin, sysinfo,
+                         gate_token, identity_merge, issue_master_value, maintenance,
+                         metrics, sessions_admin, stats, storage_admin, sysinfo,
                          users_admin, voc_admin, voc_gate_token)
 from database import report_db
 from report.static_pages import send_html_gzip
@@ -224,6 +224,34 @@ def api_eval_cases_delete():
     return jsonify(result)
 
 
+@admin_panel_bp.post("/api/eval/items/value_type")
+def api_eval_set_value_type():
+    """Unit 그룹(value_type) 수동 지정 — 선례검색 하드필터라 오분류 교정용."""
+    body = request.get_json(force=True, silent=True) or {}
+    ids = body.get("item_ids")
+    value_type = body.get("value_type")
+    if not isinstance(ids, list) or not ids or len(ids) > 200:
+        abort(400, "item_ids: 1~200개 리스트 필요")
+    if any(not isinstance(i, int) for i in ids):
+        abort(400, "item_ids: 정수만 허용")
+    if value_type not in eval_admin.VALUE_TYPES:
+        abort(400, f"value_type: {eval_admin.VALUE_TYPES} 중 하나여야 함")
+    result = eval_admin.set_item_value_type(ids, value_type)
+    _audit("edit", changed_fields=f"eval_value_type({value_type}x{result.get('updated', 0)})")
+    return jsonify(result)
+
+
+@admin_panel_bp.post("/api/eval/items/remap_units")
+def api_eval_remap_units():
+    """저장된 unit 원문에 별칭 규칙(VOLT/AMP/HERTZ)을 일괄 재적용."""
+    body = request.get_json(force=True, silent=True) or {}
+    dry_run = bool(body.get("dry_run"))
+    result = eval_admin.remap_unit_aliases(dry_run=dry_run)
+    if not dry_run:
+        _audit("edit", changed_fields=f"eval_remap_units({result.get('changed', 0)})")
+    return jsonify(result)
+
+
 @admin_panel_bp.post("/api/eval/session/<session_id>/reexport")
 def api_eval_reexport(session_id):
     if not _SESSION_ID_RE.match(session_id):
@@ -247,6 +275,16 @@ def api_metrics_file_history():
     """파일 기반 이력 — 서버 재시작으로 초기화되지 않는다 (현황 탭 실시간 차트와 병행)."""
     hours = min(max(int(request.args.get("hours", 24)), 1), metrics.FILE_HISTORY_MAX_HOURS)
     return jsonify(metrics.file_history(hours))
+
+
+@admin_panel_bp.get("/api/active_users")
+def api_active_users():
+    """실시간 접속 사용자 — 사용자 탭 전용(10초 폴링).
+
+    api/runtime 에도 같은 값이 실려 있지만, 사용자 탭은 응답시간·캐시·스케줄러가 필요 없어
+    이 가벼운 엔드포인트를 따로 쓴다."""
+    return jsonify(metrics.active_users(
+        request.args.get("window", metrics.ACTIVE_USER_WINDOW_SEC)))
 
 
 @admin_panel_bp.get("/api/runtime")
@@ -392,27 +430,36 @@ def api_sessions_restore():
 @admin_panel_bp.post("/api/sessions/purge")
 def api_sessions_purge():
     """휴지통 세션 영구 삭제 — 기본은 30일(REPORT_TRASH_RETENTION_DAYS) 경과분만.
-    body: {session_ids:[...]} 또는 {all_expired:true}, dry_run(기본 true),
-    force(기본 false — true 면 경과일 무시, 명시 session_ids 에만 허용)."""
+    body: {session_ids:[...]} 또는 {all_expired:true} 또는 {all_trashed:true},
+    dry_run(기본 true), force(기본 false — true 면 경과일 무시, 명시 session_ids 에만 허용).
+
+    all_trashed 는 휴지통 **전체**(미경과분 포함)를 비우는 관리자 수동 경로다. 자동 정리
+    (report_cleanup)는 지금도 all_expired 만 쓴다 — 자동 경로가 미경과분을 지우면 사용자의
+    복구 창이 통째로 사라지기 때문."""
     body = request.get_json(force=True, silent=True) or {}
     all_expired = bool(body.get("all_expired"))
+    all_trashed = bool(body.get("all_trashed"))
     dry_run = body.get("dry_run", True)
     force = bool(body.get("force"))
     sids = body.get("session_ids")
-    if not all_expired:
+    if all_expired and all_trashed:
+        abort(400, "all_expired 와 all_trashed 는 함께 쓸 수 없습니다")
+    if not all_expired and not all_trashed:
         if not isinstance(sids, list) or not sids or len(sids) > 200:
-            abort(400, "session_ids: 1~200개 리스트 필요 (또는 all_expired:true)")
+            abort(400, "session_ids: 1~200개 리스트 필요 (또는 all_expired/all_trashed:true)")
         for sid in sids:
             if not isinstance(sid, str) or not _SESSION_ID_RE.match(sid):
                 abort(400, f"invalid session_id: {sid!r}")
-    elif force:
-        # 전체 경과분 일괄 경로에 force 를 허용하면 휴지통 전체가 즉시 날아간다 — 차단.
-        abort(400, "force 는 session_ids 지정 시에만 사용할 수 있습니다")
+    elif force and all_expired:
+        # 경과분 일괄 경로의 force 는 의미가 모호하다 — 전체를 지우려면 all_trashed 를 쓴다.
+        abort(400, "force 는 session_ids 지정 시에만 사용할 수 있습니다 "
+                   "(휴지통 전체 비우기는 all_trashed)")
+    changed = "purge_all" if all_trashed else ("purge_force" if force else "purge")
     result = sessions_admin.purge_trashed(
-        session_ids=sids, all_expired=all_expired, dry_run=bool(dry_run), force=force,
+        session_ids=sids, all_expired=all_expired, all_trashed=all_trashed,
+        dry_run=bool(dry_run), force=force,
         audit=lambda session, res: _audit(
-            "delete", session=session,
-            changed_fields="purge_force" if force else "purge", result=res))
+            "delete", session=session, changed_fields=changed, result=res))
     return jsonify(result)
 
 
@@ -530,13 +577,26 @@ def api_db_diagnostics():
 
 @admin_panel_bp.get("/api/audit")
 def api_audit():
-    return jsonify(report_db.get_audit_logs(
+    """감사 기록 조회. "IP 가 같으면 같은 사용자" 규칙을 두 군데에 적용한다:
+    (1) 계정명으로 검색하면 그 계정의 IP 에서 남은 무신원 기록도 함께 걸리고,
+    (2) 각 행에 resolved_user(신원이 빈 행의 추정 계정)를 실어 화면이 표시할 수 있게 한다."""
+    q = (request.args.get("q") or "").strip() or None
+    mapping = identity_merge.ip_to_user()
+    extra_ips = [ip for ip, uid in mapping.items() if q and uid == q.strip().lower()]
+    rows = report_db.get_audit_logs(
         action=(request.args.get("action") or "").strip() or None,
         session_id=(request.args.get("session_id") or "").strip() or None,
-        q=(request.args.get("q") or "").strip() or None,
+        q=q,
         limit=request.args.get("limit", 200),
         offset=request.args.get("offset", 0),
-    ))
+        extra_ips=extra_ips,
+    )
+    for r in rows:
+        if not (r.get("client_user") or "").strip():
+            uid = mapping.get(r.get("client_ip"))
+            if uid:
+                r["resolved_user"] = uid
+    return jsonify(rows)
 
 
 @admin_panel_bp.get("/api/audit.csv")

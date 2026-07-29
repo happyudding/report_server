@@ -140,29 +140,81 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   **사설 API 의존 핀**: `store._migrate` / `store._seed_bin_taxonomy` /
   `pipeline.ingest._*` — 원본 동기화로 시그니처가 바뀌면 eval_export 만 고치면 된다
   (실패는 safe_export 가 격리).
+- **unit → value_type 선보정** (2026-07-29): 엔진 `UNIT_TO_VALUE_TYPE` 은 **정확매칭
+  표**라 `VOLTS`/`HERTZ`/`mAMP` 같은 표기를 놓치고 조용히 `P_F` 로 떨어뜨린다.
+  eval_analyzer 는 무수정이므로 `eval_export.unit_group()`(부분문자열 **VOLT→V /
+  AMP→A / HERTZ→Hz**)을 **먼저** 보고, 안 걸리면 엔진 표로 내려간다. 짧은 표기
+  (`v`/`hz`/`amp`)는 규칙에 안 걸려 엔진 결과 그대로 — 충돌 없음.
+  이미 적재된 오분류는 관리자 탭 **Unit 별칭 재적용** 버튼으로 일괄 교정한다.
 - **관리**: `/pe/admin-pte/` **Eval DB 탭** — overview(파일/건수), label 목록 검색
-  (product/family/lot/item/comment/세션ID), 컬럼 표시 토글(lot 기본 숨김, 선택은
-  localStorage `adminEvalHiddenCols`), 케이스 단위 완전 삭제, 세션 재적재,
-  **코멘트 CSV 다운로드**(§10). 세션 삭제 시 export 데이터는 자동 삭제하지
-  않는다(선례 보존) — 정리는 이 탭에서 수동.
+  (product/family/lot/item/comment/세션ID), 컬럼 표시 토글(lot/product/Bin 기본 숨김,
+  선택은 localStorage `adminEvalHiddenCols.v2`), 행은 1줄 고정 + 긴 Item/comment 셀
+  클릭 펼치기, **Unit 그룹 인라인 수정**(`POST /api/eval/items/value_type` —
+  item_master.value_type + fail_case.item_class 동시 갱신) 및 **Unit 별칭 재적용**
+  (`POST /api/eval/items/remap_units`, `dry_run` 미리보기 후 적용), 케이스 단위 완전
+  삭제, 세션 재적재, **코멘트 CSV 다운로드**(§10). 세션 삭제 시 export 데이터는 자동
+  삭제하지 않는다(선례 보존) — 정리는 이 탭에서 수동.
 
 ## 10. 과거 사례 수동 적재 — db_input 5컬럼 CSV (2026-07-28)
 
 엔지니어가 손으로 정리한 과거 코멘트를 같은 eval DB(`REPORT_EVAL_DB_PATH`)에 넣는 경로.
-구현은 **`eval_analyzer/db_input/` 안에서만** 한다(엔진 무수정 — §2 규약 유지).
+구현은 **`eval_analyzer/db_input/` 안에서만** 한다 — 이것이 eval_analyzer/CLAUDE.md 의
+"하위 파일 무수정"에 대한 **명시적 예외(carve-out)** 이며, `eval_engine/` 은 계속 무수정이다
+(§2 규약 유지).
 
 - **입력 계약**: `Product type, Family Product, unit, Item, comment` 5컬럼(헤더 대소문자·
   공백 유연). 기존 20컬럼 레거시 CSV 도 헤더 자동감지로 계속 동작한다.
   정본 설명은 [eval_analyzer/db_input/CLAUDE.md](../eval_analyzer/db_input/CLAUDE.md).
-- **unit 정규화**: 원문(VOLTS/HERTZ/AMPS…)을 엔진 어휘(V/A/Hz/CODE/Ohm/Sec/P_F)로 매핑한다.
-  매핑표 = 엔진 `UNIT_TO_VALUE_TYPE` + db_input `EXTRA_UNIT_ALIASES`.
+- **unit 정규화** (2026-07-29 부분일치로 확장): 원문(VOLTS/HERTZ/AMPS/PCT…)을 어휘
+  (V/A/Hz/CODE/Ohm/Sec/P_F/**%**)로 매핑한다. 2단계 —
+  ① 정확일치: 엔진 `UNIT_TO_VALUE_TYPE` + db_input `EXTRA_UNIT_ALIASES`
+  ② **부분일치**: db_input `UNIT_STEMS` 의 stem(`volt`/`amp`/`hertz`/`hz`/`ohm`/`sec`/
+  `code`/`percent`/`pct`/`%`)이 문자열에 포함되면 그 그룹 (MILLIVOLT→V, AMPERE→A,
+  KiloHertz→Hz, MOhm→Ohm, mSec→Sec, TCODE→CODE). 한 글자 stem(v/a/s)은 오탐이 커서 쓰지
+  않는다 — 한 글자 표기는 ①이 담당.
   **모르는 단위가 하나라도 있으면 아무것도 적재하지 않고 중단**(행번호+원문 출력) —
   `search_precedents` 가 `value_type` 을 등호 하드필터로 쓰기 때문에 조용한 P_F 폴백은
   선례를 영구 미매칭으로 만든다.
-- **실행**: 서버에서 `eval_analyzer\db_input\run_import.bat` 더블클릭 → CSV 선택.
+  - ⚠ **엔진 live-run 경로와 어긋난다**: `pipeline/ingest._classify_value_type` 은 여전히
+    정확일치 + 모르면 `P_F` 폴백이다(엔진 무수정). 그래서 `MILLIVOLT` 는 선례에선 `V`,
+    같은 표기를 UNIT 행에 쓴 live case 는 `P_F` 라 등호 필터에서 서로 안 잡힌다. 새 값
+    `%` 도 엔진이 절대 생성하지 않으므로 `%` 선례는 **선례 조회·관리자 탭 표시 용도**다.
+    `rules/*.yaml` 은 `item_class = category_major|value_type|bin` 스코프라 `%` 스코프가
+    없어 기본으로 폴백한다. 완전 해소는 엔진 `UNIT_TO_VALUE_TYPE`/`_classify_value_type`
+    을 같은 규칙으로 맞춰야 가능하고 **엔진 소유자 승인이 필요한 별건**이다.
+- **실행 ① 서버 콘솔**: `eval_analyzer\db_input\run_import.bat` 더블클릭 → CSV 선택.
   bat 이 report_server 안의 사본임을 감지해(`..\..\server\config.py`) `EVAL_DB_PATH` 를
   서버 소유 eval.db 로 잡고 `--to-eval-db` 를 붙인다 → 관리자 탭에 바로 보인다.
   원본 저장소(F:\COINAPI\eval_analyzer) 단독 실행은 기존 per-family output 동작 그대로.
+- **실행 ② Honey 'DB Input'** (2026-07-29): Honey 실행(&R) 메뉴 맨 아래 → CSV 선택 →
+  **검증 미리보기 → 확정**. 서버 `POST /pe/report/api/eval/labels_import`
+  ([routes_eval_input.py](../server/report/routes_eval_input.py))가
+  `db_input/import_csv.py --to-eval-db --json [--dry-run]` 을 **별도 프로세스**로 실행한다.
+  - **왜 subprocess 인가** (2가지): ① `_import_group` 이 `eval_engine.config.DATA_DIR/
+    DB_PATH` 를 **모듈 전역에 대입**하는데 그 모듈은 Flask 프로세스에서 ai_comment.py 와
+    공유된다 — 프로세스 경계가 곧 격리다. ② eval_engine import 지점을 2곳으로 유지(§2):
+    **실행은 import 가 아니다.**
+  - **JSON 계약**(깨지 말 것): stdout **마지막 줄에 JSON 1줄**
+    `{ok, mode, format, rows, groups, errors, db_path}`, 종료코드 `0`=정상 / `2`=CSV 오류.
+  - **가드**: `X-Honey-Agent: 1` 필수(브라우저 차단, CSRF 대체) + Honey 신원 필요.
+    권한은 **Honey 접속자 전원** — 추적은 감사 로그로 한다. ≤5MB. **단순 5컬럼만**
+    받는다(레거시는 `_import_group` 안에서 행 검증이라 부분 적재 위험).
+  - **상태 없음**: Honey 가 같은 바이트를 validate/commit 두 번 보낸다(토큰·TTL 불필요).
+    commit 도 쓰기 전에 dry-run 을 한 번 더 돌려, 승인한 검증을 지금 시점 DB 기준으로
+    다시 증명한다. 응답에서 서버 내부 경로(`db_path`)는 제거한다.
+  - **staged CSV 경로는 파일명 기반 고정**(`uploads/report/eval_input/`) — 랜덤 tmp 를 쓰면
+    `_get_or_create_run` 이 `(source_file 문자열, session_id)`로 run 을 재사용하므로 재적재
+    때마다 `ingest_run` 행이 쌓인다. 실행 직후 파일은 지운다(비교 대상은 경로 문자열).
+  - **감사**: action=`eval_db_input` (validate 시도 포함, `client_user` 기록).
+    관리자 User Action Monitoring 에 "선례 DB 적재" 로 보인다.
+  - **동시 쓰기**: 프로세스 내부는 `threading.Lock` 으로 직렬화하지만, 같은 eval DB 를
+    `eval_export.export_async`(데몬 스레드)도 쓴다. WAL + `busy_timeout=5000` 로 견디고
+    최악의 경우 export 1회가 스킵되지만 `safe_export` 가 격리하고 다음 코멘트 편집이
+    세션 전체를 재적재한다(멱등). 운영자가 서버 콘솔에서 run_import.bat 을 동시에 돌리는
+    것은 프로세스 밖이라 Lock 이 막지 못한다.
+  - 환경변수 `REPORT_EVAL_IMPORT_PYTHON` — 적재기를 돌릴 인터프리터(기본 `sys.executable`).
+  - 검증: [tests/test_eval_db_input.py](../tests/test_eval_db_input.py) +
+    [eval_analyzer/tests/test_db_input_json_mode.py](../eval_analyzer/tests/test_db_input_json_mode.py).
 - **왕복**: 관리자 탭 **CSV 다운로드**(`GET /api/eval/labels.csv`)가 같은 5컬럼으로 내보내고
   (unit 은 `im.value_type` = 엔진 어휘), 고쳐서 재적재하면 같은 case 의 label 이 갱신된다.
   ⚠ 단순 포맷은 lot/wafer/bin 이 없어 `product_name=<pt>_<fp>`·`bin=0` 으로 **case 를 합성**

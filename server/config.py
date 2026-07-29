@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -50,6 +51,13 @@ REPORT_UPLOAD_DIR = _path_env("REPORT_UPLOAD_DIR", ROOT_DIR / "uploads" / "repor
 # report_server 소유 별도 파일. session DB(report.db)와 분리. eval_analyzer 쪽은
 # EVAL_DB_PATH env 로 이 파일을 가리켜 읽는다 (docs/13_eval_analyzer_integration.md).
 REPORT_EVAL_DB_PATH = _path_env("REPORT_EVAL_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" / "eval" / "eval.db")
+
+# Honey 'DB Input'(선례 CSV 적재)이 돌리는 db_input/import_csv.py 의 인터프리터.
+# 기본은 서버 자신 — waitress 가 python.exe 안에서 도는 현 구성에선 이게 맞다.
+# 서버가 파이썬이 아닌 호스트(frozen 등) 아래 돌 때만 env 로 지정한다.
+# in-process import 가 아니라 별도 프로세스인 이유: import_csv._import_group 이
+# eval_engine.config.DB_PATH 를 모듈 전역에 대입한다 (docs/13 §10).
+REPORT_EVAL_IMPORT_PYTHON = os.getenv("REPORT_EVAL_IMPORT_PYTHON", "") or sys.executable
 
 # VOC 게시판 DB — 세션 DB(report.db)·eval DB 와 분리된 report_server 소유 별도 파일
 # (database/voc_db.py 가 자체 커넥션으로 관리, 이미지 파일은 storage_gateway 에 별도 저장).

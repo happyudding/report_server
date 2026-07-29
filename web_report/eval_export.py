@@ -147,6 +147,27 @@ def _collect_comments(report_db, session, upload_root: Path) -> dict:
     return per_key
 
 
+# ── 단위 원문 → 엔진 어휘 그룹 (report_server 쪽 선보정) ─────────────────────
+# 엔진 UNIT_TO_VALUE_TYPE(pipeline/ingest.py)은 정확매칭 표라 "VOLTS"/"HERTZ"/
+# "mAMP" 같은 표기를 놓치고 조용히 P_F 로 떨어뜨린다. eval_analyzer 는 외부 단방향
+# (수정 금지, ../CLAUDE.md 규칙 #8)이라 여기서 부분문자열 규칙으로 먼저 매핑한다.
+# 엔진 표와 충돌하지 않는다 — "v"/"hz"/"amp" 등 짧은 표기는 이 규칙에 안 걸려
+# 그대로 엔진 표로 내려간다.
+_UNIT_SUBSTR_RULES = (("VOLT", "V"), ("AMP", "A"), ("HERTZ", "Hz"))
+
+# item_master.value_type 어휘 (엔진 UNIT_TO_VALUE_TYPE 의 값 집합) — 관리자 수정 UI 용.
+VALUE_TYPES = ("V", "A", "Hz", "CODE", "Ohm", "Sec", "P_F")
+
+
+def unit_group(unit):
+    """단위 원문에 VOLT/AMP/HERTZ 가 포함되면 V/A/Hz. 아니면 None(엔진 표에 위임)."""
+    text = str(unit or "").upper()
+    for token, value_type in _UNIT_SUBSTR_RULES:
+        if token in text:
+            return value_type
+    return None
+
+
 def _find_item_meta(tables, item):
     """item 의 unit/usl/lsl — 첫 매칭 소스 우선 (tabs/common.item_meta 관례)."""
     from .tabs.common import num
@@ -278,7 +299,8 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
                 unit = item_meta["unit"] if item_meta else None
                 item_canonical = alias.get(item, engine_ingest._canonicalize(item))
                 category_major = engine_ingest._classify_category_major(item)
-                value_type = engine_ingest._classify_value_type(unit, item)
+                value_type = (unit_group(unit)
+                              or engine_ingest._classify_value_type(unit, item))
                 item_id = store.upsert_item_master(
                     item_canonical, item, None, None, category_major, None,
                     value_type, str(unit) if unit is not None else None, conn=conn)

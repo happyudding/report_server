@@ -6,6 +6,7 @@ created_at 은 epoch 초 → SQLite strftime(..., 'unixepoch', 'localtime') 로 
 import time
 from datetime import date, timedelta
 
+from admin_panel import identity_merge
 from database import report_db
 
 _ACTIONS = ("upload", "edit", "delete")
@@ -60,7 +61,11 @@ def usage_ranking(days=30, limit=50):
     """접속 사용량 순위 — report_usage_daily 집계 (database/usage.py 가 기록).
 
     honey_run = Honey 실행(시작 시 버전체크), web_index = 검색결과 페이지,
-    web_view = 세션 상세 페이지. 신원 없는 접속은 'ip:<addr>' 행으로 집계된다."""
+    web_view = 세션 상세 페이지. 신원 없는 접속은 'ip:<addr>' 행으로 집계되는데,
+    그 IP 가 계정 하나로 확정되면 같은 사람으로 합친다(identity_merge).
+
+    LIMIT 은 병합 **후** 적용한다 — 갈라져 있던 두 행이 합쳐지면 순위가 바뀌므로
+    DB 단계에서 자르면 잘린 조각이 사라진다."""
     days = _clamp_days(days)
     cutoff_day = (date.today() - timedelta(days=days - 1)).isoformat()
     with report_db.get_conn() as conn:
@@ -71,14 +76,33 @@ def usage_ranking(days=30, limit=50):
             "       SUM(CASE WHEN kind='web_view'  THEN count ELSE 0 END) AS web_view, "
             "       SUM(count) AS total, MAX(last_at) AS last_at "
             "FROM report_usage_daily WHERE day >= ? "
-            "GROUP BY user_id ORDER BY total DESC LIMIT ?",
-            (cutoff_day, int(limit))).fetchall()
-    return {"days": days, "rows": [dict(r) for r in rows]}
+            "GROUP BY user_id ORDER BY total DESC",
+            (cutoff_day,)).fetchall()
+
+    mapping = identity_merge.ip_to_user()
+    merged = {}
+    for r in rows:
+        name, was_merged = identity_merge.resolve(r["user_id"], mapping=mapping)
+        cur = merged.get(name)
+        if cur is None:
+            cur = merged[name] = {"user_id": name, "honey_run": 0, "web_index": 0,
+                                  "web_view": 0, "total": 0, "last_at": 0,
+                                  "merged_from": []}
+        for col in ("honey_run", "web_index", "web_view", "total"):
+            cur[col] += r[col] or 0
+        cur["last_at"] = max(cur["last_at"] or 0, r["last_at"] or 0)
+        if was_merged:
+            cur["merged_from"].append(r["user_id"])
+    out = sorted(merged.values(), key=lambda d: d["total"], reverse=True)[:int(limit)]
+    return {"days": days, "rows": out}
 
 
 def user_ranking(days=30, limit=50):
     """사용자별 사용량 순위. 신원은 client_user → client_host → client_ip 순 폴백
-    (전부 클라이언트 신고값 + IP 라 참고용). 'system' 은 cleanup 스케줄러."""
+    (전부 클라이언트 신고값 + IP 라 참고용). 'system' 은 cleanup 스케줄러.
+
+    이름이 IP 로 떨어진 행(= 신원 토큰 없이 남은 기록)은 그 IP 가 계정 하나로 확정되면
+    같은 사람으로 합친다(identity_merge). usage_ranking 과 같은 이유로 LIMIT 은 병합 후."""
     days = _clamp_days(days)
     cutoff = int(time.time()) - days * 86400
     with report_db.get_conn() as conn:
@@ -92,5 +116,23 @@ def user_ranking(days=30, limit=50):
             "       SUM(CASE WHEN action='delete' THEN 1 ELSE 0 END) AS `delete`, "
             "       COUNT(*) AS total, MAX(created_at) AS last_at "
             "FROM report_audit_log WHERE created_at >= ? "
-            "GROUP BY who ORDER BY total DESC LIMIT ?", (cutoff, int(limit))).fetchall()
-    return {"days": days, "rows": [dict(r) for r in rows]}
+            "GROUP BY who ORDER BY total DESC", (cutoff,)).fetchall()
+
+    mapping = identity_merge.ip_to_user()
+    merged = {}
+    for r in rows:
+        name, was_merged = identity_merge.resolve(r["who"], r["ip"], mapping=mapping)
+        cur = merged.get(name)
+        if cur is None:
+            cur = merged[name] = {"who": name, "host": r["host"], "ip": r["ip"],
+                                  "upload": 0, "edit": 0, "delete": 0, "total": 0,
+                                  "last_at": 0, "merged_from": []}
+        for col in ("upload", "edit", "delete", "total"):
+            cur[col] += r[col] or 0
+        cur["host"] = cur["host"] or r["host"]
+        cur["ip"] = cur["ip"] or r["ip"]
+        cur["last_at"] = max(cur["last_at"] or 0, r["last_at"] or 0)
+        if was_merged:
+            cur["merged_from"].append(r["who"])
+    out = sorted(merged.values(), key=lambda d: d["total"], reverse=True)[:int(limit)]
+    return {"days": days, "rows": out}

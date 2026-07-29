@@ -763,6 +763,7 @@ class HoneyMainWindow(QMainWindow):
         self._busy_actions += [
             m_run.addAction("Rawdata 편집", self.on_rawdata_edit),
             m_run.addAction("Excel Download", self.on_excel_download),
+            m_run.addAction("DB Input (선례 CSV 적재)", self.on_db_input),
         ]
 
         m_view = mb.addMenu("보기(&V)")
@@ -1256,6 +1257,89 @@ class HoneyMainWindow(QMainWindow):
         self._status(f"Excel Download 실패: {message}")
         self._append_run_log(f"[ExcelDL] 실패: {message}")
         QMessageBox.warning(self, "Excel Download 실패", message)
+
+    # ── DB Input: 선례(precedent) CSV → 서버 eval DB ────────────────────────
+    # 서버 라우트와 같은 상한 (POST /pe/report/api/eval/labels_import).
+    _DB_INPUT_MAX_BYTES = 5 * 1024 * 1024
+
+    def on_db_input(self):
+        """CSV 선택 → 서버 검증(dry-run) → 미리보기 확인 → 확정 적재.
+
+        적재는 **서버가 자기 eval DB 에 수행**한다 (Honey.exe 는 eval_analyzer 를 담지
+        않고 eval DB 는 서버 파일이다) — 끝나면 관리자 Eval DB 탭에 바로 보인다.
+        파일은 여기서 한 번만 읽고 그 바이트를 검증·확정 두 요청에 그대로 보낸다
+        (중간에 파일이 바뀌어 미리보기와 다른 것이 적재되는 일이 없다).
+        """
+        from honey_ui.db_input_preview_dialog import ask_db_input_confirm
+
+        start_dir = app_settings.get_setting("db_input_last_dir", "") or os.path.join(
+            os.path.expanduser("~"), "Documents")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "선례 CSV 선택 (Product type, Family Product, unit, Item, comment)",
+            start_dir, "CSV (*.csv);;모든 파일 (*.*)")
+        if not path:
+            return
+        app_settings.set_setting("db_input_last_dir", os.path.dirname(path))
+        name = os.path.basename(path)
+        try:
+            data = Path(path).read_bytes()
+        except OSError as exc:
+            _show_exc(self, "DB Input", exc, prefix="CSV 파일을 읽지 못했습니다.")
+            return
+        if not data:
+            _show_error(self, "DB Input", "빈 CSV 파일입니다.")
+            return
+        if len(data) > self._DB_INPUT_MAX_BYTES:
+            _show_error(self, "DB Input", "CSV 가 너무 큽니다 (최대 5MB).")
+            return
+
+        self._set_busy(True)
+        try:
+            self._append_run_log(f"[DB Input] 검증 요청: {name} ({len(data):,} bytes)")
+            checked = self._db_input_call(data, name, "validate", "선례 CSV 검증 중...")
+            if not ask_db_input_confirm(self, checked):
+                self._append_run_log("[DB Input] 취소 — 적재하지 않았습니다.")
+                self._status("DB Input 취소")
+                return
+            done = self._db_input_call(data, name, "commit", "eval DB 적재 중...")
+            if not done.get("ok"):
+                # 확정 직전 서버 재검증에서 걸렸다 — 같은 다이얼로그로 이유를 보여준다.
+                self._append_run_log("[DB Input] 적재 직전 검증 실패 — 적재하지 않았습니다.")
+                ask_db_input_confirm(self, done)
+                return
+            groups = ", ".join(
+                f"{g.get('product_type')}_{g.get('family_product')} {g.get('rows')}건"
+                for g in done.get("groups") or [])
+            self._append_run_log(f"[DB Input] 적재 완료: {done.get('rows', 0)}행 — {groups}")
+            QMessageBox.information(
+                self, "DB Input",
+                f"선례 {int(done.get('rows') or 0):,}건을 서버 eval DB 에 적재했습니다.\n"
+                f"{groups}")
+        except Exception as exc:  # noqa: BLE001
+            self._append_run_log(f"[DB Input] 실패: {exc}")
+            _show_exc(self, "DB Input 실패", exc,
+                      prefix="서버에 적재하지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.")
+        finally:
+            self._set_busy(False)
+
+    def _db_input_call(self, data, file_name, mode, label):
+        """DB Input 서버 호출 1회 — 짧은 네트워크 작업 공용 패턴(스레드 + 경과시간 진행바).
+
+        mirror 는 필수다 — 슬라이드인 입력 패널이 dock 진행바를 가린다.
+        """
+        from transport.eval_input import post_labels_csv
+        progress = _ElapsedProgress(
+            self.progress_status, label, self._status, busy=True, minimum=0, maximum=0,
+            mirror=getattr(self, "panel_progress", None))
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                result = _wait_for_future(
+                    ex.submit(post_labels_csv, data, file_name, mode), progress)
+        except Exception:
+            progress.fail(f"실패: {label.rstrip('. ')}")
+            raise
+        progress.success(f"{label.rstrip('. ')} 완료", hide_ms=1500)
+        return result
 
     # ── 입력 선택: 로컬 파일 열기 / d1_storage 검색 ─────────────────────────
     def on_open_local(self):
