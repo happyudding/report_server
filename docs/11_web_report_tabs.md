@@ -61,6 +61,13 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   fail → 90% / 85% / 84%. `fail` 은 그 STEP **자체** fail 로 두고 누적은 `cum_fail` 로 병기해
   `survivor + cum_fail = entered` 가 pooled·소스별 양쪽에서 성립한다(요약 박스 "Pass / In" +
   "Fail (step / cum)" 열). 빈 STEP(`""`)은 정렬상 맨 뒤라 누적의 마지막 항에 포함된다.
+  단, 세션 전체 STEP 메타에 비어있지 않은 STEP 이 **1종뿐**이면 빈 STEP fail 행을 그 STEP 으로
+  흡수한다(`yield_tab._sole_step`, 2026-07-29 사용자 확정) — 화면에 "(기타)" 섹션이 생기지 않는다.
+  판정 기준은 fail 행에 등장한 STEP 이 아니라 **전체 item 메타**(`table.step`)라 Map Analysis 의
+  단일-STEP 판정과 어긋나지 않으며, STEP 2종 이상이면 어느 STEP 인지 알 수 없으므로 종전대로
+  빈 STEP 을 유지한다. FAILTNO 가 **어느 item TNO 와도 매칭되지 않는** 경우는 이와 별개로 그
+  fail die 가 Yield 표에 잡히지 않는다(`fail_counts_by_source`, 기존 동작 — 진단은
+  `web_report/diag_yield_step.py` 의 UNMATCHED).
   **개별 bin fail 행의 % 는 이 누적과 무관하게 (그 bin fail / 전체) 유지**하며, Issue Table 도
   현행 유지다(맨 위 전체 Pass 행이 이미 최종 누적값과 같아 STEP Pass 행을 추가하지 않는다).
   **Issue Table·Summary·fail_bin_ranking 도 동일한 전체(total) 기준 값(`build_yield_rows`)**

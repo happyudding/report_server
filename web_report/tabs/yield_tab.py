@@ -5,7 +5,7 @@ from collections import Counter, defaultdict
 
 import pandas as pd
 
-from .common import PASS_BIN, bin_sort_key, bin_types, item_meta as _item_meta
+from .common import PASS_BIN, bin_sort_key, bin_types, fmt_type, item_meta as _item_meta
 
 
 def _tno_norm(value):
@@ -194,10 +194,25 @@ def yield_basis_payload(basis_info, mode="auto") -> dict:
     }
 
 
+def _sole_step(tables) -> str:
+    """전 소스 STEP 메타에 비어있지 않은 STEP 이 정확히 1종이면 그 값, 아니면 "".
+
+    FAILTNO 가 귀속된 item 의 STEP 메타가 공백일 때, 그 fail 행을 빈 STEP("(기타)" 섹션)으로
+    빼지 않고 유일 STEP 에 합치기 위한 판정 (2026-07-29 사용자 확정). STEP 이 2종 이상이면
+    어느 STEP 의 fail 인지 알 수 없으므로 종전대로 빈 STEP 을 유지한다.
+    판정 기준은 **전체 item 메타**(fail 행에 등장한 STEP 이 아님) — Map_analysis 의 step 집합
+    구성과 같은 기준이라 Yield/Map 의 단일-STEP 판정이 어긋나지 않는다.
+    """
+    steps = {fmt_type(v) for t in (tables or []) for v in t.step.values()}
+    steps.discard("")
+    return next(iter(steps)) if len(steps) == 1 else ""
+
+
 def build_yield_rows(tables, fail_counts, totals=None):
     rows = []
     totals = dict(totals) if totals else {t.source: len(t.data) for t in tables}
     item_meta = _item_meta(tables)
+    fallback_step = _sole_step(tables)     # STEP 1종뿐이면 빈 STEP fail 을 그리로 흡수
 
     pass_row = {"step": "", "bin": PASS_BIN, "TNO": "", "Item": "Pass"}
     pass_portions = []
@@ -217,7 +232,7 @@ def build_yield_rows(tables, fail_counts, totals=None):
     for bin_value, item in keys:
         meta = item_meta.get(item, {})
         row = {
-            "step": meta.get("step", ""),
+            "step": meta.get("step", "") or fallback_step,
             "bin": bin_value,
             "TNO": meta.get("tno", ""),
             "Item": item,

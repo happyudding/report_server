@@ -185,7 +185,10 @@ def map_key(session, prep_digest: str = "") -> tuple:
 # v20: Compare goodlog 이 **테스트 프로그램이 완전히 같아도 rows 를 채운다**(limit 변경이
 #      없어도 항목별 값 gap% 를 봐야 한다는 요구). identical 은 안내 플래그로만 남는다.
 #      안 올리면 옛 disk_cache 가 rows=[] 인 payload 를 계속 반환해 표가 비어 보인다.
-REPORT_SCHEMA_VERSION = 20
+# v21: STEP 메타가 공백인 fail 행을, 세션 STEP 이 1종뿐일 때 그 STEP 으로 흡수(_sole_step) —
+#      yield_rows[].step / yield_step_groups(섹션 수) / yield_summary.by_step(항목 수) 의 **값**이
+#      바뀐다(구조 동일). 안 올리면 옛 disk_cache 가 "(기타)" 섹션이 분리된 payload 를 계속 반환한다.
+REPORT_SCHEMA_VERSION = 21
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:
