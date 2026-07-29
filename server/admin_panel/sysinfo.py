@@ -233,12 +233,21 @@ def watchdog_status(limit=10):
             r = e.get("reason") or "?"
             reasons[r] = reasons.get(r, 0) + 1
     skips = [e for e in events if e.get("event") == "backoff_skip"]
+    # 위 reasons 는 '재기동한' 이벤트라 healthz_fail_x2 / not_listening 만 담긴다.
+    # 실패를 감지한 이벤트(재기동 전 1차 실패·억제)에는 세분 원인(healthz_timeout /
+    # healthz_connect / healthz_503)이 붙는데 그게 정작 진단에 필요한 값이다.
+    fail_reasons = {}
+    for e in events:
+        if e.get("event") in ("healthz_fail", "backoff_skip") and _wd_epoch(e) >= cutoff:
+            r = e.get("reason") or "?"
+            fail_reasons[r] = fail_reasons.get(r, 0) + 1
     return {
         "registered": last_check is not None,
         "last_check": last_check,
         "restarts_24h": sum(1 for e in restarts if _wd_epoch(e) >= cutoff),
         "restarts_total": len(restarts),
         "reasons_24h": reasons,
+        "fail_reasons_24h": fail_reasons,
         "backoff_skips_24h": sum(1 for e in skips if _wd_epoch(e) >= cutoff),
         "last_backoff": skips[-1] if skips else None,
         "events": events[-limit:][::-1],  # 최신 먼저

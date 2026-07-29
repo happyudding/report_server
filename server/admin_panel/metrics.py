@@ -22,6 +22,7 @@ from pathlib import Path
 import psutil
 from flask import g, request
 
+import auth_identity
 from admin_panel.sysinfo import _cpu_percent, children_rss as _children_rss
 
 _log = logging.getLogger(__name__)
@@ -78,6 +79,14 @@ _VIEWERS_MAX = 500          # 상한 — 초과 시 가장 오래된 것부터 �
 VIEWER_WINDOW_SEC = 300     # "최근 N초 안에 요청이 있었으면 열람 중"
 _viewers: OrderedDict = OrderedDict()   # session_id -> 마지막 요청 ts (_lock 공유)
 
+# 실시간 접속 사용자 — _viewers 는 "어떤 세션이 열려 있나"라서 사람 수를 모른다. 여기서는
+# 요청 신원(auth_identity.current_user — Honey UA / SSO 헤더 / 웹 로그인)을 키로 최근 활동을
+# 모은다. 신원이 없는 일반 브라우저는 ip:<addr> 로 묶어 "누군지는 몰라도 접속 중"은 보이게 한다.
+# 오버헤드는 요청당 UA 정규식 1회 + dict 갱신 1회 (기존 teardown 훅 안에서 처리).
+ACTIVE_USER_WINDOW_SEC = max(30, int(os.getenv("REPORT_ACTIVE_USER_WINDOW_SEC", "300")))
+_ACTIVE_USERS_MAX = 300
+_active_users: OrderedDict = OrderedDict()   # key -> dict(uid, ip, honey, first, last, count, route, session_id)
+
 
 def _on_request_start():
     global _inflight, _inflight_window_peak
@@ -106,8 +115,37 @@ def _on_request_teardown(exc=None):
             sid = (request.view_args or {}).get("session_id")
         except Exception:
             sid = None
+    # 접속 사용자 — 세션 데이터 요청이 아니어도(목록·편집 API 등) 사람은 접속 중이므로
+    # _VIEWER_ENDPOINTS 보다 넓게 잡는다. 지금 보고 있는 세션은 참고용으로만 곁들이므로
+    # 열람 세션 계측(sid)과 변수를 분리한다 — 섞으면 viewers 화이트리스트가 무너진다.
+    ident = user_sid = None
+    if not _skip_user_track(route):
+        ident = _identity_for_track()
+        if ident is not None:
+            try:
+                user_sid = (request.view_args or {}).get("session_id")
+            except Exception:
+                user_sid = None
     with _lock:
         _inflight -= 1
+        if ident is not None:
+            key, uid, ip, honey = ident
+            now = time.time()
+            rec = _active_users.get(key)
+            if rec is None:
+                rec = {"uid": uid, "ip": ip, "honey": honey, "first": now, "count": 0,
+                       "session_id": None}
+                _active_users[key] = rec
+            rec["last"] = now
+            rec["count"] += 1
+            rec["ip"] = ip
+            rec["honey"] = honey
+            rec["route"] = route
+            if user_sid:
+                rec["session_id"] = user_sid
+            _active_users.move_to_end(key)
+            while len(_active_users) > _ACTIVE_USERS_MAX:
+                _active_users.popitem(last=False)
         if sid:
             _viewers[sid] = time.time()
             _viewers.move_to_end(sid)
@@ -120,6 +158,28 @@ def _on_request_teardown(exc=None):
             # 느린 요청은 큐에만 넣는다 — 파일 IO 는 샘플러 스레드가 락 밖에서 처리
             if SLOW_REQ_MS > 0 and ms >= SLOW_REQ_MS:
                 _slow_pending.append((time.time(), route, ms))
+
+
+def _skip_user_track(route):
+    """접속 사용자 집계에서 뺄 요청 — 관리자 자신·healthz(watchdog 폴링)·정적 파일.
+
+    이것들을 빼야 "지금 몇 명이 쓰고 있나"가 실사용자 수에 가까워진다."""
+    return (not route or route == "healthz" or route.endswith("static")
+            or route.startswith("admin_panel."))
+
+
+def _identity_for_track():
+    """요청 신원 → (key, uid, ip, honey). 요청 컨텍스트 문제가 생기면 None (집계 생략)."""
+    try:
+        ip = request.remote_addr or "?"
+        ua = request.headers.get("User-Agent") or ""
+    except Exception:
+        return None
+    try:
+        uid = auth_identity.current_user()
+    except Exception:
+        uid = ""     # SECRET_KEY 미설정 등으로 로그인 세션 조회가 터져도 IP 로는 잡는다
+    return (uid or f"ip:{ip}", uid, ip, "HoneyUser/" in ua)
 
 
 def _bump_boot_peak(key, value, ts):
@@ -296,6 +356,36 @@ def viewers(window_sec=VIEWER_WINDOW_SEC):
     rows.sort(key=lambda r: r[1], reverse=True)
     return {"count": len(rows), "window_sec": window_sec,
             "sessions": [{"session_id": sid, "ago": round(now - ts, 1)} for sid, ts in rows]}
+
+
+def active_users(window_sec=ACTIVE_USER_WINDOW_SEC):
+    """최근 window_sec 안에 요청을 보낸 접속 사용자 목록 (실시간 현황).
+
+    신원(Honey UA/SSO/웹 로그인)이 있으면 계정으로, 없으면 ip:<addr> 로 묶인다. viewers()
+    와 같은 이유로 prune 은 관리자 조회 시점에만 한다 (요청 경로에 O(n) 을 얹지 않는다).
+    """
+    try:
+        window_sec = max(30, min(int(window_sec), 24 * 3600))
+    except (TypeError, ValueError):
+        window_sec = ACTIVE_USER_WINDOW_SEC
+    now = time.time()
+    cut = now - window_sec
+    with _lock:
+        for key in [k for k, v in _active_users.items() if v["last"] < cut]:
+            _active_users.pop(key, None)
+        rows = [(k, dict(v)) for k, v in _active_users.items() if v["last"] >= cut]
+    rows.sort(key=lambda r: r[1]["last"], reverse=True)
+    out = []
+    for key, v in rows:
+        out.append({"key": key, "user": v["uid"] or "", "ip": v["ip"],
+                    "honey": bool(v["honey"]), "requests": v["count"],
+                    "ago": round(now - v["last"], 1),
+                    "since": round(now - v["first"], 1),
+                    "route": v.get("route") or "", "session_id": v.get("session_id")})
+    return {"count": len(out), "window_sec": window_sec,
+            "named": sum(1 for r in out if r["user"]),
+            "honey": sum(1 for r in out if r["honey"]),
+            "users": out}
 
 
 def load_snapshot():

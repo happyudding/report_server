@@ -102,8 +102,10 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_METRICS_FILE_KEEP_DAYS` | `14` | flight recorder(`metrics_YYYYMMDD.log`, 분당 1줄 리소스 추이) + `runtime_YYYYMMDD.log` 보존 일수. `0` = 비활성 |
 | `REPORT_RUNTIME_LOG_INTERVAL_SEC` | `300` | `runtime_*.log` 응답시간 스냅샷(p50/p95/p99 + 느린 경로 top5) 기록 주기. 최소 60 |
 | `REPORT_SLOW_REQ_MS` | `10000` | 이 시간을 넘긴 요청을 `runtime_*.log` 에 개별 기록. `0` 이하 = 비활성 |
+| `REPORT_ACTIVE_USER_WINDOW_SEC` | `300` | 관리자 현황 탭 "실시간 접속 사용자" 기본 판정 창 — 이 시간 안에 요청이 있었으면 접속 중. 화면에서 기간 선택 가능(최소 30) |
 | `WATCHDOG_BACKOFF_MAX_PER_HOUR` / `_GAP_MIN` | `3` / `30` | (watchdog.ps1) healthz 계열 재기동 백오프 — 최근 1시간 재기동이 임계 이상이면 마지막 재기동 후 지정 분이 지날 때까지 재기동을 건너뛴다 |
 | `WATCHDOG_BACKOFF_NL_MAX` / `_NL_GAP_MIN` | `6` / `15` | (watchdog.ps1) `not_listening`(프로세스 사망) 백오프 — 가용성 우선이라 더 관대 |
+| `DIAG_PORT` | `PORT+1` | 사이드 진단 리스너([diag_listener.py](diag_listener.py)) 포트. `127.0.0.1` 전용. `0` = 비활성. watchdog 도 같은 규칙으로 포트를 찾는다 |
 
 **`server/log/` 파일 종류** (모두 위 정리 정책으로 자동 회수):
 
@@ -116,7 +118,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `runtime_YYYYMMDD.log` | metrics 샘플러 | 응답시간 스냅샷(`type:lat`, 5분마다) + 느린 요청 개별 기록(`type:slow`, JSON lines). **재시작으로 초기화되지 않는 부하 이력** — admin '이력' 탭이 읽음 |
 | `watchdog_events.log` | watchdog | 재기동/실패 이벤트(JSON lines) — admin 대시보드 현황 탭이 읽음 |
 | `watchdog_checks.log` | watchdog | **매 실행 1줄**(JSON lines) — 실행 빈도 자체. `mutex_busy` = 태스크 겹쳐 뜬 직접 증거 |
-| `watchdog_snap_<stamp>.txt` | watchdog | 재기동 직전 프로세스 부검 + 최신 `server_*.txt` 마지막 20줄 스냅샷(죽은 이유 원문) |
+| `watchdog_snap_<stamp>.txt` | watchdog | 재기동 직전 프로세스 부검 + **스레드 덤프**(사이드 진단 리스너에서 채집) + 최신 `server_*.txt` 마지막 20줄 스냅샷(죽은 이유 원문) |
 | `diagnose_<stamp>.txt` | diagnose_watchdog.ps1 | 진단 스크립트 리포트(수동 실행 시) |
 
 **watchdog 자동 재기동**: [register_watchdog.bat](register_watchdog.bat) 을 관리자 권한으로
@@ -135,11 +137,35 @@ gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 �
 
 **원인 추적 (admin 대시보드)**: 현황 탭 **Watchdog 상세** 카드에서 24시간 점검 결과 분포
 (정상/healthz 실패/백오프 억제/재기동/태스크 겹침) · `/healthz` 응답시간 추이 · 최근 점검
-20건(코드·소요·연속실패·부검 스냅샷 링크)을 본다. 스냅샷 링크를 누르면 **console log 탭**이
-그 파일을 연다 — 이 탭은 `server_*.txt` 외에 `watchdog_*` · `metrics_*` · `runtime_*` ·
-`faulthandler_*` · `diagnose_*` 도 선택해 볼 수 있다(그 외 파일은 열람 거부).
-재기동 원인 판별: `healthz_503` = `/healthz` 의 DB 체크 실패(report.db 잠금/디스크),
-`healthz_timeout`(code=0, ms≈30000) = 스레드 고갈·CPU 포화, `not_listening` = 프로세스 사망.
+20건(사유·코드·소요·오류·연속실패·부검 스냅샷 링크)을 본다. 스냅샷 링크를 누르면
+**console log 탭**이 그 파일을 연다 — 이 탭은 `server_*.txt` 외에 `watchdog_*` · `metrics_*` ·
+`runtime_*` · `faulthandler_*` · `diagnose_*` 도 선택해 볼 수 있다(그 외 파일은 열람 거부).
+
+> 타일의 `원인(24h)` 은 **재기동한** 이벤트의 사유라 `healthz_fail_x2`/`not_listening` 만 나온다.
+> 세분 사유(`healthz_timeout`/`healthz_connect`/`healthz_503`)는 그 아래 `실패 감지(24h)` 줄에 있다.
+> `최근:` 줄은 24h 대표값이 아니라 **마지막 이벤트 1건**이다.
+
+**healthz 실패 원인 판정표** — Watchdog 상세의 `code`/`ms`/`오류(wstat)` 조합으로 가른다:
+
+| 관측 (checks) | 보강 증거 | 판정 |
+|---|---|---|
+| `code=0, ms≈30000, wstat=Timeout` | inflight ≥ `WAITRESS_THREADS`, 스냅샷 스레드 덤프에서 다수 스레드가 같은 지점 대기 | **스레드 고갈** — 덤프의 공통 대기 지점이 근본 원인 |
+| `code=0, ms≈30000, wstat=Timeout` | inflight 낮음, cpu≈100%, `runtime_*.log` 에 slow 다수 | **CPU 포화 / GIL 경합** |
+| `code=503, ms<6000` | server 로그에 healthz db check 실패, DB 잠금 카운터 증가 | **DB 잠금** (report.db busy_timeout 5s 초과 — 백업 체크포인트 등) |
+| `wstat=ConnectFailure` (사유 `healthz_connect`), ms 작음 | `server_*.txt` 신규 다수 + `faulthandler_*` 존재, 부검 `procs=0` | **크래시 루프** (리스닝 확인~healthz 사이에 프로세스 사망) |
+| `not_listening` 반복 + 부검 `procs=N` | 프로세스는 살아있는데 리스너 소켓만 소실 | 포트/소켓 이상 |
+
+판정 순서: ① `diagnose_watchdog.ps1 -Hours 48` 로 태스크 중복·집계 착시를 먼저 배제
+② Watchdog 상세의 code/ms/사유/오류 ③ 실패 시각대 `metrics_*.log` 의 inflight·cpu
+④ `runtime_*.log` 의 slow 요청 라우트 ⑤ `watchdog_snap_*.txt` 의 스레드 덤프.
+
+**사이드 진단 리스너** ([diag_listener.py](diag_listener.py)): 기존 `/pe/report/_threads` 는
+waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같이 굶는다**. 그래서 별도 소켓·별도
+스레드로 도는 최소 HTTP 리스너를 둔다 — `127.0.0.1` 전용(외부 노출 안 됨), 포트는 `DIAG_PORT`
+(미설정 시 `PORT+1` = 운영 8081, `0` 이면 비활성). `GET /alive`(생존·inflight) ·
+`GET /threads`(전 스레드 스택). watchdog 이 **재기동 직전**(kill 이전) 여기서 덤프를 받아
+`watchdog_snap_*.txt` 에 남기므로, 고갈 현행범 스택이 재기동으로 사라지지 않는다.
+포트 충돌 등으로 기동 실패해도 서버 본체에는 영향이 없다(로그 1줄 후 비활성).
 
 **재기동 폭주 진단** (짧은 시간 다수 재기동이 의심될 때): 운영 PC 에서 관리자 권한으로
 [diagnose_watchdog.ps1](diagnose_watchdog.ps1) 을 1회 실행하면(read-only) events 간격 분석 ·
@@ -283,8 +309,16 @@ gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 �
 (health/storage/s3-status/metrics/stats(daily·users·client_errors·usage(접속 사용량 —
 Honey 실행·웹 방문 순위))/sessions/users/
 voc(overview·목록, 읽기 전용)/eval(overview·labels·**labels.csv**)/audit(.csv)/logs/list·tail) +
-`POST /api/*` (sessions/delete, session/<sid>/important·password, db/backup·cleanup,
+`POST /api/*` (sessions/delete·restore·purge, session/<sid>/important·password, db/backup·cleanup,
 eval/cases/delete·eval/session/<sid>/reexport 등).
+**세션 삭제 3종 구분**: `sessions/delete` = 관리자 **즉시 영구 삭제**(휴지통을 거치지 않고
+행·산출물·캐시 회수) / 사용자 웹 삭제(`DELETE /pe/report/session/<sid>`) = 휴지통(soft) /
+`sessions/purge` = 휴지통 세션 영구 정리. purge 는 기본이 `REPORT_TRASH_RETENTION_DAYS`(30일)
+경과분만이라 방금 버린 세션은 `not expired` 로 스킵되고, **`force:true`(명시 `session_ids`
+전용, 관리자 화면의 행별 purge 버튼)** 를 줘야 경과일과 무관하게 지운다.
+`all_expired:true` + `force` 조합은 휴지통 전체가 즉시 날아가므로 400 으로 거부한다.
+`GET /api/runtime` 은 응답시간·컴퓨트·캐시와 함께 **`active_users`(실시간 접속 사용자 —
+최근 `user_window` 초 안에 요청을 보낸 신원 목록, 무신원은 `ip:<addr>`)** 를 돌려준다.
 `GET /api/eval/labels.csv` = 코멘트 라벨 전체를 db_input 5컬럼 CSV 로 export
 (고쳐서 `eval_analyzer\db_input\run_import.bat` 으로 재적재 — [docs/13 §10](../docs/13_eval_analyzer_integration.md)).
 운영 진단용 GET 4개: `watchdog`(재기동 이력+reason 분포) · `watchdog/checks?hours=`(매 점검

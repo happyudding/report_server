@@ -213,6 +213,28 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
   </div>
   <div style="height:16px"></div>
   <div class="card">
+    <h2>실시간 접속 사용자 <span class="hint" id="auSummary">선택한 기간 안에 요청을 보낸 사람 목록 · 10초마다 갱신 (서버 재시작 시 초기화)</span>
+      <select id="auWindow" class="sel" style="float:right" title="이 기간 안에 요청이 있었으면 '접속 중'으로 봅니다">
+        <option value="60">최근 1분</option>
+        <option value="300" selected>최근 5분</option>
+        <option value="1800">최근 30분</option>
+        <option value="3600">최근 1시간</option>
+      </select></h2>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th title="Honey 내장 브라우저 계정 / SSO / 웹 로그인 신원 · 신원이 없으면 IP 로 묶입니다">사용자</th>
+        <th title="접속 경로 — Honey 내장 브라우저인지 일반 브라우저인지">접속</th>
+        <th title="클라이언트 IP">IP</th>
+        <th title="가장 최근에 보고 있던 세션">보는 세션</th>
+        <th title="마지막 요청의 서버 경로">마지막 요청</th>
+        <th class="num" title="이 기간 동안 보낸 요청 수">요청</th>
+        <th class="num" title="마지막 요청 이후 경과">최근</th>
+      </tr></thead>
+      <tbody id="auBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
+    </table></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
     <h2>리소스 시계열 <span class="hint">10초 샘플 · 24시간 보관 · 이 탭이 보일 때만 10초 갱신 (서버 재시작 시 초기화)</span>
       <select id="metricsWindow" class="sel" style="float:right" title="그래프에 표시할 기간">
         <option value="300">최근 5분</option>
@@ -252,9 +274,9 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
       <div class="m-tip"></div>
     </div>
     <div class="table-wrap" style="margin-top:12px"><table>
-      <thead><tr><th>점검 시각</th><th>결과</th><th class="num">code</th><th class="num">ms</th>
-        <th class="num">연속실패</th><th>부검 스냅샷</th></tr></thead>
-      <tbody id="wdChecksBody"><tr class="empty-row"><td colspan="6">-</td></tr></tbody>
+      <thead><tr><th>점검 시각</th><th>결과</th><th>사유</th><th class="num">code</th><th class="num">ms</th>
+        <th>오류</th><th class="num">연속실패</th><th>부검 스냅샷</th></tr></thead>
+      <tbody id="wdChecksBody"><tr class="empty-row"><td colspan="8">-</td></tr></tbody>
     </table></div>
   </div>
   <div class="row">
@@ -492,7 +514,7 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
 <!-- ═══ 세션 ═══ -->
 <div id="pSessions" class="panel">
   <div class="card">
-    <h2>세션 컨트롤 <span class="hint">업로드된 세션의 중요표시·PIN·삭제/복구를 관리합니다 · 삭제는 휴지통으로 이동하며 30일 후 purge 대상</span>
+    <h2>세션 컨트롤 <span class="hint">업로드된 세션의 중요표시·PIN·삭제/복구를 관리합니다 · 여기의 삭제는 <b>즉시 영구 삭제</b>(복구 불가) · 사용자가 웹에서 지운 세션은 🗑 휴지통에 남아 복원 또는 purge 대상</span>
       <span id="sessSummary" class="hint"></span></h2>
     <div class="toolbar">
       <input id="sessQ" class="inp" style="width:260px" placeholder="세션ID / 파일명 / product / lot 검색…">
@@ -516,7 +538,7 @@ td.detail-cell .clamp.open { -webkit-line-clamp: unset; }
       <span class="grow"></span>
       <button class="btn" id="btnPurgeExpired" title="휴지통에서 30일 경과분을 영구 삭제">🗑 경과분 purge</button>
       <button class="btn danger" id="btnBulkDelete" disabled
-              title="체크한 세션을 휴지통으로 보냅니다 (30일 안에는 복구 가능)">선택 삭제 (0)</button>
+              title="체크한 세션을 즉시 영구 삭제합니다 — 산출물·DB·캐시까지 정리되며 복구할 수 없습니다">선택 영구삭제 (0)</button>
     </div>
     <div class="table-wrap"><table>
       <thead><tr>
@@ -885,12 +907,17 @@ async function loadHealth() {
         // reason 분포 — healthz_503(DB 체크 실패) / healthz_timeout(지연) / not_listening(프로세스
         // 사망) 중 무엇인지가 원인 추적의 출발점이라 타일에서 바로 보여준다.
         const reasons = Object.entries(w.reasons_24h || {}).sort((a, b) => b[1] - a[1]);
+        // 위 reasons 는 '재기동한' 이벤트라 healthz_fail_x2 / not_listening 만 나온다.
+        // 세분 원인(healthz_timeout / healthz_connect / healthz_503)은 실패 감지 이벤트에만
+        // 붙으므로 따로 보여준다 — 재기동 3회 뒤에 실패 감지 40회가 깔려있는 걸 놓치지 않게.
+        const failReasons = Object.entries(w.fail_reasons_24h || {}).sort((a, b) => b[1] - a[1]);
         wdSkips = w.backoff_skips_24h || 0;
         wdTile = `
       <div class="tile"><div class="lbl">Watchdog 자동복구</div>
         <div class="val" style="font-size:20px${w.restarts_24h > 0 ? ";color:#dc2626" : ""}">24h 재기동 ${w.restarts_24h}회</div>
         <div class="det">기록상 총 ${w.restarts_total}회 · 마지막 점검 ${fmtClock(w.last_check)}${
           reasons.length ? `<br>원인(24h): ${reasons.map(([r, n]) => `${esc(r)} ${n}`).join(" · ")}` : ""}${
+          failReasons.length ? `<br>실패 감지(24h): ${failReasons.map(([r, n]) => `${esc(r)} ${n}`).join(" · ")}` : ""}${
           wdSkips ? `<br><span style="color:#f59e0b">⏸ 백오프 억제 ${wdSkips}회 — 재기동해도 낫지 않아 간격을 늘림</span>` : ""}${
           last ? `<br>최근: ${esc((last.ts || "").replace("T", " "))} ${esc(last.event || "")} (${esc(last.reason || "")})` : ""}</div></div>`;
       }
@@ -1172,16 +1199,23 @@ async function loadWatchdogDetail() {
       const snap = r.snap
         ? `<a href="#" class="wd-snap" data-file="${esc(r.snap)}" title="재기동 직전 서버 로그 20줄">${esc(r.snap)}</a>`
         : (r.detail ? `<span class="hint">${esc(r.detail)}</span>` : "-");
+      // 오류 셀: 짧은 wstat(Timeout / ConnectFailure …) 을 보여주고 전문은 title 로.
+      // 구버전 watchdog 이 남긴 레코드엔 wstat/err 가 없어 "-" 가 된다.
+      const errCell = (r.wstat || r.err)
+        ? `<span title="${esc(r.err || "")}">${esc(r.wstat || String(r.err).slice(0, 40))}</span>`
+        : "-";
       return `<tr><td>${esc((r.ts || "").replace("T", " "))}</td>
         <td${bad ? ' style="color:#dc2626"' : ""}>${esc(WD_RESULT_LABEL[r.result] || r.result || "-")}</td>
+        <td>${esc(r.reason || "-")}</td>
         <td class="num">${r.code == null ? "-" : r.code}</td>
         <td class="num">${r.ms == null ? "-" : r.ms}</td>
+        <td>${errCell}</td>
         <td class="num">${r.fails == null ? "-" : r.fails}</td>
         <td>${snap}</td></tr>`;
-    }).join("") || `<tr class="empty-row"><td colspan="6">점검 기록 없음 (watchdog 미등록?)</td></tr>`;
+    }).join("") || `<tr class="empty-row"><td colspan="8">점검 기록 없음 (watchdog 미등록?)</td></tr>`;
   } catch (e) {
     counts.textContent = "조회 실패: " + e;
-    body.innerHTML = `<tr class="empty-row"><td colspan="6">-</td></tr>`;
+    body.innerHTML = `<tr class="empty-row"><td colspan="8">-</td></tr>`;
   }
 }
 $("btnWdRefresh").onclick = () => loadWatchdogDetail();
@@ -1208,13 +1242,38 @@ function schedTile(label, s) {
     <div class="val" style="font-size:14px">${s.last_run ? fmtDate(s.last_run) : "아직 실행 안 됨"}</div>
     <div class="det">${mark}${esc(s.last_result || "-")}${nextTxt}</div></div>`;
 }
+// 경과 초 → 사람이 읽는 짧은 표기 (실시간 접속 사용자 표에서 사용)
+function fmtAgo(sec) {
+  if (sec == null) return "-";
+  if (sec < 60) return `${Math.round(sec)}초 전`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}분 전`;
+  return `${Math.floor(sec / 3600)}시간 ${Math.floor((sec % 3600) / 60)}분 전`;
+}
+function renderActiveUsers(au) {
+  const rows = (au && au.users) || [];
+  $("auSummary").textContent =
+    `최근 ${Math.round((au && au.window_sec || 300) / 60)}분 기준 ${rows.length}명`
+    + ` (계정 확인 ${au && au.named || 0}명 · Honey ${au && au.honey || 0}명) · 10초마다 갱신`;
+  $("auBody").innerHTML = rows.length ? rows.map(u => `
+    <tr>
+      <td>${u.user ? `<b>${esc(u.user)}</b>` : `<span style="color:#6f737e" title="신원 없는 일반 브라우저 — IP 로 묶어 표시">익명</span>`}</td>
+      <td>${u.honey ? `<span class="badge done">Honey</span>` : `<span class="badge gray">브라우저</span>`}</td>
+      <td class="mono">${esc(u.ip || "-")}</td>
+      <td>${u.session_id ? sessionLink(u.session_id) : "-"}</td>
+      <td class="mono" style="font-size:11px">${esc(u.route || "-")}</td>
+      <td class="num">${u.requests}</td>
+      <td class="num">${fmtAgo(u.ago)}</td>
+    </tr>`).join("")
+    : `<tr class="empty-row"><td colspan="7">해당 기간에 접속한 사용자가 없습니다</td></tr>`;
+}
 async function loadRuntime() {
   try {
-    const r = await getJSON("api/runtime");
+    const uw = ($("auWindow") && $("auWindow").value) || 300;
+    const r = await getJSON("api/runtime?user_window=" + encodeURIComponent(uw));
     const lat = r.latency || {}, cp = r.compute || {}, ca = r.cache || {}, lk = r.db_lock || {};
     const cs = cp.stats || {};
     const sch = r.schedulers || {};
-    const vw = r.viewers || {}, builds = r.builds || [];
+    const vw = r.viewers || {}, builds = r.builds || [], au = r.active_users || {};
     const resp = ca.response || {};
     const respBytes = ["full", "scatter", "dist_batch"].reduce((a, k) => a + ((resp[k] || {}).bytes || 0), 0);
     const lockWaits = Object.values(ca.lock_waits || {}).reduce((a, v) => a + (v.count || 0), 0);
@@ -1224,6 +1283,9 @@ async function loadRuntime() {
       <div class="tile"><div class="lbl">응답시간 (최근 ${lat.samples || 0}건)</div>
         <div class="val" style="font-size:20px">${lat.p95 || 0} ms</div>
         <div class="det">p50 ${lat.p50 || 0} · p99 ${lat.p99 || 0} · 최대 ${lat.max || 0} ms</div></div>
+      <div class="tile"><div class="lbl">실시간 접속 사용자</div>
+        <div class="val" style="font-size:20px">${au.count || 0}</div>
+        <div class="det">최근 ${Math.round((au.window_sec || 300) / 60)}분 내 요청 기준 · 계정 확인 ${au.named || 0} · Honey ${au.honey || 0}</div></div>
       <div class="tile"><div class="lbl">동시 열람 세션</div>
         <div class="val" style="font-size:20px">${vw.count || 0}</div>
         <div class="det">최근 ${Math.round((vw.window_sec || 300) / 60)}분 내 데이터 요청 기준${
@@ -1263,6 +1325,7 @@ async function loadRuntime() {
       `<tr><td class="mono">${esc(b.session_id || "")}</td><td>${esc(b.stage || "")}</td>` +
       `<td class="num"${(b.elapsed || 0) >= 60 ? ' style="color:var(--st-warn)"' : ""}>${b.elapsed}s</td></tr>`).join("")
       : `<tr class="empty-row"><td colspan="3">없음</td></tr>`;
+    renderActiveUsers(au);
     const slow = lat.slowest || [];
     $("slowRouteBody").innerHTML = slow.length ? slow.map(s =>
       `<tr><td class="mono">${esc(s.route)}</td><td class="num">${s.count}</td>` +
@@ -1278,6 +1341,8 @@ $("runtimeTiles").addEventListener("click", e => {
   const link = e.target.closest(".log-link");
   if (link) showLogsFor(link.dataset.grep || "", "error");
 });
+// 접속 기간 변경 즉시 반영 (다음 10초 갱신을 기다리지 않게)
+$("auWindow").onchange = () => loadRuntime();
 
 // 현황 탭이 화면에 보일 때만 10초 자동 갱신 — 그 외엔 서버 요청 없음
 setInterval(() => {
@@ -1737,7 +1802,7 @@ const SESS_PAGE = 100;
 let sessOffset = 0, sessTotal = 0;
 const selected = new Set();
 function updateBulkBtn() {
-  $("btnBulkDelete").textContent = `선택 삭제 (${selected.size})`;
+  $("btnBulkDelete").textContent = `선택 영구삭제 (${selected.size})`;
   $("btnBulkDelete").disabled = selected.size === 0;
 }
 async function loadSessions() {
@@ -1785,7 +1850,7 @@ async function loadSessions() {
         <td>${sessionLink(r.session_id)}</td>
         <td>${r.deleted_at
               ? `<button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="restore" data-sid="${esc(r.session_id)}">복원</button>`
-                + ` <button class="btn danger" style="height:24px;padding:0 8px;font-size:11px" data-act="purge" data-sid="${esc(r.session_id)}" title="산출물·DB 영구 삭제 (30일 경과분만)">purge</button>`
+                + ` <button class="btn danger" style="height:24px;padding:0 8px;font-size:11px" data-act="purge" data-sid="${esc(r.session_id)}" title="산출물·DB·캐시 즉시 영구 삭제 (경과일 무관, 복구 불가)">purge</button>`
               : `<button class="btn danger" style="height:24px;padding:0 8px;font-size:11px" data-act="del" data-sid="${esc(r.session_id)}">삭제</button>`}</td>
       </tr>`).join("");
   }
@@ -1841,7 +1906,7 @@ $("sessBody").addEventListener("click", async e => {
       msg.textContent = `${sid}: PIN ${r.has_password ? "설정됨" : "해제됨"}`;
       loadSessions();
     } else if (btn.dataset.act === "del") {
-      if (!confirm(`세션 ${sid} 을(를) 삭제할까요?\n마지막 참조 세션이면 S3/로컬 산출물도 함께 삭제됩니다.`)) return;
+      if (!confirm(`세션 ${sid} 을(를) 영구 삭제할까요?\n휴지통을 거치지 않고 즉시 지워지며 복구할 수 없습니다.\n마지막 참조 세션이면 S3/로컬 산출물도 함께 삭제됩니다.`)) return;
       const r = await postJSON("api/sessions/delete", { session_ids: [sid] });
       msg.textContent = r.deleted.length ? `삭제 완료: ${sid}` : `삭제 실패: ${JSON.stringify(r.failed)}`;
       loadSessions();
@@ -1851,8 +1916,10 @@ $("sessBody").addEventListener("click", async e => {
         : `복원 안 됨: ${JSON.stringify(r.skipped)}`;
       loadSessions();
     } else if (btn.dataset.act === "purge") {
-      if (!confirm(`세션 ${sid} 을(를) 영구 삭제(purge)할까요?\n산출물·DB 가 완전히 정리되며 복구할 수 없습니다.\n(휴지통 이동 후 30일이 지난 세션만 가능)`)) return;
-      const r = await postJSON("api/sessions/purge", { session_ids: [sid], dry_run: false });
+      // 관리자 수동 purge 는 경과일을 따지지 않는다(force) — 방금 휴지통에 넣은 세션도
+      // 즉시 지울 수 있어야 하기 때문. 자동 정리(경과분 일괄)는 계속 30일 규칙을 지킨다.
+      if (!confirm(`세션 ${sid} 을(를) 지금 영구 삭제(purge)할까요?\n산출물·DB·캐시가 완전히 정리되며 복구할 수 없습니다.\n(휴지통 경과일과 무관하게 즉시 삭제됩니다)`)) return;
+      const r = await postJSON("api/sessions/purge", { session_ids: [sid], dry_run: false, force: true });
       if (r.purged && r.purged.length) msg.textContent = `purge 완료: ${sid}`;
       else msg.textContent = `purge 안 됨: ${JSON.stringify(r.skipped || r.failed || r)}`;
       loadSessions();
@@ -1861,7 +1928,7 @@ $("sessBody").addEventListener("click", async e => {
 });
 $("btnBulkDelete").onclick = async () => {
   if (!selected.size) return;
-  const typed = prompt(`선택한 ${selected.size}개 세션을 삭제합니다.\n마지막 참조 세션의 S3/로컬 산출물도 함께 삭제됩니다.\n\n계속하려면 DELETE 를 입력하세요:`);
+  const typed = prompt(`선택한 ${selected.size}개 세션을 즉시 영구 삭제합니다 (복구 불가).\n마지막 참조 세션의 S3/로컬 산출물도 함께 삭제됩니다.\n\n계속하려면 DELETE 를 입력하세요:`);
   if (typed !== "DELETE") return;
   const msg = $("sessMsg");
   msg.className = "msg"; msg.textContent = "삭제 중…";

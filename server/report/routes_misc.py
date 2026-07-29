@@ -663,12 +663,6 @@ def debug_threads():
     admin 로그인(master 게이트) PC 에서만 — 그 외엔 존재 자체를 숨긴다(404)."""
     if not _is_master():
         abort(404)
-    import sys, threading, traceback
-    out = []
-    tid_to_name = {t.ident: t.name for t in threading.enumerate()}
-    for tid, frame in sys._current_frames().items():
-        name = tid_to_name.get(tid, "?")
-        out.append(f"=== Thread {tid} ({name}) ===")
-        out.append("".join(traceback.format_stack(frame)))
+    from diag_listener import dump_threads_text
     from flask import Response
-    return Response("\n".join(out), mimetype="text/plain; charset=utf-8")
+    return Response(dump_threads_text(), mimetype="text/plain; charset=utf-8")

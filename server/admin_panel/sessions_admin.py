@@ -135,6 +135,13 @@ def _delete_one(session):
         except Exception:
             _log.exception("[admin-panel] cache invalidate failed for %s", akey)
         _remove_rawedit_backups(akey)
+    # Note 이미지는 세션 단위라 analysis_key 공유 여부와 무관하게 정리한다 (purge 와 동일).
+    # 관리자 삭제는 행 자체를 지우는 영구 삭제라, 여기서 안 지우면 영구 고아가 된다.
+    try:
+        for warning in storage_gateway.delete_note_images(sid):
+            _log.warning("[admin-panel] note image (%s): %s", sid, warning)
+    except Exception:
+        _log.exception("[admin-panel] note image cleanup failed for %s", sid)
     report_db.delete_session(sid)
 
 
@@ -209,12 +216,15 @@ def _purge_one(session):
 
 
 def purge_trashed(session_ids=None, all_expired=False, dry_run=True, cutoff_days=None,
-                  audit=None):
+                  audit=None, force=False):
     """휴지통 세션 영구 삭제(purge) — deleted_at 이 cutoff_days(기본 REPORT_TRASH_RETENTION_DAYS)
     이전인 경과분만 대상. 관리자 수동 실행(라우트)과 cleanup 스케줄러
     (report_cleanup.run_cleanup — REPORT_CLEANUP_DRYRUN 존중)가 같이 쓴다.
 
     all_expired=True 면 경과분 전체, 아니면 session_ids 중 경과분만(미경과분은 skipped).
+    force=True(관리자 수동 + 명시 session_ids 전용)면 경과일 검사를 건너뛴다 — 방금 휴지통에
+    넣은 세션도 즉시 영구 삭제해야 할 때가 있어서다. all_expired 경로와 스케줄러는 force 를
+    쓰지 않는다(자동 경로가 미경과분을 지우면 복구 창이 사라진다).
     dry_run=True 면 실제 정리 없이 대상만 집계/감사(result='dryrun'). audit(session, result)
     는 라우트가 넘기는 감사 콜백. 공유 analysis_key 는 count_sessions_for_analysis_key
     가드로 마지막 참조일 때만 산출물을 회수한다."""
@@ -233,7 +243,7 @@ def purge_trashed(session_ids=None, all_expired=False, dry_run=True, cutoff_days
             if not session or not session.get("deleted_at"):
                 skipped_early.append({"session_id": sid, "reason": "not trashed"})
                 continue
-            if int(session.get("deleted_at")) > cutoff:
+            if not force and int(session.get("deleted_at")) > cutoff:
                 skipped_early.append({"session_id": sid, "reason": "not expired"})
                 continue
             targets.append(dict(session))
@@ -254,7 +264,7 @@ def purge_trashed(session_ids=None, all_expired=False, dry_run=True, cutoff_days
             audit(session, "fail")
 
     out = {"scanned": len(targets), "purged": purged, "failed": failed,
-           "dry_run": bool(dry_run), "cutoff_days": days}
+           "dry_run": bool(dry_run), "cutoff_days": days, "force": bool(force)}
     if not all_expired:
         out["skipped"] = skipped_early
     return out

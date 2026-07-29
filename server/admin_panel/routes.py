@@ -252,7 +252,7 @@ def api_metrics_file_history():
 @admin_panel_bp.get("/api/runtime")
 def api_runtime():
     """응답시간 백분위 · 컴퓨트 워커 · 캐시 히트율 · DB 잠금 · 스케줄러 ·
-    동시 열람 세션 · 진행 중 콜드 빌드.
+    동시 열람 세션 · 실시간 접속 사용자 · 진행 중 콜드 빌드.
 
     개별 API 로 쪼개면 화면이 여러 번 왕복해야 해서 한 번에 묶어 돌려준다. 각 구성요소는
     실패해도 나머지를 막지 않는다 (모듈 미기동/kill-switch 대비)."""
@@ -265,6 +265,11 @@ def api_runtime():
         out["viewers"] = metrics.viewers()
     except Exception:
         out["viewers"] = None
+    try:
+        out["active_users"] = metrics.active_users(
+            request.args.get("user_window", metrics.ACTIVE_USER_WINDOW_SEC))
+    except Exception:
+        out["active_users"] = None
     try:
         from web_report import build_status
         out["builds"] = build_status.snapshot_all()
@@ -386,11 +391,13 @@ def api_sessions_restore():
 
 @admin_panel_bp.post("/api/sessions/purge")
 def api_sessions_purge():
-    """휴지통 세션 영구 삭제 — 30일(REPORT_TRASH_RETENTION_DAYS) 경과분만.
-    body: {session_ids:[...]} 또는 {all_expired:true}, dry_run(기본 true)."""
+    """휴지통 세션 영구 삭제 — 기본은 30일(REPORT_TRASH_RETENTION_DAYS) 경과분만.
+    body: {session_ids:[...]} 또는 {all_expired:true}, dry_run(기본 true),
+    force(기본 false — true 면 경과일 무시, 명시 session_ids 에만 허용)."""
     body = request.get_json(force=True, silent=True) or {}
     all_expired = bool(body.get("all_expired"))
     dry_run = body.get("dry_run", True)
+    force = bool(body.get("force"))
     sids = body.get("session_ids")
     if not all_expired:
         if not isinstance(sids, list) or not sids or len(sids) > 200:
@@ -398,10 +405,14 @@ def api_sessions_purge():
         for sid in sids:
             if not isinstance(sid, str) or not _SESSION_ID_RE.match(sid):
                 abort(400, f"invalid session_id: {sid!r}")
+    elif force:
+        # 전체 경과분 일괄 경로에 force 를 허용하면 휴지통 전체가 즉시 날아간다 — 차단.
+        abort(400, "force 는 session_ids 지정 시에만 사용할 수 있습니다")
     result = sessions_admin.purge_trashed(
-        session_ids=sids, all_expired=all_expired, dry_run=bool(dry_run),
+        session_ids=sids, all_expired=all_expired, dry_run=bool(dry_run), force=force,
         audit=lambda session, res: _audit(
-            "delete", session=session, changed_fields="purge", result=res))
+            "delete", session=session,
+            changed_fields="purge_force" if force else "purge", result=res))
     return jsonify(result)
 
 

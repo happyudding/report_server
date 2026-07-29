@@ -304,6 +304,11 @@ if __name__ == "__main__":
         # threads: 동시에 처리할 요청 수 (CPU-bound 계산은 web_report 캐시가 1회로 줄여줌).
         from waitress import serve
 
+        # waitress 스레드가 전부 묶여 healthz 조차 굶는 상황을 진단하려면, 그 풀 밖에서
+        # 도는 리스너가 필요하다 (watchdog 이 재기동 직전 스레드 덤프를 여기서 받는다).
+        from diag_listener import start_diag_listener
+        start_diag_listener(port)
+
         threads = int(os.getenv("WAITRESS_THREADS", "13"))
         # waitress 기본 max_request_body_size 는 1GB — Flask MAX_CONTENT_LENGTH(기본 2048MB)
         # 보다 작아 대용량 업로드(parquet+dist blob 첨부)가 Flask 에 닿기 전에 413 으로

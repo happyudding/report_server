@@ -477,6 +477,19 @@ class HoneyMainWindow(QMainWindow):
             elif etype == QEvent.Type.Drop:
                 self._handle_csv_drop(event)
                 return True
+        elif obj is getattr(self, "lbl_ai_comment", None):
+            # 숨김 스위치: 글자 10번 클릭 → AI Comment 체크박스 활성화(이번 실행 한정).
+            # 활성화 후에는 원래 체크박스 글자처럼 클릭이 토글로 동작한다.
+            if event.type() == QEvent.Type.MouseButtonPress:
+                if self.chk_ai_comment.isEnabled():
+                    self.chk_ai_comment.toggle()
+                else:
+                    self._ai_comment_clicks += 1
+                    if self._ai_comment_clicks >= 10:
+                        self.chk_ai_comment.setEnabled(True)
+                        self.lbl_ai_comment.setStyleSheet("color: #4A3B1A;")
+                        self._status("AI Comment 사용 가능")
+                return True
         elif obj is getattr(self, "progress_status", None):
             # 진행바가 보이면 하단 dock 을 펴고, 숨겨지면 접는다 (관찰만 — 이벤트 통과).
             dock = getattr(self, "dock_log", None)
@@ -554,7 +567,7 @@ class HoneyMainWindow(QMainWindow):
     def _build_controls_panel(self, QWidget, QVBoxLayout, QHBoxLayout):
         """'새 리포트' 입력 창 — 기본 숨김, 사이드바 🆕 로 왼쪽에서 슬라이드.
         파일 열기·D1·Product Type·파일 리스트·저장명·분석 모드·Start/Web Report 를 담는다."""
-        from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QGroupBox,
+        from PyQt6.QtWidgets import (QButtonGroup, QCheckBox, QGroupBox, QLabel,
                                      QRadioButton, QSizePolicy)
 
         container = QWidget()
@@ -613,14 +626,25 @@ class HoneyMainWindow(QMainWindow):
 
         # AI Comment — 서버 eval_analyzer 분석 결과를 Issue Table 에 표시할지 여부.
         # 값은 settings.json 에 영속(webreport_ai_comment). 서버 파이프라인 검증
-        # 전까지 비활성 노출 — 활성화는 setEnabled(True) 한 줄.
-        self.chk_ai_comment = QCheckBox("AI Comment")
+        # 전까지 비활성 노출 — "AI Comment" 글자를 10번 누르면 이번 실행 동안만
+        # 활성화된다(숨김 스위치 — eventFilter 의 lbl_ai_comment 분기).
+        # disabled 위젯은 마우스 이벤트를 못 받으므로 글자를 별도 라벨로 분리했다.
+        self.chk_ai_comment = QCheckBox("")
         self.chk_ai_comment.setChecked(
             bool(app_settings.get_setting("webreport_ai_comment", False)))
         self.chk_ai_comment.toggled.connect(
             lambda v: app_settings.set_setting("webreport_ai_comment", bool(v)))
         self.chk_ai_comment.setEnabled(False)
-        web_v.addWidget(self.chk_ai_comment)
+        self._ai_comment_clicks = 0
+        self.lbl_ai_comment = QLabel("AI Comment")
+        self.lbl_ai_comment.setStyleSheet("color: #A89C77;")   # 비활성 글자색
+        self.lbl_ai_comment.installEventFilter(self)
+        ai_row = QHBoxLayout()
+        ai_row.setSpacing(6)
+        ai_row.addWidget(self.chk_ai_comment)
+        ai_row.addWidget(self.lbl_ai_comment)
+        ai_row.addStretch(1)
+        web_v.addLayout(ai_row)
         web_v.addWidget(self.btn_web_report)
 
         # Excel Report — 로컬 xlsx 생성/분석 (기존 Start 버튼).

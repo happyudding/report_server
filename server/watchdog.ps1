@@ -111,17 +111,25 @@ function Test-Listening {
 }
 
 # 판정은 .ok 만 쓴다(로직 불변). 진단을 위해 코드(503=DB fail)·소요시간·오류를 함께 반환.
+# wstat = WebException.Status enum 문자열(Timeout / ConnectFailure / ProtocolError ...).
+# 예외 메시지는 OS 언어를 타므로 문자열 매칭 대신 이 enum 으로 실패 종류를 가른다.
 function Test-Healthz {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/healthz" -UseBasicParsing -TimeoutSec 30
         $sw.Stop()
-        return @{ ok = ($r.StatusCode -eq 200); code = [int]$r.StatusCode; ms = $sw.ElapsedMilliseconds; err = '' }
+        return @{ ok = ($r.StatusCode -eq 200); code = [int]$r.StatusCode; ms = $sw.ElapsedMilliseconds
+                  wstat = ''; err = '' }
     } catch {
         $sw.Stop()
         $code = 0
+        $wstat = ''
+        if ($_.Exception -is [System.Net.WebException]) { $wstat = "$($_.Exception.Status)" }
         if ($_.Exception.Response) { try { $code = [int]$_.Exception.Response.StatusCode } catch { } }
-        return @{ ok = $false; code = $code; ms = $sw.ElapsedMilliseconds; err = $_.Exception.Message }
+        # 이벤트 detail 이 길어지면 1MB 캡이 이력을 조기에 밀어낸다 — 한 줄로 정규화 후 200자 절단.
+        $msg = ("$($_.Exception.Message)" -replace '\s+', ' ')
+        if ($msg.Length -gt 200) { $msg = $msg.Substring(0, 200) }
+        return @{ ok = $false; code = $code; ms = $sw.ElapsedMilliseconds; wstat = $wstat; err = $msg }
     }
 }
 
@@ -140,7 +148,24 @@ function Get-ServerProcSummary {
     return ("procs={0} [{1}]" -f $procs.Count, ($parts -join ' '))
 }
 
-# 킬 이전에 최신 server_*.txt 의 마지막 20줄을 스냅샷 파일로 보존 (죽은 이유 원문).
+# 킬 이전에 사이드 진단 리스너(diag_listener.py)에서 스레드 덤프를 받아온다.
+# waitress 스레드가 전부 묶여 healthz 가 굶는 상황에서도 이 리스너는 별도 소켓·스레드라
+# 응답한다 — "어떤 요청이 스레드를 잡고 있었나"를 재기동으로 잃지 않게 하는 유일한 증거다.
+# 서버가 이미 죽었거나 구버전(리스너 없음)이면 3초 후 포기하고 그대로 진행한다.
+function Get-DiagDump {
+    $diagPort = if ($env:DIAG_PORT) { [int]$env:DIAG_PORT } else { $Port + 1 }
+    if ($diagPort -le 0) { return '(diag listener 비활성 DIAG_PORT=0)' }
+    try {
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$diagPort/threads" -UseBasicParsing -TimeoutSec 3
+        $txt = "$($r.Content)"
+        if ($txt.Length -gt 8192) { $txt = $txt.Substring(0, 8192) + "`r`n... (8KB 절단)" }
+        return $txt
+    } catch {
+        return ("(diag listener 무응답 :{0} — {1})" -f $diagPort, ("$($_.Exception.Message)" -replace '\s+', ' '))
+    }
+}
+
+# 킬 이전에 최신 server_*.txt 의 마지막 20줄 + 스레드 덤프를 스냅샷 파일로 보존 (죽은 이유 원문).
 # 큰 텍스트를 이벤트 detail 에 넣으면 1MB 캡이 이벤트 이력을 조기 삭제하므로 별도 파일로 둔다.
 function Save-Snapshot([string]$reason, [string]$autopsy) {
     try {
@@ -150,8 +175,10 @@ function Save-Snapshot([string]$reason, [string]$autopsy) {
         $content = @(
             ("reason : {0}" -f $reason),
             ("autopsy: {0}" -f $autopsy),
-            ("ts     : {0}" -f (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss'))
+            ("ts     : {0}" -f (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss')),
+            '--- 스레드 덤프 (diag listener) ---'
         )
+        $content += @((Get-DiagDump) -split "`r?`n")
         if ($latest) {
             $content += ("--- {0} (마지막 20줄) ---" -f $latest.Name)
             $content += @(Get-Content $latest.FullName -Tail 20 -ErrorAction SilentlyContinue)
@@ -288,24 +315,33 @@ try {
             Write-Check @{ result = 'ok'; listen = 1; code = $hz.code; ms = $hz.ms; elapsed_ms = $swRun.ElapsedMilliseconds }
         } else {
             $fails = (Get-FailCount) + 1
-            $hzReason = if ($hz.code -eq 503) { 'healthz_503' } else { 'healthz_timeout' }
+            # 원인 3분류. healthz_timeout 은 기존 문자열을 유지한다(구 로그·운영 관습 호환) —
+            # '연결 거부'만 healthz_connect 로 떼어낸다. 서버가 리스닝 중인데 연결이 거부되면
+            # 스레드 고갈(=응답 지연)이 아니라 프로세스가 방금 죽었다는 뜻이라 대응이 다르다.
+            $hzReason = if ($hz.code -eq 503) { 'healthz_503' }
+                        elseif ($hz.wstat -eq 'ConnectFailure') { 'healthz_connect' }
+                        else { 'healthz_timeout' }
+            $hzInfo = "code=$($hz.code) ms=$($hz.ms) wstat=$($hz.wstat) err=$($hz.err)"
             if ($fails -ge 2) {
                 $skip = Test-BackoffSkip 'healthz_fail_x2'
                 if ($skip) {
                     # fail 카운터는 리셋하지 않는다 — gap 이 지나면 다음 주기에 곧바로 재기동된다.
                     Set-FailCount $fails
-                    Write-Event 'backoff_skip' $hzReason "$skip (code=$($hz.code) ms=$($hz.ms))"
+                    Write-Event 'backoff_skip' $hzReason "$skip ($hzInfo)"
                     Write-Check @{ result = 'backoff_skip'; reason = $hzReason; listen = 1; code = $hz.code; ms = $hz.ms
+                                   wstat = $hz.wstat; err = $hz.err
                                    fails = $fails; detail = $skip; elapsed_ms = $swRun.ElapsedMilliseconds }
                 } else {
                     Restart-Server 'healthz_fail_x2'
                     Write-Check @{ result = $script:lastRestartResult; reason = $hzReason; listen = 1; code = $hz.code; ms = $hz.ms
+                                   wstat = $hz.wstat; err = $hz.err
                                    fails = $fails; procs = $script:lastAutopsy; snap = $script:lastSnap; elapsed_ms = $swRun.ElapsedMilliseconds }
                 }
             } else {
                 Set-FailCount $fails
-                Write-Event 'healthz_fail' $hzReason "healthz 무응답 ($fails/2) code=$($hz.code) ms=$($hz.ms) — 다음 주기에도 실패 시 재기동"
-                Write-Check @{ result = 'healthz_fail'; listen = 1; code = $hz.code; ms = $hz.ms; fails = $fails; elapsed_ms = $swRun.ElapsedMilliseconds }
+                Write-Event 'healthz_fail' $hzReason "healthz 무응답 ($fails/2) $hzInfo — 다음 주기에도 실패 시 재기동"
+                Write-Check @{ result = 'healthz_fail'; reason = $hzReason; listen = 1; code = $hz.code; ms = $hz.ms
+                               wstat = $hz.wstat; err = $hz.err; fails = $fails; elapsed_ms = $swRun.ElapsedMilliseconds }
             }
         }
     }

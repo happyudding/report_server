@@ -58,6 +58,7 @@ def test_watchdog_status():
         {"ts": _ts(400), "event": "restart", "reason": "healthz_503"},
         {"ts": _ts(300), "event": "restart_fail", "reason": "not_listening"},
         {"ts": _ts(200), "event": "healthz_fail", "reason": "healthz_timeout"},
+        {"ts": _ts(150), "event": "healthz_fail", "reason": "healthz_connect"},
         {"ts": _ts(30), "event": "backoff_skip", "reason": "healthz_503",
          "detail": "재기동 억제: 최근1h 3회"},
     ])
@@ -65,6 +66,10 @@ def test_watchdog_status():
     assert st["restarts_24h"] == 3, st["restarts_24h"]        # 24h 밖 1건 제외
     assert st["restarts_total"] == 4, st["restarts_total"]     # 전체는 4건
     assert st["reasons_24h"] == {"healthz_503": 2, "not_listening": 1}, st["reasons_24h"]
+    # 재기동 reason(위)과 실패 감지 reason(아래)은 별개 집계다 — 세분 원인
+    # (healthz_timeout/healthz_connect)은 재기동 이벤트에 안 붙으므로 여기서만 보인다.
+    assert st["fail_reasons_24h"] == {"healthz_timeout": 1, "healthz_connect": 1,
+                                      "healthz_503": 1}, st["fail_reasons_24h"]
     assert st["backoff_skips_24h"] == 1, st["backoff_skips_24h"]
     assert st["last_backoff"]["reason"] == "healthz_503"
     assert st["events"][0]["event"] == "backoff_skip", "최신 먼저 정렬이 아님"
@@ -76,8 +81,10 @@ def test_watchdog_checks():
     for i in range(5):
         recs.append({"ts": _ts(100 - i * 10), "result": "ok", "listen": 1,
                      "code": 200, "ms": 10 + i})
-    recs.append({"ts": _ts(40), "result": "healthz_fail", "listen": 1,
-                 "code": 503, "ms": 25, "fails": 1})
+    # 신형 레코드(wstat/err/reason 포함) — 구형 레코드와 섞여도 파싱돼야 한다
+    recs.append({"ts": _ts(40), "result": "healthz_fail", "reason": "healthz_timeout",
+                 "listen": 1, "code": 0, "ms": 30012, "wstat": "Timeout",
+                 "err": "작업 시간을 초과했습니다.", "fails": 1})
     recs.append({"ts": _ts(35), "result": "backoff_skip", "listen": 1, "code": 503,
                  "ms": 24, "fails": 2, "detail": "재기동 억제"})
     recs.append({"ts": _ts(30), "result": "mutex_busy"})
@@ -92,6 +99,12 @@ def test_watchdog_checks():
     assert ck["hz_series"]["ts"] == sorted(ck["hz_series"]["ts"]), "시계열 정렬 아님"
     assert ck["recent"][0]["result"] == "mutex_busy", "최신 먼저 정렬이 아님"
     assert ck["coverage_from"] is not None
+    # 신형 진단 필드가 손실 없이 프런트까지 통과하는가 (admin 상세 '사유'/'오류' 열의 재료)
+    hz = next(r for r in ck["recent"] if r["result"] == "healthz_fail")
+    assert hz["wstat"] == "Timeout" and hz["reason"] == "healthz_timeout", hz
+    assert "시간" in hz["err"], hz
+    # 구형 레코드(wstat/err 없음)도 그대로 통과 — 프런트가 "-" 로 처리한다
+    assert "wstat" not in ck["recent"][0], ck["recent"][0]
 
     # 다운샘플: max_points 를 넘으면 줄어들되 추이는 남는다
     small = sysinfo.watchdog_checks(hours=24, max_points=3)
