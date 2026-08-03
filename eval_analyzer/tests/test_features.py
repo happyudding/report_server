@@ -38,6 +38,44 @@ def test_cdf_gap_large_for_two_clusters():
     assert features._cdf_gap(uniform) < features._cdf_gap(two_clusters)
 
 
+def test_outlier_ratio_mad_zero_fallback():
+    """과반 동일값(MAD=0)이라도 소수 폭주값을 outlier 로 잡는다 (meanAD 폴백)."""
+    vals = [5.0] * 20 + [100.0]          # MAD=0, 1개 폭주
+    m = {"stdev": float(np.std(vals, ddof=1))}
+    f = features.compute(_case(vals, lsl=0, usl=200), m, "ev1")
+    assert f["outlier_ratio"] == pytest.approx(1 / 21)
+    # 완전 동일값은 여전히 0 (CONSTANT_VALUE 몫)
+    same = [5.0] * 10
+    f2 = features.compute(_case(same, lsl=0, usl=10), {"stdev": 0.0}, "ev1")
+    assert f2["outlier_ratio"] == 0.0
+
+
+def test_value_gap_separated_vs_quantized():
+    """separated 는 값축 빈 구간 기준 — 양자화(동일값 쏠림)와 구분된다."""
+    # 두 무리(0 근처 45개 + 10 근처 15개) — 값축 간격이 범위의 대부분
+    two = np.array([0.0 + i * 0.01 for i in range(45)] + [10.0 + i * 0.01 for i in range(15)])
+    gap, minor = features._value_gap(two)
+    assert gap > 0.9
+    assert minor == pytest.approx(15 / 60)
+    # 양자화 데이터(0/1/2 반복) — cdf_gap 은 크지만 값축 간격은 균등
+    quant = np.array([0.0, 1.0, 2.0] * 20)
+    gap_q, _ = features._value_gap(quant)
+    assert gap_q == pytest.approx(0.5)
+    assert features._cdf_gap(quant) > 30.0   # 구 지표는 여기서 컸다(오발화 원인)
+
+
+def test_modality_v2_separated_uses_value_gap():
+    """이산(양자화) 단봉 데이터는 separated 로 오발화하지 않아야 한다."""
+    th = dict(thresholds_for({}))
+    # 값 2개뿐인 양자화: n_modes=2 가 아닐 수 있으니 직접 분기 함수를 검증
+    assert features._classify_modality_v2(
+        100, 0.0, 1, 0.2, 0.6, 0.05, 0.4, th) is None      # value_gap 작음 → 미발화
+    assert features._classify_modality_v2(
+        100, 0.0, 1, 0.2, 0.6, 0.9, 0.25, th) == "separated"  # 진짜 분리
+    assert features._classify_modality_v2(
+        100, 0.0, 1, 0.2, 0.6, 0.9, 0.01, th) is None      # 소수쪽 질량 미달 → 미발화
+
+
 def test_spatial_edge_concentration():
     th = thresholds_for({})
     # x=1..10 (y=0), fail 은 edge(x=9,10) 에만

@@ -365,6 +365,111 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
     return result
 
 
+# ── 관리자 정답 라벨 (eval 패널 트레이스 → 예측·정답 쌍) ─────────────────────
+# 엔진 판정(evaluation)과 사람 정답(label.eval_id 연결)을 같은 case_id 로 저장한다 —
+# 채점(precision/recall)과 이후 보정 검증의 원재료. 코멘트 export(labeler='web_report')와
+# 구분하기 위해 labeler='eval-panel' 을 쓰고, 같은 case 재검수 시 이전 패널 라벨을 교체한다.
+_PANEL_LABELER = "eval-panel"
+_STATUS_VOCAB = ("OK", "MONITOR", "MINOR", "MAJOR", "CRITICAL")
+
+
+def save_human_label(session: dict, *, item: str, bin_, item_class: str,
+                     engine: dict, human: dict) -> dict:
+    """트레이스 케이스 1건에 대한 (엔진 판정, 사람 정답) 쌍 저장.
+
+    engine: {engine_version, status, confidence, data_completeness, comment,
+             primary_signature, secondary_signatures}  — 트레이스 스냅샷 그대로.
+    human:  {accepted(bool), human_status(정정 시), human_comment(선택),
+             root_cause_category(선택), reviewer(선택)}
+    case 매핑은 코멘트 export 와 동일(lot 수준, wafer_number=None) — 같은 case 공간에서
+    코멘트 라벨과 조인된다. value_type 은 트레이스의 item_class 에서 취해 실측 unit 과
+    일치시킨다(기존 item_master 가 있으면 재사용 — value_type 덮어쓰기 방지).
+    """
+    from . import ai_comment
+    meta = ai_comment._session_meta(session, 0)
+    if meta is None:
+        raise ValueError(f"product_type={session.get('product_type')!r} 는 평가 대상이 아님")
+    meta["wafer_number"] = None
+
+    parts = (item_class or "").split("|")
+    category_major = parts[0] if len(parts) == 3 else "NON_TRIM"
+    value_type = parts[1] if len(parts) == 3 and parts[1] else "P_F"
+
+    accepted = bool(human.get("accepted"))
+    engine_status = str(engine.get("status") or "").strip() or None
+    human_status = engine_status if accepted else str(human.get("human_status") or "").strip()
+    if human_status not in _STATUS_VOCAB:
+        raise ValueError(f"human_status 는 {_STATUS_VOCAB} 중 하나여야 함: {human_status!r}")
+    human_comment = str(human.get("human_comment") or "").strip() or None
+
+    store, engine_ingest = _engine()
+    alias = engine_ingest._alias_map()
+    session_id = str(session.get("session_id") or "")
+
+    with cache.keyed_lock_ctx(("eval_export", session_id)):
+        conn = open_conn()
+        try:
+            run_id = _find_run_id(conn, session_id)
+            if run_id is None:
+                run_id = store.create_ingest_run({
+                    "product_name": meta["product_name"], "lot_id": meta["lot_id"],
+                    "source_file": str(session.get("file_name") or ""),
+                    "analysis_key": session.get("analysis_key"),
+                    "session_id": session_id, "ingested_by": _PANEL_LABELER,
+                }, conn=conn)
+            store.upsert_product_master(meta, conn=conn)
+            # 기존 item 은 재사용 — 없을 때만 트레이스의 value_type 으로 생성
+            # (upsert 로 덮으면 코멘트 export 가 넣은 unit/value_type 이 훼손된다).
+            item_canonical = alias.get(item, engine_ingest._canonicalize(item))
+            item_id = store.resolve_item_id(item, conn=conn)
+            if item_id is None:
+                item_id = store.upsert_item_master(
+                    item_canonical, item, None, None, category_major, None,
+                    value_type, None, conn=conn)
+                store.upsert_item_alias(item, item_id, conn=conn)
+
+            case_id = store.make_case_id(meta["product_name"], meta["lot_id"],
+                                         None, item_id, bin_, meta["revision"])
+            store.upsert_fail_case(case_id, meta["product_name"], meta["lot_id"],
+                                   None, item_id, bin_, meta["revision"],
+                                   f"{category_major}|{value_type}|"
+                                   f"{bin_ if bin_ is not None else ''}", conn=conn)
+            store.link_run_case(run_id, case_id, conn=conn)
+
+            eval_id = store.save_evaluation(
+                case_id, run_id, str(engine.get("engine_version") or "ev1"), None,
+                engine_status, engine.get("confidence"),
+                engine.get("data_completeness"), engine.get("comment"), conn=conn)
+            sig_rows = []
+            if engine.get("primary_signature"):
+                sig_rows.append({"id": engine["primary_signature"],
+                                 "role": "primary", "score": 1.0})
+            sig_rows += [{"id": s, "role": "secondary", "score": None}
+                         for s in engine.get("secondary_signatures") or []]
+            if sig_rows:
+                store.save_case_signature(eval_id, sig_rows, conn=conn)
+
+            # 같은 case 의 이전 패널 검수는 교체 (case 당 최신 정답 1건 유지)
+            conn.execute("DELETE FROM label WHERE case_id=? AND labeler=?",
+                         (case_id, _PANEL_LABELER))
+            label_id = store.insert_label(
+                case_id, eval_id, human_status,
+                str(human.get("root_cause_category") or "").strip() or None, None,
+                1 if accepted else 0,
+                1 if human_comment else 0,
+                human_comment, _PANEL_LABELER,
+                str(human.get("reviewer") or "").strip() or None, "manual", conn=conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    return {"case_id": case_id, "eval_id": eval_id, "label_id": label_id,
+            "human_status": human_status, "accepted": accepted}
+
+
 def safe_export(session_id: str, *, report_db, upload_root, tables=None) -> dict:
     """export 실패 격리 — 예외 시 warning 로그 + skipped (ai_comment.safe_build 관례)."""
     try:

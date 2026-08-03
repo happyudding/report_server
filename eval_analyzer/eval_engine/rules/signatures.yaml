@@ -92,11 +92,12 @@ signatures:
     evidence: ["yield {yield}"]
 
   - id: SUBPOP_GAP
+    # 특수분기 — when_metric/evidence 는 실평가에 안 쓰인다(features.modality_v2 로 판정).
     when_metric: { bimodality_score: ">bimodality_warn" }
     status_hint: MAJOR
     phenomenon_ko : "분포가 분리되는 양상입니다."
     action_ko: "분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
-    evidence: ["bimodality_score {bimodality_score}", "cdf_gap {cdf_gap}"]
+    evidence: ["bimodality_score {bimodality_score}", "density_gap {density_gap}"]
 
   - id: BIDIR_TAIL
     enabled: false

@@ -145,6 +145,7 @@ td.clipcell.open .clip { white-space: pre-wrap; word-break: break-word; max-widt
   <button class="tab" data-panel="pSignatures">Signatures</button>
   <button class="tab" data-panel="pTrace">L0~L6 트레이스</button>
   <button class="tab" data-panel="pEval">Eval DB</button>
+  <button class="tab" data-panel="pScoring">채점</button>
   <button class="tab" data-panel="pMaint">검증 · 백업</button>
 </div>
 
@@ -281,6 +282,36 @@ td.clipcell.open .clip { white-space: pre-wrap; word-break: break-word; max-widt
     </table></div>
     <div class="pager" id="evalPager"></div>
     <div class="msg" id="evalMsg">Issue Table 의 PTE/개발 comment 가 세션 업로드·편집 시마다 자동 적재됩니다 (eval_analyzer 소비용 · report.db 와 분리된 별도 DB). 과거 사례를 손으로 넣으려면 CSV 를 내려받아 고친 뒤 서버에서 eval_analyzer\db_input\run_import.bat 을 실행하세요.</div>
+  </div>
+</div>
+
+<!-- ── 채점 (엔진 판정 vs 사람 정답) ────────────────────────────────────── -->
+<div class="panel" id="pScoring">
+  <div class="card">
+    <h2>채점 — 엔진 판정 vs 사람 정답
+      <span class="hint">트레이스 탭의 "정답 라벨"이 쌓여야 계산됩니다 (evaluation ⨝ label)</span>
+      <button class="btn" id="scRefresh" style="float:right">새로고침</button></h2>
+    <div class="note" style="margin-bottom:12px">
+      <b>정밀도(precision)</b> = 엔진이 MAJOR 이상이라고 한 것 중 사람도 MAJOR 이상이라고 한 비율(높을수록 오탐 적음) ·
+      <b>재현율(recall)</b> = 사람이 MAJOR 이상이라고 한 것 중 엔진이 잡아낸 비율(높을수록 미탐 적음)
+    </div>
+    <div class="tiles" id="scTiles"><div class="tile"><div class="lbl">로딩 중…</div></div></div>
+  </div>
+  <div class="split">
+    <div class="card">
+      <h2>혼동행렬 <span class="hint">행=엔진 판정, 열=사람 정답 · 대각선=일치</span></h2>
+      <div class="table-wrap"><table id="scConfusion"></table></div>
+    </div>
+    <div class="card">
+      <h2>Signature 별 <span class="hint">primary signature 기준</span></h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>signature</th><th class="num">쌍</th><th class="num">일치율</th>
+            <th class="num">정밀도(高)</th><th class="num">재현율(高)</th></tr></thead>
+          <tbody id="scSigBody"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -758,16 +789,58 @@ function precedentHtml(list) {
 
 let TR_CASE = null;
 let TR_HIDE_OFF = false;
+let TR_IDX = null;   // 정답 라벨 저장 시 트레이스 케이스 좌표(token+index)로 쓴다
 
 async function showCase(idx) {
   const box = $('trDetail');
   box.innerHTML = '<h2>케이스 상세</h2><div class="note">불러오는 중…</div>';
   try {
+    TR_IDX = idx;
     renderCase((await getJSON(
       `api/trace/${encodeURIComponent(TRACE.token)}/case/${idx}`)).case);
   } catch (e) {
     box.innerHTML = `<h2>케이스 상세</h2><div class="msg err">${esc(e.message)}</div>`;
   }
+}
+
+// ── 정답 라벨 (검수) — 엔진 판정 수용/정정을 eval DB 에 (예측, 정답) 쌍으로 기록 ──
+function labelFormHtml(c) {
+  const opts = ['OK', 'MONITOR', 'MINOR', 'MAJOR', 'CRITICAL'].map((v) =>
+    `<option ${v === c.status ? 'selected' : ''}>${v}</option>`).join('');
+  return `
+    <h2 style="margin-top:14px">정답 라벨 <span class="hint">
+      엔진 판정을 검수해 학습용 정답으로 기록합니다 — 채점 탭의 원재료 (labeler=eval-panel)</span></h2>
+    <div class="toolbar">
+      <label class="note"><input type="radio" name="lbMode" value="accept" checked>
+        판정 수용 (<span class="badge ${esc(c.status)}">${esc(c.status)}</span> 그대로)</label>
+      <label class="note"><input type="radio" name="lbMode" value="fix"> 정정:</label>
+      <select class="sel" id="lbStatus" disabled>${opts}</select>
+      <input class="inp" id="lbRoot" style="width:180px" placeholder="root cause (선택)"
+             title="근본원인 분류 — 예: equipment / spec / process">
+    </div>
+    <textarea class="inp" id="lbComment" rows="2"
+      placeholder="보충/정정 코멘트 (선택 — 선례 검색에도 쓰입니다)"></textarea>
+    <div class="toolbar" style="margin-top:8px">
+      <button class="btn primary" id="lbSave">정답 저장</button>
+      <span class="msg" id="lbMsg"></span>
+    </div>`;
+}
+
+async function saveLabel() {
+  const accepted = document.querySelector('input[name="lbMode"]:checked').value === 'accept';
+  const btn = $('lbSave');
+  btn.disabled = true;
+  try {
+    const r = await sendJSON('api/eval/label', 'POST', {
+      token: TRACE.token, index: TR_IDX, accepted,
+      human_status: $('lbStatus').value,
+      human_comment: $('lbComment').value,
+      root_cause: $('lbRoot').value,
+    });
+    flash($('lbMsg'), `저장됨 — 정답 ${r.human_status}` +
+      (accepted ? ' (수용)' : ' (정정)'), true);
+  } catch (e) { flash($('lbMsg'), e.message, false); }
+  btn.disabled = false;
 }
 
 function renderCase(c) {
@@ -803,6 +876,7 @@ function renderCase(c) {
         `<span class="chip">secondary ${esc(s)}</span>`).join('')}
     </div>
     ${c.gate_reason ? `<div class="note">${esc(c.gate_reason)}</div>` : ''}
+    ${labelFormHtml(c)}
     <h2 style="margin-top:14px">분포</h2>${distHtml(c.dist)}
     <h2 style="margin-top:14px">L3 signature 판정
       <span class="hint">
@@ -824,12 +898,26 @@ function renderCase(c) {
     TR_HIDE_OFF = e.target.checked;
     renderCase(TR_CASE);
   });
+  document.querySelectorAll('input[name="lbMode"]').forEach((rb) => {
+    rb.addEventListener('change', () => {
+      $('lbStatus').disabled =
+        document.querySelector('input[name="lbMode"]:checked').value === 'accept';
+    });
+  });
+  $('lbSave').addEventListener('click', saveLabel);
 }
 
 // ── Eval DB 탭 (admin_panel 에서 이관) ───────────────────────────────────
 // admin_panel.html 과 같은 구현 — 헬퍼 이름만 이 페이지 규약에 맞춰 얇게 감싼다.
 const postJSON = (url, body) => sendJSON(url, 'POST', body);
 const pad = (n) => String(n).padStart(2, '0');
+// session_id → 세션 상세(새 탭) 링크 — admin_panel.html 과 동일 구현.
+// (2026-08-03 Eval DB 탭 이관 때 이 함수 이관이 누락돼 목록 렌더가 깨지던 것 복구)
+function sessionLink(sid) {
+  if (!sid) return "-";
+  return `<a href="/pe/report/view/${encodeURIComponent(sid)}" target="_blank" rel="noopener"
+            class="mono" title="세션 상세 열기 (새 탭)">${esc(sid)}</a>`;
+}
 function fmtDate(unix) {
   if (!unix) return "-";
   const d = new Date(unix * 1000);
@@ -1083,6 +1171,51 @@ $("btnEvalReexport").onclick = async () => {
   } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
 };
 
+// ── 채점 탭 ──────────────────────────────────────────────────────────────
+const pct = (v) => v == null ? '—' : (v * 100).toFixed(1) + '%';
+
+async function loadScoring() {
+  let s;
+  try { s = await getJSON('api/eval/scoring'); }
+  catch (e) {
+    $('scTiles').innerHTML = `<div class="tile"><div class="lbl">조회 실패</div><div class="det">${esc(e.message)}</div></div>`;
+    return;
+  }
+  if (!s.exists || !s.pairs) {
+    $('scTiles').innerHTML = `<div class="tile"><div class="lbl">정답 쌍 없음</div>
+      <div class="val" style="font-size:16px">0건</div>
+      <div class="det">트레이스 탭에서 케이스를 열고 "정답 라벨"을 저장하면 여기 집계됩니다.</div></div>`;
+    $('scConfusion').innerHTML = '';
+    $('scSigBody').innerHTML = '<tr class="empty-row"><td colspan="5">—</td></tr>';
+    return;
+  }
+  $('scTiles').innerHTML = `
+    <div class="tile"><div class="lbl">정답 쌍</div><div class="val">${s.pairs}</div>
+      <div class="det">엔진 판정 ↔ 사람 정답</div></div>
+    <div class="tile"><div class="lbl">status 일치율</div><div class="val">${pct(s.agree_rate)}</div></div>
+    <div class="tile"><div class="lbl">정밀도 (MAJOR+)</div><div class="val">${pct(s.high.precision)}</div>
+      <div class="det">엔진 高판정 ${s.high.engine}건 중 일치 ${s.high.both}건</div></div>
+    <div class="tile"><div class="lbl">재현율 (MAJOR+)</div><div class="val">${pct(s.high.recall)}</div>
+      <div class="det">사람 高판정 ${s.high.human}건 중 엔진이 잡음 ${s.high.both}건</div></div>
+    <div class="tile"><div class="lbl">코멘트 수용률</div><div class="val">${pct(s.accepted_rate)}</div>
+      <div class="det">엔진 판정을 그대로 수용한 비율</div></div>`;
+  const sts = s.statuses;
+  $('scConfusion').innerHTML =
+    `<thead><tr><th>엔진↓ 사람→</th>${sts.map((h) => `<th class="num">${h}</th>`).join('')}</tr></thead>` +
+    '<tbody>' + sts.map((e) => `<tr><td><span class="badge ${e}">${e}</span></td>` +
+      sts.map((h) => {
+        const n = (s.confusion[e] || {})[h] || 0;
+        const cls = n ? (e === h ? 'pass' : 'fail') : '';
+        return `<td class="num ${cls}">${n || '·'}</td>`;
+      }).join('') + '</tr>').join('') + '</tbody>';
+  $('scSigBody').innerHTML = s.per_signature.map((r) => `
+    <tr><td class="mono">${esc(r.signature)}</td><td class="num">${r.n}</td>
+      <td class="num">${pct(r.agree_rate)}</td>
+      <td class="num">${pct(r.precision_high)}</td>
+      <td class="num">${pct(r.recall_high)}</td></tr>`).join('') ||
+    '<tr class="empty-row"><td colspan="5">—</td></tr>';
+}
+
 // ── Maintenance ──────────────────────────────────────────────────────────
 async function runValidate() {
   flash($('mvMsg'), '검증 중…', true);
@@ -1134,6 +1267,7 @@ const TAB_LOADERS = {
   pSignatures: loadSignatures,
   pTrace: loadSessions,
   pEval: loadEvalTab,
+  pScoring: loadScoring,
   pMaint: () => { renderFiles(); loadBackups(); },
 };
 const loaded = new Set();
@@ -1164,6 +1298,7 @@ $('trSearch').addEventListener('click', loadSessions);
 $('trRun').addEventListener('click', runTrace);
 $('trFilter').addEventListener('input', renderTraceRows);
 $('trStoredOnly').addEventListener('change', renderTraceRows);
+$('scRefresh').addEventListener('click', loadScoring);
 $('mvRun').addEventListener('click', runValidate);
 $('mvReload').addEventListener('click', async () => {
   try {

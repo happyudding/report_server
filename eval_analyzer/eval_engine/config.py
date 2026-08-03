@@ -28,6 +28,8 @@ EVAL_LLM_TIMEOUT = float(os.environ.get("EVAL_LLM_TIMEOUT", "30"))
 
 # 선례(precedent) 매칭 — [req1] (bin + value_type + item명 퍼지)
 PRECEDENT_NAME_SIMILARITY = float(os.environ.get("EVAL_PRECEDENT_SIM", "0.70"))
+# 코멘트에 실제 사용할 선례 상한(sql 백엔드) — 무제한 반환은 데이터 누적 시 코멘트/비용 폭주
+EVAL_PRECEDENT_TOPK = int(os.environ.get("EVAL_PRECEDENT_TOPK", "5"))
 
 # ── 선례검색 백엔드 (교체형: sql 기본 | rag) ──────────────────────────────
 EVAL_PRECEDENT_BACKEND = os.environ.get("EVAL_PRECEDENT_BACKEND", "sql").lower()

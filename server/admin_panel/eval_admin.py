@@ -272,6 +272,84 @@ def labels_csv_iter():
         conn.close()
 
 
+# ── 채점 (엔진 판정 vs 사람 정답) ────────────────────────────────────────────
+# 원재료는 eval 패널 트레이스의 "정답 라벨"(label.eval_id ⨝ evaluation) — eval_id 가
+# 없는 코멘트 export 라벨은 채점에 안 잡힌다(정답 status 가 없으므로).
+
+_HIGH = ("MAJOR", "CRITICAL")
+_STATUS_ORDER = ("OK", "MONITOR", "MINOR", "MAJOR", "CRITICAL")
+
+
+def scoring() -> dict:
+    """evaluation ⨝ label(eval_id) 쌍 집계 — 혼동행렬 + high-severity precision/recall.
+
+    precision = 엔진이 MAJOR+ 라고 한 것 중 사람도 MAJOR+ 라고 한 비율(오탐 반대).
+    recall    = 사람이 MAJOR+ 라고 한 것 중 엔진이 MAJOR+ 로 잡은 비율(미탐 반대).
+    """
+    conn = eval_export.open_conn(create=False)
+    if conn is None:
+        return {"exists": False, "pairs": 0}
+    try:
+        rows = conn.execute("""
+            SELECT ev.status AS engine_status, l.human_status,
+                   l.engine_comment_accepted, l.human_comment,
+                   cs.signature AS primary_signature,
+                   pm.product_type, pm.family_product
+            FROM label l
+            JOIN evaluation ev ON ev.eval_id = l.eval_id
+            JOIN fail_case fc ON fc.case_id = l.case_id
+            LEFT JOIN product_master pm ON pm.product_name = fc.product_name
+            LEFT JOIN case_signature cs ON cs.eval_id = ev.eval_id AND cs.role='primary'
+            WHERE l.human_status IS NOT NULL AND ev.status IS NOT NULL""").fetchall()
+    finally:
+        conn.close()
+
+    pairs = len(rows)
+    confusion: dict = {}          # engine_status → human_status → n
+    per_sig: dict = {}            # primary_signature → 집계
+    agree = accepted = 0
+    eng_high = hum_high = both_high = 0
+    for r in rows:
+        e, h = r["engine_status"], r["human_status"]
+        confusion.setdefault(e, {})[h] = confusion.setdefault(e, {}).get(h, 0) + 1
+        if e == h:
+            agree += 1
+        if r["engine_comment_accepted"]:
+            accepted += 1
+        e_hi, h_hi = e in _HIGH, h in _HIGH
+        eng_high += e_hi
+        hum_high += h_hi
+        both_high += e_hi and h_hi
+        sig = r["primary_signature"] or "(없음)"
+        s = per_sig.setdefault(sig, {"n": 0, "agree": 0, "eng_high": 0,
+                                     "hum_high": 0, "both_high": 0})
+        s["n"] += 1
+        s["agree"] += e == h
+        s["eng_high"] += e_hi
+        s["hum_high"] += h_hi
+        s["both_high"] += e_hi and h_hi
+
+    def _ratio(num, den):
+        return round(num / den, 4) if den else None
+
+    sig_rows = [{"signature": sig, "n": s["n"],
+                 "agree_rate": _ratio(s["agree"], s["n"]),
+                 "precision_high": _ratio(s["both_high"], s["eng_high"]),
+                 "recall_high": _ratio(s["both_high"], s["hum_high"])}
+                for sig, s in sorted(per_sig.items(), key=lambda kv: -kv[1]["n"])]
+    return {
+        "exists": True, "pairs": pairs,
+        "statuses": list(_STATUS_ORDER),
+        "confusion": confusion,
+        "agree_rate": _ratio(agree, pairs),
+        "accepted_rate": _ratio(accepted, pairs),
+        "high": {"engine": eng_high, "human": hum_high, "both": both_high,
+                 "precision": _ratio(both_high, eng_high),
+                 "recall": _ratio(both_high, hum_high)},
+        "per_signature": sig_rows,
+    }
+
+
 def delete_cases(case_ids) -> dict:
     """case 단위 완전 삭제 — 자식(label/metrics/outcome/evaluation 계열/링크)까지.
 

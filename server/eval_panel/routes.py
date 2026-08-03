@@ -316,6 +316,76 @@ def api_eval_reexport(session_id):
     return jsonify(result)
 
 
+# ── 정답 라벨 / 채점 ─────────────────────────────────────────────────────────
+
+_STATUS_VOCAB = ("OK", "MONITOR", "MINOR", "MAJOR", "CRITICAL")
+
+
+@eval_panel_bp.post("/api/eval/label")
+def api_eval_label():
+    """트레이스 케이스 1건에 대한 정답 라벨 저장 — (엔진 판정, 사람 정답) 쌍.
+
+    트레이스 토큰에서 케이스 스냅샷을 읽어 관리자가 화면에서 본 판정 그대로를
+    evaluation 으로 영속화하고, label.eval_id 로 연결한다 (채점의 원재료).
+    """
+    from web_report import eval_export
+    body = request.get_json(force=True, silent=True) or {}
+    token = str(body.get("token") or "")
+    index = body.get("index")
+    result = trace_store.get(token)
+    if result is None:
+        return jsonify({"ok": False,
+                        "error": "트레이스 결과가 만료됐습니다 — 다시 실행하세요"}), 404
+    cases = result.get("cases") or []
+    if not isinstance(index, int) or index < 0 or index >= len(cases):
+        return jsonify({"ok": False, "error": "케이스 번호 범위 밖"}), 400
+    case = cases[index]
+
+    accepted = bool(body.get("accepted"))
+    human_status = str(body.get("human_status") or "").strip()
+    if not accepted and human_status not in _STATUS_VOCAB:
+        return jsonify({"ok": False,
+                        "error": f"정정 status 는 {_STATUS_VOCAB} 중 하나여야 합니다"}), 400
+    human_comment = str(body.get("human_comment") or "").strip()[:2000]
+    root_cause = str(body.get("root_cause") or "").strip()[:100]
+
+    session = report_db.get_session(result["session_id"])
+    if not session:
+        return jsonify({"ok": False, "error": "세션 없음"}), 404
+    try:
+        saved = eval_export.save_human_label(
+            dict(session),
+            item=str(case.get("item_raw") or ""), bin_=case.get("bin"),
+            item_class=str(case.get("item_class") or ""),
+            engine={"engine_version": result.get("engine_version"),
+                    "status": case.get("status"),
+                    "confidence": case.get("confidence"),
+                    "data_completeness": case.get("data_completeness"),
+                    "comment": case.get("comment"),
+                    "primary_signature": case.get("primary_signature"),
+                    "secondary_signatures": case.get("secondary_signatures")},
+            human={"accepted": accepted, "human_status": human_status,
+                   "human_comment": human_comment, "root_cause_category": root_cause})
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        _log.exception("eval label 저장 실패 sid=%s", result.get("session_id"))
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
+    _audit("eval_label",
+           changed_fields=[f"item={case.get('item_raw')}", f"bin={case.get('bin')}",
+                           f"engine={case.get('status')}",
+                           f"human={saved['human_status']}",
+                           f"accepted={saved['accepted']}"])
+    saved["ok"] = True
+    return jsonify(saved)
+
+
+@eval_panel_bp.get("/api/eval/scoring")
+def api_eval_scoring():
+    from admin_panel import eval_admin
+    return jsonify(eval_admin.scoring())
+
+
 # ── 트레이스 ─────────────────────────────────────────────────────────────────
 
 @eval_panel_bp.get("/api/sessions")

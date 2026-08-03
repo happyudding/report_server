@@ -491,14 +491,20 @@ def upsert_engine_version_registry(engine_version, thresholds_ref=None, threshol
 
 
 def search_precedents(value_type, item_canonical, family_product=None,
-                      limit=None, exclude_case_id=None, conn=None) -> list:
+                      limit=None, exclude_case_id=None, exclude_session_id=None,
+                      exclude_analysis_key=None, fired_signatures=None, conn=None) -> list:
     """DB_SCHEMA §9: 동일 value_type + item_canonical 유사도>=threshold (+ family_product).
 
     bin 은 매칭 조건에서 제외(더 폭넓게 참고). 후보를 SQL 로 좁힌 뒤
     difflib.SequenceMatcher.ratio 로 이름 유사도 후처리.
     exclude_case_id: 자기 자신(현재 평가 중인 case)은 선례에서 제외.
+    exclude_session_id / exclude_analysis_key: **자기 세션(및 dedup 형제)의 사례 제외**
+      — 같은 세션의 코멘트가 다른 case_id 로 적재돼 "과거 사례"인 척 돌아오는
+      시간 누출을 막는다. ingest_run 경유(run_case ⨝ ingest_run). None 이면 no-op.
+    fired_signatures: 현재 케이스에서 발화한 signature id 목록 — 선례의 primary
+      signature 가 겹치면 정렬 부스트(하드필터 아님, 선례 DB 가 얕아도 회수 유지).
     case 당 1행(최신 label 기준, human_comment 있는 행 우선), 라벨 있는 선례 우선.
-    limit=None 이면 전체 반환(호출측에서 매칭된 선례를 모두 사용하는 것을 전제).
+    limit=None 이면 전체 반환(store 계약 — 상한은 호출측 precedent_client 가 건다).
     DB 파일이 없으면(preview 모드 등) 빈 목록 — 빈 파일 생성/크래시 방지.
     """
     if conn is None and not config.DB_PATH.exists():
@@ -516,14 +522,23 @@ def search_precedents(value_type, item_canonical, family_product=None,
              LEFT JOIN case_outcome co ON co.case_id = fc.case_id
                   AND (co.label_id IS NULL OR co.label_id = l.label_id)
              WHERE im.value_type = ?
-               AND (? IS NULL OR pm.family_product = ?)"""
+               AND (? IS NULL OR pm.family_product = ?)
+               AND NOT EXISTS (
+                   SELECT 1 FROM run_case rc
+                   JOIN ingest_run ir ON ir.run_id = rc.run_id
+                   WHERE rc.case_id = fc.case_id
+                     AND ((? IS NOT NULL AND ir.session_id = ?)
+                          OR (? IS NOT NULL AND ir.analysis_key = ?)))"""
+    params = (value_type, family_product, family_product,
+              exclude_session_id, exclude_session_id,
+              exclude_analysis_key, exclude_analysis_key)
     with _scope(conn) as c:
-        rows = [dict(r) for r in c.execute(
-            sql, (value_type, family_product, family_product)).fetchall()]
+        rows = [dict(r) for r in c.execute(sql, params).fetchall()]
 
     def _rank(r):  # 같은 case 의 여러 (label×outcome) 행 중 대표행: 최신 label > comment 있는 행
         return ((r["label_id"] or 0), r["human_comment"] is not None)
 
+    fired = {s for s in (fired_signatures or []) if s}
     best = {}
     for r in rows:
         if exclude_case_id is not None and r["case_id"] == exclude_case_id:
@@ -536,7 +551,9 @@ def search_precedents(value_type, item_canonical, family_product=None,
         if prev is None or _rank(r) > _rank(prev):
             best[r["case_id"]] = r
     out = sorted(best.values(),
-                 key=lambda r: (r["human_comment"] is not None, r["similarity"]),
+                 key=lambda r: (r["human_comment"] is not None,
+                                bool(fired) and r.get("signature") in fired,
+                                r["similarity"]),
                  reverse=True)
     return out if limit is None else out[:limit]
 

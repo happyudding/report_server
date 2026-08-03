@@ -76,13 +76,10 @@ python <repo>/tools/compare_typing.py <이_폴더> <원본_updated_폴더> --out
 
 ### 2-1. `signatures.py` `_evaluate_subpop_gap()` — DENSITY_GAP 인데 값은 cdf_gap
 
-```python
-{"signal_code": "DENSITY_GAP", "value": features.get("cdf_gap"),
- "note": f"cdf_gap {features.get('cdf_gap')}"},
-```
-
-`signal_code` 는 `DENSITY_GAP` 인데 읽는 feature 는 `cdf_gap`. 원본이 `density_gap` 인지,
-아니면 의도적으로 cdf_gap 인지 확인.
+**✅ 해결(2026-08-03)** — 오라벨로 확정하고 수정했다. DENSITY_GAP 에는 `density_gap` 값을
+싣고, 값축 분리 지표는 별도 `VALUE_GAP`(`value_gap_ratio`) evidence 로 분리했다.
+같은 날 separated 판정도 cdf_gap(동일값 질량) → `_value_gap`(값축 빈 구간) 기준으로 교체
+(`subpop_value_gap_warn`/`subpop_minor_mass_min`, 구 `subpop_cdf_gap_warn` 제거).
 
 ### 2-2. `api.py` `ThreadPoolExecutor(max_workers=3)` 안에서 `present.persist()`
 

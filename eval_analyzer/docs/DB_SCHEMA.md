@@ -304,9 +304,21 @@ WHERE im.value_type = :value_type
   AND (:family_product IS NULL OR pm.family_product = :family_product);   -- bin 조건 없음
 -- → 파이썬 후처리: item_canonical 유사도 ≥0.70 행만 채택,
 --   case_id 당 1행(최신 label_id 대표행 — label×outcome 곱 제거),
---   정렬 = (human_comment 있는 선례 우선, 유사도 내림차순). DB 파일 없으면 [].
+--   정렬 = (human_comment 있는 선례 우선, 발화 signature 겹침, 유사도 내림차순).
+--   DB 파일 없으면 [].
 ```
 출력 → L5 recommend 에서 "retest→정상 / UVLO_TEST_EN H→정상 / spec release / 모과제 동일유형" 근거로 사용.
+
+2026-08-03 확장 (`store.search_precedents` 인자):
+- **자기 세션/데이터 제외** — `exclude_session_id`/`exclude_analysis_key` 가 주어지면
+  같은 `ingest_run.session_id`/`analysis_key` 로 적재된 case 를 `NOT EXISTS` 로 제외한다.
+  같은 세션의 코멘트가 다른 case_id 로 적재돼 "과거 사례"인 척 돌아오는 시간 누출 차단.
+  값은 evaluate meta 의 `session_id`/`analysis_key` 가 case_ctx 로 흘러온다(없으면 no-op).
+- **signature 정렬 부스트** — `fired_signatures`(현재 발화 id 목록)와 선례의 primary
+  signature 가 겹치면 같은 comment 등급 안에서 먼저 온다(하드필터 아님).
+- **top-k 상한** — store 는 종전대로 `limit=None`(전체)이 기본이고, 상한은 호출측
+  `precedent_client._sql_search` 가 `config.EVAL_PRECEDENT_TOPK`(기본 5, env
+  `EVAL_PRECEDENT_TOPK`)로 건다 — 데이터 누적 시 코멘트/프롬프트 폭주 방지.
 
 ## 10. controlled vocabulary
 ```

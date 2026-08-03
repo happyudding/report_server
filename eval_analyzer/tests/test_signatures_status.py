@@ -174,6 +174,50 @@ def test_heavy_tail_disabled_when_few_samples():
     assert "HEAVY_TAIL" not in [s["id"] for s in sig["signatures"]]
 
 
+def test_pf_trump_low_yield_forces_critical():
+    """P_F 는 cpk 가 없어 기존 trump 불가 — yield 단독(gross_yield_bad)으로 CRITICAL."""
+    case = _case(value_type="P_F")
+    feats = _full_features()
+    raw = {"yield": 0.3, "cpk": None}
+    sig = signatures.evaluate(case, feats, raw)
+    verdict = status.decide(case, feats, sig)
+    assert verdict["status"] == "CRITICAL"
+    # 수율 양호한 P_F 는 승격되지 않는다
+    raw_ok = {"yield": 0.95, "cpk": None}
+    v_ok = status.decide(case, feats, signatures.evaluate(case, feats, raw_ok))
+    assert v_ok["status"] != "CRITICAL"
+
+
+def test_ok_reachable_when_no_fail_and_no_spatial():
+    """fail 0 인 케이스는 공간 feature 부재가 결측이 아니다 → full/OK 도달 가능.
+
+    fail 정보가 아예 없으면(모름) 종전대로 partial 유지(양호 오판 금지).
+    """
+    raw = {"yield": 1.0, "cpk": 2.0}
+    feats = _full_features(edge_fail_ratio=None)
+    # fail_count=0 명시 → full → OK
+    case0 = _case(fail_count=0, fail_mask=[])
+    v0 = status.decide(case0, feats, signatures.evaluate(case0, feats, raw))
+    assert v0["data_completeness"] == "full"
+    assert v0["status"] == "OK"
+    # fail 있음 + 공간 없음 → 종전대로 partial/MONITOR
+    case1 = _case(fail_mask=[True, False])
+    v1 = status.decide(case1, feats, signatures.evaluate(case1, feats, raw))
+    assert v1["data_completeness"] == "partial"
+    assert v1["status"] == "MONITOR"
+
+
+def test_subpop_evidence_signal_codes_match_values():
+    """DENSITY_GAP evidence 에는 density_gap 값이 실려야 한다 (구: cdf_gap 오라벨)."""
+    feats = {"modality_v2": "bimodal", "n_modes": 2, "density_gap": 0.6,
+             "cdf_gap": 42.0, "value_gap_ratio": 0.5}
+    sub = signatures._evaluate_subpop_gap(feats)
+    by_code = {e["signal_code"]: e for e in sub["evidence"]}
+    assert by_code["DENSITY_GAP"]["value"] == 0.6
+    assert "density_gap" in by_code["DENSITY_GAP"]["note"]
+    assert by_code["VALUE_GAP"]["value"] == 0.5
+
+
 def test_should_store_covers_rule_only_case():
     """수율·cpk 는 정상인데 signature 만 발화한 케이스도 저장(=코멘트 생성) 대상.
 

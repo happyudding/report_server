@@ -185,7 +185,8 @@ def _subpop_conditions(features, thresholds):
     n_modes = features.get("n_modes")
     bc = features.get("bimodality_score")
     dgap = features.get("density_gap")
-    cgap = features.get("cdf_gap")
+    vgap = features.get("value_gap_ratio")
+    vmass = features.get("value_gap_minor_mass")
 
     def th(key):
         return thresholds.get(key)
@@ -214,8 +215,11 @@ def _subpop_conditions(features, thresholds):
                      th("subpop_density_gap_warn"), ge(dgap, "subpop_density_gap_warn")),
         _subpop_cond("density_gap [separated]", ">=", dgap, "subpop_density_gap_strong",
                      th("subpop_density_gap_strong"), ge(dgap, "subpop_density_gap_strong")),
-        _subpop_cond("cdf_gap [separated]", ">=", cgap, "subpop_cdf_gap_warn",
-                     th("subpop_cdf_gap_warn"), ge(cgap, "subpop_cdf_gap_warn")),
+        # 2026-08-03 separated 판정이 cdf_gap(동일값 질량) → value_gap(값축 빈 구간)으로 교체됨
+        _subpop_cond("value_gap_ratio [separated]", ">=", vgap, "subpop_value_gap_warn",
+                     th("subpop_value_gap_warn"), ge(vgap, "subpop_value_gap_warn")),
+        _subpop_cond("minor_mass [separated]", ">=", vmass, "subpop_minor_mass_min",
+                     th("subpop_minor_mass_min"), ge(vmass, "subpop_minor_mass_min")),
     ]
     return rows
 

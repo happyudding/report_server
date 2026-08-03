@@ -19,11 +19,20 @@ def search(case_ctx: dict, sig_result: dict) -> list:
 
 
 def _sql_search(case_ctx: dict, sig_result: dict) -> list:
-    """기존 SQL 선례검색. DB_SCHEMA §9. bin 은 매칭 조건에서 제외."""
+    """기존 SQL 선례검색. DB_SCHEMA §9. bin 은 매칭 조건에서 제외.
+
+    2026-08-03: (1) 자기 세션/analysis_key 사례 제외(시간 누출 차단),
+    (2) 발화 signature 겹침 정렬 부스트, (3) top-k 상한(config.EVAL_PRECEDENT_TOPK).
+    """
+    fired = [s.get("id") for s in (sig_result or {}).get("signatures") or []]
     return store.search_precedents(
         case_ctx["value_type"], case_ctx["item_canonical"],
         family_product=case_ctx.get("family_product"),
-        exclude_case_id=case_ctx.get("case_id"))
+        exclude_case_id=case_ctx.get("case_id"),
+        exclude_session_id=case_ctx.get("session_id"),
+        exclude_analysis_key=case_ctx.get("analysis_key"),
+        fired_signatures=fired,
+        limit=config.EVAL_PRECEDENT_TOPK)
 
 
 def _rag_search(case_ctx: dict, sig_result: dict) -> list:

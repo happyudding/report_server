@@ -133,6 +133,57 @@ def test_search_precedents_returns_all_matches_no_cap(fresh_db):
     assert len(res) == 7  # limit 기본이 None → 전체 반환(과거의 5건 cap 없음)
 
 
+def test_search_precedents_excludes_own_session_and_analysis_key(fresh_db):
+    """같은 세션/analysis_key 로 적재된 사례는 선례에서 제외 — 시간 누출 차단."""
+    with store.get_conn() as conn:
+        case_id = _seed_precedent(conn, item_canon="vref_trim")
+        run_id = store.create_ingest_run(
+            {"product_name": "P1", "lot_id": "L1", "session_id": "S123",
+             "analysis_key": "AK9"}, conn=conn)
+        store.link_run_case(run_id, case_id, conn=conn)
+    assert len(store.search_precedents("V", "vref_trim")) == 1
+    assert store.search_precedents("V", "vref_trim", exclude_session_id="S123") == []
+    assert store.search_precedents("V", "vref_trim", exclude_analysis_key="AK9") == []
+    # 다른 세션/키는 영향 없음
+    assert len(store.search_precedents("V", "vref_trim",
+                                       exclude_session_id="OTHER")) == 1
+
+
+def test_search_precedents_signature_boost(fresh_db):
+    """발화 signature 가 겹치는 선례가 (comment 동급이면) 먼저 온다 — 하드필터 아님."""
+    with store.get_conn() as conn:
+        # 선례 2건: A(EDGE_FAIL), B(SUBPOP_GAP) — 이름/유사도/comment 동급
+        for prod, sig in (("PA", "EDGE_FAIL"), ("PB", "SUBPOP_GAP")):
+            case_id = _seed_precedent(conn, product=prod, item_canon="vref_trim",
+                                      comment=f"{prod} 사례")
+            eval_id = store.save_evaluation(case_id, 1, "ev1", None, "MAJOR", 0.9,
+                                            "full", "c", conn=conn)
+            store.save_case_signature(eval_id, [{"id": sig, "role": "primary",
+                                                 "score": 1.0}], conn=conn)
+    res = store.search_precedents("V", "vref_trim", fired_signatures=["SUBPOP_GAP"])
+    assert res[0]["signature"] == "SUBPOP_GAP"
+    res2 = store.search_precedents("V", "vref_trim", fired_signatures=["EDGE_FAIL"])
+    assert res2[0]["signature"] == "EDGE_FAIL"
+    # 부스트 없이도 둘 다 회수된다(하드필터 아님)
+    assert len(store.search_precedents("V", "vref_trim")) == 2
+
+
+def test_search_precedents_limit_cap(fresh_db):
+    with store.get_conn() as conn:
+        for i in range(7):
+            store.upsert_product_master(
+                {"product_name": f"P{i}", "family_product": "SOC",
+                 "product_type": "PMIC"}, conn=conn)
+            item_id = store.upsert_item_master("vref_trim", "VREF_TRIM", None, None,
+                                                "TRIM", None, "V", None, conn=conn)
+            case_id = store.make_case_id(f"P{i}", "L1", 1, item_id, 18, 0.0)
+            store.upsert_fail_case(case_id, f"P{i}", "L1", 1, item_id, 18, 0.0,
+                                   "TRIM|V|18", conn=conn)
+            store.insert_label(case_id, None, None, None, None, 0, 0,
+                               f"c{i}", "seed", None, "seed", conn=conn)
+    assert len(store.search_precedents("V", "vref_trim", limit=5)) == 5
+
+
 def test_outcome_label_ko_and_group():
     assert outcome_label("action", "retest") == {"ko": "재측정", "group": "재검증"}
     assert outcome_label("result", "false_fail")["ko"] == "실불량아님"

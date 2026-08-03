@@ -22,6 +22,8 @@ _FEATURE_KEYS = [
     "ring_fail_ratio",
     "radial_gradient_norm", "x_gradient_norm", "y_gradient_norm",
     "n_modes","modality_v2",
+    # 파생(DB 미저장 — store.save_features cols 에 없음): separated 판정·트레이스 표시용
+    "value_gap_ratio", "value_gap_minor_mass",
 ]
 
 
@@ -32,13 +34,37 @@ def _empty_features():
 
 
 def _cdf_gap(v):
-    """ECDF(CODE_TO_PORT §3) 후 인접 누적% 최대 점프."""
+    """ECDF(CODE_TO_PORT §3) 후 인접 누적% 최대 점프.
+
+    주의: 이 값은 "최다 동일값 하나가 차지하는 질량(%)"이다 — 값 축의 빈 구간(분리)이
+    아니라 동일값 쏠림(양자화/clamp) 신호다. 분리 판정에는 _value_gap 을 쓴다.
+    """
     v = v[np.isfinite(v)]
     if v.size == 0:
         return None
     uniq, cnt = np.unique(np.sort(v), return_counts=True)
     cum = np.cumsum(cnt) / v.size * 100.0
     return float(np.max(np.diff(cum))) if len(cum) > 1 else 0.0
+
+
+def _value_gap(v):
+    """값 축 최대 인접 간격 → (간격/전체범위, 간격 양쪽 중 소수쪽 질량).
+
+    separated(분리) 판정용 — 두 무리 사이의 실제 빈 구간을 본다. cdf_gap(동일값 질량)과
+    다르다. 고유값 2개 미만이거나 범위 0 이면 (None, None).
+    """
+    v = v[np.isfinite(v)]
+    uniq = np.unique(v)
+    if uniq.size < 2:
+        return None, None
+    rng = float(uniq[-1] - uniq[0])
+    if rng <= 0:
+        return None, None
+    diffs = np.diff(uniq)
+    i = int(np.argmax(diffs))
+    gap_ratio = float(diffs[i] / rng)
+    below = float(np.mean(v <= uniq[i]))   # 간격 아래쪽 질량
+    return gap_ratio, float(min(below, 1.0 - below))
 
 def _histogram_peaks(v):
     if v.size < 8:
@@ -149,7 +175,8 @@ def _spatial_features(case_ctx, th):
     out["wafer_zone_signature"] = _classify_zone(out, th)
     return out
 
-def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, density_gap, cdf_gap, th):
+def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, density_gap,
+                          value_gap_ratio, value_gap_minor_mass, th):
     if n_dut is None or n_dut < th["subpop_n_min"]:
         return None
     if outlier_ratio is not None and outlier_ratio >= th["subpop_outlier_ratio_max"]:
@@ -158,7 +185,12 @@ def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, densi
         return "multimodal"
     if n_modes == 2 and bimodality_score is not None and bimodality_score >= th["bimodality_warn"] and density_gap is not None and density_gap >= th["subpop_density_gap_warn"]:
         return "bimodal"
-    if density_gap is not None and density_gap >= th["subpop_density_gap_strong"] and cdf_gap is not None and cdf_gap >= th["subpop_cdf_gap_warn"]:
+    # separated: 값 축의 실제 빈 구간(_value_gap) 기준 — 구 cdf_gap(동일값 질량) 조건은
+    # 이산/양자화 데이터에서 오발화라 교체(2026-08-03). 소수쪽 질량 하한으로 극단 소수점 배제.
+    if (density_gap is not None and density_gap >= th["subpop_density_gap_strong"]
+            and value_gap_ratio is not None and value_gap_ratio >= th["subpop_value_gap_warn"]
+            and value_gap_minor_mass is not None
+            and value_gap_minor_mass >= th["subpop_minor_mass_min"]):
         return "separated"
     return None
 
@@ -219,7 +251,14 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         modified_z = 0.6745 * (v - median) / mad
         outlier_ratio = float(np.mean(np.abs(modified_z) > th["modified_z"]))
     else:
-        outlier_ratio = 0.0
+        # MAD=0(과반 동일값) — Iglewicz-Hoaglin meanAD 폴백. 그냥 0 으로 두면
+        # "대부분 동일값 + 소수 폭주" 케이스를 outlier 룰이 통째로 놓친다.
+        mean_ad = float(np.mean(np.abs(v - median)))
+        if mean_ad > 0:
+            modified_z = (v - median) / (1.253314 * mean_ad)
+            outlier_ratio = float(np.mean(np.abs(modified_z) > th["modified_z"]))
+        else:
+            outlier_ratio = 0.0
 
     mean = float(v.mean())
     stdev = raw_metrics.get("stdev")
@@ -237,7 +276,10 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     density_gap = _density_gap(v)
     cdf_gap = _cdf_gap(v)
     n_modes = _n_modes(v)
-    modality_v2 = _classify_modality_v2(n,outlier_ratio,n_modes,bimodality_score,density_gap,cdf_gap,th)
+    value_gap_ratio, value_gap_minor_mass = _value_gap(v)
+    modality_v2 = _classify_modality_v2(n, outlier_ratio, n_modes, bimodality_score,
+                                        density_gap, value_gap_ratio,
+                                        value_gap_minor_mass, th)
     spec_margin_low = (mean - lsl) / stdev if (lsl is not None and stdev) else None
     spec_margin_high = (usl - mean) / stdev if (usl is not None and stdev) else None
     nearest_spec_side = None
@@ -257,6 +299,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         outlier_ratio = modality = bimodality_score = density_gap = cdf_gap = None
         spec_margin_low = spec_margin_high = nearest_spec_side = limit_hit_ratio = None
         n_modes = modality_v2 = None
+        value_gap_ratio = value_gap_minor_mass = None
 
     return {
         "spread_norm": spread_norm, "skewness": skewness, "kurtosis": kurtosis,
@@ -266,5 +309,6 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         "nearest_spec_side": nearest_spec_side, "limit_hit_ratio": limit_hit_ratio,
         **spatial,
         "n_dut": n, "site_cpk_delta": site_cpk_delta, "code_edge_hit": code_edge_hit,
-        "n_modes" : n_modes, "modality_v2" : modality_v2
+        "n_modes" : n_modes, "modality_v2" : modality_v2,
+        "value_gap_ratio": value_gap_ratio, "value_gap_minor_mass": value_gap_minor_mass,
     }

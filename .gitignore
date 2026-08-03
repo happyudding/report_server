@@ -50,6 +50,7 @@ server/releases/*.zip
 
 # Local Claude Code settings (personal, not shared)
 .claude/settings.local.json
+CLAUDE.core.md
 
 # Editor / OS
 .vscode/

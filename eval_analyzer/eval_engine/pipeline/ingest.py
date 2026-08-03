@@ -304,10 +304,18 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
                 fail_mask = [False] * len(values)
             case_id = store.make_case_id(meta.get("product_name"), meta.get("lot_id"),
                                          meta.get("wafer_number"), item_id, bin_, revision)
-            cases.append(_case_dict(meta, case_id, item_id, item_canonical, cat,
-                                    value_type, bin_, revision, lsl, usl,
-                                    values, fail_mask, x_pos, y_pos, site,
-                                    item_raw=item))
+            case = _case_dict(meta, case_id, item_id, item_canonical, cat,
+                              value_type, bin_, revision, lsl, usl,
+                              values, fail_mask, x_pos, y_pos, site,
+                              item_raw=item)
+            # yield 분모/분자는 전체 DUT(데이터 행) 기준 — item 셀 파싱 성공분(len(values))으로
+            # 재면 item 마다 분모가 달라져 trump/GROSS_FAIL 비교가 왜곡된다. FAILTNO 기반
+            # fail 식별은 측정값 파싱과 무관하므로 전체 행에서 센다. (fail_mask 는 공간
+            # feature 용 — values 배열과 정렬 유지, 그대로 둔다.)
+            case["total_count"] = len(data)
+            case["fail_count"] = sum(1 for b, ft in zip(bin_all, failtno_all)
+                                     if ft is not None and ft == tno_i and b == bin_)
+            cases.append(case)
     if item_cols and len(data) > 0 and not cases:
         logger.warning("raw_df: item %d개, 데이터 %d행이나 case 0 - item 셀 dtype 확인"
                        "(문자열이면 파서가 무시, docs/EVALUATE_RETURN_SPEC 6절)",
@@ -364,6 +372,9 @@ def _build_cases(meta, run_input, persist, conn):
         case["product_name"] = meta.get("product_name")
         case["lot_id"] = meta.get("lot_id")
         case["wafer_number"] = meta.get("wafer_number")
+        # 선례검색 자기 세션/자기 데이터 제외용 (store.search_precedents) — 없으면 no-op
+        case["session_id"] = meta.get("session_id")
+        case["analysis_key"] = meta.get("analysis_key")
     return cases
 
 

@@ -26,8 +26,11 @@ def _evaluate_subpop_gap(features : dict):
         {"signal_code" : "MODALITY_V2", "value" : None, "note" : f"modality_v2 {modality_v2}"},
         {"signal_code" : "N_MODES", "value" : features.get("n_modes"),
             "note" : f"n_modes {features.get('n_modes')}"},
-        {"signal_code" : "DENSITY_GAP", "value" : features.get("cdf_gap"),
-            "note" : f"cdf_gap {features.get('cdf_gap')}"},
+        # signal_code ↔ 값 일치 필수 — eval_evidence PK(eval_id, signal_code)로 영구 저장됨.
+        {"signal_code" : "DENSITY_GAP", "value" : features.get("density_gap"),
+            "note" : f"density_gap {features.get('density_gap')}"},
+        {"signal_code" : "VALUE_GAP", "value" : features.get("value_gap_ratio"),
+            "note" : f"value_gap_ratio {features.get('value_gap_ratio')}"},
     ]
     return {"modality_v2" : modality_v2, "evidence" : evidence}
 

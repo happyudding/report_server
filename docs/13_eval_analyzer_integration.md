@@ -304,8 +304,9 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
        `evidence` 선언은 **죽은 설정**이다(패널에서 고쳐도 무효 — `status_hint`/
        `phenomenon_ko`/`action_ko` 만 실효). 그래서 조건을 못 찍어 "왜 안 잡혔나" 를
        볼 수 없었다 → `eval_debug._subpop_conditions` 가 엔진
-       `features._classify_modality_v2` 의 AND 체인을 9행으로 미러링해 찍는다
-       (게이트 2행 + multimodal/bimodal/separated 분기 각각). `skip_reason` 대신
+       `features._classify_modality_v2` 의 AND 체인을 10행으로 미러링해 찍는다
+       (게이트 2행 + multimodal/bimodal/separated 분기 각각 — separated 는 2026-08-03
+       부터 cdf_gap 대신 `value_gap_ratio`/`minor_mass` 기준). `skip_reason` 대신
        `branch_note` 필드로 내려보내 조건과 **함께** 렌더된다. 임계값은 키 이름으로만
        읽는다(하드코딩 금지) — **엔진이 분기 구조를 바꾸면 이 함수도 고쳐야 한다**.
      - **분포 미니차트**(2026-08-03): 케이스 상세 최상단에 히스토그램(막대)+ECDF(주황선)+
@@ -323,6 +324,13 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
      eval 관련 화면을 한 페이지에 모으기 위한 이동이다.
   5. *검증·백업* — 참조 무결성(`when_metric` 이 참조하는 임계값 키 존재, 오버레이 고아
      파일, 전 PT×family 조합 병합 시뮬레이션, SPECIFICITY_ORDER 정합) + 백업 목록/복원.
+  6. *채점* (2026-08-03) — **엔진 판정 vs 사람 정답** 집계. 트레이스 케이스 상세의
+     "정답 라벨" 폼(수용/정정 + 코멘트/root cause)이 `POST /pe/eval/api/eval/label` →
+     `eval_export.save_human_label` 로 export DB 에 **evaluation(엔진 스냅샷) +
+     label(eval_id 연결, labeler=`eval-panel`)** 쌍을 저장하고(같은 case 재검수는 교체),
+     채점 탭이 `eval_admin.scoring()` 으로 혼동행렬·status 일치율·MAJOR+ 정밀도/재현율·
+     수용률·signature 별 집계를 보여준다. **이 쌍이 룰 정확도 검증(calibrate 후속 3번)의
+     원재료**다. 검증: [tests/test_eval_label_scoring.py](../tests/test_eval_label_scoring.py).
 - **저장 파이프라인**: 검증 → `rules/_backup/` 백업(파일당 50개, 같은 초면 `-2` 접미사)
   → tmp+`os.replace` 원자적 쓰기(LF 유지) → `.rules_rev` +1 → 감사 로그
   `action=eval_rules_edit`, `client_user=eval-panel`.

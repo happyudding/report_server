@@ -49,8 +49,12 @@ def compute(case_ctx: dict) -> dict:
     is_pf = case_ctx.get("value_type") == "P_F"
     summary = cpk_summary(values, case_ctx.get("lsl"), case_ctx.get("usl"))
     if values:
-        total = len(values)
-        fail = sum(1 for f in case_ctx.get("fail_mask", []) if f)
+        # 분모는 전체 DUT 수(ingest 가 넣은 total_count) 우선 — len(values)(파싱 성공분)로
+        # 재면 item 마다 분모가 달라 yield 비교·trump 판정이 왜곡된다. 구 경로 폴백 유지.
+        total = case_ctx.get("total_count") or len(values)
+        fail = case_ctx.get("fail_count")
+        if fail is None:
+            fail = sum(1 for f in case_ctx.get("fail_mask", []) if f)
         yield_ = 1 - fail / total if total else None
     else:
         # degrade 모드 — case_ctx 에 이미 yield/fail_count/total_count 가 들어있음

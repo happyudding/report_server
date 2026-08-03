@@ -32,7 +32,8 @@ default:
   subpop_outlier_ratio_max : 0.03 # 이 비율 이상 outlier 면 부분집단이 아니라 산발로 보고 판정 보류
   subpop_density_gap_warn : 0.3   # 분포 사이 골(density gap) 약한 컷 — multimodal/bimodal 판정용
   subpop_density_gap_strong : 0.5 # 분포 사이 골 강한 컷 — separated(완전 분리) 판정용
-  subpop_cdf_gap_warn : 10.0      # 값 축 빈 구간(누적분포 gap, %) 컷 — separated 판정에 AND
+  subpop_value_gap_warn : 0.3     # 값 축 최대 빈 구간(전체 범위 대비 비율) 컷 — separated 판정에 AND
+  subpop_minor_mass_min : 0.05    # 빈 구간 양쪽 중 소수쪽 최소 질량 — 극단 소수점 분리 오탐 방지
   source_min_count : 2            # 소스 간 비교(cross_source) 최소 소스 수 — evaluate 는 미사용
   source_fail_rate_delta_warn: 0.3 # 소스 간 fail 률 격차 컷 (cross_source 전용, evaluate 미사용)
 # 제품군별 override 예시 (필요 시 채움)

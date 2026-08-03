@@ -113,6 +113,9 @@ def _session_meta(session, wafer_number):
         "revision": revision,
         "lot_id": str(session.get("lot_id") or "").strip(),
         "wafer_number": int(wafer_number),
+        # 선례검색 자기 세션 제외용(시간 누출 차단) — 엔진이 case_ctx 로 넘긴다
+        "session_id": str(session.get("session_id") or "") or None,
+        "analysis_key": str(session.get("analysis_key") or "") or None,
     }
 
 

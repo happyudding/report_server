@@ -63,6 +63,21 @@ def test_compute_yield_from_fail_mask():
     assert m["cpk"] is not None
 
 
+def test_compute_yield_uses_full_dut_denominator():
+    """ingest 가 넣은 total_count/fail_count(전체 DUT 기준)가 있으면 그것이 분모/분자.
+
+    item 셀 파싱 성공분(len(values))으로 재면 item 마다 분모가 달라져 비교가 왜곡된다.
+    """
+    case = {"values": [1.0, 2.0, 3.0],          # 파싱 성공 3개뿐
+            "fail_mask": [False, True, False],
+            "total_count": 10, "fail_count": 4,  # 전체 행 기준
+            "lsl": 0, "usl": 10}
+    m = metrics.compute(case)
+    assert m["total_count"] == 10
+    assert m["fail_count"] == 4
+    assert m["yield"] == pytest.approx(0.6)
+
+
 def test_compute_degrade_passthrough():
     # values 없는 degrade 모드 — yield/fail_count 그대로
     case = {"values": [], "fail_mask": [],

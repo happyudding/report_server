@@ -219,7 +219,9 @@ _CODE_REFS = {
     "subpop_outlier_ratio_max": "L2 features(modality_v2)",
     "subpop_density_gap_warn": "L2 features(modality_v2)",
     "subpop_density_gap_strong": "L2 features(modality_v2)",
-    "subpop_cdf_gap_warn": "L2 features(modality_v2)",
+    "subpop_value_gap_warn": "L2 features(modality_v2)",
+    "subpop_minor_mass_min": "L2 features(modality_v2)",
+    "gross_yield_bad": "L4 trump(P_F CRITICAL)",
     "source_min_count": "cross_source(evaluate 미사용)",
     "source_fail_rate_delta_warn": "cross_source(evaluate 미사용)",
 }
