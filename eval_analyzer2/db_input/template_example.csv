@@ -1,0 +1,5 @@
+﻿Product type,Family Product,unit,Item,comment
+PMIC,SOC,VOLTS,VREF_TRIM,"site 3 에서만 튐, golden unit 재측정 필요"
+PMIC,SOC,HERTZ,OSC_FREQ_P2,"주파수 산포 큼, trim range 재검토"
+PMIC,SOC,AMPS,IDD_ACTIVE,"소비전류 spec 초과 — 설계 확인 필요"
+PMIC,SOC,,SPMI_LDO_POK,"outlier 5%↑ 동일값 clamp"

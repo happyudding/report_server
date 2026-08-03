@@ -1,0 +1,162 @@
+# Layer2 진단 signature — feature 조합 → named 고장 모드. 선언형.
+# when_all: 모두 발화해야 / when_metric: 수치 조건 / scope: 적용 범위(item_class 등)
+# status_hint: 기본 심각도(bin_taxonomy 로 변조됨) / action_ko: 코멘트 골격 / evidence: 근거 템플릿
+# issue_category: report_server Issue Table 버킷 YIELD|CPK (미지정 시 ETC). primary 로 노출.
+version: ev1
+signatures:
+  - id: LOW_SAMPLE_UNCERTAIN
+    when_metric: { n_dut: "<n_min"}
+    status_hint: MONITOR
+    phenomenon_ko : "샘플 수가 부족해 판정 신뢰도가 낮은 상태입니다"
+    action_ko: "샘플 수 부족으로 판정 신뢰도 낮음 - 추가 wafer/lot data 확보 후 재판정 필요"
+    evidence: ["n_dut {n_dut}"]
+
+  - id: MISSING_LIMIT
+    when_metric: { limit_missing: ">0"}
+    status_hint: MINOR
+    phenomenon_ko : "LSL/USL limit 정보가 일부 누락되어 있습니다."
+    action_ko: "limit 정보 부족 - LSL/USL 적용 여부와 item limit mapping 확인"
+    evidence: ["limit_missing {limit_missing}"]
+
+  - id: CONSTANT_VALUE
+    when_metric: { stdev: "<=0"}
+    status_hint: MAJOR
+    phenomenon_ko : "측정값이 단일 값에 고정되어 있습니다."
+    action_ko: "측정값이 단일 값에 고정 - logging, measurement clamp, item parsing 오류 확인"
+    evidence: ["stdev {stdev}"]
+
+  - id: WIDE_DISTRIBUTION
+    when_metric: { spread_norm: ">spread_norm_warn" }
+    status_hint: MAJOR
+    phenomenon_ko : "산포가 spec 폭 대비 넓게 퍼져 있습니다."
+    action_ko: "산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+    evidence: ["spread_norm {spread_norm}"]
+
+  - id: SEVERE_OUTLIER
+    when_metric: { outlier_ratio: ">outlier_ratio_bad", outlier_count : ">severe_outlier_count_min" }
+    status_hint: MAJOR
+    phenomenon_ko : "outlier 성 fail 비율이 높게 나타납니다."
+    action_ko: "outlier 성 fail 비율 높음 — 개별 die 산발 이상, contact/retest 재현성 확인"
+    evidence: ["outlier_ratio {outlier_ratio}", "outlier_count {outlier_count}"]
+
+  - id: OUTLIER_WARN
+    when_metric: { outlier_ratio: ">outlier_ratio_warn" }
+    status_hint: MINOR
+    phenomenon_ko : "outlier 비율이 주의 수준으로 관찰됩니다."
+    action_ko: "outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+    evidence: ["outlier_ratio {outlier_ratio}"]
+
+  - id: TAIL_RISK
+    when_metric: { skewness: "abs>skew_warn", spec_margin_min: "<spec_margin_warn" }
+    status_hint: MAJOR
+    phenomenon_ko : "분포의 한쪽 꼬리가 spec에 근접해 있습니다."
+    action_ko: "한쪽 꼬리가 spec 근접 — centering/방향성 trim 검토"
+    evidence: ["skewness {skewness}", "nearest {nearest_spec_side}"]
+
+  - id: EQUIPMENT_SUSPECT
+    when_metric: { site_cpk_delta: ">site_cpk_delta_warn" }
+    status_hint: MAJOR
+    phenomenon_ko : "site 간 편차가 크게 나타납니다."
+    action_ko: "site 간 편차 큼 — golden unit 재측정 / handler·site correlation"
+    evidence: ["site_cpk_delta {site_cpk_delta}"]
+
+  - id: EDGE_FAIL
+    when_metric: { edge_fail_ratio: ">edge_fail_ratio_warn", fail_count : ">spatial_fail_count_min" }
+    status_hint: MAJOR
+    phenomenon_ko : "wafer edge 영역에 불량이 집중되어 있습니다."
+    action_ko: "wafer edge 불량 집중 — uniformity/edge 보정, 모과제 동일유형 확인"
+    evidence: ["edge_fail_ratio {edge_fail_ratio}", "fail_count {fail_count}"]
+
+  - id: SPEC_TOO_TIGHT
+    when_metric: { spread_norm: "<spread_norm_warn", cpk: "<cpk_warn",
+                   center_bias: "abs<mean_shift_warn", bimodality_score: "<bimodality_warn" }
+    status_hint: MINOR
+    issue_category: CPK
+    phenomenon_ko : "산포는 안정적이나 spec margin이 부족한 상태입니다."
+    action_ko: "분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+    evidence: ["cpk {cpk}", "spread_norm {spread_norm}"]
+
+  - id: GROSS_FAIL
+    when_metric: { yield: "<gross_yield_bad" }
+    status_hint: CRITICAL
+    issue_category: YIELD
+    phenomenon_ko : "불량률이 매우 높게 나타납니다."
+    action_ko: "불량률 매우 높음 — primary item 기준으로 공정 설계 test 조건 점검"
+    evidence: ["yield {yield}"]
+
+  - id: SUBPOP_GAP
+    when_metric: { bimodality_score: ">bimodality_warn" }
+    status_hint: MAJOR
+    phenomenon_ko : "분포가 분리되는 양상입니다."
+    action_ko: "분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+    evidence: ["bimodality_score {bimodality_score}", "cdf_gap {cdf_gap}"]
+
+  - id: BIDIR_TAIL
+    when_metric: { spec_margin_low: "<spec_margin_warn", spec_margin_high: "<spec_margin_warn" }
+    status_hint: MAJOR
+    phenomenon_ko : "양쪽 spec margin 이 모두 부족한 상태입니다."
+    action_ko: "양쪽 spec 모두 근접 — 분포 폭이 spec 대비 과대, 공정/설계 재검토"
+    evidence: ["spec_margin_low {spec_margin_low}", "spec_margin_high {spec_margin_high}"]
+
+  - id: LOW_CPK
+    when_metric: { cpk: "<cpk_warn" }
+    status_hint: MAJOR
+    issue_category: CPK
+    phenomenon_ko : "공정능력지수(Cpk)가 기준(1.33) 미달입니다."
+    action_ko: "공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+    evidence: ["cpk {cpk}"]
+
+  - id: MEAN_SHIFT
+    when_metric: { center_bias: "abs>mean_shift_warn" }
+    status_hint: MINOR
+    phenomenon_ko : "분포 중심이 한쪽 spec으로 치우쳐 있습니다."
+    action_ko: "분포 중심이 한쪽 spec 으로 치우침 — offset/센터링 trim 검토"
+    evidence: ["center_bias {center_bias}", "nearest {nearest_spec_side}"]
+
+  - id: CENTER_FAIL
+    when_metric: { center_fail_ratio: ">edge_fail_ratio_warn" }
+    status_hint: MAJOR
+    phenomenon_ko : "wafer 중심부에 불량이 집중되어 있습니다."
+    action_ko: "wafer 중심부 불량 집중 — center 공정(증착/CMP 등) 점검"
+    evidence: ["center_fail_ratio {center_fail_ratio}", "fail_count {fail_count}"]
+
+  - id: CLUSTER_FAIL
+    when_metric: { quadrant_imbalance: ">quadrant_imbalance_warn" }
+    status_hint: MAJOR
+    phenomenon_ko : "특정 영역에 불량이 편중되어 있습니다."
+    action_ko: "특정 영역 불량 편중 — 국부 결함/handler/scratch 확인"
+    evidence: ["quadrant_imbalance {quadrant_imbalance}"]
+
+  - id: CODE_RAIL
+    # code_edge_hit 는 value_type=CODE 인 item 에만 계산(그 외 None → applies=False) — CODE 전용 룰
+    when_metric: { code_edge_hit: ">code_edge_hit_warn" }
+    status_hint: MAJOR
+    phenomenon_ko : "CODE 값이 min/max 레일에 포화되어 있습니다."
+    action_ko: "CODE/TRIM 값이 레일(min/max)에 포화 — trim range/알고리즘·headroom 점검"
+    evidence: ["code_edge_hit {code_edge_hit}", "limit_hit_ratio {limit_hit_ratio}"]
+
+  - id: HEAVY_TAIL
+    when_metric: { kurtosis: ">kurtosis_warn" }
+    status_hint: MINOR
+    phenomenon_ko : "분포 꼬리가 두껍게 나타납니다."
+    action_ko: "분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+    evidence: ["kurtosis {kurtosis}"]
+
+
+  - id: RING_FAIL
+    when_metric: { ring_fail_ratio : ">ring_fail_ratio_warn", fail_count: ">spatial_fail_count_min"}
+    status_hint: MAJOR
+    phenomenon_ko : "wafer 반경 방향으로 ring성 fail이 나타납니다."
+    action_ko: "wafer 반경 방향 ring성 fail - radial uniformity 및 edge/center band 반복성 확인"
+    evidence: ["ring_fail_ratio {ring_fail_ratio}", "fail_count {fail_count}"]
+
+
+  - id: WAFER_GRADIENT
+    when_metric: { gradient_norm_abs_max: ">gradient_norm_warn", fail_count: ">spatial_fail_count_min"}
+    status_hint: MAJOR
+    phenomenon_ko : "wafer 내 방향성 gradient 가 발생하고 있습니다."
+    action_ko: "wafer 내 방향성 gradient 발생 X/Y/radial 평균 변화와 공정 uniformity 확인"
+    evidence: ["gradient_norm_abs_max {gradient_norm_abs_max}", "fail_count {fail_count}"]
+
+# 보류(구현 시 추가): gradient(radial/x/y — 좌표 스케일 정규화 선행),
+#   TRIM_INEFFECTIVE/RETEST_RECOVERY(family — 이력 기반, 단일 case snapshot 밖)

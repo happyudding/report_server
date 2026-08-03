@@ -1,0 +1,6 @@
+# chatbot 전용 의존성 (엔진 requirements 와 분리 — langchain 을 엔진 런타임에 섞지 않음)
+# 코어 조회 계층(db.py/queries.py/router.py)은 아래 없이도 동작. LLM agent 경로에만 필요.
+langchain>=0.3
+langchain-core>=0.3
+langchain-openai>=0.2   # config.EVAL_LLM_* (OpenAI 호환 endpoint) 매핑용
+# pydantic 은 langchain 이 끌어옴(Tool args 스키마용)
