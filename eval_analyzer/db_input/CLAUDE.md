@@ -36,7 +36,7 @@ Product type, Family Product, unit, Item, comment      ← 5컬럼 전부 필수
   `EXTRA_UNIT_ALIASES`/`UNIT_STEMS` 를 보강한 뒤 재실행. 빈 unit 은 엔진과 같이 `P_F`(에러 아님).
   값 정규화가 필수인 이유: `search_precedents` 가 `value_type` 을 **등호 하드필터**로 쓴다.
   - ⚠ **부분일치와 `%` 는 이 파일에만 있다.** 엔진 live-run 경로 `_classify_value_type` 은
-    정확일치 + 모르면 `P_F` 폴백이다(엔진 무수정). 그래서 `MILLIVOLT` 선례(V)와 같은 표기를
+    정확일치 + 모르면 `P_F` 폴백이다(엔진 현행 동작). 그래서 `MILLIVOLT` 선례(V)와 같은 표기를
     쓴 live case(P_F)는 등호 필터에서 서로 안 잡히고, `%` 는 엔진이 생성하지 않으므로
     `%` 선례는 조회·관리 표시 용도다. 상세 ../../docs/13 §10.
 - **case 합성값**: lot/wafer/bin/limit/통계가 없는 요약 선례라 `product_name` =
@@ -64,10 +64,10 @@ human_status, root_cause_category, outcome_action, outcome_condition, outcome_re
 - **적재 대상 DB**: 기본은 `(product_type, family_product, session_id)` 그룹별
   `output/<product_type>_<family_product>.db`. `--to-eval-db` 를 주면 `config.DB_PATH`
   (`EVAL_DB_PATH` env 존중) 하나로 통합 적재.
-  `run_import.bat` 은 **report_server 안에 배치된 사본이면**(`..\..\server\config.py` 존재)
+  `run_import.bat` 은 **report_server 안에 있으면**(`..\..\server\config.py` 존재)
   `EVAL_DB_PATH` 를 서버 소유 `DB\pe\report\eval\eval.db` 로 잡고 자동으로 `--to-eval-db` 를
-  붙인다 → 관리자 `/pe/admin-pte/` **Eval DB 탭**에 바로 보인다. 원본 저장소 단독 실행은
-  기존 per-family 동작 그대로.
+  붙인다 → 관리자 `/pe/admin-pte/` **Eval DB 탭**에 바로 보인다. 이 폴더만 따로 떼어내
+  단독 실행하면 기존 per-family 동작 그대로.
 - **엔진 규칙 재사용**: `UNIT_TO_VALUE_TYPE` / `_alias_map` / `_canonicalize` /
   `_classify_category_major` / `_validate_product_meta` 를 `eval_engine.pipeline.ingest` 에서
   import(import 방향 db_input → eval_engine, 규칙 위반 아님).

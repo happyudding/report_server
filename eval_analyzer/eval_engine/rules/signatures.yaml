@@ -5,6 +5,7 @@
 version: ev1
 signatures:
   - id: LOW_SAMPLE_UNCERTAIN
+    enabled: false
     when_metric: { n_dut: "<n_min"}
     status_hint: MONITOR
     phenomenon_ko : "샘플 수가 부족해 판정 신뢰도가 낮은 상태입니다"
@@ -12,6 +13,7 @@ signatures:
     evidence: ["n_dut {n_dut}"]
 
   - id: MISSING_LIMIT
+    enabled: false
     when_metric: { limit_missing: ">0"}
     status_hint: MINOR
     phenomenon_ko : "LSL/USL limit 정보가 일부 누락되어 있습니다."
@@ -26,6 +28,7 @@ signatures:
     evidence: ["stdev {stdev}"]
 
   - id: WIDE_DISTRIBUTION
+    enabled: false
     when_metric: { spread_norm: ">spread_norm_warn" }
     status_hint: MAJOR
     phenomenon_ko : "산포가 spec 폭 대비 넓게 퍼져 있습니다."
@@ -47,6 +50,7 @@ signatures:
     evidence: ["outlier_ratio {outlier_ratio}"]
 
   - id: TAIL_RISK
+    enabled: false
     when_metric: { skewness: "abs>skew_warn", spec_margin_min: "<spec_margin_warn" }
     status_hint: MAJOR
     phenomenon_ko : "분포의 한쪽 꼬리가 spec에 근접해 있습니다."
@@ -54,6 +58,7 @@ signatures:
     evidence: ["skewness {skewness}", "nearest {nearest_spec_side}"]
 
   - id: EQUIPMENT_SUSPECT
+    enabled: false
     when_metric: { site_cpk_delta: ">site_cpk_delta_warn" }
     status_hint: MAJOR
     phenomenon_ko : "site 간 편차가 크게 나타납니다."
@@ -61,6 +66,7 @@ signatures:
     evidence: ["site_cpk_delta {site_cpk_delta}"]
 
   - id: EDGE_FAIL
+    enabled: false
     when_metric: { edge_fail_ratio: ">edge_fail_ratio_warn", fail_count : ">spatial_fail_count_min" }
     status_hint: MAJOR
     phenomenon_ko : "wafer edge 영역에 불량이 집중되어 있습니다."
@@ -77,6 +83,7 @@ signatures:
     evidence: ["cpk {cpk}", "spread_norm {spread_norm}"]
 
   - id: GROSS_FAIL
+    enabled: false
     when_metric: { yield: "<gross_yield_bad" }
     status_hint: CRITICAL
     issue_category: YIELD
@@ -92,6 +99,7 @@ signatures:
     evidence: ["bimodality_score {bimodality_score}", "cdf_gap {cdf_gap}"]
 
   - id: BIDIR_TAIL
+    enabled: false
     when_metric: { spec_margin_low: "<spec_margin_warn", spec_margin_high: "<spec_margin_warn" }
     status_hint: MAJOR
     phenomenon_ko : "양쪽 spec margin 이 모두 부족한 상태입니다."
@@ -99,6 +107,7 @@ signatures:
     evidence: ["spec_margin_low {spec_margin_low}", "spec_margin_high {spec_margin_high}"]
 
   - id: LOW_CPK
+    enabled: false
     when_metric: { cpk: "<cpk_warn" }
     status_hint: MAJOR
     issue_category: CPK
@@ -107,6 +116,7 @@ signatures:
     evidence: ["cpk {cpk}"]
 
   - id: MEAN_SHIFT
+    enabled: false
     when_metric: { center_bias: "abs>mean_shift_warn" }
     status_hint: MINOR
     phenomenon_ko : "분포 중심이 한쪽 spec으로 치우쳐 있습니다."
@@ -114,6 +124,7 @@ signatures:
     evidence: ["center_bias {center_bias}", "nearest {nearest_spec_side}"]
 
   - id: CENTER_FAIL
+    enabled: false
     when_metric: { center_fail_ratio: ">edge_fail_ratio_warn" }
     status_hint: MAJOR
     phenomenon_ko : "wafer 중심부에 불량이 집중되어 있습니다."
@@ -121,6 +132,7 @@ signatures:
     evidence: ["center_fail_ratio {center_fail_ratio}", "fail_count {fail_count}"]
 
   - id: CLUSTER_FAIL
+    enabled: false
     when_metric: { quadrant_imbalance: ">quadrant_imbalance_warn" }
     status_hint: MAJOR
     phenomenon_ko : "특정 영역에 불량이 편중되어 있습니다."
@@ -128,6 +140,7 @@ signatures:
     evidence: ["quadrant_imbalance {quadrant_imbalance}"]
 
   - id: CODE_RAIL
+    enabled: false
     # code_edge_hit 는 value_type=CODE 인 item 에만 계산(그 외 None → applies=False) — CODE 전용 룰
     when_metric: { code_edge_hit: ">code_edge_hit_warn" }
     status_hint: MAJOR
@@ -136,6 +149,7 @@ signatures:
     evidence: ["code_edge_hit {code_edge_hit}", "limit_hit_ratio {limit_hit_ratio}"]
 
   - id: HEAVY_TAIL
+    enabled: false
     when_metric: { kurtosis: ">kurtosis_warn" }
     status_hint: MINOR
     phenomenon_ko : "분포 꼬리가 두껍게 나타납니다."
@@ -144,6 +158,7 @@ signatures:
 
 
   - id: RING_FAIL
+    enabled: false
     when_metric: { ring_fail_ratio : ">ring_fail_ratio_warn", fail_count: ">spatial_fail_count_min"}
     status_hint: MAJOR
     phenomenon_ko : "wafer 반경 방향으로 ring성 fail이 나타납니다."
@@ -152,6 +167,7 @@ signatures:
 
 
   - id: WAFER_GRADIENT
+    enabled: false
     when_metric: { gradient_norm_abs_max: ">gradient_norm_warn", fail_count: ">spatial_fail_count_min"}
     status_hint: MAJOR
     phenomenon_ko : "wafer 내 방향성 gradient 가 발생하고 있습니다."

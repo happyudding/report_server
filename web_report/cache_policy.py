@@ -188,7 +188,16 @@ def map_key(session, prep_digest: str = "") -> tuple:
 # v21: STEP 메타가 공백인 fail 행을, 세션 STEP 이 1종뿐일 때 그 STEP 으로 흡수(_sole_step) —
 #      yield_rows[].step / yield_step_groups(섹션 수) / yield_summary.by_step(항목 수) 의 **값**이
 #      바뀐다(구조 동일). 안 올리면 옛 disk_cache 가 "(기타)" 섹션이 분리된 payload 를 계속 반환한다.
-REPORT_SCHEMA_VERSION = 21
+# v22: IssueTable AI Comment 셀에 이봉/다봉/분리 배지를 status 뒤에 접두한다
+#      ("[MAJOR][이봉] …") — SUBPOP_GAP 이 primary 가 아니어도 붙는다. ai_comment 옵션
+#      세션의 **AI Comment 값**만 바뀌고 구조는 동일하다. 안 올리면 옛 disk_cache 가 배지
+#      없는 셀 텍스트를 계속 반환한다(ai_comment 를 안 쓰는 세션은 값 무변경이지만 키가
+#      전 세션 공통이라 1회 재계산된다 — rules_rev 는 코드 변경을 감지하지 못해 대체 불가).
+# v23: IssueTable ETC 섹션에 "룰만 위반한 item"(수율·cpk 정상 + signature 발화) 자동 행이
+#      붙는다 — ai_comment.build_ai_comments 반환 구조도 {"comments","etc_auto_items"} 로
+#      바뀌었다. ai_comment 옵션 세션의 **행 구성**이 달라지므로 안 올리면 옛 disk_cache 가
+#      자동 행 없는 payload 를 계속 반환한다.
+REPORT_SCHEMA_VERSION = 23
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

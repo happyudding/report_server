@@ -149,8 +149,9 @@ def _collect_comments(report_db, session, upload_root: Path) -> dict:
 
 # ── 단위 원문 → 엔진 어휘 그룹 (report_server 쪽 선보정) ─────────────────────
 # 엔진 UNIT_TO_VALUE_TYPE(pipeline/ingest.py)은 정확매칭 표라 "VOLTS"/"HERTZ"/
-# "mAMP" 같은 표기를 놓치고 조용히 P_F 로 떨어뜨린다. eval_analyzer 는 외부 단방향
-# (수정 금지, ../CLAUDE.md 규칙 #8)이라 여기서 부분문자열 규칙으로 먼저 매핑한다.
+# "mAMP" 같은 표기를 놓치고 조용히 P_F 로 떨어뜨린다. 도입 당시 eval_analyzer 가 무수정
+# 영역이라 여기서 부분문자열 규칙으로 먼저 매핑했고, 이미 적재된 데이터와의 정합 때문에
+# 엔진이 자유 수정이 된 지금도 이 2단 구조를 유지한다 (../docs/13 §10).
 # 엔진 표와 충돌하지 않는다 — "v"/"hz"/"amp" 등 짧은 표기는 이 규칙에 안 걸려
 # 그대로 엔진 표로 내려간다.
 _UNIT_SUBSTR_RULES = (("VOLT", "V"), ("AMP", "A"), ("HERTZ", "Hz"))

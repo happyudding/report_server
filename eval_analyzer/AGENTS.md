@@ -1,7 +1,12 @@
 # eval_analyzer — Codex 진입점
 
 반도체 Fail-Item 평가 분석 엔진. 엔지니어의 fail 판단(status 판정 + 분석방향 comment)을
-코드로 옮긴다. **report_server 와 완전 독립**.
+코드로 옮긴다. **report_server 와 완전 독립**(코드 의존 방향은 report_server → 여기 한 방향).
+
+> **원본 위치 (2026-08-03 확정)**: `report_server/eval_analyzer/` **이 폴더가 원본**이다.
+> 예전 외부 사본 `F:\COINAPI\eval_analyzer` 는 더 이상 참조·동기화 대상이 아니다 —
+> 변경을 그쪽에 이중 반영하지 않는다. 하위 파일은 자유 수정이며, 옛 "하위 무수정" 동결
+> 규칙은 폐지됐다(경계 정본 [../docs/15_ownership.md](../docs/15_ownership.md)).
 
 > **세션 시작 규칙**: 구현 전 반드시 `docs/` 를 먼저 읽어라. 특히 아래 4개는 필수.
 > - [docs/DB_SCHEMA.md](docs/DB_SCHEMA.md) — eval.db 전체 DDL·grain·선례검색 (저장 구조의 정본)
@@ -31,6 +36,10 @@
 1. **report_server 코드를 import 하지 않는다.** 필요한 계산은 직접 구현하거나 함수만 복사(vendor).
    알고리즘은 docs/CODE_TO_PORT.md 에 공식으로 있음. 의존 방향은 report_server → eval_analyzer 한 방향만.
 2. **자체 DB(eval.db, SQLite)를 직접 관리.** report.db 는 무시(전면 개편 예정).
+   - ⚠ **eval.db 스키마 변경은 사용자 사전 승인 대상이다.** `store.py` 의 DDL·컬럼을
+     추가/삭제/변경해야 하는 상황이면 바로 고치지 말고, **어떤 테이블·컬럼을 어떻게 바꾸고
+     기존 데이터에 어떤 영향이 있는지 설명한 뒤 승인을 받고** 진행한다(운영 eval.db 에
+     누적 데이터가 있다). 스키마 정본은 [docs/DB_SCHEMA.md](docs/DB_SCHEMA.md).
 3. **raw(per-DUT) 저장 금지.** 최초 1회 계산값(요약통계/feature)만 저장. 산포 다운샘플 금지.
 4. **DB 에 JSON 컬럼 금지.** 다중값은 정규화 child 테이블(eval_evidence, case_signature 등).
 5. **룰 임계값 하드코딩 금지.** rules/*.yaml + calibration 분위수. 룰 스코프 = item_class(category_major|value_type|bin).

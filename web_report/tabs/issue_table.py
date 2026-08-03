@@ -9,7 +9,8 @@ ETC(placeholder). cpk_rows 에는 source="total"(합산) 행이 없으므로, �
 CPK 서브헤더 행(Category="CPK", avg="cpk") 감지를 이미 지원한다.
 ETC 섹션은 ENGR 가 임의로 추가한 item(manifest.etc_items, service.update_issue_etc_items 가
 갱신)을 받아 Bin/TNO 는 tables 메타에서, avg/{source}_yield 는 yield_rows 매칭 항목에서
-매 조회마다 다시 채운다(저장하는 값은 item 이름뿐).
+매 조회마다 다시 채운다(저장하는 값은 item 이름뿐). 그 뒤에 etc_auto_items(수율·cpk 는
+정상인데 eval 룰만 위반한 item — web_report/ai_comment.py 산출)를 자동 행으로 잇는다.
 PTE/개발 comment 는 manifest.issue_comments 에 row_key 단위로 저장된다
 (service.update_issue_comments 가 갱신, 여기서는 조회 시 채우기만 한다).
 row_key: Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", ETC 행 "ETC|<item>".
@@ -118,8 +119,26 @@ def build_issue_bin_summary(yield_rows):
     return groups
 
 
+def _auto_etc_items(etc_auto_items, etc_items, cpk_fails, yield_rows, hidden):
+    """룰만 위반한 item(ai_comment.etc_auto_items) 중 ETC 자동 행으로 올릴 목록.
+
+    이미 다른 섹션/행으로 보이는 것은 뺀다: 수동 ETC 항목, CPK 섹션 항목(cpk<1.33),
+    Yield 행이 있는 항목(fail bin), 사용자가 숨긴 이슈. 사용자 편집값이 아니라
+    매 조회마다 다시 계산되는 값이라, 룰이 조용해지면 행도 자동으로 사라진다.
+    """
+    if not etc_auto_items:
+        return []
+    seen = set(etc_items or ())
+    seen.update(subject for subject, _ in cpk_fails)
+    for r in yield_rows or []:
+        if str(r.get("bin")).strip() != PASS_BIN and r.get("Item"):
+            seen.add(r["Item"])
+    return [it for it in etc_auto_items
+            if it not in seen and f"ETC|{it}" not in hidden]
+
+
 def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=None,
-                           issue_comments=None, ai_comments=None,
+                           issue_comments=None, ai_comments=None, etc_auto_items=None,
                            hidden_keys=None, statuses=None):
     # ai_comments: None = 컬럼 미표시(기존 세션 payload 불변) / dict = AI Comment 컬럼
     # 표시(값은 row_key 매칭, 빈 dict 면 빈 셀). service 가 옵션 판정 후 전달.
@@ -226,7 +245,10 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
 
     etc = {"Category": "ETC", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources, ai)}
     rows.append(etc)
-    rows.extend(_etc_rows(tables, yield_rows, etc_items, sources,
+    # 수동 추가분(ENGR) 뒤에 룰 위반 자동 행을 잇는다 — 행 채움 로직은 동일.
+    etc_all = list(etc_items or []) + _auto_etc_items(
+        etc_auto_items, etc_items, cpk_fails, yield_rows, hidden)
+    rows.extend(_etc_rows(tables, yield_rows, etc_all, sources,
                           issue_comments=issue_comments, ai_comments=ai_comments,
                           status_of=_status))
     return rows

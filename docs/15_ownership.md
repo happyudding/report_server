@@ -14,10 +14,18 @@
 
 | 티어 | 정책 | 영역 |
 |------|------|------|
-| 🟢 **자유 수정** | 승인 없이 바로 수정 | `web_report/` · `server/`(단 `storage_gateway/` **제외**) · web_report 관련 html(`server/report/report_view.html`, `server/report/static/webreport/`) · client 자주 쓰는 영역: `client/honey_ui/`, `client/honey_main.py`, `client/transport/`, `client/excel_download/`, `client/excel_edit/` |
+| 🟢 **자유 수정** | 승인 없이 바로 수정 | `web_report/` · `server/`(단 `storage_gateway/` **제외**) · web_report 관련 html(`server/report/report_view.html`, `server/report/static/webreport/`) · `eval_analyzer/`(2026-08-03 승격 — 아래 주 참조) · client 자주 쓰는 영역: `client/honey_ui/`, `client/honey_main.py`, `client/transport/`, `client/excel_download/`, `client/excel_edit/` |
 | 🟡 **사전 승인 (중간)** | 편집 전 **파일·이유·영향**을 설명하고 명시 승인 | `client/` 나머지 비동결 — `report_flow/`, `map_report/`, `embedded_browser.py`, `client_identity.py`, `config.py`, 그 외 client 최상위 파일(`app_settings.py`, `chart_colors.py` 등) |
 | 🔒 **외부 담당자 영역 (동결)** | 건들 때마다 승인 (원칙 무수정) | `d1/` · `d1_storage/` · `client/honey_parse/` · `client/report_generator/` · `server/storage_gateway/`(**facade `__init__.py` + `_s3` 내부 전체**) |
-| 🔒 외부 단방향 (동결) | 하위 무수정(예외는 승인 필요), import 는 3곳만 | `eval_analyzer/` — eval_engine import 는 [web_report/ai_comment.py](../web_report/ai_comment.py)(evaluate) + [web_report/eval_export.py](../web_report/eval_export.py)(store·ingest 헬퍼) + [web_report/eval_debug.py](../web_report/eval_debug.py)(룰 리로드·트레이스) **3곳만**([docs/13](13_eval_analyzer_integration.md), CLAUDE.md 규칙 #8). 무수정 예외: `db_input/`, 그리고 2026-08-03 승인된 `pipeline/_rules.py`·`pipeline/signatures.py`(원본 `F:\COINAPI\eval_analyzer` 에도 동일 적용 필수) |
+| 🟢 자유 수정 (단방향 유지) | 하위 파일 자유 수정, **import 는 3곳만** | `eval_analyzer/` — eval_engine import 는 [web_report/ai_comment.py](../web_report/ai_comment.py)(evaluate) + [web_report/eval_export.py](../web_report/eval_export.py)(store·ingest 헬퍼) + [web_report/eval_debug.py](../web_report/eval_debug.py)(룰 리로드·트레이스) **3곳만**([docs/13](13_eval_analyzer_integration.md), CLAUDE.md 규칙 #8). 예외적으로 **eval_DB 스키마 변경만 사전 승인** 대상 |
+
+> **`eval_analyzer/` 동결 해제 (2026-08-03).** 이전에는 🔒 "외부 단방향(동결)" 이었고 근거는
+> "외부 원본 `F:\COINAPI\eval_analyzer` 와 diff 최소화 → 동기화 용이" 였다. **이제 이 repo 의
+> `eval_analyzer/` 가 원본이다** — 외부 사본은 참조·동기화 대상이 아니므로 동결 근거가 사라졌고
+> 🟢 자유 수정으로 승격했다. 계속 유효한 두 제약:
+> - **의존 방향 단방향** — report_server → eval_analyzer 만. 역방향 import 금지, 진입 import 3곳 고정.
+> - **eval_DB 스키마 변경은 사전 승인** — 운영 eval.db 에 누적 데이터가 있어, DDL·컬럼을 바꾸기
+>   전에 대상과 영향을 설명하고 승인을 받는다.
 
 ---
 
@@ -67,5 +75,6 @@
 이 문서는 **정책**을 명문화한다. 진짜로 "자유 영역은 무마찰, 외부 담당자 영역은 편집 차단"을
 도구로 강제하려면 `.claude/settings.json` 의 권한 규칙으로 가능하다 — 자유 영역 glob 은
 Edit/Write 허용, 외부 담당자 glob(`server/storage_gateway/**`, `client/report_generator/**`,
-`client/honey_parse/**`, `d1/**`, `d1_storage/**`, `eval_analyzer/**`)은 deny/ask. 이번 문서
+`client/honey_parse/**`, `d1/**`, `d1_storage/**`)은 deny/ask (`eval_analyzer/**` 는
+2026-08-03 자유 수정 승격으로 **제외**). 이번 문서
 정리 범위 밖이며, 원하면 별도로 설정한다.

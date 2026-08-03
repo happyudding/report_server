@@ -5,6 +5,7 @@
 """
 import shutil
 
+import pytest
 import yaml
 
 from eval_engine import config
@@ -95,6 +96,7 @@ def _full_features(**kw):
     return f
 
 
+@pytest.mark.rules_as_deployed
 def test_signature_enabled_false_does_not_fire(tmp_path, monkeypatch):
     """enabled:false 인 signature 는 발화도 applies 기록도 하지 않는다."""
     _tmp_rules(tmp_path, monkeypatch)

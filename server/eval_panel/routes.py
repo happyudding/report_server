@@ -12,7 +12,7 @@ import threading
 import time
 from pathlib import Path
 
-from flask import Blueprint, Response, abort, jsonify, request
+from flask import Blueprint, Response, abort, jsonify, request  # noqa: F401 (Response=CSV)
 
 import config
 from admin_panel import GATE_COOKIE_EVAL, GATE_COOKIE_EVAL_PATH, eval_gate_token
@@ -162,6 +162,23 @@ def api_signatures():
     return jsonify(rules_io.read_signatures())
 
 
+@eval_panel_bp.post("/api/signatures/enabled")
+def api_signatures_bulk_enabled():
+    """선택한 signature 여러 개를 한 번에 활성/비활성."""
+    body = request.get_json(force=True, silent=True) or {}
+    enabled = bool(body.get("enabled"))
+    try:
+        result = rules_io.set_signatures_enabled(body.get("ids") or [], enabled)
+    except rules_io.RuleError as exc:
+        return _rule_error(exc)
+    if result["changed"]:
+        _audit("eval_rules_edit",
+               changed_fields=[f"signatures_enabled={enabled}",
+                               f"ids={result['changed']}", f"rev={result['rules_rev']}"])
+    result["ok"] = True
+    return jsonify(result)
+
+
 @eval_panel_bp.put("/api/signatures/<sig_id>")
 def api_signature_save(sig_id):
     body = request.get_json(force=True, silent=True) or {}
@@ -207,6 +224,95 @@ def api_backup_restore():
     _audit("eval_rules_edit", changed_fields=[f"restore:{body.get('name')}",
                                               f"rev={result['rules_rev']}"])
     result["ok"] = True
+    return jsonify(result)
+
+
+# ── Eval DB (Issue Table 코멘트 export — web_report/eval_export.py) ──────────
+# 2026-08-03 admin_panel 에서 이관. 구현은 그대로 admin_panel/eval_admin.py 를 쓴다
+# (모듈 위치는 admin 이지만 eval DB 전용 헬퍼라 옮기지 않았다 — import 만 한다).
+
+_CASE_ID_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+@eval_panel_bp.get("/api/eval/overview")
+def api_eval_overview():
+    from admin_panel import eval_admin
+    return jsonify(eval_admin.overview())
+
+
+@eval_panel_bp.get("/api/eval/labels")
+def api_eval_labels():
+    from admin_panel import eval_admin
+    return jsonify(eval_admin.list_labels(
+        q=(request.args.get("q") or "").strip() or None,
+        limit=request.args.get("limit", 100),
+        offset=request.args.get("offset", 0),
+    ))
+
+
+@eval_panel_bp.get("/api/eval/labels.csv")
+def api_eval_labels_csv():
+    """코멘트 라벨 전체 → db_input 단순 5컬럼 CSV (수정 후 run_import.bat 재적재용)."""
+    from admin_panel import eval_admin
+    return Response(eval_admin.labels_csv_iter(), mimetype="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=eval_labels.csv",
+                             "Cache-Control": "no-store"})
+
+
+@eval_panel_bp.post("/api/eval/cases/delete")
+def api_eval_cases_delete():
+    from admin_panel import eval_admin
+    body = request.get_json(force=True, silent=True) or {}
+    cids = body.get("case_ids")
+    if not isinstance(cids, list) or not cids or len(cids) > 200:
+        abort(400, "case_ids: 1~200개 리스트 필요")
+    for cid in cids:
+        if not isinstance(cid, str) or not _CASE_ID_RE.match(cid):
+            abort(400, f"invalid case_id: {cid!r}")
+    result = eval_admin.delete_cases(cids)
+    _audit("delete", changed_fields=[f"eval_cases({result.get('deleted', 0)})"])
+    return jsonify(result)
+
+
+@eval_panel_bp.post("/api/eval/items/value_type")
+def api_eval_set_value_type():
+    """Unit 그룹(value_type) 수동 지정 — 선례검색 하드필터라 오분류 교정용."""
+    from admin_panel import eval_admin
+    body = request.get_json(force=True, silent=True) or {}
+    ids = body.get("item_ids")
+    value_type = body.get("value_type")
+    if not isinstance(ids, list) or not ids or len(ids) > 200:
+        abort(400, "item_ids: 1~200개 리스트 필요")
+    if any(not isinstance(i, int) for i in ids):
+        abort(400, "item_ids: 정수만 허용")
+    if value_type not in eval_admin.VALUE_TYPES:
+        abort(400, f"value_type: {eval_admin.VALUE_TYPES} 중 하나여야 함")
+    result = eval_admin.set_item_value_type(ids, value_type)
+    _audit("edit", changed_fields=[f"eval_value_type({value_type}x{result.get('updated', 0)})"])
+    return jsonify(result)
+
+
+@eval_panel_bp.post("/api/eval/items/remap_units")
+def api_eval_remap_units():
+    """저장된 unit 원문에 별칭 규칙(VOLT/AMP/HERTZ)을 일괄 재적용."""
+    from admin_panel import eval_admin
+    body = request.get_json(force=True, silent=True) or {}
+    dry_run = bool(body.get("dry_run"))
+    result = eval_admin.remap_unit_aliases(dry_run=dry_run)
+    if not dry_run:
+        _audit("edit", changed_fields=[f"eval_remap_units({result.get('changed', 0)})"])
+    return jsonify(result)
+
+
+@eval_panel_bp.post("/api/eval/session/<session_id>/reexport")
+def api_eval_reexport(session_id):
+    from admin_panel import eval_admin
+    if not _SESSION_ID_RE.match(session_id):
+        abort(400, "invalid session_id")
+    if not report_db.get_session(session_id):
+        abort(404, "session not found")
+    result = eval_admin.reexport(session_id)
+    _audit("edit", changed_fields=[f"eval_reexport({session_id}:{result})"])
     return jsonify(result)
 
 

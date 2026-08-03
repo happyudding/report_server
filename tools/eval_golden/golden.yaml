@@ -1,0 +1,37 @@
+# eval 룰 골든셋 — "이 세션의 이 항목은 이 룰이 떠야/뜨면 안 된다"를 사람이 기록하는 파일.
+#
+# 왜 필요한가: 임계값을 만지면 어떤 항목은 좋아지고 어떤 항목은 나빠진다. 코멘트를 눈으로
+# 훑는 방식으로는 그 교환을 볼 수 없다. 여기에 판단을 적어 두면 golden_check.py 가
+# 임계값 수정 전후의 발화 변화를 수치(누락/오탐)로 보여준다.
+#
+# 채우는 방법: /pe/eval → L0~L6 트레이스에서 세션을 돌리고, 분포 미니차트를 보며
+# "이건 진짜 이봉이다" / "이건 이봉이 아닌데 SUBPOP_GAP 이 떴다" 를 한 줄씩 옮겨 적는다.
+# 처음부터 많이 적을 필요 없다 — 확실한 것 몇 개로 시작해서 룰을 만질 때마다 늘린다.
+#
+# 실행: python tools/eval_golden/golden_check.py
+#       python tools/eval_golden/golden_check.py --session <id>   (한 세션만)
+#
+# 스키마:
+#   sessions:
+#     - session_id: <세션 id>
+#       note: <이 세션이 뭔지 — 사람용 메모>
+#       expect:
+#         - item: <item_raw 이름>       # 필수
+#           bin: <숫자>                 # 선택 — 생략하면 그 item 의 모든 case 를 합쳐서 본다
+#           source: <소스 index>        # 선택 — 생략하면 전 소스 합집합
+#           fire:     [SIGNATURE_ID, ...]   # 반드시 발화해야 (없으면 miss)
+#           not_fire: [SIGNATURE_ID, ...]   # 발화하면 오탐 (false-fire)
+#           status: MAJOR                    # 선택 — 기대 status
+#
+# 예시(주석 해제해서 실제 세션 id 로 바꿔 쓸 것):
+# sessions:
+#   - session_id: 20260803_120000_abcd
+#     note: PMIC SOC — VREF_TRIM 이 육안상 명확한 이봉
+#     expect:
+#       - item: VREF_TRIM
+#         fire: [SUBPOP_GAP]
+#       - item: IDDQ
+#         not_fire: [SUBPOP_GAP, SEVERE_OUTLIER]
+#         status: OK
+
+sessions: []

@@ -105,7 +105,7 @@ web_report/
 | DB CRUD | [database/report_db.py](../server/database/report_db.py) | create/update_session, log_audit, get/apply_webreport_edits, get_webreport_edit_rev |
 | eval_analyzer 엔진 | [eval_analyzer/](../eval_analyzer/) `eval_engine` | **ai_comment.py(evaluate, persist=False) + eval_export.py(store·ingest 헬퍼) + eval_debug.py(룰 리로드·트레이스) 3곳에서만 import** (단방향) → [docs/13](../docs/13_eval_analyzer_integration.md) |
 | eval 룰 관리자 패널 | [server/eval_panel/](../server/eval_panel/) | `/pe/eval` — eval_debug 경유로만 엔진 접근 (직접 import 금지) |
-| 관리자 Eval DB 탭 | [server/admin_panel/eval_admin.py](../server/admin_panel/eval_admin.py) | eval_export.open_conn/db_path 재사용 (overview/목록/삭제/재적재) |
+| 관리자 Eval DB 탭 | 구현 [server/admin_panel/eval_admin.py](../server/admin_panel/eval_admin.py) · 화면/라우트 [server/eval_panel/](../server/eval_panel/) (2026-08-03 `/pe/eval` 로 이관) | eval_export.open_conn/db_path 재사용 (overview/목록/삭제/재적재) |
 
 web_report 안에서 위 연결점의 **호출 시그니처(함수명·인자·반환 dict 키)** 를 바꾸면 바깥
 파일도 맞춰 고쳐야 하므로, 그 경우 함께 반영할 것.

@@ -55,6 +55,13 @@ textarea.inp { height: auto; padding: 8px 10px; width: 100%; font-family: inheri
 .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
 .badge.on { background: #143824; color: var(--ok); }
 .badge.off { background: #3a3a3a; color: var(--ink-3); }
+.badge.own { background: #2a2415; color: var(--warn); }
+.badge.inherit { background: #262a32; color: var(--ink-3); }
+.btn.tiny { height: 24px; padding: 0 7px; font-size: 12px; line-height: 1; margin-left: 4px; }
+.chip.sig { background: #1e2a3a; color: #93c5fd; }
+.chip.sig.off { background: #2b2e36; color: var(--ink-3); text-decoration: line-through; }
+.chip.code { background: #262a32; color: var(--ink-3); font-style: italic; }
+td.wrap, th.wrap { white-space: normal; min-width: 180px; }
 .badge.OK { background: #143824; color: var(--ok); }
 .badge.MONITOR { background: #1e2a3a; color: #93c5fd; }
 .badge.MINOR { background: #33301a; color: var(--warn); }
@@ -76,15 +83,68 @@ details.sig .body label { display: block; font-size: 11px; color: var(--ink-2); 
 .fld-row .inp { flex: 1; }
 ul.problems { margin: 6px 0 0 18px; font-size: 12px; color: #fca5a5; line-height: 1.8; }
 ul.notes { margin: 6px 0 0 18px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
+
+/* 우상단 페이지 이동 링크 */
+.navlinks { position: absolute; top: 18px; right: 20px; font-size: 12px; }
+.navlinks a { color: var(--ink-3); text-decoration: none; margin-left: 12px; }
+.navlinks a:hover { color: var(--accent); text-decoration: underline; }
+body { position: relative; }
+
+/* ── Eval DB 탭 (admin_panel 에서 이관, 2026-08-03) ───────────────────── */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.tile { background: var(--surface-1); border: 1px solid var(--grid); border-radius: 10px; padding: 14px 16px; }
+.tile .lbl { font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+.tile .val { font-size: 26px; font-weight: 600; color: var(--ink-1); }
+.tile .det { font-size: 11px; color: var(--ink-3); margin-top: 4px; }
+.pager { display: flex; gap: 6px; justify-content: center; margin-top: 12px; align-items: center; }
+.pager .pg-btn { min-width: 32px; height: 30px; padding: 0 10px; font-size: 12px;
+  border: 1px solid var(--grid); background: var(--surface-1); color: var(--ink-1); cursor: pointer; border-radius: 4px; }
+.pager .pg-btn:disabled { opacity: .4; cursor: not-allowed; }
+.pager .pg-info { font-size: 12px; color: var(--ink-3); }
+.table-wrap.scroll-both { max-height: 68vh; overflow: auto; }
+.table-wrap.scroll-both thead th { position: sticky; top: 0; z-index: 1; }
+details.colmenu { position: relative; }
+details.colmenu > summary { list-style: none; display: inline-flex; align-items: center; }
+details.colmenu > summary::-webkit-details-marker { display: none; }
+details.colmenu .colmenu-body {
+  position: absolute; z-index: 6; top: 36px; left: 0; min-width: 160px;
+  background: var(--surface-1); border: 1px solid var(--grid); border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.35); padding: 8px 12px;
+}
+details.colmenu .colmenu-body label {
+  display: flex; gap: 8px; align-items: center; font-size: 12px;
+  color: var(--ink-2); padding: 3px 0; cursor: pointer; white-space: nowrap;
+}
+/* 모든 행을 1줄로 고정하고, 잘린 셀만 클릭해서 펼친다.
+   max-width 는 td 가 아니라 내부 요소에 걸어야 auto 테이블 레이아웃이 존중한다.
+   펼치기 화살표는 clip 밖에 둔다 — 안에 넣으면 ellipsis 에 같이 잘려 안 보인다. */
+.clip { display: inline-block; vertical-align: top; max-width: 340px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clip.item { max-width: 220px; }
+td.clipcell { cursor: pointer; }
+td.clipcell .cliptog { color: var(--accent); margin-right: 5px; user-select: none; }
+td.clipcell .cliptog::before { content: "▸"; }
+td.clipcell.open .cliptog::before { content: "▾"; }
+td.clipcell.open .clip { white-space: pre-wrap; word-break: break-word; max-width: 560px; }
+.unit-vt { background: #21242b; color: var(--ink-2); border: 1px solid var(--grid);
+           border-radius: 6px; font-size: 12px; padding: 2px 4px; }
+.unit-raw { color: var(--ink-3); font-size: 11px; margin-right: 6px; }
+.btn.danger { background: var(--surface-1); color: #f87171; border-color: #5c2c2c; }
+.btn.danger:hover { background: #2e1c1c; }
 </style>
 </head>
 <body>
+<div class="navlinks">
+  <a href="/pe/report/" title="세션 검색 화면">🏠 Home</a>
+  <a href="/pe/admin-pte/" title="서버 현황·세션·통계 관리자 페이지">서버 관리자 →</a>
+</div>
 <h1>Eval 룰 관리 <span class="sub">/pe/eval — 저장 즉시 반영(서버 재시작 불필요)</span></h1>
 
 <div class="tabs">
   <button class="tab active" data-panel="pThresholds">Thresholds</button>
   <button class="tab" data-panel="pSignatures">Signatures</button>
   <button class="tab" data-panel="pTrace">L0~L6 트레이스</button>
+  <button class="tab" data-panel="pEval">Eval DB</button>
   <button class="tab" data-panel="pMaint">검증 · 백업</button>
 </div>
 
@@ -106,8 +166,8 @@ ul.notes { margin: 6px 0 0 18px; font-size: 12px; color: var(--ink-3); line-heig
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th>임계값 키</th><th class="num">현재 적용값</th><th>출처</th>
-          <th class="num">이 범위 값</th><th>설명</th>
+          <th>임계값</th><th class="num">적용값</th><th>상태</th>
+          <th>설명</th><th>이 값을 쓰는 룰</th>
         </tr></thead>
         <tbody id="thBody"></tbody>
       </table>
@@ -119,8 +179,17 @@ ul.notes { margin: 6px 0 0 18px; font-size: 12px; color: var(--ink-3); line-heig
 <div class="panel" id="pSignatures">
   <div class="card">
     <h2>Signature 21종 <span class="hint">전 제품 공통 · 신규 추가/삭제는 지원하지 않음</span></h2>
+    <div class="note" style="margin-bottom:10px">
+      Signature = "이런 모양이면 이런 고장" 규칙 한 줄. 조건이 <b>모두</b> 맞으면 발화하고,
+      발화한 룰의 심각도·문구가 그 항목의 AI Comment 가 됩니다.
+      끈 룰은 평가에서 통째로 빠집니다(발화도, 판정 근거도 안 됨).
+    </div>
     <div class="toolbar">
       <input class="inp grow" id="sigFilter" placeholder="id 검색">
+      <label class="note"><input type="checkbox" id="sigAll"> 전체 선택</label>
+      <span class="chip" id="sigSelCount">선택 0</span>
+      <button class="btn" id="sigEnable">선택 켜기</button>
+      <button class="btn" id="sigDisable">선택 끄기</button>
       <span class="chip" id="sigRev"></span>
       <span class="msg" id="sigMsg"></span>
     </div>
@@ -163,6 +232,55 @@ ul.notes { margin: 6px 0 0 18px; font-size: 12px; color: var(--ink-3); line-heig
       <h2>케이스 상세</h2>
       <div class="note">왼쪽 표에서 케이스를 선택하세요.</div>
     </div>
+  </div>
+</div>
+
+<!-- ── Eval DB (admin_panel 에서 이관) ─────────────────────────────── -->
+<div id="pEval" class="panel">
+  <div class="tiles" id="evalTiles">
+    <div class="tile"><div class="lbl">로딩 중…</div></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>코멘트 라벨 목록 <span id="evalSummary" class="hint"></span>
+      <button class="btn" id="btnEvalRefresh" style="float:right">새로고침</button></h2>
+    <div class="toolbar">
+      <input id="evalQ" class="inp" style="width:280px" placeholder="product / family / lot / item / comment / 세션ID 검색…">
+      <button class="btn primary" id="btnEvalSearch">검색</button>
+      <details class="colmenu" id="evalColMenu">
+        <summary class="btn" title="표에 보일 컬럼을 고릅니다 (선택은 이 브라우저에 저장됩니다)">컬럼 표시</summary>
+        <div class="colmenu-body" id="evalColBody"></div>
+      </details>
+      <a class="btn" id="btnEvalCsv" href="api/eval/labels.csv" download
+         title="코멘트 전체를 db_input 5컬럼 CSV(Product type/Family Product/unit/Item/comment)로 내려받습니다. unit 은 엔진 어휘(V/A/Hz…)로 나가며, 수정 후 run_import.bat 으로 그대로 재적재할 수 있습니다">CSV 다운로드</a>
+      <button class="btn" id="btnEvalRemapUnits"
+              title="이미 적재된 항목의 unit 원문에 별칭 규칙(VOLT→V / AMP→A / HERTZ→Hz)을 일괄 재적용합니다. 규칙에 걸리지 않는 unit 과 손으로 지정한 값은 건드리지 않습니다">Unit 별칭 재적용</button>
+      <span class="grow"></span>
+      <input id="evalReexportSid" class="inp" style="width:200px" placeholder="세션ID (재적재)"
+             title="해당 세션의 코멘트를 Eval DB 로 다시 내보낼 세션 ID">
+      <button class="btn" id="btnEvalReexport"
+              title="입력한 세션의 Issue Table 코멘트를 Eval DB 에 다시 적재합니다 (적재 누락 복구용)">세션 재적재</button>
+      <button class="btn danger" id="btnEvalBulkDelete" disabled
+              title="체크한 라벨을 Eval DB 에서 삭제합니다 — 원본 세션의 코멘트는 그대로 남습니다">선택 케이스 삭제 (0)</button>
+    </div>
+    <div class="table-wrap scroll-both"><table>
+      <thead><tr>
+        <th><input type="checkbox" id="evalChkAll" title="현재 페이지의 모든 행 선택/해제"></th>
+        <th data-col="created" title="이 라벨이 적재된 시각">기록</th>
+        <th data-col="product" title="제품명">product</th>
+        <th data-col="family" title="제품군 (product_type / family_product)">family</th>
+        <th data-col="lot" title="로트 번호">lot</th>
+        <th data-col="bin" class="num" title="fail 이 묶인 Bin 번호">Bin</th>
+        <th data-col="item" title="fail 이 난 테스트 항목 — 길면 셀을 클릭해 펼칩니다">Item</th>
+        <th data-col="unit" title="단위 원문(회색)과 Unit 그룹(value_type). 그룹이 틀렸으면 드롭다운에서 바로 고칠 수 있습니다 — 선례검색이 이 값으로 걸러집니다">unit</th>
+        <th data-col="comment" title="Issue Table 에 입력된 PTE/개발 코멘트 — eval_analyzer 학습 라벨로 쓰입니다. 길면 셀을 클릭해 펼칩니다">comment</th>
+        <th data-col="reviewer" title="코멘트를 마지막으로 저장한 사용자">편집자</th>
+        <th data-col="session" title="출처 세션 ID">session_id</th>
+      </tr></thead>
+      <tbody id="evalBody"><tr class="empty-row"><td colspan="11">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="pager" id="evalPager"></div>
+    <div class="msg" id="evalMsg">Issue Table 의 PTE/개발 comment 가 세션 업로드·편집 시마다 자동 적재됩니다 (eval_analyzer 소비용 · report.db 와 분리된 별도 DB). 과거 사례를 손으로 넣으려면 CSV 를 내려받아 고친 뒤 서버에서 eval_analyzer\db_input\run_import.bat 을 실행하세요.</div>
   </div>
 </div>
 
@@ -234,29 +352,22 @@ function flash(el, text, ok) {
 let META = null;
 
 // ── Thresholds ───────────────────────────────────────────────────────────
-const TH_DESC = {
-  cpk_warn: 'Cpk 경고선 (코멘트 저장 게이트에도 사용)',
-  cpk_bad: 'Cpk 심각 — 수율 조건과 함께면 CRITICAL 강제',
-  cpk_trump_yield_floor: 'CRITICAL 강제 수율 하한',
-  outlier_ratio_warn: 'outlier 비율 경고', outlier_ratio_bad: 'outlier 비율 심각',
-  severe_outlier_count_min: 'SEVERE_OUTLIER 최소 개수',
-  spread_norm_warn: 'spec 폭 대비 산포 경고', modified_z: 'outlier 판정 z 컷',
-  skew_warn: '왜도 경고', kurtosis_warn: '첨도 경고',
-  spec_margin_warn: 'spec 근접도 경고', n_min: '고차모멘트 룰 최소 표본',
-  bimodality_warn: '이봉성 경고', edge_fail_ratio_warn: 'edge fail 배수',
-  edge_region_pct: 'edge 영역 반경 비율', center_region_pct: 'center 영역 반경 비율',
-  quadrant_imbalance_warn: '사분면 편중', mean_shift_warn: '중심 이탈',
-  site_cpk_delta_warn: 'site 간 Cpk 격차', gross_yield_bad: '총 수율 심각',
-  code_edge_hit_warn: 'CODE rail 접촉 비율', spatial_fail_count_min: '공간 룰 최소 fail 수',
-  ring_fail_ratio_warn: 'ring fail 배수', gradient_norm_warn: 'wafer 경사',
-};
+// 설명은 thresholds.yaml 의 주석을 서버가 뽑아 내려준다(정본 1곳).
 let TH_STATE = null;
 
 function fillFamily() {
   const pt = $('thPt').value;
   const families = (META.taxonomy[pt] || []);
-  $('thFamily').innerHTML = '<option value="">(제품군 공통)</option>' +
+  $('thFamily').innerHTML = '<option value="">(제품군 공통 — 이 제품군 전체)</option>' +
     families.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
+}
+
+function usageHtml(list) {
+  if (!list || !list.length) return '<span class="note">—</span>';
+  return list.map((u) => u.code
+    ? `<span class="chip code" title="선언형 조건이 아니라 엔진 코드가 직접 읽는 값">${esc(u.id)}</span>`
+    : `<span class="chip sig ${u.enabled ? '' : 'off'}" title="${u.enabled ? '' : '비활성 상태'}">${esc(u.id)}</span>`
+  ).join('');
 }
 
 async function loadThresholds() {
@@ -265,25 +376,48 @@ async function loadThresholds() {
   const data = await getJSON(`api/thresholds?pt=${encodeURIComponent(pt)}&family=${encodeURIComponent(family)}`);
   TH_STATE = data;
   $('thRev').textContent = 'rules_rev ' + (data.rules_rev || '(없음)');
-  const own = family ? data.overlay_family : data.overlay_pt;
-  $('thScopeNote').innerHTML = family
-    ? `<b>${esc(pt)} / ${esc(family)}</b> 값을 편집합니다. 병합 순서: default → 레거시 product_type → 제품군 공통 → family (오른쪽이 우선). item_class ${data.item_class_count}건은 항상 최우선입니다.`
-    : `<b>${esc(pt)} 제품군 공통</b> 값을 편집합니다 (family 를 고르면 그 family 가 이 값을 덮어씁니다).`;
+  $('thScopeNote').innerHTML = (family
+    ? `<b>${esc(pt)} / ${esc(family)}</b> 에 적용될 값입니다.`
+    : `<b>${esc(pt)} 제품군 전체</b>에 적용될 값입니다 (family 를 고르면 그 family 가 이 값을 덮어씁니다).`)
+    + ` 칸에 보이는 값이 곧 적용되는 값이고, <b>저장을 누르면 그대로 반영</b>됩니다.`
+    + ` 상속받은 값과 같으면 파일에 기록하지 않습니다(상위 값이 바뀌면 따라갑니다).`
+    + ` 칸을 비우거나 ↺ 를 누르면 상속으로 되돌립니다.`
+    + (data.item_class_count ? ` · item_class 개별값 ${data.item_class_count}건은 항상 이보다 우선합니다.` : '');
+
   const keys = Object.keys(data.default).sort();
   $('thBody').innerHTML = keys.map((k) => {
-    const v = own[k];
+    const eff = data.effective[k];
+    const isOwn = Object.prototype.hasOwnProperty.call(data.own, k);
     return `<tr>
       <td class="mono">${esc(k)}</td>
-      <td class="num">${num(data.effective[k])}</td>
-      <td class="origin">${esc(data.origin[k] || '')}</td>
-      <td class="num"><input class="inp narrow th-val" data-key="${esc(k)}"
-           value="${v == null ? '' : esc(v)}" placeholder="상속"></td>
-      <td class="note">${esc(TH_DESC[k] || '')}</td>
+      <td class="num">
+        <input class="inp narrow th-val" data-key="${esc(k)}" value="${eff == null ? '' : esc(eff)}">
+        <button class="btn tiny th-reset" data-key="${esc(k)}" title="상속값으로 되돌리기"
+                ${isOwn ? '' : 'disabled'}>↺</button>
+      </td>
+      <td><span class="badge ${isOwn ? 'own' : 'inherit'}">${esc(data.origin[k] || '')}</span>
+          ${isOwn ? `<div class="origin">상속값 ${num(data.inherited[k])}</div>` : ''}</td>
+      <td class="note wrap">${esc(data.descriptions[k] || '')}</td>
+      <td class="wrap">${usageHtml(data.usage[k])}</td>
     </tr>`;
   }).join('');
+
   document.querySelectorAll('.th-val').forEach((inp) => {
-    const initial = inp.value;
-    inp.addEventListener('input', () => inp.classList.toggle('changed', inp.value !== initial));
+    const mark = () => {
+      const raw = inp.value.trim();
+      const inherited = TH_STATE.inherited[inp.dataset.key];
+      inp.classList.toggle('changed', raw !== '' && Number(raw) !== inherited);
+    };
+    mark();
+    inp.addEventListener('input', mark);
+  });
+  document.querySelectorAll('.th-reset').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const inp = document.querySelector(`.th-val[data-key="${CSS.escape(btn.dataset.key)}"]`);
+      const inherited = TH_STATE.inherited[btn.dataset.key];
+      inp.value = inherited == null ? '' : String(inherited);
+      inp.dispatchEvent(new Event('input'));
+    });
   });
 }
 
@@ -293,16 +427,18 @@ async function saveThresholds() {
   document.querySelectorAll('.th-val').forEach((inp) => {
     const key = inp.dataset.key;
     const raw = inp.value.trim();
-    if (raw === '') { overrides[key] = null; return; }
+    if (raw === '') { overrides[key] = null; return; }      // 비우면 상속으로
     const v = Number(raw);
     if (!isFinite(v)) { bad = key; return; }
-    overrides[key] = v;
+    // 상속값과 같으면 파일에 남기지 않는다 — 상위 층을 고치면 따라가게 하기 위함.
+    overrides[key] = (v === TH_STATE.inherited[key]) ? null : v;
   });
   if (bad) { flash($('thMsg'), `${bad}: 숫자가 아닙니다`, false); return; }
   try {
     const r = await sendJSON('api/thresholds', 'PUT',
       { pt: $('thPt').value, family: $('thFamily').value, overrides });
-    flash($('thMsg'), `저장됨 (rules_rev ${r.rules_rev})`, true);
+    const n = Object.keys(r.saved).length;
+    flash($('thMsg'), `저장됨 — 이 범위 직접 지정 ${n}건 (rules_rev ${r.rules_rev})`, true);
     await loadThresholds();
   } catch (e) { flash($('thMsg'), e.message, false); }
 }
@@ -313,12 +449,16 @@ let SIGS = [];
 function sigCard(s) {
   const conds = Object.entries(s.when_metric).map(([m, c]) => `
     <div class="fld-row">
-      <input class="inp mono" style="max-width:220px" value="${esc(m)}" data-role="metric">
-      <input class="inp mono" value="${esc(c)}" data-role="cond">
+      <input class="inp mono" style="max-width:220px" value="${esc(m)}" data-role="metric"
+             title="측정에서 계산된 지표 이름">
+      <input class="inp mono" value="${esc(c)}" data-role="cond"
+             title="비교 방법과 기준값. 기준값 자리에 임계값 이름을 쓰면 Thresholds 탭 값을 따릅니다">
     </div>`).join('');
   return `<details class="sig" data-id="${esc(s.id)}">
     <summary>
-      <span class="badge ${s.enabled ? 'on' : 'off'}">${s.enabled ? 'ON' : 'OFF'}</span>
+      <input type="checkbox" class="sig-pick" data-id="${esc(s.id)}"
+             onclick="event.stopPropagation()" title="일괄 켜기/끄기 선택">
+      <span class="badge ${s.enabled ? 'on' : 'off'}">${s.enabled ? '사용중' : '꺼짐'}</span>
       <span class="mono">${esc(s.id)}</span>
       <span class="badge ${esc(s.status_hint)}">${esc(s.status_hint)}</span>
       <span class="note">${esc(s.issue_category || 'ETC')}</span>
@@ -327,12 +467,12 @@ function sigCard(s) {
     <div class="body">
       <div class="fld-row">
         <label style="margin:0"><input type="checkbox" data-role="enabled"
-          ${s.enabled ? 'checked' : ''}> 활성</label>
-        <select class="sel" data-role="status_hint">
+          ${s.enabled ? 'checked' : ''}> 이 룰 사용</label>
+        <select class="sel" data-role="status_hint" title="이 룰이 발화했을 때 매길 심각도">
           ${['MONITOR', 'MINOR', 'MAJOR', 'CRITICAL'].map((v) =>
             `<option ${v === s.status_hint ? 'selected' : ''}>${v}</option>`).join('')}
         </select>
-        <select class="sel" data-role="issue_category">
+        <select class="sel" data-role="issue_category" title="Issue Table 어느 섹션에 붙일지">
           ${['', 'YIELD', 'CPK', 'ETC'].map((v) =>
             `<option value="${v}" ${v === (s.issue_category || '') ? 'selected' : ''}>${v || '(미지정=ETC)'}</option>`).join('')}
         </select>
@@ -340,14 +480,20 @@ function sigCard(s) {
         <button class="btn primary" data-role="save">저장</button>
         <span class="msg" data-role="msg"></span>
       </div>
-      <label>발화 조건 (모두 AND · 형식: <span class="mono">&gt;key</span>,
-        <span class="mono">&lt;=0.5</span>, <span class="mono">abs&gt;key</span>)</label>
-      <div data-role="conds">${conds || '<div class="note">조건 없음(특수분기 룰)</div>'}</div>
-      <label>현상 (phenomenon_ko)</label>
+      <label>이 룰이 뜨는 조건 — 아래를 <b>모두</b> 만족해야 발화합니다
+        <span class="note">(왼쪽=측정에서 계산된 지표, 오른쪽=비교 기준.
+        <span class="mono">&gt;cpk_warn</span> 처럼 쓰면 Thresholds 탭의 그 값을 따르고,
+        <span class="mono">&lt;=0.5</span> 처럼 숫자를 직접 박을 수도 있습니다.
+        <span class="mono">abs&gt;</span> 는 부호 무시)</span></label>
+      <div data-role="conds">${conds ||
+        '<div class="note">조건 없음 — 이 룰은 yaml 조건이 아니라 엔진 코드가 직접 판정합니다(특수분기)</div>'}</div>
+      <label>현상 — 코멘트의 "이런 상태입니다" 부분에 그대로 들어갑니다</label>
       <textarea class="inp" rows="2" data-role="phenomenon_ko">${esc(s.phenomenon_ko)}</textarea>
-      <label>점검 제안 (action_ko)</label>
+      <label>점검 제안 — 코멘트의 "이걸 확인하세요" 부분에 그대로 들어갑니다</label>
       <textarea class="inp" rows="2" data-role="action_ko">${esc(s.action_ko)}</textarea>
-      <label>근거 템플릿 (evidence · 한 줄에 하나)</label>
+      <label>근거 문구 — 코멘트에 붙는 "무슨 값이 얼마였다" 줄 (한 줄에 하나)
+        <span class="note">중괄호 안에 지표 이름을 쓰면 실제 측정값이 채워집니다.
+        예: <span class="mono">spread_norm {spread_norm}</span> → <span class="mono">spread_norm 0.24</span></span></label>
       <textarea class="inp mono" rows="2" data-role="evidence">${esc(s.evidence.join('\n'))}</textarea>
     </div>
   </details>`;
@@ -368,6 +514,32 @@ function renderSignatures() {
   $('sigList').querySelectorAll('[data-role="save"]').forEach((btn) => {
     btn.addEventListener('click', () => saveSignature(btn.closest('details.sig')));
   });
+  $('sigList').querySelectorAll('.sig-pick').forEach((cb) => {
+    cb.addEventListener('change', updateSigSelection);
+  });
+  $('sigAll').checked = false;
+  updateSigSelection();
+}
+
+function pickedSignatures() {
+  return [...$('sigList').querySelectorAll('.sig-pick:checked')].map((cb) => cb.dataset.id);
+}
+
+function updateSigSelection() {
+  const n = pickedSignatures().length;
+  $('sigSelCount').textContent = `선택 ${n}`;
+  $('sigEnable').disabled = $('sigDisable').disabled = (n === 0);
+}
+
+async function bulkEnable(enabled) {
+  const ids = pickedSignatures();
+  try {
+    const r = await sendJSON('api/signatures/enabled', 'POST', { ids, enabled });
+    flash($('sigMsg'), r.changed.length
+      ? `${enabled ? '켬' : '끔'} ${r.changed.length}건: ${r.changed.join(', ')} (rules_rev ${r.rules_rev})`
+      : '이미 그 상태였습니다 — 변경 없음', true);
+    await loadSignatures();
+  } catch (e) { flash($('sigMsg'), e.message, false); }
 }
 
 async function saveSignature(box) {
@@ -486,26 +658,136 @@ function condHtml(c) {
     `${c.applies ? '' : ', 결측→미적용'})</span></div>`;
 }
 
+// ── 분포 미니차트 (외부 라이브러리 없음 — vanilla canvas) ─────────────────
+// 수치 표만으로는 "왜 이 값이 나왔나"를 확인할 수 없어서, 값 분포를 히스토그램(막대)과
+// ECDF(선)로 같이 그린다. 세로선은 LSL/USL, 삼각 마커는 mean/median.
+function distBins(d) {
+  if (d.hist) return d.hist;
+  const v = d.values || [];
+  if (!v.length) return null;
+  const lo = v[0], hi = v[v.length - 1];
+  const n = 60, width = hi > lo ? (hi - lo) / n : 1;
+  const counts = new Array(n).fill(0);
+  for (const x of v) counts[Math.min(Math.floor((x - lo) / width), n - 1)] += 1;
+  return { lo, width, counts };
+}
+
+function drawDist(cv, d) {
+  const bins = distBins(d);
+  const ctx = cv.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr; ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, W, H);
+  if (!bins) return;
+  const css = getComputedStyle(document.body);
+  const fg = css.color || '#222';
+  const pad = { l: 8, r: 8, t: 10, b: 18 };
+  const plotW = W - pad.l - pad.r, plotH = H - pad.t - pad.b;
+  // x 범위는 데이터와 spec limit 을 모두 담는다 — limit 이 화면 밖이면 여유를 못 본다.
+  const dataLo = bins.lo, dataHi = bins.lo + bins.width * bins.counts.length;
+  let xlo = dataLo, xhi = dataHi;
+  for (const lim of [d.lsl, d.usl]) {
+    if (typeof lim === 'number') { xlo = Math.min(xlo, lim); xhi = Math.max(xhi, lim); }
+  }
+  if (!(xhi > xlo)) { xhi = xlo + 1; }
+  const px = (v) => pad.l + ((v - xlo) / (xhi - xlo)) * plotW;
+  const maxC = Math.max(...bins.counts, 1);
+
+  ctx.fillStyle = 'rgba(120,150,220,.55)';
+  for (let i = 0; i < bins.counts.length; i++) {
+    if (!bins.counts[i]) continue;
+    const x0 = px(bins.lo + bins.width * i), x1 = px(bins.lo + bins.width * (i + 1));
+    const h = (bins.counts[i] / maxC) * plotH;
+    ctx.fillRect(x0, pad.t + plotH - h, Math.max(x1 - x0 - 0.5, 1), h);
+  }
+  // ECDF — 누적 비율을 같은 x축에 겹쳐 그린다(막대와 축 공유, y 는 0~100%).
+  ctx.strokeStyle = 'rgba(220,110,60,.95)'; ctx.lineWidth = 1.5; ctx.beginPath();
+  let cum = 0;
+  const total = bins.counts.reduce((a, b) => a + b, 0) || 1;
+  for (let i = 0; i < bins.counts.length; i++) {
+    cum += bins.counts[i];
+    const x = px(bins.lo + bins.width * (i + 1)), y = pad.t + plotH - (cum / total) * plotH;
+    if (i === 0) ctx.moveTo(px(bins.lo), pad.t + plotH);
+    ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  ctx.setLineDash([4, 3]); ctx.lineWidth = 1;
+  for (const [lim, color] of [[d.lsl, '#c33'], [d.usl, '#c33']]) {
+    if (typeof lim !== 'number') continue;
+    ctx.strokeStyle = color; ctx.beginPath();
+    ctx.moveTo(px(lim), pad.t); ctx.lineTo(px(lim), pad.t + plotH); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  for (const [v, color] of [[d.mean, '#2a7'], [d.median, '#27a']]) {
+    if (typeof v !== 'number') continue;
+    ctx.fillStyle = color; ctx.beginPath();
+    ctx.moveTo(px(v), pad.t + plotH); ctx.lineTo(px(v) - 4, pad.t + plotH + 7);
+    ctx.lineTo(px(v) + 4, pad.t + plotH + 7); ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = fg; ctx.globalAlpha = 0.6; ctx.font = '10px monospace';
+  ctx.fillText(num(xlo, 4), pad.l, H - 4);
+  const hiTxt = num(xhi, 4);
+  ctx.fillText(hiTxt, W - pad.r - ctx.measureText(hiTxt).width, H - 4);
+  ctx.globalAlpha = 1;
+}
+
+function distHtml(d) {
+  if (!d || !d.n) return '<div class="note">분포 데이터 없음 (측정값 0건)</div>';
+  const legend = `<span class="note">막대=도수 · 주황선=누적(ECDF) · 빨간 점선=LSL/USL ·
+    <span style="color:#2a7">▲</span>mean <span style="color:#27a">▲</span>median ·
+    n=${d.n}${d.hist ? ' (대형 소스 — 서버 히스토그램 축약)' : ''}</span>`;
+  return `<canvas id="trDist" style="width:100%;height:140px"></canvas>${legend}`;
+}
+
+function evidenceHtml(list) {
+  if (!list || !list.length) return '<div class="note">—</div>';
+  return '<table>' + list.map((e) =>
+    `<tr><td class="mono">${esc(e.signal_code || '')}</td><td class="num">${num(e.value)}</td>` +
+    `<td class="note">${esc(e.note || e.weight || '')}</td></tr>`).join('') + '</table>';
+}
+
+function precedentHtml(list) {
+  if (!list || !list.length) return '<div class="note">선례 없음</div>';
+  return '<table>' + list.map((p) =>
+    `<tr><td class="mono">${esc(p.product_name || '')}</td><td class="mono">${esc(p.family_product || '')}</td>` +
+    `<td>${esc(p.action || '')}</td><td>${esc(p.result || '')}</td>` +
+    `<td class="note">${esc(p.comment || '')}</td></tr>`).join('') + '</table>';
+}
+
+let TR_CASE = null;
+let TR_HIDE_OFF = false;
+
 async function showCase(idx) {
   const box = $('trDetail');
   box.innerHTML = '<h2>케이스 상세</h2><div class="note">불러오는 중…</div>';
-  let c;
   try {
-    c = (await getJSON(`api/trace/${encodeURIComponent(TRACE.token)}/case/${idx}`)).case;
+    renderCase((await getJSON(
+      `api/trace/${encodeURIComponent(TRACE.token)}/case/${idx}`)).case);
   } catch (e) {
     box.innerHTML = `<h2>케이스 상세</h2><div class="msg err">${esc(e.message)}</div>`;
-    return;
   }
-  const matrix = c.signature_matrix.map((r) => `
+}
+
+function renderCase(c) {
+  const box = $('trDetail');
+  TR_CASE = c;
+  const hideOff = TR_HIDE_OFF;
+  const rows = c.signature_matrix.filter((r) => !(hideOff && !r.enabled));
+  const offCount = c.signature_matrix.filter((r) => !r.enabled).length;
+  const matrix = rows.map((r) => `
     <details class="sig">
       <summary>
         <span class="badge ${r.fired ? 'on' : 'off'}">${r.fired ? '발화' : '미발화'}</span>
         <span class="mono">${esc(r.id)}</span>
         <span class="badge ${esc(r.status_hint)}">${esc(r.status_hint)}</span>
-        ${r.enabled ? '' : '<span class="note">비활성</span>'}
+        ${r.enabled ? '' : '<span class="badge off">꺼짐 — 평가에서 제외됨</span>'}
       </summary>
       <div class="body">
-        ${r.skip_reason ? `<div class="note">스킵: ${esc(r.skip_reason)}</div>`
+        ${r.skip_reason ? `<div class="note">스킵: ${esc(r.skip_reason)}</div>` : ''}
+        ${r.branch_note ? `<div class="note">${esc(r.branch_note)}</div>` : ''}
+        ${r.skip_reason ? ''
                         : (r.conditions.map(condHtml).join('') || '<div class="note">조건 없음</div>')}
       </div>
     </details>`).join('');
@@ -517,16 +799,289 @@ async function showCase(idx) {
       <span class="chip">confidence ${num(c.confidence, 2)}</span>
       <span class="chip">completeness ${esc(c.data_completeness)}</span>
       <span class="chip">${c.stored ? 'L6 저장' : 'L6 제외'}</span>
+      ${(c.secondary_signatures || []).map((s) =>
+        `<span class="chip">secondary ${esc(s)}</span>`).join('')}
     </div>
     ${c.gate_reason ? `<div class="note">${esc(c.gate_reason)}</div>` : ''}
-    <h2 style="margin-top:14px">L3 signature 판정</h2>
+    <h2 style="margin-top:14px">분포</h2>${distHtml(c.dist)}
+    <h2 style="margin-top:14px">L3 signature 판정
+      <span class="hint">
+        <label><input type="checkbox" id="trHideOff" ${hideOff ? 'checked' : ''}>
+          꺼진 룰 숨기기 (${offCount}개)</label></span></h2>
     ${matrix}
+    <h2 style="margin-top:14px">L4 판정 근거 (evidence)</h2>${evidenceHtml(c.evidence)}
     <h2 style="margin-top:14px">L1 raw_metrics</h2>${kvTable(c.raw_metrics)}
     <h2 style="margin-top:14px">L2 features</h2>${kvTable(c.features)}
     <h2 style="margin-top:14px">적용 임계값</h2>${kvTable(c.thresholds)}
+    <details style="margin-top:14px"><summary>조건 평가에 쓰인 값 (ctx_values)</summary>
+      ${kvTable(c.ctx_values)}</details>
     <h2 style="margin-top:14px">L5 comment</h2>
-    <div class="note" style="white-space:pre-wrap">${esc(c.comment || '(생성 안 함)')}</div>`;
+    <div class="note" style="white-space:pre-wrap">${esc(c.comment || '(생성 안 함)')}</div>
+    <h2 style="margin-top:14px">L5 선례</h2>${precedentHtml(c.precedents)}`;
+  const cv = $('trDist');
+  if (cv) drawDist(cv, c.dist);
+  $('trHideOff').addEventListener('change', (e) => {
+    TR_HIDE_OFF = e.target.checked;
+    renderCase(TR_CASE);
+  });
 }
+
+// ── Eval DB 탭 (admin_panel 에서 이관) ───────────────────────────────────
+// admin_panel.html 과 같은 구현 — 헬퍼 이름만 이 페이지 규약에 맞춰 얇게 감싼다.
+const postJSON = (url, body) => sendJSON(url, 'POST', body);
+const pad = (n) => String(n).padStart(2, '0');
+function fmtDate(unix) {
+  if (!unix) return "-";
+  const d = new Date(unix * 1000);
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fmtBytes(n) {
+  if (n == null) return "-";
+  if (n < 1024) return n + " B";
+  const u = ["KB", "MB", "GB", "TB"];
+  let i = -1;
+  do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+  return n.toFixed(n >= 100 ? 0 : 1) + " " + u[i];
+}
+
+// ── Eval DB (Issue Table 코멘트 export — eval_analyzer 소비용) ──────────────
+const EVAL_PAGE = 50;
+let evalOffset = 0, evalTotal = 0;
+const evalSelected = new Set();
+
+// 컬럼 표시 토글 — th/td 의 data-col 로 매칭한다(인덱스 의존 없음 → 컬럼 추가/재정렬에 안전).
+const EVAL_COLS = [
+  { key: "created", label: "기록" }, { key: "product", label: "product" },
+  { key: "family", label: "family" }, { key: "lot", label: "lot" },
+  { key: "bin", label: "Bin" }, { key: "item", label: "Item" },
+  { key: "unit", label: "unit" }, { key: "comment", label: "comment" },
+  { key: "reviewer", label: "편집자" }, { key: "session", label: "session_id" },
+];
+// 키에 버전(v2)을 둔 이유: 기본 숨김 목록이 바뀌었는데 옛 저장값이 남아 있으면
+// 기존 사용자에게는 새 기본값이 적용되지 않는다.
+const EVAL_COLS_KEY = "adminEvalHiddenCols.v2";
+// lot / product / Bin 은 기본 숨김 (컬럼 표시 메뉴에서 다시 켤 수 있음)
+let evalHidden = new Set(["lot", "product", "bin"]);
+try {
+  const saved = localStorage.getItem(EVAL_COLS_KEY);
+  if (saved) evalHidden = new Set(JSON.parse(saved));
+} catch (e) { /* 파손된 값이면 기본값 유지 */ }
+
+function applyEvalCols() {
+  document.querySelectorAll("#pEval [data-col]").forEach(el => {
+    el.style.display = evalHidden.has(el.dataset.col) ? "none" : "";
+  });
+}
+function renderEvalColMenu() {
+  $("evalColBody").innerHTML = EVAL_COLS.map(c => `
+    <label><input type="checkbox" data-colkey="${c.key}"
+      ${evalHidden.has(c.key) ? "" : "checked"}>${esc(c.label)}</label>`).join("");
+}
+$("evalColBody").addEventListener("change", e => {
+  const key = e.target.dataset.colkey;
+  if (!key) return;
+  if (e.target.checked) evalHidden.delete(key); else evalHidden.add(key);
+  try { localStorage.setItem(EVAL_COLS_KEY, JSON.stringify([...evalHidden])); } catch (err) {}
+  applyEvalCols();
+});
+
+function evalUpdateBulk() {
+  $("btnEvalBulkDelete").textContent = `선택 케이스 삭제 (${evalSelected.size})`;
+  $("btnEvalBulkDelete").disabled = evalSelected.size === 0;
+}
+async function loadEvalTab() {
+  // 헤더(정적 markup)에도 숨김을 적용해야 하므로 목록 로드와 별개로 먼저 한 번 부른다
+  // (목록 조회가 실패해도 컬럼 선택은 반영된다).
+  renderEvalColMenu(); applyEvalCols();
+  loadEvalOverview(); loadEvalLabels();
+}
+
+async function loadEvalOverview() {
+  try {
+    const o = await getJSON("api/eval/overview");
+    // export 실패 경고 배지 — 0건이면 숨김 (safe_export 가 감사 로그에 남긴 실패)
+    const failTile = (o.recent_failures > 0) ? `
+      <div class="tile"><div class="lbl">⚠ 최근 7일 export 실패</div>
+        <div class="val" style="color:#dc2626">${o.recent_failures.toLocaleString()}</div>
+        <div class="det">User Action Monitoring 에서 action=eval_export 로 상세 조회</div></div>` : "";
+    if (!o.exists) {
+      $("evalTiles").innerHTML = `
+        <div class="tile"><div class="lbl">Eval DB 없음</div>
+          <div class="val" style="font-size:18px">미생성</div>
+          <div class="det">아직 적재된 코멘트가 없습니다 · ${esc(o.path)}</div></div>` + failTile;
+      return;
+    }
+    $("evalTiles").innerHTML = `
+      <div class="tile"><div class="lbl">Eval DB 파일 (스키마 v${o.user_version})</div>
+        <div class="val" style="font-size:22px">${fmtBytes(o.bytes)}</div>
+        <div class="det">${esc(o.path)}</div></div>
+      <div class="tile"><div class="lbl">케이스 (fail_case)</div>
+        <div class="val">${o.cases.toLocaleString()}</div></div>
+      <div class="tile"><div class="lbl">코멘트 라벨 (label)</div>
+        <div class="val">${o.labels.toLocaleString()}</div></div>
+      <div class="tile"><div class="lbl">적재 세션</div>
+        <div class="val">${o.sessions.toLocaleString()}</div>
+        <div class="det">ingest_run.session_id 기준</div></div>` + failTile;
+  } catch (e) {
+    $("evalTiles").innerHTML = `<div class="tile"><div class="lbl">Eval DB 조회 실패</div><div class="det">${esc(e)}</div></div>`;
+  }
+}
+
+function evalFamilyCell(r) {
+  // product_type 과 family_product 를 한 칸에 (예: "PMIC / SOC"). 둘 다 없으면 "-".
+  const parts = [r.product_type, r.family_product].filter(Boolean);
+  return parts.length ? esc(parts.join(" / ")) : "-";
+}
+// Unit 그룹(value_type) 어휘 — 서버 eval_export.VALUE_TYPES 와 같은 집합.
+const EVAL_VALUE_TYPES = ["V", "A", "Hz", "CODE", "Ohm", "Sec", "P_F"];
+
+function evalUnitCell(r) {
+  // 원문 unit(im.unit) 은 회색으로 참고 표시, 그룹(value_type)은 그 자리에서 고칠 수 있게
+  // 드롭다운으로 낸다. item_id 가 없으면(옛 행) 읽기 전용.
+  const raw = r.unit ? `<span class="unit-raw" title="unit 원문">${esc(r.unit)}</span>` : "";
+  if (r.item_id == null) return raw + esc(r.value_type || "-");
+  const cur = r.value_type || "";
+  const opts = EVAL_VALUE_TYPES.map(v =>
+    `<option value="${v}"${v === cur ? " selected" : ""}>${v}</option>`).join("");
+  // 어휘 밖 값·미분류는 첫 옵션(V)이 선택된 것처럼 보이면 안 되므로 자리표시 옵션을 둔다.
+  const placeholder = EVAL_VALUE_TYPES.includes(cur)
+    ? "" : `<option value="" selected>${esc(cur || "-")}</option>`;
+  return `${raw}<select class="unit-vt evalVt" data-iid="${r.item_id}"
+    title="이 항목의 Unit 그룹을 바꿉니다 (같은 항목의 모든 케이스에 적용)">${placeholder}${opts}</select>`;
+}
+
+// 잘릴 만큼 긴 셀만 펼치기 대상(td.clipcell)으로 낸다 — 짧은 셀에 화살표가 붙으면 지저분.
+// td 통째로 돌려주는 이유: 펼침 상태 class 를 td 에 걸어야 화살표와 본문이 함께 바뀐다.
+function evalClipCell(col, text, extraClass) {
+  const t = text == null ? "" : String(text);
+  const cls = "clip" + (extraClass ? " " + extraClass : "");
+  const body = `<span class="${cls}" title="${esc(t)}">${esc(t)}</span>`;
+  if (t.length <= 30 && !t.includes("\n")) return `<td data-col="${col}">${body}</td>`;
+  return `<td data-col="${col}" class="clipcell">`
+       + `<span class="cliptog" title="클릭하면 펼쳐집니다"></span>${body}</td>`;
+}
+
+async function loadEvalLabels() {
+  const tb = $("evalBody");
+  tb.innerHTML = `<tr class="empty-row"><td colspan="11">로딩 중…</td></tr>`;
+  evalSelected.clear(); evalUpdateBulk(); $("evalChkAll").checked = false;
+  const params = new URLSearchParams({ limit: EVAL_PAGE, offset: evalOffset });
+  const q = $("evalQ").value.trim(); if (q) params.set("q", q);
+  let data;
+  try { data = await getJSON("api/eval/labels?" + params); }
+  catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="11">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  evalTotal = data.total;
+  $("evalSummary").textContent = `총 ${evalTotal}건`;
+  if (!data.rows.length) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="11">적재된 코멘트가 없습니다.</td></tr>`;
+  } else {
+    tb.innerHTML = data.rows.map(r => `
+      <tr>
+        <td><input type="checkbox" class="evalChkRow" data-cid="${esc(r.case_id)}" title="선택 삭제 대상으로 체크"></td>
+        <td data-col="created">${fmtDate(r.created_at)}</td>
+        <td data-col="product">${esc(r.product_name || "-")}</td>
+        <td data-col="family">${evalFamilyCell(r)}</td>
+        <td data-col="lot">${esc(r.lot_id || "-")}</td>
+        <td data-col="bin" class="num">${r.bin == null ? "-" : esc(r.bin)}</td>
+        ${evalClipCell("item", r.item || "-", "item")}
+        <td data-col="unit">${evalUnitCell(r)}</td>
+        ${evalClipCell("comment", r.human_comment || "")}
+        <td data-col="reviewer">${esc(r.reviewer || "-")}</td>
+        <td data-col="session">${sessionLink(r.session_id)}</td>
+      </tr>`).join("");
+  }
+  applyEvalCols();
+  const page = Math.floor(evalOffset / EVAL_PAGE), last = Math.max(0, Math.ceil(evalTotal / EVAL_PAGE) - 1);
+  $("evalPager").innerHTML = `
+    <button class="pg-btn" id="evalPrev" ${page === 0 ? "disabled" : ""}>← 이전</button>
+    <span class="pg-info">${evalTotal}건 중 ${evalTotal ? evalOffset + 1 : 0}–${Math.min(evalOffset + EVAL_PAGE, evalTotal)} (페이지 ${page + 1}/${last + 1})</span>
+    <button class="pg-btn" id="evalNext" ${page >= last ? "disabled" : ""}>다음 →</button>`;
+  $("evalPrev").onclick = () => { evalOffset = Math.max(0, evalOffset - EVAL_PAGE); loadEvalLabels(); };
+  $("evalNext").onclick = () => { evalOffset += EVAL_PAGE; loadEvalLabels(); };
+}
+$("btnEvalSearch").onclick = () => { evalOffset = 0; loadEvalLabels(); };
+$("evalQ").addEventListener("keydown", e => { if (e.key === "Enter") { evalOffset = 0; loadEvalLabels(); } });
+$("btnEvalRefresh").onclick = () => { loadEvalOverview(); loadEvalLabels(); };
+$("evalChkAll").onchange = () => {
+  document.querySelectorAll(".evalChkRow").forEach(c => {
+    c.checked = $("evalChkAll").checked;
+    if (c.checked) evalSelected.add(c.dataset.cid); else evalSelected.delete(c.dataset.cid);
+  });
+  evalUpdateBulk();
+};
+$("evalBody").addEventListener("change", async e => {
+  if (e.target.classList.contains("evalChkRow")) {
+    if (e.target.checked) evalSelected.add(e.target.dataset.cid); else evalSelected.delete(e.target.dataset.cid);
+    evalUpdateBulk();
+    return;
+  }
+  if (!e.target.classList.contains("evalVt")) return;
+  // Unit 그룹 변경 — item 단위라 같은 항목의 다른 행에도 반영된다(저장 후 목록 재조회).
+  const sel = e.target, vt = sel.value, msg = $("evalMsg");
+  if (!vt) return;
+  sel.disabled = true;
+  msg.className = "msg"; msg.textContent = "Unit 그룹 변경 중…";
+  try {
+    const r = await postJSON("api/eval/items/value_type",
+                             { item_ids: [Number(sel.dataset.iid)], value_type: vt });
+    msg.textContent = `Unit 그룹을 ${vt} 로 변경 (항목 ${r.updated}건 · 케이스 ${r.cases}건 갱신)`;
+    loadEvalLabels();
+  } catch (err) {
+    msg.className = "msg err"; msg.textContent = String(err);
+    sel.disabled = false;
+  }
+});
+// 긴 셀 펼치기/접기 (셀 단위 — 다른 행·다른 셀은 1줄을 그대로 유지)
+$("evalBody").addEventListener("click", e => {
+  const cell = e.target.closest("td.clipcell");
+  if (cell) cell.classList.toggle("open");
+});
+$("btnEvalRemapUnits").onclick = async () => {
+  const msg = $("evalMsg");
+  msg.className = "msg"; msg.textContent = "변경 대상 확인 중…";
+  let preview;
+  try { preview = await postJSON("api/eval/items/remap_units", { dry_run: true }); }
+  catch (err) { msg.className = "msg err"; msg.textContent = String(err); return; }
+  if (!preview.changed) { msg.textContent = "별칭 규칙으로 바뀔 항목이 없습니다."; return; }
+  const sample = preview.items.slice(0, 10)
+    .map(i => `· ${i.item} (${i.unit}): ${i.from || "-"} → ${i.to}`).join("\n");
+  if (!confirm(`${preview.changed}개 항목의 Unit 그룹이 바뀝니다.\n\n${sample}`
+               + (preview.changed > 10 ? `\n… 외 ${preview.changed - 10}건` : "")
+               + "\n\n적용할까요?")) { msg.textContent = "취소되었습니다."; return; }
+  msg.textContent = "재적용 중…";
+  try {
+    const r = await postJSON("api/eval/items/remap_units", {});
+    msg.textContent = `Unit 별칭 재적용 완료 — 항목 ${r.changed}건, 케이스 ${r.cases}건 갱신`;
+    loadEvalLabels();
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+};
+$("btnEvalBulkDelete").onclick = async () => {
+  if (!evalSelected.size) return;
+  const typed = prompt(`선택한 ${evalSelected.size}개 케이스를 eval DB 에서 삭제합니다.\n(라벨·통계·링크 포함 완전 삭제 — report.db 세션에는 영향 없음)\n\n계속하려면 DELETE 를 입력하세요:`);
+  if (typed !== "DELETE") return;
+  const msg = $("evalMsg");
+  msg.className = "msg"; msg.textContent = "삭제 중…";
+  try {
+    const r = await postJSON("api/eval/cases/delete", { case_ids: [...evalSelected] });
+    msg.textContent = `케이스 ${r.deleted}건 삭제 완료`;
+    loadEvalOverview(); loadEvalLabels();
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+};
+$("btnEvalReexport").onclick = async () => {
+  const sid = $("evalReexportSid").value.trim();
+  const msg = $("evalMsg");
+  if (!sid) { msg.className = "msg err"; msg.textContent = "재적재할 세션ID 를 입력하세요."; return; }
+  msg.className = "msg"; msg.textContent = "재적재 중…";
+  try {
+    const r = await postJSON(`api/eval/session/${encodeURIComponent(sid)}/reexport`, {});
+    msg.textContent = r.skipped ? `건너뜀: ${r.skipped}`
+      : `재적재 완료 — 케이스 ${r.cases}건, 정리 ${r.removed}건`;
+    loadEvalOverview(); loadEvalLabels();
+  } catch (err) { msg.className = "msg err"; msg.textContent = String(err); }
+};
 
 // ── Maintenance ──────────────────────────────────────────────────────────
 async function runValidate() {
@@ -578,6 +1133,7 @@ const TAB_LOADERS = {
   pThresholds: loadThresholds,
   pSignatures: loadSignatures,
   pTrace: loadSessions,
+  pEval: loadEvalTab,
   pMaint: () => { renderFiles(); loadBackups(); },
 };
 const loaded = new Set();
@@ -598,6 +1154,12 @@ $('thFamily').addEventListener('change', loadThresholds);
 $('thSave').addEventListener('click', saveThresholds);
 $('thReset').addEventListener('click', loadThresholds);
 $('sigFilter').addEventListener('input', renderSignatures);
+$('sigAll').addEventListener('change', () => {
+  $('sigList').querySelectorAll('.sig-pick').forEach((cb) => { cb.checked = $('sigAll').checked; });
+  updateSigSelection();
+});
+$('sigEnable').addEventListener('click', () => bulkEnable(true));
+$('sigDisable').addEventListener('click', () => bulkEnable(false));
 $('trSearch').addEventListener('click', loadSessions);
 $('trRun').addEventListener('click', runTrace);
 $('trFilter').addEventListener('input', renderTraceRows);

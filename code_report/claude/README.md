@@ -43,5 +43,6 @@
 ## 근거의 신뢰 수준
 
 - 모든 주장은 `파일경로:라인` 인용으로 코드에 근거를 두었다 (2026-07-17 작업트리 기준).
-- eval_analyzer 운영 복사본과 원본(F:\COINAPI\eval_analyzer)의 코드 동일성 확인함.
+- eval_analyzer 와 당시 외부 사본(F:\COINAPI\eval_analyzer)의 코드 동일성 확인함
+  (2026-08-03 부터 `report_server/eval_analyzer/` 가 원본이라 이 확인은 더 이상 무의미).
 - "제안" 으로 표시된 것은 전부 설계 스케치이며 이번에 코드로 반영하지 않았다.

@@ -11,6 +11,7 @@ ai_comment.py(운영 평가) / eval_export.py(코멘트 export) / **이 모듈(�
   pipeline.signatures.build_ctx_values / _eval_condition / _HIGH_MOMENT_METRICS
   pipeline._rules.thresholds_for / signatures_doc / reload_rules / threshold_overlay_path
   pipeline.status.SPECIFICITY_ORDER
+  pipeline.features._classify_modality_v2  ← _subpop_conditions 가 AND 체인을 미러링한다
 """
 from __future__ import annotations
 
@@ -165,6 +166,60 @@ def _cond_detail(metric, cond, ctx_values, thresholds, eval_condition):
             "passed": bool(eval_condition(cond, actual, thresholds))}
 
 
+def _subpop_cond(metric, op, actual, ref_key, ref_value, passed):
+    """_cond_detail 과 같은 dict 모양 — 패널 condHtml 이 그대로 렌더한다."""
+    return {"metric": metric, "cond": f"{op}{ref_key or ref_value}",
+            "op": op, "abs": False, "actual": actual,
+            "ref_key": ref_key, "ref_value": ref_value,
+            "applies": actual is not None, "passed": bool(passed)}
+
+
+def _subpop_conditions(features, thresholds):
+    """SUBPOP_GAP(특수분기)의 AND 체인을 조건행으로 분해 — "왜 안 잡혔나" 진단용.
+
+    엔진 pipeline.features._classify_modality_v2 를 1:1 미러링한다(임계값은 키 이름으로만
+    읽어 하드코딩하지 않는다). 엔진이 분기 구조를 바꾸면 여기도 함께 고쳐야 한다.
+    """
+    n_dut = features.get("n_dut")
+    outlier = features.get("outlier_ratio")
+    n_modes = features.get("n_modes")
+    bc = features.get("bimodality_score")
+    dgap = features.get("density_gap")
+    cgap = features.get("cdf_gap")
+
+    def th(key):
+        return thresholds.get(key)
+
+    def ge(value, key):
+        ref = th(key)
+        return value is not None and ref is not None and value >= ref
+
+    rows = [
+        # 게이트 — 둘 중 하나라도 실패하면 modality_v2 는 무조건 None.
+        _subpop_cond("n_dut (게이트)", ">=", n_dut, "subpop_n_min",
+                     th("subpop_n_min"), ge(n_dut, "subpop_n_min")),
+        # 엔진은 outlier_ratio 가 결측이면 게이트를 통과시킨다(None 은 차단하지 않음).
+        _subpop_cond("outlier_ratio (게이트)", "<", outlier, "subpop_outlier_ratio_max",
+                     th("subpop_outlier_ratio_max"),
+                     outlier is None or (th("subpop_outlier_ratio_max") is not None
+                                         and outlier < th("subpop_outlier_ratio_max"))),
+        _subpop_cond("n_modes [multimodal]", ">=", n_modes, None, 3,
+                     n_modes is not None and n_modes >= 3),
+        _subpop_cond("density_gap [multimodal]", ">=", dgap, "subpop_density_gap_warn",
+                     th("subpop_density_gap_warn"), ge(dgap, "subpop_density_gap_warn")),
+        _subpop_cond("n_modes [bimodal]", "==", n_modes, None, 2, n_modes == 2),
+        _subpop_cond("bimodality_score [bimodal]", ">=", bc, "bimodality_warn",
+                     th("bimodality_warn"), ge(bc, "bimodality_warn")),
+        _subpop_cond("density_gap [bimodal]", ">=", dgap, "subpop_density_gap_warn",
+                     th("subpop_density_gap_warn"), ge(dgap, "subpop_density_gap_warn")),
+        _subpop_cond("density_gap [separated]", ">=", dgap, "subpop_density_gap_strong",
+                     th("subpop_density_gap_strong"), ge(dgap, "subpop_density_gap_strong")),
+        _subpop_cond("cdf_gap [separated]", ">=", cgap, "subpop_cdf_gap_warn",
+                     th("subpop_cdf_gap_warn"), ge(cgap, "subpop_cdf_gap_warn")),
+    ]
+    return rows
+
+
 def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, sig_mod):
     """signature 21개 × (활성/스킵사유/조건분해/발화) 매트릭스."""
     fired_ids = {s["id"] for s in (sig_result.get("signatures") or [])}
@@ -175,23 +230,63 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
         sig_id = sig.get("id")
         when = sig.get("when_metric") or {}
         enabled = sig.get("enabled") is not False
-        skip = None
+        # skip_reason = 평가에서 제외된 사유(조건 없음) / branch_note = 평가는 하되
+        # when_metric 이 아닌 경로를 타는 사유(조건 있음). SUBPOP_GAP 만 후자다.
+        skip, branch = None, None
         if not enabled:
+            # 엔진도 enabled:false 를 SUBPOP 특수분기보다 먼저 걸러낸다(signatures.py).
             skip = "disabled (yaml enabled:false)"
         elif sig_id == sig_mod._SUBPOP_GAP_ID:
-            skip = "특수분기 (when_metric 미사용 — features.modality_v2 로 판정)"
+            branch = ("특수분기 (when_metric 미사용 — features.modality_v2 로 판정) → "
+                      f"modality_v2={features.get('modality_v2') or '—'}")
         elif not high_moment_ok and (set(when) & sig_mod._HIGH_MOMENT_METRICS):
             skip = f"min-n 가드 (n_dut {n_dut} < n_min {thresholds.get('n_min')})"
         conds = []
-        if skip is None:
+        if branch is not None:
+            conds = _subpop_conditions(features, thresholds)
+        elif skip is None:
             conds = [_cond_detail(metric, cond, ctx_values, thresholds,
                                   sig_mod._eval_condition)
                      for metric, cond in when.items()]
         rows.append({"id": sig_id, "enabled": enabled, "skip_reason": skip,
+                     "branch_note": branch,
                      "status_hint": sig.get("status_hint"),
                      "issue_category": sig.get("issue_category") or "ETC",
                      "conditions": conds, "fired": sig_id in fired_ids})
     return rows
+
+
+_DIST_MAX_VALUES = 20_000     # 이보다 크면 값 대신 히스토그램만 (trace_store 4런 보관)
+_DIST_BINS = 60
+
+
+def _dist_payload(case, metrics):
+    """케이스 상세 미니차트용 분포 데이터.
+
+    수치 표(cpk/outlier_ratio/bimodality_score)만 보고 룰을 고치면 "왜 이 값이
+    나왔는지"를 눈으로 확인할 수 없다. 값 전량을 정렬해 내려 프런트가 히스토그램+
+    ECDF 를 그리게 하되, 대형 소스는 서버에서 히스토그램으로 축약한다(메모리 보호).
+    표시용 축약이며 판정에는 쓰이지 않는다.
+    """
+    values = sorted(v for v in (case.get("values") or []) if v is not None)
+    out = {"n": len(values), "lsl": case.get("lsl"), "usl": case.get("usl"),
+           "mean": metrics.get("mean"), "median": None,
+           "unit": case.get("unit"), "values": None, "hist": None}
+    if not values:
+        return out
+    mid = len(values) // 2
+    out["median"] = (values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2)
+    if len(values) <= _DIST_MAX_VALUES:
+        out["values"] = values
+        return out
+    lo, hi = values[0], values[-1]
+    width = (hi - lo) / _DIST_BINS if hi > lo else 1.0
+    counts = [0] * _DIST_BINS
+    for v in values:
+        idx = min(int((v - lo) / width), _DIST_BINS - 1)
+        counts[idx] += 1
+    out["hist"] = {"lo": lo, "width": width, "counts": counts}
+    return out
 
 
 def _trace_case(case, engine_version, mods):
@@ -224,9 +319,11 @@ def _trace_case(case, engine_version, mods):
         "stored": stored,
         "gate_reason": None if stored else
                        f"should_store=False (fail_count={m.get('fail_count')}, "
-                       f"cpk={m.get('cpk')} >= cpk_warn={th.get('cpk_warn')})",
+                       f"cpk={m.get('cpk')} >= cpk_warn={th.get('cpk_warn')}, "
+                       f"발화 signature 0건)",
         "comment": comment,
         "raw_metrics": m, "features": f, "thresholds": th,
+        "dist": _dist_payload(case, m),
         "ctx_values": {k: v for k, v in ctx_values.items() if not hasattr(v, "__len__")},
         "signature_matrix": _signature_matrix(case, f, ctx_values, th, sig, sig_mod),
         "evidence": verdict.get("evidence") or [],

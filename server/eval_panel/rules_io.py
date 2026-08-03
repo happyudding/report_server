@@ -155,6 +155,76 @@ def restore_backup(name: str) -> dict:
 
 # ── thresholds 오버레이 ───────────────────────────────────────────────────────
 
+# thresholds.yaml default 섹션의 "키: 값  # 설명" 에서 설명만 뽑는다 —
+# 설명의 정본을 yaml 주석 한 곳에 두기 위함(패널에 사전을 따로 두면 곧 어긋난다).
+_DESC_RE = re.compile(r"^\s+(?P<key>\w+)\s*:\s*[^#]*#\s*(?P<desc>.+?)\s*$")
+
+
+def threshold_descriptions() -> dict:
+    """{임계값 키: yaml 주석}. 주석이 없는 키는 빠진다."""
+    path = eval_debug.rules_files()["thresholds"]
+    out, in_default = {}, False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith(" ") and line.strip():
+            in_default = line.startswith("default:")
+            continue
+        if not in_default:
+            continue
+        m = _DESC_RE.match(line)
+        if m:
+            out[m.group("key")] = m.group("desc")
+    return out
+
+
+def threshold_usage() -> dict:
+    """{임계값 키: [그 값을 참조하는 signature ...]}. 어떤 룰에 영향을 주는지 표시용."""
+    usage = {}
+    for s in eval_debug.signatures_raw():
+        sig_id = s.get("id")
+        enabled = s.get("enabled") is not False
+        for cond in (s.get("when_metric") or {}).values():
+            m = _COND_RE.match(str(cond).strip())
+            if not m:
+                continue
+            ref = m.group(3).strip()
+            if ref and not _is_number(ref):
+                usage.setdefault(ref, []).append({"id": sig_id, "enabled": enabled})
+    # 코드가 직접 읽는 임계값(선언형 조건이 아니라 파이썬에서 참조) — 표에서 "미사용" 으로
+    # 보이면 지워도 되는 값으로 오해하므로 사용처를 명시한다.
+    for key, where in _CODE_REFS.items():
+        usage.setdefault(key, []).append({"id": where, "enabled": True, "code": True})
+    return usage
+
+
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+        return True
+    except ValueError:
+        return False
+
+
+# 선언형 when_metric 이 아니라 엔진 코드가 직접 읽는 임계값 → 표시용 사용처 라벨
+_CODE_REFS = {
+    "n_min": "min-n 가드(고차모멘트 룰 전체)",
+    "modified_z": "L2 features(outlier 판정)",
+    "edge_region_pct": "L2 features(공간 영역 분할)",
+    "center_region_pct": "L2 features(공간 영역 분할)",
+    "spatial_fail_count_min": "L2 features(공간 룰 최소 fail)",
+    "cpk_warn": "L6 저장 게이트(코멘트 생성 여부)",
+    "cpk_bad": "L4 trump(CRITICAL 강제)",
+    "cpk_trump_yield_floor": "L4 trump(CRITICAL 강제)",
+    "bimodality_warn": "L2 features(modality_v2)",
+    "subpop_n_min": "L2 features(modality_v2)",
+    "subpop_outlier_ratio_max": "L2 features(modality_v2)",
+    "subpop_density_gap_warn": "L2 features(modality_v2)",
+    "subpop_density_gap_strong": "L2 features(modality_v2)",
+    "subpop_cdf_gap_warn": "L2 features(modality_v2)",
+    "source_min_count": "cross_source(evaluate 미사용)",
+    "source_fail_rate_delta_warn": "cross_source(evaluate 미사용)",
+}
+
+
 def _check_scope(product_type: str, family_product: str | None) -> None:
     tax = eval_debug.taxonomy()
     if product_type not in tax:
@@ -164,7 +234,12 @@ def _check_scope(product_type: str, family_product: str | None) -> None:
 
 
 def read_thresholds(product_type: str, family_product: str | None = None) -> dict:
-    """패널 표시용 — 층별 값 + 병합 결과 + 키별 출처."""
+    """패널 표시용 — 이 범위의 적용값 + 상속 기준값 + 키별 출처 + 사용처.
+
+    `inherited` = **이 범위의 오버레이를 뺀** 값(= 이 화면에서 값을 지웠을 때 돌아갈 값).
+    화면은 `effective` 를 입력칸에 채우고, 저장 시 inherited 와 같은 값은 파일에 쓰지
+    않는다 — "보이는 값이 곧 적용값" 이면서 오버레이 파일은 최소로 유지된다.
+    """
     _check_scope(product_type, family_product)
     doc = eval_debug.thresholds_doc()
     default = dict(doc.get("default") or {})
@@ -172,15 +247,24 @@ def read_thresholds(product_type: str, family_product: str | None = None) -> dic
     ov_pt = _read_overlay(product_type, None)
     ov_family = _read_overlay(product_type, family_product) if family_product else {}
 
-    origin = {k: "default" for k in default}
-    origin.update({k: "product_type(legacy)" for k in legacy_pt})
-    origin.update({k: "제품군 공통" for k in ov_pt})
-    origin.update({k: f"family({family_product})" for k in ov_family})
-    effective = eval_debug.effective_thresholds(product_type, family_product)
+    inherited = {**default, **legacy_pt}
+    origin = {k: "기본값" for k in default}
+    origin.update({k: "제품군(legacy 섹션)" for k in legacy_pt})
+    if family_product:
+        inherited.update(ov_pt)
+        origin.update({k: f"{product_type} 공통" for k in ov_pt})
+        own = ov_family
+        origin.update({k: f"{family_product} 직접 지정" for k in ov_family})
+    else:
+        own = ov_pt
+        origin.update({k: f"{product_type} 직접 지정" for k in ov_pt})
+
     return {"product_type": product_type, "family_product": family_product,
             "default": default, "legacy_product_type": legacy_pt,
             "overlay_pt": ov_pt, "overlay_family": ov_family,
-            "effective": effective, "origin": origin,
+            "inherited": inherited, "own": own,
+            "effective": {**inherited, **own}, "origin": origin,
+            "descriptions": threshold_descriptions(), "usage": threshold_usage(),
             "item_class_count": len(doc.get("item_class") or {}),
             "rules_rev": eval_debug.rules_rev()}
 
@@ -238,6 +322,36 @@ def read_signatures() -> dict:
                      "in_specificity_order": s.get("id") in order})
     return {"signatures": rows, "rules_rev": eval_debug.rules_rev(),
             "threshold_keys": sorted(eval_debug.default_thresholds())}
+
+
+def set_signatures_enabled(sig_ids: list, enabled: bool) -> dict:
+    """여러 signature 의 활성 상태를 한 번에 바꾼다 (yaml 쓰기 1회 = 백업·rev 도 1회)."""
+    if not isinstance(sig_ids, list) or not sig_ids:
+        raise RuleError("적용할 signature 를 선택하세요")
+    path = eval_debug.rules_files()["signatures"]
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    sigs = doc.get("signatures") or []
+    by_id = {s.get("id"): s for s in sigs}
+    unknown = [s for s in sig_ids if s not in by_id]
+    if unknown:
+        raise RuleError(f"없는 signature: {unknown}")
+
+    changed = []
+    for sig_id in sig_ids:
+        target = by_id[sig_id]
+        if (target.get("enabled") is not False) == enabled:
+            continue                          # 이미 그 상태
+        if enabled:
+            target.pop("enabled", None)       # 기본값이므로 키를 지운다
+        else:
+            target["enabled"] = False
+        changed.append(sig_id)
+
+    if not changed:
+        return {"changed": [], "backup": None, "rules_rev": eval_debug.rules_rev()}
+    backup = _backup(path)
+    _write_atomic(path, _head_comments(path) + _dump(doc))
+    return {"changed": changed, "backup": backup, "rules_rev": eval_debug.bump_rules_rev()}
 
 
 def _validate_condition(metric: str, cond, threshold_keys: set) -> None:

@@ -146,11 +146,15 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             # rawdata 편집은 content_hash 변경으로 자동 재평가). 실패는
                             # safe_build 가 빈 dict 로 격리해 빌드가 죽지 않는다.
                             ai_comments = None
+                            etc_auto_items = None
                             if _webreport_ai_comment(session.get("webreport_options") or ""):
                                 from . import ai_comment
-                                ai_comments = ai_comment.safe_build(
+                                ai_result = ai_comment.safe_build(
                                     tables, session,
                                     manifest.get("selected_items") or [])
+                                ai_comments = ai_result["comments"]
+                                # 수율·cpk 는 정상인데 룰만 위반한 item → ETC 자동 행
+                                etc_auto_items = ai_result["etc_auto_items"]
                             # 수율 분모: 기준정보 Gross Die 와 세션에 저장된 소스별 선택을
                             # 함께 넘기고, 실제 판정(자동 예외 포함)은 yield_tab 이 한다.
                             gross_die = session.get("gross_die")
@@ -169,6 +173,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 mode=mode,
                                 dist_colors=dist_colors,
                                 ai_comments=ai_comments,
+                                etc_auto_items=etc_auto_items,
                                 gross_die=gross_die,
                                 yield_basis=yield_basis,
                                 # Compare 모드 Before/After 배치(업로드 시 Honey 가 지정).

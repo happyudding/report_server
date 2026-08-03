@@ -326,9 +326,10 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 비-GET 요청은 `X-Admin-Request: 1` 헤더 요구. `GET /` 대시보드 + `GET /api/*`
 (health/storage/s3-status/metrics/stats(daily·users·client_errors·usage(접속 사용량 —
 Honey 실행·웹 방문 순위))/sessions/users/
-voc(overview·목록, 읽기 전용)/eval(overview·labels·**labels.csv**)/audit(.csv)/logs/list·tail) +
-`POST /api/*` (sessions/delete·restore·purge, session/<sid>/important·password, db/backup·cleanup,
-eval/cases/delete·eval/session/<sid>/reexport·eval/items/value_type·eval/items/remap_units 등).
+voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail) +
+`POST /api/*` (sessions/delete·restore·purge, session/<sid>/important·password, db/backup·cleanup 등).
+**Eval DB 탭·`/api/eval/*` 라우트는 2026-08-03 `/pe/eval` 로 이관**했다(아래 절) — 구현 모듈
+`admin_panel/eval_admin.py` 는 그대로 남아 eval_panel 이 import 한다.
 **세션 삭제 3종 구분**: `sessions/delete` = 관리자 **즉시 영구 삭제**(휴지통을 거치지 않고
 행·산출물·캐시 회수) / 사용자 웹 삭제(`DELETE /pe/report/session/<sid>`) = 휴지통(soft) /
 `sessions/purge` = 휴지통 세션 영구 정리. purge 는 기본이 `REPORT_TRASH_RETENTION_DAYS`(30일)

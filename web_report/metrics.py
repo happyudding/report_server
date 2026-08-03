@@ -18,6 +18,7 @@ from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
                          issue_comments=None, summary_engr=None, product_type="", product="",
                          mode="Normal", dist_colors=None, ai_comments=None,
+                         etc_auto_items=None,
                          issue_hidden=None, issue_status=None, gross_die=None,
                          compare_groups=None, yield_basis=None) -> dict:
     """Distribution ECDF(대용량)는 payload 에 싣지 않고 항상 지연 로드한다
@@ -70,6 +71,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         mode=mode or "Normal",
         # None=컬럼 미표시. dict 전달은 ai_comment 옵션 세션의 콜드 빌드(service)만.
         ai_comments=ai_comments,
+        etc_auto_items=list(etc_auto_items or []),
         issue_hidden=list(issue_hidden or []),
         issue_status=dict(issue_status or {}),
     )

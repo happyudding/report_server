@@ -15,7 +15,7 @@ from flask import Blueprint, Response, abort, jsonify, request
 import config
 from admin_panel import (GATE_COOKIE_EVAL, GATE_COOKIE_EVAL_PATH, GATE_COOKIE_VOC,
                          GATE_COOKIE_VOC_PATH, MASTER_COOKIE,
-                         MASTER_COOKIE_PATH, MASTER_TTL_SECONDS, eval_admin,
+                         MASTER_COOKIE_PATH, MASTER_TTL_SECONDS,
                          eval_gate_token, gate_token, identity_merge,
                          issue_master_value, maintenance,
                          metrics, sessions_admin, stats, storage_admin, sysinfo,
@@ -187,87 +187,8 @@ def api_storage_sessions():
     ))
 
 
-# ── Eval DB (Issue Table 코멘트 export — web_report/eval_export.py) ──────────
-
-_CASE_ID_RE = re.compile(r"^[0-9a-f]{64}$")
-
-
-@admin_panel_bp.get("/api/eval/overview")
-def api_eval_overview():
-    return jsonify(eval_admin.overview())
-
-
-@admin_panel_bp.get("/api/eval/labels")
-def api_eval_labels():
-    return jsonify(eval_admin.list_labels(
-        q=(request.args.get("q") or "").strip() or None,
-        limit=request.args.get("limit", 100),
-        offset=request.args.get("offset", 0),
-    ))
-
-
-@admin_panel_bp.get("/api/eval/labels.csv")
-def api_eval_labels_csv():
-    """코멘트 라벨 전체 → db_input 단순 5컬럼 CSV (수정 후 run_import.bat 재적재용)."""
-    return Response(eval_admin.labels_csv_iter(), mimetype="text/csv; charset=utf-8",
-                    headers={
-                        "Content-Disposition": "attachment; filename=eval_labels.csv",
-                        "Cache-Control": "no-store",
-                    })
-
-
-@admin_panel_bp.post("/api/eval/cases/delete")
-def api_eval_cases_delete():
-    body = request.get_json(force=True, silent=True) or {}
-    cids = body.get("case_ids")
-    if not isinstance(cids, list) or not cids or len(cids) > 200:
-        abort(400, "case_ids: 1~200개 리스트 필요")
-    for cid in cids:
-        if not isinstance(cid, str) or not _CASE_ID_RE.match(cid):
-            abort(400, f"invalid case_id: {cid!r}")
-    result = eval_admin.delete_cases(cids)
-    _audit("delete", changed_fields=f"eval_cases({result.get('deleted', 0)})")
-    return jsonify(result)
-
-
-@admin_panel_bp.post("/api/eval/items/value_type")
-def api_eval_set_value_type():
-    """Unit 그룹(value_type) 수동 지정 — 선례검색 하드필터라 오분류 교정용."""
-    body = request.get_json(force=True, silent=True) or {}
-    ids = body.get("item_ids")
-    value_type = body.get("value_type")
-    if not isinstance(ids, list) or not ids or len(ids) > 200:
-        abort(400, "item_ids: 1~200개 리스트 필요")
-    if any(not isinstance(i, int) for i in ids):
-        abort(400, "item_ids: 정수만 허용")
-    if value_type not in eval_admin.VALUE_TYPES:
-        abort(400, f"value_type: {eval_admin.VALUE_TYPES} 중 하나여야 함")
-    result = eval_admin.set_item_value_type(ids, value_type)
-    _audit("edit", changed_fields=f"eval_value_type({value_type}x{result.get('updated', 0)})")
-    return jsonify(result)
-
-
-@admin_panel_bp.post("/api/eval/items/remap_units")
-def api_eval_remap_units():
-    """저장된 unit 원문에 별칭 규칙(VOLT/AMP/HERTZ)을 일괄 재적용."""
-    body = request.get_json(force=True, silent=True) or {}
-    dry_run = bool(body.get("dry_run"))
-    result = eval_admin.remap_unit_aliases(dry_run=dry_run)
-    if not dry_run:
-        _audit("edit", changed_fields=f"eval_remap_units({result.get('changed', 0)})")
-    return jsonify(result)
-
-
-@admin_panel_bp.post("/api/eval/session/<session_id>/reexport")
-def api_eval_reexport(session_id):
-    if not _SESSION_ID_RE.match(session_id):
-        abort(400, "invalid session_id")
-    session = report_db.get_session(session_id)
-    if not session:
-        abort(404, "session not found")
-    result = eval_admin.reexport(session_id)
-    _audit("edit", session=session, changed_fields=f"eval_reexport({result})")
-    return jsonify(result)
+# Eval DB 라우트(/api/eval/*)는 2026-08-03 eval_panel(/pe/eval)로 이관했다.
+# 구현 모듈 admin_panel/eval_admin.py 는 그대로 남아 eval_panel 이 import 한다.
 
 
 @admin_panel_bp.get("/api/metrics/history")

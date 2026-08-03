@@ -42,7 +42,8 @@
 
 ## 3. 참고
 
-- `eval_analyzer/` 는 **제3의 외부 프로젝트**(fail-item 평가 엔진)의 운영 복사본으로, 이 프로젝트가
-  단방향으로만 참조한다(import 는 `web_report/ai_comment.py` 1곳). 당신 영역과는 무관하며 여기서
-  수정 대상이 아니다.
+- `eval_analyzer/` 는 fail-item 평가 엔진으로, **이 repo 가 원본**이다(2026-08-03 — 외부 사본
+  `F:\COINAPI\eval_analyzer` 는 참조 대상 아님). report_server 가 단방향으로만 참조한다
+  (eval_engine import 는 `web_report/` 의 `ai_comment.py`·`eval_export.py`·`eval_debug.py` 3곳).
+  **당신 영역(외부 담당자 영역)과는 무관하다** — 웹리포트/서버 담당자가 소유·수정한다.
 - 경계·계약이 헷갈리면 항상 [docs/15_ownership.md](docs/15_ownership.md)(정본) 하나로 답한다.

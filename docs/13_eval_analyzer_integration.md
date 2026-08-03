@@ -7,20 +7,19 @@
 
 ## 1. 배치·소유권
 
-- `eval_analyzer/` 는 **독립 프로젝트의 운영 복사본**이다 (원본: `F:\COINAPI\eval_analyzer`,
-  자체 git 이력은 이 repo 로 이어지지 않음). 반도체 fail-item 평가 엔진 —
-  `evaluate()` 하나로 L0~L6 판단 파이프라인을 돌려 status/comment 를 반환한다.
-- **report_server 작업 중에는 `eval_analyzer/` 하위 파일을 수정하지 않는다** (원본과
-  diff 최소화 → 향후 원본 동기화 용이). eval_analyzer 자체 개발은 그쪽 CLAUDE.md 규칙을 따른다.
-  - **예외 (2026-08-03, 사용자 승인)**: `/pe/eval` 관리자 패널이 요구한 엔진 4건 —
-    `pipeline/_rules.py`(캐시 키에 mtime 포함 → 재시작 없이 yaml 반영 + family 오버레이
-    트리 병합 + `reload_rules`), `pipeline/signatures.py`(`enabled:false` skip +
-    `build_ctx_values` 순수 추출). **원본 `F:\COINAPI\eval_analyzer` 에도 같은 변경을
-    적용했다** — 한쪽만 고치면 다음 동기화 때 소실된다. 원본 signatures.py 는 사본보다
-    구버전이라(SUBPOP_GAP·outlier_count 없음) 같은 diff 가 아니라 **같은 의미의 변경**을
-    적용했다. 회귀 테스트 `tests/test_rules_scope.py` 도 양쪽에 있다.
-  - `db_input/` 은 종전대로 이 규칙의 명시적 예외다.
-- 제외하고 복사한 것: `.git/`, `__pycache__/`, `*.egg-info/`, `.claude/`·`.agents/`,
+- `eval_analyzer/` 는 반도체 fail-item 평가 엔진이다 — `evaluate()` 하나로 L0~L6 판단
+  파이프라인을 돌려 status/comment 를 반환한다.
+- **2026-08-03 이 repo 가 원본으로 승격**됐다. 외부 사본 `F:\COINAPI\eval_analyzer` 는
+  더 이상 참조·동기화 대상이 아니며, 하위 파일은 자유 수정이다
+  (정본 [15_ownership.md](15_ownership.md)). 유지되는 제약은 **의존 방향 하나**뿐 —
+  eval_analyzer 는 report_server 를 import 하지 않는다.
+  - **단, eval.db 스키마(`eval_engine/store.py` DDL·컬럼) 변경은 사전 승인 대상**이다.
+    운영 eval.db 에 누적 데이터가 있어 바꾸기 전에 영향을 설명해야 한다.
+  - `/pe/eval` 패널을 위해 들어간 엔진 변경(§11): `pipeline/_rules.py`(캐시 키에 mtime
+    포함 → 재시작 없이 yaml 반영 + family 오버레이 트리 병합 + `reload_rules`),
+    `pipeline/signatures.py`(`enabled:false` skip + `build_ctx_values` 순수 추출).
+    회귀 테스트 `eval_analyzer/tests/test_rules_scope.py`.
+- 최초 흡수 시 제외한 것: `.git/`, `__pycache__/`, `*.egg-info/`, `.claude/`·`.agents/`,
   런타임 db(`data/*.db`, `db_input/output/*.db`). 중첩 `.gitignore` 가 런타임 db 를 계속 차단한다.
 
 ## 2. 단방향 의존 — import 는 3곳만
@@ -121,8 +120,27 @@ row0 TSEQ  row1 TNO  row2 STEP  row3 UNIT  row4 HILIM(USL)  row5 LOLIM(LSL)  row
 | `bin != 1` (fail bin) | `Yield\|<bin>\|<item_raw>` |
 | item 별 worst-case (severity 최고) | `CPK\|<item_raw>` / `ETC\|<item_raw>` 폴백 |
 
-  셀 텍스트 = `[<status>] <comment>`. 여러 소스에서 같은 (item,bin) 이 나오면 severity
-  높은 쪽이 남는다. 미사용 키는 그냥 버려진다 (CPK/ETC 행이 없으면 무해).
+  셀 텍스트 = `[<status>][<modality>] <comment>` (modality 는 발화 시에만).
+  여러 소스에서 같은 (item,bin) 이 나오면 severity 높은 쪽이 남고, **동률이면 이봉
+  발화 쪽**이 남는다 (`_rank`). 미사용 키는 그냥 버려진다 (CPK/ETC 행이 없으면 무해).
+
+### 6-1. 이봉 배지 `[이봉]`/`[다봉]`/`[분리]` (2026-08-03)
+
+엔진은 SUBPOP_GAP 이 **primary_signature 일 때만** 코멘트 본문에 이봉 문구를 쓴다
+(`recommend._phenomenon_text`). 그런데 SUBPOP_GAP 은 `status.SPECIFICITY_ORDER` 21개 중
+18번째라 같은 MAJOR 인 WIDE_DISTRIBUTION·TAIL_RISK 등에 밀리기 쉽고, 이봉 분포는 산포도
+넓어 그 동시발화가 흔하다 → **발화해도 코멘트에 안 보이던 문제**.
+
+`ai_comment._modality_tag` 가 `case["signatures"]` 에서 SUBPOP_GAP 항목의
+`evidence[signal_code=="MODALITY_V2"].note`(`"modality_v2 <label>"`)를 직접 읽어
+**primary/secondary 구분 없이** status 뒤에 배지를 붙인다. 엔진은 수정하지 않는다.
+
+- 접두인 이유: `report_view.html` 의 `.kind-issue td.st-comment` 가 `white-space: normal`
+  + 330px 고정이라 comment 의 개행이 붕괴된다 — 말미 추가 문장은 문단에 묻힌다.
+- note 포맷이 바뀌면 `[분포분리]` 로 degrade한다 (조용한 미표시 방지).
+- 수치(BC/n_modes/density_gap) 확인은 셀이 아니라 `/pe/eval` 트레이스가 정본 (§11).
+- **엔진 사설 계약 핀**: `present.to_result` 의 `signatures[].evidence[].note` 포맷.
+- 캐시: 셀 **값**이 바뀌므로 `cache_policy.REPORT_SCHEMA_VERSION` 22 로 올렸다.
 
 ## 7. 클라이언트 옵션 (Honey)
 
@@ -146,8 +164,8 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 
 - **DB 파일**: `REPORT_EVAL_DB_PATH` (기본 `DB/pe/report/eval/eval.db`) — report_server
   소유, session DB(report.db)와 분리. eval_analyzer 쪽은 실행 시 `EVAL_DB_PATH` 를 이
-  파일로 지정해 읽는다(코드 무수정). 스키마는 엔진 `store.SCHEMA` 를 그대로 적용 —
-  **스키마 변경 금지**.
+  파일로 지정해 읽는다(엔진 코드 변경 없이). 스키마는 엔진 `store.SCHEMA` 를 그대로 적용 —
+  **스키마 변경은 사용자 사전 승인 대상**(§1, 누적된 운영 데이터 때문).
 - **트리거 3곳** (모두 try/except + 데몬 스레드 `export_async` — 실패해도 업로드/저장
   무영향): ① 세션 업로드 ingest 의 시드 직후, ② `service.update_issue_comments`,
   ③ `service.update_issue_etc_items`. 매번 세션 **전체 코멘트 상태 재적재**(멱등).
@@ -158,17 +176,19 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   item/unit/limit 은 honeyform tables 에서, fail/total/cpk 통계는 best-effort
   (rawdata 에 없는 자유입력 ETC 항목은 코멘트만). `ingest_run.session_id` 로 세션
   역참조, run_case 차집합으로 **삭제된 코멘트의 label 정리**(fail_case 는 보존).
-- **엔진 코드 재사용** (eval_analyzer 무수정): `store` CRUD 는 전부 `conn=` 주입 —
+- **엔진 코드 재사용** (엔진을 고치지 않고 호출만): `store` CRUD 는 전부 `conn=` 주입 —
   `eval_engine.config.DB_PATH` 는 절대 변경하지 않는다. item 정규화는
   `pipeline.ingest._alias_map/_canonicalize/_classify_category_major/_classify_value_type`
   재사용(=db_input/import_csv.py 와 동일 패턴 → 선례 fuzzy 매칭 일관).
   **사설 API 의존 핀**: `store._migrate` / `store._seed_bin_taxonomy` /
-  `pipeline.ingest._*` — 원본 동기화로 시그니처가 바뀌면 eval_export 만 고치면 된다
+  `pipeline.ingest._*` — 엔진 리팩터링으로 시그니처가 바뀌면 eval_export 만 고치면 된다
   (실패는 safe_export 가 격리).
 - **unit → value_type 선보정** (2026-07-29): 엔진 `UNIT_TO_VALUE_TYPE` 은 **정확매칭
   표**라 `VOLTS`/`HERTZ`/`mAMP` 같은 표기를 놓치고 조용히 `P_F` 로 떨어뜨린다.
-  eval_analyzer 는 무수정이므로 `eval_export.unit_group()`(부분문자열 **VOLT→V /
-  AMP→A / HERTZ→Hz**)을 **먼저** 보고, 안 걸리면 엔진 표로 내려간다. 짧은 표기
+  당시 엔진 무수정 원칙 때문에 보정을 서버 쪽에 뒀다 — `eval_export.unit_group()`
+  (부분문자열 **VOLT→V / AMP→A / HERTZ→Hz**)을 **먼저** 보고, 안 걸리면 엔진 표로
+  내려간다. (엔진이 자유 수정이 된 지금은 엔진 표를 직접 고쳐 일원화할 수도 있으나,
+  기존 적재 데이터와의 정합 때문에 현행 2단 구조를 유지한다.) 짧은 표기
   (`v`/`hz`/`amp`)는 규칙에 안 걸려 엔진 결과 그대로 — 충돌 없음.
   이미 적재된 오분류는 관리자 탭 **Unit 별칭 재적용** 버튼으로 일괄 교정한다.
 - **관리**: `/pe/admin-pte/` **Eval DB 탭** — overview(파일/건수), label 목록 검색
@@ -183,9 +203,10 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 ## 10. 과거 사례 수동 적재 — db_input 5컬럼 CSV (2026-07-28)
 
 엔지니어가 손으로 정리한 과거 코멘트를 같은 eval DB(`REPORT_EVAL_DB_PATH`)에 넣는 경로.
-구현은 **`eval_analyzer/db_input/` 안에서만** 한다 — 이것이 eval_analyzer/CLAUDE.md 의
-"하위 파일 무수정"에 대한 **명시적 예외(carve-out)** 이며, `eval_engine/` 은 계속 무수정이다
-(§2 규약 유지).
+구현은 **`eval_analyzer/db_input/` 안에서만** 한다 — 적재기와 판단 엔진의 관심사를 분리해
+`eval_engine/` 을 건드리지 않기 위해서다(§2 단방향 규약 유지).
+(2026-08-03 이전에는 "하위 파일 무수정" 동결에 대한 명시적 예외(carve-out) 였다. 동결은
+폐지됐지만 배치 규칙 자체는 그대로 유지한다.)
 
 - **입력 계약**: `Product type, Family Product, unit, Item, comment` 5컬럼(헤더 대소문자·
   공백 유연). 기존 20컬럼 레거시 CSV 도 헤더 자동감지로 계속 동작한다.
@@ -201,16 +222,17 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   `search_precedents` 가 `value_type` 을 등호 하드필터로 쓰기 때문에 조용한 P_F 폴백은
   선례를 영구 미매칭으로 만든다.
   - ⚠ **엔진 live-run 경로와 어긋난다**: `pipeline/ingest._classify_value_type` 은 여전히
-    정확일치 + 모르면 `P_F` 폴백이다(엔진 무수정). 그래서 `MILLIVOLT` 는 선례에선 `V`,
+    정확일치 + 모르면 `P_F` 폴백이다(엔진 현행 동작). 그래서 `MILLIVOLT` 는 선례에선 `V`,
     같은 표기를 UNIT 행에 쓴 live case 는 `P_F` 라 등호 필터에서 서로 안 잡힌다. 새 값
     `%` 도 엔진이 절대 생성하지 않으므로 `%` 선례는 **선례 조회·관리자 탭 표시 용도**다.
     `rules/*.yaml` 은 `item_class = category_major|value_type|bin` 스코프라 `%` 스코프가
     없어 기본으로 폴백한다. 완전 해소는 엔진 `UNIT_TO_VALUE_TYPE`/`_classify_value_type`
-    을 같은 규칙으로 맞춰야 가능하고 **엔진 소유자 승인이 필요한 별건**이다.
+    을 같은 규칙으로 맞추면 되고, 엔진이 자유 수정이 된 지금은 **이 repo 에서 바로 할 수
+    있다**(다만 기존 적재 데이터 재분류가 따라와야 하므로 여전히 별건 작업이다).
 - **실행 ① 서버 콘솔**: `eval_analyzer\db_input\run_import.bat` 더블클릭 → CSV 선택.
-  bat 이 report_server 안의 사본임을 감지해(`..\..\server\config.py`) `EVAL_DB_PATH` 를
+  bat 이 report_server 안에 있음을 감지해(`..\..\server\config.py`) `EVAL_DB_PATH` 를
   서버 소유 eval.db 로 잡고 `--to-eval-db` 를 붙인다 → 관리자 탭에 바로 보인다.
-  원본 저장소(F:\COINAPI\eval_analyzer) 단독 실행은 기존 per-family output 동작 그대로.
+  `eval_analyzer/` 폴더만 따로 떼어내 단독 실행하면 기존 per-family output 동작 그대로.
 - **실행 ② Honey 'DB Input'** (2026-07-29): Honey 실행(&R) 메뉴 맨 아래 → CSV 선택 →
   **검증 미리보기 → 확정**. 서버 `POST /pe/report/api/eval/labels_import`
   ([routes_eval_input.py](../server/report/routes_eval_input.py))가
@@ -256,21 +278,50 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   admin 로그인 상태면 바로 들어간다. 별도 토큰인 이유는 `voc_gate_token()` docstring 과
   동일(경로가 달라 admin 쿠키가 안 실리고, 값이 같으면 유출 시 서로 재사용됨).
   비-GET 은 admin 패널과 같은 `X-Admin-Request: 1` 헤더 요구(CSRF).
-- **탭 4개**:
+- **탭 5개**:
   1. *Thresholds* — 제품군 × family_product 드롭다운으로 오버레이 편집. 병합 순서는
      `default → product_type(레거시 섹션) → thresholds/<PT>/_default.yaml →
-     thresholds/<PT>/<FAMILY>.yaml → item_class`. 빈 칸 = 상속(파일에 안 씀),
-     전부 비우면 파일 삭제. 키별 "현재 적용값 + 출처" 를 함께 보여준다.
+     thresholds/<PT>/<FAMILY>.yaml → item_class`.
+     **입력칸에는 "이 범위에 적용될 값"(상속 포함)을 채워 보여주고, 저장 시 상속값과 같은
+     키는 파일에 쓰지 않는다** — 화면의 값이 곧 적용값이면서 오버레이 파일은 최소로 남고,
+     상위 층을 고치면 따라간다. 칸을 비우거나 ↺ 를 누르면 상속으로 되돌아가고, 오버레이가
+     비면 파일을 지운다. 각 행에 **설명**(thresholds.yaml 의 주석을 서버가 파싱 —
+     `rules_io.threshold_descriptions`, 설명 정본은 yaml 주석 한 곳)과 **그 값을 쓰는 룰**
+     (`rules_io.threshold_usage` 역인덱스 + 선언형이 아닌 코드 참조 라벨 `_CODE_REFS`)을 함께 찍는다.
   2. *Signatures* — 21종 enable/disable + 조건(when_metric)·status_hint·issue_category·
-     문구(phenomenon/action/evidence) 편집. **신규 추가/삭제는 지원하지 않는다** —
-     `status.py SPECIFICITY_ORDER` 코드와 동기화가 필요해 UI 만으로는 안전하지 않다.
+     문구(phenomenon/action/evidence) 편집. 체크박스로 **여러 개 골라 일괄 켜기/끄기**
+     (`POST /api/signatures/enabled` — yaml 쓰기·백업·rev bump 1회). **신규 추가/삭제는
+     지원하지 않는다** — `status.py SPECIFICITY_ORDER` 코드와 동기화가 필요해 UI 만으로는
+     안전하지 않다.
   3. *L0~L6 트레이스* — 세션 1건을 AI Comment 와 **같은 경로**(loader→mode_tables→
      `ai_comment._table_to_raw_df`)로 재현하되 `evaluate()` 대신 단계 함수를 직접 호출해
      raw_metrics/features/조건분해를 노출한다. signature 21행 매트릭스에 조건별
      `실제값 ⟨op⟩ 임계값(키=값)` 과 미발화 사유(disabled / min-n 가드 / 특수분기 / 결측)를
      찍는다. **`should_store` 게이팅 탈락 케이스도 포함**한다 — "왜 코멘트가 안 나왔나" 가
      이 화면의 주 용도다. 결과는 프로세스 메모리 LRU(4런/30분)에 두고 상세는 1건씩 조회.
-  4. *검증·백업* — 참조 무결성(`when_metric` 이 참조하는 임계값 키 존재, 오버레이 고아
+     - **SUBPOP_GAP 만 예외 처리**(2026-08-03): 이 룰은 `when_metric` 을 쓰지 않고
+       `features.modality_v2` 로 판정하는 하드코딩 특수분기라, yaml 의 `when_metric`·
+       `evidence` 선언은 **죽은 설정**이다(패널에서 고쳐도 무효 — `status_hint`/
+       `phenomenon_ko`/`action_ko` 만 실효). 그래서 조건을 못 찍어 "왜 안 잡혔나" 를
+       볼 수 없었다 → `eval_debug._subpop_conditions` 가 엔진
+       `features._classify_modality_v2` 의 AND 체인을 9행으로 미러링해 찍는다
+       (게이트 2행 + multimodal/bimodal/separated 분기 각각). `skip_reason` 대신
+       `branch_note` 필드로 내려보내 조건과 **함께** 렌더된다. 임계값은 키 이름으로만
+       읽는다(하드코딩 금지) — **엔진이 분기 구조를 바꾸면 이 함수도 고쳐야 한다**.
+     - **분포 미니차트**(2026-08-03): 케이스 상세 최상단에 히스토그램(막대)+ECDF(주황선)+
+       LSL/USL(빨간 점선)+mean/median(삼각) 을 vanilla canvas 로 그린다(`drawDist`,
+       외부 라이브러리 없음 — 페이지에 Plotly 가 없다). 수치 표만 보고 임계값을 고치면
+       "왜 이 값이 나왔나"를 확인할 수 없어서 넣었다. 데이터는 `_trace_case` 의
+       `dist` 필드 — 측정값 전량을 정렬해 내리되 20,000 초과 소스는 서버에서 60-bin
+       히스토그램으로 축약한다(trace_store 4런 보관, **표시용이며 판정에는 무관**).
+     - 함께 렌더되는 필드: `secondary_signatures`(배지) · `evidence`(L4 판정 근거) ·
+       `precedents`(L5 선례) · `ctx_values`(접힌 표 — 조건 분해의 actual 원천).
+  4. *Eval DB* — **admin 대시보드에서 이관**(2026-08-03). 코멘트 라벨 목록·검색·컬럼 토글·
+     CSV export·Unit 그룹 교정·세션 재적재·케이스 삭제. 마크업/JS 는 admin_panel.html 에서
+     그대로 옮겼고 구현 모듈은 여전히 `admin_panel/eval_admin.py` 를 import 한다
+     (라우트만 `/pe/eval/api/eval/*` 로 이동 — admin 쪽 구 라우트는 삭제).
+     eval 관련 화면을 한 페이지에 모으기 위한 이동이다.
+  5. *검증·백업* — 참조 무결성(`when_metric` 이 참조하는 임계값 키 존재, 오버레이 고아
      파일, 전 PT×family 조합 병합 시뮬레이션, SPECIFICITY_ORDER 정합) + 백업 목록/복원.
 - **저장 파이프라인**: 검증 → `rules/_backup/` 백업(파일당 50개, 같은 초면 `-2` 접미사)
   → tmp+`os.replace` 원자적 쓰기(LF 유지) → `.rules_rev` +1 → 감사 로그
@@ -280,3 +331,31 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   `thresholds/<PT>/*.yaml` 오버레이 · `_backup/*.bak` · `.rules_rev`.
 - 검증: [eval_analyzer/tests/test_rules_scope.py](../eval_analyzer/tests/test_rules_scope.py)
   (트리 없을 때 무회귀 / 병합 우선순위 / mtime 자동 리로드 / enabled 미발화).
+
+## 12. 룰 축소 디버깅 체제 (2026-08-03)
+
+룰 21개를 동시에 굴리면 임계값 하나를 고쳤을 때 무엇이 좋아지고 나빠졌는지 볼 수 없어,
+**SPEC_TOO_TIGHT / SEVERE_OUTLIER / OUTLIER_WARN / SUBPOP_GAP / CONSTANT_VALUE 5개만
+남기고 16개를 `enabled: false`** 로 껐다. 개념이 잡히는 대로 `/pe/eval` Signatures 탭에서
+하나씩 다시 켠다. 되돌리기는 그 탭의 일괄 켜기 한 번이다(코드 변경 없음).
+
+- **LOW_CPK 를 끈 것이 핵심**이다. SPEC_TOO_TIGHT 은 발화 조건에 `cpk < cpk_warn` 이
+  들어 있어 LOW_CPK(MAJOR)와 항상 같이 뜨고, 자신은 MINOR 라 specificity 경쟁에서 져
+  **primary 가 된 적이 없었다** — 코멘트에도 안 나왔다. LOW_CPK 를 꺼야 처음으로 관찰된다.
+- **저장 게이트 확장**([pipeline/present.py](../eval_analyzer/eval_engine/pipeline/present.py)
+  `should_store`): 종전 `yield fail or cpk<cpk_warn` 에 **`or signature 발화`** 를 더했다.
+  수율·cpk 는 정상인데 분포만 이상한 케이스(이봉 등)는 코멘트가 아예 안 만들어져 디버깅이
+  불가능했다. 이 부류는 Issue Table **ETC 섹션 자동 행**으로 올라간다:
+  `ai_comment.build_ai_comments` 가 `{"comments", "etc_auto_items"}` 를 돌려주고
+  (fail bin case 가 없으면서 signature 가 발화한 item), `issue_table._auto_etc_items` 가
+  수동 ETC·CPK 섹션·Yield 행·숨김과 중복을 걷어낸 뒤 수동 추가분 뒤에 잇는다.
+  **저장값이 아니라 매 조회 재계산**이라 룰이 조용해지면 행도 사라진다.
+- **테스트는 배포 on/off 와 분리**한다 — `tests/conftest.py` 의 autouse fixture
+  `all_signatures_enabled` 가 테스트에서 `enabled:false` 를 무시한다(룰을 껐다 켤 때마다
+  로직 테스트가 깨지면 다시 켤 때 기댈 안전망이 사라진다). 비활성 메커니즘 자체는
+  `rules_as_deployed` 마커를 단 `test_rules_scope.py` 가 검증한다.
+- **골든셋 회귀**: [tools/eval_golden/](../tools/eval_golden/) — `golden.yaml` 에
+  "이 세션의 이 항목은 이 룰이 떠야/뜨면 안 된다"를 사람이 적고,
+  `python tools/eval_golden/golden_check.py` 가 실제 트레이스와 대조해 누락/오탐을 센다
+  (불일치 있으면 exit 1). `eval_debug.trace_session` 만 쓰므로 import 3곳 규약 밖이 아니다.
+  임계값을 만지기 **전에** 몇 줄이라도 적어 두는 것이 이 도구의 전부다.

@@ -6,8 +6,8 @@ version: ev1
 default:
   cpk_warn: 1.33        # 주의 (업계 표준 시드)
   cpk_bad: 1.00         # 부적합 (절대 floor)
-  outlier_ratio_warn: 0.02
-  outlier_ratio_bad: 0.05
+  outlier_ratio_warn: 0.02   # outlier(튀는 die) 비율 주의 (OUTLIER_WARN)
+  outlier_ratio_bad: 0.05    # outlier 비율 심각 (SEVERE_OUTLIER, 개수 조건과 AND)
   spread_norm_warn: 0.18     # robust_sigma/(USL-LSL)
   modified_z: 3.5            # Iglewicz-Hoaglin outlier 컷
   skew_warn: 1.0            # |skew| 주의
@@ -17,24 +17,24 @@ default:
   bimodality_warn: 0.555    # Sarle's bimodality coefficient (5/9 권장값)
   edge_region_pct: 0.8      # 반경 정규화 0~1 중 상위 20% = edge
   center_region_pct: 0.3    # 반경 정규화 하위 30% = center
-  quadrant_imbalance_warn: 1.0
+  quadrant_imbalance_warn: 1.0  # 사분면 fail 률 편중 ((최대-최소)/평균) 컷 (CLUSTER_FAIL)
   mean_shift_warn: 0.30     # center_bias 이탈도(무차원 0~1) — 중심 치우침 컷
   cpk_trump_yield_floor: 0.7  # trump: cpk<cpk_bad AND yield<이값 → CRITICAL 강제
   site_cpk_delta_warn: 0.5  # site 간 cpk 편차 컷 (EQUIPMENT_SUSPECT)
   gross_yield_bad: 0.5      # yield 이 값 미만 → GROSS_FAIL
   code_edge_hit_warn: 0.05  # CODE/TRIM 레일(min/max) 포화 비율 컷 (CODE_RAIL)
   kurtosis_warn: 2.0        # excess kurtosis 컷 — heavy tail(간헐 spike) (HEAVY_TAIL)
-  spatial_fail_count_min : 5
-  severe_outlier_count_min : 5
-  ring_fail_ratio_warn : 2.0
-  gradient_norm_warn : 0.3
-  subpop_n_min : 50
-  subpop_outlier_ratio_max : 0.03
-  subpop_density_gap_warn : 0.3
-  subpop_density_gap_strong : 0.5
-  subpop_cdf_gap_warn : 10.0
-  source_min_count : 2
-  source_fail_rate_delta_warn: 0.3
+  spatial_fail_count_min : 5      # 공간 룰(EDGE/CENTER/RING/GRADIENT) 최소 fail 수 — 소수 fail 오탐 방지
+  severe_outlier_count_min : 5    # SEVERE_OUTLIER 최소 outlier 개수 (비율만으론 소표본 오탐)
+  ring_fail_ratio_warn : 2.0      # 중간 반경(ring) fail 집중 배수 (RING_FAIL)
+  gradient_norm_warn : 0.3        # wafer 한쪽으로 기우는 경사 세기 컷 (WAFER_GRADIENT)
+  subpop_n_min : 50               # 부분집단(SUBPOP_GAP) 판정 최소 표본 — 미만이면 판정 보류
+  subpop_outlier_ratio_max : 0.03 # 이 비율 이상 outlier 면 부분집단이 아니라 산발로 보고 판정 보류
+  subpop_density_gap_warn : 0.3   # 분포 사이 골(density gap) 약한 컷 — multimodal/bimodal 판정용
+  subpop_density_gap_strong : 0.5 # 분포 사이 골 강한 컷 — separated(완전 분리) 판정용
+  subpop_cdf_gap_warn : 10.0      # 값 축 빈 구간(누적분포 gap, %) 컷 — separated 판정에 AND
+  source_min_count : 2            # 소스 간 비교(cross_source) 최소 소스 수 — evaluate 는 미사용
+  source_fail_rate_delta_warn: 0.3 # 소스 간 fail 률 격차 컷 (cross_source 전용, evaluate 미사용)
 # 제품군별 override 예시 (필요 시 채움)
 product_type:
   PMIC: {}

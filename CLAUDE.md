@@ -20,14 +20,16 @@ SQLite + S3(또는 로컬 폴백)에 세션 단위로 저장한 뒤 검색결과
 이 프로젝트(웹리포트/서버) 관점이다. 외부 담당자 영역 소유자용 진입 문서는
 [CLAUDE.core.md](CLAUDE.core.md). 3-tier 요약:
 - 🟢 **자유 수정** (승인 없이 바로): `web_report/` + web_report 관련 html(report_view.html,
-  static/webreport/) + `server/`(단 `storage_gateway/` **제외**) + client 자주 쓰는 영역
+  static/webreport/) + `server/`(단 `storage_gateway/` **제외**) + `eval_analyzer/`
+  (이 repo 가 원본 — 2026-08-03 승격) + client 자주 쓰는 영역
   (`honey_ui/`, `honey_main.py`, `transport/`, `excel_download/`, `excel_edit/`).
 - 🟡 **사전 승인**: `client/` 나머지 비동결 (report_flow/, map_report/, embedded_browser.py,
   client_identity.py, config.py 등) — 편집 전 파일·이유·영향 설명.
 - 🔒 **외부 담당자 영역** (건들 때마다 승인): `d1/`·`d1_storage/`·`client/honey_parse/`·
   `client/report_generator/`·`server/storage_gateway/`(facade+`_s3` 전체). 병합돼 들어왔으나
-  외부 담당자 소유·교체 대상이라 동결(수정 불가피 시 명시 승인). + `eval_analyzer/`(외부 단방향,
-  규칙 #8). 진입점·유지 계약은 [docs/INDEX.md §3.1](docs/INDEX.md).
+  외부 담당자 소유·교체 대상이라 동결(수정 불가피 시 명시 승인).
+  진입점·유지 계약은 [docs/INDEX.md §3.1](docs/INDEX.md).
+  (`eval_analyzer/` 는 **더 이상 동결이 아니다** — 자유 수정. 단 import 단방향 규칙 #8 은 유지.)
 
 ---
 
@@ -82,12 +84,14 @@ report_server/
 │   ├── embedded_browser.py     HoneyUser UA 삽입 내장 브라우저
 │   ├── client_identity.py      PC 계정/호스트 신고값
 │   └── config.py               SERVER_BASE_URL, CURRENT_VERSION
-├── eval_analyzer/              독립 fail-item 평가 엔진 (운영 복사본 — 원본 F:\COINAPI\eval_analyzer)
+├── eval_analyzer/              독립 fail-item 평가 엔진 (자유 수정 — **이 repo 가 원본**, 외부 사본 동기화 없음)
 │                                서버 연결은 web_report/ai_comment.py + eval_export.py 2곳만 → [docs/13](docs/13_eval_analyzer_integration.md)
 ├── d1/                         (외부 담당자·동결) D1 입력 provider 경계 — 검증용(로컬 d1_storage 검색)
 ├── d1_storage/                 (외부 담당자·동결) D1 로컬 검증 스토리지
 ├── tools/product_info_import/  기준정보 CSV(DRM) → product_info.db 오프라인 임포터
 │                                (standalone — Excel 있는 별도 PC 에서 실행 후 .db 를 서버로 수동 복사)
+├── tools/eval_golden/          eval 룰 골든셋 회귀 (golden.yaml 기대 발화 vs 실제 트레이스 diff
+│                                → [docs/13 §12](docs/13_eval_analyzer_integration.md))
 ├── tests/sample_xlsx.py         더미 grids 픽스처 생성기
 ├── DB/pe/report/                런타임 자동 생성 (report.db + backup/ + 문서 스냅샷)
 ├── uploads/                     런타임 (업로드/로컬 폴백/디스크 캐시 루트)
@@ -276,26 +280,26 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
    🔒 외부 담당자 영역(건들 때마다 승인)=`d1/`·`d1_storage/`·`client/honey_parse/`·
    `client/report_generator/`·`server/storage_gateway/`(facade+`_s3` 전체). **경계가 폴더 내부를
    가르는 곳**: server/ 는 storage_gateway 만 외부 영역, client/ 는 report_generator·honey_parse 만
-   외부 영역.
-8. **eval_analyzer 단방향 의존.** `eval_analyzer/` 는 독립 프로젝트의 운영 복사본 —
-   report_server 작업 중 하위 파일 무수정, eval_engine import 는
+   외부 영역. `eval_analyzer/` 는 2026-08-03 자유 수정으로 승격됐다(동결 아님).
+8. **eval_analyzer 단방향 의존.** `eval_analyzer/` 는 **이 repo 가 원본**이다
+   (2026-08-03 — 외부 사본 `F:\COINAPI\eval_analyzer` 는 더 이상 참조·동기화 대상이 아니다).
+   하위 파일은 자유 수정이지만 **의존 방향은 계속 단방향**이다 — eval_engine import 는
    [web_report/ai_comment.py](web_report/ai_comment.py)(evaluate 호출) +
    [web_report/eval_export.py](web_report/eval_export.py)(store·ingest 헬퍼 — 코멘트 export) +
    [web_report/eval_debug.py](web_report/eval_debug.py)(룰 리로드·L0~L6 트레이스 — `/pe/eval`)
    **3곳만** 허용(양방향 그 외 import 금지). 서버의 evaluate 호출은 persist=False(운영
    eval.db 무기록) — 코멘트 export 는 report_server 소유 별도 파일 `REPORT_EVAL_DB_PATH`
    에만 쓴다. 규약 전문 [docs/13](docs/13_eval_analyzer_integration.md).
-   - **무수정 원칙의 예외 2건**: `db_input/`(종전), 그리고 2026-08-03 `/pe/eval` 패널이
-     요구한 `pipeline/_rules.py`·`pipeline/signatures.py` 최소 수정(사용자 승인). 후자는
-     **원본 `F:\COINAPI\eval_analyzer` 에도 같은 변경을 적용해야 한다** — 한쪽만 고치면
-     다음 동기화 때 소실된다.
+   - **eval_DB 스키마 변경은 사전 확인 대상**이다. `eval_engine/store.py` 의 DDL·컬럼을
+     바꿔야 하는 상황이면 바로 고치지 말고 **어떤 테이블·컬럼을 어떻게 바꾸는지와 영향을
+     설명한 뒤 사용자 승인을 받고** 진행한다(운영 eval.db 에 누적 데이터가 있다).
+     스키마와 무관한 나머지 수정은 자유.
    - 서버가 `eval_analyzer/db_input/import_csv.py` 를 **subprocess 로 실행**하는 것은
      import 가 아니므로 2곳 규약 위반이 아니다 (Honey 'DB Input' —
      [server/report/routes_eval_input.py](server/report/routes_eval_input.py),
      [docs/13 §10](docs/13_eval_analyzer_integration.md)). 별도 프로세스인 이유는
      `import_csv._import_group` 이 `eval_engine.config.DB_PATH` 를 모듈 전역에 대입하기
      때문 — 장수명 Flask 프로세스를 오염시키지 않으려면 프로세스 경계가 필요하다.
-   - `eval_analyzer/db_input/` 은 이 규칙의 **명시적 예외**다(엔진 무수정 유지 조건).
 9. **입력 계약은 7-meta honeyform 이다 (2026-07-21 확정).** `honey_parse.file_to_df` 반환 df =
    `SERIAL,SHOT,DUT,XPOS,YPOS,BIN,FAILTNO` + `TSEQ~LOLIM` 6행, 반환 df 개수 = source 개수
    (병합은 honey_parse 내부에서). **이 산출물(`md.df`)이 곧 web_report parquet 소스**이며,
@@ -334,6 +338,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 외부 담당자 영역 동결 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` · `server/storage_gateway/` → [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |
 | eval_analyzer 연결 (AI Comment / 코멘트 export) | [web_report/ai_comment.py](web_report/ai_comment.py) + [web_report/eval_export.py](web_report/eval_export.py) — eval_engine import 2곳 → [docs/13](docs/13_eval_analyzer_integration.md) |
 | 기준정보(part_ids) 갱신 — DRM CSV → product_info.db | [tools/product_info_import/](tools/product_info_import/README.md) (Excel PC) → [server/product_info.py](server/product_info.py) 가 읽기전용 로드 |
+| eval 룰 골든셋 회귀 (임계값 튜닝 전후 비교) | [tools/eval_golden/golden_check.py](tools/eval_golden/golden_check.py) → [docs/13 §12](docs/13_eval_analyzer_integration.md) |
 | 더미 grids 픽스처 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |
 
 ---

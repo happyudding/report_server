@@ -9,17 +9,19 @@ from ._rules import issue_category_for, thresholds_for
 
 
 def should_store(case_ctx, metrics, sig_result) -> bool:
-    """rule 계산 후 DB 저장 여부 판단. 지금: yield fail 또는 cpk<cpk_warn.
+    """rule 계산 후 DB 저장 여부 판단: yield fail / cpk<cpk_warn / signature 발화.
 
-    향후 all-rule 로 넓힐 때 아래 return 을
-      `return yield_fail or bool(sig_result.get("signatures"))` 한 줄로 교체.
-    (sig_result 는 지금 미사용이지만 그 교체를 위해 시그니처에 포함.)
+    signature 발화분을 포함하는 이유 — 수율·cpk 는 정상인데 분포만 이상한 케이스
+    (SUBPOP_GAP 이봉, SEVERE_OUTLIER 등)가 여기서 걸러지면 코멘트가 아예 생성되지
+    않아 룰 디버깅이 불가능하다. report_server 는 이 부류를 Issue Table ETC 섹션에
+    올린다(web_report/ai_comment.py etc_auto_items).
     """
     th = thresholds_for(case_ctx)
     yield_fail = (metrics.get("fail_count") or 0) > 0
     cpk = metrics.get("cpk")
     low_cpk = cpk is not None and cpk < th["cpk_warn"]
-    return yield_fail or low_cpk
+    fired = bool((sig_result or {}).get("signatures"))
+    return yield_fail or low_cpk or fired
 
 
 def persist(run_ctx, case_ctx, raw_metrics, features, verdict, sig_result, comment,

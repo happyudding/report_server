@@ -162,6 +162,9 @@
 6. web_report 편집 진실 = 세션 편집 DB, manifest 는 불변 스냅샷. 캐시 키는
    [cache_policy.py](../web_report/cache_policy.py) 빌더로만 → [12](12_web_report_cache.md).
 7. **소유권/수정 권한 경계** (정본 [15_ownership.md](15_ownership.md)): 자유 수정 =
-   `web_report/` + 관련 html + `server/`(storage_gateway 제외) + client 자주 쓰는 영역
+   `web_report/` + 관련 html + `server/`(storage_gateway 제외) + `eval_analyzer/`
+   (2026-08-03 이 repo 가 원본 — 동결 해제) + client 자주 쓰는 영역
    (honey_ui·honey_main·transport·excel_*); 사전 승인 = `client/` 나머지 비동결;
    외부 담당자 영역(건들 때 승인) = `d1/`·`honey_parse/`·`report_generator/`·`storage_gateway/`(§3.1).
+   `eval_analyzer/` 는 자유 수정이지만 **import 단방향(3곳)** 과 **eval_DB 스키마 변경 사전
+   승인** 두 제약은 유지 → [13 §1](13_eval_analyzer_integration.md).

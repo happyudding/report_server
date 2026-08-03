@@ -2,7 +2,7 @@
 
 signatures.evaluate 는 DB 미접근(bin_taxonomy 는 rules yaml 조회) — DB fixture 불필요.
 """
-from eval_engine.pipeline import signatures, status
+from eval_engine.pipeline import present, signatures, status
 
 
 def _case(**kw):
@@ -172,3 +172,17 @@ def test_heavy_tail_disabled_when_few_samples():
     raw = {"yield": 0.95, "cpk": 1.5}
     sig = signatures.evaluate(case, feats, raw)
     assert "HEAVY_TAIL" not in [s["id"] for s in sig["signatures"]]
+
+
+def test_should_store_covers_rule_only_case():
+    """수율·cpk 는 정상인데 signature 만 발화한 케이스도 저장(=코멘트 생성) 대상.
+
+    이게 없으면 분포만 이상한 item(SUBPOP_GAP 등)은 코멘트가 아예 안 만들어져
+    룰 디버깅이 불가능하다. report_server 는 이 부류를 Issue Table ETC 로 올린다.
+    """
+    case, m = _case(), {"fail_count": 0, "cpk": 2.0}
+    assert not present.should_store(case, m, {"signatures": []})
+    assert present.should_store(case, m, {"signatures": [{"id": "SUBPOP_GAP"}]})
+    # 종전 조건 2개는 그대로 — 발화가 없어도 저장된다.
+    assert present.should_store(case, {"fail_count": 3, "cpk": 2.0}, {"signatures": []})
+    assert present.should_store(case, {"fail_count": 0, "cpk": 0.9}, {"signatures": []})
