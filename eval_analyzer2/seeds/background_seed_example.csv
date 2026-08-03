@@ -1,7 +1,0 @@
-product_type,product_name,family_product,lot_id,wafer_number,item_name,bin,value_type,yield_pct,fail_count,total_count,cpk,mean,stdev,lsl,usl,status,root_cause_category,disposition,signature_tag,human_comment,outcome_action,outcome_condition,outcome_result
-PMIC,S5E_TEST_0000001,SOC,LOT001,3,VREF_TRIM,18,V,0.68,3,280,0.82,1.21,0.09,1.0,1.4,MAJOR,equipment,retest,SEVERE_OUTLIER,"site 3 에서만 튐, golden unit 재측정 필요",retest,,recovered_normal
-PMIC,S5E_TEST_0000001,SOC,LOT001,3,SPMI_LDO_POK,18,P_F,0.95,14,280,,,,,,MAJOR,equipment,retest,SEVERE_OUTLIER,"outlier 5%↑ 동일값 clamp",condition_change,UVLO_TEST_EN=H,recovered_normal
-PMIC,S5E_TEST_0000001,SOC,LOT001,3,TRIM_BUCK1_GM,20,CODE,0.9,9,280,0.91,30,3,20,40,MAJOR,design,dev_feedback,SPEC_TOO_TIGHT,"trim code margin 부족",dev_feedback,,pending
-PMIC,S5E_TEST_0000001,SOC,LOT001,3,TRIM_BUCK_SGM,21,CODE,0.92,7,280,1.1,15,1.2,10,20,MAJOR,spec,spec_review,SEVERE_OUTLIER,"trim 후 outlier, spec tight",spec_release,,improved
-PMIC,S5E_TEST_0000001,SOC,LOT001,3,INIT_BUCK_FSW,31,Hz,0.97,2,280,1.4,1000000,50000,900000,1100000,MONITOR,unknown,retest,SEVERE_OUTLIER,"INIT outlier, defective 의심 retest 진성확인",retest,,confirmed_defective
-PMIC,S5E_TEST_0000001,SOC,LOT001,3,BUCK_SCAN,40,P_F,0.6,112,280,,,,,,MAJOR,process,monitor,EDGE_FAIL,"edge 저수율 모과제 동일유형 확인 필요",monitor,,pending

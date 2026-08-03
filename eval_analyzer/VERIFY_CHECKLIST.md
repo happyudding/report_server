@@ -1,12 +1,14 @@
-# eval_analyzer2 — 원본 대조 체크리스트
+# eval_analyzer — 원본 대조 체크리스트
 
-`eval_analyzer2/` 는 보안망 밖으로 코드를 못 가져와서 **원본(업데이트본)을 눈으로 보고 손으로
-다시 친 사본**이다. 이 문서는 보안망 **안에서 원본과 대조할 때 확인할 것**만 모았다.
+이 폴더의 현재 내용은 외부 담당자의 업데이트본을 **보안망 밖으로 못 가져와서 눈으로 보고 손으로
+다시 친 사본**(구 `eval_analyzer2/`)이다. 사용자가 보안망 안에서 대부분 교차 검증한 뒤
+2026-08-03 에 이 폴더로 병합했다. 이 문서는 **아직 원본과 대조하지 못한 것**을 남긴다.
 
-- 작성일: 2026-08-03
-- 기준선: `report_server/eval_analyzer/` (구버전 운영 복사본). 손타이핑 delta 는
-  **py 7개 + yaml 2개 + 신규 `cross_source.py`** 로 좁혀진다. 그 밖의 파일은 구버전과 동일.
+- 손타이핑 delta 는 병합 전 구버전 대비 **py 7개 + yaml 2개 + 신규 `cross_source.py`** 였다.
+  그 밖의 파일은 구버전과 동일하므로 대조 대상이 아니다.
 - docstring 은 **일부러 안 친 것**이므로 대조 시 무시한다.
+- **교차 검증 완료(2026-08-03)**: `aggregate_cross_source()` 를 뺀 나머지는 원본과 일치 확인됨.
+  → 아래에서 실제로 남은 것은 **§1-1 / §1-2 / §1-3 / §3** 이다.
 
 ---
 
@@ -27,18 +29,32 @@ python <repo>/tools/compare_typing.py <이_폴더> <원본_updated_폴더> --out
 
 ## 1. 반드시 확인 — 내용이 비어 있음
 
-### 1-1. `eval_engine/cross_source.py` → `aggregate_cross_source()` 본문 전체 누락 ★최우선
+### 1-1. `aggregate_cross_source()` — 원본과 다를 수 있음 ★ (2026-08-03 재구성함)
 
-현재 상태: docstring 과 `return {"evaluations": resultst}` 만 있고 **본문이 없다**
-(`resultst` 는 어디에도 정의되지 않음 → 호출하면 NameError).
+**교차 검증 결과 이 함수만 원본과 대조하지 못했고, 사용자 요청으로 docstring + 남아 있던
+헬퍼들의 계약을 근거로 재구성했다.** 원본 코드가 아니므로 동작이 다를 수 있다.
 
-방증:
-- `store`, `recommend`, `thresholds_for` import 가 전부 미사용
-- 모듈 상수 `SOURCE_ONLY_FAIL` 미사용
-- 헬퍼 `_signature_text()` 미사용
-- 인자 `engine_version`, `persist` 미사용
+재구성 근거 — 아래 심볼들이 전부 미사용으로 남아 있었고, 이들이 쓰이도록 맞췄다:
+`store.cases_for_runs` / `store.update_evaluation_comment` / `recommend` / `thresholds_for` /
+`SOURCE_ONLY_FAIL` / `_signature_text()` / 인자 `engine_version`·`persist`.
 
-→ **원본의 함수 본문을 그대로 옮겨 적을 것.** 위 미사용 심볼들이 전부 쓰이게 되면 정상.
+재구성한 동작:
+1. `store.cases_for_runs(run_ids)` 로 행을 모아 `_group_by_item()` 으로 item 별 묶음
+2. 묶음마다 `_evaluate_item_group(rows, thresholds_for(rows[0]))` → 판정 없으면 skip
+3. `_source_only_comment()` 로 `recommend.make_comment` 와 **같은 3-섹션 형식** 코멘트 생성
+   (cross-source 는 선례검색을 안 하므로 `[과거사례]` 는 `recommend._NO_PRECEDENT_TEXT`)
+4. `persist=True` 면 **불량 source 쪽 case 들만** `update_evaluation_comment` 로 갱신.
+   `engine_version` 인자가 있으면 그것을, 없으면 각 행의 `engine_version` 을 사용.
+   둘 다 없으면 대상 행을 특정할 수 없어 건너뛴다.
+5. 반환 `{"evaluations": [ {item_id, item_canonical, signature, normal_sources, bad_sources,
+   source_fail_rate_gap, bad_targets, dominant_phenomenon, comment, persisted}, ... ]}`
+
+임의로 정한 것 (원본과 다를 가능성이 높은 지점):
+- **`_DEFAULT_ACTION` 문구** — `SOURCE_ONLY_FAIL` 이 `signatures.yaml` 에 없어서
+  `_signature_text()` 가 빈 dict 를 준다. yaml 에 `SOURCE_ONLY_FAIL` 항목이 원본에 있는지
+  확인하고, 있으면 그 `phenomenon_ko`/`action_ko` 가 자동으로 우선하도록 이미 짜 두었다.
+- `[현상]` 문장 표현, 반환 dict 의 키 이름(`signature`/`comment`/`persisted` 는 추가한 것)
+- `persisted` 카운트 필드는 원본에 없을 수 있다
 
 ### 1-2. `cross_source` 를 누가 호출하는가
 
@@ -89,18 +105,22 @@ python <repo>/tools/compare_typing.py <이_폴더> <원본_updated_폴더> --out
 
 ## 3. 갱신 안 된 것 — 원본에 변경이 있었는지 확인
 
-### 3-1. `tests/` 가 구버전과 100% 동일
+### 3-1. `tests/` 가 구버전과 100% 동일 → **여기서 3건을 자체 판단으로 고쳤다**
 
-원본 업데이트에 테스트 변경이 있었다면 그것도 못 옮긴 것이다. 현재 **3건 실패**하는데,
-전부 "구버전 기준 테스트 vs 새 동작" 이라 **강제로 통과시키지 않았다**:
+원본 업데이트에 테스트 변경이 있었다면 그것도 못 옮긴 것이다. 병합 시점에 3건이 실패했고,
+전부 "구버전 기준 테스트 vs 새 동작" 이라 **새 동작에 맞춰 갱신했다**(2026-08-03).
+원본 tests 가 이걸 어떻게 고쳐 놨는지 확인해 대조할 것.
 
-| 실패 테스트 | 원인 | 판단 |
+| 테스트 | 실패 원인 | 고친 방법 |
 |---|---|---|
-| `test_store.py::test_schema_v4_user_version_and_objects` | `SCHEMA_VERSION` 4→6 | 의도된 변경 |
-| `test_signatures_status.py::test_no_signature_full_data_gives_ok` | 신규 `MISSING_LIMIT` 발화 (테스트 픽스처에 lsl/usl 이 없음) → OK 가 아니라 MINOR | 의도된 변경 |
-| `test_signatures_status.py::test_no_signature_incomplete_data_keeps_monitor` | 위와 동일 | 의도된 변경 |
+| `test_store.py::test_schema_v4_user_version_and_objects` | `SCHEMA_VERSION` 4→6 | `test_schema_user_version_and_objects` 로 개명 + `== store.SCHEMA_VERSION` 으로 바꾸고 v5/v6 features 컬럼 7개 검증 추가 |
+| `test_signatures_status.py::test_no_signature_full_data_gives_ok` | 신규 `MISSING_LIMIT` 발화 (픽스처에 lsl/usl 이 없음) → OK 가 아니라 MINOR | `_case()` 기본값에 `lsl=0.0, usl=10.0` 추가 |
+| `test_signatures_status.py::test_no_signature_incomplete_data_keeps_monitor` | 위와 동일 | 위와 동일 |
 
-→ 원본 tests 가 이 3개를 어떻게 고쳐 놨는지 확인해 옮길 것.
+`_case()` 에 limit 이 없던 건 원래 픽스처 결함이다 —
+`test_trump_low_cpk_low_yield_forces_critical` 의 "발화 signature 없음" 주석이
+`MISSING_LIMIT` 때문에 거짓이 되어 있었다. limit 부재 자체는
+신규 `test_missing_limit_fires_without_spec` 로 따로 덮었다.
 
 ### 3-2. `docs/` 도 구버전과 100% 동일
 
@@ -142,4 +162,7 @@ def find_precedents(case_ctx: dict, sig_result: dict) -> list:
 - signature 21개 ↔ `status.SPECIFICITY_ORDER` 완전 일치, `when_metric` 이 참조하는
   thresholds 키 전부 존재, `phenomenon_ko` 전부 존재
 - 모듈 간 `모듈.속성` 참조 전수 검사 → 누락 0건 (이 검사가 `find_precedents` 를 잡았다)
-- 함수 내 미정의 이름 검사 → `cross_source.resultst` 1건만 (= §1-1 의 누락 본문)
+- 함수 내 미정의 이름 검사 → 0건 (§1-1 재구성 후)
+- `aggregate_cross_source()` E2E: 임시 sqlite 에 item 1개 × source 3개(2%/3%/40%)를 심어
+  → 정상 `[A,B]` / 불량 `[C]` 분리, gap 0.370, **불량 source 행의 comment 만** 갱신,
+  `persist=False` 는 DB 무변경, source 1개·격차 미달·빈 입력은 전부 `{"evaluations": []}` 확인

@@ -16,7 +16,20 @@ from ._rules import thresholds_for, signatures_doc, bin_taxonomy_for
 
 # 고차모멘트(표본 부족 시 비활성) 의존 metric
 _HIGH_MOMENT_METRICS = {"skewness", "kurtosis", "bimodality_score"}
+_SUBPOP_GAP_ID = "SUBPOP_GAP"
 
+def _evaluate_subpop_gap(features : dict):
+    modality_v2 = features.get("modality_v2")
+    if modality_v2 is None:
+        return None
+    evidence = [
+        {"signal_code" : "MODALITY_V2", "value" : None, "note" : f"modality_v2 {modality_v2}"},
+        {"signal_code" : "N_MODES", "value" : features.get("n_modes"),
+            "note" : f"n_modes {features.get('n_modes')}"},
+        {"signal_code" : "DENSITY_GAP", "value" : features.get("cdf_gap"),
+            "note" : f"cdf_gap {features.get('cdf_gap')}"},
+    ]
+    return {"modality_v2" : modality_v2, "evidence" : evidence}
 
 def _eval_condition(op_str, actual_value, thresholds):
     """'>key' / '<key' / 'abs>key' / '>0.5' 형태 해석. 결측이면 False."""
@@ -60,11 +73,26 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     if _sml is not None and _smh is not None and (_sml + _smh) > 0:
         ctx_values["center_bias"] = (_smh - _sml) / (_sml + _smh)
 
+    _outlier_ratio, _n_dut = features.get("outlier_ratio"), features.get("n_dut")
+    if _outlier_ratio is not None and _n_dut:
+        ctx_values["outlier_count"] = round(_outlier_ratio * _n_dut)
+    ctx_values["limit_missing"] = int(case_ctx.get("lsl") is None or case_ctx.get("usl") is None)
+
+    _g = [features.get(k) for k in
+          ("radial_gradient_norm" , "x_gradient_norm", "y_gradient_norm")]
+    _g = [abs(v) for v in _g if v is not None]
+    if _g:
+        ctx_values["gradient_norm_abs_max"] = max(_g)
+
     n_dut = features.get("n_dut") or 0
     high_moment_ok = n_dut >= th["n_min"]
 
     fired, reason_codes, applies = [], [], {}
+    subpop_doc = None
     for sig in signatures_doc()["signatures"]:
+        if sig["id"] == _SUBPOP_GAP_ID:
+            subpop_doc = sig
+            continue
         when = sig.get("when_metric", {}) or {}
         # 고차모멘트 의존 signature 인데 표본 부족 → 비활성
         if not high_moment_ok and (set(when) & _HIGH_MOMENT_METRICS):
@@ -80,6 +108,14 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
                           "score": None, "evidence": evidence,
                           "action_ko": sig.get("action_ko")})
             reason_codes.extend(e["signal_code"] for e in evidence)
+
+    if subpop_doc is not None:
+        subpop = _evaluate_subpop_gap(features)
+        applies[f"{_SUBPOP_GAP_ID}.modality_v2"] = features.get("modality_v2") is not None
+        if subpop is not None:
+            fired.append({"id": _SUBPOP_GAP_ID, "status_hint" : subpop_doc["status_hint"],
+                          "score":None, "evidence" : subpop["evidence"], "action_ko":subpop_doc.get("action_ko"), "modality_v2":subpop["modality_v2"]})
+            reason_codes.extend(e["signal_code"] for e in subpop["evidence"])
 
     bt = bin_taxonomy_for(case_ctx.get("product_type"), case_ctx.get("bin"))
     bin_class = bt.get("bin_class") if bt else None

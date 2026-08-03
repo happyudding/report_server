@@ -6,7 +6,8 @@ from eval_engine.pipeline import signatures, status
 
 
 def _case(**kw):
-    c = {"product_type": None, "item_class": None, "bin": 99}
+    # lsl/usl 은 MISSING_LIMIT 비발화용 — 없으면 모든 case 에 MINOR 가 하나 깔린다.
+    c = {"product_type": None, "item_class": None, "bin": 99, "lsl": 0.0, "usl": 10.0}
     c.update(kw)
     return c
 
@@ -116,6 +117,15 @@ def test_no_signature_incomplete_data_keeps_monitor():
     feats_l = _full_features(n_dut=0, edge_fail_ratio=None)
     v_l = status.decide(case, feats_l, signatures.evaluate(case, feats_l, raw))
     assert v_l["status"] == "MONITOR"
+
+
+def test_missing_limit_fires_without_spec():
+    case = _case(lsl=None, usl=None)
+    feats = _full_features()
+    raw = {"yield": 0.99, "cpk": 2.0}
+    sig = signatures.evaluate(case, feats, raw)
+    assert "MISSING_LIMIT" in [s["id"] for s in sig["signatures"]]
+    assert status.decide(case, feats, sig)["status"] == "MINOR"
 
 
 def test_outlier_warn_fires_between_warn_and_bad():

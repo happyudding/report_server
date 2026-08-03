@@ -19,6 +19,9 @@ _FEATURE_KEYS = [
     "edge_fail_ratio", "center_fail_ratio", "radial_gradient",
     "quadrant_imbalance", "x_gradient", "y_gradient", "wafer_zone_signature",
     "n_dut", "site_cpk_delta", "code_edge_hit",
+    "ring_fail_ratio",
+    "radial_gradient_norm", "x_gradient_norm", "y_gradient_norm",
+    "n_modes","modality_v2",
 ]
 
 
@@ -37,14 +40,20 @@ def _cdf_gap(v):
     cum = np.cumsum(cnt) / v.size * 100.0
     return float(np.max(np.diff(cum))) if len(cum) > 1 else 0.0
 
+def _histogram_peaks(v):
+    if v.size < 8:
+        return None
+    hist, _ = np.histogram(v, bins=min(20,max(5, v.size // 5)))
+    return [i for i in range(1, len(hist) - 1)
+            if hist[i] > hist[i-1] and hist[i] > hist[i+1]], hist
 
 def _density_gap(v):
     """히스토그램 기반 이봉 골 깊이(0~1 정규화). 단봉이면 0, 표본 부족이면 None."""
-    if v.size < 8:
+    peaks_hist = _histogram_peaks(v)
+    if peaks_hist is None:
         return None
-    hist, _ = np.histogram(v, bins=min(20, max(5, v.size // 5)))
-    peaks = [i for i in range(1, len(hist) - 1)
-             if hist[i] > hist[i - 1] and hist[i] > hist[i + 1]]
+    peaks, hist = peaks_hist
+
     if len(peaks) < 2:
         return 0.0
     p1, p2 = sorted(peaks, key=lambda i: -hist[i])[:2]
@@ -55,6 +64,12 @@ def _density_gap(v):
         return 0.0
     return float((min(int(hist[p1]), int(hist[p2])) - valley) / peak_max)
 
+def _n_modes(v):
+    peaks_hist = _histogram_peaks(v)
+    if peaks_hist is None:
+        return None
+    peaks, _ = peaks_hist
+    return max(len(peaks), 1)
 
 def _gradient(coord, fail_mask, bins=8):
     """coord 를 bins 구간으로 나눠 구간별 fail율 회귀 기울기."""
@@ -83,7 +98,8 @@ def _spatial_features(case_ctx, th):
     fail_mask = case_ctx.get("fail_mask") or []
     out = {"edge_fail_ratio": None, "center_fail_ratio": None, "radial_gradient": None,
            "quadrant_imbalance": None, "x_gradient": None, "y_gradient": None,
-           "wafer_zone_signature": None}
+           "wafer_zone_signature": None, "ring_fail_ratio" : None,
+           "radial_gradient_norm" : None, "x_gradient_norm" : None, "y_gradient_norm" : None}
     xs = np.array([v if v is not None else np.nan for v in x], dtype=float)
     ys = np.array([v if v is not None else np.nan for v in y], dtype=float)
     fm = np.asarray(fail_mask, dtype=bool)
@@ -94,19 +110,29 @@ def _spatial_features(case_ctx, th):
     xs, ys, fm = xs[valid], ys[valid], fm[valid]
     radius = np.sqrt(xs ** 2 + ys ** 2)
     rmax = radius.max()
+    xmax = float(np.max(np.abs(xs))) or None
+    ymax = float(np.max(np.abs(ys))) or None
     overall_fail = fm.mean()
     if rmax > 0 and overall_fail > 0:
         rnorm = radius / rmax
         edge_mask = rnorm >= th["edge_region_pct"]
         center_mask = rnorm <= th["center_region_pct"]
+        ring_mask = (rnorm > th["center_region_pct"]) & (rnorm <th["edge_region_pct"])
         if edge_mask.sum():
             out["edge_fail_ratio"] = float(fm[edge_mask].mean() / overall_fail)
         if center_mask.sum():
             out["center_fail_ratio"] = float(fm[center_mask].mean() / overall_fail)
+        if ring_mask.sum():
+            out["ring_fail_ratio"] = float(fm[ring_mask].mean() / overall_fail)
         out["radial_gradient"] = _gradient(radius, fm)
+        out["radial_gradient_norm"] = _gradient(rnorm,fm)
 
     out["x_gradient"] = _gradient(xs, fm)
     out["y_gradient"] = _gradient(ys, fm)
+    if xmax :
+        out["x_gradient_norm"] = _gradient(xs / xmax, fm)
+    if ymax :
+        out["y_gradient_norm"] = _gradient(ys / ymax, fm)
 
     # 사분면 불균형
     quad_rates = []
@@ -122,6 +148,19 @@ def _spatial_features(case_ctx, th):
 
     out["wafer_zone_signature"] = _classify_zone(out, th)
     return out
+
+def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, density_gap, cdf_gap, th):
+    if n_dut is None or n_dut < th["subpop_n_min"]:
+        return None
+    if outlier_ratio is not None and outlier_ratio >= th["subpop_outlier_ratio_max"]:
+        return None
+    if n_modes is not None and n_modes >= 3 and density_gap is not None and density_gap >= th["subpop_density_gap_warn"]:
+        return "multimodal"
+    if n_modes == 2 and bimodality_score is not None and bimodality_score >= th["bimodality_warn"] and density_gap is not None and density_gap >= th["subpop_density_gap_warn"]:
+        return "bimodal"
+    if density_gap is not None and density_gap >= th["subpop_density_gap_strong"] and cdf_gap is not None and cdf_gap >= th["subpop_cdf_gap_warn"]:
+        return "separated"
+    return None
 
 
 def _classify_zone(spatial, th):
@@ -163,7 +202,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     lsl, usl = case_ctx.get("lsl"), case_ctx.get("usl")
     n = len(values)
     th = thresholds_for(case_ctx)
-
+    is_pf = case_ctx.get("value_type") == "P_F"
     if n == 0:
         return _empty_features()
 
@@ -197,7 +236,8 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
 
     density_gap = _density_gap(v)
     cdf_gap = _cdf_gap(v)
-
+    n_modes = _n_modes(v)
+    modality_v2 = _classify_modality_v2(n,outlier_ratio,n_modes,bimodality_score,density_gap,cdf_gap,th)
     spec_margin_low = (mean - lsl) / stdev if (lsl is not None and stdev) else None
     spec_margin_high = (usl - mean) / stdev if (usl is not None and stdev) else None
     nearest_spec_side = None
@@ -212,6 +252,12 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     site_cpk_delta = _site_cpk_delta(case_ctx)
     code_edge_hit = limit_hit_ratio if case_ctx.get("value_type") == "CODE" else None
 
+    if is_pf:
+        spread_norm = skewness = kurtosis = None
+        outlier_ratio = modality = bimodality_score = density_gap = cdf_gap = None
+        spec_margin_low = spec_margin_high = nearest_spec_side = limit_hit_ratio = None
+        n_modes = modality_v2 = None
+
     return {
         "spread_norm": spread_norm, "skewness": skewness, "kurtosis": kurtosis,
         "outlier_ratio": outlier_ratio, "modality": modality,
@@ -220,4 +266,5 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         "nearest_spec_side": nearest_spec_side, "limit_hit_ratio": limit_hit_ratio,
         **spatial,
         "n_dut": n, "site_cpk_delta": site_cpk_delta, "code_edge_hit": code_edge_hit,
+        "n_modes" : n_modes, "modality_v2" : modality_v2
     }

@@ -159,10 +159,10 @@ def test_insert_case_outcome_rejects_unknown_vocab(fresh_db):
             _seed_precedent(conn, action="bogus_action")
 
 
-# ── 스키마 v4 ────────────────────────────────────────────────────────────────
-def test_schema_v4_user_version_and_objects(fresh_db):
+# ── 스키마 ───────────────────────────────────────────────────────────────────
+def test_schema_user_version_and_objects(fresh_db):
     with store.get_conn() as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION
         tables = {r[0] for r in conn.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
         assert "eval_precedent" in tables
@@ -172,6 +172,10 @@ def test_schema_v4_user_version_and_objects(fresh_db):
                 "idx_fail_case_item"} <= indexes
         assert "updated_at" in {r[1] for r in conn.execute("PRAGMA table_info(evaluation)")}
         assert "created_at" in {r[1] for r in conn.execute("PRAGMA table_info(case_outcome)")}
+        # v5/v6 에서 추가된 features 컬럼
+        feat_cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+        assert {"shot_fail_ratio", "ring_fail_ratio", "radial_gradient_norm",
+                "x_gradient_norm", "y_gradient_norm", "n_modes", "modality_v2"} <= feat_cols
 
 
 def test_migrate_v3_to_v4_idempotent(fresh_db):

@@ -46,6 +46,7 @@ def _bimodality_coefficient(values):
 
 def compute(case_ctx: dict) -> dict:
     values = case_ctx.get("values") or []
+    is_pf = case_ctx.get("value_type") == "P_F"
     summary = cpk_summary(values, case_ctx.get("lsl"), case_ctx.get("usl"))
     if values:
         total = len(values)
@@ -56,6 +57,14 @@ def compute(case_ctx: dict) -> dict:
         fail = case_ctx.get("fail_count")
         total = case_ctx.get("total_count")
         yield_ = case_ctx.get("yield")
+    if is_pf:
+        return {
+            "cpk": None, "cpl": None, "cpu": None,
+            "cp": None, "mean": None, "stdev": None,
+            "min": None, "max": None,
+            "yield": yield_, "fail_count": fail, "total_count": total,
+            "bimodality":None,
+        }
     return {
         "cpk": summary["cpk"], "cpl": summary["cpl"], "cpu": summary["cpu"],
         "cp": summary["cp"], "mean": summary["mean"], "stdev": summary["stdev"],

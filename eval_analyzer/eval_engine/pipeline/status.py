@@ -17,11 +17,13 @@ SEVERITY_RANK = {"MONITOR": 1, "MINOR": 2, "MAJOR": 3, "CRITICAL": 4}
 RANK_TO_STATUS = {v: k for k, v in SEVERITY_RANK.items()}
 
 # 구체적(원인 특정) → 일반적 순. 같은 severity 충돌 시 앞쪽이 primary.
-SPECIFICITY_ORDER = ["EQUIPMENT_SUSPECT", "EDGE_FAIL", "CENTER_FAIL", "CLUSTER_FAIL",
-                     "CODE_RAIL", "SUBPOP_GAP", "SEVERE_OUTLIER", "OUTLIER_WARN",
-                     "MEAN_SHIFT", "TAIL_RISK", "HEAVY_TAIL",
-                     "BIDIR_TAIL", "WIDE_DISTRIBUTION", "LOW_CPK", "SPEC_TOO_TIGHT",
-                     "GROSS_FAIL"]
+SPECIFICITY_ORDER = ["LOW_SAMPLE_UNCERTAIN", "MISSING_LIMIT", "CONSTANT_VALUE",
+                     "EQUIPMENT_SUSPECT", "RING_FAIL",
+                     "EDGE_FAIL", "CENTER_FAIL", "CLUSTER_FAIL", "WAFER_GRADIENT",
+                     "CODE_RAIL", "TAIL_RISK", "SEVERE_OUTLIER", "OUTLIER_WARN",
+                     "MEAN_SHIFT", "HEAVY_TAIL",
+                     "BIDIR_TAIL", "WIDE_DISTRIBUTION", "SUBPOP_GAP", "LOW_CPK",
+                     "SPEC_TOO_TIGHT", "GROSS_FAIL"]
 
 
 def decide(case_ctx: dict, features: dict, sig_result: dict) -> dict:

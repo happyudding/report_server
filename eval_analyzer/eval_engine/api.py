@@ -5,9 +5,11 @@ report_server 가 파일 1회 run 시 이 함수를 호출한다. eval_analyzer 
 """
 import logging
 import time
-
+from concurrent.futures import ThreadPoolExecutor
 from . import config, store
 from .pipeline import ingest, metrics, features, signatures, status, recommend, present
+
+_MAX_WORKERS = 3
 
 # 라이브러리 로거 — 핸들러/레벨 설정은 host(report_server)에 맡긴다(핸들러 부착 금지).
 logger = logging.getLogger(__name__)
@@ -38,23 +40,33 @@ def evaluate(run_input: dict, *, engine_version: str | None = None,
     # L0
     run_ctx = ingest.ingest(run_input, persist=persist)   # → {run_id, cases:[case_ctx...]}
 
-    results = []
-    n_precedent_hits = 0
-    for case in run_ctx["cases"]:
+    def _process_case(case):
         m = metrics.compute(case)                          # L1 raw_metrics
         f = features.compute(case, m, engine_version)      # L2 features
         sig = signatures.evaluate(case, f, m)              # L3 발화 signature 들
         verdict = status.decide(case, f, sig)              # L4 status/confidence
         if not present.should_store(case, m, sig):         # 저장 판단(rule 계산 후): yield fail | cpk<cpk_warn
-            continue
+            return None
         preced = recommend.find_precedents(case, sig)      # 선례 검색 (DB_SCHEMA §9)
-        n_precedent_hits += len(preced)
         comment = recommend.make_comment(case, verdict, sig, preced,
-                                         model_version=model_version)  # L5
+                                model_version=model_version)  # L5
         if persist:
             present.persist(run_ctx, case, m, f, verdict, sig, comment, engine_version,
                             model_version, precedents=preced)
-        results.append(present.to_result(case, verdict, sig, comment, preced))
+        return present.to_result(case, verdict, sig, comment, preced), len(preced)
+
+    cases = run_ctx["cases"]
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+        processed = list(pool.map(_process_case, cases))
+
+    results = []
+    n_precedent_hits = 0
+    for item in processed:
+        if item is None:
+            continue
+        result, n_hits = item
+        results.append(result)
+        n_precedent_hits += n_hits
 
     n_candidates = len(run_ctx["cases"])
     logger.info("evaluate 완료 run_id=%s candidates=%d stored=%d gated=%d precedent_hits=%d %.1fms",

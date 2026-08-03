@@ -12,7 +12,7 @@ import yaml
 
 from . import config
 
-SCHEMA_VERSION = 4  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
+SCHEMA_VERSION = 6  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_master (
@@ -71,6 +71,10 @@ CREATE TABLE IF NOT EXISTS features (
     edge_fail_ratio REAL, center_fail_ratio REAL, radial_gradient REAL, quadrant_imbalance REAL,
     x_gradient REAL, y_gradient REAL, wafer_zone_signature TEXT,
     n_dut INTEGER, site_cpk_delta REAL, code_edge_hit REAL,
+    shot_fail_ratio REAL,
+    ring_fail_ratio REAL,
+    radial_gradient_norm REAL, x_gradient_norm REAL, y_gradient_norm REAL,
+    n_modes INTEGER, modality_v2 TEXT,
     PRIMARY KEY (case_id, run_id, engine_version)
 );
 CREATE TABLE IF NOT EXISTS evaluation (
@@ -197,8 +201,24 @@ def _migrate_v3_to_v4(conn):
     """)
 
 
-_MIGRATIONS = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3,
-               3: _migrate_v3_to_v4}  # {from_version: fn} — from → from+1
+def _migrate_v4_to_v5(conn):
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+    for col in ("shot_fail_ratio", "ring_fail_ratio", "radial_gradient_norm",
+                "x_gradient_norm", "y_gradient_norm"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE features ADD COLUMN {col} REAL")
+
+
+def _migrate_v5_to_v6(conn):
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+    if "n_modes" not in cols:
+        conn.execute("ALTER TABLE features ADD COLUMN n_modes INTEGER")
+    if "modality_v2" not in cols:
+        conn.execute("ALTER TABLE features ADD COLUMN modality_v2 TEXT")
+
+
+_MIGRATIONS = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4,
+               4: _migrate_v4_to_v5, 5: _migrate_v5_to_v6}  # {from_version: fn} — from → from+1
 
 
 def _migrate(conn):
@@ -367,7 +387,10 @@ def save_features(case_id, run_id, engine_version, f: dict, conn=None) -> None:
             "spec_margin_high", "nearest_spec_side", "limit_hit_ratio",
             "edge_fail_ratio", "center_fail_ratio", "radial_gradient",
             "quadrant_imbalance", "x_gradient", "y_gradient", "wafer_zone_signature",
-            "n_dut", "site_cpk_delta", "code_edge_hit"]
+            "n_dut", "site_cpk_delta", "code_edge_hit",
+            "ring_fail_ratio",
+            "radial_gradient_norm", "x_gradient_norm", "y_gradient_norm",
+            "n_modes", "modality_v2"]
     sql = f"""INSERT INTO features (case_id,run_id,engine_version,computed_at,{','.join(cols)})
               VALUES (?,?,?,?,{','.join('?' * len(cols))})
               ON CONFLICT(case_id,run_id,engine_version) DO UPDATE SET
@@ -516,3 +539,30 @@ def search_precedents(value_type, item_canonical, family_product=None,
                  key=lambda r: (r["human_comment"] is not None, r["similarity"]),
                  reverse=True)
     return out if limit is None else out[:limit]
+
+def cases_for_runs(run_ids : list[int], conn = None) -> list[dict]:
+    if not run_ids:
+        return []
+    if conn is None and not config.DB_PATH.exists():
+        return []
+    qmarks = ",".join("?" * len(run_ids))
+    sql = f"""SELECT fc.case_id, fc.item_id, im.item_canonical, fc.product_name, fc.lot_id,
+                     fc.wafer_number, rc.run_id, ir.source_file,
+                     rm.fail_count, rm.total_count,
+                     ev.status, ev.engine_version, cs.signature AS primary_signature
+               FROM run_case rc
+               JOIN fail_case fc ON fc.case_id = rc.case_id
+               JOIN item_master im ON im.item_id = fc.item_id
+               JOIN ingest_run ir ON ir.run_id = rc.run_id
+               LEFT JOIN raw_metrics rm ON rm.case_id = fc.case_id AND rm.run_id = rc.run_id
+               LEFT JOIN evaluation ev ON ev.case_id = fc.case_id AND ev.run_id = rc.run_id
+               LEFT JOIN case_signature cs ON cs.eval_id = ev.eval_id AND cs.role = 'primary'
+               WHERE rc.run_id IN ({qmarks})"""
+    with _scope(conn) as c:
+        return [dict(r) for r in c.execute(sql, run_ids).fetchall()]
+
+def update_evaluation_comment(case_id, run_id, engine_version, comment, conn=None) -> None:
+    with _scope(conn) as c:
+        c.execute("""UPDATE evaluation SET comment=?, updated_at=?
+                     WHERE case_id=? AND run_id=? AND engine_version=?""",
+                     (comment, _now(), case_id, run_id, engine_version))

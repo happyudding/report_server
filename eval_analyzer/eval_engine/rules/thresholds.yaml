@@ -24,7 +24,17 @@ default:
   gross_yield_bad: 0.5      # yield 이 값 미만 → GROSS_FAIL
   code_edge_hit_warn: 0.05  # CODE/TRIM 레일(min/max) 포화 비율 컷 (CODE_RAIL)
   kurtosis_warn: 2.0        # excess kurtosis 컷 — heavy tail(간헐 spike) (HEAVY_TAIL)
-
+  spatial_fail_count_min : 5
+  severe_outlier_count_min : 5
+  ring_fail_ratio_warn : 2.0
+  gradient_norm_warn : 0.3
+  subpop_n_min : 50
+  subpop_outlier_ratio_max : 0.03
+  subpop_density_gap_warn : 0.3
+  subpop_density_gap_strong : 0.5
+  subpop_cdf_gap_warn : 10.0
+  source_min_count : 2
+  source_fail_rate_delta_warn: 0.3
 # 제품군별 override 예시 (필요 시 채움)
 product_type:
   PMIC: {}
