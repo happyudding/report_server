@@ -126,6 +126,10 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 **watchdog 자동 재기동**: [register_watchdog.bat](register_watchdog.bat) 을 관리자 권한으로
 1회 실행하면 작업 스케줄러에 5분 주기 + 부팅 시 감시([watchdog.ps1](watchdog.ps1))가
 등록된다 — 포트 미리스닝이면 즉시, `/healthz` 무응답이면 2연속 실패 시 자동 재기동.
+healthz 점검 주소는 **실제 LISTEN 주소를 따라간다**(`Get-ProbeHost`) — `0.0.0.0`/`127.0.0.1`
+이면 loopback, 특정 IP 에만 bind 돼 있으면 그 IP. loopback 고정이던 시절 `HOST` 가 운영 IP
+하나로 바뀌자 점검이 100% 실패해 재기동이 종일 반복된 사고(2026-07-29)를 막는 장치다.
+점검에 쓴 주소는 checks 레코드 `addr` 에 남는다.
 재기동 이력은 admin 대시보드 현황 탭 또는 `server/log/watchdog_events.log`.
 수동 점검 시간에는 `schtasks /Change /TN report-server-watchdog /DISABLE` 로 먼저 정지할 것.
 
@@ -154,7 +158,7 @@ gap 이 지나면 다음 주기에 곧바로 재기동된다. 억제 상황은 �
 | `code=0, ms≈30000, wstat=Timeout` | inflight ≥ `WAITRESS_THREADS`, 스냅샷 스레드 덤프에서 다수 스레드가 같은 지점 대기 | **스레드 고갈** — 덤프의 공통 대기 지점이 근본 원인 |
 | `code=0, ms≈30000, wstat=Timeout` | inflight 낮음, cpu≈100%, `runtime_*.log` 에 slow 다수 | **CPU 포화 / GIL 경합** |
 | `code=503, ms<6000` | server 로그에 healthz db check 실패, DB 잠금 카운터 증가 | **DB 잠금** (report.db busy_timeout 5s 초과 — 백업 체크포인트 등) |
-| `wstat=ConnectFailure` (사유 `healthz_connect`), **ms≈2000 고정** | LISTEN 은 있는데 `LocalAddress` 가 특정 IP (127.0.0.1/0.0.0.0 아님) | **바인딩 주소 문제** — 사용자는 정상인데 점검만 실패해 재기동이 무한 반복. `HOST=0.0.0.0` 으로 되돌릴 것 |
+| `wstat=ConnectFailure` (사유 `healthz_connect`), **ms≈2000 고정** | LISTEN 은 있는데 `LocalAddress` 가 특정 IP (127.0.0.1/0.0.0.0 아님) | **바인딩 주소 문제** — 사용자는 정상인데 점검만 실패해 재기동이 무한 반복. `HOST=0.0.0.0` 으로 되돌릴 것 (2026-07-29 실제 사고) |
 | `wstat=ConnectFailure`, 부검 `procs=0` | `server_*.txt` 신규 다수 + `faulthandler_*` 존재 | **크래시 루프** (리스닝 확인~healthz 사이에 프로세스 사망) |
 
 > ⚠️ **ms 로 거부/무응답을 가르지 말 것.** Windows 에서는 **접속 거부도 약 2초**가 걸린다(실측

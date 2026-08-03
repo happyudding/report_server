@@ -57,6 +57,10 @@ _NAME_COLOR = "#1A1A1F"       # 웹 .distg-name
 _LIM_RANGE_COLOR = "#1d4ed8"  # 웹 .dist-lim-range
 _LIM_UNIT_COLOR = "#15803d"   # 웹 .dist-lim-unit
 _CPK_COLOR = "#555555"        # 웹 .distg-cpk
+# Map Analysis 선택 좌표 마커 (웹 map_select.js chipMarkersFor 미러 — 7px 점 + 흰 테두리 1px).
+# 단일 선택일 때만 점선 크로스헤어를 더한다(다중은 점 색으로 구분) — 웹과 동일.
+_CHIP_MARKER_SIZE = 5.25      # 웹 marker.size 7px = 7*72/96 pt
+_CHIP_EDGE_PT = 0.75          # 웹 marker.line.width 1px
 
 # 셀 내부 플롯 영역 여백 (셀 크기에 대한 비율)
 _PAD_L, _PAD_R, _PAD_T, _PAD_B = 0.09, 0.03, 0.17, 0.13
@@ -121,13 +125,16 @@ def _cell_outer_box(idx, nrows):
 
 
 def _x_range(cell):
-    """셀 x 데이터 범위 (limit 선 포함 — 항상 보이도록). ECDF x 는 정렬돼 있음."""
+    """셀 x 데이터 범위 (limit 선 + 선택 좌표 값 포함 — 항상 보이도록). ECDF x 는 정렬됨."""
     xs = [s[2] for s in cell["sources"] if len(s[2])]
     if not xs:
         return None
     xmin = min(float(x[0]) for x in xs)
     xmax = max(float(x[-1]) for x in xs)
-    for v in (cell.get("lo"), cell.get("hi")):
+    # 선택 좌표 값도 범위에 넣는다 — 웹은 autorange 라 마커가 축을 넓히므로 값이 데이터
+    # 바깥(측정 이상치)이어도 잘리지 않는다. 넣지 않으면 그 점만 사라져 화면과 어긋난다.
+    for v in (cell.get("lo"), cell.get("hi")) + tuple(
+            c["value"] for c in (cell.get("chips") or [])):
         if v is not None:
             xmin = min(xmin, float(v))
             xmax = max(xmax, float(v))
@@ -300,6 +307,34 @@ def _limit_lines(fig, cell, box, xr, *, labels=True, label_fs=5.5):
                                edgecolor="none"))
 
 
+def _chip_markers(fig, cell, box, xr):
+    """Map Analysis 선택 좌표의 이 항목 값을 (값, 누적%) 점으로 — 웹 chipMarkersFor 미러.
+
+    값이 없는 chip(그 항목 측정 없음)은 건너뛴다. 단일 선택이면 그 색 점선 크로스헤어를
+    더해 포커싱한다(다중은 점 색으로 구분 — 웹과 동일 규칙).
+    """
+    chips = [c for c in (cell.get("chips") or [])
+             if c.get("value") is not None and c.get("cum_pct") is not None]
+    if not chips:
+        return
+    x0, y0, w, h = box
+    xmin, xmax = xr
+    span = xmax - xmin
+    for c in chips:
+        px = x0 + (float(c["value"]) - xmin) / span * w
+        py = y0 + float(c["cum_pct"]) / 100.0 * h
+        if len(chips) == 1:                  # 단일: 점선 크로스헤어로 포커싱
+            # lw 는 limit 선과 같은 0.9 — 웹 width:1px(=0.75pt)보다 가늘면 셀 폭에서
+            # 안티에일리어싱에 묻혀 선이 사실상 사라진다(0.6 에서 확인).
+            _add_line(fig, (px, px), (y0, y0 + h), c["color"], lw=0.9, ls=":")
+            _add_line(fig, (x0, x0 + w), (py, py), c["color"], lw=0.9, ls=":")
+        fig.add_artist(Line2D([px], [py], transform=fig.transFigure,
+                              linestyle="none", marker="o", color=c["color"],
+                              markersize=_CHIP_MARKER_SIZE,
+                              markeredgecolor="#ffffff",
+                              markeredgewidth=_CHIP_EDGE_PT, zorder=6))
+
+
 def _draw_cdf_cell(fig, cell, box, outer=None):
     xr = _x_range(cell)
     _cell_frame(fig, cell, box, xr, y_labels=("0", "50", "100"), outer=outer)
@@ -319,6 +354,7 @@ def _draw_cdf_cell(fig, cell, box, outer=None):
         py = y0 + np.asarray(y, dtype="float64") / 100.0 * h
         _add_markers(fig, px, py, color)
     _limit_lines(fig, cell, box, xr)
+    _chip_markers(fig, cell, box, xr)
 
 
 def _normal_x_range(cell):
@@ -494,7 +530,7 @@ def render_single_cdf(job) -> str:
 def render_map_png_job(job) -> str:
     """Map Analysis 행 1개 → 웹-파리티 wafer map PNG. job:
 
-    {"out_path","title","dies","color_map"}
+    {"out_path","title","dies","color_map","chips"}
     _map.render_wafer_map_png 으로 웹(canvas 썸네일)과 색/방향/격자를 맞춘다
     (데스크톱 map_report 와 독립). 반환: out_path. 좌표(dies)가 비어 있으면 ValueError.
     """
@@ -503,7 +539,8 @@ def render_map_png_job(job) -> str:
     if not job.get("dies"):
         raise ValueError(f"{job['title']}: 좌표가 없습니다.")
     render_wafer_map_png(job["dies"], job["color_map"],
-                         title=job["title"], out_path=job["out_path"])
+                         title=job["title"], out_path=job["out_path"],
+                         chips=job.get("chips"))
     return job["out_path"]
 
 

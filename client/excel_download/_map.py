@@ -35,6 +35,13 @@ _TARGET_PX = 1000                   # 목표 한 변 픽셀 (웹은 표시 폭 �
 _MAX_PX = 4096                      # 축당 픽셀 상한 (웹 cellFor 와 동일 메모리 보호)
 _MAX_TICKS = 8                      # 웹 _compactTicks
 
+# Map Analysis 선택 좌표 마커 (웹 .wafer-sel-marker 미러 — 15px 원 + 3px 테두리 + 흰 halo).
+# 웹은 썸네일 표시 폭과 무관한 고정 px 라 die 수가 많으면 여러 die 를 덮는다 — 같은 사상으로
+# **격자 크기와 무관한 고정 pt** 를 쓴다(플롯 6in 기준 웹 비율 ≈ 5%).
+_SEL_MARKER_PT = 18.0
+_SEL_EDGE_PT = 3.0
+_SEL_HALO_PT = 1.5                  # 흰 외곽(웹 box-shadow 1.5px)
+
 
 def build_global_bin_legend(map_rows):
     """전 맵 bin_counts 합산 → 범례 행 [{bin,count,is_pass,pct}] (Pass 먼저, fail count desc).
@@ -196,10 +203,38 @@ def _map_image(dies, color_of):
     return img, xs, ys
 
 
-def render_wafer_map_png(dies, color_map, *, title="", out_path) -> None:
+def _draw_sel_markers(ax, chips, xs, ys):
+    """선택 좌표(chip)를 압축 격자 index 위치에 chip 색 원으로 — 웹 renderThumbMarkers 미러.
+
+    호출부가 이미 source 로 걸러 넘긴다(웹도 `c.source !== m.source` 로 건너뛴다).
+    좌표가 이 맵의 격자에 없으면(다른 웨이퍼의 die) 그 chip 만 조용히 건너뛴다.
+    """
+    x_idx = {v: i for i, v in enumerate(xs)}
+    y_idx = {v: i for i, v in enumerate(ys)}
+    for c in chips or []:
+        try:
+            cx = x_idx.get(int(c.get("x")))
+            cy = y_idx.get(int(c.get("y")))
+        except (TypeError, ValueError):
+            continue
+        if cx is None or cy is None:
+            continue
+        px, py = cx + 0.5, cy + 0.5          # extent 가 index 공간이라 셀 중앙
+        color = c.get("color") or "#111111"
+        # 흰 halo 를 먼저 깔아 어떤 bin 색 위에서도 원이 보이게 한다(웹 box-shadow 대응).
+        ax.plot([px], [py], marker="o", markerfacecolor="none", markeredgecolor="#ffffff",
+                markersize=_SEL_MARKER_PT, markeredgewidth=_SEL_EDGE_PT + 2 * _SEL_HALO_PT,
+                linestyle="none", clip_on=False, zorder=4)
+        ax.plot([px], [py], marker="o", markerfacecolor="none", markeredgecolor=color,
+                markersize=_SEL_MARKER_PT, markeredgewidth=_SEL_EDGE_PT,
+                linestyle="none", clip_on=False, zorder=5)
+
+
+def render_wafer_map_png(dies, color_map, *, title="", out_path, chips=None) -> None:
     """웹-파리티 wafer bin map 을 out_path(PNG, 정사각)로 저장.
 
     dies: [{"x","y","bin"} | {"x","y","g":1}], color_map: build_bin_color_map 산출(전역).
+    chips: Map Analysis 에서 선택한 좌표(이 맵의 source 것만) — 웹과 같은 색 원 마커.
     """
     img, xs, ys = _map_image(dies, lambda d: _die_color(d, color_map))
     if img is None:
@@ -213,6 +248,7 @@ def render_wafer_map_png(dies, color_map, *, title="", out_path) -> None:
     # 고정한다(2026-07-23 요청). aspect="auto" 는 그 정사각 박스를 die 격자로 채우는 용도.
     ax.imshow(img, extent=(0, W, H, 0), aspect="auto", interpolation="nearest")
     ax.set_box_aspect(1)
+    _draw_sel_markers(ax, chips, xs, ys)
     xt, xl = _compact_ticks(xs)
     yt, yl = _compact_ticks(ys)
     ax.set_xticks(xt)

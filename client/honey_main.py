@@ -925,6 +925,37 @@ class HoneyMainWindow(QMainWindow):
         m = re.search(r"/pe/report/view/([A-Za-z0-9_-]+)", url)
         return m.group(1) if m else ""
 
+    def _map_selection_chips(self, timeout_ms=3000):
+        """내장 브라우저에 열린 세션의 Map Analysis 선택 좌표 (없거나 실패하면 []).
+
+        선택 상태는 페이지 메모리에만 있고 서버·URL 어디에도 저장되지 않아(map_select.js
+        mapSelChips) 화면에 물어보는 수밖에 없다 — 넘겨줄 필드는 honeyMapSelSnapshot
+        하나로 고정돼 있다. 응답이 비동기라 중첩 이벤트 루프로 기다리고, 그 함수가 없는
+        페이지(구 서버·검색결과 화면)나 타임아웃은 [] 로 폴백해 **기존 동작(강조 없는
+        저장)** 그대로 진행한다.
+        """
+        panel = getattr(self, "browser_panel", None)
+        if panel is None:
+            return []
+        from PyQt6.QtCore import QEventLoop, QTimer
+        box = {"chips": []}
+        loop = QEventLoop()
+
+        def _done(value):
+            if isinstance(value, list):
+                box["chips"] = value
+            loop.quit()
+
+        try:
+            panel.view.page().runJavaScript(
+                "(typeof honeyMapSelSnapshot === 'function') ? honeyMapSelSnapshot() : []",
+                _done)
+        except Exception:
+            return []
+        QTimer.singleShot(timeout_ms, loop.quit)   # 응답이 없어도 다이얼로그가 굳지 않게
+        loop.exec()
+        return box["chips"]
+
     def on_rawdata_edit(self):
         """Rawdata 허브를 연다 — 현재 상태 / Item Select / Outlier / 빠른 수정 / Excel.
 
@@ -1161,11 +1192,18 @@ class HoneyMainWindow(QMainWindow):
         # 산포(Distribution/Histogram)를 bin1(양품·규격내) 기준으로 그릴지 선택.
         # 브라우저 토글 상태를 클라가 알 수 없어 여기서 고른다. 체크 시 CDF/히스토그램만
         # 양품(BIN==1) & 규격 이내 die 로 그리고, 나머지 시트는 전체 die 기준 그대로.
+        # Map Analysis 선택 좌표(강조)는 브라우저 메모리에만 있어 여기서 읽어 워커에 넘긴다.
+        # 없으면 빈 목록 → 강조 없이 기존과 동일하게 저장한다.
+        chips = self._map_selection_chips()
+
         from PyQt6.QtWidgets import QCheckBox
         opt = QMessageBox(self)
         opt.setWindowTitle("Excel Download")
         opt.setIcon(QMessageBox.Icon.Question)
-        opt.setText("web report 를 Excel 로 저장합니다.")
+        opt.setText("web report 를 Excel 로 저장합니다."
+                    + (f"\n\nMap Analysis 에서 선택한 좌표 {len(chips)}개가 "
+                       "Map·Distribution 차트에 화면과 같은 색으로 강조됩니다."
+                       if chips else ""))
         bin1_cb = QCheckBox("산포(Distribution·Histogram)를 Bin1(양품·규격내) 기준으로 그리기")
         opt.setCheckBox(bin1_cb)
         opt.setStandardButtons(
@@ -1207,7 +1245,8 @@ class HoneyMainWindow(QMainWindow):
             return
 
         from excel_download.worker import ExcelDownloadWorker
-        self._excel_dl_worker = ExcelDownloadWorker(sid, SERVER_BASE_URL, out_path, bin1, self)
+        self._excel_dl_worker = ExcelDownloadWorker(sid, SERVER_BASE_URL, out_path, bin1,
+                                                    self, chips=chips)
         w = self._excel_dl_worker
         w.status.connect(self._on_excel_dl_status)
         w.done.connect(self._on_excel_dl_done)

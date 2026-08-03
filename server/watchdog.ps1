@@ -110,13 +110,32 @@ function Test-Listening {
     return [bool](Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
 }
 
+# healthz 를 '어느 주소로' 물어볼지 실제 LISTEN 주소를 보고 정한다.
+#
+# 2026-07-29 실제 사고: HOST 가 운영 IP 하나로 고정돼 서버가 그 IP 에만 bind 되면
+# 127.0.0.1 로는 접속이 거부된다. 사용자는 멀쩡히 쓰는데 점검만 100% 실패해서
+# 재기동이 종일 반복됐다(24h 49회 + 억제 110회). 재기동은 bind 주소를 바꾸지 못하므로
+# 영원히 낫지 않는다. loopback 고정 점검이 원인이었으므로 주소를 따라가게 한다.
+function Get-ProbeHost {
+    $addrs = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+               Select-Object -ExpandProperty LocalAddress -Unique)
+    if ($addrs -contains '0.0.0.0' -or $addrs -contains '127.0.0.1') { return '127.0.0.1' }
+    if ($addrs -contains '::' -or $addrs -contains '::1') { return '[::1]' }
+    foreach ($a in $addrs) {
+        if ($a -notmatch ':') { return $a }          # 특정 IPv4 에만 bind 된 경우
+    }
+    if ($addrs.Count -gt 0) { return ('[{0}]' -f $addrs[0]) }   # IPv6 리터럴은 대괄호
+    return '127.0.0.1'
+}
+
 # 판정은 .ok 만 쓴다(로직 불변). 진단을 위해 코드(503=DB fail)·소요시간·오류를 함께 반환.
 # wstat = WebException.Status enum 문자열(Timeout / ConnectFailure / ProtocolError ...).
 # 예외 메시지는 OS 언어를 타므로 문자열 매칭 대신 이 enum 으로 실패 종류를 가른다.
-function Test-Healthz {
+function Test-Healthz([string]$probeHost) {
+    $uri = ('http://{0}:{1}/healthz' -f $probeHost, $Port)
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/healthz" -UseBasicParsing -TimeoutSec 30
+        $r = Invoke-WebRequest -Uri $uri -UseBasicParsing -TimeoutSec 30
         $sw.Stop()
         return @{ ok = ($r.StatusCode -eq 200); code = [int]$r.StatusCode; ms = $sw.ElapsedMilliseconds
                   wstat = ''; err = '' }
@@ -309,10 +328,12 @@ try {
                            procs = $script:lastAutopsy; snap = $script:lastSnap; elapsed_ms = $swRun.ElapsedMilliseconds }
         }
     } else {
-        $hz = Test-Healthz
+        $probeHost = Get-ProbeHost
+        $hz = Test-Healthz $probeHost
         if ($hz.ok) {
             Set-FailCount 0
-            Write-Check @{ result = 'ok'; listen = 1; code = $hz.code; ms = $hz.ms; elapsed_ms = $swRun.ElapsedMilliseconds }
+            Write-Check @{ result = 'ok'; listen = 1; code = $hz.code; ms = $hz.ms
+                           addr = $probeHost; elapsed_ms = $swRun.ElapsedMilliseconds }
         } else {
             $fails = (Get-FailCount) + 1
             # 원인 3분류. healthz_timeout 은 기존 문자열을 유지한다(구 로그·운영 관습 호환) —
@@ -321,7 +342,7 @@ try {
             $hzReason = if ($hz.code -eq 503) { 'healthz_503' }
                         elseif ($hz.wstat -eq 'ConnectFailure') { 'healthz_connect' }
                         else { 'healthz_timeout' }
-            $hzInfo = "code=$($hz.code) ms=$($hz.ms) wstat=$($hz.wstat) err=$($hz.err)"
+            $hzInfo = "addr=$probeHost code=$($hz.code) ms=$($hz.ms) wstat=$($hz.wstat) err=$($hz.err)"
             if ($fails -ge 2) {
                 $skip = Test-BackoffSkip 'healthz_fail_x2'
                 if ($skip) {
@@ -329,19 +350,20 @@ try {
                     Set-FailCount $fails
                     Write-Event 'backoff_skip' $hzReason "$skip ($hzInfo)"
                     Write-Check @{ result = 'backoff_skip'; reason = $hzReason; listen = 1; code = $hz.code; ms = $hz.ms
-                                   wstat = $hz.wstat; err = $hz.err
+                                   wstat = $hz.wstat; err = $hz.err; addr = $probeHost
                                    fails = $fails; detail = $skip; elapsed_ms = $swRun.ElapsedMilliseconds }
                 } else {
                     Restart-Server 'healthz_fail_x2'
                     Write-Check @{ result = $script:lastRestartResult; reason = $hzReason; listen = 1; code = $hz.code; ms = $hz.ms
-                                   wstat = $hz.wstat; err = $hz.err
+                                   wstat = $hz.wstat; err = $hz.err; addr = $probeHost
                                    fails = $fails; procs = $script:lastAutopsy; snap = $script:lastSnap; elapsed_ms = $swRun.ElapsedMilliseconds }
                 }
             } else {
                 Set-FailCount $fails
                 Write-Event 'healthz_fail' $hzReason "healthz 무응답 ($fails/2) $hzInfo — 다음 주기에도 실패 시 재기동"
                 Write-Check @{ result = 'healthz_fail'; reason = $hzReason; listen = 1; code = $hz.code; ms = $hz.ms
-                               wstat = $hz.wstat; err = $hz.err; fails = $fails; elapsed_ms = $swRun.ElapsedMilliseconds }
+                               wstat = $hz.wstat; err = $hz.err; addr = $probeHost
+                               fails = $fails; elapsed_ms = $swRun.ElapsedMilliseconds }
             }
         }
     }

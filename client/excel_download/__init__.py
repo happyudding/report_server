@@ -8,6 +8,11 @@ worker.ExcelDownloadWorker(QThread) 로 감싸 호출한다.
 Distribution·Histogram 은 전체 항목(다운샘플링 금지 — 불변규칙 6)을 4열 그리드
 청크 PNG 로 렌더해 세로로 이어 붙인다. 렌더는 ProcessPoolExecutor 병렬(실행시간
 30초 목표), Excel 텍스트 시트 기입은 렌더와 동시에 진행한다.
+
+Map Analysis 좌표 강조는 서버가 모르는 **브라우저 메모리 상태**(map_select.js
+mapSelChips)라, honey_main 이 runJavaScript 로 읽어 ``chips`` 로 넘겨준다 — Map 시트
+맵에는 색 원 마커, Distribution 시트 CDF 에는 (값, 누적%) 점으로 화면과 같게 그린다.
+Histogram·Issue Table 미니셀은 웹에도 강조가 없어 chips 를 무시한다.
 """
 from __future__ import annotations
 
@@ -44,7 +49,7 @@ SHEET_ORDER = ["Summary", "Yield", "CPK", "Issue Table",
 
 
 def run_excel_download(session_id, server_base, out_path, status_cb=None,
-                       bin1=False) -> dict:
+                       bin1=False, chips=None) -> dict:
     """세션 web_report 를 out_path(xlsx)로 저장. 반환 {"out_path", "elapsed", "items"}.
 
     status_cb(state, message): 진행 통지 (state ∈ download/render/excel/save/done).
@@ -52,6 +57,10 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
 
     ``bin1`` 이면 Distribution(CDF)·Histogram 시트를 양품(BIN==1) & 규격(LSL/USL) 이내
     die 만의 산포로 그린다(그 외 시트는 전체 die 기준 그대로).
+
+    ``chips`` 는 브라우저 Map Analysis 에서 선택한 좌표 스냅샷(map_select.js
+    honeyMapSelSnapshot). 주면 Map Analysis 시트 맵에 색 원 마커, Distribution 시트
+    CDF 에 그 좌표의 (값, 누적%) 점을 화면과 같은 색으로 그린다. 없으면 기존과 동일.
     """
     import xlwings as xw
     from excel_edit.excel_session import _quit_app
@@ -83,9 +92,9 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
     tmpdir = tempfile.mkdtemp(prefix="honey_exceldl_")
     try:
         chunk_jobs, n_items, cell_of = _build_chunk_jobs(
-            report, dist, dict(colors), tmpdir)
+            report, dist, dict(colors), tmpdir, chips)
         map_rows = sheets.get("Map Analysis") or []
-        map_jobs, map_colors = _build_map_jobs(map_rows, tmpdir)
+        map_jobs, map_colors = _build_map_jobs(map_rows, tmpdir, chips)
         _emit("render", f"차트 잡 구성 완료 ({time.perf_counter() - t_dl:.1f}s, "
                         f"{len(chunk_jobs)}청크 + map {len(map_jobs)})")
 
@@ -307,12 +316,29 @@ def _bin1_cell(cell, info):
     return {**cell, "sources": sources}
 
 
-def _build_chunk_jobs(report, dist, color_of, tmpdir):
+def _chips_for_subject(chips, subject):
+    """선택 좌표 스냅샷 → 이 항목의 [{color, value, cum_pct}] (값 없는 chip 은 제외).
+
+    웹 chipMarkersFor 와 같은 판정(값·누적% 가 모두 숫자인 chip 만 점으로 찍는다).
+    """
+    out = []
+    for c in chips or []:
+        it = ((c.get("items") or {}).get(subject)) or {}
+        value, cum = it.get("value"), it.get("cum_pct")
+        if isinstance(value, (int, float)) and isinstance(cum, (int, float)):
+            out.append({"color": c.get("color") or "#e11d48",
+                        "value": float(value), "cum_pct": float(cum)})
+    return out
+
+
+def _build_chunk_jobs(report, dist, color_of, tmpdir, chips=None):
     """distribution_index 순서(TSEQ)로 전 항목 셀을 만들어 32개씩 청크 잡으로 나눈다.
 
     dist items 에만 있고 index 에 없는 항목도 뒤에 붙인다 (데이터 누락 금지).
     히스토그램 가우시안 통계(avg/std)는 넘겨받은 ``dist`` 의 ECDF 에서 산출하므로
     전체 die / bin1(?bin1=1) 어느 응답이든 곡선이 그 칸의 분포와 같은 표본을 따른다.
+    ``chips`` 를 주면 셀마다 그 항목의 선택 좌표 점을 실어 CDF 에 강조로 그린다
+    (Histogram 은 웹에도 강조가 없어 셀의 chips 를 무시한다 — _charts._draw_hist_cell).
     반환: (jobs, n_items, cell_of{subject: cell}).
     """
     index_rows = report.get("distribution_index") or []
@@ -352,6 +378,9 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir):
             "status": meta.get("status"),
             "cpk": meta.get("cpk"),
             "sources": sources,
+            # Issue Table 미니셀도 이 cell 을 재사용하지만 미니 렌더는 chips 를 그리지
+            # 않는다(웹 미니셀에도 강조가 없다) — 시트별 차이는 렌더 쪽에서 갈린다.
+            "chips": _chips_for_subject(chips, subject),
         })
 
     jobs = []
@@ -375,11 +404,13 @@ def _build_item_index(chunk_jobs):
             for idx, cell in enumerate(job["cells"])]
 
 
-def _build_map_jobs(map_rows, tmpdir):
+def _build_map_jobs(map_rows, tmpdir, chips=None):
     """Map Analysis 행 → 웹-파리티 wafer map 렌더 잡. 제목: source (step, yield %).
 
     좌표(dies)가 없는 행은 건너뛴다. bin→색은 전 맵 합산 기준 전역 색맵(웹과 동일 색)
-    을 한 번만 만들어 모든 맵이 공유한다. 반환: (jobs, color_map).
+    을 한 번만 만들어 모든 맵이 공유한다. 선택 좌표는 **source 만 대조**해 넘긴다 —
+    웹 renderThumbMarkers 도 step 은 보지 않아 같은 source 의 step 맵마다 마커가 찍힌다.
+    반환: (jobs, color_map).
     """
     from ._map import build_bin_color_map
 
@@ -402,6 +433,8 @@ def _build_map_jobs(map_rows, tmpdir):
             "title": title,
             "dies": dies,
             "color_map": color_map,
+            "chips": [c for c in (chips or [])
+                      if str(c.get("source") or "") == str(row.get("source") or "")],
         })
     return jobs, color_map
 

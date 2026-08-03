@@ -14,12 +14,14 @@ class ExcelDownloadWorker(QThread):
     done = pyqtSignal(str, float)   # (out_path, elapsed_sec)
     failed = pyqtSignal(str)        # error message
 
-    def __init__(self, session_id, server_base, out_path, bin1=False, parent=None):
+    def __init__(self, session_id, server_base, out_path, bin1=False, parent=None,
+                 chips=None):
         super().__init__(parent)
         self._session_id = session_id
         self._server_base = server_base
         self._out_path = out_path
         self._bin1 = bin1
+        self._chips = chips
 
     def run(self):
         try:
@@ -32,7 +34,7 @@ class ExcelDownloadWorker(QThread):
             result = run_excel_download(
                 self._session_id, self._server_base, self._out_path,
                 status_cb=lambda s, m: self.status.emit(s, m),
-                bin1=self._bin1)
+                bin1=self._bin1, chips=self._chips)
             self.done.emit(str(result.get("out_path") or self._out_path),
                            float(result.get("elapsed") or 0.0))
         except Exception as exc:

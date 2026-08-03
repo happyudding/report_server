@@ -1,0 +1,7 @@
+[Honey 3.1.1 업데이트 안내]
+
+1. Rawdata 메뉴 개편 — Excel 없이 Item Select · Outlier 제거 · Bin1 only · 수율 분모(자동/Gross Die/Test data)를 바꾸는 Rawdata 허브가 먼저 열립니다. 원본은 그대로라 언제든 해제할 수 있고, Excel 원본 수정은 고칠 source만 골라 열어 대기 시간이 줄었습니다.
+2. Compare 모드 — source 2개 제한이 없어졌습니다. Before/After 두 그룹에 직접 나눠 담고 그룹 안 순서까지 지정하며(After 최상단 source가 limit 기준), Legend 이름은 항목 더블클릭으로 바꿉니다.
+3. Excel 리포트 — Yield 시트를 STEP(P1/P2/P3)별 표로 분리, CPK는 Bin1(양품) 기준, Issue Table에 Map 썸네일 추가. 웨이퍼 맵은 정사각으로 고정되고, 웹 Map Analysis에서 선택한 좌표가 Map·Distribution 시트에도 그대로 표시됩니다.
+4. 세션 정보 수정 — 웹 리포트 상단 ✏️ 버튼으로 Session Name·Family·Product·LOT·Process를 나중에 고칠 수 있습니다(Product 변경 시 기준정보 재조회).
+5. 변경 내용 확인창 — Rawdata 반영 전 변경 목록을 표로 보여줍니다(검색·정렬·복사·CSV 저장). 수정이 많아도 창이 화면을 넘어가 버튼이 가려지지 않습니다.

@@ -9,6 +9,20 @@ let _mapSelResults = []; // 직전 검색 결과 chip 배열 — 체크박스 in
 function mapSelChipKey(c) { return `${c.source || ""}|${c.serial || ""}|${c.xpos || ""}|${c.ypos || ""}`; }
 function mapSelReassignColors() { mapSelChips.forEach((c, i) => { c.color = MAPSEL_PALETTE[i % MAPSEL_PALETTE.length]; }); }
 
+// Honey 클라이언트 Excel Download 가 runJavaScript 로 읽어가는 선택 좌표 스냅샷.
+// 선택 상태는 이 페이지 메모리에만 있어(서버·URL 미저장) 클라가 알 수 없으므로, 화면과
+// 같은 강조를 xlsx 에 그리려면 여기서 넘겨야 한다. mapSelChips 내부 구조가 클라와 직접
+// 묶이지 않도록 **필요한 필드만** 추린 계약을 이 함수 하나로 고정한다
+// (Map 마커: source/x/y/color, CDF 마커: items[subject].{value,cum_pct}).
+function honeyMapSelSnapshot() {
+  return mapSelChips.map(c => ({
+    source: c.source || "", color: c.color,
+    x: c.x, y: c.y, xpos: c.xpos, ypos: c.ypos, serial: c.serial,
+    items: c.items || {},
+  }));
+}
+window.honeyMapSelSnapshot = honeyMapSelSnapshot;
+
 // 한 항목(subject)에 대해 선택된 모든 chip 의 위치 마커(각 chip 색). 단일 선택일 때만
 // 포커싱용 점선 크로스헤어 추가(다중은 점 색으로 구분). 해당 항목 값 없는 chip 은 건너뜀.
 function chipMarkersFor(subject) {
