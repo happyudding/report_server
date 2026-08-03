@@ -26,6 +26,10 @@ _SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{3,64}$")
 GATE_COOKIE_VOC = "pe_admin_gate_voc"
 GATE_COOKIE_VOC_PATH = "/pe/report"
 
+# eval 패널(/pe/eval) 게이트 — VOC 와 같은 이유로 경로가 다른 별도 쿠키다.
+GATE_COOKIE_EVAL = "pe_admin_gate_eval"
+GATE_COOKIE_EVAL_PATH = "/pe/eval"
+
 # master 게이트 쿠키 — admin 로그인한 PC 에 한시적(4h) '전 세션 편집 + 비공개 조회/목록
 # 표시' 권한을 준다. report/security._is_master 가 /pe/report/* 요청에서 검증한다.
 # admin/VOC 게이트(고정 해시)와 달리 만료시각을 서명해 박아 서버가 4h 를 직접 강제한다
@@ -69,6 +73,11 @@ def voc_gate_token():
     토큰과 같은 값이면 평문 HTTP 구간에서 새어나갔을 때 그대로 admin 쿠키로 재사용되므로
     라벨을 분리한다(한쪽에서 다른 쪽을 유도 불가)."""
     return hashlib.sha256(("pe-voc-admin-gate|" + config.REPORT_ADMIN_PASSWORD).encode()).hexdigest()
+
+
+def eval_gate_token():
+    """eval 패널 게이트 쿠키 값 — admin/VOC 와 라벨이 달라 서로 유도 불가한 별도 토큰."""
+    return hashlib.sha256(("pe-eval-admin-gate|" + config.REPORT_ADMIN_PASSWORD).encode()).hexdigest()
 
 
 def register_admin_panel(app):

@@ -11,7 +11,7 @@
 | _DIST_BATCH_CACHE  | (akey, chash[, prep], mode, subjects_digest[, "bin1"]) | raw_data 편집 / 전처리 / 세션 삭제 |
 | MAP_CACHE          | (akey, chash[, prep], mode)                      | raw_data 편집(chash) / 전처리 / 세션 삭제 |
 | COMMONALITY_CACHE  | (akey, chash)                                    | raw_data 편집 / 세션 삭제           |
-| REPORT_CACHE       | (akey, chash, sid, edits_rev, opts, mode, sver)  | comment/override/전처리 편집(rev) + payload 스키마 변경 + 위 전부 |
+| REPORT_CACHE       | (akey, chash, sid, edits_rev, opts, mode, sver[, rules_rev]) | comment/override/전처리 편집(rev) + payload 스키마 변경 + **eval 룰 편집(/pe/eval)** + 위 전부 |
 | TRIM_CACHE         | (akey, chash, sid, edits_rev, mode, source)      | trim override/전처리 편집(rev) + 위 전부 |
 | TRIM_CHART_CACHE   | (akey, chash[, prep], mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 |
 | _FULL_CACHE        | (akey, chash, "sid:edits_rev", extras_digest)    | 편집 rev / annotations 등 extras    |
@@ -34,7 +34,7 @@
 """
 from __future__ import annotations
 
-from .validation import validate_mode
+from .validation import validate_mode, webreport_ai_comment
 
 
 def _base(session, prep_digest: str = "") -> tuple:
@@ -194,9 +194,19 @@ REPORT_SCHEMA_VERSION = 21
 def report_key(session, session_id: str, edits_rev: int) -> tuple:
     # 전처리 변경은 edits_rev 증가로 무효화되므로 prep 을 따로 넣지 않는다
     # (rev 가 이미 키에 있어 덧붙여도 재사용 이득이 없다).
-    return _base(session) + (session_id, edits_rev,
-                             session.get("webreport_options") or "", _mode(session),
-                             REPORT_SCHEMA_VERSION)
+    key = _base(session) + (session_id, edits_rev,
+                            session.get("webreport_options") or "", _mode(session),
+                            REPORT_SCHEMA_VERSION)
+    # AI Comment 는 payload 안에 박혀 캐시되므로 eval 룰(threshold/signature)을 고치면
+    # 이 키가 갈려야 재평가된다(/pe/eval 저장 시 rev +1). **ai_comment 옵션 세션에만**
+    # 덧붙고 rev 파일이 없으면 빈 문자열이라, 그 외 세션의 기존 캐시는 그대로 유효하다.
+    opts = session.get("webreport_options") or ""
+    if webreport_ai_comment(opts):
+        from .eval_debug import rules_rev
+        rev = rules_rev()
+        if rev:
+            key += ("rules" + rev,)
+    return key
 
 
 def trim_key(session, session_id: str, edits_rev: int, source: str) -> tuple:

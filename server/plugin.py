@@ -30,6 +30,10 @@ def register_report_server(app, root_redirect=False):
     from admin_panel import register_admin_panel
     register_admin_panel(app)
 
+    # eval 룰 패널 — /pe/eval (thresholds/signatures 편집 + L0~L6 트레이스).
+    from eval_panel import register_eval_panel
+    register_eval_panel(app)
+
     # 운영 보조: /healthz + 전역 에러 핸들러 + DB 백업 스케줄러 (ops.py)
     from ops import init_ops
     init_ops(app)

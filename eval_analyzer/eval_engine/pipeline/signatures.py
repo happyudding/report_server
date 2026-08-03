@@ -61,8 +61,12 @@ def _format_evidence(template, ctx_values):
     return {"signal_code": primary_key.upper(), "value": value, "note": note}
 
 
-def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
-    th = thresholds_for(case_ctx)
+def build_ctx_values(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
+    """when_metric 평가 대상 값 = raw_metrics + features + 파생값(DB 저장 안 함).
+
+    evaluate() 가 쓰는 조립 로직 그대로 — 관리자 트레이스가 파생값을 재구현하지
+    않도록 공개 함수로 분리했다(출력 불변).
+    """
     ctx_values = {**raw_metrics, **features}  # cpk/yield(raw) + spread_norm 등(features)
     # 방향무관 spec 근접도(파생값, DB 저장 안 함) — TAIL_RISK 양방향 커버용
     _sml, _smh = features.get("spec_margin_low"), features.get("spec_margin_high")
@@ -83,6 +87,12 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     _g = [abs(v) for v in _g if v is not None]
     if _g:
         ctx_values["gradient_norm_abs_max"] = max(_g)
+    return ctx_values
+
+
+def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
+    th = thresholds_for(case_ctx)
+    ctx_values = build_ctx_values(case_ctx, features, raw_metrics)
 
     n_dut = features.get("n_dut") or 0
     high_moment_ok = n_dut >= th["n_min"]
@@ -90,6 +100,9 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     fired, reason_codes, applies = [], [], {}
     subpop_doc = None
     for sig in signatures_doc()["signatures"]:
+        # yaml 의 enabled:false 는 룰 비활성 (키 부재 = 활성 — 기존 yaml 무영향)
+        if sig.get("enabled") is False:
+            continue
         if sig["id"] == _SUBPOP_GAP_ID:
             subpop_doc = sig
             continue

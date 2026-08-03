@@ -13,9 +13,11 @@ from pathlib import Path
 from flask import Blueprint, Response, abort, jsonify, request
 
 import config
-from admin_panel import (GATE_COOKIE_VOC, GATE_COOKIE_VOC_PATH, MASTER_COOKIE,
+from admin_panel import (GATE_COOKIE_EVAL, GATE_COOKIE_EVAL_PATH, GATE_COOKIE_VOC,
+                         GATE_COOKIE_VOC_PATH, MASTER_COOKIE,
                          MASTER_COOKIE_PATH, MASTER_TTL_SECONDS, eval_admin,
-                         gate_token, identity_merge, issue_master_value, maintenance,
+                         eval_gate_token, gate_token, identity_merge,
+                         issue_master_value, maintenance,
                          metrics, sessions_admin, stats, storage_admin, sysinfo,
                          users_admin, voc_admin, voc_gate_token)
 from database import report_db
@@ -84,6 +86,10 @@ def login():
     resp.set_cookie(MASTER_COOKIE, issue_master_value(), max_age=MASTER_TTL_SECONDS,
                     httponly=True, samesite="Lax", secure=request.is_secure,
                     path=MASTER_COOKIE_PATH)
+    # eval 룰 패널(/pe/eval) — 여기서 함께 발급해 admin 로그인 후 바로 진입할 수 있게 한다.
+    resp.set_cookie(GATE_COOKIE_EVAL, eval_gate_token(), max_age=12 * 3600,
+                    httponly=True, samesite="Lax", secure=request.is_secure,
+                    path=GATE_COOKIE_EVAL_PATH)
     return resp
 
 

@@ -59,6 +59,8 @@ report_server/
 │   │   ├── _issue_images.py    이슈 이미지 백엔드 (S3+로컬 폴백)
 │   │   └── _note_images.py     Note 탭 이미지 백엔드 (S3+로컬 폴백, 세션 단위)
 │   ├── admin_panel/             /pe/admin-<secret>/ 대시보드 + metrics 샘플러
+│   ├── eval_panel/              /pe/eval 룰 관리 (thresholds 제품군/family 오버레이 ·
+│   │                            signature on/off · L0~L6 트레이스 — 저장 즉시 반영)
 │   ├── tools/migrate_manifest_edits.py  manifest 편집값 → 세션 편집 DB 이전 (운영 1회 실행 완료)
 │   ├── upload_xlsx.py           POST /pe/report/upload_xlsx
 │   ├── upload_webreport.py      POST /pe/report/upload_webreport (web_report.ingest 호출)
@@ -278,10 +280,15 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 8. **eval_analyzer 단방향 의존.** `eval_analyzer/` 는 독립 프로젝트의 운영 복사본 —
    report_server 작업 중 하위 파일 무수정, eval_engine import 는
    [web_report/ai_comment.py](web_report/ai_comment.py)(evaluate 호출) +
-   [web_report/eval_export.py](web_report/eval_export.py)(store·ingest 헬퍼 — 코멘트 export)
-   **2곳만** 허용(양방향 그 외 import 금지). 서버의 evaluate 호출은 persist=False(운영
+   [web_report/eval_export.py](web_report/eval_export.py)(store·ingest 헬퍼 — 코멘트 export) +
+   [web_report/eval_debug.py](web_report/eval_debug.py)(룰 리로드·L0~L6 트레이스 — `/pe/eval`)
+   **3곳만** 허용(양방향 그 외 import 금지). 서버의 evaluate 호출은 persist=False(운영
    eval.db 무기록) — 코멘트 export 는 report_server 소유 별도 파일 `REPORT_EVAL_DB_PATH`
    에만 쓴다. 규약 전문 [docs/13](docs/13_eval_analyzer_integration.md).
+   - **무수정 원칙의 예외 2건**: `db_input/`(종전), 그리고 2026-08-03 `/pe/eval` 패널이
+     요구한 `pipeline/_rules.py`·`pipeline/signatures.py` 최소 수정(사용자 승인). 후자는
+     **원본 `F:\COINAPI\eval_analyzer` 에도 같은 변경을 적용해야 한다** — 한쪽만 고치면
+     다음 동기화 때 소실된다.
    - 서버가 `eval_analyzer/db_input/import_csv.py` 를 **subprocess 로 실행**하는 것은
      import 가 아니므로 2곳 규약 위반이 아니다 (Honey 'DB Input' —
      [server/report/routes_eval_input.py](server/report/routes_eval_input.py),
@@ -321,6 +328,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | S3 저장 진입점(facade) | [server/storage_gateway/](server/storage_gateway/__init__.py) ([README](server/storage_gateway/README.md), 키빌더 _s3.py) |
 | 검색결과 UI / 세션 상세 UI | [report_analysis_index.html](server/report/report_analysis_index.html) / [report_view.html](server/report/report_view.html) + [static/webreport/](server/report/static/webreport/) (15모듈) |
 | 관리 대시보드 (/pe/admin-pte/) | [server/admin_panel/](server/admin_panel/) (구 admin_routes.py 는 미등록 dead file) |
+| eval 룰 관리 (/pe/eval) — threshold/signature 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
 | 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |
 | Honey 클라 (자유: honey_ui/honey_main/transport/excel_*) | [client/honey_main.py](client/honey_main.py), 업로드 [transport/uploader.py](client/transport/uploader.py), 추출 [report_flow/upload_prepare.py](client/report_flow/upload_prepare.py) |
 | 외부 담당자 영역 동결 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` · `server/storage_gateway/` → [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |

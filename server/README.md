@@ -368,6 +368,29 @@ value_type 을 등호 하드필터로 쓰기 때문 ([docs/13 §9](../docs/13_ev
 `server/log/` 화이트리스트(server_·watchdog_·metrics_·runtime_·faulthandler_·diagnose_) 밖이면 400.
 구 공개 `/pe/admin` (`admin_routes.py`)은 **미등록 dead file**.
 
+### eval 룰 관리 (`/pe/eval`) — admin 비밀번호 게이트 ([eval_panel/](eval_panel/))
+
+eval_analyzer 의 임계값·signature 를 브라우저에서 고치고 **서버 재시작 없이** 반영시킨다.
+관리 대시보드와 같은 비밀번호(`REPORT_ADMIN_PASSWORD`)로 별도 쿠키 `pe_admin_gate_eval`
+(path=`/pe/eval`, 12h)를 발급하며 admin `/login` 이 함께 발급한다. 비-GET 은 admin 과 같은
+`X-Admin-Request: 1` 헤더 요구. 규약·화면 설명은 [docs/13 §11](../docs/13_eval_analyzer_integration.md).
+
+| 메서드 | 경로 (`/pe/eval` 하위) | 설명 |
+|--------|------|------|
+| `GET` | `/` · `POST /login` | 패널 페이지 / 게이트 쿠키 발급 |
+| `GET` | `/api/meta` | product_taxonomy · 임계값 키 31개 · signature id · rules_rev · 파일 sha256 |
+| `GET`/`PUT` | `/api/thresholds` | 제품군×family 오버레이 조회(적용값+출처)/저장. 빈 값=상속, 전부 비면 파일 삭제 |
+| `GET`/`PUT` | `/api/signatures[/<id>]` | 21종 조회 / 1건 갱신(enable·조건·status_hint·문구). 추가·삭제 불가 |
+| `POST` | `/api/reload` | 룰 캐시 강제 클리어 + rev bump |
+| `GET` | `/api/validate` | 참조 무결성(임계값 키 존재·고아 오버레이·전 조합 병합·SPECIFICITY_ORDER) |
+| `GET`/`POST` | `/api/backups[/restore]` | 저장 직전 백업 목록 / 복원 |
+| `GET` | `/api/sessions` | 트레이스 대상 web_report 세션 목록 |
+| `POST`/`GET` | `/api/trace[/<token>/case/<i>]` | L0~L6 트레이스 실행(요약) / 케이스 상세 |
+
+저장은 검증 → `rules/_backup/` 백업 → 원자적 쓰기 → `rules/.rules_rev` +1 → 감사
+(`action=eval_rules_edit`, `client_user=eval-panel`) 순. rev 는 ai_comment 옵션 세션의
+report 캐시 키에 실려 다음 조회에서 재평가를 강제한다.
+
 ### 기타
 
 `GET /healthz` (ops), `GET /` (root_redirect → `/pe/report/`).
@@ -417,6 +440,12 @@ server/
 │   ├── __init__.py           register_admin_panel() + metrics.init_app
 │   ├── routes.py / sysinfo.py / stats.py / sessions_admin.py / users_admin.py / voc_admin.py
 │   ├── maintenance.py / metrics.py / admin_panel.html
+├── eval_panel/               /pe/eval eval 룰 관리 (저장 즉시 반영)
+│   ├── __init__.py           register_eval_panel()
+│   ├── routes.py             blueprint (게이트 + thresholds/signatures/trace API)
+│   ├── rules_io.py           룰 yaml 검증·백업·원자적 저장 (엔진 import 없음)
+│   ├── trace_store.py        트레이스 결과 LRU (4런/30분)
+│   └── eval_panel.html / eval_login.html
 ├── tools/migrate_manifest_edits.py  manifest 편집값 → 세션 편집 DB 이전 (운영 1회 실행 완료)
 └── releases/version.json     Honey 배포 manifest
 ```

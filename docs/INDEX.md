@@ -64,7 +64,7 @@
 | 10 | **web_report 파이프라인** (upload→ingest→저장→로드) | Server | [10_web_report_pipeline.md](10_web_report_pipeline.md) | [server/upload_webreport.py](../server/upload_webreport.py) |
 | 11 | **web_report 탭 계약 & 렌더** | Server | [11_web_report_tabs.md](11_web_report_tabs.md) | [web_report/tabs/](../web_report/tabs/) |
 | 12 | **web_report 캐시 & 컴퓨트** | Server | [12_web_report_cache.md](12_web_report_cache.md) | [web_report/cache.py](../web_report/cache.py) |
-| 13 | **eval_analyzer 통합 (AI Comment + 코멘트 export)** — 단방향 의존 규약 | Server | [13_eval_analyzer_integration.md](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) / [web_report/eval_export.py](../web_report/eval_export.py) |
+| 13 | **eval_analyzer 통합 (AI Comment + 코멘트 export + /pe/eval 룰 패널)** — 단방향 의존 규약 | Server | [13_eval_analyzer_integration.md](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) / [web_report/eval_export.py](../web_report/eval_export.py) / [web_report/eval_debug.py](../web_report/eval_debug.py) |
 | 14 | **외부 담당자 영역 ↔ 이 프로젝트 병합 순서** — report_generator/storage_gateway 교체 순서·계약 | Server + Client | [14_merge_order.md](14_merge_order.md) | [client/map_report/](../client/map_report/) |
 | 15 | **소유권 / 수정 권한 경계** (정본) — 자유/사전승인/외부 담당자 영역 | 전체 | [15_ownership.md](15_ownership.md) | — |
 | 16 | **VOC 게시판** (목록·상세·상태 Open/Close·댓글) — 별도 voc.db, 관리자 판별은 admin 게이트 쿠키 재사용 | Server | [16_voc_board.md](16_voc_board.md) | [server/report/routes_voc.py](../server/report/routes_voc.py) |
@@ -115,7 +115,8 @@
 | Distribution ECDF 계산 (서버 폴백=클라 프리컴퓨트 공용) | [10](10_web_report_pipeline.md)·[12](12_web_report_cache.md) | [web_report/dist_blob.py](../web_report/dist_blob.py) `compute_dist_compact` |
 | 콜드 빌드 워커/프리웜 | — | [web_report/compute.py](../web_report/compute.py) (`WEB_REPORT_COMPUTE_WORKERS`) |
 | 새 탭 추가 | — | [web_report/tabs/__init__.py](../web_report/tabs/__init__.py) `TAB_REGISTRY` + 프런트 JS 1개 |
-| IssueTable AI Comment / eval_analyzer 연결 | [13](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) `safe_build` + 코멘트 export [web_report/eval_export.py](../web_report/eval_export.py) (eval_engine import 2곳) |
+| IssueTable AI Comment / eval_analyzer 연결 | [13](13_eval_analyzer_integration.md) | [web_report/ai_comment.py](../web_report/ai_comment.py) `safe_build` + 코멘트 export [web_report/eval_export.py](../web_report/eval_export.py) + 룰 패널 [web_report/eval_debug.py](../web_report/eval_debug.py) (eval_engine import 3곳) |
+| eval 임계값/signature 바꾸기 · 왜 이 코멘트가 나왔나 | [13 §11](13_eval_analyzer_integration.md) | `/pe/eval` ([server/eval_panel/](../server/eval_panel/)) — 제품군×family 오버레이 `eval_analyzer/eval_engine/rules/thresholds/`, 저장 즉시 반영 |
 | 세션 상세 탭 UI (JS) | — | [server/report/static/webreport/](../server/report/static/webreport/) 15개 모듈 (순서 로드 — report_view.html 은 마크업+CSS) |
 | 신원/SSO 전환 | — | [server/auth_identity.py](../server/auth_identity.py) (`AUTH_SSO_HEADER`) |
 | 감사 로그(업/수정/삭제) 기록·조회 | [02](02_server_query_edit.md) | `report_db.log_audit`/`get_audit_logs`, 대시보드 `/pe/admin-pte/` ([admin_panel/](../server/admin_panel/)) |

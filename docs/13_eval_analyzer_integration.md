@@ -12,25 +12,42 @@
   `evaluate()` 하나로 L0~L6 판단 파이프라인을 돌려 status/comment 를 반환한다.
 - **report_server 작업 중에는 `eval_analyzer/` 하위 파일을 수정하지 않는다** (원본과
   diff 최소화 → 향후 원본 동기화 용이). eval_analyzer 자체 개발은 그쪽 CLAUDE.md 규칙을 따른다.
+  - **예외 (2026-08-03, 사용자 승인)**: `/pe/eval` 관리자 패널이 요구한 엔진 4건 —
+    `pipeline/_rules.py`(캐시 키에 mtime 포함 → 재시작 없이 yaml 반영 + family 오버레이
+    트리 병합 + `reload_rules`), `pipeline/signatures.py`(`enabled:false` skip +
+    `build_ctx_values` 순수 추출). **원본 `F:\COINAPI\eval_analyzer` 에도 같은 변경을
+    적용했다** — 한쪽만 고치면 다음 동기화 때 소실된다. 원본 signatures.py 는 사본보다
+    구버전이라(SUBPOP_GAP·outlier_count 없음) 같은 diff 가 아니라 **같은 의미의 변경**을
+    적용했다. 회귀 테스트 `tests/test_rules_scope.py` 도 양쪽에 있다.
+  - `db_input/` 은 종전대로 이 규칙의 명시적 예외다.
 - 제외하고 복사한 것: `.git/`, `__pycache__/`, `*.egg-info/`, `.claude/`·`.agents/`,
   런타임 db(`data/*.db`, `db_input/output/*.db`). 중첩 `.gitignore` 가 런타임 db 를 계속 차단한다.
 
-## 2. 단방향 의존 — import 는 2곳만
+## 2. 단방향 의존 — import 는 3곳만
 
 ```
 report_server ──(web_report/ai_comment.py — evaluate 호출)──►  eval_analyzer(eval_engine)
 report_server ──(web_report/eval_export.py — store·ingest 헬퍼)──►  eval_analyzer(eval_engine)
+report_server ──(web_report/eval_debug.py — 룰 리로드·L0~L6 트레이스)──►  eval_analyzer(eval_engine)
               ◄──────────── 금지 ────────────────
 ```
 
 - eval_analyzer 는 report_server 를 **import 하지 않는다** (eval_analyzer/CLAUDE.md 불변 규칙 1).
-- report_server 에서 eval_engine 을 import 하는 곳은 **딱 2곳**이다:
+- report_server 에서 eval_engine 을 import 하는 곳은 **딱 3곳**이다:
   - [web_report/ai_comment.py](../web_report/ai_comment.py) — `evaluate()` 호출 (AI Comment, §3~§6)
   - [web_report/eval_export.py](../web_report/eval_export.py) — `store` CRUD + `pipeline.ingest`
     item 정규화 헬퍼 (사람 코멘트 export, §9)
-  pip 미설치 — 두 모듈 다 `sys.path.append(<repo>/eval_analyzer)` + 지연 import 로 연결한다
+  - [web_report/eval_debug.py](../web_report/eval_debug.py) — 룰 경로/리로드 + L0~L6 단계
+    직접 호출 트레이스 (`/pe/eval` 관리자 패널, §11). 운영 조회 경로에서 쓰이는 것은
+    `rules_rev()` 하나뿐이다(캐시 키).
+  pip 미설치 — 세 모듈 다 `sys.path.append(<repo>/eval_analyzer)` + 지연 import 로 연결한다
   (append 라 report_server 쪽 top-level 이름이 항상 우선, 컴퓨트 워커에서도 호출 시점 성립).
-- 다른 서버 코드가 eval_engine 이 필요하면 **위 두 모듈의 함수를 거친다**. 위반 = 리뷰 반려.
+- 다른 서버 코드가 eval_engine 이 필요하면 **위 세 모듈의 함수를 거친다**. 위반 = 리뷰 반려.
+  `server/eval_panel/` 은 이 규약대로 eval_engine 을 직접 import 하지 않고 eval_debug 만 쓴다.
+- **사설 API 핀** (엔진 변경 시 함께 확인): eval_debug 는 `signatures.build_ctx_values` /
+  `signatures._eval_condition` / `signatures._HIGH_MOMENT_METRICS` / `_rules.thresholds_for` /
+  `_rules.threshold_overlay_path` / `status.SPECIFICITY_ORDER` 에 의존한다
+  (eval_export 가 `store._migrate` 에 의존하는 것과 같은 성격).
 
 ## 3. JSON 계약 요약 (정본: eval_analyzer/docs/)
 
@@ -78,7 +95,15 @@ row0 TSEQ  row1 TNO  row2 STEP  row3 UNIT  row4 HILIM(USL)  row5 LOLIM(LSL)  row
 - evaluate 호출 지점은 **콜드 빌드 1곳** — `service.load_webreport` 의 인라인/워커 빌드
   (`build_report_payload` 직전). 캐시 키 `cache_policy.report_key` 에 `content_hash` 와
   `webreport_options` 가 들어 있으므로 **rawdata 편집 시 자동 재평가**되고, 옵션 on/off
-  세션은 캐시가 분리된다. 캐시 키에 새 요소를 추가할 필요 없음.
+  세션은 캐시가 분리된다.
+- **룰(threshold/signature) 편집도 재평가시킨다** (2026-08-03). AI Comment 는 payload 안에
+  박혀 캐시되므로 rules yaml 을 고쳐도 그 자체로는 무효화되지 않는다 → `/pe/eval` 저장이
+  `rules/.rules_rev` 를 +1 하고 `report_key` 가 그 값을 키에 덧붙인다. **ai_comment 옵션
+  세션에만** 덧붙고 rev 파일이 없으면 아무것도 붙지 않으므로, 패널을 안 쓰는 서버·일반
+  세션의 기존 캐시는 그대로 유효하다(`REPORT_SCHEMA_VERSION` 은 건드리지 않는다 — 그건
+  코드 배포용).
+- 엔진 쪽 반영은 캐시 키에 파일 mtime 을 넣어 해결한다 — 웹 프로세스든 컴퓨트 워커든
+  다음 호출에서 자동 재파싱이라 **프로세스 간 리로드 신호가 필요 없다**.
 - evaluate 실패(메타 부적합·의존 미설치 등)는 `ai_comment.safe_build` 가 빈 dict 로
   격리한다 — **IssueTable 빌드는 절대 죽지 않는다** (컬럼은 뜨되 빈 값 + warning 로그).
 
@@ -220,3 +245,38 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   ⚠ 단순 포맷은 lot/wafer/bin 이 없어 `product_name=<pt>_<fp>`·`bin=0` 으로 **case 를 합성**
   하므로 왕복은 의도적으로 lossy 다 — web_report 라벨을 재적재하면 합성 case 가 1건 생긴다
   (labeler 가 달라 서로 지우지 않는다: 세션 재적재 reconcile 은 `labeler='web_report'` 만 본다).
+
+## 11. 룰 관리자 패널 — `/pe/eval` (2026-08-03)
+
+매번 yaml 을 손으로 고치고 **서버를 재시작해야 했던 디버깅 루프를 없애기 위한** 관리자
+화면. [server/eval_panel/](../server/eval_panel/) (blueprint 등록은 `server/plugin.py`).
+
+- **접근**: admin 과 같은 비밀번호(`REPORT_ADMIN_PASSWORD`)로 발급하는 별도 게이트 쿠키
+  `pe_admin_gate_eval`(path=/pe/eval, 12h). admin 대시보드 `/login` 이 함께 발급하므로
+  admin 로그인 상태면 바로 들어간다. 별도 토큰인 이유는 `voc_gate_token()` docstring 과
+  동일(경로가 달라 admin 쿠키가 안 실리고, 값이 같으면 유출 시 서로 재사용됨).
+  비-GET 은 admin 패널과 같은 `X-Admin-Request: 1` 헤더 요구(CSRF).
+- **탭 4개**:
+  1. *Thresholds* — 제품군 × family_product 드롭다운으로 오버레이 편집. 병합 순서는
+     `default → product_type(레거시 섹션) → thresholds/<PT>/_default.yaml →
+     thresholds/<PT>/<FAMILY>.yaml → item_class`. 빈 칸 = 상속(파일에 안 씀),
+     전부 비우면 파일 삭제. 키별 "현재 적용값 + 출처" 를 함께 보여준다.
+  2. *Signatures* — 21종 enable/disable + 조건(when_metric)·status_hint·issue_category·
+     문구(phenomenon/action/evidence) 편집. **신규 추가/삭제는 지원하지 않는다** —
+     `status.py SPECIFICITY_ORDER` 코드와 동기화가 필요해 UI 만으로는 안전하지 않다.
+  3. *L0~L6 트레이스* — 세션 1건을 AI Comment 와 **같은 경로**(loader→mode_tables→
+     `ai_comment._table_to_raw_df`)로 재현하되 `evaluate()` 대신 단계 함수를 직접 호출해
+     raw_metrics/features/조건분해를 노출한다. signature 21행 매트릭스에 조건별
+     `실제값 ⟨op⟩ 임계값(키=값)` 과 미발화 사유(disabled / min-n 가드 / 특수분기 / 결측)를
+     찍는다. **`should_store` 게이팅 탈락 케이스도 포함**한다 — "왜 코멘트가 안 나왔나" 가
+     이 화면의 주 용도다. 결과는 프로세스 메모리 LRU(4런/30분)에 두고 상세는 1건씩 조회.
+  4. *검증·백업* — 참조 무결성(`when_metric` 이 참조하는 임계값 키 존재, 오버레이 고아
+     파일, 전 PT×family 조합 병합 시뮬레이션, SPECIFICITY_ORDER 정합) + 백업 목록/복원.
+- **저장 파이프라인**: 검증 → `rules/_backup/` 백업(파일당 50개, 같은 초면 `-2` 접미사)
+  → tmp+`os.replace` 원자적 쓰기(LF 유지) → `.rules_rev` +1 → 감사 로그
+  `action=eval_rules_edit`, `client_user=eval-panel`.
+  ⚠ signatures.yaml 재작성은 **선두 주석 블록만 보존**하고 인라인 주석은 잃는다(백업이 이력).
+- **패널이 만드는 파일** (전부 rules/ 하위, 없으면 엔진은 종전과 동일 동작):
+  `thresholds/<PT>/*.yaml` 오버레이 · `_backup/*.bak` · `.rules_rev`.
+- 검증: [eval_analyzer/tests/test_rules_scope.py](../eval_analyzer/tests/test_rules_scope.py)
+  (트리 없을 때 무회귀 / 병합 우선순위 / mtime 자동 리로드 / enabled 미발화).

@@ -17,7 +17,7 @@
 | 🟢 **자유 수정** | 승인 없이 바로 수정 | `web_report/` · `server/`(단 `storage_gateway/` **제외**) · web_report 관련 html(`server/report/report_view.html`, `server/report/static/webreport/`) · client 자주 쓰는 영역: `client/honey_ui/`, `client/honey_main.py`, `client/transport/`, `client/excel_download/`, `client/excel_edit/` |
 | 🟡 **사전 승인 (중간)** | 편집 전 **파일·이유·영향**을 설명하고 명시 승인 | `client/` 나머지 비동결 — `report_flow/`, `map_report/`, `embedded_browser.py`, `client_identity.py`, `config.py`, 그 외 client 최상위 파일(`app_settings.py`, `chart_colors.py` 등) |
 | 🔒 **외부 담당자 영역 (동결)** | 건들 때마다 승인 (원칙 무수정) | `d1/` · `d1_storage/` · `client/honey_parse/` · `client/report_generator/` · `server/storage_gateway/`(**facade `__init__.py` + `_s3` 내부 전체**) |
-| 🔒 외부 단방향 (동결) | 하위 무수정, import 는 2곳만 | `eval_analyzer/` — eval_engine import 는 [web_report/ai_comment.py](../web_report/ai_comment.py)(evaluate) + [web_report/eval_export.py](../web_report/eval_export.py)(store·ingest 헬퍼) **2곳만**([docs/13](13_eval_analyzer_integration.md), CLAUDE.md 규칙 #8) |
+| 🔒 외부 단방향 (동결) | 하위 무수정(예외는 승인 필요), import 는 3곳만 | `eval_analyzer/` — eval_engine import 는 [web_report/ai_comment.py](../web_report/ai_comment.py)(evaluate) + [web_report/eval_export.py](../web_report/eval_export.py)(store·ingest 헬퍼) + [web_report/eval_debug.py](../web_report/eval_debug.py)(룰 리로드·트레이스) **3곳만**([docs/13](13_eval_analyzer_integration.md), CLAUDE.md 규칙 #8). 무수정 예외: `db_input/`, 그리고 2026-08-03 승인된 `pipeline/_rules.py`·`pipeline/signatures.py`(원본 `F:\COINAPI\eval_analyzer` 에도 동일 적용 필수) |
 
 ---
 

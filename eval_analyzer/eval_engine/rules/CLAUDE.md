@@ -16,9 +16,18 @@
 ## thresholds 스코프 우선순위
 ```
 default (cold-start 표준 robust 시드)
-  └─ product_type[<PT>]  override
-        └─ item_class["<category>|<value_type>|<bin>"]  override   ← 가장 구체, 최우선
+  └─ product_type[<PT>]  override                      (thresholds.yaml 안의 레거시 섹션)
+        └─ thresholds/<PT>/_default.yaml               (제품군 공통 오버레이 파일)
+              └─ thresholds/<PT>/<FAMILY>.yaml         (family_product 오버레이 파일)
+                    └─ item_class["<category>|<value_type>|<bin>"]  ← 가장 구체, 최우선
 ```
+- 오버레이 트리는 **파일이 없으면 통째로 skip** 이라, 트리를 안 만들면 종전과 100% 동일하다.
+- 오버레이 파일은 flat 매핑(`cpk_warn: 1.2`)만 쓴다 — `calibration`/`item_class` 섹션 금지
+  (calibrate 는 계속 thresholds.yaml 의 마지막 `item_class:` 섹션만 재작성한다).
+- 파일/폴더 이름은 `product_taxonomy.yaml` 의 허용값 그대로. 편집은 관리자 화면
+  `/pe/eval` 이 하고(검증·백업·`.rules_rev` 증가 포함), 손으로 고쳐도 된다.
+- **캐시**: `load_yaml` 은 (경로, mtime) 키라 파일을 고치면 서버 재시작 없이 다음 호출에서
+  반영된다(컴퓨트 워커 프로세스 포함).
 - 임계값 키는 signatures.yaml 에서 **이름으로 참조**됨(예: `spread_norm: ">spread_norm_warn"`).
   thresholds 에서 키를 지우면 그 이름을 쓰는 signature 가 KeyError → **키 이름 변경 시 signatures.yaml 동시 수정**.
 
@@ -31,6 +40,8 @@ default (cold-start 표준 robust 시드)
   evidence: ["spread_norm {spread_norm}"]  # {키}=ctx_values(raw_metrics+features) 치환
 ```
 - 파생 컨텍스트 `spec_margin_min` / `center_bias` 는 signatures.py 가 계산해 주입(양방향 tail·중심 이탈용).
+  조립 로직 정본은 `signatures.build_ctx_values()` — 관리자 트레이스가 같은 함수를 쓴다.
+- `enabled: false` 를 넣으면 그 signature 는 평가에서 통째로 빠진다(키 부재 = 활성).
 - signature 추가 시 체크: (1) status.py `SPECIFICITY_ORDER` 에 id 추가, (2) 필요한 임계값 키를 thresholds 에 추가.
 
 ## calibrate 와의 관계

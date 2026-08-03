@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eval 룰 관리 — /pe/eval</title>
+<style>
+* { box-sizing: border-box; }
+:root { color-scheme: dark; }
+body {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #14161b; margin: 0; padding: 20px; color: #e8e9ec;
+  --surface-1: #1e2128;
+  --ink-1: #e8e9ec; --ink-2: #a4a8b3; --ink-3: #6f737e;
+  --grid: #2b2e36; --accent: #3d8bef;
+  --ok: #4ade80; --warn: #fbbf24; --crit: #f0605f;
+}
+h1 { margin: 0 0 14px; font-size: 20px; font-weight: 700; }
+h1 .sub { font-size: 12px; font-weight: 400; color: var(--ink-3); margin-left: 8px; }
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; flex-wrap: wrap; }
+.tab { padding: 8px 18px; border-radius: 8px 8px 0 0; border: none; cursor: pointer;
+       background: #21242b; color: var(--ink-2); font-size: 13px; font-weight: 600; }
+.tab.active { background: var(--surface-1); color: var(--ink-1); }
+.panel { display: none; } .panel.active { display: block; }
+.card { background: var(--surface-1); border: 1px solid var(--grid); border-radius: 10px;
+        padding: 16px 20px; margin-bottom: 16px; }
+.card h2 { margin: 0 0 12px; font-size: 14px; font-weight: 700; }
+.card h2 .hint { font-size: 11px; font-weight: 400; color: var(--ink-3); margin-left: 8px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--grid); text-align: left; white-space: nowrap; }
+th { background: #21242b; font-weight: 600; color: var(--ink-2); font-size: 12px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+td.mono, .mono { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.table-wrap { overflow-x: auto; max-height: 62vh; overflow-y: auto; }
+tr.empty-row td { text-align: center; color: var(--ink-3); padding: 24px; }
+tr.clickable { cursor: pointer; } tr.clickable:hover td { background: #262a32; }
+tr.sel td { background: #1d3049 !important; }
+.btn { height: 32px; padding: 0 14px; border-radius: 6px; border: 1px solid var(--grid);
+       background: var(--surface-1); color: var(--ink-1); font-size: 13px; cursor: pointer; }
+.btn:hover { background: #262a32; }
+.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn.primary:hover { background: #2f74cc; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.inp, .sel { height: 32px; padding: 0 10px; border: 1px solid var(--grid); border-radius: 6px;
+             font-size: 13px; outline: none; background: #14161b; color: var(--ink-1); }
+.inp:focus, .sel:focus { border-color: var(--accent); }
+.inp.narrow { width: 110px; }
+.inp.changed { border-color: var(--warn); background: #2a2415; }
+textarea.inp { height: auto; padding: 8px 10px; width: 100%; font-family: inherit; resize: vertical; }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.toolbar .grow { flex: 1; }
+.chip { display: inline-block; background: #262a32; color: var(--ink-2); border-radius: 12px;
+        padding: 2px 10px; font-size: 12px; margin-right: 6px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.badge.on { background: #143824; color: var(--ok); }
+.badge.off { background: #3a3a3a; color: var(--ink-3); }
+.badge.OK { background: #143824; color: var(--ok); }
+.badge.MONITOR { background: #1e2a3a; color: #93c5fd; }
+.badge.MINOR { background: #33301a; color: var(--warn); }
+.badge.MAJOR { background: #3a2a18; color: #fb923c; }
+.badge.CRITICAL { background: #3a1e1e; color: var(--crit); }
+.pass { color: var(--ok); } .fail { color: var(--ink-3); }
+.msg { font-size: 12px; margin-left: 8px; }
+.msg.ok { color: var(--ok); } .msg.err { color: var(--crit); }
+.note { font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+.split { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.split > .card { flex: 1 1 460px; margin-bottom: 0; }
+.origin { font-size: 11px; color: var(--ink-3); }
+details.sig { border: 1px solid var(--grid); border-radius: 8px; margin-bottom: 8px; background: #191c22; }
+details.sig > summary { cursor: pointer; padding: 8px 12px; font-size: 13px; font-weight: 600;
+                        display: flex; align-items: center; gap: 8px; }
+details.sig .body { padding: 4px 12px 14px; }
+details.sig .body label { display: block; font-size: 11px; color: var(--ink-2); margin: 10px 0 4px; }
+.fld-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.fld-row .inp { flex: 1; }
+ul.problems { margin: 6px 0 0 18px; font-size: 12px; color: #fca5a5; line-height: 1.8; }
+ul.notes { margin: 6px 0 0 18px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
+</style>
+</head>
+<body>
+<h1>Eval 룰 관리 <span class="sub">/pe/eval — 저장 즉시 반영(서버 재시작 불필요)</span></h1>
+
+<div class="tabs">
+  <button class="tab active" data-panel="pThresholds">Thresholds</button>
+  <button class="tab" data-panel="pSignatures">Signatures</button>
+  <button class="tab" data-panel="pTrace">L0~L6 트레이스</button>
+  <button class="tab" data-panel="pMaint">검증 · 백업</button>
+</div>
+
+<!-- ── Thresholds ───────────────────────────────────────────────────────── -->
+<div class="panel active" id="pThresholds">
+  <div class="card">
+    <h2>제품군 / Family Product 별 임계값
+      <span class="hint">비워두면 상위 층 값을 그대로 쓴다 (파일에 기록하지 않음)</span></h2>
+    <div class="toolbar">
+      <select class="sel" id="thPt"></select>
+      <select class="sel" id="thFamily"></select>
+      <span class="grow"></span>
+      <span class="chip" id="thRev"></span>
+      <button class="btn" id="thReset">되돌리기</button>
+      <button class="btn primary" id="thSave">저장</button>
+      <span class="msg" id="thMsg"></span>
+    </div>
+    <div class="note" id="thScopeNote"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>임계값 키</th><th class="num">현재 적용값</th><th>출처</th>
+          <th class="num">이 범위 값</th><th>설명</th>
+        </tr></thead>
+        <tbody id="thBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── Signatures ───────────────────────────────────────────────────────── -->
+<div class="panel" id="pSignatures">
+  <div class="card">
+    <h2>Signature 21종 <span class="hint">전 제품 공통 · 신규 추가/삭제는 지원하지 않음</span></h2>
+    <div class="toolbar">
+      <input class="inp grow" id="sigFilter" placeholder="id 검색">
+      <span class="chip" id="sigRev"></span>
+      <span class="msg" id="sigMsg"></span>
+    </div>
+    <div id="sigList"></div>
+  </div>
+</div>
+
+<!-- ── Trace ────────────────────────────────────────────────────────────── -->
+<div class="panel" id="pTrace">
+  <div class="card">
+    <h2>세션 평가 트레이스 <span class="hint">AI Comment 와 동일 경로로 L0~L6 재현 (게이팅 탈락 케이스 포함)</span></h2>
+    <div class="toolbar">
+      <input class="inp" id="trQuery" placeholder="세션 검색(제품/lot/파일명)" style="width:240px">
+      <button class="btn" id="trSearch">검색</button>
+      <select class="sel grow" id="trSession"></select>
+      <button class="btn primary" id="trRun">트레이스 실행</button>
+      <span class="msg" id="trMsg"></span>
+    </div>
+    <div class="note" id="trInfo"></div>
+  </div>
+  <div class="split">
+    <div class="card">
+      <h2>케이스 <span class="hint" id="trCount"></span></h2>
+      <div class="toolbar">
+        <input class="inp grow" id="trFilter" placeholder="항목 필터">
+        <label class="note"><input type="checkbox" id="trStoredOnly"> 코멘트 생성분만</label>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>source</th><th>항목</th><th class="num">bin</th><th>status</th>
+            <th>primary</th><th class="num">발화</th><th class="num">cpk</th>
+            <th class="num">수율</th><th>저장</th>
+          </tr></thead>
+          <tbody id="trBody"><tr class="empty-row"><td colspan="9">트레이스를 실행하세요</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" id="trDetail">
+      <h2>케이스 상세</h2>
+      <div class="note">왼쪽 표에서 케이스를 선택하세요.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Maintenance ──────────────────────────────────────────────────────── -->
+<div class="panel" id="pMaint">
+  <div class="card">
+    <h2>무결성 검증 <span class="hint">signature ↔ threshold 참조 · 오버레이 트리 · 전 조합 병합</span></h2>
+    <div class="toolbar">
+      <button class="btn primary" id="mvRun">검증 실행</button>
+      <button class="btn" id="mvReload">룰 강제 리로드</button>
+      <span class="msg" id="mvMsg"></span>
+    </div>
+    <div id="mvResult" class="note">검증을 실행하세요.</div>
+  </div>
+  <div class="card">
+    <h2>백업 <span class="hint">저장 직전 원본을 rules/_backup 에 보관(파일당 최근 50개)</span></h2>
+    <div class="toolbar">
+      <button class="btn" id="bkRefresh">새로고침</button>
+      <span class="msg" id="bkMsg"></span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>백업 파일</th><th>대상</th><th class="num">크기</th><th>시각(UTC)</th><th></th></tr></thead>
+        <tbody id="bkBody"><tr class="empty-row"><td colspan="5">-</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card">
+    <h2>룰 파일</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>파일</th><th>경로</th><th class="num">크기</th><th>sha256(12)</th></tr></thead>
+        <tbody id="fileBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+// 모든 URL 은 상대경로 — /pe/eval prefix 가 소스에 박히지 않는다.
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const num = (v, d = 4) => (typeof v === 'number' && isFinite(v))
+  ? (Number.isInteger(v) ? String(v) : v.toFixed(d).replace(/0+$/, '').replace(/\.$/, ''))
+  : (v == null ? '—' : String(v));
+
+async function getJSON(url) {
+  const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+async function sendJSON(url, method, body) {
+  const r = await fetch(url, {
+    method, headers: { 'Content-Type': 'application/json', 'X-Admin-Request': '1' },
+    body: JSON.stringify(body || {}),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+function flash(el, text, ok) {
+  el.textContent = text;
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+  if (ok) setTimeout(() => { if (el.textContent === text) el.textContent = ''; }, 4000);
+}
+
+let META = null;
+
+// ── Thresholds ───────────────────────────────────────────────────────────
+const TH_DESC = {
+  cpk_warn: 'Cpk 경고선 (코멘트 저장 게이트에도 사용)',
+  cpk_bad: 'Cpk 심각 — 수율 조건과 함께면 CRITICAL 강제',
+  cpk_trump_yield_floor: 'CRITICAL 강제 수율 하한',
+  outlier_ratio_warn: 'outlier 비율 경고', outlier_ratio_bad: 'outlier 비율 심각',
+  severe_outlier_count_min: 'SEVERE_OUTLIER 최소 개수',
+  spread_norm_warn: 'spec 폭 대비 산포 경고', modified_z: 'outlier 판정 z 컷',
+  skew_warn: '왜도 경고', kurtosis_warn: '첨도 경고',
+  spec_margin_warn: 'spec 근접도 경고', n_min: '고차모멘트 룰 최소 표본',
+  bimodality_warn: '이봉성 경고', edge_fail_ratio_warn: 'edge fail 배수',
+  edge_region_pct: 'edge 영역 반경 비율', center_region_pct: 'center 영역 반경 비율',
+  quadrant_imbalance_warn: '사분면 편중', mean_shift_warn: '중심 이탈',
+  site_cpk_delta_warn: 'site 간 Cpk 격차', gross_yield_bad: '총 수율 심각',
+  code_edge_hit_warn: 'CODE rail 접촉 비율', spatial_fail_count_min: '공간 룰 최소 fail 수',
+  ring_fail_ratio_warn: 'ring fail 배수', gradient_norm_warn: 'wafer 경사',
+};
+let TH_STATE = null;
+
+function fillFamily() {
+  const pt = $('thPt').value;
+  const families = (META.taxonomy[pt] || []);
+  $('thFamily').innerHTML = '<option value="">(제품군 공통)</option>' +
+    families.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
+}
+
+async function loadThresholds() {
+  const pt = $('thPt').value;
+  const family = $('thFamily').value;
+  const data = await getJSON(`api/thresholds?pt=${encodeURIComponent(pt)}&family=${encodeURIComponent(family)}`);
+  TH_STATE = data;
+  $('thRev').textContent = 'rules_rev ' + (data.rules_rev || '(없음)');
+  const own = family ? data.overlay_family : data.overlay_pt;
+  $('thScopeNote').innerHTML = family
+    ? `<b>${esc(pt)} / ${esc(family)}</b> 값을 편집합니다. 병합 순서: default → 레거시 product_type → 제품군 공통 → family (오른쪽이 우선). item_class ${data.item_class_count}건은 항상 최우선입니다.`
+    : `<b>${esc(pt)} 제품군 공통</b> 값을 편집합니다 (family 를 고르면 그 family 가 이 값을 덮어씁니다).`;
+  const keys = Object.keys(data.default).sort();
+  $('thBody').innerHTML = keys.map((k) => {
+    const v = own[k];
+    return `<tr>
+      <td class="mono">${esc(k)}</td>
+      <td class="num">${num(data.effective[k])}</td>
+      <td class="origin">${esc(data.origin[k] || '')}</td>
+      <td class="num"><input class="inp narrow th-val" data-key="${esc(k)}"
+           value="${v == null ? '' : esc(v)}" placeholder="상속"></td>
+      <td class="note">${esc(TH_DESC[k] || '')}</td>
+    </tr>`;
+  }).join('');
+  document.querySelectorAll('.th-val').forEach((inp) => {
+    const initial = inp.value;
+    inp.addEventListener('input', () => inp.classList.toggle('changed', inp.value !== initial));
+  });
+}
+
+async function saveThresholds() {
+  const overrides = {};
+  let bad = null;
+  document.querySelectorAll('.th-val').forEach((inp) => {
+    const key = inp.dataset.key;
+    const raw = inp.value.trim();
+    if (raw === '') { overrides[key] = null; return; }
+    const v = Number(raw);
+    if (!isFinite(v)) { bad = key; return; }
+    overrides[key] = v;
+  });
+  if (bad) { flash($('thMsg'), `${bad}: 숫자가 아닙니다`, false); return; }
+  try {
+    const r = await sendJSON('api/thresholds', 'PUT',
+      { pt: $('thPt').value, family: $('thFamily').value, overrides });
+    flash($('thMsg'), `저장됨 (rules_rev ${r.rules_rev})`, true);
+    await loadThresholds();
+  } catch (e) { flash($('thMsg'), e.message, false); }
+}
+
+// ── Signatures ───────────────────────────────────────────────────────────
+let SIGS = [];
+
+function sigCard(s) {
+  const conds = Object.entries(s.when_metric).map(([m, c]) => `
+    <div class="fld-row">
+      <input class="inp mono" style="max-width:220px" value="${esc(m)}" data-role="metric">
+      <input class="inp mono" value="${esc(c)}" data-role="cond">
+    </div>`).join('');
+  return `<details class="sig" data-id="${esc(s.id)}">
+    <summary>
+      <span class="badge ${s.enabled ? 'on' : 'off'}">${s.enabled ? 'ON' : 'OFF'}</span>
+      <span class="mono">${esc(s.id)}</span>
+      <span class="badge ${esc(s.status_hint)}">${esc(s.status_hint)}</span>
+      <span class="note">${esc(s.issue_category || 'ETC')}</span>
+      ${s.in_specificity_order ? '' : '<span class="msg err">SPECIFICITY_ORDER 누락</span>'}
+    </summary>
+    <div class="body">
+      <div class="fld-row">
+        <label style="margin:0"><input type="checkbox" data-role="enabled"
+          ${s.enabled ? 'checked' : ''}> 활성</label>
+        <select class="sel" data-role="status_hint">
+          ${['MONITOR', 'MINOR', 'MAJOR', 'CRITICAL'].map((v) =>
+            `<option ${v === s.status_hint ? 'selected' : ''}>${v}</option>`).join('')}
+        </select>
+        <select class="sel" data-role="issue_category">
+          ${['', 'YIELD', 'CPK', 'ETC'].map((v) =>
+            `<option value="${v}" ${v === (s.issue_category || '') ? 'selected' : ''}>${v || '(미지정=ETC)'}</option>`).join('')}
+        </select>
+        <span class="grow"></span>
+        <button class="btn primary" data-role="save">저장</button>
+        <span class="msg" data-role="msg"></span>
+      </div>
+      <label>발화 조건 (모두 AND · 형식: <span class="mono">&gt;key</span>,
+        <span class="mono">&lt;=0.5</span>, <span class="mono">abs&gt;key</span>)</label>
+      <div data-role="conds">${conds || '<div class="note">조건 없음(특수분기 룰)</div>'}</div>
+      <label>현상 (phenomenon_ko)</label>
+      <textarea class="inp" rows="2" data-role="phenomenon_ko">${esc(s.phenomenon_ko)}</textarea>
+      <label>점검 제안 (action_ko)</label>
+      <textarea class="inp" rows="2" data-role="action_ko">${esc(s.action_ko)}</textarea>
+      <label>근거 템플릿 (evidence · 한 줄에 하나)</label>
+      <textarea class="inp mono" rows="2" data-role="evidence">${esc(s.evidence.join('\n'))}</textarea>
+    </div>
+  </details>`;
+}
+
+async function loadSignatures() {
+  const data = await getJSON('api/signatures');
+  SIGS = data.signatures;
+  $('sigRev').textContent = 'rules_rev ' + (data.rules_rev || '(없음)');
+  renderSignatures();
+}
+
+function renderSignatures() {
+  const q = $('sigFilter').value.trim().toUpperCase();
+  const rows = SIGS.filter((s) => !q || String(s.id).includes(q));
+  $('sigList').innerHTML = rows.map(sigCard).join('') ||
+    '<div class="note">일치하는 signature 없음</div>';
+  $('sigList').querySelectorAll('[data-role="save"]').forEach((btn) => {
+    btn.addEventListener('click', () => saveSignature(btn.closest('details.sig')));
+  });
+}
+
+async function saveSignature(box) {
+  const sigId = box.dataset.id;
+  const msg = box.querySelector('[data-role="msg"]');
+  const when = {};
+  box.querySelectorAll('[data-role="conds"] .fld-row').forEach((row) => {
+    const m = row.querySelector('[data-role="metric"]').value.trim();
+    const c = row.querySelector('[data-role="cond"]').value.trim();
+    if (m && c) when[m] = c;
+  });
+  const payload = {
+    enabled: box.querySelector('[data-role="enabled"]').checked,
+    status_hint: box.querySelector('[data-role="status_hint"]').value,
+    issue_category: box.querySelector('[data-role="issue_category"]').value,
+    phenomenon_ko: box.querySelector('[data-role="phenomenon_ko"]').value,
+    action_ko: box.querySelector('[data-role="action_ko"]').value,
+    evidence: box.querySelector('[data-role="evidence"]').value
+      .split('\n').map((v) => v.trim()).filter(Boolean),
+  };
+  if (Object.keys(when).length) payload.when_metric = when;
+  try {
+    const r = await sendJSON('api/signatures/' + encodeURIComponent(sigId), 'PUT', payload);
+    flash(msg, `저장됨 (rules_rev ${r.rules_rev})` + (r.warnings.length ? ' · ' + r.warnings.join(' ') : ''), true);
+    const open = new Set([...$('sigList').querySelectorAll('details.sig[open]')].map((d) => d.dataset.id));
+    await loadSignatures();
+    open.forEach((id) => {
+      const d = $('sigList').querySelector(`details.sig[data-id="${CSS.escape(id)}"]`);
+      if (d) d.open = true;
+    });
+  } catch (e) { flash(msg, e.message, false); }
+}
+
+// ── Trace ────────────────────────────────────────────────────────────────
+let TRACE = null;
+
+async function loadSessions() {
+  const q = $('trQuery').value.trim();
+  const data = await getJSON('api/sessions?q=' + encodeURIComponent(q));
+  $('trSession').innerHTML = data.sessions.map((s) =>
+    `<option value="${esc(s.session_id)}">${esc(s.product_type || '?')} · ${esc(s.product || '')} · ` +
+    `${esc(s.lot_id || '')} · ${esc(s.file_name || s.session_id)}</option>`).join('') ||
+    '<option value="">(web_report 세션 없음)</option>';
+}
+
+async function runTrace() {
+  const sid = $('trSession').value;
+  if (!sid) { flash($('trMsg'), '세션을 선택하세요', false); return; }
+  $('trRun').disabled = true;
+  flash($('trMsg'), '실행 중…', true);
+  try {
+    TRACE = await sendJSON('api/trace', 'POST', { session_id: sid });
+    // 세션 family_product 가 비면 엔진은 *_ETC 로 폴백한다 — 임계값 스코프가 갈리므로
+    // "평가에 실제로 쓰인 family" 를 그대로 보여준다.
+    const used = (TRACE.sources[0] || {}).meta || {};
+    const famNote = TRACE.family_product
+      ? esc(TRACE.family_product)
+      : `${esc(used.family_product || '?')} <span class="msg err">(세션 값 없음 → 폴백)</span>`;
+    $('trInfo').innerHTML =
+      `엔진 ${esc(TRACE.engine_version)} · rules_rev ${esc(TRACE.rules_rev || '(없음)')} · ` +
+      `mode ${esc(TRACE.mode)} · ${esc(TRACE.product_type)} / ${famNote} · ` +
+      `소스 ${TRACE.sources.length}개 · ${TRACE.elapsed_ms}ms` +
+      (TRACE.truncated ? ` <span class="msg err">상위 ${TRACE.max_cases}건만 표시</span>` : '');
+    renderTraceRows();
+    flash($('trMsg'), `케이스 ${TRACE.cases.length}건`, true);
+  } catch (e) { flash($('trMsg'), e.message, false); }
+  $('trRun').disabled = false;
+}
+
+function renderTraceRows() {
+  if (!TRACE) return;
+  const q = $('trFilter').value.trim().toUpperCase();
+  const storedOnly = $('trStoredOnly').checked;
+  const rows = TRACE.cases.filter((c) =>
+    (!q || String(c.item_raw || '').toUpperCase().includes(q)) &&
+    (!storedOnly || c.stored));
+  $('trCount').textContent = `${rows.length} / ${TRACE.cases.length}건`;
+  $('trBody').innerHTML = rows.map((c) => `
+    <tr class="clickable" data-idx="${c.idx}">
+      <td class="mono">${esc(c.source)}</td>
+      <td class="mono">${esc(c.item_raw)}</td>
+      <td class="num">${esc(c.bin)}</td>
+      <td><span class="badge ${esc(c.status)}">${esc(c.status)}</span></td>
+      <td class="mono">${esc(c.primary_signature || '—')}</td>
+      <td class="num">${c.fired_count}</td>
+      <td class="num">${num(c.cpk, 3)}</td>
+      <td class="num">${c.yield == null ? '—' : (c.yield * 100).toFixed(2) + '%'}</td>
+      <td>${c.stored ? '<span class="pass">저장</span>' : '<span class="fail">제외</span>'}</td>
+    </tr>`).join('') || '<tr class="empty-row"><td colspan="9">일치 케이스 없음</td></tr>';
+  $('trBody').querySelectorAll('tr.clickable').forEach((tr) => {
+    tr.addEventListener('click', () => {
+      $('trBody').querySelectorAll('tr').forEach((x) => x.classList.remove('sel'));
+      tr.classList.add('sel');
+      showCase(Number(tr.dataset.idx));
+    });
+  });
+}
+
+function kvTable(obj, cols = 3) {
+  const entries = Object.entries(obj || {}).filter(([, v]) => v !== undefined);
+  if (!entries.length) return '<div class="note">—</div>';
+  const cells = entries.map(([k, v]) =>
+    `<td class="mono">${esc(k)}</td><td class="num">${num(v)}</td>`);
+  let html = '<table>';
+  for (let i = 0; i < cells.length; i += cols) {
+    html += '<tr>' + cells.slice(i, i + cols).join('') + '</tr>';
+  }
+  return html + '</table>';
+}
+
+function condHtml(c) {
+  const ref = c.ref_key ? `${esc(c.ref_key)}=${num(c.ref_value)}` : num(c.ref_value);
+  const cls = c.passed ? 'pass' : 'fail';
+  return `<div class="mono ${cls}">${c.passed ? '✔' : '✖'} ${esc(c.metric)} ` +
+    `${c.abs ? 'abs' : ''}${esc(c.op || '')} ${ref} <span class="note">(실제 ${num(c.actual)}` +
+    `${c.applies ? '' : ', 결측→미적용'})</span></div>`;
+}
+
+async function showCase(idx) {
+  const box = $('trDetail');
+  box.innerHTML = '<h2>케이스 상세</h2><div class="note">불러오는 중…</div>';
+  let c;
+  try {
+    c = (await getJSON(`api/trace/${encodeURIComponent(TRACE.token)}/case/${idx}`)).case;
+  } catch (e) {
+    box.innerHTML = `<h2>케이스 상세</h2><div class="msg err">${esc(e.message)}</div>`;
+    return;
+  }
+  const matrix = c.signature_matrix.map((r) => `
+    <details class="sig">
+      <summary>
+        <span class="badge ${r.fired ? 'on' : 'off'}">${r.fired ? '발화' : '미발화'}</span>
+        <span class="mono">${esc(r.id)}</span>
+        <span class="badge ${esc(r.status_hint)}">${esc(r.status_hint)}</span>
+        ${r.enabled ? '' : '<span class="note">비활성</span>'}
+      </summary>
+      <div class="body">
+        ${r.skip_reason ? `<div class="note">스킵: ${esc(r.skip_reason)}</div>`
+                        : (r.conditions.map(condHtml).join('') || '<div class="note">조건 없음</div>')}
+      </div>
+    </details>`).join('');
+  box.innerHTML = `
+    <h2>${esc(c.item_raw)} <span class="hint">bin ${esc(c.bin)} · ${esc(c.item_class || '')} · ${esc(c.source)}</span></h2>
+    <div class="toolbar">
+      <span class="badge ${esc(c.status)}">${esc(c.status)}</span>
+      <span class="chip">primary ${esc(c.primary_signature || '—')}</span>
+      <span class="chip">confidence ${num(c.confidence, 2)}</span>
+      <span class="chip">completeness ${esc(c.data_completeness)}</span>
+      <span class="chip">${c.stored ? 'L6 저장' : 'L6 제외'}</span>
+    </div>
+    ${c.gate_reason ? `<div class="note">${esc(c.gate_reason)}</div>` : ''}
+    <h2 style="margin-top:14px">L3 signature 판정</h2>
+    ${matrix}
+    <h2 style="margin-top:14px">L1 raw_metrics</h2>${kvTable(c.raw_metrics)}
+    <h2 style="margin-top:14px">L2 features</h2>${kvTable(c.features)}
+    <h2 style="margin-top:14px">적용 임계값</h2>${kvTable(c.thresholds)}
+    <h2 style="margin-top:14px">L5 comment</h2>
+    <div class="note" style="white-space:pre-wrap">${esc(c.comment || '(생성 안 함)')}</div>`;
+}
+
+// ── Maintenance ──────────────────────────────────────────────────────────
+async function runValidate() {
+  flash($('mvMsg'), '검증 중…', true);
+  try {
+    const r = await getJSON('api/validate');
+    $('mvResult').innerHTML = (r.ok
+      ? '<span class="msg ok">문제 없음</span>'
+      : `<span class="msg err">문제 ${r.problems.length}건</span>
+         <ul class="problems">${r.problems.map((p) => `<li>${esc(p)}</li>`).join('')}</ul>`) +
+      (r.notes.length ? `<ul class="notes">${r.notes.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>` : '');
+    flash($('mvMsg'), '완료', true);
+  } catch (e) { flash($('mvMsg'), e.message, false); }
+}
+
+async function loadBackups() {
+  try {
+    const r = await getJSON('api/backups');
+    $('bkBody').innerHTML = r.backups.map((b) => `
+      <tr>
+        <td class="mono">${esc(b.name)}</td>
+        <td class="mono">${esc(b.target)}</td>
+        <td class="num">${b.size}</td>
+        <td class="mono">${new Date(b.mtime * 1000).toISOString().replace('T', ' ').slice(0, 19)}</td>
+        <td><button class="btn" data-name="${esc(b.name)}">복원</button></td>
+      </tr>`).join('') || '<tr class="empty-row"><td colspan="5">백업 없음</td></tr>';
+    $('bkBody').querySelectorAll('button[data-name]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`${btn.dataset.name} 을(를) 복원합니다. 현재 파일은 백업됩니다.`)) return;
+        try {
+          const r2 = await sendJSON('api/backups/restore', 'POST', { name: btn.dataset.name });
+          flash($('bkMsg'), `복원됨: ${r2.restored} (rules_rev ${r2.rules_rev})`, true);
+          loadBackups();
+        } catch (e) { flash($('bkMsg'), e.message, false); }
+      });
+    });
+  } catch (e) { flash($('bkMsg'), e.message, false); }
+}
+
+function renderFiles() {
+  $('fileBody').innerHTML = Object.entries(META.files).map(([k, f]) => `
+    <tr><td>${esc(k)}</td><td class="mono">${esc(f.path)}</td>
+        <td class="num">${f.exists ? f.size : '—'}</td>
+        <td class="mono">${esc(f.sha256 || '—')}</td></tr>`).join('');
+}
+
+// ── 부트 ─────────────────────────────────────────────────────────────────
+const TAB_LOADERS = {
+  pThresholds: loadThresholds,
+  pSignatures: loadSignatures,
+  pTrace: loadSessions,
+  pMaint: () => { renderFiles(); loadBackups(); },
+};
+const loaded = new Set();
+
+document.querySelectorAll('.tab').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach((p) => p.classList.remove('active'));
+    btn.classList.add('active');
+    const id = btn.dataset.panel;
+    $(id).classList.add('active');
+    if (!loaded.has(id)) { loaded.add(id); TAB_LOADERS[id](); }
+  });
+});
+
+$('thPt').addEventListener('change', () => { fillFamily(); loadThresholds(); });
+$('thFamily').addEventListener('change', loadThresholds);
+$('thSave').addEventListener('click', saveThresholds);
+$('thReset').addEventListener('click', loadThresholds);
+$('sigFilter').addEventListener('input', renderSignatures);
+$('trSearch').addEventListener('click', loadSessions);
+$('trRun').addEventListener('click', runTrace);
+$('trFilter').addEventListener('input', renderTraceRows);
+$('trStoredOnly').addEventListener('change', renderTraceRows);
+$('mvRun').addEventListener('click', runValidate);
+$('mvReload').addEventListener('click', async () => {
+  try {
+    const r = await sendJSON('api/reload', 'POST', {});
+    flash($('mvMsg'), `리로드됨 (rules_rev ${r.rules_rev})`, true);
+  } catch (e) { flash($('mvMsg'), e.message, false); }
+});
+$('bkRefresh').addEventListener('click', loadBackups);
+
+(async () => {
+  META = await getJSON('api/meta');
+  $('thPt').innerHTML = Object.keys(META.taxonomy)
+    .map((pt) => `<option>${esc(pt)}</option>`).join('');
+  fillFamily();
+  loaded.add('pThresholds');
+  await loadThresholds();
+})();
+</script>
+</body>
+</html>
