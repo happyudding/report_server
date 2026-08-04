@@ -134,6 +134,11 @@ def stats_summary(group_by="status"):
 
 
 def _infer_value_type(item_name):
+    """item 이름 부분일치로 item_master 에서 value_type 추정. 못 찾거나 DB 없으면 None.
+
+    선례검색이 value_type 을 등호 하드필터로 쓰는데 사용자는 그걸 모르므로, 안 주면 여기서
+    채운다.
+    """
     try:
         with ro_conn() as c:
             row = c.execute(

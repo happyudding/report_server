@@ -7,6 +7,10 @@ from . import config
 
 
 def is_enabled() -> bool:
+    """LLM 을 실제로 부를 수 있는 상태인가 — 플래그 + endpoint + model 이 모두 있어야 True.
+
+    셋 중 하나라도 비면 False 라, 설정을 반만 해 둔 채 NotImplementedError 로 터지는 일이 없다.
+    """
     return config.EVAL_LLM_ENABLED and bool(config.EVAL_LLM_ENDPOINT) and bool(config.EVAL_LLM_MODEL)
 
 

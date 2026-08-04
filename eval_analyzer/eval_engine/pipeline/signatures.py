@@ -19,6 +19,14 @@ _HIGH_MOMENT_METRICS = {"skewness", "kurtosis", "bimodality_score"}
 _SUBPOP_GAP_ID = "SUBPOP_GAP"
 
 def _evaluate_subpop_gap(features : dict):
+    """SUBPOP_GAP(이봉·분리) 전용 평가 — features 의 modality_v2 판정을 그대로 발화 근거로 쓴다.
+
+    다른 signature 처럼 when_metric 조건식 하나로 줄일 수 없어서 별도 경로를 둔다.
+    modality_v2 가 없으면(표본 부족 등) 발화하지 않는다.
+    evidence 4종: MODALITY_V2 / N_MODES / DENSITY_GAP(밀도 골) / VALUE_GAP(값축 빈 구간).
+    ⚠ DENSITY_GAP 과 VALUE_GAP 은 서로 다른 지표다 — 예전엔 DENSITY_GAP 라벨에 cdf_gap
+    값을 싣던 오라벨이 있었고 2026-08-03 에 분리했다(VERIFY_CHECKLIST §2-1).
+    """
     modality_v2 = features.get("modality_v2")
     if modality_v2 is None:
         return None
@@ -33,6 +41,25 @@ def _evaluate_subpop_gap(features : dict):
             "note" : f"value_gap_ratio {features.get('value_gap_ratio')}"},
     ]
     return {"modality_v2" : modality_v2, "evidence" : evidence}
+
+def scope_matches(sig: dict, case_ctx: dict) -> bool:
+    """signature 의 적용 범위(scope) 검사 — 제품군/family 별로 룰을 갈라 쓰기 위한 필터.
+
+    yaml 형태:
+        scope:
+          product_type: [PMIC, MDDI]     # 생략/빈 목록 = 전 제품군
+          family_product: [SOC]          # 생략/빈 목록 = 전 family
+    둘 다 지정하면 AND. scope 키 자체가 없으면 종전대로 전 제품 공통이다(기존 yaml 무영향).
+    """
+    scope = sig.get("scope") or {}
+    if not scope:
+        return True
+    for key in ("product_type", "family_product"):
+        allowed = scope.get(key) or []
+        if allowed and case_ctx.get(key) not in allowed:
+            return False
+    return True
+
 
 def _eval_condition(op_str, actual_value, thresholds):
     """'>key' / '<key' / 'abs>key' / '>0.5' 형태 해석. 결측이면 False."""
@@ -53,6 +80,7 @@ def _format_evidence(template, ctx_values):
     keys = re.findall(r"\{(\w+)\}", template)
 
     def repl(mo):
+        """`{key}` 자리를 ctx_values 값으로 치환. 수치는 유효숫자 4자리(%.4g)."""
         k = mo.group(1)
         val = ctx_values.get(k)
         return f"{val:.4g}" if isinstance(val, (int, float)) else str(val)
@@ -94,6 +122,16 @@ def build_ctx_values(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
 
 
 def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
+    """L3 진입점 — signatures.yaml 의 when_metric 을 전부 평가해 발화 signature 목록 산출.
+
+    비활성 경로 4종: yaml `enabled: false`(룰 끄기), `scope`(제품군/family 밖), 표본
+    부족(n_dut < n_min)일 때 고차모멘트 의존 signature, feature 결측(값 None → 조건
+    False). 뒤 둘은 **결측을 양호로 읽지 않기 위한** 장치다.
+    SUBPOP_GAP 만 조건식으로 못 줄여 `_evaluate_subpop_gap` 별도 경로로 뺀다.
+    `applies` 는 "그 조건을 판정할 데이터가 있었나"를 남기는 트레이스용 기록(발화 여부와 별개).
+    반환 키: signatures / reason_codes / bin_class / severity_bias / applies /
+    raw_metrics_snapshot(status.decide 의 trump 판단용 cpk·yield).
+    """
     th = thresholds_for(case_ctx)
     ctx_values = build_ctx_values(case_ctx, features, raw_metrics)
 
@@ -105,6 +143,9 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     for sig in signatures_doc()["signatures"]:
         # yaml 의 enabled:false 는 룰 비활성 (키 부재 = 활성 — 기존 yaml 무영향)
         if sig.get("enabled") is False:
+            continue
+        # scope 는 enabled 다음, 특수분기보다 앞 — "이 제품군에서 안 쓰는 룰" 은 SUBPOP 도 예외 아님
+        if not scope_matches(sig, case_ctx):
             continue
         if sig["id"] == _SUBPOP_GAP_ID:
             subpop_doc = sig

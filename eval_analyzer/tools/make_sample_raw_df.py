@@ -31,7 +31,7 @@ ITEMS = [
     ("VREF_TRIM",    "V",    101, 1.0,  1.4,  18, "severe_outlier"),
     ("IDDQ_INIT",    "A",    102, 0.0,  15.0, 18, "edge_fail"),
     ("TRIM_BUCK_GM", "CODE", 103, 20.0, 40.0, 20, "wide_low_cpk"),
-    ("BUCK_SCAN",    "P_F",  104, None, None, 40, "gross_fail"),
+    ("BUCK_SCAN",    "PF",  104, None, None, 40, "gross_fail"),
 ]
 
 
@@ -51,7 +51,7 @@ RMAX = max(r for _, _, r in PTS)
 
 
 def _nominal(item):
-    """pass 측정값(spec 중앙 근처). P_F 는 0(=pass)."""
+    """pass 측정값(spec 중앙 근처). PF 는 0(=pass)."""
     _, unit, _, lsl, usl, _, _ = item
     if lsl is None or usl is None:
         return 0.0
@@ -62,7 +62,7 @@ def _nominal(item):
 def _fail_value(item):
     """fail 측정값(아키타입별)."""
     name, unit, tno, lsl, usl, fbin, arch = item
-    if arch == "gross_fail":       # P_F: limit 없음, 값은 1(=fail 표식)
+    if arch == "gross_fail":       # PF: limit 없음, 값은 1(=fail 표식)
         return 1.0
     if arch == "wide_low_cpk":     # 넓은 산포로 usl 밖
         return usl + (usl - lsl) * 0.2
@@ -95,9 +95,18 @@ def _pick_fail_duts():
 
 
 def build_rows():
+    """헤더 + 메타행 + DUT 측정행 전부를 CSV 행 리스트로 만든다.
+
+    DUT 하나에 fail item 은 최대 하나만 배정한다 — 그래야 FAILTNO 로 fail 을 되짚을 때
+    어느 item 때문인지가 유일하게 정해진다.
+    ⚠ 메타행이 **5개(STEP 없음)** 다. 정본 파서는 6-메타행을 기대하므로 이 CSV 를
+    `_ingest_raw_df` 에 그대로 넣으면 UNIT/HILIM/LOLIM 이 한 행씩 밀려 오파싱된다
+    (tools/CLAUDE.md 의 알려진 드리프트 — 미수정).
+    """
     assign = _pick_fail_duts()
     # 메타행 5개 (item 컬럼에만 값, meta 7컬럼은 태그/공란)
     def meta_row(tag, cellfn):
+        """메타행 1줄 — 첫 칸은 태그, meta 7컬럼 나머지는 공란, item 칸만 cellfn 값."""
         return [tag, "", "", "", "", "", ""] + [cellfn(it) for it in ITEMS]
 
     header = META_COLS + [it[0] for it in ITEMS]
@@ -126,6 +135,7 @@ def build_rows():
 
 
 def main():
+    """samples/ 에 sample_raw_df.csv + 사이드카 meta.json 을 쓰고 생성 요약을 출력한다."""
     os.makedirs(SAMPLES, exist_ok=True)
     rows = build_rows()
     with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:

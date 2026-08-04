@@ -40,7 +40,7 @@ row 6+: serial(=DUT) 별 측정 데이터
 | BIN | **사용** | fail bin 식별·분류 |
 | FAILTNO | **사용** | fail item 식별(아래 §2) |
 | TNO (row1) | **사용** | FAILTNO 매핑 키 |
-| UNIT (row3) | **사용** | value_type(V/A/Hz/CODE/P_F/Ohm/Sec) 매핑 |
+| UNIT (row3) | **사용** | value_type(V/A/Hz/CODE/PF/Ohm/Sec) 매핑 |
 | HILIM (row4) | **사용** | 상한 = USL |
 | LOLIM (row5) | **사용** | 하한 = LSL |
 | TESTITEM 측정값 (row6+) | **사용** | cpk/bimodality/산포/outlier 계산 |
@@ -75,7 +75,7 @@ row 6+: serial(=DUT) 별 측정 데이터
 df 대신 item별 집계만 줄 수도 있다. 이 경우 yield 기반 판정만(cpk/산포/공간 signature 휴면):
 ```python
 evaluate({"meta": {...}, "items": [
-  {"item_name":"BUCK_SCAN","bin":40,"unit":"P_F","yield":0.3,
+  {"item_name":"BUCK_SCAN","bin":40,"unit":"PF","yield":0.3,
    "fail_count":196,"total_count":280,"lsl":None,"usl":None}, ...]})
 ```
 

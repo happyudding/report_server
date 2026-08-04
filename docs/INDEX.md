@@ -68,6 +68,7 @@
 | 14 | **외부 담당자 영역 ↔ 이 프로젝트 병합 순서** — report_generator/storage_gateway 교체 순서·계약 | Server + Client | [14_merge_order.md](14_merge_order.md) | [client/map_report/](../client/map_report/) |
 | 15 | **소유권 / 수정 권한 경계** (정본) — 자유/사전승인/외부 담당자 영역 | 전체 | [15_ownership.md](15_ownership.md) | — |
 | 16 | **VOC 게시판** (목록·상세·상태 Open/Close·댓글) — 별도 voc.db, 관리자 판별은 admin 게이트 쿠키 재사용 | Server | [16_voc_board.md](16_voc_board.md) | [server/report/routes_voc.py](../server/report/routes_voc.py) |
+| 17 | **eval 학습 루프** (설계·로드맵, 미구현) — L1/L2 적재 · case grain=item×unit · 채점 표본 확보 | Server | [17_eval_learning_loop.md](17_eval_learning_loop.md) | — (13 의 후속 설계) |
 
 > 서버 부팅: [server/wsgi.py](../server/wsgi.py) → [plugin.py](../server/plugin.py)
 > `register_report_server` 가 `report_bp` + `honey_bp` + admin_panel + ops 등록.

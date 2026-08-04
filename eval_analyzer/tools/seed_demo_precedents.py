@@ -42,16 +42,21 @@ DEMO_CASES = [
     ("sleep_curr", 11, "NON_TRIM", "A", "design",
      "sleep 전류 중심 이탈, 설계 마진 재검토 요청",
      "dev_feedback", "pending"),
-    ("pll_lock_time", 14, "NON_TRIM", "P_F", "process",
+    ("pll_lock_time", 14, "NON_TRIM", "PF", "process",
      "wafer edge 불량 집중, edge 공정 조건 변경 후 개선",
      "condition_change", "improved"),
-    ("dcdc_ripple", 16, "NON_TRIM", "P_F", "spec",
+    ("dcdc_ripple", 16, "NON_TRIM", "PF", "spec",
      "spec margin 부족 확인, spec release 진행",
      "spec_release", "improved"),
 ]
 
 
 def main(argv=None):
+    """가짜 선례를 대상 DB(인자 없으면 data/eval_sample.db)에 심는다. 이미 있으면 건너뛴다.
+
+    ⚠ 내용이 전부 **지어낸 데모 데이터**다. 운영 eval.db 에 넣으면 실제 판정의 [과거사례]
+    문구로 인용되므로 절대 운영 경로에 쓰지 말 것.
+    """
     argv = argv if argv is not None else sys.argv[1:]
     db_path = argv[0] if argv else os.path.join(ROOT, "data", "eval_sample.db")
     os.environ["EVAL_DB_PATH"] = db_path

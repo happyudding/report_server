@@ -9,6 +9,7 @@ from .agent import ask
 
 
 def main(argv=None):
+    """인자가 있으면 단발 질문 1건, 없으면 REPL. 빈 줄/exit/quit/Ctrl-C 로 종료."""
     # Windows 콘솔 기본(cp949)에서 한글/기호 깨짐 방지 — UTF-8 출력 강제
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")

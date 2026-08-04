@@ -11,6 +11,7 @@ from eval_engine import store  # noqa: E402
 
 
 def _row(**kw):
+    """label + outcome 이 모두 채워진 레거시 20컬럼 행. kw 로 필요한 칸만 바꾼다."""
     r = {"product_name": "S5E_TEST_0000001", "product_type": "PMIC",
          "family_product": "SOC", "lot_id": "LOT001", "wafer_number": "3",
          "revision": "0.0", "item_name": "VREF_TRIM", "value_type": "V", "bin": "18",

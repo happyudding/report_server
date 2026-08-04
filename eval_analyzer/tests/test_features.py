@@ -7,6 +7,10 @@ from eval_engine.pipeline._rules import thresholds_for
 
 
 def _case(values, lsl=0, usl=20, **kw):
+    """측정값만 있는 case_ctx — 좌표·site·fail 은 비워 공간/site feature 를 결측으로 둔다.
+
+    산포·spec margin 공식만 겨냥하려는 것이므로, 공간 feature 가 필요한 테스트는 kw 로 채운다.
+    """
     c = {"values": values, "lsl": lsl, "usl": usl, "value_type": "V",
          "x_pos": [None] * len(values), "y_pos": [None] * len(values),
          "site": [None] * len(values),
@@ -120,3 +124,18 @@ def test_code_edge_hit_only_for_code_type():
     f_code = features.compute(_case(vals, lsl=5, usl=10, value_type="CODE"), m, "ev1")
     assert f_v["code_edge_hit"] is None
     assert f_code["code_edge_hit"] is not None
+
+
+def test_compute_returns_exactly_the_declared_keys():
+    """반환 키 집합 == _FEATURE_KEYS. 결측 경로(빈 값)도 같은 모양이어야 한다.
+
+    소비자(store.save_features / status.decide / 관리자 트레이스)가 키 존재를 전제하므로,
+    새 feature 를 계산만 하고 _FEATURE_KEYS 에 안 넣거나 그 반대면 여기서 갈린다.
+    """
+    vals = [10, 12, 14, 16, 18]
+    m = {"stdev": float(np.std(vals, ddof=1))}
+    declared = set(features._FEATURE_KEYS)
+    assert set(features.compute(_case(vals), m, "ev1")) == declared
+    assert set(features.compute(_case([]), {}, "ev1")) == declared
+    # 2026-08-03 신설 파생값(DB 미저장) — separated 판정·트레이스 표시용
+    assert {"value_gap_ratio", "value_gap_minor_mass"} <= declared

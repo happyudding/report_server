@@ -24,6 +24,7 @@ def seeded_db(tmp_path, monkeypatch):
 
 
 def _seed():
+    """조회 4종이 전부 무언가를 돌려주도록 case 1건을 마스터부터 평가까지 심고 case_id 반환."""
     store.upsert_product_master(
         {"product_name": _PROD, "product_type": "PMIC", "family_product": "SOC"})
     item_id = store.upsert_item_master(

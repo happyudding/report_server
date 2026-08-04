@@ -1,3 +1,4 @@
+"""db_input/ai_extract 행 검증 + import_text 의 JSON 임포트 경로."""
 import csv
 import json
 import sys
@@ -10,6 +11,7 @@ from eval_engine import store  # noqa: E402
 
 
 def _row(**kw):
+    """검증을 통과하는 레거시 20컬럼 행. kw 로 한 칸만 망가뜨려 해당 규칙 하나를 겨냥한다."""
     row = {
         "product_name": "S5E_TEST_0000001",
         "product_type": "PMIC",

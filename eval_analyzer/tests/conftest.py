@@ -18,6 +18,7 @@ def all_signatures_enabled(request, monkeypatch):
     from eval_engine.pipeline._rules import signatures_doc
 
     def _all_enabled():
+        """signatures.yaml 문서에서 `enabled` 키만 걷어낸 사본 — 키 부재 = 활성."""
         doc = signatures_doc()
         return {**doc,
                 "signatures": [{k: v for k, v in s.items() if k != "enabled"}

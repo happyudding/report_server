@@ -18,6 +18,11 @@ except (AttributeError, ValueError):
 
 
 def main():
+    """CSV 선택 다이얼로그 + 저장 여부 확인 → testbench_eval.main 실행. 취소하면 아무것도 안 한다.
+
+    tkinter import 를 함수 안에서 하는 것은 GUI 없는 환경에서 모듈 import 만으로 실패하지
+    않게 하려는 것.
+    """
     import tkinter as tk
     from tkinter import filedialog, messagebox
 

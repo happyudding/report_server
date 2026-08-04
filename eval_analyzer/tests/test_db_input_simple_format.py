@@ -17,6 +17,7 @@ SIMPLE_HEADER = "Product type,Family Product,unit,Item,comment\n"
 
 
 def _write_csv(tmp_path, body, header=SIMPLE_HEADER, name="simple.csv"):
+    """헤더 + 본문으로 임시 CSV 를 쓰고 경로 반환. 기본 헤더는 단순 5컬럼 포맷."""
     path = tmp_path / name
     path.write_text(header + body, encoding="utf-8")
     return path
@@ -103,10 +104,10 @@ def test_simple_format_reimport_updates_comment(fresh_db, tmp_path):
 
 
 def test_simple_format_empty_unit_falls_back_to_pf(fresh_db, tmp_path):
-    """빈 unit 은 엔진(UNIT_TO_VALUE_TYPE[''])과 동일하게 P_F — 에러가 아니다."""
+    """빈 unit 은 엔진(UNIT_TO_VALUE_TYPE[''])과 동일하게 PF — 에러가 아니다."""
     _import(tmp_path, "PMIC,SOC,,SPMI_LDO_POK,pass/fail 항목\n")
     with store.get_conn() as conn:
-        assert conn.execute("SELECT value_type FROM item_master").fetchone()[0] == "P_F"
+        assert conn.execute("SELECT value_type FROM item_master").fetchone()[0] == "PF"
 
 
 def test_legacy_format_still_detected(fresh_db, tmp_path):

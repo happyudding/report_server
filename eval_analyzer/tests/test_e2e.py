@@ -9,6 +9,10 @@ _VALID_STATUS = {"CRITICAL", "MAJOR", "MINOR", "MONITOR", "OK"}
 
 
 def _raw_run_input(n_pass=20, n_fail=4):
+    """raw_table 경로 run_input — fail DUT 는 bin18 + 큰 좌표 + usl 초과로 몰아 만든다.
+
+    한 입력으로 GROSS_FAIL/EDGE_FAIL/outlier 계열이 함께 걸리도록 의도한 픽스처다.
+    """
     rows = []
     dut = 1
     for i in range(n_pass):  # pass: bin1, 중앙부, spec 내
@@ -31,6 +35,7 @@ def _raw_run_input(n_pass=20, n_fail=4):
 
 
 def _assert_case_shape(case):
+    """RunResult.cases[i] 의 계약 검사 — 필수 키·status 어휘·item_class 3축(INTEGRATION_CONTRACT §4)."""
     assert _REQUIRED_KEYS <= set(case)
     assert case["status"] in _VALID_STATUS
     assert len(case["item_class"].split("|")) == 3
@@ -39,7 +44,7 @@ def _assert_case_shape(case):
 def test_degrade_gross_fail():
     ri = {"meta": {"product_name": "P1", "product_type": "PMIC", "revision": 0.0,
                    "lot_id": "L1", "wafer_number": 1, "family_product": "SOC"},
-          "items": [{"item_name": "BUCK_SCAN", "bin": 40, "unit": "P_F",
+          "items": [{"item_name": "BUCK_SCAN", "bin": 40, "unit": "PF",
                      "yield": 0.3, "fail_count": 196, "total_count": 280,
                      "lsl": None, "usl": None}]}
     result = api.evaluate(ri, persist=False)

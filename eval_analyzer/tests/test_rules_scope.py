@@ -25,6 +25,7 @@ def _tmp_rules(tmp_path, monkeypatch):
 
 
 def _write_overlay(rules_dir, product_type, family, values):
+    """오버레이 yaml 을 트리 규약 경로에 쓰고 경로 반환. family=None 이면 제품군 공통(_default)."""
     path = threshold_overlay_path(product_type, family)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(yaml.safe_dump(values), encoding="utf-8")
@@ -32,6 +33,7 @@ def _write_overlay(rules_dir, product_type, family, values):
 
 
 def _case(**kw):
+    """오버레이 스코프 판정용 case_ctx — PMIC/SOC 기본. 스코프 축만 kw 로 바꾼다."""
     c = {"product_type": "PMIC", "family_product": "SOC", "item_class": None, "bin": 99,
          "lsl": 0.0, "usl": 10.0}
     c.update(kw)
@@ -89,6 +91,7 @@ def test_overlay_edit_reflected_without_cache_clear(tmp_path, monkeypatch):
 
 
 def _full_features(**kw):
+    """data_completeness 가 full 로 나오는 정상 features — 발화 0건이 기대값인 테스트의 기준선."""
     f = {"spread_norm": 0.05, "skewness": 0.1, "kurtosis": 0.0, "outlier_ratio": 0.0,
          "spec_margin_low": 5.0, "spec_margin_high": 5.0, "site_cpk_delta": 0.0,
          "edge_fail_ratio": 1.0, "n_dut": 100}

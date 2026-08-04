@@ -21,7 +21,7 @@ Product type, Family Product, unit, Item, comment      ← 5컬럼 전부 필수
 ```
 헤더는 대소문자·공백·순서에 유연하다(strip+소문자+공백→`_` 정규화 후 비교).
 - **unit 은 원문 그대로** 적는다(VOLTS/HERTZ/AMPS/mA/PCT…). 어휘
-  (V/A/Hz/CODE/Ohm/Sec/P_F/**%**)로 매핑해 `item_master.value_type`·`unit` 에 저장한다.
+  (V/A/Hz/CODE/Ohm/Sec/PF/**%**)로 매핑해 `item_master.value_type`·`unit` 에 저장한다.
   `_map_unit` 이 **2단계**로 본다:
   1. **정확일치** — 엔진 `UNIT_TO_VALUE_TYPE`(pipeline/ingest.py) + 이 파일의
      `EXTRA_UNIT_ALIASES`(엔진에 없는 hertz/ampere/second/pct 등).
@@ -33,11 +33,11 @@ Product type, Family Product, unit, Item, comment      ← 5컬럼 전부 필수
      먼저 등록해 우회한다.
 
   **모르는 단위가 하나라도 있으면 아무것도 적재하지 않고 중단**한다(행번호 + 원문 목록 출력) —
-  `EXTRA_UNIT_ALIASES`/`UNIT_STEMS` 를 보강한 뒤 재실행. 빈 unit 은 엔진과 같이 `P_F`(에러 아님).
+  `EXTRA_UNIT_ALIASES`/`UNIT_STEMS` 를 보강한 뒤 재실행. 빈 unit 은 엔진과 같이 `PF`(에러 아님).
   값 정규화가 필수인 이유: `search_precedents` 가 `value_type` 을 **등호 하드필터**로 쓴다.
   - ⚠ **부분일치와 `%` 는 이 파일에만 있다.** 엔진 live-run 경로 `_classify_value_type` 은
-    정확일치 + 모르면 `P_F` 폴백이다(엔진 현행 동작). 그래서 `MILLIVOLT` 선례(V)와 같은 표기를
-    쓴 live case(P_F)는 등호 필터에서 서로 안 잡히고, `%` 는 엔진이 생성하지 않으므로
+    정확일치 + 모르면 `PF` 폴백이다(엔진 현행 동작). 그래서 `MILLIVOLT` 선례(V)와 같은 표기를
+    쓴 live case(PF)는 등호 필터에서 서로 안 잡히고, `%` 는 엔진이 생성하지 않으므로
     `%` 선례는 조회·관리 표시 용도다. 상세 ../../docs/13 §10.
 - **case 합성값**: lot/wafer/bin/limit/통계가 없는 요약 선례라 `product_name` =
   `<Product type>_<Family Product>`, `bin=0`, lot/wafer 없음, `revision=0.0` 으로 고정한다.

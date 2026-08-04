@@ -19,12 +19,14 @@ SIMPLE_HEADER = "Product type,Family Product,unit,Item,comment\n"
 
 
 def _write_csv(tmp_path, body, header=SIMPLE_HEADER, name="simple.csv"):
+    """헤더 + 본문으로 임시 CSV 를 쓰고 경로 반환. 기본 헤더는 단순 5컬럼 포맷."""
     path = tmp_path / name
     path.write_text(header + body, encoding="utf-8")
     return path
 
 
 def _counts():
+    """(fail_case 수, label 수) — dry-run 이 DB 를 건드리지 않았음을 확인하는 데 쓴다."""
     with store.get_conn() as conn:
         return (conn.execute("SELECT COUNT(*) FROM fail_case").fetchone()[0],
                 conn.execute("SELECT COUNT(*) FROM label").fetchone()[0])
@@ -35,7 +37,7 @@ def _counts():
 @pytest.mark.parametrize("raw,expected", [
     # 1단계 정확일치 — 기존 동작 불변
     ("V", "V"), ("volts", "V"), ("mA", "A"), ("KHZ", "Hz"), ("ns", "Sec"),
-    ("", "P_F"), ("pass/fail", "P_F"),
+    ("", "PF"), ("pass/fail", "PF"),
     # 2단계 부분일치 — 이번 추가
     ("MILLIVOLT", "V"), ("mVolt", "V"),
     ("AMPERE", "A"), ("mAmp", "A"),
@@ -51,7 +53,7 @@ def test_map_unit(raw, expected):
 
 
 def test_map_unit_still_rejects_unknown():
-    """조용한 P_F 폴백 금지 — search_precedents 가 value_type 을 등호 하드필터로 쓴다."""
+    """조용한 PF 폴백 금지 — search_precedents 가 value_type 을 등호 하드필터로 쓴다."""
     assert import_csv._map_unit("dB") is None
     assert import_csv._map_unit("lux") is None
 

@@ -34,7 +34,8 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 
 # signature 편집 시 패널이 다루는 필드 (그 외 키는 원본 유지)
 SIGNATURE_FIELDS = ("enabled", "when_metric", "status_hint", "issue_category",
-                    "phenomenon_ko", "action_ko", "evidence")
+                    "phenomenon_ko", "action_ko", "evidence", "scope")
+SCOPE_KEYS = ("product_type", "family_product")
 
 
 class RuleError(ValueError):
@@ -176,6 +177,29 @@ def threshold_descriptions() -> dict:
     return out
 
 
+# 긴 설명(통계 초보용)은 yaml 주석 한 줄에 담을 수 없어 패널 옆 파일에 둔다.
+# 한 줄 요약의 정본은 여전히 thresholds.yaml 주석이고, 이 파일은 그 확장이다.
+_HELP_FILE = Path(__file__).resolve().parent / "threshold_help.yaml"
+_help_cache = {"mtime": None, "data": {}}
+
+
+def threshold_help() -> dict:
+    """{임계값 키: {what, how, effect, tip}}. 파일이 없거나 깨지면 빈 dict(화면은 정상 동작)."""
+    try:
+        mtime = _HELP_FILE.stat().st_mtime
+    except OSError:
+        return {}
+    if _help_cache["mtime"] != mtime:
+        try:
+            doc = yaml.safe_load(_HELP_FILE.read_text(encoding="utf-8")) or {}
+        except (OSError, yaml.YAMLError):
+            return _help_cache["data"]
+        _help_cache["data"] = {str(k): {kk: str(vv).strip() for kk, vv in (v or {}).items()}
+                               for k, v in doc.items() if isinstance(v, dict)}
+        _help_cache["mtime"] = mtime
+    return _help_cache["data"]
+
+
 def threshold_usage() -> dict:
     """{임계값 키: [그 값을 참조하는 signature ...]}. 어떤 룰에 영향을 주는지 표시용."""
     usage = {}
@@ -221,7 +245,7 @@ _CODE_REFS = {
     "subpop_density_gap_strong": "L2 features(modality_v2)",
     "subpop_value_gap_warn": "L2 features(modality_v2)",
     "subpop_minor_mass_min": "L2 features(modality_v2)",
-    "gross_yield_bad": "L4 trump(P_F CRITICAL)",
+    "gross_yield_bad": "L4 trump(PF CRITICAL)",
     "source_min_count": "cross_source(evaluate 미사용)",
     "source_fail_rate_delta_warn": "cross_source(evaluate 미사용)",
 }
@@ -267,6 +291,7 @@ def read_thresholds(product_type: str, family_product: str | None = None) -> dic
             "inherited": inherited, "own": own,
             "effective": {**inherited, **own}, "origin": origin,
             "descriptions": threshold_descriptions(), "usage": threshold_usage(),
+            "help": threshold_help(),
             "item_class_count": len(doc.get("item_class") or {}),
             "rules_rev": eval_debug.rules_rev()}
 
@@ -321,9 +346,23 @@ def read_signatures() -> dict:
                      "phenomenon_ko": s.get("phenomenon_ko") or "",
                      "action_ko": s.get("action_ko") or "",
                      "evidence": list(s.get("evidence") or []),
+                     "scope": _norm_scope_doc(s.get("scope")),
                      "in_specificity_order": s.get("id") in order})
     return {"signatures": rows, "rules_rev": eval_debug.rules_rev(),
-            "threshold_keys": sorted(eval_debug.default_thresholds())}
+            "threshold_keys": sorted(eval_debug.default_thresholds()),
+            "taxonomy": eval_debug.taxonomy(),
+            "metric_keys": sorted(_known_metrics(sigs))}
+
+
+def _norm_scope_doc(scope) -> dict:
+    """yaml 의 scope → 항상 {product_type: [...], family_product: [...]} 형태로."""
+    scope = scope if isinstance(scope, dict) else {}
+    return {k: [str(v) for v in (scope.get(k) or [])] for k in SCOPE_KEYS}
+
+
+def _known_metrics(sigs) -> set:
+    """조건 편집 드롭다운용 지표 이름 후보 — 지금 룰에 실제로 쓰이는 이름 전부."""
+    return {str(m) for s in sigs for m in (s.get("when_metric") or {})}
 
 
 def set_signatures_enabled(sig_ids: list, enabled: bool) -> dict:
@@ -371,6 +410,26 @@ def _validate_condition(metric: str, cond, threshold_keys: set) -> None:
         raise RuleError(f"{metric}: 임계값 키 '{ref}' 가 thresholds.yaml default 에 없음")
 
 
+def _validate_scope(value) -> dict | None:
+    """scope 검증 — taxonomy 에 있는 값만 허용. 둘 다 비면 None(= 전 제품 공통, 키 제거)."""
+    if not isinstance(value, dict):
+        raise RuleError("scope 는 객체여야 함")
+    tax = eval_debug.taxonomy()
+    out = {}
+    for key in SCOPE_KEYS:
+        raw = value.get(key) or []
+        if not isinstance(raw, list):
+            raise RuleError(f"scope.{key} 는 배열이어야 함")
+        allowed = set(tax) if key == "product_type" else {f for fs in tax.values() for f in fs}
+        picked = [str(v) for v in raw if str(v)]
+        unknown = [v for v in picked if v not in allowed]
+        if unknown:
+            raise RuleError(f"scope.{key}: 알 수 없는 값 {unknown}")
+        if picked:
+            out[key] = picked
+    return out or None
+
+
 def save_signature(sig_id: str, payload: dict) -> dict:
     """기존 signature 1건 갱신. 신규 추가/삭제는 허용하지 않는다."""
     path = eval_debug.rules_files()["signatures"]
@@ -408,6 +467,8 @@ def save_signature(sig_id: str, payload: dict) -> dict:
             if not isinstance(value, list) or any(not isinstance(v, str) for v in value):
                 raise RuleError("evidence 는 문자열 배열")
             updates["evidence"] = value
+        elif field == "scope":
+            updates["scope"] = _validate_scope(value)
         else:
             updates[field] = str(value or "")
 
@@ -416,8 +477,8 @@ def save_signature(sig_id: str, payload: dict) -> dict:
         warnings.append("비활성화해도 status.py SPECIFICITY_ORDER 항목은 그대로 남습니다(무해).")
 
     for key, value in updates.items():
-        if key == "issue_category" and value is None:
-            target.pop("issue_category", None)
+        if key in ("issue_category", "scope") and value is None:
+            target.pop(key, None)          # 전 제품 공통 = 키 자체를 두지 않는다
         elif key == "enabled" and value is True:
             target.pop("enabled", None)          # 기본값이므로 키를 지워 원본 형태 유지
         else:
@@ -448,6 +509,11 @@ def validate_all() -> dict:
         for metric, cond in (s.get("when_metric") or {}).items():
             try:
                 _validate_condition(metric, cond, threshold_keys)
+            except RuleError as exc:
+                problems.append(f"[{sig_id}] {exc}")
+        if s.get("scope") is not None:
+            try:
+                _validate_scope(s.get("scope"))
             except RuleError as exc:
                 problems.append(f"[{sig_id}] {exc}")
     for missing in sorted(sig_ids - order):

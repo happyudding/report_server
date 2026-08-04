@@ -37,6 +37,7 @@ _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 
 # 트레이스는 콜드 세션이면 수 초 CPU — 관리자 전용이라 동시 1건으로 묶는다.
 _trace_lock = threading.Lock()
+_TRACE_DEFAULT_MAX_CASES = 400
 _LOGIN_PAGE_CACHE = None
 
 
@@ -407,6 +408,7 @@ def _summary_row(index, case):
     return {"idx": index, "source": case.get("source"),
             "item_raw": case.get("item_raw"), "bin": case.get("bin"),
             "item_class": case.get("item_class"), "status": case.get("status"),
+            "value_type": case.get("value_type"),
             "primary_signature": case.get("primary_signature"),
             "fired_count": sum(1 for r in case["signature_matrix"] if r["fired"]),
             "stored": case.get("stored"),
@@ -421,13 +423,15 @@ def api_trace():
     session_id = str(body.get("session_id") or "").strip()
     if not _SESSION_ID_RE.match(session_id):
         return jsonify({"ok": False, "error": "session_id 형식 오류"}), 400
+    # all=true 면 케이스 상한 없음(전체). 분포 원본값은 eval_debug 가 런 단위 예산으로 묶는다.
+    max_cases = None if body.get("all") else _TRACE_DEFAULT_MAX_CASES
     if not _trace_lock.acquire(blocking=False):
         return jsonify({"ok": False, "error": "다른 트레이스가 실행 중입니다"}), 409
     t0 = time.perf_counter()
     try:
         result = eval_debug.trace_session(
             session_id, report_db=report_db,
-            upload_root=Path(config.REPORT_UPLOAD_DIR))
+            upload_root=Path(config.REPORT_UPLOAD_DIR), max_cases=max_cases)
     except (KeyError, FileNotFoundError):
         return jsonify({"ok": False, "error": f"세션 없음: {session_id}"}), 404
     except ValueError as exc:

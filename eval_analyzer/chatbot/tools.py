@@ -17,6 +17,7 @@ def build_tools():
         ) from e
 
     class SearchCasesArgs(BaseModel):
+        """search_cases 인자 스키마 — 전부 선택(부분일치 필터), limit 만 기본 20."""
         product: str | None = Field(None, description="제품명(부분일치)")
         item: str | None = Field(None, description="item 이름(item_canonical 부분일치)")
         status: str | None = Field(None, description="CRITICAL|MAJOR|MINOR|MONITOR")
@@ -24,14 +25,17 @@ def build_tools():
         limit: int = Field(20, description="최대 건수")
 
     class CaseDetailArgs(BaseModel):
+        """get_case_detail 인자 스키마 — case_id 필수."""
         case_id: str = Field(..., description="fail_case.case_id (sha256 hex)")
 
     class PrecedentArgs(BaseModel):
+        """find_precedents 인자 스키마 — item_name 필수, value_type 미지정 시 조회부가 추정한다."""
         item_name: str = Field(..., description="선례를 찾을 item 이름")
-        value_type: str | None = Field(None, description="V|A|Hz|CODE|P_F 등(미지정 시 추정)")
+        value_type: str | None = Field(None, description="V|A|Hz|CODE|PF 등(미지정 시 추정)")
         family_product: str | None = Field(None, description="보조 필터(제품군)")
 
     class StatsArgs(BaseModel):
+        """stats_summary 인자 스키마 — 집계 축 하나."""
         group_by: str = Field("status", description="status|product|product_type|item_class")
 
     return [

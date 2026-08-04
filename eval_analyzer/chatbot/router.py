@@ -12,6 +12,12 @@ _PREC_KW = ("선례", "과거", "precedent", "이력", "비슷")
 
 
 def route(question: str) -> str:
+    """질문 키워드로 조회 함수 1개를 고르고 결과를 사람이 읽을 텍스트로 돌려준다.
+
+    우선순위: 통계 키워드 → 선례 키워드 → 나머지는 fail_case 검색(기본). 검색은 item 으로
+    먼저 찾고 못 찾으면 같은 토큰을 product 로 한 번 더 본다 — 규칙기반이라 사용자가
+    무엇을 넣었는지 구분할 수 없기 때문의 보완이다.
+    """
     q = question.strip()
     ql = q.lower()
 
@@ -36,6 +42,7 @@ def route(question: str) -> str:
 
 # ── 파라미터 추출(단순) ────────────────────────────────────────────────
 def _pick_group_by(q: str) -> str:
+    """집계 축 추정 — product_type / product / item_class, 못 고르면 status(기본)."""
     if "제품타입" in q or "product_type" in q.lower():
         return "product_type"
     if "제품" in q or "product" in q.lower():
@@ -57,6 +64,7 @@ def _guess_item(q: str) -> str | None:
 
 # ── 결과 포맷(공용 — agent.py 도 재사용) ─────────────────────────────────
 def format_stats(group_by, rows) -> str:
+    """집계 결과 → "key: count" 목록. 비면 DB 가 비었을 수 있다는 안내 문구."""
     if not rows:
         return f"({group_by}별 집계 결과 없음 — DB 가 비었거나 아직 적재 전)"
     lines = [f"[{group_by}별 case 수]"]
@@ -65,6 +73,7 @@ def format_stats(group_by, rows) -> str:
 
 
 def format_cases(rows) -> str:
+    """case 목록 → 제품/item/bin/status 한 줄 + 코멘트 들여쓰기. case_id 는 앞 10자만 보인다."""
     if not rows:
         return "(조건에 맞는 case 없음)"
     lines = [f"검색된 case {len(rows)}건:"]
@@ -78,6 +87,7 @@ def format_cases(rows) -> str:
 
 
 def format_precedents(item, rows) -> str:
+    """선례 목록 → item/유사도 + 있으면 코멘트·조치. 값이 없는 칸은 빼고 붙인다."""
     if not rows:
         return f"(\"{item}\" 관련 선례 없음)"
     lines = [f"\"{item}\" 선례 {len(rows)}건:"]

@@ -26,6 +26,15 @@ def should_store(case_ctx, metrics, sig_result) -> bool:
 
 def persist(run_ctx, case_ctx, raw_metrics, features, verdict, sig_result, comment,
             engine_version, model_version, precedents=None):
+    """L6 적재 — case 1건의 raw_metrics/features/evaluation/evidence/signature/precedent 저장.
+
+    ⚠ raw(per-DUT)는 저장하지 않는다(불변 규칙 3) — L1/L2 계산값만 남긴다.
+    fail_case/run_case upsert 를 L0 ingest 가 아니라 여기서 하는 이유는 `should_store` 를
+    통과한 case 만 마스터에 남기기 위해서다. 커넥션 하나를 열어 전 CRUD 에 넘기므로
+    한 case 의 적재는 단일 트랜잭션이 된다.
+    ⚠ api.evaluate 는 이 함수를 ThreadPoolExecutor 워커에서 호출한다 — persist=True 경로는
+    SQLite 동시 쓰기다(VERIFY_CHECKLIST §2-2). report_server 연동은 persist=False 라 무관.
+    """
     run_id = run_ctx.get("run_id")
     case_id = case_ctx["case_id"]
     with store.get_conn() as conn:
@@ -51,6 +60,12 @@ def persist(run_ctx, case_ctx, raw_metrics, features, verdict, sig_result, comme
 
 
 def to_result(case_ctx, verdict, sig_result, comment, precedents) -> dict:
+    """L6 직렬화 — RunResult.cases[i] dict 조립 (docs/INTEGRATION_CONTRACT §4).
+
+    DB 적재분과 별개로 **호출자에게 돌려주는 계약 형태**다. `item_raw` 는 report_server
+    Issue Table join 키이고, `issue_category` 는 signature 택소노미를 모르는 호출자를 위한
+    편의 버킷(YIELD|CPK|ETC).
+    """
     primary_id = verdict["primary_signature"]
     sig_breakdown = [
         {"id": s["id"], "role": "primary" if s["id"] == primary_id else "secondary",

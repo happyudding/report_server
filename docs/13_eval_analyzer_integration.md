@@ -85,6 +85,9 @@ row0 TSEQ  row1 TNO  row2 STEP  row3 UNIT  row4 HILIM(USL)  row5 LOLIM(LSL)  row
   목록을 반환하므로 eval.db 없이도 동작한다 (comment 는 룰 템플릿 기반).
 - persist=True 로 전환하려면: 워커 동시 쓰기(WAL+busy_timeout 은 있음)·콜드 빌드마다
   ingest_run 행 증식·preview↔persist 간 case_id 불일치(엔진 docstring)를 먼저 검토할 것.
+- ⚠ **그래서 L1(raw_metrics)·L2(features)·evaluation 이 운영에서 0행이다.** 판단 근거를
+  쌓아 채점·보정에 쓰려면 별도 경로가 필요하다 → 설계·로드맵은
+  [17_eval_learning_loop.md](17_eval_learning_loop.md) (2026-08-04, 아직 미구현).
 - §9 의 **사람 코멘트 export DB 는 이 규약과 별개** — eval_analyzer 소유 eval.db 가 아니라
   report_server 소유의 **별도 파일**(`REPORT_EVAL_DB_PATH`)이다. `EVAL_DB_PATH` 는 여전히
   건드리지 않으며 evaluate 의 선례검색 동작도 무변경이다.
@@ -184,7 +187,7 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   `pipeline.ingest._*` — 엔진 리팩터링으로 시그니처가 바뀌면 eval_export 만 고치면 된다
   (실패는 safe_export 가 격리).
 - **unit → value_type 선보정** (2026-07-29): 엔진 `UNIT_TO_VALUE_TYPE` 은 **정확매칭
-  표**라 `VOLTS`/`HERTZ`/`mAMP` 같은 표기를 놓치고 조용히 `P_F` 로 떨어뜨린다.
+  표**라 `VOLTS`/`HERTZ`/`mAMP` 같은 표기를 놓치고 조용히 `PF` 로 떨어뜨린다.
   당시 엔진 무수정 원칙 때문에 보정을 서버 쪽에 뒀다 — `eval_export.unit_group()`
   (부분문자열 **VOLT→V / AMP→A / HERTZ→Hz**)을 **먼저** 보고, 안 걸리면 엔진 표로
   내려간다. (엔진이 자유 수정이 된 지금은 엔진 표를 직접 고쳐 일원화할 수도 있으나,
@@ -212,18 +215,18 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   공백 유연). 기존 20컬럼 레거시 CSV 도 헤더 자동감지로 계속 동작한다.
   정본 설명은 [eval_analyzer/db_input/CLAUDE.md](../eval_analyzer/db_input/CLAUDE.md).
 - **unit 정규화** (2026-07-29 부분일치로 확장): 원문(VOLTS/HERTZ/AMPS/PCT…)을 어휘
-  (V/A/Hz/CODE/Ohm/Sec/P_F/**%**)로 매핑한다. 2단계 —
+  (V/A/Hz/CODE/Ohm/Sec/PF/**%**)로 매핑한다. 2단계 —
   ① 정확일치: 엔진 `UNIT_TO_VALUE_TYPE` + db_input `EXTRA_UNIT_ALIASES`
   ② **부분일치**: db_input `UNIT_STEMS` 의 stem(`volt`/`amp`/`hertz`/`hz`/`ohm`/`sec`/
   `code`/`percent`/`pct`/`%`)이 문자열에 포함되면 그 그룹 (MILLIVOLT→V, AMPERE→A,
   KiloHertz→Hz, MOhm→Ohm, mSec→Sec, TCODE→CODE). 한 글자 stem(v/a/s)은 오탐이 커서 쓰지
   않는다 — 한 글자 표기는 ①이 담당.
   **모르는 단위가 하나라도 있으면 아무것도 적재하지 않고 중단**(행번호+원문 출력) —
-  `search_precedents` 가 `value_type` 을 등호 하드필터로 쓰기 때문에 조용한 P_F 폴백은
+  `search_precedents` 가 `value_type` 을 등호 하드필터로 쓰기 때문에 조용한 PF 폴백은
   선례를 영구 미매칭으로 만든다.
   - ⚠ **엔진 live-run 경로와 어긋난다**: `pipeline/ingest._classify_value_type` 은 여전히
-    정확일치 + 모르면 `P_F` 폴백이다(엔진 현행 동작). 그래서 `MILLIVOLT` 는 선례에선 `V`,
-    같은 표기를 UNIT 행에 쓴 live case 는 `P_F` 라 등호 필터에서 서로 안 잡힌다. 새 값
+    정확일치 + 모르면 `PF` 폴백이다(엔진 현행 동작). 그래서 `MILLIVOLT` 는 선례에선 `V`,
+    같은 표기를 UNIT 행에 쓴 live case 는 `PF` 라 등호 필터에서 서로 안 잡힌다. 새 값
     `%` 도 엔진이 절대 생성하지 않으므로 `%` 선례는 **선례 조회·관리자 탭 표시 용도**다.
     `rules/*.yaml` 은 `item_class = category_major|value_type|bin` 스코프라 `%` 스코프가
     없어 기본으로 폴백한다. 완전 해소는 엔진 `UNIT_TO_VALUE_TYPE`/`_classify_value_type`
@@ -288,11 +291,20 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
      비면 파일을 지운다. 각 행에 **설명**(thresholds.yaml 의 주석을 서버가 파싱 —
      `rules_io.threshold_descriptions`, 설명 정본은 yaml 주석 한 곳)과 **그 값을 쓰는 룰**
      (`rules_io.threshold_usage` 역인덱스 + 선언형이 아닌 코드 참조 라벨 `_CODE_REFS`)을 함께 찍는다.
+     룰 칩을 누르면 Signatures 탭의 그 룰로 바로 이동한다. 한 줄 설명 아래 **"자세히"**
+     접이식에는 통계 초보용 긴 설명이 붙는다 — 정본은 패널 옆 파일
+     [server/eval_panel/threshold_help.yaml](../server/eval_panel/threshold_help.yaml)
+     (`rules_io.threshold_help`, 키가 없으면 한 줄 요약만 나온다).
   2. *Signatures* — 21종 enable/disable + 조건(when_metric)·status_hint·issue_category·
-     문구(phenomenon/action/evidence) 편집. 체크박스로 **여러 개 골라 일괄 켜기/끄기**
-     (`POST /api/signatures/enabled` — yaml 쓰기·백업·rev bump 1회). **신규 추가/삭제는
-     지원하지 않는다** — `status.py SPECIFICITY_ORDER` 코드와 동기화가 필요해 UI 만으로는
-     안전하지 않다.
+     **적용 범위(scope)**·문구(phenomenon/action/evidence) 편집. 체크박스로 **여러 개 골라
+     일괄 켜기/끄기**(`POST /api/signatures/enabled` — yaml 쓰기·백업·rev bump 1회).
+     목록은 **사용중이 위, 꺼진 룰은 아래 접이식**이고 적용 범위별로 묶여 나온다
+     (제품군/Family 드롭다운으로 "이 제품군에서 실제로 쓰이는 룰"만 볼 수 있다).
+     조건은 행 단위로 추가/삭제하며 **모두 만족해야 발화(AND)** — OR 은 지원하지 않는다.
+     근거 문구는 `라벨 {지표}` 문법을 직접 쓰지 않고 [앞에 붙일 말]+[지표] 두 칸으로
+     편집한다(중괄호가 여러 개인 기존 템플릿은 원문 1칸으로 남는다).
+     **신규 추가/삭제는 지원하지 않는다** — `status.py SPECIFICITY_ORDER` 코드와 동기화가
+     필요해 UI 만으로는 안전하지 않다.
   3. *L0~L6 트레이스* — 세션 1건을 AI Comment 와 **같은 경로**(loader→mode_tables→
      `ai_comment._table_to_raw_df`)로 재현하되 `evaluate()` 대신 단계 함수를 직접 호출해
      raw_metrics/features/조건분해를 노출한다. signature 21행 매트릭스에 조건별
@@ -313,8 +325,20 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
        LSL/USL(빨간 점선)+mean/median(삼각) 을 vanilla canvas 로 그린다(`drawDist`,
        외부 라이브러리 없음 — 페이지에 Plotly 가 없다). 수치 표만 보고 임계값을 고치면
        "왜 이 값이 나왔나"를 확인할 수 없어서 넣었다. 데이터는 `_trace_case` 의
-       `dist` 필드 — 측정값 전량을 정렬해 내리되 20,000 초과 소스는 서버에서 60-bin
+       `dist` 필드 — 측정값 전량을 정렬해 내리되 5,000 초과 소스는 서버에서 60-bin
        히스토그램으로 축약한다(trace_store 4런 보관, **표시용이며 판정에는 무관**).
+       2026-08-04 부터 **런 단위 값 예산**(`_DIST_VALUES_BUDGET`)도 함께 걸린다 —
+       전체 트레이스에서 케이스 수에 비례해 메모리가 늘지 않게 하는 상한이다.
+       차트는 web_report Distribution 미니셀처럼 **좁은 카드**로 그린다(가로로 늘어진
+       캔버스는 봉우리가 눌려 육안 구분이 어려웠다).
+     - **전체 케이스 / 정렬**(2026-08-04): 기본은 상위 400건이지만 "전체 케이스" 를 켜면
+       상한 없이 가져온다(`POST /api/trace {all:true}`). 표는 항목 순서(원본)·발화 많은
+       순·심각도 순·코멘트 생성분 먼저로 정렬할 수 있다. L3 매트릭스는 **발화한 룰이 위**,
+       평가에서 빠진 룰(꺼짐 / scope 밖)은 **맨 아래 접이식**으로 내려간다.
+     - **무판정 진단**(2026-08-04): `value_type=PF` 로 분류된 케이스는 L1/L2 가 통계를
+       전부 비워 어떤 룰도 발화하지 못한다. 케이스 상세 상단에 UNIT 원문과 함께 그 사유를
+       경고로 찍는다(`_metrics_note`) — 대부분은 UNIT 표기가 엔진 정확일치 표
+       `ingest.UNIT_TO_VALUE_TYPE` 에 없어서 생기는 오분류다.
      - 함께 렌더되는 필드: `secondary_signatures`(배지) · `evidence`(L4 판정 근거) ·
        `precedents`(L5 선례) · `ctx_values`(접힌 표 — 조건 분해의 actual 원천).
   4. *Eval DB* — **admin 대시보드에서 이관**(2026-08-03). 코멘트 라벨 목록·검색·컬럼 토글·
@@ -343,8 +367,8 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 ## 12. 룰 축소 디버깅 체제 (2026-08-03)
 
 룰 21개를 동시에 굴리면 임계값 하나를 고쳤을 때 무엇이 좋아지고 나빠졌는지 볼 수 없어,
-**SPEC_TOO_TIGHT / SEVERE_OUTLIER / OUTLIER_WARN / SUBPOP_GAP / CONSTANT_VALUE 5개만
-남기고 16개를 `enabled: false`** 로 껐다. 개념이 잡히는 대로 `/pe/eval` Signatures 탭에서
+**SPEC_TOO_TIGHT / SEVERE_OUTLIER / OUTLIER_WARN / SUBPOP_GAP 4개만
+남기고 나머지를 `enabled: false`** 로 껐다(2026-08-04 CONSTANT_VALUE 추가로 끔 — 5→4개). 개념이 잡히는 대로 `/pe/eval` Signatures 탭에서
 하나씩 다시 켠다. 되돌리기는 그 탭의 일괄 켜기 한 번이다(코드 변경 없음).
 
 - **LOW_CPK 를 끈 것이 핵심**이다. SPEC_TOO_TIGHT 은 발화 조건에 `cpk < cpk_warn` 이
@@ -367,3 +391,28 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   `python tools/eval_golden/golden_check.py` 가 실제 트레이스와 대조해 누락/오탐을 센다
   (불일치 있으면 exit 1). `eval_debug.trace_session` 만 쓰므로 import 3곳 규약 밖이 아니다.
   임계값을 만지기 **전에** 몇 줄이라도 적어 두는 것이 이 도구의 전부다.
+
+## 13. value_type 어휘 `P_F` → `PF` + 단위 별칭 확장 (2026-08-04)
+
+**증상**: `TRIM_LDO23_1.1V` 같은 측정 항목이 아무 판정도 못 받고 조용히 넘어갔다.
+원인은 UNIT 원문(`0V`/`mV` 등)이 엔진 정확일치 표
+[`ingest.UNIT_TO_VALUE_TYPE`](../eval_analyzer/eval_engine/pipeline/ingest.py) 에 없어
+`value_type` 이 양불로 떨어진 것 — 양불 항목은 [metrics.py](../eval_analyzer/eval_engine/pipeline/metrics.py)
+가 cpk/stdev/mean 을 **전부 None 으로 비우므로** 모든 `when_metric` 조건이 결측→False 가
+되어 어떤 signature 도 발화하지 못한다(→ 발화 0건 → `OK`).
+
+- **단위 별칭 확장**: 배율 접두(`mv`/`uv`/`kv`/`nv`, `na`)와 테스터 표기(`0v`/`0a`)를
+  정확일치 표에 등록했다. 선례 적재(db_input)의 부분일치(`UNIT_STEMS`)는 종전대로다.
+- **어휘 개명**: 양불 value_type 을 `P_F` → **`PF`** 로 바꿨다. 엔진(ingest/metrics/
+  features/status) · export(`eval_export.VALUE_TYPES`) · 관리자 UI · db_input 별칭이 모두 같은 값이다.
+- **기존 데이터 마이그레이션** (스키마 DDL 변경 없음, 값만):
+  ```
+  python -m tools.migrate_value_type_pf <eval.db 경로>            # 미리보기
+  python -m tools.migrate_value_type_pf <eval.db 경로> --apply     # 적용
+  ```
+  대상은 `item_master.value_type` 과 `fail_case.item_class`(`…|P_F|<bin>` 의 가운데 축).
+  **DB 가 둘일 수 있다** — eval_analyzer 운영 `eval.db`(`EVAL_DB_PATH`)와 report_server
+  코멘트 export DB(`REPORT_EVAL_DB_PATH`). 안 옮기면 `search_precedents` 의 value_type
+  등호 하드필터에서 옛 행이 새 케이스와 매칭되지 않는다.
+- **진단 노출**: `/pe/eval` 트레이스 케이스 상세가 UNIT 원문과 "PF 라서 통계가 비었다"는
+  경고를 함께 찍는다. 목록에도 `PF` 배지가 붙는다.

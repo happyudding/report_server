@@ -39,6 +39,11 @@ DEFAULT_META = {
 
 
 def load_meta(csv_path, meta_arg):
+    """meta 로드 — `--meta` > 사이드카 `<csv>.meta.json` > DEFAULT_META 순.
+
+    어디서 왔는지를 `_meta_source` 에 남겨 리포트 머리에 찍는다(밑줄 키는 evaluate 에
+    넘기기 전에 걸러진다).
+    """
     meta = dict(DEFAULT_META)
     sidecar = os.path.splitext(csv_path)[0] + ".meta.json"
     path = meta_arg or (sidecar if os.path.exists(sidecar) else None)
@@ -88,6 +93,7 @@ def _fmt_precedents(precs):
 
 
 def print_report(result, meta, csv_path):
+    """evaluate() 결과를 콘솔 리포트로 — item 별 case, signature·evidence, 코멘트, 선례, 분포 요약."""
     cases = result["cases"]
     print("=" * 72)
     print(f"source     : {csv_path}")
@@ -133,6 +139,11 @@ def print_report(result, meta, csv_path):
 
 
 def main(argv=None):
+    """CLI 진입점 — CSV 를 읽어 evaluate() 후 리포트 출력. 기본은 preview(DB 미접근).
+
+    `--persist` 면 EVAL_DB_PATH 를 임시 `data/eval_testbench.db` 로 잡아 운영 eval.db 를
+    건드리지 않는다. api import 는 env 를 세운 **뒤에** 해야 config 가 그 경로를 읽는다.
+    """
     ap = argparse.ArgumentParser(description="raw_df CSV → evaluate() testbench")
     ap.add_argument("csv", help="정본 raw_df 포맷 CSV 경로")
     ap.add_argument("--meta", help="meta.json 경로 (기본: 사이드카 <csv>.meta.json)")

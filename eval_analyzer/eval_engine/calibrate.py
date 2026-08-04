@@ -22,6 +22,7 @@ from .pipeline._rules import load_yaml
 
 
 def _file_sha256(path) -> str:
+    """rules 파일 내용 해시 — engine_version_registry 에 "그때 그 임계값"을 못 박는 용도."""
     with open(path, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
 
@@ -94,6 +95,17 @@ def _rewrite_item_class_section(path, item_class_map):
 
 
 def recalibrate(*, product_type=None) -> dict:
+    """공개 진입점 — 누적 features 분위수로 thresholds.yaml 의 item_class 섹션을 갱신한다.
+
+    보정 대상 키와 분위수는 thresholds.yaml 의 `calibration:` 섹션이 정본이다(코드 하드코딩
+    금지). 스펙이 없거나 eval.db 가 없으면 아무것도 쓰지 않고 note 만 담아 돌려준다.
+    기존 item_class 항목은 **지우지 않고 병합**한다(신규 계산값 우선) — 표본이 부족해
+    이번에 못 뽑은 항목이 사라지면 수동으로 넣어 둔 값까지 날아가기 때문.
+    갱신 후 rules 3종의 해시를 새 engine_version 으로 등록해, 나중에 이 판정이 어떤
+    임계값으로 나왔는지 되짚을 수 있게 한다.
+    반환: engine_version / min_n / product_type / n_item_class_sampled / item_class(계산분) /
+    thresholds_file (+ 컬럼 오타 등으로 skip 된 키가 있으면 warnings).
+    """
     doc = load_yaml(str(config.THRESHOLDS_FILE))
     cal = doc.get("calibration") or {}
     spec = cal.get("quantiles") or {}

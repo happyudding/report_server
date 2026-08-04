@@ -74,7 +74,7 @@ run_input = {
   }
 }
 ```
-- **value_type(unit계열)** 는 units 값에서 매핑(V/A/Hz/CODE/P_F/Ohm/Sec). category_major(TRIM/NON_TRIM)
+- **value_type(unit계열)** 는 units 값에서 매핑(V/A/Hz/CODE/PF/Ohm/Sec). category_major(TRIM/NON_TRIM)
   는 item_name 에 'TRIM' 포함 여부로 판정(또는 meta 로 명시 가능).
 - **degrade 입력**: raw_table 없이 집계만 줄 수도 있음(아래). 그러면 yield-only.
 ```python

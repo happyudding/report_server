@@ -41,6 +41,14 @@ def evaluate(run_input: dict, *, engine_version: str | None = None,
     run_ctx = ingest.ingest(run_input, persist=persist)   # → {run_id, cases:[case_ctx...]}
 
     def _process_case(case):
+        """case 1건의 L1~L6. 저장 게이트를 못 넘으면 None, 넘으면 (result dict, 선례 수).
+
+        `should_store` 를 L4 뒤에 두는 이유 — 저장 여부 판단에 signature 발화가 필요해서
+        룰 계산을 먼저 끝내야 한다. 대신 걸러진 case 는 L5(선례검색·코멘트)를 건너뛰므로
+        가장 비싼 단계는 아낀다.
+        ⚠ 이 함수는 ThreadPoolExecutor 워커에서 돌기 때문에 persist=True 면 SQLite 에
+        동시 쓰기가 일어난다(VERIFY_CHECKLIST §2-2). report_server 연동은 persist=False.
+        """
         m = metrics.compute(case)                          # L1 raw_metrics
         f = features.compute(case, m, engine_version)      # L2 features
         sig = signatures.evaluate(case, f, m)              # L3 발화 signature 들

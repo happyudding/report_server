@@ -43,10 +43,12 @@ NUMERIC_COLUMNS = ["bin", "revision", "USL", "LSL", "average", "stdev", "wafer_n
 
 
 def _is_blank(value: Any) -> bool:
+    """True for None or a value whose string form is empty/whitespace."""
     return value is None or str(value).strip() == ""
 
 
 def _can_float(value: Any) -> bool:
+    """Whether a numeric column is acceptable. Blank counts as OK — these columns are optional."""
     if _is_blank(value):
         return True
     try:
@@ -57,6 +59,7 @@ def _can_float(value: Any) -> bool:
 
 
 def _row_error(index: int, row: dict[str, Any], errors: list[str]) -> dict[str, Any]:
+    """Wrap one row's verdict: READY when no errors, BLOCKED otherwise. Row is kept for preview."""
     return {
         "index": index,
         "status": "BLOCKED" if errors else "READY",
@@ -118,6 +121,7 @@ def validate_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def all_ready(validation: list[dict[str, Any]]) -> bool:
+    """True only when every row is READY — import_text refuses to save unless all pass."""
     return all(v["status"] == "READY" for v in validation)
 
 

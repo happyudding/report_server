@@ -16,13 +16,13 @@ CSV 포맷 2종 — **헤더로 자동 감지**한다.
      Product type, Family Product, unit, Item, comment          (5컬럼, 전부 필수)
    헤더는 대소문자·공백에 유연하다(strip+소문자+공백→'_' 로 정규화 후 비교).
    - `unit` 은 실측 단위 원문(VOLTS/HERTZ/AMPS/mA/PCT …) 을 그대로 적으면 되고, 어휘
-     (V/A/Hz/CODE/Ohm/Sec/P_F/%)로 매핑해 저장한다. 매핑은 2단계 — ① 정확일치
+     (V/A/Hz/CODE/Ohm/Sec/PF/%)로 매핑해 저장한다. 매핑은 2단계 — ① 정확일치
      (엔진 UNIT_TO_VALUE_TYPE + EXTRA_UNIT_ALIASES) ② 부분일치(UNIT_STEMS: volt/amp/
      hertz/hz/ohm/sec/code/percent/pct/% 가 포함되면 그 그룹).
      **모르는 단위가 하나라도 있으면 아무것도 적재하지 않고 중단**한다
-     (행번호 + 원문 목록 출력 → alias 를 보강한 뒤 재실행). 빈 unit 은 엔진과 같이 P_F.
+     (행번호 + 원문 목록 출력 → alias 를 보강한 뒤 재실행). 빈 unit 은 엔진과 같이 PF.
      ⚠ 부분일치와 '%' 는 **이 파일(선례 적재)에만** 있다 — 엔진 live-run 경로
-       (_classify_value_type)는 정확일치 + P_F 폴백이라 value_type 이 어긋날 수 있다
+       (_classify_value_type)는 정확일치 + PF 폴백이라 value_type 이 어긋날 수 있다
        (search_precedents 가 등호 하드필터). 상세 ../../docs/13 §10.
    - lot/wafer/bin/limit/통계가 없는 요약 선례이므로 case 는 다음 값으로 합성한다:
      product_name=`<Product type>_<Family Product>`, bin=0, lot/wafer 없음, revision=0.0.
@@ -83,7 +83,7 @@ EXTRA_UNIT_ALIASES = {
     "hertz": "Hz",
     "ampere": "A", "amperes": "A",
     "second": "Sec", "seconds": "Sec",
-    "pass_fail": "P_F",
+    "pass_fail": "PF",
     "%": "%", "pct": "%", "percent": "%",
 }
 
@@ -111,12 +111,14 @@ class CsvValidationError(ValueError):
     """
 
     def __init__(self, errors):
+        """errors(행별 메시지 목록)를 `.errors` 로 보관하고 종전 형식의 요약문을 메시지로 만든다."""
         self.errors = list(errors)
         super().__init__("CSV 오류 {}건 — 아무것도 적재하지 않았습니다.\n  {}".format(
             len(self.errors), "\n  ".join(self.errors)))
 
 
 def _to_float(s):
+    """CSV 셀 → float. 빈 값·변환 실패는 모두 None(선례 CSV 는 결측이 흔하다)."""
     if s is None or s == "":
         return None
     try:
@@ -142,17 +144,17 @@ def _norm_header(name):
 
 
 def _map_unit(unit):
-    """실측 단위 원문 → 어휘(V/A/Hz/CODE/Ohm/Sec/P_F/%). 모르는 단위면 None.
+    """실측 단위 원문 → 어휘(V/A/Hz/CODE/Ohm/Sec/PF/%). 모르는 단위면 None.
 
     2단계로 본다:
       1) 정확일치 — 엔진 UNIT_TO_VALUE_TYPE 을 먼저 보고 EXTRA_UNIT_ALIASES 로 보완.
       2) 부분일치 — UNIT_STEMS 의 stem 이 문자열에 포함되면 그 그룹
          (VOLTS/MILLIVOLT→V, AMPERE→A, KiloHertz→Hz, MOhm→Ohm, mSec→Sec, TCODE→CODE, PCT→%).
-    _classify_value_type 과 달리 미등록 단위를 조용히 P_F 로 만들지 않는다 — 호출측이 에러 처리.
-    빈 문자열은 엔진 표에 P_F 로 들어 있어 1단계에서 그대로 통과한다.
+    _classify_value_type 과 달리 미등록 단위를 조용히 PF 로 만들지 않는다 — 호출측이 에러 처리.
+    빈 문자열은 엔진 표에 PF 로 들어 있어 1단계에서 그대로 통과한다.
 
-    ⚠ 엔진 live-run 경로(_classify_value_type)는 여전히 정확일치 + P_F 폴백이다. 부분일치는
-      선례 적재(db_input) 쪽만 넓힌 것이라, 엔진이 P_F 로 본 표기를 여기서 V 로 적재하면
+    ⚠ 엔진 live-run 경로(_classify_value_type)는 여전히 정확일치 + PF 폴백이다. 부분일치는
+      선례 적재(db_input) 쪽만 넓힌 것이라, 엔진이 PF 로 본 표기를 여기서 V 로 적재하면
       search_precedents 의 value_type 등호 필터에서 서로 매칭되지 않는다. 새 값 '%' 도
       엔진은 생성하지 않는다 → 선례 조회/관리 용도. 자세한 건 ../../docs/13 §10.
     """
@@ -250,6 +252,7 @@ def _read_rows(path):
 
 
 def _require(row, col):
+    """행에서 필수값을 꺼낸다. 비어 있으면 어느 컬럼·어느 item 인지 밝힌 ValueError."""
     val = (row.get(col) or "").strip()
     if not val:
         raise ValueError(f"필수값 누락 (컬럼={col}, item_name={row.get('item_name')!r})")
@@ -272,6 +275,19 @@ def _get_or_create_run(conn, csv_path, session_id):
 
 
 def _import_group(product_type, family_product, session_id, rows, csv_path, db_path):
+    """한 그룹의 행들을 지정 DB 에 적재. 반환: (db_path, 적재 행수).
+
+    행마다 product/item 마스터 → item_spec → fail_case → run_case → raw_metrics →
+    label → case_outcome 순으로 엮는다. 전 행이 커넥션 하나에 묶여 중간 실패면 통째로 롤백.
+    재실행 idempotent: case_id 자연키 upsert + run 재사용 + label/outcome 은 case 당 1건이며
+    **값이 들어온 컬럼만 UPDATE** 한다(빈 컬럼이 기존 값을 지우지 않게).
+
+    ⚠ `config.DATA_DIR`/`config.DB_PATH` 를 **모듈 전역에 대입해서** 대상 DB 를 바꾼다.
+    되돌리지 않으므로 같은 프로세스에서 이후 운영 eval.db 를 열면 엉뚱한 파일을 본다.
+    report_server 가 이 스크립트를 in-process import 가 아니라 **subprocess 로 부르는
+    이유**가 바로 이것이다 — 장수명 Flask 프로세스의 config 전역을 오염시키지 않으려고
+    프로세스 경계를 둔다(../../docs/13 §10).
+    """
     _validate_product_meta({"product_type": product_type, "family_product": family_product})
 
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -433,6 +449,12 @@ def run(csv_path, unified=False, dry_run=False):
 
 
 def main(argv=None):
+    """CLI 진입점. 인자 없으면 사용법(모듈 docstring) 출력.
+
+    `--json` 이면 기계 판독 모드 — stdout 마지막 줄에 JSON 1줄, 종료코드 0(정상)/2(CSV 오류).
+    report_server 의 Honey 'DB Input' 라우트가 이 계약에 의존하므로 깨지 말 것.
+    그 밖에는 사람용 출력이고, 예외를 잡지 않고 그대로 노출한다(traceback 이 곧 진단).
+    """
     argv = argv if argv is not None else sys.argv[1:]
     # 종전엔 "--to-eval-db" 만 걸러내고 argv[0] 을 경로로 썼다 — 새 플래그를 앞에 붙이면
     # 그걸 CSV 경로로 잡는다. 이제 '--' 로 시작하는 것은 전부 플래그로 본다.

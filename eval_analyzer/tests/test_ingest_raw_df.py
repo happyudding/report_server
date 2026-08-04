@@ -42,6 +42,7 @@ def _new_df(n_pass=20, n_fail=4):
 
 
 def _meta():
+    """product_taxonomy 검증을 통과하는 최소 meta(PMIC/SOC)."""
     return {"product_name": "S5E_TEST_0000001", "family_product": "SOC",
             "product_type": "PMIC", "revision": 0.0, "lot_id": "LOT001",
             "wafer_number": 3}
@@ -173,3 +174,30 @@ def test_raw_df_warns_on_nonnumeric_items(caplog):
         ctx = ingest.ingest({"meta": _meta(), "raw_df": df}, persist=False)
     assert ctx["cases"] == []
     assert "case 0" in caplog.text
+
+
+# --- meta 전파: 선례검색 자기 데이터 제외의 전제 -----------------------------------------
+
+def test_meta_session_keys_reach_every_case():
+    """session_id/analysis_key 가 모든 case 에 실려야 선례검색이 자기 세션을 뺄 수 있다.
+
+    이 주입이 빠지면 precedent_client 가 항상 None 을 넘겨 시간 누출 차단이 조용히
+    무력화된다(발화·status 는 멀쩡해 보여 눈치채기 어렵다).
+    """
+    meta = {**_meta(), "session_id": "1700000000_abc", "analysis_key": "AK9"}
+    cases = ingest.ingest({"meta": meta, "raw_df": _new_df()}, persist=False)["cases"]
+    assert cases
+    assert all(c["session_id"] == "1700000000_abc" for c in cases)
+    assert all(c["analysis_key"] == "AK9" for c in cases)
+
+
+def test_meta_session_keys_default_to_none_on_degrade_path():
+    """두 키가 없는 구 호출부도 KeyError 없이 None — degrade 경로에서도 동일."""
+    ri = {"meta": {"product_name": "P1", "product_type": "PMIC", "revision": 0.0,
+                   "lot_id": "L1", "wafer_number": 1, "family_product": "SOC"},
+          "items": [{"item_name": "BUCK_SCAN", "bin": 40, "unit": "PF",
+                     "yield": 0.3, "fail_count": 196, "total_count": 280,
+                     "lsl": None, "usl": None}]}
+    cases = ingest.ingest(ri, persist=False)["cases"]
+    assert cases
+    assert all(c["session_id"] is None and c["analysis_key"] is None for c in cases)

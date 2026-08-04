@@ -27,6 +27,7 @@ except (AttributeError, ValueError):
 
 
 def _to_float(s):
+    """CSV 셀 → float. 빈 값은 None, 숫자가 아니면 **원본 문자열 그대로** 돌려준다."""
     if s is None or s == "":
         return None
     try:
@@ -36,10 +37,12 @@ def _to_float(s):
 
 
 def _detect_csv_kind(header):
+    """헤더만 보고 'raw'(DUT+Bin 있음) / 'degrade' 판별. run 명령이 파서를 고르는 기준."""
     return "raw" if ("DUT" in header and "Bin" in header) else "degrade"
 
 
 def _read_degrade_csv(path):
+    """degrade CSV → run_input({"meta", "items"}). meta 는 첫 행의 `meta_*` 접두 컬럼에서 뽑는다."""
     with open(path, newline="", encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
     if not rows:
@@ -61,6 +64,13 @@ def _read_degrade_csv(path):
 
 
 def _read_raw_csv(path):
+    """raw per-DUT CSV(df_honey 레이아웃) → 레거시 raw_table dict.
+
+    첫 열의 태그(UNITS/LOWER_LIMIT/UPPER_LIMIT)로 한계행을 골라내고 나머지를 측정행으로
+    본다. Bin 은 int, Serial 은 문자열 유지, 그 밖의 셀은 `_to_float`.
+    ⚠ 정본 raw_df(7-meta) 경로가 아니라 레거시 raw_table 경로다 — 정본 포맷 E2E 는
+    tools/testbench_eval.py 를 쓴다.
+    """
     with open(path, newline="", encoding="utf-8") as f:
         rows = list(csv.reader(f))
     header = rows[0]
@@ -95,6 +105,11 @@ def _read_raw_csv(path):
 
 
 def _cmd_run(argv):
+    """`run <csv> [--meta '{...}']` — CSV 종류를 자동판별해 evaluate(persist=True) 후 JSON 출력.
+
+    raw 경로는 meta 가 CSV 에 없으므로 CLI_TEST/PMIC 기본값을 깔고 `--meta` 로 덮어쓴다.
+    api import 를 함수 안에서 하는 것은 init/seed 만 쓸 때 엔진 전체 로딩을 피하려는 것.
+    """
     path = argv[1]
     meta_overrides = {}
     if "--meta" in argv:
@@ -119,6 +134,12 @@ def _cmd_run(argv):
 
 
 def _cmd_seed(argv):
+    """`seed <background.csv>` — 과거 라벨/조치를 선례 DB 에 직접 적재(평가 파이프라인 미경유).
+
+    행마다 product/item 마스터 → fail_case → raw_metrics → label → case_outcome 을 손으로
+    엮는다. 판정을 만드는 게 아니라 **선례검색이 인용할 과거 사례를 심는** 경로다.
+    전 행을 커넥션 하나에 묶어 중간 실패 시 통째로 롤백된다.
+    """
     path = argv[1]
     store.init_db()
     with open(path, newline="", encoding="utf-8") as f:
@@ -166,6 +187,7 @@ def _cmd_seed(argv):
 
 
 def _cmd_calibrate(argv):
+    """`calibrate [--product-type X]` — 누적 features 분위수로 thresholds.yaml 갱신 후 결과 출력."""
     product_type = None
     if "--product-type" in argv:
         product_type = argv[argv.index("--product-type") + 1]
@@ -175,6 +197,7 @@ def _cmd_calibrate(argv):
 
 
 def main(argv=None):
+    """서브커맨드 디스패처 — init / run / seed / calibrate. 그 밖은 모듈 docstring 을 출력한다."""
     argv = argv if argv is not None else sys.argv[1:]
     cmd = argv[0] if argv else "help"
     if cmd == "init":

@@ -77,7 +77,7 @@ def main():
 
         # (c) 기존 item value_type 보호 — 같은 item 을 다른 item_class 로 재라벨해도 유지
         eval_export.save_human_label(
-            _SESSION, item="VOUT_TRIM", bin_=18, item_class="TRIM|P_F|18",
+            _SESSION, item="VOUT_TRIM", bin_=18, item_class="TRIM|PF|18",
             engine=_ENGINE_MAJOR, human={"accepted": True})
         vt = conn.execute(
             "SELECT value_type FROM item_master WHERE item_name_raw='VOUT_TRIM'"

@@ -160,7 +160,7 @@ def main():
         assert q1(conn, "SELECT * FROM fail_case WHERE item_id=? AND bin=1",
                   im["item_id"]) is not None
         etc_im = q1(conn, "SELECT * FROM item_master WHERE item_name_raw='CustomThing'")
-        assert etc_im["value_type"] == "P_F" and etc_im["unit"] is None, dict(etc_im)
+        assert etc_im["value_type"] == "PF" and etc_im["unit"] is None, dict(etc_im)
         etc_fc = q1(conn, "SELECT * FROM fail_case WHERE item_id=?", etc_im["item_id"])
         assert etc_fc["bin"] is None, dict(etc_fc)
 

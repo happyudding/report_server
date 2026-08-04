@@ -20,6 +20,10 @@ _VALID_STATUS = {"CRITICAL", "MAJOR", "MINOR", "MONITOR", "OK"}
 
 
 def _load_honey(nrows=105, ncols=35):
+    """실측 CSV 일부를 report_generator.df_honey 로 읽는다. 파일이나 모듈이 없으면 skip.
+
+    외부 담당자 소유 모듈과 개발 PC 에만 있는 CSV 에 의존하므로 없으면 실패가 아니라 skip 이다.
+    """
     if _RG_CLIENT not in sys.path:
         sys.path.insert(0, _RG_CLIENT)
     if not os.path.exists(_CSV):
@@ -31,6 +35,7 @@ def _load_honey(nrows=105, ncols=35):
 
 
 def _run_input():
+    """df_honey 를 어댑터에 통과시켜 run_input 으로. 이 경로가 곧 report_server 결합 지점의 모사다."""
     from adapter import df_honey_to_run_input
     honey = _load_honey()
     return df_honey_to_run_input(honey)

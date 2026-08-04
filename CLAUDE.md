@@ -60,6 +60,9 @@ report_server/
 │   │   ├── _s3.py              boto3 호환 client + key 빌더 (내부 어댑터)
 │   │   ├── _issue_images.py    이슈 이미지 백엔드 (S3+로컬 폴백)
 │   │   └── _note_images.py     Note 탭 이미지 백엔드 (S3+로컬 폴백, 세션 단위)
+│   ├── chatbot/                 ENGR 이력 검색 챗봇 조회 툴 + CLI ([README](server/chatbot/README.md))
+│   │                            **라우트 미등록(CLI 전용)** — 운영 무영향. report.db(세션·이슈)
+│   │                            + eval.db(item 축) 두 정본을 read-only 로만 읽는다
 │   ├── admin_panel/             /pe/admin-<secret>/ 대시보드 + metrics 샘플러
 │   ├── eval_panel/              /pe/eval 룰 관리 (thresholds 제품군/family 오버레이 ·
 │   │                            signature on/off · L0~L6 트레이스 — 저장 즉시 반영)
@@ -339,6 +342,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | eval_analyzer 연결 (AI Comment / 코멘트 export) | [web_report/ai_comment.py](web_report/ai_comment.py) + [web_report/eval_export.py](web_report/eval_export.py) — eval_engine import 2곳 → [docs/13](docs/13_eval_analyzer_integration.md) |
 | 기준정보(part_ids) 갱신 — DRM CSV → product_info.db | [tools/product_info_import/](tools/product_info_import/README.md) (Excel PC) → [server/product_info.py](server/product_info.py) 가 읽기전용 로드 |
 | eval 룰 골든셋 회귀 (임계값 튜닝 전후 비교) | [tools/eval_golden/golden_check.py](tools/eval_golden/golden_check.py) → [docs/13 §12](docs/13_eval_analyzer_integration.md) |
+| ENGR 이력 검색 챗봇 (자연어 → 조회 툴) | [server/chatbot/](server/chatbot/README.md) — 골든셋 [tests/chatbot_golden.yaml](tests/chatbot_golden.yaml), 백필 [tools/eval_backfill/](tools/eval_backfill/backfill_eval_db.py) |
 | 더미 grids 픽스처 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |
 
 ---

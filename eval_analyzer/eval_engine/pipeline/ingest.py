@@ -4,7 +4,7 @@
 할 일:
   1. product_master / item_master / item_spec upsert (마스터).
   2. item 명 파싱: item_canonical(정규화) / item_base / item_phase, item_alias 해소.
-  3. category_major(TRIM 포함 여부) / value_type(units→V|A|Hz|CODE|P_F|Ohm|Sec) 분류.
+  3. category_major(TRIM 포함 여부) / value_type(units→V|A|Hz|CODE|PF|Ohm|Sec) 분류.
   4. fail item 추출: bin != PASS_BIN 또는 limit 위반(CODE_TO_PORT §4)인 (item, bin) 조합.
   5. case_id = store.make_case_id(...), item_class = f"{category_major}|{value_type}|{bin}".
   6. ingest_run 생성(run_id, meta 의 temperature/corner 포함), run_case 링크, fail_case upsert.
@@ -27,14 +27,18 @@ logger = logging.getLogger(__name__)
 
 PASS_BIN = 1
 
+# 단위 원문(소문자) → value_type. **정확일치 표**라 여기 없는 표기는 PF 로 떨어지고,
+# PF 는 L1/L2 가 통계를 전부 비우는 부류라 그 item 은 어떤 signature 도 발화하지 못한다
+# (= 무판정). 그래서 배율 접두(m/u/k/n)와 "0V"/"0A" 같은 테스터 표기도 명시 등록한다.
 UNIT_TO_VALUE_TYPE = {
     "v": "V", "volt": "V", "volts": "V",
-    "a": "A", "amp": "A", "amps": "A", "ma": "A", "ua": "A",
+    "mv": "V", "uv": "V", "kv": "V", "nv": "V", "0v": "V",
+    "a": "A", "amp": "A", "amps": "A", "ma": "A", "ua": "A", "na": "A", "0a": "A",
     "hz": "Hz", "khz": "Hz", "mhz": "Hz",
     "code": "CODE",
     "ohm": "Ohm", "ohms": "Ohm",
     "s": "Sec", "sec": "Sec", "secs": "Sec", "ms": "Sec", "us": "Sec", "ns": "Sec",
-    "p_f": "P_F", "pass/fail": "P_F", "p/f": "P_F", "": "P_F",
+    "pf": "PF", "p_f": "PF", "pass/fail": "PF", "p/f": "PF", "": "PF",
 }
 PHASE_TOKENS = {"init", "code", "trim", "p2", "p1", "final"}
 
@@ -44,6 +48,7 @@ _META_ROW_LABELS = ["TSEQ", "TNO", "STEP", "UNIT", "HILIM", "LOLIM"]
 
 
 def _norm(x):
+    """레이아웃 검증용 정규화 — strip + BOM 제거 + 대문자. 컬럼·메타행 라벨 비교에만 쓴다."""
     return str(x).strip().lstrip("﻿").upper()
 
 
@@ -93,6 +98,7 @@ def _validate_product_meta(meta: dict) -> None:
 
 
 def _alias_map():
+    """rules/item_alias.yaml 의 {원본 item명: canonical} 사전. 파일이 없으면 빈 dict."""
     try:
         doc = load_yaml(str(config.ITEM_ALIAS_FILE))
         return {k.strip(): v for k, v in (doc.get("aliases") or {}).items()}
@@ -101,24 +107,36 @@ def _alias_map():
 
 
 def _canonicalize(raw_name: str) -> str:
+    """alias 에 없는 item 명의 기본 정규화 — 소문자 + 연속 공백을 밑줄 하나로."""
     return re.sub(r"\s+", "_", raw_name.strip().lower())
 
 
 def _classify_value_type(unit, item_name) -> str:
+    """UNIT 행 → value_type(V|A|Hz|CODE|Ohm|Sec|PF). 룰 스코프의 한 축이라 분류가 곧 임계값이다.
+
+    UNIT 을 못 읽으면 item 명에 CODE 가 있는지로 한 번 더 보고, 그래도 모르면 PF(양불)로
+    떨어뜨린다. PF 는 측정값이 없는 부류라 L1 이 통계량을 전부 비운다.
+    """
     if unit:
         vt = UNIT_TO_VALUE_TYPE.get(str(unit).strip().lower())
         if vt:
             return vt
     if "CODE" in item_name.upper():
         return "CODE"
-    return "P_F"
+    return "PF"
 
 
 def _classify_category_major(item_name: str) -> str:
+    """item 명에 TRIM 이 들어 있으면 'TRIM', 아니면 'NON_TRIM'. item_class 의 첫 축."""
     return "TRIM" if "TRIM" in item_name.upper() else "NON_TRIM"
 
 
 def _parse_base_phase(item_canonical: str):
+    """canonical 을 밑줄로 쪼개 PHASE_TOKENS(init/code/trim/p1/p2/final) 하나를 phase 로 뽑는다.
+
+    반환: (base, phase) — phase 를 뺀 나머지가 base. phase 토큰이 없으면 (canonical, None).
+    같은 측정을 단계만 달리한 item 들을 base 로 묶어 보기 위한 분해다.
+    """
     parts = item_canonical.split("_")
     phase = next((p for p in parts if p in PHASE_TOKENS), None)
     base = "_".join(p for p in parts if p != phase) if phase else item_canonical
@@ -126,6 +144,7 @@ def _parse_base_phase(item_canonical: str):
 
 
 def _is_num(x):
+    """이미 숫자 타입인가(NaN 제외). 문자열은 변환하지 않고 그대로 False — 파서가 건너뛴다."""
     return isinstance(x, (int, float)) and not (isinstance(x, float) and x != x)  # NaN 제외
 
 
@@ -139,6 +158,7 @@ def _num_or_none(v):
 
 
 def _bin_or_none(v):
+    """BIN 셀 → int. 공란/NaN/변환불가면 None."""
     n = _num_or_none(v)
     return int(n) if n is not None else None
 
@@ -156,13 +176,24 @@ def _tno_norm(v):
         return s or None
 
 
+def _unit_text(unit):
+    """UNIT 셀 → 진단 표시용 문자열. 공란/NaN 은 None (pandas 스칼라도 안전하게 처리)."""
+    if unit is None or (isinstance(unit, float) and math.isnan(unit)):
+        return None
+    return str(unit).strip() or None
+
+
 def _case_dict(meta, case_id, item_id, item_canonical, cat, value_type, bin_,
                revision, lsl, usl, values, fail_mask, x_pos, y_pos, site, skewness=None,
-               item_raw=None):
-    """fail_case context dict (raw_table/raw_df 경로 공유 — 스키마 단일 소스)."""
+               item_raw=None, unit=None):
+    """fail_case context dict (raw_table/raw_df 경로 공유 — 스키마 단일 소스).
+
+    `unit` 은 판정에 쓰이지 않는다(분류는 이미 value_type 으로 끝났다). value_type 이
+    왜 그렇게 나왔는지 되짚기 위한 진단용 원문이다 — /pe/eval 트레이스가 표시한다.
+    """
     return {
         "case_id": case_id, "item_id": item_id, "item_canonical": item_canonical,
-        "item_raw": item_raw,
+        "item_raw": item_raw, "unit": _unit_text(unit),
         "category_major": cat, "value_type": value_type, "bin": bin_,
         "revision": revision, "item_class": f"{cat}|{value_type}|{bin_}",
         "product_type": meta.get("product_type"),
@@ -174,6 +205,12 @@ def _case_dict(meta, case_id, item_id, item_canonical, cat, value_type, bin_,
 
 
 def _resolve_item_identity(raw_name, value_type, persist, conn, alias):
+    """원본 item 명 → (item_id, item_canonical, category_major). 3개 입력 경로가 공유한다.
+
+    persist=True 면 item_master/item_alias 를 조회·upsert 해 **DB 가 준 item_id** 를 쓴다.
+    persist=False(preview)는 DB 를 아예 열지 않으므로 canonical 의 sha1 앞 8자리를 item_id
+    로 대신 쓴다 — 그래서 preview 의 case_id 는 나중에 persist 로 재실행하면 달라질 수 있다.
+    """
     item_canonical = alias.get(raw_name.strip(), _canonicalize(raw_name))
     base, phase = _parse_base_phase(item_canonical)
     cat = _classify_category_major(raw_name)
@@ -189,6 +226,12 @@ def _resolve_item_identity(raw_name, value_type, persist, conn, alias):
 
 
 def _ingest_raw_table(meta, raw_table, persist, conn, alias):
+    """레거시 raw_table(중립 dict) → fail_case 들. df_honey 어댑터가 쓰던 경로.
+
+    정본 raw_df 와 **fail 식별 방식이 다르다** — 여기서는 FAILTNO 가 없으므로 "limit 위반
+    (lo|hi) AND non-pass bin" 인 (item, bin) 조합을 fail 로 본다(report_server
+    build_issue_table 과 같은 의미). limit 위반이 하나도 없는 item 은 case 를 만들지 않는다.
+    """
     revision = meta.get("revision")
     item_cols = raw_table["item_columns"]
     units = raw_table.get("units", {})
@@ -241,7 +284,7 @@ def _ingest_raw_table(meta, raw_table, persist, conn, alias):
             cases.append(_case_dict(meta, case_id, item_id, item_canonical, cat,
                                     value_type, bin_, revision, lsl, usl,
                                     values, fail_mask, x_pos, y_pos, site,
-                                    item_raw=item))
+                                    item_raw=item, unit=unit))
     return cases
 
 
@@ -307,7 +350,7 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
             case = _case_dict(meta, case_id, item_id, item_canonical, cat,
                               value_type, bin_, revision, lsl, usl,
                               values, fail_mask, x_pos, y_pos, site,
-                              item_raw=item)
+                              item_raw=item, unit=unit_row[item])
             # yield 분모/분자는 전체 DUT(데이터 행) 기준 — item 셀 파싱 성공분(len(values))으로
             # 재면 item 마다 분모가 달라져 trump/GROSS_FAIL 비교가 왜곡된다. FAILTNO 기반
             # fail 식별은 측정값 파싱과 무관하므로 전체 행에서 센다. (fail_mask 는 공간
@@ -324,6 +367,11 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
 
 
 def _ingest_degrade(meta, items, persist, conn, alias):
+    """degrade 경로 — per-DUT raw 없이 요약통계(yield/fail_count/…)를 직접 받는다.
+
+    values/fail_mask/좌표가 전부 빈 리스트라 L1 은 넘겨받은 요약값을 그대로 쓰고 L2 공간
+    feature 는 결측이 된다(→ data_completeness 하락). raw 를 못 구하는 입력의 폴백 경로.
+    """
     revision = meta.get("revision")
     cases = []
     for it in items:
@@ -340,7 +388,7 @@ def _ingest_degrade(meta, items, persist, conn, alias):
                                      meta.get("wafer_number"), item_id, bin_, revision)
         cases.append({
             "case_id": case_id, "item_id": item_id, "item_canonical": item_canonical,
-            "item_raw": raw_name,
+            "item_raw": raw_name, "unit": _unit_text(it.get("unit")),
             "category_major": cat, "value_type": value_type, "bin": bin_,
             "revision": revision, "item_class": f"{cat}|{value_type}|{bin_}",
             "product_type": meta.get("product_type"),
@@ -354,6 +402,12 @@ def _ingest_degrade(meta, items, persist, conn, alias):
 
 
 def _build_cases(meta, run_input, persist, conn):
+    """run_input 키로 입력 3경로를 분기하고, 만들어진 case 에 공통 meta 를 덧붙인다.
+
+    분기 순서: raw_df(정본) → raw_table(레거시) → items(degrade). raw_df 는 DataFrame 이라
+    진리값이 모호하므로 **반드시 `is not None`** 으로 판별한다(`if raw_df:` 로 바꾸면
+    빈 df 가 아닌데도 다음 분기로 새거나 ValueError 가 난다).
+    """
     alias = _alias_map()
     raw_df = run_input.get("raw_df")
     raw_table = run_input.get("raw_table")
@@ -379,6 +433,13 @@ def _build_cases(meta, run_input, persist, conn):
 
 
 def ingest(run_input: dict, *, persist: bool = True) -> dict:
+    """L0 진입점 — run_input → {"run_id", "cases"}. 위 모듈 docstring 이 전체 계약.
+
+    persist=True 면 커넥션 하나로 product_master upsert + ingest_run 생성 + case 조립을
+    한 트랜잭션에 묶는다. fail_case/run_case 는 **여기서 쓰지 않는다** — 룰 계산 뒤
+    `present.should_store` 를 통과한 case 만 `present.persist` 가 남긴다.
+    persist=False(preview)는 DB 를 열지 않아 run_id 가 None 이다.
+    """
     meta = run_input["meta"]
     _validate_product_meta(meta)
     if not persist:

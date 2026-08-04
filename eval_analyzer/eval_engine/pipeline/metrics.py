@@ -45,8 +45,17 @@ def _bimodality_coefficient(values):
 
 
 def compute(case_ctx: dict) -> dict:
+    """L1 진입점 — case 1건의 측정값(메모리)에서 raw_metrics 산출. raw 는 저장하지 않는다.
+
+    PF(양불) item 은 측정값이 없어 통계량을 전부 None 으로 비우고 yield 계열만 채운다.
+    cpk 로 판정할 수 없는 부류라, status.decide 의 PF trump(수율 단독 CRITICAL)가 그
+    공백을 메운다. values 가 비어 있는 경로는 degrade 입력 — 요약통계가 case_ctx 에 이미
+    들어 있으므로 그대로 옮긴다.
+    반환: DB_SCHEMA §4 raw_metrics 컬럼(cpk/cpl/cpu/cp/mean/stdev/min/max/yield/
+    fail_count/total_count/bimodality).
+    """
     values = case_ctx.get("values") or []
-    is_pf = case_ctx.get("value_type") == "P_F"
+    is_pf = case_ctx.get("value_type") == "PF"
     summary = cpk_summary(values, case_ctx.get("lsl"), case_ctx.get("usl"))
     if values:
         # 분모는 전체 DUT 수(ingest 가 넣은 total_count) 우선 — len(values)(파싱 성공분)로

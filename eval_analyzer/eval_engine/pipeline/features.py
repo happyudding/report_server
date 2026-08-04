@@ -28,6 +28,7 @@ _FEATURE_KEYS = [
 
 
 def _empty_features():
+    """전 feature 를 None 으로 채운 dict(n_dut 만 0). 측정값이 하나도 없을 때 쓴다."""
     f = {k: None for k in _FEATURE_KEYS}
     f["n_dut"] = 0
     return f
@@ -67,6 +68,11 @@ def _value_gap(v):
     return gap_ratio, float(min(below, 1.0 - below))
 
 def _histogram_peaks(v):
+    """히스토그램 + 국소 최대(양옆 bin 보다 큰) 인덱스. 표본 8 미만이면 None(판정 불가).
+
+    반환: (peaks, hist). bin 수는 표본 크기에 따라 5~20 사이. `_density_gap` 과 `_n_modes`
+    가 **같은 히스토그램**을 봐야 골 깊이와 봉우리 수가 어긋나지 않으므로 둘이 공유한다.
+    """
     if v.size < 8:
         return None
     hist, _ = np.histogram(v, bins=min(20,max(5, v.size // 5)))
@@ -91,6 +97,7 @@ def _density_gap(v):
     return float((min(int(hist[p1]), int(hist[p2])) - valley) / peak_max)
 
 def _n_modes(v):
+    """히스토그램 봉우리 개수(최소 1). 표본 부족이면 None."""
     peaks_hist = _histogram_peaks(v)
     if peaks_hist is None:
         return None
@@ -119,6 +126,14 @@ def _gradient(coord, fail_mask, bins=8):
 
 
 def _spatial_features(case_ctx, th):
+    """웨이퍼 좌표 기반 fail 편중 feature. 좌표가 없거나 fail 이 0 이면 전부 None.
+
+    반경을 최대반경으로 정규화해 edge/center/ring 영역을 가르고, 각 영역의 fail 율을
+    **전체 fail 율로 나눈 비**를 낸다 — 1.0 이면 편중 없음, 클수록 그 영역에 몰린 것.
+    gradient 는 좌표를 8구간으로 나눈 구간별 fail 율의 회귀 기울기이고, `_norm` 변형은
+    좌표 스케일이 제품마다 달라도 비교되도록 정규화 좌표로 다시 잰 값이다.
+    영역 경계(edge_region_pct/center_region_pct)는 thresholds.yaml.
+    """
     x = case_ctx.get("x_pos") or []
     y = case_ctx.get("y_pos") or []
     fail_mask = case_ctx.get("fail_mask") or []
@@ -177,6 +192,14 @@ def _spatial_features(case_ctx, th):
 
 def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, density_gap,
                           value_gap_ratio, value_gap_minor_mass, th):
+    """이봉·다봉·분리 판정 — SUBPOP_GAP 발화의 유일한 근거. 반환: bimodal|multimodal|separated|None.
+
+    게이트 2개를 먼저 통과해야 한다: 표본이 `subpop_n_min` 이상이고, outlier_ratio 가
+    `subpop_outlier_ratio_max` 미만일 것. ⚠ 후자 때문에 **소수 모드가 outlier 로 잡히는
+    분포는 이봉으로 발화하지 못한다** — 오발화를 줄이려는 의도된 보수적 게이트다.
+    separated 는 값 축의 실제 빈 구간(`_value_gap`) 기준이다. 구 cdf_gap(동일값 질량)
+    조건은 이산/양자화 데이터에서 오발화라 2026-08-03 에 교체했다.
+    """
     if n_dut is None or n_dut < th["subpop_n_min"]:
         return None
     if outlier_ratio is not None and outlier_ratio >= th["subpop_outlier_ratio_max"]:
@@ -196,6 +219,11 @@ def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, densi
 
 
 def _classify_zone(spatial, th):
+    """공간 feature → wafer_zone_signature. 앞에서 걸리는 것이 이긴다.
+
+    EDGE(가장자리 편중) → CENTER(중앙 편중) → CLUSTER(사분면 불균형) 순으로 보고,
+    아무 것도 임계를 넘지 못하면 RANDOM.
+    """
     edge = spatial.get("edge_fail_ratio")
     center = spatial.get("center_fail_ratio")
     quad = spatial.get("quadrant_imbalance")
@@ -209,6 +237,10 @@ def _classify_zone(spatial, th):
 
 
 def _site_cpk_delta(case_ctx):
+    """site 별 cpk 의 최대-최소 차. site 가 없거나 cpk 를 낼 수 있는 site 가 2개 미만이면 None.
+
+    site 간 공정능력 편차가 크면 장비/소켓 쪽을 의심하게 하는 지표(EQUIPMENT_SUSPECT).
+    """
     site = case_ctx.get("site") or []
     values = case_ctx.get("values") or []
     if not site or all(s is None for s in site):
@@ -230,11 +262,22 @@ def _site_cpk_delta(case_ctx):
 
 
 def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
+    """L2 진입점 — 측정값에서 robust 산포/spec margin/공간 feature 산출 (CODE_TO_PORT §5).
+
+    산포는 표준편차가 아니라 MAD 기반 robust sigma 를 쓴다 — 소수의 폭주값이 산포를 통째로
+    부풀려 정상 분포를 이상으로 오판하는 것을 막기 위해서다. MAD=0(과반이 같은 값)이면
+    Iglewicz-Hoaglin meanAD 로 폴백한다. 그냥 0 으로 두면 "대부분 동일값 + 소수 폭주"
+    케이스를 outlier 룰이 통째로 놓친다.
+    PF(양불) item 은 측정값 기반 feature 를 전부 None 으로 비운다 — 값이 없는데 계산하면
+    허수 판정이 된다. 공간 feature 와 n_dut 는 남는다.
+    반환: DB_SCHEMA §5 features 컬럼 + 파생 2개(value_gap_ratio/value_gap_minor_mass —
+    DB 에는 저장하지 않고 separated 판정·트레이스 표시에만 쓴다).
+    """
     values = case_ctx.get("values") or []
     lsl, usl = case_ctx.get("lsl"), case_ctx.get("usl")
     n = len(values)
     th = thresholds_for(case_ctx)
-    is_pf = case_ctx.get("value_type") == "P_F"
+    is_pf = case_ctx.get("value_type") == "PF"
     if n == 0:
         return _empty_features()
 

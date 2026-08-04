@@ -29,7 +29,7 @@ calibration 피드백. 노하우는 전부 (3)에 쌓인다. [3↔4] 변환기 =
 - item_id : PK. · item_name_raw : 원본 이름. · item_canonical : 정규화 이름(이력 traceability).
 - item_base : phase 뗀 본체(family 키, 예 vref). · item_phase : init/code/trim/p2.
 - category_major : TRIM/NON_TRIM ← item_class 구성. · category_mid : 중분류.
-- value_type : V/A/Hz/CODE/P_F/Ohm/Sec ← item_class 구성(=unit계열). · unit : 단위.
+- value_type : V/A/Hz/CODE/PF/Ohm/Sec ← item_class 구성(=unit계열). · unit : 단위.
 
 **item_spec** ((item,product,revision)당 1행)
 - lsl/usl : 하한/상한 spec. revision별 변경 이력 보존. spec_margin 기준.

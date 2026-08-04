@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS item_master (
     item_phase     TEXT,                     -- init/code/trim/p2 ...
     category_major TEXT,                     -- 'TRIM' | 'NON_TRIM'   ← item_class 구성
     category_mid   TEXT,
-    value_type     TEXT,                     -- V|A|Hz|CODE|TCODE|P_F  ← item_class 구성 (= 'unit계열')
+    value_type     TEXT,                     -- V|A|Hz|CODE|TCODE|PF  ← item_class 구성 (= 'unit계열')
     unit           TEXT,
     UNIQUE(item_canonical)
 );
@@ -334,7 +334,7 @@ outcome.result : recovered_normal | improved | false_fail | confirmed_defective
                  (정본 = rules/outcome_taxonomy.yaml — ko/group 포함, insert_case_outcome
                   에서 validate_outcome 검증. 'other' = 이스케이프값(미정의 케이스 수용))
 category_major : TRIM | NON_TRIM
-value_type     : V | A | Hz | CODE | P_F | Ohm | Sec
+value_type     : V | A | Hz | CODE | PF | Ohm | Sec
 corner         : NN | SS | FF | (기타 코너)
 data_completeness : full | partial | low
 product_type   : MDDI | PDDI | PMIC | SECURITY | TCON

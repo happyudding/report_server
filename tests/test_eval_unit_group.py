@@ -5,7 +5,7 @@
 
 검증:
   (a) unit_group() 부분문자열 규칙 — VOLT→V / AMP→A / HERTZ→Hz, 그 외 None
-  (b) export 경로가 엔진 정확매칭 표보다 이 규칙을 먼저 쓴다 (HERTZ 가 P_F 로 안 떨어짐)
+  (b) export 경로가 엔진 정확매칭 표보다 이 규칙을 먼저 쓴다 (HERTZ 가 PF 로 안 떨어짐)
   (c) list_labels() 행에 item_id 가 실려 나온다 (수정 UI 대상 지정용)
   (d) set_item_value_type() 이 item_master.value_type + fail_case.item_class 를 함께 갱신
   (e) remap_unit_aliases(dry_run=True) 는 DB 를 안 바꾸고, 실행하면 오분류만 교정
@@ -32,8 +32,8 @@ from web_report import eval_export  # noqa: E402
 
 # (item_canonical, raw, 저장된 value_type, unit 원문) — 앞 2건은 일부러 오분류 상태
 SEEDS = [
-    ("vref_trim", "VREF_TRIM", "P_F", "VOLTS"),      # → V 로 교정돼야 함
-    ("osc_freq", "OSC_FREQ", "P_F", "MEGAHERTZ"),    # → Hz
+    ("vref_trim", "VREF_TRIM", "PF", "VOLTS"),      # → V 로 교정돼야 함
+    ("osc_freq", "OSC_FREQ", "PF", "MEGAHERTZ"),    # → Hz
     ("idd_leak", "IDD_LEAK", "A", "uAMP"),           # 이미 맞음 → 변화 없음
     ("bg_code", "BG_CODE", "CODE", "code"),          # 규칙 밖 → 손대지 않음
 ]
@@ -84,9 +84,9 @@ def main():
     for unit in ["mV", "V", "hz", "code", "ohm", "", None]:
         assert eval_export.unit_group(unit) is None, unit
 
-    # (b) export 경로 우선순위 — 엔진 표엔 HERTZ 가 없어 원래 P_F 였다 ────────
+    # (b) export 경로 우선순위 — 엔진 표엔 HERTZ 가 없어 원래 PF 였다 ────────
     _, engine_ingest = eval_export._engine()
-    assert engine_ingest._classify_value_type("HERTZ", "OSC_FREQ") == "P_F"
+    assert engine_ingest._classify_value_type("HERTZ", "OSC_FREQ") == "PF"
     assert (eval_export.unit_group("HERTZ")
             or engine_ingest._classify_value_type("HERTZ", "OSC_FREQ")) == "Hz"
 
@@ -115,7 +115,7 @@ def main():
     preview = eval_admin.remap_unit_aliases(dry_run=True)
     assert preview["changed"] == 2, preview
     assert {i["item"] for i in preview["items"]} == {"VREF_TRIM", "OSC_FREQ"}, preview
-    assert item_state("VREF_TRIM")[1] == "P_F", "dry_run 이 DB 를 바꿈"
+    assert item_state("VREF_TRIM")[1] == "PF", "dry_run 이 DB 를 바꿈"
 
     applied = eval_admin.remap_unit_aliases()
     assert applied["changed"] == 2 and applied["cases"] == 2, applied

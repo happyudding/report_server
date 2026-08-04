@@ -8,6 +8,7 @@ from . import config, store
 
 
 def backend() -> str:
+    """현재 선례검색 백엔드 이름('sql' 기본 | 'rag'). config 로만 바뀐다 — 하드코딩 금지."""
     return config.EVAL_PRECEDENT_BACKEND
 
 

@@ -234,7 +234,7 @@ def labels_csv_iter():
     """코멘트 라벨 → db_input 단순 포맷 CSV generator (첫 청크에 UTF-8 BOM + 헤더).
 
     unit 은 화면에 보이는 `im.unit`(원문, 예 "mV") 이 아니라 `im.value_type`(엔진 어휘
-    V/A/Hz/CODE/Ohm/Sec/P_F)을 내보낸다 — 어휘값은 전부 import_csv 의 alias 표에 있어
+    V/A/Hz/CODE/Ohm/Sec/PF)을 내보낸다 — 어휘값은 전부 import_csv 의 alias 표에 있어
     받은 파일을 그대로 재적재할 수 있다. 코멘트가 빈 라벨은 제외(단순 포맷 필수값).
     """
     def _line(values):

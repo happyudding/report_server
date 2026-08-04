@@ -38,10 +38,16 @@ default (cold-start 표준 robust 시드)
   status_hint: MAJOR              # MONITOR|MINOR|MAJOR|CRITICAL (bin severity_bias 로 변조)
   action_ko: "코멘트 골격 …"       # recommend 템플릿 base
   evidence: ["spread_norm {spread_norm}"]  # {키}=ctx_values(raw_metrics+features) 치환
+  scope:                          # (선택) 적용 범위. 키 부재/빈 목록 = 전 제품 공통
+    product_type: [PMIC]          # 이 제품군에서만 평가
+    family_product: [SOC]         # 이 family 에서만 평가 (product_type 과 AND)
 ```
 - 파생 컨텍스트 `spec_margin_min` / `center_bias` 는 signatures.py 가 계산해 주입(양방향 tail·중심 이탈용).
   조립 로직 정본은 `signatures.build_ctx_values()` — 관리자 트레이스가 같은 함수를 쓴다.
 - `enabled: false` 를 넣으면 그 signature 는 평가에서 통째로 빠진다(키 부재 = 활성).
+- `scope` 는 제품군/family 별로 룰을 갈라 쓰기 위한 필터다(2026-08-04). 판정은
+  `signatures.scope_matches()` — enabled 다음, SUBPOP 특수분기보다 **먼저** 걸린다.
+  `/pe/eval` Signatures 탭에서 체크박스로 편집하며, 값은 product_taxonomy.yaml 로 검증된다.
 - signature 추가 시 체크: (1) status.py `SPECIFICITY_ORDER` 에 id 추가, (2) 필요한 임계값 키를 thresholds 에 추가.
 
 ## calibrate 와의 관계

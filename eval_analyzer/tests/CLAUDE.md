@@ -1,6 +1,6 @@
 # tests — 테스트 스위트 (블록 진입점)
 
-`python -m pytest -q` (현재 **76 통과**). DB 테스트는 전부 tmp 격리 — 운영 `eval.db` 오염 없음.
+`python -m pytest -q` (현재 **163 통과**). DB 테스트는 전부 tmp 격리 — 운영 `eval.db` 오염 없음.
 상위 규칙 [../CLAUDE.md](../CLAUDE.md).
 
 ## 파일 지도
@@ -11,7 +11,9 @@
 | `test_features.py` | L2 robust 산포·spec margin·공간 feature. |
 | `test_signatures_status.py` | L3 signature 발화 + L4 status/trump/specificity. |
 | `test_ingest_raw_df.py` | L0 정본 raw_df(6-메타행) 파싱·fail 매핑. **정본 레이아웃 기준선**. |
-| `test_store.py` | store CRUD + `make_case_id` idempotent + `search_precedents` + 스키마 v4(eval_precedent/updated_at). |
+| `test_store.py` | store CRUD + `make_case_id` idempotent + `search_precedents` + 스키마 v4(eval_precedent/updated_at) + `save_features` 가 파생키(DB 미저장)를 무시하는지. |
+| `test_precedent_client.py` | L5 선례검색 어댑터 — case_ctx 의 자기 세션/analysis_key·발화 signature·top-k 상한이 **store 로 실제 전달되는지**(배선). store 쪽 동작은 test_store 담당. |
+| `test_rules_integrity.py` | 배포 `rules/*.yaml` 자체 정합성 — 조건·**코드**(`th["키"]`)가 참조하는 임계값이 thresholds.yaml default 에 있는지, SPECIFICITY_ORDER 1:1, 어휘·`enabled` 타입. 룰 파일만 고쳐도 깨지는 부류를 잡는다. |
 | `test_e2e.py` | `evaluate()` 전 구간 E2E + 입력키 검증(raw_df/raw_table/items 부재 시 ValueError). |
 | `test_calibrate.py` | `recalibrate()` 분위수 → thresholds item_class 갱신 + 버전 등록 (**thresholds 는 tmp 복사본으로 격리**). |
 | `test_db_input_import.py` | db_input **레거시 20컬럼** label(human_status/root_cause)+case_outcome 적재·idempotent. |
@@ -25,6 +27,11 @@
 - `test_ingest_raw_df.py` 의 메타행 6개(TSEQ/TNO/**STEP**/UNIT/HILIM/LOLIM)가 정본 레이아웃 기준선 —
   파서 변경 시 이 테스트가 먼저 깨져야 정상. (tools 의 5-메타행 드리프트와 대비 → [../tools/CLAUDE.md](../tools/CLAUDE.md))
 - 새 signature/feature 추가 시: 해당 단계 테스트에 발화/결측 케이스 둘 다 추가.
+- **단위 함수만 테스트하지 말 것.** 이 스위트가 놓쳐 온 부류는 계산이 아니라 **배선**이다 —
+  인자를 안 넘기거나(precedent_client), meta 를 case 에 안 싣거나(ingest), 임계값 키 이름이
+  어긋나도 단위 테스트는 전부 초록이었다. 새 값이 A→B 로 흘러야 한다면 그 흐름을 직접 본다.
+- 임계값을 새로 읽는 코드를 쓰면 `th["키"]` 형태를 유지할 것 — `test_rules_integrity` 가
+  그 문자열을 훑어 thresholds.yaml 과 대조한다(변수로 우회하면 검사에서 빠진다).
 
 ## 실행
 ```

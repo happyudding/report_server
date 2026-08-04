@@ -41,7 +41,7 @@ client 가 파일을 1회 run 할 때마다 eval_analyzer 가 작동해야 한�
 - 업로드/실행 단위(세션)당 `temperature`(수치), `corner`(NN/SS/FF) 입력 UI/필드 추가 → run_input.meta 로 전달.
 
 ### C. (권장) item 메타 분류 제공
-- item 원본명에서 `category_major`(TRIM 포함 여부), `value_type`(단위→V/A/Hz/CODE/P_F/Ohm/Sec) 분류.
+- item 원본명에서 `category_major`(TRIM 포함 여부), `value_type`(단위→V/A/Hz/CODE/PF/Ohm/Sec) 분류.
   (eval_analyzer 도 fallback 추정하지만, 정확한 분류를 주면 룰 정확도↑)
 - `family_product`(제품→상위군) 매핑 테이블 제공.
 
@@ -75,7 +75,7 @@ CSV 에서 재구성할 때의 예시는 레퍼런스 어댑터 `sample_csv_to_r
 run_input = {"meta": meta, "raw_table": {
      "meta_columns": ["DUT","XCoord","YCoord","Bin","Serial"],
      "item_columns": ["<item>...",],
-     "units":       {"<item>":"V|A|Hz|CODE|P_F|Ohm|Sec"},
+     "units":       {"<item>":"V|A|Hz|CODE|PF|Ohm|Sec"},
      "lower_limit": {"<item>": float|null},
      "upper_limit": {"<item>": float|null},
      "rows": [ {"DUT":1,"XCoord":-3,"YCoord":5,"Bin":1,"Serial":"...","<item>":<value>}, ... ]

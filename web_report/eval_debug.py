@@ -240,6 +240,11 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
         if not enabled:
             # 엔진도 enabled:false 를 SUBPOP 특수분기보다 먼저 걸러낸다(signatures.py).
             skip = "disabled (yaml enabled:false)"
+        elif not sig_mod.scope_matches(sig, case_ctx):
+            scope = sig.get("scope") or {}
+            skip = (f"scope 밖 (이 룰은 product_type={scope.get('product_type') or '전체'} / "
+                    f"family_product={scope.get('family_product') or '전체'} 에만 적용 — "
+                    f"이 세션은 {case_ctx.get('product_type')}/{case_ctx.get('family_product')})")
         elif sig_id == sig_mod._SUBPOP_GAP_ID:
             branch = ("특수분기 (when_metric 미사용 — features.modality_v2 로 판정) → "
                       f"modality_v2={features.get('modality_v2') or '—'}")
@@ -253,24 +258,29 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
                                   sig_mod._eval_condition)
                      for metric, cond in when.items()]
         rows.append({"id": sig_id, "enabled": enabled, "skip_reason": skip,
-                     "branch_note": branch,
+                     "branch_note": branch, "scope": sig.get("scope") or {},
                      "status_hint": sig.get("status_hint"),
                      "issue_category": sig.get("issue_category") or "ETC",
                      "conditions": conds, "fired": sig_id in fired_ids})
     return rows
 
 
-_DIST_MAX_VALUES = 20_000     # 이보다 크면 값 대신 히스토그램만 (trace_store 4런 보관)
+_DIST_MAX_VALUES = 5_000      # 케이스 1건이 원본 값을 그대로 실을 수 있는 상한
 _DIST_BINS = 60
+# 한 트레이스가 값 원본으로 쓸 수 있는 총량. 케이스 상한을 없앨 수 있게 되면서(전체 트레이스)
+# "케이스당 상한" 만으로는 총 메모리가 케이스 수에 비례해 늘어난다 — trace_store 는 4런을
+# 들고 있으므로 런 단위 예산을 둔다. 예산을 넘긴 케이스는 히스토그램만 싣는다(표시 품질만 하락).
+_DIST_VALUES_BUDGET = 400_000
 
 
-def _dist_payload(case, metrics):
+def _dist_payload(case, metrics, budget=None):
     """케이스 상세 미니차트용 분포 데이터.
 
     수치 표(cpk/outlier_ratio/bimodality_score)만 보고 룰을 고치면 "왜 이 값이
     나왔는지"를 눈으로 확인할 수 없다. 값 전량을 정렬해 내려 프런트가 히스토그램+
     ECDF 를 그리게 하되, 대형 소스는 서버에서 히스토그램으로 축약한다(메모리 보호).
     표시용 축약이며 판정에는 쓰이지 않는다.
+    `budget` 은 [남은 값 예산] 1칸 리스트 — 소진되면 이후 케이스는 히스토그램만 싣는다.
     """
     values = sorted(v for v in (case.get("values") or []) if v is not None)
     out = {"n": len(values), "lsl": case.get("lsl"), "usl": case.get("usl"),
@@ -278,9 +288,14 @@ def _dist_payload(case, metrics):
            "unit": case.get("unit"), "values": None, "hist": None}
     if not values:
         return out
+    keep_values = len(values) <= _DIST_MAX_VALUES
+    if keep_values and budget is not None:
+        keep_values = budget[0] >= len(values)
+        if keep_values:
+            budget[0] -= len(values)
     mid = len(values) // 2
     out["median"] = (values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2)
-    if len(values) <= _DIST_MAX_VALUES:
+    if keep_values:
         out["values"] = values
         return out
     lo, hi = values[0], values[-1]
@@ -293,7 +308,22 @@ def _dist_payload(case, metrics):
     return out
 
 
-def _trace_case(case, engine_version, mods):
+def _metrics_note(case):
+    """L1 이 통계를 비운 이유 — "아무 판정도 안 받았다" 신고의 1순위 원인 설명.
+
+    value_type=PF(양불)로 분류되면 L1/L2 가 cpk·stdev·spread_norm 을 전부 None 으로
+    비우고, 그러면 모든 when_metric 조건이 결측→False 라 어떤 signature 도 발화하지
+    못한다. 대부분은 UNIT 원문이 엔진 정확일치 표(ingest.UNIT_TO_VALUE_TYPE)에 없어
+    PF 로 떨어진 오분류다.
+    """
+    if case.get("value_type") != "PF":
+        return None
+    return (f"value_type=PF(양불) — L1/L2 가 통계를 전부 비웁니다(cpk·stdev·산포 없음). "
+            f"UNIT 원문 {case.get('unit')!r} 이 엔진 단위표에 없으면 여기로 떨어집니다. "
+            f"측정값이 있는 항목이면 UNIT_TO_VALUE_TYPE 에 그 표기를 등록해야 판정됩니다.")
+
+
+def _trace_case(case, engine_version, mods, dist_budget=None):
     """case 1건 L1~L6 — 게이팅 탈락 케이스도 그대로 담는다."""
     metrics, features, sig_mod, status_mod, present, recommend, rules = mods
     m = metrics.compute(case)
@@ -315,6 +345,8 @@ def _trace_case(case, engine_version, mods):
     return {
         "item_raw": case.get("item_raw"), "item_canonical": case.get("item_canonical"),
         "item_class": case.get("item_class"), "bin": case.get("bin"),
+        "value_type": case.get("value_type"), "unit": case.get("unit"),
+        "metrics_note": _metrics_note(case),
         "status": verdict.get("status"),
         "primary_signature": verdict.get("primary_signature"),
         "secondary_signatures": verdict.get("secondary_signatures") or [],
@@ -327,7 +359,7 @@ def _trace_case(case, engine_version, mods):
                        f"발화 signature 0건)",
         "comment": comment,
         "raw_metrics": m, "features": f, "thresholds": th,
-        "dist": _dist_payload(case, m),
+        "dist": _dist_payload(case, m, dist_budget),
         "ctx_values": {k: v for k, v in ctx_values.items() if not hasattr(v, "__len__")},
         "signature_matrix": _signature_matrix(case, f, ctx_values, th, sig, sig_mod),
         "evidence": verdict.get("evidence") or [],
@@ -336,13 +368,15 @@ def _trace_case(case, engine_version, mods):
 
 
 def trace_session(session_id: str, *, report_db, upload_root: Path,
-                  max_cases: int = 400) -> dict:
+                  max_cases: int | None = 400) -> dict:
     """세션의 AI Comment 평가를 L0~L6 단계별로 재현한다 (관리자 디버그 전용).
 
     운영 조회(service.load_webreport)와 같은 변형 경로(loader.load_tables →
     mode_tables → ai_comment._table_to_raw_df)를 거치므로 결과가 Issue Table 의
     AI Comment 셀과 일치한다. evaluate() 대신 단계 함수를 직접 호출해
     raw_metrics/features/조건분해를 노출하고, **게이팅 탈락 케이스도 포함**한다.
+    `max_cases=None` 이면 전 케이스를 담는다 — 그때도 분포 원본값은 런 단위 예산
+    (_DIST_VALUES_BUDGET)으로 묶여 메모리가 케이스 수에 비례해 늘지 않는다.
     """
     from . import ai_comment
     from .loader import load_tables
@@ -361,6 +395,7 @@ def trace_session(session_id: str, *, report_db, upload_root: Path,
 
     engine_version = eval_config.ENGINE_VERSION
     sources, cases, truncated = [], [], False
+    dist_budget = [_DIST_VALUES_BUDGET]
     for idx, table in enumerate(tables):
         meta = ai_comment._session_meta(session, idx + 1)
         if meta is None:
@@ -373,10 +408,10 @@ def trace_session(session_id: str, *, report_db, upload_root: Path,
         raw_df = ai_comment._table_to_raw_df(table, items)
         ingested = ingest.ingest({"meta": meta, "raw_df": raw_df}, persist=False)
         for case in ingested.get("cases") or []:
-            if len(cases) >= max_cases:
+            if max_cases is not None and len(cases) >= max_cases:
                 truncated = True
                 break
-            detail = _trace_case(case, engine_version, mods)
+            detail = _trace_case(case, engine_version, mods, dist_budget)
             detail["source"] = table.source
             detail["source_index"] = idx
             cases.append(detail)

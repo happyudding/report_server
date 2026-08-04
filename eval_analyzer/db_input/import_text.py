@@ -24,6 +24,12 @@ from db_input import ai_extract, import_csv  # noqa: E402
 
 
 def _read_rows(args):
+    """Load rows from --json (ready-made) or --input (raw text, LLM path, not implemented yet).
+
+    Returns (rows, source_path). Every value is coerced to str because
+    `import_csv._import_group` assumes CSV string cells and calls .strip() on them —
+    JSON numbers and nulls would break that.
+    """
     if args.json:
         rows, source = ai_extract.load_json_rows(args.json), Path(args.json)
     elif args.input:
@@ -38,6 +44,7 @@ def _read_rows(args):
 
 
 def _print_preview(validation):
+    """Print one line per row (index, READY/BLOCKED, product, item) plus its errors."""
     for item in validation:
         row = item["row"]
         name = row.get("item_name") or "<missing item_name>"
@@ -48,6 +55,7 @@ def _print_preview(validation):
 
 
 def build_parser():
+    """Argument parser. --json/--input are mutually exclusive and one of them is required."""
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--json", help="AI 추출 결과 JSON 파일(row list 또는 {'rows': [...]})")
@@ -61,6 +69,11 @@ def build_parser():
 
 
 def main(argv=None):
+    """CLI entry point. Exit codes: 0 ok, 1 validation failed while saving, 2 unreadable input.
+
+    With neither --write-csv nor --save it only previews. Saving is all-or-nothing:
+    a single BLOCKED row aborts the whole import (no partial writes).
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
 

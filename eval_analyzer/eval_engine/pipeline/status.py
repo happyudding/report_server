@@ -6,7 +6,7 @@
     (signature 0건 + 결측이면 MONITOR — 모름과 정상을 구분)
   - bin_class(defective/abnormal) severity_bias 로 rank 변조.
   - trump: cpk<cpk_bad AND yield<cpk_trump_yield_floor → CRITICAL 우선.
-    P_F(cpk 없음)는 yield<gross_yield_bad 단독으로 CRITICAL (P_F 무판정 공백 보완).
+    PF(cpk 없음)는 yield<gross_yield_bad 단독으로 CRITICAL (PF 무판정 공백 보완).
   - specificity 충돌해소: 구체 signature(EQUIPMENT_SUSPECT 등) > 일반. 지배 signature=primary.
   - data_completeness: 표본/공간 결측 정도(full/partial/low). 결측 많으면 confidence↓.
 반환: {"status","primary_signature","secondary_signatures","confidence",
@@ -28,6 +28,13 @@ SPECIFICITY_ORDER = ["LOW_SAMPLE_UNCERTAIN", "MISSING_LIMIT", "CONSTANT_VALUE",
 
 
 def decide(case_ctx: dict, features: dict, sig_result: dict) -> dict:
+    """L4 진입점 — 발화 signature 를 status/confidence/data_completeness 로 접는다.
+
+    위 모듈 docstring 의 규칙을 순서대로 적용한다: severity 최대 rank → bin severity_bias
+    변조 → trump(cpk+yield, PF 는 yield 단독) → specificity 로 primary 선정 → 결측 정도로
+    completeness/confidence → 발화 0건이고 데이터가 완전할 때만 OK.
+    새 signature 를 만들지는 않는다 — 이미 발화한 것을 접기만 한다.
+    """
     fired = sig_result.get("signatures", [])
     th = thresholds_for(case_ctx)
 
@@ -50,9 +57,9 @@ def decide(case_ctx: dict, features: dict, sig_result: dict) -> dict:
     if (cpk is not None and yld is not None
             and cpk < th["cpk_bad"] and yld < th["cpk_trump_yield_floor"]):
         status = "CRITICAL"
-    # P_F trump: 통계 feature 가 전부 None 이라 signature 로는 CRITICAL 에 도달할 수
-    # 없는 P_F item 을 수율 단독으로 승격 (임계값은 thresholds.yaml gross_yield_bad).
-    if (case_ctx.get("value_type") == "P_F" and yld is not None
+    # PF trump: 통계 feature 가 전부 None 이라 signature 로는 CRITICAL 에 도달할 수
+    # 없는 PF item 을 수율 단독으로 승격 (임계값은 thresholds.yaml gross_yield_bad).
+    if (case_ctx.get("value_type") == "PF" and yld is not None
             and yld < th["gross_yield_bad"]):
         status = "CRITICAL"
 

@@ -23,6 +23,7 @@ _VALID_CATEGORY = {"YIELD", "CPK", "ETC"}
 
 
 def _sample_paths():
+    """samples/ 의 정본 raw_df CSV 목록. 하나도 없으면 skip(생성기를 안 돌린 환경)."""
     paths = sorted(glob.glob(_SAMPLE_GLOB))
     if not paths:
         pytest.skip(f"sample CSV 없음: {_SAMPLE_GLOB}")

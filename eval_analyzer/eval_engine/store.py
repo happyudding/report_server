@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS engine_version_registry (
 
 
 def _now():
+    """현재 시각(epoch 초, int). 모든 created_at/updated_at 이 이걸 쓴다."""
     return int(time.time())
 
 
@@ -133,6 +134,11 @@ def make_case_id(product_name, lot_id, wafer_number, item_id, bin_, revision):
 
 @contextmanager
 def get_conn():
+    """eval.db 커넥션 컨텍스트 — 정상 종료 시 commit, 예외면 롤백된 채 닫힌다.
+
+    WAL + busy_timeout 5초로 연다. 예외가 나면 commit 을 건너뛰고 close 만 하므로
+    한 with 블록이 곧 하나의 트랜잭션 경계다. row_factory=Row 라 컬럼명 접근이 된다.
+    """
     conn = sqlite3.connect(str(config.DB_PATH), timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
@@ -202,6 +208,8 @@ def _migrate_v3_to_v4(conn):
 
 
 def _migrate_v4_to_v5(conn):
+    """v5: features 에 REAL 컬럼 5개 추가 — shot_fail_ratio, ring_fail_ratio,
+    radial_gradient_norm, x_gradient_norm, y_gradient_norm. 이미 있으면 skip(idempotent)."""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
     for col in ("shot_fail_ratio", "ring_fail_ratio", "radial_gradient_norm",
                 "x_gradient_norm", "y_gradient_norm"):
@@ -210,6 +218,8 @@ def _migrate_v4_to_v5(conn):
 
 
 def _migrate_v5_to_v6(conn):
+    """v6: features 에 n_modes(INTEGER) + modality_v2(TEXT) 추가 — SUBPOP_GAP 판정 근거.
+    이미 있으면 skip(idempotent)."""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
     if "n_modes" not in cols:
         conn.execute("ALTER TABLE features ADD COLUMN n_modes INTEGER")
@@ -222,6 +232,13 @@ _MIGRATIONS = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4,
 
 
 def _migrate(conn):
+    """PRAGMA user_version 을 읽어 현재 버전부터 SCHEMA_VERSION 까지 순서대로 올린다.
+
+    `_MIGRATIONS` 는 {from_version: fn} — 한 칸씩(from → from+1) 적용한다. 각 마이그레이션이
+    idempotent 라 새로 만든 DB(SCHEMA 로 이미 최신 형태)에 다시 돌려도 안전하다.
+    ⚠ 스키마를 바꾸려면 SCHEMA·마이그레이션·SCHEMA_VERSION 을 함께 올려야 하고, 운영
+    eval.db 에 누적 데이터가 있으므로 **사용자 사전 승인 대상**이다(CLAUDE.md 불변 규칙 2).
+    """
     ver = conn.execute("PRAGMA user_version").fetchone()[0]
     for v in range(max(ver, 1), SCHEMA_VERSION):
         _MIGRATIONS[v](conn)
@@ -261,6 +278,7 @@ def _scope(conn):
 
 
 def upsert_product_master(meta: dict, conn=None) -> None:
+    """제품 마스터 upsert (product_name PK) — 재업로드 시 메타를 최신값으로 덮어쓴다."""
     sql = """INSERT INTO product_master
              (product_name,product_type,family_product,pkg_type,process,inch,gross_die,
               fab_line,tester,para,updated_at)
@@ -278,6 +296,7 @@ def upsert_product_master(meta: dict, conn=None) -> None:
 
 
 def resolve_item_id(raw_name: str, conn=None):
+    """원본 item 명 → item_alias 에 등록된 item_id. 처음 보는 이름이면 None."""
     with _scope(conn) as c:
         row = c.execute("SELECT item_id FROM item_alias WHERE raw_name=?", (raw_name,)).fetchone()
         return row["item_id"] if row else None
@@ -285,6 +304,11 @@ def resolve_item_id(raw_name: str, conn=None):
 
 def upsert_item_master(item_canonical, item_name_raw, item_base, item_phase,
                        category_major, category_mid, value_type, unit, conn=None) -> int:
+    """item 마스터 upsert 후 item_id 반환. 충돌 키는 item_canonical(정규화된 이름)이다.
+
+    같은 측정을 제품·리비전마다 조금씩 다른 원본명으로 부르므로, canonical 하나에 여러
+    raw name 이 item_alias 로 붙는 구조다. 여기서는 마지막에 본 raw name 을 남긴다.
+    """
     sql = """INSERT INTO item_master
              (item_name_raw,item_canonical,item_base,item_phase,category_major,
               category_mid,value_type,unit)
@@ -303,12 +327,18 @@ def upsert_item_master(item_canonical, item_name_raw, item_base, item_phase,
 
 
 def upsert_item_alias(raw_name, item_id, conn=None) -> None:
+    """원본 item 명 → item_id 매핑 등록. 다음 ingest 부터 resolve_item_id 가 바로 찾는다."""
     with _scope(conn) as c:
         c.execute("INSERT OR REPLACE INTO item_alias (raw_name,item_id) VALUES (?,?)",
                   (raw_name, item_id))
 
 
 def upsert_item_spec(item_id, product_name, revision, lsl, usl, conn=None) -> None:
+    """spec limit(lsl/usl) 이력 upsert. 키는 (item_id, product_name, revision).
+
+    revision 을 키에 넣는 이유 — limit 이 바뀌면 과거 판정의 근거가 달라지므로 덮어쓰지
+    않고 리비전별로 남긴다.
+    """
     sql = """INSERT INTO item_spec (item_id,product_name,revision,lsl,usl,updated_at)
              VALUES (?,?,?,?,?,?)
              ON CONFLICT(item_id,product_name,revision) DO UPDATE SET
@@ -319,6 +349,10 @@ def upsert_item_spec(item_id, product_name, revision, lsl, usl, conn=None) -> No
 
 def upsert_bin_taxonomy(product_type, bin_number, bin_class, severity_bias,
                         description, conn=None) -> None:
+    """bin 택소노미 upsert (product_type, bin_number 키) — bin_class + severity_bias.
+
+    init_db 가 rules/bin_taxonomy.yaml 을 이 함수로 시드하므로 yaml 이 사실상 정본이다.
+    """
     sql = """INSERT INTO bin_taxonomy
              (product_type,bin_number,bin_class,severity_bias,description,updated_at)
              VALUES (?,?,?,?,?,?)
@@ -331,6 +365,10 @@ def upsert_bin_taxonomy(product_type, bin_number, bin_class, severity_bias,
 
 
 def get_bin_taxonomy(product_type, bin_number, conn=None):
+    """(product_type, bin_number) 택소노미 1행 dict. 없으면 None.
+
+    ⚠ L3 는 이 DB 조회가 아니라 `_rules.bin_taxonomy_for`(yaml 직독)를 쓴다 — 이건 CRUD 쪽 API.
+    """
     with _scope(conn) as c:
         row = c.execute("SELECT * FROM bin_taxonomy WHERE product_type=? AND bin_number=?",
                         (product_type, bin_number)).fetchone()
@@ -338,6 +376,11 @@ def get_bin_taxonomy(product_type, bin_number, conn=None):
 
 
 def create_ingest_run(meta, conn=None) -> int:
+    """업로드 1회 = ingest_run 1행 생성, run_id 반환. 매번 새 행이다(upsert 아님).
+
+    session_id/analysis_key 는 report_server 세션 역참조용이자 선례검색의 **자기 세션
+    제외** 조건이다(search_precedents) — 안 넣으면 방금 올린 데이터가 과거 사례로 돌아온다.
+    """
     sql = """INSERT INTO ingest_run
              (product_name,lot_id,wafer_number,source_file,analysis_key,session_id,edm_link,
               temperature,corner,ingested_by,created_at)
@@ -352,6 +395,7 @@ def create_ingest_run(meta, conn=None) -> int:
 
 
 def link_run_case(run_id, case_id, conn=None) -> None:
+    """run ↔ case 다대다 링크. case_id 는 자연키라 여러 run 에 재등장하므로 INSERT OR IGNORE."""
     with _scope(conn) as c:
         c.execute("INSERT OR IGNORE INTO run_case (run_id,case_id,seen_at) VALUES (?,?,?)",
                   (run_id, case_id, _now()))
@@ -359,6 +403,11 @@ def link_run_case(run_id, case_id, conn=None) -> None:
 
 def upsert_fail_case(case_id, product_name, lot_id, wafer_number, item_id, bin_,
                      revision, item_class, conn=None) -> str:
+    """fail_case upsert. 이미 있으면 updated_at 만 갱신 — 나머지 컬럼은 case_id 의 재료라 불변.
+
+    case_id 가 자연키 sha256(make_case_id)이므로 같은 wafer/item/bin 을 재업로드해도 행이
+    늘지 않는다(idempotent).
+    """
     sql = """INSERT INTO fail_case
              (case_id,product_name,lot_id,wafer_number,item_id,bin,revision,
               item_class,created_at,updated_at)
@@ -371,6 +420,10 @@ def upsert_fail_case(case_id, product_name, lot_id, wafer_number, item_id, bin_,
 
 
 def save_raw_metrics(case_id, run_id, m: dict, conn=None) -> None:
+    """L1 계산값 upsert (case_id, run_id 키). DB_SCHEMA §4.
+
+    이름이 raw_metrics 지만 **per-DUT raw 는 여기 없다** — 요약통계만이다(불변 규칙 3).
+    """
     cols = ["cpk", "cpl", "cpu", "cp", "mean", "stdev", "min", "max", "yield",
             "fail_count", "total_count", "bimodality"]
     sql = f"""INSERT INTO raw_metrics (case_id,run_id,{','.join(cols)},created_at)
@@ -382,6 +435,14 @@ def save_raw_metrics(case_id, run_id, m: dict, conn=None) -> None:
 
 
 def save_features(case_id, run_id, engine_version, f: dict, conn=None) -> None:
+    """L2 계산값 upsert (case_id, run_id, engine_version 키). DB_SCHEMA §5.
+
+    engine_version 이 키에 들어가는 이유 — 룰/공식이 바뀌면 같은 case 의 feature 도 달라져야
+    하므로 버전별로 나란히 남긴다(과거 판정 재현 가능).
+    ⚠ `shot_fail_ratio` 는 테이블·마이그레이션에는 있지만 features.py 에 계산 경로가 없고
+    아래 cols 목록에도 없어 **항상 NULL** 이다(VERIFY_CHECKLIST §1-3, 미해결).
+    ⚠ value_gap_ratio/value_gap_minor_mass 는 파생값이라 일부러 저장하지 않는다.
+    """
     cols = ["spread_norm", "skewness", "kurtosis", "outlier_ratio", "modality",
             "bimodality_score", "density_gap", "cdf_gap", "spec_margin_low",
             "spec_margin_high", "nearest_spec_side", "limit_hit_ratio",
@@ -402,6 +463,11 @@ def save_features(case_id, run_id, engine_version, f: dict, conn=None) -> None:
 
 def save_evaluation(case_id, run_id, engine_version, model_version, status,
                     confidence, data_completeness, comment, conn=None) -> int:
+    """L4/L5 판정 결과 upsert 후 eval_id 반환. 키는 (case, run, engine_version, model_version).
+
+    model_version 을 `''` 로 정규화하는 게 핵심이다 — SQLite 에서 NULL 은 UNIQUE 제약을
+    우회해서, 그냥 두면 같은 판정이 계속 새 행으로 쌓인다(v2 마이그레이션의 이유).
+    """
     model_version = model_version or ""  # NULL 은 UNIQUE 를 우회하므로 '' 로 정규화
     sql = """INSERT INTO evaluation
              (case_id,run_id,engine_version,model_version,status,confidence,
@@ -422,6 +488,11 @@ def save_evaluation(case_id, run_id, engine_version, model_version, status,
 
 
 def save_eval_evidence(eval_id, evidence: list, conn=None) -> None:
+    """판정 근거(signal_code + 값) 저장 — JSON 컬럼 금지라 정규화한 child 테이블(불변 규칙 4).
+
+    ⚠ PK 가 (eval_id, signal_code)다. signal_code 는 영구 기록이므로 라벨과 값의 대응을
+    바꾸면 과거 기록과 의미가 어긋난다(DENSITY_GAP 오라벨 사건, VERIFY_CHECKLIST §2-1).
+    """
     with _scope(conn) as c:
         for e in evidence:
             c.execute("""INSERT OR REPLACE INTO eval_evidence
@@ -431,6 +502,7 @@ def save_eval_evidence(eval_id, evidence: list, conn=None) -> None:
 
 
 def save_case_signature(eval_id, signatures: list, conn=None) -> None:
+    """발화 signature 를 role(primary/secondary)과 함께 저장. 선례검색이 primary 만 조인한다."""
     with _scope(conn) as c:
         for s in signatures:
             c.execute("""INSERT OR REPLACE INTO case_signature
@@ -441,6 +513,10 @@ def save_case_signature(eval_id, signatures: list, conn=None) -> None:
 def insert_label(case_id, eval_id, human_status, root_cause_category, root_cause_detail,
                  engine_comment_accepted, comment_modified, human_comment, labeler,
                  reviewer, label_quality, conn=None) -> int:
+    """엔지니어 정답 라벨 1건 삽입, label_id 반환. 갱신이 아니라 **이력 누적**이다.
+
+    human_comment 가 선례검색이 실제로 인용하는 유일한 텍스트다(DB_SCHEMA §9).
+    """
     sql = """INSERT INTO label (case_id,eval_id,human_status,root_cause_category,
              root_cause_detail,engine_comment_accepted,comment_modified,human_comment,
              labeler,reviewer,label_quality,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"""
@@ -453,6 +529,11 @@ def insert_label(case_id, eval_id, human_status, root_cause_category, root_cause
 
 def insert_case_outcome(case_id, label_id, action, condition, result, resolved_by,
                         resolved_at, note, conn=None) -> int:
+    """조치·결과(action/result) 1건 삽입, outcome_id 반환.
+
+    삽입 전에 `validate_outcome` 으로 어휘를 강제한다 — 자유 문자열을 허용하면 선례 통계가
+    바로 무너진다. _rules import 는 순환 회피용 지연 import.
+    """
     from .pipeline._rules import validate_outcome  # lazy: 순환 import 회피
     validate_outcome(action, result)
     sql = """INSERT INTO case_outcome (case_id,label_id,action,condition,result,
@@ -478,6 +559,11 @@ def save_eval_precedents(eval_id, precedents: list, conn=None) -> None:
 def upsert_engine_version_registry(engine_version, thresholds_ref=None, thresholds_hash=None,
                                    signatures_ref=None, signatures_hash=None,
                                    taxonomy_ref=None, taxonomy_hash=None, conn=None) -> None:
+    """engine_version ↔ 그때의 rules 파일 해시 등록. calibrate 가 임계값을 갱신할 때 호출한다.
+
+    features/evaluation 이 engine_version 을 키로 갖고 있으므로, 이 표가 있어야 "그 판정이
+    어떤 임계값으로 나왔는지"를 나중에 되짚을 수 있다.
+    """
     sql = """INSERT INTO engine_version_registry
              (engine_version,thresholds_ref,thresholds_hash,signatures_ref,signatures_hash,
               taxonomy_ref,taxonomy_hash,created_at) VALUES (?,?,?,?,?,?,?,?)
@@ -536,6 +622,7 @@ def search_precedents(value_type, item_canonical, family_product=None,
         rows = [dict(r) for r in c.execute(sql, params).fetchall()]
 
     def _rank(r):  # 같은 case 의 여러 (label×outcome) 행 중 대표행: 최신 label > comment 있는 행
+        """대표행 선정 정렬키 — (label_id, human_comment 유무). 큰 쪽이 이긴다."""
         return ((r["label_id"] or 0), r["human_comment"] is not None)
 
     fired = {s for s in (fired_signatures or []) if s}
@@ -558,6 +645,12 @@ def search_precedents(value_type, item_canonical, family_product=None,
     return out if limit is None else out[:limit]
 
 def cases_for_runs(run_ids : list[int], conn = None) -> list[dict]:
+    """여러 run 의 case 를 판정·수율과 함께 평평한 행 목록으로. cross_source 전용 조회.
+
+    행마다 source_file(ingest_run) + fail_count/total_count(raw_metrics) + primary_signature
+    (case_signature)가 붙어 있어, source 간 fail rate 비교를 이 한 번의 조회로 끝낸다.
+    빈 run_ids 나 DB 파일 부재는 빈 목록(빈 파일 생성·크래시 방지).
+    """
     if not run_ids:
         return []
     if conn is None and not config.DB_PATH.exists():
@@ -579,6 +672,10 @@ def cases_for_runs(run_ids : list[int], conn = None) -> list[dict]:
         return [dict(r) for r in c.execute(sql, run_ids).fetchall()]
 
 def update_evaluation_comment(case_id, run_id, engine_version, comment, conn=None) -> None:
+    """이미 저장된 판정의 comment 만 덮어쓴다(status/confidence 는 건드리지 않음).
+
+    cross_source 가 사후에 SOURCE_ONLY_FAIL 문구를 얹는 경로. 해당 행이 없으면 조용히 0행 갱신.
+    """
     with _scope(conn) as c:
         c.execute("""UPDATE evaluation SET comment=?, updated_at=?
                      WHERE case_id=? AND run_id=? AND engine_version=?""",

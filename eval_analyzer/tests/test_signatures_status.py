@@ -2,10 +2,11 @@
 
 signatures.evaluate 는 DB 미접근(bin_taxonomy 는 rules yaml 조회) — DB fixture 불필요.
 """
-from eval_engine.pipeline import present, signatures, status
+from eval_engine.pipeline import features, metrics, present, signatures, status
 
 
 def _case(**kw):
+    """발화가 없는 중립 case_ctx. kw 로 필요한 축만 바꿔 그 signature 하나만 겨냥한다."""
     # lsl/usl 은 MISSING_LIMIT 비발화용 — 없으면 모든 case 에 MINOR 가 하나 깔린다.
     c = {"product_type": None, "item_class": None, "bin": 99, "lsl": 0.0, "usl": 10.0}
     c.update(kw)
@@ -175,14 +176,14 @@ def test_heavy_tail_disabled_when_few_samples():
 
 
 def test_pf_trump_low_yield_forces_critical():
-    """P_F 는 cpk 가 없어 기존 trump 불가 — yield 단독(gross_yield_bad)으로 CRITICAL."""
-    case = _case(value_type="P_F")
+    """PF 는 cpk 가 없어 기존 trump 불가 — yield 단독(gross_yield_bad)으로 CRITICAL."""
+    case = _case(value_type="PF")
     feats = _full_features()
     raw = {"yield": 0.3, "cpk": None}
     sig = signatures.evaluate(case, feats, raw)
     verdict = status.decide(case, feats, sig)
     assert verdict["status"] == "CRITICAL"
-    # 수율 양호한 P_F 는 승격되지 않는다
+    # 수율 양호한 PF 는 승격되지 않는다
     raw_ok = {"yield": 0.95, "cpk": None}
     v_ok = status.decide(case, feats, signatures.evaluate(case, feats, raw_ok))
     assert v_ok["status"] != "CRITICAL"
@@ -216,6 +217,89 @@ def test_subpop_evidence_signal_codes_match_values():
     assert by_code["DENSITY_GAP"]["value"] == 0.6
     assert "density_gap" in by_code["DENSITY_GAP"]["note"]
     assert by_code["VALUE_GAP"]["value"] == 0.5
+
+
+# --- SUBPOP_GAP: 측정값 → features → signatures 전 구간 ------------------------------
+#
+# 위 test_subpop_evidence_signal_codes_match_values 는 features dict 를 손으로 주입해
+# `_evaluate_subpop_gap` 하나만 본다. 아래 두 건은 실제 측정값에서 출발해 배선까지 본다 —
+# feature 키 이름이 바뀌거나 compute 가 파생값을 안 실어주면 여기서만 깨진다.
+
+def _measured_case(values):
+    """측정값만으로 만든 case_ctx(공간·site 결측). limit 은 값 범위를 감싸 MISSING_LIMIT 회피."""
+    n = len(values)
+    return {"values": values, "lsl": 0.0, "usl": 10.0, "value_type": "V", "bin": 99,
+            "x_pos": [None] * n, "y_pos": [None] * n, "site": [None] * n,
+            "fail_mask": [False] * n, "product_type": None, "item_class": None}
+
+
+def _bump(center, step, weights):
+    """center 를 봉우리로 하는 이산 무리. 히스토그램 내부에 봉우리가 생기도록 폭을 준다."""
+    return [x for k, w in enumerate(weights)
+            for x in [center + (k - (len(weights) - 1) // 2) * step] * w]
+
+
+_BUMP_W = [2, 4, 8, 12, 8, 4, 2]   # 무리 1개당 40개
+
+
+def test_subpop_gap_fires_end_to_end_on_two_clusters():
+    """분리된 두 무리는 compute→evaluate 를 거쳐 SUBPOP_GAP 으로 발화한다.
+
+    evidence 의 값이 features 실값과 같은지까지 확인한다 — DENSITY_GAP 라벨에 다른 지표를
+    싣던 과거 오라벨(2026-08-03 수정)이 재발하면 여기서 잡힌다.
+    """
+    values = _bump(2.0, 0.25, _BUMP_W) + _bump(8.0, 0.25, _BUMP_W)
+    case = _measured_case(values)
+    raw = metrics.compute(case)
+    feats = features.compute(case, raw, "ev1")
+    assert feats["modality_v2"] == "bimodal"
+
+    sig = signatures.evaluate(case, feats, raw)
+    fired = {s["id"]: s for s in sig["signatures"]}
+    assert "SUBPOP_GAP" in fired
+    assert fired["SUBPOP_GAP"]["modality_v2"] == "bimodal"
+    by_code = {e["signal_code"]: e["value"] for e in fired["SUBPOP_GAP"]["evidence"]}
+    assert by_code["DENSITY_GAP"] == feats["density_gap"]
+    assert by_code["VALUE_GAP"] == feats["value_gap_ratio"]
+    assert by_code["N_MODES"] == feats["n_modes"]
+
+
+def test_subpop_gap_silent_on_quantized_values():
+    """이산(양자화) 값은 발화하지 않는다 — 구 cdf_gap 지표의 오발화 회귀 방지선.
+
+    [0,1,2] 반복은 cdf_gap 이 30% 를 넘어(test_features 참조) 예전 판정으로는 분리로
+    읽히던 입력이다. 지금은 modality_v2 가 서지 않아 applies 도 False 로 남는다.
+    """
+    case = _measured_case([0.0, 1.0, 2.0] * 20)
+    raw = metrics.compute(case)
+    feats = features.compute(case, raw, "ev1")
+    assert feats["modality_v2"] is None
+
+    sig = signatures.evaluate(case, feats, raw)
+    assert "SUBPOP_GAP" not in [s["id"] for s in sig["signatures"]]
+    assert sig["applies"]["SUBPOP_GAP.modality_v2"] is False
+
+
+def test_build_ctx_values_covers_every_referenced_metric():
+    """when_metric 이 참조하는 이름은 전부 ctx_values 로 조립돼야 판정이 성립한다.
+
+    build_ctx_values 는 관리자 트레이스(/pe/eval)가 파생값 재구현을 피하려고 공개한
+    함수다. 여기서 빠진 키는 "결측 → 조건 False" 로 조용히 흘러 룰이 영구 침묵한다.
+    파생값(spec_margin_min/center_bias/outlier_count/limit_missing/gradient_norm_abs_max)
+    이 features 에 없고 여기서만 만들어지므로 특히 중요하다.
+    """
+    values = _bump(2.0, 0.25, _BUMP_W) + _bump(8.0, 0.25, _BUMP_W)
+    case = _measured_case(values)
+    case.update(x_pos=[i % 10 for i in range(len(values))],
+                y_pos=[i // 10 for i in range(len(values))],
+                fail_mask=[i % 20 == 0 for i in range(len(values))])
+    raw = metrics.compute(case)
+    feats = features.compute(case, raw, "ev1")
+    ctx = signatures.build_ctx_values(case, feats, raw)
+
+    referenced = {m for sig in signatures.signatures_doc()["signatures"]
+                  for m in (sig.get("when_metric") or {})}
+    assert referenced - set(ctx) == set()
 
 
 def test_should_store_covers_rule_only_case():

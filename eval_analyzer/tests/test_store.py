@@ -2,12 +2,18 @@
 import pytest
 
 from eval_engine import store
+from eval_engine.pipeline import features as features_module
 from eval_engine.pipeline._rules import outcome_label, validate_outcome
 
 
 def _seed_precedent(conn, *, product="P1", item_raw="VREF_TRIM", item_canon="vref_trim",
                     value_type="V", bin_=18, family="SOC",
                     action="retest", result="recovered_normal", comment="과거 정상복귀"):
+    """선례 1건(product+item+case+label+outcome)을 심고 case_id 반환.
+
+    search_precedents 가 인용할 수 있으려면 label 의 human_comment 까지 있어야 하므로
+    다섯 테이블을 한 번에 엮는다. 키워드 인자로 값을 바꿔 여러 변형을 만든다.
+    """
     store.upsert_product_master(
         {"product_name": product, "family_product": family, "product_type": "PMIC"}, conn=conn)
     item_id = store.upsert_item_master(item_canon, item_raw, None, None, "TRIM", None,
@@ -227,6 +233,24 @@ def test_schema_user_version_and_objects(fresh_db):
         feat_cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
         assert {"shot_fail_ratio", "ring_fail_ratio", "radial_gradient_norm",
                 "x_gradient_norm", "y_gradient_norm", "n_modes", "modality_v2"} <= feat_cols
+
+
+def test_save_features_ignores_derived_keys(fresh_db):
+    """DB 컬럼 없는 파생 feature 가 섞여 들어와도 저장은 성공하고, 컬럼은 늘지 않는다.
+
+    features.compute 는 value_gap_ratio/value_gap_minor_mass 를 반환하지만 이는 판정·트레이스
+    용 파생값이라 일부러 저장하지 않는다(store.save_features 의 cols 화이트리스트).
+    화이트리스트를 걷어내고 dict 를 그대로 쓰면 여기서 OperationalError 로 터진다.
+    """
+    f = {k: None for k in features_module._FEATURE_KEYS}
+    f.update(n_dut=60, value_gap_ratio=0.9, value_gap_minor_mass=0.25)
+    with store.get_conn() as conn:
+        store.save_features("C_DERIVED", 1, "ev1", f, conn=conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+        assert {"value_gap_ratio", "value_gap_minor_mass"} & cols == set()
+        row = conn.execute("SELECT n_dut FROM features WHERE case_id=?",
+                           ("C_DERIVED",)).fetchone()
+        assert row["n_dut"] == 60
 
 
 def test_migrate_v3_to_v4_idempotent(fresh_db):

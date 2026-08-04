@@ -9,6 +9,7 @@ import math
 
 
 def _nan_to_none(x):
+    """NaN → None. 엔진은 결측을 None 으로만 읽으므로 NaN 이 넘어가면 결측 규칙이 안 먹는다."""
     if x is None:
         return None
     if isinstance(x, float) and math.isnan(x):
@@ -17,6 +18,11 @@ def _nan_to_none(x):
 
 
 def df_honey_to_run_input(honey, meta_override=None):
+    """df_honey 객체 → run_input(raw_table 레거시 경로). 속성만 읽고 eval_engine 은 안 쓴다.
+
+    Bin 이 숫자로 안 읽히면 PASS_BIN(1)로 떨어뜨린다 — 파싱 실패를 fail 로 오인하지 않기 위해서.
+    meta 는 테스트용 기본값이고 meta_override 로 덮어쓴다.
+    """
     subjects = list(honey.subjects)
     units = dict(zip(subjects, honey.units))
     lower = {s: _nan_to_none(v) for s, v in zip(subjects, honey.lower_limits)}

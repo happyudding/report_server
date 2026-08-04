@@ -21,6 +21,7 @@ TREE_PT_DEFAULT = "_default"
 
 @functools.lru_cache(maxsize=64)
 def _load_yaml_cached(path_str: str, mtime_ns: int):
+    """(경로, mtime) 키 lru_cache 실체 — mtime 을 인자로 받아야 파일 수정이 캐시 미스가 된다."""
     with open(path_str, encoding="utf-8") as f:
         return yaml.safe_load(f)
 
@@ -80,6 +81,7 @@ def thresholds_for(case_ctx: dict) -> dict:
 
 
 def signatures_doc() -> dict:
+    """rules/signatures.yaml 전체 문서(캐시). signature 선언의 유일한 출처."""
     return load_yaml(str(config.SIGNATURES_FILE))
 
 
@@ -98,6 +100,7 @@ def issue_category_for(signature_id) -> str:
 
 
 def outcome_taxonomy() -> dict:
+    """rules/outcome_taxonomy.yaml 전체 문서(캐시) — action/result 허용 어휘의 정본."""
     return load_yaml(str(config.OUTCOME_TAXONOMY_FILE))
 
 

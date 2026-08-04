@@ -29,12 +29,49 @@ set "PORT=%~1"
 if not defined PORT set "PORT=8090"
 set "HOST=0.0.0.0"
 
-set "PY=%ROOT%.venv\Scripts\python.exe"
-if not exist "%PY%" (
-    echo [mypc] ERROR: .venv 가 없습니다 - %PY%
-    echo [mypc]        install.bat 을 한 번 실행해 가상환경을 만드세요.
+rem -- 파이썬 탐색: 경로를 박아두지 않고 순서대로 찾아 "실제로 실행되는" 것을 고른다 --
+rem   존재만 보지 않고 -c 로 한 번 돌려본다. venv 는 만든 뒤 전역 파이썬이 옮겨/지워지면
+rem   python.exe 는 남아 있어도 실행 시 "did not find executable at ..." 로 죽기 때문에,
+rem   파일 존재 검사만으로는 그 상태를 걸러내지 못한다.
+set "PY="
+if defined PYTHON call :try_py "%PYTHON%"
+if not defined PY call :try_py "%ROOT%.venv\Scripts\python.exe"
+if not defined PY call :try_py "%ROOT%venv\Scripts\python.exe"
+if not defined PY for /f "delims=" %%P in ('where python.exe 2^>nul') do if not defined PY call :try_py "%%P"
+if not defined PY for /f "delims=" %%P in ('py -3 -c "import sys;print(sys.executable)" 2^>nul') do if not defined PY call :try_py "%%P"
+if not defined PY (
+    echo [mypc] ERROR: 실행 가능한 파이썬을 찾지 못했습니다.
+    echo [mypc]        install.bat 으로 .venv 를 만들거나, 파이썬을 PATH 에 추가하세요.
+    echo [mypc]        특정 파이썬을 쓰려면: set "PYTHON=C:\경로\python.exe" 후 다시 실행.
     pause
     exit /b 1
+)
+
+rem -- .venv 가 있는데 탈락했다면 왜인지 알려준다 -------------------------------
+rem   venv 는 만들 때 쓴 파이썬의 절대경로를 pyvenv.cfg 에 박아두므로 다른 PC/다른 계정
+rem   으로 복사해 오면 동작하지 않는다("did not find executable at ..."). 폴더만 지우고
+rem   install.bat 으로 다시 만들면 된다.
+if exist "%ROOT%.venv\Scripts\python.exe" if /i not "%PY%"=="%ROOT%.venv\Scripts\python.exe" (
+    echo [mypc] NOTE: .venv 가 있지만 쓸 수 없어 건너뛰었습니다.
+    if exist "%ROOT%.venv\pyvenv.cfg" (
+        for /f "usebackq eol=# tokens=1,* delims== " %%A in ("%ROOT%.venv\pyvenv.cfg") do if /i "%%A"=="home" echo [mypc]       이 .venv 가 필요로 하는 파이썬: %%B
+    )
+    echo [mypc]       그 파이썬이 이 PC 에 없으면 .venv 는 못 씁니다
+    echo [mypc]       ^(venv 는 다른 PC/계정에서 복사해 올 수 없습니다^). 새로 만듭니다.
+)
+
+rem -- venv 자동 준비: 고른 파이썬이 .venv 것이 아니면 여기서 .venv 를 만들어 쓴다 ---
+rem   .venv 가 없는 경우와 깨진 경우 모두 여기로 온다. 사람이 install.bat 을 따로 돌리지
+rem   않아도 이 창에서 그대로 서버가 뜨게 하는 것이 목적이다. 실패하면 멈추지 않고
+rem   찾아둔 파이썬으로 그냥 진행한다 (에러가 눈앞에 보이는 것이 이 스크립트의 취지).
+set "VENV_PY=%ROOT%.venv\Scripts\python.exe"
+if /i not "%PY%"=="%VENV_PY%" call :prepare_venv
+
+rem -- 최종 점검: 이 파이썬으로 서버가 뜰 수 있는지 --------------------------------
+"%PY%" -c "import flask" >nul 2>&1
+if errorlevel 1 (
+    echo [mypc] WARN: 이 파이썬에는 flask 가 없습니다 - %PY%
+    echo [mypc]       아래에서 import 에러가 나면 install.bat 으로 의존성을 설치하세요.
 )
 
 rem -- 포트 선점 확인: 조용히 실패하지 않도록 먼저 본다 ------------------------
@@ -84,3 +121,52 @@ echo [mypc] 서버가 종료되었습니다. (위에 에러가 있으면 그것�
 pause
 endlocal
 exit /b 0
+
+rem --- .venv 를 만들고 의존성을 설치해 PY 를 그쪽으로 바꾼다 --------------------
+rem 못 쓰는 .venv 는 지우지 않고 .venv_broken 으로 밀어둔다 (되돌릴 수 있게).
+:prepare_venv
+if exist "%ROOT%.venv\" (
+    echo [mypc] 못 쓰는 .venv 를 .venv_broken 으로 옮깁니다.
+    if exist "%ROOT%.venv_broken\" rmdir /s /q "%ROOT%.venv_broken"
+    move "%ROOT%.venv" "%ROOT%.venv_broken" >nul 2>&1
+    if exist "%ROOT%.venv\" (
+        echo [mypc] WARN: .venv 를 옮기지 못했습니다 ^(다른 프로그램이 사용 중?^).
+        echo [mypc]       찾아둔 파이썬으로 그대로 진행합니다.
+        exit /b
+    )
+)
+echo [mypc] 가상환경 생성 중 ... (%PY%)
+"%PY%" -m venv "%ROOT%.venv"
+if not exist "%VENV_PY%" (
+    echo [mypc] WARN: .venv 생성 실패 - 찾아둔 파이썬으로 그대로 진행합니다.
+    exit /b
+)
+echo [mypc] 의존성 설치 중 ... (처음이면 몇 분 걸립니다)
+if exist "%ROOT%wheelhouse\*.whl" (
+    "%VENV_PY%" -m pip install --no-index --find-links="%ROOT%wheelhouse" -r "%ROOT%requirements.txt"
+    if not errorlevel 1 goto :venv_check
+    echo [mypc] 오프라인 설치 실패 - 네트워크 설치로 전환합니다.
+)
+"%VENV_PY%" -m pip install -r "%ROOT%requirements.txt"
+:venv_check
+"%VENV_PY%" -c "import flask" >nul 2>&1
+if errorlevel 1 (
+    echo [mypc] WARN: 새 .venv 에 의존성 설치가 안 됐습니다 ^(네트워크/프록시 확인^).
+    echo [mypc]       찾아둔 파이썬으로 그대로 진행합니다.
+    exit /b
+)
+set "PY=%VENV_PY%"
+echo [mypc] 새 .venv 준비 완료.
+exit /b
+
+rem --- 후보 파이썬 1개 검증: 실제로 실행되면 PY 에 담는다 ----------------------
+:try_py
+if "%~1"=="" exit /b
+if not exist "%~1" exit /b
+"%~1" -c "pass" >nul 2>&1
+if errorlevel 1 (
+    echo [mypc] 건너뜀 ^(있지만 실행 실패^): %~1
+    exit /b
+)
+set "PY=%~1"
+exit /b
