@@ -18,6 +18,7 @@ from auth_identity import current_user as _current_user
 from config import REPORT_UPLOAD_DIR
 from database import report_db
 from report.report_extension import report_bp
+from report.routes_session import _building_response
 from report.security import (
     _audit,
     _client_meta,
@@ -27,7 +28,6 @@ from report.security import (
 )
 from web_report import service as web_report_service
 from web_report import build_status as web_report_build_status_mod
-from web_report import compute as web_report_compute
 from web_report import response_cache as web_report_response_cache
 from web_report import preprocess as web_report_preprocess
 from web_report import rawedit as web_report_rawedit
@@ -201,10 +201,7 @@ def web_report_map_analysis(session_id):
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             build_if_cold=False)
     except web_report_service.ColdBuildRequired:
-        web_report_compute.request_build(session_id, str(REPORT_UPLOAD_DIR), "map")
-        status = web_report_build_status_mod.snapshot(session_id)
-        return jsonify({"building": True, "stage": status.get("stage", "map"),
-                        "elapsed": status.get("elapsed", 0)}), 202
+        return _building_response(session_id, "map")
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except Exception:

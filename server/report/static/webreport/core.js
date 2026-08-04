@@ -93,6 +93,18 @@ function isWebReportSession() {
 function webReportMode() {
   return (((DATA && DATA.session && DATA.session.mode) || "Normal") + "").trim();
 }
+// Temperature 모드 source 역할 — "rt"(그룹 기준) / "member"(CT·HT) / ""(그 외·타 모드).
+// payload sources[] 의 temp_role 이 정본 (서버 metrics.build_report_payload).
+function tempRoleOf(name) {
+  const sources = (DATA && DATA.web_report && DATA.web_report.sources) || [];
+  const hit = sources.find(s => String(s.name) === String(name));
+  return (hit && hit.temp_role) || "";
+}
+// RT source 뒤에 붙일 작은 표식 — "이 source 의 limit 이 그룹 판정 기준" 임을 알린다.
+function tempRoleTag(name) {
+  return tempRoleOf(name) === "rt"
+    ? ` <span class="temp-rt" title="이 그룹(RT/CT/HT)의 Limit 기준 source">RT</span>` : "";
+}
 // 요약 박스의 소스별 표 정렬 — 기본은 yield% 내림차순(수율 낮은 소스 찾기)이지만,
 // DUT 모드는 DUT 번호 오름차순(DUT 1,2,…,10)으로 고정한다. 백엔드 split_table_by_dut 가
 // 이미 그 순서로 source 를 만들므로 정렬하지 않고 payload 순서를 그대로 쓴다.

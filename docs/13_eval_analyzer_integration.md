@@ -147,12 +147,21 @@ row0 TSEQ  row1 TNO  row2 STEP  row3 UNIT  row4 HILIM(USL)  row5 LOLIM(LSL)  row
 
 ## 7. 클라이언트 옵션 (Honey)
 
-- Web Report 그룹박스의 **"AI Comment" 체크박스** (honey_main.py) ↔
-  `%APPDATA%/Honey/settings.json` 키 `webreport_ai_comment` 로 영속.
-- 업로드 시 `manifest.options.ai_comment` 로 실려 서버 `report_session.webreport_options`
-  에 고정 저장된다 — **업로드 후 토글 불가** (옵션이 캐시 키·dedup 에 묶이는 세션 불변값).
-- 현재 **setEnabled(False) 비활성 노출** 상태 — 서버 파이프라인 실사용 검증 후
-  `setEnabled(True)` 한 줄로 활성화한다.
+- Web Report 그룹박스의 **"AI Comment" 체크박스** (honey_main.py). 현재
+  **setEnabled(False) 비활성 노출** 상태 — "AI Comment" 글자를 10번 클릭하면 그 실행
+  동안만 활성화된다(숨김 스위치). 서버 파이프라인 실사용 검증 후 `setEnabled(True)`
+  한 줄로 상시 활성화한다.
+- **상태를 settings.json 에 영속하지 않는다** (2026-08-04 변경). 종전엔
+  `webreport_ai_comment` 키로 저장했는데, 한 번 켠 뒤 저장된 True 가 다음 실행에서
+  "화면은 비활성인데 체크는 켜짐"으로 복원돼 **사용자가 켠 적 없는 세션에도 AI Comment
+  컬럼이 붙었다**. 이제 매 실행 꺼진 상태로 시작한다.
+- 업로드 시 `manifest.options.ai_comment` + **`ai_comment_optin`** 두 키가 함께 실려
+  서버 `report_session.webreport_options` 에 고정 저장된다 — **업로드 후 토글 불가**
+  (옵션이 캐시 키·dedup 에 묶이는 세션 불변값).
+- 서버 판정(`validation.webreport_ai_comment`)은 **두 키가 모두 참일 때만** 컬럼을
+  만든다. 구 클라가 보낸 `ai_comment=True` 세션은 optin 키가 없어 자동으로 미표시가
+  된다 — 운영 DB 를 고치지 않고 되돌리기 위한 장치다(캐시는
+  `REPORT_SCHEMA_VERSION` 25 로 무효화).
 
 ## 8. 의존성
 
@@ -169,9 +178,17 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   소유, session DB(report.db)와 분리. eval_analyzer 쪽은 실행 시 `EVAL_DB_PATH` 를 이
   파일로 지정해 읽는다(엔진 코드 변경 없이). 스키마는 엔진 `store.SCHEMA` 를 그대로 적용 —
   **스키마 변경은 사용자 사전 승인 대상**(§1, 누적된 운영 데이터 때문).
-- **트리거 3곳** (모두 try/except + 데몬 스레드 `export_async` — 실패해도 업로드/저장
+- **적재 게이트 = Issue Table Status** (2026-08-04): **Status 가 `Close` 인 이슈의
+  코멘트만** 적재한다. Open 은 아직 조사 중인 미확정 코멘트라 선례로 쓰면 안 된다는
+  요구다. Status 키는 이슈 단위(`Yield|<bin>` / `CPK|<item>` / `ETC|<item>`)이므로
+  코멘트 row_key 에서 item 을 떼어 맞춘다(`eval_export._status_key`). Close→Open 으로
+  되돌리면 아래 run_case 차집합 정리가 그 case 의 label 을 지운다. 편집 DB 이전
+  세션(rev==0)은 Status 를 저장한 적이 없어 전부 Open = 적재 대상 없음이다.
+- **트리거 5곳** (모두 try/except + 단일 소비자 큐 `export_async` — 실패해도 업로드/저장
   무영향): ① 세션 업로드 ingest 의 시드 직후, ② `service.update_issue_comments`,
-  ③ `service.update_issue_etc_items`. 매번 세션 **전체 코멘트 상태 재적재**(멱등).
+  ③ `service.update_issue_etc_items`, ④ `service.update_issue_status`,
+  ⑤ `service.update_issue_status_bulk`(④⑤ 는 위 게이트 때문에 필수 — Status 를
+  바꾸는 순간 적재/삭제가 갈린다). 매번 세션 **전체 코멘트 상태 재적재**(멱등).
 - **매핑**: PTE+개발 comment 를 `"[PTE] ...\n[개발] ..."` 로 **병합해 label 1행**
   (labeler=`web_report`, label_quality=`manual`, reviewer=마지막 편집자). row_key →
   bin: `Yield|<bin>|<item>`→bin, `CPK|<item>`→1(PASS_BIN 관례), `ETC|<item>`→NULL,
@@ -296,11 +313,20 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
      [server/eval_panel/threshold_help.yaml](../server/eval_panel/threshold_help.yaml)
      (`rules_io.threshold_help`, 키가 없으면 한 줄 요약만 나온다).
   2. *Signatures* — 21종 enable/disable + 조건(when_metric)·status_hint·issue_category·
-     **적용 범위(scope)**·문구(phenomenon/action/evidence) 편집. 체크박스로 **여러 개 골라
+     문구(phenomenon/action/evidence) 편집. 체크박스로 **여러 개 골라
      일괄 켜기/끄기**(`POST /api/signatures/enabled` — yaml 쓰기·백업·rev bump 1회).
-     목록은 **사용중이 위, 꺼진 룰은 아래 접이식**이고 적용 범위별로 묶여 나온다
-     (제품군/Family 드롭다운으로 "이 제품군에서 실제로 쓰이는 룰"만 볼 수 있다).
+     **편집 범위는 Thresholds 와 같은 제품군 × family_product 드롭다운**이다(2026-08-04).
+     병합 순서 `signatures.yaml → signatures/<PT>/_default.yaml → signatures/<PT>/<FAMILY>.yaml`
+     (`_rules.signatures_for`), 화면은 **그 범위의 적용값**을 보여주고 저장 시 상속값과 같은
+     필드는 파일에 쓰지 않는다 — thresholds 와 똑같은 규약이라 기준값을 고치면 따로 지정하지
+     않은 제품군은 따라간다. 카드의 `이 범위 전용:` 칩이 이 범위에서 직접 지정한 필드를
+     보여주고 `↺ 상속으로`(`POST /api/signatures/<id>/reset`)가 그 항목을 통째로 지운다.
+     드롭다운에서 **기준값(전 제품 공통)** 을 고르면 종전대로 signatures.yaml 을 고친다.
+     구 per-signature `scope` 체크박스 UI 는 이 오버레이로 대체돼 사라졌다(엔진의
+     `scope_matches` 는 하위호환으로 남아 있고 배포 룰 중 쓰는 것은 없다).
+     목록은 **사용중이 위, 꺼진 룰은 아래 접이식**.
      조건은 행 단위로 추가/삭제하며 **모두 만족해야 발화(AND)** — OR 은 지원하지 않는다.
+     조건 오른쪽에는 그 기준값이 **이 범위에서 실제로 얼마인지**(`= 1.1 (cpk_warn)`)를 찍는다.
      근거 문구는 `라벨 {지표}` 문법을 직접 쓰지 않고 [앞에 붙일 말]+[지표] 두 칸으로
      편집한다(중괄호가 여러 개인 기존 템플릿은 원문 1칸으로 남는다).
      **신규 추가/삭제는 지원하지 않는다** — `status.py SPECIFICITY_ORDER` 코드와 동기화가

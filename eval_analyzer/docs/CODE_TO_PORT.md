@@ -93,7 +93,7 @@ robust 통계 표준값 사용. 임계값은 하드코딩 금지(calibration 분
 ```
 robust_sigma   = 1.4826 * median(|x - median(x)|)      # MAD 기반
 spread_norm    = robust_sigma / (USL - LSL)
-outlier_ratio  = (|modified_z| > 3.5 인 비율),  modified_z = 0.6745*(x - median)/MAD
+outlier_ratio  = (|modified_z| > outlier_sigma 인 비율, 기본 4.5),  modified_z = 0.6745*(x - median)/MAD
                  (또는 Tukey fence: x < Q1-1.5*IQR or x > Q3+1.5*IQR)
 skewness       = medcouple (robust)  또는 (mean-median)/std 근사
 kurtosis       = 표준 첨도

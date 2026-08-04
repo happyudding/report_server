@@ -15,16 +15,14 @@ def all_signatures_enabled(request, monkeypatch):
     if request.node.get_closest_marker("rules_as_deployed"):
         return
     from eval_engine.pipeline import signatures
-    from eval_engine.pipeline._rules import signatures_doc
+    from eval_engine.pipeline._rules import signatures_for
 
-    def _all_enabled():
-        """signatures.yaml 문서에서 `enabled` 키만 걷어낸 사본 — 키 부재 = 활성."""
-        doc = signatures_doc()
-        return {**doc,
-                "signatures": [{k: v for k, v in s.items() if k != "enabled"}
-                               for s in doc.get("signatures") or []]}
+    def _all_enabled(case_ctx=None):
+        """스코프 병합 결과에서 `enabled` 키만 걷어낸 사본 — 키 부재 = 활성."""
+        return [{k: v for k, v in s.items() if k != "enabled"}
+                for s in signatures_for(case_ctx)]
 
-    monkeypatch.setattr(signatures, "signatures_doc", _all_enabled)
+    monkeypatch.setattr(signatures, "signatures_for", _all_enabled)
 
 
 @pytest.fixture

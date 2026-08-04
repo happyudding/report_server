@@ -158,23 +158,37 @@ def api_thresholds_save():
 
 # ── signatures ───────────────────────────────────────────────────────────────
 
+def _scope_args(body=None):
+    """제품군/family 스코프 — GET 은 쿼리스트링, 변경요청은 body 에서 받는다."""
+    src = body if body is not None else request.args
+    pt = str(src.get("pt") or "").strip()
+    family = str(src.get("family") or "").strip() or None
+    return pt, (family if pt else None)
+
+
 @eval_panel_bp.get("/api/signatures")
 def api_signatures():
-    return jsonify(rules_io.read_signatures())
+    pt, family = _scope_args()
+    try:
+        return jsonify(rules_io.read_signatures(pt, family))
+    except rules_io.RuleError as exc:
+        return _rule_error(exc)
 
 
 @eval_panel_bp.post("/api/signatures/enabled")
 def api_signatures_bulk_enabled():
-    """선택한 signature 여러 개를 한 번에 활성/비활성."""
+    """선택한 signature 여러 개를 한 번에 활성/비활성 (제품군 지정 시 그 범위만)."""
     body = request.get_json(force=True, silent=True) or {}
     enabled = bool(body.get("enabled"))
+    pt, family = _scope_args(body)
     try:
-        result = rules_io.set_signatures_enabled(body.get("ids") or [], enabled)
+        result = rules_io.set_signatures_enabled(body.get("ids") or [], enabled, pt, family)
     except rules_io.RuleError as exc:
         return _rule_error(exc)
     if result["changed"]:
         _audit("eval_rules_edit",
                changed_fields=[f"signatures_enabled={enabled}",
+                               f"scope={pt or '기준값'}/{family or '_default'}",
                                f"ids={result['changed']}", f"rev={result['rules_rev']}"])
     result["ok"] = True
     return jsonify(result)
@@ -183,13 +197,58 @@ def api_signatures_bulk_enabled():
 @eval_panel_bp.put("/api/signatures/<sig_id>")
 def api_signature_save(sig_id):
     body = request.get_json(force=True, silent=True) or {}
+    pt, family = _scope_args(body)
     try:
-        result = rules_io.save_signature(sig_id, body)
+        result = rules_io.save_signature(sig_id, body, pt, family)
     except rules_io.RuleError as exc:
         _audit("eval_rules_edit", changed_fields=[f"signature:{sig_id}"], result="error")
         return _rule_error(exc)
     _audit("eval_rules_edit",
-           changed_fields=[f"signature:{sig_id}", f"fields={result['updated']}",
+           changed_fields=[f"signature:{sig_id}",
+                           f"scope={pt or '기준값'}/{family or '_default'}",
+                           f"fields={result['updated']}", f"rev={result['rules_rev']}"])
+    result["ok"] = True
+    return jsonify(result)
+
+
+@eval_panel_bp.post("/api/signatures/<sig_id>/reset")
+def api_signature_reset(sig_id):
+    """이 제품군 전용 설정을 지우고 상속값으로 되돌린다."""
+    body = request.get_json(force=True, silent=True) or {}
+    pt, family = _scope_args(body)
+    if not pt:
+        return jsonify({"ok": False, "error": "제품군을 먼저 고르세요"}), 400
+    try:
+        result = rules_io.reset_signature(sig_id, pt, family)
+    except rules_io.RuleError as exc:
+        return _rule_error(exc)
+    if result["removed"]:
+        _audit("eval_rules_edit",
+               changed_fields=[f"signature_reset:{sig_id}", f"scope={pt}/{family or '_default'}",
+                               f"rev={result['rules_rev']}"])
+    result["ok"] = True
+    return jsonify(result)
+
+
+# ── 평가 제외 목록 ────────────────────────────────────────────────────────────
+
+@eval_panel_bp.get("/api/exclusions")
+def api_exclusions():
+    return jsonify(rules_io.read_exclusions())
+
+
+@eval_panel_bp.put("/api/exclusions")
+def api_exclusions_save():
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        result = rules_io.save_exclusions(body)
+    except rules_io.RuleError as exc:
+        _audit("eval_rules_edit", changed_fields=["exclusions"], result="error")
+        return _rule_error(exc)
+    _audit("eval_rules_edit",
+           changed_fields=["exclusions",
+                           f"item_contains={result['saved']['item_contains']}",
+                           f"units={result['saved']['units']}",
                            f"rev={result['rules_rev']}"])
     result["ok"] = True
     return jsonify(result)

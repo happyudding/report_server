@@ -325,10 +325,18 @@ function distFlushBatch() {
 
 // 배치 로더는 별도 선행 로드가 필요 없다 — 호출 시 보이는 셀들이 각자 필요한 항목을
 // 요청하도록 재큐잉만 한다. (구 전량 로드 진입점과 같은 이름·호출 규약 유지.)
+let _distPlotlyHooked = false;
 function ensureDistData() {
   distDataReady = true;
   _distBatchFailed = false;   // 재시도 진입점이기도 하다 — 실패 안내를 걷는다
   refreshDistConsumers();
+  // plotly.min.js 는 async 로드다(첫 화면을 막지 않기 위함). 분포 데이터가 plotly 보다
+  // 먼저 도착하면 미니셀 렌더가 `typeof Plotly === "undefined"` 가드에 걸려 조용히
+  // 비어버리므로, 도착 시점에 한 번 더 재큐잉한다. (이미 그려진 셀은 no-op)
+  if (!window.Plotly && window.__plotlyReady && !_distPlotlyHooked) {
+    _distPlotlyHooked = true;
+    window.__plotlyReady.then(() => refreshDistConsumers());
+  }
   return Promise.resolve();
 }
 
@@ -421,22 +429,31 @@ function distUseExtLegend(data) { return ((data && data.sources) || []).length >
 // (wafer map 범례가 dimColorMap 을 맵에만 적용하는 것과 동일 규칙).
 // 소스가 많으면 툴바 flex 행을 밀어내므로 별도 행의 고정폭 그리드로 뽑고 기본 접힘.
 const DIST_LEGEND_COLLAPSE_MIN = 8;
+// Distribution 갤러리 전용 세로 범례 클래스 — 이 클래스가 붙으면 접기 토글 없이 항상
+// 펼친 채 우측 칸에 세로로 쌓이고, 강조 해제 버튼은 자리를 항상 차지한다(칸 밀림 방지).
+// item_detail 상단 범례("idet-legend")는 종전 가로 행 그대로다.
+const DIST_LEGEND_VERT_CLS = "dist-legend-vert";
 let distLegendOpen = false;   // 펼침 상태 — 갤러리 재렌더(innerHTML 교체)에도 유지
 function distLegendHtml(sources, cls) {
   const list = sources || [];
   if (!list.length) return "";
+  const vert = String(cls || "").indexOf(DIST_LEGEND_VERT_CLS) >= 0;
   const many = list.length >= DIST_LEGEND_COLLAPSE_MIN;
-  const open = !many || distLegendOpen;
+  const open = vert || !many || distLegendOpen;
   const items = list.map(s => {
     const on = distSourceFilter.has(s.name);
     return `<span class="dist-leg-item${on ? " is-selected" : ""}" data-dist-src="${esc(s.name)}" title="${esc(s.name)}">` +
       `<span class="dist-leg-sw" style="background:${distColorFor(s.name)}"></span>` +
       `<span class="dist-leg-nm">${esc(s.name)}</span></span>`;
   }).join("");
-  const toggle = many
+  const toggle = (many && !vert)
     ? `<button type="button" class="btn-sm dist-leg-toggle" data-dist-leg="toggle">${open ? "▴" : "▾"} 범례 ${list.length}개</button>` : "";
-  const clear = distSourceFilter.size
-    ? `<button type="button" class="btn-sm dist-leg-clear" data-dist-leg="clear">강조 ${distSourceFilter.size}개 해제</button>` : "";
+  // 세로 범례에서는 버튼이 없을 때도 자리를 비워두어(visibility) 아래 목록이 위아래로
+  // 튀지 않게 한다 — 강조를 켜고 끌 때마다 범례가 밀려 보이던 문제(사용자 요청).
+  const n = distSourceFilter.size;
+  const clear = n
+    ? `<button type="button" class="btn-sm dist-leg-clear" data-dist-leg="clear">강조 ${n}개 해제</button>`
+    : (vert ? `<button type="button" class="btn-sm dist-leg-clear is-placeholder" tabindex="-1" aria-hidden="true">강조 해제</button>` : "");
   return `<div class="dist-legend-row${cls ? " " + cls : ""}${open ? " is-open" : ""}">` +
     toggle + clear + `<div class="dist-legend">${items}</div></div>`;
 }
@@ -454,7 +471,8 @@ function distApplySourceFilter() {
 // 현재 DOM 에 있는 범례 행만 제자리 교체. 리스너는 패널 위임이라 outerHTML 로 갈아도 안전하다.
 function distRenderLegends() {
   const g = document.querySelector("#panel-distribution .dist-legend-row");
-  if (g) g.outerHTML = distLegendHtml((DATA.web_report && DATA.web_report.sources) || [], "");
+  if (g) g.outerHTML = distLegendHtml((DATA.web_report && DATA.web_report.sources) || [],
+                                      DIST_LEGEND_VERT_CLS);
   // 상세는 idetLegendHtml 을 거쳐야 게이트가 일관된다 — 소스가 적은데 강조를 해제하면
   // 빈 문자열이 돌아와 행이 사라지고 Plotly 내장 legend 가 다시 그 역할을 맡는다.
   const d = document.querySelector("#panel-item-detail .dist-legend-row");
@@ -992,10 +1010,10 @@ function distToolbarHtml() {
     </div>
     ${selChip}
     <span class="dist-count"></span>
-  </div>` +
-  // 범례는 sticky 툴바 바깥 별도 행 — 소스 40개면 툴바 안에서 여러 줄로 부풀어
-  // sticky 헤더가 갤러리 세로 공간을 계속 잡아먹는다(한 번 설정하고 잊는 컨트롤).
-  distLegendHtml((DATA.web_report && DATA.web_report.sources) || [], "");
+  </div>`;
+  // 범례는 툴바가 아니라 갤러리 **우측 세로 칸**(.dist-legend-side, distRenderGallery)에
+  // 둔다 — 소스가 최대 21개라 가로로 늘어놓으면 읽기 어렵고, 툴바 안에 넣으면 sticky
+  // 헤더가 갤러리 세로 공간을 계속 잡아먹었다(사용자 요청 2026-08-04).
 }
 function distUpdateCount() {
   const el = document.querySelector("#panel-distribution .dist-count");
@@ -1032,8 +1050,12 @@ function distRenderGallery() {
     </div>`;
   }).join("");
   panel.innerHTML = distToolbarHtml() +
+    `<div class="dist-body">` +
     (distFiltered.length ? `<div class="distg-grid">${cards}</div>`
-                         : `<div class="placeholder">해당 조건의 항목이 없습니다</div>`);
+                         : `<div class="placeholder dist-body-main">해당 조건의 항목이 없습니다</div>`) +
+    `<aside class="dist-legend-side">` +
+    distLegendHtml((DATA.web_report && DATA.web_report.sources) || [], DIST_LEGEND_VERT_CLS) +
+    `</aside></div>`;
   distUpdateCount();
   if (typeof Plotly === "undefined" || typeof IntersectionObserver === "undefined") return;
   distGalleryObserver = new IntersectionObserver(entries => {

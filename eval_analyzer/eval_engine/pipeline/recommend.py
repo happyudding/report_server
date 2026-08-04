@@ -8,7 +8,7 @@ make_comment:
   - LLM on → llm_client.complete(prompt) 로 자연어 합성(모델은 사용자 지정).
 """
 from .. import llm_client, precedent_client
-from ._rules import signatures_doc
+from ._rules import signatures_for
 
 _MODALITY_V2_COMMENT = { 
     "bimodal": "분포가 2개 level로 분리되는 양상입니다.", 
@@ -35,27 +35,27 @@ def _subpop_gap_comment(sig_result) -> str | None:
             return _MODALITY_V2_COMMENT.get(s["modality_v2"])
     return None
 
-def _signature_by_id() -> dict:
-    """signatures.yaml 의 signature 목록을 id → 항목 dict 로 색인."""
-    return {s["id"]: s for s in signatures_doc()["signatures"]} 
+def _signature_by_id(case_ctx=None) -> dict:
+    """signature 목록을 id → 항목 dict 로 색인 (제품군 오버레이 반영)."""
+    return {s["id"]: s for s in signatures_for(case_ctx)}
 
 
-def _phenomenon_text(verdict, sig_result) -> str:
+def _phenomenon_text(verdict, sig_result, case_ctx=None) -> str:
     """[현상] 섹션 문구 — primary signature 의 phenomenon_ko.
 
     SUBPOP_GAP 만 modality_v2(bimodal/multimodal/separated)별 문구로 덮어쓴다. 같은
     signature 라도 분포 모양이 달라 한 문장으로 뭉뚱그릴 수 없기 때문.
     """
-    by_id = _signature_by_id()
+    by_id = _signature_by_id(case_ctx)
     primary = verdict.get("primary_signature")
     text = by_id[primary].get("phenomenon_ko") if primary in by_id else None
     if primary == "SUBPOP_GAP":
         text = _subpop_gap_comment(sig_result) or text
     return text or _NO_PHENOMENON_FALLBACK
 
-def _action_ko_for(verdict) -> str:
+def _action_ko_for(verdict, case_ctx=None) -> str:
     """[점검제안] 의 기본값 — primary signature 의 action_ko. LLM 실패 시 폴백으로도 쓰인다."""
-    by_id = _signature_by_id()
+    by_id = _signature_by_id(case_ctx)
     primary = verdict.get("primary_signature")
     return (by_id[primary].get("action_ko") if primary in by_id else None) or _NO_PHENOMENON_FALLBACK
 
@@ -113,9 +113,9 @@ def make_comment(case_ctx: dict, verdict: dict, sig_result: dict, precedents: li
     합성하고, **꺼져 있거나 호출이 실패하면 action_ko 로 조용히 폴백**한다 — LLM 유무와
     무관하게 코멘트는 항상 나와야 하므로 예외를 위로 던지지 않는다.
     """
-    phenomenon = _phenomenon_text(verdict,sig_result)
+    phenomenon = _phenomenon_text(verdict, sig_result, case_ctx)
     past_case = _past_case_text(precedents)
-    action_ko = _action_ko_for(verdict)
+    action_ko = _action_ko_for(verdict, case_ctx)
     suggestion = action_ko
     if llm_client.is_enabled():
         try:

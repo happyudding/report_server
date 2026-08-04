@@ -2,8 +2,10 @@
 # when_all: 모두 발화해야 / when_metric: 수치 조건 / scope: 적용 범위(item_class 등)
 # status_hint: 기본 심각도(bin_taxonomy 로 변조됨) / action_ko: 코멘트 골격 / evidence: 근거 템플릿
 # issue_category: report_server Issue Table 버킷 YIELD|CPK (미지정 시 ETC). primary 로 노출.
-# scope: 적용 제품군 제한 — {product_type: [PMIC, ...], family_product: [SOC, ...]}.
-#   키가 없거나 목록이 비면 전 제품 공통(기존 동작). 둘 다 있으면 AND. /pe/eval 에서 편집.
+# scope: (하위호환) 적용 제품군 제한 — {product_type: [...], family_product: [...]}.
+#   키가 없거나 목록이 비면 전 제품 공통. 제품군별 차이는 이제 오버레이 트리로 낸다:
+#   signatures/<PT>/_default.yaml → signatures/<PT>/<FAMILY>.yaml (/pe/eval 에서 편집).
+#   이 파일은 그 트리가 덮기 전의 **기준값**이다.
 version: ev1
 signatures:
   - id: LOW_SAMPLE_UNCERTAIN

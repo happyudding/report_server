@@ -2,6 +2,8 @@
 
 스코프 우선순위: default → product_type override → 제품군/family 오버레이 트리
 → item_class override (구체값 우선).
+signature 선언도 같은 규칙의 오버레이 트리를 갖는다(signatures_for) — 제품군마다
+다른 심각도·문구·조건·on/off 를 쓰기 위함.
 임계값은 여기(yaml)에서만 읽는다 — 코드에 숫자 하드코딩 금지(불변 규칙 5).
 
 캐시는 (경로, mtime) 키라 yaml 을 고치면 어느 프로세스에서든 다음 호출에서 자동 반영된다
@@ -16,6 +18,8 @@ from .. import config
 
 # family 오버레이 트리 루트 — rules/thresholds/<PRODUCT_TYPE>/<FAMILY|_default>.yaml
 THRESHOLDS_TREE_DIRNAME = "thresholds"
+# signature 오버레이 트리 루트 — rules/signatures/<PRODUCT_TYPE>/<FAMILY|_default>.yaml
+SIGNATURES_TREE_DIRNAME = "signatures"
 TREE_PT_DEFAULT = "_default"
 
 
@@ -81,22 +85,98 @@ def thresholds_for(case_ctx: dict) -> dict:
 
 
 def signatures_doc() -> dict:
-    """rules/signatures.yaml 전체 문서(캐시). signature 선언의 유일한 출처."""
+    """rules/signatures.yaml 전체 문서(캐시). signature 선언의 **기준값** 출처."""
     return load_yaml(str(config.SIGNATURES_FILE))
 
 
-def issue_category_for(signature_id) -> str:
+def signature_overlay_path(product_type, family_product=None):
+    """signature 오버레이 파일 경로. family_product 가 없으면 제품군 공통(_default)."""
+    name = str(family_product) if family_product else TREE_PT_DEFAULT
+    return (config.RULES_DIR / SIGNATURES_TREE_DIRNAME
+            / str(product_type) / f"{name}.yaml")
+
+
+def signature_overrides(product_type, family_product=None) -> dict:
+    """{signature_id: {필드: 값}} — 제품군 공통(_default) → family 순으로 병합.
+
+    오버레이 yaml 형태:
+        signatures:
+          LOW_CPK:
+            enabled: true
+            status_hint: MAJOR
+    선언한 필드만 기준값을 덮는다(필드 단위 교체). 파일이 없으면 빈 dict = 종전 동작.
+    """
+    if not product_type:
+        return {}
+    merged = {}
+    families = [None] + ([family_product] if family_product else [])
+    for family in families:
+        doc = _overlay(signature_overlay_path(product_type, family)) or {}
+        for sig_id, fields in (doc.get("signatures") or {}).items():
+            if isinstance(fields, dict):
+                merged.setdefault(str(sig_id), {}).update(fields)
+    return merged
+
+
+def signatures_for(case_ctx: dict) -> list:
+    """case 의 product_type/family_product 에 맞춰 오버레이를 얹은 signature 목록.
+
+    스코프 우선순위는 thresholds 와 같다:
+        signatures.yaml → signatures/<PT>/_default.yaml → signatures/<PT>/<FAMILY>.yaml
+    """
+    base = signatures_doc().get("signatures") or []
+    overrides = signature_overrides((case_ctx or {}).get("product_type"),
+                                    (case_ctx or {}).get("family_product"))
+    if not overrides:
+        return list(base)
+    return [{**s, **overrides.get(s.get("id"), {})} for s in base]
+
+
+def issue_category_for(signature_id, case_ctx=None) -> str:
     """primary signature id → report_server Issue Table 버킷 'YIELD'|'CPK'|'ETC'.
 
     signatures.yaml 의 issue_category 선언을 읽고, 미지정/None/미매칭은 'ETC'(기본).
     report_generator 가 signature 택소노미를 몰라도 카테고리 분류가 되게 하는 편의 필드.
+    case_ctx 를 주면 그 제품군 오버레이가 반영된 값을 쓴다.
     """
     if not signature_id:
         return "ETC"
-    for s in signatures_doc().get("signatures", []):
+    sigs = signatures_for(case_ctx) if case_ctx else (signatures_doc().get("signatures") or [])
+    for s in sigs:
         if s.get("id") == signature_id:
             return s.get("issue_category") or "ETC"
     return "ETC"
+
+
+def exclusions_doc() -> dict:
+    """rules/exclusions.yaml — 평가 제외 목록. 파일이 없으면 빈 규칙(전부 평가)."""
+    try:
+        doc = load_yaml(str(config.EXCLUSIONS_FILE))
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def exclusion_reason(case_ctx: dict):
+    """case 가 제외 목록에 걸리면 사유 문자열, 아니면 None.
+
+    item_contains 는 item 명(원문) 부분일치, units 는 UNIT 원문 정확일치 — 둘 다
+    대소문자 무시. 매칭되면 L3 가 signature 를 하나도 발화시키지 않고
+    L6 저장 게이트(present.should_store)도 통과하지 못한다(코멘트 미생성).
+    """
+    doc = exclusions_doc()
+    item = str(case_ctx.get("item_raw") or "").upper()
+    if item:
+        for token in doc.get("item_contains") or []:
+            t = str(token).strip()
+            if t and t.upper() in item:
+                return f"item명에 '{t}' 포함"
+    unit = str(case_ctx.get("unit") or "").strip().upper()
+    if unit:
+        for u in doc.get("units") or []:
+            if str(u).strip().upper() == unit:
+                return f"unit '{str(u).strip()}' 일치"
+    return None
 
 
 def outcome_taxonomy() -> dict:

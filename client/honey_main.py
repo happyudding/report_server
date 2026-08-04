@@ -521,6 +521,8 @@ class HoneyMainWindow(QMainWindow):
         # Product Type 선택 변경 시 사용자별 settings.json 에 즉시 저장
         for rb in self._pt_radios.values():
             rb.toggled.connect(self._save_product_type)
+            # Temperature 모드는 PMIC 에서만 고를 수 있다.
+            rb.toggled.connect(self._sync_temperature_mode)
 
     # ── 실험: 내장 브라우저 + 메뉴바 + 아이콘 사이드바 ───────────────────────
     def _build_chrome(self):
@@ -614,7 +616,9 @@ class HoneyMainWindow(QMainWindow):
         mode_row = QHBoxLayout()
         self._mode_radios = {}
         self._mode_group = QButtonGroup(self)
-        for key in ("Normal", "Compare", "DUT"):
+        # Temperature 는 PMIC 제품군 전용(RT/CT/HT 온도 pair 분석) — _sync_temperature_mode 가
+        # Product Type 선택에 따라 보이고 숨긴다.
+        for key in ("Normal", "Compare", "DUT", "Temperature"):
             rb = QRadioButton(key)
             if key == "Normal":
                 rb.setChecked(True)
@@ -623,17 +627,17 @@ class HoneyMainWindow(QMainWindow):
             mode_row.addWidget(rb)
         mode_row.addStretch(1)
         web_v.addLayout(mode_row)
+        self._sync_temperature_mode()
 
         # AI Comment — 서버 eval_analyzer 분석 결과를 Issue Table 에 표시할지 여부.
-        # 값은 settings.json 에 영속(webreport_ai_comment). 서버 파이프라인 검증
-        # 전까지 비활성 노출 — "AI Comment" 글자를 10번 누르면 이번 실행 동안만
-        # 활성화된다(숨김 스위치 — eventFilter 의 lbl_ai_comment 분기).
+        # 서버 파이프라인 검증 전까지 비활성 노출 — "AI Comment" 글자를 10번 누르면
+        # 이번 실행 동안만 활성화된다(숨김 스위치 — eventFilter 의 lbl_ai_comment 분기).
         # disabled 위젯은 마우스 이벤트를 못 받으므로 글자를 별도 라벨로 분리했다.
+        # **상태를 settings.json 에 영속하지 않는다** (2026-08-04): 한 번 켠 뒤 저장된
+        # True 가 다음 실행에서 "화면은 비활성인데 체크는 켜짐"으로 복원돼, 사용자가
+        # 켠 적 없는 세션에도 AI Comment 가 붙었다. 매 실행 꺼진 상태로 시작하고
+        # 활성화(10회 클릭) 후 직접 체크한 경우에만 업로드에 실린다.
         self.chk_ai_comment = QCheckBox("")
-        self.chk_ai_comment.setChecked(
-            bool(app_settings.get_setting("webreport_ai_comment", False)))
-        self.chk_ai_comment.toggled.connect(
-            lambda v: app_settings.set_setting("webreport_ai_comment", bool(v)))
         self.chk_ai_comment.setEnabled(False)
         self._ai_comment_clicks = 0
         self.lbl_ai_comment = QLabel("AI Comment")
@@ -1749,7 +1753,8 @@ class HoneyMainWindow(QMainWindow):
                 return
             self._run_web_report(ctx["work_group"], ctx["selected"], ctx["sheets"],
                                  compare_mode=ctx["compare_mode"], options=ctx["options"],
-                                 mode=ctx["mode"], source_order=ctx.get("source_order"))
+                                 mode=ctx["mode"], source_order=ctx.get("source_order"),
+                                 temperature=ctx.get("temperature"))
         finally:
             self._set_busy(False)
 
@@ -1801,6 +1806,7 @@ class HoneyMainWindow(QMainWindow):
         - Compare: source 2개 이상 (Before/After 두 그룹으로 나눠 비교 — 개수 상한 없음)
         - DUT: source 1개 (DUT/site 별 분할)
         - Commonality: source 1개 (강조 chip 을 웹에서 선택)
+        - Temperature: 제한 없음 (RT 단독 그룹도 가능 — 그룹 구성은 배치 창이 검증한다)
         """
         n = n_sources
         if mode in ("DUT", "Commonality") and n != 1:
@@ -1829,13 +1835,18 @@ class HoneyMainWindow(QMainWindow):
         # 색 번호 i = distribution source i 의 색. 미지정이면 기본 팔레트가 실린다.
         # ai_comment: Issue Table AI Comment 컬럼 표시 여부 — 서버가 세션
         # webreport_options 에 고정 저장한다 (업로드 후 토글 불가).
+        # 숨김 스위치로 **활성화된 상태에서 직접 체크**했을 때만 참이다. 서버는
+        # ai_comment_optin 이 함께 실린 세션만 컬럼을 만든다(구 클라가 보낸
+        # ai_comment=True 세션은 미표시 — web_report/validation.webreport_ai_comment).
+        ai_on = bool(self.chk_ai_comment.isEnabled() and self.chk_ai_comment.isChecked())
         options = {"colors": chart_colors.load_colors(),
-                   "ai_comment": bool(self.chk_ai_comment.isChecked())}
+                   "ai_comment": ai_on, "ai_comment_optin": ai_on}
         # SourceName(legend) 은 파일마다 달라 매번 확인·변경 후 생성.
         # DUT 모드는 서버가 업로드된 단일 honeyform 의 DUT 컬럼으로 분할·명명(DUT <값>)하므로
         # 클라에서는 분할하지 않고 rename 도 건너뛴다 (df_honey→honeyform 포맷 변환 회피).
         # Compare 모드는 이름 변경 창 대신 Before/After 배치 창을 띄운다 (이름 변경 포함).
         source_order = None
+        temperature = None
         if mode == "Compare":
             arranged = self._ask_compare_groups()
             if arranged is None:
@@ -1843,6 +1854,15 @@ class HoneyMainWindow(QMainWindow):
             self.group.rename_sources(arranged["names"])
             options["compare"] = {"before": arranged["before"], "after": arranged["after"]}
             source_order = arranged["order"]
+        elif mode == "Temperature":
+            arranged = self._ask_temperature_groups()
+            if arranged is None:
+                return None                      # 취소 = 실행 중단
+            options["temperature"] = {"groups": arranged["groups"],
+                                      "limits_file": arranged["limits_file"]}
+            source_order = arranged["order"]
+            # bin_map(.lt/.pds)은 세션에 싣지 않는다 — 업로드 전 정리에서만 쓰고 소진한다.
+            temperature = {"groups": arranged["groups"], "bin_map": arranged["bin_map"]}
         elif mode != "DUT":
             overrides = self._ask_source_names()
             if overrides is not None:
@@ -1854,8 +1874,11 @@ class HoneyMainWindow(QMainWindow):
             "compare_mode": (mode == "Compare"),
             "mode": mode,
             "options": options,
-            # Compare 모드의 업로드 순서(After 먼저) — 서버 tables 순서가 곧 이 순서다.
+            # Compare/Temperature 모드의 업로드 순서 — 서버 tables 순서가 곧 이 순서다
+            # (Compare 는 After 먼저, Temperature 는 그룹마다 RT → CT → HT).
             "source_order": source_order,
+            # Temperature 모드 rawdata 정리 지시 (그룹 + .lt/.pds bin 매핑). 그 외 모드는 None.
+            "temperature": temperature,
         }
 
     def _ask_compare_groups(self):
@@ -1868,6 +1891,19 @@ class HoneyMainWindow(QMainWindow):
         dlg = CompareArrangeDialog(self, list(self.group.names()))
         if not dlg.exec():
             self._status("Compare 배치 취소")
+            return None
+        return dlg.result_groups()
+
+    def _ask_temperature_groups(self):
+        """Temperature 모드 RT/CT/HT 그룹 배치. 취소(Cancel)면 None.
+
+        업로드 순서가 그룹마다 [RT, CT, HT] 라 서버 ``tables`` 도 그 순서가 되고,
+        그룹의 RT 가 CT/HT 재판정의 limit 기준이다.
+        """
+        from honey_ui.temperature_group_dialog import TemperatureGroupDialog
+        dlg = TemperatureGroupDialog(self, list(self.group.names()))
+        if not dlg.exec():
+            self._status("Temperature 배치 취소")
             return None
         return dlg.result_groups()
 
@@ -1895,21 +1931,28 @@ class HoneyMainWindow(QMainWindow):
         except Exception:
             return ""
 
-    def _build_webreport_parquets(self, work_group, order=None):
+    def _build_webreport_parquets(self, work_group, order=None, temperature=None):
         items = []
         sources = []
         # 중복 항목명 자동 개명 내역 — 워커 스레드에서 도는 함수라 여기서 다이얼로그를 띄우면
         # 안 된다. 모아만 두고 UI 스레드(_run_web_report)가 인코딩 완료 후 안내한다.
         self._webreport_dup_renames = []
-        # order: 업로드 순서 지정(Compare 모드의 After→Before). 서버는 이 순서를 그대로
-        # tables 순서로 쓰므로 tables[0] 이 limit 기준 source 가 된다.
+        self._temperature_clean_log = []
+        # order: 업로드 순서 지정(Compare 모드의 After→Before, Temperature 의 RT→CT→HT).
+        # 서버는 이 순서를 그대로 tables 순서로 쓰므로 tables[0] 이 limit 기준 source 가 된다.
         names = list(order) if order else work_group.names()
+        # Temperature 모드: 인코딩 **전에** rawdata 를 정리한다 (CT/HT 를 RT pass 좌표로
+        # 자르고 RT limit 으로 재판정). dist pack 은 인코딩된 parquet 으로 만들어지므로
+        # 여기서 정리하면 pack 도 자동으로 정리본과 일치한다.
+        cleaned = self._clean_temperature_frames(work_group, names, temperature)
         for idx, name in enumerate(names):
             md = work_group.mass_data_map[name]
             # honey_parse 산출물(7-meta honeyform)이 곧 parquet 소스다. 원본 파일을 디스크에서
             # 다시 읽지 않는다 — 여러 input 의 병합이 honey_parse 안에서 일어나므로, 원본을
             # 재-read 하면 병합 결과를 버리고 파일 1개만 올리게 된다.
             df = md.to_df() if hasattr(md, "to_df") else md.df
+            if name in cleaned:
+                df = cleaned[name]
             file_name = self._source_file_name(md, name)
             # encode 안에서도 같은 개명이 돌지만(멱등), 무엇이 바뀌었는지 사용자에게 알리려면
             # 여기서 미리 호출해 목록을 받아둬야 한다.
@@ -1933,6 +1976,35 @@ class HoneyMainWindow(QMainWindow):
             })
         return sources, items
 
+    def _clean_temperature_frames(self, work_group, names, temperature):
+        """Temperature 모드 rawdata 정리 → {source: 정리된 df}. 그 외 모드는 빈 dict.
+
+        정리 규칙(단일 진실)은 ``web_report.temperature.clean_frames`` 다 — 여기서는
+        honey_parse 산출물(md.df)을 건드리지 않도록 **컬럼 개명 전 프레임을 모아 넘기고**
+        결과만 받는다. 워커 스레드에서 도는 함수라 다이얼로그를 띄우지 않고, 통계는
+        모아뒀다가 UI 스레드가 실행 로그에 출력한다.
+        """
+        if not temperature or not temperature.get("groups"):
+            return {}
+        from web_report.temperature import clean_frames, format_stats
+
+        frames = {}
+        for name in names:
+            md = work_group.mass_data_map[name]
+            frames[name] = md.to_df() if hasattr(md, "to_df") else md.df
+        cleaned, stats = clean_frames(frames, temperature["groups"],
+                                      temperature.get("bin_map"))
+        self._temperature_clean_log = format_stats(stats)
+        # RT 는 정리 대상이 아니라 원본 객체 그대로 돌아온다 — 바뀐 것만 남긴다.
+        return {name: df for name, df in cleaned.items() if df is not frames[name]}
+
+    def _log_temperature_cleanup(self):
+        """Temperature rawdata 정리 통계를 실행 로그에 남긴다 (UI 스레드 전용)."""
+        lines = getattr(self, "_temperature_clean_log", None)
+        if lines:
+            self._append_run_log("Temperature rawdata 정리 (RT 기준 재판정):\n"
+                                 + "\n".join(f"· {line}" for line in lines))
+
     def _warn_duplicate_items(self):
         """중복 항목명 자동 개명이 있었으면 안내한다 (UI 스레드 전용). 업로드는 계속 진행."""
         renames = getattr(self, "_webreport_dup_renames", None)
@@ -1953,7 +2025,7 @@ class HoneyMainWindow(QMainWindow):
             csv_name="duplicate_items.csv").exec()
 
     def _run_web_report(self, work_group, selected, sheets, compare_mode=False, options=None,
-                        mode="Normal", source_order=None):
+                        mode="Normal", source_order=None, temperature=None):
         # 실행 버튼 잠금/해제는 호출부(on_web_report)의 try/finally 가 전담한다.
         self._init_run_log("Web Report 생성")
         progress = _ElapsedProgress(
@@ -1973,7 +2045,8 @@ class HoneyMainWindow(QMainWindow):
             selector=rg.ItemSelector(selected_items=selected),
             compare_mode=compare_mode,
         )
-        fut_encode = prep_ex.submit(self._build_webreport_parquets, work_group, source_order)
+        fut_encode = prep_ex.submit(self._build_webreport_parquets, work_group, source_order,
+                                    temperature)
 
         # Distribution pack 프리컴퓨트 — 서버가 영구 저장해 조회·재조회 모두 재정렬 없이
         # 서빙한다. 같은 워커 1개에서 인코딩 완료 후 순차 실행되므로 fut_encode.result() 는
@@ -2037,6 +2110,7 @@ class HoneyMainWindow(QMainWindow):
                       prefix="업로드할 데이터를 만드는 중 오류가 발생했습니다.")
             self._status("parquet 인코딩 실패")
             return
+        self._log_temperature_cleanup()
         self._warn_duplicate_items()
 
         dist_pack = None
@@ -2402,6 +2476,20 @@ class HoneyMainWindow(QMainWindow):
     def _save_product_type(self, *_):
         """Product Type 선택을 사용자별 설정에 저장 (다음 실행 때 복원)."""
         app_settings.set_setting("product_type", self.product_type())
+
+    def _sync_temperature_mode(self, *_):
+        """Temperature 분석 모드 라디오는 PMIC 를 골랐을 때만 보인다.
+
+        다른 제품군으로 바꿀 때 Temperature 가 선택돼 있으면 Normal 로 되돌린다
+        (숨은 라디오가 선택된 채 남으면 업로드 모드가 조용히 어긋난다).
+        """
+        rb = (getattr(self, "_mode_radios", None) or {}).get("Temperature")
+        if rb is None:
+            return
+        is_pmic = self.product_type() == "PMIC"
+        rb.setVisible(is_pmic)
+        if not is_pmic and rb.isChecked():
+            self._mode_radios["Normal"].setChecked(True)
 
     def _do_upload(self, path):
         """report_generator 보고서 xlsx → Raw Data 복원 → web_report 세션 생성.

@@ -204,6 +204,28 @@ def api_metrics_file_history():
     return jsonify(metrics.file_history(hours))
 
 
+@admin_panel_bp.get("/api/webreport/builds")
+def api_webreport_builds():
+    """web_report 콜드 빌드 이력 — 단계별 소요 + 대기 시간 + 실패(타임아웃·워커 붕괴).
+
+    "콜드 빌드가 300초 걸렸다" 가 계산이 느려서인지 앞 작업 대기에 밀려서인지는
+    queue_wait/pool_wait 를 봐야 구분된다 (web_report/build_log.py 참조)."""
+    hours = min(max(int(request.args.get("hours", 24)), 1), 24 * 14)
+    limit = min(max(int(request.args.get("limit", 100)), 1), 500)
+    out = {"builds": [], "compute": None}
+    try:
+        from web_report import build_log
+        out["builds"] = build_log.history(hours, limit)
+    except Exception:
+        pass
+    try:
+        from web_report import compute
+        out["compute"] = compute.status()
+    except Exception:
+        pass
+    return jsonify(out)
+
+
 @admin_panel_bp.get("/api/active_users")
 def api_active_users():
     """실시간 접속 사용자 — 사용자 탭 전용(10초 폴링).

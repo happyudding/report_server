@@ -16,8 +16,9 @@ function collectGrid(panelEl, baseGrid) {
 
 // 열 이름 → 고정 너비(px) — xlsx 실측 기준 패턴.
 // kind==="issue" 이면 Issue Table 은 Distribution 셀을 크게 보여줘야 해 전체 컬럼을 1.5배로 키운다.
-// narrowSrc: source 컬럼이 SRC_ABBREV_MIN 이상이라 헤더가 공통부분을 뗀 짧은 라벨(01/02/…)로
-// 표시될 때 — 값이 숫자뿐이므로 {src}_yield/_count 폭을 숫자 크기에 맞게 좁힌다.
+// narrowSrc: source 컬럼이 SRC_NARROW_MIN 이상일 때 — {src}_yield/_count 폭 힌트를 숫자(xx.xx)
+// 크기까지 낮춘다. auto table-layout 은 지정 폭보다 내용(축약된 헤더 라벨 / 값)이 넓으면 그만큼만
+// 넓히고 그 아래로는 줄이지 않으므로, 결과 폭 = max(헤더 축약 라벨, xx.xx) 라는 최소값이 된다.
 function colWidth(name, kind, narrowSrc) {
   const n = String(name || "").toLowerCase().trim();
   const s = kind === "issue" ? 1.5 : 1;   // Issue Table 전체 1.5배 확대
@@ -177,6 +178,12 @@ function displayLabel(c) {
 // source 컬럼이 이 수 이상이면 헤더에서 공통 부분을 생략하고 서로 다른 부분만 보여준다.
 // 예: kucak_01 … kucak_11 → 첫 컬럼만 "kucak_01" 전체, 나머지는 "02" … "11".
 const SRC_ABBREV_MIN = 8;
+
+// source 컬럼 폭을 "숫자 크기"까지 좁히기 시작하는 source 개수. source 가 2개 이상이면 헤더가
+// 축약(abbrevSourceLabels ".."+뒤 6글자 / SRC_ABBREV_MIN 이상이면 공통부분 제거)되므로, 폭 힌트를
+// 낮춰 실제 폭이 max(축약 라벨, xx.xx) 로 정해지게 한다 → 소스명이 짧을수록 열이 좁아져 가로
+// 스크롤이 줄어든다(사용자 요청 2026-08-04). 소스 1개는 헤더가 전체 이름이라 기존 폭 유지.
+const SRC_NARROW_MIN = 2;
 
 // 이름 목록의 공통 접두/접미 길이(문자 수). 이름이 1개 이하면 축약 대상 아님.
 function commonAffixLen(names) {
@@ -443,8 +450,8 @@ function renderSheetTable(rows, opts) {
   if (opts.kind === "yield" && !opts.edit) bodyRows = reorderYieldRows(bodyRows, cols);
   const binCol = opts.kind === "yield" ? cols.find(c => String(c).trim().toLowerCase() === "bin") : null;
 
-  // source 가 많으면 헤더가 공통부분을 뗀 짧은 라벨이 되므로 그 컬럼 폭도 함께 좁힌다.
-  const narrowSrc = sourceColCount(cols) >= SRC_ABBREV_MIN;
+  // source 가 2개 이상이면 헤더가 축약 라벨이 되므로 그 컬럼 폭 힌트도 함께 낮춘다.
+  const narrowSrc = sourceColCount(cols) >= SRC_NARROW_MIN;
   const colgroup = "<colgroup>" + cols.map(c =>
     `<col style="width:${colWidth(c, opts.kind, narrowSrc)}">`
   ).join("") + "</colgroup>";
@@ -875,7 +882,7 @@ function yieldOverviewHtml() {
     const bi = basisBySrc.get(String(s.source));
     const bTxt = bi ? ((bi.basis === "gross" ? "Gross " : "Test ") + bi.total) : "";
     return `<tr>
-      <td class="ybs-src">${esc(s.source)}</td>
+      <td class="ybs-src">${esc(s.source)}${tempRoleTag(s.source)}</td>
       <td class="ybs-pct">${esc(sp)}%</td>
       <td class="ybs-cnt">${esc(s.pass)} / ${esc(s.total)}</td>
       <td class="ybs-cnt"${bi ? ` title="${esc(yieldBasisReasonText(bi))}"` : ""}>${esc(bTxt)}</td>
@@ -905,7 +912,7 @@ function yieldOverviewHtml() {
         : "";
       return `<tr>
       ${stepCell}
-      <td class="ybs-src">${esc(sr.source)}</td>
+      <td class="ybs-src">${esc(sr.source)}${tempRoleTag(sr.source)}</td>
       <td class="ybs-pct">${esc(sp)}%</td>
       <td class="ybs-cnt">${esc(sr.survivor)} / ${esc(sr.entered)}</td>
       <td class="ybs-cnt">${failTxt}</td>

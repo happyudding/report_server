@@ -123,7 +123,27 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   캐시에 시딩 — 첨부 세션은 dist 콜드 미스 자체가 없다 → [10](10_web_report_pipeline.md).
 - **콜드 빌드 관측 로그**: report/dist 콜드 빌드가 `akey/항목수/포인트수/크기/소요초`
   INFO 로그를 남긴다 ([service.py](../web_report/service.py)) — 실데이터 규모가 위험
-  구간(수천만 포인트)에 닿는지 운영 로그로 판단.
+  구간(수천만 포인트)에 닿는지 운영 로그로 판단. **단, 이 INFO 는 인라인 분기 전용**이라
+  운영의 정상 경로(워커 오프로드)는 안 찍힌다 — 아래 build_log 가 그 공백을 메운다.
+- **콜드 빌드 단계별 기록** ([build_log.py](../web_report/build_log.py), 2026-08-04):
+  완료·실패 빌드 1건 = JSON 1줄로 `server/log/webreport_build_YYYYMMDD.log`.
+  단계(`download`/`decode`/`preprocess`/`ai_comment`/`tab:<탭>`/`dist_index`/`serialize`)와
+  **대기 3종**(`queue_wait` 온디맨드·프리웜·distpack 큐 / `pool_wait` 워커 실행 시작까지
+  = 풀 큐 + spawn·모듈 재임포트 / `ipc` payload 반송)을 함께 남긴다.
+  - 오프로드 빌드의 단계는 자식 프로세스에서만 잴 수 있어, `report_job`/`dist_job`/
+    `map_job` 이 **`(결과, timing)` 튜플**을 반환해 부모로 실어 보낸다(`prewarm_job` 은
+    payload 를 버리고 timing dict 만). 호출부는 [service.py](../web_report/service.py)
+    3곳 — 잡 반환 형태를 바꾸면 여기도 함께 고칠 것.
+  - 프로세스 **안**의 구간은 `perf_counter`, 프로세스 **사이** 시점 비교는 `time.time()`
+    (perf_counter 는 프로세스마다 기준점이 달라 비교 불가). 음수는 0 클램프.
+  - 실패(timeout/broken/error)는 그걸 아는 유일한 지점인 `compute.run()` except 에서 기록.
+    ⚠️ `WEB_REPORT_COMPUTE_TIMEOUT_SEC`(기본 300s)는 **풀 큐 대기까지 포함**해 잰다 —
+    기록된 `total` 이 상한에 붙어 있으면 계산이 느린 게 아니라 앞 작업(프리웜·distpack·
+    업로드 ingest 가 같은 풀을 공유)에 밀린 것일 수 있다. 타임아웃은 `_reset_pool`
+    (전 워커 terminate)을 부르므로 **동시 진행 빌드가 함께 죽는다**(= broken 레코드 동반).
+  - 조회: 관리자 `/pe/admin-<secret>/` **이력 탭 → 콜드 빌드 이력** 카드
+    (`GET api/webreport/builds?hours=&limit=`). 원본 파일은 console log 탭에서도 열람 가능
+    (`maintenance._LOG_GLOBS`). 계측은 전부 best-effort — 실패해도 빌드에 영향 없다.
 - **202 + 백그라운드 빌드** (2026-07-21): `/full` 과 `/web_report/map_analysis` 는 콜드
   미스에서 요청 스레드가 빌드를 기다리지 않는다. `service.ColdBuildRequired` 를 올려
   `compute.request_build`(전용 큐 + 소비자 스레드 `WEB_REPORT_ONDEMAND_WORKERS`)에 넘기고

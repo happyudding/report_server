@@ -10,6 +10,8 @@
   (c) 코멘트 수정 → 해당 case 의 label 만 교체 (건수 불변)
   (e) 읽기 계약 — eval_engine store.search_precedents(conn 주입) 로 코멘트가
       선례로 조회되는지 확인
+  (f) **Status 게이트** — Close→Open 으로 되돌린 이슈는 적재에서 빠지고 그 label 이
+      정리된다. 다시 Close 로 바꾸면 복귀 (2026-08-04 규약)
   (d) 코멘트 전부 삭제 → label/run_case 정리 + fail_case 잔존 (reconciliation)
 
 pytest 미사용(그건 eval_analyzer 전용) — 자체 실행 + assert 스타일(tests/ 관례).
@@ -89,6 +91,14 @@ def comment_row(row_key, col, value, at=100, by="user1"):
             "value": value, "updated_at": at, "updated_by": by}
 
 
+def close_row(issue_key, at=100, by="user1"):
+    """Status=Close 편집행 — 이 상태인 이슈의 코멘트만 적재된다(부재=Open).
+
+    키는 이슈 단위: Yield 는 "Yield|<bin>", CPK/ETC 는 코멘트 row_key 와 같다."""
+    return {"kind": "issue_status", "item_key": issue_key,
+            "value": "Close", "updated_at": at, "updated_by": by}
+
+
 def q1(conn, sql, *params):
     return conn.execute(sql, params).fetchone()
 
@@ -115,6 +125,8 @@ def main():
         comment_row("CPK|ItemA", "PTE comment", "cpk marginal"),
         comment_row("ETC|CustomThing", "개발 comment", "기타 항목 메모"),
         comment_row("Yield|1|Pass", "PTE comment", "pass 행 코멘트 (skip 대상)"),
+        # 적재 게이트 — 이 3개 이슈가 Close 라서 위 코멘트들이 나간다.
+        close_row("Yield|4"), close_row("CPK|ItemA"), close_row("ETC|CustomThing"),
     ]
     export = lambda: eval_export.export_session_comments(  # noqa: E731
         SID, report_db=db, upload_root=_TMP, tables=[make_table()])
@@ -126,7 +138,10 @@ def main():
     conn = eval_export.open_conn(create=False)
     assert conn is not None, "eval DB 파일이 생성되지 않음"
     try:
-        assert qv(conn, "PRAGMA user_version") == 4
+        # 스키마 버전은 엔진 상수를 따른다 — 엔진이 마이그레이션을 추가할 때마다
+        # 이 숫자를 손으로 고치면 테스트가 조용히 깨진다(고정 4 였다가 엔진 6 에서 실패).
+        from eval_engine import store as _store   # eval_export._engine 이 sys.path 추가 완료
+        assert qv(conn, "PRAGMA user_version") == _store.SCHEMA_VERSION
         assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 3
         assert qv(conn, "SELECT COUNT(*) FROM label") == 3
         assert qv(conn, "SELECT COUNT(*) FROM ingest_run") == 1
@@ -234,6 +249,36 @@ def main():
     finally:
         conn.close()
 
+    # (f) Status 게이트 — Close→Open 이면 그 이슈는 빠지고 label 이 정리된다 ────
+    reopened = [r for r in db.edit_rows
+                if not (r["kind"] == "issue_status" and r["item_key"] == "Yield|4")]
+    closed_all = list(db.edit_rows)
+    db.edit_rows = reopened
+    r = export()
+    assert r == {"cases": 2, "labels": 2, "removed": 1}, r
+    conn = eval_export.open_conn(create=False)
+    try:
+        assert qv(conn, "SELECT COUNT(*) FROM label") == 2
+        assert qv(conn, "SELECT COUNT(*) FROM run_case") == 2
+        im = q1(conn, "SELECT * FROM item_master WHERE item_name_raw='ItemA'")
+        fc = q1(conn, "SELECT * FROM fail_case WHERE item_id=? AND bin=4", im["item_id"])
+        assert q1(conn, "SELECT * FROM label WHERE case_id=?", fc["case_id"]) is None, \
+            "Open 으로 되돌린 이슈의 label 이 남아 있다"
+        assert fc is not None, "fail_case 는 보존(다른 적재와 공유 가능)"
+    finally:
+        conn.close()
+    # 다시 Close → 복귀
+    db.edit_rows = closed_all
+    r = export()
+    assert r == {"cases": 3, "labels": 3, "removed": 0}, r
+
+    # Status 가 하나도 없으면(전부 Open) 적재 대상 없음
+    db.edit_rows = [row for row in closed_all if row["kind"] != "issue_status"]
+    r = export()
+    assert r == {"cases": 0, "labels": 0, "removed": 3}, r
+    db.edit_rows = closed_all
+    assert export() == {"cases": 3, "labels": 3, "removed": 0}
+
     # (d) 코멘트 전부 삭제 → reconciliation ─────────────────────────────────
     db.edit_rows = []
     r = export()
@@ -252,7 +297,7 @@ def main():
     r = export()
     assert "skipped" in r, r
 
-    print("PASS: test_eval_export (a/b/c/e/d + guard)")
+    print("PASS: test_eval_export (a/b/c/e/f/d + guard)")
     return 0
 
 

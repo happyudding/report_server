@@ -10,7 +10,8 @@ import yaml
 
 from eval_engine import config
 from eval_engine.pipeline import signatures
-from eval_engine.pipeline._rules import load_yaml, thresholds_for, threshold_overlay_path
+from eval_engine.pipeline._rules import (load_yaml, thresholds_for, threshold_overlay_path,
+                                         signature_overlay_path, signatures_for)
 
 
 def _tmp_rules(tmp_path, monkeypatch):
@@ -117,3 +118,62 @@ def test_signature_enabled_false_does_not_fire(tmp_path, monkeypatch):
     assert "SEVERE_OUTLIER" not in ids
     assert "OUTLIER_WARN" in ids       # 다른 룰은 그대로 발화
     assert not any(k.startswith("SEVERE_OUTLIER.") for k in sig["applies"])
+
+
+# ── signature 제품군 오버레이 트리 ────────────────────────────────────────────
+
+def _write_sig_overlay(product_type, family, entries):
+    path = signature_overlay_path(product_type, family)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump({"signatures": entries}, allow_unicode=True),
+                    encoding="utf-8")
+    return path
+
+
+def test_no_signature_tree_keeps_base(tmp_path, monkeypatch):
+    """오버레이 트리가 없으면 signatures.yaml 그대로 (기존 동작 보존)."""
+    _tmp_rules(tmp_path, monkeypatch)
+    base = yaml.safe_load(config.SIGNATURES_FILE.read_text(encoding="utf-8"))["signatures"]
+    assert signatures_for(_case()) == base
+
+
+def test_signature_overlay_is_per_product_type(tmp_path, monkeypatch):
+    """제품군 오버레이는 그 제품군에만 적용되고 기준값·다른 제품군은 안 건드린다."""
+    _tmp_rules(tmp_path, monkeypatch)
+    _write_sig_overlay("PMIC", None, {"OUTLIER_WARN": {"enabled": False,
+                                                       "status_hint": "CRITICAL"}})
+
+    by_id = {s["id"]: s for s in signatures_for(_case())}
+    assert by_id["OUTLIER_WARN"]["enabled"] is False
+    assert by_id["OUTLIER_WARN"]["status_hint"] == "CRITICAL"
+    # 선언하지 않은 필드는 기준값 그대로
+    assert by_id["OUTLIER_WARN"]["when_metric"] == {"outlier_ratio": ">outlier_ratio_warn"}
+    # 다른 제품군은 무영향
+    other = {s["id"]: s for s in signatures_for(_case(product_type="MDDI", family_product="MX"))}
+    assert other["OUTLIER_WARN"].get("enabled") is not False
+
+
+def test_signature_family_overlay_wins_over_pt(tmp_path, monkeypatch):
+    """_default.yaml → <FAMILY>.yaml 순으로 덮인다 (thresholds 와 같은 규약)."""
+    _tmp_rules(tmp_path, monkeypatch)
+    _write_sig_overlay("PMIC", None, {"OUTLIER_WARN": {"status_hint": "CRITICAL",
+                                                       "enabled": False}})
+    _write_sig_overlay("PMIC", "SOC", {"OUTLIER_WARN": {"status_hint": "MONITOR"}})
+
+    soc = {s["id"]: s for s in signatures_for(_case())}
+    assert soc["OUTLIER_WARN"]["status_hint"] == "MONITOR"   # family 최우선
+    assert soc["OUTLIER_WARN"]["enabled"] is False           # family 에 없는 키는 _default 유지
+    mem = {s["id"]: s for s in signatures_for(_case(family_product="MEMORY"))}
+    assert mem["OUTLIER_WARN"]["status_hint"] == "CRITICAL"
+
+
+@pytest.mark.rules_as_deployed
+def test_signature_overlay_changes_firing(tmp_path, monkeypatch):
+    """오버레이로 끈 룰은 그 제품군 평가에서 빠지고 다른 제품군은 그대로 발화한다."""
+    _tmp_rules(tmp_path, monkeypatch)
+    _write_sig_overlay("PMIC", None, {"OUTLIER_WARN": {"enabled": False}})
+
+    feats, raw = _full_features(outlier_ratio=0.10), {"yield": 0.95, "cpk": 1.5}
+    fired = lambda case: [s["id"] for s in signatures.evaluate(case, feats, raw)["signatures"]]
+    assert "OUTLIER_WARN" not in fired(_case())
+    assert "OUTLIER_WARN" in fired(_case(product_type="MDDI", family_product="MX"))

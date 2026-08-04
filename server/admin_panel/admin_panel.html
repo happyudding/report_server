@@ -380,6 +380,19 @@ body { position: relative; }
       </table></div>
     </div>
   </div>
+  <div class="card">
+    <h2>콜드 빌드 이력 <span class="hint">web_report 세션을 처음 열 때의 계산 — 단계별 소요와
+      대기 시간. <b>큐 대기·풀 대기</b>가 크면 계산이 느린 게 아니라 앞 작업에 밀린 것입니다.</span></h2>
+    <div class="msg" id="cbInfo">로딩 중…</div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>시각</th><th>종류</th><th>세션</th><th>결과</th>
+        <th class="num">총 소요</th><th class="num">큐 대기</th><th class="num">풀 대기</th>
+        <th>주요 단계</th><th>실행 위치</th>
+      </tr></thead>
+      <tbody id="cbBody"><tr class="empty-row"><td colspan="9">-</td></tr></tbody>
+    </table></div>
+  </div>
 </div>
 
 <!-- ═══ 스토리지 ═══ -->
@@ -1169,6 +1182,51 @@ async function loadHistoryTab() {
       || `<tr class="empty-row"><td colspan="3">-</td></tr>`;
   } catch (e) {
     info.textContent = "조회 실패: " + e;
+  }
+  loadColdBuilds();   // 실패해도 위 차트에 영향 없도록 분리 호출
+}
+
+// ── 콜드 빌드 이력 (web_report/build_log.py 기록) ────────────────────────────
+const CB_KIND = { report: "리포트", dist: "산포", map: "맵", dist_pack: "pack 생성", trim: "Trim" };
+const CB_TRIGGER = { ondemand: "온디맨드", prewarm: "프리웜", distpack: "pack 큐" };
+function cbSecs(v) { return (v == null) ? "-" : Number(v).toFixed(1) + "s"; }
+function cbTopStages(stages) {
+  const entries = Object.entries(stages || {})
+    // payload 는 탭별 단계의 합계라 같이 세면 중복으로 보인다 — 상위 표시에서만 뺀다.
+    .filter(([k, v]) => k !== "payload" && Number(v) > 0)
+    .sort((a, b) => b[1] - a[1]).slice(0, 3);
+  return entries.length ? entries.map(([k, v]) => `${esc(k)} ${Number(v).toFixed(1)}s`).join(" · ") : "-";
+}
+async function loadColdBuilds() {
+  const info = $("cbInfo");
+  try {
+    const d = await getJSON("api/webreport/builds?hours=" + $("histHours").value + "&limit=200");
+    const st = (d.compute && d.compute.stats) || {};
+    const bad = (st.timeout || 0) + (st.broken || 0) + (st.worker_killed || 0);
+    info.innerHTML = `${(d.builds || []).length}건 기록 · `
+      + `<span style="${bad ? "color:#f87171;font-weight:600" : ""}">타임아웃 ${st.timeout || 0}건 · 워커 붕괴 ${st.broken || 0}건 · `
+      + `워커 강제종료 ${st.worker_killed || 0}건 · 온디맨드 실패 ${st.ondemand_error || 0}건</span> `
+      + `(서버 기동 이후 누적) · 워커 ${d.compute ? d.compute.workers : "?"}개 · `
+      + `타임아웃 상한 ${d.compute ? d.compute.timeout_sec : "?"}s`;
+    $("cbBody").innerHTML = (d.builds || []).map(r => {
+      const ok = (r.result || "ok") === "ok";
+      const where = (r.offloaded ? "워커" : "인라인")
+        + (r.trigger ? " · " + (CB_TRIGGER[r.trigger] || esc(r.trigger)) : "");
+      return `<tr>
+        <td>${esc(String(r.ts || "").replace("T", " ").slice(5))}</td>
+        <td>${esc(CB_KIND[r.kind] || r.kind || "-")}</td>
+        <td title="${esc(r.akey || "")}">${esc(String(r.session || "-").slice(0, 12))}</td>
+        <td><span class="badge ${ok ? "done" : "error"}">${esc(r.result || "ok")}</span>${
+          r.error ? `<span class="badge-fail" title="${esc(r.error)}">!</span>` : ""}</td>
+        <td class="num">${cbSecs(r.total)}</td>
+        <td class="num">${cbSecs(r.queue_wait)}</td>
+        <td class="num">${cbSecs(r.pool_wait)}</td>
+        <td>${cbTopStages(r.stages)}</td>
+        <td>${esc(where)}</td>
+      </tr>`;
+    }).join("") || `<tr class="empty-row"><td colspan="9">콜드 빌드 기록 없음</td></tr>`;
+  } catch (e) {
+    info.textContent = "콜드 빌드 이력 조회 실패: " + e;
   }
 }
 $("btnHistRefresh").onclick = () => loadHistoryTab();

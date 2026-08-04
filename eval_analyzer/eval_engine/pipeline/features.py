@@ -292,14 +292,14 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
 
     if mad != 0:
         modified_z = 0.6745 * (v - median) / mad
-        outlier_ratio = float(np.mean(np.abs(modified_z) > th["modified_z"]))
+        outlier_ratio = float(np.mean(np.abs(modified_z) > th["outlier_sigma"]))
     else:
         # MAD=0(과반 동일값) — Iglewicz-Hoaglin meanAD 폴백. 그냥 0 으로 두면
         # "대부분 동일값 + 소수 폭주" 케이스를 outlier 룰이 통째로 놓친다.
         mean_ad = float(np.mean(np.abs(v - median)))
         if mean_ad > 0:
             modified_z = (v - median) / (1.253314 * mean_ad)
-            outlier_ratio = float(np.mean(np.abs(modified_z) > th["modified_z"]))
+            outlier_ratio = float(np.mean(np.abs(modified_z) > th["outlier_sigma"]))
         else:
             outlier_ratio = 0.0
 

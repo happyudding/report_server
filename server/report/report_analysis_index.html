@@ -66,8 +66,8 @@ body {
 .pt-badge.SECURITY { background: #9333ea; }
 .pt-badge.TCON { background: #0d9488; }
 .pt-badge.default { background: #64748b; }
-/* 모드 배지: 머리글자 1자를 담는 색 채운 원 (N=Normal / C=Compare / D=DUT / M=Commonality).
-   흰 글자 대비를 위해 배경은 파스텔이 아닌 포화 톤을 쓴다. */
+/* 모드 배지: 머리글자 1자를 담는 색 채운 원 (N=Normal / C=Compare / D=DUT / M=Commonality
+   / T=Temperature). 흰 글자 대비를 위해 배경은 파스텔이 아닌 포화 톤을 쓴다. */
 .mode-badge {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border-radius: 50%;
@@ -78,6 +78,7 @@ body {
 .mode-badge.Compare { background: #d97706; }
 .mode-badge.DUT { background: #2563eb; }
 .mode-badge.Commonality { background: #7c3aed; }
+.mode-badge.Temperature { background: #dc2626; }
 .mode-badge.none {
   width: auto; height: auto; background: transparent; color: #94a3b8; font-weight: 400;
 }
@@ -437,6 +438,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
         <option value="Normal">Normal</option>
         <option value="Compare">Compare</option>
         <option value="DUT">DUT</option>
+        <option value="Temperature">Temperature</option>
       </select>
     </div>
     <div class="filter-group">
@@ -677,7 +679,8 @@ function productTypeBadge(pt) {
 }
 
 // 모드 → 원형 배지에 넣을 머리글자. Commonality 는 C 가 Compare 와 겹쳐 M 을 쓴다.
-const MODE_INITIAL = { Normal: "N", Compare: "C", DUT: "D", Commonality: "M" };
+const MODE_INITIAL = { Normal: "N", Compare: "C", DUT: "D", Commonality: "M",
+                       Temperature: "T" };
 
 // 분석 모드 배지 — web_report 세션에만 의미가 있고, 그 외(xlsx 업로드 등)는 '-'.
 function modeBadge(r) {

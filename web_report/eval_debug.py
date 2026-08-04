@@ -9,7 +9,9 @@ ai_comment.py(운영 평가) / eval_export.py(코멘트 export) / **이 모듈(�
 
 엔진 사설 API 핀(엔진 변경 시 함께 확인):
   pipeline.signatures.build_ctx_values / _eval_condition / _HIGH_MOMENT_METRICS
+  pipeline.signatures.signatures_for  ← 트레이스가 평가와 같은 스코프 병합 결과를 봐야 한다
   pipeline._rules.thresholds_for / signatures_doc / reload_rules / threshold_overlay_path
+  pipeline._rules.signatures_for / signature_overrides / signature_overlay_path
   pipeline.status.SPECIFICITY_ORDER
   pipeline.features._classify_modality_v2  ← _subpop_conditions 가 AND 체인을 미러링한다
 """
@@ -48,7 +50,8 @@ def rules_files() -> dict:
     from eval_engine import config
     return {"thresholds": Path(config.THRESHOLDS_FILE),
             "signatures": Path(config.SIGNATURES_FILE),
-            "product_taxonomy": Path(config.PRODUCT_TAXONOMY_FILE)}
+            "product_taxonomy": Path(config.PRODUCT_TAXONOMY_FILE),
+            "exclusions": Path(config.EXCLUSIONS_FILE)}
 
 
 def overlay_path(product_type, family_product=None) -> Path:
@@ -100,11 +103,42 @@ def taxonomy() -> dict:
             for pt in (doc.get("product_types") or [])}
 
 
+def exclusions() -> dict:
+    """rules/exclusions.yaml 정규화 — {"item_contains": [...], "units": [...]}."""
+    _eval_path()
+    from eval_engine.pipeline._rules import exclusions_doc
+    doc = exclusions_doc()
+    return {"item_contains": [str(v) for v in (doc.get("item_contains") or [])],
+            "units": [str(v) for v in (doc.get("units") or [])]}
+
+
 def signatures_raw() -> list:
-    """signatures.yaml 의 signature 목록(파싱 결과 그대로)."""
+    """signatures.yaml 의 signature 목록(파싱 결과 그대로 — 오버레이 미적용 기준값)."""
     _eval_path()
     from eval_engine.pipeline._rules import signatures_doc
     return list(signatures_doc().get("signatures") or [])
+
+
+def signature_overlay_path(product_type, family_product=None) -> Path:
+    """signature 오버레이 파일 경로 — 엔진 로더와 같은 규칙으로 산출."""
+    _eval_path()
+    from eval_engine.pipeline import _rules
+    return Path(_rules.signature_overlay_path(product_type, family_product))
+
+
+def signature_overrides(product_type, family_product=None) -> dict:
+    """이 범위까지 병합된 signature 오버라이드 {id: {필드: 값}}."""
+    _eval_path()
+    from eval_engine.pipeline._rules import signature_overrides as _fn
+    return dict(_fn(product_type, family_product))
+
+
+def signatures_scoped(product_type, family_product=None) -> list:
+    """엔진이 이 제품군/family 에서 실제로 평가할 signature 목록 (오버레이 병합 결과)."""
+    _eval_path()
+    from eval_engine.pipeline._rules import signatures_for
+    return list(signatures_for({"product_type": product_type,
+                                "family_product": family_product}))
 
 
 def specificity_order() -> list:
@@ -227,17 +261,22 @@ def _subpop_conditions(features, thresholds):
 def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, sig_mod):
     """signature 21개 × (활성/스킵사유/조건분해/발화) 매트릭스."""
     fired_ids = {s["id"] for s in (sig_result.get("signatures") or [])}
+    excluded = sig_result.get("excluded")
     n_dut = features.get("n_dut") or 0
     high_moment_ok = n_dut >= thresholds.get("n_min", 0)
     rows = []
-    for sig in signatures_raw():
+    # 평가와 같은 목록을 봐야 한다 — 제품군 오버레이가 얹힌 결과(signatures_for).
+    for sig in sig_mod.signatures_for(case_ctx):
         sig_id = sig.get("id")
         when = sig.get("when_metric") or {}
         enabled = sig.get("enabled") is not False
         # skip_reason = 평가에서 제외된 사유(조건 없음) / branch_note = 평가는 하되
         # when_metric 이 아닌 경로를 타는 사유(조건 있음). SUBPOP_GAP 만 후자다.
         skip, branch = None, None
-        if not enabled:
+        if excluded:
+            # 제외 목록 매칭 — 엔진(signatures.evaluate)이 룰 평가 자체를 건너뛴다.
+            skip = f"평가 제외 목록 매칭 — {excluded} (모든 signature 미평가)"
+        elif not enabled:
             # 엔진도 enabled:false 를 SUBPOP 특수분기보다 먼저 걸러낸다(signatures.py).
             skip = "disabled (yaml enabled:false)"
         elif not sig_mod.scope_matches(sig, case_ctx):
@@ -353,10 +392,13 @@ def _trace_case(case, engine_version, mods, dist_budget=None):
         "confidence": verdict.get("confidence"),
         "data_completeness": verdict.get("data_completeness"),
         "stored": stored,
-        "gate_reason": None if stored else
-                       f"should_store=False (fail_count={m.get('fail_count')}, "
-                       f"cpk={m.get('cpk')} >= cpk_warn={th.get('cpk_warn')}, "
-                       f"발화 signature 0건)",
+        "excluded": sig.get("excluded"),
+        "gate_reason": None if stored else (
+            f"평가 제외 목록 매칭 — {sig.get('excluded')} (signature 미평가·코멘트 미생성)"
+            if sig.get("excluded") else
+            f"should_store=False (fail_count={m.get('fail_count')}, "
+            f"cpk={m.get('cpk')} >= cpk_warn={th.get('cpk_warn')}, "
+            f"발화 signature 0건)"),
         "comment": comment,
         "raw_metrics": m, "features": f, "thresholds": th,
         "dist": _dist_payload(case, m, dist_budget),

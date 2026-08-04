@@ -161,6 +161,7 @@ def audit_csv_iter(action=None, q=None):
 # 파일들을 포함한다 — 재기동 폭주 시 대시보드만 보고 원인을 못 찾던 문제 대응.
 _LOG_GLOBS = ("server_*.txt", "watchdog_events.log", "watchdog_checks.log",
               "watchdog_snap_*.txt", "metrics_*.log", "runtime_*.log",
+              "webreport_build_*.log",
               "faulthandler_*.txt", "diagnose_*.txt")
 _LOG_LIST_MAX = 500
 _LOG_NAME_RE = re.compile(r"[A-Za-z0-9_.\-]+")

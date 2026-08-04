@@ -64,8 +64,8 @@ report_server/
 │   │                            **라우트 미등록(CLI 전용)** — 운영 무영향. report.db(세션·이슈)
 │   │                            + eval.db(item 축) 두 정본을 read-only 로만 읽는다
 │   ├── admin_panel/             /pe/admin-<secret>/ 대시보드 + metrics 샘플러
-│   ├── eval_panel/              /pe/eval 룰 관리 (thresholds 제품군/family 오버레이 ·
-│   │                            signature on/off · L0~L6 트레이스 — 저장 즉시 반영)
+│   ├── eval_panel/              /pe/eval 룰 관리 (thresholds·signature **둘 다** 제품군/family
+│   │                            오버레이 · L0~L6 트레이스 — 저장 즉시 반영)
 │   ├── tools/migrate_manifest_edits.py  manifest 편집값 → 세션 편집 DB 이전 (운영 1회 실행 완료)
 │   ├── upload_xlsx.py           POST /pe/report/upload_xlsx
 │   ├── upload_webreport.py      POST /pe/report/upload_webreport (web_report.ingest 호출)
@@ -335,7 +335,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | S3 저장 진입점(facade) | [server/storage_gateway/](server/storage_gateway/__init__.py) ([README](server/storage_gateway/README.md), 키빌더 _s3.py) |
 | 검색결과 UI / 세션 상세 UI | [report_analysis_index.html](server/report/report_analysis_index.html) / [report_view.html](server/report/report_view.html) + [static/webreport/](server/report/static/webreport/) (15모듈) |
 | 관리 대시보드 (/pe/admin-pte/) | [server/admin_panel/](server/admin_panel/) (구 admin_routes.py 는 미등록 dead file) |
-| eval 룰 관리 (/pe/eval) — threshold/signature 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
+| eval 룰 관리 (/pe/eval) — threshold/signature 제품군별 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
 | 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |
 | Honey 클라 (자유: honey_ui/honey_main/transport/excel_*) | [client/honey_main.py](client/honey_main.py), 업로드 [transport/uploader.py](client/transport/uploader.py), 추출 [report_flow/upload_prepare.py](client/report_flow/upload_prepare.py) |
 | 외부 담당자 영역 동결 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` · `server/storage_gateway/` → [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |

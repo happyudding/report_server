@@ -17,6 +17,8 @@ let cpkShowLowOnly = true;    // 기본값: 임계 미만 항목만 항목명 �
 // 마지막으로 유효했던 숫자 — 입력이 잠깐 비어도 필터가 튀지 않게 분리해 둔다.
 let cpkLowThreshold = CPK_WARN_THRESHOLD;
 let cpkLowInputRaw = String(CPK_WARN_THRESHOLD);
+// 임계값 비교 방향 — "lt"=미만(기본, 종전 동작) / "gt"=초과. 필터·셀 강조·빈 메시지 공용.
+let cpkLowOp = "lt";
 // "동일Limit" 3상: "exclude"=제외(기본)·"all"=전체·"only"=그 항목만.
 // 판정 기준은 cpkIsAbnormal 참조(상·하한 동일 또는 CPK 계산 불가) — 화면 라벨만 "동일Limit".
 let cpkAbnormalMode = "exclude";
@@ -39,8 +41,14 @@ const CPK_ABN_ORDER = ["exclude", "all", "only"];
 
 function cpkFmt(x) { return Number(x.toFixed(4)); }
 
+// 비교 연산자 표기(HTML 이스케이프) / 판정 — 필터·강조·라벨이 같은 함수를 쓴다.
+function cpkOpSign() { return cpkLowOp === "gt" ? "&gt;" : "&lt;"; }
+function cpkMatchThreshold(v) {
+  return cpkLowOp === "gt" ? v > cpkLowThreshold : v < cpkLowThreshold;
+}
+
 // CPK 필터 버튼 라벨 — 항상 "현재 적용 중인 값"(ALL 또는 임계값)을 보여준다.
-function cpkLowBtnLabel() { return cpkShowLowOnly ? `CPK &lt; ${cpkLowThreshold}` : "ALL"; }
+function cpkLowBtnLabel() { return cpkShowLowOnly ? `CPK ${cpkOpSign()} ${cpkLowThreshold}` : "ALL"; }
 
 // 목표 Cpk → 시그마 수준 (σ = 3 × Cpk. 예: 1.33→4.0σ, 2→6.0σ, 4→12.0σ).
 function cpkSigmaText(v) {
@@ -118,7 +126,7 @@ function cpkBodyRows(rows) {
   if (cpkShowLowOnly) {
     // cpk 값 내림/오름차순이 아니라 같은 Item name 끼리 묶여 보이도록 항목명(subject) 순으로 정렬.
     return rows
-      .filter(r => { const v = parseFloat(r.cpk); return !isNaN(v) && v < cpkLowThreshold; })
+      .filter(r => { const v = parseFloat(r.cpk); return !isNaN(v) && cpkMatchThreshold(v); })
       .slice()
       .sort((a, b) => String(a.subject).localeCompare(String(b.subject)))
       .map(r => ({ ...r, _key: cpkRowKey(r) }));
@@ -143,7 +151,7 @@ function cpkBodyRows(rows) {
 let _cpkRowsMemo = null;
 function cpkDisplayRows(rows) {
   const sig = JSON.stringify([cpkAbnormalMode, cpkShowLowOnly,
-    cpkLowThreshold, cpkHideCodeUnit, cpkSearchTerm, cpkSourceFilter]);
+    cpkLowThreshold, cpkLowOp, cpkHideCodeUnit, cpkSearchTerm, cpkSourceFilter]);
   if (_cpkRowsMemo && _cpkRowsMemo.rows === rows && _cpkRowsMemo.sig === sig) {
     return _cpkRowsMemo.out;
   }
@@ -157,7 +165,7 @@ function cpkTableHtml(rows) {
 
   if (!bodyRows.length) {
     const msg = cpkSearchTerm.trim() ? "검색 결과 없음"
-      : `CPK &lt; ${cpkLowThreshold} 항목 없음`;
+      : `CPK ${cpkOpSign()} ${cpkLowThreshold} 항목 없음`;
     return `<div class="placeholder">${msg}</div>`;
   }
 
@@ -180,7 +188,7 @@ function cpkTableHtml(rows) {
   const head = "<thead><tr>" + selTh + displayCols.map(c => `<th>${esc(c)}</th>`).join("") + "</tr></thead>";
   const body = "<tbody>" + pageRows.map(row => {
     const cpkVal = parseFloat(row.cpk);
-    const isWarn = !isNaN(cpkVal) && cpkVal < cpkLowThreshold;
+    const isWarn = !isNaN(cpkVal) && cpkMatchThreshold(cpkVal);
     const res = cpkTargetResults.get(row._key);
     const selTd = cpkTargetMode
       ? `<td class="cpk-sel-col"><input type="checkbox" class="cpk-row-chk" data-key="${esc(row._key)}"${cpkSelected.has(row._key) ? " checked" : ""}></td>` : "";
@@ -266,8 +274,11 @@ function renderCpk() {
     `<input type="text" id="cpkSearchInput" data-no-dirty placeholder="항목/source 검색" value="${esc(cpkSearchTerm)}">` +
     `<select id="cpkSourceSel" title="특정 source 만 표시">${sourceOpts}</select>` +
     `<span class="cpk-tool-group"><span class="cpk-tool-label">CPK 구분</span>` +
-    `<input type="number" id="cpkLowInput" min="0" step="0.01" value="${esc(cpkLowInputRaw)}" title="CPK 임계값 — 이 값 미만인 항목만 추려 보거나(버튼) 표에서 노랗게 강조한다.">` +
-    `<button type="button" id="cpkLowBtn" class="btn-sm${cpkShowLowOnly ? " active" : ""}" title="현재 적용 중인 CPK 필터(클릭하면 전환): 'ALL'=전체 항목 · 'CPK &lt; 임계값'=임계 미만 항목만 항목명 순 정렬">` +
+    `<select id="cpkLowOpSel" title="임계값 비교 방향 — '<'=이 값 미만(기본) · '>'=이 값 초과">` +
+    `<option value="lt"${cpkLowOp === "lt" ? " selected" : ""}>&lt;</option>` +
+    `<option value="gt"${cpkLowOp === "gt" ? " selected" : ""}>&gt;</option></select>` +
+    `<input type="number" id="cpkLowInput" min="0" step="0.01" value="${esc(cpkLowInputRaw)}" title="CPK 임계값 — 왼쪽 부등호 방향으로 이 값과 비교해 항목을 추려 보거나(버튼) 표에서 노랗게 강조한다.">` +
+    `<button type="button" id="cpkLowBtn" class="btn-sm${cpkShowLowOnly ? " active" : ""}" title="현재 적용 중인 CPK 필터(클릭하면 전환): 'ALL'=전체 항목 · 'CPK &lt;(또는 &gt;) 임계값'=부등호 방향에 해당하는 항목만 항목명 순 정렬">` +
     `${cpkLowBtnLabel()}</button></span>` +
     `<span class="cpk-tool-group"><span class="cpk-tool-label">동일Limit 구분</span>` +
     `<button type="button" id="cpkAbnBtn" class="btn-sm${cpkAbnormalMode !== "all" ? " active" : ""}" title="현재 적용 중인 동일Limit 필터(클릭하면 순환): '동일Limit 제외'(기본)=해당 항목을 뺀 나머지 → 'ALL'=전체 표시 → '동일Limit only'=해당 항목만. 판정 기준: ① 상·하한(Limit)이 같아 공차가 0인 항목, ② CPK 계산 불가(값 없음).">${CPK_ABN_LABELS[cpkAbnormalMode]}</button></span>` +
@@ -293,6 +304,14 @@ function renderCpk() {
     const btn = document.getElementById("cpkLowBtn");
     if (btn) btn.innerHTML = cpkLowBtnLabel();
     renderCpkTableDebounced();
+  });
+  // 부등호 변경: 필터·강조 방향이 바뀌므로 버튼 라벨과 표를 함께 갱신한다.
+  document.getElementById("cpkLowOpSel").addEventListener("change", (e) => {
+    cpkLowOp = e.target.value === "gt" ? "gt" : "lt";
+    cpkPage = 1;
+    const btn = document.getElementById("cpkLowBtn");
+    if (btn) btn.innerHTML = cpkLowBtnLabel();
+    renderCpkTable();
   });
   document.getElementById("cpkAbnBtn").addEventListener("click", () => {
     cpkAbnormalMode = CPK_ABN_ORDER[(CPK_ABN_ORDER.indexOf(cpkAbnormalMode) + 1) % CPK_ABN_ORDER.length];

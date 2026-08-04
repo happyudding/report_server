@@ -7,11 +7,12 @@
 | 파일 | 역할 | 로더 |
 |---|---|---|
 | `thresholds.yaml` | 룰 임계값. `default → product_type → item_class` 병합(구체값 우선). `calibration:` 섹션 = 보정 스펙, `item_class:` 는 calibrate 가 재작성(**파일 마지막 섹션 유지**). | `thresholds_for(case_ctx)` |
-| `signatures.yaml` | Layer2 진단 signature 선언(feature 조합 → 고장모드). | `signatures_doc()` |
+| `signatures.yaml` | Layer2 진단 signature 선언(feature 조합 → 고장모드)의 **기준값**. 제품군별 차이는 `signatures/<PT>/…` 오버레이 트리. | `signatures_for(case_ctx)` |
 | `bin_taxonomy.yaml` | (product_type, bin) → bin_class/severity_bias. `store.init_db()` 가 DB 로 시드. | `bin_taxonomy_for()` / store 시드 |
 | `product_taxonomy.yaml` | 허용 product_type ↔ family_product 조합. ingest 가 강제 검증(1:1 드롭다운 전제). | `_validate_product_meta()` |
 | `outcome_taxonomy.yaml` | case_outcome 의 action/result 허용 어휘 + ko/group. | `outcome_label()` / `validate_outcome()` |
 | `item_alias.yaml` | raw item명 → item_canonical 수동 별칭. | `_alias_map()` |
+| `exclusions.yaml` | 평가 제외 목록(전 제품군 공통). `item_contains`(item명 부분일치)·`units`(UNIT 정확일치, 둘 다 대소문자 무시) 매칭 시 L3 발화 전체 차단 + L6 저장 차단(AI Comment 미생성). `/pe/eval` Signatures 탭에서 편집. | `exclusion_reason(case_ctx)` |
 
 ## thresholds 스코프 우선순위
 ```
@@ -45,9 +46,31 @@ default (cold-start 표준 robust 시드)
 - 파생 컨텍스트 `spec_margin_min` / `center_bias` 는 signatures.py 가 계산해 주입(양방향 tail·중심 이탈용).
   조립 로직 정본은 `signatures.build_ctx_values()` — 관리자 트레이스가 같은 함수를 쓴다.
 - `enabled: false` 를 넣으면 그 signature 는 평가에서 통째로 빠진다(키 부재 = 활성).
-- `scope` 는 제품군/family 별로 룰을 갈라 쓰기 위한 필터다(2026-08-04). 판정은
-  `signatures.scope_matches()` — enabled 다음, SUBPOP 특수분기보다 **먼저** 걸린다.
-  `/pe/eval` Signatures 탭에서 체크박스로 편집하며, 값은 product_taxonomy.yaml 로 검증된다.
+- `scope` 는 하위호환용 필터로 남아 있다(`signatures.scope_matches()`, enabled 다음·SUBPOP
+  특수분기보다 먼저). **제품군별 차이는 아래 오버레이 트리로 낸다** — 배포 룰 중 `scope` 를
+  쓰는 것은 없고 `/pe/eval` 도 더 이상 편집 UI 를 제공하지 않는다(2026-08-04).
+
+## signature 스코프 우선순위 (오버레이 트리)
+```
+signatures.yaml                                  ← 기준값(전 제품 공통)
+  └─ signatures/<PT>/_default.yaml               (제품군 공통 오버레이)
+        └─ signatures/<PT>/<FAMILY>.yaml         (family_product 오버레이)
+```
+```yaml
+# signatures/MDDI/_default.yaml — 선언한 필드만 기준값을 덮는다(필드 단위 교체)
+signatures:
+  LOW_CPK:
+    enabled: true
+    status_hint: CRITICAL
+```
+- 로더는 `signatures_for(case_ctx)`. thresholds 트리와 규약이 같다 — **파일이 없으면 통째로
+  skip** 이라 트리를 안 만들면 종전과 100% 동일하다.
+- 덮을 수 있는 필드: `enabled` / `when_metric` / `status_hint` / `issue_category` /
+  `phenomenon_ko` / `action_ko` / `evidence` (`scope` 는 제외 — 오버레이 자체가 적용 범위다).
+- 편집은 `/pe/eval` Signatures 탭(제품군·Family 드롭다운). 상속값과 같은 필드는 파일에 쓰지
+  않으므로 기준값을 고치면 따로 지정하지 않은 제품군은 따라간다.
+- `signatures_doc()` 은 이제 **기준값 전용**이다 — 평가·코멘트 경로(signatures/recommend/
+  present)는 전부 `signatures_for(case_ctx)` 를 쓴다.
 - signature 추가 시 체크: (1) status.py `SPECIFICITY_ORDER` 에 id 추가, (2) 필요한 임계값 키를 thresholds 에 추가.
 
 ## calibrate 와의 관계

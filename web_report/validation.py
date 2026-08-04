@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-WEB_REPORT_MODES = ("Normal", "Compare", "DUT", "Commonality")
+WEB_REPORT_MODES = ("Normal", "Compare", "DUT", "Commonality", "Temperature")
 
 
 def canon(obj) -> bytes:
@@ -36,8 +36,13 @@ def webreport_colors(opts_raw: str):
 def webreport_ai_comment(opts_raw: str) -> bool:
     """세션의 webreport_options JSON → IssueTable AI Comment 표시 여부.
 
-    업로드 시 manifest.options.ai_comment 로 실려 세션에 고정된다. 없음/파싱
-    실패 = False (기존 세션은 컬럼 미표시 — payload 무변화).
+    업로드 시 manifest.options 로 실려 세션에 고정된다. 없음/파싱 실패 = False.
+
+    **판정 키는 ``ai_comment_optin``** (2026-08-04). 종전 ``ai_comment`` 단일 키는
+    구 클라이언트가 settings.json 에 남은 체크 상태를 화면에 비활성으로 보여주면서도
+    True 로 실어 보내, 사용자가 켠 적 없는 세션에도 컬럼이 생겼다. 새 클라는 "라벨
+    10회 클릭으로 활성화 + 체크박스 클릭"을 모두 만족할 때만 두 키를 함께 보내므로,
+    optin 키가 없는 기존 세션은 자동으로 미표시가 된다(DB 수정 없이 되돌림).
     """
     if not opts_raw:
         return False
@@ -45,7 +50,9 @@ def webreport_ai_comment(opts_raw: str) -> bool:
         opts = json.loads(opts_raw)
     except Exception:
         return False
-    return bool(opts.get("ai_comment")) if isinstance(opts, dict) else False
+    if not isinstance(opts, dict):
+        return False
+    return bool(opts.get("ai_comment")) and bool(opts.get("ai_comment_optin"))
 
 
 def webreport_compare_groups(opts_raw: str, source_names):
@@ -72,6 +79,39 @@ def webreport_compare_groups(opts_raw: str, source_names):
     if not before or not after:
         return None
     return {"before": before, "after": after}
+
+
+def webreport_temperature_groups(opts_raw: str, source_names):
+    """세션의 webreport_options JSON → Temperature 모드 RT/CT/HT 그룹 (source 이름 기준).
+
+    업로드 시 Honey 그룹 다이얼로그가 manifest.options.temperature 로 실어 보낸다.
+    compare 와 같은 이유로 index 가 아니라 **이름**으로 저장한다(Excel 왕복 안전).
+    형식: ``{"groups": [{"rt": 이름, "members": [이름, ...]}, ...]}`` — members 는
+    CT/HT (없을 수 있다). rt 가 사라진 그룹은 버리고, 유효 그룹이 없으면 None
+    (호출부는 Normal 과 동일하게 렌더 — 옵션이 깨져도 세션이 열린다).
+    """
+    names = [str(n) for n in (source_names or [])]
+    if not opts_raw or not names:
+        return None
+    try:
+        opts = json.loads(opts_raw)
+    except Exception:
+        return None
+    temp_opt = opts.get("temperature") if isinstance(opts, dict) else None
+    if not isinstance(temp_opt, dict):
+        return None
+    present = set(names)
+    groups = []
+    for group in temp_opt.get("groups") or []:
+        if not isinstance(group, dict):
+            continue
+        rt = str(group.get("rt") or "")
+        if rt not in present:
+            continue
+        members = [str(m) for m in (group.get("members") or [])
+                   if str(m) in present and str(m) != rt]
+        groups.append({"rt": rt, "members": members})
+    return {"groups": groups} if groups else None
 
 
 def validate_mode(value) -> str:

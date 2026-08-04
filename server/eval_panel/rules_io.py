@@ -35,6 +35,8 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,64}$")
 # signature 편집 시 패널이 다루는 필드 (그 외 키는 원본 유지)
 SIGNATURE_FIELDS = ("enabled", "when_metric", "status_hint", "issue_category",
                     "phenomenon_ko", "action_ko", "evidence", "scope")
+# 제품군 오버레이 파일에 쓸 수 있는 필드 — scope 는 제외한다(오버레이 자체가 적용 범위다).
+SIGNATURE_OVERLAY_FIELDS = tuple(f for f in SIGNATURE_FIELDS if f != "scope")
 SCOPE_KEYS = ("product_type", "family_product")
 
 
@@ -231,7 +233,7 @@ def _is_number(text: str) -> bool:
 # 선언형 when_metric 이 아니라 엔진 코드가 직접 읽는 임계값 → 표시용 사용처 라벨
 _CODE_REFS = {
     "n_min": "min-n 가드(고차모멘트 룰 전체)",
-    "modified_z": "L2 features(outlier 판정)",
+    "outlier_sigma": "L2 features(outlier 판정)",
     "edge_region_pct": "L2 features(공간 영역 분할)",
     "center_region_pct": "L2 features(공간 영역 분할)",
     "spatial_fail_count_min": "L2 features(공간 룰 최소 fail)",
@@ -334,24 +336,73 @@ def save_thresholds(product_type: str, family_product: str | None, overrides: di
 
 # ── signatures ────────────────────────────────────────────────────────────────
 
-def read_signatures() -> dict:
-    sigs = eval_debug.signatures_raw()
+def _read_sig_overlay(product_type: str | None, family_product: str | None) -> dict:
+    """signature 오버레이 파일 1개 → {id: {필드: 값}}. 없으면 빈 dict."""
+    if not product_type:
+        return {}
+    path = eval_debug.signature_overlay_path(product_type, family_product)
+    if not path.is_file():
+        return {}
+    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    sigs = (doc or {}).get("signatures") if isinstance(doc, dict) else None
+    return {str(k): dict(v) for k, v in (sigs or {}).items() if isinstance(v, dict)}
+
+
+def _merge_sigs(base: list, overrides: dict) -> list:
+    return [{**s, **(overrides.get(s.get("id")) or {})} for s in base]
+
+
+def _sig_row(s: dict) -> dict:
+    """signature dict → 패널 표시용 정규화 행 (병합 결과·상속값 둘 다 이 모양으로 만든다)."""
+    return {"id": s.get("id"), "enabled": s.get("enabled") is not False,
+            "when_metric": dict(s.get("when_metric") or {}),
+            "status_hint": s.get("status_hint"),
+            "issue_category": s.get("issue_category") or "",
+            "phenomenon_ko": s.get("phenomenon_ko") or "",
+            "action_ko": s.get("action_ko") or "",
+            "evidence": list(s.get("evidence") or []),
+            "scope": _norm_scope_doc(s.get("scope"))}
+
+
+def read_signatures(product_type: str | None = None,
+                    family_product: str | None = None) -> dict:
+    """이 범위에서 엔진이 실제로 쓰는 signature 목록.
+
+    thresholds 와 같은 규약이다 — 화면은 `병합 결과`(=적용값)를 보여주고, 저장 시
+    상속값과 같은 필드는 오버레이 파일에 쓰지 않는다. `own_fields` 는 이 범위 파일이
+    직접 지정한 필드라 "↺ 상속으로" 를 활성화하는 근거가 된다.
+    """
+    if product_type:
+        _check_scope(product_type, family_product or None)
+    else:
+        family_product = None
+    base = eval_debug.signatures_raw()
+    parent_ov = _read_sig_overlay(product_type, None) if family_product else {}
+    own_ov = _read_sig_overlay(product_type, family_product)
+
+    inherited = {s.get("id"): _sig_row(s) for s in _merge_sigs(base, parent_ov)}
+    merged = _merge_sigs(_merge_sigs(base, parent_ov), own_ov)
     order = eval_debug.specificity_order()
+
     rows = []
-    for s in sigs:
-        rows.append({"id": s.get("id"), "enabled": s.get("enabled") is not False,
-                     "when_metric": dict(s.get("when_metric") or {}),
-                     "status_hint": s.get("status_hint"),
-                     "issue_category": s.get("issue_category") or "",
-                     "phenomenon_ko": s.get("phenomenon_ko") or "",
-                     "action_ko": s.get("action_ko") or "",
-                     "evidence": list(s.get("evidence") or []),
-                     "scope": _norm_scope_doc(s.get("scope")),
-                     "in_specificity_order": s.get("id") in order})
+    for s in merged:
+        row = _sig_row(s)
+        sig_id = row["id"]
+        inh = inherited.get(sig_id, {})
+        row["own_fields"] = sorted(k for k in (own_ov.get(sig_id) or {})
+                                   if k in SIGNATURE_OVERLAY_FIELDS)
+        row["inherited"] = inh
+        row["in_specificity_order"] = sig_id in order
+        rows.append(row)
+
+    thresholds = (eval_debug.effective_thresholds(product_type, family_product or None)
+                  if product_type else eval_debug.default_thresholds())
     return {"signatures": rows, "rules_rev": eval_debug.rules_rev(),
+            "product_type": product_type or "", "family_product": family_product or "",
             "threshold_keys": sorted(eval_debug.default_thresholds()),
+            "thresholds": thresholds,
             "taxonomy": eval_debug.taxonomy(),
-            "metric_keys": sorted(_known_metrics(sigs))}
+            "metric_keys": sorted(_known_metrics(merged))}
 
 
 def _norm_scope_doc(scope) -> dict:
@@ -365,18 +416,85 @@ def _known_metrics(sigs) -> set:
     return {str(m) for s in sigs for m in (s.get("when_metric") or {})}
 
 
-def set_signatures_enabled(sig_ids: list, enabled: bool) -> dict:
-    """여러 signature 의 활성 상태를 한 번에 바꾼다 (yaml 쓰기 1회 = 백업·rev 도 1회)."""
+def _write_sig_overlay(product_type: str, family_product: str | None,
+                       entries: dict) -> str | None:
+    """오버레이 파일 재작성 — 남는 항목이 없으면 파일 삭제. 반환 = 백업 파일명."""
+    path = eval_debug.signature_overlay_path(product_type, family_product)
+    backup = _backup(path)
+    if entries:
+        _write_atomic(path, _dump({"signatures": entries}))
+    elif path.exists():
+        path.unlink()
+    return backup
+
+
+def _inherited_row(sig_id: str, product_type: str | None,
+                   family_product: str | None) -> dict:
+    """이 범위 오버레이를 **뺀** 값 = 여기서 지웠을 때 돌아갈 값."""
+    base = {s.get("id"): s for s in eval_debug.signatures_raw()}
+    sig = dict(base.get(sig_id) or {})
+    if family_product:
+        sig.update(_read_sig_overlay(product_type, None).get(sig_id) or {})
+    return _sig_row(sig)
+
+
+def _same_as_inherited(field: str, value, inherited: dict) -> bool:
+    """상속값과 같은 필드는 오버레이에 쓰지 않는다(상위 층이 바뀌면 따라가게)."""
+    base = inherited.get(field)
+    if field == "enabled":
+        return bool(value) == bool(base)
+    if field == "when_metric":
+        return {str(k): str(v) for k, v in (value or {}).items()} == dict(base or {})
+    if field == "evidence":
+        return [str(v) for v in (value or [])] == list(base or [])
+    return (value or "") == (base or "")
+
+
+def set_signatures_enabled(sig_ids: list, enabled: bool, product_type: str | None = None,
+                           family_product: str | None = None) -> dict:
+    """여러 signature 의 활성 상태를 한 번에 바꾼다 (yaml 쓰기 1회 = 백업·rev 도 1회).
+
+    제품군을 고르면 그 범위 오버레이에만 기록한다 — 기준값(signatures.yaml)은 안 건드린다.
+    """
     if not isinstance(sig_ids, list) or not sig_ids:
         raise RuleError("적용할 signature 를 선택하세요")
-    path = eval_debug.rules_files()["signatures"]
-    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    sigs = doc.get("signatures") or []
-    by_id = {s.get("id"): s for s in sigs}
-    unknown = [s for s in sig_ids if s not in by_id]
+    if product_type:
+        _check_scope(product_type, family_product or None)
+    else:
+        family_product = None
+
+    known = {s.get("id") for s in eval_debug.signatures_raw()}
+    unknown = [s for s in sig_ids if s not in known]
     if unknown:
         raise RuleError(f"없는 signature: {unknown}")
 
+    if product_type:
+        entries = _read_sig_overlay(product_type, family_product)
+        changed = []
+        for sig_id in sig_ids:
+            inherited = _inherited_row(sig_id, product_type, family_product)
+            entry = dict(entries.get(sig_id) or {})
+            current = entry.get("enabled", inherited["enabled"]) is not False
+            if current == enabled:
+                continue                      # 이미 그 상태
+            if enabled == inherited["enabled"]:
+                entry.pop("enabled", None)    # 상속으로 되돌아감 = 키 제거
+            else:
+                entry["enabled"] = enabled
+            if entry:
+                entries[sig_id] = entry
+            else:
+                entries.pop(sig_id, None)
+            changed.append(sig_id)
+        if not changed:
+            return {"changed": [], "backup": None, "rules_rev": eval_debug.rules_rev()}
+        backup = _write_sig_overlay(product_type, family_product, entries)
+        return {"changed": changed, "backup": backup,
+                "rules_rev": eval_debug.bump_rules_rev()}
+
+    path = eval_debug.rules_files()["signatures"]
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    by_id = {s.get("id"): s for s in (doc.get("signatures") or [])}
     changed = []
     for sig_id in sig_ids:
         target = by_id[sig_id]
@@ -430,15 +548,8 @@ def _validate_scope(value) -> dict | None:
     return out or None
 
 
-def save_signature(sig_id: str, payload: dict) -> dict:
-    """기존 signature 1건 갱신. 신규 추가/삭제는 허용하지 않는다."""
-    path = eval_debug.rules_files()["signatures"]
-    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    sigs = doc.get("signatures") or []
-    target = next((s for s in sigs if s.get("id") == sig_id), None)
-    if target is None:
-        raise RuleError(f"없는 signature: {sig_id} (신규 추가는 이 화면에서 지원하지 않음)")
-
+def _validate_signature_payload(payload: dict) -> dict:
+    """패널이 보낸 필드만 뽑아 검증 — 반환은 그대로 yaml 에 쓸 수 있는 값."""
     threshold_keys = set(eval_debug.default_thresholds())
     updates = {}
     for field in SIGNATURE_FIELDS:
@@ -471,11 +582,59 @@ def save_signature(sig_id: str, payload: dict) -> dict:
             updates["scope"] = _validate_scope(value)
         else:
             updates[field] = str(value or "")
+    return updates
 
+
+def save_signature(sig_id: str, payload: dict, product_type: str | None = None,
+                   family_product: str | None = None) -> dict:
+    """기존 signature 1건 갱신. 신규 추가/삭제는 허용하지 않는다.
+
+    제품군을 고르면 **그 범위 오버레이 파일에만** 쓴다 — 상속값과 같은 필드는 기록하지
+    않으므로(thresholds 와 같은 규약) 기준값을 고치면 지정하지 않은 제품군은 따라간다.
+    제품군을 안 고르면 종전대로 기준값 signatures.yaml 을 고친다.
+    """
+    if product_type:
+        _check_scope(product_type, family_product or None)
+    else:
+        family_product = None
+
+    base_ids = {s.get("id") for s in eval_debug.signatures_raw()}
+    if sig_id not in base_ids:
+        raise RuleError(f"없는 signature: {sig_id} (신규 추가는 이 화면에서 지원하지 않음)")
+
+    updates = _validate_signature_payload(payload)
     warnings = []
     if updates.get("enabled") is False and sig_id in eval_debug.specificity_order():
         warnings.append("비활성화해도 status.py SPECIFICITY_ORDER 항목은 그대로 남습니다(무해).")
 
+    if product_type:
+        dropped = [f for f in updates if f not in SIGNATURE_OVERLAY_FIELDS]
+        if dropped:
+            warnings.append(f"제품군별 저장에서는 {dropped} 를 다루지 않아 무시했습니다.")
+        inherited = _inherited_row(sig_id, product_type, family_product)
+        entries = _read_sig_overlay(product_type, family_product)
+        entry = dict(entries.get(sig_id) or {})
+        for field in SIGNATURE_OVERLAY_FIELDS:
+            if field not in updates:
+                continue
+            if _same_as_inherited(field, updates[field], inherited):
+                entry.pop(field, None)
+            else:
+                entry[field] = updates[field]
+        if entry:
+            entries[sig_id] = entry
+        else:
+            entries.pop(sig_id, None)
+        backup = _write_sig_overlay(product_type, family_product, entries)
+        return {"id": sig_id, "updated": sorted(entry), "backup": backup,
+                "scope": f"{product_type}/{family_product or '_default'}",
+                "rules_rev": eval_debug.bump_rules_rev(), "warnings": warnings}
+
+    path = eval_debug.rules_files()["signatures"]
+    doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    target = next((s for s in (doc.get("signatures") or []) if s.get("id") == sig_id), None)
+    if target is None:
+        raise RuleError(f"없는 signature: {sig_id} (신규 추가는 이 화면에서 지원하지 않음)")
     for key, value in updates.items():
         if key in ("issue_category", "scope") and value is None:
             target.pop(key, None)          # 전 제품 공통 = 키 자체를 두지 않는다
@@ -488,7 +647,64 @@ def save_signature(sig_id: str, payload: dict) -> dict:
     _write_atomic(path, _head_comments(path) + _dump(doc))
     rev = eval_debug.bump_rules_rev()
     return {"id": sig_id, "updated": sorted(updates), "backup": backup,
-            "rules_rev": rev, "warnings": warnings}
+            "scope": "", "rules_rev": rev, "warnings": warnings}
+
+
+def reset_signature(sig_id: str, product_type: str, family_product: str | None) -> dict:
+    """이 범위의 signature 전용 설정을 통째로 지운다(= 상속값으로 되돌리기)."""
+    _check_scope(product_type, family_product or None)
+    entries = _read_sig_overlay(product_type, family_product or None)
+    if sig_id not in entries:
+        return {"id": sig_id, "removed": False, "backup": None,
+                "rules_rev": eval_debug.rules_rev()}
+    entries.pop(sig_id)
+    backup = _write_sig_overlay(product_type, family_product or None, entries)
+    return {"id": sig_id, "removed": True, "backup": backup,
+            "rules_rev": eval_debug.bump_rules_rev()}
+
+
+# ── 평가 제외 목록 ────────────────────────────────────────────────────────────
+
+EXCLUSION_KEYS = ("item_contains", "units")
+_EXCLUSION_MAX_LEN = 100
+_EXCLUSION_MAX_COUNT = 200
+
+
+def read_exclusions() -> dict:
+    """rules/exclusions.yaml — 패널 표시용 (전 제품군 공통)."""
+    return {**eval_debug.exclusions(), "rules_rev": eval_debug.rules_rev()}
+
+
+def save_exclusions(payload: dict) -> dict:
+    """제외 목록 전체 재작성 (백업 → 원자적 쓰기 → rev +1 — thresholds 와 같은 순서).
+
+    rev 를 올리므로 ai_comment 옵션 세션의 캐시가 무효화돼 저장 즉시 재평가된다.
+    """
+    if not isinstance(payload, dict):
+        raise RuleError("payload 는 객체여야 함")
+    out = {}
+    for key in EXCLUSION_KEYS:
+        raw = payload.get(key, [])
+        if not isinstance(raw, list):
+            raise RuleError(f"{key} 는 배열이어야 함")
+        if len(raw) > _EXCLUSION_MAX_COUNT:
+            raise RuleError(f"{key}: 최대 {_EXCLUSION_MAX_COUNT}개")
+        vals, seen = [], set()
+        for v in raw:
+            s = str(v).strip()
+            if not s:
+                continue
+            if len(s) > _EXCLUSION_MAX_LEN:
+                raise RuleError(f"{key}: {_EXCLUSION_MAX_LEN}자 이하만 — {s[:20]}…")
+            if s.upper() in seen:               # 매칭이 대소문자 무시라 중복도 무시 기준으로
+                continue
+            seen.add(s.upper())
+            vals.append(s)
+        out[key] = vals
+    path = eval_debug.rules_files()["exclusions"]
+    backup = _backup(path)
+    _write_atomic(path, _head_comments(path) + _dump(out))
+    return {"saved": out, "backup": backup, "rules_rev": eval_debug.bump_rules_rev()}
 
 
 # ── 무결성 검증 ───────────────────────────────────────────────────────────────
@@ -544,11 +760,39 @@ def validate_all() -> dict:
     else:
         notes.append("오버레이 트리 없음 — default 만 적용 중")
 
+    # 2b) signature 오버레이 트리 점검 (고아 폴더/파일, 없는 id·필드)
+    sig_tree = eval_debug.rules_dir() / "signatures"
+    if sig_tree.is_dir():
+        for pt_dir in sorted(p for p in sig_tree.iterdir() if p.is_dir()):
+            if pt_dir.name not in tax:
+                problems.append(f"고아 폴더: signatures/{pt_dir.name} (허용 product_type 아님)")
+                continue
+            for f in sorted(pt_dir.glob("*.yaml")):
+                if f.stem != "_default" and f.stem not in tax[pt_dir.name]:
+                    problems.append(f"고아 파일: signatures/{pt_dir.name}/{f.name}")
+                doc = yaml.safe_load(f.read_text(encoding="utf-8"))
+                entries = (doc or {}).get("signatures") if isinstance(doc, dict) else None
+                if not isinstance(entries, dict):
+                    problems.append(f"signatures/{pt_dir.name}/{f.name}: signatures 매핑이 없음")
+                    continue
+                for key, value in entries.items():
+                    where = f"signatures/{pt_dir.name}/{f.name}: {key}"
+                    if key not in sig_ids:
+                        problems.append(f"{where} — signatures.yaml 에 없는 id")
+                    elif not isinstance(value, dict):
+                        problems.append(f"{where} — 필드 매핑이 아님")
+                    else:
+                        for field in value:
+                            if field not in SIGNATURE_OVERLAY_FIELDS:
+                                problems.append(f"{where}.{field} — 다룰 수 없는 필드")
+    else:
+        notes.append("signature 오버레이 트리 없음 — 전 제품군이 기준값을 그대로 사용 중")
+
     # 3) 전 조합 병합 시뮬레이션 (KeyError 유발 조합 조기 발견)
     for pt, families in tax.items():
         for family in [None] + list(families):
             merged = eval_debug.effective_thresholds(pt, family)
-            for s in eval_debug.signatures_raw():
+            for s in eval_debug.signatures_scoped(pt, family):
                 if s.get("enabled") is False:
                     continue
                 for metric, cond in (s.get("when_metric") or {}).items():

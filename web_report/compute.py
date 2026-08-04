@@ -26,6 +26,8 @@ import time
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
+from . import build_log, build_status
+
 _log = logging.getLogger(__name__)
 
 # 관리자 패널 노출용 누적 카운터 (프로세스 생존 기간). 락 없이 증가시키지만 GIL 하의
@@ -165,15 +167,19 @@ def run(job, *args):
         STATS["inline"] += 1
         return job(*args)
     STATS["submitted"] += 1
+    name = getattr(job, "__name__", str(job))
+    t0 = time.time()
     try:
         fut = pool.submit(job, *args)
         result = fut.result(timeout=_TIMEOUT_SEC)
         STATS["ok"] += 1
         return result
-    except BrokenProcessPool:
+    except BrokenProcessPool as exc:
         STATS["broken"] += 1
         _log.error("compute worker pool broken — 풀 폐기 후 실패 반환: %s%r",
-                   getattr(job, "__name__", job), args, exc_info=True)
+                   name, args, exc_info=True)
+        # 실패 기록은 여기서만 가능하다 — 어느 세션이 몇 초 만에 죽었는지 아는 유일한 지점.
+        build_log.record_failure(name, args, "broken", time.time() - t0, repr(exc))
         _reset_pool(shutdown=True)
         raise
     except TimeoutError:
@@ -181,11 +187,16 @@ def run(job, *args):
         # fut.cancel() 은 이미 실행 중인 작업을 못 멈춘다(선급행분은 RUNNING 마킹).
         # hang 워커를 계속 안고 가면 슬롯이 영구 소모되므로 풀 자체를 버린다.
         _log.error("compute worker timeout (%ss) — 풀 폐기: %s%r", _TIMEOUT_SEC,
-                   getattr(job, "__name__", job), args)
+                   name, args)
+        # ⚠️ 이 타임아웃은 **풀 큐 대기까지 포함**한 시간이다 — 기록된 total 이
+        # _TIMEOUT_SEC 에 붙어 있으면 계산이 느린 게 아니라 밀린 것일 수 있다.
+        build_log.record_failure(name, args, "timeout", time.time() - t0,
+                                 f"TimeoutError({_TIMEOUT_SEC}s)")
         _reset_pool(shutdown=True)
         raise
-    except Exception:
+    except Exception as exc:
         STATS["error"] += 1
+        build_log.record_failure(name, args, "error", time.time() - t0, repr(exc))
         raise
 
 
@@ -214,28 +225,47 @@ def status():
 
 # ── 워커 잡 (모듈 최상위 — spawn pickling 요건). service 를 재사용하므로 값이
 #    인라인 계산과 동일하고, 워커 안에서는 should_offload=False 라 재귀하지 않는다. ──
+#
+# report/dist/map 잡은 **(결과, timing|None)** 튜플을 돌려준다. 단계별 소요는 실제로
+# 계산이 일어난 워커 프로세스 안에서만 잴 수 있어, 그 dict 를 결과에 실어 부모로 보낸다
+# (부모는 record_offloaded 로 풀 대기·IPC 를 얹어 기록). 워커가 디스크 캐시로 즉답하는
+# 등 콜드 빌드가 없었으면 timing 은 None 이다.
 
-def report_job(session_id: str, upload_root_str: str) -> dict:
+def _stamp(t_start: float) -> dict | None:
+    """이번 호출에서 일어난 콜드 빌드의 단계 기록에 프로세스 간 비교용 시각을 붙인다."""
+    timing = build_log.pop_stash()
+    if timing is not None:
+        timing["t_start"] = t_start
+        timing["t_end"] = time.time()
+    return timing
+
+
+def report_job(session_id: str, upload_root_str: str):
     from database import report_db
     from . import service
+    t_start = time.time()
     _, report = service.load_webreport(
         session_id, report_db=report_db, upload_root=Path(upload_root_str))
-    return report
+    return report, _stamp(t_start)
 
 
-def dist_job(session_id: str, upload_root_str: str, bin1: bool = False) -> bytes:
+def dist_job(session_id: str, upload_root_str: str, bin1: bool = False):
     from database import report_db
     from . import service
-    return service.get_distribution_gzip(
+    t_start = time.time()
+    blob = service.get_distribution_gzip(
         session_id, report_db=report_db, upload_root=Path(upload_root_str),
         bin1=bool(bin1))
+    return blob, _stamp(t_start)
 
 
-def map_job(session_id: str, upload_root_str: str) -> bytes:
+def map_job(session_id: str, upload_root_str: str):
     from database import report_db
     from . import service
-    return service.get_map_gzip(
+    t_start = time.time()
+    blob = service.get_map_gzip(
         session_id, report_db=report_db, upload_root=Path(upload_root_str))
+    return blob, _stamp(t_start)
 
 
 def trim_job(session_id: str, upload_root_str: str, source: str) -> bytes:
@@ -269,17 +299,19 @@ def dist_pack_job(session_id: str, upload_root_str: str, base: bool = False) -> 
     return None
 
 
-def prewarm_job(session_id: str, upload_root_str: str, dist_seeded: bool = False) -> None:
-    """프리웜 전용 잡 — report(+시딩된 dist)를 빌드하고 **None 을 반환**한다.
+def prewarm_job(session_id: str, upload_root_str: str, dist_seeded: bool = False) -> dict:
+    """프리웜 전용 잡 — report(+시딩된 dist)를 빌드하고 **timing 만 반환**한다.
 
     report_job 결과(payload dict, 수 MB)는 부모 RAM 캐시 적재 외엔 쓸모가 없어 IPC
     반송(pickle) 비용만 크다. 워커가 disk_cache 를 채우므로 부모의 첫 조회는 디스크
     캐시로 열린다. dist 는 시딩된 blob 이 disk_cache 에 이미 있어 값싼 작업이다.
+    payload 는 여기서 버리고 단계 기록(수 KB 미만)만 실어 보낸다.
     """
-    report_job(session_id, upload_root_str)
+    _, report_timing = report_job(session_id, upload_root_str)
+    dist_timing = None
     if dist_seeded:
-        dist_job(session_id, upload_root_str)
-    return None
+        _, dist_timing = dist_job(session_id, upload_root_str)
+    return {"report": report_timing, "dist": dist_timing}
 
 
 # ── 프리웜 큐 ────────────────────────────────────────────────────────────────
@@ -293,7 +325,8 @@ _prewarm_wake = threading.Event()
 _prewarm_thread = None
 
 
-def _prewarm_one(session_id: str, upload_root_str: str, dist_seeded: bool) -> None:
+def _prewarm_one(session_id: str, upload_root_str: str, dist_seeded: bool,
+                 t_enq: float = 0.0) -> None:
     """업로드 직후 워밍업 — **report payload 만** 만든다.
 
     종전에는 dist/map/trim 풀 payload 까지 전부 만들었다. 열어보지도 않을 탭까지
@@ -310,7 +343,14 @@ def _prewarm_one(session_id: str, upload_root_str: str, dist_seeded: bool) -> No
     =0(테스트)이면 run() 인라인 폴백으로 종전과 동일하다.
     """
     try:
-        run(prewarm_job, session_id, upload_root_str, bool(dist_seeded))
+        queue_wait = round(max(0.0, time.time() - t_enq), 3) if t_enq else 0.0
+        with build_log.context(trigger="prewarm", queue_wait=queue_wait):
+            t_sub = time.time()
+            timings = run(prewarm_job, session_id, upload_root_str, bool(dist_seeded))
+            t_recv = time.time()
+            for kind, timing in (timings or {}).items():
+                if timing:      # 워커에서 실제 콜드 빌드가 일어난 경우만
+                    build_log.record_offloaded(kind, session_id, "", t_sub, t_recv, timing)
         STATS["prewarm_done"] += 1
     except Exception:
         # 프리웜 실패는 조회 시 재계산으로 복구되지만, 조용히 삼키면 상시 실패를
@@ -345,7 +385,7 @@ def prewarm(session_id: str, upload_root_str: str, dist_seeded: bool = False) ->
             STATS["prewarm_dropped"] += 1
             _log.warning("[prewarm] 큐 포화(%d) — 가장 오래된 요청 폐기: session=%s",
                          _PREWARM_MAX_PENDING, dropped[0])
-        _prewarm_queue.append((session_id, upload_root_str, bool(dist_seeded)))
+        _prewarm_queue.append((session_id, upload_root_str, bool(dist_seeded), time.time()))
         STATS["prewarm_queued"] += 1
         if _prewarm_thread is None:
             _prewarm_thread = threading.Thread(target=_prewarm_loop,
@@ -385,14 +425,20 @@ def _ondemand_loop() -> None:
         if item is None:
             _ondemand_wake.wait()
             continue
-        session_id, upload_root_str, kind = item
+        session_id, upload_root_str, kind, t_enq = item
         try:
-            _ONDEMAND_JOBS[kind](session_id, upload_root_str)
+            # 큐 대기(= 앞선 콜드 빌드에 밀린 시간)는 여기서만 잴 수 있다.
+            with build_log.context(trigger="ondemand",
+                                   queue_wait=round(max(0.0, time.time() - t_enq), 3)):
+                _ONDEMAND_JOBS[kind](session_id, upload_root_str)
             STATS["ondemand_done"] += 1
-        except Exception:
-            # 실패해도 다음 요청이 다시 큐에 넣는다(pending 해제 후). 조용히 삼키면
-            # 프런트가 무한 폴링하므로 로그로는 남긴다.
+            build_status.clear_failure(session_id, kind)
+        except Exception as exc:
+            # 실패하면 pending 이 풀려 다음 폴링이 다시 큐에 넣는다 — 워커 타임아웃을
+            # 넘기는 세션은 그 재등록이 15분간 반복됐다. 연속 실패를 세어 일정 횟수
+            # 넘으면 재등록을 막고(request_build) 프런트에도 실패를 알린다.
             STATS["ondemand_error"] += 1
+            build_status.mark_failure(session_id, kind, f"{type(exc).__name__}: {exc}")
             _log.warning("[ondemand] %s build failed session=%s", kind, session_id,
                          exc_info=True)
         finally:
@@ -400,20 +446,25 @@ def _ondemand_loop() -> None:
                 _ondemand_pending.discard((session_id, kind))
 
 
-def request_build(session_id: str, upload_root_str: str, kind: str = "report") -> None:
+def request_build(session_id: str, upload_root_str: str, kind: str = "report") -> bool:
     """콜드 빌드를 백그라운드에 요청한다 (이미 대기/실행 중이면 무시).
 
     라우트가 202 를 반환하기 직전에 부른다. 같은 세션을 여러 명이 동시에 열어도 등록은
     1건이고, 실제 빌드 안에서 keyed_lock single-flight 가 한 번 더 중복을 막는다.
+    연속 실패로 차단된 (세션, kind) 는 등록하지 않는다 — 쿨다운이 지나면 다시 열린다.
+
+    반환값은 "이번 호출로 새로 등록했는가" 다. 기존 호출부는 반환을 쓰지 않는다.
     """
     if kind not in _ONDEMAND_JOBS:
         raise ValueError(f"unknown build kind: {kind}")
+    if build_status.failure_blocked(session_id, kind):
+        return False
     with _ondemand_lock:
         key = (session_id, kind)
         if key in _ondemand_pending:
-            return
+            return False
         _ondemand_pending.add(key)
-        _ondemand_queue.append((session_id, upload_root_str, kind))
+        _ondemand_queue.append((session_id, upload_root_str, kind, time.time()))
         STATS["ondemand_queued"] += 1
         while len(_ondemand_threads) < _ONDEMAND_WORKERS:
             th = threading.Thread(target=_ondemand_loop,
@@ -422,6 +473,7 @@ def request_build(session_id: str, upload_root_str: str, kind: str = "report") -
             _ondemand_threads.append(th)
             th.start()
     _ondemand_wake.set()
+    return True
 
 
 # ── Distribution pack 생성 큐 (2026-07-23) ───────────────────────────────────
@@ -449,9 +501,11 @@ def _distpack_loop() -> None:
         if item is None:
             _distpack_wake.wait()
             continue
-        session_id, upload_root_str, base = item
+        session_id, upload_root_str, base, t_enq = item
         try:
-            run(dist_pack_job, session_id, upload_root_str, base)
+            with build_log.context(trigger="distpack",
+                                   queue_wait=round(max(0.0, time.time() - t_enq), 3)):
+                run(dist_pack_job, session_id, upload_root_str, base)
             STATS["distpack_done"] += 1
         except Exception:
             # 실패해도 조회는 기존 계산 폴백으로 정상 동작한다. pending 해제 후 다음
@@ -481,7 +535,7 @@ def request_dist_pack(session_id: str, upload_root_str: str, base: bool = False)
         if key in _distpack_pending:
             return
         _distpack_pending.add(key)
-        _distpack_queue.append((session_id, upload_root_str, bool(base)))
+        _distpack_queue.append((session_id, upload_root_str, bool(base), time.time()))
         STATS["distpack_queued"] += 1
         if _distpack_thread is None:
             _distpack_thread = threading.Thread(target=_distpack_loop,

@@ -110,11 +110,37 @@ def _parse_row_key(row_key: str):
     return None
 
 
-def _collect_comments(report_db, session, upload_root: Path) -> dict:
+def _status_key(row_key: str) -> str:
+    """comment row_key → 그 행이 속한 이슈의 Status 키 (tabs/issue_table.py 규약).
+
+    Status/숨김은 이슈 단위라 Yield 는 bin 까지만("Yield|<bin>"), CPK/ETC 는
+    row_key 와 같다. 프런트 sheets.js issueHideStatusKey 와 같은 규칙이다.
+    """
+    if row_key.startswith("Yield|"):
+        parts = row_key.split("|", 2)
+        if len(parts) == 3:
+            return f"Yield|{parts[1]}"
+    return row_key
+
+
+def _close_keys(report_db, session_id: str) -> set:
+    """Status 가 Close 인 이슈 키 집합 (부재=Open — edits.KIND_ISSUE_STATUS 규약)."""
+    rows = report_db.get_webreport_edits(session_id,
+                                         kinds=(edits.KIND_ISSUE_STATUS,))
+    return {str(r["item_key"]) for r in rows if str(r["value"] or "") == "Close"}
+
+
+def _collect_comments(report_db, session) -> dict:
     """세션 issue_comment 상태 → {row_key: {"cols": {col: text}, "by": 최종 편집자}}.
 
+    **Status 가 Close 인 이슈의 코멘트만** 돌려준다 (2026-08-04). Open 은 아직
+    조사 중인 미확정 코멘트라 선례로 쓰면 안 된다 — Close 로 바뀌는 순간 편집 훅이
+    다시 export 하고, Close→Open 으로 되돌리면 reconciliation 이 그 case 의 라벨을
+    지운다(멱등 재적재라 상태 변화가 그대로 반영된다).
+
     rev>0 이면 세션 편집 DB 가 진실. rev==0(legacy 미이전, admin 재적재 등)은
-    manifest 폴백 — ensure_seeded 는 호출하지 않는다(rev 를 올려 REPORT_CACHE 를
+    manifest 폴백 — manifest 에는 Status 가 존재한 적이 없어(신규 kind) 전부 Open =
+    적재 대상 없음이다. ensure_seeded 는 호출하지 않는다(rev 를 올려 REPORT_CACHE 를
     불필요하게 무효화하는 부작용 방지, 읽기 전용).
     """
     from .tabs.issue_table import COMMENT_COLS
@@ -122,6 +148,9 @@ def _collect_comments(report_db, session, upload_root: Path) -> dict:
     session_id = session["session_id"]
     per_key: dict[str, dict] = {}
     if report_db.get_webreport_edit_rev(session_id) > 0:
+        closed = _close_keys(report_db, session_id)
+        if not closed:
+            return per_key
         rows = report_db.get_webreport_edits(session_id,
                                              kinds=(edits.KIND_ISSUE_COMMENT,))
         for row in rows:
@@ -129,21 +158,16 @@ def _collect_comments(report_db, session, upload_root: Path) -> dict:
             value = str(row["value"] or "").strip()
             if not row_key or col not in COMMENT_COLS or not value:
                 continue
+            if _status_key(row_key) not in closed:
+                continue   # Open 이슈 — 확정 전이라 선례로 적재하지 않는다
             ent = per_key.setdefault(row_key, {"cols": {}, "by": None, "_at": -1})
             ent["cols"][col] = value
             at = row.get("updated_at") or 0
             if at >= ent["_at"]:
                 ent["_at"] = at
                 ent["by"] = row.get("updated_by") or None
-    else:
-        manifest = cache.load_manifest_cached(session.get("analysis_key"), upload_root)
-        state = edits.state_from_manifest(manifest)
-        by = str(session.get("uploaded_by") or "") or None
-        for row_key, cols in (state.get("issue_comments") or {}).items():
-            kept = {c: str(v).strip() for c, v in (cols or {}).items()
-                    if c in COMMENT_COLS and str(v or "").strip()}
-            if kept:
-                per_key[str(row_key)] = {"cols": kept, "by": by}
+    # rev==0 = 편집 DB 이전 세션 — Status 를 저장한 적이 없으므로 전부 Open 이다.
+    # (manifest 폴백에는 issue_status 가 없다 — edits.state_from_manifest 참조.)
     return per_key
 
 
@@ -237,6 +261,10 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
                             tables=None) -> dict:
     """세션의 Issue Table 코멘트 상태 전체를 eval DB 로 재적재 (멱등).
 
+    적재 대상은 **Status 가 Close 인 이슈의 코멘트만**이다 (2026-08-04) — Open 은
+    조사 중인 미확정 코멘트라 선례로 쓰지 않는다. Close→Open 으로 되돌린 case 는
+    아래 reconciliation 이 우리 label 을 지운다.
+
     반환: {"cases": n, "labels": n, "removed": n} 또는 {"skipped": 사유}.
     tables 는 호출자가 이미 들고 있으면 주입(재로드 회피), 없으면 캐시 경유 로드.
     """
@@ -254,7 +282,7 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
     meta["wafer_number"] = None  # 코멘트는 행(세션) 단위 — lot 수준 case 로 적재
 
     parsed = []  # [(bin|None, item, 병합 comment, 최종 편집자)]
-    for row_key, ent in _collect_comments(report_db, session, upload_root).items():
+    for row_key, ent in _collect_comments(report_db, session).items():
         pk = _parse_row_key(row_key)
         if pk is None:
             continue

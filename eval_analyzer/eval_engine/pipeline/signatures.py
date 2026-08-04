@@ -12,7 +12,8 @@
 """
 import re
 
-from ._rules import thresholds_for, signatures_doc, bin_taxonomy_for
+from ._rules import (thresholds_for, signatures_doc, signatures_for,  # noqa: F401
+                     bin_taxonomy_for, exclusion_reason)
 
 # 고차모멘트(표본 부족 시 비활성) 의존 metric
 _HIGH_MOMENT_METRICS = {"skewness", "kurtosis", "bimodality_score"}
@@ -124,6 +125,9 @@ def build_ctx_values(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
 def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     """L3 진입점 — signatures.yaml 의 when_metric 을 전부 평가해 발화 signature 목록 산출.
 
+    룰 선언은 `signatures_for(case_ctx)` 로 읽는다 — 제품군/family 오버레이 트리
+    (rules/signatures/<PT>/<FAMILY|_default>.yaml)가 얹힌 결과다(트리 없으면 기준값 그대로).
+
     비활성 경로 4종: yaml `enabled: false`(룰 끄기), `scope`(제품군/family 밖), 표본
     부족(n_dut < n_min)일 때 고차모멘트 의존 signature, feature 결측(값 None → 조건
     False). 뒤 둘은 **결측을 양호로 읽지 않기 위한** 장치다.
@@ -132,6 +136,20 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     반환 키: signatures / reason_codes / bin_class / severity_bias / applies /
     raw_metrics_snapshot(status.decide 의 trump 판단용 cpk·yield).
     """
+    # 평가 제외 목록(rules/exclusions.yaml) — item명 문구/unit 매칭 시 signature 전체 미평가.
+    # "excluded" 키는 present.should_store(저장 차단)와 트레이스(제외 사유 표시)가 읽는다.
+    excluded = exclusion_reason(case_ctx)
+    if excluded:
+        bt = bin_taxonomy_for(case_ctx.get("product_type"), case_ctx.get("bin"))
+        return {
+            "signatures": [], "reason_codes": [],
+            "bin_class": bt.get("bin_class") if bt else None,
+            "severity_bias": (bt.get("severity_bias") if bt else 0.0) or 0.0,
+            "applies": {}, "excluded": excluded,
+            "raw_metrics_snapshot": {"cpk": raw_metrics.get("cpk"),
+                                     "yield": raw_metrics.get("yield")},
+        }
+
     th = thresholds_for(case_ctx)
     ctx_values = build_ctx_values(case_ctx, features, raw_metrics)
 
@@ -140,7 +158,7 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
 
     fired, reason_codes, applies = [], [], {}
     subpop_doc = None
-    for sig in signatures_doc()["signatures"]:
+    for sig in signatures_for(case_ctx):
         # yaml 의 enabled:false 는 룰 비활성 (키 부재 = 활성 — 기존 yaml 무영향)
         if sig.get("enabled") is False:
             continue

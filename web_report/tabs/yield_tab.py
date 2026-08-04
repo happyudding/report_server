@@ -126,13 +126,17 @@ def auto_basis(gross, tested):
     return BASIS_GROSS, ""
 
 
-def resolve_source_basis(tables, gross_die=None, basis_map=None) -> dict:
+def resolve_source_basis(tables, gross_die=None, basis_map=None, force_test=None) -> dict:
     """소스별 분모 결정 — {source: {source,basis,auto,override,forced,gross,tested,total,
     reason,gross_allowed}}.
 
     basis_map: 세션에 저장된 사용자 선택 ``{"mode": "auto|gross|test", "sources": {name: basis}}``
     (edits.load_yield_basis_map). None 이면 전 소스 auto. mode 가 gross/test 면 소스별 지정이
     없는 소스의 override 로 쓴다(구 세션의 전역 스위치 하위호환).
+
+    force_test: 무조건 test die 분모를 쓰는 소스 이름 집합 (Temperature 모드의 CT/HT).
+    그 소스들은 업로드 전에 RT pass 좌표로 잘려 있어 Gross Die 와 비교할 의미가 없다 —
+    남은 die 수가 곧 분모다. 사용자 선택보다 우선한다. None 이면 종전과 동일.
 
     ``gross_allowed`` 는 그 소스에 Gross 기준을 고를 수 있는지 — 규칙 2 때문에 UI 가 선택지를
     막는 데 쓴다. 분자(pass/fail die 수)는 어느 경우에도 실측값 그대로다.
@@ -141,10 +145,25 @@ def resolve_source_basis(tables, gross_die=None, basis_map=None) -> dict:
     basis_map = basis_map or {}
     mode = str(basis_map.get("mode") or "auto").strip().lower()
     overrides = basis_map.get("sources") or {}
+    force_test = set(force_test or ())
     out = {}
     for table in tables:
         tested = len(table.data)
         auto, reason = auto_basis(gross, tested)
+        if table.source in force_test:
+            out[table.source] = {
+                "source": table.source,
+                "basis": BASIS_TEST,
+                "auto": BASIS_TEST,
+                "override": None,
+                "forced": True,
+                "gross": gross,
+                "tested": tested,
+                "total": tested,
+                "reason": "temperature",
+                "gross_allowed": False,
+            }
+            continue
         override = overrides.get(table.source)
         if override is None and mode in (BASIS_GROSS, BASIS_TEST):
             override = mode

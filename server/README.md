@@ -326,7 +326,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 비-GET 요청은 `X-Admin-Request: 1` 헤더 요구. `GET /` 대시보드 + `GET /api/*`
 (health/storage/s3-status/metrics/stats(daily·users·client_errors·usage(접속 사용량 —
 Honey 실행·웹 방문 순위))/sessions/users/
-voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail) +
+voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail/webreport/builds) +
 `POST /api/*` (sessions/delete·restore·purge, session/<sid>/important·password, db/backup·cleanup 등).
 **Eval DB 탭·`/api/eval/*` 라우트는 2026-08-03 `/pe/eval` 로 이관**했다(아래 절) — 구현 모듈
 `admin_panel/eval_admin.py` 는 그대로 남아 eval_panel 이 import 한다.
@@ -340,6 +340,11 @@ voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail) +
 경과일 무시 — 행별 purge 버튼). `all_expired` 와 `force`, `all_expired` 와 `all_trashed` 조합은
 의미가 모호해 400. **자동 경로는 계속 `all_expired` 만 쓴다** — 스케줄러가 미경과분을 지우면
 사용자의 30일 복구 창이 통째로 사라진다.
+**콜드 빌드 이력**: `GET /api/webreport/builds?hours=&limit=` (이력 탭 `콜드 빌드 이력` 카드) —
+web_report 콜드 빌드의 단계별 소요 + 대기 3종(큐/풀/IPC) + 실패(타임아웃·워커 붕괴).
+기록은 [web_report/build_log.py](../web_report/build_log.py) 가
+`server/log/webreport_build_YYYYMMDD.log` 에 JSON line 으로 남긴다 →
+[docs/12](../docs/12_web_report_cache.md).
 **실시간 접속 사용자**: `GET /api/active_users?window=` (사용자 탭 10초 폴링 전용 경량 API) —
 최근 `window` 초 안에 요청을 보낸 신원 목록. 신원은 `auth_identity.current_user()`
 (Honey UA / SSO 헤더 / 웹 로그인), 없으면 `ip:<addr>` 로 묶는다. 관리자 자신·`/healthz`

@@ -67,7 +67,16 @@ function startBuildStatusPoll() {
                             { cache: "no-store" });
       if (!r.ok) { stopBuildStatusPoll(); return; }   // 구서버(404) 등 — 조용히 물러남
       const s = await r.json();
-      if (s.state !== "building") return;   // 웜이거나 아직 미등록 — 다음 tick 에서 재확인
+      if (s.state !== "building") {
+        // building 을 실제로 보다가 사라졌다 = 빌드 종료(성공·실패 모두). /full 재시도
+        // 대기(최대 5s)를 즉시 깨워 그만큼의 헛대기를 없앤다. 아직 큐 대기 중인
+        // idle 은 _buildStatusLive 가 false 라 여기 걸리지 않는다(오발사 없음).
+        // failed 는 서버가 명시한 실패라 _buildStatusLive 와 무관하게 즉시 깨운다
+        // (재시도가 503 을 받아 안내 문구를 띄운다).
+        if (_buildStatusLive || s.state === "failed") wakeBuildRetry();
+        _buildStatusLive = false;
+        return;   // 웜이거나 아직 미등록 — 다음 tick 에서 재확인
+      }
       _buildStatusLive = true;
       const secs = Math.round(s.elapsed || 0);
       setLoadMessage(`서버가 리포트를 계산하고 있습니다… (${secs}초 경과, `
@@ -85,14 +94,26 @@ function startBuildStatusPoll() {
 // 여기서 완료될 때까지 재요청한다. 간격을 조금씩 늘려(1s→5s) 긴 빌드에서 요청이
 // 쌓이지 않게 한다. 202 가 아니면(200/4xx/5xx) 그대로 돌려준다.
 const BUILD_RETRY = { START_MS: 1000, MAX_MS: 5000, GROWTH: 1.4, TIMEOUT_MS: 15 * 60 * 1000 };
+// 대기 중인 재시도를 build_status 폴링이 깨울 수 있게 resolve 를 밖으로 꺼내둔다.
+let _retryWake = null;
+function wakeBuildRetry() {
+  if (_retryWake) _retryWake();
+}
+function sleepRetry(ms) {
+  return new Promise(resolve => {
+    const t = setTimeout(() => { _retryWake = null; resolve(); }, ms);
+    _retryWake = () => { clearTimeout(t); _retryWake = null; resolve(); };
+  });
+}
 async function retryWhileBuilding(res, refetch) {
   let wait = BUILD_RETRY.START_MS;
   const deadline = Date.now() + BUILD_RETRY.TIMEOUT_MS;
   while (res && res.status === 202 && Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, wait));
+    await sleepRetry(wait);
     wait = Math.min(BUILD_RETRY.MAX_MS, Math.round(wait * BUILD_RETRY.GROWTH));
     res = await refetch();
   }
+  _retryWake = null;
   return res;
 }
 
@@ -132,7 +153,16 @@ async function load(resetMode=true) {
     if (!res.ok) {
       const box = document.getElementById("errorBox");
       box.style.display = "";
-      box.textContent = `세션을 불러올 수 없습니다 (${res.status})`;
+      // 서버가 콜드 빌드 반복 실패를 알리면(503) 상태코드 대신 사유를 보여준다 —
+      // 예전에는 실패한 빌드를 15분간 폴링만 하다 타임아웃해 "영원히 로딩 중"이었다.
+      let msg = `세션을 불러올 수 없습니다 (${res.status})`;
+      if (res.status === 503) {
+        try {
+          const j = await res.json();
+          if (j && j.build_failed && j.error) msg = j.error;
+        } catch (e) { /* 본문 없음 — 기본 문구 유지 */ }
+      }
+      box.textContent = msg;
       hideLoadOverlay();
       return;
     }

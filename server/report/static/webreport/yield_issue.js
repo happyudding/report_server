@@ -33,8 +33,8 @@ function yieldStepPassRow(step) {
 // 한 STEP 표를 렌더. si = 섹션 인덱스 — 그룹 토글 data-grp 를 표들 사이에서 유일하게 만든다.
 // passRow = 표 맨 위 Bin1 행(yieldStepPassRow, 없으면 null).
 function renderYieldTable(cols, groups, si, passRow) {
-  // source 가 많으면 헤더가 공통부분을 뗀 짧은 라벨이 되므로 그 컬럼 폭도 함께 좁힌다.
-  const narrowSrc = sourceColCount(cols) >= SRC_ABBREV_MIN;
+  // source 가 2개 이상이면 헤더가 축약 라벨이 되므로 그 컬럼 폭 힌트도 함께 낮춘다.
+  const narrowSrc = sourceColCount(cols) >= SRC_NARROW_MIN;
   const colgroup = "<colgroup>" + cols.map(c =>
     `<col style="width:${colWidth(c, undefined, narrowSrc)}">`).join("") + "</colgroup>";
   const head = buildSheetTableHead(cols, { resize: true });   // 헤더 우측 경계 드래그로 열너비 조절
@@ -114,9 +114,95 @@ function renderYieldStepSections(stepGroups, allRows) {
 function yieldToolbarHtml() {
   return `<div class="yield-toolbar">` +
     `<button type="button" class="btn-sm" id="yieldToggleAll" data-expanded="false">전체 펼치기</button>` +
+    sheetSearchHtml("yieldSearchInput", yieldSearchTerm, "Item 검색") +
     yieldExcelBtnHtml() +
     `</div>`;
 }
+
+// ── 표 검색 (Issue Table / Yield 공용) ────────────────────────────────────────
+// 상단 sticky 툴바의 검색창에 친 문자열로 데이터 행을 걸러낸다(부분일치·대소문자 무시).
+// 대상은 **Item 명 + comment 셀**(Issue Table 만 comment 열이 있다). 표 구조를 지키기
+// 위해 섹션 헤더·서브헤더 행은 항상 남기고, 나머지는 .row-search-hide 로만 숨긴다
+// (접기/펼치기가 쓰는 인라인 display 를 건드리지 않아 검색 해제 시 원상 복구된다).
+let issueSearchTerm = "";
+let yieldSearchTerm = "";
+
+function sheetSearchHtml(id, value, placeholder) {
+  return `<span class="sheet-search-wrap">` +
+    `<input type="text" class="sheet-search" id="${id}" data-no-dirty autocomplete="off" ` +
+    `placeholder="${esc(placeholder)}" value="${esc(value || "")}">` +
+    `<span class="sheet-search-cnt" id="${id}Cnt"></span></span>`;
+}
+
+// 검색 대상 텍스트. Item 셀은 읽기 모드 Issue Table 이면 data-col="Item", 그 외(Yield·
+// 편집 모드)는 좌측 고정열 순서(step/bin/tno/item — sheets.js orderColumns)상 4번째다.
+// comment 셀은 편집 모드에서 원문(data-raw)이 링크로 치환돼 있어 원문을 우선 쓴다.
+function sheetRowMatches(tr, term) {
+  const itemCell = tr.querySelector('td[data-col="Item"]') || tr.children[3];
+  let txt = itemCell ? itemCell.textContent : "";
+  tr.querySelectorAll("td.st-comment").forEach(td => {
+    txt += " " + (td.dataset.raw != null ? td.dataset.raw : td.textContent);
+  });
+  return txt.toLowerCase().indexOf(term) >= 0;
+}
+
+function setSearchCount(id, shown, total, term) {
+  const el = document.getElementById(id + "Cnt");
+  if (el) el.textContent = term ? `${shown} / ${total}` : "";
+}
+
+// Issue Table: 섹션 2행 헤더(issue-shead-*)와 CPK/ETC 서브헤더 행은 항상 남긴다.
+// 검색 중에는 접혀 있는 TNO 상세행도 매칭되면 보이게 한다(CSS .issue-searching).
+function applyIssueSearch(rawTerm) {
+  const panel = document.getElementById("panel-issues");
+  if (!panel) return;
+  issueSearchTerm = String(rawTerm || "");
+  const term = issueSearchTerm.trim().toLowerCase();
+  panel.classList.toggle("issue-searching", !!term);
+  let shown = 0, total = 0;
+  panel.querySelectorAll(".sheet-table.kind-issue tbody tr").forEach(tr => {
+    if (tr.classList.contains("issue-shead-top") || tr.classList.contains("issue-shead-bot")
+        || tr.querySelector("td.sheet-subhead")) return;   // 구조 행 — 필터 대상 아님
+    total++;
+    const keep = !term || sheetRowMatches(tr, term);
+    tr.classList.toggle("row-search-hide", !keep);
+    if (keep) shown++;
+  });
+  setSearchCount("issueSearchInput", shown, total, term);
+  afterIssueRowsToggled();   // 행 구성이 바뀌면 좌측 고정 오프셋·가로 스크롤 폭 재실측
+}
+
+// Yield: STEP 별로 표가 여러 개라 패널 전체를 훑는다. comment 열은 없어 Item 명만 본다.
+function applyYieldSearch(rawTerm) {
+  const panel = document.getElementById("panel-yield");
+  if (!panel) return;
+  yieldSearchTerm = String(rawTerm || "");
+  const term = yieldSearchTerm.trim().toLowerCase();
+  panel.classList.toggle("yield-searching", !!term);
+  let shown = 0, total = 0;
+  panel.querySelectorAll(".sheet-table.kind-yield tbody tr").forEach(tr => {
+    total++;
+    const keep = !term || sheetRowMatches(tr, term);
+    tr.classList.toggle("row-search-hide", !keep);
+    if (keep) shown++;
+  });
+  setSearchCount("yieldSearchInput", shown, total, term);
+  syncYieldStickyOffsets(panel);
+}
+
+// 키입력마다 수천 행을 훑지 않도록 입력이 멈춘 뒤 한 번만 적용한다(CPK 탭과 같은 처방).
+const SHEET_SEARCH_DEBOUNCE_MS = 150;
+let _sheetSearchTimer = null;
+function sheetSearchDebounced(fn, value) {
+  if (_sheetSearchTimer) clearTimeout(_sheetSearchTimer);
+  _sheetSearchTimer = setTimeout(() => { _sheetSearchTimer = null; fn(value); },
+                                 SHEET_SEARCH_DEBOUNCE_MS);
+}
+// 툴바는 매 렌더마다 새로 만들어지므로 document 위임으로 1회만 건다.
+document.addEventListener("input", e => {
+  if (e.target.id === "issueSearchInput") sheetSearchDebounced(applyIssueSearch, e.target.value);
+  else if (e.target.id === "yieldSearchInput") sheetSearchDebounced(applyYieldSearch, e.target.value);
+});
 // Yield 탭 우상단 Excel Down (excel_export.js exportYieldExcel).
 function yieldExcelBtnHtml() {
   return `<button type="button" class="btn-sm tab-excel-btn" id="yieldExcelBtn" ` +
@@ -173,8 +259,53 @@ function syncYieldStickyOffsets(panel) {
     table.style.setProperty("--yield-col3-left", (w[0] + w[1]) + "px");
     table.style.setProperty("--yield-col4-left", (w[0] + w[1] + w[2]) + "px");
   });
+  // 표 폭이 바뀌는 시점(렌더/펼치기/열 리사이즈/창 크기)은 고정열 재실측 시점과 같으므로
+  // 상단 프록시 스크롤바 폭도 여기서 함께 갱신한다.
+  syncYieldHscroll(panel);
 }
 window.addEventListener("resize", () => syncYieldStickyOffsets());
+
+// ── Yield 표 상단 프록시 가로 스크롤바 (사용자 요청 2026-08-04) ───────────────
+// 네이티브 가로 스크롤바는 표 아래에 붙어 표가 길면 화면 밖이라 닿기 어렵다 — 표 위에 프록시
+// 바를 놓고 scrollLeft 를 양방향 동기화하고, 프록시가 붙은 wrap(.has-htop)은 네이티브 가로
+// 스크롤바를 시각적으로만 숨긴다(overflow 는 유지 — 휠·프로그램적 스크롤 그대로).
+// #panel-yield 안의 표에만 붙인다(Issue Bin 상세의 kind-yield 표는 대상 아님).
+function setupYieldHscroll(panel) {
+  panel = panel || document.getElementById("panel-yield");
+  if (!panel) return;
+  panel.querySelectorAll(".sheet-wrap.kind-yield").forEach(wrap => {
+    if (wrap.classList.contains("has-htop")) return;
+    wrap.classList.add("has-htop");
+    const bar = document.createElement("div");
+    bar.className = "yield-hscroll";
+    const spacer = document.createElement("div");
+    spacer.className = "yield-hscroll-spacer";
+    bar.appendChild(spacer);
+    wrap.parentNode.insertBefore(bar, wrap);
+    let syncing = false;   // 피드백 루프 가드 (표마다 독립)
+    bar.addEventListener("scroll", () => {
+      if (syncing) return;
+      syncing = true; wrap.scrollLeft = bar.scrollLeft; syncing = false;
+    });
+    wrap.addEventListener("scroll", () => {
+      if (syncing) return;
+      syncing = true; bar.scrollLeft = wrap.scrollLeft; syncing = false;
+    });
+  });
+  syncYieldHscroll(panel);
+}
+// 프록시 바 내부 spacer 폭 = 표 전체 폭. 넘칠 게 없으면 바 자체를 숨긴다(빈 띠 방지).
+function syncYieldHscroll(panel) {
+  panel = panel || document.getElementById("panel-yield");
+  if (!panel) return;
+  panel.querySelectorAll(".yield-hscroll").forEach(bar => {
+    const wrap = bar.nextElementSibling;
+    const spacer = bar.firstElementChild;
+    if (!wrap || !spacer) return;
+    spacer.style.width = wrap.scrollWidth + "px";
+    bar.style.display = (wrap.scrollWidth > wrap.clientWidth) ? "" : "none";
+  });
+}
 
 // Yield 표는 STEP 별로 표가 여러 개라 각 표에 리사이즈를 따로 건다(각자 자기 colgroup 기준).
 // 폭이 바뀌면 좌측 고정열 오프셋을 다시 실측한다.
@@ -193,19 +324,26 @@ function renderYield(yield_text, summary_rows) {
   if (Array.isArray(stepGroups) && stepGroups.length && Array.isArray(yield_text)) {
     bindYieldPanel();
     panel.innerHTML = overview + yieldToolbarHtml() + renderYieldStepSections(stepGroups, yield_text);
+    setupYieldHscroll(panel);
     syncYieldStickyOffsets(panel);
     requestAnimationFrame(() => syncYieldStickyOffsets(panel));   // 레이아웃 확정 후 재실측
     bindYieldColResize(panel);
+    if (yieldSearchTerm.trim()) applyYieldSearch(yieldSearchTerm);   // 검색어 유지
     return;
   }
 
   // list of dicts (STEP 그룹이 없거나 fail 이 전혀 없을 때의 폴백 — Pass 행 포함 평면 표)
   if (Array.isArray(yield_text) && yield_text.length) {
-    panel.innerHTML = overview + `<div class="yield-toolbar">${yieldExcelBtnHtml()}</div>` +
+    panel.innerHTML = overview +
+      `<div class="yield-toolbar">` +
+      sheetSearchHtml("yieldSearchInput", yieldSearchTerm, "Item 검색") +
+      yieldExcelBtnHtml() + `</div>` +
       renderSheetTable(yield_text, { kind: "yield" });
+    setupYieldHscroll(panel);
     syncYieldStickyOffsets(panel);
     requestAnimationFrame(() => syncYieldStickyOffsets(panel));
     bindYieldColResize(panel);
+    if (yieldSearchTerm.trim()) applyYieldSearch(yieldSearchTerm);
     return;
   }
 
@@ -252,6 +390,7 @@ function issueToolbarHtml() {
       `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC</button>` +
     `</span>` +
     `<button type="button" class="btn-sm" id="issueToggleAll" data-expanded="false">TNO 전체 펼치기</button>` +
+    sheetSearchHtml("issueSearchInput", issueSearchTerm, "Item / comment 검색") +
     editBtns +
     `<button type="button" class="btn-sm issue-excel-btn" id="issueExcelBtn" title="Honey Excel Download 의 Issue Table 시트와 동일한 xlsx 다운로드 (Map/Distribution 썸네일 제외)">⬇ Excel</button>` +
     `</div>`;
@@ -453,6 +592,7 @@ function renderIssues(issue_table_text) {
       renderIssueMiniMap(panel);
       bindIssueColResize(panel);
       applyIssueDelMode(panel);   // 재렌더 후에도 삭제 모드 유지
+      if (issueSearchTerm.trim()) applyIssueSearch(issueSearchTerm);   // 검색어 유지
     });
     return;
   }

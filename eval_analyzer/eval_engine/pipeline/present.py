@@ -16,6 +16,10 @@ def should_store(case_ctx, metrics, sig_result) -> bool:
     않아 룰 디버깅이 불가능하다. report_server 는 이 부류를 Issue Table ETC 섹션에
     올린다(web_report/ai_comment.py etc_auto_items).
     """
+    # 평가 제외 목록(rules/exclusions.yaml) 매칭 — 발화 차단에 더해 저장도 차단해야
+    # yield/cpk 사유로 코멘트가 만들어지는 우회를 막는다(완전 제외).
+    if (sig_result or {}).get("excluded"):
+        return False
     th = thresholds_for(case_ctx)
     yield_fail = (metrics.get("fail_count") or 0) > 0
     cpk = metrics.get("cpk")
@@ -78,7 +82,8 @@ def to_result(case_ctx, verdict, sig_result, comment, precedents) -> dict:
         "item_raw": case_ctx.get("item_raw"),          # 원본 item명 (Issue Table join 키)
         "item_class": case_ctx["item_class"],
         "bin": case_ctx["bin"],
-        "issue_category": issue_category_for(verdict["primary_signature"]),  # YIELD|CPK|ETC
+        # YIELD|CPK|ETC — 제품군 오버레이가 issue_category 를 바꿨으면 그 값을 따른다
+        "issue_category": issue_category_for(verdict["primary_signature"], case_ctx),
         "status": verdict["status"],
         "primary_signature": verdict["primary_signature"],
         "secondary_signatures": verdict["secondary_signatures"],

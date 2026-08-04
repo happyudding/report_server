@@ -17,6 +17,7 @@ creep 으로 "계산 중" 을 추정 표시했다 — 서버가 실제로 빌드
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -25,6 +26,15 @@ _LOCK = threading.Lock()
 # 겹칠 수 있는데(세션 열자마자 Map 탭), 세션당 1칸이면 나중에 끝난 쪽의 end() 가
 # 아직 진행 중인 다른 stage 의 기록까지 지워 프런트가 "끝났다"고 오판한다.
 _ACTIVE: dict[tuple, float] = {}
+
+# (session_id, stage) -> {"count", "t_last", "error"}.  연속 실패 기록.
+# 워커 타임아웃(_TIMEOUT_SEC=300)을 넘기는 세션은 온디맨드 소비자가 예외를 삼키고
+# pending 을 풀기 때문에, 다음 폴링이 곧바로 재등록해 **같은 빌드를 15분간 반복**했다
+# (프런트 타임아웃 15분 > 워커 300s). 몇 번 연속 실패하면 일정 시간 재등록을 막고
+# 프런트에 사실대로 실패를 알려, 워커 잠식과 헛폴링을 함께 끊는다.
+_FAILED: dict[tuple, dict] = {}
+FAIL_LIMIT = max(1, int(os.getenv("WEB_REPORT_BUILD_FAIL_LIMIT", "2") or 2))
+FAIL_COOLDOWN_SEC = float(os.getenv("WEB_REPORT_BUILD_FAIL_COOLDOWN_SEC", "600") or 600)
 
 
 def begin(session_id: str, stage: str = "report") -> None:
@@ -39,19 +49,63 @@ def end(session_id: str, stage: str = "report") -> None:
         _ACTIVE.pop((session_id, stage), None)
 
 
-def snapshot(session_id: str) -> dict:
-    """현재 상태 — {"state":"building","stage","elapsed"} 또는 {"state":"idle"}.
+def mark_failure(session_id: str, stage: str, error: str = "") -> None:
+    """콜드 빌드 실패 1건 기록 (연속 카운트 증가)."""
+    with _LOCK:
+        entry = _FAILED.get((session_id, stage))
+        if entry is None:
+            entry = {"count": 0, "t_last": 0.0, "error": ""}
+            _FAILED[(session_id, stage)] = entry
+        entry["count"] += 1
+        entry["t_last"] = time.monotonic()
+        entry["error"] = str(error)[:300]
 
-    여러 stage 가 동시에 도는 경우 **가장 오래 돌고 있는 것**을 보고한다(사용자가 실제로
-    기다리는 시간에 가깝다).
+
+def clear_failure(session_id: str, stage: str) -> None:
+    """빌드가 성공했으면 연속 실패 기록을 지운다."""
+    with _LOCK:
+        _FAILED.pop((session_id, stage), None)
+
+
+def failure_blocked(session_id: str, stage: str = "report") -> dict | None:
+    """연속 실패로 재빌드를 막아야 하면 실패 정보, 아니면 None.
+
+    쿨다운이 지나면 다시 None 을 돌려줘 자동으로 재시도가 열린다 — 디스크 풀 같은
+    일시 장애가 복구되면 사람이 손대지 않아도 회복된다.
+    """
+    with _LOCK:
+        entry = _FAILED.get((session_id, stage))
+        if entry is None or entry["count"] < FAIL_LIMIT:
+            return None
+        if time.monotonic() - entry["t_last"] >= FAIL_COOLDOWN_SEC:
+            _FAILED.pop((session_id, stage), None)
+            return None
+        return dict(entry)
+
+
+def snapshot(session_id: str) -> dict:
+    """현재 상태 — building / failed / idle.
+
+    - 빌드 중: ``{"state":"building","stage","elapsed"}``. 여러 stage 가 동시에 도는
+      경우 **가장 오래 돌고 있는 것**을 보고한다(사용자가 실제로 기다리는 시간에 가깝다).
+    - 연속 실패로 차단된 상태: ``{"state":"failed","stage","fail_count"}``.
+    - 그 외: ``{"state":"idle"}``.
+
+    구 프런트는 ``state !== "building"`` 을 전부 무시하므로 failed 추가는 하위호환이다.
     """
     with _LOCK:
         entries = [(t0, stage) for (sid, stage), t0 in _ACTIVE.items() if sid == session_id]
-        if not entries:
-            return {"state": "idle"}
-        t0, stage = min(entries)
-    return {"state": "building", "stage": stage,
-            "elapsed": round(time.monotonic() - t0, 1)}
+        if entries:
+            t0, stage = min(entries)
+            return {"state": "building", "stage": stage,
+                    "elapsed": round(time.monotonic() - t0, 1)}
+        failed = [(stage, dict(e)) for (sid, stage), e in _FAILED.items()
+                  if sid == session_id and e["count"] >= FAIL_LIMIT
+                  and time.monotonic() - e["t_last"] < FAIL_COOLDOWN_SEC]
+    if failed:
+        stage, entry = failed[0]
+        return {"state": "failed", "stage": stage, "fail_count": entry["count"]}
+    return {"state": "idle"}
 
 
 def snapshot_all() -> list[dict]:

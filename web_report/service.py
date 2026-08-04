@@ -20,6 +20,7 @@ import re
 import time
 from pathlib import Path
 
+from . import build_log
 from . import build_status
 from . import cache
 from . import cache_policy
@@ -45,6 +46,7 @@ from .validation import (
     webreport_ai_comment as _webreport_ai_comment,
     webreport_colors as _webreport_colors,
     webreport_compare_groups as _webreport_compare_groups,
+    webreport_temperature_groups as _webreport_temperature_groups,
 )
 
 # dist blob 전용 gzip 레벨 — 세션당 1회 생성 후 캐시(RAM+disk)되므로 레벨을 올려도 CPU 는
@@ -68,6 +70,26 @@ class ColdBuildRequired(Exception):
     라우트가 이 신호를 받아 202(building)로 즉시 응답하고, 실제 빌드는 백그라운드
     (compute.request_build)에서 돈다 — 요청 스레드가 수 초~수십 초 묶이지 않는다.
     """
+
+
+def report_is_cold(session_id: str, *, report_db, upload_root: Path,
+                   session: dict) -> bool:
+    """report payload 가 콜드(RAM·디스크 둘 다 미스)인지 값싸게 판정한다.
+
+    ``load_webreport(build_if_cold=False)`` 의 콜드 판정과 **같은 조건**이며 비용도
+    같다 — edits_rev SELECT 1회 + RAM dict 조회 + stat 1회. 라우트가 202 를 내기 전에
+    extras(DB 왕복 7~10건 + chart_index 다운로드 + canon/sha256)를 조립하지 않도록
+    앞당겨 부르는 용도다. 콜드 세션 1건의 폴링이 15분간 수백 회 반복되므로 그 절감이
+    크다.
+
+    판정 후 응답 직전에 캐시가 축출되는 레이스는 여기서 막지 않는다 — 라우트의
+    ``except ColdBuildRequired`` 폴백이 그대로 남아 있어 결과는 동일하다.
+    """
+    edits_rev = report_db.get_webreport_edit_rev(session_id)
+    cache_key = cache_policy.report_key(session, session_id, edits_rev)
+    if cache.cache_get(cache.REPORT_CACHE, cache_key) is not None:
+        return False
+    return not disk_cache.report_exists(upload_root, cache_key)
 
 
 def load_webreport(session_id: str, *, report_db, upload_root: Path,
@@ -133,10 +155,14 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 session, _preprocess.session_digest(report_db, session_id))):
                             # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
                             # 워커가 disk_cache 도 채우므로 여기서는 RAM 캐시만 넣는다.
-                            report = compute.run(compute.report_job, session_id,
-                                                 str(upload_root))
+                            t_sub = time.time()
+                            report, child_t = compute.run(compute.report_job, session_id,
+                                                          str(upload_root))
+                            build_log.record_offloaded("report", session_id, analysis_key,
+                                                       t_sub, time.time(), child_t)
                         if report is None:
                             t0 = time.perf_counter()
+                            stages = build_log.start_stages()
                             session, tables, manifest = _load_tables(
                                 session_id, report_db=report_db, upload_root=upload_root,
                                 session=session)
@@ -149,9 +175,10 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             etc_auto_items = None
                             if _webreport_ai_comment(session.get("webreport_options") or ""):
                                 from . import ai_comment
-                                ai_result = ai_comment.safe_build(
-                                    tables, session,
-                                    manifest.get("selected_items") or [])
+                                with build_log.stage("ai_comment"):
+                                    ai_result = ai_comment.safe_build(
+                                        tables, session,
+                                        manifest.get("selected_items") or [])
                                 ai_comments = ai_result["comments"]
                                 # 수율·cpk 는 정상인데 룰만 위반한 item → ETC 자동 행
                                 etc_auto_items = ai_result["etc_auto_items"]
@@ -159,6 +186,7 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             # 함께 넘기고, 실제 판정(자동 예외 포함)은 yield_tab 이 한다.
                             gross_die = session.get("gross_die")
                             yield_basis = edits.load_yield_basis_map(report_db, session_id)
+                            t_payload = time.perf_counter()
                             report = build_report_payload(
                                 tables,
                                 selected_items=manifest.get("selected_items") or [],
@@ -181,11 +209,19 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 compare_groups=_webreport_compare_groups(
                                     session.get("webreport_options") or "",
                                     [t.source for t in tables]),
+                                # Temperature 모드 RT/CT/HT 그룹(업로드 시 Honey 가 지정).
+                                # 비RT 소스의 수율 분모를 남은 die 수로 강제한다.
+                                temperature_groups=_webreport_temperature_groups(
+                                    session.get("webreport_options") or "",
+                                    [t.source for t in tables]),
                             )
+                            # payload(= 탭별 stage 합 + 조립 오버헤드) 총계.
+                            stages["payload"] = round(time.perf_counter() - t_payload, 3)
                             # payload 를 한 번만 직렬화해 gzip 디스크 저장과 아래 RAM
                             # 캐시 크기추정에 함께 재사용한다(콜드 1회 3중 직렬화 제거).
-                            report_bytes = disk_cache.dumps_report(report)
-                            disk_cache.save_report_gz(upload_root, cache_key, report_bytes)
+                            with build_log.stage("serialize"):
+                                report_bytes = disk_cache.dumps_report(report)
+                                disk_cache.save_report_gz(upload_root, cache_key, report_bytes)
                             report_size = len(report_bytes)
                             # 관측 로그 — 콜드 빌드(디코드 포함)가 실데이터에서 얼마나 걸리는지.
                             _log.info(
@@ -193,7 +229,16 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 str(analysis_key), session_id, len(tables),
                                 len(report.get("distribution_index") or ()),
                                 time.perf_counter() - t0)
+                            # 단계별 기록 — 워커 안이면 부모로 실려가고(compute.report_job),
+                            # 부모 인라인이면 여기서 바로 파일에 남는다.
+                            build_log.finish({
+                                "kind": "report", "session": session_id,
+                                "akey": str(analysis_key)[:12], "offloaded": False,
+                                "result": "ok", "total": round(time.perf_counter() - t0, 3),
+                                "stages": stages, "sources": len(tables),
+                                "items": len(report.get("distribution_index") or ())})
                     finally:
+                        build_log.clear_stages()
                         build_status.end(session_id, "report")
                 # size: 인라인 빌드면 위에서 잰 bytes 길이 재사용, 그 외(disk hit·워커
                 # 오프로드)는 None → report_cache_put 이 자체 추정(현행 유지).
@@ -397,22 +442,36 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
                 and compute.should_offload(cache_policy.tables_key(session, prep)):
             # 콜드 빌드(수십 초 CPU 가능)는 전체/bin1 변형 모두 워커 프로세스로 —
             # 요청 스레드 GIL 점유를 피한다 (워커가 disk_cache 도 채움).
-            blob = compute.run(compute.dist_job, session_id, str(upload_root), bin1)
+            t_sub = time.time()
+            blob, child_t = compute.run(compute.dist_job, session_id, str(upload_root), bin1)
+            build_log.record_offloaded("dist", session_id, analysis_key,
+                                       t_sub, time.time(), child_t)
         if blob is None:
             t0 = time.perf_counter()
-            compact = get_distribution(session_id, report_db=report_db,
-                                       upload_root=upload_root, bin1=bin1)
-            raw = json.dumps(compact, ensure_ascii=False,
-                             separators=(",", ":")).encode("utf-8")
-            blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)
-            disk_cache.save_dist(upload_root, cache_key, blob)
-            # 관측 로그 — 실데이터가 위험 구간(수천만 포인트)에 닿는지 판단용 (docs 진단).
-            _log.info(
-                "dist cold build akey=%.12s bin1=%s items=%d points=%d raw=%.1fMB "
-                "gz=%.1fMB %.1fs",
-                str(analysis_key), bin1, len(compact.get("items") or {}),
-                _dist_blob.count_points(compact), len(raw) / 1048576,
-                len(blob) / 1048576, time.perf_counter() - t0)
+            stages = build_log.start_stages()
+            try:
+                with build_log.stage("compute"):
+                    compact = get_distribution(session_id, report_db=report_db,
+                                               upload_root=upload_root, bin1=bin1)
+                with build_log.stage("serialize"):
+                    raw = json.dumps(compact, ensure_ascii=False,
+                                     separators=(",", ":")).encode("utf-8")
+                    blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)
+                    disk_cache.save_dist(upload_root, cache_key, blob)
+                # 관측 로그 — 실데이터가 위험 구간(수천만 포인트)에 닿는지 판단용 (docs 진단).
+                _log.info(
+                    "dist cold build akey=%.12s bin1=%s items=%d points=%d raw=%.1fMB "
+                    "gz=%.1fMB %.1fs",
+                    str(analysis_key), bin1, len(compact.get("items") or {}),
+                    _dist_blob.count_points(compact), len(raw) / 1048576,
+                    len(blob) / 1048576, time.perf_counter() - t0)
+                build_log.finish({
+                    "kind": "dist", "session": session_id,
+                    "akey": str(analysis_key)[:12], "offloaded": False, "result": "ok",
+                    "total": round(time.perf_counter() - t0, 3), "stages": stages,
+                    "items": len(compact.get("items") or {})})
+            finally:
+                build_log.clear_stages()
         cache.dist_cache_put(cache_key, blob)   # 개수+바이트 이중 상한 (cache.py)
     return blob
 
@@ -484,22 +543,34 @@ def get_map_gzip(session_id: str, *, report_db, upload_root: Path,
         try:
             if blob is None and compute.should_offload(cache_policy.tables_key(session, prep)):
                 # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
-                blob = compute.run(compute.map_job, session_id, str(upload_root))
+                t_sub = time.time()
+                blob, child_t = compute.run(compute.map_job, session_id, str(upload_root))
+                build_log.record_offloaded("map", session_id, analysis_key,
+                                           t_sub, time.time(), child_t)
             if blob is None:
                 t0 = time.perf_counter()
-                payload = get_map_analysis(session_id, report_db=report_db,
-                                           upload_root=upload_root)
-                raw = json.dumps(payload, ensure_ascii=False,
-                                 separators=(",", ":")).encode("utf-8")
-                blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)
-                disk_cache.save_map(upload_root, cache_key, blob)
+                stages = build_log.start_stages()
+                with build_log.stage("map_rows"):
+                    payload = get_map_analysis(session_id, report_db=report_db,
+                                               upload_root=upload_root)
+                with build_log.stage("serialize"):
+                    raw = json.dumps(payload, ensure_ascii=False,
+                                     separators=(",", ":")).encode("utf-8")
+                    blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)
+                    disk_cache.save_map(upload_root, cache_key, blob)
                 # 관측 로그 — die 전량 payload 가 실데이터에서 얼마나 커지는지 진단용.
                 _log.info(
                     "map cold build akey=%.12s maps=%d dies=%d raw=%.1fMB gz=%.1fMB %.1fs",
                     str(analysis_key), len(payload.get("maps") or ()),
                     sum(len(m.get("dies") or ()) for m in payload.get("maps") or ()),
                     len(raw) / 1048576, len(blob) / 1048576, time.perf_counter() - t0)
+                build_log.finish({
+                    "kind": "map", "session": session_id,
+                    "akey": str(analysis_key)[:12], "offloaded": False, "result": "ok",
+                    "total": round(time.perf_counter() - t0, 3), "stages": stages,
+                    "items": len(payload.get("maps") or ())})
         finally:
+            build_log.clear_stages()
             if cold:
                 build_status.end(session_id, "map")
         cache.map_cache_put(cache_key, blob)   # 개수+바이트 이중 상한 (cache.py)
@@ -985,6 +1056,21 @@ def update_issue_hidden(session_id: str, *, report_db, upload_root: Path,
             "storage": "db" if changes else "unchanged"}
 
 
+def _trigger_eval_export(session_id: str, *, report_db, upload_root, why: str) -> None:
+    """eval DB 재적재 트리거 (백그라운드 큐, 실패 무해 — docs/13 §9).
+
+    트리거 실패를 조용히 삼키면 편집 후 eval DB 동기화가 상시 누락돼도 아무도 모른다
+    — export 자체의 실패는 safe_export 가 감사에 남기지만 트리거 실패는 별개다.
+    """
+    try:
+        from . import eval_export
+        eval_export.export_async(session_id, report_db=report_db,
+                                 upload_root=upload_root)
+    except Exception:
+        _log.warning("eval export 재적재 트리거 실패 — %s 편집 후 eval DB 동기화 누락 "
+                     "(session=%s)", why, session_id, exc_info=True)
+
+
 def _norm_issue_status(key, value):
     """Issue Table Status 키/값 검증 — 단건·일괄 저장 공용. 반환 (key, value)."""
     key = str(key or "").strip()
@@ -1030,6 +1116,12 @@ def update_issue_status(session_id: str, *, report_db, upload_root: Path,
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
+
+    # Status 가 곧 적재 게이트다 (2026-08-04) — Close 인 이슈의 코멘트만 eval DB 로
+    # 나가므로, Open↔Close 전환 때마다 재적재해야 한다(Close→Open 이면 reconciliation
+    # 이 그 case 의 라벨을 지운다).
+    _trigger_eval_export(session_id, report_db=report_db, upload_root=upload_root,
+                         why="issue_status")
 
     return {"ok": True, "key": key, "value": value, "storage": "db"}
 
@@ -1079,6 +1171,9 @@ def update_issue_status_bulk(session_id: str, *, report_db, upload_root: Path,
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
+
+    _trigger_eval_export(session_id, report_db=report_db, upload_root=upload_root,
+                         why="issue_status(bulk)")
 
     return {"ok": True, "count": len(changes), "storage": "db"}
 

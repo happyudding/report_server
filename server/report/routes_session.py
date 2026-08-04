@@ -49,6 +49,26 @@ def _load_json_object(objects, object_type):
     return storage_gateway.load_json_object(objects, object_type)
 
 
+def _building_response(session_id, kind="report"):
+    """콜드 빌드 요청 + 202(building) 응답. 연속 실패로 차단된 세션은 503.
+
+    503 이 없으면 프런트는 실패한 빌드를 최대 15분간 폴링만 하다 타임아웃한다 —
+    사용자에게는 "영원히 로딩 중"으로 보인다. 사실대로 알려 즉시 끝낸다.
+    """
+    blocked = web_report_build_status.failure_blocked(session_id, kind)
+    if blocked:
+        return jsonify({
+            "build_failed": True,
+            "fail_count": blocked["count"],
+            "error": "리포트 계산이 반복 실패했습니다. 잠시 후 다시 시도하거나 "
+                     "관리자에게 문의해 주세요.",
+        }), 503
+    web_report_compute.request_build(session_id, str(REPORT_UPLOAD_DIR), kind)
+    status = web_report_build_status.snapshot(session_id)
+    return jsonify({"building": True, "stage": status.get("stage", kind),
+                    "elapsed": status.get("elapsed", 0)}), 202
+
+
 @report_bp.get("/result/<session_id>")
 def result(session_id):
     _validate_session_id(session_id)
@@ -89,6 +109,20 @@ def session_full(session_id):
         abort(404, "session not found")
     _private_guard(session)
     _active_or_404(session)
+    if session.get("source") == "web_report":
+        # 콜드면 extras(DB 왕복 7~10건 + 다운로드 + digest)를 조립하기 **전에** 202 를
+        # 낸다 — 그 값들은 200 payload 에만 쓰이는데, 콜드 세션은 프런트가 최대 15분간
+        # 1~5초 간격으로 폴링하므로 조립 비용이 수백 번 반복됐다. 판정 자체는
+        # SELECT 1회 + stat 1회. (판정 후 축출되는 레이스는 아래 ColdBuildRequired 폴백)
+        try:
+            cold = web_report_service.report_is_cold(
+                session_id, report_db=report_db,
+                upload_root=Path(REPORT_UPLOAD_DIR), session=session)
+        except Exception:
+            _log.exception("cold probe failed for session %s", session_id)
+            cold = False        # 판정 실패는 기존 경로(느리지만 정확)로 흘려보낸다
+        if cold:
+            return _building_response(session_id, "report")
     akey = session.get("analysis_key")
     objects = {}
     if akey:
@@ -161,11 +195,8 @@ def session_full(session_id):
                 report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
                 build_if_cold=False)
         except web_report_service.ColdBuildRequired:
-            web_report_compute.request_build(
-                session_id, str(REPORT_UPLOAD_DIR), "report")
-            status = web_report_build_status.snapshot(session_id)
-            return jsonify({"building": True, "stage": status.get("stage", "report"),
-                            "elapsed": status.get("elapsed", 0)}), 202
+            # 위 조기 판정을 통과했는데 여기 온 경우 = 판정 후 축출된 레이스.
+            return _building_response(session_id, "report")
         except FileNotFoundError:
             abort(404, "web_report session data not found")
         except KeyError:

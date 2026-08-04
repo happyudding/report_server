@@ -197,7 +197,16 @@ def map_key(session, prep_digest: str = "") -> tuple:
 #      붙는다 — ai_comment.build_ai_comments 반환 구조도 {"comments","etc_auto_items"} 로
 #      바뀌었다. ai_comment 옵션 세션의 **행 구성**이 달라지므로 안 올리면 옛 disk_cache 가
 #      자동 행 없는 payload 를 계속 반환한다.
-REPORT_SCHEMA_VERSION = 23
+# v24: Temperature 모드 — sources[] 에 temp_role/temp_group 이 붙고 payload.temperature 가
+#      추가된다. 비RT(CT/HT) 소스는 수율 분모가 남은 die 수로 강제된다
+#      (resolve_source_basis force_test). 다른 모드 세션은 값 무변경이지만 키가 전 세션
+#      공통이라 1회 재계산된다.
+# v25: AI Comment 표시 판정이 webreport_options.ai_comment → **ai_comment_optin 동반**
+#      으로 바뀐다(구 클라가 사용자 의사 없이 보낸 ai_comment=True 세션을 미표시로
+#      되돌림 — validation.webreport_ai_comment). 그 세션들의 payload 에서 AI Comment
+#      컬럼과 ETC 자동 행이 사라지므로 안 올리면 옛 disk_cache 가 컬럼이 든 payload 를
+#      계속 반환해 화면상 그대로 남는다.
+REPORT_SCHEMA_VERSION = 25
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

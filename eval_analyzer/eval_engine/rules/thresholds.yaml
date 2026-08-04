@@ -9,7 +9,7 @@ default:
   outlier_ratio_warn: 0.02   # outlier(튀는 die) 비율 주의 (OUTLIER_WARN)
   outlier_ratio_bad: 0.05    # outlier 비율 심각 (SEVERE_OUTLIER, 개수 조건과 AND)
   spread_norm_warn: 0.18     # robust_sigma/(USL-LSL)
-  modified_z: 3.5            # Iglewicz-Hoaglin outlier 컷
+  outlier_sigma: 4.5         # outlier 컷 — 중앙값에서 robust σ(1.4826·MAD) 이 배수 밖이면 outlier (Iglewicz-Hoaglin modified z, 원 권장 3.5 → 과검출 완화)
   skew_warn: 1.0            # |skew| 주의
   spec_margin_warn: 1.0     # σ 단위 여유 (작을수록 위험)
   edge_fail_ratio_warn: 2.0 # edge 영역 fail 집중 배수

@@ -133,8 +133,20 @@ function activeTabName() {
   return (btn && btn.dataset.tab) || "summary";
 }
 
+// Plotly 로 그리는 탭들. plotly.min.js 는 async 로드라 시작 탭(표 기반)이 뜬 뒤에도
+// 아직 도착하지 않았을 수 있다 — 그 사이 이 탭들이 렌더되면 차트가 비어버리므로
+// dirty 를 유지한 채 도착을 기다렸다 다시 그린다. (표 탭은 Tabulator+canvas 만 쓴다)
+const PLOTLY_TABS = { "distribution": 1, "map-analysis": 1, "compare": 1, "trim-analysis": 1 };
+
 function renderTab(name) {
   if (!tabDirty[name] || !TAB_RENDERERS[name]) return;
+  if (PLOTLY_TABS[name] && !window.Plotly) {
+    // __plotlyReady 가 없는 경우(구 html 캐시)는 대기 없이 종전대로 진행한다.
+    if (window.__plotlyReady) {
+      window.__plotlyReady.then(() => renderTab(name));
+      return;                      // tabDirty 유지 — 도착 후 이 함수가 다시 돈다
+    }
+  }
   tabDirty[name] = false;
   TAB_RENDERERS[name]();
 }

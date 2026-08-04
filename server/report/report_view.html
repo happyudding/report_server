@@ -36,11 +36,16 @@ window.__fullPrefetch = (() => {
 })();
 </script>
 <link rel="stylesheet" href="/pe/report/vendor/tabulator.min.css">
-<!-- defer: plotly 4.8MB(gz 1.4MB) 파싱이 HTML 파싱/첫 페인트를 막지 않도록.
-     defer 스크립트는 DOMContentLoaded 전에 순서대로 실행되므로, 하단 인라인 스크립트의
-     load() 를 DOMContentLoaded 이후로 미루면 Tabulator/Plotly 존재가 보장된다. -->
+<!-- tabulator 는 defer — 시작 탭(Summary/Yield/Issue/Cpk)이 전부 Tabulator 기반이라
+     load() 시작 시점에 있어야 한다. defer 스크립트는 DOMContentLoaded 전에 순서대로
+     실행되므로 하단 load() 가 DOMContentLoaded 를 기다리면 존재가 보장된다.
+     plotly(4.8MB, gz 1.4MB)는 async — defer 로 두면 그 파싱이 끝나야 DOMContentLoaded 가
+     떠서 "세션 불러오는 중" 오버레이 안에 파싱 시간이 통째로 들어갔다. 시작 탭은
+     Plotly 를 쓰지 않으므로 표를 먼저 띄우고, 차트 탭은 __plotlyReady 를 기다린다
+     (edit_mode.js renderTab / item_detail.js). -->
+<script>window.__plotlyReady = new Promise(r => { window.__plotlyLoaded = r; });</script>
 <script defer src="/pe/report/vendor/tabulator.min.js"></script>
-<script defer src="/pe/report/vendor/plotly.min.js"></script>
+<script async src="/pe/report/vendor/plotly.min.js" onload="window.__plotlyLoaded()"></script>
 <style>
 @font-face {
   font-family: "Pretendard Variable";
@@ -112,6 +117,7 @@ body {
 .mode-badge.Compare { background: #db2777; }
 .mode-badge.DUT { background: #2563eb; }
 .mode-badge.Commonality { background: #d97706; }
+.mode-badge.Temperature { background: #dc2626; }
 /* ── Compare 탭 ─────────────────────────────────────────────────────────── */
 .compare-wrap { padding: 4px 2px 40px; }
 .compare-summary { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -348,6 +354,11 @@ body {
 .ybs-table tr:last-child td { border-bottom: none; }
 .ybs-table th { background: #f6f9ff; color: #6b7a90; font-weight: 600; font-size: 10px; }
 .ybs-table .ybs-src { color: #1f4d8c; font-weight: 700; text-align: left; }
+/* Temperature 모드 RT(그룹 Limit 기준) source 표식 */
+.temp-rt {
+  display: inline-block; margin-left: 5px; padding: 1px 5px; border-radius: 3px;
+  background: #dc2626; color: #fff; font-size: 10px; font-weight: 700; vertical-align: 1px;
+}
 .ybs-table .ybs-pct { color: #222; font-weight: 800; }
 .ybs-table .ybs-cnt { color: #888; }
 /* STEP×Source 표: 병합된 Step 셀(rowspan) — 세로 가운데 정렬 + Step 평균 부기. */
@@ -574,11 +585,33 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-yield tbody tr.yield-bin-rep td { font-weight: 600; }
 .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #fbfcfe; color: #55606c; }
 .sheet-table.kind-issue tbody tr.issue-bin-rep td { font-weight: 600; }
+/* 좌측 고정 6열(Step/Bin/TNO/Item/Map/Distribution)은 hover 시에도 반드시 불투명이어야 한다 —
+   행 hover 색(.sheet-table tbody tr:hover td, 특이도 0,2,2)은 고정열 배경(0,3,2)을 못 이겨
+   고정열만 색이 안 바뀌고, 가로 스크롤 상태에서 고정열 밑으로 지나가는 우측 데이터가
+   비쳐 보였다(사용자 신고 2026-08-04). 고정열에도 같은 hover 색을 명시해 덮는다. */
+.sheet-table.kind-issue tbody tr:hover td:nth-child(-n+6) { background: #edf3fc; }
 /* Issue Table / Yield 상단 sticky 툴바(전체 펼치기/접기) — sheet-wrap 위에 겹치지 않게 고정. */
 .issue-toolbar, .yield-toolbar {
   position: sticky; top: var(--sticky-head-h, 96px); z-index: 92;
   background: #fff; padding: 6px 0; display: flex; gap: 8px; align-items: center;
 }
+/* ── 표 검색 (Issue Table / Yield 툴바, yield_issue.js) ────────────────────────
+   매칭 안 된 데이터 행은 .row-search-hide 로 숨긴다. 접기/펼치기가 쓰는 인라인
+   display:none 을 이겨야 하므로(검색 중에는 접힌 상세행도 매칭되면 보여야 한다)
+   .*-searching 상태에서 상세행 표시를 !important 로 되살리고, 숨김 규칙은 그보다
+   구체적으로 둔다(순서가 아니라 특이도로 이기게 — tbody 를 한 단계 더 넣음). */
+.sheet-search-wrap { display: inline-flex; align-items: center; gap: 6px; }
+.issue-toolbar .sheet-search, .yield-toolbar .sheet-search {
+  padding: 5px 9px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 12px; width: 210px;
+}
+.issue-toolbar .sheet-search:focus, .yield-toolbar .sheet-search:focus {
+  border-color: #4a90e2; outline: none;
+}
+.sheet-search-cnt { font-size: 11px; color: #667085; font-variant-numeric: tabular-nums; }
+#panel-issues.issue-searching tr.issue-bin-detail { display: table-row !important; }
+#panel-yield.yield-searching tr.yield-bin-detail { display: table-row !important; }
+#panel-issues.issue-searching tbody tr.row-search-hide,
+#panel-yield.yield-searching tbody tr.row-search-hide { display: none !important; }
 
 /* Yield 탭 전용 다듬기 (다른 sheet-table 은 영향 없음) */
 /* overflow 는 auto — 예전 hidden 은 border-radius 클리핑 목적이었으나 상위 .sheet-wrap 의
@@ -595,6 +628,23 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-wrap.kind-yield::-webkit-scrollbar-thumb {
   background: #9aa7b5; border-radius: 6px; border: 2px solid #f0f2f5; }
 .sheet-wrap.kind-yield::-webkit-scrollbar-thumb:hover { background: #7b8a9b; }
+/* Yield 가로 스크롤바를 표 아래가 아니라 위로 올린다(사용자 요청 2026-08-04) — 표 위 프록시 바가
+   보이고, 실제 스크롤은 wrap 이 하며 scrollLeft 만 양방향 동기화한다(setupYieldHscroll).
+   프록시가 붙은 wrap(.has-htop)은 네이티브 스크롤바를 시각적으로만 숨긴다(overflow 는 유지되므로
+   휠/트랙패드/프로그램적 scrollLeft 는 그대로 동작 — Raw Data 탭과 같은 처방). */
+:root { --yield-hscroll-h: 14px; }
+.yield-hscroll {
+  height: var(--yield-hscroll-h);
+  overflow-x: auto; overflow-y: hidden;
+  background: #fff;
+}
+.yield-hscroll-spacer { height: 1px; }   /* 폭만 JS 로 실제 표 폭에 맞춰 갱신 */
+.yield-hscroll::-webkit-scrollbar { height: 12px; }
+.yield-hscroll::-webkit-scrollbar-track { background: #f0f2f5; border-radius: 6px; }
+.yield-hscroll::-webkit-scrollbar-thumb { background: #9aa7b5; border-radius: 6px; border: 2px solid #f0f2f5; }
+.yield-hscroll::-webkit-scrollbar-thumb:hover { background: #7b8a9b; }
+.sheet-wrap.kind-yield.has-htop { scrollbar-width: none; -ms-overflow-style: none; }
+.sheet-wrap.kind-yield.has-htop::-webkit-scrollbar { display: none; }
 /* 좌측 틀고정: 식별 4열(Step/Bin/TNO/Item). left 오프셋은 앞 컬럼 실측 폭 누적으로,
    colWidth 기본값(step44+bin44+tno60)이 fallback 이고 실제 폭은 JS(syncYieldStickyOffsets)가
    --yield-colN-left 로 덮어쓴다(내용이 길어 컬럼이 늘어나면 고정 px 는 셀이 겹친다).
@@ -718,6 +768,27 @@ tbody tr:hover { background: #f9fbff; }
   gap: 3px 10px; flex: 1; min-width: 0; max-height: 22px; overflow: hidden; }
 .dist-legend-row.is-open .dist-legend { max-height: 78px; overflow-y: auto; }
 .dist-legend-row .btn-sm { margin-top: 0; padding: 2px 8px; white-space: nowrap; flex: 0 0 auto; }
+/* ── Distribution 갤러리 + 우측 세로 범례 (사용자 요청 2026-08-04) ──────────────
+   소스가 최대 21개라 가로 범례는 읽기 어렵고 갤러리 위 공간을 잡아먹었다. 갤러리를
+   좌측 가변 칸, 범례를 우측 고정폭 칸(sticky)으로 나눈다. 범례 폭이 고정이라 강조
+   해제 버튼이 생겨도 갤러리 칸 폭은 변하지 않는다. */
+.dist-body { display: flex; align-items: flex-start; gap: 14px; }
+.dist-body > .distg-grid, .dist-body > .dist-body-main { flex: 1 1 auto; min-width: 0; }
+.dist-legend-side {
+  flex: 0 0 190px; position: sticky; top: calc(var(--sticky-head-h, 96px) + 46px);
+  max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - 70px);
+  overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable;
+}
+/* 세로 배치: 기본 가로 행(grid + 접힘 max-height)을 통째로 덮는다 — is-open 규칙과
+   특이도가 같으므로 반드시 그 아래에 선언해야 이긴다. */
+.dist-legend-row.dist-legend-vert { display: block; margin: 0; }
+.dist-legend-row.dist-legend-vert .dist-legend {
+  display: flex; flex-direction: column; gap: 2px;
+  max-height: none; overflow: visible; min-width: 0; }
+.dist-legend-row.dist-legend-vert .dist-leg-item { width: 100%; }
+.dist-legend-row.dist-legend-vert .btn-sm { display: block; width: 100%; margin-bottom: 6px; }
+/* 강조 해제 버튼 자리표시 — 자리는 차지하되 보이지 않는다(목록 위아래 밀림 방지). */
+.dist-legend-row.dist-legend-vert .dist-leg-clear.is-placeholder { visibility: hidden; }
 /* 클릭 강조 — Map Analysis bin 범례(.bin-table)와 같은 색 규격 */
 .dist-leg-item { cursor: pointer; padding: 1px 5px; border-radius: 4px; min-width: 0; }
 /* 말줄임은 이름 span 에 건다 — .dist-leg-item 은 inline-flex 라 text-overflow 가 안 먹는다 */
@@ -746,7 +817,9 @@ tbody tr:hover { background: #f9fbff; }
 .dist-count { font-size: 12px; color: #888; }
 /* Distribution 갤러리만 기본 패널(1200px)보다 넓게 — 양옆 여백을 절반으로.
    여백 = (뷰포트 - 폭)/2 이므로 폭 = (뷰포트 + 1200)/2 이면 여백이 정확히 반이 된다. */
-#panel-distribution { max-width: calc((100vw + 1160px) / 2); }
+/* 우측 세로 범례 칸(190px + gap 14px)을 새로 쓰므로 그만큼 폭을 더 준다 — 갤러리 카드
+   폭은 종전 그대로 유지된다. */
+#panel-distribution { max-width: calc((100vw + 1160px) / 2 + 204px); }
 .distg-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
 @media (max-width: 1100px) { .distg-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .distg-card { border: 1px solid #e2e4e8; border-radius: 8px; overflow: hidden; height: 264px;
@@ -1722,17 +1795,29 @@ html[data-theme="dark"] .issue-hscroll { background: #14161a; }
 html[data-theme="dark"] .issue-hscroll::-webkit-scrollbar-track { background: #1e2128; }
 html[data-theme="dark"] .issue-hscroll::-webkit-scrollbar-thumb { background: #4a5462; border-color: #1e2128; }
 html[data-theme="dark"] .issue-hscroll::-webkit-scrollbar-thumb:hover { background: #5d6879; }
+html[data-theme="dark"] .yield-hscroll { background: #14161a; }
+html[data-theme="dark"] .yield-hscroll::-webkit-scrollbar-track { background: #1e2128; }
+html[data-theme="dark"] .yield-hscroll::-webkit-scrollbar-thumb { background: #4a5462; border-color: #1e2128; }
+html[data-theme="dark"] .yield-hscroll::-webkit-scrollbar-thumb:hover { background: #5d6879; }
 html[data-theme="dark"] .sheet-table.kind-issue tr.issue-shead-top > th,
 html[data-theme="dark"] .sheet-table.kind-issue tr.issue-shead-bot > th { background: #242c37; }
-html[data-theme="dark"] .sheet-table.kind-issue tbody td:nth-child(-n+4) { background: #1e2128; }
+/* 고정열은 6열(Map/Distribution 포함) — 라이트의 nth-child(-n+6) 과 범위를 맞춘다.
+   5·6열이 빠져 있으면 다크에서 그 두 열만 라이트 배경(#fff)으로 남는다. */
+html[data-theme="dark"] .sheet-table.kind-issue tbody td:nth-child(-n+6) { background: #1e2128; }
 html[data-theme="dark"] .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+4) { background: #242c37; }
 html[data-theme="dark"] .sheet-table.kind-issue td.sheet-subhead { background: #242c37 !important; }
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-cell-warn { background: #46201f !important; }
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-yield-warn { background: hsl(0, 55%, calc(20% + var(--yw, 0) * 22%)) !important; }
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #20242c; color: #9aa3b0; }
+/* 라이트와 같은 이유 — hover 시 고정열도 불투명하게 덮어 우측 데이터 비침을 막는다. */
+html[data-theme="dark"] .sheet-table.kind-issue tbody tr:hover td:nth-child(-n+6) { background: #263043; }
 html[data-theme="dark"] #panel-issues.issue-del-mode tbody tr.issue-row-sel > td { background: #4a3d18 !important; }
 html[data-theme="dark"] #panel-issues.issue-del-mode td.issue-sel-cell:hover { outline-color: #64748b; }
 html[data-theme="dark"] .issue-toolbar { background: #14161a; }
+html[data-theme="dark"] .issue-toolbar .sheet-search,
+html[data-theme="dark"] .yield-toolbar .sheet-search {
+  background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .sheet-search-cnt { color: #8a93a0; }
 
 /* ── Yield 표 (pass 행 틴트/접기 버튼) ── */
 html[data-theme="dark"] .sheet-wrap.kind-yield { border-color: #2f3540; }
@@ -1991,6 +2076,14 @@ html[data-theme="dark"] .cnote-view-comment { color: #9aa3b0; }
    포커스가 부모 페이지를 스크롤(클릭 시 위아래 흔들림)하는 걸 원천 차단(스크롤할 게 없음). */
 #panel-note.active { display: flex; flex-direction: column;
   height: calc(var(--vph) - var(--sticky-head-h, 96px) - 108px); }
+/* 폭은 Issue Table 과 같이 화면 전체를 쓴다 (기본 .panel 은 1200px 중앙정렬 — 시트가 좁았다). */
+#panel-note { max-width: none; }
+/* 높이는 "세로 스크롤 0" 을 지키는 선에서 최대로 — Note 탭일 때만 content 하단 여백
+   (90px, 다른 탭의 스크롤 여유용)을 상단과 같은 18px 로 줄이고 그만큼 패널을 키운다.
+   :has 미지원 브라우저는 두 규칙을 통째로 무시해 종전 높이·여백 그대로 동작한다. */
+.content:has(> #panel-note.active) { padding-bottom: 18px; }
+.content:has(> #panel-note.active) #panel-note.active {
+  height: calc(var(--vph) - var(--sticky-head-h, 96px) - 36px); }
 .note-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 6px 4px; font-size: 12px; position: relative; }
 .note-meta { color: #6b7280; font-size: 11px; }

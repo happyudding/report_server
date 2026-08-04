@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from . import build_log
 from . import cache
 from . import cache_policy
 from . import edits
@@ -36,19 +37,21 @@ def download_decode_tables(analysis_key, upload_root: Path, *, keep_df: bool = T
     sources 와 함께 받은 manifest 를 manifest 캐시에 write-through 해 이어지는 warm 조회의
     S3 manifest GET 을 없앤다. keep_df=False 는 읽기 경로용 슬림 디코드 (honeyform 참조).
     """
-    sources, manifest = runtime.storage().load_webreport_sources(
-        analysis_key, upload_root=upload_root)
+    with build_log.stage("download"):
+        sources, manifest = runtime.storage().load_webreport_sources(
+            analysis_key, upload_root=upload_root)
     cache.manifest_cache_put(analysis_key, manifest)
 
     sources_manifest = manifest.get("sources") or []
     tables = []
-    for idx, data in enumerate(sources):
-        source_info = sources_manifest[idx] if idx < len(sources_manifest) else {}
-        source_name = str(source_info.get("name") or f"source_{idx + 1}")
-        file_name = str(source_info.get("file_name") or source_name)
-        # decode+split 결합 경로 — to_numeric 중복 변환/재검증 제거 (결과 동일)
-        tables.append(decode_split_honeyform_parquet(
-            data, source=source_name, file_name=file_name, keep_df=keep_df))
+    with build_log.stage("decode"):
+        for idx, data in enumerate(sources):
+            source_info = sources_manifest[idx] if idx < len(sources_manifest) else {}
+            source_name = str(source_info.get("name") or f"source_{idx + 1}")
+            file_name = str(source_info.get("file_name") or source_name)
+            # decode+split 결합 경로 — to_numeric 중복 변환/재검증 제거 (결과 동일)
+            tables.append(decode_split_honeyform_parquet(
+                data, source=source_name, file_name=file_name, keep_df=keep_df))
     return tables, manifest
 
 
@@ -93,7 +96,8 @@ def load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: boo
                     tables, manifest = download_decode_tables(
                         analysis_key, upload_root, keep_df=False)
                     if prep:
-                        tables, _ = preprocess.apply_tables(tables, prep)
+                        with build_log.stage("preprocess"):
+                            tables, _ = preprocess.apply_tables(tables, prep)
                     cache.tables_cache_put(cache_key, tables)
                     return session, [clone_table(t) for t in tables], manifest
         manifest = cache.load_manifest_cached(analysis_key, upload_root)
@@ -101,5 +105,6 @@ def load_tables(session_id: str, *, report_db, upload_root: Path, use_cache: boo
 
     tables, manifest = download_decode_tables(analysis_key, upload_root)
     if prep:
-        tables, _ = preprocess.apply_tables(tables, prep)
+        with build_log.stage("preprocess"):
+            tables, _ = preprocess.apply_tables(tables, prep)
     return session, tables, manifest
