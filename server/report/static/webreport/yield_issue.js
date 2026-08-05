@@ -119,24 +119,36 @@ function renderYieldStepSections(stepGroups, allRows, byStep, keyPrefix) {
 // 편집 열(Map/Distribution/Status/comment)을 뺀 읽기 전용 요약으로만 보여주고,
 // 편집은 그 탭에서 하도록 안내 버튼을 단다.
 const TEMP_SUMMARY_SKIP = /^(map|distribution|status|category)$/i;
+// 이 섹션은 '요약 + 안내' 자리다. 전 항목 재판정이라 항목이 수백 개가 될 수 있는데,
+// Issue Table 탭처럼 청크 렌더를 붙이는 대신 상위 N 행만 그리고 나머지는 탭으로 보낸다
+// (통짜 innerHTML 로 수백 행 × 20열을 만들면 Yield 탭 진입이 그대로 블록된다).
+const TEMP_SUMMARY_MAX_ROWS = 60;
 function renderYieldTempSection() {
   if (webReportMode() !== "Temperature") return "";
   const rows = (webReportSheets() || {})[ISSUE_TEMP_SHEET];
   if (!Array.isArray(rows) || !rows.length) return "";
-  // 섹션 divider 행(Category="TEMP")과 편집 전용 열을 걷어낸 표시용 사본.
-  const data = rows.filter(r => String((r && r.Item) || "").trim()).map(r => {
+  // 섹션 divider 행(Category="TEMP") 제외 + 상위 N 행만 — 열 정리도 그 행들만 한다.
+  const dataRows = rows.filter(r => String((r && r.Item) || "").trim());
+  if (!dataRows.length) return "";
+  const shown = dataRows.slice(0, TEMP_SUMMARY_MAX_ROWS);
+  const data = shown.map(r => {
     const o = {};
     Object.keys(r).forEach(k => {
       if (!TEMP_SUMMARY_SKIP.test(String(k)) && !/comment/i.test(String(k))) o[k] = r[k];
     });
     return o;
   });
-  if (!data.length) return "";
+  const more = dataRows.length - shown.length;
   return `<div class="yield-corner-section">` +
     `<div class="yield-corner-title">Temp Corner (CT / HT) — RT Limit 이탈 항목` +
+    (more > 0 ? ` <span class="yield-corner-more">상위 ${shown.length} / 전체 ${dataRows.length}</span>` : "") +
     ` <button type="button" class="btn-sm" data-goto-tab="issue-temp" ` +
-    `title="Issue Table Temp 탭에서 comment·Status 를 편집합니다">탭에서 편집 ›</button></div>` +
-    renderSheetTable(data, { kind: "yield" }) + `</div>`;
+    `title="Issue Table Temp 탭에서 전체 목록·comment·Status 를 봅니다">탭에서 보기 ›</button></div>` +
+    renderSheetTable(data, { kind: "yield" }) +
+    (more > 0
+      ? `<div class="muted" style="margin-top:6px">나머지 ${more}개 항목은 Issue Table Temp 탭에 있습니다.</div>`
+      : "") +
+    `</div>`;
 }
 
 // Yield 탭 상단 툴바: 모든 Bin 그룹의 FAILTNO 상세행을 한 번에 펼치기/접기하는 토글.
@@ -242,15 +254,17 @@ function yieldExcelBtnHtml() {
 }
 // 한 Bin 그룹(대표행)의 detail FAILTNO 행 펼치기/접기 + 그룹 토글 버튼 상태 갱신.
 // 펼침으로 Item 등 컬럼 폭이 바뀌면 좌측 고정 오프셋이 stale 이 되므로 토글 후 재실측한다.
-function setYieldGroup(gi, expand, btn) {
+function setYieldGroup(gi, expand, btn, skipSync) {
   if (btn) { btn.setAttribute("aria-expanded", expand ? "true" : "false"); btn.textContent = expand ? "▲" : "▼"; }
   document.querySelectorAll(`#panel-yield tr.yield-bin-detail[data-grp="${gi}"]`).forEach(tr => {
     tr.style.display = expand ? "" : "none";
   });
-  syncYieldStickyOffsets();
+  // 전체 펼치기/접기(setAllYieldGroups)는 그룹마다 재실측하면 그룹 수 × 전체 행
+  // 강제 reflow 로 수 초 freeze 가 난다 — 호출부가 마지막에 1회만 실측한다.
+  if (!skipSync) syncYieldStickyOffsets();
 }
 function setAllYieldGroups(expand) {
-  document.querySelectorAll("#panel-yield .yield-toggle").forEach(btn => setYieldGroup(btn.dataset.grp, expand, btn));
+  document.querySelectorAll("#panel-yield .yield-toggle").forEach(btn => setYieldGroup(btn.dataset.grp, expand, btn, true));
   syncYieldStickyOffsets();
 }
 function bindYieldPanel() {

@@ -236,6 +236,7 @@ async function load(resetMode=true) {
     const canEdit = MODE === "edit";
     // 저장·중요표시(개인)는 편집 권한자(업로더+위임 편집자) 공통.
     document.getElementById("btnSaveComment").style.display = canEdit ? "" : "none";
+    document.getElementById("autosaveDot").style.display = canEdit ? "" : "none";
     document.getElementById("btnImportant").style.display = canEdit ? "" : "none";
     // 세션 정보(이름·Product·LOT·Process) 수정 — 서버도 _editor_guard 라 같은 조건.
     // 실제 편집은 Honey 앱에서만 되고, 웹에서 누르면 안내 모달이 뜬다(edit_mode.js).

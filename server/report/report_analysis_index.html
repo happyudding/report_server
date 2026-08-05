@@ -1344,6 +1344,13 @@ document.getElementById("delModalCancel").addEventListener("click", () => {
   document.getElementById("delModal").classList.remove("show");
 });
 document.getElementById("delModalConfirm").addEventListener("click", async () => {
+  // 요청 중 버튼을 잠근다 — 더블클릭 이중 DELETE 방지. 실패 시 모달은 열어 두고
+  // 버튼을 되살려 재시도/취소가 가능하게 한다(종전에는 예외 시 그대로 방치).
+  const btn = document.getElementById("delModalConfirm");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = "삭제 중…";
   try {
     const res = await fetch(`/pe/report/session/${_delSid}`, {
       method: "DELETE",
@@ -1360,6 +1367,9 @@ document.getElementById("delModalConfirm").addEventListener("click", async () =>
     loadHistory();
   } catch (e) {
     showToast("삭제 실패: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
   }
 });
 

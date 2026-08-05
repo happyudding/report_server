@@ -59,21 +59,35 @@ function renderMiniStdfCell(cell) {
 // die 인덱스는 서버 temp_map(GET .../web_report/temp_map) 이 주고, dies 배열과 같은 순서라
 // drawWaferThumb 콜백의 3번째 인자(k)로 바로 매칭한다.
 const TEMP_MINI_FAIL_COLOR = "#dc2626";
+// 항목 fail die(hit) 는 빨강, 나머지는 dim, 앞 step fail(d.g)은 회색.
+// 미니셀과 ⤢ 확장이 같은 색 규칙을 쓴다 (issueMapRgbFor 와 같은 패턴).
+function tempMapRgbFor(hit) {
+  return (d, cache, k) => {
+    if (d.g) return MAP_GRAY_RGB;
+    const hex = hit.has(k) ? TEMP_MINI_FAIL_COLOR : MAP_BIN_DIM_COLOR;
+    let rgb = cache[hex];
+    if (!rgb) { rgb = hexToRgb(hex); cache[hex] = rgb; }
+    return rgb;
+  };
+}
 function renderMiniTempCell(cell) {
   const div = cell.querySelector(".map-plot");
   const item = cell.dataset.tempItem;
   if (!div || !item) return;
   const maps = (webReportSheets() || {})["Map Analysis"];
   if (!Array.isArray(maps) || !maps.length) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
-  // 인덱스가 있는 첫 CT/HT 소스의 맵 1장(펼치기 버튼으로 전 소스 보기).
-  const src = Object.keys(tempMapBySource).find(s =>
-    ((tempMapBySource[s] || {}).items || []).some(e => e.item === item));
   if (!tempMapReady) { ensureTempMapData(); return; }   // 도착 후 refreshMapConsumers 가 재큐잉
-  const m = src ? maps.find(mm => mm.source === src) : null;
+  // 인덱스가 있는 첫 CT/HT 소스의 맵 1장(⤢ 로 전 소스 보기). CT/HT 는 온도 조건이
+  // 서로 달라 "어느 소스인지" 가 의미를 가지므로 title 에 소스명·die 수를 적는다.
+  const entries = tempMapItemEntries(item);
+  const first = entries[0];
+  const m = first ? maps.find(mm => mm.source === first.source) : null;
   if (!m) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
   if (!Array.isArray(m.dies)) { ensureMapData(); return; }
-  const hit = new Set(((tempMapBySource[src].items || [])
-    .find(e => e.item === item) || {}).idx || []);
+  const hit = new Set(first.idx);
+  cell.title = `${first.source} — 이 항목 fail ${first.idx.length} die` +
+    (entries.length > 1 ? ` (외 ${entries.length - 1}개 소스는 ⤢)` : "") +
+    "\n클릭하면 Map Analysis 탭 Temp Item 축에서 이 항목을 강조해 봅니다";
   let canvas = div.querySelector("canvas.wafer-thumb");
   if (!canvas) {
     div.innerHTML = "";
@@ -81,13 +95,7 @@ function renderMiniTempCell(cell) {
     canvas.className = "wafer-thumb";
     div.appendChild(canvas);
   }
-  drawWaferThumb(canvas, m, (d, cache, k) => {
-    const hex = hit.has(k) ? TEMP_MINI_FAIL_COLOR : (d.g ? null : MAP_BIN_DIM_COLOR);
-    if (!hex) return MAP_GRAY_RGB;
-    let rgb = cache[hex];
-    if (!rgb) { rgb = hexToRgb(hex); cache[hex] = rgb; }
-    return rgb;
-  });
+  drawWaferThumb(canvas, m, tempMapRgbFor(hit));
   cell.dataset.mapLoaded = "1";
 }
 
@@ -229,10 +237,9 @@ function openTempExpand(cell) {
   if (!tempMapReady) { ensureTempMapData(); return; }
   if (maps.some(m => !Array.isArray(m.dies))) { ensureMapData(); return; }
   const entries = [];
-  Object.keys(tempMapBySource).forEach(src => {
-    const e = ((tempMapBySource[src] || {}).items || []).find(x => x.item === item);
-    const m = maps.find(mm => mm.source === src);
-    if (e && m) entries.push({ m, hit: new Set(e.idx || []) });
+  tempMapItemEntries(item).forEach(e => {
+    const m = maps.find(mm => mm.source === e.source);
+    if (m) entries.push({ m, hit: new Set(e.idx) });
   });
   if (!entries.length) return;
   const pop = openMapExpandPop(cell, entries.length);
@@ -246,13 +253,7 @@ function openTempExpand(cell) {
     const canvas = document.createElement("canvas");
     canvas.className = "wafer-thumb";
     host.appendChild(canvas);
-    drawWaferThumb(canvas, e.m, (d, cache, k) => {
-      const hex = e.hit.has(k) ? TEMP_MINI_FAIL_COLOR : (d.g ? null : MAP_BIN_DIM_COLOR);
-      if (!hex) return MAP_GRAY_RGB;
-      let rgb = cache[hex];
-      if (!rgb) { rgb = hexToRgb(hex); cache[hex] = rgb; }
-      return rgb;
-    });
+    drawWaferThumb(canvas, e.m, tempMapRgbFor(e.hit));
   });
 }
 

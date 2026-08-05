@@ -25,6 +25,15 @@ const _noteSaveWaiters = new Map();   // reqId → {resolve, reject}
 // 저장했는지 서버가 판정한다(불일치 → 409). 시트는 통째로 치환되므로 이 검사가 없으면
 // 동시 편집 시 상대 Note 전체가 조용히 사라진다.
 let _noteBaseToken = null;
+// 저장 요청이 담아 보낸 편집 세대. 응답을 기다리는 동안 사용자가 더 편집하면 세대가
+// 달라지고, 그때는 dirty 를 풀지 않는다(안 그러면 그 편집이 저장된 것처럼 보인 채 유실).
+let _noteDirtyGen = 0;
+let _noteSaving = false;          // 저장 요청 진행 중 (자동/수동 경합 방지)
+let _noteAutoTimer = null;        // 자동저장 debounce 타이머
+let _noteConflictPending = false; // 자동저장이 409 를 만난 상태 — 수동 저장으로만 해소
+let _noteAutoErrToasted = false;  // 자동저장 실패 toast 반복 억제
+const NOTE_AUTOSAVE_MS = 45000;   // 마지막 편집 후 이 시간 지나면 자동저장
+const NOTE_MAX_BYTES = 3 * 1024 * 1024;   // 서버 _NOTE_SHEET_MAX_BYTES 와 동일
 
 // ── 탭 렌더 (edit_mode.js TAB_RENDERERS["note"] → 탭 첫 활성화 시) ─────────────
 function renderNoteTab() {
@@ -38,10 +47,13 @@ function renderNoteTab() {
   _noteReady = false; _noteFrameReady = false; _noteFetched = false;
   _noteSavedSheets = null; _noteInitSent = false; _noteDirty = false;
   _noteBaseToken = null;
+  clearTimeout(_noteAutoTimer); _noteAutoTimer = null;
+  _noteConflictPending = false; _noteAutoErrToasted = false;
   panel.innerHTML = `
     <div class="note-bar" id="noteBar">
       ${canEdit ? `<button type="button" class="btn-sm note-save" id="noteSave">💾 Note 저장</button>` : ""}
       <button type="button" class="btn-sm" id="noteTagBtn" title="셀 앵커 태그 — IssueTable comment 의 #[태그] 로 링크됩니다">🔖 태그</button>
+      <span class="note-size" id="noteSize" title="시트 데이터 크기 (붙여넣은 이미지는 별도 저장이라 포함되지 않습니다)"></span>
       <span class="note-meta" id="noteMeta"></span>
       <span class="cnote-hint">${canEdit
         ? "차트는 각 항목 상세의 [📋 Note에 붙여넣기]로 담고, 셀에는 텍스트·수식(=A1-B1)·엑셀 붙여넣기가 됩니다. 저장 버튼을 눌러야 서버에 반영됩니다."
@@ -54,6 +66,19 @@ function renderNoteTab() {
   const tagBtn = document.getElementById("noteTagBtn");
   if (tagBtn) tagBtn.onclick = () => noteToggleTagPanel();
 
+  // iframe(Luckysheet) 응답 워치독 — note:ready 가 끝내 안 오면(번들 로드 실패 등)
+  // 종전에는 패널이 에러 표시 없이 영구 빈 화면이었다. 15초 내 init 이 안 되면 fetch
+  // 실패와 같은 재시도 UI 로 바꾼다. 정상 init 후에는 가드 조건에 걸려 no-op.
+  setTimeout(() => {
+    if (token !== _noteInitToken || _noteInitSent) return;
+    panel.innerHTML = `<div class="placeholder" style="padding:24px;">Note 편집기 응답 없음 —
+      새로고침하거나 다시 시도해 주세요.
+      <button type="button" class="btn-sm" id="noteRetry" style="margin-left:8px;">다시 시도</button></div>`;
+    const retry = document.getElementById("noteRetry");
+    if (retry) retry.onclick = () => renderNoteTab();
+    showToast("Note 편집기가 응답하지 않습니다.");
+  }, 15000);
+
   // 저장 시트 fetch 와 iframe 로드는 병렬 — 둘 다 완료되면 noteMaybeInit 이 init 전송.
   fetch(`/pe/report/session/${SESSION_ID}/web_report/note`, { cache: "no-store" })
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
@@ -64,6 +89,7 @@ function renderNoteTab() {
       _noteBaseToken = (saved && saved.base) || null;
       _noteFetched = true;
       noteRenderMeta(saved);
+      noteUpdateSize(noteSheetBytes(_noteSavedSheets || []));
       noteMaybeInit(token);
     })
     .catch(e => {
@@ -106,6 +132,9 @@ window.addEventListener("message", ev => {
     case "note:dirty":
       noteMarkDirty();
       break;
+    case "note:saveKey":          // iframe 안에서 Ctrl+S
+      if (_noteCanEdit) noteSave();
+      break;
     case "note:sheets": {
       const w = _noteSaveWaiters.get(msg.reqId);
       if (w) { _noteSaveWaiters.delete(msg.reqId); w.resolve(msg.sheets); }
@@ -143,55 +172,167 @@ function noteRenderMeta(saved) {
 
 function noteMarkDirty() {
   _noteDirty = true;
+  _noteDirtyGen++;
   const btn = document.getElementById("noteSave");
   if (btn) btn.classList.add("dirty");
+  noteArmAutoSave();
+}
+
+// ── 자동저장 ─────────────────────────────────────────────────────────────────
+// Note 는 저장에 iframe 왕복(직렬화)이 필요해 언로드 중에는 완주할 수 없다. 그래서
+// ① 마지막 편집 후 일정 시간 ② 탭이 숨겨질 때 두 시점에 저장해 유실 창을 좁힌다.
+// keepalive 는 쓰지 않는다 — 브라우저가 keepalive 본문을 64KiB 로 제한해 시트가 조금만
+// 커져도 요청 자체가 실패한다.
+function noteArmAutoSave() {
+  if (!_noteCanEdit || _noteConflictPending) return;
+  clearTimeout(_noteAutoTimer);
+  _noteAutoTimer = setTimeout(() => { _noteAutoTimer = null; noteAutoSave(); }, NOTE_AUTOSAVE_MS);
+}
+
+function noteAutoSave() {
+  if (!_noteCanEdit || !_noteDirty || !_noteReady || _noteSaving || _noteConflictPending) return;
+  noteSave({ auto: true });
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) return;
+  clearTimeout(_noteAutoTimer); _noteAutoTimer = null;
+  noteAutoSave();
+});
+
+// ── 크기 표시 ────────────────────────────────────────────────────────────────
+// 서버는 json.dumps(separators=(",",":")) 바이트로 판정한다 — JSON.stringify 와 사실상
+// 같은 크기라 사전 안내용으로 충분하다(최종 판정은 서버).
+function noteSheetBytes(sheets) {
+  try { return new TextEncoder().encode(JSON.stringify({ sheets })).length; }
+  catch (e) { return null; }
+}
+
+function noteUpdateSize(bytes) {
+  const el = document.getElementById("noteSize");
+  if (!el || bytes == null) return;
+  el.textContent = `${Math.ceil(bytes / 1024)}KB / ${NOTE_MAX_BYTES / 1024}KB`;
+  el.classList.toggle("warn", bytes > NOTE_MAX_BYTES * 0.9);
 }
 
 // ── 저장: iframe 에 현재 시트 요청 → 받은 JSON 을 서버에 POST ────────────────────
 // opts.force: 충돌(409) 안내 후 사용자가 덮어쓰기를 택했을 때의 재전송.
+// opts.auto: 자동저장 — 버튼 비활성화·성공 toast 를 생략하고, 409 는 모달 대신 안내만 한다.
 async function noteSave(opts) {
-  if (!_noteReady) { showToast("Note 가 아직 준비되지 않았습니다."); return; }
+  opts = opts || {};
+  if (!_noteReady) { if (!opts.auto) showToast("Note 가 아직 준비되지 않았습니다."); return; }
+  if (_noteSaving) return;   // 자동/수동 저장 겹침 방지
+  _noteSaving = true;
   const btn = document.getElementById("noteSave");
-  if (btn) btn.disabled = true;
+  if (btn && !opts.auto) btn.disabled = true;
   try {
     const sheets = await noteRequestSheets();
+    const gen = _noteDirtyGen;   // 이 요청이 담아 보내는 편집 세대
     // 빈 시트 배열을 보내면 서버가 400 으로 거부하지만, 애초에 POST 하지 않는다
     // (프레임 직렬화 이상 시 기존 Note 를 빈 내용으로 치환하는 사고 방지).
     if (!Array.isArray(sheets) || !sheets.length) throw new Error("시트 데이터가 비어 있습니다 — 저장하지 않았습니다");
+    // 크기 사전 확인 — 서버 400 을 기다리지 않고 한참 작업한 내용을 먼저 알린다.
+    const bytes = noteSheetBytes(sheets);
+    noteUpdateSize(bytes);
+    if (bytes != null && bytes > NOTE_MAX_BYTES) {
+      throw new Error(`시트가 너무 큽니다 (${Math.ceil(bytes / 1024)}KB > ${NOTE_MAX_BYTES / 1024}KB) — `
+        + "셀 데이터를 줄여주세요. 저장하지 않았습니다");
+    }
     const payload = { sheet: { sheets }, base: _noteBaseToken };
-    if (opts && opts.force) payload.force = true;
+    if (opts.force) payload.force = true;
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/note`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
       body: JSON.stringify(payload),
     });
     const j = await res.json().catch(() => ({}));
-    if (res.status === 409) { noteResolveConflict(j); return; }
+    if (res.status === 409) { noteResolveConflict(j, sheets, opts); return; }
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
     _noteBaseToken = j.base || null;
-    _noteDirty = false;
-    if (btn) btn.classList.remove("dirty");
+    _noteConflictPending = false;
+    _noteAutoErrToasted = false;
+    // 요청이 나간 뒤 더 편집했으면 dirty 를 유지한다(그 편집은 아직 서버에 없다).
+    if (gen === _noteDirtyGen) {
+      _noteDirty = false;
+      if (btn) btn.classList.remove("dirty");
+    } else {
+      noteArmAutoSave();
+    }
     if (DATA) DATA.note_info = { exists: true, updated_by: LOGIN_USER, updated_at: "" };
-    showToast("Note 를 저장했습니다.");
+    if (opts.auto) noteSetMetaText(`자동저장됨 ${noteNowHM()}`);
+    else { noteSetMetaText(`마지막 저장: ${LOGIN_USER || "나"} · 방금`); showToast("Note 를 저장했습니다."); }
   } catch (e) {
-    showToast("Note 저장 실패: " + e.message);
+    if (!opts.auto) showToast("Note 저장 실패: " + e.message);
+    else if (!_noteAutoErrToasted) {
+      _noteAutoErrToasted = true;   // 자동저장은 반복되므로 toast 는 1회만
+      showToast("Note 자동저장 실패: " + e.message + " (💾 Note 저장으로 다시 시도)", 5000);
+    }
   } finally {
-    if (btn) btn.disabled = false;
+    _noteSaving = false;
+    if (btn && !opts.auto) btn.disabled = false;
   }
+}
+
+function noteNowHM() {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function noteSetMetaText(text) {
+  const el = document.getElementById("noteMeta");
+  if (el) el.textContent = text;
 }
 
 // 409 — 내가 Note 를 연 뒤 다른 사용자가 저장했다. 시트는 통째 치환이라 어느 쪽을
 // 살릴지 사용자가 정해야 한다(자동 병합 불가).
-function noteResolveConflict(j) {
+// 자동저장 경로에서는 사용자가 보지 않을 수 있는 시점에 모달을 띄우지 않고, 안내만 남긴 뒤
+// 수동 저장을 기다린다(그때 아래 confirm 흐름으로 해소).
+function noteResolveConflict(j, sheets, opts) {
   const who = (j && j.conflict && j.conflict.updated_by) || "다른 사용자";
+  if (opts && opts.auto) {
+    _noteConflictPending = true;
+    clearTimeout(_noteAutoTimer); _noteAutoTimer = null;
+    noteSetMetaText(`⚠ ${who} 님이 먼저 저장했습니다 — [💾 Note 저장]을 눌러 처리해주세요`);
+    if (!_noteAutoErrToasted) {
+      _noteAutoErrToasted = true;
+      showToast(`${who} 님이 이 Note 를 먼저 저장해 자동저장이 보류됐습니다 — [💾 Note 저장]으로 처리해주세요`, 6000);
+    }
+    return;
+  }
   const overwrite = confirm(
     `${who} 님이 이 Note 를 먼저 저장했습니다.\n\n` +
     `[확인] 내 편집으로 덮어쓰기 — ${who} 님의 저장 내용이 사라집니다.\n` +
-    `[취소] 서버 최신본 다시 불러오기 — 내 미저장 편집이 사라집니다.`);
-  if (overwrite) { noteSave({ force: true }); return; }
+    `[취소] 서버 최신본 다시 불러오기 — 내 편집은 JSON 파일로 백업된 뒤 화면에서 사라집니다.`);
+  if (overwrite) {
+    _noteConflictPending = false;
+    // 지금은 아직 바깥 noteSave 의 try 안(_noteSaving=true)이라 즉시 재호출하면 재진입
+    // 가드에 막힌다 — 현재 저장이 끝난 뒤(finally) 실행되도록 다음 틱으로 미룬다.
+    setTimeout(() => noteSave({ force: true }), 0);
+    return;
+  }
+  noteDownloadBackup(sheets);
+  _noteConflictPending = false;
   _noteDirty = false;      // renderNoteTab 의 미저장 편집 보존 가드를 풀어야 재로드된다
   renderNoteTab();
-  showToast("서버 최신 Note 를 다시 불러왔습니다.");
+  showToast("서버 최신 Note 를 다시 불러왔습니다 (내 편집은 JSON 으로 내려받았습니다).", 5000);
+}
+
+// 충돌에서 내 편집을 버리기 직전, 되돌릴 수단을 하나 남긴다 — 시트 JSON 파일 저장.
+// (실패해도 재로드 흐름을 막지 않는다.)
+function noteDownloadBackup(sheets) {
+  if (!Array.isArray(sheets) || !sheets.length) return;
+  try {
+    const blob = new Blob([JSON.stringify({ session: SESSION_ID, sheets }, null, 0)],
+      { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `note_backup_${SESSION_ID}_${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  } catch (e) { /* 백업 실패가 충돌 처리를 막지 않게 */ }
 }
 
 // iframe 에 시트 직렬화 요청 (postMessage 왕복). reqId 로 응답 매칭 + 타임아웃.
@@ -363,6 +504,16 @@ function noteFlushGoto() {
   const g = _notePendingGoto; _notePendingGoto = null;
   frame.contentWindow.postMessage(Object.assign({ type: "note:goto" }, g), NOTE_ORIGIN);
 }
+
+// Ctrl+S — 포커스가 iframe 밖(note-bar·태그 패널)에 있을 때도 Note 를 저장한다.
+// iframe 안에서 누른 경우는 프레임이 note:saveKey 로 알려준다.
+document.addEventListener("keydown", e => {
+  if (!(e.ctrlKey || e.metaKey) || (e.key !== "s" && e.key !== "S")) return;
+  const panel = document.getElementById("panel-note");
+  if (!panel || !panel.classList.contains("active") || !_noteCanEdit) return;
+  e.preventDefault();
+  noteSave();
+});
 
 // 미저장 Note 이탈 경고 (chart_notes 의 dirty 와 별개 채널).
 window.addEventListener("beforeunload", e => {

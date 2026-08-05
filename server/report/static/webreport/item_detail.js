@@ -80,8 +80,16 @@ function openItemDetail(subject, navList) {
   const scatterVariantQ = distVariantQuery(distGalleryVariant()).replace(/^&/, "?");
   const scatterUrl = `/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`
     + scatterVariantQ;
-  fetch(scatterUrl)
-    .then(res => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+  // 콜드(서버 tables 미적재) 세션은 202 가 온다 — 백그라운드 웜업이 끝날 때까지
+  // fetchJson202(core.js)가 백오프 재시도한다. 항목 이동 시(reqId 변경) 재시도 중단.
+  fetchJson202(scatterUrl, {
+    shouldStop: () => reqId !== _itemDetailReq,
+    onWaiting: () => {
+      if (reqId !== _itemDetailReq) return;
+      const ph = dp.querySelector(".placeholder");
+      if (ph) ph.textContent = "데이터 준비 중… (자동 재시도)";
+    },
+  })
     .then(data => { if (reqId === _itemDetailReq) renderItemDetail(data); })
     .catch(e => {
       if (reqId !== _itemDetailReq) return;

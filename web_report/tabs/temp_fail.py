@@ -28,6 +28,7 @@ service 가드)이 전부 깨진다.
 """
 from __future__ import annotations
 
+import json
 from collections import Counter, defaultdict
 
 import numpy as np
@@ -43,10 +44,10 @@ TEMP_SHEET = "Issue Table Temp"
 
 
 def temp_member_pairs(tables, groups) -> list:
-    """[(rt_table, member_table, corner)] — groups 순서. tables 에 없는 이름은 건너뛴다.
+    """[(rt_table, member_table)] — groups 순서. tables 에 없는 이름은 건너뛴다.
 
-    corner("CT"/"HT") 추정 규칙은 metrics.build_report_payload 의 source 태깅과 동일하다
-    (member_roles 가 정본, 없는 옛 세션은 members 순서로 CT→HT).
+    corner("CT"/"HT") 라벨은 여기서 만들지 않는다 — 판정에 쓰이지 않고, 그 폴백 규칙을
+    복제해 두면 metrics 의 source 태깅과 조용히 갈릴 수 있다(정본은 metrics 1곳).
     """
     by_name = {t.source: t for t in tables or []}
     out = []
@@ -54,14 +55,11 @@ def temp_member_pairs(tables, groups) -> list:
         rt = by_name.get(str(group.get("rt") or ""))
         if rt is None:
             continue
-        members = [str(m) for m in (group.get("members") or [])]
-        roles = [str(r) for r in (group.get("member_roles") or [])]
-        for mi, name in enumerate(members):
+        for name in (str(m) for m in (group.get("members") or [])):
             member = by_name.get(name)
             if member is None or member is rt:
                 continue
-            out.append((rt, member, roles[mi] if mi < len(roles)
-                        else ("CT" if mi == 0 else "HT")))
+            out.append((rt, member))
     return out
 
 
@@ -132,33 +130,73 @@ def _bin_of(item, index, *observed) -> str:
     return ""
 
 
-def temp_fail_counts(tables, groups) -> tuple:
-    """({item: {source: fail die 수}}, [CT/HT source 이름]) — 판정의 원자료.
+def compute_temp_fail(tables, groups) -> list:
+    """판정 **1회 순회**의 단일 산출물 — ``[{source, n, items:[{item, count, idx}]}]``.
+
+    표(집계)와 Map(die 인덱스)이 같은 결과를 쓴다. 종전에는 ``build_temp_fail_rows`` 와
+    ``temp_fail_indices`` 가 각각 전 항목을 순회해 **같은 판정을 두 번**(그룹 7개 세션이면
+    항목당 float 컬럼 복사까지 두 벌) 돌았다.
+
+    - ``count`` = 전 행 기준 fail die 수 (표의 분자 — 좌표 결측 행도 포함).
+    - ``idx``   = **좌표 유효 행만 추린 뒤의** 인덱스. 기준은
+      ``Map_analysis.build_map_analysis_rows`` 의 ``XPOS/YPOS notna`` mask 와 **문자 그대로
+      같아야** dies 배열과 정합한다(한쪽을 고치면 다른 쪽도 같이 볼 것).
+
+    결과는 tables 클론(요청 단위, loader.clone_table)에 캐시한다 — 콜드 빌드가 만든 것을
+    같은 요청의 temp_map 시딩이 재계산 없이 그대로 쓴다(common.bin_types 와 같은 규약).
+    """
+    if not tables:
+        return []
+    key = json.dumps(groups, sort_keys=True, default=str)
+    cached = getattr(tables[0], "_temp_fail_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+
+    out = []
+    for rt, member in temp_member_pairs(tables, groups):
+        data = member.data
+        x_num = pd.to_numeric(data["XPOS"], errors="coerce")
+        y_num = pd.to_numeric(data["YPOS"], errors="coerce")
+        keep = (x_num.notna() & y_num.notna()).to_numpy()
+        items = []
+        for item, fail_lo, fail_hi in iter_fail_masks(rt, member):
+            fail = fail_lo | fail_hi
+            count = int(np.count_nonzero(fail))
+            if not count:
+                continue
+            items.append({"item": item, "count": count, "idx": np.flatnonzero(fail[keep])})
+        out.append({"source": member.source, "n": int(keep.sum()), "items": items})
+    tables[0]._temp_fail_cache = (key, out)
+    return out
+
+
+def temp_fail_counts(tables, groups, packs=None) -> tuple:
+    """({item: {source: fail die 수}}, [CT/HT source 이름]) — 표가 쓰는 집계 형태.
 
     source 순서는 groups 배치 순서(= 화면 컬럼 순서)다.
     """
     agg: dict = {}
     sources: list = []
-    for rt, member, _corner in temp_member_pairs(tables, groups):
-        if member.source not in sources:
-            sources.append(member.source)
-        for item, fail_lo, fail_hi in iter_fail_masks(rt, member):
-            n = int(np.count_nonzero(fail_lo | fail_hi))
-            if n:
-                agg.setdefault(item, {})[member.source] = n
+    for pack in (packs if packs is not None else compute_temp_fail(tables, groups)):
+        src = pack["source"]
+        if src not in sources:
+            sources.append(src)
+        for entry in pack["items"]:
+            agg.setdefault(entry["item"], {})[src] = entry["count"]
     return agg, sources
 
 
 def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
                          limits_meta=None, hidden=(), status_of=None,
-                         issue_comments=None, ai_comments=None) -> list:
+                         issue_comments=None, ai_comments=None, packs=None) -> list:
     """Issue Table Temp 시트 행 — 첫 행은 섹션 divider(``Category="TEMP"``).
 
     컬럼 소스는 **CT/HT 만**이고, 정렬은 소스 합산 fail die 수 내림차순이다.
     fail 이 한 건도 없는 항목은 행을 만들지 않는다. 값이 없으면(그룹·fail 부재) 빈
     리스트를 돌려 프런트가 "데이터 없음"으로 처리하게 한다.
+    ``packs`` 를 주면 그 판정 결과를 쓴다(compute_temp_fail — 재계산 없음).
     """
-    agg, sources = temp_fail_counts(tables, groups)
+    agg, sources = temp_fail_counts(tables, groups, packs)
     if not agg or not sources:
         return []
 
@@ -169,7 +207,7 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
     ai = ai_comments is not None
     meta = _item_meta(tables)
     # 관측 bin 폴백: member 소스 합산 → RT 소스 합산 순으로 본다.
-    rt_names = [rt.source for rt, _m, _c in temp_member_pairs(tables, groups)]
+    rt_names = [rt.source for rt, _m in temp_member_pairs(tables, groups)]
     member_obs = _observed_bins(_merged_counts(fail_counts, sources))
     rt_obs = _observed_bins(_merged_counts(fail_counts, rt_names))
 
@@ -205,24 +243,15 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
     return rows if len(rows) > 1 else []
 
 
-def temp_fail_indices(tables, groups) -> list:
-    """Map 용 — [{source, n, items:[{item, idx:[...]}]}] (die **인덱스** 배열).
+def temp_fail_indices(tables, groups, packs=None) -> list:
+    """Map 용 JSON — ``[{source, n, items:[{item, idx:[...]}]}]`` (die **인덱스** 배열).
 
-    인덱스 기준은 ``Map_analysis.build_map_analysis_rows`` 의
-    ``mask = XPOS.notna() & YPOS.notna()`` 와 **문자 그대로 같아야** dies 배열과 정합한다.
-    한쪽 규칙이 바뀌면 다른 쪽도 같이 고칠 것(색이 조용히 어긋난다).
     좌표를 실어 보내지 않고 인덱스만 보내 payload 를 최소화한다(다운샘플 아님 — 규칙 #6).
+    판정은 ``compute_temp_fail`` 한 곳이고 여기서는 JSON 직렬화 형태로 옮기기만 한다.
     """
     out = []
-    for rt, member, _corner in temp_member_pairs(tables, groups):
-        data = member.data
-        x_num = pd.to_numeric(data["XPOS"], errors="coerce")
-        y_num = pd.to_numeric(data["YPOS"], errors="coerce")
-        keep = (x_num.notna() & y_num.notna()).to_numpy()
-        items = []
-        for item, fail_lo, fail_hi in iter_fail_masks(rt, member):
-            idx = np.flatnonzero((fail_lo | fail_hi)[keep])
-            if idx.size:
-                items.append({"item": item, "idx": [int(v) for v in idx]})
-        out.append({"source": member.source, "n": int(keep.sum()), "items": items})
+    for pack in (packs if packs is not None else compute_temp_fail(tables, groups)):
+        items = [{"item": e["item"], "idx": e["idx"].tolist()}
+                 for e in pack["items"] if e["idx"].size]
+        out.append({"source": pack["source"], "n": pack["n"], "items": items})
     return out

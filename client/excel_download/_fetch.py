@@ -138,6 +138,28 @@ def fetch_distribution_bin1(server_base, session_id, subjects):
     return out
 
 
+def fetch_temp_map(server_base, session_id):
+    """Temperature 항목별 fail die **인덱스** — ``{source: {item: [idx, ...]}}``.
+
+    서버 ``GET .../web_report/temp_map`` (좌표가 아니라 Map dies 배열 인덱스). Issue Table
+    Temp 시트의 Map 썸네일이 쓴다. 실패(구 서버 404 포함)하면 **빈 dict** — 호출부가 Map
+    열만 비우고 시트는 그대로 만든다(전체 다운로드가 막히지 않게).
+    """
+    base = str(server_base).rstrip("/")
+    try:
+        payload = _get_json(f"{base}/pe/report/session/{session_id}/web_report/temp_map")
+    except Exception:
+        return {}
+    out = {}
+    for entry in (payload or {}).get("sources") or []:
+        src = str(entry.get("source") or "")
+        if not src:
+            continue
+        out[src] = {str(e.get("item")): list(e.get("idx") or [])
+                    for e in (entry.get("items") or []) if e.get("item")}
+    return out
+
+
 def fetch_session_meta(server_base, session_id, timeout=(2, 3)):
     """세션 메타(product/lot_id 등)만 가볍게 조회 — 저장 기본 파일명용.
 

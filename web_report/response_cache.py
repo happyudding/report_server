@@ -121,12 +121,16 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
 
 def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
                         report_db, upload_root: Path, bin1: bool = False,
-                        bin1_scope: str = "") -> tuple[str, bytes]:
+                        bin1_scope: str = "",
+                        build_if_cold: bool = True) -> tuple[str, bytes]:
     """/distribution_batch 응답의 gzip bytes 를 캐시해 (etag, bytes) 로 반환.
 
     subjects 는 **정렬·중복제거된 리스트**여야 한다(라우트가 정규화) — 같은 항목 집합을
     다른 순서로 요청해도 같은 캐시 키가 되도록 하기 위함이다. etag 는 캐시 키에서 파생해
     배치 구성·변형(bin1)이 다르면 서로의 304 로 오염되지 않는다.
+
+    ``build_if_cold=False`` 면 pack 미스 + tables 콜드에서 service 가
+    ColdBuildRequired 를 올린다 — 라우트가 202 로 즉시 응답하기 위함이다.
     """
     analysis_key = session.get("analysis_key")
     if not analysis_key:
@@ -149,7 +153,7 @@ def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
             return etag, blob
         result = service.get_distribution_batch(
             session_id, subjects, report_db=report_db, upload_root=upload_root,
-            bin1=bin1, bin1_scope=scope)
+            bin1=bin1, bin1_scope=scope, build_if_cold=build_if_cold)
         blob = _gzip_json(result)
         cache._bytes_capped_put(_DIST_BATCH_CACHE, cache_key, blob,
                                 _DIST_BATCH_CACHE_MAX, _DIST_BATCH_CACHE_MAX_BYTES)
@@ -158,10 +162,13 @@ def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
 
 def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
                      report_db, upload_root: Path, bin1: bool = False,
-                     bin1_scope: str = "") -> bytes:
+                     bin1_scope: str = "",
+                     build_if_cold: bool = True) -> bytes:
     """/scatter 응답의 gzip bytes 를 캐시해 반환 (같은 항목 반복 클릭 시 재계산 제거).
 
     ``bin1`` 변형(양품만)은 별도 캐시 키(scatter_key(bin1=True))로 전체 기준과 분리한다.
+    ``build_if_cold=False`` 면 gzip 캐시 미스 + tables 콜드에서 service 가
+    ColdBuildRequired 를 올린다 (gzip 캐시/tables 웜이면 종전대로 즉시 계산).
     """
     analysis_key = session.get("analysis_key")
     if not analysis_key:
@@ -180,7 +187,8 @@ def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
             return blob
         result = service.scatter_item(
             session_id, subject, report_db=report_db, upload_root=upload_root,
-            bin1=bin1, bin1_scope=scope)
+            bin1=bin1, bin1_scope=scope, session=session,
+            build_if_cold=build_if_cold)
         blob = _gzip_json(result)
         cache._bytes_capped_put(_SCATTER_CACHE, cache_key, blob,
                                 _SCATTER_CACHE_MAX, _SCATTER_CACHE_MAX_BYTES)

@@ -184,12 +184,20 @@ def run(job, *args):
         raise
     except TimeoutError:
         STATS["timeout"] += 1
-        # fut.cancel() 은 이미 실행 중인 작업을 못 멈춘다(선급행분은 RUNNING 마킹).
-        # hang 워커를 계속 안고 가면 슬롯이 영구 소모되므로 풀 자체를 버린다.
+        # ⚠️ 이 타임아웃은 **풀 큐 대기까지 포함**한 시간이다 — 큐에서 대기만 하다 시간을
+        # 소진한 잡은 cancel 이 성공한다(아직 미시작 = 워커 무결). 이때 풀을 버리면 무고한
+        # 동시 빌드까지 전멸하므로(전 워커 terminate) 실패만 기록하고 풀은 보존한다.
+        if fut.cancel():
+            _log.error("compute queue-wait timeout (%ss) — 미시작 잡 취소, 풀 보존: %s%r",
+                       _TIMEOUT_SEC, name, args)
+            build_log.record_failure(name, args, "timeout", time.time() - t0,
+                                     f"TimeoutError(queued, {_TIMEOUT_SEC}s)")
+            raise
+        # cancel 실패 = 실행 중(선급행 RUNNING 포함) — fut.cancel() 은 이미 실행 중인
+        # 작업을 못 멈춘다. hang 워커를 계속 안고 가면 슬롯이 영구 소모되므로 풀 자체를
+        # 버린다.
         _log.error("compute worker timeout (%ss) — 풀 폐기: %s%r", _TIMEOUT_SEC,
                    name, args)
-        # ⚠️ 이 타임아웃은 **풀 큐 대기까지 포함**한 시간이다 — 기록된 total 이
-        # _TIMEOUT_SEC 에 붙어 있으면 계산이 느린 게 아니라 밀린 것일 수 있다.
         build_log.record_failure(name, args, "timeout", time.time() - t0,
                                  f"TimeoutError({_TIMEOUT_SEC}s)")
         _reset_pool(shutdown=True)
@@ -260,6 +268,17 @@ def dist_job(session_id: str, upload_root_str: str, bin1: bool = False,
     return blob, _stamp(t_start)
 
 
+def temp_map_job(session_id: str, upload_root_str: str):
+    """Temperature 항목별 fail die 인덱스 gzip — map_job 과 같은 규약(워커 오프로드)."""
+    from database import report_db
+    from . import service
+    t_start = time.time()
+    blob = service._temp_map_blob(
+        service.get_temp_map(session_id, report_db=report_db,
+                             upload_root=Path(upload_root_str)))
+    return blob, _stamp(t_start)
+
+
 def map_job(session_id: str, upload_root_str: str):
     from database import report_db
     from . import service
@@ -298,6 +317,18 @@ def dist_pack_job(session_id: str, upload_root_str: str, base: bool = False) -> 
     service.materialize_dist_pack(
         session_id, report_db=report_db, upload_root=Path(upload_root_str), base=bool(base))
     return None
+
+
+def tables_warm_job(session_id: str, upload_root_str: str) -> None:
+    """부모 TABLES_CACHE 웜업 — scatter 등 tables 필수 조회의 202 백그라운드 잡.
+
+    워커 오프로드(run)를 타지 **않고** 온디맨드 소비자 스레드(부모 프로세스)에서 직접
+    디코드한다 — 워커에서 데우면 워커 자신의 캐시만 채워져 부모 조회에 의미가 없다.
+    parquet 디코드는 GIL 을 대부분 놓으므로 스레드 1개 점유로 수용한다.
+    """
+    from database import report_db
+    from . import service
+    service.warm_tables(session_id, report_db=report_db, upload_root=Path(upload_root_str))
 
 
 def prewarm_job(session_id: str, upload_root_str: str, dist_seeded: bool = False) -> dict:
@@ -381,6 +412,10 @@ def prewarm(session_id: str, upload_root_str: str, dist_seeded: bool = False) ->
     응답을 블록하지 않는다."""
     global _prewarm_thread
     with _prewarm_lock:
+        # 같은 세션이 이미 대기 중이면 접는다 — 편집 blur 자동저장이 연달아 와도
+        # 리빌드는 1회면 충분하다(실행 시점의 최신 edits_rev 로 빌드되므로 정확).
+        if any(q[0] == session_id and q[2] == bool(dist_seeded) for q in _prewarm_queue):
+            return
         if len(_prewarm_queue) >= _PREWARM_MAX_PENDING:
             dropped = _prewarm_queue.popleft()
             STATS["prewarm_dropped"] += 1
@@ -414,6 +449,8 @@ _ondemand_threads: list = []
 _ONDEMAND_JOBS = {
     "report": lambda sid, root: report_job(sid, root),
     "map": lambda sid, root: map_job(sid, root),
+    # 부모 tables 웜업(디코드) — 소비자 스레드에서 인라인 실행 (tables_warm_job 참조).
+    "tables": lambda sid, root: tables_warm_job(sid, root),
 }
 
 

@@ -391,6 +391,10 @@ body {
   padding: 4px 10px; background: #fff2e6; border-left: 4px solid #ea7317;
   border-radius: 0 5px 5px 0;
 }
+.yield-corner-more {
+  font-size: 11px; font-weight: 600; color: #92400e; background: #ffedd5;
+  border-radius: 9px; padding: 1px 7px; margin-left: 6px; vertical-align: middle;
+}
 /* Issue Table Temp 탭 상단 안내문 (전 항목 재판정이라 합이 100% 를 넘을 수 있다는 설명) */
 .issue-intro {
   font-size: 12px; color: #7c2d12; background: #fff7ed; border: 1px solid #fed7aa;
@@ -2139,11 +2143,15 @@ html[data-theme="dark"] .cnote-view-comment { color: #9aa3b0; }
 .note-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 6px 4px; font-size: 12px; position: relative; }
 .note-meta { color: #6b7280; font-size: 11px; }
+.note-size { color: #6b7280; font-size: 11px; font-variant-numeric: tabular-nums; }
+.note-size.warn { color: #dc2626; font-weight: 600; }
 /* Luckysheet 는 iframe(note_frame.html) 안에서 격리 실행 — 전역 CSS(*{box-sizing})·sticky·
    페이지 스크롤·중앙정렬 여백·배율 오염을 차단해 셀 밀림·격자 떨림을 근본 해결한다. 여기선
    그 iframe 만 Note 패널에 꽉 채운다(부모는 좌표계에 관여하지 않음). */
 #noteFrame { display: block; width: 100%; flex: 1 1 auto; min-height: 0; border: 0; }
 html[data-theme="dark"] .note-meta { color: #9aa3b0; }
+html[data-theme="dark"] .note-size { color: #9aa3b0; }
+html[data-theme="dark"] .note-size.warn { color: #f87171; }
 </style>
 </head>
 <body>
@@ -2163,6 +2171,7 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
       <span class="meta-inline">로드 중...</span>
     </div>
     <div class="topbar-actions" id="topbarActions">
+      <span class="autosave-dot" id="autosaveDot" title="자동저장 상태 — 주황: 미저장 / 파랑: 저장 중 / 초록: 저장됨"></span>
       <button class="btn-topbar-save" id="btnSaveComment" title="변경사항 저장">💾</button>
       <button class="btn-topbar-star" id="btnImportant" title="중요 표시(오래된 세션 자동삭제에서 제외)">☆</button>
       <button class="btn-topbar-edit" id="btnMetaEdit" title="세션 정보 수정 (이름·Product·LOT·Process — Honey 앱)">✏️</button>

@@ -164,7 +164,10 @@ def _die_color(die, color_map):
 
 
 def _map_image(dies, color_of):
-    """die 목록 → (RGB 블록 이미지, xs, ys). color_of(die) 가 die 색(hex)을 돌려준다.
+    """die 목록 → (RGB 블록 이미지, xs, ys). color_of(die, k) 가 die 색(hex)을 돌려준다.
+
+    k 는 dies 배열 인덱스 — Temperature 항목별 fail die 강조가 인덱스로 매칭한다
+    (서버 temp_map 이 좌표 대신 인덱스를 준다). 기존 콜백은 인자를 무시하므로 무회귀.
 
     xs/ys 는 압축 격자의 실제 좌표값(축 눈금 라벨용). 격자 압축·die 당 픽셀 블록·
     1px 흰 격자선은 웹 drawWaferThumb 와 동일.
@@ -178,11 +181,11 @@ def _map_image(dies, color_of):
     codes = np.zeros((H, W), dtype="int32")
     palette = [_EMPTY_RGB]
     code_of = {}
-    for d in dies:
+    for k, d in enumerate(dies):
         cx, cy = x_idx.get(d.get("x")), y_idx.get(d.get("y"))
         if cx is None or cy is None:
             continue
-        hex_color = color_of(d)
+        hex_color = color_of(d, k)
         code = code_of.get(hex_color)
         if code is None:
             code = len(palette)
@@ -236,7 +239,7 @@ def render_wafer_map_png(dies, color_map, *, title="", out_path, chips=None) -> 
     dies: [{"x","y","bin"} | {"x","y","g":1}], color_map: build_bin_color_map 산출(전역).
     chips: Map Analysis 에서 선택한 좌표(이 맵의 source 것만) — 웹과 같은 색 원 마커.
     """
-    img, xs, ys = _map_image(dies, lambda d: _die_color(d, color_map))
+    img, xs, ys = _map_image(dies, lambda d, _k: _die_color(d, color_map))
     if img is None:
         raise ValueError(f"{title}: 좌표가 없습니다.")
     W, H = len(xs), len(ys)
@@ -277,9 +280,38 @@ def render_issue_map_png(dies, color_map, bin_value, *, out_path,
     앞 step 에서 이미 fail 난 die(g=1)는 회색 그대로.
     """
     dim = dim_color_map(color_map, bin_value)
-    img, xs, ys = _map_image(dies, lambda d: _die_color(d, dim))
+    img, xs, ys = _map_image(dies, lambda d, _k: _die_color(d, dim))
     if img is None:
         raise ValueError(f"bin {bin_value}: 좌표가 없습니다.")
+    fig = Figure(figsize=(size_in, size_in), dpi=dpi)
+    ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+    ax.imshow(img, extent=(0, len(xs), len(ys), 0), aspect="auto",
+              interpolation="nearest")
+    ax.set_axis_off()
+    fig.savefig(str(out_path), format="png", facecolor="white")
+
+
+# Temperature Issue Table Temp 행 Map 셀 — "이 항목을 RT Limit 기준으로 벗어난 die" 강조.
+# 웹 renderMiniTempCell(tempMapRgbFor) 미러: fail die 빨강 / 나머지 dim / 앞 step fail 회색.
+TEMP_FAIL_COLOR = "#dc2626"
+
+
+def render_temp_map_png(dies, hit_idx, *, out_path, size_in=1.15, dpi=192) -> None:
+    """항목별 fail die 인덱스(hit_idx)를 강조한 미니 웨이퍼 맵.
+
+    hit_idx 는 서버 ``GET .../web_report/temp_map`` 이 준 **dies 배열 인덱스**다
+    (좌표가 아니다 — Map_analysis 의 좌표 mask 와 같은 순서라는 계약).
+    """
+    hits = set(hit_idx or ())
+
+    def color_of(die, k):
+        if die.get("g"):
+            return GRAY_COLOR
+        return TEMP_FAIL_COLOR if k in hits else DIM_COLOR
+
+    img, xs, ys = _map_image(dies, color_of)
+    if img is None:
+        raise ValueError("temp map: 좌표가 없습니다.")
     fig = Figure(figsize=(size_in, size_in), dpi=dpi)
     ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
     ax.imshow(img, extent=(0, len(xs), len(ys), 0), aspect="auto",

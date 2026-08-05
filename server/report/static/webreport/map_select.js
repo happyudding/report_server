@@ -267,7 +267,11 @@ function issueStatusCardHtml() {
     const c = counts[cat];
     const total = c.open + c.close;
     const prog = total ? (c.close / total * 100).toFixed(1) + "%" : "-";
-    return `<tr><td class="iss-cat">${cat}</td>` +
+    // TEMP 행은 Issue Table 이 아니라 **Issue Table Temp** 탭에 있다 — 행 자체를 그 탭으로
+    // 보내는 점프 대상으로 만든다(카드 기본 점프는 issues 라 클릭해도 없는 표로 갔었다).
+    const jump = (cat === "TEMP")
+      ? ` class="summary-jump" data-jump="issue-temp" title="Issue Table Temp 탭으로 이동"` : "";
+    return `<tr${jump}><td class="iss-cat">${cat}</td>` +
       `<td class="iss-open${c.open ? "" : " st-empty"}">${c.open}</td>` +
       `<td class="iss-close${c.close ? "" : " st-empty"}">${c.close}</td>` +
       `<td class="iss-prog${total ? "" : " st-empty"}">${prog}</td></tr>`;
@@ -356,11 +360,11 @@ async function saveSummaryEngr(opts) {
       keepalive: !!(opts && opts.keepalive),   // 언로드 중 autoSave 에서도 요청이 완료되게
     });
   } catch (err) {
-    showToast("Engr Comment 저장 실패: 네트워크 오류");
-    throw err;
+    // toast 는 호출부(autoSave)가 채널명과 함께 한 번만 낸다 — 여기서 내면 이중 표시된다.
+    throw new Error("네트워크 오류");
   }
   const j = await res.json().catch(() => ({}));
-  if (!res.ok) { showToast(j.error || `Engr Comment 저장 실패 (HTTP ${res.status})`); throw new Error("engr save failed"); }
+  if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
   // 서버는 병합된 3칸 전체를 돌려준다. 폴백은 부분 payload 라 기존 값 위에 덮어 합친다.
   DATA.web_report.summary_engr = j.summary_engr || Object.assign({}, cur, values);
 }

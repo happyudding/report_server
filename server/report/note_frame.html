@@ -45,6 +45,8 @@
     const dpr = Number.isInteger(window.devicePixelRatio) ? window.devicePixelRatio : 1;
     window.luckysheet.create({
       container: "luckysheetHost",
+      // ko 로케일은 번들에 없다(zh/en/es/zh_tw 만) — "ko" 를 주면 locales[lang] 이 undefined 라
+      // 생성 자체가 실패한다. 한글 UI 가 필요하면 로케일 파일을 추가하는 별도 작업이 필요.
       lang: "en",
       data: sheets,
       showinfobar: false,
@@ -153,6 +155,14 @@
         break;
     }
   });
+
+  // Ctrl+S — Excel 습관대로 누르면 브라우저 "페이지 저장" 창이 뜨는 것을 막고 부모에게
+  // 저장을 요청한다. 편집 권한 판정·실제 저장은 부모(note.js) 담당.
+  window.addEventListener("keydown", ev => {
+    if (!(ev.ctrlKey || ev.metaKey) || (ev.key !== "s" && ev.key !== "S")) return;
+    ev.preventDefault();
+    post("note:saveKey");
+  }, true);
 
   // iframe 자체 크기 변화(탭 표시·창 리사이즈) → 캔버스 재계산.
   window.addEventListener("resize", () => {

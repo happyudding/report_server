@@ -4,7 +4,9 @@
 기입은 전부 클라이언트가 한다. 진입점은 run_excel_download() 하나 — honey_main 은
 worker.ExcelDownloadWorker(QThread) 로 감싸 호출한다.
 
-시트: Summary / Yield / CPK / Issue Table / Distribution / Histogram / Map Analysis.
+시트: Summary / Yield / CPK / Issue Table / Distribution / Histogram / Map Analysis
+(+ Temperature 세션은 Issue Table 뒤에 "Issue Table Temp" — CT/HT 를 RT Limit 으로 전 항목
+재판정한 이슈 표. Map 썸네일은 bin 이 아니라 **항목별 fail die** 강조다).
 Distribution·Histogram 은 전체 항목(다운샘플링 금지 — 불변규칙 6)을 4열 그리드
 청크 PNG 로 렌더해 세로로 이어 붙인다. 렌더는 ProcessPoolExecutor 병렬(실행시간
 30초 목표), Excel 텍스트 시트 기입은 렌더와 동시에 진행한다.
@@ -37,8 +39,9 @@ from ._charts import (
     render_issue_maps_job,
     render_map_png_job,
     render_single_cdf,
+    render_temp_maps_job,
 )
-from ._fetch import fetch_distribution_bin1, fetch_report_data
+from ._fetch import fetch_distribution_bin1, fetch_report_data, fetch_temp_map
 from ._map import build_bin_desc_map, build_global_bin_legend
 from . import _sheets
 
@@ -46,6 +49,17 @@ _CHUNK_CELLS = NCOLS * ROWS_PER_CHUNK
 
 SHEET_ORDER = ["Summary", "Yield", "CPK", "Issue Table",
                "Distribution", "Histogram", "Map Analysis"]
+# Temperature 세션에만 추가되는 시트 — CT/HT 를 RT Limit 으로 전 항목 재판정한 이슈 표
+# (웹 "Issue Table Temp" 탭과 같은 시트). Issue Table 바로 뒤에 끼운다.
+TEMP_SHEET = "Issue Table Temp"
+
+
+def _sheet_order(sheets):
+    """이 세션에 실제로 만들 시트 순서 — Temp 행이 있을 때만 TEMP_SHEET 를 끼운다."""
+    order = list(SHEET_ORDER)
+    if (sheets or {}).get(TEMP_SHEET):
+        order.insert(order.index("Issue Table") + 1, TEMP_SHEET)
+    return order
 
 
 def run_excel_download(session_id, server_base, out_path, status_cb=None,
@@ -115,10 +129,11 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
                 # Calculation 은 열린 workbook 이 있어야 설정 가능 (Excel COM 제약)
                 app.api.Calculation = _XL_CALC_MANUAL
                 ws = {}
+                sheet_order = _sheet_order(sheets)
                 first = wb.sheets[0]
-                first.name = SHEET_ORDER[0]
-                ws[SHEET_ORDER[0]] = first
-                for name in SHEET_ORDER[1:]:
+                first.name = sheet_order[0]
+                ws[sheet_order[0]] = first
+                for name in sheet_order[1:]:
                     ws[name] = wb.sheets.add(name, after=wb.sheets[wb.sheets.count - 1])
 
                 _sheets.write_summary_sheet(ws["Summary"], report.get("yield_summary"),
@@ -155,6 +170,33 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
                     map_rows, issue_layout["map_rows"], map_colors, tmpdir)
                 issue_map_futs = [pool.submit(render_issue_maps_job, j)
                                   for j in issue_map_jobs]
+
+                # ── Issue Table Temp (Temperature 세션만) ─────────────────────
+                # 표는 Issue Table 과 같은 writer, 썸네일은 Distribution=항목 CDF(동일 경로),
+                # Map=항목별 fail die 강조(bin 강조가 아니다 — 웹 map-cell-temp 와 같은 의미).
+                temp_layout = None
+                temp_map_futs, temp_map_paths = [], {}
+                temp_targets = []
+                if TEMP_SHEET in ws:
+                    temp_layout = _sheets.write_issue_sheet(
+                        ws[TEMP_SHEET], sheets.get(TEMP_SHEET), source_names,
+                        title=TEMP_SHEET)
+                    for item, excel_row, _section in temp_layout["rows"]:
+                        cell = cell_of.get(item)
+                        if cell is None:
+                            continue
+                        out = os.path.join(tmpdir, f"temp_{excel_row:04d}.png")
+                        temp_targets.append((excel_row, out))
+                        pool_fut = pool.submit(render_single_cdf,
+                                               {"cell": cell, "out_path": out})
+                        temp_map_futs.append(("cdf", excel_row, out, pool_fut))
+                    # temp_map 수신 실패는 Map 열만 비운다(전체 다운로드는 계속).
+                    temp_map = fetch_temp_map(server_base, session_id)
+                    temp_jobs, temp_map_paths = _build_temp_map_jobs(
+                        map_rows, temp_layout["temp_rows"], temp_map, tmpdir)
+                    for j in temp_jobs:
+                        temp_map_futs.append(("map", None, None, pool.submit(
+                            render_temp_maps_job, j)))
                 t_text = time.perf_counter()
                 _emit("excel", f"텍스트 시트 완료 ({t_text - t_dl:.1f}s) — 차트 대기/부착...")
 
@@ -215,8 +257,22 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
                         _sheets.add_picture_in_cell(ws["Issue Table"], png, excel_row,
                                                     issue_layout["map_col"], mw_pt, mh_pt)
 
+                # Issue Table Temp 썸네일 부착 (CDF → Map 순서도 Issue Table 과 동일)
+                if temp_layout is not None:
+                    for _kind, _row, _out, fut in temp_map_futs:
+                        fut.result()
+                    for excel_row, out in temp_targets:
+                        if os.path.exists(out):
+                            _sheets.add_picture_in_cell(ws[TEMP_SHEET], out, excel_row,
+                                                        temp_layout["dist_col"], iw_pt, ih_pt)
+                    for item, excel_row in temp_layout["temp_rows"]:
+                        png = temp_map_paths.get(item)
+                        if png and os.path.exists(png):
+                            _sheets.add_picture_in_cell(ws[TEMP_SHEET], png, excel_row,
+                                                        temp_layout["map_col"], mw_pt, mh_pt)
+
                 # 모든 시트 상단에 세션 웹뷰 링크 삽입
-                for name in SHEET_ORDER:
+                for name in sheet_order:
                     _sheets.add_session_link(ws[name], session_url)
 
                 t_render = time.perf_counter()
@@ -467,4 +523,35 @@ def _build_issue_map_jobs(map_rows, targets, color_map, tmpdir):
         by_map.setdefault(idx, []).append((b, out))
     jobs = [{"dies": rows[i]["dies"], "color_map": color_map, "targets": t}
             for i, t in by_map.items()]
+    return jobs, path_of
+
+
+def _build_temp_map_jobs(map_rows, targets, temp_map, tmpdir):
+    """Issue Table Temp Map 셀 렌더 잡 — 항목별 fail die 강조 썸네일.
+
+    웹 renderMiniTempCell 과 동일하게 **그 항목이 fail 난 첫 CT/HT 소스**의 맵 1장을 쓰고,
+    같은 소스를 쓰는 항목끼리 묶어 die 목록 피클 전송을 1회로 줄인다.
+    temp_map 은 {source: {item: [die 인덱스, ...]}} (_fetch.fetch_temp_map).
+    반환: (jobs, {item: out_path}). temp_map 이 비면 ([], {}) — Map 열은 빈 칸이 된다.
+    """
+    rows = [m for m in (map_rows or []) if m.get("dies")]
+    if not rows or not targets or not temp_map:
+        return [], {}
+    # STEP 분리 세션은 소스당 맵이 여러 장이지만 dies 길이·순서가 같으므로 첫 장을 쓴다.
+    map_of = {}
+    for m in rows:
+        map_of.setdefault(m.get("source"), m)
+    by_source = {}
+    path_of = {}
+    for item, _excel_row in targets:
+        if item in path_of:
+            continue
+        src = next((s for s in temp_map if item in (temp_map.get(s) or {})
+                    and s in map_of), None)
+        if src is None:
+            continue
+        out = os.path.join(tmpdir, f"tempmap_{len(path_of):03d}.png")
+        path_of[item] = out
+        by_source.setdefault(src, []).append((item, temp_map[src][item], out))
+    jobs = [{"dies": map_of[src]["dies"], "targets": t} for src, t in by_source.items()]
     return jobs, path_of

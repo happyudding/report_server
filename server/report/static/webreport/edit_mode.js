@@ -316,8 +316,35 @@ document.querySelector(".content").addEventListener("dblclick", e => {
   if (!cell || cell.isContentEditable) return;
   // comment 셀: 링크로 표시 중인 내용을 원문(@[항목] 토큰) 평문으로 되돌려 편집·저장 라운드트립 보장.
   if (cell.dataset.raw != null) cell.textContent = cell.dataset.raw;
+  else cell.dataset.raw = cell.textContent || "";   // Escape 원복 기준 (raw 없는 셀도 확보)
   cell.contentEditable = "true";
   cell.focus();
+});
+
+// 붙여넣기: 엑셀 셀·서식 있는 텍스트를 그대로 넣으면 <div>/<span> 노드가 삽입되는데,
+// 저장은 td.textContent 라 줄바꿈이 조용히 사라진다(= 붙여넣은 것과 저장된 것이 다름).
+// 평문으로 정규화해 넣어 보이는 대로 저장되게 한다. execCommand 는 input 이벤트를
+// 발생시키므로 기존 dirty 마킹·@멘션 감지가 그대로 동작한다.
+document.querySelector(".content").addEventListener("paste", e => {
+  const cell = e.target.closest("td.dblclick-edit");
+  if (!cell || !cell.isContentEditable) return;
+  const cb = e.clipboardData || window.clipboardData;
+  if (!cb) return;
+  e.preventDefault();
+  const text = (cb.getData("text/plain") || "").replace(/\s+/g, " ").trim();
+  if (text) document.execCommand("insertText", false, text);
+});
+
+// Escape: 편집 중인 셀을 편집 진입 시점 원문으로 되돌린다(값이 같아지므로 저장 요청 없음).
+// @멘션 드롭다운이 열려 있으면 그것만 닫는 기존 동작 우선(document 리스너가 처리).
+document.querySelector(".content").addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  const dd = document.getElementById("mentionDropdown");
+  if (dd && dd.style.display === "block") return;
+  const cell = e.target.closest("td.dblclick-edit");
+  if (!cell || !cell.isContentEditable) return;
+  cell.textContent = cell.dataset.raw || "";
+  cell.blur();   // focusout 핸들러가 링크 표시로 복귀시킨다
 });
 
 // comment 셀 편집 종료(focusout): 편집 중 원문(@[항목])을 data-raw 에 되저장하고 링크 표시로
@@ -361,7 +388,8 @@ async function saveNow() {
   if (btn) btn.disabled = true;
   await autoSave();
   if (btn) btn.disabled = false;
-  showToast((_dirty || _cnDirty.size) ? "저장 실패 — 다시 시도해주세요." : "저장했습니다.");
+  // 실패 사유는 autoSave 가 채널명과 함께 toast 로 알린다 — 여기서 덮어쓰지 않는다.
+  if (!_dirty && !_cnDirty.size) showToast("저장했습니다.");
 }
 
 document.getElementById("btnImportant").addEventListener("click", () => {
@@ -606,28 +634,39 @@ async function saveIssueComments(opts) {
 }
 
 // 자동저장: 페이지가 숨겨질 때(탭 전환·창 최소화 등) 변경사항 자동 저장.
-// keepalive:true 로 페이지 언로드 중에도 요청이 완료된다.
 // web_report 세션은 3채널(Issue comment / Summary ENGR / 차트 주석)을 병렬로 flush —
 // 언로드 중 직렬 await 는 첫 요청 뒤 중단되므로 병렬이어야 keepalive 요청이 전부 나간다.
 // 각 함수는 자체 diff 로 변경 없으면 요청을 보내지 않는다.
-async function autoSave() {
+//
+// opts.unload: 페이지 이탈/숨김 경로에서만 true — 그때만 fetch keepalive 를 켠다.
+// keepalive 요청은 브라우저가 본문 합계 64KiB 로 제한하므로(Fetch 표준), 큰 comment
+// 묶음이나 차트 주석 다발은 keepalive 를 켜면 오히려 네트워크 오류로 실패한다.
+// 수동 저장·blur 저장처럼 페이지가 살아 있는 경로에서는 일반 요청으로 보낸다.
+async function autoSave(opts) {
+  opts = opts || {};
+  const ka = !!opts.unload;
   if (!DATA || MODE !== "edit" || _autoSaving) return;
   if (!_dirty && !_cnDirty.size) return;   // 차트 주석은 자체 dirty 채널(_cnDirty, chart_notes.js)
   _autoSaving = true;
   _setDot("saving");
   if (isWebReportSession()) {
     _dirty = false;  // optimistic
+    const jobs = [
+      ["Issue comment", () => saveIssueComments({ keepalive: ka })],
+      ["Engr Comment", () => saveSummaryEngr({ keepalive: ka })],       // map_select.js
+      ["차트 주석", () => cnFlush({ keepalive: ka })],                   // chart_notes.js
+    ];
     try {
-      await Promise.all([
-        saveIssueComments({ keepalive: true }),
-        saveSummaryEngr({ keepalive: true }),   // map_select.js
-        cnFlush({ keepalive: true }),           // chart_notes.js — 차트 주석(원/화살표/텍스트)
-      ]);
-      _setDot("saved");
-    } catch (_) {
+      // allSettled — 한 채널이 실패해도 나머지는 끝까지 보낸다(Promise.all 은 fail-fast).
+      const results = await Promise.allSettled(jobs.map(([, fn]) => fn()));
+      const failed = jobs.filter((_, i) => results[i].status === "rejected");
+      if (!failed.length) { _setDot("saved"); return; }
       _dirty = true;
       _setDot("dirty");
-      showToast("자동저장 실패 — 변경사항이 저장되지 않았습니다");
+      const first = results.find(r => r.status === "rejected");
+      const why = (first && first.reason && first.reason.message) || "알 수 없는 오류";
+      showToast(`자동저장 실패(${failed.map(j => j[0]).join("·")}): ${why}`, 5000);
+      _scheduleRetry();
     } finally {
       _autoSaving = false;
     }
@@ -640,7 +679,7 @@ async function autoSave() {
       method: "PATCH",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
       body: JSON.stringify(payload),
-      keepalive: true,
+      keepalive: ka,
     });
     if (!res.ok) { _dirty = true; _setDot("dirty"); showToast("자동저장 실패 — 변경사항이 저장되지 않았습니다"); }
     else _setDot("saved");
@@ -653,24 +692,34 @@ async function autoSave() {
   }
 }
 
+// 저장 실패 후 1회 재시도 — 일시적 네트워크 단절·CSRF 재발급 직후를 자동 복구한다.
+// 각 채널 저장이 diff 기반 멱등이라 중복 전송 위험이 없다. 재시도도 실패하면 그대로
+// dirty 로 남겨 사용자 조작(다음 blur·💾)을 기다린다(무한 재시도 금지).
+let _retryTimer = null;
+function _scheduleRetry() {
+  if (_retryTimer) return;
+  _retryTimer = setTimeout(() => {
+    _retryTimer = null;
+    if (MODE === "edit" && (_dirty || _cnDirty.size)) autoSave();
+  }, 5000);
+}
+
 // comment 셀 blur 즉시 저장 — autoSave 재사용(dot: dirty→saving→saved, _autoSaving 중복 방지,
-// 실패 시 _dirty 복원). 사용자 조작 직후라 실패를 toast 로 알린다. 다른 저장이 진행 중이면
-// autoSave 가 no-op — 그 경우 거짓 실패 toast 를 내지 않도록 _autoSaving 을 함께 검사.
+// 실패 시 _dirty 복원 + 채널명·사유 toast + 5초 뒤 1회 재시도).
 async function saveCommentOnBlur() {
   await autoSave();
-  if (_dirty && !_autoSaving) showToast("comment 저장 실패 — 저장 버튼으로 다시 시도해주세요.");
 }
 
 // 탭이 백그라운드로 가거나 창이 최소화될 때 자동저장
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) autoSave();
+  if (document.hidden) autoSave({ unload: true });
 });
 
 // 페이지를 떠날 때: dirty 상태면 브라우저 경고 + keepalive 저장 시도
 window.addEventListener("beforeunload", e => {
   if (leaveGuardBypassed()) return;   // 이탈 확인 모달에서 확정 — 중복 경고·재저장 방지
   if (MODE === "edit" && (_dirty || _cnDirty.size)) {
-    autoSave();            // keepalive 요청 발사 (비동기, 브라우저가 완료 보장)
+    autoSave({ unload: true });   // keepalive 요청 발사 (비동기, 브라우저가 완료 보장)
     e.preventDefault();
     e.returnValue = "";    // 브라우저 "변경사항이 저장되지 않을 수 있습니다" 경고
   }
@@ -926,7 +975,9 @@ async function bulkSetIssueStatus(value, scope, panel) {
 }
 
 async function resetHiddenIssueRows() {
-  if (!confirm("삭제(숨김)한 Yield/CPK 행을 전부 복원할까요?")) return;
+  // 숨김은 kind 1개(issue_hidden)를 두 패널이 공유하므로 reset 은 **양쪽 모두** 복원한다.
+  const what = (webReportMode() === "Temperature") ? "Yield/CPK/TEMP" : "Yield/CPK";
+  if (!confirm(`삭제(숨김)한 ${what} 행을 전부 복원할까요?`)) return;
   if (!(await flushPendingComments())) return;
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/hidden`, {

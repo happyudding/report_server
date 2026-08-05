@@ -185,9 +185,14 @@ def web_report_distribution_batch(session_id):
         abort(400, "invalid subject")
     bin1, bin1_scope, _variant = _bin1_args()
     try:
+        # pack 미스 + tables 콜드면 202 — pack 생성은 service 가 distpack 큐에 예약했고,
+        # 프런트(distribution.js)가 백오프 재시도한다 (요청 스레드 수 초~수십 초 비블록).
         etag, body = web_report_response_cache.get_dist_batch_gzip(
             session_id, subjects, session=session, report_db=report_db,
-            upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1, bin1_scope=bin1_scope)
+            upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1, bin1_scope=bin1_scope,
+            build_if_cold=False)
+    except web_report_service.ColdBuildRequired:
+        return jsonify({"building": True, "stage": "dist_pack"}), 202
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except Exception:
@@ -290,10 +295,13 @@ def web_report_scatter(session_id, subject):
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers=headers)
     try:
+        # tables 콜드면 202 + 백그라운드 웜업(kind="tables") — 프런트가 백오프 재시도.
         body = web_report_response_cache.get_scatter_gzip(
             session_id, subject, session=session,
             report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
-            bin1=bin1, bin1_scope=bin1_scope)
+            bin1=bin1, bin1_scope=bin1_scope, build_if_cold=False)
+    except web_report_service.ColdBuildRequired:
+        return _building_response(session_id, "tables", session=session)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report item or session data not found")
     except Exception:

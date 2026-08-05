@@ -18,6 +18,42 @@ from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
                              yield_basis_payload, yield_overview)
 
 
+def _temperature_context(tables, sources, mode, temperature_groups):
+    """Temperature 모드 분기 한 곳 — (groups, CT/HT 이름 집합, Yield 계열 입력 테이블).
+
+    - ``sources[]`` 에 ``temp_group``/``temp_role``/``temp_corner`` 를 **제자리로** 붙인다.
+      ``temp_corner``("RT"/"CT"/"HT")는 Distribution 소스 그룹 필터·Map 항목 축이 쓴다.
+      정본은 업로드 때 기록된 ``member_roles`` 이고, 없는 옛 세션은 members 순서(CT→HT)로
+      추정한다 — **이 폴백 규칙의 정본은 여기 한 곳이다**(tabs/temp_fail 은 복제하지 않음).
+    - CT/HT 는 RT pass 좌표로 잘려 있어 수율 분모를 남은 die 수로 강제한다(force_test).
+    - Yield 계열(Yield 시트·요약·Bin/STEP 그룹·Fail Bin·Issue Table)은 **RT source 만**
+      본다(2026-08-05 사용자 확정) — CT/HT 는 tabs/temp_fail 이 만드는 별도 시트로 나간다.
+
+    Temperature 가 아니거나 그룹이 없으면 (None, set(), tables) — 다른 모드는 무영향.
+    """
+    groups = (temperature_groups or {}).get("groups") if mode == "Temperature" else None
+    if not groups:
+        return None, set(), tables
+
+    role_of, member_names = {}, set()
+    for gi, group in enumerate(groups):
+        role_of[group["rt"]] = (gi, "rt", "RT")
+        members = list(group.get("members") or [])
+        roles = list(group.get("member_roles") or [])
+        for mi, name in enumerate(members):
+            corner = roles[mi] if mi < len(roles) else ("CT" if mi == 0 else "HT")
+            role_of[name] = (gi, "member", corner)
+            member_names.add(name)
+    for entry in sources:
+        role = role_of.get(entry["name"])
+        if role:
+            entry["temp_group"], entry["temp_role"], entry["temp_corner"] = role
+
+    rt_names, _members = temperature_corner_sources(tables, groups)
+    yield_tables = ([t for t in tables if t.source in set(rt_names)] if rt_names else tables)
+    return groups, member_names, yield_tables
+
+
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
                          issue_comments=None, summary_engr=None, product_type="", product="",
                          mode="Normal", dist_colors=None, ai_comments=None,
@@ -56,34 +92,10 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
             table.item_columns = [c for c in table.item_columns if c in selected_set]
 
     sources = [{"name": t.source, "file_name": t.file_name} for t in tables]
-    # Temperature 모드: source 마다 RT(기준) / member(CT·HT) 역할과 그룹 번호를 붙인다.
-    # 프런트가 RT 를 표시로 구분하고, 비RT 는 아래 분모 강제 대상이 된다.
-    # temp_corner("RT"/"CT"/"HT")는 Distribution 소스 그룹 필터가 쓴다 — 업로드 때 기록된
-    # member_roles 가 정본이고, 그게 없는 옛 세션은 members 순서(CT→HT)로 추정한다.
-    temp_role, temp_member_names = {}, set()
-    temp_groups = (temperature_groups or {}).get("groups") if mode == "Temperature" else None
-    if temp_groups:
-        for gi, group in enumerate(temp_groups):
-            temp_role[group["rt"]] = (gi, "rt", "RT")
-            members = list(group.get("members") or [])
-            roles = list(group.get("member_roles") or [])
-            for mi, name in enumerate(members):
-                corner = roles[mi] if mi < len(roles) else ("CT" if mi == 0 else "HT")
-                temp_role[name] = (gi, "member", corner)
-                temp_member_names.add(name)
-        for entry in sources:
-            role = temp_role.get(entry["name"])
-            if role:
-                entry["temp_group"], entry["temp_role"], entry["temp_corner"] = role
-    # Yield 계열 계산에 쓸 테이블 — Temperature 면 **RT source 만**(2026-08-05 사용자 확정).
-    # CT/HT 는 RT limit 전 항목 재판정 결과가 별도 시트로 나가므로 수율 표에 섞지 않는다.
-    # 이 한 줄이 Yield 시트·요약·Bin/STEP 그룹·Fail Bin·Issue Table 을 한꺼번에 RT 기준으로
-    # 만든다(아래는 전부 yield_tables/yield_rows 를 입력으로 받는다).
-    yield_tables = tables
-    if temp_groups:
-        rt_names, _member_names = temperature_corner_sources(tables, temp_groups)
-        if rt_names:
-            yield_tables = [t for t in tables if t.source in set(rt_names)]
+    # Temperature 분기는 이 한 줄로 모은다 (_temperature_context) — sources 태깅,
+    # Yield 계열 입력 테이블(RT only), 분모 강제 대상(CT/HT)이 함께 결정된다.
+    temp_groups, temp_member_names, yield_tables = _temperature_context(
+        tables, sources, mode, temperature_groups)
     all_items = sorted({c for t in tables for c in t.item_columns})
     # 항목별 유한 measurement 개수 — 아래 3곳(cpk 제외집합·dist 제외집합·distribution_index
     # 의 n)이 같은 스캔을 각각 돌던 것을 **1회**로 합친다(대형 세션에서 전 데이터 3회 스캔이었다).

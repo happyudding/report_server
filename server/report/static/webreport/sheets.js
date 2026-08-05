@@ -91,6 +91,13 @@ function webReportSourceCount() {
   return Array.isArray(srcs) ? srcs.length : 0;
 }
 
+// Temperature CT/HT 소스 개수 — Temp 미니셀 ⤢(전 소스 보기) 노출 판단용.
+// RT 는 Temp 판정 대상이 아니므로 전체 소스 수를 쓰면 CT/HT 가 1개인 세션에도 버튼이 뜬다.
+function tempSourceCount() {
+  const srcs = (DATA.web_report && DATA.web_report.sources) || [];
+  return srcs.filter(s => s && (s.temp_corner === "CT" || s.temp_corner === "HT")).length;
+}
+
 // 열 순서 보정: 고정 prefix 컬럼(step/bin/tno/item, issue 는 category 포함 avg 까지)
 // → 지정 순서로 맨 앞에 배치(대소문자 무시), comment 류 → 최우측. 나머지 상대순서 유지.
 // yield: source 별 yield 값 → source 별 _cnt/_count → avg 순으로 그루핑.
@@ -550,8 +557,10 @@ function renderSheetTable(rows, opts) {
         // Bin 은 있지만 그 bin 의 die 가 아니라 "이 항목을 벗어난 die" 를 보여야 한다.
         const tempItem = String((r && r["Item"]) ?? "").trim();
         if (opts.kind === "issue" && !subhead && issueRowSec === "TEMP" && tempItem !== "") {
-          const tempExpand = (webReportSourceCount() > 1)
-            ? `<button type="button" class="btn-map-expand" title="전체 소스 맵 보기">⤢</button>` : "";
+          // ⤢ 는 CT/HT 소스가 2개 이상일 때만 — 실제로 그 항목이 fail 난 소스만
+          // 나열되므로(openTempExpand) 여기서는 상한 판단만 한다.
+          const tempExpand = (tempSourceCount() > 1)
+            ? `<button type="button" class="btn-map-expand" title="이 항목이 fail 난 CT/HT 소스 맵 전체 보기">⤢</button>` : "";
           return `<td data-r="${ri}" data-c="${ci}">` +
             `<div class="map-cell map-cell-mini map-cell-temp" data-temp-item="${esc(tempItem)}" ` +
             `title="클릭하면 Map Analysis 탭 Temp Item 축에서 이 항목을 강조해 봅니다"><div class="map-plot"></div>${tempExpand}</div></td>`;

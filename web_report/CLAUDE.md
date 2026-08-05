@@ -46,7 +46,7 @@ web_report/
 ├── metrics.py          build_report_payload — 공용 컨텍스트 조립 후 tabs.TAB_REGISTRY 순회
 ├── cache.py            인메모리 LRU 캐시 인프라 (레지스트리·락·무효화)
 ├── cache_policy.py     캐시 키 구성 규약의 단일 진실 (빌더 + 무효화 트리거 표)
-├── disk_cache.py       계산 산출물(report/dist) 로컬 디스크 캐시
+├── disk_cache.py       계산 산출물(report/dist/map/temp_map) 로컬 디스크 캐시
 ├── response_cache.py    /full·/scatter 응답 gzip bytes LRU 캐시
 ├── compute.py          콜드 빌드 ProcessPool 오프로드 (prewarm 포함)
 ├── eta.py              콜드 빌드 **예상시간** 추정 (2026-08-05) — 로드 오버레이 "예상 약 N초"
@@ -91,8 +91,10 @@ web_report/
     │                       test die, 100% 초과·부족분 100 예외) / source_totals / auto_basis
     │                       + Temperature 소스 분류 temperature_corner_sources(RT / CT·HT)
     ├── temp_fail.py       **Temperature 전용** — CT/HT 를 RT limit 으로 **전 항목** 재판정
-    │                       (조회 시점 서버 계산, 구 '첫 fail 하나만' 제한 없음). Issue Table
-    │                       Temp 시트 행 + Map 항목 legend 용 die 인덱스(temp_fail_indices)
+    │                       (조회 시점 서버 계산, 구 '첫 fail 하나만' 제한 없음).
+    │                       compute_temp_fail 이 (count, die 인덱스)를 **한 순회로** 만들고
+    │                       tables 클론에 캐시 → 표(build_temp_fail_rows)와 Map
+    │                       (temp_fail_indices)이 같은 결과를 공유(판정 1회화)
     ├── cpk.py             build_cpk_rows(**Bin1 기준 단일**) + CPK_THRESHOLD(1.33) + worst_cpk_by_subject
     ├── issue_table.py     build_issue_table_rows (Yield + cpk<1.33 + ETC, comment/Status/
     │                       숨김은 편집 DB). 모드 분기 없음 — Temperature 면 호출부가 RT

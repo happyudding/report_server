@@ -163,6 +163,106 @@ def test_indices_align_with_map_dies():
     assert fail_coords == {(0, 0), (1, 0), (2, 0), (4, 0), (0, 1), (1, 1)}, fail_coords
 
 
+def multi_group_tables(n_groups=3, n=10, overlap=7):
+    """3그룹 × RT/CT/HT = 9 소스 — 21 source 세션의 축소 재현.
+
+    그룹마다 다른 항목이 다르게 이탈하게 해, 소스 컬럼 순서·다소스 합산·정렬을 본다.
+    """
+    tables, groups = [], []
+    for g in range(n_groups):
+        rt = f"G{g}_RT"
+        tables.append(make_table(rt, {it: [5] * n for it in ITEMS}))
+        members, roles = [], []
+        for role in ("CT", "HT"):
+            name = f"G{g}_{role}"
+            values = {it: [5] * n for it in ITEMS}
+            # 그룹마다 이탈 항목을 달리한다 (g0=ItemA, g1=ItemB, g2=ItemC)
+            target = ["ItemA", "ItemB", "ItemC"][g % 3]
+            hi = overlap if role == "CT" else max(1, overlap - 3)
+            for i in range(hi):
+                values[target][i] = 15
+            tables.append(make_table(name, values))
+            members.append(name)
+            roles.append(role)
+        groups.append({"rt": rt, "members": members, "member_roles": roles})
+    return tables, groups
+
+
+def test_multi_group_sources_and_merge():
+    """다중 그룹 — 컬럼 소스는 CT/HT 전부, 순서는 groups 배치 순서."""
+    tables, groups = multi_group_tables()
+    rows = build_temp_fail_rows(tables, groups, {t.source: 10 for t in tables})
+    data = [r for r in rows if r.get("Item")]
+    assert data, rows
+    keys = [k[:-6] for k in data[0] if k.endswith("_yield")]
+    assert keys == ["G0_CT", "G0_HT", "G1_CT", "G1_HT", "G2_CT", "G2_HT"], keys
+    assert not any(k.endswith("_RT_yield") for k in data[0]), sorted(data[0])
+    by_item = {r["Item"]: r for r in data}
+    # 그룹 0 의 CT 만 ItemA 70%, 다른 그룹 CT/HT 는 0
+    assert by_item["ItemA"]["G0_CT_yield"] == 70.0, by_item["ItemA"]
+    assert by_item["ItemA"]["G1_CT_yield"] == 0.0, by_item["ItemA"]
+    # 정렬은 소스 합산 count 내림차순 — CT(7)+HT(4)=11 로 세 항목 동률이라 이름순
+    assert [r["Item"] for r in data] == ["ItemA", "ItemB", "ItemC"], [r["Item"] for r in data]
+
+
+def test_member_roles_absent_fallback():
+    """member_roles 없는 옛 세션도 판정은 동일 (corner 라벨은 판정에 안 쓰인다)."""
+    tables, groups = multi_group_tables(n_groups=1)
+    legacy = [{"rt": g["rt"], "members": g["members"]} for g in groups]
+    totals = {t.source: 10 for t in tables}
+    assert (build_temp_fail_rows(tables, groups, totals)
+            == build_temp_fail_rows(tables, legacy, totals))
+
+
+def test_compute_once_matches_separate_paths():
+    """판정 1회화 등가성 — packs 를 넘긴 결과와 각자 계산한 결과가 같다."""
+    from web_report.tabs.temp_fail import compute_temp_fail
+
+    tables, groups = multi_group_tables()
+    totals = {t.source: 10 for t in tables}
+    packs = compute_temp_fail(tables, groups)
+    assert build_temp_fail_rows(tables, groups, totals, packs=packs) ==         build_temp_fail_rows(tables, groups, totals)
+    assert temp_fail_indices(tables, groups, packs) == temp_fail_indices(tables, groups)
+    # idx 는 JSON 직렬화 가능한 list 여야 한다(라우트가 그대로 json.dumps 한다)
+    for pack in temp_fail_indices(tables, groups):
+        for entry in pack["items"]:
+            assert isinstance(entry["idx"], list), entry
+            assert all(isinstance(v, int) for v in entry["idx"]), entry
+
+
+def test_indices_align_with_step_split_maps():
+    """STEP 2종 세션 — step 분리 맵 각각의 dies 길이가 인덱스 기준(n)과 같다."""
+    n = 8
+    steps = {"ItemA": (1, 100, 0, 10), "ItemB": (2, 200, 0, 10)}
+    cols = META_COLUMNS + ["ItemA", "ItemB"]
+
+    def tbl(source, vals):
+        rows = [
+            ["TSEQ", "", "", "", "", "", "", 1, 2],
+            ["TNO", "", "", "", "", "", "", 100, 200],
+            ["STEP", "", "", "", "", "", "", "P1", "P2"],   # STEP 2종
+            ["UNIT", "", "", "", "", "", "", "V", "V"],
+            ["HILIM", "", "", "", "", "", "", 10, 10],
+            ["LOLIM", "", "", "", "", "", "", 0, 0],
+        ]
+        for i in range(n):
+            rows.append([f"{source}-{i}", 1, 1, i % 4, i // 4,
+                         "1", ""] + [vals["ItemA"][i], vals["ItemB"][i]])
+        return split_honeyform(pd.DataFrame(rows, columns=cols),
+                              source=source, file_name=source)
+
+    rt = tbl("S_RT", {"ItemA": [5] * n, "ItemB": [5] * n})
+    ct = tbl("S_CT", {"ItemA": [15] * 3 + [5] * (n - 3), "ItemB": [5] * n})
+    groups = [{"rt": "S_RT", "members": ["S_CT"], "member_roles": ["CT"]}]
+    packs = temp_fail_indices([rt, ct], groups)
+    maps = build_map_analysis_rows([rt, ct], "", "", "Normal", include_dies=True)
+    ct_maps = [m for m in maps if m["source"] == "S_CT"]
+    assert len(ct_maps) >= 2, [(m["source"], m.get("step")) for m in maps]
+    for m in ct_maps:
+        assert len(m["dies"]) == packs[0]["n"], (m.get("step"), len(m["dies"]))
+    assert steps  # 픽스처 의도 기록용
+
+
 def test_payload_temp_sheet_end_to_end():
     """build_report_payload 경유로도 같은 결과 (Yield 시트는 RT 만)."""
     payload = build_report_payload([rt_table(), member_table()], mode="Temperature",
@@ -180,6 +280,10 @@ def main():
         pass
     checks = 0
     for fn in (test_all_items_counted_not_only_first,
+               test_multi_group_sources_and_merge,
+               test_member_roles_absent_fallback,
+               test_compute_once_matches_separate_paths,
+               test_indices_align_with_step_split_maps,
                test_sum_may_exceed_100_percent,
                test_judge_items_follow_rt_tseq_and_intersection,
                test_nan_is_pass,

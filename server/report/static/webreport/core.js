@@ -80,6 +80,40 @@ function cachePutCapped(store, order, key, value, max, onEvict) {
   }
 }
 
+// ── 콜드 202 자동 재시도 fetch (scatter / STDF 등) ────────────────────────────
+// 서버가 202({building:true})를 주면 데이터 준비(tables 웜업·pack 생성)가 백그라운드에서
+// 도는 중이다 — 백오프로 재시도해 준비되는 즉시 결과를 돌려준다. 202 외 응답은 기존
+// 규약 그대로(!ok → throw, ok → json). opts:
+//   onWaiting(elapsedMs) : 202 를 받을 때마다 호출 — 호출부가 대기 UI 갱신.
+//   shouldStop()         : true 면 재시도 중단(reject) — 항목 이동 등으로 결과가 불필요해진 경우.
+//   timeoutMs            : 총 대기 상한 (기본 3분) — 초과 시 reject.
+const FETCH202 = { DELAYS_MS: [2000, 3000, 5000, 8000, 10000], TIMEOUT_MS: 3 * 60 * 1000 };
+function fetchJson202(url, opts) {
+  opts = opts || {};
+  const t0 = Date.now();
+  const timeoutMs = opts.timeoutMs || FETCH202.TIMEOUT_MS;
+  return new Promise((resolve, reject) => {
+    let attempt = 0;
+    function go() {
+      if (opts.shouldStop && opts.shouldStop()) { reject(new Error("중단됨")); return; }
+      fetch(url, opts.fetchOpts || undefined).then(r => {
+        if (r.status === 202) {
+          const elapsed = Date.now() - t0;
+          if (elapsed > timeoutMs) { reject(new Error("데이터 준비 시간 초과")); return; }
+          if (opts.onWaiting) { try { opts.onWaiting(elapsed); } catch (e) {} }
+          const delay = FETCH202.DELAYS_MS[Math.min(attempt, FETCH202.DELAYS_MS.length - 1)];
+          attempt++;
+          setTimeout(go, delay);
+          return;
+        }
+        if (!r.ok) { reject(new Error("HTTP " + r.status)); return; }
+        r.json().then(resolve, reject);
+      }, reject);
+    }
+    go();
+  });
+}
+
 function csrfToken() {
   const m = document.cookie.match(/(?:^|;\s*)report_csrf=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : "";

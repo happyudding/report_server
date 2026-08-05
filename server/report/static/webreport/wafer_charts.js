@@ -183,9 +183,19 @@ let tempMapReady = false;
 let tempMapPromise = null;
 let tempMapBySource = {};   // source → {n, items:[{item, idx:[...]}]}
 
-function ensureTempMapData() {
+// 실패해도 promise 를 즉시 비우면, 미니셀 수백 개가 스크롤될 때마다 새 fetch 를 쏘고
+// 토스트도 그만큼 뜬다(미니셀 렌더러가 !tempMapReady 면 ensure 를 다시 부르기 때문).
+// 실패 상태를 유지하고 배지의 재시도 버튼(또는 백오프 경과)으로만 다시 시도한다.
+const TEMP_MAP_RETRY_MS = 15000;
+let _tempMapFailedAt = 0;
+
+function ensureTempMapData(force) {
   if (webReportMode() !== "Temperature") { tempMapReady = true; return Promise.resolve(); }
   if (tempMapPromise) return tempMapPromise;
+  if (_tempMapFailedAt && !force && (Date.now() - _tempMapFailedAt) < TEMP_MAP_RETRY_MS) {
+    return Promise.resolve();   // 백오프 중 — 조용히 넘긴다(배지에 재시도 버튼이 떠 있다)
+  }
+  _tempMapFailedAt = 0;
   tempMapPromise = fetch(`/pe/report/session/${SESSION_ID}/web_report/temp_map`)
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(j => {
@@ -202,10 +212,22 @@ function ensureTempMapData() {
       }
     })
     .catch(e => {
-      tempMapPromise = null;   // 다음 호출에서 재시도
+      tempMapPromise = null;
+      _tempMapFailedAt = Date.now();
+      distBadgeFail("Temp Map 데이터 로드 실패", "tempmap");   // 재시도 버튼(distribution.js)
       showToast("Temp Map 데이터 로드 실패: " + e.message);
     });
   return tempMapPromise;
+}
+
+// 항목명으로 그 항목이 fail 난 소스별 인덱스를 찾는다 (미니셀·⤢ 확장·legend 공용).
+function tempMapItemEntries(item) {
+  const out = [];
+  Object.keys(tempMapBySource).forEach(src => {
+    const e = ((tempMapBySource[src] || {}).items || []).find(x => x.item === item);
+    if (e) out.push({ source: src, idx: e.idx || [] });
+  });
+  return out;
 }
 
 // 그 소스의 die 인덱스 → 항목명 (legend 순서상 앞선 항목이 이긴다).
@@ -631,28 +653,48 @@ function buildTempItemInfo() {
       if (cnt[e.item] !== undefined) cnt[e.item] += (e.idx || []).length;
     });
   });
+  // 팔레트(7색)를 넘는 항목은 "기타" 한 줄로 접는다 — TNO Legend(buildTnoInfo)와 같은
+  // 규약. 전 항목을 늘어놓으면 21 source 세션에서 legend 가 수백 행이 되고, 8번째부터는
+  // 전부 같은 회색이라 색으로 구분도 안 된다.
   const colorMap = {};
   items.forEach((it, i) => {
     colorMap[it] = (i < FAIL_PALETTE.length) ? FAIL_PALETTE[i] : TNO_OTHER_COLOR;
   });
-  return { items, meta, cnt, colorMap };
+  const top = items.slice(0, FAIL_PALETTE.length);
+  const otherCount = items.slice(FAIL_PALETTE.length).reduce((s, it) => s + (cnt[it] || 0), 0);
+  const otherItems = items.length - top.length;
+  return { items, top, otherCount, otherItems, meta, cnt, colorMap };
+}
+
+// 선택(필터)된 항목은 상위 N 밖이어도 legend 에 올려 원색으로 보여준다 — Issue Table Temp
+// 미니셀 클릭으로 넘어온 항목이 "기타" 에 묻히면 무엇을 보고 있는지 알 수 없다.
+function tempLegendRowItems(info, selected) {
+  const extra = [...selected].filter(it => info.meta[it] && !info.top.includes(it));
+  return info.top.concat(extra);
 }
 
 function tempItemLegendHtml(info, selected) {
   if (!info.items.length) {
     return `<div class="placeholder" style="padding:12px 4px">RT Limit 이탈 항목 없음</div>`;
   }
-  const body = info.items.map(it => {
+  const shown = tempLegendRowItems(info, selected);
+  const body = shown.map(it => {
     const sel = selected.has(it);
-    const sw = (selected.size === 0 || sel) ? info.colorMap[it] : MAP_BIN_DIM_COLOR;
+    const base = info.colorMap[it] === TNO_OTHER_COLOR && sel
+      ? FAIL_PALETTE[0] : info.colorMap[it];   // 기타 항목을 고르면 원색으로 강조
+    const sw = (selected.size === 0 || sel) ? base : MAP_BIN_DIM_COLOR;
     const m = info.meta[it] || {};
     return `<tr${sel ? ` class="is-selected"` : ""} data-temp-item="${esc(it)}">` +
       `<td><span class="bin-swatch" style="background:${sw}"></span>${esc(it)}</td>` +
       `<td>${esc(m.tno || "")}</td><td>${esc(m.bin || "")}</td>` +
       `<td>${info.cnt[it] || 0}</td></tr>`;
   }).join("");
+  const hidden = info.otherItems - (shown.length - info.top.length);
+  const other = hidden > 0
+    ? `<tr class="tno-other"><td><span class="bin-swatch" style="background:${TNO_OTHER_COLOR}"></span>` +
+      `기타 ${hidden}항목</td><td></td><td></td><td>${info.otherCount}</td></tr>` : "";
   return `<table class="bin-table"><thead><tr><th>Item</th><th>TNO</th><th>Bin</th><th>die</th>` +
-         `</tr></thead><tbody>${body}</tbody></table>`;
+         `</tr></thead><tbody>${body}${other}</tbody></table>`;
 }
 
 // 선택 좌표 마커를 canvas 위 CSS 절대위치 원으로 오버레이(canvas 는 hover 없음).
@@ -915,6 +957,17 @@ function renderMapAnalysis() {
     tnoInfo.items.forEach(it => { out[it] = mapTnoFilter.has(it) ? tnoInfo.colorMap[it] : MAP_BIN_DIM_COLOR; });
     return out;
   }
+  // Temp Item 축의 die→항목 매핑은 **소스 단위**다. STEP 분리 세션은 같은 소스 맵이
+  // STEP 수만큼 있어(dies 길이 동일) 맵마다 재계산하면 소스당 STEP 배로 낭비된다.
+  // drawAllMaps 1회 = 필터 1상태이므로 그 사이만 재사용한다.
+  let _tempPrimaryCache = null;
+  function tempPrimaryFor(source) {
+    if (!_tempPrimaryCache) _tempPrimaryCache = new Map();
+    if (!_tempPrimaryCache.has(source)) {
+      _tempPrimaryCache.set(source, tempPrimaryByIdx(source, tempInfo.items, mapTempFilter));
+    }
+    return _tempPrimaryCache.get(source);
+  }
   function drawMap(i, activeBinColorMap) {
     const m = maps[i];
     const wrap = document.getElementById(`wafer-full-${i}`);
@@ -932,8 +985,7 @@ function renderMapAnalysis() {
     const activeTno = tnoActiveColorMap();
     // Temp Item 축: 이 소스의 die 인덱스 → 항목명 (dies 배열과 같은 순서, 서버 temp_map).
     // temp_map 이 아직 안 왔거나 그 소스가 RT(=대상 아님)면 null → 전부 Pass 색으로 둔다.
-    const tempPrimary = (mapColorKey === "temp")
-      ? tempPrimaryByIdx(m.source, tempInfo.items, mapTempFilter) : null;
+    const tempPrimary = (mapColorKey === "temp") ? tempPrimaryFor(m.source) : null;
     if (mapColorKey === "temp" && !tempMapReady) ensureTempMapData();
     function rgbFor(d, cache, k) {
       if (d.g) return MAP_GRAY_RGB;   // 앞 step 에서 이미 fail — 회색(모양만 유지)
@@ -958,6 +1010,7 @@ function renderMapAnalysis() {
   // 맵을 한 프레임에 한 장씩 그려 UI 스레드를 쪼갠다(대량 die freeze 방지) + 진행률 표시.
   function drawAllMaps() {
     const token = ++_mapDrawToken;
+    _tempPrimaryCache = null;   // 필터가 바뀌었을 수 있다 — 소스별 매핑 재계산
     const activeBinColorMap = dimColorMap(colorMap, binOrder, mapBinFilter);
     const prog = panel.querySelector("#mapRenderProg");
     let i = 0;
@@ -1134,28 +1187,37 @@ function bindMapDetailZoom(el, m) {
   if (!el || !el.on) return;
   const g = waferCompactGrid(m);   // 축이 compact index 공간 → die 좌표를 index 로 환산해 비교.
   let forced = false;
+  let timer = null;         // 스크롤 줌은 relayout 이 연속 발화 — trailing 디바운스로 마지막 상태만 계산
+  let lastRangeKey = "";    // 범위가 안 바뀐 relayout(팬 종료·legend 등)은 die 전량 스캔 생략
   el.on("plotly_relayout", () => {
-    const xa = el.layout && el.layout.xaxis, ya = el.layout && el.layout.yaxis;
-    const xr = xa && xa.range, yr = ya && ya.range;
-    const isAuto = (xa && xa.autorange) || (ya && ya.autorange);
-    let visible = (m.dies || []).length;
-    if (!isAuto && xr && yr) {
-      const x0 = Math.min(xr[0], xr[1]), x1 = Math.max(xr[0], xr[1]);
-      const y0 = Math.min(yr[0], yr[1]), y1 = Math.max(yr[0], yr[1]);
-      visible = 0;
-      const dies = m.dies || [];
-      for (let k = 0; k < dies.length; k++) {
-        const d = dies[k];
-        const cx = g.xIdx[d.x], cy = g.yIdx[d.y];
-        if (cx == null || cy == null) continue;
-        if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) visible++;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      const xa = el.layout && el.layout.xaxis, ya = el.layout && el.layout.yaxis;
+      const xr = xa && xa.range, yr = ya && ya.range;
+      const isAuto = (xa && xa.autorange) || (ya && ya.autorange);
+      const rangeKey = isAuto ? "auto" : String(xr) + "|" + String(yr);
+      if (rangeKey === lastRangeKey) return;
+      lastRangeKey = rangeKey;
+      let visible = (m.dies || []).length;
+      if (!isAuto && xr && yr) {
+        const x0 = Math.min(xr[0], xr[1]), x1 = Math.max(xr[0], xr[1]);
+        const y0 = Math.min(yr[0], yr[1]), y1 = Math.max(yr[0], yr[1]);
+        visible = 0;
+        const dies = m.dies || [];
+        for (let k = 0; k < dies.length; k++) {
+          const d = dies[k];
+          const cx = g.xIdx[d.x], cy = g.yIdx[d.y];
+          if (cx == null || cy == null) continue;
+          if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) visible++;
+        }
       }
-    }
-    const wantForce = visible <= MAP_DENSE_DIES;
-    if (wantForce === forced) return;
-    forced = wantForce;
-    const traces = mapDetailTraces(m, wantForce ? { forceGap: true } : null);
-    if (traces) Plotly.react("map-detail-plot", traces, el.layout, MAP_DETAIL_CONFIG);
+      const wantForce = visible <= MAP_DENSE_DIES;
+      if (wantForce === forced) return;
+      forced = wantForce;
+      const traces = mapDetailTraces(m, wantForce ? { forceGap: true } : null);
+      if (traces) Plotly.react("map-detail-plot", traces, el.layout, MAP_DETAIL_CONFIG);
+    }, 150);
   });
 }
 

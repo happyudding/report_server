@@ -255,3 +255,20 @@ def save_map(upload_root: Path, cache_key: tuple, blob: bytes) -> None:
     if not _enabled():
         return
     _write(_path_for(upload_root, "map", cache_key, ".gz"), blob)
+
+
+def load_temp_map(upload_root: Path, cache_key: tuple) -> bytes | None:
+    """Temperature 항목별 fail die 인덱스 gzip bytes 디스크 캐시 조회.
+
+    cache_key 는 service.get_temp_map_gzip 의 TEMP_MAP_CACHE 키
+    (cache_policy.temp_map_key — map 과 같은 세대라야 인덱스가 dies 배열과 맞는다).
+    """
+    if not _enabled():
+        return None
+    return _read(_path_for(upload_root, "temp_map", cache_key, ".gz"))
+
+
+def save_temp_map(upload_root: Path, cache_key: tuple, blob: bytes) -> None:
+    if not _enabled():
+        return
+    _write(_path_for(upload_root, "temp_map", cache_key, ".gz"), blob)

@@ -18,6 +18,7 @@ let _cnTool = null;       // "circle" | "rect" | "line" | "text" | null
 let _cnCharts = {};       // chartKey -> { gd, base, baseAnnos } (현재 상세뷰의 차트)
 let _cnPending = {};      // chartKey -> {shapes, texts, comment} — 미저장 편집 상태
 let _cnDirty = new Set(); // 미저장 chartKey 집합
+let _cnGen = 0;           // 편집 세대 — 저장 요청 중 추가된 편집을 지우지 않기 위한 카운터
 
 function cnSavedFor(key) {
   const all = (DATA && DATA.chart_notes) || {};
@@ -187,6 +188,7 @@ function cnStripText(t) {
 
 function cnMarkDirty(key) {
   _cnDirty.add(key);
+  _cnGen++;          // 저장 요청 비행 중 들어온 편집을 cnFlush 가 알아채는 근거
   cnUpdateBarState();
 }
 
@@ -358,6 +360,7 @@ async function cnFlush(opts) {
   if (!_cnDirty.size) return { ok: true, updated: 0 };
   // 저장 직전 차트 상태에서 최신 도형 회수 (드래그 직후 미동기 방지).
   _cnDirty.forEach(key => { if (_cnCharts[key]) cnSyncFromChart(key); });
+  const gen = _cnGen;   // 이 요청이 담아 보내는 편집 세대
   const ops = [...(_cnDirty)].map(key => {
     const st = cnStateFor(key);
     const empty = !st.shapes.length && !st.texts.length && !String(st.comment || "").trim();
@@ -372,8 +375,12 @@ async function cnFlush(opts) {
   const j = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
   if (DATA) DATA.chart_notes = j.chart_notes || {};
-  _cnDirty.clear();
-  _cnPending = {};
+  // 요청이 나간 뒤 사용자가 더 편집했다면(세대 변화) dirty·pending 을 지우지 않는다 —
+  // 지우면 그 편집이 저장된 것처럼 보이면서 다음 편집 전까지 서버에 반영되지 않는다.
+  if (gen === _cnGen) {
+    _cnDirty.clear();
+    _cnPending = {};
+  }
   cnUpdateBarState();
   if (_itemDetailData) cnRenderChartComments(_itemDetailData.subject);   // 저장값을 차트 하단에 반영
   return j;

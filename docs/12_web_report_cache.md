@@ -75,7 +75,7 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | DIST_CACHE | (akey, chash[, prep], mode) | 〃 (mode 는 세션 생성 후 불변) |
 | _DIST_BATCH_CACHE | (akey, chash[, prep], mode, subjects_digest[, "bin1"[, scope]]) | 〃 — 항목 배치 ECDF gzip (`/web_report/distribution_batch`) |
 | MAP_CACHE | (akey, chash[, prep], mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8) |
-| TEMP_MAP_CACHE | (akey, chash[, prep], mode, v) | 〃 — Temperature 항목별 fail die **인덱스** gzip (`/web_report/temp_map`, 2026-08-05). map dies 와 같은 세대여야 인덱스가 맞는다 |
+| TEMP_MAP_CACHE | (akey, chash[, prep], mode, v) | 〃 — Temperature 항목별 fail die **인덱스** gzip (`/web_report/temp_map`, 2026-08-05). map dies 와 같은 세대여야 인덱스가 맞는다. **report 콜드 빌드가 `service.seed_temp_map` 으로 RAM+디스크를 함께 채운다**(같은 판정 결과 재사용) — 라우트 단독 콜드는 디스크 → 워커 오프로드(`compute.temp_map_job`) 순 |
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 (메타만 쓰므로 전처리 무관) |
 | REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode) | comment/override/전처리 편집(rev) + 위 전부 |
 | TRIM_CACHE | (akey, chash, sid, edits_rev, mode, source) | trim override/전처리 편집(rev) + 위 전부 |

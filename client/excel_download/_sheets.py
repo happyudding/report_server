@@ -400,7 +400,7 @@ def _fill_cells(ws, cells, rgb):
         _style_range(ws.range(",".join(batch)), fill=rgb)
 
 
-def write_issue_sheet(ws, issue_rows, source_names):
+def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
     """rep/서브헤더/ETC 행만 표시. 접힌 detail 행의 comment 는 같은 bin(rep) 행의
     comment 셀에 "<Item>: <comment>" 줄로 묶어 나열한다 (rep 자신의 comment 가 맨 위).
 
@@ -411,12 +411,15 @@ def write_issue_sheet(ws, issue_rows, source_names):
     강조: Yield/ETC 섹션은 fail yield > 0, CPK 섹션은 cpk < 1.33 셀에 배경색.
     Category 열은 섹션 범위만큼 세로 병합한다.
 
+    Temperature 전용 "Issue Table Temp" 시트도 같은 함수로 쓴다 — 섹션이 TEMP 하나이고
+    Map 썸네일이 bin 이 아니라 **항목별 fail die** 라, 그 행 목록만 temp_rows 로 따로 준다.
+
     반환: {"rows": [(item, excel_row, section), ...], "map_rows": [(bin, excel_row), ...],
-           "dist_col": 열 인덱스, "map_col": 열 인덱스}.
+           "temp_rows": [(item, excel_row), ...], "dist_col": 열 인덱스, "map_col": 열 인덱스}.
     """
     from ._charts import ISSUE_MAP_IN, issue_cdf_pt_size
 
-    _title_banner(ws, "Issue Table")
+    _title_banner(ws, title)
     header = issue_header(source_names)
     c1 = _START_COL
     map_col = c1 + 5
@@ -438,6 +441,7 @@ def write_issue_sheet(ws, issue_rows, source_names):
     rows = []
     item_rows = []
     map_rows = []
+    temp_rows = []
     fail_cells = []
     cpk_cells = []
     subhead_rows = []
@@ -447,7 +451,7 @@ def write_issue_sheet(ws, issue_rows, source_names):
         if r.get("_detail"):
             continue
         # Category 는 섹션 개시행에만 채워진다 (build_issue_table_rows) — 이후 행은 승계.
-        if r.get("Category") in ("Yield", "CPK", "ETC"):
+        if r.get("Category") in ("Yield", "CPK", "ETC", "TEMP"):
             section = r["Category"]
         excel_row = _HEADER_ROW + 1 + len(rows)
         # CPK 섹션 서브헤더 = avg 칸이 "cpk" 인 행 (프런트 isCpkSubheadRow 와 같은 판정)
@@ -478,13 +482,17 @@ def write_issue_sheet(ws, issue_rows, source_names):
                     num = _num(v)
                     if num is None:
                         continue
-                    if section in ("Yield", "ETC") and num > 0:
+                    if section in ("Yield", "ETC", "TEMP") and num > 0:
                         fail_cells.append((excel_row, avg_col + off))
                     elif section == "CPK" and num < _CPK_THRESHOLD:
                         cpk_cells.append((excel_row, avg_col + off))
             # Map 썸네일 대상 — 웹과 동일하게 Bin 이 있는 Yield/ETC 행(Pass 제외)
             if not is_pass and bin_text and section in ("Yield", "ETC"):
                 map_rows.append((bin_text, excel_row))
+            # TEMP 행은 Bin 이 있어도 그 bin 의 die 가 아니라 "이 항목을 벗어난 die" 를
+            # 그린다 — 항목명으로 temp_map 인덱스를 찾는다(웹 map-cell-temp 와 동일).
+            elif section == "TEMP" and str(r.get("Item") or "").strip():
+                temp_rows.append((str(r["Item"]).strip(), excel_row))
 
         item_rows.append((r.get("Item"), excel_row, section))
         if spans and spans[-1][0] == section:
@@ -511,7 +519,7 @@ def write_issue_sheet(ws, issue_rows, source_names):
     dist_w_pt, _dist_h_pt = issue_cdf_pt_size()
     _fit_col_width_pt(ws, map_col, ISSUE_MAP_IN * 72.0)
     _fit_col_width_pt(ws, dist_col, dist_w_pt)
-    return {"rows": item_rows, "map_rows": map_rows,
+    return {"rows": item_rows, "map_rows": map_rows, "temp_rows": temp_rows,
             "dist_col": dist_col, "map_col": map_col}
 
 

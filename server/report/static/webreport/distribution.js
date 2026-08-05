@@ -175,6 +175,7 @@ function distBadgeEl(create) {
       if (b.dataset.distRetry === "bin1") ensureDistBin1Data();
       else if (b.dataset.distRetry === "rtbin1") ensureDistRtBin1Data();
       else if (b.dataset.distRetry === "map") ensureMapData();
+      else if (b.dataset.distRetry === "tempmap") ensureTempMapData(true);   // 백오프 무시
       else ensureDistData();
     });
     document.body.appendChild(el);
@@ -297,6 +298,38 @@ function distRequestSubject(subject, variant) {
 const DIST_BATCH_BADGE_DELAY_MS = 400;
 let _distBatchBadgeTimer = null;
 let _distBatchFailed = false;   // 실패 안내(재시도 버튼)가 떠 있으면 자동으로 걷지 않는다
+
+// ── 202(서버 pack 생성 중) 백오프 재시도 ─────────────────────────────────────
+// pack 이 없는 세션(구세션·전처리 직후)의 첫 배치는 서버가 202 를 주고 백그라운드로
+// pack 을 만든다 — 항목을 대기로 되돌리고 백오프 후 자동 재개한다. 202 를 정상 응답으로
+// 흘리면 subjects 가 _distHave 에 남아 영영 그려지지 않으므로 반드시 여기서 걷어낸다.
+const DIST_202 = { DELAYS_MS: [3000, 5000, 8000, 10000], TIMEOUT_MS: 3 * 60 * 1000 };
+let _dist202Since = 0;      // 첫 202 수신 시각 (성공 시 리셋)
+let _dist202Attempt = 0;
+let _dist202Timer = null;
+
+function dist202Reset() {
+  _dist202Since = 0;
+  _dist202Attempt = 0;
+  if (_dist202Timer) { clearTimeout(_dist202Timer); _dist202Timer = null; }
+}
+
+function distBatch202(key, subjects) {
+  subjects.forEach(s => { _distHave[key].delete(s); _distPending[key].add(s); });
+  const now = Date.now();
+  if (!_dist202Since) _dist202Since = now;
+  if (now - _dist202Since > DIST_202.TIMEOUT_MS) {
+    _distBatchFailed = true;
+    distBadgeShow("분포 데이터 준비 시간 초과 " +
+      `<button type="button" class="btn-sm" data-dist-retry="${key}">재시도</button>`);
+    return;
+  }
+  if (!_distBatchFailed) distBadgeShow("분포 데이터 준비 중… (서버 최초 1회 생성)");
+  if (_dist202Timer) return;
+  const delay = DIST_202.DELAYS_MS[Math.min(_dist202Attempt, DIST_202.DELAYS_MS.length - 1)];
+  _dist202Attempt++;
+  _dist202Timer = setTimeout(() => { _dist202Timer = null; distFlushBatch(); }, delay);
+}
 function distBatchBadgeSync() {
   if (_distInflight > 0) {
     if (_distBatchFailed) return;   // 실패 안내 유지 (재시도 클릭이 지운다)
@@ -313,6 +346,7 @@ function distBatchBadgeSync() {
 }
 
 function distFlushBatch() {
+  if (_dist202Timer) return;   // 202 백오프 대기 중 — 타이머가 재개한다
   if (_distInflight >= DIST_BATCH.MAX_INFLIGHT) return;   // 도착 시 다시 호출된다
   // 전체 기준을 먼저 비운다(갤러리·IssueTable 이 공유하는 기본 캐시). 그다음 bin1 → rtbin1.
   const key = DIST_VARIANTS.find(k => _distPending[k].size);
@@ -327,8 +361,14 @@ function distFlushBatch() {
   const url = `/pe/report/session/${SESSION_ID}/web_report/distribution_batch`
     + `?subjects=${q}${distVariantQuery(key)}`;
   fetch(url, { cache: "no-cache" })
-    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(r => {
+      if (r.status === 202) return { __building: true };   // pack 생성 중 (본문은 무의미)
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    })
     .then(j => {
+      if (j && j.__building) { distBatch202(key, subjects); return; }
+      dist202Reset();
       const built = buildDistDataFromCompact(j);
       Object.keys(built).forEach(s => distCachePut(key, s, built[s]));
       distScheduleRefresh();
@@ -355,6 +395,7 @@ let _distPlotlyHooked = false;
 function ensureDistData() {
   distDataReady = true;
   _distBatchFailed = false;   // 재시도 진입점이기도 하다 — 실패 안내를 걷는다
+  dist202Reset();
   refreshDistConsumers();
   // plotly.min.js 는 async 로드다(첫 화면을 막지 않기 위함). 분포 데이터가 plotly 보다
   // 먼저 도착하면 미니셀 렌더가 `typeof Plotly === "undefined"` 가드에 걸려 조용히
@@ -395,6 +436,7 @@ function refreshDistConsumers() {
 function ensureDistBin1Data() {
   distBin1Ready = true;
   _distBatchFailed = false;   // 재시도 진입점 — 실패 안내를 걷는다
+  dist202Reset();
   refreshDistGallery();
   return Promise.resolve();
 }
@@ -403,6 +445,7 @@ let distRtBin1Ready = false;
 function ensureDistRtBin1Data() {
   distRtBin1Ready = true;
   _distBatchFailed = false;
+  dist202Reset();
   refreshDistGallery();
   return Promise.resolve();
 }

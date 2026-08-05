@@ -173,7 +173,7 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 - `report_audit_log` — upload/edit/delete 감사. 메타 스냅샷 + client_ip/user_agent/client_user
   (클라 신고 계정, 위조 가능) + result. best-effort. `/pe/admin-pte/` 대시보드에서 조회.
 - `report_webreport_edit` / `_rev` — web_report 편집(comment/etc/trim override/engr/
-  chart_note(차트 주석)/note_sheet(Note 탭 Luckysheet 시트 JSON ≤2MB)/preprocess(조회 전처리
+  chart_note(차트 주석)/note_sheet(Note 탭 Luckysheet 시트 JSON ≤3MB)/preprocess(조회 전처리
   spec — 항목 제외·outlier·셀 패치·조건 규칙)/yield_basis)의 **진실 저장소,
   세션 단위**. dedup(동일 analysis_key) 세션 간 편집 비공유. `rev` 는 단조 증가 캐시
   무효화 토큰. manifest 는 불변 스냅샷 ([web_report/edits.py](web_report/edits.py)).

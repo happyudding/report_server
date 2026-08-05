@@ -564,6 +564,25 @@ def render_issue_maps_job(job) -> dict:
     return out
 
 
+def render_temp_maps_job(job) -> dict:
+    """Issue Table Temp 행 Map 썸네일 — 한 소스 dies 로 여러 항목만큼 렌더. job:
+
+    {"dies", "targets": [(item, idx, out_path), ...]}
+    render_issue_maps_job 과 같은 이유로 소스 단위로 묶는다(die 목록 피클 1회).
+    반환: {item: out_path}.
+    """
+    from ._map import render_temp_map_png
+
+    dies = job.get("dies") or []
+    out = {}
+    if not dies:
+        return out
+    for item, idx, out_path in job.get("targets") or []:
+        render_temp_map_png(dies, idx, out_path=out_path, size_in=ISSUE_MAP_IN)
+        out[str(item)] = out_path
+    return out
+
+
 def issue_map_pt_size():
     """Issue Table Map 썸네일의 부착 물리 크기 (width_pt, height_pt) — 정사각."""
     return (ISSUE_MAP_IN * 72.0, ISSUE_MAP_IN * 72.0)

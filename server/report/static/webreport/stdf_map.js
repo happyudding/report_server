@@ -236,10 +236,10 @@ function stdfThumbDefaultSource(data) {
 }
 
 // scatter 엔드포인트(die 별 값)를 캐시와 함께 가져온다 — item_detail.js 와 동일 소스.
+// 콜드 세션은 202 가 오므로 fetchJson202(core.js)가 웜업 완료까지 백오프 재시도한다.
 function stdfFetchScatter(subject) {
   if (_stdfScatterCache[subject]) return Promise.resolve(_stdfScatterCache[subject]);
-  return fetch(`/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`)
-    .then(res => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
+  return fetchJson202(`/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`)
     .then(data => {
       cachePutCapped(_stdfScatterCache, _stdfScatterOrder, subject, data,
                      STDF_SCATTER_CACHE_MAX);

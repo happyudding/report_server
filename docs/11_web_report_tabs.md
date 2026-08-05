@@ -68,6 +68,9 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     `usl_bin` — `.lt` 의 `20:19` 는 **콜론 오른쪽(19)만** 쓴다. 없으면 관측 bin 최빈값
     (member → RT 순, `"999"` 제외), 그래도 없으면 공백. 행은 항상 item 1개다 —
     row_key `TEMP|<item>` 을 유지해야 기존 comment/Status 와 파서 4곳이 안 깨진다.
+  - **판정은 1회만 돈다**: `compute_temp_fail` 이 (count, die 인덱스)를 한 순회로 만들고
+    tables 클론에 캐시한다 — 표(`build_temp_fail_rows`)와 Map(`temp_fail_indices`)이 그
+    결과를 공유한다. 21 source 세션에서 같은 판정을 두 벌 돌던 것을 없앤 지점이다.
   - **Map 항목 legend**: Map Analysis 색 기준 축에 `Temp Item` 이 추가된다(Temperature
     전용). 항목별 fail die 는 `GET .../web_report/temp_map` 이 **dies 배열 인덱스**로
     내려준다(`{"format":"temp-map-v1","sources":[{source,n,items:[{item,idx}]}]}`) —
@@ -75,6 +78,17 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     때문이다. 인덱스 기준은 `Map_analysis` 의 `XPOS/YPOS notna` mask 와 **문자 그대로
     동일**해야 한다(회귀 고정: `test_temperature_fail_eval.test_indices_align_with_map_dies`).
     Issue Table Temp 의 Map 셀(`data-temp-item`)도 같은 데이터를 쓴다.
+    **report 콜드 빌드가 `service.seed_temp_map` 으로 RAM+디스크를 미리 채운다** — 안 하면
+    Issue Table 첫 진입에서 요청 스레드가 전 항목 판정을 다시 돈다. 라우트 단독 콜드는
+    워커 오프로드(`compute.temp_map_job`).
+  - **legend 는 상위 7항목 + "기타" 1행**(팔레트 색 수 = `FAIL_PALETTE`) — TNO Legend 와
+    같은 규약. 필터로 고른 항목은 상위 밖이어도 legend 에 올려 원색으로 보여준다.
+  - **Yield 탭 하단 Temp Corner 섹션은 요약**이다 — 상위 60행만 그리고 나머지는
+    "Issue Table Temp 탭에서" 로 보낸다(통짜 렌더 블록 회피).
+  - **Honey 전체 Excel** 에도 `Issue Table Temp` 시트가 들어간다(Temperature 세션만) —
+    Distribution 열은 항목 CDF, Map 열은 **항목별 fail die 강조** 썸네일
+    (`_map.render_temp_map_png`, temp_map 인덱스 기준). temp_map 수신 실패 시 Map 열만
+    비우고 시트는 만든다.
   - **Distribution**: 소스 그룹 필터의 그룹 라벨에서 `_RT` 접미사를 뗀다. 신규 버튼
     `Bin1 (RT만)` = `?bin1=1&bin1_scope=rt` — RT 소스만 양품·규격내로 좁히고 CT/HT 는
     fail 포함 전체(`dist_pack._ecdf_sources(bin1_sources=)` /
@@ -572,9 +586,9 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
 탭 전체가 **Luckysheet 시트 캔버스** (vendored 2.1.13, MIT — `server/report/vendor/luckysheet/`).
 엑셀 정리 워크플로 대체: 차트 PNG 붙여넣기(플로팅 이미지), 셀 수식/서식, 엑셀 range 붙여넣기.
 셀 계산은 전부 브라우저 — 서버는 시트 JSON 저장만. 프런트 [note.js](../server/report/static/webreport/note.js).
-- 시트 저장: kind `note_sheet`(item_key=`"sheet"`, 전체 치환, **≤2MB**). `/full` 에는
+- 시트 저장: kind `note_sheet`(item_key=`"sheet"`, 전체 치환, **≤3MB**). `/full` 에는
   `note_info`(존재/최종수정 메타)만 — 본문은 lazy `GET·POST .../web_report/note`.
-  `load_edit_state` 는 이 kind 를 **제외 조회**해 comment 저장·콜드 빌드가 2MB 블롭을
+  `load_edit_state` 는 이 kind 를 **제외 조회**해 comment 저장·콜드 빌드가 3MB 블롭을
   끌어오지 않는다 (`get_webreport_edits(kinds/exclude_kinds)`).
 - 이미지: `POST .../web_report/note_image` (PNG/JPEG 매직바이트, ≤2MB, 세션당 200장) →
   S3(`pe/report_server/note_img/<sid>/`)+로컬 폴백
