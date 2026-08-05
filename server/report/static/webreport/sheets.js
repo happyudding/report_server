@@ -27,7 +27,9 @@ function colWidth(name, kind, narrowSrc) {
   // Issue Table 은 Map/Distribution 을 왼쪽에 함께 틀고정하므로 식별컬럼을 좁혀 고정 블록 폭을
   // 줄인다(Step 유지, Yield 표는 무영향). Map/Dist 최소폭은 CSS min-width 로 보장하고, 공간이
   // 모자라면 Item 을 더 줄이는 방향(사용자 요청) — Bin/TNO 70%, Item 55%.
-  if (n === "step")                     return px(44);
+  // Issue Table Step 은 접기/펼치기 화살표를 값 아래 줄로 내렸으므로(CSS .kind-issue
+  // .issue-toggle{display:block}) 폭 힌트를 헤더 라벨("Step") 크기까지 좁힌다.
+  if (n === "step")                     return px(kind === "issue" ? 28 : 44);
   if (n === "bin")                      return px(kind === "issue" ? 44 * 0.7 : 44);
   if (n === "tno")                      return px(kind === "issue" ? 60 * 0.7 : 60);
   if (n === "map")                      return px(96);   // Distribution 과 동일 폭
@@ -35,7 +37,9 @@ function colWidth(name, kind, narrowSrc) {
   if (n.endsWith("_count"))             return px(narrowSrc ? 38 : 60);
   if (n.endsWith("_yield"))             return px(narrowSrc ? 38 : 60);
   if (n === "avg")                      return px(48);
-  if (n === "status")                   return px(56);   // Issue Table Open/Close 드랍다운
+  // Open/Close 드랍다운은 CSS 로 "Close" 글자 폭까지 좁혔다(select.issue-status-sel) —
+  // 폭 힌트도 함께 낮춰 실제 폭이 max(헤더 "Status", 드랍다운) 로 정해지게 한다.
+  if (n === "status")                   return px(38);   // Issue Table Open/Close 드랍다운
   if (n === "item")                     return px(kind === "issue" ? 150 * 0.55 : 150);
   if (n === "category")                 return "50px";
   if (n === "condition & judge limit")  return "185px";
@@ -422,10 +426,13 @@ function issueSectionHeadRowsHtml(cols, sec) {
   ).join("");
   const botRow = runs.filter(r => r.group).map(r => {
     const runCols = cols.slice(r.start, r.start + r.len);
-    // source 이름은 SRC_ABBREV_MIN 미만이면 full 표시(기존 동작), 이상이면 공통 접두/접미를
-    // 뗀 라벨(첫 컬럼만 full) — 소스가 많을 때 열너비를 숫자 크기까지 좁히기 위함.
+    // source 이름 축약은 Yield 탭(buildSheetTableHead)과 같은 규칙을 쓴다 —
+    // SRC_ABBREV_MIN 이상이면 공통 접두/접미를 뗀 라벨(첫 컬럼만 full), 미만이면
+    // ".."+뒤 6글자 축약. hover(title)로 전체 이름을 볼 수 있다.
     const srcCols = runCols.filter(c => !isAvgCol(c));
-    const labels = sourceHeaderLabels(srcCols.map(sheetHeaderShortLabel));
+    const fulls = srcCols.map(sheetHeaderShortLabel);
+    const labels = srcCols.length >= SRC_ABBREV_MIN
+      ? sourceHeaderLabels(fulls) : abbrevSourceLabels(fulls);
     const labByCol = {};
     srcCols.forEach((c, i) => { labByCol[c] = labels[i]; });
     return runCols.map((c, k) => {

@@ -539,15 +539,15 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+6) { position: sticky; z-index: 3; background: #fff; }
 /* 헤더 상단행의 고정컬럼은 상단+좌측 동시 고정(코너)이라 다른 sticky 위로 올린다. */
 .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+6) { z-index: 7; background: #e8eef4; }
-/* 좌측 고정 오프셋 = 앞 컬럼 폭 누적. colWidth 기본값(70% 축소 반영: step66+bin46+tno63+item158+map144)이
+/* 좌측 고정 오프셋 = 앞 컬럼 폭 누적. colWidth 기본값(70% 축소 반영: step42+bin46+tno63+item158+map144)이
    fallback 이지만, 셀 내용이 길어 컬럼이 늘어나면 고정 px 는 어긋나(셀 겹침/깨짐) 실제 폭을
    JS(syncIssueStickyOffsets)로 측정해 --issue-colN-left 로 덮어쓴다. */
 .sheet-table.kind-issue tbody td:nth-child(1), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(1) { left: 0; }
-.sheet-table.kind-issue tbody td:nth-child(2), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(2) { left: var(--issue-col2-left, 66px); }
-.sheet-table.kind-issue tbody td:nth-child(3), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(3) { left: var(--issue-col3-left, 112px); }
-.sheet-table.kind-issue tbody td:nth-child(4), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(4) { left: var(--issue-col4-left, 175px); }
-.sheet-table.kind-issue tbody td:nth-child(5), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(5) { left: var(--issue-col5-left, 299px); }
-.sheet-table.kind-issue tbody td:nth-child(6), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(6) { left: var(--issue-col6-left, 443px); }
+.sheet-table.kind-issue tbody td:nth-child(2), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(2) { left: var(--issue-col2-left, 42px); }
+.sheet-table.kind-issue tbody td:nth-child(3), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(3) { left: var(--issue-col3-left, 88px); }
+.sheet-table.kind-issue tbody td:nth-child(4), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(4) { left: var(--issue-col4-left, 151px); }
+.sheet-table.kind-issue tbody td:nth-child(5), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(5) { left: var(--issue-col5-left, 275px); }
+.sheet-table.kind-issue tbody td:nth-child(6), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(6) { left: var(--issue-col6-left, 419px); }
 /* Map(5)/Distribution(6) 컬럼 최소폭 보장 — source 가 많아 auto table-layout 이 <col> 힌트폭 밑으로
    차트 컬럼을 압축해도(미니셀은 content min-width 0) 최소 144px 는 확보한다(사용자 요청: Map/Dist
    최소값 보장). 리사이즈로 더 넓힐 순 있어도 144 밑으론 안 줄어든다. */
@@ -590,6 +590,9 @@ tbody tr:hover { background: #f9fbff; }
   cursor: pointer; margin-left: 3px; vertical-align: middle;
 }
 .yield-toggle:hover, .issue-toggle:hover { background: #dbe8fb; }
+/* Issue Table 은 화살표를 STEP 값 오른쪽이 아니라 아래 줄에 둔다(사용자 요청 2026-08-05) —
+   Step 열 폭이 값("P2") 폭까지 좁아진다. Yield 탭 토글은 종전대로 오른쪽 유지. */
+.sheet-table.kind-issue .issue-toggle { display: block; margin: 2px auto 0; }
 .sheet-table.kind-yield tbody tr.yield-bin-detail td { background: #fbfcfe; color: #55606c; }
 .sheet-table.kind-yield tbody tr.yield-bin-rep td { font-weight: 600; }
 .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #fbfcfe; color: #55606c; }
@@ -1424,9 +1427,12 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
 .yield-toolbar .tab-excel-btn, .cpk-toolbar .tab-excel-btn { margin-left: auto; }
 
 /* Issue Table Status(Open/Close) — 편집모드 드랍다운 + 조회모드 텍스트 색 구분 */
+/* 드랍다운 폭은 100% 대신 내용("Close") 폭까지 좁힌다 + 폰트 2pt 축소 → Status 열이
+   좁아진다(사용자 요청 2026-08-05). td.issue-status-cell 이 가운데 정렬을 맡는다. */
 select.issue-status-sel {
-  width: 100%; padding: 2px 2px; border: 1px solid #d0d5dd; border-radius: 4px;
-  font-size: 12px; background: #fff; cursor: pointer;
+  width: auto; min-width: 0; padding: 1px 0 1px 2px;
+  border: 1px solid #d0d5dd; border-radius: 4px;
+  font-size: 10px; background: #fff; cursor: pointer;
 }
 select.issue-status-sel:focus { border-color: #4a90e2; outline: none; }
 td.issue-status.is-open { color: #ea580c; font-weight: 600; }
