@@ -1463,11 +1463,12 @@ class HoneyMainWindow(QMainWindow):
         self._intake(paths)
 
     def on_open_folder(self):
-        """폴더 열기 — 하위 데이터 파일을 수집한다.
+        """폴더 열기 — 하위 파일을 수집한다.
 
         상위폴더(예 EP1) 밑에 RT/CT/HT 온도 폴더가 있으면 그 폴더들만 읽고 역할을
         기억한다(Temperature 배치 창 자동 배치 근거). 온도 폴더가 없으면 일반 폴더로
-        보고 하위 데이터 파일을 전부 가져온다 — 전 모드에서 쓸 수 있다."""
+        보고 하위 파일을 전부 가져온다 — 전 모드에서 쓸 수 있다.
+        확장자 필터는 없다(파일 열기와 같은 규칙) — 필요 없는 파일은 리스트에서 ✕ 로 뺀다."""
         path = QFileDialog.getExistingDirectory(self, "폴더 열기", "")
         if path:
             self._intake_folders([path])
@@ -1484,10 +1485,7 @@ class HoneyMainWindow(QMainWindow):
                 merged.append(key)
                 seen.add(key)
         if not merged:
-            QMessageBox.warning(
-                self, "폴더 열기",
-                "가져올 데이터 파일이 없습니다.\n"
-                f"대상 확장자: {', '.join(folder_intake.DATA_SUFFIXES)}")
+            QMessageBox.warning(self, "폴더 열기", "폴더에 파일이 없습니다.")
             return
 
         before = len(self.csv_paths or [])

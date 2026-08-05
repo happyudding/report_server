@@ -7,9 +7,9 @@
   - 폴더명 role 인식: RT/ROOM · CT/COLD · HT/HOT, 대소문자 무관 + 토큰 경계 부분일치
     ("RT_25C" 인식 / "SHORT" 미인식), 2개 role 동시 매칭은 모호 → None
   - role 폴더가 하나라도 있으면 **그 폴더만** 수집하고 나머지는 skipped 로 보고
-  - role 폴더가 하나도 없으면 일반 폴더로 보고 하위 데이터 파일 전부 재귀 수집(role 없음)
+  - role 폴더가 하나도 없으면 일반 폴더로 보고 하위 파일 전부 재귀 수집(role 없음)
   - 수집 순서는 (RT → CT → HT, 이름순) 고정 — 자동 그룹 배치가 실행마다 흔들리면 안 된다
-  - .lt/.pds 는 limit 파일이라 입력 파일로 수집하지 않는다
+  - **확장자 필터 없음** — 파일 열기와 같은 규칙(.lt/.pds·로그도 딸려온다)
 
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례).
 """
@@ -76,13 +76,19 @@ def test_scan_folder_temperature_layout():
         assert all("readme.csv" not in p for p in paths), paths
 
 
-def test_scan_folder_skips_limit_files():
-    """.lt/.pds 는 limit 테이블이라 입력 파일로 수집하지 않는다."""
+def test_scan_folder_has_no_extension_filter():
+    """확장자 필터 없음 — 파일 열기("모든 파일 (*.*)")와 같은 규칙 (2026-08-05 사용자 확정).
+
+    .lt/.pds 같은 limit 테이블이나 로그도 그대로 딸려온다. 걸러내는 것은 사용자 몫
+    (파일 리스트 행별 ✕). 여기서 다시 화이트리스트를 넣지 말 것.
+    """
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp) / "EP1"
-        _make(root, "RT", "wf1.stdf", "limits.lt", "spec.pds")
-        paths, _roles, _skipped = scan_folder(root)
-        assert [Path(p).name for p in paths] == ["wf1.stdf"], paths
+        _make(root, "RT", "wf1.stdf", "limits.lt", "spec.pds", "run.log", "noext")
+        paths, roles, _skipped = scan_folder(root)
+        assert sorted(Path(p).name for p in paths) == [
+            "limits.lt", "noext", "run.log", "spec.pds", "wf1.stdf"], paths
+        assert set(roles.values()) == {"RT"}, roles
 
 
 def test_scan_folder_plain_folder_recurses():
@@ -141,7 +147,7 @@ def main():
         pass
     checks = 0
     for fn in (test_role_of_dirname_recognized, test_role_of_dirname_rejected,
-               test_scan_folder_temperature_layout, test_scan_folder_skips_limit_files,
+               test_scan_folder_temperature_layout, test_scan_folder_has_no_extension_filter,
                test_scan_folder_plain_folder_recurses, test_scan_folder_root_is_role_folder,
                test_scan_folder_missing_dir, test_scan_folders_merges_without_duplicates):
         fn()

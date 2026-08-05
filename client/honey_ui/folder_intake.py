@@ -10,9 +10,13 @@ LOCAL FILE OPEN 의 "폴더 열기" 와 창 드래그앤드랍이 공유하는 �
     ├── CT/    (CT, COLD)
     └── HT/    (HT, HOT)
 
-role 폴더를 하나라도 찾으면 **그 폴더들의 데이터 파일만** 수집한다(인식 못 한 폴더는
-건너뛴다). role 폴더가 하나도 없으면 Temperature 가 아닌 일반 폴더로 보고 하위 데이터
-파일을 전부 재귀 수집한다(role 맵은 비어 있음) — 전 모드에서 폴더 열기를 쓸 수 있게.
+role 폴더를 하나라도 찾으면 **그 폴더들의 파일만** 수집한다(인식 못 한 폴더는 건너뛴다).
+role 폴더가 하나도 없으면 Temperature 가 아닌 일반 폴더로 보고 하위 파일을 전부 재귀
+수집한다(role 맵은 비어 있음) — 전 모드에서 폴더 열기를 쓸 수 있게.
+
+**확장자 필터는 없다** — 파일 열기(QFileDialog "모든 파일 (*.*)")와 같은 규칙이다.
+따라서 폴더 안에 `.lt`/`.pds` 같은 limit 테이블이나 로그가 있으면 그것도 입력 파일로
+딸려온다. 필요 없는 것은 파일 리스트에서 행별 ✕ 로 빼면 된다.
 
 여기서 얻은 ``{경로: role}`` 은 Temperature 배치 창의 **자동 배치 근거**로만 쓰인다.
 입력 파일 개수 ≠ source 개수(honey_parse 가 내부 병합할 수 있음)이므로 role 을 source
@@ -31,10 +35,6 @@ ROLE_TOKENS = {
     "HT": ("HT", "HOT"),
 }
 ROLE_ORDER = ("RT", "CT", "HT")
-
-# 파싱 대상 데이터 파일. .lt/.pds 는 limit 테이블이라 입력 파일이 아니다
-# (Temperature 배치 창의 드롭 영역이 따로 받는다).
-DATA_SUFFIXES = (".csv", ".stdf", ".std")
 
 # 토큰 경계는 '알파벳이 아닌 것' — "RT_25C"·"RT25C"·"Cold Temp" 는 걸리고
 # "SHORT"(RT 포함)·"OCTOBER"(CT 포함) 는 안 걸린다.
@@ -56,17 +56,13 @@ def role_of_dirname(name) -> str | None:
     return hits[0] if len(hits) == 1 else None
 
 
-def _is_data_file(path: Path) -> bool:
-    return path.suffix.lower() in DATA_SUFFIXES
-
-
 def _data_files(directory: Path) -> list:
-    """폴더 직속 데이터 파일 (이름순). 하위 폴더는 보지 않는다."""
+    """폴더 직속 파일 전부 (이름순). 하위 폴더는 보지 않는다."""
     try:
         entries = sorted(directory.iterdir(), key=lambda p: p.name.lower())
     except OSError:
         return []
-    return [p for p in entries if p.is_file() and _is_data_file(p)]
+    return [p for p in entries if p.is_file()]
 
 
 def _walk_data_files(root: Path) -> list:
@@ -75,9 +71,7 @@ def _walk_data_files(root: Path) -> list:
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames.sort(key=str.lower)
         for name in sorted(filenames, key=str.lower):
-            path = Path(dirpath) / name
-            if _is_data_file(path):
-                out.append(path)
+            out.append(Path(dirpath) / name)
     return out
 
 
@@ -121,7 +115,7 @@ def scan_folder(root) -> tuple:
                     roles[key] = role
         return paths, roles, skipped
 
-    # role 폴더가 하나도 없다 → 일반 폴더. 하위 데이터 파일을 전부 가져오고 role 은 없다.
+    # role 폴더가 하나도 없다 → 일반 폴더. 하위 파일을 전부 가져오고 role 은 없다.
     return [str(p.resolve()) for p in _walk_data_files(root)], {}, []
 
 
