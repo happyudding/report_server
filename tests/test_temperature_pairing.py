@@ -20,9 +20,9 @@ import sys
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "client"))
 
-from honey_ui.temperature_group_dialog import (pair_key,  # noqa: E402
-                                               suggest_groups,
-                                               suggest_groups_by_role)
+from honey_ui.temperature_pairing import (pair_key,  # noqa: E402
+                                          suggest_groups,
+                                          suggest_groups_by_role)
 
 
 def test_pair_key_strips_role_token():

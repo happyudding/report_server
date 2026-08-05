@@ -25,10 +25,11 @@ import requests
 
 from PyQt6 import uic
 from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, QPoint, QRect, QUrl, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QColor, QFont, QFontMetrics
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QDialog, QFileDialog, QHeaderView,
     QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton,
+    QStyle, QStyledItemDelegate, QStyleOptionViewItem,
     QTableWidgetItem, QToolButton, QWidget,
 )
 
@@ -42,7 +43,6 @@ from honey_ui import folder_intake
 from honey_ui import (
     ColorEditorDialog,
     ElapsedProgress as _ElapsedProgress,
-    FileOrderDialog,
     OptionsDialog,
     ReportSettingsDialog,
     SHEET_OPTIONS,
@@ -312,6 +312,42 @@ class SlideInPanel(QWidget):
             self.setGeometry(shown)
 
 
+class FilePathDelegate(QStyledItemDelegate):
+    """입력 파일 리스트의 '파일 경로' 셀 — 폴더 부분은 기본색, 파일명만 파란 굵은 글씨.
+
+    한 셀 안에서 색을 나눠야 해서 QTableWidgetItem 의 foreground 로는 안 되고
+    직접 그린다. 배경/선택 표시는 기본 스타일에 맡기고 텍스트만 두 번 나눠 찍는다."""
+    NAME_COLOR = QColor("#1565C0")
+
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        text = opt.text
+        opt.text = ""                      # 배경·선택만 기본 스타일로 그리게
+        widget = opt.widget
+        style = widget.style() if widget else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, widget)
+
+        rect = style.subElementRect(
+            QStyle.SubElement.SE_ItemViewItemText, opt, widget)
+        cut = max(text.rfind("\\"), text.rfind("/")) + 1   # 경로 구분자는 OS 무관하게 둘 다
+        head, name = text[:cut], text[cut:]
+        painter.save()
+        painter.setFont(opt.font)
+        x = rect.x()
+        if head:
+            painter.setPen(opt.palette.text().color())
+            painter.drawText(rect, Qt.AlignmentFlag.AlignVCenter, head)
+            x += painter.fontMetrics().horizontalAdvance(head)
+        painter.setPen(self.NAME_COLOR)
+        bold = QFont(opt.font)
+        bold.setBold(True)
+        painter.setFont(bold)
+        painter.drawText(QRect(x, rect.y(), rect.right() - x + 1, rect.height()),
+                         Qt.AlignmentFlag.AlignVCenter, name)
+        painter.restore()
+
+
 class HoneyMainWindow(QMainWindow):
     # 백그라운드 버전 체크 결과 전달 (manifest dict 또는 예외) — cross-thread 라
     # 자동 queued connection (UploadDialog._part_ids_ready 와 같은 패턴)
@@ -502,6 +538,7 @@ class HoneyMainWindow(QMainWindow):
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)             # 행별 ✕ 삭제 버튼(좁게 고정)
         t.setColumnWidth(2, 32)
         hh.setStretchLastSection(False)
+        t.setItemDelegateForColumn(0, FilePathDelegate(t))   # 파일명만 파란색
         # 드롭은 리스트 영역에서만 받는다 (메인 창엔 setAcceptDrops 를 걸지 않음).
         t.setTextElideMode(Qt.TextElideMode.ElideNone)
         t.setWordWrap(False)
@@ -559,7 +596,7 @@ class HoneyMainWindow(QMainWindow):
         if dirs:
             self._intake_folders(dirs, extra_paths=files)
         else:
-            self._intake(files)   # 기존 인테이크 흐름 재사용(2개↑면 순서 팝업)
+            self._intake(files)   # 기존 인테이크 흐름 재사용
 
     def _connect_signals(self):
         self.btn_open_local.clicked.connect(self.on_open_local)
@@ -1491,7 +1528,7 @@ class HoneyMainWindow(QMainWindow):
         before = len(self.csv_paths or [])
         self._intake(merged, roles=roles)
         if len(self.csv_paths or []) == before:
-            return                      # busy 이거나 순서 팝업에서 취소 — 안내할 것 없음
+            return                      # busy 로 인테이크가 막힘 — 안내할 것 없음
         notes = []
         if roles:
             notes.append(" / ".join(
@@ -1524,8 +1561,10 @@ class HoneyMainWindow(QMainWindow):
         webbrowser.open("https://confluence.samsungds.net/pages/editpage.action?pageId=3473285336")
 
     def _intake(self, paths, roles=None):
-        """선택된 파일들 → (2개 이상이면) 순서 지정 팝업 → 메인 창에 로드.
+        """선택된 파일들 → 메인 창 파일 리스트에 로드.
 
+        순서 변경은 파일 리스트의 ▲▼ 버튼이 담당하므로 인테이크 시점의 순서 지정
+        팝업은 두지 않는다(같은 기능 중복).
         파일 열기·D1·드래그앤드롭이 모두 여기로 합류하므로, busy 중 새 입력 차단도
         여기 한 곳에서 한다 (드롭은 액션이 아니라 setEnabled 로 막을 수 없다).
         roles 는 폴더 열기가 알아낸 {경로: 온도 역할} (없으면 None)."""
@@ -1535,11 +1574,6 @@ class HoneyMainWindow(QMainWindow):
         paths = list(paths or [])
         if not paths:
             return
-        if len(paths) > 1:
-            dlg = FileOrderDialog(self, paths)
-            if not dlg.exec():
-                return
-            paths = dlg.ordered_paths()
         self._load_paths(paths, roles=roles)
 
     def _refill_csv_list(self):
@@ -1570,7 +1604,16 @@ class HoneyMainWindow(QMainWindow):
             self.list_csv.setRowHeight(r, 20)
         if self.csv_paths:
             fm = self.list_csv.fontMetrics()
-            width = max(fm.horizontalAdvance(str(Path(p).resolve())) for p in self.csv_paths)
+            # 파일명은 굵게 그려지므로(FilePathDelegate) 그 부분만 굵은 폭으로 잰다.
+            bold = QFont(self.list_csv.font())
+            bold.setBold(True)
+            fm_bold = QFontMetrics(bold)
+            width = 0
+            for p in self.csv_paths:
+                full = str(Path(p).resolve())
+                cut = max(full.rfind("\\"), full.rfind("/")) + 1
+                width = max(width, fm.horizontalAdvance(full[:cut])
+                            + fm_bold.horizontalAdvance(full[cut:]))
             self.list_csv.setColumnWidth(0, max(420, width + 36))
             # 파일 리스트를 채우면 긴 경로의 파일명(오른쪽)이 보이도록 가로 스크롤을 끝까지.
             # 스크롤바 range 는 레이아웃 후 갱신되므로 다음 이벤트 루프에서 최대로 민다.
@@ -1667,6 +1710,15 @@ class HoneyMainWindow(QMainWindow):
         _stage(n_files, "그룹 구성 중...")
         with _flow_time("df_honey_group.construct"):
             group = rg.df_honey_group(results)
+        # PMIC 파일명 규칙(LOT + WF → '602XX2_3')으로 legend 기본값을 덮어쓴다.
+        # 원 규칙은 report_generator/df_honey.py(동결 영역)에 있어 고칠 수 없으므로,
+        # 정식 오버라이드 API 인 rename_sources 로 파싱 직후 갈아끼운다 — 빈 문자열은
+        # 기존명 유지, 중복은 _2/_3 회피, 캐시 무효화까지 그 함수가 해준다.
+        # PMIC 이 아니거나 규칙에 맞는 파일이 하나도 없으면 None 이라 기존 이름이 남는다.
+        from honey_ui.source_naming import suggest_source_names
+        auto_names = suggest_source_names(paths, product_type)
+        if auto_names:
+            group.rename_sources(auto_names)
         issues = None
         if warn:
             _stage(n_files, "스키마 검증 중...")
@@ -1867,34 +1919,64 @@ class HoneyMainWindow(QMainWindow):
         finally:
             self._set_busy(False)
 
-    def _ask_source_names(self):
-        """Web Report 생성 직전 source 별 legend 이름을 매번 확인·변경.
+    def _dialog_entries(self, names, paths=None, from_group=True):
+        """SourceNameDialog 입력 ``[(legend, 대표 입력 파일 절대경로)]`` 를 만든다.
 
-        빈 입력/취소는 기존 이름 유지. 반환값을 rename_sources 에 넘긴다 (없으면 None).
+        파싱이 끝났으면 md 에서 대표 경로를 얻고(``source_display_path`` 가 우선순위를
+        한 곳에 모아둔다), **파싱 전**(Temperature 선표시)에는 아직 md 가 없으므로 추정
+        이름과 같은 순번의 입력 파일 경로를 쓴다 — 그 이름 자체가 그 파일에서 나왔으므로
+        순번이 곧 대응이다. 그때는 stale 한 self.group 을 보지 않도록 from_group=False.
         """
-        from PyQt6.QtWidgets import QInputDialog
-        current = list(self.group.names())
-        text, ok = QInputDialog.getText(
-            self, "SourceName 변경",
-            "각 입력 파일의 Legend 이름을 쉼표(,)로 구분해 입력하세요.\n"
-            "빈칸은 기존 이름을 유지합니다.",
-            text=", ".join(current))
-        if not ok:
+        from honey_ui.source_name_dialog import source_display_path
+
+        group = getattr(self, "group", None) if from_group else None
+        mass_map = getattr(group, "mass_data_map", None) if group is not None else None
+        entries = []
+        for i, name in enumerate(names):
+            path = ""
+            if mass_map is not None and name in mass_map:
+                path = source_display_path(mass_map[name], "")
+            if not path and paths and i < len(paths):
+                path = str(paths[i])
+            entries.append((name, path))
+        return entries
+
+    def _ask_source_names(self):
+        """Web Report 생성 직전 source 이름·순서를 표에서 확인·변경. 취소면 None.
+
+        표 한 줄이 source 하나다 — 왼쪽은 그 source 를 만든 대표 입력 파일(읽기 전용,
+        툴팁에 전체 경로), 오른쪽이 legend 이름이다. ↑/↓ 로 바꾼 순서가 그대로 업로드
+        순서(= 서버 tables 순서)가 되고 **최상단 source 의 limit 이 리포트 전체 기준**이다.
+
+        반환은 SourceNameDialog.result_arrangement() 그대로 — 호출부가
+        _apply_source_arrangement 로 반영한다.
+        """
+        from honey_ui.source_name_dialog import SourceNameDialog
+
+        names = list(self.group.names())
+        dlg = SourceNameDialog(self, self._dialog_entries(names, list(self.csv_paths)),
+                               mode=self._selected_web_mode())
+        if not dlg.exec():
             return None
-        parts = [p.strip() for p in text.split(",")]
-        while len(parts) < len(current):
-            parts.append("")
-        overrides = []
-        seen = {}
-        for i, part in enumerate(parts[:len(current)]):
-            base = part or current[i]
-            if base in seen:
-                seen[base] += 1
-                base = f"{base}_{seen[base]}"
-            else:
-                seen[base] = 1
-            overrides.append(base)
-        return overrides
+        return dlg.result_arrangement()
+
+    def _apply_source_arrangement(self, arranged, options):
+        """다이얼로그 결과를 group·options 에 반영하고 업로드 순서를 돌려준다.
+
+        rename 은 groups/order 를 쓰는 것보다 **먼저** 해야 mass_data_map 조회가 새 이름과
+        맞는다. 순서는 이름이 아니라 **원본 index** 로 잇는다 — 다이얼로그의 dedupe 규칙과
+        ``df_honey_group._dedup_in_place`` 는 알고리즘이 달라(카운터 vs 충돌 회피 루프)
+        같은 입력에서도 이름이 갈릴 수 있고, 그러면 mass_data_map 조회가 KeyError 가 난다.
+        """
+        self.group.rename_sources(arranged["names"])
+        actual = list(self.group.names())
+        order = [actual[i] for i in arranged.get("order_index") or []
+                 if 0 <= i < len(actual)]
+        colors = arranged.get("colors")
+        if colors:
+            # 창에서 지정한 색이 옵션(F10) 팔레트보다 우선한다 (이 리포트에만 적용).
+            options["colors"] = colors
+        return order if len(order) == len(actual) else None
 
     def _selected_web_mode(self):
         """패널 라디오에서 선택된 Web Report 분석 모드 (기본 Normal)."""
@@ -1931,20 +2013,29 @@ class HoneyMainWindow(QMainWindow):
     def _guess_source_names(self, paths):
         """파싱 **전에** 파일명만으로 source 이름을 추정한다 (그룹 배치 창 선표시용).
 
-        ``df_honey.from_csv`` 는 이름을 `파일명 패턴 → 파일 안 Yield 시트명 → stem[:10]`
-        순으로 정한다. **전 파일이 파일명 패턴(lot header + W tail)을 갖출 때만** 파싱
-        없이 같은 이름을 알 수 있으므로, 하나라도 패턴이 없으면 None 을 돌려 호출부가
-        종전 순서(파싱 → 배치 창)로 돌아가게 한다 — 뜻 없는 stem 조각으로 창을 띄우면
-        파일명 자동 배치(suggest_groups)까지 빗나가 오히려 손해다.
+        **전 파일이 이름 규칙을 갖출 때만** 파싱 없이 최종 이름을 알 수 있으므로, 하나라도
+        빠지면 None 을 돌려 호출부가 종전 순서(파싱 → 배치 창)로 돌아가게 한다 — 뜻 없는
+        stem 조각으로 창을 띄우면 자동 그룹 배치(suggest_groups)까지 빗나가 오히려 손해다.
+
+        규칙은 ``_parse_group_core`` 가 파싱 직후 적용하는 것과 **같아야** 한다. 어긋나면
+        Temperature 가 파싱 전에 띄운 창의 이름이 최종 legend 와 달라 창이 두 번 뜬다.
+        그래서 PMIC 은 source_naming(LOT_WF), 그 외는 df_honey 의 규칙을 그대로 쓴다.
         중복 해소(_2, _3 …)는 ``df_honey_group._dedup_in_place`` 와 같은 규칙이다.
         """
+        from honey_ui.source_naming import guess_source_names
         from report_generator.df_honey import _sheetname_from_filename
 
+        bases = guess_source_names(paths, self.product_type())
+        if bases is None:
+            bases = []
+            for p in paths:
+                base = _sheetname_from_filename(Path(p))
+                if not base:
+                    return None
+                bases.append(base)
+
         names, used = [], set()
-        for p in paths:
-            base = _sheetname_from_filename(Path(p))
-            if not base:
-                return None
+        for base in bases:
             cand, n = base, 2
             while cand in used:
                 cand = f"{base}_{n}"
@@ -1996,34 +2087,38 @@ class HoneyMainWindow(QMainWindow):
         업로드 순서가 그룹마다 [RT, CT, HT] 라 서버 ``tables`` 도 그 순서가 되고,
         그룹의 RT 가 CT/HT 재판정의 limit 기준이다.
         """
-        from honey_ui.temperature_group_dialog import TemperatureGroupDialog
+        from honey_ui.source_name_dialog import SourceNameDialog
 
         paths = list(self.csv_paths)
+
+        def _temp_dialog(names, from_group):
+            return SourceNameDialog(self, self._dialog_entries(names, paths, from_group),
+                                    mode="Temperature",
+                                    roles=self._roles_for_names(names, paths))
+
         names_guess = self._guess_source_names(paths)
         if names_guess is None:
             # 파일명만으로 이름을 알 수 없다 — 종전 순서(파싱 → 배치 창) 그대로.
             if not self._rebuild_group(warn=True) or self.group is None:
                 return None
-            real = list(self.group.names())
-            dlg = TemperatureGroupDialog(self, real,
-                                         roles=self._roles_for_names(real, paths))
+            dlg = _temp_dialog(list(self.group.names()), True)
             if not dlg.exec():
                 self._status("Temperature 배치 취소")
                 return None
-            return dlg.result_groups()
+            return dlg.result_arrangement()
 
         stage_q = queue.Queue()
         ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
             fut = ex.submit(self._parse_group_core, paths, self.product_type(),
                             True, stage_q.put)
-            dlg = TemperatureGroupDialog(self, names_guess,
-                                         roles=self._roles_for_names(names_guess, paths))
+            # 아직 파싱 전이라 md 가 없다 — 추정 이름과 같은 순번의 입력 파일을 보여준다.
+            dlg = _temp_dialog(names_guess, False)
             if not dlg.exec():
                 self._status("Temperature 배치 취소")
                 fut.cancel()          # 이미 시작됐으면 결과만 버린다(읽기 전용이라 무해)
                 return None
-            arranged = dlg.result_groups()
+            arranged = dlg.result_arrangement()
 
             # 파싱 잔여분 대기 — 배치가 길었으면 대개 이미 끝나 있다.
             progress = _ElapsedProgress(
@@ -2057,12 +2152,11 @@ class HoneyMainWindow(QMainWindow):
                     self, "Temperature 배치",
                     "파일을 읽어 보니 source 이름이 파일명에서 추정한 것과 다릅니다.\n"
                     "실제 이름으로 배치 창을 다시 표시합니다.")
-                dlg2 = TemperatureGroupDialog(self, real,
-                                              roles=self._roles_for_names(real, paths))
+                dlg2 = _temp_dialog(real, True)
                 if not dlg2.exec():
                     self._status("Temperature 배치 취소")
                     return None
-                arranged = dlg2.result_groups()
+                arranged = dlg2.result_arrangement()
             return arranged
         finally:
             ex.shutdown(wait=False)
@@ -2111,18 +2205,17 @@ class HoneyMainWindow(QMainWindow):
             source_order = arranged["order"]
         elif mode == "Temperature":
             arranged = temperature_arranged      # 위에서 파싱보다 먼저 받아둔 배치 결과
-            # rename 은 groups/order(이미 새 이름) 를 쓰는 아래 줄들보다 **먼저** 해야
-            # _clean_temperature_frames 의 mass_data_map 조회가 새 이름과 맞는다.
-            self.group.rename_sources(arranged["names"])
+            # _apply_source_arrangement 가 rename 을 **먼저** 한다 — groups/order 는 이미
+            # 새 이름이라, 그래야 _clean_temperature_frames 의 mass_data_map 조회가 맞는다.
+            source_order = self._apply_source_arrangement(arranged, options)
             options["temperature"] = {"groups": arranged["groups"],
                                       "limits_file": arranged["limits_file"]}
-            source_order = arranged["order"]
             # bin_map(.lt/.pds)은 세션에 싣지 않는다 — 업로드 전 정리에서만 쓰고 소진한다.
             temperature = {"groups": arranged["groups"], "bin_map": arranged["bin_map"]}
         elif mode != "DUT":
-            overrides = self._ask_source_names()
-            if overrides is not None:
-                self.group.rename_sources(overrides)
+            arranged = self._ask_source_names()
+            if arranged is not None:
+                source_order = self._apply_source_arrangement(arranged, options)
         return {
             "work_group": self.group,
             "selected": list(self.group.subjects()),
@@ -2130,8 +2223,9 @@ class HoneyMainWindow(QMainWindow):
             "compare_mode": (mode == "Compare"),
             "mode": mode,
             "options": options,
-            # Compare/Temperature 모드의 업로드 순서 — 서버 tables 순서가 곧 이 순서다
-            # (Compare 는 After 먼저, Temperature 는 그룹마다 RT → CT → HT).
+            # 업로드 순서 — 서버 tables 순서가 곧 이 순서이고 tables[0] 이 limit 기준이다.
+            # Compare 는 After 먼저, 그 외 모드는 SourceNameDialog 의 표 순서 그대로
+            # (Temperature 는 자동 배치가 그룹마다 RT → CT → HT 로 정렬해 둔다).
             "source_order": source_order,
             # Temperature 모드 rawdata 정리 지시 (그룹 + .lt/.pds bin 매핑). 그 외 모드는 None.
             "temperature": temperature,
@@ -2151,26 +2245,37 @@ class HoneyMainWindow(QMainWindow):
         return dlg.result_groups()
 
     def _source_file_name(self, md, fallback):
-        try:
-            src = getattr(getattr(md, "report_meta", None), "source_path", "") or ""
-            if src:
-                return Path(src).name
-        except Exception:
-            pass
-        return f"{fallback}.parquet"
+        """이 source 를 만든 대표 입력 파일의 파일명. 없으면 '<legend>.parquet'.
+
+        경로 조회 우선순위는 ``source_name_dialog.source_display_path`` 한 곳에 모아둔다
+        (MDDI 병합이 이식되면 그 함수만 사실이 되면 된다 — 여기는 손대지 않는다).
+        """
+        from honey_ui.source_name_dialog import source_display_path
+
+        src = source_display_path(md, "")
+        return Path(src).name if src else f"{fallback}.parquet"
 
     def _lot_id_from_sources(self, work_group):
-        """첫 source 파일명의 head('_' 앞 토큰)를 LOT ID 로 반환. 없으면 빈 문자열.
+        """첫 source 파일명에서 LOT ID 를 뽑는다. 없으면 빈 문자열.
 
-        예: 'N4XA123_up_a.parquet' → 'N4XA123'. 파싱 실패는 best-effort 로 '' 반환.
+        기본은 head('_' 앞 토큰) — 예: 'N4XA123_up_a.parquet' → 'N4XA123'.
+        PMIC 은 파일명 앞에 뜻 없는 접두가 붙는 경우가 많아('awjkelf_602XX2_3_….std')
+        head 가 LOT 이 아니다. 그래서 LOT 토큰 규칙(pmic_lot_id)을 먼저 본다.
+        파싱 실패는 best-effort 로 '' 반환.
         """
+        from honey_ui.source_naming import pmic_lot_id
+
         try:
             names = work_group.names()
             if not names:
                 return ""
             md = work_group.mass_data_map[names[0]]
-            stem = Path(self._source_file_name(md, names[0])).stem
-            return stem.split("_")[0].strip()
+            file_name = self._source_file_name(md, names[0])
+            if self.product_type() == "PMIC":
+                lot = pmic_lot_id(file_name)
+                if lot:
+                    return lot
+            return Path(file_name).stem.split("_")[0].strip()
         except Exception:
             return ""
 

@@ -16,8 +16,8 @@ Compare 모드는 종전에 source 가 정확히 2개일 때만 쓸 수 있었�
 RawdataHubDialog 의 Item Select(``_ItemListWidget``)와 같은 규칙을 쓰되 **이동 후 원본
 순서로 되돌리는 재정렬은 하지 않는다**.
 
-Compare 모드에서는 이 창이 기존 "SourceName 변경"(쉼표 입력 QInputDialog)을 대신한다 —
-이름 변경은 항목 더블클릭으로 한다.
+Compare 모드에서는 이 창이 공통 ``SourceNameDialog``(표 방식)를 대신한다 — 이름 변경은
+항목 더블클릭으로 한다.
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ _MOVE_BTN_W = 36
 def dedupe_names(names) -> list:
     """중복 이름에 _2, _3 … 접미사를 붙여 유일하게 만든다.
 
-    honey_main._ask_source_names 와 **같은 규칙** — 첫 번째는 원래 이름 그대로 두고
+    temperature_pairing.dedupe_names 와 **같은 규칙** — 첫 번째는 원래 이름 그대로 두고
     두 번째부터 접미사가 붙는다.
     """
     out, seen = [], {}

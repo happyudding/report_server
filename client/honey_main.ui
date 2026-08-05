@@ -145,7 +145,7 @@
       <item>
        <widget class="QTableWidget" name="list_csv">
        <property name="minimumSize">
-         <size><width>0</width><height>276</height></size>
+         <size><width>0</width><height>376</height></size>
         </property>
         <property name="styleSheet">
          <string notr="true">font-size: 8pt;</string>

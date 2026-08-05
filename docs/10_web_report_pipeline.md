@@ -149,7 +149,7 @@ df 개수 = 업로드 parquet 개수, 입력 파일 개수가 아니다)로 가�
 | **DUT** | 1 | **서버에서** honeyform 을 DUT 컬럼으로 분할(`split_table_by_dut`) — DUT별 pseudo-source(`DUT <값>`)로 Yield/CPK/Distribution 등은 DUT 비교 렌더. **단 Map Analysis 는 예외**: `build_map_analysis_rows(mode="DUT")` 가 DUT 를 하나의 맵(`source="All DUT"`)으로 병합하고 die 마다 `dut` 태그를 달아 프런트가 DUT Legend 로 강조한다. 다운샘플 없음. |
 | **Compare** | 2+ | source 를 **Before / After 두 그룹**으로 나눠 비교 (2026-07-23 재정의). 배치는 Honey `CompareArrangeDialog` 가 정해 `manifest.options.compare = {"before":[이름…],"after":[이름…]}` 로 싣고 세션 `webreport_options` 에 저장된다. **업로드 순서 = [After…, Before…]** 라 `tables[0]` = After 최상단이고, 이것이 web_report 전체의 limit(HiLIM/LoLIM) 기준 source 다(`_first_table_for`/`item_meta` 가 첫 등장 테이블을 쓰므로 서버 분기 없음). `tabs/compare.py` 가 공통성 Map(전 source·die hover 에 source 별 Bin)·Bin Yield·Bin 불일치 좌표표·goodlog(그룹 대표 2개)·산포 비교/동일성 검증(그룹 pool)을 만든다. 옵션이 없는 legacy 세션은 `after=[s0], before=[s1]` 폴백. ingest 는 2개 미만이면 400. |
 | **Commonality** | 1 | `tabs/commonality.py` chip 검색(serial/xpos/ypos/dut) + 항목별 값·누적%·wafer 좌표. chip 선택은 view-time(비영속). |
-| **Temperature** | 1+ | **PMIC 전용**(Honey 라디오가 PMIC 에서만 노출). source 를 RT/CT/HT 그룹으로 묶고 **그룹의 RT 가 Limit 기준**이다. 배치는 Honey `TemperatureGroupDialog` 가 정해 `manifest.options.temperature = {"groups":[{"rt":이름,"members":[CT,HT],"member_roles":["CT","HT"]}],"limits_file":{…}}` 로 싣는다(업로드 순서 = 그룹마다 RT→CT→HT). **rawdata 정리는 업로드 전 클라에서 끝난다** — `web_report/temperature.py clean_frames` 가 ① CT/HT 를 RT 의 BIN==1 좌표(XPOS,YPOS)만 남기고 ② RT 의 HILIM/LOLIM 으로 Pass/Fail 재판정(CT/HT 자신의 limit 메타행은 원본 유지) ③ fail bin 을 .lt/.pds 매핑(LSL/USL 방향별) → RT 에서 죽은 bin → 999 순으로 채운다. 서버는 정리된 parquet 을 받을 뿐이고, 조회 시에는 **비RT 소스의 수율 분모를 남은 die 수로 강제**한다(`resolve_source_basis(force_test=…)`). payload `sources[].temp_role`/`temp_group`/`temp_corner` + `payload.temperature` + `payload.yield_corner_groups`(Yield Corner 2표 · Issue TEMP 섹션 → [11](11_web_report_tabs.md)). |
+| **Temperature** | 1+ | **PMIC 전용**(Honey 라디오가 PMIC 에서만 노출). source 를 RT/CT/HT 그룹으로 묶고 **그룹의 RT 가 Limit 기준**이다. 배치는 Honey `SourceNameDialog`(Temperature 모드 — `Group`/`Role` 열. 2026-08-05 구 `TemperatureGroupDialog` 흡수) 가 정해 `manifest.options.temperature = {"groups":[{"rt":이름,"members":[CT,HT],"member_roles":["CT","HT"]}],"limits_file":{…}}` 로 싣는다(업로드 순서 = 그룹마다 RT→CT→HT). **rawdata 정리는 업로드 전 클라에서 끝난다** — `web_report/temperature.py clean_frames` 가 ① CT/HT 를 RT 의 BIN==1 좌표(XPOS,YPOS)만 남기고 ② RT 의 HILIM/LOLIM 으로 Pass/Fail 재판정(CT/HT 자신의 limit 메타행은 원본 유지) ③ fail bin 을 .lt/.pds 매핑(LSL/USL 방향별) → RT 에서 죽은 bin → 999 순으로 채운다. 서버는 정리된 parquet 을 받을 뿐이고, 조회 시에는 **비RT 소스의 수율 분모를 남은 die 수로 강제**한다(`resolve_source_basis(force_test=…)`). payload `sources[].temp_role`/`temp_group`/`temp_corner` + `payload.temperature` + `payload.yield_corner_groups`(Yield Corner 2표 · Issue TEMP 섹션 → [11](11_web_report_tabs.md)). |
 
 ### Temperature 입력 배치 (2026-08-05)
 - **폴더 열기** — `LOCAL FILE OPEN` 버튼의 드롭다운("폴더 열기…") 과 창 **드래그앤드랍**
@@ -164,14 +164,25 @@ df 개수 = 업로드 parquet 개수, 입력 파일 개수가 아니다)로 가�
 - **역할 → source 매핑** — ⚠️ 입력 파일 개수 ≠ source 개수(불변 규칙 #9)라
   `honey_main._roles_for_names` 는 길이가 같을 때만 index 로 잇고 그 외에는 파일 stem
   부분일치로만 잇는다. 못 이은 source 는 **미배정으로 남겨** 사용자가 직접 놓게 한다.
-- **그룹(pair) 유추** — `suggest_groups_by_role` 이 ① 이름 stem 일치(`WF1_RT`↔`WF1_CT`)
-  ② 남은 것은 **역할별 순번**(폴더마다 같은 파일명이면 source 이름이 `a`/`a_2`/`a_3` 로
-  갈리므로 순번이 유일한 단서) 2단계로 짝짓는다. 2단계는 추정이라 다이얼로그가
-  '배치'가 아니라 **'확인' 창**으로 뜬다(틀린 곳만 끌어서 수정).
-- **source 명 변경** — 확인 창에서 이름을 **더블클릭**하면 리포트 legend 이름을 바꿀 수
-  있다(`result_groups().names` → `rename_sources`, 중복은 `_2` 접미). 정합 검증은
-  rename 전 이름(`source_names`)으로 비교한다 — `order` 로 비교하면 rename 한 순간
-  항상 불일치가 되어 창이 두 번 뜬다.
+- **그룹(pair) 유추** — [client/honey_ui/temperature_pairing.py](../client/honey_ui/temperature_pairing.py)
+  `suggest_groups_by_role` 이 ① 이름 stem 일치(`WF1_RT`↔`WF1_CT`) ② 남은 것은 **역할별
+  순번**(폴더마다 같은 파일명이면 source 이름이 `a`/`a_2`/`a_3` 로 갈리므로 순번이 유일한
+  단서) 2단계로 짝짓는다. 2단계는 추정이라 창이 '배치'가 아니라 **'확인' 창**이다 —
+  자동 배치가 표의 `Group`/`Role` 콤보를 채워 두고 사용자는 틀린 곳만 고른다. 자동 배치는
+  **행 순서까지 그룹 순(RT→CT→HT)으로 재정렬**하므로 표시 순서가 곧 업로드 순서가 된다.
+  계약은 `tests/test_temperature_pairing.py` 9개 검사가 고정한다.
+- **source 명 변경 / 순서** — `SourceNameDialog` 표에서 legend 를 직접 편집하고 `↑`/`↓` 로
+  순서를 바꾼다. Role 을 고르면 `_RT`/`_CT`/`_HT` 접미사가 자동으로 붙고(이미 붙어 있으면
+  중복 부착하지 않고, Role 을 바꾸면 접미사만 교체) 이름 본체는 보존된다.
+  결과 `names` → `rename_sources`(중복은 `_2` 접미), 순서는 `order_index` 로 잇는다.
+  정합 검증은 rename 전 이름(`source_names`)으로 비교한다 — `order` 로 비교하면 rename 한
+  순간 항상 불일치가 되어 창이 두 번 뜬다.
+- **PMIC 자동 source 명** — [client/honey_ui/source_naming.py](../client/honey_ui/source_naming.py)
+  `pmic_source_name` 이 파일명의 LOT 토큰(`60/61/62/6Z/80/81/82/8Z` 로 시작) + 바로 다음
+  WF 토큰(숫자 또는 `W`+숫자, 1~3자리)을 이어 `602XX2_3` 을 만든다. `_parse_group_core` 가
+  파싱 직후 `rename_sources` 로 덮어쓰고 `_guess_source_names`(파싱 전 추정)도 같은 규칙을
+  쓴다 — 두 곳이 어긋나면 확인 창이 두 번 뜬다. 원 규칙(`report_generator/df_honey.py`
+  `_sheetname_from_filename`)은 동결 영역이라 고치지 않고 덮어쓰는 방식이다.
 
 ## 신원 / 업로더 잠금
 `client_identity(manifest["client"])` → `uploaded_by = "<domain>\\<user>"`(또는 user),

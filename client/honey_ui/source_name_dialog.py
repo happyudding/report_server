@@ -1,0 +1,717 @@
+r"""SourceNameDialog — Web Report 생성 직전 source 이름·순서(·Temperature 그룹) 확인 창.
+
+표 한 줄이 source 하나다. 왼쪽은 그 source 를 만든 **대표 입력 파일**(읽기 전용, 툴팁에 전체
+절대경로), 오른쪽이 리포트 legend 이름이다. ↑/↓ 로 바꾼 순서가 그대로 업로드 순서가 되고,
+**최상단 source 의 limit(HiLIM/LoLIM)이 리포트 전체의 판정 기준**이 된다
+(web_report/tabs/distribution.py 의 ``matched[0]``). 그래서 1행을 초록으로 강조한다.
+
+    ┌──────────────────────────────────────────────────────────────┐
+    │  # │ 입력 파일 (읽기 전용)                    │ Legend       │  ↑
+    │ 1★ │ …\lot_N4XA123\run03\602XX2_3_final.std  │ 602XX2_3     │  ↓
+    └──────────────────────────────────────────────────────────────┘
+
+Temperature 모드(PMIC 전용)에서는 **열 3개(Group·Role·색)와 Limit 파일 영역이 더 생긴다** —
+구 ``TemperatureGroupDialog``(드래그앤드랍 배치 창)를 이 창이 흡수했다. 그 외 모드에서 이
+부분들은 비활성이 아니라 **아예 만들지 않는다**(열은 columnCount 에서 빠지고, Limit 영역은
+컨테이너째 숨겨 레이아웃이 높이를 회수한다).
+
+순서를 바꾸는 경로가 ``_shift() → _render()`` 하나뿐이라, 최상단 강조·그룹 구분선·색 스와치
+갱신을 ``_render()`` 안에서만 하면 상태가 어긋날 수 없다. ``self._rows`` 가 유일한 진실이고
+표는 그것을 그린 뷰다.
+"""
+from __future__ import annotations
+
+import concurrent.futures
+from dataclasses import dataclass
+from pathlib import Path
+
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import (QBrush, QColor, QFontDatabase, QFontMetrics, QGuiApplication,
+                         QKeySequence, QShortcut)
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QColorDialog,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QStyle,
+    QStyledItemDelegate,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from honey_ui.source_naming import apply_role_suffix
+from honey_ui.temperature_pairing import (ROLES, LIMIT_FILTER, dedupe_names, parse_limit_files,
+                                          suggest_groups, suggest_groups_by_role)
+
+_PATH_CHARS = 70              # 파일명 열 폭 (고정폭 글꼴 기준 = 문자 수 그대로)
+_LEGEND_CHARS = 12            # Legend 열 폭·입력 제한 (기본)
+_LEGEND_CHARS_TEMP = 15       # Temperature 는 _RT/_CT/_HT 접미사 3자를 더한다
+_MAX_VISIBLE_ROWS = 21        # 이만큼은 스크롤 없이 보인다 (그 이상은 세로 스크롤바)
+_TOP_BG = "#DCFCE7"           # 최상단(limit 기준) 행 강조
+_RT_BG = "#FEF3C7"            # RT = 그룹의 limit 기준
+_GROUP_BAND = "#F1F5F9"       # 짝수 그룹 옅은 띠 (그룹 경계 시각화)
+_ROLE_ITEMS = ("", ) + ROLES
+_NEW_GROUP = "+ 새 그룹"
+_NO_GROUP = "(미지정)"
+
+
+# ── 순수 함수 (Qt 무의존 — QApplication 없이 단독 검증 가능) ──────────────────
+def shorten_path(path, limit: int = _PATH_CHARS) -> str:
+    """절대경로를 limit 자 안으로 줄인다 — **뒤에서 폴더 2개 + 파일명**, 앞은 `…` 생략.
+
+    파일명이 가장 중요하고 그 다음이 바로 위 폴더(lot/run)라 잘라내는 건 항상 앞쪽이다.
+    전체 원문은 툴팁이 책임진다.
+    """
+    text = str(path or "").strip()
+    if not text or len(text) <= limit:
+        return text
+    sep = "\\" if "\\" in text else "/"
+    parts = [p for p in Path(text).parts if p not in ("/", "\\")]
+    name = parts[-1] if parts else text
+    if len(name) + 2 > limit:
+        # 파일명 자체가 한계를 넘는다 — 확장자를 지키며 스템 가운데를 자른다.
+        ext = Path(name).suffix
+        stem = name[:len(name) - len(ext)]
+        keep = max(4, limit - len(ext) - 4)
+        head = max(2, keep - keep // 3)
+        return f"…{sep}{stem[:head]}…{stem[-(keep - head):]}{ext}"
+    for depth in (2, 1):
+        if len(parts) <= depth:
+            continue
+        cand = "…" + sep + sep.join(parts[-(depth + 1):])
+        if len(cand) <= limit:
+            return cand
+    return f"…{sep}{name}"
+
+
+def source_display_path(md, fallback: str = "") -> str:
+    """이 source 를 만든 **대표 입력 파일 1개**의 절대경로.
+
+    MDDI 처럼 입력 n개가 1 source 로 병합되면 화면에는 "파싱에 쓴 대표 파일" 하나만 보여야
+    한다. 지금 저장소는 파일 1개당 ``df_honey.from_csv`` 1회라 ``report_meta.source_path``
+    가 이미 대표 파일이지만, 병합 진입점(from_ddi_paths*)이 이식되면 report_meta 에 대표
+    경로 필드가 생길 수 있다. 그때 이 우선순위 목록만 사실이 되면 되도록 **조회를 여기 한
+    곳에 모은다** — 외부 담당자가 필드를 채우면 UI 코드는 손대지 않는다.
+
+    report_generator/honey_parse 는 동결 영역이라 getattr 안전 조회만 한다.
+    """
+    rm = getattr(md, "report_meta", None)
+    for attr in ("primary_path", "representative_path", "source_path"):
+        try:
+            value = getattr(rm, attr, "") or ""
+        except Exception:                                  # noqa: BLE001
+            value = ""
+        if value:
+            return str(value)
+    for attr in ("source_paths", "input_paths"):
+        try:
+            seq = getattr(rm, attr, None) or getattr(md, attr, None)
+        except Exception:                                  # noqa: BLE001
+            seq = None
+        if seq:
+            try:
+                first = list(seq)[0]
+                return str(getattr(first, "path", first))
+            except Exception:                              # noqa: BLE001
+                pass
+    return fallback
+
+
+def _fit_to_screen(dialog, width, height, ratio: float = 0.92) -> None:
+    """화면 밖으로 나가지 않게 클램프. 최대치는 사용 가능 영역 전체, 초기 크기는 그 ratio.
+
+    ``table_list_dialog.fit_dialog_to_screen`` 은 0.7 비율 하드코딩이라 "21행이 한눈에" 와
+    충돌하고, 공용 헬퍼를 고치면 TableListDialog/ChangeReviewDialog 에 영향이 간다.
+    """
+    screen = dialog.screen() or QGuiApplication.primaryScreen()
+    avail = screen.availableGeometry() if screen else None
+    if avail is None:
+        dialog.resize(width, height)
+        return
+    dialog.setMaximumSize(avail.width(), avail.height())
+    dialog.resize(min(width, int(avail.width() * ratio)),
+                  min(height, int(avail.height() * ratio)))
+
+
+@dataclass
+class _Row:
+    index: int          # 원본 source 순번 — rename_sources 가 원본 순서 기준이라 필수
+    path: str           # 대표 입력 파일 절대경로 (툴팁 원문)
+    legend: str
+    group: int = 0      # Temperature 전용, 1-based (0 = 미지정)
+    role: str = ""      # Temperature 전용
+
+
+class _MaxLenDelegate(QStyledItemDelegate):
+    """Legend 셀 편집기에 최대 길이를 건다 (QTableWidgetItem 자체엔 maxLength 가 없다)."""
+
+    def __init__(self, max_len, parent=None):
+        super().__init__(parent)
+        self._max = int(max_len)
+
+    def createEditor(self, parent, option, index):
+        editor = super().createEditor(parent, option, index)
+        try:
+            editor.setMaxLength(self._max)
+        except Exception:                                  # noqa: BLE001
+            pass
+        return editor
+
+
+class _LimitsDropArea(QFrame):
+    """.lt / .pds 파일을 끌어다 놓는 영역 (버튼으로도 고를 수 있다)."""
+
+    def __init__(self, on_files):
+        super().__init__()
+        self._on_files = on_files
+        self.setAcceptDrops(True)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setStyleSheet(
+            "QFrame { border: 1px dashed #94a3b8; border-radius: 6px; background: #f8fafc; }")
+        self.setMinimumHeight(52)
+
+    def _paths(self, mime):
+        return [u.toLocalFile() for u in mime.urls()
+                if u.isLocalFile() and Path(u.toLocalFile()).suffix.lower() in (".lt", ".pds")]
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() and self._paths(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        self.dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        paths = self._paths(event.mimeData())
+        if paths:
+            event.acceptProposedAction()
+            self._on_files(paths)
+        else:
+            event.ignore()
+
+
+class SourceNameDialog(QDialog):
+    """exec() 가 참을 돌려주면 result_arrangement() 로 결과를 읽는다.
+
+    entries: ``[(legend, 대표 입력 파일 절대경로), ...]`` — **원본 source 순서**.
+    roles  : ``{원본 legend: "RT"|"CT"|"HT"}`` (Temperature 자동 배치용, 없으면 파일명 추정)
+    colors : 48색 팔레트 (없으면 옵션 팔레트를 읽는다)
+
+    df_honey / df_honey_group 을 받지 않는다 — 그래야 QApplication 만으로 단독 실행해
+    검증할 수 있고, 동결 영역 타입에 UI 가 결합되지 않는다.
+    """
+
+    def __init__(self, parent, entries, mode="Normal", roles=None, colors=None):
+        super().__init__(parent)
+        self._mode = str(mode or "Normal")
+        self._is_temp = (self._mode == "Temperature")
+        self._roles = {str(k): str(v).upper() for k, v in (roles or {}).items()}
+        self._original = [str(name) for name, _ in entries]
+        self._paths = [str(path or "") for _, path in entries]
+        self._bin_map = None
+        self._limits_file = None
+        self._colors = list(colors) if colors else self._load_palette()
+        self._colors_changed = False
+        self._rendering = False
+
+        self.setWindowTitle("Temperature — Source 이름 / 그룹 배치" if self._is_temp
+                            else "Source 이름 / 순서")
+        self._legend_max = _LEGEND_CHARS_TEMP if self._is_temp else _LEGEND_CHARS
+
+        self._rows: list[_Row] = []
+        self._reset_rows()
+
+        # 글꼴·행 높이는 폭 계산과 렌더 양쪽에서 여러 번 쓰므로 한 번만 만든다.
+        self._mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        self._mono.setPointSize(self.font().pointSize())
+        base_h = max(QFontMetrics(self._mono).height(), QFontMetrics(self.font()).height())
+        self._row_h = max(base_h + 10, 30 if self._is_temp else 24)
+
+        self._build_ui()
+        if self._is_temp:
+            self._auto_arrange(silent=True)
+        else:
+            self._render()
+        self._apply_size()
+
+    # ── 구성 ────────────────────────────────────────────────────────────────
+    @staticmethod
+    def _load_palette():
+        """옵션(F10)에서 지정한 팔레트를 기본값으로 읽는다. 실패하면 기본 48색."""
+        try:
+            import chart_colors
+            return chart_colors.load_colors()
+        except Exception:                                  # noqa: BLE001
+            return ["#3366CC"] * 48
+
+    def _reset_rows(self):
+        """행을 원본 상태로 되돌린다 (이름·순서·그룹·역할 전부)."""
+        self._rows = [_Row(index=i, path=self._paths[i], legend=self._original[i])
+                      for i in range(len(self._original))]
+
+    def _columns(self):
+        cols = ["입력 파일", f"Legend (최대 {self._legend_max}자)"]
+        if self._is_temp:
+            cols += ["Group", "Role", "색"]
+        return cols
+
+    def _build_ui(self):
+        cols = self._columns()
+        self.table = QTableWidget(0, len(cols), self)
+        self.table.setHorizontalHeaderLabels(cols)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.table.setWordWrap(False)
+        self.table.setItemDelegateForColumn(1, _MaxLenDelegate(self._legend_max, self))
+        self.table.itemChanged.connect(self._on_item_changed)
+        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
+        self.table.horizontalHeader().setStretchLastSection(not self._is_temp)
+
+        btn_up, btn_down = QPushButton("↑"), QPushButton("↓")
+        btn_up.setToolTip("선택 행을 위로 (Alt+↑) — 최상단이 Limit 기준입니다")
+        btn_down.setToolTip("선택 행을 아래로 (Alt+↓)")
+        btn_up.clicked.connect(lambda: self._shift(-1))
+        btn_down.clicked.connect(lambda: self._shift(1))
+        for b in (btn_up, btn_down):
+            b.setFixedWidth(36)
+        QShortcut(QKeySequence("Alt+Up"), self).activated.connect(lambda: self._shift(-1))
+        QShortcut(QKeySequence("Alt+Down"), self).activated.connect(lambda: self._shift(1))
+        side = QVBoxLayout()
+        side.addStretch(1)
+        side.addWidget(btn_up)
+        side.addWidget(btn_down)
+        side.addStretch(1)
+
+        middle = QHBoxLayout()
+        middle.addWidget(self.table, 1)
+        middle.addLayout(side)
+
+        root = QVBoxLayout(self)
+        if self._is_temp:
+            root.addWidget(self._build_temp_toolbar())
+        root.addLayout(middle, 1)
+        if self._is_temp:
+            root.addWidget(self._build_limits_box())
+        root.addWidget(self._build_hint())
+
+        buttons = QDialogButtonBox()
+        buttons.addButton("OK", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton("취소", QDialogButtonBox.ButtonRole.RejectRole)
+        btn_restore = buttons.addButton("원래대로", QDialogButtonBox.ButtonRole.ResetRole)
+        btn_restore.setToolTip("이름·순서·그룹을 처음 상태로 되돌립니다")
+        btn_restore.clicked.connect(self._restore)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+        self.setSizeGripEnabled(True)
+
+    def _build_temp_toolbar(self):
+        box = QWidget()
+        lay = QHBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        btn_auto = QPushButton("파일명으로 자동 배치")
+        btn_auto.setToolTip("폴더 역할과 이름 유사도로 그룹을 다시 제안합니다.")
+        btn_auto.clicked.connect(lambda: self._auto_arrange())
+        btn_clear = QPushButton("그룹 초기화")
+        btn_clear.setToolTip("그룹·역할 지정만 지웁니다 (이름·순서는 유지).")
+        btn_clear.clicked.connect(self._clear_groups)
+        btn_palette = QPushButton("전체 팔레트 편집…")
+        btn_palette.setToolTip("48색 팔레트를 편집해 옵션(F10)에 저장합니다.")
+        btn_palette.clicked.connect(self._edit_palette)
+        for b in (btn_auto, btn_clear):
+            lay.addWidget(b)
+        lay.addStretch(1)
+        lay.addWidget(btn_palette)
+        return box
+
+    def _build_limits_box(self):
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(QLabel("Limit 파일 (.lt / .pds) — 재판정 fail 의 bin 매칭에 사용"))
+        drop = _LimitsDropArea(self._load_limits)
+        drop_lay = QHBoxLayout(drop)
+        drop_lay.addWidget(QLabel(".lt / .pds 파일을 여기에 끌어다 놓으세요"))
+        drop_lay.addStretch(1)
+        btn_pick = QPushButton("파일 선택…")
+        btn_pick.clicked.connect(self._pick_limits)
+        drop_lay.addWidget(btn_pick)
+        lay.addWidget(drop)
+        self.lbl_limits = QLabel(
+            "불러온 파일 없음 — bin 매칭은 RT 에서 죽은 bin → 999 순으로 처리합니다.")
+        self.lbl_limits.setStyleSheet("color:#64748b;")
+        lay.addWidget(self.lbl_limits)
+        return box
+
+    def _build_hint(self):
+        lines = ["· 최상단(1번) source 의 Limit(HiLIM/LoLIM) 기준으로 리포트가 생성됩니다."]
+        if self._is_temp:
+            lines += [
+                "· 그룹마다 RT 가 그 그룹의 Limit 판정 기준입니다 — CT/HT 는 RT 의 Bin1 좌표만"
+                " 남기고 RT limit 으로 다시 판정합니다.",
+                "· 색은 순서(1,2,3…)에 붙습니다. 색 칸을 더블클릭하면 이 리포트에만 적용되는"
+                " 색으로 바꿉니다(옵션 팔레트보다 우선).",
+            ]
+        else:
+            lines.append("· 순서를 바꾸면 Distribution 색 번호도 함께 바뀝니다.")
+        lines.append("· 파일 이름 위에 마우스를 올리면 전체 경로가 보입니다. 삭제는 할 수 없습니다.")
+        hint = QLabel("\n".join(lines))
+        hint.setStyleSheet("color:#64748b; font-size:9px;")
+        hint.setWordWrap(True)
+        return hint
+
+    # ── 렌더 ────────────────────────────────────────────────────────────────
+    def _render(self):
+        """self._rows 를 표에 통째로 다시 그린다 (행 수가 작아 체감 비용 0)."""
+        self._rendering = True
+        try:
+            self.table.setRowCount(0)
+            self.table.setRowCount(len(self._rows))
+            n_groups = max([r.group for r in self._rows] or [0])
+            for r, row in enumerate(self._rows):
+                self.table.setVerticalHeaderItem(
+                    r, QTableWidgetItem(f"{r + 1} ★" if r == 0 else str(r + 1)))
+
+                cell = QTableWidgetItem(shorten_path(row.path))
+                cell.setFont(self._mono)
+                cell.setToolTip(row.path or "(원본 파일 경로 정보 없음)")
+                cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(r, 0, cell)
+
+                self.table.setItem(r, 1, QTableWidgetItem(row.legend))
+
+                if self._is_temp:
+                    self.table.setCellWidget(r, 2, self._group_combo(r, row, n_groups))
+                    self.table.setCellWidget(r, 3, self._role_combo(r, row))
+                    swatch = QTableWidgetItem("")
+                    swatch.setFlags(Qt.ItemFlag.ItemIsEnabled
+                                    | Qt.ItemFlag.ItemIsSelectable)
+                    color = self._color_at(r)
+                    swatch.setBackground(QBrush(QColor(color)))
+                    swatch.setToolTip(f"{color} — 더블클릭하면 색을 바꿉니다")
+                    self.table.setItem(r, 4, swatch)
+            self._paint_rows()
+        finally:
+            self._rendering = False
+
+    def _group_combo(self, r, row, n_groups):
+        combo = QComboBox()
+        combo.addItem(_NO_GROUP)
+        for g in range(1, max(n_groups, 1) + 1):
+            combo.addItem(str(g))
+        combo.addItem(_NEW_GROUP)
+        combo.setCurrentIndex(row.group if 0 <= row.group <= n_groups else 0)
+        combo.currentTextChanged.connect(lambda text, i=r: self._on_group_changed(i, text))
+        return combo
+
+    def _role_combo(self, r, row):
+        combo = QComboBox()
+        for role in _ROLE_ITEMS:
+            combo.addItem(role or _NO_GROUP)
+        combo.setCurrentIndex(_ROLE_ITEMS.index(row.role) if row.role in _ROLE_ITEMS else 0)
+        combo.currentTextChanged.connect(lambda text, i=r: self._on_role_changed(i, text))
+        return combo
+
+    def _paint_rows(self):
+        """최상단 강조 + 그룹 경계 구분선 + RT 음영. 표를 다시 그릴 때마다 마지막에 돈다.
+
+        선택색이 배경을 덮으므로 배경 하나에 의존하지 않고 **굵은 글씨 + 세로헤더 ★** 를
+        함께 쓴다. 비-최상단 복원은 무효 브러시(팔레트 기본) — 흰색을 칠하면 테마가 깨진다.
+        """
+        for r, row in enumerate(self._rows):
+            top = (r == 0)
+            # 그룹 경계를 눈으로 잡으려고 짝수 그룹에 아주 옅은 배경을 준다 (최상단이 우선).
+            band = QColor(_GROUP_BAND) if (self._is_temp and row.group and row.group % 2 == 0) \
+                else None
+            for c in range(self.table.columnCount()):
+                item = self.table.item(r, c)
+                if item is None or (self._is_temp and c == 4):
+                    continue                       # 색 스와치는 자기 색을 지켜야 한다
+                if top:
+                    item.setBackground(QBrush(QColor(_TOP_BG)))
+                elif band is not None:
+                    item.setBackground(QBrush(band))
+                else:
+                    item.setBackground(QBrush())   # 무효 브러시 = 팔레트 기본 (테마 안전)
+                font = item.font()
+                font.setBold(top)
+                item.setFont(font)
+            if self._is_temp:
+                combo = self.table.cellWidget(r, 3)
+                if combo is not None:
+                    combo.setStyleSheet(f"background:{_RT_BG};" if row.role == "RT" else "")
+            self.table.setRowHeight(r, self._row_h)
+
+    def _color_at(self, r):
+        return self._colors[r] if r < len(self._colors) else "#888888"
+
+    # ── 조작 ────────────────────────────────────────────────────────────────
+    def _commit_editor(self):
+        """열린 셀 편집기를 커밋한다 — 없으면 마지막 타이핑이 _render 에 날아간다."""
+        if self.table.state() == QAbstractItemView.State.EditingState:
+            self.table.setCurrentCell(self.table.currentRow(), 0)
+
+    def _on_item_changed(self, item):
+        if self._rendering or item.column() != 1:
+            return
+        text = (item.text() or "").strip()[:self._legend_max]
+        self._rows[item.row()].legend = text
+
+    def _on_group_changed(self, r, text):
+        if self._rendering:
+            return
+        if text == _NEW_GROUP:
+            self._rows[r].group = max([row.group for row in self._rows] or [0]) + 1
+        elif text == _NO_GROUP:
+            self._rows[r].group = 0
+        else:
+            self._rows[r].group = int(text)
+        self._render()
+
+    def _on_role_changed(self, r, text):
+        if self._rendering:
+            return
+        role = text if text in ROLES else ""
+        row = self._rows[r]
+        row.role = role
+        # 접미사만 갈아끼운다 — 사용자가 편집한 이름 본체는 그대로 남는다.
+        row.legend = apply_role_suffix(row.legend, role)[:self._legend_max]
+        self._render()
+
+    def _on_cell_double_clicked(self, r, c):
+        if not (self._is_temp and c == 4):
+            return
+        chosen = QColorDialog.getColor(QColor(self._color_at(r)), self,
+                                       f"{r + 1}번 source 색상 선택")
+        if chosen.isValid():
+            while len(self._colors) <= r:
+                self._colors.append("#888888")
+            self._colors[r] = chosen.name().upper()
+            self._colors_changed = True
+            self._render()
+
+    def _shift(self, delta):
+        """선택 행을 한 칸 이동. 선택·스크롤을 따라 옮긴다."""
+        self._commit_editor()
+        row = self.table.currentRow()
+        new = row + delta
+        if row < 0 or new < 0 or new >= len(self._rows):
+            return
+        self._rows[row], self._rows[new] = self._rows[new], self._rows[row]
+        self._render()
+        self.table.setCurrentCell(new, max(self.table.currentColumn(), 0))
+        self.table.scrollToItem(self.table.item(new, 0))
+
+    def _restore(self):
+        self._commit_editor()
+        self._reset_rows()
+        if self._is_temp:
+            self._auto_arrange(silent=True)
+        else:
+            self._render()
+
+    def _clear_groups(self):
+        self._commit_editor()
+        for row in self._rows:
+            row.group = 0
+            row.role = ""
+        self._render()
+
+    def _edit_palette(self):
+        """48색 팔레트 편집(옵션 F10 과 같은 창) — 저장되면 표의 스와치를 다시 읽는다."""
+        from honey_ui.dialogs import ColorEditorDialog
+        if ColorEditorDialog(self).exec():
+            self._colors = self._load_palette()
+            self._colors_changed = True
+            self._render()
+
+    # ── Temperature 자동 배치 ───────────────────────────────────────────────
+    def _auto_arrange(self, silent=False):
+        """그룹·역할을 제안하고 **행 순서까지 그룹 순(RT→CT→HT)으로 재정렬**한다.
+
+        표시 순서가 곧 업로드 순서라, 재정렬해 두면 order 가 구 배치 창과 같은 형태
+        (그룹마다 RT → CT → HT)가 된다. 배치 못 한 source 는 미지정으로 뒤에 남는다.
+        """
+        names = [row.legend for row in self._rows]
+        groups = (suggest_groups_by_role(names, self._roles.get)
+                  if self._roles else suggest_groups(names))
+        if not groups:
+            if not silent:
+                QMessageBox.information(
+                    self, "자동 배치",
+                    "파일명·폴더에서 RT/CT/HT 를 알아내지 못했습니다.\n"
+                    "Group 과 Role 을 직접 골라 주세요.")
+            self._render()
+            return
+
+        by_name = {}
+        for row in self._rows:
+            by_name.setdefault(row.legend, row)     # 이름이 겹치면 첫 행만 (조용한 덮어쓰기 금지)
+        for row in self._rows:
+            row.group = 0
+            row.role = ""
+        ordered = []
+        for gi, mapping in enumerate(groups, start=1):
+            for role in ROLES:
+                row = by_name.get(mapping.get(role))
+                if row is None or row.group:
+                    continue
+                row.group, row.role = gi, role
+                row.legend = apply_role_suffix(row.legend, role)[:self._legend_max]
+                ordered.append(row)
+        ordered += [row for row in self._rows if not row.group]
+        self._rows = ordered
+        self._render()
+
+    # ── Limit 파일 ──────────────────────────────────────────────────────────
+    def _pick_limits(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "Limit 파일 선택", "", LIMIT_FILTER)
+        if paths:
+            self._load_limits(paths)
+
+    def _load_limits(self, paths):
+        """.lt/.pds 를 파싱해 항목→bin 매핑을 만든다. 실패는 경고 후 무시.
+
+        파싱은 워커 스레드에서 돌린다 — 큰 limit 파일을 UI 스레드에서 읽으면 창이 통째로
+        얼어붙는다. 읽는 동안 창은 비활성 + 대기 커서로 두고 이벤트만 돌린다.
+        """
+        prev_text = self.lbl_limits.text()
+        prev_style = self.lbl_limits.styleSheet()
+        self.lbl_limits.setText("Limit 파일 읽는 중...")
+        self.lbl_limits.setStyleSheet("color:#64748b;")
+        self.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(parse_limit_files, list(paths))
+                while True:
+                    done, _ = concurrent.futures.wait([fut], timeout=0.05)
+                    QApplication.processEvents()
+                    if done:
+                        break
+                merged, loaded, errors = fut.result()
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.setEnabled(True)
+
+        for name, reason in errors:
+            QMessageBox.warning(self, "Limit 파일 읽기 실패", f"{name}\n{reason}")
+        if not loaded:
+            self.lbl_limits.setText(prev_text)
+            self.lbl_limits.setStyleSheet(prev_style)
+            return
+        self._bin_map = merged
+        self._limits_file = {"name": loaded[0][0], "type": loaded[0][1]}
+        self.lbl_limits.setText(" / ".join(f"{n} ({k}) — 항목 {c}건" for n, k, c in loaded))
+        self.lbl_limits.setStyleSheet("color:#166534;")
+
+    # ── 크기 ────────────────────────────────────────────────────────────────
+    def _apply_size(self):
+        """21행까지 스크롤 없이 — 그 이상이면 세로 스크롤바가 자동으로 붙는다."""
+        unit_mono = QFontMetrics(self._mono).horizontalAdvance("0")
+        unit_ui = QFontMetrics(self.font()).horizontalAdvance("0")
+        self.table.setColumnWidth(0, _PATH_CHARS * unit_mono + 18)
+        self.table.setColumnWidth(1, self._legend_max * unit_ui + 28)
+        width = _PATH_CHARS * unit_mono + 18 + self._legend_max * unit_ui + 28
+        if self._is_temp:
+            for col, w in ((2, 96), (3, 92), (4, 52)):
+                self.table.setColumnWidth(col, w)
+                width += w
+            self.table.horizontalHeader().setSectionResizeMode(
+                4, QHeaderView.ResizeMode.Fixed)
+
+        header = self.table.horizontalHeader().sizeHint().height()
+        frame = self.table.frameWidth()
+        visible = min(max(len(self._rows), 1), _MAX_VISIBLE_ROWS)
+        self.table.setMinimumHeight(header + visible * self._row_h + 2 * frame + 2)
+        scrollbar = (self.style().pixelMetric(QStyle.PixelMetric.PM_ScrollBarExtent)
+                     if len(self._rows) > _MAX_VISIBLE_ROWS else 0)
+        width += self.table.verticalHeader().sizeHint().width() + scrollbar + 2 * frame + 2
+        # 높이는 레이아웃에 물어본다 — 표 최소높이가 이미 visible 행을 담고 있으므로
+        # 여유값을 어림으로 더하면(하단 요소가 그보다 작을 때) 표 아래에 빈 띠가 남는다.
+        self.layout().activate()
+        _fit_to_screen(self, width + 90, self.layout().sizeHint().height())
+
+    # ── 결과 ────────────────────────────────────────────────────────────────
+    def _accept(self):
+        self._commit_editor()
+        if self._is_temp:
+            missing = [str(r + 1) for r, row in enumerate(self._rows)
+                       if not row.role or not row.group]
+            if missing:
+                QMessageBox.warning(
+                    self, "Temperature 배치",
+                    f"{', '.join(missing)}번 행의 Group 또는 Role 이 비어 있습니다.\n"
+                    "모든 source 에 그룹과 역할(RT/CT/HT)을 지정해 주세요.")
+                return
+            counts = {}
+            for row in self._rows:
+                if row.role == "RT":
+                    counts[row.group] = counts.get(row.group, 0) + 1
+            bad = sorted(g for g in {row.group for row in self._rows} if counts.get(g, 0) != 1)
+            if bad:
+                QMessageBox.warning(
+                    self, "Temperature 배치",
+                    f"Group {', '.join(map(str, bad))} 의 RT 가 1개가 아닙니다.\n"
+                    "RT 는 Limit 판정 기준이라 그룹마다 정확히 1개여야 합니다.")
+                return
+        self.accept()
+
+    def result_arrangement(self) -> dict:
+        """OK 결과.
+
+        - ``names``        : **원본 source 순서**의 새 이름 — df_honey_group.rename_sources 용
+        - ``source_names`` : 창에 들어올 때의 원본 이름(원본 순서). 호출부가 파싱 결과와
+          이름 정합을 볼 때 **rename 전 이름**으로 비교해야 하므로 함께 돌려준다.
+        - ``order_index``  : 표시 순서의 **원본 index** — 실제 순서 배선은 이걸 쓴다.
+          이름 문자열로 순서를 이으면 dedupe 규칙 차이로 mass_data_map 키와 어긋날 수 있다.
+        - ``order``        : 표시 순서의 새 이름 (로그·참고용)
+        - Temperature 전용: ``groups`` / ``bin_map`` / ``limits_file``
+        - ``colors``       : 창에서 바꿨을 때만 48색 목록, 아니면 None (옵션 팔레트 유지)
+        """
+        by_index = {row.index: row.legend for row in self._rows}
+        raw = [by_index.get(i, self._original[i]) for i in range(len(self._original))]
+        deduped = dedupe_names(raw)
+
+        out = {
+            "names": deduped,
+            "source_names": list(self._original),
+            "order_index": [row.index for row in self._rows],
+            "order": [deduped[row.index] for row in self._rows],
+            "colors": list(self._colors) if self._colors_changed else None,
+        }
+        if not self._is_temp:
+            return out
+
+        groups = []
+        for gid in sorted({row.group for row in self._rows if row.group}):
+            members_by_role = {role: [] for role in ROLES}
+            for row in self._rows:
+                if row.group == gid and row.role in members_by_role:
+                    members_by_role[row.role].append(deduped[row.index])
+            if not members_by_role["RT"]:
+                continue
+            members, member_roles = [], []
+            for role in ("CT", "HT"):                 # members 는 CT 먼저, 그다음 HT
+                for name in members_by_role[role]:
+                    members.append(name)
+                    member_roles.append(role)
+            groups.append({"rt": members_by_role["RT"][0],
+                           "members": members, "member_roles": member_roles})
+        out.update({"groups": groups, "bin_map": self._bin_map,
+                    "limits_file": self._limits_file})
+        return out
