@@ -116,6 +116,24 @@ def _co_uninitialize(com_module):
         pass
 
 
+def _slim_temperature_limits(temperature):
+    """Temperature bin_map(.lt/.pds 파싱 결과) → 세션에 실을 최소 형태.
+
+    ``{item: {"tno", "lsl_bin", "usl_bin"}}`` — 서버 Temp 시트의 Bin 표기에만 쓴다
+    (web_report/tabs/temp_fail.py). lsl/usl **값**은 서버가 RT 메타행으로 다시 판정하므로
+    싣지 않는다. Temperature 가 아니거나 매핑이 없으면 None (서버가 관측 bin 으로 폴백).
+    """
+    bin_map = (temperature or {}).get("bin_map") or {}
+    out = {}
+    for item, entry in bin_map.items():
+        if not isinstance(entry, dict):
+            continue
+        slim = {k: entry.get(k) for k in ("tno", "lsl_bin", "usl_bin") if entry.get(k)}
+        if slim:
+            out[str(item)] = slim
+    return out or None
+
+
 def _upload_progress_channel(progress, label_fmt, value_map=None):
     """업로드 진행률 콜백 쌍 (worker_cb, drain_cb) 생성 — _run_web_report/_do_upload 공용.
 
@@ -2488,6 +2506,14 @@ class HoneyMainWindow(QMainWindow):
             "options": options or {},
             "mode": mode or "Normal",
         }
+        # Temperature: 항목별 fail bin (.lt/.pds 유래) — 서버 Temp 시트의 Bin 표기용.
+        # **options 가 아니라 manifest 최상위**에 싣는다: options 문자열은 세션에 그대로
+        # 저장돼 조회 캐시 키(cache_policy.report_key)의 원소가 되므로, 수백 KB 매핑을
+        # 넣으면 매 조회마다 그만큼을 해싱하게 된다. 값·limit 은 서버가 RT 메타로 다시
+        # 판정하므로 bin 2개 + TNO 만 남긴다(없으면 서버가 관측 bin 으로 폴백).
+        limits = _slim_temperature_limits(temperature)
+        if limits:
+            manifest["temperature_limits"] = limits
 
         _on_upload_progress, _drain_upload_progress = _upload_progress_channel(
             progress, "Web Report 업로드 중... ({pct}%)",

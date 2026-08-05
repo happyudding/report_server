@@ -42,7 +42,8 @@ def cumulative_distribution_full(values):
     return unique_vals, cum
 
 
-def build_distribution_compact(tables, all_items, *, bin1_only=False) -> dict:
+def build_distribution_compact(tables, all_items, *, bin1_only=False,
+                               bin1_sources=None) -> dict:
     """ECDF 전량(다운샘플 없음, 불변 규칙 #6)을 columnar 포맷으로 반환.
 
     행마다 반복되던 subject/source/units/limits 키를 제거한 컴팩트 표현으로,
@@ -54,15 +55,22 @@ def build_distribution_compact(tables, all_items, *, bin1_only=False) -> dict:
     성능용 다운샘플이 아니라 bin1 모드 전용 의미 필터다 — 전체 모드는 여전히 전 포인트를
     빠짐없이 표시한다(불변 규칙 #6). units/limits(spec)은 bin 과 무관하므로 전체 기준과
     동일하게 항목 메타에서 취한다.
+
+    ``bin1_sources`` 를 주면 **그 소스에만** bin1 필터를 건다 (Temperature "Bin1(RT만)" —
+    RT 만 양품으로 좁히고 CT/HT 는 fail 포함 전체). ``None`` 이면 종전과 완전히 같다.
     """
     from .common import PASS_BIN, bin_types
+
+    def _use_bin1(table):
+        return bin1_only and (bin1_sources is None or table.source in bin1_sources)
 
     bin1_masks = {}
     if bin1_only:
         # BIN 마스크는 item 과 무관 — 테이블당 1회만 계산 (item 루프 안에서 재계산 금지)
         for table in tables:
-            bin1_masks[id(table)] = np.asarray(
-                [b == PASS_BIN for b in bin_types(table)], dtype=bool)
+            if _use_bin1(table):
+                bin1_masks[id(table)] = np.asarray(
+                    [b == PASS_BIN for b in bin_types(table)], dtype=bool)
 
     items = {}
     for item in all_items:
@@ -79,7 +87,7 @@ def build_distribution_compact(tables, all_items, *, bin1_only=False) -> dict:
                 hi = round_num(table.hilim.get(item))
                 first = False
             col = table.data[item]
-            if bin1_only:
+            if _use_bin1(table):
                 # 양품(BIN==PASS_BIN) & 규격(LSL/USL) 이내 die 만 — 규격 밖 양품 die 도 제외.
                 numeric = pd.to_numeric(col, errors="coerce").to_numpy()
                 m = np.isfinite(numeric) & bin1_masks[id(table)]
@@ -197,7 +205,7 @@ def build_distribution_index(tables, cpk_rows, exclude=None, counts=None) -> lis
 
 
 def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
-                 bin1: bool = False) -> dict:
+                 bin1: bool = False, bin1_sources=None) -> dict:
     """Item_detail 용: 항목의 소스별 전체 측정값(다운샘플 없음) + 통계 + cpk/status +
     이 항목으로 Fail 된 die 의 rawdata 행(전 metadata + 측정값).
 
@@ -245,7 +253,8 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
         bin1_mask = np.asarray([b == PASS_BIN for b in bin_types(table)], dtype=bool)
         stat_col = col[bin1_mask]
         disp_mask = finite_mask
-        if bin1:
+        # bin1_sources 를 주면 그 소스에만 표시 필터를 건다(Temperature "Bin1(RT만)").
+        if bin1 and (bin1_sources is None or table.source in bin1_sources):
             disp_mask = finite_mask & bin1_mask
             arr = numeric.to_numpy()
             ilo = num(table.lolim.get(subject))

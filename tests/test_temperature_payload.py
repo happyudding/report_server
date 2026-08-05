@@ -9,8 +9,9 @@
   2. payload.sources[] 에 temp_role/temp_group/temp_corner, payload.temperature 에 그룹 구성.
   3. webreport_temperature_groups 는 깨진 옵션에 None(=Normal 렌더 폴백)을 돌려준다.
   4. **Normal 모드 payload 는 이 변경 전과 완전히 동일하다** (회귀 가드).
-  5. payload.yield_corner_groups = RT Corner / Temp Corner 2표. 같은 소스의 fail% 는
-     Corner 표와 전체 Yield 시트에서 **정확히 일치**한다(분모가 subset 에서도 불변).
+  5. Yield 계열(Yield 시트·Issue Table)은 **RT source 만** 본다 — CT/HT 컬럼 자체가 없다
+     (2026-08-05). CT/HT 는 sheets["Issue Table Temp"] 로 나가고, 그 표의 소스 컬럼은
+     CT/HT 만이며 분모는 강제된 test die 수다.
 
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례).
 """
@@ -95,9 +96,13 @@ def test_payload_marks_roles_and_forces_denominator():
     assert by_src["WF1_CT"]["total"] == 100 and by_src["WF1_CT"]["basis"] == "test", by_src
     assert by_src["WF1_RT"]["total"] == 200, by_src["WF1_RT"]
 
-    # 수율 표가 그 분모를 그대로 쓴다 (CT: 90/100 = 90%, HT: 80/100 = 80%)
+    # Yield 시트는 RT source 만 — CT/HT 컬럼이 아예 없다 (2026-08-05)
     pass_row = payload["sheets"]["Yield"][0]
-    assert (pass_row["WF1_CT_yield"], pass_row["WF1_HT_yield"]) == (90.0, 80.0), pass_row
+    assert "WF1_CT_yield" not in pass_row and "WF1_HT_yield" not in pass_row, pass_row
+    assert "WF1_RT_yield" in pass_row and "WF2_RT_yield" in pass_row, pass_row
+    # RT 만의 수율 요약 (WF1_RT 190/200=95%, WF2_RT 190/200=95%)
+    assert [s["source"] for s in payload["yield_summary"]["by_source"]] == \
+        ["WF1_RT", "WF2_RT"], payload["yield_summary"]["by_source"]
 
 
 def test_option_parsing_and_fallbacks():
@@ -120,33 +125,30 @@ def test_option_parsing_and_fallbacks():
     assert webreport_temperature_groups(opts, ["ZZZ"]) is None
 
 
-def test_yield_corner_groups_split():
-    """Corner 2표 — RT Corner 는 RT 소스만, Temp Corner 는 CT/HT 만."""
+def test_temp_sheet_sources_and_denominator():
+    """Temp 시트 — 컬럼은 CT/HT 만, 분모는 강제된 test die 수, 구 corner 키는 없다."""
     payload = build_report_payload(temp_tables(), mode="Temperature", gross_die=200,
                                    temperature_groups=GROUPS)
-    corners = payload["yield_corner_groups"]
-    assert [c["corner"] for c in corners] == ["RT", "TEMP"], corners
-    assert corners[0]["sources"] == ["WF1_RT", "WF2_RT"], corners[0]["sources"]
-    assert corners[1]["sources"] == ["WF1_CT", "WF1_HT"], corners[1]["sources"]
-    # 각 Corner 는 자기 소스 컬럼만 갖는다 (RT 표에 CT 컬럼이 새지 않는다)
-    rt_keys = set(corners[0]["rows"][0])
-    assert "WF1_CT_yield" not in rt_keys and "WF1_RT_yield" in rt_keys, sorted(rt_keys)
-    # 표시용 STEP 분리와 누적 수율도 Corner 별로 따로 계산된다
-    assert corners[1]["step_groups"] and corners[1]["by_step"], corners[1]
+    assert "yield_corner_groups" not in payload, sorted(payload)
+    rows = payload["sheets"]["Issue Table Temp"]
+    assert rows and str(rows[0]["Category"]) == "TEMP", rows[:1]
+    data = [r for r in rows if str(r.get("Item") or "")]
+    assert data, rows
+    keys = set(data[0])
+    assert "WF1_CT_yield" in keys and "WF1_HT_yield" in keys, sorted(keys)
+    assert "WF1_RT_yield" not in keys and "WF2_RT_yield" not in keys, sorted(keys)
+    # 분모는 남은 die 수(100) — CT fail 10 → 10%, HT fail 20 → 20%
+    item_a = next(r for r in data if r["Item"] == "ItemA")
+    assert (item_a["WF1_CT_yield"], item_a["WF1_HT_yield"]) == (10.0, 20.0), item_a
+    assert item_a["avg"] == 15.0, item_a
+    # Bin 은 limits 매핑이 없으면 관측 bin 폴백 (합성 데이터의 fail bin = 4)
+    assert item_a["Bin"] == "4", item_a
 
 
-def test_corner_percentages_match_full_yield_sheet():
-    """분모 불변 증명 — subset 재계산이어도 소스별 fail% 는 전체 Yield 시트와 같다."""
-    payload = build_report_payload(temp_tables(), mode="Temperature", gross_die=200,
-                                   temperature_groups=GROUPS)
-    full = {(str(r.get("bin")), str(r.get("Item"))): r for r in payload["sheets"]["Yield"]}
-    for corner in payload["yield_corner_groups"]:
-        for row in corner["rows"]:
-            ref = full[(str(row.get("bin")), str(row.get("Item")))]
-            for src in corner["sources"]:
-                for suffix in ("_yield", "_count"):
-                    key = f"{src}{suffix}"
-                    assert row[key] == ref[key], (corner["corner"], key, row[key], ref[key])
+def test_temp_sheet_absent_for_other_modes():
+    """Temperature 아니면 Temp 시트는 빈 배열 — 프런트가 탭을 숨긴다."""
+    payload = build_report_payload(temp_tables(), gross_die=200)
+    assert payload["sheets"]["Issue Table Temp"] == [], payload["sheets"]["Issue Table Temp"]
 
 
 def test_member_roles_and_temp_corner():
@@ -178,36 +180,23 @@ def _issue_sections(rows):
     return [str(r.get("Category")) for r in rows if str(r.get("Category") or "")]
 
 
-def test_issue_table_temp_section():
-    """TEMP 섹션이 CPK 와 ETC 사이, 불량률 내림차순, row_key 는 TEMP|<item>."""
+def test_issue_table_has_no_temp_section():
+    """Issue Table 은 Yield → CPK → ETC 뿐 — TEMP 는 별도 시트로 빠졌다."""
     payload = build_report_payload(temp_tables(), mode="Temperature", gross_die=200,
                                    temperature_groups=GROUPS, issue_comments={})
     rows = payload["sheets"]["Issue Table"]
-    assert _issue_sections(rows) == ["Yield", "CPK", "TEMP", "ETC"], _issue_sections(rows)
-
-    ti = next(i for i, r in enumerate(rows) if str(r.get("Category")) == "TEMP")
-    ei = next(i for i, r in enumerate(rows) if str(r.get("Category")) == "ETC")
-    temp_data = [r for r in rows[ti + 1:ei] if str(r.get("Item") or "")]
-    assert temp_data, rows[ti:ei]
-    # TEMP 행은 CT/HT 컬럼만 값이 있고, RT 컬럼은 비어 있다(Bin 도 item 단위라 공란)
-    for r in temp_data:
-        assert r["Bin"] == "", r
-        assert r["WF1_CT_yield"] != "" and r["WF1_RT_yield"] == "", r
-    # 불량률(집계 count) 내림차순
-    counts = [sum(int(r.get(f"{s}_count") or 0) for s in ("WF1_CT", "WF1_HT"))
-              for r in temp_data]
-    assert counts == sorted(counts, reverse=True), counts
+    assert _issue_sections(rows) == ["Yield", "CPK", "ETC"], _issue_sections(rows)
 
 
-def test_issue_table_yield_cpk_are_rt_only():
-    """Temperature 에서 Yield 섹션 Pass 행은 RT 소스 값만 갖는다 (CT/HT 는 공란)."""
+def test_issue_table_is_rt_only():
+    """Temperature 에서 Issue Table 은 RT 소스 컬럼만 갖는다 (CT/HT 컬럼 부재)."""
     payload = build_report_payload(temp_tables(), mode="Temperature", gross_die=200,
                                    temperature_groups=GROUPS)
     rows = payload["sheets"]["Issue Table"]
     pass_row = rows[0]
     assert str(pass_row["Bin"]) == "1" and str(pass_row["Category"]) == "Yield", pass_row
     assert pass_row["WF1_RT_yield"] not in ("", None), pass_row
-    assert pass_row["WF1_CT_yield"] == "" and pass_row["WF1_HT_yield"] == "", pass_row
+    assert "WF1_CT_yield" not in pass_row and "WF1_HT_yield" not in pass_row, pass_row
 
 
 def test_issue_table_row_key_roundtrip():
@@ -243,11 +232,11 @@ def main():
     for fn in (test_mode_accepted, test_force_test_basis_for_members,
                test_payload_marks_roles_and_forces_denominator,
                test_option_parsing_and_fallbacks,
-               test_yield_corner_groups_split,
-               test_corner_percentages_match_full_yield_sheet,
+               test_temp_sheet_sources_and_denominator,
+               test_temp_sheet_absent_for_other_modes,
                test_member_roles_and_temp_corner,
-               test_issue_table_temp_section,
-               test_issue_table_yield_cpk_are_rt_only,
+               test_issue_table_has_no_temp_section,
+               test_issue_table_is_rt_only,
                test_issue_table_row_key_roundtrip,
                test_normal_mode_payload_unchanged):
         fn()

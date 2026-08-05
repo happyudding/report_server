@@ -522,7 +522,9 @@ function renderSheetTable(rows, opts) {
     const rowItemTxt = String((r && r["Item"]) ?? "").trim();
     const delHideKey = (opts.kind === "issue" && opts.edit && !subhead && !issuePassRow
       && ((issueRowSec === "Yield" && r && r._grp && !r._detail)
-        || (issueRowSec === "CPK" && rowItemTxt !== "")))
+        || (issueRowSec === "CPK" && rowItemTxt !== "")
+        // TEMP 행(Issue Table Temp 탭)도 item 단위로 숨긴다 — 키는 TEMP|<item>.
+        || (issueRowSec === "TEMP" && rowItemTxt !== "")))
       ? issueHideStatusKey(r, issueRowSec) : "";
     const delEtcItem = (opts.kind === "issue" && opts.edit && issueRowSec === "ETC"
       && String((r && r["Category"]) || "") === "" && rowItemTxt !== "") ? rowItemTxt : "";
@@ -543,6 +545,16 @@ function renderSheetTable(rows, opts) {
           return `<td data-r="${ri}" data-c="${ci}">` +
             `<div class="map-cell map-cell-mini" data-bin="${esc(String(binv))}" ` +
             `title="클릭하면 Map Analysis 탭에서 이 Bin 을 강조해 봅니다"><div class="map-plot"></div>${expandBtn}</div></td>`;
+        }
+        // TEMP 섹션(Issue Table Temp 탭)은 항목별 fail die 를 강조한 미니맵을 넣는다.
+        // Bin 은 있지만 그 bin 의 die 가 아니라 "이 항목을 벗어난 die" 를 보여야 한다.
+        const tempItem = String((r && r["Item"]) ?? "").trim();
+        if (opts.kind === "issue" && !subhead && issueRowSec === "TEMP" && tempItem !== "") {
+          const tempExpand = (webReportSourceCount() > 1)
+            ? `<button type="button" class="btn-map-expand" title="전체 소스 맵 보기">⤢</button>` : "";
+          return `<td data-r="${ri}" data-c="${ci}">` +
+            `<div class="map-cell map-cell-mini map-cell-temp" data-temp-item="${esc(tempItem)}" ` +
+            `title="클릭하면 Map Analysis 탭 Temp Item 축에서 이 항목을 강조해 봅니다"><div class="map-plot"></div>${tempExpand}</div></td>`;
         }
         // CPK 섹션은 Bin 이 없다 — 대신 그 Item 의 STDF Map(측정값 10분위) 미니맵을 넣는다.
         const cpkItem = String((r && r["Item"]) ?? "").trim();
@@ -963,7 +975,7 @@ function yieldOverviewHtml() {
 // 이벤트 위임(document)이라 탭 재렌더에도 리스너 재바인딩이 필요 없다.
 // 활성 contenteditable·버튼·select 등 interactive 요소에서는 선택을 시작하지 않아
 // 편집 렌더(dblclick 편집·상태 select·TNO 펼침)와 간섭하지 않는다.
-const CELLSEL_SCOPE = "#panel-issues";  // 적용 패널 — 확장 시 콤마 셀렉터로 추가
+const CELLSEL_SCOPE = "#panel-issues, #panel-issue-temp";  // 적용 패널 — closest() 라 콤마 그대로 동작
 let _cellSel = null;   // {table, grid, r1, c1, r2, c2}
 let _cellDrag = null;  // {table, r1, c1, moved}
 let _cellPainted = []; // 현재 .cell-sel 이 붙은 td — 도색 해제를 표 전체 스캔 없이 하기 위함

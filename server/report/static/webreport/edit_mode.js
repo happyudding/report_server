@@ -78,24 +78,9 @@ function destroyYieldGrid() {
 const ISSUE_COMMENT_COLS = new Set(["PTE comment", "개발 comment"]);
 
 function renderIssuesEdit() {
-  const panel = document.getElementById("panel-issues");
-  if (Array.isArray(DATA.issue_table_text) && DATA.issue_table_text.length) {
-    // 읽기 모드와 동일하게 본문을 청크로 채운다(대형 표 통짜 렌더 블록 방지, DOM 은 동일).
-    const table = renderSheetTable(DATA.issue_table_text, {
-      edit: true, kind: "issue", editableCols: ISSUE_COMMENT_COLS, chunk: true });
-    panel.innerHTML = issueToolbarHtml() + table.html;
-    table.fill(panel.querySelector(".sheet-table.kind-issue tbody"), () => {
-      syncIssueHeadRowHeight(panel);
-      // 읽기 모드와 동일하게 좌측 고정(Step~Distribution) 오프셋 실측 — 편집 모드도 정렬.
-      syncIssueStickyOffsets(panel);
-      requestAnimationFrame(() => syncIssueStickyOffsets(panel));   // 레이아웃 확정 후 재실측
-      renderIssueMiniDist(panel);
-      renderIssueMiniMap(panel);
-      bindIssueColResize(panel);
-    });
-    return;
-  }
-  emptyPanel(panel, "Issue Table 데이터 없음");
+  // 렌더 본체는 조회 모드와 공용 (yield_issue.js renderIssueTableInto).
+  renderIssueTableInto(document.getElementById(ISSUE_PANEL_MAIN), DATA.issue_table_text,
+                       { edit: true });
 }
 
 // ── 모드 전환 ──────────────────────────────────────────────────────────────
@@ -115,6 +100,8 @@ const TAB_RENDERERS = {
     if (MODE === "edit") renderIssuesEdit();
     else renderIssues(DATA.issue_table_text);
   },
+  // Temperature 전용 — CT/HT 를 RT Limit 으로 전 항목 재판정한 이슈 표 (yield_issue.js).
+  "issue-temp": () => renderIssueTempTab(),
   "cpk": renderCpk,
   "distribution": renderDistribution,
   "map-analysis": renderMapAnalysis,
@@ -160,7 +147,7 @@ function schedulePrerender() {
   // map-analysis 는 프리렌더에서 제외한다. wafer map 은 scaleanchor(정사각 고정) 플롯이라
   // 숨김(0폭) 상태에서 그려지면 탭 활성화 시 Plotly.Plots.resize 로도 종횡비/폭이 제대로
   // 복구되지 않아 짤려 보인다 → 탭을 처음 열 때(패널 visible) renderTab 이 정상 폭으로 그리도록 둔다.
-  const queue = ["yield", "issues", "cpk", "distribution"];
+  const queue = ["yield", "issues", "issue-temp", "cpk", "distribution"];
   const idle = window.requestIdleCallback
     ? (fn => window.requestIdleCallback(fn, { timeout: 1000 }))
     : (fn => setTimeout(fn, 200));
@@ -198,6 +185,13 @@ document.querySelector(".content").addEventListener("click", e => {
     flushPendingComments().then(ok => { if (ok && name) noteJumpToTag(name); });
     return;
   }
+  // "탭에서 편집 ›" 등 다른 탭으로 보내는 버튼 (Yield 탭 하단 Temp Corner 섹션).
+  const gotoTab = e.target.closest("[data-goto-tab]");
+  if (gotoTab) {
+    const btn = document.querySelector(`.tab[data-tab="${gotoTab.dataset.gotoTab}"]`);
+    if (btn) btn.click();
+    return;
+  }
   // Issue Table Yield 대표행 토글 → 그 Bin 의 detail TNO 행 펼치기/접기.
   const issueToggle = e.target.closest(".issue-toggle");
   if (issueToggle) { toggleIssueGroup(issueToggle); return; }
@@ -205,7 +199,8 @@ document.querySelector(".content").addEventListener("click", e => {
   const mapExpandBtn = e.target.closest(".btn-map-expand");
   if (mapExpandBtn) { toggleMapExpand(mapExpandBtn); return; }
   // Issue Table Distribution 미니셀(산포) 클릭 → 그 Item 의 Item_detail.
-  const distMini = e.target.closest("#panel-issues .dist-cell-mini[data-subject]");
+  const distMiniAny = e.target.closest(".dist-cell-mini[data-subject]");
+  const distMini = (distMiniAny && issuePanelOf(distMiniAny)) ? distMiniAny : null;
   if (distMini) {
     const subject = distMini.dataset.subject;
     flushPendingComments().then(ok => { if (ok && subject) openItemDetail(subject, [subject]); });
@@ -213,54 +208,62 @@ document.querySelector(".content").addEventListener("click", e => {
   }
   // Issue Table Map 미니셀 클릭 → Map Analysis 탭. Yield/ETC 행(data-bin)은 Bin Map 에서
   // 그 Bin 을 범례 선택 상태로, CPK 행(data-subject)은 STDF Map 에서 그 Item 을 선택 상태로.
-  const mapMini = e.target.closest("#panel-issues .map-cell-mini");
+  const mapMiniAny = e.target.closest(".map-cell-mini");
+  const mapMini = (mapMiniAny && issuePanelOf(mapMiniAny)) ? mapMiniAny : null;
   if (mapMini) {
-    if (mapMini.dataset.subject) openMapAnalysisForItem(mapMini.dataset.subject);
+    if (mapMini.dataset.tempItem) openMapAnalysisForTempItem(mapMini.dataset.tempItem);
+    else if (mapMini.dataset.subject) openMapAnalysisForItem(mapMini.dataset.subject);
     else openMapAnalysisForBin(mapMini.dataset.bin);
     return;
   }
-  if (e.target.id === "issueToggleAll") {
-    const expand = e.target.dataset.expanded !== "true";
-    e.target.dataset.expanded = expand ? "true" : "false";
-    e.target.textContent = expand ? "TNO 전체 접기" : "TNO 전체 펼치기";
-    setAllIssueGroups(expand);
+  // Issue 표 툴바 버튼 — 두 패널(Issue Table / Issue Table Temp)이 같은 마크업을 쓰므로
+  // 고정 id 가 아니라 data-issue-act + 소속 패널로 판별한다.
+  const act = e.target.closest("[data-issue-act]");
+  const actPanel = act ? issuePanelOf(act) : null;
+  if (act && actPanel) {
+    const kind = act.dataset.issueAct;
+    if (kind === "toggle-all") {
+      const expand = act.dataset.expanded !== "true";
+      act.dataset.expanded = expand ? "true" : "false";
+      act.textContent = expand ? "TNO 전체 접기" : "TNO 전체 펼치기";
+      setAllIssueGroups(expand, actPanel);
+    } else if (kind === "excel") {
+      exportIssueExcel(issueRowsOf(actPanel),
+                       actPanel.id === ISSUE_PANEL_TEMP ? ISSUE_TEMP_SHEET : "Issue Table");
+    } else if (kind === "etc-add") { openEtcItemModal(); }
+    else if (kind === "delmode") {
+      const ui = issueUi(actPanel);
+      ui.delMode = !ui.delMode;
+      applyIssueDelMode(actPanel);
+    } else if (kind === "del-selected") { deleteSelectedIssueRows(actPanel); }
+    else if (kind === "sel-all") { setAllIssueDelChecked(true, actPanel); }
+    else if (kind === "sel-none") { setAllIssueDelChecked(false, actPanel); }
+    else if (kind === "sel-open") { bulkSetIssueStatus("Open", "selected", actPanel); }
+    else if (kind === "sel-close") { bulkSetIssueStatus("Close", "selected", actPanel); }
+    else if (kind === "all-open") { bulkSetIssueStatus("Open", "all", actPanel); }
+    else if (kind === "all-close") { bulkSetIssueStatus("Close", "all", actPanel); }
+    else if (kind === "reset-hidden") { resetHiddenIssueRows(); }
     return;
   }
   const jumpBtn = e.target.closest("[data-issue-jump]");
-  if (jumpBtn) { jumpToIssueSection(jumpBtn.dataset.issueJump); return; }
-  if (e.target.id === "issueExcelBtn") { exportIssueExcel(); return; }
+  if (jumpBtn) { jumpToIssueSection(jumpBtn.dataset.issueJump, issuePanelOf(jumpBtn)); return; }
   if (e.target.id === "yieldExcelBtn") { exportYieldExcel(); return; }
   if (e.target.id === "cpkExcelBtn") { exportCpkExcel(); return; }
-  const etcAddBtn = e.target.closest("#etcAddItemBtn");
-  if (etcAddBtn) { openEtcItemModal(); return; }
   const etcDelBtn = e.target.closest(".btn-del-etc-item");
   if (etcDelBtn) { removeEtcItem(etcDelBtn.dataset.item); return; }
   // Issue Table Yield 대표행/CPK 행 숨김(삭제) + 숨김 전체 초기화 (편집모드 전용).
   const rowDelBtn = e.target.closest(".btn-del-issue-row");
   if (rowDelBtn) { hideIssueRow(rowDelBtn.dataset.hkey); return; }
-  if (e.target.id === "issueResetHiddenBtn") { resetHiddenIssueRows(); return; }
-  // 선택 모드 토글 / 체크한 행 일괄 삭제 (편집모드 전용).
-  if (e.target.closest("#issueDelModeBtn")) {
-    issueDelMode = !issueDelMode;
-    applyIssueDelMode();
-    return;
-  }
-  if (e.target.closest("#issueDelSelectedBtn")) { deleteSelectedIssueRows(); return; }
-  if (e.target.closest("#issueSelAllBtn")) { setAllIssueDelChecked(true); return; }
-  if (e.target.closest("#issueSelNoneBtn")) { setAllIssueDelChecked(false); return; }
-  // Status 일괄 변경 — 선택한 행만 / Issue Table 전체.
-  if (e.target.closest("#issueSelOpenBtn")) { bulkSetIssueStatus("Open", "selected"); return; }
-  if (e.target.closest("#issueSelCloseBtn")) { bulkSetIssueStatus("Close", "selected"); return; }
-  if (e.target.closest("#issueAllOpenBtn")) { bulkSetIssueStatus("Open", "all"); return; }
-  if (e.target.closest("#issueAllCloseBtn")) { bulkSetIssueStatus("Close", "all"); return; }
   const delChk = e.target.closest(".issue-del-chk");
-  if (delChk) { markIssueRowSelected(delChk); syncIssueDelCount(); return; }
+  if (delChk) { markIssueRowSelected(delChk); syncIssueDelCount(issuePanelOf(delChk)); return; }
   // 선택 모드: Step 셀 아무 곳이나 클릭해도 체크된다 — 체크박스가 작아 정확히 누르기 어렵다.
   // (Step 셀 안의 TNO 펼치기 ▼ 버튼은 위에서 먼저 처리되고 여기까지 오지 않는다.)
-  const selCell = issueDelMode ? e.target.closest("#panel-issues td.issue-sel-cell") : null;
+  const selCellAny = e.target.closest("td.issue-sel-cell");
+  const selPanel = selCellAny ? issuePanelOf(selCellAny) : null;
+  const selCell = (selPanel && issueUi(selPanel).delMode) ? selCellAny : null;
   if (selCell) {
     const chk = selCell.querySelector(".issue-del-chk");
-    if (chk) { chk.checked = !chk.checked; markIssueRowSelected(chk); syncIssueDelCount(); }
+    if (chk) { chk.checked = !chk.checked; markIssueRowSelected(chk); syncIssueDelCount(selPanel); }
     return;
   }
   const addBtn = e.target.closest(".add-row");
@@ -291,11 +294,11 @@ document.querySelector(".content").addEventListener("change", async e => {
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
     // 낙관 반영: 재렌더 없이 rows 데이터만 갱신 → Summary Open/Close 카운트 재계산 유도.
+    // rows 는 그 셀이 속한 패널의 것(Issue Table / Issue Table Temp)이어야 한다.
     const td = sel.closest("td");
     const ri = td ? parseInt(td.dataset.r, 10) : NaN;
-    if (!isNaN(ri) && Array.isArray(DATA.issue_table_text) && DATA.issue_table_text[ri]) {
-      DATA.issue_table_text[ri]["Status"] = value;
-    }
+    const rows = issueRowsOf(issuePanelOf(sel));
+    if (!isNaN(ri) && rows[ri]) rows[ri]["Status"] = value;
     setStatusDot(td, value);   // 드랍다운 아래 신호등 점 갱신
     tabDirty["summary"] = true;
   } catch (err) {
@@ -569,11 +572,12 @@ function buildPayload() {
 // 변경 없으면 요청을 보내지 않는다. 실패 시 throw — 호출부가 dirty 복원.
 async function saveIssueComments(opts) {
   opts = opts || {};
-  const panel = document.getElementById("panel-issues");
-  const rows = Array.isArray(DATA && DATA.issue_table_text) ? DATA.issue_table_text : [];
   const comments = [];
-  const applied = [];   // 성공 시 DATA.issue_table_text 에도 반영해 재렌더 시 옛 값으로 되돌지 않게 함
-  if (panel) {
+  const applied = [];   // 성공 시 rows 에도 반영해 재렌더 시 옛 값으로 되돌지 않게 함
+  // Issue Table + Issue Table Temp 두 패널을 함께 훑는다 — 서버는 row_key 로 저장하므로
+  // 요청 형식·엔드포인트는 종전과 같다(패널이 하나뿐이면 동작도 완전히 같다).
+  issuePanelEls().forEach(panel => {
+    const rows = issueRowsOf(panel);
     panel.querySelectorAll("td[data-key][data-col]").forEach(td => {
       const col = td.dataset.col;
       const ri = parseInt(td.dataset.r, 10);
@@ -584,10 +588,10 @@ async function saveIssueComments(opts) {
         ? td.dataset.raw : (td.textContent || "")).trim();
       if (value !== orig) {
         comments.push({ key: td.dataset.key, col, value });
-        applied.push({ ri, col, value });
+        applied.push({ rows, ri, col, value });
       }
     });
-  }
+  });
   if (!comments.length) return { ok: true, updated: 0 };
   const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/comments`, {
     method: "POST",
@@ -597,7 +601,7 @@ async function saveIssueComments(opts) {
   });
   const j = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(j.error || `comment 저장 실패 (HTTP ${res.status})`);
-  applied.forEach(({ ri, col, value }) => { if (rows[ri]) rows[ri][col] = value; });
+  applied.forEach(({ rows, ri, col, value }) => { if (rows[ri]) rows[ri][col] = value; });
   return j;
 }
 
@@ -839,13 +843,13 @@ function setStatusDot(td, value) {
 
 // 삭제 모드에서 체크한 행 일괄 삭제 — Yield/CPK 행은 issue_hidden, ETC 항목은 etc remove.
 // 백엔드가 단건 API 라 순차 호출한다(세션 편집 DB read-modify-write 경합 방지). 재로드는 마지막 1회.
-async function deleteSelectedIssueRows() {
-  const panel = document.getElementById("panel-issues");
+async function deleteSelectedIssueRows(panel) {
+  panel = panel || activeIssuePanel();
   const checked = panel ? [...panel.querySelectorAll(".issue-del-chk:checked")] : [];
   if (!checked.length) { showToast("삭제할 행을 체크하세요."); return; }
-  if (!confirm(`체크한 ${checked.length}개 행을 Issue Table 에서 삭제할까요?\n※ Yield/CPK 행 복원은 "삭제 전체 초기화"로만 가능합니다.`)) return;
+  if (!confirm(`체크한 ${checked.length}개 행을 Issue Table 에서 삭제할까요?\n※ 삭제한 행 복원은 "삭제 전체 초기화"로만 가능합니다.`)) return;
   if (!(await flushPendingComments())) return;
-  const btn = document.getElementById("issueDelSelectedBtn");
+  const btn = panel.querySelector('[data-issue-act="del-selected"]');
   if (btn) btn.disabled = true;
   let done = 0;
   try {
@@ -879,8 +883,8 @@ async function deleteSelectedIssueRows() {
 // Issue Table Status 일괄 변경 (편집모드 전용) — scope "selected" = 체크한 행, "all" = 표 전체.
 // 대상 행의 Status 드랍다운을 모아 배치 API(items)로 한 번에 저장하고, 재렌더 없이 화면
 // (드랍다운·신호등·DATA)만 갱신한다 — 단건 변경(change 위임)과 같은 낙관 반영 방식.
-async function bulkSetIssueStatus(value, scope) {
-  const panel = document.getElementById("panel-issues");
+async function bulkSetIssueStatus(value, scope, panel) {
+  panel = panel || activeIssuePanel();
   if (!panel) return;
   let sels;
   if (scope === "selected") {
@@ -906,13 +910,12 @@ async function bulkSetIssueStatus(value, scope) {
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    const rows = issueRowsOf(panel);
     targets.forEach(sel => {
       sel.value = value;
       const td = sel.closest("td");
       const ri = td ? parseInt(td.dataset.r, 10) : NaN;
-      if (!isNaN(ri) && Array.isArray(DATA.issue_table_text) && DATA.issue_table_text[ri]) {
-        DATA.issue_table_text[ri]["Status"] = value;
-      }
+      if (!isNaN(ri) && rows[ri]) rows[ri]["Status"] = value;
       setStatusDot(td, value);
     });
     tabDirty["summary"] = true;

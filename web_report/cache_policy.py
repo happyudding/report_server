@@ -64,24 +64,34 @@ def commonality_key(session, prep_digest: str = "") -> tuple:
     return _base(session, prep_digest)
 
 
-def dist_key(session, *, bin1: bool = False, prep_digest: str = "") -> tuple:
+def _bin1_suffix(bin1: bool, bin1_scope: str = "") -> tuple:
+    """bin1 변형 키 꼬리표. scope 가 비면 종전 키와 **완전히 동일**(기존 캐시 유효).
+
+    scope="rt" = Temperature "Bin1(RT만)" — RT 소스만 양품 필터, CT/HT 는 전체.
+    """
+    if not bin1:
+        return ()
+    return ("bin1",) + ((str(bin1_scope),) if bin1_scope else ())
+
+
+def dist_key(session, *, bin1: bool = False, prep_digest: str = "",
+             bin1_scope: str = "") -> tuple:
     # DUT 모드는 같은 akey 라도 분할된 ECDF 를 내므로 mode 포함.
     # bin1=True 는 양품(Bin1)만으로 재계산한 ECDF — 전체 기준과 별도 캐시(키에만 추가해
     # 기존 전체 기준 키는 불변 유지 → 기존 캐시 무효화 없음).
-    base = _base(session, prep_digest) + (_mode(session),)
-    return base + ("bin1",) if bin1 else base
+    return _base(session, prep_digest) + (_mode(session),) + _bin1_suffix(bin1, bin1_scope)
 
 
 def dist_batch_key(session, subjects_digest: str, *, bin1: bool = False,
-                   prep_digest: str = "") -> tuple:
+                   prep_digest: str = "", bin1_scope: str = "") -> tuple:
     """항목 배치 ECDF(GET .../distribution_batch) 응답 gzip 캐시 키.
 
     dist_key 와 같은 (akey, chash, mode) 기반에 요청 항목 집합의 digest 를 더한다 —
     배치 구성이 스크롤에 따라 달라지므로 집합 자체가 키의 일부다. 전체 dist 캐시와
     같은 세션을 가리키지만 별도 캐시라 서로를 무효화하지 않는다.
     """
-    base = _base(session, prep_digest) + (_mode(session), str(subjects_digest))
-    return base + ("bin1",) if bin1 else base
+    return (_base(session, prep_digest) + (_mode(session), str(subjects_digest))
+            + _bin1_suffix(bin1, bin1_scope))
 
 
 def dist_chunk_key(analysis_key, content_hash, mode, chunk_id: int,
@@ -116,6 +126,20 @@ def map_key(session, prep_digest: str = "") -> tuple:
     # dies 는 편집과 무관하므로 edits_rev 불포함. 전처리(항목 제외)는 TNO 맵의 fail 항목
     # 구성을 바꾸므로 prep 은 포함한다.
     return _base(session, prep_digest) + (_mode(session), MAP_SCHEMA_VERSION)
+
+
+# Temperature 항목별 fail die 인덱스(GET .../web_report/temp_map) 스키마 버전.
+# 응답 구조(sources[].items[].idx)를 바꾸면 올린다.
+TEMP_MAP_SCHEMA_VERSION = 1
+
+
+def temp_map_key(session, prep_digest: str = "") -> tuple:
+    """Temperature 항목별 fail die 인덱스 캐시 키.
+
+    map_key 와 같은 기반 — 인덱스는 map dies 배열과 1:1 대응이라 같은 것들(raw 편집·
+    전처리·모드)에 함께 무효화돼야 한다. 편집(rev)과는 무관하다.
+    """
+    return _base(session, prep_digest) + (_mode(session), TEMP_MAP_SCHEMA_VERSION)
 
 
 # build_report_payload 출력 스키마 버전. payload 구조(최상위 키·그룹 형태)가 바뀌면
@@ -211,7 +235,13 @@ def map_key(session, prep_digest: str = "") -> tuple:
 #      TEMP 섹션(row_key "TEMP|<item>")이 CPK 와 ETC 사이에 들어간다. sources[] 에는
 #      temp_corner("RT"/"CT"/"HT")가 붙는다(Distribution 소스 그룹 필터). 다른 모드
 #      세션은 값 무변경이지만 키가 전 세션 공통이라 1회 재계산된다.
-REPORT_SCHEMA_VERSION = 26
+# v27: Temperature 모드 대개편 (2026-08-05) — ① Yield 계열(Yield 시트·yield_summary·
+#      Bin/STEP 그룹·issue_bin_summary·Fail Bin·Issue Table)이 **RT source 만** 본다
+#      ② yield_corner_groups 키 삭제 ③ 신규 시트 "Issue Table Temp"(CT/HT 를 RT limit 으로
+#      **전 항목** 재판정 — 첫 fail 제한 없음, row_key 는 "TEMP|<item>" 유지)가 Issue Table
+#      과 Distribution 사이에 들어가고 Issue Table 의 TEMP 섹션은 사라진다. 다른 모드
+#      세션은 값 무변경(빈 시트 1개 추가)이지만 키가 전 세션 공통이라 1회 재계산된다.
+REPORT_SCHEMA_VERSION = 27
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:
@@ -247,7 +277,8 @@ def full_key(session, session_id: str, edits_rev: int, extras_digest: str) -> tu
     return _base(session) + (f"{session_id}:{edits_rev}", extras_digest)
 
 
-def scatter_key(session, subject: str, *, bin1: bool = False, prep_digest: str = "") -> tuple:
+def scatter_key(session, subject: str, *, bin1: bool = False, prep_digest: str = "",
+                bin1_scope: str = "") -> tuple:
     # bin1=True 는 양품(Bin1)만으로 낸 상세 — 전체 기준과 별도 캐시(키에만 추가).
-    base = _base(session, prep_digest) + (_mode(session), subject)
-    return base + ("bin1",) if bin1 else base
+    return (_base(session, prep_digest) + (_mode(session), subject)
+            + _bin1_suffix(bin1, bin1_scope))

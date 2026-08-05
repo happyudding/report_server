@@ -48,6 +48,7 @@ from .validation import (
     webreport_colors as _webreport_colors,
     webreport_compare_groups as _webreport_compare_groups,
     webreport_temperature_groups as _webreport_temperature_groups,
+    webreport_temperature_rt_names as _webreport_temperature_rt_names,
 )
 
 # dist blob 전용 gzip 레벨 — 세션당 1회 생성 후 캐시(RAM+disk)되므로 레벨을 올려도 CPU 는
@@ -215,6 +216,9 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 temperature_groups=_webreport_temperature_groups(
                                     session.get("webreport_options") or "",
                                     [t.source for t in tables]),
+                                # .lt/.pds 유래 항목별 fail bin (신규 업로드만 존재) —
+                                # Temp 시트 Bin 표기용. 없으면 관측 bin 폴백.
+                                temperature_limits=manifest.get("temperature_limits"),
                             )
                             # payload(= 탭별 stage 합 + 조립 오버헤드) 총계.
                             stages["payload"] = round(time.perf_counter() - t_payload, 3)
@@ -362,7 +366,21 @@ def materialize_dist_pack(session_id: str, *, report_db, upload_root: Path,
     return "saved" if saved else "failed"
 
 
-def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: bool = False) -> dict:
+def _bin1_source_filter(session, bin1_scope: str):
+    """bin1 을 **일부 소스에만** 걸 때의 소스 이름 집합 (아니면 None = 전 소스 동일).
+
+    현재 유일한 scope 는 ``"rt"`` — Temperature 모드에서 RT source 만 양품(Bin1)·규격내로
+    좁히고 CT/HT 는 fail 포함 전체를 유지한다("Bin1(RT만)" 버튼). Temperature 가 아니거나
+    RT 가 없으면 None 을 돌려 평범한 bin1 로 폴백한다(캐시 키도 scope 없이 간다).
+    """
+    if str(bin1_scope or "") != "rt" or (session or {}).get("mode") != "Temperature":
+        return None
+    names = _webreport_temperature_rt_names(session.get("webreport_options") or "")
+    return names or None
+
+
+def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: bool = False,
+                     bin1_scope: str = "") -> dict:
     """Distribution lazy 엔드포인트용 컴팩트 ECDF (전 포인트, 다운샘플 없음).
 
     계산 본체는 dist_blob.compute_dist_compact — Honey 클라의 업로드 시 프리컴퓨트와
@@ -375,16 +393,18 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: boo
     """
     session = report_db.get_session(session_id)
     if session:
+        srcs = _bin1_source_filter(session, bin1_scope)
         items = _pack_items(session, session_id, report_db=report_db, upload_root=upload_root)
         if items is not None:
-            return _dist_pack.ecdf_from_pack_items(items, bin1=bin1)
+            return _dist_pack.ecdf_from_pack_items(items, bin1=bin1, bin1_sources=srcs)
     session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     return _dist_blob.compute_dist_compact(
-        tables, manifest.get("selected_items") or [], session.get("mode"), bin1=bin1)
+        tables, manifest.get("selected_items") or [], session.get("mode"), bin1=bin1,
+        bin1_sources=_bin1_source_filter(session, bin1_scope))
 
 
 def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root: Path,
-                           bin1: bool = False) -> dict:
+                           bin1: bool = False, bin1_scope: str = "") -> dict:
     """항목 배치 ECDF — 요청한 subject 만 계산한 compact dict (다운샘플 없음).
 
     전체 dist(get_distribution)는 대형 세션에서 수천만 포인트라 프런트가 한 번에 받으면
@@ -397,18 +417,20 @@ def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root:
     """
     session = report_db.get_session(session_id)
     if session:
+        srcs = _bin1_source_filter(session, bin1_scope)
         items = _pack_items(session, session_id, report_db=report_db,
                             upload_root=upload_root, subjects=subjects)
         if items is not None:
-            return _dist_pack.ecdf_from_pack_items(items, bin1=bin1, only=subjects)
+            return _dist_pack.ecdf_from_pack_items(items, bin1=bin1, only=subjects,
+                                                   bin1_sources=srcs)
     session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     return _dist_blob.compute_dist_compact(
         tables, manifest.get("selected_items") or [], session.get("mode"),
-        bin1=bin1, only=subjects)
+        bin1=bin1, only=subjects, bin1_sources=_bin1_source_filter(session, bin1_scope))
 
 
 def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
-                          bin1: bool = False) -> bytes:
+                          bin1: bool = False, bin1_scope: str = "") -> bytes:
     """get_distribution 결과를 JSON→gzip bytes 로 캐시해 반환 (라우트가 그대로 응답).
 
     계산(수 초 CPU)+직렬화+압축을 세션당 1회만 수행 — 동시 사용자·재방문 모두 캐시 히트.
@@ -426,7 +448,10 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
         raise FileNotFoundError(session_id)
 
     prep = _preprocess.session_digest(report_db, session_id)
-    cache_key = cache_policy.dist_key(session, bin1=bin1, prep_digest=prep)
+    # scope 가 실제로 적용되는 세션(Temperature + RT 존재)일 때만 캐시 키에 넣는다 —
+    # 그 외에는 종전 키와 완전히 같아 기존 캐시가 그대로 유효하다.
+    scope = "rt" if _bin1_source_filter(session, bin1_scope) else ""
+    cache_key = cache_policy.dist_key(session, bin1=bin1, prep_digest=prep, bin1_scope=scope)
     blob = cache.cache_get(cache.DIST_CACHE, cache_key)
     if blob is not None:
         return blob
@@ -448,7 +473,8 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
             # 콜드 빌드(수십 초 CPU 가능)는 전체/bin1 변형 모두 워커 프로세스로 —
             # 요청 스레드 GIL 점유를 피한다 (워커가 disk_cache 도 채움).
             t_sub = time.time()
-            blob, child_t = compute.run(compute.dist_job, session_id, str(upload_root), bin1)
+            blob, child_t = compute.run(compute.dist_job, session_id, str(upload_root),
+                                        bin1, scope)
             build_log.record_offloaded("dist", session_id, analysis_key,
                                        t_sub, time.time(), child_t)
         if blob is None:
@@ -457,7 +483,8 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
             try:
                 with build_log.stage("compute"):
                     compact = get_distribution(session_id, report_db=report_db,
-                                               upload_root=upload_root, bin1=bin1)
+                                               upload_root=upload_root, bin1=bin1,
+                                               bin1_scope=scope)
                 with build_log.stage("serialize"):
                     raw = json.dumps(compact, ensure_ascii=False,
                                      separators=(",", ":")).encode("utf-8")
@@ -503,6 +530,60 @@ def get_map_analysis(session_id: str, *, report_db, upload_root: Path) -> dict:
     rows = build_map_analysis_rows(
         tables, session.get("product_type", ""), session.get("product", ""), mode)
     return {"format": "map-dies-v1", "maps": rows}
+
+
+def get_temp_map(session_id: str, *, report_db, upload_root: Path) -> dict:
+    """Temperature 항목별 fail die **인덱스** (Map 항목 legend + Issue Table Temp Map 셀).
+
+    반환 ``{"format":"temp-map-v1", "sources":[{source, n, items:[{item, idx:[...]}]}]}``.
+    좌표가 아니라 ``get_map_analysis`` 의 ``maps[].dies`` 배열 인덱스를 보낸다 — 같은
+    die 를 항목마다 반복해 싣지 않으므로 payload 가 훨씬 작다(다운샘플 아님, 규칙 #6).
+    인덱스 기준은 tabs/temp_fail.temp_fail_indices 참조(Map_analysis 의 좌표 mask 와 동일).
+    Temperature 가 아니거나 그룹이 없으면 빈 목록 — 프런트가 항목 축을 만들지 않는다.
+    """
+    from .tabs.temp_fail import temp_fail_indices
+
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    if _validate_mode(session.get("mode")) != "Temperature":
+        return {"format": "temp-map-v1", "sources": []}
+    session, tables, _manifest = _load_tables(
+        session_id, report_db=report_db, upload_root=upload_root, session=session)
+    groups = _webreport_temperature_groups(
+        session.get("webreport_options") or "", [t.source for t in tables])
+    if not groups:
+        return {"format": "temp-map-v1", "sources": []}
+    return {"format": "temp-map-v1",
+            "sources": temp_fail_indices(tables, groups.get("groups"))}
+
+
+def get_temp_map_gzip(session_id: str, *, report_db, upload_root: Path) -> bytes:
+    """get_temp_map 결과를 JSON→gzip bytes 로 캐시해 반환 (get_map_gzip 축소판).
+
+    계산은 항목 루프 비교뿐(수 초 미만)이라 워커 오프로드·디스크 캐시 없이 RAM 캐시 +
+    single-flight 락만 둔다.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    if not session.get("analysis_key"):
+        raise FileNotFoundError(session_id)
+    prep = _preprocess.session_digest(report_db, session_id)
+    cache_key = cache_policy.temp_map_key(session, prep)
+    blob = cache.cache_get(cache.TEMP_MAP_CACHE, cache_key)
+    if blob is not None:
+        return blob
+    with cache.keyed_lock_ctx(("temp_map",) + cache_key):
+        blob = cache.cache_get(cache.TEMP_MAP_CACHE, cache_key)
+        if blob is not None:
+            return blob
+        payload = get_temp_map(session_id, report_db=report_db, upload_root=upload_root)
+        raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)
+        cache._bytes_capped_put(cache.TEMP_MAP_CACHE, cache_key, blob,
+                                cache.TEMP_MAP_CACHE_MAX, cache.TEMP_MAP_CACHE_MAX_BYTES)
+    return blob
 
 
 def get_map_gzip(session_id: str, *, report_db, upload_root: Path,
@@ -605,17 +686,19 @@ def query_raw_data(session_id: str, *, report_db, upload_root: Path, columns,
 
 
 def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path,
-                 bin1: bool = False) -> dict:
+                 bin1: bool = False, bin1_scope: str = "") -> dict:
     """Distribution 상세용: 항목의 소스별 전체 측정값(다운샘플 없음) + cpk/status 지연 로드.
 
     ``bin1`` 이면 분포/통계를 양품(BIN==PASS_BIN) die 만으로 낸다("Bin1 only" 상세).
+    ``bin1_scope="rt"`` 면 그 필터를 RT source 에만 건다(Temperature "Bin1(RT만)").
     항목이 어떤 소스에도 없으면 KeyError (라우트가 404 처리).
     """
     from .tabs.distribution import scatter_item as _scatter_item
 
     session, tables, _ = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     tables = _mode_tables(tables, _validate_mode(session.get("mode")))
-    return _scatter_item(tables, subject, bin1=bin1)
+    return _scatter_item(tables, subject, bin1=bin1,
+                         bin1_sources=_bin1_source_filter(session, bin1_scope))
 
 
 def _commonality_index(session: dict, tables, prep_digest: str = ""):

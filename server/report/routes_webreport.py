@@ -113,6 +113,21 @@ def web_report_raw_data(session_id):
     return jsonify(result)
 
 
+# bin1 변형 파서 — bin1_scope 는 화이트리스트로만 받는다("rt" = Temperature RT 소스만
+# 양품 필터, CT/HT 는 fail 포함 전체). 값이 유효하지 않으면 400 (조용한 오해석 방지).
+_BIN1_SCOPES = ("", "rt")
+
+
+def _bin1_args():
+    bin1 = (request.args.get("bin1") or "") in ("1", "true", "True")
+    scope = (request.args.get("bin1_scope") or "").strip().lower()
+    if scope not in _BIN1_SCOPES:
+        abort(400, "invalid bin1_scope")
+    if not bin1:
+        scope = ""
+    return bin1, scope, ("bin1" + ("-" + scope if scope else "")) if bin1 else "all"
+
+
 @report_bp.get("/session/<session_id>/web_report/distribution")
 def web_report_distribution(session_id):
     """Distribution ECDF 전량(다운샘플 없음)을 컴팩트 columnar JSON 으로 지연 로드.
@@ -123,8 +138,7 @@ def web_report_distribution(session_id):
     session = _require_web_report_session(session_id)
     # bin1=1 → 양품(Bin1)만으로 재계산한 ECDF ("Bin1 only"). ETag 에 포함해 전체/양품
     # 변형이 서로의 304 로 오염되지 않게 한다.
-    bin1 = (request.args.get("bin1") or "") in ("1", "true", "True")
-    variant = "bin1" if bin1 else "all"
+    bin1, bin1_scope, variant = _bin1_args()
     etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
             f'-{variant}{_prep_tag(session_id)}"')
     headers = {"Vary": "Accept-Encoding", "ETag": etag}
@@ -134,7 +148,8 @@ def web_report_distribution(session_id):
         # 계산+직렬화+gzip 결과가 service 쪽에서 (analysis_key, content_hash, mode[, bin1]) 키로
         # 캐시됨 — 세션당 변형별 1회만 CPU 를 쓰고 이후 요청은 bytes 반환뿐이라 동시 사용자에도 안전.
         body = web_report_service.get_distribution_gzip(
-            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1)
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            bin1=bin1, bin1_scope=bin1_scope)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except Exception:
@@ -168,11 +183,11 @@ def web_report_distribution_batch(session_id):
         abort(400, f"too many subjects (max {_DIST_BATCH_MAX})")
     if any(len(s) > 200 for s in subjects):
         abort(400, "invalid subject")
-    bin1 = (request.args.get("bin1") or "") in ("1", "true", "True")
+    bin1, bin1_scope, _variant = _bin1_args()
     try:
         etag, body = web_report_response_cache.get_dist_batch_gzip(
             session_id, subjects, session=session, report_db=report_db,
-            upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1)
+            upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1, bin1_scope=bin1_scope)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report session data not found")
     except Exception:
@@ -181,6 +196,36 @@ def web_report_distribution_batch(session_id):
     headers = {"Vary": "Accept-Encoding", "ETag": etag}
     if request.headers.get("If-None-Match") == etag:
         return Response(status=304, headers=headers)
+    if "gzip" in (request.headers.get("Accept-Encoding") or ""):
+        headers["Content-Encoding"] = "gzip"
+    else:
+        body = gzip.decompress(body)   # 실사용 브라우저는 전부 gzip — 폴백 경로
+    return Response(body, mimetype="application/json", headers=headers)
+
+
+@report_bp.get("/session/<session_id>/web_report/temp_map")
+def web_report_temp_map(session_id):
+    """Temperature 항목별 fail die **인덱스** 지연 로드 (Map 항목 legend / Temp Map 셀).
+
+    map_analysis 응답에 얹지 않는 이유: 프런트 Worker(wafer_charts.fetchMapViaWorker)가
+    dies/metas 외 필드를 버려 도달하지 않는다. 값은 map dies 배열의 인덱스라 이 라우트와
+    /map_analysis 는 같은 세대(analysis_key+content_hash+전처리)를 봐야 한다 — ETag 를
+    같은 재료로 만든다.
+    """
+    session = _require_web_report_session(session_id)
+    etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
+            f'-tempmap{_prep_tag(session_id)}"')
+    headers = {"Vary": "Accept-Encoding", "ETag": etag}
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers=headers)
+    try:
+        body = web_report_service.get_temp_map_gzip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report temp_map failed for session %s", session_id)
+        abort(500, "temp_map failed")
     if "gzip" in (request.headers.get("Accept-Encoding") or ""):
         headers["Content-Encoding"] = "gzip"
     else:
@@ -236,8 +281,7 @@ def web_report_scatter(session_id, subject):
     if not subject or len(subject) > 200:
         abort(400, "invalid subject")
     # bin1=1 → 양품(Bin1)만으로 낸 분포/통계 상세 ("Bin1 only" 상세). ETag 에 포함.
-    bin1 = (request.args.get("bin1") or "") in ("1", "true", "True")
-    variant = "bin1" if bin1 else "all"
+    bin1, bin1_scope, variant = _bin1_args()
     # subject 는 URL 에, mode 는 세션 불변이라 ETag 는 /distribution 과 동일하게
     # analysis_key+content_hash(+변형) 로 충분 — raw_data 편집 시 content_hash 변경으로 재수신.
     etag = (f'"{session.get("analysis_key") or ""}-{session.get("content_hash") or ""}'
@@ -248,7 +292,8 @@ def web_report_scatter(session_id, subject):
     try:
         body = web_report_response_cache.get_scatter_gzip(
             session_id, subject, session=session,
-            report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1)
+            report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            bin1=bin1, bin1_scope=bin1_scope)
     except (FileNotFoundError, KeyError):
         abort(404, "web_report item or session data not found")
     except Exception:

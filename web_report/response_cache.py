@@ -120,7 +120,8 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
 
 
 def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
-                        report_db, upload_root: Path, bin1: bool = False) -> tuple[str, bytes]:
+                        report_db, upload_root: Path, bin1: bool = False,
+                        bin1_scope: str = "") -> tuple[str, bytes]:
     """/distribution_batch 응답의 gzip bytes 를 캐시해 (etag, bytes) 로 반환.
 
     subjects 는 **정렬·중복제거된 리스트**여야 한다(라우트가 정규화) — 같은 항목 집합을
@@ -131,8 +132,11 @@ def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
     if not analysis_key:
         raise FileNotFoundError(session_id)
     digest = hashlib.sha256("\n".join(subjects).encode("utf-8")).hexdigest()[:32]
+    # scope 는 실제로 적용되는 세션(Temperature+RT)일 때만 키에 들어간다 — 그 외에는
+    # 종전 키와 완전히 동일해 기존 캐시가 유효하다(service._bin1_source_filter 와 같은 판정).
+    scope = "rt" if service._bin1_source_filter(session, bin1_scope) else ""
     cache_key = cache_policy.dist_batch_key(   # 키 규약: cache_policy
-        session, digest, bin1=bin1,
+        session, digest, bin1=bin1, bin1_scope=scope,
         prep_digest=preprocess.session_digest(report_db, session_id))
     etag = '"' + hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()[:32] + '"'
 
@@ -144,7 +148,8 @@ def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
         if blob is not None:
             return etag, blob
         result = service.get_distribution_batch(
-            session_id, subjects, report_db=report_db, upload_root=upload_root, bin1=bin1)
+            session_id, subjects, report_db=report_db, upload_root=upload_root,
+            bin1=bin1, bin1_scope=scope)
         blob = _gzip_json(result)
         cache._bytes_capped_put(_DIST_BATCH_CACHE, cache_key, blob,
                                 _DIST_BATCH_CACHE_MAX, _DIST_BATCH_CACHE_MAX_BYTES)
@@ -152,7 +157,8 @@ def get_dist_batch_gzip(session_id: str, subjects, *, session: dict,
 
 
 def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
-                     report_db, upload_root: Path, bin1: bool = False) -> bytes:
+                     report_db, upload_root: Path, bin1: bool = False,
+                     bin1_scope: str = "") -> bytes:
     """/scatter 응답의 gzip bytes 를 캐시해 반환 (같은 항목 반복 클릭 시 재계산 제거).
 
     ``bin1`` 변형(양품만)은 별도 캐시 키(scatter_key(bin1=True))로 전체 기준과 분리한다.
@@ -160,8 +166,9 @@ def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
     analysis_key = session.get("analysis_key")
     if not analysis_key:
         raise FileNotFoundError(session_id)
+    scope = "rt" if service._bin1_source_filter(session, bin1_scope) else ""
     cache_key = cache_policy.scatter_key(   # 키 규약: cache_policy
-        session, subject, bin1=bin1,
+        session, subject, bin1=bin1, bin1_scope=scope,
         prep_digest=preprocess.session_digest(report_db, session_id))
 
     blob = cache.cache_get(_SCATTER_CACHE, cache_key)
@@ -172,7 +179,8 @@ def get_scatter_gzip(session_id: str, subject: str, *, session: dict,
         if blob is not None:
             return blob
         result = service.scatter_item(
-            session_id, subject, report_db=report_db, upload_root=upload_root, bin1=bin1)
+            session_id, subject, report_db=report_db, upload_root=upload_root,
+            bin1=bin1, bin1_scope=scope)
         blob = _gzip_json(result)
         cache._bytes_capped_put(_SCATTER_CACHE, cache_key, blob,
                                 _SCATTER_CACHE_MAX, _SCATTER_CACHE_MAX_BYTES)

@@ -405,17 +405,18 @@ async function exportCpkExcel() {
 
 // ── Issue Table 탭 Excel Down ───────────────────────────────────────────────
 // 전체본 Issue Table 시트와 같은 구성(Map/Distribution 열은 이미지 없이 빈 칸).
-async function exportIssueExcel() {
+// rows/sheetName 을 주면 그 표를 내보낸다 (Issue Table Temp 탭 재사용). 인자 없으면 종전대로.
+async function exportIssueExcel(rows, sheetName) {
   const report = DATA && DATA.web_report;
-  const btn = document.getElementById("issueExcelBtn");
-  const issueRows = (DATA && Array.isArray(DATA.issue_table_text))
-    ? DATA.issue_table_text : [];
+  const btn = (activeIssuePanel() || document).querySelector('[data-issue-act="excel"]');
+  const issueRows = Array.isArray(rows) ? rows
+    : ((DATA && Array.isArray(DATA.issue_table_text)) ? DATA.issue_table_text : []);
   if (!issueRows.length) { showToast("Issue Table 데이터가 없습니다"); return; }
   if (btn) btn.disabled = true;
   try {
     const d = buildIssueSheetData(issueRows, hxlSourceNames(report));
     if (!d.rows.length) { showToast("내보낼 Issue Table 행이 없습니다"); return; }
-    const wsx = await hxlNewSheet("Issue Table");
+    const wsx = await hxlNewSheet(sheetName || "Issue Table");
     const ws = wsx.ws;
     hxlWriteTable(ws, d.header, d.rows);
     // CPK 서브헤더 행은 헤더 서식 — Yield 섹션 헤더와 같은 형태(소스명이 값).

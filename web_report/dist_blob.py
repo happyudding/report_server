@@ -24,7 +24,8 @@ DIST_BLOB_FORMAT = "ecdf-columnar-v1"
 DIST_BLOB_PREFIX = b'{"format":"ecdf-columnar-v1","items":'
 
 
-def compute_dist_compact(tables, selected_items, mode, *, bin1=False, only=None) -> dict:
+def compute_dist_compact(tables, selected_items, mode, *, bin1=False, only=None,
+                         bin1_sources=None) -> dict:
     """HoneyformTable 리스트 → Distribution ECDF 컴팩트 dict (전 포인트, 다운샘플 없음).
 
     service.get_distribution 의 계산 본체와 동일: 모드 변형(DUT 분할) →
@@ -53,7 +54,8 @@ def compute_dist_compact(tables, selected_items, mode, *, bin1=False, only=None)
     if only is not None:
         wanted = {str(v) for v in only if str(v)}
         all_items = [c for c in all_items if c in wanted]
-    return build_distribution_compact(tables, all_items, bin1_only=bin1)
+    return build_distribution_compact(tables, all_items, bin1_only=bin1,
+                                      bin1_sources=bin1_sources)
 
 
 def gzip_dist_blob(compact: dict, *, level: int = 6) -> bytes:

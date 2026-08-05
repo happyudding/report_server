@@ -127,6 +127,26 @@ def webreport_temperature_groups(opts_raw: str, source_names):
     return {"groups": groups} if groups else None
 
 
+def webreport_temperature_rt_names(opts_raw: str) -> set:
+    """webreport_options JSON → RT source 이름 집합 (source 목록 없이도 쓸 수 있게).
+
+    Distribution "Bin1(RT만)" 변형이 쓴다 — pack 경로는 tables 를 디코드하지 않아
+    source 이름 목록을 갖고 있지 않으므로 위 함수(이름 검증본)를 쓸 수 없다. 실제로
+    존재하지 않는 이름이 섞여도 소스별 필터에서 매칭되지 않아 무해하다.
+    """
+    if not opts_raw:
+        return set()
+    try:
+        opts = json.loads(opts_raw)
+    except Exception:
+        return set()
+    temp_opt = opts.get("temperature") if isinstance(opts, dict) else None
+    if not isinstance(temp_opt, dict):
+        return set()
+    return {str(g.get("rt")) for g in (temp_opt.get("groups") or [])
+            if isinstance(g, dict) and g.get("rt")}
+
+
 def validate_mode(value) -> str:
     """manifest.mode 를 허용 모드 중 하나로 정규화. 미지정/불명은 'Normal'."""
     mode = str(value or "").strip()

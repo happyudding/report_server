@@ -477,6 +477,34 @@ except AssertionError as exc:
 finally:
     dist_tab.build_distribution_compact = _real_compact
 
+# ── (m) bin1_sources — 일부 소스에만 bin1 필터 (Temperature "Bin1(RT만)") ─────────
+# pack 경로(덧셈만)와 폴백 계산(build_distribution_compact)이 **정준 JSON 으로 일치**해야
+# 한다. 소스 이름 Lot0 만 bin1, Lot1 은 전체 기준으로 섞어 확인한다.
+mixed_files = make_files(2)
+mixed_sid = create_session(with_pack=True, files=mixed_files)["session_id"]
+_pack_items = wr_service._pack_items(
+    report_db.get_session(mixed_sid), mixed_sid, report_db=report_db, upload_root=UPLOAD_ROOT)
+from web_report import dist_pack as _dp
+from web_report.dist_blob import compute_dist_compact as _fallback
+_tables = [decode_split_honeyform_parquet(
+    f["data"], source=f["name"], file_name=f["filename"], keep_df=False) for f in mixed_files]
+_only = {"Lot0"}
+check(canon(_dp.ecdf_from_pack_items(_pack_items, bin1=True, bin1_sources=_only))
+      == canon(_fallback(_tables, [], "Normal", bin1=True, bin1_sources=_only)),
+      "(m) bin1_sources: pack 덧셈 == 폴백 계산 (정준 JSON 일치)")
+# 필터 대상이 아닌 소스는 전체 기준(bin1=False)과 같은 곡선을 유지한다.
+_got = _dp.ecdf_from_pack_items(_pack_items, bin1=True, bin1_sources=_only)
+_all = _dp.ecdf_from_pack_items(_pack_items, bin1=False)
+_item = sorted(_got["items"])[0]
+check(canon(_got["items"][_item]["sources"]["Lot1"]) == canon(_all["items"][_item]["sources"]["Lot1"]),
+      "(m) 비대상 소스(Lot1)는 전체 기준 그대로")
+check(canon(_got["items"][_item]["sources"]["Lot0"]) != canon(_all["items"][_item]["sources"]["Lot0"]),
+      "(m) 대상 소스(Lot0)는 bin1 로 좁혀짐")
+# bin1_sources=None 이면 종전(전 소스 적용)과 바이트 동일 — 기존 캐시/응답 불변 증명.
+check(canon(_dp.ecdf_from_pack_items(_pack_items, bin1=True, bin1_sources=None))
+      == canon(_dp.ecdf_from_pack_items(_pack_items, bin1=True)),
+      "(m) bin1_sources=None 은 종전과 동일")
+
 print()
 if _failures:
     print(f"FAILED {len(_failures)}건: {_failures}")

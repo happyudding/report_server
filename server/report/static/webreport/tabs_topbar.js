@@ -3,8 +3,11 @@
 // 받는다. 종전에는 페이지 로드 시 무조건 둘 다 받아서, Summary 만 보고 나가는 사용자도
 // 전량 다운로드 비용을 냈다. ensure* 는 멱등이라 중복 호출은 진행 중 promise 를 재사용한다.
 function ensureTabData(tab) {
-  if (tab === "distribution" || tab === "issues") ensureDistData();
-  if (tab === "map-analysis" || tab === "issues") ensureMapData();
+  const issueLike = (tab === "issues" || tab === "issue-temp");
+  if (tab === "distribution" || issueLike) ensureDistData();
+  if (tab === "map-analysis" || issueLike) ensureMapData();
+  // Issue Table Temp 의 Map 셀은 항목별 fail die 인덱스가 따로 필요하다(Temperature 전용).
+  if (issueLike && typeof ensureTempMapData === "function") ensureTempMapData();
 }
 
 // ── tab switching ──────────────────────────────────────────────────────────
@@ -27,7 +30,7 @@ document.getElementById("tabs").addEventListener("click", e => {
   }
   // 프리렌더가 숨김(display:none) 상태에서 그렸으면 헤더 상단행 높이가 0으로 측정되므로,
   // 보이는 시점에 다시 실측한다.
-  if (tab === "issues" && active) syncIssueHeadRowHeight(active);
+  if ((tab === "issues" || tab === "issue-temp") && active) syncIssueHeadRowHeight(active);
   // 같은 이유 — Yield 좌측 고정열 left 오프셋도 숨김 상태에선 0 으로 측정된다.
   if (tab === "yield" && active) syncYieldStickyOffsets(active);
   // Note 탭(Luckysheet 캔버스)은 숨김 상태에서 크기가 0 — 재진입 시 리사이즈.
@@ -116,6 +119,9 @@ function syncTabVisibility() {
   const modeNow = web ? webReportMode() : "Normal";
   const compareBtn = document.querySelector('.tab[data-tab="compare"]');
   if (compareBtn) compareBtn.style.display = (modeNow === "Compare") ? "" : "none";
+  // Issue Table Temp 는 Temperature 모드 전용 (CT/HT 를 RT Limit 으로 재판정한 표).
+  const tempBtn = document.querySelector('.tab[data-tab="issue-temp"]');
+  if (tempBtn) tempBtn.style.display = (modeNow === "Temperature") ? "" : "none";
   // 2) 활성 탭이 숨겨졌으면 첫 번째로 보이는 탭으로 전환
   const activeBtn = document.querySelector(".tab.active");
   if (activeBtn && activeBtn.style.display === "none") {

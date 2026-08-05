@@ -375,3 +375,49 @@ const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
   syncActive();
 })();
 
+
+// ── Issue Table 패널 공용 헬퍼 (Issue Table / Issue Table Temp) ────────────────
+// 2026-08-05 Temperature 개편으로 Issue 표 패널이 2개가 됐다. 편집·검색·미니셀 로직은
+// 두 패널이 공유하므로 "패널을 인자로 받되 기본값은 기존 #panel-issues" 규약으로 일반화한다
+// (인자를 안 주면 동작이 종전과 같다). 툴바 버튼은 고정 id 대신 data-issue-act 로 식별한다
+// — 같은 id 가 두 패널에 생기면 document.getElementById 가 엉뚱한 패널을 잡는다.
+const ISSUE_PANEL_MAIN = "panel-issues";
+const ISSUE_PANEL_TEMP = "panel-issue-temp";
+const ISSUE_PANEL_SEL = "#panel-issues, #panel-issue-temp";
+// Temp 패널이 읽는 시트 이름 — 백엔드 tabs/temp_fail.TEMP_SHEET 와 같아야 한다.
+const ISSUE_TEMP_SHEET = "Issue Table Temp";
+
+// 현재 DOM 에 존재하는 Issue 표 패널들 (Temp 는 Temperature 세션에만 내용이 있다).
+function issuePanelEls() {
+  return [...document.querySelectorAll(ISSUE_PANEL_SEL)];
+}
+// 어떤 요소가 속한 Issue 표 패널 (아니면 null).
+function issuePanelOf(el) {
+  return (el && el.closest) ? el.closest(ISSUE_PANEL_SEL) : null;
+}
+// 두 패널을 통틀어 선택자 매칭 (구 '#panel-issues .xxx' 전역 질의의 대체).
+function issuePanelsQueryAll(sel) {
+  const out = [];
+  issuePanelEls().forEach(p => p.querySelectorAll(sel).forEach(el => out.push(el)));
+  return out;
+}
+// 인자 없는 호출의 기본 패널 — 활성 탭이 Issue 계열이면 그것, 아니면 기본 패널.
+function activeIssuePanel() {
+  return document.querySelector("#panel-issues.active, #panel-issue-temp.active")
+    || document.getElementById(ISSUE_PANEL_MAIN);
+}
+// 그 패널이 그린 rows 배열 (저장 diff·낙관 반영의 기준 데이터).
+function issueRowsOf(panel) {
+  if (panel && panel.id === ISSUE_PANEL_TEMP) {
+    const rows = (webReportSheets() || {})[ISSUE_TEMP_SHEET];
+    return Array.isArray(rows) ? rows : [];
+  }
+  return Array.isArray(DATA && DATA.issue_table_text) ? DATA.issue_table_text : [];
+}
+// 패널별 UI 상태(검색어·선택 모드) — 전역 1개면 두 패널이 서로의 상태를 덮어쓴다.
+const issueUiState = {};
+function issueUi(panel) {
+  const id = (panel && panel.id) || ISSUE_PANEL_MAIN;
+  if (!issueUiState[id]) issueUiState[id] = { search: "", delMode: false };
+  return issueUiState[id];
+}

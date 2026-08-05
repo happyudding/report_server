@@ -75,10 +75,11 @@ function openItemDetail(subject, navList) {
   purgeItemDetailCharts();   // 항목 이동 시 이전 차트(WebGL 컨텍스트) 해제 후 갈아끼움
   dp.innerHTML = `<div class="idet"><div class="idet-head"><button class="btn-sm idet-back">← Back</button>` +
     `<span class="idet-title"><b>${esc(subject)}</b></span></div><div class="placeholder">로드 중…</div></div>`;
-  // Bin1 only 가 켜져 있으면 상세도 양품(BIN==1)만으로 낸 분포/통계를 받는다(?bin1=1).
+  // Bin1 계열 토글이 켜져 있으면 상세도 같은 기준의 분포/통계를 받는다(?bin1=1[&bin1_scope=rt]).
   // cache 옵션 없음(기본) — 서버 ETag 조건부 응답으로 재클릭·재방문 시 304 재검증된다.
+  const scatterVariantQ = distVariantQuery(distGalleryVariant()).replace(/^&/, "?");
   const scatterUrl = `/pe/report/session/${SESSION_ID}/web_report/scatter/${encodeURIComponent(subject)}`
-    + (distBin1Only ? "?bin1=1" : "");
+    + scatterVariantQ;
   fetch(scatterUrl)
     .then(res => { if (!res.ok) throw new Error("HTTP " + res.status); return res.json(); })
     .then(data => { if (reqId === _itemDetailReq) renderItemDetail(data); })
@@ -990,7 +991,14 @@ function distBindPanel() {
       else if (seg.dataset.seg === "fail") distFailOnly = !distFailOnly;
       else if (seg.dataset.seg === "limit") distLimitOnly = !distLimitOnly;
       else if (seg.dataset.seg === "nopf") distHidePassfail = !distHidePassfail;
-      else if (seg.dataset.seg === "bin1") { distBin1Only = !distBin1Only; if (distBin1Only) ensureDistBin1Data(); }
+      // Bin1 계열 두 버튼은 상호배타 — 둘 다 켜지면 어느 기준인지 알 수 없다.
+      else if (seg.dataset.seg === "bin1") {
+        distBin1Only = !distBin1Only;
+        if (distBin1Only) { distRtBin1Only = false; ensureDistBin1Data(); }
+      } else if (seg.dataset.seg === "rtbin1") {
+        distRtBin1Only = !distRtBin1Only;
+        if (distRtBin1Only) { distBin1Only = false; ensureDistRtBin1Data(); }
+      }
       const q = (document.getElementById("distSearch") || {}).value || "";
       distRenderGallery();
       restoreDistSearch(q);
@@ -1104,24 +1112,32 @@ function renderMiniDistCell(cell) {
 // 얼어붙는다 — 갤러리와 같은 IntersectionObserver + rAF 분할(프레임당 3개) lazy 렌더를 쓰고,
 // 화면 밖으로 나가면 purge 해 plot DOM 상주를 막는다. 큐는 갤러리(distRenderQueue)와
 // 분리 — 갤러리 재렌더가 큐를 초기화해도 issue 셀이 유실되지 않도록.
-let issueDistObserver = null;
-let issueDistQueue = [];
-let issueDistRafScheduled = false;
+// ⚠️ 상태는 **패널별**이다 (2026-08-05). Issue 표 패널이 2개(Issue Table / Issue Table Temp)라
+// 전역 1개로 두면 두 번째 패널을 렌더하는 순간 첫 패널의 observer 가 disconnect 되고 큐가
+// 비워져, 그 패널 미니셀이 영구 공백으로 남는다.
+const _issueDistState = new Map();   // panelId → {observer, queue, raf}
+function issueDistStateOf(panel) {
+  const id = (panel && panel.id) || ISSUE_PANEL_MAIN;
+  let st = _issueDistState.get(id);
+  if (!st) { st = { observer: null, queue: [], raf: false }; _issueDistState.set(id, st); }
+  return st;
+}
 
 function issueDistQueueRender(cell) {
-  if (cell.dataset.distLoaded === "1" || issueDistQueue.includes(cell)) return;
-  issueDistQueue.push(cell);
-  if (!issueDistRafScheduled) { issueDistRafScheduled = true; requestAnimationFrame(issueDistFlush); }
+  const st = issueDistStateOf(issuePanelOf(cell));
+  if (cell.dataset.distLoaded === "1" || st.queue.includes(cell)) return;
+  st.queue.push(cell);
+  if (!st.raf) { st.raf = true; requestAnimationFrame(() => issueDistFlush(st)); }
 }
-function issueDistFlush() {
-  issueDistRafScheduled = false;
+function issueDistFlush(st) {
+  st.raf = false;
   let n = 0;
   const perFrame = distPerFrame();
-  while (issueDistQueue.length && n < perFrame) {
-    const cell = issueDistQueue.shift();
+  while (st.queue.length && n < perFrame) {
+    const cell = st.queue.shift();
     if (cell.isConnected && cell.dataset.visible === "1") { renderMiniDistCell(cell); n++; }
   }
-  if (issueDistQueue.length) { issueDistRafScheduled = true; requestAnimationFrame(issueDistFlush); }
+  if (st.queue.length) { st.raf = true; requestAnimationFrame(() => issueDistFlush(st)); }
 }
 function issueDistPurge(cell) {
   if (cell.dataset.distLoaded !== "1") return;
@@ -1132,26 +1148,27 @@ function issueDistPurge(cell) {
 }
 
 function renderIssueMiniDist(panel) {
-  if (issueDistObserver) { try { issueDistObserver.disconnect(); } catch (e) {} issueDistObserver = null; }
-  issueDistQueue = []; issueDistRafScheduled = false;
+  const st = issueDistStateOf(panel);
+  if (st.observer) { try { st.observer.disconnect(); } catch (e) {} st.observer = null; }
+  st.queue = []; st.raf = false;
   const cells = panel.querySelectorAll(".dist-cell-mini");
   if (!cells.length) return;
   if (typeof IntersectionObserver === "undefined") {
     cells.forEach(cell => renderMiniDistCell(cell));   // 구형 브라우저 폴백: 기존 동작
     return;
   }
-  issueDistObserver = new IntersectionObserver(entries => {
+  st.observer = new IntersectionObserver(entries => {
     entries.forEach(en => {
       const cell = en.target;
       if (en.isIntersecting) { cell.dataset.visible = "1"; issueDistQueueRender(cell); }
       else {
         cell.dataset.visible = "";
         issueDistPurge(cell);
-        const i = issueDistQueue.indexOf(cell);
-        if (i >= 0) issueDistQueue.splice(i, 1);
+        const i = st.queue.indexOf(cell);
+        if (i >= 0) st.queue.splice(i, 1);
       }
     });
   }, { rootMargin: "600px 0px", threshold: 0 });
-  cells.forEach(c => issueDistObserver.observe(c));
+  cells.forEach(c => st.observer.observe(c));
 }
 

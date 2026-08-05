@@ -249,13 +249,14 @@ def report_job(session_id: str, upload_root_str: str):
     return report, _stamp(t_start)
 
 
-def dist_job(session_id: str, upload_root_str: str, bin1: bool = False):
+def dist_job(session_id: str, upload_root_str: str, bin1: bool = False,
+             bin1_scope: str = ""):
     from database import report_db
     from . import service
     t_start = time.time()
     blob = service.get_distribution_gzip(
         session_id, report_db=report_db, upload_root=Path(upload_root_str),
-        bin1=bool(bin1))
+        bin1=bool(bin1), bin1_scope=str(bin1_scope or ""))
     return blob, _stamp(t_start)
 
 

@@ -17,8 +17,7 @@ function yieldColumnsFrom(allRows) {
 // 값은 yield_summary.by_step(서버 yield_step_summary) 의 STEP 별 **누적** 수율 =
 // (전체 die − 그 STEP 까지의 누적 fail) / 전체 die. 분모는 전 STEP 고정이라 P1→P3 로
 // 갈수록 값이 단조 감소한다. 소스별 yield_pct/survivor 를 {src}_yield/{src}_count 로 옮긴다.
-// byStepOverride 를 주면 그걸 쓴다 — Temperature Corner 표는 그 Corner 소스만으로 다시
-// 계산한 by_step(yield_corner_groups[].by_step)이 있어야 Pass 행이 표와 맞는다.
+// byStepOverride 는 소스 부분집합으로 다시 계산한 by_step 을 쓰고 싶을 때만 준다.
 function yieldStepPassRow(step, byStepOverride) {
   const ov = DATA.web_report && DATA.web_report.yield_summary;
   const byStep = Array.isArray(byStepOverride) ? byStepOverride
@@ -101,8 +100,7 @@ function renderYieldTable(cols, groups, si, passRow) {
 }
 
 // STEP 별 표 섹션(제목 + 표)을 순서대로 렌더 (P1→P2→P3).
-// byStep/keyPrefix 는 Temperature Corner 렌더 전용(생략하면 종전과 동일):
-// byStep = 그 Corner 의 누적 수율, keyPrefix = Corner 간 그룹 토글 id 를 갈라놓는 접두.
+// byStep/keyPrefix 는 소스 부분집합 표를 그릴 때만 쓴다(생략하면 종전과 동일).
 function renderYieldStepSections(stepGroups, allRows, byStep, keyPrefix) {
   const cols = yieldColumnsFrom(allRows);
   if (!cols.length || !Array.isArray(stepGroups) || !stepGroups.length) return "";
@@ -116,16 +114,29 @@ function renderYieldStepSections(stepGroups, allRows, byStep, keyPrefix) {
   }).join("");
 }
 
-// Temperature Corner 표 2개(RT Corner / Temp Corner) — 각 Corner 안은 기존 STEP 분리 그대로.
-// Temp Corner 의 fail 은 업로드 전 정리에서 **RT limit 으로 재판정**된 결과다.
-function renderYieldCornerSections(corners) {
-  return (corners || []).map(c => {
-    const label = String(c.label || c.corner || "").trim();
-    return `<div class="yield-corner-section">` +
-      `<div class="yield-corner-title">${esc(label)}</div>` +
-      renderYieldStepSections(c.step_groups || [], c.rows || [], c.by_step || [],
-                              `${String(c.corner || "")}_`) + `</div>`;
-  }).join("");
+// Yield 탭 하단 Temp Corner 섹션 (Temperature 모드 전용, 2026-08-05).
+// 내용은 Issue Table Temp 탭과 **같은 시트**(sheets["Issue Table Temp"])다 — 여기서는
+// 편집 열(Map/Distribution/Status/comment)을 뺀 읽기 전용 요약으로만 보여주고,
+// 편집은 그 탭에서 하도록 안내 버튼을 단다.
+const TEMP_SUMMARY_SKIP = /^(map|distribution|status|category)$/i;
+function renderYieldTempSection() {
+  if (webReportMode() !== "Temperature") return "";
+  const rows = (webReportSheets() || {})[ISSUE_TEMP_SHEET];
+  if (!Array.isArray(rows) || !rows.length) return "";
+  // 섹션 divider 행(Category="TEMP")과 편집 전용 열을 걷어낸 표시용 사본.
+  const data = rows.filter(r => String((r && r.Item) || "").trim()).map(r => {
+    const o = {};
+    Object.keys(r).forEach(k => {
+      if (!TEMP_SUMMARY_SKIP.test(String(k)) && !/comment/i.test(String(k))) o[k] = r[k];
+    });
+    return o;
+  });
+  if (!data.length) return "";
+  return `<div class="yield-corner-section">` +
+    `<div class="yield-corner-title">Temp Corner (CT / HT) — RT Limit 이탈 항목` +
+    ` <button type="button" class="btn-sm" data-goto-tab="issue-temp" ` +
+    `title="Issue Table Temp 탭에서 comment·Status 를 편집합니다">탭에서 편집 ›</button></div>` +
+    renderSheetTable(data, { kind: "yield" }) + `</div>`;
 }
 
 // Yield 탭 상단 툴바: 모든 Bin 그룹의 FAILTNO 상세행을 한 번에 펼치기/접기하는 토글.
@@ -142,7 +153,7 @@ function yieldToolbarHtml() {
 // 대상은 **Item 명 + comment 셀**(Issue Table 만 comment 열이 있다). 표 구조를 지키기
 // 위해 섹션 헤더·서브헤더 행은 항상 남기고, 나머지는 .row-search-hide 로만 숨긴다
 // (접기/펼치기가 쓰는 인라인 display 를 건드리지 않아 검색 해제 시 원상 복구된다).
-let issueSearchTerm = "";
+// Issue 표 검색어는 패널별 상태(core.js issueUi)에 둔다 — 두 패널이 서로를 덮어쓰지 않게.
 let yieldSearchTerm = "";
 
 function sheetSearchHtml(id, value, placeholder) {
@@ -171,11 +182,12 @@ function setSearchCount(id, shown, total, term) {
 
 // Issue Table: 섹션 2행 헤더(issue-shead-*)와 CPK/ETC 서브헤더 행은 항상 남긴다.
 // 검색 중에는 접혀 있는 TNO 상세행도 매칭되면 보이게 한다(CSS .issue-searching).
-function applyIssueSearch(rawTerm) {
-  const panel = document.getElementById("panel-issues");
+function applyIssueSearch(rawTerm, panel) {
+  panel = panel || activeIssuePanel();
   if (!panel) return;
-  issueSearchTerm = String(rawTerm || "");
-  const term = issueSearchTerm.trim().toLowerCase();
+  const ui = issueUi(panel);
+  ui.search = String(rawTerm || "");
+  const term = ui.search.trim().toLowerCase();
   panel.classList.toggle("issue-searching", !!term);
   let shown = 0, total = 0;
   panel.querySelectorAll(".sheet-table.kind-issue tbody tr").forEach(tr => {
@@ -186,8 +198,9 @@ function applyIssueSearch(rawTerm) {
     tr.classList.toggle("row-search-hide", !keep);
     if (keep) shown++;
   });
-  setSearchCount("issueSearchInput", shown, total, term);
-  afterIssueRowsToggled();   // 행 구성이 바뀌면 좌측 고정 오프셋·가로 스크롤 폭 재실측
+  setSearchCount(panel.querySelector(".sheet-search")?.id || "issueSearchInput",
+                 shown, total, term);
+  afterIssueRowsToggled(panel);   // 행 구성이 바뀌면 좌측 고정 오프셋·가로 스크롤 폭 재실측
 }
 
 // Yield: STEP 별로 표가 여러 개라 패널 전체를 훑는다. comment 열은 없어 Item 명만 본다.
@@ -218,7 +231,8 @@ function sheetSearchDebounced(fn, value) {
 }
 // 툴바는 매 렌더마다 새로 만들어지므로 document 위임으로 1회만 건다.
 document.addEventListener("input", e => {
-  if (e.target.id === "issueSearchInput") sheetSearchDebounced(applyIssueSearch, e.target.value);
+  const issuePanel = e.target.classList.contains("sheet-search") ? issuePanelOf(e.target) : null;
+  if (issuePanel) sheetSearchDebounced(v => applyIssueSearch(v, issuePanel), e.target.value);
   else if (e.target.id === "yieldSearchInput") sheetSearchDebounced(applyYieldSearch, e.target.value);
 });
 // Yield 탭 우상단 Excel Down (excel_export.js exportYieldExcel).
@@ -337,25 +351,14 @@ function renderYield(yield_text, summary_rows) {
   const panel = document.getElementById("panel-yield");
   const overview = yieldOverviewHtml();
 
-  // Temperature 모드: RT Corner / Temp Corner 표 2개 (각 Corner 안은 STEP 분리 그대로).
-  // 키가 없으면 아래 종전 흐름 그대로 — 다른 모드·옛 캐시 세션은 영향받지 않는다.
-  const corners = DATA.web_report && DATA.web_report.yield_corner_groups;
-  if (Array.isArray(corners) && corners.length) {
-    bindYieldPanel();
-    panel.innerHTML = overview + yieldToolbarHtml() + renderYieldCornerSections(corners);
-    setupYieldHscroll(panel);
-    syncYieldStickyOffsets(panel);
-    requestAnimationFrame(() => syncYieldStickyOffsets(panel));
-    bindYieldColResize(panel);
-    if (yieldSearchTerm.trim()) applyYieldSearch(yieldSearchTerm);
-    return;
-  }
-
   // web_report: STEP(P1/P2/P3) 별 분리 표 (yield_step_groups 가 있을 때)
+  // Temperature 면 표 자체가 이미 RT source 기준이라(서버 metrics) 별도 분기가 없다 —
+  // 그 아래에 CT/HT 재판정 결과를 Temp Corner 섹션으로 덧붙이기만 한다.
   const stepGroups = DATA.web_report && DATA.web_report.yield_step_groups;
   if (Array.isArray(stepGroups) && stepGroups.length && Array.isArray(yield_text)) {
     bindYieldPanel();
-    panel.innerHTML = overview + yieldToolbarHtml() + renderYieldStepSections(stepGroups, yield_text);
+    panel.innerHTML = overview + yieldToolbarHtml() +
+      renderYieldStepSections(stepGroups, yield_text) + renderYieldTempSection();
     setupYieldHscroll(panel);
     syncYieldStickyOffsets(panel);
     requestAnimationFrame(() => syncYieldStickyOffsets(panel));   // 레이아웃 확정 후 재실측
@@ -370,7 +373,7 @@ function renderYield(yield_text, summary_rows) {
       `<div class="yield-toolbar">` +
       sheetSearchHtml("yieldSearchInput", yieldSearchTerm, "Item 검색") +
       yieldExcelBtnHtml() + `</div>` +
-      renderSheetTable(yield_text, { kind: "yield" });
+      renderSheetTable(yield_text, { kind: "yield" }) + renderYieldTempSection();
     setupYieldHscroll(panel);
     syncYieldStickyOffsets(panel);
     requestAnimationFrame(() => syncYieldStickyOffsets(panel));
@@ -397,52 +400,58 @@ function syncIssueHeadRowHeight(panel) {
 
 // ── Issue Table (read) ──────────────────────────────────────────────────────
 // Issue Table 상단 sticky 툴바: Yield 섹션 Bin 그룹 전체 펼치기/접기.
-function issueToolbarHtml() {
+// panelId 를 받아 두 패널(Issue Table / Issue Table Temp)이 같은 툴바를 쓴다. 버튼 식별은
+// 고정 id 가 아니라 **data-issue-act** 다 — 같은 id 가 두 패널에 생기면 getElementById 가
+// 엉뚱한 패널의 버튼을 잡는다. Temp 패널은 섹션이 1개·Bin 그룹이 없어 섹션 점프/TNO 펼치기/
+// ISSUE ITEM 추가를 뺀다(ETC 는 Issue Table 전용 개념).
+function issueToolbarHtml(panelId) {
+  const isTemp = panelId === ISSUE_PANEL_TEMP;
+  const ui = issueUi(document.getElementById(panelId || ISSUE_PANEL_MAIN));
+  const searchId = isTemp ? "issueTempSearchInput" : "issueSearchInput";
   // 수정모드 버튼: ISSUE ITEM 추가 + 선택 모드 토글 + Status 전체 일괄. 선택 실행 버튼
   // (.issue-del-actions)은 선택 모드일 때만 CSS 로 노출된다.
   const editBtns = (MODE === "edit")
-    ? `<button type="button" class="btn-sm" id="etcAddItemBtn">ISSUE ITEM 추가</button>` +
-      `<button type="button" class="btn-sm" id="issueDelModeBtn" title="행을 선택해 한 번에 삭제하거나 Status 를 Open/Close 로 바꾼다 (Step 셀 클릭 = 선택)">☑ 선택 모드</button>` +
+    ? (isTemp ? "" : `<button type="button" class="btn-sm" data-issue-act="etc-add">ISSUE ITEM 추가</button>`) +
+      `<button type="button" class="btn-sm" data-issue-act="delmode" title="행을 선택해 한 번에 삭제하거나 Status 를 Open/Close 로 바꾼다 (Step 셀 클릭 = 선택)">☑ 선택 모드</button>` +
       `<span class="issue-del-actions">` +
-        `<button type="button" class="btn-sm" id="issueSelAllBtn" title="보이는 행 전체 선택">전체 선택</button>` +
-        `<button type="button" class="btn-sm" id="issueSelNoneBtn" title="선택 모두 해제">선택 해제</button>` +
-        `<button type="button" class="btn-sm" id="issueSelOpenBtn" title="선택한 행 Status 를 Open 으로">선택 Open</button>` +
-        `<button type="button" class="btn-sm" id="issueSelCloseBtn" title="선택한 행 Status 를 Close 로">선택 Close</button>` +
-        `<button type="button" class="btn-sm" id="issueDelSelectedBtn" title="체크한 행 일괄 삭제">선택 삭제</button>` +
-        `<button type="button" class="btn-sm" id="issueResetHiddenBtn" title="삭제(숨김)한 Yield/CPK 행 전부 복원">삭제 전체 초기화</button>` +
+        `<button type="button" class="btn-sm" data-issue-act="sel-all" title="보이는 행 전체 선택">전체 선택</button>` +
+        `<button type="button" class="btn-sm" data-issue-act="sel-none" title="선택 모두 해제">선택 해제</button>` +
+        `<button type="button" class="btn-sm" data-issue-act="sel-open" title="선택한 행 Status 를 Open 으로">선택 Open</button>` +
+        `<button type="button" class="btn-sm" data-issue-act="sel-close" title="선택한 행 Status 를 Close 로">선택 Close</button>` +
+        `<button type="button" class="btn-sm" data-issue-act="del-selected" title="체크한 행 일괄 삭제">선택 삭제</button>` +
+        `<button type="button" class="btn-sm" data-issue-act="reset-hidden" title="삭제(숨김)한 행 전부 복원">삭제 전체 초기화</button>` +
       `</span>` +
       `<span class="issue-status-actions">` +
-        `<button type="button" class="btn-sm" id="issueAllOpenBtn" title="Issue Table 전체 행 Status 를 Open 으로">All Open</button>` +
-        `<button type="button" class="btn-sm" id="issueAllCloseBtn" title="Issue Table 전체 행 Status 를 Close 로">All Close</button>` +
+        `<button type="button" class="btn-sm" data-issue-act="all-open" title="이 표 전체 행 Status 를 Open 으로">All Open</button>` +
+        `<button type="button" class="btn-sm" data-issue-act="all-close" title="이 표 전체 행 Status 를 Close 로">All Close</button>` +
       `</span>` : "";
-  return `<div class="issue-toolbar">` +
+  const jumpAndToggle = isTemp ? "" :
     `<span class="issue-jump-group" title="섹션으로 이동">` +
       `<button type="button" class="btn-sm" data-issue-jump="Yield">YIELD</button>` +
       `<button type="button" class="btn-sm" data-issue-jump="CPK">CPK</button>` +
-      // TEMP 섹션은 Temperature 모드에서만 존재한다 — 다른 모드에선 버튼도 안 만든다.
-      (webReportMode() === "Temperature"
-        ? `<button type="button" class="btn-sm" data-issue-jump="TEMP" title="RT Limit 을 벗어난 CT/HT 항목">TEMP</button>` : "") +
       `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC</button>` +
     `</span>` +
-    `<button type="button" class="btn-sm" id="issueToggleAll" data-expanded="false">TNO 전체 펼치기</button>` +
-    sheetSearchHtml("issueSearchInput", issueSearchTerm, "Item / comment 검색") +
+    `<button type="button" class="btn-sm" data-issue-act="toggle-all" data-expanded="false">TNO 전체 펼치기</button>`;
+  return `<div class="issue-toolbar">` +
+    jumpAndToggle +
+    sheetSearchHtml(searchId, ui.search, "Item / comment 검색") +
     editBtns +
-    `<button type="button" class="btn-sm issue-excel-btn" id="issueExcelBtn" title="Honey Excel Download 의 Issue Table 시트와 동일한 xlsx 다운로드 (Map/Distribution 썸네일 제외)">⬇ Excel</button>` +
+    `<button type="button" class="btn-sm issue-excel-btn" data-issue-act="excel" title="Honey Excel Download 의 Issue Table 시트와 동일한 xlsx 다운로드 (Map/Distribution 썸네일 제외)">⬇ Excel</button>` +
     `</div>`;
 }
 
 // ── Issue Table 선택 모드 (일괄 삭제 / Status 일괄 변경) ─────────────────────
-// 켜면 행 체크박스·개별 삭제(×)·선택 실행 버튼이 보인다(CSS #panel-issues.issue-del-mode).
-// 삭제 후 재로드(load)로 표가 다시 그려져도 모드가 유지되도록 모듈 전역에 둔다.
-let issueDelMode = false;
+// 켜면 행 체크박스·개별 삭제(×)·선택 실행 버튼이 보인다(CSS .issue-del-mode).
+// 삭제 후 재로드(load)로 표가 다시 그려져도 모드가 유지되도록 패널별 상태(issueUi)에 둔다.
 function applyIssueDelMode(panel) {
-  panel = panel || document.getElementById("panel-issues");
+  panel = panel || activeIssuePanel();
   if (!panel) return;
-  panel.classList.toggle("issue-del-mode", issueDelMode);
-  const btn = panel.querySelector("#issueDelModeBtn");
+  const on = issueUi(panel).delMode;
+  panel.classList.toggle("issue-del-mode", on);
+  const btn = panel.querySelector('[data-issue-act="delmode"]');
   if (btn) {
-    btn.classList.toggle("active", issueDelMode);
-    btn.textContent = issueDelMode ? "✕ 선택 모드 종료" : "☑ 선택 모드";
+    btn.classList.toggle("active", on);
+    btn.textContent = on ? "✕ 선택 모드 종료" : "☑ 선택 모드";
   }
   syncIssueDelCount(panel);
   syncIssueStickyOffsets(panel);   // 체크박스 노출로 Step 열 폭이 변할 수 있어 재실측
@@ -453,8 +462,8 @@ function markIssueRowSelected(chk) {
   if (tr) tr.classList.toggle("issue-row-sel", chk.checked);
 }
 // 전체 선택 / 선택 해제.
-function setAllIssueDelChecked(checked) {
-  const panel = document.getElementById("panel-issues");
+function setAllIssueDelChecked(checked, panel) {
+  panel = panel || activeIssuePanel();
   if (!panel) return;
   panel.querySelectorAll(".issue-del-chk").forEach(chk => {
     chk.checked = checked;
@@ -464,11 +473,11 @@ function setAllIssueDelChecked(checked) {
 }
 // 체크 개수를 "선택 삭제 (n)" 라벨에 반영 + 선택 대상 버튼 활성/비활성.
 function syncIssueDelCount(panel) {
-  panel = panel || document.getElementById("panel-issues");
+  panel = panel || activeIssuePanel();
   if (!panel) return;
   const n = panel.querySelectorAll(".issue-del-chk:checked").length;
-  const btn = panel.querySelector("#issueDelSelectedBtn");
-  ["#issueSelOpenBtn", "#issueSelCloseBtn"].forEach(sel => {
+  const btn = panel.querySelector('[data-issue-act="del-selected"]');
+  ['[data-issue-act="sel-open"]', '[data-issue-act="sel-close"]'].forEach(sel => {
     const b = panel.querySelector(sel);
     if (b) b.disabled = !n;
   });
@@ -481,49 +490,56 @@ function syncIssueDelCount(panel) {
 // 헬퍼(hxl*)를 써서 Honey 전체본 Excel Download 의 Issue Table 시트와 서식을 맞춘다.
 
 // Issue Table 섹션(CPK/ETC) 헤더로 스크롤 이동.
-function jumpToIssueSection(sec) {
-  const row = document.querySelector(`#panel-issues tr.issue-shead-top[data-sec="${sec}"]`);
+function jumpToIssueSection(sec, panel) {
+  panel = panel || activeIssuePanel();
+  const row = panel && panel.querySelector(`tr.issue-shead-top[data-sec="${sec}"]`);
   if (row) row.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 // 한 Bin 그룹(대표행)의 detail TNO 행 펼치기/접기.
-function setIssueGroup(gi, expand, btn) {
+function setIssueGroup(gi, expand, btn, panel) {
   if (btn) { btn.setAttribute("aria-expanded", expand ? "true" : "false"); btn.textContent = expand ? "▲" : "▼"; }
-  document.querySelectorAll(`#panel-issues tr.issue-bin-detail[data-grp="${gi}"]`).forEach(tr => {
+  panel = panel || (btn && issuePanelOf(btn)) || activeIssuePanel();
+  if (!panel) return;
+  panel.querySelectorAll(`tr.issue-bin-detail[data-grp="${gi}"]`).forEach(tr => {
     tr.style.display = expand ? "" : "none";
   });
 }
 // 행 펼침/접힘으로 상세행의 긴 Item 명이 드러나면 Item 열이 넓어지는데, 좌측 고정 오프셋
 // (--issue-colN-left)은 렌더 시점 실측값이라 그대로면 stale 이 된다 → Map/Distribution 이
 // 옛 오프셋에 서서 Item 열 위로 겹쳐 보인다(2026-07-21 재현). 토글 뒤 반드시 재실측한다.
-function afterIssueRowsToggled() {
-  const panel = document.getElementById("panel-issues");
+function afterIssueRowsToggled(panel) {
+  panel = panel || activeIssuePanel();
   if (!panel) return;
   syncIssueStickyOffsets(panel);
   syncIssueHscrollSpacer(panel);
   requestAnimationFrame(() => { syncIssueStickyOffsets(panel); syncIssueHscrollSpacer(panel); });
 }
 function toggleIssueGroup(btn) {
-  setIssueGroup(btn.dataset.grp, btn.getAttribute("aria-expanded") !== "true", btn);
-  afterIssueRowsToggled();
+  const panel = issuePanelOf(btn);
+  setIssueGroup(btn.dataset.grp, btn.getAttribute("aria-expanded") !== "true", btn, panel);
+  afterIssueRowsToggled(panel);
 }
-function setAllIssueGroups(expand) {
-  document.querySelectorAll("#panel-issues .issue-toggle").forEach(btn => setIssueGroup(btn.dataset.grp, expand, btn));
-  afterIssueRowsToggled();
+function setAllIssueGroups(expand, panel) {
+  panel = panel || activeIssuePanel();
+  if (!panel) return;
+  panel.querySelectorAll(".issue-toggle").forEach(btn =>
+    setIssueGroup(btn.dataset.grp, expand, btn, panel));
+  afterIssueRowsToggled(panel);
 }
 
 // 상단 프록시 가로스크롤바 ↔ .sheet-wrap.kind-issue 실제 스크롤 동기화 (피드백 루프 가드).
 let _issueHscrollSyncing = false;
 function syncIssueHscrollSpacer(panel) {
-  panel = panel || document.getElementById("panel-issues");
+  panel = panel || activeIssuePanel();
   if (!panel) return;
   const wrap = panel.querySelector(".sheet-wrap.kind-issue");
-  const spacer = panel.querySelector("#issueHscrollSpacer");
+  const spacer = panel.querySelector(".issue-hscroll-spacer");
   if (!wrap || !spacer) return;
   spacer.style.width = wrap.scrollWidth + "px";
 }
 function bindIssueHscroll(panel) {
   const wrap = panel.querySelector(".sheet-wrap.kind-issue");
-  const hscroll = panel.querySelector("#issueHscroll");
+  const hscroll = panel.querySelector(".issue-hscroll");
   if (!wrap || !hscroll) return;
   syncIssueHscrollSpacer(panel);
   // 표 폭이 미니셀 지연 렌더 후에도 변할 수 있어 rAF 로 한 번 더 실측.
@@ -540,7 +556,7 @@ function bindIssueHscroll(panel) {
 // 좌측 고정열(Step/Bin/TNO/Item/Map/Distribution)의 left 오프셋을 실제 렌더 폭으로 계산 —
 // 내용이 길어 컬럼이 colWidth 힌트보다 넓어져도 셀이 겹치지(깨지지) 않게 한다.
 function syncIssueStickyOffsets(panel) {
-  panel = panel || document.getElementById("panel-issues");
+  panel = panel || activeIssuePanel();
   if (!panel) return;
   const table = panel.querySelector(".sheet-table.kind-issue");
   if (!table) return;
@@ -559,7 +575,9 @@ function syncIssueStickyOffsets(panel) {
   if (w1 > 0 && w2 > 0 && w3 > 0 && w4 > 0) table.style.setProperty("--issue-col5-left", (w1 + w2 + w3 + w4) + "px");
   if (w1 > 0 && w2 > 0 && w3 > 0 && w4 > 0 && w5 > 0) table.style.setProperty("--issue-col6-left", (w1 + w2 + w3 + w4 + w5) + "px");
 }
-window.addEventListener("resize", () => { syncIssueHscrollSpacer(); syncIssueStickyOffsets(); });
+window.addEventListener("resize", () => {
+  issuePanelEls().forEach(p => { syncIssueHscrollSpacer(p); syncIssueStickyOffsets(p); });
+});
 
 // 컬럼 폭 드래그 리사이즈 — 헤더 우측 경계 핸들(.col-resize-handle, data-col=컬럼인덱스)을 끌어
 // 해당 <col> width 를 바꾼다. 저장 없음(새로고침 시 기본 폭 복귀). 폭 변경 시 좌측 고정 오프셋과
@@ -606,31 +624,54 @@ function bindIssueColResize(panel) {
   });
 }
 
-function renderIssues(issue_table_text) {
-  const panel = document.getElementById("panel-issues");
-
-  if (Array.isArray(issue_table_text) && issue_table_text.length) {
-    // 표 본문은 청크로 채운다(프레임당 50행) — 행 수백~수천 × 20열을 통짜 innerHTML 로
-    // 만들면 첫 진입(및 백그라운드 프리렌더)에서 수백 ms 를 통으로 블록한다. 삽입되는
-    // 마크업·DOM 구조는 통짜 렌더와 동일하다(감싸는 요소를 추가하지 않는다). 후처리(고정열
-    // 오프셋 실측·미니차트 관측 등록 등)는 행이 다 붙은 뒤 해야 실측이 맞다.
-    const table = renderSheetTable(issue_table_text, { kind: "issue", chunk: true });
-    panel.innerHTML = issueToolbarHtml() +
-      `<div id="issueHscroll" class="issue-hscroll"><div id="issueHscrollSpacer" class="issue-hscroll-spacer"></div></div>` +
-      table.html;
-    table.fill(panel.querySelector(".sheet-table.kind-issue tbody"), () => {
-      syncIssueHeadRowHeight(panel);
-      syncIssueStickyOffsets(panel);
-      requestAnimationFrame(() => syncIssueStickyOffsets(panel));   // 레이아웃 확정 후 재실측
-      bindIssueHscroll(panel);
-      renderIssueMiniDist(panel);
-      renderIssueMiniMap(panel);
-      bindIssueColResize(panel);
-      applyIssueDelMode(panel);   // 재렌더 후에도 삭제 모드 유지
-      if (issueSearchTerm.trim()) applyIssueSearch(issueSearchTerm);   // 검색어 유지
-    });
+// Issue 표 렌더 본체 — Issue Table / Issue Table Temp 두 패널과 조회/편집 모드가 공유한다.
+// opts.edit=true 면 comment 두 열만 편집 가능(ISSUE_COMMENT_COLS), opts.intro 는 표 위 안내문.
+function renderIssueTableInto(panel, rows, opts) {
+  if (!panel) return;
+  opts = opts || {};
+  if (!Array.isArray(rows) || !rows.length) {
+    emptyPanel(panel, opts.emptyText || "Issue Table 데이터 없음");
     return;
   }
-  emptyPanel(panel, "Issue Table 데이터 없음");
+  // 표 본문은 청크로 채운다(프레임당 50행) — 행 수백~수천 × 20열을 통짜 innerHTML 로
+  // 만들면 첫 진입(및 백그라운드 프리렌더)에서 수백 ms 를 통으로 블록한다. 삽입되는
+  // 마크업·DOM 구조는 통짜 렌더와 동일하다(감싸는 요소를 추가하지 않는다). 후처리(고정열
+  // 오프셋 실측·미니차트 관측 등록 등)는 행이 다 붙은 뒤 해야 실측이 맞다.
+  const table = renderSheetTable(rows, opts.edit
+    ? { edit: true, kind: "issue", editableCols: ISSUE_COMMENT_COLS, chunk: true }
+    : { kind: "issue", chunk: true });
+  panel.innerHTML = issueToolbarHtml(panel.id) +
+    (opts.intro ? `<div class="issue-intro">${opts.intro}</div>` : "") +
+    // 상단 프록시 가로 스크롤바는 조회 모드 전용(편집 모드는 종전대로 없다).
+    (opts.edit ? "" : `<div class="issue-hscroll"><div class="issue-hscroll-spacer"></div></div>`) +
+    table.html;
+  table.fill(panel.querySelector(".sheet-table.kind-issue tbody"), () => {
+    syncIssueHeadRowHeight(panel);
+    syncIssueStickyOffsets(panel);
+    requestAnimationFrame(() => syncIssueStickyOffsets(panel));   // 레이아웃 확정 후 재실측
+    bindIssueHscroll(panel);
+    renderIssueMiniDist(panel);
+    renderIssueMiniMap(panel);
+    bindIssueColResize(panel);
+    applyIssueDelMode(panel);   // 재렌더 후에도 삭제 모드 유지
+    const term = issueUi(panel).search;
+    if (term.trim()) applyIssueSearch(term, panel);   // 검색어 유지
+  });
+}
+
+function renderIssues(issue_table_text) {
+  renderIssueTableInto(document.getElementById(ISSUE_PANEL_MAIN), issue_table_text,
+                       { edit: false });
+}
+
+// Temperature 전용 탭 — CT/HT 를 RT Limit 으로 전 항목 재판정한 이슈 표.
+function renderIssueTempTab() {
+  const panel = document.getElementById(ISSUE_PANEL_TEMP);
+  renderIssueTableInto(panel, (webReportSheets() || {})[ISSUE_TEMP_SHEET], {
+    edit: MODE === "edit",
+    intro: "CT / HT 를 RT Limit(LOLIM·HILIM)으로 <b>전 항목</b> 재판정한 결과입니다 — " +
+      "한 die 가 여러 항목을 벗어나면 그 항목 전부에 계상되므로 소스별 합이 100% 를 넘을 수 있습니다.",
+    emptyText: "RT Limit 을 벗어난 CT / HT 항목이 없습니다",
+  });
 }
 

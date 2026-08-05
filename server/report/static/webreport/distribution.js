@@ -137,6 +137,12 @@ let distDataReady = false;     // 배치 로더 사용 가능 여부 (항목 보
 let distBin1Only = false;      // 갤러리 미니셀을 양품(BIN==1) & 규격내 ECDF 로 표시
 let distBin1Cache = {};        // subject → {...} (bin1 ECDF, distDataCache 와 동일 스키마)
 let distBin1Ready = false;
+// ── "Bin1(RT만)" — Temperature 전용 3번째 변형 (2026-08-05) ────────────────────
+// RT source 만 bin1(양품·규격내) 필터를 걸고 CT/HT 는 fail 포함 전 die 를 그대로 쓴다.
+// CT/HT 의 저장 BIN 은 업로드 시점 "첫 fail" 기준이라 bin1 필터를 그대로 걸면 RT limit
+// 재판정 결과와 기준이 어긋난다 — RT 만 양품으로 좁혀 비교하려는 용도.
+let distRtBin1Only = false;
+let distRtBin1Cache = {};
 
 function buildDistDataFromCompact(payload) {
   // 컴팩트 columnar → 기존 distDataCache 스키마 그대로 (소비자 코드 무수정)
@@ -167,6 +173,7 @@ function distBadgeEl(create) {
       if (!b) return;
       distBadgeHide();
       if (b.dataset.distRetry === "bin1") ensureDistBin1Data();
+      else if (b.dataset.distRetry === "rtbin1") ensureDistRtBin1Data();
       else if (b.dataset.distRetry === "map") ensureMapData();
       else ensureDistData();
     });
@@ -224,15 +231,35 @@ function distHasData(subject) {
   return _distSubjectSet.has(subject);
 }
 
-const _distPending = { all: new Set(), bin1: new Set() };   // 요청 대기(다음 배치)
-const _distHave = { all: new Set(), bin1: new Set() };      // 요청 완료 또는 진행 중
-const _distOrder = { all: [], bin1: [] };                   // LRU 축출 순서
+// 변형 3종: all(전체) / bin1(전 소스 양품) / rtbin1(RT 만 양품 — Temperature 전용).
+const DIST_VARIANTS = ["all", "bin1", "rtbin1"];
+const _distPending = { all: new Set(), bin1: new Set(), rtbin1: new Set() };   // 요청 대기
+const _distHave = { all: new Set(), bin1: new Set(), rtbin1: new Set() };      // 완료/진행 중
+const _distOrder = { all: [], bin1: [], rtbin1: [] };                          // LRU 축출 순서
 let _distInflight = 0;
 let _distBatchTimer = null;
 let _distRefreshTimer = null;
 
-function distCacheFor(bin1) { return bin1 ? distBin1Cache : distDataCache; }
-function distVariantKey(bin1) { return bin1 ? "bin1" : "all"; }
+// variant 는 문자열이지만 기존 호출부는 true/false 를 넘긴다 — 둘 다 받는다.
+function distVariantKey(v) {
+  if (v === true || v === "bin1") return "bin1";
+  if (v === "rtbin1") return "rtbin1";
+  return "all";
+}
+function distCacheFor(v) {
+  const k = distVariantKey(v);
+  return k === "bin1" ? distBin1Cache : (k === "rtbin1" ? distRtBin1Cache : distDataCache);
+}
+// variant → 요청 쿼리 조각 (서버 routes_webreport 가 bin1/bin1_scope 로 받는다).
+function distVariantQuery(v) {
+  const k = distVariantKey(v);
+  if (k === "bin1") return "&bin1=1";
+  if (k === "rtbin1") return "&bin1=1&bin1_scope=rt";
+  return "";
+}
+function _distPendingTotal() {
+  return DIST_VARIANTS.reduce((n, k) => n + _distPending[k].size, 0);
+}
 
 // 배치 도착 후 재렌더 — 여러 배치가 연달아 오므로 한 프레임으로 모은다.
 function distScheduleRefresh() {
@@ -245,18 +272,18 @@ function distScheduleRefresh() {
 
 // 받은 항목을 캐시에 넣되 보유 개수 상한을 유지한다(core.js cachePutCapped 공용).
 // 버린 항목은 _distHave 에서도 빼야 다시 보일 때 재요청이 걸린다.
-function distCachePut(bin1, subject, info) {
-  const key = distVariantKey(bin1);
-  cachePutCapped(distCacheFor(bin1), _distOrder[key], subject, info,
+function distCachePut(variant, subject, info) {
+  const key = distVariantKey(variant);
+  cachePutCapped(distCacheFor(variant), _distOrder[key], subject, info,
                  DIST_BATCH.CACHE_MAX, old => _distHave[key].delete(old));
 }
 
 // 이 항목의 ECDF 를 요청 큐에 넣는다 (이미 보유/요청 중이면 no-op).
 // 렌더러는 데이터가 없으면 rendered 플래그를 세우지 않고 리턴하고, 도착 후
 // refreshDistConsumers 재큐잉으로 다시 그려진다 — 기존 지연 로드와 동일한 흐름.
-function distRequestSubject(subject, bin1) {
+function distRequestSubject(subject, variant) {
   if (!subject || !distHasData(subject)) return;
-  const key = distVariantKey(bin1);
+  const key = distVariantKey(variant);
   if (_distHave[key].has(subject) || _distPending[key].has(subject)) return;
   _distPending[key].add(subject);
   if (_distBatchTimer) return;
@@ -287,11 +314,10 @@ function distBatchBadgeSync() {
 
 function distFlushBatch() {
   if (_distInflight >= DIST_BATCH.MAX_INFLIGHT) return;   // 도착 시 다시 호출된다
-  // 전체 기준을 먼저 비운다(갤러리·IssueTable 이 공유하는 기본 캐시). 전체가 비면 bin1.
-  const bin1 = _distPending.all.size === 0;
-  const key = distVariantKey(bin1);
+  // 전체 기준을 먼저 비운다(갤러리·IssueTable 이 공유하는 기본 캐시). 그다음 bin1 → rtbin1.
+  const key = DIST_VARIANTS.find(k => _distPending[k].size);
+  if (!key) return;
   const pending = _distPending[key];
-  if (!pending.size) return;
   const subjects = Array.from(pending).slice(0, DIST_BATCH.SIZE);
   subjects.forEach(s => { pending.delete(s); _distHave[key].add(s); });
 
@@ -299,12 +325,12 @@ function distFlushBatch() {
   distBatchBadgeSync();
   const q = encodeURIComponent(subjects.join(","));
   const url = `/pe/report/session/${SESSION_ID}/web_report/distribution_batch`
-    + `?subjects=${q}${bin1 ? "&bin1=1" : ""}`;
+    + `?subjects=${q}${distVariantQuery(key)}`;
   fetch(url, { cache: "no-cache" })
     .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then(j => {
       const built = buildDistDataFromCompact(j);
-      Object.keys(built).forEach(s => distCachePut(bin1, s, built[s]));
+      Object.keys(built).forEach(s => distCachePut(key, s, built[s]));
       distScheduleRefresh();
     })
     .catch(e => {
@@ -318,9 +344,9 @@ function distFlushBatch() {
     .then(() => {
       _distInflight--;
       distBatchBadgeSync();
-      if (_distPending.all.size || _distPending.bin1.size) distFlushBatch();
+      if (_distPendingTotal()) distFlushBatch();
     });
-  if (_distPending.all.size || _distPending.bin1.size) distFlushBatch();   // 남은 배치
+  if (_distPendingTotal()) distFlushBatch();   // 남은 배치
 }
 
 // 배치 로더는 별도 선행 로드가 필요 없다 — 호출 시 보이는 셀들이 각자 필요한 항목을
@@ -344,8 +370,7 @@ function ensureDistData() {
 function refreshDistConsumers() {
   // Issue Table 미니셀 — 화면에 보이는(관측 중) 셀만 rAF 큐로 재큐잉.
   // 전량 동기 렌더 금지 (수천 셀 × Plotly = 분 단위 freeze). 나머지는 스크롤 시 lazy.
-  document.querySelectorAll('#panel-issues .dist-cell-mini[data-visible="1"]')
-    .forEach(issueDistQueueRender);
+  issuePanelsQueryAll('.dist-cell-mini[data-visible="1"]').forEach(issueDistQueueRender);
   // Issue Table Bin 상세의 단일 분포 셀
   const detail = document.getElementById("issueDetailDistCell");
   if (detail && detail.dataset.distLoaded !== "1") {
@@ -372,6 +397,20 @@ function ensureDistBin1Data() {
   _distBatchFailed = false;   // 재시도 진입점 — 실패 안내를 걷는다
   refreshDistGallery();
   return Promise.resolve();
+}
+// Bin1(RT만) — RT 소스만 양품 필터, CT/HT 는 전체. 위와 같은 배치 로더의 rtbin1 변형.
+let distRtBin1Ready = false;
+function ensureDistRtBin1Data() {
+  distRtBin1Ready = true;
+  _distBatchFailed = false;
+  refreshDistGallery();
+  return Promise.resolve();
+}
+// 현재 갤러리가 쓰는 변형 키 ("all" | "bin1" | "rtbin1").
+function distGalleryVariant() {
+  if (distBin1Only) return "bin1";
+  if (distRtBin1Only) return "rtbin1";
+  return "all";
 }
 
 // 갤러리에 보이는(관측 중) 카드만 재큐잉 — Bin1 데이터 도착 시 미니셀을 다시 채운다.
@@ -508,12 +547,19 @@ function tempFilterSources(kind, groupIndex) {
   }).map(s => s.name);
 }
 
+// 그룹 라벨 — RT source 이름에서 역할 접미사(_RT/-RT/ RT)를 뗀 stem.
+// 업로드 때 클라(honey_ui/source_naming.apply_role_suffix)가 붙인 접미사를 되돌리는 것이라
+// 그룹 이름으로는 "_RT" 가 군더더기다 (2026-08-05 사용자 요청).
+function tempGroupLabel(g, i) {
+  const rt = String((g && g.rt) || "");
+  return rt.replace(/[_\-. ]?RT$/i, "") || rt || `Group ${i + 1}`;
+}
 // 그룹 <select> 옵션 — payload.temperature.groups 순서(업로드 시 배치 순서)를 따른다.
 function tempGroupOptions() {
   const groups = ((DATA.web_report && DATA.web_report.temperature) || {}).groups || [];
   return groups.map((g, i) =>
     `<option value="${i}"${String(distTempFilterGroup) === String(i) ? " selected" : ""}>` +
-    `${esc(String(g.rt || `Group ${i + 1}`))}</option>`).join("");
+    `${esc(tempGroupLabel(g, i))}</option>`).join("");
 }
 
 function distTempFilterHtml() {
@@ -1000,8 +1046,11 @@ function distRepaintPoints() {
 }
 
 // 갤러리 미니셀이 쓸 활성 분포 캐시/준비상태 — Bin1 only 토글 시 양품 캐시로 전환.
-function distGalleryCache() { return distBin1Only ? distBin1Cache : distDataCache; }
-function distGalleryReady() { return distBin1Only ? distBin1Ready : distDataReady; }
+function distGalleryCache() { return distCacheFor(distGalleryVariant()); }
+function distGalleryReady() {
+  const v = distGalleryVariant();
+  return v === "bin1" ? distBin1Ready : (v === "rtbin1" ? distRtBin1Ready : distDataReady);
+}
 
 // ── 갤러리 미니셀(정적 CDF, distDataCache 재사용, 표시용만 1500점 다운샘플) ─────
 function distRenderGalleryCell(cell) {
@@ -1013,7 +1062,7 @@ function distRenderGalleryCell(cell) {
   // 이 항목 ECDF 가 아직 없으면 배치로 요청하고 리턴 — rendered 플래그를 세우지 않아야
   // 도착 후 refreshDistConsumers/refreshDistGallery 재큐잉으로 다시 그려진다.
   // (인덱스에 아예 없는 항목은 데이터가 없는 것이 확정이라 그대로 빈 축만 그린다.)
-  if (!info && distHasData(subject)) { distRequestSubject(subject, distBin1Only); return; }
+  if (!info && distHasData(subject)) { distRequestSubject(subject, distGalleryVariant()); return; }
   const plot = cell.querySelector(".distg-plot");
   if (!plot || typeof Plotly === "undefined") return;
   const lo = info ? info.lower_limit : null;
@@ -1097,9 +1146,13 @@ function distToolbarHtml() {
   const selChip = distSelected.size
     ? `<button class="distseg dist-sel-clear" data-seg="clearsel" title="선택 해제">선택 ${distSelected.size}개 ✕</button>` : "";
   const bin1Btn = `<button class="distseg${distBin1Only ? " active" : ""}" data-seg="bin1" title="켜짐: 각 항목 분포를 양품(Bin1, BIN==1) & 규격(LSL/USL) 이내 die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
+  // Temperature 전용 3번째 변형 — RT 만 양품으로 좁히고 CT/HT 는 fail 포함 전체를 유지한다.
+  const rtBin1Btn = tempIsMode()
+    ? `<button class="distseg${distRtBin1Only ? " active" : ""}" data-seg="rtbin1" title="켜짐: RT source 만 양품(Bin1)·규격내로 좁히고 CT / HT 는 fail 포함 전체 die 로 표시 · 꺼짐: 전체 die">Bin1 (RT만)</button>`
+    : "";
   const nopfBtn = `<button class="distseg${distHidePassfail ? " active" : ""}" data-seg="nopf" title="켜짐: unit 이 Pass/Fail(P/F·P_F) 인 항목 카드를 숨김 · 꺼짐: 표시">P/F 없애기</button>`;
   return `<div class="dist-toolbar">
-    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${nopfBtn}</div>
+    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${rtBin1Btn}${nopfBtn}</div>
     ${distTempFilterHtml()}
     <div class="dist-search-wrap" data-no-dirty>
       <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">

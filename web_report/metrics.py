@@ -11,9 +11,10 @@ from .tabs import TAB_REGISTRY, TabContext, build_cpk_rows
 from .tabs.common import empty_items, finite_count_map, passfail_or_empty_items
 from .tabs.distribution import build_distribution_index
 from .tabs.issue_table import build_issue_bin_summary
-from .tabs.yield_tab import (build_yield_bin_groups, build_yield_corner_groups,
-                             build_yield_rows, build_yield_step_groups,
-                             fail_counts_by_source, resolve_source_basis,
+from .tabs.temp_fail import build_temp_fail_rows
+from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
+                             build_yield_step_groups, fail_counts_by_source,
+                             resolve_source_basis, temperature_corner_sources,
                              yield_basis_payload, yield_overview)
 
 
@@ -23,7 +24,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
                          etc_auto_items=None,
                          issue_hidden=None, issue_status=None, gross_die=None,
                          compare_groups=None, yield_basis=None,
-                         temperature_groups=None) -> dict:
+                         temperature_groups=None, temperature_limits=None) -> dict:
     """Distribution ECDF(대용량)는 payload 에 싣지 않고 항상 지연 로드한다
     (distribution_deferred=True, sheets["Distribution"]=[]) — 프런트가 별도 lazy 엔드포인트
     (GET .../web_report/distribution)로 받아간다. distribution_index(경량)는 항상 포함.
@@ -43,7 +44,12 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     크게 어긋나면(수율 100% 초과 등) 그 소스만 자동으로 test die 기준이 된다.
     temperature_groups: Temperature 모드 RT/CT/HT 그룹 {"groups":[{"rt","members"}]}
     (validation.webreport_temperature_groups). 비RT(CT/HT) 소스는 업로드 전에 RT pass
-    좌표로 잘려 있어 분모를 **남은 die 수로 강제**한다."""
+    좌표로 잘려 있어 분모를 **남은 die 수로 강제**한다. 그리고 **Yield 계열은 전부 RT
+    source 기준**이다(2026-08-05) — Yield 시트/요약/Bin·STEP 그룹/Fail Bin/Issue Table 이
+    RT 만 본다. CT/HT 는 tabs.temp_fail 이 전 항목을 RT limit 으로 재판정한 별도 시트
+    ("Issue Table Temp")로 나간다.
+    temperature_limits: manifest["temperature_limits"] — {item: {tno, lsl_bin, usl_bin}}
+    (.lt/.pds 유래, 신규 업로드만 존재). Temp 시트의 Bin 표기에만 쓰고 없으면 관측 bin 폴백."""
     selected_set = {str(v) for v in (selected_items or []) if str(v)}
     if selected_set:
         for table in tables:
@@ -55,8 +61,9 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     # temp_corner("RT"/"CT"/"HT")는 Distribution 소스 그룹 필터가 쓴다 — 업로드 때 기록된
     # member_roles 가 정본이고, 그게 없는 옛 세션은 members 순서(CT→HT)로 추정한다.
     temp_role, temp_member_names = {}, set()
-    if mode == "Temperature" and temperature_groups:
-        for gi, group in enumerate(temperature_groups.get("groups") or []):
+    temp_groups = (temperature_groups or {}).get("groups") if mode == "Temperature" else None
+    if temp_groups:
+        for gi, group in enumerate(temp_groups):
             temp_role[group["rt"]] = (gi, "rt", "RT")
             members = list(group.get("members") or [])
             roles = list(group.get("member_roles") or [])
@@ -68,6 +75,15 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
             role = temp_role.get(entry["name"])
             if role:
                 entry["temp_group"], entry["temp_role"], entry["temp_corner"] = role
+    # Yield 계열 계산에 쓸 테이블 — Temperature 면 **RT source 만**(2026-08-05 사용자 확정).
+    # CT/HT 는 RT limit 전 항목 재판정 결과가 별도 시트로 나가므로 수율 표에 섞지 않는다.
+    # 이 한 줄이 Yield 시트·요약·Bin/STEP 그룹·Fail Bin·Issue Table 을 한꺼번에 RT 기준으로
+    # 만든다(아래는 전부 yield_tables/yield_rows 를 입력으로 받는다).
+    yield_tables = tables
+    if temp_groups:
+        rt_names, _member_names = temperature_corner_sources(tables, temp_groups)
+        if rt_names:
+            yield_tables = [t for t in tables if t.source in set(rt_names)]
     all_items = sorted({c for t in tables for c in t.item_columns})
     # 항목별 유한 measurement 개수 — 아래 3곳(cpk 제외집합·dist 제외집합·distribution_index
     # 의 n)이 같은 스캔을 각각 돌던 것을 **1회**로 합친다(대형 세션에서 전 데이터 3회 스캔이었다).
@@ -84,16 +100,20 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         basis_info = resolve_source_basis(tables, gross_die, yield_basis,
                                           force_test=temp_member_names or None)
         totals = {src: info["total"] for src, info in basis_info.items()}
-        yield_rows = build_yield_rows(tables, fail_counts, totals=totals)
+        yield_rows = build_yield_rows(yield_tables, fail_counts, totals=totals)
         cpk_rows = build_cpk_rows(tables, stat_items)
 
-    # Temperature 모드 Corner 분해(RT / CT+HT) — Yield 탭 표 2개와 Issue Table 의
-    # RT 기준 계산·TEMP 섹션이 **같은 결과 객체**를 쓴다(1회만 계산).
-    temp_corners = None
-    if mode == "Temperature" and temperature_groups:
-        with build_log.stage("yield_corner"):
-            temp_corners = build_yield_corner_groups(
-                tables, fail_counts, totals, temperature_groups.get("groups"))
+    # Temperature 모드: CT/HT 를 RT limit 으로 **전 항목** 재판정한 Temp 시트 행
+    # (Issue Table Temp 탭 + Yield 탭 하단 섹션이 같은 객체를 쓴다 — 1회만 계산).
+    temp_rows = []
+    if temp_groups:
+        with build_log.stage("temp_fail"):
+            temp_rows = build_temp_fail_rows(
+                tables, temp_groups, totals, fail_counts=fail_counts,
+                limits_meta=temperature_limits, hidden=issue_hidden,
+                status_of=(lambda key: "Close"
+                           if (issue_status or {}).get(key) == "Close" else "Open"),
+                issue_comments=issue_comments, ai_comments=ai_comments)
 
     ctx = TabContext(
         tables=tables,
@@ -111,7 +131,8 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         etc_auto_items=list(etc_auto_items or []),
         issue_hidden=list(issue_hidden or []),
         issue_status=dict(issue_status or {}),
-        temp_corners=temp_corners,
+        yield_tables=yield_tables,
+        temp_rows=temp_rows,
     )
     sheets_out = {}
     for spec in TAB_REGISTRY:
@@ -128,7 +149,8 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     payload = {
         "mode": mode or "Normal",
         "sources": sources,
-        "yield_summary": yield_overview(tables, yield_rows, totals=totals),
+        # Temperature 면 yield_tables = RT source 만 (Summary 의 전체/소스별 수율도 RT 기준).
+        "yield_summary": yield_overview(yield_tables, yield_rows, totals=totals),
         # 수율 분모 기준(프런트 요약 박스 배지·소스별 표). basis 는 전 소스가 같을 때 그 값,
         # 소스마다 다르면 "mixed" — 소스별 분해는 by_source 에 있다.
         "yield_basis": yield_basis_payload(basis_info,
@@ -159,12 +181,10 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
                 tables, all_items, cpk_rows, stat_items=stat_items,
                 compare_groups=compare_groups)
 
-    # Temperature 모드: RT/CT/HT 그룹 구성을 그대로 내려 프런트가 RT 를 표시한다.
-    # yield_corner_groups 는 Yield 탭이 표를 RT Corner / Temp Corner 2개로 그리는 근거다
-    # (없으면 프런트가 종전 yield_step_groups 렌더로 폴백 — 다른 모드는 이 키가 없다).
-    if mode == "Temperature" and temperature_groups:
+    # Temperature 모드: RT/CT/HT 그룹 구성을 그대로 내려 프런트(Distribution 소스 그룹 필터
+    # ·Map 항목 legend·Temp 시트 렌더)가 쓴다. Yield 표는 이미 RT 기준이라 Corner 분해 키
+    # (구 yield_corner_groups)는 없앴다 — CT/HT 는 sheets["Issue Table Temp"] 로 나간다.
+    if temp_groups:
         payload["temperature"] = temperature_groups
-        if temp_corners:
-            payload["yield_corner_groups"] = temp_corners
 
     return payload

@@ -63,12 +63,19 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 [cache_policy.py](../web_report/cache_policy.py) 가 캐시별 키 빌더를 제공하고 **호출부는
 반드시 이 빌더로 키를 만든다**. 새 캐시를 추가하면 여기 빌더와 아래 표를 함께 추가할 것.
 
+> **bin1 변형 키 꼬리표** (`cache_policy._bin1_suffix`): `bin1=True` 면 `("bin1",)`,
+> 거기에 `bin1_scope="rt"`(Temperature "Bin1(RT만)" — RT 소스만 양품 필터, CT/HT 는
+> fail 포함 전체)면 `("rt",)` 를 더 붙인다. **scope 가 비면 종전 키와 완전히 동일**해
+> 기존 캐시가 그대로 유효하다. scope 는 실제로 적용되는 세션(Temperature + RT 존재)일
+> 때만 키에 들어간다(`service._bin1_source_filter` 가 판정).
+
 | 캐시 | 키 구성 | 무효화 트리거 |
 |------|---------|---------------|
 | TABLES_CACHE | (akey, chash[, prep]) | raw_data 편집(chash) / 전처리 / 세션 삭제 |
 | DIST_CACHE | (akey, chash[, prep], mode) | 〃 (mode 는 세션 생성 후 불변) |
-| _DIST_BATCH_CACHE | (akey, chash[, prep], mode, subjects_digest[, "bin1"]) | 〃 — 항목 배치 ECDF gzip (`/web_report/distribution_batch`) |
+| _DIST_BATCH_CACHE | (akey, chash[, prep], mode, subjects_digest[, "bin1"[, scope]]) | 〃 — 항목 배치 ECDF gzip (`/web_report/distribution_batch`) |
 | MAP_CACHE | (akey, chash[, prep], mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8) |
+| TEMP_MAP_CACHE | (akey, chash[, prep], mode, v) | 〃 — Temperature 항목별 fail die **인덱스** gzip (`/web_report/temp_map`, 2026-08-05). map dies 와 같은 세대여야 인덱스가 맞는다 |
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 (메타만 쓰므로 전처리 무관) |
 | REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode) | comment/override/전처리 편집(rev) + 위 전부 |
 | TRIM_CACHE | (akey, chash, sid, edits_rev, mode, source) | trim override/전처리 편집(rev) + 위 전부 |

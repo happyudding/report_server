@@ -19,9 +19,10 @@
 |----|------|------|
 | Summary | `summary.py` | placeholder(`[]`) — 화면은 프런트가 Map/Fail Bin 으로 자체 구성 |
 | Raw Data | `raw_data.py` | payload 는 placeholder — 실제는 lazy 조회/편집 라우트 |
-| Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`) + Temperature Corner 분리(`build_yield_corner_groups`) |
+| Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`). **Temperature 는 RT source 만** 입력으로 받는다(metrics 가 결정) |
 | CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) — 통계는 **Bin1(양품) 기준 단일 값** |
-| Issue Table | `issue_table.py` | Yield 파생 + cpk<1.33 파생(Bin1 기준) + (Temperature 만) TEMP + ETC. comment/Status/행 숨김은 편집 DB 에서 채움 |
+| Issue Table | `issue_table.py` | Yield 파생 + cpk<1.33 파생(Bin1 기준) + ETC. comment/Status/행 숨김은 편집 DB 에서 채움. **Temperature 는 RT source 만**(TEMP 는 아래 별도 시트로 분리) |
+| Issue Table Temp | `temp_fail.py` | **Temperature 전용** — CT/HT 를 RT limit 으로 **전 항목** 재판정한 item 단위 행(다른 모드는 `[]`). row_key `TEMP\|<item>` |
 | Distribution | — (lazy, 항목 배치) | `/full` 은 빈 시트 + `distribution_index`(항목 목록). ECDF 는 **화면에 보이는 항목만** `GET .../web_report/distribution_batch?subjects=…` 로 받는다 |
 | Trim Analysis | — (lazy, **버튼 시작**) | `/full` 은 빈 시트. **탭 진입만으로는 아무 요청도 안 한다** — 「분석 시작」을 눌러야 `GET .../web_report/trim_analysis` 를 받고, 그 뒤 차트는 `GET .../web_report/trim_chart_batch` 로 **한 페이지 6개씩** |
 | Map Analysis | `Map_analysis.py` (하이브리드 lazy) | wafer map die/bin 집계 — `/full` 은 dies 뺀 경량 메타(`include_dies=False`), die 전량은 `GET .../web_report/map_analysis` 지연 로드 (schema v8) |
@@ -48,25 +49,40 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
 `REPORT_SCHEMA_VERSION` 을 함께 올렸다 — **서버 재시작 필요**.
 
 ## 주요 탭 계약
-- **Temperature Corner 분리 (2026-08-05)**: Temperature 모드에서만 payload 에
-  `yield_corner_groups` 가 실리고, Yield 탭이 STEP 표 대신 **Corner 표 2개**를 그린다
-  (각 Corner 안은 아래 STEP 분리 구조 그대로). 키가 없으면 프런트가 종전
-  `yield_step_groups` 렌더로 폴백하므로 다른 모드·옛 캐시 세션은 무영향이다.
-  - `[{corner, label, sources, rows, step_groups, by_step}]` — `corner` 는 `"RT"`(RT source
-    만, Normal 과 같은 계산) 또는 `"TEMP"`(CT+HT). 소스 없는 Corner 는 생략된다.
-  - 계산은 `yield_tab.build_yield_corner_groups` 가 **소스 부분집합으로 build_yield_rows 를
-    다시 호출**할 뿐이다. `resolve_source_basis` 는 소스 간 결합이 없어 subset 에서도 분모가
-    같으므로, 같은 소스의 fail% 는 Corner 표와 전체 Yield 시트가 정확히 일치한다
-    (회귀 고정: `test_corner_percentages_match_full_yield_sheet`).
-  - Issue Table 도 이때 **Yield/CPK 섹션을 RT source 기준으로만** 계산하고, CPK 와 ETC
-    사이에 **TEMP 섹션**(CT/HT 가 RT 의 HILIM/LOLIM 을 벗어나 fail 한 항목, 불량률 내림차순
-    = `row_total_count` 기준)을 넣는다. TEMP 행은 item 단위 집계라 Bin 이 비어 있다.
-  - CT/HT 판정은 **업로드 전에 이미 끝나 있다** — `web_report/temperature.py` 가 RT pass
-    좌표만 남기고 RT limit 으로 BIN/FAILTNO 를 덮어쓰므로, 여기서 limit 을 다시 보지 않는다.
-  - `sources[]` 에 `temp_corner`(`"RT"|"CT"|"HT"`)가 붙어 Distribution 소스 그룹 필터
-    (전체/RT만/CT만/HT만/그룹 선택, 갤러리 툴바 + item_detail 공용)가 쓴다. 정본은 업로드
-    시 기록된 `options.temperature.groups[].member_roles` 이고, 그게 없는 옛 세션은
-    members 순서(CT→HT)로 추정한다.
+- **Temperature 개편 (2026-08-05)** — Yield 는 RT 기준, CT/HT 는 별도 시트:
+  - **Yield 계열은 RT source 만** 본다(Yield 시트·`yield_summary`·Bin/STEP 그룹·
+    `issue_bin_summary`·Fail Bin·Issue Table). `metrics.build_report_payload` 가
+    `yield_tables`(= RT subset)를 만들어 넘기는 한 지점에서 결정된다 — 구
+    `yield_corner_groups` 키와 `build_yield_corner_groups` 는 **삭제**됐다.
+  - **CT/HT 는 신규 시트 `sheets["Issue Table Temp"]`** 로 나간다(Issue Table 과
+    Distribution 사이, 프런트 탭 `data-tab="issue-temp"` — Temperature 에서만 노출).
+    첫 행은 섹션 divider(`Category="TEMP"`)이고 이후가 데이터 행이다. 컬럼 소스는
+    **CT/HT 만**, 정렬은 소스 합산 fail die 수 내림차순.
+  - **판정은 조회 시점 서버 재계산**이다(`tabs/temp_fail.py`). 업로드 전 정리
+    (`web_report/temperature.py`)는 RT pass 좌표 필터 + **첫 fail 하나만** BIN/FAILTNO 에
+    적지만, 여기서는 좌표 필터가 이미 반영된 parquet 위에서 **모든 항목**을 RT 의
+    LOLIM/HILIM 으로 다시 판정한다 → 한 die 가 여러 항목을 벗어나면 그 항목 전부에
+    계상되고, 소스별 fail% 합이 **100% 를 넘을 수 있다**(사용자 확정). 클라 정리 로직은
+    한 줄도 바뀌지 않아 기존 세션도 재배포 없이 새 화면이 된다.
+  - **Bin 표기**: `manifest["temperature_limits"]`(.lt/.pds 유래, 신규 업로드만)의
+    `usl_bin` — `.lt` 의 `20:19` 는 **콜론 오른쪽(19)만** 쓴다. 없으면 관측 bin 최빈값
+    (member → RT 순, `"999"` 제외), 그래도 없으면 공백. 행은 항상 item 1개다 —
+    row_key `TEMP|<item>` 을 유지해야 기존 comment/Status 와 파서 4곳이 안 깨진다.
+  - **Map 항목 legend**: Map Analysis 색 기준 축에 `Temp Item` 이 추가된다(Temperature
+    전용). 항목별 fail die 는 `GET .../web_report/temp_map` 이 **dies 배열 인덱스**로
+    내려준다(`{"format":"temp-map-v1","sources":[{source,n,items:[{item,idx}]}]}`) —
+    map_analysis 응답에 얹지 않는 이유는 프런트 Worker 가 dies/metas 외 필드를 버리기
+    때문이다. 인덱스 기준은 `Map_analysis` 의 `XPOS/YPOS notna` mask 와 **문자 그대로
+    동일**해야 한다(회귀 고정: `test_temperature_fail_eval.test_indices_align_with_map_dies`).
+    Issue Table Temp 의 Map 셀(`data-temp-item`)도 같은 데이터를 쓴다.
+  - **Distribution**: 소스 그룹 필터의 그룹 라벨에서 `_RT` 접미사를 뗀다. 신규 버튼
+    `Bin1 (RT만)` = `?bin1=1&bin1_scope=rt` — RT 소스만 양품·규격내로 좁히고 CT/HT 는
+    fail 포함 전체(`dist_pack._ecdf_sources(bin1_sources=)` /
+    `build_distribution_compact(bin1_sources=)`). `bin1_scope` 가 없으면 캐시 키가
+    종전과 **완전히 동일**해 기존 캐시가 그대로 유효하다.
+  - `sources[]` 의 `temp_corner`(`"RT"|"CT"|"HT"`)·`temp_group` 과 `payload.temperature`
+    는 그대로다(Distribution 소스 그룹 필터·Map legend·Temp 시트 렌더가 쓴다).
+
 - **Yield STEP 분리 (2026-07-14 분모 전체 기준으로 통일 / 2026-07-21 STEP 요약만 누적 차감)**: Yield 탭은 STEP(P1/P2/P3)별로
   표를 나눈다. STEP 은 각 fail die 의 `FAILTNO → (TNO 매칭) item → item 의 STEP 메타행
   (raw 4번째 행)` 으로 정한다 (`item_meta`). 각 STEP 표의 bin portion 분모는 **항상 전체

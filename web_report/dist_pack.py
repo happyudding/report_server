@@ -291,14 +291,20 @@ def item_chunk_map(index: dict) -> dict:
     return out
 
 
-def _ecdf_sources(sources: dict, *, bin1: bool) -> dict:
+def _ecdf_sources(sources: dict, *, bin1: bool, bin1_sources=None) -> dict:
+    """bin1_sources 를 주면 **그 소스에만** bin1 필터를 건다 (나머지는 전체 기준).
+
+    Temperature 의 "Bin1(RT만)" 변형용 — RT 만 양품·규격내로 좁히고 CT/HT 는 fail 포함
+    전체를 유지한다. ``None`` 이면 종전과 완전히 같다(전 소스 동일 적용).
+    """
     out = {}
     for source, cols in (sources or {}).items():
+        use_bin1 = bin1 and (bin1_sources is None or source in bin1_sources)
         # x 는 numpy 로 되돌리지 않는다 — 정수 컬럼의 x 는 오늘 서버도 int 를 내므로
         # float64 로 승격하면 정준 JSON 이 5 ↔ 5.0 으로 어긋난다.
         x = list(cols.get("x") or ())
-        raw = list((cols.get("c1") if bin1 else cols.get("c")) or ())
-        if bin1:
+        raw = list((cols.get("c1") if use_bin1 else cols.get("c")) or ())
+        if use_bin1:
             kept = [i for i, n in enumerate(raw) if n]
             x = [x[i] for i in kept]
             raw = [raw[i] for i in kept]
@@ -313,7 +319,8 @@ def _ecdf_sources(sources: dict, *, bin1: bool) -> dict:
     return out
 
 
-def ecdf_from_pack_items(pack_items: dict, *, bin1: bool = False, only=None) -> dict:
+def ecdf_from_pack_items(pack_items: dict, *, bin1: bool = False, only=None,
+                         bin1_sources=None) -> dict:
     """pack 항목 dict → ``ecdf-columnar-v1`` compact dict (정렬 없음, 덧셈만).
 
     항목 키는 **사전순**으로 낸다 — 서버 폴백(compute_dist_compact)의 항목 순서와 같아야
@@ -330,7 +337,8 @@ def ecdf_from_pack_items(pack_items: dict, *, bin1: bool = False, only=None) -> 
             "units": entry.get("units") or "",
             "lo": entry.get("lo"),
             "hi": entry.get("hi"),
-            "sources": _ecdf_sources(entry.get("sources") or {}, bin1=bin1),
+            "sources": _ecdf_sources(entry.get("sources") or {}, bin1=bin1,
+                                     bin1_sources=bin1_sources),
         }
     return {"format": "ecdf-columnar-v1", "items": items}
 

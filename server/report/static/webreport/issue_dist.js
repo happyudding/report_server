@@ -50,13 +50,50 @@ function renderMiniStdfCell(cell) {
     cell.dataset.mapLoaded = "";
   }).finally(() => {
     _stdfMiniInflight--;
-    document.querySelectorAll('#panel-issues .map-cell-mini[data-subject][data-visible="1"]')
+    issuePanelsQueryAll('.map-cell-mini[data-subject][data-visible="1"]')
       .forEach(issueMapQueueRender);
   });
 }
 
+// Issue Table Temp 행 Map 셀: "이 항목을 RT Limit 기준으로 벗어난 die" 를 강조한 미니맵.
+// die 인덱스는 서버 temp_map(GET .../web_report/temp_map) 이 주고, dies 배열과 같은 순서라
+// drawWaferThumb 콜백의 3번째 인자(k)로 바로 매칭한다.
+const TEMP_MINI_FAIL_COLOR = "#dc2626";
+function renderMiniTempCell(cell) {
+  const div = cell.querySelector(".map-plot");
+  const item = cell.dataset.tempItem;
+  if (!div || !item) return;
+  const maps = (webReportSheets() || {})["Map Analysis"];
+  if (!Array.isArray(maps) || !maps.length) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
+  // 인덱스가 있는 첫 CT/HT 소스의 맵 1장(펼치기 버튼으로 전 소스 보기).
+  const src = Object.keys(tempMapBySource).find(s =>
+    ((tempMapBySource[s] || {}).items || []).some(e => e.item === item));
+  if (!tempMapReady) { ensureTempMapData(); return; }   // 도착 후 refreshMapConsumers 가 재큐잉
+  const m = src ? maps.find(mm => mm.source === src) : null;
+  if (!m) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
+  if (!Array.isArray(m.dies)) { ensureMapData(); return; }
+  const hit = new Set(((tempMapBySource[src].items || [])
+    .find(e => e.item === item) || {}).idx || []);
+  let canvas = div.querySelector("canvas.wafer-thumb");
+  if (!canvas) {
+    div.innerHTML = "";
+    canvas = document.createElement("canvas");
+    canvas.className = "wafer-thumb";
+    div.appendChild(canvas);
+  }
+  drawWaferThumb(canvas, m, (d, cache, k) => {
+    const hex = hit.has(k) ? TEMP_MINI_FAIL_COLOR : (d.g ? null : MAP_BIN_DIM_COLOR);
+    if (!hex) return MAP_GRAY_RGB;
+    let rgb = cache[hex];
+    if (!rgb) { rgb = hexToRgb(hex); cache[hex] = rgb; }
+    return rgb;
+  });
+  cell.dataset.mapLoaded = "1";
+}
+
 function renderMiniMapCell(cell) {
   if (cell.dataset.mapLoaded === "1") return;
+  if (cell.dataset.tempItem) { renderMiniTempCell(cell); return; }
   if (cell.dataset.subject) { renderMiniStdfCell(cell); return; }
   const div = cell.querySelector(".map-plot");
   if (!div) return;
@@ -81,22 +118,28 @@ function renderMiniMapCell(cell) {
   cell.dataset.mapLoaded = "1";
 }
 
-let issueMapObserver = null;
-let issueMapQueue = [];
-let issueMapRafScheduled = false;
-function issueMapQueueRender(cell) {
-  if (cell.dataset.mapLoaded === "1" || issueMapQueue.includes(cell)) return;
-  issueMapQueue.push(cell);
-  if (!issueMapRafScheduled) { issueMapRafScheduled = true; requestAnimationFrame(issueMapFlush); }
+// ⚠️ 상태는 **패널별** (item_detail.js _issueDistState 와 같은 이유 — 두 Issue 패널).
+const _issueMapState = new Map();   // panelId → {observer, queue, raf}
+function issueMapStateOf(panel) {
+  const id = (panel && panel.id) || ISSUE_PANEL_MAIN;
+  let st = _issueMapState.get(id);
+  if (!st) { st = { observer: null, queue: [], raf: false }; _issueMapState.set(id, st); }
+  return st;
 }
-function issueMapFlush() {
-  issueMapRafScheduled = false;
+function issueMapQueueRender(cell) {
+  const st = issueMapStateOf(issuePanelOf(cell));
+  if (cell.dataset.mapLoaded === "1" || st.queue.includes(cell)) return;
+  st.queue.push(cell);
+  if (!st.raf) { st.raf = true; requestAnimationFrame(() => issueMapFlush(st)); }
+}
+function issueMapFlush(st) {
+  st.raf = false;
   let n = 0;
-  while (issueMapQueue.length && n < DIST.PER_FRAME) {
-    const cell = issueMapQueue.shift();
+  while (st.queue.length && n < DIST.PER_FRAME) {
+    const cell = st.queue.shift();
     if (cell.isConnected && cell.dataset.visible === "1") { renderMiniMapCell(cell); n++; }
   }
-  if (issueMapQueue.length) { issueMapRafScheduled = true; requestAnimationFrame(issueMapFlush); }
+  if (st.queue.length) { st.raf = true; requestAnimationFrame(() => issueMapFlush(st)); }
 }
 function issueMapPurge(cell) {
   if (cell.dataset.mapLoaded !== "1") return;
@@ -105,8 +148,9 @@ function issueMapPurge(cell) {
   cell.dataset.mapLoaded = "";
 }
 function renderIssueMiniMap(panel) {
-  if (issueMapObserver) { try { issueMapObserver.disconnect(); } catch (e) {} issueMapObserver = null; }
-  issueMapQueue = []; issueMapRafScheduled = false;
+  const st = issueMapStateOf(panel);
+  if (st.observer) { try { st.observer.disconnect(); } catch (e) {} st.observer = null; }
+  st.queue = []; st.raf = false;
   const cells = panel.querySelectorAll(".map-cell-mini");
   if (!cells.length) return;
   if (typeof IntersectionObserver === "undefined") {
@@ -115,19 +159,19 @@ function renderIssueMiniMap(panel) {
     ensureMapData().then(() => cells.forEach(cell => renderMiniMapCell(cell)));
     return;
   }
-  issueMapObserver = new IntersectionObserver(entries => {
+  st.observer = new IntersectionObserver(entries => {
     entries.forEach(en => {
       const cell = en.target;
       if (en.isIntersecting) { cell.dataset.visible = "1"; issueMapQueueRender(cell); }
       else {
         cell.dataset.visible = "";
         issueMapPurge(cell);
-        const i = issueMapQueue.indexOf(cell);
-        if (i >= 0) issueMapQueue.splice(i, 1);
+        const i = st.queue.indexOf(cell);
+        if (i >= 0) st.queue.splice(i, 1);
       }
     });
   }, { rootMargin: "600px 0px", threshold: 0 });
-  cells.forEach(c => issueMapObserver.observe(c));
+  cells.forEach(c => st.observer.observe(c));
 }
 
 // ── Issue Table Map 셀 소스별 펼치기 팝오버(전 소스 웨이퍼 가로 나열) ─────────────
@@ -177,12 +221,48 @@ function openStdfExpand(cell) {
   });
 }
 
+// Temp 항목 미니셀 ⤢ — 그 항목이 fail 난 CT/HT 소스 맵을 가로로 나열한다.
+function openTempExpand(cell) {
+  const item = cell.dataset.tempItem;
+  const maps = (webReportSheets() || {})["Map Analysis"];
+  if (!item || !Array.isArray(maps) || !maps.length) return;
+  if (!tempMapReady) { ensureTempMapData(); return; }
+  if (maps.some(m => !Array.isArray(m.dies))) { ensureMapData(); return; }
+  const entries = [];
+  Object.keys(tempMapBySource).forEach(src => {
+    const e = ((tempMapBySource[src] || {}).items || []).find(x => x.item === item);
+    const m = maps.find(mm => mm.source === src);
+    if (e && m) entries.push({ m, hit: new Set(e.idx || []) });
+  });
+  if (!entries.length) return;
+  const pop = openMapExpandPop(cell, entries.length);
+  pop.innerHTML = entries.map((e, i) =>
+    `<div class="map-exp-item"><div class="map-exp-title">${esc(e.m.source)}` +
+    `${e.m.step ? " — " + esc(e.m.step) : ""}</div>` +
+    `<div class="map-exp-plot" id="mapexp-${i}"></div></div>`).join("");
+  entries.forEach((e, i) => {
+    const host = pop.querySelector(`#mapexp-${i}`);
+    if (!host) return;
+    const canvas = document.createElement("canvas");
+    canvas.className = "wafer-thumb";
+    host.appendChild(canvas);
+    drawWaferThumb(canvas, e.m, (d, cache, k) => {
+      const hex = e.hit.has(k) ? TEMP_MINI_FAIL_COLOR : (d.g ? null : MAP_BIN_DIM_COLOR);
+      if (!hex) return MAP_GRAY_RGB;
+      let rgb = cache[hex];
+      if (!rgb) { rgb = hexToRgb(hex); cache[hex] = rgb; }
+      return rgb;
+    });
+  });
+}
+
 function toggleMapExpand(btn) {
   const cell = btn.closest(".map-cell-mini");
   if (!cell) return;
   if (_mapExpandAnchor === cell) { closeMapExpand(); return; }
   closeMapExpand();
   if (cell.dataset.subject) { openStdfExpand(cell); return; }
+  if (cell.dataset.tempItem) { openTempExpand(cell); return; }
   const maps = (webReportSheets() || {})["Map Analysis"];
   if (!Array.isArray(maps) || maps.length < 2) return;
   // dies 지연 로드 중 — 로드만 킥하고 열지 않는다(boot 선로드라 드묾, 배지가 진행 표시).

@@ -236,17 +236,23 @@ function majorFailBinsTableHtml() {
 // (Yield 대표행/CPK 행/ETC 행)만 집계한다. Status=="" 행(Pass/상세/서브헤더/placeholder)과
 // 숨김 행(서버가 이미 제외)은 자동 비대상. 섹션 추적은 sheets.js rowSection 과 동일 로직.
 function issueStatusCounts() {
-  const rows = (DATA && Array.isArray(DATA.issue_table_text)) ? DATA.issue_table_text : [];
   const counts = {
     Yield: { open: 0, close: 0 }, CPK: { open: 0, close: 0 },
     TEMP: { open: 0, close: 0 }, ETC: { open: 0, close: 0 },
   };
-  let sec = "";
-  rows.forEach(r => {
-    if (r && r["Category"]) sec = String(r["Category"]);
-    const st = String((r && r["Status"]) || "");
-    if (!st || !counts[sec]) return;
-    counts[sec][st === "Close" ? "close" : "open"]++;
+  // Issue Table + (Temperature 면) Issue Table Temp 두 시트를 같은 규칙으로 훑는다 —
+  // TEMP 섹션이 별도 시트로 빠졌으므로(2026-08-05) 여기서 합산해야 카드 값이 맞는다.
+  const sheets = [(DATA && Array.isArray(DATA.issue_table_text)) ? DATA.issue_table_text : []];
+  const temp = (webReportSheets() || {})["Issue Table Temp"];
+  if (Array.isArray(temp) && temp.length) sheets.push(temp);
+  sheets.forEach(rows => {
+    let sec = "";
+    rows.forEach(r => {
+      if (r && r["Category"]) sec = String(r["Category"]);
+      const st = String((r && r["Status"]) || "");
+      if (!st || !counts[sec]) return;
+      counts[sec][st === "Close" ? "close" : "open"]++;
+    });
   });
   return counts;
 }

@@ -48,6 +48,12 @@ MAP_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_MAP_CACHE", "4") or 4))
 MAP_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_MAP_CACHE_MB", "512")
                                  or 512)) * 1024 * 1024   # 0 = 바이트 상한 비활성
 MAP_CACHE: OrderedDict = OrderedDict()      # (akey, chash, mode) -> gzip bytes
+# Temperature 항목별 fail die 인덱스 gzip 캐시 (2026-08-05, Map 항목 legend + Issue Table
+# Temp Map 셀). 좌표가 아니라 dies 배열 인덱스만 담아 map dies 보다 훨씬 작다.
+TEMP_MAP_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_TEMP_MAP_CACHE", "4") or 4))
+TEMP_MAP_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_TEMP_MAP_CACHE_MB", "128")
+                                      or 128)) * 1024 * 1024   # 0 = 바이트 상한 비활성
+TEMP_MAP_CACHE: OrderedDict = OrderedDict()   # (akey, chash, mode, v) -> gzip bytes
 # report payload dict 캐시. dist/map 과 달리 값이 bytes 가 아니라 dict 라 len() 으로
 # 크기를 알 수 없어 개수 상한만 있었는데, 대형 세션(항목×소스 수천 행의 cpk_rows)이
 # 8개 쌓이면 RAM 이 예측 불가로 커진다 → tables 와 같은 "크기 기록 + 이중 상한" 방식으로
@@ -100,7 +106,7 @@ MANIFEST_CACHE: OrderedDict = OrderedDict()  # analysis_key -> (canonical bytes,
 # analysis_key 를 키 첫 요소로 쓰는 캐시 레지스트리 — 무효화(invalidate_caches,
 # evict_akey_caches)가 이 리스트를 순회한다. 파생 캐시를 새로 만들면 register_akey_cache
 # 로 등록만 하면 무효화에 자동 편입된다 (response_cache.py 가 import 시 자기 캐시를 등록).
-AKEY_CACHES: list = [TABLES_CACHE, DIST_CACHE, MAP_CACHE, REPORT_CACHE,
+AKEY_CACHES: list = [TABLES_CACHE, DIST_CACHE, MAP_CACHE, TEMP_MAP_CACHE, REPORT_CACHE,
                      COMMONALITY_CACHE, TRIM_CACHE, TRIM_CHART_CACHE, DIST_CHUNK_CACHE]
 
 # 콜드 캐시 동시 진입(stampede) 방지 single-flight 락 — 캐시에 없는 같은 세션을 여러

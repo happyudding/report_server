@@ -315,7 +315,7 @@ body {
 .panel { display: none; max-width: 1200px; margin-left: auto; margin-right: auto; }
 .panel.active { display: block; }
 #panel-cpk { max-width: 1500px; }
-#panel-issues { max-width: none; }
+#panel-issues , #panel-issue-temp{ max-width: none; }
 /* Trim Analysis: legend 를 카드 오른쪽으로 뺀 만큼 패널을 가로 Full 로 넓혀 양쪽 여백을 줄인다. */
 #panel-trim-analysis { max-width: none; }
 
@@ -390,6 +390,11 @@ body {
   font-size: 15px; font-weight: 800; color: #7c2d12; margin-bottom: 8px;
   padding: 4px 10px; background: #fff2e6; border-left: 4px solid #ea7317;
   border-radius: 0 5px 5px 0;
+}
+/* Issue Table Temp 탭 상단 안내문 (전 항목 재판정이라 합이 100% 를 넘을 수 있다는 설명) */
+.issue-intro {
+  font-size: 12px; color: #7c2d12; background: #fff7ed; border: 1px solid #fed7aa;
+  border-radius: 5px; padding: 6px 10px; margin: 4px 0 8px;
 }
 
 /* ── Summary: 전체/소스별 Yield + Major Fail Bins 통합 테이블 ─────────────── */
@@ -627,9 +632,9 @@ tbody tr:hover { background: #f9fbff; }
   border-color: #4a90e2; outline: none;
 }
 .sheet-search-cnt { font-size: 11px; color: #667085; font-variant-numeric: tabular-nums; }
-#panel-issues.issue-searching tr.issue-bin-detail { display: table-row !important; }
+#panel-issues.issue-searching tr.issue-bin-detail , #panel-issue-temp.issue-searching tr.issue-bin-detail{ display: table-row !important; }
 #panel-yield.yield-searching tr.yield-bin-detail { display: table-row !important; }
-#panel-issues.issue-searching tbody tr.row-search-hide,
+#panel-issues.issue-searching tbody tr.row-search-hide, #panel-issue-temp.issue-searching tbody tr.row-search-hide,
 #panel-yield.yield-searching tbody tr.row-search-hide { display: none !important; }
 
 /* Yield 탭 전용 다듬기 (다른 sheet-table 은 영향 없음) */
@@ -751,8 +756,8 @@ tbody tr:hover { background: #f9fbff; }
 .map-cell-mini { position: relative; height: 112px; background: #fff; border: 1px solid #e0e0e0;
   border-radius: 6px; overflow: hidden; }
 /* 미니셀 클릭 → Distribution=Item_detail, Map=Map Analysis 탭 이동 (edit_mode.js 위임) */
-#panel-issues .dist-cell-mini, #panel-issues .map-cell-mini { cursor: pointer; }
-#panel-issues .map-cell-mini:hover { border-color: #9bb4d6; }
+#panel-issues .dist-cell-mini, #panel-issue-temp .dist-cell-mini, #panel-issues .map-cell-mini , #panel-issue-temp .map-cell-mini{ cursor: pointer; }
+#panel-issues .map-cell-mini:hover , #panel-issue-temp .map-cell-mini:hover{ border-color: #9bb4d6; }
 .btn-map-expand { position: absolute; top: 2px; right: 2px; z-index: 2;
   border: 1px solid #cbd2da; background: rgba(255,255,255,.85); color: #445;
   border-radius: 4px; font-size: 10px; line-height: 1; padding: 1px 3px; cursor: pointer; }
@@ -1408,24 +1413,24 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
 .btn-del-etc-item:hover, .btn-del-issue-row:hover { color: #b91c1c; }
 
 /* Issue Table 선택 모드 — 행 체크박스·개별 삭제(×)·선택 실행 버튼은 모드 진입 시에만 노출 */
-#panel-issues .issue-del-chk { display: none; margin-right: 5px; vertical-align: middle; cursor: pointer; }
-#panel-issues .btn-del-etc-item, #panel-issues .btn-del-issue-row { display: none; }
-#panel-issues .issue-del-actions { display: none; gap: 8px; }
-#panel-issues.issue-del-mode .issue-del-chk { display: inline-block; }
-#panel-issues.issue-del-mode .btn-del-etc-item,
-#panel-issues.issue-del-mode .btn-del-issue-row { display: inline-block; }
-#panel-issues.issue-del-mode .issue-del-actions { display: inline-flex; }
-#issueDelModeBtn.active { background: #dc2626; border-color: #dc2626; color: #fff; }
-#issueDelModeBtn.active:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+#panel-issues .issue-del-chk , #panel-issue-temp .issue-del-chk{ display: none; margin-right: 5px; vertical-align: middle; cursor: pointer; }
+#panel-issues .btn-del-etc-item, #panel-issue-temp .btn-del-etc-item, #panel-issues .btn-del-issue-row , #panel-issue-temp .btn-del-issue-row{ display: none; }
+#panel-issues .issue-del-actions , #panel-issue-temp .issue-del-actions{ display: none; gap: 8px; }
+#panel-issues.issue-del-mode .issue-del-chk , #panel-issue-temp.issue-del-mode .issue-del-chk{ display: inline-block; }
+#panel-issues.issue-del-mode .btn-del-etc-item, #panel-issue-temp.issue-del-mode .btn-del-etc-item,
+#panel-issues.issue-del-mode .btn-del-issue-row , #panel-issue-temp.issue-del-mode .btn-del-issue-row{ display: inline-block; }
+#panel-issues.issue-del-mode .issue-del-actions , #panel-issue-temp.issue-del-mode .issue-del-actions{ display: inline-flex; }
+[data-issue-act="delmode"].active { background: #dc2626; border-color: #dc2626; color: #fff; }
+[data-issue-act="delmode"].active:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
 #issueDelSelectedBtn:disabled, #issueSelOpenBtn:disabled, #issueSelCloseBtn:disabled {
   opacity: .5; cursor: default; transform: none;
 }
 /* Step 셀 전체가 체크 클릭 영역 — 체크박스가 작아 정확히 누르기 어렵다는 요청(2026-07-28). */
-#panel-issues.issue-del-mode td.issue-sel-cell { cursor: pointer; user-select: none; }
-#panel-issues.issue-del-mode td.issue-sel-cell:hover { outline: 1px dashed #94a3b8; outline-offset: -2px; }
+#panel-issues.issue-del-mode td.issue-sel-cell , #panel-issue-temp.issue-del-mode td.issue-sel-cell{ cursor: pointer; user-select: none; }
+#panel-issues.issue-del-mode td.issue-sel-cell:hover , #panel-issue-temp.issue-del-mode td.issue-sel-cell:hover{ outline: 1px dashed #94a3b8; outline-offset: -2px; }
 /* 선택된 행 강조. background 에 !important 가 붙는 이유는 zebra/hover/좌측 고정열(#fff)이
    특이도로 이기기 때문 (cpk-warn·compare-table 과 같은 처방). */
-#panel-issues.issue-del-mode tbody tr.issue-row-sel > td { background: #fff3d6 !important; }
+#panel-issues.issue-del-mode tbody tr.issue-row-sel > td , #panel-issue-temp.issue-del-mode tbody tr.issue-row-sel > td{ background: #fff3d6 !important; }
 /* Status 전체 일괄(All Open/All Close) — 선택과 무관하게 편집모드 상시 노출 */
 .issue-status-actions { display: inline-flex; gap: 8px; }
 
@@ -1761,6 +1766,9 @@ html[data-theme="dark"] .yield-step-title { color: #7fb3ef; border-color: #2c3a5
 html[data-theme="dark"] .yield-corner-title {
   color: #f6bd8a; background: #33251a; border-left-color: #b45309;
 }
+html[data-theme="dark"] .issue-intro {
+  color: #f6bd8a; background: #2b2117; border-color: #7c4a16;
+}
 html[data-theme="dark"] .ybs-table th { background: #1c2330; color: #8b94a3; }
 html[data-theme="dark"] .ybs-table th,
 html[data-theme="dark"] .ybs-table td { border-bottom-color: #2a2e37; }
@@ -1850,8 +1858,8 @@ html[data-theme="dark"] .sheet-table.kind-issue td.issue-yield-warn { background
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #20242c; color: #9aa3b0; }
 /* 라이트와 같은 이유 — hover 시 고정열도 불투명하게 덮어 우측 데이터 비침을 막는다. */
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr:hover td:nth-child(-n+6) { background: #263043; }
-html[data-theme="dark"] #panel-issues.issue-del-mode tbody tr.issue-row-sel > td { background: #4a3d18 !important; }
-html[data-theme="dark"] #panel-issues.issue-del-mode td.issue-sel-cell:hover { outline-color: #64748b; }
+html[data-theme="dark"] #panel-issues.issue-del-mode tbody tr.issue-row-sel > td , html[data-theme="dark"] #panel-issue-temp.issue-del-mode tbody tr.issue-row-sel > td{ background: #4a3d18 !important; }
+html[data-theme="dark"] #panel-issues.issue-del-mode td.issue-sel-cell:hover , html[data-theme="dark"] #panel-issue-temp.issue-del-mode td.issue-sel-cell:hover{ outline-color: #64748b; }
 html[data-theme="dark"] .issue-toolbar { background: #14161a; }
 html[data-theme="dark"] .issue-toolbar .sheet-search,
 html[data-theme="dark"] .yield-toolbar .sheet-search {
@@ -2171,6 +2179,8 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
     <button class="tab" data-tab="yield">Yield</button>
     <button class="tab" data-tab="cpk">CPK</button>
     <button class="tab" data-tab="issues">Issue Table</button>
+    <!-- Temperature 모드 전용 — tabs_topbar.syncTabVisibility 가 노출을 결정한다 -->
+    <button class="tab" data-tab="issue-temp" style="display:none">Issue Table Temp</button>
     <button class="tab" data-tab="distribution">Distribution</button>
     <button class="tab" data-tab="trim-analysis">Trim Analysis</button>
     <button class="tab" data-tab="map-analysis">Map Analysis</button>
@@ -2224,6 +2234,7 @@ html[data-theme="dark"] .note-meta { color: #9aa3b0; }
   <div class="panel" id="panel-yield"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-cpk"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-issues"><div class="placeholder">로드 중...</div></div>
+  <div class="panel" id="panel-issue-temp"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-distribution"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-raw-data"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-trim-analysis"><div class="placeholder">로드 중...</div></div>

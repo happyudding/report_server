@@ -370,22 +370,10 @@ def build_yield_step_groups(yield_rows):
     return out
 
 
-# ── Temperature Corner 분해 (Yield 탭 전용) ───────────────────────────────────
-# Temperature 모드는 Yield 표를 2개로 나눈다:
-#   RT Corner   = RT source 만 — Normal 모드와 완전히 같은 계산
-#   Temp Corner = CT + HT source — 업로드 직전 정리(web_report.temperature)에서 RT pass
-#                 좌표만 남기고 **RT 의 HILIM/LOLIM 으로 재판정**된 뒤라, BIN != 1 인 행이
-#                 곧 "RT 규격을 벗어난 die" 다(여기서 limit 을 다시 보지 않는다).
-# 각 Corner 는 그 소스 부분집합만으로 build_yield_rows 를 다시 돌린다. 소스별 분모
-# (resolve_source_basis)는 소스 간 결합이 없어 subset 에서도 값이 같으므로, 호출부가 전체
-# basis 에서 슬라이스한 totals 를 그대로 넘기면 된다 — 같은 소스의 fail% 는 Corner 표와
-# 전체 Yield 시트에서 정확히 일치한다.
-# 다만 _sole_step / _item_meta 는 subset 에서 재계산되므로, RT 와 CT/HT 의 STEP 메타가
-# 다른 세션에서는 Corner 별 STEP 라벨이 갈릴 수 있다(같은 프로그램 pair 면 동일).
-
-CORNER_RT = "RT"
-CORNER_TEMP = "TEMP"
-
+# ── Temperature 소스 분류 ─────────────────────────────────────────────────────
+# Temperature 모드의 Yield 계열(Yield 시트·요약·Bin/STEP 그룹·Fail Bin·Issue Table)은
+# **RT source 만** 본다 (2026-08-05 사용자 확정). CT/HT 는 RT limit 으로 전 항목을 다시
+# 판정한 별도 시트로 나간다(tabs/temp_fail.py) — 여기서는 소스 이름 분류만 제공한다.
 
 def temperature_corner_sources(tables, temperature_groups):
     """(RT source 이름, CT/HT source 이름) — tables 순서 유지, 그룹 미소속 source 는 제외."""
@@ -399,35 +387,6 @@ def temperature_corner_sources(tables, temperature_groups):
     order = [t.source for t in tables]
     return ([n for n in order if n in rt_names],
             [n for n in order if n in member_names and n not in rt_names])
-
-
-def build_yield_corner_groups(tables, fail_counts, totals, temperature_groups):
-    """Temperature Yield 탭용 Corner 2종 (RT / CT+HT).
-
-    반환 ``[{corner, label, sources, rows, step_groups, by_step}]`` — 각 원소가 화면의
-    표 1개(안쪽은 기존 STEP 분리 구조 그대로)다. source 가 하나도 없는 Corner 는 넣지
-    않는다(CT/HT 없는 RT 단독 세션이면 RT Corner 만 나온다).
-    """
-    rt_names, member_names = temperature_corner_sources(tables, temperature_groups)
-    out = []
-    for corner, label, names in ((CORNER_RT, "RT Corner", rt_names),
-                                 (CORNER_TEMP, "Temp Corner (CT / HT)", member_names)):
-        wanted = set(names)
-        subset = [t for t in tables if t.source in wanted]
-        if not subset:
-            continue
-        sub_counts = {t.source: fail_counts[t.source] for t in subset}
-        sub_totals = {t.source: totals[t.source] for t in subset}
-        rows = build_yield_rows(subset, sub_counts, totals=sub_totals)
-        out.append({
-            "corner": corner,
-            "label": label,
-            "sources": [t.source for t in subset],
-            "rows": rows,
-            "step_groups": build_yield_step_groups(rows),
-            "by_step": yield_step_summary(subset, rows, totals=sub_totals),
-        })
-    return out
 
 
 def yield_step_summary(tables, yield_rows, totals=None):
