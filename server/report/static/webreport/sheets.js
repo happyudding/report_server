@@ -889,7 +889,7 @@ function yieldOverviewHtml() {
   // 값인지 표에서 바로 보이게 한다 — "소스별 yield 가 왜 다른가"에 화면이 답하도록.
   const bySrc = Array.isArray(ov.by_source) ? ov.by_source : [];
   const basisBySrc = yieldBasisBySource();
-  const bySrcHtml = bySrc.length >= 2 ? `<div class="yield-by-source"><table class="ybs-table">
+  const bySrcHtml = bySrc.length >= 2 ? `<div class="yo-block"><div class="yield-by-source"><table class="ybs-table">
     <thead><tr><th>Source</th><th>Yield</th><th>Pass / Total</th><th>분모</th></tr></thead>
     <tbody>` + bySrc.map(s => {
     const sp = (typeof s.yield_pct === "number") ? s.yield_pct.toFixed(2) : s.yield_pct;
@@ -901,7 +901,9 @@ function yieldOverviewHtml() {
       <td class="ybs-cnt">${esc(s.pass)} / ${esc(s.total)}</td>
       <td class="ybs-cnt"${bi ? ` title="${esc(yieldBasisReasonText(bi))}"` : ""}>${esc(bTxt)}</td>
     </tr>`;
-  }).join("") + `</tbody></table></div>` : "";
+  }).join("") + `</tbody></table></div>
+    <div class="yo-cap">입력 소스(파일)별 최종 수율 · '분모' 열 = 그 소스가 쓴 분모(Gross Die / Test data)</div>
+    </div>` : "";
   // STEP×Source 표: STEP 셀은 소스 수만큼 rowspan 병합(병합 셀에 STEP 평균 yield 표시).
   // 분모는 각 소스 전체 die(In) 로 **고정**하고 분자만 누적 차감한다 —
   // Cum Yield = (In − 그 STEP 까지의 누적 fail) / In. avg = 소스 산술평균.
@@ -933,12 +935,22 @@ function yieldOverviewHtml() {
     </tr>`;
     }).join("");
   }).join("") + `</tbody></table></div>` : "";
+  // 카드 밑 작은 글씨 설명(사용자 요청 2026-08-05) — 숫자만 보고 "무엇을 무엇으로 나눈 값인지"
+  // 되묻지 않도록 각 카드가 자기 정의를 달고 있게 한다. Total 라벨은 분모 기준에 따라
+  // "Total"/"Gross Die" 로 달라지므로 설명 문구도 같은 라벨을 그대로 쓴다.
+  const totalLabel = yieldTotalLabel();
   return `<div class="yield-overview">
-    <div class="yo-pct">${esc(pct)}%</div>
-    <div class="yo-stats">
-      <div class="yo-stat"><span class="yo-num">${esc(ov.pass)}</span><span class="yo-label">Pass</span></div>
-      <div class="yo-stat"><span class="yo-num">${esc(ov.total)}</span><span class="yo-label">${esc(yieldTotalLabel())}</span></div>
-      <div class="yo-stat yo-fail"><span class="yo-num">${esc(ov.fail)}</span><span class="yo-label">Fail</span></div>
+    <div class="yo-block">
+      <div class="yo-pct">${esc(pct)}%</div>
+      <div class="yo-cap">전체 수율 = Pass die ÷ ${esc(totalLabel)}</div>
+    </div>
+    <div class="yo-block">
+      <div class="yo-stats">
+        <div class="yo-stat"><span class="yo-num">${esc(ov.pass)}</span><span class="yo-label">Pass</span></div>
+        <div class="yo-stat"><span class="yo-num">${esc(ov.total)}</span><span class="yo-label">${esc(totalLabel)}</span></div>
+        <div class="yo-stat yo-fail"><span class="yo-num">${esc(ov.fail)}</span><span class="yo-label">Fail</span></div>
+      </div>
+      <div class="yo-cap">Pass = Bin1 통과 die · ${esc(totalLabel)} = 수율 분모 die · Fail = 불량 die</div>
     </div>
     ${yieldBasisBadgeHtml(ov)}
     ${byStepHtml}

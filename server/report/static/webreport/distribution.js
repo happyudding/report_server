@@ -431,7 +431,7 @@ function distUseExtLegend(data) { return ((data && data.sources) || []).length >
 const DIST_LEGEND_COLLAPSE_MIN = 8;
 // Distribution 갤러리 전용 세로 범례 클래스 — 이 클래스가 붙으면 접기 토글 없이 항상
 // 펼친 채 우측 칸에 세로로 쌓이고, 강조 해제 버튼은 자리를 항상 차지한다(칸 밀림 방지).
-// item_detail 상단 범례("idet-legend")는 종전 가로 행 그대로다.
+// item_detail 범례("idet-legend")도 2026-08-05 부터 같은 세로 규격으로 우측 칸에 붙는다.
 const DIST_LEGEND_VERT_CLS = "dist-legend-vert";
 let distLegendOpen = false;   // 펼침 상태 — 갤러리 재렌더(innerHTML 교체)에도 유지
 function distLegendHtml(sources, cls) {
@@ -474,9 +474,11 @@ function distRenderLegends() {
   if (g) g.outerHTML = distLegendHtml((DATA.web_report && DATA.web_report.sources) || [],
                                       DIST_LEGEND_VERT_CLS);
   // 상세는 idetLegendHtml 을 거쳐야 게이트가 일관된다 — 소스가 적은데 강조를 해제하면
-  // 빈 문자열이 돌아와 행이 사라지고 Plotly 내장 legend 가 다시 그 역할을 맡는다.
-  const d = document.querySelector("#panel-item-detail .dist-legend-row");
-  if (d && _itemDetailData && typeof idetLegendHtml === "function") d.outerHTML = idetLegendHtml(_itemDetailData);
+  // 빈 문자열이 돌아와 범례가 사라지고 Plotly 내장 legend 가 다시 그 역할을 맡는다.
+  // 우측 칸(aside)은 항상 DOM 에 남기고 그 안만 갈아끼운다 — 행 자체를 outerHTML 로
+  // 지우면 다시 강조를 걸었을 때 되살릴 자리가 없다(빈 aside 는 CSS :empty 로 숨김).
+  const d = document.querySelector("#panel-item-detail .idet-legend-side");
+  if (d && _itemDetailData && typeof idetLegendHtml === "function") d.innerHTML = idetLegendHtml(_itemDetailData);
 }
 // ── Temperature 소스 그룹 필터 (Temperature 모드 전용) ────────────────────────
 // 전체 / RT만 / CT만 / HT만 + 그룹 선택(특정 그룹의 RT·CT·HT 만). 원칙은 전 소스 표시라

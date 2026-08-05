@@ -127,13 +127,15 @@ function idetFailBinsHtml(data) {
   return `<span class="idet-fail-bins">Bin ${esc(bins.join(", "))}</span>`;
 }
 
-// 상세 상단 공용 legend 스트립 — distUseExtLegend(소스 다수로 내장 legend 를 끈 경우)이거나
-// 강조가 걸려 있을 때 렌더한다(툴바와 같은 distLegendHtml 재사용, 순서는 data.sources 순서).
-// 강조 조건이 필수인 이유: 소스가 8개 미만이면 상세는 Plotly 내장 legend 를 쓰므로,
-// 갤러리에서 건 강조가 해제 UI 없이 따라 들어오는 구멍이 생긴다.
+// 상세 차트 **우측 세로 칸** 공용 legend — distUseExtLegend(소스 다수로 내장 legend 를 끈
+// 경우)이거나 강조가 걸려 있을 때 렌더한다(갤러리와 같은 distLegendHtml 재사용, 순서는
+// data.sources 순서). 강조 조건이 필수인 이유: 소스가 8개 미만이면 상세는 Plotly 내장
+// legend 를 쓰므로, 갤러리에서 건 강조가 해제 UI 없이 따라 들어오는 구멍이 생긴다.
+// 배치는 Distribution 갤러리와 동일한 세로 규격(DIST_LEGEND_VERT_CLS) — 소스가 많으면
+// 가로 스트립은 차트 위를 몇 줄씩 잡아먹어 읽기 어렵다(사용자 요청 2026-08-05).
 function idetLegendHtml(data) {
   if (!distUseExtLegend(data) && !distSourceFilter.size) return "";
-  return distLegendHtml((data && data.sources) || [], "idet-legend");
+  return distLegendHtml((data && data.sources) || [], "idet-legend " + DIST_LEGEND_VERT_CLS);
 }
 
 function renderItemDetail(data) {
@@ -174,7 +176,7 @@ function renderItemDetail(data) {
     <div id="cdfEditBar" class="cdf-editbar"></div>
     <div id="chartNoteBar"></div>
     ${distTempFilterHtml()}
-    ${idetLegendHtml(data)}
+    <div class="idet-body">
     <div class="idet-charts">
       <div class="idet-chart-block">
         <div class="dist-chart-cap idet-hist-cap">
@@ -200,6 +202,8 @@ function renderItemDetail(data) {
         <div id="histAxisBar" class="cdf-axisbar"></div>
         <div class="idet-chart-comment" id="histCommentView"></div>
       </div>
+    </div>
+    <aside class="dist-legend-side idet-legend-side">${idetLegendHtml(data)}</aside>
     </div>
     ${itemStatsTableHtml(data.stats)}
     <div id="idetChipVals"></div>

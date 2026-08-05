@@ -336,6 +336,13 @@ body {
 .yield-overview .yo-num { font-size: 17px; font-weight: 700; color: #222; }
 .yield-overview .yo-label { font-size: 11px; color: #888; margin-top: 2px; }
 .yield-overview .yo-stat.yo-fail .yo-num { color: #d9480f; }
+/* 카드 + 그 밑 작은 글씨 설명을 한 덩어리로 세로 배치 (사용자 요청 2026-08-05).
+   .yield-overview 는 align-items:center 라 블록끼리는 계속 세로 가운데로 맞춰진다. */
+.yield-overview .yo-block { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+/* 블록 안에서는 세로 스택이므로 표의 align-self:center(= 가로 가운데)를 좌측 정렬로 되돌린다. */
+.yield-overview .yo-block > .yield-by-source { align-self: flex-start; }
+/* 설명은 max-content 로 늘어나면 카드 폭을 밀어내므로 상한을 두고 줄바꿈시킨다. */
+.yield-overview .yo-cap { font-size: 10px; color: #8a93a0; line-height: 1.4; max-width: 320px; }
 /* 수율 분모 기준 배지 — Gross Die 기준이면 미측정 die 때문에 Pass+Fail < Total 일 수 있어
    무엇을 분모로 썼는지 항상 눈에 보이게 한다. */
 .yield-overview .yo-basis {
@@ -1020,7 +1027,12 @@ tbody tr:hover { background: #f9fbff; }
 .idet-stats { margin: 0 0 16px; }
 .idet-stats table { width: auto; }
 .idet-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
-.dist-legend-row.idet-legend { margin: 0 0 10px; }   /* 상세 상단 공용 legend (source 多 또는 강조 시 렌더) */
+/* 상세 차트 + 우측 세로 범례 (사용자 요청 2026-08-05 — Distribution 갤러리와 같은 배치).
+   범례가 없을 때(source 少 + 강조 없음)는 aside 가 비므로 자리를 차지하지 않게 접는다. */
+.idet-body { display: flex; align-items: flex-start; gap: 14px; }
+.idet-body > .idet-charts { flex: 1 1 auto; min-width: 0; }
+.idet-legend-side:empty { display: none; }
+.dist-legend-row.idet-legend { margin: 0; }   /* 상세 공용 legend (source 多 또는 강조 시 렌더) */
 .idet-chart-block { border: 1px solid #e2e4e8; border-radius: 8px; padding: 8px 10px; }
 /* 차트 하단 Comment 표시 (chart_notes.js cnRenderChartComments) — 내용 없으면 여백 0 */
 .idet-chart-comment:not(:empty) { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #e5e7eb;
@@ -1037,7 +1049,7 @@ html[data-theme="dark"] .idet-chart-comment:not(:empty) { border-top-color: #2f3
 .idet-hist-tabs .btn-sm:first-child { border-radius: 8px 0 0 8px; }
 .idet-hist-tabs .btn-sm:last-child { border-radius: 0 8px 8px 0; border-left: none; }
 .idet-hist-tabs .btn-sm.active { background: #4a90e2; border-color: #4a90e2; color: #fff; }
-@media (max-width: 900px) { .idet-charts { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .idet-charts { grid-template-columns: 1fr; } .idet-body { display: block; } }
 .item-detail-link { color: #2a5db0; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .item-detail-link:hover { color: #17417f; }
 /* comment @멘션 자동완성 드롭다운 (contenteditable 밖 body 직속, 캐럿 셀 아래 절대위치) */
@@ -1739,6 +1751,7 @@ html[data-theme="dark"] .yield-overview { background: #1c2330; border-color: #2c
 html[data-theme="dark"] .yield-overview .yo-pct { color: #7fb3ef; }
 html[data-theme="dark"] .yield-overview .yo-num { color: #d7dbe2; }
 html[data-theme="dark"] .yield-overview .yo-label { color: #8b94a3; }
+html[data-theme="dark"] .yield-overview .yo-cap { color: #79828f; }
 html[data-theme="dark"] .yield-overview .yo-basis {
   color: #9dc0ef; background: #22304a; border-color: #33456a;
 }

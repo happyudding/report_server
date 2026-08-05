@@ -34,6 +34,10 @@ def register_report_server(app, root_redirect=False):
     from eval_panel import register_eval_panel
     register_eval_panel(app)
 
+    # 공개 REST API — /pe/api/v1 (무인증·읽기 전용, 사내망 타 서버용).
+    from public_api import register_public_api
+    register_public_api(app)
+
     # 운영 보조: /healthz + 전역 에러 핸들러 + DB 백업 스케줄러 (ops.py)
     from ops import init_ops
     init_ops(app)

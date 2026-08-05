@@ -400,6 +400,16 @@ eval_analyzer 의 임계값·signature 를 브라우저에서 고치고 **서버
 (`action=eval_rules_edit`, `client_user=eval-panel`) 순. rev 는 ai_comment 옵션 세션의
 report 캐시 키에 실려 다음 조회에서 재평가를 강제한다.
 
+### 공개 REST API (`/pe/api/v1`) — 무인증·읽기 전용, 사내망 타 서버용 ([public_api/](public_api/README.md))
+
+| 메서드 | 경로 (`/pe/api/v1` 하위) | 설명 |
+|--------|--------------------------|------|
+| GET | `/product-info/candidates` | 기준정보 part_id 검색 후보(part_id+sub_part_id flatten). DB 부재 시 빈 목록 200 |
+| GET | `/product-info/lookup?part_id=` | part_id → 기준정보 14컬럼. 미매칭 404 |
+
+부하가 작은 조회만 노출한다(단순 SELECT / 메모리 dict) — 파싱·재계산 경로는 넣지 않는다.
+외부 소비자용 접근 규약(Base URL·에러 형식·버저닝)은 [public_api/README.md](public_api/README.md).
+
 ### 기타
 
 `GET /healthz` (ops), `GET /` (root_redirect → `/pe/report/`).
