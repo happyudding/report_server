@@ -143,6 +143,14 @@ details.help > summary::marker { color: var(--ink-3); }
 .chip.sig { cursor: pointer; }
 .chip.sig:hover { background: #2b415e; }
 details.sig.flash { outline: 2px solid var(--accent); }
+/* 트레이스 조건 → Thresholds 탭 그 행으로 가는 링크 */
+.th-link { color: var(--accent); text-decoration: none; }
+.th-link:hover { text-decoration: underline; }
+#thBody tr.flash > td { background: #1d3049; }
+.warn { color: var(--warn); }
+/* 편집 범위 선택기 — 탭 바로 아래 고정 위치 */
+#scopeBar { margin: 0 0 12px; padding: 8px 10px; background: var(--surface-1);
+            border: 1px solid var(--grid); border-radius: 8px; }
 
 /* ── Signatures 그룹 ─────────────────────────────────────────────────── */
 .grp { margin-bottom: 18px; }
@@ -177,15 +185,28 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
   <button class="tab" data-panel="pMaint">검증 · 백업</button>
 </div>
 
+<!-- 편집 범위는 Thresholds·Signatures 가 공유한다 — 두 탭을 오갈 때 범위가 어긋나면
+     "고친 값이 왜 안 먹지" 가 된다. 트레이스는 세션의 범위를 따르므로 무관. -->
+<div class="toolbar" id="scopeBar">
+  <span class="note"><b>편집 범위</b></span>
+  <select class="sel" id="scPt" title="어느 제품군의 룰을 편집할지"></select>
+  <select class="sel" id="scFam" title="Family 를 고르면 그 Family 전용으로 저장됩니다"></select>
+  <span class="note">Thresholds · Signatures 탭이 이 범위를 공유합니다
+    (트레이스는 세션의 제품군을 따릅니다)</span>
+</div>
+
 <!-- ── Thresholds ───────────────────────────────────────────────────────── -->
 <div class="panel active" id="pThresholds">
   <div class="card">
-    <h2>제품군 / Family Product 별 임계값
+    <h2>제품군 / Family Product 별 임계값 <span class="hint" id="thCount"></span>
       <span class="hint">비워두면 상위 층 값을 그대로 쓴다 (파일에 기록하지 않음)</span></h2>
     <div class="toolbar">
-      <select class="sel" id="thPt"></select>
-      <select class="sel" id="thFamily"></select>
+      <input class="inp" id="thFilter" placeholder="키 · 설명 검색" style="width:180px">
+      <label class="note" title="상위 층에서 상속받지 않고 이 범위가 직접 지정한 값만 봅니다">
+        <input type="checkbox" id="thOwnOnly"> 직접 지정만</label>
       <span class="grow"></span>
+      <input class="inp" id="thReason" placeholder="변경 사유(선택)" style="width:170px"
+             title="감사 로그에 함께 남습니다 — 나중에 왜 바꿨는지 추적할 수 있습니다">
       <span class="chip" id="thRev"></span>
       <button class="btn" id="thReset">되돌리기</button>
       <button class="btn primary" id="thSave">저장</button>
@@ -207,7 +228,7 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
 <!-- ── Signatures ───────────────────────────────────────────────────────── -->
 <div class="panel" id="pSignatures">
   <div class="card">
-    <h2>제품군 / Family Product 별 Signature
+    <h2>제품군 / Family Product 별 Signature <span class="hint" id="sigCount"></span>
       <span class="hint">고른 범위에만 저장된다 · 신규 추가/삭제는 지원하지 않음</span></h2>
     <div class="note" style="margin-bottom:10px">
       Signature = "이런 모양이면 이런 고장" 규칙 한 줄. 조건이 <b>모두</b> 맞으면(AND) 발화하고,
@@ -215,10 +236,10 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
       끈 룰은 평가에서 통째로 빠집니다(발화도, 판정 근거도 안 됨).
     </div>
     <div class="toolbar">
-      <select class="sel" id="sigPt" title="어느 범위의 룰을 편집할지"></select>
-      <select class="sel" id="sigFam" title="Family 를 고르면 그 Family 전용으로 저장됩니다"></select>
-      <input class="inp" id="sigFilter" placeholder="id 검색" style="width:150px">
+      <input class="inp" id="sigFilter" placeholder="id · 현상 · 제안 · 조건 검색" style="width:220px">
       <span class="grow"></span>
+      <input class="inp" id="sigReason" placeholder="변경 사유(선택)" style="width:150px"
+             title="감사 로그에 함께 남습니다 (카드 저장·일괄 켜기/끄기 공용)">
       <label class="note"><input type="checkbox" id="sigAll"> 전체 선택</label>
       <span class="chip" id="sigSelCount">선택 0</span>
       <button class="btn" id="sigEnable">선택 켜기</button>
@@ -273,6 +294,12 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
     </div>
     <div class="note" id="trInfo"></div>
   </div>
+  <!-- 룰을 고친 뒤 같은 세션을 다시 트레이스하면 직전 실행과의 차이만 추려 보여준다.
+       보관은 최근 4런/30분이라 직전 실행이 밀려났으면 표시하지 않는다(정상). -->
+  <div class="card" id="trDiffCard" style="display:none">
+    <h2>직전 트레이스와 비교 <span class="hint" id="trDiffInfo"></span></h2>
+    <div id="trDiffBody"></div>
+  </div>
   <div class="split">
     <div class="card">
       <h2>케이스 <span class="hint" id="trCount"></span></h2>
@@ -284,6 +311,14 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
           <option value="status">심각도 높은 순</option>
           <option value="stored">코멘트 생성분 먼저</option>
         </select>
+      </div>
+      <div class="toolbar">
+        <select class="sel" id="trStatus" title="이 status 로 판정된 케이스만">
+          <option value="">status 전체</option></select>
+        <select class="sel" id="trSigSel" title="이 룰이 발화한 케이스만 — 룰 하나를 추적할 때">
+          <option value="">발화 룰 전체</option></select>
+        <select class="sel" id="trSource" title="이 소스(파일)의 케이스만">
+          <option value="">source 전체</option></select>
         <label class="note"><input type="checkbox" id="trStoredOnly"> 코멘트 생성분만</label>
       </div>
       <div class="note" style="margin-bottom:8px">
@@ -401,6 +436,21 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
     <div id="mvResult" class="note">검증을 실행하세요.</div>
   </div>
   <div class="card">
+    <h2>골든셋 회귀
+      <span class="hint">기대 발화(golden.yaml) vs 지금 룰의 실제 발화 — 임계값 튜닝 전후 안전망</span></h2>
+    <div class="note" style="margin-bottom:10px">
+      트레이스 케이스 상세의 <b>"골든셋에 추가"</b> 로 "이 항목은 이 룰이 떠야 한다" 를 쌓아두면,
+      룰을 고친 뒤 여기서 한 번에 <b>누락(안 뜸)·오탐(잘못 뜸)</b> 을 확인할 수 있습니다.
+      세션마다 트레이스를 1회씩 돌리므로 시간이 걸리고, 도는 동안 수동 트레이스는 대기합니다.
+    </div>
+    <div class="toolbar">
+      <button class="btn primary" id="goRun">회귀 실행</button>
+      <span class="chip" id="goInfo"></span>
+      <span class="msg" id="goMsg"></span>
+    </div>
+    <div id="goResult" class="note">아직 실행하지 않았습니다.</div>
+  </div>
+  <div class="card">
     <h2>백업 <span class="hint">저장 직전 원본을 rules/_backup 에 보관(파일당 최근 50개)</span></h2>
     <div class="toolbar">
       <button class="btn" id="bkRefresh">새로고침</button>
@@ -433,11 +483,20 @@ const num = (v, d = 4) => (typeof v === 'number' && isFinite(v))
   ? (Number.isInteger(v) ? String(v) : v.toFixed(d).replace(/0+$/, '').replace(/\.$/, ''))
   : (v == null ? '—' : String(v));
 
+// 서버가 내려주는 rules_rev 를 한 곳에서 추적한다 — 저장 요청에 base_rules_rev 로 실어
+// 보내면 다른 관리자(또는 손으로 고친 파일)와 충돌할 때 서버가 409 로 막는다.
+// 응답이면 종류를 가리지 않고 갱신하므로, 같은 탭 안에서 내가 방금 한 저장과는 충돌하지 않는다.
+let RULES_REV = '';
+function trackRev(j) {
+  if (j && Object.prototype.hasOwnProperty.call(j, 'rules_rev')) RULES_REV = String(j.rules_rev);
+  return j;
+}
+
 async function getJSON(url) {
   const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-  return j;
+  return trackRev(j);
 }
 async function sendJSON(url, method, body) {
   const r = await fetch(url, {
@@ -445,8 +504,16 @@ async function sendJSON(url, method, body) {
     body: JSON.stringify(body || {}),
   });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-  return j;
+  if (!r.ok) {
+    if (j.conflict) RULES_REV = String(j.rules_rev ?? RULES_REV);
+    throw new Error(j.error || ('HTTP ' + r.status));
+  }
+  return trackRev(j);
+}
+// 룰을 바꾸는 요청 공통 필드 — 낙관적 잠금 토큰 + 변경 사유.
+function editBody(extra, reasonId) {
+  return { base_rules_rev: RULES_REV,
+           reason: reasonId ? $(reasonId).value.trim() : '', ...extra };
 }
 function flash(el, text, ok) {
   el.textContent = text;
@@ -456,15 +523,68 @@ function flash(el, text, ok) {
 
 let META = null;
 
+// ── 편집 범위 (Thresholds · Signatures 공용) ──────────────────────────────
+// pt='' = 기준값(전 제품 공통). Signatures 는 이 범위를 직접 편집하고, Thresholds 는
+// 기준값을 패널에서 고치지 않으므로 읽기 전용으로 보여준다.
+function scope() {
+  const pt = $('scPt').value;
+  return { pt, family: pt ? $('scFam').value : '' };
+}
+
+function fillScopeFamily() {
+  const pt = $('scPt').value;
+  if (!pt) {
+    $('scFam').innerHTML = '<option value="">(제품군을 고르면 선택 가능)</option>';
+    $('scFam').disabled = true;
+    return;
+  }
+  $('scFam').disabled = false;
+  $('scFam').innerHTML = '<option value="">(제품군 공통 — 이 제품군 전체)</option>' +
+    (META.taxonomy[pt] || []).map((f) => `<option>${esc(f)}</option>`).join('');
+}
+
+// ── 미저장 변경 추적 ──────────────────────────────────────────────────────
+// Thresholds 는 input 의 defaultValue(=로드 시점 값)와 비교하면 정확하다 — 손으로
+// 되돌리면 자동 해제되고 재렌더 시 자동 초기화된다. Signatures 는 조건/근거 행이
+// 동적으로 늘고 줄어 값 비교로는 부족해 플래그로 보수적으로 잡는다.
+let SIG_DIRTY = false;
+
+function isThresholdsDirty() {
+  return [...document.querySelectorAll('.th-val')].some((i) => i.value !== i.defaultValue);
+}
+function isDirty() { return isThresholdsDirty() || SIG_DIRTY; }
+
+// 탭 전환으로는 편집이 사라지지 않으므로(패널 DOM 이 남는다) 막지 않고 배지로만 알린다.
+function updateDirtyBadge() {
+  const mark = { pThresholds: isThresholdsDirty(), pSignatures: SIG_DIRTY };
+  document.querySelectorAll('.tab').forEach((b) => {
+    const on = !!mark[b.dataset.panel];
+    b.textContent = b.textContent.replace(/ ●$/, '') + (on ? ' ●' : '');
+    b.title = on ? '저장하지 않은 변경이 있습니다' : '';
+  });
+}
+
 // ── Thresholds ───────────────────────────────────────────────────────────
 // 설명은 thresholds.yaml 의 주석을 서버가 뽑아 내려준다(정본 1곳).
 let TH_STATE = null;
 
-function fillFamily() {
-  const pt = $('thPt').value;
-  const families = (META.taxonomy[pt] || []);
-  $('thFamily').innerHTML = '<option value="">(제품군 공통 — 이 제품군 전체)</option>' +
-    families.map((f) => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
+// 검색·"직접 지정만" 은 재렌더가 아니라 행 표시/숨김으로 처리한다 — 다시 그리면
+// 입력 중이던 값과 변경 표시가 통째로 날아간다. 숨긴 행도 저장 대상에는 그대로 포함된다.
+function applyThresholdFilter() {
+  const q = $('thFilter').value.trim().toUpperCase();
+  const ownOnly = $('thOwnOnly').checked;
+  const desc = (TH_STATE && TH_STATE.descriptions) || {};
+  let shown = 0;
+  $('thBody').querySelectorAll('tr[data-key]').forEach((tr) => {
+    const key = tr.dataset.key;
+    const hit = !q || key.toUpperCase().includes(q)
+                || String(desc[key] || '').toUpperCase().includes(q);
+    const on = hit && (!ownOnly || tr.dataset.own === '1');
+    tr.style.display = on ? '' : 'none';
+    if (on) shown += 1;
+  });
+  const total = $('thBody').querySelectorAll('tr[data-key]').length;
+  $('thCount').textContent = shown === total ? `${total}개` : `${shown} / ${total}개`;
 }
 
 function usageHtml(list) {
@@ -489,29 +609,35 @@ function helpHtml(h) {
 }
 
 async function loadThresholds() {
-  const pt = $('thPt').value;
-  const family = $('thFamily').value;
+  const { pt, family } = scope();
   const data = await getJSON(`api/thresholds?pt=${encodeURIComponent(pt)}&family=${encodeURIComponent(family)}`);
   TH_STATE = data;
+  const ro = !!data.read_only;
   $('thRev').textContent = 'rules_rev ' + (data.rules_rev || '(없음)');
-  $('thScopeNote').innerHTML = (family
-    ? `<b>${esc(pt)} / ${esc(family)}</b> 에 적용될 값입니다.`
-    : `<b>${esc(pt)} 제품군 전체</b>에 적용될 값입니다 (family 를 고르면 그 family 가 이 값을 덮어씁니다).`)
+  $('thSave').disabled = ro;
+  $('thScopeNote').innerHTML = (ro
+    ? `<b>기준값(default)</b> 입니다 — 이 화면에서는 <b>읽기 전용</b>이고 제품군 오버레이만
+       저장할 수 있습니다. 값을 고치려면 위에서 제품군을 고르세요
+       (기준값 자체는 thresholds.yaml 을 직접 편집합니다).`
+    : (family
+      ? `<b>${esc(pt)} / ${esc(family)}</b> 에 적용될 값입니다.`
+      : `<b>${esc(pt)} 제품군 전체</b>에 적용될 값입니다 (family 를 고르면 그 family 가 이 값을 덮어씁니다).`)
     + ` 칸에 보이는 값이 곧 적용되는 값이고, <b>저장을 누르면 그대로 반영</b>됩니다.`
     + ` 상속받은 값과 같으면 파일에 기록하지 않습니다(상위 값이 바뀌면 따라갑니다).`
-    + ` 칸을 비우거나 ↺ 를 누르면 상속으로 되돌립니다.`
+    + ` 칸을 비우거나 ↺ 를 누르면 상속으로 되돌립니다.`)
     + (data.item_class_count ? ` · item_class 개별값 ${data.item_class_count}건은 항상 이보다 우선합니다.` : '');
 
   const keys = Object.keys(data.default).sort();
   $('thBody').innerHTML = keys.map((k) => {
     const eff = data.effective[k];
     const isOwn = Object.prototype.hasOwnProperty.call(data.own, k);
-    return `<tr>
+    return `<tr data-key="${esc(k)}" data-own="${isOwn ? 1 : 0}">
       <td class="mono">${esc(k)}</td>
       <td class="num">
-        <input class="inp narrow th-val" data-key="${esc(k)}" value="${eff == null ? '' : esc(eff)}">
+        <input class="inp narrow th-val" data-key="${esc(k)}" value="${eff == null ? '' : esc(eff)}"
+               ${ro ? 'disabled' : ''}>
         <button class="btn tiny th-reset" data-key="${esc(k)}" title="상속값으로 되돌리기"
-                ${isOwn ? '' : 'disabled'}>↺</button>
+                ${isOwn && !ro ? '' : 'disabled'}>↺</button>
       </td>
       <td><span class="badge ${isOwn ? 'own' : 'inherit'}">${esc(data.origin[k] || '')}</span>
           ${isOwn ? `<div class="origin">상속값 ${num(data.inherited[k])}</div>` : ''}</td>
@@ -528,6 +654,7 @@ async function loadThresholds() {
       const raw = inp.value.trim();
       const inherited = TH_STATE.inherited[inp.dataset.key];
       inp.classList.toggle('changed', raw !== '' && Number(raw) !== inherited);
+      updateDirtyBadge();
     };
     mark();
     inp.addEventListener('input', mark);
@@ -540,6 +667,8 @@ async function loadThresholds() {
       inp.dispatchEvent(new Event('input'));
     });
   });
+  applyThresholdFilter();          // 재로드 후에도 검색 상태 유지
+  updateDirtyBadge();
 }
 
 async function saveThresholds() {
@@ -555,11 +684,15 @@ async function saveThresholds() {
     overrides[key] = (v === TH_STATE.inherited[key]) ? null : v;
   });
   if (bad) { flash($('thMsg'), `${bad}: 숫자가 아닙니다`, false); return; }
+  const { pt, family } = scope();
   try {
     const r = await sendJSON('api/thresholds', 'PUT',
-      { pt: $('thPt').value, family: $('thFamily').value, overrides });
+      editBody({ pt, family, overrides }, 'thReason'));
     const n = Object.keys(r.saved).length;
-    flash($('thMsg'), `저장됨 — 이 범위 직접 지정 ${n}건 (rules_rev ${r.rules_rev})`, true);
+    flash($('thMsg'), r.no_op
+      ? '변경 없음 — 저장을 건너뛰었습니다 (세션 캐시 유지)'
+      : `저장됨 — 이 범위 직접 지정 ${n}건 (rules_rev ${r.rules_rev})`, true);
+    $('thReason').value = '';
     await loadThresholds();
   } catch (e) { flash($('thMsg'), e.message, false); }
 }
@@ -567,7 +700,12 @@ async function saveThresholds() {
 // ── Signatures ───────────────────────────────────────────────────────────
 // 편집 범위(제품군/Family)는 Thresholds 와 같은 규약 — 고른 범위 파일에만 저장되고,
 // 상속값과 같은 필드는 기록하지 않는다(기준값을 고치면 지정 안 한 제품군은 따라간다).
-let SIGS = [], SIG_TAX = {}, SIG_METRICS = [], SIG_TH = {};
+let SIGS = [], SIG_METRICS = [], SIG_TH = {};
+// SUBPOP_GAP 이 실제로 쓰는 임계값 (엔진 features._classify_modality_v2 = eval_debug
+// _subpop_conditions 미러). 이 룰은 when_metric 이 판정에 안 쓰이므로 여기로 안내한다.
+const SUBPOP_TH_KEYS = ['subpop_n_min', 'subpop_outlier_ratio_max', 'bimodality_warn',
+  'subpop_density_gap_warn', 'subpop_density_gap_strong',
+  'subpop_value_gap_warn', 'subpop_minor_mass_min'];
 let SIG_SHOW_OFF = false;   // 꺼진 룰 섹션 펼침 상태 (렌더 사이 유지)
 const SIG_FIELD_LABEL = { enabled: '사용여부', when_metric: '조건', status_hint: '심각도',
   issue_category: '분류', phenomenon_ko: '현상', action_ko: '점검제안', evidence: '근거' };
@@ -635,11 +773,25 @@ function ownLabel(s) {
   return fields.length ? fields.join(' · ') : '';
 }
 
+// 이 룰은 when_metric/근거 문구가 판정에 쓰이지 않는다 — 편집칸을 잠그고 실제로 효력이
+// 있는 임계값으로 안내한다(고쳐도 아무 일이 안 일어나는 칸을 열어두면 오해가 쌓인다).
+function subpopNoticeHtml() {
+  const chips = SUBPOP_TH_KEYS.map((k) =>
+    `<span class="chip sig" data-goto-th="${esc(k)}"
+       title="Thresholds 탭에서 이 값 편집">${esc(k)}</span>`).join(' ');
+  return `<div class="note" style="color:var(--warn);margin:6px 0">
+      ⚠ 이 룰은 아래 조건·근거 문구를 <b>판정에 쓰지 않습니다</b> — 엔진이
+      features.modality_v2 로 직접 판정하는 특수 룰입니다(읽기 전용).
+      실제로 효력이 있는 값은 이것들입니다: ${chips}
+    </div>`;
+}
+
 function sigCard(s) {
+  const isSubpop = META && s.id === META.subpop_gap_id;
   const conds = Object.entries(s.when_metric).map(([m, c]) => condRow(m, c)).join('');
   const evs = (s.evidence || []).map(evRow).join('');
   const own = ownLabel(s);
-  return `<details class="sig" data-id="${esc(s.id)}">
+  return `<details class="sig" data-id="${esc(s.id)}"${isSubpop ? ' data-subpop="1"' : ''}>
     <summary>
       <input type="checkbox" class="sig-pick" data-id="${esc(s.id)}"
              onclick="event.stopPropagation()" title="일괄 켜기/끄기 선택">
@@ -673,10 +825,12 @@ function sigCard(s) {
         <span class="mono">&gt;cpk_warn</span> 처럼 쓰면 Thresholds 탭의 그 값을 따르고,
         <span class="mono">&lt;=0.5</span> 처럼 숫자를 직접 박을 수도 있습니다.
         <span class="mono">abs&gt;</span> 는 부호 무시)</span></label>
-      <div data-role="conds">${conds}</div>
-      <button class="btn tiny" data-role="cond-add"
-              title="조건을 하나 더 추가합니다 (모두 만족해야 발화)">+ 조건 추가</button>
-      ${Object.keys(s.when_metric).length ? '' :
+      ${isSubpop ? subpopNoticeHtml() : ''}
+      <div data-role="conds"${isSubpop ? ' style="display:none"' : ''}>${conds}</div>
+      ${isSubpop ? '' : `<button class="btn tiny" data-role="cond-add"
+              title="조건을 하나 더 추가합니다 (모두 만족해야 발화)">+ 조건 추가</button>`}
+      <div class="note" data-role="card-problems" style="color:var(--warn)"></div>
+      ${Object.keys(s.when_metric).length || isSubpop ? '' :
         '<div class="note">조건 없음 — 이 룰은 yaml 조건이 아니라 엔진 코드가 직접 판정합니다(특수분기)</div>'}
       <label>현상 — 코멘트의 "이런 상태입니다" 부분에 그대로 들어갑니다</label>
       <textarea class="inp" rows="2" data-role="phenomenon_ko">${esc(s.phenomenon_ko)}</textarea>
@@ -685,32 +839,53 @@ function sigCard(s) {
       <label>근거 문구 — 코멘트에 붙는 "무슨 값이 얼마였다" 줄
         <span class="note">(앞에 붙일 말 + 지표를 고르면 됩니다. 실제 코멘트에는 지표 자리에
         측정값이 채워집니다)</span></label>
-      <div data-role="evs">${evs}</div>
-      <button class="btn tiny" data-role="ev-add" title="근거 문구를 한 줄 추가합니다">+ 근거 추가</button>
+      <div data-role="evs"${isSubpop ? ' style="display:none"' : ''}>${evs}</div>
+      ${isSubpop ? '' : `<button class="btn tiny" data-role="ev-add"
+              title="근거 문구를 한 줄 추가합니다">+ 근거 추가</button>`}
     </div>
   </details>`;
 }
 
-function sigScope() {
-  const pt = $('sigPt').value;
-  return { pt, family: pt ? $('sigFam').value : '' };
+// 저장 전에 눈에 띄게 해 주는 것만 — 최종 검증은 서버(_validate_signature_payload)다.
+function validateSigCard(box) {
+  if (box.dataset.subpop) return [];
+  const problems = [], seen = new Set();
+  box.querySelectorAll('[data-role="cond-row"]').forEach((row) => {
+    const m = row.querySelector('[data-role="metric"]').value.trim();
+    const c = row.querySelector('[data-role="cond"]').value.trim();
+    if (!m && !c) return;                                    // 빈 행은 그냥 무시
+    if (!m || !c) {
+      problems.push('지표·조건을 둘 다 채워야 합니다 — 한쪽만 채운 행은 저장 시 버려집니다');
+      return;
+    }
+    if (!/^[A-Za-z0-9_]{1,64}$/.test(m)) problems.push(`지표 이름 형식 오류: ${m}`);
+    if (seen.has(m)) problems.push(`지표 ${m} 조건이 중복입니다 — 마지막 행만 저장됩니다`);
+    seen.add(m);
+    if (!_COND_RE.test(c)) problems.push(`${m}: 조건 형식이 아닙니다 (${c})`);
+    else {
+      const ref = _COND_RE.exec(c)[3].trim();
+      if (!Object.prototype.hasOwnProperty.call(SIG_TH, ref) && !isFinite(Number(ref))) {
+        problems.push(`${m}: 없는 임계값 ${ref}`);
+      }
+    }
+  });
+  return [...new Set(problems)];
+}
+
+function refreshCardProblems(box) {
+  const el = box.querySelector('[data-role="card-problems"]');
+  if (!el) return;
+  const problems = validateSigCard(box);
+  el.innerHTML = problems.map((p) => `⚠ ${esc(p)}`).join('<br>');
 }
 
 async function loadSignatures() {
-  // 첫 로드 때는 제품군 드롭다운이 아직 비어 있다 — 기준값 범위로 받아 taxonomy 를 채운다.
-  const first = !$('sigPt').dataset.filled;
-  const { pt, family } = first ? { pt: '', family: '' } : sigScope();
+  const { pt, family } = scope();
   const data = await getJSON(`api/signatures?pt=${encodeURIComponent(pt)}` +
                              `&family=${encodeURIComponent(family)}`);
   SIGS = data.signatures;
-  SIG_TAX = data.taxonomy || SIG_TAX;
   SIG_TH = data.thresholds || {};
-  if (first) {
-    $('sigPt').innerHTML = '<option value="">기준값 (전 제품 공통)</option>' +
-      Object.keys(SIG_TAX).map((v) => `<option>${esc(v)}</option>`).join('');
-    $('sigPt').dataset.filled = '1';
-    fillSigFamily();
-  }
+  SIG_DIRTY = false;                       // 서버 기준으로 다시 그렸으니 편집 없음
   SIG_METRICS = data.metric_keys || [];
   $('metricList').innerHTML = SIG_METRICS.map((m) => `<option value="${esc(m)}">`).join('');
   $('sigRev').textContent = 'rules_rev ' + (data.rules_rev || '(없음)');
@@ -724,26 +899,27 @@ async function loadSignatures() {
   renderSignatures();
 }
 
-function fillSigFamily() {
-  const pt = $('sigPt').value;
-  if (!pt) {
-    $('sigFam').innerHTML = '<option value="">(제품군을 고르면 선택 가능)</option>';
-    $('sigFam').disabled = true;
-    return;
-  }
-  $('sigFam').disabled = false;
-  $('sigFam').innerHTML = '<option value="">(제품군 공통 — 이 제품군 전체)</option>' +
-    (SIG_TAX[pt] || []).map((f) => `<option>${esc(f)}</option>`).join('');
+// 검색은 카드를 다시 그리지 않고 표시/숨김만 한다 — 재렌더하면 편집 중인 카드가 초기화된다.
+function applySigFilter() {
+  const q = $('sigFilter').value.trim().toUpperCase();
+  const hay = (s) => [s.id, s.phenomenon_ko, s.action_ko,
+    ...Object.entries(s.when_metric || {}).flat()].join(' ').toUpperCase();
+  const hit = new Set(SIGS.filter((s) => !q || hay(s).includes(q)).map((s) => s.id));
+  let shown = 0;
+  $('sigList').querySelectorAll('details.sig[data-id]').forEach((d) => {
+    const on = hit.has(d.dataset.id);
+    d.style.display = on ? '' : 'none';
+    if (on) shown += 1;
+  });
+  $('sigCount').textContent = q ? `검색 ${shown}건` : '';
 }
 
 function renderSignatures() {
-  const q = $('sigFilter').value.trim().toUpperCase();
-  const rows = SIGS.filter((s) => !q || String(s.id).includes(q));
-  const on = rows.filter((s) => s.enabled);
-  const off = rows.filter((s) => !s.enabled);
+  const on = SIGS.filter((s) => s.enabled);
+  const off = SIGS.filter((s) => !s.enabled);
 
   // 사용중이 위, 꺼진 룰은 접이식으로 아래.
-  $('sigList').innerHTML = (rows.length ? '' : '<div class="note">일치하는 signature 없음</div>') +
+  $('sigList').innerHTML = (SIGS.length ? '' : '<div class="note">signature 없음</div>') +
     (on.length ? `<div class="grp"><h3>사용중<span class="n">${on.length}개</span></h3>` +
         on.map(sigCard).join('') + '</div>' : '') +
     (off.length ? `<details class="fold" ${SIG_SHOW_OFF ? 'open' : ''} id="sigOffFold">
@@ -761,8 +937,13 @@ function renderSignatures() {
   });
   $('sigOffFold')?.addEventListener('toggle', (e) => { SIG_SHOW_OFF = e.target.open; });
   $('sigList').querySelectorAll('details.sig').forEach(wireSigCard);
+  $('sigList').querySelectorAll('[data-goto-th]').forEach((chip) => {
+    chip.addEventListener('click', () => gotoThreshold(chip.dataset.gotoTh));
+  });
   $('sigAll').checked = false;
   updateSigSelection();
+  applySigFilter();
+  updateDirtyBadge();
 }
 
 // 조건/근거 행 추가·삭제와 근거 미리보기 — 카드 1장 단위로 묶는다.
@@ -772,23 +953,39 @@ function wireSigCard(box) {
   box.querySelector('[data-role="cond-add"]')?.addEventListener('click', () => {
     conds.insertAdjacentHTML('beforeend', condRow('', ''));
     refreshCondPreview(box);
+    markSigDirty();
   });
   box.querySelector('[data-role="ev-add"]')?.addEventListener('click', () => {
     evs.insertAdjacentHTML('beforeend', evRow(''));
     refreshEvPreview(box);
+    markSigDirty();
   });
   box.addEventListener('click', (e) => {
     const del = e.target.closest('[data-role="cond-del"],[data-role="ev-del"]');
     if (!del) return;
     e.preventDefault();
     del.closest('[data-role="cond-row"],[data-role="ev-row"]').remove();
+    markSigDirty();
+    refreshCardProblems(box);
   });
   box.addEventListener('input', (e) => {
     if (e.target.matches('[data-role="ev-label"],[data-role="ev-metric"]')) refreshEvPreview(box);
     if (e.target.matches('[data-role="cond"]')) refreshCondPreview(box);
+    if (e.target.matches('[data-role="cond"],[data-role="metric"]')) refreshCardProblems(box);
+    markSigDirty();
+  });
+  box.addEventListener('change', (e) => {
+    if (!e.target.matches('.sig-pick')) markSigDirty();     // 선택 체크박스는 편집이 아니다
   });
   refreshEvPreview(box);
   refreshCondPreview(box);
+  refreshCardProblems(box);
+}
+
+function markSigDirty() {
+  if (SIG_DIRTY) return;
+  SIG_DIRTY = true;
+  updateDirtyBadge();
 }
 
 function refreshEvPreview(box) {
@@ -812,9 +1009,11 @@ function updateSigSelection() {
 
 async function bulkEnable(enabled) {
   const ids = pickedSignatures();
-  const { pt, family } = sigScope();
+  const { pt, family } = scope();
   try {
-    const r = await sendJSON('api/signatures/enabled', 'POST', { ids, enabled, pt, family });
+    const r = await sendJSON('api/signatures/enabled', 'POST',
+                             editBody({ ids, enabled, pt, family }, 'sigReason'));
+    $('sigReason').value = '';
     flash($('sigMsg'), r.changed.length
       ? `${pt ? `${pt}${family ? '/' + family : ''} ` : ''}${enabled ? '켬' : '끔'} ` +
         `${r.changed.length}건: ${r.changed.join(', ')} (rules_rev ${r.rules_rev})`
@@ -836,10 +1035,10 @@ async function reloadSignaturesKeepingOpen() {
 async function resetSignature(box) {
   const sigId = box.dataset.id;
   const msg = box.querySelector('[data-role="msg"]');
-  const { pt, family } = sigScope();
+  const { pt, family } = scope();
   try {
     const r = await sendJSON(`api/signatures/${encodeURIComponent(sigId)}/reset`, 'POST',
-                             { pt, family });
+                             editBody({ pt, family }, 'sigReason'));
     flash(msg, r.removed ? `상속으로 되돌림 (rules_rev ${r.rules_rev})` : '전용 설정이 없었습니다', true);
     await reloadSignaturesKeepingOpen();
   } catch (e) { flash(msg, e.message, false); }
@@ -866,20 +1065,26 @@ async function saveSignature(box) {
     const metric = row.querySelector('[data-role="ev-metric"]').value.trim();
     if (metric) evidence.push((label ? label + ' ' : '') + `{${metric}}`);
   });
-  const { pt, family } = sigScope();
-  const payload = {
+  const { pt, family } = scope();
+  const payload = editBody({
     pt, family,
     enabled: box.querySelector('[data-role="enabled"]').checked,
     status_hint: box.querySelector('[data-role="status_hint"]').value,
     issue_category: box.querySelector('[data-role="issue_category"]').value,
     phenomenon_ko: box.querySelector('[data-role="phenomenon_ko"]').value,
     action_ko: box.querySelector('[data-role="action_ko"]').value,
-    evidence,
-  };
-  if (Object.keys(when).length) payload.when_metric = when;
+  }, 'sigReason');
+  // 특수분기 룰은 조건·근거가 판정에 안 쓰이므로 애초에 보내지 않는다(읽기 전용 표시와 일치).
+  if (!box.dataset.subpop) {
+    payload.evidence = evidence;
+    if (Object.keys(when).length) payload.when_metric = when;
+  }
   try {
     const r = await sendJSON('api/signatures/' + encodeURIComponent(sigId), 'PUT', payload);
-    flash(msg, `${r.scope ? r.scope + ' 에 ' : '기준값으로 '}저장됨 (rules_rev ${r.rules_rev})` +
+    $('sigReason').value = '';
+    flash(msg, (r.no_op
+      ? '변경 없음 — 저장을 건너뛰었습니다 (세션 캐시 유지)'
+      : `${r.scope ? r.scope + ' 에 ' : '기준값으로 '}저장됨 (rules_rev ${r.rules_rev})`) +
                (r.warnings.length ? ' · ' + r.warnings.join(' ') : ''), true);
     await reloadSignaturesKeepingOpen();
   } catch (e) { flash(msg, e.message, false); }
@@ -918,10 +1123,11 @@ async function loadExclusions() {
 async function saveExclusions(next) {
   try {
     const r = await sendJSON('api/exclusions', 'PUT',
-      { item_contains: next.item_contains, units: next.units });
+      editBody({ item_contains: next.item_contains, units: next.units }));
     EXCL = { ...r.saved, rules_rev: r.rules_rev };
     renderExclusions();
-    flash($('exMsg'), `저장됨 (rules_rev ${r.rules_rev}) — 다음 조회/트레이스부터 반영`, true);
+    flash($('exMsg'), r.no_op ? '변경 없음 — 저장을 건너뛰었습니다'
+      : `저장됨 (rules_rev ${r.rules_rev}) — 다음 조회/트레이스부터 반영`, true);
   } catch (e) { flash($('exMsg'), e.message, false); }
 }
 
@@ -966,10 +1172,87 @@ async function runTrace() {
       `mode ${esc(TRACE.mode)} · ${esc(TRACE.product_type)} / ${famNote} · ` +
       `소스 ${TRACE.sources.length}개 · ${TRACE.elapsed_ms}ms` +
       (TRACE.truncated ? ` <span class="msg err">상위 ${TRACE.max_cases}건만 표시</span>` : '');
+    fillTraceFilters();
     renderTraceRows();
+    renderTraceDiff();
     flash($('trMsg'), `케이스 ${TRACE.cases.length}건`, true);
   } catch (e) { flash($('trMsg'), e.message, false); }
   $('trRun').disabled = false;
+}
+
+// 필터 후보는 이번 트레이스 결과에서 뽑는다 — 있지도 않은 값을 고르게 하지 않는다.
+function fillTraceFilters() {
+  const keep = (sel) => { const v = $(sel).value; return v; };
+  const statuses = [...new Set(TRACE.cases.map((c) => c.status).filter(Boolean))]
+    .sort((a, b) => (_STATUS_RANK[b] || 0) - (_STATUS_RANK[a] || 0));
+  const sigs = [...new Set(TRACE.cases.flatMap((c) => c.fired_ids || []))].sort();
+  const prev = { st: keep('trStatus'), sg: keep('trSigSel'), src: keep('trSource') };
+  $('trStatus').innerHTML = '<option value="">status 전체</option>' +
+    statuses.map((s) => `<option>${esc(s)}</option>`).join('');
+  $('trSigSel').innerHTML = '<option value="">발화 룰 전체</option>' +
+    sigs.map((s) => `<option>${esc(s)}</option>`).join('');
+  $('trSource').innerHTML = '<option value="">source 전체</option>' +
+    (TRACE.sources || []).map((s) =>
+      `<option value="${s.index}">${esc(s.source || ('source ' + s.index))}</option>`).join('');
+  // 같은 세션을 다시 트레이스했을 때 보고 있던 필터를 유지한다(전후 비교 흐름).
+  for (const [id, v] of [['trStatus', prev.st], ['trSigSel', prev.sg], ['trSource', prev.src]]) {
+    if (v && [...$(id).options].some((o) => o.value === v)) $(id).value = v;
+  }
+}
+
+// ── 직전 트레이스와의 차이 (룰 수정 전후) ────────────────────────────────
+function diffRowHtml(d) {
+  const chips = [
+    ...d.fired_added.map((s) => `<span class="chip sig" title="새로 발화">＋${esc(s)}</span>`),
+    ...d.fired_removed.map((s) => `<span class="chip off" title="발화 사라짐">－${esc(s)}</span>`),
+  ].join(' ');
+  const badge = (v) => `<span class="badge ${esc(v)}">${esc(v)}</span>`;
+  return `<tr class="clickable" data-idx="${d.idx}">
+    <td class="mono">${esc(d.item_raw)}</td>
+    <td class="num">${esc(d.bin)}</td>
+    <td>${d.old.status === d.new.status ? badge(d.new.status)
+        : `${badge(d.old.status)} → ${badge(d.new.status)}`}</td>
+    <td class="mono">${d.old.primary === d.new.primary ? esc(d.new.primary || '—')
+        : `${esc(d.old.primary || '—')} → ${esc(d.new.primary || '—')}`}</td>
+    <td>${chips || '<span class="note">—</span>'}</td>
+    <td>${d.old.stored === d.new.stored ? (d.new.stored ? '저장' : '제외')
+        : `<b>${d.old.stored ? '저장' : '제외'} → ${d.new.stored ? '저장' : '제외'}</b>`}</td>
+  </tr>`;
+}
+
+function renderTraceDiff() {
+  const card = $('trDiffCard');
+  const d = TRACE && TRACE.diff;
+  if (!d) {                       // 직전 실행이 없거나 보관에서 밀려남 — 정상 동작
+    card.style.display = 'none';
+    return;
+  }
+  card.style.display = '';
+  if (d.skipped) {
+    $('trDiffInfo').textContent = '';
+    $('trDiffBody').innerHTML = `<div class="note">${esc(d.skipped)}</div>`;
+    return;
+  }
+  $('trDiffInfo').textContent =
+    `rules_rev ${d.prev_rules_rev || '(없음)'} → ${TRACE.rules_rev || '(없음)'} · 공통 ${d.compared}건`;
+  const total = d.changed.length + d.added.length + d.removed.length;
+  if (!total) {
+    $('trDiffBody').innerHTML =
+      '<div class="note">변화 없음 — 직전 실행과 판정·발화가 모두 같습니다.</div>';
+    return;
+  }
+  $('trDiffBody').innerHTML =
+    (d.changed.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>항목</th><th class="num">bin</th><th>status</th><th>primary</th>
+          <th>발화 변화</th><th>L6</th></tr></thead>
+        <tbody>${d.changed.map(diffRowHtml).join('')}</tbody></table></div>` : '') +
+    (d.added.length ? `<div class="note" style="margin-top:8px">새로 생긴 케이스 ${d.added.length}건:
+        ${d.added.map((a) => esc(`${a.item_raw}(bin ${a.bin})`)).join(', ')}</div>` : '') +
+    (d.removed.length ? `<div class="note" style="margin-top:8px">사라진 케이스 ${d.removed.length}건:
+        ${d.removed.map((a) => esc(`${a.item_raw}(bin ${a.bin})`)).join(', ')}</div>` : '');
+  $('trDiffBody').querySelectorAll('tr.clickable').forEach((tr) => {
+    tr.addEventListener('click', () => showCase(Number(tr.dataset.idx)));
+  });
 }
 
 const _STATUS_RANK = { OK: 0, MONITOR: 1, MINOR: 2, MAJOR: 3, CRITICAL: 4 };
@@ -985,9 +1268,13 @@ function renderTraceRows() {
   if (!TRACE) return;
   const q = $('trFilter').value.trim().toUpperCase();
   const storedOnly = $('trStoredOnly').checked;
+  const st = $('trStatus').value, sg = $('trSigSel').value, src = $('trSource').value;
   const rows = TRACE.cases.filter((c) =>
     (!q || String(c.item_raw || '').toUpperCase().includes(q)) &&
-    (!storedOnly || c.stored));
+    (!storedOnly || c.stored) &&
+    (!st || c.status === st) &&
+    (!sg || (c.fired_ids || []).includes(sg)) &&
+    (src === '' || String(c.source_index ?? '') === src));
   rows.sort(TRACE_SORTS[$('trSort').value] || TRACE_SORTS.item);
   $('trCount').textContent = `${rows.length} / ${TRACE.cases.length}건`;
   $('trBody').innerHTML = rows.map((c) => `
@@ -1025,7 +1312,11 @@ function kvTable(obj, cols = 3) {
 }
 
 function condHtml(c) {
-  const ref = c.ref_key ? `${esc(c.ref_key)}=${num(c.ref_value)}` : num(c.ref_value);
+  // 임계값 이름은 Thresholds 탭 그 행으로 바로 가는 링크 — "이 값 때문에 안 떴다" → 수정.
+  const ref = c.ref_key
+    ? `<a href="#" class="th-link" data-goto-th="${esc(c.ref_key)}"
+          title="Thresholds 탭에서 이 값 편집">${esc(c.ref_key)}</a>=${num(c.ref_value)}`
+    : num(c.ref_value);
   const cls = c.passed ? 'pass' : 'fail';
   return `<div class="mono ${cls}">${c.passed ? '✔' : '✖'} ${esc(c.metric)} ` +
     `${c.abs ? 'abs' : ''}${esc(c.op || '')} ${ref} <span class="note">(실제 ${num(c.actual)}` +
@@ -1135,40 +1426,65 @@ function precedentHtml(list) {
 let TR_CASE = null;
 let TR_HIDE_OFF = true;    // 평가에서 빠진 룰은 기본 접힘 (요청: 하단으로 내리고 숨기기)
 let TR_IDX = null;   // 정답 라벨 저장 시 트레이스 케이스 좌표(token+index)로 쓴다
+let TR_LABEL_OPEN = true;  // 라벨 폼 펼침 상태 (케이스를 바꿔도 유지 — 연속 검수 동선)
 
 async function showCase(idx) {
   const box = $('trDetail');
   box.innerHTML = '<h2>케이스 상세</h2><div class="note">불러오는 중…</div>';
   try {
     TR_IDX = idx;
-    renderCase((await getJSON(
-      `api/trace/${encodeURIComponent(TRACE.token)}/case/${idx}`)).case);
+    const r = await getJSON(`api/trace/${encodeURIComponent(TRACE.token)}/case/${idx}`);
+    renderCase(r.case, r.label);
   } catch (e) {
     box.innerHTML = `<h2>케이스 상세</h2><div class="msg err">${esc(e.message)}</div>`;
   }
 }
 
 // ── 정답 라벨 (검수) — 엔진 판정 수용/정정을 eval DB 에 (예측, 정답) 쌍으로 기록 ──
-function labelFormHtml(c) {
+// 이미 검수한 케이스면 그 값으로 폼을 채운다(저장하면 교체 — case 당 정답 1건).
+function labelFormHtml(c, label) {
+  const accepted = label ? !!label.engine_comment_accepted : true;
+  const picked = label && !accepted ? label.human_status : c.status;
   const opts = ['OK', 'MONITOR', 'MINOR', 'MAJOR', 'CRITICAL'].map((v) =>
-    `<option ${v === c.status ? 'selected' : ''}>${v}</option>`).join('');
+    `<option ${v === picked ? 'selected' : ''}>${v}</option>`).join('');
   return `
-    <h2 style="margin-top:14px">정답 라벨 <span class="hint">
-      엔진 판정을 검수해 학습용 정답으로 기록합니다 — 채점 탭의 원재료 (labeler=eval-panel)</span></h2>
+    <details class="fold" id="trLabelFold" ${TR_LABEL_OPEN ? 'open' : ''} style="margin-top:14px">
+      <summary>정답 라벨 — 엔진 판정 검수 (채점 탭의 원재료)
+        ${label ? `<span class="badge own" title="이미 검수한 케이스입니다 — 저장하면 교체됩니다"
+          >기존 라벨 ${esc(label.human_status)} · ${fmtDate(label.created_at)}</span>` : ''}</summary>
     <div class="toolbar">
-      <label class="note"><input type="radio" name="lbMode" value="accept" checked>
+      <label class="note"><input type="radio" name="lbMode" value="accept" ${accepted ? 'checked' : ''}>
         판정 수용 (<span class="badge ${esc(c.status)}">${esc(c.status)}</span> 그대로)</label>
-      <label class="note"><input type="radio" name="lbMode" value="fix"> 정정:</label>
-      <select class="sel" id="lbStatus" disabled>${opts}</select>
+      <label class="note"><input type="radio" name="lbMode" value="fix" ${accepted ? '' : 'checked'}> 정정:</label>
+      <select class="sel" id="lbStatus" ${accepted ? 'disabled' : ''}>${opts}</select>
       <input class="inp" id="lbRoot" style="width:180px" placeholder="root cause (선택)"
+             value="${esc((label && label.root_cause_category) || '')}"
              title="근본원인 분류 — 예: equipment / spec / process">
     </div>
     <textarea class="inp" id="lbComment" rows="2"
-      placeholder="보충/정정 코멘트 (선택 — 선례 검색에도 쓰입니다)"></textarea>
+      placeholder="보충/정정 코멘트 (선택 — 선례 검색에도 쓰입니다)">${esc((label && label.human_comment) || '')}</textarea>
     <div class="toolbar" style="margin-top:8px">
-      <button class="btn primary" id="lbSave">정답 저장</button>
+      <button class="btn primary" id="lbSave">${label ? '정답 저장 (덮어쓰기)' : '정답 저장'}</button>
       <span class="msg" id="lbMsg"></span>
-    </div>`;
+    </div>
+    </details>`;
+}
+
+// ── L0 수집·분류 — "왜 아무 판정도 안 받았나" 의 1순위 원인이 여기서 드러난다 ──
+function l0Html(c) {
+  const d = c.dist || {};
+  const lim = (d.lsl == null && d.usl == null)
+    ? '<span class="fail">limit 없음 — spec 기반 룰이 전부 결측 처리됩니다</span>'
+    : `LSL ${num(d.lsl)} / USL ${num(d.usl)}`;
+  return `<table>
+    <tr><td class="mono">item_class</td><td>${esc(c.item_class || '—')}</td>
+        <td class="mono">value_type</td>
+        <td>${esc(c.value_type || '—')} <span class="note">← unit ${esc(c.unit || '(없음)')}</span></td></tr>
+    <tr><td class="mono">bin</td><td>${esc(c.bin)}</td>
+        <td class="mono">n (측정 die)</td><td>${d.n == null ? '—' : d.n}</td></tr>
+    <tr><td class="mono">spec limit</td><td colspan="3">${lim}</td></tr>
+    <tr><td class="mono">source</td><td colspan="3">${esc(c.source || '—')}</td></tr>
+  </table>`;
 }
 
 async function saveLabel() {
@@ -1196,6 +1512,9 @@ function sigMatrixRow(r) {
         <span class="mono">${esc(r.id)}</span>
         <span class="badge ${esc(r.status_hint)}">${esc(r.status_hint)}</span>
         ${r.enabled ? '' : '<span class="badge off">꺼짐 — 평가에서 제외됨</span>'}
+        <span class="grow"></span>
+        <button class="btn tiny" data-goto-sig="${esc(r.id)}"
+                title="Signatures 탭에서 이 룰 편집">편집 →</button>
       </summary>
       <div class="body">
         ${r.skip_reason ? `<div class="note">스킵: ${esc(r.skip_reason)}</div>` : ''}
@@ -1206,7 +1525,9 @@ function sigMatrixRow(r) {
     </details>`;
 }
 
-function renderCase(c) {
+// 섹션 순서 = 엔진이 실제로 도는 순서(L0 수집 → L1 통계 → L2 feature → L3 룰 → L4 판정 →
+// L5 코멘트 → L6 저장). 어디서 끊겼는지 위에서 아래로 따라 읽을 수 있게 한다.
+function renderCase(c, label) {
   const box = $('trDetail');
   TR_CASE = c;
   // 평가에 실제로 참여한 룰(켜짐 + scope 안)이 위, 빠진 룰은 통째로 아래 접이식에.
@@ -1229,30 +1550,46 @@ function renderCase(c) {
         >${c.stored ? 'L6 저장' : 'L6 제외'}</span>
       ${(c.secondary_signatures || []).map((s) =>
         `<span class="chip">secondary ${esc(s)}</span>`).join('')}
+      <span class="grow"></span>
+      <button class="btn" id="goldenAdd"
+        title="지금 이 발화 상태(뜬 룰 + status)를 골든셋 기대값으로 기록합니다 — 룰을 고친 뒤 회귀로 확인">골든셋에 추가</button>
+      <span class="msg" id="goldenMsg"></span>
     </div>
+    ${labelFormHtml(c, label)}
+
+    <h2 style="margin-top:14px">L0 수집 · 분류
+      <span class="hint">여기서 잘못 분류되면 아래 단계가 전부 결측이 됩니다</span></h2>
+    ${l0Html(c)}
     ${c.metrics_note ? `<div class="note" style="color:var(--warn)">⚠ ${esc(c.metrics_note)}</div>` : ''}
     ${c.excluded ? `<div class="note" style="color:var(--warn)">⚠ 평가 제외 목록 매칭 — ${esc(c.excluded)}.
       모든 signature 를 평가하지 않고 AI Comment 도 만들지 않습니다
       (Signatures 탭 하단 "평가 제외 목록"에서 관리).</div>` : ''}
-    ${c.gate_reason && !c.excluded ? `<div class="note">${esc(c.gate_reason)}</div>` : ''}
-    ${labelFormHtml(c)}
-    <h2 style="margin-top:14px">분포</h2>${distHtml(c.dist)}
+
+    <h2 style="margin-top:14px">L1 raw_metrics <span class="hint">측정 통계 (cpk·수율 등)</span></h2>
+    ${kvTable(c.raw_metrics)}
+    <h2 style="margin-top:14px">L2 features <span class="hint">산포·공간·모달리티 지표</span></h2>
+    ${kvTable(c.features)}
+    ${distHtml(c.dist)}
     <h2 style="margin-top:14px">L3 signature 판정
       <span class="hint">발화한 룰이 위 · 평가에서 빠진 룰은 맨 아래로 접어 둡니다</span></h2>
+    <details style="margin-bottom:8px"><summary>이 케이스에 적용된 임계값 · 조건 평가에 쓰인 값</summary>
+      ${kvTable(c.thresholds)}${kvTable(c.ctx_values)}</details>
     ${matrix}
-    <h2 style="margin-top:14px">L4 판정 근거 (evidence)</h2>${evidenceHtml(c.evidence)}
-    <h2 style="margin-top:14px">L1 raw_metrics</h2>${kvTable(c.raw_metrics)}
-    <h2 style="margin-top:14px">L2 features</h2>${kvTable(c.features)}
-    <h2 style="margin-top:14px">적용 임계값</h2>${kvTable(c.thresholds)}
-    <details style="margin-top:14px"><summary>조건 평가에 쓰인 값 (ctx_values)</summary>
-      ${kvTable(c.ctx_values)}</details>
+    <h2 style="margin-top:14px">L4 판정 근거 (evidence)
+      <span class="hint">발화한 룰들을 종합해 위 status 가 나온 근거</span></h2>
+    ${evidenceHtml(c.evidence)}
     <h2 style="margin-top:14px">L5 comment</h2>
     <div class="note" style="white-space:pre-wrap">${esc(c.comment || '(생성 안 함)')}</div>
-    <h2 style="margin-top:14px">L5 선례</h2>${precedentHtml(c.precedents)}`;
+    <h2 style="margin-top:14px">L5 선례</h2>${precedentHtml(c.precedents)}
+    <h2 style="margin-top:14px">L6 저장 게이트</h2>
+    <div class="note">${c.stored
+      ? '<span class="pass">저장</span> — Issue Table 에 AI Comment 로 올라갑니다.'
+      : `<span class="fail">제외</span> — 코멘트를 만들지 않습니다. ${esc(c.gate_reason || '')}`}</div>`;
   const cv = $('trDist');
   if (cv) drawDist(cv, c.dist);
   // 접힘 상태는 케이스를 바꿔도 유지한다(룰 하나를 여러 항목에서 연달아 볼 때 매번 접지 않게).
   $('trOffFold')?.addEventListener('toggle', (e) => { TR_HIDE_OFF = !e.target.open; });
+  $('trLabelFold')?.addEventListener('toggle', (e) => { TR_LABEL_OPEN = e.target.open; });
   document.querySelectorAll('input[name="lbMode"]').forEach((rb) => {
     rb.addEventListener('change', () => {
       $('lbStatus').disabled =
@@ -1260,6 +1597,67 @@ function renderCase(c) {
     });
   });
   $('lbSave').addEventListener('click', saveLabel);
+  $('goldenAdd').addEventListener('click', addToGolden);
+  // 조건의 임계값 이름 / 룰 id → 편집 화면 바로가기 (summary 안이라 토글을 막는다)
+  box.querySelectorAll('[data-goto-th]').forEach((a) => {
+    a.addEventListener('click', (e) => { e.preventDefault(); gotoThreshold(a.dataset.gotoTh); });
+  });
+  box.querySelectorAll('[data-goto-sig]').forEach((b) => {
+    b.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation(); gotoSignature(b.dataset.gotoSig);
+    });
+  });
+}
+
+// ── 골든셋 (기대 발화 회귀) ──────────────────────────────────────────────
+async function addToGolden() {
+  const btn = $('goldenAdd');
+  btn.disabled = true;
+  try {
+    const r = await sendJSON('api/golden/add', 'POST',
+                             { token: TRACE.token, index: TR_IDX });
+    flash($('goldenMsg'), (r.replaced ? '골든셋 갱신됨' : '골든셋 추가됨') +
+      ` — 기대 발화 ${(r.entry.fire || []).join(', ') || '없음'} / ${r.entry.status}`, true);
+    loadGoldenInfo();
+  } catch (e) { flash($('goldenMsg'), e.message, false); }
+  btn.disabled = false;
+}
+
+async function loadGoldenInfo() {
+  try {
+    const r = await getJSON('api/golden');
+    $('goInfo').textContent = `세션 ${r.sessions.length} · 기대 ${r.total_expect}건`;
+  } catch (e) { $('goInfo').textContent = '골든셋 읽기 실패'; }
+}
+
+const GOLDEN_KIND_CLS = { '누락': 'fail', '오탐': 'fail', 'status': 'warn', '케이스없음': 'warn' };
+
+async function runGoldenCheck() {
+  const btn = $('goRun');
+  btn.disabled = true;
+  flash($('goMsg'), '검사 중… (세션마다 트레이스 1회)', true);
+  try {
+    const r = await sendJSON('api/golden/check', 'POST', {});
+    if (r.note) {
+      $('goResult').innerHTML = `<div class="note">${esc(r.note)}</div>`;
+    } else {
+      $('goResult').innerHTML = r.sessions.map((s) => `
+        <div style="margin-bottom:10px">
+          <b class="mono">${esc(s.session_id)}</b>
+          <span class="note">${esc(s.note || '')}</span>
+          ${s.error ? `<div class="msg err">트레이스 불가: ${esc(s.error)}</div>`
+            : (s.findings.length
+              ? s.findings.map((f) => `<div class="mono ${GOLDEN_KIND_CLS[f.kind] || ''}">
+                    [${esc(f.kind)}] ${esc(f.item)}${f.bin == null ? '' : ' bin' + esc(f.bin)}
+                    ${f.signature ? '· ' + esc(f.signature) : ''}</div>`).join('')
+              : `<span class="pass">일치 (${s.checked}건)</span>`)}
+        </div>`).join('');
+    }
+    flash($('goMsg'), r.total_findings
+      ? `불일치 ${r.total_findings}건 / 검사 ${r.total_checked}건 (${r.elapsed_ms || 0}ms)`
+      : `전부 일치 — 검사 ${r.total_checked}건 (${r.elapsed_ms || 0}ms)`, !r.total_findings);
+  } catch (e) { flash($('goMsg'), e.message, false); }
+  btn.disabled = false;
 }
 
 // ── Eval DB 탭 (admin_panel 에서 이관) ───────────────────────────────────
@@ -1623,7 +2021,7 @@ const TAB_LOADERS = {
   pTrace: loadSessions,
   pEval: loadEvalTab,
   pScoring: loadScoring,
-  pMaint: () => { renderFiles(); loadBackups(); },
+  pMaint: () => { renderFiles(); loadBackups(); loadGoldenInfo(); },
 };
 const loaded = new Set();
 
@@ -1637,33 +2035,69 @@ async function activateTab(id) {
   if (!loaded.has(id)) { loaded.add(id); await TAB_LOADERS[id](); }
 }
 
-// 임계값 → 그 값을 쓰는 signature 로 바로 이동 (탭 전환 + 카드 펼침 + 강조).
+function flashEl(el) {
+  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1600);
+}
+
+// 임계값·트레이스 조건 → 그 값을 쓰는 signature 로 바로 이동 (탭 전환 + 카드 펼침 + 강조).
+// 재렌더가 아니라 필터 해제로 찾아간다 — 편집 중인 다른 카드를 날리지 않기 위함.
 async function gotoSignature(sigId) {
   await activateTab('pSignatures');
   $('sigFilter').value = '';
-  SIG_SHOW_OFF = true;                       // 꺼진 룰이어도 찾아갈 수 있어야 한다
-  renderSignatures();
+  applySigFilter();
   const box = $('sigList').querySelector(`details.sig[data-id="${CSS.escape(sigId)}"]`);
   if (!box) return;
-  box.closest('details.fold')?.setAttribute('open', '');
+  const fold = box.closest('details.fold');
+  if (fold) { fold.open = true; SIG_SHOW_OFF = true; }   // 꺼진 룰도 찾아갈 수 있어야 한다
   box.open = true;
-  box.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  box.classList.add('flash');
-  setTimeout(() => box.classList.remove('flash'), 1600);
+  flashEl(box);
+}
+
+// 트레이스 조건의 임계값 이름 → Thresholds 탭 그 행으로 (같은 편집 범위 유지).
+async function gotoThreshold(key) {
+  await activateTab('pThresholds');
+  $('thFilter').value = '';
+  $('thOwnOnly').checked = false;
+  applyThresholdFilter();
+  const row = $('thBody').querySelector(`tr[data-key="${CSS.escape(key)}"]`);
+  if (row) flashEl(row);
 }
 
 document.querySelectorAll('.tab').forEach((btn) => {
   btn.addEventListener('click', () => activateTab(btn.dataset.panel));
 });
 
-$('thPt').addEventListener('change', () => { fillFamily(); loadThresholds(); });
-$('thFamily').addEventListener('change', loadThresholds);
+// 범위를 바꾸면 두 탭 모두 그 범위 값으로 다시 읽어온다(필터가 아니라 편집 대상 전환) —
+// 재로드하면 입력 중이던 값이 사라지므로 미저장 변경이 있으면 먼저 확인한다.
+function onScopeChange(sel) {
+  if (isDirty() &&
+      !confirm('저장하지 않은 변경이 있습니다. 범위를 바꾸면 사라집니다 — 계속할까요?')) {
+    sel.value = sel.dataset.prev || '';
+    return;
+  }
+  fillScopeFamily();
+  reloadScopedTabs();
+}
+
+function reloadScopedTabs() {
+  $('scPt').dataset.prev = $('scPt').value;
+  $('scFam').dataset.prev = $('scFam').value;
+  if (loaded.has('pThresholds')) loadThresholds();
+  if (loaded.has('pSignatures')) loadSignatures();
+}
+
+$('scPt').addEventListener('change', () => onScopeChange($('scPt')));
+$('scFam').addEventListener('change', () => onScopeChange($('scFam')));
+$('thFilter').addEventListener('input', applyThresholdFilter);
+$('thOwnOnly').addEventListener('change', applyThresholdFilter);
 $('thSave').addEventListener('click', saveThresholds);
 $('thReset').addEventListener('click', loadThresholds);
-$('sigFilter').addEventListener('input', renderSignatures);
-// 범위를 바꾸면 그 범위에서 실제 적용되는 값으로 다시 읽어온다(필터가 아니라 편집 대상 전환).
-$('sigPt').addEventListener('change', () => { fillSigFamily(); loadSignatures(); });
-$('sigFam').addEventListener('change', loadSignatures);
+$('sigFilter').addEventListener('input', applySigFilter);
+window.addEventListener('beforeunload', (e) => {
+  if (isDirty()) { e.preventDefault(); e.returnValue = ''; }
+});
 $('sigAll').addEventListener('change', () => {
   $('sigList').querySelectorAll('.sig-pick').forEach((cb) => { cb.checked = $('sigAll').checked; });
   updateSigSelection();
@@ -1683,6 +2117,10 @@ $('trRun').addEventListener('click', runTrace);
 $('trFilter').addEventListener('input', renderTraceRows);
 $('trSort').addEventListener('change', renderTraceRows);
 $('trStoredOnly').addEventListener('change', renderTraceRows);
+$('trStatus').addEventListener('change', renderTraceRows);
+$('trSigSel').addEventListener('change', renderTraceRows);
+$('trSource').addEventListener('change', renderTraceRows);
+$('goRun').addEventListener('click', runGoldenCheck);
 $('scRefresh').addEventListener('click', loadScoring);
 $('mvRun').addEventListener('click', runValidate);
 $('mvReload').addEventListener('click', async () => {
@@ -1695,9 +2133,13 @@ $('bkRefresh').addEventListener('click', loadBackups);
 
 (async () => {
   META = await getJSON('api/meta');
-  $('thPt').innerHTML = Object.keys(META.taxonomy)
-    .map((pt) => `<option>${esc(pt)}</option>`).join('');
-  fillFamily();
+  RULES_REV = String(META.rules_rev ?? '');
+  // 첫 옵션 = 기준값(전 제품 공통). Signatures 는 여기서 편집하고 Thresholds 는 읽기 전용.
+  $('scPt').innerHTML = '<option value="">기준값 (전 제품 공통)</option>' +
+    Object.keys(META.taxonomy).map((pt) => `<option>${esc(pt)}</option>`).join('');
+  fillScopeFamily();
+  $('scPt').dataset.prev = '';
+  $('scFam').dataset.prev = '';
   loaded.add('pThresholds');
   await loadThresholds();
 })();

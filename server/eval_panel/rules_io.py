@@ -9,6 +9,7 @@ web_report.eval_debug 를 경유하고, 이 모듈은 그 경로에 대한 **파
 """
 from __future__ import annotations
 
+import copy
 import os
 import re
 import shutil
@@ -253,6 +254,65 @@ _CODE_REFS = {
 }
 
 
+# 엔진이 암묵 전제하는 관계 불변식 (a op b). 위반은 "실험" 이 아니라 조용한 오동작이라
+# 저장을 막는다. 검사는 **병합 결과(effective)** 기준 — 오버레이가 쌍의 한쪽만 덮으면
+# 파일 단독으로는 판정할 수 없기 때문이다. 단 이번 저장이 실제로 바꾼 키(touched)가 쌍에
+# 걸릴 때만 본다(상위 층에 이미 있는 위반 때문에 무관한 키 저장까지 막히지 않게 —
+# 상위 층 위반은 validate_all 이 전역 보고한다).
+THRESHOLD_RELATIONS = (
+    ("cpk_bad", "<=", "cpk_warn"),
+    ("outlier_ratio_warn", "<=", "outlier_ratio_bad"),
+    ("center_region_pct", "<", "edge_region_pct"),
+    ("subpop_density_gap_warn", "<=", "subpop_density_gap_strong"),
+)
+
+# 값 종류 — **opt-in 표**. 여기 없는 키는 검사하지 않는다(새 임계값이 저장을 막지 않게).
+# 구조적으로 범위가 정해진 값만 담는다: ratio=0~1 비율/정규화 반경, count=1 이상 정수,
+# positive=0 초과. "큰 값을 넣어 사실상 끄기" 가 정당한 키(spread_norm_warn·kurtosis_warn
+# 등)는 일부러 뺐다 — 그 용도는 signature 의 enabled:false 가 담당한다.
+THRESHOLD_KINDS = {
+    "outlier_ratio_warn": "ratio", "outlier_ratio_bad": "ratio",
+    "subpop_outlier_ratio_max": "ratio", "subpop_minor_mass_min": "ratio",
+    "subpop_density_gap_warn": "ratio", "subpop_density_gap_strong": "ratio",
+    "subpop_value_gap_warn": "ratio", "code_edge_hit_warn": "ratio",
+    "edge_region_pct": "ratio", "center_region_pct": "ratio",
+    "gross_yield_bad": "ratio", "cpk_trump_yield_floor": "ratio",
+    "n_min": "count", "subpop_n_min": "count", "spatial_fail_count_min": "count",
+    "severe_outlier_count_min": "count", "source_min_count": "count",
+    "outlier_sigma": "positive",
+}
+
+
+def _is_num(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _check_threshold_values(effective: dict, touched: set) -> list:
+    """관계·타입 위반 메시지 목록 (비면 통과). 파일 IO 없는 순수 함수."""
+    problems = []
+    for key in sorted(touched):
+        kind = THRESHOLD_KINDS.get(key)
+        value = effective.get(key)
+        if kind is None or not _is_num(value):
+            continue
+        if kind == "ratio" and not 0 <= value <= 1:
+            problems.append(f"{key}: 0~1 비율이어야 함 (받은 값 {value})")
+        elif kind == "count" and (value <= 0 or float(value) != int(value)):
+            problems.append(f"{key}: 1 이상 정수여야 함 (받은 값 {value})")
+        elif kind == "positive" and value <= 0:
+            problems.append(f"{key}: 0 보다 커야 함 (받은 값 {value})")
+    for left, op, right in THRESHOLD_RELATIONS:
+        if left not in touched and right not in touched:
+            continue
+        a, b = effective.get(left), effective.get(right)
+        if not _is_num(a) or not _is_num(b):
+            continue
+        if a > b if op == "<=" else a >= b:
+            word = "작거나 같아야" if op == "<=" else "작아야"
+            problems.append(f"{left}({a}) 는 {right}({b}) 보다 {word} 함")
+    return problems
+
+
 def _check_scope(product_type: str, family_product: str | None) -> None:
     tax = eval_debug.taxonomy()
     if product_type not in tax:
@@ -267,27 +327,30 @@ def read_thresholds(product_type: str, family_product: str | None = None) -> dic
     `inherited` = **이 범위의 오버레이를 뺀** 값(= 이 화면에서 값을 지웠을 때 돌아갈 값).
     화면은 `effective` 를 입력칸에 채우고, 저장 시 inherited 와 같은 값은 파일에 쓰지
     않는다 — "보이는 값이 곧 적용값" 이면서 오버레이 파일은 최소로 유지된다.
-    """
-    _check_scope(product_type, family_product)
-    doc = eval_debug.thresholds_doc()
-    default = dict(doc.get("default") or {})
-    legacy_pt = dict((doc.get("product_type") or {}).get(product_type) or {})
-    ov_pt = _read_overlay(product_type, None)
-    ov_family = _read_overlay(product_type, family_product) if family_product else {}
 
-    inherited = {**default, **legacy_pt}
-    origin = {k: "기본값" for k in default}
-    origin.update({k: "제품군(legacy 섹션)" for k in legacy_pt})
-    if family_product:
-        inherited.update(ov_pt)
-        origin.update({k: f"{product_type} 공통" for k in ov_pt})
-        own = ov_family
-        origin.update({k: f"{family_product} 직접 지정" for k in ov_family})
-    else:
-        own = ov_pt
-        origin.update({k: f"{product_type} 직접 지정" for k in ov_pt})
+    product_type 이 비면 **기준값(default) 읽기 전용 뷰**를 돌려준다 — 전역 범위 선택기의
+    "기준값 (전 제품 공통)" 자리다. 기준값은 패널에서 편집하지 않으므로(save_thresholds 는
+    제품군을 요구한다) 화면도 입력칸을 잠근다.
+    """
+    if not product_type:
+        default = dict(eval_debug.default_thresholds())
+        return {"product_type": "", "family_product": None, "read_only": True,
+                "default": default, "legacy_product_type": {},
+                "overlay_pt": {}, "overlay_family": {},
+                "inherited": default, "own": {}, "effective": default,
+                "origin": {k: "기본값" for k in default},
+                "descriptions": threshold_descriptions(), "usage": threshold_usage(),
+                "help": threshold_help(),
+                "item_class_count": len(eval_debug.thresholds_doc().get("item_class") or {}),
+                "rules_rev": eval_debug.rules_rev()}
+    _check_scope(product_type, family_product)
+    inherited, origin, parts = _inherited_thresholds(product_type, family_product)
+    default, legacy_pt = parts["default"], parts["legacy_pt"]
+    ov_pt, ov_family = parts["overlay_pt"], parts["overlay_family"]
+    own = parts["own"]
 
     return {"product_type": product_type, "family_product": family_product,
+            "read_only": False,
             "default": default, "legacy_product_type": legacy_pt,
             "overlay_pt": ov_pt, "overlay_family": ov_family,
             "inherited": inherited, "own": own,
@@ -306,8 +369,40 @@ def _read_overlay(product_type: str, family_product: str | None) -> dict:
     return dict(doc) if isinstance(doc, dict) else {}
 
 
+def _inherited_thresholds(product_type: str, family_product: str | None):
+    """(이 범위 오버레이를 뺀 값, 키별 출처, 원자료 조각).
+
+    read_thresholds(표시)와 save_thresholds(관계 검증)가 **같은 병합 결과**를 봐야 한다 —
+    오버레이가 관계쌍의 한쪽만 덮으면 오버레이 파일 단독으로는 검사할 수 없기 때문이다.
+    """
+    doc = eval_debug.thresholds_doc()
+    default = dict(doc.get("default") or {})
+    legacy_pt = dict((doc.get("product_type") or {}).get(product_type) or {})
+    ov_pt = _read_overlay(product_type, None)
+    ov_family = _read_overlay(product_type, family_product) if family_product else {}
+
+    inherited = {**default, **legacy_pt}
+    origin = {k: "기본값" for k in default}
+    origin.update({k: "제품군(legacy 섹션)" for k in legacy_pt})
+    if family_product:
+        inherited.update(ov_pt)
+        origin.update({k: f"{product_type} 공통" for k in ov_pt})
+        own = ov_family
+        origin.update({k: f"{family_product} 직접 지정" for k in ov_family})
+    else:
+        own = ov_pt
+        origin.update({k: f"{product_type} 직접 지정" for k in ov_pt})
+    return inherited, origin, {"default": default, "legacy_pt": legacy_pt,
+                               "overlay_pt": ov_pt, "overlay_family": ov_family, "own": own}
+
+
 def save_thresholds(product_type: str, family_product: str | None, overrides: dict) -> dict:
-    """오버레이 파일 재작성. 값이 None 인 키는 제거, 전부 비면 파일 삭제."""
+    """오버레이 파일 재작성. 값이 None 인 키는 제거, 전부 비면 파일 삭제.
+
+    내용이 그대로면(no_op) 백업·쓰기·rev 증가를 전부 건너뛴다 — rev 를 올리면 ai_comment
+    세션의 리포트 캐시가 통째로 무효화되므로 "저장 눌렀지만 안 바뀐" 경우까지 재평가시키지
+    않는다.
+    """
     _check_scope(product_type, family_product)
     if not isinstance(overrides, dict):
         raise RuleError("overrides 는 객체여야 함")
@@ -325,13 +420,24 @@ def save_thresholds(product_type: str, family_product: str | None, overrides: di
         merged[key] = value
 
     path = eval_debug.overlay_path(product_type, family_product)
+    if merged == current:
+        return {"path": str(path), "saved": merged, "backup": None, "no_op": True,
+                "rules_rev": eval_debug.rules_rev()}
+
+    touched = {k for k in set(current) | set(merged) if current.get(k) != merged.get(k)}
+    inherited, _, _ = _inherited_thresholds(product_type, family_product)
+    problems = _check_threshold_values({**inherited, **merged}, touched)
+    if problems:
+        raise RuleError("; ".join(problems))
+
     backup = _backup(path)
     if merged:
         _write_atomic(path, _dump(merged))
     elif path.exists():
         path.unlink()
     rev = eval_debug.bump_rules_rev()
-    return {"path": str(path), "saved": merged, "backup": backup, "rules_rev": rev}
+    return {"path": str(path), "saved": merged, "backup": backup, "no_op": False,
+            "rules_rev": rev}
 
 
 # ── signatures ────────────────────────────────────────────────────────────────
@@ -487,9 +593,10 @@ def set_signatures_enabled(sig_ids: list, enabled: bool, product_type: str | Non
                 entries.pop(sig_id, None)
             changed.append(sig_id)
         if not changed:
-            return {"changed": [], "backup": None, "rules_rev": eval_debug.rules_rev()}
+            return {"changed": [], "backup": None, "no_op": True,
+                    "rules_rev": eval_debug.rules_rev()}
         backup = _write_sig_overlay(product_type, family_product, entries)
-        return {"changed": changed, "backup": backup,
+        return {"changed": changed, "backup": backup, "no_op": False,
                 "rules_rev": eval_debug.bump_rules_rev()}
 
     path = eval_debug.rules_files()["signatures"]
@@ -507,10 +614,12 @@ def set_signatures_enabled(sig_ids: list, enabled: bool, product_type: str | Non
         changed.append(sig_id)
 
     if not changed:
-        return {"changed": [], "backup": None, "rules_rev": eval_debug.rules_rev()}
+        return {"changed": [], "backup": None, "no_op": True,
+                "rules_rev": eval_debug.rules_rev()}
     backup = _backup(path)
     _write_atomic(path, _head_comments(path) + _dump(doc))
-    return {"changed": changed, "backup": backup, "rules_rev": eval_debug.bump_rules_rev()}
+    return {"changed": changed, "backup": backup, "no_op": False,
+            "rules_rev": eval_debug.bump_rules_rev()}
 
 
 def _validate_condition(metric: str, cond, threshold_keys: set) -> None:
@@ -613,6 +722,7 @@ def save_signature(sig_id: str, payload: dict, product_type: str | None = None,
             warnings.append(f"제품군별 저장에서는 {dropped} 를 다루지 않아 무시했습니다.")
         inherited = _inherited_row(sig_id, product_type, family_product)
         entries = _read_sig_overlay(product_type, family_product)
+        before = copy.deepcopy(entries)
         entry = dict(entries.get(sig_id) or {})
         for field in SIGNATURE_OVERLAY_FIELDS:
             if field not in updates:
@@ -625,9 +735,14 @@ def save_signature(sig_id: str, payload: dict, product_type: str | None = None,
             entries[sig_id] = entry
         else:
             entries.pop(sig_id, None)
+        scope_label = f"{product_type}/{family_product or '_default'}"
+        if entries == before:
+            return {"id": sig_id, "updated": sorted(entry), "backup": None, "no_op": True,
+                    "scope": scope_label, "rules_rev": eval_debug.rules_rev(),
+                    "warnings": warnings}
         backup = _write_sig_overlay(product_type, family_product, entries)
-        return {"id": sig_id, "updated": sorted(entry), "backup": backup,
-                "scope": f"{product_type}/{family_product or '_default'}",
+        return {"id": sig_id, "updated": sorted(entry), "backup": backup, "no_op": False,
+                "scope": scope_label,
                 "rules_rev": eval_debug.bump_rules_rev(), "warnings": warnings}
 
     path = eval_debug.rules_files()["signatures"]
@@ -635,6 +750,7 @@ def save_signature(sig_id: str, payload: dict, product_type: str | None = None,
     target = next((s for s in (doc.get("signatures") or []) if s.get("id") == sig_id), None)
     if target is None:
         raise RuleError(f"없는 signature: {sig_id} (신규 추가는 이 화면에서 지원하지 않음)")
+    before = copy.deepcopy(doc)
     for key, value in updates.items():
         if key in ("issue_category", "scope") and value is None:
             target.pop(key, None)          # 전 제품 공통 = 키 자체를 두지 않는다
@@ -643,10 +759,13 @@ def save_signature(sig_id: str, payload: dict, product_type: str | None = None,
         else:
             target[key] = value
 
+    if doc == before:
+        return {"id": sig_id, "updated": sorted(updates), "backup": None, "no_op": True,
+                "scope": "", "rules_rev": eval_debug.rules_rev(), "warnings": warnings}
     backup = _backup(path)
     _write_atomic(path, _head_comments(path) + _dump(doc))
     rev = eval_debug.bump_rules_rev()
-    return {"id": sig_id, "updated": sorted(updates), "backup": backup,
+    return {"id": sig_id, "updated": sorted(updates), "backup": backup, "no_op": False,
             "scope": "", "rules_rev": rev, "warnings": warnings}
 
 
@@ -701,10 +820,14 @@ def save_exclusions(payload: dict) -> dict:
             seen.add(s.upper())
             vals.append(s)
         out[key] = vals
+    if out == eval_debug.exclusions():
+        return {"saved": out, "backup": None, "no_op": True,
+                "rules_rev": eval_debug.rules_rev()}
     path = eval_debug.rules_files()["exclusions"]
     backup = _backup(path)
     _write_atomic(path, _head_comments(path) + _dump(out))
-    return {"saved": out, "backup": backup, "rules_rev": eval_debug.bump_rules_rev()}
+    return {"saved": out, "backup": backup, "no_op": False,
+            "rules_rev": eval_debug.bump_rules_rev()}
 
 
 # ── 무결성 검증 ───────────────────────────────────────────────────────────────
@@ -789,9 +912,16 @@ def validate_all() -> dict:
         notes.append("signature 오버레이 트리 없음 — 전 제품군이 기준값을 그대로 사용 중")
 
     # 3) 전 조합 병합 시뮬레이션 (KeyError 유발 조합 조기 발견)
+    # 관계·타입 불변식도 여기서 본다 — 저장 시엔 "이번에 바꾼 키" 만 검사하므로
+    # 상위 층(default·legacy 섹션)에 이미 있던 위반은 이 전역 점검에서만 드러난다.
+    seen_value = set()
     for pt, families in tax.items():
         for family in [None] + list(families):
             merged = eval_debug.effective_thresholds(pt, family)
+            for msg in _check_threshold_values(merged, set(merged)):
+                if msg not in seen_value:
+                    seen_value.add(msg)
+                    problems.append(f"{pt}/{family or '_default'}: {msg}")
             for s in eval_debug.signatures_scoped(pt, family):
                 if s.get("enabled") is False:
                     continue

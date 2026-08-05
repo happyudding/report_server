@@ -298,8 +298,14 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   admin 로그인 상태면 바로 들어간다. 별도 토큰인 이유는 `voc_gate_token()` docstring 과
   동일(경로가 달라 admin 쿠키가 안 실리고, 값이 같으면 유출 시 서로 재사용됨).
   비-GET 은 admin 패널과 같은 `X-Admin-Request: 1` 헤더 요구(CSRF).
-- **탭 5개**:
-  1. *Thresholds* — 제품군 × family_product 드롭다운으로 오버레이 편집. 병합 순서는
+- **편집 범위 선택기는 페이지 상단 1쌍**(`#scPt`/`#scFam`, 2026-08-05) — Thresholds 와
+  Signatures 가 공유한다. 탭마다 따로 두면 두 탭의 범위가 어긋난 채 "고친 값이 왜 안 먹지"
+  가 되기 때문이다. 첫 옵션 **기준값(전 제품 공통)** 에서는 Signatures 가 signatures.yaml 을
+  직접 편집하고, Thresholds 는 **읽기 전용**으로 default 를 보여준다(패널은 제품군 오버레이만
+  저장한다 — `read_thresholds(pt="")` 가 그 뷰를 내려준다). 트레이스 탭은 세션의 제품군을
+  따르므로 이 선택기와 무관하다.
+- **탭 6개**:
+  1. *Thresholds* — 상단 범위 선택기로 오버레이 편집. 병합 순서는
      `default → product_type(레거시 섹션) → thresholds/<PT>/_default.yaml →
      thresholds/<PT>/<FAMILY>.yaml → item_class`.
      **입력칸에는 "이 범위에 적용될 값"(상속 포함)을 채워 보여주고, 저장 시 상속값과 같은
@@ -312,6 +318,9 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
      접이식에는 통계 초보용 긴 설명이 붙는다 — 정본은 패널 옆 파일
      [server/eval_panel/threshold_help.yaml](../server/eval_panel/threshold_help.yaml)
      (`rules_io.threshold_help`, 키가 없으면 한 줄 요약만 나온다).
+     키가 40개 가까이라 **키·설명 검색 + "직접 지정만" 토글**이 있다(2026-08-05).
+     둘 다 재렌더가 아니라 **행 표시/숨김**이다 — 다시 그리면 입력 중이던 값이 날아간다.
+     숨긴 행도 저장 대상에는 그대로 포함된다(저장은 `.th-val` 전체를 순회).
   2. *Signatures* — 21종 enable/disable + 조건(when_metric)·status_hint·issue_category·
      문구(phenomenon/action/evidence) 편집. 체크박스로 **여러 개 골라
      일괄 켜기/끄기**(`POST /api/signatures/enabled` — yaml 쓰기·백업·rev bump 1회).
@@ -331,6 +340,17 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
      편집한다(중괄호가 여러 개인 기존 템플릿은 원문 1칸으로 남는다).
      **신규 추가/삭제는 지원하지 않는다** — `status.py SPECIFICITY_ORDER` 코드와 동기화가
      필요해 UI 만으로는 안전하지 않다.
+     - 검색은 **id 뿐 아니라 현상·점검제안·조건 텍스트**까지 훑고(대소문자 무시), Thresholds
+       와 같은 이유로 재렌더가 아니라 카드 표시/숨김이다(2026-08-05).
+     - 저장 전에 **조건 문제를 카드 안에 인라인 표시**한다(지표 중복 → 마지막 행만 저장됨 /
+       한쪽만 채운 행 → 저장 시 버려짐 / 없는 임계값 / 이름 형식). 표시일 뿐 저장을 막지는
+       않는다 — 최종 권위는 서버 `_validate_signature_payload` 다.
+     - **SUBPOP_GAP 카드는 조건·근거가 읽기 전용**이다(2026-08-05). 이 룰은 `when_metric` 이
+       판정에 쓰이지 않으므로(아래 트레이스 항목) 고쳐도 아무 일이 안 일어나는 칸을 열어두면
+       오해가 쌓인다. 대신 실제로 효력이 있는 `subpop_*`·`bimodality_warn` 7종으로 가는
+       바로가기 칩을 보여주고, 저장 시 두 필드를 payload 에서 아예 뺀다. id 는 하드코딩하지
+       않고 `eval_debug.subpop_gap_id()`(엔진 `signatures._SUBPOP_GAP_ID`)를 `/api/meta` 로
+       받는다.
   3. *L0~L6 트레이스* — 세션 1건을 AI Comment 와 **같은 경로**(loader→mode_tables→
      `ai_comment._table_to_raw_df`)로 재현하되 `evaluate()` 대신 단계 함수를 직접 호출해
      raw_metrics/features/조건분해를 노출한다. signature 21행 매트릭스에 조건별
@@ -367,13 +387,36 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
        `ingest.UNIT_TO_VALUE_TYPE` 에 없어서 생기는 오분류다.
      - 함께 렌더되는 필드: `secondary_signatures`(배지) · `evidence`(L4 판정 근거) ·
        `precedents`(L5 선례) · `ctx_values`(접힌 표 — 조건 분해의 actual 원천).
+     - **케이스 상세는 엔진이 도는 순서로 배치**한다(2026-08-05): 결론 배지 → 정답 라벨(접이식,
+       열림 상태 유지) → **L0 수집·분류**(item_class·`unit → value_type`·LSL/USL 유무·n·source)
+       → L1 raw_metrics → L2 features + 분포차트 → L3(적용 임계값·ctx_values 접이식 + 매트릭스)
+       → L4 evidence → L5 comment·선례 → L6 저장 게이트. 어디서 끊겼는지 위에서 아래로 따라
+       읽게 하기 위함이고, **L0 의 "limit 없음" 이 무판정 원인 2순위**라 맨 위로 올렸다.
+     - **전후 비교**(2026-08-05): 룰을 고치고 같은 세션을 다시 트레이스하면 직전 실행과의
+       차이만 카드로 보여준다 — status/primary/L6 저장/**발화 집합**이 바뀐 케이스(＋/－ 칩),
+       새로 생기거나 사라진 케이스. 서버가 `trace_store.latest_for_session()` 으로 직전 run 을
+       찾아(`put()` 전에 조회) `_trace_diff` 를 계산해 응답 `diff` 로 내린다. 케이스 키는
+       `(source_index, item_raw, bin)` 이고 **중복 키는 비교에서 뺀다**(어느 쪽과 비교할지
+       알 수 없어 오보가 난다). 보관이 LRU 4런/30분이라 직전 run 이 밀려났으면 `diff:null` 로
+       카드를 숨긴다(best-effort — 없어도 기능은 무손상). 케이스 상한(전체/400)이 다르면
+       케이스 집합 차이가 룰 변화로 오인되므로 비교를 생략하고 사유만 표시한다.
+     - **필터**(2026-08-05): 항목명 외에 status·**발화 룰**·source 별 필터. 후보는 이번
+       트레이스 결과에서 뽑고(`fired_ids` 합집합 등), 재실행해도 고르고 있던 값을 유지한다
+       (전후 비교 흐름에서 매번 다시 고르지 않게).
+     - **바로가기**(2026-08-05): 매트릭스의 룰 id → Signatures 탭 그 카드, 조건의 임계값 이름
+       → Thresholds 탭 그 행(둘 다 펼침+강조). "이 룰이 왜 안 떴지 → 고치러 간다" 동선이
+       끊겨 있던 것을 잇는다. 상단 범위 선택기를 공유하므로 이동해도 범위가 유지된다.
+     - **기존 라벨 프리필**(2026-08-05): 이미 검수한 케이스면 `GET .../case/<i>` 응답의
+       `label` 필드(`eval_export.get_panel_label` — `save_human_label` 과 **같은 case_id
+       산식**)로 폼을 채우고 "기존 라벨" 배지를 단다. 조회 실패는 상세 열람을 막지 않는다.
   4. *Eval DB* — **admin 대시보드에서 이관**(2026-08-03). 코멘트 라벨 목록·검색·컬럼 토글·
      CSV export·Unit 그룹 교정·세션 재적재·케이스 삭제. 마크업/JS 는 admin_panel.html 에서
      그대로 옮겼고 구현 모듈은 여전히 `admin_panel/eval_admin.py` 를 import 한다
      (라우트만 `/pe/eval/api/eval/*` 로 이동 — admin 쪽 구 라우트는 삭제).
      eval 관련 화면을 한 페이지에 모으기 위한 이동이다.
   5. *검증·백업* — 참조 무결성(`when_metric` 이 참조하는 임계값 키 존재, 오버레이 고아
-     파일, 전 PT×family 조합 병합 시뮬레이션, SPECIFICITY_ORDER 정합) + 백업 목록/복원.
+     파일, 전 PT×family 조합 병합 시뮬레이션, SPECIFICITY_ORDER 정합) + 백업 목록/복원
+     + **골든셋 회귀**(2026-08-05, §12-1).
   6. *채점* (2026-08-03) — **엔진 판정 vs 사람 정답** 집계. 트레이스 케이스 상세의
      "정답 라벨" 폼(수용/정정 + 코멘트/root cause)이 `POST /pe/eval/api/eval/label` →
      `eval_export.save_human_label` 로 export DB 에 **evaluation(엔진 스냅샷) +
@@ -381,14 +424,45 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
      채점 탭이 `eval_admin.scoring()` 으로 혼동행렬·status 일치율·MAJOR+ 정밀도/재현율·
      수용률·signature 별 집계를 보여준다. **이 쌍이 룰 정확도 검증(calibrate 후속 3번)의
      원재료**다. 검증: [tests/test_eval_label_scoring.py](../tests/test_eval_label_scoring.py).
-- **저장 파이프라인**: 검증 → `rules/_backup/` 백업(파일당 50개, 같은 초면 `-2` 접미사)
-  → tmp+`os.replace` 원자적 쓰기(LF 유지) → `.rules_rev` +1 → 감사 로그
-  `action=eval_rules_edit`, `client_user=eval-panel`.
+- **저장 파이프라인**: **낙관적 잠금** → 검증 → **no-op 판정** → `rules/_backup/` 백업(파일당
+  50개, 같은 초면 `-2` 접미사) → tmp+`os.replace` 원자적 쓰기(LF 유지) → `.rules_rev` +1 →
+  감사 로그 `action=eval_rules_edit`, `client_user=eval-panel`.
   ⚠ signatures.yaml 재작성은 **선두 주석 블록만 보존**하고 인라인 주석은 잃는다(백업이 이력).
-- **패널이 만드는 파일** (전부 rules/ 하위, 없으면 엔진은 종전과 동일 동작):
-  `thresholds/<PT>/*.yaml` 오버레이 · `_backup/*.bak` · `.rules_rev`.
+- **저장 안전장치 3종** (2026-08-05, 변경 5개 라우트 = thresholds PUT / signatures PUT /
+  signatures enabled / signature reset / exclusions PUT):
+  1. **낙관적 잠금** — 화면이 들고 있던 `base_rules_rev` 를 요청에 실어 보내고 현재 값과
+     다르면 409(`conflict:true` + 현재 rev). **필드가 없어도 409** 다: 클라이언트가 이
+     HTML 하나뿐이고 HTML 과 라우트는 같이 배포되므로, 필드 없는 요청 = 배포 전에 열어 둔
+     구버전 화면 = 정의상 stale 이다. 프런트는 `getJSON`/`sendJSON` 이 모든 응답의
+     `rules_rev` 를 한 곳에서 추적하므로(`RULES_REV`) 같은 탭 안의 연속 저장은 충돌하지
+     않는다. 서버는 rev 검사~파일 쓰기를 `_rules_lock` 으로 직렬화한다(TOCTOU).
+  2. **no-op 스킵** — 파싱된 값이 그대로면 백업·쓰기·rev 증가를 **전부 건너뛰고**
+     `no_op:true` 를 돌려준다. rev 를 올리면 ai_comment 옵션 세션의 리포트 캐시가 통째로
+     무효화되므로(§5) "저장 눌렀지만 안 바뀐" 경우까지 재평가시키지 않기 위함이다.
+  3. **변경 사유**(선택) — 입력하면 감사 로그 `changed_fields` 에 `reason=…`(200자)로 남는다.
+     필수로 하지 않은 것은 튜닝 중 저장이 잦아 마찰만 커지기 때문.
+- **임계값 관계·타입 검증** (2026-08-05, `rules_io._check_threshold_values`): 엔진이 암묵
+  전제하는 불변식(`cpk_bad ≤ cpk_warn`, `outlier_ratio_warn ≤ outlier_ratio_bad`,
+  `center_region_pct < edge_region_pct`, `subpop_density_gap_warn ≤ …_strong`)과 값 종류
+  (ratio 0~1 / count 양의 정수 / positive)를 검사해 위반이면 **400 으로 거부**한다. 위반은
+  실험이 아니라 조용한 오동작이다. 두 가지 규약에 주의:
+  - 검사는 **병합 결과(effective) 기준**이다 — 오버레이가 관계쌍의 한쪽만 덮으면 파일
+    단독으로는 판정할 수 없다(`_inherited_thresholds` 를 read/save 가 공유한다).
+  - 단, **이번 저장이 실제로 바꾼 키**가 쌍에 걸릴 때만 본다. 상위 층에 이미 있던 위반
+    때문에 무관한 키 저장까지 막히지 않게 하기 위함이고, 그 위반은 `validate_all()`(검증
+    탭)이 전 PT×family 조합에서 전역 보고한다.
+  - `THRESHOLD_KINDS` 는 **opt-in 표**다 — 없는 키는 검사하지 않는다(새 임계값이 저장을
+    막지 않게). "큰 값을 넣어 사실상 끄기" 가 정당한 키는 일부러 뺐다(그 용도는
+    signature `enabled:false` 가 담당).
+- **패널이 만드는 파일** (rules/ 하위는 없으면 엔진이 종전과 동일 동작):
+  `thresholds/<PT>/*.yaml` · `signatures/<PT>/*.yaml` 오버레이 · `_backup/*.bak` ·
+  `.rules_rev` · (rules 밖) `tools/eval_golden/golden.yaml` + 그 옆 `_backup/`.
 - 검증: [eval_analyzer/tests/test_rules_scope.py](../eval_analyzer/tests/test_rules_scope.py)
-  (트리 없을 때 무회귀 / 병합 우선순위 / mtime 자동 리로드 / enabled 미발화).
+  (트리 없을 때 무회귀 / 병합 우선순위 / mtime 자동 리로드 / enabled 미발화) ·
+  [tests/test_rules_io_guards.py](../tests/test_rules_io_guards.py)(관계·타입 검증, no-op,
+  배포 default 전 키 통과) · [tests/test_trace_diff.py](../tests/test_trace_diff.py)
+  (전후 비교, 중복 키 제외, 직전 run 조회 TTL) ·
+  [tests/test_eval_golden_io.py](../tests/test_eval_golden_io.py).
 
 ## 12. 룰 축소 디버깅 체제 (2026-08-03)
 
@@ -417,6 +491,34 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   `python tools/eval_golden/golden_check.py` 가 실제 트레이스와 대조해 누락/오탐을 센다
   (불일치 있으면 exit 1). `eval_debug.trace_session` 만 쓰므로 import 3곳 규약 밖이 아니다.
   임계값을 만지기 **전에** 몇 줄이라도 적어 두는 것이 이 도구의 전부다.
+
+### 12-1. 골든셋 ↔ 패널 연결 (2026-08-05)
+
+"손으로 적어 두라"는 규약은 실제로 아무도 적지 않아 `golden.yaml` 이 계속 비어 있었다.
+쌓는 비용과 돌리는 비용을 둘 다 패널로 옮겼다.
+
+- **쌓기**: 트레이스 케이스 상세의 **"골든셋에 추가"** → `POST /pe/eval/api/golden/add
+  {token, index}`. 그 케이스의 **현재 발화 상태**(뜬 룰 집합 + status)를 기대값으로 적는다.
+  같은 `(item, bin, source)` 항목이 있으면 **교체**한다(룰을 고쳐 기대값 자체가 바뀌는 것이
+  정상 흐름이라 중복을 쌓지 않는다). 발화 0건이면 `fire` 키를 넣지 않는다.
+- **돌리기**: 검증·백업 탭의 **"회귀 실행"** → `POST /pe/eval/api/golden/check`. CLI 와
+  **같은 대조 로직**(`golden_check._check_cases`)을 쓰고 세션마다 트레이스를 1회씩 돈다.
+  동기 실행이며 `_trace_lock` 을 전 구간 보유한다(도는 동안 수동 트레이스는 409). 지금
+  골든 세션은 손으로 늘리는 소수 건이라 요청 안에서 끝내지만, **10건/1분을 넘기기 시작하면
+  trace_store 처럼 토큰 폴링으로 바꿔야 한다**(코드에 주석으로 핀). 세션별 예외는 `error`
+  필드로 격리해 한 세션 실패가 전체를 죽이지 않는다.
+- **CLI 무변경**: `check_session` 을 (트레이스 호출)과 (순수 대조 `_check_cases`)로 쪼개고
+  finding 을 dict(`kind`/`item`/`bin`/`signature`/`text`)로 바꿨지만, `text` 에 종전 문장을
+  그대로 담아 `main()` 이 그것만 출력한다 → **stdout·종료코드 동일**. 부수 개선으로
+  `max_cases=None`(전체)로 트레이스한다 — 기본 상한 400 이면 뒤쪽 항목이 통째로
+  `[케이스없음]` 오탐이 됐다.
+- **파일 IO**: [server/eval_panel/golden_io.py](../server/eval_panel/golden_io.py).
+  선두 주석 보존 + 원자적 쓰기는 `rules_io` 헬퍼를 재사용하지만 **백업만은 골든셋 옆
+  `tools/eval_golden/_backup/`** 에 둔다 — `rules/_backup/` 에 섞이면 검증·백업 탭의 "복원"
+  버튼이 golden.yaml 을 rules 디렉토리로 되돌리려 한다. 골든셋은 룰이 아니므로
+  **`.rules_rev` 를 올리지 않는다**(엔진 판정이 안 바뀌니 세션 캐시를 갈 이유가 없다).
+- 검증: [tests/test_eval_golden_io.py](../tests/test_eval_golden_io.py)
+  (추가/교체/주석 보존/백업 위치 + `_check_cases` 4종 finding).
 
 ## 13. value_type 어휘 `P_F` → `PF` + 단위 별칭 확장 (2026-08-04)
 

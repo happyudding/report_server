@@ -65,7 +65,8 @@ report_server/
 │   │                            + eval.db(item 축) 두 정본을 read-only 로만 읽는다
 │   ├── admin_panel/             /pe/admin-<secret>/ 대시보드 + metrics 샘플러
 │   ├── eval_panel/              /pe/eval 룰 관리 (thresholds·signature **둘 다** 제품군/family
-│   │                            오버레이 · L0~L6 트레이스 — 저장 즉시 반영)
+│   │                            오버레이(전역 범위 선택기 공유) · L0~L6 트레이스 + **전후 비교**
+│   │                            · 골든셋 회귀 — 저장 즉시 반영, rev 낙관적 잠금·no-op 스킵)
 │   ├── tools/migrate_manifest_edits.py  manifest 편집값 → 세션 편집 DB 이전 (운영 1회 실행 완료)
 │   ├── upload_xlsx.py           POST /pe/report/upload_xlsx
 │   ├── upload_webreport.py      POST /pe/report/upload_webreport (web_report.ingest 호출)
@@ -345,7 +346,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 외부 담당자 영역 동결 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` · `server/storage_gateway/` → [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |
 | eval_analyzer 연결 (AI Comment / 코멘트 export) | [web_report/ai_comment.py](web_report/ai_comment.py) + [web_report/eval_export.py](web_report/eval_export.py) — eval_engine import 2곳 → [docs/13](docs/13_eval_analyzer_integration.md) |
 | 기준정보(part_ids) 갱신 — DRM CSV → product_info.db | [tools/product_info_import/](tools/product_info_import/README.md) (Excel PC) → [server/product_info.py](server/product_info.py) 가 읽기전용 로드 |
-| eval 룰 골든셋 회귀 (임계값 튜닝 전후 비교) | [tools/eval_golden/golden_check.py](tools/eval_golden/golden_check.py) → [docs/13 §12](docs/13_eval_analyzer_integration.md) |
+| eval 룰 골든셋 회귀 (임계값 튜닝 전후 비교) | [tools/eval_golden/golden_check.py](tools/eval_golden/golden_check.py) (CLI) + [server/eval_panel/golden_io.py](server/eval_panel/golden_io.py) (패널 추가/실행) → [docs/13 §12](docs/13_eval_analyzer_integration.md) |
 | ENGR 이력 검색 챗봇 (자연어 → 조회 툴) | [server/chatbot/](server/chatbot/README.md) — 골든셋 [tests/chatbot_golden.yaml](tests/chatbot_golden.yaml), 백필 [tools/eval_backfill/](tools/eval_backfill/backfill_eval_db.py) |
 | 더미 grids 픽스처 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |
 | web_report 성능 벤치 (이전 실행 대비 회귀 리포트) | [tests/bench_webreport.py](tests/bench_webreport.py) — 결과 `tests/bench_results/`(gitignore), 실행 절차 스킬 `.claude/skills/webreport-bench` |

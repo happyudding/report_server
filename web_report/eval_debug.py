@@ -9,6 +9,7 @@ ai_comment.py(운영 평가) / eval_export.py(코멘트 export) / **이 모듈(�
 
 엔진 사설 API 핀(엔진 변경 시 함께 확인):
   pipeline.signatures.build_ctx_values / _eval_condition / _HIGH_MOMENT_METRICS
+  pipeline.signatures._SUBPOP_GAP_ID  ← subpop_gap_id() 로 패널에 노출(특수분기 표시)
   pipeline.signatures.signatures_for  ← 트레이스가 평가와 같은 스코프 병합 결과를 봐야 한다
   pipeline._rules.thresholds_for / signatures_doc / reload_rules / threshold_overlay_path
   pipeline._rules.signatures_for / signature_overrides / signature_overlay_path
@@ -139,6 +140,17 @@ def signatures_scoped(product_type, family_product=None) -> list:
     from eval_engine.pipeline._rules import signatures_for
     return list(signatures_for({"product_type": product_type,
                                 "family_product": family_product}))
+
+
+def subpop_gap_id() -> str:
+    """when_metric 을 쓰지 않는 특수분기 signature id (엔진 값 — 패널 하드코딩 방지).
+
+    이 룰만 features.modality_v2 판정을 그대로 발화 근거로 쓰므로, 편집 화면이
+    when_metric/evidence 를 "효력 없음" 으로 표시해야 한다(_subpop_conditions 참조).
+    """
+    _eval_path()
+    from eval_engine.pipeline import signatures
+    return str(signatures._SUBPOP_GAP_ID)
 
 
 def specificity_order() -> list:

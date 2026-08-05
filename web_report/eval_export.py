@@ -498,6 +498,36 @@ def save_human_label(session: dict, *, item: str, bin_, item_class: str,
             "human_status": human_status, "accepted": accepted}
 
 
+def get_panel_label(session: dict, *, item: str, bin_) -> dict | None:
+    """이 케이스에 이미 달아 둔 패널 정답 라벨 1건 (없으면 None) — 폼 프리필용.
+
+    case_id 산식은 save_human_label 과 같아야 한다(lot 수준, wafer_number=None) —
+    다르면 방금 저장한 라벨을 못 찾는다. 조회 전용이라 DB 를 만들지 않는다.
+    """
+    from . import ai_comment
+    meta = ai_comment._session_meta(session, 0)
+    if meta is None:
+        return None
+    conn = open_conn(create=False)
+    if conn is None:                                  # eval DB 미생성 = 라벨 없음
+        return None
+    try:
+        store, _ = _engine()
+        item_id = store.resolve_item_id(item, conn=conn)
+        if item_id is None:
+            return None
+        case_id = store.make_case_id(meta["product_name"], meta["lot_id"], None,
+                                     item_id, bin_, meta["revision"])
+        row = conn.execute(
+            "SELECT label_id, human_status, human_comment, root_cause_category, "
+            "engine_comment_accepted, reviewer, created_at "
+            "FROM label WHERE case_id=? AND labeler=? "
+            "ORDER BY label_id DESC LIMIT 1", (case_id, _PANEL_LABELER)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def safe_export(session_id: str, *, report_db, upload_root, tables=None) -> dict:
     """export 실패 격리 — 예외 시 warning 로그 + skipped (ai_comment.safe_build 관례)."""
     try:

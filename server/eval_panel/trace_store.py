@@ -32,6 +32,24 @@ def put(token: str, result: dict) -> None:
         _purge(now)
 
 
+def latest_for_session(session_id: str):
+    """같은 세션의 가장 최근 run → (token, result). 없으면 None (전후 비교용).
+
+    토큰 문자열을 파싱하지 않고 result 안의 session_id 로 찾는다 — 토큰은
+    "<session_id>-<ts>" 인데 session_id 자체에 '-' 가 들어갈 수 있어 모호하다.
+    보관은 LRU 4런/TTL 이라 직전 run 이 이미 밀려났으면 None 이 정상(best-effort).
+    """
+    with _lock:
+        now = time.time()
+        for token in reversed(_runs):                 # move_to_end 이므로 뒤가 최신
+            ts, result = _runs[token]
+            if now - ts > TTL_SECONDS:
+                continue
+            if str(result.get("session_id") or "") == session_id:
+                return token, result
+        return None
+
+
 def get(token: str) -> dict | None:
     with _lock:
         entry = _runs.get(token)

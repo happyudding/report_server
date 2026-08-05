@@ -9,6 +9,7 @@
   (b) 같은 케이스 재검수 시 이전 패널 라벨은 교체된다 (case 당 정답 1건)
   (c) 기존 item_master 의 value_type 을 덮어쓰지 않는다 (선례검색 하드필터 보호)
   (d) scoring() — 혼동행렬/일치율/high-severity precision·recall/수용률 산식
+  (e) get_panel_label — 저장한 라벨을 같은 case_id 산식으로 되찾는다 (폼 프리필)
 
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례).
 """
@@ -98,7 +99,17 @@ def main():
     by_sig = {r["signature"]: r for r in sc["per_signature"]}
     assert by_sig["SEVERE_OUTLIER"]["agree_rate"] == 1.0
 
-    print("PASS: test_eval_label_scoring (a/b/c/d)")
+    # (e) 기존 라벨 조회 — 저장한 최신 1건을 되찾는다 ────────────────────────
+    got = eval_export.get_panel_label(_SESSION, item="VOUT_TRIM", bin_=18)
+    assert got is not None, "저장한 라벨을 못 찾음 (case_id 산식 불일치)"
+    assert got["human_status"] == "MAJOR", got          # (c) 의 수용 라벨이 최신
+    assert got["engine_comment_accepted"] == 1, got
+    got2 = eval_export.get_panel_label(_SESSION, item="IDD_LEAK", bin_=31)
+    assert got2["human_status"] == "CRITICAL" and got2["human_comment"] == "누설 실불량", got2
+    assert eval_export.get_panel_label(_SESSION, item="NO_SUCH_ITEM", bin_=1) is None
+    assert eval_export.get_panel_label(_SESSION, item="VOUT_TRIM", bin_=99) is None
+
+    print("PASS: test_eval_label_scoring (a/b/c/d/e)")
     return 0
 
 

@@ -24,7 +24,8 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from eval_panel import rules_io, trace_store          # noqa: E402
+from eval_panel import golden_io, rules_io, trace_store          # noqa: E402
+from tools.eval_golden import golden_check            # noqa: E402  (CLI 와 같은 대조 로직)
 from web_report import eval_debug                     # noqa: E402
 
 _log = logging.getLogger(__name__)
@@ -38,6 +39,8 @@ _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 # 트레이스는 콜드 세션이면 수 초 CPU — 관리자 전용이라 동시 1건으로 묶는다.
 _trace_lock = threading.Lock()
 _TRACE_DEFAULT_MAX_CASES = 400
+# 룰 저장 직렬화 — rev 검사와 파일 쓰기 사이의 TOCTOU 를 봉합한다(저장은 수십 ms).
+_rules_lock = threading.Lock()
 _LOGIN_PAGE_CACHE = None
 
 
@@ -100,6 +103,27 @@ def _rule_error(exc):
     return jsonify({"ok": False, "error": str(exc)}), 400
 
 
+def _rev_guard(body):
+    """낙관적 잠금 — 화면이 들고 있던 rules_rev 와 현재 값이 다르면 저장을 막는다.
+
+    base_rules_rev 미포함도 충돌로 본다: 이 패널의 클라이언트는 eval_panel.html 하나뿐이고
+    HTML 과 라우트는 같이 배포되므로, 필드가 없는 요청 = 배포 전에 열어 둔 구버전 화면
+    = 정의상 stale 이다. 미포함/불일치를 한 경로로 묶어 분기를 줄인다.
+    """
+    current = eval_debug.rules_rev()
+    if str(body.get("base_rules_rev", "\x00")) != current:
+        return jsonify({"ok": False, "conflict": True, "rules_rev": current,
+                        "error": "룰이 다른 곳에서 변경됐거나 구버전 화면입니다 "
+                                 "— 새로고침 후 다시 시도하세요"}), 409
+    return None
+
+
+def _reason(body):
+    """변경 사유(선택 입력) — 감사 로그 changed_fields 에 붙일 항목 목록."""
+    text = str(body.get("reason") or "").strip()[:200]
+    return [f"reason={text}"] if text else []
+
+
 # ── 메타 ─────────────────────────────────────────────────────────────────────
 
 @eval_panel_bp.get("/api/meta")
@@ -110,6 +134,7 @@ def api_meta():
         "threshold_keys": sorted(eval_debug.default_thresholds()),
         "default": eval_debug.default_thresholds(),
         "signature_ids": [s.get("id") for s in eval_debug.signatures_raw()],
+        "subpop_gap_id": eval_debug.subpop_gap_id(),
         "rules_rev": eval_debug.rules_rev(),
         "rules_dir": str(eval_debug.rules_dir()),
         "files": {k: _file_info(v) for k, v in files.items()},
@@ -143,15 +168,22 @@ def api_thresholds_save():
     body = request.get_json(force=True, silent=True) or {}
     pt = str(body.get("pt") or "").strip()
     family = str(body.get("family") or "").strip() or None
-    try:
-        result = rules_io.save_thresholds(pt, family, body.get("overrides") or {})
-    except rules_io.RuleError as exc:
-        _audit("eval_rules_edit", changed_fields=[f"thresholds:{pt}/{family or '_default'}"],
-               result="error")
-        return _rule_error(exc)
-    _audit("eval_rules_edit",
-           changed_fields=[f"thresholds:{pt}/{family or '_default'}",
-                           f"keys={sorted(result['saved'])}", f"rev={result['rules_rev']}"])
+    with _rules_lock:
+        conflict = _rev_guard(body)
+        if conflict:
+            return conflict
+        try:
+            result = rules_io.save_thresholds(pt, family, body.get("overrides") or {})
+        except rules_io.RuleError as exc:
+            _audit("eval_rules_edit",
+                   changed_fields=[f"thresholds:{pt}/{family or '_default'}"] + _reason(body),
+                   result="error")
+            return _rule_error(exc)
+    if not result.get("no_op"):
+        _audit("eval_rules_edit",
+               changed_fields=[f"thresholds:{pt}/{family or '_default'}",
+                               f"keys={sorted(result['saved'])}",
+                               f"rev={result['rules_rev']}"] + _reason(body))
     result["ok"] = True
     return jsonify(result)
 
@@ -181,15 +213,20 @@ def api_signatures_bulk_enabled():
     body = request.get_json(force=True, silent=True) or {}
     enabled = bool(body.get("enabled"))
     pt, family = _scope_args(body)
-    try:
-        result = rules_io.set_signatures_enabled(body.get("ids") or [], enabled, pt, family)
-    except rules_io.RuleError as exc:
-        return _rule_error(exc)
+    with _rules_lock:
+        conflict = _rev_guard(body)
+        if conflict:
+            return conflict
+        try:
+            result = rules_io.set_signatures_enabled(body.get("ids") or [], enabled, pt, family)
+        except rules_io.RuleError as exc:
+            return _rule_error(exc)
     if result["changed"]:
         _audit("eval_rules_edit",
                changed_fields=[f"signatures_enabled={enabled}",
                                f"scope={pt or '기준값'}/{family or '_default'}",
-                               f"ids={result['changed']}", f"rev={result['rules_rev']}"])
+                               f"ids={result['changed']}",
+                               f"rev={result['rules_rev']}"] + _reason(body))
     result["ok"] = True
     return jsonify(result)
 
@@ -198,15 +235,22 @@ def api_signatures_bulk_enabled():
 def api_signature_save(sig_id):
     body = request.get_json(force=True, silent=True) or {}
     pt, family = _scope_args(body)
-    try:
-        result = rules_io.save_signature(sig_id, body, pt, family)
-    except rules_io.RuleError as exc:
-        _audit("eval_rules_edit", changed_fields=[f"signature:{sig_id}"], result="error")
-        return _rule_error(exc)
-    _audit("eval_rules_edit",
-           changed_fields=[f"signature:{sig_id}",
-                           f"scope={pt or '기준값'}/{family or '_default'}",
-                           f"fields={result['updated']}", f"rev={result['rules_rev']}"])
+    with _rules_lock:
+        conflict = _rev_guard(body)
+        if conflict:
+            return conflict
+        try:
+            result = rules_io.save_signature(sig_id, body, pt, family)
+        except rules_io.RuleError as exc:
+            _audit("eval_rules_edit", changed_fields=[f"signature:{sig_id}"] + _reason(body),
+                   result="error")
+            return _rule_error(exc)
+    if not result.get("no_op"):
+        _audit("eval_rules_edit",
+               changed_fields=[f"signature:{sig_id}",
+                               f"scope={pt or '기준값'}/{family or '_default'}",
+                               f"fields={result['updated']}",
+                               f"rev={result['rules_rev']}"] + _reason(body))
     result["ok"] = True
     return jsonify(result)
 
@@ -218,14 +262,18 @@ def api_signature_reset(sig_id):
     pt, family = _scope_args(body)
     if not pt:
         return jsonify({"ok": False, "error": "제품군을 먼저 고르세요"}), 400
-    try:
-        result = rules_io.reset_signature(sig_id, pt, family)
-    except rules_io.RuleError as exc:
-        return _rule_error(exc)
+    with _rules_lock:
+        conflict = _rev_guard(body)
+        if conflict:
+            return conflict
+        try:
+            result = rules_io.reset_signature(sig_id, pt, family)
+        except rules_io.RuleError as exc:
+            return _rule_error(exc)
     if result["removed"]:
         _audit("eval_rules_edit",
                changed_fields=[f"signature_reset:{sig_id}", f"scope={pt}/{family or '_default'}",
-                               f"rev={result['rules_rev']}"])
+                               f"rev={result['rules_rev']}"] + _reason(body))
     result["ok"] = True
     return jsonify(result)
 
@@ -240,16 +288,21 @@ def api_exclusions():
 @eval_panel_bp.put("/api/exclusions")
 def api_exclusions_save():
     body = request.get_json(force=True, silent=True) or {}
-    try:
-        result = rules_io.save_exclusions(body)
-    except rules_io.RuleError as exc:
-        _audit("eval_rules_edit", changed_fields=["exclusions"], result="error")
-        return _rule_error(exc)
-    _audit("eval_rules_edit",
-           changed_fields=["exclusions",
-                           f"item_contains={result['saved']['item_contains']}",
-                           f"units={result['saved']['units']}",
-                           f"rev={result['rules_rev']}"])
+    with _rules_lock:
+        conflict = _rev_guard(body)
+        if conflict:
+            return conflict
+        try:
+            result = rules_io.save_exclusions(body)
+        except rules_io.RuleError as exc:
+            _audit("eval_rules_edit", changed_fields=["exclusions"], result="error")
+            return _rule_error(exc)
+    if not result.get("no_op"):
+        _audit("eval_rules_edit",
+               changed_fields=["exclusions",
+                               f"item_contains={result['saved']['item_contains']}",
+                               f"units={result['saved']['units']}",
+                               f"rev={result['rules_rev']}"] + _reason(body))
     result["ok"] = True
     return jsonify(result)
 
@@ -463,17 +516,75 @@ def api_sessions():
         for r in items]})
 
 
+def _fired_set(case):
+    return {r["id"] for r in (case.get("signature_matrix") or []) if r.get("fired")}
+
+
 def _summary_row(index, case):
     return {"idx": index, "source": case.get("source"),
+            "source_index": case.get("source_index"),
             "item_raw": case.get("item_raw"), "bin": case.get("bin"),
             "item_class": case.get("item_class"), "status": case.get("status"),
             "value_type": case.get("value_type"),
             "primary_signature": case.get("primary_signature"),
             "fired_count": sum(1 for r in case["signature_matrix"] if r["fired"]),
+            "fired_ids": sorted(_fired_set(case)),
             "stored": case.get("stored"),
             "cpk": (case.get("raw_metrics") or {}).get("cpk"),
             "yield": (case.get("raw_metrics") or {}).get("yield"),
             "n_dut": (case.get("features") or {}).get("n_dut")}
+
+
+def _case_key(case):
+    return (case.get("source_index"), str(case.get("item_raw") or ""), case.get("bin"))
+
+
+def _by_key(cases):
+    """케이스 → {키: (idx, case)}. 같은 키가 둘 이상이면 **양쪽 다 버린다** —
+    어느 쪽과 비교해야 하는지 알 수 없어 오보가 나느니 비교에서 빼는 편이 낫다."""
+    out, dup = {}, set()
+    for idx, case in enumerate(cases):
+        key = _case_key(case)
+        if key in out:
+            dup.add(key)
+        out[key] = (idx, case)
+    for key in dup:
+        out.pop(key, None)
+    return out
+
+
+def _snapshot(case):
+    return {"status": case.get("status"), "primary": case.get("primary_signature"),
+            "stored": bool(case.get("stored")), "fired": sorted(_fired_set(case))}
+
+
+def _trace_diff(prev_cases, new_cases):
+    """직전 run 대비 변화만 추린다 (룰 수정 전후 비교).
+
+    changed = status/primary/stored/발화집합 중 하나라도 다른 케이스.
+    added/removed = 케이스 집합 자체의 증감(항목 제외 규칙을 고친 경우 등).
+    """
+    prev, new = _by_key(prev_cases), _by_key(new_cases)
+    changed, added, removed = [], [], []
+    for key, (idx, case) in new.items():
+        if key not in prev:
+            added.append({"idx": idx, "source_index": key[0], "item_raw": key[1],
+                          "bin": key[2], "status": case.get("status")})
+            continue
+        old, cur = _snapshot(prev[key][1]), _snapshot(case)
+        if old == cur:
+            continue
+        old_fired, cur_fired = set(old["fired"]), set(cur["fired"])
+        changed.append({"idx": idx, "source_index": key[0], "item_raw": key[1], "bin": key[2],
+                        "old": old, "new": cur,
+                        "fired_added": sorted(cur_fired - old_fired),
+                        "fired_removed": sorted(old_fired - cur_fired)})
+    for key, (_, case) in prev.items():
+        if key not in new:
+            removed.append({"source_index": key[0], "item_raw": key[1], "bin": key[2],
+                            "old_status": case.get("status")})
+    return {"changed": changed, "added": added, "removed": removed,
+            "compared": len(new)}
 
 
 @eval_panel_bp.post("/api/trace")
@@ -501,10 +612,23 @@ def api_trace():
     finally:
         _trace_lock.release()
 
+    # 직전 run 과의 diff — put() **전에** 조회해야 방금 만든 결과를 자기 자신과 비교하지
+    # 않는다. 보관은 LRU 4런/30분이라 없을 수 있다(best-effort — 없으면 diff=None).
+    diff = None
+    prev = trace_store.latest_for_session(session_id)
+    if prev is not None:
+        prev_token, prev_result = prev
+        if prev_result.get("max_cases") != result.get("max_cases"):
+            diff = {"skipped": "직전 트레이스와 케이스 상한이 달라 비교를 생략했습니다 "
+                               "(전체/기본 을 맞춰 다시 실행하세요)"}
+        else:
+            diff = {"prev_token": prev_token, "prev_rules_rev": prev_result.get("rules_rev"),
+                    **_trace_diff(prev_result.get("cases") or [], result["cases"])}
+
     token = f"{session_id}-{int(time.time())}"
     trace_store.put(token, result)
     return jsonify({
-        "ok": True, "token": token, "session_id": session_id,
+        "ok": True, "token": token, "session_id": session_id, "diff": diff,
         "mode": result["mode"], "product_type": result["product_type"],
         "family_product": result["family_product"],
         "engine_version": result["engine_version"], "rules_rev": result["rules_rev"],
@@ -523,4 +647,102 @@ def api_trace_case(token, index):
     cases = result.get("cases") or []
     if index < 0 or index >= len(cases):
         return jsonify({"ok": False, "error": "케이스 번호 범위 밖"}), 404
-    return jsonify({"ok": True, "case": cases[index]})
+    case = cases[index]
+    # 이미 검수한 케이스면 라벨 폼을 그 값으로 채운다. 조회 실패가 상세 열람 자체를
+    # 막으면 안 되므로 best-effort (eval DB 미생성·스키마 차이 등).
+    label = None
+    try:
+        from web_report import eval_export
+        session = report_db.get_session(result["session_id"])
+        if session:
+            label = eval_export.get_panel_label(dict(session),
+                                                item=str(case.get("item_raw") or ""),
+                                                bin_=case.get("bin"))
+    except Exception:
+        _log.warning("기존 라벨 조회 실패 sid=%s", result.get("session_id"), exc_info=True)
+    return jsonify({"ok": True, "case": case, "label": label})
+
+
+# ── 골든셋 (기대 발화 회귀 — tools/eval_golden) ───────────────────────────────
+
+@eval_panel_bp.get("/api/golden")
+def api_golden():
+    doc = golden_io.read_golden()
+    return jsonify({"ok": True, "path": str(golden_io.GOLDEN_FILE),
+                    "sessions": doc["sessions"],
+                    "total_expect": sum(len(s.get("expect") or [])
+                                        for s in doc["sessions"])})
+
+
+@eval_panel_bp.post("/api/golden/add")
+def api_golden_add():
+    """트레이스 케이스의 현재 발화 상태를 골든셋 기대값으로 기록."""
+    body = request.get_json(force=True, silent=True) or {}
+    result = trace_store.get(str(body.get("token") or ""))
+    if result is None:
+        return jsonify({"ok": False,
+                        "error": "트레이스 결과가 만료됐습니다 — 다시 실행하세요"}), 404
+    cases = result.get("cases") or []
+    index = body.get("index")
+    if not isinstance(index, int) or index < 0 or index >= len(cases):
+        return jsonify({"ok": False, "error": "케이스 번호 범위 밖"}), 400
+    case = cases[index]
+    session = report_db.get_session(result["session_id"]) or {}
+    note = " · ".join(x for x in [
+        f"{result.get('product_type') or '-'}/{result.get('family_product') or '-'}",
+        str(session.get("product") or ""), str(session.get("lot_id") or "")] if x)
+    try:
+        saved = golden_io.add_case(result["session_id"], note, case)
+    except rules_io.RuleError as exc:
+        return _rule_error(exc)
+    _audit("eval_golden",
+           changed_fields=[f"add:{result['session_id']}", f"item={case.get('item_raw')}",
+                           f"bin={case.get('bin')}",
+                           f"fire={saved['entry'].get('fire') or []}",
+                           f"replaced={saved['replaced']}"])
+    saved["ok"] = True
+    return jsonify(saved)
+
+
+@eval_panel_bp.post("/api/golden/check")
+def api_golden_check():
+    """골든셋 회귀 실행 — 세션마다 트레이스 1회라 CPU 를 쓴다(동기 실행).
+
+    현재 골든 세션은 손으로 늘리는 소수 건이라 요청 안에서 끝낸다. 10건 이상/1분 이상이
+    되면 trace_store 처럼 토큰 폴링으로 바꿀 것. 그동안 수동 트레이스는 409 를 받는다.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    only = str(body.get("session_id") or "").strip()
+    entries = golden_io.read_golden()["sessions"]
+    if only:
+        entries = [e for e in entries if str(e.get("session_id") or "") == only]
+    if not entries:
+        return jsonify({"ok": True, "sessions": [], "total_checked": 0, "total_findings": 0,
+                        "rules_rev": eval_debug.rules_rev(),
+                        "note": "골든셋이 비어 있습니다 — 트레이스 케이스에서 "
+                                "'골든셋에 추가' 로 채우세요"})
+    if not _trace_lock.acquire(blocking=False):
+        return jsonify({"ok": False, "error": "다른 트레이스가 실행 중입니다"}), 409
+    t0 = time.perf_counter()
+    rows, total_checked, total_findings = [], 0, 0
+    try:
+        for entry in entries:
+            sid = str(entry.get("session_id") or "")
+            row = {"session_id": sid, "note": entry.get("note"), "checked": 0, "findings": []}
+            try:
+                findings, checked = golden_check.check_session(entry)
+            except Exception as exc:                       # 세션 삭제·parquet 유실 등
+                row["error"] = f"{type(exc).__name__}: {exc}"
+                total_findings += 1
+                rows.append(row)
+                continue
+            row["checked"], row["findings"] = checked, findings
+            total_checked += checked
+            total_findings += len(findings)
+            rows.append(row)
+    finally:
+        _trace_lock.release()
+    return jsonify({"ok": True, "sessions": rows, "total_checked": total_checked,
+                    "total_findings": total_findings,
+                    "rules_rev": eval_debug.rules_rev(),
+                    "elapsed_ms": int((time.perf_counter() - t0) * 1000)})

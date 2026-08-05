@@ -47,12 +47,19 @@ def _match(case, exp):
     return True
 
 
-def check_session(entry):
-    """세션 1건 검사 → (findings, checked) — findings 는 사람이 읽는 문자열 목록."""
-    session_id = str(entry["session_id"])
-    trace = eval_debug.trace_session(session_id, report_db=report_db,
-                                     upload_root=Path(config.REPORT_UPLOAD_DIR))
-    cases = trace.get("cases") or []
+def _finding(kind, exp, text, signature=None):
+    """finding 1건 — `text` 는 CLI 출력 원문 그대로, 나머지는 패널 렌더용 분해."""
+    return {"kind": kind, "item": str(exp.get("item") or ""), "bin": exp.get("bin"),
+            "signature": signature, "text": text}
+
+
+def _check_cases(entry, cases):
+    """기대값 vs 트레이스 케이스 대조 (순수 함수 — 트레이스 없이 테스트 가능).
+
+    반환 (findings, checked). findings 원소는 dict 이고 `text` 에 사람이 읽는 문장을
+    담는다 — CLI 는 그 문장만 출력하므로 stdout 형식은 종전과 같다.
+    """
+    session_id = str(entry.get("session_id") or "")
     findings, checked = [], 0
     for exp in entry.get("expect") or []:
         matched = [c for c in cases if _match(c, exp)]
@@ -60,23 +67,42 @@ def check_session(entry):
         if exp.get("bin") is not None:
             label += f" bin{exp['bin']}"
         if not matched:
-            findings.append(f"  [케이스없음] {label} — 트레이스에 이 항목이 없다")
+            findings.append(_finding("케이스없음", exp,
+                                     f"  [케이스없음] {label} — 트레이스에 이 항목이 없다"))
             continue
         checked += 1
         fired = set().union(*(_fired(c) for c in matched))
         for sig in exp.get("fire") or []:
             if sig not in fired:
-                findings.append(f"  [누락]   {label} — {sig} 가 안 떴다 "
-                                f"(실제 발화: {', '.join(sorted(fired)) or '없음'})")
+                findings.append(_finding("누락", exp,
+                                         f"  [누락]   {label} — {sig} 가 안 떴다 "
+                                         f"(실제 발화: {', '.join(sorted(fired)) or '없음'})",
+                                         signature=sig))
         for sig in exp.get("not_fire") or []:
             if sig in fired:
-                findings.append(f"  [오탐]   {label} — {sig} 가 떴다")
+                findings.append(_finding("오탐", exp,
+                                         f"  [오탐]   {label} — {sig} 가 떴다", signature=sig))
         want_status = exp.get("status")
         if want_status:
             got = {str(c.get("status")) for c in matched}
             if want_status not in got:
-                findings.append(f"  [status] {label} — 기대 {want_status}, 실제 {'/'.join(sorted(got))}")
+                findings.append(_finding("status", exp,
+                                         f"  [status] {label} — 기대 {want_status}, "
+                                         f"실제 {'/'.join(sorted(got))}"))
     return findings, checked
+
+
+def check_session(entry):
+    """세션 1건 검사 → (findings, checked). findings 는 _check_cases 의 dict 목록.
+
+    max_cases=None (전체) 로 트레이스한다 — 기본 상한 400 이면 뒤쪽 항목이 통째로
+    [케이스없음] 으로 잡혀 오탐이 된다.
+    """
+    session_id = str(entry["session_id"])
+    trace = eval_debug.trace_session(session_id, report_db=report_db,
+                                     upload_root=Path(config.REPORT_UPLOAD_DIR),
+                                     max_cases=None)
+    return _check_cases(entry, trace.get("cases") or [])
 
 
 def main():
@@ -107,7 +133,7 @@ def main():
             continue
         total_checked += checked
         if findings:
-            print("\n".join(findings))
+            print("\n".join(f["text"] for f in findings))
             total_find.extend(findings)
         else:
             print(f"  일치 ({checked}건)")
