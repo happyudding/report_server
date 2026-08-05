@@ -30,6 +30,7 @@ from . import dist_blob as _dist_blob
 from . import dist_pack as _dist_pack
 from . import dist_pack_store
 from . import edits
+from . import eta
 from . import preprocess as _preprocess
 from . import rawedit as _rawedit
 from . import rawvalues
@@ -231,12 +232,16 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 time.perf_counter() - t0)
                             # 단계별 기록 — 워커 안이면 부모로 실려가고(compute.report_job),
                             # 부모 인라인이면 여기서 바로 파일에 남는다.
+                            # 입력 규모(셀·항목 수) — eta.calibration_factor 가 이 기록과
+                            # 실측 시간을 비교해 예상시간 배율을 학습한다(web_report/eta.py).
+                            mcells, kcols = eta.shape_from_tables(tables)
                             build_log.finish({
                                 "kind": "report", "session": session_id,
                                 "akey": str(analysis_key)[:12], "offloaded": False,
                                 "result": "ok", "total": round(time.perf_counter() - t0, 3),
                                 "stages": stages, "sources": len(tables),
-                                "items": len(report.get("distribution_index") or ())})
+                                "items": len(report.get("distribution_index") or ()),
+                                "mcells": mcells, "kcols": kcols})
                     finally:
                         build_log.clear_stages()
                         build_status.end(session_id, "report")

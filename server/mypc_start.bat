@@ -68,6 +68,12 @@ set "VENV_PY=%ROOT%.venv\Scripts\python.exe"
 if /i not "%PY%"=="%VENV_PY%" call :prepare_venv
 
 rem -- 최종 점검: 이 파이썬으로 서버가 뜰 수 있는지 --------------------------------
+rem   위 prepare_venv 는 .venv 가 "못 쓰는" 경우(실행 실패)에만 돈다. 그런데 .venv 가
+rem   멀쩡히 실행되는데 패키지만 없는 경우(설치가 중간에 끊김 / 네트워크 실패 / venv 만
+rem   먼저 만들어 둠)가 더 흔하고, 그때는 여기까지 그냥 내려와 ModuleNotFoundError 로
+rem   즉사했다. venv 를 다시 만들 필요는 없고 pip install 만 하면 되므로 여기서 설치한다.
+"%PY%" -c "import flask" >nul 2>&1
+if errorlevel 1 call :install_deps
 "%PY%" -c "import flask" >nul 2>&1
 if errorlevel 1 (
     echo [mypc] WARN: 이 파이썬에는 flask 가 없습니다 - %PY%
@@ -157,6 +163,23 @@ if errorlevel 1 (
 )
 set "PY=%VENV_PY%"
 echo [mypc] 새 .venv 준비 완료.
+exit /b
+
+rem --- 지금 고른 PY 에 requirements 설치 (wheelhouse 우선) ----------------------
+rem 이미 있는 venv 에 패키지만 채우는 경로다. venv 를 새로 만들지 않으므로 되돌릴 것이 없다.
+:install_deps
+echo [mypc] 의존성이 없습니다 - 지금 설치합니다 ... (처음이면 몇 분 걸립니다)
+"%PY%" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    echo [mypc] pip 이 없는 환경입니다 - ensurepip 으로 복구합니다.
+    "%PY%" -m ensurepip --upgrade
+)
+if exist "%ROOT%wheelhouse\*.whl" (
+    "%PY%" -m pip install --no-index --find-links="%ROOT%wheelhouse" -r "%ROOT%requirements.txt"
+    if not errorlevel 1 exit /b
+    echo [mypc] 오프라인 설치 실패 - 네트워크 설치로 전환합니다.
+)
+"%PY%" -m pip install -r "%ROOT%requirements.txt"
 exit /b
 
 rem --- 후보 파이썬 1개 검증: 실제로 실행되면 PY 에 담는다 ----------------------

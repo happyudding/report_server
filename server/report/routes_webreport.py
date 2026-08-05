@@ -28,6 +28,7 @@ from report.security import (
 )
 from web_report import service as web_report_service
 from web_report import build_status as web_report_build_status_mod
+from web_report import eta as web_report_eta
 from web_report import response_cache as web_report_response_cache
 from web_report import preprocess as web_report_preprocess
 from web_report import rawedit as web_report_rawedit
@@ -62,9 +63,17 @@ def web_report_build_status(session_id):
 
     {"state":"building","stage","elapsed"} 또는 {"state":"idle"}. 레지스트리 dict 조회뿐
     이라 /full 이 워커/락에 묶여 있어도 즉시 응답한다(진척률이 아니라 사실만 준다).
+
+    빌드 중이면 입력 규모 기반 예상초(eta)를 함께 준다 — 규모는 세션별로 캐시되므로
+    2초 폴링이 반복돼도 parquet footer 를 다시 읽지 않는다. 모르면 키가 없다.
     """
-    _require_web_report_session(session_id)
-    return jsonify(web_report_build_status_mod.snapshot(session_id))
+    session = _require_web_report_session(session_id)
+    status = web_report_build_status_mod.snapshot(session_id)
+    if status.get("state") == "building":
+        eta_sec = web_report_eta.session_eta(session, Path(REPORT_UPLOAD_DIR))
+        if eta_sec is not None:
+            status["eta"] = eta_sec
+    return jsonify(status)
 
 
 @report_bp.get("/session/<session_id>/web_report/raw_data/columns")

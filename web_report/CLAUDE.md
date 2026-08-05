@@ -49,6 +49,10 @@ web_report/
 ├── disk_cache.py       계산 산출물(report/dist) 로컬 디스크 캐시
 ├── response_cache.py    /full·/scatter 응답 gzip bytes LRU 캐시
 ├── compute.py          콜드 빌드 ProcessPool 오프로드 (prewarm 포함)
+├── eta.py              콜드 빌드 **예상시간** 추정 (2026-08-05) — 로드 오버레이 "예상 약 N초"
+│                        안내 전용(진행바 %는 종전 creep). parquet footer 로 규모(Mcells·kcols)
+│                        를 디코드 없이 재고, build_log 실측으로 배율 하나를 학습해 사양차를
+│                        흡수. 실패는 전부 None = 안내 생략 → docs/12
 ├── build_log.py        콜드 빌드 **단계별 소요 + 대기 3종(큐/풀/IPC)** 기록 (2026-08-04).
 │                        server/log/webreport_build_*.log JSON line · 실패(타임아웃·워커
 │                        붕괴)도 기록 · 관리자 이력 탭 카드. 오프로드 빌드는 잡이

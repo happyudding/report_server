@@ -80,6 +80,26 @@ if not exist "%ROOT%.venv\Scripts\python.exe" (
 rem venv 가 준비됐으니 항상 venv python 으로 고정
 set PY_CMD="%ROOT%.venv\Scripts\python.exe"
 
+rem -- .venv 는 있는데 의존성이 없는 경우도 복구한다 ----------------------------
+rem 위 블록은 python.exe 의 "존재"만 보므로, 설치가 중간에 끊겼거나 다른 PC 에서
+rem .venv 를 복사해 왔거나 venv 만 먼저 만들어 둔 상태면 설치 단계를 통째로 건너뛴다.
+rem 그러면 빈 venv 로 wsgi.py 가 떠서 ModuleNotFoundError 로 즉사하고, 서버 창은
+rem 닫혀 버려 원인이 안 보인 채 "Waiting for server to listen" 이 60초 타임아웃 났다.
+rem terminate.bat 보다 먼저 두는 이유: 기동 가능 여부를 확인하기 전에 돌고 있는
+rem 서버를 내리지 않기 위해서다.
+%PY_CMD% -c "import flask" >nul 2>&1
+if errorlevel 1 (
+    echo [start] .venv 에 의존성이 없습니다 - 설치합니다 ...
+    call :install_deps
+    %PY_CMD% -c "import flask" >nul 2>&1
+    if errorlevel 1 (
+        echo [start] ERROR: 의존성 설치 실패 - 네트워크/프록시를 확인하세요.
+        echo [start] install.bat 를 실행해 자세한 로그를 확인하세요.
+        pause
+        exit /b 1
+    )
+)
+
 echo [start] Python    : %PY_CMD%
 echo [start] Config    : %ENV_FILE%
 echo [start] Bind host : %HOST%
@@ -136,6 +156,12 @@ rem wheel 은 Python minor 버전(cp313 등)에 묶여 있어 서버 PC 의 Pyth
 rem 안 맞을 수 있다 — 그때는 멈추지 않고 네트워크 설치로 넘어간다.
 :install_deps
 set "VPY=%ROOT%.venv\Scripts\python.exe"
+rem venv 에 pip 자체가 없는 경우(--without-pip / ensurepip 실패)도 여기서 복구한다.
+"%VPY%" -m pip --version >nul 2>&1
+if errorlevel 1 (
+    echo [start] pip 이 없는 venv 입니다 - ensurepip 으로 복구합니다.
+    "%VPY%" -m ensurepip --upgrade
+)
 if not exist "%ROOT%wheelhouse\*.whl" goto :deps_network
 echo [start] wheelhouse 발견 - 네트워크 없이 설치합니다 ...
 "%VPY%" -m pip install --no-index --find-links="%ROOT%wheelhouse" -r "%ROOT%requirements.txt"

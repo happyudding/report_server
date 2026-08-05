@@ -37,6 +37,7 @@ function clearLoadStageTimers() {
 }
 function scheduleLoadStageMsgs() {
   clearLoadStageTimers();
+  _buildEtaSec = null;   // 재로드(편집 후 등)마다 다시 받는다 — 이전 세션 값 잔존 방지
   // 폴링이 실측 문구를 대고 있으면(_buildStatusLive) 여기 추정 문구는 넘기지 않고(null)
   // % creep 만 이어간다 — 두 문구가 서로 덮어써 깜빡이지 않도록.
   _loadStageTimers = [
@@ -55,9 +56,35 @@ function scheduleLoadStageMsgs() {
 // 실패해도 로드에 영향을 주지 않는다.
 let _buildPoll = null;
 let _buildStatusLive = false;   // 폴링이 "계산 중"을 실제로 확인했는가 (문구 우선순위용)
+// 서버가 알려준 콜드 빌드 예상초(입력 규모 기반 — web_report/eta.py). 모르면 null.
+// 진행바(%)는 종전 creep 그대로다 — 이 값은 안내 문구에만 쓴다(진척률이 아니라 추정).
+let _buildEtaSec = null;
 function stopBuildStatusPoll() {
   if (_buildPoll) { clearInterval(_buildPoll); _buildPoll = null; }
   _buildStatusLive = false;
+}
+// 예상초 → "약 12초" / "약 1분 20초". 10초 넘으면 5초 단위로 뭉개 과한 정밀도를 피한다.
+function fmtEta(sec) {
+  if (sec >= 60) {
+    const m = Math.floor(sec / 60);
+    const s = Math.round((sec - m * 60) / 5) * 5;
+    return s > 0 ? `약 ${m}분 ${s}초` : `약 ${m}분`;
+  }
+  if (sec > 10) return `약 ${Math.round(sec / 5) * 5}초`;
+  return `약 ${Math.round(sec)}초`;
+}
+// 계산 중 안내 문구 — 예상초를 알면 "예상 약 N초", 예상을 넘겼으면 사실대로 알린다.
+function buildingMessage(elapsedSec) {
+  const tail = "첫 조회만 걸리며 이후에는 즉시 열립니다";
+  if (_buildEtaSec == null) {
+    return `서버가 리포트를 계산하고 있습니다… (${elapsedSec}초 경과, ${tail})`;
+  }
+  if (elapsedSec > _buildEtaSec * 1.3) {
+    return `서버가 리포트를 계산하고 있습니다… (${elapsedSec}초 경과 — `
+      + `예상 ${fmtEta(_buildEtaSec)}보다 오래 걸리고 있습니다, ${tail})`;
+  }
+  return `서버가 리포트를 계산하고 있습니다… `
+    + `(예상 ${fmtEta(_buildEtaSec)} / ${elapsedSec}초 경과, ${tail})`;
 }
 function startBuildStatusPoll() {
   stopBuildStatusPoll();
@@ -78,9 +105,8 @@ function startBuildStatusPoll() {
         return;   // 웜이거나 아직 미등록 — 다음 tick 에서 재확인
       }
       _buildStatusLive = true;
-      const secs = Math.round(s.elapsed || 0);
-      setLoadMessage(`서버가 리포트를 계산하고 있습니다… (${secs}초 경과, `
-        + `첫 조회만 걸리며 이후에는 즉시 열립니다)`);
+      if (typeof s.eta === "number") _buildEtaSec = s.eta;
+      setLoadMessage(buildingMessage(Math.round(s.elapsed || 0)));
     } catch (e) {
       stopBuildStatusPoll();   // 네트워크 단절 등 — 안내 문구는 기존 것 유지
     }
@@ -109,6 +135,15 @@ async function retryWhileBuilding(res, refetch) {
   let wait = BUILD_RETRY.START_MS;
   const deadline = Date.now() + BUILD_RETRY.TIMEOUT_MS;
   while (res && res.status === 202 && Date.now() < deadline) {
+    // 202 본문에 예상초가 실려 온다 — build_status 첫 폴링(1.5s)보다 이르므로 여기서
+    // 먼저 안내한다. clone() 은 타임아웃 이탈 시 호출부가 같은 res 를 읽을 수 있어서.
+    try {
+      const s = await res.clone().json();
+      if (typeof s.eta === "number") {
+        _buildEtaSec = s.eta;
+        setLoadMessage(buildingMessage(Math.round(s.elapsed || 0)));
+      }
+    } catch (e) { /* 본문 없음·파싱 실패 — 안내만 생략 */ }
     await sleepRetry(wait);
     wait = Math.min(BUILD_RETRY.MAX_MS, Math.round(wait * BUILD_RETRY.GROWTH));
     res = await refetch();

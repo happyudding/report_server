@@ -40,6 +40,7 @@ from web_report.validation import validate_meta as _validate_upload_meta
 from web_report import response_cache as web_report_response_cache
 from web_report import build_status as web_report_build_status
 from web_report import compute as web_report_compute
+from web_report import eta as web_report_eta
 
 _log = logging.getLogger(__name__)
 
@@ -49,11 +50,14 @@ def _load_json_object(objects, object_type):
     return storage_gateway.load_json_object(objects, object_type)
 
 
-def _building_response(session_id, kind="report"):
+def _building_response(session_id, kind="report", session=None):
     """콜드 빌드 요청 + 202(building) 응답. 연속 실패로 차단된 세션은 503.
 
     503 이 없으면 프런트는 실패한 빌드를 최대 15분간 폴링만 하다 타임아웃한다 —
     사용자에게는 "영원히 로딩 중"으로 보인다. 사실대로 알려 즉시 끝낸다.
+
+    session 을 주면 입력 규모 기반 예상초(eta)를 함께 실어 로드 오버레이가 "예상 약 N초"
+    를 안내한다 (모르면 키 자체를 넣지 않는다 — 프런트는 없으면 종전 문구).
     """
     blocked = web_report_build_status.failure_blocked(session_id, kind)
     if blocked:
@@ -65,8 +69,13 @@ def _building_response(session_id, kind="report"):
         }), 503
     web_report_compute.request_build(session_id, str(REPORT_UPLOAD_DIR), kind)
     status = web_report_build_status.snapshot(session_id)
-    return jsonify({"building": True, "stage": status.get("stage", kind),
-                    "elapsed": status.get("elapsed", 0)}), 202
+    body = {"building": True, "stage": status.get("stage", kind),
+            "elapsed": status.get("elapsed", 0)}
+    if session is not None:
+        eta_sec = web_report_eta.session_eta(session, Path(REPORT_UPLOAD_DIR))
+        if eta_sec is not None:
+            body["eta"] = eta_sec
+    return jsonify(body), 202
 
 
 @report_bp.get("/result/<session_id>")
@@ -122,7 +131,7 @@ def session_full(session_id):
             _log.exception("cold probe failed for session %s", session_id)
             cold = False        # 판정 실패는 기존 경로(느리지만 정확)로 흘려보낸다
         if cold:
-            return _building_response(session_id, "report")
+            return _building_response(session_id, "report", session=session)
     akey = session.get("analysis_key")
     objects = {}
     if akey:
@@ -196,7 +205,7 @@ def session_full(session_id):
                 build_if_cold=False)
         except web_report_service.ColdBuildRequired:
             # 위 조기 판정을 통과했는데 여기 온 경우 = 판정 후 축출된 레이스.
-            return _building_response(session_id, "report")
+            return _building_response(session_id, "report", session=session)
         except FileNotFoundError:
             abort(404, "web_report session data not found")
         except KeyError:

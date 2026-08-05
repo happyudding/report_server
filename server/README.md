@@ -92,6 +92,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `WEB_REPORT_UPLOAD_CONCURRENCY` | `2` | 동시에 처리하는 web_report 업로드 건수. 업로드 1건이 parquet bytes + 디코드 tables 를 함께 들고 있어 대형 세션이면 건당 RAM 피크가 GB 급 — 겹치면 웹 프로세스가 죽는다 |
 | `WEB_REPORT_UPLOAD_WAIT_SEC` | `180` | 위 상한이 찼을 때 대기하는 시간(초). 초과하면 503. 대기 중에는 본문이 디스크에 스풀돼 있어 RAM 을 거의 안 쓴다 |
 | `WEB_REPORT_PREWARM_QUEUE` | `8` | 업로드 직후 프리웜 대기 큐 상한. 초과 시 가장 오래된 요청 폐기(로그) |
+| `WEB_REPORT_ETA_ENABLED` | `1` | 세션 로드 오버레이의 "예상 약 N초" 안내(202·build_status 응답의 `eta`). `0` 이면 키를 싣지 않고 프런트는 종전 문구 — 추정이 어긋나 혼란을 줄 때의 차단 스위치 ([docs/12](../docs/12_web_report_cache.md)) |
 | `REPORT_ADMIN_SECRET` | `pte` | admin 경로 조각 → `/pe/admin-<secret>/` (기본 `/pe/admin-pte/`) |
 
 ### 로그 / 무인 운영 (wsgi.py, watchdog.ps1)

@@ -205,7 +205,7 @@ def record_offloaded(kind: str, session_id: str, akey, t_submit: float, t_recv: 
             rec["ipc"] = _pos(t_recv - t_end)
         else:
             rec["note"] = "worker cache hit (콜드 빌드 없음 — 전부 대기)"
-        for k in ("stages", "sources", "items"):
+        for k in ("stages", "sources", "items", "mcells", "kcols"):
             if t.get(k) is not None:
                 rec[k] = t[k]
         record(rec)

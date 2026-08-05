@@ -53,6 +53,10 @@ row 6+  : die 측정 데이터
 
 - 반환 df **개수 = source 개수**. 여러 input 파일의 병합은 honey_parse 안에서 일어나며,
   호출부는 병합 결과를 그대로 1 source 로 받는다.
+  - ⚠️ **input 파일 개수 ≠ source 개수 (1:1 아님).** 특정 product 는 input 파일 n 개가
+    source 1개로 병합돼 리턴된다. 어떤 파일이 몇 개 source 로 묶이는지는 외부 담당
+    honey_parse 내부 규칙이라 호출부가 예측할 수 없다 — source 개수가 필요한 코드는
+    반드시 **리턴된 df 개수**를 세야 하고, 입력 파일 목록 길이로 계산하면 안 된다.
 - `file_to_df.py` 는 실제 파서를 **외부 `honey_parse.file_to_df`** 에서 import 한다.
   없으면 호출 시 `ImportError`.
 - [csv_loader.py](../client/report_generator/csv_loader.py) `file_to_df` 는 `_ensure_canonical`

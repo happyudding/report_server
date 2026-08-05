@@ -307,6 +307,10 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
    `SERIAL,SHOT,DUT,XPOS,YPOS,BIN,FAILTNO` + `TSEQ~LOLIM` 6행, 반환 df 개수 = source 개수
    (병합은 honey_parse 내부에서). **이 산출물(`md.df`)이 곧 web_report parquet 소스**이며,
    원본 입력 파일을 다시 읽어 검증하지 말 것 — 병합 결과를 버리게 된다.
+   - ⚠️ **input 파일 개수 ≠ source 개수 (1:1 아님).** source 개수의 유일한 기준은
+     `file_to_df` 가 **리턴한 df 개수**다. 특정 product 는 input 파일이 n 개여도 파서가
+     내부 병합해 source 1개로 리턴한다(병합 규칙은 외부 담당 honey_parse 소관이라 이 repo
+     에서 알 수 없음). source 를 세는 코드를 만들거나 고칠 때 입력 파일 개수로 세면 안 된다.
    - 구 5-meta df_honey(`DUT,XCoord,YCoord,Bin,Serial`)는 **폐기된 계약**이다.
    - ⚠️ **알려진 격차**: `client/report_generator/`(constants.py `DATA_START_ROW=5` 등)는 아직
      5-meta 를 가정한다 → 7-meta 프레임에서 `BIN`·`FAILTNO` 를 측정 항목으로 오인한다.
