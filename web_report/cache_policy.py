@@ -206,7 +206,12 @@ def map_key(session, prep_digest: str = "") -> tuple:
 #      되돌림 — validation.webreport_ai_comment). 그 세션들의 payload 에서 AI Comment
 #      컬럼과 ETC 자동 행이 사라지므로 안 올리면 옛 disk_cache 가 컬럼이 든 payload 를
 #      계속 반환해 화면상 그대로 남는다.
-REPORT_SCHEMA_VERSION = 25
+# v26: Temperature 모드 — payload 에 yield_corner_groups(RT Corner / Temp Corner 2표)가
+#      추가되고, Issue Table 이 Yield/CPK 섹션을 **RT source 기준으로만** 계산하며
+#      TEMP 섹션(row_key "TEMP|<item>")이 CPK 와 ETC 사이에 들어간다. sources[] 에는
+#      temp_corner("RT"/"CT"/"HT")가 붙는다(Distribution 소스 그룹 필터). 다른 모드
+#      세션은 값 무변경이지만 키가 전 세션 공통이라 1회 재계산된다.
+REPORT_SCHEMA_VERSION = 26
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

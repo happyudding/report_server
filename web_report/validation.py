@@ -86,9 +86,13 @@ def webreport_temperature_groups(opts_raw: str, source_names):
 
     업로드 시 Honey 그룹 다이얼로그가 manifest.options.temperature 로 실어 보낸다.
     compare 와 같은 이유로 index 가 아니라 **이름**으로 저장한다(Excel 왕복 안전).
-    형식: ``{"groups": [{"rt": 이름, "members": [이름, ...]}, ...]}`` — members 는
-    CT/HT (없을 수 있다). rt 가 사라진 그룹은 버리고, 유효 그룹이 없으면 None
-    (호출부는 Normal 과 동일하게 렌더 — 옵션이 깨져도 세션이 열린다).
+    형식: ``{"groups": [{"rt": 이름, "members": [이름, ...],
+    "member_roles": ["CT", "HT"]}, ...]}`` — members 는 CT/HT (없을 수 있다).
+    ``member_roles`` 는 members 와 같은 길이의 실제 역할이며, **없는 옛 세션도 있다**
+    (그때는 호출부가 members 순서로 CT→HT 를 추정한다). members 를 걸러낼 때 짝이
+    어긋나지 않도록 여기서 함께 걸러 길이를 맞춘다.
+    rt 가 사라진 그룹은 버리고, 유효 그룹이 없으면 None (호출부는 Normal 과 동일하게
+    렌더 — 옵션이 깨져도 세션이 열린다).
     """
     names = [str(n) for n in (source_names or [])]
     if not opts_raw or not names:
@@ -108,9 +112,18 @@ def webreport_temperature_groups(opts_raw: str, source_names):
         rt = str(group.get("rt") or "")
         if rt not in present:
             continue
-        members = [str(m) for m in (group.get("members") or [])
-                   if str(m) in present and str(m) != rt]
-        groups.append({"rt": rt, "members": members})
+        raw_members = [str(m) for m in (group.get("members") or [])]
+        raw_roles = [str(r) for r in (group.get("member_roles") or [])]
+        keep = [i for i, m in enumerate(raw_members)
+                if m in present and m != rt]
+        members = [raw_members[i] for i in keep]
+        # member_roles 는 옛 세션에 없다 — 있을 때만, members 와 같은 길이일 때만 싣는다.
+        roles = ([raw_roles[i] for i in keep]
+                 if len(raw_roles) == len(raw_members) else [])
+        entry = {"rt": rt, "members": members}
+        if roles:
+            entry["member_roles"] = roles
+        groups.append(entry)
     return {"groups": groups} if groups else None
 
 

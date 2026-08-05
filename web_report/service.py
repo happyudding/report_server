@@ -1029,7 +1029,8 @@ def update_issue_hidden(session_id: str, *, report_db, upload_root: Path,
     if action == "hide":
         if not key or len(key) > 300:
             raise ValueError(f"invalid row key: {key!r}")
-        if not (key.startswith("Yield|") or key.startswith("CPK|")):
+        if not (key.startswith("Yield|") or key.startswith("CPK|")
+                or key.startswith("TEMP|")):
             raise ValueError(f"row not hidable: {key!r}")
 
     # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
@@ -1082,7 +1083,8 @@ def _norm_issue_status(key, value):
     value = str(value or "").strip()
     if not key or len(key) > 300:
         raise ValueError(f"invalid row key: {key!r}")
-    if not (key.startswith("Yield|") or key.startswith("CPK|") or key.startswith("ETC|")):
+    if not (key.startswith("Yield|") or key.startswith("CPK|")
+            or key.startswith("TEMP|") or key.startswith("ETC|")):
         raise ValueError(f"invalid row key: {key!r}")
     if value not in ("Open", "Close"):
         raise ValueError(f"invalid status: {value!r}")
@@ -1193,8 +1195,8 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
     manifest 는 불변 스냅샷.
 
     comments: [{"key": row_key, "col": comment 컬럼명, "value": str}, ...].
-    row_key 는 tabs/issue_table.py 규칙("Yield|<bin>|<item>", "CPK|<item>", "ETC|<item>")을
-    따르고, 빈 value 는 해당 항목 삭제로 처리한다.
+    row_key 는 tabs/issue_table.py 규칙("Yield|<bin>|<item>", "CPK|<item>", "TEMP|<item>",
+    "ETC|<item>")을 따르고, 빈 value 는 해당 항목 삭제로 처리한다.
     """
     from .tabs.issue_table import COMMENT_COLS
 

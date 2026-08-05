@@ -45,6 +45,9 @@ class TabContext:
     # Issue Table 행 숨김 키 목록 / 행 Status dict (세션 편집 DB — edits.py)
     issue_hidden: list = field(default_factory=list)
     issue_status: dict = field(default_factory=dict)
+    # Temperature 모드에만 값이 있는 Corner 분해(yield_tab.build_yield_corner_groups).
+    # Issue Table 이 Yield/CPK 를 RT 기준으로만 계산하고 TEMP 섹션을 만드는 근거.
+    temp_corners: list | None = None
 
 
 @dataclass(frozen=True)
@@ -62,7 +65,8 @@ TAB_REGISTRY: tuple = (
         ctx.tables, ctx.yield_rows, ctx.cpk_rows,
         etc_items=ctx.etc_items, issue_comments=ctx.issue_comments,
         ai_comments=ctx.ai_comments, etc_auto_items=ctx.etc_auto_items,
-        hidden_keys=ctx.issue_hidden, statuses=ctx.issue_status)),
+        hidden_keys=ctx.issue_hidden, statuses=ctx.issue_status,
+        temp_corners=ctx.temp_corners)),
     TabSpec("Distribution", None),      # lazy — GET .../web_report/distribution
     TabSpec("Trim Analysis", None),     # lazy — GET .../web_report/trim_analysis
     # 하이브리드 lazy — 경량 메타만 /full 에, dies 는 GET .../web_report/map_analysis

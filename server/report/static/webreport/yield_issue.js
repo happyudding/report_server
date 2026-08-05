@@ -17,9 +17,12 @@ function yieldColumnsFrom(allRows) {
 // 값은 yield_summary.by_step(서버 yield_step_summary) 의 STEP 별 **누적** 수율 =
 // (전체 die − 그 STEP 까지의 누적 fail) / 전체 die. 분모는 전 STEP 고정이라 P1→P3 로
 // 갈수록 값이 단조 감소한다. 소스별 yield_pct/survivor 를 {src}_yield/{src}_count 로 옮긴다.
-function yieldStepPassRow(step) {
+// byStepOverride 를 주면 그걸 쓴다 — Temperature Corner 표는 그 Corner 소스만으로 다시
+// 계산한 by_step(yield_corner_groups[].by_step)이 있어야 Pass 행이 표와 맞는다.
+function yieldStepPassRow(step, byStepOverride) {
   const ov = DATA.web_report && DATA.web_report.yield_summary;
-  const byStep = (ov && Array.isArray(ov.by_step)) ? ov.by_step : [];
+  const byStep = Array.isArray(byStepOverride) ? byStepOverride
+    : ((ov && Array.isArray(ov.by_step)) ? ov.by_step : []);
   const st = byStep.find(s => String(s.step || "") === String(step || ""));
   if (!st) return null;
   const row = { step: "", bin: "1", TNO: "", Item: "Pass", avg: st.avg_yield_pct };
@@ -98,7 +101,9 @@ function renderYieldTable(cols, groups, si, passRow) {
 }
 
 // STEP 별 표 섹션(제목 + 표)을 순서대로 렌더 (P1→P2→P3).
-function renderYieldStepSections(stepGroups, allRows) {
+// byStep/keyPrefix 는 Temperature Corner 렌더 전용(생략하면 종전과 동일):
+// byStep = 그 Corner 의 누적 수율, keyPrefix = Corner 간 그룹 토글 id 를 갈라놓는 접두.
+function renderYieldStepSections(stepGroups, allRows, byStep, keyPrefix) {
   const cols = yieldColumnsFrom(allRows);
   if (!cols.length || !Array.isArray(stepGroups) || !stepGroups.length) return "";
   return stepGroups.map((sg, si) => {
@@ -106,7 +111,20 @@ function renderYieldStepSections(stepGroups, allRows) {
     const label = String(sg.step || "").trim() || "(기타)";
     return `<div class="yield-step-section">` +
       `<div class="yield-step-title">STEP ${esc(label)}</div>` +
-      renderYieldTable(cols, groups, si, yieldStepPassRow(sg.step)) + `</div>`;
+      renderYieldTable(cols, groups, `${keyPrefix || ""}${si}`,
+                       yieldStepPassRow(sg.step, byStep)) + `</div>`;
+  }).join("");
+}
+
+// Temperature Corner 표 2개(RT Corner / Temp Corner) — 각 Corner 안은 기존 STEP 분리 그대로.
+// Temp Corner 의 fail 은 업로드 전 정리에서 **RT limit 으로 재판정**된 결과다.
+function renderYieldCornerSections(corners) {
+  return (corners || []).map(c => {
+    const label = String(c.label || c.corner || "").trim();
+    return `<div class="yield-corner-section">` +
+      `<div class="yield-corner-title">${esc(label)}</div>` +
+      renderYieldStepSections(c.step_groups || [], c.rows || [], c.by_step || [],
+                              `${String(c.corner || "")}_`) + `</div>`;
   }).join("");
 }
 
@@ -319,6 +337,20 @@ function renderYield(yield_text, summary_rows) {
   const panel = document.getElementById("panel-yield");
   const overview = yieldOverviewHtml();
 
+  // Temperature 모드: RT Corner / Temp Corner 표 2개 (각 Corner 안은 STEP 분리 그대로).
+  // 키가 없으면 아래 종전 흐름 그대로 — 다른 모드·옛 캐시 세션은 영향받지 않는다.
+  const corners = DATA.web_report && DATA.web_report.yield_corner_groups;
+  if (Array.isArray(corners) && corners.length) {
+    bindYieldPanel();
+    panel.innerHTML = overview + yieldToolbarHtml() + renderYieldCornerSections(corners);
+    setupYieldHscroll(panel);
+    syncYieldStickyOffsets(panel);
+    requestAnimationFrame(() => syncYieldStickyOffsets(panel));
+    bindYieldColResize(panel);
+    if (yieldSearchTerm.trim()) applyYieldSearch(yieldSearchTerm);
+    return;
+  }
+
   // web_report: STEP(P1/P2/P3) 별 분리 표 (yield_step_groups 가 있을 때)
   const stepGroups = DATA.web_report && DATA.web_report.yield_step_groups;
   if (Array.isArray(stepGroups) && stepGroups.length && Array.isArray(yield_text)) {
@@ -387,6 +419,9 @@ function issueToolbarHtml() {
     `<span class="issue-jump-group" title="섹션으로 이동">` +
       `<button type="button" class="btn-sm" data-issue-jump="Yield">YIELD</button>` +
       `<button type="button" class="btn-sm" data-issue-jump="CPK">CPK</button>` +
+      // TEMP 섹션은 Temperature 모드에서만 존재한다 — 다른 모드에선 버튼도 안 만든다.
+      (webReportMode() === "Temperature"
+        ? `<button type="button" class="btn-sm" data-issue-jump="TEMP" title="RT Limit 을 벗어난 CT/HT 항목">TEMP</button>` : "") +
       `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC</button>` +
     `</span>` +
     `<button type="button" class="btn-sm" id="issueToggleAll" data-expanded="false">TNO 전체 펼치기</button>` +

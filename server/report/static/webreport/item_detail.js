@@ -173,6 +173,7 @@ function renderItemDetail(data) {
     </div>
     <div id="cdfEditBar" class="cdf-editbar"></div>
     <div id="chartNoteBar"></div>
+    ${distTempFilterHtml()}
     ${idetLegendHtml(data)}
     <div class="idet-charts">
       <div class="idet-chart-block">
@@ -434,6 +435,7 @@ function bindItemDetailPanel() {
     if (pg && !pg.disabled) { _itemDetailFailPage = parseInt(pg.dataset.idetPage, 10) || 1; renderItemFailRows(); return; }
   });
   dp.addEventListener("change", e => {
+    if (distTempFilterChange(e)) return;   // Temperature 그룹 선택 → source 강조
     const chk = e.target.closest(".cdf-fail-chk");
     if (!chk) return;
     const set = cdfActiveSet();
@@ -995,6 +997,7 @@ function distBindPanel() {
   });
   // 검색 제안 체크박스 토글 → 선택 집합 갱신 후 갤러리를 선택 항목만으로 필터(검색상태 복원).
   panel.addEventListener("change", e => {
+    if (distTempFilterChange(e)) return;   // Temperature 그룹 선택 → source 강조
     const chk = e.target.closest(".dist-sug-chk");
     if (!chk) return;
     if (chk.checked) distSelected.add(chk.dataset.subject);

@@ -19,9 +19,9 @@
 |----|------|------|
 | Summary | `summary.py` | placeholder(`[]`) — 화면은 프런트가 Map/Fail Bin 으로 자체 구성 |
 | Raw Data | `raw_data.py` | payload 는 placeholder — 실제는 lazy 조회/편집 라우트 |
-| Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`) |
+| Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`) + Temperature Corner 분리(`build_yield_corner_groups`) |
 | CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) — 통계는 **Bin1(양품) 기준 단일 값** |
-| Issue Table | `issue_table.py` | Yield 파생 + cpk<1.33 파생(Bin1 기준) + ETC. comment/Status/행 숨김은 편집 DB 에서 채움 |
+| Issue Table | `issue_table.py` | Yield 파생 + cpk<1.33 파생(Bin1 기준) + (Temperature 만) TEMP + ETC. comment/Status/행 숨김은 편집 DB 에서 채움 |
 | Distribution | — (lazy, 항목 배치) | `/full` 은 빈 시트 + `distribution_index`(항목 목록). ECDF 는 **화면에 보이는 항목만** `GET .../web_report/distribution_batch?subjects=…` 로 받는다 |
 | Trim Analysis | — (lazy, **버튼 시작**) | `/full` 은 빈 시트. **탭 진입만으로는 아무 요청도 안 한다** — 「분석 시작」을 눌러야 `GET .../web_report/trim_analysis` 를 받고, 그 뒤 차트는 `GET .../web_report/trim_chart_batch` 로 **한 페이지 6개씩** |
 | Map Analysis | `Map_analysis.py` (하이브리드 lazy) | wafer map die/bin 집계 — `/full` 은 dies 뺀 경량 메타(`include_dies=False`), die 전량은 `GET .../web_report/map_analysis` 지연 로드 (schema v8) |
@@ -48,6 +48,25 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
 `REPORT_SCHEMA_VERSION` 을 함께 올렸다 — **서버 재시작 필요**.
 
 ## 주요 탭 계약
+- **Temperature Corner 분리 (2026-08-05)**: Temperature 모드에서만 payload 에
+  `yield_corner_groups` 가 실리고, Yield 탭이 STEP 표 대신 **Corner 표 2개**를 그린다
+  (각 Corner 안은 아래 STEP 분리 구조 그대로). 키가 없으면 프런트가 종전
+  `yield_step_groups` 렌더로 폴백하므로 다른 모드·옛 캐시 세션은 무영향이다.
+  - `[{corner, label, sources, rows, step_groups, by_step}]` — `corner` 는 `"RT"`(RT source
+    만, Normal 과 같은 계산) 또는 `"TEMP"`(CT+HT). 소스 없는 Corner 는 생략된다.
+  - 계산은 `yield_tab.build_yield_corner_groups` 가 **소스 부분집합으로 build_yield_rows 를
+    다시 호출**할 뿐이다. `resolve_source_basis` 는 소스 간 결합이 없어 subset 에서도 분모가
+    같으므로, 같은 소스의 fail% 는 Corner 표와 전체 Yield 시트가 정확히 일치한다
+    (회귀 고정: `test_corner_percentages_match_full_yield_sheet`).
+  - Issue Table 도 이때 **Yield/CPK 섹션을 RT source 기준으로만** 계산하고, CPK 와 ETC
+    사이에 **TEMP 섹션**(CT/HT 가 RT 의 HILIM/LOLIM 을 벗어나 fail 한 항목, 불량률 내림차순
+    = `row_total_count` 기준)을 넣는다. TEMP 행은 item 단위 집계라 Bin 이 비어 있다.
+  - CT/HT 판정은 **업로드 전에 이미 끝나 있다** — `web_report/temperature.py` 가 RT pass
+    좌표만 남기고 RT limit 으로 BIN/FAILTNO 를 덮어쓰므로, 여기서 limit 을 다시 보지 않는다.
+  - `sources[]` 에 `temp_corner`(`"RT"|"CT"|"HT"`)가 붙어 Distribution 소스 그룹 필터
+    (전체/RT만/CT만/HT만/그룹 선택, 갤러리 툴바 + item_detail 공용)가 쓴다. 정본은 업로드
+    시 기록된 `options.temperature.groups[].member_roles` 이고, 그게 없는 옛 세션은
+    members 순서(CT→HT)로 추정한다.
 - **Yield STEP 분리 (2026-07-14 분모 전체 기준으로 통일 / 2026-07-21 STEP 요약만 누적 차감)**: Yield 탭은 STEP(P1/P2/P3)별로
   표를 나눈다. STEP 은 각 fail die 의 `FAILTNO → (TNO 매칭) item → item 의 STEP 메타행
   (raw 4번째 행)` 으로 정한다 (`item_meta`). 각 STEP 표의 bin portion 분모는 **항상 전체
@@ -119,10 +138,14 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   없음)와 표본이 완전히 같지는 않다.
   회귀 고정: [tests/test_cpk_bin1_basis.py](../tests/test_cpk_bin1_basis.py).
 - **Issue Table comment 키**: `row_key` 규약 — Yield 행 `Yield|<bin>|<item>`,
-  CPK 데이터 행 `CPK|<item>`, ETC 행 `ETC|<item>`. comment 컬럼은
-  `COMMENT_COLS = ["PTE comment", "개발 comment"]`. 값은 세션 편집 DB 에서 채운다.
+  CPK 데이터 행 `CPK|<item>`, TEMP 행 `TEMP|<item>`(Temperature 전용), ETC 행 `ETC|<item>`.
+  comment 컬럼은 `COMMENT_COLS = ["PTE comment", "개발 comment"]`. 값은 세션 편집 DB 에서
+  채운다. **파서 사본이 4곳**이라 접두를 늘리면 전부 같이 고쳐야 한다:
+  [issue_table.py](../web_report/tabs/issue_table.py) 생성 · [sheets.js](../server/report/static/webreport/sheets.js)
+  `issueRowKey`/`issueHideStatusKey` · [eval_export.py](../web_report/eval_export.py) `_parse_row_key`
+  · [chatbot/rowkey.py](../server/chatbot/rowkey.py) (+ service.py 의 숨김/Status 허용 접두 2곳).
 - **Issue Table 행 숨김/Status 키** (2026-07-16): 이슈 단위 키 — Yield 는 **bin 단위**
-  `Yield|<bin>`(대표행+상세행 일괄), CPK/ETC 는 `CPK|<item>`/`ETC|<item>`
+  `Yield|<bin>`(대표행+상세행 일괄), CPK/TEMP/ETC 는 `CPK|<item>`/`TEMP|<item>`/`ETC|<item>`
   (sheets.js `issueHideStatusKey` ↔ issue_table.py 동기 필수). 숨김(kind `issue_hidden`,
   Yield/CPK 만 — ETC 는 기존 etc remove)은 행별 복원 없이 툴바 "삭제 전체 초기화"로만
   일괄 복원. Status(kind `issue_status`)는 Open/Close 드랍다운(편집모드 전용, 기본 Open —

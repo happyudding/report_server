@@ -478,12 +478,96 @@ function distRenderLegends() {
   const d = document.querySelector("#panel-item-detail .dist-legend-row");
   if (d && _itemDetailData && typeof idetLegendHtml === "function") d.outerHTML = idetLegendHtml(_itemDetailData);
 }
+// ── Temperature 소스 그룹 필터 (Temperature 모드 전용) ────────────────────────
+// 전체 / RT만 / CT만 / HT만 + 그룹 선택(특정 그룹의 RT·CT·HT 만). 원칙은 전 소스 표시라
+// 별도 데이터 경로를 두지 않고 위 distSourceFilter(강조=비선택 dim)에 이름 집합을
+// 채워 넣기만 한다 — 렌더·데이터는 종전과 완전히 같고 색만 바뀐다.
+// 갤러리 툴바와 item_detail 상단이 같은 html 을 쓰고, 클릭은 distLegendClick 안에서
+// 처리하므로 두 패널의 기존 이벤트 위임에 자동으로 얹힌다.
+const TEMP_FILTER_KINDS = [
+  ["all", "전체", "모든 source 를 원색으로 (강조 해제)"],
+  ["RT", "RT만", "RT(기준) source 만 강조"],
+  ["CT", "CT만", "CT source 만 강조"],
+  ["HT", "HT만", "HT source 만 강조"],
+];
+let distTempFilterKind = "all";     // 버튼 active 표시용 (그룹 선택 시 "")
+let distTempFilterGroup = "";       // 그룹 인덱스 문자열 ("" = 미선택)
+
+function tempIsMode() { return webReportMode() === "Temperature"; }
+
+// payload.sources 의 temp_corner("RT"/"CT"/"HT")·temp_group(그룹 번호)로 이름 집합을 만든다.
+function tempFilterSources(kind, groupIndex) {
+  const list = (DATA.web_report && DATA.web_report.sources) || [];
+  return list.filter(s => {
+    if (groupIndex !== "" && groupIndex !== undefined && groupIndex !== null) {
+      return String(s.temp_group) === String(groupIndex);
+    }
+    return String(s.temp_corner || "") === String(kind);
+  }).map(s => s.name);
+}
+
+// 그룹 <select> 옵션 — payload.temperature.groups 순서(업로드 시 배치 순서)를 따른다.
+function tempGroupOptions() {
+  const groups = ((DATA.web_report && DATA.web_report.temperature) || {}).groups || [];
+  return groups.map((g, i) =>
+    `<option value="${i}"${String(distTempFilterGroup) === String(i) ? " selected" : ""}>` +
+    `${esc(String(g.rt || `Group ${i + 1}`))}</option>`).join("");
+}
+
+function distTempFilterHtml() {
+  if (!tempIsMode()) return "";               // 다른 모드는 DOM 자체를 만들지 않는다
+  const groups = ((DATA.web_report && DATA.web_report.temperature) || {}).groups || [];
+  const btns = TEMP_FILTER_KINDS.map(([key, label, tip]) =>
+    `<button class="distseg${distTempFilterKind === key ? " active" : ""}" ` +
+    `data-temp-seg="${key}" title="${esc(tip)}">${esc(label)}</button>`).join("");
+  const sel = groups.length
+    ? `<select class="dist-temp-group" data-temp-group title="한 그룹의 RT·CT·HT 만 강조">` +
+      `<option value=""${distTempFilterGroup === "" ? " selected" : ""}>그룹 선택…</option>` +
+      tempGroupOptions() + `</select>` : "";
+  return `<div class="distseg-group dist-temp-filter">${btns}${sel}</div>`;
+}
+
+// 필터 적용 후 두 패널의 버튼 행을 제자리 교체(active 표시 갱신). 리스너는 패널 위임이라 안전.
+function distRenderTempFilters() {
+  document.querySelectorAll(".dist-temp-filter").forEach(el => {
+    el.outerHTML = distTempFilterHtml();
+  });
+}
+
+function distTempApply(kind, groupIndex) {
+  distTempFilterKind = kind;
+  distTempFilterGroup = (groupIndex === undefined || groupIndex === null) ? "" : String(groupIndex);
+  distSourceFilter = (kind === "all" && distTempFilterGroup === "")
+    ? new Set() : new Set(tempFilterSources(kind, distTempFilterGroup));
+  distApplySourceFilter();
+  distRenderTempFilters();
+}
+
+// 클릭(버튼) 처리 — 처리했으면 true.
+function distTempFilterClick(e) {
+  const b = e.target.closest("[data-temp-seg]");
+  if (!b) return false;
+  distTempApply(b.dataset.tempSeg, "");
+  return true;
+}
+
+// change(<select>) 처리 — 처리했으면 true.
+function distTempFilterChange(e) {
+  const sel = e.target.closest("[data-temp-group]");
+  if (!sel) return false;
+  if (sel.value === "") distTempApply("all", "");
+  else distTempApply("", sel.value);
+  return true;
+}
+
 // 범례 클릭 처리(두 패널 공용) — 처리했으면 true 를 돌려 호출측이 조기 반환하게 한다.
 function distLegendClick(e) {
+  if (distTempFilterClick(e)) return true;
   const b = e.target.closest("[data-dist-leg]");
   if (b) {
     if (b.dataset.distLeg === "toggle") distLegendOpen = !distLegendOpen;
     else distSourceFilter.clear();
+    distTempClearActive(b.dataset.distLeg !== "toggle");
     distApplySourceFilter();
     return true;
   }
@@ -491,8 +575,18 @@ function distLegendClick(e) {
   if (!it) return false;
   const s = it.dataset.distSrc;
   if (distSourceFilter.has(s)) distSourceFilter.delete(s); else distSourceFilter.add(s);
+  distTempClearActive(false);
   distApplySourceFilter();
   return true;
+}
+
+// 범례를 직접 눌러 강조를 바꾸면 그룹 필터 버튼의 active 표시가 사실과 어긋난다.
+// toAll=true(강조 해제)면 "전체"로, 아니면 아무 버튼도 눌리지 않은 상태로 되돌린다.
+function distTempClearActive(toAll) {
+  if (!tempIsMode()) return;
+  distTempFilterKind = toAll ? "all" : "";
+  distTempFilterGroup = "";
+  distRenderTempFilters();
 }
 
 // Limit 값이 없으면 물음표 대신 공백으로 둔다 (사용자 요청).
@@ -1004,6 +1098,7 @@ function distToolbarHtml() {
   const nopfBtn = `<button class="distseg${distHidePassfail ? " active" : ""}" data-seg="nopf" title="켜짐: unit 이 Pass/Fail(P/F·P_F) 인 항목 카드를 숨김 · 꺼짐: 표시">P/F 없애기</button>`;
   return `<div class="dist-toolbar">
     <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${nopfBtn}</div>
+    ${distTempFilterHtml()}
     <div class="dist-search-wrap" data-no-dirty>
       <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">
       <div id="distSuggest" class="dist-suggest" style="display:none"></div>

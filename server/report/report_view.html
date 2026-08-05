@@ -376,6 +376,15 @@ body {
   padding-bottom: 3px; border-bottom: 2px solid #dbe6f7;
 }
 
+\* ── Yield: Temperature Corner(RT / CT·HT) 표 섹션 ────────────────────────── */
+.yield-corner-section { margin-top: 26px; }
+.yield-corner-section:first-of-type { margin-top: 6px; }
+.yield-corner-title {
+  font-size: 15px; font-weight: 800; color: #7c2d12; margin-bottom: 8px;
+  padding: 4px 10px; background: #fff2e6; border-left: 4px solid #ea7317;
+  border-radius: 0 5px 5px 0;
+}
+
 /* ── Summary: 전체/소스별 Yield + Major Fail Bins 통합 테이블 ─────────────── */
 .mfb-wrap { overflow-x: auto; margin-bottom: 18px; }
 .mfb-table { width: auto; min-width: 480px; border-collapse: collapse; font-size: 12px; margin: 0; }
@@ -753,6 +762,14 @@ tbody tr:hover { background: #f9fbff; }
   color: #344054; border-right: 1px solid #cbd2dc; }
 .distseg:last-child { border-right: none; }
 .distseg.active { background: #5E6AD2; color: #fff; }
+/* Temperature 소스 그룹 필터(전체/RT/CT/HT + 그룹 선택) — Temperature 모드에서만 생성된다.
+   item_detail 상단에도 같은 마크업이 들어가므로 툴바 밖에서도 자체 여백을 갖는다. */
+.dist-temp-filter { border-color: #ea7317; align-items: stretch; }
+.dist-temp-filter .distseg { background: #fff5eb; color: #7c2d12; border-right-color: #f3c9a3; }
+.dist-temp-filter .distseg.active { background: #ea7317; color: #fff; }
+.dist-temp-group { border: none; border-left: 1px solid #f3c9a3; background: #fff5eb;
+  color: #7c2d12; font-size: 13px; padding: 0 8px; cursor: pointer; }
+.idet .dist-temp-filter { margin: 6px 0 10px; }
 /* 선택 해제 칩 — 세그먼트 그룹 밖 독립 버튼(토글이 아니라 액션). 그룹 멤버용
    반쪽 테두리(.distseg border-right) 대신 단독 버튼 외형을 준다. */
 .dist-toolbar > .dist-sel-clear { border: 1px solid #d0d5dd; border-right: 1px solid #d0d5dd;
@@ -1722,6 +1739,9 @@ html[data-theme="dark"] .yield-overview .yo-basis {
 html[data-theme="dark"] .yield-by-source,
 html[data-theme="dark"] .yield-by-step { background: #1e2128; border-color: #2c3a52; }
 html[data-theme="dark"] .yield-step-title { color: #7fb3ef; border-color: #2c3a52; }
+html[data-theme="dark"] .yield-corner-title {
+  color: #f6bd8a; background: #33251a; border-left-color: #b45309;
+}
 html[data-theme="dark"] .ybs-table th { background: #1c2330; color: #8b94a3; }
 html[data-theme="dark"] .ybs-table th,
 html[data-theme="dark"] .ybs-table td { border-bottom-color: #2a2e37; }
@@ -1915,6 +1935,11 @@ html[data-theme="dark"] .bin-table tbody tr.is-selected td { background: #4a3b12
 html[data-theme="dark"] .dist-toolbar { background: #14161a; }
 html[data-theme="dark"] .distseg-group { border-color: #3a3f4b; }
 html[data-theme="dark"] .distseg { background: #262a33; color: #aab3c0; border-right-color: #3a3f4b; }
+html[data-theme="dark"] .dist-temp-filter { border-color: #b45309; }
+html[data-theme="dark"] .dist-temp-filter .distseg,
+html[data-theme="dark"] .dist-temp-group { background: #33251a; color: #f6bd8a; border-right-color: #5c3a17; }
+html[data-theme="dark"] .dist-temp-filter .distseg.active { background: #b45309; color: #fff; }
+html[data-theme="dark"] .dist-temp-group { border-left-color: #5c3a17; }
 html[data-theme="dark"] .dist-toolbar > .dist-sel-clear { background: #1e2128; border-color: #3a3f4b; color: #f3a3a8; }
 html[data-theme="dark"] .dist-toolbar > .dist-sel-clear:hover { background: #46201f; border-color: #6b3230; }
 html[data-theme="dark"] .dist-leg-item { color: #aab3c0; }

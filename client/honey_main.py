@@ -28,8 +28,8 @@ from PyQt6.QtCore import Qt, QTimer, QEvent, QPropertyAnimation, QEasingCurve, Q
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QDialog, QFileDialog, QHeaderView,
-    QMainWindow, QMessageBox, QProgressDialog, QPushButton, QTableWidgetItem,
-    QWidget,
+    QMainWindow, QMenu, QMessageBox, QProgressDialog, QPushButton,
+    QTableWidgetItem, QToolButton, QWidget,
 )
 
 from transport.config import CURRENT_VERSION, SERVER_BASE_URL
@@ -38,6 +38,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 from d1 import D1BrowserDialog
+from honey_ui import folder_intake
 from honey_ui import (
     ColorEditorDialog,
     ElapsedProgress as _ElapsedProgress,
@@ -331,6 +332,7 @@ class HoneyMainWindow(QMainWindow):
         self._apply_main_ui_tweaks()
 
         self.csv_paths = []
+        self.csv_roles = {}        # {파일 절대경로: "RT"|"CT"|"HT"} — 폴더 열기로 얻은 온도 역할
         self.group = None          # df_honey_group
         self.last_result = None    # AnalysisResult
         self.out_path = None       # 생성된 xlsx 경로
@@ -370,6 +372,18 @@ class HoneyMainWindow(QMainWindow):
             if point_size > 0:
                 font.setPointSize(point_size + 3)
             button.setFont(font)
+
+        # btn_open_local 은 드롭다운(파일/폴더 열기)을 달려고 QToolButton 이다. 앱 전역
+        # 스타일시트는 QPushButton 만 칠하므로, 옆 버튼과 같아 보이도록 여기서 칠한다.
+        self.btn_open_local.setStyleSheet(
+            "QToolButton {"
+            " background: #F6C445; color: #4A3B1A; border: 1px solid #E0A81E;"
+            " border-radius: 6px; padding: 5px 12px; font-weight: 600; }"
+            "QToolButton:hover { background: #FFD65A; }"
+            "QToolButton:pressed { background: #E9B21E; }"
+            "QToolButton:disabled {"
+            " background: #EDE6CF; color: #A89C77; border-color: #E0D9C0; }"
+            "QToolButton::menu-button { width: 18px; border-left: 1px solid #E0A81E; }")
 
     def _init_run_log(self, title):
         self._run_log_started = time.perf_counter()
@@ -532,13 +546,24 @@ class HoneyMainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def _handle_csv_drop(self, event):
-        paths = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
-        if paths:
-            event.acceptProposedAction()
-            self._intake(paths)   # 기존 인테이크 흐름 재사용(2개↑면 순서 팝업)
+        """파일·폴더 혼합 드롭을 모두 받는다.
+
+        폴더는 '폴더 열기' 와 같은 규칙으로 스캔(하위 RT/CT/HT 온도 폴더 인식)하고,
+        같이 끌어다 놓은 낱개 파일과 합쳐 한 번에 인테이크한다."""
+        dropped = [u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile()]
+        if not dropped:
+            return
+        event.acceptProposedAction()
+        dirs = [p for p in dropped if Path(p).is_dir()]
+        files = [p for p in dropped if p not in dirs]
+        if dirs:
+            self._intake_folders(dirs, extra_paths=files)
+        else:
+            self._intake(files)   # 기존 인테이크 흐름 재사용(2개↑면 순서 팝업)
 
     def _connect_signals(self):
         self.btn_open_local.clicked.connect(self.on_open_local)
+        self._build_open_local_menu()
         self.btn_pick_csv.clicked.connect(self.on_browse_d1)
         # 입력 파일: 선택 후 ▲▼ 로 순서 변경 (맨 위 파일이 기준), Clear 로 전체 비우기
         # 개별 파일 삭제는 각 행의 ✕ 버튼(_refill_csv_list)이 담당한다.
@@ -1416,12 +1441,69 @@ class HoneyMainWindow(QMainWindow):
         return result
 
     # ── 입력 선택: 로컬 파일 열기 / d1_storage 검색 ─────────────────────────
+    def _build_open_local_menu(self):
+        """LOCAL FILE OPEN 우측 화살표 메뉴 — 파일 열기 / 폴더 열기.
+
+        버튼 본체 클릭은 종전대로 파일 열기다(MenuButtonPopup 이라 메뉴는 화살표를
+        눌러야 열린다) — 기존 사용자의 클릭 동작이 바뀌지 않는다."""
+        menu = QMenu(self.btn_open_local)
+        menu.addAction("파일 열기…", self.on_open_local)
+        menu.addAction("폴더 열기…", self.on_open_folder)
+        self.btn_open_local.setMenu(menu)
+        self.btn_open_local.setPopupMode(
+            QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        # QToolButton 기본은 아이콘 전용이라 이걸 안 하면 글자가 사라진다.
+        self.btn_open_local.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+
     def on_open_local(self):
         # 현재 윈도우(네이티브) 파일 열기 대화상자
         paths, _ = QFileDialog.getOpenFileNames(
             self, "파일 열기 (여러 개 가능)", "",
             "모든 파일 (*.*)")
         self._intake(paths)
+
+    def on_open_folder(self):
+        """폴더 열기 — 하위 데이터 파일을 수집한다.
+
+        상위폴더(예 EP1) 밑에 RT/CT/HT 온도 폴더가 있으면 그 폴더들만 읽고 역할을
+        기억한다(Temperature 배치 창 자동 배치 근거). 온도 폴더가 없으면 일반 폴더로
+        보고 하위 데이터 파일을 전부 가져온다 — 전 모드에서 쓸 수 있다."""
+        path = QFileDialog.getExistingDirectory(self, "폴더 열기", "")
+        if path:
+            self._intake_folders([path])
+
+    def _intake_folders(self, dirs, extra_paths=None):
+        """폴더(들) 스캔 → 함께 드롭된 낱개 파일과 합쳐 기존 인테이크 흐름에 합류.
+
+        extra_paths 는 폴더와 같이 끌어다 놓은 파일이다(스캔 결과 뒤에 붙인다)."""
+        paths, roles, skipped = folder_intake.scan_folders(dirs)
+        merged, seen = list(paths), set(paths)
+        for p in extra_paths or []:
+            key = str(Path(p).resolve())
+            if key not in seen:
+                merged.append(key)
+                seen.add(key)
+        if not merged:
+            QMessageBox.warning(
+                self, "폴더 열기",
+                "가져올 데이터 파일이 없습니다.\n"
+                f"대상 확장자: {', '.join(folder_intake.DATA_SUFFIXES)}")
+            return
+
+        before = len(self.csv_paths or [])
+        self._intake(merged, roles=roles)
+        if len(self.csv_paths or []) == before:
+            return                      # busy 이거나 순서 팝업에서 취소 — 안내할 것 없음
+        notes = []
+        if roles:
+            notes.append(" / ".join(
+                f"{role} {sum(1 for r in roles.values() if r == role)}개"
+                for role in folder_intake.ROLE_ORDER
+                if any(r == role for r in roles.values())))
+        if skipped:
+            notes.append(f"건너뛴 폴더 {len(skipped)}개({', '.join(skipped[:5])})")
+        if notes:
+            self._status(f"{len(self.csv_paths)}개 파일 선택됨 — " + " · ".join(notes))
 
     def on_browse_d1(self):
         dlg = D1BrowserDialog(self)
@@ -1443,11 +1525,12 @@ class HoneyMainWindow(QMainWindow):
         외부 링크라 SSO 세션이 있는 시스템 브라우저에서 열어야 한다(내장 브라우저 X)."""
         webbrowser.open("https://confluence.samsungds.net/pages/editpage.action?pageId=3473285336")
 
-    def _intake(self, paths):
+    def _intake(self, paths, roles=None):
         """선택된 파일들 → (2개 이상이면) 순서 지정 팝업 → 메인 창에 로드.
 
         파일 열기·D1·드래그앤드롭이 모두 여기로 합류하므로, busy 중 새 입력 차단도
-        여기 한 곳에서 한다 (드롭은 액션이 아니라 setEnabled 로 막을 수 없다)."""
+        여기 한 곳에서 한다 (드롭은 액션이 아니라 setEnabled 로 막을 수 없다).
+        roles 는 폴더 열기가 알아낸 {경로: 온도 역할} (없으면 None)."""
         if self._busy:
             self._status("작업이 진행 중입니다 — 완료 후 파일을 가져와 주세요.")
             return
@@ -1459,7 +1542,7 @@ class HoneyMainWindow(QMainWindow):
             if not dlg.exec():
                 return
             paths = dlg.ordered_paths()
-        self._load_paths(paths)
+        self._load_paths(paths, roles=roles)
 
     def _refill_csv_list(self):
         """self.csv_paths 순서대로 list_csv(테이블) 다시 채우기.
@@ -1499,6 +1582,7 @@ class HoneyMainWindow(QMainWindow):
     def _clear_files(self):
         """파일 리스트를 전체 비운다 (Clear 버튼)."""
         self.csv_paths = []
+        self.csv_roles = {}
         self._refill_csv_list()
         self.le_outname.clear()
         self.group = None
@@ -1515,6 +1599,7 @@ class HoneyMainWindow(QMainWindow):
             return
         removed = Path(self.csv_paths[idx]).name
         del self.csv_paths[idx]
+        (self.csv_roles or {}).pop(target, None)
         self._refill_csv_list()
         # 파일 구성이 바뀌었으니 그룹은 무효화 — Start 시 재구성된다.
         self.group = None
@@ -1523,10 +1608,11 @@ class HoneyMainWindow(QMainWindow):
             self.le_outname.clear()
         self._status(f"'{removed}' 을(를) 리스트에서 제거했습니다.")
 
-    def _load_paths(self, paths):
+    def _load_paths(self, paths, roles=None):
         """선택된 입력 파일들 → 기존 리스트에 이어붙이기(중복 경로 제외) + 저장 파일명 제안.
         새로 File open(또는 D1/드래그드롭)을 해도 기존 리스트를 지우지 않고 추가한다.
-        전체 비우기는 Clear 버튼, 개별 제거는 각 행의 ✕ 버튼이 담당한다."""
+        전체 비우기는 Clear 버튼, 개별 제거는 각 행의 ✕ 버튼이 담당한다.
+        roles({경로: 온도 역할})는 파일 리스트와 같은 수명으로 csv_roles 에 누적한다."""
         new_paths = [str(Path(p).resolve()) for p in paths]
         merged = list(self.csv_paths or [])
         seen = set(merged)
@@ -1535,6 +1621,8 @@ class HoneyMainWindow(QMainWindow):
                 merged.append(p)
                 seen.add(p)
         self.csv_paths = merged
+        if roles:
+            self.csv_roles = {**(self.csv_roles or {}), **roles}
         self._refill_csv_list()
         self.le_outname.setText(_suggest_base_name(self.csv_paths))
         self.group = None
@@ -1867,6 +1955,35 @@ class HoneyMainWindow(QMainWindow):
             names.append(cand)
         return names
 
+    def _roles_for_names(self, names, paths):
+        """{source 이름: 온도 역할} — 폴더에서 얻은 경로별 역할을 source 이름으로 옮긴다.
+
+        ⚠️ 입력 파일 개수 ≠ source 개수다(honey_parse 가 내부 병합할 수 있음 — CLAUDE.md #9).
+        그래서 names 와 paths 의 길이가 같을 때(= 파일 1개가 source 1개인 경우)만 index 로
+        잇고, 그 외에는 **파일 stem 부분일치**로만 잇는다. 못 이은 source 는 키를 만들지
+        않아 배치 창에서 미배정으로 남는다 — 조용한 오배치보다 사용자 배치가 낫다.
+        """
+        roles = getattr(self, "csv_roles", None) or {}
+        if not roles or not names:
+            return {}
+        by_path = {str(Path(p).resolve()): roles.get(str(Path(p).resolve())) for p in paths}
+        if len(names) == len(paths):
+            return {n: r for n, r in zip(names, (by_path[str(Path(p).resolve())] for p in paths))
+                    if r}
+        out = {}
+        for name in names:
+            key = str(name).strip().lower()
+            if not key:
+                continue
+            for path, role in by_path.items():
+                if not role:
+                    continue
+                stem = Path(path).stem.lower()
+                if key in stem or stem in key:
+                    out[name] = role
+                    break
+        return out
+
     def _temperature_first_flow(self):
         """Temperature 모드: RT/CT/HT 배치 창을 **파싱보다 먼저** 띄운다. 취소면 None.
 
@@ -1889,7 +2006,9 @@ class HoneyMainWindow(QMainWindow):
             # 파일명만으로 이름을 알 수 없다 — 종전 순서(파싱 → 배치 창) 그대로.
             if not self._rebuild_group(warn=True) or self.group is None:
                 return None
-            dlg = TemperatureGroupDialog(self, list(self.group.names()))
+            real = list(self.group.names())
+            dlg = TemperatureGroupDialog(self, real,
+                                         roles=self._roles_for_names(real, paths))
             if not dlg.exec():
                 self._status("Temperature 배치 취소")
                 return None
@@ -1900,7 +2019,8 @@ class HoneyMainWindow(QMainWindow):
         try:
             fut = ex.submit(self._parse_group_core, paths, self.product_type(),
                             True, stage_q.put)
-            dlg = TemperatureGroupDialog(self, names_guess)
+            dlg = TemperatureGroupDialog(self, names_guess,
+                                         roles=self._roles_for_names(names_guess, paths))
             if not dlg.exec():
                 self._status("Temperature 배치 취소")
                 fut.cancel()          # 이미 시작됐으면 결과만 버린다(읽기 전용이라 무해)
@@ -1931,13 +2051,16 @@ class HoneyMainWindow(QMainWindow):
             self._status(f"{len(paths)}개 파일 전처리 완료 (기준: {Path(paths[0]).name}).")
 
             # 이름 정합 검증 — 추정이 빗나갔으면 실제 이름으로 한 번 다시 받는다.
+            # 비교 대상은 창에 **들어간** 원본 이름(source_names)이다 — order 는 사용자가
+            # 바꾼 새 이름이라 rename 을 한 순간 항상 불일치가 되어 창이 두 번 뜬다.
             real = list(self.group.names())
-            if sorted(arranged["order"]) != sorted(real):
+            if sorted(arranged["source_names"]) != sorted(real):
                 QMessageBox.information(
                     self, "Temperature 배치",
                     "파일을 읽어 보니 source 이름이 파일명에서 추정한 것과 다릅니다.\n"
                     "실제 이름으로 배치 창을 다시 표시합니다.")
-                dlg2 = TemperatureGroupDialog(self, real)
+                dlg2 = TemperatureGroupDialog(self, real,
+                                              roles=self._roles_for_names(real, paths))
                 if not dlg2.exec():
                     self._status("Temperature 배치 취소")
                     return None
@@ -1990,6 +2113,9 @@ class HoneyMainWindow(QMainWindow):
             source_order = arranged["order"]
         elif mode == "Temperature":
             arranged = temperature_arranged      # 위에서 파싱보다 먼저 받아둔 배치 결과
+            # rename 은 groups/order(이미 새 이름) 를 쓰는 아래 줄들보다 **먼저** 해야
+            # _clean_temperature_frames 의 mass_data_map 조회가 새 이름과 맞는다.
+            self.group.rename_sources(arranged["names"])
             options["temperature"] = {"groups": arranged["groups"],
                                       "limits_file": arranged["limits_file"]}
             source_order = arranged["order"]

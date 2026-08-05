@@ -237,7 +237,10 @@ function majorFailBinsTableHtml() {
 // 숨김 행(서버가 이미 제외)은 자동 비대상. 섹션 추적은 sheets.js rowSection 과 동일 로직.
 function issueStatusCounts() {
   const rows = (DATA && Array.isArray(DATA.issue_table_text)) ? DATA.issue_table_text : [];
-  const counts = { Yield: { open: 0, close: 0 }, CPK: { open: 0, close: 0 }, ETC: { open: 0, close: 0 } };
+  const counts = {
+    Yield: { open: 0, close: 0 }, CPK: { open: 0, close: 0 },
+    TEMP: { open: 0, close: 0 }, ETC: { open: 0, close: 0 },
+  };
   let sec = "";
   rows.forEach(r => {
     if (r && r["Category"]) sec = String(r["Category"]);
@@ -252,7 +255,9 @@ function issueStatusCounts() {
 // 진행률 = Close / (Open + Close) * 100 (소수 1자리). 이슈 행이 없는 카테고리는 "-".
 function issueStatusCardHtml() {
   const counts = issueStatusCounts();
-  const rows = ["Yield", "CPK", "ETC"].map(cat => {
+  const cats = (webReportMode() === "Temperature")
+    ? ["Yield", "CPK", "TEMP", "ETC"] : ["Yield", "CPK", "ETC"];
+  const rows = cats.map(cat => {
     const c = counts[cat];
     const total = c.open + c.close;
     const prog = total ? (c.close / total * 100).toFixed(1) + "%" : "-";

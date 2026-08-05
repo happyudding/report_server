@@ -104,7 +104,7 @@
      <layout class="QHBoxLayout" name="horizontalLayout_filebtns">
       <property name="spacing"><number>6</number></property>
       <item>
-       <widget class="QPushButton" name="btn_open_local">
+       <widget class="QToolButton" name="btn_open_local">
         <property name="text"><string>LOCAL FILE OPEN</string></property>
         <property name="minimumSize"><size><width>0</width><height>52</height></size></property>
         <property name="sizePolicy">

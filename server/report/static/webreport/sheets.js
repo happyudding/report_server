@@ -353,19 +353,22 @@ function reorderYieldRows(rows, cols) {
  */
 // Issue Table comment 저장용 행 식별 키 — 백엔드 web_report/tabs/issue_table.py 의
 // manifest.issue_comments 키 규칙과 반드시 동일해야 한다:
-// Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", ETC 데이터 행 "ETC|<item>".
+// Yield 행 "Yield|<bin>|<item>", CPK 데이터 행 "CPK|<item>", TEMP 행 "TEMP|<item>"
+// (Temperature 모드 전용), ETC 데이터 행 "ETC|<item>".
 function issueRowKey(r, section) {
   const item = String((r && r["Item"]) ?? "");
   if (!item.trim()) return "";
   if (section === "Yield") return `Yield|${String((r && r["Bin"]) ?? "")}|${item}`;
   if (section === "CPK") return `CPK|${item}`;
+  if (section === "TEMP") return `TEMP|${item}`;
   if (section === "ETC") return `ETC|${item}`;
   return "";
 }
 
 // Issue Table 행 숨김/Status 용 이슈 단위 키 — 백엔드 edits.py KIND_ISSUE_HIDDEN/
 // KIND_ISSUE_STATUS 규약과 반드시 동일해야 한다: Yield 는 bin 단위 "Yield|<bin>"
-// (대표행에만 부여 — 상세행/Pass 행 제외), CPK 행 "CPK|<item>", ETC 행 "ETC|<item>".
+// (대표행에만 부여 — 상세행/Pass 행 제외), CPK 행 "CPK|<item>", TEMP 행 "TEMP|<item>",
+// ETC 행 "ETC|<item>".
 function issueHideStatusKey(r, section) {
   const item = String((r && r["Item"]) ?? "").trim();
   if (section === "Yield") {
@@ -373,6 +376,7 @@ function issueHideStatusKey(r, section) {
     return (bin && bin !== "1" && r && r._grp && !r._detail) ? `Yield|${bin}` : "";
   }
   if (section === "CPK") return item ? `CPK|${item}` : "";
+  if (section === "TEMP") return item ? `TEMP|${item}` : "";
   if (section === "ETC") return item ? `ETC|${item}` : "";
   return "";
 }
@@ -384,6 +388,7 @@ function issueHideStatusKey(r, section) {
 const ISSUE_SECTION_LABELS = {
   Yield: { group: "yield", avg: "Avg" },
   CPK:   { group: "cpk",   avg: "cpk" },
+  TEMP:  { group: "temp",  avg: "Avg" },   // Temperature 모드 전용 (RT limit 이탈 항목)
   ETC:   { group: "etc",   avg: "Avg" },
 };
 function issueSectionHeadRowsHtml(cols, sec) {
@@ -487,7 +492,7 @@ function renderSheetTable(rows, opts) {
     bodyRows.forEach((r, ri) => {
       if (isCpkSubheadRow(r)) return;
       const sec = rowSection[ri];
-      if (sec !== "Yield" && sec !== "ETC") return;
+      if (sec !== "Yield" && sec !== "ETC" && sec !== "TEMP") return;
       if (String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() === "1") return;   // Pass 행 제외
       cols.forEach(c => {
         if (!/_yield$/i.test(String(c))) return;
@@ -550,7 +555,8 @@ function renderSheetTable(rows, opts) {
         // 셀만 배치로 받으므로 캐시 보유 여부로 판단하면 아직 안 받은 항목의 셀이 통째로
         // 안 만들어진다. Yield/ETC/CPK 섹션의 데이터 행(서브헤더 제외)에 산포 카드 표시.
         if (opts.kind === "issue" && item && !subhead && !issuePassRow
-          && (rowSection[ri] === "Yield" || rowSection[ri] === "ETC" || rowSection[ri] === "CPK")
+          && (rowSection[ri] === "Yield" || rowSection[ri] === "ETC"
+            || rowSection[ri] === "CPK" || rowSection[ri] === "TEMP")
           && distHasData(item)) {
           // CPK 섹션 미니셀은 Bin1(양품) ECDF 로 그린다(data-bin1) — 행의 cpk 값이 Bin1
           // 기준이라 그림과 숫자의 데이터 기준을 맞춘다. Yield/ETC 는 기존 전체 범위 유지.
@@ -681,9 +687,10 @@ function renderSheetTable(rows, opts) {
           state.curSec = sec;
           out += issueSectionHeadRowsHtml(cols, sec);
         }
-        // 헤더 블록이 대체하는 divider 행(CPK 서브헤더 / ETC 라벨행)은 데이터로 안 그린다.
+        // 헤더 블록이 대체하는 divider 행(CPK 서브헤더 / TEMP·ETC 라벨행)은 데이터로 안 그린다.
         if (isCpkSubheadRow(r)) continue;
-        if (String((r && r["Category"]) || "").trim() === "ETC") continue;
+        const catTxt = String((r && r["Category"]) || "").trim();
+        if (catTxt === "ETC" || catTxt === "TEMP") continue;
       }
       out += renderDataRowTr(r, ri);
     }

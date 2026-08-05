@@ -89,8 +89,12 @@ web_report/
     ├── yield_tab.py       build_yield_rows / fail_counts / fail_bin_ranking / yield_overview
     │                       + **수율 분모 판정 정본** resolve_source_basis(소스별 Gross Die ↔
     │                       test die, 100% 초과·부족분 100 예외) / source_totals / auto_basis
+    │                       + Temperature Corner 분해 build_yield_corner_groups(RT / CT+HT —
+    │                       소스 부분집합으로 build_yield_rows 재호출, 분모는 subset 불변)
     ├── cpk.py             build_cpk_rows(**Bin1 기준 단일**) + CPK_THRESHOLD(1.33) + worst_cpk_by_subject
-    ├── issue_table.py     build_issue_table_rows (Yield + cpk<1.33 + ETC, comment/Status/숨김은 편집 DB)
+    ├── issue_table.py     build_issue_table_rows (Yield + cpk<1.33 + [Temperature 만] TEMP
+    │                       + ETC, comment/Status/숨김은 편집 DB). Temperature 는 Yield/CPK 를
+    │                       RT source 기준으로만 계산하고 TEMP 섹션을 CPK↔ETC 사이에 넣는다
     ├── distribution.py    build_distribution_index / scatter_item / build_distribution_compact (lazy)
     ├── trim_analysis.py   build_trim_payload / build_trim_chart (lazy)
     ├── commonality.py     search_chips / chip_percentiles (Commonality 모드)

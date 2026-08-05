@@ -370,6 +370,66 @@ def build_yield_step_groups(yield_rows):
     return out
 
 
+# ── Temperature Corner 분해 (Yield 탭 전용) ───────────────────────────────────
+# Temperature 모드는 Yield 표를 2개로 나눈다:
+#   RT Corner   = RT source 만 — Normal 모드와 완전히 같은 계산
+#   Temp Corner = CT + HT source — 업로드 직전 정리(web_report.temperature)에서 RT pass
+#                 좌표만 남기고 **RT 의 HILIM/LOLIM 으로 재판정**된 뒤라, BIN != 1 인 행이
+#                 곧 "RT 규격을 벗어난 die" 다(여기서 limit 을 다시 보지 않는다).
+# 각 Corner 는 그 소스 부분집합만으로 build_yield_rows 를 다시 돌린다. 소스별 분모
+# (resolve_source_basis)는 소스 간 결합이 없어 subset 에서도 값이 같으므로, 호출부가 전체
+# basis 에서 슬라이스한 totals 를 그대로 넘기면 된다 — 같은 소스의 fail% 는 Corner 표와
+# 전체 Yield 시트에서 정확히 일치한다.
+# 다만 _sole_step / _item_meta 는 subset 에서 재계산되므로, RT 와 CT/HT 의 STEP 메타가
+# 다른 세션에서는 Corner 별 STEP 라벨이 갈릴 수 있다(같은 프로그램 pair 면 동일).
+
+CORNER_RT = "RT"
+CORNER_TEMP = "TEMP"
+
+
+def temperature_corner_sources(tables, temperature_groups):
+    """(RT source 이름, CT/HT source 이름) — tables 순서 유지, 그룹 미소속 source 는 제외."""
+    rt_names, member_names = set(), set()
+    for group in temperature_groups or []:
+        rt = str(group.get("rt") or "")
+        if rt:
+            rt_names.add(rt)
+        for name in group.get("members") or []:
+            member_names.add(str(name))
+    order = [t.source for t in tables]
+    return ([n for n in order if n in rt_names],
+            [n for n in order if n in member_names and n not in rt_names])
+
+
+def build_yield_corner_groups(tables, fail_counts, totals, temperature_groups):
+    """Temperature Yield 탭용 Corner 2종 (RT / CT+HT).
+
+    반환 ``[{corner, label, sources, rows, step_groups, by_step}]`` — 각 원소가 화면의
+    표 1개(안쪽은 기존 STEP 분리 구조 그대로)다. source 가 하나도 없는 Corner 는 넣지
+    않는다(CT/HT 없는 RT 단독 세션이면 RT Corner 만 나온다).
+    """
+    rt_names, member_names = temperature_corner_sources(tables, temperature_groups)
+    out = []
+    for corner, label, names in ((CORNER_RT, "RT Corner", rt_names),
+                                 (CORNER_TEMP, "Temp Corner (CT / HT)", member_names)):
+        wanted = set(names)
+        subset = [t for t in tables if t.source in wanted]
+        if not subset:
+            continue
+        sub_counts = {t.source: fail_counts[t.source] for t in subset}
+        sub_totals = {t.source: totals[t.source] for t in subset}
+        rows = build_yield_rows(subset, sub_counts, totals=sub_totals)
+        out.append({
+            "corner": corner,
+            "label": label,
+            "sources": [t.source for t in subset],
+            "rows": rows,
+            "step_groups": build_yield_step_groups(rows),
+            "by_step": yield_step_summary(subset, rows, totals=sub_totals),
+        })
+    return out
+
+
 def yield_step_summary(tables, yield_rows, totals=None):
     """상단 요약 박스용 STEP 요약 행: STEP 별 fail die 수 + 전체 rawdata 기준 **누적** 수율%.
 
@@ -470,7 +530,7 @@ def yield_overview(tables, yield_rows, totals=None):
             "by_step": yield_step_summary(tables, yield_rows, totals=src_totals)}
 
 
-def _row_total_count(row):
+def row_total_count(row):
     """행에 있는 소스별 ``{source}_count`` 값을 모두 합산."""
     return sum(int(v or 0) for k, v in row.items() if str(k).endswith("_count"))
 
@@ -482,14 +542,14 @@ def fail_bin_ranking(yield_rows):
     Summary(상위 5)·Yield(0.5% 임계 분리) 가 공유하는 단일 출처.
     """
     fails = [r for r in yield_rows if str(r.get("bin")) != PASS_BIN]
-    fails.sort(key=_row_total_count, reverse=True)
+    fails.sort(key=row_total_count, reverse=True)
 
     ranked = []
     for r in fails:
         ranked.append({
             "bin": r.get("bin"),
             "item": r.get("Item"),
-            "count": _row_total_count(r),
+            "count": row_total_count(r),
             "yield_pct": r.get("avg"),
         })
     return ranked

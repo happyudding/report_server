@@ -29,11 +29,11 @@ from web_report import edits as _edits
 # (eval_export.py:128 도 같은 방식으로 참조한다).
 SEP = _edits._SEP
 
-CATEGORIES = ("Yield", "CPK", "ETC")
+CATEGORIES = ("Yield", "CPK", "TEMP", "ETC")
 
 
 class RowKey(NamedTuple):
-    category: str        # "Yield" | "CPK" | "ETC"
+    category: str        # "Yield" | "CPK" | "TEMP" | "ETC"
     bin: int | None      # Yield 만 값이 있다
     item: str
 
@@ -50,7 +50,7 @@ def parse(row_key: str) -> RowKey | None:
         except (TypeError, ValueError):
             return None
         return RowKey("Yield", bin_, parts[2])
-    for cat in ("CPK", "ETC"):
+    for cat in ("CPK", "TEMP", "ETC"):
         prefix = cat + "|"
         if text.startswith(prefix) and text[len(prefix):]:
             return RowKey(cat, None, text[len(prefix):])

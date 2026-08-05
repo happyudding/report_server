@@ -89,6 +89,7 @@ def _parse_row_key(row_key: str):
 
     Yield|<bin>|<item> → 그 bin. 단 Pass 요약행(bin==1)은 fail-item 이 아니라 skip.
     CPK|<item> → bin=1 (엔진 PASS_BIN 관례 — cpk marginal case).
+    TEMP|<item> → bin=None (Temperature 모드 RT limit 이탈 항목 — item 단위 집계라 bin 없음).
     ETC|<item> → bin=None (rawdata 에 없는 자유입력 item 가능).
     """
     if row_key.startswith("Yield|"):
@@ -105,6 +106,8 @@ def _parse_row_key(row_key: str):
         return (bin_, parts[2])
     if row_key.startswith("CPK|") and row_key[4:]:
         return (1, row_key[4:])
+    if row_key.startswith("TEMP|") and row_key[5:]:
+        return (None, row_key[5:])
     if row_key.startswith("ETC|") and row_key[4:]:
         return (None, row_key[4:])
     return None
@@ -113,7 +116,7 @@ def _parse_row_key(row_key: str):
 def _status_key(row_key: str) -> str:
     """comment row_key → 그 행이 속한 이슈의 Status 키 (tabs/issue_table.py 규약).
 
-    Status/숨김은 이슈 단위라 Yield 는 bin 까지만("Yield|<bin>"), CPK/ETC 는
+    Status/숨김은 이슈 단위라 Yield 는 bin 까지만("Yield|<bin>"), CPK/TEMP/ETC 는
     row_key 와 같다. 프런트 sheets.js issueHideStatusKey 와 같은 규칙이다.
     """
     if row_key.startswith("Yield|"):

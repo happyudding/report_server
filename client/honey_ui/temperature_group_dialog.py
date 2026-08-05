@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -43,6 +44,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from .compare_arrange_dialog import dedupe_names
 
 ROLES = ("RT", "CT", "HT")
 LIMIT_FILTER = "Limit Table (*.lt *.pds)"
@@ -71,6 +74,74 @@ def suggest_groups(names) -> list:
         if role not in buckets[stem]:
             buckets[stem][role] = name
     return [buckets[s] for s in order if "RT" in buckets[s]]
+
+
+def pair_key(name) -> str:
+    """그룹(pair) 묶음 키 — 이름에서 RT/CT/HT 토큰을 떼고 소문자화·구분자 정리.
+
+    suggest_groups 의 stem 계산과 같은 규칙이되 **대소문자를 무시**한다. 역할이 폴더로
+    이미 확정된 경우(suggest_groups_by_role)에는 이 키가 같은 것끼리 한 웨이퍼 pair 다.
+    """
+    text = str(name)
+    m = _ROLE_TOKEN.search(text)
+    if m:
+        text = text[:m.start(1)] + text[m.end(1):]
+    return text.strip(" _-.").lower()
+
+
+def suggest_groups_by_role(names, role_of) -> list:
+    """역할이 **확정된** 상태에서 pair 를 묶는다 → [{"RT":…, "CT":…, "HT":…}, ...].
+
+    role_of(name) → "RT"|"CT"|"HT"|"" (빈 값이면 파일명 토큰으로 폴백). 폴더 구조로 역할을
+    알아낸 뒤 "어느 RT 와 짝인가" 만 정하는 경로이며 2단계로 짝짓는다:
+
+      1. **이름 유사도** — pair_key(온도 토큰 제거) 가 같은 것끼리. 이름 자체에 온도가
+         든 경우(``WF1_RT`` ↔ ``WF1_CT``)를 잡는다. RT + member 가 모두 있어야 확정.
+      2. **역할별 순서** — 1에서 남은 것은 i 번째 RT ↔ i 번째 CT ↔ i 번째 HT 로 짝짓는다.
+         폴더마다 같은 파일명을 쓰는 경우(``EP1/RT/a.stdf`` ↔ ``EP1/CT/a.stdf`` → source
+         이름이 ``a`` / ``a_2`` / ``a_3`` 로 갈리는 경우)가 여기서 잡힌다. folder_intake 가
+         역할마다 이름순으로 정렬해 주므로 같은 순번이 같은 웨이퍼다.
+
+    2단계는 추정이라 틀릴 수 있다 — 이 창이 '확인' 창인 이유가 그것이다.
+    짝이 남으면(RT 보다 CT 가 많은 등) 미배정으로 남겨 사용자가 직접 놓게 한다.
+    """
+    role_by_name: dict = {}
+    for name in names:
+        role = str(role_of(name) or "").upper() if role_of else ""
+        if role not in ROLES:
+            m = _ROLE_TOKEN.search(str(name))
+            role = m.group(1).upper() if m else ""
+        if role in ROLES:
+            role_by_name[name] = role
+
+    # 1단계 — 이름 stem 이 같은 것끼리
+    buckets: dict = {}
+    order: list = []
+    for name, role in role_by_name.items():
+        stem = pair_key(name)
+        if stem not in buckets:
+            buckets[stem] = {}
+            order.append(stem)
+        buckets[stem].setdefault(role, name)     # 같은 (stem, 역할) 중복은 첫 번째만
+
+    groups, taken = [], set()
+    for stem in order:
+        bucket = buckets[stem]
+        if "RT" in bucket and len(bucket) > 1:   # RT + member 최소 1개라야 pair 로 인정
+            groups.append(bucket)
+            taken.update(bucket.values())
+
+    # 2단계 — 남은 것은 역할별 순번으로
+    rest = {role: [n for n in names
+                   if role_by_name.get(n) == role and n not in taken]
+            for role in ROLES}
+    for i, rt in enumerate(rest["RT"]):
+        pair = {"RT": rt}
+        for role in ("CT", "HT"):
+            if i < len(rest[role]):
+                pair[role] = rest[role][i]
+        groups.append(pair)
+    return groups
 
 
 class _DropList(QListWidget):
@@ -166,9 +237,14 @@ class _LimitsDropArea(QFrame):
 class TemperatureGroupDialog(QDialog):
     """exec() 가 참을 돌려주면 result_groups() 로 배치 결과를 읽는다."""
 
-    def __init__(self, parent, names):
+    def __init__(self, parent, names, roles=None):
         super().__init__(parent)
-        self.setWindowTitle("Temperature — RT / CT / HT 그룹 배치")
+        # roles({source 이름: "RT"|"CT"|"HT"})가 있으면 폴더 구조에서 역할이 이미 확정된
+        # 것이라, 이 창은 '배치' 가 아니라 '확인' 창이 된다.
+        self._roles = {str(k): str(v) for k, v in (roles or {}).items()}
+        confirm = bool(self._roles)
+        self.setWindowTitle("Temperature — RT / CT / HT 배치 확인" if confirm
+                            else "Temperature — RT / CT / HT 그룹 배치")
         self.resize(880, 620)
         self._original = [str(n) for n in names]
         self._bin_map = None
@@ -177,6 +253,7 @@ class TemperatureGroupDialog(QDialog):
 
         self.pool = _DropList()
         self.pool.setMaximumHeight(150)
+        self.pool.itemDoubleClicked.connect(self._rename)
 
         self._groups_box = QVBoxLayout()
         self._groups_box.setSpacing(6)
@@ -211,8 +288,11 @@ class TemperatureGroupDialog(QDialog):
         drop_layout.addWidget(btn_pick)
 
         hint = QLabel(
-            "· source 를 끌어다 각 그룹의 RT / CT / HT 자리에 놓으세요 (자리끼리도 이동 가능).\n"
+            ("· 폴더 구조(RT/CT/HT)에서 역할을, 파일명 유사도로 그룹을 자동 인식했습니다 —"
+             " **틀린 곳만 끌어서 고치세요**.\n" if confirm else
+             "· source 를 끌어다 각 그룹의 RT / CT / HT 자리에 놓으세요 (자리끼리도 이동 가능).\n") +
             "· 음영 표시된 **RT 가 그 그룹의 Limit(HILIM/LOLIM) 기준**입니다. CT/HT 는 없어도 됩니다.\n"
+            "· 이름을 **더블클릭**하면 source 명(리포트 legend 이름)을 바꿀 수 있습니다.\n"
             "· Start 를 누르면 CT/HT 는 RT 의 Bin1 좌표만 남기고 RT limit 으로 다시 판정합니다.")
         hint.setStyleSheet("color:#64748b;")
 
@@ -250,6 +330,7 @@ class TemperatureGroupDialog(QDialog):
             label = QLabel("RT (Limit 기준)" if role == "RT" else role)
             slot = _DropList(capacity=1, pool=self.pool)
             slot.setFixedHeight(46)
+            slot.itemDoubleClicked.connect(self._rename)
             if role == "RT":
                 label.setStyleSheet("color:#b45309; font-weight:700;")
                 slot.setStyleSheet("QListWidget { background: #fef3c7; }")
@@ -286,9 +367,21 @@ class TemperatureGroupDialog(QDialog):
             row["frame"].setParent(None)
         self._rows = []
         self.pool.clear()
-        for name in self._original:
-            self.pool.addItem(QListWidgetItem(name))
+        for idx, name in enumerate(self._original):
+            it = QListWidgetItem(name)
+            # 원본 source 순번 — rename_sources 가 **원본 순서** 리스트를 받으므로 필요하다
+            # (compare_arrange_dialog 와 같은 이유).
+            it.setData(Qt.ItemDataRole.UserRole, idx)
+            self.pool.addItem(it)
         self._add_group()
+
+    def _rename(self, item):
+        """source 명(리포트 legend 이름) 변경 — compare_arrange_dialog._rename 미러."""
+        text, ok = QInputDialog.getText(self, "SourceName 변경",
+                                        "Legend 이름:", text=item.text())
+        text = (text or "").strip()
+        if ok and text:
+            item.setText(text)
 
     def _take_from_pool(self, name):
         for i in range(self.pool.count()):
@@ -297,8 +390,13 @@ class TemperatureGroupDialog(QDialog):
         return None
 
     def _auto_arrange(self):
-        """파일명 토큰으로 그룹을 제안한다. 배치 못 한 source 는 미배정으로 남는다."""
-        groups = suggest_groups(self._original)
+        """그룹을 제안한다. 배치 못 한 source 는 미배정으로 남는다.
+
+        폴더에서 역할을 받았으면(self._roles) 역할은 그대로 쓰고 pair 만 파일명 유사도로
+        묶는다. 없으면 종전처럼 파일명 토큰으로 역할까지 추정한다.
+        """
+        groups = (suggest_groups_by_role(self._original, self._roles.get)
+                  if self._roles else suggest_groups(self._original))
         if not groups:
             return
         self._reset()
@@ -396,21 +494,48 @@ class TemperatureGroupDialog(QDialog):
             return
         self.accept()
 
+    def _entries(self, lw):
+        """[(원본 index, 현재 이름)] — 리스트에 보이는 순서 그대로."""
+        return [(lw.item(i).data(Qt.ItemDataRole.UserRole), lw.item(i).text())
+                for i in range(lw.count())]
+
     def result_groups(self) -> dict:
         """Start 결과.
 
-        - ``groups`` : ``[{"rt": 이름, "members": [CT, HT]}, ...]`` — manifest.options.temperature
+        - ``groups`` : ``[{"rt": 이름, "members": [CT, HT], "member_roles": ["CT","HT"]}, ...]``
+          — manifest.options.temperature. member_roles 는 members 와 같은 길이의 실제
+          역할이며, 서버가 Distribution 소스 그룹 필터의 CT/HT 구분에 쓴다.
         - ``order``  : 업로드 순서 (그룹마다 RT → CT → HT). 서버 tables 순서가 이 순서다.
+        - ``names``  : **원본 source 순서**의 새 이름 목록 — df_honey_group.rename_sources 용.
+        - ``source_names``: 창에 들어올 때의 **원본 이름** 목록(원본 순서). 호출부가 파싱
+          결과와 이름 정합을 볼 때 rename 전 이름으로 비교해야 하므로 함께 돌려준다.
         - ``bin_map``: .lt/.pds 파싱 결과 (없으면 None)
         - ``limits_file``: 세션에 기록할 파일 정보 (없으면 None)
+
+        이름은 source 키라 전체에서 유일해야 한다. dedupe 는 **원본 순서 기준**으로 한 번만
+        수행하고(rename_sources 와 같은 규칙) 그 결과를 그룹 목록에도 그대로 반영한다.
         """
+        # 배치된 것 + 미배정(pool) 전부에서 원본 index → 현재 이름을 모은다.
+        raw_by_idx = {}
+        for row in self._rows:
+            for role in ROLES:
+                raw_by_idx.update(dict(self._entries(row["slots"][role])))
+        raw_by_idx.update(dict(self._entries(self.pool)))
+        raw = [raw_by_idx.get(i, self._original[i]) for i in range(len(self._original))]
+        deduped = dedupe_names(raw)
+
         groups, order = [], []
         for row in self._rows:
-            rt = row["slots"]["RT"].names()
+            rt = [deduped[i] for i, _ in self._entries(row["slots"]["RT"])]
             if not rt:
                 continue
-            members = [n for role in ("CT", "HT") for n in row["slots"][role].names()]
-            groups.append({"rt": rt[0], "members": members})
+            members, member_roles = [], []
+            for role in ("CT", "HT"):
+                for i, _ in self._entries(row["slots"][role]):
+                    members.append(deduped[i])
+                    member_roles.append(role)
+            groups.append({"rt": rt[0], "members": members, "member_roles": member_roles})
             order += [rt[0]] + members
         return {"groups": groups, "order": order,
+                "names": deduped, "source_names": list(self._original),
                 "bin_map": self._bin_map, "limits_file": self._limits_file}

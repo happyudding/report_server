@@ -11,9 +11,10 @@ from .tabs import TAB_REGISTRY, TabContext, build_cpk_rows
 from .tabs.common import empty_items, finite_count_map, passfail_or_empty_items
 from .tabs.distribution import build_distribution_index
 from .tabs.issue_table import build_issue_bin_summary
-from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
-                             build_yield_step_groups, fail_counts_by_source,
-                             resolve_source_basis, yield_basis_payload, yield_overview)
+from .tabs.yield_tab import (build_yield_bin_groups, build_yield_corner_groups,
+                             build_yield_rows, build_yield_step_groups,
+                             fail_counts_by_source, resolve_source_basis,
+                             yield_basis_payload, yield_overview)
 
 
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
@@ -51,17 +52,22 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     sources = [{"name": t.source, "file_name": t.file_name} for t in tables]
     # Temperature 모드: source 마다 RT(기준) / member(CT·HT) 역할과 그룹 번호를 붙인다.
     # 프런트가 RT 를 표시로 구분하고, 비RT 는 아래 분모 강제 대상이 된다.
+    # temp_corner("RT"/"CT"/"HT")는 Distribution 소스 그룹 필터가 쓴다 — 업로드 때 기록된
+    # member_roles 가 정본이고, 그게 없는 옛 세션은 members 순서(CT→HT)로 추정한다.
     temp_role, temp_member_names = {}, set()
     if mode == "Temperature" and temperature_groups:
         for gi, group in enumerate(temperature_groups.get("groups") or []):
-            temp_role[group["rt"]] = (gi, "rt")
-            for name in group.get("members") or []:
-                temp_role[name] = (gi, "member")
+            temp_role[group["rt"]] = (gi, "rt", "RT")
+            members = list(group.get("members") or [])
+            roles = list(group.get("member_roles") or [])
+            for mi, name in enumerate(members):
+                corner = roles[mi] if mi < len(roles) else ("CT" if mi == 0 else "HT")
+                temp_role[name] = (gi, "member", corner)
                 temp_member_names.add(name)
         for entry in sources:
             role = temp_role.get(entry["name"])
             if role:
-                entry["temp_group"], entry["temp_role"] = role
+                entry["temp_group"], entry["temp_role"], entry["temp_corner"] = role
     all_items = sorted({c for t in tables for c in t.item_columns})
     # 항목별 유한 measurement 개수 — 아래 3곳(cpk 제외집합·dist 제외집합·distribution_index
     # 의 n)이 같은 스캔을 각각 돌던 것을 **1회**로 합친다(대형 세션에서 전 데이터 3회 스캔이었다).
@@ -81,6 +87,14 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         yield_rows = build_yield_rows(tables, fail_counts, totals=totals)
         cpk_rows = build_cpk_rows(tables, stat_items)
 
+    # Temperature 모드 Corner 분해(RT / CT+HT) — Yield 탭 표 2개와 Issue Table 의
+    # RT 기준 계산·TEMP 섹션이 **같은 결과 객체**를 쓴다(1회만 계산).
+    temp_corners = None
+    if mode == "Temperature" and temperature_groups:
+        with build_log.stage("yield_corner"):
+            temp_corners = build_yield_corner_groups(
+                tables, fail_counts, totals, temperature_groups.get("groups"))
+
     ctx = TabContext(
         tables=tables,
         all_items=all_items,
@@ -97,6 +111,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         etc_auto_items=list(etc_auto_items or []),
         issue_hidden=list(issue_hidden or []),
         issue_status=dict(issue_status or {}),
+        temp_corners=temp_corners,
     )
     sheets_out = {}
     for spec in TAB_REGISTRY:
@@ -145,7 +160,11 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
                 compare_groups=compare_groups)
 
     # Temperature 모드: RT/CT/HT 그룹 구성을 그대로 내려 프런트가 RT 를 표시한다.
+    # yield_corner_groups 는 Yield 탭이 표를 RT Corner / Temp Corner 2개로 그리는 근거다
+    # (없으면 프런트가 종전 yield_step_groups 렌더로 폴백 — 다른 모드는 이 키가 없다).
     if mode == "Temperature" and temperature_groups:
         payload["temperature"] = temperature_groups
+        if temp_corners:
+            payload["yield_corner_groups"] = temp_corners
 
     return payload
