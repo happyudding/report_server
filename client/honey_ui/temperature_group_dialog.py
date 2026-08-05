@@ -20,12 +20,14 @@ rawdata 를 정리한다(RT pass 좌표만 남기고 RT limit 으로 재판정).
 """
 from __future__ import annotations
 
+import concurrent.futures
 import re
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -313,25 +315,60 @@ class TemperatureGroupDialog(QDialog):
         if paths:
             self._load_limits(paths)
 
-    def _load_limits(self, paths):
-        """.lt/.pds 를 즉시 파싱해 항목→bin 매핑을 만든다. 실패는 경고 후 무시."""
+    @staticmethod
+    def _parse_limits(paths):
+        """.lt/.pds 파싱 — **워커 스레드에서 돈다**(UI 접근 금지, 예외는 값으로 돌려준다).
+
+        반환 (merged, loaded, errors). 큰 limit 파일이 UI 스레드를 멈추던 것을 옮긴 것으로,
+        판정 규칙 자체는 web_report.temperature.load_limits_file 그대로다.
+        """
         from web_report.temperature import load_limits_file
 
-        merged, loaded = {}, []
+        merged, loaded, errors = {}, [], []
         for path in paths:
+            name = Path(path).name
             try:
                 mapping, kind = load_limits_file(path)
             except Exception as exc:
-                QMessageBox.warning(self, "Limit 파일 읽기 실패",
-                                    f"{Path(path).name}\n{exc}")
+                errors.append((name, str(exc)))
                 continue
             if not mapping:
-                QMessageBox.warning(self, "Limit 파일 읽기 실패",
-                                    f"{Path(path).name}\n항목을 하나도 찾지 못했습니다.")
+                errors.append((name, "항목을 하나도 찾지 못했습니다."))
                 continue
             merged.update(mapping)
-            loaded.append((Path(path).name, kind, len(mapping)))
+            loaded.append((name, kind, len(mapping)))
+        return merged, loaded, errors
+
+    def _load_limits(self, paths):
+        """.lt/.pds 를 파싱해 항목→bin 매핑을 만든다. 실패는 경고 후 무시.
+
+        파싱은 워커 스레드에서 돌린다 — 큰 limit 파일을 UI 스레드에서 읽으면 배치 창이
+        통째로 얼어붙는다. 읽는 동안 창은 비활성 + 대기 커서로 두고 이벤트만 돌린다.
+        """
+        prev_text = self.lbl_limits.text()
+        prev_style = self.lbl_limits.styleSheet()
+        self.lbl_limits.setText("Limit 파일 읽는 중...")
+        self.lbl_limits.setStyleSheet("color:#64748b;")
+        self.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(self._parse_limits, list(paths))
+                while True:
+                    done, _ = concurrent.futures.wait([fut], timeout=0.05)
+                    QApplication.processEvents()
+                    if done:
+                        break
+                merged, loaded, errors = fut.result()
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.setEnabled(True)
+
+        for name, reason in errors:
+            QMessageBox.warning(self, "Limit 파일 읽기 실패", f"{name}\n{reason}")
         if not loaded:
+            self.lbl_limits.setText(prev_text)
+            self.lbl_limits.setStyleSheet(prev_style)
             return
         self._bin_map = merged
         self._limits_file = {"name": loaded[0][0], "type": loaded[0][1]}

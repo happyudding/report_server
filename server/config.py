@@ -76,6 +76,14 @@ PRODUCT_INFO_DB_PATH = _path_env("PRODUCT_INFO_DB_PATH",
 # (요청 전체, 기본 2048)보다 작게 두는 것이 목적.
 REPORT_WEBREPORT_TOTAL_MB = int(os.getenv("REPORT_WEBREPORT_TOTAL_MB", "1024") or 1024)
 
+# web_report 업로드 **동시 처리 건수**. 업로드 1건은 parquet bytes 전량 + 디코드된 tables
+# 를 동시에 들고 있어 대형 세션(2000항목×1500행×24소스)이면 건당 RAM 피크가 GB 급이다.
+# 제한이 없으면 waitress 스레드 수만큼 그 피크가 겹쳐 웹 프로세스가 죽는다.
+# 초과분은 즉시 거절하지 않고 WAIT_SEC 까지 대기한다 — 대기 중에는 werkzeug 가 요청 본문을
+# 디스크에 스풀해 둔 상태라 RAM 을 거의 쓰지 않는다.
+WEB_REPORT_UPLOAD_CONCURRENCY = int(os.getenv("WEB_REPORT_UPLOAD_CONCURRENCY", "2") or 2)
+WEB_REPORT_UPLOAD_WAIT_SEC = float(os.getenv("WEB_REPORT_UPLOAD_WAIT_SEC", "180") or 180)
+
 REPORT_S3_ENDPOINT   = os.getenv("REPORT_S3_ENDPOINT", "")
 REPORT_S3_BUCKET     = os.getenv("REPORT_S3_BUCKET", "")
 REPORT_S3_REGION     = os.getenv("REPORT_S3_REGION", "us-east-1")

@@ -30,6 +30,9 @@ DB/
 uploads/
 tests/sample.xlsx
 
+# web_report 벤치 결과 (로컬 PC 기준선 — bench_webreport.py 가 생성, PC 사양 종속이라 미추적)
+tests/bench_results/
+
 # Runtime logs (server/client console tee output)
 server/log/
 client/log/

@@ -145,6 +145,37 @@ def _upload_progress_channel(progress, label_fmt, value_map=None):
     return worker_cb, drain_cb
 
 
+def _parse_progress_poll(progress, stage_q, slow_sec=60):
+    """``_parse_group_core`` 의 (value, label) 큐를 진행바에 반영하는 poll_cb 생성.
+
+    한 단계가 slow_sec 을 넘기면 라벨에 "(계속 진행중)" 만 덧붙인다 — 큰 파일 1개가
+    오래 걸릴 때 멈춘 게 아님을 알리기 위한 것으로, 중단하지는 않는다.
+    """
+    state = {"value": 0, "label": "파일 로딩 준비 중...",
+             "since": time.monotonic(), "shown": None}
+
+    def poll_cb():
+        while True:
+            try:
+                value, label = stage_q.get_nowait()
+            except queue.Empty:
+                break
+            state["value"], state["label"] = value, label
+            state["since"] = time.monotonic()
+        label = state["label"]
+        if time.monotonic() - state["since"] >= slow_sec:
+            label = f"{label}  (계속 진행중)"
+        # 라벨이 바뀔 때만 하단 status 바에도 반영(진행중임을 명확히 표시).
+        # 진행바 경과시간은 매 폴링마다 계속 갱신된다.
+        if label != state["shown"]:
+            progress.set(label, value=state["value"], status=label)
+            state["shown"] = label
+        else:
+            progress.set(label, value=state["value"])
+
+    return poll_cb
+
+
 def _build_webreport_dist_pack(parquet_items, sources, selected_items, mode,
                                stage_cb=None):
     """업로드할 parquet 바이트로 Distribution pack(정렬 완료)을 미리 계산.
@@ -1521,6 +1552,43 @@ class HoneyMainWindow(QMainWindow):
         self._refill_csv_list()
         self.list_csv.selectRow(new)
 
+    def _parse_group_core(self, paths, product_type, warn, stage_cb=None):
+        """파일 파싱 → 그룹 구성 (+ 스키마 검증). **워커 스레드에서 호출한다**.
+
+        UI 에 직접 접근하지 않는다 — 진행은 ``stage_cb(value, label)`` 로만 보고하고,
+        호출부(UI 스레드)가 그 값을 진행바에 반영한다(``_parse_progress_poll``).
+        ``product_type`` 은 위젯을 읽는 값이라 호출부가 UI 스레드에서 미리 넘긴다.
+        반환 (group, issues|None).
+        """
+        def _stage(value, label):
+            if stage_cb is not None:
+                stage_cb((value, label))
+
+        n_files = len(paths)
+        results = []
+        for i, p in enumerate(paths):
+            filename = Path(p).name
+            _stage(i, f"파일 전처리 중... ({i + 1}/{n_files})  {filename}")
+            file_start_perf = time.perf_counter()
+            results.append(rg.df_honey.from_csv(p, product_type=product_type))
+            if _FLOW_PROFILE_ON:
+                print(
+                    f"[flow-profile] honey_main.load_file[{filename}]: "
+                    f"{time.perf_counter() - file_start_perf:.3f}s",
+                    file=sys.stderr,
+                    flush=True,
+                )
+        _stage(n_files, "그룹 구성 중...")
+        with _flow_time("df_honey_group.construct"):
+            group = rg.df_honey_group(results)
+        issues = None
+        if warn:
+            _stage(n_files, "스키마 검증 중...")
+            with _flow_time("group.validate"):
+                validated = group.validate()
+            issues = {name: v for name, v in validated.items() if v}
+        return group, issues
+
     def _rebuild_group(self, warn=False):
         """현재 self.csv_paths 순서로 그룹 재구성 + 항목 갱신.
 
@@ -1533,68 +1601,23 @@ class HoneyMainWindow(QMainWindow):
                 return False
 
             n_files = len(paths)
-            # CSV 로딩을 백그라운드 스레드(1개)에서 파일 단위로 수행한다. 동기로 돌리면
+            # 파싱·그룹 구성·검증을 백그라운드 스레드(1개)에서 수행한다. 동기로 돌리면
             # 무거운 pandas 읽기 동안 Qt 이벤트 루프가 멈춰 Windows 가 창을 "응답 없음"
             # 으로 표시한다. 메인 스레드는 짧게 폴링하며 processEvents() 로 UI 를 살려
-            # "(진행중)" 을 보여주고, 한 파일이 60초를 넘기면 라벨만 바꾼다(중단 없음).
-            _SLOW_FILE_SEC = 60
+            # "(진행중)" 을 보여주고, 한 단계가 60초를 넘기면 라벨만 바꾼다(중단 없음).
             progress = _ElapsedProgress(
                 self.progress_status, "파일 로딩 준비 중...", self._status,
                 busy=True, minimum=0, maximum=n_files,
                 mirror=getattr(self, "panel_progress", None))
             QApplication.processEvents()
 
-            results = []
-            last_status = None
+            stage_q = queue.Queue()
             try:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                    for i, p in enumerate(paths):
-                        filename = Path(p).name
-                        file_start_perf = time.perf_counter()
-                        fut = ex.submit(rg.df_honey.from_csv, p, product_type=self.product_type())
-                        file_start = time.monotonic()
-                        while True:
-                            done_set, _ = concurrent.futures.wait([fut], timeout=0.1)
-                            elapsed = int(time.monotonic() - file_start)
-                            if elapsed >= _SLOW_FILE_SEC:
-                                label = (
-                                    f"파일 전처리 중... ({i + 1}/{n_files})  {filename}  "
-                                    f"(계속 진행중)"
-                                )
-                            else:
-                                label = f"파일 전처리 중... ({i + 1}/{n_files})  {filename}"
-                            # 라벨이 바뀔 때만 하단 status 바에도 반영(진행중임을 명확히 표시).
-                            # 진행바 경과시간은 매 폴링마다 계속 갱신된다.
-                            if label != last_status:
-                                progress.set(label, value=i, status=label)
-                                last_status = label
-                            else:
-                                progress.set(label, value=i)
-                            if done_set:
-                                break
-                        results.append(fut.result())  # 로드 실패 시 여기서 예외 전파
-                        if _FLOW_PROFILE_ON:
-                            print(
-                                f"[flow-profile] honey_main.load_file[{filename}]: "
-                                f"{time.perf_counter() - file_start_perf:.3f}s",
-                                file=sys.stderr,
-                                flush=True,
-                            )
-                # 그룹 구성(대용량 concat/인덱싱)·검증도 UI 스레드에서 직접 돌리면 프리즈되므로
-                # 파일 파싱과 동일하게 스레드+폴링(_wait_for_future 의 processEvents)으로 감싼다.
-                with _flow_time("df_honey_group.construct"):
-                    progress.set("그룹 구성 중...", value=n_files, status="그룹 구성 중...")
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex2:
-                        self.group = _wait_for_future(
-                            ex2.submit(rg.df_honey_group, results), progress)
-                issues = None
-                if warn:
-                    progress.set("스키마 검증 중...", status="스키마 검증 중...")
-                    with _flow_time("group.validate"):
-                        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex3:
-                            validated = _wait_for_future(
-                                ex3.submit(self.group.validate), progress)
-                    issues = {name: v for name, v in validated.items() if v}
+                    fut = ex.submit(self._parse_group_core, list(paths),
+                                    self.product_type(), warn, stage_q.put)
+                    self.group, issues = _wait_for_future(
+                        fut, progress, poll_cb=_parse_progress_poll(progress, stage_q))
             except Exception as exc:
                 progress.fail(f"실패: 파일 로드 실패 - {exc}")
                 _show_exc(self, "파일 로드 실패", exc,
@@ -1819,12 +1842,123 @@ class HoneyMainWindow(QMainWindow):
             return False
         return True
 
+    def _guess_source_names(self, paths):
+        """파싱 **전에** 파일명만으로 source 이름을 추정한다 (그룹 배치 창 선표시용).
+
+        ``df_honey.from_csv`` 는 이름을 `파일명 패턴 → 파일 안 Yield 시트명 → stem[:10]`
+        순으로 정한다. **전 파일이 파일명 패턴(lot header + W tail)을 갖출 때만** 파싱
+        없이 같은 이름을 알 수 있으므로, 하나라도 패턴이 없으면 None 을 돌려 호출부가
+        종전 순서(파싱 → 배치 창)로 돌아가게 한다 — 뜻 없는 stem 조각으로 창을 띄우면
+        파일명 자동 배치(suggest_groups)까지 빗나가 오히려 손해다.
+        중복 해소(_2, _3 …)는 ``df_honey_group._dedup_in_place`` 와 같은 규칙이다.
+        """
+        from report_generator.df_honey import _sheetname_from_filename
+
+        names, used = [], set()
+        for p in paths:
+            base = _sheetname_from_filename(Path(p))
+            if not base:
+                return None
+            cand, n = base, 2
+            while cand in used:
+                cand = f"{base}_{n}"
+                n += 1
+            used.add(cand)
+            names.append(cand)
+        return names
+
+    def _temperature_first_flow(self):
+        """Temperature 모드: RT/CT/HT 배치 창을 **파싱보다 먼저** 띄운다. 취소면 None.
+
+        Temperature 는 source 가 가장 많은 모드인데, 정리(_clean_temperature_frames)가
+        배치 결과로 rawdata 를 바꾸므로 배치가 끝나기 전에는 인코딩을 시작할 수 없다.
+        대신 **파싱**은 배치와 무관하므로 창을 먼저 띄우고 그 뒤에서 돌린다 — 사용자가
+        source 를 끌어다 놓는 시간에 파싱이 숨는다.
+
+        배치 창은 이름 목록만 쓰고, 그 이름은 파일명 패턴이 있으면 파싱 없이 정확히
+        알 수 있다(``_guess_source_names``). 알 수 없으면 종전 순서로 돌아간다.
+
+        업로드 순서가 그룹마다 [RT, CT, HT] 라 서버 ``tables`` 도 그 순서가 되고,
+        그룹의 RT 가 CT/HT 재판정의 limit 기준이다.
+        """
+        from honey_ui.temperature_group_dialog import TemperatureGroupDialog
+
+        paths = list(self.csv_paths)
+        names_guess = self._guess_source_names(paths)
+        if names_guess is None:
+            # 파일명만으로 이름을 알 수 없다 — 종전 순서(파싱 → 배치 창) 그대로.
+            if not self._rebuild_group(warn=True) or self.group is None:
+                return None
+            dlg = TemperatureGroupDialog(self, list(self.group.names()))
+            if not dlg.exec():
+                self._status("Temperature 배치 취소")
+                return None
+            return dlg.result_groups()
+
+        stage_q = queue.Queue()
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            fut = ex.submit(self._parse_group_core, paths, self.product_type(),
+                            True, stage_q.put)
+            dlg = TemperatureGroupDialog(self, names_guess)
+            if not dlg.exec():
+                self._status("Temperature 배치 취소")
+                fut.cancel()          # 이미 시작됐으면 결과만 버린다(읽기 전용이라 무해)
+                return None
+            arranged = dlg.result_groups()
+
+            # 파싱 잔여분 대기 — 배치가 길었으면 대개 이미 끝나 있다.
+            progress = _ElapsedProgress(
+                self.progress_status, "파일 로딩 준비 중...", self._status,
+                busy=True, minimum=0, maximum=len(paths),
+                mirror=getattr(self, "panel_progress", None))
+            QApplication.processEvents()
+            try:
+                self.group, issues = _wait_for_future(
+                    fut, progress, poll_cb=_parse_progress_poll(progress, stage_q))
+            except Exception as exc:
+                progress.fail(f"실패: 파일 로드 실패 - {exc}")
+                _show_exc(self, "파일 로드 실패", exc,
+                          prefix="선택한 파일을 읽지 못했습니다.")
+                self._status("파일 로드 실패")
+                self.group = None
+                return None
+            progress.success(f"완료: {len(paths)}개 파일 전처리 완료", value=len(paths))
+            if issues:
+                msg = "\n".join(f"- {name}: {', '.join(v)}" for name, v in issues.items())
+                QMessageBox.warning(self, "스키마 경고", f"일부 파일에 문제가 있습니다:\n{msg}")
+            self.out_path = None
+            self._status(f"{len(paths)}개 파일 전처리 완료 (기준: {Path(paths[0]).name}).")
+
+            # 이름 정합 검증 — 추정이 빗나갔으면 실제 이름으로 한 번 다시 받는다.
+            real = list(self.group.names())
+            if sorted(arranged["order"]) != sorted(real):
+                QMessageBox.information(
+                    self, "Temperature 배치",
+                    "파일을 읽어 보니 source 이름이 파일명에서 추정한 것과 다릅니다.\n"
+                    "실제 이름으로 배치 창을 다시 표시합니다.")
+                dlg2 = TemperatureGroupDialog(self, real)
+                if not dlg2.exec():
+                    self._status("Temperature 배치 취소")
+                    return None
+                arranged = dlg2.result_groups()
+            return arranged
+        finally:
+            ex.shutdown(wait=False)
+
     def _prepare_web_report_context(self):
         if not self.csv_paths:
             QMessageBox.warning(self, "입력 누락", "먼저 파일을 가져오세요.")
             return None
         mode = self._selected_web_mode()
-        if not self._rebuild_group(warn=True) or self.group is None:
+        # Temperature 는 배치 창을 먼저 띄우고 파싱을 그 뒤에서 돌린다(자체 플로가 파싱까지
+        # 책임진다). 나머지 모드는 종전대로 파싱 → 모드별 창 순서.
+        temperature_arranged = None
+        if mode == "Temperature":
+            temperature_arranged = self._temperature_first_flow()
+            if temperature_arranged is None:
+                return None
+        elif not self._rebuild_group(warn=True) or self.group is None:
             return None
         # 모드 검증은 전처리 **후**에 한다 — 기준이 입력 파일 개수가 아니라 honey_parse 가
         # 돌려준 source 개수라서, 그룹이 만들어져야 개수를 알 수 있다.
@@ -1855,9 +1989,7 @@ class HoneyMainWindow(QMainWindow):
             options["compare"] = {"before": arranged["before"], "after": arranged["after"]}
             source_order = arranged["order"]
         elif mode == "Temperature":
-            arranged = self._ask_temperature_groups()
-            if arranged is None:
-                return None                      # 취소 = 실행 중단
+            arranged = temperature_arranged      # 위에서 파싱보다 먼저 받아둔 배치 결과
             options["temperature"] = {"groups": arranged["groups"],
                                       "limits_file": arranged["limits_file"]}
             source_order = arranged["order"]
@@ -1891,19 +2023,6 @@ class HoneyMainWindow(QMainWindow):
         dlg = CompareArrangeDialog(self, list(self.group.names()))
         if not dlg.exec():
             self._status("Compare 배치 취소")
-            return None
-        return dlg.result_groups()
-
-    def _ask_temperature_groups(self):
-        """Temperature 모드 RT/CT/HT 그룹 배치. 취소(Cancel)면 None.
-
-        업로드 순서가 그룹마다 [RT, CT, HT] 라 서버 ``tables`` 도 그 순서가 되고,
-        그룹의 RT 가 CT/HT 재판정의 limit 기준이다.
-        """
-        from honey_ui.temperature_group_dialog import TemperatureGroupDialog
-        dlg = TemperatureGroupDialog(self, list(self.group.names()))
-        if not dlg.exec():
-            self._status("Temperature 배치 취소")
             return None
         return dlg.result_groups()
 
@@ -2037,14 +2156,12 @@ class HoneyMainWindow(QMainWindow):
         # 분석·인코딩(수 초)을 업로드 메타 입력과 병렬로 미리 시작한다 — 같은 워커 1개에서
         # 순차 실행이라 work_group 동시 접근이 없고, 사용자가 대화상자를 입력하는 동안
         # 대부분 끝난다. 취소 시 결과는 버린다 (읽기 전용 계산이라 부작용 없음).
+        #
+        # ⚠️ 제출 순서 = 실행 순서(워커 1개 FIFO)다. 업로드에 **필요한** 인코딩·분포 pack 을
+        # 먼저 돌리고, 화면 요약 표시에만 쓰이는 analyze 를 마지막에 둔다 — analyze 결과는
+        # 어차피 대화상자 이후에야 소비되므로(_show_summary), 앞에 두면 가장 무거운 분포
+        # pack 이 대화상자 시간을 못 쓰고 그 뒤로 밀린다(source 가 많을수록 손해가 크다).
         prep_ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        fut_analyze = prep_ex.submit(
-            rg.analyze,
-            work_group,
-            meta=rg.ReportMeta(),
-            selector=rg.ItemSelector(selected_items=selected),
-            compare_mode=compare_mode,
-        )
         fut_encode = prep_ex.submit(self._build_webreport_parquets, work_group, source_order,
                                     temperature)
 
@@ -2059,6 +2176,14 @@ class HoneyMainWindow(QMainWindow):
             return _build_webreport_dist_pack(items_, sources_, selected, mode,
                                               stage_cb=_dist_stage_q.put)
         fut_dist = prep_ex.submit(_dist_after_encode)
+
+        fut_analyze = prep_ex.submit(
+            rg.analyze,
+            work_group,
+            meta=rg.ReportMeta(),
+            selector=rg.ItemSelector(selected_items=selected),
+            compare_mode=compare_mode,
+        )
 
         def _drain_dist_stage():
             msg = None
@@ -2088,20 +2213,11 @@ class HoneyMainWindow(QMainWindow):
         meta["file_name"] = self.le_outname.text().strip() or _suggest_base_name(
             self.csv_paths, work_group)
 
+        # 대기 순서도 제출 순서와 같게 둔다 — 워커가 FIFO 라, 뒤에 제출한 것을 먼저 기다리면
+        # 진행바가 그 앞 단계의 소요를 엉뚱한 라벨로 표시하고 분포 단계 메시지(n/총 chunk)도
+        # 못 보여준다.
         try:
-            progress.set("데이터 분석 중... (Web Report)", value=10, status="데이터 분석 중...")
-            self.last_result = _wait_for_future(fut_analyze, progress)
-            self._show_summary(self.last_result)
-        except Exception as exc:
-            progress.fail(f"실패: 분석 실패 - {exc}")
-            prep_ex.shutdown(wait=False, cancel_futures=True)
-            _show_exc(self, "분석 실패", exc,
-                      prefix="데이터 분석 중 오류가 발생했습니다.")
-            self._status("Web Report 분석 실패")
-            return
-
-        try:
-            progress.set("parquet 인코딩 중...", value=35, status="parquet 인코딩 중...")
+            progress.set("parquet 인코딩 중...", value=10, status="parquet 인코딩 중...")
             sources, parquet_items = _wait_for_future(fut_encode, progress)
         except Exception as exc:
             progress.fail(f"실패: parquet 인코딩 실패 - {exc}")
@@ -2115,11 +2231,23 @@ class HoneyMainWindow(QMainWindow):
 
         dist_pack = None
         try:
-            progress.set("분포 데이터 생성 중...", value=38, status="분포 데이터 생성 중...")
+            progress.set("분포 데이터 생성 중...", value=30, status="분포 데이터 생성 중...")
             dist_pack = _wait_for_future(fut_dist, progress, poll_cb=_drain_dist_stage)
         except Exception as exc:
             # 프리컴퓨트 실패는 업로드를 막지 않는다 — 서버가 첫 조회 때 폴백 계산한다.
             self._append_run_log(f"분포 프리컴퓨트 생략(서버 폴백 계산): {exc}")
+
+        try:
+            progress.set("데이터 분석 중... (Web Report)", value=38, status="데이터 분석 중...")
+            self.last_result = _wait_for_future(fut_analyze, progress)
+            self._show_summary(self.last_result)
+        except Exception as exc:
+            progress.fail(f"실패: 분석 실패 - {exc}")
+            prep_ex.shutdown(wait=False, cancel_futures=True)
+            _show_exc(self, "분석 실패", exc,
+                      prefix="데이터 분석 중 오류가 발생했습니다.")
+            self._status("Web Report 분석 실패")
+            return
         prep_ex.shutdown(wait=False)
 
         manifest = {

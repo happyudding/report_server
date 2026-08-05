@@ -47,6 +47,20 @@ DIST_PACK_PREFIX = ('{"format":"' + DIST_PACK_FORMAT + '","items":').encode("utf
 # 화면에 보이는 한 배치가 대체로 chunk 1~2개만 읽고 끝나게 한다.
 CHUNK_ITEMS = 30
 
+# chunk 1개의 무게는 항목 수가 아니라 **항목 × 소스** 에 비례한다 — 한 항목의 payload 가
+# 소스마다 (x, c, c1) 3배열이기 때문이다. 항목 수를 30 으로 고정하면 소스가 24개인 세션은
+# chunk 하나가 비압축 수십 MB 가 되고, 그걸 조회 스레드가 통째로 gunzip+json.loads 하며
+# GIL 을 잡는다(dist_pack_store.load_chunk_items). 그래서 **셀 수**를 목표로 잡고 항목 수를
+# 소스 수에 반비례시킨다. 240 = 30 × 8 이라 소스 8개 이하는 종전과 완전히 동일하다.
+_CHUNK_TARGET_CELLS = 240
+_CHUNK_ITEMS_MIN = 5
+
+
+def adaptive_chunk_items(n_sources: int) -> int:
+    """소스 수에 맞춘 chunk 당 항목 수 (S≤8 이면 CHUNK_ITEMS 그대로)."""
+    n = max(1, int(n_sources))
+    return max(_CHUNK_ITEMS_MIN, min(CHUNK_ITEMS, round(_CHUNK_TARGET_CELLS / n)))
+
 
 def _numeric_array(series):
     """Series → numeric ndarray (길이 보존, 비수치는 NaN).
@@ -111,17 +125,23 @@ def _prepare_tables(tables, selected_items, mode):
     return tables, excluded
 
 
-def build_dist_pack(tables, selected_items, mode, *, chunk_items: int = CHUNK_ITEMS):
+def build_dist_pack(tables, selected_items, mode, *, chunk_items: int | None = None):
     """(index, chunk 제너레이터) 반환 — chunk 를 하나씩 만들어 넘긴다.
 
     호출자(Honey)가 chunk 를 받는 즉시 gzip 하고 버리면 전체 항목을 한 dict 로 들고 있지
     않아 peak 메모리가 낮다. chunk 분할 순서는 TSEQ(갤러리 표시 순) — 화면에 보이는
     배치가 인접 chunk 에 모이게 하기 위함이며, 서빙 시 항목 정렬과는 무관하다.
+
+    ``chunk_items=None`` 이면 소스 수에 맞춰 자동 결정한다(``adaptive_chunk_items``).
+    서버 조회는 index 의 chunk→항목 매핑만 보므로 chunk 크기는 pack 마다 달라도 되고,
+    이미 저장된 30 고정 pack 도 그대로 서빙된다(포맷 리비전 대상 아님).
     """
     from .tabs.common import PASS_BIN, bin_types, json_safe, round_num
     from .tabs.distribution import tseq_sort_key
 
     tables, excluded = _prepare_tables(tables, selected_items, mode)
+    if chunk_items is None:
+        chunk_items = adaptive_chunk_items(len(tables))
     ordered = sorted({c for t in tables for c in t.item_columns if c not in excluded},
                      key=tseq_sort_key(tables))
     groups = [ordered[i:i + chunk_items] for i in range(0, len(ordered), chunk_items)]

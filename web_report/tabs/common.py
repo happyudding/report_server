@@ -143,19 +143,54 @@ def _item_has_data(tables, item) -> bool:
     return False
 
 
-def empty_items(tables) -> set:
+def finite_count_map(tables) -> dict:
+    """{item: 전 소스 합산 유한 numeric 값 개수}. ``_item_has_data`` /
+    ``to_numeric_clean(col).size`` 와 **같은 유한값 기준(np.isfinite)** 이다.
+
+    항목마다 소스별 Series 를 물질화하던 것을 테이블당 to_numpy 1회 + isfinite 합으로
+    대체한다 — 대형 세션(2000항목×24소스)에서 이 스캔이 콜드 빌드 CPU 를 지배했다.
+    ``frame.count()`` 는 ±inf 를 세므로 쓰지 않는다(기준이 어긋난다).
+    """
+    counts: dict = {}
+    for t in tables:
+        cols = list(t.item_columns)
+        if not cols:
+            continue
+        frame = t.data[cols]
+        # split_honeyform 이 item 컬럼을 numeric dtype 으로 만들지만, object 로 남은
+        # 컬럼이 있으면 기존 per-item pd.to_numeric 과 동일하게 변환해 둔다(cpk._stats_batch 관례).
+        # dtype 은 frame.dtypes(한 벌)로 본다 — frame[c] 로 보면 컬럼 수만큼 Series 를
+        # 새로 만들어 이 판정 자체가 스캔보다 비싸진다(2000항목에서 실측 60배).
+        stale = [c for c, dt in frame.dtypes.items() if dt.kind not in "if"]
+        if stale:
+            frame = frame.copy()
+            for c in stale:
+                frame[c] = pd.to_numeric(frame[c], errors="coerce")
+        arr = frame.to_numpy(dtype="float64", na_value=np.nan)
+        per_col = np.isfinite(arr).sum(axis=0)
+        for c, k in zip(cols, per_col):
+            counts[c] = counts.get(c, 0) + int(k)
+    return counts
+
+
+def empty_items(tables, counts=None) -> set:
     """측정 data 가 전무한(모든 소스에서 유한 numeric 값 0개) item 집합.
 
     Distribution(카드/ECDF)은 Pass/Fail 항목을 하드 제외하지 않고 프런트 토글로 숨기므로,
     ``passfail_or_empty_items`` 대신 이 집합(데이터 없는 항목만)으로 제외한다 — Pass/Fail 도
     data 만 있으면 인덱스·ECDF 에 포함되고 ``is_passfail`` 플래그로 프런트가 필터한다.
     cpk 계산은 여전히 ``passfail_or_empty_items`` 로 Pass/Fail 을 제외한다.
+
+    ``counts`` 를 주면 ``finite_count_map`` 결과를 재사용해 전체 스캔을 건너뛴다.
     """
+    if counts is not None:
+        return {item for item in {c for t in tables for c in t.item_columns}
+                if not counts.get(item, 0)}
     return {item for item in {c for t in tables for c in t.item_columns}
             if not _item_has_data(tables, item)}
 
 
-def passfail_or_empty_items(tables) -> set:
+def passfail_or_empty_items(tables, counts=None) -> set:
     """cpk·distribution 계산에서 제외할 item 집합.
 
     다음 중 하나라도 해당하면 제외한다:
@@ -163,6 +198,7 @@ def passfail_or_empty_items(tables) -> set:
     - 모든 소스의 data 부분에 유한 numeric 측정값이 하나도 없음 — ``_item_has_data``.
 
     unit 은 항목이 처음 등장하는 테이블 기준(표시 unit 규칙과 동일)으로 판정한다.
+    ``counts`` 를 주면 ``finite_count_map`` 결과를 재사용해 전체 스캔을 건너뛴다.
     """
     excluded: set = set()
     for item in {c for t in tables for c in t.item_columns}:
@@ -171,7 +207,8 @@ def passfail_or_empty_items(tables) -> set:
             if item in t.item_columns:
                 passfail = _is_passfail_unit(t.units.get(item))
                 break
-        if passfail or not _item_has_data(tables, item):
+        has_data = bool(counts.get(item, 0)) if counts is not None else _item_has_data(tables, item)
+        if passfail or not has_data:
             excluded.add(item)
     return excluded
 

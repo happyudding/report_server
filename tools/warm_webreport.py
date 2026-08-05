@@ -70,7 +70,9 @@ def _targets(days: int, limit: int, session_id: str | None) -> list:
         return [dict(session)]
     date_from = None
     if days > 0:
-        date_from = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+        # get_history 의 date_from 은 report_session.created_at 과 같은 **epoch 초**다
+        # (날짜 문자열을 넘기면 _history_where 의 int() 에서 깨진다).
+        date_from = int(time.time() - days * 86400)
     rows = report_db.get_history(source="web_report", limit=limit, date_from=date_from,
                                  see_all_private=True)
     # get_history 는 목록용 컬럼만 준다 — 캐시 키에 필요한 analysis_key/content_hash/

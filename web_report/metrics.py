@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from . import build_log
 from .tabs import TAB_REGISTRY, TabContext, build_cpk_rows
-from .tabs.common import empty_items, passfail_or_empty_items
+from .tabs.common import empty_items, finite_count_map, passfail_or_empty_items
 from .tabs.distribution import build_distribution_index
 from .tabs.issue_table import build_issue_bin_summary
 from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
@@ -63,12 +63,15 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
             if role:
                 entry["temp_group"], entry["temp_role"] = role
     all_items = sorted({c for t in tables for c in t.item_columns})
+    # 항목별 유한 measurement 개수 — 아래 3곳(cpk 제외집합·dist 제외집합·distribution_index
+    # 의 n)이 같은 스캔을 각각 돌던 것을 **1회**로 합친다(대형 세션에서 전 데이터 3회 스캔이었다).
+    item_counts = finite_count_map(tables)
     # cpk 는 unit 이 Pass/Fail 이거나 측정 data 가 전무한 항목을 제외한다.
-    excluded_items = passfail_or_empty_items(tables)
+    excluded_items = passfail_or_empty_items(tables, counts=item_counts)
     stat_items = [i for i in all_items if i not in excluded_items]
     # distribution_index 는 Pass/Fail 항목을 하드 제외하지 않고 is_passfail 플래그만 붙여
     # 내려보낸다(프런트 "P/F 없애기" 토글이 필터). data 전무 항목만 제외한다.
-    dist_excluded = empty_items(tables)
+    dist_excluded = empty_items(tables, counts=item_counts)
     with build_log.stage("yield_cpk"):
         fail_counts = {table.source: fail_counts_by_source(table) for table in tables}
         # 수율 분모: 소스마다 Gross Die / test die 중 하나 (자동 판정 + 사용자 선택).
@@ -104,7 +107,8 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
             sheets_out[spec.name] = spec.builder(ctx)
     with build_log.stage("dist_index"):
         distribution_index = build_distribution_index(tables, cpk_rows,
-                                                      exclude=dist_excluded)
+                                                      exclude=dist_excluded,
+                                                      counts=item_counts)
 
     payload = {
         "mode": mode or "Normal",

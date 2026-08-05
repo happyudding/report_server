@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -23,6 +24,13 @@ from web_report import service as web_report_service
 _log = logging.getLogger(__name__)
 
 _MAX_WEBREPORT_BYTES = 512 * 1024 * 1024
+
+# 동시 업로드 처리 수 제한 — 업로드 1건은 parquet bytes 전량(합계 최대 1GB)과 디코드된
+# tables(대형 세션이면 수백 MB)를 동시에 들고 있다. waitress 스레드(13)가 전부 업로드에
+# 몰리면 그 피크가 그대로 겹쳐 웹 프로세스가 죽는다.
+# ⚠️ acquire 는 request.form/files 에 손대기 **전에** 해야 한다 — werkzeug 는 멀티파트를
+# 디스크에 스풀해 두므로, 대기 중인 요청은 RAM 이 아니라 임시파일만 점유한다.
+_UPLOAD_SEM = threading.BoundedSemaphore(max(1, int(config.WEB_REPORT_UPLOAD_CONCURRENCY)))
 
 
 def _client_meta():
@@ -126,6 +134,10 @@ def _read_dist_pack():
 @report_bp.post("/upload_webreport")
 def upload_webreport():
     started = time.perf_counter()
+    if not _UPLOAD_SEM.acquire(timeout=float(config.WEB_REPORT_UPLOAD_WAIT_SEC)):
+        _log.warning("[upload_webreport] 동시 업로드 상한 대기 초과 — 거절")
+        return jsonify({"status": "failed",
+                        "error": "서버가 다른 업로드를 처리 중입니다. 잠시 후 다시 시도해 주세요."}), 503
     try:
         manifest = _read_manifest()
         files = _read_files()
@@ -149,6 +161,8 @@ def upload_webreport():
         # 오인하고 재시도도 안 한다. 5xx 로 알리고 traceback 을 서버에 남긴다.
         _log.exception("[upload_webreport] failed")
         return jsonify({"status": "failed", "error": str(exc)}), 500
+    finally:
+        _UPLOAD_SEM.release()
 
     return jsonify(result)
 

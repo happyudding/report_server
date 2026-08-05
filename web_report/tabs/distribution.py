@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .common import _is_passfail_unit, fmt_type, json_safe, num, round_num
+from .common import _is_passfail_unit, finite_count_map, fmt_type, json_safe, num, round_num
 from .cpk import CPK_THRESHOLD, _stats, worst_cpk_by_subject
 from .raw_data import _META_COLUMNS
 from .yield_tab import _tno_norm, failtno_norms, tno_to_item_map
@@ -157,26 +157,26 @@ def tseq_sort_key(tables):
     return key
 
 
-def build_distribution_index(tables, cpk_rows, exclude=None) -> list:
+def build_distribution_index(tables, cpk_rows, exclude=None, counts=None) -> list:
     """갤러리/툴바/타입어헤드용 항목 인덱스. subject 당 1행 (경량, 점 배열 없음).
 
     cpk 는 ``cpk_rows`` 재사용(재계산 없음 — Bin1 기준 단일 값), fail 은 ``fail_items`` 로 귀속.
     항목 순서는 TEST SEQ(TSEQ) 순 — 갤러리가 이 순서대로 표시된다.
     ``exclude`` 에 담긴 항목(Pass/Fail unit·측정 data 전무)은 인덱스에서 제외한다.
+    ``counts``(finite_count_map 결과)를 주면 ``n`` 을 재스캔하지 않고 그대로 쓴다.
     """
     exclude = exclude or set()
     worst = worst_cpk_by_subject(cpk_rows)
     failed = fail_items(tables)
     all_items = sorted({c for t in tables for c in t.item_columns if c not in exclude},
                        key=tseq_sort_key(tables))
+    if counts is None:
+        counts = finite_count_map(tables)
 
     rows = []
     for item in all_items:
         meta_t = _first_table_for(tables, item)
-        n = 0
-        for table in tables:
-            if item in table.item_columns:
-                n += int(to_numeric_clean(table.data[item]).size)
+        n = int(counts.get(item, 0))
         cpk = worst.get(item)
         is_fail = item in failed
         rows.append({
