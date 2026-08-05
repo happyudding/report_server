@@ -45,8 +45,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .compare_arrange_dialog import dedupe_names
-
 ROLES = ("RT", "CT", "HT")
 LIMIT_FILTER = "Limit Table (*.lt *.pds)"
 
@@ -74,6 +72,27 @@ def suggest_groups(names) -> list:
         if role not in buckets[stem]:
             buckets[stem][role] = name
     return [buckets[s] for s in order if "RT" in buckets[s]]
+
+
+def dedupe_names(names) -> list:
+    """중복 이름에 _2, _3 … 접미사를 붙여 유일하게 만든다.
+
+    ``compare_arrange_dialog.dedupe_names`` / ``honey_main._ask_source_names`` 와 **같은
+    규칙**이다 — 첫 번째는 원래 이름 그대로 두고 두 번째부터 접미사가 붙는다.
+    형제 모듈에서 import 하지 않고 여기에 두는 이유: 이 창은 배포본마다 버전이 갈릴 수
+    있는 다른 다이얼로그에 의존하면 안 된다(구 사본에서 ImportError 로 업로드가 통째로
+    막혔던 사례). 규칙을 바꾼다면 위 두 곳도 같이 본다.
+    """
+    out, seen = [], {}
+    for name in names:
+        base = str(name)
+        if base in seen:
+            seen[base] += 1
+            base = f"{base}_{seen[base]}"
+        else:
+            seen[base] = 1
+        out.append(base)
+    return out
 
 
 def pair_key(name) -> str:
