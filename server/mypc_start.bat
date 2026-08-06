@@ -37,10 +37,10 @@ set "PY="
 if defined PYTHON call :try_py "%PYTHON%"
 if not defined PY call :try_py "%ROOT%.venv\Scripts\python.exe"
 if not defined PY call :try_py "%ROOT%venv\Scripts\python.exe"
-if not defined PY for /f "delims=" %%P in ('where python.exe 2^>nul') do if not defined PY call :try_py "%%P"
-if not defined PY for /f "delims=" %%P in ('py -3 -c "import sys;print(sys.executable)" 2^>nul') do if not defined PY call :try_py "%%P"
+rem 전역 파이썬 탐색은 _find_python.bat 이 맡는다 (PATH 보다 py -3 우선 + 최소 버전 검사).
+if not defined PY for /f "delims=" %%P in ('call "%ROOT%_find_python.bat"') do if not defined PY set "PY=%%P"
 if not defined PY (
-    echo [mypc] ERROR: 실행 가능한 파이썬을 찾지 못했습니다.
+    echo [mypc] ERROR: 3.11 이상의 실행 가능한 파이썬을 찾지 못했습니다.
     echo [mypc]        install.bat 으로 .venv 를 만들거나, 파이썬을 PATH 에 추가하세요.
     echo [mypc]        특정 파이썬을 쓰려면: set "PYTHON=C:\경로\python.exe" 후 다시 실행.
     pause
@@ -48,16 +48,18 @@ if not defined PY (
 )
 
 rem -- .venv 가 있는데 탈락했다면 왜인지 알려준다 -------------------------------
-rem   venv 는 만들 때 쓴 파이썬의 절대경로를 pyvenv.cfg 에 박아두므로 다른 PC/다른 계정
-rem   으로 복사해 오면 동작하지 않는다("did not find executable at ..."). 폴더만 지우고
-rem   install.bat 으로 다시 만들면 된다.
+rem   탈락 사유는 두 가지고, 실제 사유는 바로 위 :try_py 가 이미 한 줄로 찍는다.
+rem     (1) 파이썬 3.11 미만  - 새로 깔아도 기존 .venv 는 안 바뀐다(그래서 다시 만든다)
+rem     (2) 실행 자체가 실패 - venv 는 만들 때 쓴 파이썬의 절대경로를 pyvenv.cfg 에
+rem         박아두므로 다른 PC/계정으로 복사해 오면 "did not find executable at ..." 로 죽는다.
+rem   어느 쪽이든 조치는 같다: 새로 만든다(예전 것은 .venv_broken 으로 밀어둔다).
 if exist "%ROOT%.venv\Scripts\python.exe" if /i not "%PY%"=="%ROOT%.venv\Scripts\python.exe" (
-    echo [mypc] NOTE: .venv 가 있지만 쓸 수 없어 건너뛰었습니다.
+    echo [mypc] NOTE: .venv 가 있지만 쓸 수 없어 건너뛰었습니다 ^(사유는 바로 위 줄^).
     if exist "%ROOT%.venv\pyvenv.cfg" (
-        for /f "usebackq eol=# tokens=1,* delims== " %%A in ("%ROOT%.venv\pyvenv.cfg") do if /i "%%A"=="home" echo [mypc]       이 .venv 가 필요로 하는 파이썬: %%B
+        for /f "usebackq eol=# tokens=1,* delims== " %%A in ("%ROOT%.venv\pyvenv.cfg") do if /i "%%A"=="home" echo [mypc]       이 .venv 를 만든 파이썬: %%B
     )
-    echo [mypc]       그 파이썬이 이 PC 에 없으면 .venv 는 못 씁니다
-    echo [mypc]       ^(venv 는 다른 PC/계정에서 복사해 올 수 없습니다^). 새로 만듭니다.
+    echo [mypc]       파이썬을 새로 깔아도 기존 .venv 는 그 버전에 고정됩니다
+    echo [mypc]       ^(다른 PC/계정에서 복사해 올 수도 없습니다^). 새로 만듭니다.
 )
 
 rem -- venv 자동 준비: 고른 파이썬이 .venv 것이 아니면 여기서 .venv 를 만들어 쓴다 ---
@@ -182,13 +184,22 @@ if exist "%ROOT%wheelhouse\*.whl" (
 "%PY%" -m pip install -r "%ROOT%requirements.txt"
 exit /b
 
-rem --- 후보 파이썬 1개 검증: 실제로 실행되면 PY 에 담는다 ----------------------
+rem --- 후보 파이썬 1개 검증: 실행되고 요구 버전 이상이면 PY 에 담는다 -----------
+rem   버전까지 보는 이유: 3.10 으로 만든 .venv 가 남아 있으면 나중에 3.11+ 를 깔아도
+rem   계속 그것으로 떠서 web_report 콜드 빌드가 TypeError 로 100% 실패했다
+rem   (ProcessPoolExecutor(max_tasks_per_child=) 는 3.11 신설). 최소 버전 판정은
+rem   _find_python.bat 한 곳에만 둔다.
 :try_py
 if "%~1"=="" exit /b
 if not exist "%~1" exit /b
 "%~1" -c "pass" >nul 2>&1
 if errorlevel 1 (
     echo [mypc] 건너뜀 ^(있지만 실행 실패^): %~1
+    exit /b
+)
+call "%ROOT%_find_python.bat" "%~1" >nul 2>&1
+if errorlevel 1 (
+    echo [mypc] 건너뜀 ^(파이썬 3.11 미만^): %~1
     exit /b
 )
 set "PY=%~1"

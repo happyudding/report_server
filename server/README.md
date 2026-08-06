@@ -10,8 +10,24 @@ Honey 클라이언트가 업로드한 산출물(xlsx 추출 grid / web_report pa
 ## 요구사항 / 실행
 
 Python 3.11+ (web_report 컴퓨트 워커의 `ProcessPoolExecutor(max_tasks_per_child=...)` 가
-3.11 신설이라 3.10 에선 기동 불가). 의존성은 [requirements.txt](requirements.txt) 참조
-(버전은 그 파일이 정본).
+3.11 신설이라, 3.10 이하에서는 **콜드 빌드가 전부 TypeError 로 실패**하고 화면에는
+"리포트 계산이 반복 실패했습니다" 만 뜬다). 의존성은 [requirements.txt](requirements.txt)
+참조 (버전은 그 파일이 정본).
+
+> **⚠️ 파이썬을 새로 깔아도 기존 `.venv` 는 바뀌지 않는다.** venv 는 만들어질 당시
+> 인터프리터 경로를 `pyvenv.cfg` 에 박아두므로, 3.10 으로 만든 `.venv` 가 남아 있으면
+> 나중에 3.14 를 설치해도 서버는 계속 3.10 으로 뜬다(2026-08-06 실제 사고).
+> 그래서 [start.bat](start.bat) · [mypc_start.bat](mypc_start.bat) ·
+> [install.bat](install.bat) 이 기동 전에 `.venv` 의 **버전까지** 확인한다:
+> - 요구 버전 미만이면 `.venv` 를 `.venv_old` 로 **옮겨 두고**(지우지 않는다) 다시 만든다.
+>   새로 만들다 실패하면 원래 것을 되돌리고 기동을 멈춘다.
+> - 3.11+ 인터프리터를 못 찾으면 `.venv` 를 건드리지 않고 안내 후 중단한다.
+>   임시로 그대로 띄우려면 `set "ALLOW_OLD_PYTHON=1"` (web_report 는 계속 실패한다).
+> - 특정 파이썬을 지정하려면 `set "PYTHON=C:\경로\python.exe"`.
+>
+> 인터프리터 탐색·최소 버전 판정은 [_find_python.bat](_find_python.bat) 한 곳에 있다
+> (탐색 순서: `%PYTHON%` → `py -3`(설치된 최신) → `PATH`. 예전에는 PATH 가 먼저라
+> 오래된 파이썬이 앞에 있으면 그것으로 venv 가 만들어졌다).
 pyyaml 은 eval_analyzer(eval_engine) rules 로딩용 — ai_comment 옵션 세션의 IssueTable
 AI Comment 평가 경로([../web_report/ai_comment.py](../web_report/ai_comment.py),
 [../docs/13](../docs/13_eval_analyzer_integration.md))에서만 쓰인다.

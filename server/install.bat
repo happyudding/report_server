@@ -15,30 +15,44 @@ rem ============================================================
 set "ROOT=%~dp0"
 
 rem -- Python 인터프리터 탐색 (start.bat 과 동일 우선순위) --
+rem 이미 있는 .venv 는 **버전까지** 확인한다 - 3.10 으로 만든 것이 남아 있으면 나중에
+rem 3.11+ 를 깔아도 계속 그것으로 떠서 web_report 콜드 빌드가 100% 실패했다.
+rem 탐색·최소 버전 판정은 _find_python.bat 한 곳에 모여 있다.
+if not exist "%ROOT%.venv\Scripts\python.exe" goto :need_boot
+call "%ROOT%_find_python.bat" "%ROOT%.venv\Scripts\python.exe" >nul 2>&1
+if not errorlevel 1 goto :have_venv
+echo [install] 기존 .venv 의 파이썬이 요구 버전(3.11+) 미만입니다 - 다시 만듭니다.
+set "VENV_TOO_OLD=1"
+
+:need_boot
+rem 쓸 파이썬을 **먼저** 확보한다 - 못 찾는데 기존 .venv 부터 치우면 아무것도 없는
+rem 상태로 남는다 (start.bat 과 같은 순서).
 set "PY_BOOT="
-if defined PYTHON (
-    set PY_BOOT="%PYTHON%"
-    goto :boot_ok
-)
-if exist "%ROOT%.venv\Scripts\python.exe" goto :have_venv
-for /f "delims=" %%P in ('where python.exe 2^>nul') do (
-    set PY_BOOT="%%P"
-    goto :boot_ok
-)
-where py.exe >nul 2>&1
-if not errorlevel 1 (
-    set "PY_BOOT=py -3"
-    goto :boot_ok
-)
-echo [install] ERROR: Python 을 찾을 수 없습니다.
-echo [install] Python 3 를 설치해 PATH 에 추가하거나 PYTHON 환경변수를 지정하세요.
+for /f "delims=" %%P in ('call "%ROOT%_find_python.bat"') do set "PY_BOOT=%%P"
+if defined PY_BOOT goto :boot_prepare
+echo [install] ERROR: 3.11 이상의 Python 을 찾을 수 없습니다.
+echo [install]   설치: https://www.python.org/downloads/  ^(설치 시 "Add to PATH" 체크^)
+echo [install]   이미 있다면: set "PYTHON=C:\경로\python.exe" 후 다시 실행
+if defined VENV_TOO_OLD echo [install]   기존 .venv 는 손대지 않았습니다.
 pause
 exit /b 1
+
+:boot_prepare
+rem 예전 .venv 는 지우지 않고 밀어둔다 (되돌릴 수 있게).
+if not defined VENV_TOO_OLD goto :boot_ok
+echo [install] 예전 .venv 는 .venv_old 로 옮겨 둡니다 ^(확인 후 삭제하세요^).
+if exist "%ROOT%.venv_old\" rmdir /s /q "%ROOT%.venv_old"
+move "%ROOT%.venv" "%ROOT%.venv_old" >nul 2>&1
+if exist "%ROOT%.venv\" (
+    echo [install] ERROR: 기존 .venv 를 옮기지 못했습니다 ^(서버가 아직 돌고 있나요?^).
+    pause
+    exit /b 1
+)
 
 :boot_ok
 echo [install] 부트스트랩 Python : %PY_BOOT%
 echo [install] .venv 생성 중 ...
-%PY_BOOT% -m venv "%ROOT%.venv"
+"%PY_BOOT%" -m venv "%ROOT%.venv"
 if not exist "%ROOT%.venv\Scripts\python.exe" (
     echo [install] ERROR: .venv 생성 실패
     pause

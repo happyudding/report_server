@@ -29,56 +29,88 @@ rem terminate.bat 이 교체 작업 중 오작동을 막으려고 일시 정지�
 rem 마친 뒤 이 스크립트가 다시 켠다 (:enable_watchdog).
 set "TASK_WATCHDOG=report-server-watchdog"
 
-rem Resolve Python interpreter.
-set "PY_CMD="
+rem ── 파이썬 결정 ─────────────────────────────────────────────────────────────
+rem  종전에는 .venv 가 있으면 **버전을 보지 않고** 그대로 썼다. 그래서 3.10 으로 만든
+rem  .venv 가 남아 있으면 나중에 3.11+ 를 깔아도 서버는 계속 3.10 으로 떴고, web_report
+rem  콜드 빌드가 ProcessPoolExecutor(max_tasks_per_child=) TypeError 로 100% 실패해
+rem  화면에는 "리포트 계산이 반복 실패했습니다" 만 보였다(원인을 알 수 없는 증상).
+rem  이제 버전을 확인하고, 낮으면 .venv_old 로 밀어둔 뒤 3.11+ 로 다시 만든다.
+rem  인터프리터 탐색 규칙은 _find_python.bat 에 모아 두었다(PATH 보다 py -3 우선).
+set "VENV_PY=%ROOT%.venv\Scripts\python.exe"
+set "VENV_BACKED_UP="
 
-if defined PYTHON (
-    set PY_CMD="%PYTHON%"
-    goto :py_ok
+if not exist "%VENV_PY%" (
+    echo [start] .venv not found - creating virtual environment ...
+    goto :make_venv
 )
-if exist "%ROOT%.venv\Scripts\python.exe" (
-    set PY_CMD="%ROOT%.venv\Scripts\python.exe"
-    goto :py_ok
+rem 최소 버전 판정은 _find_python.bat 한 곳에만 둔다 (여기서 숫자를 또 쓰지 않는다).
+call "%ROOT%_find_python.bat" "%VENV_PY%" >nul 2>&1
+if not errorlevel 1 goto :venv_ready
+
+for /f "delims=" %%V in ('"%VENV_PY%" -c "import sys;print(sys.version.split()[0])" 2^>nul') do echo [start] 기존 .venv 의 파이썬이 %%V 입니다 ^(서버 요구: 3.11 이상^).
+echo [start] 파이썬을 새로 설치해도 기존 .venv 는 바뀌지 않습니다 - 다시 만듭니다.
+goto :make_venv
+
+:make_venv
+rem 3.11+ 인터프리터를 찾는다 (stdout 에 경로만 온다 - _find_python.bat 참조).
+set "PY_BOOT="
+for /f "delims=" %%P in ('call "%ROOT%_find_python.bat"') do set "PY_BOOT=%%P"
+if defined PY_BOOT goto :make_venv_go
+
+echo [start] ERROR: 3.11 이상의 파이썬을 찾지 못했습니다.
+echo [start]   설치: https://www.python.org/downloads/  ^(설치 시 "Add to PATH" 체크^)
+echo [start]   이미 있다면 경로 지정: set "PYTHON=C:\경로\python.exe" 후 다시 실행
+if exist "%VENV_PY%" (
+    echo [start]   기존 .venv 로 그대로 기동하려면: set "ALLOW_OLD_PYTHON=1" 후 다시 실행
+    echo [start]   ^(단 web_report 콜드 빌드는 계속 실패합니다 - 임시 회피용^)
+    if "%ALLOW_OLD_PYTHON%"=="1" (
+        echo [start] WARN: ALLOW_OLD_PYTHON=1 - 요구 버전 미만인 .venv 로 기동합니다.
+        goto :venv_ready
+    )
 )
-if exist "%ROOT%venv\Scripts\python.exe" (
-    set PY_CMD="%ROOT%venv\Scripts\python.exe"
-    goto :py_ok
-)
-for /f "delims=" %%P in ('where python.exe 2^>nul') do (
-    set PY_CMD="%%P"
-    goto :py_ok
-)
-where py.exe >nul 2>&1
-if not errorlevel 1 (
-    set "PY_CMD=py -3"
-    goto :py_ok
-)
-echo [start] ERROR: Python interpreter not found.
-echo [start] Set PYTHON env var, create .venv, or add python to PATH.
 pause
 exit /b 1
 
-:py_ok
-rem -- venv 자동 생성: clone 직후 .venv 가 없으면 만들고 requirements 설치 --
-if not exist "%ROOT%.venv\Scripts\python.exe" (
-    echo [start] .venv not found - creating virtual environment ...
-    %PY_CMD% -m venv "%ROOT%.venv"
-    if not exist "%ROOT%.venv\Scripts\python.exe" (
-        echo [start] ERROR: failed to create .venv
+:make_venv_go
+echo [start] 사용할 파이썬: %PY_BOOT%
+rem 기존 .venv 는 지우지 않고 밀어둔다 - 새로 만들다 실패하면 되돌려야 하기 때문.
+if exist "%ROOT%.venv\" (
+    if exist "%ROOT%.venv_old\" rmdir /s /q "%ROOT%.venv_old"
+    move "%ROOT%.venv" "%ROOT%.venv_old" >nul 2>&1
+    if exist "%ROOT%.venv\" (
+        echo [start] ERROR: 기존 .venv 를 옮기지 못했습니다 ^(서버가 아직 돌고 있나요?^).
+        echo [start]        terminate.bat 실행 후 다시 시도하세요.
         pause
         exit /b 1
     )
-    call :install_deps
-    if errorlevel 1 (
-        echo [start] ERROR: 의존성 설치 실패 - 네트워크/프록시를 확인하세요.
-        echo [start] 불완전한 .venv 를 제거합니다. 문제 해결 후 start.bat 또는 install.bat 를 다시 실행하세요.
-        rmdir /s /q "%ROOT%.venv"
-        pause
-        exit /b 1
-    )
+    set "VENV_BACKED_UP=1"
 )
+"%PY_BOOT%" -m venv "%ROOT%.venv"
+if not exist "%VENV_PY%" (
+    echo [start] ERROR: failed to create .venv
+    goto :venv_rollback
+)
+call :install_deps
+if errorlevel 1 goto :venv_rollback
+"%VENV_PY%" -c "import flask" >nul 2>&1
+if errorlevel 1 goto :venv_rollback
+if defined VENV_BACKED_UP echo [start] 예전 .venv 는 .venv_old 에 남겨 두었습니다 ^(확인 후 삭제하세요^).
+goto :venv_ready
+
+:venv_rollback
+echo [start] ERROR: 새 .venv 준비 실패 - 네트워크/프록시를 확인하세요.
+if exist "%ROOT%.venv\" rmdir /s /q "%ROOT%.venv"
+if defined VENV_BACKED_UP (
+    echo [start] 원래 .venv 를 되돌립니다 ^(기동은 중단^).
+    move "%ROOT%.venv_old" "%ROOT%.venv" >nul 2>&1
+)
+echo [start] 문제 해결 후 start.bat 또는 install.bat 를 다시 실행하세요.
+pause
+exit /b 1
+
+:venv_ready
 rem venv 가 준비됐으니 항상 venv python 으로 고정
-set PY_CMD="%ROOT%.venv\Scripts\python.exe"
+set PY_CMD="%VENV_PY%"
 
 rem -- .venv 는 있는데 의존성이 없는 경우도 복구한다 ----------------------------
 rem 위 블록은 python.exe 의 "존재"만 보므로, 설치가 중간에 끊겼거나 다른 PC 에서
