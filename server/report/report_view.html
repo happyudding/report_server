@@ -683,6 +683,36 @@ tbody tr:hover { background: #f9fbff; }
 .yield-hscroll::-webkit-scrollbar-thumb:hover { background: #7b8a9b; }
 .sheet-wrap.kind-yield.has-htop { scrollbar-width: none; -ms-overflow-style: none; }
 .sheet-wrap.kind-yield.has-htop::-webkit-scrollbar { display: none; }
+/* ── Yield 탭 세로 틀고정 (사용자 요청 2026-08-06) ─────────────────────────────
+   표가 길면 스크롤 시 컬럼 헤더가 화면 밖으로 나가 어느 열인지 알 수 없었다. thead 를
+   sticky 로 고정하려면 **스크롤 주체가 wrap 이어야** 한다(wrap 이 overflow:auto 라
+   sticky 기준 scrollport 가 뷰포트가 아니라 wrap 이다) → wrap 에 뷰포트 기준 max-height 를
+   줘서 세로 스크롤을 wrap 이 맡게 한다. 그러면 하단 가로 스크롤바도 항상 화면 안에 들어온다
+   (사용자 요구: "가로 스크롤까진 보여야 함"). 프록시 가로 바는 wrap 위에 sticky 로 붙인다.
+   #panel-yield 로 한정 — Issue Bin 상세의 kind-yield 표(짧다)는 종전 그대로 둔다. */
+/* 표 자체를 sticky 로 붙이는 건 불가능하다 — 섹션(STEP) 높이가 표 높이와 거의 같아
+   sticky 가 움직일 여유(containing block slack)가 없다(2026-08-06 실측: 요청 top 155px,
+   실제 -95px). 대신 표를 뷰포트 높이로 잘라 **표 안에서 세로 스크롤**하게 하고 헤더를 그
+   안에 고정한다. 표 위에 커서를 두고 굴리면 표가 먼저 스크롤되고(헤더 계속 보임), 표 끝에
+   닿아야 페이지가 다음 STEP 으로 넘어간다. 섹션 정렬은 툴바의 점프 버튼이 맞춰준다. */
+#panel-yield .sheet-wrap.kind-yield {
+  max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - var(--yield-toolbar-h, 40px)
+                   - var(--yield-hscroll-h, 14px) - 56px);
+}
+/* 브라우저 기본 scrollIntoView 로 섹션에 갈 때도 sticky 헤더+툴바에 가리지 않게. */
+#panel-yield .yield-step-section, #panel-yield .yield-corner-section {
+  scroll-margin-top: calc(var(--sticky-head-h, 96px) + var(--yield-toolbar-h, 40px) + 8px);
+}
+#panel-yield .yield-hscroll {
+  position: sticky; z-index: 92;
+  top: calc(var(--sticky-head-h, 96px) + var(--yield-toolbar-h, 40px));
+}
+/* 헤더 2행(그룹 라벨 / source) 모두 고정 — 하단행 top 은 상단행 실측 높이(JS). */
+#panel-yield .sheet-table.kind-yield thead > tr:first-child > th { position: sticky; top: 0; z-index: 4; }
+#panel-yield .sheet-table.kind-yield thead > tr:nth-child(2) > th {
+  position: sticky; top: var(--yield-shead-row1-h, 26px); z-index: 4; }
+/* 좌측 고정 4열과 겹치는 코너 셀은 더 위로(가로·세로 동시 고정). */
+#panel-yield .sheet-table.kind-yield thead > tr:first-child > th:nth-child(-n+4) { z-index: 6; }
 /* 좌측 틀고정: 식별 4열(Step/Bin/TNO/Item). left 오프셋은 앞 컬럼 실측 폭 누적으로,
    colWidth 기본값(step44+bin44+tno60)이 fallback 이고 실제 폭은 JS(syncYieldStickyOffsets)가
    --yield-colN-left 로 덮어쓴다(내용이 길어 컬럼이 늘어나면 고정 px 는 셀이 겹친다).
@@ -1488,11 +1518,12 @@ html[data-theme="dark"] .note-sheet-btn:hover { background: rgba(94,234,212,.20)
 /* Status 전체 일괄(All Open/All Close) — 선택과 무관하게 편집모드 상시 노출 */
 .issue-status-actions { display: inline-flex; gap: 8px; }
 
-/* Issue Table 섹션 이동 버튼 묶음(YIELD/CPK/ETC) — 세그먼트 형태로 붙여 표시 */
-.issue-jump-group { display: inline-flex; }
-.issue-jump-group .btn-sm { margin-top: 0; border-radius: 0; margin-left: -1px; }
-.issue-jump-group .btn-sm:first-child { border-radius: 8px 0 0 8px; margin-left: 0; }
-.issue-jump-group .btn-sm:last-child { border-radius: 0 8px 8px 0; }
+/* Issue Table 섹션 이동 버튼 묶음(YIELD/CPK/ETC) — 세그먼트 형태로 붙여 표시.
+   Yield 탭 STEP/Temp Corner 점프 묶음(.yield-jump-group)도 같은 모양을 쓴다. */
+.issue-jump-group, .yield-jump-group { display: inline-flex; }
+.issue-jump-group .btn-sm, .yield-jump-group .btn-sm { margin-top: 0; border-radius: 0; margin-left: -1px; }
+.issue-jump-group .btn-sm:first-child, .yield-jump-group .btn-sm:first-child { border-radius: 8px 0 0 8px; margin-left: 0; }
+.issue-jump-group .btn-sm:last-child, .yield-jump-group .btn-sm:last-child { border-radius: 0 8px 8px 0; }
 /* Excel 다운로드는 툴바 우측 끝 */
 .issue-toolbar .issue-excel-btn { margin-left: auto; }
 .yield-toolbar .tab-excel-btn, .cpk-toolbar .tab-excel-btn { margin-left: auto; }

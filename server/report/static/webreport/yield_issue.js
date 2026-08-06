@@ -107,7 +107,7 @@ function renderYieldStepSections(stepGroups, allRows, byStep, keyPrefix) {
   return stepGroups.map((sg, si) => {
     const groups = sg.groups || [];
     const label = String(sg.step || "").trim() || "(기타)";
-    return `<div class="yield-step-section">` +
+    return `<div class="yield-step-section" data-step="${esc(label)}">` +
       `<div class="yield-step-title">STEP ${esc(label)}</div>` +
       renderYieldTable(cols, groups, `${keyPrefix || ""}${si}`,
                        yieldStepPassRow(sg.step, byStep)) + `</div>`;
@@ -156,6 +156,7 @@ function renderYieldTempSection() {
 // Yield 탭 상단 툴바: 모든 Bin 그룹의 FAILTNO 상세행을 한 번에 펼치기/접기하는 토글.
 function yieldToolbarHtml() {
   return `<div class="yield-toolbar">` +
+    yieldJumpGroupHtml() +
     `<button type="button" class="btn-sm" id="yieldToggleAll" data-expanded="false">전체 펼치기</button>` +
     sheetSearchHtml("yieldSearchInput", yieldSearchTerm, "Item 검색") +
     yieldExcelBtnHtml() +
@@ -282,6 +283,8 @@ function bindYieldPanel() {
       setAllYieldGroups(expand);
       return;
     }
+    const jump = e.target.closest("[data-yield-jump]");
+    if (jump) { yieldJumpTo(jump.dataset.yieldJump); return; }
     const btn = e.target.closest(".yield-toggle");
     if (!btn) return;
     setYieldGroup(btn.dataset.grp, btn.getAttribute("aria-expanded") !== "true", btn);
@@ -289,12 +292,88 @@ function bindYieldPanel() {
   yieldPanelBound = true;
 }
 
+// ── STEP / Temp Corner 바로가기 (사용자 요청 2026-08-06) ─────────────────────
+// STEP 마다 표가 하나씩 세로로 이어져 아래 STEP 까지 스크롤하기 번거롭다 — sticky 툴바에
+// 점프 버튼을 둔다. Issue Table 의 issue-jump-group 과 같은 역할.
+// 스크롤 목표 y 는 sticky 헤더+툴바 높이만큼 올려 잡는다(안 그러면 섹션 제목이 툴바에 가린다).
+function yieldStickyTop() {
+  const head = parseFloat(getComputedStyle(document.documentElement)
+    .getPropertyValue("--sticky-head-h")) || 96;
+  const bar = document.querySelector("#panel-yield .yield-toolbar");
+  return head + (bar ? bar.getBoundingClientRect().height : 40);
+}
+function yieldJumpTo(target) {
+  if (target === "top") { window.scrollTo({ top: 0, behavior: "smooth" }); return; }
+  const panel = document.getElementById("panel-yield");
+  if (!panel) return;
+  let el = null;
+  if (target === "temp") {
+    el = panel.querySelector(".yield-corner-section");
+  } else if (target.startsWith("step:")) {
+    const want = target.slice(5);
+    panel.querySelectorAll(".yield-step-section").forEach(sec => {
+      if (!el && sec.dataset.step === want) el = sec;
+    });
+  }
+  if (!el) return;
+  const y = window.scrollY + el.getBoundingClientRect().top - yieldStickyTop() - 8;
+  window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
+}
+// 툴바에 넣을 점프 버튼들. STEP 이 2개 이상이거나 Temp Corner 가 있을 때만 만든다
+// (표가 하나뿐이면 점프할 곳이 없다).
+function yieldJumpGroupHtml() {
+  const steps = (DATA.web_report && DATA.web_report.yield_step_groups) || [];
+  const tempRows = (webReportMode() === "Temperature")
+    ? (webReportSheets() || {})[ISSUE_TEMP_SHEET] : null;
+  const hasTemp = Array.isArray(tempRows) && tempRows.length > 0;
+  if (!(steps.length > 1 || hasTemp)) return "";
+  const btns = steps.map(sg => {
+    const label = String(sg.step || "").trim() || "(기타)";
+    return `<button type="button" class="btn-sm" data-yield-jump="step:${esc(label)}" ` +
+      `title="STEP ${esc(label)} 표로 이동">${esc(label)}</button>`;
+  });
+  if (hasTemp) {
+    btns.push(`<button type="button" class="btn-sm" data-yield-jump="temp" ` +
+      `title="Temp Corner (CT / HT) 표로 이동">Temp Corner</button>`);
+  }
+  return `<span class="yield-jump-group" title="표로 이동">` + btns.join("") +
+    `<button type="button" class="btn-sm" data-yield-jump="top" title="맨 위로">▲ 맨 위</button>` +
+    `</span>`;
+}
+
 // Yield 표 좌측 고정열(Step/Bin/TNO/Item)의 left 오프셋을 실제 렌더 폭으로 계산 —
 // 내용이 길어 컬럼이 colWidth 힌트보다 넓어져도 셀이 겹치지(깨지지) 않게 한다.
 // STEP 별로 표가 여러 개라 표마다 따로 심는다. 탭이 숨겨져 폭이 0 이면 건너뛴다.
+// sticky 툴바 실제 높이 → --yield-toolbar-h (CSS 가 표 max-height·프록시 바 top 계산에 쓴다).
+// 점프 버튼이 늘어 툴바가 두 줄이 되면 고정값 40px 은 어긋나므로 실측한다.
+function syncYieldToolbarHeight(panel) {
+  const bar = panel && panel.querySelector(".yield-toolbar");
+  if (!bar) return;
+  const h = Math.round(bar.getBoundingClientRect().height);
+  if (h > 0) panel.style.setProperty("--yield-toolbar-h", h + "px");
+}
+// 2행 헤더(그룹 라벨 / source)에서 하단행이 상단행 높이만큼 내려가 sticky 되도록 실측
+// (Issue Table 의 syncIssueHeadRowHeight 와 같은 처방). 표마다 따로 심는다.
+function syncYieldHeadRowHeight(panel) {
+  if (!panel) return;
+  panel.querySelectorAll(".sheet-table.kind-yield").forEach(table => {
+    const top = table.querySelector("thead > tr:first-child > th");
+    const bot = table.querySelector("thead > tr:nth-child(2) > th");
+    if (!top || !bot) return;   // 단일 소스 등 2행 헤더가 아니면 생략
+    // 상단행 th 의 **높이**를 재면 안 된다 — 식별 4열은 rowspan=2 라 두 행 합(≈50px)이
+    // 나와 하단행이 그만큼 더 내려가고 그 틈으로 데이터 행이 비쳤다(2026-08-06 실측).
+    // offsetTop 차이는 sticky 시각 오프셋과 무관한 레이아웃 위치라 상단행 높이를 정확히 준다
+    // (Issue Table 의 syncIssueHeadRowHeight 와 같은 처방).
+    const h = bot.offsetTop - top.offsetTop;
+    if (h > 0) table.style.setProperty("--yield-shead-row1-h", h + "px");
+  });
+}
+
 function syncYieldStickyOffsets(panel) {
   panel = panel || document.getElementById("panel-yield");
   if (!panel) return;
+  syncYieldToolbarHeight(panel);
+  syncYieldHeadRowHeight(panel);
   panel.querySelectorAll(".sheet-table.kind-yield").forEach(table => {
     let row = null;
     table.querySelectorAll("tbody tr").forEach(tr => {
@@ -395,6 +474,7 @@ function renderYield(yield_text, summary_rows) {
   if (Array.isArray(yield_text) && yield_text.length) {
     panel.innerHTML = overview +
       `<div class="yield-toolbar">` +
+      yieldJumpGroupHtml() +   // STEP 표가 없는 폴백이라 보통 빈 문자열 (Temp Corner 만 있으면 노출)
       sheetSearchHtml("yieldSearchInput", yieldSearchTerm, "Item 검색") +
       yieldExcelBtnHtml() + `</div>` +
       renderSheetTable(yield_text, { kind: "yield" }) + temp.html;

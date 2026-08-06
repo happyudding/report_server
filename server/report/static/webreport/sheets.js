@@ -201,7 +201,7 @@ const SRC_ABBREV_MIN = 8;
 const SRC_KEEP_FULL_LEN = 5;
 
 // source 컬럼 폭을 "숫자 크기"까지 좁히기 시작하는 source 개수. source 가 2개 이상이면 헤더가
-// 축약(abbrevSourceLabels ".."+뒤 6글자 / SRC_ABBREV_MIN 이상이면 공통부분 제거)되므로, 폭 힌트를
+// 축약(abbrevSourceLabels "…"+뒤 6글자 / SRC_ABBREV_MIN 이상이면 공통부분 제거)되므로, 폭 힌트를
 // 낮춰 실제 폭이 max(축약 라벨, xx.xx) 로 정해지게 한다 → 소스명이 짧을수록 열이 좁아져 가로
 // 스크롤이 줄어든다(사용자 요청 2026-08-04). 소스 1개는 헤더가 전체 이름이라 기존 폭 유지.
 const SRC_NARROW_MIN = 2;
@@ -245,13 +245,31 @@ function sourceHeaderLabels(fulls) {
 function sourceColCount(cols) {
   return (cols || []).filter(c => /_yield$/i.test(String(c))).length;
 }
-// 여러 source 이름을 ".." + 이름 끝 6글자로 축약한다 (사용자 요청 — 소스 이름은 보통
-// 끝부분에서 달라지므로 구분 유지). 이름이 8글자 이하면 그대로 둔다. hover 로 전체이름 확인.
-function abbrevSourceLabels(fulls) {
-  if (!fulls || fulls.length < 2) return (fulls || []).map(f => ({ short: f, full: f }));
-  return fulls.map(full =>
-    (full.length <= 8) ? { short: full, full } : { short: ".." + full.slice(-6), full });
+// source 이름을 "…" + 이름 끝 6글자로 축약한다 (소스 이름은 보통 끝부분에서 달라지므로
+// 뒤를 남긴다). **6글자를 넘으면 무조건 축약**하고 source 가 1개뿐이어도 적용한다
+// (사용자 요청 2026-08-06 — 종전에는 2개 이상 + 8글자 초과일 때만이라 단일 소스 세션에서
+// 12자 이름이 그대로 나왔다). 전체 이름은 hover(title)로 확인한다.
+const SRC_HEAD_TAIL_LEN = 6;
+function abbrevSourceName(full) {
+  const s = String(full);
+  return (s.length <= SRC_HEAD_TAIL_LEN) ? s : "…" + s.slice(-SRC_HEAD_TAIL_LEN);
 }
+function abbrevSourceLabels(fulls) {
+  return (fulls || []).map(full => ({ short: abbrevSourceName(full), full: String(full) }));
+}
+// source 가 1개면 {src}_yield / {src}_count 가 각각 run 길이 1 이라 2행 헤더가 만들어지지
+// 않는다 → 1행 헤더 경로에서는 종전에 컬럼 키가 통째로 노출됐다("PMIC_LOT1_RT_yield").
+// 접미사(_yield/_count)는 열의 의미라 남기고 **source 이름 부분만** 축약한다.
+// 반환 null = source 컬럼이 아님(호출부가 기존 displayLabel 사용).
+function flatSourceHeadLabel(c) {
+  const raw = String(c);
+  const m = raw.match(/_(yield|cnt|count)$/i);
+  if (!m) return null;
+  const full = sheetHeaderShortLabel(c);
+  const short = abbrevSourceName(full);
+  return { short: short + m[0], full: raw, abbreviated: short !== full };
+}
+
 // opts.resize=true 면 단일 컬럼 th 우측에 폭 드래그 핸들을 심는다(colgroup 인덱스 동반).
 // Yield 표에서 쓰며(bindSheetColResize), 지정 없으면 기존과 동일한 헤더를 그대로 낸다.
 function buildSheetTableHead(cols, opts) {
@@ -276,8 +294,14 @@ function buildSheetTableHead(cols, opts) {
   }
   const commentCls = c => isCommentCol(c) ? ` class="st-comment"` : "";
   if (!runs.some(r => r.group)) {
-    return "<thead><tr>" + cols.map((c, k) =>
-      `<th${commentCls(c)}>${esc(displayLabel(c))}${handle(k)}</th>`).join("") + "</tr></thead>";
+    return "<thead><tr>" + cols.map((c, k) => {
+      const s = flatSourceHeadLabel(c);
+      if (s) {
+        return `<th class="sheet-src-th"${s.abbreviated ? ` title="${esc(s.full)}"` : ""}>` +
+          `${esc(s.short)}${handle(k)}</th>`;
+      }
+      return `<th${commentCls(c)}>${esc(displayLabel(c))}${handle(k)}</th>`;
+    }).join("") + "</tr></thead>";
   }
   const topRow = runs.map(r => r.group
     ? `<th colspan="${r.len}" class="sheet-group-th">${esc(r.group.label)}</th>`
@@ -436,7 +460,14 @@ function issueSectionHeadRowsHtml(cols, sec) {
   const commentCls = c => isCommentCol(c) ? ` class="st-comment"` : "";
   if (!runs.some(r => r.group)) {
     return `<tr class="issue-shead-top" data-sec="${esc(sec)}">` +
-      cols.map((c, k) => `<th${commentCls(c)}>${esc(displayLabel(c))}${resizeHandle(k)}</th>`).join("") + `</tr>`;
+      cols.map((c, k) => {
+        const s = flatSourceHeadLabel(c);   // source 1개 세션 — 컬럼 키 노출 방지(Yield 와 동일 규칙)
+        if (s) {
+          return `<th class="sheet-src-th"${s.abbreviated ? ` title="${esc(s.full)}"` : ""}>` +
+            `${esc(s.short)}${resizeHandle(k)}</th>`;
+        }
+        return `<th${commentCls(c)}>${esc(displayLabel(c))}${resizeHandle(k)}</th>`;
+      }).join("") + `</tr>`;
   }
   const topRow = runs.map(r => r.group
     ? `<th colspan="${r.len}" class="sheet-group-th">${esc(lab.group)}</th>`
