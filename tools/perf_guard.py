@@ -50,6 +50,23 @@ ROOT = Path(__file__).resolve().parent.parent
 # 검사 범위 — 실제 성능 회귀가 나온 영역만. 밖의 파일은 즉시 통과한다.
 SCOPE = ("web_report/", "server/report/")
 
+# 조회/빌드 속도에 직접 영향을 주는 파일들. 여기가 바뀐 채로 턴이 끝나면 --stop 이
+# "벤치 돌릴지 사용자에게 물어라"를 돌려준다. **성능 목적 변경이었는지는 파일만 보고
+# 알 수 없으므로** 판단은 모델에게 맡긴다(라벨 수정 같은 건 묻지 말라고 안내한다).
+# 편집·eval·검증 전용 모듈은 조회 경로가 아니라서 제외했다.
+PERF_SENSITIVE = (
+    "web_report/cache.py", "web_report/cache_policy.py", "web_report/disk_cache.py",
+    "web_report/response_cache.py", "web_report/compute.py", "web_report/service.py",
+    "web_report/loader.py", "web_report/metrics.py", "web_report/honeyform.py",
+    "web_report/ingest.py", "web_report/preprocess.py",
+    "web_report/dist_pack.py", "web_report/dist_pack_store.py",
+    "web_report/dist_blob.py", "web_report/tabs/**/*.py",
+    "server/report/routes_session.py", "server/report/routes_webreport.py",
+    "server/report/static/webreport/*.js",
+)
+
+BENCH_CMD = r"server\.venv\Scripts\python.exe tests\bench_webreport.py --quick"
+
 # 면제 주석: 위반 줄 또는 바로 윗줄에 있으면 그 규칙을 건너뛴다.
 EXEMPT_RE = re.compile(r"perf-guard:\s*allow\s+([A-Za-z0-9_\-]+)")
 
@@ -502,6 +519,21 @@ def run_hook() -> int:
 _MARKER = Path(tempfile.gettempdir()) / "perf_guard_last_stop.txt"
 
 
+def _once(sig: str) -> bool:
+    """같은 사유로 두 번 막지 않는다 — 못 고치는 상태에 갇히면 안 된다."""
+    digest = hashlib.sha256(sig.encode()).hexdigest()
+    try:
+        if _MARKER.read_text(encoding="utf-8").strip() == digest:
+            return False
+    except OSError:
+        pass
+    try:
+        _MARKER.write_text(digest, encoding="utf-8")
+    except OSError:
+        pass
+    return True
+
+
 def run_stop() -> int:
     # 이미 Stop 훅 때문에 한 번 되돌아온 턴이면 두 번 막지 않는다.
     try:
@@ -509,26 +541,37 @@ def run_stop() -> int:
             return 0
     except Exception:
         pass
-    hits = [h for h in scan_diff() if _severity(h["rule"]) == "block"]
-    if not hits:
+
+    diff = collect_diff()
+    hits = [h for h in scan_diff(diff=diff) if _severity(h["rule"]) == "block"]
+    if hits:
+        sig = "violate|" + "|".join(
+            sorted(f"{h['rule']['id']}:{h['file']}" for h in hits))
+        if _once(sig):
+            _emit({"decision": "block",
+                   "reason": "성능 가드가 작업트리에서 회귀 위험 변경을 찾았습니다. "
+                             "되돌리거나, 의도한 변경이면 면제 주석을 다세요.\n\n"
+                             + _fmt(hits)})
+        return 0
+
+    # 위반은 없다. 조회/빌드 속도에 영향을 줄 수 있는 파일이 바뀌었는지만 알린다 —
+    # 실측 벤치는 수십 초 걸려 매번 돌릴 수 없으므로 턴 끝에 한 번 제안하게 한다.
+    touched = sorted(f for f in diff if _match_path(f, PERF_SENSITIVE))
+    if not touched:
         _MARKER.unlink(missing_ok=True)
         return 0
-    # 같은 위반 집합으로 두 번 막지 않는다 — 못 고치는 위반에 갇히면 안 된다.
-    sig = hashlib.sha256(
-        "|".join(sorted(f"{h['rule']['id']}:{h['file']}" for h in hits))
-        .encode()).hexdigest()
-    try:
-        if _MARKER.read_text(encoding="utf-8").strip() == sig:
-            return 0
-    except OSError:
-        pass
-    try:
-        _MARKER.write_text(sig, encoding="utf-8")
-    except OSError:
-        pass
-    _emit({"decision": "block",
-           "reason": "성능 가드가 작업트리에서 회귀 위험 변경을 찾았습니다. "
-                     "되돌리거나, 의도한 변경이면 면제 주석을 다세요.\n\n" + _fmt(hits)})
+    if not _once("bench|" + "|".join(touched)):
+        return 0
+    _emit({"decision": "block", "reason":
+           "이번 작업에서 조회/빌드 속도에 영향을 줄 수 있는 파일이 바뀌었습니다:\n"
+           + "".join(f"  - {f}\n" for f in touched)
+           + "\n**속도 개선이 목적인 변경이었다면** 여기서 마치지 말고 사용자에게 "
+             "실측 벤치를 돌릴지 AskUserQuestion 으로 물어보세요.\n"
+             f"    {BENCH_CMD}\n"
+             "  (수십 초, 임시 DB 격리라 운영 무접촉. 이전 실행 대비 회귀를 자동 판정하고 "
+             "결과 해석 절차는 스킬 webreport-bench 에 있습니다.)\n\n"
+             "속도와 무관한 변경(라벨·문구 수정, 기능 추가, 버그 수정 등)이었다면 "
+             "묻지 말고 그대로 마치세요. 이 알림은 같은 파일 집합에 대해 한 번만 뜹니다."})
     return 0
 
 

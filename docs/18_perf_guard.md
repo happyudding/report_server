@@ -31,6 +31,22 @@ server\.venv\Scripts\python.exe tools\perf_guard.py --list
 | 수동 | `--diff [--ref REF]` | 작업트리 diff 전체 | exit 1 |
 | 수동 | `--scan-all` | 범위 내 전 파일 | exit 1 — 규칙 도입 시 오탐 점검용 |
 
+## 턴 끝의 벤치 제안
+
+실측 벤치는 수십 초가 걸려 편집마다 돌릴 수 없다. 그래서 `--stop` 은 **위반이 없을 때**,
+조회/빌드 속도에 영향을 줄 수 있는 파일(`PERF_SENSITIVE`)이 바뀌었는지만 보고
+**턴 끝에 한 번** 알린다. 그러면 모델이 사용자에게 벤치 실행 여부를 묻는다.
+
+```
+server\.venv\Scripts\python.exe tests\bench_webreport.py --quick
+```
+
+- **속도 개선이 목적이었는지는 파일만 보고 알 수 없다.** 그 판단은 모델 몫이다 —
+  라벨 수정·기능 추가·버그 수정이었다면 묻지 않고 마친다.
+- 같은 파일 집합에 대해 **한 번만** 뜨고, 위반이 있으면 위반 보고가 우선한다.
+- 벤치는 임시 DB 격리라 운영 무접촉이고, 이전 실행 대비 회귀를 자동 판정한다.
+  결과 해석 절차는 스킬 `webreport-bench` 참조.
+
 검사 범위는 `web_report/` 와 `server/report/` 뿐이다. 그 밖의 파일을 고치는 세션에서는
 가드가 아무 반응도 하지 않는다.
 
@@ -88,5 +104,6 @@ python tests/test_perf_guard.py           # 규칙마다 위반/정상 샘플이
 - `Plotly.toImage` 는 canvas 오버레이 점을 담지 못한다
 
 그리고 **새로운 종류의 성능 회귀**(알고리즘 복잡도 증가, 예상 못한 N+1)는 원리적으로
-못 잡는다. 그건 실측 영역이다 — [tests/bench_webreport.py](../tests/bench_webreport.py)
-가 이전 실행 대비 회귀를 판정하고, 실행 절차는 스킬 `webreport-bench` 에 있다.
+못 잡는다. 그건 실측 영역이다 — 그래서 `--stop` 이 턴 끝에
+[tests/bench_webreport.py](../tests/bench_webreport.py) 실행을 제안한다(위 "턴 끝의 벤치
+제안"). 가드가 조용하다고 해서 빨라졌다는 뜻은 아니다.

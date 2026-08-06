@@ -13,7 +13,9 @@
   (f) require_pair 는 짝 변경이 없을 때만 발화한다.
   (g) require_import 는 파일이 cache_policy 를 쓰면 발화하지 않는다.
   (h) 범위(web_report/·server/report/) 밖 경로는 통과한다.
-  (i) 규칙 메타(id 중복·필수 키·정규식 컴파일)가 온전하다.
+  (i) Stop 훅의 벤치 제안 — 성능 민감 파일이 바뀌면 1회만, 무관 파일엔 무반응,
+      위반이 있으면 위반이 우선, stop_hook_active 면 무조건 통과.
+  (j) 규칙 메타(id 중복·필수 키·정규식 컴파일)가 온전하다.
 
 가드는 fail-open 이라 훅에서 조용히 죽어도 티가 안 난다. 이 테스트가 유일한 안전망이다.
 
@@ -184,6 +186,61 @@ def check_out_of_scope() -> None:
     print("  (h) 범위 밖 통과 OK")
 
 
+def check_bench_prompt() -> None:
+    """Stop 훅: 위반이 없어도 성능 민감 파일이 바뀌면 벤치 제안을 한 번만 돌려준다."""
+    import io
+    import tempfile
+
+    def stop_with(diff):
+        buf, out = io.StringIO(), sys.stdout
+        sys.stdin, sys.stdout = io.StringIO("{}"), buf
+        try:
+            pg.run_stop()
+        finally:
+            sys.stdout = out
+        return buf.getvalue()
+
+    orig_collect, orig_marker = pg.collect_diff, pg._MARKER
+    tmp = Path(tempfile.mkdtemp(prefix="pg_test_")) / "marker.txt"
+    pg._MARKER = tmp
+    try:
+        # 성능 민감 파일 — 1회차만 제안, 2회차는 조용 (같은 파일 집합)
+        perf = {"web_report/service.py": {"added": "    return p\n", "removed": ""}}
+        pg.collect_diff = lambda *a, **k: perf
+        first = stop_with(perf)
+        assert "bench_webreport.py --quick" in first, "벤치 제안이 안 떴다"
+        assert not stop_with(perf), "같은 파일 집합인데 두 번 떴다"
+
+        # 성능과 무관한 파일만 바뀌면 아무 말도 하지 않는다
+        pg._MARKER = tmp.with_name("m2.txt")
+        pg.collect_diff = lambda *a, **k: {
+            "web_report/edits.py": {"added": "    x = 1\n", "removed": ""}}
+        assert not stop_with(None), "무관한 파일에 제안이 떴다"
+
+        # 위반이 있으면 벤치 제안보다 위반이 우선한다
+        pg._MARKER = tmp.with_name("m3.txt")
+        bad = {"web_report/service.py":
+               {"added": "    gzip.compress(b, compresslevel=6)\n", "removed": ""}}
+        pg.collect_diff = lambda *a, **k: bad
+        assert "R03-gzip-level" in stop_with(bad), "위반이 우선하지 않았다"
+
+        # stop_hook_active 면 무조건 통과 (무한 루프 방지)
+        pg._MARKER = tmp.with_name("m4.txt")
+        buf, out = io.StringIO(), sys.stdout
+        sys.stdin, sys.stdout = io.StringIO('{"stop_hook_active":true}'), buf
+        try:
+            pg.run_stop()
+        finally:
+            sys.stdout = out
+        assert not buf.getvalue(), "stop_hook_active 인데 막았다"
+    finally:
+        pg.collect_diff, pg._MARKER = orig_collect, orig_marker
+    assert pg._match_path("web_report/service.py", pg.PERF_SENSITIVE)
+    assert pg._match_path("web_report/tabs/yield_tab.py", pg.PERF_SENSITIVE)
+    assert not pg._match_path("web_report/edits.py", pg.PERF_SENSITIVE)
+    print("  (i) Stop 벤치 제안 (1회만/무관무반응/위반우선/루프가드) OK")
+
+
 def check_rule_meta() -> None:
     seen = set()
     for r in pg._RULES:
@@ -206,7 +263,7 @@ def check_rule_meta() -> None:
                if r["kind"] in ("forbid_add", "forbid_remove")
                and r["id"] not in covered]
     assert not missing, f"샘플 없는 규칙: {missing}"
-    print(f"  (i) 규칙 메타 {len(pg._RULES)}개 OK")
+    print(f"  (j) 규칙 메타 {len(pg._RULES)}개 OK")
 
 
 def selftest() -> int:
@@ -219,6 +276,7 @@ def selftest() -> int:
     check_require_pair()
     check_require_import()
     check_out_of_scope()
+    check_bench_prompt()
     check_rule_meta()
     print("전부 통과")
     return 0

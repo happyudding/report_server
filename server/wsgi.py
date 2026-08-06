@@ -12,7 +12,22 @@ from pathlib import Path
 # web_report 컴퓨트 워커(ProcessPoolExecutor spawn)가 이 모듈을 __mp_main__ 으로
 # 재임포트한다 — 자식 프로세스에서는 앱 조립·스케줄러(cleanup/백업/메트릭)·로그 tee 를
 # 전부 건너뛴다 (중복 기동 방지). 워커는 web_report/database 만 직접 import 해 쓴다.
-_IS_MP_CHILD = multiprocessing.parent_process() is not None
+#
+# ⚠️ 판정은 **모듈 이름**으로 한다. `multiprocessing.parent_process()` 는 이 시점에
+# 아직 None 이다 — spawn 자식은 `spawn.prepare()` 안의 `_fixup_main_from_path()` 에서
+# 이 모듈을 실행하는데, `_parent_process` 는 그 뒤 `BaseProcess._bootstrap()` 에서야
+# 채워지기 때문이다. 그래서 종전 가드는 **항상 False** 였고 워커마다 Flask 앱 조립·
+# DB 초기화·스케줄러가 통째로 다시 돌았다(2026-08-06 수정). parent_process() 는
+# 워커가 잡을 실행하는 단계에서는 정상이므로 보조 조건으로 남겨둔다.
+_IS_MP_CHILD = __name__ == "__mp_main__" or multiprocessing.parent_process() is not None
+
+# server/ 를 sys.path 최상단에 고정한다. 이 저장소에는 `config.py` 가 둘 있고
+# (server/config.py, client/config.py), 워커의 `from config import REPORT_DB_PATH` 가
+# 클라이언트 쪽을 집으면 ImportError 로 죽는다. 실행 방식(작업 디렉토리·PYTHONPATH·
+# 외부 앱에 plugin 으로 붙는 경우)에 따라 순서가 달라지므로 여기서 못박는다.
+_SERVER_DIR = str(Path(__file__).resolve().parent)
+if sys.path and sys.path[0] != _SERVER_DIR:
+    sys.path = [_SERVER_DIR] + [p for p in sys.path if p != _SERVER_DIR]
 
 # 콘솔 인코딩(예: Windows cp949)이 로그 문자열의 비-인코딩 문자(em-dash 등)를
 # 만나도 서버가 UnicodeEncodeError 로 죽지 않도록 stdout/stderr 를 UTF-8 로 강제.
