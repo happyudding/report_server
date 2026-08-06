@@ -340,7 +340,8 @@ body {
    .yield-overview 는 align-items:center 라 블록끼리는 계속 세로 가운데로 맞춰진다. */
 .yield-overview .yo-block { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
 /* 블록 안에서는 세로 스택이므로 표의 align-self:center(= 가로 가운데)를 좌측 정렬로 되돌린다. */
-.yield-overview .yo-block > .yield-by-source { align-self: flex-start; }
+.yield-overview .yo-block > .yield-by-source,
+.yield-overview .yo-block > .yield-by-step { align-self: flex-start; }
 /* 설명은 max-content 로 늘어나면 카드 폭을 밀어내므로 상한을 두고 줄바꿈시킨다. */
 .yield-overview .yo-cap { font-size: 10px; color: #8a93a0; line-height: 1.4; max-width: 320px; }
 /* 수율 분모 기준 배지 — Gross Die 기준이면 미측정 die 때문에 Pass+Fail < Total 일 수 있어
@@ -351,9 +352,14 @@ body {
 }
 /* source/step 별 수율을 메인 Total Yield 오른쪽에 작은 테이블로 이어 붙인다(세로 공간 차지 X). */
 .yield-by-source, .yield-by-step {
-  align-self: center; max-height: 132px; overflow-y: auto;
+  align-self: center; overflow-y: auto;
   border: 1px solid #dbe6f7; border-radius: 8px; background: #fff;
 }
+/* 세로 상한은 행이 7개를 넘을 때만(JS ybsScrollCls 가 .ybs-scroll 을 붙인다) — 7행까지는
+   상한 없이 전부 보인다(사용자 요청 2026-08-06). 상한값 = 헤더 + 7행 높이 어림치.
+   STEP 표는 첫 행의 Step 셀이 avg 부기로 2줄이라 조금 더 준다. */
+.yield-by-source.ybs-scroll { max-height: 176px; }
+.yield-by-step.ybs-scroll { max-height: 178px; }
 .ybs-table { width: auto; margin: 0; font-size: 11px; border-collapse: collapse; }
 .ybs-table th, .ybs-table td {
   padding: 3px 10px; border-bottom: 1px solid #eef2f8; white-space: nowrap; text-align: right;
@@ -396,9 +402,13 @@ body {
   border-radius: 9px; padding: 1px 7px; margin-left: 6px; vertical-align: middle;
 }
 /* Issue Table Temp 탭 상단 안내문 (전 항목 재판정이라 합이 100% 를 넘을 수 있다는 설명) */
-.issue-intro {
-  font-size: 12px; color: #7c2d12; background: #fff7ed; border: 1px solid #fed7aa;
-  border-radius: 5px; padding: 6px 10px; margin: 4px 0 8px;
+/* Issue Table Temp 안내 — 표 위 배너(구 .issue-intro)는 하단 가로 스크롤바를 화면 밖으로
+   밀어내 폐지하고 sticky 툴바 안 한 줄로 옮겼다(2026-08-06). 자리가 좁으면 이 요소부터
+   줄어들고 말줄임 처리된다(전문은 title 툴팁). */
+.issue-toolbar-note {
+  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; color: #7c2d12; background: #fff7ed; border: 1px solid #fed7aa;
+  border-radius: 5px; padding: 3px 8px; cursor: help;
 }
 
 /* ── Summary: 전체/소스별 Yield + Major Fail Bins 통합 테이블 ─────────────── */
@@ -1299,6 +1309,8 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 /* Legend 가 화면보다 길면 잘리므로 뷰포트 높이로 제한하고 내부 스크롤.
    scrollbar-gutter: 세로 스크롤바가 폭을 잠식해 가로 스크롤이 생기는 것 방지. */
 .wafer-legend-fixed { flex: 0 0 340px; position: sticky; top: var(--sticky-head-h, 96px); max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - 16px); overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
+/* Temp Item Legend 는 Item/TNO/Bin/die 4열이라 340px 에서는 Bin·die 가 잘린다(사용자 요청 2026-08-06). */
+.wafer-legend-fixed.legend-wide { flex: 0 0 440px; }
 .wafer-legend-title { font-size: 13px; font-weight: 700; color: #333; margin: 0 0 8px; }
 .bin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .bin-table th, .bin-table td { padding: 2px 8px; border-bottom: 1px solid #eef0f3; text-align: right; }
@@ -1311,6 +1323,15 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 /* Bin Legend description(대표 fail item) 열 — 좌측 정렬 + 말줄임 */
 .bin-table td.bin-desc { text-align: left; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; font-size: 11px; }
 html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
+/* Temp Item Legend: 항목명이 길어도 TNO/Bin/die 열이 밀려 잘리지 않게 폭을 고정 배분하고,
+   Item 만 말줄임(전체 이름은 hover title). 항목 수 제한 없이 전부 나열한다(내부 스크롤). */
+.temp-legend-table { table-layout: fixed; }
+.temp-legend-table th:nth-child(2), .temp-legend-table td:nth-child(2) { width: 62px; }
+.temp-legend-table th:nth-child(3), .temp-legend-table td:nth-child(3) { width: 44px; }
+.temp-legend-table th:nth-child(4), .temp-legend-table td:nth-child(4) { width: 52px; }
+.temp-legend-table td.temp-leg-item {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* TNO Legend — "기타" 행은 클릭 불가 */
 .bin-table tr.tno-other td { cursor: default; color: #888; }
 .bin-table tr.tno-other:hover td { background: transparent; }
@@ -1770,7 +1791,7 @@ html[data-theme="dark"] .yield-step-title { color: #7fb3ef; border-color: #2c3a5
 html[data-theme="dark"] .yield-corner-title {
   color: #f6bd8a; background: #33251a; border-left-color: #b45309;
 }
-html[data-theme="dark"] .issue-intro {
+html[data-theme="dark"] .issue-toolbar-note {
   color: #f6bd8a; background: #2b2117; border-color: #7c4a16;
 }
 html[data-theme="dark"] .ybs-table th { background: #1c2330; color: #8b94a3; }

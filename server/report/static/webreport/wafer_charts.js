@@ -493,6 +493,10 @@ function dimColorMap(colorMap, binOrder, selected) {
 // source 가 여럿이면 가로 2칸 그리드로 wafer map 을 나열하고, bin 범례는 전체 소스
 // 합산 기준으로 한 번만 만들어 오른쪽에 고정(sticky)한다. 모든 맵이 같은 색상 매핑을 쓴다.
 let mapGridCols = 2;   // Map Analysis 가로 칸수 기본 2칸. 숫자 입력으로 조절, 세션 내 유지.
+// source 가 많으면 2칸으로는 세로로 한없이 길어져 훑기 어렵다 — 이 수 이상이면 기본값을
+// 4칸으로 올린다(사용자 요청 2026-08-06). 사용자가 한 번이라도 칸수를 바꾸면 그 값을 존중한다.
+const MAP_GRID_WIDE_SOURCES = 7;
+let mapGridColsUserSet = false;
 // 갤러리 카드 크기는 가로 칸수(폭)로 결정되고, 썸네일 wrap 은 항상 1:1(웨이퍼=원형 전제).
 
 // Map Analysis 서브모드: "bin"=Bin Map(기존), "stdf"=STDF Map(값 기반, stdf_map.js). 세션 내 유지.
@@ -653,48 +657,34 @@ function buildTempItemInfo() {
       if (cnt[e.item] !== undefined) cnt[e.item] += (e.idx || []).length;
     });
   });
-  // 팔레트(7색)를 넘는 항목은 "기타" 한 줄로 접는다 — TNO Legend(buildTnoInfo)와 같은
-  // 규약. 전 항목을 늘어놓으면 21 source 세션에서 legend 가 수백 행이 되고, 8번째부터는
-  // 전부 같은 회색이라 색으로 구분도 안 된다.
+  // 색은 팔레트(7색)까지만 고유색이고 그 뒤는 공통 회색이다(색 구분은 상위 항목만).
+  // 다만 legend 행은 **전 항목을 다 보여준다** — 아래 항목도 클릭해 강조할 수 있어야 한다
+  // (사용자 요청 2026-08-06, 구 "기타 N항목" 접기 폐지).
   const colorMap = {};
   items.forEach((it, i) => {
     colorMap[it] = (i < FAIL_PALETTE.length) ? FAIL_PALETTE[i] : TNO_OTHER_COLOR;
   });
-  const top = items.slice(0, FAIL_PALETTE.length);
-  const otherCount = items.slice(FAIL_PALETTE.length).reduce((s, it) => s + (cnt[it] || 0), 0);
-  const otherItems = items.length - top.length;
-  return { items, top, otherCount, otherItems, meta, cnt, colorMap };
-}
-
-// 선택(필터)된 항목은 상위 N 밖이어도 legend 에 올려 원색으로 보여준다 — Issue Table Temp
-// 미니셀 클릭으로 넘어온 항목이 "기타" 에 묻히면 무엇을 보고 있는지 알 수 없다.
-function tempLegendRowItems(info, selected) {
-  const extra = [...selected].filter(it => info.meta[it] && !info.top.includes(it));
-  return info.top.concat(extra);
+  return { items, meta, cnt, colorMap };
 }
 
 function tempItemLegendHtml(info, selected) {
   if (!info.items.length) {
     return `<div class="placeholder" style="padding:12px 4px">RT Limit 이탈 항목 없음</div>`;
   }
-  const shown = tempLegendRowItems(info, selected);
-  const body = shown.map(it => {
+  const body = info.items.map(it => {
     const sel = selected.has(it);
+    // 팔레트 밖(공통 회색) 항목도 고르면 원색으로 강조해 무엇을 보고 있는지 보이게 한다.
     const base = info.colorMap[it] === TNO_OTHER_COLOR && sel
-      ? FAIL_PALETTE[0] : info.colorMap[it];   // 기타 항목을 고르면 원색으로 강조
+      ? FAIL_PALETTE[0] : info.colorMap[it];
     const sw = (selected.size === 0 || sel) ? base : MAP_BIN_DIM_COLOR;
     const m = info.meta[it] || {};
     return `<tr${sel ? ` class="is-selected"` : ""} data-temp-item="${esc(it)}">` +
-      `<td><span class="bin-swatch" style="background:${sw}"></span>${esc(it)}</td>` +
+      `<td class="temp-leg-item" title="${esc(it)}"><span class="bin-swatch" style="background:${sw}"></span>${esc(it)}</td>` +
       `<td>${esc(m.tno || "")}</td><td>${esc(m.bin || "")}</td>` +
       `<td>${info.cnt[it] || 0}</td></tr>`;
   }).join("");
-  const hidden = info.otherItems - (shown.length - info.top.length);
-  const other = hidden > 0
-    ? `<tr class="tno-other"><td><span class="bin-swatch" style="background:${TNO_OTHER_COLOR}"></span>` +
-      `기타 ${hidden}항목</td><td></td><td></td><td>${info.otherCount}</td></tr>` : "";
-  return `<table class="bin-table"><thead><tr><th>Item</th><th>TNO</th><th>Bin</th><th>die</th>` +
-         `</tr></thead><tbody>${body}${other}</tbody></table>`;
+  return `<table class="bin-table temp-legend-table"><thead><tr><th>Item</th><th>TNO</th><th>Bin</th><th>die</th>` +
+         `</tr></thead><tbody>${body}</tbody></table>`;
 }
 
 // 선택 좌표 마커를 canvas 위 CSS 절대위치 원으로 오버레이(canvas 는 hover 없음).
@@ -771,6 +761,8 @@ function renderMapAnalysis() {
     emptyPanel(panel, "Map Analysis 데이터 없음"); return;
   }
   panel.classList.add("viz-root");
+  // source 가 많은 세션의 기본 칸수(사용자가 직접 바꾸기 전까지만).
+  if (!mapGridColsUserSet && maps.length >= MAP_GRID_WIDE_SOURCES) mapGridCols = 4;
 
   const legendRows = buildGlobalBinLegend(maps);
   const binOrder = legendRows.map(r => r.bin);
@@ -806,7 +798,7 @@ function renderMapAnalysis() {
     mapModeSegHtml() +
     `<div class="map-toolbar">가로 칸수 ` +
     `<input type="number" id="mapGridColsInput" min="1" max="8" step="1" value="${mapGridCols}">` +
-    `<span class="map-toolbar-hint">칸 (1 = 확대해서 보기 · 2~3 = 한꺼번에 보기)</span>` +
+    `<span class="map-toolbar-hint">칸 (1 = 확대해서 보기 · 2~4 = 한꺼번에 보기)</span>` +
     `<span class="mapsel-sep"></span>` +
     `<span class="map-axis-seg distseg-group" title="색 기준 축">` +
       `<button type="button" class="distseg${mapColorKey === "bin" ? " active" : ""}" data-axis="bin">Bin</button>` +
@@ -840,7 +832,8 @@ function renderMapAnalysis() {
         <div id="wafer-full-${i}" class="wafer-thumb-wrap" style="aspect-ratio:1 / 1"><div class="placeholder">맵 로드 중…</div></div>
       </div>`).join("") +
     `</div>` +
-    `<div class="wafer-legend-fixed">` +
+    // Temp Item Legend 는 Item/TNO/Bin/die 4열이라 기본 폭(340px)에서는 Bin·die 가 잘린다 → 넓게.
+    `<div class="wafer-legend-fixed${mapColorKey === "temp" ? " legend-wide" : ""}">` +
     // 색 기준 축(Bin/TNO)에 맞는 Legend 하나만 표시 — 축 전환 시 renderMapAnalysis 재호출로 교체.
     (mapColorKey === "temp"
       ? `<div class="wafer-legend-title">Temp Item Legend</div>` +
@@ -861,6 +854,7 @@ function renderMapAnalysis() {
   panel.querySelector("#mapGridColsInput").addEventListener("change", (e) => {
     const v = parseInt(e.target.value, 10);
     mapGridCols = isNaN(v) ? 2 : Math.min(8, Math.max(1, v));
+    mapGridColsUserSet = true;   // 이후로는 source 수 기반 기본값을 덮어쓰지 않는다
     renderMapAnalysis();   // 칸수 변경 → 그리드·플롯 높이 다시 그림(범례 선택은 초기화됨)
   });
 

@@ -189,6 +189,9 @@ function displayLabel(c) {
 // source 컬럼이 이 수 이상이면 헤더에서 공통 부분을 생략하고 서로 다른 부분만 보여준다.
 // 예: kucak_01 … kucak_11 → 첫 컬럼만 "kucak_01" 전체, 나머지는 "02" … "11".
 const SRC_ABBREV_MIN = 8;
+// 이 길이 이하의 소스명은 source 가 아무리 많아도 축약하지 않는다 — "CT_01" 같은 5자리
+// 이름에서 공통부분을 떼면 한두 글자만 남아 무엇인지 알아볼 수 없다(사용자 요청 2026-08-06).
+const SRC_KEEP_FULL_LEN = 5;
 
 // source 컬럼 폭을 "숫자 크기"까지 좁히기 시작하는 source 개수. source 가 2개 이상이면 헤더가
 // 축약(abbrevSourceLabels ".."+뒤 6글자 / SRC_ABBREV_MIN 이상이면 공통부분 제거)되므로, 폭 힌트를
@@ -219,12 +222,13 @@ function commonAffixLen(names) {
 // source 전체 이름 목록 → [{short, full}]. SRC_ABBREV_MIN 미만이면 전부 전체 이름 그대로.
 // 이상이면 첫 컬럼만 전체 이름이고 나머지는 공통 접두/접미를 뗀 부분만 남긴다(빈 문자열이
 // 되면 전체 이름으로 폴백 — 이름이 전부 같은 경우).
+// 단 SRC_KEEP_FULL_LEN 이하로 짧은 이름은 축약해도 얻는 폭이 없어 전체 이름을 유지한다.
 function sourceHeaderLabels(fulls) {
   const names = (fulls || []).map(f => String(f));
   if (names.length < SRC_ABBREV_MIN) return names.map(f => ({ short: f, full: f }));
   const { pre, suf } = commonAffixLen(names);
   return names.map((full, i) => {
-    if (i === 0) return { short: full, full };
+    if (i === 0 || full.length <= SRC_KEEP_FULL_LEN) return { short: full, full };
     const core = full.slice(pre, full.length - suf);
     return { short: core || full, full };
   });
@@ -501,15 +505,22 @@ function renderSheetTable(rows, opts) {
 
   // Yield/ETC fail yield 셀 빨강 그라데이션의 기준값 = 각 source 컬럼 내 최대 fail yield(>0).
   // 값이 클수록 진한 빨강(--yw 1 에 가까움). 컬럼별로 나눠 정규화한다. Pass(Bin1) 행·CPK 섹션 제외.
+  // opts.grad=true 면 kind:"yield" 표(Yield 탭 Temp Corner)에도 같은 규칙을 적용하고 avg 열까지
+  // 포함한다 — Yield 표(renderYieldTable)와 같은 음영을 쓴다(사용자 요청 2026-08-06).
+  const gradYield = opts.kind === "issue" || !!opts.grad;
+  const isGradCol = c => /_yield$/i.test(String(c))
+    || (!!opts.grad && String(c).trim().toLowerCase() === "avg");
   const issueYieldColMax = {};
-  if (opts.kind === "issue") {
+  if (gradYield) {
     bodyRows.forEach((r, ri) => {
       if (isCpkSubheadRow(r)) return;
-      const sec = rowSection[ri];
-      if (sec !== "Yield" && sec !== "ETC" && sec !== "TEMP") return;
+      if (opts.kind === "issue") {
+        const sec = rowSection[ri];
+        if (sec !== "Yield" && sec !== "ETC" && sec !== "TEMP") return;
+      }
       if (String((r && (r["Bin"] ?? r["bin"])) ?? "").trim() === "1") return;   // Pass 행 제외
       cols.forEach(c => {
-        if (!/_yield$/i.test(String(c))) return;
+        if (!isGradCol(c)) return;
         const n = parseFloat(r ? r[c] : "");
         if (!isNaN(n) && n > (issueYieldColMax[c] || 0)) issueYieldColMax[c] = n;
       });
@@ -639,14 +650,15 @@ function renderSheetTable(rows, opts) {
       // 문제 셀 강조(소스별 _yield 컬럼 한정). Yield/ETC 섹션은 값이 클수록 진한 빨강
       // 그라데이션(표 내 최대 fail yield 기준, Yield 탭과 동일 — 소스 1개여도 적용). CPK 섹션은
       // 임계 미만 연빨강이되 다중 소스일 때만(단일 소스는 cpk 가 avg 와 동일해 중복). Pass 행 제외.
-      if (opts.kind === "issue" && !subhead && !issuePassRow && !isEmpty && /_yield$/i.test(String(c))) {
+      if (gradYield && !subhead && !issuePassRow && !isEmpty && isGradCol(c)) {
         const num = parseFloat(v);
         if (!isNaN(num)) {
           if (issueRowSec === "CPK") { if (issueMultiSource && num <= CPK_WARN_THRESHOLD) clsParts.push("issue-cell-warn"); }
           else if (num > 0) {
             const cmax = issueYieldColMax[c] || 0;
             const ratio = cmax > 0 ? Math.min(1, num / cmax) : 0;
-            clsParts.push("issue-yield-warn");
+            // 표 종류에 맞는 클래스 — 음영 CSS 는 .kind-issue/.kind-yield 각각에 걸려 있다.
+            clsParts.push(opts.kind === "issue" ? "issue-yield-warn" : "yield-grad");
             cellStyle = ` style="--yw:${ratio.toFixed(3)}"`;
           }
         }
@@ -898,6 +910,12 @@ function yieldBasisBadgeHtml(ov) {
   return `<div class="yo-basis" title="수율 % 의 분모 기준 (Honey → Rawdata edit → [Yield 계산] 에서 변경)">${esc(txt)}</div>`;
 }
 
+// 소스별/STEP별 표의 세로 크기 — 행이 이 수 이하면 상한 없이 전부 보이고(스크롤바 없음),
+// 넘칠 때만 .ybs-scroll 로 상한+스크롤을 건다 (사용자 요청 2026-08-06: 소스 7개까지는
+// 한꺼번에 보이게, 8개 이상부터 스크롤).
+const YBS_NOSCROLL_ROWS = 7;
+function ybsScrollCls(rowCount) { return rowCount > YBS_NOSCROLL_ROWS ? " ybs-scroll" : ""; }
+
 // Yield 상단 요약 박스 HTML (web_report 세션의 yield_summary 가 있을 때만).
 function yieldOverviewHtml() {
   const ov = DATA.web_report && DATA.web_report.yield_summary;
@@ -910,7 +928,7 @@ function yieldOverviewHtml() {
   // 값인지 표에서 바로 보이게 한다 — "소스별 yield 가 왜 다른가"에 화면이 답하도록.
   const bySrc = Array.isArray(ov.by_source) ? ov.by_source : [];
   const basisBySrc = yieldBasisBySource();
-  const bySrcHtml = bySrc.length >= 2 ? `<div class="yo-block"><div class="yield-by-source"><table class="ybs-table">
+  const bySrcHtml = bySrc.length >= 2 ? `<div class="yo-block"><div class="yield-by-source${ybsScrollCls(bySrc.length)}"><table class="ybs-table">
     <thead><tr><th>Source</th><th>Yield</th><th>Pass / Total</th><th>분모</th></tr></thead>
     <tbody>` + bySrc.map(s => {
     const sp = (typeof s.yield_pct === "number") ? s.yield_pct.toFixed(2) : s.yield_pct;
@@ -930,7 +948,10 @@ function yieldOverviewHtml() {
   // Cum Yield = (In − 그 STEP 까지의 누적 fail) / In. avg = 소스 산술평균.
   // Fail 열은 "그 STEP 자체 fail / 누적 fail" 2값 — survivor + cum_fail = In 이 성립한다.
   const byStep = Array.isArray(ov.by_step) ? ov.by_step : [];
-  const byStepHtml = byStep.length ? `<div class="yield-by-step"><table class="ybs-table">
+  // 표 행 수 = 각 STEP 의 source 행 합(옛 payload 는 STEP 당 1행 폴백) — 스크롤 판단용.
+  const byStepRows = byStep.reduce(
+    (n, s) => n + ((Array.isArray(s.sources) && s.sources.length) ? s.sources.length : 1), 0);
+  const byStepHtml = byStep.length ? `<div class="yo-block"><div class="yield-by-step${ybsScrollCls(byStepRows)}"><table class="ybs-table">
     <thead><tr><th>Step</th><th>Source</th><th>Cum Yield</th><th>Pass / In</th><th>Fail (step / cum)</th></tr></thead>
     <tbody>` + byStep.map(s => {
     // sources 가 없으면(옛 payload) pooled 값으로 1행 폴백.
@@ -955,7 +976,11 @@ function yieldOverviewHtml() {
       <td class="ybs-cnt">${failTxt}</td>
     </tr>`;
     }).join("");
-  }).join("") + `</tbody></table></div>` : "";
+  }).join("") + `</tbody></table></div>
+    <div class="yo-cap">STEP 별 <b>누적</b> 수율 = (소스 전체 die − 그 STEP 까지의 누적 fail) ÷ 소스 전체 die ·
+    분모는 전 STEP 고정이라 P1→P3 로 갈수록 값이 낮아집니다 · Fail 열 = 그 STEP 자체 fail / 누적 fail ·
+    Step 셀의 avg = 그 STEP 소스들의 산술평균</div>
+    </div>` : "";
   // 카드 밑 작은 글씨 설명(사용자 요청 2026-08-05) — 숫자만 보고 "무엇을 무엇으로 나눈 값인지"
   // 되묻지 않도록 각 카드가 자기 정의를 달고 있게 한다. Total 라벨은 분모 기준에 따라
   // "Total"/"Gross Die" 로 달라지므로 설명 문구도 같은 라벨을 그대로 쓴다.

@@ -119,36 +119,38 @@ function renderYieldStepSections(stepGroups, allRows, byStep, keyPrefix) {
 // 편집 열(Map/Distribution/Status/comment)을 뺀 읽기 전용 요약으로만 보여주고,
 // 편집은 그 탭에서 하도록 안내 버튼을 단다.
 const TEMP_SUMMARY_SKIP = /^(map|distribution|status|category)$/i;
-// 이 섹션은 '요약 + 안내' 자리다. 전 항목 재판정이라 항목이 수백 개가 될 수 있는데,
-// Issue Table 탭처럼 청크 렌더를 붙이는 대신 상위 N 행만 그리고 나머지는 탭으로 보낸다
-// (통짜 innerHTML 로 수백 행 × 20열을 만들면 Yield 탭 진입이 그대로 블록된다).
-const TEMP_SUMMARY_MAX_ROWS = 60;
+// 전 항목 재판정이라 항목이 수백 개가 될 수 있어 **전량을 청크 렌더**로 그린다(사용자 요청
+// 2026-08-06 — 구 상위 60행 제한 폐지). 통짜 innerHTML 로 수백 행 × 20열을 만들면 Yield 탭
+// 진입이 그대로 블록되므로, Issue Table 과 같은 청크 채우기(fill)를 쓴다.
+// 반환값은 {html, fill} — 호출부가 panel.innerHTML 을 심은 뒤 fill(onDone) 을 부른다.
+const TEMP_SECTION_EMPTY = { html: "", fill: () => {} };
 function renderYieldTempSection() {
-  if (webReportMode() !== "Temperature") return "";
+  if (webReportMode() !== "Temperature") return TEMP_SECTION_EMPTY;
   const rows = (webReportSheets() || {})[ISSUE_TEMP_SHEET];
-  if (!Array.isArray(rows) || !rows.length) return "";
-  // 섹션 divider 행(Category="TEMP") 제외 + 상위 N 행만 — 열 정리도 그 행들만 한다.
+  if (!Array.isArray(rows) || !rows.length) return TEMP_SECTION_EMPTY;
+  // 섹션 divider 행(Category="TEMP") 제외 — 열 정리(편집 전용 열 제거)는 여기서 한다.
   const dataRows = rows.filter(r => String((r && r.Item) || "").trim());
-  if (!dataRows.length) return "";
-  const shown = dataRows.slice(0, TEMP_SUMMARY_MAX_ROWS);
-  const data = shown.map(r => {
+  if (!dataRows.length) return TEMP_SECTION_EMPTY;
+  const data = dataRows.map(r => {
     const o = {};
     Object.keys(r).forEach(k => {
       if (!TEMP_SUMMARY_SKIP.test(String(k)) && !/comment/i.test(String(k))) o[k] = r[k];
     });
     return o;
   });
-  const more = dataRows.length - shown.length;
-  return `<div class="yield-corner-section">` +
+  // grad: source _yield / avg 셀에 Yield 표와 같은 빨강 그라데이션(값 클수록 진함).
+  const table = renderSheetTable(data, { kind: "yield", grad: true, chunk: true });
+  const html = `<div class="yield-corner-section">` +
     `<div class="yield-corner-title">Temp Corner (CT / HT) — RT Limit 이탈 항목` +
-    (more > 0 ? ` <span class="yield-corner-more">상위 ${shown.length} / 전체 ${dataRows.length}</span>` : "") +
+    ` <span class="yield-corner-more">전체 ${dataRows.length}항목</span>` +
     ` <button type="button" class="btn-sm" data-goto-tab="issue-temp" ` +
-    `title="Issue Table Temp 탭에서 전체 목록·comment·Status 를 봅니다">탭에서 보기 ›</button></div>` +
-    renderSheetTable(data, { kind: "yield" }) +
-    (more > 0
-      ? `<div class="muted" style="margin-top:6px">나머지 ${more}개 항목은 Issue Table Temp 탭에 있습니다.</div>`
-      : "") +
-    `</div>`;
+    `title="Issue Table Temp 탭에서 comment·Status 를 편집합니다">탭에서 보기 ›</button></div>` +
+    table.html + `</div>`;
+  return {
+    html,
+    fill: onDone => table.fill(
+      document.querySelector("#panel-yield .yield-corner-section .sheet-table tbody"), onDone),
+  };
 }
 
 // Yield 탭 상단 툴바: 모든 Bin 그룹의 FAILTNO 상세행을 한 번에 펼치기/접기하는 토글.
@@ -369,15 +371,23 @@ function renderYield(yield_text, summary_rows) {
   // Temperature 면 표 자체가 이미 RT source 기준이라(서버 metrics) 별도 분기가 없다 —
   // 그 아래에 CT/HT 재판정 결과를 Temp Corner 섹션으로 덧붙이기만 한다.
   const stepGroups = DATA.web_report && DATA.web_report.yield_step_groups;
+  const temp = renderYieldTempSection();
+  // Temp Corner 행은 청크로 나중에 붙으므로, 다 붙은 뒤 고정열 오프셋·검색어를 다시 맞춘다.
+  const fillTemp = () => temp.fill(() => {
+    syncYieldStickyOffsets(panel);
+    bindYieldColResize(panel);
+    if (yieldSearchTerm.trim()) applyYieldSearch(yieldSearchTerm);
+  });
   if (Array.isArray(stepGroups) && stepGroups.length && Array.isArray(yield_text)) {
     bindYieldPanel();
     panel.innerHTML = overview + yieldToolbarHtml() +
-      renderYieldStepSections(stepGroups, yield_text) + renderYieldTempSection();
+      renderYieldStepSections(stepGroups, yield_text) + temp.html;
     setupYieldHscroll(panel);
     syncYieldStickyOffsets(panel);
     requestAnimationFrame(() => syncYieldStickyOffsets(panel));   // 레이아웃 확정 후 재실측
     bindYieldColResize(panel);
     if (yieldSearchTerm.trim()) applyYieldSearch(yieldSearchTerm);   // 검색어 유지
+    fillTemp();
     return;
   }
 
@@ -387,12 +397,13 @@ function renderYield(yield_text, summary_rows) {
       `<div class="yield-toolbar">` +
       sheetSearchHtml("yieldSearchInput", yieldSearchTerm, "Item 검색") +
       yieldExcelBtnHtml() + `</div>` +
-      renderSheetTable(yield_text, { kind: "yield" }) + renderYieldTempSection();
+      renderSheetTable(yield_text, { kind: "yield" }) + temp.html;
     setupYieldHscroll(panel);
     syncYieldStickyOffsets(panel);
     requestAnimationFrame(() => syncYieldStickyOffsets(panel));
     bindYieldColResize(panel);
     if (yieldSearchTerm.trim()) applyYieldSearch(yieldSearchTerm);
+    fillTemp();
     return;
   }
 
@@ -446,10 +457,17 @@ function issueToolbarHtml(panelId) {
       `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC</button>` +
     `</span>` +
     `<button type="button" class="btn-sm" data-issue-act="toggle-all" data-expanded="false">TNO 전체 펼치기</button>`;
+  // Issue Table Temp 안내문 — 표 위 배너(구 .issue-intro)로 두면 그 높이만큼 표가 밀려
+  // 하단 가로 스크롤바가 화면 밖으로 나간다(사용자 요청 2026-08-06). sticky 툴바 안에
+  // 한 줄로 축약해 넣고, 자세한 설명은 hover(title)로 남긴다.
+  const tempNote = isTemp
+    ? `<span class="issue-toolbar-note" title="CT / HT 를 RT Limit(LOLIM·HILIM)으로 전 항목 재판정한 결과입니다. 한 die 가 여러 항목을 벗어나면 그 항목 전부에 계산되므로 소스별 합이 100% 를 넘을 수 있습니다.">CT / HT 를 RT Limit 기준 재판정한 결과입니다</span>`
+    : "";
   return `<div class="issue-toolbar">` +
     jumpAndToggle +
     sheetSearchHtml(searchId, ui.search, "Item / comment 검색") +
     editBtns +
+    tempNote +
     `<button type="button" class="btn-sm issue-excel-btn" data-issue-act="excel" title="Honey Excel Download 의 Issue Table 시트와 동일한 xlsx 다운로드 (Map/Distribution 썸네일 제외)">⬇ Excel</button>` +
     `</div>`;
 }
@@ -639,7 +657,9 @@ function bindIssueColResize(panel) {
 }
 
 // Issue 표 렌더 본체 — Issue Table / Issue Table Temp 두 패널과 조회/편집 모드가 공유한다.
-// opts.edit=true 면 comment 두 열만 편집 가능(ISSUE_COMMENT_COLS), opts.intro 는 표 위 안내문.
+// opts.edit=true 면 comment 두 열만 편집 가능(ISSUE_COMMENT_COLS).
+// 표 위 안내문(구 opts.intro)은 하단 가로 스크롤바를 화면 밖으로 밀어내 폐지했다 —
+// Temp 탭 안내는 sticky 툴바의 .issue-toolbar-note 로 옮겼다(issueToolbarHtml).
 function renderIssueTableInto(panel, rows, opts) {
   if (!panel) return;
   opts = opts || {};
@@ -655,7 +675,6 @@ function renderIssueTableInto(panel, rows, opts) {
     ? { edit: true, kind: "issue", editableCols: ISSUE_COMMENT_COLS, chunk: true }
     : { kind: "issue", chunk: true });
   panel.innerHTML = issueToolbarHtml(panel.id) +
-    (opts.intro ? `<div class="issue-intro">${opts.intro}</div>` : "") +
     // 상단 프록시 가로 스크롤바는 조회 모드 전용(편집 모드는 종전대로 없다).
     (opts.edit ? "" : `<div class="issue-hscroll"><div class="issue-hscroll-spacer"></div></div>`) +
     table.html;
@@ -683,8 +702,6 @@ function renderIssueTempTab() {
   const panel = document.getElementById(ISSUE_PANEL_TEMP);
   renderIssueTableInto(panel, (webReportSheets() || {})[ISSUE_TEMP_SHEET], {
     edit: MODE === "edit",
-    intro: "CT / HT 를 RT Limit(LOLIM·HILIM)으로 <b>전 항목</b> 재판정한 결과입니다 — " +
-      "한 die 가 여러 항목을 벗어나면 그 항목 전부에 계상되므로 소스별 합이 100% 를 넘을 수 있습니다.",
     emptyText: "RT Limit 을 벗어난 CT / HT 항목이 없습니다",
   });
 }
