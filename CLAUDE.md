@@ -221,7 +221,7 @@ S3 가 아니라 DB `report_sheet_data` 에 저장한다.
 - `REPORT_CLEANUP_DRYRUN` 기본 **1(참)** — **기본은 실삭제 안 함**(대상만 로그). 실삭제하려면
   `0` 으로 명시.
 - `AUTH_SSO_HEADER` 지정 시 그 역프록시 헤더가 신원으로 우선(기본은 HoneyUser UA).
-- `WEB_REPORT_COMPUTE_WORKERS` 기본 2(**운영 server.env 는 3**), `0` = 콜드 빌드 전부
+- `WEB_REPORT_COMPUTE_WORKERS` 기본 2(**운영 server.env 는 8** — 16코어/64GB), `0` = 콜드 빌드 전부
   인라인(구 동작). `WEB_REPORT_ONDEMAND_WORKERS`(202 후 백그라운드 빌드 소비자 스레드)와
   **짝으로** 올려야 한다 — 풀만 늘리면 소비자 스레드 수가 새 상한이 된다.
 
@@ -318,6 +318,13 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
      외부 담당자 소유라 **이 저장소에서 고치지 않는다**(최신 사본 수령으로 해소).
      `client/honey_parse/` 더미 폴백도 5-meta 라 **개발 PC 로컬 Web Report 업로드는 실패가
      정상**이다. 상세 [docs/06](docs/06_analysis_engine.md).
+10. **web_report 성능 회귀 가드를 통과해야 한다.** 위 규칙 중 기계 검사가 가능한 것들은
+    [tools/perf_guard.py](tools/perf_guard.py) 가 `web_report/`·`server/report/` 의 Edit/Write
+    직전에 검사해 **쓰기 자체를 거부**한다(Claude Code 훅, [.claude/settings.json](.claude/settings.json)).
+    막혔다면 그 변경이 과거에 회귀를 냈던 방향이라는 뜻이다 — 우회하지 말고 되돌리거나,
+    의도한 변경이면 `# perf-guard: allow <규칙ID> (사유)` 면제를 사유와 함께 단다.
+    회귀가 새로 나면 고치는 것으로 끝내지 말고 `_RULES` 에 규칙 1개를 추가하는 것이
+    표준 사후 조치다 → [docs/18](docs/18_perf_guard.md).
 
 ---
 
@@ -351,6 +358,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | ENGR 이력 검색 챗봇 (자연어 → 조회 툴) | [server/chatbot/](server/chatbot/README.md) — 골든셋 [tests/chatbot_golden.yaml](tests/chatbot_golden.yaml), 백필 [tools/eval_backfill/](tools/eval_backfill/backfill_eval_db.py) |
 | 더미 grids 픽스처 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |
 | web_report 성능 벤치 (이전 실행 대비 회귀 리포트) | [tests/bench_webreport.py](tests/bench_webreport.py) — 결과 `tests/bench_results/`(gitignore), 실행 절차 스킬 `.claude/skills/webreport-bench` |
+| web_report 성능 회귀 가드 (지뢰 재밟기 차단 — 훅 자동) | [tools/perf_guard.py](tools/perf_guard.py) (`--list` 가 규칙 정본) + [.claude/settings.json](.claude/settings.json) → [docs/18](docs/18_perf_guard.md) |
 
 ---
 

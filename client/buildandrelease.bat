@@ -19,9 +19,9 @@ if not exist "%PS1%" (
 )
 
 REM No -Version and no -NoBump: release_honey.ps1 bumps the patch number from
-REM CURRENT_VERSION automatically (e.g. 3.1.0 -> 3.1.1) and publishes it as a new
+REM CURRENT_VERSION automatically (e.g. 3.1.1 -> 3.1.2) and publishes it as a new
 REM client-facing release. To rebuild the CURRENT version WITHOUT bumping, use
-REM build_zip.bat instead. To set an explicit version (e.g. a minor bump 3.1.0 -> 3.2.0),
+REM build_zip.bat instead. To set an explicit version (e.g. a minor bump 3.1.1 -> 3.2.0),
 REM run release\release_honey.ps1 -Version x.y.z directly.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%"
 set "REL_EXIT=%ERRORLEVEL%"

@@ -36,7 +36,8 @@ STATS = {"submitted": 0, "inline": 0, "ok": 0, "timeout": 0, "broken": 0, "error
          "worker_killed": 0,
          "prewarm_queued": 0, "prewarm_dropped": 0, "prewarm_done": 0,
          "ondemand_queued": 0, "ondemand_done": 0, "ondemand_error": 0,
-         "distpack_queued": 0, "distpack_done": 0, "distpack_error": 0}
+         "distpack_queued": 0, "distpack_done": 0, "distpack_error": 0,
+         "rewarm_queued": 0}
 
 _WORKERS = max(0, int(os.getenv("WEB_REPORT_COMPUTE_WORKERS", "2") or 2))
 # 워커 N개 태스크 처리 후 프로세스 재기동 — 워커 프로세스 내 TABLES_CACHE(최대 4GB)로
@@ -319,18 +320,6 @@ def dist_pack_job(session_id: str, upload_root_str: str, base: bool = False) -> 
     return None
 
 
-def tables_warm_job(session_id: str, upload_root_str: str) -> None:
-    """부모 TABLES_CACHE 웜업 — scatter 등 tables 필수 조회의 202 백그라운드 잡.
-
-    워커 오프로드(run)를 타지 **않고** 온디맨드 소비자 스레드(부모 프로세스)에서 직접
-    디코드한다 — 워커에서 데우면 워커 자신의 캐시만 채워져 부모 조회에 의미가 없다.
-    parquet 디코드는 GIL 을 대부분 놓으므로 스레드 1개 점유로 수용한다.
-    """
-    from database import report_db
-    from . import service
-    service.warm_tables(session_id, report_db=report_db, upload_root=Path(upload_root_str))
-
-
 def prewarm_job(session_id: str, upload_root_str: str, dist_seeded: bool = False) -> dict:
     """프리웜 전용 잡 — report(+시딩된 dist)를 빌드하고 **timing 만 반환**한다.
 
@@ -449,8 +438,6 @@ _ondemand_threads: list = []
 _ONDEMAND_JOBS = {
     "report": lambda sid, root: report_job(sid, root),
     "map": lambda sid, root: map_job(sid, root),
-    # 부모 tables 웜업(디코드) — 소비자 스레드에서 인라인 실행 (tables_warm_job 참조).
-    "tables": lambda sid, root: tables_warm_job(sid, root),
 }
 
 
@@ -580,3 +567,84 @@ def request_dist_pack(session_id: str, upload_root_str: str, base: bool = False)
                                                 name="webreport-distpack", daemon=True)
             _distpack_thread.start()
     _distpack_wake.set()
+
+
+# ── 기동 후 재웜 스윕 (2026-08-06) ───────────────────────────────────────────
+# 서버 재기동이나 캐시 스키마 버전 상승(cache_policy.REPORT_SCHEMA_VERSION) 배포 직후에는
+# 모든 세션이 콜드라, 그날 처음 세션을 여는 사용자마다 콜드 빌드를 정면으로 맞는다.
+# 여기서는 기동 후 잠깐 뒤부터 최근 세션을 하나씩 훑어 **콜드인 것만** 프리웜 큐에 넣어,
+# 그 폭풍을 유휴 워커가 대신 흡수하게 한다.
+#
+# 사용자 요청이 항상 우선이다 — 온디맨드(202 대기) 잡이 하나라도 있거나 프리웜 큐가
+# 비어 있지 않으면 스윕은 멈춰 기다린다. 실패·중단은 전부 무해하다(조회가 재계산).
+_REWARM_ON_START = (os.getenv("WEB_REPORT_REWARM_ON_START", "1") or "1").strip().lower() \
+    not in ("0", "false", "no", "off")
+_REWARM_LIMIT = max(0, int(os.getenv("WEB_REPORT_REWARM_LIMIT", "30") or 30))
+_REWARM_DELAY_SEC = max(0.0, float(os.getenv("WEB_REPORT_REWARM_DELAY_SEC", "60") or 60))
+_REWARM_POLL_SEC = 3.0
+# 사용자 트래픽에 계속 양보하다 스윕이 영원히 남아 있지 않도록 전체 예산을 둔다.
+_REWARM_BUDGET_SEC = 3600.0
+_rewarm_thread = None
+
+
+def _rewarm_idle() -> bool:
+    """사용자가 기다리는 작업이 없고 프리웜 큐도 비었는가 (스윕 투입 조건)."""
+    with _ondemand_lock:
+        if _ondemand_pending:
+            return False
+    with _prewarm_lock:
+        return not _prewarm_queue
+
+
+def _rewarm_sweep(upload_root_str: str) -> None:
+    time.sleep(_REWARM_DELAY_SEC)
+    from database import report_db
+    from . import service
+
+    upload_root = Path(upload_root_str)
+    deadline = time.time() + _REWARM_BUDGET_SEC
+    try:
+        rows = report_db.get_history(source="web_report", limit=_REWARM_LIMIT)
+    except Exception:
+        _log.warning("[rewarm] 세션 목록 조회 실패 — 스윕 생략", exc_info=True)
+        return
+    queued = 0
+    for row in rows:
+        session_id = row.get("session_id")
+        if not session_id:
+            continue
+        while not _rewarm_idle():
+            if time.time() > deadline:
+                _log.info("[rewarm] 예산(%.0fs) 소진 — %d건 예약 후 중단",
+                          _REWARM_BUDGET_SEC, queued)
+                return
+            time.sleep(_REWARM_POLL_SEC)
+        try:
+            session = report_db.get_session(session_id)
+            if not session or not session.get("analysis_key"):
+                continue
+            if not service.report_is_cold(session_id, report_db=report_db,
+                                          upload_root=upload_root, session=session):
+                continue
+        except Exception:
+            continue        # 개별 세션 실패는 건너뛴다 (조회가 재계산)
+        prewarm(session_id, upload_root_str)
+        STATS["rewarm_queued"] += 1
+        queued += 1
+    _log.info("[rewarm] 기동 후 재웜 스윕 완료 — 최근 %d건 중 콜드 %d건 예약",
+              len(rows), queued)
+
+
+def start_rewarm_sweep(upload_root_str: str) -> None:
+    """기동 후 1회 재웜 스윕을 띄운다 (report_extension.init_app 이 호출).
+
+    워커 프로세스(_IN_WORKER)·워커 0(인라인 모드)·env 로 끈 경우에는 아무것도 하지 않는다.
+    """
+    global _rewarm_thread
+    if _IN_WORKER or _WORKERS <= 0 or not _REWARM_ON_START or _REWARM_LIMIT <= 0:
+        return
+    if _rewarm_thread is not None:
+        return
+    _rewarm_thread = threading.Thread(target=_rewarm_sweep, args=(upload_root_str,),
+                                      name="webreport-rewarm", daemon=True)
+    _rewarm_thread.start()

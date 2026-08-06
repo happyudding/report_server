@@ -136,20 +136,45 @@ const { candidates } = await res.json();
 ```
 server/public_api/
 ├── __init__.py            register_public_api(app) — 기능별 Blueprint 등록만
+├── metrics.py             호출 계측 (관리자 패널 'public API' 탭 — 아래 절)
 ├── README.md              이 문서 (외부 소비자용 접근 규약)
 └── product_info/
-    └── routes.py          product_info_bp — /pe/api/v1/product-info/*
+    └── routes.py          public_api_product_info — /pe/api/v1/product-info/*
 ```
 
 새 기능(예: eval 이력 조회)을 붙일 때:
 
-1. `public_api/<기능>/routes.py` 에 Blueprint 를 만든다 (`<기능>_bp`, 라우트 경로는
-   prefix 를 뺀 나머지만 — 예: `@bp.get("/candidates")`).
-2. `public_api/__init__.py` 의 `register_public_api()` 에 등록 2줄을 추가한다.
-   URL prefix 는 `f"{URL_PREFIX}/<기능>"` 으로 준다.
+1. `public_api/<기능>/routes.py` 에 Blueprint 를 만든다. 라우트 경로는 prefix 를 뺀
+   나머지만 준다 (예: `@bp.get("/candidates")`).
+   **Blueprint 이름은 반드시 `public_api_<기능>` 으로 시작해야 한다** —
+   `Blueprint("public_api_eval_history", __name__)`. 관리자 패널의 부하 계측이
+   Flask endpoint 이름의 이 접두로만 공개 API 요청을 식별하므로, 이름이 어긋나면
+   그 기능은 **모니터링에서 통째로 누락된다**(서버 기동 로그에 경고가 남는다).
+2. `public_api/__init__.py` 의 `register_public_api()` 에 `_register(app, <기능>_bp,
+   "<url-경로>")` 한 줄을 추가한다. URL prefix 와 이름 검사는 `_register` 가 처리한다.
 
 기존 기능 폴더는 건드리지 않는다. 하위 폴더에 `__init__.py` 는 두지 않는다
 (namespace package — 등록 진입점은 `public_api/__init__.py` 하나뿐이다).
+
+## 모니터링 (관리자 패널 'public API' 탭)
+
+공개 API 호출은 `/pe/admin-<secret>/` 의 **public API** 탭에서 endpoint 별 호출수·
+응답시간·에러·호출자 IP·분당 추이로 볼 수 있다. 기능이 늘어도 별도 배선 없이
+위 이름 규약만 지키면 자동으로 잡힌다.
+
+**"서버에 부담인가"는 호출수가 아니라 `busy_pct` 로 본다** — 구간 내 총 소요시간을
+`WAITRESS_THREADS × 구간`으로 나눈 값, 즉 공개 API 가 요청 처리 스레드를 몇 % 점유
+했는가다. 호출이 잦아도 응답이 짧으면 0 에 가깝고, 이 값이 두 자릿수로 올라가면
+사람 요청이 밀리기 시작한다는 뜻이다.
+
+공개 API 요청은 관리자 패널의 **사람 트래픽 지표에서 제외**된다 — 응답시간 p50/p95
+표본과 '실시간 접속 사용자' 목록에 넣지 않는다. 무인증 폴러가 섞이면 표본 대부분을
+차지해 실사용자의 체감 악화를 가리기 때문이다
+([server/admin_panel/metrics.py](../admin_panel/metrics.py)).
+
+관련 환경변수: `PUBLIC_API_METRICS_ENABLED`(기본 1, `0`이면 계측 끔) ·
+`PUBLIC_API_SLOW_MS`(기본 1000 — 느린 호출 기록 기준) ·
+`REPORT_METRICS_FILE_KEEP_DAYS`(기본 14 — `server/log/publicapi_*.log` 보관 일수).
 
 ## 향후 확장 (아직 없음)
 

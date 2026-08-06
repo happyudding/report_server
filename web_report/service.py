@@ -264,35 +264,6 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     return public, report
 
 
-def _tables_warm(session, prep_digest: str) -> bool:
-    """부모 TABLES_CACHE 에 이 세션 tables 가 있는가 (콜드 202 판정용 — 락 하 조회 1회)."""
-    key = cache_policy.tables_key(session, prep_digest)
-    with cache.CACHE_LOCK:
-        return key in cache.TABLES_CACHE
-
-
-def warm_tables(session_id: str, *, report_db, upload_root: Path) -> None:
-    """TABLES_CACHE 웜업 전용 — 결과는 버린다 (compute.tables_warm_job 이 백그라운드 호출).
-
-    scatter/distribution_batch 콜드 202 의 백그라운드 짝 — 디코드(수 초~수십 초)를
-    요청 스레드 대신 온디맨드 소비자 스레드가 치르고, 다음 폴링 조회부터 웜 경로를 탄다.
-    """
-    _load_tables(session_id, report_db=report_db, upload_root=upload_root)
-
-
-def _prewarm_after_edit(session_id: str, upload_root: Path) -> None:
-    """편집 저장 직후 리포트 재빌드를 백그라운드로 미리 건다 (edit_raw_data 와 동일 규약).
-
-    편집은 edits_rev 증가로 REPORT/디스크 캐시 키를 바꿔 다음 /full 이 콜드가 된다 —
-    미리 데워 두면 다음 조회(새로고침·재방문)가 202 대기 없이 열린다. 실패 무해
-    (조회가 재계산). 연속 저장은 compute.prewarm 의 대기 중복 접기로 1회만 빌드된다.
-    """
-    try:
-        compute.prewarm(session_id, str(upload_root))
-    except Exception:
-        _log.warning("편집 후 prewarm 예약 실패 session=%s", session_id, exc_info=True)
-
-
 def pack_available(session, session_id, *, report_db, upload_root: Path) -> bool:
     """이 세션이 pack 으로 서빙되는가 (해당 세대 index 존재). 작은 파일 읽기 1회.
 
@@ -439,8 +410,7 @@ def get_distribution(session_id: str, *, report_db, upload_root: Path, bin1: boo
 
 
 def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root: Path,
-                           bin1: bool = False, bin1_scope: str = "",
-                           build_if_cold: bool = True) -> dict:
+                           bin1: bool = False, bin1_scope: str = "") -> dict:
     """항목 배치 ECDF — 요청한 subject 만 계산한 compact dict (다운샘플 없음).
 
     전체 dist(get_distribution)는 대형 세션에서 수천만 포인트라 프런트가 한 번에 받으면
@@ -450,11 +420,6 @@ def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root:
 
     pack 세션은 요청 항목이 든 chunk 만 읽어 덧셈으로 만든다 — **tables 디코드조차 하지
     않는다**(스크롤할 때마다 반복되던 서버 재정렬이 사라지는 지점).
-
-    pack 미스 폴백은 tables 디코드가 필요하다 — tables 까지 콜드면 첫 배치가 요청
-    스레드에서 수 초~수십 초를 태우므로, ``build_if_cold=False``(라우트 202 경로)면
-    pack 생성을 예약하고 ColdBuildRequired 를 올린다. tables 가 웜이면 배치당
-    부분 계산이라 종전대로 인라인이 싸다.
     """
     session = report_db.get_session(session_id)
     if session:
@@ -464,13 +429,6 @@ def get_distribution_batch(session_id: str, subjects, *, report_db, upload_root:
         if items is not None:
             return _dist_pack.ecdf_from_pack_items(items, bin1=bin1, only=subjects,
                                                    bin1_sources=srcs)
-        # pack 미스 — 다음 조회부터 덧셈만 하도록 생성을 예약한다 (전처리 variant 는
-        # _pack_items 가 이미 예약했고, pack 자체가 없는 구세션은 여기서 base 를 예약.
-        # 중복 요청은 distpack 큐의 pending 집합이 무시한다).
-        prep = _preprocess.session_digest(report_db, session_id)
-        compute.request_dist_pack(session_id, str(upload_root))
-        if not build_if_cold and not _tables_warm(session, prep):
-            raise ColdBuildRequired(session_id)
     session, tables, manifest = _load_tables(session_id, report_db=report_db, upload_root=upload_root)
     return _dist_blob.compute_dist_compact(
         tables, manifest.get("selected_items") or [], session.get("mode"),
@@ -783,23 +741,15 @@ def query_raw_data(session_id: str, *, report_db, upload_root: Path, columns,
 
 def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path,
                  bin1: bool = False, bin1_scope: str = "",
-                 session=None, build_if_cold: bool = True) -> dict:
+                 session=None) -> dict:
     """Distribution 상세용: 항목의 소스별 전체 측정값(다운샘플 없음) + cpk/status 지연 로드.
 
     ``bin1`` 이면 분포/통계를 양품(BIN==PASS_BIN) die 만으로 낸다("Bin1 only" 상세).
     ``bin1_scope="rt"`` 면 그 필터를 RT source 에만 건다(Temperature "Bin1(RT만)").
     항목이 어떤 소스에도 없으면 KeyError (라우트가 404 처리).
-
-    ``build_if_cold=False``(라우트 202 경로)면 tables 콜드 시 ColdBuildRequired 를
-    올린다 — 웜업(kind="tables")은 백그라운드가 맡고 다음 폴링부터 웜 경로를 탄다.
     """
     from .tabs.distribution import scatter_item as _scatter_item
 
-    if not build_if_cold:
-        probe = session or report_db.get_session(session_id)
-        if probe and not _tables_warm(
-                probe, _preprocess.session_digest(report_db, session_id)):
-            raise ColdBuildRequired(session_id)
     session, tables, _ = _load_tables(session_id, report_db=report_db,
                                       upload_root=upload_root, session=session)
     tables = _mode_tables(tables, _validate_mode(session.get("mode")))
@@ -1050,7 +1000,6 @@ def save_preprocess(session_id: str, *, report_db, upload_root: Path, spec: dict
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
-    _prewarm_after_edit(session_id, upload_root)
     return {"ok": True, "spec": norm, "summary": _preprocess.describe(norm),
             "digest": _preprocess.digest(norm), "rev": rev, "stats": stats,
             **_yield_basis_view(session, basis)}
@@ -1189,7 +1138,6 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
             # 아무도 모른다 — export 자체는 safe_export 에서 감사하지만 트리거 실패는 별개.
             _log.warning("eval export 재적재 트리거 실패 — ETC 항목 편집 후 코멘트 "
                          "eval DB 동기화 누락 (session=%s)", session_id, exc_info=True)
-        _prewarm_after_edit(session_id, upload_root)
 
     return {"ok": True, "etc_items": etc_items,
             "storage": "db" if changes else "unchanged"}
@@ -1247,8 +1195,6 @@ def update_issue_hidden(session_id: str, *, report_db, upload_root: Path,
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
-    if changes:
-        _prewarm_after_edit(session_id, upload_root)
 
     return {"ok": True, "hidden": hidden,
             "storage": "db" if changes else "unchanged"}
@@ -1318,7 +1264,6 @@ def update_issue_status(session_id: str, *, report_db, upload_root: Path,
     # 이 그 case 의 라벨을 지운다).
     _trigger_eval_export(session_id, report_db=report_db, upload_root=upload_root,
                          why="issue_status")
-    _prewarm_after_edit(session_id, upload_root)
 
     return {"ok": True, "key": key, "value": value, "storage": "db"}
 
@@ -1371,7 +1316,6 @@ def update_issue_status_bulk(session_id: str, *, report_db, upload_root: Path,
 
     _trigger_eval_export(session_id, report_db=report_db, upload_root=upload_root,
                          why="issue_status(bulk)")
-    _prewarm_after_edit(session_id, upload_root)
 
     return {"ok": True, "count": len(changes), "storage": "db"}
 
@@ -1448,7 +1392,6 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
         except Exception:
             _log.warning("eval export 재적재 트리거 실패 — 코멘트 편집 후 eval DB "
                          "동기화 누락 (session=%s)", session_id, exc_info=True)
-        _prewarm_after_edit(session_id, upload_root)
         storage = "db"
     else:
         storage = "unchanged"
@@ -1508,7 +1451,6 @@ def update_summary_engr(session_id: str, values: dict, *, report_db, upload_root
                 client_ip=client_ip, user_agent=user_agent)
         except Exception:
             pass
-        _prewarm_after_edit(session_id, upload_root)
         storage = "db"
     else:
         storage = "unchanged"
@@ -1667,7 +1609,6 @@ def update_chart_notes(session_id: str, ops: list, *, report_db, upload_root: Pa
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
-    _prewarm_after_edit(session_id, upload_root)
     return {"ok": True, "updated": len(changes), "rev": rev,
             "chart_notes": edits.load_chart_notes(report_db, session_id)}
 
@@ -1759,7 +1700,6 @@ def update_note_tag(session_id: str, *, report_db, upload_root: Path,
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
-    _prewarm_after_edit(session_id, upload_root)
     return {"ok": True, "rev": rev,
             "note_tags": edits.load_note_tags(report_db, session_id)}
 
@@ -1826,7 +1766,6 @@ def save_note(session_id: str, sheet, *, report_db, upload_root: Path,
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         _log.warning("note_sheet 감사 기록 실패 (session=%s)", session_id, exc_info=True)
-    _prewarm_after_edit(session_id, upload_root)
     return {"ok": True, "rev": info["rev"], "base": info["base"]}
 
 
@@ -2061,7 +2000,6 @@ def update_trim_overrides(session_id: str, ops: list, *, report_db, upload_root:
                 client_ip=client_ip, user_agent=user_agent)
         except Exception:
             pass
-        _prewarm_after_edit(session_id, upload_root)
         storage = "db"
     else:
         storage = "unchanged"

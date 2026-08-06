@@ -69,6 +69,7 @@
 | 15 | **소유권 / 수정 권한 경계** (정본) — 자유/사전승인/외부 담당자 영역 | 전체 | [15_ownership.md](15_ownership.md) | — |
 | 16 | **VOC 게시판** (목록·상세·상태 Open/Close·댓글) — 별도 voc.db, 관리자 판별은 admin 게이트 쿠키 재사용 | Server | [16_voc_board.md](16_voc_board.md) | [server/report/routes_voc.py](../server/report/routes_voc.py) |
 | 17 | **eval 학습 루프** (설계·로드맵, 미구현) — L1/L2 적재 · case grain=item×unit · 채점 표본 확보 | Server | [17_eval_learning_loop.md](17_eval_learning_loop.md) | — (13 의 후속 설계) |
+| 18 | **web_report 성능 회귀 가드** — 알려진 지뢰를 밟는 변경을 쓰기 전에 차단(Edit/Write 훅 자동) | Dev | [18_perf_guard.md](18_perf_guard.md) | [tools/perf_guard.py](../tools/perf_guard.py) |
 
 > 서버 부팅: [server/wsgi.py](../server/wsgi.py) → [plugin.py](../server/plugin.py)
 > `register_report_server` 가 `report_bp` + `honey_bp` + admin_panel + ops 등록.
@@ -169,3 +170,7 @@
    외부 담당자 영역(건들 때 승인) = `d1/`·`honey_parse/`·`report_generator/`·`storage_gateway/`(§3.1).
    `eval_analyzer/` 는 자유 수정이지만 **import 단방향(3곳)** 과 **eval_DB 스키마 변경 사전
    승인** 두 제약은 유지 → [13 §1](13_eval_analyzer_integration.md).
+
+> 위 규칙 중 `web_report/`·`server/report/` 에서 기계 검사가 가능한 것은
+> [tools/perf_guard.py](../tools/perf_guard.py) 가 Edit/Write 훅으로 자동 검출해
+> **쓰기 자체를 막는다** → [18](18_perf_guard.md). 규칙 목록은 `--list` 가 정본.

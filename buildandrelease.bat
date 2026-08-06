@@ -1,7 +1,7 @@
 @echo off
 REM Honey build + release.
 REM   buildandrelease.bat          auto-bump patch from CURRENT_VERSION
-REM   buildandrelease.bat 3.1.0    release the given version
+REM   buildandrelease.bat 3.1.1    release the given version
 REM PowerShell prompts for a release comment. Blank uses "Honey <version> release".
 REM
 REM KEEP THIS FILE PURE ASCII WITH CRLF LINE ENDINGS (see client\build_zip.bat).

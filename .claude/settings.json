@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "D=\"${CLAUDE_PROJECT_DIR:-/f/COINAPI/report_server}\"; PYTHONIOENCODING=utf-8 \"$D/server/.venv/Scripts/python.exe\" \"$D/tools/perf_guard.py\" --hook",
+            "timeout": 20,
+            "statusMessage": "성능 가드 검사"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "shell": "bash",
+            "command": "D=\"${CLAUDE_PROJECT_DIR:-/f/COINAPI/report_server}\"; PYTHONIOENCODING=utf-8 \"$D/server/.venv/Scripts/python.exe\" \"$D/tools/perf_guard.py\" --stop",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

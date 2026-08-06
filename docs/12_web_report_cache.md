@@ -163,6 +163,9 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   `(session, kind)` 중복 등록을 막아 재요청 폭주에도 큐가 자라지 않게 한다.
   `build_status` 는 (session, stage) 단위로 기록한다 — report/map 콜드가 겹칠 때
   한쪽 `end()` 가 다른 쪽 기록을 지우지 않게 하기 위함.
+  - **적용 범위는 `/full` 과 `map_analysis` 둘뿐이다.** `distribution_batch`/`scatter` 에도
+    잠시 확장했다가 **철회했다**(2026-08-06) — 그 둘은 배치당 부분 계산이라 인라인이
+    싼데도 백오프(3s/5s/8s/10s) 대기가 붙어 첫 진입 체감이 오히려 느려졌다.
   - **예상시간 안내** (2026-08-05, [web_report/eta.py](../web_report/eta.py)): 202 응답과
     `build_status` 가 `eta`(예상초)를 함께 준다 — 오버레이 문구가 "예상 약 12초 / 5초 경과"
     로 바뀐다. 진행바(%)는 종전 추정 creep 그대로다(안내일 뿐 진척률이 아니라서).
@@ -193,33 +196,46 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   chunk 단위 keyed_lock 은 잡지 않는다(락 레지스트리 LRU 256 에 chunk 키가 대량 유입되면
   보유 중인 빌드·편집 락이 축출돼 상호배제가 깨진다).
 
+- **기동 후 재웜 스윕** (2026-08-06, `compute.start_rewarm_sweep`): 재기동이나
+  `REPORT_SCHEMA_VERSION` 상승 배포 직후에는 **전 세션이 한꺼번에 콜드**가 되어, 그날 처음
+  세션을 여는 사용자마다 콜드 빌드를 정면으로 맞는다(실제로 2026-08-06 에 일반 세션이
+  5초→1분으로 느려진 원인). 기동 `WEB_REPORT_REWARM_DELAY_SEC` 후 최근 세션
+  `WEB_REPORT_REWARM_LIMIT` 건을 훑어 **콜드인 것만**(`service.report_is_cold`) 프리웜 큐에
+  넣는다. 투입 조건은 "온디맨드 pending 이 비었고 프리웜 큐도 빈 상태" — 사용자 요청이
+  항상 우선이고, 양보하다 `_REWARM_BUDGET_SEC`(1시간)을 넘기면 스윕을 접는다.
+  [report_extension.init_app](../server/report/report_extension.py) 이 기동하며 워커
+  프로세스에서는 뜨지 않는다.
+
 ## 환경변수
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `WEB_REPORT_COMPUTE_WORKERS` | `2` (운영 `4`) | 콜드 빌드 워커 프로세스 수. `0` = 전부 인라인(구 동작). 운영값은 [server/env/server.env](../server/env/server.env) — `_ONDEMAND_WORKERS` 와 **짝으로** 올려야 효과가 있다. 제약은 RAM 이 아니라 CPU(유휴 워커 ≈100MB 실측) |
+| `WEB_REPORT_COMPUTE_WORKERS` | `2` (운영 `8`) | 콜드 빌드 워커 프로세스 수. `0` = 전부 인라인(구 동작). 운영값은 [server/env/server.env](../server/env/server.env) — `_ONDEMAND_WORKERS` 와 **짝으로** 올려야 효과가 있다. 제약은 RAM 이 아니라 CPU(유휴 워커 ≈100MB 실측). 운영 8 은 16코어/64GB 기준(2026-08-06 상향) — 슬롯 부족이 `_COMPUTE_TIMEOUT_SEC` 큐 대기 타임아웃 → 전 워커 terminate 연쇄로 이어지던 것을 완화 |
 | `WEB_REPORT_TABLES_CACHE` | `4` | decoded tables 캐시 개수 상한. **실데이터 규모에선 이쪽이 먼저 걸린다** (세션 1건 ≈ 229MB → 4건 ≈ 0.9GB) |
 | `WEB_REPORT_TABLES_CACHE_MB` | `4096` (운영 `2048`) | tables 캐시 추정 바이트 상한 (개수와 이중 적용, 0=비활성). **부모와 워커가 각자 갖는 상한**이라 실효 천장 = 값 × (1+워커수). 실데이터에선 개수 상한이 먼저 걸려 이 값은 발동하지 않는다(= 성능 손실 없이 천장만 절반) |
 | `WEB_REPORT_DIST_CACHE` | `4` | Distribution gzip 캐시 개수 |
 | `WEB_REPORT_DIST_CACHE_MB` | `1024` | dist blob RAM 바이트 상한 (개수와 이중 적용, 0=비활성 — worst case blob ~505MB 실측) |
-| `WEB_REPORT_MAP_CACHE` | `4` | Map dies gzip 캐시 개수 |
-| `WEB_REPORT_MAP_CACHE_MB` | `512` | Map dies blob RAM 바이트 상한 (개수와 이중 적용, 0=비활성) |
-| `WEB_REPORT_REPORT_CACHE` | `8` | report dict 캐시 개수 |
-| `WEB_REPORT_REPORT_CACHE_MB` | `256` | report dict 캐시 추정 바이트 상한 (개수와 이중 적용, 0=비활성). 크기는 put 시 1회 직렬화 길이로 추정 |
+| `WEB_REPORT_MAP_CACHE` | `4` (운영 `8`) | Map dies gzip 캐시 개수 |
+| `WEB_REPORT_MAP_CACHE_MB` | `512` (운영 `1024`) | Map dies blob RAM 바이트 상한 (개수와 이중 적용, 0=비활성) |
+| `WEB_REPORT_REPORT_CACHE` | `8` (운영 `32`) | report dict 캐시 개수 |
+| `WEB_REPORT_REPORT_CACHE_MB` | `256` (운영 `1024`) | report dict 캐시 추정 바이트 상한 (개수와 이중 적용, 0=비활성). 크기는 put 시 1회 직렬화 길이로 추정 |
 | `WEB_REPORT_DIST_BATCH_CACHE` | `64` | Distribution 항목 배치 응답 gzip 캐시 개수 |
 | `WEB_REPORT_DIST_BATCH_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성). 소스·die 가 많은 세션은 배치 1건이 수 MB |
-| `WEB_REPORT_DIST_CHUNK_CACHE` | `64` | dist pack chunk **디코드 결과** 캐시 개수 (distribution_batch 의 gunzip+json.loads 반복 제거) |
+| `WEB_REPORT_DIST_CHUNK_CACHE` | `64` (운영 `128`) | dist pack chunk **디코드 결과** 캐시 개수 (distribution_batch 의 gunzip+json.loads 반복 제거) |
 | `WEB_REPORT_DIST_CHUNK_CACHE_MB` | `512` | 〃 비압축 바이트 상한 (개수와 이중 적용, 0=비활성) |
-| `WEB_REPORT_ONDEMAND_WORKERS` | `2` (운영 `3`) | 콜드 미스 조회가 202 를 반환한 뒤 백그라운드에서 빌드하는 소비자 스레드 수 |
+| `WEB_REPORT_ONDEMAND_WORKERS` | `2` (운영 `8`) | 콜드 미스 조회가 202 를 반환한 뒤 백그라운드에서 빌드하는 소비자 스레드 수. `_COMPUTE_WORKERS` 와 같은 값으로 유지 |
 | `WEB_REPORT_COMMONALITY_CACHE` | `2` | Commonality 인덱스 캐시 개수 |
 | `WEB_REPORT_TRIM_CACHE` | `4` | Trim payload 캐시 개수 |
 | `WEB_REPORT_TRIM_CHART_CACHE` | `64` | Trim 그룹 차트 캐시 개수 |
 | `WEB_REPORT_TRIM_CHART_CACHE_MB` | `256` | Trim 그룹 차트 gzip 바이트 상한 (개수와 이중 적용, 0=비활성). 차트 1건이 전 die 전 포인트라 개수 상한만으론 RAM 이 예측 불가 |
 | `WEB_REPORT_MANIFEST_CACHE` | `16` | manifest 캐시 개수 |
-| `WEB_REPORT_FULL_CACHE` | `8` | `/full` 응답 gzip 캐시 개수 |
-| `WEB_REPORT_FULL_CACHE_MB` | `512` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성) |
+| `WEB_REPORT_FULL_CACHE` | `8` (운영 `32`) | `/full` 응답 gzip 캐시 개수 |
+| `WEB_REPORT_FULL_CACHE_MB` | `512` (운영 `1024`) | 〃 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_SCATTER_CACHE` | `16` | `/scatter` 응답 gzip 캐시 개수 |
 | `WEB_REPORT_SCATTER_CACHE_MB` | `256` | 〃 바이트 상한 (개수와 이중 적용, 0=비활성) |
 | `WEB_REPORT_DISK_CACHE_MAX_GB` | `500` | 디스크 캐시 총량 상한 (0 이하 = 비활성) |
+| `WEB_REPORT_REWARM_ON_START` | `1` | 기동 후 재웜 스윕 사용 여부 (`0` = 끔) |
+| `WEB_REPORT_REWARM_LIMIT` | `30` | 스윕이 훑을 최근 web_report 세션 수 |
+| `WEB_REPORT_REWARM_DELAY_SEC` | `60` | 기동 후 스윕 시작까지 지연(초) |
 
 ## 불변 규칙
 - 캐시는 전부 재계산 가능한 파생물 — 언제 지워져도 무해해야 한다.

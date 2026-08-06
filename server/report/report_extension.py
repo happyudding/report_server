@@ -25,3 +25,11 @@ def init_app(app):  # noqa: ARG001
     except Exception:
         import logging
         logging.getLogger(__name__).exception("cleanup scheduler start failed")
+    # 기동 직후 최근 세션의 콜드 report 를 유휴 워커로 미리 데운다 (env 로 끌 수 있음).
+    try:
+        import config
+        from web_report import compute as web_report_compute
+        web_report_compute.start_rewarm_sweep(str(config.REPORT_UPLOAD_DIR))
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("rewarm sweep start failed")

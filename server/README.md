@@ -70,12 +70,12 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 ### web_report 캐시 / 컴퓨트
 
 캐시 계층·환경변수 전체는 [../docs/12_web_report_cache.md](../docs/12_web_report_cache.md) 가
-정본. 자주 만지는 것: `WEB_REPORT_COMPUTE_WORKERS`(기본 2 / **운영 4**, 0=인라인),
+정본. 자주 만지는 것: `WEB_REPORT_COMPUTE_WORKERS`(기본 2 / **운영 8**, 0=인라인),
 `WEB_REPORT_TABLES_CACHE_MB`(기본 4096 / **운영 2048** — 부모·워커가 각자 갖는 상한),
 `WEB_REPORT_DISK_CACHE_MAX_GB`(기본 500),
 `WEB_REPORT_REPORT_CACHE_MB`(기본 256 — report dict 바이트 상한),
 `WEB_REPORT_TRIM_CHART_CACHE_MB`(기본 256 — Trim 그룹 차트 gzip 바이트 상한),
-`WEB_REPORT_ONDEMAND_WORKERS`(기본 2 / **운영 4** — 콜드 202 후 백그라운드 빌드 스레드),
+`WEB_REPORT_ONDEMAND_WORKERS`(기본 2 / **운영 8** — 콜드 202 후 백그라운드 빌드 스레드),
 `WEB_REPORT_DIST_CHUNK_CACHE_MB`(기본 512 — dist pack chunk 디코드 결과 캐시).
 컴퓨트 워커 2종은 **짝으로** 올려야 한다 — 풀만 늘리면 소비자 스레드 수가 새 상한이 된다.
 
@@ -103,7 +103,9 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `LOG_KEEP_FILES` / `LOG_KEEP_DAYS` | `30` / `14` | 로그 파일 정리 상한(개수/일수) — 기동·로테이션 시 초과분 삭제. faulthandler·metrics 파일도 `LOG_KEEP_DAYS` 준용 |
 | `LOG_MIN_KEEP_HOURS` | `48` | **이 시간 안쪽 `server_*.txt` 는 개수·용량 상한과 무관하게 보존** — 재기동 폭주(기동 1회=파일 1개)가 원인 구간 로그를 밀어내지 못하게 하는 안전장치 |
 | `LOG_KEEP_TOTAL_MB` | `4096` | `LOG_MIN_KEEP_HOURS` 밖 구간에 적용되는 총 용량 상한 (넘어선 지점부터 과거를 삭제) |
-| `REPORT_METRICS_FILE_KEEP_DAYS` | `14` | flight recorder(`metrics_YYYYMMDD.log`, 분당 1줄 리소스 추이) + `runtime_YYYYMMDD.log` 보존 일수. `0` = 비활성 |
+| `REPORT_METRICS_FILE_KEEP_DAYS` | `14` | flight recorder(`metrics_YYYYMMDD.log`, 분당 1줄 리소스 추이) + `runtime_YYYYMMDD.log` + `publicapi_YYYYMMDD.log` 보존 일수. `0` = 비활성 |
+| `PUBLIC_API_METRICS_ENABLED` | `1` | 공개 API(`/pe/api/v1`) 호출 계측 — 관리자 **public API** 탭. `0` = 계측만 끔(API 는 정상 동작) |
+| `PUBLIC_API_SLOW_MS` | `1000` | 이 시간을 넘긴 공개 API 호출을 '느린·실패 호출' 목록에 개별 기록. 단순 조회만 노출하므로 사람 요청(`REPORT_SLOW_REQ_MS`)보다 낮게 잡는다 |
 | `REPORT_RUNTIME_LOG_INTERVAL_SEC` | `300` | `runtime_*.log` 응답시간 스냅샷(p50/p95/p99 + 느린 경로 top5) 기록 주기. 최소 60 |
 | `REPORT_SLOW_REQ_MS` | `10000` | 이 시간을 넘긴 요청을 `runtime_*.log` 에 개별 기록. `0` 이하 = 비활성 |
 | `REPORT_ACTIVE_USER_WINDOW_SEC` | `300` | 관리자 현황 탭 "실시간 접속 사용자" 기본 판정 창 — 이 시간 안에 요청이 있었으면 접속 중. 화면에서 기간 선택 가능(최소 30) |

@@ -204,6 +204,32 @@ def api_metrics_file_history():
     return jsonify(metrics.file_history(hours))
 
 
+@admin_panel_bp.get("/api/public_api")
+def api_public_api():
+    """공개 API(/pe/api/v1) 호출 계측 — 'public API' 탭.
+
+    기능이 폴더 단위로 계속 늘어나므로(외부 담당자 추가분 포함) endpoint 를 열거하지 않고
+    Blueprint 이름 접두(public_api_)로 자동 수집한 것을 그대로 돌려준다.
+    hours 를 주면 재시작과 무관한 파일 이력(publicapi_*.log)도 함께 싣는다.
+    api_runtime 과 같은 이유로 구성요소별 try — 하나가 실패해도 나머지는 살린다."""
+    window = min(max(int(request.args.get("window", 3600)), 60), 86400)
+    out = {"snapshot": None, "history": None}
+    try:
+        from public_api import metrics as pa_metrics
+        out["snapshot"] = pa_metrics.snapshot(window)
+    except Exception:
+        pass
+    hours = request.args.get("hours")
+    if hours:
+        try:
+            from public_api import metrics as pa_metrics
+            out["history"] = pa_metrics.file_history(
+                min(max(int(hours), 1), 24 * 14))
+        except Exception:
+            pass
+    return jsonify(out)
+
+
 @admin_panel_bp.get("/api/webreport/builds")
 def api_webreport_builds():
     """web_report 콜드 빌드 이력 — 단계별 소요 + 대기 시간 + 실패(타임아웃·워커 붕괴).

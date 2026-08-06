@@ -208,6 +208,8 @@ body { position: relative; }
           title="서버 CPU·RAM·디스크·업타임과 리소스 시계열 — 서버가 건강한지 먼저 보는 곳">현황</button>
   <button class="tab" data-panel="pHistory"
           title="파일로 남은 부하 이력 — 서버가 재시작돼도 사라지지 않는 리소스·응답시간·느린 요청">이력</button>
+  <button class="tab" data-panel="pPublicApi"
+          title="사내에 공개한 REST API(/pe/api/v1)를 누가 얼마나 호출하는지 — 서버에 부담이 되는지 확인">public API</button>
   <button class="tab" data-panel="pStorage"
           title="로컬 디스크 사용량을 범주별·세션별로 보고 용량 큰 세션을 정리">스토리지</button>
   <button class="tab" data-panel="pStats"
@@ -392,6 +394,87 @@ body { position: relative; }
       </tr></thead>
       <tbody id="cbBody"><tr class="empty-row"><td colspan="9">-</td></tr></tbody>
     </table></div>
+  </div>
+</div>
+
+<!-- ═══ public API ═══ -->
+<div id="pPublicApi" class="panel">
+  <div class="card">
+    <h2>공개 API 부하 <span class="hint">/pe/api/v1 — 사내에 열어 둔 무인증 읽기 전용 API ·
+      이 탭이 보일 때만 10초 갱신 (메모리 집계라 서버 재시작 시 초기화)</span>
+      <select id="paWindow" class="sel" style="float:right" title="집계 구간">
+        <option value="300">최근 5분</option>
+        <option value="3600" selected>최근 1시간</option>
+        <option value="86400">최근 24시간</option>
+      </select></h2>
+    <div class="tiles" id="paTiles"></div>
+    <div class="det" style="margin-top:12px;line-height:1.7">
+      <b>스레드 점유</b>가 "부담인가"를 보는 값입니다 — 구간 내 API 총 소요시간 ÷ (요청 스레드 수 × 구간).
+      호출이 아무리 잦아도 응답이 짧으면 0% 에 가깝고, 두 자릿수로 오르면 사람 요청이 밀리기 시작합니다.<br>
+      공개 API 호출은 <b>현황 탭의 응답시간 p50/p95 와 '지금 접속 중' 집계에서 제외</b>됩니다 —
+      무인증 폴러가 섞이면 실사용자 지표가 가려지기 때문입니다.
+    </div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>분당 호출 추이 <span class="hint">위 구간 선택을 따릅니다</span></h2>
+    <div class="chart-box">
+      <div class="chart-legend">
+        <span class="key"><span class="sw" style="background:var(--accent)"></span>분당 호출수</span>
+        <span class="key"><span class="sw" style="background:var(--s-delete)"></span>에러(4xx+5xx)</span>
+      </div>
+      <svg id="paCallChart" width="100%" height="150" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
+      <div class="chart-legend" style="margin-top:10px">
+        <span class="key"><span class="sw" style="background:var(--st-warn)"></span>평균 응답시간</span>
+      </div>
+      <svg id="paMsChart" width="100%" height="110" viewBox="0 0 900 110" preserveAspectRatio="none"></svg>
+      <div class="m-tip"></div>
+    </div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>기능(endpoint)별 <span class="hint">기동 이후 누적 · 기능이 늘면 자동으로 여기에 나타납니다
+      (Blueprint 이름이 public_api_ 로 시작해야 잡힙니다)</span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>endpoint</th><th class="num">호출</th><th class="num">평균</th>
+        <th class="num">최대</th><th class="num">4xx</th><th class="num">5xx</th><th>마지막 호출</th></tr></thead>
+      <tbody id="paRouteBody"><tr class="empty-row"><td colspan="7">-</td></tr></tbody>
+    </table></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>호출자 <span class="hint">무인증이라 IP 가 유일한 식별자입니다 — 폭주하는 쪽을 여기서 찾습니다</span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>IP</th><th class="num">호출</th><th>마지막 호출</th><th>최근 endpoint</th></tr></thead>
+      <tbody id="paCallerBody"><tr class="empty-row"><td colspan="4">-</td></tr></tbody>
+    </table></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>느린 · 실패 호출 <span class="hint" id="paRecentHint"></span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr><th>시각</th><th>endpoint</th><th class="num">상태</th><th class="num">소요</th><th>IP</th></tr></thead>
+      <tbody id="paRecentBody"><tr class="empty-row"><td colspan="5">-</td></tr></tbody>
+    </table></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>이력 <span class="hint">파일 기록(server/log/publicapi_*.log) — 서버가 재시작돼도 남습니다 · 자동 갱신 없음</span>
+      <select id="paHistHours" class="sel" style="float:right" title="조회 기간">
+        <option value="24" selected>최근 24시간</option>
+        <option value="72">최근 3일</option>
+        <option value="168">최근 7일</option>
+        <option value="336">최근 14일</option>
+      </select></h2>
+    <div class="msg" id="paHistInfo">로딩 중…</div>
+    <div class="chart-box">
+      <div class="chart-legend">
+        <span class="key"><span class="sw" style="background:var(--accent)"></span>호출수</span>
+        <span class="key"><span class="sw" style="background:var(--s-delete)"></span>에러</span>
+      </div>
+      <svg id="paHistChart" width="100%" height="150" viewBox="0 0 900 150" preserveAspectRatio="none"></svg>
+      <div class="m-tip"></div>
+    </div>
   </div>
 </div>
 
@@ -824,7 +907,8 @@ async function postJSON(url, body) {
 // ── 탭 ──────────────────────────────────────────────────────────────────────
 const loadedTabs = new Set();
 const TAB_LOADERS = {
-  pHealth: loadHealth, pHistory: loadHistoryTab, pStorage: loadStorageTab, pStats: loadStats,
+  pHealth: loadHealth, pHistory: loadHistoryTab, pPublicApi: loadPublicApiTab,
+  pStorage: loadStorageTab, pStats: loadStats,
   pSessions: loadSessions, pUsers: loadUsersTab, pVoc: loadVocTab,
   pDb: loadDb, pLogs: () => { loadLogFileList(); loadLogs(); }, pAudit: loadAudit,
 };
@@ -1407,6 +1491,106 @@ setInterval(() => {
     loadMetrics();
     loadRuntime();
   }
+}, 10000);
+
+// ── public API (/pe/api/v1) 부하 ────────────────────────────────────────────
+// 계측 정본은 server/public_api/metrics.py. endpoint 를 열거하지 않고 Blueprint 이름
+// 접두로 자동 수집하므로, 기능이 늘어도 이 화면은 손대지 않는다.
+function paStatusCell(st) {
+  const color = st >= 500 ? "#d33" : st >= 400 ? "var(--st-warn)" : "";
+  return `<td class="num"${color ? ` style="color:${color}"` : ""}>${st}</td>`;
+}
+async function loadPublicApiTab() { loadPublicApi(); loadPublicApiHistory(); }
+async function loadPublicApi() {
+  try {
+    const d = await getJSON("api/public_api?window=" + $("paWindow").value);
+    const s = d.snapshot;
+    if (!s) throw new Error("계측 모듈 응답 없음");
+    if (s.enabled === false) {
+      $("paTiles").innerHTML = `<div class="tile"><div class="lbl">계측 비활성</div>
+        <div class="val" style="font-size:20px">-</div>
+        <div class="det">PUBLIC_API_METRICS_ENABLED=0 으로 꺼져 있습니다 · API 자체는 정상 동작합니다</div></div>`;
+      return;
+    }
+    const w = s.window || {}, lat = s.latency || {};
+    const mins = Math.round((s.window_sec || 3600) / 60);
+    const busy = w.busy_pct || 0;
+    const errPct = w.count ? (w.err / w.count * 100) : 0;
+    $("paTiles").innerHTML = `
+      <div class="tile"><div class="lbl">스레드 점유 (최근 ${mins}분)</div>
+        <div class="val" style="font-size:20px${busy >= 10 ? ";color:var(--st-warn)" : ""}">${
+          busy < 0.01 && busy > 0 ? "<0.01" : busy.toFixed(2)}%</div>
+        <div class="det">요청 스레드 ${s.threads}개 기준 · 이 값이 낮으면 호출이 잦아도 부담이 아닙니다</div></div>
+      <div class="tile"><div class="lbl">호출 (최근 ${mins}분)</div>
+        <div class="val" style="font-size:20px">${w.count || 0}</div>
+        <div class="det">분당 ${w.rpm || 0}회 · 평균 ${w.avg_ms || 0} ms</div></div>
+      <div class="tile"><div class="lbl">에러</div>
+        <div class="val" style="font-size:20px${(w.err || 0) ? ";color:var(--st-warn)" : ""}">${w.err || 0}</div>
+        <div class="det">${w.count ? errPct.toFixed(1) + "% (4xx+5xx)" : "호출 없음"}</div></div>
+      <div class="tile"><div class="lbl">응답시간 (최근 ${lat.samples || 0}건)</div>
+        <div class="val" style="font-size:20px">${lat.p95 || 0} ms</div>
+        <div class="det">p50 ${lat.p50 || 0} · p99 ${lat.p99 || 0} · 최대 ${lat.max || 0} ms</div></div>
+      <div class="tile"><div class="lbl">호출자</div>
+        <div class="val" style="font-size:20px">${(s.callers || []).length}</div>
+        <div class="det">최근 ${mins}분 내 요청한 IP 수 · 기능 ${(s.routes || []).length}개 · 계측 시작 ${fmtDate(s.since)}</div></div>`;
+
+    const se = s.series || { ts: [] };
+    renderMetricsChart($("paCallChart"), se.ts || [], [
+      { arr: se.count || [], color: "var(--accent)", label: "호출", area: true },
+      { arr: se.err || [], color: "var(--s-delete)", label: "에러" },
+    ], v => String(Math.round(v)), null, fmtClock);
+    renderMetricsChart($("paMsChart"), se.ts || [], [
+      { arr: se.avg_ms || [], color: "var(--st-warn)", label: "평균", area: true },
+    ], v => Math.round(v) + "ms", null, fmtClock);
+
+    $("paRouteBody").innerHTML = (s.routes || []).length ? s.routes.map(r =>
+      `<tr><td class="mono">${esc(r.route)}</td><td class="num">${r.count}</td>
+        <td class="num">${r.avg_ms} ms</td><td class="num">${r.max_ms} ms</td>
+        <td class="num"${r.err4xx ? ' style="color:var(--st-warn)"' : ""}>${r.err4xx}</td>
+        <td class="num"${r.err5xx ? ' style="color:#d33"' : ""}>${r.err5xx}</td>
+        <td>${fmtAgo(r.last_ago)}</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="7">아직 호출 없음</td></tr>`;
+    $("paCallerBody").innerHTML = (s.callers || []).length ? s.callers.map(c =>
+      `<tr><td class="mono">${esc(c.ip)}</td><td class="num">${c.count}</td>
+        <td>${fmtAgo(c.last_ago)}</td><td class="mono">${esc(c.route)}</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="4">최근 ${mins}분 내 호출 없음</td></tr>`;
+    $("paRecentHint").textContent =
+      `${Math.round(s.slow_ms)}ms 초과 또는 4xx/5xx 응답만 기록 · 최근 ${(s.recent || []).length}건`;
+    $("paRecentBody").innerHTML = (s.recent || []).length ? s.recent.map(r =>
+      `<tr><td>${fmtDate(r.ts)}</td><td class="mono">${esc(r.route)}</td>` +
+      paStatusCell(r.status) +
+      `<td class="num">${r.ms} ms</td><td class="mono">${esc(r.ip)}</td></tr>`).join("")
+      : `<tr class="empty-row"><td colspan="5">느리거나 실패한 호출 없음</td></tr>`;
+  } catch (e) {
+    $("paTiles").innerHTML = `<div class="tile"><div class="lbl">공개 API 계측 조회 실패</div>
+      <div class="det">${esc(e)}</div></div>`;
+  }
+}
+async function loadPublicApiHistory() {
+  const info = $("paHistInfo");
+  info.textContent = "불러오는 중…";
+  try {
+    const d = await getJSON("api/public_api?hours=" + $("paHistHours").value);
+    const h = d.history;
+    if (!h) { info.textContent = "이력을 읽을 수 없습니다."; return; }
+    const se = h.series || { ts: [] };
+    info.innerHTML = se.ts.length
+      ? `총 ${h.total}회 호출 · 에러 ${h.err}회 · 기록 시작 ${fmtDate(h.coverage_from)} · 파일 ${h.files.length}개`
+      : `이력 파일이 아직 없습니다 — 호출이 있는 분만 1줄씩 쌓입니다 (server/log/publicapi_*.log)`;
+    renderMetricsChart($("paHistChart"), se.ts, [
+      { arr: se.count, color: "var(--accent)", label: "호출", area: true },
+      { arr: se.err, color: "var(--s-delete)", label: "에러" },
+    ], v => String(Math.round(v)), null, h.hours > 24 ? fmtDayClock : fmtClock);
+  } catch (e) {
+    info.textContent = "조회 실패: " + e;
+  }
+}
+$("paWindow").onchange = loadPublicApi;
+$("paHistHours").onchange = loadPublicApiHistory;
+// 이 탭이 보일 때만 10초 자동 갱신 (현황 탭과 같은 규칙 — 그 외엔 서버 요청 없음)
+setInterval(() => {
+  if (document.visibilityState === "visible" && $("pPublicApi").classList.contains("active"))
+    loadPublicApi();
 }, 10000);
 
 // ── 스토리지 ────────────────────────────────────────────────────────────────

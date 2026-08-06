@@ -75,6 +75,13 @@ _VIEWER_ENDPOINTS = frozenset((
     "report.web_report_distribution_batch", "report.web_report_scatter",
     "report.web_report_map_analysis", "report.web_report_raw_data",
     "report.web_report_trim_analysis", "report.web_report_trim_chart_batch"))
+# 공개 API(/pe/api/v1) 요청 — 무인증 폴러(사내 대시보드·배치)라 사람 트래픽 지표에서
+# 뺀다. 섞이면 빠르고 잦은 API 호출이 p50/p95 표본 대부분을 차지해 **사람의 체감 악화를
+# 가리고**, '실시간 접속 사용자'에 ip:<addr> 로 사람처럼 표시된다. 대신 전용 계측
+# (public_api/metrics.py → 관리자 'public API' 탭)으로 따로 모은다.
+# 식별 키는 Blueprint 이름 규약(public_api/__init__.py BLUEPRINT_PREFIX)이다.
+_PUBLIC_API_PREFIX = "public_api_"
+
 _VIEWERS_MAX = 500          # 상한 — 초과 시 가장 오래된 것부터 버린다
 VIEWER_WINDOW_SEC = 300     # "최근 N초 안에 요청이 있었으면 열람 중"
 _viewers: OrderedDict = OrderedDict()   # session_id -> 마지막 요청 ts (_lock 공유)
@@ -98,6 +105,29 @@ def _on_request_start():
     g._mx_t0 = time.perf_counter()
 
 
+def _on_response(resp):
+    """teardown 훅은 응답을 받지 못하므로 상태코드만 여기서 넘겨 둔다 (공개 API 계측용).
+    처리 중 예외로 이 훅을 못 거치면 teardown 이 500 으로 간주한다."""
+    try:
+        g._mx_status = resp.status_code
+    except Exception:
+        pass
+    return resp
+
+
+def _record_public_api(route, ms):
+    """공개 API 계측 위임 — 진실 저장소는 public_api/metrics.py 다.
+
+    지연 import + 광범위 try: 전역 teardown 훅이라 여기서 예외가 새면 모든 요청에 영향간다."""
+    try:
+        from public_api import metrics as pa_metrics
+        fwd = request.headers.get("X-Forwarded-For")
+        ip = fwd.split(",")[0].strip() if fwd else (request.remote_addr or "")
+        pa_metrics.record(route, ms, g.pop("_mx_status", 500), ip)
+    except Exception:
+        pass
+
+
 def _on_request_teardown(exc=None):
     # 다른 before_request 가 먼저 abort 하면 우리 훅이 안 돌았을 수 있다 — 플래그 확인
     global _inflight
@@ -109,6 +139,7 @@ def _on_request_teardown(exc=None):
         route = request.endpoint or request.path
     except Exception:
         route = "?"
+    is_public_api = bool(route) and route.startswith(_PUBLIC_API_PREFIX)
     sid = None
     if route in _VIEWER_ENDPOINTS:      # 락 밖에서 뽑는다 (dict 조회 2회)
         try:
@@ -152,20 +183,26 @@ def _on_request_teardown(exc=None):
             while len(_viewers) > _VIEWERS_MAX:
                 _viewers.popitem(last=False)
         if ms is not None:
-            _lat_recent.append(ms)
+            # 백분위(p50/p95)는 사람 트래픽만 — 공개 API 는 전용 계측으로 뺀다.
+            # route 별 누적은 그대로 둔다 (경로별 평균은 섞여도 왜곡되지 않는다).
+            if not is_public_api:
+                _lat_recent.append(ms)
             n, total, mx = _lat_by_route.get(route, (0, 0.0, 0.0))
             _lat_by_route[route] = (n + 1, total + ms, max(mx, ms))
             # 느린 요청은 큐에만 넣는다 — 파일 IO 는 샘플러 스레드가 락 밖에서 처리
             if SLOW_REQ_MS > 0 and ms >= SLOW_REQ_MS:
                 _slow_pending.append((time.time(), route, ms))
+    if is_public_api and ms is not None:
+        _record_public_api(route, ms)   # 락 밖에서 (전용 모듈이 자기 락을 쓴다)
 
 
 def _skip_user_track(route):
-    """접속 사용자 집계에서 뺄 요청 — 관리자 자신·healthz(watchdog 폴링)·정적 파일.
+    """접속 사용자 집계에서 뺄 요청 — 관리자 자신·healthz(watchdog 폴링)·정적 파일·
+    공개 API(무인증 폴러는 사람이 아니다 → public API 탭에서 따로 본다).
 
     이것들을 빼야 "지금 몇 명이 쓰고 있나"가 실사용자 수에 가까워진다."""
     return (not route or route == "healthz" or route.endswith("static")
-            or route.startswith("admin_panel."))
+            or route.startswith("admin_panel.") or route.startswith(_PUBLIC_API_PREFIX))
 
 
 def _identity_for_track():
@@ -188,10 +225,10 @@ def _bump_boot_peak(key, value, ts):
 
 
 def _prune_flight_files(log_dir):
-    """오래된 metrics_*.log / runtime_*.log 정리 (best-effort)."""
+    """오래된 metrics_*.log / runtime_*.log / publicapi_*.log 정리 (best-effort)."""
     try:
         cutoff = time.time() - METRICS_FILE_KEEP_DAYS * 86400
-        for pattern in ("metrics_*.log", "runtime_*.log"):
+        for pattern in ("metrics_*.log", "runtime_*.log", "publicapi_*.log"):
             for p in log_dir.glob(pattern):
                 try:
                     if p.stat().st_mtime < cutoff:
@@ -301,6 +338,16 @@ def _sample():
     # 파일 IO 는 락 밖에서 (요청 경로의 in-flight 카운터를 막지 않도록)
     _flight_record(ts, cpu, mem_used, rss, inflight, win_peak, wrss)
     _runtime_record(ts)
+    _publicapi_record(ts)
+
+
+def _publicapi_record(ts):
+    """공개 API 분 버킷을 파일로 flush — 요청 경로에 IO 를 얹지 않으려고 샘플러가 부른다."""
+    try:
+        from public_api import metrics as pa_metrics
+        pa_metrics.flush_file(ts)
+    except Exception:
+        pass
 
 
 def _loop():
@@ -323,6 +370,7 @@ def init_app(app):
         return
     _started = True
     app.before_request(_on_request_start)
+    app.after_request(_on_response)
     app.teardown_request(_on_request_teardown)
     threading.Thread(target=_loop, name="admin-metrics-sampler", daemon=True).start()
     _log.info("[metrics] sampler started: interval=%.0fs retention=%dh buf=%d",
