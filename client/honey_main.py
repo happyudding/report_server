@@ -2495,13 +2495,13 @@ class HoneyMainWindow(QMainWindow):
         # SourceName(legend) 은 파일마다 달라 매번 확인·변경 후 생성.
         # DUT 모드는 서버가 업로드된 단일 honeyform 의 DUT 컬럼으로 분할·명명(DUT <값>)하므로
         # 클라에서는 분할하지 않고 rename 도 건너뛴다 (df_honey→honeyform 포맷 변환 회피).
-        # Compare 모드는 이름 변경 창 대신 Before/After 배치 창을 띄운다 (이름 변경 포함).
+        # 대신 **색 지정 창만** 띄운다 — 색은 분할된 source 순서에 붙기 때문이다.
+        # Compare 모드는 이름 변경 창 대신 Before/After 배치 창을 띄운다 (이름·색 변경 포함).
         #
         # 그 창이 떠 있는 동안 parquet 인코딩을 미리 돌려 둔다 — 인코딩 결과는 이름·순서와
         # 무관하므로(honeyform 에 이름 컬럼이 없다) 창에서 무엇을 바꾸든 그대로 재사용된다.
-        # DUT 는 창이 없어 벌 시간이 없고, Temperature 는 _temperature_first_flow 가 파싱과
-        # 같은 워커에 이어 붙여 이미 시작했다.
-        if mode not in ("DUT", "Temperature"):
+        # Temperature 는 _temperature_first_flow 가 파싱과 같은 워커에 이어 붙여 이미 시작했다.
+        if mode != "Temperature":
             self._start_encode_prefetch()
         source_order = None
         temperature = None
@@ -2512,6 +2512,9 @@ class HoneyMainWindow(QMainWindow):
             self.group.rename_sources(arranged["names"])
             options["compare"] = {"before": arranged["before"], "after": arranged["after"]}
             source_order = arranged["order"]
+            if arranged.get("colors"):
+                # 창에서 지정한 색이 옵션(F10) 팔레트보다 우선한다 (이 리포트에만 적용).
+                options["colors"] = arranged["colors"]
         elif mode == "Temperature":
             arranged = temperature_arranged      # 위에서 파싱보다 먼저 받아둔 배치 결과
             # _apply_source_arrangement 가 rename 을 **먼저** 한다 — groups/order 는 이미
@@ -2521,7 +2524,11 @@ class HoneyMainWindow(QMainWindow):
                                       "limits_file": arranged["limits_file"]}
             # bin_map(.lt/.pds)은 세션에 싣지 않는다 — 업로드 전 정리에서만 쓰고 소진한다.
             temperature = {"groups": arranged["groups"], "bin_map": arranged["bin_map"]}
-        elif mode != "DUT":
+        elif mode == "DUT":
+            colors = self._ask_dut_colors()      # 이름·순서는 서버가 정한다 — 색만
+            if colors:
+                options["colors"] = colors
+        else:
             arranged = self._ask_source_names()
             if arranged is not None:
                 source_order = self._apply_source_arrangement(arranged, options)
@@ -2554,6 +2561,43 @@ class HoneyMainWindow(QMainWindow):
             self._status("Compare 배치 취소")
             return None
         return dlg.result_groups()
+
+    def _dut_source_names(self):
+        """DUT 모드에서 **서버가 만들 source 목록**(DUT 라벨 순서)을 미리 계산한다.
+
+        클라는 DUT 분할을 하지 않지만(서버 honeyform.split_table_by_dut 소관), 색은
+        source 순서 i 에 붙으므로 색을 지정하려면 그 목록을 알아야 한다. 라벨·정렬은
+        서버 분할과 **같은 함수**(web_report.honeyform.dut_labels)로 얻는다 — 규칙이
+        갈리면 색이 밀린다. DUT 종류가 1개 이하면 서버가 분할하지 않으므로 원본 이름
+        그대로다. 계산 실패는 None — 호출부가 창을 건너뛴다(색은 옵션 팔레트 그대로).
+        """
+        try:
+            from web_report.honeyform import DATA_START_ROW, dut_labels
+
+            names = list(self.group.names())
+            md = self.group.mass_data_map[names[0]]
+            df = md.to_df() if hasattr(md, "to_df") else md.df
+            labels = dut_labels(df.iloc[DATA_START_ROW:])
+        except Exception:                                  # noqa: BLE001
+            return None
+        return [f"DUT {label}" for label in labels] if len(labels) > 1 else names
+
+    def _ask_dut_colors(self):
+        """DUT 모드 색 지정 창. 바꾼 색만 돌려준다 (취소·건너뜀이면 None).
+
+        이름·순서는 서버가 DUT 값으로 정하므로 결과에서 ``colors`` 만 쓴다.
+        """
+        from honey_ui.source_name_dialog import SourceNameDialog
+
+        names = self._dut_source_names()
+        if not names:
+            return None
+        src = list(self.csv_paths)
+        entries = [(name, str(src[0]) if src else "") for name in names]
+        dlg = SourceNameDialog(self, entries, mode="DUT")
+        if not dlg.exec():
+            return None
+        return dlg.result_arrangement().get("colors")
 
     def _source_file_name(self, md, fallback):
         """이 source 를 만든 대표 입력 파일의 파일명. 없으면 '<legend>.parquet'.

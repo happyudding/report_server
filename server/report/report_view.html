@@ -690,14 +690,23 @@ tbody tr:hover { background: #f9fbff; }
    줘서 세로 스크롤을 wrap 이 맡게 한다. 그러면 하단 가로 스크롤바도 항상 화면 안에 들어온다
    (사용자 요구: "가로 스크롤까진 보여야 함"). 프록시 가로 바는 wrap 위에 sticky 로 붙인다.
    #panel-yield 로 한정 — Issue Bin 상세의 kind-yield 표(짧다)는 종전 그대로 둔다. */
-/* 표 자체를 sticky 로 붙이는 건 불가능하다 — 섹션(STEP) 높이가 표 높이와 거의 같아
-   sticky 가 움직일 여유(containing block slack)가 없다(2026-08-06 실측: 요청 top 155px,
-   실제 -95px). 대신 표를 뷰포트 높이로 잘라 **표 안에서 세로 스크롤**하게 하고 헤더를 그
-   안에 고정한다. 표 위에 커서를 두고 굴리면 표가 먼저 스크롤되고(헤더 계속 보임), 표 끝에
-   닿아야 페이지가 다음 STEP 으로 넘어간다. 섹션 정렬은 툴바의 점프 버튼이 맞춰준다. */
-#panel-yield .sheet-wrap.kind-yield {
+/* ── 세로 틀고정 구조 (2026-08-06, 2차) ────────────────────────────────────────
+   헤더(thead)를 sticky 로 고정하려면 **세로 스크롤 주체가 wrap 이어야** 한다(wrap 이
+   overflow:auto 라 sticky 기준 scrollport 가 뷰포트가 아니라 wrap 이다). 그런데 사용자가
+   굴리는 건 페이지 스크롤이라, 표만 안에서 스크롤되게 두면 페이지를 내릴 때 표가 통째로
+   툴바 밑으로 사라진다(1차 구현의 실제 증상).
+   그래서 **페이지 스크롤 = 표 내부 스크롤** 로 묶는다:
+     · 섹션 min-height 를 표 전체 높이로 늘려(JS) 그만큼 페이지가 스크롤되게 하고,
+     · wrap 은 그 섹션 안에서 sticky 로 툴바 바로 아래에 고정되며(늘어난 높이 = sticky 여유),
+     · 페이지 스크롤량만큼 wrap.scrollTop 을 JS 가 그대로 따라 준다(1:1).
+   wrap 의 세로는 hidden — 사용자가 표 안을 따로 굴리면 페이지 스크롤과 두 번 움직인다.
+   .yield-vfreeze 클래스로 게이트해 JS 가 준비된 뒤에만 적용한다(JS 실패 시 종전 동작 유지). */
+#panel-yield.yield-vfreeze .sheet-wrap.kind-yield {
+  position: sticky;
+  top: calc(var(--sticky-head-h, 96px) + var(--yield-toolbar-h, 40px) + var(--yield-hscroll-h, 14px));
   max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - var(--yield-toolbar-h, 40px)
                    - var(--yield-hscroll-h, 14px) - 56px);
+  overflow-y: hidden;
 }
 /* 브라우저 기본 scrollIntoView 로 섹션에 갈 때도 sticky 헤더+툴바에 가리지 않게. */
 #panel-yield .yield-step-section, #panel-yield .yield-corner-section {
@@ -1347,7 +1356,7 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 /* Legend 가 화면보다 길면 잘리므로 뷰포트 높이로 제한하고 내부 스크롤.
    scrollbar-gutter: 세로 스크롤바가 폭을 잠식해 가로 스크롤이 생기는 것 방지. */
 .wafer-legend-fixed { flex: 0 0 340px; position: sticky; top: var(--sticky-head-h, 96px); max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - 16px); overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
-/* Temperature Map Legend 는 Item/TNO/Bin/die 4열이라 340px 에서는 Bin·die 가 잘린다(사용자 요청 2026-08-06). */
+/* Temperature Map Legend 는 Bin/TNO/Item/die 4열이라 340px 에서는 Item·die 가 잘린다(사용자 요청 2026-08-06). */
 .wafer-legend-fixed.legend-wide { flex: 0 0 440px; }
 .wafer-legend-title { font-size: 13px; font-weight: 700; color: #333; margin: 0 0 8px; }
 .bin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -1361,14 +1370,15 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 /* Bin Legend description(대표 fail item) 열 — 좌측 정렬 + 말줄임 */
 .bin-table td.bin-desc { text-align: left; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; font-size: 11px; }
 html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
-/* Temperature Map Legend: 항목명이 길어도 TNO/Bin/die 열이 밀려 잘리지 않게 폭을 고정 배분하고,
-   Item 만 말줄임(전체 이름은 hover title). 항목 수 제한 없이 전부 나열한다(내부 스크롤). */
+/* Temperature Map Legend: 열 순서는 Bin/TNO/Item/die. 항목명이 길어도 나머지 열이 밀려
+   잘리지 않게 Bin/TNO/die 폭을 고정하고 Item 만 남은 폭+말줄임(전체 이름은 hover title).
+   항목 수 제한 없이 전부 나열한다(내부 스크롤). */
 .temp-legend-table { table-layout: fixed; }
+.temp-legend-table th:nth-child(1), .temp-legend-table td:nth-child(1) { width: 62px; }
 .temp-legend-table th:nth-child(2), .temp-legend-table td:nth-child(2) { width: 62px; }
-.temp-legend-table th:nth-child(3), .temp-legend-table td:nth-child(3) { width: 44px; }
 .temp-legend-table th:nth-child(4), .temp-legend-table td:nth-child(4) { width: 52px; }
 .temp-legend-table td.temp-leg-item {
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 /* TNO Legend — "기타" 행은 클릭 불가 */
 .bin-table tr.tno-other td { cursor: default; color: #888; }

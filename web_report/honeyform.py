@@ -397,6 +397,19 @@ def _dut_sort_key(label: str):
         return (1, label)
 
 
+def dut_labels(data) -> list[str]:
+    """DUT 컬럼 → **분할 순서(수치 오름차순)의 고유 라벨** 목록. 분할 규칙의 정본.
+
+    ``split_table_by_dut`` 이 이 함수로 source 를 만들고, Honey 클라이언트도 업로드 **전에**
+    "서버가 만들 DUT source 목록"을 알아야 색을 지정할 수 있어 같은 함수를 쓴다
+    (honey_main._dut_source_names). 두 곳이 다른 규칙을 쓰면 색 번호가 밀린다.
+
+    data 는 메타 6행을 뺀 **데이터 행 프레임**이다.
+    """
+    labels = data["DUT"].map(_fmt_dut)
+    return sorted(dict.fromkeys(labels.tolist()), key=_dut_sort_key)
+
+
 def split_table_by_dut(table: "HoneyformTable") -> list["HoneyformTable"]:
     """단일 HoneyformTable 을 DUT 컬럼 값별로 분할 — 각 DUT 가 새 source 가 된다 (DUT 모드).
 
@@ -408,7 +421,7 @@ def split_table_by_dut(table: "HoneyformTable") -> list["HoneyformTable"]:
     labels = data["DUT"].map(_fmt_dut)
     # DUT legend/series 순서를 전 탭(yield/distribution/issue table/map)에서 수치
     # 오름차순으로 통일 (1,2,…,10,11,12). 비숫자('(blank)' 등)는 뒤로 문자순.
-    uniq = sorted(dict.fromkeys(labels.tolist()), key=_dut_sort_key)
+    uniq = dut_labels(data)
     if len(uniq) <= 1:
         return [table]
 

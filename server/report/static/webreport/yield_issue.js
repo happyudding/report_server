@@ -369,11 +369,76 @@ function syncYieldHeadRowHeight(panel) {
   });
 }
 
+// ── 세로 틀고정: 페이지 스크롤 ↔ 표 내부 스크롤 1:1 동기화 ────────────────────
+// (구조 설명은 report_view.html 의 .yield-vfreeze 주석이 정본)
+// ① 섹션 높이를 표 전체 높이로 늘려 페이지가 그만큼 스크롤되게 하고
+// ② 페이지가 섹션을 지나간 만큼 wrap.scrollTop 을 그대로 따라 준다.
+// 표가 뷰포트보다 짧으면 늘릴 것도 따라갈 것도 없다(그 섹션은 그냥 통째로 보인다).
+function yieldVFreezeSections(panel) {
+  return (panel || document).querySelectorAll(
+    "#panel-yield .yield-step-section, #panel-yield .yield-corner-section");
+}
+function syncYieldVFreeze(panel) {
+  panel = panel || document.getElementById("panel-yield");
+  if (!panel) return;
+  // 클램프(max-height)를 **먼저** 걸어야 wrap.clientHeight 가 "잘린 높이"로 읽힌다 —
+  // 클래스를 나중에 붙이면 첫 측정에서 wrap 높이 = 표 전체 높이라 늘 "고정 불필요" 로 나온다.
+  panel.classList.add("yield-vfreeze");
+  let any = false;
+  yieldVFreezeSections(panel).forEach(sec => {
+    const wrap = sec.querySelector(".sheet-wrap.kind-yield");
+    const table = wrap && wrap.querySelector(".sheet-table.kind-yield");
+    if (!wrap || !table) return;
+    // 표 전체 높이(클램프 전) + 섹션 안 다른 요소(제목·프록시 바) 높이.
+    const tableH = table.scrollHeight;
+    let others = 0;
+    Array.prototype.forEach.call(sec.children, el => {
+      if (el !== wrap) others += el.getBoundingClientRect().height;
+    });
+    const wrapH = wrap.clientHeight;
+    if (!(tableH > 0) || !(wrapH > 0)) return;
+    if (tableH > wrapH) {
+      sec.style.minHeight = Math.ceil(tableH + others + 16) + "px";
+      any = true;
+    } else {
+      sec.style.minHeight = "";
+    }
+  });
+  // 늘릴 섹션이 하나도 없으면(짧은 표뿐) 고정 구조 자체가 필요 없다 — 클래스를 되돌린다.
+  if (!any) { panel.classList.remove("yield-vfreeze"); return; }
+  applyYieldVFreezeScroll(panel);
+}
+// 페이지 스크롤 위치 → 각 표의 scrollTop. sticky 로 고정된 wrap 은 섹션이 위로 지나간
+// 만큼(pinTop - secTop) 안쪽을 내려 보여줘야 페이지 스크롤 한 번에 표가 이어서 읽힌다.
+function applyYieldVFreezeScroll(panel) {
+  panel = panel || document.getElementById("panel-yield");
+  if (!panel || !panel.classList.contains("yield-vfreeze")) return;
+  const pinTop = yieldStickyTop() + (parseFloat(getComputedStyle(document.documentElement)
+    .getPropertyValue("--yield-hscroll-h")) || 14);
+  yieldVFreezeSections(panel).forEach(sec => {
+    const wrap = sec.querySelector(".sheet-wrap.kind-yield");
+    if (!wrap) return;
+    const max = wrap.scrollHeight - wrap.clientHeight;
+    if (max <= 0) { wrap.scrollTop = 0; return; }
+    const past = pinTop - sec.getBoundingClientRect().top;
+    wrap.scrollTop = Math.max(0, Math.min(max, past));
+  });
+}
+let _yieldVFreezeRaf = false;
+window.addEventListener("scroll", () => {
+  if (_yieldVFreezeRaf) return;
+  const panel = document.getElementById("panel-yield");
+  if (!panel || !panel.classList.contains("active")) return;
+  _yieldVFreezeRaf = true;
+  requestAnimationFrame(() => { _yieldVFreezeRaf = false; applyYieldVFreezeScroll(panel); });
+}, { passive: true });
+
 function syncYieldStickyOffsets(panel) {
   panel = panel || document.getElementById("panel-yield");
   if (!panel) return;
   syncYieldToolbarHeight(panel);
   syncYieldHeadRowHeight(panel);
+  syncYieldVFreeze(panel);
   panel.querySelectorAll(".sheet-table.kind-yield").forEach(table => {
     let row = null;
     table.querySelectorAll("tbody tr").forEach(tr => {

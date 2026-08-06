@@ -6,8 +6,8 @@ Compare 모드는 종전에 source 가 정확히 2개일 때만 쓸 수 있었�
 
     Before                     After
     ┌──────────┐   >>  >       ┌──────────┐   ↑
-    │ WF1      │   <   <<      │ WF3      │   ↓
-    │ WF2      │               │ WF4      │
+    │ ■ WF1    │   <   <<      │ ■ WF3    │   ↓
+    │ ■ WF2    │               │ ■ WF4    │
     └──────────┘               └──────────┘
       항목 더블클릭 = Legend 이름 변경           [Confirm] [취소]
 
@@ -16,17 +16,25 @@ Compare 모드는 종전에 source 가 정확히 2개일 때만 쓸 수 있었�
 RawdataHubDialog 의 Item Select(``_ItemListWidget``)와 같은 규칙을 쓰되 **이동 후 원본
 순서로 되돌리는 재정렬은 하지 않는다**.
 
+항목 앞 사각형이 그 source 의 리포트 색이다. 색은 이름이 아니라 **업로드 순서
+(After → Before) 위치 i** 에 붙으므로(서버 ``dist_colors[i]``), 항목을 옮기면 색이 그
+자리에 남는다 — ``SourceNameDialog`` 의 색 열과 같은 규칙이라 두 창의 의미가 어긋나지
+않는다. 그래서 이동·정렬 뒤에는 반드시 ``_refresh_colors()`` 를 돌린다.
+
 Compare 모드에서는 이 창이 공통 ``SourceNameDialog``(표 방식)를 대신한다 — 이름 변경은
-항목 더블클릭으로 한다.
+항목 더블클릭, 색 변경은 [색 변경…] 버튼으로 한다(더블클릭은 이름이 먼저 쓴다).
 """
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtGui import QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QColorDialog,
     QDialog,
     QDialogButtonBox,
     QGridLayout,
+    QHBoxLayout,
     QInputDialog,
     QLabel,
     QListWidget,
@@ -36,7 +44,10 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
+from honey_ui.source_name_dialog import load_palette
+
 _MOVE_BTN_W = 36
+_SWATCH = 14                  # 항목 앞 색 사각형 한 변(px)
 
 
 def dedupe_names(names) -> list:
@@ -60,11 +71,13 @@ def dedupe_names(names) -> list:
 class CompareArrangeDialog(QDialog):
     """exec() 가 참을 돌려주면 result() 로 배치 결과를 읽는다."""
 
-    def __init__(self, parent, names):
+    def __init__(self, parent, names, colors=None):
         super().__init__(parent)
-        self.setWindowTitle("Compare — Before / After 배치")
+        self.setWindowTitle("Compare — Before / After 배치 / 색")
         self.resize(680, 460)
         self._original = [str(n) for n in names]
+        self._colors = list(colors) if colors else load_palette()
+        self._colors_changed = False
 
         self.list_before = QListWidget()
         self.list_after = QListWidget()
@@ -93,6 +106,7 @@ class CompareArrangeDialog(QDialog):
             lambda: self._move(self.list_before, self.list_after, self.list_before.selectedItems()))
         btn_sel_left.clicked.connect(
             lambda: self._move(self.list_after, self.list_before, self.list_after.selectedItems()))
+        self._refresh_colors()
 
         mid = QVBoxLayout()
         mid.addStretch(1)
@@ -125,9 +139,21 @@ class CompareArrangeDialog(QDialog):
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(2, 1)
 
-        hint = QLabel("· 항목 더블클릭 = Legend 이름 변경\n"
+        btn_color = QPushButton("색 변경…")
+        btn_color.setToolTip("선택한 항목의 리포트 색을 바꿉니다 (옵션(F10) 팔레트보다 우선).")
+        btn_color.clicked.connect(self._pick_color)
+        btn_palette = QPushButton("전체 팔레트 편집…")
+        btn_palette.setToolTip("48색 팔레트를 편집해 옵션(F10)에 저장합니다.")
+        btn_palette.clicked.connect(self._edit_palette)
+        tools = QHBoxLayout()
+        tools.addWidget(btn_color)
+        tools.addStretch(1)
+        tools.addWidget(btn_palette)
+
+        hint = QLabel("· 항목 더블클릭 = Legend 이름 변경 / 항목 선택 후 [색 변경…] = 색 지정\n"
                       "· After 최상단 source 가 limit(HiLIM/LoLIM) 기준이고 Log 비교의 대표입니다.\n"
-                      "· 업로드 순서는 After → Before 순이 되며 웹 리포트의 컬럼·범례 순서와 같습니다.")
+                      "· 업로드 순서는 After → Before 순이 되며 웹 리포트의 컬럼·범례 순서와 같습니다.\n"
+                      "· 색은 그 업로드 순서(1,2,3…)에 붙습니다 — 항목을 옮기면 색도 그 자리에 남습니다.")
         hint.setStyleSheet("color:#64748b;")
 
         buttons = QDialogButtonBox()
@@ -138,6 +164,7 @@ class CompareArrangeDialog(QDialog):
 
         root = QVBoxLayout(self)
         root.addLayout(grid)
+        root.addLayout(tools)
         root.addWidget(hint)
         root.addWidget(buttons)
 
@@ -147,6 +174,7 @@ class CompareArrangeDialog(QDialog):
             row = src.row(it)
             if row >= 0:
                 dst.addItem(src.takeItem(row))   # 재정렬 없음 — 순서가 곧 의미
+        self._refresh_colors()
 
     def _move_all(self, src, dst):
         self._move(src, dst, [src.item(i) for i in range(src.count())])
@@ -163,6 +191,54 @@ class CompareArrangeDialog(QDialog):
                 it = lw.takeItem(row)
                 lw.insertItem(new, it)
                 it.setSelected(True)
+        self._refresh_colors()
+
+    # ── 색 ──────────────────────────────────────────────────────────────────
+    def _ordered_items(self):
+        """업로드 순서(After → Before)의 항목 목록 — 색 번호가 붙는 순서다."""
+        return [lw.item(i) for lw in (self.list_after, self.list_before)
+                for i in range(lw.count())]
+
+    def _color_at(self, i):
+        return self._colors[i] if i < len(self._colors) else "#888888"
+
+    def _refresh_colors(self):
+        """항목 앞 색 사각형을 업로드 순서 기준으로 다시 칠한다."""
+        for i, it in enumerate(self._ordered_items()):
+            color = self._color_at(i)
+            pix = QPixmap(_SWATCH, _SWATCH)
+            pix.fill(QColor(color))
+            it.setIcon(QIcon(pix))
+            it.setToolTip(f"{i + 1}번 (업로드 순서) — 색 {color}")
+        for lw in (self.list_before, self.list_after):
+            lw.setIconSize(QSize(_SWATCH, _SWATCH))
+
+    def _pick_color(self):
+        selected = [it for lw in (self.list_before, self.list_after)
+                    for it in lw.selectedItems()]
+        if len(selected) != 1:
+            QMessageBox.information(self, "색 변경",
+                                    "색을 바꿀 항목 하나를 선택해 주세요.")
+            return
+        ordered = self._ordered_items()
+        i = ordered.index(selected[0])
+        chosen = QColorDialog.getColor(QColor(self._color_at(i)), self,
+                                       f"{selected[0].text()} 색상 선택")
+        if not chosen.isValid():
+            return
+        while len(self._colors) <= i:
+            self._colors.append("#888888")
+        self._colors[i] = chosen.name().upper()
+        self._colors_changed = True
+        self._refresh_colors()
+
+    def _edit_palette(self):
+        """48색 팔레트 편집(옵션 F10 과 같은 창) — 저장되면 색을 다시 읽는다."""
+        from honey_ui.dialogs import ColorEditorDialog
+        if ColorEditorDialog(self).exec():
+            self._colors = load_palette()
+            self._colors_changed = True
+            self._refresh_colors()
 
     def _rename(self, item):
         text, ok = QInputDialog.getText(self, "SourceName 변경",
@@ -192,6 +268,7 @@ class CompareArrangeDialog(QDialog):
           ``df_honey_group.rename_sources`` 가 원본 순서 기준이라 그대로 넘긴다.
         - ``order``  : 업로드 순서 (After 먼저 → Before) 의 새 이름 목록.
         - ``before`` / ``after`` : 그룹별 새 이름 목록 (그룹 안 순서 유지).
+        - ``colors`` : 창에서 바꿨을 때만 48색 목록, 아니면 None (옵션 팔레트 유지).
 
         이름은 source 키라 전체에서 유일해야 한다. dedupe 는 **원본 순서 기준**으로 한 번만
         수행하고(rename_sources 와 같은 규칙), 그 결과를 그룹 목록에도 그대로 반영한다.
@@ -205,4 +282,5 @@ class CompareArrangeDialog(QDialog):
         after = [name_by_idx[i] for i, _ in after_entries]
         before = [name_by_idx[i] for i, _ in before_entries]
         return {"names": deduped, "order": after + before,
-                "after": after, "before": before}
+                "after": after, "before": before,
+                "colors": list(self._colors) if self._colors_changed else None}

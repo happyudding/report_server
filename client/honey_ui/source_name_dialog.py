@@ -5,15 +5,23 @@ r"""SourceNameDialog — Web Report 생성 직전 source 이름·순서(·Temper
 **최상단 source 의 limit(HiLIM/LoLIM)이 리포트 전체의 판정 기준**이 된다
 (web_report/tabs/distribution.py 의 ``matched[0]``). 그래서 1행을 초록으로 강조한다.
 
-    ┌──────────────────────────────────────────────────────────────┐
-    │  # │ 입력 파일 (읽기 전용)                    │ Legend       │  ↑
-    │ 1★ │ …\lot_N4XA123\run03\602XX2_3_final.std  │ 602XX2_3     │  ↓
-    └──────────────────────────────────────────────────────────────┘
+    ┌───────────────────────────────────────────────────────────────────┐
+    │  # │ 입력 파일 (읽기 전용)                    │ Legend       │ 색 │  ↑
+    │ 1★ │ …\lot_N4XA123\run03\602XX2_3_final.std  │ 602XX2_3     │ ██ │  ↓
+    └───────────────────────────────────────────────────────────────────┘
 
-Temperature 모드(PMIC 전용)에서는 **열 3개(Group·Role·색)와 Limit 파일 영역이 더 생긴다** —
+**색 열은 모든 모드에 있다.** 기본값은 옵션(F10) 팔레트이고, 여기서 바꾼 색이 그 리포트의
+최종 색이 된다(팔레트보다 우선). 색은 이름이 아니라 **표시 순서 i** 에 붙으므로 행을
+옮기면 색도 그 자리에 남는다 — 서버의 ``dist_colors[i]`` 규약과 같다.
+
+Temperature 모드(PMIC 전용)에서는 **열 2개(Group·Role)와 Limit 파일 영역이 더 생긴다** —
 구 ``TemperatureGroupDialog``(드래그앤드랍 배치 창)를 이 창이 흡수했다. 그 외 모드에서 이
 부분들은 비활성이 아니라 **아예 만들지 않는다**(열은 columnCount 에서 빠지고, Limit 영역은
 컨테이너째 숨겨 레이아웃이 높이를 회수한다).
+
+DUT 모드는 **색 전용**이다 — 행이 입력 파일이 아니라 서버가 만들 DUT pseudo-source
+(``DUT 1``, ``DUT 2`` …)라 이름·순서를 클라가 정할 수 없다. 그래서 Legend 는 읽기 전용,
+↑/↓ 는 만들지 않고, 파일 열은 숨긴다.
 
 순서를 바꾸는 경로가 ``_shift() → _render()`` 하나뿐이라, 최상단 강조·그룹 구분선·색 스와치
 갱신을 ``_render()`` 안에서만 하면 상태가 어긋날 수 없다. ``self._rows`` 가 유일한 진실이고
@@ -64,9 +72,25 @@ _GROUP_BAND = "#F1F5F9"       # 짝수 그룹 옅은 띠 (그룹 경계 시각�
 _ROLE_ITEMS = ("", ) + ROLES
 _NEW_GROUP = "+ 새 그룹"
 _NO_GROUP = "(미지정)"
+_DROP_HINT = ".lt / .pds 파일을 여기에 끌어다 놓으세요"   # 파일을 넣으면 이 자리에 파일명이 들어간다
+_DROP_HINT_STYLE = "color:#1e40af;"
+_DROP_FILE_STYLE = "color:#166534; font-weight:600;"
 
 
 # ── 순수 함수 (Qt 무의존 — QApplication 없이 단독 검증 가능) ──────────────────
+def load_palette() -> list:
+    """옵션(F10)에서 지정한 팔레트를 읽는다. 실패하면 기본 48색.
+
+    색을 고르는 창이 둘(이 창 + CompareArrangeDialog)이라 **기본값을 읽는 곳은 하나**로
+    둔다 — 한쪽만 옵션을 안 보면 같은 순번의 source 가 창마다 다른 색으로 보인다.
+    """
+    try:
+        import chart_colors
+        return chart_colors.load_colors()
+    except Exception:                                      # noqa: BLE001
+        return ["#3366CC"] * 48
+
+
 def shorten_path(path, limit: int = _PATH_CHARS) -> str:
     """절대경로를 limit 자 안으로 줄인다 — **뒤에서 폴더 2개 + 파일명**, 앞은 `…` 생략.
 
@@ -218,7 +242,7 @@ class _LimitsDropArea(QFrame):
         paths = self._paths(event.mimeData())
         if paths:
             event.acceptProposedAction()
-            self._on_files(paths)
+            self._on_files(paths[:1])          # limit 파일은 1개만 받는다
         else:
             event.ignore()
 
@@ -227,6 +251,7 @@ class SourceNameDialog(QDialog):
     """exec() 가 참을 돌려주면 result_arrangement() 로 결과를 읽는다.
 
     entries: ``[(legend, 대표 입력 파일 절대경로), ...]`` — **원본 source 순서**.
+             (DUT 모드는 ``DUT <값>`` pseudo-source 목록 — 경로는 원본 파일 하나로 같다.)
     roles  : ``{원본 legend: "RT"|"CT"|"HT"}`` (Temperature 자동 배치용, 없으면 파일명 추정)
     colors : 48색 팔레트 (없으면 옵션 팔레트를 읽는다)
 
@@ -238,17 +263,19 @@ class SourceNameDialog(QDialog):
         super().__init__(parent)
         self._mode = str(mode or "Normal")
         self._is_temp = (self._mode == "Temperature")
+        self._is_dut = (self._mode == "DUT")
         self._roles = {str(k): str(v).upper() for k, v in (roles or {}).items()}
         self._original = [str(name) for name, _ in entries]
         self._paths = [str(path or "") for _, path in entries]
         self._bin_map = None
         self._limits_file = None
-        self._colors = list(colors) if colors else self._load_palette()
+        self._colors = list(colors) if colors else load_palette()
         self._colors_changed = False
         self._rendering = False
 
         self.setWindowTitle("Temperature — Source 이름 / 그룹 배치" if self._is_temp
-                            else "Source 이름 / 순서")
+                            else "DUT — Source 색 지정" if self._is_dut
+                            else "Source 이름 / 순서 / 색")
         self._legend_max = _LEGEND_CHARS_TEMP if self._is_temp else _LEGEND_CHARS
 
         self._rows: list[_Row] = []
@@ -268,24 +295,20 @@ class SourceNameDialog(QDialog):
         self._apply_size()
 
     # ── 구성 ────────────────────────────────────────────────────────────────
-    @staticmethod
-    def _load_palette():
-        """옵션(F10)에서 지정한 팔레트를 기본값으로 읽는다. 실패하면 기본 48색."""
-        try:
-            import chart_colors
-            return chart_colors.load_colors()
-        except Exception:                                  # noqa: BLE001
-            return ["#3366CC"] * 48
-
     def _reset_rows(self):
         """행을 원본 상태로 되돌린다 (이름·순서·그룹·역할 전부)."""
         self._rows = [_Row(index=i, path=self._paths[i], legend=self._original[i])
                       for i in range(len(self._original))]
 
     def _columns(self):
-        cols = ["입력 파일", f"Legend (최대 {self._legend_max}자)"]
+        """열 구성 — 색은 **항상 마지막**이라 위치를 self._color_col 로 기억해 둔다."""
+        cols = ["입력 파일",
+                "Source (DUT 분할)" if self._is_dut
+                else f"Legend (최대 {self._legend_max}자)"]
         if self._is_temp:
-            cols += ["Group", "Role", "색"]
+            cols += ["Group", "Role"]
+        cols.append("색")
+        self._color_col = len(cols) - 1
         return cols
 
     def _build_ui(self):
@@ -299,30 +322,35 @@ class SourceNameDialog(QDialog):
         self.table.setItemDelegateForColumn(1, _MaxLenDelegate(self._legend_max, self))
         self.table.itemChanged.connect(self._on_item_changed)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
-        self.table.horizontalHeader().setStretchLastSection(not self._is_temp)
-
-        btn_up, btn_down = QPushButton("↑"), QPushButton("↓")
-        btn_up.setToolTip("선택 행을 위로 (Alt+↑) — 최상단이 Limit 기준입니다")
-        btn_down.setToolTip("선택 행을 아래로 (Alt+↓)")
-        btn_up.clicked.connect(lambda: self._shift(-1))
-        btn_down.clicked.connect(lambda: self._shift(1))
-        for b in (btn_up, btn_down):
-            b.setFixedWidth(36)
-        QShortcut(QKeySequence("Alt+Up"), self).activated.connect(lambda: self._shift(-1))
-        QShortcut(QKeySequence("Alt+Down"), self).activated.connect(lambda: self._shift(1))
-        side = QVBoxLayout()
-        side.addStretch(1)
-        side.addWidget(btn_up)
-        side.addWidget(btn_down)
-        side.addStretch(1)
+        header = self.table.horizontalHeader()
+        # 마지막 열이 색(고정폭)이 됐으므로 stretch 는 Legend 열이 받는다.
+        header.setStretchLastSection(False)
+        if not self._is_temp:
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        if self._is_dut:
+            self.table.setColumnHidden(0, True)   # DUT 분할은 전부 같은 원본 파일이다
 
         middle = QHBoxLayout()
         middle.addWidget(self.table, 1)
-        middle.addLayout(side)
+        if not self._is_dut:                      # DUT 순서는 서버가 정한다 (수치 오름차순)
+            btn_up, btn_down = QPushButton("↑"), QPushButton("↓")
+            btn_up.setToolTip("선택 행을 위로 (Alt+↑) — 최상단이 Limit 기준입니다")
+            btn_down.setToolTip("선택 행을 아래로 (Alt+↓)")
+            btn_up.clicked.connect(lambda: self._shift(-1))
+            btn_down.clicked.connect(lambda: self._shift(1))
+            for b in (btn_up, btn_down):
+                b.setFixedWidth(36)
+            QShortcut(QKeySequence("Alt+Up"), self).activated.connect(lambda: self._shift(-1))
+            QShortcut(QKeySequence("Alt+Down"), self).activated.connect(lambda: self._shift(1))
+            side = QVBoxLayout()
+            side.addStretch(1)
+            side.addWidget(btn_up)
+            side.addWidget(btn_down)
+            side.addStretch(1)
+            middle.addLayout(side)
 
         root = QVBoxLayout(self)
-        if self._is_temp:
-            root.addWidget(self._build_temp_toolbar())
+        root.addWidget(self._build_toolbar())
         root.addLayout(middle, 1)
         if self._is_temp:
             root.addWidget(self._build_limits_box())
@@ -339,21 +367,23 @@ class SourceNameDialog(QDialog):
         root.addWidget(buttons)
         self.setSizeGripEnabled(True)
 
-    def _build_temp_toolbar(self):
+    def _build_toolbar(self):
+        """팔레트 편집은 모든 모드 공통, 자동 배치·그룹 초기화는 Temperature 전용."""
         box = QWidget()
         lay = QHBoxLayout(box)
         lay.setContentsMargins(0, 0, 0, 0)
-        btn_auto = QPushButton("파일명으로 자동 배치")
-        btn_auto.setToolTip("폴더 역할과 이름 유사도로 그룹을 다시 제안합니다.")
-        btn_auto.clicked.connect(lambda: self._auto_arrange())
-        btn_clear = QPushButton("그룹 초기화")
-        btn_clear.setToolTip("그룹·역할 지정만 지웁니다 (이름·순서는 유지).")
-        btn_clear.clicked.connect(self._clear_groups)
+        if self._is_temp:
+            btn_auto = QPushButton("파일명으로 자동 배치")
+            btn_auto.setToolTip("폴더 역할과 이름 유사도로 그룹을 다시 제안합니다.")
+            btn_auto.clicked.connect(lambda: self._auto_arrange())
+            btn_clear = QPushButton("그룹 초기화")
+            btn_clear.setToolTip("그룹·역할 지정만 지웁니다 (이름·순서는 유지).")
+            btn_clear.clicked.connect(self._clear_groups)
+            for b in (btn_auto, btn_clear):
+                lay.addWidget(b)
         btn_palette = QPushButton("전체 팔레트 편집…")
         btn_palette.setToolTip("48색 팔레트를 편집해 옵션(F10)에 저장합니다.")
         btn_palette.clicked.connect(self._edit_palette)
-        for b in (btn_auto, btn_clear):
-            lay.addWidget(b)
         lay.addStretch(1)
         lay.addWidget(btn_palette)
         return box
@@ -368,9 +398,10 @@ class SourceNameDialog(QDialog):
         lay.addWidget(title)
         drop = _LimitsDropArea(self._load_limits)
         drop_lay = QHBoxLayout(drop)
-        drop_hint = QLabel(".lt / .pds 파일을 여기에 끌어다 놓으세요")
-        drop_hint.setStyleSheet("color:#1e40af;")
-        drop_lay.addWidget(drop_hint)
+        # 파일을 넣으면 이 안내문 **자리 그대로** 파일명으로 바뀐다 (_load_limits).
+        self.lbl_drop = QLabel(_DROP_HINT)
+        self.lbl_drop.setStyleSheet(_DROP_HINT_STYLE)
+        drop_lay.addWidget(self.lbl_drop)
         drop_lay.addStretch(1)
         btn_pick = QPushButton("파일 선택…")
         btn_pick.clicked.connect(self._pick_limits)
@@ -383,17 +414,29 @@ class SourceNameDialog(QDialog):
         return box
 
     def _build_hint(self):
+        if self._is_dut:
+            return self._hint_label([
+                "· 이름·순서는 서버가 DUT 값으로 정합니다 (수치 오름차순) — 이 창에서는"
+                " 색만 지정합니다.",
+                "· 색 칸을 더블클릭하면 이 리포트에만 적용되는 색으로 바꿉니다"
+                "(옵션(F10) 팔레트보다 우선).",
+            ])
         lines = ["· 최상단(1번) source 의 Limit(HiLIM/LoLIM) 기준으로 리포트가 생성됩니다."]
         if self._is_temp:
-            lines += [
+            lines.append(
                 "· 그룹마다 RT 가 그 그룹의 Limit 판정 기준입니다 — CT/HT 는 RT 의 Bin1 좌표만"
-                " 남기고 RT limit 으로 다시 판정합니다.",
-                "· 색은 순서(1,2,3…)에 붙습니다. 색 칸을 더블클릭하면 이 리포트에만 적용되는"
-                " 색으로 바꿉니다(옵션 팔레트보다 우선).",
-            ]
-        else:
-            lines.append("· 순서를 바꾸면 Distribution 색 번호도 함께 바뀝니다.")
-        lines.append("· 파일 이름 위에 마우스를 올리면 전체 경로가 보입니다. 삭제는 할 수 없습니다.")
+                " 남기고 RT limit 으로 다시 판정합니다.")
+        lines += [
+            "· 색은 순서(1,2,3…)에 붙습니다 — 순서를 바꾸면 Distribution 색 번호도 함께"
+            " 바뀝니다.",
+            "· 색 칸을 더블클릭하면 이 리포트에만 적용되는 색으로 바꿉니다"
+            "(옵션(F10) 팔레트보다 우선).",
+            "· 파일 이름 위에 마우스를 올리면 전체 경로가 보입니다. 삭제는 할 수 없습니다.",
+        ]
+        return self._hint_label(lines)
+
+    @staticmethod
+    def _hint_label(lines):
         hint = QLabel("\n".join(lines))
         hint.setStyleSheet("color:#64748b; font-size:9px;")
         hint.setWordWrap(True)
@@ -409,7 +452,8 @@ class SourceNameDialog(QDialog):
             n_groups = max([r.group for r in self._rows] or [0])
             for r, row in enumerate(self._rows):
                 self.table.setVerticalHeaderItem(
-                    r, QTableWidgetItem(f"{r + 1} ★" if r == 0 else str(r + 1)))
+                    r, QTableWidgetItem(f"{r + 1} ★" if r == 0 and not self._is_dut
+                                        else str(r + 1)))
 
                 cell = QTableWidgetItem(shorten_path(row.path))
                 cell.setFont(self._mono)
@@ -417,18 +461,21 @@ class SourceNameDialog(QDialog):
                 cell.setFlags(cell.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(r, 0, cell)
 
-                self.table.setItem(r, 1, QTableWidgetItem(row.legend))
+                legend = QTableWidgetItem(row.legend)
+                if self._is_dut:                 # 이름은 서버가 DUT 값으로 만든다
+                    legend.setFlags(legend.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                self.table.setItem(r, 1, legend)
 
                 if self._is_temp:
                     self.table.setCellWidget(r, 2, self._group_combo(r, row, n_groups))
                     self.table.setCellWidget(r, 3, self._role_combo(r, row))
-                    swatch = QTableWidgetItem("")
-                    swatch.setFlags(Qt.ItemFlag.ItemIsEnabled
-                                    | Qt.ItemFlag.ItemIsSelectable)
-                    color = self._color_at(r)
-                    swatch.setBackground(QBrush(QColor(color)))
-                    swatch.setToolTip(f"{color} — 더블클릭하면 색을 바꿉니다")
-                    self.table.setItem(r, 4, swatch)
+
+                swatch = QTableWidgetItem("")
+                swatch.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                color = self._color_at(r)
+                swatch.setBackground(QBrush(QColor(color)))
+                swatch.setToolTip(f"{color} — 더블클릭하면 색을 바꿉니다")
+                self.table.setItem(r, self._color_col, swatch)
             self._paint_rows()
         finally:
             self._rendering = False
@@ -458,13 +505,13 @@ class SourceNameDialog(QDialog):
         함께 쓴다. 비-최상단 복원은 무효 브러시(팔레트 기본) — 흰색을 칠하면 테마가 깨진다.
         """
         for r, row in enumerate(self._rows):
-            top = (r == 0)
+            top = (r == 0 and not self._is_dut)    # DUT 는 limit 기준이 원본 1개라 무의미
             # 그룹 경계를 눈으로 잡으려고 짝수 그룹에 아주 옅은 배경을 준다 (최상단이 우선).
             band = QColor(_GROUP_BAND) if (self._is_temp and row.group and row.group % 2 == 0) \
                 else None
             for c in range(self.table.columnCount()):
                 item = self.table.item(r, c)
-                if item is None or (self._is_temp and c == 4):
+                if item is None or c == self._color_col:
                     continue                       # 색 스와치는 자기 색을 지켜야 한다
                 if top:
                     item.setBackground(QBrush(QColor(_TOP_BG)))
@@ -518,7 +565,7 @@ class SourceNameDialog(QDialog):
         self._render()
 
     def _on_cell_double_clicked(self, r, c):
-        if not (self._is_temp and c == 4):
+        if c != self._color_col:
             return
         chosen = QColorDialog.getColor(QColor(self._color_at(r)), self,
                                        f"{r + 1}번 source 색상 선택")
@@ -531,6 +578,8 @@ class SourceNameDialog(QDialog):
 
     def _shift(self, delta):
         """선택 행을 한 칸 이동. 선택·스크롤을 따라 옮긴다."""
+        if self._is_dut:
+            return                                 # DUT 순서는 서버가 정한다
         self._commit_editor()
         row = self.table.currentRow()
         new = row + delta
@@ -604,16 +653,20 @@ class SourceNameDialog(QDialog):
 
     # ── Limit 파일 ──────────────────────────────────────────────────────────
     def _pick_limits(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, "Limit 파일 선택", "", LIMIT_FILTER)
-        if paths:
-            self._load_limits(paths)
+        path, _ = QFileDialog.getOpenFileName(self, "Limit 파일 선택", "", LIMIT_FILTER)
+        if path:
+            self._load_limits([path])
 
     def _load_limits(self, paths):
         """.lt/.pds 를 파싱해 항목→bin 매핑을 만든다. 실패는 경고 후 무시.
 
+        limit 파일은 **1개만** 받는다 — 성공하면 드롭 영역의 안내문 자리가 그 파일명으로
+        바뀐다(어느 파일을 넣었는지 그 자리에서 바로 보이게).
+
         파싱은 워커 스레드에서 돌린다 — 큰 limit 파일을 UI 스레드에서 읽으면 창이 통째로
         얼어붙는다. 읽는 동안 창은 비활성 + 대기 커서로 두고 이벤트만 돌린다.
         """
+        paths = list(paths)[:1]
         prev_text = self.lbl_limits.text()
         prev_style = self.lbl_limits.styleSheet()
         self.lbl_limits.setText("Limit 파일 읽는 중...")
@@ -641,6 +694,9 @@ class SourceNameDialog(QDialog):
             return
         self._bin_map = merged
         self._limits_file = {"name": loaded[0][0], "type": loaded[0][1]}
+        self.lbl_drop.setText(loaded[0][0])          # 안내문 자리 = 넣은 파일명
+        self.lbl_drop.setStyleSheet(_DROP_FILE_STYLE)
+        self.lbl_drop.setToolTip(str(paths[0]))
         self.lbl_limits.setText(" / ".join(f"{n} ({k}) — 항목 {c}건" for n, k, c in loaded))
         self.lbl_limits.setStyleSheet("color:#166534;")
 
@@ -651,13 +707,17 @@ class SourceNameDialog(QDialog):
         unit_ui = QFontMetrics(self.font()).horizontalAdvance("0")
         self.table.setColumnWidth(0, _PATH_CHARS * unit_mono + 18)
         self.table.setColumnWidth(1, self._legend_max * unit_ui + 28)
-        width = _PATH_CHARS * unit_mono + 18 + self._legend_max * unit_ui + 28
+        width = self._legend_max * unit_ui + 28
+        if not self._is_dut:                       # DUT 는 파일 열을 숨긴다
+            width += _PATH_CHARS * unit_mono + 18
         if self._is_temp:
-            for col, w in ((2, 96), (3, 92), (4, 52)):
+            for col, w in ((2, 96), (3, 92)):
                 self.table.setColumnWidth(col, w)
                 width += w
-            self.table.horizontalHeader().setSectionResizeMode(
-                4, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(self._color_col, 52)
+        width += 52
+        self.table.horizontalHeader().setSectionResizeMode(
+            self._color_col, QHeaderView.ResizeMode.Fixed)
 
         header = self.table.horizontalHeader().sizeHint().height()
         frame = self.table.frameWidth()
@@ -669,7 +729,8 @@ class SourceNameDialog(QDialog):
         # 높이는 레이아웃에 물어본다 — 표 최소높이가 이미 visible 행을 담고 있으므로
         # 여유값을 어림으로 더하면(하단 요소가 그보다 작을 때) 표 아래에 빈 띠가 남는다.
         self.layout().activate()
-        _fit_to_screen(self, width + 90, self.layout().sizeHint().height())
+        # DUT 는 파일 열이 없어 폭 계산만으로는 힌트 문구가 줄줄이 접힌다 — 하한을 둔다.
+        _fit_to_screen(self, max(width + 90, 460), self.layout().sizeHint().height())
 
     # ── 결과 ────────────────────────────────────────────────────────────────
     def _accept(self):
@@ -707,6 +768,9 @@ class SourceNameDialog(QDialog):
         - ``order``        : 표시 순서의 새 이름 (로그·참고용)
         - Temperature 전용: ``groups`` / ``bin_map`` / ``limits_file``
         - ``colors``       : 창에서 바꿨을 때만 48색 목록, 아니면 None (옵션 팔레트 유지)
+
+        DUT 모드는 이름·순서를 클라가 정하지 않으므로 호출부가 ``colors`` 만 쓴다
+        (나머지 키는 서버가 만들 pseudo-source 이름이라 rename 에 넘기면 안 된다).
         """
         by_index = {row.index: row.legend for row in self._rows}
         raw = [by_index.get(i, self._original[i]) for i in range(len(self._original))]

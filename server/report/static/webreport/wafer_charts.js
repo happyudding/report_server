@@ -734,11 +734,12 @@ function tempItemLegendHtml(info, selected) {
     const sw = (selected.size === 0 || sel) ? info.colorMap[it] : MAP_BIN_DIM_COLOR;
     const m = info.meta[it] || {};
     return `<tr${sel ? ` class="is-selected"` : ""} data-temp-item="${esc(it)}">` +
-      `<td class="temp-leg-item" title="${esc(it)}"><span class="bin-swatch" style="background:${sw}"></span>${esc(it)}</td>` +
-      `<td>${esc(m.tno || "")}</td><td>${esc(m.bin || "")}</td>` +
+      `<td><span class="bin-swatch" style="background:${sw}"></span>${esc(m.bin || "")}</td>` +
+      `<td>${esc(m.tno || "")}</td>` +
+      `<td class="temp-leg-item" title="${esc(it)}">${esc(it)}</td>` +
       `<td>${info.cnt[it] || 0}</td></tr>`;
   }).join("");
-  return `<table class="bin-table temp-legend-table"><thead><tr><th>Item</th><th>TNO</th><th>Bin</th><th>die</th>` +
+  return `<table class="bin-table temp-legend-table"><thead><tr><th>Bin</th><th>TNO</th><th>Item</th><th>die</th>` +
          `</tr></thead><tbody>${body}</tbody></table>`;
 }
 
@@ -896,7 +897,7 @@ function renderMapAnalysis() {
       : `<div class="placeholder">${mapColorKey === "temp"
           ? "CT / HT 소스 맵이 없습니다" : "표시할 맵이 없습니다"}</div>`) +
     `</div>` +
-    // Temperature Map Legend 는 Item/TNO/Bin/die 4열이라 기본 폭(340px)에서는 Bin·die 가 잘린다 → 넓게.
+    // Temperature Map Legend 는 Bin/TNO/Item/die 4열이라 기본 폭(340px)에서는 Item·die 가 잘린다 → 넓게.
     `<div class="wafer-legend-fixed${mapColorKey === "temp" ? " legend-wide" : ""}">` +
     // 색 기준 축(Bin/TNO)에 맞는 Legend 하나만 표시 — 축 전환 시 renderMapAnalysis 재호출로 교체.
     (mapColorKey === "temp"

@@ -287,7 +287,11 @@ let summaryJumpBound = false;
 function renderWebSummary() {
   const panel = document.getElementById("panel-summary");
   const sheets = webReportSheets();
-  if (!window.Plotly || !sheets) { emptyPanel(panel, "Summary 데이터 없음"); return; }
+  // Plotly 를 요구하지 않는다 — 이 패널은 표 HTML + textarea 만 그린다(차트 시절의 잔재였음).
+  // plotly.min.js 는 async 라 /full 보다 늦게 도착할 수 있고, renderTab 은 summary 를
+  // PLOTLY_TABS 로 대기시키지 않은 채 dirty 를 이미 내려버려 재렌더도 안 됐다
+  // → 간헐적으로 "Summary 데이터 없음" 만 뜨던 원인.
+  if (!sheets) { emptyPanel(panel, "Summary 데이터 없음"); return; }
   // Summary 카드(Yield) 클릭 → 해당 탭 버튼 클릭 재사용(1회 위임 바인딩).
   if (!summaryJumpBound) {
     panel.addEventListener("click", (e) => {
