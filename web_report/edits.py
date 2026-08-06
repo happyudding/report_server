@@ -55,7 +55,7 @@ YIELD_BASIS_TEST = "test"
 YIELD_BASIS_AUTO = "auto"
 
 # 표 payload 빌드에 안 쓰이는 kind — load_edit_state 조회에서 제외해 대용량 값
-# (note_sheet 시트 JSON 최대 2MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
+# (note_sheet 시트 JSON 최대 10MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
 # note_tag 는 /full extras 로 별도 조회(load_note_tags)라 표 상태에 싣지 않는다.
 # preprocess 는 loader 가 별도 조회(load_preprocess)해 캐시 키에 쓰므로 표 상태 밖이다.
 _STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG, KIND_PREPROCESS,
@@ -320,7 +320,7 @@ def save_yield_basis_map(report_db, session_id: str, basis_map, updated_by=None)
 def load_note_sheet(report_db, session_id: str) -> dict | None:
     """Note 탭 시트 JSON(단일 행, item_key='sheet') + 메타. 없으면 None.
 
-    시트 본문은 최대 2MB — /full 에는 싣지 않고 lazy GET 라우트만 이 함수를 쓴다."""
+    시트 본문은 최대 10MB — /full 에는 싣지 않고 lazy GET 라우트만 이 함수를 쓴다."""
     rows = report_db.get_webreport_edits(session_id, kinds=(KIND_NOTE_SHEET,))
     for row in rows:
         if row["item_key"] != "sheet":

@@ -49,7 +49,7 @@ def get_webreport_edits(session_id, kinds=None, exclude_kinds=None):
 def get_webreport_edit_meta(session_id, kind):
     """kind 의 편집행 메타만 [(item_key, updated_at, updated_by)] — value 를 읽지 않는다.
 
-    note_sheet(최대 2MB) 존재 여부/최종 수정자를 /full extras 가 매 요청 조회하는 용도."""
+    note_sheet(최대 10MB) 존재 여부/최종 수정자를 /full extras 가 매 요청 조회하는 용도."""
     with get_conn() as conn:
         rows = conn.execute(
             "SELECT item_key, updated_at, updated_by FROM report_webreport_edit "

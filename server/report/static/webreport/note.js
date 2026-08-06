@@ -28,12 +28,19 @@ let _noteBaseToken = null;
 // 저장 요청이 담아 보낸 편집 세대. 응답을 기다리는 동안 사용자가 더 편집하면 세대가
 // 달라지고, 그때는 dirty 를 풀지 않는다(안 그러면 그 편집이 저장된 것처럼 보인 채 유실).
 let _noteDirtyGen = 0;
+// 시트 이름 목록 [{index,name,order}] — Summary 의 $[시트명] 자동완성·시트 버튼 줄 공용.
+// Note 탭을 열지 않아도 알아야 하므로 경량 라우트(sheet_names)로 따로 받는다. Note 탭을
+// 이미 열었거나 저장한 뒤에는 그때 손에 쥔 시트 배열로 공짜로 채운다.
+let _noteSheetList = null;
+let _noteSheetListPromise = null;
 let _noteSaving = false;          // 저장 요청 진행 중 (자동/수동 경합 방지)
 let _noteAutoTimer = null;        // 자동저장 debounce 타이머
 let _noteConflictPending = false; // 자동저장이 409 를 만난 상태 — 수동 저장으로만 해소
 let _noteAutoErrToasted = false;  // 자동저장 실패 toast 반복 억제
 const NOTE_AUTOSAVE_MS = 45000;   // 마지막 편집 후 이 시간 지나면 자동저장
-const NOTE_MAX_BYTES = 3 * 1024 * 1024;   // 서버 _NOTE_SHEET_MAX_BYTES 와 동일
+// 서버 _NOTE_SHEET_MAX_BYTES 와 동일 (2026-08-06 3→10MB). Luckysheet 로 직접 넣은 이미지는
+// base64 로 이 JSON 안에 들어오므로(+33%) 상한이 사실상 이미지 예산이다.
+const NOTE_MAX_BYTES = 10 * 1024 * 1024;
 
 // ── 탭 렌더 (edit_mode.js TAB_RENDERERS["note"] → 탭 첫 활성화 시) ─────────────
 function renderNoteTab() {
@@ -88,6 +95,7 @@ function renderNoteTab() {
         ? saved.sheet.sheets : null;
       _noteBaseToken = (saved && saved.base) || null;
       _noteFetched = true;
+      noteSetSheetList(_noteSavedSheets || []);   // 시트 목록은 여기서 공짜로 얻는다
       noteRenderMeta(saved);
       noteUpdateSize(noteSheetBytes(_noteSavedSheets || []));
       noteMaybeInit(token);
@@ -211,7 +219,8 @@ function noteSheetBytes(sheets) {
 function noteUpdateSize(bytes) {
   const el = document.getElementById("noteSize");
   if (!el || bytes == null) return;
-  el.textContent = `${Math.ceil(bytes / 1024)}KB / ${NOTE_MAX_BYTES / 1024}KB`;
+  // 상한이 MB 단위라 KB 로만 쓰면 "7168KB" 처럼 읽기 어렵다 — 분모만 MB 로 적는다.
+  el.textContent = `${Math.ceil(bytes / 1024)}KB / ${NOTE_MAX_BYTES / 1024 / 1024}MB`;
   el.classList.toggle("warn", bytes > NOTE_MAX_BYTES * 0.9);
 }
 
@@ -235,7 +244,7 @@ async function noteSave(opts) {
     const bytes = noteSheetBytes(sheets);
     noteUpdateSize(bytes);
     if (bytes != null && bytes > NOTE_MAX_BYTES) {
-      throw new Error(`시트가 너무 큽니다 (${Math.ceil(bytes / 1024)}KB > ${NOTE_MAX_BYTES / 1024}KB) — `
+      throw new Error(`시트가 너무 큽니다 (${Math.ceil(bytes / 1024)}KB > ${NOTE_MAX_BYTES / 1024 / 1024}MB) — `
         + "셀 데이터를 줄여주세요. 저장하지 않았습니다");
     }
     const payload = { sheet: { sheets }, base: _noteBaseToken };
@@ -259,6 +268,7 @@ async function noteSave(opts) {
       noteArmAutoSave();
     }
     if (DATA) DATA.note_info = { exists: true, updated_by: LOGIN_USER, updated_at: "" };
+    noteSetSheetList(sheets);   // 시트 추가·이름변경을 Summary 버튼 줄에 즉시 반영
     if (opts.auto) noteSetMetaText(`자동저장됨 ${noteNowHM()}`);
     else { noteSetMetaText(`마지막 저장: ${LOGIN_USER || "나"} · 방금`); showToast("Note 를 저장했습니다."); }
   } catch (e) {
@@ -503,6 +513,49 @@ function noteFlushGoto() {
   if (!frame || !frame.contentWindow) return;
   const g = _notePendingGoto; _notePendingGoto = null;
   frame.contentWindow.postMessage(Object.assign({ type: "note:goto" }, g), NOTE_ORIGIN);
+}
+
+// ── Note 시트 목록 (Summary 의 $[시트명] 자동완성 · 시트 버튼 줄) ────────────────
+// 동기 조회 — 아직 모르면 null (호출부가 noteEnsureSheetList 로 받아온다).
+function noteSheetNames() { return _noteSheetList; }
+// 시트 배열(fetch 응답 / 저장 직전 직렬화본 / 경량 라우트)에서 이름만 추린다.
+function noteSetSheetList(sheets) {
+  _noteSheetList = (Array.isArray(sheets) ? sheets : [])
+    .map(s => ({ index: String((s && s.index) || ""), name: String((s && s.name) || ""),
+                 order: Number((s && s.order) || 0) }))
+    .filter(s => s.name)
+    .sort((a, b) => a.order - b.order);
+  if (typeof renderEngrNoteJump === "function") renderEngrNoteJump();
+}
+// 목록을 보장한다 — 이미 알면 즉시, 아니면 경량 라우트로 1회만 받아온다(본문 5MB 를
+// 끌어오는 GET .../note 대신 이름만 받는다). 실패해도 빈 목록으로 확정해 재요청 폭주 방지.
+function noteEnsureSheetList() {
+  if (_noteSheetList !== null) return Promise.resolve(_noteSheetList);
+  if (_noteSheetListPromise) return _noteSheetListPromise;
+  _noteSheetListPromise = fetch(`/pe/report/session/${SESSION_ID}/web_report/note/sheet_names`,
+                                { cache: "no-store" })
+    .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(j => { noteSetSheetList((j && j.sheets) || []); return _noteSheetList; })
+    .catch(() => { noteSetSheetList([]); return _noteSheetList; })
+    .finally(() => { _noteSheetListPromise = null; });
+  return _noteSheetListPromise;
+}
+
+// ── $[시트명] 링크 / Summary 시트 버튼 → Note 탭 전환 + 해당 시트로 이동 ──────────
+// noteJumpToTag 와 같은 pending 큐 패턴. 시트 index 를 모르면 이름만 넘겨도 프레임의
+// gotoCell 이 sheetName 으로 폴백 매칭한다.
+function noteJumpToSheet(name) {
+  name = String(name || "");
+  const list = noteSheetNames();
+  const found = (list || []).find(s => s.name === name);
+  if (list && !found) { showToast(`Note 시트 "${name}" 을(를) 찾을 수 없습니다 (이름이 바뀌었을 수 있습니다).`); return; }
+  _notePendingGoto = { sheet: (found && found.index) || "", sheetName: name, r: 0, c: 0 };
+  const panel = document.getElementById("panel-note");
+  const active = panel && panel.classList.contains("active");
+  if (_noteReady && active) { noteFlushGoto(); return; }
+  const tabBtn = document.querySelector('.tab[data-tab="note"]');
+  if (tabBtn) tabBtn.click();   // renderTab("note") → iframe init 후 noteFlushGoto
+  if (_noteReady) setTimeout(() => noteFlushGoto(), 150);
 }
 
 // Ctrl+S — 포커스가 iframe 밖(note-bar·태그 패널)에 있을 때도 Note 를 저장한다.

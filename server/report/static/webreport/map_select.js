@@ -291,6 +291,9 @@ function renderWebSummary() {
   // Summary 카드(Yield) 클릭 → 해당 탭 버튼 클릭 재사용(1회 위임 바인딩).
   if (!summaryJumpBound) {
     panel.addEventListener("click", (e) => {
+      // Note 시트 버튼 → Note 탭 + 해당 시트 (Engr Comment 의 $[시트명] 과 같은 경로).
+      const sheetBtn = e.target.closest(".note-sheet-btn");
+      if (sheetBtn) { noteJumpToSheet(sheetBtn.dataset.sheetName); return; }
       const card = e.target.closest(".summary-jump");
       if (!card) return;
       const tabBtn = document.querySelector(`.tab[data-tab="${card.dataset.jump}"]`);
@@ -313,9 +316,58 @@ function renderWebSummary() {
     `<div class="engr-comment-grid">` +
     ENGR_COMMENT_FIELDS.map(f =>
       `<label class="engr-comment-label" for="engr-${f.key}">${f.label}</label>` +
-      `<textarea id="engr-${f.key}" class="engr-comment-input" data-engr="${f.key}" rows="4"${engrEditable ? "" : " readonly"}>${esc(engr[f.key] || "")}</textarea>`).join("") +
-    `</div></div>`;
+      (engrEditable
+        // 편집: textarea 는 그대로 두고(줄바꿈·붙여넣기·캐럿 전부 브라우저 기본), 태그는
+        // 아래 링크 칩 줄로 클릭한다. @/#/$ 자동완성은 edit_mode.js 가 붙인다.
+        ? `<div class="engr-comment-cell">` +
+          `<textarea id="engr-${f.key}" class="engr-comment-input" data-engr="${f.key}" rows="4">${esc(engr[f.key] || "")}</textarea>` +
+          `<div class="engr-comment-links" data-engr-links="${f.key}" hidden></div>` +
+          `</div>`
+        // 조회: 편집이 없으니 본문 자체를 링크로 그린다.
+        : `<div class="engr-comment-view">${linkifyComment(engr[f.key] || "")}</div>`)).join("") +
+    `</div>` +
+    `<div class="engr-note-jump" id="engrNoteJump" hidden></div>` +
+    `</div>`;
   if (engrEditable) bindEngrComment(panel);
+  renderEngrNoteJump();
+}
+
+// Engr Comment 안의 @[..]/#[..]/$[..] 토큰만 뽑아 클릭 가능한 칩으로 나열한다.
+// textarea 는 HTML 을 못 그리므로 링크를 본문 밖에 두는 방식 — 클래스·.missing 판정은
+// linkifyComment(sheets.js) 를 토큰 1개씩 통과시켜 재사용하고, 클릭은 .content 위임이 받는다.
+function engrLinkChips(raw) {
+  const re = /([@#$])\[([^\]]+)\]/g, seen = new Set();
+  let out = "", m;
+  while ((m = re.exec(String(raw || "")))) {
+    if (seen.has(m[0])) continue;
+    seen.add(m[0]);
+    out += linkifyComment(m[0]);
+  }
+  return out;
+}
+function renderEngrChips(key) {
+  const ta = document.getElementById(`engr-${key}`);
+  const box = document.querySelector(`[data-engr-links="${key}"]`);
+  if (!ta || !box) return;
+  const html = engrLinkChips(ta.value);
+  box.innerHTML = html;
+  box.hidden = !html;
+}
+
+// Engr Comment 아래 Note 시트 버튼 줄 — 시트 이름만 받는 경량 라우트를 쓰고,
+// Note 가 없는 세션에서는 요청조차 하지 않는다.
+function renderEngrNoteJump() {
+  const box = document.getElementById("engrNoteJump");
+  if (!box) return;
+  if (!(DATA && DATA.note_info && DATA.note_info.exists)) { box.hidden = true; return; }
+  const list = noteSheetNames();
+  if (list === null) { noteEnsureSheetList().then(renderEngrNoteJump); return; }
+  box.hidden = !list.length;
+  box.innerHTML = list.length
+    ? `<span class="engr-note-jump-label">📄 Note 시트</span>` +
+      list.map(s => `<button type="button" class="note-sheet-btn" data-sheet-name="${esc(s.name)}" ` +
+        `title="Note 탭의 이 시트로 이동">${esc(s.name)}</button>`).join("")
+    : "";
 }
 
 // Summary 탭 Engr Comment 3칸 정의 (manifest.summary_engr 키와 일치).
@@ -331,6 +383,10 @@ const ENGR_COMMENT_FIELDS = [
 function bindEngrComment(panel) {
   panel.querySelectorAll("textarea[data-engr]").forEach(ta => {
     ta.addEventListener("change", () => { _dirty = true; autoSave(); });
+    // 방금 입력·선택한 태그가 blur 를 기다리지 않고 바로 클릭 가능해지도록 칩을 갱신한다
+    // (≤2000자 정규식이라 debounce 없이 충분).
+    ta.addEventListener("input", () => renderEngrChips(ta.dataset.engr));
+    renderEngrChips(ta.dataset.engr);
   });
 }
 

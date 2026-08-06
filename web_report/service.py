@@ -1468,7 +1468,14 @@ _CHART_NOTE_MAX_OPS = 100
 _CHART_NOTE_MAX_SHAPES = 40
 _CHART_NOTE_MAX_BYTES = 16 * 1024
 _CHART_NOTE_TEXT_MAX = 300
-_NOTE_SHEET_MAX_BYTES = 3 * 1024 * 1024
+# Note 시트 JSON 상한 (2026-08-06: 3MB → 10MB, 사용자 요청). 프런트 note.js NOTE_MAX_BYTES
+# 와 **같은 값**을 유지할 것 — 프런트는 저장 전 안내용으로 같은 기준을 미리 검사한다.
+#
+# 이 상한이 큰 이유는 **이미지가 시트 JSON 안에 들어오기 때문**이다. Luckysheet 자체 경로
+# (툴바 업로드·드래그&드롭·Ctrl+V)는 FileReader.readAsDataURL → base64 data URI 를 시트에
+# 박는다(원본 대비 +33%). 서버에 따로 올라가는 것은 차트→Note 붙여넣기(chart_notes.js →
+# POST .../note_image) 뿐이고 그건 URL 문자열만 시트에 남는다.
+_NOTE_SHEET_MAX_BYTES = 10 * 1024 * 1024
 
 _NOTE_TAG_MAX = 200
 # 태그명 1~40자, linkify 토큰(#[..]/@[..])·드롭다운 쿼리와 충돌하는 문자 금지.
@@ -1709,6 +1716,50 @@ def get_note_tags(session_id: str, *, report_db) -> dict:
     return edits.load_note_tags(report_db, session_id)
 
 
+# 시트 이름 목록 memo — 세션 상세를 열 때마다 Summary 가 물어보는데 본문은 최대 10MB 라
+# 매번 json 파싱을 돌리면 낭비다. 키에 updated_at 을 넣어 Note 가 저장되면 자동 무효화.
+_NOTE_SHEET_NAMES_MEMO: dict = {}
+_NOTE_SHEET_NAMES_MEMO_MAX = 128
+
+
+def get_note_sheet_names(session_id: str, *, report_db) -> list:
+    """Note 시트 이름 목록 — [{"index","name","order"}]. 셀 본문은 버린다.
+
+    Summary 탭의 $[시트명] 자동완성·시트 버튼 줄이 쓴다. 이름만 필요한데 본문 전체를
+    내려보내는 lazy GET(.../web_report/note)을 부르면 최대 10MB 를 헛되이 옮기게 된다."""
+    stamp = ""
+    for row in report_db.get_webreport_edit_meta(session_id, edits.KIND_NOTE_SHEET):
+        if row.get("item_key") == "sheet":
+            stamp = str(row.get("updated_at") or "")
+            break
+    else:
+        return []   # Note 자체가 없음 — 본문을 읽지 않는다
+    key = (session_id, stamp)
+    hit = _NOTE_SHEET_NAMES_MEMO.get(key)
+    if hit is not None:
+        return hit
+
+    saved = edits.load_note_sheet(report_db, session_id) or {}
+    sheets = (saved.get("sheet") or {}).get("sheets")
+    names = []
+    for idx, sheet in enumerate(sheets or []):
+        if not isinstance(sheet, dict):
+            continue
+        name = str(sheet.get("name") or "")
+        if not name:
+            continue
+        try:
+            order = int(sheet.get("order", idx))
+        except (TypeError, ValueError):
+            order = idx
+        names.append({"index": str(sheet.get("index") or ""), "name": name, "order": order})
+    names.sort(key=lambda s: s["order"])
+    if len(_NOTE_SHEET_NAMES_MEMO) >= _NOTE_SHEET_NAMES_MEMO_MAX:
+        _NOTE_SHEET_NAMES_MEMO.clear()
+    _NOTE_SHEET_NAMES_MEMO[key] = names
+    return names
+
+
 def load_note(session_id: str, *, report_db) -> dict:
     """Note 탭 lazy GET — {"sheet": dict|None, "updated_at", "updated_by", "base"}.
 
@@ -1726,7 +1777,7 @@ def save_note(session_id: str, sheet, *, report_db, upload_root: Path,
     """Note 탭 시트 JSON 저장 (전체 치환) — 세션 편집 DB(kind=note_sheet, item_key='sheet').
 
     sheet: Luckysheet 시트 상태 dict (셀 계산은 전부 클라이언트 — 서버는 저장만).
-    null/빈 dict 는 삭제. 직렬화 크기 상한 2MB.
+    null/빈 dict 는 삭제. 직렬화 크기 상한은 _NOTE_SHEET_MAX_BYTES.
 
     시트는 통째로 치환되므로 동시 편집 시 상대의 Note 전체가 사라진다. check 이면
     호출자가 읽었던 base 토큰과 현재 저장본을 비교해 불일치 시 NoteConflict 를 올린다

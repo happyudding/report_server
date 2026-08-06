@@ -891,7 +891,7 @@ def web_report_note_tags(session_id):
 
 @report_bp.get("/session/<session_id>/web_report/note")
 def web_report_note_get(session_id):
-    """Note 탭 시트 JSON 지연 로드 (최대 2MB — /full 에서 제외). 읽기는 전원 가능."""
+    """Note 탭 시트 JSON 지연 로드 (최대 10MB — /full 에서 제외). 읽기는 전원 가능."""
     _require_web_report_session(session_id)
     try:
         result = web_report_service.load_note(session_id, report_db=report_db)
@@ -909,6 +909,23 @@ def web_report_note_get(session_id):
     else:
         body = gzip.decompress(body)
     return Response(body, mimetype="application/json", headers=headers)
+
+
+@report_bp.get("/session/<session_id>/web_report/note/sheet_names")
+def web_report_note_sheet_names(session_id):
+    """Note 시트 **이름 목록만** — [{"index","name","order"}]. 읽기는 전원 가능.
+
+    Summary 탭의 $[시트명] 자동완성·시트 버튼 줄 전용이다. 위 lazy GET 은 본문까지
+    내려주므로(최대 10MB) 이름만 필요한 화면이 그걸 부르면 안 된다."""
+    _require_web_report_session(session_id)
+    try:
+        sheets = web_report_service.get_note_sheet_names(session_id, report_db=report_db)
+    except KeyError:
+        abort(404, "session not found")
+    except Exception:
+        _log.exception("web_report note sheet_names failed for session %s", session_id)
+        abort(500, "note sheet_names failed")
+    return jsonify({"sheets": sheets})
 
 
 @report_bp.post("/session/<session_id>/web_report/note")

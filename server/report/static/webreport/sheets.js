@@ -54,18 +54,25 @@ function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNa
 function isDistCol(c) { return String(c || "").toLowerCase() === "distribution"; }
 function isMapCol(c) { return String(c || "").toLowerCase() === "map"; }
 function isCommentCol(c) { return /comment/i.test(String(c || "")); }
-// comment 텍스트의 @[항목명]→Item_detail 링크, #[태그명]→Note 셀 앵커 링크로 변환
-// (그 외 텍스트는 전부 esc). 저장은 항상 @[..]/#[..] 평문으로(td.textContent),
-// 표시할 때만 링크로 보인다. #[..] 는 DATA.note_tags 에 없으면 .missing(삭제된 태그).
+// comment 텍스트의 @[항목명]→Item_detail 링크, #[태그명]→Note 셀 앵커 링크,
+// $[시트명]→Note 시트 링크로 변환 (그 외 텍스트는 전부 esc). 저장은 항상
+// @[..]/#[..]/$[..] 평문으로(td.textContent), 표시할 때만 링크로 보인다.
+// #[..] 는 DATA.note_tags 에 없으면 .missing(삭제된 태그). $[..] 는 시트 목록이
+// 도착한 뒤에만 .missing 판정한다(목록 미도착을 삭제로 오인하지 않게).
 function linkifyComment(txt) {
   const s = String(txt == null ? "" : txt);
   let out = "", last = 0, m;
-  const re = /([@#])\[([^\]]+)\]/g;
+  const re = /([@#$])\[([^\]]+)\]/g;
   while ((m = re.exec(s))) {
     out += esc(s.slice(last, m.index));
     const name = m[2];
     if (m[1] === "@") {
       out += `<span class="item-detail-link" data-subject="${esc(name)}">@${esc(name)}</span>`;
+    } else if (m[1] === "$") {
+      const sheets = (typeof noteSheetNames === "function") ? noteSheetNames() : null;
+      const missing = !!sheets && !sheets.some(sh => sh.name === name);
+      out += `<span class="note-sheet-link${missing ? " missing" : ""}" data-sheet-name="${esc(name)}"`
+           + `${missing ? ' title="삭제되었거나 이름이 바뀐 Note 시트"' : ""}>$${esc(name)}</span>`;
     } else {
       const tags = (typeof DATA !== "undefined" && DATA && DATA.note_tags) || {};
       const missing = !Object.prototype.hasOwnProperty.call(tags, name);
@@ -574,7 +581,7 @@ function renderSheetTable(rows, opts) {
             ? `<button type="button" class="btn-map-expand" title="이 항목이 fail 난 CT/HT 소스 맵 전체 보기">⤢</button>` : "";
           return `<td data-r="${ri}" data-c="${ci}">` +
             `<div class="map-cell map-cell-mini map-cell-temp" data-temp-item="${esc(tempItem)}" ` +
-            `title="클릭하면 Map Analysis 탭 Temp Item 축에서 이 항목을 강조해 봅니다"><div class="map-plot"></div>${tempExpand}</div></td>`;
+            `title="클릭하면 Map Analysis 탭 Temperature Map 축에서 이 항목을 강조해 봅니다"><div class="map-plot"></div>${tempExpand}</div></td>`;
         }
         // CPK 섹션은 Bin 이 없다 — 대신 그 Item 의 STDF Map(측정값 10분위) 미니맵을 넣는다.
         const cpkItem = String((r && r["Item"]) ?? "").trim();
@@ -951,7 +958,9 @@ function yieldOverviewHtml() {
   // 표 행 수 = 각 STEP 의 source 행 합(옛 payload 는 STEP 당 1행 폴백) — 스크롤 판단용.
   const byStepRows = byStep.reduce(
     (n, s) => n + ((Array.isArray(s.sources) && s.sources.length) ? s.sources.length : 1), 0);
-  const byStepHtml = byStep.length ? `<div class="yo-block"><div class="yield-by-step${ybsScrollCls(byStepRows)}"><table class="ybs-table">
+  // STEP 이 하나뿐이면 이 표는 전체 수율 카드와 같은 값을 반복할 뿐이라 오히려 헷갈린다
+  // → 통째로 뺀다 (사용자 요청 2026-08-06). STEP 2개 이상일 때만 표시.
+  const byStepHtml = byStep.length > 1 ? `<div class="yo-block"><div class="yield-by-step${ybsScrollCls(byStepRows)}"><table class="ybs-table">
     <thead><tr><th>Step</th><th>Source</th><th>Cum Yield</th><th>Pass / In</th><th>Fail (step / cum)</th></tr></thead>
     <tbody>` + byStep.map(s => {
     // sources 가 없으면(옛 payload) pooled 값으로 1행 폴백.

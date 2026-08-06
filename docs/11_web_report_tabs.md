@@ -39,6 +39,12 @@ dies(STEP 분리 시 수백만 객체 — 메인스레드 JSON 파싱 freeze 의
 DUT 모드만 예외로 dies 를 만든다(`_merge_dut_rows` 가 병합 입력으로 쓴다) — 그래서
 `strip_dies` 는 안전망으로 남아 있다.
 
+**Map Detail(크게 보기) 범례** (2026-08-06): 갤러리 범례는 전 소스 합산이지만 Detail 은
+**지금 보고 있는 맵 1장** 기준이다 — Bin Legend 의 count·비율이 화면의 웨이퍼와 일치한다
+(`renderMapDetailLegend`, 색은 세션 공통 `globalBinColorMap` 이라 갤러리와 같은 bin=같은 색).
+Detail 은 `Temperature Map` 축도 갤러리와 같은 색으로 그린다(`mapDetailAxis` temp 분기 —
+`waferHeatmap` 의 `catOf(d, k)` 2번째 인자 = die 인덱스).
+
 **Map Analysis eval STEP 제외** (2026-07-21): STEP 이름에 `eval`(대소문자 무시)이 들어가면
 맵을 그리지 않는다(`_is_eval_step`, [Map_analysis.py](../web_report/tabs/Map_analysis.py)).
 STEP 이 eval 하나뿐인 소스는 맵 자체가 없다. fail step 귀속(`_fail_step_indexes`)에는
@@ -71,8 +77,11 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   - **판정은 1회만 돈다**: `compute_temp_fail` 이 (count, die 인덱스)를 한 순회로 만들고
     tables 클론에 캐시한다 — 표(`build_temp_fail_rows`)와 Map(`temp_fail_indices`)이 그
     결과를 공유한다. 21 source 세션에서 같은 판정을 두 벌 돌던 것을 없앤 지점이다.
-  - **Map 항목 legend**: Map Analysis 색 기준 축에 `Temp Item` 이 추가된다(Temperature
-    전용). 항목별 fail die 는 `GET .../web_report/temp_map` 이 **dies 배열 인덱스**로
+  - **Map 항목 legend**: Map Analysis 색 기준 축에 `Temperature Map`(구 `Temp Item`,
+    2026-08-06 개명)이 추가된다(Temperature 전용). **Temperature 모드에서는 축이 소스를
+    가른다** — `Bin`/`TNO` 축 = RT 소스 맵만, `Temperature Map` 축 = CT/HT 소스 맵만
+    (`wafer_charts.js mapVisibleMaps`, 갤러리·Detail 공용이라 인덱스가 어긋나지 않는다).
+    항목별 fail die 는 `GET .../web_report/temp_map` 이 **dies 배열 인덱스**로
     내려준다(`{"format":"temp-map-v1","sources":[{source,n,items:[{item,idx}]}]}`) —
     map_analysis 응답에 얹지 않는 이유는 프런트 Worker 가 dies/metas 외 필드를 버리기
     때문이다. 인덱스 기준은 `Map_analysis` 의 `XPOS/YPOS notna` mask 와 **문자 그대로
@@ -81,10 +90,13 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     **report 콜드 빌드가 `service.seed_temp_map` 으로 RAM+디스크를 미리 채운다** — 안 하면
     Issue Table 첫 진입에서 요청 스레드가 전 항목 판정을 다시 돈다. 라우트 단독 콜드는
     워커 오프로드(`compute.temp_map_job`).
-  - **legend 는 상위 7항목 + "기타" 1행**(팔레트 색 수 = `FAIL_PALETTE`) — TNO Legend 와
-    같은 규약. 필터로 고른 항목은 상위 밖이어도 legend 에 올려 원색으로 보여준다.
-  - **Yield 탭 하단 Temp Corner 섹션은 요약**이다 — 상위 60행만 그리고 나머지는
-    "Issue Table Temp 탭에서" 로 보낸다(통짜 렌더 블록 회피).
+  - **legend 는 전 항목을 나열하고 항목마다 서로 다른 색**이다(2026-08-06 — 구 "상위 7항목
+    + 기타 회색" 폐지). 팔레트(`FAIL_PALETTE` 7색)를 먼저 쓰고 그 뒤는 황금각 색상환 회전
+    (`tempItemColorAt`, Pass 초록 대역 제외)으로 만든다. 클릭하면 그 항목 fail die 만 강조.
+    Detail(크게 보기) 범례는 **그 소스에서 fail 난 항목만** + 그 소스 die 수
+    (`tempItemInfoForSource`) — Bin Legend 와 같은 규약이다.
+  - **Yield 탭 하단 Temp Corner 섹션은 요약**이다 — 편집 열(Map/Distribution/Status/comment)
+    을 뺀 읽기 전용이고 행은 전량 청크 렌더한다. 편집은 "Issue Table Temp 탭에서".
   - **Honey 전체 Excel** 에도 `Issue Table Temp` 시트가 들어간다(Temperature 세션만) —
     Distribution 열은 항목 CDF, Map 열은 **항목별 fail die 강조** 썸네일
     (`_map.render_temp_map_png`, temp_map 인덱스 기준). temp_map 수신 실패 시 Map 열만
@@ -109,7 +121,10 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   `step_yield% = (전체 − Σ 그 STEP 까지의 fail)/전체`. 예) 1000 die, P1 100 / P2 50 / P3 10
   fail → 90% / 85% / 84%. `fail` 은 그 STEP **자체** fail 로 두고 누적은 `cum_fail` 로 병기해
   `survivor + cum_fail = entered` 가 pooled·소스별 양쪽에서 성립한다(요약 박스 "Pass / In" +
-  "Fail (step / cum)" 열). 빈 STEP(`""`)은 정렬상 맨 뒤라 누적의 마지막 항에 포함된다.
+  "Fail (step / cum)" 열). **STEP 이 1종뿐이면 이 STEP 요약 박스 자체를 그리지 않는다**
+  (`sheets.js yieldOverviewHtml` — 전체 수율 카드와 같은 값을 반복해 헷갈린다는 사용자 요청
+  2026-08-06). 서버 payload(`by_step`)는 그대로다 — 표시만 생략.
+  빈 STEP(`""`)은 정렬상 맨 뒤라 누적의 마지막 항에 포함된다.
   단, 세션 전체 STEP 메타에 비어있지 않은 STEP 이 **1종뿐**이면 빈 STEP fail 행을 그 STEP 으로
   흡수한다(`yield_tab._sole_step`, 2026-07-29 사용자 확정) — 화면에 "(기타)" 섹션이 생기지 않는다.
   판정 기준은 fail 행에 등장한 STEP 이 아니라 **전체 item 메타**(`table.step`)라 Map Analysis 의
@@ -586,11 +601,19 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
 탭 전체가 **Luckysheet 시트 캔버스** (vendored 2.1.13, MIT — `server/report/vendor/luckysheet/`).
 엑셀 정리 워크플로 대체: 차트 PNG 붙여넣기(플로팅 이미지), 셀 수식/서식, 엑셀 range 붙여넣기.
 셀 계산은 전부 브라우저 — 서버는 시트 JSON 저장만. 프런트 [note.js](../server/report/static/webreport/note.js).
-- 시트 저장: kind `note_sheet`(item_key=`"sheet"`, 전체 치환, **≤3MB**). `/full` 에는
+- 시트 저장: kind `note_sheet`(item_key=`"sheet"`, 전체 치환, **≤10MB**). `/full` 에는
   `note_info`(존재/최종수정 메타)만 — 본문은 lazy `GET·POST .../web_report/note`.
-  `load_edit_state` 는 이 kind 를 **제외 조회**해 comment 저장·콜드 빌드가 3MB 블롭을
+  `load_edit_state` 는 이 kind 를 **제외 조회**해 comment 저장·콜드 빌드가 이 블롭을
   끌어오지 않는다 (`get_webreport_edits(kinds/exclude_kinds)`).
-- 이미지: `POST .../web_report/note_image` (PNG/JPEG 매직바이트, ≤2MB, 세션당 200장) →
+- ⚠️ **이미지가 들어오는 경로는 2개이고 저장 위치가 다르다** (헷갈리기 쉬운 지점):
+  ① **차트 반입**(아래) 만 서버 업로드 → 시트 JSON 에는 **URL 문자열**만 남는다.
+  ② **Luckysheet 자체 삽입**(툴바 이미지 업로드 · 캔버스 드래그&드롭 · Ctrl+V 스크린샷)은
+  번들 내부에서 `FileReader.readAsDataURL` → `inserImg(dataURI)` 라 **base64 가 시트 JSON
+  안에 통째로 박힌다**(원본 대비 +33%). [note_frame.html](../server/report/note_frame.html)
+  에 이 경로를 가로채는 훅은 없다. 그래서 ≤10MB 상한은 사실상 **②의 이미지 예산**이다
+  (1MB 캡처 ≈ 5장). 상한이 부담되면 ②도 ①처럼 업로드→URL 치환으로 바꾸는 것이 근본 해결이고,
+  기존 세션은 시트 JSON 의 data URI 를 업로드 후 src 만 바꾸는 배치로 이전할 수 있다.
+- 이미지 업로드(①): `POST .../web_report/note_image` (PNG/JPEG 매직바이트, ≤2MB, 세션당 200장) →
   S3(`pe/report_server/note_img/<sid>/`)+로컬 폴백
   ([_note_images.py](../server/storage_gateway/_note_images.py) — **세션 단위** 네임스페이스,
   dedup 세션 간 누출 방지). 서빙 `GET /pe/report/note_image/<sid>/<id>` (nosniff).
@@ -598,6 +621,38 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
 - 차트 반입: 항목 상세의 [📋 Note에 붙여넣기] → `Plotly.toImage`(주석 포함) → note_image
   업로드 → `luckysheet.insertImage`. Luckysheet 번들(≈4MB)은 Note 탭 첫 진입 시 지연 로드,
   vendor 서빙은 `routes_misc.py` 의 luckysheet/ 경로 정규식 + 확장자 mime.
+
+### 코멘트 태그 `@` `#` `$` (2026-08-06 확장)
+코멘트 본문에 **평문 토큰**으로 저장하고, 표시할 때만 링크로 바꾼다. 변환은
+`linkifyComment`([sheets.js](../server/report/static/webreport/sheets.js)) 하나가 정본이고,
+입력 자동완성은 `showMention`/`mentionInsert`([edit_mode.js](../server/report/static/webreport/edit_mode.js))
+가 담당한다. 트리거 문자 집합은 `TRIGGER_RE`/`TRIGGER_TAIL_RE`(edit_mode.js) 와
+`linkifyComment` 의 정규식이 **짝**이라 늘릴 땐 둘 다 고쳐야 한다.
+
+| 토큰 | 후보 출처 | 클릭 동작 | `.missing` 판정 |
+|---|---|---|---|
+| `@[항목명]` | `distIndex`·`rawDataMeta`·`etcItemMeta` (측정 항목) | Item_detail 열기 | 없음 |
+| `#[태그명]` | `DATA.note_tags` (Note 앵커 태그) | Note 탭 + 그 **셀**로 점프 | 태그 없으면 표시 |
+| `$[시트명]` | Note 시트 이름 목록 | Note 탭 + 그 **시트**로 점프 | 목록 도착 후 이름 없으면 표시 |
+
+- **쓸 수 있는 자리 2곳**: Issue Table 의 comment 열(`contenteditable td`)과 Summary 탭
+  **Engr Comment**(`textarea`). 위젯이 달라 `mentionQueryAtCaret`/`mentionInsert` 는
+  textarea(`selectionStart`) / contenteditable(`Selection` + Text 노드) **두 경로**를 갖고,
+  대상 판별은 `tagFieldOf()` 하나로 모은다.
+- **Engr Comment 는 textarea 를 유지한다** — contenteditable 로 바꾸면 패널이 `display:none`
+  일 때 `innerText` 가 줄바꿈을 잃어(자동저장은 그 상태로도 돈다) 값이 뭉개진다. 대신 링크는
+  입력칸 **아래 칩 줄**(`engrLinkChips`, [map_select.js](../server/report/static/webreport/map_select.js))
+  에 띄우고, 조회 모드는 본문 자체를 `linkifyComment` 로 렌더한다. 저장 경로
+  (`POST .../summary/engr`, kind=`summary_engr`)는 종전 그대로다.
+- **Note 시트 이름 목록**: `GET .../web_report/note/sheet_names` → `{"sheets":[{index,name,order}]}`.
+  이름만 필요한 화면이 본문까지 내려주는 lazy `GET .../note`(≤10MB)를 부르지 않게 만든 경량
+  라우트다. 서버는 `updated_at` 을 키로 memo 하고, 클라(note.js `noteEnsureSheetList`)는 Note
+  탭 fetch·저장 때 손에 쥔 시트 배열로 공짜로 채운다. `DATA.note_info.exists` 가 false 면
+  요청 자체를 하지 않는다.
+- Summary 의 Engr Comment 카드 아래 **Note 시트 버튼 줄**(`renderEngrNoteJump`)도 같은 목록을
+  쓰고, 클릭은 `$` 링크와 같은 `noteJumpToSheet`([note.js](../server/report/static/webreport/note.js))
+  로 간다 — `noteJumpToTag` 과 동일한 pending 큐 패턴이라 Note 탭이 아직 init 전이어도 안전하다.
+  시트 index 를 몰라도 `note_frame.html` 의 `gotoCell` 이 `sheetName` 으로 폴백 매칭한다.
 
 ## 렌더 구조 (report_view.html + static/webreport)
 - 마크업+CSS 는 [report_view.html](../server/report/report_view.html), 탭별 JS 는

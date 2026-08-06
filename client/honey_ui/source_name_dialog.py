@@ -170,15 +170,29 @@ class _MaxLenDelegate(QStyledItemDelegate):
 
 
 class _LimitsDropArea(QFrame):
-    """.lt / .pds 파일을 끌어다 놓는 영역 (버튼으로도 고를 수 있다)."""
+    """.lt / .pds 파일을 끌어다 놓는 영역 (버튼으로도 고를 수 있다).
+
+    회색 바탕(구 ``#f8fafc``)은 창 배경과 구분이 안 돼 잘 안 보인다는 지적(2026-08-06)으로
+    파란 바탕으로 강조한다. 끌어오는 중에는 더 진한 파랑으로 바꿔 "여기에 놓으면 된다"를
+    눈에 보이게 한다.
+
+    선택자를 ``QFrame`` 이 아니라 **objectName(#limitsDrop)** 으로 잡는 이유: QLabel 도
+    QFrame 하위라 ``QFrame {...}`` 은 안에 든 라벨까지 물들여(점선 테두리가 라벨에도 생김)
+    영역 경계가 흐려진다.
+    """
+
+    _BASE = ("#limitsDrop { border: 2px dashed #3b82f6; border-radius: 6px;"
+             " background: #e8f1fe; }")
+    _HOVER = ("#limitsDrop { border: 2px solid #2563eb; border-radius: 6px;"
+              " background: #cfe2fd; }")
 
     def __init__(self, on_files):
         super().__init__()
         self._on_files = on_files
         self.setAcceptDrops(True)
+        self.setObjectName("limitsDrop")
         self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setStyleSheet(
-            "QFrame { border: 1px dashed #94a3b8; border-radius: 6px; background: #f8fafc; }")
+        self.setStyleSheet(self._BASE)
         self.setMinimumHeight(52)
 
     def _paths(self, mime):
@@ -187,6 +201,7 @@ class _LimitsDropArea(QFrame):
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls() and self._paths(event.mimeData()):
+            self.setStyleSheet(self._HOVER)
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -194,7 +209,12 @@ class _LimitsDropArea(QFrame):
     def dragMoveEvent(self, event):
         self.dragEnterEvent(event)
 
+    def dragLeaveEvent(self, event):
+        self.setStyleSheet(self._BASE)
+        super().dragLeaveEvent(event)
+
     def dropEvent(self, event):
+        self.setStyleSheet(self._BASE)
         paths = self._paths(event.mimeData())
         if paths:
             event.acceptProposedAction()
@@ -342,10 +362,15 @@ class SourceNameDialog(QDialog):
         box = QWidget()
         lay = QVBoxLayout(box)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.addWidget(QLabel("Limit 파일 (.lt / .pds) — 재판정 fail 의 bin 매칭에 사용"))
+        # 제목도 파랑·굵게 — 드롭 영역과 한 덩어리로 읽히게 한다(2026-08-06 사용자 요청).
+        title = QLabel("Limit 파일 (.lt / .pds) — 재판정 fail 의 bin 매칭에 사용")
+        title.setStyleSheet("color:#1d4ed8; font-weight:600;")
+        lay.addWidget(title)
         drop = _LimitsDropArea(self._load_limits)
         drop_lay = QHBoxLayout(drop)
-        drop_lay.addWidget(QLabel(".lt / .pds 파일을 여기에 끌어다 놓으세요"))
+        drop_hint = QLabel(".lt / .pds 파일을 여기에 끌어다 놓으세요")
+        drop_hint.setStyleSheet("color:#1e40af;")
+        drop_lay.addWidget(drop_hint)
         drop_lay.addStretch(1)
         btn_pick = QPushButton("파일 선택…")
         btn_pick.clicked.connect(self._pick_limits)

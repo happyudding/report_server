@@ -204,7 +204,7 @@ function ensureTempMapData(force) {
       tempMapBySource = out;
       tempMapReady = true;
       refreshMapConsumers();
-      // Map Analysis 가 Temp Item 축으로 열려 있으면 색을 다시 칠한다.
+      // Map Analysis 가 Temperature Map 축으로 열려 있으면 색을 다시 칠한다.
       if (mapColorKey === "temp") {
         const p = document.getElementById("panel-map-analysis");
         if (p && p.classList.contains("active")) renderMapAnalysis();
@@ -218,6 +218,19 @@ function ensureTempMapData(force) {
       showToast("Temp Map 데이터 로드 실패: " + e.message);
     });
   return tempMapPromise;
+}
+
+// source 이름 → Temperature corner("RT"/"CT"/"HT", 그룹 밖이면 ""). 정본은 payload
+// sources[].temp_corner (서버 metrics._temperature_context) — 맵 축 필터(RT ↔ CT/HT)와
+// Issue Table Temp 미니셀 색(CT=파랑/HT=빨강)이 **같은 판정**을 쓰도록 여기 한 곳에 둔다.
+function tempCornerOf(source) {
+  const list = (DATA && DATA.web_report && DATA.web_report.sources) || [];
+  const s = list.find(x => x && x.name === source);
+  return String((s && s.temp_corner) || "");
+}
+function tempIsMemberSource(source) {
+  const c = tempCornerOf(source);
+  return c === "CT" || c === "HT";
 }
 
 // 항목명으로 그 항목이 fail 난 소스별 인덱스를 찾는다 (미니셀·⤢ 확장·legend 공용).
@@ -331,11 +344,13 @@ function waferHeatmap(m, opts) {
 
   const z = Array.from({ length: H }, () => Array(W).fill(null));
   const cdata = Array.from({ length: H }, () => Array(W).fill(""));
-  (m.dies || []).forEach(d => {
+  // k(die 인덱스)를 catOf 2번째 인자로 넘긴다 — 인덱스 기반 색칠(Temperature Map 축)용.
+  // 기존 catOf 는 인자를 무시하므로 무회귀 (drawWaferThumb 의 rgbFor 와 같은 규약).
+  (m.dies || []).forEach((d, k) => {
     const c = grid ? grid.xIdx[d.x] : d.x - xMin;
     const r = grid ? grid.yIdx[d.y] : d.y - yMin;
     if (r == null || c == null || r < 0 || r >= H || c < 0 || c >= W) return;
-    const cat = catOf(d);
+    const cat = catOf(d, k);
     const idx = catIndex[cat] != null ? catIndex[cat] : 0;
     z[r][c] = idx + 0.5;
     // compact 는 index 공간이라 %{x}/%{y} 가 실제 좌표가 아니다 → hover 문자열에 실제 좌표를 담는다.
@@ -507,8 +522,22 @@ let mapMode = "bin";
 let mapBinPreselect = null;
 // Map 초기 그리기(rAF 스텝퍼) 재진입 가드 — 새 렌더가 시작되면 이전 체인을 중단시킨다.
 let _mapDrawToken = 0;
-// 색 기준 축: "bin"=Bin Map(기존), "tno"=die 가 fail 난 항목(FAILTNO)별 색. 세션 내 유지.
+// 색 기준 축: "bin"=Bin Map(기존), "tno"=die 가 fail 난 항목(FAILTNO)별 색,
+// "temp"=Temperature Map(CT/HT 를 RT Limit 이탈 항목별 색). 세션 내 유지.
 let mapColorKey = "bin";
+
+// 갤러리·Detail 이 보여줄 맵 목록 — **두 화면이 항상 같은 목록을 본다**
+// (_mapDetailIndex 도 이 목록 기준이라 인덱스가 어긋나지 않는다).
+// Temperature 모드는 색 기준 축으로 소스를 가른다 (사용자 확정 2026-08-06):
+//   Bin/TNO 축 = RT 소스만 · Temperature Map 축 = CT/HT 소스만.
+// 다른 모드는 전체 그대로.
+function mapVisibleMaps() {
+  const all = (webReportSheets() || {})["Map Analysis"] || [];
+  if (webReportMode() !== "Temperature") return all;
+  return (mapColorKey === "temp")
+    ? all.filter(m => tempIsMemberSource(m.source))
+    : all.filter(m => !tempIsMemberSource(m.source));
+}
 
 // ── canvas 썸네일 렌더 (갤러리) ────────────────────────────────────────────────
 // hex → [r,g,b]. 6자리 hex 만 지원(팔레트가 전부 6자리).
@@ -576,7 +605,7 @@ function drawWaferThumb(canvas, m, rgbFor) {
     const d = dies[k];
     const cx = g.xIdx[d.x], cy = g.yIdx[d.y];
     if (cx == null || cy == null) continue;
-    // k(die 인덱스)를 3번째 인자로 넘긴다 — 인덱스 기반 색칠(Temp Item 축·Temp 미니셀)용.
+    // k(die 인덱스)를 3번째 인자로 넘긴다 — 인덱스 기반 색칠(Temperature Map 축·Temp 미니셀)용.
     // 기존 콜백은 인자를 무시하므로 무회귀.
     const rgb = rgbFor(d, cache, k);
     if (!rgb) continue;
@@ -638,9 +667,31 @@ function tnoLegendHtml(tnoInfo, selected) {
          `<tbody>${body}${other}</tbody></table>`;
 }
 
-// ── Temp Item Legend (Temperature 전용 색 기준 축) ───────────────────────────
+// ── Temperature Map Legend (Temperature 전용 색 기준 축) ─────────────────────
 // 목록·순서·TNO·Bin 은 서버 Temp 시트(sheets["Issue Table Temp"])를 그대로 따른다 —
 // Yield 탭 하단 Temp Corner 표와 같은 항목·같은 순서가 되게 한다(사용자 요청).
+// hsl → #rrggbb (팔레트 밖 항목 색 생성용). h=0~360, s/l=0~100.
+function hslHex(h, s, l) {
+  const S = s / 100, L = l / 100;
+  const c = (1 - Math.abs(2 * L - 1)) * S;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = L - c / 2;
+  const seg = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.floor(h / 60) % 6];
+  return "#" + seg.map(v => Math.round((v + m) * 255).toString(16).padStart(2, "0")).join("");
+}
+// 항목 수가 팔레트(7색)를 넘어도 **전 항목에 서로 다른 색**을 준다(사용자 요청 2026-08-06 —
+// 구 "팔레트 밖은 공통 회색" 폐지). 팔레트를 먼저 쓰고, 그 뒤는 황금각(137.5°) 색상환
+// 회전 + 명도 3단으로 인접 항목끼리 색이 붙지 않게 만든다. Pass 초록 대역은 피한다
+// (맵에서 Pass die 와 같은 색으로 보이면 안 된다).
+function tempItemColorAt(i) {
+  if (i < FAIL_PALETTE.length) return FAIL_PALETTE[i];
+  const n = i - FAIL_PALETTE.length;
+  // 색상환 360° 를 Pass 초록 대역(95~155°)만 뺀 300° 안으로 **단조 사상**한 뒤 밀어 넣는다.
+  // (대역에 걸린 값만 +60 하는 방식은 서로 다른 index 가 같은 색이 될 수 있어 쓰지 않는다.)
+  let hue = ((n * 137.508) % 360) * (300 / 360);
+  if (hue >= 95) hue += 60;
+  return hslHex(hue, 62, 38 + (n % 3) * 9);
+}
 function buildTempItemInfo() {
   const rows = (webReportSheets() || {})[ISSUE_TEMP_SHEET] || [];
   const items = [], meta = {}, cnt = {};
@@ -657,14 +708,21 @@ function buildTempItemInfo() {
       if (cnt[e.item] !== undefined) cnt[e.item] += (e.idx || []).length;
     });
   });
-  // 색은 팔레트(7색)까지만 고유색이고 그 뒤는 공통 회색이다(색 구분은 상위 항목만).
-  // 다만 legend 행은 **전 항목을 다 보여준다** — 아래 항목도 클릭해 강조할 수 있어야 한다
-  // (사용자 요청 2026-08-06, 구 "기타 N항목" 접기 폐지).
+  // legend 행은 **전 항목을 다 보여주고 전 항목에 서로 다른 색**을 준다 — 아래 항목도
+  // 클릭해 강조할 수 있어야 한다 (사용자 요청 2026-08-06, 구 "기타 N항목" 접기·공통 회색 폐지).
   const colorMap = {};
-  items.forEach((it, i) => {
-    colorMap[it] = (i < FAIL_PALETTE.length) ? FAIL_PALETTE[i] : TNO_OTHER_COLOR;
-  });
+  items.forEach((it, i) => { colorMap[it] = tempItemColorAt(i); });
   return { items, meta, cnt, colorMap };
+}
+
+// Detail(맵 1장) 용 범례 — 항목 순서·색은 전역 목록 그대로 두고(갤러리와 같은 항목=같은 색),
+// **그 소스에서 실제로 fail 난 항목만** 남기고 die 수도 그 소스 것으로 바꾼다
+// (갤러리 범례 = 전 소스 합산, Detail 범례 = 그 소스 — Bin Legend 와 같은 규약).
+function tempItemInfoForSource(source) {
+  const info = buildTempItemInfo();
+  const cnt = {};
+  (((tempMapBySource[source] || {}).items) || []).forEach(e => { cnt[e.item] = (e.idx || []).length; });
+  return { items: info.items.filter(it => cnt[it]), meta: info.meta, cnt, colorMap: info.colorMap };
 }
 
 function tempItemLegendHtml(info, selected) {
@@ -673,10 +731,7 @@ function tempItemLegendHtml(info, selected) {
   }
   const body = info.items.map(it => {
     const sel = selected.has(it);
-    // 팔레트 밖(공통 회색) 항목도 고르면 원색으로 강조해 무엇을 보고 있는지 보이게 한다.
-    const base = info.colorMap[it] === TNO_OTHER_COLOR && sel
-      ? FAIL_PALETTE[0] : info.colorMap[it];
-    const sw = (selected.size === 0 || sel) ? base : MAP_BIN_DIM_COLOR;
+    const sw = (selected.size === 0 || sel) ? info.colorMap[it] : MAP_BIN_DIM_COLOR;
     const m = info.meta[it] || {};
     return `<tr${sel ? ` class="is-selected"` : ""} data-temp-item="${esc(it)}">` +
       `<td class="temp-leg-item" title="${esc(it)}"><span class="bin-swatch" style="background:${sw}"></span>${esc(it)}</td>` +
@@ -727,6 +782,9 @@ function gotoMapAnalysisTab() {
 // Issue Table Yield/ETC 행 Map 미니셀 클릭 → Bin Map 으로 이동(그 Bin 을 범례 선택 상태로).
 function openMapAnalysisForBin(bin) {
   mapMode = "bin";
+  // Temperature 모드에서 축이 Temperature Map(CT/HT 만) 로 남아 있으면 RT bin 을 강조할
+  // 맵 자체가 화면에 없다 — Bin 축으로 되돌린다.
+  if (mapColorKey === "temp") mapColorKey = "bin";
   mapBinPreselect = (bin === null || bin === undefined || bin === "") ? null : String(bin);
   gotoMapAnalysisTab();
 }
@@ -738,7 +796,7 @@ function openMapAnalysisForItem(subject) {
   stdfBucketFilter.clear();
   gotoMapAnalysisTab();
 }
-// Issue Table Temp 행 Map 미니셀 클릭 → Bin Map 의 "Temp Item" 축에서 그 항목 강조.
+// Issue Table Temp 행 Map 미니셀 클릭 → Bin Map 의 "Temperature Map" 축에서 그 항목 강조.
 let mapTempItemPreselect = null;
 function openMapAnalysisForTempItem(item) {
   if (!item) return;
@@ -756,10 +814,13 @@ function renderMapAnalysis() {
   const preselectBin = mapBinPreselect;
   mapBinPreselect = null;
   const sheets = webReportSheets();
-  const maps = sheets ? sheets["Map Analysis"] : null;
-  if (!window.Plotly || !maps || !maps.length) {
+  const allMaps = sheets ? sheets["Map Analysis"] : null;
+  if (!window.Plotly || !allMaps || !allMaps.length) {
     emptyPanel(panel, "Map Analysis 데이터 없음"); return;
   }
+  // Temperature 모드는 축에 따라 보여줄 소스가 갈린다(RT ↔ CT/HT). 결과가 비어도
+  // emptyPanel 로 빠지지 않는다 — 툴바가 사라지면 축을 되돌릴 수 없기 때문.
+  const maps = mapVisibleMaps();
   panel.classList.add("viz-root");
   // source 가 많은 세션의 기본 칸수(사용자가 직접 바꾸기 전까지만).
   if (!mapGridColsUserSet && maps.length >= MAP_GRID_WIDE_SOURCES) mapGridCols = 4;
@@ -770,7 +831,7 @@ function renderMapAnalysis() {
   const mapBinFilter = new Set();   // 범례 클릭으로 선택된 bin 다중선택(재클릭 시 해제, 없으면 전체 표시)
   if (preselectBin != null) mapBinFilter.add(preselectBin);   // Issue Table 에서 넘어온 Bin 강조
   const mapTnoFilter = new Set();   // TNO 축 범례 클릭 필터
-  // Temp Item 축(Temperature 전용) — CT/HT 를 RT Limit 이탈 **항목**으로 색칠한다.
+  // Temperature Map 축(Temperature 전용) — CT/HT 를 RT Limit 이탈 **항목**으로 색칠한다.
   const isTempMode = webReportMode() === "Temperature";
   if (!isTempMode && mapColorKey === "temp") mapColorKey = "bin";
   const mapTempFilter = new Set();
@@ -804,7 +865,7 @@ function renderMapAnalysis() {
       `<button type="button" class="distseg${mapColorKey === "bin" ? " active" : ""}" data-axis="bin">Bin</button>` +
       `<button type="button" class="distseg${mapColorKey === "tno" ? " active" : ""}" data-axis="tno">TNO</button>` +
       (isTempMode
-        ? `<button type="button" class="distseg${mapColorKey === "temp" ? " active" : ""}" data-axis="temp" title="CT / HT 를 RT Limit 이탈 항목으로 색칠 (범례 클릭 = 그 항목 fail die 강조)">Temp Item</button>`
+        ? `<button type="button" class="distseg${mapColorKey === "temp" ? " active" : ""}" data-axis="temp" title="CT / HT 소스만 — RT Limit 이탈 항목으로 색칠 (범례 클릭 = 그 항목 fail die 강조)">Temperature Map</button>`
         : "") +
     `</span>` +
     `<span class="mapsel-sep"></span>` +
@@ -826,17 +887,20 @@ function renderMapAnalysis() {
     selLegend +
     `<div class="wafer-analysis-layout">` +
     `<div class="wafer-grid" style="grid-template-columns:repeat(${mapGridCols}, minmax(0, 1fr))">` +
-    maps.map((m, i) =>
-      `<div class="wafer-card wafer-card-clickable" data-map-index="${i}" title="클릭하면 크게(확대·마우스오버) 봅니다">
+    (maps.length
+      ? maps.map((m, i) =>
+        `<div class="wafer-card wafer-card-clickable" data-map-index="${i}" title="클릭하면 크게(확대·마우스오버) 봅니다">
         <div class="wafer-card-title">${esc(m.source)}${m.step ? " — " + esc(m.step) : ""} — ${esc(String(m.total))} dies<span class="wafer-card-zoom">⤢ 크게 보기</span></div>
         <div id="wafer-full-${i}" class="wafer-thumb-wrap" style="aspect-ratio:1 / 1"><div class="placeholder">맵 로드 중…</div></div>
-      </div>`).join("") +
+      </div>`).join("")
+      : `<div class="placeholder">${mapColorKey === "temp"
+          ? "CT / HT 소스 맵이 없습니다" : "표시할 맵이 없습니다"}</div>`) +
     `</div>` +
-    // Temp Item Legend 는 Item/TNO/Bin/die 4열이라 기본 폭(340px)에서는 Bin·die 가 잘린다 → 넓게.
+    // Temperature Map Legend 는 Item/TNO/Bin/die 4열이라 기본 폭(340px)에서는 Bin·die 가 잘린다 → 넓게.
     `<div class="wafer-legend-fixed${mapColorKey === "temp" ? " legend-wide" : ""}">` +
     // 색 기준 축(Bin/TNO)에 맞는 Legend 하나만 표시 — 축 전환 시 renderMapAnalysis 재호출로 교체.
     (mapColorKey === "temp"
-      ? `<div class="wafer-legend-title">Temp Item Legend</div>` +
+      ? `<div class="wafer-legend-title">Temperature Map Legend</div>` +
         `<div class="dut-legend-hint">RT Limit 이탈 항목 — 클릭 시 그 항목 fail die 만 강조</div>` +
         `<div class="temp-legend-body"></div>`
       : mapColorKey === "tno"
@@ -951,7 +1015,7 @@ function renderMapAnalysis() {
     tnoInfo.items.forEach(it => { out[it] = mapTnoFilter.has(it) ? tnoInfo.colorMap[it] : MAP_BIN_DIM_COLOR; });
     return out;
   }
-  // Temp Item 축의 die→항목 매핑은 **소스 단위**다. STEP 분리 세션은 같은 소스 맵이
+  // Temperature Map 축의 die→항목 매핑은 **소스 단위**다. STEP 분리 세션은 같은 소스 맵이
   // STEP 수만큼 있어(dies 길이 동일) 맵마다 재계산하면 소스당 STEP 배로 낭비된다.
   // drawAllMaps 1회 = 필터 1상태이므로 그 사이만 재사용한다.
   let _tempPrimaryCache = null;
@@ -977,7 +1041,7 @@ function renderMapAnalysis() {
     }
     const sel = (mapDutSelected && (m.duts || []).includes(mapDutSelected)) ? mapDutSelected : null;
     const activeTno = tnoActiveColorMap();
-    // Temp Item 축: 이 소스의 die 인덱스 → 항목명 (dies 배열과 같은 순서, 서버 temp_map).
+    // Temperature Map 축: 이 소스의 die 인덱스 → 항목명 (dies 배열과 같은 순서, 서버 temp_map).
     // temp_map 이 아직 안 왔거나 그 소스가 RT(=대상 아님)면 null → 전부 Pass 색으로 둔다.
     const tempPrimary = (mapColorKey === "temp") ? tempPrimaryFor(m.source) : null;
     if (mapColorKey === "temp" && !tempMapReady) ensureTempMapData();
@@ -1034,9 +1098,10 @@ let _mapDetailIndex = 0;         // 현재 보는 맵 인덱스
 let _mapDetailBound = false;
 let _mapDetailBinFilter = new Set();
 
+// Detail 은 갤러리와 **같은 목록**을 본다(mapVisibleMaps) — 카드 클릭이 넘기는 인덱스가
+// 그대로 통하고, Temperature 모드 축 필터(RT ↔ CT/HT)도 자동으로 따라온다.
 function mapDetailMaps() {
-  const sheets = webReportSheets();
-  return (sheets && sheets["Map Analysis"]) ? sheets["Map Analysis"] : [];
+  return mapVisibleMaps();
 }
 
 // Detail 플롯 높이 — 뷰포트에서 sticky/헤더 여백을 뺀 큰 값(해상도 우선), 420~900 clamp.
@@ -1105,8 +1170,8 @@ function bindMapDetailPanel() {
     if (e.target.closest(".idet-back")) { closeMapDetail(); return; }
     if (e.target.closest(".mapd-prev")) { mapDetailNav(-1); return; }
     if (e.target.closest(".mapd-next")) { mapDetailNav(1); return; }
-    const tr = e.target.closest("tbody tr[data-bin], tbody tr[data-tno]");
-    if (tr) { mapDetailToggle(tr.dataset.bin || tr.dataset.tno); return; }
+    const tr = e.target.closest("tbody tr[data-bin], tbody tr[data-tno], tbody tr[data-temp-item]");
+    if (tr) { mapDetailToggle(tr.dataset.bin || tr.dataset.tno || tr.dataset.tempItem); return; }
   });
   document.addEventListener("keydown", e => {
     if (!dp.classList.contains("active")) return;
@@ -1120,6 +1185,18 @@ function bindMapDetailPanel() {
 // 현재 mapColorKey 축의 catOf/order/colorMap (회색·Pass 포함, _mapDetailBinFilter dim 반영).
 const _MAP_GRAY_CAT = "__gray__", _MAP_OTHER_CAT = "__other__";
 function mapDetailAxis() {
+  if (mapColorKey === "temp" && webReportMode() === "Temperature") {
+    // 갤러리와 같은 규칙: 이 소스의 die 인덱스 → RT Limit 이탈 항목(temp_map), 나머지는 Pass 색.
+    // 범례 선택(_mapDetailBinFilter)은 색이 아니라 **칠할 항목 집합**을 좁힌다(tempPrimaryByIdx).
+    const info = buildTempItemInfo();
+    const m = mapDetailMaps()[_mapDetailIndex];
+    const primary = m ? tempPrimaryByIdx(m.source, info.items, _mapDetailBinFilter) : null;
+    const order = ["1"].concat(info.items, [_MAP_GRAY_CAT]);
+    const colorMap = { "1": PASS_COLOR, [_MAP_GRAY_CAT]: MAP_GRAY_HEX };
+    info.items.forEach(it => { colorMap[it] = info.colorMap[it]; });
+    const catOf = (d, k) => d.g ? _MAP_GRAY_CAT : ((primary && primary[k]) || "1");
+    return { catOf, order, colorMap };
+  }
   if (mapColorKey === "tno") {
     const tno = buildTnoInfo();
     const topSet = {}; tno.top.forEach(it => { topSet[it] = 1; });
@@ -1221,25 +1298,41 @@ function renderMapDetailLegend() {
   const legendBody = dp.querySelector(".wafer-legend-body");
   const title = dp.querySelector(".wafer-legend-title");
   if (!legendBody) return;
-  if (mapColorKey === "tno") {
+  if (mapColorKey === "temp" && webReportMode() === "Temperature") {
+    const m = mapDetailMaps()[_mapDetailIndex];
+    if (title) title.textContent = "Temperature Map Legend" + (m ? " — " + m.source : "");
+    legendBody.innerHTML = tempItemLegendHtml(
+      tempItemInfoForSource(m ? m.source : ""), _mapDetailBinFilter);
+  } else if (mapColorKey === "tno") {
     if (title) title.textContent = "TNO Legend";
     legendBody.innerHTML = tnoLegendHtml(buildTnoInfo(), _mapDetailBinFilter);
   } else {
-    if (title) title.textContent = "Bin Legend";
-    legendBody.innerHTML = binLegendHtml(buildGlobalBinLegend(mapDetailMaps()),
+    // 갤러리 범례는 전 소스 합산(Summary)이지만, 크게 보기는 **지금 보고 있는 맵 1장**의
+    // Bin 집계다 — count·비율이 화면의 웨이퍼와 일치해야 한다(사용자 요청 2026-08-06).
+    // 색은 세션 공통(globalBinColorMap) 그대로라 갤러리와 같은 bin=같은 색이 유지된다.
+    const m = mapDetailMaps()[_mapDetailIndex];
+    if (title) title.textContent = "Bin Legend" + (m ? " — " + m.source + (m.step ? " / " + m.step : "") : "");
+    legendBody.innerHTML = binLegendHtml(buildGlobalBinLegend(m ? [m] : []),
       globalBinColorMap(), _mapDetailBinFilter, buildBinDescMap());
   }
 }
 
-// 범례 클릭: 색만 restyle(확대/격자 상태 유지). bin/tno 축 공용.
+// 범례 클릭: 색만 restyle(확대/격자 상태 유지). bin/tno/temp 축 공용.
 function mapDetailToggle(key) {
   const m = mapDetailMaps()[_mapDetailIndex];
   if (!m) return;
   if (_mapDetailBinFilter.has(key)) _mapDetailBinFilter.delete(key); else _mapDetailBinFilter.add(key);
   const el = document.getElementById("map-detail-plot");
   if (el && el.data) {
-    const axis = mapDetailAxis();
-    try { Plotly.restyle(el, { colorscale: [binColorscale(axis.order, axis.colorMap)] }, [0]); } catch (e) {}
+    if (mapColorKey === "temp") {
+      // temp 축은 색이 아니라 **z(die→항목 매핑)** 가 선택으로 바뀐다 → colorscale restyle
+      // 로는 반영되지 않는다. 같은 layout 으로 trace 만 다시 만든다.
+      const traces = mapDetailTraces(m, null);
+      if (traces) { try { Plotly.react(el, traces, el.layout, MAP_DETAIL_CONFIG); } catch (e) {} }
+    } else {
+      const axis = mapDetailAxis();
+      try { Plotly.restyle(el, { colorscale: [binColorscale(axis.order, axis.colorMap)] }, [0]); } catch (e) {}
+    }
   }
   renderMapDetailLegend();
 }
@@ -1279,20 +1372,25 @@ function renderMapDetail() {
             `<div id="map-detail-plot" style="width:100%;height:${mapDetailPlotHeight()}px;"><div class="placeholder">맵 로드 중…</div></div>` +
           `</div>` +
         `</div>` +
-        `<div class="wafer-legend-fixed">` +
-          `<div class="wafer-legend-title">${mapColorKey === "tno" ? "TNO Legend" : "Bin Legend"}</div>` +
+        // Temperature Map 축은 항목 범례가 Item/TNO/Bin/die 4열이라 갤러리와 같이 넓게 쓴다.
+        `<div class="wafer-legend-fixed${mapColorKey === "temp" ? " legend-wide" : ""}">` +
+          `<div class="wafer-legend-title">${mapColorKey === "temp" ? "Temperature Map Legend"
+            : mapColorKey === "tno" ? "TNO Legend" : "Bin Legend"}</div>` +
           `<div class="wafer-legend-body"></div>` +
         `</div>` +
       `</div>` +
     `</div>`;
 
   renderMapDetailLegend();
-  // dies 지연 로드 중 — placeholder 만 표시하고, 도착하면 refreshMapConsumers 가 재호출.
-  if (!Array.isArray(m.dies)) {
+  // dies(또는 temp 축의 temp_map) 지연 로드 중 — placeholder 만 표시하고,
+  // 도착하면 refreshMapConsumers(ensureMapData/ensureTempMapData 완료 훅)가 재호출한다.
+  const needTemp = (mapColorKey === "temp" && webReportMode() === "Temperature" && !tempMapReady);
+  if (!Array.isArray(m.dies) || needTemp) {
     dp.dataset.mapWaiting = "1";
     const host = document.getElementById("map-detail-plot");
     if (host) host.innerHTML = `<div class="placeholder">die 데이터 로딩 중…</div>`;
     ensureMapData();
+    if (needTemp) ensureTempMapData();
     return;
   }
   dp.dataset.mapWaiting = "";

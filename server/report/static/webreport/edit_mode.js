@@ -185,6 +185,13 @@ document.querySelector(".content").addEventListener("click", e => {
     flushPendingComments().then(ok => { if (ok && name) noteJumpToTag(name); });
     return;
   }
+  // comment 의 $[시트명] 클릭 → Note 탭 + 해당 시트로 이동 (Summary 의 시트 버튼과 동일 경로).
+  const sheetLink = e.target.closest(".note-sheet-link");
+  if (sheetLink) {
+    const name = sheetLink.dataset.sheetName;
+    flushPendingComments().then(ok => { if (ok && name) noteJumpToSheet(name); });
+    return;
+  }
   // "탭에서 편집 ›" 등 다른 탭으로 보내는 버튼 (Yield 탭 하단 Temp Corner 섹션).
   const gotoTab = e.target.closest("[data-goto-tab]");
   if (gotoTab) {
@@ -467,9 +474,22 @@ document.querySelector(".content").addEventListener("input", e => {
   _setDot("dirty");
 });
 
-// ── Issue Table comment @멘션: contenteditable comment 셀에서 '@' 입력 시 Testitem 검색 드롭다운 ──
-// 선택하면 @[항목명] 토큰이 캐럿 위치에 삽입되고, 저장/표시 시 Item_detail 링크가 된다.
+// ── 태그 멘션: comment 셀 / Summary Engr Comment 에서 '@ # $' 입력 시 검색 드롭다운 ──
+// 선택하면 @[항목명] / #[태그명] / $[시트명] 토큰이 캐럿 위치에 삽입되고, 저장/표시 시
+// linkifyComment(sheets.js)가 각각 Item_detail·Note 셀·Note 시트 링크로 바꾼다.
+// 트리거 문자 집합은 이 두 상수와 sheets.js linkifyComment 의 정규식이 짝이다.
+const TRIGGER_RE = /([@#$])([^\[\]@#$\n]*)$/;        // 캐럿 앞의 미완결 트리거+쿼리
+const TRIGGER_TAIL_RE = /[@#$]([^\[\]@#$\n]*)$/;     // 그 부분을 토큰으로 치환할 때
 let _mentionCell = null;
+// 태그를 입력할 수 있는 필드면 그 요소, 아니면 null.
+// contenteditable comment 셀(Issue Table)과 textarea(Summary Engr Comment) 둘 다 대상.
+function tagFieldOf(t) {
+  if (!t) return null;
+  if (t.matches && t.matches("textarea.engr-comment-input") && !t.readOnly) return t;
+  const td = t.closest && t.closest("td.dblclick-edit");
+  if (td && td.isContentEditable && isCommentCol(td.dataset.col)) return td;
+  return null;
+}
 function mentionCandidates() {
   const out = [], seen = new Set();
   const push = n => { n = String(n == null ? "" : n).trim(); if (n && !seen.has(n)) { seen.add(n); out.push(n); } };
@@ -496,26 +516,38 @@ function _mentionDD() {
 }
 function hideMention() { const dd = document.getElementById("mentionDropdown"); if (dd) dd.style.display = "none"; _mentionCell = null; }
 function mentionQueryAtCaret(cell) {
+  if (cell.tagName === "TEXTAREA") {   // Summary Engr Comment — selectionStart 기준
+    const m = cell.value.slice(0, cell.selectionStart).match(TRIGGER_RE);
+    return m ? { trigger: m[1], q: m[2] } : null;
+  }
   const sel = window.getSelection();
   if (!sel.rangeCount) return null;
   const range = sel.getRangeAt(0);
   if (!cell.contains(range.startContainer)) return null;
   const node = range.startContainer;
   const before = (node.nodeType === 3) ? node.textContent.slice(0, range.startOffset) : (cell.textContent || "");
-  const m = before.match(/([@#])([^\[\]@#\n]*)$/);   // 완결(@[..]/#[..]) 안 된 마지막 트리거+query
+  const m = before.match(TRIGGER_RE);   // 완결(@[..] 등) 안 된 마지막 트리거+query
   return m ? { trigger: m[1], q: m[2] } : null;
 }
 function mentionInsert(cell, item, trigger) {
-  const sel = window.getSelection();
   const token = `${trigger || "@"}[${item}] `;
+  if (cell.tagName === "TEXTAREA") {
+    const head = cell.value.slice(0, cell.selectionStart).replace(TRIGGER_TAIL_RE, token);
+    const tail = cell.value.slice(cell.selectionStart);
+    cell.value = head + tail;
+    cell.selectionStart = cell.selectionEnd = head.length;
+    cell.dispatchEvent(new Event("input", { bubbles: true }));   // _dirty + 링크 칩 갱신
+    return;
+  }
+  const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const range = sel.getRangeAt(0);
   const node = range.startContainer;
   if (node.nodeType !== 3) {
-    cell.textContent = (cell.textContent || "").replace(/[@#]([^\[\]@#\n]*)$/, "") + token;
+    cell.textContent = (cell.textContent || "").replace(TRIGGER_TAIL_RE, "") + token;
   } else {
     const off = range.startOffset, text = node.textContent;
-    const nb = text.slice(0, off).replace(/[@#]([^\[\]@#\n]*)$/, token);
+    const nb = text.slice(0, off).replace(TRIGGER_TAIL_RE, token);
     node.textContent = nb + text.slice(off);
     const r = document.createRange();
     r.setStart(node, Math.min(nb.length, node.textContent.length)); r.collapse(true);
@@ -523,23 +555,39 @@ function mentionInsert(cell, item, trigger) {
   }
   cell.dispatchEvent(new Event("input", { bubbles: true }));   // _dirty 마킹(기존 리스너)
 }
-// @ = Testitem 검색(Item_detail 링크), # = Note 앵커 태그(Note 셀 점프).
+// @ = Testitem 검색(Item_detail 링크), # = Note 앵커 태그(Note 셀 점프),
+// $ = Note 시트 이름(Note 시트 점프).
 function showMention(cell, query, trigger) {
   trigger = trigger || "@";
   const dd = _mentionDD();
+  const match = n => !query || n.toLowerCase().includes(query.toLowerCase());
   let cands, emptyMsg = "";
   if (trigger === "#") {
     const tags = (typeof DATA !== "undefined" && DATA && DATA.note_tags) || {};
-    cands = Object.keys(tags)
-      .filter(n => !query || n.toLowerCase().includes(query.toLowerCase())).slice(0, 20);
+    cands = Object.keys(tags).filter(match).slice(0, 20);
     if (!cands.length) emptyMsg = "등록된 태그 없음 — Note 탭 [🔖 태그]로 생성";
+  } else if (trigger === "$") {
+    const sheets = noteSheetNames();
+    if (sheets === null) {   // 목록 미도착 — 받아오고 드롭다운이 열려 있으면 다시 그린다
+      cands = [];
+      emptyMsg = "Note 시트 목록 불러오는 중…";
+      noteEnsureSheetList().then(() => {
+        if (_mentionCell === cell && dd.dataset.trigger === "$") showMention(cell, query, trigger);
+      });
+    } else {
+      // 이름에 [ ] 가 있으면 $[..] 토큰으로 표현할 수 없다 — 후보에서 뺀다(버튼 줄로는 이동 가능).
+      cands = sheets.map(s => s.name).filter(n => !/[\[\]]/.test(n)).filter(match).slice(0, 20);
+      if (!cands.length) emptyMsg = "일치하는 Note 시트 없음";
+    }
   } else {
-    cands = mentionCandidates()
-      .filter(n => !query || n.toLowerCase().includes(query.toLowerCase())).slice(0, 20);
+    cands = mentionCandidates().filter(match).slice(0, 20);
+    // 후보 0건이면 종전에는 조용히 닫혔다 — Summary 는 첫 화면이라 distIndex 가 아직
+    // 안 채워졌을 수 있어(프리렌더 큐) 사용자가 고장으로 오해한다.
+    if (!cands.length) emptyMsg = query ? "일치하는 항목 없음" : "항목 목록 준비 중 — 잠시 후 다시 시도";
   }
   if (!cands.length && !emptyMsg) { hideMention(); return; }
   dd.dataset.trigger = trigger;
-  const pre = trigger === "#" ? "#" : "";
+  const pre = (trigger === "@") ? "" : trigger;
   dd.innerHTML = cands.length
     ? cands.map(n => `<button type="button" class="mention-opt" data-name="${esc(n)}">${pre}${esc(n)}</button>`).join("")
     : `<div class="mention-empty">${esc(emptyMsg)}</div>`;
@@ -550,14 +598,15 @@ function showMention(cell, query, trigger) {
   _mentionCell = cell;
 }
 document.querySelector(".content").addEventListener("input", e => {
-  const cell = e.target.closest("td.dblclick-edit");
-  if (!cell || !cell.isContentEditable || !isCommentCol(cell.dataset.col)) { hideMention(); return; }
+  const cell = tagFieldOf(e.target);
+  if (!cell) { hideMention(); return; }
   const q = mentionQueryAtCaret(cell);
   if (q === null) hideMention(); else showMention(cell, q.q, q.trigger);
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") hideMention(); });
 document.addEventListener("click", e => {
-  if (!e.target.closest("#mentionDropdown") && !e.target.closest("td.dblclick-edit")) hideMention();
+  if (!e.target.closest("#mentionDropdown") && !e.target.closest("td.dblclick-edit")
+      && !e.target.closest("textarea.engr-comment-input")) hideMention();
 });
 
 // payload 조립 (saveEdits / autoSave 공용)
@@ -796,10 +845,13 @@ function renderEtcItemList(filterText) {
 
 // ETC 추가/삭제·Bin 상세 전환은 panel-issues 를 재렌더하므로, 아직 저장 안 된 comment
 // 편집이 있으면 먼저 저장해 유실을 막는다. 저장 실패 시 false 를 반환해 조작을 중단시킨다.
+// Engr Comment 도 같은 _dirty 를 쓰므로 함께 flush 한다 — 안 그러면 Engr 를 고친 직후
+// 링크를 눌렀을 때 그 편집이 저장 없이 dirty 만 풀린다(변경 없으면 요청도 안 나간다).
 async function flushPendingComments() {
   if (MODE !== "edit" || !_dirty || !isWebReportSession()) return true;
   try {
     await saveIssueComments();
+    await saveSummaryEngr();
     _dirty = false;
     _setDot("saved");
     return true;

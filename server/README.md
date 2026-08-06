@@ -304,7 +304,8 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `POST` | `/issue_table/hidden` | 편집자 | Issue 행 숨김/전체 초기화 (kind=issue_hidden, Yield/CPK 만) |
 | `POST` | `/issue_table/status` | 편집자 | Issue 행 Status Open/Close (kind=issue_status, Close 만 저장). 단건 `{key,value}` / 일괄 `{items:[{key,value},…]}` (전체·선택 Open/Close, DB write 1회) |
 | `POST` | `/chart_notes` | 편집자 | 차트 주석(도형/텍스트/코멘트) 저장 (kind=chart_note) |
-| `GET`/`POST` | `/note` | 공개/편집자 | Note 탭 시트 JSON 지연 조회 / 저장 (kind=note_sheet, ≤2MB) |
+| `GET`/`POST` | `/note` | 공개/편집자 | Note 탭 시트 JSON 지연 조회 / 저장 (kind=note_sheet, ≤10MB) |
+| `GET` | `/note/sheet_names` | 공개 | Note 시트 **이름만** `[{index,name,order}]`. Summary 의 `$[시트명]` 자동완성·시트 버튼 줄 전용 — 본문(≤10MB)까지 내려주는 `/note` 를 이름 때문에 부르지 않게 한 경량 라우트 (서버는 updated_at 키로 memo) |
 | `POST` | `/note_image` | 편집자 | Note 이미지 업로드 (PNG/JPEG raw body, ≤2MB·세션 200장) |
 | `GET` | `/rawdata_export` | 공개 | Honey Excel 편집용 zip(manifest + source_*.parquet) 내보내기. **ETag = content_hash** — Honey 가 temp 에 받아둔 zip 을 `If-None-Match` 로 물어보면 내용 무변경 시 **304**(서버가 원본을 메모리에 올려 zip 으로 싸는 작업 자체를 안 함) |
 | `POST` | `/rawdata_replace` | 편집자 | Raw Data 소스 전체 교체 (Honey 전용, `X-Honey-Agent`). Excel 시트를 지워 source 가 줄면 form 필드 `source_indices`(남긴 원본 idx JSON 배열, 오름차순)를 함께 받아 그 source 를 물리 제거. 선택 첨부 `dist_pack_index`+`dist_pack_chunk_<n>`(클라가 새 parquet 으로 만든 Distribution pack — 업로드 라우트와 같은 규약)을 받으면 새 content_hash 로 영구 저장해 반영 후 콜드 dist 정렬을 없앤다. 반영 후 프리웜을 걸어 리빌드를 컴퓨트 워커로 넘긴다 |

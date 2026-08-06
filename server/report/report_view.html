@@ -401,14 +401,12 @@ body {
   font-size: 11px; font-weight: 600; color: #92400e; background: #ffedd5;
   border-radius: 9px; padding: 1px 7px; margin-left: 6px; vertical-align: middle;
 }
-/* Issue Table Temp 탭 상단 안내문 (전 항목 재판정이라 합이 100% 를 넘을 수 있다는 설명) */
-/* Issue Table Temp 안내 — 표 위 배너(구 .issue-intro)는 하단 가로 스크롤바를 화면 밖으로
-   밀어내 폐지하고 sticky 툴바 안 한 줄로 옮겼다(2026-08-06). 자리가 좁으면 이 요소부터
-   줄어들고 말줄임 처리된다(전문은 title 툴팁). */
+/* Issue Table Temp 안내 (전 항목 재판정이라 합이 100% 를 넘을 수 있다는 설명) —
+   표 위 배너(구 .issue-intro)도, 툴바 안 한 줄 문구도 결국 표를 아래로 밀어 하단 가로
+   스크롤바를 가렸다(2026-08-06 재신고). 지금은 ⓘ 아이콘 하나이고 전문은 title 툴팁이다. */
 .issue-toolbar-note {
-  flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 11px; color: #7c2d12; background: #fff7ed; border: 1px solid #fed7aa;
-  border-radius: 5px; padding: 3px 8px; cursor: help;
+  flex: 0 0 auto; font-size: 13px; line-height: 1; color: #b45309;
+  padding: 2px 4px; cursor: help;
 }
 
 /* ── Summary: 전체/소스별 Yield + Major Fail Bins 통합 테이블 ─────────────── */
@@ -523,11 +521,13 @@ tbody tr:hover { background: #f9fbff; }
    (width:auto 는 컨테이너 폭에 맞추려고 auto table-layout 이 모든 컬럼을 min-content 쪽으로
    압축해서 source 가 늘수록 표 전체가 좁아졌다 — 사용자 요청으로 압축 대신 횡스크롤.) */
 .sheet-table.kind-issue { width: max-content; }
+/* 툴바 높이는 JS 실측값(--issue-toolbar-h, yield_issue.js syncIssueToolbarHeight)을 쓴다 —
+   40px 고정이던 시절엔 툴바가 그보다 커지면 표 하단(=가로 스크롤바)이 화면 밖으로 밀렸다. */
 .sheet-wrap.kind-issue {
   overflow: auto;
   position: sticky;
-  top: calc(var(--sticky-head-h, 96px) + 40px + var(--issue-hscroll-h, 14px));   /* 툴바 + 상단 프록시 가로스크롤바 높이만큼 내림 */
-  max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - 40px - var(--issue-hscroll-h, 14px) - 24px);
+  top: calc(var(--sticky-head-h, 96px) + var(--issue-toolbar-h, 40px) + var(--issue-hscroll-h, 14px));
+  max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - var(--issue-toolbar-h, 40px) - var(--issue-hscroll-h, 14px) - 24px);
   border: 1px solid #d0d7de; border-radius: 6px;
 }
 /* Issue Table 상단 프록시 가로 스크롤바 — 넓은 표에서 하단까지 안 내려가도 상단에서 좌우 스크롤.
@@ -536,7 +536,7 @@ tbody tr:hover { background: #f9fbff; }
 :root { --issue-hscroll-h: 14px; }
 .issue-hscroll {
   position: sticky;
-  top: calc(var(--sticky-head-h, 96px) + 40px);
+  top: calc(var(--sticky-head-h, 96px) + var(--issue-toolbar-h, 40px));
   z-index: 92;
   height: var(--issue-hscroll-h);
   overflow-x: auto; overflow-y: hidden;
@@ -1092,6 +1092,14 @@ html[data-theme="dark"] .mention-empty { color: #8b93a1; }
 html[data-theme="dark"] .note-tag-link { color: #b794f6; background: rgba(183,148,246,.12); }
 html[data-theme="dark"] .note-tag-link:hover { background: rgba(183,148,246,.22); }
 html[data-theme="dark"] .note-tag-link.missing { color: #8b93a1; background: rgba(139,147,161,.15); }
+/* comment $[시트명] → Note 시트 링크 (#태그 보라와 구분되는 청록 pill) */
+.note-sheet-link { color: #0f766e; background: rgba(15,118,110,.10); border-radius: 3px;
+  padding: 0 3px; cursor: pointer; white-space: nowrap; }
+.note-sheet-link:hover { background: rgba(15,118,110,.20); }
+.note-sheet-link.missing { color: #98a2b3; background: rgba(148,163,184,.12); text-decoration: line-through; }
+html[data-theme="dark"] .note-sheet-link { color: #5eead4; background: rgba(94,234,212,.12); }
+html[data-theme="dark"] .note-sheet-link:hover { background: rgba(94,234,212,.22); }
+html[data-theme="dark"] .note-sheet-link.missing { color: #8b93a1; background: rgba(139,147,161,.15); }
 /* Note 탭 [🔖 태그] 팝오버 — note-bar 안 절대위치 */
 .note-tag-panel { position: absolute; z-index: 320; top: 100%; left: 0; margin-top: 4px;
   min-width: 260px; max-width: 360px; max-height: 320px; overflow-y: auto;
@@ -1309,7 +1317,7 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 /* Legend 가 화면보다 길면 잘리므로 뷰포트 높이로 제한하고 내부 스크롤.
    scrollbar-gutter: 세로 스크롤바가 폭을 잠식해 가로 스크롤이 생기는 것 방지. */
 .wafer-legend-fixed { flex: 0 0 340px; position: sticky; top: var(--sticky-head-h, 96px); max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - 16px); overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; }
-/* Temp Item Legend 는 Item/TNO/Bin/die 4열이라 340px 에서는 Bin·die 가 잘린다(사용자 요청 2026-08-06). */
+/* Temperature Map Legend 는 Item/TNO/Bin/die 4열이라 340px 에서는 Bin·die 가 잘린다(사용자 요청 2026-08-06). */
 .wafer-legend-fixed.legend-wide { flex: 0 0 440px; }
 .wafer-legend-title { font-size: 13px; font-weight: 700; color: #333; margin: 0 0 8px; }
 .bin-table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -1323,7 +1331,7 @@ html[data-theme="dark"] .wafer-card-zoom, html[data-theme="dark"] .map-render-pr
 /* Bin Legend description(대표 fail item) 열 — 좌측 정렬 + 말줄임 */
 .bin-table td.bin-desc { text-align: left; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #555; font-size: 11px; }
 html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
-/* Temp Item Legend: 항목명이 길어도 TNO/Bin/die 열이 밀려 잘리지 않게 폭을 고정 배분하고,
+/* Temperature Map Legend: 항목명이 길어도 TNO/Bin/die 열이 밀려 잘리지 않게 폭을 고정 배분하고,
    Item 만 말줄임(전체 이름은 hover title). 항목 수 제한 없이 전부 나열한다(내부 스크롤). */
 .temp-legend-table { table-layout: fixed; }
 .temp-legend-table th:nth-child(2), .temp-legend-table td:nth-child(2) { width: 62px; }
@@ -1363,6 +1371,27 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
   padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font: inherit; line-height: 1.5;
 }
 .engr-comment-input:focus { outline: none; border-color: #4a90e2; box-shadow: 0 0 0 2px rgba(74,144,226,.18); }
+/* 입력칸 + 그 아래 링크 칩 줄 (textarea 는 HTML 을 못 그리므로 링크를 본문 밖에 둔다) */
+.engr-comment-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.engr-comment-links { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
+/* 조회 모드: 본문 자체를 링크로 렌더 (편집이 없어 textarea 가 필요 없다) */
+.engr-comment-view {
+  width: 100%; box-sizing: border-box; min-height: 84px; max-height: 220px; overflow-y: auto;
+  padding: 8px 10px; border: 1px solid #e7e7ea; border-radius: 6px; background: #fafafa;
+  font: inherit; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+/* Engr Comment 아래 Note 시트 점프 버튼 줄 */
+.engr-note-jump { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  margin-top: 12px; padding-top: 10px; border-top: 1px solid #eee; }
+.engr-note-jump-label { font-size: 12px; font-weight: 600; color: #667085; margin-right: 2px; }
+.note-sheet-btn { font-size: 12px; padding: 3px 10px; border-radius: 12px; cursor: pointer;
+  border: 1px solid rgba(15,118,110,.35); background: rgba(15,118,110,.08); color: #0f766e; }
+.note-sheet-btn:hover { background: rgba(15,118,110,.18); }
+html[data-theme="dark"] .engr-comment-view { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .engr-note-jump { border-top-color: #2a2f38; }
+html[data-theme="dark"] .engr-note-jump-label { color: #8b93a1; }
+html[data-theme="dark"] .note-sheet-btn { border-color: rgba(94,234,212,.35); background: rgba(94,234,212,.10); color: #5eead4; }
+html[data-theme="dark"] .note-sheet-btn:hover { background: rgba(94,234,212,.20); }
 
 .error-box {
   background: #fef2f2; color: #991b1b; padding: 12px 16px;
@@ -1791,9 +1820,7 @@ html[data-theme="dark"] .yield-step-title { color: #7fb3ef; border-color: #2c3a5
 html[data-theme="dark"] .yield-corner-title {
   color: #f6bd8a; background: #33251a; border-left-color: #b45309;
 }
-html[data-theme="dark"] .issue-toolbar-note {
-  color: #f6bd8a; background: #2b2117; border-color: #7c4a16;
-}
+html[data-theme="dark"] .issue-toolbar-note { color: #f6bd8a; }
 html[data-theme="dark"] .ybs-table th { background: #1c2330; color: #8b94a3; }
 html[data-theme="dark"] .ybs-table th,
 html[data-theme="dark"] .ybs-table td { border-bottom-color: #2a2e37; }

@@ -179,7 +179,7 @@ def session_full(session_id):
     if session.get("source") == "web_report":
         # 차트 주석(도형/코멘트) + Note 탭 존재 메타 — 세션 편집 DB 의 값싼 조회.
         # 편집 저장은 edits_rev 증가 + extras digest 변경으로 응답 캐시가 무효화된다.
-        # Note 시트 본문(최대 2MB)은 싣지 않고 GET .../web_report/note 로 지연 로드.
+        # Note 시트 본문(최대 10MB)은 싣지 않고 GET .../web_report/note 로 지연 로드.
         extras["chart_notes"] = web_report_service.get_chart_notes(
             session_id, report_db=report_db)
         extras["note_info"] = web_report_service.get_note_meta(

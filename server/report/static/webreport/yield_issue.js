@@ -457,11 +457,11 @@ function issueToolbarHtml(panelId) {
       `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC</button>` +
     `</span>` +
     `<button type="button" class="btn-sm" data-issue-act="toggle-all" data-expanded="false">TNO 전체 펼치기</button>`;
-  // Issue Table Temp 안내문 — 표 위 배너(구 .issue-intro)로 두면 그 높이만큼 표가 밀려
-  // 하단 가로 스크롤바가 화면 밖으로 나간다(사용자 요청 2026-08-06). sticky 툴바 안에
-  // 한 줄로 축약해 넣고, 자세한 설명은 hover(title)로 남긴다.
+  // Issue Table Temp 안내문 — 문구를 그대로 두면 툴바가 길어져(줄바꿈·버튼 밀림) 표가
+  // 아래로 내려가고 하단 가로 스크롤바가 화면 밖으로 나간다(사용자 요청 2026-08-06).
+  // 아이콘 하나로 줄이고 설명 전문은 hover(title) 로만 남긴다.
   const tempNote = isTemp
-    ? `<span class="issue-toolbar-note" title="CT / HT 를 RT Limit(LOLIM·HILIM)으로 전 항목 재판정한 결과입니다. 한 die 가 여러 항목을 벗어나면 그 항목 전부에 계산되므로 소스별 합이 100% 를 넘을 수 있습니다.">CT / HT 를 RT Limit 기준 재판정한 결과입니다</span>`
+    ? `<span class="issue-toolbar-note" title="CT / HT 를 RT Limit(LOLIM·HILIM)으로 전 항목 재판정한 결과입니다. 한 die 가 여러 항목을 벗어나면 그 항목 전부에 계산되므로 소스별 합이 100% 를 넘을 수 있습니다.&#10;Map 셀 fail die 색: CT = 파랑 · HT = 빨강">ⓘ</span>`
     : "";
   return `<div class="issue-toolbar">` +
     jumpAndToggle +
@@ -585,11 +585,23 @@ function bindIssueHscroll(panel) {
     _issueHscrollSyncing = true; hscroll.scrollLeft = wrap.scrollLeft; _issueHscrollSyncing = false;
   });
 }
+// sticky 툴바 실제 높이 → --issue-toolbar-h. 표(.sheet-wrap.kind-issue)의 top·max-height 가
+// 이 값을 빼서 뷰포트 안에 들어오는데, CSS 에 40px 로 박아두면 툴바가 그보다 커질 때
+// (버튼이 많은 편집 모드·안내문 등) 표 하단이 화면 밖으로 밀려 **하단 가로 스크롤바가
+// 보이지 않는다**(사용자 신고 2026-08-06). 실측값으로 대체한다.
+function syncIssueToolbarHeight(panel) {
+  const bar = panel && panel.querySelector(".issue-toolbar");
+  if (!bar) return;
+  const h = Math.round(bar.getBoundingClientRect().height);
+  if (h > 0) panel.style.setProperty("--issue-toolbar-h", h + "px");
+}
+
 // 좌측 고정열(Step/Bin/TNO/Item/Map/Distribution)의 left 오프셋을 실제 렌더 폭으로 계산 —
 // 내용이 길어 컬럼이 colWidth 힌트보다 넓어져도 셀이 겹치지(깨지지) 않게 한다.
 function syncIssueStickyOffsets(panel) {
   panel = panel || activeIssuePanel();
   if (!panel) return;
+  syncIssueToolbarHeight(panel);
   const table = panel.querySelector(".sheet-table.kind-issue");
   if (!table) return;
   // 셀 6개 이상인 대표 행 하나로 앞 5개 컬럼(Step/Bin/TNO/Item/Map) 실측 폭을 잰다.

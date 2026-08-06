@@ -58,13 +58,20 @@ function renderMiniStdfCell(cell) {
 // Issue Table Temp 행 Map 셀: "이 항목을 RT Limit 기준으로 벗어난 die" 를 강조한 미니맵.
 // die 인덱스는 서버 temp_map(GET .../web_report/temp_map) 이 주고, dies 배열과 같은 순서라
 // drawWaferThumb 콜백의 3번째 인자(k)로 바로 매칭한다.
-const TEMP_MINI_FAIL_COLOR = "#dc2626";
-// 항목 fail die(hit) 는 빨강, 나머지는 dim, 앞 step fail(d.g)은 회색.
+// fail die 색은 **온도 조건**으로 가른다 — CT(저온) fail = 파랑, HT(고온) fail = 빨강
+// (사용자 요청 2026-08-06). corner 를 못 찾는 소스는 종전대로 빨강.
+const TEMP_MINI_FAIL_CT = "#2a78d6";
+const TEMP_MINI_FAIL_HT = "#dc2626";
+function tempMiniFailColor(source) {
+  return tempCornerOf(source) === "CT" ? TEMP_MINI_FAIL_CT : TEMP_MINI_FAIL_HT;
+}
+// 항목 fail die(hit) 는 그 소스의 온도 색, 나머지는 dim, 앞 step fail(d.g)은 회색.
 // 미니셀과 ⤢ 확장이 같은 색 규칙을 쓴다 (issueMapRgbFor 와 같은 패턴).
-function tempMapRgbFor(hit) {
+function tempMapRgbFor(hit, failHex) {
+  const fail = failHex || TEMP_MINI_FAIL_HT;
   return (d, cache, k) => {
     if (d.g) return MAP_GRAY_RGB;
-    const hex = hit.has(k) ? TEMP_MINI_FAIL_COLOR : MAP_BIN_DIM_COLOR;
+    const hex = hit.has(k) ? fail : MAP_BIN_DIM_COLOR;
     let rgb = cache[hex];
     if (!rgb) { rgb = hexToRgb(hex); cache[hex] = rgb; }
     return rgb;
@@ -85,9 +92,11 @@ function renderMiniTempCell(cell) {
   if (!m) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
   if (!Array.isArray(m.dies)) { ensureMapData(); return; }
   const hit = new Set(first.idx);
-  cell.title = `${first.source} — 이 항목 fail ${first.idx.length} die` +
+  const corner = tempCornerOf(first.source);
+  cell.title = `${first.source}${corner ? ` (${corner})` : ""} — 이 항목 fail ${first.idx.length} die` +
     (entries.length > 1 ? ` (외 ${entries.length - 1}개 소스는 ⤢)` : "") +
-    "\n클릭하면 Map Analysis 탭 Temp Item 축에서 이 항목을 강조해 봅니다";
+    "\nfail die 색: CT = 파랑 · HT = 빨강" +
+    "\n클릭하면 Map Analysis 탭 Temperature Map 축에서 이 항목을 강조해 봅니다";
   let canvas = div.querySelector("canvas.wafer-thumb");
   if (!canvas) {
     div.innerHTML = "";
@@ -95,7 +104,7 @@ function renderMiniTempCell(cell) {
     canvas.className = "wafer-thumb";
     div.appendChild(canvas);
   }
-  drawWaferThumb(canvas, m, tempMapRgbFor(hit));
+  drawWaferThumb(canvas, m, tempMapRgbFor(hit, tempMiniFailColor(first.source)));
   cell.dataset.mapLoaded = "1";
 }
 
@@ -243,17 +252,19 @@ function openTempExpand(cell) {
   });
   if (!entries.length) return;
   const pop = openMapExpandPop(cell, entries.length);
-  pop.innerHTML = entries.map((e, i) =>
-    `<div class="map-exp-item"><div class="map-exp-title">${esc(e.m.source)}` +
-    `${e.m.step ? " — " + esc(e.m.step) : ""}</div>` +
-    `<div class="map-exp-plot" id="mapexp-${i}"></div></div>`).join("");
+  pop.innerHTML = entries.map((e, i) => {
+    const corner = tempCornerOf(e.m.source);
+    return `<div class="map-exp-item"><div class="map-exp-title">${esc(e.m.source)}` +
+      `${corner ? ` (${esc(corner)})` : ""}${e.m.step ? " — " + esc(e.m.step) : ""}</div>` +
+      `<div class="map-exp-plot" id="mapexp-${i}"></div></div>`;
+  }).join("");
   entries.forEach((e, i) => {
     const host = pop.querySelector(`#mapexp-${i}`);
     if (!host) return;
     const canvas = document.createElement("canvas");
     canvas.className = "wafer-thumb";
     host.appendChild(canvas);
-    drawWaferThumb(canvas, e.m, tempMapRgbFor(e.hit));
+    drawWaferThumb(canvas, e.m, tempMapRgbFor(e.hit, tempMiniFailColor(e.m.source)));
   });
 }
 
