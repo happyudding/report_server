@@ -224,6 +224,183 @@ def _build_webreport_dist_pack(parquet_items, sources, selected_items, mode,
     return build_pack_from_parquet(items, selected_items, mode, stage_cb=stage_cb)
 
 
+def _encode_sources_worker(entries, cancel_evt=None):
+    """source 별 parquet 인코딩을 미리 돌려 ``{id(md): (bytes, renames)}`` 로 돌려준다.
+
+    **워커 스레드 전용 순수 함수**다 — UI·MainWindow(self)·work_group·md.name 을 읽지도
+    쓰지도 않는다. 그래야 UI 스레드가 배치 다이얼로그 결과로 ``rename_sources`` 를 돌리는
+    것과 읽기/쓰기 집합이 겹치지 않는다(rename 이 건드리는 것은 md.name 과 그룹의 dict/
+    캐시뿐이고, 여기서 읽는 것은 md.df 뿐이다).
+
+    미리 만들어 둘 수 있는 이유는 **인코딩 결과가 source 이름·순서와 무관**하기 때문이다 —
+    honeyform 에는 이름 컬럼이 없어서(web_report/honeyform.py META_COLUMNS) 이름·순서는
+    manifest 의 sources/items 메타에만 실린다. 그래서 배치창에서 이름을 바꾸든 순서를
+    바꾸든 재인코딩이 필요 없다.
+
+    캐시 키가 md **객체 identity** 인 이유는 ``_apply_source_arrangement`` 와 같다 —
+    이름은 dedupe 규칙 차이로 갈릴 수 있지만 md 객체는 rename/reorder 를 관통해 그대로다.
+    호출부(_EncodePrefetch)가 md 참조를 붙들어 id 재사용을 막는다.
+
+    cancel_evt 가 서면 그때까지 만든 것만 돌려준다(부분 캐시도 정상 동작 — 조립이 나머지를
+    인코딩한다). 실패한 source 는 캐시에 넣지 않는다 — 조립 때 정식 경로가 다시 인코딩하며
+    같은 예외를 source 이름과 함께 사용자에게 보여준다(에러 은폐 방지).
+    """
+    out = {}
+    for md, df in entries:
+        if cancel_evt is not None and cancel_evt.is_set():
+            break
+        try:
+            frame, renames = dedupe_item_columns(df)
+            out[id(md)] = (encode_honeyform_parquet(frame), renames)
+        except Exception:  # noqa: BLE001 — 조립 경로가 같은 입력으로 다시 시도한다
+            continue
+    return out
+
+
+def _guess_temperature_groups(names, roles):
+    """배치창의 자동 배치와 **같은 함수**로 추정 그룹을 만든다.
+
+    반환 형태는 ``SourceNameDialog.result_arrangement()["groups"]`` 와 같은
+    ``[{"rt": 이름, "members": [...], "member_roles": [...]}]`` — 그래야
+    ``web_report.temperature.clean_frames`` 에 그대로 넣어 볼 수 있다.
+
+    다이얼로그(_auto_arrange)와 **다른 규칙을 쓰면 안 된다** — 추정이 창의 초기 배치와
+    달라지면 사용자가 아무것도 안 건드렸는데도 무효 판정이 나 헛경고가 뜬다.
+    """
+    from honey_ui.temperature_pairing import suggest_groups, suggest_groups_by_role
+
+    try:
+        raw = (suggest_groups_by_role(list(names), roles.get) if roles
+               else suggest_groups(list(names)))
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for mapping in raw:
+        rt = mapping.get("RT")
+        if not rt:
+            continue
+        members, member_roles = [], []
+        for role in ("CT", "HT"):                     # members 는 CT 먼저, 그다음 HT
+            name = mapping.get(role)
+            if name:
+                members.append(name)
+                member_roles.append(role)
+        if members:
+            out.append({"rt": rt, "members": members, "member_roles": member_roles})
+    return out
+
+
+def _temp_invalid_members(guess_groups, guess_names, arranged):
+    """최종 배치에서 **추정과 RT 파트너가 달라진** member 의 원본 index 집합.
+
+    이름이 아니라 **원본 index** 로 비교한다 — 자동 배치가 legend 에 역할 접미사를
+    붙이므로(apply_role_suffix) 최종 이름은 추정 이름과 구조적으로 항상 다르다. 이름으로
+    비교하면 100% 오탐이다.
+
+    ``clean_group`` 은 member 마다 (member.df, RT.df, bin_map) 로만 정리하고 CT/HT 역할을
+    구분하지 않으므로, **표시 순서 변경·그룹 번호 스왑·CT↔HT 역할 스왑은 정리 결과가
+    같다** → 여기서 자동으로 통과한다(경고창도 안 뜬다).
+
+    limit 파일(.lt/.pds)이 들어오면 bin 매칭이 통째로 달라지므로 전 member 가 무효다.
+    """
+    final_names = list(arranged.get("names") or [])
+    final_idx = {n: i for i, n in enumerate(final_names)}
+    final_groups = arranged.get("groups") or []
+    if arranged.get("bin_map"):
+        return {final_idx[m] for g in final_groups for m in (g.get("members") or [])
+                if m in final_idx}
+
+    guess_idx = {n: i for i, n in enumerate(list(guess_names))}
+    rt_of_guess = {}
+    for g in guess_groups:
+        rt = guess_idx.get(g.get("rt"))
+        if rt is None:
+            continue
+        for m in g.get("members") or []:
+            mi = guess_idx.get(m)
+            if mi is not None:
+                rt_of_guess[mi] = rt
+
+    invalid = set()
+    for g in final_groups:
+        rt = final_idx.get(g.get("rt"))
+        for m in g.get("members") or []:
+            mi = final_idx.get(m)
+            if mi is None:
+                continue
+            if rt is None or rt_of_guess.get(mi) != rt:
+                invalid.add(mi)
+    return invalid
+
+
+class _EncodePrefetch:
+    """source 배치/이름 다이얼로그가 떠 있는 동안 도는 parquet 인코딩 선행 작업.
+
+    executor 를 ``_run_web_report`` 에 **그대로 넘겨준다** — 선행 job 과 조립 job 이 같은
+    ``max_workers=1`` 풀에 있어야 FIFO 로 배타 실행되어 락 없이 안전하고("제출 순서 =
+    실행 순서" 를 이용하는 _run_web_report 의 기존 설계도 그대로 유지된다), 조립이 캐시를
+    읽을 때 선행 job 이 이미 끝나 있음이 구조적으로 보장된다.
+
+    실패·취소는 전부 "캐시 없음" 으로 수렴한다 — 그러면 종전과 똑같이 전량 인코딩한다.
+    """
+
+    def __init__(self, executor, future, cancel_evt, keepalive):
+        self.executor = executor
+        self._future = future
+        self._cancel = cancel_evt
+        # 캐시 키가 id(md) 라서 md 가 GC 되면 다른 객체가 같은 id 를 받아 오적중할 수
+        # 있다. 결과를 다 쓸 때까지 참조를 붙들어 그 창을 닫는다.
+        self.keepalive = keepalive
+        self._drop = set()
+        self._aborted = False
+
+    @classmethod
+    def start(cls, entries):
+        """entries=[(md, df)] 로 선행 인코딩 시작. 빈 입력이면 None."""
+        if not entries:
+            return None
+        cancel = threading.Event()
+        ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        fut = ex.submit(lambda: {"raw": _encode_sources_worker(entries, cancel),
+                                 "cleaned": {}})
+        return cls(ex, fut, cancel, entries)
+
+    def cache_or_empty(self):
+        """선행 결과 ``{"raw": {...}, "cleaned": {...}}``. 실패·취소·미완이면 빈 dict.
+
+        두 풀로 나누는 이유: 같은 source 라도 **원본 df 인코딩(raw)** 과 **Temperature
+        배치로 정리한 df 인코딩(cleaned)** 은 다른 바이트다. 조립이 자기가 만든 cleaned
+        여부로 풀을 골라야 섞이지 않는다.
+
+        **조립 job 안에서 호출한다** — 같은 FIFO 풀이라 선행 job 이 이미 끝나 있어
+        블로킹이 없다. UI 스레드에서 부르면 이 대기가 그대로 프리징이 된다.
+        """
+        try:
+            data = self._future.result() or {}
+        except Exception:  # noqa: BLE001
+            return {}
+        cleaned = data.get("cleaned") or {}
+        if self._drop:
+            cleaned = {k: v for k, v in cleaned.items() if k not in self._drop}
+        return {"raw": data.get("raw") or {}, "cleaned": cleaned}
+
+    def drop_cleaned(self, ids):
+        """추정과 달라진 source 의 선행 **정리분**을 버린다 (UI 스레드에서 호출).
+
+        future 가 아직 안 끝났을 수 있어 결과 dict 를 직접 지우지 않고 제외 집합으로만
+        남긴다 — cache_or_empty 가 걸러 낸다. raw 풀은 배치와 무관하므로 손대지 않는다.
+        """
+        self._drop |= set(ids)
+
+    def abort(self):
+        """취소 + executor 정리. 여러 번 불러도 안전하다."""
+        if self._aborted:
+            return
+        self._aborted = True
+        self._cancel.set()
+        self.executor.shutdown(wait=False, cancel_futures=True)
+
+
 class SlideInPanel(QWidget):
     """왼쪽→오른쪽으로 슬라이드되어 나오는 프레임리스 최상위 패널.
 
@@ -1933,8 +2110,12 @@ class HoneyMainWindow(QMainWindow):
             self._run_web_report(ctx["work_group"], ctx["selected"], ctx["sheets"],
                                  compare_mode=ctx["compare_mode"], options=ctx["options"],
                                  mode=ctx["mode"], source_order=ctx.get("source_order"),
-                                 temperature=ctx.get("temperature"))
+                                 temperature=ctx.get("temperature"),
+                                 prefetch=ctx.get("prefetch"))
         finally:
+            # 배치창 취소·예외로 빠져나가도 선행 executor 가 남지 않게 한다. 정상 완료면
+            # _run_web_report 가 이미 정리한 뒤라 no-op 다.
+            self._abort_encode_prefetch()
             self._set_busy(False)
 
     def _dialog_entries(self, names, paths=None, from_group=True):
@@ -2119,6 +2300,9 @@ class HoneyMainWindow(QMainWindow):
             # 파일명만으로 이름을 알 수 없다 — 종전 순서(파싱 → 배치 창) 그대로.
             if not self._rebuild_group(warn=True) or self.group is None:
                 return None
+            # 파싱이 이미 끝났으니 배치 창 시간을 인코딩이 쓴다 (RT·미배정분은 배치가
+            # 어떻게 나오든 그대로 유효하다 — _build_webreport_parquets 의 cleaned 판정).
+            self._start_encode_prefetch()
             dlg = _temp_dialog(list(self.group.names()), True)
             if not dlg.exec():
                 self._status("Temperature 배치 취소")
@@ -2126,17 +2310,72 @@ class HoneyMainWindow(QMainWindow):
             return dlg.result_arrangement()
 
         stage_q = queue.Queue()
+        cancel = threading.Event()
         ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        handed_over = False
         try:
             fut = ex.submit(self._parse_group_core, paths, self.product_type(),
                             True, stage_q.put)
+
+            # 창의 자동 배치와 **같은 규칙**으로 배치를 미리 추정한다 — CT/HT 는 이 배치로
+            # rawdata 를 정리해야 인코딩할 수 있어서, 추정 없이는 RT·미배정분밖에 못 만든다.
+            guess_groups = _guess_temperature_groups(
+                names_guess, self._roles_for_names(names_guess, paths))
+
+            def _prefetch_after_parse():
+                """파싱 뒤에 이어 달리는 선행 인코딩 (같은 워커 1개 FIFO).
+
+                배치 시간이 파싱보다 길면 남는 시간을 이게 먹고, 짧으면 시작도 못 한 채
+                남는다 — 아래 _wait_for_future(fut) 는 파싱만 기다리므로 종전과 같다.
+
+                RT·미배정은 배치와 무관하므로 원본 그대로(raw), CT/HT 는 추정 배치로 정리한
+                뒤(cleaned) 인코딩한다. 사용자가 창에서 RT 파트너를 바꾸면 그 member 의
+                정리분만 버려진다(drop_cleaned).
+                """
+                grp, _issues = fut.result()
+                names = list(grp.names())
+                mds = [grp.mass_data_map[n] for n in names]
+                frames = {n: (md.to_df() if hasattr(md, "to_df") else md.df)
+                          for n, md in zip(names, mds)}
+                members = {m for g in guess_groups for m in g["members"]}
+                # RT·미배정 먼저 — 추정이 빗나가도 이쪽은 100% 살아남는다.
+                out = {"raw": _encode_sources_worker(
+                    [(md, frames[n]) for n, md in zip(names, mds) if n not in members],
+                    cancel), "cleaned": {}}
+                if not guess_groups:
+                    return out
+                from web_report.temperature import clean_frames
+                # 추정 이름이 실제와 어긋나면 clean_frames 가 그 그룹을 건너뛴다 →
+                # cleaned 가 비어 조립이 정식 경로로 인코딩한다(값은 항상 최종 배치 기준).
+                cleaned, _stats = clean_frames(frames, guess_groups, None)
+                out["cleaned"] = _encode_sources_worker(
+                    [(md, cleaned[n]) for n, md in zip(names, mds)
+                     if n in cleaned and cleaned[n] is not frames[n]], cancel)
+                return out
+            prefetch = _EncodePrefetch(ex, ex.submit(_prefetch_after_parse), cancel, None)
+
             # 아직 파싱 전이라 md 가 없다 — 추정 이름과 같은 순번의 입력 파일을 보여준다.
             dlg = _temp_dialog(names_guess, False)
-            if not dlg.exec():
-                self._status("Temperature 배치 취소")
-                fut.cancel()          # 이미 시작됐으면 결과만 버린다(읽기 전용이라 무해)
-                return None
-            arranged = dlg.result_arrangement()
+            while True:
+                if not dlg.exec():
+                    self._status("Temperature 배치 취소")
+                    fut.cancel()      # 이미 시작됐으면 결과만 버린다(읽기 전용이라 무해)
+                    return None
+                arranged = dlg.result_arrangement()
+                # 미리 계산해 둔 배치를 사용자가 바꿨으면 그만큼 다시 계산해야 한다.
+                # limit 파일 드롭은 배치 변경이 아니라 정확도를 올리는 정상 입력이라
+                # 묻지 않고 조용히 다시 계산한다.
+                if (not guess_groups or arranged.get("bin_map")
+                        or not _temp_invalid_members(guess_groups, names_guess, arranged)):
+                    break
+                if QMessageBox.question(
+                        self, "Temperature 배치 변경",
+                        "미리 계산해 둔 배치와 다르게 바꾸셨습니다. 정말 바꾸시겠습니까?\n"
+                        "(계산해 둔 결과를 버리고 다시 계산하므로 보고서 생성 시간이 "
+                        "약간 증가합니다.)",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes) == QMessageBox.StandardButton.Yes:
+                    break
 
             # 파싱 잔여분 대기 — 배치가 길었으면 대개 이미 끝나 있다.
             progress = _ElapsedProgress(
@@ -2175,9 +2414,54 @@ class HoneyMainWindow(QMainWindow):
                     self._status("Temperature 배치 취소")
                     return None
                 arranged = dlg2.result_arrangement()
+            # 최종 배치와 어긋난 member 의 선행 정리분을 버린다 — 조립이 그것만 다시
+            # 인코딩한다. index → md 는 **source_names(창에 들어간 rename 전 이름)** 로
+            # 잇는다. group.names() 순서로 이으면 파서가 파일을 병합해 순서·개수가
+            # 어긋난 경우 엉뚱한 source 를 지워 잘못된 정리본이 살아남는다.
+            invalid = _temp_invalid_members(guess_groups, names_guess, arranged)
+            if invalid:
+                mass_map = self.group.mass_data_map
+                src_names = arranged.get("source_names") or []
+                prefetch.drop_cleaned(
+                    {id(mass_map[src_names[i]]) for i in invalid
+                     if 0 <= i < len(src_names) and src_names[i] in mass_map})
+            # 선행 인코딩과 그 executor 를 _run_web_report 로 넘긴다 — 조립 job 이 같은
+            # FIFO 풀에 들어가야 캐시를 블로킹 없이 읽고 상태 누적도 인터리브되지 않는다.
+            prefetch.keepalive = self.group      # 캐시 키가 id(md) 라 md 를 살려 둔다
+            self._encode_prefetch = prefetch
+            handed_over = True
             return arranged
         finally:
-            ex.shutdown(wait=False)
+            # 소유권을 넘긴 뒤에는 정리하지 않는다 — shutdown 은 이후 submit 을 막는다.
+            if not handed_over:
+                cancel.set()
+                ex.shutdown(wait=False, cancel_futures=True)
+
+    def _start_encode_prefetch(self):
+        """현재 그룹으로 선행 parquet 인코딩을 시작한다 (이전 것은 정리).
+
+        **UI 스레드에서 df 스냅샷을 떠서** 워커에 넘긴다 — group 을 통째로 넘기면 배치창
+        결과로 도는 ``rename_sources`` 와 워커가 같은 객체를 보게 된다. 스냅샷은 얕은
+        참조라 복사 비용이 없고, 워커가 읽는 md.df 는 rename 이 건드리지 않는다.
+        실패는 조용히 넘긴다 — 선행이 없으면 종전대로 조립 때 전량 인코딩한다.
+        """
+        self._abort_encode_prefetch()
+        group = getattr(self, "group", None)
+        if group is None:
+            return
+        try:
+            entries = [(md, md.to_df() if hasattr(md, "to_df") else md.df)
+                       for md in (group.mass_data_map[n] for n in group.names())]
+        except Exception:  # noqa: BLE001
+            return
+        self._encode_prefetch = _EncodePrefetch.start(entries)
+
+    def _abort_encode_prefetch(self):
+        """보관 중인 선행 인코딩을 취소·정리한다 (여러 번 불러도 안전)."""
+        pf = getattr(self, "_encode_prefetch", None)
+        self._encode_prefetch = None
+        if pf is not None:
+            pf.abort()
 
     def _prepare_web_report_context(self):
         if not self.csv_paths:
@@ -2212,6 +2496,13 @@ class HoneyMainWindow(QMainWindow):
         # DUT 모드는 서버가 업로드된 단일 honeyform 의 DUT 컬럼으로 분할·명명(DUT <값>)하므로
         # 클라에서는 분할하지 않고 rename 도 건너뛴다 (df_honey→honeyform 포맷 변환 회피).
         # Compare 모드는 이름 변경 창 대신 Before/After 배치 창을 띄운다 (이름 변경 포함).
+        #
+        # 그 창이 떠 있는 동안 parquet 인코딩을 미리 돌려 둔다 — 인코딩 결과는 이름·순서와
+        # 무관하므로(honeyform 에 이름 컬럼이 없다) 창에서 무엇을 바꾸든 그대로 재사용된다.
+        # DUT 는 창이 없어 벌 시간이 없고, Temperature 는 _temperature_first_flow 가 파싱과
+        # 같은 워커에 이어 붙여 이미 시작했다.
+        if mode not in ("DUT", "Temperature"):
+            self._start_encode_prefetch()
         source_order = None
         temperature = None
         if mode == "Compare":
@@ -2247,6 +2538,8 @@ class HoneyMainWindow(QMainWindow):
             "source_order": source_order,
             # Temperature 모드 rawdata 정리 지시 (그룹 + .lt/.pds bin 매핑). 그 외 모드는 None.
             "temperature": temperature,
+            # 배치창 동안 돌린 선행 인코딩 (없으면 None — 조립이 전량 인코딩한다).
+            "prefetch": getattr(self, "_encode_prefetch", None),
         }
 
     def _ask_compare_groups(self):
@@ -2297,7 +2590,8 @@ class HoneyMainWindow(QMainWindow):
         except Exception:
             return ""
 
-    def _build_webreport_parquets(self, work_group, order=None, temperature=None):
+    def _build_webreport_parquets(self, work_group, order=None, temperature=None,
+                                  cache=None):
         items = []
         sources = []
         # 중복 항목명 자동 개명 내역 — 워커 스레드에서 도는 함수라 여기서 다이얼로그를 띄우면
@@ -2317,18 +2611,31 @@ class HoneyMainWindow(QMainWindow):
             # 다시 읽지 않는다 — 여러 input 의 병합이 honey_parse 안에서 일어나므로, 원본을
             # 재-read 하면 병합 결과를 버리고 파일 1개만 올리게 된다.
             df = md.to_df() if hasattr(md, "to_df") else md.df
-            if name in cleaned:
+            # 선행 인코딩 캐시는 원본 df 기준(raw)과 Temperature 정리본 기준(cleaned)이
+            # 다른 풀이라, 이 source 를 정리했는지로 풀을 고른다. RT·미배정 source 는
+            # clean_frames 가 입력 프레임 객체를 그대로 돌려주고 _clean_temperature_frames
+            # 가 `is not` 로 걸러내므로 cleaned 에 들어오지 않는다 → 항상 raw 풀이다.
+            changed = name in cleaned
+            if changed:
                 df = cleaned[name]
+            pool = (cache or {}).get("cleaned" if changed else "raw") or {}
+            hit = pool.get(id(md))
             file_name = self._source_file_name(md, name)
-            # encode 안에서도 같은 개명이 돌지만(멱등), 무엇이 바뀌었는지 사용자에게 알리려면
-            # 여기서 미리 호출해 목록을 받아둬야 한다.
-            df, renames = dedupe_item_columns(df)
+            if hit is not None:
+                # 배치창이 떠 있는 동안 미리 만들어 둔 것 (_encode_sources_worker).
+                # 이름·순서는 아래 메타에만 쓰이므로 재인코딩이 필요 없다.
+                data, renames = hit
+            else:
+                # encode 안에서도 같은 개명이 돌지만(멱등), 무엇이 바뀌었는지 사용자에게
+                # 알리려면 여기서 미리 호출해 목록을 받아둬야 한다.
+                df, renames = dedupe_item_columns(df)
+                try:
+                    data = encode_honeyform_parquet(df)
+                except ValueError as exc:
+                    # 어느 source 가 걸렸는지 없으면 사용자가 원인 파일을 못 찾는다.
+                    raise ValueError(
+                        f"[{file_name}] honeyform 형식이 맞지 않습니다.\n{exc}") from exc
             self._webreport_dup_renames += [(file_name, old, new) for old, new in renames]
-            try:
-                data = encode_honeyform_parquet(df)
-            except ValueError as exc:
-                # 어느 source 가 걸렸는지 없으면 사용자가 원인 파일을 못 찾는다.
-                raise ValueError(f"[{file_name}] honeyform 형식이 맞지 않습니다.\n{exc}") from exc
             items.append({
                 "index": idx,
                 "name": name,
@@ -2391,7 +2698,7 @@ class HoneyMainWindow(QMainWindow):
             csv_name="duplicate_items.csv").exec()
 
     def _run_web_report(self, work_group, selected, sheets, compare_mode=False, options=None,
-                        mode="Normal", source_order=None, temperature=None):
+                        mode="Normal", source_order=None, temperature=None, prefetch=None):
         # 실행 버튼 잠금/해제는 호출부(on_web_report)의 try/finally 가 전담한다.
         self._init_run_log("Web Report 생성")
         progress = _ElapsedProgress(
@@ -2408,9 +2715,24 @@ class HoneyMainWindow(QMainWindow):
         # 먼저 돌리고, 화면 요약 표시에만 쓰이는 analyze 를 마지막에 둔다 — analyze 결과는
         # 어차피 대화상자 이후에야 소비되므로(_show_summary), 앞에 두면 가장 무거운 분포
         # pack 이 대화상자 시간을 못 쓰고 그 뒤로 밀린다(source 가 많을수록 손해가 크다).
-        prep_ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        fut_encode = prep_ex.submit(self._build_webreport_parquets, work_group, source_order,
-                                    temperature)
+        #
+        # 배치 다이얼로그 동안 인코딩을 미리 돌린 prefetch 가 있으면 **그 executor 를 그대로
+        # 이어 쓴다** — 새 풀을 만들면 선행 job 과 조립 job 이 다른 스레드에서 동시에 돌아
+        # _webreport_dup_renames 누적이 인터리브되고, FIFO 전제도 깨진다.
+        prep_ex = (prefetch.executor if prefetch is not None
+                   else concurrent.futures.ThreadPoolExecutor(max_workers=1))
+
+        def _encode_stage():
+            # 캐시는 **워커 안에서** 늦게 해석한다(_dist_after_encode 와 같은 패턴) —
+            # 같은 FIFO 풀이라 선행 job 은 이미 끝나 있어 블로킹이 없고, 실패·취소면
+            # 빈 캐시가 돌아와 종전 경로(전량 인코딩)를 그대로 탄다.
+            cache = prefetch.cache_or_empty() if prefetch is not None else None
+            # 선행 인코딩이 얼마나 벌어 줬는지는 이 구간의 벽시계로만 잰다
+            # (HONEY_FLOW_PROFILE=1 — 적중률이 높을수록 0 에 가까워진다).
+            with _flow_time("webreport.encode"):
+                return self._build_webreport_parquets(work_group, source_order, temperature,
+                                                      cache=cache)
+        fut_encode = prep_ex.submit(_encode_stage)
 
         # Distribution pack 프리컴퓨트 — 서버가 영구 저장해 조회·재조회 모두 재정렬 없이
         # 서빙한다. 같은 워커 1개에서 인코딩 완료 후 순차 실행되므로 fut_encode.result() 는
