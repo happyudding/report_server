@@ -54,16 +54,46 @@ function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNa
 function isDistCol(c) { return String(c || "").toLowerCase() === "distribution"; }
 function isMapCol(c) { return String(c || "").toLowerCase() === "map"; }
 function isCommentCol(c) { return /comment/i.test(String(c || "")); }
+
+// ── comment 서식 토큰 (*[..] 계열) ────────────────────────────────────────────
+// PTE/개발 comment 안에서 특정 글자만 색·굵기로 강조하기 위한 표시 토큰.
+//   *[텍스트]   굵게        *r[텍스트]  색만        *R[텍스트]  색 + 굵게
+// 색 글자: r=빨강 o=주황 g=초록 b=파랑. **굵기는 "글자 없음" 또는 "대문자"로만
+// 표현하므로 b 는 bold 가 아니라 blue 다.** 모르는 글자(*x[..])는 토큰이 아니라
+// 평문 그대로 esc 된다 — 기존 코멘트의 곱셈/각주 * 가 서식으로 오인되지 않게 하는 방어다.
+// 저장값은 늘 이 토큰이 섞인 평문이고, Excel·eval·챗봇으로 나갈 때는
+// stripCommentFormat / web_report.comment_format.strip_format 이 본문만 남긴다.
+const CMT_FMT_COLORS = { r: "red", o: "orange", g: "green", b: "blue" };
+// 스타일 글자 → span class. 토큰이 아니면 null.
+function cmtFmtClass(letter) {
+  const s = String(letter == null ? "" : letter);
+  if (s === "") return "cmt-b";
+  const color = CMT_FMT_COLORS[s.toLowerCase()];
+  if (!color) return null;
+  return "cmt-" + color + (s === s.toUpperCase() ? " cmt-b" : "");
+}
+
 // comment 텍스트의 @[항목명]→Item_detail 링크, #[태그명]→Note 셀 앵커 링크,
-// $[시트명]→Note 시트 링크로 변환 (그 외 텍스트는 전부 esc). 저장은 항상
-// @[..]/#[..]/$[..] 평문으로(td.textContent), 표시할 때만 링크로 보인다.
+// $[시트명]→Note 시트 링크, *[..]/*r[..]→서식 span 으로 변환 (그 외 텍스트는 전부 esc).
+// 저장은 항상 @[..]/#[..]/$[..]/*[..] 평문으로(td.textContent), 표시할 때만 링크·색으로 보인다.
 // #[..] 는 DATA.note_tags 에 없으면 .missing(삭제된 태그). $[..] 는 시트 목록이
 // 도착한 뒤에만 .missing 판정한다(목록 미도착을 삭제로 오인하지 않게).
+// ⚠️ 정규식은 반드시 이 함수 안에서 만든다 — g 플래그 정규식을 모듈 상수로 빼면
+// engrLinkChips(map_select.js)가 자기 루프 안에서 이 함수를 부를 때 lastIndex 가 오염된다.
 function linkifyComment(txt) {
   const s = String(txt == null ? "" : txt);
   let out = "", last = 0, m;
-  const re = /([@#$])\[([^\]]+)\]/g;
+  const re = /([@#$])\[([^\]]+)\]|\*([A-Za-z]?)\[([^\]]+)\]/g;
   while ((m = re.exec(s))) {
+    if (m[1] === undefined) {                 // 서식 토큰
+      const cls = cmtFmtClass(m[3]);
+      // 모르는 스타일 글자 — last 를 옮기지 않고 넘긴다(그 구간은 다음 esc(slice)에 흡수).
+      if (cls === null) continue;
+      out += esc(s.slice(last, m.index));
+      out += `<span class="${cls}">${esc(m[4])}</span>`;
+      last = m.index + m[0].length;
+      continue;
+    }
     out += esc(s.slice(last, m.index));
     const name = m[2];
     if (m[1] === "@") {
@@ -83,6 +113,74 @@ function linkifyComment(txt) {
   }
   out += esc(s.slice(last));
   return out;
+}
+
+// 서식 토큰의 본문만 남긴다 — Excel·챗봇 등 평문 소비처로 나가기 직전에만 쓴다.
+// @[..]/#[..]/$[..] 는 손대지 않는다(종전부터 원문 그대로 나가던 규약 유지).
+// Python 짝은 web_report/comment_format.py strip_format — 둘의 문법이 같아야 한다.
+function stripCommentFormat(txt) {
+  return String(txt == null ? "" : txt).replace(
+    /\*([A-Za-z]?)\[([^\]]+)\]/g,
+    (all, st, body) => (cmtFmtClass(st) === null ? all : body));
+}
+
+// ── 서식 토큰 편집 (플로팅 툴바·단축키가 쓰는 순수 로직 — DOM 무의존) ──────────
+// raw 안의 토큰 범위 목록. link=true 는 @[..]/#[..]/$[..], false 는 서식 토큰.
+function cmtScanTokens(raw) {
+  const s = String(raw == null ? "" : raw);
+  const re = /([@#$])\[([^\]]+)\]|\*([A-Za-z]?)\[([^\]]+)\]/g;
+  const out = [];
+  let m;
+  while ((m = re.exec(s))) {
+    if (m[1] !== undefined) { out.push({ start: m.index, end: re.lastIndex, link: true }); continue; }
+    if (cmtFmtClass(m[3]) === null) continue;   // 모르는 글자 = 토큰 아님
+    out.push({ start: m.index, end: re.lastIndex, link: false, style: m[3], body: m[4] });
+  }
+  return out;
+}
+
+// 현재 스타일 글자 cur 에 action 을 적용한 다음 글자. null 이면 토큰 자체를 없앤다.
+// action: "" = 굵기 토글 / "r"|"o"|"g"|"b" = 색 토글·교체.
+// 같은 색을 다시 누르면 색만 빠지고 굵기는 남는다(축이 서로 독립).
+function cmtNextStyle(cur, action) {
+  cur = String(cur || "");
+  const color = cur.toLowerCase();              // "" = 색 없음
+  const bold = !cur || cur !== color;           // "" = 굵게만, 대문자 = 색+굵게
+  if (action === "") return color ? (bold ? color : color.toUpperCase()) : (bold ? null : "");
+  if (color === action) return bold ? "" : null;   // 같은 색 재클릭 → 색 해제
+  return bold ? action.toUpperCase() : action;     // 색 교체(굵기 유지)
+}
+
+// 선택 구간 [start,end) 에 서식을 적용/변경/해제한 결과. 적용 불가면 null.
+// action: "" = 굵게 / "r"|"o"|"g"|"b" = 색 / null = 서식 제거.
+// 거부 조건 — 빈 선택 / 선택에 대괄호 포함 / 링크 토큰과 겹침 / 서식 토큰과 부분 겹침.
+// (토큰 본문에 [ ] 를 넣으면 정규식 [^\]]+ 가 끊겨 표시가 깨지므로 아예 막는다.)
+// 선택이 서식 토큰 하나에 **완전히 들어가면** 그 토큰 전체의 스타일 변경으로 해석한다(토글).
+function cmtFormatRange(raw, start, end, action) {
+  const s = String(raw == null ? "" : raw);
+  let a = Math.max(0, Math.min(start, end)), b = Math.min(s.length, Math.max(start, end));
+  while (a < b && /\s/.test(s[a])) a++;          // 선택 양끝 공백은 토큰 밖에 남긴다
+  while (b > a && /\s/.test(s[b - 1])) b--;
+  if (a >= b) return null;
+  let host = null;
+  for (const t of cmtScanTokens(s)) {
+    if (b <= t.start || a >= t.end) continue;                       // 겹침 없음
+    if (!t.link && a >= t.start && b <= t.end) { host = t; continue; }
+    return null;                                 // 링크 토큰과 겹침 / 서식 토큰 부분 겹침
+  }
+  if (host) {
+    const st = (action === null) ? null : cmtNextStyle(host.style, action);
+    const rep = (st === null) ? host.body : `*${st}[${host.body}]`;
+    return { text: s.slice(0, host.start) + rep + s.slice(host.end),
+             caret: host.start + rep.length };
+  }
+  if (action === null) return null;              // 서식 없는 구간에서 '제거' → 할 일 없음
+  const body = s.slice(a, b);
+  if (body.indexOf("[") >= 0 || body.indexOf("]") >= 0) return null;
+  // 색 버튼을 평문에 쓰면 색+굵게로 시작한다 — 좁은 표 셀(330px)에서 색만으로는 잘 안 보인다.
+  // 굵기만 빼고 싶으면 이어서 Ctrl+B 를 누르면 된다(cmtNextStyle 이 색을 남긴다).
+  const rep = `*${action === "" ? "" : action.toUpperCase()}[${body}]`;
+  return { text: s.slice(0, a) + rep + s.slice(b), caret: a + rep.length };
 }
 
 // web_report Map Analysis 소스(웨이퍼) 개수 — 2개 이상일 때만 Map 셀 펼치기 버튼 노출.
@@ -139,12 +237,17 @@ function orderColumns(cols, kind) {
   }
 
   if (kind === "yield") {
+    // 순서: 식별(step/bin/tno/item) → avg → source별 yield → source별 count
+    // (2026-08-07 사용자 요청 — 종전에는 avg 가 맨 끝이었다). avg 가 _yield 그룹 바로
+    // 앞이라 2행 헤더에서는 "yield" 그룹 아래 Avg 열로 흡수된다(buildSheetTableHead).
     const isCntCol = c => /_(cnt|count)$/i.test(String(c));
     const isAvgCol = c => String(c).trim().toLowerCase() === "avg";
-    const yieldVals = rest.filter(c => !isCntCol(c) && !isAvgCol(c));
+    const isYieldCol = c => /_yield$/i.test(String(c));
+    const idCols = rest.filter(c => !isCntCol(c) && !isAvgCol(c) && !isYieldCol(c));
+    const yieldVals = rest.filter(isYieldCol);
     const cntVals = rest.filter(isCntCol);
     const avgVals = singleSource ? [] : rest.filter(isAvgCol);
-    rest = yieldVals.concat(cntVals).concat(avgVals);
+    rest = idCols.concat(avgVals).concat(yieldVals).concat(cntVals);
   }
 
   if (kind === "issue") {
@@ -494,6 +597,36 @@ function issueSectionHeadRowsHtml(cols, sec) {
   return `<tr class="issue-shead-top" data-sec="${esc(sec)}">${topRow}</tr><tr class="issue-shead-bot">${botRow}</tr>`;
 }
 
+// Issue Table Yield 섹션: 각 Bin 그룹의 첫 상세행(= most-fail TNO)은 대표행이 같은 Item 을
+// 제목으로 이미 보여주므로 중복이라 표시에서 뺀다(2026-08-07 사용자 요청 — Yield 탭
+// renderYieldTable 의 slice(2)와 같은 규칙). 대표행 _ndetail 을 함께 줄여 남은 상세가 없으면
+// ▼ 토글도 사라진다. 서버 payload(캐시 포함)는 그대로 두고 표시 직전에만 거른다 —
+// comment 키는 대표행과 동일(Yield|bin|item)이라 지워도 편집·표시 유실이 없다.
+function dropIssueMostFailDetailRows(rows) {
+  const repByGrp = {};
+  const seen = new Set();   // 첫 상세행을 이미 제거한 _grp
+  const out = [];
+  (rows || []).forEach(r => {
+    if (r && r._grp && !r._detail) {
+      const cp = Object.assign({}, r);   // _ndetail 을 고치므로 원본 불변 사본
+      repByGrp[r._grp] = cp;
+      out.push(cp);
+      return;
+    }
+    if (r && r._grp && r._detail && !seen.has(r._grp)) {
+      seen.add(r._grp);
+      const rep = repByGrp[r._grp];
+      // 정렬 규약상 첫 상세행 = 대표행과 같은 most-fail Item. 혹시 어긋나면 지우지 않는다.
+      if (rep && String(rep.Item ?? "") === String(r.Item ?? "")) {
+        rep._ndetail = Math.max(0, (Number(rep._ndetail) || 0) - 1);
+        return;
+      }
+    }
+    out.push(r);
+  });
+  return out;
+}
+
 function renderSheetTable(rows, opts) {
   opts = opts || {};
   let cols;
@@ -509,6 +642,7 @@ function renderSheetTable(rows, opts) {
 
   let bodyRows = rows || [];
   if (opts.kind === "yield" && !opts.edit) bodyRows = reorderYieldRows(bodyRows, cols);
+  if (opts.kind === "issue") bodyRows = dropIssueMostFailDetailRows(bodyRows);
   const binCol = opts.kind === "yield" ? cols.find(c => String(c).trim().toLowerCase() === "bin") : null;
 
   // source 가 2개 이상이면 헤더가 축약 라벨이 되므로 그 컬럼 폭 힌트도 함께 낮춘다.

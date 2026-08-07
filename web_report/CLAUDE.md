@@ -80,6 +80,11 @@ web_report/
 │                        rawdata 정리(RT pass 좌표 필터 + RT limit 재판정 + bin 매칭).
 │                        순수 모듈 — Honey 클라 honey_main._clean_temperature_frames 가 import
 ├── trim_match.py       Trim 항목명 매칭 순수 모듈 (product_type 별 PMIC4/TV2 규칙셋)
+├── comment_format.py   Issue comment 서식 토큰(*[..]=굵게 / *r[..]=색) strip — 색·굵기는
+│                        웹 화면 전용이라 Excel·eval·챗봇으로 나갈 땐 본문만 남긴다.
+│                        문법 정본은 sheets.js linkifyComment, 이 모듈은 strip 쪽 짝.
+│                        순수 모듈 — Honey 클라 excel_download/_sheets.py 가 import
+│                        → [docs/11](../docs/11_web_report_tabs.md)
 ├── wafer_frame.py      제품 기준정보(die pitch+wafer 크기) → 고정 map 프레임
 └── tabs/               시트별 row 빌더 + TAB_REGISTRY (시트 구성 단일 진실)
     ├── __init__.py        TAB_REGISTRY / TabContext / TabSpec

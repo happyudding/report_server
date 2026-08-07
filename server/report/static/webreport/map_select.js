@@ -86,11 +86,12 @@ function mapSelSearch() {
       if (!chips.length) { list.innerHTML = `<div class="placeholder">일치하는 chip 없음</div>`; updateMapSelAddBtn(); return; }
       const head = `<table class="sheet-table common-chip-table"><thead><tr>
         <th class="common-chk-col"><input type="checkbox" id="mapSelChkAll" title="전체 선택"></th>
-        <th>SERIAL</th><th>XPOS</th><th>YPOS</th><th>DUT</th><th>BIN</th></tr></thead><tbody>`;
+        <th>SOURCE</th><th>SERIAL</th><th>XPOS</th><th>YPOS</th><th>DUT</th><th>BIN</th></tr></thead><tbody>`;
       const body = chips.map((c, i) => {
         const added = mapSelChips.some(x => x.key === mapSelChipKey(c));
         return `<tr class="common-chip-row${added ? " common-chip-added" : ""}" data-i="${i}">
           <td class="common-chk-col"><input type="checkbox" class="mapsel-chk" data-i="${i}"${added ? " checked disabled" : ""}></td>
+          <td>${esc(c.source || "")}</td>
           <td>${esc(c.serial)}</td><td class="num">${esc(c.xpos)}</td><td class="num">${esc(c.ypos)}</td>
           <td class="num">${esc(c.dut)}</td><td class="num">${esc(c.bin)}</td></tr>`;
       }).join("");

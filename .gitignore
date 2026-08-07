@@ -51,6 +51,12 @@ tools/product_info_import/output/
 server/releases/*.exe
 server/releases/*.zip
 
+# 자동 업데이트 테스트 빌드 산출물 (client/update_test/README.md).
+# 위 build/ · dist/ 패턴은 이름이 정확히 일치해야 걸리므로 따로 적는다.
+client/build_launcher/
+client/dist_launcher/
+client/update_test/release/
+
 # Local Claude Code settings (personal, not shared)
 .claude/settings.local.json
 CLAUDE.core.md

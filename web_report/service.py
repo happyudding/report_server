@@ -1500,7 +1500,8 @@ _SHAPE_KEYS = ("type", "x0", "x1", "y0", "y1", "path", "xref", "yref",
                "line", "fillcolor", "opacity")
 _SHAPE_LINE_KEYS = ("color", "width", "dash")
 _TEXT_KEYS = ("x", "y", "xref", "yref", "text", "showarrow", "arrowhead",
-              "ax", "ay", "font", "bgcolor", "bordercolor")
+              "ax", "ay", "font", "bgcolor", "bordercolor",
+              "arrowcolor", "arrowwidth")
 _TEXT_FONT_KEYS = ("size", "color")
 
 
@@ -1559,7 +1560,9 @@ def _sanitize_chart_note(value: dict) -> dict:
                 out[k] = _clean_scalar(t[k], maxlen=_CHART_NOTE_TEXT_MAX)
             else:
                 out[k] = _clean_scalar(t[k])
-        if not str(out.get("text") or "").strip():
+        # 텍스트 없는 주석은 버리되, 화살표 전용 주석(showarrow, 텍스트 없이 지점만
+        # 가리킴 — 프런트 "화살표" 도구)은 허용한다 (2026-08-07).
+        if not str(out.get("text") or "").strip() and not out.get("showarrow"):
             continue
         texts.append(out)
     comment = str(value.get("comment") or "").strip()

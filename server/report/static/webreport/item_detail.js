@@ -147,6 +147,16 @@ function idetLegendHtml(data) {
   return distLegendHtml((data && data.sources) || [], "idet-legend " + DIST_LEGEND_VERT_CLS);
 }
 
+// Temperature 전용 — 갤러리 툴바의 "Bin1 (RT만)" 토글을 상세 안에서도 제공(2026-08-07 사용자
+// 요청). 갤러리와 같은 전역 상태(distRtBin1Only)를 공유하며, 토글 시 현재 항목을 같은
+// 변형(?bin1=1&bin1_scope=rt)으로 다시 연다. 클릭 처리는 bindItemDetailPanel 위임.
+function idetRtBin1Html() {
+  if (!tempIsMode()) return "";
+  return `<div class="distseg-group idet-rtbin1">` +
+    `<button class="distseg${distRtBin1Only ? " active" : ""}" data-idet-rtbin1 ` +
+    `title="켜짐: RT source 만 양품(Bin1)·규격내로 좁히고 CT / HT 는 fail 포함 전체 die 로 표시 · 꺼짐: 전체 die">Bin1 (RT만)</button></div>`;
+}
+
 function renderItemDetail(data) {
   const dp = document.getElementById("panel-item-detail");
   if (!dp) return;
@@ -184,7 +194,7 @@ function renderItemDetail(data) {
     </div>
     <div id="cdfEditBar" class="cdf-editbar"></div>
     <div id="chartNoteBar"></div>
-    ${distTempFilterHtml()}
+    ${distTempFilterHtml()}${idetRtBin1Html()}
     <div class="idet-body">
     <div class="idet-charts">
       <div class="idet-chart-block">
@@ -430,6 +440,16 @@ function bindItemDetailPanel() {
     if (e.target.closest(".idet-back")) { closeItemDetail(); return; }
     if (e.target.closest(".idet-prev")) { itemDetailNav(-1); return; }
     if (e.target.closest(".idet-next")) { itemDetailNav(1); return; }
+    // Bin1 (RT만) 토글 (Temperature 전용) — 갤러리와 같은 상태를 바꾸고 현재 항목을
+    // 새 변형으로 다시 연다. 갤러리 툴바가 이미 그려져 있으면 재렌더해 버튼 상태를 맞춘다
+    // (숨겨진 패널이라 실제 카드 렌더는 다시 보일 때 IntersectionObserver 가 지연 수행).
+    if (e.target.closest("[data-idet-rtbin1]")) {
+      distRtBin1Only = !distRtBin1Only;
+      if (distRtBin1Only) { distBin1Only = false; ensureDistRtBin1Data(); }
+      if (document.querySelector("#panel-distribution .dist-toolbar")) distRenderGallery();
+      if (_itemDetailSubject) openItemDetail(_itemDetailSubject, _itemDetailNav);
+      return;
+    }
     const hm = e.target.closest("[data-hist-mode]");
     if (hm) { setIdetHistMode(hm.dataset.histMode); return; }
     const mb = e.target.closest("[data-cdf-mode]");
@@ -700,12 +720,13 @@ function distRenderCdf(data) {
     if (!useGl) trace.cliponaxis = false;   // scattergl 미지원 속성 — SVG 분기에만
     if (hasId) {
       // customdata/hover 는 필터·정렬된 동일 순서 유지(클릭 식별·hover 지속).
+      // <extra> 에 trace 이름(=source 명)을 표시한다(2026-08-07 사용자 요청).
       trace.customdata = c.order.map(i => [serial[i], xpos[i], ypos[i]]);
-      trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<br>SERIAL %{customdata[0]} · X %{customdata[1]} / Y %{customdata[2]}<extra></extra>";
+      trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<br>SERIAL %{customdata[0]} · X %{customdata[1]} / Y %{customdata[2]}<extra>%{fullData.name}</extra>";
       trace.marker = { color: base, size: 5 };
     } else {
       trace.marker = { color: base, size: 5 };
-      trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<extra></extra>";
+      trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<extra>%{fullData.name}</extra>";
     }
     return trace;
   });
@@ -995,6 +1016,8 @@ function distBindPanel() {
     const seg = e.target.closest(".distseg");
     if (seg) {
       if (seg.dataset.seg === "clearsel") distSelected.clear();
+      // 전체 보기 — 항목 숨김 필터 3종 일괄 해제 (토글 아님, distToolbarHtml 참조).
+      else if (seg.dataset.seg === "showall") { distCpkOnly = false; distFailOnly = false; distHidePassfail = false; }
       else if (seg.dataset.seg === "cpk") distCpkOnly = !distCpkOnly;
       else if (seg.dataset.seg === "fail") distFailOnly = !distFailOnly;
       else if (seg.dataset.seg === "limit") distLimitOnly = !distLimitOnly;
@@ -1034,6 +1057,16 @@ function distBindPanel() {
     const q = e.target.value;
     clearTimeout(suggestTimer);
     suggestTimer = setTimeout(() => distRenderSuggest(q), 250);
+  });
+  // 검색 제안 목록은 검색창 영역(.dist-search-wrap) 밖을 클릭하면 닫는다(2026-08-07 사용자
+  // 요청). 입력값·선택(distSelected)은 유지되고, 다시 입력하면 제안이 다시 열린다.
+  // 문서 레벨 1회 등록 — 패널 위임 핸들러(버블링 선행)가 재렌더한 뒤에 실행되므로
+  // 세그 토글 클릭에도 목록이 열린 채 남지 않는다.
+  document.addEventListener("click", e => {
+    const box = document.getElementById("distSuggest");
+    if (!box || box.style.display === "none") return;
+    if (e.target.closest && e.target.closest(".dist-search-wrap")) return;
+    box.style.display = "none";
   });
   distPanelBound = true;
 }

@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 )
 
 from transport.config import CURRENT_VERSION, SERVER_BASE_URL
-from transport import update_policy, updater, uploader, version_check
+from transport import app_update, update_policy, updater, uploader, version_check
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
@@ -3594,6 +3594,152 @@ class HoneyMainWindow(QMainWindow):
                 pass
         os._exit(0)
 
+    # ── 버전 폴더 + 런처 방식 업데이트 (검증 단계 — HONEY_UPDATE_TEST=1) ─────
+    def _versioned_update_root(self):
+        """새 방식으로 업데이트할 수 있으면 설치 루트, 아니면 None.
+
+        아직 검증 단계라 환경변수 HONEY_UPDATE_TEST=1 일 때만 켠다 — 운영 배포본은
+        이 값이 없어 종전 흐름(ZIP 다운로드 안내)이 그대로 동작한다. 버전 폴더
+        레이아웃(versions\\<ver>\\HoneyApp.exe)이 아니면 어차피 None 이다.
+        """
+        if os.environ.get("HONEY_UPDATE_TEST") != "1":
+            return None
+        return app_update.install_root()
+
+    def _run_versioned_update(self, manifest, remote, root):
+        """실행 중인 파일을 건드리지 않는 업데이트: 새 버전 폴더 설치 → 포인터 교체 → 재시작.
+
+        구 batch 스왑(updater.apply_update_zip)과 달리 설치가 끝날 때까지 현재 버전은
+        그대로 돌아간다. 어느 단계에서 실패·취소해도 기존 버전은 무손상이다.
+        """
+        url = manifest.get("url") or "/honey/download"
+        expected = manifest.get("sha256") or None
+        package_name = manifest.get("file") or f"Honey-{remote}.zip"
+        app_update.ulog(f"[v2] OFFER remote={remote} current={CURRENT_VERSION} root={root}")
+
+        answer = QMessageBox.question(
+            self, "업데이트 사용 가능",
+            f"신규 버전 {remote} 이(가) 있습니다. (현재 {CURRENT_VERSION})\n\n"
+            "지금 업데이트하시겠습니까?\n"
+            "다운로드와 설치가 끝나면 Honey 가 자동으로 다시 시작됩니다.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            app_update.ulog("[v2] CHOICE later")
+            return
+
+        enough, free_mb, need_mb = app_update.check_disk(root, manifest.get("size"))
+        if not enough:
+            app_update.ulog(f"[v2] DISK 부족 free={free_mb}MB need={need_mb}MB")
+            QMessageBox.warning(
+                self, "디스크 공간 부족",
+                f"업데이트에 약 {need_mb}MB 가 필요하지만 여유 공간이 {free_mb}MB 입니다.\n"
+                f"공간을 확보한 뒤 다시 시도해 주세요.\n\n{root}")
+            return
+
+        dest = root / app_update.UPDATES_DIRNAME / package_name
+        app_update.ulog(f"[v2] DOWNLOAD start dest={dest} url={url}")
+
+        progress = _ElapsedProgress(
+            self.progress_status, "업데이트 다운로드 중...",
+            self.status.showMessage, busy=True, minimum=0, maximum=100)
+        modal = self._update_modal(f"신규 버전 {remote} 다운로드 준비 중...")
+        events = queue.Queue()
+        self._dl_cancelled = False
+        self._show_download_cancel()
+
+        def _cb(done, total):
+            events.put((done, total))
+            return not self._dl_cancelled
+
+        def _drain(label_fmt):
+            # 워커 스레드가 넣은 진행값 중 최신 것만 화면에 반영한다.
+            if modal is not None and modal.wasCanceled():
+                self._dl_cancelled = True
+            last = None
+            while True:
+                try:
+                    last = events.get_nowait()
+                except queue.Empty:
+                    break
+            if last is None:
+                QApplication.processEvents()
+                return
+            done, total = last
+            label = label_fmt.format(done=done // (1024 * 1024), total=total // (1024 * 1024))
+            pct = int(done * 100 / total) if total else 0
+            progress.set(label, value=pct)
+            if modal is not None:
+                modal.setLabelText(f"{label}  {pct}%")
+                modal.setValue(pct)
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(version_check.download_to, dest, url,
+                                expected_sha256=expected, progress_cb=_cb)
+                _wait_for_future(fut, progress,
+                                 poll_cb=lambda: _drain("업데이트 다운로드 중... ({done}MB / {total}MB)"))
+        except version_check.DownloadCancelled:
+            app_update.ulog("[v2] DOWNLOAD cancelled by user")
+            progress.fail("실패: 업데이트 다운로드 취소됨")
+            self.status.showMessage("업데이트 취소됨")
+            return
+        except Exception as exc:
+            app_update.ulog(f"[v2] DOWNLOAD FAILED {type(exc).__name__}: {exc}")
+            progress.fail(f"실패: 업데이트 다운로드 실패 - {exc}")
+            _show_exc(self, "다운로드 실패", exc,
+                      prefix="업데이트를 내려받지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.")
+            self.status.showMessage("업데이트 실패")
+            return
+        finally:
+            self._hide_download_cancel()
+            if modal is not None:
+                modal.close()
+        progress.success("완료: 업데이트 다운로드 완료", value=100)
+
+        # 설치(압축 해제)는 새 버전 폴더에만 쓰므로 중간 취소도 안전하다.
+        progress = _ElapsedProgress(
+            self.progress_status, "업데이트 설치 중...",
+            self.status.showMessage, busy=True, minimum=0, maximum=100)
+        modal = self._update_modal(f"버전 {remote} 설치 중...")
+        events = queue.Queue()
+        self._dl_cancelled = False
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(app_update.install_version, root, remote, dest, _cb)
+                _wait_for_future(fut, progress,
+                                 poll_cb=lambda: _drain("업데이트 설치 중... ({done}MB / {total}MB)"))
+        except app_update.InstallCancelled:
+            app_update.ulog("[v2] INSTALL cancelled by user")
+            progress.fail("실패: 업데이트 설치 취소됨")
+            self.status.showMessage("업데이트 취소됨")
+            return
+        except Exception as exc:
+            app_update.ulog(f"[v2] INSTALL FAILED {type(exc).__name__}: {exc}")
+            progress.fail(f"실패: 업데이트 설치 실패 - {exc}")
+            _show_exc(self, "업데이트 설치 실패", exc,
+                      prefix="업데이트를 설치하지 못했습니다. 기존 버전은 그대로 사용할 수 있습니다.\n"
+                             f"진단 로그: {app_update.log_path()}")
+            self.status.showMessage("업데이트 실패")
+            return
+        finally:
+            if modal is not None:
+                modal.close()
+            dest.unlink(missing_ok=True)   # 성공/실패 어느 쪽이든 받은 zip 은 남기지 않는다
+
+        progress.success("업데이트 적용 중... 앱을 다시 시작합니다.", value=100)
+        try:
+            app_update.switch_and_relaunch(root, remote, CURRENT_VERSION)
+        except Exception as exc:
+            app_update.ulog(f"[v2] SWITCH FAILED {type(exc).__name__}: {exc}")
+            _show_exc(self, "업데이트 적용 실패", exc,
+                      prefix="새 버전을 설치했지만 전환하지 못했습니다. 기존 버전은 그대로 사용할 수 있습니다.\n"
+                             f"진단 로그: {app_update.log_path()}")
+            return
+        self.status.showMessage("업데이트 적용 중... 앱을 다시 시작합니다.")
+        self._exit_for_update()
+
     def _on_version_manifest(self, result):
         if isinstance(result, requests.exceptions.RequestException):
             # 연결 불가/타임아웃 = 서버 오프라인으로 간주, 상태바에 명확히 표시
@@ -3612,6 +3758,11 @@ class HoneyMainWindow(QMainWindow):
             # 최신을 실행 중일 때만 공지 확인 — 업데이트가 남아 있으면 구버전 사용자에게
             # 신버전 공지가 먼저 뜨게 되므로, 업데이트를 마친 뒤 첫 실행에서 뜬다.
             self._maybe_show_announcement()
+            return
+
+        versioned_root = self._versioned_update_root()
+        if versioned_root is not None:
+            self._run_versioned_update(manifest, remote, versioned_root)
             return
 
         # 설치 방법 선택: [자동 설치] / [ZIP 다운로드] / [나중에]
@@ -3931,6 +4082,26 @@ def _apply_cute_font(app):
     app.setFont(font)
 
 
+def _schedule_version_cleanup():
+    """버전 폴더 방식이면 정상 기동 10초 뒤 옛 버전·잔재를 정리한다 (검증 단계 게이트).
+
+    창이 뜨고 10초를 버텼다 = 새 버전 첫 실행이 성공했다는 뜻이라, 이때 직전 버전
+    1개만 롤백용으로 남기고 나머지를 지운다. 실패해도 무해한 best-effort 라
+    데몬 스레드로 돌린다 (종료를 붙잡지 않는다).
+    """
+    if os.environ.get("HONEY_UPDATE_TEST") != "1":
+        return
+    root = app_update.install_root()
+    if root is None:
+        return
+    current, previous = app_update.read_current(root)
+    timer = threading.Timer(
+        10.0, app_update.startup_cleanup, args=(root,),
+        kwargs={"keep_versions": (current or CURRENT_VERSION, CURRENT_VERSION, previous)})
+    timer.daemon = True
+    timer.start()
+
+
 def main():
     import run_log
     run_log.setup_run_logging()
@@ -3946,6 +4117,7 @@ def main():
     _install_excepthook()
     win = HoneyMainWindow()
     win.showMaximized()
+    _schedule_version_cleanup()
     sys.exit(app.exec())
 
 

@@ -838,6 +838,8 @@ tbody tr:hover { background: #f9fbff; }
 .dist-temp-group { border: none; border-left: 1px solid #f3c9a3; background: #fff5eb;
   color: #7c2d12; font-size: 13px; padding: 0 8px; cursor: pointer; }
 .idet .dist-temp-filter { margin: 6px 0 10px; }
+/* 상세 안 "Bin1 (RT만)" 토글 — Temperature 필터 줄 옆에 같은 높이로 나란히 선다. */
+.idet .idet-rtbin1 { margin: 6px 0 10px 8px; vertical-align: top; }
 /* 선택 해제 칩 — 세그먼트 그룹 밖 독립 버튼(토글이 아니라 액션). 그룹 멤버용
    반쪽 테두리(.distseg border-right) 대신 단독 버튼 외형을 준다. */
 .dist-toolbar > .dist-sel-clear { border: 1px solid #d0d5dd; border-right: 1px solid #d0d5dd;
@@ -1139,6 +1141,37 @@ html[data-theme="dark"] .note-tag-link.missing { color: #8b93a1; background: rgb
 html[data-theme="dark"] .note-sheet-link { color: #5eead4; background: rgba(94,234,212,.12); }
 html[data-theme="dark"] .note-sheet-link:hover { background: rgba(94,234,212,.22); }
 html[data-theme="dark"] .note-sheet-link.missing { color: #8b93a1; background: rgba(139,147,161,.15); }
+/* comment 서식 토큰(*[..] / *r[..]) 렌더 클래스 — sheets.js cmtFmtClass 가 붙인다.
+   .cmt-b 는 색 클래스와 함께 붙을 수 있다(*R[..] = 색 + 굵게). */
+.cmt-b      { font-weight: 700; }
+.cmt-red    { color: #d92d20; }
+.cmt-orange { color: #c2410c; }
+.cmt-green  { color: #067647; }
+.cmt-blue   { color: #175cd3; }
+html[data-theme="dark"] .cmt-red    { color: #ff8b82; }
+html[data-theme="dark"] .cmt-orange { color: #f5b544; }
+html[data-theme="dark"] .cmt-green  { color: #6ee7a8; }
+html[data-theme="dark"] .cmt-blue   { color: #7fb3ef; }
+/* comment 서식 플로팅 툴바 — 편집 중 셀에서 글자를 선택하면 뜬다(edit_mode.js _cmtFmtBar).
+   mention-dd 와 같은 body 직속 절대위치. 동시에 뜨는 일은 없다(저쪽은 캐럿, 이쪽은 선택 구간). */
+.cmt-fmt-bar { position: absolute; z-index: 300; display: flex; gap: 2px; padding: 3px;
+  background: #fff; border: 1px solid #d0d5dd; border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.16); }
+.cmt-fmt-btn { border: 0; background: none; cursor: pointer; width: 24px; height: 24px;
+  border-radius: 4px; font-size: 13px; line-height: 1; padding: 0; color: #344054; }
+.cmt-fmt-btn:hover { background: #eaf3ff; }
+.cmt-fmt-btn[data-act=""]  { font-weight: 800; }
+.cmt-fmt-btn[data-act="r"] { color: #d92d20; }
+.cmt-fmt-btn[data-act="o"] { color: #c2410c; }
+.cmt-fmt-btn[data-act="g"] { color: #067647; }
+.cmt-fmt-btn[data-act="b"] { color: #175cd3; }
+html[data-theme="dark"] .cmt-fmt-bar { background: #1e2128; border-color: #3a3f4b; }
+html[data-theme="dark"] .cmt-fmt-btn { color: #d7dbe2; }
+html[data-theme="dark"] .cmt-fmt-btn:hover { background: #26303f; }
+html[data-theme="dark"] .cmt-fmt-btn[data-act="r"] { color: #ff8b82; }
+html[data-theme="dark"] .cmt-fmt-btn[data-act="o"] { color: #f5b544; }
+html[data-theme="dark"] .cmt-fmt-btn[data-act="g"] { color: #6ee7a8; }
+html[data-theme="dark"] .cmt-fmt-btn[data-act="b"] { color: #7fb3ef; }
 /* Note 탭 [🔖 태그] 팝오버 — note-bar 안 절대위치 */
 .note-tag-panel { position: absolute; z-index: 320; top: 100%; left: 0; margin-top: 4px;
   min-width: 260px; max-width: 360px; max-height: 320px; overflow-y: auto;

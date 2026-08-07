@@ -23,6 +23,7 @@ from pathlib import Path
 
 from . import cache
 from . import edits
+from .comment_format import strip_format
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +76,15 @@ def open_conn(create: bool = True):
 
 
 def _merge_comment(cols: dict) -> str:
-    """PTE/개발 comment 병합 — 있는 쪽만 "[PTE] ...\n[개발] ..." 로 연결."""
+    """PTE/개발 comment 병합 — 있는 쪽만 "[PTE] ...\n[개발] ..." 로 연결.
+
+    화면 전용 서식 토큰(*[..]/*r[..])은 여기서 벗긴다. 이 함수가 eval.db
+    label.human_comment 로 가는 유일한 관문이라, 여기 한 곳만 막으면 챗봇 코멘트 검색·
+    AI Comment 선례 인용·관리자 패널·CSV 내보내기가 전부 평문을 보게 된다.
+    """
     parts = []
     for col, prefix in _COMMENT_PREFIX.items():
-        text = str(cols.get(col) or "").strip()
+        text = strip_format(cols.get(col)).strip()
         if text:
             parts.append(f"{prefix} {text}")
     return "\n".join(parts)

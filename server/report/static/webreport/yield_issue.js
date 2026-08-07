@@ -48,7 +48,7 @@ function renderYieldTable(cols, groups, si, passRow) {
   const colMax = {};
   gradCols.forEach(c => { colMax[c] = 0; });
   (groups || []).forEach(g => {
-    const rows = [g.rep].concat((g.rows || []).slice(1));
+    const rows = [g.rep].concat((g.rows || []).slice(2));
     rows.forEach(r => gradCols.forEach(c => {
       const n = parseFloat(r ? r[c] : "");
       if (!isNaN(n) && n > colMax[c]) colMax[c] = n;
@@ -87,7 +87,10 @@ function renderYieldTable(cols, groups, si, passRow) {
   if (passRow) body += `<tr class="yield-pass-row">${cellTds(passRow, "", true)}</tr>`;
   (groups || []).forEach((g, gi) => {
     const grp = `${si}_${gi}`;   // 표 간 유일한 그룹 id
-    const detail = (g.rows || []).slice(1);   // 대표(most-fail) 제외 나머지 fail TNO
+    // g.rows = [집계 rep, most-fail TNO, 나머지 TNO...]. 대표행이 most-fail Item 을 제목으로
+    // 이미 보여주므로 펼침 상세에서 most-fail 행(rows[1])은 중복이라 빼고(slice(2)),
+    // 남는 상세가 없는 단일 항목 Bin 은 ▼ 토글 자체를 만들지 않는다(2026-08-07 사용자 요청).
+    const detail = (g.rows || []).slice(2);
     const toggle = detail.length
       ? ` <button type="button" class="yield-toggle" data-grp="${grp}" aria-expanded="false">▼</button>` : "";
     body += `<tr class="yield-bin-rep" data-grp="${grp}">${cellTds(g.rep, toggle)}</tr>`;
@@ -184,8 +187,10 @@ function sheetSearchHtml(id, value, placeholder) {
 function sheetRowMatches(tr, term) {
   const itemCell = tr.querySelector('td[data-col="Item"]') || tr.children[3];
   let txt = itemCell ? itemCell.textContent : "";
+  // 서식 토큰은 벗기고 본문만 검색 대상에 넣는다 — 안 그러면 "*r[" 같은 표시문자가
+  // 검색어에 걸려 엉뚱한 행이 남는다.
   tr.querySelectorAll("td.st-comment").forEach(td => {
-    txt += " " + (td.dataset.raw != null ? td.dataset.raw : td.textContent);
+    txt += " " + stripCommentFormat(td.dataset.raw != null ? td.dataset.raw : td.textContent);
   });
   return txt.toLowerCase().indexOf(term) >= 0;
 }

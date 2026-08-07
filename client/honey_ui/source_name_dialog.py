@@ -296,9 +296,10 @@ class SourceNameDialog(QDialog):
 
     # ── 구성 ────────────────────────────────────────────────────────────────
     def _reset_rows(self):
-        """행을 원본 상태로 되돌린다 (이름·순서·그룹·역할 전부)."""
+        """행을 원본 상태로 되돌린다 (이름·순서·그룹·역할·그룹 이름 전부)."""
         self._rows = [_Row(index=i, path=self._paths[i], legend=self._original[i])
                       for i in range(len(self._original))]
+        self._group_names: dict[int, str] = {}   # 이름을 바꾼 그룹만 (기본 표시는 숫자)
 
     def _columns(self):
         """열 구성 — 색은 **항상 마지막**이라 위치를 self._color_col 로 기억해 둔다."""
@@ -426,6 +427,9 @@ class SourceNameDialog(QDialog):
             lines.append(
                 "· 그룹마다 RT 가 그 그룹의 Limit 판정 기준입니다 — CT/HT 는 RT 의 Bin1 좌표만"
                 " 남기고 RT limit 으로 다시 판정합니다.")
+            lines.append(
+                f"· Group 칸에 이름을 직접 입력하면 그룹 이름이 되고, 그 그룹 source 이름의"
+                f" 앞부분(_RT/_CT/_HT 제외)이 일괄 변경됩니다 (최대 {self._legend_max - 3}자).")
         lines += [
             "· 색은 순서(1,2,3…)에 붙습니다 — 순서를 바꾸면 Distribution 색 번호도 함께"
             " 바뀝니다.",
@@ -482,13 +486,22 @@ class SourceNameDialog(QDialog):
 
     def _group_combo(self, r, row, n_groups):
         combo = QComboBox()
+        combo.setEditable(True)                   # 그룹 이름 직접 입력 → 멤버 legend 일괄 반영
+        combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         combo.addItem(_NO_GROUP)
         for g in range(1, max(n_groups, 1) + 1):
-            combo.addItem(str(g))
+            combo.addItem(self._group_label(g))
         combo.addItem(_NEW_GROUP)
         combo.setCurrentIndex(row.group if 0 <= row.group <= n_groups else 0)
-        combo.currentTextChanged.connect(lambda text, i=r: self._on_group_changed(i, text))
+        combo.lineEdit().setMaxLength(self._legend_max - 3)   # 접미사(_RT 등 3자) 자리 확보
+        # 편집 콤보에서 currentTextChanged 는 타이핑마다 발화하므로 선택/입력을 분리한다.
+        combo.activated.connect(lambda idx, i=r: self._on_group_changed(i, idx))
+        combo.lineEdit().editingFinished.connect(
+            lambda i=r, c=combo: self._on_group_renamed(i, c))
         return combo
+
+    def _group_label(self, gid):
+        return self._group_names.get(gid, str(gid))
 
     def _role_combo(self, r, row):
         combo = QComboBox()
@@ -543,16 +556,56 @@ class SourceNameDialog(QDialog):
         text = (item.text() or "").strip()[:self._legend_max]
         self._rows[item.row()].legend = text
 
-    def _on_group_changed(self, r, text):
+    def _on_group_changed(self, r, idx):
+        """드롭다운 **선택** 전용 — 항목 순서가 곧 의미다 (0=미지정, 마지막=새 그룹)."""
         if self._rendering:
             return
-        if text == _NEW_GROUP:
-            self._rows[r].group = max([row.group for row in self._rows] or [0]) + 1
-        elif text == _NO_GROUP:
-            self._rows[r].group = 0
+        n_groups = max([row.group for row in self._rows] or [0])
+        row = self._rows[r]
+        if idx <= 0:
+            row.group = 0
+        elif idx > max(n_groups, 1):              # 마지막 항목 = _NEW_GROUP
+            row.group = n_groups + 1
         else:
-            self._rows[r].group = int(text)
+            row.group = idx
+            self._sync_group_name(idx, only_row=row)
         self._render()
+
+    def _on_group_renamed(self, r, combo):
+        """Group 칸에 직접 타이핑한 이름 — 개명(멤버 legend 일괄 반영) 또는 그룹 이동."""
+        if self._rendering:
+            return
+        try:
+            text = (combo.currentText() or "").strip()
+        except RuntimeError:                      # _render 가 콤보를 이미 파괴한 뒤
+            return
+        row = self._rows[r]
+        if not text or text in (_NO_GROUP, _NEW_GROUP):
+            return
+        if row.group and text == self._group_label(row.group):
+            return                                # 변화 없음 (드롭다운 선택 뒤 포커스 아웃 포함)
+        n_groups = max([rw.group for rw in self._rows] or [0])
+        for g in range(1, n_groups + 1):
+            if g != row.group and text == self._group_label(g):
+                row.group = g                     # 다른 그룹의 이름과 일치 → 그 그룹으로 이동
+                self._sync_group_name(g, only_row=row)
+                self._render()
+                return
+        if not row.group:                         # 미지정 행에서 새 이름 → 새 그룹 생성
+            row.group = n_groups + 1
+        self._group_names[row.group] = text
+        self._sync_group_name(row.group)
+        self._render()
+
+    def _sync_group_name(self, gid, only_row=None):
+        """이름 붙은 그룹의 멤버 legend 앞부분을 그룹 이름으로 맞춘다 (숫자 기본 그룹은 무시)."""
+        name = self._group_names.get(gid)
+        if not name:
+            return
+        rows = [only_row] if only_row is not None \
+            else [rw for rw in self._rows if rw.group == gid]
+        for rw in rows:
+            rw.legend = apply_role_suffix(name, rw.role)[:self._legend_max]
 
     def _on_role_changed(self, r, text):
         if self._rendering:
@@ -603,6 +656,7 @@ class SourceNameDialog(QDialog):
         for row in self._rows:
             row.group = 0
             row.role = ""
+        self._group_names = {}
         self._render()
 
     def _edit_palette(self):
@@ -638,6 +692,7 @@ class SourceNameDialog(QDialog):
         for row in self._rows:
             row.group = 0
             row.role = ""
+        self._group_names = {}                    # 그룹을 새로 짜므로 옛 이름은 무효
         ordered = []
         for gi, mapping in enumerate(groups, start=1):
             for role in ROLES:

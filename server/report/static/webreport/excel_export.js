@@ -43,6 +43,8 @@ const CPK_SHEET_HEADER = ["TEST NAME", "LOW SPEC", "HIGH SPEC", "SCALE", "계열
   "cpl", "cpu", "cp", "cpk", "comment"];
 const CPK_LABEL_NCOL = 4;    // TEST NAME/LOW SPEC/HIGH SPEC/SCALE — 계열 간 공통이라 병합
 // 전체본(_sheets.py _COMMENT_COLS)과 같은 2개만 — AI Comment 는 양쪽 모두 내보내지 않는다.
+// 값은 stripCommentFormat(sheets.js)으로 서식 토큰(*[..]/*r[..])을 벗겨 평문만 쓴다 —
+// 색·굵기는 웹 화면 전용이고 xlsx 셀에는 표시문자가 새면 안 된다.
 const HXL_ISSUE_COMMENT_COLS = ["PTE comment", "개발 comment"];
 const ISSUE_ID_COLS = ["Category", "Step", "Bin", "TNO", "Item"];
 
@@ -172,7 +174,7 @@ function buildIssueSheetData(issueRows, srcs) {
     const r = r0 || {};
     if (!r._detail) return;
     HXL_ISSUE_COMMENT_COLS.forEach(col => {
-      const text = String(r[col] || "").trim();
+      const text = stripCommentFormat(r[col]).trim();
       if (!text) return;
       const key = `${r._grp} ${col}`;
       (detailComments[key] = detailComments[key] || []).push(`${r.Item}: ${text}`);
@@ -197,7 +199,7 @@ function buildIssueSheetData(issueRows, srcs) {
       .concat(srcVals).concat([r.Status || ""]);
     HXL_ISSUE_COMMENT_COLS.forEach(col => {
       const parts = [];
-      const own = String(r[col] || "").trim();
+      const own = stripCommentFormat(r[col]).trim();
       if (own) parts.push(own);
       const extra = detailComments[`${r._grp} ${col}`];
       if (extra) extra.forEach(t => parts.push(t));

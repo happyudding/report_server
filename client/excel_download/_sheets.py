@@ -29,10 +29,13 @@ from report_generator._xlsx_style import (
     _hdr_range,
     _style_range,
 )
+from web_report.comment_format import strip_format
 
 _CPK_WARN_FILL_RGB = "FFFFF3B0"   # cpk < 1.33 경고(연노랑) — honey excel 과 동일 계열
 _CPK_THRESHOLD = 1.33
 _PASS_BIN = "1"
+# 값은 strip_format 으로 화면 전용 서식 토큰(*[..]/*r[..])을 벗겨 평문만 쓴다 —
+# 색·굵기는 웹 화면 전용이고 xlsx 셀에는 표시문자가 새면 안 된다(웹 excel_export.js 와 동일).
 _COMMENT_COLS = ["PTE comment", "개발 comment"]
 _ADDR_JOIN_MAXLEN = 200           # Range("A1:...,A2:...") 주소 문자열 상한
 
@@ -433,7 +436,7 @@ def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
             continue
         grp = r.get("_grp")
         for col in _COMMENT_COLS:
-            text = str(r.get(col) or "").strip()
+            text = strip_format(r.get(col)).strip()
             if text:
                 detail_comments.setdefault((grp, col), []).append(
                     f"{r.get('Item')}: {text}")
@@ -466,7 +469,7 @@ def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
                 r.get("avg")] + src_vals + [r.get("Status") or ""]
         for col in _COMMENT_COLS:
             parts = []
-            own = str(r.get(col) or "").strip()
+            own = strip_format(r.get(col)).strip()
             if own:
                 parts.append(own)
             parts.extend(detail_comments.get((r.get("_grp"), col), []))

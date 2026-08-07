@@ -17,11 +17,14 @@ from pathlib import Path
 
 from database import report_db
 from database.core import get_conn
+from web_report.comment_format import strip_format
 
 from . import rowkey
 
 # tabs/issue_table.py 의 편집 가능 컬럼. 이 두 개가 곧 "조치/close 사유" 텍스트다
 # (Issue Table 에 별도 '조치' 컬럼은 없다).
+# 값은 report.db 편집행에서 직접 읽으므로(= eval_export 관문을 우회) 화면 전용 서식
+# 토큰(*[..]/*r[..])을 여기서 벗겨야 한다 — 안 벗기면 LIKE 검색이 조용히 빗나간다.
 COMMENT_COLS = ("PTE comment", "개발 comment")
 
 # 목록을 훑어 집계하는 함수(search_products)의 스캔 상한. 세션 수가 이보다 많아지면
@@ -158,8 +161,8 @@ def _web_report_issues(session):
         if rk is None:
             continue
         skey = rowkey.status_key(rk)
-        kept = {c: str(v).strip() for c, v in (cols or {}).items()
-                if c in COMMENT_COLS and str(v or "").strip()}
+        kept = {c: strip_format(v).strip() for c, v in (cols or {}).items()
+                if c in COMMENT_COLS and strip_format(v).strip()}
         issues.append({
             "category": rk.category,
             "bin": rk.bin,
@@ -314,7 +317,7 @@ def search_item_in_sessions(item_keyword, *, viewer, see_all_private=False,
         if not ent["item"] and rk.item:
             ent["item"] = rk.item
         if col:
-            text = str(row.get("value") or "").strip()
+            text = strip_format(row.get("value")).strip()
             if text:
                 ent["comments"][col] = text
         elif str(row.get("value") or "") == "Close":

@@ -654,6 +654,45 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
   로 간다 — `noteJumpToTag` 과 동일한 pending 큐 패턴이라 Note 탭이 아직 init 전이어도 안전하다.
   시트 index 를 몰라도 `note_frame.html` 의 `gotoCell` 이 `sheetName` 으로 폴백 매칭한다.
 
+### 코멘트 서식 토큰 `*[..]` — 색·굵기 (2026-08-07)
+PTE/개발 comment 안에서 **특정 글자만** 색·굵기로 강조한다. 위 `@#$` 링크 토큰과 같은
+"평문 저장 + 표시 시점 변환" 구조라 **DB 스키마·저장 API·캐시는 무변경**이다.
+
+| 토큰 | 의미 | 토큰 | 의미 |
+|---|---|---|---|
+| `*[텍스트]` | 굵게 | | |
+| `*r[텍스트]` | 빨강 | `*R[텍스트]` | 빨강 + 굵게 |
+| `*o[텍스트]` | 주황 | `*O[텍스트]` | 주황 + 굵게 |
+| `*g[텍스트]` | 초록 | `*G[텍스트]` | 초록 + 굵게 |
+| `*b[텍스트]` | 파랑 | `*B[텍스트]` | 파랑 + 굵게 |
+
+- 굵기는 **"글자 없음" 또는 "대문자"로만** 표현한다 → `b` 는 bold 가 아니라 **blue** 다.
+- 스타일 글자가 `r/o/g/b` 가 아니면 **토큰이 아니다**(`*x[..]` = 평문). 기존 코멘트의
+  곱셈·각주 `*` 가 서식으로 오인되는 것을 막는 방어다(도입 시 운영 DB 오탐 실측 0건).
+- **중첩 불가** — 정규식이 `[^\]]+` 라 `*[a @[item] b]` 나 `*[REG[7:0]]` 는 표현할 수 없다.
+  툴바가 "선택 구간에 `[`/`]` 가 있거나 기존 토큰과 겹치면" 아예 뜨지 않게 막는다.
+- 입력은 **플로팅 툴바 + 단축키**: 편집 중(더블클릭) 셀에서 글자를 드래그하면
+  셀 위에 버튼이 뜬다(`selectionchange` → `_cmtFmtBarEl`, edit_mode.js). 단축키는
+  `Ctrl+B`(굵게) / `Ctrl+Shift+1~4`(빨강·주황·초록·파랑) / `Ctrl+Shift+0`(제거).
+  `Ctrl+B/I/U` 는 `preventDefault` 로 가로챈다 — contenteditable 기본 동작이 `<b>` 를
+  삽입하는데 저장은 `textContent` 라 조용히 사라지기 때문이다.
+- **색·굵기는 웹 화면 전용이다.** Excel·챗봇·eval DB 로 나갈 때는 표시문자를 벗기고
+  본문만 보낸다. strip 은 JS `stripCommentFormat`(sheets.js)과 Python
+  `strip_format`([comment_format.py](../web_report/comment_format.py)) 두 짝이고,
+  호출 지점은 4곳뿐이다:
+
+  | 소비처 | 지점 |
+  |---|---|
+  | eval.db 관문 | [eval_export.py](../web_report/eval_export.py) `_merge_comment` — 여기 하나로 챗봇 코멘트 검색·AI Comment 선례 인용·관리자 패널·CSV 가 전부 커버된다 |
+  | 챗봇 report.db 직독 | [chatbot/tools_report.py](../server/chatbot/tools_report.py) (eval_export 를 우회하는 유일한 경로) |
+  | 웹 Excel Down | [excel_export.js](../server/report/static/webreport/excel_export.js) |
+  | Honey Excel Download | [client/excel_download/_sheets.py](../client/excel_download/_sheets.py) |
+
+  **저장 경로에서는 절대 벗기지 않는다** — 원문이 정본이다. `_COMMENT_MAX_LEN`(2000자)
+  검사도 마크업 포함 길이 그대로다(서식 1개당 3~4자 오버헤드).
+- 회귀 고정: [tests/test_comment_format.py](../tests/test_comment_format.py) — strip 표·멱등성·
+  `_merge_comment` 관문 + **JS↔Python 문법 드리프트 가드**(sheets.js 정규식·색 테이블 대조).
+
 ## 렌더 구조 (report_view.html + static/webreport)
 - 마크업+CSS 는 [report_view.html](../server/report/report_view.html), 탭별 JS 는
   [static/webreport/](../server/report/static/webreport/) **17개 모듈**(boot / core / sheets /

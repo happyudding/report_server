@@ -14,7 +14,7 @@ const CNOTE_STYLE = { line: { color: "#DC2626", width: 2 }, fillcolor: "rgba(220
 const CNOTE_TEXT_FONT = { size: 12, color: "#DC2626" };
 
 let _cnEditing = false;   // 주석 편집 모드 (툴바 토글)
-let _cnTool = null;       // "circle" | "rect" | "line" | "text" | null
+let _cnTool = null;       // "circle" | "rect" | "line" | "text" | "arrow" | null
 let _cnCharts = {};       // chartKey -> { gd, base, baseAnnos } (현재 상세뷰의 차트)
 let _cnPending = {};      // chartKey -> {shapes, texts, comment} — 미저장 편집 상태
 let _cnDirty = new Set(); // 미저장 chartKey 집합
@@ -71,7 +71,8 @@ function chartNotesApply(kind, subject, gd) {
   }
   if (editable) {
     relayout.newshape = CNOTE_STYLE;
-    if (_cnTool && _cnTool !== "text") relayout.dragmode = "draw" + _cnTool;
+    // text/arrow 는 클릭 배치 도구라 draw dragmode 가 없다 — zoom 유지.
+    if (_cnTool && _cnTool !== "text" && _cnTool !== "arrow") relayout.dragmode = "draw" + _cnTool;
   }
   if (Object.keys(relayout).length) { try { Plotly.relayout(gd, relayout); } catch (e) {} }
   cnBindChart(key, gd);
@@ -122,20 +123,31 @@ function cnBindPlotEvents(key, gd) {
   });
 }
 
-// 텍스트 도구: 차트 여백 클릭 좌표(px)를 데이터 좌표로 변환해 주석 추가.
+// 텍스트/화살표 도구: 차트 클릭 좌표(px)를 데이터 좌표로 변환해 주석 추가.
+// 화살표는 텍스트 없는 annotation(showarrow) — 가리킬 지점을 클릭하면 붉은 화살표가 붙고,
+// 편집 모드에서 머리(가리키는 지점)·꼬리를 드래그로 옮길 수 있다(텍스트 주석과 동일 채널로
+// 세션 저장). 삭제는 ↶(마지막 취소) 또는 전체 지우기.
 // 1회만 등록되므로 key 를 클로저로 잡지 않고 현재 바인딩된 gd._cnBoundKey 를 그때그때 읽는다.
 function cnBindTextClick(gd) {
   gd.addEventListener("click", ev => {
-    if (!_cnEditing || _cnTool !== "text") return;
+    if (!_cnEditing || (_cnTool !== "text" && _cnTool !== "arrow")) return;
     const key = gd._cnBoundKey;
     if (!key) return;
     const pt = cnPixelToData(gd, ev);
     if (!pt) return;
-    const text = prompt("Comment 텍스트를 입력하세요 (최대 300자):", "");
-    if (!text || !text.trim()) return;
+    const anno = { x: pt.x, y: pt.y, xref: "x", yref: "y" };
+    if (_cnTool === "text") {
+      const text = prompt("Comment 텍스트를 입력하세요 (최대 300자):", "");
+      if (!text || !text.trim()) return;
+      anno.text = text.trim().slice(0, 300);
+    } else {
+      anno.text = "";
+      anno.showarrow = true; anno.arrowhead = 3;
+      anno.ax = 28; anno.ay = -34;   // 꼬리 기본 위치(우상단) — 드래그로 조정 가능
+      anno.arrowcolor = CNOTE_STYLE.line.color; anno.arrowwidth = 2;
+    }
     const st = cnStateFor(key);
-    st.texts = st.texts.concat([{ x: pt.x, y: pt.y, xref: "x", yref: "y",
-      text: text.trim().slice(0, 300) }]);
+    st.texts = st.texts.concat([anno]);
     _cnPending[key] = st;
     cnMarkDirty(key);
     cnReapply(key);
@@ -179,7 +191,8 @@ function cnStripShape(s) {
 // x/y = 화살표가 가리키는 지점, ax/ay = 텍스트 상자까지의 꼬리 offset — 드래그로 바뀌는 값들.
 function cnStripText(t) {
   const out = { x: t.x, y: t.y, xref: t.xref, yref: t.yref, text: t.text };
-  ["showarrow", "arrowhead", "ax", "ay", "bgcolor", "bordercolor"].forEach(k => {
+  ["showarrow", "arrowhead", "ax", "ay", "bgcolor", "bordercolor",
+   "arrowcolor", "arrowwidth"].forEach(k => {
     if (t[k] !== undefined) out[k] = t[k];
   });
   if (t.font) out.font = { size: t.font.size, color: t.font.color };
@@ -242,13 +255,14 @@ function chartNotesBar(data) {
       ${tool("circle", "○", "동그라미 그리기 (드래그)")}
       ${tool("rect", "□", "사각형 그리기 (드래그)")}
       ${tool("line", "╱", "선 그리기 (드래그)")}
+      ${tool("arrow", "↗", "화살표 포인팅 (가리킬 지점을 차트에서 클릭)")}
       ${tool("text", "T", "텍스트 Comment (차트 클릭)")}
       <button type="button" class="btn-sm" id="cnoteUndo" title="마지막 도형 취소">↶</button>
       <button type="button" class="btn-sm" id="cnoteClear" title="이 항목의 Comment 전부 삭제">전체 지우기</button>
       <input type="text" id="cnoteComment" class="cnote-comment" placeholder="Comment (선택)"
         value="${esc(comment)}" maxlength="2000">
       <button type="button" class="btn-sm cnote-save${_cnDirty.size ? " dirty" : ""}" id="cnoteSave">저장</button>
-      <span class="cnote-hint">도형은 CDF/히스토그램 어느 쪽에나 드래그로 그립니다 · 텍스트 Comment 클릭 = 삭제</span>
+      <span class="cnote-hint">도형은 CDF/히스토그램 어느 쪽에나 드래그로 그립니다 · 화살표는 가리킬 지점 클릭(삭제는 ↶) · 텍스트 Comment 클릭 = 삭제</span>
     ` : (cnHasAny(cdfKey) || cnHasAny(histKey)
         ? `<span class="cnote-hint">저장된 Comment가 표시되어 있습니다</span>` : "")}
     <button type="button" class="btn-sm" id="cnoteToNote" title="현재 차트(Comment 포함)를 Note 탭 시트에 이미지로 붙여넣기">📋 Note에 붙여넣기</button>
@@ -283,7 +297,7 @@ function cnSetTool(t) {
   _cnTool = (t === _cnTool) ? null : t;
   document.querySelectorAll(".cnote-tool").forEach(b =>
     b.classList.toggle("active", b.dataset.cnoteTool === _cnTool));
-  const mode = (_cnTool && _cnTool !== "text") ? ("draw" + _cnTool) : false;
+  const mode = (_cnTool && _cnTool !== "text" && _cnTool !== "arrow") ? ("draw" + _cnTool) : false;
   Object.keys(_cnCharts).forEach(k => {
     const gd = _cnCharts[k].gd;
     if (!gd || !gd.layout) return;
@@ -309,11 +323,22 @@ function cnBindBar(subject) {
   const undo = document.getElementById("cnoteUndo");
   if (undo) undo.onclick = () => {
     // 가장 마지막에 그린 도형 하나 취소 — 두 차트 중 pending 도형이 있는 쪽 우선.
+    // 도형이 없으면 텍스트/화살표 주석을 취소한다(화살표는 클릭 삭제가 어려워 이 경로가 삭제 수단).
     for (const key of [`cdf:${subject}`, `hist:${subject}`]) {
       cnSyncFromChart(key);
       const st = cnStateFor(key);
       if (st.shapes.length) {
         st.shapes = st.shapes.slice(0, -1);
+        _cnPending[key] = st;
+        cnMarkDirty(key);
+        cnReapply(key);
+        return;
+      }
+    }
+    for (const key of [`cdf:${subject}`, `hist:${subject}`]) {
+      const st = cnStateFor(key);
+      if (st.texts.length) {
+        st.texts = st.texts.slice(0, -1);
         _cnPending[key] = st;
         cnMarkDirty(key);
         cnReapply(key);

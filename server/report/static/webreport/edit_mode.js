@@ -348,6 +348,9 @@ document.querySelector(".content").addEventListener("keydown", e => {
   if (e.key !== "Escape") return;
   const dd = document.getElementById("mentionDropdown");
   if (dd && dd.style.display === "block") return;
+  // 서식 툴바가 떠 있으면 그것만 닫는다(document 리스너가 닫는다) — mention 과 같은 규칙.
+  const fb = document.getElementById("cmtFmtBar");
+  if (fb && fb.style.display === "block") return;
   const cell = e.target.closest("td.dblclick-edit");
   if (!cell || !cell.isContentEditable) return;
   cell.textContent = cell.dataset.raw || "";
@@ -364,8 +367,9 @@ document.querySelector(".content").addEventListener("focusout", e => {
   const raw = cell.textContent || "";
   cell.contentEditable = "false";
   cell.dataset.raw = raw;                  // 저장·재편집 라운드트립용 원문 갱신
-  cell.innerHTML = linkifyComment(raw);    // @[항목] → 링크 표시로 복귀
+  cell.innerHTML = linkifyComment(raw);    // @[항목] → 링크, *[..] → 색·굵기 표시로 복귀
   hideMention();
+  hideCmtFmtBar();
   // 편집 종료 즉시 DB 저장 (web_report 만 — legacy PATCH /content 는 405 폐지).
   if (MODE === "edit" && _dirty && isWebReportSession()) saveCommentOnBlur();
 });
@@ -478,6 +482,9 @@ document.querySelector(".content").addEventListener("input", e => {
 // 선택하면 @[항목명] / #[태그명] / $[시트명] 토큰이 캐럿 위치에 삽입되고, 저장/표시 시
 // linkifyComment(sheets.js)가 각각 Item_detail·Note 셀·Note 시트 링크로 바꾼다.
 // 트리거 문자 집합은 이 두 상수와 sheets.js linkifyComment 의 정규식이 짝이다.
+// 단 서식 토큰(*[..]/*r[..])은 자동완성 대상이 아니다 — 플로팅 툴바·단축키로만 삽입되므로
+// '*' 를 아래 문자클래스에 넣지 않는다. 넣으면 '*' 가 든 항목명의 자동완성이 깨지고,
+// 안 넣어도 오작동이 없다(토큰 삽입 직후 캐럿 앞은 ']' 인데 ']' 가 이미 tail 매치를 끊는다).
 const TRIGGER_RE = /([@#$])([^\[\]@#$\n]*)$/;        // 캐럿 앞의 미완결 트리거+쿼리
 const TRIGGER_TAIL_RE = /[@#$]([^\[\]@#$\n]*)$/;     // 그 부분을 토큰으로 치환할 때
 let _mentionCell = null;
@@ -603,10 +610,131 @@ document.querySelector(".content").addEventListener("input", e => {
   const q = mentionQueryAtCaret(cell);
   if (q === null) hideMention(); else showMention(cell, q.q, q.trigger);
 });
-document.addEventListener("keydown", e => { if (e.key === "Escape") hideMention(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { hideMention(); hideCmtFmtBar(); } });
 document.addEventListener("click", e => {
   if (!e.target.closest("#mentionDropdown") && !e.target.closest("td.dblclick-edit")
       && !e.target.closest("textarea.engr-comment-input")) hideMention();
+});
+
+// ── comment 서식 툴바: 편집 중 셀에서 글자를 선택하면 뜨는 플로팅 버튼 ─────────
+// 토큰 문법·문자열 조작은 전부 sheets.js 순수 함수(cmtFormatRange)에 있고 여기는 DOM 글루만.
+// mention 드롭다운과 같은 방식이다 — body 직속 절대위치 + mousedown+preventDefault 로 blur 회피.
+// (둘이 동시에 뜨는 일은 없다: mention 은 캐럿이 collapsed 일 때, 이건 선택 구간이 있을 때.)
+const CMT_FMT_BTNS = [
+  ["",     "B", "굵게 (Ctrl+B)"],
+  ["r",    "●", "빨강 (Ctrl+Shift+1)"],
+  ["o",    "●", "주황 (Ctrl+Shift+2)"],
+  ["g",    "●", "초록 (Ctrl+Shift+3)"],
+  ["b",    "●", "파랑 (Ctrl+Shift+4)"],
+  ["none", "✕", "서식 제거 (Ctrl+Shift+0)"],
+];
+let _cmtFmtCell = null;
+function _cmtFmtBarEl() {
+  let bar = document.getElementById("cmtFmtBar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "cmtFmtBar"; bar.className = "cmt-fmt-bar"; bar.style.display = "none";
+    bar.innerHTML = CMT_FMT_BTNS.map(([act, label, title]) =>
+      `<button type="button" class="cmt-fmt-btn" data-act="${act}" title="${esc(title)}">${label}</button>`).join("");
+    document.body.appendChild(bar);
+    bar.addEventListener("mousedown", ev => {   // blur 전에 처리하도록 mousedown
+      const btn = ev.target.closest(".cmt-fmt-btn");
+      if (!btn) return;
+      ev.preventDefault();
+      if (_cmtFmtCell) cmtApplyFormat(_cmtFmtCell, btn.dataset.act);
+    });
+  }
+  return bar;
+}
+function hideCmtFmtBar() {
+  const bar = document.getElementById("cmtFmtBar");
+  if (bar) bar.style.display = "none";
+  _cmtFmtCell = null;
+}
+// 노드가 속한 편집 중 comment 셀 (텍스트 노드·엘리먼트 둘 다 받는다).
+function cmtCellOfNode(node) {
+  const el = (node && node.nodeType === 3) ? node.parentElement : node;
+  const td = (el && el.closest) ? el.closest("td.dblclick-edit") : null;
+  return (td && td.isContentEditable && isCommentCol(td.dataset.col)) ? td : null;
+}
+// 셀 시작부터 (node, off) 까지의 문자 수 — Range.toString() 이라 cell.textContent 와 같은 좌표계다.
+function _cmtLenTo(cell, node, off) {
+  const r = document.createRange();
+  r.setStart(cell, 0); r.setEnd(node, off);
+  return r.toString().length;
+}
+function cmtSelOffsets(cell, range) {
+  return { start: _cmtLenTo(cell, range.startContainer, range.startOffset),
+           end:   _cmtLenTo(cell, range.endContainer, range.endOffset) };
+}
+// 선택 구간에 서식을 적용하고 캐럿을 토큰 끝으로 옮긴다.
+// textContent 로 통째 교체해 텍스트 노드 1개로 정규화한다(붙여넣기 잔재 노드도 같이 정리).
+// 저장은 건드리지 않는다 — dispatch 한 input 이 기존 dirty 마킹을 태우고, focusout 이 저장한다.
+function cmtApplyFormat(cell, action) {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount) return;
+  const range = sel.getRangeAt(0);
+  if (!cell.contains(range.startContainer) || !cell.contains(range.endContainer)) return;
+  const off = cmtSelOffsets(cell, range);
+  const res = cmtFormatRange(cell.textContent || "", off.start, off.end,
+                             action === "none" ? null : action);
+  if (!res) {
+    showToast("이 구간에는 서식을 넣을 수 없습니다 — 대괄호나 @[]/#[] 토큰과 겹칩니다.");
+    return;
+  }
+  cell.textContent = res.text;
+  const tn = cell.firstChild;
+  if (tn) {
+    const r = document.createRange();
+    r.setStart(tn, Math.min(res.caret, tn.length)); r.collapse(true);
+    sel.removeAllRanges(); sel.addRange(r);
+  }
+  cell.dispatchEvent(new Event("input", { bubbles: true }));   // _dirty 마킹 + mention 재판정
+  hideCmtFmtBar();
+}
+// 선택 변화 감지는 selectionchange 여야 한다 — mouseup 만으로는 키보드 선택(Shift+←/→)을 놓친다.
+// 적용 불가한 선택(링크 토큰 겹침·대괄호 포함)에는 아예 안 띄운다(비활성 버튼을 그리지 않는다).
+document.addEventListener("selectionchange", () => {
+  const sel = window.getSelection();
+  if (!sel || !sel.rangeCount || sel.isCollapsed) { hideCmtFmtBar(); return; }
+  const range = sel.getRangeAt(0);
+  const cell = cmtCellOfNode(range.startContainer);
+  if (!cell || !cell.contains(range.endContainer)) { hideCmtFmtBar(); return; }
+  const off = cmtSelOffsets(cell, range);
+  if (!cmtFormatRange(cell.textContent || "", off.start, off.end, "")) { hideCmtFmtBar(); return; }
+  const bar = _cmtFmtBarEl();
+  _cmtFmtCell = cell;
+  bar.style.display = "block";
+  let rect = range.getBoundingClientRect();
+  if (!rect.width && !rect.height) rect = cell.getBoundingClientRect();
+  // 셀 폭이 330px 고정(.st-comment)이라 툴바가 셀보다 넓을 수 있어 뷰포트로 클램프한다.
+  const bw = bar.offsetWidth, bh = bar.offsetHeight;
+  const maxLeft = window.scrollX + document.documentElement.clientWidth - bw - 4;
+  bar.style.left = Math.max(window.scrollX + 4,
+                            Math.min(window.scrollX + rect.left, maxLeft)) + "px";
+  bar.style.top = (window.scrollY + (rect.top - bh - 6 > 0 ? rect.top - bh - 6 : rect.bottom + 6)) + "px";
+});
+// 서식 단축키. Ctrl+B 는 contenteditable 기본이 <b> 를 삽입하는데 저장은 textContent 라
+// 조용히 사라진다 — 우리 토큰으로 가로채면서 그 구멍도 같이 막는다. Ctrl+I/U 는 대응
+// 기능이 없으니 기본 동작만 차단한다(보이지 않는 HTML 이 생기는 것 방지).
+// Ctrl+1~8 은 Edge 탭 전환이라 색은 Ctrl+Shift+숫자 로 잡는다.
+// ⚠️ e.key 가 아니라 **e.code**(물리 키)로 판정한다 — Shift+1 의 e.key 는 레이아웃에 따라
+// "!" 이고, 한글 IME 입력 상태에서는 B 의 e.key 가 "ㅠ" 로 올 수 있다.
+const CMT_FMT_KEYS = { Digit1: "r", Digit2: "o", Digit3: "g", Digit4: "b", Digit0: "none" };
+const CMT_FMT_BLOCK_CODES = { KeyB: 1, KeyI: 1, KeyU: 1 };
+document.querySelector(".content").addEventListener("keydown", e => {
+  if (!(e.ctrlKey || e.metaKey)) return;
+  const cell = cmtCellOfNode(e.target);
+  if (!cell) return;
+  if (!e.shiftKey && CMT_FMT_BLOCK_CODES[e.code]) {
+    e.preventDefault();
+    if (e.code === "KeyB") cmtApplyFormat(cell, "");
+    return;
+  }
+  if (e.shiftKey && Object.prototype.hasOwnProperty.call(CMT_FMT_KEYS, e.code)) {
+    e.preventDefault();
+    cmtApplyFormat(cell, CMT_FMT_KEYS[e.code]);
+  }
 });
 
 // payload 조립 (saveEdits / autoSave 공용)

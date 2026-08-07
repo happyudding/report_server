@@ -1150,8 +1150,11 @@ function distToolbarHtml() {
     ? `<button class="distseg${distRtBin1Only ? " active" : ""}" data-seg="rtbin1" title="켜짐: RT source 만 양품(Bin1)·규격내로 좁히고 CT / HT 는 fail 포함 전체 die 로 표시 · 꺼짐: 전체 die">Bin1 (RT만)</button>`
     : "";
   const nopfBtn = `<button class="distseg${distHidePassfail ? " active" : ""}" data-seg="nopf" title="켜짐: unit 이 Pass/Fail(P/F·P_F) 인 항목 카드를 숨김 · 꺼짐: 표시">P/F 없애기</button>`;
+  // 전체 보기 — 항목을 숨기는 세 필터(cpk<1.33 / Fail Only / P/F 없애기)를 한 번에 해제하는
+  // 액션 버튼(토글 아님). 데이터 변형(Bin1 계열)과 축 옵션(Limit)은 건드리지 않는다.
+  const allBtn = `<button class="distseg" data-seg="showall" title="cpk < 1.33 · Fail Only · P/F 없애기 필터를 모두 해제해 전 항목 표시">전체 보기</button>`;
   return `<div class="dist-toolbar">
-    <div class="distseg-group">${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${rtBin1Btn}${nopfBtn}</div>
+    <div class="distseg-group">${allBtn}${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${rtBin1Btn}${nopfBtn}</div>
     ${distTempFilterHtml()}
     <div class="dist-search-wrap" data-no-dirty>
       <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">
