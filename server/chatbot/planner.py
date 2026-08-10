@@ -284,10 +284,14 @@ _ITEM_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_]{1,})\b")
 _STOPWORDS = {"close", "issue", "item", "lot", "db", "id", "ok", "ng", "pte"}
 
 
-def rule_plan(question: str) -> QueryPlan:
+def rule_plan(question: str, context_session_id=None) -> QueryPlan:
     """LLM 없이 키워드로 계획을 세운다 — LLM 미설정/장애 시의 폴백.
 
     정교한 의도 파악은 하지 않는다. 목적은 "그래도 실제 DB 결과를 돌려준다" 이다.
+
+    context_session_id 는 **분류에만** 쓴다(반환 session_id 에 넣지 않는다 — 주입은 agent 가
+    세션 관련 intent 에만 한다). 세션 상세를 열어 둔 채 "이슈 알려줘" 라고 하면 제품명이
+    없어 unknown 으로 빠지던 것을, 열린 세션이 있으면 그 세션 질문으로 읽게 하려는 것이다.
     """
     q = str(question or "").strip()
     tax = taxonomy()
@@ -338,6 +342,8 @@ def rule_plan(question: str) -> QueryPlan:
     session_id = session_ref.group(1) if session_ref else None
     if session_id and product and product.lower() in session_id.lower():
         product = None      # 세션 id 조각을 제품명으로 오인하지 않는다
+    # 분류용 — 질문이 세션을 지목했거나, 지금 세션을 열어 두고 물었거나.
+    session_scope = session_id or context_session_id
 
     metric = jump_target = None
     if any(k in q or k in ql for k in _SIMILAR_KW):
@@ -350,7 +356,7 @@ def rule_plan(question: str) -> QueryPlan:
         metric = "raw" if has_raw else ("cpk" if "cpk" in ql or "씨피케이" in q else "yield")
     elif product and (has_issue or (items and has_report)):
         intent = "session_issue"
-    elif session_id and has_issue:
+    elif session_scope and has_issue:
         intent = "session_issue"
     elif has_report and (product or session_id
                          or any(k in q or k in ql for k in _FIND_KW)):
@@ -384,4 +390,4 @@ def plan(question: str, *, use_llm=True, context_session_id=None) -> QueryPlan:
         data = _call_llm(question, context_session_id)
         if data is not None:
             return _plan_from_dict(data, question)
-    return rule_plan(question)
+    return rule_plan(question, context_session_id)

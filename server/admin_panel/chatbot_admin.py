@@ -32,6 +32,10 @@ def overview(hours=24):
     return data
 
 
-def list_logs(q=None, limit=50, offset=0):
-    """질문/답변 이력 (최신순). limit/offset 클램프는 chatbot_log 가 한다."""
-    return report_db.list_chats(q=q, limit=limit, offset=offset)
+def list_logs(q=None, limit=50, offset=0, errors_only=False):
+    """질문/답변 이력 (최신순). limit/offset 클램프는 chatbot_log 가 한다.
+
+    errors_only 는 실패만 추린다 — 성공 기록 사이에서 오류를 찾아 헤매지 않도록.
+    """
+    return report_db.list_chats(q=q, limit=limit, offset=offset,
+                                errors_only=bool(errors_only))

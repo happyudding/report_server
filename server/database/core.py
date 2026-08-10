@@ -199,7 +199,8 @@ CREATE TABLE IF NOT EXISTS report_chatbot_log (
     total_ms      INTEGER,
     wait_ms       INTEGER,              -- 동시실행 세마포어 대기
     llm_ms        INTEGER,              -- LLM 왕복 (미사용이면 NULL)
-    result        TEXT DEFAULT 'ok'     -- 'ok' | 'busy' | 'error'
+    result        TEXT DEFAULT 'ok',    -- 'ok' | 'busy' | 'error:<예외클래스>'
+    error_detail  TEXT                  -- 실패 시 예외 메시지 + traceback (관리자 탭에서 펼쳐 봄)
 );
 CREATE INDEX IF NOT EXISTS idx_report_chatbot_created_at
     ON report_chatbot_log(created_at DESC);
@@ -392,6 +393,13 @@ def _migrate(conn):
         for col in ("client_user", "client_host"):
             if col not in audit_cols:
                 conn.execute(f"ALTER TABLE report_audit_log ADD COLUMN {col} TEXT")
+
+    # report_chatbot_log: 실패 상세(traceback) 컬럼 — 관리자 Chatbot 탭이 예외 클래스만
+    # 보여주던 것을 원인까지 보여주려고 추가(2026-08-10). 그 이전에 만들어진 표는 ALTER.
+    if _table_exists(conn, "report_chatbot_log"):
+        chat_cols = {r[1] for r in conn.execute("PRAGMA table_info(report_chatbot_log)")}
+        if "error_detail" not in chat_cols:
+            conn.execute("ALTER TABLE report_chatbot_log ADD COLUMN error_detail TEXT")
 
     # 편집 권한 위임 / web_report 방문자 / 사용자별 개인 중요표시 (기존 DB 에도 생성)
     if not _table_exists(conn, "report_session_editor"):

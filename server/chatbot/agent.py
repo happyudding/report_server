@@ -10,9 +10,27 @@ LangGraph 를 쓰지 않는다: 1단계 흐름은 분기 5개와 1회 완화 재
 """
 from __future__ import annotations
 
+import logging
 import time
 
 from . import planner, tools_eval, tools_metrics, tools_report
+
+_log = logging.getLogger(__name__)
+
+
+class AnswerFailed(Exception):
+    """핸들러 실행 중 실패 — **어디까지 갔는지**(plan/steps)를 함께 들고 올라간다.
+
+    예외 클래스 이름만 남기면 "AttributeError 3건" 까지는 알아도 어느 인텐트의 어느 툴에서
+    터졌는지 몰라 재현부터 다시 해야 한다. 그 왕복을 없애려고 계획과 툴 호출 기록을 붙인다.
+    원인 예외는 ``cause`` 로 보존한다(`raise ... from` 이라 traceback 도 이어진다).
+    """
+
+    def __init__(self, cause, plan, steps):
+        super().__init__(f"{type(cause).__name__}: {cause}")
+        self.cause = cause
+        self.plan = plan
+        self.steps = steps
 
 # 세션 상세 패널에서 온 질문의 "이 세션" 을 붙일 intent — 규칙 폴백은 컨텍스트를 모르므로
 # 여기서 사후 주입한다.
@@ -67,8 +85,15 @@ def _run(question, *, viewer, see_all_private, use_llm, context_session_id=None)
         "page_jump": _page_jump,
     }.get(plan.intent, _unknown)
 
-    text, data = handler(plan, ctx)
-    _derive_links(data, ctx)
+    try:
+        text, data = handler(plan, ctx)
+    except Exception as exc:
+        raise AnswerFailed(exc, plan.to_dict(), trace.steps) from exc
+    try:
+        _derive_links(data, ctx)
+    except Exception:
+        # 링크는 답변의 덤이다 — 파생이 실패했다고 이미 만든 답을 버리지 않는다.
+        _log.warning("chatbot 링크 파생 실패 (답변은 그대로 반환)", exc_info=True)
     return {"plan": plan.to_dict(), "steps": trace.steps, "text": text, "data": data,
             "web": web}
 

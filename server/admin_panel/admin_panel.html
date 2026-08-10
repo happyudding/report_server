@@ -736,20 +736,34 @@ body { position: relative; }
     <div class="tile"><div class="lbl">로딩 중…</div></div>
   </div>
   <div style="height:16px"></div>
+  <div class="card" id="chatErrCard" style="margin-bottom:16px; display:none">
+    <h2>오류 종류별 <span class="hint">무엇이 몇 번 터졌는지 — 총 오류 수보다 원인을 빨리 좁힌다.
+      맨 아래 상세를 클릭하면 traceback 전체가 펼쳐진다</span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>오류</th><th class="num">건수</th><th>마지막 발생</th>
+        <th>마지막 질문</th><th>상세 (traceback)</th>
+      </tr></thead>
+      <tbody id="chatErrBody"></tbody>
+    </table></div>
+  </div>
   <div class="card">
     <h2>질문 / 답변 이력
       <span class="hint">소요는 총 = 대기(동시실행 제한) + LLM(질문 해석) + 조회 로 나눠 본다 —
         느린 원인이 LLM 인지 동시성 제한인지 총 소요만으로는 못 가린다</span></h2>
     <div class="toolbar">
-      <input id="chatQ" class="inp" style="width:280px" placeholder="질문 / 답변 / 사용자 검색…">
+      <input id="chatQ" class="inp" style="width:280px" placeholder="질문 / 답변 / 사용자 / 오류 검색…">
       <button class="btn primary" id="btnChatSearch">검색</button>
       <button class="btn" id="btnChatReset">초기화</button>
+      <label style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer">
+        <input type="checkbox" id="chatErrOnly"> 오류만
+      </label>
       <span class="grow"></span>
       <button class="btn" id="btnChatRefresh">새로고침</button>
     </div>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th>시각</th><th>사용자</th><th>질문</th><th>답변</th>
+        <th>시각</th><th>사용자</th><th>질문</th><th>답변 / 오류상세</th>
         <th>intent</th><th>plan</th>
         <th class="num">총 ms</th><th class="num">대기</th><th class="num">LLM</th><th>결과</th>
       </tr></thead>
@@ -2356,17 +2370,37 @@ async function loadChatbotTab() {
         <div class="det">여유 슬롯 ${rt.free_slots == null ? "-" : rt.free_slots} / ${rt.concurrency == null ? "-" : rt.concurrency}</div></div>
       <div class="tile"><div class="lbl">오류</div>
         <div class="val"${errs > 0 ? ` style="color:#dc2626"` : ""}>${errs}건</div>
-        <div class="det">최근 24시간</div></div>`;
+        <div class="det">${errs > 0 ? "아래 '오류 종류별' 표 참고" : "최근 24시간"}</div></div>`;
+    renderChatErrors(s.by_error || []);
   } catch (e) {
     $("chatTiles").innerHTML = `<div class="tile"><div class="lbl">챗봇 요약 조회 실패</div><div class="det">${esc(e)}</div></div>`;
   }
   loadChatLog();
 }
+// 오류를 종류별로 묶어 보여준다 — 같은 예외가 반복되는지, 여러 종류가 섞였는지가
+// 한눈에 보여야 어디부터 볼지 정할 수 있다.
+function renderChatErrors(rows) {
+  const card = $("chatErrCard");
+  if (!rows.length) { card.style.display = "none"; return; }
+  card.style.display = "";
+  $("chatErrBody").innerHTML = rows.map(r => `<tr>
+    <td style="color:#dc2626">${esc(r.result || "-")}</td>
+    <td class="num">${esc(r.n)}</td>
+    <td>${fmtDate(r.last_at)}</td>
+    <td class="detail-cell"><div class="clamp">${esc(r.last_question || "-")}</div></td>
+    <td class="detail-cell"><div class="clamp">${esc(r.last_detail || "(상세 없음)")}</div></td>
+  </tr>`).join("");
+}
+$("chatErrBody").addEventListener("click", e => {
+  const cell = e.target.closest(".detail-cell .clamp");
+  if (cell) cell.classList.toggle("open");
+});
 async function loadChatLog() {
   const tb = $("chatBody");
   tb.innerHTML = `<tr class="empty-row"><td colspan="10">로딩 중…</td></tr>`;
   const params = new URLSearchParams({ limit: CHAT_PAGE, offset: chatOffset });
   const q = $("chatQ").value.trim(); if (q) params.set("q", q);
+  if ($("chatErrOnly").checked) params.set("errors", "1");
   let data;
   try { data = await getJSON("api/chatbot/log?" + params); }
   catch (e) {
@@ -2375,11 +2409,13 @@ async function loadChatLog() {
   }
   tb.innerHTML = data.rows.length ? data.rows.map(r => {
     const bad = r.result && r.result !== "ok";
+    // 실패 행은 답변 자리에 traceback 을 싣는다 — 그 행에서 볼 것이 그것뿐이다.
+    const body = bad ? (r.error_detail || r.answer || "(상세 없음)") : (r.answer || "-");
     return `<tr>
       <td>${fmtDate(r.created_at)}</td>
       <td>${esc(r.user || "-")}</td>
       <td class="detail-cell"><div class="clamp">${esc(r.question || "")}</div></td>
-      <td class="detail-cell"><div class="clamp">${esc(r.answer || "-")}</div></td>
+      <td class="detail-cell"${bad ? ` style="color:#dc2626"` : ""}><div class="clamp">${esc(body)}</div></td>
       <td>${esc(CHAT_INTENT_LABEL[r.intent] || r.intent || "-")}</td>
       <td>${esc(r.planner || "-")}</td>
       <td class="num">${r.total_ms == null ? "-" : r.total_ms}</td>
@@ -2402,7 +2438,10 @@ $("chatBody").addEventListener("click", e => {
   if (cell) cell.classList.toggle("open");
 });
 $("btnChatSearch").onclick = () => { chatOffset = 0; loadChatLog(); };
-$("btnChatReset").onclick = () => { $("chatQ").value = ""; chatOffset = 0; loadChatbotTab(); };
+$("chatErrOnly").onchange = () => { chatOffset = 0; loadChatLog(); };
+$("btnChatReset").onclick = () => {
+  $("chatQ").value = ""; $("chatErrOnly").checked = false; chatOffset = 0; loadChatbotTab();
+};
 $("btnChatRefresh").onclick = () => loadChatbotTab();
 $("chatQ").addEventListener("keydown", e => { if (e.key === "Enter") { chatOffset = 0; loadChatLog(); } });
 // 실시간 현황(처리 중 건수)은 그 탭을 보고 있을 때만 갱신한다 — 다른 탭에서 도는 폴링은

@@ -16,6 +16,7 @@
 import logging
 import threading
 import time
+import traceback
 
 from flask import abort, jsonify, request
 
@@ -33,6 +34,15 @@ _ACQUIRE_TIMEOUT = 10   # 초 — 이보다 밀리면 기다리게 두지 않고
 _CHAT_SEM = threading.BoundedSemaphore(_CONCURRENCY)
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT = 0
+
+
+def _error_detail(exc):
+    """예외 → 관리자 탭에 저장할 상세 문자열 (메시지 + traceback).
+
+    `type(exc).__name__` 만 남기면 "AttributeError 3건" 까지는 알아도 **무엇의 어느 줄**
+    인지를 알 수 없어 재현부터 다시 해야 한다. 그 왕복을 없애려고 통째로 남긴다.
+    """
+    return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).strip()
 
 
 def chat_runtime():
@@ -83,11 +93,29 @@ def api_chat():
             context_session_id=ctx_sid)
     except Exception as exc:
         _log.exception("chatbot 응답 실패: %s", question[:120])
+        # 어디까지 갔는지(계획·툴 호출)를 함께 남긴다 — 실패 기록만 보고도 재현 없이
+        # "어느 인텐트의 어느 툴에서 터졌나" 를 읽을 수 있어야 한다.
+        # agent.AnswerFailed 를 isinstance 로 보지 않는 이유: chatbot import 자체가 실패하면
+        # 그 이름이 이 스코프에 없다(그때가 바로 기록이 가장 필요한 순간이다).
+        failed_plan, failed_steps = {}, None
+        cause = getattr(exc, "cause", None)
+        if cause is not None:
+            failed_plan = getattr(exc, "plan", None) or {}
+            failed_steps = getattr(exc, "steps", None)
+            exc = cause              # 클래스명·traceback 이 진짜 원인을 가리키게
+        detail = _error_detail(exc)
         report_db.log_chat(question=question, user=viewer, client_ip=client_ip,
                            context_session_id=ctx_sid, wait_ms=wait_ms,
                            total_ms=int((time.perf_counter() - started) * 1000),
-                           result=f"error:{type(exc).__name__}")
-        return jsonify({"error": "답변 생성 중 오류가 발생했습니다."}), 500
+                           intent=failed_plan.get("intent"),
+                           planner=failed_plan.get("planner"),
+                           plan=failed_plan or None, steps=failed_steps,
+                           llm_ms=failed_plan.get("llm_ms"),
+                           result=f"error:{type(exc).__name__}", error_detail=detail)
+        # master 전용 기능이라 원인을 감추지 않는다 — 예외 한 줄을 그대로 보여 주는 편이
+        # "오류가 발생했습니다" 보다 훨씬 빨리 고쳐진다. 전체 traceback 은 관리자 탭에.
+        return jsonify({"error": f"{type(exc).__name__}: {exc}",
+                        "detail": detail}), 500
     finally:
         with _INFLIGHT_LOCK:
             _INFLIGHT -= 1

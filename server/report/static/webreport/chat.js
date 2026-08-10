@@ -38,6 +38,10 @@
   border:1px solid #d0d7de;background:#fff;color:#0969da;cursor:pointer;text-decoration:none}
 #chatLog .acts button.choice{color:#24292f}
 #chatLog .acts a:hover,#chatLog .acts button:hover{background:#f3f4f6}
+#chatLog .errdet{margin-top:5px;font-size:11px}
+#chatLog .errdet summary{cursor:pointer;color:#82071e}
+#chatLog .errdet pre{margin:4px 0 0;padding:6px;background:#fff;border:1px solid #ffcecb;
+  border-radius:5px;max-height:220px;overflow:auto;white-space:pre-wrap;word-break:break-all}
 #chatForm{display:flex;gap:6px;padding:8px;border-top:1px solid #e5e7eb}
 #chatForm input{flex:1;padding:6px 8px;border:1px solid #d0d7de;border-radius:6px;font-size:12.5px;
   background:#fff;color:#24292f}
@@ -54,6 +58,8 @@ html[data-theme="dark"] #chatLog .acts a,html[data-theme="dark"] #chatLog .acts 
 html[data-theme="dark"] #chatLog .acts button.choice{color:#c9d1d9}
 html[data-theme="dark"] #chatForm{border-color:#30363d}
 html[data-theme="dark"] #chatForm input{background:#0d1117;border-color:#30363d;color:#c9d1d9}
+html[data-theme="dark"] #chatLog .errdet summary{color:#ffa198}
+html[data-theme="dark"] #chatLog .errdet pre{background:#0d1117;border-color:#5c2b29;color:#c9d1d9}
 `;
 
   var API = "/pe/report/api/chat";
@@ -153,6 +159,20 @@ html[data-theme="dark"] #chatForm input{background:#0d1117;border-color:#30363d;
 
   function addBot(text) { return bubble("bot", text); }
 
+  /** 오류 말풍선에 접힌 traceback 을 단다 (클릭하면 펼침). */
+  function addDetail(wrap, detail) {
+    var box = document.createElement("details");
+    box.className = "errdet";
+    var sum = document.createElement("summary");
+    sum.textContent = "상세 (traceback)";
+    var pre = document.createElement("pre");
+    pre.textContent = detail;      // 항상 평문 — innerHTML 로 넣지 않는다
+    box.appendChild(sum);
+    box.appendChild(pre);
+    wrap.appendChild(box);
+    els.log.scrollTop = els.log.scrollHeight;
+  }
+
   function addActions(wrap, links, choices) {
     if (!(links || []).length && !(choices || []).length) return;
     var box = document.createElement("div");
@@ -216,7 +236,10 @@ html[data-theme="dark"] #chatForm input{background:#0d1117;border-color:#30363d;
     }).then(function (r) {
       els.log.removeChild(pending);
       if (!r.ok) {
-        bubble("err", r.body.error || ("요청 실패 (HTTP " + r.status + ")"));
+        // master 전용 기능이라 원인을 감추지 않는다 — 예외 한 줄을 바로 보여 주고,
+        // traceback 은 접어 둔다(관리자 탭에도 같은 내용이 남는다).
+        var wrap = bubble("err", r.body.error || ("요청 실패 (HTTP " + r.status + ")"));
+        if (r.body.detail) addDetail(wrap, r.body.detail);
         return;
       }
       var wrap = addBot(r.body.text || "(빈 응답)");

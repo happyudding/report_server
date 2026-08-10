@@ -12,23 +12,30 @@ _log = logging.getLogger(__name__)
 
 _COLUMNS = ("created_at", "user", "client_ip", "context_session_id", "question",
             "answer", "intent", "planner", "plan_json", "steps_json",
-            "total_ms", "wait_ms", "llm_ms", "result")
+            "total_ms", "wait_ms", "llm_ms", "result", "error_detail")
 
 # 질문은 라우트가 500자로 막지만 답변은 상한이 없다 — 표 하나가 DB 를 키우지 않게 자른다.
 _ANSWER_CAP = 20000
+# traceback 은 길어야 몇 KB 다. 원인 줄이 잘리면 기록하는 의미가 없어 넉넉히 잡는다.
+_ERROR_CAP = 8000
 
 
 def log_chat(*, question, user=None, client_ip=None, context_session_id=None,
              answer=None, intent=None, planner=None, plan=None, steps=None,
-             total_ms=None, wait_ms=None, llm_ms=None, result="ok"):
+             total_ms=None, wait_ms=None, llm_ms=None, result="ok",
+             error_detail=None):
     """챗 1건 기록. 실패해도 조용히 넘어간다."""
     try:
         text = str(answer or "")
         if len(text) > _ANSWER_CAP:
             text = text[:_ANSWER_CAP] + "…(생략)"
+        detail = str(error_detail or "") or None
+        if detail and len(detail) > _ERROR_CAP:
+            # 앞이 아니라 **뒤**를 남긴다 — traceback 의 마지막 프레임과 예외 메시지가 원인이다.
+            detail = "…(앞부분 생략)\n" + detail[-_ERROR_CAP:]
         values = (_now(), user, client_ip, context_session_id, str(question or ""),
                   text or None, intent, planner, _dump(plan), _dump(steps),
-                  _int(total_ms), _int(wait_ms), _int(llm_ms), result)
+                  _int(total_ms), _int(wait_ms), _int(llm_ms), result, detail)
         cols = ", ".join(f'"{c}"' for c in _COLUMNS)
         marks = ", ".join("?" for _ in _COLUMNS)
         with get_conn(busy_timeout_ms=2000) as conn:
@@ -54,13 +61,20 @@ def _int(value):
         return None
 
 
-def list_chats(q=None, limit=50, offset=0):
-    """최신순 목록. q 는 질문·답변·사용자·intent 부분일치."""
-    where, params = "", []
+def list_chats(q=None, limit=50, offset=0, errors_only=False):
+    """최신순 목록. q 는 질문·답변·사용자·intent·오류상세 부분일치.
+
+    errors_only 는 실패만 추린다 — 관리자가 "무슨 에러가 났나" 를 볼 때 성공 기록 사이에서
+    찾아 헤매지 않도록.
+    """
+    clauses, params = [], []
     if q:
-        where = (' WHERE (question LIKE ? OR answer LIKE ? OR "user" LIKE ?'
-                 " OR intent LIKE ?)")
-        params = [f"%{q}%"] * 4
+        clauses.append('(question LIKE ? OR answer LIKE ? OR "user" LIKE ?'
+                       " OR intent LIKE ? OR error_detail LIKE ?)")
+        params += [f"%{q}%"] * 5
+    if errors_only:
+        clauses.append("result IS NOT NULL AND result <> 'ok'")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     limit = max(1, min(_int(limit) or 50, 500))
     offset = max(0, _int(offset) or 0)
     with get_conn() as conn:
@@ -68,7 +82,7 @@ def list_chats(q=None, limit=50, offset=0):
             f"SELECT COUNT(*) AS n FROM report_chatbot_log{where}", params).fetchone()["n"]
         rows = conn.execute(
             f'SELECT id, created_at, "user", client_ip, context_session_id, question,'
-            f" answer, intent, planner, total_ms, wait_ms, llm_ms, result"
+            f" answer, intent, planner, total_ms, wait_ms, llm_ms, result, error_detail"
             f" FROM report_chatbot_log{where}"
             f" ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
             params + [limit, offset]).fetchall()
@@ -98,6 +112,19 @@ def chat_stats(hours=24):
             "SELECT COALESCE(NULLIF(TRIM(intent), ''), '(없음)') AS intent,"
             " COUNT(*) AS n FROM report_chatbot_log WHERE created_at >= ?"
             " GROUP BY 1 ORDER BY n DESC LIMIT 12", (since,)).fetchall()
+        # 실패를 종류별로 — "error:AttributeError 3건" 처럼 무엇이 몇 번 터졌는지가
+        # 총 오류 수보다 훨씬 빨리 원인을 좁힌다. 최근 1건의 상세를 함께 실어 보낸다.
+        errors = conn.execute(
+            "SELECT result, COUNT(*) AS n, MAX(created_at) AS last_at,"
+            "       (SELECT error_detail FROM report_chatbot_log e2"
+            "         WHERE e2.result = e1.result AND e2.created_at >= ?"
+            "         ORDER BY e2.created_at DESC, e2.id DESC LIMIT 1) AS last_detail,"
+            "       (SELECT question FROM report_chatbot_log e3"
+            "         WHERE e3.result = e1.result AND e3.created_at >= ?"
+            "         ORDER BY e3.created_at DESC, e3.id DESC LIMIT 1) AS last_question"
+            " FROM report_chatbot_log e1"
+            " WHERE created_at >= ? AND result IS NOT NULL AND result <> 'ok'"
+            " GROUP BY result ORDER BY n DESC LIMIT 10", (since, since, since)).fetchall()
         grand = conn.execute("SELECT COUNT(*) AS n FROM report_chatbot_log").fetchone()
     out = {k: agg[k] for k in agg.keys()}
     for key in ("avg_ms", "avg_wait_ms", "avg_llm_ms"):
@@ -106,6 +133,7 @@ def chat_stats(hours=24):
     out["all_time"] = grand["n"]
     out["by_user"] = [dict(r) for r in users]
     out["by_intent"] = [dict(r) for r in intents]
+    out["by_error"] = [dict(r) for r in errors]
     return out
 
 

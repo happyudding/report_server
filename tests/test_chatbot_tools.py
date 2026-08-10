@@ -398,6 +398,14 @@ def test_answer_web():
     assert ask["plan"]["session_id"] is None, ask["plan"]
     assert "보고서" in ask["text"], ask["text"]
 
+    # 세션을 열어 둔 채 제품명 없이 물어도 그 세션 질문으로 읽는다
+    # (컨텍스트가 없으면 unknown 이 맞다 — 어느 보고서인지 알 수 없으므로)
+    opened = agent.answer_web("이슈 알려줘", viewer=UPLOADER, use_llm=False,
+                              context_session_id="S1")
+    assert opened["plan"]["intent"] == "session_issue", opened["plan"]
+    assert "SGM_TRIM_CHECK" in opened["text"], opened["text"]
+    assert planner.rule_plan("이슈 알려줘").intent == "unknown"
+
     # 같은 페이지 안에서의 이동은 url 이 아니라 action 으로 나간다
     jump = agent.answer_web("맵 열어줘", viewer=UPLOADER, use_llm=False,
                             context_session_id="S1")

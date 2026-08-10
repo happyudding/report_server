@@ -365,6 +365,7 @@ def api_chatbot_log():
         q=(request.args.get("q") or "").strip() or None,
         limit=request.args.get("limit", 50),
         offset=request.args.get("offset", 0),
+        errors_only=request.args.get("errors") == "1",
     ))
 
 
