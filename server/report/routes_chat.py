@@ -13,10 +13,14 @@
 3. **계측** — 총/대기/LLM 소요를 3분해해 기록한다. 총 소요만 남기면 "느린 게 LLM 탓인지
    동시성 제한 탓인지" 를 관리자 탭에서 가릴 수 없다(web_report/build_log.py 와 같은 이유).
 """
+import importlib
+import importlib.util
 import logging
+import sys
 import threading
 import time
 import traceback
+from pathlib import Path
 
 from flask import abort, jsonify, request
 
@@ -34,6 +38,59 @@ _ACQUIRE_TIMEOUT = 10   # 초 — 이보다 밀리면 기다리게 두지 않고
 _CHAT_SEM = threading.BoundedSemaphore(_CONCURRENCY)
 _INFLIGHT_LOCK = threading.Lock()
 _INFLIGHT = 0
+
+
+# ── 챗봇 엔진 모듈 확보 ──────────────────────────────────────────────────────
+# `from chatbot import agent` 만으로는 부족하다 — `chatbot` 은 흔한 top-level 이름이라
+# 같은 이름의 다른 패키지가 sys.path 앞에 있거나 sys.modules 를 선점하면 answer_web 이 없는
+# 모듈이 잡힌다. 2026-08-10 운영에서 실제로 터졌고(범인은 당시 eval_analyzer/chatbot —
+# 이후 chatbot_prototype 으로 개명), 이름이 흔한 만큼 재발 여지가 있어 방어를 남긴다.
+# **경로로 검증**하고, 어긋나면 파일 경로로 직접 적재한다(고유 모듈명이라 충돌 없음).
+_CHATBOT_DIR = Path(__file__).resolve().parent.parent / "chatbot"
+_ALIAS = "report_server_chatbot"    # 이름 충돌을 피하려는 전용 별칭
+_AGENT = None
+
+
+def _load_agent_by_path():
+    """server/chatbot 을 별칭 패키지로 적재하고 그 안의 agent 를 돌려준다.
+
+    패키지째 적재해야 agent.py 의 `from . import planner, …` 상대 import 가 성립한다.
+    """
+    if _ALIAS not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            _ALIAS, _CHATBOT_DIR / "__init__.py",
+            submodule_search_locations=[str(_CHATBOT_DIR)])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[_ALIAS] = module
+        spec.loader.exec_module(module)
+    return importlib.import_module(f"{_ALIAS}.agent")
+
+
+def _agent():
+    """answer_web 을 가진 챗봇 agent 모듈 (프로세스당 1회 해석 후 재사용)."""
+    global _AGENT
+    if _AGENT is not None:
+        return _AGENT
+    module = None
+    try:
+        from chatbot import agent as found
+        # 같은 이름의 다른 패키지를 잡았는지 경로로 판정한다.
+        if Path(getattr(found, "__file__", "") or "").resolve().parent == _CHATBOT_DIR:
+            module = found
+        else:
+            _log.warning("chatbot.agent 가 %s 로 잡혔다 — server/chatbot 으로 다시 적재한다",
+                         getattr(found, "__file__", "?"))
+    except Exception:
+        _log.warning("chatbot.agent import 실패 — 경로 적재로 폴백", exc_info=True)
+    if module is None:
+        module = _load_agent_by_path()
+    if not hasattr(module, "answer_web"):
+        # 여기까지 왔는데 없으면 파일 자체가 옛 버전이다(배포 누락·부분 복사).
+        raise RuntimeError(
+            f"챗봇 엔진이 오래된 버전입니다 — {getattr(module, '__file__', '?')} 에 "
+            "answer_web 이 없습니다. server/chatbot/agent.py 를 최신으로 배포한 뒤 재기동하세요.")
+    _AGENT = module
+    return module
 
 
 def _error_detail(exc):
@@ -86,8 +143,7 @@ def api_chat():
     with _INFLIGHT_LOCK:
         _INFLIGHT += 1
     try:
-        from chatbot import agent as chatbot_agent
-        result = chatbot_agent.answer_web(
+        result = _agent().answer_web(
             question, viewer=viewer,
             see_all_private=True,          # master 확정 후라 전 세션 조회 가능
             context_session_id=ctx_sid)

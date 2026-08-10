@@ -58,7 +58,7 @@ class _Trace:
 def _count(result):
     if isinstance(result, dict):
         for key in ("items", "history", "similar", "comments", "hits", "issues",
-                    "sessions", "products"):
+                    "sessions", "products", "groups"):
             value = result.get(key)
             if isinstance(value, list):
                 return len(value)
@@ -83,6 +83,7 @@ def _run(question, *, viewer, see_all_private, use_llm, context_session_id=None)
         "session_find": _session_find,
         "session_metrics": _session_metrics,
         "page_jump": _page_jump,
+        "stats": _stats,
     }.get(plan.intent, _unknown)
 
     try:
@@ -445,6 +446,41 @@ def _page_jump(plan, ctx):
     return f"아래 버튼으로 \"{exact}\" 상세를 엽니다.", {"session_id": sid, "item": exact}
 
 
+def _stats(plan, ctx):
+    """"몇 건인가" — eval.db fail_case 를 축 하나로 세어 준다."""
+    axis = plan.group_by or "status"
+    try:
+        res = ctx["trace"].call(tools_eval.stats_summary, group_by=axis,
+                                product_type=plan.product_type,
+                                family_product=plan.family_product,
+                                status=plan.status, limit=20)
+    except ValueError as exc:
+        return str(exc), {}
+    groups = res.get("groups") or []
+    if not groups:
+        if not res.get("db_available"):
+            return (f"[eval DB] 없음 — {res.get('db_path')} (집계할 데이터가 없습니다)",
+                    {"stats": res})
+        return "조건에 맞는 case 가 없습니다.", {"stats": res}
+
+    scope = " / ".join(x for x in (plan.product_type, plan.family_product,
+                                   plan.status) if x)
+    head = (f"{_AXIS_LABEL.get(axis, axis)} 집계 — 총 {res['total']}건"
+            + (f" ({scope})" if scope else ""))
+    lines = [head]
+    for row in groups:
+        lines.append(f"  - {row.get('key') or '(없음)'}: {row.get('count')}건"
+                     f" (최근 {_date(row.get('last_at'))})")
+    if axis != "status" and not plan.status:
+        _choice(ctx, "판정별로 보기", "판정별 통계 알려줘")
+    if axis != "product":
+        _choice(ctx, "제품별로 보기", "제품별 건수 알려줘")
+    return "\n".join(lines), {"stats": res}
+
+
+_AXIS_LABEL = {"status": "판정", "product": "제품", "product_type": "제품 타입",
+               "family_product": "제품군", "item": "항목", "item_class": "항목 분류",
+               "bin": "bin"}
 _METRIC_LABEL = {"yield": "수율", "cpk": "CPK", "raw": "측정값"}
 
 
@@ -596,7 +632,8 @@ def _unknown(plan, ctx):
             "  - \"S3222 보고서에서 LDO 이슈 어떻게 close 됐어?\"\n"
             "  - \"S3222 라는 제품 있었어?\"\n"
             "  - \"S3222 보고서 찾아줘\" / \"이 세션 수율 알려줘\"\n"
-            "  - \"VDD_INT 상세 보여줘\" / \"맵 열어줘\"", {})
+            "  - \"VDD_INT 상세 보여줘\" / \"맵 열어줘\"\n"
+            "  - \"PMIC 에 MAJOR 몇 건이야?\" / \"제품별 건수 알려줘\"", {})
 
 
 # ── 포맷 ─────────────────────────────────────────────────────────────────────

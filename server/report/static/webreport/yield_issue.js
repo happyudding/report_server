@@ -579,27 +579,19 @@ function syncIssueHeadRowHeight(panel) {
 // 고정 id 가 아니라 **data-issue-act** 다 — 같은 id 가 두 패널에 생기면 getElementById 가
 // 엉뚱한 패널의 버튼을 잡는다. Temp 패널은 섹션이 1개·Bin 그룹이 없어 섹션 점프/TNO 펼치기/
 // ISSUE ITEM 추가를 뺀다(ETC 는 Issue Table 전용 개념).
+const ISSUE_MENU_LABEL = "☑ Issue Item 추가/변경/삭제";
 function issueToolbarHtml(panelId) {
   const isTemp = panelId === ISSUE_PANEL_TEMP;
   const ui = issueUi(document.getElementById(panelId || ISSUE_PANEL_MAIN));
   const searchId = isTemp ? "issueTempSearchInput" : "issueSearchInput";
-  // 수정모드 버튼: ISSUE ITEM 추가 + 선택 모드 토글 + Status 전체 일괄. 선택 실행 버튼
-  // (.issue-del-actions)은 선택 모드일 때만 CSS 로 노출된다.
+  // 수정모드 액션(ISSUE ITEM 추가 · 선택 모드 · 선택/전체 Status · 삭제)은 버튼을 가로로
+  // 늘어놓지 않고 드롭다운 메뉴 버튼 하나로 묶는다(사용자 요청 2026-08-10 — 오른쪽으로 쭉
+  // 펼쳐지면 직관적이지 않다). 항목 정의·열기는 issueActionMenuHtml / toggleIssueMenu.
   const editBtns = (MODE === "edit")
-    ? (isTemp ? "" : `<button type="button" class="btn-sm" data-issue-act="etc-add">ISSUE ITEM 추가</button>`) +
-      `<button type="button" class="btn-sm" data-issue-act="delmode" title="행을 선택해 한 번에 삭제하거나 Status 를 Open/Close 로 바꾼다 (Step 셀 클릭 = 선택)">☑ Issue Item 추가/변경/삭제</button>` +
-      `<span class="issue-del-actions">` +
-        `<button type="button" class="btn-sm" data-issue-act="sel-all" title="보이는 행 전체 선택">전체 선택</button>` +
-        `<button type="button" class="btn-sm" data-issue-act="sel-none" title="선택 모두 해제">선택 해제</button>` +
-        `<button type="button" class="btn-sm" data-issue-act="sel-open" title="선택한 행 Status 를 Open 으로">선택 Open</button>` +
-        `<button type="button" class="btn-sm" data-issue-act="sel-close" title="선택한 행 Status 를 Close 로">선택 Close</button>` +
-        `<button type="button" class="btn-sm" data-issue-act="del-selected" title="체크한 행 일괄 삭제">선택 삭제</button>` +
-        `<button type="button" class="btn-sm" data-issue-act="reset-hidden" title="삭제(숨김)한 행 전부 복원">삭제 전체 초기화</button>` +
-      `</span>` +
-      `<span class="issue-status-actions">` +
-        `<button type="button" class="btn-sm" data-issue-act="all-open" title="이 표 전체 행 Status 를 Open 으로">All Open</button>` +
-        `<button type="button" class="btn-sm" data-issue-act="all-close" title="이 표 전체 행 Status 를 Close 로">All Close</button>` +
-      `</span>` : "";
+    ? `<button type="button" class="btn-sm issue-menu-btn" data-issue-act="menu" ` +
+      `aria-haspopup="true" aria-expanded="false" ` +
+      `title="ISSUE ITEM 추가 / 행 선택 삭제 / Status 일괄 변경">${ISSUE_MENU_LABEL} ▾</button>`
+    : "";
   // 'TNO 전체 펼치기' 는 툴바에서 빼고 Yield 섹션 헤더의 Step 열 아래 작은 ▼ 아이콘으로
   // 옮겼다(2026-08-10 사용자 요청 — sheets.js issueSectionHeadRowsHtml). 동작·핸들러
   // (data-issue-act="toggle-all")는 그대로다.
@@ -624,6 +616,78 @@ function issueToolbarHtml(panelId) {
     `</div>`;
 }
 
+// ── Issue Table 액션 메뉴 (툴바 버튼 → 세로 리스트 팝오버) ────────────────────
+// 우클릭 컨텍스트 메뉴처럼 생긴 세로 리스트 하나로 편집 액션을 모았다(2026-08-10 사용자 요청).
+// 표 스크롤 컨테이너에 잘리지 않도록 fixed 로 띄우되 **패널 안에** 붙인다 — body 직속이면
+// .content 클릭 위임(edit_mode.js)이 못 잡고, sticky 툴바(z-index:92) 안에 넣으면 그
+// 스태킹 컨텍스트에 갇혀 표 sticky 셀에 가린다. 한 번에 하나만 연다.
+let _issueMenuEl = null;
+let _issueMenuAnchor = null;
+function closeIssueMenu() {
+  if (!_issueMenuEl) return;
+  if (_issueMenuAnchor) _issueMenuAnchor.setAttribute("aria-expanded", "false");
+  _issueMenuEl.remove();
+  _issueMenuEl = null; _issueMenuAnchor = null;
+}
+function issueMenuItemHtml(act, label, opts) {
+  opts = opts || {};
+  return `<button type="button" class="issue-menu-item${opts.checked ? " checked" : ""}"` +
+    ` data-issue-act="${act}"${opts.disabled ? " disabled" : ""}` +
+    ` title="${esc(opts.title || "")}">` +
+    `<span class="issue-menu-mark">${opts.checked ? "✓" : ""}</span>` +
+    `<span class="issue-menu-label">${esc(label)}</span></button>`;
+}
+// 항목 활성/라벨은 **여는 시점**에 계산한다 — 메뉴는 열 때마다 새로 그리므로 열려 있는
+// 동안 갱신할 일이 없다(체크 변경은 메뉴가 닫힌 뒤에만 일어난다).
+function issueActionMenuHtml(panel) {
+  const on = issueUi(panel).delMode;
+  const n = panel.querySelectorAll(".issue-del-chk:checked").length;
+  const sep = `<div class="issue-menu-sep"></div>`;
+  // ETC 는 Issue Table 전용 개념이라 Temp 패널에는 'ISSUE ITEM 추가' 가 없다.
+  return (panel.id === ISSUE_PANEL_TEMP ? "" :
+      issueMenuItemHtml("etc-add", "＋ ISSUE ITEM 추가", { title: "ETC 섹션에 항목을 직접 추가한다" }) + sep) +
+    issueMenuItemHtml("delmode", "행 선택 모드", {
+      checked: on, title: "행 체크박스를 켜고 끈다 (Step 셀 클릭 = 선택)" }) +
+    issueMenuItemHtml("sel-all", "전체 선택", { disabled: !on, title: "보이는 행 전체 선택" }) +
+    issueMenuItemHtml("sel-none", "선택 해제", { disabled: !on, title: "선택 모두 해제" }) +
+    sep +
+    issueMenuItemHtml("sel-open", "선택 Open", { disabled: !on || !n, title: "선택한 행 Status 를 Open 으로" }) +
+    issueMenuItemHtml("sel-close", "선택 Close", { disabled: !on || !n, title: "선택한 행 Status 를 Close 로" }) +
+    issueMenuItemHtml("del-selected", n ? `선택 삭제 (${n})` : "선택 삭제", {
+      disabled: !on || !n, title: "체크한 행 일괄 삭제" }) +
+    sep +
+    issueMenuItemHtml("all-open", "All Open", { title: "이 표 전체 행 Status 를 Open 으로" }) +
+    issueMenuItemHtml("all-close", "All Close", { title: "이 표 전체 행 Status 를 Close 로" }) +
+    issueMenuItemHtml("reset-hidden", "삭제 전체 초기화", { title: "삭제(숨김)한 행 전부 복원" });
+}
+function toggleIssueMenu(btn) {
+  if (_issueMenuAnchor === btn) { closeIssueMenu(); return; }   // 같은 버튼 재클릭 = 닫기
+  closeIssueMenu();
+  const panel = issuePanelOf(btn);
+  if (!panel) return;
+  const menu = document.createElement("div");
+  menu.className = "issue-menu";
+  menu.innerHTML = issueActionMenuHtml(panel);
+  menu.style.position = "fixed";
+  menu.style.visibility = "hidden";   // 폭·높이 실측 전에는 깜빡임 방지로 숨긴다
+  panel.appendChild(menu);
+  const rect = btn.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  let top = rect.bottom + 4;
+  if (top + mh > window.innerHeight - 8) top = Math.max(8, rect.top - mh - 4);   // 아래 공간 부족 → 위로
+  menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - mw - 12)) + "px";
+  menu.style.top = top + "px";
+  menu.style.visibility = "";
+  btn.setAttribute("aria-expanded", "true");
+  _issueMenuEl = menu; _issueMenuAnchor = btn;
+}
+// 바깥 클릭 / ESC 로 닫기 (issue_dist.js map-expand-pop 과 같은 처방).
+document.addEventListener("click", e => {
+  if (_issueMenuEl && !e.target.closest(".issue-menu") && !e.target.closest('[data-issue-act="menu"]'))
+    closeIssueMenu();
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeIssueMenu(); });
+
 // ── Issue Table 선택 모드 (일괄 삭제 / Status 일괄 변경) ─────────────────────
 // 켜면 행 체크박스·개별 삭제(×)·선택 실행 버튼이 보인다(CSS .issue-del-mode).
 // 삭제 후 재로드(load)로 표가 다시 그려져도 모드가 유지되도록 패널별 상태(issueUi)에 둔다.
@@ -632,11 +696,9 @@ function applyIssueDelMode(panel) {
   if (!panel) return;
   const on = issueUi(panel).delMode;
   panel.classList.toggle("issue-del-mode", on);
-  const btn = panel.querySelector('[data-issue-act="delmode"]');
-  if (btn) {
-    btn.classList.toggle("active", on);
-    btn.textContent = on ? "✕ Issue Item 추가/변경/삭제 종료" : "☑ Issue Item 추가/변경/삭제";
-  }
+  // 모드가 메뉴 안으로 들어가 보이지 않으므로 트리거 버튼 자체를 켜짐 표시(빨강)로 쓴다.
+  const btn = panel.querySelector('[data-issue-act="menu"]');
+  if (btn) btn.classList.toggle("active", on);
   syncIssueDelCount(panel);
   syncIssueStickyOffsets(panel);   // 체크박스 노출로 Step 열 폭이 변할 수 있어 재실측
 }
@@ -655,19 +717,16 @@ function setAllIssueDelChecked(checked, panel) {
   });
   syncIssueDelCount(panel);
 }
-// 체크 개수를 "선택 삭제 (n)" 라벨에 반영 + 선택 대상 버튼 활성/비활성.
+// 체크 개수를 툴바 트리거 라벨에 반영 — 선택 실행 항목이 메뉴 안으로 들어가 평소엔 보이지
+// 않으므로, 몇 행을 골랐는지는 버튼에서 읽혀야 한다. 메뉴 항목의 활성/라벨은 메뉴를 여는
+// 시점에 계산한다(issueActionMenuHtml).
 function syncIssueDelCount(panel) {
   panel = panel || activeIssuePanel();
   if (!panel) return;
+  const trigger = panel.querySelector('[data-issue-act="menu"]');
+  if (!trigger) return;
   const n = panel.querySelectorAll(".issue-del-chk:checked").length;
-  const btn = panel.querySelector('[data-issue-act="del-selected"]');
-  ['[data-issue-act="sel-open"]', '[data-issue-act="sel-close"]'].forEach(sel => {
-    const b = panel.querySelector(sel);
-    if (b) b.disabled = !n;
-  });
-  if (!btn) return;
-  btn.textContent = n ? `선택 삭제 (${n})` : "선택 삭제";
-  btn.disabled = !n;
+  trigger.textContent = ISSUE_MENU_LABEL + (issueUi(panel).delMode && n ? ` (${n})` : "") + " ▾";
 }
 
 // Issue Table Excel 내보내기는 excel_export.js exportIssueExcel — Yield/CPK 탭과 같은
@@ -829,6 +888,8 @@ function bindIssueColResize(panel) {
 function renderIssueTableInto(panel, rows, opts) {
   if (!panel) return;
   opts = opts || {};
+  closeIssueMenu();   // 아래 innerHTML 교체가 열려 있던 메뉴를 지운다 — 참조도 같이 버린다
+
   if (!Array.isArray(rows) || !rows.length) {
     emptyPanel(panel, opts.emptyText || "Issue Table 데이터 없음");
     return;

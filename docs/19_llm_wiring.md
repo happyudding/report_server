@@ -42,7 +42,7 @@ python tools/llm_check.py --ping     # 소비자별 상태 + 실제 왕복 확�
 |---|---|---|
 | 선례 RAG 검색 | [eval_engine/precedent_client.py](../eval_analyzer/eval_engine/precedent_client.py) `_rag_search` | 스텁. `EVAL_PRECEDENT_BACKEND=rag` + `EVAL_PRECEDENT_RAG_ENDPOINT` 로 전환 예정. 계약은 [PRECEDENT_RAG_HANDOFF.md](../eval_analyzer/docs/PRECEDENT_RAG_HANDOFF.md) — **report_server 담당 몫으로 계약된 1함수** |
 | 텍스트 → 선례 행 | [db_input/ai_extract.py](../eval_analyzer/db_input/ai_extract.py) `extract_rows_from_text` | 스텁. 검증(`validate_rows`)·CSV 변환·적재는 완성이라 **rows JSON 만 만들면 된다** |
-| LangChain 프로토타입 | [eval_analyzer/chatbot/](../eval_analyzer/chatbot/llm.py) `build_llm` | 별개 실험용(langchain-openai 의존). 운영 챗봇은 `server/chatbot/` 이고 서로 코드 의존 없음 — **이름이 같아 혼동 주의**(§4) |
+| LangChain 프로토타입 | [eval_analyzer/chatbot_prototype/](../eval_analyzer/chatbot_prototype/llm.py) `build_llm` | 보류된 실험(langchain 미설치라 실행 불가, import 되는 곳 0). 운영 챗봇은 `server/chatbot/` — 2026-08-10 이름 충돌로 개명(§4) |
 
 ## 3. endpoint 표기 — base URL 과 완성 경로 둘 다 받는다
 
@@ -67,10 +67,18 @@ payload 는 OpenAI 호환 chat completions(`model` + `messages`, `temperature:0`
    `EVAL_*` 를 `os.environ` 으로 옮겨 비대칭을 없앤다(이미 설정된 값은 덮지 않는다).
 2. **엔진 설정은 import 시점 1회다.** `eval_engine/config.py` 는 모듈 상수라, 실행 중에
    `os.environ` 을 바꿔도 반영되지 않는다. 값을 바꿨으면 **재기동**이 답이다.
-3. **`chatbot` 패키지가 두 개다.** `server/chatbot`(운영)과 `eval_analyzer/chatbot`(실험).
-   `sys.path` 에 eval_analyzer 를 **앞에** 넣으면 후자가 이겨 `from chatbot import planner` 가
-   깨진다. 운영 코드는 [ai_comment.py](../web_report/ai_comment.py) `_evaluate_fn` 처럼 항상
-   **append** 한다 — 새 스크립트를 쓸 때도 그 순서를 따를 것.
+3. **`chatbot` 이라는 top-level 이름은 흔해서 가로채이기 쉽다.** 운영에서 실제로 터졌다
+   (2026-08-10): `AttributeError: module 'chatbot.agent' has no attribute 'answer_web'`.
+   당시 범인은 `eval_analyzer/chatbot`(LangChain 실험)이었고 →
+   **`chatbot_prototype` 으로 개명해 원인을 제거**했다.
+   개명과 별개로 방어도 남겼다(비용 0): [routes_chat.py](../server/report/routes_chat.py)
+   `_agent()` 가 잡아 온 모듈의 **경로를 검증**하고, 어긋나면 `server/chatbot` 을 고유
+   별칭(`report_server_chatbot`)으로 직접 적재한다 — 잘못 잡힌 파일 경로가 경고 로그에 남는다.
+   회귀 가드 [tests/test_chatbot_module_collision.py](../tests/test_chatbot_module_collision.py)
+   는 **가짜 충돌 패키지를 만들어** 검사하므로 어떤 폴더가 범인이든 잡는다
+   (sys.modules 를 오염시켜 **단독 실행** 전용).
+   새 스크립트를 쓸 때도 eval_analyzer 는 항상 **append** 할 것
+   ([ai_comment.py](../web_report/ai_comment.py) `_evaluate_fn` 규약).
 
 ## 5. 확인 절차
 

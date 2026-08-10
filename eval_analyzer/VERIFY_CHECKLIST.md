@@ -7,7 +7,8 @@
 - 손타이핑 delta 는 병합 전 구버전 대비 **py 7개 + yaml 2개 + 신규 `cross_source.py`** 였다.
   그 밖의 파일은 구버전과 동일하므로 대조 대상이 아니다.
 - docstring 은 **일부러 안 친 것**이므로 대조 시 무시한다.
-  - **2026-08-04**: 운영 코드(`eval_engine/`·`db_input/`·`chatbot/`·`tools/`)의 빠진 docstring
+  - **2026-08-04**: 운영 코드(`eval_engine/`·`db_input/`·`chatbot/`→現 `chatbot_prototype/`·
+    `tools/`)의 빠진 docstring
     119개를 **현재 코드를 읽고 새로 썼다**(원본 복원이 아니라 재작성 — 문구가 원본과 다르다).
     `compare_typing.py` 는 AST 비교라 이 추가를 감지하지 않으므로 대조 시 계속 무시하면 된다.
     `tests/` 는 자명한 테스트에 docstring 을 안 붙이는 기존 컨벤션을 유지해 헬퍼만 채웠다.

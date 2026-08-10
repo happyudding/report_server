@@ -15,7 +15,7 @@ from __future__ import annotations
 from . import eval_store
 
 # 케이스별 "최신 평가" 상관 서브쿼리 — 같은 case 에 여러 engine/model 판정이 쌓이므로
-# 항상 최신 1건만 본다 (eval_analyzer/chatbot/queries.py 와 같은 관례).
+# 항상 최신 1건만 본다 (eval_analyzer/chatbot_prototype/queries.py 와 같은 관례).
 _LATEST_EVAL = ("SELECT MAX(e2.eval_id) FROM evaluation e2 WHERE e2.case_id = fc.case_id")
 _LATEST_LABEL = ("SELECT MAX(l2.label_id) FROM label l2 WHERE l2.case_id = fc.case_id")
 
@@ -197,3 +197,61 @@ def search_comments(keyword, *, family_product=None, limit=20):
     """
     params.append(int(limit))
     return _envelope(eval_store.query(sql, params), "comments")
+
+
+# ── 5. 집계 (몇 건인가) ─────────────────────────────────────────────────────
+# 축 이름 → SQL 식. **사용자 입력을 SQL 에 넣지 않으려고** 화이트리스트로만 매핑한다
+# (LLM 이 고른 값이 그대로 들어오는 자리라 특히 중요하다).
+STATS_AXES = {
+    "status": "COALESCE(ev.status, '(판정없음)')",
+    "product": "fc.product_name",
+    "product_type": "COALESCE(pm.product_type, '(미등록)')",
+    "family_product": "COALESCE(pm.family_product, '(미등록)')",
+    "item": "im.item_canonical",
+    "item_class": "fc.item_class",
+    "bin": "CAST(fc.bin AS TEXT)",
+}
+
+
+def stats_summary(group_by="status", *, product_type=None, family_product=None,
+                  status=None, limit=20):
+    """"몇 건인가" 에 답하는 집계 — 축 하나로 fail_case 를 세어 많은 순으로 돌려준다.
+
+    언제 쓰나: "PMIC 에서 MAJOR 몇 건이야?", "제품별로 fail case 얼마나 쌓였어?",
+    "판정 분포 알려줘" 처럼 **목록이 아니라 숫자**를 묻는 질문.
+    언제 쓰지 않나: 특정 item 의 과거 내용을 알고 싶을 때 — 그건 `get_item_history` 다.
+
+    group_by: STATS_AXES 의 키. 모르는 값이면 ValueError (조용히 다른 축으로 세지 않는다).
+    status 로 판정을 걸러 "MAJOR 만 제품별로" 같은 조합도 된다.
+    """
+    axis = STATS_AXES.get(str(group_by or "").strip())
+    if axis is None:
+        raise ValueError(f"group_by 는 {list(STATS_AXES)} 중 하나여야 합니다")
+    where, params = [], []
+    if product_type:
+        where.append("pm.product_type = ?")
+        params.append(product_type)
+    if family_product:
+        where.append("pm.family_product = ?")
+        params.append(family_product)
+    if status:
+        where.append("ev.status = ?")
+        params.append(str(status).upper())
+    sql = f"""
+        SELECT {axis} AS key, COUNT(*) AS count,
+               MAX(fc.created_at) AS last_at
+        FROM fail_case fc
+        JOIN item_master im          ON im.item_id = fc.item_id
+        LEFT JOIN product_master pm  ON pm.product_name = fc.product_name
+        LEFT JOIN evaluation ev      ON ev.case_id = fc.case_id
+                                    AND ev.eval_id = ({_LATEST_EVAL})
+        {("WHERE " + " AND ".join(where)) if where else ""}
+        GROUP BY {axis}
+        ORDER BY count DESC, last_at DESC
+        LIMIT ?
+    """
+    params.append(int(limit))
+    out = _envelope(eval_store.query(sql, params), "groups")
+    out["group_by"] = str(group_by).strip()
+    out["total"] = sum(int(r.get("count") or 0) for r in out["groups"])
+    return out

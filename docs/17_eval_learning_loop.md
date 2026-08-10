@@ -181,7 +181,7 @@ SQLite 는 UNIQUE/PK 제약을 `ALTER` 로 못 바꾼다 → **두 테이블 모
 | `web_report/eval_export.py` | :305, :424, :426 | 서버 (코멘트 export + `save_human_label`) |
 | `eval_analyzer/db_input/import_csv.py` | :315 | 과거사례 적재기 |
 | `eval_analyzer/tools/seed_demo_precedents.py` | :74 | 데모 시드 |
-| `eval_analyzer/chatbot/test_smoke.py` | :30 | 스모크 |
+| `eval_analyzer/chatbot_prototype/test_smoke.py` | :30 | 스모크 (보류된 프로토타입 — 일반 pytest 수집 대상 아님) |
 | 테스트 | `eval_analyzer/tests/test_store.py`(:19,:34,:39,:129,:183) · `test_calibrate.py`(:28,:96) · `test_e2e.py`(:83) · `tests/test_eval_admin_labels.py`(:52) · `tests/test_eval_unit_group.py`(:53) | 회귀 |
 
 기존 데이터 관점에서는 **안전한 확장**이다 — 현재 `item_canonical` 이 이미

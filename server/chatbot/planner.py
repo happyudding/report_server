@@ -25,10 +25,14 @@ from dataclasses import dataclass, field, asdict
 _log = logging.getLogger(__name__)
 
 INTENTS = ("item_history", "session_issue", "product_search", "similar_case",
-           "comment_search", "session_find", "session_metrics", "page_jump", "unknown")
+           "comment_search", "session_find", "session_metrics", "page_jump",
+           "stats", "unknown")
 
 METRICS = ("yield", "cpk", "raw")
 JUMP_TARGETS = ("item_detail", "map")
+# 집계 축 — 정본은 tools_eval.STATS_AXES (여기 목록이 그 키와 어긋나면 조용히 status 로 떨어진다)
+STATS_AXES = ("status", "product", "product_type", "family_product", "item",
+              "item_class", "bin")
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")   # security.py 와 동일 패턴
 
 
@@ -47,6 +51,8 @@ class QueryPlan:
     session_id: str | None = None         # 질문이 특정 세션을 지목할 때
     metric: str | None = None             # session_metrics: 'yield' | 'cpk' | 'raw'
     jump_target: str | None = None        # page_jump: 'item_detail' | 'map'
+    group_by: str | None = None           # stats: 집계 축 (STATS_AXES)
+    status: str | None = None             # stats: 판정 필터 (CRITICAL/MAJOR/MINOR/MONITOR)
     llm_ms: int | None = None             # LLM 왕복 소요(관리자 탭 부하 분해용)
 
     def to_dict(self):
@@ -136,10 +142,13 @@ intent 는 다음 중 하나다.
 - session_find   : 조건(제품/lot/기간)에 맞는 평가 세션(보고서) 자체를 찾아 열려 한다
 - session_metrics: 특정 세션의 수율(yield)·CPK·측정값(raw) 수치를 묻는다
 - page_jump      : 화면 이동만 원한다 (항목 상세 보기 / 웨이퍼 맵 보기)
+- stats          : 목록이 아니라 **건수/분포**를 묻는다 ("PMIC 에 MAJOR 몇 건", "제품별 몇 건")
 - unknown        : 위 어디에도 해당하지 않는다
 
 session_metrics 면 metric 을 반드시 하나 고른다: "yield"(수율) / "cpk" / "raw"(실제 측정값).
 page_jump 면 jump_target 을 반드시 하나 고른다: "item_detail"(항목 상세) / "map"(웨이퍼 맵).
+stats 면 group_by 를 하나 고른다: "status" / "product" / "product_type" / "family_product" /
+"item" / "item_class" / "bin". 판정을 특정했으면 status 에 CRITICAL|MAJOR|MINOR|MONITOR 중 하나.
 
 규칙:
 - 사용자가 말하지 않은 제품명·항목명·날짜를 만들어내지 않는다.
@@ -154,7 +163,8 @@ page_jump 면 jump_target 을 반드시 하나 고른다: "item_detail"(항목 �
  "family_product": null 또는 문자열, "item_keywords": [문자열...],
  "lot_id": null 또는 문자열, "free_text": null 또는 문자열,
  "session_id": null 또는 문자열, "metric": null 또는 문자열,
- "jump_target": null 또는 문자열,
+ "jump_target": null 또는 문자열, "group_by": null 또는 문자열,
+ "status": null 또는 문자열,
  "ambiguity": true/false, "normalized_question": "무엇을 찾는지 한 문장"}"""
 
 
@@ -234,6 +244,12 @@ def _plan_from_dict(data: dict, question: str) -> QueryPlan:
     sid = _clean(data.get("session_id"))
     if sid and not _SESSION_ID_RE.match(sid):
         sid = None
+    group_by = _clean(data.get("group_by"))
+    if group_by not in STATS_AXES:
+        group_by = None
+    status = (_clean(data.get("status")) or "").upper() or None
+    if status not in _STATUS_VOCAB:
+        status = None
     return QueryPlan(
         intent=intent,
         product=_clean(data.get("product")),
@@ -248,6 +264,8 @@ def _plan_from_dict(data: dict, question: str) -> QueryPlan:
         session_id=sid,
         metric=metric,
         jump_target=jump,
+        group_by=group_by,
+        status=status,
         llm_ms=data.get("_llm_ms"))
 
 
@@ -273,6 +291,21 @@ _JUMP_KW = ("열어", "보여줘", "이동", "점프", "탭", "띄워")
 _MAP_KW = ("맵", "map", "웨이퍼")
 _DETAIL_KW = ("상세", "detail", "분포")
 _FIND_KW = ("찾아", "검색", "목록", "리스트")
+# 집계 신호. "몇 건/건수/통계/분포" 는 목록 질문에는 거의 안 쓰이는 말이라 오분류 위험이 낮다.
+# ⚠ "분포" 는 _DETAIL_KW 에도 있다 — page_jump 가 앞 분기라 "분포 보여줘" 는 화면 이동이 이긴다
+#    (그게 맞다: 사용자는 차트를 보려는 것이다). 집계는 "몇 건/통계" 같은 수량 표현이 있을 때다.
+_STATS_KW = ("몇 건", "몇건", "건수", "통계", "집계", "몇 개", "몇개", "얼마나")
+_STATUS_VOCAB = ("CRITICAL", "MAJOR", "MINOR", "MONITOR")
+# 집계 축을 말에서 고른다(먼저 걸리는 것이 이긴다 — 좁은 축을 앞에 둔다).
+_STATS_AXIS_KW = (
+    ("item_class", ("아이템 클래스", "item_class", "항목 분류")),
+    ("family_product", ("family", "패밀리", "제품군")),
+    ("product_type", ("product_type", "제품 타입", "제품타입")),
+    ("product", ("제품별", "제품 별", "product")),
+    ("item", ("항목별", "항목 별", "아이템별", "item별")),
+    ("bin", ("bin별", "bin 별", "빈별")),
+    ("status", ("판정", "status", "등급")),
+)
 # 세션 id 는 "<epoch>_<hex6>" 형태(web_report.ingest) — 짧은 제품코드와 섞이지 않게 8자 이상만.
 _SESSION_REF_RE = re.compile(r"세션\s*([A-Za-z0-9_-]{8,80})")
 # 제품 코드처럼 보이는 토큰: 영문 1~4자 (+ 구분자) + 숫자 3자 이상
@@ -345,8 +378,16 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
     # 분류용 — 질문이 세션을 지목했거나, 지금 세션을 열어 두고 물었거나.
     session_scope = session_id or context_session_id
 
-    metric = jump_target = None
-    if any(k in q or k in ql for k in _SIMILAR_KW):
+    metric = jump_target = group_by = None
+    status = next((s for s in _STATUS_VOCAB if s in q.upper()), None)
+    if any(k in q or k in ql for k in _STATS_KW):
+        intent = "stats"
+        group_by = next((axis for axis, words in _STATS_AXIS_KW
+                         if any(w in q or w in ql for w in words)), None)
+        if group_by is None:
+            # 판정을 특정했으면 그 안에서 제품별로 세는 게 더 유용하다.
+            group_by = "product" if status else "status"
+    elif any(k in q or k in ql for k in _SIMILAR_KW):
         intent = "similar_case"
     elif wants_jump:
         intent = "page_jump"
@@ -376,7 +417,8 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
                      family_product=family, item_keywords=items[:5],
                      free_text=q if intent == "comment_search" else None,
                      ambiguity=len(items) > 1, normalized_question=q, planner="rule",
-                     session_id=session_id, metric=metric, jump_target=jump_target)
+                     session_id=session_id, metric=metric, jump_target=jump_target,
+                     group_by=group_by, status=status if intent == "stats" else None)
 
 
 # ── 진입점 ───────────────────────────────────────────────────────────────────

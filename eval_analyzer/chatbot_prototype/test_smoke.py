@@ -7,8 +7,8 @@ import pytest
 
 from eval_engine import config, store
 
-from chatbot import queries, router
-from chatbot.agent import ask
+from chatbot_prototype import queries, router
+from chatbot_prototype.agent import ask
 
 _PROD = "PRODUCT0001234"
 

@@ -1,7 +1,7 @@
 """챗봇 CLI — 단발 질문 또는 REPL.
 
-  python -m chatbot.cli "MAJOR 케이스 통계"   # 단발
-  python -m chatbot.cli                        # REPL (빈 줄/exit 종료)
+  python -m chatbot_prototype.cli "MAJOR 케이스 통계"   # 단발
+  python -m chatbot_prototype.cli                        # REPL (빈 줄/exit 종료)
 """
 import sys
 

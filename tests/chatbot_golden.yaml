@@ -104,6 +104,19 @@
   expect_intent: page_jump
   expect_tools: []
 
+# ── 집계 ("몇 건" — 목록이 아니라 숫자) ─────────────────────────────────────
+- question: "PMIC 에 MAJOR 몇 건이야?"
+  expect_intent: stats
+  expect_tools: [stats_summary]
+
+- question: "제품별 건수 알려줘"
+  expect_intent: stats
+  expect_tools: [stats_summary]
+
+- question: "판정별 통계 알려줘"
+  expect_intent: stats
+  expect_tools: [stats_summary]
+
 # ── 알 수 없음 (지어내지 않고 되물어야 한다) ────────────────────────────────
 - question: "어제 뭐 했더라"
   expect_intent: unknown

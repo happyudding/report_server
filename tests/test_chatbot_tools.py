@@ -327,6 +327,31 @@ def test_eval_db_present():
         found = tools_eval.search_comments("sequence")["comments"]
         assert len(found) == 2, found
 
+        # 집계 (eval_analyzer/chatbot_prototype 의 stats_summary 이식분)
+        by_status = tools_eval.stats_summary("status")
+        assert by_status["total"] == 2, by_status
+        assert by_status["groups"] == [{"key": "MAJOR", "count": 2,
+                                        "last_at": NOW}], by_status["groups"]
+        by_item = tools_eval.stats_summary("item")
+        assert {g["key"] for g in by_item["groups"]} == {"SGM_TRIM_CHECK", "LDO_OUTPUT"}, by_item
+        assert all(g["count"] == 1 for g in by_item["groups"]), by_item
+        # 스코프·판정 필터
+        assert tools_eval.stats_summary("product", product_type="PMIC")["total"] == 2
+        assert tools_eval.stats_summary("product", product_type="MDDI")["total"] == 0
+        assert tools_eval.stats_summary("product", status="MAJOR")["total"] == 2
+        assert tools_eval.stats_summary("product", status="CRITICAL")["total"] == 0
+        # 축 이름은 화이트리스트 — 사용자 입력이 SQL 로 새지 않는다
+        try:
+            tools_eval.stats_summary("product_name; DROP TABLE fail_case")
+            raise AssertionError("잘못된 축이 통과했다")
+        except ValueError:
+            pass
+        # 답변 경로
+        out = agent.answer("PMIC 에 MAJOR 몇 건이야?", viewer=UPLOADER, use_llm=False)
+        assert out["plan"]["intent"] == "stats", out["plan"]
+        assert out["plan"]["status"] == "MAJOR", out["plan"]
+        assert "총 2건" in out["text"], out["text"]
+
         # 답변에 eval.db 이력과 report.db 근거가 함께 나와야 한다
         out = agent.answer("SGM 들어가는 항목 예전에 어떻게 됐었지?",
                            viewer=UPLOADER, use_llm=False)
@@ -339,7 +364,7 @@ def test_eval_db_present():
         assert tools[:2] == ["search_item_candidates", "get_item_history"], tools
     finally:
         eval_store.set_db_path(None)
-    print("[OK] (i) eval.db 조회 — 후보/alias/스코프/이력/유사/코멘트 + 병합 답변")
+    print("[OK] (i) eval.db 조회 — 후보/alias/스코프/이력/유사/코멘트/집계 + 병합 답변")
 
 
 # ── (j) 세션 수치 툴 ────────────────────────────────────────────────────────

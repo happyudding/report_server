@@ -229,6 +229,10 @@ document.querySelector(".content").addEventListener("click", e => {
   const actPanel = act ? issuePanelOf(act) : null;
   if (act && actPanel) {
     const kind = act.dataset.issueAct;
+    // 편집 액션은 툴바 버튼 하나(kind="menu")가 여는 세로 메뉴 안에 있다. 트리거는 열고
+    // 닫기만 하고, 메뉴 안 항목을 고르면 메뉴를 닫은 뒤 실행한다.
+    if (kind === "menu") { toggleIssueMenu(act); return; }
+    if (act.closest(".issue-menu")) closeIssueMenu();
     if (kind === "toggle-all") {
       const expand = act.dataset.expanded !== "true";
       act.dataset.expanded = expand ? "true" : "false";

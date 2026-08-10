@@ -5,6 +5,7 @@
 - "PMIC SOC family 에 SGM 들어가는 항목, 예전에 어떻게 됐었지?"
 - "S3222 평가 보고서에서 LDO item 이슈 어떻게 close 됐지?"
 - "이 세션 수율/CPK 알려줘" · "S3222 보고서 찾아줘" · "VDD_INT 상세 보여줘"
+- "PMIC 에 MAJOR 몇 건이야?" · "제품별 건수 알려줘" (집계)
 
 **이 패키지는 라우트를 등록하지 않는다** (`plugin.py` 무변경). 웹 노출은 바깥의
 [../report/routes_chat.py](../report/routes_chat.py) 한 곳뿐이고, 이 패키지는 CLI 와 그
@@ -27,6 +28,14 @@
 
 CLI 계약(`agent.answer` 반환 키 4개)은 그대로다 — 웹 확장이 깨지 않는지 단위 테스트가 지킨다.
 
+> ⚠ **`chatbot` 이라는 top-level 이름은 가로채이기 쉽다.** 2026-08-10 운영에서
+> `eval_analyzer/chatbot`(LangChain 실험)이 먼저 잡혀 `answer_web` 이 없다는 AttributeError
+> 가 났다 → 그쪽을 **`chatbot_prototype` 으로 개명**해 원인을 없앴다.
+> 방어는 그대로 남아 있다: [routes_chat.py](../report/routes_chat.py) `_agent()` 가 경로를
+> 검증하고 어긋나면 이 폴더를 고유 별칭으로 직접 적재한다. 회귀는
+> [tests/test_chatbot_module_collision.py](../../tests/test_chatbot_module_collision.py)
+> 가 가짜 충돌 패키지로 검사한다. 새 코드에서 eval_analyzer 를 `sys.path` 에 넣을 땐 **append**.
+
 ## 왜 LangChain/LangGraph 를 안 쓰나
 
 1단계 흐름은 "질문 → QueryPlan(JSON) → 툴 2~3개 순차 호출 → 답"이 전부다. LangGraph 가
@@ -38,9 +47,9 @@ CLI 계약(`agent.answer` 반환 키 4개)은 그대로다 — 웹 확장이 깨
 
 | 파일 | 역할 |
 |---|---|
-| `planner.py` | 질문 → `QueryPlan`(intent 9종/제품/family/item 키워드/세션·metric·jump). LLM 실패·미설정 시 **규칙 폴백** |
+| `planner.py` | 질문 → `QueryPlan`(intent 10종/제품/family/item 키워드/세션·metric·jump·집계축). LLM 실패·미설정 시 **규칙 폴백** |
 | `tools_report.py` | report.db — 세션/제품/Issue Table/세션 횡단 item 검색 |
-| `tools_eval.py` | eval.db — item 마스터·alias·과거 케이스·수치·사람 코멘트 |
+| `tools_eval.py` | eval.db — item 마스터·alias·과거 케이스·수치·사람 코멘트 + `stats_summary`(축별 건수 집계) |
 | `tools_metrics.py` | web_report 계산값 — 수율/CPK/측정값. 콜드면 배경 빌드만 걸고 `building` 반환 |
 | `eval_store.py` | eval.db read-only 커넥션 (경로 override 가능) |
 | `rowkey.py` | Issue Table `row_key` 파서 (`Yield\|bin\|item` 등) |
@@ -85,7 +94,7 @@ EVAL_LLM_API_KEY=<키, 필요 시>
 EVAL_LLM_TIMEOUT=30
 ```
 
-미설정이면 규칙 기반 계획으로 동작한다(골든 세트 22/22 통과 기준). LLM 은 **질문 해석만**
+미설정이면 규칙 기반 계획으로 동작한다(골든 세트 25/25 통과 기준). LLM 은 **질문 해석만**
 하고 답변 본문은 조회 결과 템플릿이라, LLM 이 없어도/틀려도 없는 값을 지어내지 않는다 —
 오분류는 "되묻기(choices)" 나 unknown 으로 나타난다.
 

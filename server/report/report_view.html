@@ -1559,13 +1559,12 @@ html[data-theme="dark"] .note-sheet-btn:hover { background: rgba(94,234,212,.20)
 /* Issue Table 선택 모드 — 행 체크박스·개별 삭제(×)·선택 실행 버튼은 모드 진입 시에만 노출 */
 #panel-issues .issue-del-chk , #panel-issue-temp .issue-del-chk{ display: none; margin-right: 5px; vertical-align: middle; cursor: pointer; }
 #panel-issues .btn-del-etc-item, #panel-issue-temp .btn-del-etc-item, #panel-issues .btn-del-issue-row , #panel-issue-temp .btn-del-issue-row{ display: none; }
-#panel-issues .issue-del-actions , #panel-issue-temp .issue-del-actions{ display: none; gap: 8px; }
 #panel-issues.issue-del-mode .issue-del-chk , #panel-issue-temp.issue-del-mode .issue-del-chk{ display: inline-block; }
 #panel-issues.issue-del-mode .btn-del-etc-item, #panel-issue-temp.issue-del-mode .btn-del-etc-item,
 #panel-issues.issue-del-mode .btn-del-issue-row , #panel-issue-temp.issue-del-mode .btn-del-issue-row{ display: inline-block; }
-#panel-issues.issue-del-mode .issue-del-actions , #panel-issue-temp.issue-del-mode .issue-del-actions{ display: inline-flex; }
-[data-issue-act="delmode"].active { background: #dc2626; border-color: #dc2626; color: #fff; }
-[data-issue-act="delmode"].active:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+/* 선택 모드는 메뉴 안으로 들어가 보이지 않으므로 트리거 버튼을 켜짐 표시로 쓴다. */
+[data-issue-act="menu"].active { background: #dc2626; border-color: #dc2626; color: #fff; }
+[data-issue-act="menu"].active:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
 #issueDelSelectedBtn:disabled, #issueSelOpenBtn:disabled, #issueSelCloseBtn:disabled {
   opacity: .5; cursor: default; transform: none;
 }
@@ -1575,8 +1574,31 @@ html[data-theme="dark"] .note-sheet-btn:hover { background: rgba(94,234,212,.20)
 /* 선택된 행 강조. background 에 !important 가 붙는 이유는 zebra/hover/좌측 고정열(#fff)이
    특이도로 이기기 때문 (cpk-warn·compare-table 과 같은 처방). */
 #panel-issues.issue-del-mode tbody tr.issue-row-sel > td , #panel-issue-temp.issue-del-mode tbody tr.issue-row-sel > td{ background: #fff3d6 !important; }
-/* Status 전체 일괄(All Open/All Close) — 선택과 무관하게 편집모드 상시 노출 */
-.issue-status-actions { display: inline-flex; gap: 8px; }
+/* Issue Table 액션 메뉴 — 툴바 버튼(data-issue-act="menu") 아래로 떨어지는 세로 리스트.
+   ISSUE ITEM 추가 · 선택 모드/선택 실행 · All Open/All Close 를 여기 다 모았다(2026-08-10
+   사용자 요청 — 버튼이 가로로 쭉 펼쳐지던 것 대체). 배치는 JS 가 fixed 로 실측해 심고,
+   패널 안에 붙되 z-index 는 표 sticky 셀보다 위여야 한다(.mention-dd 300 계열). */
+/* 트리거 라벨이 줄바꿈되면 툴바가 두 줄이 되고 표가 아래로 밀려 하단 가로 스크롤바가
+   화면 밖으로 나간다(--issue-toolbar-h 실측 주석 참조) — 한 줄로 고정한다. */
+.issue-toolbar .issue-menu-btn { white-space: nowrap; flex: none; }
+.issue-menu { position: fixed; z-index: 320; min-width: 200px; padding: 4px;
+  background: #fff; border: 1px solid #d0d5dd; border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+.issue-menu-item { display: flex; align-items: center; gap: 4px; width: 100%;
+  margin: 0; border: 0; background: none; cursor: pointer; text-align: left;
+  padding: 6px 10px 6px 4px; font-size: 12px; color: #222; border-radius: 5px; white-space: nowrap; }
+.issue-menu-item:hover:not(:disabled) { background: #eaf3ff; color: #1f4d8c; }
+.issue-menu-item:disabled { color: #98a2b3; cursor: default; }
+.issue-menu-item.checked { font-weight: 700; color: #1f4d8c; }
+.issue-menu-mark { display: inline-block; width: 14px; text-align: center; color: #067647; }
+.issue-menu-sep { height: 1px; margin: 4px 2px; background: #e4e7ec; }
+html[data-theme="dark"] .issue-menu { background: #1e2128; border-color: #3a3f4b; }
+html[data-theme="dark"] .issue-menu-item { color: #d7dbe2; }
+html[data-theme="dark"] .issue-menu-item:hover:not(:disabled) { background: #26303f; color: #7fb3ef; }
+html[data-theme="dark"] .issue-menu-item:disabled { color: #8b93a1; }
+html[data-theme="dark"] .issue-menu-item.checked { color: #7fb3ef; }
+html[data-theme="dark"] .issue-menu-mark { color: #6ee7a8; }
+html[data-theme="dark"] .issue-menu-sep { background: #3a3f4b; }
 
 /* Issue Table 섹션 이동 버튼 묶음(YIELD/CPK/ETC) — 세그먼트 형태로 붙여 표시.
    Yield 탭 STEP/Temp Corner 점프 묶음(.yield-jump-group)도 같은 모양을 쓴다. */
