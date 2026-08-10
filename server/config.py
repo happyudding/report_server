@@ -34,6 +34,7 @@ def _server_env_file(name):
 REPORT_ANALYSIS_INDEX_HTML = ROOT_DIR / "server" / "report" / "report_analysis_index.html"
 REPORT_VIEW_HTML           = ROOT_DIR / "server" / "report" / "report_view.html"
 ADMIN_DASHBOARD_HTML       = ROOT_DIR / "server" / "report" / "admin_dashboard.html"
+REPORT_LANDING_HTML        = ROOT_DIR / "server" / "landing" / "landing.html"
 
 # 절대 URL 생성 기준 — bind 주소(HOST=0.0.0.0)가 아니라 클라이언트가 실제로 접속하는
 # 운영 서버 주소. 정본은 env/server.env 의 SERVER_BASE_URL 이고, 환경변수로 덮을 수 있다.

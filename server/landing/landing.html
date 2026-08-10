@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LSI PTE REPORT SERVER</title>
+<style>
+/* 랜딩은 다크 한 벌로 고정한다(검색결과/세션 상세의 report_theme 토글과 무관).
+   배경 canvas 가 다크 전제로 그려지고, 이 화면은 한 장짜리 관문이라 테마 전환의
+   실익이 없다. 대신 모든 색을 토큰으로 명시해 호스트 배경을 빌려 쓰지 않는다. */
+:root {
+  --ink-900: #0A0D12;   /* 최심부 배경 — 순검정이 아닌 청색 편향 그라파이트 */
+  --ink-800: #121721;   /* 패널 표면 */
+  --ink-600: #232B38;   /* 경계선 */
+  --si-300:  #8894A8;   /* 보조 텍스트 */
+  --si-050:  #E9EEF6;   /* 본문·제목 */
+
+  /* 제품군 시그니처 — 검색결과 배지 팔레트(report_analysis_index.html)와 동일 값.
+     PDDI 만 다크 배경에서 명도가 부족해 상단 스트라이프를 한 단계 올린다. */
+  --mddi:     #4A90E2;
+  --pddi:     #1E3A8A;
+  --pddi-lit: #3B5BC0;
+  --pmic:     #16A34A;
+  --secu:     #9333EA;
+  --tcon:     #0D9488;
+  --honey:    #F0A62A;  /* PMIC 초록과 겹치지 않게 amber — 이름 그대로 */
+
+  --font-display: Bahnschrift, "DIN Alternate", "Segoe UI Semibold", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Segoe UI Variable Text", "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  --font-data: "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--ink-900);
+  color: var(--si-050);
+  font-family: var(--font-body);
+  overflow-x: hidden;
+}
+
+/* ── 배경: 웨이퍼 앰비언트 canvas + 가독성 베일 ───────────────────────────── */
+#bg {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  z-index: 0; display: block;
+}
+/* canvas 가 없는 환경(구형/차단)에서도 화면이 허전하지 않게 CSS 폴백 */
+body.no-canvas #bg {
+  background:
+    radial-gradient(60% 55% at 20% 25%, rgba(74,144,226,.13) 0%, transparent 60%),
+    radial-gradient(50% 45% at 82% 70%, rgba(13,148,136,.11) 0%, transparent 62%);
+}
+.veil {
+  position: fixed; inset: 0; z-index: 1; pointer-events: none;
+  background: radial-gradient(125% 85% at 50% 38%,
+              rgba(10,13,18,.20) 0%, rgba(10,13,18,.76) 58%, rgba(10,13,18,.95) 100%);
+}
+
+.page {
+  position: relative; z-index: 2;
+  min-height: 100dvh;
+  display: grid; grid-template-rows: auto 1fr auto;
+  padding: 18px clamp(16px, 3.5vw, 56px) 22px;
+  gap: clamp(16px, 2.5vh, 32px);
+}
+
+/* ── 상단: 신원 ─────────────────────────────────────────────────────────── */
+.top { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.chip {
+  height: 34px; padding: 0 14px;
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px solid var(--ink-600); border-radius: 999px;
+  background: rgba(18,23,33,.72); backdrop-filter: blur(6px);
+  color: var(--si-050); font-size: 14px; font-weight: 600;
+  text-decoration: none; cursor: pointer; white-space: nowrap;
+  transition: border-color .15s, color .15s;
+}
+.chip:hover { border-color: var(--mddi); color: var(--mddi); }
+.chip.icon { padding: 0 12px; font-size: 16px; }
+/* .chip 의 display 가 UA 의 [hidden]{display:none} 을 이긴다 — 명시적으로 되돌린다 */
+.chip[hidden] { display: none; }
+
+/* ── 중앙: 제목 + 타일 ──────────────────────────────────────────────────── */
+.hero {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: clamp(20px, 4vh, 48px);
+}
+.title-link { text-decoration: none; display: block; text-align: center; }
+.title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(28px, 5.6vw, 78px);
+  font-weight: 600; font-stretch: 87.5%;
+  /* 트래킹은 마지막 글자 뒤에도 붙어 중앙정렬이 그 절반만큼 왼쪽으로 밀린다 — 보정 */
+  letter-spacing: .16em; text-indent: .08em;
+  text-wrap: balance;
+  color: var(--si-050);
+  text-shadow: 0 0 46px rgba(74,144,226,.28), 0 2px 18px rgba(0,0,0,.6);
+  transition: text-shadow .25s;
+}
+.title-link:hover .title { text-shadow: 0 0 60px rgba(74,144,226,.5), 0 2px 18px rgba(0,0,0,.6); }
+.subtitle {
+  margin: 10px 0 0;
+  font-family: var(--font-display);
+  font-size: clamp(10px, 1.1vw, 14px);
+  letter-spacing: .42em; text-indent: .21em;
+  color: var(--si-300);
+}
+
+.tiles {
+  width: 100%; max-width: 1420px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr)) minmax(0, 1.22fr);
+  align-items: center; justify-items: center;
+  gap: clamp(10px, 1.5vw, 22px);
+}
+/* 열이 3개로 접히면 트랙이 넓어져 타일이 과하게 커진다 — 상한을 두고 트랙 안에서 가운데로.
+   넓은 화면에서는 트랙 폭이 상한보다 좁아 이 값이 아무 일도 하지 않는다. */
+.cell {
+  display: flex; flex-direction: column; gap: 10px;
+  width: 100%; min-width: 0; max-width: 212px;
+}
+.cell.honey-cell { max-width: 262px; margin-left: clamp(6px, 1.8vw, 38px); }
+
+.tile {
+  position: relative; overflow: hidden;
+  aspect-ratio: 1 / 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(255,255,255,.10); border-radius: 16px;
+  background: var(--tile, var(--ink-800));
+  color: #fff; text-decoration: none;
+  box-shadow: 0 12px 34px rgba(0,0,0,.46);
+  transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
+}
+.tile::before {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: var(--stripe, var(--tile));
+}
+.tile:hover { transform: translateY(-5px); filter: brightness(1.09); box-shadow: 0 20px 46px rgba(0,0,0,.58); }
+.tile-name {
+  font-family: var(--font-display);
+  font-size: clamp(15px, 1.9vw, 30px);
+  font-weight: 600; font-stretch: 87.5%;
+  letter-spacing: .10em; text-indent: .05em;
+  text-shadow: 0 1px 3px rgba(0,0,0,.34);
+}
+.tile[data-pt="SECURITY"] .tile-name { font-size: clamp(12px, 1.45vw, 23px); }
+
+.tile[data-pt="MDDI"]     { --tile: var(--mddi); --stripe: #7FB4EE; }
+.tile[data-pt="PDDI"]     { --tile: var(--pddi); --stripe: var(--pddi-lit); }
+.tile[data-pt="PMIC"]     { --tile: var(--pmic); --stripe: #4ED07F; }
+.tile[data-pt="SECURITY"] { --tile: var(--secu); --stripe: #C084FC; }
+.tile[data-pt="TCON"]     { --tile: var(--tcon); --stripe: #45C8BC; }
+
+.tile.honey { --tile: var(--honey); --stripe: #FFD37A; color: #170F03; }
+.tile.honey .tile-name { text-shadow: none; letter-spacing: .14em; text-indent: .07em; }
+.tile.honey .tile-mark { font-size: clamp(20px, 2.6vw, 40px); line-height: 1; }
+
+.cap {
+  margin: 0; min-height: 2.6em;
+  font-size: clamp(11px, .82vw, 13px); line-height: 1.3;
+  color: var(--si-300); text-align: center;
+}
+
+/* ── 하단: 현황 수치 ────────────────────────────────────────────────────── */
+.stats {
+  display: flex; flex-wrap: wrap; align-items: flex-end;
+  gap: clamp(14px, 2.6vw, 46px);
+  padding-top: 16px; border-top: 1px solid var(--ink-600);
+}
+.stat-group { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.stat-label {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 12px; font-weight: 600; letter-spacing: .2em;
+  color: var(--si-050);
+}
+.stat-label em {
+  font-family: var(--font-body); font-style: normal; font-weight: 400;
+  font-size: 11px; letter-spacing: 0; color: var(--si-300); margin-left: 8px;
+}
+.stat-row {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: 6px 16px;
+  font-family: var(--font-data); font-variant-numeric: tabular-nums;
+}
+.pt-count { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12px; color: var(--si-300); }
+.pt-count i { width: 8px; height: 8px; border-radius: 2px; background: var(--dot); align-self: center; }
+.pt-count[data-pt="MDDI"]     { --dot: var(--mddi); }
+.pt-count[data-pt="PDDI"]     { --dot: var(--pddi-lit); }
+.pt-count[data-pt="PMIC"]     { --dot: var(--pmic); }
+.pt-count[data-pt="SECURITY"] { --dot: var(--secu); }
+.pt-count[data-pt="TCON"]     { --dot: var(--tcon); }
+.pt-count b { font-size: 17px; font-weight: 600; color: var(--si-050); }
+.pt-total { font-size: 12px; color: var(--si-300); padding-left: 4px; border-left: 1px solid var(--ink-600); }
+.pt-total b { font-size: 20px; font-weight: 600; color: var(--si-050); margin-left: 6px; }
+.big { font-size: clamp(24px, 2.4vw, 34px); font-weight: 600; color: var(--si-050); }
+.sub { font-size: 12px; color: var(--si-300); }
+
+.stat-meta {
+  margin-left: auto; display: flex; align-items: center; gap: 9px;
+  font-size: 11px; color: var(--si-300);
+}
+.refresh {
+  width: 30px; height: 30px; border-radius: 999px;
+  border: 1px solid var(--ink-600); background: rgba(18,23,33,.72);
+  color: var(--si-300); font-size: 15px; cursor: pointer; line-height: 1;
+  transition: color .15s, border-color .15s, transform .3s;
+}
+.refresh:hover { color: var(--si-050); border-color: var(--mddi); transform: rotate(180deg); }
+
+a:focus-visible, button:focus-visible {
+  outline: 2px solid var(--mddi); outline-offset: 3px; border-radius: 4px;
+}
+
+@media (max-width: 1100px) {
+  .tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .cell.honey-cell { margin-left: 0; }
+}
+@media (max-width: 680px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stats { gap: 18px; }
+  .stat-meta { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tile, .title, .refresh { transition: none; }
+  .refresh:hover { transform: none; }
+}
+</style>
+</head>
+<body>
+
+<canvas id="bg" aria-hidden="true"></canvas>
+<div class="veil" aria-hidden="true"></div>
+
+<div class="page">
+
+  <header class="top">
+    <a class="chip" id="userChip" href="/pe/report/" title="검색결과 화면에서 로그인">로그인</a>
+    <button class="chip icon" id="logoutBtn" type="button" title="로그아웃" hidden>⏻</button>
+  </header>
+
+  <main class="hero">
+    <a class="title-link" href="/pe/report/" title="검색결과로 이동">
+      <h1 class="title">LSI PTE REPORT SERVER</h1>
+      <p class="subtitle">WAFER TEST REPORT HUB</p>
+    </a>
+
+    <nav class="tiles" aria-label="바로가기">
+      <div class="cell">
+        <a class="tile" data-pt="MDDI" href="/pe/report/?pt=MDDI"><span class="tile-name">MDDI</span></a>
+        <p class="cap"></p>
+      </div>
+      <div class="cell">
+        <a class="tile" data-pt="PDDI" href="/pe/report/?pt=PDDI"><span class="tile-name">PDDI</span></a>
+        <p class="cap"></p>
+      </div>
+      <div class="cell">
+        <a class="tile" data-pt="PMIC" href="/pe/report/?pt=PMIC"><span class="tile-name">PMIC</span></a>
+        <p class="cap"></p>
+      </div>
+      <div class="cell">
+        <a class="tile" data-pt="SECURITY" href="/pe/report/?pt=SECURITY"><span class="tile-name">SECURITY</span></a>
+        <p class="cap"></p>
+      </div>
+      <div class="cell">
+        <a class="tile" data-pt="TCON" href="/pe/report/?pt=TCON"><span class="tile-name">TCON</span></a>
+        <p class="cap"></p>
+      </div>
+      <div class="cell honey-cell">
+        <a class="tile honey" href="/honey/download" download>
+          <span class="tile-mark" aria-hidden="true">⬇</span>
+          <span class="tile-name">HONEY</span>
+        </a>
+        <p class="cap">테스트 리포트 추출·업로드 클라이언트<br>압축을 푼 뒤 Honey.exe 를 실행하세요.</p>
+      </div>
+    </nav>
+  </main>
+
+  <footer class="stats">
+    <section class="stat-group">
+      <h2 class="stat-label">SESSIONS <em>제품군별 · 비공개 포함 전체</em></h2>
+      <div class="stat-row">
+        <span class="pt-count" data-pt="MDDI"><i></i>MDDI<b id="cMDDI">—</b></span>
+        <span class="pt-count" data-pt="PDDI"><i></i>PDDI<b id="cPDDI">—</b></span>
+        <span class="pt-count" data-pt="PMIC"><i></i>PMIC<b id="cPMIC">—</b></span>
+        <span class="pt-count" data-pt="SECURITY"><i></i>SECURITY<b id="cSECURITY">—</b></span>
+        <span class="pt-count" data-pt="TCON"><i></i>TCON<b id="cTCON">—</b></span>
+        <span class="pt-total">TOTAL<b id="cTOTAL">—</b></span>
+      </div>
+    </section>
+
+    <section class="stat-group">
+      <h2 class="stat-label">TODAY <em>오늘 접속 사용량</em></h2>
+      <div class="stat-row">
+        <span class="big" id="uTotal">—</span>
+        <span class="sub" id="uBreak"></span>
+      </div>
+    </section>
+
+    <section class="stat-group">
+      <h2 class="stat-label">ONLINE <em>최근 5분 접속자</em></h2>
+      <div class="stat-row"><span class="big" id="aCount">—</span></div>
+    </section>
+
+    <div class="stat-meta">
+      <button class="refresh" id="refreshBtn" type="button" title="현황 새로고침">⟳</button>
+      <span id="statAge"></span>
+    </div>
+  </footer>
+
+</div>
+
+<script>
+"use strict";
+
+/* ════════════════════════════════════════════════════════════════════════
+   현황 수치 + 신원
+   조회는 /pe/report/api/landing 하나뿐이다 (신원 + 수치를 한 응답에 담는다).
+   폴링하지 않는다 — 활성 접속자는 '최근 5분 요청' 기준이라 주기 폴링하면 탭을
+   켜둔 사람이 영원히 활성으로 상주해 지표가 자기충족적으로 부푼다. 갱신은 ⟳ 수동.
+   /honey/version 은 호출만으로 honey_run 사용량이 올라가므로 여기서 부르지 않는다.
+   ════════════════════════════════════════════════════════════════════════ */
+
+var PT_NAMES = ["MDDI", "PDDI", "PMIC", "SECURITY", "TCON"];
+var _authSource = "";
+
+function $(id) { return document.getElementById(id); }
+function num(n) { return (typeof n === "number" && isFinite(n)) ? n.toLocaleString() : "—"; }
+
+function csrfToken() {
+  var m = document.cookie.match(/(?:^|;\s*)report_csrf=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : "";
+}
+
+function applyViewer(v) {
+  v = v || {};
+  var uid = v.user_id || "";
+  _authSource = v.source || "";
+  var chip = $("userChip");
+  if (uid) {
+    chip.textContent = "👤 " + uid;
+    chip.title = _authSource === "honey"
+      ? "PC 계정으로 자동 로그인됨 (" + uid + ")"
+      : uid + " 계정으로 로그인됨";
+  } else {
+    chip.textContent = "로그인";
+    chip.title = "검색결과 화면에서 로그인";
+  }
+  // 로그아웃은 웹 로그인 세션일 때만 의미가 있다 (Honey UA 신원은 끌 수 없다).
+  $("logoutBtn").hidden = _authSource !== "login";
+}
+
+function applyStats(d) {
+  var s = d.sessions || {}, u = d.usage || {}, a = d.active || {};
+  for (var i = 0; i < PT_NAMES.length; i++) {
+    $("c" + PT_NAMES[i]).textContent = num(s[PT_NAMES[i]]);
+  }
+  $("cTOTAL").textContent = num(s.total);
+  $("uTotal").textContent = num(u.total);
+  $("uBreak").textContent = (typeof u.honey_run === "number")
+    ? "Honey 실행 " + num(u.honey_run) + " · 웹 조회 " + num((u.web_index || 0) + (u.web_view || 0))
+    : "";
+  $("aCount").textContent = num(a.count);
+  var age = d.cache_age_s;
+  $("statAge").textContent = (typeof age === "number")
+    ? (age > 0 ? age + "초 전 기준" : "방금 기준") : "";
+}
+
+function loadLanding() {
+  return fetch("/pe/report/api/landing", {headers: {"Accept": "application/json"}})
+    .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+    .then(function (d) { applyViewer(d.viewer); applyStats(d); })
+    .catch(function () {
+      // 수치는 부가 정보다 — 실패해도 화면(바로가기·다운로드)은 그대로 쓸 수 있어야 한다.
+      $("statAge").textContent = "현황을 불러오지 못했습니다";
+    });
+}
+
+$("refreshBtn").addEventListener("click", loadLanding);
+
+$("logoutBtn").addEventListener("click", function () {
+  fetch("/pe/report/api/auth/logout", {
+    method: "POST", headers: {"X-CSRF-Token": csrfToken()}
+  }).catch(function () { /* 실패해도 화면은 비로그인으로 전환 */ })
+    .then(function () { applyViewer({}); return loadLanding(); });
+});
+
+loadLanding();
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   배경 — 웨이퍼 앰비언트
+   화면보다 큰 웨이퍼 원반 3장이 서로 다른 속도로 가로질러 흐르고, 원반 안의
+   die 격자에서 일부 die 가 제품군 색으로 아주 느리게 밝아졌다 사라진다.
+   실데이터가 아닌 순수 장식 도형이다.
+   ════════════════════════════════════════════════════════════════════════ */
+(function background() {
+  var cv = $("bg"), ctx = null;
+  try { ctx = cv.getContext("2d"); } catch (e) { ctx = null; }
+  if (!ctx) { document.body.classList.add("no-canvas"); return; }
+
+  var CELL = 13;            // die 한 변(CSS px)
+  var GAP = 4;              // die 사이 스크라이브 레인
+  var STEP = CELL + GAP;
+  var MAX_DIES = 7000;      // 프레임당 상한 — 저사양 PC 보호
+  var DRIFT_SEC = 110;      // 기준 웨이퍼가 화면을 한 번 가로지르는 시간
+  var COLORED = 0.075;      // 색이 도는 die 비율
+  var FPS = 30;
+
+  var reduced = !!(window.matchMedia &&
+                   window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+  // fillStyle 문자열을 매 프레임 만들지 않도록 (색 × 알파단계) 조합을 미리 굽는다.
+  var HUES = [[74,144,226], [59,91,192], [22,163,74], [147,51,234], [13,148,136]];
+  var ALPHA_STEPS = 8;
+  var SWATCH = [];
+  for (var h = 0; h < HUES.length; h++) {
+    SWATCH[h] = [];
+    for (var k = 0; k <= ALPHA_STEPS; k++) {
+      SWATCH[h][k] = "rgba(" + HUES[h][0] + "," + HUES[h][1] + "," + HUES[h][2] + ","
+                     + (0.05 + (k / ALPHA_STEPS) * 0.34).toFixed(3) + ")";
+    }
+  }
+  var BASE_FILL = "rgba(137,148,168,.085)";
+
+  var W = 0, H = 0, wafers = [];
+
+  function layout() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = cv.clientWidth || window.innerWidth;
+    H = cv.clientHeight || window.innerHeight;
+    cv.width = Math.max(1, Math.round(W * dpr));
+    cv.height = Math.max(1, Math.round(H * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var r = Math.max(W, H) * 0.34;
+    wafers = [
+      {r: r * 1.00, cy: H * 0.28, phase: 0.00, speed: 1.00, seed: 11},
+      {r: r * 0.62, cy: H * 0.80, phase: 0.46, speed: 1.55, seed: 23},
+      {r: r * 1.34, cy: H * 0.56, phase: 0.74, speed: 0.68, seed: 37}
+    ];
+  }
+
+  // 결정적 해시 — die 색·위상이 프레임마다 튀지 않게 (i,j,seed)로 고정한다.
+  function hash(i, j, seed) {
+    var x = (i * 374761393 + j * 668265263 + seed * 1442695041) | 0;
+    x = (x ^ (x >>> 13)) * 1274126177 | 0;
+    return ((x ^ (x >>> 16)) >>> 0) / 4294967296;
+  }
+
+  function draw(tSec) {
+    ctx.clearRect(0, 0, W, H);
+    var drawn = 0;
+
+    for (var w = 0; w < wafers.length; w++) {
+      var waf = wafers[w];
+      var span = W + waf.r * 2;
+      var prog = ((tSec / (DRIFT_SEC / waf.speed)) + waf.phase) % 1;
+      var cx = W + waf.r - prog * span;      // 오른쪽 밖 → 왼쪽 밖, 무한 반복
+      var n = Math.ceil(waf.r / STEP);
+      var rr = waf.r * waf.r;
+
+      // 1) 바탕 격자 — fillStyle 을 한 번만 세팅해 상태 변경 비용을 없앤다
+      ctx.fillStyle = BASE_FILL;
+      var colored = [];
+      for (var j = -n; j <= n; j++) {
+        var ly = j * STEP, y = waf.cy + ly;
+        if (y < -STEP || y > H) continue;
+        for (var i = -n; i <= n; i++) {
+          var lx = i * STEP;
+          if (lx * lx + ly * ly > rr) continue;
+          var x = cx + lx;
+          if (x < -STEP || x > W) continue;
+          if (drawn >= MAX_DIES) { j = n + 1; break; }
+          drawn++;
+          ctx.fillRect(x, y, CELL, CELL);
+          var hv = hash(i, j, waf.seed);
+          if (hv < COLORED) colored.push(x, y, hv, i, j);
+        }
+      }
+
+      // 2) 색이 도는 소수의 die — 저마다 다른 위상으로 느리게 밝아졌다 사라진다
+      for (var c = 0; c < colored.length; c += 5) {
+        var hv2 = colored[c + 2];
+        var hue = (colored[c + 3] * 7 + colored[c + 4] * 13 + waf.seed) % HUES.length;
+        if (hue < 0) hue += HUES.length;
+        var wave = 0.5 + 0.5 * Math.sin(tSec * 0.22 + hv2 * 62.8);
+        ctx.fillStyle = SWATCH[hue][Math.round(wave * ALPHA_STEPS)];
+        ctx.fillRect(colored[c], colored[c + 1], CELL, CELL);
+      }
+    }
+  }
+
+  var raf = 0, t0 = 0, last = 0;
+  function frame(ts) {
+    raf = 0;
+    if (!t0) t0 = ts;
+    if (ts - last >= 1000 / FPS) { last = ts; draw((ts - t0) / 1000); }
+    if (!document.hidden) raf = requestAnimationFrame(frame);
+  }
+  function start() {
+    if (reduced) { draw(0); return; }          // 정지된 한 장만 그린다
+    if (!raf && !document.hidden) raf = requestAnimationFrame(frame);
+  }
+  function stop() { if (raf) { cancelAnimationFrame(raf); raf = 0; } }
+
+  var resizeTimer = 0;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () { layout(); if (reduced) draw(0); }, 150);
+  });
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) { stop(); } else { last = 0; start(); }
+  });
+
+  try {
+    layout();
+    start();
+  } catch (e) {
+    stop();
+    document.body.classList.add("no-canvas");
+  }
+})();
+</script>
+
+</body>
+</html>

@@ -245,7 +245,12 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      제외한다 (2026-08-10 사용자 요청 — tabs/issue_table._cpk_skip_subject). 전 모드
 #      공통으로 **행 구성**이 달라지므로 안 올리면 옛 disk_cache 가 그 행이 든 payload 를
 #      계속 반환한다.
-REPORT_SCHEMA_VERSION = 28
+# v29: Temperature 모드 CT/HT 의 CPK 를 "**RT 에서 Bin1 이던 die × RT limit**" 기준으로
+#      계산한다 (2026-08-10 사용자 요청 — tabs/cpk.temperature_reference_tables). 자기 BIN
+#      필터를 걸지 않으므로 cpk/average/stdev/n 과 표시 limit 이 모두 달라지고, 그 값을
+#      쓰는 Issue Table CPK 섹션·Distribution status 도 함께 바뀐다. 다른 모드 세션은 값
+#      무변경이지만 키가 전 세션 공통이라 1회 재계산된다.
+REPORT_SCHEMA_VERSION = 29
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

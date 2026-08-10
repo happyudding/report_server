@@ -1,5 +1,5 @@
 """report_session CRUD + 검색결과 히스토리 + retention 조회 (report_db facade 구현)."""
-from .core import get_conn, _now, _row
+from .core import get_conn, _now, _row, _PRODUCT_TYPE_NAMES
 from .models import Session
 
 
@@ -344,6 +344,31 @@ def count_history(product_type=None, process=None, product=None, revision=None,
         row = conn.execute(
             f"SELECT COUNT(*) FROM report_session s WHERE {where}", params).fetchone()
     return int(row[0]) if row else 0
+
+
+def count_by_product_type():
+    """제품군별 세션 수 -> {"MDDI": n, ..., "TCON": n}. /pe 랜딩의 현황 수치 전용.
+
+    **카운트 전용이다 — 목록 조회에 쓰지 말 것.** viewer 를 넘기지 않아
+    (_history_where 의 viewer=None) 비공개 필터가 걸리지 않는다: 랜딩은 누가 보든
+    같은 숫자를 보여야 한다는 요구라 비공개 세션도 수에 포함한다. 숫자만 나가고
+    세션 메타는 나가지 않으므로 유출이 아니지만, 같은 값을 목록에 쓰면 비공개
+    세션이 그대로 노출된다.
+
+    완료상태·휴지통 제외 규칙은 _history_where 정본을 그대로 따른다.
+    DB 에 0건인 제품군도 키를 0 으로 채워 돌려준다 (타일에 '0' 이 떠야 한다).
+    """
+    where, params = _history_where()
+    counts = {name: 0 for name in _PRODUCT_TYPE_NAMES}
+    with get_conn() as conn:
+        rows = conn.execute(
+            f"SELECT s.product_type AS pt, COUNT(*) AS n FROM report_session s "
+            f"WHERE {where} GROUP BY s.product_type", params).fetchall()
+    for r in rows:
+        pt = (r["pt"] or "").strip()
+        if pt in counts:                 # enum 밖 값(구 데이터)은 제품군 타일에 자리가 없다
+            counts[pt] = int(r["n"])
+    return counts
 
 
 def get_history_page(product_type=None, process=None, product=None, revision=None,

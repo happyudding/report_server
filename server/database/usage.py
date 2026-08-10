@@ -2,7 +2,8 @@
 
 기록은 best-effort 다: 페이지 서빙/버전체크 응답을 막으면 안 되므로 짧은
 busy_timeout 으로 시도하고 실패는 조용히 버린다 (호출측도 try/except).
-집계 조회는 admin_panel/stats.py 가 get_conn() 자체 SELECT 로 수행한다.
+사용자별 순위 집계는 admin_panel/stats.py 가 get_conn() 자체 SELECT 로 수행하고,
+여기 usage_totals 는 사용자 축을 지운 하루 합계만 돌려준다 (/pe 랜딩 현황 수치).
 """
 import time
 
@@ -32,3 +33,25 @@ def record_usage(kind, user_id):
             "DO UPDATE SET count = count + 1, last_at = excluded.last_at",
             (day, kind, user_id, now),
         )
+
+
+def usage_totals(day=None):
+    """하루치 접속 사용량 합계 -> {"day","total","honey_run","web_index","web_view"}.
+
+    무인증 랜딩에 나가는 값이라 **사용자 축을 지운 합계만** 돌려준다 — user_id
+    (무신원은 'ip:<addr>')는 어떤 형태로도 포함하지 않는다.
+    day 기본값은 record_usage 와 같은 localtime 기준이어야 자정 경계가 어긋나지 않는다.
+    """
+    day = day or time.strftime("%Y-%m-%d", time.localtime(_now()))
+    out = {"day": day, "total": 0,
+           KIND_HONEY_RUN: 0, KIND_WEB_INDEX: 0, KIND_WEB_VIEW: 0}
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT kind, SUM(count) AS n FROM report_usage_daily "
+            "WHERE day = ? GROUP BY kind", (day,)).fetchall()
+    for r in rows:
+        n = int(r["n"] or 0)
+        out["total"] += n
+        if r["kind"] in out:
+            out[r["kind"]] = n
+    return out

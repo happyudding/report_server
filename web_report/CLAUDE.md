@@ -100,7 +100,9 @@ web_report/
     │                       compute_temp_fail 이 (count, die 인덱스)를 **한 순회로** 만들고
     │                       tables 클론에 캐시 → 표(build_temp_fail_rows)와 Map
     │                       (temp_fail_indices)이 같은 결과를 공유(판정 1회화)
-    ├── cpk.py             build_cpk_rows(**Bin1 기준 단일**) + CPK_THRESHOLD(1.33) + worst_cpk_by_subject
+    ├── cpk.py             build_cpk_rows(**Bin1 기준 단일** — 예외는 Temperature CT/HT:
+    │                       **RT Bin1 die × RT limit**, temperature_reference_tables)
+    │                       + CPK_THRESHOLD(1.33) + worst_cpk_by_subject
     ├── issue_table.py     build_issue_table_rows (Yield + cpk<1.33 + ETC, comment/Status/
     │                       숨김은 편집 DB). 모드 분기 없음 — Temperature 면 호출부가 RT
     │                       source 테이블·RT 기준 yield_rows 만 넘긴다(CT/HT 는 temp_fail.py)

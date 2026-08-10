@@ -113,7 +113,8 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
                                           force_test=temp_member_names or None)
         totals = {src: info["total"] for src, info in basis_info.items()}
         yield_rows = build_yield_rows(yield_tables, fail_counts, totals=totals)
-        cpk_rows = build_cpk_rows(tables, stat_items)
+        # Temperature 면 CT/HT 만 "RT Bin1 die × RT limit" 기준으로 계산된다 (tabs/cpk.py).
+        cpk_rows = build_cpk_rows(tables, stat_items, temp_groups)
 
     # Temperature 모드: CT/HT 를 RT limit 으로 **전 항목** 재판정한 Temp 시트 행
     # (Issue Table Temp 탭 + Yield 탭 하단 섹션이 같은 객체를 쓴다 — 1회만 계산).

@@ -15,7 +15,7 @@ def register_report_server(app, root_redirect=False):
     """
     report_server Blueprint 3개를 app에 등록하고 DB를 초기화한다.
 
-    :param root_redirect: True이면 '/' → '/pe/report/' 리다이렉트 라우트도 추가.
+    :param root_redirect: True이면 '/' → '/pe/' 리다이렉트 라우트도 추가.
                           외부 앱에 이미 '/' 라우트가 있으면 False(기본값) 사용.
     """
     from report.report_extension import report_bp, init_app as _init_report
@@ -38,6 +38,10 @@ def register_report_server(app, root_redirect=False):
     from public_api import register_public_api
     register_public_api(app)
 
+    # 랜딩 페이지 — /pe (제품군 바로가기 + Honey 다운로드 + 현황 수치).
+    from landing import register_landing
+    register_landing(app)
+
     # 운영 보조: /healthz + 전역 에러 핸들러 + DB 백업 스케줄러 (ops.py)
     from ops import init_ops
     init_ops(app)
@@ -47,4 +51,4 @@ def register_report_server(app, root_redirect=False):
 
         @app.route("/")
         def _report_root():
-            return redirect("/pe/report/")
+            return redirect("/pe/")   # 랜딩이 첫 화면. 기존 /pe/report/ 북마크는 그대로 산다

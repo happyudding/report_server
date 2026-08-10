@@ -5,6 +5,13 @@
 다른 기준을 골라 써서, 같은 항목의 CPK 가 탭마다 다른 값으로 보였다. 이제 base 필드
 (``cpk``/``average``/``stdev``/…)가 곧 Bin1 기준이며 ``*_bin1``/``*_limited`` 병기는 없다 —
 CPK 탭·Issue Table·Distribution status·Excel 내보내기가 모두 같은 값을 본다.
+
+**유일한 예외: Temperature 모드의 CT/HT (2026-08-10).** 그 소스는 "**RT 에서 Bin1 이던**
+die 를 **RT limit** 으로" 계산한다 — 자기 BIN 으로 거르지 않는다. CT/HT 프레임은 업로드
+전에 이미 RT 의 BIN==1 좌표만 남겨져 있으므로(``temperature.clean_frames``) **모집단 =
+그 프레임 전 행**이고, 남은 차이는 limit 뿐이다(정리 단계가 CT/HT 자신의 limit 메타행은
+화면 표시용으로 보존한다). 자기 BIN 으로 거르면 "RT limit 재판정까지 통과한 die" 만 남아
+저온/고온에서 규격을 벗어난 분포가 통계에서 빠져 CPK 가 실제보다 좋게 나온다.
 """
 from __future__ import annotations
 
@@ -139,12 +146,36 @@ def _stats_batch(frame: pd.DataFrame, lolim: dict, hilim: dict) -> dict:
     return out
 
 
-def build_cpk_rows(tables, all_items):
+def temperature_reference_tables(tables, temperature_groups) -> dict:
+    """{CT/HT source 이름: 그 그룹의 RT table} — Temperature CPK 기준 (그 외 모드는 빈 dict).
+
+    모듈 docstring 의 예외를 적용할 대상을 고르는 유일한 지점이다. 그룹에 속하지 않은
+    source·RT 자신·tables 에 없는 이름은 담기지 않으므로, 호출부는 이 dict 에 있는지만
+    보면 된다.
+    """
+    by_name = {t.source: t for t in tables}
+    out = {}
+    for group in temperature_groups or []:
+        rt = by_name.get(str(group.get("rt") or ""))
+        if rt is None:
+            continue
+        for name in group.get("members") or []:
+            member = by_name.get(str(name))
+            if member is not None and member is not rt:
+                out[str(name)] = rt
+    return out
+
+
+def build_cpk_rows(tables, all_items, temperature_groups=None):
+    """temperature_groups 를 주면 그 그룹의 CT/HT 만 RT 기준으로 계산한다(모듈 docstring).
+
+    인자를 생략하면 종전과 완전히 동일한 전 소스 Bin1 기준이다 — Compare 의 pooled 계산과
+    Honey 빠른 수정 미리보기가 그 경로를 쓴다.
+    """
     rows = []
     per_table = []
+    ref_of = temperature_reference_tables(tables, temperature_groups)
     for table in tables:
-        # BIN 마스크는 item 과 무관 — 테이블당 1회만 계산 (item 루프 안에서 재계산 금지)
-        bin1_mask = [b == PASS_BIN for b in bin_types(table)]
         item_set = set(table.item_columns)
         present = [i for i in all_items if i in item_set]
         frame = table.data[present]
@@ -155,22 +186,29 @@ def build_cpk_rows(tables, all_items):
             frame = frame.copy()
             for c in stale:
                 frame[c] = pd.to_numeric(frame[c], errors="coerce")
-        # 통계는 Bin1(BIN==PASS_BIN, 양품) die 만으로 낸 한 벌뿐이다 — 이 값이 곧 base
-        # 필드이며 CPK 탭·Issue Table·Distribution·Excel 이 모두 같은 값을 쓴다.
-        stats_bin1 = _stats_batch(frame[bin1_mask], table.lolim, table.hilim)
-        per_table.append((table, item_set, stats_bin1))
+        ref = ref_of.get(table.source)
+        if ref is None:
+            # 통계는 Bin1(BIN==PASS_BIN, 양품) die 만으로 낸 한 벌뿐이다 — 이 값이 곧 base
+            # 필드이며 CPK 탭·Issue Table·Distribution·Excel 이 모두 같은 값을 쓴다.
+            # BIN 마스크는 item 과 무관 — 테이블당 1회만 계산 (item 루프 안에서 재계산 금지)
+            frame = frame[[b == PASS_BIN for b in bin_types(table)]]
+            lolim, hilim = table.lolim, table.hilim
+        else:
+            # Temperature CT/HT — 행은 이미 RT Bin1 좌표만이라 그대로 쓰고 limit 만 RT 것으로
+            # 바꾼다. 표시 limit(lower/upper_limit)도 같이 RT 것이어야 CPK 탭의 한계값
+            # 역산(avg ± 3·Cpk·stdev)과 화면 규격이 어긋나지 않는다.
+            lolim, hilim = ref.lolim, ref.hilim
+        per_table.append((table, item_set, _stats_batch(frame, lolim, hilim), lolim, hilim))
     for item in all_items:
-        for table, item_set, stats_bin1 in per_table:
+        for table, item_set, stats_bin1, lolim, hilim in per_table:
             if item not in item_set:
                 continue
-            lo = table.lolim.get(item)
-            hi = table.hilim.get(item)
             rows.append({
                 "subject": item,
                 "source": table.source,
                 "units": json_safe(table.units.get(item)) or "",
-                "lower_limit": round_num(lo),
-                "upper_limit": round_num(hi),
+                "lower_limit": round_num(lolim.get(item)),
+                "upper_limit": round_num(hilim.get(item)),
                 **stats_bin1[item],
             })
     return rows

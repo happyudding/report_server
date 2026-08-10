@@ -109,8 +109,8 @@ echo [mypc] Port            : %PORT%
 echo [mypc] SERVER_BASE_URL : %SERVER_BASE_URL%   ^<- 이 PC 가 서버 주소
 echo.
 echo [mypc] 접속 주소
-echo [mypc]   이 PC          : http://127.0.0.1:%PORT%/pe/report/
-echo [mypc]   같은 네트워크  : http://%MYIP%:%PORT%/pe/report/
+echo [mypc]   이 PC          : http://127.0.0.1:%PORT%/pe/
+echo [mypc]   같은 네트워크  : http://%MYIP%:%PORT%/pe/
 echo [mypc]   관리자         : http://127.0.0.1:%PORT%/pe/admin-pte/
 echo.
 echo [mypc] 외부 PC 에서 처음 접속 시 방화벽 허용이 필요할 수 있습니다

@@ -161,9 +161,9 @@ call :enable_watchdog
 
 echo.
 echo [start] ===== Accessible URLs (HOST=%HOST%) =====
-echo [start] Local (이 PC)              : http://127.0.0.1:%PORT%/pe/report/
+echo [start] Local (이 PC)              : http://127.0.0.1:%PORT%/pe/
 echo [start] LAN ^(같은 네트워크 다른 PC^):
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -in @('Dhcp','Manual','WellKnown') } | Select-Object -ExpandProperty IPAddress -Unique; if ($ips) { foreach ($ip in $ips) { Write-Host ('[start]                              http://' + $ip + ':%PORT%/pe/report/') } } else { Write-Host '[start]                              (LAN IPv4 주소를 찾지 못함 - ipconfig 로 직접 확인하세요)' }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -in @('Dhcp','Manual','WellKnown') } | Select-Object -ExpandProperty IPAddress -Unique; if ($ips) { foreach ($ip in $ips) { Write-Host ('[start]                              http://' + $ip + ':%PORT%/pe/') } } else { Write-Host '[start]                              (LAN IPv4 주소를 찾지 못함 - ipconfig 로 직접 확인하세요)' }"
 
 echo.
 echo [start] ** 처음 외부 PC 에서 접근 시 Windows Defender 방화벽이 차단할 수 있습니다.
@@ -172,7 +172,7 @@ echo [start]      New-NetFirewallRule -DisplayName "report-server %PORT%" -Direc
 echo [start] ============================
 echo.
 
-start "" "http://127.0.0.1:%PORT%/pe/report/"
+start "" "http://127.0.0.1:%PORT%/pe/"
 
 echo.
 echo [start] 서버는 별도 창("report-server") 에서 실행 중입니다.

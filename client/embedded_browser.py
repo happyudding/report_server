@@ -186,9 +186,14 @@ class _WebView(QWebEngineView):
 class BrowserPanel(QWidget):
     """네비게이션 툴바 + 웹뷰 패널. 메인 화면·독립 창 어디든 embed 가능."""
 
-    def __init__(self, home_url, navigate=False, parent=None):
+    def __init__(self, home_url, navigate=False, parent=None, start_url=None):
+        """home_url: 🏠 버튼이 가는 곳(검색결과). start_url: 처음 한 번 열 곳(랜딩).
+
+        start_url 을 넘기지 않으면 종전대로 home_url 로 시작한다 — 기존 호출부 무영향.
+        """
         super().__init__(parent)
         self._home_url = home_url
+        self._start_url = start_url or home_url
         _inject_user_agent()
         _install_download_handler()
         self.view = _WebView(home_url)
@@ -214,7 +219,7 @@ class BrowserPanel(QWidget):
         self.view.urlChanged.connect(
             lambda u: self.url_bar.setText(u.toString()))
         if navigate:
-            self.go_home()
+            self.view.load(QUrl(self._start_url))
 
     def go_home(self):
         self.view.load(QUrl(self._home_url))

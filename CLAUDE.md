@@ -63,6 +63,9 @@ report_server/
 │   ├── chatbot/                 ENGR 이력 검색 챗봇 조회 툴 + CLI ([README](server/chatbot/README.md))
 │   │                            **라우트 미등록(CLI 전용)** — 운영 무영향. report.db(세션·이슈)
 │   │                            + eval.db(item 축) 두 정본을 read-only 로만 읽는다
+│   ├── landing/                 /pe 랜딩(서버 첫 화면) — 제품군 바로가기·Honey 다운로드·현황
+│   │                            수치. HTML 1장(canvas 배경 인라인) + blueprint 1개.
+│   │                            데이터는 report_bp 의 GET /pe/report/api/landing 하나
 │   ├── admin_panel/             /pe/admin-<secret>/ 대시보드 + metrics 샘플러
 │   ├── eval_panel/              /pe/eval 룰 관리 (thresholds·signature **둘 다** 제품군/family
 │   │                            오버레이(전역 범위 선택기 공유) · L0~L6 트레이스 + **전후 비교**
@@ -361,9 +364,10 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | web_report 캐시 키 규약 | [web_report/cache_policy.py](web_report/cache_policy.py) → [docs/12](docs/12_web_report_cache.md) |
 | Distribution 정렬 전가(pack) — 서버 최대 병목 제거 | [web_report/dist_pack.py](web_report/dist_pack.py) + [dist_pack_store.py](web_report/dist_pack_store.py) → [docs/12](docs/12_web_report_cache.md) |
 | 새 탭 추가 (레지스트리) | [web_report/tabs/__init__.py](web_report/tabs/__init__.py) `TAB_REGISTRY` → [docs/11](docs/11_web_report_tabs.md) |
-| Temperature(PMIC RT/CT/HT) — 전 항목 RT limit 재판정 | [web_report/tabs/temp_fail.py](web_report/tabs/temp_fail.py) (조회 시점 서버 계산) + 업로드 전 정리 [web_report/temperature.py](web_report/temperature.py) → [docs/11](docs/11_web_report_tabs.md) |
+| Temperature(PMIC RT/CT/HT) — 전 항목 RT limit 재판정 | [web_report/tabs/temp_fail.py](web_report/tabs/temp_fail.py) (조회 시점 서버 계산) + 업로드 전 정리 [web_report/temperature.py](web_report/temperature.py) + CT/HT CPK 는 **RT Bin1 die × RT limit** ([tabs/cpk.py](web_report/tabs/cpk.py) `temperature_reference_tables`) → [docs/11](docs/11_web_report_tabs.md) |
 | S3 저장 진입점(facade) | [server/storage_gateway/](server/storage_gateway/__init__.py) ([README](server/storage_gateway/README.md), 키빌더 _s3.py) |
 | 검색결과 UI / 세션 상세 UI | [report_analysis_index.html](server/report/report_analysis_index.html) / [report_view.html](server/report/report_view.html) + [static/webreport/](server/report/static/webreport/) (15모듈) |
+| 랜딩 UI (/pe) — 서버 첫 화면 | [server/landing/landing.html](server/landing/landing.html) + [landing/__init__.py](server/landing/__init__.py) · 데이터는 [routes_misc.py](server/report/routes_misc.py) `GET /api/landing` |
 | 관리 대시보드 (/pe/admin-pte/) | [server/admin_panel/](server/admin_panel/) (구 admin_routes.py 는 미등록 dead file) |
 | eval 룰 관리 (/pe/eval) — threshold/signature 제품군별 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
 | 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |

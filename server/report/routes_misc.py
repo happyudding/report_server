@@ -2,6 +2,7 @@
 (Phase 4 분리 — 구 report_routes.py)."""
 import logging
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -599,6 +600,71 @@ def part_ids():
     파일 없음/읽기 실패는 best-effort 로 빈 리스트 반환(500 안 냄) — product_info 로더가 내부 처리.
     """
     return jsonify({"part_ids": list_search_candidates()})
+
+
+# ── /pe 랜딩 현황 수치 ────────────────────────────────────────────────────────
+# 무인증 공개 페이지에 나가는 값이라 **집계 숫자만** 싣는다 — 계정ID·IP·보고 있는
+# session_id 는 어떤 경로로도 포함하지 않는다(active_users() 는 count 만 꺼내 쓴다).
+# 랜딩 페이지(/pe)가 아니라 report_bp 에 두는 이유 2가지:
+#   1) after_request 가 report_csrf 쿠키를 발급한다 — 랜딩이 첫 방문이어도 이 응답
+#      하나로 쿠키가 심어져 로그아웃 POST 가 동작한다(GET /pe 응답엔 안 붙는다).
+#   2) /pe/api/v1(public_api) 에 두면 metrics._skip_user_track 이 호출자를 활성 사용자
+#      집계에서 빼버려, 랜딩을 보는 사람이 ONLINE 수에 안 잡히는 자기모순이 생긴다.
+
+_LANDING_TTL_SEC = 30.0
+_landing_cache = None                    # (ts, payload) — 신원 무관 전역 1슬롯
+_landing_cache_lock = threading.Lock()
+
+
+def _landing_stats():
+    """세션/사용량/활성 접속자 집계 (TTL 캐시). -> (payload, cache_age_s)
+
+    캐시가 필요한 이유: active_users() 는 조회 시점에 O(n) prune + identity_merge
+    DB 조회를 한다. 캐시가 전역 1개로 충분한 이유: 세션 수를 비공개 포함 전체로
+    세기로 해서 값이 신원별로 갈리지 않는다.
+    """
+    global _landing_cache
+    now = time.time()
+    cached = _landing_cache
+    if cached and now - cached[0] < _LANDING_TTL_SEC:
+        return cached[1], int(now - cached[0])
+
+    # 부분 실패는 나머지 값을 살린다 — 랜딩이 500 이면 첫 화면이 통째로 죽는다.
+    try:
+        sessions = report_db.count_by_product_type()
+    except Exception:
+        _log.warning("landing: 세션 카운트 실패", exc_info=True)
+        sessions = {}
+    sessions["total"] = sum(sessions.values())
+    try:
+        usage = report_db.usage_totals()
+    except Exception:
+        _log.warning("landing: 사용량 집계 실패", exc_info=True)
+        usage = {}
+    try:
+        from admin_panel import metrics
+        au = metrics.active_users()
+        active = {"count": int(au.get("count") or 0),
+                  "window_sec": int(au.get("window_sec") or 0)}
+    except Exception:
+        _log.warning("landing: 활성 접속자 조회 실패", exc_info=True)
+        active = {"count": 0, "window_sec": 0}
+
+    payload = {"sessions": sessions, "usage": usage, "active": active}
+    with _landing_cache_lock:
+        _landing_cache = (now, payload)
+    return payload, 0
+
+
+@report_bp.get("/api/landing")
+def landing_info():
+    """/pe 랜딩의 유일한 조회 — 신원(요청마다) + 현황 수치(30초 캐시)를 한 응답에."""
+    stats, age = _landing_stats()
+    return jsonify({
+        "viewer": {"user_id": _current_user(), "source": _identity_source()},
+        "cache_age_s": age,
+        **stats,
+    })
 
 
 # ── 클라이언트 JS 에러 beacon (error_beacon.js) ───────────────────────────────

@@ -249,6 +249,16 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 쿠키, Honey 전용 업로드는 `X-Honey-Agent` 헤더로 구분. 상세 가드는
 [../docs/02_server_query_edit.md](../docs/02_server_query_edit.md) 참조.
 
+### 랜딩 (`/pe`) — 서버 첫 화면 ([landing/](landing/__init__.py))
+
+| 메서드 | 경로 | 접근 | 설명 |
+|--------|------|------|------|
+| `GET` | `/pe` · `/pe/` | 공개 | 랜딩 페이지 (HTML). 제품군 바로가기(`/pe/report/?pt=<PT>`) + Honey 다운로드 + 현황 수치. `/` 는 여기로 리다이렉트하고 Honey 클라 첫 화면도 여기다 (🏠 홈 버튼은 계속 `/pe/report/`) |
+| `GET` | `/pe/report/api/landing` | 공개 | 랜딩이 쓰는 유일한 조회 — `viewer`(요청마다) + `sessions`/`usage`/`active`(30초 전역 캐시). 세션 수는 **비공개 포함 전체**라 누가 봐도 같은 값. 계정ID·IP·session_id 는 싣지 않는다(`active` 는 `count`/`window_sec` 만) |
+
+랜딩 자체(`landing_bp`)에는 CSRF `after_request` 가 없다 — 화면이 진입 직후 부르는
+`/pe/report/api/landing`(report_bp) 응답이 `report_csrf` 쿠키를 심어 로그아웃 POST 가 통한다.
+
 ### 업로드 (`/pe/report/`) — Honey 클라이언트 전용
 
 | 메서드 | 경로 | 접근 | 설명 |

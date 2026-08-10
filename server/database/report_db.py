@@ -24,6 +24,7 @@ from .core import (  # noqa: F401
 )
 from .models import Session  # noqa: F401  (get_session 반환 타입 — Mapping 호환)
 from .sessions import (  # noqa: F401
+    count_by_product_type,
     count_history,
     count_sessions_for_analysis_key,
     create_session,
@@ -81,7 +82,7 @@ from .users import (  # noqa: F401
     set_user_important,
     update_user_password,
 )
-from .usage import record_usage  # noqa: F401
+from .usage import record_usage, usage_totals  # noqa: F401
 from .annotations import (  # noqa: F401
     create_annotation,
     delete_annotation,

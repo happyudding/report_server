@@ -832,7 +832,9 @@ class HoneyMainWindow(QMainWindow):
             QDockWidget, QHBoxLayout, QToolBar, QVBoxLayout, QWidget,
         )
 
-        url = SERVER_BASE_URL.rstrip("/") + "/pe/report/"
+        base = SERVER_BASE_URL.rstrip("/")
+        home_url = base + "/pe/report/"      # 🏠 버튼·팝업 판정 기준 (종전 그대로)
+        landing_url = base + "/pe/"          # 처음 한 번 여는 화면
         # .ui 로 만든 기존 central 은 버리되(참조는 유지해 버튼 위젯 살려둠),
         # 필요한 위젯만 새 dock 컨테이너로 옮긴다.
         self._legacy_central = self.takeCentralWidget()
@@ -841,7 +843,8 @@ class HoneyMainWindow(QMainWindow):
         self.btn_upload_local.setVisible(False)
 
         # 중앙: 웹 브라우저가 전체를 차지
-        self.browser_panel = embedded_browser.BrowserPanel(url, navigate=True)
+        self.browser_panel = embedded_browser.BrowserPanel(
+            home_url, navigate=True, start_url=landing_url)
         self.setCentralWidget(self.browser_panel)
         # Rawdata(Excel) 편집 중 세션 이탈(다른 페이지 이동)을 확인 다이얼로그로 가로챈다.
         try:

@@ -297,12 +297,12 @@ if __name__ == "__main__":
     debug = os.getenv("FLASK_DEBUG", "0") == "1"
 
     _log("===== Accessible URLs =====")
-    _log(f"Local (이 PC)               : http://127.0.0.1:{port}/pe/report/")
+    _log(f"Local (이 PC)               : http://127.0.0.1:{port}/pe/")
     if host in ("0.0.0.0", "::", ""):
         ips = _lan_ips()
         if ips:
             for ip in ips:
-                _log(f"LAN (같은 네트워크 다른 PC) : http://{ip}:{port}/pe/report/")
+                _log(f"LAN (같은 네트워크 다른 PC) : http://{ip}:{port}/pe/")
         else:
             _log("LAN: IPv4 주소를 찾지 못함 (ipconfig 로 직접 확인)")
         _log("** 처음 외부 PC 에서 접근 시 Windows 방화벽 허용 필요할 수 있음:")

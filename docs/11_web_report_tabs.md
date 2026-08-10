@@ -20,7 +20,7 @@
 | Summary | `summary.py` | placeholder(`[]`) — 화면은 프런트가 Map/Fail Bin 으로 자체 구성 |
 | Raw Data | `raw_data.py` | payload 는 placeholder — 실제는 lazy 조회/편집 라우트 |
 | Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`). **Temperature 는 RT source 만** 입력으로 받는다(metrics 가 결정) |
-| CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) — 통계는 **Bin1(양품) 기준 단일 값** |
+| CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) — 통계는 **Bin1(양품) 기준 단일 값**. 유일한 예외 = Temperature 의 CT/HT(**RT Bin1 die × RT limit**, 2026-08-10) |
 | Issue Table | `issue_table.py` | Yield 파생 + cpk<1.33 파생(Bin1 기준, **Pass/Fail 단위·`OTP_`/`CHIP_ID`/`CHIPID` 이름 항목 제외** — `_cpk_skip_subject`, 2026-08-10) + ETC. comment/Status/행 숨김은 편집 DB 에서 채움. **Temperature 는 RT source 만**(TEMP 는 아래 별도 시트로 분리) |
 | Issue Table Temp | `temp_fail.py` | **Temperature 전용** — CT/HT 를 RT limit 으로 **전 항목** 재판정한 item 단위 행(다른 모드는 `[]`). row_key `TEMP\|<item>` |
 | Distribution | — (lazy, 항목 배치) | `/full` 은 빈 시트 + `distribution_index`(항목 목록). ECDF 는 **화면에 보이는 항목만** `GET .../web_report/distribution_batch?subjects=…` 로 받는다 |
@@ -188,6 +188,19 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   실패 시 전체 기준 폴백). 서버 bin1 ECDF 는 양품 **그리고** 규격내라 cpk 통계(규격 클리핑
   없음)와 표본이 완전히 같지는 않다.
   회귀 고정: [tests/test_cpk_bin1_basis.py](../tests/test_cpk_bin1_basis.py).
+- **Temperature CT/HT 의 CPK 기준 (2026-08-10 사용자 요청)** — 위 "Bin1 기준 하나"의
+  **유일한 예외**다. CT/HT 는 "**RT 에서 Bin1 이던 die**" 를 "**RT limit**" 으로 계산한다:
+  자기 BIN 으로 거르지 않고(CT/HT 프레임은 업로드 전 정리로 이미 RT pass 좌표만 남아
+  있어 **프레임 전 행**이 곧 그 모집단), lolim/hilim 만 그 그룹 RT 것으로 바꾼다(정리
+  단계가 CT/HT 자신의 limit 메타행은 화면 표시용으로 보존하므로 여기서 갈아끼워야 한다).
+  자기 BIN 으로 거르면 RT limit 재판정까지 통과한 die 만 남아 **저온/고온에서 규격을
+  벗어난 분포가 통계에서 빠져 CPK 가 실제보다 좋게** 나온다. 대상 선정은
+  `cpk.temperature_reference_tables` 한 곳이고, `build_cpk_rows(tables, items,
+  temperature_groups)` 의 3번째 인자를 생략하면 종전과 완전히 동일하다(Compare 의 pooled
+  계산·Honey 빠른 수정 미리보기가 그 경로). 행의 `lower_limit`/`upper_limit` 도 RT 값으로
+  나간다 — 계산에 쓴 규격과 화면 규격이 다르면 CPK 탭의 한계값 역산(avg ± 3·Cpk·stdev)이
+  맞지 않는다. 값이 바뀌므로 `REPORT_SCHEMA_VERSION` v29(**서버 재시작 필요**).
+  회귀 고정: [tests/test_cpk_temperature_basis.py](../tests/test_cpk_temperature_basis.py).
 - **Issue Table comment 키**: `row_key` 규약 — Yield 행 `Yield|<bin>|<item>`,
   CPK 데이터 행 `CPK|<item>`, TEMP 행 `TEMP|<item>`(Temperature 전용), ETC 행 `ETC|<item>`.
   comment 컬럼은 `COMMENT_COLS = ["PTE comment", "개발 comment"]`. 값은 세션 편집 DB 에서
