@@ -367,16 +367,28 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
        부터 cdf_gap 대신 `value_gap_ratio`/`minor_mass` 기준). `skip_reason` 대신
        `branch_note` 필드로 내려보내 조건과 **함께** 렌더된다. 임계값은 키 이름으로만
        읽는다(하드코딩 금지) — **엔진이 분기 구조를 바꾸면 이 함수도 고쳐야 한다**.
-     - **분포 미니차트**(2026-08-03): 케이스 상세 최상단에 히스토그램(막대)+ECDF(주황선)+
-       LSL/USL(빨간 점선)+mean/median(삼각) 을 vanilla canvas 로 그린다(`drawDist`,
-       외부 라이브러리 없음 — 페이지에 Plotly 가 없다). 수치 표만 보고 임계값을 고치면
-       "왜 이 값이 나왔나"를 확인할 수 없어서 넣었다. 데이터는 `_trace_case` 의
-       `dist` 필드 — 측정값 전량을 정렬해 내리되 5,000 초과 소스는 서버에서 60-bin
-       히스토그램으로 축약한다(trace_store 4런 보관, **표시용이며 판정에는 무관**).
-       2026-08-04 부터 **런 단위 값 예산**(`_DIST_VALUES_BUDGET`)도 함께 걸린다 —
-       전체 트레이스에서 케이스 수에 비례해 메모리가 늘지 않게 하는 상한이다.
+     - **분포 미니차트**(2026-08-03, 2026-08-10 Plotly 산점으로 교체): 케이스 상세
+       L2 features 아래에 ECDF(**선 없는 markers**)+도수 막대(보조 y축)+LSL/USL(빨간 점선)+
+       mean/median(세로 점선) 을 그린다(`drawDist`). 수치 표만 보고 임계값을 고치면
+       "왜 이 값이 나왔나"를 확인할 수 없어서 넣었다.
+       - 렌더는 **web_report Item Detail 의 CDF 와 같은 규약**이다 — ECDF 를 선으로 잇지
+         않고(누적분포 왜곡), 확대는 드래그 박스·원복은 더블클릭(모드바·scrollZoom 없음).
+         Plotly 는 `/pe/report/vendor/plotly.min.js` 를 **케이스 상세를 처음 그릴 때만**
+         주입한다(임계값만 편집하는 관리자에게 1.4MB 를 받게 하지 않으려고).
+       - 데이터는 `_trace_case` 의 `dist` 필드 — `{x, y, sampled, hist, n, lsl, usl,
+         mean, median, unit}`. **이 카드에 한해 표시용 다운샘플을 허용**한다
+         (`_ECDF_POINTS`=400, 균등 stride+첫/끝 보존). 카드는 300px 폭이라 그 이상은 눈에
+         보이지 않고, 측정값 전량 확인은 카드 아래 "Item Detail 열기" 링크
+         (`?tab=item_detail&item=` — boot.js `applyDeepLink`)가 여는 세션 상세의 몫이다.
+         CLAUDE.md §5-5 의 다운샘플 금지는 리포트 Distribution 차트를 지키는 규칙이고
+         이 payload 는 관리자 디버그 표시용이라 **판정에는 무관**하다
+         (perf_guard 면제 주석이 `_downsample_ecdf` 에 달려 있다).
+       - **런 단위 점 예산**(`_DIST_POINTS_BUDGET`=160,000)이 함께 걸린다 — 전체 트레이스
+         에서 케이스 수에 비례해 메모리가 늘지 않게 하는 상한(trace_store 4런 보관).
+         기본 400 케이스 × 400점이라 기본 트레이스는 전량 점을 받고, 예산을 넘긴 케이스는
+         막대만 싣는다.
        차트는 web_report Distribution 미니셀처럼 **좁은 카드**로 그린다(가로로 늘어진
-       캔버스는 봉우리가 눌려 육안 구분이 어려웠다).
+       차트는 봉우리가 눌려 육안 구분이 어려웠다).
      - **전체 케이스 / 정렬**(2026-08-04): 기본은 상위 400건이지만 "전체 케이스" 를 켜면
        상한 없이 가져온다(`POST /api/trace {all:true}`). 표는 항목 순서(원본)·발화 많은
        순·심각도 순·코멘트 생성분 먼저로 정렬할 수 있다. L3 매트릭스는 **발화한 룰이 위**,

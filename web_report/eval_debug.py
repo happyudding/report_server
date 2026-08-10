@@ -316,46 +316,63 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
     return rows
 
 
-_DIST_MAX_VALUES = 5_000      # 케이스 1건이 원본 값을 그대로 실을 수 있는 상한
-_DIST_BINS = 60
-# 한 트레이스가 값 원본으로 쓸 수 있는 총량. 케이스 상한을 없앨 수 있게 되면서(전체 트레이스)
+_ECDF_POINTS = 400            # 카드 1장이 그릴 ECDF 점 수 (300px 폭 — 1px 당 1점 이상)
+_DIST_BINS = 60               # 배경 도수 막대
+# 한 트레이스가 ECDF 점으로 쓸 수 있는 총량. 케이스 상한을 없앨 수 있게 되면서(전체 트레이스)
 # "케이스당 상한" 만으로는 총 메모리가 케이스 수에 비례해 늘어난다 — trace_store 는 4런을
-# 들고 있으므로 런 단위 예산을 둔다. 예산을 넘긴 케이스는 히스토그램만 싣는다(표시 품질만 하락).
-_DIST_VALUES_BUDGET = 400_000
+# 들고 있으므로 런 단위 예산을 둔다. 기본 400 케이스 × 400점이라 기본 트레이스는 전량 점을
+# 받고, 예산을 넘긴 케이스는 막대만 싣는다(표시 품질만 하락).
+_DIST_POINTS_BUDGET = 160_000
+
+
+def _downsample_ecdf(values, cap):   # perf-guard: allow R01-dist-downsample (/pe/eval 트레이스 카드 전용 표시용 축약 — 리포트 조회·판정 경로와 무관, 전량은 Item Detail 링크로 넘긴다)
+    """정렬된 values → 표시용 ECDF 점 (xs, ys). cap 초과분만 균등 stride 로 솎는다.
+
+    첫/끝 점은 항상 포함하므로 양 꼬리와 ys[-1]=100% 가 보존된다.
+    """
+    n = len(values)
+    if n <= cap:
+        idx = range(n)
+    else:
+        step = n / cap
+        idx = sorted({int(k * step) for k in range(cap)} | {n - 1})
+    return [values[i] for i in idx], [(i + 1) / n * 100.0 for i in idx]
 
 
 def _dist_payload(case, metrics, budget=None):
-    """케이스 상세 미니차트용 분포 데이터.
+    """케이스 상세 미니차트용 분포 데이터 (관리자 디버그 표시 전용).
 
     수치 표(cpk/outlier_ratio/bimodality_score)만 보고 룰을 고치면 "왜 이 값이
-    나왔는지"를 눈으로 확인할 수 없다. 값 전량을 정렬해 내려 프런트가 히스토그램+
-    ECDF 를 그리게 하되, 대형 소스는 서버에서 히스토그램으로 축약한다(메모리 보호).
-    표시용 축약이며 판정에는 쓰이지 않는다.
-    `budget` 은 [남은 값 예산] 1칸 리스트 — 소진되면 이후 케이스는 히스토그램만 싣는다.
+    나왔는지"를 눈으로 확인할 수 없다. 값 분포를 ECDF 산점(선 없는 점)과 도수 막대로
+    내려보내되, 카드 1장이 그릴 수 있는 점 수(`_ECDF_POINTS`)로 솎는다 — 전량 확인은
+    카드의 링크가 여는 web_report Item Detail 의 몫이다. 판정에는 쓰이지 않는다.
+    `budget` 은 [남은 점 예산] 1칸 리스트 — 소진되면 이후 케이스는 막대만 싣는다.
     """
     values = sorted(v for v in (case.get("values") or []) if v is not None)
     out = {"n": len(values), "lsl": case.get("lsl"), "usl": case.get("usl"),
            "mean": metrics.get("mean"), "median": None,
-           "unit": case.get("unit"), "values": None, "hist": None}
+           "unit": case.get("unit"), "x": None, "y": None,
+           "sampled": False, "hist": None}
     if not values:
         return out
-    keep_values = len(values) <= _DIST_MAX_VALUES
-    if keep_values and budget is not None:
-        keep_values = budget[0] >= len(values)
-        if keep_values:
-            budget[0] -= len(values)
-    mid = len(values) // 2
-    out["median"] = (values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2)
-    if keep_values:
-        out["values"] = values
-        return out
+    n = len(values)
+    mid = n // 2
+    out["median"] = (values[mid] if n % 2 else (values[mid - 1] + values[mid]) / 2)
+    # 도수 막대는 크기와 무관하게 항상 싣는다 (프런트 폴백 계산 제거).
     lo, hi = values[0], values[-1]
     width = (hi - lo) / _DIST_BINS if hi > lo else 1.0
     counts = [0] * _DIST_BINS
     for v in values:
-        idx = min(int((v - lo) / width), _DIST_BINS - 1)
-        counts[idx] += 1
+        counts[min(int((v - lo) / width), _DIST_BINS - 1)] += 1
     out["hist"] = {"lo": lo, "width": width, "counts": counts}
+
+    want = min(n, _ECDF_POINTS)
+    if budget is not None:
+        if budget[0] < want:
+            return out                       # 예산 소진 — 막대만
+        budget[0] -= want
+    out["x"], out["y"] = _downsample_ecdf(values, _ECDF_POINTS)
+    out["sampled"] = n > _ECDF_POINTS
     return out
 
 
@@ -429,8 +446,8 @@ def trace_session(session_id: str, *, report_db, upload_root: Path,
     mode_tables → ai_comment._table_to_raw_df)를 거치므로 결과가 Issue Table 의
     AI Comment 셀과 일치한다. evaluate() 대신 단계 함수를 직접 호출해
     raw_metrics/features/조건분해를 노출하고, **게이팅 탈락 케이스도 포함**한다.
-    `max_cases=None` 이면 전 케이스를 담는다 — 그때도 분포 원본값은 런 단위 예산
-    (_DIST_VALUES_BUDGET)으로 묶여 메모리가 케이스 수에 비례해 늘지 않는다.
+    `max_cases=None` 이면 전 케이스를 담는다 — 그때도 분포 점은 런 단위 예산
+    (_DIST_POINTS_BUDGET)으로 묶여 메모리가 케이스 수에 비례해 늘지 않는다.
     """
     from . import ai_comment
     from .loader import load_tables
@@ -449,7 +466,7 @@ def trace_session(session_id: str, *, report_db, upload_root: Path,
 
     engine_version = eval_config.ENGINE_VERSION
     sources, cases, truncated = [], [], False
-    dist_budget = [_DIST_VALUES_BUDGET]
+    dist_budget = [_DIST_POINTS_BUDGET]
     for idx, table in enumerate(tables):
         meta = ai_comment._session_meta(session, idx + 1)
         if meta is None:

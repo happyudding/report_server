@@ -33,6 +33,7 @@ os.environ["REPORT_UPLOAD_DIR"] = str(_TMP / "uploads")
 os.environ["REPORT_S3_BUCKET"] = ""
 
 from flask import Flask  # noqa: E402
+from werkzeug.security import generate_password_hash  # noqa: E402
 
 from report.report_extension import report_bp  # noqa: E402  (라우트 등록 트리거)
 from report import routes_misc  # noqa: E402  (캐시 리셋용)
@@ -233,6 +234,35 @@ check(n == 1, "(i) probe 없는 호출은 종전대로 집계 (기존 동작 무
 pe_html = client.get("/pe").data
 check(b'id="honeyDlBtn"' in pe_html and b'href="/honey/download"' in pe_html,
       "(i) 랜딩의 다운로드 버튼도 /honey/download 기본 링크 + 보정용 id")
+
+# ── (k) 랜딩 자체 로그인 (모달) ──────────────────────────────────────────────
+# 랜딩의 '로그인' 은 /pe/report 로 넘기지 않고 그 자리에서 모달을 띄운다.
+check(b'id="loginModal"' in pe_html and b'id="pwInput"' in pe_html,
+      "(k) 랜딩에 로그인 모달 마크업이 있다")
+check(b'<button class="chip" id="userChip"' in pe_html,
+      "(k) 로그인 칩이 /pe/report 링크가 아니라 버튼")
+
+# 모달이 실제로 쓰는 경로 그대로: /pe/report/api/landing 이 심은 CSRF 로 로그인 POST
+c4 = app.test_client()
+report_db.create_user("erin", generate_password_hash("1234"))
+c4.get("/pe")
+c4.get("/pe/report/api/landing")
+tok4 = c4.get_cookie("report_csrf")
+lg = c4.post("/pe/report/api/auth/login",
+             json={"user_id": "erin", "password": "1234"},
+             headers={"X-CSRF-Token": tok4.value if tok4 else ""})
+body4 = json.loads(lg.data) if lg.status_code == 200 else {}
+check(lg.status_code == 200 and body4.get("user_id") == "erin",
+      "(k) 랜딩 경로로 받은 CSRF 로 로그인 성공")
+me = json.loads(c4.get("/pe/report/api/landing").data)["viewer"]
+check(me.get("user_id") == "erin" and me.get("source") == "login",
+      "(k) 로그인 후 랜딩 viewer 가 login 신원으로 바뀐다")
+
+bad = c4.post("/pe/report/api/auth/login",
+              json={"user_id": "erin", "password": "9999"},
+              headers={"X-CSRF-Token": tok4.value if tok4 else ""})
+check(bad.status_code != 200 and b"error" in bad.data,
+      "(k) 잘못된 비밀번호는 error 를 돌려준다 (모달이 그 문구를 표시)")
 
 # ── (j) 검색결과 페이지 제목 → 랜딩 링크 ─────────────────────────────────────
 idx = client.get("/pe/report/").data.decode("utf-8")

@@ -73,7 +73,7 @@ body.no-canvas #bg {
   display: inline-flex; align-items: center; gap: 7px;
   border: 1px solid var(--ink-600); border-radius: 999px;
   background: rgba(18,23,33,.72); backdrop-filter: blur(6px);
-  color: var(--si-050); font-size: 14px; font-weight: 600;
+  color: var(--si-050); font-family: var(--font-body); font-size: 14px; font-weight: 600;
   text-decoration: none; cursor: pointer; white-space: nowrap;
   transition: border-color .15s, color .15s;
 }
@@ -241,6 +241,53 @@ a:focus-visible, button:focus-visible {
   outline: 2px solid var(--mddi); outline-offset: 3px; border-radius: 4px;
 }
 
+/* ── 로그인 모달 ────────────────────────────────────────────────────────── */
+/* 표시 토글은 [hidden] 이 아니라 .show 클래스로 한다 — .modal-overlay 의 display 가
+   UA 의 [hidden]{display:none} 을 이겨버리기 때문(검색결과 페이지도 같은 규약). */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 20;
+  background: rgba(6,9,13,.74); backdrop-filter: blur(3px);
+  display: none; align-items: center; justify-content: center; padding: 20px;
+}
+.modal-overlay.show { display: flex; }
+.modal-box {
+  width: min(420px, 100%);
+  background: var(--ink-800); color: var(--si-050);
+  border: 1px solid var(--ink-600); border-radius: 14px;
+  padding: 22px; box-shadow: 0 24px 60px rgba(0,0,0,.62);
+}
+.modal-title {
+  margin: 0 0 14px;
+  font-family: var(--font-display); font-size: 20px; font-weight: 600;
+  letter-spacing: .1em;
+}
+.id-row { display: flex; align-items: center; gap: 8px; }
+.id-prefix { flex: 0 0 auto; color: var(--si-300); font-weight: 600; white-space: nowrap; }
+.id-row input {
+  height: 38px; min-width: 0; padding: 0 10px;
+  border: 1px solid var(--ink-600); border-radius: 8px;
+  background: #0E131B; color: var(--si-050);
+  font-family: var(--font-body); font-size: 15px;
+}
+.id-row input:focus { outline: none; border-color: var(--mddi); }
+#idInput { flex: 1 1 auto; }
+#pwInput { flex: 0 0 84px; width: 84px; text-align: center; letter-spacing: 4px; }
+/* 자간이 placeholder 까지 벌려 'P W' 로 보인다 — 입력값에만 적용되게 되돌린다 */
+#pwInput::placeholder { letter-spacing: normal; }
+.modal-note { margin: 14px 0 0; font-size: 12px; line-height: 1.65; color: var(--si-300); }
+.modal-note a { color: var(--mddi); }
+.modal-err { margin: 10px 0 0; font-size: 12.5px; color: #F87171; }
+.modal-err[hidden] { display: none; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.modal-btn {
+  height: 36px; padding: 0 16px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--ink-600); background: #1A212C; color: var(--si-050);
+  font-family: var(--font-body); font-size: 14px; font-weight: 600;
+}
+.modal-btn:hover { border-color: var(--si-300); }
+.modal-btn.primary { background: var(--mddi); border-color: var(--mddi); color: #06121F; }
+.modal-btn.primary:hover { filter: brightness(1.08); }
+
 /* 타일 그리드(1080) + 좌우 Honey 자리(2×140) + 페이지 패딩이 안 들어가는 폭부터는
    띄우기를 포기하고 흐름으로 되돌린다 — 겹치느니 아래로 내려오는 편이 낫다. */
 @media (max-width: 1480px) {
@@ -271,7 +318,7 @@ a:focus-visible, button:focus-visible {
 <div class="page">
 
   <header class="top">
-    <a class="chip" id="userChip" href="/pe/report/" title="검색결과 화면에서 로그인">로그인</a>
+    <button class="chip" id="userChip" type="button" title="로그인">로그인</button>
     <button class="chip icon" id="logoutBtn" type="button" title="로그아웃" hidden>⏻</button>
   </header>
 
@@ -363,6 +410,29 @@ a:focus-visible, button:focus-visible {
 
 </div>
 
+<!-- 로그인 모달 (일반 브라우저용 — Honey 내장 브라우저는 UA 로 자동 식별되어 필요 없다) -->
+<div class="modal-overlay" id="loginModal">
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="loginTitle">
+    <p class="modal-title" id="loginTitle">로그인</p>
+    <div class="id-row">
+      <span class="id-prefix">SECDS\</span>
+      <input type="text" id="idInput" placeholder="singleID" autocomplete="username">
+      <input type="password" id="pwInput" inputmode="numeric" maxlength="4"
+             autocomplete="current-password" placeholder="PW">
+    </div>
+    <p class="modal-err" id="loginErr" hidden></p>
+    <p class="modal-note">
+      비밀번호는 숫자 4자리입니다. Honey 사용 이력이 있는 계정은 Honey 앱에서 설정하세요.<br>
+      웹 접속은 조회 전용입니다 — 세션 수정은 Honey 앱으로 접속해 주세요.<br>
+      계정이 없으면 <a href="/pe/report/">검색결과 화면</a>에서 회원가입할 수 있습니다.
+    </p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="loginCancel" type="button">취소</button>
+      <button class="modal-btn primary" id="loginSubmit" type="button">로그인</button>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 
@@ -375,7 +445,8 @@ a:focus-visible, button:focus-visible {
    ════════════════════════════════════════════════════════════════════════ */
 
 var PT_NAMES = ["MDDI", "PDDI", "PMIC", "SECURITY", "TCON"];
-var _authSource = "";
+var _userId = "";        // 현재 신원 (Honey UA / SSO / 웹 로그인 세션)
+var _authSource = "";    // "honey" | "login" | "sso" | "" — 서버 identity_source()
 
 function $(id) { return document.getElementById(id); }
 function num(n) { return (typeof n === "number" && isFinite(n)) ? n.toLocaleString() : "—"; }
@@ -387,17 +458,19 @@ function csrfToken() {
 
 function applyViewer(v) {
   v = v || {};
-  var uid = v.user_id || "";
+  _userId = v.user_id || "";
   _authSource = v.source || "";
   var chip = $("userChip");
-  if (uid) {
-    chip.textContent = "👤 " + uid;
+  if (_userId) {
+    chip.textContent = "👤 " + _userId;
     chip.title = _authSource === "honey"
-      ? "PC 계정으로 자동 로그인됨 (" + uid + ")"
-      : uid + " 계정으로 로그인됨";
+      ? "PC 계정으로 자동 로그인됨 (" + _userId + ")"
+      : _userId + " 계정으로 로그인됨";
+    chip.style.cursor = "default";
   } else {
     chip.textContent = "로그인";
-    chip.title = "검색결과 화면에서 로그인";
+    chip.title = "singleID + 비밀번호로 로그인 (비밀번호는 Honey 앱에서 설정)";
+    chip.style.cursor = "pointer";
   }
   // 로그아웃은 웹 로그인 세션일 때만 의미가 있다 (Honey UA 신원은 끌 수 없다).
   $("logoutBtn").hidden = _authSource !== "login";
@@ -453,6 +526,75 @@ function initHoneyDlBtn() {
       label.textContent = "배포본 없음";
     });
 }
+
+// ── 로그인 (일반 브라우저) ─────────────────────────────────────────────────
+// Honey 내장 브라우저는 UA 의 HoneyUser/<계정> 으로 자동 식별되므로 이 창이 필요 없다 —
+// 그 계정을 ID 칸에 미리 채워는 둔다(검색결과 페이지와 같은 규약).
+var UA_USER = (function () {
+  var m = navigator.userAgent.match(/HoneyUser\/(\S+)/);
+  if (!m) return "";
+  try { return decodeURIComponent(m[1]).trim().toLowerCase(); } catch (e) { return ""; }
+})();
+
+function loginErr(msg) {
+  var el = $("loginErr");
+  el.textContent = msg || "";
+  el.hidden = !msg;
+}
+
+function openLogin() {
+  if (_userId) return;                 // 이미 신원이 있으면 칩은 표시 전용
+  $("idInput").value = UA_USER;
+  $("pwInput").value = "";
+  loginErr("");
+  $("loginModal").classList.add("show");
+  $(UA_USER ? "pwInput" : "idInput").focus();
+}
+
+function closeLogin() { $("loginModal").classList.remove("show"); }
+
+function doLogin() {
+  // 폼은 singleID 만 받는다 (SECDS\ 는 고정 라벨). 붙여넣기 대비로 접두는 떼어낸다.
+  var id = ($("idInput").value || "").split("\\").pop().trim().toLowerCase();
+  var pw = $("pwInput").value || "";
+  if (!/^[^\s\\/]{1,64}$/.test(id)) { loginErr("singleID 를 공백 없이 입력하세요."); return; }
+  if (!/^\d{4}$/.test(pw)) { loginErr("비밀번호는 숫자 4자리입니다."); return; }
+  loginErr("");
+  // CSRF 쿠키는 /pe/report/api/landing 응답이 심는다(GET /pe 응답에는 안 붙는다).
+  // 진입 직후 곧바로 열면 아직 안 왔을 수 있으므로, 없으면 한 번 받아온 뒤 보낸다.
+  var ready = csrfToken() ? Promise.resolve() : loadLanding();
+  ready.then(function () {
+    return fetch("/pe/report/api/auth/login", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
+      body: JSON.stringify({user_id: id, password: pw})
+    });
+  }).then(function (res) {
+    return res.json().catch(function () { return {}; }).then(function (j) {
+      if (!res.ok) throw new Error(j.error || "로그인 실패");
+      return j;
+    });
+  }).then(function (j) {
+    closeLogin();
+    applyViewer({user_id: j.user_id, source: j.source || "login"});
+    return loadLanding();
+  }).catch(function (e) {
+    loginErr(e.message || "로그인 실패");
+  });
+}
+
+$("userChip").addEventListener("click", openLogin);
+$("loginSubmit").addEventListener("click", doLogin);
+$("loginCancel").addEventListener("click", closeLogin);
+$("loginModal").addEventListener("click", function (e) {
+  if (e.target === $("loginModal")) closeLogin();      // 바깥 클릭으로 닫기
+});
+["idInput", "pwInput"].forEach(function (id) {
+  $(id).addEventListener("keydown", function (e) { if (e.key === "Enter") doLogin(); });
+});
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape") closeLogin();
+});
 
 $("refreshBtn").addEventListener("click", loadLanding);
 
