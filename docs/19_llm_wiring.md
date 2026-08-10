@@ -2,6 +2,10 @@
 
 이 프로젝트에서 LLM 을 쓰는 지점 전부와, 붙이는 방법·확인 방법.
 
+> 외부 담당자(eval_analyzer 원저자)에게 그대로 전달할 문서는
+> [eval_analyzer/docs/LLM_WIRING_HANDOFF.md](../eval_analyzer/docs/LLM_WIRING_HANDOFF.md) 다.
+> 이 문서는 **우리 팀용** — 소비자 2개·부하·함정까지 다룬다.
+
 **요약: 설정은 [server/env/server.env](../server/env/server.env) 5줄, 확인은 명령 1개다.**
 
 ```

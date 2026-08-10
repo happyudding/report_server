@@ -100,6 +100,9 @@ CREATE TABLE IF NOT EXISTS case_signature (
     eval_id INTEGER NOT NULL, signature TEXT NOT NULL, role TEXT NOT NULL, score REAL,
     PRIMARY KEY (eval_id, signature)
 );
+-- PK 가 (eval_id, signature) 라 "이 룰이 발화한 case 전부" 조회는 full scan 이 된다.
+-- 표본함(/pe/eval 검수 큐)이 룰별로 뽑으므로 signature 선두 인덱스를 둔다.
+CREATE INDEX IF NOT EXISTS idx_case_signature_sig ON case_signature(signature, role);
 CREATE TABLE IF NOT EXISTS label (
     label_id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL, eval_id INTEGER,
     human_status TEXT, root_cause_category TEXT, root_cause_detail TEXT,
@@ -133,13 +136,18 @@ def make_case_id(product_name, lot_id, wafer_number, item_id, bin_, revision):
 
 
 @contextmanager
-def get_conn():
+def get_conn(db_path=None):
     """eval.db 커넥션 컨텍스트 — 정상 종료 시 commit, 예외면 롤백된 채 닫힌다.
 
     WAL + busy_timeout 5초로 연다. 예외가 나면 commit 을 건너뛰고 close 만 하므로
     한 with 블록이 곧 하나의 트랜잭션 경계다. row_factory=Row 라 컬럼명 접근이 된다.
+
+    `db_path` 를 주면 그 파일을 연다(기본은 `config.DB_PATH`). report_server 가 자기
+    소유 DB(REPORT_EVAL_DB_PATH)에 적재할 때 쓰는 경로이며, **`config.DB_PATH` 를
+    전역 대입하지 않기 위한** 인자다 — 그 모듈은 장수명 Flask 프로세스에서 공유되므로
+    전역을 갈면 같은 프로세스의 다른 호출자까지 오염된다(docs/13 §10 과 같은 이유).
     """
-    conn = sqlite3.connect(str(config.DB_PATH), timeout=10)
+    conn = sqlite3.connect(str(db_path or config.DB_PATH), timeout=10)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
@@ -257,10 +265,15 @@ def _seed_bin_taxonomy(conn):
                             e.get("severity_bias"), e.get("description"), conn=conn)
 
 
-def init_db():
-    """eval.db 생성 + 스키마 + 마이그레이션 + bin_taxonomy 시드. (config.DATA_DIR 자동 생성)"""
-    config.DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with get_conn() as conn:
+def init_db(db_path=None):
+    """eval.db 생성 + 스키마 + 마이그레이션 + bin_taxonomy 시드. (상위 디렉토리 자동 생성)
+
+    `db_path` 지정 시 그 파일을 대상으로 한다 — `config.DATA_DIR` 이 아니라 그 파일의
+    부모를 만든다(엔진 기본 DB 를 건드리지 않기 위해). get_conn 과 같은 이유의 인자다.
+    """
+    from pathlib import Path
+    (Path(db_path).parent if db_path else config.DATA_DIR).mkdir(parents=True, exist_ok=True)
+    with get_conn(db_path) as conn:
         conn.executescript(SCHEMA)
         _migrate(conn)
         _seed_bin_taxonomy(conn)

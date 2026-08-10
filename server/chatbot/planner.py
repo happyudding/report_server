@@ -26,7 +26,7 @@ _log = logging.getLogger(__name__)
 
 INTENTS = ("item_history", "session_issue", "product_search", "similar_case",
            "comment_search", "session_find", "session_metrics", "page_jump",
-           "stats", "unknown")
+           "stats", "item_search", "session_meta", "help", "unknown")
 
 METRICS = ("yield", "cpk", "raw")
 JUMP_TARGETS = ("item_detail", "map")
@@ -53,6 +53,11 @@ class QueryPlan:
     jump_target: str | None = None        # page_jump: 'item_detail' | 'map'
     group_by: str | None = None           # stats: 집계 축 (STATS_AXES)
     status: str | None = None             # stats: 판정 필터 (CRITICAL/MAJOR/MINOR/MONITOR)
+    date_from: int | None = None          # 세션 조회 기간 (epoch 초)
+    date_to: int | None = None
+    # 근거 없이 catch-all 로 정해진 계획인가 — 규칙이 "영문 토큰이 있으니 item 이겠지" 로
+    # 찍은 경우 True. agent 가 이 비트를 보고 조회 결과로 재분류한다(LLM 계획은 항상 False).
+    weak: bool = False
     llm_ms: int | None = None             # LLM 왕복 소요(관리자 탭 부하 분해용)
 
     def to_dict(self):
@@ -65,13 +70,23 @@ def taxonomy() -> dict:
 
     web_report.eval_debug 경유로 읽는다(eval_engine import 허용 3곳 중 하나라 새 import
     지점을 만들지 않는다). 실패하면 빈 dict — 그 경우 값 검증만 느슨해진다.
+
+    실패를 **경고로** 남기는 이유: 조용히 {} 가 되면 제품군 스코프가 통째로 빠져 같은 질문의
+    조회 범위가 달라지는데, 로그가 debug 면 아무도 모른다. 다만 질문마다 찍히면 시끄러우니
+    프로세스당 1회만 올린다.
     """
+    global _TAXONOMY_WARNED
     try:
         from web_report import eval_debug
         return eval_debug.taxonomy()
     except Exception:
-        _log.debug("taxonomy 로드 실패 — 검증 없이 진행", exc_info=True)
+        if not _TAXONOMY_WARNED:
+            _TAXONOMY_WARNED = True
+            _log.warning("taxonomy 로드 실패 — 제품군 스코프 없이 진행한다", exc_info=True)
         return {}
+
+
+_TAXONOMY_WARNED = False
 
 
 def _valid_scope(product_type, family_product):
@@ -143,12 +158,17 @@ intent 는 다음 중 하나다.
 - session_metrics: 특정 세션의 수율(yield)·CPK·측정값(raw) 수치를 묻는다
 - page_jump      : 화면 이동만 원한다 (항목 상세 보기 / 웨이퍼 맵 보기)
 - stats          : 목록이 아니라 **건수/분포**를 묻는다 ("PMIC 에 MAJOR 몇 건", "제품별 몇 건")
+- item_search    : 특정 제품군에 **어떤 항목들이 있는지** 목록을 묻는다 ("PMIC SOC 에 무슨 Item 있어")
+- session_meta   : 열려 있는 세션의 메타를 묻는다 (누가/언제 올렸나, 온도·공정·설비·패키지 등)
+- help           : 인사이거나 "뭐 할 수 있어?" 같은 기능 안내 요청이다
 - unknown        : 위 어디에도 해당하지 않는다
 
 session_metrics 면 metric 을 반드시 하나 고른다: "yield"(수율) / "cpk" / "raw"(실제 측정값).
 page_jump 면 jump_target 을 반드시 하나 고른다: "item_detail"(항목 상세) / "map"(웨이퍼 맵).
 stats 면 group_by 를 하나 고른다: "status" / "product" / "product_type" / "family_product" /
 "item" / "item_class" / "bin". 판정을 특정했으면 status 에 CRITICAL|MAJOR|MINOR|MONITOR 중 하나.
+질문에 기간 표현(오늘/어제/이번주/지난주/이번 달/올해)이 있으면 date_from·date_to 를 epoch 초로
+채운다. "최근"·"요즘" 처럼 범위가 모호한 말은 **비워 둔다**(최신순 정렬로 충분하다).
 
 규칙:
 - 사용자가 말하지 않은 제품명·항목명·날짜를 만들어내지 않는다.
@@ -164,7 +184,7 @@ stats 면 group_by 를 하나 고른다: "status" / "product" / "product_type" /
  "lot_id": null 또는 문자열, "free_text": null 또는 문자열,
  "session_id": null 또는 문자열, "metric": null 또는 문자열,
  "jump_target": null 또는 문자열, "group_by": null 또는 문자열,
- "status": null 또는 문자열,
+ "status": null 또는 문자열, "date_from": null 또는 정수, "date_to": null 또는 정수,
  "ambiguity": true/false, "normalized_question": "무엇을 찾는지 한 문장"}"""
 
 
@@ -226,7 +246,11 @@ def _loads_lenient(text):
 
 
 def _plan_from_dict(data: dict, question: str) -> QueryPlan:
-    """LLM 출력 → 검증된 QueryPlan. 모르는 값은 버린다(예외 아님)."""
+    """LLM 출력 → 검증된 QueryPlan. 모르는 값은 버린다(예외 아님).
+
+    `weak` 은 채우지 않는다(항상 False) — 규칙 catch-all 전용 신호이고, LLM 은 근거를 갖고
+    고른 계획이므로 agent 의 재분류 대상이 아니다.
+    """
     intent = str(data.get("intent") or "").strip()
     if intent not in INTENTS:
         intent = "unknown"
@@ -266,7 +290,16 @@ def _plan_from_dict(data: dict, question: str) -> QueryPlan:
         jump_target=jump,
         group_by=group_by,
         status=status,
+        date_from=_int_or_none(data.get("date_from")),
+        date_to=_int_or_none(data.get("date_to")),
         llm_ms=data.get("_llm_ms"))
+
+
+def _int_or_none(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _clean(value):
@@ -277,11 +310,17 @@ def _clean(value):
 # ── 규칙 폴백 ────────────────────────────────────────────────────────────────
 # 이슈 처리 결과를 묻는 신호. "평가한/보고서" 같은 약한 단어를 여기 넣으면
 # "S3222 평가한 적 있어?"(제품 존재 확인)까지 session_issue 로 빨려 들어간다.
-_ISSUE_KW = ("이슈", "issue", "close", "클로즈", "종결", "조치", "불량", "fail")
+# ⚠ 확장할 때 단독 음절/짧은 어간을 넣지 말 것 — "이상"은 "3건 이상", "튀"는 "튀던"(코멘트
+#   질문)에 걸린다. 반드시 "이상동작"·"튐" 처럼 오탐이 없는 형태로만 넣는다.
+_ISSUE_KW = ("이슈", "issue", "close", "클로즈", "종결", "조치", "불량", "fail",
+             "문제", "에러", "error", "고장", "이상동작", "깨짐", "튐")
 _REPORT_KW = ("보고서", "리포트", "세션")
 _HISTORY_KW = ("히스토리", "이력", "예전", "과거", "선례", "전에")
 _SIMILAR_KW = ("비슷", "유사", "닮은", "같은 유형")
-_COMMENT_KW = ("현상", "증상", "코멘트")
+# 코멘트 본문 검색 신호. 증상어를 함께 둔다 — "고온에서 문제된 적 있어?" 처럼 제품·item 토큰이
+# 없는 순한글 질문은 이 분기(11번)에서만 건질 수 있다. 11번은 items·product 가 모두 없을 때만
+# 도달하므로(정리 B) 확장의 회귀 위험이 구조적으로 낮다.
+_COMMENT_KW = ("현상", "증상", "코멘트", "문제", "에러", "error", "고장", "이상동작")
 # 수치 질문 신호. "수율/cpk" 는 기존 어느 키워드 세트에도 없어 기존 분기를 건드리지 않는다.
 _METRIC_KW = ("수율", "yield", "cpk", "씨피케이")
 _RAW_KW = ("측정값", "실측", "로우데이터", "원시값", "raw data", "rawdata")
@@ -291,6 +330,25 @@ _JUMP_KW = ("열어", "보여줘", "이동", "점프", "탭", "띄워")
 _MAP_KW = ("맵", "map", "웨이퍼")
 _DETAIL_KW = ("상세", "detail", "분포")
 _FIND_KW = ("찾아", "검색", "목록", "리스트")
+# 존재 확인("IW06 세션 있냐?"). ⚠ 7번(session_find)의 `has_report_like AND (…)` 안쪽에서만
+# 쓴다 — 밖으로 빼면 "S3222 라는 제품 평가한 적 있어?"(product_search)를 삼킨다.
+_EXISTS_KW = ("있냐", "있어", "있나", "있는지", "있을까", "존재")
+# 업로드 표현. has_report 를 늘리지 않고 7번에서만 쓴다.
+_UPLOAD_KW = ("올라온", "올라왔", "올린", "업로드")
+# 시간 표현. ⚠ "예전"·"과거" 는 넣지 않는다 — 그건 _HISTORY_KW(item 이력) 소관이다.
+_TIME_KW = ("최근", "요즘", "오늘", "어제", "이번주", "이번 주", "지난주", "지난 주",
+            "이번 달", "이달", "올해")
+# item 목록 질문("PMIC SOC 에 무슨 Item 있어") — 둘 다 있어야 성립한다.
+_ITEMWORD_KW = ("항목", "아이템", "item")
+_LIST_KW = ("무슨", "어떤", "뭐 있", "뭐가", "목록", "리스트", "종류")
+# 세션 메타(누가/언제/온도/공정…). session_scope 가 있을 때만 쓰이므로 오탐 위험이 낮다.
+_META_KW = ("누가", "올렸", "업로더", "작성자", "언제", "온도", "몇 도", "몇도", "파일명",
+            "공정", "설비", "장비", "패키지", "gross die", "칩 사이즈", "리비전",
+            "revision", "step")
+# 인사·도움말. **전체 매치**만 인정한다 — 부분일치면 긴 질문 중간의 "도움"에도 걸린다.
+_HELP_RE = re.compile(r"(안녕|안녕하세요|하이|hi|hello|헬로|도움말|도움|help|"
+                      r"뭐할수있어|뭐할수있니|뭐가능해|기능|사용법|어떻게써|어떻게사용)",
+                      re.I)
 # 집계 신호. "몇 건/건수/통계/분포" 는 목록 질문에는 거의 안 쓰이는 말이라 오분류 위험이 낮다.
 # ⚠ "분포" 는 _DETAIL_KW 에도 있다 — page_jump 가 앞 분기라 "분포 보여줘" 는 화면 이동이 이긴다
 #    (그게 맞다: 사용자는 차트를 보려는 것이다). 집계는 "몇 건/통계" 같은 수량 표현이 있을 때다.
@@ -314,7 +372,37 @@ _SESSION_REF_RE = re.compile(r"세션\s*([A-Za-z0-9_-]{8,80})")
 _PRODUCT_RE = re.compile(r"\b([A-Za-z]{1,4}[-_]?\d{3,}[A-Za-z0-9_-]*)\b")
 # item 후보 토큰: 영문 2자 이상으로 시작하는 식별자 (SGM, LDO, PLL_VCO 등)
 _ITEM_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_]{1,})\b")
-_STOPWORDS = {"close", "issue", "item", "lot", "db", "id", "ok", "ng", "pte"}
+# item 후보에서 뺄 일반 명사. cpk/yield 를 넣는 이유: "S3222 cpk 안 좋은 항목?" 이
+# item_keywords=['cpk'] 를 만들어 get_session_metrics 가 이름에 'cpk' 가 든 항목만 찾다
+# 0건을 답했다(조용한 오답). 지표 이름은 항목 이름이 아니다.
+_STOPWORDS = {"close", "issue", "item", "lot", "db", "id", "ok", "ng", "pte",
+              "cpk", "yield"}
+
+
+def _date_range(question: str):
+    """질문의 시간 표현 → (date_from, date_to) epoch. 못 읽으면 (None, None).
+
+    **"최근"·"요즘" 은 일부러 범위를 만들지 않는다** — 세션 검색이 이미 최신순(sort="new")
+    이라 정렬로 충족되고, 임의로 7일을 걸면 3개월 전 자료를 조용히 숨긴다.
+    """
+    q = str(question or "")
+    now = time.localtime()
+    midnight = time.mktime((now.tm_year, now.tm_mon, now.tm_mday, 0, 0, 0, 0, 0, -1))
+    day = 86400
+    if "오늘" in q:
+        return int(midnight), None
+    if "어제" in q:
+        return int(midnight - day), int(midnight - 1)
+    if "이번주" in q or "이번 주" in q:
+        return int(midnight - now.tm_wday * day), None
+    if "지난주" in q or "지난 주" in q:
+        monday = midnight - now.tm_wday * day
+        return int(monday - 7 * day), int(monday - 1)
+    if "이번 달" in q or "이달" in q:
+        return int(time.mktime((now.tm_year, now.tm_mon, 1, 0, 0, 0, 0, 0, -1))), None
+    if "올해" in q:
+        return int(time.mktime((now.tm_year, 1, 1, 0, 0, 0, 0, 0, -1))), None
+    return None, None
 
 
 def rule_plan(question: str, context_session_id=None) -> QueryPlan:
@@ -343,7 +431,12 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
         # 좁아진다 — product 를 먼저 뽑아 두고 그 안에 든 이름은 건너뛴다.
         if product and fam.lower() in product.lower():
             continue
-        if re.search(rf"\b{re.escape(fam)}\b", q, re.I):
+        # 짧은 family 이름(IF·TV·MX·ESE)은 일반 단어와 충돌한다 — "if 조건 뭐야" 가
+        # family_product='IF' 로 조회 범위를 잘못 좁혔다. 3자 이하는 **원문(대문자) 매칭**
+        # 으로만 인정한다. 제품군을 말할 땐 대문자로 쓰므로("PMIC SOC", "TV 제품군") 실사용
+        # 손실은 소문자로 친 경우뿐이고, 그마저 product_type 을 함께 쓰면 복구된다.
+        flags = 0 if len(fam) <= 3 else re.I
+        if re.search(rf"\b{re.escape(fam)}\b", q, flags):
             family = fam
             break
     product_type, family = _valid_scope(product_type, family)
@@ -378,7 +471,16 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
     # 분류용 — 질문이 세션을 지목했거나, 지금 세션을 열어 두고 물었거나.
     session_scope = session_id or context_session_id
 
+    has_comment = any(k in q or k in ql for k in _COMMENT_KW)
+    has_history = any(k in q or k in ql for k in _HISTORY_KW)
+    # 7번 전용 신호 — has_report 자체를 늘리면 5번(items and has_report)까지 번진다.
+    has_report_like = has_report or any(k in q or k in ql for k in _UPLOAD_KW)
+    has_exists = any(k in q or k in ql for k in _EXISTS_KW)
+    has_time = any(k in q or k in ql for k in _TIME_KW)
+    date_from, date_to = _date_range(q)
+
     metric = jump_target = group_by = None
+    weak = False
     status = next((s for s in _STATUS_VOCAB if s in q.upper()), None)
     if any(k in q or k in ql for k in _STATS_KW):
         intent = "stats"
@@ -399,17 +501,30 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
         intent = "session_issue"
     elif session_scope and has_issue:
         intent = "session_issue"
-    elif has_report and (product or session_id
-                         or any(k in q or k in ql for k in _FIND_KW)):
+    elif session_scope and not has_comment and any(k in q or k in ql for k in _META_KW):
+        # 열어 둔 세션의 메타(누가/언제/온도/공정…). not has_comment 가드가 없으면
+        # "온도 올라갈 때 튀던 현상 코멘트 찾아줘" 가 온도 때문에 여기로 샌다.
+        intent = "session_meta"
+    elif has_report_like and (product or session_scope or has_exists or has_time
+                              or any(k in q or k in ql for k in _FIND_KW)):
         intent = "session_find"
-    elif items and any(k in q or k in ql for k in _HISTORY_KW):
-        intent = "item_history"
+    elif ((product_type or family) and not items and not has_history
+            and any(k in q or k in ql for k in _ITEMWORD_KW)
+            and any(k in q or k in ql for k in _LIST_KW)):
+        # "PMIC SOC 에 무슨 Item 있어" — 스코프만 있고 특정 item 토큰이 없는 목록 질문.
+        # not items / not has_history 가 item_history 질문("SGM 항목 이력")과 갈라 준다.
+        intent = "item_search"
+    elif items and has_history:
+        intent = "item_history"          # 이력 어휘가 근거 — 재분류 대상 아님
     elif items:
-        intent = "item_history"
+        intent = "item_history"          # catch-all: 영문 토큰만 보고 찍은 것
+        weak = True                      # → agent 가 조회 결과로 재검증한다
     elif product:
         intent = "product_search"
-    elif any(k in q or k in ql for k in _COMMENT_KW):
+    elif has_comment:
         intent = "comment_search"
+    elif _HELP_RE.fullmatch(re.sub(r"[\s?!.,~]+", "", q)):
+        intent = "help"
     else:
         intent = "unknown"
 
@@ -418,18 +533,34 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
                      free_text=q if intent == "comment_search" else None,
                      ambiguity=len(items) > 1, normalized_question=q, planner="rule",
                      session_id=session_id, metric=metric, jump_target=jump_target,
-                     group_by=group_by, status=status if intent == "stats" else None)
+                     group_by=group_by, status=status if intent == "stats" else None,
+                     date_from=date_from, date_to=date_to, weak=weak)
 
 
 # ── 진입점 ───────────────────────────────────────────────────────────────────
-def plan(question: str, *, use_llm=True, context_session_id=None) -> QueryPlan:
-    """질문 → QueryPlan. LLM 이 꺼져 있거나 실패하면 규칙 계획을 돌려준다.
+def _needs_llm(plan_: QueryPlan) -> bool:
+    """규칙 계획이 약해서 LLM 을 부를 값어치가 있는가.
 
-    context_session_id 는 "지금 열려 있는 세션" — 웹 챗 패널이 세션 상세에서 보낸 질문의
-    "이 세션" 을 해석하는 데 쓴다. 규칙 폴백은 이걸 모르므로 agent 가 사후 주입한다.
+    규칙이 근거를 갖고 분류한 질문은 LLM 을 부르지 않는다 — 챗 동시 처리는 3슬롯이고 LLM 왕복은
+    최대 30초라, 전부 LLM 을 태우면 최악 처리량이 3건/30초가 되고 네 번째 사용자는 429 를 본다.
+    또 골든셋이 지키는 것은 규칙 경로이므로, 규칙을 1차로 두면 **테스트되는 경로가 곧 운영
+    경로**가 된다. LLM 의 강점(lot_id·날짜 같은 슬롯 추출)은 정확히 아래 '약한' 케이스에 몰려 있다.
     """
-    if use_llm and llm_enabled():
+    return (plan_.intent in ("unknown", "help") or plan_.weak
+            or (plan_.intent == "session_find"
+                and not (plan_.product or plan_.lot_id or plan_.date_from)))
+
+
+def plan(question: str, *, use_llm=True, context_session_id=None) -> QueryPlan:
+    """질문 → QueryPlan. **규칙을 먼저** 돌리고, 약할 때만 LLM 에 물어본다.
+
+    LLM 이 꺼져 있거나 실패하면 규칙 계획을 그대로 쓴다(빈손으로 죽지 않는다).
+    context_session_id 는 "지금 열려 있는 세션" — 웹 챗 패널이 세션 상세에서 보낸 질문의
+    "이 세션" 을 해석하는 데 쓴다.
+    """
+    rule = rule_plan(question, context_session_id)
+    if use_llm and llm_enabled() and _needs_llm(rule):
         data = _call_llm(question, context_session_id)
         if data is not None:
             return _plan_from_dict(data, question)
-    return rule_plan(question, context_session_id)
+    return rule

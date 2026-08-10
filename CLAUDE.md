@@ -71,7 +71,8 @@ report_server/
 │   ├── admin_panel/             /pe/admin-<secret>/ 대시보드 + metrics 샘플러
 │   ├── eval_panel/              /pe/eval 룰 관리 (thresholds·signature **둘 다** 제품군/family
 │   │                            오버레이(전역 범위 선택기 공유) · L0~L6 트레이스 + **전후 비교**
-│   │                            · 골든셋 회귀 — 저장 즉시 반영, rev 낙관적 잠금·no-op 스킵)
+│   │                            · 골든셋 회귀 — 저장 즉시 반영, rev 낙관적 잠금·no-op 스킵
+│   │                            · **표본함**(룰당 8건만 검수 → 승인형 임계값 강화안, docs/13 §14))
 │   ├── tools/migrate_manifest_edits.py  manifest 편집값 → 세션 편집 DB 이전 (운영 1회 실행 완료)
 │   ├── upload_xlsx.py           POST /pe/report/upload_xlsx
 │   ├── upload_webreport.py      POST /pe/report/upload_webreport (web_report.ingest 호출)
@@ -375,13 +376,14 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 랜딩 UI (/pe) — 서버 첫 화면 | [server/landing/landing.html](server/landing/landing.html) + [landing/__init__.py](server/landing/__init__.py) · 데이터는 [routes_misc.py](server/report/routes_misc.py) `GET /api/landing` |
 | 관리 대시보드 (/pe/admin-pte/) | [server/admin_panel/](server/admin_panel/) (구 admin_routes.py 는 미등록 dead file) |
 | eval 룰 관리 (/pe/eval) — threshold/signature 제품군별 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
+| eval 표본 검수 → 승인형 룰 튜닝 (발화 전수 검토 대신 룰당 8건) | [server/eval_panel/review.py](server/eval_panel/review.py) · 수집 [web_report/eval_export.py](web_report/eval_export.py) `collect_session_snapshot` → [docs/13 §14](docs/13_eval_analyzer_integration.md) |
 | 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |
 | Honey 클라 (자유: honey_ui/honey_main/transport/excel_*) | [client/honey_main.py](client/honey_main.py), 업로드 [transport/uploader.py](client/transport/uploader.py), 추출 [report_flow/upload_prepare.py](client/report_flow/upload_prepare.py) |
 | 외부 담당자 영역 동결 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` · `server/storage_gateway/` → [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |
 | eval_analyzer 연결 (AI Comment / 코멘트 export) | [web_report/ai_comment.py](web_report/ai_comment.py) + [web_report/eval_export.py](web_report/eval_export.py) — eval_engine import 2곳 → [docs/13](docs/13_eval_analyzer_integration.md) |
 | 기준정보(part_ids) 갱신 — DRM CSV → product_info.db | [tools/product_info_import/](tools/product_info_import/README.md) (Excel PC) → [server/product_info.py](server/product_info.py) 가 읽기전용 로드 |
 | eval 룰 골든셋 회귀 (임계값 튜닝 전후 비교) | [tools/eval_golden/golden_check.py](tools/eval_golden/golden_check.py) (CLI) + [server/eval_panel/golden_io.py](server/eval_panel/golden_io.py) (패널 추가/실행) → [docs/13 §12](docs/13_eval_analyzer_integration.md) |
-| **LLM 배선 (붙이는 곳·나가는 곳)** | 정본 [docs/19](docs/19_llm_wiring.md) — 설정은 [server/env/server.env](server/env/server.env) `EVAL_LLM_*` 5줄, 확인은 `python tools/llm_check.py --ping`. 소비자 2개(AI Comment [점검제안] = [llm_client.complete](eval_analyzer/eval_engine/llm_client.py) / 챗봇 질문해석 = [planner._call_llm](server/chatbot/planner.py)), 둘 다 꺼져도 폴백 동작 |
+| **LLM 배선 (붙이는 곳·나가는 곳)** | 정본 [docs/19](docs/19_llm_wiring.md) — 설정은 [server/env/server.env](server/env/server.env) `EVAL_LLM_*` 5줄, 확인은 `python tools/llm_check.py --ping`. 소비자 2개(AI Comment [점검제안] = [llm_client.complete](eval_analyzer/eval_engine/llm_client.py) / 챗봇 질문해석 = [planner._call_llm](server/chatbot/planner.py)), 둘 다 꺼져도 폴백 동작. **외부 담당자 전달용**은 [eval_analyzer/docs/LLM_WIRING_HANDOFF.md](eval_analyzer/docs/LLM_WIRING_HANDOFF.md) |
 | ENGR 이력 검색 챗봇 (자연어 → 조회 툴) | [server/chatbot/](server/chatbot/README.md) — 골든셋 [tests/chatbot_golden.yaml](tests/chatbot_golden.yaml), 백필 [tools/eval_backfill/](tools/eval_backfill/backfill_eval_db.py). ⚠ `eval_analyzer/chatbot_prototype/` 은 **보류된 별개 실험**(2026-08-10 개명 — 옛 이름 `chatbot` 이 이것과 충돌해 운영 장애) |
 | 챗봇 웹 노출 (관리자 전용 플로팅 버튼) | 라우트 [server/report/routes_chat.py](server/report/routes_chat.py) · 위젯 [static/webreport/chat.js](server/report/static/webreport/chat.js) · 딥링크 `?tab=item_detail\|map&item=` ([boot.js](server/report/static/webreport/boot.js) `applyDeepLink`) · 사용현황/부하 = 관리자 Chatbot 탭([chatbot_admin.py](server/admin_panel/chatbot_admin.py), `report_chatbot_log`) |
 | 더미 grids 픽스처 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |

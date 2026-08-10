@@ -6,6 +6,18 @@
 - "S3222 평가 보고서에서 LDO item 이슈 어떻게 close 됐지?"
 - "이 세션 수율/CPK 알려줘" · "S3222 보고서 찾아줘" · "VDD_INT 상세 보여줘"
 - "PMIC 에 MAJOR 몇 건이야?" · "제품별 건수 알려줘" (집계)
+- "PMIC SOC 에 무슨 Item 있어" (항목 목록) · "이 세션 누가 올렸어?"·"온도 몇 도야?" (세션 메타)
+- "IW06 세션 있냐?" · "어제 올라온 세션 목록" (존재 확인·기간)
+
+## 분류가 실패해도 "모르겠다"로 끝내지 않는다
+
+1. **규칙**(빠름) → 2. **LLM**(약할 때만) → 3. **광역 폴백**.
+`unknown` 핸들러는 질문에서 건진 토큰을 세션·항목·코멘트 세 축에 던져 *무엇으로 걸리는지*
+를 보여주고, 걸린 축만 클릭 버튼으로 준다.
+또 규칙이 근거 없이 찍은 계획(`QueryPlan.weak`, catch-all `elif items:`)은 조회 결과가 0건이면
+**agent 가 세션 자유검색으로 재검증해 교정**한다 — "IW06 있어?" 가 item 이 아니라 세션으로
+잡히는 이유다(모양이 아니라 데이터가 판정한다). 재분류는 `viewer` 가 필요해 planner 가 아닌
+agent 에 둔다.
 
 **이 패키지는 라우트를 등록하지 않는다** (`plugin.py` 무변경). 웹 노출은 바깥의
 [../report/routes_chat.py](../report/routes_chat.py) 한 곳뿐이고, 이 패키지는 CLI 와 그
@@ -47,7 +59,7 @@ CLI 계약(`agent.answer` 반환 키 4개)은 그대로다 — 웹 확장이 깨
 
 | 파일 | 역할 |
 |---|---|
-| `planner.py` | 질문 → `QueryPlan`(intent 10종/제품/family/item 키워드/세션·metric·jump·집계축). LLM 실패·미설정 시 **규칙 폴백** |
+| `planner.py` | 질문 → `QueryPlan`(intent 13종 + 제품/family/item/세션/metric/jump/집계축/기간). **규칙이 1차**, 약할 때만 LLM |
 | `tools_report.py` | report.db — 세션/제품/Issue Table/세션 횡단 item 검색 |
 | `tools_eval.py` | eval.db — item 마스터·alias·과거 케이스·수치·사람 코멘트 + `stats_summary`(축별 건수 집계) |
 | `tools_metrics.py` | web_report 계산값 — 수율/CPK/측정값. 콜드면 배경 빌드만 걸고 `building` 반환 |
@@ -94,7 +106,15 @@ EVAL_LLM_API_KEY=<키, 필요 시>
 EVAL_LLM_TIMEOUT=30
 ```
 
-미설정이면 규칙 기반 계획으로 동작한다(골든 세트 25/25 통과 기준). LLM 은 **질문 해석만**
+미설정이면 규칙 기반 계획으로 동작한다(골든 세트 56/56 통과 기준).
+
+**호출 순서는 규칙이 먼저다.** `planner._needs_llm()` 이 참일 때(=unknown·weak·조건 없는
+session_find)만 LLM 을 부른다. 챗 동시 처리는 3슬롯이고 LLM 왕복은 최대 30초라 전부 태우면
+최악 처리량이 3건/30초가 되고, 무엇보다 골든셋이 지키는 것이 규칙 경로여서 **테스트되는 경로가
+곧 운영 경로**여야 하기 때문이다. 되돌리려면 `_needs_llm` 이 항상 True 를 반환하면 된다.
+
+⚠ `_ISSUE_KW` 에 `문제/에러` 가 들어가면서, **세션을 열어 둔 상태**의 "…문제된 적 있어?" 는
+item 이력이 아니라 그 세션의 이슈(session_issue)로 간다(의도된 개선). LLM 은 **질문 해석만**
 하고 답변 본문은 조회 결과 템플릿이라, LLM 이 없어도/틀려도 없는 값을 지어내지 않는다 —
 오분류는 "되묻기(choices)" 나 unknown 으로 나타난다.
 

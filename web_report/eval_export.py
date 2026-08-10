@@ -48,6 +48,20 @@ def _engine():
     return store, engine_ingest
 
 
+def _engine_eval():
+    """평가 스냅샷 수집용 (evaluate + engine_version). _engine 과 같은 sys.path 규약.
+
+    ai_comment.py 가 아니라 여기서 evaluate 를 부르는 이유: 이 모듈이 report_server
+    소유 eval DB(REPORT_EVAL_DB_PATH)의 주인이고, eval_engine import 지점을 3곳으로
+    유지해야 하기 때문이다(docs/13 §2). ai_comment 의 호출은 여전히 persist=False 다.
+    """
+    path = str(_EVAL_DIR)
+    if path not in sys.path:
+        sys.path.append(path)
+    from eval_engine import config as eval_config, evaluate
+    return evaluate, eval_config.ENGINE_VERSION
+
+
 def db_path() -> Path:
     import config  # server/ 가 sys.path 에 있음 (ingest.py 의 product_info 와 동일)
     return Path(config.REPORT_EVAL_DB_PATH)
@@ -537,6 +551,126 @@ def get_panel_label(session: dict, *, item: str, bin_) -> dict | None:
         conn.close()
 
 
+# ── 평가 스냅샷 수집 (L1~L4 를 report_server 소유 DB 에 적재) ─────────────────
+# 왜 필요한가: 운영 조회 경로는 evaluate(persist=False) 라 엔진이 콜드 빌드마다 L1/L2 를
+# 전부 계산해 놓고 버린다. 그래서 features/evaluation/case_signature 가 0행이고,
+# 룰 채점·표본 검수·임계값 what-if 의 재료가 통째로 없다. 업로드 직후 1회만 판단 근거를
+# 남긴다(코멘트는 만들지 않는다 — generate_comment=False 로 LLM·선례검색 비용 0).
+
+_SNAPSHOT_INGESTED_BY = "eval-snapshot"     # 코멘트 export run(web_report)과 구분하는 표식
+
+
+def _snapshot_source_file(source_index: int) -> str:
+    """ingest_run.source_file 에 소스 번호를 실어 세션×소스 단위 중복 판정을 가능하게 한다.
+
+    ingest_run 에는 source_index 컬럼이 없다(스키마 무변경 방침). 기존 코멘트 export 가
+    이 컬럼에 'web_report' 를 쓰므로 접두를 달리해 서로 침범하지 않는다.
+    """
+    return f"{_SNAPSHOT_INGESTED_BY}#{int(source_index)}"
+
+
+def _snapshot_done(conn, session_id: str, source_file: str, engine_version: str) -> bool:
+    """이 (세션, 소스, engine_version) 스냅샷이 이미 있나 — 재업로드·재조회 중복 방지.
+
+    run 만 보지 않고 evaluation 까지 확인한다. run 은 만들어졌는데 도중에 실패한 경우를
+    "수집됨" 으로 읽으면 그 소스가 영영 비게 된다.
+    """
+    row = conn.execute(
+        """SELECT 1 FROM ingest_run ir
+             JOIN evaluation ev ON ev.run_id = ir.run_id
+            WHERE ir.session_id=? AND ir.source_file=? AND ev.engine_version=?
+            LIMIT 1""",
+        (session_id, source_file, engine_version)).fetchone()
+    return row is not None
+
+
+def collect_session_snapshot(session_id: str, *, report_db, upload_root,
+                             tables=None, force: bool = False) -> dict:
+    """세션의 평가 판단 근거(L1~L4)를 report_server 소유 eval DB 에 1회 적재.
+
+    운영 조회(service.load_webreport)·AI Comment 와 **같은 변형 경로**를 거친다
+    (loader.load_tables → mode_tables → ai_comment._table_to_raw_df) — 그래야 표본함에서
+    보는 근거가 사용자가 보는 판정과 같은 것이 된다.
+
+    - 저장 게이트(`present.should_store`)를 통과한 case 만 쌓인다. per-DUT 원본값은
+      저장하지 않는다(불변 규칙 3).
+    - `EVAL_DB_PATH`(엔진 소유 eval.db)는 건드리지 않는다 — `db_path()` 를 인자로 넘긴다.
+    - `force=False` 면 이미 수집된 (세션, 소스, engine_version) 은 건너뛴다. `force=True`
+      는 **지우지 않고 새 run 으로 다시 쌓는다** — 기존 evaluation 을 지우면 거기 달린
+      사람 라벨까지 잃기 때문이다. 표본 조회는 case 별 최신 evaluation 을 본다.
+
+    반환: {"sources": n, "collected": n, "skipped": n, "cases": n} 또는 {"skipped": 사유}.
+    """
+    upload_root = Path(upload_root)
+    session = report_db.get_session(session_id)
+    if not session or str(session.get("source") or "") != "web_report":
+        return {"skipped": "not a web_report session"}
+    if not session.get("analysis_key"):
+        return {"skipped": "no analysis_key"}
+
+    from . import ai_comment
+    if ai_comment._session_meta(session, 1) is None:
+        return {"skipped": f"unsupported product_type: {session.get('product_type')!r}"}
+
+    evaluate, engine_version = _engine_eval()
+
+    if tables is None:
+        from . import loader
+        from .validation import mode_tables
+        _, tables, manifest = loader.load_tables(session_id, report_db=report_db,
+                                                 upload_root=upload_root, session=session)
+        tables = mode_tables(tables, str(session.get("mode") or "Normal"))
+        selected = {str(v) for v in (manifest.get("selected_items") or []) if str(v)}
+    else:
+        selected = set()
+
+    collected = skipped = n_cases = 0
+    # 코멘트 export 와 같은 세션 키로 직렬화 — 같은 DB 파일을 두 경로가 함께 쓴다.
+    with cache.keyed_lock_ctx(("eval_export", session_id)):
+        conn = open_conn()
+        try:
+            for idx, table in enumerate(tables):
+                source_file = _snapshot_source_file(idx)
+                if not force and _snapshot_done(conn, session_id, source_file,
+                                                engine_version):
+                    skipped += 1
+                    continue
+                items = [c for c in table.item_columns if not selected or c in selected]
+                if not items:
+                    continue
+                meta = dict(ai_comment._session_meta(session, idx + 1))
+                meta["session_id"] = session_id
+                meta["analysis_key"] = session.get("analysis_key")
+                meta["source_file"] = source_file
+                meta["ingested_by"] = _SNAPSHOT_INGESTED_BY
+                raw_df = ai_comment._table_to_raw_df(table, items)
+                result = evaluate({"meta": meta, "raw_df": raw_df},
+                                  persist=True, db_path=str(db_path()),
+                                  generate_comment=False)
+                n_cases += len(result.get("cases") or [])
+                collected += 1
+        finally:
+            conn.close()
+    return {"sources": len(tables), "collected": collected, "skipped": skipped,
+            "cases": n_cases}
+
+
+def safe_collect_snapshot(session_id: str, *, report_db, upload_root, force=False) -> dict:
+    """수집 실패 격리 — 업로드 응답·리포트 조회를 절대 죽이지 않는다(safe_export 관례)."""
+    try:
+        return collect_session_snapshot(session_id, report_db=report_db,
+                                        upload_root=upload_root, force=force)
+    except Exception as exc:
+        logger.warning("eval 스냅샷 수집 실패 — 무시하고 진행 (session=%s)", session_id,
+                       exc_info=True)
+        try:
+            report_db.log_audit(action="eval_snapshot", session_id=session_id,
+                                result="error", changed_fields=repr(exc)[:500])
+        except Exception:
+            pass
+        return {"skipped": "error"}
+
+
 def safe_export(session_id: str, *, report_db, upload_root, tables=None) -> dict:
     """export 실패 격리 — 예외 시 warning 로그 + skipped (ai_comment.safe_build 관례)."""
     try:
@@ -561,10 +695,15 @@ def safe_export(session_id: str, *, report_db, upload_root, tables=None) -> dict
 # 편집이 다시 큐에 올라 최신 상태로 재-export 되게 한다(eval_export 는 세션 편집 상태를
 # 읽어 멱등 재적재하므로 last-write 반영이 필요하다).
 _EXPORT_QUEUE = collections.deque()
-_EXPORT_PENDING: set = set()        # session_id — 큐 대기 중만
+_EXPORT_PENDING: set = set()        # (kind, session_id) — 큐 대기 중만
 _EXPORT_LOCK = threading.Lock()
 _EXPORT_WAKE = threading.Event()
 _EXPORT_THREAD = None
+
+# 큐가 처리하는 작업 2종. 스냅샷 수집을 별도 스레드로 띄우지 않고 같은 단일 소비자에
+# 합류시키는 이유 — 둘 다 같은 eval DB 파일에 쓰므로 여기서 직렬화하면 파일 경합이 없다.
+_JOB_EXPORT = "export"
+_JOB_SNAPSHOT = "snapshot"
 
 
 def _export_loop() -> None:
@@ -576,28 +715,41 @@ def _export_loop() -> None:
         if item is None:
             _EXPORT_WAKE.wait()
             continue
-        session_id, report_db, upload_root = item
+        kind, session_id, report_db, upload_root = item
         with _EXPORT_LOCK:
-            _EXPORT_PENDING.discard(session_id)   # 실행 시작 → 대기 해제(실행 중 새 편집 재큐 허용)
-        # safe_export 는 자체 예외 격리를 하지만, 소비자 스레드가 죽지 않게 한 번 더 감싼다.
+            _EXPORT_PENDING.discard((kind, session_id))   # 실행 시작 → 대기 해제(실행 중 새 편집 재큐 허용)
+        # safe_* 가 자체 예외 격리를 하지만, 소비자 스레드가 죽지 않게 한 번 더 감싼다.
         try:
-            safe_export(session_id, report_db=report_db, upload_root=upload_root)
+            if kind == _JOB_SNAPSHOT:
+                safe_collect_snapshot(session_id, report_db=report_db,
+                                      upload_root=upload_root)
+            else:
+                safe_export(session_id, report_db=report_db, upload_root=upload_root)
         except Exception:
-            logger.warning("eval export 소비자 처리 실패 (session=%s)", session_id,
+            logger.warning("eval %s 소비자 처리 실패 (session=%s)", kind, session_id,
                            exc_info=True)
 
 
-def export_async(session_id: str, *, report_db, upload_root) -> None:
-    """훅 전용 — 단일 소비자 스레드가 순차로 safe_export 한다 (콜드 tables 로드가 응답을
-    늦추지 않게, 그리고 편집 버스트에 스레드가 무한히 쌓이지 않게)."""
+def _enqueue(kind: str, session_id: str, report_db, upload_root) -> None:
     global _EXPORT_THREAD
     with _EXPORT_LOCK:
-        if session_id in _EXPORT_PENDING:
-            return   # 이미 대기 중 — 소비자가 최신 상태를 읽어 export 하므로 재등록 불요
-        _EXPORT_PENDING.add(session_id)
-        _EXPORT_QUEUE.append((session_id, report_db, Path(upload_root)))
+        if (kind, session_id) in _EXPORT_PENDING:
+            return   # 이미 대기 중 — 소비자가 최신 상태를 읽으므로 재등록 불요
+        _EXPORT_PENDING.add((kind, session_id))
+        _EXPORT_QUEUE.append((kind, session_id, report_db, Path(upload_root)))
         if _EXPORT_THREAD is None:
             _EXPORT_THREAD = threading.Thread(target=_export_loop, name="eval-export",
                                               daemon=True)
             _EXPORT_THREAD.start()
     _EXPORT_WAKE.set()
+
+
+def export_async(session_id: str, *, report_db, upload_root) -> None:
+    """훅 전용 — 단일 소비자 스레드가 순차로 safe_export 한다 (콜드 tables 로드가 응답을
+    늦추지 않게, 그리고 편집 버스트에 스레드가 무한히 쌓이지 않게)."""
+    _enqueue(_JOB_EXPORT, session_id, report_db, upload_root)
+
+
+def collect_async(session_id: str, *, report_db, upload_root) -> None:
+    """훅 전용 — 평가 스냅샷 수집을 같은 큐에 올린다 (업로드 응답을 늦추지 않게)."""
+    _enqueue(_JOB_SNAPSHOT, session_id, report_db, upload_root)

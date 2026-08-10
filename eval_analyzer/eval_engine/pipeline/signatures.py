@@ -62,6 +62,41 @@ def scope_matches(sig: dict, case_ctx: dict) -> bool:
     return True
 
 
+def _suppressor_ids(sig: dict) -> list:
+    """signature 선언의 `suppressed_by` 정규화 — 문자열 1개도 목록으로 받는다."""
+    raw = sig.get("suppressed_by") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return [str(v) for v in raw if v]
+
+
+def _apply_suppression(fired: list, suppressors: dict):
+    """포함관계인 룰의 중복 발화 제거 — "A 가 뜨면 B 는 군더더기" 를 선언으로 처리한다.
+
+    왜 필요한가: `SEVERE_OUTLIER`(outlier_ratio > outlier_ratio_bad)가 뜨면
+    `OUTLIER_WARN`(> outlier_ratio_warn)은 **조건상 항상** 함께 뜬다(임계값 관계 검증이
+    warn <= bad 를 강제한다). 같은 현상의 약한 표현이 secondary 를 채우고 primary
+    specificity 경쟁까지 흐린다. 임계값은 건드리지 않고 중복 의미만 걷어낸다.
+
+    판정은 **억제 적용 전(원본) 발화 집합 기준 1패스**다 — 전이(A→B→C)나 상호 참조로
+    체인이 도는 것을 원천 차단하기 위해서다. 그래서 "B 가 A 에 의해 지워졌더라도 B 가
+    지목한 C 는 여전히 지워진다" 가 아니라, C 는 B 의 원본 발화 여부만 본다.
+    (순환·미존재 id 검사는 룰 저장 시점 검증의 몫이다.)
+    반환: (살아남은 fired, [{"id":..,"by":..}, ...])
+    """
+    if not any(suppressors.values()):
+        return fired, []
+    fired_ids = {s["id"] for s in fired}
+    kept, suppressed = [], []
+    for s in fired:
+        by = [sid for sid in suppressors.get(s["id"], []) if sid in fired_ids]
+        if by:
+            suppressed.append({"id": s["id"], "by": sorted(by)})
+        else:
+            kept.append(s)
+    return kept, suppressed
+
+
 def _eval_condition(op_str, actual_value, thresholds):
     """'>key' / '<key' / 'abs>key' / '>0.5' 형태 해석. 결측이면 False."""
     if actual_value is None:
@@ -145,7 +180,7 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
             "signatures": [], "reason_codes": [],
             "bin_class": bt.get("bin_class") if bt else None,
             "severity_bias": (bt.get("severity_bias") if bt else 0.0) or 0.0,
-            "applies": {}, "excluded": excluded,
+            "applies": {}, "suppressed": [], "excluded": excluded,
             "raw_metrics_snapshot": {"cpk": raw_metrics.get("cpk"),
                                      "yield": raw_metrics.get("yield")},
         }
@@ -156,7 +191,8 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     n_dut = features.get("n_dut") or 0
     high_moment_ok = n_dut >= th["n_min"]
 
-    fired, reason_codes, applies = [], [], {}
+    fired, applies = [], {}
+    suppressors = {}                     # {id: [나를 지우는 id, ...]} — 발화분만 모은다
     subpop_doc = None
     for sig in signatures_for(case_ctx):
         # yaml 의 enabled:false 는 룰 비활성 (키 부재 = 활성 — 기존 yaml 무영향)
@@ -182,7 +218,7 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
             fired.append({"id": sig["id"], "status_hint": sig["status_hint"],
                           "score": None, "evidence": evidence,
                           "action_ko": sig.get("action_ko")})
-            reason_codes.extend(e["signal_code"] for e in evidence)
+            suppressors[sig["id"]] = _suppressor_ids(sig)
 
     if subpop_doc is not None:
         subpop = _evaluate_subpop_gap(features)
@@ -190,7 +226,10 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
         if subpop is not None:
             fired.append({"id": _SUBPOP_GAP_ID, "status_hint" : subpop_doc["status_hint"],
                           "score":None, "evidence" : subpop["evidence"], "action_ko":subpop_doc.get("action_ko"), "modality_v2":subpop["modality_v2"]})
-            reason_codes.extend(e["signal_code"] for e in subpop["evidence"])
+            suppressors[_SUBPOP_GAP_ID] = _suppressor_ids(subpop_doc)
+
+    fired, suppressed = _apply_suppression(fired, suppressors)
+    reason_codes = [e["signal_code"] for s in fired for e in s.get("evidence", [])]
 
     bt = bin_taxonomy_for(case_ctx.get("product_type"), case_ctx.get("bin"))
     bin_class = bt.get("bin_class") if bt else None
@@ -199,7 +238,7 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     return {
         "signatures": fired, "reason_codes": reason_codes,
         "bin_class": bin_class, "severity_bias": severity_bias or 0.0,
-        "applies": applies,
+        "applies": applies, "suppressed": suppressed,
         "raw_metrics_snapshot": {"cpk": raw_metrics.get("cpk"),
                                  "yield": raw_metrics.get("yield")},
     }

@@ -134,10 +134,12 @@ html[data-theme="dark"] #chatLog .errdet pre{background:#0d1117;border-color:#5c
     });
 
     addBot("무엇을 찾아드릴까요?\n" +
-           "  · S3222 보고서 찾아줘\n" +
-           "  · 이 세션 수율 / cpk 알려줘\n" +
+           "  · S3222 보고서 찾아줘 / 어제 올라온 세션 목록\n" +
+           "  · 이 세션 수율 / cpk 알려줘 / 누가 올렸어?\n" +
+           "  · PMIC SOC 에 무슨 Item 있어\n" +
            "  · SGM 들어가는 항목 예전에 어떻게 됐었지?\n" +
-           "  · VDD_INT 상세 보여줘 / 맵 열어줘");
+           "  · VDD_INT 상세 보여줘 / 맵 열어줘\n" +
+           "\"도움말\" 이라고 치면 할 수 있는 것을 전부 보여드립니다.");
   }
 
   function toggle() {

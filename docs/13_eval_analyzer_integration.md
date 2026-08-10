@@ -76,18 +76,38 @@ row0 TSEQ  row1 TNO  row2 STEP  row3 UNIT  row4 HILIM(USL)  row5 LOLIM(LSL)  row
 `status`(CRITICAL>MAJOR>MINOR>MONITOR>OK), `comment`(분석방향 한 문장). cases 는
 게이팅(yield fail ∪ cpk<cpk_warn) 통과분만 반환된다.
 
-## 4. eval.db 소유권 — 서버는 무기록(persist=False)
+## 4. eval.db 소유권 — 엔진 소유 DB 는 무기록, 서버 소유 DB 에는 업로드 시 1회 적재
 
-- eval.db 는 **eval_analyzer 전용** (`eval_analyzer/data/eval.db`, env `EVAL_DB_PATH`).
-  report_server 의 `report_` prefix 테이블 규칙 대상이 아니다.
-- 서버 호출은 **persist=False 고정**: eval.db 에 아무것도 쓰지 않는다 → 컴퓨트 워커
-  동시 실행에 안전하고 ingest_run 증식이 없다. 선례검색(sql)은 DB 파일이 없으면 빈
-  목록을 반환하므로 eval.db 없이도 동작한다 (comment 는 룰 템플릿 기반).
-- persist=True 로 전환하려면: 워커 동시 쓰기(WAL+busy_timeout 은 있음)·콜드 빌드마다
-  ingest_run 행 증식·preview↔persist 간 case_id 불일치(엔진 docstring)를 먼저 검토할 것.
-- ⚠ **그래서 L1(raw_metrics)·L2(features)·evaluation 이 운영에서 0행이다.** 판단 근거를
-  쌓아 채점·보정에 쓰려면 별도 경로가 필요하다 → 설계·로드맵은
-  [17_eval_learning_loop.md](17_eval_learning_loop.md) (2026-08-04, 아직 미구현).
+**2026-08-10 개정.** 종전엔 "서버는 어디에도 persist 하지 않는다" 였는데, 그 결과
+L1/L2/evaluation 이 영구 0행이라 룰 채점·표본 검수의 재료가 통째로 없었다. 소유권 원칙은
+그대로 두고 **쓰는 대상만** report_server 소유 파일로 갈랐다.
+
+| 경로 | 대상 DB | persist | 언제 |
+|---|---|---|---|
+| `ai_comment.build_ai_comments` (조회) | — | **False** | 콜드 빌드마다 |
+| `eval_export.collect_session_snapshot` (수집) | `REPORT_EVAL_DB_PATH` | **True** | 업로드 직후 1회 |
+
+- **엔진 소유 `eval.db`(`EVAL_DB_PATH`, `eval_analyzer/data/eval.db`)는 여전히 무기록**이며
+  생성조차 되지 않는다. 회귀 가드는 [tests/test_eval_snapshot.py](../tests/test_eval_snapshot.py) (d).
+- **DB 지정은 인자로 한다** — `evaluate(..., db_path=...)` → `ingest`/`present.persist` →
+  `store.get_conn(db_path)`. `eval_engine.config.DB_PATH` **전역 대입 금지**(장수명 Flask
+  프로세스 오염 — §10 이 subprocess 를 쓰는 이유와 같은 위험).
+- **`generate_comment=False`** 로 부른다 → L5(선례검색 + `make_comment`)를 통째로 건너뛰어
+  LLM·선례 조회 비용이 0 이다. 그 대신 `evaluation.comment` 는 NULL 이고
+  `eval_precedent` 는 안 쌓인다(v1 의 의도된 축소 — 목표는 룰 정확도).
+- **동시 쓰기**: `api.evaluate` 는 case 를 ThreadPoolExecutor 로 도는데, `persist=True` 면
+  **워커를 1로 줄여** 직렬화한다(`workers = 1 if persist else _MAX_WORKERS`). 세션 간
+  직렬화는 `eval_export` 의 단일 소비자 큐가 맡는다(수집 작업이 그 큐에 합류한다).
+- **중복 방지**: `(session_id, source_file=eval-snapshot#<idx>, engine_version)` 에
+  evaluation 이 이미 있으면 건너뛴다. `ingest_run.ingested_by='eval-snapshot'` 표식으로
+  코멘트 export run 과 구분한다. `force=True` 재수집은 **지우지 않고 새 run 으로 쌓는다**
+  — 기존 evaluation 을 지우면 거기 달린 사람 라벨까지 잃기 때문이다.
+- **AI Comment 옵션과 무관**하게 전 web_report 세션에서 돈다(옵션이 꺼져 있어 콜드 빌드
+  편승은 커버리지가 0 이 된다 — [17 §1-5](17_eval_learning_loop.md)). 기존 세션은 자동
+  백필하지 않고 `/pe/eval` 표본함에서 세션을 지정해 수집한다.
+- 실패는 `safe_collect_snapshot` 이 격리한다 — 업로드 응답·리포트 조회에 무영향, 감사
+  로그(`action=eval_snapshot`)만 남는다.
+- 선례검색(sql)은 DB 파일이 없으면 빈 목록을 반환하므로 이 DB 없이도 조회는 동작한다.
 - §9 의 **사람 코멘트 export DB 는 이 규약과 별개** — eval_analyzer 소유 eval.db 가 아니라
   report_server 소유의 **별도 파일**(`REPORT_EVAL_DB_PATH`)이다. `EVAL_DB_PATH` 는 여전히
   건드리지 않으며 evaluate 의 선례검색 동작도 무변경이다.
@@ -304,7 +324,7 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   직접 편집하고, Thresholds 는 **읽기 전용**으로 default 를 보여준다(패널은 제품군 오버레이만
   저장한다 — `read_thresholds(pt="")` 가 그 뷰를 내려준다). 트레이스 탭은 세션의 제품군을
   따르므로 이 선택기와 무관하다.
-- **탭 6개**:
+- **탭 7개** (표본함은 §14):
   1. *Thresholds* — 상단 범위 선택기로 오버레이 편집. 병합 순서는
      `default → product_type(레거시 섹션) → thresholds/<PT>/_default.yaml →
      thresholds/<PT>/<FAMILY>.yaml → item_class`.
@@ -556,3 +576,64 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   등호 하드필터에서 옛 행이 새 케이스와 매칭되지 않는다.
 - **진단 노출**: `/pe/eval` 트레이스 케이스 상세가 UNIT 원문과 "PF 라서 통계가 비었다"는
   경고를 함께 찍는다. 목록에도 `PF` 배지가 붙는다.
+
+## 14. 표본 검수 + 승인형 룰 튜닝 — `/pe/eval` 표본함 (2026-08-10)
+
+세션 1건 트레이스에 발화가 수백 건이라 전수 검토가 불가능하고, 그렇다고 안 보면 "이 룰이
+과하게 뜨는가" 를 판단할 근거가 없다. **룰당 8건만 검수**해 임계값 강화안을 만드는 화면.
+구현 [server/eval_panel/review.py](../server/eval_panel/review.py) + 라우트 4개
+(`/api/review/queue|label|collect-session|proposal`), 검증
+[tests/test_eval_review.py](../tests/test_eval_review.py).
+
+- **표본 구성**: 활성 룰마다 최대 8건 = 임계값 경계 3 / 중간 3 / 극단 2.
+  정렬 키를 `(초과율, case_id)` 로 고정해 **재현 가능**하고, 같은 `analysis_key` 의 dedup
+  형제 세션은 하나만 올린다(판정이 같아 검수해도 새로 알게 되는 것이 없다).
+  ⚠ 경계를 일부러 과대표집한 **층화표본**이라 여기서 나온 precision 은 전체 precision 보다
+  낮게 나온다 — 화면·추천에 그렇게 표기한다.
+- **층화 기준은 하드코딩하지 않는다**: 그 룰 `when_metric` 중 임계값 키를 참조하는 첫
+  조건에서 뽑고, when_metric 이 판정 기준이 아닌 룰만 yaml `review_metric` 으로 지목한다
+  (현재 `SUBPOP_GAP` 하나 — 판정에는 무영향, 표본 정렬 전용).
+- **라벨**: 기존 `label` 테이블 재사용, `labeler='eval-review'`,
+  `engine_comment_accepted` 에 맞음(1)/과다발화(0). **`human_status` 는 비운다** — 그래야
+  전체 status 채점(`eval_admin.scoring()`, `labeler='eval-panel'` 로 한정)과 섞이지 않는다.
+  **DB 스키마 변경 없음**(인덱스 `idx_case_signature_sig` 1개만 추가 — 룰별 조회가 full
+  scan 이 되지 않게).
+- **"맞음" 은 골든셋에 자동 등록**된다. 이게 없으면 아래 강화안의 안전망이 무효다 —
+  골든셋이 비면 회귀가 항상 통과하므로, **골든 항목 0건이면 추천 적용 자체를 막는다**.
+- **무판정 트랙**: 저장 게이트는 통과했지만 통계가 비어(`cpk IS NULL` + 발화 0건) 어떤
+  룰도 뜰 수 없는 항목을 UNIT 원문과 함께 따로 보여준다. 임계값이 아니라 **엔진 단위표
+  등록**으로 고치는 문제라 여기부터 줄이는 것이 임계값 튜닝보다 효율이 높다(§13).
+- **추천은 강화 방향만**: 게이트는 룰별 검수 20건 + 맞음·과다발화 각 5건. 후보는
+  "과다발화로 표시된 케이스의 지표값" 이고, 라벨된 표본 전체를 재판정해 precision 90% 를
+  넘는 것 중 **기존 맞음을 가장 많이 보존**하는 값을 고른다. 느슨하게 만드는 후보는
+  v1 에서 만들지 않는다(검수하지 않은 케이스가 새로 뜨는 건 검증된 변경이 아니다).
+- **적용은 사람이 누를 때만**, 그리고 **기존 Thresholds 저장 API 를 그대로 탄다** —
+  백업·`rules_rev`·낙관적 잠금·감사 로그(`eval_rules_edit`)를 전부 거친다. 오버레이는
+  병합 저장이라 한 키만 보내도 그 범위의 다른 임계값은 지워지지 않는다.
+  패널은 제품군 오버레이만 저장하므로 **기준값(전 제품 공통) 범위에서는 적용할 수 없다**.
+- **`calibrate.recalibrate()` 는 계속 비활성** — 라벨 없이 분위수만으로 룰을 바꾸므로.
+
+### 14-1. signature 포함관계 억제 `suppressed_by`
+
+`SEVERE_OUTLIER`(`outlier_ratio > outlier_ratio_bad`)가 뜨면
+`OUTLIER_WARN`(`> outlier_ratio_warn`)은 **조건상 항상** 함께 뜬다 —
+`rules_io._check_threshold_values` 가 `warn <= bad` 를 강제하므로 구조적으로 보장된
+포함관계다. 같은 현상의 약한 표현이 secondary 를 채우고 primary specificity 경쟁까지
+흐리므로, 임계값은 그대로 두고 중복 의미만 걷어낸다.
+
+```yaml
+- id: OUTLIER_WARN
+  suppressed_by: [SEVERE_OUTLIER]     # 이 룰이 발화하면 나는 발화하지 않는다
+```
+
+- **코드에 쌍을 박지 않는다** — 같은 모양이 하나 더 있다(`LOW_CPK` ⊃ `SPEC_TOO_TIGHT`,
+  §12). 선언형이라 나중에 LOW_CPK 를 다시 켜도 SPEC_TOO_TIGHT 이 묻히지 않는다.
+- 판정은 **억제 적용 전(원본) 발화 집합 기준 1패스**다 — 전이·순환을 원천 차단하기 위해서.
+  참조 무결성과 상호 참조는 검증 탭(`rules_io.validate_all`)이 잡는다.
+- 트레이스는 그 룰을 "조건은 만족했으나 X 발화에 가려짐" 으로 찍는다(조건만 보면
+  "떠야 하는데 안 떴다" 로 읽히므로).
+- ⚠ **캐시**: `secondary_signatures`·`evidence`·`reason_codes` 가 줄고
+  `ai_comment._rank` 가 그 목록을 보므로 AI Comment 셀 값이 바뀔 수 있다. 룰 yaml 이 아니라
+  코드 변경이므로 `rules_rev` 가 아니라 **`cache_policy.REPORT_SCHEMA_VERSION`(→30)** 을
+  올렸다.
+- 검증: [eval_analyzer/tests/test_signature_suppression.py](../eval_analyzer/tests/test_signature_suppression.py).

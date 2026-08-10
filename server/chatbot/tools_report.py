@@ -35,7 +35,7 @@ _SCAN_LIMIT = 1000
 # ── 1. 세션 검색 ──────────────────────────────────────────────────────────────
 def search_sessions(*, viewer, see_all_private=False, product=None, product_type=None,
                     lot_id=None, q=None, source=None, date_from=None, date_to=None,
-                    limit=20):
+                    limit=20, sort="new", offset=0):
     """평가 세션(보고서)을 조건으로 검색한다.
 
     언제 쓰나: 사용자가 제품명·lot·기간·"예전에 올린 보고서" 를 말하며 **어떤 평가가
@@ -48,11 +48,18 @@ def search_sessions(*, viewer, see_all_private=False, product=None, product_type
     q: 자유 검색어. product/lot/file_name/process/uploader 등을 부분일치로 훑는다.
        제품명이 정확한지 모르면 product 대신 q 를 쓴다.
     date_from/date_to: epoch 초.
+    sort: new(기본) | old | product | lot — 화이트리스트 밖이면 DB 층이 new 로 되돌린다.
+    offset: 다음 페이지.
+
+    ⚠ `_history_where` 는 `process/revision/mode/mine/visibility` 도 받지만 여기서는 노출하지
+    않는다(호출자가 없다). 필요해지면 한 줄씩 추가하면 되는데, `mode` 는 `source='web_report'`
+    를 암묵 AND 하고 `mine` 은 viewer 가 빈 문자열이면 공집합이 되는 함정이 있으니 골든 케이스와
+    함께 열 것.
     """
     rows, total = report_db.get_history_page(
         product=product, product_type=product_type, lot_id=lot_id, source=source,
-        q=q, date_from=date_from, date_to=date_to, limit=int(limit), offset=0,
-        viewer=viewer, see_all_private=bool(see_all_private), sort="new")
+        q=q, date_from=date_from, date_to=date_to, limit=int(limit), offset=int(offset),
+        viewer=viewer, see_all_private=bool(see_all_private), sort=sort)
     return {"sessions": rows, "total": total, "returned": len(rows)}
 
 
@@ -94,6 +101,46 @@ def search_products(keyword, *, viewer, see_all_private=False, limit=20):
 
 
 # ── 3. 세션의 Issue Table ────────────────────────────────────────────────────
+# 세션 메타 중 사용자에게 보여줄 것 — (컬럼, 라벨). **화이트리스트다**:
+# report_session 은 SELECT * 로 읽히고 그 안에 password·file_path 가 있다. 여기 없는 컬럼은
+# 답변으로 나가지 않는다. 순서가 곧 표시 순서다.
+SESSION_DETAIL_FIELDS = (
+    ("product", "제품"), ("product_type", "제품 타입"), ("family_product", "제품군"),
+    ("lot_id", "LOT"), ("revision", "Revision"), ("process", "공정"),
+    ("mode", "분석 모드"), ("source", "업로드 경로"), ("file_name", "파일명"),
+    ("created_at", "업로드 시각"), ("uploaded_by", "업로더"), ("client_host", "업로드 PC"),
+    ("edm_link", "EDM"), ("temperature", "온도"), ("step", "STEP"), ("equip", "설비"),
+    ("pkg_type", "패키지"), ("gross_die", "Gross Die"),
+    ("chip_size_x", "칩 크기 X"), ("chip_size_y", "칩 크기 Y"), ("wf_size", "웨이퍼 크기"),
+    ("part_id", "Part ID"), ("sub_part_id", "Sub Part ID"), ("product_group", "제품 그룹"),
+    ("e2f_fab_site", "FAB"), ("para", "PARA"), ("flat_zone", "Flat Zone"),
+)
+
+
+def get_session_detail(session_id, *, viewer, see_all_private=False):
+    """세션 1건의 메타 — 누가·언제 올렸나, 온도·공정·설비·패키지·die 크기 등.
+
+    언제 쓰나: "이 세션 누가 올렸어?", "온도 몇 도야?", "공정이랑 리비전 뭐야?" 처럼
+    **측정값이 아니라 세션 자체**를 묻는 질문. 계산이 없어 콜드 빌드와 무관하다.
+    언제 쓰지 않나: 수율·CPK·측정값 → `tools_metrics.get_session_metrics`.
+
+    반환 {session_id, fields: [{key, label, value}...]} — 값이 빈 항목은 빼고 준다.
+    노출 범위는 `SESSION_DETAIL_FIELDS` 화이트리스트가 정본이다.
+    """
+    session = report_db.get_session(session_id)
+    if session is None or not _can_view(session, viewer, see_all_private):
+        return {"error": "session_not_found", "session_id": session_id}
+    if session.get("deleted_at") or session.get("status") not in ("done", "reused"):
+        return {"error": "session_not_active", "session_id": session_id}
+    fields = []
+    for key, label in SESSION_DETAIL_FIELDS:
+        value = session.get(key)
+        if value is None or str(value).strip() == "":
+            continue
+        fields.append({"key": key, "label": label, "value": value})
+    return {"session_id": session_id, "fields": fields}
+
+
 def get_session_issues(session_id, *, viewer, see_all_private=False, item_keyword=None):
     """특정 세션의 Issue Table 에서 이슈 행·Status(Open/Close)·PTE/개발 코멘트를 읽는다.
 

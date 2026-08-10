@@ -181,6 +181,7 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
   <button class="tab active" data-panel="pThresholds">Thresholds</button>
   <button class="tab" data-panel="pSignatures">Signatures</button>
   <button class="tab" data-panel="pTrace">L0~L6 트레이스</button>
+  <button class="tab" data-panel="pReview">표본함</button>
   <button class="tab" data-panel="pEval">Eval DB</button>
   <button class="tab" data-panel="pScoring">채점</button>
   <button class="tab" data-panel="pMaint">검증 · 백업</button>
@@ -192,7 +193,7 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
   <span class="note"><b>편집 범위</b></span>
   <select class="sel" id="scPt" title="어느 제품군의 룰을 편집할지"></select>
   <select class="sel" id="scFam" title="Family 를 고르면 그 Family 전용으로 저장됩니다"></select>
-  <span class="note">Thresholds · Signatures 탭이 이 범위를 공유합니다
+  <span class="note">Thresholds · Signatures · 표본함 탭이 이 범위를 공유합니다
     (트레이스는 세션의 제품군을 따릅니다)</span>
 </div>
 
@@ -470,6 +471,37 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
       <table>
         <thead><tr><th>파일</th><th>경로</th><th class="num">크기</th><th>sha256(12)</th></tr></thead>
         <tbody id="fileBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── 표본함 (룰별 소수 표본 검수 → 승인형 임계값 추천) ──────────────────── -->
+<div class="panel" id="pReview">
+  <div class="card">
+    <h2>표본함 <span class="hint">룰마다 최대 8건(임계값 경계 3 · 중간 3 · 극단 2)만 보고
+      맞음/과다발화를 찍습니다 — 발화 전수를 검토하지 않기 위한 화면입니다</span></h2>
+    <div class="toolbar">
+      <button class="btn" id="rvRefresh">표본 새로고침</button>
+      <input class="inp" id="rvSession" placeholder="세션 ID — 이 세션을 표본함에 수집"
+             style="min-width:260px">
+      <button class="btn" id="rvCollect">수집</button>
+      <span class="msg" id="rvMsg"></span>
+    </div>
+    <div class="note">상단 <b>편집 범위</b> 선택기를 함께 씁니다. 판정은 자동으로 바뀌지
+      않습니다 — 검수 결과로 <b>임계값 강화안</b>을 계산해 보여주고, 적용은 사람이 누를
+      때만 일어납니다. <b>"맞음"</b> 으로 찍은 케이스는 골든셋에 자동 등록돼 이후 임계값
+      변경이 그 발화를 죽이면 회귀가 잡아냅니다.</div>
+    <div id="rvRules"></div>
+  </div>
+  <div class="card">
+    <h2>무판정 <span class="hint">통계가 비어 어떤 룰도 발화할 수 없는 항목 — 임계값이 아니라
+      UNIT 표기 등록으로 고칩니다</span></h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>항목</th><th>UNIT 원문</th><th>value_type</th><th>제품군</th>
+          <th class="num">건수</th></tr></thead>
+        <tbody id="rvNoJudge"><tr class="empty-row"><td colspan="5">-</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -2040,10 +2072,219 @@ function renderFiles() {
 }
 
 // ── 부트 ─────────────────────────────────────────────────────────────────
+// ── 표본함 ────────────────────────────────────────────────────────────────
+// 발화 전수를 보는 대신 룰당 8건만 본다. 화면이 하는 일은 3가지뿐 —
+// (1) 표본 보여주기 (2) 맞음/과다발화 찍기 (3) 쌓이면 임계값 강화안 계산·적용.
+let REVIEW = null;
+
+async function loadReview() {
+  const s = scope();
+  const qs = new URLSearchParams();
+  if (s.pt) qs.set('product_type', s.pt);
+  if (s.family) qs.set('family_product', s.family);
+  try {
+    REVIEW = await getJSON('api/review/queue?' + qs.toString());
+  } catch (e) {
+    flash($('rvMsg'), '표본 조회 실패: ' + e.message, false);
+    return;
+  }
+  renderReview();
+}
+
+function renderReview() {
+  const box = $('rvRules');
+  if (!REVIEW) { box.innerHTML = ''; return; }
+  if (!REVIEW.collected) {
+    box.innerHTML = `<div class="note">${esc(REVIEW.note || '수집된 스냅샷이 없습니다')}</div>`;
+    $('rvNoJudge').innerHTML = '<tr class="empty-row"><td colspan="5">-</td></tr>';
+    return;
+  }
+  box.innerHTML = (REVIEW.rules || []).map(reviewRuleHtml).join('') ||
+    '<div class="note">이 범위에서 활성 상태인 룰이 없습니다.</div>';
+
+  const nj = REVIEW.no_judgment || [];
+  $('rvNoJudge').innerHTML = nj.length ? nj.map((r) => `<tr>
+      <td>${esc(r.item)}</td><td><code>${esc(r.unit ?? '—')}</code></td>
+      <td>${esc(r.value_type ?? '—')}</td>
+      <td>${esc(r.product_type ?? '—')}/${esc(r.family_product ?? '—')}</td>
+      <td class="num">${r.n}</td></tr>`).join('')
+    : '<tr class="empty-row"><td colspan="5">무판정 항목 없음</td></tr>';
+}
+
+function reviewRuleHtml(rule) {
+  const crit = rule.criterion;
+  const gateOk = rule.labeled >= REVIEW.min_labels &&
+                 rule.labeled_ok >= REVIEW.min_per_side &&
+                 rule.labeled_over >= REVIEW.min_per_side;
+  const head = `<b>${esc(rule.id)}</b>
+    <span class="hint">${esc(rule.status_hint || '')}</span>
+    <span class="hint">검수 ${rule.labeled}건 (맞음 ${rule.labeled_ok} ·
+      과다발화 ${rule.labeled_over}) · 미검수 ${rule.pending_total}건</span>`;
+  const critHtml = crit
+    ? `<div class="note">층화 기준 <code>${esc(crit.metric)} ${esc(crit.op)}
+         ${esc(crit.threshold_key)}</code> = ${num(crit.threshold)}</div>`
+    : `<div class="note">${esc(rule.note || '')}</div>`;
+  const rows = (rule.samples || []).map((s) => reviewSampleHtml(rule.id, s)).join('');
+  return `<details class="sig" data-rule="${esc(rule.id)}" open>
+    <summary>${head}</summary>
+    ${critHtml}
+    <div class="table-wrap"><table>
+      <thead><tr><th>항목</th><th class="num">bin</th><th>판정</th>
+        <th class="num">지표</th><th class="num">초과</th><th class="num">cpk</th>
+        <th>검수</th></tr></thead>
+      <tbody>${rows || '<tr class="empty-row"><td colspan="7">미검수 표본 없음</td></tr>'}</tbody>
+    </table></div>
+    <div class="toolbar">
+      <button class="btn" data-proposal="${esc(rule.id)}" ${gateOk ? '' : 'disabled'}>
+        임계값 강화안 계산</button>
+      <span class="hint">${gateOk ? '' :
+        `검수 ${REVIEW.min_labels}건 + 양쪽 각 ${REVIEW.min_per_side}건을 넘어야 계산됩니다`}</span>
+      <span class="msg" data-pmsg="${esc(rule.id)}"></span>
+    </div>
+    <div data-pbox="${esc(rule.id)}"></div>
+  </details>`;
+}
+
+function reviewSampleHtml(ruleId, s) {
+  const link = s.session_id
+    ? `<a href="../report/view/${encodeURIComponent(s.session_id)}?tab=item_detail&item=${
+        encodeURIComponent(s.item || '')}" target="_blank">${esc(s.item)}</a>`
+    : esc(s.item);
+  return `<tr data-eval="${s.eval_id}">
+    <td>${link}<div class="hint">${esc(s.product_name ?? '')} ·
+      ${esc(s.lot_id ?? '')} · ${esc(s.unit ?? '')}</div></td>
+    <td class="num">${s.bin ?? '—'}</td>
+    <td>${esc(s.status ?? '—')}</td>
+    <td class="num">${num(s.metric_value)}</td>
+    <td class="num">${s.exceedance == null ? '—' : (s.exceedance * 100).toFixed(0) + '%'}</td>
+    <td class="num">${num(s.cpk)}</td>
+    <td>
+      <button class="btn" data-lbl="ok" data-eval="${s.eval_id}">맞음</button>
+      <button class="btn" data-lbl="over" data-eval="${s.eval_id}">과다발화</button>
+    </td></tr>`;
+}
+
+// 검수 저장 — 저장 후 목록을 다시 읽어 그 케이스가 표본에서 빠지게 한다.
+$('rvRules').addEventListener('click', async (ev) => {
+  const lbl = ev.target.closest('button[data-lbl]');
+  if (lbl) {
+    const evalId = Number(lbl.dataset.eval);
+    lbl.disabled = true;
+    try {
+      const r = await sendJSON('api/review/label', 'POST',
+        { eval_id: evalId, correct: lbl.dataset.lbl === 'ok' });
+      flash($('rvMsg'), r.golden ? '저장 · 골든셋에도 등록했습니다' : '저장했습니다', true);
+      await loadReview();
+    } catch (e) {
+      lbl.disabled = false;
+      flash($('rvMsg'), '저장 실패: ' + e.message, false);
+    }
+    return;
+  }
+  const prop = ev.target.closest('button[data-proposal]');
+  if (prop) await runProposal(prop.dataset.proposal);
+});
+
+async function runProposal(ruleId) {
+  const s = scope();
+  const msg = $('rvRules').querySelector(`[data-pmsg="${CSS.escape(ruleId)}"]`);
+  const box = $('rvRules').querySelector(`[data-pbox="${CSS.escape(ruleId)}"]`);
+  msg.textContent = '계산 중…';
+  try {
+    const p = await sendJSON('api/review/proposal', 'POST',
+      { signature: ruleId, product_type: s.pt, family_product: s.family });
+    msg.textContent = '';
+    box.innerHTML = proposalHtml(p);
+  } catch (e) {
+    msg.className = 'msg err';
+    msg.textContent = '실패: ' + e.message;
+  }
+}
+
+function proposalHtml(p) {
+  if (p.blocked) return `<div class="note">${esc(p.blocked)}</div>`;
+  const b = p.before, a = p.after;
+  const pct = (v) => (v == null ? '—' : (v * 100).toFixed(0) + '%');
+  const blockedNote = p.apply_blocked
+    ? `<div class="note err">${esc(p.apply_blocked)}</div>` : '';
+  return `<div class="card">
+    <h3>강화안 — <code>${esc(p.threshold_key)}</code>
+      ${num(p.current)} → <b>${num(p.proposed)}</b></h3>
+    <div class="table-wrap"><table>
+      <thead><tr><th></th><th class="num">발화</th><th class="num">맞음 유지</th>
+        <th class="num">과다발화 잔존</th><th class="num">표본 precision</th></tr></thead>
+      <tbody>
+        <tr><td>현재</td><td class="num">${b.fired}</td><td class="num">${b.kept_ok}</td>
+          <td class="num">${b.kept_over}</td><td class="num">${pct(b.precision)}</td></tr>
+        <tr><td>변경 후</td><td class="num">${a.fired}</td><td class="num">${a.kept_ok}</td>
+          <td class="num">${a.kept_over}</td><td class="num">${pct(a.precision)}</td></tr>
+      </tbody>
+    </table></div>
+    <div class="note">${esc(p.note)} 목표 ${pct(p.target_precision)}
+      ${p.meets_target ? '달성' : '<b>미달</b>'} ·
+      제거되는 과다발화 ${p.removed.length}건 · 잃는 맞음 ${p.lost_ok.length}건 ·
+      골든 항목 ${p.golden_expect ?? 0}건</div>
+    ${blockedNote}
+    <div class="toolbar">
+      <button class="btn primary" data-apply="${esc(p.threshold_key)}"
+        data-value="${p.proposed}" ${p.apply_blocked ? 'disabled' : ''}>
+        이 값으로 적용 (백업·감사 기록 남김)</button>
+      <span class="hint">적용은 Thresholds 저장과 같은 경로를 탑니다 —
+        적용 후 검증·백업 탭에서 골든 회귀를 돌려 확인하세요.</span>
+    </div>
+  </div>`;
+}
+
+// 적용 — 기존 Thresholds 저장 API 를 그대로 탄다(백업·rules_rev·낙관적 잠금·감사 로그).
+$('rvRules').addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('button[data-apply]');
+  if (!btn) return;
+  const key = btn.dataset.apply, value = Number(btn.dataset.value);
+  const s = scope();
+  // 패널은 제품군 오버레이만 저장한다 — 기준값(전 제품 공통)은 읽기 전용이라
+  // 여기서 적용하면 400 이 난다. 그 사실을 눌러 보기 전에 알려 준다.
+  if (!s.pt) {
+    flash($('rvMsg'), '상단 편집 범위에서 제품군을 먼저 고르세요 — ' +
+      '기준값(전 제품 공통)은 이 화면에서 저장하지 않습니다', false);
+    return;
+  }
+  if (!confirm(`${s.pt}/${s.family || '_default'} 범위에 ${key} 를 ${value} 로 ` +
+               '저장합니다. 계속할까요?')) return;
+  btn.disabled = true;
+  try {
+    // overrides 는 기존 오버레이에 **병합**된다(save_thresholds) — 한 키만 보내도
+    // 그 범위의 다른 임계값은 지워지지 않는다.
+    await sendJSON('api/thresholds', 'PUT', editBody({
+      pt: s.pt, family: s.family, overrides: { [key]: value },
+      reason: '표본 검수 기반 강화안 적용',
+    }));
+    flash($('rvMsg'), `${key} = ${value} 저장 완료 — 골든 회귀를 돌려 확인하세요`, true);
+  } catch (e) {
+    btn.disabled = false;
+    flash($('rvMsg'), '적용 실패: ' + e.message, false);
+  }
+});
+
+$('rvRefresh').addEventListener('click', loadReview);
+$('rvCollect').addEventListener('click', async () => {
+  const sid = $('rvSession').value.trim();
+  if (!sid) { flash($('rvMsg'), '세션 ID 를 입력하세요', false); return; }
+  flash($('rvMsg'), '수집 중…', true);
+  try {
+    const r = await sendJSON('api/review/collect-session', 'POST',
+      { session_id: sid, wait: true });
+    flash($('rvMsg'), `수집 완료 — 소스 ${r.collected ?? 0}개 / case ${r.cases ?? 0}건`, true);
+    await loadReview();
+  } catch (e) {
+    flash($('rvMsg'), '수집 실패: ' + e.message, false);
+  }
+});
+
 const TAB_LOADERS = {
   pThresholds: loadThresholds,
   pSignatures: async () => { await Promise.all([loadSignatures(), loadExclusions()]); },
   pTrace: loadSessions,
+  pReview: loadReview,
   pEval: loadEvalTab,
   pScoring: loadScoring,
   pMaint: () => { renderFiles(); loadBackups(); loadGoldenInfo(); },
@@ -2111,6 +2352,9 @@ function reloadScopedTabs() {
   $('scFam').dataset.prev = $('scFam').value;
   if (loaded.has('pThresholds')) loadThresholds();
   if (loaded.has('pSignatures')) loadSignatures();
+  // 표본함도 범위를 따른다 — 다른 제품군의 표본을 그대로 두면 "이 범위 값" 이 아닌
+  // 임계값 기준으로 층화된 표본을 검수하게 된다.
+  if (loaded.has('pReview')) loadReview();
 }
 
 $('scPt').addEventListener('change', () => onScopeChange($('scPt')));

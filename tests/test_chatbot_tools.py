@@ -439,6 +439,66 @@ def test_answer_web():
     print("[OK] (k) answer_web — 링크/선택지/컨텍스트 주입 + answer() 계약 유지")
 
 
+# ── (l) 근거 기반 재분류 / 세션 메타 / taxonomy 부재 ────────────────────────
+def test_evidence_reclassify():
+    """규칙이 catch-all 로 item_history 를 찍어도, 데이터가 세션이면 바로잡는다.
+
+    골든셋에 넣을 수 없는 검증이다 — 결과가 DB 내용에 달려 있어 환경마다 달라진다.
+    """
+    # S3222 세션은 있지만 'S3222' 라는 item 은 없다. weak 경로를 타게 이력 어휘를 뺀다.
+    plan = planner.rule_plan("LOT1 있어?")
+    assert plan.intent == "item_history" and plan.weak, plan
+    out = agent.answer_web("LOT1 있어?", viewer=UPLOADER, use_llm=False)
+    assert out["plan"]["intent"] == "session_find", out["plan"]
+    assert out["web"]["links"], out["web"]
+    print("[OK] (l) 근거 재분류 — item 0건이면 세션 자유검색 결과로 교정")
+
+    # 반대: 진짜 item 이면 재분류하지 않는다
+    keep = agent.answer_web("SGM_TRIM_CHECK 있어?", viewer=UPLOADER, use_llm=False)
+    assert keep["plan"]["intent"] == "item_history", keep["plan"]
+    print("[OK] (l) item 축에 근거가 있으면 그대로 유지")
+
+
+def test_session_meta():
+    res = tools_report.get_session_detail("S1", viewer=UPLOADER)
+    keys = {f["key"] for f in res["fields"]}
+    assert "product" in keys and "uploaded_by" in keys, res
+    # 화이트리스트 — 민감/내부 컬럼은 절대 나가지 않는다
+    assert not ({"password", "file_path", "analysis_key"} & keys), keys
+    assert tools_report.get_session_detail("S2", viewer=OTHER)["error"] == "session_not_found"
+
+    out = agent.answer_web("이 세션 누가 올렸어?", viewer=UPLOADER, use_llm=False,
+                           context_session_id="S1")
+    assert out["plan"]["intent"] == "session_meta", out["plan"]
+    assert out["text"].startswith("업로더:"), out["text"][:60]
+    print("[OK] (l) session_meta — 화이트리스트 + 질문이 짚은 필드를 맨 앞에")
+
+
+def test_taxonomy_absent():
+    """taxonomy 로드 실패(웹 import 불가)에도 **intent 는 흔들리지 않는다**.
+
+    스코프만 넓어질 뿐 분류가 바뀌면 같은 질문이 환경마다 다르게 동작하게 된다.
+    """
+    real = planner.taxonomy
+    planner.taxonomy = lambda: {}
+    try:
+        assert planner.rule_plan("PMIC SOC 에 SGM 항목 예전 이력").intent == "item_history"
+        assert planner.rule_plan("S3222 보고서 찾아줘").intent == "session_find"
+        assert planner.rule_plan("안녕").intent == "help"
+    finally:
+        planner.taxonomy = real
+    print("[OK] (l) taxonomy 부재 — intent 불변(스코프만 손실)")
+
+
+def test_llm_gate():
+    """규칙이 확신한 계획은 LLM 을 부르지 않는다(처리량 보호)."""
+    strong = planner.rule_plan("S3222 보고서에서 LDO 이슈 어떻게 close 됐어?")
+    assert not planner._needs_llm(strong), strong
+    for q in ("어제 뭐 했더라", "IW06 있어?"):
+        assert planner._needs_llm(planner.rule_plan(q)), q
+    print("[OK] (l) LLM 게이트 — 약한 계획에서만 호출")
+
+
 def main():
     setup()
     test_rowkey()
@@ -452,6 +512,10 @@ def main():
     test_rule_plan()
     test_metrics_branches()
     test_answer_web()
+    test_evidence_reclassify()
+    test_session_meta()
+    test_taxonomy_absent()
+    test_llm_gate()
     print("\n전부 통과")
 
 

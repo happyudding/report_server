@@ -117,6 +117,155 @@
   expect_intent: stats
   expect_tools: [stats_summary]
 
+# ── item 목록 (제품군에 무슨 항목이 있나) ───────────────────────────────────
+- question: "PMIC SOC 에 무슨 Item 있어"
+  expect_intent: item_search
+  expect_tools: [search_item_candidates]
+
+- question: "PMIC 에 어떤 항목들 있어?"
+  expect_intent: item_search
+  expect_tools: [search_item_candidates]
+
+- question: "TCON 에 어떤 아이템 종류 있어?"
+  expect_intent: item_search
+  expect_tools: [search_item_candidates]
+
+- question: "PDDI LCD 항목 목록 뭐가 있어?"
+  expect_intent: item_search
+  expect_tools: [search_item_candidates]
+
+# 반대편 앵커 — item_search 가 item_history 를 훔치지 않는다 (items·이력어휘가 막는다)
+- question: "PMIC SOC 에 SGM 항목 예전 이력"
+  expect_intent: item_history
+  expect_tools: [search_item_candidates]
+
+# ── 세션 메타 (컨텍스트 세션이 있을 때만) ───────────────────────────────────
+- question: "이 세션 누가 올렸어?"
+  context_session_id: "gold-ctx"
+  expect_intent: session_meta
+  expect_tools: [get_session_detail]
+
+- question: "온도 몇 도야?"
+  context_session_id: "gold-ctx"
+  expect_intent: session_meta
+  expect_tools: [get_session_detail]
+
+- question: "언제 올렸어"
+  context_session_id: "gold-ctx"
+  expect_intent: session_meta
+  expect_tools: [get_session_detail]
+
+- question: "이 세션 공정이랑 리비전 뭐야?"
+  context_session_id: "gold-ctx"
+  expect_intent: session_meta
+  expect_tools: [get_session_detail]
+
+# 앵커 — 세션을 열어도 코멘트 질문은 comment_search, 수율은 session_metrics 여야 한다
+- question: "온도 올라갈 때 튀던 현상 코멘트 찾아줘"
+  context_session_id: "gold-ctx"
+  expect_intent: comment_search
+  expect_tools: [search_comments]
+
+- question: "이 세션 수율 어때?"
+  context_session_id: "gold-ctx"
+  expect_intent: session_metrics
+  expect_tools: []
+
+# ── 도움말·인사 (unknown 으로 빠지지 않는다) ────────────────────────────────
+- question: "안녕"
+  expect_intent: help
+  expect_tools: []
+
+- question: "뭐 할 수 있어?"
+  expect_intent: help
+  expect_tools: []
+
+- question: "도움말"
+  expect_intent: help
+  expect_tools: []
+
+# ── 세션 존재 확인 / 짧은 제품·로트 코드 ────────────────────────────────────
+- question: "IW06 세션 있어?"
+  expect_intent: session_find
+  expect_tools: [search_sessions]
+
+- question: "P1 보고서 찾아줘"
+  expect_intent: session_find
+  expect_tools: [search_sessions]
+
+- question: "LOT1 리포트 있나?"
+  expect_intent: session_find
+  expect_tools: [search_sessions]
+
+- question: "S3222 보고서 있는지 확인해줘"
+  expect_intent: session_find
+  expect_tools: [search_sessions]
+
+# 앵커 — 존재확인 어휘가 product_search 를 훔치지 않는다(_REPORT_KW 가 없으면 7번 불성립).
+# ⚠ 제품 코드 모양(영문+숫자 3자리 이상)이어야 product 로 인식된다 — IW06 같은 짧은 코드는
+#   설계상 product 가 아니라 자유검색(q) 으로 푼다(_PRODUCT_RE 완화 금지).
+- question: "KTD2026 이라는 제품 평가한 적 있어?"
+  expect_intent: product_search
+  expect_tools: [search_products]
+
+# ── 시간축 ──────────────────────────────────────────────────────────────────
+- question: "최근에 올라온 보고서 보여줘"
+  expect_intent: session_find
+  expect_tools: [search_sessions]
+
+- question: "어제 올라온 세션 목록"
+  expect_intent: session_find
+  expect_tools: [search_sessions]
+
+- question: "이번주에 올린 리포트 있어?"
+  expect_intent: session_find
+  expect_tools: [search_sessions]
+
+- question: "오늘 업로드된 보고서 찾아줘"
+  expect_intent: session_find
+  expect_tools: [search_sessions]
+
+# ── 이슈·증상 어휘 확장 ─────────────────────────────────────────────────────
+- question: "고온에서 문제된 적 있어?"
+  expect_intent: comment_search
+  expect_tools: [search_comments]
+
+- question: "에러 났던 케이스 코멘트 찾아줘"
+  expect_intent: comment_search
+  expect_tools: [search_comments]
+
+- question: "S3222 에서 문제된 항목 알려줘"
+  expect_intent: session_issue
+  expect_tools: [search_sessions]
+
+- question: "이 세션에 이상동작 있었어?"
+  context_session_id: "gold-ctx"
+  expect_intent: session_issue
+  expect_tools: []
+
+# ── family 짧은 이름 오탐 (슬롯 회귀 — expect_plan) ─────────────────────────
+# 소문자 "if" 는 family_product 'IF' 로 잡히면 안 된다(조회 범위가 잘못 좁아진다).
+# ⚠ "이력" 을 넣어 weak=False 로 만든 것은 의도적이다 — weak 이면 근거 재분류가 돌아
+#   실DB 내용에 따라 intent 가 달라져(데이터 의존) 골든이 흔들린다.
+- question: "if 조건 이력 알려줘"
+  expect_intent: item_history
+  expect_tools: [search_item_candidates]
+  expect_plan: {family_product: null}
+
+- question: "TV 제품군 항목 목록 뭐 있어?"
+  expect_intent: item_search
+  expect_tools: [search_item_candidates]
+  expect_plan: {family_product: "TV"}
+
+# ── 광역 폴백 (intent 는 unknown 유지 · 툴은 늘어도 통과) ───────────────────
+- question: "ㅁㄴㅇㄹ"
+  expect_intent: unknown
+  expect_tools: []
+
+- question: "그거 있잖아 그거"
+  expect_intent: unknown
+  expect_tools: []
+
 # ── 알 수 없음 (지어내지 않고 되물어야 한다) ────────────────────────────────
 - question: "어제 뭐 했더라"
   expect_intent: unknown

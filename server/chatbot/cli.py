@@ -71,27 +71,39 @@ def _golden(path, args):
     import yaml
 
     cases = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or []
-    ok_intent = ok_tools = 0
+    ok_intent = ok_tools = ok_plan = 0
     for i, case in enumerate(cases, 1):
         question = case["question"]
-        result = agent.answer(question, viewer=args.viewer,
-                              see_all_private=args.master, use_llm=not args.no_llm)
+        # answer_web 을 쓰는 이유: 세션 컨텍스트 분기(session_meta 등)를 골든으로 검증하려면
+        # context_session_id 를 넘길 수 있어야 한다. 반환 키는 answer() 의 상위집합이라
+        # 아래 채점 코드는 그대로다.
+        result = agent.answer_web(question, viewer=args.viewer,
+                                  see_all_private=args.master, use_llm=not args.no_llm,
+                                  context_session_id=case.get("context_session_id"))
         intent = result["plan"]["intent"]
         tools = [s["tool"] for s in result["steps"]]
         intent_ok = intent == case.get("expect_intent")
         want_tools = case.get("expect_tools") or []
         tools_ok = all(t in tools for t in want_tools)
+        # expect_plan: 슬롯 회귀용(있을 때만 비교). family 오탐처럼 intent 는 그대로인데
+        # 조회 범위만 틀어지는 회귀는 이것으로만 잡힌다.
+        want_plan = case.get("expect_plan") or {}
+        plan_ok = all(result["plan"].get(k) == v for k, v in want_plan.items())
         ok_intent += intent_ok
         ok_tools += tools_ok
-        mark = "OK " if (intent_ok and tools_ok) else "FAIL"
+        ok_plan += plan_ok
+        mark = "OK " if (intent_ok and tools_ok and plan_ok) else "FAIL"
         print(f"[{mark}] {i:2d}. {question}")
         if not intent_ok:
             print(f"         intent: {intent} (기대 {case.get('expect_intent')})")
         if not tools_ok:
             print(f"         tools : {tools} (기대 포함 {want_tools})")
+        if not plan_ok:
+            got = {k: result["plan"].get(k) for k in want_plan}
+            print(f"         plan  : {got} (기대 {want_plan})")
     total = len(cases)
-    print(f"\nintent {ok_intent}/{total} · tools {ok_tools}/{total}")
-    return 0 if (ok_intent == total and ok_tools == total) else 1
+    print(f"\nintent {ok_intent}/{total} · tools {ok_tools}/{total} · plan {ok_plan}/{total}")
+    return 0 if (ok_intent == total and ok_tools == total and ok_plan == total) else 1
 
 
 def main(argv=None):

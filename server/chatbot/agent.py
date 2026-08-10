@@ -34,7 +34,7 @@ class AnswerFailed(Exception):
 
 # 세션 상세 패널에서 온 질문의 "이 세션" 을 붙일 intent — 규칙 폴백은 컨텍스트를 모르므로
 # 여기서 사후 주입한다.
-_SESSION_INTENTS = ("session_issue", "session_metrics", "page_jump")
+_SESSION_INTENTS = ("session_issue", "session_metrics", "page_jump", "session_meta")
 
 # 세션 바로가기 URL. 같은 페이지 안에서의 이동은 url 이 아니라 action 으로 내보낸다.
 _VIEW_URL = "/pe/report/view/{sid}"
@@ -84,6 +84,9 @@ def _run(question, *, viewer, see_all_private, use_llm, context_session_id=None)
         "session_metrics": _session_metrics,
         "page_jump": _page_jump,
         "stats": _stats,
+        "item_search": _item_search,
+        "session_meta": _session_meta,
+        "help": _help,
     }.get(plan.intent, _unknown)
 
     try:
@@ -231,6 +234,17 @@ def _item_history(plan, ctx):
                       product_type=plan.product_type, family_product=plan.family_product,
                       limit=30)
     data["session_hits"] = hits
+
+    # 근거 기반 재분류 — 규칙이 "영문 토큰이 있으니 item 이겠지"로 찍었는데(weak) item 축에
+    # 아무것도 없으면, 그 토큰을 세션 자유검색에 던져 본다. "IW06 있어?" 처럼 제품/lot/파일명은
+    # 맞는데 item 은 아닌 경우가 여기서 바로잡힌다. 모양이 아니라 데이터가 판정한다.
+    if plan.weak and not items and not hits.get("hits"):
+        alt = trace.call(tools_report.search_sessions, q=keyword, viewer=ctx["viewer"],
+                         see_all_private=ctx["see_all_private"], limit=20)
+        if alt.get("sessions"):
+            plan.intent = "session_find"      # 응답·관리자 로그가 사실과 일치하게
+            return _render_sessions(alt, ctx, plan)
+
     lines.append("")
     if hits.get("hits"):
         lines.append(f"[세션 기록] \"{keyword}\" 관련 이슈 {len(hits['hits'])}건 "
@@ -353,22 +367,39 @@ def _comment_search(plan, ctx):
 
 
 def _session_find(plan, ctx):
-    """조건에 맞는 평가 세션을 찾아 바로가기를 준다 — "S3222 보고서 찾아줘"."""
+    """조건에 맞는 평가 세션을 찾아 바로가기를 준다 — "S3222 보고서 찾아줘".
+
+    제품·lot 이 없으면 남은 토큰을 자유검색(q)으로 넘긴다 — `q` 는 lot_id·file_name·
+    session_id·uploaded_by 등 10컬럼을 훑으므로 "IW06 세션 있냐?" 처럼 제품 코드처럼 안 생긴
+    문자열도 여기서 걸린다(규칙이 모양으로 못 알아본 것을 DB 가 알아본다).
+    """
     trace = ctx["trace"]
+    free = None
+    if not plan.product and not plan.lot_id:
+        free = (plan.item_keywords[0] if plan.item_keywords else None) or plan.session_id
     found = trace.call(tools_report.search_sessions, viewer=ctx["viewer"],
                        see_all_private=ctx["see_all_private"],
-                       product=plan.product, lot_id=plan.lot_id, limit=20)
+                       product=plan.product, lot_id=plan.lot_id, q=free,
+                       date_from=plan.date_from, date_to=plan.date_to, limit=20)
     sessions = found.get("sessions") or []
     if not sessions and (plan.product or plan.lot_id):
         found = trace.call(tools_report.search_sessions, viewer=ctx["viewer"],
                            see_all_private=ctx["see_all_private"],
-                           q=plan.product or plan.lot_id, limit=20)
+                           q=plan.product or plan.lot_id,
+                           date_from=plan.date_from, date_to=plan.date_to, limit=20)
         sessions = found.get("sessions") or []
     if not sessions:
-        cond = plan.product or plan.lot_id or plan.normalized_question
-        return f"\"{cond}\" 로 찾은 평가 세션이 없습니다.", {}
+        cond = plan.product or plan.lot_id or free or plan.normalized_question
+        period = _period_text(plan)
+        return f"\"{cond}\" 로 찾은 평가 세션이 없습니다{period}.", {}
+    return _render_sessions(found, ctx, plan)
 
-    lines = [f"세션 {found.get('total', len(sessions))}건 중 {len(sessions[:10])}건:"]
+
+def _render_sessions(found, ctx, plan=None):
+    """세션 목록 렌더 — `_session_find` 와 근거 재분류(`_item_history`)가 공유한다."""
+    sessions = found.get("sessions") or []
+    lines = [f"세션 {found.get('total', len(sessions))}건 중 {len(sessions[:10])}건"
+             f"{_period_text(plan)}:"]
     for s in sessions[:10]:
         lines.append(f"  - {_session_line(s)}")
         _link(ctx, s["session_id"],
@@ -382,6 +413,14 @@ def _session_find(plan, ctx):
         _choice(ctx, "이슈 보기", f"세션 {sid} 의 이슈 알려줘")
         _choice(ctx, "수율 보기", f"세션 {sid} 의 수율 알려줘")
     return "\n".join(lines), {"sessions": sessions}
+
+
+def _period_text(plan):
+    if plan is None or plan.date_from is None:
+        return ""
+    if plan.date_to:
+        return f" ({_date(plan.date_from)} ~ {_date(plan.date_to)})"
+    return f" ({_date(plan.date_from)} 이후)"
 
 
 def _session_metrics(plan, ctx):
@@ -477,6 +516,135 @@ def _stats(plan, ctx):
         _choice(ctx, "제품별로 보기", "제품별 건수 알려줘")
     return "\n".join(lines), {"stats": res}
 
+
+def _item_search(plan, ctx):
+    """"이 제품군에 무슨 항목이 있나" — eval.db 의 item 목록.
+
+    ⚠ eval.db 에는 **이슈 코멘트가 달린 item 만** 쌓인다(적재 경로가 코멘트 export 뿐).
+    그래서 "전체 측정항목"이 아니라는 범위를 답변에 반드시 밝힌다 — 지어내지 않는다 원칙.
+    """
+    scope = " / ".join(x for x in (plan.product_type, plan.family_product) if x) or "전체"
+    res = ctx["trace"].call(tools_eval.search_item_candidates, item_keyword="",
+                            product_type=plan.product_type,
+                            family_product=plan.family_product, limit=30)
+    items = res.get("items") or []
+    if not items:
+        if not res.get("db_available"):
+            # eval.db 가 없고 세션이 열려 있으면 그 세션의 측정항목으로 답한다(범위가 다르다).
+            if plan.session_id:
+                return _item_search_from_session(plan, ctx, scope)
+            return (f"[eval DB] 없음 — {res.get('db_path')} (항목 목록을 낼 데이터가 없습니다)",
+                    {"items": res})
+        return f"{scope} 에서 이슈 이력이 있는 항목을 찾지 못했습니다.", {"items": res}
+
+    lines = [f"{scope} — 이슈 코멘트가 남은 항목 {len(items)}개 (사례 많은 순):"]
+    for it in items:
+        products = ", ".join(it.get("products_sample") or []) or "-"
+        lines.append(f"  - {it['item_canonical']} ({it.get('value_type') or '?'}) "
+                     f"— case {it.get('cases', 0)}건 / 제품 {products}")
+    lines.append("  ※ 이슈 코멘트가 달린 항목 기준입니다 — 측정만 되고 이슈가 없던 항목은 "
+                 "여기 없습니다.")
+    for it in items[:8]:
+        _choice(ctx, it["item_canonical"], f"{it['item_canonical']} 항목 이력 알려줘")
+    return "\n".join(lines), {"items": res}
+
+
+def _item_search_from_session(plan, ctx, scope):
+    """eval.db 가 없을 때의 폴백 — 열려 있는 세션의 측정항목(CPK subject)."""
+    listing = ctx["trace"].call(tools_metrics.list_items, session_id=plan.session_id,
+                                viewer=ctx["viewer"],
+                                see_all_private=ctx["see_all_private"], limit=50)
+    guard = _metrics_guard(listing, ctx, plan.session_id)
+    if guard is not None:
+        return guard, {"items": listing}
+    names = listing.get("items") or []
+    if not names:
+        return "이 세션에서 측정 항목을 찾지 못했습니다.", {"items": listing}
+    lines = [f"eval DB 가 없어 **열려 있는 세션 기준**으로 답합니다 — 측정 항목 {len(names)}개:"]
+    lines += [f"  - {n}" for n in names]
+    return "\n".join(lines), {"items": listing}
+
+
+def _session_meta(plan, ctx):
+    """세션 자체의 메타 — 누가·언제 올렸나, 온도·공정·설비·패키지 등."""
+    sid, pending = _resolve_session(plan, ctx, "세션 정보 알려줘")
+    if pending is not None:
+        return pending, {"sessions": ctx.get("_candidates") or []}
+    res = ctx["trace"].call(tools_report.get_session_detail, session_id=sid,
+                            viewer=ctx["viewer"], see_all_private=ctx["see_all_private"])
+    if res.get("error") == "session_not_found":
+        return "해당 세션을 찾을 수 없습니다(또는 조회 권한이 없습니다).", {"detail": res}
+    if res.get("error"):
+        return "삭제되었거나 아직 처리 중인 세션입니다.", {"detail": res}
+
+    fields = res.get("fields") or []
+    by_key = {f["key"]: f for f in fields}
+    lines = []
+    # 질문이 특정 필드를 짚었으면 그 한 줄을 먼저 — "온도 몇 도야?" 에 표부터 들이밀지 않는다.
+    asked = [k for k, words in _META_FIELD_HINTS
+             if any(w in plan.normalized_question for w in words) and k in by_key]
+    for key in asked:
+        lines.append(f"{by_key[key]['label']}: {_meta_value(by_key[key])}")
+    if asked:
+        lines.append("")
+    lines.append("세션 정보:")
+    for f in fields:
+        lines.append(f"  - {f['label']}: {_meta_value(f)}")
+    _link(ctx, sid, "보고서 열기")
+    _choice(ctx, "이슈 보기", f"세션 {sid} 의 이슈 알려줘")
+    _choice(ctx, "수율 보기", f"세션 {sid} 의 수율 알려줘")
+    return "\n".join(lines), {"detail": res}
+
+
+# 질문 어휘 → 세션 메타 필드. 짚은 필드를 답변 맨 앞에 올리는 용도일 뿐이라 빗나가도 무해하다.
+_META_FIELD_HINTS = (
+    ("uploaded_by", ("누가", "올렸", "업로더", "작성자")),
+    ("created_at", ("언제", "날짜", "시각")),
+    ("temperature", ("온도", "몇 도", "몇도")),
+    ("process", ("공정",)),
+    ("equip", ("설비", "장비")),
+    ("pkg_type", ("패키지",)),
+    ("gross_die", ("gross die", "die 수")),
+    ("revision", ("리비전", "revision")),
+    ("step", ("step",)),
+    ("file_name", ("파일명",)),
+)
+
+
+def _meta_value(field):
+    if field["key"] == "created_at":
+        return _date(field["value"])
+    return field["value"]
+
+
+def _help(plan, ctx):
+    """인사·도움말 — 무엇을 물을 수 있는지 보여주고 예시를 클릭 가능하게 준다."""
+    for label, question in _EXAMPLES:
+        _choice(ctx, label, question)
+    return ("\n".join([
+        "web_report 세션과 과거 평가 이력을 자연어로 찾아 드립니다. 이런 걸 물어보세요:",
+        "  · 보고서 찾기      \"S3222 보고서 찾아줘\" · \"어제 올라온 세션 목록\"",
+        "  · 세션 정보        \"이 세션 누가 올렸어?\" · \"온도 몇 도야?\"",
+        "  · 수치             \"이 세션 수율 어때?\" · \"cpk 안 좋은 항목\" · \"VDD_INT 측정값\"",
+        "  · 이슈·코멘트      \"S3222 이슈 어떻게 close 됐어?\" · \"고온에서 문제된 적 있어?\"",
+        "  · 항목 이력        \"PMIC SOC 에 무슨 Item 있어\" · \"SGM 항목 이력\"",
+        "  · 집계             \"PMIC 에 MAJOR 몇 건?\" · \"제품별 건수\"",
+        "  · 화면 이동        \"맵 열어줘\" · \"VDD_INT 상세 보여줘\"",
+        "",
+        "아직 못 하는 것: 세션 A 와 B 를 직접 비교하는 것(각각 물어보셔야 합니다), "
+        "데이터 수정·삭제(조회 전용입니다).",
+    ]), {})
+
+
+# `help` 와 광역 폴백이 공유하는 예시 — 한 곳에서만 고친다.
+_EXAMPLES = (
+    ("보고서 찾기", "S3222 보고서 찾아줘"),
+    ("최근 세션", "최근에 올라온 보고서 보여줘"),
+    ("항목 목록", "PMIC SOC 에 무슨 Item 있어"),
+    ("항목 이력", "SGM 항목 이력 알려줘"),
+    ("집계", "제품별 건수 알려줘"),
+    ("코멘트 검색", "고온에서 문제된 적 있어?"),
+)
 
 _AXIS_LABEL = {"status": "판정", "product": "제품", "product_type": "제품 타입",
                "family_product": "제품군", "item": "항목", "item_class": "항목 분류",
@@ -627,13 +795,65 @@ def _num(value):
 
 
 def _unknown(plan, ctx):
-    return ("무엇을 찾을지 파악하지 못했습니다. 다음처럼 물어보세요:\n"
-            "  - \"PMIC SOC 에 SGM 들어가는 항목 이력\"\n"
-            "  - \"S3222 보고서에서 LDO 이슈 어떻게 close 됐어?\"\n"
-            "  - \"S3222 라는 제품 있었어?\"\n"
-            "  - \"S3222 보고서 찾아줘\" / \"이 세션 수율 알려줘\"\n"
-            "  - \"VDD_INT 상세 보여줘\" / \"맵 열어줘\"\n"
-            "  - \"PMIC 에 MAJOR 몇 건이야?\" / \"제품별 건수 알려줘\"", {})
+    """분류 실패 — **"모르겠다"로 끝내지 않는다.**
+
+    질문에서 건진 토큰을 세션·item·코멘트 세 축에 던져 "무엇으로 걸리는지"를 보여준다.
+    의도를 못 맞혀도 사용자는 다음 클릭을 할 수 있다. 토큰도 기간도 없으면 그때만 안내문.
+    """
+    token = (plan.item_keywords[0] if plan.item_keywords else None) or plan.product \
+        or plan.lot_id
+    if not token and plan.date_from is None:
+        return _help(plan, ctx)
+
+    trace = ctx["trace"]
+    data, found = {}, []
+
+    sess = trace.call(tools_report.search_sessions, q=token, viewer=ctx["viewer"],
+                      see_all_private=ctx["see_all_private"],
+                      date_from=plan.date_from, date_to=plan.date_to, limit=5)
+    # `sessions` 키에는 **행 리스트**를 담는다 — _derive_links 가 그 규약으로 읽는다
+    # (봉투 dict 를 그대로 넣으면 키 문자열을 순회하게 된다).
+    data["sessions"] = sess.get("sessions") or []
+    n_sess = len(data["sessions"])
+    if n_sess:
+        found.append(f"세션 {sess.get('total', n_sess)}건")
+
+    n_item = n_comment = 0
+    if token:
+        cand = trace.call(tools_eval.search_item_candidates, item_keyword=token, limit=5)
+        data["candidates"] = cand
+        n_item = len(cand.get("items") or [])
+        if n_item:
+            found.append(f"항목 {n_item}개")
+        com = trace.call(tools_eval.search_comments, keyword=token, limit=5)
+        data["comments"] = com
+        n_comment = len(com.get("comments") or [])
+        if n_comment:
+            found.append(f"코멘트 {n_comment}건")
+
+    label = f"\"{token}\"" if token else _period_text(plan).strip(" ()")
+    if not found:
+        lines = [f"{label} 로는 세션·항목·코멘트 어디에서도 찾지 못했습니다.",
+                 "다르게 물어보시려면 아래를 눌러 보세요."]
+        for text, question in _EXAMPLES:
+            _choice(ctx, text, question)
+        return "\n".join(lines), data
+
+    lines = [f"{label} 로 찾은 것: {' / '.join(found)}"]
+    for s in data["sessions"][:5]:
+        lines.append(f"  - {_session_line(s)}")
+        _link(ctx, s["session_id"],
+              f"보고서 열기: {s.get('product') or '?'} / lot {s.get('lot_id') or '-'}")
+    for it in (data.get("candidates", {}).get("items") or [])[:5]:
+        lines.append(f"  - [항목] {it['item_canonical']} — case {it.get('cases', 0)}건")
+    # 걸린 축만 후속 버튼으로 — 없는 축을 눌러 빈 결과를 보게 하지 않는다.
+    if n_sess:
+        _choice(ctx, "세션 더 보기", f"{token} 보고서 찾아줘")
+    if n_item:
+        _choice(ctx, "항목 이력 보기", f"{token} 항목 이력 알려줘")
+    if n_comment:
+        _choice(ctx, "코멘트 보기", f"{token} 코멘트 찾아줘")
+    return "\n".join(lines), data
 
 
 # ── 포맷 ─────────────────────────────────────────────────────────────────────

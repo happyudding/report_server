@@ -24,7 +24,7 @@ _ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from eval_panel import golden_io, rules_io, trace_store          # noqa: E402
+from eval_panel import golden_io, review, rules_io, trace_store  # noqa: E402
 from tools.eval_golden import golden_check            # noqa: E402  (CLI 와 같은 대조 로직)
 from web_report import eval_debug                     # noqa: E402
 
@@ -702,6 +702,112 @@ def api_golden_add():
                            f"replaced={saved['replaced']}"])
     saved["ok"] = True
     return jsonify(saved)
+
+
+# ── Eval 표본함 (룰별 소수 표본 검수 → 승인형 임계값 추천) ────────────────────
+
+@eval_panel_bp.get("/api/review/queue")
+def api_review_queue():
+    """활성 룰별 미검수 표본(룰당 최대 8건) + 무판정 목록 + 검수 진행."""
+    try:
+        return jsonify({"ok": True, **review.queue(
+            (request.args.get("product_type") or "").strip() or None,
+            (request.args.get("family_product") or "").strip() or None)})
+    except review.ReviewError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:
+        _log.exception("표본함 조회 실패")
+        return jsonify({"ok": False, "error": f"{type(exc).__name__}: {exc}"}), 500
+
+
+@eval_panel_bp.post("/api/review/label")
+def api_review_label():
+    """검수 1건 저장 — 맞음/과다발화. "맞음" 은 골든셋에도 굳힌다.
+
+    골든셋 자동 등록이 핵심이다: 임계값 강화는 recall 을 반드시 떨어뜨리는데, 그걸 막는
+    가드가 골든 회귀뿐인데 골든셋이 비어 있으면 항상 통과해 무효가 된다. 사람이 "맞다" 고
+    한 발화가 곧 "유지돼야 한다" 이므로 그대로 기대값이 된다.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    eval_id = body.get("eval_id")
+    if not isinstance(eval_id, int):
+        return jsonify({"ok": False, "error": "eval_id(정수) 필요"}), 400
+    if not isinstance(body.get("correct"), bool):
+        return jsonify({"ok": False, "error": "correct(true=맞음 / false=과다발화) 필요"}), 400
+    correct = bool(body["correct"])
+    try:
+        saved = review.save_review_label(
+            eval_id, correct=correct, comment=str(body.get("comment") or ""),
+            reviewer=str(request.headers.get("X-Admin-User") or "eval-panel"))
+    except review.ReviewError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    saved["golden"] = None
+    if correct:
+        # 골든 등록 실패가 검수 저장을 되돌리면 안 된다 — 라벨은 이미 저장됐다.
+        try:
+            entry = review.golden_entry_for(eval_id)
+            if entry:
+                saved["golden"] = golden_io.add_case(
+                    entry["session_id"], "표본 검수에서 '맞음' 으로 확정", entry["case"])
+        except Exception:
+            _log.warning("골든셋 자동 등록 실패 (eval_id=%s)", eval_id, exc_info=True)
+    _audit("eval_review_label",
+           changed_fields=[f"eval_id={eval_id}", f"correct={correct}",
+                           f"golden={bool(saved['golden'])}"])
+    saved["ok"] = True
+    return jsonify(saved)
+
+
+@eval_panel_bp.post("/api/review/collect-session")
+def api_review_collect():
+    """지정 세션의 평가 스냅샷 수집 — 기존 세션은 자동 백필하지 않으므로 여기서 채운다.
+
+    큐에 올리고 바로 돌려준다(수집은 콜드 tables 로드를 포함해 수 초). eval_export 의
+    단일 소비자 큐를 그대로 쓰므로 코멘트 export 와 같은 DB 파일에 순차로 쓴다.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    session_id = str(body.get("session_id") or "").strip()
+    if not _SESSION_ID_RE.match(session_id):
+        return jsonify({"ok": False, "error": "session_id 형식 오류"}), 400
+    if report_db.get_session(session_id) is None:
+        return jsonify({"ok": False, "error": f"세션 없음: {session_id}"}), 404
+    from web_report import eval_export
+    if body.get("wait"):          # 소수 세션을 손으로 채울 때 결과를 바로 보고 싶은 경우
+        result = eval_export.safe_collect_snapshot(
+            session_id, report_db=report_db,
+            upload_root=Path(config.REPORT_UPLOAD_DIR), force=bool(body.get("force")))
+    else:
+        eval_export.collect_async(session_id, report_db=report_db,
+                                  upload_root=Path(config.REPORT_UPLOAD_DIR))
+        result = {"queued": True}
+    _audit("eval_review_collect", changed_fields=[f"session={session_id}", repr(result)[:200]])
+    return jsonify({"ok": True, "session_id": session_id, **result})
+
+
+@eval_panel_bp.post("/api/review/proposal")
+def api_review_proposal():
+    """검수 라벨 기반 임계값 **강화안** + 전후 영향도. 계산만 하고 적용하지 않는다."""
+    body = request.get_json(force=True, silent=True) or {}
+    signature = str(body.get("signature") or "").strip()
+    if not signature:
+        return jsonify({"ok": False, "error": "signature 필요"}), 400
+    try:
+        result = review.proposal(
+            signature,
+            str(body.get("product_type") or "").strip() or None,
+            str(body.get("family_product") or "").strip() or None)
+    except review.ReviewError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    # 골든셋이 비어 있으면 "회귀 실패 시 차단" 가드가 무효라 적용을 막는다.
+    if not result.get("blocked"):
+        total = sum(len(s.get("expect") or []) for s in golden_io.read_golden()["sessions"])
+        result["golden_expect"] = total
+        if total == 0:
+            result["apply_blocked"] = ("골든셋이 비어 있어 적용을 막습니다 — 회귀 가드가 "
+                                       "항상 통과해 무의미해집니다. 표본을 '맞음' 으로 "
+                                       "검수하면 자동으로 쌓입니다.")
+    return jsonify({"ok": True, **result})
 
 
 @eval_panel_bp.post("/api/golden/check")

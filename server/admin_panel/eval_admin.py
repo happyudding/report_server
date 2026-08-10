@@ -300,7 +300,8 @@ def scoring() -> dict:
             JOIN fail_case fc ON fc.case_id = l.case_id
             LEFT JOIN product_master pm ON pm.product_name = fc.product_name
             LEFT JOIN case_signature cs ON cs.eval_id = ev.eval_id AND cs.role='primary'
-            WHERE l.human_status IS NOT NULL AND ev.status IS NOT NULL""").fetchall()
+            WHERE l.labeler = 'eval-panel'
+              AND l.human_status IS NOT NULL AND ev.status IS NOT NULL""").fetchall()
     finally:
         conn.close()
 

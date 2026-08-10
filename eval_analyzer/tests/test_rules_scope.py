@@ -173,7 +173,10 @@ def test_signature_overlay_changes_firing(tmp_path, monkeypatch):
     _tmp_rules(tmp_path, monkeypatch)
     _write_sig_overlay("PMIC", None, {"OUTLIER_WARN": {"enabled": False}})
 
-    feats, raw = _full_features(outlier_ratio=0.10), {"yield": 0.95, "cpk": 1.5}
+    # outlier_ratio 는 warn(0.02) 은 넘고 bad(0.05) 는 안 넘는 값이어야 한다 — 0.05 를
+    # 넘기면 SEVERE_OUTLIER 가 함께 떠서 OUTLIER_WARN 이 suppressed_by 로 가려지므로
+    # 이 테스트가 보려는 "오버레이 때문에 빠졌나" 와 사유가 섞인다.
+    feats, raw = _full_features(outlier_ratio=0.03), {"yield": 0.95, "cpk": 1.5}
     fired = lambda case: [s["id"] for s in signatures.evaluate(case, feats, raw)["signatures"]]
     assert "OUTLIER_WARN" not in fired(_case())
     assert "OUTLIER_WARN" in fired(_case(product_type="MDDI", family_product="MX"))

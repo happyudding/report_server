@@ -273,6 +273,9 @@ def _subpop_conditions(features, thresholds):
 def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, sig_mod):
     """signature 21개 × (활성/스킵사유/조건분해/발화) 매트릭스."""
     fired_ids = {s["id"] for s in (sig_result.get("signatures") or [])}
+    # 조건은 만족했지만 상위 룰(포함관계)에 가려진 것 — 조건만 보면 "떠야 하는데 안 떴다"
+    # 로 읽히므로 사유를 함께 찍는다.
+    suppressed_by = {row["id"]: row["by"] for row in (sig_result.get("suppressed") or [])}
     excluded = sig_result.get("excluded")
     n_dut = features.get("n_dut") or 0
     high_moment_ok = n_dut >= thresholds.get("n_min", 0)
@@ -301,8 +304,13 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
                       f"modality_v2={features.get('modality_v2') or '—'}")
         elif not high_moment_ok and (set(when) & sig_mod._HIGH_MOMENT_METRICS):
             skip = f"min-n 가드 (n_dut {n_dut} < n_min {thresholds.get('n_min')})"
+        elif sig_id in suppressed_by:
+            branch = (f"조건은 만족했으나 {', '.join(suppressed_by[sig_id])} 발화에 가려짐 "
+                      "(suppressed_by — 같은 현상의 약한 표현이라 중복 제거)")
+        # 조건행은 그 룰이 실제로 쓰는 판정 경로로 그린다 — SUBPOP_GAP 만 when_metric 이
+        # 아니라 modality_v2 체인이고, 나머지는(억제된 것 포함) when_metric 그대로다.
         conds = []
-        if branch is not None:
+        if sig_id == sig_mod._SUBPOP_GAP_ID and skip is None:
             conds = _subpop_conditions(features, thresholds)
         elif skip is None:
             conds = [_cond_detail(metric, cond, ctx_values, thresholds,
@@ -312,6 +320,7 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
                      "branch_note": branch, "scope": sig.get("scope") or {},
                      "status_hint": sig.get("status_hint"),
                      "issue_category": sig.get("issue_category") or "ETC",
+                     "suppressed_by": suppressed_by.get(sig_id) or [],
                      "conditions": conds, "fired": sig_id in fired_ids})
     return rows
 

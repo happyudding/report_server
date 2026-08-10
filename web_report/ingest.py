@@ -262,6 +262,11 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
         from . import eval_export
         eval_export.export_async(session_id, report_db=report_db,
                                  upload_root=Path(upload_root))
+        # 평가 판단 근거(L1~L4) 스냅샷도 같은 큐에 올린다 — 조회 경로는 persist=False 라
+        # 매번 계산하고 버리므로, 룰 채점·표본 검수의 재료가 여기서만 쌓인다(docs/17).
+        # AI Comment 옵션과 무관하게 전 web_report 세션 대상이며 실패는 무해하다.
+        eval_export.collect_async(session_id, report_db=report_db,
+                                  upload_root=Path(upload_root))
     except Exception:
         _log.warning("eval export 시작 실패 — 코멘트 eval DB 적재 누락 (session=%s)",
                      session_id, exc_info=True)

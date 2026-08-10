@@ -29,19 +29,20 @@ def should_store(case_ctx, metrics, sig_result) -> bool:
 
 
 def persist(run_ctx, case_ctx, raw_metrics, features, verdict, sig_result, comment,
-            engine_version, model_version, precedents=None):
+            engine_version, model_version, precedents=None, db_path=None):
     """L6 적재 — case 1건의 raw_metrics/features/evaluation/evidence/signature/precedent 저장.
 
     ⚠ raw(per-DUT)는 저장하지 않는다(불변 규칙 3) — L1/L2 계산값만 남긴다.
     fail_case/run_case upsert 를 L0 ingest 가 아니라 여기서 하는 이유는 `should_store` 를
     통과한 case 만 마스터에 남기기 위해서다. 커넥션 하나를 열어 전 CRUD 에 넘기므로
     한 case 의 적재는 단일 트랜잭션이 된다.
-    ⚠ api.evaluate 는 이 함수를 ThreadPoolExecutor 워커에서 호출한다 — persist=True 경로는
-    SQLite 동시 쓰기다(VERIFY_CHECKLIST §2-2). report_server 연동은 persist=False 라 무관.
+    `db_path` 는 적재 대상 DB(기본 `config.DB_PATH`) — `store.get_conn` docstring 참조.
+    ⚠ 동시 쓰기 주의: api.evaluate 가 ThreadPoolExecutor 로 case 를 돌리므로, persist 를
+    켜는 호출자는 워커를 1로 줄여야 한다(api.evaluate 가 `max_workers` 로 강제한다).
     """
     run_id = run_ctx.get("run_id")
     case_id = case_ctx["case_id"]
-    with store.get_conn() as conn:
+    with store.get_conn(db_path) as conn:
         # fail_case/run_case 는 저장 대상(should_store 통과)에만 여기서 upsert (ingest 에서 이관).
         store.upsert_fail_case(case_id, case_ctx["product_name"], case_ctx["lot_id"],
                                case_ctx["wafer_number"], case_ctx["item_id"],

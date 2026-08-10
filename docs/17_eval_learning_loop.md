@@ -2,7 +2,29 @@
 
 > 2026-08-04 작성. [13](13_eval_analyzer_integration.md) 이 "무엇을 어떻게 연결했나"(현행
 > 규약)라면, 이 문서는 **"무엇이 비어 있고 어떤 순서로 채우나"**(로드맵)다.
-> **이 문서 시점에 구현된 코드는 없다.** 결정과 근거만 못 박아 둔 것이다.
+>
+> **2026-08-10 진행 상황** — Phase 2(L1/L2 적재)가 **스키마 변경 없이** 구현됐다.
+> 정본 규약은 [13 §4](13_eval_analyzer_integration.md) 로 옮겼고, 그 위에 표본 검수 +
+> 승인형 룰 튜닝([13 §14](13_eval_analyzer_integration.md))이 얹혔다.
+>
+> | 항목 | 상태 |
+> |---|---|
+> | Phase 1 스키마 변경 (`item_master`/`item_alias` UNIQUE·PK) | **미착수** — v1 범위 밖 |
+> | Phase 2 L1/L2 적재 (`db_path` 인자 + 업로드 훅) | **완료** |
+> | §3-2 case 키에서 bin·wafer 제거 | **미착수** — 파급 확인 후 판단(아래) |
+> | §3-5 `item_class` 2단화 | **보류** — 운영 챗봇이 3축을 집계 축으로 쓴다 |
+> | Phase 3 `eval_export` case 규칙 정렬 | 위 두 건에 종속 |
+> | Phase 4 사후 라벨링 화면 | **표본함이 대체** ([13 §14](13_eval_analyzer_integration.md)) |
+> | 자동보정 `calibrate` | 계속 비활성 (라벨 없는 분위수라 v1 배제) |
+>
+> ⚠ **§3-2/§3-5 를 미룬 이유**(2026-08-10 조사): `item_class` 를 2단으로 바꾸면
+> `server/chatbot/tools_eval.py`·`planner.py` 가 **운영에서** 그 값을 집계·필터 축으로
+> 쓰고 있어 기존 3축 행과 신규 2축 행이 섞인다. `eval_export.save_human_label`·
+> `eval_admin.set_value_type`·`db_input/import_csv.py`·`test_e2e.py` 도 3축을 전제한다.
+> case_id 에서 bin 만 빼는 것은 DDL 변경이 아니지만, 기존 라벨의 case_id 재계산
+> 마이그레이션이 따라온다 — **운영 eval.db 의 label 행 수를 실측한 뒤** 재입력 vs
+> 마이그레이션을 정하는 것이 맞다(§Phase 0). 개발 PC 기준으로는 `fail_case` 1행 /
+> `label` 1행(그마저 `eval_id=NULL` 로 채점 대상 아님)이라 사실상 재입력 1건이다.
 
 ---
 

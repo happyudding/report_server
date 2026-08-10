@@ -250,7 +250,12 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      필터를 걸지 않으므로 cpk/average/stdev/n 과 표시 limit 이 모두 달라지고, 그 값을
 #      쓰는 Issue Table CPK 섹션·Distribution status 도 함께 바뀐다. 다른 모드 세션은 값
 #      무변경이지만 키가 전 세션 공통이라 1회 재계산된다.
-REPORT_SCHEMA_VERSION = 29
+# v30: signature 포함관계 억제(`suppressed_by`) 도입 — SEVERE_OUTLIER 가 뜨면 조건상 항상
+#      따라오던 OUTLIER_WARN 을 발화 목록에서 뺀다. status(최대 severity)는 그대로지만
+#      secondary_signatures·evidence·reason_codes 가 줄고, ai_comment._rank(동률 시 이봉
+#      우선)가 그 목록을 보므로 AI Comment 셀 값이 바뀔 수 있다. 코드 배포에 따른 변경이라
+#      rules_rev 가 아니라 이 값을 올린다.
+REPORT_SCHEMA_VERSION = 30
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

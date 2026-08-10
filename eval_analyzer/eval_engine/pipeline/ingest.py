@@ -204,12 +204,17 @@ def _case_dict(meta, case_id, item_id, item_canonical, cat, value_type, bin_,
     }
 
 
-def _resolve_item_identity(raw_name, value_type, persist, conn, alias):
+def _resolve_item_identity(raw_name, value_type, persist, conn, alias, unit=None):
     """원본 item 명 → (item_id, item_canonical, category_major). 3개 입력 경로가 공유한다.
 
     persist=True 면 item_master/item_alias 를 조회·upsert 해 **DB 가 준 item_id** 를 쓴다.
     persist=False(preview)는 DB 를 아예 열지 않으므로 canonical 의 sha1 앞 8자리를 item_id
     로 대신 쓴다 — 그래서 preview 의 case_id 는 나중에 persist 로 재실행하면 달라질 수 있다.
+
+    `unit` 은 판정에 쓰이지 않는 진단용 원문이지만 **반드시 넘겨야 한다** —
+    `upsert_item_master` 가 `unit=excluded.unit` 으로 덮으므로 None 을 넘기면 다른 적재
+    경로(web_report/eval_export)가 채워 둔 UNIT 원문을 지운다. value_type 이 PF 로
+    오분류된 항목을 되짚는 유일한 단서라 지워지면 진단이 불가능해진다.
     """
     item_canonical = alias.get(raw_name.strip(), _canonicalize(raw_name))
     base, phase = _parse_base_phase(item_canonical)
@@ -218,7 +223,8 @@ def _resolve_item_identity(raw_name, value_type, persist, conn, alias):
         item_id = store.resolve_item_id(raw_name, conn=conn)
         if item_id is None:
             item_id = store.upsert_item_master(item_canonical, raw_name, base, phase,
-                                               cat, None, value_type, None, conn=conn)
+                                               cat, None, value_type, _unit_text(unit),
+                                               conn=conn)
             store.upsert_item_alias(raw_name, item_id, conn=conn)
     else:
         item_id = int(hashlib.sha1(item_canonical.encode()).hexdigest()[:8], 16)
@@ -272,7 +278,7 @@ def _ingest_raw_table(meta, raw_table, persist, conn, alias):
             continue
 
         item_id, item_canonical, cat = _resolve_item_identity(
-            item, value_type, persist, conn, alias)
+            item, value_type, persist, conn, alias, unit)
         if persist and revision is not None and (lsl is not None or usl is not None):
             store.upsert_item_spec(item_id, meta.get("product_name"), revision,
                                    lsl, usl, conn=conn)
@@ -333,7 +339,7 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
                     fail_bins.add(b)
 
         item_id, item_canonical, cat = _resolve_item_identity(
-            item, value_type, persist, conn, alias)
+            item, value_type, persist, conn, alias, unit_row[item])
         if persist and revision is not None and (lsl is not None or usl is not None):
             store.upsert_item_spec(item_id, meta.get("product_name"), revision,
                                    lsl, usl, conn=conn)
@@ -380,7 +386,7 @@ def _ingest_degrade(meta, items, persist, conn, alias):
         bin_ = int(it["bin"])
         lsl, usl = it.get("lsl"), it.get("usl")
         item_id, item_canonical, cat = _resolve_item_identity(
-            raw_name, value_type, persist, conn, alias)
+            raw_name, value_type, persist, conn, alias, it.get("unit"))
         if persist and revision is not None and (lsl is not None or usl is not None):
             store.upsert_item_spec(item_id, meta.get("product_name"), revision,
                                    lsl, usl, conn=conn)
@@ -432,13 +438,16 @@ def _build_cases(meta, run_input, persist, conn):
     return cases
 
 
-def ingest(run_input: dict, *, persist: bool = True) -> dict:
+def ingest(run_input: dict, *, persist: bool = True, db_path=None) -> dict:
     """L0 진입점 — run_input → {"run_id", "cases"}. 위 모듈 docstring 이 전체 계약.
 
     persist=True 면 커넥션 하나로 product_master upsert + ingest_run 생성 + case 조립을
     한 트랜잭션에 묶는다. fail_case/run_case 는 **여기서 쓰지 않는다** — 룰 계산 뒤
     `present.should_store` 를 통과한 case 만 `present.persist` 가 남긴다.
     persist=False(preview)는 DB 를 열지 않아 run_id 가 None 이다.
+
+    `db_path` 는 persist=True 일 때 열 DB 파일(기본 `config.DB_PATH`). 전역 대입 대신
+    인자로 받는 이유는 `store.get_conn` docstring 참조.
     """
     meta = run_input["meta"]
     _validate_product_meta(meta)
@@ -446,7 +455,7 @@ def ingest(run_input: dict, *, persist: bool = True) -> dict:
         cases = _build_cases(meta, run_input, persist=False, conn=None)
         return {"run_id": None, "cases": cases}
 
-    with store.get_conn() as conn:
+    with store.get_conn(db_path) as conn:
         store.upsert_product_master(meta, conn=conn)
         run_id = store.create_ingest_run(meta, conn=conn)
         # fail_case/run_case 는 여기서 쓰지 않는다 — rule 계산 후 present.persist 가

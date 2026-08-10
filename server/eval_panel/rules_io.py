@@ -458,6 +458,13 @@ def _merge_sigs(base: list, overrides: dict) -> list:
     return [{**s, **(overrides.get(s.get("id")) or {})} for s in base]
 
 
+def _norm_suppressed_by(raw) -> list:
+    """`suppressed_by` 정규화 — 엔진 signatures._suppressor_ids 와 같은 규칙(문자열 1개 허용)."""
+    if isinstance(raw, str):
+        raw = [raw]
+    return [str(v) for v in (raw or []) if v]
+
+
 def _sig_row(s: dict) -> dict:
     """signature dict → 패널 표시용 정규화 행 (병합 결과·상속값 둘 다 이 모양으로 만든다)."""
     return {"id": s.get("id"), "enabled": s.get("enabled") is not False,
@@ -467,6 +474,9 @@ def _sig_row(s: dict) -> dict:
             "phenomenon_ko": s.get("phenomenon_ko") or "",
             "action_ko": s.get("action_ko") or "",
             "evidence": list(s.get("evidence") or []),
+            # 읽기 전용 — 이 룰을 지우는 상위 룰(포함관계). 편집 UI 는 제공하지 않고
+            # 화면에 관계만 찍는다(SIGNATURE_FIELDS 에 없으므로 저장에서도 건드리지 않는다).
+            "suppressed_by": _norm_suppressed_by(s.get("suppressed_by")),
             "scope": _norm_scope_doc(s.get("scope"))}
 
 
@@ -859,6 +869,18 @@ def validate_all() -> dict:
         problems.append(f"[{missing}] status.py SPECIFICITY_ORDER 에 없음 — primary 정렬 누락")
     for extra in sorted(order - sig_ids):
         notes.append(f"SPECIFICITY_ORDER 에만 있는 id: {extra}")
+
+    # 1b) suppressed_by 참조 무결성 + 순환. 엔진은 원본 발화 집합 기준 1패스라 순환이
+    # 나도 무한루프는 아니지만, 상호 참조는 "둘 다 사라지는" 오동작이라 문제로 본다.
+    suppress = {s.get("id"): _norm_suppressed_by(s.get("suppressed_by"))
+                for s in eval_debug.signatures_raw()}
+    for sig_id, targets in suppress.items():
+        for target in targets:
+            if target not in sig_ids:
+                problems.append(f"[{sig_id}] suppressed_by 가 없는 signature 를 가리킴: {target}")
+            elif sig_id in suppress.get(target, []):
+                problems.append(f"[{sig_id}] {target} 와 suppressed_by 상호 참조 — "
+                                "둘 다 발화하면 양쪽이 사라집니다")
 
     # 2) 오버레이 트리 점검 (고아 폴더/파일, 미지의 키)
     tree = eval_debug.rules_dir() / "thresholds"
