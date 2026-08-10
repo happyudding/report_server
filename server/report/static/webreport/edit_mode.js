@@ -232,7 +232,9 @@ document.querySelector(".content").addEventListener("click", e => {
     if (kind === "toggle-all") {
       const expand = act.dataset.expanded !== "true";
       act.dataset.expanded = expand ? "true" : "false";
-      act.textContent = expand ? "TNO 전체 접기" : "TNO 전체 펼치기";
+      // 버튼은 Yield 섹션 헤더 Step 열 아래의 작은 ▼/▲ 아이콘이다(설명은 title 로).
+      act.textContent = expand ? "▲" : "▼";
+      act.title = expand ? "TNO 전체 접기" : "TNO 전체 펼치기";
       setAllIssueGroups(expand, actPanel);
     } else if (kind === "excel") {
       exportIssueExcel(issueRowsOf(actPanel),

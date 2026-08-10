@@ -154,7 +154,7 @@ let MODE = "view";
 let LOGIN_USER = "";            // 현재 사용자 (Honey UA 또는 웹 로그인, 없으면 "")
 let IDENTITY_SRC = "";          // "honey"|"login"|"sso"|"" — Honey 전용 기능 안내 판단용
 let CAN_EDIT = false;           // 이 세션 편집 가능(업로더 또는 위임 편집자) — 서버 판정
-let IS_UPLOADER = false;        // 이 세션 업로더 본인 — 권한부여/비공개/삭제용
+let IS_UPLOADER = false;        // 이 세션 업로더 본인(또는 master PC) — 권한부여/비공개/삭제용
 let MY_IMPORTANT = false;       // 내 개인 중요표시 상태(사용자별)
 let verifiedPassword = "";      // (구 PIN 흐름 잔재 — 저장 payload 호환용, 항상 "")
 
@@ -168,7 +168,9 @@ async function loadAuth() {
       LOGIN_USER = j.user_id || "";
       IDENTITY_SRC = j.source || "";
       CAN_EDIT = !!j.can_edit;
-      IS_UPLOADER = !!j.is_uploader;
+      // master PC(admin 로그인 4h)는 업로더와 동일 권한 — 삭제/비공개/권한부여 UI 도 연다
+      // (서버 _uploader_guard 가 같은 규칙으로 재검증한다).
+      IS_UPLOADER = !!(j.is_uploader || j.is_master);
       MY_IMPORTANT = !!j.my_important;
     } else {
       console.warn("my_access 조회 실패 — 읽기 전용으로 표시 (HTTP " + res.status + ")");

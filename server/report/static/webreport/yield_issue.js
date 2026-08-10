@@ -587,7 +587,7 @@ function issueToolbarHtml(panelId) {
   // (.issue-del-actions)은 선택 모드일 때만 CSS 로 노출된다.
   const editBtns = (MODE === "edit")
     ? (isTemp ? "" : `<button type="button" class="btn-sm" data-issue-act="etc-add">ISSUE ITEM 추가</button>`) +
-      `<button type="button" class="btn-sm" data-issue-act="delmode" title="행을 선택해 한 번에 삭제하거나 Status 를 Open/Close 로 바꾼다 (Step 셀 클릭 = 선택)">☑ 선택 모드</button>` +
+      `<button type="button" class="btn-sm" data-issue-act="delmode" title="행을 선택해 한 번에 삭제하거나 Status 를 Open/Close 로 바꾼다 (Step 셀 클릭 = 선택)">☑ Issue Item 추가/변경/삭제</button>` +
       `<span class="issue-del-actions">` +
         `<button type="button" class="btn-sm" data-issue-act="sel-all" title="보이는 행 전체 선택">전체 선택</button>` +
         `<button type="button" class="btn-sm" data-issue-act="sel-none" title="선택 모두 해제">선택 해제</button>` +
@@ -600,13 +600,15 @@ function issueToolbarHtml(panelId) {
         `<button type="button" class="btn-sm" data-issue-act="all-open" title="이 표 전체 행 Status 를 Open 으로">All Open</button>` +
         `<button type="button" class="btn-sm" data-issue-act="all-close" title="이 표 전체 행 Status 를 Close 로">All Close</button>` +
       `</span>` : "";
+  // 'TNO 전체 펼치기' 는 툴바에서 빼고 Yield 섹션 헤더의 Step 열 아래 작은 ▼ 아이콘으로
+  // 옮겼다(2026-08-10 사용자 요청 — sheets.js issueSectionHeadRowsHtml). 동작·핸들러
+  // (data-issue-act="toggle-all")는 그대로다.
   const jumpAndToggle = isTemp ? "" :
     `<span class="issue-jump-group" title="섹션으로 이동">` +
       `<button type="button" class="btn-sm" data-issue-jump="Yield">YIELD</button>` +
       `<button type="button" class="btn-sm" data-issue-jump="CPK">CPK</button>` +
       `<button type="button" class="btn-sm" data-issue-jump="ETC">ETC</button>` +
-    `</span>` +
-    `<button type="button" class="btn-sm" data-issue-act="toggle-all" data-expanded="false">TNO 전체 펼치기</button>`;
+    `</span>`;
   // Issue Table Temp 안내문 — 문구를 그대로 두면 툴바가 길어져(줄바꿈·버튼 밀림) 표가
   // 아래로 내려가고 하단 가로 스크롤바가 화면 밖으로 나간다(사용자 요청 2026-08-06).
   // 아이콘 하나로 줄이고 설명 전문은 hover(title) 로만 남긴다.
@@ -633,7 +635,7 @@ function applyIssueDelMode(panel) {
   const btn = panel.querySelector('[data-issue-act="delmode"]');
   if (btn) {
     btn.classList.toggle("active", on);
-    btn.textContent = on ? "✕ 선택 모드 종료" : "☑ 선택 모드";
+    btn.textContent = on ? "✕ Issue Item 추가/변경/삭제 종료" : "☑ Issue Item 추가/변경/삭제";
   }
   syncIssueDelCount(panel);
   syncIssueStickyOffsets(panel);   // 체크박스 노출로 Step 열 폭이 변할 수 있어 재실측
@@ -746,8 +748,12 @@ function syncIssueToolbarHeight(panel) {
   if (h > 0) panel.style.setProperty("--issue-toolbar-h", h + "px");
 }
 
-// 좌측 고정열(Step/Bin/TNO/Item/Map/Distribution)의 left 오프셋을 실제 렌더 폭으로 계산 —
+// 좌측 고정열(Step/Bin/Item/Map/Distribution)의 left 오프셋을 실제 렌더 폭으로 계산 —
 // 내용이 길어 컬럼이 colWidth 힌트보다 넓어져도 셀이 겹치지(깨지지) 않게 한다.
+// **TNO(3번째)는 고정 대상이 아니다**(2026-08-10 사용자 요청) — 가로 스크롤 시 Step/Bin 뒤로
+// 밀려 사라지므로 그 폭(w3)을 누적에서 빼야 Item 이하가 고정 블록에 딱 붙는다.
+// ⚠ 패널이 숨김(display:none, 백그라운드 프리렌더)일 때 부르면 실측이 전부 0 이라 아무 값도
+// 안 심어지고 CSS fallback 이 그대로 남는다 → 탭이 보이는 시점에 다시 부를 것(tabs_topbar.js).
 function syncIssueStickyOffsets(panel) {
   panel = panel || activeIssuePanel();
   if (!panel) return;
@@ -758,16 +764,14 @@ function syncIssueStickyOffsets(panel) {
   let row = null;
   table.querySelectorAll("tbody tr").forEach(tr => { if (!row && tr.children.length >= 6) row = tr; });
   if (!row) return;
-  const w1 = row.children[0].getBoundingClientRect().width;
-  const w2 = row.children[1].getBoundingClientRect().width;
-  const w3 = row.children[2].getBoundingClientRect().width;
-  const w4 = row.children[3].getBoundingClientRect().width;
-  const w5 = row.children[4].getBoundingClientRect().width;
+  const w1 = row.children[0].getBoundingClientRect().width;   // Step
+  const w2 = row.children[1].getBoundingClientRect().width;   // Bin
+  const w4 = row.children[3].getBoundingClientRect().width;   // Item (TNO=children[2] 는 고정 제외)
+  const w5 = row.children[4].getBoundingClientRect().width;   // Map
   if (w1 > 0) table.style.setProperty("--issue-col2-left", w1 + "px");
-  if (w1 > 0 && w2 > 0) table.style.setProperty("--issue-col3-left", (w1 + w2) + "px");
-  if (w1 > 0 && w2 > 0 && w3 > 0) table.style.setProperty("--issue-col4-left", (w1 + w2 + w3) + "px");
-  if (w1 > 0 && w2 > 0 && w3 > 0 && w4 > 0) table.style.setProperty("--issue-col5-left", (w1 + w2 + w3 + w4) + "px");
-  if (w1 > 0 && w2 > 0 && w3 > 0 && w4 > 0 && w5 > 0) table.style.setProperty("--issue-col6-left", (w1 + w2 + w3 + w4 + w5) + "px");
+  if (w1 > 0 && w2 > 0) table.style.setProperty("--issue-col4-left", (w1 + w2) + "px");
+  if (w1 > 0 && w2 > 0 && w4 > 0) table.style.setProperty("--issue-col5-left", (w1 + w2 + w4) + "px");
+  if (w1 > 0 && w2 > 0 && w4 > 0 && w5 > 0) table.style.setProperty("--issue-col6-left", (w1 + w2 + w4 + w5) + "px");
 }
 window.addEventListener("resize", () => {
   issuePanelEls().forEach(p => { syncIssueHscrollSpacer(p); syncIssueStickyOffsets(p); });

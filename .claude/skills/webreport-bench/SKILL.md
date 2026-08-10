@@ -17,6 +17,7 @@ server\.venv\Scripts\python.exe tests\bench_webreport.py
 ```
 
 - 사용자가 "빠르게/간단히" 를 원하면 `--quick` (5×200×200, 수십 초).
+  단 **Map 3초 SLA 시나리오는 full 에서만** 돈다 — Map/Issue Table 관련 변경이면 full 로.
 - 특정 커밋과 비교하려면 해당 커밋에서 한 번 실행해 기준선을 만든 뒤 현재 코드에서
   재실행하거나, `--baseline tests/bench_results/bench_<ts>.json` 으로 기준을 명시.
 - 코드 변경 전후 비교가 목적이면: 변경 **전** 1회 + 변경 **후** 1회 실행 (같은 스케일).
@@ -25,6 +26,8 @@ server\.venv\Scripts\python.exe tests\bench_webreport.py
 
 완료 후 `tests/bench_results/latest.md` 를 읽고 사용자에게 한국어로 요약한다:
 
+- **`[SLA위반]` 이 있으면 그것부터** — Map 3초 SLA(CLAUDE.md §5-11, "SLA: Map 3초" 섹션)는
+  이전 실행과 무관한 **절대 기준**이라, 회귀가 없어도 위반일 수 있다. full 실행에서만 측정된다.
 - **`[회귀]`(+30% 초과) / `[주의]`(+15% 초과) 항목을 최우선으로** — 없으면 "회귀 없음" 한 줄.
 - 비교 대상이 없으면(첫 실행) 기준선이 만들어졌다고 알린다.
 - 핵심 지표만 짚는다: 완전 콜드 열기 / 재오픈(RAM) / 배치 30건 pack vs 폴백 /

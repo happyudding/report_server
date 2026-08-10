@@ -547,6 +547,13 @@ function issueSectionHeadRowsHtml(cols, sec) {
   // (그룹 라벨 colspan th 는 제외). colgroup.children[idx] 와 1:1 대응(bindIssueColResize).
   const resizeHandle = idx =>
     `<span class="col-resize-handle" data-col="${idx}" data-col-name="${esc(String(cols[idx]))}"></span>`;
+  // Yield 섹션 헤더의 Step 열 아래 작은 ▼ = 그 표의 Bin 그룹 TNO 전체 펼치기/접기
+  // (2026-08-10 사용자 요청 — 종전 툴바 'TNO 전체 펼치기' 버튼을 여기로 옮겼다).
+  // 핸들러는 종전 그대로 edit_mode.js 의 data-issue-act="toggle-all" 위임을 탄다.
+  // Bin 그룹은 Yield 섹션에만 있으므로 다른 섹션(CPK/TEMP/ETC) 헤더에는 달지 않는다.
+  const toggleAllBtn = idx => (sec === "Yield" && String(cols[idx]).trim().toLowerCase() === "step")
+    ? `<button type="button" class="issue-toggle-all" data-issue-act="toggle-all" ` +
+      `data-expanded="false" title="TNO 전체 펼치기">▼</button>` : "";
   const groupOf = c => SHEET_HEADER_SUFFIX_GROUPS.find(g => g.re.test(String(c)));
   const groupKeyAt = i =>
     groupOf(cols[i]) ||
@@ -569,12 +576,13 @@ function issueSectionHeadRowsHtml(cols, sec) {
           return `<th class="sheet-src-th"${s.abbreviated ? ` title="${esc(s.full)}"` : ""}>` +
             `${esc(s.short)}${resizeHandle(k)}</th>`;
         }
-        return `<th${commentCls(c)}>${esc(displayLabel(c))}${resizeHandle(k)}</th>`;
+        return `<th${commentCls(c)}>${esc(displayLabel(c))}${resizeHandle(k)}${toggleAllBtn(k)}</th>`;
       }).join("") + `</tr>`;
   }
   const topRow = runs.map(r => r.group
     ? `<th colspan="${r.len}" class="sheet-group-th">${esc(lab.group)}</th>`
-    : `<th rowspan="2"${commentCls(cols[r.start])}>${esc(displayLabel(cols[r.start]))}${resizeHandle(r.start)}</th>`
+    : `<th rowspan="2"${commentCls(cols[r.start])}>${esc(displayLabel(cols[r.start]))}` +
+      `${resizeHandle(r.start)}${toggleAllBtn(r.start)}</th>`
   ).join("");
   const botRow = runs.filter(r => r.group).map(r => {
     const runCols = cols.slice(r.start, r.start + r.len);

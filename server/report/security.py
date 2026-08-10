@@ -18,8 +18,9 @@ _log = logging.getLogger(__name__)
 
 
 def _is_master():
-    """admin 로그인한 PC 인가 — 서명·미만료된 master 게이트 쿠키(4h). 통과 시 전 세션
-    편집 + 비공개 세션 조회/목록표시 권한. 삭제·비공개토글 등 업로더 전용 권한은 불포함."""
+    """admin 로그인한 PC 인가 — 서명·미만료된 master 게이트 쿠키(4h). 통과하면
+    **업로더와 동일 권한**이다 (2026-08-10 사용자 요청): 전 세션 편집 + 비공개 세션
+    조회/목록표시에 더해 삭제·비공개 토글·편집자 위임까지(_uploader_guard)."""
     return master_value_valid(request.cookies.get(MASTER_COOKIE, ""))
 
 _ANALYSIS_KEY_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -95,6 +96,8 @@ def _uploader_guard(session):
     """세션 삭제·비공개·권한부여 가드 — PC 사용자(HoneyUser) == 업로더.
 
     Honey 밖(신원 없음)은 읽기전용(401). 통과하면 None, 거부면 (json, status)."""
+    if _is_master():
+        return None  # admin 로그인한 master PC 는 업로더와 동일 권한 (Honey 신원 불요)
     uid = _current_user()
     if not uid:
         return jsonify({"error": "로그인한 사용자만 수정/삭제할 수 있습니다 (현재 읽기 전용)."}), 401
@@ -105,7 +108,7 @@ def _uploader_guard(session):
 
 def _editor_guard(session):
     """콘텐츠 편집·개인 중요표시 가드 — 업로더 본인 또는 위임받은 편집자면 통과.
-    (삭제·비공개·권한부여는 _uploader_guard 로 업로더 전용 유지.)
+    (master PC 는 _uploader_guard 쪽도 함께 통과하므로 여기 판정은 업로더/위임자와 동일.)
     거부는 warning 로그를 남긴다 — "저장이 안 됐다" 신고 시 서버 측 추적 근거."""
     if _is_master():
         return None  # admin 로그인한 master PC 는 전 세션 편집 허용 (Honey 신원 불요)

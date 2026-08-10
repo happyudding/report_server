@@ -5,6 +5,10 @@ r"""SourceNameDialog — Web Report 생성 직전 source 이름·순서(·Temper
 **최상단 source 의 limit(HiLIM/LoLIM)이 리포트 전체의 판정 기준**이 된다
 (web_report/tabs/distribution.py 의 ``matched[0]``). 그래서 1행을 초록으로 강조한다.
 
+**표에 보이는 위→아래가 곧 web_report 표시 순서다** (Yield/Distribution 의 source 컬럼 순서,
+Temperature 의 그룹 순서·Temp Fail 컬럼 순서). Ctrl/Shift 로 여러 행을 골라 ↑/↓/↑↑/↓↓ 로
+함께 옮길 수 있다 — Temperature 면 그룹 블록을 통째로 잡아 그룹 순서를 바꾸는 데 쓴다.
+
     ┌───────────────────────────────────────────────────────────────────┐
     │  # │ 입력 파일 (읽기 전용)                    │ Legend       │ 색 │  ↑
     │ 1★ │ …\lot_N4XA123\run03\602XX2_3_final.std  │ 602XX2_3     │ ██ │  ↓
@@ -33,7 +37,7 @@ import concurrent.futures
 from dataclasses import dataclass
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QItemSelection, QItemSelectionModel, Qt
 from PyQt6.QtGui import (QBrush, QColor, QFontDatabase, QFontMetrics, QGuiApplication,
                          QKeySequence, QShortcut)
 from PyQt6.QtWidgets import (
@@ -317,7 +321,7 @@ class SourceNameDialog(QDialog):
         self.table = QTableWidget(0, len(cols), self)
         self.table.setHorizontalHeaderLabels(cols)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
         self.table.setWordWrap(False)
         self.table.setItemDelegateForColumn(1, _MaxLenDelegate(self._legend_max, self))
@@ -334,19 +338,27 @@ class SourceNameDialog(QDialog):
         middle = QHBoxLayout()
         middle.addWidget(self.table, 1)
         if not self._is_dut:                      # DUT 순서는 서버가 정한다 (수치 오름차순)
-            btn_up, btn_down = QPushButton("↑"), QPushButton("↓")
-            btn_up.setToolTip("선택 행을 위로 (Alt+↑) — 최상단이 Limit 기준입니다")
-            btn_down.setToolTip("선택 행을 아래로 (Alt+↓)")
+            btn_top, btn_up = QPushButton("↑↑"), QPushButton("↑")
+            btn_down, btn_bottom = QPushButton("↓"), QPushButton("↓↓")
+            btn_top.setToolTip("선택 행을 최상단으로 (Alt+Home) — 최상단이 Limit 기준입니다")
+            btn_up.setToolTip("선택 행을 위로 (Alt+↑) — Ctrl/Shift 로 여러 행을 함께 옮깁니다")
+            btn_down.setToolTip("선택 행을 아래로 (Alt+↓) — Ctrl/Shift 로 여러 행을 함께 옮깁니다")
+            btn_bottom.setToolTip("선택 행을 최하단으로 (Alt+End)")
+            btn_top.clicked.connect(lambda: self._move_edge(True))
             btn_up.clicked.connect(lambda: self._shift(-1))
             btn_down.clicked.connect(lambda: self._shift(1))
-            for b in (btn_up, btn_down):
+            btn_bottom.clicked.connect(lambda: self._move_edge(False))
+            for b in (btn_top, btn_up, btn_down, btn_bottom):
                 b.setFixedWidth(36)
-            QShortcut(QKeySequence("Alt+Up"), self).activated.connect(lambda: self._shift(-1))
-            QShortcut(QKeySequence("Alt+Down"), self).activated.connect(lambda: self._shift(1))
+            for keys, slot in (("Alt+Up", lambda: self._shift(-1)),
+                               ("Alt+Down", lambda: self._shift(1)),
+                               ("Alt+Home", lambda: self._move_edge(True)),
+                               ("Alt+End", lambda: self._move_edge(False))):
+                QShortcut(QKeySequence(keys), self).activated.connect(slot)
             side = QVBoxLayout()
             side.addStretch(1)
-            side.addWidget(btn_up)
-            side.addWidget(btn_down)
+            for b in (btn_top, btn_up, btn_down, btn_bottom):
+                side.addWidget(b)
             side.addStretch(1)
             middle.addLayout(side)
 
@@ -422,7 +434,12 @@ class SourceNameDialog(QDialog):
                 "· 색 칸을 더블클릭하면 이 리포트에만 적용되는 색으로 바꿉니다"
                 "(옵션(F10) 팔레트보다 우선).",
             ])
-        lines = ["· 최상단(1번) source 의 Limit(HiLIM/LoLIM) 기준으로 리포트가 생성됩니다."]
+        lines = ["· 최상단(1번) source 의 Limit(HiLIM/LoLIM) 기준으로 리포트가 생성됩니다.",
+                 "· 여기 보이는 위→아래 순서가 그대로 web_report 표시 순서입니다"
+                 " (Yield/Distribution 의 source 순서" + (", Temperature 그룹 순서)."
+                                                          if self._is_temp else ")."),
+                 "· Ctrl/Shift 로 여러 행을 골라 ↑/↓ 로 함께 옮기고, ↑↑/↓↓ (Alt+Home/End) 로"
+                 " 최상단·최하단으로 보냅니다."]
         if self._is_temp:
             lines.append(
                 "· 그룹마다 RT 가 그 그룹의 Limit 판정 기준입니다 — CT/HT 는 RT 의 Bin1 좌표만"
@@ -447,8 +464,29 @@ class SourceNameDialog(QDialog):
         return hint
 
     # ── 렌더 ────────────────────────────────────────────────────────────────
+    def _renumber_groups(self):
+        """그룹 번호를 **표 등장 순서**로 다시 매긴다 (Temperature 전용).
+
+        result_arrangement 가 groups 를 표 순서로 내보내고 서버가 그 순서를 그대로
+        ``temp_group`` 번호·Temp Fail 컬럼 순서로 쓰므로, 창에 보이는 번호도 같은 순서여야
+        "위에 있는 그룹이 리포트에서도 먼저" 가 눈으로 확인된다. 이름을 붙인 그룹은
+        _group_names 키도 함께 옮긴다.
+        """
+        remap = {}
+        for row in self._rows:
+            if row.group and row.group not in remap:
+                remap[row.group] = len(remap) + 1
+        if all(old == new for old, new in remap.items()):
+            return                                 # 이미 표 순서 (대부분의 경우)
+        self._group_names = {remap[g]: name for g, name in self._group_names.items()
+                             if g in remap}
+        for row in self._rows:
+            row.group = remap.get(row.group, 0)
+
     def _render(self):
         """self._rows 를 표에 통째로 다시 그린다 (행 수가 작아 체감 비용 0)."""
+        if self._is_temp:
+            self._renumber_groups()
         self._rendering = True
         try:
             self.table.setRowCount(0)
@@ -629,19 +667,81 @@ class SourceNameDialog(QDialog):
             self._colors_changed = True
             self._render()
 
+    def _selected_rows(self):
+        """선택 행 index 오름차순. 선택이 없으면 현재 행 하나 (Ctrl/Shift 다중 선택 지원)."""
+        model = self.table.selectionModel()
+        rows = sorted({idx.row() for idx in model.selectedRows()}) if model else []
+        if not rows and self.table.currentRow() >= 0:
+            rows = [self.table.currentRow()]
+        return rows
+
+    def _select_rows(self, rows):
+        """행 선택·스크롤을 복원한다 — _render() 가 표를 통째로 다시 그려 선택이 날아간다.
+
+        ``selectRow`` 는 호출마다 이전 선택을 지우므로 여러 행을 복원할 수 없다. 그래서
+        선택 범위를 한 번에 모아 selectionModel 에 넘긴다.
+        """
+        model = self.table.selectionModel()
+        if model is None or not rows:
+            return
+        self.table.setCurrentCell(rows[0], max(self.table.currentColumn(), 0))
+        selection = QItemSelection()
+        src = self.table.model()
+        last = self.table.columnCount() - 1
+        for r in rows:
+            selection.select(src.index(r, 0), src.index(r, last))
+        model.select(selection, QItemSelectionModel.SelectionFlag.ClearAndSelect
+                     | QItemSelectionModel.SelectionFlag.Rows)
+        self.table.scrollToItem(self.table.item(rows[0], 0))
+
     def _shift(self, delta):
-        """선택 행을 한 칸 이동. 선택·스크롤을 따라 옮긴다."""
+        """선택 행(복수 가능)을 한 칸 이동. 이동 방향 끝에 붙은 행은 그 자리에 남는다.
+
+        blocked 는 "더 이상 못 가는 자리" — 맨 위(아래)에 이미 붙어 있는 선택 행이 여기서
+        걸린다. 그렇게 해야 선택 블록이 경계에 닿아도 블록 안에서 서로 뒤섞이지 않는다.
+        """
         if self._is_dut:
             return                                 # DUT 순서는 서버가 정한다
         self._commit_editor()
-        row = self.table.currentRow()
-        new = row + delta
-        if row < 0 or new < 0 or new >= len(self._rows):
+        rows = self._selected_rows()
+        if not rows:
             return
-        self._rows[row], self._rows[new] = self._rows[new], self._rows[row]
+        moved = []
+        if delta < 0:
+            blocked = 0
+            for r in rows:
+                if r == blocked:
+                    blocked += 1
+                    moved.append(r)
+                    continue
+                self._rows[r - 1], self._rows[r] = self._rows[r], self._rows[r - 1]
+                moved.append(r - 1)
+        else:
+            blocked = len(self._rows) - 1
+            for r in reversed(rows):
+                if r == blocked:
+                    blocked -= 1
+                    moved.append(r)
+                    continue
+                self._rows[r + 1], self._rows[r] = self._rows[r], self._rows[r + 1]
+                moved.append(r + 1)
         self._render()
-        self.table.setCurrentCell(new, max(self.table.currentColumn(), 0))
-        self.table.scrollToItem(self.table.item(new, 0))
+        self._select_rows(sorted(moved))
+
+    def _move_edge(self, to_top):
+        """선택 행(복수 가능)을 통째로 최상단/최하단으로 보낸다 (선택 안 순서는 유지)."""
+        if self._is_dut:
+            return                                 # DUT 순서는 서버가 정한다
+        self._commit_editor()
+        rows = set(self._selected_rows())
+        if not rows:
+            return
+        picked = [row for i, row in enumerate(self._rows) if i in rows]
+        rest = [row for i, row in enumerate(self._rows) if i not in rows]
+        self._rows = picked + rest if to_top else rest + picked
+        self._render()
+        base = 0 if to_top else len(rest)
+        self._select_rows([base + i for i in range(len(picked))])
 
     def _restore(self):
         self._commit_editor()
@@ -841,20 +941,27 @@ class SourceNameDialog(QDialog):
         if not self._is_temp:
             return out
 
+        # 그룹 순서·그룹 안 member 순서 모두 **표 순서 그대로**다 — 서버가 groups 순서를
+        # temp_group 번호와 Temp Fail 컬럼 순서로 쓰므로(web_report/tabs/temp_fail.py
+        # temp_member_pairs), 표에서 위에 있는 그룹이 리포트에서도 먼저 나온다.
+        gids = []
+        for row in self._rows:
+            if row.group and row.group not in gids:
+                gids.append(row.group)
         groups = []
-        for gid in sorted({row.group for row in self._rows if row.group}):
-            members_by_role = {role: [] for role in ROLES}
+        for gid in gids:
+            rt_name, members, member_roles = "", [], []
             for row in self._rows:
-                if row.group == gid and row.role in members_by_role:
-                    members_by_role[row.role].append(deduped[row.index])
-            if not members_by_role["RT"]:
+                if row.group != gid:
+                    continue
+                if row.role == "RT":
+                    rt_name = rt_name or deduped[row.index]   # _accept 가 그룹당 1개를 강제
+                elif row.role in ROLES:
+                    members.append(deduped[row.index])
+                    member_roles.append(row.role)
+            if not rt_name:
                 continue
-            members, member_roles = [], []
-            for role in ("CT", "HT"):                 # members 는 CT 먼저, 그다음 HT
-                for name in members_by_role[role]:
-                    members.append(name)
-                    member_roles.append(role)
-            groups.append({"rt": members_by_role["RT"][0],
+            groups.append({"rt": rt_name,
                            "members": members, "member_roles": member_roles})
         out.update({"groups": groups, "bin_map": self._bin_map,
                     "limits_file": self._limits_file})

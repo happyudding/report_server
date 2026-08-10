@@ -30,7 +30,21 @@ document.getElementById("tabs").addEventListener("click", e => {
   }
   // 프리렌더가 숨김(display:none) 상태에서 그렸으면 헤더 상단행 높이가 0으로 측정되므로,
   // 보이는 시점에 다시 실측한다.
-  if ((tab === "issues" || tab === "issue-temp") && active) syncIssueHeadRowHeight(active);
+  // 좌측 고정열 left 오프셋(--issue-colN-left)도 같은 이유로 숨김 상태에선 전부 0 이라
+  // 아예 심어지지 않고 CSS fallback(Item=124px 가정) 이 쓰였다 → 실제 Item 열이 그보다
+  // 넓으면 Map/Distribution 이 Item 위로 겹쳐 "Item 이 잘리고 Map/Dist 가 고정블록
+  // 오른쪽에 안 붙는" 증상이 났다(사용자 신고 2026-08-10). 여기서 반드시 재실측한다.
+  if ((tab === "issues" || tab === "issue-temp") && active) {
+    syncIssueHeadRowHeight(active);
+    syncIssueStickyOffsets(active);
+    syncIssueHscrollSpacer(active);
+    // 미니셀·폰트 반영으로 폭이 한 번 더 흔들리므로 레이아웃 확정 후 재실측(렌더 경로와 동일).
+    requestAnimationFrame(() => {
+      syncIssueHeadRowHeight(active);
+      syncIssueStickyOffsets(active);
+      syncIssueHscrollSpacer(active);
+    });
+  }
   // 같은 이유 — Yield 좌측 고정열 left 오프셋도 숨김 상태에선 0 으로 측정된다.
   if (tab === "yield" && active) syncYieldStickyOffsets(active);
   // Note 탭(Luckysheet 캔버스)은 숨김 상태에서 크기가 0 — 재진입 시 리사이즈.

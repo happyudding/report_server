@@ -15,6 +15,10 @@
 결과: tests/bench_results/bench_<ts>.json + bench_<ts>.md + latest.md (gitignore 대상).
 판정: 이전 대비 p50 +15% 초과 [주의], +30% 초과 [회귀] (bytes 는 +10%/+30%).
 
+절대 기준 판정 1건 — **Map 3초 SLA (CLAUDE.md §5-11)**: gross die 10,000 × 7 소스 ×
+STEP 3종 세션에서 Map 첫 조회(서버 응답 + gunzip + JSON 파싱)가 3초를 넘으면 기준선
+유무와 무관하게 [SLA위반] 이 뜬다. full 실행에서만 돈다(--quick 제외).
+
 측정 범위 밖(리포트 말미에도 명시): 실 네트워크/waitress 동시성(→ load_test_10users.py),
 브라우저 JS 렌더링, S3 경로, workers>0 프로세스 풀(결정성 위해 workers=0 인라인 고정).
 
@@ -77,6 +81,11 @@ UA = {"User-Agent": "Mozilla/5.0 HoneyUser/bench", "Accept-Encoding": "gzip"}
 
 SCALE_FULL = (21, 1000, 1000)    # (sources, items, rows)
 SCALE_QUICK = (5, 200, 200)
+# CLAUDE.md §5-11 Map 3초 SLA 시나리오 — gross die 10,000 × 7 source.
+# 항목 수는 map 산출에 영향이 없어 100 으로 줄인다(픽스처 생성 시간만 아낌).
+SCALE_SLA = (7, 100, 10000)
+SLA_MAP_SECONDS = 3.0            # 서버 응답 + gunzip + JSON 파싱 합산 상한
+SLA_STEPS = 3                    # P1/P2/P3 — STEP 분리(die×STEP 증폭) 경로를 실제로 태운다
 N_COLD, N_DISK, N_WARM, N_TAB = 3, 5, 10, 5
 BATCH_N = 30                     # distribution_batch 요청 항목 수 (프런트 DIST_BATCH.SIZE)
 
@@ -96,7 +105,11 @@ def warn(msg: str) -> None:
 
 # ── 합성 honeyform (load_test_10users.py 이식) ───────────────────────────────
 
-def make_honeyform_df(n_items: int, n_rows: int, seed: int = 0):
+def make_honeyform_df(n_items: int, n_rows: int, seed: int = 0, n_steps: int = 1):
+    """n_steps>1 이면 항목을 P1..Pn STEP 으로 나눠 배분한다 (Map STEP 분리 경로용).
+
+    기본값 1 은 종전과 문자 그대로 같은 df 를 만든다 — 기존 지표의 기준선 연속성 유지.
+    """
     import numpy as np
     import pandas as pd
     rng = np.random.default_rng(seed)
@@ -107,7 +120,8 @@ def make_honeyform_df(n_items: int, n_rows: int, seed: int = 0):
         row = {c: "" for c in META_COLUMNS}
         row["SERIAL"] = label
         for i, it in enumerate(items, start=1):
-            row[it] = {"TSEQ": str(i), "TNO": str(i), "STEP": "FT",
+            row[it] = {"TSEQ": str(i), "TNO": str(i),
+                       "STEP": "FT" if n_steps <= 1 else f"P{(i - 1) % n_steps + 1}",
                        "UNIT": "V", "HILIM": "1.5", "LOLIM": "0.5"}[label]
         meta_rows.append(row)
 
@@ -409,6 +423,85 @@ def bench_tabs(sid: str, akey: str, items: list[str]) -> dict:
     return metrics
 
 
+def bench_sla_map(run_id: str) -> tuple[dict, dict, dict]:
+    """#13 Map 3초 SLA (CLAUDE.md §5-11) — gross die 10,000 × 7 source × STEP 3종.
+
+    측정 대상은 **사용자가 세션을 연 뒤 Map 탭을 클릭한 순간**이다 — 서버 응답 +
+    gunzip + JSON 파싱까지 합산한다. Issue Table Map 컬럼은 같은 map_analysis 응답을
+    소비하므로(static/webreport/issue_dist.js) 별도 지표가 없다.
+
+    세션 열기(/full)를 먼저 200 까지 완료시키는 것이 시나리오의 핵심이다. 그 콜드
+    빌드가 map dies 를 함께 시딩하고(`service.seed_map`), 실사용에서도 Map 탭 클릭은
+    항상 세션 열기 뒤에 온다. 프리웜(업로드 직후)으로 대신할 수 없다 —
+    `compute.status()["prewarm_pending"]` 은 **큐 길이만** 세어 settle 이 빌드 완료를
+    보장하지 못한다(빌드는 소비자 스레드에서 계속 돈다).
+
+    이 판정은 이전 실행 대비 상대 판정과 **독립인 절대 기준**이다 — 기준선이 없어도
+    3초를 넘으면 [SLA위반] 이 뜬다.
+    """
+    n_sources, n_items, n_rows = SCALE_SLA
+    print(f"#13 SLA 픽스처 생성: {n_sources} 소스 × {n_rows} die × STEP {SLA_STEPS}종")
+    df, _items = make_honeyform_df(n_items, n_rows, n_steps=SLA_STEPS)
+    files = make_files(encode_honeyform_parquet(df), n_sources)
+    _m, sid = bench_ingest(files, f"BENCH_{run_id}_SLA", None)
+    akey = report_db.get_session(sid).get("analysis_key")
+    metrics = {}
+    url = f"/pe/report/session/{sid}/web_report/map_analysis"
+    sizes = {}
+
+    # ① 세션 열기 — 이 콜드 빌드가 map dies 를 함께 시딩한다.
+    open_sec, r, open_polls = open_until_200(f"/pe/report/session/{sid}/full")
+    assert r.status_code == 200
+    metrics["sla.session_open"] = summarize([open_sec])
+    print(f"#13 세션 열기(/full): {open_sec:.2f}s ({open_polls}회 폴링)")
+
+    # ② Map 탭 클릭. 서버 재시작 직후와 같은 최악의 웜 상태(RAM 비고 디스크만)에서도
+    #    시딩이 동작하면 202 없이 바로 200 이어야 한다.
+    drop_ram(akey)
+    t0 = time.perf_counter()
+    _sec, r, polls = open_until_200(url)
+    body = r.data
+    if r.headers.get("Content-Encoding") == "gzip":
+        body = _gzip.decompress(body)
+    payload = json.loads(body)
+    first_sec = time.perf_counter() - t0
+    if polls:
+        warn(f"Map 첫 조회가 콜드 202 ({polls}회 폴링) — seed_map 시딩 미동작 의심")
+    sizes["sla_map_gz"] = len(r.data)
+    sizes["sla_map_json"] = len(body)
+    metrics["sla.map.first"] = summarize([first_sec])
+
+    # 데이터 소실 없음(규칙 §5-5) — STEP 분리는 모든 die 가 모든 STEP 맵에 등장한다.
+    maps = payload.get("maps") or []
+    dies = sum(len(m2.get("dies") or ()) for m2 in maps)
+    expected = n_rows * n_sources * SLA_STEPS
+    assert dies == expected, f"die 소실/증식: {dies} != {expected} (맵 {len(maps)}장)"
+    print(f"#13 SLA 첫 조회: {first_sec:.2f}s ({len(maps)}맵 / {dies:,}die / "
+          f"gz {sizes['sla_map_gz']/2**20:.1f}MB → json {sizes['sla_map_json']/2**20:.1f}MB)")
+
+    # 시딩 도입 전 세션(map 캐시만 없음) → /full 200 이 백그라운드 백필을 건다.
+    settle()
+    wr_cache.invalidate_caches(akey)
+    for path in (UPLOAD_ROOT / "web_report").glob("*/cache/map-*.gz"):
+        path.unlink()
+    t0 = time.perf_counter()
+    _sec, r = timed_get(f"/pe/report/session/{sid}/full")
+    assert r.status_code == 200, f"레거시 /full 이 200 이 아님: {r.status_code}"
+    _sec, _r, back_polls = open_until_200(url)
+    backfill_sec = time.perf_counter() - t0
+    metrics["sla.map.legacy_backfill"] = summarize([backfill_sec])
+    print(f"#13 레거시 백필: {backfill_sec:.2f}s ({back_polls}회 폴링)")
+
+    ok = first_sec <= SLA_MAP_SECONDS
+    if not ok:
+        warn(f"Map 3초 SLA 위반 — 첫 조회 {first_sec:.2f}s > {SLA_MAP_SECONDS}s "
+             f"(CLAUDE.md §5-11)")
+    sla = {"target": SLA_MAP_SECONDS, "measured": round(first_sec, 3), "ok": ok,
+           "maps": len(maps), "dies": dies, "polls": polls,
+           "params": {"sources": n_sources, "rows": n_rows, "steps": SLA_STEPS}}
+    return metrics, sizes, sla
+
+
 # ── 환경/카운터/저장/비교/리포트 ─────────────────────────────────────────────
 
 def collect_env(scale, quick: bool, label: str) -> dict:
@@ -473,6 +566,8 @@ _SECTION_ORDER = [
                       "tab.scatter.warm", "tab.raw_columns.first", "tab.raw_columns.warm",
                       "tab.raw_page.first", "tab.raw_page.warm", "tab.trim.first",
                       "tab.trim.warm"]),
+    ("SLA: Map 3초 (§5-11)", ["sla.map.first", "sla.map.legacy_backfill",
+                              "sla.session_open"]),
 ]
 
 _NAME_KO = {
@@ -505,6 +600,9 @@ _NAME_KO = {
     "tab.raw_page.warm": "Raw Data 페이지 조회 — 웜",
     "tab.trim.first": "Trim Analysis — 1회차",
     "tab.trim.warm": "Trim Analysis — 웜",
+    "sla.map.first": "Map 첫 조회 (응답+파싱, 목표 3초)",
+    "sla.map.legacy_backfill": "└ 시딩 전 세션 백필 경로",
+    "sla.session_open": "(선행) 세션 열기 — 이때 시딩됨",
 }
 
 _SIZE_KO = {
@@ -513,6 +611,8 @@ _SIZE_KO = {
     "full_gz": "/full 응답 gzip (네트워크)",
     "full_json": "/full 해제 JSON (브라우저 파싱)",
     "dist_batch_resp_gz": f"배치 {BATCH_N}건 응답 gzip",
+    "sla_map_gz": "SLA Map 응답 gzip (네트워크)",
+    "sla_map_json": "SLA Map 해제 JSON (브라우저 파싱)",
 }
 
 
@@ -605,8 +705,25 @@ def render_report_md(cur: dict, prev: dict | None, total_sec: float) -> str:
         lines.append(f"- lock_waits: {json.dumps(cs['lock_waits'], ensure_ascii=False)}")
     lines.append("")
 
+    sla = cur.get("sla")
+    if sla:
+        p = sla["params"]
+        lines.append("## SLA: Map 3초 (CLAUDE.md §5-11)")
+        lines.append("")
+        lines.append(f"- **{'[SLA충족]' if sla['ok'] else '[SLA위반]'}** "
+                     f"{p['sources']} 소스 × {p['rows']:,} die × STEP {p['steps']}종 "
+                     f"→ Map 첫 조회 **{sla['measured']:.2f}s** (목표 {sla['target']}s)")
+        lines.append(f"- 맵 {sla['maps']}장 / die {sla['dies']:,}개 "
+                     f"(다운샘플 없음 — 규칙 §5-5) / 콜드 폴링 {sla['polls']}회")
+        lines.append("- 이전 실행 대비가 아니라 **절대 기준** 판정이다. Issue Table 의 Map "
+                     "컬럼도 같은 응답을 소비하므로 이 수치가 함께 적용된다.")
+        lines.append("")
+
     lines.append("## 종합")
     lines.append("")
+    if sla and not sla["ok"]:
+        lines.append(f"- [SLA위반] Map 첫 조회 {sla['measured']:.2f}s "
+                     f"> 목표 {sla['target']}s")
     if flagged:
         for verdict, name, delta in sorted(flagged, key=lambda x: -abs(x[2])):
             lines.append(f"- {verdict} {name}: {delta:+.0f}%")
@@ -666,6 +783,12 @@ def main() -> int:
 
     metrics.update(bench_tabs(sid_a, akey_a, items))
 
+    # #13 Map 3초 SLA — 픽스처 규모가 달라 full 실행에서만 돈다(quick 스모크 제외).
+    sla = None
+    if not args.quick:
+        m, sz, sla = bench_sla_map(run_id)
+        metrics.update(m); sizes.update(sz)
+
     cur = {
         "run_id": run_id,
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -674,6 +797,7 @@ def main() -> int:
         "stages": stages,
         "sizes": sizes,
         "checks": checks,
+        "sla": sla,
         "counters": {
             "cache_stats": wr_cache.cache_stats(),
             "compute_stats": wr_compute.status().get("stats"),

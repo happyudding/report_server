@@ -234,6 +234,12 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             with build_log.stage("temp_map_seed"):
                                 seed_temp_map(session_id, session, tables,
                                               report_db=report_db, upload_root=upload_root)
+                            # Map dies 도 같은 tables 로 함께 채운다 — 안 하면 Map 탭 /
+                            # Issue Table Map 컬럼 첫 진입이 콜드 202 + 전체 재디코드
+                            # (CLAUDE.md §5-11 Map 3초 SLA).
+                            with build_log.stage("map_seed"):
+                                seed_map(session_id, session, tables,
+                                         report_db=report_db, upload_root=upload_root)
                             # 관측 로그 — 콜드 빌드(디코드 포함)가 실데이터에서 얼마나 걸리는지.
                             _log.info(
                                 "report cold build akey=%.12s sid=%s sources=%d items=%d %.1fs",
@@ -605,6 +611,65 @@ def seed_temp_map(session_id: str, session, tables, *, report_db, upload_root: P
                                 cache.TEMP_MAP_CACHE_MAX, cache.TEMP_MAP_CACHE_MAX_BYTES)
     except Exception:
         _log.warning("temp_map seeding failed for session %s", session_id, exc_info=True)
+
+
+def seed_map(session_id: str, session, tables, *, report_db, upload_root: Path) -> None:
+    """report 콜드 빌드 직후 Map dies gzip 을 같은 tables 로 미리 채운다 (RAM + 디스크).
+
+    CLAUDE.md §5-11 (Map 3초 SLA) 의 달성 수단이다. 이게 없으면 Map Analysis 탭 / Issue
+    Table Map 컬럼 첫 진입이 콜드 202 + 전체 재디코드 빌드(30초+ "맵 로드 중…")가 된다 —
+    map dies 는 프리웜 대상이 아니라 종전에는 첫 진입이 사실상 항상 콜드였다.
+    여기서는 tables 가 이미 웜이라 한계비용이 die dict 생성 + dumps + gzip 뿐이다.
+
+    호출 시점 tables 는 ``_mode_tables`` + ``build_report_payload`` 의 selected_items
+    필터가 적용된 상태 = ``get_map_analysis`` 와 같은 준비 순서라 산출 rows 가 동일하다
+    (그쪽을 고치면 여기도 같이 고칠 것 — 정준 JSON 일치가 계약).
+    실패는 조용히 넘긴다 — 시딩은 최적화일 뿐이고 라우트가 폴백 계산을 갖고 있다.
+    """
+    from .tabs.Map_analysis import build_map_analysis_rows
+
+    try:
+        prep = _preprocess.session_digest(report_db, session_id)
+        cache_key = cache_policy.map_key(session, prep)
+        # comment/override 편집 리빌드는 edits_rev 만 바뀌어 map 키가 그대로다 — 이미
+        # 있는 dies 를 다시 만들지 않는다(프로세스 무관 판정을 위해 디스크까지 확인).
+        if (cache.cache_get(cache.MAP_CACHE, cache_key) is not None
+                or disk_cache.map_exists(upload_root, cache_key)):
+            return
+        t0 = time.perf_counter()
+        rows = build_map_analysis_rows(
+            tables, session.get("product_type", ""), session.get("product", ""),
+            _validate_mode(session.get("mode")))
+        raw = json.dumps({"format": "map-dies-v1", "maps": rows},
+                         ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        blob = gzip.compress(raw, compresslevel=_DIST_GZIP_LEVEL)
+        disk_cache.save_map(upload_root, cache_key, blob)
+        cache.map_cache_put(cache_key, blob)
+        _log.info("map seeded akey=%.12s maps=%d dies=%d raw=%.1fMB gz=%.1fMB %.1fs",
+                  str(session.get("analysis_key")), len(rows),
+                  sum(len(m.get("dies") or ()) for m in rows),
+                  len(raw) / 1048576, len(blob) / 1048576, time.perf_counter() - t0)
+    except Exception:
+        _log.warning("map seeding failed for session %s", session_id, exc_info=True)
+
+
+def schedule_map_backfill(session_id: str, session, *, report_db, upload_root: Path) -> None:
+    """시딩 도입 전 세션(report 캐시는 있는데 map 캐시가 없는 세션)만 백그라운드 빌드 예약.
+
+    /full 200 직후에 부른다. 빌드를 **기다리지 않는다** — 사용자가 몇 초 뒤 Map/Issue
+    Table 탭을 클릭할 때쯤 준비돼 있게 하는 것이 목적이라, 어차피 유발될 빌드를 앞당길
+    뿐이다(신규 202 도 부분 계산도 아니다). ``seed_map`` 이 채운 신규 세션은 stat 1회로
+    no-op. 폭주 방어는 ``compute.request_build`` 의 pending 중복 제거 + 연속 실패 차단.
+    """
+    try:
+        prep = _preprocess.session_digest(report_db, session_id)
+        cache_key = cache_policy.map_key(session, prep)
+        if (cache.cache_get(cache.MAP_CACHE, cache_key) is not None
+                or disk_cache.map_exists(upload_root, cache_key)):
+            return
+        compute.request_build(session_id, str(upload_root), "map")
+    except Exception:
+        _log.warning("map backfill scheduling failed for session %s", session_id, exc_info=True)
 
 
 def get_temp_map_gzip(session_id: str, *, report_db, upload_root: Path) -> bytes:

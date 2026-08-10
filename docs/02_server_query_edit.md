@@ -38,6 +38,10 @@
 - **`_uploader_guard`** — 삭제·비공개 토글·편집자 부여. 신원 없으면 401, 업로더 아니면 403.
 - **`_editor_guard`** — 콘텐츠 편집·개인 중요표시. 업로더 본인 또는 위임 편집자
   (`report_session_editor`)면 통과.
+- **master PC 는 위 두 가드를 모두 통과한다** (2026-08-10 — 종전엔 `_editor_guard` 만).
+  admin 로그인한 PC(서명된 `pe_master_gate` 쿠키, 4h)는 Honey 신원이 없어도 업로더와 동일
+  권한이다 — 편집뿐 아니라 삭제·비공개 토글·편집자 부여까지. 프런트도 `is_master` 를
+  `IS_UPLOADER` 에 합류시켜 해당 버튼을 노출한다([core.js](../server/report/static/webreport/core.js)).
 - **`_private_guard`** (2026-07-15) — **비공개(is_private) 세션 조회 차단**. 업로더 본인 또는
   위임 편집자가 아니면 **404**(존재 자체를 숨김 — 편집 가드의 401/403 과 달리 조회는 404).
   적용 지점: `/result`·`/session/<sid>`·`/full`·`/view`·`/annotation/<sid>`(각 라우트),
@@ -79,7 +83,7 @@
 ### 편집자 위임
 업로더가 `POST /session/<sid>/editors` 로 다른 PC 계정에 편집 권한을 준다. 후보는
 `report_web_visitor` 풀(`/editors/candidates`)에서 고른다. 위임받은 계정은 `_editor_guard`
-통과(콘텐츠 편집 가능, 삭제·비공개는 여전히 업로더 전용).
+통과(콘텐츠 편집 가능, 삭제·비공개는 여전히 업로더 전용 — 단 master PC 는 예외).
 
 ### 세션 메타 수정 — `PATCH /session/<sid>/meta` (Honey 편집창)
 세션 상세 우상단 ✏️ → **Honey 앱**의 편집창(업로드 다이얼로그 재사용, `SessionMetaDialog`)

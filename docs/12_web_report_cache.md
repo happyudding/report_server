@@ -74,7 +74,7 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | TABLES_CACHE | (akey, chash[, prep]) | raw_data 편집(chash) / 전처리 / 세션 삭제 |
 | DIST_CACHE | (akey, chash[, prep], mode) | 〃 (mode 는 세션 생성 후 불변) |
 | _DIST_BATCH_CACHE | (akey, chash[, prep], mode, subjects_digest[, "bin1"[, scope]]) | 〃 — 항목 배치 ECDF gzip (`/web_report/distribution_batch`) |
-| MAP_CACHE | (akey, chash[, prep], mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8) |
+| MAP_CACHE | (akey, chash[, prep], mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8). **report 콜드 빌드가 `service.seed_map` 으로 RAM+디스크를 함께 채운다** (아래 "Map dies 시딩" — Map 3초 SLA) |
 | TEMP_MAP_CACHE | (akey, chash[, prep], mode, v) | 〃 — Temperature 항목별 fail die **인덱스** gzip (`/web_report/temp_map`, 2026-08-05). map dies 와 같은 세대여야 인덱스가 맞는다. **report 콜드 빌드가 `service.seed_temp_map` 으로 RAM+디스크를 함께 채운다**(같은 판정 결과 재사용) — 라우트 단독 콜드는 디스크 → 워커 오프로드(`compute.temp_map_job`) 순 |
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 (메타만 쓰므로 전처리 무관) |
 | REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode) | comment/override/전처리 편집(rev) + 위 전부 |
@@ -188,6 +188,27 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
     대기했다(같은 세션을 N명이 열면 스레드 N개가 묶임). 지금은
     `disk_cache.report_exists`/`map_exists`(stat 1회)로 락 **전에** 판정한다. 락 안의
     기존 판정은 TOCTOU 안전망으로 남겨 둔다.
+- **Map dies 시딩** (2026-08-10, CLAUDE.md §5-11 Map 3초 SLA): 위 202 규약은 "콜드일 때
+  스레드를 물지 않는다"를 보장할 뿐, **사용자 대기 자체는 그대로**다. map dies 는
+  프리웜 대상이 아니라(`compute._prewarm_one` 은 report payload 만 만든다) Map 탭 /
+  Issue Table Map 컬럼 첫 진입이 사실상 항상 콜드 202 + 전체 재디코드였다(대형 세션
+  30초+ "맵 로드 중…").
+  - **report 콜드 빌드가 `service.seed_map` 으로 함께 채운다** — temp_map 시딩과 대칭.
+    이미 웜인 tables 를 재사용하므로 한계비용은 die dict 생성 + dumps + gzip 뿐이고,
+    `build_log` 의 `map_seed` stage 로 상시 실측된다. 워커 오프로드 빌드면 워커
+    프로세스 안에서 돌아 디스크를 직접 채우고(기존 규약), 부모 첫 조회는 disk 히트.
+  - **재생성 방지**: 시딩 전에 RAM+디스크 존재를 확인해 조기 종료한다. comment/override
+    편집 리빌드는 `edits_rev` 만 바뀌고 map 키는 그대로라 no-op 이다 — "편집마다 전체
+    리빌드" 금지(2026-08-06)와 충돌하지 않는다.
+  - **시딩 도입 전 세션**(report 캐시는 있는데 map 캐시가 없음)은 `/full` **200** 경로가
+    `service.schedule_map_backfill` 로 백그라운드 빌드를 **예약만** 한다(대기 없음).
+    사용자가 몇 초 뒤 탭을 클릭할 때 이미 준비돼 있게 하는 것으로, 어차피 유발될 빌드를
+    앞당길 뿐이라 신규 202 도 부분 계산도 아니다. 폭주 방어는 `request_build` 의
+    `(session, kind)` 중복 제거 + 연속 실패 차단 + 온디맨드 워커 상한.
+  - 시딩 산출이 지연 라우트 경로(`get_map_analysis`)와 **정준 JSON 완전 일치**해야 한다
+    (tables 준비 순서 `_mode_tables` → `selected_items` 필터가 같아야 함) —
+    회귀 테스트 [tests/test_map_seed_equivalence.py](../tests/test_map_seed_equivalence.py),
+    SLA 실측은 [tests/bench_webreport.py](../tests/bench_webreport.py) `bench_sla_map`.
 - **dist pack chunk 디코드 캐시** (2026-07-28): `distribution_batch` 는 요청마다 chunk
   파일을 read+gunzip+json.loads 했다(대형 세션은 chunk 1개가 비압축 15~20MB, 순수 GIL
   점유). 디코드 결과를 `DIST_CHUNK_CACHE` 에 담아 갤러리 스크롤이 같은 chunk 를 되짚을 때

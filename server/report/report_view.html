@@ -559,21 +559,25 @@ tbody tr:hover { background: #f9fbff; }
   position: sticky; top: 0; z-index: 6; background: #e8eef4; }
 .sheet-table.kind-issue tr.issue-shead-bot > th {
   position: sticky; top: var(--issue-shead-row1-h, 26px); z-index: 6; background: #e8eef4; }
-/* 좌측 고정: 식별컬럼 4개(Step/Bin/TNO/Item) + Map/Distribution — 데이터 tbody td + 섹션 헤더 상단행 th.
-   Map/Dist 를 함께 고정해야 source(_yield) 가 많아 가로 스크롤 시 두 컬럼이 고정 블록 밑으로 안 가려진다. */
-.sheet-table.kind-issue tbody td:nth-child(-n+6),
-.sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+6) { position: sticky; z-index: 3; background: #fff; }
+/* 좌측 고정: 식별컬럼 3개(Step/Bin/Item) + Map/Distribution — 데이터 tbody td + 섹션 헤더 상단행 th.
+   Map/Dist 를 함께 고정해야 source(_yield) 가 많아 가로 스크롤 시 두 컬럼이 고정 블록 밑으로 안 가려진다.
+   **TNO(3번째)만 고정에서 뺀다**(사용자 요청 2026-08-10) — 가로 스크롤하면 TNO 는 자연스럽게
+   Step/Bin 뒤로 밀려 사라지고 Item/Map/Dist 가 그만큼(≈63px) 왼쪽으로 당겨져 붙는다.
+   열 폭·내용은 그대로라 다른 셀에는 영향이 없다. */
+.sheet-table.kind-issue tbody td:nth-child(-n+6):not(:nth-child(3)),
+.sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+6):not(:nth-child(3)) { position: sticky; z-index: 3; background: #fff; }
 /* 헤더 상단행의 고정컬럼은 상단+좌측 동시 고정(코너)이라 다른 sticky 위로 올린다. */
-.sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+6) { z-index: 7; background: #e8eef4; }
-/* 좌측 고정 오프셋 = 앞 컬럼 폭 누적. colWidth 기본값(70% 축소 반영: step42+bin46+tno63+item158+map144)이
-   fallback 이지만, 셀 내용이 길어 컬럼이 늘어나면 고정 px 는 어긋나(셀 겹침/깨짐) 실제 폭을
-   JS(syncIssueStickyOffsets)로 측정해 --issue-colN-left 로 덮어쓴다. */
+.sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+6):not(:nth-child(3)) { z-index: 7; background: #e8eef4; }
+/* 좌측 고정 오프셋 = 앞 고정컬럼 폭 누적(TNO 폭은 빠진다). colWidth 기본값
+   (step42+bin46+item124+map144)이 fallback 이지만, 셀 내용이 길어 컬럼이 늘어나면 고정 px 는
+   어긋나(셀 겹침/깨짐) 실제 폭을 JS(syncIssueStickyOffsets)로 측정해 --issue-colN-left 로 덮어쓴다.
+   ※ fallback 은 어디까지나 임시값이라 **패널이 보이는 시점에 반드시 재실측해야 한다**
+   (프리렌더가 숨김 상태에서 그리면 실측이 0 이라 안 심어진다 — tabs_topbar.js). */
 .sheet-table.kind-issue tbody td:nth-child(1), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(1) { left: 0; }
 .sheet-table.kind-issue tbody td:nth-child(2), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(2) { left: var(--issue-col2-left, 42px); }
-.sheet-table.kind-issue tbody td:nth-child(3), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(3) { left: var(--issue-col3-left, 88px); }
-.sheet-table.kind-issue tbody td:nth-child(4), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(4) { left: var(--issue-col4-left, 151px); }
-.sheet-table.kind-issue tbody td:nth-child(5), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(5) { left: var(--issue-col5-left, 275px); }
-.sheet-table.kind-issue tbody td:nth-child(6), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(6) { left: var(--issue-col6-left, 419px); }
+.sheet-table.kind-issue tbody td:nth-child(4), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(4) { left: var(--issue-col4-left, 88px); }
+.sheet-table.kind-issue tbody td:nth-child(5), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(5) { left: var(--issue-col5-left, 212px); }
+.sheet-table.kind-issue tbody td:nth-child(6), .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(6) { left: var(--issue-col6-left, 356px); }
 /* Map(5)/Distribution(6) 컬럼 최소폭 보장 — source 가 많아 auto table-layout 이 <col> 힌트폭 밑으로
    차트 컬럼을 압축해도(미니셀은 content min-width 0) 최소 144px 는 확보한다(사용자 요청: Map/Dist
    최소값 보장). 리사이즈로 더 넓힐 순 있어도 144 밑으론 안 줄어든다. */
@@ -619,6 +623,14 @@ tbody tr:hover { background: #f9fbff; }
 /* Issue Table 은 화살표를 STEP 값 오른쪽이 아니라 아래 줄에 둔다(사용자 요청 2026-08-05) —
    Step 열 폭이 값("P2") 폭까지 좁아진다. Yield 탭 토글은 종전대로 오른쪽 유지. */
 .sheet-table.kind-issue .issue-toggle { display: block; margin: 2px auto 0; }
+/* Yield 섹션 헤더 Step 열 아래 작은 ▼ — 표 전체 TNO 펼치기/접기(구 툴바 버튼, 2026-08-10
+   사용자 요청). 행 토글(.issue-toggle)과 같은 규격이라 Step 열 폭이 넓어지지 않는다. */
+.sheet-table.kind-issue .issue-toggle-all {
+  display: block; margin: 2px auto 0;
+  border: 1px solid #c7d2e0; background: #eef3fb; color: #1f4d8c;
+  border-radius: 3px; font-size: 9px; line-height: 1; padding: 0 2px; cursor: pointer;
+}
+.sheet-table.kind-issue .issue-toggle-all:hover { background: #dbe8fb; }
 .sheet-table.kind-yield tbody tr.yield-bin-detail td { background: #fbfcfe; color: #55606c; }
 .sheet-table.kind-yield tbody tr.yield-bin-rep td { font-weight: 600; }
 .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #fbfcfe; color: #55606c; }
@@ -628,6 +640,11 @@ tbody tr:hover { background: #f9fbff; }
    고정열만 색이 안 바뀌고, 가로 스크롤 상태에서 고정열 밑으로 지나가는 우측 데이터가
    비쳐 보였다(사용자 신고 2026-08-04). 고정열에도 같은 hover 색을 명시해 덮는다. */
 .sheet-table.kind-issue tbody tr:hover td:nth-child(-n+6) { background: #edf3fc; }
+/* 셀 선택(.cell-sel)의 기본 배경은 **반투명**이라(rgba .13) 좌측 고정열에 걸리면 그 밑을
+   지나가는 우측 데이터가 그대로 비쳐 글자가 겹쳐 보인다(사용자 신고 2026-08-10 — Item 셀
+   클릭). 고정 6열만 같은 색을 **불투명**으로 계산해 덮는다(흰 배경 위 합성값과 동일 색).
+   특이도(0,4,2) > 기본 .sheet-table td.cell-sel(0,2,1) 이라 !important 끼리도 이긴다. */
+.sheet-table.kind-issue tbody td:nth-child(-n+6).cell-sel { background: #e3ebfc !important; }
 /* Issue Table / Yield 상단 sticky 툴바(전체 펼치기/접기) — sheet-wrap 위에 겹치지 않게 고정. */
 .issue-toolbar, .yield-toolbar {
   position: sticky; top: var(--sticky-head-h, 96px); z-index: 92;
@@ -1974,9 +1991,10 @@ html[data-theme="dark"] .yield-hscroll::-webkit-scrollbar-thumb { background: #4
 html[data-theme="dark"] .yield-hscroll::-webkit-scrollbar-thumb:hover { background: #5d6879; }
 html[data-theme="dark"] .sheet-table.kind-issue tr.issue-shead-top > th,
 html[data-theme="dark"] .sheet-table.kind-issue tr.issue-shead-bot > th { background: #242c37; }
-/* 고정열은 6열(Map/Distribution 포함) — 라이트의 nth-child(-n+6) 과 범위를 맞춘다.
-   5·6열이 빠져 있으면 다크에서 그 두 열만 라이트 배경(#fff)으로 남는다. */
-html[data-theme="dark"] .sheet-table.kind-issue tbody td:nth-child(-n+6) { background: #1e2128; }
+/* 고정열은 5열(Step/Bin/Item + Map/Distribution — TNO 제외) — 라이트의
+   nth-child(-n+6):not(:nth-child(3)) 과 범위를 맞춘다. 5·6열이 빠져 있으면 다크에서 그 두 열만
+   라이트 배경(#fff)으로 남는다. */
+html[data-theme="dark"] .sheet-table.kind-issue tbody td:nth-child(-n+6):not(:nth-child(3)) { background: #1e2128; }
 html[data-theme="dark"] .sheet-table.kind-issue tr.issue-shead-top > th:nth-child(-n+4) { background: #242c37; }
 html[data-theme="dark"] .sheet-table.kind-issue td.sheet-subhead { background: #242c37 !important; }
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-cell-warn { background: #46201f !important; }
@@ -1984,6 +2002,8 @@ html[data-theme="dark"] .sheet-table.kind-issue td.issue-yield-warn { background
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #20242c; color: #9aa3b0; }
 /* 라이트와 같은 이유 — hover 시 고정열도 불투명하게 덮어 우측 데이터 비침을 막는다. */
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr:hover td:nth-child(-n+6) { background: #263043; }
+/* 고정열 셀 선택 — 라이트와 같은 이유로 불투명(다크 고정열 배경 #1e2128 위 합성값). */
+html[data-theme="dark"] .sheet-table.kind-issue tbody td:nth-child(-n+6).cell-sel { background: #1f2a41 !important; }
 html[data-theme="dark"] #panel-issues.issue-del-mode tbody tr.issue-row-sel > td , html[data-theme="dark"] #panel-issue-temp.issue-del-mode tbody tr.issue-row-sel > td{ background: #4a3d18 !important; }
 html[data-theme="dark"] #panel-issues.issue-del-mode td.issue-sel-cell:hover , html[data-theme="dark"] #panel-issue-temp.issue-del-mode td.issue-sel-cell:hover{ outline-color: #64748b; }
 html[data-theme="dark"] .issue-toolbar { background: #14161a; }
@@ -2011,9 +2031,11 @@ html[data-theme="dark"] .sheet-wrap.kind-yield::-webkit-scrollbar-track { backgr
 html[data-theme="dark"] .sheet-wrap.kind-yield::-webkit-scrollbar-thumb { background: #4a5462; border-color: #1e2128; }
 html[data-theme="dark"] .sheet-wrap.kind-yield::-webkit-scrollbar-thumb:hover { background: #5d6879; }
 html[data-theme="dark"] .yield-toggle,
-html[data-theme="dark"] .issue-toggle { background: #243044; border-color: #33507a; color: #7fb3ef; }
+html[data-theme="dark"] .issue-toggle,
+html[data-theme="dark"] .sheet-table.kind-issue .issue-toggle-all { background: #243044; border-color: #33507a; color: #7fb3ef; }
 html[data-theme="dark"] .yield-toggle:hover,
-html[data-theme="dark"] .issue-toggle:hover { background: #2b3c58; }
+html[data-theme="dark"] .issue-toggle:hover,
+html[data-theme="dark"] .sheet-table.kind-issue .issue-toggle-all:hover { background: #2b3c58; }
 
 /* ── Compare 탭 (pass/fail 틴트 → 다크 대비 색) ── */
 html[data-theme="dark"] .compare-h { color: #aab3c0; }

@@ -213,6 +213,12 @@ def session_full(session_id):
         except Exception:
             _log.exception("web_report recompute failed for session %s", session_id)
             abort(500, "web_report recompute failed")
+        # 시딩(service.seed_map) 도입 전 세션은 map 캐시가 없다 — 여기서 백그라운드
+        # 빌드만 예약하고 기다리지 않는다. 사용자가 몇 초 뒤 Map/Issue Table 탭을 열 때
+        # 콜드 202 로 30초+ 기다리지 않게 하는 백필 (CLAUDE.md §5-11).
+        web_report_service.schedule_map_backfill(
+            session_id, session, report_db=report_db,
+            upload_root=Path(REPORT_UPLOAD_DIR))
         headers = {"Vary": "Accept-Encoding", "ETag": etag}
         if request.headers.get("If-None-Match") == etag:
             return Response(status=304, headers=headers)
@@ -421,7 +427,8 @@ def session_my_access(session_id):
     uid = _current_user()
     is_master = _is_master()
     is_uploader = _is_uploader(session, uid) if uid else False
-    # master PC 는 전 세션 편집 허용(편집만 — 삭제·비공개토글은 is_uploader 로 업로더 전용 유지).
+    # master PC 는 업로더와 동일 권한 — 편집뿐 아니라 삭제·비공개토글·권한부여도 통과한다
+    # (security._uploader_guard). 프런트도 is_master 를 IS_UPLOADER 에 합류시킨다(core.js).
     can_edit = is_master or is_uploader or (bool(uid) and report_db.is_session_editor(session_id, uid))
     return jsonify({
         "user_id": uid,

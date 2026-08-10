@@ -21,7 +21,7 @@
 | Raw Data | `raw_data.py` | payload 는 placeholder — 실제는 lazy 조회/편집 라우트 |
 | Yield | `yield_tab.py` | `build_yield_rows` + fail_counts/fail_bin_ranking/yield_overview + STEP 분리(`build_yield_step_groups`). **Temperature 는 RT source 만** 입력으로 받는다(metrics 가 결정) |
 | CPK | `cpk.py` | `build_cpk_rows` (source 별 행, total 합산 행 없음) — 통계는 **Bin1(양품) 기준 단일 값** |
-| Issue Table | `issue_table.py` | Yield 파생 + cpk<1.33 파생(Bin1 기준) + ETC. comment/Status/행 숨김은 편집 DB 에서 채움. **Temperature 는 RT source 만**(TEMP 는 아래 별도 시트로 분리) |
+| Issue Table | `issue_table.py` | Yield 파생 + cpk<1.33 파생(Bin1 기준, **Pass/Fail 단위·`OTP_`/`CHIP_ID`/`CHIPID` 이름 항목 제외** — `_cpk_skip_subject`, 2026-08-10) + ETC. comment/Status/행 숨김은 편집 DB 에서 채움. **Temperature 는 RT source 만**(TEMP 는 아래 별도 시트로 분리) |
 | Issue Table Temp | `temp_fail.py` | **Temperature 전용** — CT/HT 를 RT limit 으로 **전 항목** 재판정한 item 단위 행(다른 모드는 `[]`). row_key `TEMP\|<item>` |
 | Distribution | — (lazy, 항목 배치) | `/full` 은 빈 시트 + `distribution_index`(항목 목록). ECDF 는 **화면에 보이는 항목만** `GET .../web_report/distribution_batch?subjects=…` 로 받는다 |
 | Trim Analysis | — (lazy, **버튼 시작**) | `/full` 은 빈 시트. **탭 진입만으로는 아무 요청도 안 한다** — 「분석 시작」을 눌러야 `GET .../web_report/trim_analysis` 를 받고, 그 뒤 차트는 `GET .../web_report/trim_chart_batch` 로 **한 페이지 6개씩** |
@@ -38,6 +38,12 @@ dies(STEP 분리 시 수백만 객체 — 메인스레드 JSON 파싱 freeze 의
 않는다** — 종전엔 전량 생성 후 `strip_dies` 로 버렸다(같은 결과, 낭비만 제거).
 DUT 모드만 예외로 dies 를 만든다(`_merge_dut_rows` 가 병합 입력으로 쓴다) — 그래서
 `strip_dies` 는 안전망으로 남아 있다.
+
+**Map 3초 SLA** (2026-08-10, CLAUDE.md §5-11): gross die 10,000 × 7 source 세션에서 Map
+Analysis 첫 화면과 **Issue Table 의 Map 컬럼**(같은 응답을 소비 — issue_dist.js)은 3초
+안에 떠야 한다. 지연 로드만으로는 첫 진입이 콜드 202 + 전체 재디코드라 30초+ 걸렸으므로,
+report 콜드 빌드가 map dies gzip 을 함께 시딩한다(`service.seed_map`) — 첫 진입은 항상
+RAM/디스크 히트다. 다운샘플로 달성하지 말 것(규칙 §5-5). 상세 [docs/12](12_web_report_cache.md).
 
 **Map Detail(크게 보기) 범례** (2026-08-06): 갤러리 범례는 전 소스 합산이지만 Detail 은
 **지금 보고 있는 맵 1장** 기준이다 — Bin Legend 의 count·비율이 화면의 웨이퍼와 일치한다
@@ -196,8 +202,9 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   일괄 복원. Status(kind `issue_status`)는 Open/Close 드랍다운(편집모드 전용, 기본 Open —
   **"Close" 만 저장, 부재=Open**). Summary 탭 Issue Status 카드가 카테고리별 Open/Close
   를 집계한다(`issueStatusCounts`, map_select.js).
-- **Issue Table 선택 모드 = 일괄 삭제 + Status 일괄** (2026-07-28): 툴바 "☑ 선택 모드"(구
-  "🗑 삭제 모드", id/CSS 클래스는 `issueDelMode`/`.issue-del-mode` 그대로)를 켜면 행 체크박스가
+- **Issue Table 선택 모드 = 일괄 삭제 + Status 일괄** (2026-07-28): 툴바
+  "☑ Issue Item 추가/변경/삭제"(구 "☑ 선택 모드" → 2026-08-10 개명, 그 전엔 "🗑 삭제 모드".
+  id/CSS 클래스는 `issueDelMode`/`.issue-del-mode` 그대로)를 켜면 행 체크박스가
   뜬다. 체크박스가 작아 **Step 셀 아무 곳이나 클릭해도 토글**되고(`td.issue-sel-cell`,
   Step 셀 안 ▼ 는 클릭 위임에서 먼저 처리), 선택 행은 `tr.issue-row-sel` 로 강조한다.
   선택 대상 동작: 전체 선택/선택 해제 · 선택 Open/선택 Close · 선택 삭제 · 삭제 전체 초기화.
@@ -222,11 +229,21 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   `GET .../web_report/scatter/<subject>` 라 셀당 요청 1건이며, 동시 요청은
   `STDF_MINI_MAX_INFLIGHT`(2)로 제한하고 상한에 걸린 셀은 요청 완료 시 재큐잉한다.
 - **Issue Table/Yield 컬럼 표시 규칙** (2026-07-21, [sheets.js](../server/report/static/webreport/sheets.js)):
-  - **좌측 틀고정 재실측**: 고정열(Step/Bin/TNO/Item/Map/Distribution) left 오프셋은 렌더
+  - **좌측 틀고정 재실측**: 고정열(Step/Bin/**Item**/Map/Distribution — **TNO 는 2026-08-10
+    부터 고정 제외**, 가로 스크롤하면 Step/Bin 뒤로 밀려 사라진다) left 오프셋은 렌더
     시점 실측값(`--issue-colN-left`)이라, TNO 상세행을 펼쳐 Item 열이 넓어지면 stale 이 되어
     Map/Distribution 이 Item 위로 겹친다. `toggleIssueGroup`/`setAllIssueGroups` 는
     `afterIssueRowsToggled()` 로 반드시 재실측한다(Yield 는 `setYieldGroup` 에서 동일).
     **행 표시/폭을 바꾸는 새 동작을 추가하면 여기에 합류시킬 것.**
+    - ⚠ **숨김 상태 실측은 전부 0** 이다. 백그라운드 프리렌더가 Issue Table 을
+      `display:none` 인 채로 그리므로 그때 실측하면 아무 값도 안 심어지고 CSS fallback
+      (Item=124px 가정)이 남아 Map/Distribution 이 Item 을 덮는다(2026-08-10 신고 원인).
+      탭 활성화 시점([tabs_topbar.js](../server/report/static/webreport/tabs_topbar.js))에서
+      `syncIssueStickyOffsets` 를 반드시 다시 부른다.
+    - 고정열 셀의 강조 배경은 **불투명**이어야 한다 — 셀 선택(`.cell-sel`)의 기본 반투명
+      배경을 그대로 쓰면 고정열 밑을 지나가는 우측 데이터가 비쳐 글자가 겹친다.
+  - **TNO 전체 펼치기**: 툴바 버튼이 아니라 **Yield 섹션 헤더 Step 열 아래 작은 ▼**
+    (`.issue-toggle-all`, 2026-08-10). 핸들러는 종전 `data-issue-act="toggle-all"` 그대로.
   - **source 헤더 축약**: source 컬럼이 `SRC_ABBREV_MIN`(8) 이상이면 공통 접두/접미를 떼고
     다른 부분만 표시한다(첫 컬럼만 전체 이름, `sourceHeaderLabels`). 전체 이름은 th `title`
     에 남는다. 이때 `{src}_yield/_count` 열너비도 숫자 크기로 좁힌다(`colWidth(..., narrowSrc)`).

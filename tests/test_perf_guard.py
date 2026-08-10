@@ -83,6 +83,10 @@ REMOVE_CASES = [
      "    finite = finite_count_map(tables)"),
     ("S08-cancel-preserve-pool", "web_report/compute.py",
      "        if fut.cancel():"),
+    ("S09-map-seed", "web_report/service.py",
+     "                                seed_map(session_id, session, tables,"),
+    ("S09-map-seed", "server/report/routes_session.py",
+     "        web_report_service.schedule_map_backfill("),
 ]
 
 

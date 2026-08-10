@@ -237,6 +237,17 @@ _RULES = [
         "doc": "web_report/compute.py run()",
     },
     {
+        "id": "S09-map-seed",
+        "kind": "forbid_remove",
+        "paths": ["web_report/service.py", "server/report/routes_session.py"],
+        "pattern": r"\bseed_map\(session_id|schedule_map_backfill\(",
+        "why": "Map 3초 SLA(§5-11)는 report 콜드 빌드의 seed_map 시딩과 /full 200 백필이 "
+               "달성한다. 이 호출(또는 정의)을 없애면 Map 탭·Issue Table Map 컬럼 첫 진입이 "
+               "콜드 202 + 전체 재디코드로 돌아가 대형 세션에서 30초+ 프리즈가 된다. "
+               "옮기는 것뿐이라면 면제 주석을 달 것.",
+        "doc": "CLAUDE.md §5-11, docs/12_web_report_cache.md",
+    },
+    {
         "id": "R11-keyed-lock-cap",
         "kind": "forbid_add",
         "paths": ["web_report/cache.py"],

@@ -241,7 +241,11 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      **전 항목** 재판정 — 첫 fail 제한 없음, row_key 는 "TEMP|<item>" 유지)가 Issue Table
 #      과 Distribution 사이에 들어가고 Issue Table 의 TEMP 섹션은 사라진다. 다른 모드
 #      세션은 값 무변경(빈 시트 1개 추가)이지만 키가 전 세션 공통이라 1회 재계산된다.
-REPORT_SCHEMA_VERSION = 27
+# v28: IssueTable CPK 섹션에서 Pass/Fail 단위 항목과 OTP_/CHIP_ID/CHIPID 이름 항목을
+#      제외한다 (2026-08-10 사용자 요청 — tabs/issue_table._cpk_skip_subject). 전 모드
+#      공통으로 **행 구성**이 달라지므로 안 올리면 옛 disk_cache 가 그 행이 든 payload 를
+#      계속 반환한다.
+REPORT_SCHEMA_VERSION = 28
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

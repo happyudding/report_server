@@ -46,6 +46,9 @@ server\.venv\Scripts\python.exe tests\bench_webreport.py --quick
 - 같은 파일 집합에 대해 **한 번만** 뜨고, 위반이 있으면 위반 보고가 우선한다.
 - 벤치는 임시 DB 격리라 운영 무접촉이고, 이전 실행 대비 회귀를 자동 판정한다.
   결과 해석 절차는 스킬 `webreport-bench` 참조.
+- 벤치에는 **절대 기준 판정이 1건** 있다 — Map 3초 SLA([CLAUDE.md §5-11](../CLAUDE.md),
+  `bench_sla_map`). 기준선이 없어도 초과하면 `[SLA위반]` 이 뜨며, `--quick` 에서는 돌지
+  않으므로 Map/Issue Table 렌더 경로를 건드렸다면 **full 실행**으로 확인한다.
 
 검사 범위는 `web_report/` 와 `server/report/` 뿐이다. 그 밖의 파일을 고치는 세션에서는
 가드가 아무 반응도 하지 않는다.

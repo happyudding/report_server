@@ -146,7 +146,8 @@ report_server/
 ([server/auth_identity.py](server/auth_identity.py) — env `AUTH_SSO_HEADER` 설정 시 역프록시
 SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이 없어 **읽기 전용**. 가드 3종
 ([server/report/security.py](server/report/security.py)): `_uploader_guard`(삭제·비공개 토글·
-편집자 부여 — 업로더 전용) / `_editor_guard`(콘텐츠 편집 — 업로더 또는 위임 편집자) /
+편집자 부여 — 업로더 전용, **단 admin 로그인 master PC 는 통과** 2026-08-10) /
+`_editor_guard`(콘텐츠 편집 — 업로더 또는 위임 편집자, master PC 포함) /
 `_private_guard`(비공개 세션 **조회** 차단 — 업로더+위임 편집자 외 404, 목록도 SQL 필터로
 숨김, 2026-07-15). **legacy 우회**:
 `uploaded_by` 가 빈 세션(= xlsx 업로드 세션)은 Honey 접속 사용자 전원이 편집/삭제 가능하고,
@@ -325,6 +326,22 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     의도한 변경이면 `# perf-guard: allow <규칙ID> (사유)` 면제를 사유와 함께 단다.
     회귀가 새로 나면 고치는 것으로 끝내지 말고 `_RULES` 에 규칙 1개를 추가하는 것이
     표준 사후 조치다 → [docs/18](docs/18_perf_guard.md).
+11. **Map Analysis 3초 SLA.** gross die 10,000개 × 7 source 세션에서 **Map Analysis 탭
+    첫 화면**과 **Issue Table 의 Map 컬럼**은 3초 안에 떠야 한다(둘은 같은
+    `.../web_report/map_analysis` 응답을 소비하므로 한 지표다).
+    **규칙 5(다운샘플 금지)를 어겨서 달성하지 말 것** — die 는 전량 유지하고 *구조*로
+    맞춘다. 현재 달성 수단 2개:
+    - report 콜드 빌드가 map dies gzip 을 **같은 tables 로 함께 시딩**
+      ([web_report/service.py](web_report/service.py) `seed_map`, temp_map 시딩과 대칭).
+      map dies 는 프리웜 대상이 아니라, 이게 없으면 첫 탭 진입이 사실상 항상 콜드 202 +
+      전체 재디코드(30초+ "맵 로드 중…")가 된다.
+    - 시딩 도입 전 세션은 `/full` 200 경로가 백그라운드 백필만 예약
+      (`schedule_map_backfill` → `compute.request_build(..., "map")`, 대기하지 않음).
+    기계 확인 2중: [tests/bench_webreport.py](tests/bench_webreport.py) 의 SLA 시나리오
+    (절대 기준 — 초과 시 `[SLA위반]`, 기준선 없어도 뜬다) + perf_guard `S09-map-seed` 가
+    시딩 호출 제거를 차단. 정합성(시딩 산출 == 콜드 빌드 산출)은
+    [tests/test_map_seed_equivalence.py](tests/test_map_seed_equivalence.py).
+    → [docs/12](docs/12_web_report_cache.md)
 
 ---
 

@@ -27,11 +27,15 @@ tabs/temp_fail.py)로 나가고, 여기서는 그 item 목록(temp_items)을 받
 """
 from __future__ import annotations
 
-from .common import PASS_BIN, fmt_type, item_meta as _item_meta
+from .common import PASS_BIN, fmt_type, item_meta as _item_meta, _is_passfail_unit
 from .cpk import CPK_THRESHOLD, worst_cpk_by_subject
 from .yield_tab import build_yield_bin_groups
 
 _COMMENT_COLS = ["PTE comment", "개발 comment"]
+
+# CPK 섹션에서 뺄 item 이름 토큰 (2026-08-10 사용자 요청) — OTP 기록값·CHIP ID 는
+# 측정 산포가 의미 없는 식별/기록 항목이라 cpk 가 낮아도 이슈가 아니다. 대소문자 무시.
+_CPK_SKIP_TOKENS = ("OTP_", "CHIP_ID", "CHIPID")
 
 # service.update_issue_comments 의 컬럼 검증용 공개 이름.
 # AI Comment(아래) 는 여기 절대 추가하지 말 것 — 미포함이 곧 읽기전용 보장
@@ -93,6 +97,19 @@ def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None,
         data.update(_comment_values(issue_comments, f"ETC|{item}", ai_comments))
         rows.append(data)
     return rows
+
+
+def _cpk_skip_subject(subject, unit) -> bool:
+    """CPK 섹션(이슈)에서 제외할 항목인가 — Pass/Fail 단위이거나 OTP/CHIP ID 계열 이름.
+
+    metrics 단계의 ``passfail_or_empty_items`` 가 이미 Pass/Fail 항목을 cpk 계산에서
+    빼지만, 여기서도 unit 을 다시 본다 — 이 표에 무엇이 오르는지의 판정을 한곳에 모아
+    상류 제외 규칙이 바뀌어도 Issue Table 기준이 흔들리지 않게 한다.
+    """
+    if _is_passfail_unit(unit):
+        return True
+    name = str(subject or "").upper()
+    return any(token in name for token in _CPK_SKIP_TOKENS)
 
 
 def _cpk_fail_subjects(cpk_rows):
@@ -231,8 +248,16 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     # (CT/HT 는 RT limit 재판정으로 이미 잘려 있어 그 분포로 낸 cpk 를 섞으면 기준이 어긋난다).
     src_set = set(sources)
     cpk_src_rows = [r for r in (cpk_rows or []) if r.get("source") in src_set]
-    cpk_fails = [(subject, cpk) for subject, cpk in _cpk_fail_subjects(cpk_src_rows)
-                 if f"CPK|{subject}" not in hidden]
+    # unit 은 항목이 처음 등장하는 행 기준 (표시 unit 규칙과 동일).
+    cpk_units = {}
+    for r in cpk_src_rows:
+        cpk_units.setdefault(r.get("subject"), r.get("units"))
+    cpk_hit = [(subject, cpk) for subject, cpk in _cpk_fail_subjects(cpk_src_rows)
+               if f"CPK|{subject}" not in hidden]
+    # 제외 항목은 CPK 섹션에서만 빼고 _auto_etc_items 의 seen 에는 그대로 넘긴다
+    # (cpk_hit) — 안 그러면 여기서 뺀 항목이 룰 위반 자동 ETC 행으로 다시 올라온다.
+    cpk_fails = [(subject, cpk) for subject, cpk in cpk_hit
+                 if not _cpk_skip_subject(subject, cpk_units.get(subject))]
     # CPK 구간은 source 컬럼({src}_yield)에 source 별 CPK 값을 담는다(Yield 값 대신).
     # subhead 행이 그 컬럼을 "CPK"로 재정의(프런트 isCpkSubheadRow 감지). STEP/TNO 는 항목
     # 메타에서, BIN 은 CPK 항목엔 없어 비운다. 값은 선정 기준과 동일한 Bin1 기준 cpk.
@@ -266,7 +291,7 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     # 수동 추가분(ENGR) 뒤에 룰 위반 자동 행을 잇는다 — 행 채움 로직은 동일.
     # Temp 시트에 이미 선 item 은 자동 ETC 행에서 뺀다(같은 item 이 두 곳에 겹치지 않게).
     etc_all = list(etc_items or []) + _auto_etc_items(
-        etc_auto_items, etc_items, cpk_fails, base_rows, hidden,
+        etc_auto_items, etc_items, cpk_hit, base_rows, hidden,
         temp_items=temp_items)
     rows.extend(_etc_rows(tables, base_rows, etc_all, sources,
                           issue_comments=issue_comments, ai_comments=ai_comments,
