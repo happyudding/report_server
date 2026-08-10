@@ -679,7 +679,7 @@ async function loadThresholds() {
     </tr>`;
   }).join('');
   $('thBody').querySelectorAll('.chip.sig[data-goto]').forEach((chip) => {
-    chip.addEventListener('click', () => gotoSignature(chip.dataset.goto));
+    chip.addEventListener('click', () => { gotoSignature(chip.dataset.goto).catch(() => {}); });
   });
 
   document.querySelectorAll('.th-val').forEach((inp) => {
@@ -1661,7 +1661,8 @@ function renderCase(c, label) {
   });
   box.querySelectorAll('[data-goto-sig]').forEach((b) => {
     b.addEventListener('click', (e) => {
-      e.preventDefault(); e.stopPropagation(); gotoSignature(b.dataset.gotoSig);
+      e.preventDefault(); e.stopPropagation();
+      gotoSignature(b.dataset.gotoSig).catch(() => {});   // 오류는 탭 안에 찍힌다
     });
   });
 }
@@ -2293,12 +2294,45 @@ const loaded = new Set();
 
 // 탭 전환은 함수로 둔다 — Thresholds 의 "이 값을 쓰는 룰" 칩이 Signatures 탭으로
 // 건너뛸 때 같은 경로를 쓰기 위함(로딩 완료를 기다릴 수 있게 Promise 반환).
+// 로더가 실패해도 **빈 화면으로 두지 않는다.** 종전엔 loaded.add 를 await 앞에서 해서,
+// 로더가 던지면 (a) 탭은 이미 전환돼 내용이 빈 채로 남고 (b) loaded 에 등록돼 다시 눌러도
+// 아무 일이 안 일어나 새로고침 전까지 영구 빈 화면이 됐다. 실제 신고("화면이 꺼져 버린다")가
+// 이것이다 — 오류는 반드시 보이게 하고 재시도를 남긴다.
 async function activateTab(id) {
   document.querySelectorAll('.tab').forEach((b) =>
     b.classList.toggle('active', b.dataset.panel === id));
   document.querySelectorAll('.panel').forEach((p) =>
     p.classList.toggle('active', p.id === id));
-  if (!loaded.has(id)) { loaded.add(id); await TAB_LOADERS[id](); }
+  if (loaded.has(id)) return;
+  try {
+    await TAB_LOADERS[id]();
+    loaded.add(id);            // 성공했을 때만 "읽었다" 로 기록한다
+  } catch (e) {
+    showPanelError(id, e);
+    throw e;
+  }
+}
+
+// 탭 안에 오류와 재시도 버튼을 그린다. 패널 마크업을 지우지 않고 맨 앞에 끼워 넣어,
+// 부분 로드된 내용이 있으면 그대로 남긴다.
+function showPanelError(id, err) {
+  const panel = document.getElementById(id);
+  if (!panel) return;
+  const msg = String((err && err.message) || err || '알 수 없는 오류');
+  const hint = /40[13]/.test(msg)
+    ? ' 로그인이 만료됐을 수 있습니다 — 페이지를 새로고침해 다시 로그인하세요.' : '';
+  let box = panel.querySelector('.panel-error');
+  if (!box) {
+    box = document.createElement('div');
+    box.className = 'card panel-error';
+    panel.insertBefore(box, panel.firstChild);
+  }
+  box.innerHTML = `<div class="msg err">이 탭을 불러오지 못했습니다: ${esc(msg)}${esc(hint)}</div>
+    <div class="toolbar"><button class="btn" data-retry="${esc(id)}">다시 시도</button></div>`;
+  box.querySelector('[data-retry]').addEventListener('click', async () => {
+    box.remove();
+    try { await activateTab(id); } catch (e) { /* showPanelError 가 다시 그린다 */ }
+  });
 }
 
 function flashEl(el) {
@@ -2332,7 +2366,9 @@ async function gotoThreshold(key) {
 }
 
 document.querySelectorAll('.tab').forEach((btn) => {
-  btn.addEventListener('click', () => activateTab(btn.dataset.panel));
+  // activateTab 은 실패 시 showPanelError 로 화면에 찍고 다시 던진다 — 여기서는
+  // 미처리 거부(unhandledrejection)만 막는다.
+  btn.addEventListener('click', () => { activateTab(btn.dataset.panel).catch(() => {}); });
 });
 
 // 범위를 바꾸면 두 탭 모두 그 범위 값으로 다시 읽어온다(필터가 아니라 편집 대상 전환) —
@@ -2400,17 +2436,27 @@ $('mvReload').addEventListener('click', async () => {
 });
 $('bkRefresh').addEventListener('click', loadBackups);
 
-(async () => {
+// 초기화 실패를 삼키면 META 가 null 인 채로 남아 **모든 탭이 빈 화면**이 된다
+// (게이트 쿠키 12h 만료 → /api/meta 401 이 대표적). 반드시 보이게 하고 재시도를 남긴다.
+async function init() {
   META = await getJSON('api/meta');
   RULES_REV = String(META.rules_rev ?? '');
   // 첫 옵션 = 기준값(전 제품 공통). Signatures 는 여기서 편집하고 Thresholds 는 읽기 전용.
   $('scPt').innerHTML = '<option value="">기준값 (전 제품 공통)</option>' +
-    Object.keys(META.taxonomy).map((pt) => `<option>${esc(pt)}</option>`).join('');
+    Object.keys(META.taxonomy || {}).map((pt) => `<option>${esc(pt)}</option>`).join('');
   fillScopeFamily();
   $('scPt').dataset.prev = '';
   $('scFam').dataset.prev = '';
-  loaded.add('pThresholds');
   await loadThresholds();
+  loaded.add('pThresholds');     // activateTab 과 같은 규약 — 성공했을 때만 기록
+}
+
+(async () => {
+  try {
+    await init();
+  } catch (e) {
+    showPanelError('pThresholds', e);
+  }
 })();
 </script>
 </body>

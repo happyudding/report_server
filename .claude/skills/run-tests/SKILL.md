@@ -27,6 +27,7 @@ server\.venv\Scripts\python.exe tests\test_xxx.py
 | `tests/load_test_10users.py` | **실 DB·업로드 디렉토리에 LOADTEST 세션을 만든다.** 서버가 떠 있어야 하고, 끝난 뒤 관리자 패널에서 product="LOADTEST" 로 검색해 **수동 일괄 삭제** 필요(자동 정리 없음) |
 | `tests/bench_webreport.py` | 임시 DB 격리라 운영 무접촉. 전용 skill `webreport-bench` 로 실행 |
 | `tests/test_perf_guard.py` | `tools/perf_guard.py` 의 `_RULES` 를 건드렸으면 **필수**. `python tools/perf_guard.py --selftest` 와 같은 것 |
+| `tests/test_eval_panel_js.py` | **`server/eval_panel/eval_panel.html` 을 고쳤으면 필수.** headless Edge 로 패널 JS 를 실제 서버 페이로드에 대고 돌린다(node 가 없어 Edge 가 유일한 JS 실행 수단). Edge 가 없으면 정적 id 검사만 하고 SKIP. 파이썬 테스트로는 안 잡히는 부류 — 렌더 예외·**로더 실패 시 빈 화면**을 잡는다 |
 | `eval_analyzer/tests/` | **여기만 conftest.py 가 있다** — autouse fixture `all_signatures_enabled` 가 배포용 `enabled:false` 를 무시한다. pytest 로 실행하며, 배포 상태 그대로 보려면 `rules_as_deployed` 마커 |
 
 ## 3. 주의

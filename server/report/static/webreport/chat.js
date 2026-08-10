@@ -25,6 +25,9 @@
 #chatPanel .chat-head{display:flex;align-items:center;justify-content:space-between;
   padding:8px 12px;border-bottom:1px solid #e5e7eb;font-weight:600;font-size:13px;background:#f6f8fa}
 #chatPanel .chat-head button{border:none;background:none;cursor:pointer;font-size:16px;color:#57606a}
+#chatPanel .chat-head #chatNew{font-size:11px;border:1px solid #d0d7de;border-radius:10px;
+  padding:2px 7px;margin-right:6px;vertical-align:middle}
+html[data-theme="dark"] #chatPanel .chat-head #chatNew{border-color:#30363d}
 #chatLog{flex:1;overflow-y:auto;padding:10px 12px;font-size:12.5px;line-height:1.55}
 #chatLog .msg{margin-bottom:10px}
 #chatLog .msg.me{text-align:right}
@@ -64,10 +67,21 @@ html[data-theme="dark"] #chatLog .errdet pre{background:#0d1117;border-color:#5c
 
   var API = "/pe/report/api/chat";
   var TIMEOUT_MS = 60000;
+  var CONV_KEY = "report_chat_conv";   // sessionStorage — 대화 id 만 보관(내용은 서버 메모리)
   var sessionId = null;
   var built = false;
   var busy = false;
   var els = {};
+
+  function convId() {
+    try { return sessionStorage.getItem(CONV_KEY) || ""; } catch (e) { return ""; }
+  }
+  function setConvId(id) {
+    try { if (id) sessionStorage.setItem(CONV_KEY, id); } catch (e) { /* 무시 */ }
+  }
+  function resetConv() {
+    try { sessionStorage.removeItem(CONV_KEY); } catch (e) { /* 무시 */ }
+  }
 
   // 같은 페이지 안에서의 이동. 세션 상세에만 있는 함수라 홈에서는 조용히 무시한다.
   var ACTIONS = {
@@ -110,7 +124,8 @@ html[data-theme="dark"] #chatLog .errdet pre{background:#0d1117;border-color:#5c
     panel.id = "chatPanel";
     panel.innerHTML =
       '<div class="chat-head"><span>ENGR 챗봇 <small style="font-weight:400;color:#57606a">(관리자 테스트)</small></span>' +
-      '<button type="button" id="chatClose" title="닫기">×</button></div>' +
+      '<span><button type="button" id="chatNew" title="새 대화 — 앞선 문맥을 잊습니다">새 대화</button>' +
+      '<button type="button" id="chatClose" title="닫기">×</button></span></div>' +
       '<div id="chatLog"></div>' +
       '<form id="chatForm"><input id="chatInput" type="text" maxlength="500" ' +
       'placeholder="예: S3222 보고서 찾아줘 / 이 세션 수율" autocomplete="off">' +
@@ -127,19 +142,29 @@ html[data-theme="dark"] #chatLog .errdet pre{background:#0d1117;border-color:#5c
 
     fab.addEventListener("click", toggle);
     panel.querySelector("#chatClose").addEventListener("click", toggle);
+    panel.querySelector("#chatNew").addEventListener("click", function () {
+      resetConv();
+      els.log.innerHTML = "";
+      greet();
+      addBot("새 대화를 시작했습니다 — 앞선 문맥(\"1번 세션\", \"그 항목\")은 잊었습니다.");
+    });
     panel.querySelector("#chatForm").addEventListener("submit", function (e) {
       e.preventDefault();
       var q = els.input.value.trim();
       if (q) { els.input.value = ""; send(q); }
     });
 
+    greet();
+  }
+
+  function greet() {
     addBot("무엇을 찾아드릴까요?\n" +
-           "  · S3222 보고서 찾아줘 / 어제 올라온 세션 목록\n" +
+           "  · S3222 보고서 찾아줘 → 이어서 \"1번 세션 Yield 알려줘\"\n" +
+           "  · Open 안 된 이슈 알려줘 / fail 상위 5개\n" +
            "  · 이 세션 수율 / cpk 알려줘 / 누가 올렸어?\n" +
            "  · PMIC SOC 에 무슨 Item 있어\n" +
-           "  · SGM 들어가는 항목 예전에 어떻게 됐었지?\n" +
-           "  · VDD_INT 상세 보여줘 / 맵 열어줘\n" +
-           "\"도움말\" 이라고 치면 할 수 있는 것을 전부 보여드립니다.");
+           "  · 맵 링크 알려줘 / VDD_INT 상세 보여줘\n" +
+           "앞선 대화를 기억하니 이어서 물어보셔도 됩니다. \"도움말\" 이라고 치면 전체 목록.");
   }
 
   function toggle() {
@@ -229,7 +254,11 @@ html[data-theme="dark"] #chatLog .errdet pre{background:#0d1117;border-color:#5c
     fetch(API, {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf() },
-      body: JSON.stringify({ question: question, context: { session_id: sessionId } }),
+      body: JSON.stringify({
+        question: question,
+        conversation_id: convId() || null,
+        context: { session_id: sessionId },
+      }),
       signal: ctl.signal,
     }).then(function (res) {
       return res.json().catch(function () { return {}; }).then(function (j) {
@@ -237,6 +266,8 @@ html[data-theme="dark"] #chatLog .errdet pre{background:#0d1117;border-color:#5c
       });
     }).then(function (r) {
       els.log.removeChild(pending);
+      // 대화 id 는 성공/실패와 무관하게 서버가 준 값을 따른다(첫 요청에서 발급된다).
+      if (r.body && r.body.conversation_id) setConvId(r.body.conversation_id);
       if (!r.ok) {
         // master 전용 기능이라 원인을 감추지 않는다 — 예외 한 줄을 바로 보여 주고,
         // traceback 은 접어 둔다(관리자 탭에도 같은 내용이 남는다).

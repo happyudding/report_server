@@ -257,6 +257,57 @@
   expect_tools: [search_item_candidates]
   expect_plan: {family_product: "TV"}
 
+# ── Issue Table 추림 (Open/fail/상위N/카테고리) ─────────────────────────────
+# 세션 컨텍스트가 있어야 성립하는 질문들 — 슬롯이 제대로 뽑히는지가 핵심이다.
+- question: "Issue 에 제일 Open 안된거 알려줘"
+  context_session_id: "gold-ctx"
+  expect_intent: session_issue
+  expect_tools: []
+  expect_plan: {issue_filter: "open"}
+
+- question: "Issue 에 Fail 된거 뭐뭐있는지 상위 5개 알려줘"
+  context_session_id: "gold-ctx"
+  expect_intent: session_issue
+  expect_tools: []
+  expect_plan: {issue_filter: "fail", top_n: 5}
+
+- question: "Issue 에 CPK 부분에 VDD_INT 아이템 있어?"
+  context_session_id: "gold-ctx"
+  expect_intent: session_issue
+  expect_tools: []
+  expect_plan: {issue_category: "CPK"}
+
+- question: "지금 이 세션 VDD_INT item comment 뭐야?"
+  context_session_id: "gold-ctx"
+  expect_intent: session_issue
+  expect_tools: []
+
+# 앵커 — 항목 토큰이 없는 코멘트 질문은 세션을 열어도 전역 코멘트 검색이다
+- question: "현상 코멘트 찾아줘"
+  context_session_id: "gold-ctx"
+  expect_intent: comment_search
+  expect_tools: [search_comments]
+
+# ── 화면 링크 요청 ("열어" 가 아니라 "링크/보고 싶은데") ────────────────────
+- question: "Map 보고 싶은데 링크 알려줘"
+  context_session_id: "gold-ctx"
+  expect_intent: page_jump
+  expect_tools: []
+  expect_plan: {jump_target: "map"}
+
+- question: "VDD_INT 상세 링크 알려줘"
+  context_session_id: "gold-ctx"
+  expect_intent: page_jump
+  expect_tools: []
+  expect_plan: {jump_target: "item_detail"}
+
+# ── 서수 지목 (직전 목록에서 N번째) ─────────────────────────────────────────
+# 대화 상태가 없으면 세션은 못 정하지만 **서수 슬롯은 뽑혀야** 한다.
+- question: "1번 세션 Yield 알려줘"
+  expect_intent: session_metrics
+  expect_tools: []
+  expect_plan: {ordinal: 1, metric: "yield"}
+
 # ── 광역 폴백 (intent 는 unknown 유지 · 툴은 늘어도 통과) ───────────────────
 - question: "ㅁㄴㅇㄹ"
   expect_intent: unknown

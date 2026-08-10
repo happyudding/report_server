@@ -55,6 +55,10 @@ class QueryPlan:
     status: str | None = None             # stats: 판정 필터 (CRITICAL/MAJOR/MINOR/MONITOR)
     date_from: int | None = None          # 세션 조회 기간 (epoch 초)
     date_to: int | None = None
+    ordinal: int | None = None            # "1번/첫번째" — 직전에 보여준 목록에서 몇 번째
+    issue_filter: str | None = None       # session_issue: 'open' | 'close' | 'fail'
+    issue_category: str | None = None     # session_issue: Yield | CPK | TEMP | ETC
+    top_n: int | None = None              # "상위 5개"
     # 근거 없이 catch-all 로 정해진 계획인가 — 규칙이 "영문 토큰이 있으니 item 이겠지" 로
     # 찍은 경우 True. agent 가 이 비트를 보고 조회 결과로 재분류한다(LLM 계획은 항상 False).
     weak: bool = False
@@ -320,7 +324,8 @@ _SIMILAR_KW = ("비슷", "유사", "닮은", "같은 유형")
 # 코멘트 본문 검색 신호. 증상어를 함께 둔다 — "고온에서 문제된 적 있어?" 처럼 제품·item 토큰이
 # 없는 순한글 질문은 이 분기(11번)에서만 건질 수 있다. 11번은 items·product 가 모두 없을 때만
 # 도달하므로(정리 B) 확장의 회귀 위험이 구조적으로 낮다.
-_COMMENT_KW = ("현상", "증상", "코멘트", "문제", "에러", "error", "고장", "이상동작")
+_COMMENT_KW = ("현상", "증상", "코멘트", "comment", "문제", "에러", "error", "고장",
+               "이상동작")
 # 수치 질문 신호. "수율/cpk" 는 기존 어느 키워드 세트에도 없어 기존 분기를 건드리지 않는다.
 _METRIC_KW = ("수율", "yield", "cpk", "씨피케이")
 _RAW_KW = ("측정값", "실측", "로우데이터", "원시값", "raw data", "rawdata")
@@ -345,6 +350,20 @@ _LIST_KW = ("무슨", "어떤", "뭐 있", "뭐가", "목록", "리스트", "종
 _META_KW = ("누가", "올렸", "업로더", "작성자", "언제", "온도", "몇 도", "몇도", "파일명",
             "공정", "설비", "장비", "패키지", "gross die", "칩 사이즈", "리비전",
             "revision", "step")
+# "1번 세션", "첫번째 거" — 직전 답변의 목록에서 하나를 지목하는 말.
+_ORDINAL_RE = re.compile(r"(\d{1,2})\s*(?:번째|번|째)")
+_ORDINAL_WORDS = (("첫", 1), ("두번째", 2), ("두 번째", 2), ("세번째", 3), ("세 번째", 3),
+                  ("네번째", 4), ("네 번째", 4), ("마지막", -1))
+# Issue Table 을 어떻게 추릴지. Open/미해결 · Close · fail(수율 이슈) · 상위 N
+_OPEN_KW = ("open", "오픈", "미해결", "안 된", "안된", "안됐", "해결 안", "종결 안", "남아")
+_CLOSE_KW = ("close", "클로즈", "종결", "해결됨", "닫힌")
+_FAILONLY_KW = ("fail", "페일", "불량", "떨어진")
+_TOPN_RE = re.compile(r"상위\s*(\d{1,2})|top\s*(\d{1,2})|(\d{1,2})\s*개만", re.I)
+# Issue Table 카테고리 — row_key 의 첫 조각과 같은 어휘를 쓴다(rowkey.parse).
+_CATEGORY_KW = (("CPK", ("cpk", "씨피케이")), ("Yield", ("yield", "수율", "bin")),
+                ("TEMP", ("temp", "온도")), ("ETC", ("etc", "기타")))
+# "링크 알려줘", "보고 싶은데" — 화면으로 보내 달라는 완곡한 표현.
+_LINK_KW = ("링크", "url", "주소", "보고 싶", "보고싶", "가고 싶", "가고싶", "바로가기")
 # 인사·도움말. **전체 매치**만 인정한다 — 부분일치면 긴 질문 중간의 "도움"에도 걸린다.
 _HELP_RE = re.compile(r"(안녕|안녕하세요|하이|hi|hello|헬로|도움말|도움|help|"
                       r"뭐할수있어|뭐할수있니|뭐가능해|기능|사용법|어떻게써|어떻게사용)",
@@ -375,8 +394,12 @@ _ITEM_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_]{1,})\b")
 # item 후보에서 뺄 일반 명사. cpk/yield 를 넣는 이유: "S3222 cpk 안 좋은 항목?" 이
 # item_keywords=['cpk'] 를 만들어 get_session_metrics 가 이름에 'cpk' 가 든 항목만 찾다
 # 0건을 답했다(조용한 오답). 지표 이름은 항목 이름이 아니다.
+# 지표·상태·화면 이름은 item 이름이 아니다. 여기 없으면 "Open 안된거 알려줘" 가
+# item_keywords=['Open'] 을 만들어 이름이 'Open' 인 항목을 찾다 0건을 답한다(조용한 오답).
+# 밑줄이 단어 문자라 FAIL_CNT·OPEN_LOOP 같은 실제 항목명은 통째로 남고 여기 걸리지 않는다.
 _STOPWORDS = {"close", "issue", "item", "lot", "db", "id", "ok", "ng", "pte",
-              "cpk", "yield"}
+              "cpk", "yield", "open", "fail", "comment", "map", "test", "top",
+              "status", "bin"}
 
 
 def _date_range(question: str):
@@ -473,6 +496,12 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
 
     has_comment = any(k in q or k in ql for k in _COMMENT_KW)
     has_history = any(k in q or k in ql for k in _HISTORY_KW)
+    ordinal = _ordinal(q)
+    issue_filter = _issue_filter(q, ql)
+    issue_category = next((cat for cat, words in _CATEGORY_KW
+                           if any(w in q or w in ql for w in words)), None)
+    top_n = _top_n(q)
+    wants_link = any(k in q or k in ql for k in _LINK_KW)
     # 7번 전용 신호 — has_report 자체를 늘리면 5번(items and has_report)까지 번진다.
     has_report_like = has_report or any(k in q or k in ql for k in _UPLOAD_KW)
     has_exists = any(k in q or k in ql for k in _EXISTS_KW)
@@ -482,7 +511,15 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
     metric = jump_target = group_by = None
     weak = False
     status = next((s for s in _STATUS_VOCAB if s in q.upper()), None)
-    if any(k in q or k in ql for k in _STATS_KW):
+    if wants_link and (has_map or has_detail):
+        # "Map 보고 싶은데 링크 알려줘" — 열어 달라는 말과 같은 요구다.
+        intent = "page_jump"
+        jump_target = "map" if has_map else "item_detail"
+    elif issue_filter or (issue_category and has_issue):
+        # "Open 안 된 이슈", "fail 상위 5개", "CPK 에 xxx 있어?" — Issue Table 을 추리는 질문.
+        # 세션은 컨텍스트/직전 대화/제품 중 무엇으로든 정해지면 된다(핸들러가 확정).
+        intent = "session_issue"
+    elif any(k in q or k in ql for k in _STATS_KW):
         intent = "stats"
         group_by = next((axis for axis, words in _STATS_AXIS_KW
                          if any(w in q or w in ql for w in words)), None)
@@ -500,6 +537,11 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
     elif product and (has_issue or (items and has_report)):
         intent = "session_issue"
     elif session_scope and has_issue:
+        intent = "session_issue"
+    elif session_scope and has_comment and items:
+        # "지금 이 세션 POR item comment 뭐야?" — 세션이 정해진 상태에서 **항목을 짚어**
+        # 코멘트를 물으면 그 세션의 Issue Table 코멘트다(전역 코멘트 검색이 아니다).
+        # 항목 토큰이 없으면(예: "현상 코멘트 찾아줘") 아래 comment_search 로 간다.
         intent = "session_issue"
     elif session_scope and not has_comment and any(k in q or k in ql for k in _META_KW):
         # 열어 둔 세션의 메타(누가/언제/온도/공정…). not has_comment 가드가 없으면
@@ -534,7 +576,42 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
                      ambiguity=len(items) > 1, normalized_question=q, planner="rule",
                      session_id=session_id, metric=metric, jump_target=jump_target,
                      group_by=group_by, status=status if intent == "stats" else None,
-                     date_from=date_from, date_to=date_to, weak=weak)
+                     date_from=date_from, date_to=date_to, weak=weak,
+                     ordinal=ordinal, issue_filter=issue_filter,
+                     issue_category=issue_category, top_n=top_n)
+
+
+def _ordinal(q: str):
+    """"1번/첫번째/마지막" → 정수(마지막은 -1). 없으면 None."""
+    m = _ORDINAL_RE.search(q)
+    if m:
+        n = int(m.group(1))
+        return n if 1 <= n <= 20 else None
+    for word, n in _ORDINAL_WORDS:
+        if word in q:
+            return n
+    return None
+
+
+def _issue_filter(q: str, ql: str):
+    if any(k in q or k in ql for k in _OPEN_KW):
+        return "open"
+    if any(k in q or k in ql for k in _CLOSE_KW):
+        return "close"
+    if any(k in q or k in ql for k in _FAILONLY_KW):
+        return "fail"
+    return None
+
+
+def _top_n(q: str):
+    m = _TOPN_RE.search(q)
+    if not m:
+        return None
+    for g in m.groups():
+        if g:
+            n = int(g)
+            return n if 1 <= n <= 50 else None
+    return None
 
 
 # ── 진입점 ───────────────────────────────────────────────────────────────────

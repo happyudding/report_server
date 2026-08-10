@@ -16,6 +16,7 @@
 import importlib
 import importlib.util
 import logging
+import re
 import sys
 import threading
 import time
@@ -32,6 +33,7 @@ from report.security import _client_meta, _is_master, _require_csrf, _validate_s
 _log = logging.getLogger(__name__)
 
 _MAX_QUESTION = 500
+_CONV_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
 _CONCURRENCY = 3        # 동시 처리 상한 (waitress 13스레드 보호)
 _ACQUIRE_TIMEOUT = 10   # 초 — 이보다 밀리면 기다리게 두지 않고 429
 
@@ -93,6 +95,11 @@ def _agent():
     return module
 
 
+def chatbot_conversation():
+    """chatbot.conversation 모듈 — `_agent()` 와 같은 적재 경로를 쓴다(이름 충돌 방어 공유)."""
+    return importlib.import_module(_agent().__package__ + ".conversation")
+
+
 def _error_detail(exc):
     """예외 → 관리자 탭에 저장할 상세 문자열 (메시지 + traceback).
 
@@ -126,6 +133,13 @@ def api_chat():
     ctx_sid = str(context.get("session_id") or "").strip() or None
     if ctx_sid:
         _validate_session_id(ctx_sid)
+    # 대화 id — 위젯이 sessionStorage 에 들고 다닌다. 형식만 검사하고(서버 메모리 키로만 쓰임),
+    # 없으면 새로 발급해 응답에 실어 준다.
+    conv_id = str(body.get("conversation_id") or "").strip()
+    if conv_id and not _CONV_ID_RE.match(conv_id):
+        abort(400, "invalid conversation_id")
+    if not conv_id:
+        conv_id = chatbot_conversation().new_id()
 
     viewer = _current_user()
     client_ip, _ = _client_meta()
@@ -146,7 +160,7 @@ def api_chat():
         result = _agent().answer_web(
             question, viewer=viewer,
             see_all_private=True,          # master 확정 후라 전 세션 조회 가능
-            context_session_id=ctx_sid)
+            context_session_id=ctx_sid, conversation_id=conv_id)
     except Exception as exc:
         _log.exception("chatbot 응답 실패: %s", question[:120])
         # 어디까지 갔는지(계획·툴 호출)를 함께 남긴다 — 실패 기록만 보고도 재현 없이
@@ -189,4 +203,5 @@ def api_chat():
                     "links": web.get("links") or [],
                     "choices": web.get("choices") or [],
                     "building": bool(web.get("building")),
+                    "conversation_id": conv_id,
                     "plan": plan})

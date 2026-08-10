@@ -297,7 +297,8 @@ def _xlsx_issues(session):
 
 # ── 4. 세션 횡단 item 검색 ──────────────────────────────────────────────────
 def search_item_in_sessions(item_keyword, *, viewer, see_all_private=False,
-                            product_type=None, family_product=None, limit=50):
+                            product_type=None, family_product=None, product=None,
+                            limit=50):
     """item 이름 부분일치로 **여러 세션에 걸친** Issue Table 이슈를 찾는다.
 
     언제 쓰나: eval.db 가 없거나(개발 환경) item 축을 report.db 만으로 확인하고 싶을 때.
@@ -335,6 +336,10 @@ def search_item_in_sessions(item_keyword, *, viewer, see_all_private=False,
         if product_type and row.get("product_type") != product_type:
             continue
         if family_product and row.get("family_product") != family_product:
+            continue
+        # product 는 "이 제품 예전에 test 한 것 중에…" 처럼 한 제품의 이력만 볼 때 쓴다.
+        # 세션 검색의 product 와 달리 대소문자 무시 — 사용자가 타이핑한 제품명이라 관대하게 본다.
+        if product and str(row.get("product") or "").lower() != str(product).lower():
             continue
         if row["kind"] == "issue_comment":
             row_key, col = rowkey.split_comment_key(row["item_key"])

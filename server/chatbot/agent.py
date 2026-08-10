@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import time
 
-from . import planner, tools_eval, tools_metrics, tools_report
+from . import conversation, planner, tools_eval, tools_metrics, tools_report
 
 _log = logging.getLogger(__name__)
 
@@ -35,6 +35,8 @@ class AnswerFailed(Exception):
 # 세션 상세 패널에서 온 질문의 "이 세션" 을 붙일 intent — 규칙 폴백은 컨텍스트를 모르므로
 # 여기서 사후 주입한다.
 _SESSION_INTENTS = ("session_issue", "session_metrics", "page_jump", "session_meta")
+# 직전 항목을 이어받아도 되는 intent — 항목이 질문의 주어인 것들만.
+_ITEM_CARRY_INTENTS = ("item_history", "session_issue", "similar_case")
 
 # 세션 바로가기 URL. 같은 페이지 안에서의 이동은 url 이 아니라 action 으로 내보낸다.
 _VIEW_URL = "/pe/report/view/{sid}"
@@ -65,14 +67,35 @@ def _count(result):
     return None
 
 
-def _run(question, *, viewer, see_all_private, use_llm, context_session_id=None) -> dict:
+def _run(question, *, viewer, see_all_private, use_llm, context_session_id=None,
+         conversation_id=None) -> dict:
+    state = conversation.recall(conversation_id)
     plan = planner.plan(question, use_llm=use_llm, context_session_id=context_session_id)
-    if not plan.session_id and context_session_id and plan.intent in _SESSION_INTENTS:
-        plan.session_id = context_session_id
+
+    # ── 직전 대화에서 이어받기 (사실만 이어받는다) ──────────────────────────
+    # "1번 세션 Yield 알려줘" — 직전 답변의 목록에서 N번째를 집는다.
+    if plan.ordinal and not plan.session_id:
+        listed = state.get("sessions") or []
+        idx = plan.ordinal - 1 if plan.ordinal > 0 else len(listed) - 1
+        if 0 <= idx < len(listed):
+            plan.session_id = listed[idx].get("session_id")
+    # 세션을 안 말했으면: 열어 둔 세션 > 직전에 고른 세션 순으로 잇는다.
+    if not plan.session_id and plan.intent in _SESSION_INTENTS:
+        plan.session_id = context_session_id or state.get("session_id")
+    # "이 제품 예전에 …" — 제품을 안 말했으면 직전 제품을 잇는다.
+    if not plan.product and plan.intent in ("item_history", "session_issue", "session_find"):
+        plan.product = state.get("product")
+    # "그 항목 코멘트 뭐야" — 항목을 안 말했으면 직전 항목을 잇는다.
+    # ⚠ page_jump 는 제외한다: "맵 링크 알려줘" 에 직전 항목이 딸려 들어가면 탭을 여는 대신
+    #    "그 항목이 20개인데 고르세요" 로 되묻게 된다(항목을 안 말한 것이 곧 "탭만 열어줘"다).
+    if not plan.item_keywords and state.get("item") and plan.intent in _ITEM_CARRY_INTENTS:
+        plan.item_keywords = [state["item"]]
+
     trace = _Trace()
     web = {"links": [], "choices": [], "building": False}
     ctx = {"viewer": viewer, "see_all_private": see_all_private, "trace": trace,
-           "web": web, "question": question, "context_session_id": context_session_id}
+           "web": web, "question": question, "context_session_id": context_session_id,
+           "conversation_id": conversation_id, "state": state}
 
     handler = {
         "item_history": _item_history,
@@ -98,8 +121,25 @@ def _run(question, *, viewer, see_all_private, use_llm, context_session_id=None)
     except Exception:
         # 링크는 답변의 덤이다 — 파생이 실패했다고 이미 만든 답을 버리지 않는다.
         _log.warning("chatbot 링크 파생 실패 (답변은 그대로 반환)", exc_info=True)
+    _remember(conversation_id, plan, data)
     return {"plan": plan.to_dict(), "steps": trace.steps, "text": text, "data": data,
             "web": web}
+
+
+def _remember(conversation_id, plan, data):
+    """이번 턴에서 확정된 **사실만** 대화 상태에 남긴다 (질문 원문·추론은 담지 않는다)."""
+    if not conversation_id:
+        return
+    listed = None
+    rows = data.get("sessions")
+    if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+        listed = [{"session_id": r.get("session_id"), "product": r.get("product"),
+                   "lot_id": r.get("lot_id")} for r in rows if r.get("session_id")]
+    conversation.remember(conversation_id,
+                          sessions=listed,
+                          session_id=plan.session_id,
+                          product=plan.product,
+                          item=plan.item_keywords[0] if plan.item_keywords else None)
 
 
 def answer(question, *, viewer, see_all_private=False, use_llm=True) -> dict:
@@ -110,15 +150,17 @@ def answer(question, *, viewer, see_all_private=False, use_llm=True) -> dict:
 
 
 def answer_web(question, *, viewer, see_all_private=False, use_llm=True,
-               context_session_id=None) -> dict:
+               context_session_id=None, conversation_id=None) -> dict:
     """웹 챗 패널용 — answer() 결과에 `web{links, choices, building}` 을 얹는다.
 
     links  : 세션 바로가기 url 또는 같은 페이지 내 점프 action
-    choices: 무상태 선택 버튼 — 각 항목의 `question` 을 그대로 다시 보내면 된다
-             (서버에 대화 상태를 두지 않으려고 후속 질의문을 완성해 내려보낸다)
+    choices: 선택 버튼 — 각 항목의 `question` 을 그대로 다시 보내면 된다(후속 질의문 완성형)
+    conversation_id: 주면 직전 턴의 **사실**(보여준 세션 목록·고른 세션·항목·제품)을 이어받아
+             "1번 세션 Yield 알려줘", "그 항목 코멘트 뭐야" 같은 후속 질문이 성립한다.
     """
     return _run(question, viewer=viewer, see_all_private=see_all_private,
-                use_llm=use_llm, context_session_id=context_session_id)
+                use_llm=use_llm, context_session_id=context_session_id,
+                conversation_id=conversation_id)
 
 
 # ── 웹 응답(링크/선택지) ─────────────────────────────────────────────────────
@@ -232,7 +274,7 @@ def _item_history(plan, ctx):
     hits = trace.call(tools_report.search_item_in_sessions, item_keyword=keyword,
                       viewer=ctx["viewer"], see_all_private=ctx["see_all_private"],
                       product_type=plan.product_type, family_product=plan.family_product,
-                      limit=30)
+                      product=plan.product, limit=30)
     data["session_hits"] = hits
 
     # 근거 기반 재분류 — 규칙이 "영문 토큰이 있으니 item 이겠지"로 찍었는데(weak) item 축에
@@ -257,9 +299,16 @@ def _item_history(plan, ctx):
 
 
 def _session_issue(plan, ctx):
-    """제품 → 세션 → 그 세션의 이슈. 세션이 여럿이면 전부 훑어 item 으로 거른다."""
+    """제품 → 세션 → 그 세션의 이슈. 세션이 여럿이면 전부 훑어 item 으로 거른다.
+
+    세션이 하나로 정해져 있으면(컨텍스트·"1번"·직전 대화) 그 세션만 보고, Open/fail·카테고리·
+    상위 N·이름 일치율 같은 추림 조건을 적용한다.
+    """
     trace = ctx["trace"]
     item_kw = plan.item_keywords[0] if plan.item_keywords else None
+
+    if plan.session_id:
+        return _one_session_issues(plan, ctx, plan.session_id, item_kw)
 
     found = trace.call(tools_report.search_sessions, viewer=ctx["viewer"],
                        see_all_private=ctx["see_all_private"],
@@ -298,6 +347,85 @@ def _session_issue(plan, ctx):
         if detail.get("note"):
             lines.append(f"      · {detail['note']}")
     return "\n".join(lines), data
+
+
+def _one_session_issues(plan, ctx, sid, item_kw):
+    """세션 1건의 Issue Table 을 조건대로 추려 보여준다.
+
+    조건: Open/Close/fail 필터 · 카테고리(CPK/Yield/TEMP/ETC) · 상위 N · item 이름 일치율 순.
+    item 이름은 부분일치가 아니라 **일치율 순 정렬**이라, 정확한 이름을 몰라도 가까운 것부터
+    나온다("CPK 에 xxx 아이템 있어?").
+    """
+    detail = ctx["trace"].call(tools_report.get_session_issues, session_id=sid,
+                               viewer=ctx["viewer"],
+                               see_all_private=ctx["see_all_private"])
+    if detail.get("error") == "session_not_found":
+        return "해당 세션을 찾을 수 없습니다(또는 조회 권한이 없습니다).", {"issues": [detail]}
+    if detail.get("error"):
+        return "삭제되었거나 아직 처리 중인 세션입니다.", {"issues": [detail]}
+
+    issues = list(detail.get("issues") or [])
+    total = len(issues)
+    if plan.issue_category:
+        issues = [i for i in issues
+                  if str(i.get("category") or "").upper() == plan.issue_category.upper()]
+    if plan.issue_filter == "open":
+        issues = [i for i in issues if str(i.get("status") or "Open") != "Close"]
+    elif plan.issue_filter == "close":
+        issues = [i for i in issues if str(i.get("status") or "") == "Close"]
+    elif plan.issue_filter == "fail":
+        # Yield 이슈 = 특정 bin 으로 떨어진 die — "fail 된 거"에 해당하는 축이다.
+        issues = [i for i in issues if str(i.get("category") or "").upper() == "YIELD"]
+
+    if item_kw:
+        scored = [(_match_score(item_kw, i.get("item")), i) for i in issues]
+        scored = [(s, i) for s, i in scored if s > 0]
+        scored.sort(key=lambda si: -si[0])
+        issues = [i for _, i in scored]
+        ranked_by = "이름 일치율"
+    else:
+        # 이름 조건이 없으면 Open 을 위로(미해결이 먼저 눈에 띄어야 한다).
+        issues.sort(key=lambda i: (str(i.get("status") or "Open") == "Close",))
+        ranked_by = "Open 우선"
+
+    shown = issues[:plan.top_n] if plan.top_n else issues[:15]
+    session = detail.get("session") or {}
+    head = (f"{session.get('product') or '?'} / lot {session.get('lot_id') or '-'} "
+            f"— 이슈 {len(issues)}건" + (f" (전체 {total}건 중)" if len(issues) != total else ""))
+    cond = " · ".join(x for x in (
+        {"open": "Open 만", "close": "Close 만", "fail": "Yield(fail) 만"}.get(plan.issue_filter),
+        f"{plan.issue_category} 카테고리" if plan.issue_category else None,
+        f"\"{item_kw}\" {ranked_by}" if item_kw else None,
+        f"상위 {plan.top_n}" if plan.top_n else None) if x)
+    lines = [head + (f"  [{cond}]" if cond else "")]
+    if not issues:
+        lines.append("  조건에 맞는 이슈가 없습니다.")
+    for issue in shown:
+        lines.append("  - " + _format_issue(issue))
+        if issue.get("item"):
+            _link(ctx, sid, f"상세: {issue['item']}", tab="item_detail", item=issue["item"])
+    if detail.get("note"):
+        lines.append(f"  · {detail['note']}")
+    _link(ctx, sid, "보고서 열기")
+    return "\n".join(lines), {"issues": [detail], "shown": shown}
+
+
+def _match_score(keyword, name):
+    """item 이름 일치율 0~1 — 정확일치 > 접두 > 부분 > 문자 유사도 순."""
+    kw = str(keyword or "").strip().lower()
+    nm = str(name or "").strip().lower()
+    if not kw or not nm:
+        return 0.0
+    if kw == nm:
+        return 1.0
+    if nm.startswith(kw):
+        return 0.9
+    if kw in nm:
+        return 0.8
+    import difflib
+    ratio = difflib.SequenceMatcher(None, kw, nm).ratio()
+    # 너무 먼 것까지 늘어놓으면 "없다"는 사실이 가려진다.
+    return ratio if ratio >= 0.55 else 0.0
 
 
 def _product_search(plan, ctx):
@@ -477,12 +605,28 @@ def _page_jump(plan, ctx):
     if target == "map":
         _link(ctx, sid, f"Map Analysis 열기{f' — {exact}' if exact else ''}",
               tab="map", item=exact)
-        return "아래 버튼으로 Map Analysis 를 엽니다.", {"session_id": sid, "item": exact}
+        # "링크 알려줘" 처럼 주소 자체를 원하면 눌러야 보이는 버튼만으로는 부족하다 —
+        # 복사해 쓸 수 있게 URL 을 본문에도 적는다.
+        url = _view_url(sid, tab="map", item=exact)
+        return (f"Map Analysis 링크입니다:\n  {url}\n(아래 버튼으로 바로 열 수도 있습니다.)",
+                {"session_id": sid, "item": exact, "url": url})
     if not exact:
         return ("어떤 항목의 상세를 열지 알려주세요. 예: \"VDD_INT 상세 보여줘\"",
                 {"session_id": sid})
     _link(ctx, sid, f"Item Detail 열기 — {exact}", tab="item_detail", item=exact)
-    return f"아래 버튼으로 \"{exact}\" 상세를 엽니다.", {"session_id": sid, "item": exact}
+    url = _view_url(sid, tab="item_detail", item=exact)
+    return (f"\"{exact}\" 상세 링크입니다:\n  {url}\n(아래 버튼으로 바로 열 수도 있습니다.)",
+            {"session_id": sid, "item": exact, "url": url})
+
+
+def _view_url(session_id, *, tab=None, item=None):
+    """복사해 쓸 수 있는 절대 경로. `_link` 의 action/url 판정과 달리 **항상 url** 이다."""
+    url = _VIEW_URL.format(sid=session_id)
+    if tab:
+        url += f"?tab={_q(tab)}"
+        if item:
+            url += f"&item={_q(item)}"
+    return url
 
 
 def _stats(plan, ctx):

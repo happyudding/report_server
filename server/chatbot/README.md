@@ -9,6 +9,36 @@
 - "PMIC SOC 에 무슨 Item 있어" (항목 목록) · "이 세션 누가 올렸어?"·"온도 몇 도야?" (세션 메타)
 - "IW06 세션 있냐?" · "어제 올라온 세션 목록" (존재 확인·기간)
 
+## 멀티턴 — 직전 대화를 이어받는다
+
+`answer_web(..., conversation_id=...)` 에 대화 id 를 주면 [conversation.py](conversation.py)
+가 **직전 턴의 사실만** 기억한다: 보여준 세션 목록·고른 세션·마지막 항목·마지막 제품.
+질문 원문이나 모델 추론은 담지 않는다(그건 `report_chatbot_log` 의 몫이고, 여기 쌓이면 오래된
+문맥이 새 질문을 오염시킨다). 프로세스 메모리 LRU(30분·200대화)이므로 재시작하면 사라진다 —
+웹 위젯은 sessionStorage 에 **id 만** 들고 다니고 "새 대화" 버튼으로 비운다.
+
+이걸로 열리는 후속 질문:
+
+```
+"S3222 세션 뭐있어"        → 세션 3건 목록
+"1번 세션 Yield 알려줘"     → 목록의 첫 세션으로 해석(ordinal)
+"Open 안된거 알려줘"        → 그 세션의 Issue Table, Open 만
+"이 제품 예전에 POR 코멘트"  → 직전 제품을 승계해 제품 스코프 item 이력
+```
+
+승계 규칙은 `agent._run` 상단 한 곳에 모여 있다(서수 → 열린 세션 → 직전 세션 → 직전 제품 →
+직전 항목). 대화 id 를 안 주면 상태를 아예 쓰지 않으므로 CLI(`answer`)는 종전과 동일하다.
+
+## Issue Table 을 조건으로 추린다
+
+세션이 정해지면 `session_issue` 가 이 슬롯들로 추린다 —
+`issue_filter`(open/close/fail) · `issue_category`(CPK/Yield/TEMP/ETC) · `top_n`(상위 N) ·
+item 이름은 부분일치가 아니라 **일치율 순 정렬**(`_match_score`: 정확 > 접두 > 부분 > 문자 유사도)
+이라 정확한 이름을 몰라도 가까운 것부터 나온다.
+
+⚠ `Open`·`Fail`·`comment`·`map` 같은 말은 `_STOPWORDS` 에 있다. 없으면 "Open 안된거 알려줘"가
+`item_keywords=['Open']` 을 만들어 이름이 'Open' 인 항목을 찾다 0건을 답한다(조용한 오답).
+
 ## 분류가 실패해도 "모르겠다"로 끝내지 않는다
 
 1. **규칙**(빠름) → 2. **LLM**(약할 때만) → 3. **광역 폴백**.
@@ -27,7 +57,7 @@ agent 에 둔다.
 
 | 조각 | 위치 |
 |---|---|
-| 라우트 `POST /pe/report/api/chat` | [../report/routes_chat.py](../report/routes_chat.py) — master 404 가드 + CSRF + 세마포어 3 + 계측 |
+| 라우트 `POST /pe/report/api/chat` | [../report/routes_chat.py](../report/routes_chat.py) — master 404 가드 + CSRF + 세마포어 3 + 계측. 요청/응답에 `conversation_id`(없으면 서버가 발급) |
 | 프런트 위젯 (홈·세션 상세 공용) | [../report/static/webreport/chat.js](../report/static/webreport/chat.js) — 우하단 플로팅 버튼, DOM/스타일 자체 주입 |
 | 노출 판정 | 홈 `applyViewer(v.is_master)` / 상세 `core.js loadAuth()` 의 `IS_MASTER` |
 | 딥링크 `?tab=item_detail\|map&item=` | [../report/static/webreport/boot.js](../report/static/webreport/boot.js) `applyDeepLink()` |
@@ -63,6 +93,7 @@ CLI 계약(`agent.answer` 반환 키 4개)은 그대로다 — 웹 확장이 깨
 | `tools_report.py` | report.db — 세션/제품/Issue Table/세션 횡단 item 검색 |
 | `tools_eval.py` | eval.db — item 마스터·alias·과거 케이스·수치·사람 코멘트 + `stats_summary`(축별 건수 집계) |
 | `tools_metrics.py` | web_report 계산값 — 수율/CPK/측정값. 콜드면 배경 빌드만 걸고 `building` 반환 |
+| `conversation.py` | 대화 상태(직전 세션목록·세션·항목·제품) — 메모리 LRU 30분, **사실만** 저장 |
 | `eval_store.py` | eval.db read-only 커넥션 (경로 override 가능) |
 | `rowkey.py` | Issue Table `row_key` 파서 (`Yield\|bin\|item` 등) |
 | `agent.py` | 고정 워크플로 오케스트레이션 + 근거가 붙은 답변 렌더 |
