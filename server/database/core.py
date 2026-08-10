@@ -180,6 +180,30 @@ CREATE INDEX IF NOT EXISTS idx_report_audit_action
 CREATE INDEX IF NOT EXISTS idx_report_audit_session_id
     ON report_audit_log(session_id);
 
+-- 웹 챗봇(관리자 전용) 질문/답변 + 부하 계측. report_audit_log 와 분리한 이유:
+-- 답변 전문이 수 KB 라 audit 의 changed_fields 1500자 관례에 안 맞고, 질문 단위 행이라
+-- 업로드/편집 단위인 감사 화면을 밀어낸다. 소요는 총/대기/LLM 3분해로 남긴다 —
+-- "느린 게 LLM 탓인지 동시성 제한 탓인지" 를 총 소요만으로는 가릴 수 없다.
+CREATE TABLE IF NOT EXISTS report_chatbot_log (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at    INTEGER NOT NULL,
+    user          TEXT,                 -- 질문한 신원 (HoneyUser 계정)
+    client_ip     TEXT,
+    context_session_id TEXT,            -- 세션 상세에서 물었으면 그 세션
+    question      TEXT NOT NULL,
+    answer        TEXT,                 -- 답변 전문
+    intent        TEXT,
+    planner       TEXT,                 -- 'llm' | 'rule'
+    plan_json     TEXT,
+    steps_json    TEXT,                 -- 호출된 조회 툴 기록
+    total_ms      INTEGER,
+    wait_ms       INTEGER,              -- 동시실행 세마포어 대기
+    llm_ms        INTEGER,              -- LLM 왕복 (미사용이면 NULL)
+    result        TEXT DEFAULT 'ok'     -- 'ok' | 'busy' | 'error'
+);
+CREATE INDEX IF NOT EXISTS idx_report_chatbot_created_at
+    ON report_chatbot_log(created_at DESC);
+
 CREATE TABLE IF NOT EXISTS report_user_favorite (
     user_id    TEXT NOT NULL,        -- 웹 사용자 신고 Windows ID (소문자 정규화, 위조 가능)
     session_id TEXT NOT NULL,

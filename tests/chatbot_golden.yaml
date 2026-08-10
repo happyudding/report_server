@@ -68,6 +68,42 @@
   expect_intent: comment_search
   expect_tools: [search_comments]
 
+# ── 세션 찾기 (웹 챗: 바로가기 링크가 목적) ─────────────────────────────────
+- question: "S3222 보고서 찾아줘"
+  expect_intent: session_find
+  expect_tools: [search_sessions]
+
+- question: "KTD2026 리포트 목록 보여줘"
+  expect_intent: session_find
+  expect_tools: [search_sessions]
+
+# ── 세션 수치 (수율 / CPK / 측정값) ──────────────────────────────────────────
+# 세션이 특정되지 않으면 되묻는 게 정답이라 툴 호출이 없을 수 있다(expect_tools 비움).
+- question: "이 세션 수율 어때?"
+  expect_intent: session_metrics
+  expect_tools: []
+
+- question: "S3222 수율 알려줘"
+  expect_intent: session_metrics
+  expect_tools: [search_sessions]
+
+- question: "S3222 cpk 안 좋은 항목 뭐야?"
+  expect_intent: session_metrics
+  expect_tools: [search_sessions]
+
+- question: "VDD_INT 측정값 보여줘"
+  expect_intent: session_metrics
+  expect_tools: []
+
+# ── 화면 이동 (같은 페이지 점프 / 딥링크) ────────────────────────────────────
+- question: "맵 열어줘"
+  expect_intent: page_jump
+  expect_tools: []
+
+- question: "VDD_INT 상세 보여줘"
+  expect_intent: page_jump
+  expect_tools: []
+
 # ── 알 수 없음 (지어내지 않고 되물어야 한다) ────────────────────────────────
 - question: "어제 뭐 했더라"
   expect_intent: unknown

@@ -25,6 +25,7 @@
 | `report_web_visitor` | 편집자 후보 풀 | `user_id`(PK) |
 | `report_usage_daily` | 접속 사용량 일별 카운터 (Honey 실행·웹 방문 — 관리자 통계 탭) | `PK(day,kind,user_id)`, `kind`=`honey_run/web_index/web_view`, 무신원은 `ip:<addr>` ([database/usage.py](../server/database/usage.py)) |
 | `report_user_important` / `report_user_favorite` | 개인 중요표시/즐겨찾기 | `PK(user_id,session_id)` |
+| `report_chatbot_log` | 웹 챗봇 질문/답변 + 부하 계측 (관리자 Chatbot 탭) | `created_at DESC` 인덱스, `total_ms`=`wait_ms`(동시실행 대기)+`llm_ms`+조회, `result`=`ok/busy/error:*` ([database/chatbot_log.py](../server/database/chatbot_log.py)) |
 | `report_annotation` | 세션 주석 | `session_id` 인덱스 |
 | `report_analysis_lock` | analysis_key 동시성 락 | `analysis_key`(PK), `expires_at`(TTL 300s) |
 | `report_csv_files` / `report_dashboard_comment` / `report_user` | legacy 보존 | (미사용) |

@@ -2476,6 +2476,9 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
 <script src="/pe/report/static/webreport/note.js"></script>
 <script src="/pe/report/static/webreport/edit_mode.js"></script>
 <script src="/pe/report/static/webreport/leave_guard.js"></script>
+<!-- 챗봇은 독립 위젯(자체 DOM 주입) — 순서 결합이 없어 boot.js 직전에 둔다.
+     실제 노출은 core.js loadAuth() 가 is_master 를 확인한 뒤 enable() 로 켠다. -->
+<script src="/pe/report/static/webreport/chat.js"></script>
 <script src="/pe/report/static/webreport/boot.js"></script>
 </body>
 </html>

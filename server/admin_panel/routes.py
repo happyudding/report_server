@@ -16,7 +16,7 @@ import config
 from admin_panel import (GATE_COOKIE_EVAL, GATE_COOKIE_EVAL_PATH, GATE_COOKIE_VOC,
                          GATE_COOKIE_VOC_PATH, MASTER_COOKIE,
                          MASTER_COOKIE_PATH, MASTER_TTL_SECONDS,
-                         eval_gate_token, gate_token, identity_merge,
+                         chatbot_admin, eval_gate_token, gate_token, identity_merge,
                          issue_master_value, maintenance,
                          metrics, sessions_admin, stats, storage_admin, sysinfo,
                          users_admin, voc_admin, voc_gate_token)
@@ -346,6 +346,22 @@ def api_voc_overview():
 @admin_panel_bp.get("/api/voc")
 def api_voc_list():
     return jsonify(voc_admin.list_voc(
+        q=(request.args.get("q") or "").strip() or None,
+        limit=request.args.get("limit", 50),
+        offset=request.args.get("offset", 0),
+    ))
+
+
+# ── 웹 챗봇 (관리자 전용 기능이라 사용 현황·부하도 여기서만 본다) ─────────────
+
+@admin_panel_bp.get("/api/chatbot")
+def api_chatbot_overview():
+    return jsonify(chatbot_admin.overview(request.args.get("hours", 24)))
+
+
+@admin_panel_bp.get("/api/chatbot/log")
+def api_chatbot_log():
+    return jsonify(chatbot_admin.list_logs(
         q=(request.args.get("q") or "").strip() or None,
         limit=request.args.get("limit", 50),
         offset=request.args.get("offset", 0),

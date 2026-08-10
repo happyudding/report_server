@@ -36,6 +36,7 @@ from flask import Flask  # noqa: E402
 
 from report.report_extension import report_bp  # noqa: E402  (라우트 등록 트리거)
 from report import routes_misc  # noqa: E402  (캐시 리셋용)
+from honey_routes import honey_bp  # noqa: E402
 from landing import landing_bp  # noqa: E402
 from database import report_db  # noqa: E402
 from database.core import get_conn  # noqa: E402
@@ -43,6 +44,7 @@ from database.core import get_conn  # noqa: E402
 app = Flask(__name__)
 app.secret_key = "landing-test"      # 운영은 wsgi.py 가 파일에서 로드 — 로그아웃이 세션을 지운다
 app.register_blueprint(report_bp)
+app.register_blueprint(honey_bp)
 app.register_blueprint(landing_bp)
 report_db.init_report_db()
 client = app.test_client()
@@ -189,6 +191,53 @@ add_session("s_mddi_3", "MDDI")                 # 캐시 중에는 반영되지 
 second = json.loads(client.get("/pe/report/api/landing").data)
 check(second["sessions"] == first["sessions"], "(g) TTL 안에서는 같은 스냅샷")
 check(landing_json()["sessions"]["MDDI"] == 3, "(g) 캐시 만료 후 갱신")
+
+# ── (h) 최근 1주 활동 (신규 / 수정) ──────────────────────────────────────────
+# 여기까지 만들어진 완료·미삭제 세션은 전부 방금 생성 → created 에 잡힌다.
+# 1주 밖에 만든 세션에 최근 편집을 붙이면 updated 로만 잡혀야 한다 (둘은 겹치지 않는다).
+fresh_total = landing_json()["sessions"]["total"]
+add_session("s_old_1", "TCON")
+with get_conn() as conn:
+    conn.execute("UPDATE report_session SET created_at = ? WHERE session_id = 's_old_1'",
+                 (now - 30 * 86400,))
+    conn.execute(
+        "INSERT INTO report_webreport_edit (session_id, kind, item_key, value, updated_at, updated_by) "
+        "VALUES ('s_old_1', 'issue_comment', 'r1', 'hello', ?, 'alice')", (now,))
+
+rec = landing_json()["recent"]
+check(rec.get("days") == 7, "(h) days = 7")
+check(rec.get("created") == fresh_total, "(h) created = 최근 1주 안에 생성된 세션만")
+check(rec.get("updated") == 1, "(h) updated = 1주 전에 만들어졌고 최근 편집된 세션")
+
+# 편집 시각이 1주 밖이면 updated 에서 빠진다
+with get_conn() as conn:
+    conn.execute("UPDATE report_webreport_edit SET updated_at = ? WHERE session_id = 's_old_1'",
+                 (now - 20 * 86400,))
+check(landing_json()["recent"].get("updated") == 0, "(h) 오래된 편집은 제외")
+
+# ── (i) Honey 다운로드 버튼 — 검색결과 페이지와 동일 규약 ────────────────────
+with get_conn() as conn:
+    conn.execute("DELETE FROM report_usage_daily")
+c3 = app.test_client()
+ua = {"User-Agent": "Mozilla/5.0 HoneyUser/dana"}
+check(c3.get("/honey/version?probe=1", headers=ua).status_code in (200, 404),
+      "(i) probe 호출도 같은 응답 (manifest 유무에 따라 200/404)")
+with get_conn() as conn:
+    n = conn.execute("SELECT COUNT(*) FROM report_usage_daily WHERE kind='honey_run'").fetchone()[0]
+check(n == 0, "(i) probe=1 은 'Honey 실행' 집계를 올리지 않는다")
+c3.get("/honey/version", headers=ua)             # 실제 클라 호출 경로는 그대로 집계
+with get_conn() as conn:
+    n = conn.execute("SELECT COUNT(*) FROM report_usage_daily WHERE kind='honey_run'").fetchone()[0]
+check(n == 1, "(i) probe 없는 호출은 종전대로 집계 (기존 동작 무회귀)")
+
+pe_html = client.get("/pe").data
+check(b'id="honeyDlBtn"' in pe_html and b'href="/honey/download"' in pe_html,
+      "(i) 랜딩의 다운로드 버튼도 /honey/download 기본 링크 + 보정용 id")
+
+# ── (j) 검색결과 페이지 제목 → 랜딩 링크 ─────────────────────────────────────
+idx = client.get("/pe/report/").data.decode("utf-8")
+check('href="/pe/"' in idx and "page-title-link" in idx,
+      "(j) /pe/report 좌상단 제목이 /pe/ 로 가는 링크")
 
 print()
 if _failures:

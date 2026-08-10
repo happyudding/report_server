@@ -254,7 +254,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | 메서드 | 경로 | 접근 | 설명 |
 |--------|------|------|------|
 | `GET` | `/pe` · `/pe/` | 공개 | 랜딩 페이지 (HTML). 제품군 바로가기(`/pe/report/?pt=<PT>`) + Honey 다운로드 + 현황 수치. `/` 는 여기로 리다이렉트하고 Honey 클라 첫 화면도 여기다 (🏠 홈 버튼은 계속 `/pe/report/`) |
-| `GET` | `/pe/report/api/landing` | 공개 | 랜딩이 쓰는 유일한 조회 — `viewer`(요청마다) + `sessions`/`usage`/`active`(30초 전역 캐시). 세션 수는 **비공개 포함 전체**라 누가 봐도 같은 값. 계정ID·IP·session_id 는 싣지 않는다(`active` 는 `count`/`window_sec` 만) |
+| `GET` | `/pe/report/api/landing` | 공개 | 랜딩이 쓰는 유일한 조회 — `viewer`(요청마다) + `sessions`/`recent`/`usage`/`active`(30초 전역 캐시). 세션 수는 **비공개 포함 전체**라 누가 봐도 같은 값. `recent` 은 최근 7일 `created`(신규)/`updated`(그 이전 생성분 중 `report_webreport_edit` 이 찍힌 것)로 서로 겹치지 않는다. 계정ID·IP·session_id 는 싣지 않는다(`active` 는 `count`/`window_sec` 만) |
 
 랜딩 자체(`landing_bp`)에는 CSRF `after_request` 가 없다 — 화면이 진입 직후 부르는
 `/pe/report/api/landing`(report_bp) 응답이 `report_csrf` 쿠키를 심어 로그아웃 POST 가 통한다.
@@ -349,7 +349,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| `GET` | `/honey/version` | 버전 정보 JSON (`version.json` 반환). 호출을 'Honey 실행'으로 사용자별 집계 (`report_usage_daily`, 신원은 HoneyUser UA — 구버전 클라는 IP) |
+| `GET` | `/honey/version` | 버전 정보 JSON (`version.json` 반환). 호출을 'Honey 실행'으로 사용자별 집계 (`report_usage_daily`, 신원은 HoneyUser UA — 구버전 클라는 IP). **`?probe=1` 이면 집계를 건너뛴다** — 웹 페이지가 다운로드 버튼의 링크·파일명을 보정하려고 부르는 경우(실행이 아니다). `/pe` 랜딩이 이걸 쓰고, 응답 내용은 완전히 동일하다 |
 | `GET` | `/honey/download` | Honey exe/ZIP 다운로드 |
 | `GET` | `/honey/announcement` | 릴리스 공지 원문 (`releases/announcement.txt` 그대로, text/plain). 클라가 최신 버전 실행 중일 때 PC 계정별 1회 팝업 → [docs/04](../docs/04_honey_update.md) |
 

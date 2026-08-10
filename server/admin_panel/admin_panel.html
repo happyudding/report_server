@@ -220,6 +220,8 @@ body { position: relative; }
           title="지금 접속 중인 사람(실시간) + 기간별 누적 사용량 + 웹 로그인 계정 관리">👤 사용자</button>
   <button class="tab" data-panel="pVoc"
           title="사용자 문의(VOC) 게시글 현황 — 읽기 전용">VOC</button>
+  <button class="tab" data-panel="pChatbot"
+          title="웹 챗봇(관리자 전용) 사용 현황 · 서버 부하 · 질문/답변 이력">🤖 Chatbot</button>
   <button class="tab" data-panel="pDb"
           title="DB 백업 실행·백업 목록, 보존기간 세션 정리, 무결성 진단">DB</button>
   <button class="tab" data-panel="pLogs"
@@ -728,6 +730,35 @@ body { position: relative; }
   </div>
 </div>
 
+<!-- ═══ Chatbot (관리자 전용 웹 챗봇 — 사용 현황·부하·이력) ═══ -->
+<div id="pChatbot" class="panel">
+  <div class="tiles" id="chatTiles">
+    <div class="tile"><div class="lbl">로딩 중…</div></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card">
+    <h2>질문 / 답변 이력
+      <span class="hint">소요는 총 = 대기(동시실행 제한) + LLM(질문 해석) + 조회 로 나눠 본다 —
+        느린 원인이 LLM 인지 동시성 제한인지 총 소요만으로는 못 가린다</span></h2>
+    <div class="toolbar">
+      <input id="chatQ" class="inp" style="width:280px" placeholder="질문 / 답변 / 사용자 검색…">
+      <button class="btn primary" id="btnChatSearch">검색</button>
+      <button class="btn" id="btnChatReset">초기화</button>
+      <span class="grow"></span>
+      <button class="btn" id="btnChatRefresh">새로고침</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>시각</th><th>사용자</th><th>질문</th><th>답변</th>
+        <th>intent</th><th>plan</th>
+        <th class="num">총 ms</th><th class="num">대기</th><th class="num">LLM</th><th>결과</th>
+      </tr></thead>
+      <tbody id="chatBody"><tr class="empty-row"><td colspan="10">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="pager" id="chatPager"></div>
+  </div>
+</div>
+
 <!-- ═══ DB ═══ -->
 <div id="pDb" class="panel">
   <div class="row">
@@ -910,6 +941,7 @@ const TAB_LOADERS = {
   pHealth: loadHealth, pHistory: loadHistoryTab, pPublicApi: loadPublicApiTab,
   pStorage: loadStorageTab, pStats: loadStats,
   pSessions: loadSessions, pUsers: loadUsersTab, pVoc: loadVocTab,
+  pChatbot: loadChatbotTab,
   pDb: loadDb, pLogs: () => { loadLogFileList(); loadLogs(); }, pAudit: loadAudit,
 };
 document.querySelectorAll(".tab").forEach(btn => {
@@ -2292,6 +2324,94 @@ async function loadVocList() {
 $("btnVocSearch").onclick = () => { vocOffset = 0; loadVocList(); };
 $("btnVocReset").onclick = () => { $("vocQ").value = ""; vocOffset = 0; loadVocTab(); };
 $("vocQ").addEventListener("keydown", e => { if (e.key === "Enter") { vocOffset = 0; loadVocList(); } });
+
+// ── Chatbot ─────────────────────────────────────────────────────────────────
+const CHAT_PAGE = 50;
+let chatOffset = 0;
+const CHAT_INTENT_LABEL = {
+  item_history: "항목 이력", session_issue: "세션 이슈", product_search: "제품 검색",
+  similar_case: "유사 사례", comment_search: "코멘트 검색", session_find: "세션 찾기",
+  session_metrics: "세션 수치", page_jump: "화면 이동", unknown: "미분류",
+};
+async function loadChatbotTab() {
+  try {
+    const o = await getJSON("api/chatbot?hours=24");
+    const s = o.stats || {}, rt = o.runtime || {};
+    const busy = Number(s.busy || 0), errs = Number(s.errors || 0);
+    $("chatTiles").innerHTML = `
+      <div class="tile"><div class="lbl">최근 24시간 질문</div><div class="val">${s.total || 0}건</div>
+        <div class="det">누적 ${s.all_time || 0}건</div></div>
+      <div class="tile"><div class="lbl">응답시간 평균</div><div class="val">${s.avg_ms == null ? "-" : s.avg_ms + "ms"}</div>
+        <div class="det">최대 ${s.max_ms == null ? "-" : s.max_ms + "ms"}</div></div>
+      <div class="tile"><div class="lbl">동시실행 대기</div>
+        <div class="val"${busy > 0 ? ` style="color:#dc2626"` : ""}>${s.avg_wait_ms == null ? "-" : s.avg_wait_ms + "ms"}</div>
+        <div class="det">최대 ${s.max_wait_ms == null ? "-" : s.max_wait_ms + "ms"} · 혼잡거절 ${busy}건</div></div>
+      <div class="tile"><div class="lbl">LLM 플래너</div>
+        <div class="val">${o.llm_enabled ? "사용" : "미설정"}</div>
+        <div class="det">${o.llm_enabled
+          ? `평균 ${s.avg_llm_ms == null ? "-" : s.avg_llm_ms + "ms"} · 최대 ${s.max_llm_ms == null ? "-" : s.max_llm_ms + "ms"}`
+          : "규칙 기반으로 동작 중"}</div></div>
+      <div class="tile"><div class="lbl">지금 처리 중</div>
+        <div class="val">${rt.inflight == null ? "-" : rt.inflight}건</div>
+        <div class="det">여유 슬롯 ${rt.free_slots == null ? "-" : rt.free_slots} / ${rt.concurrency == null ? "-" : rt.concurrency}</div></div>
+      <div class="tile"><div class="lbl">오류</div>
+        <div class="val"${errs > 0 ? ` style="color:#dc2626"` : ""}>${errs}건</div>
+        <div class="det">최근 24시간</div></div>`;
+  } catch (e) {
+    $("chatTiles").innerHTML = `<div class="tile"><div class="lbl">챗봇 요약 조회 실패</div><div class="det">${esc(e)}</div></div>`;
+  }
+  loadChatLog();
+}
+async function loadChatLog() {
+  const tb = $("chatBody");
+  tb.innerHTML = `<tr class="empty-row"><td colspan="10">로딩 중…</td></tr>`;
+  const params = new URLSearchParams({ limit: CHAT_PAGE, offset: chatOffset });
+  const q = $("chatQ").value.trim(); if (q) params.set("q", q);
+  let data;
+  try { data = await getJSON("api/chatbot/log?" + params); }
+  catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="10">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  tb.innerHTML = data.rows.length ? data.rows.map(r => {
+    const bad = r.result && r.result !== "ok";
+    return `<tr>
+      <td>${fmtDate(r.created_at)}</td>
+      <td>${esc(r.user || "-")}</td>
+      <td class="detail-cell"><div class="clamp">${esc(r.question || "")}</div></td>
+      <td class="detail-cell"><div class="clamp">${esc(r.answer || "-")}</div></td>
+      <td>${esc(CHAT_INTENT_LABEL[r.intent] || r.intent || "-")}</td>
+      <td>${esc(r.planner || "-")}</td>
+      <td class="num">${r.total_ms == null ? "-" : r.total_ms}</td>
+      <td class="num">${r.wait_ms == null ? "-" : r.wait_ms}</td>
+      <td class="num">${r.llm_ms == null ? "-" : r.llm_ms}</td>
+      <td${bad ? ` style="color:#dc2626"` : ""}>${esc(r.result || "-")}</td></tr>`;
+  }).join("") : `<tr class="empty-row"><td colspan="10">기록이 없습니다.</td></tr>`;
+  const total = data.total;
+  const page = Math.floor(chatOffset / CHAT_PAGE), last = Math.max(0, Math.ceil(total / CHAT_PAGE) - 1);
+  $("chatPager").innerHTML = `
+    <button class="pg-btn" id="chatPrev" ${page === 0 ? "disabled" : ""}>← 이전</button>
+    <span class="pg-info">${total}건 중 ${total ? chatOffset + 1 : 0}–${Math.min(chatOffset + CHAT_PAGE, total)} (페이지 ${page + 1}/${last + 1})</span>
+    <button class="pg-btn" id="chatNext" ${page >= last ? "disabled" : ""}>다음 →</button>`;
+  $("chatPrev").onclick = () => { chatOffset = Math.max(0, chatOffset - CHAT_PAGE); loadChatLog(); };
+  $("chatNext").onclick = () => { chatOffset += CHAT_PAGE; loadChatLog(); };
+}
+// 긴 질문/답변 셀 펼치기 — tbody 는 유지되므로 위임 핸들러 1회 등록(감사 탭과 같은 패턴)
+$("chatBody").addEventListener("click", e => {
+  const cell = e.target.closest(".detail-cell .clamp");
+  if (cell) cell.classList.toggle("open");
+});
+$("btnChatSearch").onclick = () => { chatOffset = 0; loadChatLog(); };
+$("btnChatReset").onclick = () => { $("chatQ").value = ""; chatOffset = 0; loadChatbotTab(); };
+$("btnChatRefresh").onclick = () => loadChatbotTab();
+$("chatQ").addEventListener("keydown", e => { if (e.key === "Enter") { chatOffset = 0; loadChatLog(); } });
+// 실시간 현황(처리 중 건수)은 그 탭을 보고 있을 때만 갱신한다 — 다른 탭에서 도는 폴링은
+// 서버 부하를 보려고 서버에 부하를 주는 셈이다(public API 탭과 같은 규칙).
+setInterval(() => {
+  if (document.visibilityState === "visible" && $("pChatbot").classList.contains("active")) {
+    loadChatbotTab();
+  }
+}, 15000);
 
 // ── DB ──────────────────────────────────────────────────────────────────────
 async function loadDb() { loadBackups(); }

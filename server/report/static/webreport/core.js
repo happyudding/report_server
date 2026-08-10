@@ -155,6 +155,7 @@ let LOGIN_USER = "";            // 현재 사용자 (Honey UA 또는 웹 로그�
 let IDENTITY_SRC = "";          // "honey"|"login"|"sso"|"" — Honey 전용 기능 안내 판단용
 let CAN_EDIT = false;           // 이 세션 편집 가능(업로더 또는 위임 편집자) — 서버 판정
 let IS_UPLOADER = false;        // 이 세션 업로더 본인(또는 master PC) — 권한부여/비공개/삭제용
+let IS_MASTER = false;          // admin 로그인 PC 인가 — IS_UPLOADER 와 별도로 둔다(챗봇 등 master 전용 UI)
 let MY_IMPORTANT = false;       // 내 개인 중요표시 상태(사용자별)
 let verifiedPassword = "";      // (구 PIN 흐름 잔재 — 저장 payload 호환용, 항상 "")
 
@@ -171,13 +172,17 @@ async function loadAuth() {
       // master PC(admin 로그인 4h)는 업로더와 동일 권한 — 삭제/비공개/권한부여 UI 도 연다
       // (서버 _uploader_guard 가 같은 규칙으로 재검증한다).
       IS_UPLOADER = !!(j.is_uploader || j.is_master);
+      IS_MASTER = !!j.is_master;
       MY_IMPORTANT = !!j.my_important;
+      // 챗봇은 master 전용(테스트 단계) — 서버 라우트도 같은 규칙으로 404 를 낸다.
+      if (IS_MASTER && window.ChatWidget) ChatWidget.enable(SESSION_ID);
     } else {
       console.warn("my_access 조회 실패 — 읽기 전용으로 표시 (HTTP " + res.status + ")");
     }
   } catch (e) {
     console.warn("my_access 조회 실패 — 읽기 전용으로 표시", e);
-    LOGIN_USER = ""; IDENTITY_SRC = ""; CAN_EDIT = false; IS_UPLOADER = false; MY_IMPORTANT = false;
+    LOGIN_USER = ""; IDENTITY_SRC = ""; CAN_EDIT = false; IS_UPLOADER = false;
+    IS_MASTER = false; MY_IMPORTANT = false;
   }
   // Honey 밖에서만 '전용 기능' 안내 버튼을 툴바에 붙인다 (honey_hint.js).
   try { HoneyHint.init(IDENTITY_SRC, ".topbar", "theme-toggle", "🍯"); } catch (e) { /* 안내는 부가기능 */ }

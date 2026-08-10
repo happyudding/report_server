@@ -26,6 +26,7 @@ from .models import Session  # noqa: F401  (get_session 반환 타입 — Mappin
 from .sessions import (  # noqa: F401
     count_by_product_type,
     count_history,
+    count_recent_activity,
     count_sessions_for_analysis_key,
     create_session,
     delete_analysis_rows,
@@ -65,6 +66,12 @@ from .audit import (  # noqa: F401
     log_audit,
     purge_audit_logs,
     recent_upload_user_by_ip,
+)
+from .chatbot_log import (  # noqa: F401
+    chat_stats,
+    list_chats,
+    log_chat,
+    purge_chat_logs,
 )
 from .users import (  # noqa: F401
     add_session_editor,

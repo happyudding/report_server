@@ -67,6 +67,40 @@ def _evaluate_fn():
     return evaluate
 
 
+def llm_status(*, ping=False):
+    """엔진 LLM 배선 상태 — 설정 출처·해석된 URL·활성 여부(+선택적 실호출 1회).
+
+    엔진 접근은 이 파일을 통해서만 한다는 규약(불변규칙 #8) 때문에, 배선 점검 도구
+    ([tools/llm_check.py](../tools/llm_check.py))도 eval_engine 을 직접 열지 않고 여기를 부른다.
+
+    ``ping=True`` 면 실제로 한 번 호출해 왕복을 확인한다 — 설정만 맞고 서버가 안 뜬 경우를
+    "켜짐" 으로 오독하지 않기 위해서다. 실패는 예외가 아니라 ``error`` 문자열로 담는다.
+    """
+    out = {"enabled": False, "endpoint_raw": "", "endpoint_resolved": "", "model": "",
+           "timeout": None, "api_key_set": False, "error": None, "reply": None}
+    try:
+        path = str(_EVAL_DIR)
+        if path not in sys.path:
+            sys.path.append(path)
+        from eval_engine import config as eval_config, llm_client
+    except Exception as exc:                      # 엔진 폴더가 없거나 import 실패
+        out["error"] = f"engine import 실패: {exc}"
+        return out
+
+    out.update(enabled=bool(llm_client.is_enabled()),
+               endpoint_raw=eval_config.EVAL_LLM_ENDPOINT,
+               endpoint_resolved=llm_client.chat_url(),
+               model=eval_config.EVAL_LLM_MODEL,
+               timeout=eval_config.EVAL_LLM_TIMEOUT,
+               api_key_set=bool(eval_config.EVAL_LLM_API_KEY))
+    if ping and out["enabled"]:
+        try:
+            out["reply"] = (llm_client.complete("ping. 한 단어로만 답하세요.") or "")[:200]
+        except Exception as exc:
+            out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
 def _table_to_raw_df(table, items):
     """HoneyformTable(읽기 경로, df=None) → 엔진 정본 raw_df 레이아웃 재조립.
 

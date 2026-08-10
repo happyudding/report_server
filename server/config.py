@@ -31,6 +31,33 @@ def _server_env_file(name):
     return None
 
 
+# ── eval_analyzer 엔진 설정 브리지 ───────────────────────────────────────────
+# eval_engine 은 report_server 를 import 하지 않는 독립 패키지라 `os.environ` 만 읽고,
+# 그것도 **import 시점 1회**다(eval_engine/config.py 의 모듈 상수).
+# start.bat 은 server.env 를 환경변수로 export 하지만 `python wsgi.py` 로 직접 띄우면
+# 안 올라온다 — 그러면 같은 EVAL_LLM_* 를 적어 두고도 챗봇(server.env 폴백 있음)만 LLM 이
+# 켜지고 AI Comment(엔진)는 꺼진 채로 도는 비대칭이 생긴다. 기동 경로에 따라 배선이 반만
+# 먹던 자리라, 엔진이 import 되기 전인 여기서 한 번 채워 둔다.
+# 이미 설정된 환경변수는 덮지 않는다(명시 지정이 항상 이긴다).
+_ENGINE_ENV_KEYS = (
+    "EVAL_LLM_ENABLED", "EVAL_LLM_ENDPOINT", "EVAL_LLM_MODEL",
+    "EVAL_LLM_API_KEY", "EVAL_LLM_TIMEOUT",
+    "EVAL_DB_PATH", "EVAL_RULES_DIR",
+    "EVAL_PRECEDENT_BACKEND", "EVAL_PRECEDENT_RAG_ENDPOINT",
+)
+
+
+def _export_engine_env():
+    for key in _ENGINE_ENV_KEYS:
+        if os.getenv(key):
+            continue
+        value = _server_env_file(key)
+        if value:
+            os.environ[key] = value
+
+
+_export_engine_env()
+
 REPORT_ANALYSIS_INDEX_HTML = ROOT_DIR / "server" / "report" / "report_analysis_index.html"
 REPORT_VIEW_HTML           = ROOT_DIR / "server" / "report" / "report_view.html"
 ADMIN_DASHBOARD_HTML       = ROOT_DIR / "server" / "report" / "admin_dashboard.html"

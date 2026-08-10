@@ -12,7 +12,15 @@ from __future__ import annotations
 
 import time
 
-from . import planner, tools_eval, tools_report
+from . import planner, tools_eval, tools_metrics, tools_report
+
+# 세션 상세 패널에서 온 질문의 "이 세션" 을 붙일 intent — 규칙 폴백은 컨텍스트를 모르므로
+# 여기서 사후 주입한다.
+_SESSION_INTENTS = ("session_issue", "session_metrics", "page_jump")
+
+# 세션 바로가기 URL. 같은 페이지 안에서의 이동은 url 이 아니라 action 으로 내보낸다.
+_VIEW_URL = "/pe/report/view/{sid}"
+_LINK_CAP = 10
 
 
 class _Trace:
@@ -39,11 +47,14 @@ def _count(result):
     return None
 
 
-def answer(question, *, viewer, see_all_private=False, use_llm=True) -> dict:
-    """질문 1건 처리 → {plan, steps, text, data}."""
-    plan = planner.plan(question, use_llm=use_llm)
+def _run(question, *, viewer, see_all_private, use_llm, context_session_id=None) -> dict:
+    plan = planner.plan(question, use_llm=use_llm, context_session_id=context_session_id)
+    if not plan.session_id and context_session_id and plan.intent in _SESSION_INTENTS:
+        plan.session_id = context_session_id
     trace = _Trace()
-    ctx = {"viewer": viewer, "see_all_private": see_all_private, "trace": trace}
+    web = {"links": [], "choices": [], "building": False}
+    ctx = {"viewer": viewer, "see_all_private": see_all_private, "trace": trace,
+           "web": web, "question": question, "context_session_id": context_session_id}
 
     handler = {
         "item_history": _item_history,
@@ -51,10 +62,100 @@ def answer(question, *, viewer, see_all_private=False, use_llm=True) -> dict:
         "product_search": _product_search,
         "similar_case": _similar_case,
         "comment_search": _comment_search,
+        "session_find": _session_find,
+        "session_metrics": _session_metrics,
+        "page_jump": _page_jump,
     }.get(plan.intent, _unknown)
 
     text, data = handler(plan, ctx)
-    return {"plan": plan.to_dict(), "steps": trace.steps, "text": text, "data": data}
+    _derive_links(data, ctx)
+    return {"plan": plan.to_dict(), "steps": trace.steps, "text": text, "data": data,
+            "web": web}
+
+
+def answer(question, *, viewer, see_all_private=False, use_llm=True) -> dict:
+    """질문 1건 처리 → {plan, steps, text, data}. (CLI 계약 — 키 4개 고정)"""
+    result = _run(question, viewer=viewer, see_all_private=see_all_private,
+                  use_llm=use_llm)
+    return {k: result[k] for k in ("plan", "steps", "text", "data")}
+
+
+def answer_web(question, *, viewer, see_all_private=False, use_llm=True,
+               context_session_id=None) -> dict:
+    """웹 챗 패널용 — answer() 결과에 `web{links, choices, building}` 을 얹는다.
+
+    links  : 세션 바로가기 url 또는 같은 페이지 내 점프 action
+    choices: 무상태 선택 버튼 — 각 항목의 `question` 을 그대로 다시 보내면 된다
+             (서버에 대화 상태를 두지 않으려고 후속 질의문을 완성해 내려보낸다)
+    """
+    return _run(question, viewer=viewer, see_all_private=see_all_private,
+                use_llm=use_llm, context_session_id=context_session_id)
+
+
+# ── 웹 응답(링크/선택지) ─────────────────────────────────────────────────────
+def _link(ctx, session_id, label, *, tab=None, item=None):
+    """세션 이동 링크 1개 추가.
+
+    대상이 지금 열려 있는 세션이면 페이지 안에서 이동(action)하고, 다른 세션이면
+    딥링크 url 을 준다 — 판정을 여기 한 곳에만 둬서 호출부가 실수할 여지를 없앤다.
+    """
+    web = ctx["web"]
+    if len(web["links"]) >= _LINK_CAP or not session_id:
+        return
+    if session_id == ctx.get("context_session_id"):
+        if tab == "item_detail" and item:
+            action, args = "open_item_detail", {"subject": item}
+        elif tab == "map":
+            action, args = "open_map", {"subject": item} if item else {}
+        elif tab:
+            action, args = "open_tab", {"tab": tab}
+        else:
+            return      # 이미 그 세션을 보고 있다 — "여기 열기" 링크는 의미가 없다
+        web["links"].append({"label": label, "action": action, "args": args})
+        return
+    url = _VIEW_URL.format(sid=session_id)
+    if tab:
+        url += f"?tab={_q(tab)}"
+        if item:
+            url += f"&item={_q(item)}"
+    if any(existing.get("url") == url for existing in web["links"]):
+        return
+    web["links"].append({"label": label, "url": url})
+
+
+def _q(value):
+    from urllib.parse import quote
+    return quote(str(value or ""), safe="")
+
+
+def _choice(ctx, label, question):
+    ctx["web"]["choices"].append({"label": label, "question": question})
+
+
+def _derive_links(data, ctx):
+    """핸들러가 직접 링크를 안 붙였어도, 결과에 담긴 세션들로 바로가기를 만들어 준다.
+
+    기존 intent 핸들러(item_history 등)를 건드리지 않고 웹 응답을 얹기 위한 지점이다.
+    """
+    if ctx["web"]["links"]:
+        return
+    seen = []
+    for session in (data.get("sessions") or []):
+        seen.append(session)
+    for detail in (data.get("issues") or []):
+        session = detail.get("session")
+        if isinstance(session, dict):
+            seen.append(session)
+    for hit in ((data.get("session_hits") or {}).get("hits") or []):
+        seen.append(hit)
+    done = set()
+    for s in seen:
+        sid = s.get("session_id")
+        if not sid or sid in done:
+            continue
+        done.add(sid)
+        _link(ctx, sid, f"보고서 열기: {s.get('product') or '?'}"
+                        f" / lot {s.get('lot_id') or '-'}")
 
 
 # ── intent 별 흐름 ───────────────────────────────────────────────────────────
@@ -225,11 +326,252 @@ def _comment_search(plan, ctx):
     return "\n".join(lines), {"comments": res}
 
 
+def _session_find(plan, ctx):
+    """조건에 맞는 평가 세션을 찾아 바로가기를 준다 — "S3222 보고서 찾아줘"."""
+    trace = ctx["trace"]
+    found = trace.call(tools_report.search_sessions, viewer=ctx["viewer"],
+                       see_all_private=ctx["see_all_private"],
+                       product=plan.product, lot_id=plan.lot_id, limit=20)
+    sessions = found.get("sessions") or []
+    if not sessions and (plan.product or plan.lot_id):
+        found = trace.call(tools_report.search_sessions, viewer=ctx["viewer"],
+                           see_all_private=ctx["see_all_private"],
+                           q=plan.product or plan.lot_id, limit=20)
+        sessions = found.get("sessions") or []
+    if not sessions:
+        cond = plan.product or plan.lot_id or plan.normalized_question
+        return f"\"{cond}\" 로 찾은 평가 세션이 없습니다.", {}
+
+    lines = [f"세션 {found.get('total', len(sessions))}건 중 {len(sessions[:10])}건:"]
+    for s in sessions[:10]:
+        lines.append(f"  - {_session_line(s)}")
+        _link(ctx, s["session_id"],
+              f"보고서 열기: {s.get('product') or '?'} / lot {s.get('lot_id') or '-'}")
+    if len(sessions) > 1:
+        for s in sessions[:5]:
+            _choice(ctx, f"{s.get('product') or '?'} / {_date(s.get('created_at'))} 이슈",
+                    f"세션 {s['session_id']} 의 이슈 알려줘")
+    else:
+        sid = sessions[0]["session_id"]
+        _choice(ctx, "이슈 보기", f"세션 {sid} 의 이슈 알려줘")
+        _choice(ctx, "수율 보기", f"세션 {sid} 의 수율 알려줘")
+    return "\n".join(lines), {"sessions": sessions}
+
+
+def _session_metrics(plan, ctx):
+    """세션의 수율 / CPK / 측정값. metric 이 없으면 가장 흔한 질문인 수율로 본다."""
+    metric = plan.metric or "yield"
+    sid, pending = _resolve_session(plan, ctx, f"{_METRIC_LABEL[metric]} 알려줘")
+    if pending is not None:
+        return pending, {"sessions": ctx.get("_candidates") or []}
+
+    keyword = plan.item_keywords[0] if plan.item_keywords else None
+    res = ctx["trace"].call(tools_metrics.get_session_metrics, session_id=sid,
+                            viewer=ctx["viewer"], see_all_private=ctx["see_all_private"],
+                            item_keyword=keyword if metric != "yield" else None)
+    guard = _metrics_guard(res, ctx, sid)
+    if guard is not None:
+        return guard, {"metrics": res}
+
+    session = res["session"]
+    head = f"{session.get('product') or '?'} / lot {session.get('lot_id') or '-'}"
+    if metric == "yield":
+        return _format_yield(head, res, ctx, sid), {"metrics": res}
+    if metric == "cpk":
+        return _format_cpk(head, res, keyword, ctx, sid), {"metrics": res}
+    return _format_raw(head, res, keyword, ctx, sid)
+
+
+def _page_jump(plan, ctx):
+    """화면 이동만 — "맵 열어줘" / "VDD_INT 상세 보여줘"."""
+    target = plan.jump_target or "item_detail"
+    label = "웨이퍼 맵" if target == "map" else "항목 상세"
+    sid, pending = _resolve_session(plan, ctx, f"{label} 열어줘")
+    if pending is not None:
+        return pending, {"sessions": ctx.get("_candidates") or []}
+
+    subject = plan.item_keywords[0] if plan.item_keywords else None
+    exact = None
+    if subject:
+        listing = ctx["trace"].call(tools_metrics.list_items, session_id=sid,
+                                    viewer=ctx["viewer"],
+                                    see_all_private=ctx["see_all_private"],
+                                    keyword=subject, limit=20)
+        items = listing.get("items") or []
+        if len(items) == 1:
+            exact = items[0]
+        elif len(items) > 1:
+            for name in items[:8]:
+                _choice(ctx, name,
+                        f"세션 {sid} 의 {name} {'맵' if target == 'map' else '상세'} 열어줘")
+            return (f"\"{subject}\" 로 걸린 항목이 {len(items)}개입니다 — 하나 고르세요.",
+                    {"items": items})
+        elif not listing.get("building") and not listing.get("error"):
+            return (f"\"{subject}\" 로 걸린 항목이 이 세션에 없습니다.", {"items": []})
+
+    if target == "map":
+        _link(ctx, sid, f"Map Analysis 열기{f' — {exact}' if exact else ''}",
+              tab="map", item=exact)
+        return "아래 버튼으로 Map Analysis 를 엽니다.", {"session_id": sid, "item": exact}
+    if not exact:
+        return ("어떤 항목의 상세를 열지 알려주세요. 예: \"VDD_INT 상세 보여줘\"",
+                {"session_id": sid})
+    _link(ctx, sid, f"Item Detail 열기 — {exact}", tab="item_detail", item=exact)
+    return f"아래 버튼으로 \"{exact}\" 상세를 엽니다.", {"session_id": sid, "item": exact}
+
+
+_METRIC_LABEL = {"yield": "수율", "cpk": "CPK", "raw": "측정값"}
+
+
+def _resolve_session(plan, ctx, followup_suffix):
+    """(session_id, None) 또는 (None, 되물음 텍스트).
+
+    질문이 세션을 지목하지 않았으면 조건으로 후보를 찾고, 하나면 확정, 여럿이면 선택
+    버튼을 만들어 되묻는다(서버에 대화 상태를 두지 않으므로 후속 질의문을 완성해 준다).
+    """
+    if plan.session_id:
+        return plan.session_id, None
+    if not (plan.product or plan.lot_id):
+        return None, ("어느 보고서인지 알려주세요. 세션을 연 상태에서 물으시거나 "
+                      "제품명을 함께 적어 주세요. 예: \"S3222 수율 알려줘\"")
+    found = ctx["trace"].call(tools_report.search_sessions, viewer=ctx["viewer"],
+                              see_all_private=ctx["see_all_private"],
+                              product=plan.product, lot_id=plan.lot_id, limit=10)
+    sessions = found.get("sessions") or []
+    if not sessions and plan.product:
+        found = ctx["trace"].call(tools_report.search_sessions, viewer=ctx["viewer"],
+                                  see_all_private=ctx["see_all_private"],
+                                  q=plan.product, limit=10)
+        sessions = found.get("sessions") or []
+    ctx["_candidates"] = sessions
+    if not sessions:
+        cond = plan.product or plan.lot_id
+        return None, f"\"{cond}\" 로 찾은 평가 세션이 없습니다."
+    if len(sessions) == 1:
+        return sessions[0]["session_id"], None
+    for s in sessions[:8]:
+        _choice(ctx, f"{s.get('product') or '?'} / lot {s.get('lot_id') or '-'} / "
+                     f"{_date(s.get('created_at'))}",
+                f"세션 {s['session_id']} 의 {followup_suffix}")
+    return None, f"해당 조건의 세션이 {len(sessions)}건입니다 — 하나 고르세요."
+
+
+def _metrics_guard(res, ctx, sid):
+    """콜드/권한/xlsx 분기를 사람 문장으로. 정상이면 None."""
+    if res.get("building"):
+        ctx["web"]["building"] = True
+        if res.get("blocked"):
+            return ("이 세션은 리포트 계산이 반복 실패해 지금은 수치를 낼 수 없습니다. "
+                    "보고서 화면에서 직접 확인해 주세요.")
+        _choice(ctx, "다시 시도", ctx["question"])
+        return ("리포트가 아직 계산되지 않아 백그라운드 빌드를 시작했습니다 "
+                "(수 초~수십 초). 잠시 후 다시 시도해 주세요.")
+    error = res.get("error")
+    if error == "session_not_found":
+        return "해당 세션을 찾을 수 없습니다(또는 조회 권한이 없습니다)."
+    if error == "not_web_report":
+        return "이 세션은 xlsx 업로드 세션이라 수율/CPK 수치를 계산해 두지 않습니다."
+    if error == "item_not_found":
+        return f"\"{res.get('subject')}\" 항목을 이 세션에서 찾지 못했습니다."
+    return None
+
+
+def _format_yield(head, res, ctx, sid):
+    y = res.get("yield_summary") or {}
+    if not y:
+        return f"{head} — 수율 요약이 비어 있습니다."
+    lines = [f"{head} 수율 {y.get('yield_pct')}% "
+             f"(pass {y.get('pass')} / fail {y.get('fail')} / 측정 {y.get('tested')} / "
+             f"분모 {y.get('total')})"]
+    for s in (y.get("by_source") or [])[:12]:
+        lines.append(f"  - {s.get('source')}: {s.get('yield_pct')}% "
+                     f"(pass {s.get('pass')} / fail {s.get('fail')})")
+    worst = res.get("cpk_worst")
+    if worst and worst.get("cpk") is not None:
+        lines.append(f"  · 최저 CPK: {worst.get('subject')} = {worst['cpk']:.2f} "
+                     f"({worst.get('source')})")
+    _link(ctx, sid, "보고서 열기")
+    _choice(ctx, "CPK 워스트 보기", f"세션 {sid} 의 cpk 알려줘")
+    return "\n".join(lines)
+
+
+def _format_cpk(head, res, keyword, ctx, sid):
+    rows = res.get("cpk_rows") or []
+    if not rows:
+        cond = f"\"{keyword}\" 로 걸린 " if keyword else ""
+        return f"{head} — {cond}CPK 항목이 없습니다."
+    title = (f"{head} — \"{keyword}\" CPK {len(rows)}건:" if keyword
+             else f"{head} — CPK 낮은 순 {len(rows)}건:")
+    lines = [title]
+    for r in rows:
+        lines.append(f"  - {r.get('subject')} ({r.get('source')}) "
+                     f"cpk={_num(r.get('cpk'))} / avg={_num(r.get('average'))} "
+                     f"/ limit {_num(r.get('lower_limit'))}~{_num(r.get('upper_limit'))}")
+    for subject in (res.get("items_matched") or [])[:5]:
+        _link(ctx, sid, f"상세 보기 — {subject}", tab="item_detail", item=subject)
+    return "\n".join(lines)
+
+
+def _format_raw(head, res, keyword, ctx, sid):
+    matched = res.get("items_matched") or []
+    if not keyword:
+        return ("어떤 항목의 측정값을 볼지 알려주세요. 예: \"VDD_INT 측정값 보여줘\"",
+                {"metrics": res})
+    if not matched:
+        return f"{head} — \"{keyword}\" 로 걸린 항목이 없습니다.", {"metrics": res}
+    if len(matched) > 1:
+        for name in matched[:8]:
+            _choice(ctx, name, f"세션 {sid} 의 {name} 측정값 알려줘")
+        return (f"\"{keyword}\" 로 걸린 항목이 {len(matched)}개입니다 — 하나 고르세요.",
+                {"metrics": res})
+
+    subject = matched[0]
+    values = ctx["trace"].call(tools_metrics.get_item_values, session_id=sid,
+                               subject=subject, viewer=ctx["viewer"],
+                               see_all_private=ctx["see_all_private"])
+    guard = _metrics_guard(values, ctx, sid)
+    if guard is not None:
+        return guard, {"metrics": res, "values": values}
+
+    lines = [f"{head} — {subject} ({values.get('units') or '-'}) "
+             f"limit {_num(values.get('lower_limit'))}~{_num(values.get('upper_limit'))} "
+             f"/ cpk={_num(values.get('cpk'))} / {values.get('status') or '-'}"]
+    for st in values.get("stats") or []:
+        lines.append(f"  - {st.get('source')}: n={st.get('n')} "
+                     f"min={_num(st.get('min'))} avg={_num(st.get('average'))} "
+                     f"max={_num(st.get('max'))} stdev={_num(st.get('stdev'))}")
+    for src in values.get("sources") or []:
+        low = ", ".join(_num(v) for v in (src.get("min_values") or [])[:5])
+        high = ", ".join(_num(v) for v in (src.get("max_values") or [])[:5])
+        lines.append(f"  · {src.get('source')} 최소 {low} / 최대 {high} "
+                     f"(총 {src.get('count')}점)")
+    if values.get("fail_total"):
+        lines.append(f"  · 이 항목으로 fail 한 die {values['fail_total']}개")
+    _link(ctx, sid, f"Item Detail 열기 — {subject}", tab="item_detail", item=subject)
+    return "\n".join(lines), {"metrics": res, "values": values}
+
+
+def _session_line(s):
+    return (f"{s.get('product') or '?'} / lot {s.get('lot_id') or '-'} / "
+            f"{_date(s.get('created_at'))} / {s.get('file_name') or '-'} "
+            f"({s['session_id']})")
+
+
+def _num(value):
+    if value is None:
+        return "-"
+    if isinstance(value, float):
+        return f"{value:.4g}"
+    return str(value)
+
+
 def _unknown(plan, ctx):
     return ("무엇을 찾을지 파악하지 못했습니다. 다음처럼 물어보세요:\n"
             "  - \"PMIC SOC 에 SGM 들어가는 항목 이력\"\n"
             "  - \"S3222 보고서에서 LDO 이슈 어떻게 close 됐어?\"\n"
-            "  - \"S3222 라는 제품 있었어?\"", {})
+            "  - \"S3222 라는 제품 있었어?\"\n"
+            "  - \"S3222 보고서 찾아줘\" / \"이 세션 수율 알려줘\"\n"
+            "  - \"VDD_INT 상세 보여줘\" / \"맵 열어줘\"", {})
 
 
 # ── 포맷 ─────────────────────────────────────────────────────────────────────

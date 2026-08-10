@@ -25,6 +25,9 @@ body {
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
 .page-title { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: 0; }
+/* 제목을 누르면 시작 화면(/pe) 으로 — 헤더 배경이 검정이라 링크 색을 따로 잡는다 */
+.page-title-link { text-decoration: none; color: inherit; }
+.page-title-link:hover .page-title { opacity: .82; }
 .back-main-btn {
   border: 0; background: transparent; color: #fff;
   font-size: 19px; font-weight: 700; cursor: pointer;
@@ -405,7 +408,9 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 </div>
 
 <header class="page-header">
-  <h1 class="page-title">LSI PTE REPORT SERVER</h1>
+  <a class="page-title-link" href="/pe/" title="시작 화면으로">
+    <h1 class="page-title">LSI PTE REPORT SERVER</h1>
+  </a>
   <div style="display:flex; align-items:center; gap:14px;">
     <a class="help-btn" href="/pe/report/help">HELP</a>
     <a class="help-btn" href="https://confluence.samsungds.net/pages/editpage.action?pageId=3473285336" target="_blank" rel="noopener">VOC</a>
@@ -766,6 +771,9 @@ function applyViewer(v) {
   _authSource = v.source || "";
   _hasPin = !!v.has_pin;
   updateUserChip();
+  // 챗봇은 master 전용(테스트 단계) — 서버 라우트도 같은 규칙으로 404 를 낸다.
+  // 홈에는 열려 있는 세션이 없으므로 컨텍스트 없이 켠다.
+  if (v.is_master && window.ChatWidget) ChatWidget.enable(null);
   // Honey 최초 접속(웹 비밀번호 미설정)이면 설정 창을 한 번 띄운다. '나중에' 를 누르면
   // 계정별로 다시 띄우지 않는다 — 이후 진입점은 상시 노출된 🔑 버튼.
   if (!_pwPromptChecked && _authSource === "honey" && !_hasPin) {
@@ -1432,5 +1440,7 @@ window.addEventListener("pageshow", e => {
   loadHistory(true, true);
 });
 </script>
+<!-- 챗봇 위젯(자체 DOM 주입) — applyViewer 가 is_master 를 확인한 뒤 enable() 로 켠다. -->
+<script src="/pe/report/static/webreport/chat.js"></script>
 </body>
 </html>

@@ -371,6 +371,35 @@ def count_by_product_type():
     return counts
 
 
+def count_recent_activity(days=7):
+    """최근 N일 활동 -> {"days": n, "created": x, "updated": y}. /pe 랜딩의 현황 수치 전용.
+
+    created — 그 기간에 새로 만들어진 세션.
+    updated — 그 **이전에** 만들어졌는데 기간 안에 내용이 편집된 세션.
+    둘은 정의상 겹치지 않으므로 합계를 내도 이중집계가 아니다.
+
+    '내용 편집' 의 기준은 report_webreport_edit.updated_at 이다 — 코멘트·ETC·trim
+    override·ENGR·차트주석·Note 시트·전처리 등 web_report 편집 전부가 이 테이블에
+    쌓인다(편집 상태의 진실 저장소). 편집 1건만 있어도 잡힌다.
+
+    count_by_product_type 과 같은 이유로 비공개 필터를 걸지 않는다 — 카운트 전용이다.
+    """
+    cutoff = _now() - int(days) * 86400
+    where, params = _history_where()
+    with get_conn() as conn:
+        created = conn.execute(
+            f"SELECT COUNT(*) FROM report_session s WHERE {where} AND s.created_at >= ?",
+            params + [cutoff]).fetchone()
+        updated = conn.execute(
+            f"SELECT COUNT(*) FROM report_session s WHERE {where} AND s.created_at < ? "
+            f"AND EXISTS (SELECT 1 FROM report_webreport_edit e "
+            f"            WHERE e.session_id = s.session_id AND e.updated_at >= ?)",
+            params + [cutoff, cutoff]).fetchone()
+    return {"days": int(days),
+            "created": int(created[0]) if created else 0,
+            "updated": int(updated[0]) if updated else 0}
+
+
 def get_history_page(product_type=None, process=None, product=None, revision=None,
                      lot_id=None, source=None, limit=500, offset=0, viewer=None, q=None,
                      mode=None, date_from=None, date_to=None, mine=False, visibility=None,

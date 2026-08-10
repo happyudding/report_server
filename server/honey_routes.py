@@ -33,7 +33,10 @@ def _record_run():
 
 @honey_bp.get("/version")
 def get_version():
-    _record_run()
+    # ?probe=1 은 집계를 건너뛴다 — 웹 페이지가 다운로드 버튼 링크/파일명을 보정하려고
+    # 부르는 경우다(실행이 아니다). /pe 랜딩이 이걸 쓴다. 응답 내용은 완전히 동일하다.
+    if request.args.get("probe") != "1":
+        _record_run()
     if not HONEY_VERSION_JSON.exists():
         return jsonify({"error": "version.json not found", "version": None}), 404
     try:

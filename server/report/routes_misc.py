@@ -637,6 +637,11 @@ def _landing_stats():
         sessions = {}
     sessions["total"] = sum(sessions.values())
     try:
+        recent = report_db.count_recent_activity(7)
+    except Exception:
+        _log.warning("landing: 최근 활동 집계 실패", exc_info=True)
+        recent = {}
+    try:
         usage = report_db.usage_totals()
     except Exception:
         _log.warning("landing: 사용량 집계 실패", exc_info=True)
@@ -650,7 +655,7 @@ def _landing_stats():
         _log.warning("landing: 활성 접속자 조회 실패", exc_info=True)
         active = {"count": 0, "window_sec": 0}
 
-    payload = {"sessions": sessions, "usage": usage, "active": active}
+    payload = {"sessions": sessions, "recent": recent, "usage": usage, "active": active}
     with _landing_cache_lock:
         _landing_cache = (now, payload)
     return payload, 0

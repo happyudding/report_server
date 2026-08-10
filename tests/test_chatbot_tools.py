@@ -13,6 +13,8 @@
   (f) search_products — 제품 집계
   (g) tools_eval — eval.db 가 없을 때 예외 없이 빈 결과 + db_available=False
   (h) planner.rule_plan — LLM 없이도 골든 두 질문의 intent 를 맞춘다
+  (j) tools_metrics — 미존재/권한없음/xlsx 세션에서 예외 대신 분기 키를 돌려준다
+  (k) answer_web — 세션 바로가기 링크·선택 버튼·컨텍스트 세션 주입 + answer() 계약 유지
 
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례). 전 과정 read-only 툴만 쓰지만
 DB 는 임시 디렉터리에 새로 만든다(개발 report.db 를 건드리지 않는다).
@@ -44,7 +46,8 @@ os.environ["REPORT_S3_BUCKET"] = ""
 from database import report_db  # noqa: E402
 from database.core import get_conn  # noqa: E402
 
-from chatbot import agent, eval_store, planner, rowkey, tools_eval, tools_report  # noqa: E402
+from chatbot import (agent, eval_store, planner, rowkey, tools_eval,  # noqa: E402
+                     tools_metrics, tools_report)
 
 NOW = int(time.time())
 UPLOADER = "kim"
@@ -339,6 +342,70 @@ def test_eval_db_present():
     print("[OK] (i) eval.db 조회 — 후보/alias/스코프/이력/유사/코멘트 + 병합 답변")
 
 
+# ── (j) 세션 수치 툴 ────────────────────────────────────────────────────────
+def test_metrics_branches():
+    """수치 툴은 예외를 던지지 않는다 — 챗 답변이 500 으로 끊기면 안 된다."""
+    missing = tools_metrics.get_session_metrics("NOPE", viewer=UPLOADER)
+    assert missing.get("error") == "session_not_found", missing
+
+    # 권한 없음도 '없음' 과 같은 응답이어야 세션 존재가 새지 않는다
+    hidden = tools_metrics.get_session_metrics("S2", viewer=OTHER)
+    assert hidden.get("error") == "session_not_found", hidden
+
+    # xlsx 세션에는 yield/CPK payload 자체가 없다
+    xlsx = tools_metrics.get_session_metrics("S3", viewer=UPLOADER)
+    assert xlsx.get("error") == "not_web_report", xlsx
+
+    values = tools_metrics.get_item_values("NOPE", "VDD", viewer=UPLOADER)
+    assert values.get("error") == "session_not_found", values
+
+    # 산출물이 없는 web_report 세션 — 콜드(building) 또는 not-found 로 끝나야 한다.
+    # 실제 백그라운드 빌드는 막는다: 테스트 DB 는 임시 경로라 자식 프로세스가 못 열고,
+    # 그 실패 로그가 테스트 출력에 섞인다(검증 대상은 "예외 없이 분기하는가" 뿐).
+    from web_report import compute
+    real_request_build = compute.request_build
+    compute.request_build = lambda *a, **k: False
+    try:
+        cold = tools_metrics.get_session_metrics("S1", viewer=UPLOADER)
+    finally:
+        compute.request_build = real_request_build
+    assert cold.get("building") or cold.get("error"), cold
+    print("[OK] (j) 수치 툴 — 미존재/권한/xlsx/콜드 분기 (예외 없음)")
+
+
+# ── (k) 웹 응답 ─────────────────────────────────────────────────────────────
+def test_answer_web():
+    # answer() 계약(키 4개)은 CLI 가 의존한다 — 웹 확장이 이걸 깨면 안 된다
+    plain = agent.answer("S3222 보고서 찾아줘", viewer=UPLOADER, use_llm=False)
+    assert set(plain) == {"plan", "steps", "text", "data"}, sorted(plain)
+
+    web = agent.answer_web("S3222 보고서 찾아줘", viewer=UPLOADER, use_llm=False)
+    assert web["plan"]["intent"] == "session_find", web["plan"]
+    urls = [l["url"] for l in web["web"]["links"] if l.get("url")]
+    assert urls and all(u.startswith("/pe/report/view/") for u in urls), urls
+    assert any("S1" in u for u in urls), urls
+    # 세션이 1건이면 후속 질의문이 완성돼 내려온다(서버에 대화 상태를 두지 않는다)
+    assert any("세션 S1" in c["question"] for c in web["web"]["choices"]), web["web"]
+
+    # 컨텍스트 세션이 있으면 "이 세션" 이 그 세션으로 해석된다
+    ctx = agent.answer_web("이 세션 수율 알려줘", viewer=UPLOADER, use_llm=False,
+                           context_session_id="S1")
+    assert ctx["plan"]["session_id"] == "S1", ctx["plan"]
+    assert ctx["plan"]["intent"] == "session_metrics", ctx["plan"]
+
+    # 컨텍스트가 없으면 지어내지 않고 되묻는다
+    ask = agent.answer_web("이 세션 수율 알려줘", viewer=UPLOADER, use_llm=False)
+    assert ask["plan"]["session_id"] is None, ask["plan"]
+    assert "보고서" in ask["text"], ask["text"]
+
+    # 같은 페이지 안에서의 이동은 url 이 아니라 action 으로 나간다
+    jump = agent.answer_web("맵 열어줘", viewer=UPLOADER, use_llm=False,
+                            context_session_id="S1")
+    actions = [l.get("action") for l in jump["web"]["links"]]
+    assert actions == ["open_map"], jump["web"]["links"]
+    print("[OK] (k) answer_web — 링크/선택지/컨텍스트 주입 + answer() 계약 유지")
+
+
 def main():
     setup()
     test_rowkey()
@@ -350,6 +417,8 @@ def main():
     test_eval_db_absent()
     test_eval_db_present()
     test_rule_plan()
+    test_metrics_branches()
+    test_answer_web()
     print("\n전부 통과")
 
 

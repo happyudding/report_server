@@ -60,9 +60,11 @@ report_server/
 │   │   ├── _s3.py              boto3 호환 client + key 빌더 (내부 어댑터)
 │   │   ├── _issue_images.py    이슈 이미지 백엔드 (S3+로컬 폴백)
 │   │   └── _note_images.py     Note 탭 이미지 백엔드 (S3+로컬 폴백, 세션 단위)
-│   ├── chatbot/                 ENGR 이력 검색 챗봇 조회 툴 + CLI ([README](server/chatbot/README.md))
-│   │                            **라우트 미등록(CLI 전용)** — 운영 무영향. report.db(세션·이슈)
-│   │                            + eval.db(item 축) 두 정본을 read-only 로만 읽는다
+│   ├── chatbot/                 ENGR 이력 검색 챗봇 엔진 ([README](server/chatbot/README.md)) — CLI 와
+│   │                            웹 위젯이 공유. report.db(세션·이슈)+eval.db(item 축) read-only
+│   │                            + web_report 계산값(수율/CPK/측정값, tools_metrics).
+│   │                            **패키지 자체는 라우트 미등록** — 웹 노출은 report/routes_chat.py
+│   │                            하나뿐(master 전용 404 가드·세마포어 3·질문/답변 기록)
 │   ├── landing/                 /pe 랜딩(서버 첫 화면) — 제품군 바로가기·Honey 다운로드·현황
 │   │                            수치. HTML 1장(canvas 배경 인라인) + blueprint 1개.
 │   │                            데이터는 report_bp 의 GET /pe/report/api/landing 하나
@@ -165,7 +167,7 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 
 **정본은 [server/database/core.py](server/database/core.py) 의 `SCHEMA`.** 전체 테이블·컬럼은
 [docs/03](docs/03_storage.md) 와 스냅샷 [DB/pe/report/report_README.md](DB/pe/report/report_README.md)
-참조. 테이블 17개 요지:
+참조. 테이블 18개 요지:
 
 - `report_session` — 세션 1건. `source`('xlsx_upload'|'web_report'), `mode`('Normal' 기본),
   `uploaded_by`·`client_host`(신원), `webreport_options`, `password`(미사용 보존) 컬럼 포함.
@@ -185,6 +187,9 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
   `report_user_important`(개인 중요표시) / `report_user_favorite`(즐겨찾기).
 - `report_usage_daily` — 접속 사용량 일별 카운터(Honey 실행·웹 방문, 관리자 통계 탭).
   `kind`=`honey_run/web_index/web_view`, 무신원은 `ip:<addr>` 행.
+- `report_chatbot_log` — 웹 챗봇 질문/답변 전문 + 부하 계측(`total_ms`=`wait_ms`(동시실행
+  대기)+`llm_ms`(질문 해석)+조회). 관리자 Chatbot 탭의 유일한 데이터원. 감사로그와 분리한
+  이유는 답변이 수 KB 라 `changed_fields` 1500자 관례에 안 맞고 감사 화면을 밀어내기 때문.
 - `report_annotation` / `report_dashboard_comment` / `report_csv_files` /
   `report_analysis_lock` / `report_user`(ID/PW 로그인 폐지 — 미사용 보존).
 
@@ -376,7 +381,9 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | eval_analyzer 연결 (AI Comment / 코멘트 export) | [web_report/ai_comment.py](web_report/ai_comment.py) + [web_report/eval_export.py](web_report/eval_export.py) — eval_engine import 2곳 → [docs/13](docs/13_eval_analyzer_integration.md) |
 | 기준정보(part_ids) 갱신 — DRM CSV → product_info.db | [tools/product_info_import/](tools/product_info_import/README.md) (Excel PC) → [server/product_info.py](server/product_info.py) 가 읽기전용 로드 |
 | eval 룰 골든셋 회귀 (임계값 튜닝 전후 비교) | [tools/eval_golden/golden_check.py](tools/eval_golden/golden_check.py) (CLI) + [server/eval_panel/golden_io.py](server/eval_panel/golden_io.py) (패널 추가/실행) → [docs/13 §12](docs/13_eval_analyzer_integration.md) |
+| **LLM 배선 (붙이는 곳·나가는 곳)** | 정본 [docs/19](docs/19_llm_wiring.md) — 설정은 [server/env/server.env](server/env/server.env) `EVAL_LLM_*` 5줄, 확인은 `python tools/llm_check.py --ping`. 소비자 2개(AI Comment [점검제안] = [llm_client.complete](eval_analyzer/eval_engine/llm_client.py) / 챗봇 질문해석 = [planner._call_llm](server/chatbot/planner.py)), 둘 다 꺼져도 폴백 동작 |
 | ENGR 이력 검색 챗봇 (자연어 → 조회 툴) | [server/chatbot/](server/chatbot/README.md) — 골든셋 [tests/chatbot_golden.yaml](tests/chatbot_golden.yaml), 백필 [tools/eval_backfill/](tools/eval_backfill/backfill_eval_db.py) |
+| 챗봇 웹 노출 (관리자 전용 플로팅 버튼) | 라우트 [server/report/routes_chat.py](server/report/routes_chat.py) · 위젯 [static/webreport/chat.js](server/report/static/webreport/chat.js) · 딥링크 `?tab=item_detail\|map&item=` ([boot.js](server/report/static/webreport/boot.js) `applyDeepLink`) · 사용현황/부하 = 관리자 Chatbot 탭([chatbot_admin.py](server/admin_panel/chatbot_admin.py), `report_chatbot_log`) |
 | 더미 grids 픽스처 생성기 | [tests/sample_xlsx.py](tests/sample_xlsx.py) |
 | web_report 성능 벤치 (이전 실행 대비 회귀 리포트) | [tests/bench_webreport.py](tests/bench_webreport.py) — 결과 `tests/bench_results/`(gitignore), 실행 절차 스킬 `.claude/skills/webreport-bench` |
 | web_report 성능 회귀 가드 (지뢰 재밟기 차단 — 훅 자동) | [tools/perf_guard.py](tools/perf_guard.py) (`--list` 가 규칙 정본) + [.claude/settings.json](.claude/settings.json) → [docs/18](docs/18_perf_guard.md) |

@@ -246,6 +246,7 @@ async function load(resetMode=true) {
     document.getElementById("btnDel").style.display = IS_UPLOADER ? "" : "none";
     document.getElementById("settingsTabPerm").style.display = IS_UPLOADER ? "" : "none";
     renderActive();
+    applyDeepLink();
     hideLoadOverlay();
   } catch (e) {
     const box = document.getElementById("errorBox");
@@ -253,6 +254,33 @@ async function load(resetMode=true) {
     box.textContent = "로드 실패: " + e.message;
     hideLoadOverlay();
   }
+}
+
+// 다른 화면(검색결과 챗봇 답변 등)에서 특정 탭·항목을 지목해 들어온 경우의 1회 점프.
+// 어휘는 서버(chatbot/agent.py _link)가 만드는 두 가지뿐: tab=item_detail|map (+ item).
+// SESSION_ID 는 pathname 에서만 파싱하므로(core.js) 쿼리스트링을 붙여도 무해하다.
+let _deepLinkDone = false;
+function applyDeepLink() {
+  if (_deepLinkDone) return;
+  _deepLinkDone = true;
+  const p = new URLSearchParams(location.search);
+  const tab = p.get("tab");
+  const item = p.get("item");
+  if (!tab) return;
+  try {
+    if (tab === "item_detail" && item) {
+      openItemDetail(item, [item]);
+    } else if (tab === "map") {
+      if (item) openMapAnalysisForItem(item);
+      else gotoMapAnalysisTab();
+    } else {
+      document.querySelector(`.tab[data-tab="${CSS.escape(tab)}"]`)?.click();
+    }
+  } catch (e) {
+    console.warn("deep link 처리 실패", e);
+  }
+  // 새로고침·뒤로가기에서 같은 점프가 반복되지 않게 쿼리를 걷는다.
+  history.replaceState(null, "", location.pathname);
 }
 
 // vendor 가 defer 로 로드되므로 DOMContentLoaded(=defer 실행 완료) 후에 시작한다.
