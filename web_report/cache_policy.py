@@ -261,7 +261,12 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      종전 순서의 payload 를 계속 반환한다. 같은 배포에 들어간 STEP 표시 치환
 #      (metrics._apply_step_label)은 세션 옵션(webreport_options)이 이미 키에 있어
 #      이 값과 무관하게 갈린다.
-REPORT_SCHEMA_VERSION = 31
+# v32: "Issue Table Temp" 시트 행을 Bin 별로 묶는다 (2026-08-11 사용자 요청 —
+#      tabs/temp_fail._group_by_bin). 행 **순서**가 Bin 그룹 단위로 재배열되고 접기 토글용
+#      내부 필드(_grp/_detail/_ndetail)가 붙는다. 행 자체(항목당 1행)·row_key·값은 그대로
+#      지만 v31 과 같은 성격이라, 안 올리면 옛 disk_cache 가 접기 마킹 없는 payload 를
+#      계속 반환해 Temp 표가 종전 평면 목록으로 남는다.
+REPORT_SCHEMA_VERSION = 32
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

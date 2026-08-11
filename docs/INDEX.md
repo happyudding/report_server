@@ -128,6 +128,7 @@
 | S3 키 경로 바꾸기 | [03](03_storage.md) | [_s3.py](../server/storage_gateway/_s3.py) `make_*_key` + [config.py](../server/config.py) |
 | 새 Honey 버전 배포 | [04](04_honey_update.md) | `version.json` + release 스크립트 |
 | 클라 화면/버튼 동작 (사전 승인) | [05](05_client_ui.md) | `HoneyMainWindow` 슬롯 |
+| source legend 기본값 규칙 (product_type 별 파일명 파싱) | [10](10_web_report_pipeline.md) | [client/honey_ui/source_naming.py](../client/honey_ui/source_naming.py) `_SOURCE_NAME_RULES` — MDDI 마커 / PDDI `stdf_` 고정위치 / PMIC·SECURITY·TCON LOT+WF. 길이 대조는 `resolve_source_names` |
 | 분석 수식(cpk/yield 등) (외부 담당자·동결) | [06](06_analysis_engine.md) | [_builders.py](../client/report_generator/_builders.py) |
 | 생성 xlsx 레이아웃/차트 (외부 담당자·동결) | [06](06_analysis_engine.md) | [xlsx_writer.py](../client/report_generator/xlsx_writer.py) |
 | 업로드 multipart 형식 | [07](07_client_upload_chart.md) | `post_grids()` |

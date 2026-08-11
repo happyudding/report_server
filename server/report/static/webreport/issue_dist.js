@@ -114,7 +114,9 @@ function renderMiniMapCell(cell) {
   if (cell.dataset.subject) { renderMiniStdfCell(cell); return; }
   const div = cell.querySelector(".map-plot");
   if (!div) return;
-  const maps = (webReportSheets() || {})["Map Analysis"];
+  // Temperature 모드면 RT 소스 맵만 본다 — 이 표(Issue Table)가 RT 기준이라 CT/HT 맵이
+  // 뜨면 Bin 과 어긋난다 (wafer_charts.issueBinMaps).
+  const maps = issueBinMaps();
   if (!Array.isArray(maps) || !maps.length) { div.innerHTML = ""; cell.dataset.mapLoaded = "1"; return; }
   const bin = cell.dataset.bin;
   const binOrder = buildGlobalBinLegend(maps).map(r => r.bin);
@@ -275,7 +277,7 @@ function toggleMapExpand(btn) {
   closeMapExpand();
   if (cell.dataset.subject) { openStdfExpand(cell); return; }
   if (cell.dataset.tempItem) { openTempExpand(cell); return; }
-  const maps = (webReportSheets() || {})["Map Analysis"];
+  const maps = issueBinMaps();   // Temperature 는 RT 소스만 (미니셀과 같은 목록)
   if (!Array.isArray(maps) || maps.length < 2) return;
   // dies 지연 로드 중 — 로드만 킥하고 열지 않는다(boot 선로드라 드묾, 배지가 진행 표시).
   if (maps.some(m => !Array.isArray(m.dies))) { ensureMapData(); return; }

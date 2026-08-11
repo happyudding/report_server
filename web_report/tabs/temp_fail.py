@@ -24,7 +24,8 @@ Bin 표기 규칙 (2026-08-05 사용자 확정):
 
 한 항목은 항상 **1행**이다 — row_key ``TEMP|<item>`` 이 comment/Status/숨김의 키라
 bin 별로 행을 나누면 기존에 저장된 편집값과 파서 4곳(sheets.js·eval_export·chatbot·
-service 가드)이 전부 깨진다.
+service 가드)이 전부 깨진다. 화면에서 Bin 별로 묶어 보이는 것(``_group_by_bin``)은
+**표시 순서 + 접기 마킹**일 뿐이라 이 규칙과 무관하다 — 행은 여전히 항목당 1개다.
 """
 from __future__ import annotations
 
@@ -186,12 +187,57 @@ def temp_fail_counts(tables, groups, packs=None) -> tuple:
     return agg, sources
 
 
+def _group_by_bin(rows) -> list:
+    """Bin 별로 모아 대표(most fail) 1행 + 나머지 접힘 행 순서로 재배열 (2026-08-11 요청).
+
+    ``_grp``/``_detail``/``_ndetail`` 은 프런트 접기 토글 전용 내부 필드로,
+    Issue Table Yield 섹션([tabs/issue_table.py])과 **같은 규약**이다 — 프런트(sheets.js
+    orderColumns)가 화면 컬럼에서 제외하고, 같은 토글 코드가 두 표를 처리한다.
+
+    Yield 섹션과 다른 점 하나: 대표행이 Bin 총합 집계행이 아니라 **most-fail 항목 행
+    그 자체**다. TEMP 행은 row_key ``TEMP|<item>`` 이 comment/Status/숨김의 키라
+    집계 대표행을 새로 만들면 그 행에 줄 키가 없고, 소스별 fail% 도 항목끼리 겹치는
+    die 를 세므로(모듈 docstring) 합산이 뜻을 갖지 않는다.
+
+    Bin 이 빈 항목(limits·관측 bin 둘 다 없음)은 묶을 기준이 없어 그룹을 만들지 않고
+    뒤에 그대로 붙인다. 입력 순서(소스 합산 fail die 수 내림차순)는 그룹 안에서도,
+    그룹 사이에서도(각 Bin 의 첫 등장 순서) 그대로 유지된다.
+    """
+    order: list = []
+    groups: dict = {}
+    loose: list = []
+    for row in rows:
+        bin_value = str(row.get("Bin") or "").strip()
+        if not bin_value:
+            loose.append(row)
+            continue
+        if bin_value not in groups:
+            groups[bin_value] = []
+            order.append(bin_value)
+        groups[bin_value].append(row)
+
+    out = []
+    for gi, bin_value in enumerate(order):
+        members = groups[bin_value]
+        grp_id = f"t{gi}"
+        for j, row in enumerate(members):
+            row["_grp"] = grp_id
+            row["_detail"] = j > 0
+            if j == 0:
+                row["_ndetail"] = len(members) - 1
+        out.extend(members)
+    out.extend(loose)
+    return out
+
+
 def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
                          limits_meta=None, hidden=(), status_of=None,
                          issue_comments=None, ai_comments=None, packs=None) -> list:
     """Issue Table Temp 시트 행 — 첫 행은 섹션 divider(``Category="TEMP"``).
 
-    컬럼 소스는 **CT/HT 만**이고, 정렬은 소스 합산 fail die 수 내림차순이다.
+    컬럼 소스는 **CT/HT 만**이고, 정렬은 소스 합산 fail die 수 내림차순이다. 그 순서를
+    유지한 채 **Bin 별로 묶어**(``_group_by_bin``) 대표(most fail) 행만 펼쳐 보이고
+    나머지는 접는다 — Yield 표와 같은 보기 방식(2026-08-11 요청).
     fail 이 한 건도 없는 항목은 행을 만들지 않는다. 값이 없으면(그룹·fail 부재) 빈
     리스트를 돌려 프런트가 "데이터 없음"으로 처리하게 한다.
     ``packs`` 를 주면 그 판정 결과를 쓴다(compute_temp_fail — 재계산 없음).
@@ -215,6 +261,7 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
                      key=lambda kv: (-sum(kv[1].values()), str(kv[0])))
     rows = [{"Category": "TEMP", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "",
              **_blank_row(sources, ai)}]
+    data_rows = []
     for item, counts in ordered:
         if f"TEMP|{item}" in hidden:
             continue
@@ -239,7 +286,8 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
         data.update(values)
         data["Status"] = status_of(f"TEMP|{item}") if status_of else "Open"
         data.update(_comment_values(issue_comments, f"TEMP|{item}", ai_comments))
-        rows.append(data)
+        data_rows.append(data)
+    rows.extend(_group_by_bin(data_rows))
     return rows if len(rows) > 1 else []
 
 

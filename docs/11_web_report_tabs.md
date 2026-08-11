@@ -100,9 +100,23 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     + 기타 회색" 폐지). 팔레트(`FAIL_PALETTE` 7색)를 먼저 쓰고 그 뒤는 황금각 색상환 회전
     (`tempItemColorAt`, Pass 초록 대역 제외)으로 만든다. 클릭하면 그 항목 fail die 만 강조.
     Detail(크게 보기) 범례는 **그 소스에서 fail 난 항목만** + 그 소스 die 수
-    (`tempItemInfoForSource`) — Bin Legend 와 같은 규약이다.
+    (`tempItemInfoForSource`) — Bin Legend 와 같은 규약이다. 항목명은 말줄임 없이 전부
+    보여준다(CSS `.temp-leg-item` 줄바꿈, 2026-08-11). **이탈 없는 die 는 Pass 초록이
+    아니라 연한 바탕색**(`TEMP_MAP_BASE_COLOR`) — 온통 초록이면 범례 클릭 강조가 묻힌다.
+  - **Temp 표는 Bin 별로 묶인다** (2026-08-11) — 서버 `temp_fail._group_by_bin` 이
+    fail die 수 내림차순을 유지한 채 같은 Bin 을 모아 **most fail 항목 행을 대표**로 두고
+    나머지에 `_detail` 마킹을 단다(Issue Table Yield 섹션과 같은 `_grp`/`_detail`/
+    `_ndetail` 규약 — 프런트 sheets.js 가 두 표를 같은 코드로 접는다). 대표행이 집계행이
+    아니라 **항목 행 자체**인 점만 다르다: row_key 가 `TEMP|<item>` 이라 집계행에 줄 키가
+    없고, 항목끼리 die 가 겹쳐 합산이 뜻을 갖지 않는다. Bin 이 빈 항목은 묶지 않고 뒤에
+    붙인다. **Excel(웹/Honey 둘 다)은 TEMP 접힘 행을 대표행에 합치지 않는다** — 화면
+    접기일 뿐 행 하나가 독립 항목이라, 합치면 항목이 사라진다.
   - **Yield 탭 하단 Temp Corner 섹션은 요약**이다 — 편집 열(Map/Distribution/Status/comment)
-    을 뺀 읽기 전용이고 행은 전량 청크 렌더한다. 편집은 "Issue Table Temp 탭에서".
+    을 뺀 읽기 전용이고 행은 전량 청크 렌더한다(Bin 묶음·접기는 위와 동일, 토글은
+    `.yield-toggle`). 편집은 "Issue Table Temp 탭에서".
+  - **Issue Table(메인)의 Bin 미니맵·⤢ 는 RT 소스 맵만 본다** (`issueBinMaps`, 2026-08-11)
+    — 그 표가 RT source 기준이라 CT/HT 맵이 뜨면 표의 Bin 과 어긋난다. 항목별 fail die 를
+    그리는 Temp 미니셀(`map-cell-temp`)은 반대로 CT/HT 가 대상이라 이 목록을 쓰지 않는다.
   - **Honey 전체 Excel** 에도 `Issue Table Temp` 시트가 들어간다(Temperature 세션만) —
     Distribution 열은 항목 CDF, Map 열은 **항목별 fail die 강조** 썸네일
     (`_map.render_temp_map_png`, temp_map 인덱스 기준). temp_map 수신 실패 시 Map 열만

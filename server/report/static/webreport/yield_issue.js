@@ -145,7 +145,8 @@ function renderYieldTempSection() {
   const table = renderSheetTable(data, { kind: "yield", grad: true, chunk: true });
   const html = `<div class="yield-corner-section">` +
     `<div class="yield-corner-title">Temp Corner (CT / HT) — RT Limit 이탈 항목` +
-    ` <span class="yield-corner-more">전체 ${dataRows.length}항목</span>` +
+    ` <span class="yield-corner-more">전체 ${dataRows.length}항목 · Bin 별 most fail 만 표시` +
+    ` (▼ 로 펼치기)</span>` +
     ` <button type="button" class="btn-sm" data-goto-tab="issue-temp" ` +
     `title="Issue Table Temp 탭에서 comment·Status 를 편집합니다">탭에서 보기 ›</button></div>` +
     table.html + `</div>`;
@@ -540,6 +541,9 @@ function bindYieldColResize(panel) {
 function renderYield(yield_text, summary_rows) {
   const panel = document.getElementById("panel-yield");
   const overview = yieldOverviewHtml();
+  // 접기 토글 위임은 STEP 표가 없는 폴백에서도 필요하다 — Temp Corner 표가 Bin 그룹
+  // 토글(.yield-toggle)을 쓰기 때문(2026-08-11). 중복 호출은 가드로 no-op.
+  bindYieldPanel();
 
   // web_report: STEP(P1/P2/P3) 별 분리 표 (yield_step_groups 가 있을 때)
   // Temperature 면 표 자체가 이미 RT source 기준이라(서버 metrics) 별도 분기가 없다 —
@@ -553,7 +557,6 @@ function renderYield(yield_text, summary_rows) {
     if (yieldSearchTerm.trim()) applyYieldSearch(yieldSearchTerm);
   });
   if (Array.isArray(stepGroups) && stepGroups.length && Array.isArray(yield_text)) {
-    bindYieldPanel();
     panel.innerHTML = overview + yieldToolbarHtml() +
       renderYieldStepSections(stepGroups, yield_text) + temp.html;
     setupYieldHscroll(panel);

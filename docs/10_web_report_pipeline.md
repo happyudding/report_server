@@ -182,12 +182,47 @@ df 개수 = 업로드 parquet 개수, 입력 파일 개수가 아니다)로 가�
   결과 `names` → `rename_sources`(중복은 `_2` 접미), 순서는 `order_index` 로 잇는다.
   정합 검증은 rename 전 이름(`source_names`)으로 비교한다 — `order` 로 비교하면 rename 한
   순간 항상 불일치가 되어 창이 두 번 뜬다.
-- **PMIC 자동 source 명** — [client/honey_ui/source_naming.py](../client/honey_ui/source_naming.py)
-  `pmic_source_name` 이 파일명의 LOT 토큰(`60/61/62/6Z/80/81/82/8Z` 로 시작) + 바로 다음
-  WF 토큰(숫자 또는 `W`+숫자, 1~3자리)을 이어 `602XX2_3` 을 만든다. `_parse_group_core` 가
-  파싱 직후 `rename_sources` 로 덮어쓰고 `_guess_source_names`(파싱 전 추정)도 같은 규칙을
-  쓴다 — 두 곳이 어긋나면 확인 창이 두 번 뜬다. 원 규칙(`report_generator/df_honey.py`
-  `_sheetname_from_filename`)은 동결 영역이라 고치지 않고 덮어쓰는 방식이다.
+- **자동 source 명 (product_type 별)** — 규칙의 정본은
+  [client/honey_ui/source_naming.py](../client/honey_ui/source_naming.py) 의
+  `_SOURCE_NAME_RULES` 표 한 장이다(2026-08-11 — 종전에는 PMIC 전용이었다).
+
+  | product_type | 파일명 → legend | 1:1 |
+  |---|---|---|
+  | MDDI | `00M.W`/`00P.W`/`00F.W` 마커 → 마커 **앞부분 전체**=LOT + `.W` 뒤 숫자=WF. `NH0D3-00M.W03` → `NH0D3_03` | ✗ |
+  | PDDI | `stdf_[LOTID]_[STEP]_[WFNO]_[PARTID]…` **고정 위치** → `LOTID_WFNO`. `stdf_` 접두 필수 | ✗ |
+  | PMIC · SECURITY · TCON | LOT 토큰(`60/61/62/68/6A/6Z/80/81/82/8Z` 로 시작) + 바로 다음 WF 토큰(숫자 또는 `W`+숫자, 1~3자리) → `602XX2_3` | ✓ |
+
+  MDDI 의 마커 3종과 PDDI 의 STEP `L1`/`L2` 는 **같은 legend 를 낸다** — 같은 웨이퍼의 다른
+  측정/STEP 이라 honey_parse 가 1 source 로 병합할 대상이라는 뜻이다.
+
+  ⚠️ **MDDI 의 2차 규칙(xlsx 시트명)은 이 저장소에 구현하지 않는다 — 미구현 버그가 아니라
+  의도다.** 그 알고리즘은 외부 담당자 소유 honey_parse 안에 있다. 마커가 없으면 규칙이
+  빈 문자열을 돌려 `rename_sources` 가 "기존명 유지"(= honey_parse 가 이미 정한 이름)로
+  떨어뜨린다. 채워 넣지 말 것.
+
+  **길이 대조 (`resolve_source_names`)** — `suggest_source_names` 는 **파일 1개당 1칸**을
+  돌려주는데 `rename_sources` 는 **source 에 positional** 로 적용한다. 입력 파일 개수 ≠
+  source 개수(불변 규칙 #9)라 그대로 넘기면 앞에서부터 잘려 조용한 오배치가 난다. 그래서
+  ① 파일별 이름 길이 == source 개수면 그대로(1:1. 같은 이름이 겹쳐도 `rename_sources` 가
+  `_2`/`_3` 로 가른다 — Temperature 의 RT/CT/HT 폴더가 이 경우다) → ② 같은 이름을 **첫 등장
+  순서**로 접은 길이가 맞으면 접은 것(병합) → ③ 둘 다 아니면 `None`(기존명 유지). 빈 이름이
+  섞이면 접기를 포기한다 — 빈 이름은 어느 source 인지 정보를 담지 않아 길이만 우연히 맞고
+  배치는 틀린다.
+
+  `_parse_group_core` 가 파싱 직후 `rename_sources` 로 덮어쓰고 `_guess_source_names`
+  (파싱 전 추정)도 같은 표를 쓴다 — 두 곳이 어긋나면 확인 창이 두 번 뜬다. 그래서 규칙이
+  **일부만** 맞으면 선표시를 포기한다(전원 일치 또는 전원 불일치일 때만 창을 먼저 띄운다).
+  병합 product_type(MDDI/PDDI)은 파싱 전에 source 개수를 알 수 없어 `guess_source_names` 가
+  항상 `None` 이다. 원 규칙(`report_generator/df_honey.py` `_sheetname_from_filename`)은
+  동결 영역이라 고치지 않고 덮어쓰는 방식이다.
+  업로드 메타의 `lot_id` 기본값도 같은 분기(`lot_id_for`)를 탄다 — PDDI 는 `stdf_` 접두 때문에
+  head 폴백이 LOT 을 `stdf` 로 잡던 버그가 있었다.
+
+  회귀 테스트: [tests/test_source_naming.py](../tests/test_source_naming.py) (self-run).
+
+  > **개발 PC 에서 MDDI 가 `NH0D3_03`, `NH0D3_03_2`, `NH0D3_03_3` 으로 보이는 건 정상이다.**
+  > 이 저장소는 파일 1개당 `from_csv` 1회라 `len(group) == len(paths)` 가 항상 참이고 위 ①
+  > 경로를 탄다. 접기(②)는 실제 honey_parse 가 들어와야 발동한다. 회귀로 오진하지 말 것.
 
 ## 신원 / 업로더 잠금
 `client_identity(manifest["client"])` → `uploaded_by = "<domain>\\<user>"`(또는 user),

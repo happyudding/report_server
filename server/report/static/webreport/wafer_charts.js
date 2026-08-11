@@ -12,6 +12,12 @@ const MAP_DENSE_DIES = 3000;
 const MAP_GRAY_RGB = [200, 204, 208];
 const MAP_GRAY_HEX = "#c8ccd0";
 const TNO_OTHER_COLOR = "#9aa0a6";
+// Temperature Map(CT/HT) 의 **기본 die 색** — RT Limit 을 벗어나지 않은 die.
+// 종전엔 Pass 초록이었는데 바탕이 온통 진한 초록이라 범례를 클릭해 한 항목만 강조해도
+// 눈에 띄지 않았다(2026-08-11 사용자 요청). 거의 흰색에 가까운 중립색을 깔아 셀 사이
+// 격자선(투명=흰 카드)이 chip 윤곽으로만 남게 하고, 이탈 항목 색이 도드라지게 한다.
+// 회색 계열(MAP_GRAY=앞 STEP fail, MAP_BIN_DIM=범례 미선택)보다 밝아 셋이 구분된다.
+const TEMP_MAP_BASE_COLOR = "#f2f4f6";
 
 function webReportSheets() {
   return (DATA && DATA.web_report && DATA.web_report.sheets) ? DATA.web_report.sheets : null;
@@ -539,6 +545,16 @@ function mapVisibleMaps() {
     : all.filter(m => !tempIsMemberSource(m.source));
 }
 
+// Issue Table(메인) Bin 미니맵·⤢ 가 쓰는 맵 목록 — Temperature 모드면 **RT 소스만**
+// (2026-08-11 사용자 요청). 그 표는 서버 metrics 가 RT source 기준으로만 계산한 것이라
+// CT/HT 맵이 섞이면 표의 Bin 과 무관한 웨이퍼가 뜬다. Temp 항목 미니셀(map-cell-temp)은
+// 반대로 CT/HT 가 대상이라 이 목록을 쓰지 않는다(temp_map 인덱스를 따로 쓴다).
+function issueBinMaps() {
+  const all = (webReportSheets() || {})["Map Analysis"] || [];
+  if (webReportMode() !== "Temperature") return all;
+  return all.filter(m => !tempIsMemberSource(m.source));
+}
+
 // ── canvas 썸네일 렌더 (갤러리) ────────────────────────────────────────────────
 // hex → [r,g,b]. 6자리 hex 만 지원(팔레트가 전부 6자리).
 function hexToRgb(hex) {
@@ -902,7 +918,8 @@ function renderMapAnalysis() {
     // 색 기준 축(Bin/TNO)에 맞는 Legend 하나만 표시 — 축 전환 시 renderMapAnalysis 재호출로 교체.
     (mapColorKey === "temp"
       ? `<div class="wafer-legend-title">Temperature Map Legend</div>` +
-        `<div class="dut-legend-hint">RT Limit 이탈 항목 — 클릭 시 그 항목 fail die 만 강조</div>` +
+        `<div class="dut-legend-hint">RT Limit 이탈 항목 — 클릭 시 그 항목 fail die 만 강조` +
+        ` (이탈 없는 die = 연한 바탕)</div>` +
         `<div class="temp-legend-body"></div>`
       : mapColorKey === "tno"
         ? `<div class="wafer-legend-title">TNO Legend</div><div class="tno-legend-body"></div>`
@@ -1051,7 +1068,8 @@ function renderMapAnalysis() {
       let hex;
       if (mapColorKey === "temp") {
         const it = tempPrimary ? tempPrimary[k] : null;
-        hex = it ? (tempInfo.colorMap[it] || TNO_OTHER_COLOR) : PASS_COLOR;
+        // 이탈 항목이 아닌 die 는 초록(Pass)이 아니라 연한 바탕색 — 강조가 묻히지 않게.
+        hex = it ? (tempInfo.colorMap[it] || TNO_OTHER_COLOR) : TEMP_MAP_BASE_COLOR;
       } else if (mapColorKey === "tno") {
         hex = (d.bin === "1" || d.it == null) ? PASS_COLOR : (activeTno[d.it] || TNO_OTHER_COLOR);
       } else {
@@ -1187,13 +1205,14 @@ function bindMapDetailPanel() {
 const _MAP_GRAY_CAT = "__gray__", _MAP_OTHER_CAT = "__other__";
 function mapDetailAxis() {
   if (mapColorKey === "temp" && webReportMode() === "Temperature") {
-    // 갤러리와 같은 규칙: 이 소스의 die 인덱스 → RT Limit 이탈 항목(temp_map), 나머지는 Pass 색.
+    // 갤러리와 같은 규칙: 이 소스의 die 인덱스 → RT Limit 이탈 항목(temp_map), 나머지는
+    // 연한 바탕색(TEMP_MAP_BASE_COLOR — 갤러리와 같은 기본색, 초록 아님).
     // 범례 선택(_mapDetailBinFilter)은 색이 아니라 **칠할 항목 집합**을 좁힌다(tempPrimaryByIdx).
     const info = buildTempItemInfo();
     const m = mapDetailMaps()[_mapDetailIndex];
     const primary = m ? tempPrimaryByIdx(m.source, info.items, _mapDetailBinFilter) : null;
     const order = ["1"].concat(info.items, [_MAP_GRAY_CAT]);
-    const colorMap = { "1": PASS_COLOR, [_MAP_GRAY_CAT]: MAP_GRAY_HEX };
+    const colorMap = { "1": TEMP_MAP_BASE_COLOR, [_MAP_GRAY_CAT]: MAP_GRAY_HEX };
     info.items.forEach(it => { colorMap[it] = info.colorMap[it]; });
     const catOf = (d, k) => d.g ? _MAP_GRAY_CAT : ((primary && primary[k]) || "1");
     return { catOf, order, colorMap };

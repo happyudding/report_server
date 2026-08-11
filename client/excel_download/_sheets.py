@@ -416,6 +416,10 @@ def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
 
     Temperature 전용 "Issue Table Temp" 시트도 같은 함수로 쓴다 — 섹션이 TEMP 하나이고
     Map 썸네일이 bin 이 아니라 **항목별 fail die** 라, 그 행 목록만 temp_rows 로 따로 준다.
+    TEMP 섹션은 접힘 행을 대표행으로 **합치지 않는다** (2026-08-11): 웹에서 Bin 별로
+    묶어 보이게 됐지만(_grp 부여) 그건 화면 접기일 뿐이고, 행 하나하나가 독립 항목이라
+    Excel 에서 접으면 항목 자체가 사라진다. Yield 섹션의 접힘 행(같은 Bin 의 TNO 분해)과
+    성격이 다르다.
 
     반환: {"rows": [(item, excel_row, section), ...], "map_rows": [(bin, excel_row), ...],
            "temp_rows": [(item, excel_row), ...], "dist_col": 열 인덱스, "map_col": 열 인덱스}.
@@ -429,10 +433,13 @@ def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
     dist_col = c1 + 6
     avg_col = c1 + 7            # avg 뒤로 source 컬럼이 이어진다(색상 표시 대상 구간)
 
-    # _grp 별 detail comment 수집
+    # _grp 별 detail comment 수집 (TEMP 섹션은 접지 않으므로 대상 아님)
     detail_comments = {}
+    scan_section = ""
     for r in issue_rows or []:
-        if not r.get("_detail"):
+        if r.get("Category") in ("Yield", "CPK", "ETC", "TEMP"):
+            scan_section = r["Category"]
+        if scan_section == "TEMP" or not r.get("_detail"):
             continue
         grp = r.get("_grp")
         for col in _COMMENT_COLS:
@@ -451,11 +458,11 @@ def write_issue_sheet(ws, issue_rows, source_names, *, title="Issue Table"):
     spans = []                  # Category 병합 구간 [[section, 첫 행, 마지막 행], ...]
     section = ""
     for r in issue_rows or []:
-        if r.get("_detail"):
-            continue
         # Category 는 섹션 개시행에만 채워진다 (build_issue_table_rows) — 이후 행은 승계.
         if r.get("Category") in ("Yield", "CPK", "ETC", "TEMP"):
             section = r["Category"]
+        if r.get("_detail") and section != "TEMP":
+            continue
         excel_row = _HEADER_ROW + 1 + len(rows)
         # CPK 섹션 서브헤더 = avg 칸이 "cpk" 인 행 (프런트 isCpkSubheadRow 와 같은 판정)
         subhead = section == "CPK" and str(r.get("avg") or "").strip().lower() == "cpk"

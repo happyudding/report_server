@@ -1930,13 +1930,14 @@ class HoneyMainWindow(QMainWindow):
         _stage(n_files, "그룹 구성 중...")
         with _flow_time("df_honey_group.construct"):
             group = rg.df_honey_group(results)
-        # PMIC 파일명 규칙(LOT + WF → '602XX2_3')으로 legend 기본값을 덮어쓴다.
-        # 원 규칙은 report_generator/df_honey.py(동결 영역)에 있어 고칠 수 없으므로,
-        # 정식 오버라이드 API 인 rename_sources 로 파싱 직후 갈아끼운다 — 빈 문자열은
-        # 기존명 유지, 중복은 _2/_3 회피, 캐시 무효화까지 그 함수가 해준다.
-        # PMIC 이 아니거나 규칙에 맞는 파일이 하나도 없으면 None 이라 기존 이름이 남는다.
-        from honey_ui.source_naming import suggest_source_names
-        auto_names = suggest_source_names(paths, product_type)
+        # product_type 별 파일명 규칙(MDDI 마커 / PDDI 고정위치 / PMIC·SECURITY·TCON LOT+WF)
+        # 으로 legend 기본값을 덮어쓴다. 원 규칙은 report_generator/df_honey.py(동결 영역)에
+        # 있어 고칠 수 없으므로, 정식 오버라이드 API 인 rename_sources 로 파싱 직후
+        # 갈아끼운다 — 빈 문자열은 기존명 유지, 중복은 _2/_3 회피, 캐시 무효화까지 해준다.
+        # 입력 파일 개수 ≠ source 개수(CLAUDE.md #9)인데 rename_sources 는 positional 이라
+        # 길이 대조는 resolve_source_names 가 한다 — 확신이 없으면 None 이라 기존명이 남는다.
+        from honey_ui.source_naming import resolve_source_names
+        auto_names = resolve_source_names(paths, product_type, len(group))
         if auto_names:
             group.rename_sources(auto_names)
         issues = None
@@ -2243,14 +2244,20 @@ class HoneyMainWindow(QMainWindow):
 
         규칙은 ``_parse_group_core`` 가 파싱 직후 적용하는 것과 **같아야** 한다. 어긋나면
         Temperature 가 파싱 전에 띄운 창의 이름이 최종 legend 와 달라 창이 두 번 뜬다.
-        그래서 PMIC 은 source_naming(LOT_WF), 그 외는 df_honey 의 규칙을 그대로 쓴다.
+        그래서 source_naming 의 product_type 별 규칙을 먼저 쓰고, 그 규칙이 **한 파일도**
+        안 맞을 때만 df_honey 규칙으로 폴백한다(그때는 _parse_group_core 도 rename 하지
+        않으므로 두 경로가 반드시 일치한다).
         중복 해소(_2, _3 …)는 ``df_honey_group._dedup_in_place`` 와 같은 규칙이다.
         """
-        from honey_ui.source_naming import guess_source_names
+        from honey_ui.source_naming import guess_source_names, suggest_source_names
         from report_generator.df_honey import _sheetname_from_filename
 
         bases = guess_source_names(paths, self.product_type())
         if bases is None:
+            # 규칙이 **일부만** 맞으면 파싱 후 그 파일들만 개명된다 → 미리 띄운 창의 이름과
+            # 최종 legend 가 어긋나 창이 두 번 뜬다. 그럴 땐 선표시를 포기한다.
+            if suggest_source_names(paths, self.product_type()):
+                return None
             bases = []
             for p in paths:
                 base = _sheetname_from_filename(Path(p))
@@ -2638,12 +2645,13 @@ class HoneyMainWindow(QMainWindow):
     def _lot_id_from_sources(self, work_group):
         """첫 source 파일명에서 LOT ID 를 뽑는다. 없으면 빈 문자열.
 
-        기본은 head('_' 앞 토큰) — 예: 'N4XA123_up_a.parquet' → 'N4XA123'.
-        PMIC 은 파일명 앞에 뜻 없는 접두가 붙는 경우가 많아('awjkelf_602XX2_3_….std')
-        head 가 LOT 이 아니다. 그래서 LOT 토큰 규칙(pmic_lot_id)을 먼저 본다.
+        legend 와 같은 product_type 별 규칙(source_naming)을 먼저 본다 — head('_' 앞 토큰)
+        가 LOT 이 아닌 제품군이 있어서다: PMIC 은 뜻 없는 접두가 붙고
+        ('awjkelf_602XX2_3_….std'), PDDI 는 'stdf_' 접두라 head 가 'stdf' 가 된다.
+        규칙이 안 맞으면 종전 head 폴백 — 예: 'N4XA123_up_a.parquet' → 'N4XA123'.
         파싱 실패는 best-effort 로 '' 반환.
         """
-        from honey_ui.source_naming import pmic_lot_id
+        from honey_ui.source_naming import lot_id_for
 
         try:
             names = work_group.names()
@@ -2651,10 +2659,9 @@ class HoneyMainWindow(QMainWindow):
                 return ""
             md = work_group.mass_data_map[names[0]]
             file_name = self._source_file_name(md, names[0])
-            if self.product_type() == "PMIC":
-                lot = pmic_lot_id(file_name)
-                if lot:
-                    return lot
+            lot = lot_id_for(file_name, self.product_type())
+            if lot:
+                return lot
             return Path(file_name).stem.split("_")[0].strip()
         except Exception:
             return ""

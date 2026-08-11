@@ -169,10 +169,15 @@ function buildIssueSheetData(issueRows, srcs) {
   const avgCol = ISSUE_ID_COLS.length + 2;   // Map/Distribution 다음이 avg
 
   // _grp 별 detail comment 수집 (접힌 상세행 → 대표행 comment 칸에 "<Item>: <내용>")
+  // TEMP 섹션(Issue Table Temp 시트)은 접지 않는다 — 웹에서 Bin 별로 묶어 보일 뿐
+  // 행 하나하나가 독립 항목이라, Excel 에서 합치면 항목이 사라진다(_sheets.py 와 같은 규약).
   const detailComments = {};
+  let scanSection = "";
   (issueRows || []).forEach(r0 => {
     const r = r0 || {};
-    if (!r._detail) return;
+    if (r.Category === "Yield" || r.Category === "CPK" || r.Category === "ETC"
+        || r.Category === "TEMP") scanSection = r.Category;
+    if (scanSection === "TEMP" || !r._detail) return;
     HXL_ISSUE_COMMENT_COLS.forEach(col => {
       const text = stripCommentFormat(r[col]).trim();
       if (!text) return;
@@ -185,10 +190,11 @@ function buildIssueSheetData(issueRows, srcs) {
   let span = null;
   (issueRows || []).forEach(r0 => {
     const r = r0 || {};
-    if (r._detail) return;
-    if (r.Category === "Yield" || r.Category === "CPK" || r.Category === "ETC") {
+    if (r.Category === "Yield" || r.Category === "CPK" || r.Category === "ETC"
+        || r.Category === "TEMP") {
       section = r.Category;
     }
+    if (r._detail && section !== "TEMP") return;
     const off = rows.length;
     const subhead = section === "CPK" && String(r.avg || "").trim().toLowerCase() === "cpk";
     const binText = String(r.Bin === undefined || r.Bin === null ? "" : r.Bin).trim();
@@ -212,7 +218,7 @@ function buildIssueSheetData(issueRows, srcs) {
       [r.avg].concat(srcs.map(s => r[`${s}_yield`])).forEach((v, i) => {
         const num = hxlNum(v);
         if (num === null) return;
-        if ((section === "Yield" || section === "ETC") && num > 0) fails.push([off, avgCol + i]);
+        if ((section === "Yield" || section === "ETC" || section === "TEMP") && num > 0) fails.push([off, avgCol + i]);
         else if (section === "CPK" && num < HXL.CPK_THRESHOLD) warns.push([off, avgCol + i]);
       });
     }

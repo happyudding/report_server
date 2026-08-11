@@ -183,10 +183,10 @@ function cmtFormatRange(raw, start, end, action) {
   return { text: s.slice(0, a) + rep + s.slice(b), caret: a + rep.length };
 }
 
-// web_report Map Analysis 소스(웨이퍼) 개수 — 2개 이상일 때만 Map 셀 펼치기 버튼 노출.
+// Issue Table Bin 미니셀 Map 소스(웨이퍼) 개수 — 2개 이상일 때만 ⤢(전 소스 보기) 노출.
+// 실제로 그릴 목록과 같은 것을 세야 한다(Temperature 는 RT 만 — wafer_charts.issueBinMaps).
 function mapSourceCount() {
-  const maps = (webReportSheets() || {})["Map Analysis"];
-  return Array.isArray(maps) ? maps.length : 0;
+  return issueBinMaps().length;
 }
 
 // 입력 소스(파일) 개수 — CPK 행 STDF 미니맵은 소스별 측정값이라 이 수로 펼치기를 판단한다
@@ -550,10 +550,12 @@ function issueSectionHeadRowsHtml(cols, sec) {
   // Yield 섹션 헤더의 Step 열 아래 작은 ▼ = 그 표의 Bin 그룹 TNO 전체 펼치기/접기
   // (2026-08-10 사용자 요청 — 종전 툴바 'TNO 전체 펼치기' 버튼을 여기로 옮겼다).
   // 핸들러는 종전 그대로 edit_mode.js 의 data-issue-act="toggle-all" 위임을 탄다.
-  // Bin 그룹은 Yield 섹션에만 있으므로 다른 섹션(CPK/TEMP/ETC) 헤더에는 달지 않는다.
-  const toggleAllBtn = idx => (sec === "Yield" && String(cols[idx]).trim().toLowerCase() === "step")
+  // Bin 그룹이 있는 섹션은 Yield(TNO 묶음)와 TEMP(2026-08-11 — Bin 별 항목 묶음) 둘이다.
+  // CPK/ETC 는 그룹이 없어 달지 않는다.
+  const toggleAllBtn = idx => ((sec === "Yield" || sec === "TEMP")
+      && String(cols[idx]).trim().toLowerCase() === "step")
     ? `<button type="button" class="issue-toggle-all" data-issue-act="toggle-all" ` +
-      `data-expanded="false" title="TNO 전체 펼치기">▼</button>` : "";
+      `data-expanded="false" title="${sec === "TEMP" ? "Bin 전체 펼치기" : "TNO 전체 펼치기"}">▼</button>` : "";
   const groupOf = c => SHEET_HEADER_SUFFIX_GROUPS.find(g => g.re.test(String(c)));
   const groupKeyAt = i =>
     groupOf(cols[i]) ||
@@ -649,7 +651,11 @@ function renderSheetTable(rows, opts) {
   if (!cols.length) return "";
 
   let bodyRows = rows || [];
-  if (opts.kind === "yield" && !opts.edit) bodyRows = reorderYieldRows(bodyRows, cols);
+  // Bin 그룹 마킹(_grp)이 실린 표는 그 순서 자체가 "대표행 + 그 아래 접힌 상세행" 이라
+  // avg 내림차순 재정렬을 걸면 대표·상세가 흩어진다 (Yield 탭 Temp Corner — 서버
+  // tabs/temp_fail._group_by_bin 이 이미 정렬해 보낸다).
+  const hasBinGroups = (bodyRows || []).some(r => r && r._grp);
+  if (opts.kind === "yield" && !opts.edit && !hasBinGroups) bodyRows = reorderYieldRows(bodyRows, cols);
   if (opts.kind === "issue") bodyRows = dropIssueMostFailDetailRows(bodyRows);
   const binCol = opts.kind === "yield" ? cols.find(c => String(c).trim().toLowerCase() === "bin") : null;
 
@@ -878,9 +884,14 @@ function renderSheetTable(rows, opts) {
           (delHideKey ? ` data-hkey="${esc(delHideKey)}"` : ` data-etc="${esc(delEtcItem)}"`) +
           ` title="선택 (일괄 삭제 / Status 일괄 변경) — Step 셀 아무 곳이나 클릭">` + cellHtml;
       }
-      // Issue Table Yield 대표행 STEP 셀 오른쪽에 접기/펼치기 토글(그 Bin 의 detail TNO 가 있을 때).
-      if (opts.kind === "issue" && c === "Step" && r && r._grp && !r._detail && (Number(r._ndetail) || 0) > 0) {
-        cellHtml += ` <button type="button" class="issue-toggle" data-grp="${esc(r._grp)}" aria-expanded="false">▼</button>`;
+      // Bin 그룹 대표행 STEP 셀 오른쪽에 접기/펼치기 토글(접힌 상세행이 있을 때).
+      // Issue Table Yield 섹션과 Yield 탭 Temp Corner 표가 같은 _grp 규약을 쓰되, 클래스는
+      // 표 종류별로 다르다(핸들러가 각각 toggleIssueGroup / setYieldGroup 이다).
+      if ((opts.kind === "issue" || opts.kind === "yield")
+        && String(c).trim().toLowerCase() === "step"
+        && r && r._grp && !r._detail && (Number(r._ndetail) || 0) > 0) {
+        const tcls = opts.kind === "issue" ? "issue-toggle" : "yield-toggle";
+        cellHtml += ` <button type="button" class="${tcls}" data-grp="${esc(r._grp)}" aria-expanded="false">▼</button>`;
       }
       // 읽기 모드 Issue Table 셀에만 data-col 부여 → CSS 로 BIN/ITEM/Yield/CPK 폰트 확대(값 가독성).
       // 편집 모드는 부여하지 않아 collectSheetTable 저장 대상(=comment 셀)이 그대로 유지된다.
@@ -890,10 +901,11 @@ function renderSheetTable(rows, opts) {
     const isPassRow = !subhead && (issuePassRow
       || (binCol && String((r ? r[binCol] : "") ?? "").trim() === "1"));
     let trAttr = isPassRow ? ` class="yield-pass-row"` : "";
-    if (!isPassRow && opts.kind === "issue" && r && r._grp) {
+    if (!isPassRow && r && r._grp && (opts.kind === "issue" || opts.kind === "yield")) {
+      const pfx = opts.kind === "issue" ? "issue-bin" : "yield-bin";
       trAttr = r._detail
-        ? ` class="issue-bin-detail" data-grp="${esc(r._grp)}" style="display:none"`
-        : ` class="issue-bin-rep" data-grp="${esc(r._grp)}"`;
+        ? ` class="${pfx}-detail" data-grp="${esc(r._grp)}" style="display:none"`
+        : ` class="${pfx}-rep" data-grp="${esc(r._grp)}"`;
     }
     return `<tr${trAttr}>${tds}</tr>`;
   };

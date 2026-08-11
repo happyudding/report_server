@@ -1468,8 +1468,11 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
 .temp-legend-table th:nth-child(1), .temp-legend-table td:nth-child(1) { width: 62px; }
 .temp-legend-table th:nth-child(2), .temp-legend-table td:nth-child(2) { width: 62px; }
 .temp-legend-table th:nth-child(4), .temp-legend-table td:nth-child(4) { width: 52px; }
+/* 항목명은 **생략하지 않는다**(2026-08-11 사용자 요청) — 말줄임 대신 줄바꿈으로 전부
+   보여준다. 긴 이름에 구분자(_ 등)가 없어도 잘리지 않게 anywhere 로 끊는다. */
 .temp-legend-table td.temp-leg-item {
-  text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: left; white-space: normal; overflow-wrap: anywhere; word-break: break-word;
+  line-height: 1.35;
 }
 /* TNO Legend — "기타" 행은 클릭 불가 */
 .bin-table tr.tno-other td { cursor: default; color: #888; }

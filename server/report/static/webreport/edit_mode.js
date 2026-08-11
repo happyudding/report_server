@@ -237,9 +237,11 @@ document.querySelector(".content").addEventListener("click", e => {
     if (kind === "toggle-all") {
       const expand = act.dataset.expanded !== "true";
       act.dataset.expanded = expand ? "true" : "false";
-      // 버튼은 Yield 섹션 헤더 Step 열 아래의 작은 ▼/▲ 아이콘이다(설명은 title 로).
+      // 버튼은 섹션 헤더 Step 열 아래의 작은 ▼/▲ 아이콘이다(설명은 title 로).
+      // 묶음 단위가 섹션마다 다르다 — Yield=TNO, Temp=Bin 별 항목.
+      const unit = actPanel.id === ISSUE_PANEL_TEMP ? "Bin" : "TNO";
       act.textContent = expand ? "▲" : "▼";
-      act.title = expand ? "TNO 전체 접기" : "TNO 전체 펼치기";
+      act.title = `${unit} 전체 ${expand ? "접기" : "펼치기"}`;
       setAllIssueGroups(expand, actPanel);
     } else if (kind === "excel") {
       exportIssueExcel(issueRowsOf(actPanel),
