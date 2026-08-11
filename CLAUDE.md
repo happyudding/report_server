@@ -42,6 +42,10 @@ report_server/
 │   ├── plugin.py                register_report_server() — Blueprint 3개 + admin_panel + ops 등록
 │   ├── config.py                환경변수·경로 통합 설정
 │   ├── auth_identity.py         신원 provider 체인 (기본 HoneyUser UA, AUTH_SSO_HEADER 로 SSO 전환)
+│   ├── diagnostics.py           진단 사건 저장소 — 서버 500/503·느린 요청·콜드 빌드 실패·
+│   │                            브라우저/Honey 오류를 상관 ID(request/operation/build/session)
+│   │                            로 이어 `server/log/diagnostic_*.log` JSONL 로 모은다.
+│   │                            **DB 를 쓰지 않는다**(에러 순간이 곧 DB 가 잠기는 순간)
 │   ├── database/                SQLite 계층 (report_db.py 는 재노출 facade — 호출부 무변경)
 │   │   ├── core.py              SCHEMA(정본)·마이그레이션·get_conn·analysis lock
 │   │   ├── sessions.py / objects.py / audit.py / users.py / annotations.py / usage.py
@@ -69,6 +73,8 @@ report_server/
 │   │                            수치. HTML 1장(canvas 배경 인라인) + blueprint 1개.
 │   │                            데이터는 report_bp 의 GET /pe/report/api/landing 하나
 │   ├── admin_panel/             /pe/admin-<secret>/ 대시보드 + metrics 샘플러
+│   │                            (🚨 진단 사건 탭 = diagnostics_admin.py — 사건 타임라인·
+│   │                            콜드 빌드 마지막 단계·증거 기반 원인 안내)
 │   ├── eval_panel/              /pe/eval 룰 관리 (thresholds·signature **둘 다** 제품군/family
 │   │                            오버레이(전역 범위 선택기 공유) · L0~L6 트레이스 + **전후 비교**
 │   │                            · 골든셋 회귀 — 저장 즉시 반영, rev 낙관적 잠금·no-op 스킵
@@ -370,7 +376,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | web_report 캐시 키 규약 | [web_report/cache_policy.py](web_report/cache_policy.py) → [docs/12](docs/12_web_report_cache.md) |
 | Distribution 정렬 전가(pack) — 서버 최대 병목 제거 | [web_report/dist_pack.py](web_report/dist_pack.py) + [dist_pack_store.py](web_report/dist_pack_store.py) → [docs/12](docs/12_web_report_cache.md) |
 | 새 탭 추가 (레지스트리) | [web_report/tabs/__init__.py](web_report/tabs/__init__.py) `TAB_REGISTRY` → [docs/11](docs/11_web_report_tabs.md) |
-| Temperature(PMIC RT/CT/HT) — 전 항목 RT limit 재판정 | [web_report/tabs/temp_fail.py](web_report/tabs/temp_fail.py) (조회 시점 서버 계산) + 업로드 전 정리 [web_report/temperature.py](web_report/temperature.py) + CT/HT CPK 는 **RT Bin1 die × RT limit** ([tabs/cpk.py](web_report/tabs/cpk.py) `temperature_reference_tables`) → [docs/11](docs/11_web_report_tabs.md) |
+| Temperature(PMIC·SECURITY RT/CT/HT) — 전 항목 RT limit 재판정 | [web_report/tabs/temp_fail.py](web_report/tabs/temp_fail.py) (조회 시점 서버 계산) + 업로드 전 정리 [web_report/temperature.py](web_report/temperature.py) + CT/HT CPK 는 **RT Bin1 die × RT limit** ([tabs/cpk.py](web_report/tabs/cpk.py) `temperature_reference_tables`) → [docs/11](docs/11_web_report_tabs.md) |
 | S3 저장 진입점(facade) | [server/storage_gateway/](server/storage_gateway/__init__.py) ([README](server/storage_gateway/README.md), 키빌더 _s3.py) |
 | 검색결과 UI / 세션 상세 UI | [report_analysis_index.html](server/report/report_analysis_index.html) / [report_view.html](server/report/report_view.html) + [static/webreport/](server/report/static/webreport/) (15모듈) |
 | 랜딩 UI (/pe) — 서버 첫 화면 | [server/landing/landing.html](server/landing/landing.html) + [landing/__init__.py](server/landing/__init__.py) · 데이터는 [routes_misc.py](server/report/routes_misc.py) `GET /api/landing` |
@@ -378,6 +384,8 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | eval 룰 관리 (/pe/eval) — threshold/signature 제품군별 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
 | eval 표본 검수 → 승인형 룰 튜닝 (발화 전수 검토 대신 룰당 8건) | [server/eval_panel/review.py](server/eval_panel/review.py) · 수집 [web_report/eval_export.py](web_report/eval_export.py) `collect_session_snapshot` → [docs/13 §14](docs/13_eval_analyzer_integration.md) |
 | 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |
+| **오류 추적 — "에러가 났는데 어디를 보나"** | 사건 저장소 [server/diagnostics.py](server/diagnostics.py) · 화면 [admin_panel/diagnostics_admin.py](server/admin_panel/diagnostics_admin.py) (`🚨 진단 사건` 탭) · 500/503 발급 [server/ops.py](server/ops.py) · 클라 수집 [routes_misc.py](server/report/routes_misc.py) `client_error`/`client_diagnostic` + [error_beacon.js](server/report/static/webreport/error_beacon.js) + [client/transport/error_report.py](client/transport/error_report.py) → [docs/20](docs/20_error_tracking.md) |
+| **콜드 빌드가 300초 걸렸다 — 어디서 멎었나** | 실행 중 체크포인트 [web_report/build_log.py](web_report/build_log.py) `stage/checkpoint/read_states` + 회수 [compute.py](web_report/compute.py) `_dead_worker_state` → 실패 레코드의 `last_stage`/`last_source` → [docs/20](docs/20_error_tracking.md) |
 | Honey 클라 (자유: honey_ui/honey_main/transport/excel_*) | [client/honey_main.py](client/honey_main.py), 업로드 [transport/uploader.py](client/transport/uploader.py), 추출 [report_flow/upload_prepare.py](client/report_flow/upload_prepare.py) |
 | 외부 담당자 영역 동결 (무수정) | `d1/` · `client/report_generator/` · `client/honey_parse/` · `server/storage_gateway/` → [docs/15](docs/15_ownership.md) · 진입점 [INDEX §3.1](docs/INDEX.md) |
 | eval_analyzer 연결 (AI Comment / 코멘트 export) | [web_report/ai_comment.py](web_report/ai_comment.py) + [web_report/eval_export.py](web_report/eval_export.py) — eval_engine import 2곳 → [docs/13](docs/13_eval_analyzer_integration.md) |

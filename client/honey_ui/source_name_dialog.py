@@ -18,7 +18,7 @@ Temperature 의 그룹 순서·Temp Fail 컬럼 순서). Ctrl/Shift 로 여러 �
 최종 색이 된다(팔레트보다 우선). 색은 이름이 아니라 **표시 순서 i** 에 붙으므로 행을
 옮기면 색도 그 자리에 남는다 — 서버의 ``dist_colors[i]`` 규약과 같다.
 
-Temperature 모드(PMIC 전용)에서는 **열 2개(Group·Role)와 Limit 파일 영역이 더 생긴다** —
+Temperature 모드(PMIC·SECURITY 전용)에서는 **열 2개(Group·Role)와 Limit 파일 영역이 더 생긴다** —
 구 ``TemperatureGroupDialog``(드래그앤드랍 배치 창)를 이 창이 흡수했다. 그 외 모드에서 이
 부분들은 비활성이 아니라 **아예 만들지 않는다**(열은 columnCount 에서 빠지고, Limit 영역은
 컨테이너째 숨겨 레이아웃이 높이를 회수한다).

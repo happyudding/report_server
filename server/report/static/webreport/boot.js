@@ -185,19 +185,31 @@ async function load(resetMode=true) {
     // 않기 위함). 빌드가 끝날 때까지 재시도한다 — 대기 안내는 기존 오버레이·build_status
     // 폴링이 그대로 담당한다.
     res = await retryWhileBuilding(res, freshFull);
+    if (res && res.status === 202) {
+      // 재시도 루프가 15분 데드라인을 넘겨 빠져나온 경우 — 여태 "로딩 중"으로만 끝나
+      // 서버에는 아무 흔적도 남지 않았다. 사용자가 실제로 겪은 실패를 보고한다.
+      reportLoadFailure("poll_timeout", "콜드 빌드 폴링 타임아웃(15분)", 202);
+    }
     if (!res.ok) {
       const box = document.getElementById("errorBox");
       box.style.display = "";
       // 서버가 콜드 빌드 반복 실패를 알리면(503) 상태코드 대신 사유를 보여준다 —
       // 예전에는 실패한 빌드를 15분간 폴링만 하다 타임아웃해 "영원히 로딩 중"이었다.
       let msg = `세션을 불러올 수 없습니다 (${res.status})`;
-      if (res.status === 503) {
+      let detail = "", errorId = "";
+      if (res.status === 503 || res.status === 500) {
         try {
           const j = await res.json();
           if (j && j.build_failed && j.error) msg = j.error;
+          detail = (j && j.detail) || "";
+          errorId = (j && j.error_id) || "";
         } catch (e) { /* 본문 없음 — 기본 문구 유지 */ }
       }
-      box.textContent = msg;
+      if (!errorId) errorId = res.headers.get("X-Request-ID") || "";
+      // 오류 번호를 화면에 남겨야 사용자가 그대로 신고하고, 관리자가 진단 사건에서
+      // 같은 값으로 서버 스택·빌드 기록을 한 번에 찾을 수 있다.
+      box.textContent = msg + (errorId ? ` [오류번호 ${errorId}]` : "");
+      reportLoadFailure("load_failed", detail || msg, res.status, errorId);
       hideLoadOverlay();
       return;
     }
@@ -252,8 +264,21 @@ async function load(resetMode=true) {
     const box = document.getElementById("errorBox");
     box.style.display = "";
     box.textContent = "로드 실패: " + e.message;
+    reportLoadFailure("load_exception", e && e.message ? e.message : String(e), 0);
     hideLoadOverlay();
   }
+}
+
+// 세션 로드 실패 보고 — error_beacon.js 가 노출한 창구를 쓴다(전송 상한·중복 제거 공유).
+// beacon 이 없으면 조용히 넘어간다 (보고가 화면을 깨면 안 된다).
+function reportLoadFailure(kind, message, status, errorId) {
+  try {
+    if (typeof window.reportClientError !== "function") return;
+    window.reportClientError({
+      kind, message: String(message || "").slice(0, 500),
+      status: status || undefined, error_id: errorId || undefined,
+    });
+  } catch (e) { /* no-op */ }
 }
 
 // 다른 화면(검색결과 챗봇 답변 등)에서 특정 탭·항목을 지목해 들어온 경우의 1회 점프.

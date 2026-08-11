@@ -162,6 +162,9 @@ def audit_csv_iter(action=None, q=None):
 _LOG_GLOBS = ("server_*.txt", "watchdog_events.log", "watchdog_checks.log",
               "watchdog_snap_*.txt", "metrics_*.log", "runtime_*.log",
               "webreport_build_*.log",
+              # 진단 사건·워커 로그·실행 중 콜드 빌드 체크포인트 (2026-08-11)
+              "diagnostic_*.log", "diagnostic_detail_*.txt",
+              "compute_worker_*.log", "build_state_*.json",
               "faulthandler_*.txt", "diagnose_*.txt")
 _LOG_LIST_MAX = 500
 _LOG_NAME_RE = re.compile(r"[A-Za-z0-9_.\-]+")

@@ -120,7 +120,7 @@ function updatePrivateBtn(session) {
 // web_report 전용 데이터로만 채워지는 탭(CPK/Map Analysis)은 legacy(xlsx_upload)
 // 세션에서 항상 빈 화면이므로 탭 버튼 자체를 숨긴다. 숨긴 탭이 활성 상태였으면 Summary 로 전환.
 // (Raw Data 탭은 제거됨 — rawdata 편집은 Honey 사이드바 'Rawdata 수정'(Excel) 으로 이관.)
-const WEB_REPORT_ONLY_TABS = ["cpk", "map-analysis", "trim-analysis", "note"];
+const WEB_REPORT_ONLY_TABS = ["cpk", "map-analysis", "characteristic", "note"];
 
 function syncTabVisibility() {
   const web = isWebReportSession();

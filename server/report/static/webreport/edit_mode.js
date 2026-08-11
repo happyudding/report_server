@@ -108,8 +108,9 @@ const TAB_RENDERERS = {
   "compare": renderCompare,
   // "raw-data" 탭 제거 — rawdata 편집은 Honey 사이드바 'Rawdata 수정'(Excel) 로 이관.
   // 관련 JS(renderRawDataTab 등)와 #panel-raw-data 는 비활성 상태로 남겨둠(참조 안전).
-  // Trim Analysis 는 탭 진입 시 lazy fetch (프리렌더 큐 제외 — 숨김 Plotly 렌더 회피)
-  "trim-analysis": renderTrimAnalysis,
+  // Characteristic(서브탭: Trim Analysis / Shmoo / BV / Analog Chart / TCB / DVO)은
+  // 탭 진입 시 lazy fetch (프리렌더 큐 제외 — 숨김 Plotly 렌더 회피)
+  "characteristic": () => renderCharacteristic(),
   // Note(Luckysheet 캔버스)도 탭 진입 시 lazy — 번들(≈4MB) 로드가 첫 페인트를 막지 않게.
   "note": () => renderNoteTab(),
 };
@@ -123,7 +124,7 @@ function activeTabName() {
 // Plotly 로 그리는 탭들. plotly.min.js 는 async 로드라 시작 탭(표 기반)이 뜬 뒤에도
 // 아직 도착하지 않았을 수 있다 — 그 사이 이 탭들이 렌더되면 차트가 비어버리므로
 // dirty 를 유지한 채 도착을 기다렸다 다시 그린다. (표 탭은 Tabulator+canvas 만 쓴다)
-const PLOTLY_TABS = { "distribution": 1, "map-analysis": 1, "compare": 1, "trim-analysis": 1 };
+const PLOTLY_TABS = { "distribution": 1, "map-analysis": 1, "compare": 1, "characteristic": 1 };
 
 function renderTab(name) {
   if (!tabDirty[name] || !TAB_RENDERERS[name]) return;

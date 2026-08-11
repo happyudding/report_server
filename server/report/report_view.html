@@ -316,8 +316,9 @@ body {
 .panel.active { display: block; }
 #panel-cpk { max-width: 1500px; }
 #panel-issues , #panel-issue-temp{ max-width: none; }
-/* Trim Analysis: legend 를 카드 오른쪽으로 뺀 만큼 패널을 가로 Full 로 넓혀 양쪽 여백을 줄인다. */
-#panel-trim-analysis { max-width: none; }
+/* Characteristic(Trim Analysis 등): legend 를 카드 오른쪽으로 뺀 만큼 패널을 가로 Full 로
+   넓혀 양쪽 여백을 줄인다. */
+#panel-characteristic { max-width: none; }
 
 .section-title {
   font-size: 13px; font-weight: 700; color: #333;
@@ -963,6 +964,14 @@ tbody tr:hover { background: #f9fbff; }
 .dist-chart { width: 100%; height: 420px; }
 .dist-loading { font-size: 12px; color: #999; padding: 10px; }
 @media (max-width: 900px) { .dist-detail-body { grid-template-columns: 1fr; } }
+
+/* ── Characteristic 탭 서브탭 (Trim Analysis / Shmoo / BV / Analog Chart / TCB / DVO) ──
+   Compare 서브탭(.cmp-subpanel)과 같은 방식 — .distseg 세그먼트 재사용 + 하위 패널 토글.
+   서브탭 바는 sticky 로 만들지 않는다: 하위 화면(Trim)의 .trim-topbar 가 이미 같은
+   top 에 sticky 라 둘을 겹쳐 고정하면 서로 가린다. */
+.char-subtabs { margin: 0 0 12px; }
+.char-subpanel { display: none; }
+.char-subpanel.active { display: block; }
 
 /* ── Trim Analysis 탭 (① 항목 매칭 ② 산포 분석 ③ 분석 리포트) ───────────────── */
 .trim-topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; flex-wrap: wrap;
@@ -2357,8 +2366,10 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
     <!-- Temperature 모드 전용 — tabs_topbar.syncTabVisibility 가 노출을 결정한다 -->
     <button class="tab" data-tab="issue-temp" style="display:none">Issue Table Temp</button>
     <button class="tab" data-tab="distribution">Distribution</button>
-    <button class="tab" data-tab="trim-analysis">Trim Analysis</button>
     <button class="tab" data-tab="map-analysis">Map Analysis</button>
+    <!-- Characteristic — 서브탭 6개(Trim Analysis / Shmoo / BV / Analog Chart / TCB / DVO).
+         구 최상위 'Trim Analysis' 탭은 이 안의 첫 서브탭으로 이동했다. -->
+    <button class="tab" data-tab="characteristic">Characteristic</button>
     <button class="tab" data-tab="note">Note</button>
     <button class="tab" data-tab="compare" style="display:none">Compare</button>
   </div>
@@ -2412,8 +2423,28 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
   <div class="panel" id="panel-issue-temp"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-distribution"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-raw-data"><div class="placeholder">로드 중...</div></div>
-  <div class="panel" id="panel-trim-analysis"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-map-analysis"><div class="placeholder">로드 중...</div></div>
+  <!-- Characteristic: 서브탭 6개. Trim Analysis 는 종전 최상위 탭 화면을 그대로 옮긴 것이라
+       컨테이너 id(#panel-trim-analysis)를 유지한다 — 렌더는 계속 trim.js 가 담당한다.
+       나머지 5개는 아직 화면이 없어 안내만 표시한다(characteristic.js). -->
+  <div class="panel" id="panel-characteristic">
+    <div class="char-subtabs distseg-group" id="charSubtabs">
+      <button class="distseg active" data-charsub="trim-analysis">Trim Analysis</button>
+      <button class="distseg" data-charsub="shmoo">Shmoo</button>
+      <button class="distseg" data-charsub="bv">BV</button>
+      <button class="distseg" data-charsub="analog-chart">Analog Chart</button>
+      <button class="distseg" data-charsub="tcb">TCB</button>
+      <button class="distseg" data-charsub="dvo">DVO</button>
+    </div>
+    <div class="char-subpanel active" data-charpanel="trim-analysis" id="panel-trim-analysis">
+      <div class="placeholder">로드 중...</div>
+    </div>
+    <div class="char-subpanel" data-charpanel="shmoo"><div class="placeholder">Shmoo — 준비 중입니다.</div></div>
+    <div class="char-subpanel" data-charpanel="bv"><div class="placeholder">BV — 준비 중입니다.</div></div>
+    <div class="char-subpanel" data-charpanel="analog-chart"><div class="placeholder">Analog Chart — 준비 중입니다.</div></div>
+    <div class="char-subpanel" data-charpanel="tcb"><div class="placeholder">TCB — 준비 중입니다.</div></div>
+    <div class="char-subpanel" data-charpanel="dvo"><div class="placeholder">DVO — 준비 중입니다.</div></div>
+  </div>
   <div class="panel" id="panel-note"><div class="placeholder">로드 중...</div></div>
   <div class="panel" id="panel-compare"><div class="placeholder">로드 중...</div></div>
   <!-- Item_detail: 탭 버튼 없이 프로그램으로만 활성화(Yield/CPK/IssueTable/Distribution item 클릭) -->
@@ -2492,6 +2523,7 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
 <script src="/pe/report/static/webreport/item_detail.js"></script>
 <script src="/pe/report/static/webreport/issue_dist.js"></script>
 <script src="/pe/report/static/webreport/trim.js"></script>
+<script src="/pe/report/static/webreport/characteristic.js"></script>
 <script src="/pe/report/static/webreport/excel_export.js"></script>
 <script src="/pe/report/static/webreport/raw_data.js"></script>
 <script src="/pe/report/static/webreport/chart_notes.js"></script>

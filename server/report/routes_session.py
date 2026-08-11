@@ -61,12 +61,21 @@ def _building_response(session_id, kind="report", session=None):
     """
     blocked = web_report_build_status.failure_blocked(session_id, kind)
     if blocked:
-        return jsonify({
+        # detail/error_id 는 추가 키다 — 구 프런트는 무시하고 error 문구만 쓴다.
+        # 사용자가 화면의 error_id 를 그대로 신고하면 관리자가 진단 사건을 바로 찾는다.
+        import diagnostics
+        body = {
             "build_failed": True,
             "fail_count": blocked["count"],
             "error": "리포트 계산이 반복 실패했습니다. 잠시 후 다시 시도하거나 "
                      "관리자에게 문의해 주세요.",
-        }), 503
+        }
+        if blocked.get("error"):
+            body["detail"] = blocked["error"]
+        rid = diagnostics.current_ids().get("request_id")
+        if rid:
+            body["error_id"] = rid
+        return jsonify(body), 503
     web_report_compute.request_build(session_id, str(REPORT_UPLOAD_DIR), kind)
     status = web_report_build_status.snapshot(session_id)
     body = {"building": True, "stage": status.get("stage", kind),

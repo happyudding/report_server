@@ -24,18 +24,31 @@ compute.run 의 타임아웃(기본 300s)은 **풀 큐 대기까지 포함**해�
 
 전 함수 best-effort — 계측이 빌드를 죽이면 안 되므로 예외를 모두 삼킨다(수집기가 없으면
 stage() 는 완전 no-op).
+
+## 실행 중 체크포인트 (sidecar, 2026-08-11)
+
+위 단계 기록은 **빌드가 끝나야** 부모로 돌아온다. 그런데 정작 알고 싶은 300초 타임아웃은
+워커가 끝내지 못하고 terminate 되는 경우라, 단계 기록이 통째로 유실됐다 — 실패 레코드에는
+"session, 300초, TimeoutError" 뿐이라 어느 단계·어느 source 파일에서 멎었는지 알 수 없었다.
+
+그래서 워커는 단계에 들어갈 때마다 `server/log/build_state_<pid>.json` 을 원자적으로
+덮어쓴다(tmp → os.replace). 부모는 타임아웃 시 풀을 버리기 **전에** 그 파일을 읽어
+last_stage / last_source 를 실패 레코드에 보존한다. 빌드당 쓰기 십수 회(수백 바이트)라
+비용은 무시할 수 있다.
 """
 from __future__ import annotations
 
 import collections
 import json
 import os
+import secrets
 import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
 LOG_PREFIX = "webreport_build"
+STATE_PREFIX = "build_state"
 _KEEP_DAYS = float(os.getenv("LOG_KEEP_DAYS", "14") or 14)
 _HISTORY_MAX_HOURS = 24 * 14
 # 워커가 콜드 빌드 없이 즉답한 왕복은 이 시간 미만이면 기록하지 않는다 (잡음 제거).
@@ -79,8 +92,14 @@ def collecting():
 
 
 @contextmanager
-def stage(name: str):
-    """단계 소요를 누적한다. 수집기가 없으면 no-op (getattr 1회 비용)."""
+def stage(name: str, source: str = ""):
+    """단계 소요를 누적한다. 수집기가 없으면 소요 누적은 no-op (getattr 1회 비용).
+
+    source 는 그 단계가 다루는 파일(basename) — decode/preprocess 처럼 source 를 순회하는
+    단계에서 "몇 번째 파일에서 멎었나"를 남기기 위한 것이다. 체크포인트 기록은 수집기
+    유무와 무관하게(워커 안이면) 항상 돈다 — 타임아웃 진단이 그것에 달려 있다.
+    """
+    _state_enter(name, source)
     stages = getattr(_tls, "stages", None)
     if stages is None:
         yield
@@ -93,6 +112,173 @@ def stage(name: str):
             stages[name] = round(stages.get(name, 0.0) + (time.perf_counter() - t0), 3)
         except Exception:
             pass
+
+
+# ── 실행 중 체크포인트 (워커 sidecar) ────────────────────────────────────────
+# ProcessPoolExecutor 워커는 한 번에 잡 1개만 돌리므로 프로세스 전역 상태로 충분하다
+# (스레드 분리 불필요). 중첩 잡(prewarm_job → report_job)은 depth 로 최외곽만 기록한다.
+
+_JOB = {"depth": 0, "build_id": "", "kind": "", "session": "",
+        "stage": "", "source": "", "t_stage": 0.0, "t0": 0.0, "done": {}}
+
+
+def _in_worker() -> bool:
+    try:
+        from . import compute
+        return bool(compute._IN_WORKER)
+    except Exception:
+        return False
+
+
+def _state_path(pid=None) -> Path:
+    return _log_dir() / f"{STATE_PREFIX}_{pid or os.getpid()}.json"
+
+
+def _write_state() -> None:
+    """sidecar 원자적 갱신 — 부모가 언제 읽어도 반쪽 JSON 을 보지 않게 tmp+replace."""
+    try:
+        p = _state_path()
+        tmp = p.with_suffix(".tmp")
+        now = time.time()
+        rec = {"build_id": _JOB["build_id"], "pid": os.getpid(), "kind": _JOB["kind"],
+               "session": _JOB["session"], "stage": _JOB["stage"],
+               "source": _JOB["source"], "stage_elapsed": round(now - _JOB["t_stage"], 3),
+               "elapsed": round(now - _JOB["t0"], 3),
+               "stages_done": _JOB["done"],
+               "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))}
+        tmp.write_text(json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, p)
+    except Exception:
+        pass
+
+
+def _state_enter(name: str, source: str = "") -> None:
+    if _JOB["depth"] <= 0 or not _in_worker():
+        return
+    try:
+        prev, t_prev = _JOB["stage"], _JOB["t_stage"]
+        if prev:
+            _JOB["done"][prev] = round(_JOB["done"].get(prev, 0.0)
+                                       + (time.time() - t_prev), 3)
+        _JOB["stage"] = str(name)[:40]
+        _JOB["source"] = str(source or "")[:120]
+        _JOB["t_stage"] = time.time()
+        _write_state()
+    except Exception:
+        pass
+
+
+def checkpoint(name: str, source: str = "") -> None:
+    """소요 누적 없이 체크포인트만 갱신한다.
+
+    stage() 안에서 source 를 바꿔가며 진행 상황만 남기고 싶을 때 쓴다 — 같은 이름으로
+    stage() 를 중첩하면 바깥과 안쪽이 **같은 키에 두 번 더해져** 소요가 2배로 부풀고
+    eta 배율 학습까지 망가진다."""
+    _state_enter(name, source)
+
+
+def begin_job(kind: str, session_id: str) -> str:
+    """워커 잡 시작 — sidecar 를 만들고 build_id 를 돌려준다 (부모/워커 공통 상관 키).
+
+    워커 밖(부모 인라인 실행)에서는 아무것도 하지 않는다 — 부모가 hang 하면 sidecar 가
+    아니라 diag_listener 스레드 덤프가 진단 수단이다."""
+    if not _in_worker():
+        return ""
+    try:
+        _JOB["depth"] += 1
+        if _JOB["depth"] > 1:
+            return _JOB["build_id"]
+        _JOB.update({"build_id": f"{os.getpid()}-{secrets.token_hex(3)}",
+                     "kind": str(kind)[:20], "session": str(session_id)[:64],
+                     "stage": "", "source": "", "t0": time.time(),
+                     "t_stage": time.time(), "done": {}})
+        _write_state()
+        return _JOB["build_id"]
+    except Exception:
+        return ""
+
+
+def end_job() -> None:
+    """워커 잡 종료 — sidecar 제거 (남아 있으면 부모가 '진행 중'으로 오독한다)."""
+    if not _in_worker():
+        return
+    try:
+        _JOB["depth"] = max(0, _JOB["depth"] - 1)
+        if _JOB["depth"] > 0:
+            return
+        _JOB["build_id"] = ""
+        _state_path().unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def current_build_id() -> str:
+    return _JOB["build_id"] if _JOB["depth"] > 0 else ""
+
+
+def read_states(pids=None) -> list[dict]:
+    """워커 sidecar 읽기 — pids 를 주면 그 프로세스 것만. 부모에서만 부른다."""
+    out = []
+    try:
+        want = {int(p) for p in pids} if pids else None
+        for p in _log_dir().glob(f"{STATE_PREFIX}_*.json"):
+            try:
+                pid = int(p.stem.split("_")[-1])
+            except ValueError:
+                continue
+            if want is not None and pid not in want:
+                continue
+            try:
+                rec = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(rec, dict):
+                out.append(rec)
+    except Exception:
+        pass
+    return out
+
+
+def drop_states(pids) -> None:
+    """지정한 pid 의 sidecar 만 지운다 (terminate 한 워커의 잔해 정리).
+
+    "그 외 전부 삭제"가 아니라 **대상 지정**인 이유: 풀을 버린 직후 다른 스레드가 새 풀을
+    띄웠다면, 싹 지우는 방식은 지금 막 시작한 남의 빌드 체크포인트까지 날린다."""
+    for pid in (pids or ()):
+        try:
+            _state_path(pid).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def clear_states(keep_pids=None) -> list[dict]:
+    """살아있지 않은 워커의 sidecar 를 걷어내고 그 내용을 돌려준다.
+
+    기동 시 호출하면 재기동 직전에 돌던 빌드(= interrupted)가 무엇이었는지 알 수 있고,
+    타임아웃으로 워커를 terminate 한 뒤 호출하면 그 잔해를 정리한다."""
+    stale = []
+    keep = {int(p) for p in (keep_pids or ())}
+    try:
+        for p in _log_dir().glob(f"{STATE_PREFIX}_*.json"):
+            try:
+                pid = int(p.stem.split("_")[-1])
+            except ValueError:
+                pid = -1
+            if pid in keep:
+                continue
+            try:
+                rec = json.loads(p.read_text(encoding="utf-8"))
+                if isinstance(rec, dict):
+                    stale.append(rec)
+            except Exception:
+                pass
+            try:
+                p.unlink()
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return stale
 
 
 @contextmanager
@@ -109,8 +295,14 @@ def context(**kw):
 # ── 레코드 싱크 ──────────────────────────────────────────────────────────────
 
 def _log_dir() -> Path:
-    import config
-    d = Path(config.ROOT_DIR) / "server" / "log"
+    # REPORT_DIAG_DIR 은 테스트가 운영 로그를 오염시키지 않도록 하는 우회로다
+    # (server/diagnostics.py 와 같은 변수를 공유 — 진단 기록은 한 폴더에 모인다).
+    override = os.getenv("REPORT_DIAG_DIR", "").strip()
+    if override:
+        d = Path(override)
+    else:
+        import config
+        d = Path(config.ROOT_DIR) / "server" / "log"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -218,14 +410,49 @@ _JOB_KIND = {"report_job": "report", "dist_job": "dist", "map_job": "map",
              "trim_job": "trim", "trim_chart_batch_job": "trim"}
 
 
+def _session_meta(session_id: str) -> dict:
+    """실패 레코드에 붙일 세션 메타 (실패했을 때만 도는 경로라 DB 왕복 1회는 무해).
+
+    session_id 만으로는 "무엇이 죽었는지" 를 사람이 못 읽는다 — 제품·LOT·파일명이
+    있어야 관리자가 같은 데이터를 재현하거나 사용자에게 되물을 수 있다."""
+    if not session_id:
+        return {}
+    try:
+        from database import report_db
+        s = report_db.get_session(session_id) or {}
+        out = {"akey": str(s.get("analysis_key") or "")[:12],
+               "product": s.get("product") or "", "lot_id": s.get("lot_id") or "",
+               "file_name": s.get("file_name") or ""}
+        return {k: v for k, v in out.items() if v}
+    except Exception:
+        return {}
+
+
 def record_failure(job_name: str, args, result: str, elapsed: float,
-                   error_text: str = "") -> None:
-    """compute.run 의 타임아웃/워커 붕괴/예외를 기록한다 (그걸 아는 곳이 거기뿐)."""
+                   error_text: str = "", state: dict | None = None) -> None:
+    """compute.run 의 타임아웃/워커 붕괴/예외를 기록한다 (그걸 아는 곳이 거기뿐).
+
+    state 는 죽은 워커의 sidecar(read_states) — 있으면 마지막 단계·source 가 함께
+    남아 "300초를 어디서 썼나"에 답할 수 있다. 없으면(= 큐에서 대기만 하다 죽음)
+    그 부재 자체가 '대기 타임아웃'이라는 증거다.
+    """
     try:
         session = args[0] if args and isinstance(args[0], str) else ""
-        record({"kind": _JOB_KIND.get(job_name, job_name), "session": session,
-                "offloaded": True, "result": result, "total": _pos(elapsed),
-                "error": str(error_text)[:200]})
+        rec = {"kind": _JOB_KIND.get(job_name, job_name), "session": session,
+               "offloaded": True, "result": result, "total": _pos(elapsed),
+               "error": str(error_text)[:200]}
+        rec.update(_session_meta(session))
+        if state:
+            rec["build_id"] = state.get("build_id") or ""
+            rec["last_stage"] = state.get("stage") or ""
+            rec["last_source"] = state.get("source") or ""
+            rec["last_stage_elapsed"] = state.get("stage_elapsed")
+            rec["build_elapsed"] = state.get("elapsed")
+            if state.get("stages_done"):
+                rec["stages"] = state["stages_done"]
+        else:
+            rec["last_stage"] = ""      # 명시적 부재 = 워커가 시작조차 못 함(큐 대기)
+        record(rec)
     except Exception:
         pass
 

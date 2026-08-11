@@ -93,6 +93,9 @@ def _read_dist_blobs():
             continue
         data = f.read()
         if not data or len(data) > _MAX_WEBREPORT_BYTES:
+            # 조용히 버리면 "왜 이 세션만 조회가 느리지"를 나중에 추적할 수 없다.
+            _log.warning("[upload_webreport] dist_blob(%s) 건너뜀 — %s bytes", variant,
+                         len(data) if data else 0)
             continue
         blobs[variant] = data
     return blobs
@@ -120,20 +123,57 @@ def _read_dist_pack():
             break
         data = f.read()
         if not data or len(data) > _MAX_WEBREPORT_BYTES:
+            _log.warning("[upload_webreport] dist_pack 건너뜀 — chunk %d 크기 %s bytes",
+                         idx, len(data) if data else 0)
             return None
         total += len(data)
         if total > budget:
+            _log.warning("[upload_webreport] dist_pack 건너뜀 — 합계 %d bytes > 상한 %d",
+                         total, budget)
             return None
         chunks[idx] = data
         idx += 1
     if not chunks:
+        _log.warning("[upload_webreport] dist_pack 건너뜀 — index 는 있는데 chunk 가 없음")
         return None
     return {"index": index_text, "chunks": chunks}
+
+
+def _record_upload_failure(manifest, exc, status, severity):
+    """업로드 실패를 서버에 남긴다 (2026-08-11).
+
+    지금까지 400/503 경로는 클라 화면에만 뜨고 서버에는 흔적이 0 이라, 사용자가
+    "업로드가 안 된다"고 신고하면 확인할 방법이 없었다. xlsx 흐름은 세션 행
+    error_message 로 남기는데 web_report 만 비어 있던 비대칭을 메운다."""
+    meta = (manifest or {}).get("meta") if isinstance(manifest, dict) else None
+    meta = meta if isinstance(meta, dict) else {}
+    detail = f"{type(exc).__name__}: {exc}"
+    try:
+        ip, ua = _client_meta()
+    except Exception:
+        ip = ua = ""
+    try:
+        report_db.log_audit(
+            "upload", product_type=meta.get("product_type"), product=meta.get("product"),
+            lot_id=meta.get("lot_id"), file_name=meta.get("file_name"),
+            changed_fields=f"upload_webreport {status}: {detail}"[:1500],
+            client_ip=ip, user_agent=ua, result="fail")
+    except Exception:
+        _log.warning("[upload_webreport] 실패 감사 기록 실패", exc_info=True)
+    try:
+        import diagnostics
+        diagnostics.emit(severity, "server", "upload_failed", http_status=status,
+                         error_type=type(exc).__name__, message=detail[:500],
+                         product=meta.get("product"), lot_id=meta.get("lot_id"),
+                         source=meta.get("file_name"), client_ip=ip, **diagnostics.current_ids())
+    except Exception:
+        pass
 
 
 @report_bp.post("/upload_webreport")
 def upload_webreport():
     started = time.perf_counter()
+    manifest = None
     if not _UPLOAD_SEM.acquire(timeout=float(config.WEB_REPORT_UPLOAD_WAIT_SEC)):
         _log.warning("[upload_webreport] 동시 업로드 상한 대기 초과 — 거절")
         return jsonify({"status": "failed",
@@ -148,18 +188,24 @@ def upload_webreport():
             manifest, files, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             client_ip=ip, user_agent=ua, dist_blobs=dist_blobs, dist_pack=dist_pack,
             request_started=started)
-    except HTTPException:
+    except HTTPException as exc:
         # abort() 가 정한 상태코드(413 등)를 아래 catch-all 이 400 으로 뭉개지 않게 통과시킨다.
+        _record_upload_failure(manifest, exc, exc.code or 400, "info")
         raise
     except RuntimeError as exc:
+        _log.warning("[upload_webreport] rejected(503): %s", exc)
+        _record_upload_failure(manifest, exc, 503, "warning")
         return jsonify({"status": "failed", "error": str(exc)}), 503
     except ValueError as exc:
         # 입력 데이터 문제(잘못된 parquet·모드별 파일 수 등) — 클라이언트 오류.
+        _log.warning("[upload_webreport] rejected(400): %s", exc)
+        _record_upload_failure(manifest, exc, 400, "info")
         return jsonify({"status": "failed", "error": str(exc)}), 400
     except Exception as exc:
         # 저장/DB/디코드 등 서버 측 장애를 400 으로 돌려주면 클라가 "내 파일이 잘못됐다"로
         # 오인하고 재시도도 안 한다. 5xx 로 알리고 traceback 을 서버에 남긴다.
         _log.exception("[upload_webreport] failed")
+        _record_upload_failure(manifest, exc, 500, "critical")
         return jsonify({"status": "failed", "error": str(exc)}), 500
     finally:
         _UPLOAD_SEM.release()

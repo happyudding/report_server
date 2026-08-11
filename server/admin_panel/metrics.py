@@ -150,6 +150,7 @@ def _on_request_teardown(exc=None):
     # _VIEWER_ENDPOINTS 보다 넓게 잡는다. 지금 보고 있는 세션은 참고용으로만 곁들이므로
     # 열람 세션 계측(sid)과 변수를 분리한다 — 섞으면 viewers 화이트리스트가 무너진다.
     ident = user_sid = None
+    slow = False
     if not _skip_user_track(route):
         ident = _identity_for_track()
         if ident is not None:
@@ -192,8 +193,32 @@ def _on_request_teardown(exc=None):
             # 느린 요청은 큐에만 넣는다 — 파일 IO 는 샘플러 스레드가 락 밖에서 처리
             if SLOW_REQ_MS > 0 and ms >= SLOW_REQ_MS:
                 _slow_pending.append((time.time(), route, ms))
+                slow = True
+    if slow:
+        _emit_slow_event(route, ms)     # 락 밖에서 (파일 IO)
     if is_public_api and ms is not None:
         _record_public_api(route, ms)   # 락 밖에서 (전용 모듈이 자기 락을 쓴다)
+
+
+def _emit_slow_event(route, ms):
+    """느린 요청을 진단 사건으로 — runtime_*.log 의 통계와 달리 **요청 상관 ID**가 붙는다.
+
+    같은 요청이 뒤에 500 으로 끝나거나 콜드 빌드로 이어졌을 때 타임라인에서 이어 보려면
+    request_id 가 필요한데, 그건 요청 컨텍스트가 살아 있는 지금만 알 수 있다.
+    ≥10초 요청에서만 도는 경로라 파일 IO 비용은 문제되지 않는다."""
+    try:
+        import diagnostics
+        ctx = {"endpoint": route, "elapsed_ms": int(ms)}
+        try:
+            ctx["session_id"] = (request.view_args or {}).get("session_id") or ""
+            ctx["method"] = request.method
+        except Exception:
+            pass
+        ctx.update(diagnostics.current_ids())
+        diagnostics.emit("warning", "server", "slow_request",
+                         message=f"{route} {int(ms)}ms", **ctx)
+    except Exception:
+        pass
 
 
 def _skip_user_track(route):

@@ -206,6 +206,8 @@ body { position: relative; }
 <div class="tabs">
   <button class="tab active" data-panel="pHealth"
           title="서버 CPU·RAM·디스크·업타임과 리소스 시계열 — 서버가 건강한지 먼저 보는 곳">현황</button>
+  <button class="tab" data-panel="pDiag"
+          title="서버 오류·콜드 빌드 실패·브라우저/Honey 오류를 한곳에서 — 사건을 누르면 요청→빌드→오류 타임라인과 원인 근거가 펼쳐진다">🚨 진단 사건</button>
   <button class="tab" data-panel="pHistory"
           title="파일로 남은 부하 이력 — 서버가 재시작돼도 사라지지 않는 리소스·응답시간·느린 요청">이력</button>
   <button class="tab" data-panel="pPublicApi"
@@ -317,6 +319,78 @@ body { position: relative; }
               title="S3 endpoint 에 실제로 접속해 버킷 접근이 되는지 확인합니다">S3 상태 확인</button>
       <div class="msg" id="s3Msg">아직 확인 안 함</div>
     </div>
+  </div>
+</div>
+
+<!-- ═══ 진단 사건 (오류 추적 단일 진입점) ═══ -->
+<div id="pDiag" class="panel">
+  <div class="tiles" id="diagTiles">
+    <div class="tile"><div class="lbl">로딩 중…</div></div>
+  </div>
+  <div style="height:16px"></div>
+  <div class="card" id="diagDetailCard" style="margin-bottom:16px; display:none">
+    <h2>사건 상세 <span class="hint">같은 요청·작업·빌드·세션 ID 로 이어진 기록을 시간순으로 —
+      한 사건만 보면 알 수 없는 "무엇이 먼저였나"가 여기서 드러난다</span>
+      <span style="float:right"><button class="btn" id="btnDiagClose">닫기</button></span></h2>
+    <div id="diagExplain" class="msg"></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>시각</th><th>발생원</th><th>사건</th><th>내용</th><th>세션/경로</th></tr></thead>
+      <tbody id="diagTimeline"></tbody>
+    </table></div>
+    <div id="diagStack" style="margin-top:10px"></div>
+  </div>
+  <div class="card" id="diagBuildCard" style="margin-bottom:16px">
+    <h2>오래 걸리거나 실패한 콜드 빌드
+      <span class="hint">60초 이상이면 다음엔 타임아웃이 될 수 있다는 신호 ·
+        마지막 단계/파일은 워커가 죽어도 남는 실행 중 체크포인트에서 온다</span></h2>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>시각</th><th>결과</th><th>세션</th><th>제품 / LOT</th>
+        <th class="num">총 소요</th><th class="num">큐 대기</th><th class="num">풀 대기</th>
+        <th>마지막 단계 / 파일</th>
+      </tr></thead>
+      <tbody id="diagBuildBody"><tr class="empty-row"><td colspan="8">로딩 중…</td></tr></tbody>
+    </table></div>
+  </div>
+  <div class="card">
+    <h2>사건 목록 <span class="hint">행을 클릭하면 위에 타임라인이 펼쳐진다</span></h2>
+    <div class="toolbar">
+      <select id="diagHours" class="sel" title="조회 기간">
+        <option value="24" selected>최근 24시간</option>
+        <option value="72">최근 3일</option>
+        <option value="168">최근 7일</option>
+        <option value="336">최근 14일</option>
+      </select>
+      <select id="diagSeverity" class="sel" title="심각도">
+        <option value="">전체 심각도</option>
+        <option value="critical">critical (서버 예외·빌드 실패)</option>
+        <option value="warning">warning</option>
+        <option value="info">info</option>
+      </select>
+      <select id="diagComponent" class="sel" title="어디서 난 오류인가">
+        <option value="">전체 발생원</option>
+        <option value="server">server (서버 요청)</option>
+        <option value="build">build (콜드 빌드)</option>
+        <option value="browser">browser (웹 화면)</option>
+        <option value="honey">honey (Honey 앱)</option>
+      </select>
+      <input id="diagQ" class="inp" style="width:240px"
+             placeholder="오류번호 · 세션 · 사용자 · 메시지 검색…">
+      <label style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer"
+             title="확인 처리한 사건을 숨깁니다">
+        <input type="checkbox" id="diagUnacked"> 미확인만
+      </label>
+      <button class="btn primary" id="btnDiagSearch">검색</button>
+      <span class="grow"></span>
+      <button class="btn" id="btnDiagRefresh">새로고침</button>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>시각</th><th>심각도</th><th>발생원</th><th>사건</th><th>내용</th>
+        <th>사용자</th><th>세션</th><th>오류번호</th><th></th>
+      </tr></thead>
+      <tbody id="diagBody"><tr class="empty-row"><td colspan="9">로딩 중…</td></tr></tbody>
+    </table></div>
   </div>
 </div>
 
@@ -856,12 +930,25 @@ body { position: relative; }
       <select id="fAction" class="sel" title="특정 작업 종류만 골라 봅니다">
         <option value="">전체 작업</option>
         <option value="upload">업로드</option>
+        <option value="view">세션 열람</option>
         <option value="edit">수정</option>
         <option value="delete">삭제</option>
         <option value="client_error">클라이언트 오류</option>
         <option value="note_conflict">Note 편집 충돌</option>
+        <option value="login">로그인</option>
+        <option value="login_fail">로그인 실패</option>
+        <option value="logout">로그아웃</option>
+        <option value="signup">가입</option>
+        <option value="password_set">비밀번호 변경</option>
         <option value="eval_export">Eval export</option>
+        <option value="eval_snapshot">Eval 스냅샷</option>
+        <option value="eval_rules_edit">Eval 룰 수정</option>
+        <option value="eval_label">Eval 정답라벨</option>
+        <option value="eval_golden">Eval 골든셋</option>
+        <option value="eval_review_label">Eval 표본검수</option>
+        <option value="eval_review_collect">Eval 표본수집</option>
         <option value="eval_db_input">선례 DB 적재</option>
+        <option value="diag_ack">진단 사건 확인</option>
         <option value="tier">S3 티어링</option>
         <option value="voc_create">VOC 등록</option>
         <option value="voc_edit">VOC 수정</option>
@@ -952,7 +1039,8 @@ async function postJSON(url, body) {
 // ── 탭 ──────────────────────────────────────────────────────────────────────
 const loadedTabs = new Set();
 const TAB_LOADERS = {
-  pHealth: loadHealth, pHistory: loadHistoryTab, pPublicApi: loadPublicApiTab,
+  pHealth: loadHealth, pDiag: loadDiagTab,
+  pHistory: loadHistoryTab, pPublicApi: loadPublicApiTab,
   pStorage: loadStorageTab, pStats: loadStats,
   pSessions: loadSessions, pUsers: loadUsersTab, pVoc: loadVocTab,
   pChatbot: loadChatbotTab,
@@ -1081,6 +1169,21 @@ async function loadHealth() {
         <div class="go">클릭 → 상세 보기 ›</div></div>`;
       }
     } catch (e) { /* client_error 타일도 best-effort */ }
+    let diagTile = "";
+    try {
+      const d = await getJSON("api/diagnostics/events?hours=24&limit=1&unacked=1");
+      const un = (d.summary || {}).unacked || {};
+      const nCrit = Number(un.critical || 0), nWarn = Number(un.warning || 0);
+      if (nCrit > 0 || nWarn > 0) {
+        diagTile = `
+      <div class="tile clickable" id="diagTile"
+           title="클릭하면 진단 사건 탭에서 미확인 사건을 보여줍니다">
+        <div class="lbl">미확인 진단 사건 (24h)</div>
+        <div class="val" style="color:${nCrit ? "#dc2626" : "#d97706"}">${nCrit + nWarn}건</div>
+        <div class="det">critical ${nCrit} · warning ${nWarn} — 서버 예외·빌드 실패·클라 오류</div>
+        <div class="go">클릭 → 상세 보기 ›</div></div>`;
+      }
+    } catch (e) { /* 진단 타일도 best-effort */ }
     $("healthTiles").innerHTML = `
       <div class="tile"><div class="lbl">CPU</div>
         <div class="val">${h.cpu_percent.toFixed(0)}%</div>
@@ -1096,9 +1199,10 @@ async function loadHealth() {
         <div class="meter"><div class="${meterCls(h.disk_percent)}" style="width:${Math.min(h.disk_percent,100)}%"></div></div></div>
       <div class="tile"><div class="lbl">서버 업타임</div>
         <div class="val" style="font-size:20px">${fmtUptime(h.uptime_sec)}</div>
-        <div class="det">서버 RSS ${fmtBytes(h.total_rss || h.proc_rss)} (부모 ${fmtBytes(h.proc_rss)} + 워커 ${fmtBytes(h.workers_rss || 0)}/${h.workers_n || 0}개) · 스레드 ${h.proc_threads}</div></div>${wdTile}${ceTile}`;
+        <div class="det">서버 RSS ${fmtBytes(h.total_rss || h.proc_rss)} (부모 ${fmtBytes(h.proc_rss)} + 워커 ${fmtBytes(h.workers_rss || 0)}/${h.workers_n || 0}개) · 스레드 ${h.proc_threads}</div></div>${wdTile}${ceTile}${diagTile}`;
     // 타일은 조건부라 innerHTML 이후에 핸들러를 붙인다
     if ($("ceTile")) $("ceTile").onclick = () => showAuditFor("client_error");
+    if ($("diagTile")) $("diagTile").onclick = () => showDiagTab("");
 
     try {
       const b = await getJSON("api/db/backups");
@@ -2347,6 +2451,187 @@ const CHAT_INTENT_LABEL = {
   similar_case: "유사 사례", comment_search: "코멘트 검색", session_find: "세션 찾기",
   session_metrics: "세션 수치", page_jump: "화면 이동", unknown: "미분류",
 };
+// ── 진단 사건 ────────────────────────────────────────────────────────────────
+// 사건 저장소는 server/log/diagnostic_*.log (JSON lines). DB 를 안 쓰는 이유는
+// 에러가 나는 순간이 곧 DB 가 잠기거나 디스크가 눌린 순간이라서다 (server/diagnostics.py).
+const DIAG_SEV_COLOR = { critical: "#dc2626", warning: "#d97706", info: "#64748b" };
+const DIAG_COMPONENT_LABEL = {
+  server: "서버", build: "콜드 빌드", browser: "웹 화면", honey: "Honey 앱",
+  watchdog: "watchdog",
+};
+const DIAG_EVENT_LABEL = {
+  unhandled_exception: "처리되지 않은 예외", compute_unavailable: "컴퓨트 지연/붕괴",
+  slow_request: "느린 요청(10초+)", upload_failed: "업로드 실패",
+  build_timeout: "빌드 타임아웃", build_broken: "워커 붕괴", build_error: "빌드 오류",
+  build_interrupted: "빌드 중단(재기동)", load_failed: "세션 로드 실패",
+  load_exception: "세션 로드 예외", poll_timeout: "빌드 대기 타임아웃",
+  honey_upload_fail: "Honey 업로드 실패", honey_crash: "Honey 비정상 종료",
+};
+const diagLabel = (m, v) => m[v] || v || "-";
+const diagTs = s => String(s || "").replace("T", " ");
+
+async function loadDiagTab() {
+  const params = new URLSearchParams({ hours: $("diagHours").value });
+  const sev = $("diagSeverity").value; if (sev) params.set("severity", sev);
+  const comp = $("diagComponent").value; if (comp) params.set("component", comp);
+  const q = $("diagQ").value.trim(); if (q) params.set("q", q);
+  if ($("diagUnacked").checked) params.set("unacked", "1");
+  let o;
+  try { o = await getJSON("api/diagnostics/events?" + params); }
+  catch (e) {
+    $("diagBody").innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  const un = (o.summary || {}).unacked || {};
+  const cnt = (o.summary || {}).counts || {};
+  const crit = Number(un.critical || 0), warn = Number(un.warning || 0);
+  $("diagTiles").innerHTML = `
+    <div class="tile"><div class="lbl">미확인 critical</div>
+      <div class="val"${crit > 0 ? ` style="color:#dc2626"` : ""}>${crit}건</div>
+      <div class="det">전체 ${cnt.critical || 0}건 · 서버 예외·빌드 실패</div></div>
+    <div class="tile"><div class="lbl">미확인 warning</div>
+      <div class="val"${warn > 0 ? ` style="color:#d97706"` : ""}>${warn}건</div>
+      <div class="det">전체 ${cnt.warning || 0}건</div></div>
+    <div class="tile"><div class="lbl">참고(info)</div><div class="val">${cnt.info || 0}건</div>
+      <div class="det">입력 오류·대기 타임아웃 등</div></div>
+    <div class="tile"><div class="lbl">느림/실패 콜드 빌드</div>
+      <div class="val">${(o.builds || []).length}건</div>
+      <div class="det">60초 이상이거나 실패한 것</div></div>`;
+  renderDiagBuilds(o.builds || []);
+  renderDiagEvents(o.events || []);
+}
+
+function renderDiagBuilds(rows) {
+  const tb = $("diagBuildBody");
+  if (!rows.length) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="8">해당 기간에 느리거나 실패한 콜드 빌드가 없습니다.</td></tr>`;
+    return;
+  }
+  tb.innerHTML = rows.map(r => {
+    const bad = r.result && r.result !== "ok";
+    // 마지막 단계가 빈 문자열이면 "워커가 시작조차 못 했다"는 적극적 증거다 —
+    // 값이 없는 것(성공 빌드)과 구분해야 큐 대기 타임아웃을 가려낼 수 있다.
+    const last = r.last_stage === "" && bad
+      ? `<span style="color:#d97706">워커 미시작 (큐 대기)</span>`
+      : esc(r.last_stage || "-") + (r.last_source ? ` <span class="mono">${esc(r.last_source)}</span>` : "");
+    return `<tr>
+      <td>${diagTs(r.ts)}</td>
+      <td${bad ? ` style="color:#dc2626"` : ""}>${esc(r.result || "-")}</td>
+      <td>${sessionLink(r.session)}</td>
+      <td>${esc(r.product || "-")}${r.lot_id ? " / " + esc(r.lot_id) : ""}</td>
+      <td class="num">${r.total == null ? "-" : Number(r.total).toFixed(1) + "s"}</td>
+      <td class="num">${r.queue_wait == null ? "-" : Number(r.queue_wait).toFixed(1) + "s"}</td>
+      <td class="num">${r.pool_wait == null ? "-" : Number(r.pool_wait).toFixed(1) + "s"}</td>
+      <td>${last}</td>
+    </tr>`;
+  }).join("");
+}
+
+function renderDiagEvents(rows) {
+  const tb = $("diagBody");
+  if (!rows.length) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="9">해당 조건의 사건이 없습니다.</td></tr>`;
+    return;
+  }
+  tb.innerHTML = rows.map(r => `<tr data-eid="${esc(r.event_id)}" style="cursor:pointer">
+    <td>${diagTs(r.ts)}</td>
+    <td style="color:${DIAG_SEV_COLOR[r.severity] || "#64748b"}">${esc(r.severity)}</td>
+    <td>${esc(diagLabel(DIAG_COMPONENT_LABEL, r.component))}</td>
+    <td>${esc(diagLabel(DIAG_EVENT_LABEL, r.event))}</td>
+    <td class="detail-cell"><div class="clamp">${esc(r.message || "-")}</div></td>
+    <td>${esc(r.user || "-")}</td>
+    <td>${r.session_id ? sessionLink(r.session_id) : "-"}</td>
+    <td class="mono">${esc(r.request_id || r.event_id || "-")}</td>
+    <td>${r.ack ? "확인됨" : `<button class="btn" data-ack="${esc(r.event_id)}">확인</button>`}</td>
+  </tr>`).join("");
+}
+
+$("diagBody").addEventListener("click", async e => {
+  const ackBtn = e.target.closest("button[data-ack]");
+  if (ackBtn) {
+    e.stopPropagation();
+    try { await postJSON(`api/diagnostics/events/${encodeURIComponent(ackBtn.dataset.ack)}/ack`); }
+    catch (err) { alert("확인 처리 실패: " + err); return; }
+    loadDiagTab();
+    return;
+  }
+  const cell = e.target.closest(".detail-cell .clamp");
+  if (cell) { cell.classList.toggle("open"); return; }
+  const tr = e.target.closest("tr[data-eid]");
+  if (tr) showDiagDetail(tr.dataset.eid);
+});
+
+async function showDiagDetail(eventId) {
+  const card = $("diagDetailCard");
+  card.style.display = "";
+  $("diagTimeline").innerHTML = `<tr class="empty-row"><td colspan="5">로딩 중…</td></tr>`;
+  $("diagExplain").textContent = "";
+  $("diagStack").innerHTML = "";
+  let o;
+  try { o = await getJSON(`api/diagnostics/events/${encodeURIComponent(eventId)}`); }
+  catch (e) {
+    $("diagTimeline").innerHTML = `<tr class="empty-row"><td colspan="5">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  if (!o.found) {
+    $("diagTimeline").innerHTML = `<tr class="empty-row"><td colspan="5">사건을 찾을 수 없습니다 (보관기간 경과).</td></tr>`;
+    return;
+  }
+  const ex = o.explain || {};
+  // 근거가 없으면 "확인 불가"를 그대로 보여준다 — 그럴듯한 추정이 진짜 원인 탐색을 막는다.
+  $("diagExplain").innerHTML =
+    `<b style="color:${ex.confident ? "#0f172a" : "#64748b"}">${esc(ex.cause || "확인 불가")}</b>`
+    + (ex.evidence && ex.evidence.length
+       ? `<div class="det" style="margin-top:4px">근거: ${ex.evidence.map(esc).join(" · ")}</div>` : "")
+    + `<div class="det" style="margin-top:4px">연결 키: ${
+        Object.entries(o.keys || {}).map(([k, v]) => `${esc(k)}=<span class="mono">${esc(v)}</span>`).join(" · ") || "-"}</div>`;
+  const rows = (o.timeline || []).map(r => `<tr>
+    <td>${diagTs(r.ts)}</td>
+    <td>${esc(diagLabel(DIAG_COMPONENT_LABEL, r.component))}</td>
+    <td>${esc(diagLabel(DIAG_EVENT_LABEL, r.event))}</td>
+    <td class="detail-cell"><div class="clamp">${esc(r.message || "-")}</div></td>
+    <td>${r.session_id ? sessionLink(r.session_id) : esc(r.endpoint || "-")}</td>
+  </tr>`);
+  (o.builds || []).forEach(b => rows.push(`<tr style="background:#f8fafc">
+    <td>${diagTs(b.ts)}</td><td>콜드 빌드</td><td>${esc(b.result || "-")}</td>
+    <td class="detail-cell"><div class="clamp">${esc(JSON.stringify(b.stages || {}))}</div></td>
+    <td>${b.total == null ? "-" : Number(b.total).toFixed(1) + "s"}</td>
+  </tr>`));
+  (o.watchdog || []).forEach(w => rows.push(`<tr style="background:#fef2f2">
+    <td>${diagTs(w.ts)}</td><td>watchdog</td><td>${esc(w.action || w.event || "-")}</td>
+    <td class="detail-cell"><div class="clamp">${esc(JSON.stringify(w))}</div></td><td>-</td>
+  </tr>`));
+  $("diagTimeline").innerHTML = rows.join("") ||
+    `<tr class="empty-row"><td colspan="5">연결된 기록이 없습니다.</td></tr>`;
+  const stack = (o.event || {}).stack || o.detail || "";
+  if (stack) {
+    $("diagStack").innerHTML = `<h2 style="font-size:13px">스택 / 상세</h2>
+      <pre style="max-height:320px; overflow:auto; background:#0f172a; color:#e2e8f0;
+                  padding:10px; border-radius:6px; font-size:11px">${esc(stack)}</pre>`;
+  }
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+$("diagTimeline").addEventListener("click", e => {
+  const cell = e.target.closest(".detail-cell .clamp");
+  if (cell) cell.classList.toggle("open");
+});
+$("btnDiagClose").onclick = () => { $("diagDetailCard").style.display = "none"; };
+$("btnDiagSearch").onclick = loadDiagTab;
+$("btnDiagRefresh").onclick = loadDiagTab;
+$("diagQ").addEventListener("keydown", e => { if (e.key === "Enter") loadDiagTab(); });
+[$("diagHours"), $("diagSeverity"), $("diagComponent"), $("diagUnacked")]
+  .forEach(el => el.addEventListener("change", loadDiagTab));
+
+// 현황 탭 경고 칩 → 진단 사건 탭 이동 (loadedTabs 때문에 재방문 시 직접 재조회).
+function showDiagTab(severity) {
+  const btn = document.querySelector('.tab[data-panel="pDiag"]');
+  if (!btn) return;
+  $("diagSeverity").value = severity || "";
+  $("diagUnacked").checked = true;
+  btn.click();
+  loadDiagTab();
+}
+
 async function loadChatbotTab() {
   try {
     const o = await getJSON("api/chatbot?hours=24");
@@ -2620,9 +2905,15 @@ $("logGrep").addEventListener("input", renderLog);
 const AUDIT_PAGE = 50;
 let auditPage = 0, auditHasMore = false;
 const ACTION_LABEL = {
-  upload: "업로드", edit: "수정", delete: "삭제",
+  upload: "업로드", view: "세션 열람", edit: "수정", delete: "삭제",
   client_error: "클라이언트 오류", note_conflict: "Note 편집 충돌",
-  eval_export: "Eval export", eval_db_input: "선례 DB 적재", tier: "S3 티어링",
+  login: "로그인", login_fail: "로그인 실패", logout: "로그아웃",
+  signup: "가입", password_set: "비밀번호 변경",
+  eval_export: "Eval export", eval_snapshot: "Eval 스냅샷",
+  eval_rules_edit: "Eval 룰 수정", eval_label: "Eval 정답라벨",
+  eval_golden: "Eval 골든셋", eval_review_label: "Eval 표본검수",
+  eval_review_collect: "Eval 표본수집",
+  eval_db_input: "선례 DB 적재", diag_ack: "진단 사건 확인", tier: "S3 티어링",
   voc_create: "VOC 등록", voc_edit: "VOC 수정", voc_status: "VOC 상태전환",
   voc_comment_create: "VOC 댓글", voc_comment_delete: "VOC 댓글삭제", voc_delete: "VOC 삭제",
 };

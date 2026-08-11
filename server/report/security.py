@@ -7,6 +7,7 @@ CSRF(double-submit cookie), 신원 가드(_uploader_guard/_editor_guard), 입력
 import logging
 import re
 import secrets
+import time
 
 from flask import abort, jsonify, make_response, request
 
@@ -191,6 +192,34 @@ def _record_web_visit(session):
             uid = _current_user()
             if uid:
                 report_db.record_web_visitor(uid)
+    except Exception:
+        pass
+    _audit_view(session)
+
+
+# 세션 열람 감사 — (사용자, 세션)당 1시간에 1행만. 프런트가 /full 을 재요청하는 경우가
+# 많아(폴링·탭 재로드·뒤로가기) 매번 남기면 감사 로그가 열람으로 도배돼 정작 업로드·편집
+# 이력이 밀려난다. 그래도 "누가 이 세션을 봤나"는 사고 조사에 꼭 필요해 중복만 걷어낸다.
+_VIEW_TTL_SEC = 3600.0
+_view_seen = {}                      # (uid, session_id) -> epoch. best-effort in-memory
+_VIEW_SEEN_MAX = 4000
+
+
+def _audit_view(session):
+    try:
+        sid = (session or {}).get("session_id")
+        if not sid:
+            return
+        uid = _current_user() or ""
+        key = (uid, sid)
+        now = time.time()
+        last = _view_seen.get(key)
+        if last is not None and now - last < _VIEW_TTL_SEC:
+            return
+        if len(_view_seen) > _VIEW_SEEN_MAX:   # dict 비대 방지 (dedupe 리셋 감수)
+            _view_seen.clear()
+        _view_seen[key] = now
+        _audit("view", session=session)
     except Exception:
         pass
 

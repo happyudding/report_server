@@ -128,6 +128,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `WATCHDOG_BACKOFF_MAX_PER_HOUR` / `_GAP_MIN` | `3` / `30` | (watchdog.ps1) healthz 계열 재기동 백오프 — 최근 1시간 재기동이 임계 이상이면 마지막 재기동 후 지정 분이 지날 때까지 재기동을 건너뛴다 |
 | `WATCHDOG_BACKOFF_NL_MAX` / `_NL_GAP_MIN` | `6` / `15` | (watchdog.ps1) `not_listening`(프로세스 사망) 백오프 — 가용성 우선이라 더 관대 |
 | `DIAG_PORT` | `PORT+1` | 사이드 진단 리스너([diag_listener.py](diag_listener.py)) 포트. `127.0.0.1` 전용. `0` = 비활성. watchdog 도 같은 규칙으로 포트를 찾는다 |
+| `REPORT_DIAG_DIR` | (없음) | 진단 사건·빌드 로그를 쓸 폴더. **운영에선 지정하지 않는다**(기본 `server/log`) — 테스트가 운영 로그를 오염시키지 않도록 격리하는 용도 |
 
 **`server/log/` 파일 종류** (모두 위 정리 정책으로 자동 회수):
 
@@ -138,6 +139,11 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `faulthandler_worker_<pid>.txt` | 컴퓨트 워커 | 워커 프로세스 네이티브 크래시(OOM 등) 스택. per-PID |
 | `metrics_YYYYMMDD.log` | metrics 샘플러 | flight recorder — `ts,cpu,rss,mem_used,inflight,win_peak,workers_rss` (분당 1줄). 크래시 직전 리소스 추이 부검용. 7번째(컴퓨트 워커 RSS 합)는 2026-07-28 추가 — **뒤에 붙여** 6컬럼 구파일도 그대로 파싱된다 |
 | `runtime_YYYYMMDD.log` | metrics 샘플러 | 응답시간 스냅샷(`type:lat`, 5분마다) + 느린 요청 개별 기록(`type:slow`, JSON lines). **재시작으로 초기화되지 않는 부하 이력** — admin '이력' 탭이 읽음 |
+| `diagnostic_YYYYMMDD.log` | [diagnostics.py](diagnostics.py) | **진단 사건**(JSON lines) — 서버 500/503·느린 요청·콜드 빌드 실패/중단·브라우저·Honey 오류를 상관 ID(request/operation/build/session)로 이어 모은 단일 저장소. admin '진단 사건' 탭이 읽음 |
+| `diagnostic_detail_<event_id>.txt` | diagnostics.py | 사용자가 오류 창에서 직접 보낸 상세(정제 traceback + 실행 로그 꼬리). JSONL 한 줄이 커지면 조회가 통째로 느려져 따로 뺀다 |
+| `diagnostic_ack.json` | diagnostics.py | 사건 확인 처리 상태(DB 스키마 무변경 원칙) |
+| `compute_worker_YYYYMMDD.log` | 컴퓨트 워커 | 워커 프로세스의 logging — 워커 stdout 은 부모 tee 로 안 흘러 지금까지 증발했다 |
+| `build_state_<pid>.json` | 컴퓨트 워커 | **실행 중** 콜드 빌드 체크포인트(현재 단계·source 파일). 타임아웃으로 워커가 죽어도 부모가 이걸 읽어 마지막 단계를 실패 레코드에 남긴다. 정상 종료 시 삭제 |
 | `watchdog_events.log` | watchdog | 재기동/실패 이벤트(JSON lines) — admin 대시보드 현황 탭이 읽음 |
 | `watchdog_checks.log` | watchdog | **매 실행 1줄**(JSON lines) — 실행 빈도 자체. `mutex_busy` = 태스크 겹쳐 뜬 직접 증거 |
 | `watchdog_snap_<stamp>.txt` | watchdog | 재기동 직전 프로세스 부검 + **스레드 덤프**(사이드 진단 리스너에서 채집) + 최신 `server_*.txt` 마지막 20줄 스냅샷(죽은 이유 원문) |
@@ -275,7 +281,8 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `GET` | `/view/<sid>` | 공개 | 세션 상세 페이지 (HTML) |
 | `GET` | `/api/history` | 공개 | 세션 목록 JSON (필터: product_type/product/lot_id/source) |
 | `GET` | `/api/part_ids` | 공개 | 기준정보 part id 목록 (product_info.db 의 part_id + sub_part_id flatten) |
-| `POST` | `/api/client_error` | 공개 | 브라우저 JS 에러 beacon 수신 (error_beacon.js — CSRF 미적용, per-IP 스로틀, 감사 action=`client_error`) |
+| `POST` | `/api/client_error` | 공개 | 브라우저 JS 에러 beacon 수신 (error_beacon.js — CSRF 미적용, per-IP 스로틀, 감사 action=`client_error` + 진단 사건 component=`browser`). fetch 5xx·콜드 빌드 폴링 타임아웃처럼 **이미 catch 된** 실패도 boot.js 가 여기로 명시 전송한다 |
+| `POST` | `/api/client_diagnostic` | 공개 | **Honey 앱** 오류 수신 (client/transport/error_report.py). client_error 와 같은 규약(항상 204·CSRF 미적용·IP 스로틀)이되 본문 상한 640KB(`mode=detail` = 사용자가 오류 창에서 직접 보낸 상세). **event_id 는 클라 값을 유지**한다 — 서버가 죽어 있던 동안 로컬 큐에 쌓였다 재전송되므로 서버가 새로 발급하면 한 사고가 여러 건이 된다 |
 | `POST` | `/api/eval/labels_import` | Honey | **선례 CSV 검증/적재** (Honey 'DB Input'). multipart `file` + `mode=validate\|commit`. **`X-Honey-Agent: 1` 필수**(CSRF 대체), Honey 신원 있으면 누구나, ≤5MB, 단순 5컬럼만. CSV **내용** 오류는 4xx 가 아니라 `200 {"ok":false,"errors":[…]}`. `db_input/import_csv.py` 를 subprocess 로 실행(→ [docs/13 §10](../docs/13_eval_analyzer_integration.md)). 관리자 `GET /api/eval/labels.csv` 의 반대 방향. 감사 action=`eval_db_input` |
 | `GET` | `/result/<sid>` | 공개 | 세션 요약 JSON |
 | `GET` | `/session/<sid>` | 공개 | 세션 메타 JSON (password 제거, has_password 만) |
@@ -377,6 +384,15 @@ web_report 콜드 빌드의 단계별 소요 + 대기 3종(큐/풀/IPC) + 실패
 기록은 [web_report/build_log.py](../web_report/build_log.py) 가
 `server/log/webreport_build_YYYYMMDD.log` 에 JSON line 으로 남긴다 →
 [docs/12](../docs/12_web_report_cache.md).
+**진단 사건 (오류 추적 단일 진입점)**: `GET /api/diagnostics/events?hours=&severity=&component=&q=&unacked=` /
+`GET /api/diagnostics/events/<event_id>` (상관 ID 로 이어진 타임라인 + 콜드 빌드 기록 +
+watchdog 병합 + **증거 기반 원인 안내**) / `POST /api/diagnostics/events/<event_id>/ack`.
+구현 [admin_panel/diagnostics_admin.py](admin_panel/diagnostics_admin.py), 저장소
+[diagnostics.py](diagnostics.py)(`server/log/diagnostic_*.log`). 화면은 `🚨 진단 사건` 탭.
+서버 500/503 응답은 본문 `error_id` 와 `X-Request-ID` 헤더에 **같은 값**을 실어 주므로,
+사용자가 화면에서 읽어준 번호 하나로 서버 스택·빌드 기록·클라 오류를 한 번에 찾는다.
+원인 안내는 근거가 있을 때만 말하고, 없으면 "확인 불가"를 그대로 표시한다.
+
 **실시간 접속 사용자**: `GET /api/active_users?window=` (사용자 탭 10초 폴링 전용 경량 API) —
 최근 `window` 초 안에 요청을 보낸 신원 목록. 신원은 `auth_identity.current_user()`
 (Honey UA / SSO 헤더 / 웹 로그인), 없으면 `ip:<addr>` 로 묶는다. 관리자 자신·`/healthz`
@@ -453,6 +469,7 @@ server/
 ├── plugin.py                 register_report_server() — Blueprint 3개 + admin_panel + ops 등록
 ├── config.py                 환경변수·경로 통합 설정 (정본)
 ├── auth_identity.py          신원 provider 체인 (HoneyUser UA 기본 / AUTH_SSO_HEADER SSO)
+├── diagnostics.py            진단 사건 저장소 (JSONL) + 요청 상관 ID(request/operation) 훅
 ├── upload_xlsx.py            POST /upload_xlsx 핸들러
 ├── upload_webreport.py       POST /upload_webreport 핸들러 (web_report.ingest 호출)
 ├── xlsx_parser.py            시트 grid → 텍스트 추출 (_GridSheet 셸, openpyxl 미사용)
@@ -487,6 +504,7 @@ server/
 ├── admin_panel/              /pe/admin-<secret>/ 대시보드 + metrics 샘플러
 │   ├── __init__.py           register_admin_panel() + metrics.init_app
 │   ├── routes.py / sysinfo.py / stats.py / sessions_admin.py / users_admin.py / voc_admin.py
+│   ├── diagnostics_admin.py  진단 사건 조회·타임라인·원인 안내 ('🚨 진단 사건' 탭)
 │   ├── maintenance.py / metrics.py / admin_panel.html
 ├── eval_panel/               /pe/eval eval 룰 관리 (저장 즉시 반영)
 │   ├── __init__.py           register_eval_panel()

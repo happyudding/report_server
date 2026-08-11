@@ -71,4 +71,13 @@
       stack: trimStack(r),
     });
   });
+
+  // 이미 catch 된 실패(fetch 5xx·콜드 빌드 폴링 타임아웃 등)를 명시적으로 보고하는 창구.
+  // window.onerror 는 try/catch 안의 실패를 못 본다 — 정작 사용자가 "안 열린다"고
+  // 신고하는 경우가 대부분 그쪽이라, 화면에 에러를 띄우는 자리에서 직접 부른다.
+  window.reportClientError = function (entry) {
+    try {
+      if (entry && typeof entry === "object") send(entry);
+    } catch (e) { /* no-op */ }
+  };
 })();

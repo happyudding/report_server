@@ -88,7 +88,9 @@ def snapshot(session_id: str) -> dict:
 
     - 빌드 중: ``{"state":"building","stage","elapsed"}``. 여러 stage 가 동시에 도는
       경우 **가장 오래 돌고 있는 것**을 보고한다(사용자가 실제로 기다리는 시간에 가깝다).
-    - 연속 실패로 차단된 상태: ``{"state":"failed","stage","fail_count"}``.
+    - 연속 실패로 차단된 상태: ``{"state":"failed","stage","fail_count","error"}``.
+      error 는 mark_failure 가 받아 둔 예외 요약이다 — 여태 보관만 하고 아무데도
+      내보내지 않아, 사용자도 관리자도 실패 사유를 볼 수 없었다.
     - 그 외: ``{"state":"idle"}``.
 
     구 프런트는 ``state !== "building"`` 을 전부 무시하므로 failed 추가는 하위호환이다.
@@ -104,7 +106,8 @@ def snapshot(session_id: str) -> dict:
                   and time.monotonic() - e["t_last"] < FAIL_COOLDOWN_SEC]
     if failed:
         stage, entry = failed[0]
-        return {"state": "failed", "stage": stage, "fail_count": entry["count"]}
+        return {"state": "failed", "stage": stage, "fail_count": entry["count"],
+                "error": entry.get("error") or ""}
     return {"state": "idle"}
 
 

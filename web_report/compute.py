@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import collections
 import faulthandler
+import functools
 import logging
 import os
 import threading
@@ -52,10 +53,90 @@ _WORKER_FAULT_FILE = None  # 워커 faulthandler 파일 핸들 (전역 보관 �
 
 
 def _init_worker():
-    """워커 프로세스 초기화 — 재귀 오프로드 방지 플래그 + 네이티브 크래시 로깅."""
+    """워커 프로세스 초기화 — 재귀 오프로드 방지 플래그 + 네이티브 크래시 로깅 + 로깅."""
     global _IN_WORKER
     _IN_WORKER = True
     _enable_worker_faulthandler()
+    _enable_worker_logging()
+
+
+def _enable_worker_logging():
+    """워커의 logging 을 파일로 — 지금까지 워커 안의 _log.warning/exception 은
+    무포맷 stderr 로 나가 부모 tee(server_*.txt)에 잡히지 않고 증발했다(wsgi 의
+    __mp_main__ 가드가 워커에서 tee 설치를 건너뛰기 때문).
+
+    날짜 파일 공유 append — 워커 2~8개가 인터리브해도 라인 단위라 실용상 읽을 수 있다."""
+    try:
+        import config
+        d = Path(config.ROOT_DIR) / "server" / "log"
+        d.mkdir(parents=True, exist_ok=True)
+        h = logging.FileHandler(d / f"compute_worker_{time.strftime('%Y%m%d')}.log",
+                                encoding="utf-8", delay=True)
+        h.setFormatter(logging.Formatter(
+            f"%(asctime)s %(levelname)s [pid {os.getpid()}] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S"))
+        root = logging.getLogger()
+        root.setLevel(logging.INFO)
+        root.addHandler(h)
+    except Exception:
+        pass
+
+
+def _job(kind: str):
+    """워커 잡 데코레이터 — 실행 중 체크포인트(sidecar) + hang 스택 덤프 예약.
+
+    타임아웃으로 terminate 되는 워커는 아무 흔적도 남기지 못했다. 여기서 두 겹을 건다:
+    ① build_log sidecar 에 현재 단계를 계속 남겨 부모가 사후에 읽고,
+    ② 타임아웃 10초 전 faulthandler 가 자기 스택을 워커 덤프 파일에 찍는다
+       (부모가 자식 스택을 뜨는 방법은 Windows 에 없다 — 자식이 스스로 찍어야 한다).
+    """
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(session_id, *args, **kw):
+            if not _IN_WORKER:
+                return fn(session_id, *args, **kw)
+            build_log.begin_job(kind, session_id)
+            dumping = False
+            try:
+                if _TIMEOUT_SEC > 20 and _WORKER_FAULT_FILE is not None:
+                    faulthandler.dump_traceback_later(_TIMEOUT_SEC - 10,
+                                                      file=_WORKER_FAULT_FILE)
+                    dumping = True
+            except Exception:
+                pass
+            try:
+                return fn(session_id, *args, **kw)
+            finally:
+                if dumping:
+                    try:
+                        faulthandler.cancel_dump_traceback_later()
+                    except Exception:
+                        pass
+                build_log.end_job()
+        return wrapper
+    return deco
+
+
+def _pool_pids():
+    """현재 풀의 워커 PID 목록 (sidecar 회수용)."""
+    try:
+        return [p.pid for p in (getattr(_pool, "_processes", None) or {}).values()]
+    except Exception:
+        return []
+
+
+def _dead_worker_state(session_id):
+    """이 세션을 돌고 있던 워커의 마지막 체크포인트 (없으면 None).
+
+    타임아웃 시 **풀을 버리기 전에** 부른다 — terminate 후에는 sidecar 가 남아 있어도
+    어느 pid 가 살아 있었는지 알 수 없다."""
+    try:
+        for st in build_log.read_states(_pool_pids()):
+            if st.get("session") == session_id:
+                return st
+    except Exception:
+        pass
+    return None
 
 
 def _enable_worker_faulthandler():
@@ -180,7 +261,10 @@ def run(job, *args):
         _log.error("compute worker pool broken — 풀 폐기 후 실패 반환: %s%r",
                    name, args, exc_info=True)
         # 실패 기록은 여기서만 가능하다 — 어느 세션이 몇 초 만에 죽었는지 아는 유일한 지점.
-        build_log.record_failure(name, args, "broken", time.time() - t0, repr(exc))
+        # sidecar 는 풀을 버리기 전에 읽어야 어느 pid 가 이 잡을 돌았는지 알 수 있다.
+        state = _dead_worker_state(args[0] if args else "")
+        build_log.record_failure(name, args, "broken", time.time() - t0, repr(exc), state)
+        _emit_build_failure(name, args, "broken", time.time() - t0, repr(exc), state)
         _reset_pool(shutdown=True)
         raise
     except TimeoutError:
@@ -191,22 +275,55 @@ def run(job, *args):
         if fut.cancel():
             _log.error("compute queue-wait timeout (%ss) — 미시작 잡 취소, 풀 보존: %s%r",
                        _TIMEOUT_SEC, name, args)
-            build_log.record_failure(name, args, "timeout", time.time() - t0,
-                                     f"TimeoutError(queued, {_TIMEOUT_SEC}s)")
+            err = f"TimeoutError(queued, {_TIMEOUT_SEC}s)"
+            build_log.record_failure(name, args, "timeout", time.time() - t0, err)
+            _emit_build_failure(name, args, "timeout", time.time() - t0, err, None)
             raise
         # cancel 실패 = 실행 중(선급행 RUNNING 포함) — fut.cancel() 은 이미 실행 중인
         # 작업을 못 멈춘다. hang 워커를 계속 안고 가면 슬롯이 영구 소모되므로 풀 자체를
         # 버린다.
         _log.error("compute worker timeout (%ss) — 풀 폐기: %s%r", _TIMEOUT_SEC,
                    name, args)
-        build_log.record_failure(name, args, "timeout", time.time() - t0,
-                                 f"TimeoutError({_TIMEOUT_SEC}s)")
+        doomed_pids = _pool_pids()          # 풀을 버리면 pid 를 알 수 없으므로 먼저 확보
+        state = _dead_worker_state(args[0] if args else "")
+        if state:
+            _log.error("  ↳ 마지막 단계: %s%s (%.1fs 경과, 빌드 %.1fs)",
+                       state.get("stage") or "?",
+                       f" [{state.get('source')}]" if state.get("source") else "",
+                       float(state.get("stage_elapsed") or 0),
+                       float(state.get("elapsed") or 0))
+        err = f"TimeoutError({_TIMEOUT_SEC}s)"
+        build_log.record_failure(name, args, "timeout", time.time() - t0, err, state)
+        _emit_build_failure(name, args, "timeout", time.time() - t0, err, state)
         _reset_pool(shutdown=True)
+        build_log.drop_states(doomed_pids)   # terminate 된 워커의 sidecar 잔해 정리
         raise
     except Exception as exc:
         STATS["error"] += 1
-        build_log.record_failure(name, args, "error", time.time() - t0, repr(exc))
+        state = _dead_worker_state(args[0] if args else "")
+        build_log.record_failure(name, args, "error", time.time() - t0, repr(exc), state)
+        _emit_build_failure(name, args, "error", time.time() - t0, repr(exc), state)
         raise
+
+
+def _emit_build_failure(name, args, result, elapsed, error_text, state):
+    """콜드 빌드 실패를 진단 사건으로 — 빌드 로그와 달리 사용자 요청·오류와 한 타임라인에
+    묶인다(같은 session_id 로 이어짐). 여기가 아니면 빌드 실패는 관리자 이력 탭에서만
+    보이고, "그때 그 사용자가 못 연 세션"과 연결되지 않는다."""
+    try:
+        import diagnostics
+        session_id = args[0] if args and isinstance(args[0], str) else ""
+        st = state or {}
+        diagnostics.emit("critical" if result != "error" else "warning", "build",
+                         f"build_{result}",
+                         session_id=session_id, build_id=st.get("build_id") or None,
+                         elapsed_ms=int(max(0.0, elapsed) * 1000),
+                         error_type=result, message=f"{name}: {error_text}",
+                         source=st.get("source") or None,
+                         last_stage=st.get("stage") or "(워커 미시작 — 큐 대기)",
+                         **diagnostics.current_ids())
+    except Exception:
+        pass
 
 
 def status():
@@ -249,6 +366,7 @@ def _stamp(t_start: float) -> dict | None:
     return timing
 
 
+@_job("report")
 def report_job(session_id: str, upload_root_str: str):
     from database import report_db
     from . import service
@@ -258,6 +376,7 @@ def report_job(session_id: str, upload_root_str: str):
     return report, _stamp(t_start)
 
 
+@_job("dist")
 def dist_job(session_id: str, upload_root_str: str, bin1: bool = False,
              bin1_scope: str = ""):
     from database import report_db
@@ -269,6 +388,7 @@ def dist_job(session_id: str, upload_root_str: str, bin1: bool = False,
     return blob, _stamp(t_start)
 
 
+@_job("temp_map")
 def temp_map_job(session_id: str, upload_root_str: str):
     """Temperature 항목별 fail die 인덱스 gzip — map_job 과 같은 규약(워커 오프로드)."""
     from database import report_db
@@ -280,6 +400,7 @@ def temp_map_job(session_id: str, upload_root_str: str):
     return blob, _stamp(t_start)
 
 
+@_job("map")
 def map_job(session_id: str, upload_root_str: str):
     from database import report_db
     from . import service
@@ -289,6 +410,7 @@ def map_job(session_id: str, upload_root_str: str):
     return blob, _stamp(t_start)
 
 
+@_job("trim")
 def trim_job(session_id: str, upload_root_str: str, source: str) -> bytes:
     from database import report_db
     from . import service
@@ -297,6 +419,7 @@ def trim_job(session_id: str, upload_root_str: str, source: str) -> bytes:
     return blob
 
 
+@_job("trim")
 def trim_chart_batch_job(session_id: str, upload_root_str: str, source: str,
                          group_ids: list) -> bytes:
     """Trim 산포 1페이지(≤3그룹) 차트 배치 — 콜드일 때만 여기로 온다.
@@ -311,6 +434,7 @@ def trim_chart_batch_job(session_id: str, upload_root_str: str, source: str,
         source=source, group_ids=list(group_ids))
 
 
+@_job("dist_pack")
 def dist_pack_job(session_id: str, upload_root_str: str, base: bool = False) -> None:
     """Distribution pack 생성 잡 — 결과는 dist_pack_store 에 영구 저장되므로 반환값 없음."""
     from database import report_db
@@ -633,6 +757,41 @@ def _rewarm_sweep(upload_root_str: str) -> None:
         queued += 1
     _log.info("[rewarm] 기동 후 재웜 스윕 완료 — 최근 %d건 중 콜드 %d건 예약",
               len(rows), queued)
+
+
+def sweep_interrupted_builds() -> None:
+    """기동 시 남아 있는 워커 sidecar 를 정리하고 사건으로 남긴다.
+
+    풀이 아직 없는 기동 시점이므로 남아 있는 파일은 전부 **지난 프로세스의 잔해**다 —
+    즉 그 빌드는 서버가 죽거나 재기동되면서 끊긴 것이다. 지금까지는 그 사실이 어디에도
+    남지 않아, watchdog 재기동과 "리포트가 안 열린다" 신고가 연결되지 않았다."""
+    if _IN_WORKER:
+        return
+    try:
+        stale = build_log.clear_states()
+    except Exception:
+        return
+    for st in stale:
+        try:
+            _log.warning("[build] 중단된 콜드 빌드 발견 — session=%s stage=%s elapsed=%.1fs",
+                         st.get("session"), st.get("stage"), float(st.get("elapsed") or 0))
+            build_log.record({"kind": st.get("kind") or "report",
+                              "session": st.get("session") or "",
+                              "offloaded": True, "result": "interrupted",
+                              "total": st.get("elapsed"),
+                              "build_id": st.get("build_id") or "",
+                              "last_stage": st.get("stage") or "",
+                              "last_source": st.get("source") or "",
+                              "error": "서버 재기동으로 중단"})
+            import diagnostics
+            diagnostics.emit("warning", "build", "build_interrupted",
+                             session_id=st.get("session") or None,
+                             build_id=st.get("build_id") or None,
+                             source=st.get("source") or None,
+                             last_stage=st.get("stage") or None,
+                             message=f"서버 재기동으로 중단됨 (stage={st.get('stage')})")
+        except Exception:
+            pass
 
 
 def start_rewarm_sweep(upload_root_str: str) -> None:

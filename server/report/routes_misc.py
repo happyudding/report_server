@@ -723,6 +723,76 @@ def client_error():
             client_user=_current_user(), result="error")
     except Exception:
         _log.warning("client_error 감사 기록 실패", exc_info=True)
+    _emit_client_event("browser", body, msg, session_id, ip)
+    return "", 204
+
+
+def _emit_client_event(component, body, msg, session_id, ip):
+    """클라이언트 오류를 진단 사건으로도 남긴다 — 감사 로그와 역할이 다르다.
+
+    감사 로그는 "누가 무엇을 했나"의 시계열이라 오류가 섞이면 이력이 밀려나고,
+    상관 ID(요청·빌드)로 이어붙일 수도 없다. 사건 저장소가 그 짝이다."""
+    try:
+        import diagnostics
+        kind = str(body.get("kind") or "error")[:40]
+        sev = "info" if kind in ("poll_timeout",) else "warning"
+        diagnostics.emit(sev, component, kind,
+                         event_id=body.get("event_id"),
+                         message=diagnostics.scrub_paths(msg),
+                         session_id=session_id or None,
+                         operation_id=str(body.get("operation_id") or "")[:32] or None,
+                         request_id=str(body.get("error_id") or "")[:32] or None,
+                         http_status=body.get("status") or None,
+                         endpoint=str(body.get("url") or "")[:300] or None,
+                         error_type=str(body.get("error_type") or "")[:80] or None,
+                         source=str(body.get("source") or "")[:200] or None,
+                         honey_version=str(body.get("version") or "")[:40] or None,
+                         user=_current_user() or None, client_ip=ip,
+                         stack=diagnostics.scrub_paths(body.get("stack") or "") or None,
+                         detail=body.get("detail") or None)
+    except Exception:
+        _log.warning("진단 사건 기록 실패", exc_info=True)
+
+
+# ── Honey 클라이언트 진단 수집 (client/transport/error_report.py) ─────────────
+
+_CLIENT_DIAG_MAX_BODY = 640 * 1024   # detail 모드(정제 traceback + 실행 로그 꼬리)
+
+
+@report_bp.post("/api/client_diagnostic")
+def client_diagnostic():
+    """Honey 데스크톱 앱의 오류 보고 수신. client_error 와 같은 규약(항상 204, CSRF
+    미적용, IP 스로틀)이되 상세 본문 상한만 크다.
+
+    event_id 는 **클라가 만든 값을 그대로 쓴다** — 서버가 잠깐 죽어 있던 동안 로컬
+    큐에 쌓였다가 재전송되므로, 서버가 새 ID 를 발급하면 같은 사고가 여러 건으로
+    보인다."""
+    ip = request.remote_addr or "?"
+    if (request.content_length or 0) > _CLIENT_DIAG_MAX_BODY or _client_err_throttled(ip):
+        return "", 204
+    body = request.get_json(force=True, silent=True) or {}
+    msg = str(body.get("message") or "")[:500]
+    if not msg:
+        return "", 204
+    session_id = re.sub(r"[^0-9a-zA-Z_\-]", "", str(body.get("session_id") or ""))[:64]
+    if str(body.get("mode") or "minimal") != "detail":
+        body.pop("detail", None)
+    detail = " | ".join(p for p in (
+        f"honey:{body.get('kind') or 'error'}",
+        msg,
+        f"op={body.get('operation_id')}" if body.get("operation_id") else "",
+        f"ver={body.get('version')}" if body.get("version") else "",
+    ) if p)
+    _log.warning("honey_diagnostic [%s] %s", ip, detail)
+    try:
+        report_db.log_audit(
+            action="client_error", session_id=session_id or None,
+            changed_fields=detail[:1500], client_ip=ip,
+            user_agent=request.headers.get("User-Agent"),
+            client_user=_current_user(), result="error")
+    except Exception:
+        _log.warning("honey_diagnostic 감사 기록 실패", exc_info=True)
+    _emit_client_event("honey", body, msg, session_id, ip)
     return "", 204
 
 

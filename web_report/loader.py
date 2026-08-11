@@ -49,6 +49,9 @@ def download_decode_tables(analysis_key, upload_root: Path, *, keep_df: bool = T
             source_info = sources_manifest[idx] if idx < len(sources_manifest) else {}
             source_name = str(source_info.get("name") or f"source_{idx + 1}")
             file_name = str(source_info.get("file_name") or source_name)
+            # source 단위 체크포인트 — 콜드 빌드가 타임아웃으로 죽었을 때 "몇 번째
+            # 파일에서 멎었나"를 남기는 유일한 수단이다(누적 소요는 decode 하나로 유지).
+            build_log.checkpoint("decode", f"{idx + 1}/{len(sources)} {file_name}")
             # decode+split 결합 경로 — to_numeric 중복 변환/재검증 제거 (결과 동일)
             tables.append(decode_split_honeyform_parquet(
                 data, source=source_name, file_name=file_name, keep_df=keep_df))

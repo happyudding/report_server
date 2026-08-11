@@ -15,6 +15,8 @@
   (5) compute.run 타임아웃 → result="timeout" 레코드 (총 소요 = 큐 대기 포함)
   (6) compute.run 잡 예외 → result="error" 레코드
   (7) report_job/dist_job/map_job 이 (결과, timing) 튜플을 반환한다 (호출부 계약)
+  (8) 워커가 타임아웃으로 죽어도 **마지막 단계·source 파일**이 실패 레코드에 남는다
+      (실행 중 체크포인트 sidecar — 300초 타임아웃 진단의 핵심)
 
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례).
 """
@@ -23,6 +25,7 @@ from __future__ import annotations
 import inspect
 import os
 import sys
+import tempfile
 import time
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -32,6 +35,10 @@ sys.path.insert(0, os.path.join(_ROOT, "server"))
 # compute import 전에 확정돼야 하는 값들 (모듈 전역으로 굳는다).
 os.environ["WEB_REPORT_COMPUTE_WORKERS"] = "2"
 os.environ["WEB_REPORT_COMPUTE_TIMEOUT_SEC"] = "2"
+# 로그는 임시 폴더로 격리한다 — 테스트 레코드가 운영 server/log 에 섞이면 관리자
+# 화면의 빌드 이력을 못 믿게 된다. 워커(spawn)도 환경을 물려받아 같은 폴더를 쓴다.
+os.environ.setdefault("REPORT_DIAG_DIR", os.path.join(tempfile.gettempdir(),
+                                                      "honey_test_log"))
 
 from web_report import build_log  # noqa: E402
 
@@ -43,6 +50,17 @@ def _slow_job(session_id, seconds):
 
 def _boom_job(session_id):
     raise ValueError("boom")
+
+
+def _stage_hang_job(session_id, seconds):
+    """단계에 들어간 뒤 멎는 잡 — 운영의 hang 워커를 흉내낸다 (compute._job 과 같은 배선)."""
+    build_log.begin_job("report", session_id)
+    try:
+        with build_log.stage("decode"):
+            build_log.checkpoint("decode", "2/3 lot_b.csv")
+            time.sleep(seconds)
+    finally:
+        build_log.end_job()
 
 
 def main():
@@ -117,7 +135,31 @@ def main():
     assert row["result"] == "error" and "boom" in row["error"], row
     print("(6) 잡 예외 레코드 ok")
 
+    # ── (8) 타임아웃 시 마지막 단계·파일 보존 ─────────────────────────────────
+    # 워커가 terminate 되면 자식이 잰 단계 기록은 IPC 로 돌아오지 못한다. 실행 중
+    # sidecar 가 없으면 "300초 걸렸다"만 남고 어디서 멎었는지는 영영 알 수 없다.
+    mark8 = mark + "-hang"
+    try:
+        compute.run(_stage_hang_job, mark8, 30)
+        raise AssertionError("TimeoutError 가 나야 한다")
+    except TimeoutError:
+        pass
+    row = [r for r in build_log.history(1, 500) if r.get("session") == mark8][0]
+    assert row["result"] == "timeout", row
+    assert row["last_stage"] == "decode", row
+    assert row["last_source"] == "2/3 lot_b.csv", row
+    assert row.get("build_id"), row
+    assert row.get("last_stage_elapsed") is not None, row
+    print(f"(8) 타임아웃 실패 레코드에 마지막 단계 보존 ok "
+          f"(stage={row['last_stage']} source={row['last_source']})")
+
+    # 큐 대기만 하다 죽은 잡은 sidecar 가 없어야 한다 — 그 부재가 '대기 타임아웃'의 증거다.
+    assert [r for r in build_log.history(1, 500)
+            if r.get("session") == mark5][0]["last_stage"] == "", "큐/미계측 잡은 빈 값"
+    print("(9) 계측 없는 잡은 last_stage 가 빈 값 (대기 타임아웃과 구분 가능) ok")
+
     compute._reset_pool(shutdown=True)     # 테스트 워커 정리
+    assert not build_log.read_states(), "종료 후 sidecar 잔해가 없어야 한다"
 
     # ── (7) 잡 반환 계약 ──────────────────────────────────────────────────────
     # 실제 세션 없이 돌릴 수 없으므로 소스에서 계약만 확인한다 — service.py 3곳이

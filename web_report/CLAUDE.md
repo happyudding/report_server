@@ -56,7 +56,13 @@ web_report/
 ├── build_log.py        콜드 빌드 **단계별 소요 + 대기 3종(큐/풀/IPC)** 기록 (2026-08-04).
 │                        server/log/webreport_build_*.log JSON line · 실패(타임아웃·워커
 │                        붕괴)도 기록 · 관리자 이력 탭 카드. 오프로드 빌드는 잡이
-│                        (결과, timing) 튜플로 자식 시간을 부모에 실어 보낸다
+│                        (결과, timing) 튜플로 자식 시간을 부모에 실어 보낸다.
+│                        + **실행 중 체크포인트**(2026-08-11) — 워커가 단계마다
+│                        server/log/build_state_<pid>.json 을 원자적으로 덮어써, 타임아웃으로
+│                        terminate 돼도 부모가 last_stage/last_source 를 건져 실패 레코드에
+│                        남긴다(그게 없으면 300초를 어디서 썼는지 영영 모른다 → docs/20).
+│                        ⚠️ source 단위 진행 표시는 `checkpoint()` 를 쓸 것 — 같은 이름으로
+│                        `stage()` 를 중첩하면 소요가 2배로 누적된다
 ├── runtime.py          저장소 포트 주입 지점 (report_extension.init_app 이 주입)
 ├── ports.py            StoragePort/SessionRepo Protocol (DIP 경계)
 ├── rawedit.py          Raw Data 소스 내보내기/교체·삭제 헬퍼 (Excel 왕복 — 시트 삭제 시
@@ -76,7 +82,7 @@ web_report/
 │                        공개 API: normalize/digest/describe/describe_rule/normalize_where/
 │                        match_rows/apply_tables. 순수 모듈 — Honey 허브·빠른 수정
 │                        다이얼로그가 같은 코드를 돌려 값 일치를 구조적으로 보장
-├── temperature.py      Temperature 모드(PMIC RT/CT/HT) — .lt/.pds limit 파서 + 업로드 전
+├── temperature.py      Temperature 모드(PMIC·SECURITY RT/CT/HT) — .lt/.pds limit 파서 + 업로드 전
 │                        rawdata 정리(RT pass 좌표 필터 + RT limit 재판정 + bin 매칭).
 │                        순수 모듈 — Honey 클라 honey_main._clean_temperature_frames 가 import
 ├── trim_match.py       Trim 항목명 매칭 순수 모듈 (product_type 별 PMIC4/TV2 규칙셋)

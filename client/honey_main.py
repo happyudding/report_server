@@ -59,6 +59,26 @@ from report_flow import (
 from web_report.honeyform import dedupe_item_columns, encode_honeyform_parquet
 import app_settings
 import chart_colors
+
+
+def _report_error(kind, message, *, stack="", context=None):
+    """오류를 서버 진단 사건으로 보고하고 오류번호를 돌려준다 (실패해도 무음).
+
+    transport 를 지연 import 하는 이유: 보고 경로가 앱 기동을 좌우해선 안 된다."""
+    try:
+        from transport import error_report
+        return error_report.report_error(kind, message, stack=stack, context=context)
+    except Exception:
+        return ""
+
+
+def _begin_operation(name):
+    """작업 단위 시작 — 이후 서버 요청 헤더와 오류 보고가 같은 operation_id 를 쓴다."""
+    try:
+        from transport import error_report
+        return error_report.begin_operation(name)
+    except Exception:
+        return ""
 import client_identity
 
 # 로컬 리포트 엔진 (pandas/xlwings 의존). 미설치 시 화면 비활성.
@@ -74,6 +94,8 @@ except Exception as exc:  # noqa: BLE001
     _RG_IMPORT_ERROR = exc
 
 PRODUCT_TYPES = ["MDDI", "PDDI", "PMIC", "SECURITY", "TCON"]
+# Temperature(RT/CT/HT) 분석 모드를 고를 수 있는 제품군 — _sync_temperature_mode 가 사용.
+_TEMPERATURE_PRODUCT_TYPES = {"PMIC", "SECURITY"}
 _FLOW_PROFILE_ON = bool(os.environ.get("HONEY_FLOW_PROFILE"))
 
 # 프리징(onedir) 시 _MEIPASS, 아니면 스크립트 폴더에서 .ui 탐색
@@ -809,7 +831,7 @@ class HoneyMainWindow(QMainWindow):
         # Product Type 선택 변경 시 사용자별 settings.json 에 즉시 저장
         for rb in self._pt_radios.values():
             rb.toggled.connect(self._save_product_type)
-            # Temperature 모드는 PMIC 에서만 고를 수 있다.
+            # Temperature 모드는 PMIC / SECURITY 에서만 고를 수 있다.
             rb.toggled.connect(self._sync_temperature_mode)
 
     # ── 실험: 내장 브라우저 + 메뉴바 + 아이콘 사이드바 ───────────────────────
@@ -907,7 +929,7 @@ class HoneyMainWindow(QMainWindow):
         mode_row = QHBoxLayout()
         self._mode_radios = {}
         self._mode_group = QButtonGroup(self)
-        # Temperature 는 PMIC 제품군 전용(RT/CT/HT 온도 pair 분석) — _sync_temperature_mode 가
+        # Temperature 는 PMIC / SECURITY 제품군 전용(RT/CT/HT 온도 pair 분석) — _sync_temperature_mode 가
         # Product Type 선택에 따라 보이고 숨긴다.
         for key in ("Normal", "Compare", "DUT", "Temperature"):
             rb = QRadioButton(key)
@@ -2748,6 +2770,7 @@ class HoneyMainWindow(QMainWindow):
                         mode="Normal", source_order=None, temperature=None, prefetch=None):
         # 실행 버튼 잠금/해제는 호출부(on_web_report)의 try/finally 가 전담한다.
         self._init_run_log("Web Report 생성")
+        _begin_operation("web_report")   # 이 작업의 요청·오류를 서버에서 한 줄로 묶는다
         progress = _ElapsedProgress(
             self.progress_status, "Web Report 준비 중...", self._status,
             busy=True, minimum=0, maximum=100,
@@ -2900,8 +2923,15 @@ class HoneyMainWindow(QMainWindow):
                 result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
         except Exception as exc:
             progress.fail(f"실패: Web Report 업로드 실패 - {exc}")
+            # 연결 거부·read timeout 은 서버에 요청 자체가 닿지 않아 서버 로그에 아무것도
+            # 남지 않는다 — 그런 실패는 이 보고만이 유일한 기록이다.
+            event_id = _report_error(
+                "honey_upload_fail", f"{type(exc).__name__}: {exc}",
+                context={"product": meta.get("product", ""), "lot": meta.get("lot_id", ""),
+                         "sources": len(parquet_items)})
             _show_exc(self, "Web Report 업로드 실패", exc,
-                      prefix="서버에 업로드하지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.")
+                      prefix="서버에 업로드하지 못했습니다. 네트워크와 서버 상태를 확인해 주세요."
+                             + (f"\n오류번호: {event_id}" if event_id else ""))
             self._status("Web Report 업로드 실패")
             return
 
@@ -3230,7 +3260,7 @@ class HoneyMainWindow(QMainWindow):
         app_settings.set_setting("product_type", self.product_type())
 
     def _sync_temperature_mode(self, *_):
-        """Temperature 분석 모드 라디오는 PMIC 를 골랐을 때만 보인다.
+        """Temperature 분석 모드 라디오는 PMIC / SECURITY 를 골랐을 때만 보인다.
 
         다른 제품군으로 바꿀 때 Temperature 가 선택돼 있으면 Normal 로 되돌린다
         (숨은 라디오가 선택된 채 남으면 업로드 모드가 조용히 어긋난다).
@@ -3238,9 +3268,9 @@ class HoneyMainWindow(QMainWindow):
         rb = (getattr(self, "_mode_radios", None) or {}).get("Temperature")
         if rb is None:
             return
-        is_pmic = self.product_type() == "PMIC"
-        rb.setVisible(is_pmic)
-        if not is_pmic and rb.isChecked():
+        allowed = self.product_type() in _TEMPERATURE_PRODUCT_TYPES
+        rb.setVisible(allowed)
+        if not allowed and rb.isChecked():
             self._mode_radios["Normal"].setChecked(True)
 
     def _do_upload(self, path):
@@ -3985,12 +4015,16 @@ def _install_excepthook():
     def hook(etype, value, tb):
         text = "".join(traceback.format_exception(etype, value, tb))
         print(text, file=sys.stderr)  # tee 된 stderr → 로그 파일에 traceback 기록
+        # 서버에도 최소 정보를 남긴다 — 지금까지 Honey 오류는 사용자 PC 로그에만
+        # 남아, 신고가 없으면 관리자가 존재조차 알 수 없었다. 전송 실패는 무음.
+        event_id = _report_error("honey_crash", f"{etype.__name__}: {value}", stack=text)
         try:
             # traceback 은 "자세히 보기" 뒤로 — 본문은 사용자가 읽을 문장만.
             _show_error(
                 None, "오류가 발생했습니다",
                 "예기치 않은 오류가 발생했습니다.\n"
-                "작업을 다시 시도해 주세요. 반복되면 아래 '자세히 보기' 내용을 담당자에게 전달해 주세요.",
+                "작업을 다시 시도해 주세요. 반복되면 아래 '자세히 보기' 내용을 담당자에게 전달해 주세요."
+                + (f"\n\n오류번호: {event_id}" if event_id else ""),
                 detail=text[-3000:])
         except Exception:
             pass
@@ -4121,7 +4155,25 @@ def main():
     win = HoneyMainWindow()
     win.showMaximized()
     _schedule_version_cleanup()
+    _flush_diag_queue()
     sys.exit(app.exec())
+
+
+def _flush_diag_queue():
+    """서버가 죽어 있던 동안 쌓인 오류 보고를 재전송한다 (백그라운드, 실패 무음).
+
+    서버 장애 중에 난 오류일수록 기록이 중요한데, 그때가 바로 전송이 실패하는 때다 —
+    그래서 로컬 큐를 두고 여기서 흘려보낸다 (transport/error_report.py)."""
+    def run():
+        try:
+            from transport import error_report
+            error_report.flush_queue()
+        except Exception:
+            pass
+    try:
+        threading.Thread(target=run, name="diag-flush", daemon=True).start()
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

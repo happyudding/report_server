@@ -25,6 +25,14 @@ def init_app(app):  # noqa: ARG001
     except Exception:
         import logging
         logging.getLogger(__name__).exception("cleanup scheduler start failed")
+    # 재기동 직전에 돌던 콜드 빌드의 잔해(sidecar)를 걷어 사건으로 남긴다 — watchdog
+    # 재기동이 무엇을 끊었는지는 이 흔적으로만 알 수 있다.
+    try:
+        from web_report import compute as web_report_compute
+        web_report_compute.sweep_interrupted_builds()
+    except Exception:
+        import logging
+        logging.getLogger(__name__).exception("interrupted build sweep failed")
     # 기동 직후 최근 세션의 콜드 report 를 유휴 워커로 미리 데운다 (env 로 끌 수 있음).
     try:
         import config

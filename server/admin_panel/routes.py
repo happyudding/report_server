@@ -252,6 +252,33 @@ def api_webreport_builds():
     return jsonify(out)
 
 
+@admin_panel_bp.get("/api/diagnostics/events")
+def api_diagnostics_events():
+    """진단 사건 목록 — 서버 500/503·느린 요청·콜드 빌드 실패·브라우저/Honey 오류.
+
+    "에러가 났는데 어디를 봐야 하나"의 단일 진입점이다 (server/diagnostics.py 참조)."""
+    from admin_panel import diagnostics_admin
+    return jsonify(diagnostics_admin.events(request.args))
+
+
+@admin_panel_bp.get("/api/diagnostics/events/<event_id>")
+def api_diagnostics_event(event_id):
+    """사건 1건 + 상관 ID 로 이어진 타임라인 + 빌드 기록 + watchdog + 원인 안내."""
+    from admin_panel import diagnostics_admin
+    hours = min(max(int(request.args.get("hours", 24 * 7)), 1), 24 * 14)
+    return jsonify(diagnostics_admin.event_detail(event_id, hours))
+
+
+@admin_panel_bp.post("/api/diagnostics/events/<event_id>/ack")
+def api_diagnostics_ack(event_id):
+    """사건 확인 처리 (미확인 경고 칩에서 제외된다)."""
+    import diagnostics
+    ok = diagnostics.ack(event_id, by="admin-panel")
+    _audit("diag_ack", session_id=None, changed_fields=f"event_id={event_id}",
+           result="ok" if ok else "fail")
+    return jsonify({"ok": ok})
+
+
 @admin_panel_bp.get("/api/active_users")
 def api_active_users():
     """실시간 접속 사용자 — 사용자 탭 전용(10초 폴링).

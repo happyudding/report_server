@@ -23,6 +23,13 @@ def _upload_headers(content_type):
         user = ""
     if user:
         headers["User-Agent"] = f"python-requests HoneyUser/{quote(user, safe='')}"
+    # 작업 상관 ID — 서버가 이 업로드 요청과 그 뒤 콜드 빌드·오류를 한 타임라인으로
+    # 묶는다 (server/diagnostics.py). 없으면 헤더 자체가 안 붙어 종전과 동일하다.
+    try:
+        from .error_report import operation_headers
+        headers.update(operation_headers())
+    except Exception:
+        pass
     return headers
 
 
