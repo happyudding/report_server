@@ -424,6 +424,9 @@ body {
 .mfb-table .mfb-item { text-align: left; }
 .mfb-table .mfb-bin { text-align: center; }
 .mfb-table .mfb-rate { color: #d9480f; font-weight: 700; }
+/* Yield 블록 ↔ Major Fail Bins 블록 사이 빈 칸 — 테두리 없는 열 하나로 두 표를 갈라 놓는다
+   (표를 둘로 쪼개면 행 높이가 서로 어긋나 rowspan 인 '전체 Yield' 칸과 정렬이 깨진다). */
+.mfb-table .mfb-gap { border: none; background: transparent; padding: 0; width: 22px; }
 
 table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
 th, td { padding: 6px 10px; border-bottom: 1px solid #eef0f3; text-align: left; }
@@ -668,6 +671,15 @@ tbody tr:hover { background: #f9fbff; }
 #panel-yield.yield-searching tr.yield-bin-detail { display: table-row !important; }
 #panel-issues.issue-searching tbody tr.row-search-hide, #panel-issue-temp.issue-searching tbody tr.row-search-hide,
 #panel-yield.yield-searching tbody tr.row-search-hide { display: none !important; }
+/* Issue Table Status 보기 필터(액션 메뉴 "Close/Open 항목 숨기기", yield_issue.js
+   applyIssueStatusFilter). 검색과 독립이라 클래스를 따로 쓴다.
+   ⚠️ .issue-searching 이 켜지면 위의 `tr.issue-bin-detail{display:table-row!important}`
+   (특이도 1,2,1)가 상세행을 되살린다 — 그래서 **.issue-searching 을 붙인 짝**(1,2,2)을
+   함께 둬 검색 중에도 숨김이 유지되게 한다. 순서가 아니라 특이도로 이겨야 한다. */
+#panel-issues tbody tr.row-status-hide, #panel-issues.issue-searching tbody tr.row-status-hide,
+#panel-issue-temp tbody tr.row-status-hide, #panel-issue-temp.issue-searching tbody tr.row-status-hide {
+  display: none !important;
+}
 
 /* Yield 탭 전용 다듬기 (다른 sheet-table 은 영향 없음) */
 /* overflow 는 auto — 예전 hidden 은 border-radius 클리핑 목적이었으나 상위 .sheet-wrap 의
@@ -987,11 +999,23 @@ tbody tr:hover { background: #f9fbff; }
   box-shadow: 0 2px 6px rgba(0,0,0,.12); transform: translateY(-1px); }
 .trim-start-btn:disabled { background: #9CA3AF; border-color: #9CA3AF; cursor: default;
   transform: none; box-shadow: none; }
+/* 「새로 분석하기」 — 항목을 옮겨도 바로 재계산하지 않고 여기 모아 두었다가 한 번에 반영한다.
+   「분석 시작」(녹색)과 같은 자리에 서므로 색을 주황으로 갈라 둘을 혼동하지 않게 한다. */
+.trim-reanalyze-btn { background: #EA580C; border-color: #C2410C; }
+.trim-reanalyze-btn:hover { background: #C2410C; border-color: #9A3412; }
+/* 재분석 후 "마지막에 옮긴 항목" 강조 — 스크롤만으로는 어느 칩인지 눈에 안 띈다. */
+.trim-chip-focus { animation: trimChipFocus 2.4s ease-out 1; }
+@keyframes trimChipFocus {
+  0%, 60% { background: #FDE68A; border-color: #F59E0B; box-shadow: 0 0 0 3px rgba(245,158,11,.35); }
+  100% { background: transparent; border-color: transparent; box-shadow: none; }
+}
 .trim-note { font-size: 12.5px; color: #6b7280; margin-bottom: 10px; }
 /* 좌우 2단: 왼쪽 = 항목 찾기 팔레트, 오른쪽 = 그룹 카드 그리드 */
 .trim-match-layout { display: flex; gap: 16px; align-items: flex-start; flex-wrap: nowrap; }
 .trim-match-main { flex: 1 1 auto; min-width: 0; }
-.trim-palette { flex: 0 0 264px; width: 264px; display: flex; flex-direction: column;
+/* 팔레트 폭 = 종전 264px 의 2배 (2026-08-11 요청 — Item 명이 잘려 읽히지 않았다).
+   좁은 화면에서는 아래 미디어쿼리가 되돌린다. */
+.trim-palette { flex: 0 0 528px; width: 528px; display: flex; flex-direction: column;
   border: 1px solid #e6e8ee; border-radius: 12px; background: #fbfbfd; overflow: hidden;
   box-shadow: 0 1px 2px rgba(16,24,40,.05);
   position: sticky; top: calc(var(--sticky-head-h, 96px) + 50px); align-self: flex-start;
@@ -1025,8 +1049,16 @@ tbody tr:hover { background: #f9fbff; }
 .trim-palette-meta.assigned { background: #E7F6EC; color: #14703d; }
 .trim-palette-meta.excl { background: #f2f4f7; color: #a3aab6; }
 @media (max-width: 640px) { .trim-match-layout { flex-wrap: wrap; }
-  .trim-palette { position: static; flex-basis: 100%; width: 100%; max-height: 320px; } }
-.trim-match-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+  .trim-palette { position: static; flex-basis: 100%; width: 100%; max-height: 320px; }
+  .trim-match-grid { grid-template-columns: minmax(0, 1fr); } }
+/* 그룹 카드는 **가로 3개 고정** (2026-08-11 요청). minmax(0,1fr) 이라 카드 내용이 넓어도
+   3열을 유지한다(auto-fill 은 폭에 따라 열 수가 널뛰었다). 팔레트가 넓어진 만큼 본문이
+   좁아지므로 넓지 않은 화면에서는 아래 미디어쿼리로 2열까지 내린다. */
+.trim-match-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 1500px) {
+  .trim-palette { flex-basis: 360px; width: 360px; }
+  .trim-match-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .trim-card { border: 1px solid #e2e4e8; border-radius: 8px; padding: 8px 10px; background: #fff; }
 .trim-card.cpk-warn, .trim-gcard.cpk-warn { border: 2px solid #DC2626; }
 .trim-card-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }

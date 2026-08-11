@@ -37,6 +37,7 @@ from report.security import (
 )
 from web_report import service as web_report_service
 from web_report.validation import validate_meta as _validate_upload_meta
+from web_report.validation import webreport_step as _webreport_step
 from web_report import response_cache as web_report_response_cache
 from web_report import build_status as web_report_build_status
 from web_report import compute as web_report_compute
@@ -115,7 +116,11 @@ def session_info(session_id):
         abort(404, "session not found")
     _private_guard(session)
     _active_or_404(session)
-    return jsonify(_public_session(session))
+    pub = _public_session(session)
+    # Honey 세션 정보 수정창이 STEP 현재값을 채울 수 있게 풀어서 얹는다 (원본은
+    # webreport_options JSON 안에 있어 클라가 파싱해야 했다).
+    pub["webreport_step"] = _webreport_step(session.get("webreport_options") or "")
+    return jsonify(pub)
 
 
 @report_bp.get("/session/<session_id>/full")
@@ -366,6 +371,29 @@ def _clean_session_name(value):
     return name[:120] or None
 
 
+def _update_session_step(session_id, session, step):
+    """webreport_options JSON 의 step 키만 갱신. 바뀌었으면 True.
+
+    빈 값은 키 삭제(= 종전대로 honeyform 의 STEP 을 그대로 표시)로 처리한다.
+    """
+    raw = session.get("webreport_options") or ""
+    try:
+        opts = json.loads(raw) if raw else {}
+    except ValueError:
+        opts = {}
+    if not isinstance(opts, dict):
+        opts = {}
+    if str(opts.get("step") or "") == str(step or ""):
+        return False
+    if step:
+        opts["step"] = step
+    else:
+        opts.pop("step", None)
+    report_db.update_session(session_id,
+                            webreport_options=json.dumps(opts, sort_keys=True))
+    return True
+
+
 @report_bp.patch("/session/<session_id>/meta")
 def update_session_meta_route(session_id):
     """세션 메타 수정 — Honey 편집창 전용 (업로드 다이얼로그 재사용).
@@ -406,6 +434,12 @@ def update_session_meta_route(session_id):
     changed = [k for k, v in meta.items() if (session.get(k) or "") != v]
     report_db.update_session_meta(session_id, meta,
                                   product_info=product_info.lookup(norm["product"]))
+    # STEP 은 세션 컬럼이 아니라 webreport_options JSON 안에 산다(report_session.step 은
+    # 기준정보 lookup 값이라 별개다). 옵션 전체를 통째로 덮으면 색·모드 그룹 같은 다른
+    # 키가 날아가므로 read-modify-write 로 step 키만 바꾼다. report 캐시는 report_key 가
+    # webreport_options 를 물고 있어 저장 즉시 갈린다.
+    if _update_session_step(session_id, session, norm["step"]):
+        changed.append("step")
     _audit("edit", session=session,
            changed_fields="meta:" + (",".join(changed) if changed else "none"))
     return jsonify({"ok": True, "session_id": session_id, "changed": changed,

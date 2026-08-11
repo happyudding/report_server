@@ -459,6 +459,9 @@ function issueRowsOf(panel) {
 const issueUiState = {};
 function issueUi(panel) {
   const id = (panel && panel.id) || ISSUE_PANEL_MAIN;
-  if (!issueUiState[id]) issueUiState[id] = { search: "", delMode: false };
+  // hideClose/hideOpen: Status 별 행 숨김(액션 메뉴 — yield_issue.applyIssueStatusFilter).
+  // 검색과 독립된 별도 클래스(.row-status-hide)라 둘을 동시에 걸 수 있다.
+  if (!issueUiState[id]) issueUiState[id] = { search: "", delMode: false,
+                                              hideClose: false, hideOpen: false };
   return issueUiState[id];
 }

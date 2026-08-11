@@ -55,6 +55,27 @@ def webreport_ai_comment(opts_raw: str) -> bool:
     return bool(opts.get("ai_comment")) and bool(opts.get("ai_comment_optin"))
 
 
+def webreport_step(opts_raw: str) -> str:
+    """세션의 webreport_options JSON → 업로드 때 지정한 STEP 표시값 (없으면 "").
+
+    honeyform 의 STEP 메타는 파서가 채우는 값이라 실데이터가 전부 ``P2`` 로 온다.
+    사용자가 업로드 창에서 고른 공정 STEP(기본 L2)을 여기 실어, 조회 시점에
+    ``P2`` 표시만 그 값으로 바꾼다 (metrics._apply_step_label). 원본 parquet 은 불변.
+
+    ⚠️ 세션 컬럼 ``report_session.step`` 은 **기준정보(product_info) lookup 값**이라
+    별개다 — 그쪽을 덮어쓰면 기준정보가 사라진다.
+    """
+    if not opts_raw:
+        return ""
+    try:
+        opts = json.loads(opts_raw)
+    except Exception:
+        return ""
+    if not isinstance(opts, dict):
+        return ""
+    return str(opts.get("step") or "").strip()[:20]
+
+
 def webreport_compare_groups(opts_raw: str, source_names):
     """세션의 webreport_options JSON → Compare 모드 Before/After 그룹 (source 이름 기준).
 
@@ -179,6 +200,9 @@ def validate_meta(meta: dict) -> dict:
         "lot_id": str(meta.get("lot_id") or "").strip(),
         "revision": str(meta.get("revision") or "").strip()[:80],
         "process": str(meta.get("process") or "").strip()[:80],
+        # STEP 은 세션 컬럼이 아니라 webreport_options 로 간다 (report_session.step 은
+        # 기준정보 lookup 값이라 별개). analysis_key 산출 meta 에는 포함하지 않는다.
+        "step": str(meta.get("step") or "").strip()[:20],
         "edm_link": str(meta.get("edm_link") or "").strip()[:500],
         "password": str(meta.get("password") or "").strip(),
         "file_name": secure_filename(str(meta.get("file_name") or "web_report")) or "web_report",

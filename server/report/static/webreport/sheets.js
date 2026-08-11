@@ -779,7 +779,11 @@ function renderSheetTable(rows, opts) {
           && distHasData(item)) {
           // CPK 섹션 미니셀은 Bin1(양품) ECDF 로 그린다(data-bin1) — 행의 cpk 값이 Bin1
           // 기준이라 그림과 숫자의 데이터 기준을 맞춘다. Yield/ETC 는 기존 전체 범위 유지.
-          const distBin1 = rowSection[ri] === "CPK" ? ` data-bin1="1"` : "";
+          // TEMP 섹션(Issue Table Temp)은 **Bin1(RT)** 변형으로 고정한다 (2026-08-11 요청) —
+          // 그 표의 재판정 자체가 "RT 에서 Bin1 이던 die × RT limit" 기준이라 그림도 같은
+          // 기준이어야 숫자와 어긋나지 않는다. Distribution 탭 토글과 무관하게 항상 이 기준.
+          const distBin1 = rowSection[ri] === "CPK" ? ` data-bin1="1"`
+            : (rowSection[ri] === "TEMP" ? ` data-bin1="1" data-bin1-scope="rt"` : "");
           return `<td${subhead ? ` class="sheet-subhead"` : ""} data-r="${ri}" data-c="${ci}">` +
             `<div class="dist-cell dist-cell-mini" data-subject="${esc(item)}"${distBin1}><div class="dist-plot"></div></div></td>`;
         }

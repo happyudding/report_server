@@ -223,6 +223,31 @@ function applyIssueSearch(rawTerm, panel) {
   afterIssueRowsToggled(panel);   // 행 구성이 바뀌면 좌측 고정 오프셋·가로 스크롤 폭 재실측
 }
 
+// Status(Open/Close) 별 행 숨김 — 액션 메뉴의 "Close/Open 항목 숨기기" (2026-08-11 요청).
+// 검색(.row-search-hide)과 **다른 클래스**를 써서 두 필터가 서로를 지우지 않게 한다.
+//
+// Status 셀이 없는 행(Yield 섹션의 Pass 행·TNO 상세행)은 **직전 이슈 행의 판정을 상속**
+// 한다 — Yield 는 대표행 하나만 Status 를 갖고 그 아래 상세행이 따라붙으므로, 대표행을
+// 숨기면서 상세행만 남기면 표가 깨진다. 섹션 헤더/서브헤더에서 상속을 리셋한다.
+function applyIssueStatusFilter(panel) {
+  panel = panel || activeIssuePanel();
+  if (!panel) return;
+  const ui = issueUi(panel);
+  let visible = true;
+  panel.querySelectorAll(".sheet-table.kind-issue tbody tr").forEach(tr => {
+    if (tr.classList.contains("issue-shead-top") || tr.classList.contains("issue-shead-bot")
+        || tr.querySelector("td.sheet-subhead")) { visible = true; return; }   // 구조 행
+    const cell = tr.querySelector("td.issue-status-cell");
+    if (cell) {
+      // 값은 셀 클래스가 정본이다(편집 모드는 드랍다운, 조회 모드는 텍스트라 마크업이 다름).
+      const closed = cell.classList.contains("is-close");
+      visible = !(closed ? ui.hideClose : ui.hideOpen);
+    }
+    tr.classList.toggle("row-status-hide", !visible);
+  });
+  afterIssueRowsToggled(panel);   // 행 구성이 바뀌면 좌측 고정 오프셋·가로 스크롤 폭 재실측
+}
+
 // Yield: STEP 별로 표가 여러 개라 패널 전체를 훑는다. comment 열은 없어 Item 명만 본다.
 function applyYieldSearch(rawTerm) {
   const panel = document.getElementById("panel-yield");
@@ -640,7 +665,8 @@ function issueMenuItemHtml(act, label, opts) {
 // 항목 활성/라벨은 **여는 시점**에 계산한다 — 메뉴는 열 때마다 새로 그리므로 열려 있는
 // 동안 갱신할 일이 없다(체크 변경은 메뉴가 닫힌 뒤에만 일어난다).
 function issueActionMenuHtml(panel) {
-  const on = issueUi(panel).delMode;
+  const ui = issueUi(panel);
+  const on = ui.delMode;
   const n = panel.querySelectorAll(".issue-del-chk:checked").length;
   const sep = `<div class="issue-menu-sep"></div>`;
   // ETC 는 Issue Table 전용 개념이라 Temp 패널에는 'ISSUE ITEM 추가' 가 없다.
@@ -658,7 +684,15 @@ function issueActionMenuHtml(panel) {
     sep +
     issueMenuItemHtml("all-open", "All Open", { title: "이 표 전체 행 Status 를 Open 으로" }) +
     issueMenuItemHtml("all-close", "All Close", { title: "이 표 전체 행 Status 를 Close 로" }) +
-    issueMenuItemHtml("reset-hidden", "삭제 전체 초기화", { title: "삭제(숨김)한 행 전부 복원" });
+    issueMenuItemHtml("reset-hidden", "삭제 전체 초기화", { title: "삭제(숨김)한 행 전부 복원" }) +
+    sep +
+    // 보기 필터 — 데이터를 바꾸지 않고 화면에서만 감춘다(삭제/숨김 편집과 무관, 저장 안 함).
+    issueMenuItemHtml("hide-close", "Close 항목 숨기기", {
+      checked: ui.hideClose, title: "Status = Close 인 행을 화면에서 감춘다 (다시 누르면 보기)" }) +
+    issueMenuItemHtml("hide-open", "Open 항목 숨기기", {
+      checked: ui.hideOpen, title: "Status = Open 인 행을 화면에서 감춘다 (다시 누르면 보기)" }) +
+    issueMenuItemHtml("show-all", "전체 보기", {
+      disabled: !ui.hideClose && !ui.hideOpen, title: "Open/Close 숨김을 모두 해제한다" });
 }
 function toggleIssueMenu(btn) {
   if (_issueMenuAnchor === btn) { closeIssueMenu(); return; }   // 같은 버튼 재클릭 = 닫기
@@ -914,8 +948,9 @@ function renderIssueTableInto(panel, rows, opts) {
     renderIssueMiniMap(panel);
     bindIssueColResize(panel);
     applyIssueDelMode(panel);   // 재렌더 후에도 삭제 모드 유지
-    const term = issueUi(panel).search;
-    if (term.trim()) applyIssueSearch(term, panel);   // 검색어 유지
+    const ui = issueUi(panel);
+    if (ui.search.trim()) applyIssueSearch(ui.search, panel);   // 검색어 유지
+    if (ui.hideClose || ui.hideOpen) applyIssueStatusFilter(panel);   // Status 필터 유지
   });
 }
 

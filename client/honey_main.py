@@ -1449,7 +1449,7 @@ class HoneyMainWindow(QMainWindow):
             return
         v = dlg.values()
         payload = {k: v[k] for k in
-                   ("file_name", "family_product", "product", "lot_id", "process")}
+                   ("file_name", "family_product", "product", "lot_id", "process", "step")}
         try:
             r = requests.patch(
                 f"{base}/pe/report/session/{session_id}/meta", json=payload,

@@ -47,6 +47,7 @@ from .validation import (
     webreport_ai_comment as _webreport_ai_comment,
     webreport_colors as _webreport_colors,
     webreport_compare_groups as _webreport_compare_groups,
+    webreport_step as _webreport_step,
     webreport_temperature_groups as _webreport_temperature_groups,
     webreport_temperature_rt_names as _webreport_temperature_rt_names,
 )
@@ -219,6 +220,11 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 # .lt/.pds 유래 항목별 fail bin (신규 업로드만 존재) —
                                 # Temp 시트 Bin 표기용. 없으면 관측 bin 폴백.
                                 temperature_limits=manifest.get("temperature_limits"),
+                                # 업로드 창에서 고른 공정 STEP — honeyform 이 P2 로 실어 온
+                                # STEP 표시만 이 값으로 바꾼다(원본 parquet 불변). 빈 값이면
+                                # 종전 그대로. 캐시는 report_key 의 webreport_options 가 덮는다.
+                                step_label=_webreport_step(
+                                    session.get("webreport_options") or ""),
                             )
                             # payload(= 탭별 stage 합 + 조립 오버헤드) 총계.
                             stages["payload"] = round(time.perf_counter() - t_payload, 3)
@@ -1464,16 +1470,19 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
     return {"ok": True, "updated": changed, "storage": storage}
 
 
-_ENGR_KEYS = ("yield", "cpk", "etc")
+# temp 는 Temperature 모드 세션에서만 화면에 뜨지만(map_select.js engrCommentFields),
+# 키 자체는 모드와 무관하게 받는다 — 모드 판정을 저장 경로에 넣으면 옵션이 바뀐 세션의
+# 기존 값이 저장 불가로 막힌다.
+_ENGR_KEYS = ("yield", "cpk", "temp", "etc")
 
 
 def update_summary_engr(session_id: str, values: dict, *, report_db, upload_root: Path,
                         client_ip: str = "", user_agent: str = "") -> dict:
-    """Summary 탭의 Engr Comment(Yield/CPK/ETC 3칸)를 세션 편집 DB(kind=summary_engr)에
+    """Summary 탭의 Engr Comment(Yield/CPK/TEMP/ETC 칸)를 세션 편집 DB(kind=summary_engr)에
     저장한다. manifest 는 불변 스냅샷.
 
-    values: {"yield": str, "cpk": str, "etc": str} 중 온 키만 갱신하고, 빈 값은 삭제로
-    처리한다.
+    values: {"yield": str, "cpk": str, "temp": str, "etc": str} 중 온 키만 갱신하고,
+    빈 값은 삭제로 처리한다. (temp 는 Temperature 모드 화면에서만 노출)
     """
     session = report_db.get_session(session_id)
     if not session:

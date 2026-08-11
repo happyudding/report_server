@@ -32,6 +32,11 @@ let trimState = {
   scatterPage: 0,           // ② 산포 현재 페이지(0-index)
   scatterSel: new Set(),    // ② 산포 검색 체크박스로 고른 그룹 id (있으면 그것만 표시)
   yBasis: "target",         // ② 산포 y축 범위 기준 슬롯: target(VERIFY/P2, 기본) | base(PRE/INIT)
+  // 재배치는 서버에 **바로 저장**하되 재계산·재렌더는 미룬다 (2026-08-11 요청) — 항목을
+  // 옮길 때마다 payload 재조회 + 전 화면 재렌더가 돌아 연속 편집이 불가능했다.
+  // 저장은 그대로 즉시라 이탈해도 유실되지 않고, 화면만 「새로 분석하기」까지 유지된다.
+  pending: [],              // 저장됐지만 아직 반영 안 한 항목 이름 (등장 순서, 중복 없음)
+  focusItem: "",            // 재분석 후 스크롤·강조할 항목 (= pending 의 마지막 변경)
 };
 function trimPayload() { return trimState.payloads[trimState.source || ""] || null; }
 
@@ -73,6 +78,8 @@ function renderTrimAnalysis() {
       </div>
       <button class="trim-start-btn" id="trimStartBtn"
         title="Trim 매칭·산포 분석을 계산한다 — 탭을 여는 것만으로는 계산하지 않는다">분석 시작</button>
+      <button class="trim-start-btn trim-reanalyze-btn" id="trimReanalyzeBtn" style="display:none"
+        title="옮긴 항목을 반영해 매칭·산포를 다시 계산한다 (마지막에 옮긴 항목으로 이동)"></button>
       <div class="distseg-group" id="trimYBasis" style="display:none">
         <button class="distseg" data-ybasis="base"
           title="보이는 차트의 y축 범위를 PRE(INIT) 슬롯 항목의 LSL/USL ±15% 로 잡는다">PRE(INIT) 기준 y축</button>
@@ -108,7 +115,9 @@ function renderTrimAnalysis() {
   });
   panel.querySelector("#trimExcelBtn").addEventListener("click", exportTrimExcel);
   panel.querySelector("#trimStartBtn").addEventListener("click", startTrimAnalysis);
+  panel.querySelector("#trimReanalyzeBtn").addEventListener("click", reanalyzeTrim);
   trimMarkSubtabs();
+  trimUpdateReanalyzeBtn();   // 편집 등으로 탭이 재렌더돼도 대기 중 변경 개수를 되살린다
   // 탭 진입만으로는 payload 조차 받지 않는다 — 모든 계산은 「분석 시작」 뒤로 미룬다.
   // 이미 분석을 시작한 뒤 편집 등으로 탭이 재렌더되면 그 상태를 그대로 복원한다.
   if (trimState.started) { trimHideStartBtn(); ensureTrimPayload().then(renderTrimView).catch(trimBodyError); }
@@ -335,6 +344,7 @@ function renderTrimMatch(body, p) {
     if (pwrap) pwrap.classList.toggle("trim-hide-unassigned", !ptoggle.checked);
     applyPaletteFilter();
   });
+  trimFocusPendingItem(body);   // 「새로 분석하기」로 들어왔으면 마지막에 옮긴 항목으로 이동
 }
 
 function bindTrimDnD(body) {
@@ -363,6 +373,50 @@ function bindTrimDnD(body) {
   });
 }
 
+// 상단 sticky 바의 「새로 분석하기」 — 대기 중 변경이 있을 때만 보이고 개수를 함께 낸다.
+function trimUpdateReanalyzeBtn() {
+  const btn = document.getElementById("trimReanalyzeBtn");
+  if (!btn) return;
+  const n = trimState.pending.length;
+  btn.style.display = n ? "" : "none";
+  btn.textContent = `↻ 새로 분석하기 (${n})`;
+}
+
+// 모아둔 재배치를 한 번에 반영한다. 마지막에 옮긴 항목을 focusItem 으로 넘겨 재렌더 후
+// 그 자리로 스크롤·강조한다(어디로 갔는지 눈으로 확인하려고 표를 뒤지지 않게).
+function reanalyzeTrim() {
+  if (!trimState.pending.length) return;
+  // 이동 위치를 보여줄 수 있는 건 ① 항목 매칭 화면뿐이다 — 다른 화면에서 눌렀다면
+  // 나중에 엉뚱한 시점에 스크롤이 튀지 않도록 focus 를 남기지 않는다.
+  trimState.focusItem = (trimState.view === "match")
+    ? (trimState.pending[trimState.pending.length - 1] || "") : "";
+  trimState.pending = [];
+  trimUpdateReanalyzeBtn();
+  const body = document.getElementById("trimBody");
+  if (body) body.innerHTML = `<div class="placeholder">재계산 중…</div>`;
+  // 시작 전(분석 시작을 아직 안 누름)이라면 이 버튼이 그 역할까지 겸한다.
+  trimState.started = true;
+  trimHideStartBtn();
+  ensureTrimPayload().then(renderTrimView).catch(trimBodyError);
+}
+
+// 재분석 뒤 focusItem 을 화면에 보여준다 — 팔레트가 아니라 **그룹 카드 쪽 칩**을 우선
+// 잡는다(옮긴 결과가 어디에 붙었는지가 궁금한 것이므로). 강조는 CSS 애니메이션 1회.
+function trimFocusPendingItem(body) {
+  const name = trimState.focusItem;
+  if (!name) return;
+  trimState.focusItem = "";
+  const chips = [...body.querySelectorAll(".trim-chip")]
+    .filter(el => el.dataset.item === name);
+  const chip = chips.find(el => !el.closest(".trim-palette")) || chips[0];
+  if (!chip) return;
+  const card = chip.closest(".trim-card") || chip;
+  card.scrollIntoView({ block: "center", behavior: "smooth" });
+  chip.classList.add("trim-chip-focus");
+  // 클래스를 남겨두면 다음 렌더까지 계속 깜빡인 것처럼 보인다 — 애니메이션 후 건다.
+  setTimeout(() => chip.classList.remove("trim-chip-focus"), 2600);
+}
+
 let _trimSaving = 0;   // 진행 중 저장 수 — 드롭 직후 페이지 이탈로 요청이 끊기기 전 경고용
 
 async function saveTrimOverrides(ops) {
@@ -376,17 +430,23 @@ async function saveTrimOverrides(ops) {
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) { showToast(j.error || `저장 실패 (HTTP ${res.status})`); return; }
-    showToast("Trim 재배치 저장됨");
-    // 그룹 구성이 바뀌므로 클라 캐시를 비우고 재조회. 서버 payload 캐시는 manifest digest
-    // 변경으로 자연 미스, 구성이 안 바뀐 그룹의 차트는 서버 캐시가 그대로 재사용된다.
+    // 그룹 구성이 바뀌었으므로 클라 캐시는 지금 비운다(다음 조회가 새 payload 를 받게).
+    // **재조회·재렌더는 하지 않는다** — 「새로 분석하기」를 눌러야 반영된다. 서버 payload
+    // 캐시는 manifest digest 변경으로 자연 미스, 구성이 안 바뀐 그룹의 차트는 서버 캐시
+    // 재사용이라 미뤄도 비용이 늘지 않는다.
     trimState.payloads = {};
     trimState.charts = {};
     trimState.chartPromises = {};
     trimState.scatterPage = 0;         // 그룹 재구성 → 산포 페이지/선택 초기화
     trimState.scatterSel.clear();
-    const body = document.getElementById("trimBody");
-    if (body) body.innerHTML = `<div class="placeholder">재계산 중…</div>`;
-    ensureTrimPayload().then(renderTrimView).catch(trimBodyError);
+    ops.forEach(op => {
+      if (!op || !op.item) return;
+      const at = trimState.pending.indexOf(op.item);
+      if (at >= 0) trimState.pending.splice(at, 1);   // 같은 항목을 또 옮기면 맨 뒤로
+      trimState.pending.push(op.item);
+    });
+    trimUpdateReanalyzeBtn();
+    showToast(`Trim 재배치 저장됨 (${trimState.pending.length}) — 「새로 분석하기」를 누르면 반영됩니다`);
   } catch (e) {
     showToast("저장 실패: " + e.message);
   } finally {

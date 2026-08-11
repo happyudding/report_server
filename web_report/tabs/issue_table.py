@@ -36,6 +36,8 @@ _COMMENT_COLS = ["PTE comment", "개발 comment"]
 # CPK 섹션에서 뺄 item 이름 토큰 (2026-08-10 사용자 요청) — OTP 기록값·CHIP ID 는
 # 측정 산포가 의미 없는 식별/기록 항목이라 cpk 가 낮아도 이슈가 아니다. 대소문자 무시.
 _CPK_SKIP_TOKENS = ("OTP_", "CHIP_ID", "CHIPID")
+# CPK 섹션 정렬에서 **뒤로 미룰** item 이름 토큰 (2026-08-11 사용자 요청). 대소문자 무시.
+_CPK_CODE_TOKEN = "CODE_"
 
 # service.update_issue_comments 의 컬럼 검증용 공개 이름.
 # AI Comment(아래) 는 여기 절대 추가하지 말 것 — 미포함이 곧 읽기전용 보장
@@ -118,8 +120,10 @@ def _cpk_fail_subjects(cpk_rows):
     cpk 는 Bin1(양품) 기준 단일 값이다 (2026-07-23 통일 — CPK 탭과 같은 통계)."""
     worst = worst_cpk_by_subject(cpk_rows)
     fails = [(subject, cpk) for subject, cpk in worst.items() if cpk < CPK_THRESHOLD]
-    # 표의 avg 컬럼(=worst-case cpk) 오름차순으로 정렬(낮은 순 위 → 아래).
-    fails.sort(key=lambda sc: sc[1])
+    # 이름에 CODE_ 가 든 항목을 **뒤로** 몰고, 각 덩어리 안에서 cpk 오름차순(낮은 순 위 →
+    # 아래). CODE_ 계열은 코드값 산포라 cpk 가 구조적으로 낮게 나와 위를 다 차지하는데,
+    # 먼저 봐야 하는 건 그 아래 깔리던 일반 측정 항목이다 (2026-08-11 요청).
+    fails.sort(key=lambda sc: (_CPK_CODE_TOKEN in str(sc[0] or "").upper(), sc[1]))
     return fails
 
 

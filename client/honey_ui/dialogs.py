@@ -96,6 +96,9 @@ class UploadDialog(QDialog):
         self.le_product.setText(defaults.get("product", ""))
         self.le_lot_id.setText(defaults.get("lot_id", ""))
         self.le_process.setText(defaults.get("process", ""))
+        # STEP 은 .ui 기본값 L2 — 직전 업로드값/세션값이 있으면 그것을 우선한다.
+        if defaults.get("step"):
+            self.le_step.setText(str(defaults["step"]))
 
     def _fetch_part_ids_bg(self):
         try:
@@ -176,6 +179,9 @@ class UploadDialog(QDialog):
             "lot_id": self.le_lot_id.text().strip(),
             "revision": "",
             "process": self.le_process.text().strip(),
+            # Web Report 의 STEP 표시(P2)를 대신할 값 — 서버가 세션 옵션에 실어 두고
+            # 조회 시점에 바꾼다(web_report/metrics._apply_step_label). 원본은 불변.
+            "step": self.le_step.text().strip(),
             "password": self.le_password.text().strip(),
         }
 
@@ -195,6 +201,7 @@ class SessionMetaDialog(UploadDialog):
             "product": session.get("product") or "",
             "lot_id": session.get("lot_id") or "",
             "process": session.get("process") or "",
+            "step": session.get("webreport_step") or "",
         }, show_password=False)
         self.setWindowTitle("세션 정보 수정")
         # 세션 이름 = 서버 report_session.file_name (검색결과 목록의 파일명 칸 = 상단바

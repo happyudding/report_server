@@ -54,13 +54,40 @@ def _temperature_context(tables, sources, mode, temperature_groups):
     return groups, member_names, yield_tables
 
 
+# honeyform STEP 메타가 실데이터에서 사실상 항상 이 값으로 온다 — 업로드 창에서 고른
+# 공정 STEP(기본 L2)으로 **표시만** 바꾸는 대상. 다른 STEP(P1/P3 등)은 실제 구분이므로
+# 손대지 않는다 (2026-08-11 요청: "P2 라고 들어가는 부분을 그 값으로").
+_STEP_PLACEHOLDER = "P2"
+
+
+def _apply_step_label(tables, step_label):
+    """tables 의 STEP 메타에서 ``P2`` 를 세션 STEP 값으로 바꾼다 (조회 시점, 원본 불변).
+
+    여기서 한 번 바꾸면 Yield STEP 분리 표·Issue Table/CPK 의 Step 칸·Excel 다운로드가
+    모두 같은 값을 쓴다 — 표시 지점마다 치환하면 한 곳을 빠뜨린다. tables 는 loader 가
+    준 **클론**이라(payload 조립이 이미 item_columns 를 제자리 수정한다) 원본 캐시는
+    건드리지 않는다. Raw Data 탭은 이 경로를 타지 않아 원본 STEP 을 그대로 보여준다 —
+    거기서 본 값을 Excel 로 내려 편집하기 때문에 그게 맞다.
+    """
+    label = str(step_label or "").strip()
+    if not label:
+        return
+    for table in tables:
+        step = getattr(table, "step", None)
+        if not isinstance(step, dict):
+            continue
+        table.step = {k: (label if str(v).strip().upper() == _STEP_PLACEHOLDER else v)
+                      for k, v in step.items()}
+
+
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
                          issue_comments=None, summary_engr=None, product_type="", product="",
                          mode="Normal", dist_colors=None, ai_comments=None,
                          etc_auto_items=None,
                          issue_hidden=None, issue_status=None, gross_die=None,
                          compare_groups=None, yield_basis=None,
-                         temperature_groups=None, temperature_limits=None) -> dict:
+                         temperature_groups=None, temperature_limits=None,
+                         step_label="") -> dict:
     """Distribution ECDF(대용량)는 payload 에 싣지 않고 항상 지연 로드한다
     (distribution_deferred=True, sheets["Distribution"]=[]) — 프런트가 별도 lazy 엔드포인트
     (GET .../web_report/distribution)로 받아간다. distribution_index(경량)는 항상 포함.
@@ -85,7 +112,10 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     RT 만 본다. CT/HT 는 tabs.temp_fail 이 전 항목을 RT limit 으로 재판정한 별도 시트
     ("Issue Table Temp")로 나간다.
     temperature_limits: manifest["temperature_limits"] — {item: {tno, lsl_bin, usl_bin}}
-    (.lt/.pds 유래, 신규 업로드만 존재). Temp 시트의 Bin 표기에만 쓰고 없으면 관측 bin 폴백."""
+    (.lt/.pds 유래, 신규 업로드만 존재). Temp 시트의 Bin 표기에만 쓰고 없으면 관측 bin 폴백.
+    step_label: 업로드 창에서 고른 공정 STEP(예 "L2"). 주면 honeyform STEP 메타의 ``P2``
+    표시를 이 값으로 바꾼다 (_apply_step_label). 빈 값이면 아무것도 하지 않는다."""
+    _apply_step_label(tables, step_label)
     selected_set = {str(v) for v in (selected_items or []) if str(v)}
     if selected_set:
         for table in tables:

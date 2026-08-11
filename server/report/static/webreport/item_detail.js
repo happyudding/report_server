@@ -720,13 +720,15 @@ function distRenderCdf(data) {
     if (!useGl) trace.cliponaxis = false;   // scattergl 미지원 속성 — SVG 분기에만
     if (hasId) {
       // customdata/hover 는 필터·정렬된 동일 순서 유지(클릭 식별·hover 지속).
-      // <extra> 에 trace 이름(=source 명)을 표시한다(2026-08-07 사용자 요청).
+      // source 명은 본문 첫 줄에 넣고 <extra> 는 비운다 (2026-08-11 사용자 요청) —
+      // <extra> 는 Plotly 가 좌표·SERIAL 과 **떨어진 별도 상자**로 그려서, 같은 칸에서
+      // 읽히지 않았다.
       trace.customdata = c.order.map(i => [serial[i], xpos[i], ypos[i]]);
-      trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<br>SERIAL %{customdata[0]} · X %{customdata[1]} / Y %{customdata[2]}<extra>%{fullData.name}</extra>";
+      trace.hovertemplate = "source : %{fullData.name}<br>측정값 %{x}<br>누적 %{y:.1f}%<br>SERIAL %{customdata[0]} · X %{customdata[1]} / Y %{customdata[2]}<extra></extra>";
       trace.marker = { color: base, size: 5 };
     } else {
       trace.marker = { color: base, size: 5 };
-      trace.hovertemplate = "측정값 %{x}<br>누적 %{y:.1f}%<extra>%{fullData.name}</extra>";
+      trace.hovertemplate = "source : %{fullData.name}<br>측정값 %{x}<br>누적 %{y:.1f}%<extra></extra>";
     }
     return trace;
   });
@@ -1093,14 +1095,16 @@ function renderMiniDistCell(cell) {
   const div = cell.querySelector(".dist-plot");
   if (!div || typeof Plotly === "undefined") return;
   if (!distDataReady) return;
-  // Issue Table CPK 섹션 미니셀(data-bin1)은 Bin1(양품) ECDF 캐시를 쓴다 — 행의 cpk 가
-  // Bin1 기준이라 그림과 숫자의 데이터 기준을 맞춘다(갤러리 "Bin1 only" 와 같은 변형·
-  // 같은 배치 로더). 나머지 셀은 종전대로 전체 기준 캐시.
-  const useBin1 = cell.dataset.bin1 === "1";
-  const info = (useBin1 ? distBin1Cache : distDataCache)[subject];
+  // Issue Table CPK 섹션 미니셀(data-bin1)은 Bin1(양품) ECDF 캐시를, Issue Table Temp 의
+  // TEMP 섹션(data-bin1-scope="rt")은 Bin1(RT) 캐시를 쓴다 — 행의 숫자가 그 기준으로
+  // 계산되므로 그림도 같은 변형이어야 한다(갤러리 토글과 같은 변형·같은 배치 로더).
+  // 나머지 셀은 종전대로 전체 기준 캐시.
+  const variant = cell.dataset.bin1 !== "1" ? "all"
+    : (cell.dataset.bin1Scope === "rt" ? "rtbin1" : "bin1");
+  const info = distCacheFor(variant)[subject];
   // 아직 안 받은 항목은 배치로 요청하고 플래그를 세우지 않은 채 리턴 — 도착 후
   // refreshDistConsumers 재큐잉으로 그려진다.
-  if (!info && distHasData(subject)) { distRequestSubject(subject, useBin1); return; }
+  if (!info && distHasData(subject)) { distRequestSubject(subject, variant); return; }
   // 데이터 없는 항목: 빈 칸으로 확정 (loaded 마킹해 재큐잉 no-op 방지)
   if (!info) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; return; }
 

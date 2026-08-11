@@ -257,6 +257,15 @@ document.querySelector(".content").addEventListener("click", e => {
     else if (kind === "all-open") { bulkSetIssueStatus("Open", "all", actPanel); }
     else if (kind === "all-close") { bulkSetIssueStatus("Close", "all", actPanel); }
     else if (kind === "reset-hidden") { resetHiddenIssueRows(); }
+    // 보기 필터 3종 — 화면에서만 감춘다(저장 없음). 상태는 패널별 issueUi 에 남아
+    // 재렌더 후에도 유지된다(renderIssueTableInto).
+    else if (kind === "hide-close" || kind === "hide-open" || kind === "show-all") {
+      const ui = issueUi(actPanel);
+      if (kind === "hide-close") ui.hideClose = !ui.hideClose;
+      else if (kind === "hide-open") ui.hideOpen = !ui.hideOpen;
+      else { ui.hideClose = false; ui.hideOpen = false; }
+      applyIssueStatusFilter(actPanel);
+    }
     return;
   }
   const jumpBtn = e.target.closest("[data-issue-jump]");
@@ -291,6 +300,21 @@ document.querySelector(".content").addEventListener("click", e => {
   if (delBtn) { delBtn.closest("tr").remove(); }
 });
 
+// Status 낙관 반영은 행 인덱스가 아니라 **이슈 키**로 찾아 쓴다 (2026-08-11 수정).
+// 화면이 그린 배열은 dropIssueMostFailDetailRows 로 걸러진 사본이라 td.dataset.r 이
+// 원본 rows(DATA.issue_table_text) 인덱스와 어긋난다 — 걸러진 행 수만큼 밀리는 CPK/ETC
+// 섹션에서 엉뚱한 행의 Status 가 바뀌어 Summary 의 Open/Close 카운트가 안 따라왔다.
+// 섹션 추적은 issueStatusCounts / sheets.js rowSection 과 같은 규칙(Category 상속).
+function applyIssueStatusToRows(rows, skey, value) {
+  if (!Array.isArray(rows) || !skey) return false;
+  let sec = "", hit = false;
+  rows.forEach(r => {
+    if (r && r["Category"]) sec = String(r["Category"]);
+    if (issueHideStatusKey(r, sec) === skey) { r["Status"] = value; hit = true; }
+  });
+  return hit;
+}
+
 // Issue Table Status(Open/Close) 드랍다운 — 변경 즉시 저장 (편집모드 전용, 세션 편집 DB).
 // change 는 버블되므로 위임 1회로 충분. select 의 change 는 comment _dirty 마킹과 무간섭.
 document.querySelector(".content").addEventListener("change", async e => {
@@ -310,9 +334,7 @@ document.querySelector(".content").addEventListener("change", async e => {
     // 낙관 반영: 재렌더 없이 rows 데이터만 갱신 → Summary Open/Close 카운트 재계산 유도.
     // rows 는 그 셀이 속한 패널의 것(Issue Table / Issue Table Temp)이어야 한다.
     const td = sel.closest("td");
-    const ri = td ? parseInt(td.dataset.r, 10) : NaN;
-    const rows = issueRowsOf(issuePanelOf(sel));
-    if (!isNaN(ri) && rows[ri]) rows[ri]["Status"] = value;
+    applyIssueStatusToRows(issueRowsOf(issuePanelOf(sel)), key, value);
     setStatusDot(td, value);   // 드랍다운 아래 신호등 점 갱신
     tabDirty["summary"] = true;
   } catch (err) {
@@ -1149,10 +1171,8 @@ async function bulkSetIssueStatus(value, scope, panel) {
     const rows = issueRowsOf(panel);
     targets.forEach(sel => {
       sel.value = value;
-      const td = sel.closest("td");
-      const ri = td ? parseInt(td.dataset.r, 10) : NaN;
-      if (!isNaN(ri) && rows[ri]) rows[ri]["Status"] = value;
-      setStatusDot(td, value);
+      applyIssueStatusToRows(rows, sel.dataset.skey, value);
+      setStatusDot(sel.closest("td"), value);
     });
     tabDirty["summary"] = true;
     showToast(`${targets.length}개 행을 ${value} 로 바꿨습니다.`);

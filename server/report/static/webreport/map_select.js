@@ -216,18 +216,22 @@ function majorFailBinsTableHtml() {
     cells.push(s
       ? `<td class="mfb-src">${esc(s.source)}</td><td class="mfb-syield"${bTip}>${esc(fmtPct(s.yield_pct))}%</td>`
       : `<td class="mfb-src"></td><td class="mfb-syield"></td>`);
+    // Yield 블록과 Major Fail Bins 블록 사이의 빈 칸(테두리 없음) — 첫 행에서 rowspan 으로
+    // 한 번만 낸다. 컬럼 순서는 Bin → Item → Fail Rate (2026-08-11 요청).
+    if (i === 0) cells.push(`<td class="mfb-gap" rowspan="${rowCount}"></td>`);
     const m = majors[i];
     cells.push(m
-      ? `<td class="mfb-item">${esc(m.item)}</td><td class="mfb-bin">${esc(m.bin)}</td>` +
+      ? `<td class="mfb-bin">${esc(m.bin)}</td><td class="mfb-item">${esc(m.item)}</td>` +
         `<td class="mfb-rate">${esc(fmtPct(m.rate))}%</td>`
-      : `<td class="mfb-item"></td><td class="mfb-bin"></td><td class="mfb-rate"></td>`);
+      : `<td class="mfb-bin"></td><td class="mfb-item"></td><td class="mfb-rate"></td>`);
     body += `<tr>${cells.join("")}</tr>`;
   }
 
   return `<div class="mfb-wrap"><table class="mfb-table">
     <thead>
-      <tr><th rowspan="2">전체 Yield</th><th colspan="2">Source 별 Yield</th><th colspan="3">Major Fail Bins</th></tr>
-      <tr><th>Source</th><th>Yield</th><th>Item</th><th>Bin</th><th>Fail Rate</th></tr>
+      <tr><th rowspan="2">전체 Yield</th><th colspan="2">Source 별 Yield</th>
+        <th class="mfb-gap" rowspan="2"></th><th colspan="3">Major Fail Bins</th></tr>
+      <tr><th>Source</th><th>Yield</th><th>Bin</th><th>Item</th><th>Fail Rate</th></tr>
     </thead>
     <tbody>${body}</tbody>
   </table></div>`;
@@ -319,7 +323,7 @@ function renderWebSummary() {
     `<div class="summary-section-card">` +
     `<div class="section-title">Engr Comment</div>` +
     `<div class="engr-comment-grid">` +
-    ENGR_COMMENT_FIELDS.map(f =>
+    engrCommentFields().map(f =>
       `<label class="engr-comment-label" for="engr-${f.key}">${f.label}</label>` +
       (engrEditable
         // 편집: textarea 는 그대로 두고(줄바꿈·붙여넣기·캐럿 전부 브라우저 기본), 태그는
@@ -375,12 +379,23 @@ function renderEngrNoteJump() {
     : "";
 }
 
-// Summary 탭 Engr Comment 3칸 정의 (manifest.summary_engr 키와 일치).
+// Summary 탭 Engr Comment 칸 정의 (manifest.summary_engr 키와 일치).
+// TEMP 는 Temperature 모드에서만 — Issue Status 카드의 TEMP 행과 같은 기준이다
+// (webReportMode()). 상수가 아니라 함수인 이유: 모드는 DATA 가 온 뒤에야 안다.
 const ENGR_COMMENT_FIELDS = [
   { key: "yield", label: "Yield" },
   { key: "cpk", label: "CPK" },
   { key: "etc", label: "ETC" },
 ];
+function engrCommentFields() {
+  if (webReportMode() !== "Temperature") return ENGR_COMMENT_FIELDS;
+  return [
+    { key: "yield", label: "Yield" },
+    { key: "cpk", label: "CPK" },
+    { key: "temp", label: "TEMP" },
+    { key: "etc", label: "ETC" },
+  ];
+}
 
 // textarea 값이 바뀌면(blur 시 change 발생) autoSave 경로로 저장 — dot/dirty/실패복원을
 // Issue comment 와 일원화하고, 탭 전환·페이지 이탈 시에도 autoSave 안전망이 ENGR 를 덮는다.

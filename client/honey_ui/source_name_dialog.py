@@ -52,6 +52,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMessageBox,
     QPushButton,
     QStyle,
@@ -74,7 +75,6 @@ _TOP_BG = "#DCFCE7"           # 최상단(limit 기준) 행 강조
 _RT_BG = "#FEF3C7"            # RT = 그룹의 limit 기준
 _GROUP_BAND = "#F1F5F9"       # 짝수 그룹 옅은 띠 (그룹 경계 시각화)
 _ROLE_ITEMS = ("", ) + ROLES
-_NEW_GROUP = "+ 새 그룹"
 _NO_GROUP = "(미지정)"
 _DROP_HINT = ".lt / .pds 파일을 여기에 끌어다 놓으세요"   # 파일을 넣으면 이 자리에 파일명이 들어간다
 _DROP_HINT_STYLE = "color:#1e40af;"
@@ -379,6 +379,13 @@ class SourceNameDialog(QDialog):
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
         self.setSizeGripEnabled(True)
+        # Enter 로 창이 닫히지 않게 한다 (2026-08-11 요청) — Group/Legend 를 타이핑하다 Enter 를
+        # 치면 "입력 확정"으로 읽히는데, QDialog 는 default 버튼(OK)을 눌러 다음 화면으로
+        # 넘어가 버린다. QPushButton 은 QDialog 안에서 autoDefault 가 기본 참이라 버튼마다
+        # 꺼야 하고, 하나라도 남으면 그 버튼이 default 를 물려받는다.
+        for btn in self.findChildren(QPushButton):
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
 
     def _build_toolbar(self):
         """팔레트 편집은 모든 모드 공통, 자동 배치·그룹 초기화는 Temperature 전용."""
@@ -445,8 +452,11 @@ class SourceNameDialog(QDialog):
                 "· 그룹마다 RT 가 그 그룹의 Limit 판정 기준입니다 — CT/HT 는 RT 의 Bin1 좌표만"
                 " 남기고 RT limit 으로 다시 판정합니다.")
             lines.append(
-                f"· Group 칸에 이름을 직접 입력하면 그룹 이름이 되고, 그 그룹 source 이름의"
-                f" 앞부분(_RT/_CT/_HT 제외)이 일괄 변경됩니다 (최대 {self._legend_max - 3}자).")
+                f"· Group 칸은 비워 두어도 됩니다. 한 행에 이름을 적으면 같은 그룹의 나머지"
+                f" 행과 source 이름 앞부분(_RT/_CT/_HT 제외)이 함께 바뀝니다"
+                f" (최대 {self._legend_max - 3}자). 다른 그룹과 같은 이름은 쓸 수 없습니다.")
+            lines.append(
+                "· Enter 는 입력 확정만 합니다 — 창은 아래 OK 를 눌러야 닫힙니다.")
         lines += [
             "· 색은 순서(1,2,3…)에 붙습니다 — 순서를 바꾸면 Distribution 색 번호도 함께"
             " 바뀝니다.",
@@ -491,7 +501,6 @@ class SourceNameDialog(QDialog):
         try:
             self.table.setRowCount(0)
             self.table.setRowCount(len(self._rows))
-            n_groups = max([r.group for r in self._rows] or [0])
             for r, row in enumerate(self._rows):
                 self.table.setVerticalHeaderItem(
                     r, QTableWidgetItem(f"{r + 1} ★" if r == 0 and not self._is_dut
@@ -509,7 +518,7 @@ class SourceNameDialog(QDialog):
                 self.table.setItem(r, 1, legend)
 
                 if self._is_temp:
-                    self.table.setCellWidget(r, 2, self._group_combo(r, row, n_groups))
+                    self.table.setCellWidget(r, 2, self._group_edit(r, row))
                     self.table.setCellWidget(r, 3, self._role_combo(r, row))
 
                 swatch = QTableWidgetItem("")
@@ -522,24 +531,23 @@ class SourceNameDialog(QDialog):
         finally:
             self._rendering = False
 
-    def _group_combo(self, r, row, n_groups):
-        combo = QComboBox()
-        combo.setEditable(True)                   # 그룹 이름 직접 입력 → 멤버 legend 일괄 반영
-        combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        combo.addItem(_NO_GROUP)
-        for g in range(1, max(n_groups, 1) + 1):
-            combo.addItem(self._group_label(g))
-        combo.addItem(_NEW_GROUP)
-        combo.setCurrentIndex(row.group if 0 <= row.group <= n_groups else 0)
-        combo.lineEdit().setMaxLength(self._legend_max - 3)   # 접미사(_RT 등 3자) 자리 확보
-        # 편집 콤보에서 currentTextChanged 는 타이핑마다 발화하므로 선택/입력을 분리한다.
-        combo.activated.connect(lambda idx, i=r: self._on_group_changed(i, idx))
-        combo.lineEdit().editingFinished.connect(
-            lambda i=r, c=combo: self._on_group_renamed(i, c))
-        return combo
+    def _group_edit(self, r, row):
+        """Group 칸 = **그냥 입력칸**이다 (드롭다운 아님, 2026-08-11 사용자 요청).
 
-    def _group_label(self, gid):
-        return self._group_names.get(gid, str(gid))
+        그룹 **소속**은 자동 배치가 정하고 사용자는 **이름**만 적는다. 기본값은 빈 칸이고,
+        한 행에 적으면 같은 그룹 전원이 그 이름으로 채워진다(_on_group_text → _render).
+        어느 그룹인지는 placeholder(회색 "그룹 N")와 짝수 그룹 배경 띠로 구분한다.
+        """
+        edit = QLineEdit()
+        edit.setText(self._group_names.get(row.group, "") if row.group else "")
+        edit.setMaxLength(self._legend_max - 3)   # 접미사(_RT 등 3자) 자리 확보
+        edit.setPlaceholderText(f"그룹 {row.group}" if row.group else _NO_GROUP)
+        edit.setToolTip(
+            "그룹 이름을 입력하면 같은 그룹의 나머지 행과 source 이름이 함께 바뀝니다.\n"
+            "Enter 는 입력 확정만 합니다(창은 닫히지 않습니다).")
+        # 엔터·포커스 아웃 모두 editingFinished 하나로 받는다 (엔터는 둘 다 발화).
+        edit.editingFinished.connect(lambda i=r, e=edit: self._on_group_text(i, e))
+        return edit
 
     def _role_combo(self, r, row):
         combo = QComboBox()
@@ -594,43 +602,48 @@ class SourceNameDialog(QDialog):
         text = (item.text() or "").strip()[:self._legend_max]
         self._rows[item.row()].legend = text
 
-    def _on_group_changed(self, r, idx):
-        """드롭다운 **선택** 전용 — 항목 순서가 곧 의미다 (0=미지정, 마지막=새 그룹)."""
-        if self._rendering:
-            return
-        n_groups = max([row.group for row in self._rows] or [0])
-        row = self._rows[r]
-        if idx <= 0:
-            row.group = 0
-        elif idx > max(n_groups, 1):              # 마지막 항목 = _NEW_GROUP
-            row.group = n_groups + 1
-        else:
-            row.group = idx
-            self._sync_group_name(idx, only_row=row)
-        self._render()
+    def _on_group_text(self, r, edit):
+        """Group 칸에 적은 이름 — 개명(같은 그룹 전원 일괄) / 미지정 행의 그룹 편입 / 지우기.
 
-    def _on_group_renamed(self, r, combo):
-        """Group 칸에 직접 타이핑한 이름 — 개명(멤버 legend 일괄 반영) 또는 그룹 이동."""
+        **이미 그룹이 있는 행**이 다른 그룹의 이름을 적으면 거부한다(2026-08-11 요청) —
+        그룹 이름은 그룹을 가리키는 유일한 이름이어야 하고, 같은 이름 두 그룹은 리포트에서
+        구분되지 않는다. 반면 **미지정 행**이 기존 그룹 이름을 적는 건 "그 그룹에 넣어라"
+        라는 뜻이라 그대로 편입시킨다 — 자동 배치가 못 묶은 source 를 손으로 묶는 유일한
+        수단이다.
+        """
         if self._rendering:
             return
         try:
-            text = (combo.currentText() or "").strip()
-        except RuntimeError:                      # _render 가 콤보를 이미 파괴한 뒤
+            text = (edit.text() or "").strip()
+        except RuntimeError:                      # _render 가 위젯을 이미 파괴한 뒤
+            return
+        if r >= len(self._rows):
             return
         row = self._rows[r]
-        if not text or text in (_NO_GROUP, _NEW_GROUP):
+        current = self._group_names.get(row.group, "") if row.group else ""
+        if text == current:
+            return                                # 변화 없음 (포커스 아웃 포함)
+        if not text:                              # 이름만 지운다 — 그룹 소속은 유지
+            if row.group:
+                self._group_names.pop(row.group, None)
+            self._render()
             return
-        if row.group and text == self._group_label(row.group):
-            return                                # 변화 없음 (드롭다운 선택 뒤 포커스 아웃 포함)
-        n_groups = max([rw.group for rw in self._rows] or [0])
-        for g in range(1, n_groups + 1):
-            if g != row.group and text == self._group_label(g):
-                row.group = g                     # 다른 그룹의 이름과 일치 → 그 그룹으로 이동
-                self._sync_group_name(g, only_row=row)
-                self._render()
+        owner = next((g for g, name in self._group_names.items()
+                      if name == text and g != row.group), 0)
+        if owner:
+            if row.group:
+                QMessageBox.warning(
+                    self, "그룹 이름 중복",
+                    f"'{text}' 는 이미 다른 그룹의 이름입니다.\n"
+                    "그룹마다 다른 이름을 지정해 주세요.")
+                self._render()                    # 입력값 원복
                 return
+            row.group = owner                     # 미지정 행 → 그 그룹으로 편입
+            self._sync_group_name(owner, only_row=row)
+            self._render()
+            return
         if not row.group:                         # 미지정 행에서 새 이름 → 새 그룹 생성
-            row.group = n_groups + 1
+            row.group = max([rw.group for rw in self._rows] or [0]) + 1
         self._group_names[row.group] = text
         self._sync_group_name(row.group)
         self._render()
@@ -763,7 +776,7 @@ class SourceNameDialog(QDialog):
         """48색 팔레트 편집(옵션 F10 과 같은 창) — 저장되면 표의 스와치를 다시 읽는다."""
         from honey_ui.dialogs import ColorEditorDialog
         if ColorEditorDialog(self).exec():
-            self._colors = self._load_palette()
+            self._colors = load_palette()      # 모듈 함수 (self 메서드가 아니다)
             self._colors_changed = True
             self._render()
 

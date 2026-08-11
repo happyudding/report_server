@@ -255,7 +255,13 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      secondary_signatures·evidence·reason_codes 가 줄고, ai_comment._rank(동률 시 이봉
 #      우선)가 그 목록을 보므로 AI Comment 셀 값이 바뀔 수 있다. 코드 배포에 따른 변경이라
 #      rules_rev 가 아니라 이 값을 올린다.
-REPORT_SCHEMA_VERSION = 30
+# v31: IssueTable CPK 섹션 정렬을 "CODE_ 없는 항목 먼저, 각 덩어리 안에서 cpk 오름차순"
+#      으로 바꾼다 (2026-08-11 사용자 요청 — tabs/issue_table._cpk_fail_subjects). v28 과
+#      같은 성격으로 **행 순서**가 전 모드에서 달라지므로, 안 올리면 옛 disk_cache 가
+#      종전 순서의 payload 를 계속 반환한다. 같은 배포에 들어간 STEP 표시 치환
+#      (metrics._apply_step_label)은 세션 옵션(webreport_options)이 이미 키에 있어
+#      이 값과 무관하게 갈린다.
+REPORT_SCHEMA_VERSION = 31
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

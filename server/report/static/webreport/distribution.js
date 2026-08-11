@@ -1144,8 +1144,14 @@ function distToolbarHtml() {
   // 둔다 — 그룹 안에 있으면 선택 개수에 따라 그룹 폭이 변해 오른쪽 검색창이 좌우로 밀렸다.
   const selChip = distSelected.size
     ? `<button class="distseg dist-sel-clear" data-seg="clearsel" title="선택 해제">선택 ${distSelected.size}개 ✕</button>` : "";
-  const bin1Btn = `<button class="distseg${distBin1Only ? " active" : ""}" data-seg="bin1" title="켜짐: 각 항목 분포를 양품(Bin1, BIN==1) & 규격(LSL/USL) 이내 die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
-  // Temperature 전용 3번째 변형 — RT 만 양품으로 좁히고 CT/HT 는 fail 포함 전체를 유지한다.
+  // Temperature 모드에서는 "Bin1 only" 를 내리고 "Bin1 (RT만)" 하나만 남긴다
+  // (2026-08-11 요청) — CT/HT 까지 양품으로 좁히는 변형은 RT limit 재판정 결과와 기준이
+  // 어긋나 오해를 부른다. 버튼과 함께 상태도 끈다 — 안 끄면 다른 세션에서 켠 채 넘어왔을
+  // 때 끌 버튼이 없는 상태로 갇힌다.
+  if (tempIsMode() && distBin1Only) distBin1Only = false;
+  const bin1Btn = tempIsMode() ? ""
+    : `<button class="distseg${distBin1Only ? " active" : ""}" data-seg="bin1" title="켜짐: 각 항목 분포를 양품(Bin1, BIN==1) & 규격(LSL/USL) 이내 die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
+  // Temperature 전용 변형 — RT 만 양품으로 좁히고 CT/HT 는 fail 포함 전체를 유지한다.
   const rtBin1Btn = tempIsMode()
     ? `<button class="distseg${distRtBin1Only ? " active" : ""}" data-seg="rtbin1" title="켜짐: RT source 만 양품(Bin1)·규격내로 좁히고 CT / HT 는 fail 포함 전체 die 로 표시 · 꺼짐: 전체 die">Bin1 (RT만)</button>`
     : "";

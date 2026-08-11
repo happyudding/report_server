@@ -239,6 +239,12 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     # analysis_key 는 여러 세션이 공유(dedup)할 수 있으나 옵션은 세션 단위이므로 DB 세션행에
     # 저장한다. {"colors":[...]} 형태이며 조회 시 distribution source 색으로 적용된다.
     options = manifest.get("options")
+    # 업로드 창의 STEP 도 같은 옵션 JSON 에 실어 둔다 — 세션 단위 값이고, report 캐시
+    # 키(cache_policy.report_key)가 webreport_options 를 이미 물고 있어 나중에 STEP 을
+    # 고치면 payload 가 자동으로 다시 만들어진다. 빈 값이면 넣지 않는다(종전 세션과 동일).
+    if meta.get("step"):
+        options = dict(options) if isinstance(options, dict) else {}
+        options["step"] = meta["step"]
     if isinstance(options, dict) and options:
         try:
             report_db.update_session(

@@ -436,6 +436,31 @@ class RawdataHubDialog(QDialog):
             "CPK/Distribution 의 n·평균·σ 만 달라집니다."))
         layout.addSpacing(14)
 
+        # DUT 제외 — source 를 골라 특정 DUT 의 die 를 통째로 뺀다 (2026-08-11 요청).
+        # 조건 규칙(where.source + DUT in [...] → exclude_rows)을 만드는 한 줄 옵션이라
+        # 빠른 수정 화면을 열지 않아도 되고, [현재 상태] 에서 그대로 해제할 수 있다.
+        self.cmb_dut_source = QComboBox()
+        self.cmb_dut_source.setMinimumWidth(200)
+        self.edit_dut = QLineEdit()
+        self.edit_dut.setPlaceholderText("예: 3  또는  3,4")
+        self.edit_dut.setFixedWidth(120)
+        self.edit_dut.returnPressed.connect(self._add_dut_exclude)
+        btn_dut = QPushButton("추가")
+        btn_dut.clicked.connect(self._add_dut_exclude)
+        dut_row = QHBoxLayout()
+        dut_row.addWidget(QLabel("DUT 제외 —"))
+        dut_row.addWidget(self.cmb_dut_source)
+        dut_row.addWidget(QLabel("의 DUT"))
+        dut_row.addWidget(self.edit_dut)
+        dut_row.addWidget(btn_dut)
+        dut_row.addStretch(1)
+        layout.addLayout(dut_row)
+        layout.addWidget(QLabel(
+            "    고른 source 에서 그 DUT 의 die 를 통째로 뺍니다 (수율 분자·분모, Wafer Map, "
+            "Distribution 전부 반영).\n    원본은 그대로이고 [현재 상태] 에서 언제든 해제할 수 "
+            "있습니다."))
+        layout.addSpacing(14)
+
         # [Spec Out 빈값] 은 잠시 비활성 (2026-07-28, 사용자 요청). 위젯과 _add_spec_out_option
         # 은 그대로 두고 **레이아웃에만 붙이지 않는다** — 되살릴 때 아래 3줄만 복구하면 된다.
         # 이미 저장된 spec_out 규칙은 계속 적용되고 [현재 상태] 에서 해제할 수 있다.
@@ -564,8 +589,46 @@ class RawdataHubDialog(QDialog):
             f"'{item}' 규격 밖 값을 빈값 처리하는 옵션을 추가했습니다.\n"
             "아래 [저장] 을 눌러야 서버에 반영됩니다.")
 
+    def _add_dut_exclude(self):
+        """[DUT 제외] 한 줄 옵션 → 조건 규칙 1건.
+
+        source 를 (전체) 로 두면 where.source 를 넣지 않는다 — preprocess.normalize 규약상
+        source 가 없으면 모든 소스에 걸린다.
+        """
+        values = [v.strip() for v in (self.edit_dut.text() or "").replace(" ", ",").split(",")]
+        values = [v for v in values if v]
+        if not values:
+            QMessageBox.warning(self, "DUT 제외", "뺄 DUT 번호를 입력하세요 (예: 3 또는 3,4).")
+            return
+        source = self.cmb_dut_source.currentData() or ""
+        where = {"conds": [{"field": "DUT", "op": "in", "values": values}]}
+        if source:
+            where["source"] = source
+        rule = {"where": where, "action": {"op": "exclude_rows"}}
+        if self._find_rule(rule) >= 0:
+            QMessageBox.information(self, "DUT 제외", "같은 조건이 이미 적용 중입니다.")
+            return
+        self._rules.append(rule)
+        self.edit_dut.clear()
+        self._render_state_list()
+        self._refresh_state()
+        from web_report import preprocess
+
+        QMessageBox.information(
+            self, "DUT 제외",
+            f"{preprocess.describe_rule(rule)}\n\n아래 [저장] 을 눌러야 서버에 반영됩니다.")
+
     def _sync_options(self):
-        """저장된 규칙 → Options 화면 상태 (항목 콤보 채우기 + Bin1 only 체크)."""
+        """저장된 규칙 → Options 화면 상태 (항목·source 콤보 채우기 + Bin1 only 체크)."""
+        current_src = self.cmb_dut_source.currentData()
+        self.cmb_dut_source.clear()
+        self.cmb_dut_source.addItem("(전체 source)", "")
+        for name in self._sources:
+            self.cmb_dut_source.addItem(name, name)
+        if current_src:
+            pos = self.cmb_dut_source.findData(current_src)
+            if pos >= 0:
+                self.cmb_dut_source.setCurrentIndex(pos)
         current = self.cmb_specout.currentData()
         self.cmb_specout.clear()
         self.cmb_specout.addItem("(선택)", "")
