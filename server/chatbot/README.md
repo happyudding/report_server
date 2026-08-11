@@ -53,6 +53,10 @@ agent 에 둔다.
 [../report/routes_chat.py](../report/routes_chat.py) 한 곳뿐이고, 이 패키지는 CLI 와 그
 라우트가 공유하는 순수 엔진이다.
 
+> 📊 **전체 구조를 한 장으로 보려면** [docs/chatbot_architecture.html](../../docs/chatbot_architecture.html)
+> — 계층 5개, 입력→출력 12단계, 인텐트 13종, 빈틈 목록, 적용 개념(규칙/LLM/RAG/LangChain)을
+> 도식화한 단일 HTML(의존성 없음, 브라우저로 그냥 열면 된다).
+
 ## 웹 노출 (2026-08-10, 관리자 전용 테스트)
 
 | 조각 | 위치 |

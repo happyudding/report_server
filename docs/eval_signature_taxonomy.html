@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>eval_engine signature 21종 분류 체계</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body {
+    background: #0e1116;
+    color: #e6edf3;
+    font-family: "Malgun Gothic", "맑은 고딕", "Segoe UI", system-ui, sans-serif;
+    font-size: clamp(9px, 1.5vh, 20px);
+    display: flex;
+    flex-direction: column;
+    padding: 1.4vh 1.1vw 1.1vh;
+    gap: 1vh;
+  }
+
+  header { display: flex; align-items: baseline; gap: 1.2em; flex: 0 0 auto; }
+  h1 { font-size: 1.7em; margin: 0; letter-spacing: -0.01em; white-space: nowrap; }
+  .sub { color: #8b949e; font-size: 0.88em; }
+  .legend { margin-left: auto; display: flex; gap: 1.1em; align-items: center; font-size: 0.82em; color: #8b949e; }
+  .legend b { color: #e6edf3; font-weight: 600; }
+  .dot { display: inline-block; width: 0.85em; height: 0.85em; border-radius: 50%; vertical-align: -0.08em; margin-right: 0.35em; }
+
+  .grid {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.75vw;
+  }
+
+  .major {
+    --c: #58a6ff;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: #151a21;
+    border: 1px solid #232b36;
+    border-top: 3px solid var(--c);
+    border-radius: 7px;
+    padding: 1.1vh 0.55vw 1.4vh;
+    gap: 1.3vh;
+  }
+  .major > h2 {
+    margin: 0;
+    font-size: 1.35em;
+    color: var(--c);
+    display: flex;
+    align-items: baseline;
+    gap: 0.45em;
+  }
+  .major > h2 .no { font-size: 0.8em; opacity: 0.65; font-weight: 400; }
+  .major > h2 .cnt {
+    margin-left: auto; font-size: 0.72em; font-weight: 400;
+    color: #8b949e; background: #0e1116; border: 1px solid #232b36;
+    border-radius: 999px; padding: 0.05em 0.55em;
+  }
+  .major > .why {
+    margin: -0.3vh 0 0; color: #8b949e; font-size: 0.98em; line-height: 1.35;
+    border-left: 2px solid #232b36; padding-left: 0.5em;
+  }
+
+  .mid { display: flex; flex-direction: column; gap: 0.55vh; flex: 1 1 0; min-height: 0; }
+  .mid > h3 {
+    margin: 0; font-size: 1.02em; font-weight: 600; color: #c9d1d9;
+    display: flex; align-items: center; gap: 0.4em;
+  }
+  .mid > h3::before {
+    content: ""; width: 0.5em; height: 0.5em; background: var(--c);
+    border-radius: 1px; transform: rotate(45deg); flex: 0 0 auto; opacity: 0.8;
+  }
+  .mid > h3 .en { color: #6e7681; font-weight: 400; font-size: 0.88em; }
+
+  .rule {
+    background: #0e1116;
+    border: 1px solid #232b36;
+    border-left: 3px solid #30363d;
+    border-radius: 4px;
+    padding: 0.75vh 0.5em 0.8vh;
+    line-height: 1.35;
+    flex: 1 1 0;
+    min-height: 0;
+    max-height: 13vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 0.3em;
+  }
+  .rule.on { border-left-color: var(--c); background: #101822; }
+  .rule .id {
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 1.03em; font-weight: 700; letter-spacing: -0.02em;
+    display: flex; align-items: center; gap: 0.35em;
+  }
+  .rule.off .id { color: #7d8590; }
+  .rule .sev {
+    margin-left: auto; font-size: 0.72em; font-weight: 700; letter-spacing: 0.02em;
+    padding: 0 0.4em; border-radius: 3px; border: 1px solid currentColor; opacity: 0.9;
+  }
+  .sev.CRITICAL { color: #ff7b72; }
+  .sev.MAJOR    { color: #e3b341; }
+  .sev.MINOR    { color: #56d364; }
+  .sev.MONITOR  { color: #6e7681; }
+  .rule .m {
+    font-family: Consolas, "Courier New", monospace;
+    color: #7d8590; font-size: 0.92em; word-break: break-all;
+  }
+  .rule.on .m { color: #8b949e; }
+  .rule .cat {
+    font-size: 0.78em; font-weight: 700; color: #a371f7;
+    border: 1px solid #a371f7; border-radius: 3px; padding: 0 0.3em; opacity: 0.85;
+  }
+  .rule .live { color: var(--c); font-size: 0.9em; }
+
+  footer {
+    flex: 0 0 auto; color: #6e7681; font-size: 0.82em; line-height: 1.4;
+    border-top: 1px solid #232b36; padding-top: 0.7vh;
+    display: flex; gap: 1.6em;
+  }
+  footer b { color: #8b949e; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>eval_engine signature 21종 — 불량 유형 분류</h1>
+  <span class="sub">대분류 5 · 중분류 14 · 룰 21 &nbsp;|&nbsp; 정본 <code>eval_analyzer/eval_engine/rules/signatures.yaml</code></span>
+  <span class="legend">
+    <span><span class="dot" style="background:#58a6ff"></span><b>활성</b> 4종 (테두리 강조)</span>
+    <span><span class="dot" style="background:#30363d"></span>비활성 <code>enabled:false</code> 17종</span>
+    <span><span class="sev CRITICAL">CRIT</span> <span class="sev MAJOR">MAJOR</span> <span class="sev MINOR">MINOR</span> <span class="sev MONITOR">MON</span> = status_hint</span>
+    <span><span class="cat">CPK</span> = issue_category</span>
+  </span>
+</header>
+
+<div class="grid">
+
+  <!-- ─────────────── I ─────────────── -->
+  <section class="major" style="--c:#8b949e">
+    <h2><span class="no">I.</span> 데이터 유효성 <span class="cnt">3</span></h2>
+    <p class="why">판정 이전 단계. "이 데이터로 판단이 성립하는가" — 불량이 아니라 <b>측정·수집 문제</b> 신호.</p>
+
+    <div class="mid">
+      <h3>표본 부족 <span class="en">sample</span></h3>
+      <div class="rule off">
+        <div class="id">LOW_SAMPLE_UNCERTAIN <span class="sev MONITOR">MON</span></div>
+        <div class="m">n_dut &lt; n_min</div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <h3>기준 결측 <span class="en">limit</span></h3>
+      <div class="rule off">
+        <div class="id">MISSING_LIMIT <span class="sev MINOR">MINOR</span></div>
+        <div class="m">limit_missing &gt; 0</div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <h3>값 고착 <span class="en">logging</span></h3>
+      <div class="rule off">
+        <div class="id">CONSTANT_VALUE <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">stdev ≤ 0</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────── II ─────────────── -->
+  <section class="major" style="--c:#e3b341">
+    <h2><span class="no">II.</span> 마진성 <span class="cnt">6</span></h2>
+    <p class="why">값 분포 자체는 정상인데 <b>spec 대비 여유가 없다</b>. die 하나하나는 멀쩡 — 능력·설정의 문제(spec/센터링/산포).</p>
+
+    <div class="mid">
+      <h3>공정능력 <span class="en">capability</span></h3>
+      <div class="rule on">
+        <div class="id">SPEC_TOO_TIGHT <span class="cat">CPK</span> <span class="sev MINOR">MINOR</span></div>
+        <div class="m">좁고·중앙·단봉인데 cpk↓ → spec 재검토</div>
+      </div>
+      <div class="rule off">
+        <div class="id">LOW_CPK <span class="cat">CPK</span> <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">cpk &lt; cpk_warn (1.33)</div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <h3>산포 과대 <span class="en">spread</span></h3>
+      <div class="rule off">
+        <div class="id">WIDE_DISTRIBUTION <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">spread_norm &gt; warn</div>
+      </div>
+      <div class="rule off">
+        <div class="id">BIDIR_TAIL <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">margin_low &amp; margin_high 동시 부족</div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <h3>센터링 이탈 <span class="en">centering</span></h3>
+      <div class="rule off">
+        <div class="id">MEAN_SHIFT <span class="sev MINOR">MINOR</span></div>
+        <div class="m">|center_bias| &gt; mean_shift_warn</div>
+      </div>
+      <div class="rule off">
+        <div class="id">TAIL_RISK <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">|skewness|↑ + spec_margin_min↓ (한쪽 꼬리)</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────── III ─────────────── -->
+  <section class="major" style="--c:#ff7b72">
+    <h2><span class="no">III.</span> 산발 결함성 <span class="cnt">3</span></h2>
+    <p class="why"><b>개별 die 가 진짜 이상</b>(defective). 모집단은 정상인데 소수가 튄다 — contact/노이즈/국부 결함 의심.</p>
+
+    <div class="mid">
+      <h3>이상치 <span class="en">outlier</span></h3>
+      <div class="rule on">
+        <div class="id">SEVERE_OUTLIER <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">outlier_ratio &gt; bad &amp; count &gt; min</div>
+      </div>
+      <div class="rule on">
+        <div class="id">OUTLIER_WARN <span class="sev MINOR">MINOR</span></div>
+        <div class="m">ratio &gt; warn · <span class="live">SEVERE 시 억제</span></div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <h3>간헐 spike <span class="en">tail</span></h3>
+      <div class="rule off">
+        <div class="id">HEAVY_TAIL <span class="sev MINOR">MINOR</span></div>
+        <div class="m">kurtosis &gt; kurtosis_warn</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────── IV ─────────────── -->
+  <section class="major" style="--c:#3fb950">
+    <h2><span class="no">IV.</span> 공간 패턴성 (Map) <span class="cnt">6</span></h2>
+    <p class="why">fail 의 <b>위치가 편중</b>. XPOS/YPOS 기반 — 값이 아니라 "어디서 났나"로 판정. 공정 uniformity·설비 계통.</p>
+
+    <div class="mid">
+      <h3>영역 집중 <span class="en">localized</span></h3>
+      <div class="rule off">
+        <div class="id">EDGE_FAIL <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">edge_fail_ratio &gt; warn</div>
+      </div>
+      <div class="rule off">
+        <div class="id">CENTER_FAIL <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">center_fail_ratio &gt; warn</div>
+      </div>
+      <div class="rule off">
+        <div class="id">CLUSTER_FAIL <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">quadrant_imbalance &gt; warn</div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <h3>반경·방향성 <span class="en">radial / gradient</span></h3>
+      <div class="rule off">
+        <div class="id">RING_FAIL <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">ring_fail_ratio &gt; warn</div>
+      </div>
+      <div class="rule off">
+        <div class="id">WAFER_GRADIENT <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">gradient_norm_abs_max &gt; warn</div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <h3>설비·site 계통 <span class="en">equipment</span></h3>
+      <div class="rule off">
+        <div class="id">EQUIPMENT_SUSPECT <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">site_cpk_delta &gt; warn (site 간 편차)</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─────────────── V ─────────────── -->
+  <section class="major" style="--c:#a371f7">
+    <h2><span class="no">V.</span> 모집단·설계성 <span class="cnt">3</span></h2>
+    <p class="why">분포가 <b>하나의 모집단이 아니거나</b>, 설계 range·전체 수율 수준의 문제. 개별 die 도 산포도 아닌 상위 원인.</p>
+
+    <div class="mid">
+      <h3>모집단 혼입 <span class="en">bimodality</span></h3>
+      <div class="rule on">
+        <div class="id">SUBPOP_GAP <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">modality_v2 특수분기 (density_gap)<br>로트/장비 혼입·조건 이원화</div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <h3>trim 포화 <span class="en">CODE 전용</span></h3>
+      <div class="rule off">
+        <div class="id">CODE_RAIL <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">code_edge_hit &gt; warn (value_type=CODE)</div>
+      </div>
+    </div>
+
+    <div class="mid">
+      <h3>전량 불량 <span class="en">yield</span></h3>
+      <div class="rule off">
+        <div class="id">GROSS_FAIL <span class="cat">YIELD</span> <span class="sev CRITICAL">CRIT</span></div>
+        <div class="m">yield &lt; gross_yield_bad</div>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <span><b>읽는 법</b> — 대분류 = 판정에 쓰는 입력 축(데이터 자체 / spec 여유 / 개별 die / 좌표 / 모집단·수율). 한 item 에 여러 룰이 동시 발화하면 severity → <code>status.SPECIFICITY_ORDER</code>(구체적인 것 우선) 순으로 primary 를 고른다.</span>
+  <span><b>주의</b> — status_hint 는 기준값이고 <code>bin_taxonomy</code> severity_bias 로 변조된다. 제품군별로는 <code>signatures/&lt;PT&gt;/&lt;FAMILY&gt;.yaml</code> 오버레이가 enabled·임계값을 덮으므로 활성 4종은 <b>기준값 기준</b>이다.</span>
+</footer>
+
+</body>
+</html>

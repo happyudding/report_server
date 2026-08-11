@@ -71,6 +71,7 @@
 | 17 | **eval 학습 루프** (설계·로드맵, 미구현) — L1/L2 적재 · case grain=item×unit · 채점 표본 확보 | Server | [17_eval_learning_loop.md](17_eval_learning_loop.md) | — (13 의 후속 설계) |
 | 18 | **web_report 성능 회귀 가드** — 알려진 지뢰를 밟는 변경을 쓰기 전에 차단(Edit/Write 훅 자동) | Dev | [18_perf_guard.md](18_perf_guard.md) | [tools/perf_guard.py](../tools/perf_guard.py) |
 | 19 | **LLM 배선** — 붙이는 곳(server.env `EVAL_LLM_*` 5줄)과 나가는 곳(소비자 2개+미구현 훅 3개), 확인 명령 | Server | [19_llm_wiring.md](19_llm_wiring.md) | [tools/llm_check.py](../tools/llm_check.py) · [llm_client.py](../eval_analyzer/eval_engine/llm_client.py) |
+| — | **챗봇 구조 도식** (브라우저로 여는 단일 HTML) — 계층 5개·입력→출력 12단계·인텐트 13종·빈틈 목록·적용 개념(규칙/LLM/RAG/LangChain) | Server | [chatbot_architecture.html](chatbot_architecture.html) | [server/chatbot/](../server/chatbot/README.md) |
 
 > 서버 부팅: [server/wsgi.py](../server/wsgi.py) → [plugin.py](../server/plugin.py)
 > `register_report_server` 가 `report_bp` + `honey_bp` + admin_panel + ops 등록.

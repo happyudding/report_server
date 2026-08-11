@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENGR 챗봇 — 구조와 동작 흐름</title>
+<!--
+  server/chatbot 구조 도식 (2026-08-10).
+  의존성 없는 단일 파일 — 브라우저로 그냥 열면 된다. 라이트/다크 테마 자동.
+  코드가 바뀌면 이 문서도 같이 고칠 것: 인텐트 수·툴 수·빈틈 목록이 본문에 하드코딩돼 있다.
+-->
+<style>
+  :root {
+    --ground: #eef0f6;
+    --surface: #ffffff;
+    --surface-2: #f6f7fb;
+    --ink: #161a2b;
+    --ink-2: #4a5169;
+    --ink-3: #767d95;
+    --line: #d9dde9;
+    --line-2: #c3c9db;
+    --accent: #3b4fd8;
+    --accent-soft: #e7eafc;
+    --on-accent: #ffffff;
+    --ok: #0f7a5a;
+    --ok-soft: #e2f3ec;
+    --partial: #9a6200;
+    --partial-soft: #fbf0da;
+    --gap: #b3341f;
+    --gap-soft: #fbe8e4;
+    --shadow: 0 1px 2px rgba(22,26,43,.06), 0 8px 24px -12px rgba(22,26,43,.18);
+    --sans: ui-sans-serif, "Segoe UI", system-ui, -apple-system, "Malgun Gothic", sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "D2Coding", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0e1017;
+      --surface: #161a25;
+      --surface-2: #1c212e;
+      --ink: #e4e8f2;
+      --ink-2: #a8b0c6;
+      --ink-3: #7b8299;
+      --line: #262c3b;
+      --line-2: #333b4e;
+      --accent: #8e9dff;
+      --accent-soft: #1e2440;
+      --on-accent: #0e1017;
+      --ok: #4fc79c;
+      --ok-soft: #122c24;
+      --partial: #e0a341;
+      --partial-soft: #2e2415;
+      --gap: #f08268;
+      --gap-soft: #331914;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0e1017;
+    --surface: #161a25;
+    --surface-2: #1c212e;
+    --ink: #e4e8f2;
+    --ink-2: #a8b0c6;
+    --ink-3: #7b8299;
+    --line: #262c3b;
+    --line-2: #333b4e;
+    --accent: #8e9dff;
+    --accent-soft: #1e2440;
+    --on-accent: #0e1017;
+    --ok: #4fc79c;
+    --ok-soft: #122c24;
+    --partial: #e0a341;
+    --partial-soft: #2e2415;
+    --gap: #f08268;
+    --gap-soft: #331914;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* ── 헤더 ───────────────────────────────────────────── */
+  header.top {
+    padding: 56px 0 32px;
+    border-bottom: 1px solid var(--line);
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--accent); font-weight: 600;
+  }
+  h1 {
+    margin: 0; font-size: clamp(28px, 4.4vw, 42px); line-height: 1.15;
+    letter-spacing: -.022em; font-weight: 680; text-wrap: balance;
+  }
+  .lede { margin: 0; max-width: 62ch; color: var(--ink-2); font-size: 16.5px; }
+
+  .stats { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+  .stat {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+    padding: 10px 14px; display: flex; flex-direction: column; gap: 1px; min-width: 116px;
+  }
+  .stat b { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 11.5px; color: var(--ink-3); letter-spacing: .02em; }
+
+  /* ── 섹션 ───────────────────────────────────────────── */
+  section { padding-top: 52px; }
+  h2 {
+    margin: 0 0 6px; font-size: 21px; font-weight: 650; letter-spacing: -.012em;
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  h2 .num {
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    font-weight: 600; letter-spacing: .06em;
+  }
+  .sub { margin: 0 0 22px; color: var(--ink-2); max-width: 68ch; }
+
+  code, .m { font-family: var(--mono); font-size: .885em; }
+  code {
+    background: var(--surface-2); border: 1px solid var(--line);
+    padding: 1px 5px; border-radius: 4px; color: var(--ink);
+    word-break: break-word;
+  }
+
+  /* ── 계층 지도 ──────────────────────────────────────── */
+  .layers { display: flex; flex-direction: column; gap: 12px; }
+  .layer {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 14px 16px; box-shadow: var(--shadow);
+    display: grid; grid-template-columns: 148px 1fr; gap: 14px; align-items: start;
+  }
+  .layer > h3 {
+    margin: 0; font-size: 13px; font-weight: 650; color: var(--accent);
+    letter-spacing: .01em; padding-top: 3px;
+  }
+  .layer > h3 small { display: block; font-weight: 450; color: var(--ink-3); font-size: 11.5px; letter-spacing: 0; }
+  .mods { display: flex; flex-direction: column; gap: 9px; margin: 0; padding: 0; list-style: none; }
+  .mods li { display: grid; grid-template-columns: minmax(150px, 210px) 1fr; gap: 12px; align-items: baseline; }
+  .mods .who { font-family: var(--mono); font-size: 12.5px; color: var(--ink); font-weight: 550; }
+  .mods .what { color: var(--ink-2); font-size: 13.5px; }
+  @media (max-width: 720px) {
+    .layer { grid-template-columns: 1fr; gap: 8px; }
+    .mods li { grid-template-columns: 1fr; gap: 1px; }
+  }
+
+  /* ── 흐름도 ─────────────────────────────────────────── */
+  .flow { list-style: none; margin: 0; padding: 0; position: relative; display: flex; flex-direction: column; gap: 0; }
+  .flow::before {
+    content: ""; position: absolute; left: 15px; top: 14px; bottom: 26px;
+    width: 2px; background: linear-gradient(var(--line-2), var(--line)); border-radius: 2px;
+  }
+  .stage { position: relative; padding: 0 0 22px 46px; }
+  .mark {
+    position: absolute; left: 0; top: 0; width: 32px; height: 32px; border-radius: 50%;
+    background: var(--surface); border: 2px solid var(--line-2); color: var(--ink-2);
+    display: grid; place-items: center; font-family: var(--mono); font-size: 13px;
+    font-weight: 650; z-index: 1;
+  }
+  .stage--io .mark { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 13px 16px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; gap: 7px;
+  }
+  .card h3 { margin: 0; font-size: 15.5px; font-weight: 620; letter-spacing: -.008em; }
+  .where { font-family: var(--mono); font-size: 12px; color: var(--accent); word-break: break-all; }
+  .card p { margin: 0; color: var(--ink-2); font-size: 14px; }
+  .branches { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 0; padding: 0; list-style: none; }
+  .br {
+    font-size: 12px; padding: 2.5px 9px; border-radius: 20px; border: 1px solid;
+    font-family: var(--mono); letter-spacing: -.01em;
+  }
+  .br--stop { color: var(--gap); border-color: var(--gap); background: var(--gap-soft); }
+  .br--warn { color: var(--partial); border-color: var(--partial); background: var(--partial-soft); }
+  .br--ok   { color: var(--ok); border-color: var(--ok); background: var(--ok-soft); }
+
+  /* ── 표 ─────────────────────────────────────────────── */
+  .tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; min-width: 660px; font-size: 13.5px; }
+  th, td { text-align: left; padding: 9px 13px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-size: 11.5px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--ink-3); font-weight: 600; background: var(--surface-2); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono, th.mono { font-family: var(--mono); font-size: 12.5px; }
+  .chip {
+    display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1.5px 8px;
+    border-radius: 20px; white-space: nowrap; font-family: var(--mono);
+  }
+  .chip--ok { color: var(--ok); background: var(--ok-soft); }
+  .chip--partial { color: var(--partial); background: var(--partial-soft); }
+  .chip--gap { color: var(--gap); background: var(--gap-soft); }
+
+  /* ── 개념 카드 ──────────────────────────────────────── */
+  .concepts { display: grid; grid-template-columns: repeat(auto-fit, minmax(268px, 1fr)); gap: 12px; }
+  .concept {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 15px 16px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 7px;
+  }
+  .concept header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .concept h3 { margin: 0; font-size: 15px; font-weight: 640; }
+  .concept p { margin: 0; font-size: 13.5px; color: var(--ink-2); }
+  .concept .verdict { font-size: 12.5px; color: var(--ink-3); border-top: 1px dashed var(--line-2); padding-top: 7px; }
+
+  /* ── 강조 노트 ──────────────────────────────────────── */
+  .note {
+    border-left: 3px solid var(--accent); background: var(--accent-soft);
+    padding: 12px 16px; border-radius: 0 8px 8px 0; color: var(--ink-2); font-size: 14px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .note b { color: var(--ink); font-weight: 620; }
+  footer {
+    margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--line);
+    color: var(--ink-3); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 6px 18px;
+  }
+  a { color: var(--accent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  @media print {
+    body { background: #fff; color: #000; }
+    .layer, .card, .concept, .tw { box-shadow: none; }
+    section { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">report_server · server/chatbot</div>
+    <h1>ENGR 챗봇 — 구성요소와 동작 흐름</h1>
+    <p class="lede">
+      웹 리포트 세션과 과거 평가 이력을 자연어로 찾는 관리자 전용 챗봇.
+      사람이 한 줄 입력하면 어떤 함수를 거쳐 답이 나오는지, 지금 무엇이 되고 무엇이 비어 있는지를
+      코드 기준으로 정리했다.
+    </p>
+    <div class="stats">
+      <div class="stat"><b>11</b><span>파이썬 모듈</span></div>
+      <div class="stat"><b>13</b><span>인텐트</span></div>
+      <div class="stat"><b>13</b><span>조회 툴 (read-only)</span></div>
+      <div class="stat"><b>64/64</b><span>골든셋 통과</span></div>
+      <div class="stat"><b>OFF</b><span>LLM (배선 완료)</span></div>
+    </div>
+  </header>
+
+  <!-- ═══════════ 1. 구성요소 ═══════════ -->
+  <section>
+    <h2><span class="num">01</span> 구성요소 — 5개 계층</h2>
+    <p class="sub">
+      위에서 아래로 한 방향이다. 아래 계층은 위를 모른다 —
+      엔진(<code>chatbot/</code>)은 Flask 를 import 하지 않아 CLI 로도 그대로 돌아간다.
+    </p>
+
+    <div class="layers">
+      <div class="layer">
+        <h3>웹 UI<small>브라우저</small></h3>
+        <ul class="mods">
+          <li><span class="who">chat.js</span><span class="what">우하단 플로팅 위젯. DOM·CSS 를 스스로 주입하고 master 로 확인된 뒤에만 열린다. 대화 id 는 sessionStorage 에 보관</span></li>
+          <li><span class="who">core.js / applyViewer</span><span class="what">서버가 내려준 <code>is_master</code> 를 보고 위젯을 켠다 (쿠키는 httponly 라 JS 가 못 읽는다)</span></li>
+          <li><span class="who">boot.js applyDeepLink</span><span class="what"><code>?tab=map&amp;item=…</code> 로 들어오면 해당 탭·항목으로 1회 점프</span></li>
+        </ul>
+      </div>
+
+      <div class="layer">
+        <h3>HTTP 경계<small>Flask</small></h3>
+        <ul class="mods">
+          <li><span class="who">routes_chat.py</span><span class="what"><code>POST /pe/report/api/chat</code> — master 가드·CSRF·동시성 3·계측·에러 기록. 조회 로직은 없다</span></li>
+          <li><span class="who">_agent()</span><span class="what">엔진 모듈을 <b>경로로 검증</b>해 적재 (같은 이름의 다른 <code>chatbot</code> 패키지에 가로채이는 사고 방지)</span></li>
+        </ul>
+      </div>
+
+      <div class="layer">
+        <h3>해석<small>질문 → 계획</small></h3>
+        <ul class="mods">
+          <li><span class="who">planner.py</span><span class="what">규칙 분류 13인텐트 + 슬롯 추출(제품·항목·기간·서수·필터). <code>_needs_llm()</code> 게이트, <code>_call_llm()</code></span></li>
+          <li><span class="who">conversation.py</span><span class="what">대화 상태 — 직전 세션목록·세션·항목·제품. 메모리 LRU 30분. <b>사실만</b> 저장</span></li>
+        </ul>
+      </div>
+
+      <div class="layer">
+        <h3>오케스트레이션<small>계획 → 답변</small></h3>
+        <ul class="mods">
+          <li><span class="who">agent.py</span><span class="what">인텐트별 핸들러 13개 디스패치, 상태 승계, 근거 기반 재분류, 링크·선택버튼 파생, 텍스트 렌더</span></li>
+          <li><span class="who">rowkey.py</span><span class="what">Issue Table 행 키 파서 (<code>Yield|bin|item</code> 비대칭 처리)</span></li>
+        </ul>
+      </div>
+
+      <div class="layer">
+        <h3>조회 툴<small>read-only</small></h3>
+        <ul class="mods">
+          <li><span class="who">tools_report.py</span><span class="what">report.db — 세션검색·제품집계·세션메타·Issue Table·세션횡단 item 검색 <b>(5)</b></span></li>
+          <li><span class="who">tools_eval.py</span><span class="what">eval.db — item 후보·이력·유사사례·코멘트·집계 <b>(5)</b>. <code>mode=ro</code> SELECT 만</span></li>
+          <li><span class="who">tools_metrics.py</span><span class="what">web_report 계산값 — 수율/CPK·항목목록·측정값 <b>(3)</b>. 콜드면 계산하지 않고 <code>building</code></span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="note" style="margin-top:14px">
+      <span><b>규약 3가지</b>가 이 그림 전체를 지탱한다.</span>
+      <span>① 임의 SQL 없음 — 노출하는 것은 파라미터 바인딩 SELECT 뿐이다.
+      ② 모든 조회 함수는 <code>viewer</code> 가 <b>키워드 필수 인자</b>다(빠뜨리면 비공개 세션이 새므로 기본값을 두지 않았다).
+      ③ 답변의 수치는 전부 툴 결과에서 온다 — 문장을 만드는 쪽은 값을 지어낼 수 없다.</span>
+    </div>
+  </section>
+
+  <!-- ═══════════ 2. 흐름 ═══════════ -->
+  <section>
+    <h2><span class="num">02</span> 입력에서 출력까지</h2>
+    <p class="sub">
+      질문 한 줄이 답으로 바뀌기까지 12단계. 파란 원은 사람이 보는 지점,
+      회색 원은 서버 내부다. 오른쪽 칩은 그 단계에서 갈라지는 경로다.
+    </p>
+
+    <ol class="flow">
+      <li class="stage stage--io">
+        <div class="mark">1</div>
+        <div class="card">
+          <h3>사람이 질문을 입력한다</h3>
+          <div class="where">chat.js · send()</div>
+          <p><code>{ question, conversation_id, context:{ session_id } }</code> 를 POST 한다.
+          CSRF 토큰은 쿠키에서 읽어 <code>X-CSRF-Token</code> 헤더로 되돌려 보낸다.
+          세션 상세 화면이면 지금 보고 있는 세션 id 가 자동으로 실린다.</p>
+          <ul class="branches">
+            <li class="br br--warn">60초 초과 → 중단</li>
+            <li class="br br--ok">전송 중 입력 비활성</li>
+          </ul>
+        </div>
+      </li>
+
+      <li class="stage">
+        <div class="mark">2</div>
+        <div class="card">
+          <h3>관문 — 권한·위조·혼잡</h3>
+          <div class="where">routes_chat.api_chat()</div>
+          <p>master 쿠키가 아니면 <b>404</b>(존재 자체를 숨긴다). CSRF 불일치 403, 빈 질문·500자 초과 400.
+          그다음 동시 처리 세마포어 3개 중 하나를 10초 안에 잡아야 한다.</p>
+          <ul class="branches">
+            <li class="br br--stop">비master → 404</li>
+            <li class="br br--stop">CSRF → 403</li>
+            <li class="br br--stop">혼잡 → 429</li>
+          </ul>
+        </div>
+      </li>
+
+      <li class="stage">
+        <div class="mark">3</div>
+        <div class="card">
+          <h3>대화 상태를 꺼낸다</h3>
+          <div class="where">conversation.recall(conversation_id)</div>
+          <p>직전 턴에서 <b>확정된 사실</b>만 돌아온다 — 보여준 세션 목록, 고른 세션, 마지막 항목, 마지막 제품.
+          질문 원문이나 추론은 저장하지 않는다. 30분이 지났으면 빈 상태다.</p>
+          <ul class="branches"><li class="br br--warn">만료·미존재 → 빈 상태로 진행</li></ul>
+        </div>
+      </li>
+
+      <li class="stage">
+        <div class="mark">4</div>
+        <div class="card">
+          <h3>규칙으로 먼저 분류한다</h3>
+          <div class="where">planner.rule_plan() — if/elif 13분기</div>
+          <p>키워드·정규식으로 인텐트 1개와 슬롯을 뽑는다(제품·항목·기간·서수·이슈필터·상위N·집계축).
+          근거 없이 catch-all 로 정해졌으면 <code>weak=True</code> 를 단다 — 뒤에서 데이터로 재검증하기 위한 표식이다.</p>
+          <ul class="branches"><li class="br br--ok">마이크로초 · DB 접근 없음</li></ul>
+        </div>
+      </li>
+
+      <li class="stage">
+        <div class="mark">5</div>
+        <div class="card">
+          <h3>약할 때만 LLM 에 물어본다</h3>
+          <div class="where">planner._needs_llm() → _call_llm()</div>
+          <p><code>unknown</code>·<code>weak</code>·조건 없는 세션검색일 때만 호출한다. 규칙이 확신한 질문은
+          LLM 을 부르지 않는다 — 슬롯이 3개뿐인데 왕복이 최대 30초라 전부 태우면 네 번째 사용자가 429 를 본다.
+          LLM 은 <b>계획만</b> 세우고 SQL 이나 수치를 만들지 않는다.</p>
+          <ul class="branches">
+            <li class="br br--warn">현재 미설정 → 이 단계 건너뜀</li>
+            <li class="br br--ok">실패 → 규칙 계획 그대로</li>
+          </ul>
+        </div>
+      </li>
+
+      <li class="stage">
+        <div class="mark">6</div>
+        <div class="card">
+          <h3>직전 대화를 이어받는다</h3>
+          <div class="where">agent._run() — 승계 4단계</div>
+          <p>① "1번/첫번째/마지막" → 직전 목록의 N번째 세션 ② 세션 미지정이면 열린 세션 → 직전 세션
+          ③ 제품 미지정이면 직전 제품 ④ 항목 미지정이면 직전 항목(항목이 주어인 인텐트에서만).
+          세션 id 는 <b>코드가 목록에서 집는다</b> — 모델이 문자열을 다시 타이핑하지 않는다.</p>
+        </div>
+      </li>
+
+      <li class="stage">
+        <div class="mark">7</div>
+        <div class="card">
+          <h3>인텐트별 핸들러 실행</h3>
+          <div class="where">agent — handler dict 13개</div>
+          <p>핸들러가 필요한 툴을 1~3개 부른다. 모든 호출은 <code>_Trace</code> 에 기록돼 관리자 화면에서
+          "어느 툴을 어떤 인자로 불렀나"가 남는다.</p>
+        </div>
+      </li>
+
+      <li class="stage">
+        <div class="mark">8</div>
+        <div class="card">
+          <h3>조회 — 권한 필터를 통과한 것만</h3>
+          <div class="where">tools_report / tools_eval / tools_metrics</div>
+          <p>report.db 는 비공개 세션 필터를 SQL 에 붙이고, 상세는 <code>_can_view()</code> 로 한 번 더 본다.
+          eval.db 는 파일이 없으면 예외 대신 <b>빈 결과 + <code>db_available:false</code></b>.
+          web_report 수치는 캐시가 없으면 계산하지 않고 백그라운드 빌드만 예약한다.</p>
+          <ul class="branches">
+            <li class="br br--warn">콜드 → building + 재시도 버튼</li>
+            <li class="br br--warn">eval.db 없음 → 빈 결과</li>
+            <li class="br br--stop">권한 없음 → 없는 것으로 응답</li>
+          </ul>
+        </div>
+      </li>
+
+      <li class="stage">
+        <div class="mark">9</div>
+        <div class="card">
+          <h3>근거로 재분류 — 모양이 아니라 데이터가 판정한다</h3>
+          <div class="where">agent._item_history() 말미</div>
+          <p><code>weak</code> 인데 item 축에서 0건이면, 그 토큰을 세션 자유검색에 던져 본다.
+          세션이 잡히면 인텐트를 <code>session_find</code> 로 고쳐 답한다.
+          "IW06 있어?" 가 항목이 아니라 세션으로 잡히는 이유다.</p>
+          <ul class="branches"><li class="br br--ok">정상 경로 비용 0 (0건일 때만 프로브)</li></ul>
+        </div>
+      </li>
+
+      <li class="stage">
+        <div class="mark">10</div>
+        <div class="card">
+          <h3>답변 문장 + 링크 + 선택 버튼</h3>
+          <div class="where">_format_* · _link() · _choice()</div>
+          <p>문장은 <b>조회 결과를 넣은 템플릿</b>이다(생성 모델이 쓰지 않는다).
+          링크는 대상이 지금 열린 세션이면 페이지 안 이동(action), 아니면 딥링크 URL 로 갈린다.
+          애매하면 완성된 후속 질문을 담은 버튼을 준다.</p>
+          <ul class="branches"><li class="br br--warn">분류 실패 → 광역 폴백(3축 검색)</li></ul>
+        </div>
+      </li>
+
+      <li class="stage">
+        <div class="mark">11</div>
+        <div class="card">
+          <h3>사실을 기억하고, 기록을 남긴다</h3>
+          <div class="where">conversation.remember() · report_db.log_chat()</div>
+          <p>대화에는 세션목록·세션·항목·제품만 남긴다.
+          DB 에는 질문·답변 전문·intent·툴 호출·<b>총/대기/LLM 소요 3분해</b>·실패 시 traceback 이 들어간다
+          — 관리자 Chatbot 탭이 이걸 읽는다.</p>
+        </div>
+      </li>
+
+      <li class="stage stage--io">
+        <div class="mark">12</div>
+        <div class="card">
+          <h3>화면에 그린다</h3>
+          <div class="where">chat.js — 렌더</div>
+          <p>본문은 <code>textContent</code> 로만 넣는다(HTML 주입 없음). URL 은 <code>/pe/report/</code> 로
+          시작할 때만 링크로 만들고, action 은 화이트리스트 3종만 실행한다. 오류면 예외 한 줄 + 접힌 traceback.</p>
+          <ul class="branches"><li class="br br--ok">대화 id 저장 → 다음 턴에 재사용</li></ul>
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ═══════════ 3. 인텐트 ═══════════ -->
+  <section>
+    <h2><span class="num">03</span> 인텐트 13종 — 판정 순서대로</h2>
+    <p class="sub">
+      위에서부터 먼저 걸리는 것이 이긴다. 순서 자체가 설계다 —
+      예컨대 <code>session_meta</code> 가 <code>session_find</code> 보다 앞에 있어야
+      "이 세션 누가 올렸어?"가 세션 <em>검색</em>으로 새지 않는다.
+    </p>
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th class="mono">#</th><th>인텐트</th><th>이런 질문</th><th>부르는 툴</th><th>상태</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">1</td><td class="mono">page_jump</td><td>맵 보고 싶은데 링크 알려줘</td><td class="mono">list_items</td><td><span class="chip chip--ok">동작</span></td></tr>
+          <tr><td class="mono">2</td><td class="mono">session_issue</td><td>Open 안 된 거 / fail 상위 5개 / CPK 에 xxx 있어?</td><td class="mono">get_session_issues</td><td><span class="chip chip--ok">동작</span></td></tr>
+          <tr><td class="mono">3</td><td class="mono">stats</td><td>PMIC 에 MAJOR 몇 건이야?</td><td class="mono">stats_summary</td><td><span class="chip chip--partial">데이터 부족</span></td></tr>
+          <tr><td class="mono">4</td><td class="mono">similar_case</td><td>LDO 랑 비슷한 사례 있었어?</td><td class="mono">search_similar_cases</td><td><span class="chip chip--partial">데이터 부족</span></td></tr>
+          <tr><td class="mono">5</td><td class="mono">session_metrics</td><td>이 세션 수율 / cpk / 측정값</td><td class="mono">get_session_metrics<br>get_item_values</td><td><span class="chip chip--partial">콜드 시 대기</span></td></tr>
+          <tr><td class="mono">6</td><td class="mono">session_meta</td><td>누가 올렸어? 온도 몇 도야?</td><td class="mono">get_session_detail</td><td><span class="chip chip--ok">동작</span></td></tr>
+          <tr><td class="mono">7</td><td class="mono">session_find</td><td>S3222 보고서 찾아줘 / 어제 올라온 세션</td><td class="mono">search_sessions</td><td><span class="chip chip--ok">동작</span></td></tr>
+          <tr><td class="mono">8</td><td class="mono">item_search</td><td>PMIC SOC 에 무슨 Item 있어</td><td class="mono">search_item_candidates</td><td><span class="chip chip--partial">이슈 난 항목만</span></td></tr>
+          <tr><td class="mono">9</td><td class="mono">item_history</td><td>SGM 항목 예전에 어떻게 됐었지?</td><td class="mono">search_item_candidates<br>get_item_history<br>search_item_in_sessions</td><td><span class="chip chip--ok">동작</span></td></tr>
+          <tr><td class="mono">10</td><td class="mono">product_search</td><td>S3222 라는 제품 평가한 적 있어?</td><td class="mono">search_products</td><td><span class="chip chip--ok">동작</span></td></tr>
+          <tr><td class="mono">11</td><td class="mono">comment_search</td><td>고온에서 문제된 적 있어?</td><td class="mono">search_comments</td><td><span class="chip chip--partial">데이터 부족</span></td></tr>
+          <tr><td class="mono">12</td><td class="mono">help</td><td>안녕 / 뭐 할 수 있어?</td><td>—</td><td><span class="chip chip--ok">동작</span></td></tr>
+          <tr><td class="mono">13</td><td class="mono">unknown</td><td>그 외 전부 → <b>광역 폴백</b></td><td class="mono">search_sessions<br>search_item_candidates<br>search_comments</td><td><span class="chip chip--ok">동작</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note" style="margin-top:14px">
+      <span><b>"모르겠습니다"로 끝나지 않는다.</b></span>
+      <span>13번은 실패 처리가 아니라 마지막 시도다. 질문에서 건진 토큰을 세션·항목·코멘트 세 축에
+      동시에 던져 무엇으로 걸리는지 보여주고, <em>걸린 축만</em> 후속 버튼으로 준다.
+      의도를 못 맞혀도 사용자는 다음 클릭을 할 수 있다.</span>
+    </div>
+  </section>
+
+  <!-- ═══════════ 4. 빈틈 ═══════════ -->
+  <section>
+    <h2><span class="num">04</span> 빈틈 — 지금 안 되는 것</h2>
+    <p class="sub">
+      되는 것보다 이 목록이 중요하다. 원인을 함께 적었다 — 어떤 것은 데이터가 없어서고,
+      어떤 것은 구조가 막고 있어서다.
+    </p>
+    <div class="tw">
+      <table>
+        <thead><tr><th>안 되는 것</th><th>원인</th><th>성격</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><b>세션 A 와 B 비교</b><br><span style="color:var(--ink-3)">"이 세션이랑 저 세션 뭐가 달라?"</span></td>
+            <td>web_report 조회 함수가 전부 <code>session_id</code> <b>단수</b>다. 조회 시점에 두 세션을 섞을 경로가 없다</td>
+            <td><span class="chip chip--gap">구조</span></td>
+          </tr>
+          <tr>
+            <td><b>Compare · Temperature · Trim · Commonality 분석</b></td>
+            <td>해당 탭 계산을 챗봇 툴로 감싼 것이 없다. 콜드 빌드 비용도 함께 온다</td>
+            <td><span class="chip chip--gap">미구현</span></td>
+          </tr>
+          <tr>
+            <td><b>rawdata 집계</b><br><span style="color:var(--ink-3)">"이 항목 3σ 벗어난 die 몇 개?"</span></td>
+            <td>항목 1개 전량 조회(<code>scatter_item</code>)만 있고 조건부 집계 툴이 없다</td>
+            <td><span class="chip chip--gap">미구현</span></td>
+          </tr>
+          <tr>
+            <td><b>애매한 지시대명사</b><br><span style="color:var(--ink-3)">"맨 위에 거", "아까 그거 말고"</span></td>
+            <td>서수 인식이 정규식이라 <code>1번/첫번째/마지막</code> 만 받는다. 이건 LLM 이 잘하는 영역</td>
+            <td><span class="chip chip--partial">LLM 대기</span></td>
+          </tr>
+          <tr>
+            <td><b>자연스러운 문장 답변</b></td>
+            <td>답변이 템플릿 문자열이다. 근거 기반 합성(모델이 초안, 서버가 값 치환)은 다음 단계</td>
+            <td><span class="chip chip--partial">LLM 대기</span></td>
+          </tr>
+          <tr>
+            <td><b>표현이 다른 코멘트 검색</b><br><span style="color:var(--ink-3)">"튀었다" ↔ "스파이크"</span></td>
+            <td><code>LIKE</code> 문자열 검색이라 표현이 정확히 겹쳐야 걸린다. FTS·임베딩 없음</td>
+            <td><span class="chip chip--partial">데이터 대기</span></td>
+          </tr>
+          <tr>
+            <td><b>item 이름 표기 흔들림</b><br><span style="color:var(--ink-3)">VDD_INT ↔ VDDINT</span></td>
+            <td>alias 정규화 사전이 없다. eval.db 의 <code>item_alias</code> 는 적재된 것만</td>
+            <td><span class="chip chip--gap">미구현</span></td>
+          </tr>
+          <tr>
+            <td><b>eval.db 축 답변 대부분</b><br><span style="color:var(--ink-3)">집계·유사사례·코멘트</span></td>
+            <td>현 워크스페이스 eval.db 에 <b>case 1건 / evaluation 0건</b>. 코멘트가 달린 이슈만 쌓이는 구조</td>
+            <td><span class="chip chip--partial">데이터 부족</span></td>
+          </tr>
+          <tr>
+            <td><b>콜드 세션의 수치 즉답</b></td>
+            <td>요청 스레드를 빌드에 묶지 않는다는 결정의 대가. "빌드 시작했다 + 재시도" 로 응답</td>
+            <td><span class="chip chip--partial">의도된 절충</span></td>
+          </tr>
+          <tr>
+            <td><b>대화 기억의 영속성</b></td>
+            <td>프로세스 메모리라 재기동하면 사라지고 워커 간 공유도 없다. 몇 분짜리 대화 전제</td>
+            <td><span class="chip chip--partial">의도된 절충</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══════════ 5. 개념 ═══════════ -->
+  <section>
+    <h2><span class="num">05</span> 어떤 개념이 들어갔나</h2>
+    <p class="sub">
+      쓴 것과 <b>일부러 안 쓴 것</b>을 함께 적는다. 안 쓴 이유가 곧 이 설계의 근거다.
+    </p>
+    <div class="concepts">
+
+      <div class="concept">
+        <header><h3>규칙 기반 분류</h3><span class="chip chip--ok">채택 · 1차</span></header>
+        <p>키워드 세트 20여 개와 정규식 5개로 인텐트와 슬롯을 뽑는다. 13분기 if/elif.</p>
+        <div class="verdict">LLM 이 죽어도 서비스가 서 있어야 하므로 이쪽이 하한선이다.
+        골든셋 64문항이 지키는 것도 이 경로다.</div>
+      </div>
+
+      <div class="concept">
+        <header><h3>LLM</h3><span class="chip chip--partial">배선 완료 · OFF</span></header>
+        <p>사내 OpenAI 호환 엔드포인트로 POST 1회. 역할은 <b>질문 해석(플래너)</b> 하나뿐 —
+        SQL 을 만들지도, 수치를 쓰지도 않는다.</p>
+        <div class="verdict">규칙이 약할 때만 호출한다. 켜면 표현 변형에 크게 강해지고,
+        꺼도 규칙으로 폴백해 답은 나온다.</div>
+      </div>
+
+      <div class="concept">
+        <header><h3>엔티티 해석</h3><span class="chip chip--ok">채택 · 핵심</span></header>
+        <p>토큰의 정체를 모양으로 추측하지 않고 <b>DB 에 물어본다</b>.
+        "IW06" 이 제품인지 lot 인지 파일명인지는 10개 컬럼 검색이 답한다.</p>
+        <div class="verdict">임베딩 없이 결정론적으로 도는 실질적 리트리버.
+        오분류를 가장 많이 줄인 장치다.</div>
+      </div>
+
+      <div class="concept">
+        <header><h3>LangChain / LangGraph</h3><span class="chip chip--gap">미채택</span></header>
+        <p>흐름이 "질문 → 계획 → 툴 1~3개 → 답"으로 끝나 에이전트 루프가 필요 없다.</p>
+        <div class="verdict">운영 venv 가 Python 3.14 라 의존 추가 위험이 이득보다 크다.
+        같은 이름의 실험 패키지가 실제로 운영 장애를 낸 전력도 있다.</div>
+      </div>
+
+      <div class="concept">
+        <header><h3>RAG · 벡터 검색</h3><span class="chip chip--gap">보류</span></header>
+        <p>검색할 말뭉치 자체가 없다 — eval.db 에 case 1건, evaluation 0건.</p>
+        <div class="verdict">구조화 데이터는 SQL 이 더 정확하다.
+        코멘트·선례가 수백 건 쌓이고 <b>FTS 실패가 측정된 뒤</b>에 올릴 순서다.</div>
+      </div>
+
+      <div class="concept">
+        <header><h3>멀티턴 메모리</h3><span class="chip chip--ok">채택 · 구조화</span></header>
+        <p>대화록을 다시 보내는 방식이 아니라 <b>사실 4개</b>(세션목록·세션·항목·제품)만 저장한다.</p>
+        <div class="verdict">LLM 이 꺼져 있어도 동작해야 하고, 세션 id 같은 식별자는
+        모델이 다시 타이핑하면 안 되기 때문이다.</div>
+      </div>
+
+    </div>
+  </section>
+
+  <footer>
+    <span>server/chatbot · 11 모듈 · 약 3,000줄</span>
+    <span>골든셋 64/64 · 단위 16케이스</span>
+    <span>관리자 전용 (master 4h) · read-only</span>
+    <span>2026-08-10 기준 · 코드 변경 시 함께 갱신</span>
+  </footer>
+</div>
+
+</body>
+</html>
