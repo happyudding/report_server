@@ -447,8 +447,14 @@ def _trace_case(case, engine_version, mods, dist_budget=None):
     }
 
 
+def fail_only_default() -> bool:
+    """서버 기본 평가 범위 (eval_panel 이 ai_comment 를 직접 import 하지 않도록 재노출)."""
+    from . import ai_comment
+    return ai_comment.fail_only_enabled()
+
+
 def trace_session(session_id: str, *, report_db, upload_root: Path,
-                  max_cases: int | None = 400) -> dict:
+                  max_cases: int | None = 400, fail_only: bool | None = None) -> dict:
     """세션의 AI Comment 평가를 L0~L6 단계별로 재현한다 (관리자 디버그 전용).
 
     운영 조회(service.load_webreport)와 같은 변형 경로(loader.load_tables →
@@ -457,6 +463,11 @@ def trace_session(session_id: str, *, report_db, upload_root: Path,
     raw_metrics/features/조건분해를 노출하고, **게이팅 탈락 케이스도 포함**한다.
     `max_cases=None` 이면 전 케이스를 담는다 — 그때도 분포 점은 런 단위 예산
     (_DIST_POINTS_BUDGET)으로 묶여 메모리가 케이스 수에 비례해 늘지 않는다.
+
+    `fail_only=None` 이면 서버 기본(env WEB_REPORT_EVAL_FAIL_ONLY)을 따라 운영 경로와
+    같은 item 집합을 본다. True/False 로 강제하면 범위를 바꿔 비교할 수 있다 — 그때
+    반환 `fail_only` 가 달라지므로 호출측(패널)은 직전 run 과의 diff 를 건너뛰어야 한다
+    (모집단이 달라 added/removed 가 오보가 된다).
     """
     from . import ai_comment
     from .loader import load_tables
@@ -473,16 +484,23 @@ def trace_session(session_id: str, *, report_db, upload_root: Path,
     tables = mode_tables(tables, str(session.get("mode") or "Normal"))
     selected = {str(v) for v in (manifest.get("selected_items") or []) if str(v)}
 
+    if fail_only is None:
+        fail_only = ai_comment.fail_only_enabled()
+    fail_set = ai_comment.eval_fail_scope(tables) if fail_only else None
+
     engine_version = eval_config.ENGINE_VERSION
     sources, cases, truncated = [], [], False
+    item_total = 0
     dist_budget = [_DIST_POINTS_BUDGET]
     for idx, table in enumerate(tables):
         meta = ai_comment._session_meta(session, idx + 1)
         if meta is None:
             raise ValueError(f"product_type={session.get('product_type')!r} 는 평가 대상이 아님")
-        items = [c for c in table.item_columns if not selected or c in selected]
+        items = ai_comment._eval_items(table, selected, fail_set)
+        item_total += len(table.item_columns)
         sources.append({"index": idx, "source": table.source, "meta": meta,
-                        "item_count": len(items)})
+                        "item_count": len(items),
+                        "item_total": len(table.item_columns)})
         if not items:
             continue
         raw_df = ai_comment._table_to_raw_df(table, items)
@@ -503,4 +521,21 @@ def trace_session(session_id: str, *, report_db, upload_root: Path,
             "family_product": session.get("family_product"),
             "engine_version": engine_version, "rules_rev": rules_rev(),
             "sources": sources, "cases": cases, "truncated": truncated,
-            "max_cases": max_cases}
+            "max_cases": max_cases,
+            "fail_only": bool(fail_only),
+            "item_scope": {"evaluated": sum(s["item_count"] for s in sources),
+                           "total": item_total},
+            "coverage": _coverage(cases)}
+
+
+def _coverage(cases) -> dict:
+    """fail case 중 진단 signature 가 하나도 안 뜬 비율 — "현재 룰로 커버되나" 지표.
+
+    fail_count>0 인데 발화 0건이면 엔진은 (data_completeness=full 일 때) OK 를 낼 수도
+    있다(status.decide). 그런 케이스가 얼마나 되는지 세어 패널에 노출한다 — 판정 자체는
+    바꾸지 않는다.
+    """
+    fail_cases = [c for c in cases if (c.get("raw_metrics") or {}).get("fail_count")]
+    fired = [c for c in fail_cases if c.get("primary_signature")]
+    return {"fail_cases": len(fail_cases), "fired": len(fired),
+            "unclassified": len(fail_cases) - len(fired)}

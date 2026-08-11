@@ -31,6 +31,13 @@ KIND_NOTE_SHEET = "note_sheet"
 # 부재=Open). 둘 다 manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
 KIND_ISSUE_HIDDEN = "issue_hidden"
 KIND_ISSUE_STATUS = "issue_status"
+# 2026-08-11 추가 — Issue Table Signature 컬럼의 **ENGR 확정값**
+# (item_key=comment 와 같은 row_key, value=JSON 배열 ["WIDE_DISTRIBUTION","UNKNOWN"]).
+# 순서를 보존해야 rank(1순위 정답)를 알 수 있어 문자열 조인이 아니라 배열로 담는다.
+# 행이 있으면 "ENGR 가 검수해 확정했다"는 뜻이고(엔진 제안과 같은 값이어도 저장한다 —
+# 동의 사례가 빠지면 정정 사례만 쌓여 통계가 편향된다), 행이 없으면 미검수 상태다.
+# manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
+KIND_ISSUE_SIGNATURE = "issue_signature"
 # 2026-07-22 추가 — 앵커/북마크 태그(item_key=태그명, value=JSON 위치 spec).
 # IssueTable comment 의 #[태그명] 토큰이 이 태그를 가리켜 Note 특정 셀로 점프한다.
 # manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
@@ -88,6 +95,30 @@ def comment_key(row_key: str, col: str) -> str:
     return f"{row_key}{_SEP}{col}"
 
 
+def _signature_list(value) -> list:
+    """issue_signature 저장값(JSON 배열) → id 목록. 깨진 값은 조용히 빈 목록."""
+    try:
+        ids = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    return [str(v) for v in ids if str(v)] if isinstance(ids, list) else []
+
+
+def signature_value(ids) -> str:
+    """id 목록 → 저장 문자열 (순서 보존 JSON 배열). 저장·동기화가 같은 표현을 쓴다."""
+    return json.dumps([str(v) for v in ids], ensure_ascii=False)
+
+
+def load_issue_signatures(report_db, session_id: str) -> dict:
+    """row_key → ENGR 확정 signature 목록. eval DB 동기화(멱등 재적재)가 쓰는 진실 상태."""
+    out = {}
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_ISSUE_SIGNATURE,)):
+        ids = _signature_list(row["value"])
+        if ids:
+            out[row["item_key"]] = ids
+    return out
+
+
 def state_from_manifest(manifest: dict) -> dict:
     """manifest 의 편집 필드를 편집 상태 dict 로 (legacy 폴백·시드 공용)."""
     manifest = manifest or {}
@@ -96,9 +127,11 @@ def state_from_manifest(manifest: dict) -> dict:
         "etc_items": list(manifest.get("etc_items") or []),
         "trim_overrides": dict(manifest.get("trim_overrides") or {}),
         "summary_engr": dict(manifest.get("summary_engr") or {}),
-        # issue_hidden/issue_status 는 manifest 에 없는 신규 kind — 빈 기본값만 보장.
+        # issue_hidden/issue_status/issue_signatures 는 manifest 에 없는 신규 kind —
+        # 빈 기본값만 보장.
         "issue_hidden": [],
         "issue_status": {},
+        "issue_signatures": {},
     }
 
 
@@ -107,7 +140,7 @@ def load_edit_state(report_db, session_id: str) -> dict:
 
     etc_items 순서는 rowid(삽입) 순서 — get_webreport_edits 가 보장한다."""
     state = {"issue_comments": {}, "etc_items": [], "trim_overrides": {}, "summary_engr": {},
-             "issue_hidden": [], "issue_status": {}}
+             "issue_hidden": [], "issue_status": {}, "issue_signatures": {}}
     for row in report_db.get_webreport_edits(session_id,
                                              exclude_kinds=_STATE_EXCLUDED_KINDS):
         kind, item_key, value = row["kind"], row["item_key"], row["value"]
@@ -121,6 +154,10 @@ def load_edit_state(report_db, session_id: str) -> dict:
             state["issue_hidden"].append(item_key)
         elif kind == KIND_ISSUE_STATUS:
             state["issue_status"][item_key] = value
+        elif kind == KIND_ISSUE_SIGNATURE:
+            ids = _signature_list(value)
+            if ids:
+                state["issue_signatures"][item_key] = ids
         elif kind == KIND_TRIM_OVERRIDE:
             try:
                 spec = json.loads(value)

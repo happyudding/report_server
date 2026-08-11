@@ -796,6 +796,36 @@ def web_report_issue_table_status(session_id):
     return jsonify(result)
 
 
+@report_bp.post("/session/<session_id>/web_report/issue_table/signature")
+def web_report_issue_table_signature(session_id):
+    """Issue Table 행의 ENGR 확정 signature 저장 — 세션 편집 DB(kind=issue_signature).
+
+    body: {"key": "Yield|<bin>|<item>"|"CPK|<item>"|"ETC|<item>",
+           "signatures": ["WIDE_DISTRIBUTION", "UNKNOWN"]}.
+    빈 배열이면 확정을 해제해 "미검수 + 엔진 제안" 상태로 되돌린다.
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_issue_signature(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+            key=(body.get("key") or "").strip(), value=body.get("signatures"),
+            client_ip=ip, user_agent=ua)
+    except (FileNotFoundError, KeyError):
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report issue_table signature failed for session %s", session_id)
+        abort(500, "issue_table signature failed")
+    return jsonify(result)
+
+
 @report_bp.post("/session/<session_id>/web_report/issue_table/comments")
 def web_report_issue_table_comments(session_id):
     """Issue Table PTE/개발 comment 저장 — 세션 편집 DB 갱신 (parquet 불변).

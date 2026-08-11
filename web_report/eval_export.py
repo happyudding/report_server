@@ -273,10 +273,20 @@ def _dist_metrics(tables, item) -> dict:
             "stdev": best.get("stdev"), "min": best.get("min"), "max": best.get("max")}
 
 
-def _find_run_id(conn, session_id: str):
-    row = conn.execute(
-        "SELECT run_id FROM ingest_run WHERE session_id=? ORDER BY run_id DESC LIMIT 1",
-        (session_id,)).fetchone()
+def _find_run_id(conn, session_id: str, ingested_by: str | None = None):
+    """세션의 ingest_run — ingested_by 를 주면 그 용도의 run 만 찾는다.
+
+    한 세션에 용도가 다른 run 이 여럿 있다(코멘트 export / 스냅샷 수집 / signature 라벨).
+    ingested_by 없이 최근 run 을 집으면 남의 run 에 라벨이 달려 세션 역참조가 흐려진다.
+    """
+    if ingested_by:
+        row = conn.execute(
+            "SELECT run_id FROM ingest_run WHERE session_id=? AND ingested_by=? "
+            "ORDER BY run_id DESC LIMIT 1", (session_id, ingested_by)).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT run_id FROM ingest_run WHERE session_id=? ORDER BY run_id DESC LIMIT 1",
+            (session_id,)).fetchone()
     return row["run_id"] if row else None
 
 
@@ -383,8 +393,8 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
                 if metrics:
                     store.save_raw_metrics(case_id, run_id, metrics, conn=conn)
 
-                conn.execute("DELETE FROM label WHERE case_id=? AND labeler=?",
-                             (case_id, _LABELER))
+                store.delete_label_with_signatures("case_id=? AND labeler=?",
+                                                   (case_id, _LABELER), conn=conn)
                 store.insert_label(case_id, None, None, None, None, 0, 0,
                                    text, _LABELER, by or None, "manual", conn=conn)
                 now_cases.add(case_id)
@@ -396,8 +406,8 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
                 "SELECT case_id FROM run_case WHERE run_id=?", (run_id,))}
             removed = 0
             for case_id in prev - now_cases:
-                conn.execute("DELETE FROM label WHERE case_id=? AND labeler=?",
-                             (case_id, _LABELER))
+                store.delete_label_with_signatures("case_id=? AND labeler=?",
+                                                   (case_id, _LABELER), conn=conn)
                 conn.execute("DELETE FROM raw_metrics WHERE case_id=? AND run_id=?",
                              (case_id, run_id))
                 conn.execute("DELETE FROM run_case WHERE run_id=? AND case_id=?",
@@ -501,8 +511,8 @@ def save_human_label(session: dict, *, item: str, bin_, item_class: str,
                 store.save_case_signature(eval_id, sig_rows, conn=conn)
 
             # 같은 case 의 이전 패널 검수는 교체 (case 당 최신 정답 1건 유지)
-            conn.execute("DELETE FROM label WHERE case_id=? AND labeler=?",
-                         (case_id, _PANEL_LABELER))
+            store.delete_label_with_signatures("case_id=? AND labeler=?",
+                                               (case_id, _PANEL_LABELER), conn=conn)
             label_id = store.insert_label(
                 case_id, eval_id, human_status,
                 str(human.get("root_cause_category") or "").strip() or None, None,
@@ -549,6 +559,107 @@ def get_panel_label(session: dict, *, item: str, bin_) -> dict | None:
         return dict(row) if row else None
     finally:
         conn.close()
+
+
+# ── ENGR 확정 Signature 라벨 (Issue Table Signature 컬럼 → eval DB) ───────────
+# 왜 별도 run 을 쓰나: case_id 는 (제품, lot, wafer=None, item, bin, revision) 자연키라
+# **세션이 들어가지 않는다**. 같은 lot 을 여러 세션에서 열어 각각 확정하면 case_id 가
+# 겹쳐 서로의 라벨을 덮어쓴다. 그래서 세션마다 전용 ingest_run 을 만들고 그 run 의
+# evaluation 에 label.eval_id 를 매달아, 삭제·조회를 **세션 단위**로 한다.
+_SIGNATURE_LABELER = "web-signature"
+_SIGNATURE_ENGINE_VERSION = "engr-label"   # 사람 라벨용 run — 엔진 판정 스냅샷이 아니다
+
+
+def sync_session_signatures(session_id: str, *, report_db, upload_root=None) -> dict:
+    """세션 편집 DB 의 ENGR 확정 signature 전체를 eval DB 로 멱등 재적재.
+
+    요청 payload 가 아니라 **편집 DB 의 현재 상태**를 읽는다 — 연속 편집이 몰려도 마지막
+    상태로 수렴하고, 서버 재시작 뒤 수동 재동기화도 같은 함수 하나로 된다.
+    해제(편집행 삭제)된 행은 이 세션 run 의 라벨을 통째로 지운 뒤 다시 넣는 방식으로
+    자연히 사라진다.
+    """
+    session = report_db.get_session(session_id)
+    if not session or str(session.get("source") or "") != "web_report":
+        return {"skipped": "not a web_report session"}
+
+    from . import ai_comment, edits
+    meta = ai_comment._session_meta(session, 0)
+    if meta is None:
+        return {"skipped": f"unsupported product_type: {session.get('product_type')!r}"}
+    meta["wafer_number"] = None            # 코멘트/패널 라벨과 같은 lot 수준 case 공간
+
+    state = edits.load_issue_signatures(report_db, session_id)
+    parsed = []                            # [(bin|None, item, [signature...])]
+    for row_key, ids in state.items():
+        pk = _parse_row_key(row_key)
+        if pk is not None and ids:
+            parsed.append((pk[0], pk[1], ids))
+
+    # 확정 0건 + eval DB 미존재면 파일조차 만들지 않는다 (빈 DB 양산 방지 — export 와 동일).
+    if not parsed and not db_path().exists():
+        return {"labels": 0, "removed": 0}
+
+    store, engine_ingest = _engine()
+    alias = engine_ingest._alias_map()
+    labels = 0
+    with cache.keyed_lock_ctx(("eval_export", session_id)):
+        conn = open_conn()
+        try:
+            run_id = _find_run_id(conn, session_id, ingested_by=_SIGNATURE_LABELER)
+            if run_id is None:
+                run_id = store.create_ingest_run({
+                    "product_name": meta["product_name"], "lot_id": meta["lot_id"],
+                    "source_file": str(session.get("file_name") or ""),
+                    "analysis_key": session.get("analysis_key"),
+                    "session_id": session_id, "ingested_by": _SIGNATURE_LABELER,
+                }, conn=conn)
+            store.upsert_product_master(meta, conn=conn)
+
+            # 이 세션 run 의 기존 확정 라벨 전량 제거 후 현재 상태로 재작성(멱등).
+            removed = store.delete_label_with_signatures(
+                "labeler=? AND eval_id IN (SELECT eval_id FROM evaluation WHERE run_id=?)",
+                (_SIGNATURE_LABELER, run_id), conn=conn)
+
+            for bin_, item, ids in parsed:
+                item_canonical = alias.get(item, engine_ingest._canonicalize(item))
+                item_id = store.resolve_item_id(item, conn=conn)
+                if item_id is None:
+                    item_id = store.upsert_item_master(
+                        item_canonical, item, None, None, "NON_TRIM", None, "PF",
+                        None, conn=conn)
+                    store.upsert_item_alias(item, item_id, conn=conn)
+                case_id = store.make_case_id(meta["product_name"], meta["lot_id"], None,
+                                             item_id, bin_, meta["revision"])
+                store.upsert_fail_case(case_id, meta["product_name"], meta["lot_id"],
+                                       None, item_id, bin_, meta["revision"], None,
+                                       conn=conn)
+                store.link_run_case(run_id, case_id, conn=conn)
+                # 사람 라벨을 매달 자리(eval_id)를 만든다 — status 는 비운다.
+                # scoring(관리자 채점)은 human_status 가 있는 라벨만 세므로 오염되지 않는다.
+                eval_id = store.save_evaluation(case_id, run_id, _SIGNATURE_ENGINE_VERSION,
+                                                None, None, None, None, None, conn=conn)
+                label_id = store.insert_label(case_id, eval_id, None, None, None,
+                                              None, 0, None, _SIGNATURE_LABELER,
+                                              None, "manual", conn=conn)
+                store.save_label_signatures(label_id, ids, conn=conn)
+                labels += 1
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    return {"labels": labels, "removed": removed}
+
+
+def safe_sync_signatures(session_id: str, *, report_db, upload_root=None) -> dict:
+    """sync_session_signatures 실패 격리 — 편집 저장은 이미 끝났으므로 죽이지 않는다."""
+    try:
+        return sync_session_signatures(session_id, report_db=report_db,
+                                       upload_root=upload_root)
+    except Exception:
+        logger.warning("signature 라벨 동기화 실패 (session=%s)", session_id, exc_info=True)
+        return {"skipped": "error"}
 
 
 # ── 평가 스냅샷 수집 (L1~L4 를 report_server 소유 DB 에 적재) ─────────────────
@@ -635,6 +746,10 @@ def collect_session_snapshot(session_id: str, *, report_db, upload_root,
                                                 engine_version):
                     skipped += 1
                     continue
+                # 표본함(룰 튜닝) 모집단은 **항상 전체 item** 이다 — 운영 평가의
+                # fail-only 플래그(WEB_REPORT_EVAL_FAIL_ONLY)를 여기에는 적용하지
+                # 않는다(2026-08-11 결정). fail 이 없는 항목에서만 뜨는 룰의 표본이
+                # 마르면 임계값 강화안이 한쪽으로 치우친다.
                 items = [c for c in table.item_columns if not selected or c in selected]
                 if not items:
                     continue
@@ -704,6 +819,7 @@ _EXPORT_THREAD = None
 # 합류시키는 이유 — 둘 다 같은 eval DB 파일에 쓰므로 여기서 직렬화하면 파일 경합이 없다.
 _JOB_EXPORT = "export"
 _JOB_SNAPSHOT = "snapshot"
+_JOB_SIGNATURE = "signature"
 
 
 def _export_loop() -> None:
@@ -723,6 +839,9 @@ def _export_loop() -> None:
             if kind == _JOB_SNAPSHOT:
                 safe_collect_snapshot(session_id, report_db=report_db,
                                       upload_root=upload_root)
+            elif kind == _JOB_SIGNATURE:
+                safe_sync_signatures(session_id, report_db=report_db,
+                                     upload_root=upload_root)
             else:
                 safe_export(session_id, report_db=report_db, upload_root=upload_root)
         except Exception:
@@ -753,3 +872,11 @@ def export_async(session_id: str, *, report_db, upload_root) -> None:
 def collect_async(session_id: str, *, report_db, upload_root) -> None:
     """훅 전용 — 평가 스냅샷 수집을 같은 큐에 올린다 (업로드 응답을 늦추지 않게)."""
     _enqueue(_JOB_SNAPSHOT, session_id, report_db, upload_root)
+
+
+def sync_signatures_async(session_id: str, *, report_db, upload_root) -> None:
+    """훅 전용 — ENGR 확정 signature 동기화를 같은 큐에 올린다.
+
+    소비자가 편집 DB 의 최신 전체 상태를 다시 읽으므로, 빠른 연속 편집에서 큐가
+    dedup 돼도 마지막 상태가 반영된다(요청값을 큐에 싣지 않는 이유)."""
+    _enqueue(_JOB_SIGNATURE, session_id, report_db, upload_root)

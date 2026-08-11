@@ -241,7 +241,7 @@ def _group_by_bin(rows) -> list:
 
 def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
                          limits_meta=None, hidden=(), status_of=None,
-                         issue_comments=None, ai_comments=None, packs=None) -> list:
+                         issue_comments=None, packs=None) -> list:
     """Issue Table Temp 시트 행 — 첫 행은 섹션 divider(``Category="TEMP"``).
 
     컬럼 소스는 **CT/HT 만**이고, 정렬 기준은 **avg**(소스 평균 fail%) 내림차순이다.
@@ -251,6 +251,11 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
     fail 이 한 건도 없는 항목은 행을 만들지 않는다. 값이 없으면(그룹·fail 부재) 빈
     리스트를 돌려 프런트가 "데이터 없음"으로 처리하게 한다.
     ``packs`` 를 주면 그 판정 결과를 쓴다(compute_temp_fail — 재계산 없음).
+
+    이 시트에는 **AI Comment·Signature 컬럼을 만들지 않는다** (2026-08-11 사용자 결정).
+    CT/HT 는 RT limit 재판정으로 fail 을 다시 정하는데 엔진 평가는 저장된 FAILTNO 를
+    기준으로 하므로, 같은 항목이라도 두 판정이 어긋난다 — 어긋난 값을 나란히 두느니
+    빼는 쪽이 맞다. RT 기준 "Issue Table" 의 AI Comment 는 그대로다.
     """
     agg, sources = temp_fail_counts(tables, groups, packs)
     if not agg or not sources:
@@ -260,7 +265,6 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
     fail_counts = fail_counts or {}
     index = bin_lookup(limits_meta)
     hidden = set(hidden or ())
-    ai = ai_comments is not None
     meta = _item_meta(tables)
     # 관측 bin 폴백: member 소스 합산 → RT 소스 합산 순으로 본다.
     rt_names = [rt.source for rt, _m in temp_member_pairs(tables, groups)]
@@ -268,7 +272,7 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
     rt_obs = _observed_bins(_merged_counts(fail_counts, rt_names))
 
     rows = [{"Category": "TEMP", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "",
-             **_blank_row(sources, ai)}]
+             **_blank_row(sources)}]
     data_rows = []
     for item, counts in sorted(agg.items(), key=lambda kv: str(kv[0])):
         if f"TEMP|{item}" in hidden:
@@ -290,10 +294,10 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
             "Item": item,
             "avg": round(sum(portions) / len(portions), 2) if portions else "",
         }
-        data.update(_blank_row(sources, ai))
+        data.update(_blank_row(sources))
         data.update(values)
         data["Status"] = status_of(f"TEMP|{item}") if status_of else "Open"
-        data.update(_comment_values(issue_comments, f"TEMP|{item}", ai_comments))
+        data.update(_comment_values(issue_comments, f"TEMP|{item}"))
         data_rows.append(data)
     # 표시 순서 기준은 **avg**(소스 평균 fail%) 내림차순, 동률은 항목명 (2026-08-11 사용자
     # 확정 — 종전 "소스 합산 fail die 수"). Yield 표(build_yield_bin_groups)가 avg 로

@@ -41,6 +41,9 @@ class TabContext:
     # ai_comment 옵션 세션만 dict (row_key→텍스트, web_report/ai_comment.py) — None 이면
     # Issue Table 에 AI Comment 컬럼 자체가 생성되지 않는다.
     ai_comments: dict | None = None
+    # Signature 컬럼 — {"engine": {row_key: [id..]}, "engr": {row_key: [id..]}}.
+    # None 이면 컬럼 자체가 안 생긴다(ai_comments 와 같은 조건에서만 채워진다).
+    signatures: dict | None = None
     # 룰만 위반한 item(수율·cpk 정상) — ai_comment 가 산출, ETC 섹션 자동 행.
     etc_auto_items: list = field(default_factory=list)
     # Issue Table 행 숨김 키 목록 / 행 Status dict (세션 편집 DB — edits.py)
@@ -70,6 +73,7 @@ TAB_REGISTRY: tuple = (
         etc_items=ctx.etc_items, issue_comments=ctx.issue_comments,
         ai_comments=ctx.ai_comments, etc_auto_items=ctx.etc_auto_items,
         hidden_keys=ctx.issue_hidden, statuses=ctx.issue_status,
+        signatures=ctx.signatures,
         temp_items=[r["Item"] for r in (ctx.temp_rows or []) if r.get("Item")])),
     # Temperature 전용 — 다른 모드는 빈 시트(프런트가 탭 자체를 숨긴다).
     TabSpec(TEMP_SHEET, lambda ctx: ctx.temp_rows),

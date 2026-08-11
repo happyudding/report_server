@@ -230,6 +230,16 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   일괄 복원. Status(kind `issue_status`)는 Open/Close 드랍다운(편집모드 전용, 기본 Open —
   **"Close" 만 저장, 부재=Open**). Summary 탭 Issue Status 카드가 카테고리별 Open/Close
   를 집계한다(`issueStatusCounts`, map_select.js).
+- **Issue Table Signature 컬럼** (2026-08-11): AI Comment **왼쪽** 열. 값은 엔진이 발화한
+  룰 전체(제안, 흐리게) 또는 ENGR 이 확정한 목록(진하게), 발화가 없으면 `미분류`.
+  ai_comment 옵션 세션에만 생기고(`ai_comments` 와 같은 조건), 행 보조 필드
+  `_sig`/`_sigrev` 는 화면 컬럼이 아니다(sheets.js `orderColumns` 제외 — 컬럼 자체도
+  이름에 "comment" 가 없어 issue 분기에서 **Status 뒤·comment 앞**에 명시 배치한다).
+  편집모드는 드랍다운 N개 + `+`(가로 추가) + `확정`(엔진값과 같아도 저장 — 동의 사례를
+  남겨야 통계가 안 치우친다), 변경 즉시 저장(kind `issue_signature`, row_key 는
+  comment 와 동일, value=JSON 배열로 순서 보존). **Issue Table Temp 에는 만들지 않는다**
+  (CT/HT 는 RT limit 재판정이라 저장 FAILTNO 기준 엔진 평가와 어긋난다 — AI Comment 도
+  같은 이유로 뺐다). eval DB 라벨 적재·Unknown 모음은 [13 §6-3](13_eval_analyzer_integration.md).
 - **Issue Table 선택 모드 = 일괄 삭제 + Status 일괄** (2026-07-28): 툴바
   "☑ Issue Item 추가/변경/삭제"(구 "☑ 선택 모드" → 2026-08-10 개명, 그 전엔 "🗑 삭제 모드".
   id/CSS 클래스는 `issueDelMode`/`.issue-del-mode` 그대로)를 켜면 행 체크박스가
@@ -622,14 +632,14 @@ zip·같은 ETag 캐시) → ② 필터 조회 → 표에서 셀 수정 / 선택
   ("저장은 됐는데 세션이 안 열리는" 상태). decode 에도 넣어 **이미 오염된 parquet 도
   마이그레이션 없이 구제**한다. item 컬럼명이 메타 컬럼명과 겹치는 것은 구조 검증
   (`validate_honeyform_df`)에서 거부한다 — 그런 파일은 지금도 컬럼이 밀려 깨지므로 회귀가 아니다.
-- `kind` 8종: `issue_comment` / `etc_item` / `trim_override` / `summary_engr` /
-  `chart_note` / `note_sheet` / `issue_hidden` / `issue_status`
+- `kind` 9종: `issue_comment` / `etc_item` / `trim_override` / `summary_engr` /
+  `chart_note` / `note_sheet` / `issue_hidden` / `issue_status` / `issue_signature`
   ([edits.py](../web_report/edits.py) 규약). 편집마다 `rev` 가
   단조 증가해 캐시가 자연 무효화된다([12](12_web_report_cache.md)). dedup(동일 analysis_key)
   세션 간 편집 비공유. legacy 세션(rev==0)은 조회 시 manifest 폴백 + 첫 편집 직전 자동 시드
-  (chart_note/note_sheet/issue_hidden/issue_status 는 manifest 에 없던 신규 kind 라 시드
-  대상 아님). 세션 단위 저장이라 rawdata 수정 → 재업로드(새 세션) 시 숨김/Status 는 자연
-  리셋된다.
+  (chart_note/note_sheet/issue_hidden/issue_status/issue_signature 는 manifest 에 없던 신규
+  kind 라 시드 대상 아님). 세션 단위 저장이라 rawdata 수정 → 재업로드(새 세션) 시 숨김/Status
+  는 자연 리셋된다.
 
 ### 차트 주석 (chart_note — 2026-07-12)
 그래프 위 동그라미/사각형/선/텍스트 + 코멘트. Plotly 내장 draw(dragmode drawcircle 등,

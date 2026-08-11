@@ -40,6 +40,8 @@ function colWidth(name, kind, narrowSrc) {
   // Open/Close 드랍다운은 CSS 로 "Close" 글자 폭까지 좁혔다(select.issue-status-sel) —
   // 폭 힌트도 함께 낮춰 실제 폭이 max(헤더 "Status", 드랍다운) 로 정해지게 한다.
   if (n === "status")                   return px(38);   // Issue Table Open/Close 드랍다운
+  // Signature: 드랍다운이 여러 개 세로로 쌓이므로 룰 이름(WIDE_DISTRIBUTION)이 들어갈 폭.
+  if (n === "signature")                return px(150);
   if (n === "item")                     return px(kind === "issue" ? 150 * 0.55 : 150);
   if (n === "category")                 return "50px";
   if (n === "condition & judge limit")  return "185px";
@@ -50,6 +52,51 @@ function colWidth(name, kind, narrowSrc) {
 
 // 값이 숫자인지 (td 정렬용)
 function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNaN(+v); }
+
+// ── Issue Table Signature 셀 ────────────────────────────────────────────────
+// ids = 이 행의 signature 목록(ENGR 확정값이 있으면 그것, 없으면 엔진 발화 제안).
+// reviewed = ENGR 이 확정했는가(편집 DB 행 존재). 미확정은 흐리게 보여 "아직 사람이
+// 안 본 제안" 임을 구분한다 — 엔진 제안과 사람 판단이 통계에서 섞이면 안 되기 때문.
+const SIG_UNKNOWN = "UNKNOWN";
+const SIG_UNCLASSIFIED = "미분류";
+
+function signatureOptions() {
+  const opts = (DATA.web_report && DATA.web_report.signature_options) || [];
+  return opts.map(o => (typeof o === "string" ? { id: o, enabled: true } : o))
+    .filter(o => o && o.id);
+}
+
+// 저장된 legacy 값(현재 카탈로그에 없는 룰)도 고를 수 있는 상태로 남겨야 드랍다운이
+// 제 값을 잃지 않는다 — 목록에 없으면 그 항목만 덧붙인다.
+function signatureSelect(value, idx) {
+  const opts = signatureOptions();
+  const known = opts.some(o => o.id === value);
+  const rows = known || !value ? opts : opts.concat([{ id: value, enabled: false }]);
+  const label = o => o.id === SIG_UNKNOWN ? "Unknown"
+    : (o.enabled ? o.id : `${o.id} (현재 비활성)`);
+  return `<select class="issue-sig-sel" data-idx="${idx}">` +
+    `<option value=""${value ? "" : " selected"}>(선택)</option>` +
+    rows.map(o => `<option value="${esc(o.id)}"${o.id === value ? " selected" : ""}>` +
+      `${esc(label(o))}</option>`).join("") +
+    `<option value="__del">(제거)</option></select>`;
+}
+
+function renderSignatureCell(ids, reviewed, edit) {
+  if (!edit) {
+    if (!ids.length) return `<span class="sig-chip sig-none">${SIG_UNCLASSIFIED}</span>`;
+    return ids.map(id => `<span class="sig-chip${reviewed ? "" : " sig-suggest"}">` +
+      `${esc(id === SIG_UNKNOWN ? "Unknown" : id)}</span>`).join("");
+  }
+  const sels = ids.map((id, i) => signatureSelect(id, i)).join("");
+  const empty = ids.length ? "" : `<span class="sig-chip sig-none">${SIG_UNCLASSIFIED}</span>`;
+  // [+] 는 칸 추가(다축 원인 — 예: 값 패턴 + 공간 패턴), [✓] 는 엔진 제안 그대로
+  // 확정(값이 같아도 저장해야 "동의한 사례"가 남는다).
+  return empty + sels +
+    `<div class="sig-btns"><button type="button" class="sig-add" title="원인 칸 추가">+</button>` +
+    (reviewed ? `<span class="sig-ok" title="ENGR 확정됨">✓</span>`
+      : `<button type="button" class="sig-confirm" title="이 내용으로 확정">확정</button>`) +
+    `</div>`;
+}
 
 function isDistCol(c) { return String(c || "").toLowerCase() === "distribution"; }
 function isMapCol(c) { return String(c || "").toLowerCase() === "map"; }
@@ -214,7 +261,8 @@ function orderColumns(cols, kind) {
   // 단 rows 의 Category 데이터 필드는 섹션 판정(rowSection)에 그대로 쓰이므로 여기서 컬럼만 뺀다.
   let rest = cols.filter(c => !isComment(c)
     && !(kind === "issue" && String(c).trim().toLowerCase() === "category")
-    && !/^_(grp|detail|ndetail)$/.test(String(c)));   // 토글 전용 내부 마킹 필드 제외
+    // 토글 전용 내부 마킹 필드 + Signature 셀 렌더 보조 필드(_sig/_sigrev) 제외
+    && !/^_(grp|detail|ndetail|sig|sigrev)$/.test(String(c)));
 
   // source(={src}_yield 컬럼 수)가 1개면 avg 는 그 source 값과 동일해 의미가 없으므로
   // Yield/Issue 표에서 avg 컬럼을 표시하지 않는다(행 데이터의 avg 값은 그대로 유지 —
@@ -259,13 +307,19 @@ function orderColumns(cols, kind) {
     const isAvgCol = c => String(c).trim().toLowerCase() === "avg";
     const isYieldCol = c => /_yield$/i.test(String(c));
     const isStatus = c => String(c).trim().toLowerCase() === "status";
+    // Signature 는 이름에 "comment" 가 없어 comment 블록으로 자동 분류되지 않는다 —
+    // Status 뒤 · comment 앞(= AI Comment 왼쪽)에 명시 배치한다. 안 하면 others 로
+    // 들어가 식별컬럼 옆(좌측 sticky 블록)에 붙어 고정 폭 계산까지 흔든다.
+    const isSig = c => String(c).trim().toLowerCase() === "signature";
     const map = rest.filter(isMap);
     const dist = rest.filter(isDist);
     const avg = singleSource ? [] : rest.filter(isAvgCol);
     const yields = rest.filter(isYieldCol);
     const status = rest.filter(isStatus);
-    const others = rest.filter(c => !isMap(c) && !isDist(c) && !isAvgCol(c) && !isYieldCol(c) && !isStatus(c));
-    rest = others.concat(map).concat(dist).concat(avg).concat(yields).concat(status);
+    const sig = rest.filter(isSig);
+    const others = rest.filter(c => !isMap(c) && !isDist(c) && !isAvgCol(c) && !isYieldCol(c)
+      && !isStatus(c) && !isSig(c));
+    rest = others.concat(map).concat(dist).concat(avg).concat(yields).concat(status).concat(sig);
   }
 
   return rest.concat(comments);
@@ -812,6 +866,17 @@ function renderSheetTable(rows, opts) {
             `<span class="status-dot"></span></td>`;
         }
         return `<td class="issue-status ${statusCls}" data-r="${ri}" data-c="${ci}">${esc(txt)}<span class="status-dot"></span></td>`;
+      }
+      // Signature 열: 엔진이 발화한 룰(제안) 또는 ENGR 이 확정한 룰 목록.
+      // 편집모드는 룰마다 드랍다운 1개 + [+]/[확정] 버튼(변경 즉시 저장 — edit_mode.js 위임),
+      // 조회모드는 칩 텍스트. 미검수(엔진 제안 그대로)는 흐리게 보여 구분한다.
+      if (String(c).trim().toLowerCase() === "signature") {
+        const gkey = (opts.kind === "issue" && !subhead) ? issueRowKey(r, rowSection[ri]) : "";
+        if (!gkey || (txt === "" && !(r._sig || []).length)) {
+          return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
+        }
+        return `<td class="issue-sig-cell${r._sigrev ? " is-reviewed" : ""}" data-r="${ri}" data-c="${ci}" data-key="${esc(gkey)}">` +
+          renderSignatureCell(r._sig || [], !!r._sigrev, !!opts.edit) + `</td>`;
       }
       // opts.editableCols 가 있으면 그 컬럼만 편집 가능(더블클릭으로 활성화), 나머지는 읽기전용으로
       // 아래 일반 렌더링을 그대로 탄다. 없으면 기존처럼 opts.edit 전체 컬럼이 즉시 편집 가능.

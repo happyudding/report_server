@@ -96,12 +96,14 @@ def check_session(entry):
     """세션 1건 검사 → (findings, checked). findings 는 _check_cases 의 dict 목록.
 
     max_cases=None (전체) 로 트레이스한다 — 기본 상한 400 이면 뒤쪽 항목이 통째로
-    [케이스없음] 으로 잡혀 오탐이 된다.
+    [케이스없음] 으로 잡혀 오탐이 된다. 같은 이유로 `fail_only=False`(전체 item) 도
+    고정한다 — 서버가 fail-only 로 돌고 있으면 fail 이 없는 골든 항목(특히 "발화하면
+    안 된다"는 not_fire 가드)이 통째로 [케이스없음] 이 되어 오탐이 된다.
     """
     session_id = str(entry["session_id"])
     trace = eval_debug.trace_session(session_id, report_db=report_db,
                                      upload_root=Path(config.REPORT_UPLOAD_DIR),
-                                     max_cases=None)
+                                     max_cases=None, fail_only=False)
     return _check_cases(entry, trace.get("cases") or [])
 
 

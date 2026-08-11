@@ -49,10 +49,39 @@ COMMENT_COLS = list(_COMMENT_COLS)
 # dict 삽입 순서(PTE comment 앞)가 블록 내 표시 순서다 (docs/13).
 AI_COMMENT_COL = "AI Comment"
 
+# 발화 signature 컬럼 — AI Comment 와 같은 조건(ai_comment 옵션 세션)에만 생긴다.
+# 이름에 "comment" 가 없어 프런트 orderColumns 가 comment 블록으로 자동 배치하지 못하므로,
+# sheets.js issue 분기에서 **Status 뒤 · comment 앞**(= AI Comment 왼쪽)에 명시 배치한다.
+SIGNATURE_COL = "Signature"
+# 표시 보조 필드(화면 컬럼 아님 — orderColumns 가 제외): 선택 목록 원본 / ENGR 확정 여부.
+SIGNATURE_IDS_FIELD = "_sig"
+SIGNATURE_REVIEWED_FIELD = "_sigrev"
+# fail 이 있는데 발화 signature 가 없는 케이스. 엔진은 (결측이 없으면) 이걸 OK 로 낼 수도
+# 있어 화면에서 구분해 준다 — 판정은 바꾸지 않고 표시만 한다.
+UNCLASSIFIED = "미분류"
 
-def _comment_values(issue_comments, row_key, ai_comments=None):
+
+def _sig_values(signatures, row_key, issue_row=True):
+    """Signature 셀 + 보조 필드. signatures=None 이면 빈 dict(컬럼 자체가 안 생긴다).
+
+    signatures = {"engine": {row_key: [id..]}, "engr": {row_key: [id..]}}.
+    ENGR 확정값(engr)이 있으면 그걸 쓰고, 없으면 엔진 발화값(engine)을 제안으로 보여준다.
+    """
+    if signatures is None:
+        return {}
+    if not issue_row:                       # Pass 요약행·섹션 divider 등 이슈가 아닌 행
+        return {SIGNATURE_COL: "", SIGNATURE_IDS_FIELD: [], SIGNATURE_REVIEWED_FIELD: 0}
+    engr = (signatures.get("engr") or {}).get(row_key)
+    ids = [str(v) for v in (engr or (signatures.get("engine") or {}).get(row_key) or [])]
+    return {SIGNATURE_COL: "+".join(ids) if ids else UNCLASSIFIED,
+            SIGNATURE_IDS_FIELD: ids,
+            SIGNATURE_REVIEWED_FIELD: 1 if engr else 0}
+
+
+def _comment_values(issue_comments, row_key, ai_comments=None, signatures=None,
+                    issue_row=True):
     saved = (issue_comments or {}).get(row_key) or {}
-    out = {}
+    out = _sig_values(signatures, row_key, issue_row)
     if ai_comments is not None:
         out[AI_COMMENT_COL] = str(ai_comments.get(row_key) or "")
     for col in _COMMENT_COLS:
@@ -60,11 +89,12 @@ def _comment_values(issue_comments, row_key, ai_comments=None):
     return out
 
 
-def _blank_row(sources, ai=False):
+def _blank_row(sources, ai=False, signatures=None):
     row = {f"{src}_yield": "" for src in sources}
     row["Map"] = ""
     row["Distribution"] = ""
     row["Status"] = ""
+    row.update(_sig_values(signatures, "", issue_row=False))
     if ai:
         row[AI_COMMENT_COL] = ""
     for col in _COMMENT_COLS:
@@ -73,7 +103,7 @@ def _blank_row(sources, ai=False):
 
 
 def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None,
-              ai_comments=None, status_of=None):
+              ai_comments=None, status_of=None, signatures=None):
     if not etc_items:
         return []
     meta = _item_meta(tables)
@@ -96,7 +126,8 @@ def _etc_rows(tables, yield_rows, etc_items, sources, issue_comments=None,
         data["Map"] = ""
         data["Distribution"] = ""
         data["Status"] = status_of(f"ETC|{item}") if status_of else "Open"
-        data.update(_comment_values(issue_comments, f"ETC|{item}", ai_comments))
+        data.update(_comment_values(issue_comments, f"ETC|{item}", ai_comments,
+                                    signatures))
         rows.append(data)
     return rows
 
@@ -170,9 +201,12 @@ def _auto_etc_items(etc_auto_items, etc_items, cpk_fails, yield_rows, hidden,
 
 def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=None,
                            issue_comments=None, ai_comments=None, etc_auto_items=None,
-                           hidden_keys=None, statuses=None, temp_items=None):
+                           hidden_keys=None, statuses=None, temp_items=None,
+                           signatures=None):
     # ai_comments: None = 컬럼 미표시(기존 세션 payload 불변) / dict = AI Comment 컬럼
     # 표시(값은 row_key 매칭, 빈 dict 면 빈 셀). service 가 옵션 판정 후 전달.
+    # signatures: None = Signature 컬럼 미표시 / {"engine","engr"} = 표시 (ai_comments 와
+    #   같은 조건에서만 온다 — 엔진 발화값이 있어야 제안이 의미가 있다).
     # hidden_keys: 숨긴 이슈 키 목록("Yield|<bin>"|"CPK|<item>") — 해당 이슈 행 미출력.
     # statuses: 이슈 키 → "Close" dict — 부재=Open. 둘 다 세션 편집 DB(edits.py) 유래.
     # temp_items: Temperature 모드만 — Temp 시트에 이미 선 item 목록(자동 ETC 행에서 제외).
@@ -206,7 +240,8 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
         prow["Distribution"] = ""
         prow["Status"] = ""   # Pass 행은 이슈 행이 아님 — Status/숨김 비대상.
         prow.update(_comment_values(
-            issue_comments, f"Yield|{pass_src.get('bin')}|{pass_item}", ai_comments))
+            issue_comments, f"Yield|{pass_src.get('bin')}|{pass_item}", ai_comments,
+            signatures, issue_row=False))
         rows.append(prow)
 
     # Yield 섹션: Bin 당 대표(Bin 총합 집계, 식별정보는 most-fail TNO) 행 + 그 Bin 의
@@ -244,7 +279,7 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
             # Status 는 bin 이슈 단위 — 대표행에만 표시(상세행 빈칸).
             out["Status"] = _status(f"Yield|{bin_value}") if j == 0 else ""
             out.update(_comment_values(issue_comments, f"Yield|{bin_value}|{item}",
-                                       ai_comments))
+                                       ai_comments, signatures))
             rows.append(out)
 
     # cpk_rows 는 전 소스 기준으로 계산돼 오므로 이 표의 소스 컬럼에 맞춰 거른다.
@@ -272,7 +307,7 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
             cpk_by[(r.get("subject"), r.get("source"))] = cpk
     cpk_meta = _item_meta(tables)
     subhead = {"Category": "CPK", "Step": "", "Bin": "", "TNO": "", "Item": "item name", "avg": "cpk"}
-    subhead.update(_blank_row(sources, ai))
+    subhead.update(_blank_row(sources, ai, signatures))
     for src in sources:
         subhead[f"{src}_yield"] = "CPK"
     rows.append(subhead)
@@ -281,16 +316,19 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
             m = cpk_meta.get(subject, {})
             data = {"Category": "", "Step": fmt_type(m.get("step")), "Bin": "",
                     "TNO": fmt_type(m.get("tno")), "Item": subject, "avg": cpk}
-            data.update(_blank_row(sources, ai))
+            data.update(_blank_row(sources, ai, signatures))
             for src in sources:
                 data[f"{src}_yield"] = cpk_by.get((subject, src), "")
             data["Status"] = _status(f"CPK|{subject}")
-            data.update(_comment_values(issue_comments, f"CPK|{subject}", ai_comments))
+            data.update(_comment_values(issue_comments, f"CPK|{subject}", ai_comments,
+                                        signatures))
             rows.append(data)
     else:
-        rows.append({"Category": "", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources, ai)})
+        rows.append({"Category": "", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "",
+                     **_blank_row(sources, ai, signatures)})
 
-    etc = {"Category": "ETC", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "", **_blank_row(sources, ai)}
+    etc = {"Category": "ETC", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "",
+           **_blank_row(sources, ai, signatures)}
     rows.append(etc)
     # 수동 추가분(ENGR) 뒤에 룰 위반 자동 행을 잇는다 — 행 채움 로직은 동일.
     # Temp 시트에 이미 선 item 은 자동 ETC 행에서 뺀다(같은 item 이 두 곳에 겹치지 않게).
@@ -299,5 +337,5 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
         temp_items=temp_items)
     rows.extend(_etc_rows(tables, base_rows, etc_all, sources,
                           issue_comments=issue_comments, ai_comments=ai_comments,
-                          status_of=_status))
+                          status_of=_status, signatures=signatures))
     return rows

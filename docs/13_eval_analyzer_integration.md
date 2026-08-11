@@ -165,6 +165,60 @@ L1/L2/evaluation 이 영구 0행이라 룰 채점·표본 검수의 재료가 �
 - **엔진 사설 계약 핀**: `present.to_result` 의 `signatures[].evidence[].note` 포맷.
 - 캐시: 셀 **값**이 바뀌므로 `cache_policy.REPORT_SCHEMA_VERSION` 22 로 올렸다.
 
+### 6-2. 평가 범위 — fail item 만 (2026-08-11, env 토글)
+
+기본은 **fail 이 1chip 이상인 item 만** 평가한다 (`WEB_REPORT_EVAL_FAIL_ONLY=1`,
+server.env). `0` 이면 종전대로 전체 item.
+
+- **item 컬럼만 줄이고 chip 행은 전량 유지한다** — 필터는 `table.item_columns` 축소뿐이라
+  엔진 L1/L2 가 전체 분포(cpk·이봉·outlier) 대비 fail 을 그대로 본다. fail chip 만 남기는
+  행 필터는 만들지 말 것.
+- fail 판정 = Yield 탭·Issue Table 과 같은 규칙(`FAILTNO == item 의 TNO`, 소스 합집합) —
+  `ai_comment.eval_fail_scope` 하나가 정본이고 운영 경로와 트레이스가 이걸 공유한다
+  (`_eval_items`). Temperature 도 같은 기준이다(CT/HT 재판정 불일치는 아래 6-3 으로 회피).
+- 부작용(의도): 수율·cpk 정상 + 룰만 위반한 item 이 평가 대상에서 빠지므로 **ETC 자동 행
+  (`etc_auto_items`)이 생기지 않는다**. 되돌리려면 플래그를 0 으로.
+- **적용 안 되는 2곳** — 표본함 수집(`collect_session_snapshot`)과 골든셋 검사
+  (`golden_check.check_session` 은 `fail_only=False` 고정)는 **항상 전체 item**이다.
+  표본이 한쪽으로 마르거나, fail 없는 골든 항목이 `[케이스없음]` 오탐으로 잡히는 걸 막는다.
+- 캐시: ai_comment 옵션 세션 키에 `evalfail` 표식이 붙는다(`cache_policy.report_key`) —
+  env 토글은 rules_rev 로 감지되지 않으므로. 되돌리면 종전 키의 캐시가 그대로 재사용된다.
+- `/pe/eval` 트레이스는 범위를 요청별로 바꿀 수 있다(`scope`=fail|all|미지정=서버 기본).
+  범위가 다르면 **직전 run 과의 diff 를 건너뛴다** — 모집단이 달라 added/removed 가 오보다.
+
+### 6-3. Signature 컬럼 + ENGR 정답 라벨 (2026-08-11)
+
+Issue Table 의 **AI Comment 왼쪽**에 `Signature` 컬럼이 붙는다 (AI Comment 와 같은 조건 =
+ai_comment 옵션 세션에만). 코멘트 본문은 primary 하나만 서술하지만 이 컬럼은
+`case["signatures"]` 의 **발화 전체**를 보여준다(엔진 무수정 — `ai_comment._case_sig_ids`).
+
+- 행 필드: `Signature`(표시 텍스트) + `_sig`(id 배열) + `_sigrev`(ENGR 확정 여부).
+  뒤 둘은 화면 컬럼이 아니다(`sheets.js orderColumns` 가 제외). payload 최상위
+  `signature_options` 가 dropdown 선택지(정의된 전체 룰 — 비활성 포함 — + `UNKNOWN`).
+- **미분류**: fail 인데 발화 0건이면 셀에 `미분류` 로 표시한다. 엔진은 결측이 없으면 그런
+  케이스를 OK 로 낼 수도 있어(`status.decide`) 화면에서 구분해 주는 것이고, **판정은
+  바꾸지 않는다**. 엔진 미분류(no-match)와 사람이 고른 `UNKNOWN` 은 다른 개념이다 —
+  UNKNOWN 을 자동 발화로 넣으면 커버율이 가짜로 100% 가 된다.
+- ENGR 편집: 드랍다운 N개(가로 추가 `+`) + `확정`. **엔진 제안과 값이 같아도 확정하면
+  저장한다** — 안 그러면 정정 사례만 쌓여 통계가 편향된다. 해제하면 편집행과 라벨이 함께
+  사라져 "미검수 + 엔진 제안" 으로 돌아간다.
+- 저장 순서: 세션 편집 DB(`kind=issue_signature`, value=JSON 배열로 순서 보존)가 **진실**,
+  eval DB 반영은 비동기 큐(`_JOB_SIGNATURE`). 워커는 요청값이 아니라 **편집 DB 의 최신
+  전체 상태를 다시 읽어** 멱등 재적재하므로 연속 편집도 마지막 상태로 수렴하고, 서버를
+  내렸다 올린 뒤 `/pe/eval` 재동기화 버튼으로 복구된다.
+- 서버 검증: signature 카탈로그에 있는 id 또는 UNKNOWN 만, 중복 금지, 최대 8개
+  (`service._norm_issue_signature`). 정규식만으로는 UI 우회를 못 막는다.
+- eval DB: `label_signature(label_id, signature, rank)` — **eval.db v7**(사용자 승인).
+  라벨은 `labeler='web-signature'`, `human_status` 는 비운다(관리자 채점 오염 방지).
+  case_id 에는 세션이 없으므로 **세션 전용 `ingest_run`**(`ingested_by='web-signature'`)을
+  만들고 그 run 의 evaluation 에 `label.eval_id` 를 매달아 세션을 구분한다 — 안 그러면 같은
+  lot·item·bin 을 다른 세션에서 확정할 때 서로 덮어쓴다.
+- 조회: `/pe/eval` → **ENGR Signature** 탭. 기본이 `UNKNOWN` 목록(= 새 불량유형 후보).
+  룰은 여기서 자동으로 바뀌지 않는다 — 사람이 보고 정의하는 재료다.
+- **Issue Table Temp 시트는 AI Comment·Signature 를 만들지 않는다** — CT/HT 는 RT limit
+  재판정으로 fail 을 다시 정하는데 엔진 평가는 저장된 FAILTNO 기준이라 두 판정이 어긋난다.
+- 캐시: `REPORT_SCHEMA_VERSION` 34.
+
 ## 7. 클라이언트 옵션 (Honey)
 
 - Web Report 그룹박스의 **"AI Comment" 체크박스** (honey_main.py). 현재

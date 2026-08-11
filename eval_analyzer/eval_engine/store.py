@@ -12,7 +12,7 @@ import yaml
 
 from . import config
 
-SCHEMA_VERSION = 6  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
+SCHEMA_VERSION = 7  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_master (
@@ -110,6 +110,16 @@ CREATE TABLE IF NOT EXISTS label (
     labeler TEXT, reviewer TEXT, label_quality TEXT, created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_label_case ON label(case_id);
+-- 사람이 지목한 **정답 signature**(label 1건에 여러 개, rank=1 이 1순위).
+-- case_signature(엔진이 발화한 것)와 절대 섞지 않는다 — 그쪽은 role='primary' 를 전제로
+-- 선례검색·채점·골든셋이 조회하므로, 사람 라벨을 끼워 넣으면 그 3곳이 함께 틀어진다.
+-- FK cascade 는 SQLite 기본이 off 라 기대하지 않는다: label 삭제 시 여기도 같이 지운다
+-- (delete_label_with_signatures).
+CREATE TABLE IF NOT EXISTS label_signature (
+    label_id INTEGER NOT NULL, signature TEXT NOT NULL, rank INTEGER,
+    PRIMARY KEY (label_id, signature)
+);
+CREATE INDEX IF NOT EXISTS idx_label_signature_sig ON label_signature(signature);
 CREATE TABLE IF NOT EXISTS case_outcome (
     outcome_id INTEGER PRIMARY KEY AUTOINCREMENT, case_id TEXT NOT NULL, label_id INTEGER,
     action TEXT, condition TEXT, result TEXT, resolved_by TEXT, resolved_at INTEGER, note TEXT,
@@ -235,8 +245,22 @@ def _migrate_v5_to_v6(conn):
         conn.execute("ALTER TABLE features ADD COLUMN modality_v2 TEXT")
 
 
+def _migrate_v6_to_v7(conn):
+    """v7: label_signature(사람이 지목한 정답 signature) 테이블 + 인덱스 추가.
+
+    기존 테이블·데이터는 건드리지 않는다 — 새 테이블만 만든다(2026-08-11, 사용자 승인).
+    CREATE IF NOT EXISTS 라 SCHEMA 로 이미 만들어진 새 DB 에 다시 돌려도 안전하다.
+    """
+    conn.executescript(
+        "CREATE TABLE IF NOT EXISTS label_signature ("
+        " label_id INTEGER NOT NULL, signature TEXT NOT NULL, rank INTEGER,"
+        " PRIMARY KEY (label_id, signature));"
+        "CREATE INDEX IF NOT EXISTS idx_label_signature_sig ON label_signature(signature);")
+
+
 _MIGRATIONS = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4,
-               4: _migrate_v4_to_v5, 5: _migrate_v5_to_v6}  # {from_version: fn} — from → from+1
+               4: _migrate_v4_to_v5, 5: _migrate_v5_to_v6,
+               6: _migrate_v6_to_v7}  # {from_version: fn} — from → from+1
 
 
 def _migrate(conn):
@@ -538,6 +562,33 @@ def insert_label(case_id, eval_id, human_status, root_cause_category, root_cause
                               root_cause_detail, engine_comment_accepted, comment_modified,
                               human_comment, labeler, reviewer, label_quality, _now()))
         return cur.lastrowid
+
+
+def save_label_signatures(label_id, signatures, conn=None) -> None:
+    """사람이 지목한 정답 signature 저장 — 순서를 rank(1..N)로 보존한다.
+
+    같은 label 의 기존 행은 먼저 지운다(라벨 1건 = 지목 목록 1개). 엔진 발화 기록
+    (case_signature)과는 다른 테이블이다.
+    """
+    with _scope(conn) as c:
+        c.execute("DELETE FROM label_signature WHERE label_id=?", (label_id,))
+        for i, sig in enumerate(signatures or [], start=1):
+            c.execute("""INSERT OR REPLACE INTO label_signature (label_id,signature,rank)
+                         VALUES (?,?,?)""", (label_id, str(sig), i))
+
+
+def delete_label_with_signatures(where_sql: str, params, conn=None) -> int:
+    """label 삭제 + 자식 label_signature 정리. 삭제 건수 반환.
+
+    SQLite 는 FK cascade 가 기본 off 라 자식이 고아로 남는다 — label 을 지우는 곳은
+    **전부 이 함수를 거쳐** 자식부터 지운다. `where_sql` 은 label 테이블 기준 조건절
+    (예 ``"case_id=? AND labeler=?"``).
+    """
+    with _scope(conn) as c:
+        c.execute(f"DELETE FROM label_signature WHERE label_id IN "
+                  f"(SELECT label_id FROM label WHERE {where_sql})", params)
+        cur = c.execute(f"DELETE FROM label WHERE {where_sql}", params)
+        return cur.rowcount or 0
 
 
 def insert_case_outcome(case_id, label_id, action, condition, result, resolved_by,

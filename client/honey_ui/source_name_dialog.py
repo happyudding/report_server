@@ -923,6 +923,14 @@ class SourceNameDialog(QDialog):
                     f"Group {', '.join(map(str, bad))} 의 RT 가 1개가 아닙니다.\n"
                     "RT 는 Limit 판정 기준이라 그룹마다 정확히 1개여야 합니다.")
                 return
+            # OK 즉시 업로드로 넘어가지 않고 한 번 확인한다 (2026-08-11 요청) — 그룹/이름을
+            # 만지다 무심코 OK(또는 Enter) 를 눌러 잘못된 배치로 생성되는 실수 방지.
+            if QMessageBox.question(
+                    self, "Web Report 생성",
+                    "해당 설정으로 web report 생성됩니다.\n계속하시겠습니까?",
+                    QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Ok) != QMessageBox.StandardButton.Ok:
+                return
         self.accept()
 
     def result_arrangement(self) -> dict:

@@ -270,7 +270,13 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      내림차순으로 바꾼다 (2026-08-11 사용자 확정 — 일반 Yield 표와 같은 기준). 항목
 #      순서와 Bin 그룹 순서(대표 avg 순 = 가장 큰 Bin 최상단)가 함께 달라진다. 소스마다
 #      분모가 다르면 v32 와 순서가 갈리므로 v32 캐시를 재사용하면 안 된다.
-REPORT_SCHEMA_VERSION = 33
+# v34: Issue Table 에 **Signature 컬럼**이 붙는다 (ai_comment 옵션 세션만) — 행에
+#      Signature/_sig/_sigrev 키와 payload 최상위 signature_options 가 추가되고, 반대로
+#      "Issue Table Temp" 시트에서는 **AI Comment 컬럼이 빠진다**(CT/HT 는 RT limit
+#      재판정이라 저장 FAILTNO 기준 엔진 평가와 어긋난다 — 2026-08-11 사용자 결정).
+#      AI Comment 를 안 쓰는 세션은 값·키 모두 무변경이지만 키가 전 세션 공통이라
+#      1회 재계산된다. 안 올리면 옛 disk_cache 가 Signature 없는 payload 를 계속 반환한다.
+REPORT_SCHEMA_VERSION = 34
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:
@@ -288,6 +294,12 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
         rev = rules_rev()
         if rev:
             key += ("rules" + rev,)
+        # 평가 범위(fail item 만 ↔ 전체 item)가 바뀌면 AI Comment 값이 달라진다.
+        # env 토글이라 rules_rev 가 감지하지 못하므로 표식을 덧붙인다 — 기본(fail-only)
+        # 에서만 붙어 되돌리면 종전 키의 캐시가 그대로 재사용된다.
+        from .ai_comment import fail_only_enabled
+        if fail_only_enabled():
+            key += ("evalfail",)
     return key
 
 

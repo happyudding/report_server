@@ -83,7 +83,8 @@ def _apply_step_label(tables, step_label):
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
                          issue_comments=None, summary_engr=None, product_type="", product="",
                          mode="Normal", dist_colors=None, ai_comments=None,
-                         etc_auto_items=None,
+                         etc_auto_items=None, ai_signatures=None,
+                         signature_options=None, issue_signatures=None,
                          issue_hidden=None, issue_status=None, gross_die=None,
                          compare_groups=None, yield_basis=None,
                          temperature_groups=None, temperature_limits=None,
@@ -114,7 +115,10 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     temperature_limits: manifest["temperature_limits"] — {item: {tno, lsl_bin, usl_bin}}
     (.lt/.pds 유래, 신규 업로드만 존재). Temp 시트의 Bin 표기에만 쓰고 없으면 관측 bin 폴백.
     step_label: 업로드 창에서 고른 공정 STEP(예 "L2"). 주면 honeyform STEP 메타의 ``P2``
-    표시를 이 값으로 바꾼다 (_apply_step_label). 빈 값이면 아무것도 하지 않는다."""
+    표시를 이 값으로 바꾼다 (_apply_step_label). 빈 값이면 아무것도 하지 않는다.
+    ai_signatures/issue_signatures/signature_options: Issue Table Signature 컬럼
+    (엔진 발화 제안 / ENGR 확정값 / 선택 목록). ai_comments 와 **같은 조건**에서만
+    전달된다 — ai_comments 가 None 이면 컬럼도 payload 키도 생기지 않는다(기존 계약 유지)."""
     _apply_step_label(tables, step_label)
     selected_set = {str(v) for v in (selected_items or []) if str(v)}
     if selected_set:
@@ -156,7 +160,7 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
                 limits_meta=temperature_limits, hidden=issue_hidden,
                 status_of=(lambda key: "Close"
                            if (issue_status or {}).get(key) == "Close" else "Open"),
-                issue_comments=issue_comments, ai_comments=ai_comments)
+                issue_comments=issue_comments)
 
     ctx = TabContext(
         tables=tables,
@@ -171,6 +175,9 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         mode=mode or "Normal",
         # None=컬럼 미표시. dict 전달은 ai_comment 옵션 세션의 콜드 빌드(service)만.
         ai_comments=ai_comments,
+        signatures=(None if ai_comments is None else
+                    {"engine": dict(ai_signatures or {}),
+                     "engr": dict(issue_signatures or {})}),
         etc_auto_items=list(etc_auto_items or []),
         issue_hidden=list(issue_hidden or []),
         issue_status=dict(issue_status or {}),
@@ -214,6 +221,11 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         # None → 색 미지정(legacy): 프런트가 기본 팔레트. list → source i 가 dist_colors[i] 색.
         "dist_colors": list(dist_colors) if dist_colors else None,
     }
+
+    # Signature dropdown 선택지 — ai_comment 옵션 세션에만 싣는다(그 외 세션은 키 자체가
+    # 없어 종전 payload 와 완전히 동일하다).
+    if ai_comments is not None:
+        payload["signature_options"] = list(signature_options or [])
 
     # Compare 모드: source 2개 이상일 때만 비교 분석을 얹는다 (단일 source 는 비교 대상 없음).
     # compare_groups(세션 옵션의 Before/After 배치)가 없으면 compare 쪽이 legacy 폴백한다.

@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import logging
 import re
+import sqlite3
 import sys
 import threading
 import time
@@ -136,6 +137,7 @@ def api_meta():
         "signature_ids": [s.get("id") for s in eval_debug.signatures_raw()],
         "subpop_gap_id": eval_debug.subpop_gap_id(),
         "rules_rev": eval_debug.rules_rev(),
+        "eval_fail_only": eval_debug.fail_only_default(),
         "rules_dir": str(eval_debug.rules_dir()),
         "files": {k: _file_info(v) for k, v in files.items()},
     })
@@ -595,13 +597,16 @@ def api_trace():
         return jsonify({"ok": False, "error": "session_id 형식 오류"}), 400
     # all=true 면 케이스 상한 없음(전체). 분포 원본값은 eval_debug 가 런 단위 예산으로 묶는다.
     max_cases = None if body.get("all") else _TRACE_DEFAULT_MAX_CASES
+    # scope: fail=fail item 만 / all=전체 item / 미지정=서버 기본(env)
+    fail_only = {"fail": True, "all": False}.get(str(body.get("scope") or "").strip())
     if not _trace_lock.acquire(blocking=False):
         return jsonify({"ok": False, "error": "다른 트레이스가 실행 중입니다"}), 409
     t0 = time.perf_counter()
     try:
         result = eval_debug.trace_session(
             session_id, report_db=report_db,
-            upload_root=Path(config.REPORT_UPLOAD_DIR), max_cases=max_cases)
+            upload_root=Path(config.REPORT_UPLOAD_DIR), max_cases=max_cases,
+            fail_only=fail_only)
     except (KeyError, FileNotFoundError):
         return jsonify({"ok": False, "error": f"세션 없음: {session_id}"}), 404
     except ValueError as exc:
@@ -621,6 +626,11 @@ def api_trace():
         if prev_result.get("max_cases") != result.get("max_cases"):
             diff = {"skipped": "직전 트레이스와 케이스 상한이 달라 비교를 생략했습니다 "
                                "(전체/기본 을 맞춰 다시 실행하세요)"}
+        elif prev_result.get("fail_only") != result.get("fail_only"):
+            # 모집단(평가 item 집합) 자체가 다르면 빠진 item 이 전부 removed 로 잡혀
+            # 룰 회귀처럼 보인다 — 상한 불일치와 같은 이유로 비교를 건너뛴다.
+            diff = {"skipped": "직전 트레이스와 평가 범위(fail/전체)가 달라 비교를 "
+                               "생략했습니다 (범위를 맞춰 다시 실행하세요)"}
         else:
             diff = {"prev_token": prev_token, "prev_rules_rev": prev_result.get("rules_rev"),
                     **_trace_diff(prev_result.get("cases") or [], result["cases"])}
@@ -634,6 +644,8 @@ def api_trace():
         "engine_version": result["engine_version"], "rules_rev": result["rules_rev"],
         "sources": result["sources"], "truncated": result["truncated"],
         "max_cases": result["max_cases"],
+        "fail_only": result["fail_only"], "item_scope": result["item_scope"],
+        "coverage": result["coverage"],
         "elapsed_ms": int((time.perf_counter() - t0) * 1000),
         "cases": [_summary_row(i, c) for i, c in enumerate(result["cases"])],
     })
@@ -782,6 +794,70 @@ def api_review_collect():
                                   upload_root=Path(config.REPORT_UPLOAD_DIR))
         result = {"queued": True}
     _audit("eval_review_collect", changed_fields=[f"session={session_id}", repr(result)[:200]])
+    return jsonify({"ok": True, "session_id": session_id, **result})
+
+
+# ── ENGR 확정 Signature (Issue Table) ────────────────────────────────────────
+
+@eval_panel_bp.get("/api/engr-signatures")
+def api_engr_signatures():
+    """ENGR 이 Issue Table 에서 확정한 정답 signature 목록.
+
+    ``?only=UNKNOWN`` 이면 "기존 룰로 설명이 안 된다"고 지목된 케이스만 — 새 불량유형을
+    정의할 때 볼 재료다. 세션은 label→evaluation→ingest_run 으로 역참조한다(case_id 에는
+    세션이 없다).
+    """
+    only = str(request.args.get("only") or "").strip().upper()
+    limit = max(1, min(500, int(request.args.get("limit") or 200)))
+    from web_report import eval_export
+    conn = eval_export.open_conn(create=False)
+    if conn is None:
+        return jsonify({"ok": True, "rows": [], "note": "eval DB 없음"})
+    try:
+        sql = """SELECT ls.signature, ls.rank, l.created_at, l.label_id,
+                        fc.bin, fc.lot_id, fc.product_name,
+                        im.item_name_raw AS item, pm.family_product,
+                        ir.session_id, ir.source_file
+                 FROM label_signature ls
+                 JOIN label l ON l.label_id = ls.label_id
+                 JOIN fail_case fc ON fc.case_id = l.case_id
+                 LEFT JOIN item_master im ON im.item_id = fc.item_id
+                 LEFT JOIN product_master pm ON pm.product_name = fc.product_name
+                 LEFT JOIN evaluation ev ON ev.eval_id = l.eval_id
+                 LEFT JOIN ingest_run ir ON ir.run_id = ev.run_id
+                 WHERE l.labeler = ?"""
+        params = [eval_export._SIGNATURE_LABELER]
+        if only:
+            sql += " AND ls.signature = ?"
+            params.append(only)
+        sql += " ORDER BY l.label_id DESC, ls.rank LIMIT ?"
+        params.append(limit)
+        rows = [dict(r) for r in conn.execute(sql, params)]
+    except sqlite3.OperationalError as exc:      # v7 이전 DB (label_signature 없음)
+        return jsonify({"ok": True, "rows": [], "note": f"스키마 미갱신: {exc}"})
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "rows": rows, "count": len(rows)})
+
+
+@eval_panel_bp.post("/api/engr-signatures/resync")
+def api_engr_signatures_resync():
+    """지정 세션의 확정 signature 를 편집 DB → eval DB 로 재동기화 (멱등).
+
+    편집 DB 가 진실이므로 언제 돌려도 안전하다 — 동기화가 실패했거나 서버를 내렸다
+    올린 뒤 복구 수단.
+    """
+    body = request.get_json(force=True, silent=True) or {}
+    session_id = str(body.get("session_id") or "").strip()
+    if not _SESSION_ID_RE.match(session_id):
+        return jsonify({"ok": False, "error": "session_id 형식 오류"}), 400
+    if report_db.get_session(session_id) is None:
+        return jsonify({"ok": False, "error": f"세션 없음: {session_id}"}), 404
+    from web_report import eval_export
+    result = eval_export.safe_sync_signatures(
+        session_id, report_db=report_db, upload_root=Path(config.REPORT_UPLOAD_DIR))
+    _audit("eval_signature_resync",
+           changed_fields=[f"session={session_id}", repr(result)[:200]])
     return jsonify({"ok": True, "session_id": session_id, **result})
 
 

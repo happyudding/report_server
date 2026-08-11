@@ -182,6 +182,7 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
   <button class="tab" data-panel="pSignatures">Signatures</button>
   <button class="tab" data-panel="pTrace">L0~L6 트레이스</button>
   <button class="tab" data-panel="pReview">표본함</button>
+  <button class="tab" data-panel="pEngrSig">ENGR Signature</button>
   <button class="tab" data-panel="pEval">Eval DB</button>
   <button class="tab" data-panel="pScoring">채점</button>
   <button class="tab" data-panel="pMaint">검증 · 백업</button>
@@ -291,6 +292,12 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
       <select class="sel grow" id="trSession"></select>
       <label class="note" title="켜면 상위 400개 제한 없이 세션의 모든 케이스를 가져옵니다 (느려질 수 있음)">
         <input type="checkbox" id="trAll"> 전체 케이스</label>
+      <select class="sel" id="trScope" style="width:190px"
+              title="평가할 item 범위. 기본은 서버 설정(WEB_REPORT_EVAL_FAIL_ONLY)을 따릅니다.">
+        <option value="">범위: 서버 설정</option>
+        <option value="fail">범위: fail item 만</option>
+        <option value="all">범위: 전체 item</option>
+      </select>
       <button class="btn primary" id="trRun">트레이스 실행</button>
       <span class="msg" id="trMsg"></span>
     </div>
@@ -473,6 +480,30 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
         <tbody id="fileBody"></tbody>
       </table>
     </div>
+  </div>
+</div>
+
+<!-- ── ENGR Signature (세션 화면에서 확정한 정답 룰 — 특히 Unknown 모음) ──── -->
+<div class="panel" id="pEngrSig">
+  <div class="card">
+    <h2>ENGR 확정 Signature <span class="hint">세션 상세 Issue Table 의 Signature 컬럼에서
+      엔지니어가 직접 고른 정답입니다 (엔진 발화와 별개 기록)</span></h2>
+    <div class="toolbar">
+      <select class="sel" id="esOnly" style="width:220px">
+        <option value="UNKNOWN">Unknown 만 (새 불량유형 후보)</option>
+        <option value="">전체 확정 라벨</option>
+      </select>
+      <button class="btn" id="esRefresh">새로고침</button>
+      <input class="inp" id="esSession" placeholder="세션 ID — 편집 DB → eval DB 재동기화"
+             style="min-width:260px">
+      <button class="btn" id="esResync">재동기화</button>
+      <span class="msg" id="esMsg"></span>
+    </div>
+    <div class="note"><b>Unknown</b> 은 "기존 룰로 설명이 안 된다"는 뜻입니다 — 여기 쌓인
+      항목을 보고 새 불량유형(signature)을 정의하세요. 엔진이 아무 룰도 못 띄운
+      <b>미분류</b>(세션 화면 표시)와는 다릅니다: 미분류는 엔진 사정, Unknown 은 사람 판단입니다.
+      룰은 이 화면에서 자동으로 바뀌지 않습니다.</div>
+    <div id="esBody"></div>
   </div>
 </div>
 
@@ -1193,7 +1224,9 @@ async function runTrace() {
   $('trRun').disabled = true;
   flash($('trMsg'), '실행 중…', true);
   try {
-    TRACE = await sendJSON('api/trace', 'POST', { session_id: sid, all: $('trAll').checked });
+    const scope = $('trScope').value;
+    TRACE = await sendJSON('api/trace', 'POST',
+      { session_id: sid, all: $('trAll').checked, ...(scope ? { scope } : {}) });
     // 세션 family_product 가 비면 엔진은 *_ETC 로 폴백한다 — 임계값 스코프가 갈리므로
     // "평가에 실제로 쓰인 family" 를 그대로 보여준다.
     const used = (TRACE.sources[0] || {}).meta || {};
@@ -1204,13 +1237,26 @@ async function runTrace() {
       `엔진 ${esc(TRACE.engine_version)} · rules_rev ${esc(TRACE.rules_rev || '(없음)')} · ` +
       `mode ${esc(TRACE.mode)} · ${esc(TRACE.product_type)} / ${famNote} · ` +
       `소스 ${TRACE.sources.length}개 · ${TRACE.elapsed_ms}ms` +
-      (TRACE.truncated ? ` <span class="msg err">상위 ${TRACE.max_cases}건만 표시</span>` : '');
+      (TRACE.truncated ? ` <span class="msg err">상위 ${TRACE.max_cases}건만 표시</span>` : '') +
+      `<br>범위: <b>${TRACE.fail_only ? 'fail item 만' : '전체 item'}</b> ` +
+      `(item ${(TRACE.item_scope || {}).evaluated}/${(TRACE.item_scope || {}).total})` +
+      traceCoverageText(TRACE.coverage);
     fillTraceFilters();
     renderTraceRows();
     renderTraceDiff();
     flash($('trMsg'), `케이스 ${TRACE.cases.length}건`, true);
   } catch (e) { flash($('trMsg'), e.message, false); }
   $('trRun').disabled = false;
+}
+
+// fail 이 있는데 진단 룰이 하나도 안 뜬 케이스 비율 — "현재 룰로 커버되나" 지표.
+// 미분류가 많으면 fail 유형을 설명할 signature 가 없다는 뜻이다(판정은 바뀌지 않는다).
+function traceCoverageText(cov) {
+  if (!cov || !cov.fail_cases) return '';
+  const pct = (cov.unclassified / cov.fail_cases * 100).toFixed(1);
+  const cls = cov.unclassified ? ' class="msg err"' : '';
+  return ` · fail case ${cov.fail_cases}건 중 발화 ${cov.fired}건, ` +
+         `<span${cls}>미분류 ${cov.unclassified}건 (${pct}%)</span>`;
 }
 
 // 필터 후보는 이번 트레이스 결과에서 뽑는다 — 있지도 않은 값을 고르게 하지 않는다.
@@ -2281,11 +2327,56 @@ $('rvCollect').addEventListener('click', async () => {
   }
 });
 
+// ── ENGR 확정 Signature 탭 ────────────────────────────────────────────────
+async function loadEngrSignatures() {
+  const only = $('esOnly').value;
+  const r = await getJSON('api/engr-signatures?limit=300' + (only ? `&only=${only}` : ''));
+  const rows = r.rows || [];
+  if (!rows.length) {
+    $('esBody').innerHTML = `<div class="note">${esc(r.note || '확정된 라벨이 없습니다.')}</div>`;
+    return;
+  }
+  // 같은 label(=한 행에서 고른 목록)을 한 줄로 묶는다 — rank 순서가 곧 우선순위다.
+  const byLabel = new Map();
+  rows.forEach((x) => {
+    const g = byLabel.get(x.label_id) || { ...x, sigs: [] };
+    g.sigs.push(x.signature);
+    byLabel.set(x.label_id, g);
+  });
+  const body = [...byLabel.values()].map((g) => `<tr>
+    <td>${esc(g.product_name || '')}</td><td>${esc(g.family_product || '')}</td>
+    <td>${esc(g.lot_id || '')}</td><td>${esc(g.item || '')}</td>
+    <td>${g.bin == null ? '' : esc(String(g.bin))}</td>
+    <td>${esc(g.sigs.join(' + '))}</td>
+    <td class="mono">${esc(g.session_id || '')}</td>
+    <td>${g.created_at ? new Date(g.created_at * 1000).toLocaleString() : ''}</td></tr>`).join('');
+  $('esBody').innerHTML = `<table><thead><tr>
+    <th>제품</th><th>Family</th><th>Lot</th><th>Item</th><th>Bin</th>
+    <th>확정 Signature</th><th>세션</th><th>확정 시각</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+
+$('esRefresh').addEventListener('click', () => {
+  loadEngrSignatures().catch((e) => flash($('esMsg'), e.message, false));
+});
+$('esOnly').addEventListener('change', () => {
+  loadEngrSignatures().catch((e) => flash($('esMsg'), e.message, false));
+});
+$('esResync').addEventListener('click', async () => {
+  const sid = $('esSession').value.trim();
+  if (!sid) { flash($('esMsg'), '세션 ID 를 입력하세요', false); return; }
+  try {
+    const r = await sendJSON('api/engr-signatures/resync', 'POST', { session_id: sid });
+    flash($('esMsg'), `동기화 완료 — 라벨 ${r.labels ?? 0}건`, true);
+    await loadEngrSignatures();
+  } catch (e) { flash($('esMsg'), '동기화 실패: ' + e.message, false); }
+});
+
 const TAB_LOADERS = {
   pThresholds: loadThresholds,
   pSignatures: async () => { await Promise.all([loadSignatures(), loadExclusions()]); },
   pTrace: loadSessions,
   pReview: loadReview,
+  pEngrSig: loadEngrSignatures,
   pEval: loadEvalTab,
   pScoring: loadScoring,
   pMaint: () => { renderFiles(); loadBackups(); loadGoldenInfo(); },
@@ -2447,6 +2538,9 @@ async function init() {
   fillScopeFamily();
   $('scPt').dataset.prev = '';
   $('scFam').dataset.prev = '';
+  // 트레이스 범위 기본값 = 서버 env 설정. 무엇을 따라가는지 라벨에 그대로 적는다.
+  $('trScope').options[0].textContent =
+    `범위: 서버 설정 (현재 ${META.eval_fail_only ? 'fail item 만' : '전체 item'})`;
   await loadThresholds();
   loaded.add('pThresholds');     // activateTab 과 같은 규약 — 성공했을 때만 기록
 }

@@ -391,9 +391,9 @@ def save_review_label(eval_id: int, *, correct: bool, comment: str = "",
         if row is None:
             raise ReviewError(f"없는 eval_id: {eval_id}")
         case_id = row["case_id"]
-        conn.execute("DELETE FROM label WHERE eval_id=? AND labeler=?",
-                     (int(eval_id), REVIEW_LABELER))
         store, _ = eval_export._engine()
+        store.delete_label_with_signatures("eval_id=? AND labeler=?",
+                                           (int(eval_id), REVIEW_LABELER), conn=conn)
         store.insert_label(case_id, int(eval_id), None, None, None,
                            1 if correct else 0, 0, (comment or "").strip()[:2000] or None,
                            REVIEW_LABELER, (reviewer or "")[:100], "manual", conn=conn)

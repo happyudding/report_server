@@ -16,6 +16,7 @@ evaluate 는 persist=False(미리보기) 로만 호출한다 — eval.db 무기�
 from __future__ import annotations
 
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -40,8 +41,22 @@ _FAMILY_FALLBACK = {
 _SEVERITY = {"OK": 0, "MONITOR": 1, "MINOR": 2, "MAJOR": 3, "CRITICAL": 4}
 _PASS_BIN = 1
 
+# 평가 범위 — 1(기본)=fail item 만(FAILTNO 1chip 이상, Yield/IssueTable 과 같은 기준),
+# 0=전체 item(종전 동작). 토글은 server.env 수정 + 서버 재기동.
+# ⚠ 이 필터는 **item 컬럼만** 줄인다. 선택된 item 의 chip 행(측정 행)은 전량 유지해야
+# 엔진 L1/L2 가 전체 분포(cpk·이봉·outlier) 대비 fail 을 볼 수 있다 — fail chip 만
+# 남기는 행 필터는 만들지 말 것.
+_FAIL_ONLY = (os.getenv("WEB_REPORT_EVAL_FAIL_ONLY", "1") or "1").strip().lower() \
+    in ("1", "true", "yes", "on")
+
 # 평가 스킵/실패 시 반환 형태 — 키 구성은 정상 반환과 동일해야 한다(호출부 분기 없음).
-_EMPTY_RESULT = {"comments": {}, "etc_auto_items": []}
+# 키를 늘릴 때 여기도 같이 늘려야 예외 폴백에서 KeyError 로 빌드가 죽지 않는다.
+_EMPTY_RESULT = {"comments": {}, "etc_auto_items": [], "row_signatures": {},
+                 "signature_options": []}
+
+# ENGR 가 "해당 없음/새 유형" 으로 지목할 때 쓰는 값. 엔진이 자동 발화하는 signature 가
+# **아니다** — 자동으로 붙이면 커버율이 가짜로 100% 가 된다(엔진 미분류와 구분).
+UNKNOWN_SIGNATURE = "UNKNOWN"
 
 # 이봉(SUBPOP_GAP) 배지 — 엔진은 primary_signature 일 때만 코멘트 본문에 이봉 문구를
 # 쓰는데(recommend._phenomenon_text), SUBPOP_GAP 은 specificity 순위가 낮아 같은 MAJOR 인
@@ -53,6 +68,33 @@ _MODALITY_RE = re.compile(r"modality_v2\s+(\w+)")
 _MODALITY_TAG = {"bimodal": "[이봉]", "multimodal": "[다봉]", "separated": "[분리]"}
 # note 포맷이 바뀌어도 "발화했다" 는 사실은 잃지 않는다 (조용한 미표시 방지).
 _MODALITY_TAG_FALLBACK = "[분포분리]"
+
+
+def fail_only_enabled() -> bool:
+    """서버 기본 평가 범위가 fail item 만인가 (env WEB_REPORT_EVAL_FAIL_ONLY)."""
+    return _FAIL_ONLY
+
+
+def eval_fail_scope(tables):
+    """평가 대상 item 집합 — fail(FAILTNO==TNO) 이 1chip 이상인 항목. 소스 합집합.
+
+    Yield 탭 / Issue Table 의 fail 귀속 규칙을 그대로 재사용한다
+    (tabs.distribution.fail_items → yield_tab.tno_to_item_map). 모드 구분 없이 같은
+    기준을 쓴다 — Temperature 의 CT/HT RT-limit 재판정은 저장된 FAILTNO 와 다르지만,
+    그 표(Issue Table Temp)는 AI Comment 대상에서 제외했으므로 어긋나지 않는다.
+    """
+    from .tabs.distribution import fail_items
+    return fail_items(tables)
+
+
+def _eval_items(table, selected, fail_set):
+    """이 소스에서 엔진에 넘길 item 컬럼 — selected_items 필터 + (옵션) fail 필터.
+
+    ai_comment / eval_debug / eval 스냅샷이 같은 식을 쓰도록 여기로 모은다.
+    fail_set 이 None 이면 종전(전체 item) 동작.
+    """
+    return [c for c in table.item_columns
+            if (not selected or c in selected) and (fail_set is None or c in fail_set)]
 
 
 def _evaluate_fn():
@@ -98,6 +140,23 @@ def llm_status(*, ping=False):
             out["reply"] = (llm_client.complete("ping. 한 단어로만 답하세요.") or "")[:200]
         except Exception as exc:
             out["error"] = f"{type(exc).__name__}: {exc}"
+    return out
+
+
+def signature_catalog() -> list:
+    """ENGR 가 고를 수 있는 signature 목록 — [{"id", "enabled"}, ...] + UNKNOWN.
+
+    사람 정답 라벨용이므로 **현재 비활성(enabled:false)인 룰도 포함**한다 — 발화는 안
+    하지만 "이게 맞는 유형"으로 지목할 수는 있어야 한다. enabled 는 기준값
+    (signatures.yaml) 기준이고 제품군 오버레이는 반영하지 않는다(화면 안내용 표시).
+    """
+    path = str(_EVAL_DIR)
+    if path not in sys.path:
+        sys.path.append(path)
+    from eval_engine.pipeline._rules import signatures_doc
+    out = [{"id": str(s.get("id")), "enabled": s.get("enabled") is not False}
+           for s in (signatures_doc().get("signatures") or []) if s.get("id")]
+    out.append({"id": UNKNOWN_SIGNATURE, "enabled": True})
     return out
 
 
@@ -188,6 +247,20 @@ def _rank(case):
     return (_sev(case), 1 if _modality_tag(case) else 0)
 
 
+def _case_sig_ids(case) -> list:
+    """이 케이스에서 발화한 signature id — primary 먼저, 그다음 secondary(발화 순).
+
+    엔진은 발화 목록 전체를 case["signatures"](role 포함)로 돌려주는데 코멘트 본문은
+    primary 하나로만 쓰인다. Issue Table Signature 컬럼은 전부 보여주기 위해 여기서
+    목록을 그대로 꺼낸다 (억제된 룰은 엔진이 이미 목록에서 뺐다 — suppressed_by).
+    """
+    rows = case.get("signatures") or []
+    primary = [str(s.get("id")) for s in rows if s.get("role") == "primary" and s.get("id")]
+    rest = [str(s.get("id")) for s in rows
+            if s.get("role") != "primary" and s.get("id") and str(s.get("id")) not in primary]
+    return primary + rest
+
+
 def _to_row_keys(cases_by_key):
     """(item_raw, bin) case 들 → {"comments": row_key 사전, "etc_auto_items": [...]}.
 
@@ -199,15 +272,23 @@ def _to_row_keys(cases_by_key):
     생기지 않는데) signature 가 발화한 item. 수율·cpk 는 정상인데 분포만 이상한
     항목이 표 어디에도 안 나오던 공백을 ETC 섹션 자동 행으로 메운다.
     cpk<1.33 항목과의 중복 제외는 cpk_rows 를 가진 issue_table 쪽이 한다.
+
+    row_signatures = 같은 row_key 규약으로 담은 **발화 signature id 목록**. Issue Table
+    Signature 컬럼의 엔진 제안값이며, 발화가 없으면 키 자체를 만들지 않는다(그 행은
+    화면에서 "미분류"로 보인다).
     """
     out = {}
+    sigs = {}
     worst_by_item = {}
     fail_bin_items, fired_items = set(), set()
     for (item, bin_), case in cases_by_key.items():
         if not item:
             continue
+        ids = _case_sig_ids(case)
         if bin_ is not None and bin_ != _PASS_BIN:
             out[f"Yield|{bin_}|{item}"] = _cell_text(case)
+            if ids:
+                sigs[f"Yield|{bin_}|{item}"] = ids
             fail_bin_items.add(item)
         if case.get("signatures"):
             fired_items.add(item)
@@ -217,19 +298,32 @@ def _to_row_keys(cases_by_key):
     for item, case in worst_by_item.items():
         out.setdefault(f"CPK|{item}", _cell_text(case))
         out.setdefault(f"ETC|{item}", _cell_text(case))
-    return {"comments": out, "etc_auto_items": sorted(fired_items - fail_bin_items)}
+        ids = _case_sig_ids(case)
+        if ids:
+            sigs.setdefault(f"CPK|{item}", ids)
+            sigs.setdefault(f"ETC|{item}", ids)
+    return {"comments": out, "etc_auto_items": sorted(fired_items - fail_bin_items),
+            "row_signatures": sigs, "signature_options": signature_catalog()}
 
 
-def build_ai_comments(tables, session, selected_items=None):
+def build_ai_comments(tables, session, selected_items=None, fail_only=None):
     """tables(모드 변형 후) 를 소스별로 evaluate 해 IssueTable 입력 dict 반환.
 
-    반환 = {"comments": {row_key: 셀 텍스트}, "etc_auto_items": [item...]}.
+    반환 = {"comments": {row_key: 셀 텍스트}, "etc_auto_items": [item...],
+            "row_signatures": {row_key: [signature id...]},
+            "signature_options": [{"id","enabled"}...]}.
     selected_items 필터는 build_report_payload 의 in-place 필터와 동일 집합으로
     적용한다(미선택 item 평가 회피). 여러 소스에서 같은 (item, bin) 케이스가 나오면
     severity 높은 쪽이 남고, 동률이면 이봉(SUBPOP_GAP) 발화 쪽이 남는다(_rank).
+
+    fail_only=None 이면 서버 기본(env). 참이면 fail 이 1chip 이상인 item 만 평가한다 —
+    그 결과 **수율·cpk 는 정상인데 룰만 위반한 item(etc_auto_items)이 생기지 않는다**.
+    의도된 동작이며, 되돌리려면 WEB_REPORT_EVAL_FAIL_ONLY=0.
     """
     evaluate = _evaluate_fn()
     selected = {str(v) for v in (selected_items or []) if str(v)}
+    fail_set = eval_fail_scope(tables) \
+        if (fail_only if fail_only is not None else _FAIL_ONLY) else None
     best = {}
     for idx, table in enumerate(tables):
         meta = _session_meta(session, idx + 1)
@@ -237,7 +331,7 @@ def build_ai_comments(tables, session, selected_items=None):
             logger.warning("ai_comment: product_type=%r 는 평가 대상이 아님 — 건너뜀",
                            session.get("product_type"))
             return _EMPTY_RESULT.copy()
-        items = [c for c in table.item_columns if not selected or c in selected]
+        items = _eval_items(table, selected, fail_set)
         if not items:
             continue
         raw_df = _table_to_raw_df(table, items)
@@ -250,7 +344,7 @@ def build_ai_comments(tables, session, selected_items=None):
     return _to_row_keys(best)
 
 
-def safe_build(tables, session, selected_items=None):
+def safe_build(tables, session, selected_items=None, fail_only=None):
     """build_ai_comments 실패 격리 — 예외 시 warning 로그 + 빈 결과.
 
     반환이 dict 인 한(빈 comments 포함) IssueTable 에 AI Comment 컬럼은 표시된다
@@ -258,7 +352,7 @@ def safe_build(tables, session, selected_items=None):
     옵션 판정이 결정한다.
     """
     try:
-        return build_ai_comments(tables, session, selected_items)
+        return build_ai_comments(tables, session, selected_items, fail_only)
     except Exception:
         logger.warning("ai_comment 빌드 실패 — 빈 값으로 진행 (session=%s)",
                        session.get("session_id"), exc_info=True)

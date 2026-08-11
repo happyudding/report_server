@@ -36,6 +36,7 @@
 | eval_evidence | (eval, signal) 근거 1건 |
 | case_signature | (eval, signature) 1건 |
 | label | 사람 라벨 이벤트 1건(case당 다중) |
+| label_signature | (label, 사람이 지목한 signature) 1건 — 엔진 발화(case_signature)와 별개 |
 | case_outcome | case 의 실제 조치·결과 1건 |
 | eval_precedent | (eval, 참조한 선례 case) 1건 — L5 선례 사용 이력 |
 | engine_version_registry | engine_version 1개 |
@@ -247,6 +248,19 @@ CREATE TABLE IF NOT EXISTS label (
     created_at            INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_label_case ON label(case_id);
+
+-- v7(2026-08-11): 사람이 지목한 **정답 signature**. label 1건에 여러 개(rank=1 이 1순위).
+-- `case_signature`(엔진이 발화한 것)와 절대 섞지 않는다 — 그쪽은 role='primary' 를 전제로
+-- 선례검색·채점·골든셋이 조회하므로 사람 라벨을 끼워 넣으면 셋 다 함께 틀어진다.
+-- FK cascade 는 SQLite 기본 off → label 삭제 시 자식부터 지운다
+-- (store.delete_label_with_signatures 를 반드시 경유).
+CREATE TABLE IF NOT EXISTS label_signature (
+    label_id   INTEGER NOT NULL,
+    signature  TEXT NOT NULL,               -- signatures.yaml 의 id 또는 'UNKNOWN'
+    rank       INTEGER,                     -- 1..N (선택 순서 = 우선순위)
+    PRIMARY KEY (label_id, signature)
+);
+CREATE INDEX IF NOT EXISTS idx_label_signature_sig ON label_signature(signature);
 
 CREATE TABLE IF NOT EXISTS case_outcome (
     outcome_id   INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -372,6 +372,9 @@ def delete_cases(case_ids) -> dict:
             conn.execute("DELETE FROM features WHERE case_id=?", (cid,))
             conn.execute("DELETE FROM raw_metrics WHERE case_id=?", (cid,))
             conn.execute("DELETE FROM case_outcome WHERE case_id=?", (cid,))
+            # label 자식(label_signature = 사람이 지목한 정답 signature)까지 함께 정리.
+            conn.execute("DELETE FROM label_signature WHERE label_id IN "
+                         "(SELECT label_id FROM label WHERE case_id=?)", (cid,))
             conn.execute("DELETE FROM label WHERE case_id=?", (cid,))
             conn.execute("DELETE FROM run_case WHERE case_id=?", (cid,))
             cur = conn.execute("DELETE FROM fail_case WHERE case_id=?", (cid,))

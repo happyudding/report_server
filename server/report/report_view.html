@@ -1675,6 +1675,30 @@ td.issue-status-cell .status-dot {
 td.issue-status-cell.is-open .status-dot { background: #f97316; box-shadow: 0 0 5px rgba(249,115,22,.75); }
 td.issue-status-cell.is-close .status-dot { background: #16a34a; box-shadow: 0 0 5px rgba(22,163,74,.75); }
 
+/* Issue Table Signature — 엔진 발화 룰(제안) / ENGR 확정값. AI Comment 왼쪽 열.
+   미확정(제안)은 흐리게, 확정은 진하게 — 사람 판단과 엔진 제안이 섞여 보이면 안 된다. */
+td.issue-sig-cell { text-align: left; vertical-align: top; padding: 2px 3px; }
+.sig-chip {
+  display: inline-block; margin: 1px 2px 1px 0; padding: 1px 5px; border-radius: 9px;
+  font-size: 10px; background: #eef2f7; color: #1f2937; white-space: nowrap;
+}
+.sig-chip.sig-suggest { background: #f5f6f8; color: #98a2b3; font-style: italic; }
+.sig-chip.sig-none { background: #fff1f0; color: #b42318; }
+select.issue-sig-sel {
+  display: block; width: 100%; margin: 1px 0; padding: 1px 0 1px 2px;
+  border: 1px solid #d0d5dd; border-radius: 4px;
+  font-size: 10px; background: #fff; cursor: pointer;
+}
+select.issue-sig-sel:focus { border-color: #4a90e2; outline: none; }
+td.issue-sig-cell.is-reviewed select.issue-sig-sel { border-color: #16a34a; }
+.sig-btns { display: flex; gap: 4px; align-items: center; margin-top: 2px; }
+.sig-btns .sig-add, .sig-btns .sig-confirm {
+  padding: 0 5px; border: 1px solid #d0d5dd; border-radius: 4px;
+  background: #fff; font-size: 10px; line-height: 16px; cursor: pointer;
+}
+.sig-btns .sig-confirm { color: #15803d; border-color: #86c99a; }
+.sig-btns .sig-ok { color: #16a34a; font-size: 11px; }
+
 /* Summary 탭 Issue Status 카드(카테고리별 Open/Close 소표) */
 .iss-status-wrap { overflow-x: auto; }
 .iss-status-table { border-collapse: collapse; font-size: 13px; min-width: 220px; }

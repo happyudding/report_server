@@ -109,6 +109,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `WEB_REPORT_UPLOAD_WAIT_SEC` | `180` | 위 상한이 찼을 때 대기하는 시간(초). 초과하면 503. 대기 중에는 본문이 디스크에 스풀돼 있어 RAM 을 거의 안 쓴다 |
 | `WEB_REPORT_PREWARM_QUEUE` | `8` | 업로드 직후 프리웜 대기 큐 상한. 초과 시 가장 오래된 요청 폐기(로그) |
 | `WEB_REPORT_ETA_ENABLED` | `1` | 세션 로드 오버레이의 "예상 약 N초" 안내(202·build_status 응답의 `eta`). `0` 이면 키를 싣지 않고 프런트는 종전 문구 — 추정이 어긋나 혼란을 줄 때의 차단 스위치 ([docs/12](../docs/12_web_report_cache.md)) |
+| `WEB_REPORT_EVAL_FAIL_ONLY` | `1` | AI Comment 평가 범위. `1`=fail 이 1chip 이상인 item 만(Yield/Issue Table 과 같은 기준), `0`=전체 item(종전). **item 컬럼만** 줄고 chip 행은 전량 유지돼 분포·CPK 계산은 그대로다. 표본함 수집·골든셋 검사는 이 값과 무관하게 항상 전체. 바꾸면 재기동 필요(ai_comment 세션 캐시 1회 재계산) ([docs/13 §6-2](../docs/13_eval_analyzer_integration.md)) |
 | `REPORT_ADMIN_SECRET` | `pte` | admin 경로 조각 → `/pe/admin-<secret>/` (기본 `/pe/admin-pte/`) |
 
 ### 로그 / 무인 운영 (wsgi.py, watchdog.ps1)
@@ -320,6 +321,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `POST` | `/issue_table/etc`, `/issue_table/comments`, `/summary/engr` | 편집자 | Issue/Summary 편집 |
 | `POST` | `/issue_table/hidden` | 편집자 | Issue 행 숨김/전체 초기화 (kind=issue_hidden, Yield/CPK 만) |
 | `POST` | `/issue_table/status` | 편집자 | Issue 행 Status Open/Close (kind=issue_status, Close 만 저장). 단건 `{key,value}` / 일괄 `{items:[{key,value},…]}` (전체·선택 Open/Close, DB write 1회) |
+| `POST` | `/issue_table/signature` | 편집자 | Issue 행의 **ENGR 확정 Signature** 저장 (kind=issue_signature, `{key, signatures:[id,…]}`, 빈 배열=해제). 카탈로그 id 또는 `UNKNOWN` 만·중복 불가·최대 8개. 저장 후 eval DB 로 비동기 동기화 ([docs/13 §6-3](../docs/13_eval_analyzer_integration.md)) |
 | `POST` | `/chart_notes` | 편집자 | 차트 주석(도형/텍스트/코멘트) 저장 (kind=chart_note) |
 | `GET`/`POST` | `/note` | 공개/편집자 | Note 탭 시트 JSON 지연 조회 / 저장 (kind=note_sheet, ≤10MB) |
 | `GET` | `/note/sheet_names` | 공개 | Note 시트 **이름만** `[{index,name,order}]`. Summary 의 `$[시트명]` 자동완성·시트 버튼 줄 전용 — 본문(≤10MB)까지 내려주는 `/note` 를 이름 때문에 부르지 않게 한 경량 라우트 (서버는 updated_at 키로 memo) |

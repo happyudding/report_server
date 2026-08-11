@@ -176,6 +176,8 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             # safe_build 가 빈 dict 로 격리해 빌드가 죽지 않는다.
                             ai_comments = None
                             etc_auto_items = None
+                            ai_signatures = None
+                            signature_options = None
                             if _webreport_ai_comment(session.get("webreport_options") or ""):
                                 from . import ai_comment
                                 with build_log.stage("ai_comment"):
@@ -185,6 +187,9 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 ai_comments = ai_result["comments"]
                                 # 수율·cpk 는 정상인데 룰만 위반한 item → ETC 자동 행
                                 etc_auto_items = ai_result["etc_auto_items"]
+                                # Signature 컬럼 — 엔진 발화 제안 + dropdown 선택지
+                                ai_signatures = ai_result["row_signatures"]
+                                signature_options = ai_result["signature_options"]
                             # 수율 분모: 기준정보 Gross Die 와 세션에 저장된 소스별 선택을
                             # 함께 넘기고, 실제 판정(자동 예외 포함)은 yield_tab 이 한다.
                             gross_die = session.get("gross_die")
@@ -205,6 +210,10 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 dist_colors=dist_colors,
                                 ai_comments=ai_comments,
                                 etc_auto_items=etc_auto_items,
+                                ai_signatures=ai_signatures,
+                                signature_options=signature_options,
+                                # ENGR 확정 signature — 편집 상태(세션 편집 DB)가 진실.
+                                issue_signatures=edit_state["issue_signatures"],
                                 gross_die=gross_die,
                                 yield_basis=yield_basis,
                                 # Compare 모드 Before/After 배치(업로드 시 Honey 가 지정).
@@ -1337,6 +1346,98 @@ def update_issue_status(session_id: str, *, report_db, upload_root: Path,
                          why="issue_status")
 
     return {"ok": True, "key": key, "value": value, "storage": "db"}
+
+
+_SIGNATURE_MAX_IDS = 8
+
+
+def _norm_issue_signature(key, value):
+    """Signature 확정값 검증 → (key, [id...]). 빈 목록 = 해제(미검수로 되돌림).
+
+    허용 id 는 **엔진 signature 카탈로그에 정의된 것 + UNKNOWN** 뿐이다 — 정규식만
+    검사하면 UI 를 우회해 아무 문자열이나 라벨로 심을 수 있고, 그 라벨은 나중에
+    "정답 signature" 통계에 그대로 섞인다. 카탈로그에서 사라진 legacy 값은 화면 표시
+    (기존 저장값)는 되지만 새로 저장되지는 않는다.
+    """
+    key = str(key or "").strip()
+    if not key or len(key) > 300 or not key.startswith(_ISSUE_KEY_PREFIXES):
+        raise ValueError(f"invalid row key: {key!r}")
+    if value is None:
+        value = []
+    if not isinstance(value, list):
+        raise ValueError("signatures must be a list")
+    if len(value) > _SIGNATURE_MAX_IDS:
+        raise ValueError(f"too many signatures: {len(value)}")
+
+    from . import ai_comment
+    allowed = {s["id"] for s in ai_comment.signature_catalog()}
+    ids, seen = [], set()
+    for raw in value:
+        sig = str(raw or "").strip().upper()
+        if not sig:
+            continue
+        if sig not in allowed:
+            raise ValueError(f"unknown signature: {sig!r}")
+        if sig in seen:
+            raise ValueError(f"duplicate signature: {sig!r}")
+        seen.add(sig)
+        ids.append(sig)
+    return key, ids
+
+
+def update_issue_signature(session_id: str, *, report_db, upload_root: Path,
+                           key: str, value,
+                           client_ip: str = "", user_agent: str = "") -> dict:
+    """Issue Table 행의 **ENGR 확정 signature** 를 세션 편집 DB 에 저장한다.
+
+    key 는 comment 와 같은 row_key("Yield|<bin>|<item>"|"CPK|<item>"|"ETC|<item>"),
+    value 는 id 목록(순서 = 우선순위). 빈 목록이면 편집행을 지워 "미검수 + 엔진 제안"
+    상태로 되돌린다. 엔진 제안과 **같은 값이어도 저장한다** — 그래야 "ENGR 가 동의한
+    사례"가 남아 정정 사례만 쌓이는 편향을 피한다.
+
+    저장 순서는 편집 DB 먼저(진실), eval DB 반영은 그 뒤 비동기다 — 동기화 워커가
+    요청값이 아니라 편집 DB 의 최신 전체 상태를 다시 읽으므로 연속 편집도 마지막
+    상태로 수렴한다.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    key, ids = _norm_issue_signature(key, value)
+
+    edits.ensure_seeded(report_db, session_id,
+                        lambda: cache.load_manifest_cached(analysis_key, upload_root))
+    changes = [(edits.KIND_ISSUE_SIGNATURE, key,
+                edits.signature_value(ids) if ids else None)]
+    report_db.apply_webreport_edits(session_id, changes,
+                                    updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"issue_signature({key!r}={'+'.join(ids) or '(해제)'})",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+
+    _trigger_signature_sync(session_id, report_db=report_db, upload_root=upload_root)
+
+    return {"ok": True, "key": key, "signatures": ids, "storage": "db"}
+
+
+def _trigger_signature_sync(session_id: str, *, report_db, upload_root: Path) -> None:
+    """ENGR 확정 signature → eval DB 동기화 예약 (best-effort — 실패해도 편집은 유지)."""
+    try:
+        from . import eval_export
+        eval_export.sync_signatures_async(session_id, report_db=report_db,
+                                          upload_root=upload_root)
+    except Exception:
+        _log.warning("signature 동기화 트리거 실패 — eval DB 반영 누락 (session=%s)",
+                     session_id, exc_info=True)
 
 
 _ISSUE_STATUS_MAX_ITEMS = 3000

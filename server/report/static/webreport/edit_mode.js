@@ -346,6 +346,85 @@ document.querySelector(".content").addEventListener("change", async e => {
   }
 });
 
+// ── Issue Table Signature (ENGR 확정 원인 룰) ──────────────────────────────
+// 저장 단위는 셀 1개 = row_key 1개, 값은 드랍다운 순서대로의 id 목록이다.
+// 낙관 반영은 Status 와 같은 이유로 **row_key** 로 행을 찾는다(행 인덱스 금지).
+function applyIssueSignatureToRows(rows, key, ids) {
+  if (!Array.isArray(rows) || !key) return false;
+  let sec = "", hit = false;
+  rows.forEach(r => {
+    if (r && r["Category"]) sec = String(r["Category"]);
+    if (issueRowKey(r, sec) === key) {
+      r._sig = ids.slice();
+      r._sigrev = 1;
+      r["Signature"] = ids.length ? ids.join("+") : "미분류";
+      hit = true;
+    }
+  });
+  return hit;
+}
+
+function signatureIdsOf(td) {
+  return [...td.querySelectorAll("select.issue-sig-sel")]
+    .map(s => s.value).filter(v => v && v !== "__del");
+}
+
+// 저장 후 셀을 다시 그린다 — 칸 추가/제거·확정 배지가 한 경로로만 반영되게.
+function redrawSignatureCell(td, ids, reviewed) {
+  td.innerHTML = renderSignatureCell(ids, reviewed, true);
+  td.classList.toggle("is-reviewed", !!reviewed);
+}
+
+async function saveIssueSignature(td, ids) {
+  const key = td.dataset.key;
+  const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/signature`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+    body: JSON.stringify({ password: verifiedPassword, key, signatures: ids }),
+    keepalive: true,
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+  applyIssueSignatureToRows(issueRowsOf(issuePanelOf(td)), key, j.signatures || ids);
+  redrawSignatureCell(td, j.signatures || ids, (j.signatures || ids).length > 0);
+}
+
+document.querySelector(".content").addEventListener("change", async e => {
+  const sel = e.target.closest("select.issue-sig-sel");
+  if (!sel || MODE !== "edit") return;
+  const td = sel.closest("td.issue-sig-cell");
+  if (!td) return;
+  const before = signatureIdsOf(td);
+  if (sel.value === "__del") sel.remove();      // (제거) — 그 칸만 없앤다
+  const ids = signatureIdsOf(td);
+  try {
+    await saveIssueSignature(td, ids);
+  } catch (err) {
+    redrawSignatureCell(td, before, td.classList.contains("is-reviewed"));
+    showToast("Signature 저장 실패: " + err.message);
+  }
+});
+
+document.querySelector(".content").addEventListener("click", async e => {
+  if (MODE !== "edit") return;
+  const btn = e.target.closest(".sig-add, .sig-confirm");
+  if (!btn) return;
+  const td = btn.closest("td.issue-sig-cell");
+  if (!td) return;
+  if (btn.classList.contains("sig-add")) {
+    // 빈 칸 하나 추가 — 값이 정해지기 전에는 저장하지 않는다(빈 값은 목록에서 빠진다).
+    btn.closest(".sig-btns").insertAdjacentHTML("beforebegin",
+      signatureSelect("", td.querySelectorAll("select.issue-sig-sel").length));
+    return;
+  }
+  // [확정] — 엔진 제안과 값이 같아도 저장한다(동의 사례를 남기기 위한 명시 동작).
+  try {
+    await saveIssueSignature(td, signatureIdsOf(td));
+  } catch (err) {
+    showToast("Signature 확정 실패: " + err.message);
+  }
+});
+
 // PTE/개발 comment 등 dblclick-edit 셀: 더블클릭 전에는 읽기전용 표시, 더블클릭 시에만
 // contenteditable 활성화 (Distribution 등 다른 열이 즉시 편집 가능한 것과 구분).
 document.querySelector(".content").addEventListener("dblclick", e => {
