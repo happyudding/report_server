@@ -1074,6 +1074,8 @@ tbody tr:hover { background: #f9fbff; }
   border: 1px solid #d8dce4; border-radius: 12px; padding: 2px 9px; font-size: 12px; color: #1f2430;
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .trim-chip[draggable="true"] { cursor: grab; }
+/* ① 항목 매칭 그룹 카드 안에서는 항목명 생략(…) 대신 줄바꿈으로 전체 표시 (2026-08-11 요청) */
+.trim-card .trim-chip { white-space: normal; overflow-wrap: anywhere; }
 .trim-chip-wrap { display: inline-flex; align-items: center; gap: 3px; }
 .trim-ovr { color: #5E6AD2; font-weight: 700; }
 .trim-reset { border: none; background: none; cursor: pointer; color: #999; font-size: 12px; padding: 0 1px; }

@@ -187,21 +187,30 @@ def temp_fail_counts(tables, groups, packs=None) -> tuple:
     return agg, sources
 
 
+def _avg_of(row) -> float:
+    """행의 avg(소스 평균 fail%) — 정렬 키. 값이 없으면 0."""
+    try:
+        return float(row.get("avg"))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _group_by_bin(rows) -> list:
-    """Bin 별로 모아 대표(most fail) 1행 + 나머지 접힘 행 순서로 재배열 (2026-08-11 요청).
+    """Bin 별로 모아 대표(avg 최대) 1행 + 나머지 접힘 행 순서로 재배열 (2026-08-11 요청).
 
     ``_grp``/``_detail``/``_ndetail`` 은 프런트 접기 토글 전용 내부 필드로,
     Issue Table Yield 섹션([tabs/issue_table.py])과 **같은 규약**이다 — 프런트(sheets.js
     orderColumns)가 화면 컬럼에서 제외하고, 같은 토글 코드가 두 표를 처리한다.
 
-    Yield 섹션과 다른 점 하나: 대표행이 Bin 총합 집계행이 아니라 **most-fail 항목 행
+    Yield 섹션과 다른 점 하나: 대표행이 Bin 총합 집계행이 아니라 **avg 가 가장 큰 항목 행
     그 자체**다. TEMP 행은 row_key ``TEMP|<item>`` 이 comment/Status/숨김의 키라
     집계 대표행을 새로 만들면 그 행에 줄 키가 없고, 소스별 fail% 도 항목끼리 겹치는
     die 를 세므로(모듈 docstring) 합산이 뜻을 갖지 않는다.
 
     Bin 이 빈 항목(limits·관측 bin 둘 다 없음)은 묶을 기준이 없어 그룹을 만들지 않고
-    뒤에 그대로 붙인다. 입력 순서(소스 합산 fail die 수 내림차순)는 그룹 안에서도,
-    그룹 사이에서도(각 Bin 의 첫 등장 순서) 그대로 유지된다.
+    뒤에 그대로 붙인다. **입력이 avg 내림차순으로 정렬돼 있음을 전제**한다 — 그래서
+    각 Bin 의 첫 행이 그 Bin 의 avg 최대 행(대표)이 되고, Bin 이 처음 등장하는 순서가
+    곧 대표 avg 내림차순(= 가장 큰 Bin 이 최상단)이 된다.
     """
     order: list = []
     groups: dict = {}
@@ -235,9 +244,10 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
                          issue_comments=None, ai_comments=None, packs=None) -> list:
     """Issue Table Temp 시트 행 — 첫 행은 섹션 divider(``Category="TEMP"``).
 
-    컬럼 소스는 **CT/HT 만**이고, 정렬은 소스 합산 fail die 수 내림차순이다. 그 순서를
-    유지한 채 **Bin 별로 묶어**(``_group_by_bin``) 대표(most fail) 행만 펼쳐 보이고
-    나머지는 접는다 — Yield 표와 같은 보기 방식(2026-08-11 요청).
+    컬럼 소스는 **CT/HT 만**이고, 정렬 기준은 **avg**(소스 평균 fail%) 내림차순이다.
+    그 순서로 **Bin 별로 묶어**(``_group_by_bin``) Bin 안에서 avg 가 가장 큰 행만 펼쳐
+    보이고 나머지는 접는다. Bin 그룹 자체도 대표 avg 순이라 가장 큰 Bin 이 최상단에 온다
+    — 일반(Normal) Yield 표와 같은 보기 방식(2026-08-11 요청).
     fail 이 한 건도 없는 항목은 행을 만들지 않는다. 값이 없으면(그룹·fail 부재) 빈
     리스트를 돌려 프런트가 "데이터 없음"으로 처리하게 한다.
     ``packs`` 를 주면 그 판정 결과를 쓴다(compute_temp_fail — 재계산 없음).
@@ -257,12 +267,10 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
     member_obs = _observed_bins(_merged_counts(fail_counts, sources))
     rt_obs = _observed_bins(_merged_counts(fail_counts, rt_names))
 
-    ordered = sorted(agg.items(),
-                     key=lambda kv: (-sum(kv[1].values()), str(kv[0])))
     rows = [{"Category": "TEMP", "Step": "", "Bin": "", "TNO": "", "Item": "", "avg": "",
              **_blank_row(sources, ai)}]
     data_rows = []
-    for item, counts in ordered:
+    for item, counts in sorted(agg.items(), key=lambda kv: str(kv[0])):
         if f"TEMP|{item}" in hidden:
             continue
         m = meta.get(item, {})
@@ -287,6 +295,12 @@ def build_temp_fail_rows(tables, groups, totals=None, *, fail_counts=None,
         data["Status"] = status_of(f"TEMP|{item}") if status_of else "Open"
         data.update(_comment_values(issue_comments, f"TEMP|{item}", ai_comments))
         data_rows.append(data)
+    # 표시 순서 기준은 **avg**(소스 평균 fail%) 내림차순, 동률은 항목명 (2026-08-11 사용자
+    # 확정 — 종전 "소스 합산 fail die 수"). Yield 표(build_yield_bin_groups)가 avg 로
+    # 줄 세우는 것과 같은 기준이라, 두 표에서 같은 항목이 같은 근거로 위에 온다. 소스마다
+    # 분모(die 수)가 다르면 die 수 합과 avg 의 순위가 갈리는데, 화면에 보이는 숫자(avg)를
+    # 따르는 쪽이 사용자 기대와 맞는다.
+    data_rows.sort(key=lambda r: (-_avg_of(r), str(r.get("Item") or "")))
     rows.extend(_group_by_bin(data_rows))
     return rows if len(rows) > 1 else []
 

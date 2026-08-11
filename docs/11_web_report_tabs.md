@@ -104,7 +104,8 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     보여준다(CSS `.temp-leg-item` 줄바꿈, 2026-08-11). **이탈 없는 die 는 Pass 초록이
     아니라 연한 바탕색**(`TEMP_MAP_BASE_COLOR`) — 온통 초록이면 범례 클릭 강조가 묻힌다.
   - **Temp 표는 Bin 별로 묶인다** (2026-08-11) — 서버 `temp_fail._group_by_bin` 이
-    fail die 수 내림차순을 유지한 채 같은 Bin 을 모아 **most fail 항목 행을 대표**로 두고
+    **avg(소스 평균 fail%) 내림차순**을 유지한 채 같은 Bin 을 모아 **avg 최대 항목 행을
+    대표**로 두고(= 그 Bin 이 처음 등장하는 순서가 곧 대표 avg 순 → 가장 큰 Bin 이 최상단)
     나머지에 `_detail` 마킹을 단다(Issue Table Yield 섹션과 같은 `_grp`/`_detail`/
     `_ndetail` 규약 — 프런트 sheets.js 가 두 표를 같은 코드로 접는다). 대표행이 집계행이
     아니라 **항목 행 자체**인 점만 다르다: row_key 가 `TEMP|<item>` 이라 집계행에 줄 키가

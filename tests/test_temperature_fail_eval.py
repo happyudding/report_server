@@ -12,6 +12,8 @@
   5. Bin 은 limits 매핑의 **usl_bin**(.lt "20:19" 의 콜론 오른쪽) → 관측 bin → 공백 순.
      관측 bin 폴백에서 "999"(미상 표식)는 쓰지 않는다.
   6. temp_fail_indices 의 die 인덱스는 Map_analysis 의 dies 배열과 정합한다.
+  7. 표시 순서·Bin 묶음(대표 1행 + 접힘)의 기준은 **avg**(소스 평균 fail%) 내림차순이다
+     (2026-08-11 — 일반 Yield 표와 같은 기준). 행 자체는 여전히 항목당 1개.
 
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례).
 """
@@ -92,7 +94,7 @@ def test_all_items_counted_not_only_first():
     assert by_item["ItemB"]["W_CT_yield"] == 10.0, by_item["ItemB"]
     # 구 "첫 fail 하나만" 이면 ItemC 는 행 자체가 없었다 (이 개편의 목적)
     assert "ItemD" not in by_item, "limit 없는 항목은 판정 대상이 아니다"
-    # 정렬 = fail die 수 내림차순 (동수는 item 이름순)
+    # 정렬 = avg(소스 평균 fail%) 내림차순, 동률은 item 이름순 (2026-08-11 — 구 fail die 수)
     order = [r["Item"] for r in rows if r.get("Item")]
     assert order == ["ItemA", "ItemC", "ItemB"], order
 
@@ -201,7 +203,7 @@ def test_multi_group_sources_and_merge():
     # 그룹 0 의 CT 만 ItemA 70%, 다른 그룹 CT/HT 는 0
     assert by_item["ItemA"]["G0_CT_yield"] == 70.0, by_item["ItemA"]
     assert by_item["ItemA"]["G1_CT_yield"] == 0.0, by_item["ItemA"]
-    # 정렬은 소스 합산 count 내림차순 — CT(7)+HT(4)=11 로 세 항목 동률이라 이름순
+    # 정렬은 avg 내림차순 — 세 항목 모두 (70+40)/6 = 18.33 으로 동률이라 이름순
     assert [r["Item"] for r in data] == ["ItemA", "ItemB", "ItemC"], [r["Item"] for r in data]
 
 
@@ -273,6 +275,43 @@ def test_payload_temp_sheet_end_to_end():
     assert "W_CT_yield" not in payload["sheets"]["Yield"][0], payload["sheets"]["Yield"][0]
 
 
+def test_avg_order_and_bin_groups():
+    """표시 순서·Bin 묶음 기준은 **avg** — fail die 수와 갈리는 경우로 고정한다.
+
+    소스마다 분모(die 수)가 다르면 "die 수 많은 항목"과 "avg 큰 항목"의 순위가 뒤집힌다:
+    ItemA 는 fail 10 die 지만 분모가 100 이라 avg 5.0, ItemB 는 9 die 에 분모 10 이라 45.0.
+    화면에 보이는 숫자(avg)를 따라 ItemB 가 위로 온다(2026-08-11 사용자 확정).
+    같은 Bin 은 한 그룹으로 묶이고 대표는 그 Bin 의 avg 최대 행, 그룹 순서도 대표 avg 순.
+    """
+    n = 10
+    rt0 = make_table("G0_RT", {it: [5] * n for it in ITEMS})
+    rt1 = make_table("G1_RT", {it: [5] * n for it in ITEMS})
+    v0 = {it: [5] * n for it in ITEMS}
+    v0["ItemA"] = [15] * n                       # fail 10 die / 분모 100 → 10%
+    v1 = {it: [5] * n for it in ITEMS}
+    v1["ItemB"] = [15] * 9 + [5]                 # fail 9 die / 분모 10 → 90%
+    v1["ItemC"] = [15] * 3 + [5] * 7             # fail 3 die / 분모 10 → 30%
+    tables = [rt0, make_table("G0_CT", v0), rt1, make_table("G1_CT", v1)]
+    groups = [{"rt": "G0_RT", "members": ["G0_CT"], "member_roles": ["CT"]},
+              {"rt": "G1_RT", "members": ["G1_CT"], "member_roles": ["CT"]}]
+    # 관측 bin: ItemB·ItemC 는 4, ItemA 는 5 → 그룹 2개
+    counts = {"G1_CT": {("4", "ItemB"): 9, ("4", "ItemC"): 3},
+              "G0_CT": {("5", "ItemA"): 10}}
+    rows = build_temp_fail_rows(tables, groups, {"G0_CT": 100, "G1_CT": 10},
+                                fail_counts=counts)
+    data = [r for r in rows if r.get("Item")]
+    assert [r["Item"] for r in data] == ["ItemB", "ItemC", "ItemA"], [r["Item"] for r in data]
+    assert [r["avg"] for r in data] == [45.0, 15.0, 5.0], [r["avg"] for r in data]
+    # Bin 묶음: (4: ItemB 대표 + ItemC 접힘) → (5: ItemA 대표, 접힘 없음)
+    assert [r["Bin"] for r in data] == ["4", "4", "5"], [r["Bin"] for r in data]
+    assert [r["_grp"] for r in data] == ["t0", "t0", "t1"], [r["_grp"] for r in data]
+    assert [r["_detail"] for r in data] == [False, True, False], data
+    assert data[0]["_ndetail"] == 1 and data[2]["_ndetail"] == 0, data
+    assert "_ndetail" not in data[1], data[1]          # 접힘 행에는 없다
+    # 항목 행은 여전히 항목당 1개 (집계 대표행을 새로 만들지 않는다 — row_key 규약)
+    assert len(data) == 3 and len({r["Item"] for r in data}) == 3, data
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -289,6 +328,7 @@ def main():
                test_nan_is_pass,
                test_bin_priority_limits_then_observed_then_blank,
                test_indices_align_with_map_dies,
+               test_avg_order_and_bin_groups,
                test_payload_temp_sheet_end_to_end):
         fn()
         checks += 1

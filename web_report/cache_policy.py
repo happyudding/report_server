@@ -266,7 +266,11 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      내부 필드(_grp/_detail/_ndetail)가 붙는다. 행 자체(항목당 1행)·row_key·값은 그대로
 #      지만 v31 과 같은 성격이라, 안 올리면 옛 disk_cache 가 접기 마킹 없는 payload 를
 #      계속 반환해 Temp 표가 종전 평면 목록으로 남는다.
-REPORT_SCHEMA_VERSION = 32
+# v33: 그 Temp 표의 **정렬 기준**을 소스 합산 fail die 수 → **avg(소스 평균 fail%)**
+#      내림차순으로 바꾼다 (2026-08-11 사용자 확정 — 일반 Yield 표와 같은 기준). 항목
+#      순서와 Bin 그룹 순서(대표 avg 순 = 가장 큰 Bin 최상단)가 함께 달라진다. 소스마다
+#      분모가 다르면 v32 와 순서가 갈리므로 v32 캐시를 재사용하면 안 된다.
+REPORT_SCHEMA_VERSION = 33
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

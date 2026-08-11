@@ -357,6 +357,34 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     시딩 호출 제거를 차단. 정합성(시딩 산출 == 콜드 빌드 산출)은
     [tests/test_map_seed_equivalence.py](tests/test_map_seed_equivalence.py).
     → [docs/12](docs/12_web_report_cache.md)
+12. **사용자가 입력한 것은 무슨 일이 있어도 잃지 않는다.** 세션에서 사용자가 직접 입력한
+    모든 것(Issue Table comment, 행 숨김/Status, Note 시트, 차트 주석, ENGR 요약, trim
+    override, 전처리 설정 …)은 **소실되면 사용자 경험상 치명적**이다 — 다시 입력할 방법이
+    없고, 사라져도 에러가 아니라 "빈 값"으로 보여 발견조차 늦다. 따라서 **어떤 코드 변경도
+    기존 입력이 사라지는 경로를 만들어선 안 된다.** 서비스 중인 서버라 이미 운영 DB 에
+    실제 입력이 쌓여 있다는 전제로 판단한다.
+
+    가장 흔한 소실 원인은 **저장 키 변경**이다. 아래 4종은 표시 문구만 바꾸고
+    **저장 값은 고정**한다(화면 라벨 ≠ 저장 키):
+    - `row_key` 접두 — `Yield|<bin>|<item>` / `CPK|<item>` / `TEMP|<item>` / `ETC|<item>`.
+      **파서 사본이 4곳**이라 손대려면 전부 같이 고쳐야 한다:
+      [issue_table.py](web_report/tabs/issue_table.py) 생성 ·
+      [sheets.js](server/report/static/webreport/sheets.js) `issueRowKey`/`issueHideStatusKey` ·
+      [eval_export.py](web_report/eval_export.py) `_parse_row_key` ·
+      [chatbot/rowkey.py](server/chatbot/rowkey.py) (+ service.py 의 숨김/Status 허용 접두 2곳).
+    - comment 컬럼명 — `COMMENT_COLS = ["PTE comment", "개발 comment"]`. 화면·Excel 헤더의
+      "개발팀 Comment" 는 `COLUMN_DISPLAY_ALIAS` 표기일 뿐 **저장 키는 `"개발 comment"`**.
+    - 행 숨김/Status 키 — Yield 는 **bin 단위** `Yield|<bin>`(대표행+상세행 일괄),
+      나머지는 `CPK|<item>`/`TEMP|<item>`/`ETC|<item>`.
+    - 편집 `kind` 8종 이름과 item_key — `issue_comment`/`etc_item`/`trim_override`/
+      `summary_engr`/`chart_note`/`note_sheet`/`issue_hidden`/`issue_status`
+      ([edits.py](web_report/edits.py) 규약). Note 는 `note_sheet` + item_key `"sheet"` 전체 치환.
+      legacy 세션(rev==0)의 manifest 폴백·자동 시드 경로도 함께 유지한다.
+
+    불가피하게 바꿔야 하면 **고치기 전에 멈추고** 대상 키·영향 세션 수·마이그레이션 방법을
+    설명해 승인을 받는다(§ 상단 주의사항과 같은 취급). 상세는
+    [docs/11 §Issue Table comment 키](docs/11_web_report_tabs.md) ·
+    [docs/13](docs/13_eval_analyzer_integration.md)(row_key ↔ eval case 매핑).
 
 ---
 
