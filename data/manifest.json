@@ -1,0 +1,174 @@
+{
+  "meta": {
+    "product_type": "PMIC",
+    "family_product": "PMIC_ETC",
+    "product": "EVALTEST",
+    "lot_id": "EVALTEST_LOT1",
+    "revision": "1.0",
+    "file_name": "eval_testdata"
+  },
+  "mode": "Normal",
+  "sources": [
+    {
+      "index": 0,
+      "name": "EVALTEST_W01",
+      "file_name": "source_00.parquet"
+    },
+    {
+      "index": 1,
+      "name": "EVALTEST_W02",
+      "file_name": "source_01.parquet"
+    },
+    {
+      "index": 2,
+      "name": "EVALTEST_W03",
+      "file_name": "source_02.parquet"
+    },
+    {
+      "index": 3,
+      "name": "EVALTEST_W04",
+      "file_name": "source_03.parquet"
+    },
+    {
+      "index": 4,
+      "name": "EVALTEST_W05",
+      "file_name": "source_04.parquet"
+    },
+    {
+      "index": 5,
+      "name": "EVALTEST_W06",
+      "file_name": "source_05.parquet"
+    },
+    {
+      "index": 6,
+      "name": "EVALTEST_W07",
+      "file_name": "source_06.parquet"
+    },
+    {
+      "index": 7,
+      "name": "EVALTEST_W08",
+      "file_name": "source_07.parquet"
+    },
+    {
+      "index": 8,
+      "name": "EVALTEST_W09",
+      "file_name": "source_08.parquet"
+    },
+    {
+      "index": 9,
+      "name": "EVALTEST_W10",
+      "file_name": "source_09.parquet"
+    },
+    {
+      "index": 10,
+      "name": "EVALTEST_W11",
+      "file_name": "source_10.parquet"
+    },
+    {
+      "index": 11,
+      "name": "EVALTEST_W12",
+      "file_name": "source_11.parquet"
+    },
+    {
+      "index": 12,
+      "name": "EVALTEST_W13",
+      "file_name": "source_12.parquet"
+    },
+    {
+      "index": 13,
+      "name": "EVALTEST_W14",
+      "file_name": "source_13.parquet"
+    },
+    {
+      "index": 14,
+      "name": "EVALTEST_W15",
+      "file_name": "source_14.parquet"
+    },
+    {
+      "index": 15,
+      "name": "EVALTEST_W16",
+      "file_name": "source_15.parquet"
+    },
+    {
+      "index": 16,
+      "name": "EVALTEST_W17",
+      "file_name": "source_16.parquet"
+    },
+    {
+      "index": 17,
+      "name": "EVALTEST_W18",
+      "file_name": "source_17.parquet"
+    },
+    {
+      "index": 18,
+      "name": "EVALTEST_W19",
+      "file_name": "source_18.parquet"
+    },
+    {
+      "index": 19,
+      "name": "EVALTEST_W20",
+      "file_name": "source_19.parquet"
+    },
+    {
+      "index": 20,
+      "name": "EVALTEST_W21",
+      "file_name": "source_20.parquet"
+    },
+    {
+      "index": 21,
+      "name": "EVALTEST_W22",
+      "file_name": "source_21.parquet"
+    },
+    {
+      "index": 22,
+      "name": "EVALTEST_W23",
+      "file_name": "source_22.parquet"
+    },
+    {
+      "index": 23,
+      "name": "EVALTEST_W24",
+      "file_name": "source_23.parquet"
+    },
+    {
+      "index": 24,
+      "name": "EVALTEST_W25",
+      "file_name": "source_24.parquet"
+    },
+    {
+      "index": 25,
+      "name": "EVALTEST_W26",
+      "file_name": "source_25.parquet"
+    },
+    {
+      "index": 26,
+      "name": "EVALTEST_W27",
+      "file_name": "source_26.parquet"
+    },
+    {
+      "index": 27,
+      "name": "EVALTEST_W28",
+      "file_name": "source_27.parquet"
+    },
+    {
+      "index": 28,
+      "name": "EVALTEST_W29",
+      "file_name": "source_28.parquet"
+    },
+    {
+      "index": 29,
+      "name": "EVALTEST_W30",
+      "file_name": "source_29.parquet"
+    }
+  ],
+  "selected_items": [],
+  "sheets": [],
+  "options": {
+    "ai_comment": true,
+    "ai_comment_optin": true
+  },
+  "client": {
+    "user": "evaltest",
+    "host": "evaltest-pc",
+    "domain": ""
+  }
+}

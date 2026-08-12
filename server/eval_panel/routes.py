@@ -136,6 +136,7 @@ def api_meta():
         "default": eval_debug.default_thresholds(),
         "signature_ids": [s.get("id") for s in eval_debug.signatures_raw()],
         "subpop_gap_id": eval_debug.subpop_gap_id(),
+        "unknown_id": eval_debug.unknown_id(),
         "rules_rev": eval_debug.rules_rev(),
         "eval_fail_only": eval_debug.fail_only_default(),
         "rules_dir": str(eval_debug.rules_dir()),

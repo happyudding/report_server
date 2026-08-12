@@ -41,6 +41,8 @@ row0 TSEQ  row1 TNO  row2 STEP(P1/P2/P3, 미사용)  row3 UNIT  row4 HILIM(USL) 
 ## status 판정 요점 (status.py)
 - severity rank: MONITOR<MINOR<MAJOR<CRITICAL. bin `severity_bias` 로 rank 변조.
 - **OK**: 발화 signature 0건 + data_completeness=full → OK(정상 확정). 결측이면 MONITOR 유지.
+  단 **fail 이 있는 case 는 L3 가 `UNKNOWN` 을 명시 발화**하므로 여기까지 오지 않는다
+  (설명 못 한 fail 이 정상 확정으로 새던 구멍 — ../../../docs/13 §15).
 - **trump**: `cpk<cpk_bad AND yield<cpk_trump_yield_floor` → CRITICAL 강제.
 - **specificity**: 같은 severity 충돌 시 구체 signature(EQUIPMENT_SUSPECT/EDGE_FAIL…) > 일반(LOW_CPK) 가 primary.
   순서는 `SPECIFICITY_ORDER` 리스트 — signatures.yaml 에 signature 추가 시 이 리스트도 갱신.

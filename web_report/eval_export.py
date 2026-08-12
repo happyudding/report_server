@@ -204,7 +204,8 @@ def _collect_comments(report_db, session) -> dict:
 _UNIT_SUBSTR_RULES = (("VOLT", "V"), ("AMP", "A"), ("HERTZ", "Hz"))
 
 # item_master.value_type 어휘 (엔진 UNIT_TO_VALUE_TYPE 의 값 집합) — 관리자 수정 UI 용.
-VALUE_TYPES = ("V", "A", "Hz", "CODE", "Ohm", "Sec", "PF")
+# '%' 는 2026-08-12 에 엔진 표로 승격됐다(종전엔 db_input 선례 적재에만 있던 어휘).
+VALUE_TYPES = ("V", "A", "Hz", "CODE", "Ohm", "Sec", "%", "PF")
 
 
 def unit_group(unit):

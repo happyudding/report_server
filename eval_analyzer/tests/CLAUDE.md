@@ -1,6 +1,6 @@
 # tests — 테스트 스위트 (블록 진입점)
 
-`python -m pytest -q` (현재 **163 통과**). DB 테스트는 전부 tmp 격리 — 운영 `eval.db` 오염 없음.
+`python -m pytest -q` (현재 **186 통과**). DB 테스트는 전부 tmp 격리 — 운영 `eval.db` 오염 없음.
 상위 규칙 [../CLAUDE.md](../CLAUDE.md).
 
 ## 파일 지도
@@ -10,6 +10,7 @@
 | `test_metrics.py` | L1 `cpk_summary`/yield/bimodality 공식(CODE_TO_PORT §2). |
 | `test_features.py` | L2 robust 산포·spec margin·공간 feature. |
 | `test_signatures_status.py` | L3 signature 발화 + L4 status/trump/specificity. |
+| `test_unknown_signature.py` | L3 `UNKNOWN` 미분류 명시 발화 — 발화/미발화 경계·사유 코드 우선순위·제외 목록·LOW_CPK 억제(SPEC_TOO_TIGHT 보호). "모든 fail 은 signature 로 설명된다" 의 하한선 → ../../docs/13 §15. |
 | `test_ingest_raw_df.py` | L0 정본 raw_df(6-메타행) 파싱·fail 매핑. **정본 레이아웃 기준선**. |
 | `test_store.py` | store CRUD + `make_case_id` idempotent + `search_precedents` + 스키마 v4(eval_precedent/updated_at) + `save_features` 가 파생키(DB 미저장)를 무시하는지. |
 | `test_precedent_client.py` | L5 선례검색 어댑터 — case_ctx 의 자기 세션/analysis_key·발화 signature·top-k 상한이 **store 로 실제 전달되는지**(배선). store 쪽 동작은 test_store 담당. |

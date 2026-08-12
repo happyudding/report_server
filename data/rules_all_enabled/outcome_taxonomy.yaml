@@ -1,0 +1,22 @@
+# case_outcome.action / result 통제 어휘 + 한글 라벨 + 상위 그룹.
+# insert_case_outcome 삽입 시 validate_outcome 로 검증, benchtest/recommend 표시에 사용.
+# 'other' = 이스케이프값(product_taxonomy 의 _ETC 와 동일 취지 — 미정의 케이스 수용). group 명은 조정 가능.
+action:
+  retest:           {ko: 재측정,          group: 재검증}
+  condition_change: {ko: 조건변경,        group: 재검증}
+  trim_adjust:      {ko: 트림조정,        group: 조정}
+  spec_release:     {ko: 스펙릴리즈,      group: 스펙}
+  dev_feedback:     {ko: 설계피드백,      group: 피드백}
+  pa_feedback:      {ko: 공정피드백,      group: 피드백}
+  false_fail:       {ko: 정상판정,        group: 판정}
+  scrap:            {ko: 폐기,            group: 처분}
+  monitor:          {ko: 모니터링,        group: 관찰}
+  other:            {ko: 기타,            group: 기타}
+result:
+  recovered_normal:    {ko: 정상,         group: 정상화}
+  improved:            {ko: 개선,         group: 정상화}
+  false_fail:          {ko: 실불량아님,   group: 정상화}
+  confirmed_defective: {ko: 진성불량,     group: 불량}
+  inconclusive:        {ko: 원인불명종결, group: 미결}
+  pending:             {ko: 보류,         group: 미결}
+  other:               {ko: 기타,         group: 기타}

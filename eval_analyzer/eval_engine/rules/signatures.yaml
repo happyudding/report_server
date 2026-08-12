@@ -33,7 +33,6 @@ signatures:
     evidence: ["stdev {stdev}"]
 
   - id: WIDE_DISTRIBUTION
-    enabled: false
     when_metric: { spread_norm: ">spread_norm_warn" }
     status_hint: MAJOR
     phenomenon_ko : "산포가 spec 폭 대비 넓게 퍼져 있습니다."
@@ -122,8 +121,12 @@ signatures:
     evidence: ["spec_margin_low {spec_margin_low}", "spec_margin_high {spec_margin_high}"]
 
   - id: LOW_CPK
-    enabled: false
     when_metric: { cpk: "<cpk_warn" }
+    # SPEC_TOO_TIGHT 은 발화 조건에 cpk<cpk_warn 을 이미 포함하므로 LOW_CPK 와 항상 함께
+    # 뜨는 포함관계다(docs/13 §14-1). 더 구체적인 쪽(좁고·중앙·단봉인데 cpk 낮음 = spec
+    # margin 문제)을 남긴다 — 이 선언이 없으면 MAJOR 인 LOW_CPK 가 primary 를 독점해
+    # SPEC_TOO_TIGHT 이 다시 보이지 않게 된다(2026-08-03 축소 디버깅의 원인).
+    suppressed_by: [SPEC_TOO_TIGHT]
     status_hint: MAJOR
     issue_category: CPK
     phenomenon_ko : "공정능력지수(Cpk)가 기준(1.33) 미달입니다."
@@ -131,7 +134,6 @@ signatures:
     evidence: ["cpk {cpk}"]
 
   - id: MEAN_SHIFT
-    enabled: false
     when_metric: { center_bias: "abs>mean_shift_warn" }
     status_hint: MINOR
     phenomenon_ko : "분포 중심이 한쪽 spec으로 치우쳐 있습니다."
@@ -148,7 +150,11 @@ signatures:
 
   - id: CLUSTER_FAIL
     enabled: false
-    when_metric: { quadrant_imbalance: ">quadrant_imbalance_warn" }
+    # fail_count 가드는 다른 공간 룰(EDGE/RING/GRADIENT)에는 다 있는데 이 룰만 빠져 있었다.
+    # 그 상태로 켜면 fail 이 1~2개만 있어도 사분면 편중이 항상 성립해 fail case 의 87% 가
+    # CLUSTER_FAIL 로 덮인다(2026-08-12 실측 2594/2985). 가드를 넣으면 14건으로 떨어진다.
+    when_metric: { quadrant_imbalance: ">quadrant_imbalance_warn",
+                   fail_count: ">spatial_fail_count_min" }
     status_hint: MAJOR
     phenomenon_ko : "특정 영역에 불량이 편중되어 있습니다."
     action_ko: "특정 영역 불량 편중 — 국부 결함/handler/scratch 확인"
@@ -164,7 +170,6 @@ signatures:
     evidence: ["code_edge_hit {code_edge_hit}", "limit_hit_ratio {limit_hit_ratio}"]
 
   - id: HEAVY_TAIL
-    enabled: false
     when_metric: { kurtosis: ">kurtosis_warn" }
     status_hint: MINOR
     phenomenon_ko : "분포 꼬리가 두껍게 나타납니다."
@@ -188,6 +193,17 @@ signatures:
     phenomenon_ko : "wafer 내 방향성 gradient 가 발생하고 있습니다."
     action_ko: "wafer 내 방향성 gradient 발생 X/Y/radial 평균 변화와 공정 uniformity 확인"
     evidence: ["gradient_norm_abs_max {gradient_norm_abs_max}", "fail_count {fail_count}"]
+
+  # 미분류 명시 발화 — fail 이 있는데 위 룰이 하나도 안 뜬 케이스를 "설명되지 않음" 으로
+  # 남긴다. 특수분기라 when_metric 을 쓰지 않는다(다른 룰의 발화 결과로 판정 —
+  # signatures._evaluate_unknown). 발화 사유(왜 못 떴나)는 evidence 로 실린다:
+  #   NO_STATS_PF(단위 미등록 → 통계 없음) / NO_LIMIT / LOW_SAMPLE / NO_MATCH.
+  # ⚠ 이 룰이 발화한 건수는 **커버율에서 빼고 센다** — 자동 UNKNOWN 을 성과로 세면
+  #   커버율이 가짜로 100% 가 된다(docs/13 §6-3). 사람이 고르는 UNKNOWN 라벨과도 별개다.
+  - id: UNKNOWN
+    status_hint: MONITOR
+    phenomenon_ko : "fail 이 있으나 기존 룰로 설명되지 않는 상태입니다."
+    action_ko: "기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
 
 # 보류(구현 시 추가): gradient(radial/x/y — 좌표 스케일 정규화 선행),
 #   TRIM_INEFFECTIVE/RETEST_RECOVERY(family — 이력 기반, 단일 case snapshot 밖)

@@ -92,20 +92,29 @@ def record_web_visitor(user_id):
 
 
 def search_web_visitors(q="", limit=50):
-    """방문자 검색. q 가 있으면 부분일치, 없으면 최근 방문순 전체. user_id 목록 반환."""
+    """편집자 후보 검색. q 가 있으면 부분일치, 없으면 최근순 전체. user_id 목록 반환.
+
+    후보 풀은 **web_report 방문자(report_web_visitor) ∪ 웹 로그인 계정(report_user)** 이다.
+    방문자만 보면 갓 가입한 계정은 web_report 세션을 한 번 열기 전까지 후보에 뜨지 않아
+    "가입했는데 권한을 못 준다"가 된다 — 가입(=report_user INSERT) 즉시 후보가 되도록
+    두 테이블을 합친다. 정렬 기준 시각은 방문자=last_seen, 계정=created_at."""
     q = (q or "").strip().lower()
+    sql = """
+        SELECT user_id, MAX(ts) AS ts FROM (
+            SELECT user_id, last_seen  AS ts FROM report_web_visitor
+            UNION ALL
+            SELECT user_id, created_at AS ts FROM report_user
+        )
+        {where}
+        GROUP BY user_id ORDER BY ts DESC LIMIT ?
+    """
     with get_conn() as conn:
         if q:
             rows = conn.execute(
-                "SELECT user_id FROM report_web_visitor WHERE user_id LIKE ? "
-                "ORDER BY last_seen DESC LIMIT ?",
-                (f"%{q}%", int(limit)),
+                sql.format(where="WHERE user_id LIKE ?"), (f"%{q}%", int(limit)),
             ).fetchall()
         else:
-            rows = conn.execute(
-                "SELECT user_id FROM report_web_visitor ORDER BY last_seen DESC LIMIT ?",
-                (int(limit),),
-            ).fetchall()
+            rows = conn.execute(sql.format(where=""), (int(limit),)).fetchall()
     return [r["user_id"] for r in rows]
 
 

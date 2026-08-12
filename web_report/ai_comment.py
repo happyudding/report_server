@@ -54,8 +54,12 @@ _FAIL_ONLY = (os.getenv("WEB_REPORT_EVAL_FAIL_ONLY", "1") or "1").strip().lower(
 _EMPTY_RESULT = {"comments": {}, "etc_auto_items": [], "row_signatures": {},
                  "signature_options": []}
 
-# ENGR 가 "해당 없음/새 유형" 으로 지목할 때 쓰는 값. 엔진이 자동 발화하는 signature 가
-# **아니다** — 자동으로 붙이면 커버율이 가짜로 100% 가 된다(엔진 미분류와 구분).
+# ENGR 가 "해당 없음/새 유형" 으로 지목할 때 쓰는 값.
+# 2026-08-12 부터 **엔진도 같은 id 로 자동 발화한다** — fail 인데 어떤 룰도 안 뜨면
+# signature 0건(화면 "미분류")으로 두지 않고 UNKNOWN 을 명시 발화해 사유까지 남긴다
+# (eval_analyzer signatures._evaluate_unknown). 사람이 확정한 라벨과는 편집행 유무
+# (`_sigrev`)로 계속 구분되고, **커버율 집계에서는 UNKNOWN 을 빼고 센다** — 자동 발화를
+# 성과로 세면 커버율이 가짜로 100% 가 되기 때문(eval_debug._coverage).
 UNKNOWN_SIGNATURE = "UNKNOWN"
 
 # 이봉(SUBPOP_GAP) 배지 — 엔진은 primary_signature 일 때만 코멘트 본문에 이봉 문구를
@@ -156,7 +160,11 @@ def signature_catalog() -> list:
     from eval_engine.pipeline._rules import signatures_doc
     out = [{"id": str(s.get("id")), "enabled": s.get("enabled") is not False}
            for s in (signatures_doc().get("signatures") or []) if s.get("id")]
-    out.append({"id": UNKNOWN_SIGNATURE, "enabled": True})
+    # UNKNOWN 은 2026-08-12 부터 엔진 룰로도 선언돼 있다(미분류 명시 발화) — 카탈로그에
+    # 두 번 실리지 않게 이미 있으면 덧붙이지 않는다. 사람 라벨용 선택지로는 항상 있어야
+    # 하므로 없을 때만 보탠다(구 룰 파일 호환).
+    if not any(s["id"] == UNKNOWN_SIGNATURE for s in out):
+        out.append({"id": UNKNOWN_SIGNATURE, "enabled": True})
     return out
 
 
@@ -290,7 +298,10 @@ def _to_row_keys(cases_by_key):
             if ids:
                 sigs[f"Yield|{bin_}|{item}"] = ids
             fail_bin_items.add(item)
-        if case.get("signatures"):
+        # UNKNOWN(미분류 명시 발화)만 있는 케이스는 ETC 자동 행을 만들지 않는다 —
+        # 자동 행의 취지는 "표 어디에도 안 나오는데 룰이 뭔가 잡아낸 항목" 이라,
+        # 설명하지 못했다는 표시만으로 표를 늘리면 취지에 반한다.
+        if any(str(s.get("id")) != UNKNOWN_SIGNATURE for s in (case.get("signatures") or [])):
             fired_items.add(item)
         prev = worst_by_item.get(item)
         if prev is None or _rank(case) > _rank(prev):

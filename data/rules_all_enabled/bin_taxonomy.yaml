@@ -1,0 +1,8 @@
+# bin 의미 reference (도메인 입력). (product_type, bin_number) → bin_class, severity_bias.
+# 같은 통계 신호라도 bin_class 로 status 가 변조됨 (예: outlier@bin18-defective → CRITICAL).
+# eval.db.bin_taxonomy 로 적재됨. 아래는 예시 — 실제 값은 도메인이 채움.
+version: ev1
+entries:
+  - { product_type: PMIC, bin_number: 1,  bin_class: pass,       severity_bias: 0.0, description: "Pass" }
+  - { product_type: PMIC, bin_number: 18, bin_class: defective,  severity_bias: 0.3, description: "진성 불량 경향" }
+  - { product_type: PMIC, bin_number: 31, bin_class: abnormal,   severity_bias: -0.1, description: "이상치/조사 대상" }

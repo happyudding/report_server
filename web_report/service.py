@@ -832,9 +832,19 @@ def scatter_item(session_id: str, subject: str, *, report_db, upload_root: Path,
 
     session, tables, _ = _load_tables(session_id, report_db=report_db,
                                       upload_root=upload_root, session=session)
-    tables = _mode_tables(tables, _validate_mode(session.get("mode")))
+    mode = _validate_mode(session.get("mode"))
+    tables = _mode_tables(tables, mode)
+    # Temperature 그룹을 함께 넘긴다 — CT/HT 의 CPK 는 "RT Bin1 die × RT limit" 기준이라
+    # (tabs/cpk.build_cpk_rows) 이걸 빼면 Item_detail 만 다른 값을 보여준다.
+    # 넘기는 값은 **그룹 리스트**다 (temperature_reference_tables 계약 — metrics 가
+    # build_cpk_rows 에 넘기는 것과 같은 형태). 옵션 dict 를 그대로 주면 조용히 no-op 된다.
+    temp_groups = None
+    if mode == "Temperature":
+        temp_groups = (_webreport_temperature_groups(
+            session.get("webreport_options") or "", [t.source for t in tables]) or {}).get("groups")
     return _scatter_item(tables, subject, bin1=bin1,
-                         bin1_sources=_bin1_source_filter(session, bin1_scope))
+                         bin1_sources=_bin1_source_filter(session, bin1_scope),
+                         temperature_groups=temp_groups)
 
 
 def _commonality_index(session: dict, tables, prep_digest: str = ""):

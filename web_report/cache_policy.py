@@ -276,7 +276,12 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      재판정이라 저장 FAILTNO 기준 엔진 평가와 어긋난다 — 2026-08-11 사용자 결정).
 #      AI Comment 를 안 쓰는 세션은 값·키 모두 무변경이지만 키가 전 세션 공통이라
 #      1회 재계산된다. 안 올리면 옛 disk_cache 가 Signature 없는 payload 를 계속 반환한다.
-REPORT_SCHEMA_VERSION = 34
+# v35: eval 엔진이 **미분류 fail 에 UNKNOWN 을 명시 발화**하고(설명 못 한 fail 이 status=OK
+#      로 새던 구멍 차단), UNIT 표에 %/LSB 를 등록해 PF 오분류를 줄이고, LOW_CPK·
+#      WIDE_DISTRIBUTION·MEAN_SHIFT·HEAVY_TAIL 4룰을 다시 켰다(2026-08-12 — 실측 미분류
+#      46.8%→6.9%). AI Comment 셀 텍스트·Signature 컬럼 값이 바뀐다. 룰 yaml 을 손으로
+#      고쳤으므로 `.rules_rev`(패널 저장 카운터)로는 무효화되지 않아 여기서 올린다.
+REPORT_SCHEMA_VERSION = 35
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

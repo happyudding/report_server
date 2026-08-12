@@ -386,6 +386,28 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
     [docs/11 §Issue Table comment 키](docs/11_web_report_tabs.md) ·
     [docs/13](docs/13_eval_analyzer_integration.md)(row_key ↔ eval case 매핑).
 
+13. **같은 값·같은 목록은 한 곳에서만 계산하고, 나머지 화면은 그것을 가져다 쓴다
+    (재계산 금지).** 같은 항목이 탭마다 다른 숫자로 보이면 사용자는 리포트 전체를
+    신뢰하지 않는다. 어떤 코드를 고치든 **그 산출물을 가져다 쓰는 곳이 계속 같은 값을
+    받는지** 확인하고, 새로 계산하는 코드를 추가하지 말 것.
+    - **Yield 탭을 바꾸면 Issue Table 도 반드시 같이 확인한다. 두 표의 목록(bin/item)은
+      동일해야 한다.** Issue Table 은 `ctx.yield_rows`·`ctx.cpk_rows` 를 그대로 소비하는
+      구조라([tabs/__init__.py](web_report/tabs/__init__.py) `TAB_REGISTRY`),
+      [yield_tab.py](web_report/tabs/yield_tab.py) 의 행 생성·필터·분모(basis)를 손대면
+      Issue Table 의 Yield 섹션 목록이 함께 변한다. 한쪽에만 필터를 넣어 목록이
+      갈라지게 하지 말 것 — 목록 차이는 에러 없이 "이슈가 사라진" 것처럼 보인다.
+    - **Item_detail 의 CPK 는 CPK 탭의 CPK 와 같아야 한다.** 기준 정본은
+      [tabs/cpk.py](web_report/tabs/cpk.py) 모듈 docstring(Bin1 단일 기준 + Temperature
+      CT/HT 는 RT Bin1 die × RT limit) 하나뿐이다. Item_detail
+      ([tabs/distribution.py](web_report/tabs/distribution.py) `scatter_item`)은 지연 로드
+      경로라 `_stats` 로 **다시 계산**하는 유일한 예외인데, 공식만 같고 코드가 갈라져 있어
+      한쪽에 예외를 넣으면 값이 어긋난다(2026-08-12 Temperature 예외 누락으로 실제 발생).
+      → `cpk.py` 의 기준(모집단 마스크·limit 선택)을 고치면 `scatter_item` 도 **같은
+      커밋에서** 반영하고, 가능하면 `cpk.py` 의 헬퍼를 호출해 공식 사본을 늘리지 말 것.
+    - 이미 재사용으로 정리된 곳(되돌리지 말 것): Distribution 카드 status/cpk 는
+      `cpk_rows` 재사용(`worst_cpk_by_subject`), Issue Table CPK 섹션도 같은 함수,
+      Temperature 표/Map 은 `compute_temp_fail` 판정 1회분 공유.
+
 ---
 
 ## 6. 코드 포인터

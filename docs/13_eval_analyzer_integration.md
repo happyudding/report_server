@@ -195,10 +195,11 @@ ai_comment 옵션 세션에만). 코멘트 본문은 primary 하나만 서술하
 - 행 필드: `Signature`(표시 텍스트) + `_sig`(id 배열) + `_sigrev`(ENGR 확정 여부).
   뒤 둘은 화면 컬럼이 아니다(`sheets.js orderColumns` 가 제외). payload 최상위
   `signature_options` 가 dropdown 선택지(정의된 전체 룰 — 비활성 포함 — + `UNKNOWN`).
-- **미분류**: fail 인데 발화 0건이면 셀에 `미분류` 로 표시한다. 엔진은 결측이 없으면 그런
-  케이스를 OK 로 낼 수도 있어(`status.decide`) 화면에서 구분해 주는 것이고, **판정은
-  바꾸지 않는다**. 엔진 미분류(no-match)와 사람이 고른 `UNKNOWN` 은 다른 개념이다 —
-  UNKNOWN 을 자동 발화로 넣으면 커버율이 가짜로 100% 가 된다.
+- **미분류**: fail 인데 발화 0건이면 셀에 `미분류` 로 표시한다. **2026-08-12 부터 엔진이
+  그 자리에 `UNKNOWN` 을 명시 발화**하므로(§15) 실제로는 `Unknown` 칩이 뜬다 — `미분류`
+  표시는 엔진 UNKNOWN 룰을 꺼 둔 경우의 폴백으로 남는다. 사람이 고른 `UNKNOWN` 라벨과는
+  편집행 유무(`_sigrev`)로 계속 구분되고, **커버율 집계에서는 UNKNOWN 을 빼고 센다** —
+  자동 발화를 성과로 세면 커버율이 가짜로 100% 가 되기 때문이다.
 - ENGR 편집: 드랍다운 N개(가로 추가 `+`) + `확정`. **엔진 제안과 값이 같아도 확정하면
   저장한다** — 안 그러면 정정 사례만 쌓여 통계가 편향된다. 해제하면 편집행과 라벨이 함께
   사라져 "미검수 + 엔진 제안" 으로 돌아간다.
@@ -217,7 +218,7 @@ ai_comment 옵션 세션에만). 코멘트 본문은 primary 하나만 서술하
   룰은 여기서 자동으로 바뀌지 않는다 — 사람이 보고 정의하는 재료다.
 - **Issue Table Temp 시트는 AI Comment·Signature 를 만들지 않는다** — CT/HT 는 RT limit
   재판정으로 fail 을 다시 정하는데 엔진 평가는 저장된 FAILTNO 기준이라 두 판정이 어긋난다.
-- 캐시: `REPORT_SCHEMA_VERSION` 34.
+- 캐시: `REPORT_SCHEMA_VERSION` 34 (UNKNOWN 명시 발화로 35 — §15).
 
 ## 7. 클라이언트 옵션 (Honey)
 
@@ -550,12 +551,17 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   (전후 비교, 중복 키 제외, 직전 run 조회 TTL) ·
   [tests/test_eval_golden_io.py](../tests/test_eval_golden_io.py).
 
-## 12. 룰 축소 디버깅 체제 (2026-08-03)
+## 12. 룰 축소 디버깅 체제 (2026-08-03) — 2026-08-12 부분 해제
 
 룰 21개를 동시에 굴리면 임계값 하나를 고쳤을 때 무엇이 좋아지고 나빠졌는지 볼 수 없어,
 **SPEC_TOO_TIGHT / SEVERE_OUTLIER / OUTLIER_WARN / SUBPOP_GAP 4개만
 남기고 나머지를 `enabled: false`** 로 껐다(2026-08-04 CONSTANT_VALUE 추가로 끔 — 5→4개). 개념이 잡히는 대로 `/pe/eval` Signatures 탭에서
 하나씩 다시 켠다. 되돌리기는 그 탭의 일괄 켜기 한 번이다(코드 변경 없음).
+
+> **2026-08-12**: unknown 축소 작업(§15)으로 `LOW_CPK` · `WIDE_DISTRIBUTION` ·
+> `MEAN_SHIFT` · `HEAVY_TAIL` 4개를 다시 켰다(활성 8 + UNKNOWN). LOW_CPK 는 아래 항목
+> 그대로 `suppressed_by: [SPEC_TOO_TIGHT]` 를 달아 재활성했다 — 선언 없이 켜면 축소
+> 디버깅의 원인이던 "SPEC_TOO_TIGHT 이 영영 primary 가 안 됨" 으로 그대로 되돌아간다.
 
 - **LOW_CPK 를 끈 것이 핵심**이다. SPEC_TOO_TIGHT 은 발화 조건에 `cpk < cpk_warn` 이
   들어 있어 LOW_CPK(MAJOR)와 항상 같이 뜨고, 자신은 MINOR 라 specificity 경쟁에서 져
@@ -617,6 +623,12 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 
 - **단위 별칭 확장**: 배율 접두(`mv`/`uv`/`kv`/`nv`, `na`)와 테스터 표기(`0v`/`0a`)를
   정확일치 표에 등록했다. 선례 적재(db_input)의 부분일치(`UNIT_STEMS`)는 종전대로다.
+  - **2026-08-12 추가**: `%`/`pct`/`percent` → **`%`**, `lsb` → **`CODE`**. 실측에서
+    무판정 fail 404건 전부가 이 둘(`%` 245 · `LSB` 159)이었다. `%` 는 종전에 db_input
+    선례 적재에만 있던 어휘를 엔진으로 승격한 것이라 §10 의 "엔진이 `%` 를 절대 생성하지
+    않는다" 는 **더 이상 사실이 아니다**(선례 ↔ live case 의 value_type 불일치가 그만큼
+    줄었다). `eval_export.VALUE_TYPES` 와 패널 드롭다운에도 `%` 를 추가했다.
+    이미 PF 로 적재된 과거 행은 관리자 **Unit 별칭 재적용** 버튼으로 교정한다.
 - **어휘 개명**: 양불 value_type 을 `P_F` → **`PF`** 로 바꿨다. 엔진(ingest/metrics/
   features/status) · export(`eval_export.VALUE_TYPES`) · 관리자 UI · db_input 별칭이 모두 같은 값이다.
 - **기존 데이터 마이그레이션** (스키마 DDL 변경 없음, 값만):
@@ -691,3 +703,69 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   코드 변경이므로 `rules_rev` 가 아니라 **`cache_policy.REPORT_SCHEMA_VERSION`(→30)** 을
   올렸다.
 - 검증: [eval_analyzer/tests/test_signature_suppression.py](../eval_analyzer/tests/test_signature_suppression.py).
+
+## 15. 미분류(unknown) 명시 발화 + 축소 (2026-08-12)
+
+**목표**: 모든 fail 은 signature 로 설명되고, 설명되지 않은 fail 은 `UNKNOWN` 으로
+드러나며, 그 UNKNOWN 을 계속 줄여 간다. 종전엔 발화 0건인 fail 이 화면에서만 "미분류" 로
+보이고 엔진 판정은 `OK`(정상 확정)로 나갈 수 있어, **설명 못 한 fail 과 정상이 구분되지
+않았다**.
+
+### 15-1. 엔진 — UNKNOWN 특수분기
+
+`signatures.yaml` 에 `UNKNOWN` 룰을 선언하고 `signatures._evaluate_unknown` 이 판정한다.
+`SUBPOP_GAP` 과 같은 **특수분기**라 `when_metric` 을 쓰지 않는다(패널에서도 조건이 읽기
+전용 — `data-nocond`).
+
+- 발화 조건: **억제까지 끝난 최종 발화 집합이 비었고** `fail_count > 0`. fail 을 모르면
+  (키 부재) 발화하지 않는다 — 모름을 fail 로 읽지 않는다. 평가 제외 목록(exclusions)에
+  걸린 item 도 발화하지 않는다(완전 제외 유지).
+- `status_hint: MONITOR` → fail 케이스가 `OK` 로 새지 않는다. **판정이 바뀌는 지점**이라
+  골든셋·채점 표본에 영향이 있다.
+- evidence `signal_code = UNKNOWN_<사유>` 로 **왜 못 떴는지**를 남긴다. 사유마다 고쳐야 할
+  것이 다르다:
+
+| 사유 | 뜻 | 줄이는 방법 |
+|---|---|---|
+| `NO_STATS_PF` | value_type=PF → L1/L2 가 통계를 전부 비움 | 엔진 UNIT 표 등록 (§13) |
+| `NO_LIMIT` | LSL/USL 둘 다 없음 → cpk·spec margin 산출 불가 | limit mapping 확인 |
+| `LOW_SAMPLE` | `n_dut < n_min` | 표본 확보 |
+| `NO_MATCH` | 통계는 정상인데 어떤 조건에도 해당 없음 | 임계값 조정 / 새 룰 |
+
+- **커버율에서는 UNKNOWN 을 빼고 센다** (`eval_debug._coverage`) — 자동 발화를 성과로
+  세면 커버율이 가짜로 100% 가 된다. 트레이스 탭이 사유별 건수를 함께 찍는다.
+- **표본함(§14)에는 UNKNOWN 이 뜨지 않는다** — 임계값이 없어 강화할 대상이 없다.
+  그 부류의 재료는 무판정 트랙이다.
+- Issue Table **ETC 자동 행은 UNKNOWN 만으로는 생기지 않는다**(`ai_comment._to_row_keys`)
+  — 자동 행의 취지는 "표에 안 나오는데 룰이 뭔가 잡은 항목" 이라, 설명 못 했다는 표시로
+  표를 늘리면 취지에 반한다.
+
+### 15-2. 축소 — 실측 46.8% → 6.9%
+
+로컬 web_report 세션 14건(PMIC), fail case 2,985건 기준 (`fail_only=1`):
+
+| 단계 | 미분류 |
+|---|---|
+| 종전(활성 4룰) | 1,396건 **46.8%** |
+| ① UNIT 표에 `%`/`LSB` 등록 (§13) | 1,143건 38.3% |
+| ② `LOW_CPK` + `WIDE_DISTRIBUTION` 재활성 | 341건 11.4% |
+| ③ `MEAN_SHIFT` + `HEAVY_TAIL` 재활성 | 207건 **6.9%** |
+
+남은 207건은 전부 `NO_MATCH`(통계 정상·조건 미달)다 — 다음 축소는 임계값 조정이나 새 룰의
+몫이고, 근거는 표본함·골든셋으로 쌓는다.
+
+- ⚠ **`CLUSTER_FAIL` 은 켜지 않았다.** 켜면 미분류가 0% 가 되지만 fail case 의 87%
+  (2,594/2,985)를 이 룰 하나가 먹는다 — 다른 공간 룰(EDGE/RING/GRADIENT)에는 다 있는
+  `fail_count > spatial_fail_count_min` 가드가 이 룰에만 빠져 있어서다. **가드는 yaml 에
+  넣어 뒀고**(넣으면 발화 2,594→14건) `enabled:false` 는 유지했다. 나중에 켤 때 이
+  지뢰를 다시 밟지 않게 하기 위한 조치다.
+- 이 표를 재현하려면 `/pe/eval` 트레이스 탭에서 세션을 돌려 커버리지 줄을 읽으면 된다
+  (사유별 건수 포함).
+
+### 15-3. 함께 바뀐 것
+
+`REPORT_SCHEMA_VERSION` **35** (룰 yaml 을 손으로 고쳤으므로 `.rules_rev` 로는 무효화되지
+않는다 — 패널 저장 카운터라서). 검증:
+[eval_analyzer/tests/test_unknown_signature.py](../eval_analyzer/tests/test_unknown_signature.py)
+(발화/미발화·사유 우선순위·제외·LOW_CPK 억제) + `tests/test_eval_review.py`
+(표본함에 UNKNOWN 미노출 — 기대 룰 목록을 배포 yaml 에서 유도하도록 바꿨다).

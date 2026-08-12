@@ -4,6 +4,8 @@
   - severity 집계 = 발화 signature 중 최대 rank → MONITOR/MINOR/MAJOR/CRITICAL.
   - OK: 발화 signature 0건 + data_completeness=full → 통계적 정상 확정.
     (signature 0건 + 결측이면 MONITOR — 모름과 정상을 구분)
+    ※ fail 이 있는 case 는 L3 가 UNKNOWN 을 명시 발화하므로 여기까지 오지 않는다 —
+      "설명 못 한 fail" 이 정상 확정으로 새던 구멍을 L3 에서 막는다.
   - bin_class(defective/abnormal) severity_bias 로 rank 변조.
   - trump: cpk<cpk_bad AND yield<cpk_trump_yield_floor → CRITICAL 우선.
     PF(cpk 없음)는 yield<gross_yield_bad 단독으로 CRITICAL (PF 무판정 공백 보완).
@@ -12,6 +14,7 @@
 반환: {"status","primary_signature","secondary_signatures","confidence",
        "data_completeness","evidence":[{signal_code,value,weight}...]}
 """
+from . import signatures
 from ._rules import thresholds_for
 
 SEVERITY_RANK = {"MONITOR": 1, "MINOR": 2, "MAJOR": 3, "CRITICAL": 4}
@@ -24,7 +27,10 @@ SPECIFICITY_ORDER = ["LOW_SAMPLE_UNCERTAIN", "MISSING_LIMIT", "CONSTANT_VALUE",
                      "CODE_RAIL", "TAIL_RISK", "SEVERE_OUTLIER", "OUTLIER_WARN",
                      "MEAN_SHIFT", "HEAVY_TAIL",
                      "BIDIR_TAIL", "WIDE_DISTRIBUTION", "SUBPOP_GAP", "LOW_CPK",
-                     "SPEC_TOO_TIGHT", "GROSS_FAIL"]
+                     "SPEC_TOO_TIGHT", "GROSS_FAIL",
+                     # UNKNOWN 은 다른 발화가 하나도 없을 때만 생기므로 경쟁 상대가 없다.
+                     # 그래도 맨 끝에 둔다 — 순서 정합 검증(rules_io.validate_all)이 전 id 를 요구.
+                     "UNKNOWN"]
 
 
 def decide(case_ctx: dict, features: dict, sig_result: dict) -> dict:
@@ -67,9 +73,7 @@ def decide(case_ctx: dict, features: dict, sig_result: dict) -> dict:
     # fail 이 확실히 0 이면 공간 fail-pattern feature 는 "결측"이 아니라 "대상 없음" —
     # 이것 때문에 completeness 가 partial 로 떨어져 정상 케이스가 영원히 OK 가 못 되던
     # 구멍을 막는다. fail 정보 자체가 없으면(None) 종전대로 결측 취급(양호 오판 금지).
-    fail_count = case_ctx.get("fail_count")
-    if fail_count is None and "fail_mask" in case_ctx:
-        fail_count = sum(1 for f in case_ctx.get("fail_mask") or [] if f)
+    fail_count = signatures.fail_count_of(case_ctx)
     has_spatial = features.get("edge_fail_ratio") is not None or fail_count == 0
     if n_dut == 0:
         completeness, confidence = "low", 0.3

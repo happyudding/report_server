@@ -32,7 +32,7 @@ os.environ["REPORT_EVAL_DB_PATH"] = str(_TMP / "eval" / "eval.db")
 import pandas as pd  # noqa: E402
 
 from eval_panel import review  # noqa: E402
-from web_report import eval_export  # noqa: E402
+from web_report import eval_debug, eval_export  # noqa: E402
 from web_report.honeyform import META_COLUMNS, split_honeyform  # noqa: E402
 
 SID = "1700000002_review1"
@@ -183,9 +183,14 @@ def main():
     q = review.queue("MDDI", "MDDI_ETC")
     assert q["collected"] is True, q
     by_id = {r["id"]: r for r in q["rules"]}
-    # 배포 활성 4룰만 표본함에 뜬다(꺼진 룰의 표본을 검수시키지 않는다).
-    assert set(by_id) == {"SEVERE_OUTLIER", "OUTLIER_WARN", "SPEC_TOO_TIGHT", "SUBPOP_GAP"}, \
-        sorted(by_id)
+    # 배포 활성 룰만 표본함에 뜬다(꺼진 룰의 표본을 검수시키지 않는다). 목록을 박아 두면
+    # 룰을 켤 때마다 깨지므로 배포 yaml 에서 기대값을 유도한다 — 검사하려는 것은
+    # "어떤 룰이 켜져 있나" 가 아니라 "꺼진 룰·UNKNOWN 이 새어 들어오지 않나" 다.
+    deployed = {s["id"] for s in eval_debug.signatures_scoped("MDDI", "MDDI_ETC")
+                if s.get("enabled") is not False} - {eval_debug.unknown_id()}
+    assert set(by_id) == deployed, (sorted(by_id), sorted(deployed))
+    # UNKNOWN(미분류 명시 발화)은 임계값이 없어 강화할 대상이 없다 — 무판정 트랙의 몫.
+    assert eval_debug.unknown_id() not in by_id
     severe = by_id["SEVERE_OUTLIER"]
     assert severe["criterion"]["threshold_key"] == "outlier_ratio_bad"
     assert severe["pending_total"] >= 1 and severe["samples"], severe

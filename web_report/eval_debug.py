@@ -10,6 +10,8 @@ ai_comment.py(운영 평가) / eval_export.py(코멘트 export) / **이 모듈(�
 엔진 사설 API 핀(엔진 변경 시 함께 확인):
   pipeline.signatures.build_ctx_values / _eval_condition / _HIGH_MOMENT_METRICS
   pipeline.signatures._SUBPOP_GAP_ID  ← subpop_gap_id() 로 패널에 노출(특수분기 표시)
+  pipeline.signatures._UNKNOWN_ID / fail_count_of / _evaluate_unknown 의 evidence 포맷
+      ← unknown_id() 노출 + _coverage 사유별 집계(UNKNOWN_<사유> signal_code)
   pipeline.signatures.signatures_for  ← 트레이스가 평가와 같은 스코프 병합 결과를 봐야 한다
   pipeline._rules.thresholds_for / signatures_doc / reload_rules / threshold_overlay_path
   pipeline._rules.signatures_for / signature_overrides / signature_overlay_path
@@ -151,6 +153,17 @@ def subpop_gap_id() -> str:
     _eval_path()
     from eval_engine.pipeline import signatures
     return str(signatures._SUBPOP_GAP_ID)
+
+
+def unknown_id() -> str:
+    """미분류 명시 발화 signature id (엔진 값 — 패널 하드코딩 방지).
+
+    이 룰도 when_metric 을 쓰지 않는 특수분기다 — 다른 룰이 하나도 안 떴을 때만 발화하므로
+    편집 화면은 조건을 "효력 없음" 으로 표시해야 한다(subpop_gap_id 와 같은 취급).
+    """
+    _eval_path()
+    from eval_engine.pipeline import signatures
+    return str(signatures._UNKNOWN_ID)
 
 
 def specificity_order() -> list:
@@ -302,6 +315,13 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
         elif sig_id == sig_mod._SUBPOP_GAP_ID:
             branch = ("특수분기 (when_metric 미사용 — features.modality_v2 로 판정) → "
                       f"modality_v2={features.get('modality_v2') or '—'}")
+        elif sig_id == sig_mod._UNKNOWN_ID:
+            # 다른 룰이 하나도 안 떴을 때만 발화하는 특수분기 — 조건행이 없으므로
+            # "왜 떴나/안 떴나" 를 여기서 문장으로 준다.
+            fail_count = sig_mod.fail_count_of(case_ctx)
+            branch = ("특수분기 (when_metric 미사용 — 다른 룰의 발화 0건 + fail 존재 시 발화) → "
+                      + (f"fail {fail_count}chip" if fail_count
+                         else "fail 없음(미발화)" if fail_count == 0 else "fail 정보 없음(미발화)"))
         elif not high_moment_ok and (set(when) & sig_mod._HIGH_MOMENT_METRICS):
             skip = f"min-n 가드 (n_dut {n_dut} < n_min {thresholds.get('n_min')})"
         elif sig_id in suppressed_by:
@@ -531,11 +551,31 @@ def trace_session(session_id: str, *, report_db, upload_root: Path,
 def _coverage(cases) -> dict:
     """fail case 중 진단 signature 가 하나도 안 뜬 비율 — "현재 룰로 커버되나" 지표.
 
-    fail_count>0 인데 발화 0건이면 엔진은 (data_completeness=full 일 때) OK 를 낼 수도
-    있다(status.decide). 그런 케이스가 얼마나 되는지 세어 패널에 노출한다 — 판정 자체는
-    바꾸지 않는다.
+    엔진이 미분류 fail 에 `UNKNOWN` 을 명시 발화하므로 primary_signature 는 항상 채워진다.
+    **UNKNOWN 은 커버로 세지 않는다** — 자동 발화를 성과로 세면 커버율이 가짜로 100% 가
+    된다(docs/13 §6-3). 대신 `reasons` 로 "왜 못 떴나"(단위 미등록/limit 없음/표본 부족/
+    조건 미달)를 함께 세서 무엇을 고쳐야 unknown 이 줄어드는지 보이게 한다.
     """
+    unknown = unknown_id()
     fail_cases = [c for c in cases if (c.get("raw_metrics") or {}).get("fail_count")]
-    fired = [c for c in fail_cases if c.get("primary_signature")]
-    return {"fail_cases": len(fail_cases), "fired": len(fired),
-            "unclassified": len(fail_cases) - len(fired)}
+    unclassified = [c for c in fail_cases
+                    if not c.get("primary_signature") or c["primary_signature"] == unknown]
+    reasons = {}
+    for c in unclassified:
+        code = _unknown_reason_code(c, unknown) or "NO_MATCH"
+        reasons[code] = reasons.get(code, 0) + 1
+    return {"fail_cases": len(fail_cases), "fired": len(fail_cases) - len(unclassified),
+            "unclassified": len(unclassified), "reasons": reasons}
+
+
+def _unknown_reason_code(case, unknown):
+    """UNKNOWN 발화 evidence 의 `UNKNOWN_<사유>` signal_code 에서 사유만 뽑는다.
+
+    엔진 사설 계약 핀 — `signatures._evaluate_unknown` 의 evidence signal_code 포맷.
+    포맷이 바뀌면 사유 없이 NO_MATCH 로 뭉뚱그려지므로 집계만 무뎌지고 화면은 산다.
+    """
+    for ev in case.get("evidence") or []:
+        code = str(ev.get("signal_code") or "")
+        if code.startswith("UNKNOWN_"):
+            return code[len("UNKNOWN_"):]
+    return None

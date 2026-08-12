@@ -18,6 +18,53 @@ from ._rules import (thresholds_for, signatures_doc, signatures_for,  # noqa: F4
 # 고차모멘트(표본 부족 시 비활성) 의존 metric
 _HIGH_MOMENT_METRICS = {"skewness", "kurtosis", "bimodality_score"}
 _SUBPOP_GAP_ID = "SUBPOP_GAP"
+_UNKNOWN_ID = "UNKNOWN"
+
+
+def fail_count_of(case_ctx: dict):
+    """이 case 의 fail chip 수 — ingest 가 넣은 fail_count, 없으면 fail_mask 로 폴백.
+
+    입력 경로마다 채워지는 키가 달라서(raw_df 는 fail_count, 레거시 raw_table 은
+    fail_mask 만) status.decide 가 쓰던 폴백과 같은 식을 공용 함수로 뺐다.
+    둘 다 없으면 None — "fail 이 0" 이 아니라 "모른다" 이므로 UNKNOWN 발화도 하지 않는다.
+    """
+    fail_count = case_ctx.get("fail_count")
+    if fail_count is None and "fail_mask" in case_ctx:
+        fail_count = sum(1 for f in case_ctx.get("fail_mask") or [] if f)
+    return fail_count
+
+
+def _unknown_reason(case_ctx: dict, features: dict, raw_metrics: dict, thresholds: dict):
+    """UNKNOWN 발화 사유 1개 — "왜 어떤 룰도 못 떴나". 줄이려면 무엇을 고쳐야 하는지가 다르다.
+
+    NO_STATS_PF : value_type=PF → L1/L2 가 통계를 전부 비워 모든 when_metric 이 결측→False.
+                  대부분 UNIT 표기가 엔진 정확일치 표에 없어서 생긴 오분류다(단위표 등록으로 해결).
+    NO_LIMIT    : LSL/USL 이 둘 다 없어 cpk·spec margin 계열이 산출 불가(limit mapping 문제).
+    LOW_SAMPLE  : n_dut < n_min — 고차모멘트 룰이 min-n 가드로 빠진다(표본 확보 문제).
+    NO_MATCH    : 통계는 멀쩡한데 어떤 조건에도 안 걸림 → 임계값 조정이나 새 룰이 필요한 부류.
+    """
+    if str(case_ctx.get("value_type")) == "PF":
+        return ("NO_STATS_PF",
+                f"value_type=PF (UNIT {case_ctx.get('unit')!r}) — 통계가 비어 룰 평가 불가")
+    if case_ctx.get("lsl") is None and case_ctx.get("usl") is None:
+        return ("NO_LIMIT", "LSL/USL 없음 — cpk·spec margin 계열 산출 불가")
+    n_dut = features.get("n_dut") or 0
+    if n_dut < thresholds["n_min"]:
+        return ("LOW_SAMPLE", f"n_dut {n_dut} < n_min {thresholds['n_min']}")
+    return ("NO_MATCH", "통계는 산출됐으나 활성 룰의 조건에 해당 없음")
+
+
+def _evaluate_unknown(case_ctx, features, raw_metrics, thresholds, doc):
+    """fail 인데 발화 0건 → UNKNOWN 합성. fail 이 없거나 모르면 발화하지 않는다.
+
+    "모든 fail 은 signature 로 설명된다" 를 강제하기 위한 명시 발화다. 이게 없으면 fail
+    케이스가 발화 0건 + 결측 없음 조건에서 `status=OK`(정상 확정)로 나가버려, 설명하지
+    못한 fail 과 정상이 화면에서 구분되지 않는다.
+    """
+    code, note = _unknown_reason(case_ctx, features, raw_metrics, thresholds)
+    return {"id": _UNKNOWN_ID, "status_hint": doc["status_hint"], "score": None,
+            "evidence": [{"signal_code": f"UNKNOWN_{code}", "value": None, "note": note}],
+            "action_ko": doc.get("action_ko"), "unknown_reason": code}
 
 def _evaluate_subpop_gap(features : dict):
     """SUBPOP_GAP(이봉·분리) 전용 평가 — features 의 modality_v2 판정을 그대로 발화 근거로 쓴다.
@@ -166,7 +213,8 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     비활성 경로 4종: yaml `enabled: false`(룰 끄기), `scope`(제품군/family 밖), 표본
     부족(n_dut < n_min)일 때 고차모멘트 의존 signature, feature 결측(값 None → 조건
     False). 뒤 둘은 **결측을 양호로 읽지 않기 위한** 장치다.
-    SUBPOP_GAP 만 조건식으로 못 줄여 `_evaluate_subpop_gap` 별도 경로로 뺀다.
+    조건식으로 못 줄이는 특수분기 2개는 루프 밖으로 뺀다 — `SUBPOP_GAP`(modality_v2 로
+    판정)과 `UNKNOWN`(다른 룰이 하나도 안 떴을 때 fail 을 설명 없음으로 명시 발화).
     `applies` 는 "그 조건을 판정할 데이터가 있었나"를 남기는 트레이스용 기록(발화 여부와 별개).
     반환 키: signatures / reason_codes / bin_class / severity_bias / applies /
     raw_metrics_snapshot(status.decide 의 trump 판단용 cpk·yield).
@@ -193,7 +241,7 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
 
     fired, applies = [], {}
     suppressors = {}                     # {id: [나를 지우는 id, ...]} — 발화분만 모은다
-    subpop_doc = None
+    subpop_doc = unknown_doc = None
     for sig in signatures_for(case_ctx):
         # yaml 의 enabled:false 는 룰 비활성 (키 부재 = 활성 — 기존 yaml 무영향)
         if sig.get("enabled") is False:
@@ -203,6 +251,10 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
             continue
         if sig["id"] == _SUBPOP_GAP_ID:
             subpop_doc = sig
+            continue
+        if sig["id"] == _UNKNOWN_ID:
+            # 다른 룰의 발화 결과를 봐야 하므로 루프가 끝난 뒤(억제 적용 후) 판정한다.
+            unknown_doc = sig
             continue
         when = sig.get("when_metric", {}) or {}
         # 고차모멘트 의존 signature 인데 표본 부족 → 비활성
@@ -229,6 +281,15 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
             suppressors[_SUBPOP_GAP_ID] = _suppressor_ids(subpop_doc)
 
     fired, suppressed = _apply_suppression(fired, suppressors)
+
+    # UNKNOWN 은 **억제까지 끝난 최종 발화 집합**을 보고 판정한다 — 억제로 발화가 0이 된
+    # 경우는 "설명이 있었는데 중복이라 지운 것" 이므로 여기 해당하지 않는다(억제는 같은
+    # 현상의 약한 표현만 지우므로 최소 1건은 남는다).
+    fail_count = fail_count_of(case_ctx)
+    if unknown_doc is not None and not fired and fail_count:
+        fired.append(_evaluate_unknown(case_ctx, features, raw_metrics, th, unknown_doc))
+    applies[f"{_UNKNOWN_ID}.fail_count"] = fail_count is not None
+
     reason_codes = [e["signal_code"] for s in fired for e in s.get("evidence", [])]
 
     bt = bin_taxonomy_for(case_ctx.get("product_type"), case_ctx.get("bin"))

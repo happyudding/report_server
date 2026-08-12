@@ -231,9 +231,16 @@ def _stratify(rows: list, metric: str, op: str, threshold) -> list:
 
 
 def _active_signatures(product_type=None, family_product=None) -> list:
-    """이 범위에서 실제로 평가되는 룰만 — 꺼진 룰의 표본을 검수시키지 않는다."""
+    """이 범위에서 실제로 평가되는 룰만 — 꺼진 룰의 표본을 검수시키지 않는다.
+
+    UNKNOWN(미분류 명시 발화)은 뺀다 — 표본함은 "이 룰이 과하게 뜨는가" 를 검수해
+    임계값 강화안을 만드는 화면인데, UNKNOWN 은 임계값이 없어 강화할 대상이 없고
+    맞고 틀리고를 물을 것도 없다. 그 부류를 줄이는 재료는 아래 무판정 트랙이다.
+    """
+    unknown = eval_debug.unknown_id()
     sigs = eval_debug.signatures_scoped(product_type or None, family_product or None)
-    return [s for s in sigs if s.get("enabled") is not False]
+    return [s for s in sigs
+            if s.get("enabled") is not False and s.get("id") != unknown]
 
 
 def _sample_view(row: dict) -> dict:

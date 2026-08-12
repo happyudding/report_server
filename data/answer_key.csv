@@ -1,0 +1,501 @@
+﻿item,source,wafer,group,level,level_ko,intent,expect,unit,lsl,usl,bin,metric,target,actual_metric,threshold,n_dut,fail_count,yield,note
+GROSS_FAIL_L5_104,0,1,single,5,심각,GROSS_FAIL,fire,V,0.5,1.5,2,yield,0.02,0.02,0.5,2453,2404,0.02,
+MIX2_GROSS-WIDE_L5_174,1,2,combo,5,심각,GROSS_FAIL;WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,2404,0.02,
+GROSS_FAIL_L1_100,2,3,single,1,정상범위(미발화),GROSS_FAIL,not_fire,V,0.5,1.5,2,yield,0.9,0.9001,0.5,2453,245,0.9001,
+NORMAL_013_377,2,3,normal,1,정상범위(미발화),,not_fire,ms,0.5,1.5,3,spread_norm,0.0505,0.0502,0.18,2453,8,0.9967,발화 0건 기대(오탐 검사)
+NORMAL_016_380,2,3,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,2,spread_norm,0.0545,0.0533,0.18,2453,20,0.9918,발화 0건 기대(오탐 검사)
+NORMAL_022_386,2,3,normal,1,정상범위(미발화),,not_fire,ms,0.5,1.5,2,spread_norm,0.0549,0.056,0.18,2453,20,0.9918,발화 0건 기대(오탐 검사)
+GROSS_FAIL_L4_103,2,3,single,4,크게 초과,GROSS_FAIL,fire,V,0.5,1.5,2,yield,0.15,0.15,0.5,2453,2085,0.15,
+MIX2_GROSS-WIDE_L1_170,3,4,combo,1,정상범위(미발화),GROSS_FAIL;WIDE_DISTRIBUTION,not_fire,V,0.5,1.5,2,(조합),,,,2453,245,0.9001,
+NORMAL_023_387,3,4,normal,1,정상범위(미발화),,not_fire,CODE,0.5,1.5,2,spread_norm,0.021,0.0212,0.18,2453,20,0.9918,발화 0건 기대(오탐 검사)
+NORMAL_024_388,3,4,normal,1,정상범위(미발화),,not_fire,PCT,0.5,1.5,4,spread_norm,0.0362,0.0378,0.18,2453,8,0.9967,발화 0건 기대(오탐 검사)
+NORMAL_026_390,3,4,normal,1,정상범위(미발화),,not_fire,DEGC,0.5,1.5,3,spread_norm,0.0229,0.0222,0.18,2453,20,0.9918,발화 0건 기대(오탐 검사)
+MIX2_GROSS-WIDE_L4_173,3,4,combo,4,크게 초과,GROSS_FAIL;WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,2085,0.15,
+BIDIR_TAIL_L1_030,4,5,single,1,정상범위(미발화),BIDIR_TAIL,not_fire,V,0.5,1.5,2,spec_margin_min,1.2,1.1795,1.0,2453,12,0.9951,
+LOW_CPK_L1_020,4,5,single,1,정상범위(미발화),LOW_CPK,not_fire,V,0.5,1.5,2,cpk,1.5,1.5301,1.33,2453,12,0.9951,
+LOW_CPK_L2_021,4,5,single,2,임계값 소폭 초과,LOW_CPK,fire,V,0.5,1.5,2,cpk,1.2,1.2026,1.33,2453,12,0.9951,
+LOW_CPK_L3_022,4,5,single,3,초과,LOW_CPK,fire,V,0.5,1.5,2,cpk,0.9,0.8839,1.33,2453,12,0.9951,
+LOW_CPK_L4_023,4,5,single,4,크게 초과,LOW_CPK,fire,V,0.5,1.5,2,cpk,0.6,0.575,1.33,2453,12,0.9951,
+LOW_CPK_L5_024,4,5,single,5,심각,LOW_CPK,fire,V,0.5,1.5,2,cpk,0.3,0.2983,1.33,2453,12,0.9951,
+MEAN_SHIFT_L1_025,4,5,single,1,정상범위(미발화),MEAN_SHIFT,not_fire,V,0.5,1.5,2,center_bias,0.15,0.1505,0.3,2453,12,0.9951,
+MEAN_SHIFT_L2_026,4,5,single,2,임계값 소폭 초과,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.35,0.3505,0.3,2453,12,0.9951,
+MEAN_SHIFT_L3_027,4,5,single,3,초과,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.5,0.5002,0.3,2453,12,0.9951,
+MEAN_SHIFT_L4_028,4,5,single,4,크게 초과,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.7,0.7002,0.3,2453,12,0.9951,
+MEAN_SHIFT_L5_029,4,5,single,5,심각,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.9,0.9001,0.3,2453,12,0.9951,
+NORMAL_000_364,4,5,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,4,spread_norm,0.0237,0.0235,0.18,2453,18,0.9927,발화 0건 기대(오탐 검사)
+NORMAL_001_365,4,5,normal,1,정상범위(미발화),,not_fire,ma,0.5,1.5,4,spread_norm,0.0408,0.0403,0.18,2453,10,0.9959,발화 0건 기대(오탐 검사)
+NORMAL_003_367,4,5,normal,1,정상범위(미발화),,not_fire,ohm,0.5,1.5,4,spread_norm,0.0619,0.0648,0.18,2453,13,0.9947,발화 0건 기대(오탐 검사)
+NORMAL_006_370,4,5,normal,1,정상범위(미발화),,not_fire,PCT,0.5,1.5,3,spread_norm,0.0632,0.0644,0.18,2453,19,0.9923,발화 0건 기대(오탐 검사)
+NORMAL_007_371,4,5,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,2,spread_norm,0.0616,0.061,0.18,2453,15,0.9939,발화 0건 기대(오탐 검사)
+NORMAL_010_374,4,5,normal,1,정상범위(미발화),,not_fire,ma,0.5,1.5,4,spread_norm,0.0329,0.0317,0.18,2453,19,0.9923,발화 0건 기대(오탐 검사)
+NORMAL_011_375,4,5,normal,1,정상범위(미발화),,not_fire,khz,0.5,1.5,3,spread_norm,0.0251,0.0253,0.18,2453,15,0.9939,발화 0건 기대(오탐 검사)
+NORMAL_012_376,4,5,normal,1,정상범위(미발화),,not_fire,ohm,0.5,1.5,3,spread_norm,0.0332,0.0319,0.18,2453,16,0.9935,발화 0건 기대(오탐 검사)
+NORMAL_014_378,4,5,normal,1,정상범위(미발화),,not_fire,CODE,0.5,1.5,3,spread_norm,0.0465,0.0464,0.18,2453,16,0.9935,발화 0건 기대(오탐 검사)
+NORMAL_015_379,4,5,normal,1,정상범위(미발화),,not_fire,PCT,0.5,1.5,2,spread_norm,0.0492,0.05,0.18,2453,14,0.9943,발화 0건 기대(오탐 검사)
+NORMAL_018_382,4,5,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,2,spread_norm,0.053,0.0494,0.18,2453,13,0.9947,발화 0건 기대(오탐 검사)
+NORMAL_021_385,4,5,normal,1,정상범위(미발화),,not_fire,ohm,0.5,1.5,2,spread_norm,0.0627,0.0611,0.18,2453,17,0.9931,발화 0건 기대(오탐 검사)
+NORMAL_025_389,4,5,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,4,spread_norm,0.0764,0.0759,0.18,2453,17,0.9931,발화 0건 기대(오탐 검사)
+NORMAL_027_391,4,5,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,4,spread_norm,0.0889,0.0887,0.18,2453,14,0.9943,발화 0건 기대(오탐 검사)
+NORMAL_029_393,4,5,normal,1,정상범위(미발화),,not_fire,khz,0.5,1.5,3,spread_norm,0.0355,0.0358,0.18,2453,16,0.9935,발화 0건 기대(오탐 검사)
+NORMAL_033_397,4,5,normal,1,정상범위(미발화),,not_fire,PCT,0.5,1.5,2,spread_norm,0.0305,0.0313,0.18,2453,16,0.9935,발화 0건 기대(오탐 검사)
+NORMAL_034_398,4,5,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,3,spread_norm,0.0435,0.0438,0.18,2453,18,0.9927,발화 0건 기대(오탐 검사)
+NORMAL_038_402,4,5,normal,1,정상범위(미발화),,not_fire,khz,0.5,1.5,2,spread_norm,0.0846,0.0855,0.18,2453,19,0.9923,발화 0건 기대(오탐 검사)
+NORMAL_039_403,4,5,normal,1,정상범위(미발화),,not_fire,ohm,0.5,1.5,4,spread_norm,0.0398,0.0393,0.18,2453,20,0.9918,발화 0건 기대(오탐 검사)
+NORMAL_042_406,4,5,normal,1,정상범위(미발화),,not_fire,PCT,0.5,1.5,3,spread_norm,0.0379,0.0393,0.18,2453,15,0.9939,발화 0건 기대(오탐 검사)
+NORMAL_043_407,4,5,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,4,spread_norm,0.0783,0.0767,0.18,2453,18,0.9927,발화 0건 기대(오탐 검사)
+NORMAL_044_408,4,5,normal,1,정상범위(미발화),,not_fire,DEGC,0.5,1.5,3,spread_norm,0.0586,0.0594,0.18,2453,14,0.9943,발화 0건 기대(오탐 검사)
+NORMAL_046_410,4,5,normal,1,정상범위(미발화),,not_fire,ma,0.5,1.5,2,spread_norm,0.0783,0.0784,0.18,2453,14,0.9943,발화 0건 기대(오탐 검사)
+NORMAL_049_413,4,5,normal,1,정상범위(미발화),,not_fire,ms,0.5,1.5,3,spread_norm,0.0598,0.0583,0.18,2453,20,0.9918,발화 0건 기대(오탐 검사)
+NORMAL_050_414,4,5,normal,1,정상범위(미발화),,not_fire,CODE,0.5,1.5,4,spread_norm,0.052,0.0517,0.18,2453,14,0.9943,발화 0건 기대(오탐 검사)
+NORMAL_052_416,4,5,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,3,spread_norm,0.0621,0.0625,0.18,2453,13,0.9947,발화 0건 기대(오탐 검사)
+OUTLIER_WARN_L1_010,4,5,single,1,정상범위(미발화),OUTLIER_WARN,not_fire,V,0.5,1.5,2,outlier_ratio,0.0,0.0,0.02,2453,12,0.9951,
+OUTLIER_WARN_L2_011,4,5,single,2,임계값 소폭 초과,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio,0.022,0.022,0.02,2453,12,0.9951,
+OUTLIER_WARN_L3_012,4,5,single,3,초과,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio,0.03,0.0302,0.02,2453,12,0.9951,
+OUTLIER_WARN_L4_013,4,5,single,4,크게 초과,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio,0.04,0.04,0.02,2453,12,0.9951,
+OUTLIER_WARN_L5_014,4,5,single,5,심각,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio,0.048,0.0481,0.02,2453,12,0.9951,
+SEVERE_OUTLIER_L1_005,4,5,single,1,정상범위(미발화),SEVERE_OUTLIER,not_fire,V,0.5,1.5,2,outlier_ratio,0.0,0.0,0.02,2453,12,0.9951,
+SEVERE_OUTLIER_L2_006,4,5,single,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio,0.06,0.0599,0.02,2453,12,0.9951,
+SEVERE_OUTLIER_L3_007,4,5,single,3,초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio,0.1,0.0999,0.02,2453,12,0.9951,
+SEVERE_OUTLIER_L4_008,4,5,single,4,크게 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio,0.2,0.2002,0.02,2453,12,0.9951,
+SEVERE_OUTLIER_L5_009,4,5,single,5,심각,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio,0.33,0.3274,0.02,2453,12,0.9951,
+SPEC_TOO_TIGHT_L1_015,4,5,single,1,정상범위(미발화),SPEC_TOO_TIGHT,not_fire,V,0.5,1.5,2,spread_norm,0.1,0.1,0.18,2453,12,0.9951,
+SPEC_TOO_TIGHT_L2_016,4,5,single,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,spread_norm,0.13,0.13,0.18,2453,12,0.9951,
+SPEC_TOO_TIGHT_L3_017,4,5,single,3,초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,spread_norm,0.15,0.15,0.18,2453,12,0.9951,
+SPEC_TOO_TIGHT_L4_018,4,5,single,4,크게 초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,spread_norm,0.168,0.168,0.18,2453,12,0.9951,
+SPEC_TOO_TIGHT_L5_019,4,5,single,5,심각,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,spread_norm,0.175,0.175,0.18,2453,12,0.9951,
+WIDE_DISTRIBUTION_L1_000,4,5,single,1,정상범위(미발화),WIDE_DISTRIBUTION,not_fire,V,0.5,1.5,2,spread_norm,0.11,0.1109,0.18,2453,12,0.9951,
+WIDE_DISTRIBUTION_L2_001,4,5,single,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.2,0.1959,0.18,2453,12,0.9951,
+WIDE_DISTRIBUTION_L3_002,4,5,single,3,초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.3,0.2982,0.18,2453,12,0.9951,
+WIDE_DISTRIBUTION_L4_003,4,5,single,4,크게 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.5,0.4999,0.18,2453,12,0.9951,
+WIDE_DISTRIBUTION_L5_004,4,5,single,5,심각,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.9,0.9167,0.18,2453,12,0.9951,
+GROSS_FAIL_L3_102,4,5,single,3,초과,GROSS_FAIL,fire,V,0.5,1.5,2,yield,0.35,0.3502,0.5,2453,1594,0.3502,
+BIDIR_TAIL_L2_031,5,6,single,2,임계값 소폭 초과,BIDIR_TAIL,fire,V,0.5,1.5,2,spec_margin_min,0.9,0.8923,1.0,2453,12,0.9951,
+BIDIR_TAIL_L3_032,5,6,single,3,초과,BIDIR_TAIL,fire,V,0.5,1.5,2,spec_margin_min,0.6,0.5867,1.0,2453,12,0.9951,
+BIDIR_TAIL_L4_033,5,6,single,4,크게 초과,BIDIR_TAIL,fire,V,0.5,1.5,2,spec_margin_min,0.35,0.3441,1.0,2453,12,0.9951,
+BIDIR_TAIL_L5_034,5,6,single,5,심각,BIDIR_TAIL,fire,V,0.5,1.5,2,spec_margin_min,0.15,0.1281,1.0,2453,12,0.9951,
+CODE_RAIL_L1_060,5,6,single,1,정상범위(미발화),CODE_RAIL,not_fire,CODE,0.0,63.0,2,code_edge_hit,0.02,0.02,0.05,2453,12,0.9951,
+CODE_RAIL_L2_061,5,6,single,2,임계값 소폭 초과,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.07,0.0701,0.05,2453,12,0.9951,
+CODE_RAIL_L3_062,5,6,single,3,초과,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.15,0.15,0.05,2453,12,0.9951,
+CODE_RAIL_L4_063,5,6,single,4,크게 초과,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.35,0.3502,0.05,2453,12,0.9951,
+CODE_RAIL_L5_064,5,6,single,5,심각,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.6,0.6001,0.05,2453,12,0.9951,
+CONSTANT_VALUE_L1_050,5,6,single,1,정상범위(미발화),CONSTANT_VALUE,not_fire,V,0.5,1.5,2,stdev,0.0,0.0001,,2453,12,0.9951,
+CONSTANT_VALUE_L2_051,5,6,single,2,임계값 소폭 초과,CONSTANT_VALUE,fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,
+CONSTANT_VALUE_L3_052,5,6,single,3,초과,CONSTANT_VALUE,fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,
+CONSTANT_VALUE_L4_053,5,6,single,4,크게 초과,CONSTANT_VALUE,fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,
+CONSTANT_VALUE_L5_054,5,6,single,5,심각,CONSTANT_VALUE,fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,
+EQUIPMENT_SUSPECT_L1_055,5,6,single,1,정상범위(미발화),EQUIPMENT_SUSPECT,not_fire,V,0.5,1.5,2,site_cpk_delta,0.2,,0.5,2453,12,0.9951,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L2_056,5,6,single,2,임계값 소폭 초과,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,2,site_cpk_delta,0.6,,0.5,2453,12,0.9951,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L3_057,5,6,single,3,초과,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,2,site_cpk_delta,1.0,,0.5,2453,12,0.9951,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L4_058,5,6,single,4,크게 초과,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,2,site_cpk_delta,2.0,,0.5,2453,12,0.9951,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L5_059,5,6,single,5,심각,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,2,site_cpk_delta,4.0,,0.5,2453,12,0.9951,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+HEAVY_TAIL_L1_035,5,6,single,1,정상범위(미발화),HEAVY_TAIL,not_fire,V,0.5,1.5,2,kurtosis,1.0,1.0,2.0,2453,12,0.9951,
+HEAVY_TAIL_L2_036,5,6,single,2,임계값 소폭 초과,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,2.5,2.5,2.0,2453,12,0.9951,
+HEAVY_TAIL_L3_037,5,6,single,3,초과,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,5.0,5.0,2.0,2453,12,0.9951,
+HEAVY_TAIL_L4_038,5,6,single,4,크게 초과,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,15.0,15.0,2.0,2453,12,0.9951,
+HEAVY_TAIL_L5_039,5,6,single,5,심각,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,40.0,40.0,2.0,2453,12,0.9951,
+LOW_SAMPLE_UNCERTAIN_L1_070,5,6,single,1,정상범위(미발화),LOW_SAMPLE_UNCERTAIN,not_fire,V,0.5,1.5,2,n_dut,40,40,20,40,12,0.9951,
+LOW_SAMPLE_UNCERTAIN_L2_071,5,6,single,2,임계값 소폭 초과,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,2,n_dut,19,19,20,19,12,0.9951,
+LOW_SAMPLE_UNCERTAIN_L3_072,5,6,single,3,초과,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,2,n_dut,12,12,20,12,12,0.9951,
+LOW_SAMPLE_UNCERTAIN_L4_073,5,6,single,4,크게 초과,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,2,n_dut,6,6,20,6,12,0.9951,
+LOW_SAMPLE_UNCERTAIN_L5_074,5,6,single,5,심각,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,2,n_dut,2,2,20,2,12,0.9951,
+MISSING_LIMIT_L1_065,5,6,single,1,정상범위(미발화),MISSING_LIMIT,not_fire,V,0.5,1.5,2,limit_missing,0,0,,2453,12,0.9951,
+MISSING_LIMIT_L2_066,5,6,single,2,임계값 소폭 초과,MISSING_LIMIT,fire,V,0.5,,2,limit_missing,1,1,,2453,12,0.9951,
+MISSING_LIMIT_L3_067,5,6,single,3,초과,MISSING_LIMIT,fire,V,,1.5,2,limit_missing,1,1,,2453,12,0.9951,
+MISSING_LIMIT_L4_068,5,6,single,4,크게 초과,MISSING_LIMIT,fire,V,,,2,limit_missing,1,1,,2453,12,0.9951,
+MISSING_LIMIT_L5_069,5,6,single,5,심각,MISSING_LIMIT,fire,,,,2,limit_missing,1,1,,2453,12,0.9951,
+MIX2_MEANSHIFT-OUTWARN_L1_115,5,6,combo,1,정상범위(미발화),MEAN_SHIFT;OUTLIER_WARN,not_fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-OUTWARN_L2_116,5,6,combo,2,임계값 소폭 초과,MEAN_SHIFT;OUTLIER_WARN,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-OUTWARN_L3_117,5,6,combo,3,초과,MEAN_SHIFT;OUTLIER_WARN,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-OUTWARN_L4_118,5,6,combo,4,크게 초과,MEAN_SHIFT;OUTLIER_WARN,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-OUTWARN_L5_119,5,6,combo,5,심각,MEAN_SHIFT;OUTLIER_WARN,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_WIDE-SEVOUT_L1_105,5,6,combo,1,정상범위(미발화),WIDE_DISTRIBUTION;SEVERE_OUTLIER,not_fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_WIDE-SEVOUT_L2_106,5,6,combo,2,임계값 소폭 초과,WIDE_DISTRIBUTION;SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_WIDE-SEVOUT_L3_107,5,6,combo,3,초과,WIDE_DISTRIBUTION;SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_WIDE-SEVOUT_L4_108,5,6,combo,4,크게 초과,WIDE_DISTRIBUTION;SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_WIDE-SEVOUT_L5_109,5,6,combo,5,심각,WIDE_DISTRIBUTION;SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_WIDE-SUBPOP_L1_110,5,6,combo,1,정상범위(미발화),WIDE_DISTRIBUTION;SUBPOP_GAP,not_fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_WIDE-SUBPOP_L2_111,5,6,combo,2,임계값 소폭 초과,WIDE_DISTRIBUTION;SUBPOP_GAP,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_WIDE-SUBPOP_L3_112,5,6,combo,3,초과,WIDE_DISTRIBUTION;SUBPOP_GAP,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_WIDE-SUBPOP_L4_113,5,6,combo,4,크게 초과,WIDE_DISTRIBUTION;SUBPOP_GAP,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_WIDE-SUBPOP_L5_114,5,6,combo,5,심각,WIDE_DISTRIBUTION;SUBPOP_GAP,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+SUBPOP_GAP_L1_040,5,6,single,1,정상범위(미발화),SUBPOP_GAP,not_fire,V,0.5,1.5,2,density_gap,,0.0,,2453,12,0.9951,모드 분리 0.0σ
+SUBPOP_GAP_L2_041,5,6,single,2,임계값 소폭 초과,SUBPOP_GAP,fire,V,0.5,1.5,2,density_gap,,0.7254,,2453,12,0.9951,모드 분리 5.0σ
+SUBPOP_GAP_L3_042,5,6,single,3,초과,SUBPOP_GAP,fire,V,0.5,1.5,2,density_gap,,0.8618,,2453,12,0.9951,모드 분리 7.0σ
+SUBPOP_GAP_L4_043,5,6,single,4,크게 초과,SUBPOP_GAP,fire,V,0.5,1.5,2,density_gap,,0.8708,,2453,12,0.9951,모드 분리 10.0σ
+SUBPOP_GAP_L5_044,5,6,single,5,심각,SUBPOP_GAP,fire,V,0.5,1.5,2,density_gap,,0.9446,,2453,12,0.9951,모드 분리 7.0σ · 3봉(다봉)
+TAIL_RISK_L1_045,5,6,single,1,정상범위(미발화),TAIL_RISK,not_fire,V,0.5,1.5,2,skewness,0.05,0.05,1.0,2453,12,0.9951,skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 skew_warn=1.0 을 넘을 수 없다
+TAIL_RISK_L2_046,5,6,single,2,임계값 소폭 초과,TAIL_RISK,fire,V,0.5,1.5,2,skewness,0.15,0.15,1.0,2453,12,0.9951,skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 skew_warn=1.0 을 넘을 수 없다
+TAIL_RISK_L3_047,5,6,single,3,초과,TAIL_RISK,fire,V,0.5,1.5,2,skewness,0.25,0.25,1.0,2453,12,0.9951,skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 skew_warn=1.0 을 넘을 수 없다
+TAIL_RISK_L4_048,5,6,single,4,크게 초과,TAIL_RISK,fire,V,0.5,1.5,2,skewness,0.35,0.35,1.0,2453,12,0.9951,skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 skew_warn=1.0 을 넘을 수 없다
+TAIL_RISK_L5_049,5,6,single,5,심각,TAIL_RISK,fire,V,0.5,1.5,2,skewness,0.45,0.45,1.0,2453,12,0.9951,skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 skew_warn=1.0 을 넘을 수 없다
+MIX2_GROSS-WIDE_L3_172,5,6,combo,3,초과,GROSS_FAIL;WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,1594,0.3502,
+MIX2_CODERAIL-MEANSHIFT_L1_145,6,7,combo,1,정상범위(미발화),CODE_RAIL;MEAN_SHIFT,not_fire,CODE,0.0,63.0,2,(조합),,,,2453,12,0.9951,
+MIX2_CODERAIL-MEANSHIFT_L2_146,6,7,combo,2,임계값 소폭 초과,CODE_RAIL;MEAN_SHIFT,fire,CODE,0.0,63.0,2,(조합),,,,2453,12,0.9951,
+MIX2_CODERAIL-MEANSHIFT_L3_147,6,7,combo,3,초과,CODE_RAIL;MEAN_SHIFT,fire,CODE,0.0,63.0,2,(조합),,,,2453,12,0.9951,
+MIX2_CODERAIL-MEANSHIFT_L4_148,6,7,combo,4,크게 초과,CODE_RAIL;MEAN_SHIFT,fire,CODE,0.0,63.0,2,(조합),,,,2453,12,0.9951,
+MIX2_CODERAIL-MEANSHIFT_L5_149,6,7,combo,5,심각,CODE_RAIL;MEAN_SHIFT,fire,CODE,0.0,63.0,2,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-HEAVYTAIL_L1_120,6,7,combo,1,정상범위(미발화),MEAN_SHIFT;HEAVY_TAIL,not_fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-HEAVYTAIL_L2_121,6,7,combo,2,임계값 소폭 초과,MEAN_SHIFT;HEAVY_TAIL,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-HEAVYTAIL_L3_122,6,7,combo,3,초과,MEAN_SHIFT;HEAVY_TAIL,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-HEAVYTAIL_L4_123,6,7,combo,4,크게 초과,MEAN_SHIFT;HEAVY_TAIL,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-HEAVYTAIL_L5_124,6,7,combo,5,심각,MEAN_SHIFT;HEAVY_TAIL,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+UNITA_MEANSHIFT_L2_204,6,7,unit_axis,2,임계값 소폭 초과,MEAN_SHIFT,fire,ma,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=A
+UNITA_MEANSHIFT_L4_205,6,7,unit_axis,4,크게 초과,MEAN_SHIFT,fire,ma,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=A
+UNITA_SEVOUT_L2_200,6,7,unit_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,ma,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=A
+UNITA_SEVOUT_L4_201,6,7,unit_axis,4,크게 초과,SEVERE_OUTLIER,fire,ma,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=A
+UNITA_SPECTIGHT_L2_202,6,7,unit_axis,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,ma,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=A
+UNITA_SPECTIGHT_L4_203,6,7,unit_axis,4,크게 초과,SPEC_TOO_TIGHT,fire,ma,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=A
+UNITA_WIDE_L2_198,6,7,unit_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,ma,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=A
+UNITA_WIDE_L4_199,6,7,unit_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,ma,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=A
+UNITCODE_MEANSHIFT_L2_236,6,7,unit_axis,2,임계값 소폭 초과,MEAN_SHIFT,fire,CODE,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=CODE
+UNITCODE_MEANSHIFT_L4_237,6,7,unit_axis,4,크게 초과,MEAN_SHIFT,fire,CODE,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=CODE
+UNITCODE_SEVOUT_L2_232,6,7,unit_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,CODE,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=CODE
+UNITCODE_SEVOUT_L4_233,6,7,unit_axis,4,크게 초과,SEVERE_OUTLIER,fire,CODE,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=CODE
+UNITCODE_SPECTIGHT_L2_234,6,7,unit_axis,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,CODE,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=CODE
+UNITCODE_SPECTIGHT_L4_235,6,7,unit_axis,4,크게 초과,SPEC_TOO_TIGHT,fire,CODE,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=CODE
+UNITCODE_WIDE_L2_230,6,7,unit_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,CODE,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=CODE
+UNITCODE_WIDE_L4_231,6,7,unit_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,CODE,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=CODE
+UNITHz_MEANSHIFT_L2_212,6,7,unit_axis,2,임계값 소폭 초과,MEAN_SHIFT,fire,khz,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Hz
+UNITHz_MEANSHIFT_L4_213,6,7,unit_axis,4,크게 초과,MEAN_SHIFT,fire,khz,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Hz
+UNITHz_SEVOUT_L2_208,6,7,unit_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,khz,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Hz
+UNITHz_SEVOUT_L4_209,6,7,unit_axis,4,크게 초과,SEVERE_OUTLIER,fire,khz,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Hz
+UNITHz_SPECTIGHT_L2_210,6,7,unit_axis,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,khz,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Hz
+UNITHz_SPECTIGHT_L4_211,6,7,unit_axis,4,크게 초과,SPEC_TOO_TIGHT,fire,khz,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Hz
+UNITHz_WIDE_L2_206,6,7,unit_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,khz,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Hz
+UNITHz_WIDE_L4_207,6,7,unit_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,khz,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Hz
+UNITOhm_MEANSHIFT_L2_220,6,7,unit_axis,2,임계값 소폭 초과,MEAN_SHIFT,fire,ohm,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Ohm
+UNITOhm_MEANSHIFT_L4_221,6,7,unit_axis,4,크게 초과,MEAN_SHIFT,fire,ohm,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Ohm
+UNITOhm_SEVOUT_L2_216,6,7,unit_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,ohm,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Ohm
+UNITOhm_SEVOUT_L4_217,6,7,unit_axis,4,크게 초과,SEVERE_OUTLIER,fire,ohm,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Ohm
+UNITOhm_SPECTIGHT_L2_218,6,7,unit_axis,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,ohm,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Ohm
+UNITOhm_SPECTIGHT_L4_219,6,7,unit_axis,4,크게 초과,SPEC_TOO_TIGHT,fire,ohm,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Ohm
+UNITOhm_WIDE_L2_214,6,7,unit_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,ohm,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Ohm
+UNITOhm_WIDE_L4_215,6,7,unit_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,ohm,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Ohm
+UNITPCT_WIDE_L2_238,6,7,unit_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,PCT,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=PCT
+UNITSec_MEANSHIFT_L2_228,6,7,unit_axis,2,임계값 소폭 초과,MEAN_SHIFT,fire,ms,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Sec
+UNITSec_MEANSHIFT_L4_229,6,7,unit_axis,4,크게 초과,MEAN_SHIFT,fire,ms,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Sec
+UNITSec_SEVOUT_L2_224,6,7,unit_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,ms,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Sec
+UNITSec_SEVOUT_L4_225,6,7,unit_axis,4,크게 초과,SEVERE_OUTLIER,fire,ms,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Sec
+UNITSec_SPECTIGHT_L2_226,6,7,unit_axis,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,ms,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Sec
+UNITSec_SPECTIGHT_L4_227,6,7,unit_axis,4,크게 초과,SPEC_TOO_TIGHT,fire,ms,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Sec
+UNITSec_WIDE_L2_222,6,7,unit_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,ms,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Sec
+UNITSec_WIDE_L4_223,6,7,unit_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,ms,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=Sec
+UNITV_MEANSHIFT_L2_196,6,7,unit_axis,2,임계값 소폭 초과,MEAN_SHIFT,fire,v,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=V
+UNITV_MEANSHIFT_L4_197,6,7,unit_axis,4,크게 초과,MEAN_SHIFT,fire,v,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=V
+UNITV_SEVOUT_L2_192,6,7,unit_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,v,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=V
+UNITV_SEVOUT_L4_193,6,7,unit_axis,4,크게 초과,SEVERE_OUTLIER,fire,v,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=V
+UNITV_SPECTIGHT_L2_194,6,7,unit_axis,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,v,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=V
+UNITV_SPECTIGHT_L4_195,6,7,unit_axis,4,크게 초과,SPEC_TOO_TIGHT,fire,v,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=V
+UNITV_WIDE_L2_190,6,7,unit_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,v,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=V
+UNITV_WIDE_L4_191,6,7,unit_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,v,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=V
+WAFER_GRADIENT_L5_099,6,7,single,5,심각,WAFER_GRADIENT,fire,V,0.5,1.5,2,gradient_norm_abs_max,0.95,0.8086,0.3,2453,1412,0.4244,
+BIN18_SEVOUT_L2_288,7,8,bin_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,18,(조합),,,,2453,12,0.9951,
+BIN18_SEVOUT_L4_289,7,8,bin_axis,4,크게 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,18,(조합),,,,2453,12,0.9951,
+BIN18_SUBPOP_L2_290,7,8,bin_axis,2,임계값 소폭 초과,SUBPOP_GAP,fire,V,0.5,1.5,18,(조합),,,,2453,12,0.9951,
+BIN18_SUBPOP_L4_291,7,8,bin_axis,4,크게 초과,SUBPOP_GAP,fire,V,0.5,1.5,18,(조합),,,,2453,12,0.9951,
+BIN18_WIDE_L2_286,7,8,bin_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,18,(조합),,,,2453,12,0.9951,
+BIN18_WIDE_L4_287,7,8,bin_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,18,(조합),,,,2453,12,0.9951,
+BIN31_SEVOUT_L2_294,7,8,bin_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,31,(조합),,,,2453,12,0.9951,
+BIN31_SEVOUT_L4_295,7,8,bin_axis,4,크게 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,31,(조합),,,,2453,12,0.9951,
+BIN31_SUBPOP_L2_296,7,8,bin_axis,2,임계값 소폭 초과,SUBPOP_GAP,fire,V,0.5,1.5,31,(조합),,,,2453,12,0.9951,
+BIN31_SUBPOP_L4_297,7,8,bin_axis,4,크게 초과,SUBPOP_GAP,fire,V,0.5,1.5,31,(조합),,,,2453,12,0.9951,
+BIN31_WIDE_L2_292,7,8,bin_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,31,(조합),,,,2453,12,0.9951,
+BIN31_WIDE_L4_293,7,8,bin_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,31,(조합),,,,2453,12,0.9951,
+BIN3_SEVOUT_L2_264,7,8,bin_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+BIN3_SEVOUT_L4_265,7,8,bin_axis,4,크게 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+BIN3_SUBPOP_L2_266,7,8,bin_axis,2,임계값 소폭 초과,SUBPOP_GAP,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+BIN3_SUBPOP_L4_267,7,8,bin_axis,4,크게 초과,SUBPOP_GAP,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+BIN3_WIDE_L2_262,7,8,bin_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+BIN3_WIDE_L4_263,7,8,bin_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+BIN4_SEVOUT_L2_270,7,8,bin_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+BIN4_SEVOUT_L4_271,7,8,bin_axis,4,크게 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+BIN4_SUBPOP_L2_272,7,8,bin_axis,2,임계값 소폭 초과,SUBPOP_GAP,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+BIN4_SUBPOP_L4_273,7,8,bin_axis,4,크게 초과,SUBPOP_GAP,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+BIN4_WIDE_L2_268,7,8,bin_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+BIN4_WIDE_L4_269,7,8,bin_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+BIN5_SEVOUT_L2_276,7,8,bin_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,5,(조합),,,,2453,12,0.9951,
+BIN5_SEVOUT_L4_277,7,8,bin_axis,4,크게 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,5,(조합),,,,2453,12,0.9951,
+BIN5_SUBPOP_L2_278,7,8,bin_axis,2,임계값 소폭 초과,SUBPOP_GAP,fire,V,0.5,1.5,5,(조합),,,,2453,12,0.9951,
+BIN5_SUBPOP_L4_279,7,8,bin_axis,4,크게 초과,SUBPOP_GAP,fire,V,0.5,1.5,5,(조합),,,,2453,12,0.9951,
+BIN5_WIDE_L2_274,7,8,bin_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,5,(조합),,,,2453,12,0.9951,
+BIN5_WIDE_L4_275,7,8,bin_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,5,(조합),,,,2453,12,0.9951,
+BIN8_SEVOUT_L2_282,7,8,bin_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+BIN8_SEVOUT_L4_283,7,8,bin_axis,4,크게 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+BIN8_SUBPOP_L2_284,7,8,bin_axis,2,임계값 소폭 초과,SUBPOP_GAP,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+BIN8_SUBPOP_L4_285,7,8,bin_axis,4,크게 초과,SUBPOP_GAP,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+BIN8_WIDE_L2_280,7,8,bin_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+BIN8_WIDE_L4_281,7,8,bin_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+UNITPCT_MEANSHIFT_L2_244,7,8,unit_axis,2,임계값 소폭 초과,MEAN_SHIFT,fire,PCT,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=PCT
+UNITPCT_MEANSHIFT_L4_245,7,8,unit_axis,4,크게 초과,MEAN_SHIFT,fire,PCT,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=PCT
+UNITPCT_SEVOUT_L2_240,7,8,unit_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,PCT,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=PCT
+UNITPCT_SEVOUT_L4_241,7,8,unit_axis,4,크게 초과,SEVERE_OUTLIER,fire,PCT,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=PCT
+UNITPCT_SPECTIGHT_L2_242,7,8,unit_axis,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,PCT,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=PCT
+UNITPCT_SPECTIGHT_L4_243,7,8,unit_axis,4,크게 초과,SPEC_TOO_TIGHT,fire,PCT,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=PCT
+UNITPCT_WIDE_L4_239,7,8,unit_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,PCT,0.5,1.5,2,(조합),,,,2453,12,0.9951,value_type=PCT
+UNITPFMISS_MEANSHIFT_L2_260,7,8,unit_axis,2,임계값 소폭 초과,MEAN_SHIFT,not_fire,DEGC,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF(오분류) — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPFMISS_MEANSHIFT_L4_261,7,8,unit_axis,4,크게 초과,MEAN_SHIFT,not_fire,DEGC,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF(오분류) — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPFMISS_SEVOUT_L2_256,7,8,unit_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,not_fire,DEGC,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF(오분류) — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPFMISS_SEVOUT_L4_257,7,8,unit_axis,4,크게 초과,SEVERE_OUTLIER,not_fire,DEGC,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF(오분류) — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPFMISS_SPECTIGHT_L2_258,7,8,unit_axis,2,임계값 소폭 초과,SPEC_TOO_TIGHT,not_fire,DEGC,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF(오분류) — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPFMISS_SPECTIGHT_L4_259,7,8,unit_axis,4,크게 초과,SPEC_TOO_TIGHT,not_fire,DEGC,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF(오분류) — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPFMISS_WIDE_L2_254,7,8,unit_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,not_fire,DEGC,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF(오분류) — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPFMISS_WIDE_L4_255,7,8,unit_axis,4,크게 초과,WIDE_DISTRIBUTION,not_fire,DEGC,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF(오분류) — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPF_MEANSHIFT_L2_252,7,8,unit_axis,2,임계값 소폭 초과,MEAN_SHIFT,not_fire,,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPF_MEANSHIFT_L4_253,7,8,unit_axis,4,크게 초과,MEAN_SHIFT,not_fire,,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPF_SEVOUT_L2_248,7,8,unit_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,not_fire,,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPF_SEVOUT_L4_249,7,8,unit_axis,4,크게 초과,SEVERE_OUTLIER,not_fire,,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPF_SPECTIGHT_L2_250,7,8,unit_axis,2,임계값 소폭 초과,SPEC_TOO_TIGHT,not_fire,,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPF_SPECTIGHT_L4_251,7,8,unit_axis,4,크게 초과,SPEC_TOO_TIGHT,not_fire,,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPF_WIDE_L2_246,7,8,unit_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,not_fire,,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+UNITPF_WIDE_L4_247,7,8,unit_axis,4,크게 초과,WIDE_DISTRIBUTION,not_fire,,0.5,1.5,2,(조합),,,,2453,12,0.9951,"value_type=PF — 측정 통계 없음(무판정), 값 기반 룰 발화 불가"
+GROSS_FAIL_L2_101,7,8,single,2,임계값 소폭 초과,GROSS_FAIL,fire,V,0.5,1.5,2,yield,0.48,0.4798,0.5,2453,1276,0.4798,
+EDGEC_centerbias_1_342,8,9,boundary,1,정상범위(미발화),MEAN_SHIFT,not_fire,V,0.5,1.5,2,center_bias,0.26,0.2601,0.3,2453,12,0.9951,임계값 0.3 대비 이내
+EDGEC_centerbias_2_343,8,9,boundary,1,정상범위(미발화),MEAN_SHIFT,not_fire,V,0.5,1.5,2,center_bias,0.285,0.2853,0.3,2453,12,0.9951,임계값 0.3 대비 이내
+EDGEC_centerbias_3_344,8,9,boundary,1,정상범위(미발화),MEAN_SHIFT,not_fire,V,0.5,1.5,2,center_bias,0.298,0.2986,0.3,2453,12,0.9951,임계값 0.3 대비 이내
+EDGEC_centerbias_4_345,8,9,boundary,3,초과,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.305,0.305,0.3,2453,12,0.9951,임계값 0.3 대비 초과
+EDGEC_centerbias_5_346,8,9,boundary,3,초과,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.33,0.3304,0.3,2453,12,0.9951,임계값 0.3 대비 초과
+EDGEC_centerbias_6_347,8,9,boundary,3,초과,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.4,0.3995,0.3,2453,12,0.9951,임계값 0.3 대비 초과
+EDGEC_codeedgehit_1_354,8,9,boundary,1,정상범위(미발화),CODE_RAIL,not_fire,CODE,0.0,63.0,2,code_edge_hit,0.038,0.0379,0.05,2453,12,0.9951,임계값 0.05 대비 이내
+EDGEC_codeedgehit_2_355,8,9,boundary,1,정상범위(미발화),CODE_RAIL,not_fire,CODE,0.0,63.0,2,code_edge_hit,0.045,0.0448,0.05,2453,12,0.9951,임계값 0.05 대비 이내
+EDGEC_codeedgehit_3_356,8,9,boundary,1,정상범위(미발화),CODE_RAIL,not_fire,CODE,0.0,63.0,2,code_edge_hit,0.049,0.0489,0.05,2453,12,0.9951,임계값 0.05 대비 이내
+EDGEC_cpkwarn_1_336,8,9,boundary,1,정상범위(미발화),SPEC_TOO_TIGHT,not_fire,V,0.5,1.5,2,cpk_warn,1.45,,,2453,12,0.9951,임계값 1.33 대비 이내
+EDGEC_cpkwarn_2_337,8,9,boundary,1,정상범위(미발화),SPEC_TOO_TIGHT,not_fire,V,0.5,1.5,2,cpk_warn,1.38,,,2453,12,0.9951,임계값 1.33 대비 이내
+EDGEC_cpkwarn_3_338,8,9,boundary,1,정상범위(미발화),SPEC_TOO_TIGHT,not_fire,V,0.5,1.5,2,cpk_warn,1.34,,,2453,12,0.9951,임계값 1.33 대비 이내
+EDGEC_cpkwarn_4_339,8,9,boundary,3,초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,cpk_warn,1.32,,,2453,12,0.9951,임계값 1.33 대비 초과
+EDGEC_cpkwarn_5_340,8,9,boundary,3,초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,cpk_warn,1.25,,,2453,12,0.9951,임계값 1.33 대비 초과
+EDGEC_cpkwarn_6_341,8,9,boundary,3,초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,cpk_warn,1.1,,,2453,12,0.9951,임계값 1.33 대비 초과
+EDGEC_kurtosis_1_348,8,9,boundary,1,정상범위(미발화),HEAVY_TAIL,not_fire,V,0.5,1.5,2,kurtosis,1.6,1.6,2.0,2453,12,0.9951,임계값 2.0 대비 이내
+EDGEC_kurtosis_2_349,8,9,boundary,1,정상범위(미발화),HEAVY_TAIL,not_fire,V,0.5,1.5,2,kurtosis,1.85,1.85,2.0,2453,12,0.9951,임계값 2.0 대비 이내
+EDGEC_kurtosis_3_350,8,9,boundary,1,정상범위(미발화),HEAVY_TAIL,not_fire,V,0.5,1.5,2,kurtosis,1.97,1.97,2.0,2453,12,0.9951,임계값 2.0 대비 이내
+EDGEC_kurtosis_4_351,8,9,boundary,3,초과,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,2.05,2.05,2.0,2453,12,0.9951,임계값 2.0 대비 초과
+EDGEC_kurtosis_5_352,8,9,boundary,3,초과,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,2.3,2.3,2.0,2453,12,0.9951,임계값 2.0 대비 초과
+EDGEC_kurtosis_6_353,8,9,boundary,3,초과,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,3.0,3.0,2.0,2453,12,0.9951,임계값 2.0 대비 초과
+EDGEC_outlierratiobad_1_330,8,9,boundary,1,정상범위(미발화),SEVERE_OUTLIER,not_fire,V,0.5,1.5,2,outlier_ratio_bad,0.04,,,2453,12,0.9951,임계값 0.05 대비 이내
+EDGEC_outlierratiobad_2_331,8,9,boundary,1,정상범위(미발화),SEVERE_OUTLIER,not_fire,V,0.5,1.5,2,outlier_ratio_bad,0.046,,,2453,12,0.9951,임계값 0.05 대비 이내
+EDGEC_outlierratiobad_3_332,8,9,boundary,1,정상범위(미발화),SEVERE_OUTLIER,not_fire,V,0.5,1.5,2,outlier_ratio_bad,0.049,,,2453,12,0.9951,임계값 0.05 대비 이내
+EDGEC_outlierratiobad_4_333,8,9,boundary,3,초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio_bad,0.052,,,2453,12,0.9951,임계값 0.05 대비 초과
+EDGEC_outlierratiobad_5_334,8,9,boundary,3,초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio_bad,0.06,,,2453,12,0.9951,임계값 0.05 대비 초과
+EDGEC_outlierratiobad_6_335,8,9,boundary,3,초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio_bad,0.075,,,2453,12,0.9951,임계값 0.05 대비 초과
+EDGEC_outlierratiowarn_1_324,8,9,boundary,1,정상범위(미발화),OUTLIER_WARN,not_fire,V,0.5,1.5,2,outlier_ratio_warn,0.014,,,2453,12,0.9951,임계값 0.02 대비 이내
+EDGEC_outlierratiowarn_2_325,8,9,boundary,1,정상범위(미발화),OUTLIER_WARN,not_fire,V,0.5,1.5,2,outlier_ratio_warn,0.018,,,2453,12,0.9951,임계값 0.02 대비 이내
+EDGEC_outlierratiowarn_3_326,8,9,boundary,1,정상범위(미발화),OUTLIER_WARN,not_fire,V,0.5,1.5,2,outlier_ratio_warn,0.0198,,,2453,12,0.9951,임계값 0.02 대비 이내
+EDGEC_outlierratiowarn_4_327,8,9,boundary,3,초과,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio_warn,0.021,,,2453,12,0.9951,임계값 0.02 대비 초과
+EDGEC_outlierratiowarn_5_328,8,9,boundary,3,초과,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio_warn,0.025,,,2453,12,0.9951,임계값 0.02 대비 초과
+EDGEC_outlierratiowarn_6_329,8,9,boundary,3,초과,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio_warn,0.03,,,2453,12,0.9951,임계값 0.02 대비 초과
+EDGEC_spreadnorm_1_318,8,9,boundary,1,정상범위(미발화),WIDE_DISTRIBUTION,not_fire,V,0.5,1.5,2,spread_norm,0.17,0.17,0.18,2453,12,0.9951,임계값 0.18 대비 이내
+EDGEC_spreadnorm_2_319,8,9,boundary,1,정상범위(미발화),WIDE_DISTRIBUTION,not_fire,V,0.5,1.5,2,spread_norm,0.176,0.176,0.18,2453,12,0.9951,임계값 0.18 대비 이내
+EDGEC_spreadnorm_3_320,8,9,boundary,1,정상범위(미발화),WIDE_DISTRIBUTION,not_fire,V,0.5,1.5,2,spread_norm,0.179,0.179,0.18,2453,12,0.9951,임계값 0.18 대비 이내
+EDGEC_spreadnorm_4_321,8,9,boundary,3,초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.181,0.181,0.18,2453,12,0.9951,임계값 0.18 대비 초과
+EDGEC_spreadnorm_5_322,8,9,boundary,3,초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.186,0.186,0.18,2453,12,0.9951,임계값 0.18 대비 초과
+EDGEC_spreadnorm_6_323,8,9,boundary,3,초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.2,0.2,0.18,2453,12,0.9951,임계값 0.18 대비 초과
+TRIM_MEANSHIFT_L1_313,8,9,trim_axis,1,정상범위(미발화),MEAN_SHIFT,not_fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_MEANSHIFT_L2_314,8,9,trim_axis,2,임계값 소폭 초과,MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_MEANSHIFT_L3_315,8,9,trim_axis,3,초과,MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_MEANSHIFT_L4_316,8,9,trim_axis,4,크게 초과,MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_MEANSHIFT_L5_317,8,9,trim_axis,5,심각,MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_SEVOUT_L1_303,8,9,trim_axis,1,정상범위(미발화),SEVERE_OUTLIER,not_fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_SEVOUT_L2_304,8,9,trim_axis,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_SEVOUT_L3_305,8,9,trim_axis,3,초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_SEVOUT_L4_306,8,9,trim_axis,4,크게 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_SEVOUT_L5_307,8,9,trim_axis,5,심각,SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_SPECTIGHT_L1_308,8,9,trim_axis,1,정상범위(미발화),SPEC_TOO_TIGHT,not_fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_SPECTIGHT_L2_309,8,9,trim_axis,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_SPECTIGHT_L3_310,8,9,trim_axis,3,초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_SPECTIGHT_L4_311,8,9,trim_axis,4,크게 초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_SPECTIGHT_L5_312,8,9,trim_axis,5,심각,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_WIDE_L1_298,8,9,trim_axis,1,정상범위(미발화),WIDE_DISTRIBUTION,not_fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_WIDE_L2_299,8,9,trim_axis,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_WIDE_L3_300,8,9,trim_axis,3,초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_WIDE_L4_301,8,9,trim_axis,4,크게 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+TRIM_WIDE_L5_302,8,9,trim_axis,5,심각,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_GROSS-WIDE_L2_171,8,9,combo,2,임계값 소폭 초과,GROSS_FAIL;WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,1276,0.4798,
+EDGEC_codeedgehit_4_357,9,10,boundary,3,초과,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.052,0.0522,0.05,2453,12,0.9951,임계값 0.05 대비 초과
+EDGEC_codeedgehit_5_358,9,10,boundary,3,초과,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.06,0.0603,0.05,2453,12,0.9951,임계값 0.05 대비 초과
+EDGEC_codeedgehit_6_359,9,10,boundary,3,초과,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.08,0.0799,0.05,2453,12,0.9951,임계값 0.05 대비 초과
+EDGEC_constant_1p25_360,9,10,boundary,3,초과,CONSTANT_VALUE,fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,2진수 정확표현
+EDGEC_constant_1p4_362,9,10,boundary,1,정상범위(미발화),CONSTANT_VALUE,not_fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,표본표준편차가 2e-16 으로 떠 stdev<=0 이 성립하지 않음
+EDGEC_constant_1p5_361,9,10,boundary,3,초과,CONSTANT_VALUE,fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,2진수 정확표현
+EDGEC_constant_1p8_363,9,10,boundary,1,정상범위(미발화),CONSTANT_VALUE,not_fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,표본표준편차가 2e-16 으로 떠 stdev<=0 이 성립하지 않음
+MIX1_HEAVYTAIL_L2_074_492,9,10,mixed,2,임계값 소폭 초과,HEAVY_TAIL,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+MIX1_HEAVYTAIL_L3_000_418,9,10,mixed,3,초과,HEAVY_TAIL,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX1_HEAVYTAIL_L3_014_432,9,10,mixed,3,초과,HEAVY_TAIL,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+MIX1_HEAVYTAIL_L4_027_445,9,10,mixed,4,크게 초과,HEAVY_TAIL,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+MIX1_MEANSHIFT_L5_007_425,9,10,mixed,5,심각,MEAN_SHIFT,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+MIX1_OUTWARN_L2_004_422,9,10,mixed,2,임계값 소폭 초과,OUTLIER_WARN,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX1_OUTWARN_L4_037_455,9,10,mixed,4,크게 초과,OUTLIER_WARN,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX1_OUTWARN_L4_072_490,9,10,mixed,4,크게 초과,OUTLIER_WARN,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+MIX1_OUTWARN_L5_046_464,9,10,mixed,5,심각,OUTLIER_WARN,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+MIX1_SEVOUT_L2_030_448,9,10,mixed,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+MIX1_SEVOUT_L5_042_460,9,10,mixed,5,심각,SEVERE_OUTLIER,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+MIX1_SEVOUT_L5_061_479,9,10,mixed,5,심각,SEVERE_OUTLIER,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+MIX1_SPECTIGHT_L2_043_461,9,10,mixed,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX1_SPECTIGHT_L4_056_474,9,10,mixed,4,크게 초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+MIX1_SUBPOP_L2_009_427,9,10,mixed,2,임계값 소폭 초과,SUBPOP_GAP,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+MIX1_SUBPOP_L2_017_435,9,10,mixed,2,임계값 소폭 초과,SUBPOP_GAP,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+MIX1_WIDE_L2_065_483,9,10,mixed,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX1_WIDE_L4_032_450,9,10,mixed,4,크게 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+MIX2_HEAVYTAIL-SPECTIGHT_L2_040_458,9,10,mixed,2,임계값 소폭 초과,HEAVY_TAIL;SPEC_TOO_TIGHT,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-HEAVYTAIL_L2_026_444,9,10,mixed,2,임계값 소폭 초과,MEAN_SHIFT;HEAVY_TAIL,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-HEAVYTAIL_L3_033_451,9,10,mixed,3,초과,MEAN_SHIFT;HEAVY_TAIL,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+MIX2_MEANSHIFT-SEVOUT_L3_041_459,9,10,mixed,3,초과,MEAN_SHIFT;SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_OUTWARN-SPECTIGHT_L4_006_424,9,10,mixed,4,크게 초과,OUTLIER_WARN;SPEC_TOO_TIGHT,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+MIX2_SEVOUT-MEANSHIFT_L4_050_468,9,10,mixed,4,크게 초과,SEVERE_OUTLIER;MEAN_SHIFT,fire,V,0.5,1.5,3,(조합),,,,2453,12,0.9951,
+MIX2_SEVOUT-SPECTIGHT_L3_049_467,9,10,mixed,3,초과,SEVERE_OUTLIER;SPEC_TOO_TIGHT,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+MIX2_SEVOUT-WIDE_L5_034_452,9,10,mixed,5,심각,SEVERE_OUTLIER;WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_SPECTIGHT-HEAVYTAIL_L5_023_441,9,10,mixed,5,심각,SPEC_TOO_TIGHT;HEAVY_TAIL,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+MIX2_SPECTIGHT-SEVOUT_L4_024_442,9,10,mixed,4,크게 초과,SPEC_TOO_TIGHT;SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,12,0.9951,
+MIX2_SUBPOP-MEANSHIFT_L2_052_470,9,10,mixed,2,임계값 소폭 초과,SUBPOP_GAP;MEAN_SHIFT,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+MIX2_SUBPOP-MEANSHIFT_L5_019_437,9,10,mixed,5,심각,SUBPOP_GAP;MEAN_SHIFT,fire,V,0.5,1.5,4,(조합),,,,2453,12,0.9951,
+MIX3_MEANSHIFT-SEVOUT-WIDE_L3_064_482,9,10,mixed,3,초과,MEAN_SHIFT;SEVERE_OUTLIER;WIDE_DISTRIBUTION,fire,V,0.5,1.5,8,(조합),,,,2453,12,0.9951,
+NORMAL_002_366,9,10,normal,1,정상범위(미발화),,not_fire,khz,0.5,1.5,2,spread_norm,0.0675,0.066,0.18,2453,10,0.9959,발화 0건 기대(오탐 검사)
+NORMAL_004_368,9,10,normal,1,정상범위(미발화),,not_fire,ms,0.5,1.5,3,spread_norm,0.0309,0.0295,0.18,2453,10,0.9959,발화 0건 기대(오탐 검사)
+NORMAL_005_369,9,10,normal,1,정상범위(미발화),,not_fire,CODE,0.5,1.5,3,spread_norm,0.0619,0.0606,0.18,2453,7,0.9971,발화 0건 기대(오탐 검사)
+NORMAL_008_372,9,10,normal,1,정상범위(미발화),,not_fire,DEGC,0.5,1.5,4,spread_norm,0.0398,0.0392,0.18,2453,5,0.998,발화 0건 기대(오탐 검사)
+NORMAL_009_373,9,10,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,4,spread_norm,0.0669,0.0674,0.18,2453,6,0.9976,발화 0건 기대(오탐 검사)
+NORMAL_017_381,9,10,normal,1,정상범위(미발화),,not_fire,DEGC,0.5,1.5,2,spread_norm,0.0834,0.0827,0.18,2453,10,0.9959,발화 0건 기대(오탐 검사)
+NORMAL_019_383,9,10,normal,1,정상범위(미발화),,not_fire,ma,0.5,1.5,4,spread_norm,0.0442,0.0437,0.18,2453,6,0.9976,발화 0건 기대(오탐 검사)
+NORMAL_020_384,9,10,normal,1,정상범위(미발화),,not_fire,khz,0.5,1.5,4,spread_norm,0.0385,0.0376,0.18,2453,12,0.9951,발화 0건 기대(오탐 검사)
+NORMAL_028_392,9,10,normal,1,정상범위(미발화),,not_fire,ma,0.5,1.5,3,spread_norm,0.0668,0.0669,0.18,2453,8,0.9967,발화 0건 기대(오탐 검사)
+NORMAL_030_394,9,10,normal,1,정상범위(미발화),,not_fire,ohm,0.5,1.5,2,spread_norm,0.0778,0.0816,0.18,2453,7,0.9971,발화 0건 기대(오탐 검사)
+NORMAL_031_395,9,10,normal,1,정상범위(미발화),,not_fire,ms,0.5,1.5,3,spread_norm,0.0344,0.0346,0.18,2453,12,0.9951,발화 0건 기대(오탐 검사)
+NORMAL_032_396,9,10,normal,1,정상범위(미발화),,not_fire,CODE,0.5,1.5,3,spread_norm,0.0731,0.0692,0.18,2453,10,0.9959,발화 0건 기대(오탐 검사)
+NORMAL_036_400,9,10,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,3,spread_norm,0.0824,0.0828,0.18,2453,12,0.9951,발화 0건 기대(오탐 검사)
+NORMAL_037_401,9,10,normal,1,정상범위(미발화),,not_fire,ma,0.5,1.5,2,spread_norm,0.0455,0.045,0.18,2453,7,0.9971,발화 0건 기대(오탐 검사)
+NORMAL_040_404,9,10,normal,1,정상범위(미발화),,not_fire,ms,0.5,1.5,4,spread_norm,0.0285,0.0277,0.18,2453,11,0.9955,발화 0건 기대(오탐 검사)
+NORMAL_041_405,9,10,normal,1,정상범위(미발화),,not_fire,CODE,0.5,1.5,4,spread_norm,0.0336,0.0343,0.18,2453,10,0.9959,발화 0건 기대(오탐 검사)
+NORMAL_045_409,9,10,normal,1,정상범위(미발화),,not_fire,v,0.5,1.5,4,spread_norm,0.0612,0.0597,0.18,2453,8,0.9967,발화 0건 기대(오탐 검사)
+NORMAL_047_411,9,10,normal,1,정상범위(미발화),,not_fire,khz,0.5,1.5,4,spread_norm,0.088,0.0892,0.18,2453,6,0.9976,발화 0건 기대(오탐 검사)
+NORMAL_048_412,9,10,normal,1,정상범위(미발화),,not_fire,ohm,0.5,1.5,2,spread_norm,0.0296,0.0285,0.18,2453,8,0.9967,발화 0건 기대(오탐 검사)
+NORMAL_051_415,9,10,normal,1,정상범위(미발화),,not_fire,PCT,0.5,1.5,2,spread_norm,0.0438,0.0436,0.18,2453,8,0.9967,발화 0건 기대(오탐 검사)
+NORMAL_053_417,9,10,normal,1,정상범위(미발화),,not_fire,DEGC,0.5,1.5,4,spread_norm,0.0726,0.0733,0.18,2453,10,0.9959,발화 0건 기대(오탐 검사)
+WAFER_GRADIENT_L4_098,9,10,single,4,크게 초과,WAFER_GRADIENT,fire,V,0.5,1.5,2,gradient_norm_abs_max,0.75,0.745,0.3,2453,1221,0.5022,
+NORMAL_035_399,10,11,normal,1,정상범위(미발화),,not_fire,DEGC,0.5,1.5,2,spread_norm,0.0616,0.064,0.18,2453,5,0.998,발화 0건 기대(오탐 검사)
+WAFER_GRADIENT_L3_097,10,11,single,3,초과,WAFER_GRADIENT,fire,V,0.5,1.5,2,gradient_norm_abs_max,0.55,0.5563,0.3,2453,897,0.6343,
+WAFER_GRADIENT_L2_096,11,12,single,2,임계값 소폭 초과,WAFER_GRADIENT,fire,V,0.5,1.5,2,gradient_norm_abs_max,0.35,0.347,0.3,2453,570,0.7676,
+CLUSTER_FAIL_L1_090,12,13,single,1,정상범위(미발화),CLUSTER_FAIL,not_fire,V,0.5,1.5,2,quadrant_imbalance,0.5,0.6404,1.0,2453,80,0.9674,
+CLUSTER_FAIL_L2_091,12,13,single,2,임계값 소폭 초과,CLUSTER_FAIL,fire,V,0.5,1.5,2,quadrant_imbalance,1.1,1.079,1.0,2453,80,0.9674,
+CLUSTER_FAIL_L3_092,12,13,single,3,초과,CLUSTER_FAIL,fire,V,0.5,1.5,2,quadrant_imbalance,2.0,2.0298,1.0,2453,80,0.9674,
+CLUSTER_FAIL_L4_093,12,13,single,4,크게 초과,CLUSTER_FAIL,fire,V,0.5,1.5,2,quadrant_imbalance,3.0,2.9964,1.0,2453,80,0.9674,
+CLUSTER_FAIL_L5_094,12,13,single,5,심각,CLUSTER_FAIL,fire,V,0.5,1.5,2,quadrant_imbalance,3.9,3.893,1.0,2453,80,0.9674,
+WAFER_GRADIENT_L1_095,12,13,single,1,정상범위(미발화),WAFER_GRADIENT,not_fire,V,0.5,1.5,2,gradient_norm_abs_max,0.15,0.1563,0.3,2453,245,0.9001,
+EDGE_FAIL_L1_075,13,14,single,1,정상범위(미발화),EDGE_FAIL,not_fire,V,0.5,1.5,2,edge_fail_ratio,1.0,1.0315,2.0,2453,60,0.9755,
+EDGE_FAIL_L2_076,13,14,single,2,임계값 소폭 초과,EDGE_FAIL,fire,V,0.5,1.5,2,edge_fail_ratio,2.1,2.1098,2.0,2453,60,0.9755,
+EDGE_FAIL_L3_077,13,14,single,3,초과,EDGE_FAIL,fire,V,0.5,1.5,2,edge_fail_ratio,2.4,2.438,2.0,2453,60,0.9755,
+MIX2_CLUSTER-MEANSHIFT_L1_135,13,14,combo,1,정상범위(미발화),CLUSTER_FAIL;MEAN_SHIFT,not_fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_CLUSTER-MEANSHIFT_L2_136,13,14,combo,2,임계값 소폭 초과,CLUSTER_FAIL;MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_CLUSTER-MEANSHIFT_L3_137,13,14,combo,3,초과,CLUSTER_FAIL;MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_CLUSTER-MEANSHIFT_L4_138,13,14,combo,4,크게 초과,CLUSTER_FAIL;MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_CLUSTER-MEANSHIFT_L5_139,13,14,combo,5,심각,CLUSTER_FAIL;MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_HEAVYTAIL-CLUSTER_L1_155,13,14,combo,1,정상범위(미발화),HEAVY_TAIL;CLUSTER_FAIL,not_fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+CENTER_FAIL_L1_080,14,15,single,1,정상범위(미발화),CENTER_FAIL,not_fire,V,0.5,1.5,2,center_fail_ratio,1.0,0.925,2.0,2453,60,0.9755,
+EDGE_FAIL_L4_078,14,15,single,4,크게 초과,EDGE_FAIL,fire,V,0.5,1.5,2,edge_fail_ratio,2.65,2.6724,2.0,2453,60,0.9755,
+EDGE_FAIL_L5_079,14,15,single,5,심각,EDGE_FAIL,fire,V,0.5,1.5,2,edge_fail_ratio,2.78,2.8131,2.0,2453,60,0.9755,
+MIX2_HEAVYTAIL-CLUSTER_L2_156,14,15,combo,2,임계값 소폭 초과,HEAVY_TAIL;CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_HEAVYTAIL-CLUSTER_L3_157,14,15,combo,3,초과,HEAVY_TAIL;CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_HEAVYTAIL-CLUSTER_L4_158,14,15,combo,4,크게 초과,HEAVY_TAIL;CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_HEAVYTAIL-CLUSTER_L5_159,14,15,combo,5,심각,HEAVY_TAIL;CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_MISSLIMIT-CLUSTER_L1_160,14,15,combo,1,정상범위(미발화),MISSING_LIMIT;CLUSTER_FAIL,not_fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_MISSLIMIT-CLUSTER_L2_161,14,15,combo,2,임계값 소폭 초과,MISSING_LIMIT;CLUSTER_FAIL,fire,V,0.5,,2,(조합),,,,2453,80,0.9674,
+CENTER_FAIL_L2_081,15,16,single,2,임계값 소폭 초과,CENTER_FAIL,fire,V,0.5,1.5,2,center_fail_ratio,2.2,2.2199,2.0,2453,60,0.9755,
+CENTER_FAIL_L3_082,15,16,single,3,초과,CENTER_FAIL,fire,V,0.5,1.5,2,center_fail_ratio,4.0,4.0698,2.0,2453,60,0.9755,
+CENTER_FAIL_L4_083,15,16,single,4,크게 초과,CENTER_FAIL,fire,V,0.5,1.5,2,center_fail_ratio,7.0,7.0297,2.0,2453,60,0.9755,
+MIX2_MISSLIMIT-CLUSTER_L3_162,15,16,combo,3,초과,MISSING_LIMIT;CLUSTER_FAIL,fire,V,,,2,(조합),,,,2453,80,0.9674,
+MIX2_MISSLIMIT-CLUSTER_L4_163,15,16,combo,4,크게 초과,MISSING_LIMIT;CLUSTER_FAIL,fire,V,,,2,(조합),,,,2453,80,0.9674,
+MIX2_MISSLIMIT-CLUSTER_L5_164,15,16,combo,5,심각,MISSING_LIMIT;CLUSTER_FAIL,fire,V,,,2,(조합),,,,2453,80,0.9674,
+MIX3_MEANSHIFT-HEAVYTAIL-CLUSTER_L1_180,15,16,combo,1,정상범위(미발화),MEAN_SHIFT;HEAVY_TAIL;CLUSTER_FAIL,not_fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX3_MEANSHIFT-HEAVYTAIL-CLUSTER_L2_181,15,16,combo,2,임계값 소폭 초과,MEAN_SHIFT;HEAVY_TAIL;CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX3_WIDE-CLUSTER-HEAVYTAIL_L2_001_419,15,16,mixed,2,임계값 소폭 초과,WIDE_DISTRIBUTION;CLUSTER_FAIL;HEAVY_TAIL,fire,V,0.5,1.5,4,(조합),,,,2453,80,0.9674,
+CENTER_FAIL_L5_084,16,17,single,5,심각,CENTER_FAIL,fire,V,0.5,1.5,2,center_fail_ratio,10.5,10.5446,2.0,2453,60,0.9755,
+MIX3_CLUSTER-HEAVYTAIL-MEANSHIFT_L4_010_428,16,17,mixed,4,크게 초과,CLUSTER_FAIL;HEAVY_TAIL;MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX3_CLUSTER-WIDE-SUBPOP_L2_047_465,16,17,mixed,2,임계값 소폭 초과,CLUSTER_FAIL;WIDE_DISTRIBUTION;SUBPOP_GAP,fire,V,0.5,1.5,3,(조합),,,,2453,80,0.9674,
+MIX3_MEANSHIFT-HEAVYTAIL-CLUSTER_L3_182,16,17,combo,3,초과,MEAN_SHIFT;HEAVY_TAIL;CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX3_MEANSHIFT-HEAVYTAIL-CLUSTER_L4_183,16,17,combo,4,크게 초과,MEAN_SHIFT;HEAVY_TAIL;CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX3_MEANSHIFT-HEAVYTAIL-CLUSTER_L5_184,16,17,combo,5,심각,MEAN_SHIFT;HEAVY_TAIL;CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+RING_FAIL_L1_085,16,17,single,1,정상범위(미발화),RING_FAIL,not_fire,V,0.5,1.5,2,ring_fail_ratio,1.0,0.992,2.0,2453,60,0.9755,ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 1/0.55≈1.82 — 임계값 2.0 에 도달 불가
+RING_FAIL_L2_086,16,17,single,2,임계값 소폭 초과,RING_FAIL,fire,V,0.5,1.5,2,ring_fail_ratio,1.4,1.3828,2.0,2453,60,0.9755,ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 1/0.55≈1.82 — 임계값 2.0 에 도달 불가
+RING_FAIL_L3_087,16,17,single,3,초과,RING_FAIL,fire,V,0.5,1.5,2,ring_fail_ratio,1.6,1.5932,2.0,2453,60,0.9755,ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 1/0.55≈1.82 — 임계값 2.0 에 도달 불가
+MIX2_CLUSTER-MEANSHIFT_L4_028_446,17,18,mixed,4,크게 초과,CLUSTER_FAIL;MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_EDGE-SEVOUT_L1_125,17,18,combo,1,정상범위(미발화),EDGE_FAIL;SEVERE_OUTLIER,not_fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_EDGE-SEVOUT_L2_126,17,18,combo,2,임계값 소폭 초과,EDGE_FAIL;SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_WIDE-CLUSTER_L3_013_431,17,18,mixed,3,초과,WIDE_DISTRIBUTION;CLUSTER_FAIL,fire,V,0.5,1.5,4,(조합),,,,2453,80,0.9674,
+MIX3_CLUSTER-SUBPOP-WIDE_L3_015_433,17,18,mixed,3,초과,CLUSTER_FAIL;SUBPOP_GAP;WIDE_DISTRIBUTION,fire,V,0.5,1.5,4,(조합),,,,2453,80,0.9674,
+MIX3_OUTWARN-CLUSTER-MEANSHIFT_L3_022_440,17,18,mixed,3,초과,OUTLIER_WARN;CLUSTER_FAIL;MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX3_SEVOUT-CLUSTER-SPECTIGHT_L4_012_430,17,18,mixed,4,크게 초과,SEVERE_OUTLIER;CLUSTER_FAIL;SPEC_TOO_TIGHT,fire,V,0.5,1.5,3,(조합),,,,2453,80,0.9674,
+RING_FAIL_L4_088,17,18,single,4,크게 초과,RING_FAIL,fire,V,0.5,1.5,2,ring_fail_ratio,1.75,1.7436,2.0,2453,60,0.9755,ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 1/0.55≈1.82 — 임계값 2.0 에 도달 불가
+RING_FAIL_L5_089,17,18,single,5,심각,RING_FAIL,fire,V,0.5,1.5,2,ring_fail_ratio,1.82,1.8037,2.0,2453,60,0.9755,ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 1/0.55≈1.82 — 임계값 2.0 에 도달 불가
+MIX1_CLUSTER_L5_044_462,18,19,mixed,5,심각,CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_CENTER-WIDE_L1_130,18,19,combo,1,정상범위(미발화),CENTER_FAIL;WIDE_DISTRIBUTION,not_fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_CLUSTER-MEANSHIFT_L2_051_469,18,19,mixed,2,임계값 소폭 초과,CLUSTER_FAIL;MEAN_SHIFT,fire,V,0.5,1.5,8,(조합),,,,2453,80,0.9674,
+MIX2_CLUSTER-SUBPOP_L3_045_463,18,19,mixed,3,초과,CLUSTER_FAIL;SUBPOP_GAP,fire,V,0.5,1.5,4,(조합),,,,2453,80,0.9674,
+MIX2_EDGE-SEVOUT_L3_127,18,19,combo,3,초과,EDGE_FAIL;SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_EDGE-SEVOUT_L4_128,18,19,combo,4,크게 초과,EDGE_FAIL;SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_EDGE-SEVOUT_L5_129,18,19,combo,5,심각,EDGE_FAIL;SEVERE_OUTLIER,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SUBPOP-CLUSTER_L3_029_447,18,19,mixed,3,초과,SUBPOP_GAP;CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX2_WIDE-CLUSTER_L4_039_457,18,19,mixed,4,크게 초과,WIDE_DISTRIBUTION;CLUSTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,80,0.9674,
+MIX1_CLUSTER_L5_068_486,19,20,mixed,5,심각,CLUSTER_FAIL,fire,V,0.5,1.5,4,(조합),,,,2453,80,0.9674,
+MIX2_CENTER-WIDE_L2_131,19,20,combo,2,임계값 소폭 초과,CENTER_FAIL;WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_CENTER-WIDE_L3_132,19,20,combo,3,초과,CENTER_FAIL;WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_CENTER-WIDE_L4_133,19,20,combo,4,크게 초과,CENTER_FAIL;WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SPECTIGHT-EDGE_L1_140,19,20,combo,1,정상범위(미발화),SPEC_TOO_TIGHT;EDGE_FAIL,not_fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SPECTIGHT-EDGE_L2_141,19,20,combo,2,임계값 소폭 초과,SPEC_TOO_TIGHT;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SPECTIGHT-EDGE_L3_142,19,20,combo,3,초과,SPEC_TOO_TIGHT;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SPECTIGHT-EDGE_L4_143,19,20,combo,4,크게 초과,SPEC_TOO_TIGHT;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SPECTIGHT-EDGE_L5_144,19,20,combo,5,심각,SPEC_TOO_TIGHT;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_WIDE-CLUSTER_L4_060_478,19,20,mixed,4,크게 초과,WIDE_DISTRIBUTION;CLUSTER_FAIL,fire,V,0.5,1.5,4,(조합),,,,2453,80,0.9674,
+MIX2_CENTER-WIDE_L5_134,20,21,combo,5,심각,CENTER_FAIL;WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_CONSTANT-EDGE_L1_165,20,21,combo,1,정상범위(미발화),CONSTANT_VALUE;EDGE_FAIL,not_fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_CONSTANT-EDGE_L2_166,20,21,combo,2,임계값 소폭 초과,CONSTANT_VALUE;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_CONSTANT-EDGE_L3_167,20,21,combo,3,초과,CONSTANT_VALUE;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_CONSTANT-EDGE_L4_168,20,21,combo,4,크게 초과,CONSTANT_VALUE;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_CONSTANT-EDGE_L5_169,20,21,combo,5,심각,CONSTANT_VALUE;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SUBPOP-CENTER_L1_150,20,21,combo,1,정상범위(미발화),SUBPOP_GAP;CENTER_FAIL,not_fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SUBPOP-CENTER_L2_151,20,21,combo,2,임계값 소폭 초과,SUBPOP_GAP;CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SUBPOP-CENTER_L3_152,20,21,combo,3,초과,SUBPOP_GAP;CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX3_WIDE-SEVOUT-EDGE_L1_175,20,21,combo,1,정상범위(미발화),WIDE_DISTRIBUTION;SEVERE_OUTLIER;EDGE_FAIL,not_fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX3_WIDE-SEVOUT-EDGE_L2_176,20,21,combo,2,임계값 소폭 초과,WIDE_DISTRIBUTION;SEVERE_OUTLIER;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX1_EDGE_L3_011_429,21,22,mixed,3,초과,EDGE_FAIL,fire,V,0.5,1.5,8,(조합),,,,2453,60,0.9755,
+MIX2_EDGE-SPECTIGHT_L5_020_438,21,22,mixed,5,심각,EDGE_FAIL;SPEC_TOO_TIGHT,fire,V,0.5,1.5,4,(조합),,,,2453,60,0.9755,
+MIX2_HEAVYTAIL-EDGE_L4_008_426,21,22,mixed,4,크게 초과,HEAVY_TAIL;EDGE_FAIL,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX2_SUBPOP-CENTER_L4_153,21,22,combo,4,크게 초과,SUBPOP_GAP;CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SUBPOP-CENTER_L5_154,21,22,combo,5,심각,SUBPOP_GAP;CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SUBPOP-EDGE_L2_005_423,21,22,mixed,2,임계값 소폭 초과,SUBPOP_GAP;EDGE_FAIL,fire,V,0.5,1.5,4,(조합),,,,2453,60,0.9755,
+MIX3_HEAVYTAIL-SPECTIGHT-EDGE_L3_036_454,21,22,mixed,3,초과,HEAVY_TAIL;SPEC_TOO_TIGHT;EDGE_FAIL,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX3_SUBPOP-WIDE-CENTER_L1_185,21,22,combo,1,정상범위(미발화),SUBPOP_GAP;WIDE_DISTRIBUTION;CENTER_FAIL,not_fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX3_WIDE-SEVOUT-EDGE_L3_177,21,22,combo,3,초과,WIDE_DISTRIBUTION;SEVERE_OUTLIER;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX3_WIDE-SEVOUT-EDGE_L4_178,21,22,combo,4,크게 초과,WIDE_DISTRIBUTION;SEVERE_OUTLIER;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX3_WIDE-SEVOUT-EDGE_L5_179,21,22,combo,5,심각,WIDE_DISTRIBUTION;SEVERE_OUTLIER;EDGE_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX1_CENTER_L3_002_420,22,23,mixed,3,초과,CENTER_FAIL,fire,V,0.5,1.5,8,(조합),,,,2453,60,0.9755,
+MIX1_EDGE_L2_059_477,22,23,mixed,2,임계값 소폭 초과,EDGE_FAIL,fire,V,0.5,1.5,4,(조합),,,,2453,60,0.9755,
+MIX2_EDGE-HEAVYTAIL_L3_055_473,22,23,mixed,3,초과,EDGE_FAIL;HEAVY_TAIL,fire,V,0.5,1.5,4,(조합),,,,2453,60,0.9755,
+MIX2_EDGE-SEVOUT_L4_048_466,22,23,mixed,4,크게 초과,EDGE_FAIL;SEVERE_OUTLIER,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX2_SPECTIGHT-EDGE_L5_031_449,22,23,mixed,5,심각,SPEC_TOO_TIGHT;EDGE_FAIL,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX3_EDGE-HEAVYTAIL-MEANSHIFT_L5_038_456,22,23,mixed,5,심각,EDGE_FAIL;HEAVY_TAIL;MEAN_SHIFT,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX3_MEANSHIFT-EDGE-SUBPOP_L2_054_472,22,23,mixed,2,임계값 소폭 초과,MEAN_SHIFT;EDGE_FAIL;SUBPOP_GAP,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX3_SPECTIGHT-SEVOUT-EDGE_L4_058_476,22,23,mixed,4,크게 초과,SPEC_TOO_TIGHT;SEVERE_OUTLIER;EDGE_FAIL,fire,V,0.5,1.5,4,(조합),,,,2453,60,0.9755,
+MIX3_SUBPOP-WIDE-CENTER_L2_186,22,23,combo,2,임계값 소폭 초과,SUBPOP_GAP;WIDE_DISTRIBUTION;CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX3_SUBPOP-WIDE-CENTER_L3_187,22,23,combo,3,초과,SUBPOP_GAP;WIDE_DISTRIBUTION;CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX3_SUBPOP-WIDE-CENTER_L4_188,22,23,combo,4,크게 초과,SUBPOP_GAP;WIDE_DISTRIBUTION;CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX1_CENTER_L2_077_495,23,24,mixed,2,임계값 소폭 초과,CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX1_EDGE_L2_062_480,23,24,mixed,2,임계값 소폭 초과,EDGE_FAIL,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX2_EDGE-HEAVYTAIL_L4_079_497,23,24,mixed,4,크게 초과,EDGE_FAIL;HEAVY_TAIL,fire,V,0.5,1.5,8,(조합),,,,2453,60,0.9755,
+MIX3_MEANSHIFT-SEVOUT-EDGE_L2_080_498,23,24,mixed,2,임계값 소폭 초과,MEAN_SHIFT;SEVERE_OUTLIER;EDGE_FAIL,fire,V,0.5,1.5,8,(조합),,,,2453,60,0.9755,
+MIX3_MEANSHIFT-SUBPOP-CENTER_L4_003_421,23,24,mixed,4,크게 초과,MEAN_SHIFT;SUBPOP_GAP;CENTER_FAIL,fire,V,0.5,1.5,4,(조합),,,,2453,60,0.9755,
+MIX3_SUBPOP-WIDE-CENTER_L5_189,23,24,combo,5,심각,SUBPOP_GAP;WIDE_DISTRIBUTION;CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX3_WIDE-MEANSHIFT-EDGE_L4_076_494,23,24,mixed,4,크게 초과,WIDE_DISTRIBUTION;MEAN_SHIFT;EDGE_FAIL,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX1_CENTER_L3_021_439,24,25,mixed,3,초과,CENTER_FAIL,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX2_OUTWARN-CENTER_L3_063_481,24,25,mixed,3,초과,OUTLIER_WARN;CENTER_FAIL,fire,V,0.5,1.5,8,(조합),,,,2453,60,0.9755,
+MIX3_WIDE-MEANSHIFT-CENTER_L5_016_434,24,25,mixed,5,심각,WIDE_DISTRIBUTION;MEAN_SHIFT;CENTER_FAIL,fire,V,0.5,1.5,4,(조합),,,,2453,60,0.9755,
+MIX1_CENTER_L4_035_453,25,26,mixed,4,크게 초과,CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_SEVOUT-CENTER_L2_081_499,25,26,mixed,2,임계값 소폭 초과,SEVERE_OUTLIER;CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX3_CENTER-MEANSHIFT-WIDE_L5_018_436,25,26,mixed,5,심각,CENTER_FAIL;MEAN_SHIFT;WIDE_DISTRIBUTION,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX2_CENTER-OUTWARN_L5_025_443,26,27,mixed,5,심각,CENTER_FAIL;OUTLIER_WARN,fire,V,0.5,1.5,8,(조합),,,,2453,60,0.9755,
+MIX3_OUTWARN-SPECTIGHT-CENTER_L4_053_471,26,27,mixed,4,크게 초과,OUTLIER_WARN;SPEC_TOO_TIGHT;CENTER_FAIL,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX2_CENTER-SEVOUT_L3_066_484,27,28,mixed,3,초과,CENTER_FAIL;SEVERE_OUTLIER,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,
+MIX2_MEANSHIFT-CENTER_L3_071_489,27,28,mixed,3,초과,MEAN_SHIFT;CENTER_FAIL,fire,V,0.5,1.5,4,(조합),,,,2453,60,0.9755,
+MIX3_OUTWARN-SPECTIGHT-CENTER_L3_067_485,27,28,mixed,3,초과,OUTLIER_WARN;SPEC_TOO_TIGHT;CENTER_FAIL,fire,V,0.5,1.5,8,(조합),,,,2453,60,0.9755,
+MIX3_SEVOUT-CENTER-MEANSHIFT_L4_057_475,27,28,mixed,4,크게 초과,SEVERE_OUTLIER;CENTER_FAIL;MEAN_SHIFT,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX1_CENTER_L3_078_496,28,29,mixed,3,초과,CENTER_FAIL,fire,V,0.5,1.5,8,(조합),,,,2453,60,0.9755,
+MIX2_CENTER-SUBPOP_L5_069_487,28,29,mixed,5,심각,CENTER_FAIL;SUBPOP_GAP,fire,V,0.5,1.5,8,(조합),,,,2453,60,0.9755,
+MIX3_WIDE-CENTER-HEAVYTAIL_L3_073_491,28,29,mixed,3,초과,WIDE_DISTRIBUTION;CENTER_FAIL;HEAVY_TAIL,fire,V,0.5,1.5,4,(조합),,,,2453,60,0.9755,
+MIX1_CENTER_L5_070_488,29,30,mixed,5,심각,CENTER_FAIL,fire,V,0.5,1.5,2,(조합),,,,2453,60,0.9755,
+MIX2_CENTER-SUBPOP_L4_075_493,29,30,mixed,4,크게 초과,CENTER_FAIL;SUBPOP_GAP,fire,V,0.5,1.5,3,(조합),,,,2453,60,0.9755,

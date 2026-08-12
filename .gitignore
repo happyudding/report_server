@@ -43,6 +43,9 @@ client/_profiles/
 # 기준정보 임포터 산출물 (Excel PC 에서 생성 → 서버로 수동 복사)
 tools/product_info_import/output/
 
+# eval 디버깅용 합성 테스트 데이터 (make_eval_testdata.py 가 생성 — parquet 6MB+)
+tools/eval_testdata/out/
+
 # MS Office lock/owner files (e.g. ~$sample.xlsx when opened in Excel)
 ~$*
 

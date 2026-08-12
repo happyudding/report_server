@@ -540,7 +540,8 @@ def remove_editor(session_id, editor_user):
 
 @report_bp.get("/session/<session_id>/editors/candidates")
 def editor_candidates(session_id):
-    """편집 권한 부여 후보 — web_report 방문자 검색 (업로더 전용). 업로더 자신은 제외,
+    """편집 권한 부여 후보 검색 (업로더 전용). 후보 풀은 web_report 방문자 ∪ 웹 가입 계정
+    이라 회원가입 즉시 여기에 뜬다(search_web_visitors 참조). 업로더 자신은 제외,
     이미 편집자인 사용자는 already=True 로 표시."""
     _validate_session_id(session_id)
     session = report_db.get_session(session_id)

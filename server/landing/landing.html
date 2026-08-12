@@ -270,14 +270,25 @@ a:focus-visible, button:focus-visible {
   font-family: var(--font-body); font-size: 15px;
 }
 .id-row input:focus { outline: none; border-color: var(--mddi); }
-#idInput { flex: 1 1 auto; }
+#idInput, #suIdInput { flex: 1 1 auto; }
 #pwInput { flex: 0 0 84px; width: 84px; text-align: center; letter-spacing: 4px; }
 /* 자간이 placeholder 까지 벌려 'P W' 로 보인다 — 입력값에만 적용되게 되돌린다 */
 #pwInput::placeholder { letter-spacing: normal; }
+/* 회원가입 모달의 비밀번호 칸 — id-row 와 달리 한 줄에 하나씩 세로로 쌓인다 */
+.pw-input {
+  width: 100%; height: 38px; margin-top: 8px; padding: 0 10px;
+  border: 1px solid var(--ink-600); border-radius: 8px;
+  background: #0E131B; color: var(--si-050);
+  font-family: var(--font-body); font-size: 15px; letter-spacing: 4px;
+}
+.pw-input:focus { outline: none; border-color: var(--mddi); }
+.pw-input::placeholder { letter-spacing: normal; }
 .modal-note { margin: 14px 0 0; font-size: 12px; line-height: 1.65; color: var(--si-300); }
 .modal-note a { color: var(--mddi); }
 .modal-err { margin: 10px 0 0; font-size: 12.5px; color: #F87171; }
 .modal-err[hidden] { display: none; }
+.modal-hint { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: #FBBF24; }
+.modal-hint[hidden] { display: none; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .modal-btn {
   height: 36px; padding: 0 16px; border-radius: 8px; cursor: pointer;
@@ -424,11 +435,37 @@ a:focus-visible, button:focus-visible {
     <p class="modal-note">
       비밀번호는 숫자 4자리입니다. Honey 사용 이력이 있는 계정은 Honey 앱에서 설정하세요.<br>
       웹 접속은 조회 전용입니다 — 세션 수정은 Honey 앱으로 접속해 주세요.<br>
-      계정이 없으면 <a href="/pe/report/">검색결과 화면</a>에서 회원가입할 수 있습니다.
+      계정이 없으면 [회원가입] 을 눌러 만드세요.
     </p>
     <div class="modal-actions">
+      <button class="modal-btn" id="signupOpen" type="button">회원가입</button>
       <button class="modal-btn" id="loginCancel" type="button">취소</button>
       <button class="modal-btn primary" id="loginSubmit" type="button">로그인</button>
+    </div>
+  </div>
+</div>
+
+<!-- 회원가입 모달 (일반 브라우저 — Honey 이력이 없는 미사용 singleID 만 가입된다.
+     폼·검증·안내는 검색결과 페이지(report_analysis_index.html)와 같은 규약) -->
+<div class="modal-overlay" id="signupModal">
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="signupTitle">
+    <p class="modal-title" id="signupTitle">회원가입</p>
+    <div class="id-row">
+      <span class="id-prefix">SECDS\</span>
+      <input type="text" id="suIdInput" placeholder="singleID" autocomplete="username">
+    </div>
+    <input type="password" class="pw-input" id="suPwInput" inputmode="numeric" maxlength="4"
+           autocomplete="new-password" placeholder="비밀번호 (숫자 4자리)">
+    <input type="password" class="pw-input" id="suPw2Input" inputmode="numeric" maxlength="4"
+           autocomplete="new-password" placeholder="비밀번호 확인">
+    <p class="modal-err" id="signupErr" hidden></p>
+    <p class="modal-note">
+      본인의 singleID 로 가입해주세요. PC 비밀번호와 <b>다른 값</b>을 쓰세요.
+    </p>
+    <p class="modal-hint" id="signupHint" hidden></p>
+    <div class="modal-actions">
+      <button class="modal-btn" id="signupCancel" type="button">취소</button>
+      <button class="modal-btn primary" id="signupSubmit" type="button">가입</button>
     </div>
   </div>
 </div>
@@ -583,6 +620,73 @@ function doLogin() {
   });
 }
 
+// ── 회원가입 (일반 브라우저) ───────────────────────────────────────────────
+// 서버는 'Honey 사용 이력이 없는 미사용 singleID' 만 가입시킨다 — 이력이 있으면 403 과
+// 함께 Honey 안내를 돌려주므로 그 메시지를 그대로 보여준다(검색결과 페이지와 동일 규약).
+function signupErr(msg) {
+  var el = $("signupErr");
+  el.textContent = msg || "";
+  el.hidden = !msg;
+}
+
+function openSignup() {
+  ["suIdInput", "suPwInput", "suPw2Input"].forEach(function (id) { $(id).value = ""; });
+  signupErr("");
+  $("signupHint").hidden = true;
+  $("signupHint").textContent = "";
+  closeLogin();
+  $("signupModal").classList.add("show");
+  $("suIdInput").value = UA_USER;
+  $("suIdInput").focus();
+  // 같은 IP 에서 Honey 로 업로드한 계정이 있으면 ID 를 채워준다(자동완성 힌트일 뿐,
+  // 그 계정은 대개 가입 차단 대상이라 안내 문구를 함께 띄운다).
+  fetch("/pe/report/api/auth/signup_hint")
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j || !j.user_id) return;
+      if (!$("suIdInput").value) $("suIdInput").value = j.user_id;
+      if (j.honey_seen) {
+        $("signupHint").textContent = "이 PC 는 '" + j.user_id
+          + "' 계정으로 Honey 를 사용한 이력이 있습니다."
+          + " 본인 계정이라면 가입 대신 Honey 앱에서 비밀번호를 설정하세요.";
+        $("signupHint").hidden = false;
+      }
+    })
+    .catch(function () { /* 힌트는 부가 기능 — 실패해도 직접 입력하면 된다 */ });
+}
+
+function closeSignup() { $("signupModal").classList.remove("show"); }
+
+function doSignup() {
+  var id = ($("suIdInput").value || "").split("\\").pop().trim().toLowerCase();
+  var pw = $("suPwInput").value || "";
+  var pw2 = $("suPw2Input").value || "";
+  if (!/^[^\s\\/]{1,64}$/.test(id)) { signupErr("singleID 를 공백 없이 입력하세요."); return; }
+  if (!/^\d{4}$/.test(pw)) { signupErr("비밀번호는 숫자 4자리입니다."); return; }
+  if (pw !== pw2) { signupErr("비밀번호가 서로 다릅니다."); return; }
+  signupErr("");
+  // CSRF 쿠키 확보 규약은 로그인과 동일 (GET /pe 응답에는 쿠키가 안 붙는다)
+  var ready = csrfToken() ? Promise.resolve() : loadLanding();
+  ready.then(function () {
+    return fetch("/pe/report/api/auth/signup", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
+      body: JSON.stringify({user_id: id, password: pw})
+    });
+  }).then(function (res) {
+    return res.json().catch(function () { return {}; }).then(function (j) {
+      if (!res.ok) throw new Error(j.error || "가입 실패");
+      return j;
+    });
+  }).then(function (j) {
+    closeSignup();
+    applyViewer({user_id: j.user_id, source: j.source || "login"});
+    return loadLanding();
+  }).catch(function (e) {
+    signupErr(e.message || "가입 실패");
+  });
+}
+
 $("userChip").addEventListener("click", openLogin);
 $("loginSubmit").addEventListener("click", doLogin);
 $("loginCancel").addEventListener("click", closeLogin);
@@ -592,8 +696,28 @@ $("loginModal").addEventListener("click", function (e) {
 ["idInput", "pwInput"].forEach(function (id) {
   $(id).addEventListener("keydown", function (e) { if (e.key === "Enter") doLogin(); });
 });
+
+$("signupOpen").addEventListener("click", openSignup);
+$("signupSubmit").addEventListener("click", doSignup);
+$("signupCancel").addEventListener("click", function () {
+  closeSignup();
+  openLogin();          // 로그인 모달에서 넘어왔으므로 되돌려준다 (막다른 화면 방지)
+});
+$("signupModal").addEventListener("click", function (e) {
+  if (e.target === $("signupModal")) closeSignup();
+});
+["suIdInput", "suPwInput", "suPw2Input"].forEach(function (id) {
+  $(id).addEventListener("keydown", function (e) { if (e.key === "Enter") doSignup(); });
+});
+// 숫자 4자리 입력칸: 비숫자 제거 (붙여넣기 포함)
+["pwInput", "suPwInput", "suPw2Input"].forEach(function (id) {
+  $(id).addEventListener("input", function (e) {
+    e.target.value = e.target.value.replace(/\D/g, "").slice(0, 4);
+  });
+});
+
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Escape") closeLogin();
+  if (e.key === "Escape") { closeLogin(); closeSignup(); }
 });
 
 $("refreshBtn").addEventListener("click", loadLanding);

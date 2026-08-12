@@ -9,6 +9,8 @@
   2. CT/HT 의 CPK 는 **RT limit** 으로 계산하고, 표시 limit(lower/upper_limit)도 RT 것이다
      — 계산에 쓴 규격과 화면 규격이 어긋나면 CPK 탭의 한계값 역산이 맞지 않는다.
   3. RT 소스와 Temperature 가 아닌 모드는 **종전 그대로** 자기 Bin1 × 자기 limit 이다.
+  4. Item_detail(``distribution.scatter_item``)도 같은 기준을 쓴다 — CPK 탭과 값이 갈리면
+     같은 항목의 CPK 가 화면마다 다르게 보인다 (2026-08-12 회귀로 추가).
 
 CT 프레임은 손으로 만들지 않고 실제 정리 함수(``temperature.clean_frames``)를 돌려 만든다
 — 그래야 "이미 RT pass 좌표만 남아 있다" 는 1번 전제가 테스트 안에서도 사실이 된다.
@@ -28,6 +30,7 @@ from web_report.honeyform import META_COLUMNS, split_honeyform  # noqa: E402
 from web_report.metrics import build_report_payload  # noqa: E402
 from web_report.tabs.common import bin_types  # noqa: E402
 from web_report.tabs.cpk import build_cpk_rows  # noqa: E402
+from web_report.tabs.distribution import scatter_item  # noqa: E402
 from web_report.temperature import clean_frames  # noqa: E402
 
 # RT: LOLIM 8 / HILIM 12. 앞 4 die 는 Bin1, 뒤 2 die 는 fail(극단값).
@@ -153,6 +156,30 @@ def test_payload_wires_groups_through():
         (old_n, old_avg, old_cpk), ct_normal
 
 
+def test_item_detail_matches_cpk_tab():
+    """Item_detail(scatter_item) 이 CPK 탭과 **같은 값**이어야 한다 (2026-08-12 회귀).
+
+    CT/HT 예외가 build_cpk_rows 에만 있고 scatter_item 에는 없어, 같은 항목의 CPK 가
+    CPK 탭/Issue Table 과 Item_detail 에서 다르게 보였다. 두 경로가 다시 갈리지 않도록
+    통계 전 필드를 맞대어 고정한다.
+    """
+    tables = temp_tables()
+    tab = {r["source"]: r for r in build_cpk_rows(tables, ["ItemA"], GROUPS)}
+    det_payload = scatter_item(tables, "ItemA", temperature_groups=GROUPS)
+    det = {s["source"]: s for s in det_payload["stats"]}
+    for source in ("WF1_RT", "WF1_CT"):
+        for field in ("n", "average", "stdev", "cp", "cpl", "cpu", "cpk"):
+            assert tab[source][field] == det[source][field], (source, field,
+                                                              tab[source][field],
+                                                              det[source][field])
+    # 화면 규격선(단일 값)도 RT 것 — 점은 RT limit 으로 판정됐는데 선만 CT 것이면 어긋난다.
+    assert (det_payload["lower_limit"], det_payload["upper_limit"]) == (8, 12), det_payload
+
+    # groups 를 안 넘기면 종전 그대로(자기 Bin1 × 자기 limit) — 다른 모드에 영향이 없다.
+    legacy = {s["source"]: s for s in scatter_item(tables, "ItemA")["stats"]}
+    assert legacy["WF1_CT"]["n"] == len(_CT_SELF_BIN1), legacy["WF1_CT"]
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -163,7 +190,8 @@ def main():
                test_member_uses_rt_bin1_dies_and_rt_limits,
                test_rt_source_unchanged,
                test_without_groups_is_legacy_behaviour,
-               test_payload_wires_groups_through):
+               test_payload_wires_groups_through,
+               test_item_detail_matches_cpk_tab):
         fn()
         checks += 1
     print(f"PASS: test_cpk_temperature_basis ({checks} checks)")

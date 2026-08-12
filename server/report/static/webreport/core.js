@@ -369,7 +369,7 @@ const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
       const res = await fetch(`/pe/report/session/${SESSION_ID}/editors/candidates?q=${encodeURIComponent(q)}`);
       if (!res.ok) { box.innerHTML = `<div class="perm-empty">검색 실패</div>`; return; }
       const list = (await res.json()).candidates || [];
-      if (!list.length) { box.innerHTML = `<div class="perm-empty">해당 사용자가 없습니다 (web_report 방문 기록 기준).</div>`; return; }
+      if (!list.length) { box.innerHTML = `<div class="perm-empty">해당 사용자가 없습니다 (web_report 방문 기록 · 웹 가입 계정 기준).</div>`; return; }
       box.innerHTML = list.map(c => `
         <div class="perm-item">
           <span class="perm-user" title="${esc(c.user)}">${esc(c.user)}</span>

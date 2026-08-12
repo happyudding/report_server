@@ -205,7 +205,7 @@ def build_distribution_index(tables, cpk_rows, exclude=None, counts=None) -> lis
 
 
 def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
-                 bin1: bool = False, bin1_sources=None) -> dict:
+                 bin1: bool = False, bin1_sources=None, temperature_groups=None) -> dict:
     """Item_detail 용: 항목의 소스별 전체 측정값(다운샘플 없음) + 통계 + cpk/status +
     이 항목으로 Fail 된 die 의 rawdata 행(전 metadata + 측정값).
 
@@ -215,6 +215,12 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
     ``stats``/``cpk`` 는 ``bin1`` 여부와 무관하게 **항상 양품(BIN==PASS_BIN) 기준**이고
     규격 클리핑은 하지 않는다 — CPK 탭/Issue Table/CPK 시트와 같은 통계여야 같은 항목의
     CPK 가 화면마다 달라 보이지 않는다 (2026-07-23 통일, tabs/cpk.py 와 동일 기준).
+    ``temperature_groups`` (그룹 **리스트** — ``[{"rt":…, "members":[…]}, …]``, 옵션 dict 가
+    아니다)를 주면 그 예외까지 함께 따른다 — Temperature 모드의 CT/HT 는
+    **RT 에서 Bin1 이던 die × RT limit** 으로 계산한다(자기 BIN 필터를 걸지 않는다.
+    행이 이미 RT pass 좌표만이기 때문). 기준 선택은 ``cpk.temperature_reference_tables``
+    한 곳이고 여기서는 그 결과를 쓰기만 한다 — 안 넘기면 CPK 탭과 값이 갈린다
+    (2026-08-12 수정: Item_detail 만 이 예외를 몰라 CPK/limit 이 다르게 보였다).
     그래서 기본(전체 die) 모드에서는 표시 분포(전체 die)와 통계 표본(양품)이 다르다 —
     분포까지 양품으로 맞추려면 "Bin1 only" 토글을 쓴다.
     ``fail_rows``/``fail_total``/``is_fail`` 은 "이 항목으로 fail 한 die" 진단이라 bin 필터와
@@ -229,11 +235,17 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
     항목이 어떤 소스에도 없으면 ``KeyError`` (라우트가 404 처리).
     """
     from .common import PASS_BIN, bin_types
+    from .cpk import temperature_reference_tables
 
     matched = [t for t in tables if subject in t.item_columns]
     if not matched:
         raise KeyError(subject)
     meta_t = matched[0]
+    # {CT/HT source: 그 그룹의 RT table} — 비어 있으면 종전(전 소스 자기 Bin1) 동작 그대로.
+    ref_of = temperature_reference_tables(tables, temperature_groups)
+    # 화면 규격선(LSL/USL)은 하나뿐이다. 대표가 CT/HT 면 그 그룹의 RT limit 을 쓴다 —
+    # 전 소스가 RT limit 으로 판정되므로 그래야 점과 선의 기준이 맞는다.
+    limit_t = ref_of.get(meta_t.source, meta_t)
 
     sources = []
     stats = []
@@ -251,7 +263,13 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
         # Bin1 only 모드는 여기에 더해 **표시 분포**도 양품 & 규격(LSL/USL) 이내로 좁힌다
         # (disp_mask = 유한 ∩ 양품 ∩ 규격내).
         bin1_mask = np.asarray([b == PASS_BIN for b in bin_types(table)], dtype=bool)
-        stat_col = col[bin1_mask]
+        # Temperature CT/HT 는 행이 이미 RT Bin1 좌표만이라 자기 BIN 으로 다시 거르지 않고
+        # (거르면 CT/HT 에서 fail 난 die 가 빠져 CPK 탭보다 낙관적인 값이 된다), limit 만
+        # RT 것으로 바꾼다 — tabs/cpk.build_cpk_rows 와 같은 규칙.
+        ref = ref_of.get(table.source)
+        stat_col = col if ref is not None else col[bin1_mask]
+        stat_lo = (ref or table).lolim.get(subject)
+        stat_hi = (ref or table).hilim.get(subject)
         disp_mask = finite_mask
         # bin1_sources 를 주면 그 소스에만 표시 필터를 건다(Temperature "Bin1(RT만)").
         if bin1 and (bin1_sources is None or table.source in bin1_sources):
@@ -271,7 +289,7 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
             "xpos": [fmt_type(v) for v in table.data["XPOS"].to_numpy()[disp_mask]],
             "ypos": [fmt_type(v) for v in table.data["YPOS"].to_numpy()[disp_mask]],
         })
-        st = _stats(stat_col, table.lolim.get(subject), table.hilim.get(subject))
+        st = _stats(stat_col, stat_lo, stat_hi)
         # report용 정규분포 곡선(프론트)의 축퇴 판정: n<2 또는 std<=0 이면 곡선을
         # 그리지 못하므로 서버가 degenerate 로 표시(프론트는 스파이크로 대체).
         # stdev 는 표본표준편차(ddof=1) — n≤1이면 None, 전부 동일값이면 0.
@@ -309,8 +327,8 @@ def scatter_item(tables, subject, *, fail_row_cap: int = _FAIL_ROW_CAP,
         "subject": subject,
         "test_num": fmt_type(meta_t.tno.get(subject)),
         "units": json_safe(meta_t.units.get(subject)) or "",
-        "lower_limit": round_num(meta_t.lolim.get(subject)),
-        "upper_limit": round_num(meta_t.hilim.get(subject)),
+        "lower_limit": round_num(limit_t.lolim.get(subject)),
+        "upper_limit": round_num(limit_t.hilim.get(subject)),
         "cpk": round_num(cpk, 3),
         "is_fail": is_fail,
         "status": _status(is_fail, cpk),

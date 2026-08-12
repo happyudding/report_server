@@ -850,12 +850,25 @@ function subpopNoticeHtml() {
     </div>`;
 }
 
+// UNKNOWN 도 조건을 쓰지 않는 특수분기다 — 다른 룰이 하나도 안 떴을 때만 발화한다.
+// 여기서 줄일 수 있는 것은 조건이 아니라 "다른 룰의 커버리지" 라 그 사실을 안내한다.
+function unknownNoticeHtml() {
+  return `<div class="note" style="color:var(--warn);margin:6px 0">
+      ⚠ 이 룰은 조건을 <b>쓰지 않습니다</b> — fail 이 있는데 다른 룰이 하나도 발화하지
+      않았을 때 엔진이 자동으로 붙이는 "설명되지 않음" 표시입니다(읽기 전용).
+      줄이려면 이 카드가 아니라 <b>다른 룰의 임계값·활성 여부</b>를 고쳐야 하고,
+      사유별 건수는 L0~L6 트레이스 탭의 커버리지 표시에서 확인합니다.
+    </div>`;
+}
+
 function sigCard(s) {
   const isSubpop = META && s.id === META.subpop_gap_id;
+  const isUnknown = META && s.id === META.unknown_id;
+  const noCond = isSubpop || isUnknown;         // 조건이 판정에 안 쓰이는 특수분기
   const conds = Object.entries(s.when_metric).map(([m, c]) => condRow(m, c)).join('');
   const evs = (s.evidence || []).map(evRow).join('');
   const own = ownLabel(s);
-  return `<details class="sig" data-id="${esc(s.id)}"${isSubpop ? ' data-subpop="1"' : ''}>
+  return `<details class="sig" data-id="${esc(s.id)}"${noCond ? ' data-nocond="1"' : ''}>
     <summary>
       <input type="checkbox" class="sig-pick" data-id="${esc(s.id)}"
              onclick="event.stopPropagation()" title="일괄 켜기/끄기 선택">
@@ -889,12 +902,12 @@ function sigCard(s) {
         <span class="mono">&gt;cpk_warn</span> 처럼 쓰면 Thresholds 탭의 그 값을 따르고,
         <span class="mono">&lt;=0.5</span> 처럼 숫자를 직접 박을 수도 있습니다.
         <span class="mono">abs&gt;</span> 는 부호 무시)</span></label>
-      ${isSubpop ? subpopNoticeHtml() : ''}
-      <div data-role="conds"${isSubpop ? ' style="display:none"' : ''}>${conds}</div>
-      ${isSubpop ? '' : `<button class="btn tiny" data-role="cond-add"
+      ${isSubpop ? subpopNoticeHtml() : isUnknown ? unknownNoticeHtml() : ''}
+      <div data-role="conds"${noCond ? ' style="display:none"' : ''}>${conds}</div>
+      ${noCond ? '' : `<button class="btn tiny" data-role="cond-add"
               title="조건을 하나 더 추가합니다 (모두 만족해야 발화)">+ 조건 추가</button>`}
       <div class="note" data-role="card-problems" style="color:var(--warn)"></div>
-      ${Object.keys(s.when_metric).length || isSubpop ? '' :
+      ${Object.keys(s.when_metric).length || noCond ? '' :
         '<div class="note">조건 없음 — 이 룰은 yaml 조건이 아니라 엔진 코드가 직접 판정합니다(특수분기)</div>'}
       <label>현상 — 코멘트의 "이런 상태입니다" 부분에 그대로 들어갑니다</label>
       <textarea class="inp" rows="2" data-role="phenomenon_ko">${esc(s.phenomenon_ko)}</textarea>
@@ -912,7 +925,7 @@ function sigCard(s) {
 
 // 저장 전에 눈에 띄게 해 주는 것만 — 최종 검증은 서버(_validate_signature_payload)다.
 function validateSigCard(box) {
-  if (box.dataset.subpop) return [];
+  if (box.dataset.nocond) return [];
   const problems = [], seen = new Set();
   box.querySelectorAll('[data-role="cond-row"]').forEach((row) => {
     const m = row.querySelector('[data-role="metric"]').value.trim();
@@ -1139,7 +1152,7 @@ async function saveSignature(box) {
     action_ko: box.querySelector('[data-role="action_ko"]').value,
   }, 'sigReason');
   // 특수분기 룰은 조건·근거가 판정에 안 쓰이므로 애초에 보내지 않는다(읽기 전용 표시와 일치).
-  if (!box.dataset.subpop) {
+  if (!box.dataset.nocond) {
     payload.evidence = evidence;
     if (Object.keys(when).length) payload.when_metric = when;
   }
@@ -1249,14 +1262,28 @@ async function runTrace() {
   $('trRun').disabled = false;
 }
 
+// UNKNOWN 발화 사유 — 무엇을 고쳐야 줄어드는지가 사유마다 다르다(엔진 _unknown_reason).
+const UNKNOWN_REASON_LABEL = {
+  NO_STATS_PF: 'UNIT 미등록(PF) — 엔진 단위표에 표기 추가',
+  NO_LIMIT: 'LSL/USL 없음 — limit mapping 확인',
+  LOW_SAMPLE: '표본 부족 — n_min 미만',
+  NO_MATCH: '조건 미달 — 임계값 조정 또는 새 룰 필요',
+};
+
 // fail 이 있는데 진단 룰이 하나도 안 뜬 케이스 비율 — "현재 룰로 커버되나" 지표.
-// 미분류가 많으면 fail 유형을 설명할 signature 가 없다는 뜻이다(판정은 바뀌지 않는다).
+// 엔진이 UNKNOWN 을 명시 발화하므로 primary 는 늘 차 있지만, UNKNOWN 은 커버로 세지
+// 않는다 — 자동 발화를 성과로 세면 커버율이 가짜로 100% 가 된다.
 function traceCoverageText(cov) {
   if (!cov || !cov.fail_cases) return '';
   const pct = (cov.unclassified / cov.fail_cases * 100).toFixed(1);
   const cls = cov.unclassified ? ' class="msg err"' : '';
+  const reasons = Object.entries(cov.reasons || {}).sort((a, b) => b[1] - a[1]);
+  const detail = reasons.length
+    ? '<br><span class="note">미분류 사유: ' + reasons.map(([k, n]) =>
+        `${esc(UNKNOWN_REASON_LABEL[k] || k)} <b>${n}</b>건`).join(' · ') + '</span>'
+    : '';
   return ` · fail case ${cov.fail_cases}건 중 발화 ${cov.fired}건, ` +
-         `<span${cls}>미분류 ${cov.unclassified}건 (${pct}%)</span>`;
+         `<span${cls}>미분류 ${cov.unclassified}건 (${pct}%)</span>` + detail;
 }
 
 // 필터 후보는 이번 트레이스 결과에서 뽑는다 — 있지도 않은 값을 고르게 하지 않는다.
@@ -1878,7 +1905,7 @@ function evalFamilyCell(r) {
   return parts.length ? esc(parts.join(" / ")) : "-";
 }
 // Unit 그룹(value_type) 어휘 — 서버 eval_export.VALUE_TYPES 와 같은 집합.
-const EVAL_VALUE_TYPES = ["V", "A", "Hz", "CODE", "Ohm", "Sec", "PF"];
+const EVAL_VALUE_TYPES = ["V", "A", "Hz", "CODE", "Ohm", "Sec", "%", "PF"];
 
 function evalUnitCell(r) {
   // 원문 unit(im.unit) 은 회색으로 참고 표시, 그룹(value_type)은 그 자리에서 고칠 수 있게

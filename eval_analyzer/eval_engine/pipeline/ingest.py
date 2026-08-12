@@ -38,6 +38,11 @@ UNIT_TO_VALUE_TYPE = {
     "code": "CODE",
     "ohm": "Ohm", "ohms": "Ohm",
     "s": "Sec", "sec": "Sec", "secs": "Sec", "ms": "Sec", "us": "Sec", "ns": "Sec",
+    # 선례 적재(db_input)가 쓰던 어휘 '%' 를 엔진에도 등록했다(2026-08-12). 미등록일 땐
+    # PF 로 떨어져 통계가 통째로 비었고, 실측 fail 의 8% 가 그 이유로 무판정이었다.
+    "%": "%", "pct": "%", "percent": "%",
+    # LSB(code unit) 는 CODE 와 같은 부류 — 미등록 시 PF 폴백으로 무판정이 됐다.
+    "lsb": "CODE",
     "pf": "PF", "p_f": "PF", "pass/fail": "PF", "p/f": "PF", "": "PF",
 }
 PHASE_TOKENS = {"init", "code", "trim", "p2", "p1", "final"}

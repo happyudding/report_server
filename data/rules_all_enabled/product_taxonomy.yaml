@@ -1,0 +1,9 @@
+# product_type ↔ family_product 허용 조합 (드롭다운 1:1 매칭 기준)
+# ingest 시 _validate_product_meta 가 이 표로 검증 — 불일치면 ValueError.
+product_types: [MDDI, PDDI, PMIC, SECURITY, TCON]
+family_product:
+  MDDI:     [MX, AQUA, CHINA, MDDI_ETC]
+  PMIC:     [SOC, MEMORY, DISPLAY, IF, PMIC_ETC]
+  SECURITY: [NFC_ESE, ESE, Contactless, SECU_ETC]
+  PDDI:     [LCD, PDDI_IT, QDOLED, PDDI_ETC]
+  TCON:     [TV, TCON_IT, TCON_ETC]

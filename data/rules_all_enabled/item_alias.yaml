@@ -1,0 +1,7 @@
+# item 원본명 → canonical 매핑 (개정 rename/표기차 흡수). 도메인 입력.
+# eval.db.item_alias 로 적재. 아래는 예시.
+version: ev1
+aliases:
+  # raw_name : item_canonical
+  "VREF_TRIM ": "vref_trim"
+  "Vref_Trim": "vref_trim"
