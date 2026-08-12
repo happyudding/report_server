@@ -796,8 +796,22 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 ### 16-2. 공간 존 세분 — E1(최외곽 1 chip line) 신설
 
 `EDGE`(반경 상위 20%) 하나로는 "가장자리 한 줄"이 안 보였다. 한 줄의 두께는 웨이퍼·die
-크기에 따라 달라 **반경 비율로 표현할 수 없으므로** 격자 이웃으로 판정한다 —
-4-이웃 중 하나라도 비면 E1(`features._e1_mask`, 좌표 집합 O(n), 추가 입력 없음).
+크기에 따라 달라 **반경 비율로 표현할 수 없다**. 그래서 좌표만으로 판정하되
+**각 행의 좌·우 끝 + 각 열의 위·아래 끝** die 를 E1 으로 본다(`features._e1_mask`).
+
+> ⚠ 처음엔 4-이웃(x±1, y±1) 조회로 만들었다가 바로 고쳤다 — 그 방식은 **die pitch 가 1**
+> 이라는 가정을 숨기고 있어서, 좌표 간격이 2 이거나 격자를 띄엄띄엄 측정한 map 에서
+> **모든 die 를 최외곽으로 오판**한다(실측 100%). 그러면 `edge = 반경밴드 & ~E1` 이 비어
+> **EDGE·RING 룰이 조용히 죽는다**. 지금 정의는 간격을 전혀 가정하지 않고, E1 이 절반을
+> 넘으면(한 줄짜리 배치 등) 판정 불가로 보고 결측 처리한다.
+> 회귀 테스트: `test_e1_mask_is_die_pitch_agnostic` / `test_e1_mask_undecidable_when_degenerate`.
+
+**함께 고친 것 — 웨이퍼 중심**: 공간 feature 가 반경을 **원점(0,0) 기준**으로 재고 있었다.
+`XPOS`/`YPOS` 는 실데이터에서 **항상 양수**(0/1-based die 인덱스)이므로 원점은 웨이퍼의 한
+귀퉁이다 — edge/center/ring/quadrant 가 전부 어긋난 값이었다. 이제 좌표 범위의 중앙
+(bounding box 중심)을 웨이퍼 중심으로 잡는다. 이미 중심 정렬된 입력에는 no-op 이라 과거
+동작과 충돌하지 않는다. 회귀 테스트 `test_spatial_features_are_translation_invariant`.
+좌표 규약은 [../CLAUDE.md §5-9](../CLAUDE.md) 에도 박아 뒀다(PMIC 은 YPOS ≤ 200).
 
 - 새 feature `e1_fail_ratio` + 임계 `e1_fail_ratio_warn`(2.0) + 룰 `E1_FAIL`.
 - `edge_fail_ratio`/`ring_fail_ratio` 는 **E1 을 뺀** 영역 기준으로 의미가 좁아졌다.
@@ -820,7 +834,7 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 
 - 룰 yaml 을 손으로 고쳤으므로 `.rules_rev` 를 **직접 올렸다**(`eval_debug.bump_rules_rev`).
   ai_comment 옵션 세션의 캐시만 무효화되므로 `REPORT_SCHEMA_VERSION` 은 건드리지 않았다.
-- 검증: `eval_analyzer` 엔진 테스트 187 passed(E1 존 테스트 추가·TAIL_RISK 지표 갱신),
+- 검증: `eval_analyzer` 엔진 테스트 189 passed(E1 존·pitch 무관 테스트 추가·TAIL_RISK 지표 갱신),
   `rules_io.validate_all()` 무결성 0 problems, 합성 데이터 정답표 대조
   (단독 CSV 85/85, 전체 세트 496/500 — 나머지는 조합 항목의 구조적 상충).
 - `label_signature`(사람 확정 라벨)는 조회 결과 **0행**이라 id 마이그레이션이 필요 없었다.

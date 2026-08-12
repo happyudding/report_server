@@ -127,23 +127,33 @@ def _gradient(coord, fail_mask, bins=8):
     return float(np.polyfit(centers, rates, 1)[0])
 
 
+def _edge_of_line(key, val):
+    """key 로 묶은 각 줄에서 val 이 **양끝**인 die 마스크 (행별 좌우끝 / 열별 상하끝)."""
+    uniq, inv = np.unique(key, return_inverse=True)
+    lo = np.full(uniq.size, np.inf)
+    hi = np.full(uniq.size, -np.inf)
+    np.minimum.at(lo, inv, val)
+    np.maximum.at(hi, inv, val)
+    return (val == lo[inv]) | (val == hi[inv])
+
+
 def _e1_mask(xs, ys):
-    """**최외곽 1 chip line(E1)** die 마스크 — 상하좌우 4-이웃 중 하나라도 비면 최외곽.
+    """**최외곽 1 chip line(E1)** die 마스크 — 각 행의 좌·우 끝 + 각 열의 위·아래 끝.
 
     "웨이퍼 가장자리 한 줄" 은 반경 비율로 표현할 수 없다(웨이퍼 크기·die 크기에 따라
-    두께가 달라진다). 좌표 집합만으로 판정하므로 추가 입력이 필요 없고, 결손 die 가 있는
-    실제 map 에서도 그 구멍의 테두리를 잡는다.
-    좌표가 정수 격자가 아니면(간격이 1이 아니면) 판정할 수 없어 전부 False 를 돌려준다 —
-    그 경우 E1 관련 feature 는 자연히 결측이 되고, 결측은 "양호" 로 읽지 않는다(규칙).
+    두께가 달라진다). 그렇다고 4-이웃(x±1)을 조회하면 **die pitch 가 1 이라는 가정**이
+    생겨, 좌표 간격이 2 이거나 격자를 띄엄띄엄 측정한 map 에서 **모든 die 를 최외곽으로
+    오판한다**(실측 100%). 그 경우 `edge = 반경밴드 & ~E1` 이 비어 EDGE·RING 룰이 조용히
+    죽는다. 그래서 간격을 전혀 가정하지 않는 "줄의 양끝" 정의를 쓴다.
+
+    E1 이 전체의 절반을 넘으면(한 줄짜리 배치 등) 개념이 성립하지 않으므로 **판정 불가**로
+    보고 전부 False 를 돌려준다 — E1 feature 는 결측이 되고(결측을 양호로 읽지 않는 규칙),
+    EDGE/RING 은 원래 밴드를 그대로 쓴다.
     """
-    xi = np.rint(xs).astype(np.int64)
-    yi = np.rint(ys).astype(np.int64)
-    if xi.size == 0 or not np.allclose(xs, xi) or not np.allclose(ys, yi):
+    if xs.size == 0:
         return np.zeros(xs.shape, dtype=bool)
-    coords = set(zip(xi.tolist(), yi.tolist()))
-    return np.array([((x + 1, y) not in coords) or ((x - 1, y) not in coords)
-                     or ((x, y + 1) not in coords) or ((x, y - 1) not in coords)
-                     for x, y in zip(xi.tolist(), yi.tolist())], dtype=bool)
+    mask = _edge_of_line(ys, xs) | _edge_of_line(xs, ys)
+    return mask if mask.mean() <= 0.5 else np.zeros(xs.shape, dtype=bool)
 
 
 def _spatial_features(case_ctx, th):
@@ -171,6 +181,12 @@ def _spatial_features(case_ctx, th):
         return out
 
     xs, ys, fm = xs[valid], ys[valid], fm[valid]
+    # **웨이퍼 중심을 좌표에서 구한다** — XPOS/YPOS 는 실데이터에서 항상 양수(0/1-based die
+    # 인덱스)라, 원점(0,0) 기준으로 반경을 재면 웨이퍼 한 귀퉁이가 중심이 되어 edge/center/
+    # ring/quadrant 판정이 통째로 어긋난다. 좌표 범위의 중앙(bounding box 중심)을 쓴다.
+    # 이미 중심 정렬된(음수 포함) 입력에는 no-op 이다.
+    xs = xs - (float(xs.max()) + float(xs.min())) / 2.0
+    ys = ys - (float(ys.max()) + float(ys.min())) / 2.0
     radius = np.sqrt(xs ** 2 + ys ** 2)
     rmax = radius.max()
     xmax = float(np.max(np.abs(xs))) or None

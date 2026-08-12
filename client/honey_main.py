@@ -3649,6 +3649,10 @@ class HoneyMainWindow(QMainWindow):
 
         구 batch 스왑(updater.apply_update_zip)과 달리 설치가 끝날 때까지 현재 버전은
         그대로 돌아간다. 어느 단계에서 실패·취소해도 기존 버전은 무손상이다.
+
+        **현재는 호출되지 않는다** (2026-08-12) — 버전 폴더 방식의 업데이트는 런처가
+        앱을 띄우기 전에 하는 것으로 일원화했다(launcher.try_update). 런처 방식에
+        문제가 생겼을 때 되돌릴 수 있도록 이 경로를 지우지 않고 남겨 둔다.
         """
         url = manifest.get("url") or "/honey/download"
         expected = manifest.get("sha256") or None
@@ -3800,7 +3804,11 @@ class HoneyMainWindow(QMainWindow):
 
         versioned_root = self._versioned_update_root()
         if versioned_root is not None:
-            self._run_versioned_update(manifest, remote, versioned_root)
+            # 버전 폴더 방식은 **런처가 앱을 띄우기 전에** 업데이트한다. 실행 중에는
+            # 아무것도 하지 않는다 (2026-08-12 결정) — 사용자가 쓰고 있는 창을 끊지
+            # 않고, 업데이트 경로를 런처 한 곳으로 모으기 위해서다. 다음 실행 때
+            # Honey.exe(런처)가 처리한다.
+            app_update.ulog(f"[v2] remote={remote} 있음 — 런처가 다음 실행에 처리(앱 무동작)")
             return
 
         # 설치 방법 선택: [자동 설치] / [ZIP 다운로드] / [나중에]

@@ -329,6 +329,13 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
      내부 병합해 source 1개로 리턴한다(병합 규칙은 외부 담당 honey_parse 소관이라 이 repo
      에서 알 수 없음). source 를 세는 코드를 만들거나 고칠 때 입력 파일 개수로 세면 안 된다.
    - 구 5-meta df_honey(`DUT,XCoord,YCoord,Bin,Serial`)는 **폐기된 계약**이다.
+   - ⚠️ **좌표 규약: `XPOS`/`YPOS` 는 언제나 양수다** (0/1-based die 인덱스 — 음수 좌표는
+     실데이터에 없다). 따라서 **웨이퍼 중심은 (0,0)이 아니다** — 반경·사분면을 쓰는 코드는
+     좌표 범위의 중앙을 중심으로 잡아야 한다. 원점 기준으로 재면 웨이퍼 한 귀퉁이가 중심이
+     되어 edge/center/ring/quadrant 판정이 통째로 어긋난다(eval 엔진에서 실제로 겪음 →
+     [docs/13 §16-2](docs/13_eval_analyzer_integration.md)).
+   - ⚠️ **제품군별 좌표 상한: PMIC 은 `YPOS` 가 200 을 넘지 않는다**(Y=201 같은 값은 없다).
+     테스트/합성 데이터를 만들 때 이 범위를 넘기면 실데이터가 아니게 된다.
    - ⚠️ **알려진 격차**: `client/report_generator/`(constants.py `DATA_START_ROW=5` 등)는 아직
      5-meta 를 가정한다 → 7-meta 프레임에서 `BIN`·`FAILTNO` 를 측정 항목으로 오인한다.
      외부 담당자 소유라 **이 저장소에서 고치지 않는다**(최신 사본 수령으로 해소).

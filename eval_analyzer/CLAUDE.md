@@ -52,6 +52,11 @@
    row0 TSEQ / row1 TNO / row2 STEP / row3 UNIT / row4 HILIM(USL) / row5 LOLIM(LSL) / row6+ 측정
    ```
    - 사용: XPOS/YPOS→공간, BIN→bin, UNIT→value_type, HILIM/LOLIM→usl/lsl, TESTITEM→측정값, FAILTNO/TNO→fail.
+   - ⚠ **XPOS/YPOS 는 항상 양수**(0/1-based die 인덱스)다 — 음수 좌표는 실데이터에 없다.
+     그래서 **웨이퍼 중심은 원점(0,0)이 아니다**: 공간 feature 는 좌표 범위의 중앙을 중심으로
+     잡아 반경·사분면을 잰다(`features._spatial_features`). 원점 기준으로 재면 웨이퍼 귀퉁이가
+     중심이 되어 edge/center/ring/quadrant 가 통째로 어긋난다.
+     제품군 상한도 있다 — **PMIC 은 YPOS ≤ 200**.
    - 미사용: SERIAL/SHOT/DUT/TSEQ/STEP(P1/P2/P3, 보류).
    - **fail 식별 = FAILTNO(serial이 fail한 test의 TNO) == item의 TNO** → fail item, 그 serial BIN=fail bin.
      FAILTNO 공란/0/NaN = pass. (limit 위반 재판정 아님)

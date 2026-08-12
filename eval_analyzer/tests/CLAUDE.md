@@ -1,6 +1,6 @@
 # tests — 테스트 스위트 (블록 진입점)
 
-`python -m pytest -q` (현재 **186 통과**). DB 테스트는 전부 tmp 격리 — 운영 `eval.db` 오염 없음.
+`python -m pytest -q` (현재 **189 통과**). DB 테스트는 전부 tmp 격리 — 운영 `eval.db` 오염 없음.
 상위 규칙 [../CLAUDE.md](../CLAUDE.md).
 
 ## 파일 지도
@@ -8,7 +8,7 @@
 |---|---|
 | `conftest.py` | `fresh_db` fixture — `config.DB_PATH/DATA_DIR` 를 tmp 로 monkeypatch 후 `init_db`. |
 | `test_metrics.py` | L1 `cpk_summary`/yield/bimodality 공식(CODE_TO_PORT §2). |
-| `test_features.py` | L2 robust 산포·spec margin·공간 feature. |
+| `test_features.py` | L2 robust 산포·spec margin·공간 feature + **E1(최외곽 1열)** — die pitch 무관·퇴화 배치 판정불가. |
 | `test_signatures_status.py` | L3 signature 발화 + L4 status/trump/specificity. |
 | `test_unknown_signature.py` | L3 `UNKNOWN` 미분류 명시 발화 — 발화/미발화 경계·사유 코드 우선순위·제외 목록·LOW_CPK 억제(SPEC_TOO_TIGHT 보호). "모든 fail 은 signature 로 설명된다" 의 하한선 → ../../docs/13 §15. |
 | `test_ingest_raw_df.py` | L0 정본 raw_df(6-메타행) 파싱·fail 매핑. **정본 레이아웃 기준선**. |

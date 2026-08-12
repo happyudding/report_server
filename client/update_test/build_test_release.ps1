@@ -63,6 +63,7 @@ $LauncherExe  = Join-Path $LauncherDist "Honey.exe"
 $OutDir       = Join-Path $PSScriptRoot "release"
 $ZipPath      = Join-Path $OutDir "Honey-$Version.zip"
 $VersionJson  = Join-Path $OutDir "version.json"
+$FilesJson    = Join-Path $OutDir "Honey-$Version.files.json"
 $Utf8NoBom    = New-Object System.Text.UTF8Encoding($false)
 $Stopwatch    = [System.Diagnostics.Stopwatch]::StartNew()
 
@@ -113,7 +114,7 @@ try {
     if (-not (Test-Path $LauncherExe)) { throw "런처 산출물이 없습니다: $LauncherExe" }
     if (-not (Test-Path $AppExe))      { throw "앱 산출물이 없습니다: $AppExe" }
 
-    Write-Step "4/5 honey.env + zip 패키징"
+    Write-Step "4/6 honey.env + 파일 매니페스트"
     $honeyEnvText = @(
         "# build_test_release.ps1 이 만든 테스트용 설정 (운영 배포본과 무관)",
         "SERVER_BASE_URL=$ServerUrl",
@@ -122,6 +123,14 @@ try {
     Write-Utf8NoBomText (Join-Path $AppDist "honey.env") $honeyEnvText
 
     if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir | Out-Null }
+
+    # 델타 업데이트용 파일 목록. 앱 폴더 안(.files.json)에도 같은 내용이 들어가 zip 에
+    # 함께 실린다 — 설치되면 그것이 다음 업데이트의 "무엇이 바뀌었나" 판정 기준이 된다.
+    # honey.env 를 쓴 뒤에 만들어야 그 파일까지 목록에 들어간다.
+    & $Python (Join-Path $PSScriptRoot "make_manifest.py") $AppDist $Version $FilesJson
+    if ($LASTEXITCODE -ne 0) { throw "파일 매니페스트 생성 실패 (exit $LASTEXITCODE)" }
+
+    Write-Step "5/6 zip 패키징"
     if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
 
     $currentTxt = Join-Path $OutDir "current.txt.tmp"
@@ -148,7 +157,7 @@ try {
     }
     Write-Host "    -> $ZipPath"
 
-    Write-Step "5/5 version.json"
+    Write-Step "6/6 version.json"
     $sha  = (Get-FileHash $ZipPath -Algorithm SHA256).Hash.ToLower()
     $size = (Get-Item $ZipPath).Length
     $manifest = [ordered]@{

@@ -15,6 +15,7 @@ from urllib.parse import quote
 
 import requests
 
+from .app_update import is_newer  # noqa: F401  (재노출 — 아래 주석 참조)
 from .config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
 from .retry import get_with_retry
 
@@ -57,16 +58,9 @@ def fetch_announcement(base_url=None) -> str:
     return resp.text
 
 
-def is_newer(remote: str, local: str) -> bool:
-    """Compare simple semver strings in a.b.c form."""
-    if not remote or not local:
-        return False
-    try:
-        ra = tuple(int(x) for x in remote.split("."))
-        la = tuple(int(x) for x in local.split("."))
-    except ValueError:
-        return remote != local
-    return ra > la
+# is_newer 는 위에서 app_update 것을 재노출한다 (`version_check.is_newer` 호출부 무변경).
+# 정본을 app_update 에 둔 이유: 런처는 requests 를 넣을 수 없어 이 모듈을 import 하지
+# 못하는데, 런처와 앱이 서로 다른 "더 새 버전" 판정을 쓰면 안 되기 때문이다.
 
 
 def download_to(target_path, url, expected_sha256=None, base_url=None, progress_cb=None):

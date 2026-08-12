@@ -15,13 +15,19 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[],
-    hiddenimports=[],
+    # tkinter = 업데이트 진행창(런처가 앱을 띄우기 전에 띄운다). 나머지는 함수 안에서
+    # 지연 import 되는 것들이라 정적 분석에 안 잡힐 수 있어 명시한다.
+    hiddenimports=['tkinter', 'tkinter.ttk',
+                   'transport.app_update', 'transport.config', 'client_identity'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
+    # tkinter 는 위에서 포함한다(진행창). 나머지 무거운 것들은 계속 확실히 막는다 —
+    # 하나라도 딸려오면 런처가 수백 MB 가 되고, 그러면 "런처는 거의 안 바뀐다"는
+    # 이 구조의 전제가 무너진다.
     excludes=['PyQt6', 'PyQt5', 'pandas', 'numpy', 'requests', 'xlwings',
               'pyarrow', 'PIL', 'botocore', 'boto3', 'matplotlib', 'plotly',
-              'win32com', 'tkinter'],
+              'win32com'],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

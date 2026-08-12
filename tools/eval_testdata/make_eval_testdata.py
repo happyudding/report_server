@@ -275,11 +275,25 @@ def tune(fn, target, lo, hi, iters=36):
 # 웨이퍼 좌표 — 엔진은 반경을 **원점(0,0) 기준**으로 재므로 좌표를 중심 정렬한다.
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _edge_of_line(key, val):
+    """key 로 묶은 각 줄에서 val 이 양끝인 die 마스크 — 엔진 `features._edge_of_line` 과 동일.
+
+    4-이웃(x±1) 조회로 최외곽을 찾으면 **die pitch 가 1 이라는 가정**이 생겨 좌표 간격이
+    2 인 map 에서 모든 die 를 최외곽으로 오판한다. 간격을 가정하지 않는 정의를 쓴다.
+    """
+    uniq, inv = np.unique(key, return_inverse=True)
+    lo = np.full(uniq.size, np.inf)
+    hi = np.full(uniq.size, -np.inf)
+    np.minimum.at(lo, inv, val)
+    np.maximum.at(hi, inv, val)
+    return (val == lo[inv]) | (val == hi[inv])
+
+
 def build_wafer(radius: int):
     """반경 radius 안의 정수격자 die 목록 → (x, y, rnorm, e1) 배열.
 
-    e1 = **최외곽 1 chip line** — 4-이웃 중 하나라도 비어 있는 die. 엔진
-    (`features._e1_mask`)과 **같은 정의**를 써야 E1_FAIL 이 겨냥한 대로 뜬다.
+    e1 = **최외곽 1 chip line** — 각 행의 좌·우 끝 + 각 열의 위·아래 끝 die.
+    엔진(`features._e1_mask`)과 **같은 정의**를 써야 E1_FAIL 이 겨냥한 대로 뜬다.
     """
     xs, ys = [], []
     for y in range(-radius, radius + 1):
@@ -290,10 +304,7 @@ def build_wafer(radius: int):
     x = np.asarray(xs, dtype=float)
     y = np.asarray(ys, dtype=float)
     r = np.sqrt(x ** 2 + y ** 2)
-    coords = set(zip(xs, ys))
-    e1 = np.array([((px + 1, py) not in coords) or ((px - 1, py) not in coords)
-                   or ((px, py + 1) not in coords) or ((px, py - 1) not in coords)
-                   for px, py in zip(xs, ys)], dtype=bool)
+    e1 = _edge_of_line(y, x) | _edge_of_line(x, y)
     return x, y, r / r.max(), e1
 
 
@@ -1423,8 +1434,11 @@ def build_source_df(specs, wafer, seed):
         "SERIAL": [f"C{i:06d}" for i in range(n)],
         "SHOT": [str(i // 4 + 1) for i in range(n)],
         "DUT": [str(i % 4 + 1) for i in range(n)],
-        "XPOS": [str(int(v)) for v in x],
-        "YPOS": [str(int(v)) for v in y],
+        # **실데이터 규약: XPOS/YPOS 는 항상 양수**(0-based die 인덱스). 내부 계산은 중심
+        # 정렬 좌표(x, y)로 하고, 파일에는 좌하단을 (0,0)으로 옮겨 적는다.
+        # 엔진은 좌표 범위의 중앙을 웨이퍼 중심으로 잡으므로 판정은 동일하다.
+        "XPOS": [str(int(v - x.min())) for v in x],
+        "YPOS": [str(int(v - y.min())) for v in y],
         "BIN": [str(int(b)) for b in bin_col],
         "FAILTNO": ["" if t == 0 else str(int(t)) for t in failtno_col],
     }
@@ -1893,6 +1907,7 @@ def main():
     if n_rows < 2000:
         print(f"[경고] source 당 행 수 {n_rows} < 2000 — --radius 를 28 이상으로 두세요")
 
+    _check_coord_limits(args)
     print(f"[1/4] item 카탈로그 생성 (목표 {args.items}개) …")
     specs = build_catalog(args.items, args.seed)
     groups: dict[str, int] = {}
@@ -1966,11 +1981,29 @@ def single_csv_specs(n_rows: int):
     return kept, dropped, used
 
 
+# 제품군별 좌표 상한 — 실데이터에서 넘을 수 없는 값(도메인 규약, 2026-08-12).
+COORD_MAX = {"PMIC": {"y": 200}}
+
+
+def _check_coord_limits(args):
+    """생성할 좌표가 제품군 규약을 넘지 않는지 확인 — 넘으면 실데이터가 아니게 된다.
+
+    좌표는 0-based 양수라 최대값이 곧 `2 × 반경` 이다(PMIC 은 Y ≤ 200).
+    """
+    limit = (COORD_MAX.get(args.product_type) or {}).get("y")
+    span = 2 * args.radius
+    if limit and span > limit:
+        raise SystemExit(f"{args.product_type} 는 YPOS 가 {limit} 을 넘을 수 없습니다 — "
+                         f"--radius {args.radius} 는 Y 최대 {span}. --radius 를 "
+                         f"{limit // 2} 이하로 두세요")
+
+
 def make_single_csv(args):
     """7-meta honeyform **CSV 1장**을 만든다 (사람이 직접 web_report 로 올리는 용도)."""
     import shutil
     import tempfile
 
+    _check_coord_limits(args)
     wafer = build_wafer(args.radius)
     n_rows = wafer[0].size
     specs, dropped, used = single_csv_specs(n_rows)

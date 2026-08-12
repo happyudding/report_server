@@ -106,6 +106,30 @@ def test_spatial_edge_concentration():
     assert out["wafer_zone_signature"] == "EDGE"
 
 
+def test_e1_mask_is_die_pitch_agnostic():
+    """die pitch 가 1 이 아니어도 최외곽 비율이 같아야 한다.
+
+    4-이웃(x±1) 조회로 판정하던 시절에는 pitch=2 인 map 의 **모든 die 가 E1** 로 잡혔고,
+    그 여파로 `edge = 반경밴드 & ~E1` 이 비어 EDGE·RING 룰이 조용히 죽었다.
+    """
+    base = _disc(8)
+    ratios = []
+    for step in (1, 2, 5):
+        xs = np.array([x * step for x, _ in base], dtype=float)
+        ys = np.array([y * step for _, y in base], dtype=float)
+        m = features._e1_mask(xs, ys)
+        assert 0 < m.mean() < 0.5, (step, m.mean())
+        ratios.append(m.sum())
+    assert len(set(ratios)) == 1, ratios          # 간격이 달라도 같은 die 집합
+
+
+def test_e1_mask_undecidable_when_degenerate():
+    """한 줄짜리 배치처럼 전부가 가장자리면 판정 불가(전부 False) — EDGE/RING 을 살린다."""
+    xs = np.arange(1.0, 11.0)
+    m = features._e1_mask(xs, np.zeros(10))
+    assert not m.any()
+
+
 def test_spatial_e1_concentration():
     """최외곽 1열(E1)에만 fail 이 몰리면 e1_fail_ratio 가 뜨고 zone 이 E1 로 분류된다."""
     th = thresholds_for({})
@@ -119,6 +143,32 @@ def test_spatial_e1_concentration():
     assert out["e1_fail_ratio"] > th["e1_fail_ratio_warn"]
     assert out["edge_fail_ratio"] == 0.0          # E1 을 뺀 밴드에는 fail 이 없다
     assert out["wafer_zone_signature"] == "E1"
+
+
+def test_spatial_features_are_translation_invariant():
+    """XPOS/YPOS 는 실데이터에서 **항상 양수**다 — 좌표를 평행이동해도 결과가 같아야 한다.
+
+    엔진이 반경을 원점(0,0) 기준으로 재던 시절에는 0-based 좌표에서 웨이퍼 한 귀퉁이가
+    중심이 되어 edge/center/ring/quadrant 가 통째로 어긋났다.
+    """
+    th = thresholds_for({})
+    dies = _disc()
+    e1 = features._e1_mask(np.array([d[0] for d in dies], dtype=float),
+                           np.array([d[1] for d in dies], dtype=float))
+    fail = list(e1)
+    keys = ("e1_fail_ratio", "edge_fail_ratio", "center_fail_ratio", "ring_fail_ratio",
+            "quadrant_imbalance", "wafer_zone_signature")
+
+    def run(offset):
+        case = {"values": [1.0] * len(dies),
+                "x_pos": [float(x + offset) for x, _ in dies],
+                "y_pos": [float(y + offset) for _, y in dies],
+                "fail_mask": fail, "lsl": 0, "usl": 11}
+        out = features._spatial_features(case, th)
+        return {k: out[k] for k in keys}
+
+    assert run(0) == run(50)          # 중심 정렬(음수 포함) == 양수 0-based
+    assert run(50)["wafer_zone_signature"] == "E1"
 
 
 def test_spatial_none_when_no_coords():
