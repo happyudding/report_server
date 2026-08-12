@@ -343,6 +343,8 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `POST` | `/api/auth/set_password` | Honey | 웹 로그인 비밀번호 설정/변경 (Honey 접속 전용 — 본인확인) |
 | `POST` | `/api/auth/change_password` | — | **410 Gone** (set_password 로 대체) |
 | `POST`/`GET` | `/api/auth/logout`, `/api/auth/me` | 공개 | 로그아웃 / 현재 신원·출처 확인 |
+| `GET` | `/api/my_messages` | 공개 | **관리자 팝업 메시지** 수신 — 아직 확인하지 않은 것만. 두 페이지(검색결과·세션 상세)의 `admin_message.js` 가 30초 폴링(화면이 보일 때만). 수신자 키는 사용량 집계와 같은 규칙(신원 있으면 소문자 계정, 없으면 `ip:<addr>`)이라 **신원 없는 브라우저는 전체 공지만** 받는다. 저장소는 서버 프로세스 메모리(`admin_panel/messages.py`) — 재시작 시 미확인분 소멸 |
+| `POST` | `/api/my_messages/<id>/ack` | 공개* | 확인 버튼 → 읽음 기록(그 사람에겐 다시 안 뜸). *CSRF. 없는 id 도 200(멱등 — 재시도가 실패로 보이지 않게) |
 | `GET` | `/_threads` | 공개 | 진단 (스레드 덤프) |
 
 ### 이미지 스트리밍 (`/pe/report/`, storage_gateway)
@@ -369,6 +371,12 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 Honey 실행·웹 방문 순위))/sessions/users/
 voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail/webreport/builds) +
 `POST /api/*` (sessions/delete·restore·purge, session/<sid>/important·password, db/backup·cleanup 등).
+**사용자 팝업 메시지**(사용자 탭 `📢 메시지 보내기`): `GET /api/messages`(보낸 목록 + 확인 인원) ·
+`POST /api/messages`(발송 — `targets` 가 비면 전체 공지, 있으면 그 계정만. 접속자 표의 `보내기`
+버튼이 대상을 채운다) · `POST /api/messages/<id>/revoke`(회수 — 아직 안 본 사람에게 중단) ·
+`POST /api/messages/<id>/delete`. 저장소는 **DB 가 아니라 프로세스 메모리**
+(`admin_panel/messages.py` — 단일 프로세스 전제, metrics 의 in-flight 카운터와 같은 방식)라
+서버 재시작 시 미확인 메시지가 사라진다. 보관 상한 200건 / 7일.
 **Eval DB 탭·`/api/eval/*` 라우트는 2026-08-03 `/pe/eval` 로 이관**했다(아래 절) — 구현 모듈
 `admin_panel/eval_admin.py` 는 그대로 남아 eval_panel 이 import 한다.
 **세션 삭제 3종 구분**: `sessions/delete` = 관리자 **즉시 영구 삭제**(휴지통을 거치지 않고
@@ -408,8 +416,10 @@ watchdog 병합 + **증거 기반 원인 안내**) / `POST /api/diagnostics/even
 `report_audit_log` 의 (client_user, client_ip) 짝 + 현재 접속자에서 **IP→계정** 매핑을 만들고
 (TTL 60초 캐시, 90일 창), IP 로 표시되는 행을 그 계정에 합친다. 적용 범위는 관리자 화면 전체 —
 실시간 접속자 / 누적 사용량 2종 / 감사 기록(표시 `resolved_user` + 계정명 검색이 그 IP 의
-무신원 기록까지 포함). **한 IP 에 계정이 2개 이상이면 병합하지 않는다**(공용 PC·NAT 에서
-남의 활동을 특정 계정에 붙이지 않기 위함) — 그 행은 예전처럼 익명으로 남는다.
+무신원 기록까지 포함). **한 IP 에 계정이 2개 이상이면 활동이 가장 많은 계정(주 사용자)으로
+합친다**(2026-08-12 완화 — 그전에는 병합하지 않아 한 사람의 행이 갈라져 목록이 길어졌다).
+공용 PC·NAT 에서는 남의 활동이 주 사용자에게 붙을 수 있으므로 합쳐진 행은 `merged_from`
+(화면 `IP 병합` 배지)에 원래 이름을 남긴다. 동률이면 계정명 사전순으로 고정(표가 흔들리지 않게).
 `admin-panel`·`system` 은 사람이 아니라 매핑 근거에서 제외한다. 순위표의 LIMIT 은 **병합 후**
 적용된다(자르고 합치면 조각이 사라지므로).
 `GET /api/eval/labels.csv` = 코멘트 라벨 전체를 db_input 5컬럼 CSV 로 export

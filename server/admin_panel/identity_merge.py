@@ -9,8 +9,11 @@
   1. report_audit_log 의 (client_user, client_ip) 짝 — 재시작과 무관한 영구 근거
   2. 지금 접속 중인 사용자(metrics._active_users)의 (uid, ip) — 감사 기록이 아직 없는 신규 PC
 
-**한 IP 에 계정이 2개 이상이면 병합하지 않는다.** 공용 PC·NAT 에서 남의 활동을 특정 계정에
-붙이면 안 되기 때문이다(그 IP 행은 지금까지처럼 익명으로 남는다).
+**한 IP 에 계정이 2개 이상이면 활동이 가장 많은 계정으로 합친다** (2026-08-12 완화 —
+그전에는 병합하지 않아 IP 행이 익명으로 남았고, 실제로는 한 사람의 행이 갈라져 목록이
+길어졌다). 공용 PC·NAT 에서는 남의 활동이 주 사용자에게 붙을 수 있다는 뜻이므로, 합쳐진
+행에는 원래 이름을 <span>IP 병합</span> 배지로 함께 보여준다(화면 쪽 mergeBadge).
+동률이면 계정명 사전순으로 고정한다 — 새로고침마다 대표가 바뀌면 표가 흔들린다.
 
 `admin-panel`(관리자 패널 자체 감사 기록)과 `system`(정리 스케줄러)은 사람이 아니라
 매핑에서 제외한다 — 안 그러면 관리자 PC 의 IP 가 통째로 'admin-panel' 로 붙는다.
@@ -50,13 +53,15 @@ def ip_of_name(name):
 
 
 def _db_pairs(days):
-    """report_audit_log 의 (ip, 계정) 짝 → {ip: {계정, ...}}."""
+    """report_audit_log 의 (ip, 계정) 짝 → {ip: {계정: 활동건수}}.
+
+    건수를 함께 세는 이유는 한 IP 에 계정이 여럿일 때 주 사용자를 고르기 위해서다."""
     cutoff = int(time.time()) - days * 86400
     out = {}
     try:
         with report_db.get_conn() as conn:
             rows = conn.execute(
-                "SELECT client_ip AS ip, LOWER(TRIM(client_user)) AS uid "
+                "SELECT client_ip AS ip, LOWER(TRIM(client_user)) AS uid, COUNT(*) AS n "
                 "FROM report_audit_log "
                 "WHERE created_at >= ? AND client_ip IS NOT NULL AND client_ip <> '' "
                 "      AND client_user IS NOT NULL AND TRIM(client_user) <> '' "
@@ -67,24 +72,34 @@ def _db_pairs(days):
         uid = (r["uid"] or "").strip()
         if not uid or uid in _NON_HUMAN:
             continue
-        out.setdefault(r["ip"], set()).add(uid)
+        by_uid = out.setdefault(r["ip"], {})
+        by_uid[uid] = by_uid.get(uid, 0) + int(r["n"] or 0)
     return out
 
 
 def _live_pairs(into):
-    """지금 접속 중인 사용자의 (ip, 계정)도 근거에 더한다 (감사 기록 전 신규 PC 대비)."""
+    """지금 접속 중인 사용자의 (ip, 계정)도 근거에 더한다 (감사 기록 전 신규 PC 대비).
+
+    건수는 0 으로 둔다 — 감사 기록이라는 실적 근거보다 앞세우지 않되, 그 IP 에 계정이
+    이것뿐이면 여전히 대표로 뽑힌다."""
     try:
         from admin_panel import metrics
         for uid, ip in metrics.live_identity_pairs():
             if uid and ip and uid not in _NON_HUMAN:
-                into.setdefault(ip, set()).add(uid)
+                into.setdefault(ip, {}).setdefault(uid, 0)
     except Exception:
         pass
 
 
-def ip_to_user(force=False):
-    """{ip: 계정} — 그 IP 에서 확인된 계정이 **정확히 하나일 때만** 담는다.
+def _primary(by_uid):
+    """{계정: 활동건수} → 대표 계정. 건수 최다 → 동률이면 계정명 사전순(결정적)."""
+    return min(by_uid.items(), key=lambda kv: (-kv[1], kv[0]))[0]
 
+
+def ip_to_user(force=False):
+    """{ip: 계정} — 그 IP 의 주 사용자(활동 최다 계정).
+
+    계정이 하나면 그 계정, 여럿이면 활동이 가장 많은 계정이다(모듈 docstring 참조).
     TTL 캐시(60초). force=True 면 즉시 재산출(테스트/수동 새로고침용)."""
     now = time.time()
     with _lock:
@@ -92,7 +107,7 @@ def ip_to_user(force=False):
             return _cache["map"]
     pairs = _db_pairs(MAP_DAYS)
     _live_pairs(pairs)
-    mapping = {ip: next(iter(uids)) for ip, uids in pairs.items() if len(uids) == 1}
+    mapping = {ip: _primary(by_uid) for ip, by_uid in pairs.items() if by_uid}
     with _lock:
         _cache["ts"] = time.time()
         _cache["map"] = mapping

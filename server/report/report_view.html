@@ -2601,6 +2601,8 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
 <!-- 챗봇은 독립 위젯(자체 DOM 주입) — 순서 결합이 없어 boot.js 직전에 둔다.
      실제 노출은 core.js loadAuth() 가 is_master 를 확인한 뒤 enable() 로 켠다. -->
 <script src="/pe/report/static/webreport/chat.js"></script>
+<!-- 관리자 팝업 메시지(자체 DOM 주입 · 30초 폴링) — 챗봇과 같은 독립 위젯이라 순서 결합 없음. -->
+<script src="/pe/report/static/webreport/admin_message.js"></script>
 <script src="/pe/report/static/webreport/boot.js"></script>
 </body>
 </html>

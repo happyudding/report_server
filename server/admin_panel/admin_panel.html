@@ -716,11 +716,54 @@ body { position: relative; }
         <th class="num" title="이 기간 안에서 처음 요청한 뒤 지난 시간">접속</th>
         <th class="num" title="마지막 요청 이후 경과">최근 활동</th>
         <th title="클라이언트 IP">IP</th>
+        <th title="이 사람에게만 보낼 팝업 메시지 — 누르면 아래 '메시지 보내기' 받는 사람에 추가됩니다">메시지</th>
       </tr></thead>
-      <tbody id="auBody"><tr class="empty-row"><td colspan="9">로딩 중…</td></tr></tbody>
+      <tbody id="auBody"><tr class="empty-row"><td colspan="10">로딩 중…</td></tr></tbody>
     </table></div>
     <div class="msg">서버 메모리 기준이라 <b>서버를 재시작하면 초기화</b>됩니다. 화면을 열어만 두고 아무 요청도 하지 않는 사람은 기간이 지나면 목록에서 빠집니다.
-      같은 IP 에서 온 접속은 계정이 하나로 확정되면 한 사람으로 합쳐 보여줍니다 (<span class="badge gray">IP 병합</span>).</div>
+      같은 IP 에서 온 접속은 그 IP 의 <b>주 사용자</b>(활동이 가장 많은 계정)로 합쳐 보여줍니다 (<span class="badge gray">IP 병합</span>).</div>
+  </div>
+
+  <!-- 팝업 메시지 — 웹 화면(검색결과·세션 상세)을 열어둔 사람에게 공지를 띄운다. -->
+  <div class="card">
+    <h2>📢 메시지 보내기 <span class="hint">웹 화면을 보고 있는 사용자에게 팝업으로 띄웁니다 ·
+      받는 사람이 확인 버튼을 누르면 그 사람에겐 다시 뜨지 않습니다</span></h2>
+    <div class="toolbar" style="align-items:flex-start; flex-wrap:wrap">
+      <label style="display:flex; align-items:center; gap:5px; font-size:12px; cursor:pointer">
+        <input type="checkbox" id="msgAll" checked> <b>전체 공지</b>
+      </label>
+      <input id="msgTargets" class="inp" style="width:320px" disabled
+             placeholder="받는 사람 (계정, 쉼표로 여러 명)"
+             title="전체 공지를 끄면 입력할 수 있습니다. 위 접속자 표의 '보내기' 버튼으로도 추가됩니다">
+      <select id="msgLevel" class="sel" title="경고로 보내면 팝업이 노란색으로 강조됩니다">
+        <option value="info">일반 공지</option>
+        <option value="warn">경고</option>
+      </select>
+      <span class="grow"></span>
+      <button class="btn" id="btnMsgRefresh" title="보낸 메시지 목록 새로고침">↻</button>
+    </div>
+    <div class="toolbar" style="flex-wrap:wrap">
+      <input id="msgTitle" class="inp" style="width:320px" maxlength="200" placeholder="제목 (비우면 '관리자 공지')">
+      <span class="grow"></span>
+    </div>
+    <textarea id="msgBody" class="inp" rows="3" maxlength="2000"
+              style="width:100%; resize:vertical" placeholder="보낼 내용을 입력하세요"></textarea>
+    <div class="toolbar" style="margin-top:8px">
+      <button class="btn primary" id="btnMsgSend">보내기</button>
+      <span class="hint" id="msgSendMsg"></span>
+    </div>
+    <div class="table-wrap" style="margin-top:10px"><table>
+      <thead><tr>
+        <th class="num" title="메시지 번호">#</th><th>받는 사람</th><th>제목 / 내용</th>
+        <th title="지금도 안 본 사람에게 뜨는 중인지">상태</th>
+        <th class="num" title="확인 버튼을 누른 사람 수 — 이름 위에 마우스를 올리면 명단이 보입니다">확인</th>
+        <th>보낸 시각</th><th>작업</th>
+      </tr></thead>
+      <tbody id="msgListBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="msg">메시지는 <b>서버 메모리에만</b> 보관합니다 — 서버를 재시작하면 아직 확인하지 않은 메시지도 함께 사라지니 필요하면 다시 보내세요.
+      화면을 보고 있는 사람에게 <b>최대 30초</b> 안에 뜹니다. 웹 화면을 닫아 둔 사람은 다음에 열 때 뜹니다(7일 보관).
+      신원이 없는 일반 브라우저는 <b>전체 공지만</b> 받습니다.</div>
   </div>
 
   <!-- 누적 — 아래 두 카드는 기간 선택(usersDays)을 공유한다. -->
@@ -753,8 +796,9 @@ body { position: relative; }
       <tbody id="usageRankBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
     </table></div>
     <div class="msg">신원 없는 브라우저·구버전 Honey 는 <span class="mono">ip:주소</span> 행으로 집계되지만,
-      <b>그 IP 를 쓰는 계정이 하나로 확정되면 같은 사람으로 합칩니다</b> (<span class="badge gray">IP 병합</span> 표시).
-      한 IP 를 여러 계정이 쓰면(공용 PC·NAT) 누구 것인지 알 수 없으므로 합치지 않습니다.</div>
+      <b>그 IP 를 쓰는 계정 중 활동이 가장 많은 사람(주 사용자)에게 합칩니다</b> (<span class="badge gray">IP 병합</span> 표시 ·
+      배지에 마우스를 올리면 합쳐진 원래 이름이 보입니다).
+      한 PC 를 여러 사람이 쓰면(공용 PC·NAT) 다른 사람의 활동도 주 사용자 행에 섞일 수 있으니, 정확히 가려야 할 때는 배지로 확인하세요.</div>
   </div>
   <div class="card">
     <h2>웹 로그인 계정 <span class="hint">현재 접근제어는 Honey 클라이언트 신원(UA)으로 하며, 이 계정은 즐겨찾기·중요표시 보관용입니다</span>
@@ -2173,7 +2217,7 @@ $("btnPurgeExpired").onclick = async () => {
 // 사용자 관련 화면은 전부 이 탭에 모았다 (실시간 접속 / 누적 사용량 / 웹 로그인 계정).
 // 이전에는 현황·통계·사용자 세 탭에 흩어져 있었고 통계 탭 '사용자별 사용량' 은 여기
 // '작업 활동' 표와 같은 API 를 두 번 그리는 중복이었다.
-function loadUsersTab() { loadLiveUsers(); loadUsageTables(); loadUsers(); }
+function loadUsersTab() { loadLiveUsers(); loadUsageTables(); loadUsers(); loadMessages(); }
 
 function goUsersTab() {
   const btn = document.querySelector('.tab[data-panel="pUsers"]');
@@ -2255,7 +2299,7 @@ async function loadLiveUsers() {
       <td>${u.user
             ? `<b class="who-link" data-who="${esc(u.user)}" title="이 사용자의 활동 기록 보기"
                   style="cursor:pointer;color:var(--accent)">${esc(u.user)}</b>`
-            : `<span style="color:var(--ink-3)" title="신원 토큰이 없고 같은 IP 를 쓰는 계정도 특정되지 않아 IP 로만 구분합니다">익명</span>`
+            : `<span style="color:var(--ink-3)" title="신원 토큰이 없고, 이 IP 로 활동한 계정 기록도 없어 IP 로만 구분합니다">익명</span>`
           }${u.merged ? mergeBadge(u.ips) : ""}</td>
       <td>${u.honey ? `<span class="badge done">Honey</span>` : `<span class="badge gray">브라우저</span>`}</td>
       <td>${esc(activityLabel(u.route))}</td>
@@ -2264,8 +2308,19 @@ async function loadLiveUsers() {
       <td class="num">${fmtDur(u.since)}</td>
       <td class="num">${fmtAgo(u.ago)}</td>
       <td class="mono">${esc((u.ips && u.ips.length > 1) ? u.ips.join(", ") : (u.ip || "-"))}</td>
+      <td>${msgTargetOf(u)
+            ? `<button class="btn msg-to" data-to="${esc(msgTargetOf(u))}"
+                  title="이 사람에게만 보낼 대상으로 추가">보내기</button>`
+            : "-"}</td>
     </tr>`).join("")
-    : `<tr class="empty-row"><td colspan="9">최근 ${mins}분 안에 접속한 사용자가 없습니다.</td></tr>`;
+    : `<tr class="empty-row"><td colspan="10">최근 ${mins}분 안에 접속한 사용자가 없습니다.</td></tr>`;
+}
+
+// 접속자 행 → 메시지 수신자 키. 서버 쪽 규칙(report/routes_misc._message_user_key)과
+// 같아야 한다 — 신원이 있으면 계정, 없으면 'ip:<주소>'.
+function msgTargetOf(u) {
+  if (u.user) return String(u.user).toLowerCase();
+  return u.ip ? "ip:" + u.ip : "";
 }
 $("auWindow").onchange = loadLiveUsers;
 $("btnAuRefresh").onclick = loadLiveUsers;
@@ -2307,6 +2362,92 @@ async function loadUsageTables() {
     $("usageRankBody").innerHTML = `<tr class="empty-row"><td colspan="7">조회 실패: ${esc(e)}</td></tr>`;
   }
 }
+// ── 팝업 메시지 (저장소는 서버 프로세스 메모리 — admin_panel/messages.py) ─────
+async function loadMessages() {
+  const tb = $("msgListBody");
+  try {
+    const d = await getJSON("api/messages");
+    tb.innerHTML = d.rows.length ? d.rows.map(m => `
+      <tr>
+        <td class="num">${m.id}</td>
+        <td>${m.targets.length
+              ? m.targets.map(t => `<span class="badge gray">${esc(t)}</span>`).join(" ")
+              : `<span class="badge done">전체</span>`}</td>
+        <td>${m.title ? `<b>${esc(m.title)}</b><br>` : ""}<span style="color:var(--ink-2)">${esc(m.body)}</span></td>
+        <td>${m.active ? `<span class="badge done">보내는 중</span>` : `<span class="badge gray">회수됨</span>`}</td>
+        <td class="num" title="${m.readers.length ? esc(m.readers.map(r => r.user).join(", ")) : "아직 확인한 사람이 없습니다"}">${m.read_count}</td>
+        <td>${fmtDate(m.created_at)}</td>
+        <td>
+          ${m.active ? `<button class="btn msg-revoke" data-id="${m.id}"
+                          title="아직 확인하지 않은 사람에게 더 이상 띄우지 않습니다">회수</button>` : ""}
+          <button class="btn danger msg-del" data-id="${m.id}" title="목록에서 완전히 지웁니다">삭제</button>
+        </td>
+      </tr>`).join("")
+      : `<tr class="empty-row"><td colspan="7">보낸 메시지가 없습니다.</td></tr>`;
+  } catch (e) {
+    tb.innerHTML = `<tr class="empty-row"><td colspan="7">조회 실패: ${esc(e)}</td></tr>`;
+  }
+}
+
+$("msgAll").onchange = () => {
+  const all = $("msgAll").checked;
+  $("msgTargets").disabled = all;
+  if (all) $("msgTargets").value = "";
+};
+$("btnMsgRefresh").onclick = loadMessages;
+
+// 접속자 표의 '보내기' — 받는 사람 칸에 추가하고 전체 공지 체크를 푼다.
+$("auBody").addEventListener("click", e => {
+  const btn = e.target.closest(".msg-to");
+  if (!btn) return;
+  const to = btn.dataset.to;
+  $("msgAll").checked = false;
+  $("msgTargets").disabled = false;
+  const cur = $("msgTargets").value.split(",").map(s => s.trim()).filter(Boolean);
+  if (!cur.includes(to)) cur.push(to);
+  $("msgTargets").value = cur.join(", ");
+  $("msgBody").focus();
+});
+
+$("btnMsgSend").onclick = async () => {
+  const body = $("msgBody").value.trim();
+  const note = $("msgSendMsg");
+  if (!body) { note.textContent = "보낼 내용을 입력하세요."; return; }
+  const all = $("msgAll").checked;
+  const targets = all ? [] : $("msgTargets").value.split(",").map(s => s.trim()).filter(Boolean);
+  if (!all && !targets.length) { note.textContent = "받는 사람을 입력하거나 전체 공지를 켜세요."; return; }
+  if (!confirm(all ? "모든 사용자에게 팝업을 띄웁니다. 보낼까요?"
+                   : `${targets.join(", ")} 님에게 팝업을 띄웁니다. 보낼까요?`)) return;
+  $("btnMsgSend").disabled = true;
+  note.textContent = "보내는 중…";
+  try {
+    await postJSON("api/messages", {
+      body, title: $("msgTitle").value.trim(), targets, level: $("msgLevel").value });
+    $("msgBody").value = ""; $("msgTitle").value = "";
+    note.textContent = "보냈습니다. 받는 사람 화면에 최대 30초 안에 뜹니다.";
+    loadMessages();
+  } catch (e) {
+    note.textContent = "실패: " + e;
+  } finally {
+    $("btnMsgSend").disabled = false;
+  }
+};
+
+$("msgListBody").addEventListener("click", async e => {
+  const revoke = e.target.closest(".msg-revoke"), del = e.target.closest(".msg-del");
+  const btn = revoke || del;
+  if (!btn) return;
+  if (del && !confirm(`메시지 #${btn.dataset.id} 을 목록에서 지울까요?`)) return;
+  btn.disabled = true;
+  try {
+    await postJSON(`api/messages/${btn.dataset.id}/${revoke ? "revoke" : "delete"}`);
+    loadMessages();
+  } catch (err) {
+    alert("실패: " + err);
+    btn.disabled = false;
+  }
+});
+
 $("usersDays").onchange = loadUsageTables;
 // 누적 사용량 하위 전환 (작업 활동 ↔ 접속 횟수) — 데이터는 이미 둘 다 받아뒀다.
 $("usersSubtabs").addEventListener("click", e => {

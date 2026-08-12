@@ -1,0 +1,409 @@
+﻿item,source,group,level,intent,expect,metric,target,actual_metric,fired_all_rules,fired_live,missing,false_fire,suppressed,co_fired,status_live,cell_live
+CENTER_FAIL_L1,0,single,1,CENTER_FAIL,not_fire,center_fail_ratio,1.0,0.9221,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+CENTER_FAIL_L2,0,single,2,CENTER_FAIL,not_fire,center_fail_ratio,1.6,1.3831,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+CENTER_FAIL_L3(FAIL),0,single,3,CENTER_FAIL,fire,center_fail_ratio,2.2,2.3052,CENTER_FAIL,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+CENTER_FAIL_L4(FAIL),0,single,4,CENTER_FAIL,fire,center_fail_ratio,3.2,3.2273,CENTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+CENTER_FAIL_L5(FAIL),0,single,5,CENTER_FAIL,fire,center_fail_ratio,5.0,4.7948,CENTER_FAIL;CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+CENTER_FAIL_L6(FAIL),0,single,6,CENTER_FAIL,fire,center_fail_ratio,7.5,7.3766,CENTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+CENTER_FAIL_L7(FAIL),0,single,7,CENTER_FAIL,fire,center_fail_ratio,10.5,10.3733,CENTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+CLUSTER_FAIL_L1,0,single,1,CLUSTER_FAIL,not_fire,quadrant_imbalance,0.3,0.334,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+CLUSTER_FAIL_L2,0,single,2,CLUSTER_FAIL,not_fire,quadrant_imbalance,0.7,0.7819,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+CLUSTER_FAIL_L3(FAIL),0,single,3,CLUSTER_FAIL,fire,quadrant_imbalance,1.15,1.4674,CLUSTER_FAIL,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+CLUSTER_FAIL_L4(FAIL),0,single,4,CLUSTER_FAIL,fire,quadrant_imbalance,1.6,1.627,CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+CLUSTER_FAIL_L5(FAIL),0,single,5,CLUSTER_FAIL,fire,quadrant_imbalance,2.2,2.3612,CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+CLUSTER_FAIL_L6(FAIL),0,single,6,CLUSTER_FAIL,fire,quadrant_imbalance,3.0,3.1452,CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+CLUSTER_FAIL_L7(FAIL),0,single,7,CLUSTER_FAIL,fire,quadrant_imbalance,3.9,3.9145,CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+EDGE_FAIL_L1,0,single,1,EDGE_FAIL,not_fire,edge_fail_ratio,1.0,1.0388,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+EDGE_FAIL_L2,0,single,2,EDGE_FAIL,not_fire,edge_fail_ratio,1.6,1.6159,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+EDGE_FAIL_L3(FAIL),0,single,3,EDGE_FAIL,fire,edge_fail_ratio,2.1,2.0776,EDGE_FAIL,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+EDGE_FAIL_L4(FAIL),0,single,4,EDGE_FAIL,fire,edge_fail_ratio,2.3,2.3084,EDGE_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+EDGE_FAIL_L5(FAIL),0,single,5,EDGE_FAIL,fire,edge_fail_ratio,2.5,2.4931,EDGE_FAIL;CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+EDGE_FAIL_L6(FAIL),0,single,6,EDGE_FAIL,fire,edge_fail_ratio,2.66,2.6547,EDGE_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+EDGE_FAIL_L7(FAIL),0,single,7,EDGE_FAIL,fire,edge_fail_ratio,2.78,2.7701,EDGE_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+RING_FAIL_L1,0,single,1,RING_FAIL,not_fire,ring_fail_ratio,1.0,0.9873,CLUSTER_FAIL,UNKNOWN,,,,CLUSTER_FAIL,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+RING_FAIL_L2,0,single,2,RING_FAIL,not_fire,ring_fail_ratio,1.2,1.2151,CLUSTER_FAIL,UNKNOWN,,,,CLUSTER_FAIL,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+RING_FAIL_L3(FAIL),0,single,3,RING_FAIL,fire,ring_fail_ratio,1.35,1.367,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+RING_FAIL_L4(FAIL),0,single,4,RING_FAIL,fire,ring_fail_ratio,1.5,1.5189,CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+RING_FAIL_L5(FAIL),0,single,5,RING_FAIL,fire,ring_fail_ratio,1.62,1.6405,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+RING_FAIL_L6(FAIL),0,single,6,RING_FAIL,fire,ring_fail_ratio,1.73,1.7468,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+RING_FAIL_L7(FAIL),0,single,7,RING_FAIL,fire,ring_fail_ratio,1.82,1.8227,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+WAFER_GRADIENT_L1,0,single,1,WAFER_GRADIENT,not_fire,gradient_norm_abs_max,0.1,0.0984,SEVERE_OUTLIER;SPEC_TOO_TIGHT;HEAVY_TAIL,SEVERE_OUTLIER;SPEC_TOO_TIGHT;HEAVY_TAIL,,,,SEVERE_OUTLIER;SPEC_TOO_TIGHT;HEAVY_TAIL,MAJOR,"[MAJOR] [현상] outlier 성 fail 비율이 높게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail 비율 높음 — 개별 die 산발 이상, contact/retest 재현성 확인"
+WAFER_GRADIENT_L2,0,single,2,WAFER_GRADIENT,not_fire,gradient_norm_abs_max,0.22,0.2185,OUTLIER_WARN;SPEC_TOO_TIGHT,OUTLIER_WARN;SPEC_TOO_TIGHT,,,,OUTLIER_WARN;SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] outlier 비율이 주의 수준으로 관찰됩니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+BIDIR_TAIL_L1,0,single,1,BIDIR_TAIL,not_fire,spec_margin_min,1.6,1.5877,WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+BIDIR_TAIL_L2,0,single,2,BIDIR_TAIL,not_fire,spec_margin_min,1.15,1.1521,WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+BIDIR_TAIL_L3(FAIL),0,single,3,BIDIR_TAIL,fire,spec_margin_min,0.9,0.8773,CLUSTER_FAIL;WIDE_DISTRIBUTION;BIDIR_TAIL;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+BIDIR_TAIL_L4(FAIL),0,single,4,BIDIR_TAIL,fire,spec_margin_min,0.7,0.6878,CLUSTER_FAIL;WIDE_DISTRIBUTION;BIDIR_TAIL;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+BIDIR_TAIL_L5(FAIL),0,single,5,BIDIR_TAIL,fire,spec_margin_min,0.5,0.4921,BIDIR_TAIL;WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+BIDIR_TAIL_L6(FAIL),0,single,6,BIDIR_TAIL,fire,spec_margin_min,0.3,0.2725,BIDIR_TAIL;WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+BIDIR_TAIL_L7(FAIL),0,single,7,BIDIR_TAIL,fire,spec_margin_min,0.15,0.1425,BIDIR_TAIL;WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+CODE_RAIL_L1,0,single,1,CODE_RAIL,not_fire,code_edge_hit,0.01,0.0098,SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+CODE_RAIL_L2,0,single,2,CODE_RAIL,not_fire,code_edge_hit,0.03,0.0297,SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+CODE_RAIL_L3(FAIL),0,single,3,CODE_RAIL,fire,code_edge_hit,0.07,0.0692,CLUSTER_FAIL;SPEC_TOO_TIGHT;CODE_RAIL,SPEC_TOO_TIGHT,,,,CLUSTER_FAIL;SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+CODE_RAIL_L4(FAIL),0,single,4,CODE_RAIL,fire,code_edge_hit,0.12,0.1182,CODE_RAIL;SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+CODE_RAIL_L5(FAIL),0,single,5,CODE_RAIL,fire,code_edge_hit,0.2,0.1962,CODE_RAIL;SPEC_TOO_TIGHT;SUBPOP_GAP,SUBPOP_GAP;SPEC_TOO_TIGHT,,,,SPEC_TOO_TIGHT;SUBPOP_GAP,MAJOR,"[MAJOR][다봉] [현상] 분포가 여러 level로 분리되는 양상입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+CODE_RAIL_L6(FAIL),0,single,6,CODE_RAIL,fire,code_edge_hit,0.35,0.3424,EDGE_FAIL;WIDE_DISTRIBUTION;LOW_CPK;CODE_RAIL;SUBPOP_GAP,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,,,,EDGE_FAIL;WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,MAJOR,"[MAJOR][다봉] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+CODE_RAIL_L7(FAIL),0,single,7,CODE_RAIL,fire,code_edge_hit,0.6,0.5847,EDGE_FAIL;WIDE_DISTRIBUTION;LOW_CPK;CODE_RAIL;SUBPOP_GAP,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,,,,EDGE_FAIL;WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,MAJOR,"[MAJOR][다봉] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+CONSTANT_VALUE_L1,0,single,1,CONSTANT_VALUE,not_fire,stdev,0.0,0.0209,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+CONSTANT_VALUE_L2,0,single,2,CONSTANT_VALUE,not_fire,stdev,0.0,0.0223,CENTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,CENTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+CONSTANT_VALUE_L3(FAIL),0,single,3,CONSTANT_VALUE,fire,stdev,0.0,0.0,CONSTANT_VALUE;EDGE_FAIL;CLUSTER_FAIL,UNKNOWN,,,,EDGE_FAIL;CLUSTER_FAIL,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+CONSTANT_VALUE_L4(FAIL),0,single,4,CONSTANT_VALUE,fire,stdev,0.0,0.0,CONSTANT_VALUE;EDGE_FAIL;CLUSTER_FAIL,UNKNOWN,,,,EDGE_FAIL;CLUSTER_FAIL,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+CONSTANT_VALUE_L5(FAIL),0,single,5,CONSTANT_VALUE,fire,stdev,0.0,0.0,CONSTANT_VALUE;EDGE_FAIL;CLUSTER_FAIL,UNKNOWN,,,,EDGE_FAIL;CLUSTER_FAIL,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+CONSTANT_VALUE_L6(FAIL),0,single,6,CONSTANT_VALUE,fire,stdev,0.0,0.0,CONSTANT_VALUE;EDGE_FAIL;CLUSTER_FAIL,UNKNOWN,,,,EDGE_FAIL;CLUSTER_FAIL,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+CONSTANT_VALUE_L7(FAIL),0,single,7,CONSTANT_VALUE,fire,stdev,0.0,0.0,CONSTANT_VALUE;EDGE_FAIL;CLUSTER_FAIL,UNKNOWN,,,,EDGE_FAIL;CLUSTER_FAIL,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+EQUIPMENT_SUSPECT_L1,0,single,1,EQUIPMENT_SUSPECT,not_fire,site_cpk_delta,0.1,,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+EQUIPMENT_SUSPECT_L2,0,single,2,EQUIPMENT_SUSPECT,not_fire,site_cpk_delta,0.3,,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+EQUIPMENT_SUSPECT_L3(FAIL),0,single,3,EQUIPMENT_SUSPECT,fire,site_cpk_delta,0.6,,CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+EQUIPMENT_SUSPECT_L4(FAIL),0,single,4,EQUIPMENT_SUSPECT,fire,site_cpk_delta,1.0,,CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+EQUIPMENT_SUSPECT_L5(FAIL),0,single,5,EQUIPMENT_SUSPECT,fire,site_cpk_delta,1.6,,CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+EQUIPMENT_SUSPECT_L6(FAIL),0,single,6,EQUIPMENT_SUSPECT,fire,site_cpk_delta,2.5,,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+EQUIPMENT_SUSPECT_L7(FAIL),0,single,7,EQUIPMENT_SUSPECT,fire,site_cpk_delta,4.0,,OUTLIER_WARN;SPEC_TOO_TIGHT;HEAVY_TAIL,OUTLIER_WARN;SPEC_TOO_TIGHT;HEAVY_TAIL,,,,OUTLIER_WARN;SPEC_TOO_TIGHT;HEAVY_TAIL,MINOR,"[MINOR] [현상] outlier 비율이 주의 수준으로 관찰됩니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+GROSS_FAIL_L1,0,single,1,GROSS_FAIL,not_fire,yield,0.97,0.97,OUTLIER_WARN;HEAVY_TAIL,OUTLIER_WARN;HEAVY_TAIL,,,,OUTLIER_WARN;HEAVY_TAIL,MINOR,"[MINOR] [현상] outlier 비율이 주의 수준으로 관찰됩니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+HEAVY_TAIL_L1,0,single,1,HEAVY_TAIL,not_fire,kurtosis,0.5,0.5046,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+HEAVY_TAIL_L2,0,single,2,HEAVY_TAIL,not_fire,kurtosis,1.4,1.4,SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+HEAVY_TAIL_L3(FAIL),0,single,3,HEAVY_TAIL,fire,kurtosis,2.4,2.4,CLUSTER_FAIL;SPEC_TOO_TIGHT;HEAVY_TAIL,HEAVY_TAIL;SPEC_TOO_TIGHT,,,,CLUSTER_FAIL;SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+HEAVY_TAIL_L4(FAIL),0,single,4,HEAVY_TAIL,fire,kurtosis,4.0,4.0,CENTER_FAIL;SPEC_TOO_TIGHT;CLUSTER_FAIL;HEAVY_TAIL,HEAVY_TAIL;SPEC_TOO_TIGHT,,,,CENTER_FAIL;SPEC_TOO_TIGHT;CLUSTER_FAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+HEAVY_TAIL_L5(FAIL),0,single,5,HEAVY_TAIL,fire,kurtosis,8.0,8.0,HEAVY_TAIL;SPEC_TOO_TIGHT,HEAVY_TAIL;SPEC_TOO_TIGHT,,,,SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+HEAVY_TAIL_L6(FAIL),0,single,6,HEAVY_TAIL,fire,kurtosis,18.0,18.0,HEAVY_TAIL;SPEC_TOO_TIGHT,HEAVY_TAIL;SPEC_TOO_TIGHT,,,,SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+HEAVY_TAIL_L7(FAIL),0,single,7,HEAVY_TAIL,fire,kurtosis,40.0,34.9258,OUTLIER_WARN;SPEC_TOO_TIGHT;HEAVY_TAIL,OUTLIER_WARN;SPEC_TOO_TIGHT;HEAVY_TAIL,,,,OUTLIER_WARN;SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] outlier 비율이 주의 수준으로 관찰됩니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+LOW_CPK_L1,0,single,1,LOW_CPK,not_fire,cpk,1.8,1.8033,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+LOW_CPK_L2,0,single,2,LOW_CPK,not_fire,cpk,1.45,1.455,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+LOW_CPK_L3(FAIL),0,single,3,LOW_CPK,fire,cpk,1.25,1.2435,CLUSTER_FAIL;SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,LOW_CPK,CLUSTER_FAIL;SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+LOW_CPK_L4(FAIL),0,single,4,LOW_CPK,fire,cpk,1.0,1.0057,CENTER_FAIL;SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,LOW_CPK,CENTER_FAIL;SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+LOW_CPK_L5(FAIL),0,single,5,LOW_CPK,fire,cpk,0.75,0.7539,WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,WIDE_DISTRIBUTION,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+LOW_CPK_L6(FAIL),0,single,6,LOW_CPK,fire,cpk,0.5,0.4948,WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,WIDE_DISTRIBUTION,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+LOW_CPK_L7(FAIL),0,single,7,LOW_CPK,fire,cpk,0.3,0.2963,BIDIR_TAIL;WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,BIDIR_TAIL;WIDE_DISTRIBUTION,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+LOW_SAMPLE_UNCERTAIN_L1,0,single,1,LOW_SAMPLE_UNCERTAIN,not_fire,n_dut,400,400,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+LOW_SAMPLE_UNCERTAIN_L2,0,single,2,LOW_SAMPLE_UNCERTAIN,not_fire,n_dut,60,60,OUTLIER_WARN;SPEC_TOO_TIGHT;HEAVY_TAIL,OUTLIER_WARN;SPEC_TOO_TIGHT;HEAVY_TAIL,,,,OUTLIER_WARN;SPEC_TOO_TIGHT;HEAVY_TAIL,MINOR,"[MINOR] [현상] outlier 비율이 주의 수준으로 관찰됩니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+LOW_SAMPLE_UNCERTAIN_L3(FAIL),0,single,3,LOW_SAMPLE_UNCERTAIN,fire,n_dut,19,19,CLUSTER_FAIL;LOW_SAMPLE_UNCERTAIN;OUTLIER_WARN;LOW_CPK,LOW_CPK;OUTLIER_WARN,,,,CLUSTER_FAIL;OUTLIER_WARN;LOW_CPK,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+LOW_SAMPLE_UNCERTAIN_L4(FAIL),0,single,4,LOW_SAMPLE_UNCERTAIN,fire,n_dut,15,15,CLUSTER_FAIL;LOW_SAMPLE_UNCERTAIN;SEVERE_OUTLIER;LOW_CPK;WAFER_GRADIENT,SEVERE_OUTLIER;LOW_CPK,,,,CLUSTER_FAIL;SEVERE_OUTLIER;LOW_CPK;WAFER_GRADIENT,MAJOR,"[MAJOR] [현상] outlier 성 fail 비율이 높게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail 비율 높음 — 개별 die 산발 이상, contact/retest 재현성 확인"
+LOW_SAMPLE_UNCERTAIN_L5(FAIL),0,single,5,LOW_SAMPLE_UNCERTAIN,fire,n_dut,10,10,LOW_CPK;LOW_SAMPLE_UNCERTAIN;OUTLIER_WARN;MEAN_SHIFT,LOW_CPK;OUTLIER_WARN;MEAN_SHIFT,,,,LOW_CPK;OUTLIER_WARN;MEAN_SHIFT,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+LOW_SAMPLE_UNCERTAIN_L6(FAIL),0,single,6,LOW_SAMPLE_UNCERTAIN,fire,n_dut,5,5,WAFER_GRADIENT;LOW_SAMPLE_UNCERTAIN;WIDE_DISTRIBUTION;LOW_CPK;MEAN_SHIFT,WIDE_DISTRIBUTION;LOW_CPK;MEAN_SHIFT,,,,WAFER_GRADIENT;WIDE_DISTRIBUTION;LOW_CPK;MEAN_SHIFT,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+LOW_SAMPLE_UNCERTAIN_L7(FAIL),0,single,7,LOW_SAMPLE_UNCERTAIN,fire,n_dut,2,2,CLUSTER_FAIL;LOW_SAMPLE_UNCERTAIN;WIDE_DISTRIBUTION;LOW_CPK;MEAN_SHIFT;WAFER_GRADIENT,WIDE_DISTRIBUTION;LOW_CPK;MEAN_SHIFT,,,,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK;MEAN_SHIFT;WAFER_GRADIENT,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+MEAN_SHIFT_L1,0,single,1,MEAN_SHIFT,not_fire,center_bias,0.08,0.0802,CENTER_FAIL;HEAVY_TAIL,HEAVY_TAIL,,,,CENTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+MEAN_SHIFT_L2,0,single,2,MEAN_SHIFT,not_fire,center_bias,0.22,0.2194,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+MEAN_SHIFT_L3(FAIL),0,single,3,MEAN_SHIFT,fire,center_bias,0.34,0.3407,CLUSTER_FAIL;MEAN_SHIFT;HEAVY_TAIL,MEAN_SHIFT;HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 중심이 한쪽 spec으로 치우쳐 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 중심이 한쪽 spec 으로 치우침 — offset/센터링 trim 검토"
+MEAN_SHIFT_L4(FAIL),0,single,4,MEAN_SHIFT,fire,center_bias,0.45,0.4513,MEAN_SHIFT;HEAVY_TAIL,MEAN_SHIFT;HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 중심이 한쪽 spec으로 치우쳐 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 중심이 한쪽 spec 으로 치우침 — offset/센터링 trim 검토"
+MEAN_SHIFT_L5(FAIL),0,single,5,MEAN_SHIFT,fire,center_bias,0.58,0.5822,CLUSTER_FAIL;MEAN_SHIFT;HEAVY_TAIL,MEAN_SHIFT;HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 중심이 한쪽 spec으로 치우쳐 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 중심이 한쪽 spec 으로 치우침 — offset/센터링 trim 검토"
+MEAN_SHIFT_L6(FAIL),0,single,6,MEAN_SHIFT,fire,center_bias,0.72,0.7241,LOW_CPK;MEAN_SHIFT;HEAVY_TAIL,LOW_CPK;MEAN_SHIFT;HEAVY_TAIL,,,,LOW_CPK;HEAVY_TAIL,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+MEAN_SHIFT_L7(FAIL),0,single,7,MEAN_SHIFT,fire,center_bias,0.9,0.8987,LOW_CPK;MEAN_SHIFT,LOW_CPK;MEAN_SHIFT,,,,LOW_CPK,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+MISSING_LIMIT_L1,0,single,1,MISSING_LIMIT,not_fire,limit_missing,0,0,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+MISSING_LIMIT_L2,0,single,2,MISSING_LIMIT,not_fire,limit_missing,0,0,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+MISSING_LIMIT_L3(FAIL),0,single,3,MISSING_LIMIT,fire,limit_missing,1,1,MISSING_LIMIT,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+MISSING_LIMIT_L4(FAIL),0,single,4,MISSING_LIMIT,fire,limit_missing,1,1,MISSING_LIMIT,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+MISSING_LIMIT_L5(FAIL),0,single,5,MISSING_LIMIT,fire,limit_missing,1,1,MISSING_LIMIT,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+MISSING_LIMIT_L6(FAIL),0,single,6,MISSING_LIMIT,fire,limit_missing,1,1,MISSING_LIMIT,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+MISSING_LIMIT_L7(FAIL),0,single,7,MISSING_LIMIT,fire,limit_missing,1,1,MISSING_LIMIT,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+OUTLIER_WARN_L1,0,single,1,OUTLIER_WARN,not_fire,outlier_ratio,0.0,0.0001,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+OUTLIER_WARN_L2,0,single,2,OUTLIER_WARN,not_fire,outlier_ratio,0.012,0.012,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+OUTLIER_WARN_L3(FAIL),0,single,3,OUTLIER_WARN,fire,outlier_ratio,0.022,0.0221,CENTER_FAIL;OUTLIER_WARN;CLUSTER_FAIL;HEAVY_TAIL,OUTLIER_WARN;HEAVY_TAIL,,,,CENTER_FAIL;CLUSTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] outlier 비율이 주의 수준으로 관찰됩니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+OUTLIER_WARN_L4(FAIL),0,single,4,OUTLIER_WARN,fire,outlier_ratio,0.028,0.028,CLUSTER_FAIL;OUTLIER_WARN;HEAVY_TAIL,OUTLIER_WARN;HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MINOR,"[MINOR] [현상] outlier 비율이 주의 수준으로 관찰됩니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+OUTLIER_WARN_L5(FAIL),0,single,5,OUTLIER_WARN,fire,outlier_ratio,0.034,0.034,OUTLIER_WARN;HEAVY_TAIL,OUTLIER_WARN;HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] outlier 비율이 주의 수준으로 관찰됩니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+OUTLIER_WARN_L6(FAIL),0,single,6,OUTLIER_WARN,fire,outlier_ratio,0.042,0.0419,OUTLIER_WARN;HEAVY_TAIL,OUTLIER_WARN;HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] outlier 비율이 주의 수준으로 관찰됩니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+OUTLIER_WARN_L7(FAIL),0,single,7,OUTLIER_WARN,fire,outlier_ratio,0.049,0.0489,OUTLIER_WARN;HEAVY_TAIL,OUTLIER_WARN;HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] outlier 비율이 주의 수준으로 관찰됩니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 비율 주의 수준 — 개별 die 산발 이상 여부 관찰"
+SEVERE_OUTLIER_L1,0,single,1,SEVERE_OUTLIER,not_fire,outlier_ratio,0.0,0.0001,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+SEVERE_OUTLIER_L2,0,single,2,SEVERE_OUTLIER,not_fire,outlier_ratio,0.012,0.012,HEAVY_TAIL,HEAVY_TAIL,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+SEVERE_OUTLIER_L3(FAIL),0,single,3,SEVERE_OUTLIER,fire,outlier_ratio,0.06,0.06,CLUSTER_FAIL;SEVERE_OUTLIER;HEAVY_TAIL,SEVERE_OUTLIER;HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MAJOR,"[MAJOR] [현상] outlier 성 fail 비율이 높게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail 비율 높음 — 개별 die 산발 이상, contact/retest 재현성 확인"
+SEVERE_OUTLIER_L4(FAIL),0,single,4,SEVERE_OUTLIER,fire,outlier_ratio,0.09,0.09,CLUSTER_FAIL;SEVERE_OUTLIER;HEAVY_TAIL,SEVERE_OUTLIER;HEAVY_TAIL,,,,CLUSTER_FAIL;HEAVY_TAIL,MAJOR,"[MAJOR] [현상] outlier 성 fail 비율이 높게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail 비율 높음 — 개별 die 산발 이상, contact/retest 재현성 확인"
+SEVERE_OUTLIER_L5(FAIL),0,single,5,SEVERE_OUTLIER,fire,outlier_ratio,0.14,0.14,SEVERE_OUTLIER;HEAVY_TAIL,SEVERE_OUTLIER;HEAVY_TAIL,,,,HEAVY_TAIL,MAJOR,"[MAJOR] [현상] outlier 성 fail 비율이 높게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail 비율 높음 — 개별 die 산발 이상, contact/retest 재현성 확인"
+SEVERE_OUTLIER_L6(FAIL),0,single,6,SEVERE_OUTLIER,fire,outlier_ratio,0.22,0.22,SEVERE_OUTLIER;HEAVY_TAIL,SEVERE_OUTLIER;HEAVY_TAIL,,,,HEAVY_TAIL,MAJOR,"[MAJOR] [현상] outlier 성 fail 비율이 높게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail 비율 높음 — 개별 die 산발 이상, contact/retest 재현성 확인"
+SEVERE_OUTLIER_L7(FAIL),0,single,7,SEVERE_OUTLIER,fire,outlier_ratio,0.33,0.3271,SEVERE_OUTLIER;SPEC_TOO_TIGHT;HEAVY_TAIL,SEVERE_OUTLIER;SPEC_TOO_TIGHT;HEAVY_TAIL,,,,SPEC_TOO_TIGHT;HEAVY_TAIL,MAJOR,"[MAJOR] [현상] outlier 성 fail 비율이 높게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail 비율 높음 — 개별 die 산발 이상, contact/retest 재현성 확인"
+SPEC_TOO_TIGHT_L1,0,single,1,SPEC_TOO_TIGHT,not_fire,spread_norm,0.08,0.08,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+SPEC_TOO_TIGHT_L2,0,single,2,SPEC_TOO_TIGHT,not_fire,spread_norm,0.115,0.115,CENTER_FAIL,UNKNOWN,,,,CENTER_FAIL,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+SPEC_TOO_TIGHT_L3(FAIL),0,single,3,SPEC_TOO_TIGHT,fire,spread_norm,0.13,0.13,CLUSTER_FAIL;SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,CLUSTER_FAIL,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+SPEC_TOO_TIGHT_L4(FAIL),0,single,4,SPEC_TOO_TIGHT,fire,spread_norm,0.145,0.145,CLUSTER_FAIL;SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,CLUSTER_FAIL,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+SPEC_TOO_TIGHT_L5(FAIL),0,single,5,SPEC_TOO_TIGHT,fire,spread_norm,0.158,0.158,SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+SPEC_TOO_TIGHT_L6(FAIL),0,single,6,SPEC_TOO_TIGHT,fire,spread_norm,0.168,0.168,SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+SPEC_TOO_TIGHT_L7(FAIL),0,single,7,SPEC_TOO_TIGHT,fire,spread_norm,0.176,0.176,HEAVY_TAIL;SPEC_TOO_TIGHT,HEAVY_TAIL;SPEC_TOO_TIGHT,,,,HEAVY_TAIL,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+SUBPOP_GAP_L1,0,single,1,SUBPOP_GAP,not_fire,density_gap,,0.0,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+SUBPOP_GAP_L2,0,single,2,SUBPOP_GAP,not_fire,density_gap,,0.0,CENTER_FAIL,UNKNOWN,,,,CENTER_FAIL,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+SUBPOP_GAP_L3(FAIL),0,single,3,SUBPOP_GAP,fire,density_gap,,0.7619,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,,,,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR][이봉] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+SUBPOP_GAP_L4(FAIL),0,single,4,SUBPOP_GAP,fire,density_gap,,0.9324,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,,,,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR][이봉] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+SUBPOP_GAP_L5(FAIL),0,single,5,SUBPOP_GAP,fire,density_gap,,0.9106,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,,,,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR][이봉] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+SUBPOP_GAP_L6(FAIL),0,single,6,SUBPOP_GAP,fire,density_gap,,0.9554,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,,,,WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR][다봉] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+SUBPOP_GAP_L7(FAIL),0,single,7,SUBPOP_GAP,fire,density_gap,,0.9515,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,,,,WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR][다봉] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+TAIL_RISK_L1,0,single,1,TAIL_RISK,not_fire,skewness,0.03,0.03,SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+TAIL_RISK_L2,0,single,2,TAIL_RISK,not_fire,skewness,0.08,0.08,SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+TAIL_RISK_L3(FAIL),0,single,3,TAIL_RISK,fire,skewness,0.15,0.15,WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+TAIL_RISK_L4(FAIL),0,single,4,TAIL_RISK,fire,skewness,0.22,0.22,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+TAIL_RISK_L5(FAIL),0,single,5,TAIL_RISK,fire,skewness,0.3,0.3,WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,WIDE_DISTRIBUTION;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+TAIL_RISK_L6(FAIL),0,single,6,TAIL_RISK,fire,skewness,0.38,0.38,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,,,,WIDE_DISTRIBUTION;LOW_CPK;SUBPOP_GAP,MAJOR,"[MAJOR][이봉] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+TAIL_RISK_L7(FAIL),0,single,7,TAIL_RISK,fire,skewness,0.45,0.45,SEVERE_OUTLIER;WIDE_DISTRIBUTION;LOW_CPK;MEAN_SHIFT,SEVERE_OUTLIER;WIDE_DISTRIBUTION;LOW_CPK;MEAN_SHIFT,,,,SEVERE_OUTLIER;WIDE_DISTRIBUTION;LOW_CPK;MEAN_SHIFT,MAJOR,"[MAJOR] [현상] outlier 성 fail 비율이 높게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail 비율 높음 — 개별 die 산발 이상, contact/retest 재현성 확인"
+WIDE_DISTRIBUTION_L1,0,single,1,WIDE_DISTRIBUTION,not_fire,spread_norm,0.08,0.0782,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+WIDE_DISTRIBUTION_L2,0,single,2,WIDE_DISTRIBUTION,not_fire,spread_norm,0.14,0.1434,CENTER_FAIL;SPEC_TOO_TIGHT,SPEC_TOO_TIGHT,,,,CENTER_FAIL;SPEC_TOO_TIGHT,MINOR,"[MINOR] [현상] 산포는 안정적이나 spec margin이 부족한 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포는 양호(좁고·중앙·단봉)한데 cpk 낮음 — spec margin 자체 검토(spec_review)"
+WIDE_DISTRIBUTION_L3(FAIL),0,single,3,WIDE_DISTRIBUTION,fire,spread_norm,0.2,0.2003,CLUSTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,CLUSTER_FAIL;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+WIDE_DISTRIBUTION_L4(FAIL),0,single,4,WIDE_DISTRIBUTION,fire,spread_norm,0.28,0.2771,CENTER_FAIL;WIDE_DISTRIBUTION;LOW_CPK;CLUSTER_FAIL,WIDE_DISTRIBUTION;LOW_CPK,,,,CENTER_FAIL;LOW_CPK;CLUSTER_FAIL,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+WIDE_DISTRIBUTION_L5(FAIL),0,single,5,WIDE_DISTRIBUTION,fire,spread_norm,0.4,0.4003,WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+WIDE_DISTRIBUTION_L6(FAIL),0,single,6,WIDE_DISTRIBUTION,fire,spread_norm,0.6,0.5928,BIDIR_TAIL;WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,BIDIR_TAIL;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
+WIDE_DISTRIBUTION_L7(FAIL),0,single,7,WIDE_DISTRIBUTION,fire,spread_norm,0.9,0.8969,BIDIR_TAIL;WIDE_DISTRIBUTION;LOW_CPK,WIDE_DISTRIBUTION;LOW_CPK,,,,BIDIR_TAIL;LOW_CPK,MAJOR,"[MAJOR] [현상] 산포가 spec 폭 대비 넓게 퍼져 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"

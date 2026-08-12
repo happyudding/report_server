@@ -593,6 +593,43 @@ def set_favorite():
                     "favorite": favorite})
 
 
+# ── 관리자 팝업 메시지 수신 (저장소는 admin_panel/messages.py — 프로세스 메모리) ──
+
+def _message_user_key():
+    """메시지 수신자 키 — 사용량 집계(_record_page_visit)와 같은 규칙.
+
+    신원이 있으면 소문자 계정, 없으면 'ip:<addr>'. 둘 다 없으면 빈 문자열(수신 없음).
+    """
+    uid = _current_user()
+    if uid:
+        return uid.lower()
+    ip, _ = _client_meta()
+    return f"ip:{ip}" if ip else ""
+
+
+@report_bp.get("/api/my_messages")
+def my_messages():
+    """아직 확인하지 않은 관리자 메시지. 화면이 30초마다 폴링하는 경로라 가볍게 유지한다.
+
+    admin_panel 미등록(REPORT_ADMIN_SECRET 없음) 환경에서도 import 자체는 안전하지만,
+    폴링이 페이지 동작을 막지 않도록 실패는 빈 목록으로 삼킨다."""
+    try:
+        from admin_panel import messages as admin_messages
+        rows = admin_messages.pending_for(_message_user_key())
+    except Exception:
+        rows = []
+    return jsonify({"messages": rows})
+
+
+@report_bp.post("/api/my_messages/<int:message_id>/ack")
+def ack_my_message(message_id):
+    """확인 버튼 — 그 사람에게 다시 뜨지 않게 읽음 기록."""
+    _require_csrf()
+    from admin_panel import messages as admin_messages
+    admin_messages.mark_read(message_id, _message_user_key())
+    return jsonify({"ok": True, "id": message_id})
+
+
 @report_bp.get("/api/part_ids")
 def part_ids():
     """product_info.db 의 part_id + sub_part_id(중괄호) flatten 검색 후보. 업로드 Product 검색용.

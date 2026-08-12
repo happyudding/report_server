@@ -17,7 +17,7 @@ from admin_panel import (GATE_COOKIE_EVAL, GATE_COOKIE_EVAL_PATH, GATE_COOKIE_VO
                          GATE_COOKIE_VOC_PATH, MASTER_COOKIE,
                          MASTER_COOKIE_PATH, MASTER_TTL_SECONDS,
                          chatbot_admin, eval_gate_token, gate_token, identity_merge,
-                         issue_master_value, maintenance,
+                         issue_master_value, maintenance, messages,
                          metrics, sessions_admin, stats, storage_admin, sysinfo,
                          users_admin, voc_admin, voc_gate_token)
 from database import report_db
@@ -560,6 +560,48 @@ def api_user_delete(user_id):
         abort(404, "user not found")
     _audit("delete", changed_fields="user_delete(%s)" % uid)
     return jsonify({"ok": True, "user_id": uid})
+
+
+# ── 사용자 팝업 메시지 (프로세스 메모리 — admin_panel/messages.py) ────────────
+# 수신·읽음 처리는 사용자 쪽 라우트(report/routes_misc.py)가 담당한다.
+
+@admin_panel_bp.get("/api/messages")
+def api_messages():
+    return jsonify({"rows": messages.list_all()})
+
+
+@admin_panel_bp.post("/api/messages")
+def api_message_create():
+    body = request.get_json(force=True, silent=True) or {}
+    targets = messages.normalize_targets(body.get("targets"))
+    for uid in targets:
+        if not _USER_ID_RE.match(uid):
+            abort(400, "invalid target user: %s" % uid)
+    try:
+        msg = messages.create(
+            body.get("body"), title=body.get("title"), targets=targets,
+            level=(body.get("level") or "info"), created_by="admin-panel")
+    except ValueError:
+        abort(400, "body required")
+    _audit("edit", changed_fields="admin_message_send(id=%d, targets=%s)"
+           % (msg["id"], ",".join(targets) or "all"))
+    return jsonify(msg)
+
+
+@admin_panel_bp.post("/api/messages/<int:message_id>/revoke")
+def api_message_revoke(message_id):
+    if not messages.revoke(message_id):
+        abort(404, "message not found")
+    _audit("edit", changed_fields="admin_message_revoke(id=%d)" % message_id)
+    return jsonify({"ok": True, "id": message_id})
+
+
+@admin_panel_bp.post("/api/messages/<int:message_id>/delete")
+def api_message_delete(message_id):
+    if not messages.delete(message_id):
+        abort(404, "message not found")
+    _audit("delete", changed_fields="admin_message_delete(id=%d)" % message_id)
+    return jsonify({"ok": True, "id": message_id})
 
 
 # ── DB 컨트롤 ────────────────────────────────────────────────────────────────

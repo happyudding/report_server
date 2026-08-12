@@ -4,12 +4,15 @@
 계정 행 + IP 행 둘로 갈라져 보였다. 관리자 화면 전체가 같은 규칙으로 합치는지 고정한다.
 
   (a) ip_to_user — 감사로그 (client_user, client_ip) 짝에서 IP→계정 매핑.
-      한 IP 에 계정이 2개 이상이면 매핑하지 않는다(공용 PC/NAT). admin-panel·system 제외
+      한 IP 에 계정이 2개 이상이면 **활동이 가장 많은 계정(주 사용자)** 으로 합친다
+      (2026-08-12 완화 — 그전에는 매핑하지 않아 한 사람의 행이 갈라졌다).
+      admin-panel·system 은 사람이 아니라 제외
   (b) metrics.active_users — 익명 ip: 행이 계정 행에 합쳐지고 요청 수가 합산된다
   (c) stats.user_ranking — IP 이름 행이 계정 행에 합쳐지고, LIMIT 은 병합 후에 걸린다
   (d) stats.usage_ranking — ip:<addr> 행이 계정 행에 합쳐진다
   (e) 감사 로그 — 계정명 검색이 그 계정 IP 의 무신원 기록도 잡고, 행에 resolved_user 가 붙는다
-  (f) 매핑되지 않는 IP(계정 2개 이상)는 예전처럼 익명으로 남는다
+  (f) 활동 동률이면 계정명 사전순으로 고정 — 새로고침마다 대표가 바뀌면 표가 흔들린다
+  (g) 계정 기록이 아예 없는 IP 는 익명으로 남는다
 
 실행:
     python tests/test_identity_merge.py
@@ -61,12 +64,15 @@ def audit(action, user, ip, when=None):
 
 
 def seed():
-    """hong = 10.0.0.5 전용 / shared IP 10.0.0.99 는 kim·lee 공용(병합 불가)."""
+    """hong = 10.0.0.5 전용 / 10.0.0.50 은 park 주 사용자 / 10.0.0.99 는 kim·lee 동률."""
     audit("upload", "hong", "10.0.0.5")
     audit("edit", "hong", "10.0.0.5")
     audit("edit", "", "10.0.0.5")          # 같은 PC 의 무신원 기록 → hong 으로 귀속돼야
+    for _ in range(4):                     # park 4건 vs choi 1건 → 주 사용자 park
+        audit("upload", "park", "10.0.0.50")
+    audit("upload", "choi", "10.0.0.50")
     audit("upload", "kim", "10.0.0.99")
-    audit("upload", "lee", "10.0.0.99")    # 같은 IP 에 계정 2개 → 매핑 불가
+    audit("upload", "lee", "10.0.0.99")    # 활동 동률 → 사전순 kim
     audit("delete", "admin-panel", "10.0.0.7")   # 사람 아님 → 매핑 제외
     identity_merge.invalidate()
 
@@ -76,8 +82,10 @@ def seed():
 def test_mapping():
     m = identity_merge.ip_to_user(force=True)
     check(m.get("10.0.0.5") == "hong", f"(a) 단독 계정 IP 는 매핑 ({m})")
-    check("10.0.0.99" not in m, f"(f) 계정 2개 공유 IP 는 매핑 안 함 ({m})")
+    check(m.get("10.0.0.50") == "park", f"(a) 계정 2개면 활동 최다(park 4 vs choi 1) ({m})")
+    check(m.get("10.0.0.99") == "kim", f"(f) 동률이면 계정명 사전순 ({m})")
     check("10.0.0.7" not in m, f"(a) admin-panel 은 사람이 아니라 제외 ({m})")
+    check("10.0.0.123" not in m, f"(g) 계정 기록 없는 IP 는 매핑 없음 ({m})")
 
     check(identity_merge.ip_of_name("ip:1.2.3.4") == "1.2.3.4", "(a) ip: 접두 표기 파싱")
     check(identity_merge.ip_of_name("1.2.3.4") == "1.2.3.4", "(a) 순수 IP 표기 파싱")
@@ -85,9 +93,13 @@ def test_mapping():
     check(identity_merge.ip_of_name("PC-DESK01") is None, "(a) 호스트명은 IP 아님")
 
     check(identity_merge.resolve("ip:10.0.0.5") == ("hong", True), "(a) resolve 병합")
-    check(identity_merge.resolve("ip:10.0.0.99") == ("ip:10.0.0.99", False),
-          "(f) resolve 는 모호하면 그대로")
+    check(identity_merge.resolve("ip:10.0.0.50") == ("park", True),
+          "(a) resolve 는 주 사용자로 합친다")
+    check(identity_merge.resolve("ip:10.0.0.123") == ("ip:10.0.0.123", False),
+          "(g) 근거 없는 IP 는 그대로")
     check(identity_merge.resolve("hong") == ("hong", False), "(a) 계정은 그대로")
+    check(identity_merge.resolve("choi") == ("choi", False),
+          "(a) 계정 이름 행은 IP 가 같아도 흡수하지 않는다")
 
 
 # ── (b) 실시간 접속 사용자 ───────────────────────────────────────────────────
@@ -101,9 +113,9 @@ def test_live_merge():
     metrics._active_users["ip:10.0.0.5"] = {"uid": "", "ip": "10.0.0.5", "honey": False,
                                             "first": now - 100, "last": now - 2, "count": 3,
                                             "route": "report.index", "session_id": "S_NEW"}
-    metrics._active_users["ip:10.0.0.99"] = {"uid": "", "ip": "10.0.0.99", "honey": False,
-                                             "first": now - 50, "last": now - 5, "count": 2,
-                                             "route": "report.index", "session_id": None}
+    metrics._active_users["ip:10.0.0.123"] = {"uid": "", "ip": "10.0.0.123", "honey": False,
+                                              "first": now - 50, "last": now - 5, "count": 2,
+                                              "route": "report.index", "session_id": None}
     identity_merge.invalidate()
     au = metrics.active_users(window_sec=3600)
     by = {u["key"]: u for u in au["users"]}
@@ -116,8 +128,8 @@ def test_live_merge():
           f"(b) 마지막 활동은 더 최근 행 기준 ({h})")
     check(round(h.get("since", 0)) >= 600, f"(b) 접속 시작은 더 이른 쪽 ({h.get('since')})")
     check(h.get("honey") is True, "(b) 한쪽이 Honey 면 Honey 로 표시")
-    check("ip:10.0.0.99" in by and by["ip:10.0.0.99"]["user"] == "",
-          f"(f) 모호한 IP 는 익명 유지 ({sorted(by)})")
+    check("ip:10.0.0.123" in by and by["ip:10.0.0.123"]["user"] == "",
+          f"(g) 근거 없는 IP 는 익명 유지 ({sorted(by)})")
     metrics._active_users.clear()
 
 
@@ -134,13 +146,16 @@ def test_rank_merge():
 
     report_db.record_usage("web_index", "hong")
     report_db.record_usage("web_view", "ip:10.0.0.5")
-    report_db.record_usage("honey_run", "ip:10.0.0.99")
+    report_db.record_usage("honey_run", "ip:10.0.0.50")
+    report_db.record_usage("honey_run", "ip:10.0.0.123")
     g = stats.usage_ranking(days=30)
     urows = {x["user_id"]: x for x in g["rows"]}
     check("ip:10.0.0.5" not in urows, f"(d) ip: 행이 계정으로 흡수 ({sorted(urows)})")
     check(urows["hong"]["total"] == 2 and urows["hong"]["web_view"] == 1,
           f"(d) 계정 행에 합산 ({urows.get('hong')})")
-    check("ip:10.0.0.99" in urows, f"(f) 모호한 IP 는 그대로 ({sorted(urows)})")
+    check(urows.get("park", {}).get("honey_run") == 1,
+          f"(d) 공용 IP 도 주 사용자 행으로 흡수 ({sorted(urows)})")
+    check("ip:10.0.0.123" in urows, f"(g) 근거 없는 IP 는 그대로 ({sorted(urows)})")
 
     # LIMIT 은 병합 후 적용 — 자르고 합치면 조각이 사라진다
     g1 = stats.usage_ranking(days=30, limit=1)

@@ -4,53 +4,118 @@
 만든다. 목적은 하나 — "이 룰이 이 세기에서 뜨는가"를 **정답을 아는 상태로** 확인하는 것.
 
 ```
-server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py
-server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --upload http://127.0.0.1:8080
+# ① 7-meta CSV 1장 (직접 업로드용) — 파일이 있으면 _v2·_v3 … 로 자동 증가
+server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --single-csv data\eval_testdata_7meta.csv
+
+# ② 전체 세트(parquet 30 source) 생성 + 세션까지
+server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out data
+server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out data --upload-only --upload http://127.0.0.1:8080
+server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out data --upload-only --make-session
 ```
 
-산출물은 `tools/eval_testdata/out/` (git 미추적):
+**버전 규칙**: `--single-csv` 는 같은 이름이 이미 있으면 `_v2`, `_v3` … 을 붙여 새로 만든다
+(`versioned_path`). 기존 raw data 를 절대 덮지 않는다 — 이전 버전으로 재현·비교할 수 있어야
+하기 때문.
+
+**① CSV 1장** (`--single-csv`) — item 85개(17 signature × 5단계) × **chip 1,517개**, 약 1MB:
 
 | 파일 | 내용 |
 |---|---|
-| `source_NN.parquet` (30개) | 7-meta honeyform. 1개 = 1 source = 1 wafer, **각 2,453행** |
-| `manifest.json` | 업로드용 manifest (`options.ai_comment`/`ai_comment_optin` = true) |
-| `answer_key.csv` | **정답표** — item 마다 겨냥한 signature·세기(1~5)·목표 지표값·실측 지표값·임계값 |
-| `verify.csv` | 실제 엔진 발화 결과와 정답표의 대조 (아래 §3) |
-| `metrics_detail.json` | item 별 생성 시점 실측 지표 전체 |
+| `<name>_vN.csv` | 7-meta honeyform CSV 1장 |
+| `<name>_vN_answer.csv` | 정답표 — item·세기·목표/실측 지표·임계값·bin·fail 수 |
+| `<name>_vN_verify.csv` | 실제 엔진 발화 대조 |
 
-기본 규모: **test item 500개 / source 30개 / source 당 2,453행** (총 fail chip 약 3.7만).
+> **CSV 1장에 못 담는 signature 4종** — 발화 조건 자체가 "웨이퍼의 상당수가 fail" 이라
+> 다른 항목이 쓸 chip 이 남지 않는다(chip 1개는 `FAILTNO` 를 하나만 갖는다):
+> `GROSS_FAIL`(수율<50%) · `WAFER_GRADIENT`(fail 률 기울기) · `CONSTANT_VALUE`(spec 밖 상수
+> = 전량 fail) · `BIDIR_TAIL`(양쪽 margin<1σ = 분포가 spec 밖으로). 이 넷은 전체 세트
+> (`--out`, source 여러 개)에서 확인한다.
+
+**② 전체 세트** (`--out DIR`) — parquet 30 source × 2,453행 + `manifest.json` +
+`answer_key.csv` + `verify.csv` + `metrics_detail.json`. item 500개.
+
 `--items` `--radius` `--product-type` `--family` `--lot` `--seed` 로 조절한다.
 
 ---
 
 ## 1. 데이터 설계
 
-### 1-1. 세기 5단계
+### 1-1. 세기 5단계 (L1~L5)
 
 각 signature 마다 그 룰의 판정 지표를 임계값에서 얼마나 벗어나게 할지로 5단계를 만든다.
+**L1·L2 = 미발화(정상, fail 0), L3부터 발화**하고 L5 까지 심해진다.
 
-| 단계 | 의미 | 예 (WIDE_DISTRIBUTION, `spread_norm` warn 0.18) |
-|---|---|---|
-| 1 | 정상범위 — **겨냥한 룰 미발화** | 0.11 |
-| 2 | 임계값 소폭 초과 | 0.20 |
-| 3 | 초과 | 0.30 |
-| 4 | 크게 초과 | 0.50 |
-| 5 | 심각 | 0.90 |
+| 단계 | 의미 | `spread_norm`(warn 0.18) | fail chip |
+|---|---|---|---|
+| L1 | 정상(가장 여유) | 0.09 | **0** |
+| L2 | 정상(임계값 근접) | 0.14 | **0** |
+| L3 | **발화 시작** | 0.20 | 6 |
+| L4 | 초과 | 0.24 | 15 |
+| L5 | 심각 | 0.29 | 30 |
 
-> 1단계는 **"겨냥한 그 룰"이 뜨지 않는다**는 뜻이다. 지표가 상관된 다른 룰
+fail chip 수(`FAIL_N`)와 지표가 **함께** 올라간다. 그러려면 분포가 spec 밖으로 새면 안 되므로
+값 기반 항목은 전부 **spec 안에 가둔다**(`bounded` — spec 밖으로 나간 값은 spec 안에서 재추출).
+가두지 않으면 산포가 큰 항목은 chip 의 수십 %가 spec 밖 = fail 이 되어 웨이퍼 하나를 통째로
+먹는다(§1-2 의 불변 법칙 때문).
+
+> L1·L2 는 **"겨냥한 그 룰"이 뜨지 않는다**는 뜻이다. 지표가 상관된 다른 룰
 > (예: 산포가 넓으면 cpk 는 반드시 낮다)은 뜰 수 있고, 그건 오탐이 아니다.
-> 아무것도 뜨면 안 되는 항목은 `NORMAL_*` (group=normal) 54개다.
+> 아무것도 뜨면 안 되는 항목은 `NORMAL_*` (group=normal) 이다.
+
+### 1-2. 불변 법칙 — **spec 밖 = fail**
+
+이 엔진의 목적은 "fail 난 item 이 왜 죽었는지" 설명하는 것이므로, 데이터는 양방향으로
+정합해야 한다. **spec 을 벗어난 chip 은 예외 없이 fail 이고, spec 안인 chip 은 fail 이 아니다.**
+
+- fail chip 수는 **분포가 정한다** — 산포가 넓거나 중심이 치우칠수록 자동으로 늘어난다
+  (WIDE L3 22개 → L7 1,413개). 고정 개수를 강요하지 않는다.
+- 값만으로 fail 이 안 생기는 항목(좁은 분포·공간 룰·수율 룰)만 레벨 사다리(`FAIL_N`)만큼
+  chip 을 골라 limit 밖으로 민다(`_push_out_of_spec`).
+- **L1·L2 는 fail 0** — spec 밖 값이 나오면 안쪽으로 당겨 없앤다. fail 이 없으므로 서버
+  평가 범위(`WEB_REPORT_EVAL_FAIL_ONLY=1`)에서 아예 빠진다 = "정상 item 은 발화하지 않는다"가
+  구조적으로 보장된다.
+- chip 하나는 `FAILTNO` 를 하나만 가지므로, **다른 item 이 이미 fail 로 쓴 chip 에서
+  이 item 이 spec 을 벗어나면 그 값은 spec 안으로 당긴다**(실제 테스터도 처음 걸린 test
+  하나로 귀속한다).
+- 측정값이 없는(공란) chip 은 fail 로 찍지 않는다 — 값으로 설명 못 하는 fail 이 된다.
+
+검증(마지막 생성물, item 147개 · fail chip 46,235개):
+**spec 안인데 fail = 0건, spec 밖인데 pass = 0건.**
+
+**item 이름에 `(FAIL)`** — L3 이상(= 값이 죽어서 fail 난 항목)에만 붙는다.
+`WIDE_DISTRIBUTION_L5(FAIL)` 처럼 이름만으로 정답과 세기를 읽을 수 있다.
+
+### 1-3. fail 유형별 bin — Map Analysis 색 구분
+
+**bin = 유형(SIG_BIN) × 10 + 레벨**. 예: `113` = WIDE_DISTRIBUTION(11) L3, `207` =
+SUBPOP_GAP(20) L7. 십의 자리 이상으로 불량 유형이, 일의 자리로 세기가 갈린다 —
+Map Analysis 에서 색이 유형별로 뭉치면서도 다양하게 나온다(실측 105종).
+L1·L2(fail 0)와 정상군은 일반 fail bin `2`.
+
+| bin | signature | bin | signature | bin | signature |
+|---|---|---|---|---|---|
+| 11 | WIDE_DISTRIBUTION | 19 | HEAVY_TAIL | 27 | EDGE_FAIL |
+| 12 | SEVERE_OUTLIER | 20 | SUBPOP_GAP | 28 | CENTER_FAIL |
+| 13 | OUTLIER_WARN | 21 | TAIL_RISK | 29 | RING_FAIL |
+| 14 | SPEC_TOO_TIGHT | 22 | CONSTANT_VALUE | 30 | CLUSTER_FAIL |
+| 15 | LOW_CPK | 23 | EQUIPMENT_SUSPECT | 32 | WAFER_GRADIENT |
+| 16 | MEAN_SHIFT | 24 | CODE_RAIL | 33 | GROSS_FAIL |
+| 17 | BIDIR_TAIL | 25 | MISSING_LIMIT | 2 | 일반(L1·L2·정상군) |
+|  |  | 26 | LOW_SAMPLE_UNCERTAIN |  |  |
+
+18(defective)·31(abnormal)은 `bin_taxonomy.yaml` 예약값이라 피했다 — 그 둘을 쓰면
+severity_bias 가 얹혀 status 가 달라진다.
 
 목표치는 **생성 시점에 역산**한다(`with_tune`) — 표본 잡음으로 0.179 가 0.182 가 되면
 경계 검증이 성립하지 않기 때문. `answer_key.csv` 의 `target` ↔ `actual_metric` 을 비교하면
 얼마나 정확히 맞췄는지 보인다(대부분 소수 셋째 자리까지 일치).
 
-### 1-2. 구성 (500개)
+### 1-4. 구성 (전체 세트 500개)
 
 | group | 개수 | 내용 |
 |---|---|---|
-| `single` | 105 | signature 21종 × 5단계 — **한 룰만 겨냥** |
-| `combo` | 85 | 2~3개 동시발화 조합 17종 × 5단계 |
+| `single` | 147 | signature 21종 × 7단계 — **한 룰만 겨냥** |
+| `combo` | 119 | 2~3개 동시발화 조합 17종 × 7단계 |
 | `unit_axis` | 72 | 같은 시나리오를 UNIT 9종으로 (V/A/Hz/Ohm/Sec/CODE/PCT/PF/미등록) → `item_class` 스코프 |
 | `bin_axis` | 36 | fail bin 6종(3·4·5·8·**18**·**31**) → `bin_taxonomy` severity_bias |
 | `trim_axis` | 20 | item 명에 TRIM → `category_major=TRIM` |
@@ -61,7 +126,7 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --uplo
 **모든 item 은 fail item 이다** (FAILTNO == 그 item 의 TNO 인 chip 이 1개 이상).
 서버 기본값 `WEB_REPORT_EVAL_FAIL_ONLY=1` 에서 500개 전부가 평가 대상이 된다.
 
-### 1-3. 왜 source 가 30개인가 (item 을 나눠 담는 이유)
+### 1-5. 왜 source 가 30개인가 (item 을 나눠 담는 이유)
 
 chip 1행의 **`FAILTNO` 는 하나뿐**이다 → 한 source 안에서 item 들의 fail 행은 서로 겹칠 수
 없다. GROSS_FAIL 5단계(수율 2%)는 혼자서 그 source 행의 98% 를 먹는다. 그래서 fail 예산에
@@ -73,7 +138,7 @@ chip 1행의 **`FAILTNO` 는 하나뿐**이다 → 한 source 안에서 item 들
 이걸 안 하면 앞 item 이 쓴 행 때문에 **뒤 item 의 공간 패턴이 망가진다**(실제로 겪었다:
 gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
 
-### 1-4. 좌표계 주의
+### 1-6. 좌표계 주의
 
 XPOS/YPOS 를 **웨이퍼 중심이 (0,0)** 이 되도록 만든다(음수 포함). 엔진은 반경을
 `sqrt(XPOS²+YPOS²)` 로 원점 기준 계산하므로, 좌표가 0-based 양수면 edge/center 판정이
@@ -88,7 +153,7 @@ XPOS/YPOS 를 **웨이퍼 중심이 (0,0)** 이 되도록 만든다(음수 포�
    manifest 에 `ai_comment` + `ai_comment_optin` 이 들어 있어 세션 상세 Issue Table 에
    **Signature / AI Comment 컬럼**이 생긴다.
 2. **세션 상세** — Issue Table 의 Signature 컬럼이 엔진 제안값이다. item 이름이 곧 정답
-   (`WIDE_DISTRIBUTION_L3_002` = WIDE_DISTRIBUTION 3단계).
+   (`WIDE_DISTRIBUTION_L3(FAIL)` = WIDE_DISTRIBUTION 3단계, 값이 죽어 fail 난 항목).
 3. **L0~L6 트레이스** — `/pe/eval` → 트레이스 탭에서 이 세션을 지정. item 별로
    L1 통계 / L2 feature / L3 조건별 판정(applies·fired) / L4 status 가 그대로 보인다.
    `answer_key.csv` 의 `actual_metric` 과 트레이스 값이 일치해야 한다.
@@ -109,12 +174,12 @@ XPOS/YPOS 를 **웨이퍼 중심이 (0,0)** 이 되도록 만든다(음수 포�
   (`fired_all_rules`). **운영 rules 파일은 건드리지 않는다**(복사본에만 쓴다).
   비활성 룰까지 "데이터가 조건을 맞췄는지" 확인하기 위한 경로다.
 
-판정 4종 — 마지막 실행 결과는 **500/500**:
+판정 4종 — 마지막 실행 결과는 단일 CSV **136/136**, 전체 세트 **500/500**:
 
 | 지표 | 의미 | 기대 |
 |---|---|---|
-| `missing` | 2~5단계인데 겨냥한 룰이 안 뜸 | 0 |
-| `false_fire` | 1단계인데 겨냥한 룰이 뜸 | 0 |
+| `missing` | L3~L7 인데 겨냥한 룰이 안 뜸 | 0 |
+| `false_fire` | L1·L2 인데 겨냥한 룰이 뜸 | 0 |
 | 정상군 오탐 | `NORMAL_*` 에서 룰 발화 | 0 |
 | `suppressed` | 조건은 맞았지만 `suppressed_by` 로 눌림 | 정상 동작(현재 1건: SPEC_TOO_TIGHT → LOW_CPK) |
 | `co_fired` | 겨냥 밖 동반발화 | 구조상 발생(§4-1) |
@@ -152,6 +217,13 @@ XPOS/YPOS 를 **웨이퍼 중심이 (0,0)** 이 되도록 만든다(음수 포�
 같은 방식의 상한이 다른 공간 룰에도 있다: `edge_fail_ratio` 상한 2.78(영역 36%),
 `center_fail_ratio` 11(9%), `quadrant_imbalance` 4. 임계값을 상한 위로 두면 그 룰은
 영원히 침묵한다.
+
+### 4-2-1. fail chip 을 limit 밖에 두면 좁은 분포는 반드시 heavy tail 이 된다
+
+`fail = limit 위반` 규칙(§1-2) 때문에, 산포가 좁은 item 은 fail chip 이 곧 극단값이 되어
+`HEAVY_TAIL`(kurtosis>2)이 함께 뜬다. 데이터의 결함이 아니라 **사실 그대로**다 —
+"대부분 잘 나오는데 몇 개만 멀리 튀었다" 가 정확히 heavy tail 이다. 기준 분포가 지나치게
+좁아 이 동반발화가 과했던 항목(HEAVY_TAIL 자신·MEAN_SHIFT·공간 룰)은 σ 를 키워 완화했다.
 
 ### 4-3. `CONSTANT_VALUE` 의 부동소수 함정
 
