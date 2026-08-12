@@ -1019,7 +1019,9 @@ tbody tr:hover { background: #f9fbff; }
   border: 1px solid #e6e8ee; border-radius: 12px; background: #fbfbfd; overflow: hidden;
   box-shadow: 0 1px 2px rgba(16,24,40,.05);
   position: sticky; top: calc(var(--sticky-head-h, 96px) + 50px); align-self: flex-start;
-  max-height: calc(var(--vph) - var(--sticky-head-h, 96px) - 70px); }
+  /* 카드가 페이지(3×3)로 잘려 오른쪽이 짧아졌다 — 팔레트도 그만큼만 차지하고
+     목록(.trim-palette-list)이 안에서 세로 스크롤한다 (2026-08-12 요청). */
+  max-height: min(560px, calc(var(--vph) - var(--sticky-head-h, 96px) - 70px)); }
 .trim-palette-head { padding: 10px 10px 9px; border-bottom: 1px solid #eef0f4; background: #fff; }
 .trim-palette-searchwrap { position: relative; }
 .trim-palette-searchwrap::before { content: ""; position: absolute; left: 11px; top: 50%;
@@ -1043,14 +1045,19 @@ tbody tr:hover { background: #f9fbff; }
   background: transparent; border-color: transparent; border-radius: 7px; padding: 5px 6px; }
 .trim-palette-item .trim-chip::before { content: "\2807"; flex: 0 0 auto; margin-right: 4px;
   color: #c4c9d4; font-size: 12px; line-height: 1; }
-.trim-palette-meta { flex: 0 0 auto; font-size: 10px; font-weight: 700; padding: 2px 8px;
-  border-radius: 9px; background: #eef1f6; color: #667085; white-space: nowrap;
-  max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+/* 매칭 위치(그룹 · 슬롯) 배지 — 생략(…) 없이 전체 표시, 길면 배지 안에서 줄바꿈 (2026-08-12). */
+.trim-palette-meta { flex: 0 1 auto; font-size: 10px; font-weight: 700; padding: 2px 8px;
+  border-radius: 9px; background: #eef1f6; color: #667085; white-space: normal;
+  overflow-wrap: anywhere; text-align: right; }
 .trim-palette-meta.assigned { background: #E7F6EC; color: #14703d; }
 .trim-palette-meta.excl { background: #f2f4f7; color: #a3aab6; }
 @media (max-width: 640px) { .trim-match-layout { flex-wrap: wrap; }
   .trim-palette { position: static; flex-basis: 100%; width: 100%; max-height: 320px; }
   .trim-match-grid { grid-template-columns: minmax(0, 1fr); } }
+/* ① 매칭 그룹 카드 상단 검색바 (2026-08-12 요청 — 카드 페이지네이션과 짝) */
+.trim-cardsearch { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.trim-cardsearch .dist-search { flex: 0 1 300px; }
+.trim-cardsearch-count { font-size: 11px; font-weight: 600; color: #98a2b3; white-space: nowrap; }
 /* 그룹 카드는 **가로 3개 고정** (2026-08-11 요청). minmax(0,1fr) 이라 카드 내용이 넓어도
    3열을 유지한다(auto-fill 은 폭에 따라 열 수가 널뛰었다). 팔레트가 넓어진 만큼 본문이
    좁아지므로 넓지 않은 화면에서는 아래 미디어쿼리로 2열까지 내린다. */

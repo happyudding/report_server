@@ -1113,7 +1113,18 @@ function renderMiniDistCell(cell) {
   // 점은 canvas 로 그린다(distPaintPoints) — Plotly 에는 sentinel 만. 이 칸은 112px 로
   // 작아 칸 예산(CELL_BUDGET_MINI)을 소스 수로 나눈 캡을 쓴다 — 소스가 적으면 갤러리와
   // 동일하고 소스 수십 개일 때만 소스별 점이 줄어든다.
-  const srcNames = Object.keys(info.bySource);
+  // Temperature 모드 메인 Issue Table 셀(data-src-scope="rt")은 RT source 만 그린다 —
+  // 그 표의 숫자가 RT 기준이라 CT/HT 곡선이 섞이면 표와 그림이 어긋난다(Map 미니셀의
+  // issueBinMaps() 와 같은 규약). RT 집합이 비면(비Temperature 세션) 필터하지 않아 기존
+  // 동작과 동일하고, 겹치는 소스가 없으면 데이터 없음과 같게 빈 칸으로 확정한다.
+  let srcNames = Object.keys(info.bySource);
+  if (cell.dataset.srcScope === "rt" && typeof tempFilterSources === "function") {
+    const rt = new Set(tempFilterSources("RT", ""));
+    if (rt.size) {
+      srcNames = srcNames.filter(s => rt.has(s));
+      if (!srcNames.length) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; return; }
+    }
+  }
   const cap = distCapFor(srcNames.length, DIST.CELL_BUDGET_MINI);
   const dsBySource = {};
   srcNames.forEach(source => {

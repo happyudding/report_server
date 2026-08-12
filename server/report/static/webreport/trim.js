@@ -13,6 +13,7 @@ const TRIM = {
   COLORS: { INIT: "#2E6FE8", CODE: "#7C3AED", TRIM: "#16A34A", VERIFY: "#F59E0B" },
   CONCURRENCY: 8, GL_THRESHOLD: 2000,
   PAGE_SIZE: 6,             // ② 산포 분석: 한 페이지 6개(가로3·세로2)로 나눠 렌더
+  MATCH_PAGE_SIZE: 9,       // ① 항목 매칭: 그룹 카드 한 페이지 9개(3×3) — 긴 세로 스크롤 방지
   BATCH_MAX: 6,             // trim_chart_batch 1회 그룹 수 상한(서버 라우트와 동일 값)
   CHART_CACHE_MAX: 64,      // 그룹 차트 응답 보유 개수 상한(페이지 6개 × 여유)
   REPORT_ENABLED: false,    // ③ 분석 리포트 임시 비활성(웹에서 숨김) — renderTrimReport 코드는 보존
@@ -29,6 +30,8 @@ let trimState = {
   queue: [], inflight: 0,   // 차트 fetch 동시 CONCURRENCY 개 제한 큐
   filter: "all", search: "",
   showUnassigned: false,    // ① 매칭: stem 미산출(미배정) 항목 노출 여부 — 기본 숨김
+  matchPage: 0,             // ① 매칭 그룹 카드 현재 페이지(0-index)
+  matchSearch: "",          // ① 매칭 그룹 카드 검색어 (그룹명/항목명)
   scatterPage: 0,           // ② 산포 현재 페이지(0-index)
   scatterSel: new Set(),    // ② 산포 검색 체크박스로 고른 그룹 id (있으면 그것만 표시)
   yBasis: "target",         // ② 산포 y축 범위 기준 슬롯: target(VERIFY/P2, 기본) | base(PRE/INIT)
@@ -110,6 +113,7 @@ function renderTrimAnalysis() {
     trimState.source = e.target.value;
     trimState.scatterPage = 0;         // source 바뀌면 그룹 구성이 달라지므로 산포 상태 초기화
     trimState.scatterSel.clear();
+    trimState.matchPage = 0;           // ① 매칭 카드 페이지도 그룹 구성 기준이라 함께 초기화
     document.getElementById("trimBody").innerHTML = `<div class="placeholder">로드 중…</div>`;
     ensureTrimPayload().then(renderTrimView).catch(trimBodyError);
   });
@@ -206,12 +210,29 @@ function trimItemChip(name, itemsMap, canEdit) {
   return `<span class="trim-chip" data-item="${esc(name)}"${draggable} title="${esc(name)}">${ovr}${esc(name)}${reset}</span>`;
 }
 
+// 카드 검색 필터 — 그룹명 또는 소속 항목명 부분일치 (대소문자 무시).
+function trimMatchFilteredGroups(p) {
+  const q = (trimState.matchSearch || "").trim().toLowerCase();
+  const groups = p.groups || [];
+  if (!q) return groups;
+  return groups.filter(g => String(g.id).toLowerCase().includes(q) ||
+    (g.members || []).some(m => String(m).toLowerCase().includes(q)));
+}
+
 function renderTrimMatch(body, p) {
   const itemsMap = {};
   (p.items || []).forEach(i => { itemsMap[i.name] = i; });
   const canEdit = canEditSession();
-  const groups = p.groups || [];
-  const cards = groups.map(g => {
+  const allGroups = p.groups || [];
+  const groups = trimMatchFilteredGroups(p);
+  const mq = (trimState.matchSearch || "").trim();
+  // 카드가 많으면 세로 스크롤이 길어진다 — 한 페이지 9개(3×3)로 잘라 페이저로 넘긴다.
+  const mPageCount = Math.max(1, Math.ceil(groups.length / TRIM.MATCH_PAGE_SIZE));
+  trimState.matchPage = Math.min(Math.max(trimState.matchPage, 0), mPageCount - 1);
+  const mPage = trimState.matchPage;
+  const pageGroups = groups.slice(mPage * TRIM.MATCH_PAGE_SIZE,
+                                  (mPage + 1) * TRIM.MATCH_PAGE_SIZE);
+  const cards = pageGroups.map(g => {
     const slotRows = p.phases.map(ph => {
       const item = g.slots[ph];
       return `<div class="trim-slot" data-group="${esc(g.id)}" data-slot="${esc(ph)}">
@@ -249,7 +270,7 @@ function renderTrimMatch(body, p) {
   const invalidNote = invalid.length
     ? `<div class="trim-note">무효 override ${invalid.length}건 (항목 없음/슬롯 불일치): ${invalid.map(esc).join(", ")}</div>` : "";
   const editNote = canEdit
-    ? `<div class="trim-note">항목 칩을 끌어 다른 그룹의 슬롯/MEMBER 에 놓으면 수동 재배치가 서버에 저장됩니다 (자동 매칭보다 우선). ↺ = 자동 배치 복귀.</div>`
+    ? `<div class="trim-note">항목 칩을 끌어 다른 그룹의 슬롯/MEMBER 에 놓으면 수동 재배치가 서버에 저장되고 화면에 바로 반영됩니다 (자동 매칭보다 우선). 통계·배지 재계산은 「새로 분석하기」. ↺ = 자동 배치 복귀.</div>`
     : `<div class="trim-note">수동 재배치는 로그인한 업로더만 가능합니다 (현재 읽기 전용).</div>`;
 
   const rows = (p.items || []).map(i => `<tr class="${i.group ? "" : "is-unassigned"}">
@@ -297,8 +318,16 @@ function renderTrimMatch(body, p) {
          <div class="trim-palette-list">${paletteItems}</div>
        </aside>
        <div class="trim-match-main">
+         <div class="trim-cardsearch">
+           <input id="trimCardSearch" class="dist-search" type="text" autocomplete="off"
+             data-no-dirty placeholder="그룹 카드 검색 (그룹명/항목명)" value="${esc(trimState.matchSearch)}">
+           <span class="trim-cardsearch-count">${mq
+             ? `${groups.length}/${allGroups.length}그룹` : `${allGroups.length}그룹`}</span>
+         </div>
          ${cards ? `<div class="trim-match-grid">${cards}</div>`
-                 : `<div class="placeholder">매칭된 그룹이 없습니다</div>`}
+                 : `<div class="placeholder">${mq ? "검색과 일치하는 그룹이 없습니다"
+                                                 : "매칭된 그룹이 없습니다"}</div>`}
+         ${trimScatterPagerHtml(mPage, mPageCount)}
          <div class="section-title small" style="margin-top:14px">미배정 항목 (여기로 끌어오면 자동 배치 복귀)</div>
          <div class="trim-unassigned" data-drop="reset">${unassignedChips}${dropHint}</div>
          ${canEdit ? `<div class="trim-newgroup" data-drop="newgroup">+ 새 그룹으로 끌어오기</div>` : ""}
@@ -311,7 +340,32 @@ function renderTrimMatch(body, p) {
 
   const cnt = document.getElementById("trimCount");
   if (cnt) cnt.textContent =
-    `그룹 ${groups.length}개 · 매칭 ${nTotal - nUnassigned}개 · 미배정 ${nUnassigned}개`;
+    `그룹 ${mq ? `${groups.length}/${allGroups.length}` : allGroups.length}개` +
+    ` · 매칭 ${nTotal - nUnassigned}개 · 미배정 ${nUnassigned}개`;
+  // 카드 검색 — 입력 250ms 디바운스 후 재렌더, 포커스·커서 위치 복원(연속 타이핑 유지).
+  const csearch = document.getElementById("trimCardSearch");
+  if (csearch) {
+    let ctimer = null;
+    csearch.addEventListener("input", () => {
+      clearTimeout(ctimer);
+      ctimer = setTimeout(() => {
+        trimState.matchSearch = csearch.value;
+        trimState.matchPage = 0;
+        const pos = csearch.selectionStart;
+        renderTrimMatch(body, p);
+        const s2 = document.getElementById("trimCardSearch");
+        if (s2) { s2.focus(); try { s2.setSelectionRange(pos, pos); } catch (e) {} }
+      }, 250);
+    });
+  }
+  // 카드 페이저 (②와 같은 마크업 재사용 — 바인딩만 matchPage 로)
+  body.querySelectorAll(".trim-pager-btn").forEach(b => b.addEventListener("click", () => {
+    if (b.disabled) return;
+    const t = parseInt(b.dataset.tpage, 10);
+    if (isNaN(t) || t === trimState.matchPage) return;
+    trimState.matchPage = t;
+    renderTrimMatch(body, p);
+  }));
   if (canEdit) bindTrimDnD(body);
   body.querySelectorAll(".trim-reset").forEach(b => b.addEventListener("click", e => {
     e.stopPropagation();
@@ -392,6 +446,12 @@ function reanalyzeTrim() {
     ? (trimState.pending[trimState.pending.length - 1] || "") : "";
   trimState.pending = [];
   trimUpdateReanalyzeBtn();
+  // 저장 시점엔 payload 를 로컬 미러링으로 유지했다 — 여기서 비워야 서버 재계산본을 받는다.
+  trimState.payloads = {};
+  trimState.payloadPromises = {};
+  trimState.charts = {};
+  trimState.chartsOrder = [];
+  trimState.chartPromises = {};
   const body = document.getElementById("trimBody");
   if (body) body.innerHTML = `<div class="placeholder">재계산 중…</div>`;
   // 시작 전(분석 시작을 아직 안 누름)이라면 이 버튼이 그 역할까지 겸한다.
@@ -417,6 +477,83 @@ function trimFocusPendingItem(body) {
   setTimeout(() => chip.classList.remove("trim-chip-focus"), 2600);
 }
 
+// ── 저장된 override 를 클라 payload 에 미러링 (서버 _apply_overrides 의 화면용 근사) ────
+// 저장은 이미 서버에 끝났고, 재분석 전까지 화면 표시만 같은 모양으로 맞춰 둔다.
+// reset(자동 배치 복귀)은 자동 매칭 결과를 클라가 모르므로 일단 미배정으로 보여주고,
+// 정확한 자리는 「새로 분석하기」가 반영한다.
+function trimApplyOpLocal(op) {
+  if (!op || !op.item) return;
+  const seen = new Set();                    // "" 별칭이 같은 객체를 가리킨다 — 이중 적용 방지
+  Object.values(trimState.payloads).forEach(p => {
+    if (!p || seen.has(p)) return;
+    seen.add(p);
+    trimApplyOpToPayload(p, op);
+  });
+}
+
+function trimApplyOpToPayload(p, op) {
+  const item = (p.items || []).find(i => i.name === op.item);
+  if (!item) return;
+  const groups = p.groups || (p.groups = []);
+  const detach = () => {
+    const g = groups.find(x => x.id === item.group);
+    if (!g) return;
+    Object.keys(g.slots || {}).forEach(s => { if (g.slots[s] === item.name) g.slots[s] = null; });
+    g.members = (g.members || []).filter(m => m !== item.name);
+    if (!Object.values(g.slots || {}).some(Boolean) && !g.members.length)
+      groups.splice(groups.indexOf(g), 1);   // 빈 그룹 정리 (서버와 동일)
+    else trimRefreshGroupFlags(p, g);
+  };
+  if (op.reset) {
+    detach();
+    item.group = null; item.slot = null; item.override = false;
+    return;
+  }
+  const gid = String(op.group || "").trim().toUpperCase();   // 서버가 대문자로 정규화한다
+  const slot = String(op.slot || "").trim().toUpperCase();
+  if (!gid || !slot) return;
+  detach();
+  let g = groups.find(x => x.id === gid);
+  if (!g) {
+    g = { id: gid, slots: {}, members: [], manual: true, flags: {} };
+    (p.phases || []).forEach(ph => { g.slots[ph] = null; });
+    groups.push(g);
+  }
+  if (!g.members.includes(item.name)) g.members.push(item.name);
+  if (slot === "MEMBER") {
+    item.slot = null;
+  } else {
+    const occupant = g.slots[slot];
+    if (occupant) {                          // 기존 점유 항목은 MEMBER 로 강등 (서버와 동일)
+      const occ = (p.items || []).find(i => i.name === occupant);
+      if (occ) occ.slot = null;
+    }
+    g.slots[slot] = item.name;
+    item.slot = slot;
+  }
+  item.group = gid;
+  item.override = true;
+  trimRefreshGroupFlags(p, g);
+}
+
+function trimRefreshGroupFlags(p, g) {
+  const f = g.flags || (g.flags = {});
+  f.complete_base_target = !!(g.slots[p.base] && g.slots[p.target]);
+  if ((p.phases || []).length === 4)
+    f.complete_4phase = (p.phases || []).every(ph => g.slots[ph]);
+  f.has_verify = !!g.slots.VERIFY;
+}
+
+// 재렌더 직후 옮긴 칩을 강조만 한다 (드롭한 자리라 스크롤 이동은 하지 않는다).
+function trimHighlightChip(body, name) {
+  if (!name) return;
+  const chips = [...body.querySelectorAll(".trim-chip")].filter(el => el.dataset.item === name);
+  const chip = chips.find(el => !el.closest(".trim-palette")) || chips[0];
+  if (!chip) return;
+  chip.classList.add("trim-chip-focus");
+  setTimeout(() => chip.classList.remove("trim-chip-focus"), 2600);
+}
+
 let _trimSaving = 0;   // 진행 중 저장 수 — 드롭 직후 페이지 이탈로 요청이 끊기기 전 경고용
 
 async function saveTrimOverrides(ops) {
@@ -430,15 +567,17 @@ async function saveTrimOverrides(ops) {
     });
     const j = await res.json().catch(() => ({}));
     if (!res.ok) { showToast(j.error || `저장 실패 (HTTP ${res.status})`); return; }
-    // 그룹 구성이 바뀌었으므로 클라 캐시는 지금 비운다(다음 조회가 새 payload 를 받게).
-    // **재조회·재렌더는 하지 않는다** — 「새로 분석하기」를 눌러야 반영된다. 서버 payload
-    // 캐시는 manifest digest 변경으로 자연 미스, 구성이 안 바뀐 그룹의 차트는 서버 캐시
-    // 재사용이라 미뤄도 비용이 늘지 않는다.
-    trimState.payloads = {};
+    // 서버 재조회는 하지 않되 **화면에는 즉시 반영**한다 (2026-08-12 요청) — 클라가 가진
+    // payload 에 같은 이동을 미러링해 매칭 화면을 다시 그린다. payload 를 유지하므로 ②
+    // 산포 분석으로도 바로 넘어갈 수 있다(그룹 통계·배지만 재분석 전까지 이전 값).
+    // 차트 캐시만 비운다 — 다음 조회가 새 그룹 구성(서버에 이미 저장됨)으로 받아온다.
+    // 정확한 자동 배치(↺ 복귀 위치)·통계 재계산은 「새로 분석하기」가 payload 를 새로 받는다.
     trimState.charts = {};
+    trimState.chartsOrder = [];
     trimState.chartPromises = {};
     trimState.scatterPage = 0;         // 그룹 재구성 → 산포 페이지/선택 초기화
     trimState.scatterSel.clear();
+    ops.forEach(op => trimApplyOpLocal(op));
     ops.forEach(op => {
       if (!op || !op.item) return;
       const at = trimState.pending.indexOf(op.item);
@@ -446,7 +585,22 @@ async function saveTrimOverrides(ops) {
       trimState.pending.push(op.item);
     });
     trimUpdateReanalyzeBtn();
-    showToast(`Trim 재배치 저장됨 (${trimState.pending.length}) — 「새로 분석하기」를 누르면 반영됩니다`);
+    if (trimState.view === "match") {
+      const body = document.getElementById("trimBody");
+      const p = trimPayload();
+      if (body && p) {
+        // 옮긴 그룹이 다른 페이지에 있으면 그 페이지로 이동해 결과가 눈에 보이게 한다.
+        const lastOp = ops[ops.length - 1] || {};
+        if (lastOp.group) {
+          const gid = String(lastOp.group).trim().toUpperCase();
+          const idx = trimMatchFilteredGroups(p).findIndex(g => g.id === gid);
+          if (idx >= 0) trimState.matchPage = Math.floor(idx / TRIM.MATCH_PAGE_SIZE);
+        }
+        renderTrimMatch(body, p);
+        trimHighlightChip(body, lastOp.item);
+      }
+    }
+    showToast(`Trim 재배치 저장됨 (${trimState.pending.length}) — 통계·자동배치는 「새로 분석하기」로 갱신됩니다`);
   } catch (e) {
     showToast("저장 실패: " + e.message);
   } finally {

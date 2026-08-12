@@ -118,6 +118,17 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   - **Issue Table(메인)의 Bin 미니맵·⤢ 는 RT 소스 맵만 본다** (`issueBinMaps`, 2026-08-11)
     — 그 표가 RT source 기준이라 CT/HT 맵이 뜨면 표의 Bin 과 어긋난다. 항목별 fail die 를
     그리는 Temp 미니셀(`map-cell-temp`)은 반대로 CT/HT 가 대상이라 이 목록을 쓰지 않는다.
+  - **Issue Table(메인)의 Distribution 미니셀도 RT 소스만 그린다** (2026-08-12) — Bin 미니맵과
+    같은 이유다(표가 RT 기준). 셀에 `data-src-scope="rt"`(sheets.js)를 달고
+    `renderMiniDistCell`(item_detail.js)이 `tempFilterSources("RT","")` 로 `bySource` 를 걸러
+    낸다 — 서버 payload 는 그대로 전 소스이고 **그리는 목록만** 좁힌다(표시점 캡
+    `distCapFor` 는 걸러낸 소스 수로 계산). 겹치는 RT 소스가 없으면 빈 칸으로 확정한다.
+    같은 변경에서 메인 CPK 섹션 미니셀 variant 를 `bin1` → **`rtbin1`** 로 옮겼다: CT/HT 의
+    저장 BIN 은 업로드 정리의 "첫 fail" 값이라 plain `bin1` 을 걸면 CT/HT 곡선이 통째로 비어
+    "일부 source 만 보이는" 증상이 됐고, `rtbin1` 이 그 표의 CPK 숫자(RT Bin1 die × RT limit)와
+    같은 기준이며 `Issue Table Temp` 탭과 캐시(`distRtBin1Cache`)·배치 요청까지 공유한다.
+    **`Issue Table Temp` 탭은 반대로 전 소스**(RT 만 Bin1, CT/HT 는 fail 포함 전체)라
+    `data-src-scope` 를 달지 않는다.
   - **Honey 전체 Excel** 에도 `Issue Table Temp` 시트가 들어간다(Temperature 세션만) —
     Distribution 열은 항목 CDF, Map 열은 **항목별 fail die 강조** 썸네일
     (`_map.render_temp_map_png`, temp_map 인덱스 기준). temp_map 수신 실패 시 Map 열만

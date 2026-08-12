@@ -44,6 +44,10 @@ _PHASE_PRIORITY = ("CODE", "VERIFY", "TRIM", "INIT")  # 판정 규칙 (3) 검사
 _TV2_MARKERS = {"MDDI": "FUSE_", "PDDI": "OTP_"}
 _TV2_TRIM_SUFFIXES = ("_P1", "_TRIM", "_PRE")
 _TV2_VERIFY_SUFFIXES = ("_P2", "_POST")
+# VERIFY 접두 (2026-08-12 요청): PWR2_VREF 처럼 앞에 붙는 표기 — PMIC4 는 PWR2 토큰을
+# 이미 VERIFY 로 보지만 TV2 는 접미사만 봐서 미배정이 되던 것을 맞춘다. phase 를 명시하는
+# 표기이므로 마커(FUSE_/OTP_)보다 우선한다.
+_TV2_VERIFY_PREFIX = "PWR2_"
 # PRE/POST 꼬리 (뒤에 _P<n> 이 붙어도 하나의 접미사로 본다) — VREF_PRE_P1 ↔ VREF_POST_P2 ↔
 # VREF_POST_P3 처럼 P 번호가 달라도 같은 stem("VREF")으로 묶이게 한다 (2026-07-21).
 # 이 꼬리는 phase 를 명시하므로 마커(FUSE_/OTP_)보다 우선한다 — 마커가 있어도 _POST 는 VERIFY.
@@ -126,6 +130,8 @@ def classify_tv2(name, product_type) -> str | None:
     prepost = _tv2_prepost(upper)
     if prepost:                                  # PRE/POST 는 phase 명시 → 마커보다 우선
         return prepost[0]
+    if upper.startswith(_TV2_VERIFY_PREFIX):     # PWR2_ 접두도 phase 명시 → 마커보다 우선
+        return "VERIFY"
     marker = _TV2_MARKERS.get(str(product_type or "").strip().upper())
     if marker and marker in upper:
         return "TRIM"
@@ -143,6 +149,8 @@ def stem_tv2(name, product_type) -> str:
     stem("VREF")이 되게 한다.
     """
     upper = str(name or "").strip().upper()
+    if upper.startswith(_TV2_VERIFY_PREFIX):     # PWR2_VREF ↔ FUSE_VREF 짝 매칭
+        upper = upper[len(_TV2_VERIFY_PREFIX):]
     prepost = _tv2_prepost(upper)
     if prepost:
         upper = upper[:-prepost[1]]

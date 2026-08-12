@@ -1501,6 +1501,25 @@ def verify(out_dir: Path, answer_rows, args):
     return rows
 
 
+def make_session_local(files, manifest):
+    """서버 프로세스 없이 **이 PC 의 report DB 에 직접** 세션을 만든다.
+
+    업로드 라우트가 하는 일(web_report.ingest_webreport)을 그대로 호출한다 — 서버가
+    떠 있지 않아도(개발 PC 처럼) 세션이 만들어지고, 서버를 켜면 목록에 그대로 보인다.
+    저장 경로는 서버와 같은 config 기본값(DB/pe/report/report.db · uploads/)이다.
+    """
+    from database import report_db
+    from web_report import ingest as wr_ingest
+    from config import REPORT_UPLOAD_DIR
+
+    report_db.init_report_db()
+    payload = [{"name": s["name"], "filename": s["file_name"],
+                "data": p.read_bytes()} for s, p in zip(manifest["sources"], files)]
+    return wr_ingest.ingest_webreport(
+        manifest, payload, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
+        client_ip="127.0.0.1", user_agent="Mozilla/5.0 HoneyUser/evaltest")
+
+
 def upload(base_url: str, files, manifest):
     """multipart/form-data 로 POST /pe/report/upload_webreport (requests 의존 없음)."""
     import urllib.request
@@ -1548,12 +1567,26 @@ def main():
     ap.add_argument("--no-verify", action="store_true")
     ap.add_argument("--upload", default="", metavar="URL",
                     help="생성 후 업로드할 서버 (예: http://127.0.0.1:8080)")
+    ap.add_argument("--upload-only", action="store_true",
+                    help="생성을 건너뛰고 --out 의 기존 파일을 그대로 올린다/세션으로 만든다")
+    ap.add_argument("--make-session", action="store_true",
+                    help="서버 없이 이 PC 의 report DB 에 직접 세션 생성 (개발 PC 용)")
     ap.add_argument("--_eval-dump", default="", help=argparse.SUPPRESS)   # 내부 자식 모드
     args = ap.parse_args()
 
     out_dir = Path(args.out)
     if getattr(args, "_eval_dump"):
         run_eval_pass(out_dir, args, Path(getattr(args, "_eval_dump")))
+        return
+
+    if args.upload_only:
+        manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+        files = [out_dir / s["file_name"] for s in manifest["sources"]]
+        missing = [str(p) for p in files if not p.exists()]
+        if missing:
+            raise SystemExit(f"parquet 이 없습니다: {missing[:3]} … 먼저 생성하세요")
+        print(f"[업로드 전용] {out_dir} 의 parquet {len(files)}개 사용 (재생성 없음)")
+        _deliver(files, manifest, args)
         return
 
     wafer = build_wafer(args.radius)
@@ -1586,6 +1619,11 @@ def main():
     else:
         print("[4/4] 검증 생략 (--no-verify)")
 
+    _deliver(files, manifest, args)
+
+
+def _deliver(files, manifest, args):
+    """생성 결과를 세션으로 만든다 — HTTP 업로드(--upload) 또는 로컬 DB 직접(--make-session)."""
     if args.upload:
         print(f"\n[업로드] {args.upload} …")
         res = upload(args.upload, files, manifest)
@@ -1593,6 +1631,13 @@ def main():
         sid = res.get("session_id")
         if sid:
             print(f"  세션: {args.upload.rstrip('/')}/pe/report/view/{sid}")
+    if args.make_session:
+        print("\n[세션 생성] 이 PC 의 report DB 에 직접 (서버 프로세스 불필요) …")
+        t0 = time.perf_counter()
+        res = make_session_local(files, manifest)
+        sid = res.get("session_id")
+        print(f"  session_id = {sid}  ({time.perf_counter() - t0:.1f}s)")
+        print(f"  서버 기동 후: /pe/report/view/{sid}")
 
 
 if __name__ == "__main__":
