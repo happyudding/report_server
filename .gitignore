@@ -59,6 +59,8 @@ server/releases/*.zip
 client/build_launcher/
 client/dist_launcher/
 client/update_test/release/
+client/update_test/build_server/
+client/update_test/dist_server/
 
 # Local Claude Code settings (personal, not shared)
 .claude/settings.local.json

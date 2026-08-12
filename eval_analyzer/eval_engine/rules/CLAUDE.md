@@ -75,6 +75,17 @@ signatures:
 - `signatures_doc()` 은 이제 **기준값 전용**이다 — 평가·코멘트 경로(signatures/recommend/
   present)는 전부 `signatures_for(case_ctx)` 를 쓴다.
 - signature 추가 시 체크: (1) status.py `SPECIFICITY_ORDER` 에 id 추가, (2) 필요한 임계값 키를 thresholds 에 추가.
+- **현상 5축 체계(2026-08-12)** — 중심 / 산포·여유 / 형태 / 공간 / 데이터품질. 축당 primary
+  하나만 남기고 같은 현상의 약한 통계는 `suppressed_by` 로 목록에만 둔다
+  (`LOW_CPK ← [SPEC_TOO_TIGHT, WIDE_DISTRIBUTION, MEAN_SHIFT]`,
+  `HEAVY_TAIL ← [SEVERE_OUTLIER, OUTLIER_WARN]`, `BIDIR_TAIL ← [WIDE_DISTRIBUTION]`).
+  결과 지표(cpk)는 원인 룰이 있으면 primary 가 되지 않는다. 배경은
+  [../../../docs/13 §16](../../../docs/13_eval_analyzer_integration.md).
+- **공간 존은 E1/EDGE/CENTER** — `E1_FAIL` 은 최외곽 1 chip line(4-이웃 중 결손이 있는 die,
+  `features._e1_mask`)이고 `edge_fail_ratio`·`ring_fail_ratio` 는 **E1 을 뺀** 영역이다.
+- ⚠ **임계값을 그 지표의 상한 위로 두면 그 룰은 영원히 침묵한다.** 비율형 공간 지표의 상한은
+  `1/영역면적비`(edge≈2.8, center≈11, ring≈1.8, quadrant≤4)이고, 비모수 왜도(`skewness`)는
+  1.0 이다(그래서 TAIL_RISK 는 `skewness_moment` 로 갈아탔다).
 
 ## calibrate 와의 관계
 `calibrate.recalibrate()`가 누적 features 분위수(`calibration:` 스펙, item_class 별 `min_n` 이상)로

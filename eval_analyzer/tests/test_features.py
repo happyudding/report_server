@@ -80,17 +80,45 @@ def test_modality_v2_separated_uses_value_gap():
         100, 0.0, 1, 0.2, 0.6, 0.9, 0.01, th) is None      # 소수쪽 질량 미달 → 미발화
 
 
+def _disc(radius=6):
+    """반경 radius 안의 정수격자 die 좌표 목록 (원형 웨이퍼 모사)."""
+    return [(x, y) for y in range(-radius, radius + 1) for x in range(-radius, radius + 1)
+            if x * x + y * y <= radius * radius]
+
+
 def test_spatial_edge_concentration():
     th = thresholds_for({})
-    # x=1..10 (y=0), fail 은 edge(x=9,10) 에만
-    xs = list(range(1, 11))
-    case = {"values": [float(x) for x in xs],
-            "x_pos": [float(x) for x in xs], "y_pos": [0.0] * 10,
-            "fail_mask": [x in (9, 10) for x in xs], "lsl": 0, "usl": 11}
+    # 원형 die 배치에서 fail 을 **가장자리 밴드(E1 제외)** 에만 둔다.
+    # 2026-08-12: EDGE 는 최외곽 1열(E1)을 뺀 영역으로 의미가 좁아졌다 — 한 줄짜리
+    # 데이터(x=1..10)는 전부 E1 이라 EDGE 표본이 0 이 되므로 2차원 배치를 쓴다.
+    dies = _disc()
+    e1 = features._e1_mask(np.array([d[0] for d in dies], dtype=float),
+                           np.array([d[1] for d in dies], dtype=float))
+    rmax = max((x * x + y * y) ** 0.5 for x, y in dies)
+    fail = [(not e1[i]) and ((x * x + y * y) ** 0.5 / rmax >= th["edge_region_pct"])
+            for i, (x, y) in enumerate(dies)]
+    case = {"values": [1.0] * len(dies),
+            "x_pos": [float(x) for x, _ in dies], "y_pos": [float(y) for _, y in dies],
+            "fail_mask": fail, "lsl": 0, "usl": 11}
     out = features._spatial_features(case, th)
     assert out["edge_fail_ratio"] is not None
     assert out["edge_fail_ratio"] > 1.0
     assert out["wafer_zone_signature"] == "EDGE"
+
+
+def test_spatial_e1_concentration():
+    """최외곽 1열(E1)에만 fail 이 몰리면 e1_fail_ratio 가 뜨고 zone 이 E1 로 분류된다."""
+    th = thresholds_for({})
+    dies = _disc()
+    e1 = features._e1_mask(np.array([d[0] for d in dies], dtype=float),
+                           np.array([d[1] for d in dies], dtype=float))
+    case = {"values": [1.0] * len(dies),
+            "x_pos": [float(x) for x, _ in dies], "y_pos": [float(y) for _, y in dies],
+            "fail_mask": list(e1), "lsl": 0, "usl": 11}
+    out = features._spatial_features(case, th)
+    assert out["e1_fail_ratio"] > th["e1_fail_ratio_warn"]
+    assert out["edge_fail_ratio"] == 0.0          # E1 을 뺀 밴드에는 fail 이 없다
+    assert out["wafer_zone_signature"] == "E1"
 
 
 def test_spatial_none_when_no_coords():

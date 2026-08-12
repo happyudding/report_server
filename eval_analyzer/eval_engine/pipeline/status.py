@@ -23,6 +23,8 @@ RANK_TO_STATUS = {v: k for k, v in SEVERITY_RANK.items()}
 # 구체적(원인 특정) → 일반적 순. 같은 severity 충돌 시 앞쪽이 primary.
 SPECIFICITY_ORDER = ["LOW_SAMPLE_UNCERTAIN", "MISSING_LIMIT", "CONSTANT_VALUE",
                      "EQUIPMENT_SUSPECT", "RING_FAIL",
+                     # 공간 존은 좁은 것부터: E1(최외곽 한 줄) > EDGE(바깥 밴드) > CENTER
+                     "E1_FAIL",
                      "EDGE_FAIL", "CENTER_FAIL", "CLUSTER_FAIL", "WAFER_GRADIENT",
                      "CODE_RAIL", "TAIL_RISK", "SEVERE_OUTLIER", "OUTLIER_WARN",
                      "MEAN_SHIFT", "HEAVY_TAIL",

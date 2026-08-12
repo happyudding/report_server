@@ -3634,16 +3634,14 @@ class HoneyMainWindow(QMainWindow):
                 pass
         os._exit(0)
 
-    # ── 버전 폴더 + 런처 방식 업데이트 (검증 단계 — HONEY_UPDATE_TEST=1) ─────
+    # ── 버전 폴더 + 런처 방식 업데이트 ──────────────────────────────────────
     def _versioned_update_root(self):
         """새 방식으로 업데이트할 수 있으면 설치 루트, 아니면 None.
 
-        아직 검증 단계라 환경변수 HONEY_UPDATE_TEST=1 일 때만 켠다 — 운영 배포본은
-        이 값이 없어 종전 흐름(ZIP 다운로드 안내)이 그대로 동작한다. 버전 폴더
-        레이아웃(versions\\<ver>\\HoneyApp.exe)이 아니면 어차피 None 이다.
+        판정은 install_root() 하나로 끝난다 — 실행 파일이 versions\\<ver>\\HoneyApp.exe
+        일 때만 루트를 돌려주므로, 구 레이아웃(Honey.exe 단독)으로 배포된 기존
+        사용자는 항상 None 이라 종전 흐름(ZIP 다운로드 안내)이 그대로 동작한다.
         """
-        if os.environ.get("HONEY_UPDATE_TEST") != "1":
-            return None
         return app_update.install_root()
 
     def _run_versioned_update(self, manifest, remote, root):
@@ -4127,14 +4125,12 @@ def _apply_cute_font(app):
 
 
 def _schedule_version_cleanup():
-    """버전 폴더 방식이면 정상 기동 10초 뒤 옛 버전·잔재를 정리한다 (검증 단계 게이트).
+    """버전 폴더 방식이면 정상 기동 10초 뒤 옛 버전·잔재를 정리한다.
 
     창이 뜨고 10초를 버텼다 = 새 버전 첫 실행이 성공했다는 뜻이라, 이때 직전 버전
     1개만 롤백용으로 남기고 나머지를 지운다. 실패해도 무해한 best-effort 라
     데몬 스레드로 돌린다 (종료를 붙잡지 않는다).
     """
-    if os.environ.get("HONEY_UPDATE_TEST") != "1":
-        return
     root = app_update.install_root()
     if root is None:
         return

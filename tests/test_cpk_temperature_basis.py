@@ -176,8 +176,14 @@ def test_item_detail_matches_cpk_tab():
     assert (det_payload["lower_limit"], det_payload["upper_limit"]) == (8, 12), det_payload
 
     # groups 를 안 넘기면 종전 그대로(자기 Bin1 × 자기 limit) — 다른 모드에 영향이 없다.
+    # Temperature 가 아닌 모드에서도 두 경로는 같은 값이어야 한다(_stats ↔ _stats_batch
+    # 는 같은 공식의 사본 2벌이라, 한쪽만 손대면 여기서 갈린다).
+    legacy_tab = {r["source"]: r for r in build_cpk_rows(tables, ["ItemA"])}
     legacy = {s["source"]: s for s in scatter_item(tables, "ItemA")["stats"]}
     assert legacy["WF1_CT"]["n"] == len(_CT_SELF_BIN1), legacy["WF1_CT"]
+    for source in ("WF1_RT", "WF1_CT"):
+        for field in ("n", "average", "stdev", "cp", "cpl", "cpu", "cpk"):
+            assert legacy_tab[source][field] == legacy[source][field], (source, field)
 
 
 def main():

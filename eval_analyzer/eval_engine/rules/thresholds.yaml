@@ -12,7 +12,8 @@ default:
   outlier_sigma: 4.5         # outlier 컷 — 중앙값에서 robust σ(1.4826·MAD) 이 배수 밖이면 outlier (Iglewicz-Hoaglin modified z, 원 권장 3.5 → 과검출 완화)
   skew_warn: 1.0            # |skew| 주의
   spec_margin_warn: 1.0     # σ 단위 여유 (작을수록 위험)
-  edge_fail_ratio_warn: 2.0 # edge 영역 fail 집중 배수
+  edge_fail_ratio_warn: 2.0 # edge 영역 fail 집중 배수 (E1 제외한 바깥 밴드)
+  e1_fail_ratio_warn: 2.0   # 최외곽 1 chip line(E1) fail 집중 배수 (E1_FAIL)
   n_min: 20                 # min-n 가드 (고차모멘트 룰)
   bimodality_warn: 0.555    # Sarle's bimodality coefficient (5/9 권장값)
   edge_region_pct: 0.8      # 반경 정규화 0~1 중 상위 20% = edge
@@ -26,7 +27,9 @@ default:
   kurtosis_warn: 2.0        # excess kurtosis 컷 — heavy tail(간헐 spike) (HEAVY_TAIL)
   spatial_fail_count_min : 5      # 공간 룰(EDGE/CENTER/RING/GRADIENT) 최소 fail 수 — 소수 fail 오탐 방지
   severe_outlier_count_min : 5    # SEVERE_OUTLIER 최소 outlier 개수 (비율만으론 소표본 오탐)
-  ring_fail_ratio_warn : 2.0      # 중간 반경(ring) fail 집중 배수 (RING_FAIL)
+  ring_fail_ratio_warn : 1.5      # 중간 반경(ring) fail 집중 배수 (RING_FAIL)
+                                  # ⚠ ring 영역이 die 의 절반 이상이라 비율 상한이 ~1.8 이다
+                                  # — 2.0 으로 두면 수학적으로 발화 불가(2026-08-12 하향)
   gradient_norm_warn : 0.3        # wafer 한쪽으로 기우는 경사 세기 컷 (WAFER_GRADIENT)
   subpop_n_min : 50               # 부분집단(SUBPOP_GAP) 판정 최소 표본 — 미만이면 판정 보류
   subpop_outlier_ratio_max : 0.03 # 이 비율 이상 outlier 면 부분집단이 아니라 산발로 보고 판정 보류

@@ -769,3 +769,58 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 [eval_analyzer/tests/test_unknown_signature.py](../eval_analyzer/tests/test_unknown_signature.py)
 (발화/미발화·사유 우선순위·제외·LOW_CPK 억제) + `tests/test_eval_review.py`
 (표본함에 UNKNOWN 미노출 — 기대 룰 목록을 배포 yaml 에서 유도하도록 바꿨다).
+
+## 16. signature 축 재편 + 공간 존 세분 (2026-08-12)
+
+합성 테스트 데이터([tools/eval_testdata](../tools/eval_testdata/README.md))로 룰별 분포를
+나란히 보니 **여러 signature 가 같은 현상을 다른 통계로 본 것**이라 화면에서 갈리지 않았다.
+근거는 수식이다 — 대칭 limit 에서 `cpk = 1/(6·spread_norm)` 이므로 `WIDE_DISTRIBUTION` 이
+뜨면 `LOW_CPK` 는 **항상** 따라 뜨고, `SPEC_TOO_TIGHT` 은 그 여집합(좁은데 cpk 낮음)일 뿐이다.
+`outlier_ratio` 와 `kurtosis` 도 "튀는 값" 하나를 두 통계로 본 것이다.
+
+### 16-1. 현상 5축 — 축당 primary 1개
+
+| 축 | primary | 억제되어 목록에만(secondary) |
+|---|---|---|
+| 중심 | `MEAN_SHIFT` | — |
+| 산포/여유 | `WIDE_DISTRIBUTION` \| `SPEC_TOO_TIGHT` | `LOW_CPK`, `BIDIR_TAIL` |
+| 형태 | `SUBPOP_GAP` \| `SEVERE_OUTLIER` \| `CODE_RAIL` | `OUTLIER_WARN`, `HEAVY_TAIL` |
+| 공간 | `E1_FAIL` \| `EDGE_FAIL` \| `CENTER_FAIL` \| `CLUSTER_FAIL` \| `WAFER_GRADIENT` | `RING_FAIL` |
+| 데이터 품질 | `LOW_SAMPLE_UNCERTAIN` \| `MISSING_LIMIT` \| `CONSTANT_VALUE` | — |
+
+억제는 전부 yaml `suppressed_by` 선언이다(엔진 코드 무수정):
+`LOW_CPK ← [SPEC_TOO_TIGHT, WIDE_DISTRIBUTION, MEAN_SHIFT]` ·
+`HEAVY_TAIL ← [SEVERE_OUTLIER, OUTLIER_WARN]` · `BIDIR_TAIL ← [WIDE_DISTRIBUTION]`.
+**결과 지표(cpk)는 primary 가 되지 않는다** — "왜 낮은가"를 말하는 룰에 자리를 내준다.
+
+### 16-2. 공간 존 세분 — E1(최외곽 1 chip line) 신설
+
+`EDGE`(반경 상위 20%) 하나로는 "가장자리 한 줄"이 안 보였다. 한 줄의 두께는 웨이퍼·die
+크기에 따라 달라 **반경 비율로 표현할 수 없으므로** 격자 이웃으로 판정한다 —
+4-이웃 중 하나라도 비면 E1(`features._e1_mask`, 좌표 집합 O(n), 추가 입력 없음).
+
+- 새 feature `e1_fail_ratio` + 임계 `e1_fail_ratio_warn`(2.0) + 룰 `E1_FAIL`.
+- `edge_fail_ratio`/`ring_fail_ratio` 는 **E1 을 뺀** 영역 기준으로 의미가 좁아졌다.
+- `wafer_zone_signature` 에 `E1` 값이 추가됐다(TEXT 컬럼이라 DDL 변경 없음).
+- **eval.db 스키마는 그대로다** — 새 feature 는 `store.save_features` 의 cols 목록에 없어
+  메모리 계산으로만 쓰인다(저장이 필요해지면 그때 별도 승인).
+
+### 16-3. 발화 불가였던 룰 2종 수선
+
+| 룰 | 문제 | 조치 |
+|---|---|---|
+| `TAIL_RISK` | 지표 `skewness` 가 **비모수 왜도**((mean-median)/stdev) 라 수학적 상한이 1.0 — 임계 `skew_warn: 1.0` 을 넘을 수 없어 켜도 영원히 미발화 | 상한 없는 **모멘트 왜도** `skewness_moment` 신설 후 룰을 그쪽으로 교체(기존 `skewness` 컬럼은 의미 보존을 위해 그대로 둔다) |
+| `RING_FAIL` | ring 영역이 die 의 절반 이상이라 `ring_fail_ratio` 상한이 ~1.8 — 임계 2.0 에 도달 불가 | 임계 **1.5** 로 하향 |
+
+같은 종류의 상한이 다른 공간 룰에도 있다: `edge_fail_ratio` 상한 ≈ 1/edge면적비,
+`center_fail_ratio` ≈ 11, `quadrant_imbalance` ≤ 4. **임계값을 상한 위로 두면 그 룰은
+영원히 침묵한다** — `/pe/eval` 에서 임계를 올릴 때 이 점을 확인할 것.
+
+### 16-4. 캐시·검증
+
+- 룰 yaml 을 손으로 고쳤으므로 `.rules_rev` 를 **직접 올렸다**(`eval_debug.bump_rules_rev`).
+  ai_comment 옵션 세션의 캐시만 무효화되므로 `REPORT_SCHEMA_VERSION` 은 건드리지 않았다.
+- 검증: `eval_analyzer` 엔진 테스트 187 passed(E1 존 테스트 추가·TAIL_RISK 지표 갱신),
+  `rules_io.validate_all()` 무결성 0 problems, 합성 데이터 정답표 대조
+  (단독 CSV 85/85, 전체 세트 496/500 — 나머지는 조합 항목의 구조적 상충).
+- `label_signature`(사람 확정 라벨)는 조회 결과 **0행**이라 id 마이그레이션이 필요 없었다.

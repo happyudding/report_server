@@ -25,11 +25,11 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out 
 | `<name>_vN_answer.csv` | 정답표 — item·세기·목표/실측 지표·임계값·bin·fail 수 |
 | `<name>_vN_verify.csv` | 실제 엔진 발화 대조 |
 
-> **CSV 1장에 못 담는 signature 4종** — 발화 조건 자체가 "웨이퍼의 상당수가 fail" 이라
+> **CSV 1장에 못 담는 signature 5종** — 발화 조건 자체가 "웨이퍼의 상당수가 fail" 이라
 > 다른 항목이 쓸 chip 이 남지 않는다(chip 1개는 `FAILTNO` 를 하나만 갖는다):
 > `GROSS_FAIL`(수율<50%) · `WAFER_GRADIENT`(fail 률 기울기) · `CONSTANT_VALUE`(spec 밖 상수
-> = 전량 fail) · `BIDIR_TAIL`(양쪽 margin<1σ = 분포가 spec 밖으로). 이 넷은 전체 세트
-> (`--out`, source 여러 개)에서 확인한다.
+> = 전량 fail) · `BIDIR_TAIL`(양쪽 margin<1σ) · `TAIL_RISK`(spec_margin_min<1σ = 꼬리가
+> spec 을 넘어야 함). 이 다섯은 전체 세트(`--out`, source 여러 개)에서 확인한다.
 
 **② 전체 세트** (`--out DIR`) — parquet 30 source × 2,453행 + `manifest.json` +
 `answer_key.csv` + `verify.csv` + `metrics_detail.json`. item 500개.
@@ -85,6 +85,13 @@ fail chip 수(`FAIL_N`)와 지표가 **함께** 올라간다. 그러려면 분�
 **item 이름에 `(FAIL)`** — L3 이상(= 값이 죽어서 fail 난 항목)에만 붙는다.
 `WIDE_DISTRIBUTION_L5(FAIL)` 처럼 이름만으로 정답과 세기를 읽을 수 있다.
 
+### 1-2-1. TNO 도 유형·레벨로 구분한다
+
+`TNO = 유형(SIG_BIN)×1000 + 레벨×100 + 순번` (예: `11301` = WIDE_DISTRIBUTION(11) L3 1번).
+bin 규칙과 대칭이라 **번호만 보고 불량 유형·세기를 읽을 수 있고, source 를 넘어 전역
+유일**하다. 종전에는 source 안 순번(1..N)이라 다른 source 의 다른 item 이 같은 TNO 를
+가졌다 — fail 귀속이 `FAILTNO == TNO` 비교이므로 겹치면 fail 이 엉뚱한 item 에 붙는다.
+
 ### 1-3. fail 유형별 bin — Map Analysis 색 구분
 
 **bin = 유형(SIG_BIN) × 10 + 레벨**. 예: `113` = WIDE_DISTRIBUTION(11) L3, `207` =
@@ -94,14 +101,14 @@ L1·L2(fail 0)와 정상군은 일반 fail bin `2`.
 
 | bin | signature | bin | signature | bin | signature |
 |---|---|---|---|---|---|
-| 11 | WIDE_DISTRIBUTION | 19 | HEAVY_TAIL | 27 | EDGE_FAIL |
+| 11 | WIDE_DISTRIBUTION | 19 | HEAVY_TAIL | 27 | EDGE_FAIL(E1 제외) |
 | 12 | SEVERE_OUTLIER | 20 | SUBPOP_GAP | 28 | CENTER_FAIL |
 | 13 | OUTLIER_WARN | 21 | TAIL_RISK | 29 | RING_FAIL |
 | 14 | SPEC_TOO_TIGHT | 22 | CONSTANT_VALUE | 30 | CLUSTER_FAIL |
 | 15 | LOW_CPK | 23 | EQUIPMENT_SUSPECT | 32 | WAFER_GRADIENT |
 | 16 | MEAN_SHIFT | 24 | CODE_RAIL | 33 | GROSS_FAIL |
-| 17 | BIDIR_TAIL | 25 | MISSING_LIMIT | 2 | 일반(L1·L2·정상군) |
-|  |  | 26 | LOW_SAMPLE_UNCERTAIN |  |  |
+| 17 | BIDIR_TAIL | 25 | MISSING_LIMIT | 34 | **E1_FAIL**(최외곽 1열) |
+|  |  | 26 | LOW_SAMPLE_UNCERTAIN | 2 | 일반(L1·L2·정상군) |
 
 18(defective)·31(abnormal)은 `bin_taxonomy.yaml` 예약값이라 피했다 — 그 둘을 쓰면
 severity_bias 가 얹혀 status 가 달라진다.
@@ -205,6 +212,20 @@ XPOS/YPOS 를 **웨이퍼 중심이 (0,0)** 이 되도록 만든다(음수 포�
 | SUBPOP_GAP ⊻ outlier 계열 | `outlier_ratio ≥ 3%` 면 판정 보류(게이트) |
 
 `INCOMPATIBLE` 상수가 이 관계를 코드로 갖고 있다.
+
+### 4-1-1. 동시에 만들 수 없는 조합 (생성기가 막는다)
+
+분포를 spec 안에 가두는(`bounded`) 규칙 때문에 **물리적으로 함께 성립하지 않는 조합**이
+있다. `INCOMPATIBLE` 이 이를 코드로 갖고 있고, 고정 조합 목록은 `combo_specs()` 시작에서
+검사한다(어기면 그 항목은 영원히 미발화로 남는다).
+
+| 조합 | 왜 불가능한가 |
+|---|---|
+| WIDE × SEVOUT/OUTWARN/HEAVYTAIL | outlier 로 잡히려면 spike 가 robust σ 의 4.5배 밖이어야 하는데 spec 안(≤0.47 폭)을 못 벗어난다 |
+| WIDE × SUBPOP | 모드를 spec 안에 두면서 골(density_gap)까지 만들 폭이 없다 |
+| WIDE/SUBPOP × MEANSHIFT | 가둔 분포는 재추출이 치우침을 되돌려 center_bias 가 임계에 못 미친다 |
+| CONSTANT × 공간 룰 | 전 chip 이 fail 이면 "특정 영역 집중" 이라는 개념이 성립하지 않는다(비율 항상 1.0) |
+| SPECTIGHT × WIDE/MEANSHIFT/SUBPOP | 룰 조건이 서로 배타(좁고·중앙·단봉) |
 
 ### 4-2. 현 임계값으로 **발화가 불가능한** 룰 3종
 

@@ -52,7 +52,9 @@ def test_tail_risk_disabled_when_few_samples():
 
 def test_tail_risk_fires_with_enough_samples():
     case = _case()
-    feats = _full_features(skewness=2.0, spec_margin_low=0.5, n_dut=100)
+    # 2026-08-12: TAIL_RISK 의 지표가 비모수 왜도(`skewness`, 상한 1.0 이라 임계 1.0 을
+    # 넘을 수 없었다) → 모멘트 왜도(`skewness_moment`, 상한 없음)로 교체됐다.
+    feats = _full_features(skewness_moment=2.0, spec_margin_low=0.5, n_dut=100)
     raw = {"yield": 0.95, "cpk": 1.5}
     sig = signatures.evaluate(case, feats, raw)
     assert "TAIL_RISK" in [s["id"] for s in sig["signatures"]]

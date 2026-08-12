@@ -5,8 +5,13 @@ zip 을 매번 손으로 배포하는 대신, **서버 버전 체크 → 진행�
 
 > **운영에는 아직 아무 영향이 없다.** 기존 릴리스 파이프라인
 > (`build_zip.bat` / `buildandrelease.bat` / `release_honey.ps1` / `build_honey.spec`)과
-> 서버(`server/`), `server/releases/` 는 **하나도 바뀌지 않았다**. 새 흐름은
-> 환경변수 `HONEY_UPDATE_TEST=1` 이 있을 때만 켜진다.
+> 서버(`server/`), `server/releases/` 는 **하나도 바뀌지 않았다**.
+>
+> 새 흐름이 켜지는 조건은 **설치 구조 하나**다 — 실행 파일이
+> `versions\<ver>\HoneyApp.exe` 여야 한다(`app_update.install_root()`). 기존 배포본은
+> `Honey.exe` 단독이라 항상 종전 흐름(ZIP 다운로드 안내)으로 간다.
+> 검증 단계에 쓰던 환경변수 게이트 `HONEY_UPDATE_TEST=1` 은 **2026-08-12 제거**됐다
+> (이 구조 판정과 중복이라 새 구조로 설치한 PC 에서 exe 를 그냥 더블클릭하면 된다).
 
 ---
 
@@ -170,8 +175,10 @@ client\update_test\run_test_client.bat
 
 ## 5. 알아 둘 것
 
-* **`HONEY_UPDATE_TEST=1` 없이 실행하면** 새 흐름이 꺼져 종전대로 "ZIP 다운로드 / 나중에"
-  안내가 뜬다. 테스트 설치본에서도 마찬가지다 — 운영 배포본은 이 변수가 없으니 무영향.
+* **구 레이아웃(`Honey.exe` 단독)으로 설치된 빌드본은** 새 흐름이 꺼져 종전대로
+  "ZIP 다운로드 / 나중에" 안내가 뜬다 — 지금 운영에 깔려 있는 배포본이 전부 여기 해당하므로
+  무영향이다. `run_test_client.bat` 이 아직 `HONEY_UPDATE_TEST=1` 을 넣지만 게이트가
+  없어져 무의미한 값이다(해는 없어 그대로 뒀다).
 * 테스트 빌드본은 `honey.env` 에 `http://127.0.0.1:8090` 이 박혀 있어 **운영 서버로 가지
   않는다.** 다른 주소를 쓰려면 `build_test_release.ps1 -ServerUrl <주소>`.
 * 앱 빌드 산출물은 `client\dist\HoneyApp\`, 런처는 `client\dist_launcher\` 로,
@@ -185,7 +192,67 @@ client\update_test\run_test_client.bat
 * 실행 로그(`log\<시각>.txt`)는 아직 버전 폴더 안(`versions\<ver>\log\`)에 남는다 —
   루트 `log\` 로 모으는 것은 운영 배선 단계에서 `run_log.py` 와 함께 정리한다.
 
-## 6. 테스트가 끝나면
+## 6. 다른 PC 한 대에서 단독 검증 (파이썬·네트워크 불필요)
+
+개발 PC 와 **통신이 안 되는 PC** 에서도 전 과정을 확인하기 위한 방법이다. 서버와
+클라이언트가 **그 PC 안에서 `127.0.0.1` 로만** 오간다 — 네트워크도, 방화벽 설정도,
+파이썬 설치도 필요 없다. 운영 서버(12.81.220.117)는 당연히 쓰지 않는다.
+
+가져갈 꾸러미(약 700MB, USB 로 복사):
+
+```
+HoneyUpdateTest\
+├── READ_ME_FIRST.txt
+├── Honey-3.1.1.zip                 <- 여기 풀고 Honey.exe 실행 (설치 시작점)
+└── update_server\
+    ├── HoneyUpdateServer.exe       <- 더블클릭하면 127.0.0.1:8090 에서 대기
+    ├── test_update_server.py        (파이썬이 있는 PC 라면 이쪽을 써도 된다)
+    └── release\
+        ├── Honey-3.2.0.zip          서버가 나눠줄 새 버전
+        └── version.json             "지금 배포 중인 버전은 3.2.0"
+```
+
+### 6-1. 개발 PC 에서 꾸러미 만들기
+
+```
+REM 1) 설치용 + 업데이트용 두 개 (각 수 분). ServerUrl 기본값이 127.0.0.1:8090 이다.
+client\update_test\build_test_release.ps1 -Version 3.1.1
+client\update_test\build_test_release.ps1 -Version 3.2.0
+
+REM 2) 미니 서버를 exe 로 (파이썬 없는 PC 를 위해)
+python -m PyInstaller --noconfirm --onefile --console --name HoneyUpdateServer ^
+  --distpath client\update_test\dist_server --workpath client\update_test\build_server ^
+  --specpath client\update_test\build_server client\update_test\test_update_server.py
+```
+
+그 다음 위 트리대로 파일을 모아 USB 에 담는다.
+
+**두 번 빌드하는 이유**: 외부 PC 에 깔아둘 설치본(3.1.1) 자체가 런처+`versions\`
+구조여야 한다. 기존 운영 zip 은 구 구조라 이 흐름을 타지 않는다.
+
+### 6-2. 외부 PC 에서 (순서대로)
+
+1. `update_server\HoneyUpdateServer.exe` 더블클릭 → 검은 창에
+   `현재 배포 중인 버전: 3.2.0` 이 뜬다. **이 창은 켜 둔 채로 둔다.**
+2. `Honey-3.1.1.zip` 을 아무 데나 푼다 → `...\Honey\` 가 생긴다.
+3. `Honey\Honey.exe` 더블클릭.
+
+기대: 창 제목 `Honey v3.1.1` → 곧 "신규 버전 3.2.0 이(가) 있습니다" → 예 →
+다운로드바 → 설치바 → 자동 재시작 → `Honey v3.2.0`.
+서버 창에는 `/honey/version -> 3.2.0`, `/honey/download -> Honey-3.2.0.zip` 이 찍힌다.
+
+확인 항목은 4-5 / 4-6 / 4-7 과 같다 (`current.txt` 는 1행 `3.2.0`, 2행 `3.1.1`).
+
+> **함정**: 그 PC 에 사용자 환경변수 `HONEY_SERVER_URL` 이 설정돼 있으면 `honey.env`
+> 를 이겨서, 클라가 엉뚱한 서버를 보고 "최신입니다"라며 **에러 없이 아무 일도 안 한다**.
+> 업데이트 창이 안 뜨면 `echo %HONEY_SERVER_URL%` 부터 확인할 것 (4-5 와 같은 함정).
+
+> 두 zip 모두 `honey.env` 에 `127.0.0.1:8090` 이 박혀 있다. 검증 전용이며, 운영
+> 전환 때는 운영 주소로 다시 빌드해야 한다.
+
+---
+
+## 7. 테스트가 끝나면
 
 운영 배선(릴리스 스크립트 개편, 환경변수 게이트 제거, 기존 batch 업데이트 코드 정리,
 기존 사용자 1회 수동 이전 안내)은 **다음 단계**다. 이 폴더의 것만으로는 운영 배포본이

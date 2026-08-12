@@ -24,6 +24,8 @@ _FEATURE_KEYS = [
     "n_modes","modality_v2",
     # 파생(DB 미저장 — store.save_features cols 에 없음): separated 판정·트레이스 표시용
     "value_gap_ratio", "value_gap_minor_mass",
+    # 파생(DB 미저장): E1(최외곽 1 chip line) 집중도 · 모멘트 왜도
+    "e1_fail_ratio", "skewness_moment",
 ]
 
 
@@ -125,6 +127,25 @@ def _gradient(coord, fail_mask, bins=8):
     return float(np.polyfit(centers, rates, 1)[0])
 
 
+def _e1_mask(xs, ys):
+    """**최외곽 1 chip line(E1)** die 마스크 — 상하좌우 4-이웃 중 하나라도 비면 최외곽.
+
+    "웨이퍼 가장자리 한 줄" 은 반경 비율로 표현할 수 없다(웨이퍼 크기·die 크기에 따라
+    두께가 달라진다). 좌표 집합만으로 판정하므로 추가 입력이 필요 없고, 결손 die 가 있는
+    실제 map 에서도 그 구멍의 테두리를 잡는다.
+    좌표가 정수 격자가 아니면(간격이 1이 아니면) 판정할 수 없어 전부 False 를 돌려준다 —
+    그 경우 E1 관련 feature 는 자연히 결측이 되고, 결측은 "양호" 로 읽지 않는다(규칙).
+    """
+    xi = np.rint(xs).astype(np.int64)
+    yi = np.rint(ys).astype(np.int64)
+    if xi.size == 0 or not np.allclose(xs, xi) or not np.allclose(ys, yi):
+        return np.zeros(xs.shape, dtype=bool)
+    coords = set(zip(xi.tolist(), yi.tolist()))
+    return np.array([((x + 1, y) not in coords) or ((x - 1, y) not in coords)
+                     or ((x, y + 1) not in coords) or ((x, y - 1) not in coords)
+                     for x, y in zip(xi.tolist(), yi.tolist())], dtype=bool)
+
+
 def _spatial_features(case_ctx, th):
     """웨이퍼 좌표 기반 fail 편중 feature. 좌표가 없거나 fail 이 0 이면 전부 None.
 
@@ -140,7 +161,8 @@ def _spatial_features(case_ctx, th):
     out = {"edge_fail_ratio": None, "center_fail_ratio": None, "radial_gradient": None,
            "quadrant_imbalance": None, "x_gradient": None, "y_gradient": None,
            "wafer_zone_signature": None, "ring_fail_ratio" : None,
-           "radial_gradient_norm" : None, "x_gradient_norm" : None, "y_gradient_norm" : None}
+           "radial_gradient_norm" : None, "x_gradient_norm" : None, "y_gradient_norm" : None,
+           "e1_fail_ratio" : None}
     xs = np.array([v if v is not None else np.nan for v in x], dtype=float)
     ys = np.array([v if v is not None else np.nan for v in y], dtype=float)
     fm = np.asarray(fail_mask, dtype=bool)
@@ -156,9 +178,14 @@ def _spatial_features(case_ctx, th):
     overall_fail = fm.mean()
     if rmax > 0 and overall_fail > 0:
         rnorm = radius / rmax
-        edge_mask = rnorm >= th["edge_region_pct"]
+        # E1(최외곽 1열)은 EDGE 밴드에서 뺀다 — 같은 die 를 두 룰이 각각 세면 "가장자리
+        # 한 줄 문제" 와 "바깥 밴드 전체 문제" 가 구분되지 않는다(2026-08-12 공간축 세분).
+        e1 = _e1_mask(xs, ys)
+        edge_mask = (rnorm >= th["edge_region_pct"]) & (~e1)
         center_mask = rnorm <= th["center_region_pct"]
-        ring_mask = (rnorm > th["center_region_pct"]) & (rnorm <th["edge_region_pct"])
+        ring_mask = (rnorm > th["center_region_pct"]) & (rnorm <th["edge_region_pct"]) & (~e1)
+        if e1.sum():
+            out["e1_fail_ratio"] = float(fm[e1].mean() / overall_fail)
         if edge_mask.sum():
             out["edge_fail_ratio"] = float(fm[edge_mask].mean() / overall_fail)
         if center_mask.sum():
@@ -221,12 +248,15 @@ def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, densi
 def _classify_zone(spatial, th):
     """공간 feature → wafer_zone_signature. 앞에서 걸리는 것이 이긴다.
 
-    EDGE(가장자리 편중) → CENTER(중앙 편중) → CLUSTER(사분면 불균형) 순으로 보고,
-    아무 것도 임계를 넘지 못하면 RANDOM.
+    E1(최외곽 한 줄) → EDGE(가장자리 밴드) → CENTER(중앙 편중) → CLUSTER(사분면 불균형)
+    순으로 보고, 아무 것도 임계를 넘지 못하면 RANDOM.
     """
+    e1 = spatial.get("e1_fail_ratio")
     edge = spatial.get("edge_fail_ratio")
     center = spatial.get("center_fail_ratio")
     quad = spatial.get("quadrant_imbalance")
+    if e1 is not None and e1 >= th.get("e1_fail_ratio_warn", th["edge_fail_ratio_warn"]):
+        return "E1"
     if edge is not None and edge >= th["edge_fail_ratio_warn"]:
         return "EDGE"
     if center is not None and center >= th["edge_fail_ratio_warn"]:
@@ -309,6 +339,11 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     if skewness is None and stdev:
         skewness = (mean - median) / stdev
     kurtosis = float(np.mean(((v - mean) / stdev) ** 4) - 3) if stdev else None
+    # 모멘트 왜도(3차) — `skewness`(비모수 (mean-median)/stdev)는 **수학적 상한이 1.0** 이라
+    # `skew_warn: 1.0` 을 넘을 수 없다(TAIL_RISK 가 영원히 발화 못 하던 원인). 상한이 없는
+    # 3차 모멘트를 따로 둬 룰이 실제로 판정할 수 있게 한다. 기존 컬럼은 그대로 둔다
+    # (eval.db features.skewness 의 의미가 바뀌면 과거 데이터와 섞인다).
+    skewness_moment = float(np.mean(((v - mean) / stdev) ** 3)) if stdev else None
 
     bimodality_score = raw_metrics.get("bimodality")
     if bimodality_score is not None:
@@ -338,7 +373,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     code_edge_hit = limit_hit_ratio if case_ctx.get("value_type") == "CODE" else None
 
     if is_pf:
-        spread_norm = skewness = kurtosis = None
+        spread_norm = skewness = kurtosis = skewness_moment = None
         outlier_ratio = modality = bimodality_score = density_gap = cdf_gap = None
         spec_margin_low = spec_margin_high = nearest_spec_side = limit_hit_ratio = None
         n_modes = modality_v2 = None
@@ -346,6 +381,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
 
     return {
         "spread_norm": spread_norm, "skewness": skewness, "kurtosis": kurtosis,
+        "skewness_moment": skewness_moment,
         "outlier_ratio": outlier_ratio, "modality": modality,
         "bimodality_score": bimodality_score, "density_gap": density_gap, "cdf_gap": cdf_gap,
         "spec_margin_low": spec_margin_low, "spec_margin_high": spec_margin_high,

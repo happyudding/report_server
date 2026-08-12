@@ -59,7 +59,10 @@ signatures:
 
   - id: TAIL_RISK
     enabled: false
-    when_metric: { skewness: "abs>skew_warn", spec_margin_min: "<spec_margin_warn" }
+    # ⚠ 지표 교체(2026-08-12): 종전 `skewness` 는 비모수 왜도 (mean-median)/stdev 로
+    # **수학적 상한이 1.0** 이라 skew_warn(1.0)을 넘을 수 없었다 = 켜도 영원히 미발화.
+    # 상한이 없는 3차 모멘트 왜도(features.skewness_moment)로 바꿔 실제 판정이 되게 한다.
+    when_metric: { skewness_moment: "abs>skew_warn", spec_margin_min: "<spec_margin_warn" }
     status_hint: MAJOR
     phenomenon_ko : "분포의 한쪽 꼬리가 spec에 근접해 있습니다."
     action_ko: "한쪽 꼬리가 spec 근접 — centering/방향성 trim 검토"
@@ -73,11 +76,25 @@ signatures:
     action_ko: "site 간 편차 큼 — golden unit 재측정 / handler·site correlation"
     evidence: ["site_cpk_delta {site_cpk_delta}"]
 
+  # 공간 축은 존(zone)으로 가른다: E1(최외곽 한 줄) / EDGE(그 안쪽 바깥 밴드) / CENTER.
+  # 세 영역은 서로 배타라 동시 발화가 드물고, 조치 방향이 다르다(E1 = 에지 노출·척킹,
+  # EDGE = uniformity, CENTER = 증착/CMP).
+  - id: E1_FAIL
+    enabled: false
+    # E1 = die 격자에서 4-이웃 중 하나라도 비어 있는 die (features._e1_mask).
+    # 반경 비율로는 "한 줄" 을 표현할 수 없어 좌표 이웃으로 판정한다.
+    when_metric: { e1_fail_ratio: ">e1_fail_ratio_warn", fail_count : ">spatial_fail_count_min" }
+    status_hint: MAJOR
+    phenomenon_ko : "wafer 최외곽 한 줄(E1)에 불량이 집중되어 있습니다."
+    action_ko: "최외곽 1열(E1) 불량 집중 — edge exclusion/척킹·프로브 접촉, edge die 취급 기준 확인"
+    evidence: ["e1_fail_ratio {e1_fail_ratio}", "fail_count {fail_count}"]
+
   - id: EDGE_FAIL
     enabled: false
+    # edge_fail_ratio 는 **E1 을 제외한** 바깥 밴드 기준이다(features._spatial_features).
     when_metric: { edge_fail_ratio: ">edge_fail_ratio_warn", fail_count : ">spatial_fail_count_min" }
     status_hint: MAJOR
-    phenomenon_ko : "wafer edge 영역에 불량이 집중되어 있습니다."
+    phenomenon_ko : "wafer edge 영역(최외곽 한 줄 제외)에 불량이 집중되어 있습니다."
     action_ko: "wafer edge 불량 집중 — uniformity/edge 보정, 모과제 동일유형 확인"
     evidence: ["edge_fail_ratio {edge_fail_ratio}", "fail_count {fail_count}"]
 
@@ -115,6 +132,9 @@ signatures:
   - id: BIDIR_TAIL
     enabled: false
     when_metric: { spec_margin_low: "<spec_margin_warn", spec_margin_high: "<spec_margin_warn" }
+    # 양쪽 margin 이 모두 1σ 미만이면 σ > spec 폭/2 → spread_norm > 0.5 로 WIDE 임계(0.18)를
+    # 훨씬 넘는다. 즉 이 룰은 **WIDE_DISTRIBUTION 의 극단 구간**이다(실측 100% 동반).
+    suppressed_by: [WIDE_DISTRIBUTION]
     status_hint: MAJOR
     phenomenon_ko : "양쪽 spec margin 이 모두 부족한 상태입니다."
     action_ko: "양쪽 spec 모두 근접 — 분포 폭이 spec 대비 과대, 공정/설계 재검토"
@@ -122,11 +142,14 @@ signatures:
 
   - id: LOW_CPK
     when_metric: { cpk: "<cpk_warn" }
-    # SPEC_TOO_TIGHT 은 발화 조건에 cpk<cpk_warn 을 이미 포함하므로 LOW_CPK 와 항상 함께
-    # 뜨는 포함관계다(docs/13 §14-1). 더 구체적인 쪽(좁고·중앙·단봉인데 cpk 낮음 = spec
-    # margin 문제)을 남긴다 — 이 선언이 없으면 MAJOR 인 LOW_CPK 가 primary 를 독점해
-    # SPEC_TOO_TIGHT 이 다시 보이지 않게 된다(2026-08-03 축소 디버깅의 원인).
-    suppressed_by: [SPEC_TOO_TIGHT]
+    # cpk 는 **결과 지표**다 — "왜 낮은가"(중심 치우침/산포 과대/spec 여유 부족)를 말하는
+    # 룰이 떠 있으면 primary 자리를 그쪽에 내준다(현상 5축 재편, 2026-08-12).
+    #   · SPEC_TOO_TIGHT : 조건에 cpk<cpk_warn 을 포함 → 항상 동반(포함관계)
+    #   · WIDE_DISTRIBUTION : 대칭 limit 에서 cpk = 1/(6·spread_norm) → spread>0.18 이면
+    #     cpk<0.93 이 수학적으로 강제된다(테스트 데이터 실측에서도 100% 동반)
+    #   · MEAN_SHIFT : 중심이 치우치면 가까운 쪽 margin 이 줄어 cpk 가 따라 내려간다
+    # 이 선언이 없으면 MAJOR 인 LOW_CPK 가 primary 를 독점해 원인 룰이 안 보인다.
+    suppressed_by: [SPEC_TOO_TIGHT, WIDE_DISTRIBUTION, MEAN_SHIFT]
     status_hint: MAJOR
     issue_category: CPK
     phenomenon_ko : "공정능력지수(Cpk)가 기준(1.33) 미달입니다."
@@ -171,6 +194,11 @@ signatures:
 
   - id: HEAVY_TAIL
     when_metric: { kurtosis: ">kurtosis_warn" }
+    # outlier_ratio 와 kurtosis 는 **같은 현상(튀는 값)의 두 통계**다 — 멀리 튄 die 가
+    # 몇 개만 있어도 kurtosis 는 그 4제곱으로 올라간다. outlier 룰이 뜬 case 에 이 룰까지
+    # 얹으면 "무엇이 문제인가"가 두 줄로 갈라져 보인다(테스트 데이터 실측: outlier 발화
+    # 항목 대부분에 동반). 같은 현상의 약한 표현이므로 목록에만 남긴다.
+    suppressed_by: [SEVERE_OUTLIER, OUTLIER_WARN]
     status_hint: MINOR
     phenomenon_ko : "분포 꼬리가 두껍게 나타납니다."
     action_ko: "분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"

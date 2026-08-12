@@ -12,10 +12,15 @@ Honey 를 다시 실행하는 것만으로 새 버전이 보인다.
 import argparse
 import json
 import shutil
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-RELEASE_DIR = Path(__file__).resolve().parent / "release"
+# exe 로 묶으면(frozen) __file__ 은 PyInstaller 가 푼 임시 폴더를 가리킨다 — 그 옆에는
+# release\ 가 없으므로 exe 자신이 놓인 폴더를 기준으로 삼아야 한다. 파이썬이 없는 PC
+# 에서도 이 서버를 띄우려고 exe 로 배포하기 때문에 필요한 분기다.
+_BASE_DIR = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
+RELEASE_DIR = _BASE_DIR / "release"
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -42,9 +47,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b'{"error":"not found"}', "application/json")
 
     def _manifest(self):
+        # utf-8-sig: 사람이 메모장으로 열어 저장하면 BOM 이 붙는데, utf-8 로 읽으면 그
+        # 순간 JSONDecodeError 로 서버가 죽는다 (app_update.read_current 와 같은 이유).
         try:
-            return json.loads((RELEASE_DIR / "version.json").read_text(encoding="utf-8"))
-        except OSError:
+            return json.loads((RELEASE_DIR / "version.json").read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
             return None
 
     def _serve_version(self):
@@ -91,8 +98,12 @@ def main():
                          "먼저 build_test_release.ps1 로 테스트 릴리스를 만드세요.")
     manifest_path = RELEASE_DIR / "version.json"
     if manifest_path.exists():
-        version = json.loads(manifest_path.read_text(encoding="utf-8")).get("version")
-        print(f"현재 배포 중인 버전: {version}")
+        try:
+            version = json.loads(manifest_path.read_text(encoding="utf-8-sig")).get("version")
+            print(f"현재 배포 중인 버전: {version}")
+        except (OSError, json.JSONDecodeError) as exc:
+            # 여기서 죽으면 서버가 아예 안 떠서 원인을 모른다 — 알려주고 계속 띄운다.
+            print(f"[경고] version.json 을 읽지 못했습니다: {exc}")
     print(f"테스트 업데이트 서버: http://{args.host}:{args.port}  (Ctrl+C 종료)")
     print(f"  릴리스 폴더: {RELEASE_DIR}")
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
