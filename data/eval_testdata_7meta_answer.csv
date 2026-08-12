@@ -1,0 +1,98 @@
+﻿item,source,wafer,group,level,level_ko,intent,expect,unit,lsl,usl,bin,metric,target,actual_metric,threshold,n_dut,fail_count,yield,note
+CENTER_FAIL_L1,0,1,single,1,정상범위(미발화),CENTER_FAIL,not_fire,V,0.5,1.5,2,center_fail_ratio,1.0,1.11,2.0,2453,30,0.9878,
+CENTER_FAIL_L2,0,1,single,2,임계값 소폭 초과,CENTER_FAIL,fire,V,0.5,1.5,2,center_fail_ratio,2.2,2.2199,2.0,2453,30,0.9878,
+CENTER_FAIL_L3,0,1,single,3,초과,CENTER_FAIL,fire,V,0.5,1.5,2,center_fail_ratio,4.0,4.0698,2.0,2453,30,0.9878,
+CENTER_FAIL_L4,0,1,single,4,크게 초과,CENTER_FAIL,fire,V,0.5,1.5,2,center_fail_ratio,7.0,7.0297,2.0,2453,30,0.9878,
+CENTER_FAIL_L5,0,1,single,5,심각,CENTER_FAIL,fire,V,0.5,1.5,2,center_fail_ratio,10.5,10.3596,2.0,2453,30,0.9878,
+CLUSTER_FAIL_L1,0,1,single,1,정상범위(미발화),CLUSTER_FAIL,not_fire,V,0.5,1.5,2,quadrant_imbalance,0.5,0.5786,1.0,2453,30,0.9878,
+CLUSTER_FAIL_L2,0,1,single,2,임계값 소폭 초과,CLUSTER_FAIL,fire,V,0.5,1.5,2,quadrant_imbalance,1.1,1.3858,1.0,2453,30,0.9878,
+CLUSTER_FAIL_L3,0,1,single,3,초과,CLUSTER_FAIL,fire,V,0.5,1.5,2,quadrant_imbalance,2.0,2.0682,1.0,2453,30,0.9878,
+CLUSTER_FAIL_L4,0,1,single,4,크게 초과,CLUSTER_FAIL,fire,V,0.5,1.5,2,quadrant_imbalance,3.0,3.0201,1.0,2453,30,0.9878,
+CLUSTER_FAIL_L5,0,1,single,5,심각,CLUSTER_FAIL,fire,V,0.5,1.5,2,quadrant_imbalance,3.9,3.8606,1.0,2453,30,0.9878,
+EDGE_FAIL_L1,0,1,single,1,정상범위(미발화),EDGE_FAIL,not_fire,V,0.5,1.5,2,edge_fail_ratio,1.0,1.0315,2.0,2453,30,0.9878,
+EDGE_FAIL_L2,0,1,single,2,임계값 소폭 초과,EDGE_FAIL,fire,V,0.5,1.5,2,edge_fail_ratio,2.1,2.1567,2.0,2453,30,0.9878,
+EDGE_FAIL_L3,0,1,single,3,초과,EDGE_FAIL,fire,V,0.5,1.5,2,edge_fail_ratio,2.4,2.438,2.0,2453,30,0.9878,
+EDGE_FAIL_L4,0,1,single,4,크게 초과,EDGE_FAIL,fire,V,0.5,1.5,2,edge_fail_ratio,2.65,2.7193,2.0,2453,30,0.9878,
+EDGE_FAIL_L5,0,1,single,5,심각,EDGE_FAIL,fire,V,0.5,1.5,2,edge_fail_ratio,2.78,2.8131,2.0,2453,30,0.9878,
+RING_FAIL_L1,0,1,single,1,정상범위(미발화),RING_FAIL,not_fire,V,0.5,1.5,2,ring_fail_ratio,1.0,1.0221,2.0,2453,30,0.9878,ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 1/0.55≈1.82 — 임계값 2.0 에 도달 불가
+RING_FAIL_L2,0,1,single,2,임계값 소폭 초과,RING_FAIL,fire,V,0.5,1.5,2,ring_fail_ratio,1.4,1.3828,2.0,2453,30,0.9878,ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 1/0.55≈1.82 — 임계값 2.0 에 도달 불가
+RING_FAIL_L3,0,1,single,3,초과,RING_FAIL,fire,V,0.5,1.5,2,ring_fail_ratio,1.6,1.5632,2.0,2453,30,0.9878,ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 1/0.55≈1.82 — 임계값 2.0 에 도달 불가
+RING_FAIL_L4,0,1,single,4,크게 초과,RING_FAIL,fire,V,0.5,1.5,2,ring_fail_ratio,1.75,1.7436,2.0,2453,30,0.9878,ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 1/0.55≈1.82 — 임계값 2.0 에 도달 불가
+RING_FAIL_L5,0,1,single,5,심각,RING_FAIL,fire,V,0.5,1.5,2,ring_fail_ratio,1.82,1.8037,2.0,2453,30,0.9878,ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 1/0.55≈1.82 — 임계값 2.0 에 도달 불가
+WAFER_GRADIENT_L1,0,1,single,1,정상범위(미발화),WAFER_GRADIENT,not_fire,V,0.5,1.5,2,gradient_norm_abs_max,0.15,0.1563,0.3,2453,245,0.9001,
+BIDIR_TAIL_L1,0,1,single,1,정상범위(미발화),BIDIR_TAIL,not_fire,V,0.5,1.5,2,spec_margin_min,1.2,1.1929,1.0,2453,12,0.9951,
+BIDIR_TAIL_L2,0,1,single,2,임계값 소폭 초과,BIDIR_TAIL,fire,V,0.5,1.5,2,spec_margin_min,0.9,0.9064,1.0,2453,12,0.9951,
+BIDIR_TAIL_L3,0,1,single,3,초과,BIDIR_TAIL,fire,V,0.5,1.5,2,spec_margin_min,0.6,0.5793,1.0,2453,12,0.9951,
+BIDIR_TAIL_L4,0,1,single,4,크게 초과,BIDIR_TAIL,fire,V,0.5,1.5,2,spec_margin_min,0.35,0.3297,1.0,2453,12,0.9951,
+BIDIR_TAIL_L5,0,1,single,5,심각,BIDIR_TAIL,fire,V,0.5,1.5,2,spec_margin_min,0.15,0.0989,1.0,2453,12,0.9951,
+CODE_RAIL_L1,0,1,single,1,정상범위(미발화),CODE_RAIL,not_fire,CODE,0.0,63.0,2,code_edge_hit,0.02,0.0204,0.05,2453,12,0.9951,
+CODE_RAIL_L2,0,1,single,2,임계값 소폭 초과,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.07,0.0701,0.05,2453,12,0.9951,
+CODE_RAIL_L3,0,1,single,3,초과,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.15,0.15,0.05,2453,12,0.9951,
+CODE_RAIL_L4,0,1,single,4,크게 초과,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.35,0.3502,0.05,2453,12,0.9951,
+CODE_RAIL_L5,0,1,single,5,심각,CODE_RAIL,fire,CODE,0.0,63.0,2,code_edge_hit,0.6,0.6001,0.05,2453,12,0.9951,
+CONSTANT_VALUE_L1,0,1,single,1,정상범위(미발화),CONSTANT_VALUE,not_fire,V,0.5,1.5,2,stdev,0.0,0.0001,,2453,12,0.9951,
+CONSTANT_VALUE_L2,0,1,single,2,임계값 소폭 초과,CONSTANT_VALUE,fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,
+CONSTANT_VALUE_L3,0,1,single,3,초과,CONSTANT_VALUE,fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,
+CONSTANT_VALUE_L4,0,1,single,4,크게 초과,CONSTANT_VALUE,fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,
+CONSTANT_VALUE_L5,0,1,single,5,심각,CONSTANT_VALUE,fire,V,0.5,1.5,2,stdev,0.0,0.0,,2453,12,0.9951,
+EQUIPMENT_SUSPECT_L1,0,1,single,1,정상범위(미발화),EQUIPMENT_SUSPECT,not_fire,V,0.5,1.5,2,site_cpk_delta,0.2,,0.5,2453,12,0.9951,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L2,0,1,single,2,임계값 소폭 초과,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,2,site_cpk_delta,0.6,,0.5,2453,12,0.9951,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L3,0,1,single,3,초과,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,2,site_cpk_delta,1.0,,0.5,2453,12,0.9951,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L4,0,1,single,4,크게 초과,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,2,site_cpk_delta,2.0,,0.5,2453,12,0.9951,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L5,0,1,single,5,심각,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,2,site_cpk_delta,4.0,,0.5,2453,12,0.9951,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+GROSS_FAIL_L1,0,1,single,1,정상범위(미발화),GROSS_FAIL,not_fire,V,0.5,1.5,2,yield,0.9,0.9001,0.5,2453,245,0.9001,
+HEAVY_TAIL_L1,0,1,single,1,정상범위(미발화),HEAVY_TAIL,not_fire,V,0.5,1.5,2,kurtosis,1.0,1.0,2.0,2453,12,0.9951,
+HEAVY_TAIL_L2,0,1,single,2,임계값 소폭 초과,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,2.5,2.5,2.0,2453,12,0.9951,
+HEAVY_TAIL_L3,0,1,single,3,초과,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,5.0,5.0,2.0,2453,12,0.9951,
+HEAVY_TAIL_L4,0,1,single,4,크게 초과,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,15.0,15.0,2.0,2453,12,0.9951,
+HEAVY_TAIL_L5,0,1,single,5,심각,HEAVY_TAIL,fire,V,0.5,1.5,2,kurtosis,40.0,40.0,2.0,2453,12,0.9951,
+LOW_CPK_L1,0,1,single,1,정상범위(미발화),LOW_CPK,not_fire,V,0.5,1.5,2,cpk,1.5,1.4819,1.33,2453,12,0.9951,
+LOW_CPK_L2,0,1,single,2,임계값 소폭 초과,LOW_CPK,fire,V,0.5,1.5,2,cpk,1.2,1.1892,1.33,2453,12,0.9951,
+LOW_CPK_L3,0,1,single,3,초과,LOW_CPK,fire,V,0.5,1.5,2,cpk,0.9,0.9067,1.33,2453,12,0.9951,
+LOW_CPK_L4,0,1,single,4,크게 초과,LOW_CPK,fire,V,0.5,1.5,2,cpk,0.6,0.5862,1.33,2453,12,0.9951,
+LOW_CPK_L5,0,1,single,5,심각,LOW_CPK,fire,V,0.5,1.5,2,cpk,0.3,0.3038,1.33,2453,12,0.9951,
+LOW_SAMPLE_UNCERTAIN_L1,0,1,single,1,정상범위(미발화),LOW_SAMPLE_UNCERTAIN,not_fire,V,0.5,1.5,2,n_dut,40,40,20,40,12,0.9951,
+LOW_SAMPLE_UNCERTAIN_L2,0,1,single,2,임계값 소폭 초과,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,2,n_dut,19,19,20,19,12,0.9951,
+LOW_SAMPLE_UNCERTAIN_L3,0,1,single,3,초과,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,2,n_dut,12,12,20,12,12,0.9951,
+LOW_SAMPLE_UNCERTAIN_L4,0,1,single,4,크게 초과,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,2,n_dut,6,6,20,6,12,0.9951,
+LOW_SAMPLE_UNCERTAIN_L5,0,1,single,5,심각,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,2,n_dut,2,2,20,2,12,0.9951,
+MEAN_SHIFT_L1,0,1,single,1,정상범위(미발화),MEAN_SHIFT,not_fire,V,0.5,1.5,2,center_bias,0.15,0.1494,0.3,2453,12,0.9951,
+MEAN_SHIFT_L2,0,1,single,2,임계값 소폭 초과,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.35,0.3507,0.3,2453,12,0.9951,
+MEAN_SHIFT_L3,0,1,single,3,초과,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.5,0.5,0.3,2453,12,0.9951,
+MEAN_SHIFT_L4,0,1,single,4,크게 초과,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.7,0.7004,0.3,2453,12,0.9951,
+MEAN_SHIFT_L5,0,1,single,5,심각,MEAN_SHIFT,fire,V,0.5,1.5,2,center_bias,0.9,0.9004,0.3,2453,12,0.9951,
+MISSING_LIMIT_L1,0,1,single,1,정상범위(미발화),MISSING_LIMIT,not_fire,V,0.5,1.5,2,limit_missing,0,0,,2453,12,0.9951,
+MISSING_LIMIT_L2,0,1,single,2,임계값 소폭 초과,MISSING_LIMIT,fire,V,0.5,,2,limit_missing,1,1,,2453,12,0.9951,
+MISSING_LIMIT_L3,0,1,single,3,초과,MISSING_LIMIT,fire,V,,1.5,2,limit_missing,1,1,,2453,12,0.9951,
+MISSING_LIMIT_L4,0,1,single,4,크게 초과,MISSING_LIMIT,fire,V,,,2,limit_missing,1,1,,2453,12,0.9951,
+MISSING_LIMIT_L5,0,1,single,5,심각,MISSING_LIMIT,fire,,,,2,limit_missing,1,1,,2453,12,0.9951,
+OUTLIER_WARN_L1,0,1,single,1,정상범위(미발화),OUTLIER_WARN,not_fire,V,0.5,1.5,2,outlier_ratio,0.0,0.0,0.02,2453,12,0.9951,
+OUTLIER_WARN_L2,0,1,single,2,임계값 소폭 초과,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio,0.022,0.022,0.02,2453,12,0.9951,
+OUTLIER_WARN_L3,0,1,single,3,초과,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio,0.03,0.0302,0.02,2453,12,0.9951,
+OUTLIER_WARN_L4,0,1,single,4,크게 초과,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio,0.04,0.04,0.02,2453,12,0.9951,
+OUTLIER_WARN_L5,0,1,single,5,심각,OUTLIER_WARN,fire,V,0.5,1.5,2,outlier_ratio,0.048,0.0481,0.02,2453,12,0.9951,
+SEVERE_OUTLIER_L1,0,1,single,1,정상범위(미발화),SEVERE_OUTLIER,not_fire,V,0.5,1.5,2,outlier_ratio,0.0,0.0,0.02,2453,12,0.9951,
+SEVERE_OUTLIER_L2,0,1,single,2,임계값 소폭 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio,0.06,0.0599,0.02,2453,12,0.9951,
+SEVERE_OUTLIER_L3,0,1,single,3,초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio,0.1,0.0999,0.02,2453,12,0.9951,
+SEVERE_OUTLIER_L4,0,1,single,4,크게 초과,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio,0.2,0.2002,0.02,2453,12,0.9951,
+SEVERE_OUTLIER_L5,0,1,single,5,심각,SEVERE_OUTLIER,fire,V,0.5,1.5,2,outlier_ratio,0.33,0.3265,0.02,2453,12,0.9951,
+SPEC_TOO_TIGHT_L1,0,1,single,1,정상범위(미발화),SPEC_TOO_TIGHT,not_fire,V,0.5,1.5,2,spread_norm,0.1,0.1,0.18,2453,12,0.9951,
+SPEC_TOO_TIGHT_L2,0,1,single,2,임계값 소폭 초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,spread_norm,0.13,0.13,0.18,2453,12,0.9951,
+SPEC_TOO_TIGHT_L3,0,1,single,3,초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,spread_norm,0.15,0.15,0.18,2453,12,0.9951,
+SPEC_TOO_TIGHT_L4,0,1,single,4,크게 초과,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,spread_norm,0.168,0.168,0.18,2453,12,0.9951,
+SPEC_TOO_TIGHT_L5,0,1,single,5,심각,SPEC_TOO_TIGHT,fire,V,0.5,1.5,2,spread_norm,0.175,0.175,0.18,2453,12,0.9951,
+SUBPOP_GAP_L1,0,1,single,1,정상범위(미발화),SUBPOP_GAP,not_fire,V,0.5,1.5,2,density_gap,,0.0,,2453,12,0.9951,모드 분리 0.0σ
+SUBPOP_GAP_L2,0,1,single,2,임계값 소폭 초과,SUBPOP_GAP,fire,V,0.5,1.5,2,density_gap,,0.85,,2453,12,0.9951,모드 분리 5.0σ
+SUBPOP_GAP_L3,0,1,single,3,초과,SUBPOP_GAP,fire,V,0.5,1.5,2,density_gap,,0.9525,,2453,12,0.9951,모드 분리 7.0σ
+SUBPOP_GAP_L4,0,1,single,4,크게 초과,SUBPOP_GAP,fire,V,0.5,1.5,2,density_gap,,0.9639,,2453,12,0.9951,모드 분리 10.0σ
+SUBPOP_GAP_L5,0,1,single,5,심각,SUBPOP_GAP,fire,V,0.5,1.5,2,density_gap,,0.926,,2453,12,0.9951,모드 분리 7.0σ · 3봉(다봉)
+TAIL_RISK_L1,0,1,single,1,정상범위(미발화),TAIL_RISK,not_fire,V,0.5,1.5,2,skewness,0.05,0.05,1.0,2453,12,0.9951,skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 skew_warn=1.0 을 넘을 수 없다
+TAIL_RISK_L2,0,1,single,2,임계값 소폭 초과,TAIL_RISK,fire,V,0.5,1.5,2,skewness,0.15,0.15,1.0,2453,12,0.9951,skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 skew_warn=1.0 을 넘을 수 없다
+TAIL_RISK_L3,0,1,single,3,초과,TAIL_RISK,fire,V,0.5,1.5,2,skewness,0.25,0.25,1.0,2453,12,0.9951,skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 skew_warn=1.0 을 넘을 수 없다
+TAIL_RISK_L4,0,1,single,4,크게 초과,TAIL_RISK,fire,V,0.5,1.5,2,skewness,0.35,0.35,1.0,2453,12,0.9951,skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 skew_warn=1.0 을 넘을 수 없다
+TAIL_RISK_L5,0,1,single,5,심각,TAIL_RISK,fire,V,0.5,1.5,2,skewness,0.45,0.45,1.0,2453,12,0.9951,skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 skew_warn=1.0 을 넘을 수 없다
+WIDE_DISTRIBUTION_L1,0,1,single,1,정상범위(미발화),WIDE_DISTRIBUTION,not_fire,V,0.5,1.5,2,spread_norm,0.11,0.1075,0.18,2453,12,0.9951,
+WIDE_DISTRIBUTION_L2,0,1,single,2,임계값 소폭 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.2,0.1987,0.18,2453,12,0.9951,
+WIDE_DISTRIBUTION_L3,0,1,single,3,초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.3,0.2975,0.18,2453,12,0.9951,
+WIDE_DISTRIBUTION_L4,0,1,single,4,크게 초과,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.5,0.5205,0.18,2453,12,0.9951,
+WIDE_DISTRIBUTION_L5,0,1,single,5,심각,WIDE_DISTRIBUTION,fire,V,0.5,1.5,2,spread_norm,0.9,0.893,0.18,2453,12,0.9951,

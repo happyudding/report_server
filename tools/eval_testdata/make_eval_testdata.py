@@ -1571,12 +1571,18 @@ def main():
                     help="생성을 건너뛰고 --out 의 기존 파일을 그대로 올린다/세션으로 만든다")
     ap.add_argument("--make-session", action="store_true",
                     help="서버 없이 이 PC 의 report DB 에 직접 세션 생성 (개발 PC 용)")
+    ap.add_argument("--single-csv", default="", metavar="PATH",
+                    help="7-meta honeyform CSV 1장만 만든다 (직접 업로드용)")
     ap.add_argument("--_eval-dump", default="", help=argparse.SUPPRESS)   # 내부 자식 모드
     args = ap.parse_args()
 
     out_dir = Path(args.out)
     if getattr(args, "_eval_dump"):
         run_eval_pass(out_dir, args, Path(getattr(args, "_eval_dump")))
+        return
+
+    if args.single_csv:
+        make_single_csv(args)
         return
 
     if args.upload_only:
@@ -1620,6 +1626,68 @@ def main():
         print("[4/4] 검증 생략 (--no-verify)")
 
     _deliver(files, manifest, args)
+
+
+def single_csv_specs(n_rows: int):
+    """웨이퍼 1장(= CSV 1개)에 담을 item 목록 — 단독 세트(21 signature × 5단계) 기준.
+
+    fail 행은 item 끼리 겹칠 수 없으므로 한 장에 다 담기지 않는다. 두 가지로 줄인다:
+      ① 공간 룰(edge/center/ring/quadrant)의 fail 수를 30 으로 축소 — 판정 지표가
+         **비율**이라 개수는 무관하다(가드 `spatial_fail_count_min`=5 만 넘으면 된다).
+      ② 그래도 예산(행 수의 90%)을 넘는 item 은 제외한다 — 수율/gradient 고단계는
+         혼자 웨이퍼의 절반 이상을 먹으므로 별도 파일이어야 한다.
+    반환: (담은 specs, 제외된 [(item, 필요 fail 수)])
+    """
+    specs = single_specs()
+    for s in specs:
+        if s["fails"].get("pattern") in SPATIAL_PATTERNS and s["fails"].get("count"):
+            s["fails"]["count"] = min(s["fails"]["count"], 30)
+    budget = int(n_rows * 0.9)
+    kept, dropped, used = [], [], 0
+    for s in sorted(specs, key=lambda s: fail_budget(s, n_rows)):   # 가벼운 것부터
+        need = fail_budget(s, n_rows)
+        if used + need > budget:
+            dropped.append((s["name"], need))
+            continue
+        kept.append(s)
+        used += need
+    # source 안 처리 순서: 공간 패턴 먼저(뒤로 밀리면 남은 행이 편중돼 패턴이 깨진다)
+    kept.sort(key=lambda s: (s["fails"].get("pattern") not in SPATIAL_PATTERNS, s["name"]))
+    return kept, dropped, used
+
+
+def make_single_csv(args):
+    """7-meta honeyform **CSV 1장**을 만든다 (사람이 직접 web_report 로 올리는 용도)."""
+    import shutil
+    import tempfile
+
+    wafer = build_wafer(args.radius)
+    n_rows = wafer[0].size
+    specs, dropped, used = single_csv_specs(n_rows)
+    print(f"[1/3] item 선정 — {len(specs)}개 (fail 행 {used}/{n_rows} 사용)")
+    if dropped:
+        print(f"      제외 {len(dropped)}개(웨이퍼 1장에 안 들어감): "
+              + ", ".join(f"{n}({k}행)" for n, k in dropped))
+
+    df, summary = build_source_df(specs, wafer, args.seed)
+    out_csv = Path(args.single_csv)
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    # Excel 이 한글 헤더를 깨지 않게 BOM 포함 UTF-8. dtype 은 전부 문자열(honeyform 규약).
+    df.to_csv(out_csv, index=False, encoding="utf-8-sig")
+    print(f"[2/3] CSV → {out_csv} · {out_csv.stat().st_size / 2**20:.1f}MB "
+          f"· {df.shape[0] - len(META_ROW_LABELS)}행 × item {df.shape[1] - len(META_COLUMNS)}개")
+
+    tmp = Path(tempfile.mkdtemp(prefix="evalcsv_"))
+    try:
+        _files, _manifest = write_outputs(tmp, [(df, summary)], args)
+        answer_rows = write_answer_key(tmp, [(df, summary)])
+        shutil.copy(tmp / "answer_key.csv", out_csv.with_name(out_csv.stem + "_answer.csv"))
+        print(f"      정답표 → {out_csv.with_name(out_csv.stem + '_answer.csv')}")
+        if not args.no_verify:
+            print("[3/3] 엔진 검증 (2패스) …")
+            verify(tmp, answer_rows, args)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 def _deliver(files, manifest, args):
