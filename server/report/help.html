@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="HONEY 버튼 및 분석 화면 기능 도움말">
+  <meta name="description" content="HONEY UI, 보고서 생성, 검색, Rawdata 편집 및 web_report 전체 기능 도움말">
   <title>HONEY 기능 도움말</title>
   <style>
     :root {
@@ -482,12 +482,12 @@
       <p class="toc-label">목차</p>
       <nav>
         <ul>
-          <li><a href="#flow">1. 기본 사용 순서</a></li>
+          <li><a href="#flow">1. 시작 · 계정 · 기본 순서</a></li>
           <li><a href="#honey-buttons">2. Honey 왼쪽 버튼</a></li>
           <li><a href="#new-report">3. New Report</a></li>
           <li><a href="#upload-info">4. 보고서 정보 입력</a></li>
           <li><a href="#excel-report">5. Excel Report</a></li>
-          <li><a href="#excel-tools">6. Excel 연동 기능</a></li>
+          <li><a href="#excel-tools">6. Rawdata · Excel</a></li>
           <li><a href="#options">7. Options</a></li>
           <li><a href="#dashboard">8. 보고서 찾기</a></li>
           <li><a href="#report-top">9. 보고서 상단 버튼</a></li>
@@ -497,10 +497,10 @@
           <li><a href="#issue">13. Issue Table</a></li>
           <li><a href="#distribution">14. Distribution</a></li>
           <li><a href="#map">15. Map Analysis</a></li>
-          <li><a href="#trim">16. Trim Analysis</a></li>
+          <li><a href="#trim">16. Characteristic · Trim</a></li>
           <li><a href="#note">17. Note</a></li>
           <li><a href="#compare">18. Compare</a></li>
-          <li><a href="#trouble">19. 문제 해결</a></li>
+          <li><a href="#trouble">19. 문제 해결 · 지원 · 챗봇</a></li>
         </ul>
       </nav>
       <p class="find-tip">문서 내 검색: <kbd>Ctrl</kbd> + <kbd>F</kbd></p>
@@ -516,12 +516,12 @@
         <button type="button" class="back-btn"
                 onclick="if (history.length > 1) history.back(); else location.href = '/pe/report/';">← 뒤로가기</button>
         <h1>HONEY 기능 도움말</h1>
-        <p>보고서 생성 · 검색 · 분석 · 편집 버튼 설명</p>
+        <p>Honey.ui 입력부터 web_report 분석·편집·공유까지 현재 제공 기능 전체 안내</p>
       </header>
 
       <div class="content">
         <section id="flow">
-          <h2>1. 기본 사용 순서</h2>
+          <h2>1. 시작 · 계정 · 기본 사용 순서</h2>
           <ol class="steps">
             <li><span class="ui">New Report</span></li>
             <li>측정 파일 추가</li>
@@ -530,6 +530,23 @@
             <li>Product · LOT 입력</li>
             <li>분석 탭 확인</li>
           </ol>
+          <h3>REPORT SERVER 시작 화면</h3>
+          <p><code>/pe/</code>에서 MDDI·PDDI·PMIC·SECURITY·TCON 타일을 눌러 해당 Product Type의 검색 화면으로 이동합니다. HONEY 다운로드와 전체 세션 수, 최근 7일 신규·수정 활동, 오늘 사용량, 최근 5분 접속자도 확인할 수 있습니다.</p>
+          <h3>웹 로그인과 권한</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>접속 상태</th><th>가능한 작업</th><th>설정 방법</th></tr></thead>
+              <tbody>
+                <tr><td>비로그인 브라우저</td><td>공개 보고서 검색·읽기</td><td>수정 기능은 읽기 전용입니다.</td></tr>
+                <tr><td>웹 로그인</td><td>내 권한 범위의 즐겨찾기·편집·비공개 열람</td><td>singleID와 숫자 4자리 비밀번호를 사용합니다.</td></tr>
+                <tr><td>Honey 접속</td><td>Honey 신원으로 자동 로그인, 업로드·편집</td><td>별도 로그인 없이 현재 Windows 계정을 사용합니다.</td></tr>
+                <tr><td>위임 편집자</td><td>코멘트·상태·Note 등 콘텐츠 편집</td><td>업로더가 리포트 설정의 권한 탭에서 지정합니다.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">Honey 사용 이력이 없는 미사용 singleID만 웹에서 회원가입할 수 있습니다. 이미 Honey 사용 이력이 있다면 계정 선점을 막기 위해 Honey 앱에서 4자리 비밀번호를 설정·재설정해야 합니다.</p>
+          <p class="note">사용자 이름(실명)은 회원가입 때 함께 입력하며, 아직 등록하지 않았다면 접속 시 입력창이 뜹니다. 업로더 표시·권한 부여 창 등 사람이 보이는 모든 화면이 <b>이름(ID)</b> 형식으로 표시되어 누구인지 바로 알 수 있습니다. 이름은 표시용이며 권한 판정에는 쓰이지 않습니다. 나중에 바꾸려면 화면 오른쪽 위 👤 버튼을 누르세요.</p>
+          <p class="warn">비공개 보고서는 업로더와 위임 편집자 외에는 목록과 상세 모두 보이지 않습니다.</p>
         </section>
 
         <section id="honey-buttons">
@@ -540,34 +557,28 @@
               <tbody>
                 <tr><td>Home</td><td>보고서 검색 목록으로 이동</td><td>기존 보고서를 찾을 때</td></tr>
                 <tr><td>New Report</td><td>측정 파일 입력·설정 패널 열기/닫기</td><td>새 보고서를 만들 때</td></tr>
-                <tr><td>Rawdata edit</td><td>현재 보고서의 Raw Data를 Excel에서 수정</td><td>측정값·Limit·판정값을 수정할 때</td></tr>
+                <tr><td>Rawdata edit</td><td>현재 상태·Options·Item Select·Yield 계산·Excel 원본 수정을 한 허브에서 관리</td><td>원본 보존 전처리 또는 원본 직접 수정이 필요할 때</td></tr>
                 <tr><td>Excel Down</td><td>현재 보고서를 Excel 파일로 저장</td><td>Excel 공유본이나 추가 분석 자료가 필요할 때</td></tr>
                 <tr><td>Excel Upload</td><td>HONEY Excel 파일의 Raw Data로 새 Web Report 생성</td><td>Excel에서 수정한 데이터를 새 보고서로 만들 때</td></tr>
                 <tr><td>Options</td><td>기본 Product Type·Family와 Distribution 색상 설정</td><td>반복 입력값이나 그래프 색을 변경할 때</td></tr>
               </tbody>
             </table>
           </div>
-          <p class="note"><span class="ui">Help → HONEY 도움말</span>은 이 문서를 열고, <span class="ui">Help → VOC</span>는 문의 화면을 엽니다.</p>
+          <p class="note"><span class="ui">Help → HONEY 도움말</span>은 이 문서를 Honey 내장 브라우저로 엽니다. 현재 <span class="ui">Help → VOC</span>는 기본 브라우저에서 Confluence 문의 페이지를 열며, 서버 VOC 게시판은 <a href="/pe/report/voc">/pe/report/voc</a>에서 별도로 이용할 수 있습니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="new-report">
           <h2>3. New Report</h2>
-          <figure class="shot narrow">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/00_honey_new_report.png" data-caption="New Report 입력 패널">
-              <img src="/pe/report/static/help_assets/00_honey_new_report.png" alt="Honey New Report 입력 패널" loading="lazy">
-            </button>
-            <figcaption>New Report 입력 패널 — 이미지를 누르면 확대됩니다.</figcaption>
-          </figure>
-
           <h3>측정 파일 추가</h3>
           <div class="table-wrap">
             <table>
               <thead><tr><th>버튼·영역</th><th>동작</th></tr></thead>
               <tbody>
-                <tr><td>LOCAL FILE OPEN</td><td>PC에 저장된 측정 파일을 선택합니다.</td></tr>
-                <tr><td>Dolphin (D1)에서 불러오기</td><td>D1에서 측정 파일을 선택합니다.</td></tr>
-                <tr><td>파일 목록</td><td>파일을 끌어 놓아 추가할 수 있습니다. 같은 파일은 중복 추가되지 않습니다.</td></tr>
+                <tr><td>LOCAL FILE OPEN</td><td>오른쪽 화살표에서 <strong>파일 열기</strong> 또는 <strong>폴더 열기</strong>를 선택합니다.</td></tr>
+                <tr><td>폴더 열기</td><td>하위 파일을 함께 수집합니다. RT·ROOM / CT·COLD / HT·HOT 폴더명은 Temperature Role 자동 배치에 사용됩니다.</td></tr>
+                <tr><td>Dolphin (D1)에서 불러오기</td><td>D1 검색 결과에서 측정 파일을 다중 선택합니다.</td></tr>
+                <tr><td>파일 목록</td><td>파일과 폴더를 끌어 놓을 수 있습니다. 새 입력은 기존 목록을 지우지 않고 누적됩니다.</td></tr>
                 <tr><td>▲ / ▼</td><td>선택 파일의 순서를 변경합니다.</td></tr>
                 <tr><td>×</td><td>해당 파일만 목록에서 제거합니다.</td></tr>
                 <tr><td>Clear</td><td>입력 파일 목록 전체를 비웁니다.</td></tr>
@@ -576,7 +587,7 @@
             </table>
           </div>
 
-          <p class="warn"><strong>파일 순서:</strong> 첫 번째 파일의 Item·Unit·Limit 구성을 기준으로 합칩니다. Compare에서는 첫 번째가 After, 두 번째가 Before입니다.</p>
+          <p class="warn"><strong>파일과 source 순서:</strong> Web Report 생성 직전 배치 창의 맨 위 source가 Item·Unit·Limit 기준입니다. Compare는 단순 파일 순서가 아니라 Before·After 배치 창에서 그룹과 대표 source를 확정합니다.</p>
 
           <h3>Product Type</h3>
           <p><span class="ui">MDDI</span> <span class="ui">PDDI</span> <span class="ui">PMIC</span> <span class="ui">SECURITY</span> <span class="ui">TCON</span> 중 측정 대상에 맞는 항목을 선택합니다.</p>
@@ -587,11 +598,26 @@
               <thead><tr><th>모드</th><th>입력 파일</th><th>용도</th></tr></thead>
               <tbody>
                 <tr><td>Normal</td><td>1개 이상</td><td>LOT·Step·조건별 일반 평가 결과를 한 보고서에서 비교</td></tr>
-                <tr><td>Compare</td><td>정확히 2개</td><td>After와 Before의 Map·Log·CPK·Bin 차이 비교</td></tr>
+                <tr><td>Compare</td><td>2개 이상</td><td>여러 source를 Before·After 두 그룹으로 나눠 Map·Log·산포·동일성 비교</td></tr>
                 <tr><td>DUT</td><td>정확히 1개</td><td>DUT 단위 데이터를 정리해 분석</td></tr>
+                <tr><td>Temperature</td><td>1개 이상</td><td>PMIC·SECURITY에서 RT 기준으로 CT·HT corner의 온도 Fail 분석</td></tr>
               </tbody>
             </table>
           </div>
+
+          <h3>Source 배치·Legend·색</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>모드</th><th>생성 직전 확인할 내용</th></tr></thead>
+              <tbody>
+                <tr><td>Normal</td><td>입력 파일, Legend, source 색, 위→아래 표시 순서. Ctrl·Shift 다중 선택과 ▲·▼·맨 위·맨 아래 이동을 지원합니다.</td></tr>
+                <tr><td>Compare</td><td>source를 Before·After에 각각 1개 이상 배치하고 그룹 안 순서를 정합니다. 항목 더블클릭으로 Legend를 바꿉니다.</td></tr>
+                <tr><td>DUT</td><td>서버가 DUT 값으로 source를 나누므로 이름과 순서는 고정되고 DUT별 색만 지정합니다.</td></tr>
+                <tr><td>Temperature</td><td>Group, Role(RT/CT/HT), Legend, 색, 순서를 확인합니다. 필요하면 <code>.lt</code>·<code>.pds</code> Limit 파일을 선택합니다.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">Compare 업로드 순서는 After → Before이며, <strong>After 최상단</strong>이 전체 Limit 기준과 Log 대표 source입니다. Temperature는 그룹마다 RT → CT → HT 순서이며 그룹의 RT가 Limit 기준입니다.</p>
 
           <div class="two-col">
             <div class="mini-card">
@@ -603,32 +629,29 @@
               <p>선택한 분석 Sheet를 Excel 파일로 생성합니다.</p>
             </div>
           </div>
-          <p class="note"><span class="ui">AI Comment</span>는 현재 비활성 상태입니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="upload-info">
           <h2>4. 보고서 정보 입력</h2>
-          <figure class="shot narrow">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/00a_upload_info.png" data-caption="Web Report 정보 입력">
-              <img src="/pe/report/static/help_assets/00a_upload_info.png" alt="Web Report Family Product LOT ID Process 입력 창" loading="lazy">
-            </button>
-            <figcaption>Web Report 버튼을 누른 뒤 입력하는 정보</figcaption>
-          </figure>
 
           <div class="table-wrap">
             <table>
               <thead><tr><th>항목</th><th>입력 기준</th></tr></thead>
               <tbody>
-                <tr><td>Family</td><td>선택한 Product Type의 제품군을 선택합니다.</td></tr>
-                <tr><td>Product</td><td>등록된 Product를 선택합니다. 필수입니다.</td></tr>
+                <tr><td>Session Name</td><td>검색 목록과 리포트 상단에 표시할 이름입니다. 업로드 후 Honey의 연필 버튼으로 수정할 수 있습니다.</td></tr>
+                <tr><td>Product Type</td><td>New Report에서 고른 값으로 고정됩니다.</td></tr>
+                <tr><td>Family Product</td><td>선택한 Product Type의 제품군을 선택합니다.</td></tr>
+                <tr><td>Product</td><td>Part ID를 입력·선택합니다. 등록된 값이면 WF Size·Gross Die·Package 등 기준정보가 연결됩니다. 필수입니다.</td></tr>
                 <tr><td>LOT ID</td><td>평가 LOT를 입력합니다. 필수입니다.</td></tr>
                 <tr><td>Process</td><td>공정·조건 구분이 필요할 때 입력합니다.</td></tr>
+                <tr><td>Step</td><td>리포트에서 표시할 STEP 이름을 입력합니다. 원본 Rawdata는 바꾸지 않고 조회 시 표시명에 반영됩니다.</td></tr>
                 <tr><td>OK</td><td>입력값으로 보고서를 생성합니다.</td></tr>
                 <tr><td>Cancel</td><td>생성을 취소하고 입력 패널로 돌아갑니다.</td></tr>
               </tbody>
             </table>
           </div>
+          <p class="note">업로드 후 메타 수정은 리포트 우상단 연필 버튼으로 시작하며 Honey에서만 열립니다. 편집자는 Session Name·Family·Product·LOT ID·Process·Step을 바꿀 수 있지만 Product Type은 바꿀 수 없습니다.</p>
 
           <h3>Family 선택 항목</h3>
           <div class="table-wrap">
@@ -648,12 +671,6 @@
 
         <section id="excel-report">
           <h2>5. Excel Report</h2>
-          <figure class="shot narrow">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/00c_excel_settings.png" data-caption="Excel Report 설정">
-              <img src="/pe/report/static/help_assets/00c_excel_settings.png" alt="Excel Report 분석 항목 설정 창" loading="lazy">
-            </button>
-            <figcaption>Excel Report 설정 화면</figcaption>
-          </figure>
 
           <h3>버튼</h3>
           <div class="table-wrap">
@@ -698,14 +715,14 @@
         </section>
 
         <section id="excel-tools">
-          <h2>6. Excel 연동 기능</h2>
+          <h2>6. Rawdata 편집 · Excel 연동</h2>
           <div class="table-wrap">
             <table>
               <thead><tr><th>기능</th><th>입력</th><th>결과</th></tr></thead>
               <tbody>
                 <tr><td>Excel Down</td><td>현재 열려 있는 Web Report</td><td>저장 위치를 선택해 Excel 파일로 저장</td></tr>
                 <tr><td>Excel Upload</td><td>HONEY에서 생성한 Excel 파일</td><td>Raw Data로 새 Normal Web Report 생성</td></tr>
-                <tr><td>Rawdata edit</td><td>현재 열려 있는 Web Report</td><td>Excel에서 Raw Data 수정 후 저장·닫으면 현재 보고서 갱신</td></tr>
+                <tr><td>Rawdata edit</td><td>현재 열려 있는 Web Report</td><td>원본 보존 전처리와 Excel 원본 수정을 선택하는 허브 열기</td></tr>
               </tbody>
             </table>
           </div>
@@ -723,15 +740,31 @@
             <li>Raw Data Sheet가 없으면 Excel Report에서 Raw Data를 포함해 다시 생성합니다.</li>
           </ul>
 
-          <h3>Rawdata edit</h3>
+          <h3>Rawdata 편집 허브</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>페이지</th><th>세부 기능</th><th>원본 변경</th></tr></thead>
+              <tbody>
+                <tr><td>현재 상태</td><td>적용 중인 전처리·수율 기준·셀 패치를 확인하고 하나씩 또는 전체 해제합니다. 해제 후 <strong>저장</strong>해야 반영됩니다.</td><td>없음</td></tr>
+                <tr><td>Options</td><td><span class="ui">Bin1 only</span>, mean ± kσ <span class="ui">Outlier 제거</span>, 선택 source의 특정 <span class="ui">DUT 제외</span></td><td>없음</td></tr>
+                <tr><td>Item Select</td><td>제외·표시 두 목록에서 리포트에 남길 항목을 정합니다. 검색은 목록을 숨기기만 하며 실제 이동 후 저장해야 적용됩니다.</td><td>없음</td></tr>
+                <tr><td>Yield 계산</td><td>source별 수율 분모를 자동·Gross Die·Test data에서 고르고 그 자리에서 예상 수율을 확인합니다.</td><td>없음</td></tr>
+                <tr><td>Rawdata 원본 수정</td><td>수정할 source를 체크해 Excel로 열고 값 수정·행 변경·source 시트 삭제 후 변경 검토를 거쳐 반영합니다.</td><td>직접 변경</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="ok">Options·Item Select·Yield 계산은 원본 parquet을 바꾸지 않는 가역 전처리입니다. 저장하면 Summary·Yield·CPK·Issue Table·Distribution·Trim·Map이 같은 기준으로 다시 계산되며 현재 상태에서 되돌릴 수 있습니다.</p>
+
+          <h3>Excel 원본 수정 절차</h3>
           <ol class="checklist">
-            <li>수정할 Web Report를 엽니다.</li>
-            <li><span class="ui">Rawdata edit</span>를 누릅니다.</li>
-            <li>열린 Excel에서 값을 수정합니다.</li>
-            <li>Excel 파일을 저장하고 닫습니다.</li>
-            <li>보고서 갱신 완료 메시지를 확인합니다.</li>
+            <li>먼저 <span class="ui">Excel Down</span>으로 현재 자료를 별도 보관합니다.</li>
+            <li>Rawdata 편집 허브에서 수정할 source를 1개 이상 선택합니다.</li>
+            <li>Excel에서 값을 수정합니다. source 시트를 삭제하면 그 source 자체가 보고서에서 제거됩니다.</li>
+            <li>파일을 저장하고 Excel을 닫습니다.</li>
+            <li>변경 검토의 개요·셀 변경·자동 교정·경고를 확인하고 <span class="ui">반영</span>을 명시적으로 누릅니다.</li>
           </ol>
-          <p class="warn"><strong>주의:</strong> Rawdata edit는 현재 보고서를 직접 갱신합니다. 실행 전 <span class="ui">Excel Down</span>으로 원본을 보관하십시오.</p>
+          <p class="warn"><strong>원본 수정은 화면에서 되돌릴 수 없습니다.</strong> 서버에는 직전 한 세대의 수동 복구용 백업만 남으므로 잘못 반영했다면 추가 편집 전에 관리자에게 즉시 문의하십시오.</p>
+          <p class="note">웹 리포트의 Raw Data 탭은 현재 사용하지 않습니다. Rawdata 조회·전처리·원본 수정은 Honey의 <span class="ui">Rawdata edit</span>를 사용하십시오.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
@@ -749,41 +782,54 @@
               <tbody>
                 <tr><td>Product Type</td><td>New Report에서 기본 선택할 PT를 지정합니다.</td></tr>
                 <tr><td>Family</td><td>보고서 정보 입력 창에서 기본 선택할 Family를 지정합니다.</td></tr>
-                <tr><td>Distribution 색 편집</td><td>Normal·Compare·DUT 그래프의 Source 색상을 변경합니다.</td></tr>
+                <tr><td>Distribution 색 편집</td><td>Normal·Compare·DUT·Temperature에서 Source 배치 창이 기본으로 읽을 색 팔레트를 변경합니다.</td></tr>
                 <tr><td>확인</td><td>설정을 저장하고 창을 닫습니다.</td></tr>
                 <tr><td>취소</td><td>변경값을 저장하지 않고 닫습니다.</td></tr>
               </tbody>
             </table>
           </div>
+          <p class="note">Web Report 생성 직전 Source 배치 창에서 바꾼 색은 해당 리포트에만 적용되며 Options 팔레트보다 우선합니다.</p>
+          <h3>Honey 업데이트</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>선택</th><th>동작</th></tr></thead>
+              <tbody>
+                <tr><td>자동 설치</td><td>다운로드와 무결성 확인 후 Honey 종료를 기다려 앱 파일을 교체하고 재실행합니다. 설치 폴더 쓰기 권한이 없으면 비활성화됩니다.</td></tr>
+                <tr><td>ZIP 다운로드</td><td>다운로드 폴더에 ZIP을 저장합니다. Honey를 종료하고 압축을 풀어 설치 폴더에 수동으로 덮어씁니다.</td></tr>
+                <tr><td>나중에</td><td>이번 실행에서는 업데이트하지 않습니다.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note">새 버전 설치 후 첫 실행에는 변경 공지가 한 번 표시됩니다. 자동 설치 실패 시 설치 폴더의 <code>log/update.log</code>를 확인합니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="dashboard">
           <h2>8. 보고서 찾기</h2>
-          <figure class="shot">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/01_dashboard.png" data-caption="보고서 검색 목록">
-              <img src="/pe/report/static/help_assets/01_dashboard.png" alt="HONEY 보고서 검색 목록과 필터" loading="lazy">
-            </button>
-            <figcaption>Home의 보고서 검색 목록</figcaption>
-          </figure>
-
           <div class="table-wrap">
             <table>
               <thead><tr><th>버튼·입력</th><th>동작</th></tr></thead>
               <tbody>
                 <tr><td>MDDI · PDDI · PMIC · SECURITY · TCON</td><td>Product Type으로 목록을 제한합니다.</td></tr>
-                <tr><td>Process</td><td>선택한 Process와 일치하는 보고서만 표시합니다.</td></tr>
-                <tr><td>Product</td><td>선택한 Product와 일치하는 보고서만 표시합니다.</td></tr>
-                <tr><td>Search</td><td>Product, LOT, Process, 파일명, 작성자에 포함된 문자를 검색합니다.</td></tr>
+                <tr><td>분석 모드</td><td>Normal·Compare·DUT·Temperature 보고서로 제한합니다.</td></tr>
+                <tr><td>공개 범위</td><td>공개 또는 내 권한으로 볼 수 있는 비공개 보고서를 구분합니다.</td></tr>
+                <tr><td>시작일 / 종료일</td><td>업로드 날짜 범위를 지정합니다.</td></tr>
+                <tr><td>정렬</td><td>최신·오래된 순서 또는 Product·LOT 기준으로 정렬합니다.</td></tr>
+                <tr><td>My Upload</td><td>현재 로그인 계정이 올린 보고서만 표시합니다.</td></tr>
+                <tr><td>통합 검색</td><td>Product, LOT, Process, 파일명, 작성자에 포함된 문자를 검색합니다.</td></tr>
                 <tr><td>Query</td><td>선택한 조건으로 검색을 실행합니다.</td></tr>
                 <tr><td>표의 보고서 행</td><td>해당 Web Report를 엽니다.</td></tr>
-                <tr><td>☆ / ★</td><td>자주 보는 보고서를 즐겨찾기에 추가·해제합니다.</td></tr>
+                <tr><td>☆ / ★</td><td>자주 보는 보고서를 내 계정의 즐겨찾기에 추가·해제합니다.</td></tr>
+                <tr><td>중요 ★</td><td>리포트에서 설정한 개인 중요 표시입니다. 즐겨찾기와 별개이며 자동 정리 대상에서도 보호됩니다.</td></tr>
+                <tr><td>🔒 / 🔓</td><td>업로더가 공개·비공개를 전환합니다.</td></tr>
+                <tr><td>🗑</td><td>업로더가 보고서를 휴지통으로 이동합니다. 즉시 영구 삭제되지 않습니다.</td></tr>
                 <tr><td>Theme</td><td>화면 테마를 변경합니다.</td></tr>
                 <tr><td>HONEY Download</td><td>HONEY 설치 파일을 내려받습니다.</td></tr>
               </tbody>
             </table>
           </div>
-          <p class="note">목록은 한 페이지에 20개씩 표시됩니다. 조건을 바꾼 뒤 <span class="ui">Query</span>를 누르십시오.</p>
+          <p class="note">목록은 페이지 단위로 표시되며 현재 필터·정렬·페이지가 URL에 저장됩니다. 새로고침하거나 URL을 공유해도 같은 검색 상태로 돌아옵니다.</p>
+          <p class="warn">휴지통 세션은 30일간 보관된 뒤 관리자가 영구 정리할 수 있습니다. 복원이 필요하면 세션 이름·Product·LOT·삭제 시각을 관리자에게 전달하십시오.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
@@ -793,28 +839,24 @@
             <table>
               <thead><tr><th>버튼</th><th>동작</th><th>비고</th></tr></thead>
               <tbody>
-                <tr><td>Home</td><td>보고서 검색 목록으로 이동</td><td>현재 탭의 미저장 편집값을 먼저 저장</td></tr>
-                <tr><td>Save</td><td>현재 편집 내용을 저장</td><td>편집 권한이 있을 때 표시</td></tr>
-                <tr><td>Important</td><td>중요 보고서 표시를 설정·해제</td><td>목록에서 중요 보고서 구분</td></tr>
-                <tr><td>Private</td><td>공개 범위를 전환</td><td>작성자 또는 권한 보유자만 변경</td></tr>
-                <tr><td>Delete</td><td>보고서를 삭제</td><td>복구가 필요하면 삭제 전에 Excel Down</td></tr>
-                <tr><td>⚙</td><td>보고서 설정 메뉴 열기</td><td>권한에 따라 항목이 다름</td></tr>
+                <tr><td>←</td><td>보고서 검색 목록으로 이동</td><td>미저장 편집이 있으면 취소·저장 후 이동·버리고 이동을 선택</td></tr>
+                <tr><td>저장 아이콘·상태 점</td><td>현재 편집 저장과 자동저장 상태 표시</td><td>편집 권한이 있을 때 표시</td></tr>
+                <tr><td>Important</td><td>개인 중요 표시 설정·해제</td><td>사용자별 표시이며 즐겨찾기와 별개</td></tr>
+                <tr><td>✏</td><td>Session Name·Family·Product·LOT·Process·Step 수정</td><td>Honey에서만 편집 창이 열림</td></tr>
+                <tr><td>Private</td><td>공개 범위를 전환</td><td>업로더만 변경</td></tr>
+                <tr><td>Delete</td><td>보고서를 휴지통으로 이동</td><td>업로더만 가능, 30일 보관</td></tr>
+                <tr><td>⚙ 표시</td><td>글꼴과 화면 확대율(100·110·125·150%) 설정</td><td>브라우저에 저장</td></tr>
+                <tr><td>⚙ 권한</td><td>편집자 추가·해제 (이름·ID 로 검색)</td><td>업로더만 표시, 콘텐츠 편집 권한만 위임</td></tr>
                 <tr><td>Theme</td><td>보고서 화면 색상 테마 변경</td><td>분석값에는 영향 없음</td></tr>
               </tbody>
             </table>
           </div>
-          <p class="note">일반 브라우저에서 읽기 전용으로 열면 편집·저장 버튼이 보이지 않을 수 있습니다. 편집은 HONEY에서 해당 보고서를 열어 진행합니다.</p>
+          <p class="note">비로그인 일반 브라우저는 읽기 전용입니다. 웹 로그인이나 Honey 신원으로 본인 보고서 또는 위임받은 보고서를 열면 코멘트·상태·Note 등 편집 기능이 표시됩니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="summary">
           <h2>10. Summary</h2>
-          <figure class="shot">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/02_report_summary.png" data-caption="Summary 탭">
-              <img src="/pe/report/static/help_assets/02_report_summary.png" alt="Web Report Summary Yield 요약과 Engineer Comment" loading="lazy">
-            </button>
-            <figcaption>Summary 탭</figcaption>
-          </figure>
           <div class="table-wrap">
             <table>
               <thead><tr><th>영역</th><th>확인 내용</th></tr></thead>
@@ -822,74 +864,60 @@
                 <tr><td>Report 정보</td><td>Product Type, Family, Product, LOT, Process, 작성자, 생성 시각</td></tr>
                 <tr><td>Overall Yield</td><td>전체 측정 수량 기준 Pass·Fail 비율</td></tr>
                 <tr><td>Source Yield</td><td>Source별 Yield 비교</td></tr>
-                <tr><td>Top 5 Bin</td><td>발생 수량이 많은 Bin 순위</td></tr>
-                <tr><td>Engineer Comment</td><td>평가 결론·특이사항·후속 조치를 기록</td></tr>
+                <tr><td>Major Fail Bin</td><td>발생 수량이 많은 Bin과 비율</td></tr>
+                <tr><td>Issue Status</td><td>Yield·CPK·TEMP·ETC별 Open·Close 건수. TEMP는 Temperature 보고서에서 표시</td></tr>
+                <tr><td>ENGR Comment</td><td>Yield·CPK·ETC와 Temperature의 TEMP 결론·특이사항·후속 조치를 자동저장</td></tr>
               </tbody>
             </table>
           </div>
-          <p class="ok"><strong>권장 기록:</strong> 평가 목적, 주요 이슈 Item, 조건별 차이, 판정, 후속 확인 항목.</p>
+          <p class="ok"><strong>권장 기록:</strong> 평가 목적, 주요 이슈 Item, 조건별 차이, 판정, 후속 확인 항목. Item 태그, Note 셀 태그, Note 시트 링크를 사용하면 관련 화면으로 바로 이동할 수 있습니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="yield">
           <h2>11. Yield Analysis</h2>
-          <figure class="shot">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/03_yield.png" data-caption="Yield Analysis 탭">
-              <img src="/pe/report/static/help_assets/03_yield.png" alt="Yield Analysis 전체 Source Bin Yield 화면" loading="lazy">
-            </button>
-            <figcaption>Yield Analysis 탭</figcaption>
-          </figure>
           <div class="table-wrap">
             <table>
               <thead><tr><th>영역·버튼</th><th>동작</th></tr></thead>
               <tbody>
-                <tr><td>Overall</td><td>전체 Pass·Fail 수량과 Yield를 확인합니다.</td></tr>
-                <tr><td>Source / Step</td><td>조건·Step별 Yield 차이를 비교합니다.</td></tr>
+                <tr><td>Overall</td><td>선택한 수율 분모 기준의 전체 Pass·Fail 수량과 Yield를 확인합니다.</td></tr>
+                <tr><td>Source / Step</td><td>Source별 기준과 전체·Step 누적 Yield 차이를 비교합니다.</td></tr>
                 <tr><td>Bin / TNO</td><td>Fail Bin과 Test Number별 발생 수량을 확인합니다.</td></tr>
-                <tr><td>펼치기</td><td>선택 항목의 상세 Fail 내용을 표시합니다.</td></tr>
-                <tr><td>Item 링크</td><td>해당 Item의 Distribution 또는 상세 분석으로 이동합니다.</td></tr>
+                <tr><td>Fail Bin 차트</td><td>주요 Bin 상위 항목과 나머지 Bin을 차트로 확인합니다.</td></tr>
+                <tr><td>검색·바로가기</td><td>상단 검색과 Step·Temperature 바로가기로 긴 표의 원하는 위치로 이동합니다.</td></tr>
+                <tr><td>Excel Down</td><td>Yield 표를 Excel 파일로 내보냅니다.</td></tr>
               </tbody>
             </table>
           </div>
+          <p class="note">Temperature 보고서의 Yield·Fail Bin·일반 Issue Table은 RT source만 사용합니다. CT·HT 항목 Fail은 <span class="ui">Issue Table Temp</span>에서 확인합니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="cpk">
           <h2>12. CPK Analysis</h2>
-          <figure class="shot">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/04_cpk.png" data-caption="CPK Analysis 탭">
-              <img src="/pe/report/static/help_assets/04_cpk.png" alt="CPK Analysis Item 검색 Source 선택 CPK 필터" loading="lazy">
-            </button>
-            <figcaption>CPK Analysis 탭</figcaption>
-          </figure>
           <div class="table-wrap">
             <table>
               <thead><tr><th>버튼·필터</th><th>동작</th></tr></thead>
               <tbody>
                 <tr><td>Item Search</td><td>Item명 일부를 입력해 목록을 제한합니다.</td></tr>
                 <tr><td>Source 선택</td><td>선택 Source의 평균, Sigma, Min, Max, CPK를 비교합니다.</td></tr>
-                <tr><td>Whole Die / Bin1</td><td>전체 Die 또는 양품 Die 기준으로 통계를 전환합니다.</td></tr>
-                <tr><td>CPK &lt; 1.33</td><td>CPK가 1.33 미만인 Item만 표시합니다.</td></tr>
-                <tr><td>Abnormal</td><td>이상 분포 판정 상태로 목록을 제한합니다.</td></tr>
+                <tr><td>Bin1 기준</td><td>CPK 통계는 양품 Die만 사용합니다.</td></tr>
+                <tr><td>임계값·연산자</td><td>입력한 CPK 값보다 작은 행 또는 큰 행을 표시합니다.</td></tr>
+                <tr><td>Abnormal</td><td>동일 Limit 제외 · ALL · 동일 Limit만의 3상태로 필터링합니다.</td></tr>
                 <tr><td>CODE 제거</td><td>CODE Item을 분석 목록에서 제외합니다.</td></tr>
-                <tr><td>Limit 계산</td><td>목표 CPK 기준의 참고 Limit을 계산하고 복사합니다.</td></tr>
+                <tr><td>Limit 계산</td><td>행을 선택하고 Target Cpk와 margin 0·1·5·10%로 참고 Limit을 역산·복사·초기화합니다.</td></tr>
+                <tr><td>Excel Down</td><td>현재 CPK 표를 Excel로 내보냅니다.</td></tr>
                 <tr><td>Item 행</td><td>해당 Item의 Distribution 상세 화면으로 이동합니다.</td></tr>
               </tbody>
             </table>
           </div>
           <p class="warn"><span class="ui">Limit 계산</span> 결과는 참고값이며 원본 Limit을 자동 변경하지 않습니다.</p>
-          <p class="note">목록은 한 페이지에 50개씩 표시됩니다.</p>
+          <p class="note">목록은 한 페이지에 100개씩 표시됩니다. Temperature의 CT·HT는 해당 그룹 RT의 Bin1 die와 RT Limit을 기준으로 계산합니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="issue">
           <h2>13. Issue Table</h2>
-          <figure class="shot">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/05_issue_table.png" data-caption="Issue Table 탭">
-              <img src="/pe/report/static/help_assets/05_issue_table.png" alt="Issue Table Yield CPK ETC 이슈와 Map Distribution" loading="lazy">
-            </button>
-            <figcaption>Issue Table 탭</figcaption>
-          </figure>
           <div class="table-wrap">
             <table>
               <thead><tr><th>버튼·영역</th><th>동작</th></tr></thead>
@@ -901,25 +929,26 @@
                 <tr><td>Item 링크</td><td>해당 Item의 상세 분석으로 이동합니다.</td></tr>
                 <tr><td>PTE Comment</td><td>PTE 의견을 입력합니다. 셀을 더블클릭해 편집합니다.</td></tr>
                 <tr><td>Dev Comment</td><td>개발 담당 의견을 입력합니다. 셀을 더블클릭해 편집합니다.</td></tr>
-                <tr><td>Add ETC</td><td>자동 검출 항목 외의 이슈를 직접 추가합니다.</td></tr>
+                <tr><td>Add ISSUE ITEM</td><td>자동 검출 항목 외의 ETC 또는 측정 Item 이슈를 직접 추가합니다.</td></tr>
+                <tr><td>Status</td><td>행을 Open·Close로 바꾸고 Open/Close 보기 숨김을 적용합니다.</td></tr>
+                <tr><td>행 선택 모드</td><td>전체·없음·Open·Close 선택, 선택 삭제, 일괄 Open·Close, 숨김 초기화를 수행합니다.</td></tr>
+                <tr><td>Excel Download</td><td>현재 Issue Table을 Excel로 내보냅니다.</td></tr>
               </tbody>
             </table>
           </div>
           <ul class="checklist">
-            <li>Comment에 <code>@Item명</code>을 입력하면 해당 Item 링크로 사용할 수 있습니다.</li>
-            <li>열 너비 조정은 화면 표시용이며 다음 접속에 유지되지 않습니다.</li>
+            <li><code>@[Item]</code>: Item Detail, <code>#[Tag]</code>: Note 셀, <code>$[Sheet]</code>: Note 시트로 이동합니다.</li>
+            <li>문자열을 선택하면 굵게와 빨강·주황·초록·파랑 서식을 적용할 수 있습니다.</li>
+            <li>열 경계를 끌어 너비를 조정하고 셀 내용을 복사할 수 있습니다.</li>
           </ul>
+          <h3>Issue Table Temp</h3>
+          <p>Temperature 보고서에서만 표시됩니다. 각 그룹의 CT·HT 전체 항목을 RT Limit으로 다시 판정하며 검색·Excel·Map·Distribution, Comment와 Status 편집을 지원합니다.</p>
+          <p class="warn">한 die가 여러 Item에서 동시에 Fail일 수 있으므로 source의 Item별 Fail % 합은 100%를 넘을 수 있습니다. 합계를 Yield로 해석하지 마십시오.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="distribution">
           <h2>14. Distribution</h2>
-          <figure class="shot">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/06_distribution.png" data-caption="Distribution 탭">
-              <img src="/pe/report/static/help_assets/06_distribution.png" alt="Distribution 갤러리 CPK Fail Limit Bin 필터" loading="lazy">
-            </button>
-            <figcaption>Distribution 갤러리</figcaption>
-          </figure>
           <div class="table-wrap">
             <table>
               <thead><tr><th>버튼·필터</th><th>동작</th></tr></thead>
@@ -927,10 +956,11 @@
                 <tr><td>Item 검색</td><td>Item명 일부를 입력해 그래프를 찾습니다.</td></tr>
                 <tr><td>CPK &lt; 1.33</td><td>CPK가 1.33 미만인 Item만 표시합니다.</td></tr>
                 <tr><td>Fail Only</td><td>Fail 데이터가 있는 Item만 표시합니다.</td></tr>
-                <tr><td>Limit inside data</td><td>LSL·USL이 데이터 범위에 보이도록 X축을 조정합니다.</td></tr>
+                <tr><td>Limit 없는 Data만</td><td>Limit이 비어 있는 항목만 표시합니다.</td></tr>
                 <tr><td>Bin1 only</td><td>BIN=1 데이터만 분포에 사용합니다.</td></tr>
                 <tr><td>P/F 숨김</td><td>Pass·Fail 표식을 숨겨 분포 곡선만 표시합니다.</td></tr>
-                <tr><td>그래프 카드</td><td>CDF, Histogram, 통계값, Fail Die 상세 화면을 엽니다.</td></tr>
+                <tr><td>Source·온도 선택</td><td>Source를 강조하거나 Temperature에서 All·RT·CT·HT·그룹을 선택합니다.</td></tr>
+                <tr><td>그래프 카드</td><td>TNO, Limit, CPK, Status와 Note 표시를 보고 Item Detail을 엽니다.</td></tr>
               </tbody>
             </table>
           </div>
@@ -940,60 +970,51 @@
             <table>
               <thead><tr><th>기능</th><th>동작</th></tr></thead>
               <tbody>
-                <tr><td>Die 제외</td><td>선택 Die를 분포 계산에서 임시 제외합니다.</td></tr>
-                <tr><td>Reset</td><td>임시 제외와 축 조정을 초기화합니다.</td></tr>
-                <tr><td>X축 조정</td><td>확인할 값 범위만 확대합니다.</td></tr>
-                <tr><td>Comment 도형·문자</td><td>그래프 위에 원, 화살표, 텍스트 등 표시를 추가합니다.</td></tr>
-                <tr><td>Save</td><td>그래프 Comment를 저장합니다.</td></tr>
+                <tr><td>CDF / Histogram</td><td>전체 측정값의 누적 분포와 구간별 빈도를 전환해 봅니다.</td></tr>
+                <tr><td>Source 선택</td><td>표시할 source를 제한하고 통계·그래프를 비교합니다.</td></tr>
+                <tr><td>Map chip</td><td>선택 die의 좌표와 source별 측정값 표를 확인합니다.</td></tr>
+                <tr><td>Fail die 표</td><td>Limit 밖 die를 페이지 단위로 확인합니다.</td></tr>
+                <tr><td>이전 / 다음</td><td>버튼 또는 <kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd>로 인접 Item을 이동합니다.</td></tr>
+                <tr><td>차트 복사</td><td>Analysis·Report용 Histogram 또는 현재 차트를 PNG로 클립보드에 복사합니다.</td></tr>
+                <tr><td>주석 편집</td><td>권한이 있으면 원·사각형·선·텍스트와 Comment를 저장·취소·초기화합니다.</td></tr>
                 <tr><td>Note 붙여넣기</td><td>완성한 그래프 이미지를 Note에 붙여넣습니다.</td></tr>
               </tbody>
             </table>
           </div>
           <p class="note"><span class="ui">CPK &lt; 1.33</span>과 <span class="ui">Fail Only</span>을 함께 선택하면 두 조건을 모두 만족하는 Item만 표시됩니다.</p>
-          <p class="warn">상세 화면의 임시 Die 제외·X축 확대는 원본 Raw Data를 변경하지 않습니다.</p>
+          <p class="warn">상세 화면의 source 필터·축 확대·표시 전환은 원본 Raw Data를 변경하지 않습니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="map">
           <h2>15. Map Analysis</h2>
-          <figure class="shot">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/07_map_analysis.png" data-caption="Map Analysis 탭">
-              <img src="/pe/report/static/help_assets/07_map_analysis.png" alt="Map Analysis Bin Map STDF Map 좌표 선택" loading="lazy">
-            </button>
-            <figcaption>Map Analysis 탭</figcaption>
-          </figure>
           <div class="table-wrap">
             <table>
               <thead><tr><th>버튼·필터</th><th>동작</th></tr></thead>
               <tbody>
                 <tr><td>Bin Map</td><td>Bin 또는 TNO별 색으로 Fail 위치를 표시합니다.</td></tr>
-                <tr><td>STDF Map</td><td>측정값 크기를 단계별 색으로 표시합니다.</td></tr>
+                <tr><td>STDF Map</td><td>STDF 측정 조건을 기준으로 Map을 표시합니다.</td></tr>
+                <tr><td>Temperature Map</td><td>Temperature 보고서에서 CT·HT의 Item Fail 위치를 표시합니다.</td></tr>
                 <tr><td>Columns 1–8</td><td>한 줄에 표시할 Map 개수를 변경합니다.</td></tr>
                 <tr><td>Bin / TNO</td><td>Map 색상 기준을 Bin 또는 TNO로 전환합니다.</td></tr>
                 <tr><td>Legend 선택</td><td>선택 Bin·TNO만 강조해 위치 패턴을 확인합니다.</td></tr>
                 <tr><td>Map 클릭</td><td>해당 Map을 확대해 상세 좌표를 확인합니다.</td></tr>
-                <tr><td>SERIAL</td><td>입력 문자가 포함된 Serial을 선택합니다.</td></tr>
-                <tr><td>X / Y</td><td>입력 좌표와 정확히 일치하는 Die를 선택합니다.</td></tr>
-                <tr><td>Clear</td><td>좌표 선택·강조를 해제합니다.</td></tr>
+                <tr><td>Source / Item 검색</td><td>표시할 source 또는 Temperature Item을 빠르게 찾습니다.</td></tr>
+                <tr><td>상세 범례</td><td>확대한 현재 맵 한 장 기준의 Bin count·비율과 hover 좌표를 확인합니다.</td></tr>
               </tbody>
             </table>
           </div>
-          <p class="note">SERIAL, X, Y를 함께 입력하면 모든 조건을 만족하는 Die만 선택됩니다. 선택 Die는 Map과 Distribution에서 함께 확인할 수 있습니다.</p>
+          <p class="note">Temperature에서는 Bin·TNO 축이 RT source 맵만, Temperature Map 축이 CT·HT source 맵만 표시합니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="trim">
-          <h2>16. Trim Analysis</h2>
-          <figure class="shot">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/08_trim_analysis.png" data-caption="Trim Analysis 탭">
-              <img src="/pe/report/static/help_assets/08_trim_analysis.png" alt="Trim Analysis Item Matching Distribution Excel Download Copy" loading="lazy">
-            </button>
-            <figcaption>Trim Analysis 탭</figcaption>
-          </figure>
+          <h2>16. Characteristic · Trim Analysis</h2>
           <div class="table-wrap">
             <table>
               <thead><tr><th>버튼·영역</th><th>동작</th></tr></thead>
               <tbody>
+                <tr><td>분석 시작</td><td>초록색 버튼을 눌러야 매칭과 차트 데이터를 불러옵니다. 탭 진입만으로는 실행되지 않습니다.</td></tr>
                 <tr><td>Item Matching</td><td>Trim 단계에 사용할 Item을 연결합니다.</td></tr>
                 <tr><td>Item 끌어 놓기</td><td>단계별 Item 순서를 변경합니다.</td></tr>
                 <tr><td>Reset</td><td>Item Matching을 초기 상태로 되돌립니다.</td></tr>
@@ -1005,18 +1026,13 @@
               </tbody>
             </table>
           </div>
-          <p class="note">MDDI와 PDDI TV2는 2-Step, 그 외 대상은 4-Step 기준으로 Item을 Matching합니다. Distribution은 한 페이지에 6개씩 표시됩니다.</p>
+          <p class="note">Item Matching·Distribution·결과 영역을 순서대로 확인하며 Distribution은 한 페이지에 6개씩 표시됩니다.</p>
+          <p class="warn"><span class="ui">Shmoo</span> <span class="ui">BV</span> <span class="ui">Analog Chart</span> <span class="ui">TCB</span> <span class="ui">DVO</span>는 화면에 표시되지만 현재 준비 중입니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="note">
           <h2>17. Note</h2>
-          <figure class="shot">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/09_note.png" data-caption="Note 탭">
-              <img src="/pe/report/static/help_assets/09_note.png" alt="Note 스프레드시트와 Distribution 그래프 이미지" loading="lazy">
-            </button>
-            <figcaption>Note 탭</figcaption>
-          </figure>
           <div class="table-wrap">
             <table>
               <thead><tr><th>기능</th><th>동작</th></tr></thead>
@@ -1026,7 +1042,9 @@
                 <tr><td>수식</td><td>셀 계산식을 입력해 정리값을 계산합니다.</td></tr>
                 <tr><td>서식</td><td>글꼴, 정렬, 색상, 테두리 등 셀 서식을 적용합니다.</td></tr>
                 <tr><td>이미지 붙여넣기</td><td>Distribution 등 분석 그래프를 Note에 배치합니다.</td></tr>
-                <tr><td>Save</td><td>Note의 셀·서식·이미지를 저장합니다.</td></tr>
+                <tr><td>Tag</td><td>현재 셀의 태그를 만들어 Summary·Issue Table 코멘트에서 바로 연결합니다.</td></tr>
+                <tr><td>시트 링크</td><td>코멘트의 Sheet 링크로 지정 Note 시트를 바로 엽니다.</td></tr>
+                <tr><td>Save</td><td>Note의 시트·셀·수식·서식·이미지를 저장합니다.</td></tr>
               </tbody>
             </table>
           </div>
@@ -1037,48 +1055,74 @@
 
         <section id="compare">
           <h2>18. Compare</h2>
-          <figure class="shot">
-            <button type="button" data-lightbox="/pe/report/static/help_assets/10_compare.png" data-caption="Compare 분석 화면">
-              <img src="/pe/report/static/help_assets/10_compare.png" alt="Compare After Before Map 비교 화면" loading="lazy">
-            </button>
-            <figcaption>Compare 보고서의 Map 비교 화면</figcaption>
-          </figure>
           <div class="table-wrap">
             <table>
               <thead><tr><th>탭</th><th>확인 내용</th></tr></thead>
               <tbody>
-                <tr><td>Map</td><td>After와 Before의 Fail 위치·패턴 차이</td></tr>
-                <tr><td>Log</td><td>Item별 측정값 변화와 차이</td></tr>
-                <tr><td>CPK</td><td>After·Before CPK 변화</td></tr>
-                <tr><td>Bin</td><td>Bin 수량과 Yield 변화</td></tr>
+                <tr><td>Map 비교</td><td>모든 source의 공통 Map, 그룹별 Bin Yield와 Bin 불일치 좌표</td></tr>
+                <tr><td>Log 비교</td><td>After·Before 대표 source의 전체 Item Log. Item·Limit 차이·Gap 필터와 펼치기 지원</td></tr>
+                <tr><td>Distribution 비교</td><td>After·Before 그룹 pool의 통계와 ECDF를 한 페이지에 비교</td></tr>
+                <tr><td>동일성 검증</td><td>그룹 분포의 동일성 등급과 noise gate를 필터링해 확인</td></tr>
               </tbody>
             </table>
           </div>
-          <p class="warn"><strong>입력 순서:</strong> New Report 파일 목록의 첫 번째 파일이 After, 두 번째 파일이 Before입니다.</p>
+          <p class="warn"><strong>대표 source:</strong> Honey Compare 배치에서 After 최상단이 Limit 기준과 After Log 대표, Before 최상단이 Before Log 대표입니다. 각 그룹에는 source가 1개 이상 필요합니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
 
         <section id="trouble">
-          <h2>19. 문제 해결</h2>
+          <h2>19. 문제 해결 · 지원 · ENGR 챗봇</h2>
           <div class="table-wrap">
             <table>
               <thead><tr><th>증상</th><th>확인·조치</th></tr></thead>
               <tbody>
                 <tr><td>Web Report 버튼이 실행되지 않음</td><td>입력 파일, Product Type, 모드별 파일 개수를 확인합니다.</td></tr>
                 <tr><td>Product를 선택할 수 없음</td><td>Product Type과 Family를 다시 선택한 뒤 Product 목록을 확인합니다.</td></tr>
-                <tr><td>Compare 생성 오류</td><td>파일이 정확히 2개인지, 순서가 After → Before인지 확인합니다.</td></tr>
+                <tr><td>Compare 생성 오류</td><td>source가 2개 이상인지, Before·After 양쪽에 각각 1개 이상 배치했는지 확인합니다.</td></tr>
                 <tr><td>DUT 생성 오류</td><td>입력 파일이 정확히 1개인지 확인합니다.</td></tr>
+                <tr><td>Temperature가 보이지 않음</td><td>Product Type이 PMIC 또는 SECURITY인지 확인합니다.</td></tr>
+                <tr><td>Temperature 배치 오류</td><td>각 그룹에 RT가 있고 Group·Role·순서가 올바른지 확인합니다. Limit 파일은 선택 사항입니다.</td></tr>
                 <tr><td>Bin1 분석 오류</td><td>입력 데이터에 BIN=1 값이 있는지 확인합니다.</td></tr>
                 <tr><td>Excel Report가 열리지 않음</td><td>열려 있는 동일 파일을 닫고, 파일 보호·DRM 여부와 Excel 설치 상태를 확인합니다.</td></tr>
                 <tr><td>Excel Upload 실패</td><td>HONEY Excel인지, Raw Data Sheet가 포함되어 있는지 확인합니다.</td></tr>
-                <tr><td>Rawdata edit가 반영되지 않음</td><td>Excel에서 저장한 뒤 파일과 Excel 프로그램을 모두 닫았는지 확인합니다.</td></tr>
+                <tr><td>Rawdata 전처리가 반영되지 않음</td><td>Options·Item Select·Yield 계산 변경 뒤 허브 하단의 저장을 눌렀는지 확인합니다.</td></tr>
+                <tr><td>Excel 원본 수정이 반영되지 않음</td><td>Excel을 저장·종료한 뒤 변경 검토 창에서 반영을 승인했는지 확인합니다.</td></tr>
                 <tr><td>보고서가 읽기 전용임</td><td>HONEY에서 다시 열고, 본인에게 편집 권한이 있는 보고서인지 확인합니다.</td></tr>
                 <tr><td>공유 주소에서 보고서가 보이지 않음</td><td>보고서 작성자에게 공개 범위 또는 공유 권한 확인을 요청합니다.</td></tr>
-                <tr><td>분석 탭이 늦게 표시됨</td><td>최초 계산이 끝날 때까지 기다립니다. 데이터가 크면 1–2분이 걸릴 수 있습니다.</td></tr>
+                <tr><td>분석 탭이 늦게 표시됨</td><td>최초 계산 상태를 기다립니다. 반복해서 멈추면 새로고침 후 오류번호와 세션 ID를 기록합니다.</td></tr>
                 <tr><td>Note 변경 내용이 사라짐</td><td>Note 화면의 Save 버튼을 눌렀는지 확인합니다.</td></tr>
+                <tr><td>Honey 업데이트 실패</td><td>설치 폴더의 <code>log/update.log</code>를 확인하고 자동 설치가 불가하면 ZIP 다운로드를 사용합니다.</td></tr>
+                <tr><td>Honey 작업 오류</td><td>오류번호, 수행 작업, 세션 ID, 발생 시각을 기록합니다. 오프라인 오류 보고는 연결 복구 후 전송될 수 있습니다.</td></tr>
               </tbody>
             </table>
           </div>
+          <h3>VOC 문의</h3>
+          <div class="two-col">
+            <div class="mini-card">
+              <h3>현재 버튼 동작</h3>
+              <p>Honey의 Help → VOC와 검색 화면의 VOC는 기본 브라우저에서 Confluence 페이지를 엽니다.</p>
+            </div>
+            <div class="mini-card">
+              <h3>서버 VOC 게시판</h3>
+              <p><a href="/pe/report/voc">/pe/report/voc</a>에서 분류·제목·본문과 PNG/JPEG 스크린샷 최대 3장을 등록하고 댓글·Open/Close 상태를 확인합니다.</p>
+            </div>
+          </div>
+
+          <h3>ENGR 챗봇 — 현재 관리자 테스트</h3>
+          <p>검색 화면과 세션 상세 우하단에서 관리자에게만 표시됩니다. 보고서 찾기, 현재 세션 정보, Yield·CPK·측정값, Issue·코멘트, Item 이력·집계·화면 이동과 HONEY 기능 사용법을 질문할 수 있습니다.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>질문 예시</th><th>답변 내용</th></tr></thead>
+              <tbody>
+                <tr><td>Temperature 모드 있어?</td><td>사용 가능 상태, PMIC·SECURITY 조건, RT·CT·HT 배치 방법과 이 도움말 링크</td></tr>
+                <tr><td>Rawdata에서 DUT 제외 가능해?</td><td>Options의 source·DUT 선택, 전 탭 반영과 원본 보존 안내</td></tr>
+                <tr><td>Compare에서 Before 여러 개 가능해?</td><td>2개 이상 source와 Before·After 그룹별 1개 이상 조건</td></tr>
+                <tr><td>Shmoo 사용할 수 있어?</td><td>준비 중 상태를 명확히 안내하고 현재 사용 가능한 Trim으로 연결</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="note"><span class="ui">새 대화</span>를 누르면 앞에서 선택한 세션·제품·Item 문맥을 지웁니다. 챗봇은 조회와 화면 이동만 지원하며 데이터 수정·삭제는 수행하지 않습니다.</p>
+          <p class="warn">기능명이 카탈로그에 없으면 기능이 있다고 추측하지 않고 “공개 기능 카탈로그에서 확인되지 않습니다”라고 답합니다.</p>
           <a class="top-link" href="#main">맨 위로</a>
         </section>
       </div>

@@ -10,6 +10,7 @@ import logging
 import re
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 from flask import Response, abort, jsonify, request
 
@@ -25,6 +26,7 @@ from report.security import (
     _editor_guard,
     _require_csrf,
     _require_web_report_session,
+    artifact_missing,
 )
 from web_report import service as web_report_service
 from web_report import build_status as web_report_build_status_mod
@@ -83,7 +85,9 @@ def web_report_raw_data_columns(session_id):
     try:
         result = web_report_service.get_raw_data_columns(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except Exception:
         _log.exception("web_report raw_data columns failed for session %s", session_id)
@@ -103,7 +107,9 @@ def web_report_raw_data(session_id):
         result = web_report_service.query_raw_data(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             columns=columns, search=search, bin_filter=bin_filter, source_filter=source_filter)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -150,7 +156,9 @@ def web_report_distribution(session_id):
         body = web_report_service.get_distribution_gzip(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             bin1=bin1, bin1_scope=bin1_scope)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except Exception:
         _log.exception("web_report distribution failed for session %s", session_id)
@@ -188,7 +196,9 @@ def web_report_distribution_batch(session_id):
         etag, body = web_report_response_cache.get_dist_batch_gzip(
             session_id, subjects, session=session, report_db=report_db,
             upload_root=Path(REPORT_UPLOAD_DIR), bin1=bin1, bin1_scope=bin1_scope)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except Exception:
         _log.exception("web_report distribution_batch failed for session %s", session_id)
@@ -221,7 +231,9 @@ def web_report_temp_map(session_id):
     try:
         body = web_report_service.get_temp_map_gzip(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except Exception:
         _log.exception("web_report temp_map failed for session %s", session_id)
@@ -256,7 +268,9 @@ def web_report_map_analysis(session_id):
             build_if_cold=False)
     except web_report_service.ColdBuildRequired:
         return _building_response(session_id, "map")
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except Exception:
         _log.exception("web_report map_analysis failed for session %s", session_id)
@@ -294,7 +308,9 @@ def web_report_scatter(session_id, subject):
             session_id, subject, session=session,
             report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             bin1=bin1, bin1_scope=bin1_scope)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report item or session data not found")
     except Exception:
         _log.exception("web_report scatter failed for session %s item %s", session_id, subject)
@@ -322,7 +338,9 @@ def web_report_trim_analysis(session_id):
         body, mdigest = web_report_service.get_trim_analysis_gzip(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             source=source)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except Exception:
         _log.exception("web_report trim_analysis failed for session %s", session_id)
@@ -355,7 +373,9 @@ def web_report_trim_chart(session_id):
         body = web_report_service.get_trim_chart_gzip(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             source=source, group_id=group)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report trim group or session data not found")
     except Exception:
         _log.exception("web_report trim_chart failed for session %s group %s",
@@ -388,7 +408,9 @@ def web_report_trim_chart_batch(session_id):
         body = web_report_service.get_trim_charts_batch(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             source=source, group_ids=groups)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report trim group or session data not found")
     except Exception:
         _log.exception("web_report trim_chart_batch failed for session %s groups %r",
@@ -421,7 +443,9 @@ def web_report_trim_overrides(session_id):
         result = web_report_service.update_trim_overrides(
             session_id, ops, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -447,7 +471,9 @@ def web_report_commonality_chips(session_id):
         result = web_report_service.commonality_chips(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             q=q, limit=limit, serial=serial, xpos=xpos, ypos=ypos)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except Exception:
         _log.exception("web_report commonality chips failed for session %s", session_id)
@@ -464,7 +490,9 @@ def web_report_commonality_chip(session_id):
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             serial=request.args.get("serial") or "", xpos=request.args.get("xpos") or "",
             ypos=request.args.get("ypos") or "", source=request.args.get("source") or "")
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "chip or session data not found")
     except Exception:
         _log.exception("web_report commonality chip failed for session %s", session_id)
@@ -493,7 +521,9 @@ def web_report_raw_data_edit(session_id):
         result = web_report_service.edit_raw_data(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             edits=edits, client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -511,7 +541,9 @@ def web_report_get_preprocess(session_id):
     _require_web_report_session(session_id)
     try:
         result = web_report_service.get_preprocess(session_id, report_db=report_db)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session not found")
     return jsonify(result)
 
@@ -526,7 +558,9 @@ def web_report_get_yield_basis(session_id):
     try:
         result = web_report_service.get_yield_basis(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except Exception:
         _log.exception("web_report yield_basis load failed for session %s", session_id)
@@ -560,7 +594,9 @@ def web_report_save_preprocess(session_id):
         result = web_report_service.save_preprocess(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             spec=body, client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -637,7 +673,9 @@ def web_report_rawdata_export(session_id):
     try:
         blob = web_report_rawedit.export_sources_zip(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except Exception:
         _log.exception("web_report rawdata export failed for session %s", session_id)
@@ -647,6 +685,57 @@ def web_report_rawdata_export(session_id):
     if etag:
         headers["ETag"] = etag
     return Response(blob, mimetype="application/zip", headers=headers)
+
+
+@report_bp.get("/session/<session_id>/web_report/rawdata_csv")
+def web_report_rawdata_csv(session_id):
+    """웹 브라우저용: 세션 rawdata 원본 source 1개를 7-meta CSV 로 내려준다.
+
+    Honey 나 별도 exe 없이 웹에서 바로 받는 조회 전용 경로다 — 가드는 rawdata_export 와
+    같이 _require_web_report_session 하나뿐이고(비공개 세션은 그 안에서 404), 조회이므로
+    CSRF·편집자 가드는 없다. 읽기 전용 사용자도 받을 수 있다.
+
+    내려주는 것은 저장된 parquet 그대로다 — 메타 6행(TSEQ~LOLIM) 포함, 전처리·편집 상태
+    미반영. ETag 는 rawdata_export 와 같은 content_hash 에 source idx 를 붙인 것.
+    """
+    session = _require_web_report_session(session_id)
+    try:
+        source_idx = int(request.args.get("source", "0"))
+    except (TypeError, ValueError):
+        abort(400, "invalid source index")
+
+    base_etag = web_report_rawedit.export_etag(session)
+    etag = f'"{base_etag}:src{source_idx}"' if base_etag else ""
+    if etag and request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+
+    try:
+        chunks, source_name = web_report_rawedit.export_source_csv(
+            session_id, source_idx, report_db=report_db,
+            upload_root=Path(REPORT_UPLOAD_DIR))
+    except IndexError:
+        abort(404, "source not found")
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report rawdata csv failed for session %s", session_id)
+        abort(500, "rawdata csv export failed")
+
+    lot = str(session.get("lot_id") or "").strip() or session_id
+    pretty = re.sub(r'[\\/:*?"<>|\r\n]+', "_", f"rawdata_{lot}_{source_name}.csv")
+    # filename= 은 ASCII 만 안전하므로 세션/idx 기반 폴백을 두고, 실제 이름(한글 가능)은
+    # filename*(RFC5987) 로 준다 — 브라우저는 filename* 를 우선한다.
+    ascii_name = f"rawdata_{session_id}_src{source_idx}.csv"
+    headers = {
+        "Content-Disposition": (f'attachment; filename="{ascii_name}"; '
+                                f"filename*=UTF-8''{quote(pretty)}"),
+        "Cache-Control": "no-cache",
+    }
+    if etag:
+        headers["ETag"] = etag
+    return Response(chunks, mimetype="text/csv; charset=utf-8", headers=headers)
 
 
 @report_bp.post("/session/<session_id>/web_report/rawdata_replace")
@@ -686,7 +775,9 @@ def web_report_rawdata_replace(session_id):
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             sources_bytes=sources, kept_indices=kept_indices, client_ip=ip, user_agent=ua,
             client_user=_current_user() or "", dist_pack=dist_pack)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -720,7 +811,9 @@ def web_report_issue_table_etc(session_id):
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             add=item if action == "add" else "", remove=item if action == "remove" else "",
             client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -749,7 +842,9 @@ def web_report_issue_table_hidden(session_id):
         result = web_report_service.update_issue_hidden(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             action=action, key=key, client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -786,7 +881,9 @@ def web_report_issue_table_status(session_id):
             result = web_report_service.update_issue_status(
                 session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
                 key=key, value=value, client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -816,13 +913,52 @@ def web_report_issue_table_signature(session_id):
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             key=(body.get("key") or "").strip(), value=body.get("signatures"),
             client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception:
         _log.exception("web_report issue_table signature failed for session %s", session_id)
         abort(500, "issue_table signature failed")
+    return jsonify(result)
+
+
+_SIG_ID_RE = re.compile(r"^[A-Z0-9_]{1,64}$")
+_SIG_REASON_MAX_IDS = 9
+
+
+@report_bp.get("/session/<session_id>/web_report/issue_table/signature_reason")
+def web_report_issue_table_signature_reason(session_id):
+    """Signature 판정 근거 — 룰 기준(조건식·임계값) + 업로드 시점 스냅샷 실측값.
+
+    query: key=<row_key>, ids=<SIG_A,SIG_B>(생략 시 스냅샷 발화 목록).
+    **조회 전용**이라 CSRF·편집자 가드가 아니라 세션 조회 권한(_require_web_report_session
+    안의 비공개 가드)만 요구한다 — 판정 근거는 그 판정을 검토하는 사람이 봐야 하고,
+    노출되는 지표(cpk/yield/outlier_ratio)는 같은 세션의 Cpk·Distribution 탭에 이미 있다.
+    """
+    session = _require_web_report_session(session_id)
+    key = (request.args.get("key") or "").strip()
+    if not key or len(key) > 300:
+        return jsonify({"error": "invalid key"}), 400
+    ids = [s.strip().upper() for s in (request.args.get("ids") or "").split(",") if s.strip()]
+    if len(ids) > _SIG_REASON_MAX_IDS or any(not _SIG_ID_RE.match(s) for s in ids):
+        return jsonify({"error": "invalid ids"}), 400
+    # 엔진 경로·eval DB 의존을 모듈 로드 시점으로 끌어오지 않는다 — 이 파일은 모든 세션
+    # 조회가 지나가는 진입 모듈이다.
+    from eval_panel import signature_reason
+    try:
+        result = signature_reason.build(
+            session_id, key, ids,
+            product_type=str(session.get("product_type") or ""),
+            family_product=str(session.get("family_product") or ""),
+            preprocessed=bool(web_report_preprocess.session_digest(report_db, session_id)))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("signature_reason failed for session %s", session_id)
+        abort(500, "signature reason failed")
     return jsonify(result)
 
 
@@ -845,7 +981,9 @@ def web_report_issue_table_comments(session_id):
         result = web_report_service.update_issue_comments(
             session_id, comments, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -875,7 +1013,9 @@ def web_report_chart_notes(session_id):
         result = web_report_service.update_chart_notes(
             session_id, ops, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -909,7 +1049,9 @@ def web_report_note_tags(session_id):
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             action=action, name=name, target=body.get("target"),
             client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -1009,7 +1151,9 @@ def web_report_note_save(session_id):
             "conflict": {"updated_by": exc.info.get("updated_by", ""),
                          "updated_at": exc.info.get("updated_at", 0)},
         }), 409
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -1079,7 +1223,9 @@ def web_report_summary_engr(session_id):
         result = web_report_service.update_summary_engr(
             session_id, values, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             client_ip=ip, user_agent=ua)
-    except (FileNotFoundError, KeyError):
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
         abort(404, "web_report session data not found")
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400

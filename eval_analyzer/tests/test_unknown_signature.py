@@ -111,15 +111,16 @@ def test_excluded_case_has_no_unknown():
     assert sig["signatures"] == []
 
 
-def test_low_cpk_does_not_bury_spec_too_tight():
-    """LOW_CPK 재활성(2026-08-12) 후에도 SPEC_TOO_TIGHT 이 primary 로 남는다.
+def test_low_cpk_does_not_bury_its_cause():
+    """cpk 는 **결과** 지표다 — 원인 룰이 떠 있으면 primary 자리를 그쪽에 내준다.
 
-    두 룰은 조건상 항상 함께 뜨는 포함관계다 — suppressed_by 가 빠지면 MAJOR 인
-    LOW_CPK 가 primary 를 독점해 축소 디버깅의 원인이 됐던 상태로 되돌아간다.
+    SPEC_TOO_TIGHT·WIDE_DISTRIBUTION 이 LOW_CPK 로 통합된 뒤(2026-08-12) 남은 원인 룰은
+    MEAN_SHIFT(중심 치우침)와 OUTLIER(멀리 튄 die 가 산포를 부풀림)다. suppressed_by 가
+    빠지면 MAJOR 인 LOW_CPK 가 primary 를 독점해 "무엇을 고쳐야 하나" 가 사라진다.
     """
     case = _case()
-    feats = _quiet_features()                       # 좁고(spread_norm 낮음)·단봉
+    feats = _quiet_features(fail_robust_z_max=20.0)     # 멀리 떨어진 fail = cpk 하락의 원인
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 1.0})
     ids = [s["id"] for s in sig["signatures"]]
-    assert "SPEC_TOO_TIGHT" in ids and "LOW_CPK" not in ids
-    assert status.decide(case, feats, sig)["primary_signature"] == "SPEC_TOO_TIGHT"
+    assert "OUTLIER" in ids and "LOW_CPK" not in ids
+    assert status.decide(case, feats, sig)["primary_signature"] == "OUTLIER"

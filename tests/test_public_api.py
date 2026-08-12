@@ -125,8 +125,10 @@ check("/pe/report/api/part_ids 무변경",
       r.status_code == 200 and r.get_json()["part_ids"] == body["candidates"])
 
 rules = {str(rule) for rule in app.url_map.iter_rules()}
-check("v1 라우트 2개 등록",
+check("v1 기존·도움말 라우트 등록",
       f"{API}/product-info/candidates" in rules
-      and f"{API}/product-info/lookup" in rules)
+      and f"{API}/product-info/lookup" in rules
+      and f"{API}/help/features" in rules
+      and f"{API}/help/features/<feature_id>" in rules)
 
 print("\nALL PASS")

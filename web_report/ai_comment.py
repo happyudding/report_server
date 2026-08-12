@@ -10,7 +10,7 @@ evaluate 는 persist=False(미리보기) 로만 호출한다 — eval.db 무기�
 실패는 어떤 경우에도 IssueTable 빌드를 죽이지 않는다 (safe_build 빈 dict 폴백).
 
 엔진 사설 계약 핀(엔진 변경 시 함께 확인):
-  present.to_result 의 case["signatures"][].evidence[] — SUBPOP_GAP 의 note 포맷
+  present.to_result 의 case["signatures"][].evidence[] — BIMODALITY 의 note 포맷
   "modality_v2 <label>" 을 _modality_tag 가 파싱한다 (signatures._evaluate_subpop_gap).
 """
 from __future__ import annotations
@@ -62,11 +62,12 @@ _EMPTY_RESULT = {"comments": {}, "etc_auto_items": [], "row_signatures": {},
 # 성과로 세면 커버율이 가짜로 100% 가 되기 때문(eval_debug._coverage).
 UNKNOWN_SIGNATURE = "UNKNOWN"
 
-# 이봉(SUBPOP_GAP) 배지 — 엔진은 primary_signature 일 때만 코멘트 본문에 이봉 문구를
-# 쓰는데(recommend._phenomenon_text), SUBPOP_GAP 은 specificity 순위가 낮아 같은 MAJOR 인
-# WIDE_DISTRIBUTION 등에 밀리기 쉽다. 그래서 발화 사실 자체를 case["signatures"] 에서
+# 이봉(BIMODALITY) 배지 — 엔진은 primary_signature 일 때만 코멘트 본문에 이봉 문구를
+# 쓰는데(recommend._phenomenon_text), BIMODALITY 는 specificity 순위가 낮아 같은 MAJOR 인
+# 공간 룰 등에 밀리기 쉽다. 그래서 발화 사실 자체를 case["signatures"] 에서
 # 직접 읽어 status 뒤에 붙인다 — primary/secondary 를 구분하지 않는다.
-_SUBPOP_SIG_ID = "SUBPOP_GAP"
+# (2026-08-12 개명: SUBPOP_GAP → BIMODALITY)
+_SUBPOP_SIG_ID = "BIMODALITY"
 _MODALITY_SIGNAL = "MODALITY_V2"
 _MODALITY_RE = re.compile(r"modality_v2\s+(\w+)")
 _MODALITY_TAG = {"bimodal": "[이봉]", "multimodal": "[다봉]", "separated": "[분리]"}
@@ -221,7 +222,7 @@ def _session_meta(session, wafer_number):
 
 
 def _modality_tag(case):
-    """SUBPOP_GAP 발화 시 이봉/다봉/분리 배지 문자열, 아니면 "".
+    """BIMODALITY 발화 시 이봉/다봉/분리 배지 문자열, 아니면 "".
 
     primary 인지 secondary 인지 보지 않는다 — 발화 사실만으로 붙인다.
     """
@@ -246,13 +247,19 @@ def _cell_text(case):
     return f"{prefix} {comment}".strip() if prefix else comment
 
 
-def _sev(case):
-    return _SEVERITY.get(str(case.get("status") or ""), -1)
+def rank_key(status, has_modality):
+    """소스 간 대표 케이스 선택 순위 — severity 동률이면 이봉 발화 쪽을 남긴다.
+
+    `_rank` 에서 분리해 공개한 이유: Signature 근거 팝업이 eval DB 행(evaluation.status +
+    case_signature 에 BIMODALITY 존재)에서 **같은 대표 케이스**를 골라야 화면 코멘트와
+    팝업 근거가 어긋나지 않는다. `_modality_tag` 는 BIMODALITY 발화 시에만 비지 않으므로
+    DB 쪽 has_modality = case_signature 에 BIMODALITY 행 존재 와 1:1 대응한다.
+    """
+    return (_SEVERITY.get(str(status or ""), -1), 1 if has_modality else 0)
 
 
 def _rank(case):
-    """소스 간 대표 케이스 선택 순위 — severity 동률이면 이봉 발화 쪽을 남긴다."""
-    return (_sev(case), 1 if _modality_tag(case) else 0)
+    return rank_key(case.get("status"), bool(_modality_tag(case)))
 
 
 def _case_sig_ids(case) -> list:
@@ -325,7 +332,7 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None):
             "signature_options": [{"id","enabled"}...]}.
     selected_items 필터는 build_report_payload 의 in-place 필터와 동일 집합으로
     적용한다(미선택 item 평가 회피). 여러 소스에서 같은 (item, bin) 케이스가 나오면
-    severity 높은 쪽이 남고, 동률이면 이봉(SUBPOP_GAP) 발화 쪽이 남는다(_rank).
+    severity 높은 쪽이 남고, 동률이면 이봉(BIMODALITY) 발화 쪽이 남는다(_rank).
 
     fail_only=None 이면 서버 기본(env). 참이면 fail 이 1chip 이상인 item 만 평가한다 —
     그 결과 **수율·cpk 는 정상인데 룰만 위반한 item(etc_auto_items)이 생기지 않는다**.

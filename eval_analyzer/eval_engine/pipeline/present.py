@@ -12,7 +12,7 @@ def should_store(case_ctx, metrics, sig_result) -> bool:
     """rule 계산 후 DB 저장 여부 판단: yield fail / cpk<cpk_warn / signature 발화.
 
     signature 발화분을 포함하는 이유 — 수율·cpk 는 정상인데 분포만 이상한 케이스
-    (SUBPOP_GAP 이봉, SEVERE_OUTLIER 등)가 여기서 걸러지면 코멘트가 아예 생성되지
+    (BIMODALITY 이봉, OUTLIER 등)가 여기서 걸러지면 코멘트가 아예 생성되지
     않아 룰 디버깅이 불가능하다. report_server 는 이 부류를 Issue Table ETC 섹션에
     올린다(web_report/ai_comment.py etc_auto_items).
     """

@@ -11,7 +11,7 @@
 - **강화 방향만.** 느슨하게 만들어 **새 발화를 늘리는** 추천은 v1 에서 만들지 않는다 —
   검수하지 않은 케이스가 새로 뜨면 그건 라벨로 검증된 변경이 아니다.
 - **룰별 기준 하드코딩 금지.** 층화 기준 metric 은 그 룰의 `when_metric` 첫 조건에서
-  자동으로 뽑고, 그게 판정 기준이 아닌 룰(SUBPOP_GAP)만 yaml `review_metric` 으로 지목한다.
+  자동으로 뽑고, 그게 판정 기준이 아닌 룰(BIMODALITY)만 yaml `review_metric` 으로 지목한다.
 
 DB 스키마는 바꾸지 않는다 — 라벨은 기존 `label` 테이블에 `labeler='eval-review'` 로 넣고,
 `human_status` 는 비운다(그래야 전체 status 채점 `eval_admin.scoring()` 과 섞이지 않는다).
@@ -81,23 +81,35 @@ def _derived(row: dict) -> dict:
     return out
 
 
+# 표본함이 **재현할 수 있는** 지표 — eval.db 에 저장된 컬럼 + `_derived` 가 되살리는 파생.
+# 여기 없는 지표(OUTLIER 의 fail_robust_z_max, 공간 룰의 *_fail_share 등)는 per-DUT 원본
+# 값이 있어야 계산되는데 raw 는 저장하지 않는다(불변 규칙 3). 그런 룰은 억지로 정렬하지
+# 않고 "층화 불가"로 정직하게 비운다 — 빈 표본 목록보다 사유가 보이는 편이 낫다.
+_STRATIFIABLE = set(_METRIC_COLS) | set(_RAW_COLS) | {
+    "yield_rate", "spec_margin_min", "center_bias", "outlier_count",
+    "gradient_norm_abs_max"}
+
+
 def _rule_criterion(sig: dict, thresholds: dict):
     """이 룰의 표본 층화·재판정 기준 → (metric, op, threshold_key) | None.
 
     우선순위: yaml `review_metric`(판정 기준이 when_metric 이 아닌 룰용) → `when_metric`
     중 **임계값 키를 참조하는** 첫 조건. 리터럴 비교(">0")는 옮길 값이 없으므로 건너뛴다.
+    그 판정 지표를 스냅샷에서 되살릴 수 없으면(`_STRATIFIABLE` 밖) **None** 이다 —
+    뒤에 오는 가드 조건(fail_count 등)으로 대신 정렬하면 "임계값에서 얼마나 떨어졌나" 가
+    판정 축이 아닌 다른 축을 가리켜 검수자가 잘못된 표본을 보게 된다.
     """
     review = sig.get("review_metric") or {}
     for metric, key in review.items():
         if key in thresholds:
-            return str(metric), ">", str(key)
+            return (str(metric), ">", str(key)) if str(metric) in _STRATIFIABLE else None
     for metric, cond in (sig.get("when_metric") or {}).items():
         m = _COND_RE.match(str(cond).strip())
         if not m:
             continue
         ref = m.group(3).strip()
         if ref in thresholds:
-            return str(metric), m.group(2), ref
+            return (str(metric), m.group(2), ref) if str(metric) in _STRATIFIABLE else None
     return None
 
 

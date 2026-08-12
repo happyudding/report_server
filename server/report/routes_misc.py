@@ -23,6 +23,7 @@ from database import report_db
 from product_info import list_search_candidates
 from report.report_extension import report_bp
 from report.security import (
+    _DISPLAY_NAME_RE,
     _PIN_RE,
     _USER_ID_RE,
     _active_or_404,
@@ -290,6 +291,12 @@ def _epoch_arg(name, end_of_day=False):
     return ts + 86399 if end_of_day else ts
 
 
+def _uid_tail(value):
+    """'SECDS\\hgd123' → 'hgd123' (소문자). 세션의 uploaded_by 처럼 도메인이 섞여 들어오는
+    값을 report_user_profile 의 키(소문자 singleID)로 맞춘다."""
+    return (value or "").split("\\")[-1].strip().lower()
+
+
 @report_bp.get("/api/history")
 def history():
     filters = {
@@ -330,11 +337,15 @@ def history():
                                              viewer=viewer, sort=sort,
                                              see_all_private=master)
     # 신원을 함께 실어 첫 화면의 /api/auth/me 왕복을 없앤다 (auth_me 와 동일 규칙).
-    viewer_info = {"user_id": viewer, "source": _identity_source(), "is_master": master}
+    viewer_info = {"user_id": viewer, "source": _identity_source(), "is_master": master,
+                   "display_name": report_db.get_display_name(viewer) or ""}
     if viewer_info["source"] == "honey" and viewer:
         viewer_info["has_pin"] = bool(report_db.get_user(viewer))
+    # 업로더 표기를 '이름(ID)' 로 그리기 위한 uid→이름 맵. 행마다 이름을 인라인하지 않고
+    # 맵으로 한 번만 실어 보낸다(같은 업로더가 여러 행에 반복되므로).
+    names = report_db.display_names([_uid_tail(r.get("uploaded_by")) for r in rows])
     return jsonify({"rows": rows, "total": total, "limit": limit, "offset": offset,
-                    "viewer": viewer_info})
+                    "viewer": viewer_info, "names": names})
 
 
 # ── 사용자 인증 (웹 로그인) ───────────────────────────────────────────────────
@@ -453,7 +464,8 @@ def auth_login():
     flask_session["uid"] = uid
     flask_session.permanent = True
     _auth_audit("login", uid)
-    return jsonify({"ok": True, "user_id": uid, "source": "login"})
+    return jsonify({"ok": True, "user_id": uid, "source": "login",
+                    "display_name": report_db.get_display_name(uid) or ""})
 
 
 @report_bp.post("/api/auth/set_password")
@@ -509,6 +521,11 @@ def auth_signup():
     pin = (body.get("password") or "").strip()
     if not _PIN_RE.match(pin):
         return jsonify({"error": "비밀번호는 숫자 4자리여야 합니다."}), 400
+    # 이름은 폼에서 필수지만 **서버는 강제하지 않는다** — 브라우저에 캐시된 옛 JS 가 name
+    # 없이 보내도 가입 자체는 되어야 한다. 비면 첫 화면에서 이름 입력창이 뜨므로 결과는 같다.
+    name = (body.get("name") or "").strip()
+    if name and not _DISPLAY_NAME_RE.match(name):
+        return jsonify({"error": "이름은 1~30자여야 합니다."}), 400
 
     ip, _ua = _client_meta()
     if _signup_flooded(ip):
@@ -527,6 +544,8 @@ def auth_signup():
     if not report_db.create_user(uid, generate_password_hash(pin)):
         # 동시 가입 경합 — 위 존재 확인과 INSERT 사이에 다른 요청이 만든 경우
         return jsonify({"error": "이미 가입된 계정입니다."}), 409
+    if name:
+        report_db.set_display_name(uid, name, "self")
 
     _record_signup(ip)
     _login_fails.pop(uid, None)
@@ -534,7 +553,8 @@ def auth_signup():
     flask_session["uid"] = uid
     flask_session.permanent = True
     _auth_audit("signup", uid)
-    return jsonify({"ok": True, "user_id": uid, "source": "login"})
+    return jsonify({"ok": True, "user_id": uid, "source": "login",
+                    "display_name": name})
 
 
 @report_bp.get("/api/auth/signup_hint")
@@ -557,13 +577,34 @@ def auth_signup_hint():
 
 @report_bp.get("/api/auth/me")
 def auth_me():
-    """현재 신원 + 출처. has_pin 은 Honey 접속 시 '비밀번호 설정' UI 노출 판단용."""
+    """현재 신원 + 출처. has_pin 은 Honey 접속 시 '비밀번호 설정' UI 노출 판단용.
+    display_name 이 빈 문자열이면 프런트가 이름 입력창을 띄운다."""
     uid = _current_user()
     src = _identity_source()
-    resp = {"user_id": uid, "source": src}
+    resp = {"user_id": uid, "source": src,
+            "display_name": report_db.get_display_name(uid) or ""}
     if src == "honey" and uid:
         resp["has_pin"] = bool(report_db.get_user(uid))
     return jsonify(resp)
+
+
+@report_bp.post("/api/auth/display_name")
+def auth_display_name():
+    """사용자 실명 등록/변경 — 신원이 확인된 본인만(Honey UA · 웹 로그인 · SSO 모두 허용).
+
+    로그인 계정(report_user)이 없는 Honey 전용 사용자도 저장된다 — 저장소가 별도
+    테이블(report_user_profile)이라 계정 유무와 무관하다. 이름은 표시 전용이며 접근제어에
+    쓰지 않으므로, 사칭 위험은 화면이 항상 '이름(ID)' 로 ID 를 함께 보여주는 것으로 감당한다."""
+    _require_csrf()
+    uid = _current_user()
+    if not uid:
+        return jsonify({"error": "이름을 저장하려면 Honey 앱이나 웹 로그인이 필요합니다."}), 403
+    name = ((request.get_json(force=True, silent=True) or {}).get("name") or "").strip()
+    if not _DISPLAY_NAME_RE.match(name):
+        return jsonify({"error": "이름은 1~30자여야 합니다."}), 400
+    report_db.set_display_name(uid, name, "self")
+    _auth_audit("display_name", uid)
+    return jsonify({"ok": True, "user_id": uid, "display_name": name})
 
 
 # ── user favorites (검색결과 즐겨찾기, 로그인 계정 별) ────────────────────────
@@ -703,7 +744,8 @@ def landing_info():
     """/pe 랜딩의 유일한 조회 — 신원(요청마다) + 현황 수치(30초 캐시)를 한 응답에."""
     stats, age = _landing_stats()
     return jsonify({
-        "viewer": {"user_id": _current_user(), "source": _identity_source()},
+        "viewer": {"user_id": _current_user(), "source": _identity_source(),
+                   "display_name": report_db.get_display_name(_current_user()) or ""},
         "cache_age_s": age,
         **stats,
     })

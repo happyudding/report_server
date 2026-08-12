@@ -33,13 +33,32 @@ signatures:
     evidence: ["stdev {stdev}"]
 
   - id: WIDE_DISTRIBUTION
+    enabled: false
+    # LOW_CPK 로 통합(2026-08-12). 대칭 limit 에서 cpk = 1/(6·spread_norm) 이라 이 룰이
+    # 뜨는 구간은 cpk<0.93 이 수학적으로 강제된다 — 같은 현상을 두 이름으로 말하던 셈이다.
     when_metric: { spread_norm: ">spread_norm_warn" }
     status_hint: MAJOR
     phenomenon_ko : "산포가 spec 폭 대비 넓게 퍼져 있습니다."
     action_ko: "산포가 spec 폭 대비 넓음 — 공정 변동 및 site/wafer 조건별 산포 차이 확인"
     evidence: ["spread_norm {spread_norm}"]
 
+  # outlier 축의 단일 룰(2026-08-12) — 구 SEVERE_OUTLIER/OUTLIER_WARN 을 대체한다.
+  # 옛 두 룰은 같은 지표(outlier_ratio)의 임계값만 다른 강약 표현이라 늘 함께 떴고,
+  # 무엇보다 **비율**로는 "limit 바로 밖에 붙은 fail" 과 "뚝 떨어져 나간 fail" 이 구분되지
+  # 않았다. 판정을 거리(fail_robust_z_max)로 바꾼 이유가 이것이다.
+  - id: OUTLIER
+    when_metric: { fail_robust_z_max: ">=outlier_fail_z_min" }
+    status_hint: MAJOR
+    phenomenon_ko : "일부 die 가 분포 중심에서 극단적으로 벗어나 fail 했습니다."
+    action_ko: "outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+    evidence: ["fail_robust_z_max {fail_robust_z_max}", "fail_value_gap_norm {fail_value_gap_norm}",
+               "outlier_ratio {outlier_ratio}", "outlier_count {outlier_count}"]
+
+  # 아래 두 룰은 OUTLIER 로 통합돼 꺼졌다. **지우지 않는 이유**: eval.db 에 이 이름으로
+  # 쌓인 과거 발화·정답라벨이 있어 패널·트레이스가 계속 해석해야 하고, 테스트데이터
+  # 생성기의 전-룰-enabled 검증 패스도 선언이 있어야 돈다.
   - id: SEVERE_OUTLIER
+    enabled: false
     when_metric: { outlier_ratio: ">outlier_ratio_bad", outlier_count : ">severe_outlier_count_min" }
     status_hint: MAJOR
     phenomenon_ko : "outlier 성 fail 비율이 높게 나타납니다."
@@ -47,10 +66,8 @@ signatures:
     evidence: ["outlier_ratio {outlier_ratio}", "outlier_count {outlier_count}"]
 
   - id: OUTLIER_WARN
+    enabled: false
     when_metric: { outlier_ratio: ">outlier_ratio_warn" }
-    # outlier_ratio_warn <= outlier_ratio_bad 가 강제되므로(rules_io._check_threshold_values)
-    # SEVERE_OUTLIER 가 뜨면 이 룰은 조건상 항상 함께 뜬다 — 같은 현상의 약한 표현이라
-    # 중복 발화로 primary 경쟁·secondary 목록만 어지럽힌다.
     suppressed_by: [SEVERE_OUTLIER]
     status_hint: MINOR
     phenomenon_ko : "outlier 비율이 주의 수준으로 관찰됩니다."
@@ -76,29 +93,34 @@ signatures:
     action_ko: "site 간 편차 큼 — golden unit 재측정 / handler·site correlation"
     evidence: ["site_cpk_delta {site_cpk_delta}"]
 
-  # 공간 축은 존(zone)으로 가른다: E1(최외곽 한 줄) / EDGE(그 안쪽 바깥 밴드) / CENTER.
-  # 세 영역은 서로 배타라 동시 발화가 드물고, 조치 방향이 다르다(E1 = 에지 노출·척킹,
-  # EDGE = uniformity, CENTER = 증착/CMP).
+  # 공간 축은 존(zone)으로 가른다: E1(최외곽 한 줄) / EDGE(그 안쪽 바깥 밴드) / CENTER /
+  # RING(중간 밴드). 영역은 서로 배타라 동시 발화가 드물고, 조치 방향이 다르다
+  # (E1 = 에지 노출·척킹, EDGE = uniformity, CENTER = 증착/CMP, RING = radial uniformity).
+  # **판정 기준은 점유율(share)** — "전체 fail 중 그 영역이 몇 % 를 가졌나". 종전 밀도 비
+  # (*_fail_ratio)는 영역이 좁을수록 쉽게 커지고 수학적 상한도 영역마다 달라(edge≈2.8,
+  # center≈11, ring≈1.8) 임계값을 공유할 수 없었고, ring 은 상한이 임계 아래라 아예
+  # 발화 불가였다. 배수 지표는 evidence 로만 남긴다.
   - id: E1_FAIL
-    enabled: false
-    # E1 = die 격자에서 4-이웃 중 하나라도 비어 있는 die (features._e1_mask).
-    # 반경 비율로는 "한 줄" 을 표현할 수 없어 좌표 이웃으로 판정한다.
-    when_metric: { e1_fail_ratio: ">e1_fail_ratio_warn", fail_count : ">spatial_fail_count_min" }
+    # E1 = 각 행의 좌·우 끝 + 각 열의 위·아래 끝 die (features._e1_mask).
+    # 반경 비율로는 "한 줄" 을 표현할 수 없어 줄의 양끝으로 판정한다.
+    when_metric: { e1_fail_share: ">=region_fail_share_min", fail_count : ">spatial_fail_count_min" }
     status_hint: MAJOR
     phenomenon_ko : "wafer 최외곽 한 줄(E1)에 불량이 집중되어 있습니다."
     action_ko: "최외곽 1열(E1) 불량 집중 — edge exclusion/척킹·프로브 접촉, edge die 취급 기준 확인"
-    evidence: ["e1_fail_ratio {e1_fail_ratio}", "fail_count {fail_count}"]
+    evidence: ["e1_fail_share {e1_fail_share}", "e1_fail_ratio {e1_fail_ratio}", "fail_count {fail_count}"]
 
   - id: EDGE_FAIL
-    enabled: false
-    # edge_fail_ratio 는 **E1 을 제외한** 바깥 밴드 기준이다(features._spatial_features).
-    when_metric: { edge_fail_ratio: ">edge_fail_ratio_warn", fail_count : ">spatial_fail_count_min" }
+    # edge 영역은 **E1 을 제외한** 바깥 밴드다(features._spatial_features).
+    when_metric: { edge_fail_share: ">=region_fail_share_min", fail_count : ">spatial_fail_count_min" }
     status_hint: MAJOR
     phenomenon_ko : "wafer edge 영역(최외곽 한 줄 제외)에 불량이 집중되어 있습니다."
     action_ko: "wafer edge 불량 집중 — uniformity/edge 보정, 모과제 동일유형 확인"
-    evidence: ["edge_fail_ratio {edge_fail_ratio}", "fail_count {fail_count}"]
+    evidence: ["edge_fail_share {edge_fail_share}", "edge_fail_ratio {edge_fail_ratio}", "fail_count {fail_count}"]
 
   - id: SPEC_TOO_TIGHT
+    enabled: false
+    # LOW_CPK 로 통합(2026-08-12). 조건에 cpk<cpk_warn 을 품고 있어 LOW_CPK 와 항상 동반
+    # 발화했고(포함관계), 사용자 검토에서도 두 발화를 구분할 실익이 없다는 결론이었다.
     when_metric: { spread_norm: "<spread_norm_warn", cpk: "<cpk_warn",
                    center_bias: "abs<mean_shift_warn", bimodality_score: "<bimodality_warn" }
     status_hint: MINOR
@@ -118,9 +140,10 @@ signatures:
 
   # review_metric: 표본 검수(/pe/eval 표본함)가 "임계값에서 얼마나 떨어졌나" 로 경계·중간·
   # 극단 표본을 고를 때 쓰는 기준. 평소에는 when_metric 첫 조건에서 자동으로 뽑지만,
-  # SUBPOP_GAP 은 when_metric 이 판정에 쓰이지 않는 특수분기라 여기서 따로 지목한다.
+  # BIMODALITY 는 when_metric 이 판정에 쓰이지 않는 특수분기라 여기서 따로 지목한다.
   # 판정에는 아무 영향이 없다(표본 정렬 전용).
-  - id: SUBPOP_GAP
+  # (2026-08-12 개명: SUBPOP_GAP → BIMODALITY. 과거 DB 값은 마이그레이션으로 치환됐다.)
+  - id: BIMODALITY
     review_metric: { density_gap: subpop_density_gap_warn }
     # 특수분기 — when_metric/evidence 는 실평가에 안 쓰인다(features.modality_v2 로 판정).
     when_metric: { bimodality_score: ">bimodality_warn" }
@@ -144,12 +167,14 @@ signatures:
     when_metric: { cpk: "<cpk_warn" }
     # cpk 는 **결과 지표**다 — "왜 낮은가"(중심 치우침/산포 과대/spec 여유 부족)를 말하는
     # 룰이 떠 있으면 primary 자리를 그쪽에 내준다(현상 5축 재편, 2026-08-12).
-    #   · SPEC_TOO_TIGHT : 조건에 cpk<cpk_warn 을 포함 → 항상 동반(포함관계)
-    #   · WIDE_DISTRIBUTION : 대칭 limit 에서 cpk = 1/(6·spread_norm) → spread>0.18 이면
-    #     cpk<0.93 이 수학적으로 강제된다(테스트 데이터 실측에서도 100% 동반)
     #   · MEAN_SHIFT : 중심이 치우치면 가까운 쪽 margin 이 줄어 cpk 가 따라 내려간다
+    #   · OUTLIER : 멀리 튄 die 가 stdev 를 부풀려 cpk 를 끌어내린다 — 조치 대상은
+    #     분포 전체가 아니라 그 몇 개 die 다
+    #   · BIMODALITY : 두 무리로 갈라진 분포는 합쳐 재면 산포가 넓어 cpk 가 낮게 나온다.
+    #     고칠 것은 산포가 아니라 무리를 가른 원인(로트/장비 혼입)이다
     # 이 선언이 없으면 MAJOR 인 LOW_CPK 가 primary 를 독점해 원인 룰이 안 보인다.
-    suppressed_by: [SPEC_TOO_TIGHT, WIDE_DISTRIBUTION, MEAN_SHIFT]
+    # (SPEC_TOO_TIGHT·WIDE_DISTRIBUTION 은 이 룰로 통합돼 꺼졌으므로 목록에서 뺐다.)
+    suppressed_by: [MEAN_SHIFT, OUTLIER, BIMODALITY]
     status_hint: MAJOR
     issue_category: CPK
     phenomenon_ko : "공정능력지수(Cpk)가 기준(1.33) 미달입니다."
@@ -164,18 +189,18 @@ signatures:
     evidence: ["center_bias {center_bias}", "nearest {nearest_spec_side}"]
 
   - id: CENTER_FAIL
-    enabled: false
-    when_metric: { center_fail_ratio: ">edge_fail_ratio_warn" }
+    # fail_count 가드가 없고 edge 임계 키를 빌려 쓰던 것을 share 전환과 함께 정비했다.
+    when_metric: { center_fail_share: ">=region_fail_share_min", fail_count: ">spatial_fail_count_min" }
     status_hint: MAJOR
     phenomenon_ko : "wafer 중심부에 불량이 집중되어 있습니다."
     action_ko: "wafer 중심부 불량 집중 — center 공정(증착/CMP 등) 점검"
-    evidence: ["center_fail_ratio {center_fail_ratio}", "fail_count {fail_count}"]
+    evidence: ["center_fail_share {center_fail_share}", "center_fail_ratio {center_fail_ratio}", "fail_count {fail_count}"]
 
   - id: CLUSTER_FAIL
-    enabled: false
-    # fail_count 가드는 다른 공간 룰(EDGE/RING/GRADIENT)에는 다 있는데 이 룰만 빠져 있었다.
-    # 그 상태로 켜면 fail 이 1~2개만 있어도 사분면 편중이 항상 성립해 fail case 의 87% 가
-    # CLUSTER_FAIL 로 덮인다(2026-08-12 실측 2594/2985). 가드를 넣으면 14건으로 떨어진다.
+    # 존(E1/EDGE/CENTER/RING)으로 설명되지 않는 **국부 편중**을 잡는 룰 — 사분면 fail 률의
+    # (최대-최소)/평균 이다. fail_count 가드 없이 켰을 때는 fail 이 1~2개만 있어도 편중이
+    # 항상 성립해 fail case 의 87% 를 덮었다(2026-08-12 실측 2594/2985). 가드 + 임계
+    # 1.0→2.5 상향(상한 4)으로 국부 결함·scratch 수준만 남긴다.
     when_metric: { quadrant_imbalance: ">quadrant_imbalance_warn",
                    fail_count: ">spatial_fail_count_min" }
     status_hint: MAJOR
@@ -198,7 +223,7 @@ signatures:
     # 몇 개만 있어도 kurtosis 는 그 4제곱으로 올라간다. outlier 룰이 뜬 case 에 이 룰까지
     # 얹으면 "무엇이 문제인가"가 두 줄로 갈라져 보인다(테스트 데이터 실측: outlier 발화
     # 항목 대부분에 동반). 같은 현상의 약한 표현이므로 목록에만 남긴다.
-    suppressed_by: [SEVERE_OUTLIER, OUTLIER_WARN]
+    suppressed_by: [OUTLIER]
     status_hint: MINOR
     phenomenon_ko : "분포 꼬리가 두껍게 나타납니다."
     action_ko: "분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
@@ -206,12 +231,14 @@ signatures:
 
 
   - id: RING_FAIL
-    enabled: false
-    when_metric: { ring_fail_ratio : ">ring_fail_ratio_warn", fail_count: ">spatial_fail_count_min"}
+    # ring = center 와 edge 사이 중간 밴드(E1 제외). 배수 기준일 때는 이 영역이 die 의
+    # 절반 이상이라 지표 상한(~1.8)이 임계 아래여서 켜도 발화할 수 없었다 — share 기준으로
+    # 바꾸면서 실제로 판정 가능해졌다(2026-08-12).
+    when_metric: { ring_fail_share : ">=region_fail_share_min", fail_count: ">spatial_fail_count_min"}
     status_hint: MAJOR
     phenomenon_ko : "wafer 반경 방향으로 ring성 fail이 나타납니다."
     action_ko: "wafer 반경 방향 ring성 fail - radial uniformity 및 edge/center band 반복성 확인"
-    evidence: ["ring_fail_ratio {ring_fail_ratio}", "fail_count {fail_count}"]
+    evidence: ["ring_fail_share {ring_fail_share}", "ring_fail_ratio {ring_fail_ratio}", "fail_count {fail_count}"]
 
 
   - id: WAFER_GRADIENT

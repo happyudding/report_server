@@ -111,6 +111,12 @@ REPORT_WEBREPORT_TOTAL_MB = int(os.getenv("REPORT_WEBREPORT_TOTAL_MB", "1024") o
 # 디스크에 스풀해 둔 상태라 RAM 을 거의 쓰지 않는다.
 WEB_REPORT_UPLOAD_CONCURRENCY = int(os.getenv("WEB_REPORT_UPLOAD_CONCURRENCY", "2") or 2)
 WEB_REPORT_UPLOAD_WAIT_SEC = float(os.getenv("WEB_REPORT_UPLOAD_WAIT_SEC", "180") or 180)
+# ⚠️ 대기는 RAM 은 안 쓰지만 **waitress 스레드는 그대로 문다**. 상한이 없으면 클라 13대가
+# 동시에 올릴 때 2건 처리 + 11스레드가 최대 WAIT_SEC(180초) 대기 = 가용 스레드 0 이 되어
+# 그 사이 조회·/healthz 까지 전면 무응답이 된다(watchdog 이 죽었다고 오판할 수 있다).
+# 그래서 "동시에 줄 설 수 있는 요청 수"를 따로 제한한다. 이 수를 넘으면 기다리지 않고
+# 즉시 503 — 소수 버스트는 종전대로 대기해 성공하고, 폭주만 잘라낸다.
+WEB_REPORT_UPLOAD_MAX_WAITERS = int(os.getenv("WEB_REPORT_UPLOAD_MAX_WAITERS", "4") or 4)
 
 REPORT_S3_ENDPOINT   = os.getenv("REPORT_S3_ENDPOINT", "")
 REPORT_S3_BUCKET     = os.getenv("REPORT_S3_BUCKET", "")

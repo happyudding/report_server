@@ -107,6 +107,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_WEBREPORT_TOTAL_MB` | `1024` | web_report parquet **합계** 상한. 개별 파일은 512MB 고정, 요청 전체는 `MAX_CONTENT_LENGTH_MB` |
 | `WEB_REPORT_UPLOAD_CONCURRENCY` | `2` | 동시에 처리하는 web_report 업로드 건수. 업로드 1건이 parquet bytes + 디코드 tables 를 함께 들고 있어 대형 세션이면 건당 RAM 피크가 GB 급 — 겹치면 웹 프로세스가 죽는다 |
 | `WEB_REPORT_UPLOAD_WAIT_SEC` | `180` | 위 상한이 찼을 때 대기하는 시간(초). 초과하면 503. 대기 중에는 본문이 디스크에 스풀돼 있어 RAM 을 거의 안 쓴다 |
+| `WEB_REPORT_UPLOAD_MAX_WAITERS` | `4` | **동시에 줄 설 수 있는** 업로드 요청 수. 대기는 RAM 은 안 쓰지만 waitress 스레드는 문다 — 상한이 없으면 클라 여러 대의 동시 업로드가 스레드를 전부 물어 조회·`/healthz` 까지 수 분간 멎는다. 초과분은 기다리지 않고 즉시 503(`Retry-After: 30`) |
 | `WEB_REPORT_PREWARM_QUEUE` | `8` | 업로드 직후 프리웜 대기 큐 상한. 초과 시 가장 오래된 요청 폐기(로그) |
 | `WEB_REPORT_ETA_ENABLED` | `1` | 세션 로드 오버레이의 "예상 약 N초" 안내(202·build_status 응답의 `eta`). `0` 이면 키를 싣지 않고 프런트는 종전 문구 — 추정이 어긋나 혼란을 줄 때의 차단 스위치 ([docs/12](../docs/12_web_report_cache.md)) |
 | `WEB_REPORT_EVAL_FAIL_ONLY` | `1` | AI Comment 평가 범위. `1`=fail 이 1chip 이상인 item 만(Yield/Issue Table 과 같은 기준), `0`=전체 item(종전). **item 컬럼만** 줄고 chip 행은 전량 유지돼 분포·CPK 계산은 그대로다. 표본함 수집·골든셋 검사는 이 값과 무관하게 항상 전체. 바꾸면 재기동 필요(ai_comment 세션 캐시 1회 재계산) ([docs/13 §6-2](../docs/13_eval_analyzer_integration.md)) |
@@ -327,6 +328,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `GET` | `/note/sheet_names` | 공개 | Note 시트 **이름만** `[{index,name,order}]`. Summary 의 `$[시트명]` 자동완성·시트 버튼 줄 전용 — 본문(≤10MB)까지 내려주는 `/note` 를 이름 때문에 부르지 않게 한 경량 라우트 (서버는 updated_at 키로 memo) |
 | `POST` | `/note_image` | 편집자 | Note 이미지 업로드 (PNG/JPEG raw body, ≤2MB·세션 200장) |
 | `GET` | `/rawdata_export` | 공개 | Honey Excel 편집용 zip(manifest + source_*.parquet) 내보내기. **ETag = content_hash** — Honey 가 temp 에 받아둔 zip 을 `If-None-Match` 로 물어보면 내용 무변경 시 **304**(서버가 원본을 메모리에 올려 zip 으로 싸는 작업 자체를 안 함) |
+| `GET` | `/rawdata_csv?source=<idx>` | 공개 | **웹 브라우저용 Rawdata 다운로드** — source 1개를 7-meta honeyform CSV(UTF-8 BOM, 메타 6행 TSEQ~LOLIM 포함)로 내보낸다. Honey·추가 exe 없이 세션 상세 상단 ⬇ 버튼에서 받는다. 저장된 parquet 문자 그대로이며 전처리·편집 상태는 미반영. **ETag = `<content_hash>:src<idx>`**. 범위 밖 idx 404 / 정수 아님 400. 서버는 openpyxl 을 쓰지 않으므로 xlsx 가 아니라 CSV 다(불변 규칙 #1) |
 | `POST` | `/rawdata_replace` | 편집자 | Raw Data 소스 전체 교체 (Honey 전용, `X-Honey-Agent`). Excel 시트를 지워 source 가 줄면 form 필드 `source_indices`(남긴 원본 idx JSON 배열, 오름차순)를 함께 받아 그 source 를 물리 제거. 선택 첨부 `dist_pack_index`+`dist_pack_chunk_<n>`(클라가 새 parquet 으로 만든 Distribution pack — 업로드 라우트와 같은 규약)을 받으면 새 content_hash 로 영구 저장해 반영 후 콜드 dist 정렬을 없앤다. 반영 후 프리웜을 걸어 리빌드를 컴퓨트 워커로 넘긴다 |
 | `GET`/`POST` | `/preprocess` | 공개/편집자 | **조회 전처리** 옵션(항목 제외 / outlier `mean ± k·stdev` / 셀 패치 / 조건 규칙) 조회·저장 (kind=preprocess). 원본 parquet 은 그대로 두고 조회 시점에만 적용 — 빈 spec 저장 = 해제, 되돌리기 가능. 같은 body 의 `yield_basis`(수율 분모 기준, 별도 kind)도 함께 저장한다. Honey 는 `X-Honey-Agent` 로 CSRF 대체 |
 | `GET` | `/yield_basis` | 공개 | 소스별 **수율 분모 기준**(자동 판정 결과 + 사용자 선택)과 그 판정에 쓰인 수치(pass/tested/gross die). Honey 허브 [Yield 계산] 탭이 이 값으로 기준을 바꿔 가며 수율을 **왕복 없이** 다시 계산한다. 저장은 `/preprocess` POST 의 `yield_basis` 필드 |
@@ -338,11 +340,12 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `POST`/`GET`/`PATCH`/`DELETE` | `/annotation`, `/annotation/<sid>`, `/annotation/<aid>` | 공개* | 주석 CRUD (*변경은 CSRF) |
 | `GET`/`POST` | `/api/favorites` | Honey | 개인 즐겨찾기 |
 | `POST` | `/api/auth/login` | 공개 | 웹 로그인 (singleID + 비밀번호 4자리). 5회/5분 실패 시 429 |
-| `POST` | `/api/auth/signup` | 공개 | **웹 회원가입** — Honey 사용 이력(업로드·web_report 방문)이 **없는 미사용 singleID** 만 자유 가입(403/409로 차단), 가입 즉시 로그인. IP 당 5회/1시간 |
+| `POST` | `/api/auth/signup` | 공개 | **웹 회원가입** — Honey 사용 이력(업로드·web_report 방문)이 **없는 미사용 singleID** 만 자유 가입(403/409로 차단), 가입 즉시 로그인. IP 당 5회/1시간. body 의 `name`(실명)은 폼에서만 필수 — 서버는 **없어도 가입시킨다**(브라우저에 캐시된 옛 JS 대비, 이름은 첫 화면 입력창이 채운다) |
+| `POST` | `/api/auth/display_name` | 신원 | **사용자 실명 등록/변경** (1~30자). 신원(Honey UA·웹 로그인·SSO)만 가능하고 익명은 403. 로그인 계정이 없는 Honey 전용 사용자도 저장된다(저장소 `report_user_profile` 은 `report_user` 와 별개). 이름은 **표시 전용** — 접근제어·감사 식별은 계속 `user_id` |
 | `GET` | `/api/auth/signup_hint` | 공개 | 회원가입 창 ID 자동완성 힌트 — **요청자 자신의 IP** 로 최근 180일 Honey 업로드 계정 1건 (`{user_id, honey_seen}` / 없으면 `{}`). 신원 판단에는 미사용 |
 | `POST` | `/api/auth/set_password` | Honey | 웹 로그인 비밀번호 설정/변경 (Honey 접속 전용 — 본인확인) |
 | `POST` | `/api/auth/change_password` | — | **410 Gone** (set_password 로 대체) |
-| `POST`/`GET` | `/api/auth/logout`, `/api/auth/me` | 공개 | 로그아웃 / 현재 신원·출처 확인 |
+| `POST`/`GET` | `/api/auth/logout`, `/api/auth/me` | 공개 | 로그아웃 / 현재 신원·출처 확인 (`display_name` 동봉 — 비면 프런트가 이름 입력창을 띄운다) |
 | `GET` | `/api/my_messages` | 공개 | **관리자 팝업 메시지** 수신 — 아직 확인하지 않은 것만. 두 페이지(검색결과·세션 상세)의 `admin_message.js` 가 30초 폴링(화면이 보일 때만). 수신자 키는 사용량 집계와 같은 규칙(신원 있으면 소문자 계정, 없으면 `ip:<addr>`)이라 **신원 없는 브라우저는 전체 공지만** 받는다. 저장소는 서버 프로세스 메모리(`admin_panel/messages.py`) — 재시작 시 미확인분 소멸 |
 | `POST` | `/api/my_messages/<id>/ack` | 공개* | 확인 버튼 → 읽음 기록(그 사람에겐 다시 안 뜸). *CSRF. 없는 id 도 200(멱등 — 재시도가 실패로 보이지 않게) |
 | `GET` | `/_threads` | 공개 | 진단 (스레드 덤프) |
@@ -463,6 +466,8 @@ report 캐시 키에 실려 다음 조회에서 재평가를 강제한다.
 |--------|--------------------------|------|
 | GET | `/product-info/candidates` | 기준정보 part_id 검색 후보(part_id+sub_part_id flatten). DB 부재 시 빈 목록 200 |
 | GET | `/product-info/lookup?part_id=` | part_id → 기준정보 14컬럼. 미매칭 404 |
+| GET | `/help/features` | HONEY 사용자 기능 전체 또는 q/category/surface/status 필터 검색 |
+| GET | `/help/features/<id>` | 기능 한 건의 제공 상태·사용 조건·절차·도움말 anchor. 미매칭 404 |
 
 부하가 작은 조회만 노출한다(단순 SELECT / 메모리 dict) — 파싱·재계산 경로는 넣지 않는다.
 외부 소비자용 접근 규약(Base URL·에러 형식·버저닝)은 [public_api/README.md](public_api/README.md).

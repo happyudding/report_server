@@ -19,6 +19,7 @@ import logging
 import sqlite3
 import sys
 import threading
+import time
 from pathlib import Path
 
 from . import cache
@@ -86,6 +87,38 @@ def open_conn(create: bool = True):
     store._migrate(conn)          # 사설 API 의존 — docs/13 에 핀
     store._seed_bin_taxonomy(conn)
     conn.commit()
+    return conn
+
+
+def open_conn_ro():
+    """**조회 전용** 커넥션 — 스키마 보장·마이그레이션·시드를 하지 않는다.
+
+    open_conn 은 호출마다 `SCHEMA` executescript + `_migrate` + bin_taxonomy UPSERT +
+    커밋(fsync)을 한다 = 사실상 **쓰기 트랜잭션**이다. 관리자 전용 진입점일 때는 무해했지만,
+    Issue Table Signature 의 판정근거 팝업(`?`)은 편집 권한 없는 조회자 전원이 누르는
+    읽기 경로다 — 클릭마다 쓰기 잠금을 다투게 되고, 업로드 스냅샷 적재와 겹치면
+    busy_timeout(5초)만큼 waitress 스레드를 물고 있다 실패한다.
+
+    파일이 없거나 스키마가 아직 없으면 None (호출부는 "eval DB 없음" 폴백).
+    `mode=ro` URI 를 쓰지 않는 이유 — WAL DB 를 읽기전용으로 열면 -shm 이 없을 때
+    (기동 직후 아직 쓴 적 없는 상태) 열기 자체가 실패한다. 여기서는 SELECT 만 하므로
+    보통 커넥션으로 열되 **쓰기 작업을 하지 않는 것**으로 같은 효과를 낸다.
+    """
+    path = db_path()
+    if not path.exists():
+        return None
+    conn = sqlite3.connect(str(path), timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=3000")
+    try:
+        got = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='evaluation'"
+        ).fetchone()
+    except Exception:
+        got = None
+    if not got:
+        conn.close()
+        return None
     return conn
 
 
@@ -850,6 +883,29 @@ def _export_loop() -> None:
                            exc_info=True)
 
 
+def _supervised_export_loop() -> None:
+    """_export_loop 가 어떤 예외로도 끝나지 않게 감싼다.
+
+    루프 안에 잡별 try/except 가 있지만 그 **except 블록 자체**(로깅 등)가 실패하면
+    스레드가 조용히 죽는다. 그러면 코멘트 편집이 eval DB 로 영영 나가지 않는데,
+    에러가 아니라 "동기화가 안 된 상태"로만 보여 발견이 늦는다.
+    """
+    while True:
+        try:
+            _export_loop()
+            return
+        except Exception:
+            logger.error("eval export 소비자 스레드가 예외로 종료됨 — 재시작합니다",
+                         exc_info=True)
+            try:
+                import diagnostics
+                diagnostics.emit("critical", "build", "consumer_thread_died",
+                                 error_type="eval_export", message="eval-export loop died")
+            except Exception:
+                pass
+            time.sleep(1.0)
+
+
 def _enqueue(kind: str, session_id: str, report_db, upload_root) -> None:
     global _EXPORT_THREAD
     with _EXPORT_LOCK:
@@ -857,9 +913,11 @@ def _enqueue(kind: str, session_id: str, report_db, upload_root) -> None:
             return   # 이미 대기 중 — 소비자가 최신 상태를 읽으므로 재등록 불요
         _EXPORT_PENDING.add((kind, session_id))
         _EXPORT_QUEUE.append((kind, session_id, report_db, Path(upload_root)))
-        if _EXPORT_THREAD is None:
-            _EXPORT_THREAD = threading.Thread(target=_export_loop, name="eval-export",
-                                              daemon=True)
+        # is_alive 까지 보는 이유 — 죽은 스레드 핸들이 남으면 `is None` 검사가 계속
+        # 통과해 소비자 없는 큐에 요청만 쌓인다(_supervised 가 있어도 최후 방어).
+        if _EXPORT_THREAD is None or not _EXPORT_THREAD.is_alive():
+            _EXPORT_THREAD = threading.Thread(target=_supervised_export_loop,
+                                              name="eval-export", daemon=True)
             _EXPORT_THREAD.start()
     _EXPORT_WAKE.set()
 

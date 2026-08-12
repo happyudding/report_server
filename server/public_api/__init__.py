@@ -7,8 +7,9 @@
 `public_api/<기능>/routes.py` 에 Blueprint 를 만들고 아래 register 함수에 등록 2줄만
 추가한다 (기존 기능 파일은 건드리지 않는다).
 
-현재 범위는 기준정보(product_info)뿐이다. ENGR 이력·평가(eval.db) 조회는 나중에 같은
-방식으로 추가한다 — 그때 지켜야 할 비공개 세션 차단 규약은 README.md "향후 확장" 절 참조.
+현재 범위는 기준정보(product_info)와 HONEY 기능 도움말(help)이다. ENGR 이력 조회는
+나중에 같은 방식으로 추가한다 — 그때 지켜야 할 비공개 세션 차단 규약은 README.md
+"향후 확장" 절 참조.
 
 eval_panel/__init__.py 와 같은 이유로 이 파일은 경량 유지 — routes 는 register 시점에만
 import 한다.
@@ -37,7 +38,9 @@ def _register(app, blueprint, path):
 
 def register_public_api(app):
     from public_api.product_info.routes import product_info_bp
+    from public_api.help.routes import help_bp
     _register(app, product_info_bp, "product-info")
+    _register(app, help_bp, "help")
 
     _log.info("[public-api] registered at %s/", URL_PREFIX)
     return True

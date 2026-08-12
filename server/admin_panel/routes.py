@@ -32,6 +32,7 @@ _LOGIN_HTML = Path(__file__).resolve().parent / "admin_login.html"
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _PIN_RE = re.compile(r"^\d{4}$")
 _USER_ID_RE = re.compile(r"^[^\s\\/]{1,64}$")
+_DISPLAY_NAME_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,30}$")   # report/security.py 와 같은 규칙
 
 # ── 접속 비밀번호 게이트 (아무나 못 들어오게 하는 간단한 쿠키 게이트) ─────────
 # 비밀번호가 맞으면 쿠키를 발급하고, before_request 가 매 요청 쿠키를 확인한다.
@@ -285,8 +286,9 @@ def api_active_users():
 
     api/runtime 에도 같은 값이 실려 있지만, 사용자 탭은 응답시간·캐시·스케줄러가 필요 없어
     이 가벼운 엔드포인트를 따로 쓴다."""
-    return jsonify(metrics.active_users(
-        request.args.get("window", metrics.ACTIVE_USER_WINDOW_SEC)))
+    out = metrics.active_users(request.args.get("window", metrics.ACTIVE_USER_WINDOW_SEC))
+    users_admin.attach_names(out.get("users"), "user")
+    return jsonify(out)
 
 
 @admin_panel_bp.get("/api/runtime")
@@ -349,7 +351,9 @@ def api_stats_daily():
 
 @admin_panel_bp.get("/api/stats/users")
 def api_stats_users():
-    return jsonify(stats.user_ranking(request.args.get("days", 30)))
+    out = stats.user_ranking(request.args.get("days", 30))
+    users_admin.attach_names(out.get("rows"), "who")
+    return jsonify(out)
 
 
 @admin_panel_bp.get("/api/stats/client_errors")
@@ -360,7 +364,9 @@ def api_stats_client_errors():
 @admin_panel_bp.get("/api/stats/usage")
 def api_stats_usage():
     """접속 사용량 순위 — Honey 실행 · 웹페이지 방문 (report_usage_daily 집계)."""
-    return jsonify(stats.usage_ranking(request.args.get("days", 30)))
+    out = stats.usage_ranking(request.args.get("days", 30))
+    users_admin.attach_names(out.get("rows"), "user_id")
+    return jsonify(out)
 
 
 # ── VOC 게시판 (읽기 전용 — 등록/수정/상태전환은 /pe/report/voc) ────────────────
@@ -388,12 +394,14 @@ def api_chatbot_overview():
 
 @admin_panel_bp.get("/api/chatbot/log")
 def api_chatbot_log():
-    return jsonify(chatbot_admin.list_logs(
+    out = chatbot_admin.list_logs(
         q=(request.args.get("q") or "").strip() or None,
         limit=request.args.get("limit", 50),
         offset=request.args.get("offset", 0),
         errors_only=request.args.get("errors") == "1",
-    ))
+    )
+    users_admin.attach_names(out.get("rows"), "user")
+    return jsonify(out)
 
 
 # ── 세션 컨트롤 ──────────────────────────────────────────────────────────────
@@ -553,6 +561,20 @@ def api_user_set_password(user_id):
     return jsonify({"ok": True, "user_id": uid})
 
 
+@admin_panel_bp.post("/api/user/<user_id>/name")
+def api_user_set_name(user_id):
+    """사용자 실명 지정/변경 (오타·개명 대응). 사용자 본인 경로는
+    report/routes_misc.py 의 POST /api/auth/display_name."""
+    uid = _norm_user_id(user_id)
+    body = request.get_json(force=True, silent=True) or {}
+    name = (body.get("name") or "").strip()
+    if not _DISPLAY_NAME_RE.match(name):
+        abort(400, "name must be 1-30 chars")
+    users_admin.set_display_name(uid, name, admin_user="admin-panel")
+    _audit("edit", changed_fields="user_name_set(%s)" % uid)
+    return jsonify({"ok": True, "user_id": uid, "display_name": name})
+
+
 @admin_panel_bp.post("/api/user/<user_id>/delete")
 def api_user_delete(user_id):
     uid = _norm_user_id(user_id)
@@ -657,6 +679,8 @@ def api_audit():
             uid = mapping.get(r.get("client_ip"))
             if uid:
                 r["resolved_user"] = uid
+    # 실명은 각 행에 붙인다 — 응답이 배열이라 별도 names 맵을 실을 자리가 없다(구조 유지).
+    users_admin.attach_names(rows, "client_user", "resolved_user")
     return jsonify(rows)
 
 

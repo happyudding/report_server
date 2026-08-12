@@ -76,6 +76,8 @@ from .chatbot_log import (  # noqa: F401
 from .users import (  # noqa: F401
     add_session_editor,
     create_user,
+    display_names,
+    get_display_name,
     get_user,
     get_user_favorites,
     has_honey_history,
@@ -85,6 +87,7 @@ from .users import (  # noqa: F401
     record_web_visitor,
     remove_session_editor,
     search_web_visitors,
+    set_display_name,
     set_user_favorite,
     set_user_important,
     update_user_password,

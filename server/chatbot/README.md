@@ -54,7 +54,7 @@ agent 에 둔다.
 라우트가 공유하는 순수 엔진이다.
 
 > 📊 **전체 구조를 한 장으로 보려면** [docs/chatbot_architecture.html](../../docs/chatbot_architecture.html)
-> — 계층 5개, 입력→출력 12단계, 인텐트 13종, 빈틈 목록, 적용 개념(규칙/LLM/RAG/LangChain)을
+> — 계층 5개, 입력→출력 흐름, 인텐트 구조, 빈틈 목록, 적용 개념(규칙/LLM/RAG/LangChain)을
 > 도식화한 단일 HTML(의존성 없음, 브라우저로 그냥 열면 된다).
 
 ## 웹 노출 (2026-08-10, 관리자 전용 테스트)
@@ -93,7 +93,8 @@ CLI 계약(`agent.answer` 반환 키 4개)은 그대로다 — 웹 확장이 깨
 
 | 파일 | 역할 |
 |---|---|
-| `planner.py` | 질문 → `QueryPlan`(intent 13종 + 제품/family/item/세션/metric/jump/집계축/기간). **규칙이 1차**, 약할 때만 LLM |
+| `planner.py` | 질문 → `QueryPlan`(intent 14종 + 제품/family/item/세션/metric/jump/집계축/기간). **기능 질문은 카탈로그로 우선 확정**, 그 외는 규칙이 1차이고 약할 때만 LLM |
+| `tools_help.py` | 정적 HONEY 기능 카탈로그 — 기능 존재·제공 상태·사용법 검색. DB·LLM 미사용 |
 | `tools_report.py` | report.db — 세션/제품/Issue Table/세션 횡단 item 검색 |
 | `tools_eval.py` | eval.db — item 마스터·alias·과거 케이스·수치·사람 코멘트 + `stats_summary`(축별 건수 집계) |
 | `tools_metrics.py` | web_report 계산값 — 수율/CPK/측정값. 콜드면 배경 빌드만 걸고 `building` 반환 |

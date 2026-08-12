@@ -157,6 +157,8 @@ let CAN_EDIT = false;           // 이 세션 편집 가능(업로더 또는 위
 let IS_UPLOADER = false;        // 이 세션 업로더 본인(또는 master PC) — 권한부여/비공개/삭제용
 let IS_MASTER = false;          // admin 로그인 PC 인가 — IS_UPLOADER 와 별도로 둔다(챗봇 등 master 전용 UI)
 let MY_IMPORTANT = false;       // 내 개인 중요표시 상태(사용자별)
+let DISPLAY_NAME = "";          // 내 실명 — 비어 있으면 이름 입력창을 띄운다
+let UPLOADER_NAME = "";         // 세션 업로더의 실명 (상단바 '이름(ID)' 표기용)
 let verifiedPassword = "";      // (구 PIN 흐름 잔재 — 저장 payload 호환용, 항상 "")
 
 // 세션별 권한·개인상태는 서버가 요청자(User-Agent) 기준으로 판정해 내려준다.
@@ -174,15 +176,21 @@ async function loadAuth() {
       IS_UPLOADER = !!(j.is_uploader || j.is_master);
       IS_MASTER = !!j.is_master;
       MY_IMPORTANT = !!j.my_important;
+      DISPLAY_NAME = j.display_name || "";
+      UPLOADER_NAME = j.uploader_name || "";
       // 챗봇은 master 전용(테스트 단계) — 서버 라우트도 같은 규칙으로 404 를 낸다.
       if (IS_MASTER && window.ChatWidget) ChatWidget.enable(SESSION_ID);
+      // 세션 링크로 곧장 들어온 사람도 이름을 받는다 (홈을 거치지 않는 경로).
+      try {
+        UserName.promptIfMissing(j, {onSaved: (name) => { DISPLAY_NAME = name; }});
+      } catch (e) { /* 이름 수집은 부가기능 — 실패해도 화면은 그대로 */ }
     } else {
       console.warn("my_access 조회 실패 — 읽기 전용으로 표시 (HTTP " + res.status + ")");
     }
   } catch (e) {
     console.warn("my_access 조회 실패 — 읽기 전용으로 표시", e);
     LOGIN_USER = ""; IDENTITY_SRC = ""; CAN_EDIT = false; IS_UPLOADER = false;
-    IS_MASTER = false; MY_IMPORTANT = false;
+    IS_MASTER = false; MY_IMPORTANT = false; DISPLAY_NAME = ""; UPLOADER_NAME = "";
   }
   // Honey 밖에서만 '전용 기능' 안내 버튼을 툴바에 붙인다 (honey_hint.js).
   try { HoneyHint.init(IDENTITY_SRC, ".topbar", "theme-toggle", "🍯"); } catch (e) { /* 안내는 부가기능 */ }
@@ -343,15 +351,19 @@ const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
       searchCandidates("");
     }
   }
-  function renderEditorsList(editors) {
+  // 사용자 표기는 전부 '이름(ID)' — 이름이 아직 없는 사람은 ID 만 나온다(UserName.fmt).
+  function renderEditorsList(editors, names) {
     const box = document.getElementById("permCurrent");
     if (!box) return;
     if (!editors.length) { box.innerHTML = `<div class="perm-empty">아직 편집 권한을 준 사용자가 없습니다.</div>`; return; }
-    box.innerHTML = editors.map(ed => `
+    box.innerHTML = editors.map(ed => {
+      const who = UserName.fromMap(ed.editor_user, names);
+      return `
       <div class="perm-item">
-        <span class="perm-user" title="${esc(ed.editor_user)}">${esc(ed.editor_user)}</span>
+        <span class="perm-user" title="${esc(who)}">${esc(who)}</span>
         <button class="revoke" data-revoke="${esc(ed.editor_user)}">회수</button>
-      </div>`).join("");
+      </div>`;
+    }).join("");
   }
   async function loadEditorsList() {
     const box = document.getElementById("permCurrent");
@@ -359,7 +371,8 @@ const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
     try {
       const res = await fetch(`/pe/report/session/${SESSION_ID}/editors`);
       if (!res.ok) { box.innerHTML = `<div class="perm-empty">불러오기 실패</div>`; return; }
-      renderEditorsList((await res.json()).editors || []);
+      const j = await res.json();
+      renderEditorsList(j.editors || [], j.names || {});
     } catch (e) { box.innerHTML = `<div class="perm-empty">불러오기 실패</div>`; }
   }
   async function searchCandidates(q) {
@@ -370,11 +383,15 @@ const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
       if (!res.ok) { box.innerHTML = `<div class="perm-empty">검색 실패</div>`; return; }
       const list = (await res.json()).candidates || [];
       if (!list.length) { box.innerHTML = `<div class="perm-empty">해당 사용자가 없습니다 (web_report 방문 기록 · 웹 가입 계정 기준).</div>`; return; }
-      box.innerHTML = list.map(c => `
+      // 검색어는 서버에서 ID·이름 둘 다에 매칭된다 — 이름으로 사람을 찾을 수 있다.
+      box.innerHTML = list.map(c => {
+        const who = UserName.fmt(c.user, c.name);
+        return `
         <div class="perm-item">
-          <span class="perm-user" title="${esc(c.user)}">${esc(c.user)}</span>
+          <span class="perm-user" title="${esc(who)}">${esc(who)}</span>
           <button data-grant="${esc(c.user)}"${c.already ? " disabled" : ""}>${c.already ? "부여됨" : "부여"}</button>
-        </div>`).join("");
+        </div>`;
+      }).join("");
     } catch (e) { box.innerHTML = `<div class="perm-empty">검색 실패</div>`; }
   }
   async function grantEditor(user) {
@@ -386,9 +403,9 @@ const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { showToast(j.error || "권한 부여 실패"); return; }
-      renderEditorsList(j.editors || []);
+      renderEditorsList(j.editors || [], j.names || {});
       searchCandidates((document.getElementById("permSearch") || {}).value || "");
-      showToast(`${user} 에게 편집 권한을 주었습니다.`);
+      showToast(`${UserName.fromMap(user, j.names)} 에게 편집 권한을 주었습니다.`);
     } catch (e) { showToast("권한 부여 실패: " + e.message); }
   }
   async function revokeEditor(user) {
@@ -399,9 +416,9 @@ const UI_ZOOMS = { "100": "", "110": "1.1", "125": "1.25", "150": "1.5" };
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) { showToast(j.error || "권한 회수 실패"); return; }
-      renderEditorsList(j.editors || []);
+      renderEditorsList(j.editors || [], j.names || {});
       searchCandidates((document.getElementById("permSearch") || {}).value || "");
-      showToast(`${user} 의 편집 권한을 회수했습니다.`);
+      showToast(`${user} 의 편집 권한을 회수했습니다.`);   // 회수 후엔 이름 맵에서 빠진다
     } catch (e) { showToast("권한 회수 실패: " + e.message); }
   }
   const permSearch = document.getElementById("permSearch");

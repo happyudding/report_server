@@ -87,14 +87,18 @@ def check(name, cond):
 
 def test_signup_basic():
     print("[a] 미사용 ID 자유 가입")
-    r = post("/pe/report/api/auth/signup", {"user_id": "newbie", "password": "1234"})
+    r = post("/pe/report/api/auth/signup",
+             {"user_id": "newbie", "password": "1234", "name": "홍길동"})
     check("가입 200", r.status_code == 200)
-    check("응답 user_id/source", r.get_json() == {"ok": True, "user_id": "newbie",
-                                                 "source": "login"})
+    check("응답 user_id/source/이름", r.get_json() == {"ok": True, "user_id": "newbie",
+                                                     "source": "login",
+                                                     "display_name": "홍길동"})
     check("계정 생성됨", bool(report_db.get_user("newbie")))
+    check("실명 저장됨", report_db.get_display_name("newbie") == "홍길동")
 
     me = client.get("/pe/report/api/auth/me").get_json()
     check("가입 즉시 로그인 세션", me["user_id"] == "newbie" and me["source"] == "login")
+    check("me 에 실명 동봉", me["display_name"] == "홍길동")
 
     r = post("/pe/report/api/auth/login", {"user_id": "newbie", "password": "1234"})
     check("가입한 비밀번호로 로그인 200", r.status_code == 200)
@@ -134,11 +138,19 @@ def test_validation():
     check("singleID 공백 400",
           post("/pe/report/api/auth/signup",
                {"user_id": "a b", "password": "1234"}).status_code == 400)
+    check("이름 31자 400",
+          post("/pe/report/api/auth/signup",
+               {"user_id": "who1", "password": "1234", "name": "가" * 31}).status_code == 400)
     r = client.post("/pe/report/api/auth/signup",
                     json={"user_id": "who2", "password": "1234"})
     check("CSRF 헤더 없음 403", r.status_code == 403)
     check("검증 실패 건은 계정 미생성",
           report_db.get_user("who1") is None and report_db.get_user("who2") is None)
+    # 이름 없는 가입은 **막지 않는다** — 브라우저에 캐시된 옛 JS 가 name 없이 보내도
+    # 가입 자체는 되어야 한다(이름은 첫 화면 입력창이 뒤늦게 채운다).
+    r = post("/pe/report/api/auth/signup", {"user_id": "noname", "password": "1234"})
+    check("이름 없이도 가입 200 (하위호환)", r.status_code == 200)
+    check("이름은 미등록", report_db.get_display_name("noname") is None)
 
 
 def test_signup_hint():

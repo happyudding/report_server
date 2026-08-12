@@ -11,16 +11,20 @@ Honey 를 다시 실행하는 것만으로 새 버전이 보인다.
 """
 import argparse
 import json
+import re
 import shutil
 import sys
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, unquote
 
 # exe 로 묶으면(frozen) __file__ 은 PyInstaller 가 푼 임시 폴더를 가리킨다 — 그 옆에는
 # release\ 가 없으므로 exe 자신이 놓인 폴더를 기준으로 삼아야 한다. 파이썬이 없는 PC
 # 에서도 이 서버를 띄우려고 exe 로 배포하기 때문에 필요한 분기다.
 _BASE_DIR = Path(sys.executable if getattr(sys, "frozen", False) else __file__).resolve().parent
 RELEASE_DIR = _BASE_DIR / "release"
+_VERSION_RE = re.compile(r"\d+(\.\d+)*")   # 경로 조각으로 쓰이므로 숫자와 점만
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -43,6 +47,10 @@ class Handler(BaseHTTPRequestHandler):
             self._serve_download()
         elif path == "/honey/announcement":
             self._send(200, b"", "text/plain; charset=utf-8")
+        elif path.startswith("/honey/files/"):
+            self._serve_file_manifest(path.rsplit("/", 1)[-1])
+        elif path.startswith("/honey/file/"):
+            self._serve_one_file(path.rsplit("/", 1)[-1])
         else:
             self._send(404, b'{"error":"not found"}', "application/json")
 
@@ -82,6 +90,60 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         with target.open("rb") as fh:
             shutil.copyfileobj(fh, self.wfile, 1024 * 1024)
+
+    # ── 델타 업데이트 (운영 honey_routes.py 와 같은 규약) ─────────────────────
+    def _serve_file_manifest(self, version):
+        """`Honey-<ver>.files.json` 을 그대로. 없으면 404 → 런처은 전체 zip 으로 폴백."""
+        if not _VERSION_RE.fullmatch(version):
+            self._send(400, b'{"error":"invalid version"}', "application/json")
+            return
+        try:
+            body = (RELEASE_DIR / f"Honey-{version}.files.json").read_bytes()
+        except OSError:
+            self._send(404, b'{"error":"no file manifest"}', "application/json")
+            return
+        print(f"  /honey/files/{version} -> {len(body) / 1024:.0f} KB")
+        self._send(200, body, "application/json")
+
+    def _serve_one_file(self, version):
+        """릴리스 zip 안의 파일 **하나만** 스트리밍한다 (변경분만 받기).
+
+        zip 을 풀어 두지 않아도 되므로 릴리스 산출물은 zip 한 개 그대로다.
+        """
+        if not _VERSION_RE.fullmatch(version):
+            self._send(400, b'{"error":"invalid version"}', "application/json")
+            return
+        query = self.path.split("?", 1)[1] if "?" in self.path else ""
+        rel = unquote(parse_qs(query).get("path", [""])[0])
+        # 경로 탈출 방어 (운영 라우트와 같은 취지)
+        if not rel or rel.startswith("/") or "\\" in rel or ".." in rel.split("/"):
+            self._send(400, b'{"error":"invalid path"}', "application/json")
+            return
+        zip_path = RELEASE_DIR / f"Honey-{version}.zip"
+        if not zip_path.is_file():
+            self._send(404, b'{"error":"release not found"}', "application/json")
+            return
+        try:
+            archive = zipfile.ZipFile(zip_path)
+        except (OSError, zipfile.BadZipFile):
+            self._send(500, b'{"error":"bad archive"}', "application/json")
+            return
+        try:
+            info = archive.getinfo(f"Honey/versions/{version}/{rel}")
+        except KeyError:
+            archive.close()
+            self._send(404, b'{"error":"file not in release"}', "application/json")
+            return
+        print(f"  /honey/file/{version} -> {rel} ({info.file_size / 1024 / 1024:.1f} MB)")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(info.file_size))
+        self.end_headers()
+        try:
+            with archive.open(info) as src:
+                shutil.copyfileobj(src, self.wfile, 256 * 1024)
+        finally:
+            archive.close()
 
     def log_message(self, fmt, *args):
         pass   # 기본 접근 로그는 끄고, 위의 print 로만 남긴다

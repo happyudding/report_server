@@ -321,3 +321,20 @@
 - question: "어제 뭐 했더라"
   expect_intent: unknown
   expect_tools: []
+
+# ── HONEY 기능 카탈로그 (DB·LLM 없이 정적 도움말만 조회) ──────────────────
+- question: "Temperature 모드 있어?"
+  expect_intent: feature_help
+  expect_tools: [search_help_features]
+
+- question: "Rawdata에서 DUT 제외 가능해?"
+  expect_intent: feature_help
+  expect_tools: [search_help_features]
+
+- question: "Compare에서 Before 여러 개 가능해?"
+  expect_intent: feature_help
+  expect_tools: [search_help_features]
+
+- question: "Shmoo 사용할 수 있어?"
+  expect_intent: feature_help
+  expect_tools: [search_help_features]

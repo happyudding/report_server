@@ -60,29 +60,36 @@ except Exception:
 
 LEVELS = [1, 2, 3, 4, 5]
 UNKNOWN_ID = "UNKNOWN"          # 엔진 미분류 표식 — 발화 목록에 섞여 오지만 오탐이 아니다
-LEVEL_KO = {1: "정상(가장 여유)", 2: "정상(임계값 근접)",
-            3: "발화 시작(임계값 소폭 초과)", 4: "초과", 5: "심각"}
-# L1~L2 = 겨냥한 룰 미발화 / L3~L7 = 발화 + 갈수록 심해짐 (fail chip 수도 함께 늘어난다)
-FIRE_FROM = 3
+# 2026-08-12 레벨 재편: 강도를 한 단계씩 내려 **L1/L2 사이가 fail 경계**가 되게 했다.
+# (구 L3=발화 시작 → 신 L2, 구 L4 → 신 L3, 구 L5 → 신 L4, 신 L5 는 구 L5 보다 강하게)
+LEVEL_KO = {1: "정상(fail 0)", 2: "발화 시작(임계값 소폭 초과)", 3: "초과",
+            4: "크게 초과", 5: "심각"}
+FIRE_FROM = 2
 
 # 레벨별 fail chip 수 — **fail 은 limit 위반으로만 만든다**(값이 spec 안인데 FAILTNO 만
-# 찍힌 항목이 없도록). L1·L2 도 소수 fail 은 둔다 — 서버 기본값
-# WEB_REPORT_EVAL_FAIL_ONLY=1 에서 fail 0 인 item 은 평가 대상에서 아예 빠지기 때문.
-FAIL_N = [0, 0, 6, 15, 30]
+# 찍힌 항목이 없도록). L1 은 fail 0 이라 서버 기본값 WEB_REPORT_EVAL_FAIL_ONLY=1 에서
+# 평가 대상에서 아예 빠진다(= 미발화가 구조적으로 보장된다).
+FAIL_N = [0, 6, 15, 30, 60]
 # fail chip 을 limit 밖으로 얼마나 밀지(spec 폭 대비) — 레벨이 오를수록 더 멀리 나간다.
-FAIL_MARGIN = [0.01, 0.01, 0.02, 0.04, 0.08]
+# ⚠ 이 값이 커지면 밀려난 chip 이 OUTLIER 판정선(중심에서 12 robust σ)에 닿아 겨냥하지
+# 않은 OUTLIER 가 동반발화한다. 산포가 좁은 시나리오일수록 먼저 닿으므로 과하게 키우지 말 것.
+FAIL_MARGIN = [0.01, 0.02, 0.03, 0.05, 0.07]
 
 # fail 유형별 bin — Map Analysis 에서 **유형을 색으로 구분**하기 위한 배정.
 # 1=Pass. 18(defective)·31(abnormal)은 bin_taxonomy.yaml 예약값이라 피한다.
+# 12 = OUTLIER(구 SEVERE_OUTLIER). 13(구 OUTLIER_WARN)은 통합돼 결번.
 SIG_BIN = {
-    "WIDE_DISTRIBUTION": 11, "SEVERE_OUTLIER": 12, "OUTLIER_WARN": 13,
+    "WIDE_DISTRIBUTION": 11, "OUTLIER": 12,
     "SPEC_TOO_TIGHT": 14, "LOW_CPK": 15, "MEAN_SHIFT": 16, "BIDIR_TAIL": 17,
-    "HEAVY_TAIL": 19, "SUBPOP_GAP": 20, "TAIL_RISK": 21, "CONSTANT_VALUE": 22,
+    "HEAVY_TAIL": 19, "BIMODALITY": 20, "TAIL_RISK": 21, "CONSTANT_VALUE": 22,
     "EQUIPMENT_SUSPECT": 23, "CODE_RAIL": 24, "MISSING_LIMIT": 25,
     "LOW_SAMPLE_UNCERTAIN": 26, "EDGE_FAIL": 27, "CENTER_FAIL": 28, "RING_FAIL": 29,
     "CLUSTER_FAIL": 30, "WAFER_GRADIENT": 32, "GROSS_FAIL": 33, "E1_FAIL": 34,
+    # 통합돼 꺼진 구 룰 — 전-룰-enabled 검증 패스에서 여전히 이름이 오간다.
+    "SEVERE_OUTLIER": 12, "OUTLIER_WARN": 12,
 }
 NORMAL_BIN = 2                  # 겨냥한 룰이 없는 항목(정상군·경계군)의 fail bin
+RANDOM_BIN_BASE = 40            # 관찰군(random) — Map 에서 40번대 색으로 한눈에 갈린다
 
 # 기준 limit — 폭(WIDTH)=1.0 이라 spread_norm·center_bias 계산이 그대로 눈에 보인다.
 LSL, USL = 0.5, 1.5
@@ -95,23 +102,23 @@ TH = {
     "outlier_ratio_warn": 0.02, "outlier_ratio_bad": 0.05, "outlier_sigma": 4.5,
     "spread_norm_warn": 0.18, "skew_warn": 1.0, "spec_margin_warn": 1.0,
     "edge_fail_ratio_warn": 2.0, "n_min": 20, "bimodality_warn": 0.555,
-    "edge_region_pct": 0.8, "center_region_pct": 0.3, "quadrant_imbalance_warn": 1.0,
+    "edge_region_pct": 0.8, "center_region_pct": 0.3, "quadrant_imbalance_warn": 2.5,
     "mean_shift_warn": 0.30, "site_cpk_delta_warn": 0.5, "gross_yield_bad": 0.5,
-    "code_edge_hit_warn": 0.05, "kurtosis_warn": 2.0, "spatial_fail_count_min": 5,
+    "code_edge_hit_warn": 0.05, "kurtosis_warn": 8.0, "spatial_fail_count_min": 10,
     "severe_outlier_count_min": 5, "ring_fail_ratio_warn": 2.0,
+    # 2026-08-12 신설 — OUTLIER 는 거리로, 공간 룰 4종은 점유율로 판정한다.
+    "outlier_fail_z_min": 12.0, "region_fail_share_min": 0.95,
     "gradient_norm_warn": 0.3, "subpop_n_min": 50, "subpop_outlier_ratio_max": 0.03,
     "subpop_density_gap_warn": 0.3, "subpop_density_gap_strong": 0.5,
     "subpop_value_gap_warn": 0.3, "subpop_minor_mass_min": 0.05,
 }
 
 # 현 룰셋에서 **구조적으로 발화할 수 없는** signature 와 이유 (README §4 와 같은 내용).
+# TAIL_RISK 는 지표가 모멘트 왜도로 바뀌어(2026-08-12), RING_FAIL 은 판정이 점유율로
+# 바뀌어 발화 가능해졌다 — 목록에서 뺐다.
 UNFIRABLE = {
     "EQUIPMENT_SUSPECT": "raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) "
                          "→ site_cpk_delta 가 영구 None",
-    "TAIL_RISK": "skewness = (mean-median)/stdev (비모수 왜도)는 수학적 상한이 1.0 이라 "
-                 "skew_warn=1.0 을 넘을 수 없다",
-    "RING_FAIL": "ring 영역(반경 0.3~0.8)이 die 의 55% 라 ring_fail_ratio 상한이 "
-                 "1/0.55≈1.82 — 임계값 2.0 에 도달 불가",
 }
 
 
@@ -143,6 +150,33 @@ def m_outlier_ratio(v):
             return 0.0
         z = (v - med) / (1.253314 * mean_ad)
     return float(np.mean(np.abs(z) > TH["outlier_sigma"]))
+
+
+def m_fail_z_max(values, fail_idx):
+    """OUTLIER 판정 지표 — fail chip 의 modified z 최대 (엔진 features._fail_outlier_features).
+
+    `values` 는 **전체 길이** 배열(NaN 포함), `fail_idx` 는 그 배열의 인덱스다.
+    엔진은 파싱된(=유한) 값만 보므로 여기서도 유한값 기준으로 맞춘다.
+    """
+    v = np.asarray(values, dtype=float)
+    ok = np.isfinite(v)
+    if not ok.any() or len(fail_idx) == 0:
+        return None
+    fm = np.zeros(v.size, dtype=bool)
+    fm[np.asarray(fail_idx, dtype=int)] = True
+    fm, vv = fm[ok], v[ok]
+    if not fm.any():
+        return None
+    med = float(np.median(vv))
+    mad = float(np.median(np.abs(vv - med)))
+    if mad != 0:
+        z = 0.6745 * (vv - med) / mad
+    else:
+        mean_ad = float(np.mean(np.abs(vv - med)))
+        if mean_ad <= 0:
+            return None
+        z = (vv - med) / (1.253314 * mean_ad)
+    return float(np.max(np.abs(z[fm])))
 
 
 def m_std(v):
@@ -406,9 +440,9 @@ def pick_fail_rows(pattern: str, count: int, free: np.ndarray, rnorm, xn, yn,
                    share: float, rng: np.random.Generator, e1=None):
     """free(아직 다른 item 이 안 쓴 행 인덱스)에서 패턴에 맞는 fail 행 count 개 선택.
 
-    `e1` 은 최외곽 1열 마스크(build_wafer). `pattern="e1"` 일 때 share 는 **목표 집중
-    배수**(e1_fail_ratio)이며, 실제 E1 면적 비율로 환산해 몫을 정한다 — 면적이 웨이퍼
-    크기에 따라 달라져 고정 상수로 둘 수 없기 때문이다.
+    `e1` 은 최외곽 1열 마스크(build_wafer). 영역 패턴에서 `share` 는 **그 영역에 둘 fail 의
+    몫**(0~1)이고, 그것이 곧 엔진의 판정 지표(`*_fail_share`)다 — 종전 밀도 배수 시절에는
+    영역 면적으로 나눠 몫을 역산해야 했지만 이제 환산이 필요 없다.
     """
     count = int(min(count, free.size))
     if count <= 0:
@@ -443,7 +477,6 @@ def pick_fail_rows(pattern: str, count: int, free: np.ndarray, rnorm, xn, yn,
     if pattern in ("edge", "center", "ring", "quadrant", "e1"):
         if pattern == "e1":
             mask = e1_mask
-            share = min(1.0, share * float(e1_mask.mean()))   # 배수 → 몫 환산
         elif pattern == "edge":
             mask = edge
         elif pattern == "center":
@@ -535,36 +568,44 @@ def with_tune(plan, apply, metric_fn, target, lo, hi, ensure=None):
 
 
 # ── 레벨별 목표치 (단독 세트) ────────────────────────────────────────────────
-SPREAD_T = [0.08, 0.14, 0.20, 0.26, 0.33]                  # spread_norm (warn 0.18)
-SEVOUT_T = [0.000, 0.012, 0.060, 0.120, 0.220]             # outlier_ratio (bad 0.05)
-OUTWARN_T = [0.000, 0.012, 0.022, 0.032, 0.045]            # outlier_ratio (warn 0.02)
-# SPEC_TOO_TIGHT 은 spread_norm(<0.18) 로 세기를 매긴다 — 목표 spread 에서 cpk = 1/(6·s)
-# 이므로 [1.67, 1.28, 1.11, 0.99, 0.95] 로 함께 내려간다(둘 다 조건이라 한 손잡이로 움직인다).
-SPECTIGHT_T = [0.080, 0.115, 0.135, 0.152, 0.166]          # spread_norm (<0.18 유지)
-LOWCPK_T = [1.80, 1.45, 1.25, 0.95, 0.65]                  # cpk (bounded 분포 하한 0.58)
-MEANSHIFT_T = [0.08, 0.22, 0.36, 0.55, 0.80]               # |center_bias| (warn 0.30)
-BIDIR_T = [1.60, 1.15, 0.90, 0.60, 0.35]                   # min spec margin (warn 1.0, 작을수록 나쁨)
-KURT_T = [0.5, 1.4, 2.5, 6.0, 15.0]                        # excess kurtosis (warn 2.0)
-RAIL_T = [0.010, 0.030, 0.070, 0.150, 0.300]               # limit_hit_ratio (warn 0.05)
-EDGE_T = [1.0, 1.6, 2.1, 2.4, 2.75]                        # edge_fail_ratio (warn 2.0, 상한 2.78)
-CENTER_T = [1.0, 1.6, 2.2, 4.5, 9.0]                       # center_fail_ratio (warn 2.0, 상한 11)
-E1_T = [1.0, 1.6, 2.3, 4.0, 7.0]                           # e1_fail_ratio (warn 2.0, 최외곽 1열)
-RING_T = [1.0, 1.2, 1.4, 1.6, 1.82]                        # ring_fail_ratio (상한 1.82 < warn 2.0)
-CLUSTER_T = [0.3, 0.7, 1.15, 2.0, 3.5]                     # quadrant_imbalance (warn 1.0, 상한 4)
-GRAD_T = [0.10, 0.22, 0.35, 0.55, 0.85]                    # gradient_norm (warn 0.3, radial 상한 1.0)
-YIELD_T = [0.97, 0.72, 0.46, 0.28, 0.08]                   # yield (bad 0.5)
-NSAMPLE_T = [400, 60, 19, 12, 5]                           # n_dut (n_min 20)
-SITEDELTA_T = [0.1, 0.3, 0.6, 1.5, 3.0]                    # site_cpk_delta (warn 0.5) — 미발화
+# 전부 **L1 = 정상(미발화) / L2 = 임계 소폭 초과(발화 시작) / L5 = 심각** 사다리다.
+SPREAD_T = [0.10, 0.20, 0.26, 0.33, 0.40]                  # spread_norm (warn 0.18)
+# 통합 OUTLIER — fail chip 이 중심에서 몇 robust σ 떨어졌나(warn 12). 비율이 아니라 거리다.
+OUTLIER_Z = [0.0, 14.0, 20.0, 30.0, 45.0]                  # fail_robust_z_max (warn 12)
+# spike 비율은 레벨별 fail 수(FAIL_N)와 맞춘다 — spike 자체가 spec 밖이라 그대로 fail 이
+# 되고, fail 은 chip 을 배타적으로 쓰므로 비율이 크면 한 item 이 웨이퍼 예산을 다 먹는다.
+# (반경 36 ≈ 4,053 chip 기준으로 6/16/32/61개 = FAIL_N 과 같은 눈금)
+OUTLIER_P = [0.0000, 0.0015, 0.0040, 0.0080, 0.0150]
+SEVOUT_T = [0.000, 0.060, 0.120, 0.220, 0.320]             # (구 룰, off) outlier_ratio bad 0.05
+OUTWARN_T = [0.000, 0.022, 0.032, 0.045, 0.060]            # (구 룰, off) outlier_ratio warn 0.02
+# SPEC_TOO_TIGHT 은 spread_norm(<0.18) 로 세기를 매긴다 (LOW_CPK 로 통합돼 현재 off).
+SPECTIGHT_T = [0.080, 0.135, 0.152, 0.166, 0.174]          # spread_norm (<0.18 유지)
+LOWCPK_T = [1.80, 1.25, 0.95, 0.75, 0.62]                  # cpk (bounded 분포 하한 0.58)
+MEANSHIFT_T = [0.15, 0.36, 0.55, 0.80, 0.92]               # |center_bias| (warn 0.30)
+BIDIR_T = [1.60, 0.90, 0.60, 0.35, 0.20]                   # min spec margin (warn 1.0, 작을수록 나쁨)
+KURT_T = [1.0, 9.5, 13.0, 18.0, 25.0]                      # excess kurtosis (warn 8.0)
+RAIL_T = [0.010, 0.070, 0.150, 0.300, 0.450]               # limit_hit_ratio (warn 0.05)
+# 공간 4종은 **점유율**(전체 fail 중 그 영역 몫, warn 0.95)로 바뀌었다 — 종전 밀도 배수는
+# 영역마다 상한이 달라 사다리를 공유할 수 없었고 ring 은 아예 도달 불가였다.
+REGION_SHARE_T = [0.50, 0.96, 0.98, 0.99, 1.00]            # *_fail_share (warn 0.95)
+CLUSTER_T = [0.5, 2.7, 3.0, 3.4, 3.8]                      # quadrant_imbalance (warn 2.5, 상한 4)
+GRAD_T = [0.10, 0.35, 0.55, 0.85, 0.95]                    # gradient_norm (warn 0.3, radial 상한 1.0)
+YIELD_T = [0.97, 0.46, 0.28, 0.08, 0.03]                   # yield (bad 0.5)
+NSAMPLE_T = [400, 19, 12, 8, 4]                            # n_dut (n_min 20)
+SITEDELTA_T = [0.1, 0.6, 1.5, 3.0, 4.5]                    # site_cpk_delta (warn 0.5) — 미발화
 # TAIL_RISK 는 2026-08-12 에 지표가 **모멘트 왜도**로 바뀌었다(비모수 왜도는 상한 1.0 이라
-# 임계 1.0 을 넘을 수 없었다). warn 1.0 기준 L1·L2 는 미달, L3~L5 는 초과.
-SKEW_T = [0.30, 0.70, 1.30, 2.20, 3.50]                    # |모멘트 왜도| (warn 1.0)
-# SUBPOP 세기는 **모드 간 분리폭(성분 σ 배수)** 으로 매긴다. density_gap 을 목표로 잡으면
-# 약한 분리(0.35 등)에서 bimodality_score 가 임계 미달이라 발화 자체가 안 돼 사다리가
-# 무너진다(2·3단계가 같은 값으로 수렴). L5 는 3봉(다봉).
-SUBPOP_SEP_SD = [0.0, 1.5, 5.0, 6.5, 3.4]                  # 모드 간 거리 / 성분 σ (L5=3봉)
-# 상수값 항목 — L3 부터는 **spec 밖 상수**(그래서 fail 이 난다). 2진수로 정확히 표현되는
+# 임계 1.0 을 넘을 수 없었다). warn 1.0 기준 L1 은 미달, L2~L5 는 초과.
+SKEW_T = [0.30, 1.30, 2.20, 3.50, 5.00]                    # |모멘트 왜도| (warn 1.0)
+# BIMODALITY(구 SUBPOP_GAP) 세기는 **모드 간 분리폭 / 성분 σ** 으로 매긴다. density_gap 을
+# 목표로 잡으면 약한 분리에서 bimodality_score 가 임계 미달이라 사다리가 무너진다.
+# 성분 σ 를 레벨마다 좁히는 이유: 분리폭(절대값)은 **모드가 spec 안에 있어야** 하므로
+# 0.4 근처가 천장이다(넘으면 bounded 재추출이 봉우리를 뭉갠다). 폭을 좁혀 같은 절대
+# 분리에서 σ 대비 배수를 올린다. L5 는 3봉(다봉) — 인접 모드 간격이라 천장이 더 낮다.
+SUBPOP_SEP_SD = [0.0, 5.0, 6.5, 8.0, 9.5]                  # 모드 간 거리 / 성분 σ (L5=3봉)
+SUBPOP_SD = [0.12, 0.12, 0.12, 0.09, 0.040]                # 성분 σ
+# 상수값 항목 — L2 부터는 **spec 밖 상수**(그래서 fail 이 난다). 2진수로 정확히 표현되는
 # 값만 쓴다(1.4 같은 값은 표본표준편차가 2e-16 으로 떠 stdev<=0 이 성립하지 않는다).
-CONST_V = [None, None, 1.5625, 2.0, 3.0]
+CONST_V = [None, 1.5625, 2.0, 3.0, 5.0]
 
 
 def _quadrant_share(imbalance):
@@ -592,6 +633,21 @@ def _outwarn_plan(lv, base_sigma=0.02):
     return _spike_plan(OUTWARN_T[lv], base_sigma)
 
 
+def _outlier_plan(lv, base_sigma=0.05):
+    """통합 OUTLIER — spike 를 **spec 밖**에 두어 그 자체가 fail 이 되게 한다.
+
+    `bounded` 를 걸지 않는 것이 요점이다. 판정이 "fail chip 이 중심에서 몇 σ 떨어졌나"
+    라서, spike 를 spec 안에 가두면(bounded) 그 chip 은 fail 이 아니고 대신 limit 바로 밖으로
+    밀린 평범한 chip 이 fail 이 되어 거리가 나오지 않는다.
+    base σ=0.05 · spike z=14 이면 중심에서 0.7 (spec 반폭 0.5)이라 확실히 밖이다.
+    """
+    z = OUTLIER_Z[lv]
+    if z <= 0:                                     # L1 = 정상(미발화)
+        return {"kind": "normal", "mean": CENTER, "sigma": base_sigma, "bounded": True}
+    return {"kind": "normal", "mean": CENTER, "sigma": base_sigma,
+            "spike": {"p": OUTLIER_P[lv], "z": z, "neg_p": 0.5}}
+
+
 def _spectight_plan(lv):
     """spread_norm 은 임계값(0.18) **아래**로 두면서 cpk 만 떨어뜨린다 — 두 조건이 모두
     성립해야 발화하므로 목표는 spread_norm 이고, 표본 잡음으로 0.18 을 넘지 않도록 역산한다.
@@ -608,7 +664,7 @@ def _lowcpk_plan(lv):
             "bounded": True}
 
 
-def _meanshift_plan(lv, sigma=0.03):
+def _meanshift_plan(lv, sigma=0.05):
     plan = {"kind": "normal", "mean": CENTER - MEANSHIFT_T[lv] * WIDTH / 2, "sigma": sigma,
             "bounded": True}
     # bounded 는 spec 밖 값을 spec 안에서 재추출하므로 치우침이 조금 되돌아온다
@@ -655,7 +711,7 @@ def _subpop_plan(lv, sd=None, center=None):
     # ("spec 밖=fail")을 맞추려 chip 을 밀어내면 그 극단값이 kurtosis 를 올려
     # bimodality_score 를 임계 아래로 끌어내린다(실측 L3~L5 미발화). 폭을 키워
     # **바깥 무리의 꼬리가 자연스럽게 spec 을 넘게** 한다.
-    sd = sd or 0.12
+    sd = sd or SUBPOP_SD[lv]
     mid = CENTER if center is None else center
     if lv == 0:
         return {"kind": "normal", "mean": mid, "sigma": sd}
@@ -730,16 +786,15 @@ def _spatial_n(lv):
 
 SINGLE_BUILDERS = {
     "WIDE_DISTRIBUTION": lambda lv: (_wide_plan(lv), None, "spread_norm", SPREAD_T[lv], {}),
-    "SEVERE_OUTLIER": lambda lv: (_sevout_plan(lv), None, "outlier_ratio", SEVOUT_T[lv], {}),
-    "OUTLIER_WARN": lambda lv: (_outwarn_plan(lv), None, "outlier_ratio", OUTWARN_T[lv], {}),
+    "OUTLIER": lambda lv: (_outlier_plan(lv), None, "fail_robust_z_max", OUTLIER_Z[lv], {}),
     "SPEC_TOO_TIGHT": lambda lv: (_spectight_plan(lv), None, "spread_norm",
                                   SPECTIGHT_T[lv], {}),
     "LOW_CPK": lambda lv: (_lowcpk_plan(lv), None, "cpk", LOWCPK_T[lv], {}),
     "MEAN_SHIFT": lambda lv: (_meanshift_plan(lv), None, "center_bias", MEANSHIFT_T[lv], {}),
     "BIDIR_TAIL": lambda lv: (_bidir_plan(lv), None, "spec_margin_min", BIDIR_T[lv], {}),
     "HEAVY_TAIL": lambda lv: (_heavytail_plan(lv), None, "kurtosis", KURT_T[lv], {}),
-    "SUBPOP_GAP": lambda lv: (_subpop_plan(lv), None, "density_gap", None,
-                              {"note": f"모드 분리 {SUBPOP_SEP_SD[lv]}σ"
+    "BIMODALITY": lambda lv: (_subpop_plan(lv), None, "density_gap", None,
+                              {"note": f"모드 분리 {SUBPOP_SEP_SD[lv]}σ (성분 σ {SUBPOP_SD[lv]})"
                                        + (" · 3봉(다봉)" if lv == len(LEVELS) - 1 else "")}),
     "TAIL_RISK": lambda lv: (_skew_plan(lv), None, "skewness_moment", SKEW_T[lv], {}),
     # L3 부터 상수 자체를 spec 밖에 둔다 — fail 원인이 값으로 설명된다(전 chip 이 spec
@@ -751,32 +806,32 @@ SINGLE_BUILDERS = {
                              {"unit": "CODE", "lsl": 0.0, "usl": 63.0}),
     "MISSING_LIMIT": lambda lv: (
         {"kind": "normal", "mean": CENTER, "sigma": 0.05, "bounded": True}, None, "limit_missing",
-        [0, 0, 1, 1, 1, 1, 1][lv],
-        dict({}, **[{}, {}, {"usl": None}, {"lsl": None}, {"lsl": None, "usl": None},
-                    {"lsl": None, "usl": None},
+        [0, 1, 1, 1, 1][lv],
+        dict({}, **[{}, {"usl": None}, {"lsl": None}, {"lsl": None, "usl": None},
                     {"lsl": None, "usl": None, "unit": ""}][lv],
              )),   # limit 이 없는 단계는 밀 대상이 없다(_push_out_of_spec 가 알아서 건너뛴다)
     "LOW_SAMPLE_UNCERTAIN": lambda lv: (
         {"kind": "normal", "mean": CENTER, "sigma": 0.05, "n_valid": NSAMPLE_T[lv],
          "bounded": True},
         None, "n_dut", NSAMPLE_T[lv], {}),
+    # 공간 4종 — share 가 그대로 "전체 fail 중 그 영역 몫"이라 면적 환산이 필요 없다
+    # (배수 지표 시절에는 영역 면적으로 나눠 몫을 역산해야 했다).
     "E1_FAIL": lambda lv: (
         {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
-        {"pattern": "e1", "count": _spatial_n(lv), "share": E1_T[lv]},
-        "e1_fail_ratio", E1_T[lv], {}),
+        {"pattern": "e1", "count": _spatial_n(lv), "share": REGION_SHARE_T[lv]},
+        "e1_fail_share", REGION_SHARE_T[lv], {}),
     "EDGE_FAIL": lambda lv: (
         {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
-        {"pattern": "edge", "count": _spatial_n(lv), "share": min(1.0, EDGE_T[lv] * (1 - TH["edge_region_pct"] ** 2))},
-        "edge_fail_ratio", EDGE_T[lv], {}),
+        {"pattern": "edge", "count": _spatial_n(lv), "share": REGION_SHARE_T[lv]},
+        "edge_fail_share", REGION_SHARE_T[lv], {}),
     "CENTER_FAIL": lambda lv: (
         {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
-        {"pattern": "center", "count": _spatial_n(lv), "share": min(1.0, CENTER_T[lv] * TH["center_region_pct"] ** 2)},
-        "center_fail_ratio", CENTER_T[lv], {}),
+        {"pattern": "center", "count": _spatial_n(lv), "share": REGION_SHARE_T[lv]},
+        "center_fail_share", REGION_SHARE_T[lv], {}),
     "RING_FAIL": lambda lv: (
         {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
-        {"pattern": "ring", "count": _spatial_n(lv),
-         "share": min(1.0, RING_T[lv] * (TH["edge_region_pct"] ** 2 - TH["center_region_pct"] ** 2))},
-        "ring_fail_ratio", RING_T[lv], {}),
+        {"pattern": "ring", "count": _spatial_n(lv), "share": REGION_SHARE_T[lv]},
+        "ring_fail_share", REGION_SHARE_T[lv], {}),
     "CLUSTER_FAIL": lambda lv: (
         {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
         {"pattern": "quadrant", "count": _spatial_n(lv), "share": _quadrant_share(CLUSTER_T[lv])},
@@ -831,14 +886,13 @@ def _ing(name, lv, plan, fails, meta):
         plan["sigma"] = SPREAD_T[i] * width
         if plan.get("comps"):                      # 이미 mixture 면 성분 폭을 함께 넓힌다
             plan["comps"] = [(w, mu, SPREAD_T[i] * width) for w, mu, _sd in plan["comps"]]
-    elif name in ("SEVOUT", "OUTWARN"):
-        p = (SEVOUT_T if name == "SEVOUT" else OUTWARN_T)[i]
-        if p > 0:
-            # outlier 로 잡히려면 spike 가 robust σ 의 4.5배 밖이어야 하는데, bounded 라
-            # spec 안(≤0.47 폭)에 머물러야 한다 → 기준 산포가 넓으면 둘을 동시에 만족할 수
-            # 없다. 그래서 spike 계열 재료는 기준 산포를 좁게 되돌린다.
-            plan["sigma"] = min(plan.get("sigma", 0.02), 0.06)
-            plan["spike"] = {"p": p, "z": 10.0, "neg_p": 0.5}
+    elif name == "OUTLIER":
+        if OUTLIER_Z[i] > 0:
+            # spike 는 **spec 밖**에 둔다 — 그 chip 이 곧 fail 이고, 그 거리가 판정 지표다.
+            # bounded 를 지워야(spec 안 재추출 금지) spike 가 살아남는다.
+            plan["sigma"] = min(plan.get("sigma", 0.05), 0.05)
+            plan.pop("bounded", None)
+            plan["spike"] = {"p": OUTLIER_P[i], "z": OUTLIER_Z[i], "neg_p": 0.5}
     elif name == "SPECTIGHT":
         plan["sigma"] = SPECTIGHT_T[i] * width
         with_tune(plan, lambda pl, s: pl.update(sigma=s), lambda v: m_spread_norm(v, lo, hi),
@@ -869,14 +923,8 @@ def _ing(name, lv, plan, fails, meta):
         plan.update(_constant_plan(i))
     elif name == "MISSLIMIT":
         meta.update(lsl=None if i >= 2 else LSL, usl=None if i >= 1 else USL)
-    elif name == "E1":
-        fails.update(pattern="e1", count=_spatial_n(i), share=E1_T[i])
-    elif name == "EDGE":
-        fails.update(pattern="edge", count=60,
-                     share=min(1.0, EDGE_T[i] * (1 - TH["edge_region_pct"] ** 2)))
-    elif name == "CENTER":
-        fails.update(pattern="center", count=60,
-                     share=min(1.0, CENTER_T[i] * TH["center_region_pct"] ** 2))
+    elif name in ("E1", "EDGE", "CENTER", "RING"):
+        fails.update(pattern=name.lower(), count=_spatial_n(i), share=REGION_SHARE_T[i])
     elif name == "CLUSTER":
         fails.update(pattern="quadrant", count=80, share=_quadrant_share(CLUSTER_T[i]))
     elif name == "GRAD":
@@ -887,30 +935,31 @@ def _ing(name, lv, plan, fails, meta):
         raise KeyError(name)
 
 
-ING_SIG = {"WIDE": "WIDE_DISTRIBUTION", "SEVOUT": "SEVERE_OUTLIER",
-           "OUTWARN": "OUTLIER_WARN", "SPECTIGHT": "SPEC_TOO_TIGHT",
-           "MEANSHIFT": "MEAN_SHIFT", "HEAVYTAIL": "HEAVY_TAIL", "SUBPOP": "SUBPOP_GAP",
+ING_SIG = {"WIDE": "WIDE_DISTRIBUTION", "OUTLIER": "OUTLIER",
+           "SPECTIGHT": "SPEC_TOO_TIGHT",
+           "MEANSHIFT": "MEAN_SHIFT", "HEAVYTAIL": "HEAVY_TAIL", "SUBPOP": "BIMODALITY",
            "CODERAIL": "CODE_RAIL", "CONSTANT": "CONSTANT_VALUE",
            "MISSLIMIT": "MISSING_LIMIT", "EDGE": "EDGE_FAIL", "CENTER": "CENTER_FAIL",
+           "RING": "RING_FAIL",
            "CLUSTER": "CLUSTER_FAIL", "GRAD": "WAFER_GRADIENT", "GROSS": "GROSS_FAIL",
            "E1": "E1_FAIL"}
 
 # 재료 적용 순서 — 이름을 준 순서와 무관하게 이 순서로 얹는다. 순서에 따라 뒤 재료가 앞
 # 재료의 결과를 지우면(예: 산포를 정한 뒤 mixture 로 갈아끼우면) 둘 다 미발화가 된다.
 ING_ORDER = {"CONSTANT": 0, "CODERAIL": 1, "WIDE": 2, "SPECTIGHT": 2, "SUBPOP": 3,
-             "MEANSHIFT": 4, "SEVOUT": 5, "OUTWARN": 5, "HEAVYTAIL": 5, "MISSLIMIT": 6,
-             "E1": 7, "EDGE": 7, "CENTER": 7, "CLUSTER": 7, "GRAD": 7, "GROSS": 7}
+             "MEANSHIFT": 4, "OUTLIER": 5, "HEAVYTAIL": 5, "MISSLIMIT": 6,
+             "E1": 7, "EDGE": 7, "CENTER": 7, "RING": 7, "CLUSTER": 7, "GRAD": 7,
+             "GROSS": 7}
 # fail 행 배치는 item 당 하나만 고를 수 있다 (패턴이 서로 덮어쓴다).
-FAIL_ING = {"E1", "EDGE", "CENTER", "CLUSTER", "GRAD", "GROSS"}
+FAIL_ING = {"E1", "EDGE", "CENTER", "RING", "CLUSTER", "GRAD", "GROSS"}
 
 COMBOS = [
-    ("MEANSHIFT", "SEVOUT"), ("SUBPOP", "E1"), ("MEANSHIFT", "OUTWARN"),
-    ("MEANSHIFT", "HEAVYTAIL"), ("EDGE", "SEVOUT"), ("CENTER", "WIDE"),
+    ("MEANSHIFT", "OUTLIER"), ("SUBPOP", "E1"), ("MEANSHIFT", "HEAVYTAIL"),
+    ("CENTER", "WIDE"), ("RING", "MEANSHIFT"),
     ("CLUSTER", "MEANSHIFT"), ("SPECTIGHT", "EDGE"), ("CODERAIL", "MEANSHIFT"),
     ("SUBPOP", "CENTER"), ("HEAVYTAIL", "CLUSTER"), ("MISSLIMIT", "CLUSTER"),
     ("CODERAIL", "CENTER"), ("GROSS", "WIDE"),
-    ("MEANSHIFT", "SEVOUT", "EDGE"), ("MEANSHIFT", "HEAVYTAIL", "CLUSTER"),
-    ("SEVOUT", "E1", "MEANSHIFT"),
+    ("MEANSHIFT", "HEAVYTAIL", "CLUSTER"), ("MEANSHIFT", "HEAVYTAIL", "RING"),
 ]
 
 
@@ -939,7 +988,7 @@ def combo_specs():
 # 엔진 UNIT_TO_VALUE_TYPE 은 정확일치 표라 모르는 표기는 조용히 PF(무판정)로 떨어진다.
 UNIT_AXIS = [("v", "V"), ("ma", "A"), ("khz", "Hz"), ("ohm", "Ohm"), ("ms", "Sec"),
              ("CODE", "CODE"), ("PCT", "PCT"), ("", "PF"), ("DEGC", "PF(오분류)")]
-AXIS_SCENARIOS = ["WIDE", "SEVOUT", "SPECTIGHT", "MEANSHIFT"]
+AXIS_SCENARIOS = ["WIDE", "OUTLIER", "SPECTIGHT", "MEANSHIFT"]
 BIN_AXIS = [3, 4, 5, 8, 18, 31]
 
 
@@ -963,7 +1012,7 @@ def axis_specs():
                 out.append(s)
     # bin 축 — bin_taxonomy severity_bias(PMIC 18/31)와 item_class bin 축 검증.
     for b in BIN_AXIS:
-        for scen in ("WIDE", "SEVOUT", "SUBPOP"):
+        for scen in ("WIDE", "OUTLIER", "SUBPOP"):
             for lv in (3, 5):
                 s = combo_spec((scen,), lv, group="bin_axis")
                 s["name"] = f"BIN{b}_{scen}_L{lv}"
@@ -987,22 +1036,21 @@ BOUNDARY = [
                          lambda pl, s: pl.update(sigma=s),
                          lambda v: m_spread_norm(v, LSL, USL), t, WIDTH * 0.02, WIDTH),
      "WIDE_DISTRIBUTION"),
-    ("outlier_ratio_warn", TH["outlier_ratio_warn"], [0.014, 0.018, 0.0198, 0.021, 0.025, 0.030],
-     lambda t: {"kind": "normal", "mean": CENTER, "sigma": 0.02,
-                "spike": {"p": t, "z": 10.0, "neg_p": 0.5}}, "OUTLIER_WARN"),
-    ("outlier_ratio_bad", TH["outlier_ratio_bad"], [0.040, 0.046, 0.049, 0.052, 0.060, 0.075],
-     lambda t: {"kind": "normal", "mean": CENTER, "sigma": 0.02,
-                "spike": {"p": t, "z": 10.0, "neg_p": 0.5}}, "SEVERE_OUTLIER"),
+    # OUTLIER 는 **거리**(fail chip 의 robust z)가 지표다 — spike 를 spec 밖에 두어
+    # 그 chip 이 fail 이 되게 하고, z 를 임계 12 앞뒤로 훑는다.
+    ("fail_robust_z_max", TH["outlier_fail_z_min"], [9.0, 10.8, 11.8, 12.2, 14.0, 20.0],
+     lambda t: {"kind": "normal", "mean": CENTER, "sigma": 0.05,
+                "spike": {"p": 0.01, "z": t, "neg_p": 0.5}}, "OUTLIER"),
     ("cpk_warn", TH["cpk_warn"], [1.45, 1.38, 1.34, 1.32, 1.25, 1.10],
      # 산포(sigma)를 손잡이로 두고 -cpk 를 목표로 잡는다 — sigma 가 커질수록 -cpk 가
      # 커지므로(단조 증가) 이분법이 성립한다.
      lambda t: with_tune({"kind": "normal", "mean": CENTER, "sigma": WIDTH / (6 * t)},
                          lambda pl, s: pl.update(sigma=s),
                          lambda v: -(m_cpk(v, LSL, USL) or 0), -t, WIDTH * 0.02, WIDTH),
-     "SPEC_TOO_TIGHT"),
+     "LOW_CPK"),
     ("center_bias", TH["mean_shift_warn"], [0.26, 0.285, 0.298, 0.305, 0.33, 0.40],
      lambda t: {"kind": "normal", "mean": CENTER - t * WIDTH / 2, "sigma": 0.01}, "MEAN_SHIFT"),
-    ("kurtosis", TH["kurtosis_warn"], [1.6, 1.85, 1.97, 2.05, 2.3, 3.0],
+    ("kurtosis", TH["kurtosis_warn"], [6.0, 7.2, 7.9, 8.2, 9.5, 12.0],
      _kurt_plan, "HEAVY_TAIL"),
     ("code_edge_hit", TH["code_edge_hit_warn"], [0.038, 0.045, 0.049, 0.052, 0.060, 0.080],
      lambda t: _coderail_plan(0, p=t), "CODE_RAIL"),
@@ -1018,14 +1066,14 @@ def boundary_specs():
             # 임계값보다 나쁜 쪽인지로 발화 기대를 정한다 (cpk 만 작을수록 나쁨).
             worse = t < th if metric == "cpk_warn" else t > th
             # "_CODE_" 를 피하려고 metric 이름의 밑줄을 뗀다 (exclusions.yaml item_contains).
-            out.append(spec(f"EDGEC_{metric.replace('_', '')}_{i}", [sig], 3 if worse else 1,
+            out.append(spec(f"EDGEC_{metric.replace('_', '')}_{i}", [sig], 2 if worse else 1,
                             values=build(t), metric=metric, target=t, group="boundary",
                             expect="fire" if worse else "not_fire",
                             note=f"임계값 {th} 대비 {'초과' if worse else '이내'}", **over))
     # 부동소수 함정 — 같은 '상수값' 인데 2진수 표현 가능 여부로 CONSTANT_VALUE 판정이 갈린다.
     for value, fire in ((1.25, True), (1.5, True), (1.4, False), (1.8, False)):
         out.append(spec(f"EDGEC_constant_{str(value).replace('.', 'p')}", ["CONSTANT_VALUE"],
-                        3 if fire else 1, values={"kind": "constant", "value": value},
+                        2 if fire else 1, values={"kind": "constant", "value": value},
                         metric="stdev", target=0.0, group="boundary",
                         expect="fire" if fire else "not_fire",
                         note="2진수 정확표현" if fire else
@@ -1052,23 +1100,106 @@ def normal_specs(count, rng: random.Random):
     return out
 
 
-MIX_POOL = ["WIDE", "SEVOUT", "OUTWARN", "SPECTIGHT", "MEANSHIFT", "HEAVYTAIL", "SUBPOP",
-            "EDGE", "CENTER", "CLUSTER"]
+# ── 관찰군(random) — 정답 없이 "엔진이 뭐라고 하는지" 만 보는 항목 ──────────────
+# 겨냥한 룰이 없다(intent=[]). 산포 모양과 fail 배치를 무작위로 섞어, 룰 사다리에 맞춰
+# 만든 데이터가 아니라 **아무렇게나 들어온 데이터**를 엔진이 어떻게 판정하는지 본다.
+# verify 는 이 그룹을 누락·오발화로 세지 않고 발화 분포만 따로 요약한다.
+RANDOM_COUNT = 100              # 관찰군 기본 개수 (--random-items 로 조절)
+RANDOM_SHAPES = ["normal", "wide", "shifted", "bimodal", "spiky", "tailed", "quantized",
+                 "flat", "skewed"]
+# grad_r(반경 경사)은 뺐다 — fail 수를 "행 비율"로 정하는 패턴이라 item 하나가 웨이퍼
+# 예산을 통째로 먹는다(실측 1,900 chip). 경사형 맵은 겨냥 세트의 WAFER_GRADIENT 담당.
+RANDOM_PATTERNS = ["random", "random", "edge", "center", "ring", "quadrant", "e1"]
+
+
+def _random_plan(shape: str, rng: random.Random):
+    """관찰군 1건의 값 plan — 사다리를 쓰지 않고 파라미터를 구간에서 뽑는다."""
+    sd = rng.uniform(0.03, 0.22)
+    mean = CENTER + rng.uniform(-0.35, 0.35)
+    if shape == "wide":
+        return {"kind": "normal", "mean": CENTER, "sigma": rng.uniform(0.18, 0.40),
+                "bounded": True}
+    if shape == "shifted":
+        return {"kind": "normal", "mean": mean, "sigma": rng.uniform(0.03, 0.10),
+                "bounded": True}
+    if shape == "bimodal":
+        gap = rng.uniform(0.15, 0.55)
+        sd = min(sd, 0.10)
+        return {"kind": "mixture", "bounded": True,
+                "comps": [(rng.uniform(0.3, 1.0), CENTER - gap / 2, sd),
+                          (rng.uniform(0.3, 1.0), CENTER + gap / 2, sd)]}
+    if shape == "spiky":
+        # spike 는 bounded 를 안 걸어 spec 밖으로 나간다 = 그대로 fail 이다. 비율을 키우면
+        # 이 item 하나가 웨이퍼 fail 예산을 다 먹으므로 1% 근처로 묶는다.
+        return {"kind": "normal", "mean": CENTER, "sigma": rng.uniform(0.03, 0.08),
+                "spike": {"p": rng.uniform(0.002, 0.010),
+                          "z": rng.uniform(5.0, 30.0), "neg_p": 0.5}}
+    if shape == "tailed":
+        return {"kind": "normal", "mean": CENTER, "sigma": rng.uniform(0.04, 0.09),
+                "bounded": True,
+                "spike": {"p": rng.uniform(0.01, 0.06), "z": rng.uniform(3.0, 9.0),
+                          "neg_p": 0.5}}
+    if shape == "quantized":
+        return {"kind": "normal", "mean": CENTER, "sigma": rng.uniform(0.08, 0.20),
+                "quantize": rng.choice([0.03125, 0.0625, 0.125]), "bounded": True}
+    if shape == "flat":
+        half = rng.uniform(0.15, 0.45)
+        return {"kind": "uniform", "low": CENTER - half, "high": CENTER + half}
+    if shape == "skewed":
+        w = rng.uniform(0.15, 0.35)
+        return {"kind": "mixture", "bounded": True,
+                "comps": [(0.75, CENTER - w / 2, 0.05), (0.25, CENTER + w, 0.12)]}
+    return {"kind": "normal", "mean": CENTER, "sigma": rng.uniform(0.03, 0.12),
+            "bounded": True}
+
+
+def random_specs(count, rng: random.Random):
+    """관찰군 — 정답 기대 없음(expect='observe'). 산포 모양 × fail 배치를 섞는다."""
+    out = []
+    for i in range(count):
+        shape = RANDOM_SHAPES[i % len(RANDOM_SHAPES)]
+        pattern = rng.choice(RANDOM_PATTERNS)
+        n_fail = rng.randint(4, 20)
+        fails = {"pattern": pattern, "count": n_fail}
+        if pattern in ("edge", "center", "ring", "quadrant", "e1"):
+            # 점유율을 **일부러 애매하게** 흩는다 — 임계 0.95 를 넘는 것도, 못 넘는 것도 섞인다.
+            fails["share"] = rng.uniform(0.4, 1.0)
+        elif pattern.startswith("grad"):
+            fails["share"] = rng.uniform(0.1, 0.7)
+        unit_raw, _vt = UNIT_AXIS[i % len(UNIT_AXIS)]
+        if unit_raw in ("", "DEGC"):
+            unit_raw = "v"                        # 무판정(PF) 은 관찰 대상이 아니다
+        # 레벨은 fail 수만 정한다(사다리 의미 없음) — TNO/bin 번호가 겹치지 않게 흩어 준다.
+        lv = 2 + i % 4
+        out.append(spec(f"RANDOM{shape.upper()}_{i:03d}", [], lv,
+                        values=_random_plan(shape, rng), fails=fails, unit=unit_raw,
+                        bin_=RANDOM_BIN_BASE + i % len(RANDOM_SHAPES),
+                        metric="(관찰)", target=None, group="random", expect="observe",
+                        note=f"관찰용 무작위 — 분포 {shape} · fail 배치 {pattern} {n_fail}개"))
+    return out
+
+
+MIX_POOL = ["WIDE", "OUTLIER", "SPECTIGHT", "MEANSHIFT", "HEAVYTAIL", "SUBPOP",
+            "E1", "EDGE", "CENTER", "RING", "CLUSTER"]
 
 # **동시에 성립할 수 없는 재료 쌍** — 룰 조건이 서로 배타적이라 둘 다 발화시킬 수 없다.
 #   SPECTIGHT 는 "좁고(spread<0.18)·중앙(|bias|<0.3)·단봉(BC<임계)인데 cpk 낮음" 이므로
 #   WIDE/MEANSHIFT/SUBPOP 과 정면 충돌한다. SUBPOP 은 outlier_ratio<3% 게이트가 있어
-#   outlier·heavy tail 계열과 같이 못 간다. OUTWARN 은 SEVOUT 에 억제된다(suppressed_by).
+#   outlier·heavy tail 계열과 같이 못 간다.
 INCOMPATIBLE = [{"SPECTIGHT", "WIDE"}, {"SPECTIGHT", "MEANSHIFT"}, {"SPECTIGHT", "SUBPOP"},
-                {"SUBPOP", "SEVOUT"}, {"SUBPOP", "OUTWARN"}, {"SUBPOP", "HEAVYTAIL"},
-                {"SEVOUT", "OUTWARN"},
-                # spike 손잡이(비율·크기)가 하나뿐이라 서로 덮어쓴다. 게다가 outlier 룰은
+                {"SUBPOP", "OUTLIER"}, {"SUBPOP", "HEAVYTAIL"},
+                # spike 손잡이(비율·크기)가 하나뿐이라 서로 덮어쓴다. 게다가 OUTLIER 는
                 # kurtosis 를 끌어올려 HEAVY_TAIL 을 어차피 동반발화시킨다.
-                {"SEVOUT", "HEAVYTAIL"}, {"OUTWARN", "HEAVYTAIL"},
-                # 넓은 산포 + spike: spike 가 outlier 로 잡히려면 robust σ 의 4.5배 밖이어야
-                # 하는데 spec 안(≤0.47 폭)을 못 벗어난다 — 동시에 성립 불가.
-                {"WIDE", "SEVOUT"}, {"WIDE", "OUTWARN"}, {"WIDE", "HEAVYTAIL"},
-                {"SPECTIGHT", "SEVOUT"}, {"SPECTIGHT", "OUTWARN"}, {"SPECTIGHT", "HEAVYTAIL"},
+                {"OUTLIER", "HEAVYTAIL"},
+                # 넓은 산포 + spike: 산포가 넓으면 spike 를 얼마나 멀리 두어도 robust σ 대비
+                # 거리(fail_robust_z_max)가 12 에 못 미친다 — 동시에 성립 불가.
+                {"WIDE", "OUTLIER"}, {"WIDE", "HEAVYTAIL"},
+                {"SPECTIGHT", "OUTLIER"}, {"SPECTIGHT", "HEAVYTAIL"},
+                # OUTLIER + 공간 룰: OUTLIER 의 spike 는 spec 밖이라 **위치와 무관하게** fail 이
+                # 된다. 공간 룰은 이제 "fail 의 95% 이상이 그 영역" 이 조건이라, 무작위 위치의
+                # spike fail 이 섞이는 순간 점유율이 깨진다.
+                {"OUTLIER", "E1"}, {"OUTLIER", "EDGE"}, {"OUTLIER", "CENTER"},
+                {"OUTLIER", "RING"}, {"OUTLIER", "CLUSTER"},
                 # 넓은 산포 + 이봉: 모드를 spec 안에 두면서 골(density_gap)까지 만들 폭이 없다.
                 {"WIDE", "SUBPOP"},
                 # 넓은 산포 + 중심 치우침: spec 안에 가두면 재추출이 치우침을 되돌려
@@ -1077,7 +1208,8 @@ INCOMPATIBLE = [{"SPECTIGHT", "WIDE"}, {"SPECTIGHT", "MEANSHIFT"}, {"SPECTIGHT",
                 # 상수(전 chip spec 밖 = 전량 fail) + 공간 룰: 전부 fail 이면 특정 영역
                 # 집중이라는 개념 자체가 성립하지 않는다(비율이 항상 1.0).
                 {"CONSTANT", "EDGE"}, {"CONSTANT", "CENTER"}, {"CONSTANT", "CLUSTER"},
-                {"CONSTANT", "GRAD"}, {"CONSTANT", "GROSS"}, {"CONSTANT", "E1"}]
+                {"CONSTANT", "GRAD"}, {"CONSTANT", "GROSS"}, {"CONSTANT", "E1"},
+                {"CONSTANT", "RING"}]
 
 
 def _compatible(names) -> bool:
@@ -1122,7 +1254,8 @@ def assign_tno(specs):
 
 def build_catalog(total: int, seed: int):
     rng = random.Random(seed)
-    specs = single_specs() + combo_specs() + axis_specs() + boundary_specs()
+    specs = (single_specs() + combo_specs() + axis_specs() + boundary_specs()
+             + random_specs(RANDOM_COUNT, rng))
     fixed = len(specs)
     rest = max(0, total - fixed)
     n_normal = min(rest, max(0, int(round(rest * 0.4))))
@@ -1411,7 +1544,8 @@ def build_source_df(specs, wafer, seed):
         summary.append({
             "spec": s, "tno": tno, "fail_count": int(fail_idx.size),
             "n_dut": int(v_ok.size),
-            "actual": measure(v_ok, lsl, usl, fail_idx, n, x, y, rnorm, xn, yn, e1),
+            "actual": measure(v_ok, lsl, usl, fail_idx, n, x, y, rnorm, xn, yn, e1,
+                              all_values=values),
         })
 
         cols[s["name"]] = ["" if not np.isfinite(v) else f"{v:.6g}" for v in values]
@@ -1449,8 +1583,12 @@ def build_source_df(specs, wafer, seed):
     return df, summary
 
 
-def measure(v, lsl, usl, fail_idx, n_rows, x, y, rnorm, xn, yn, e1=None):
-    """생성된 값·fail 배치의 실측 지표 (정답표 기록용)."""
+def measure(v, lsl, usl, fail_idx, n_rows, x, y, rnorm, xn, yn, e1=None, all_values=None):
+    """생성된 값·fail 배치의 실측 지표 (정답표 기록용).
+
+    `v` 는 유한값만 담은 배열, `all_values` 는 NaN 을 포함한 전체 길이 배열이다
+    (fail_idx 가 전체 길이 기준이라 fail 지표 계산에는 후자가 필요하다).
+    """
     out = {"n_dut": int(v.size), "fail_count": int(fail_idx.size),
            "yield": round(1 - fail_idx.size / n_rows, 4)}
     if v.size >= 2:
@@ -1465,17 +1603,23 @@ def measure(v, lsl, usl, fail_idx, n_rows, x, y, rnorm, xn, yn, e1=None):
             spec_margin_min=_r(_spec_margin_min(v, lsl, usl)),
             limit_missing=int(lsl is None or usl is None))
     if fail_idx.size:
+        if all_values is not None:
+            out["fail_robust_z_max"] = _r(m_fail_z_max(all_values, fail_idx))
         fm = np.zeros(n_rows, dtype=bool)
         fm[fail_idx] = True
         overall = fm.mean()
+        total = float(fm.sum())
         e1_mask = np.zeros_like(rnorm, dtype=bool) if e1 is None else e1
         edge = (rnorm >= TH["edge_region_pct"]) & (~e1_mask)
         center = rnorm <= TH["center_region_pct"]
         ring = (rnorm > TH["center_region_pct"]) & (rnorm < TH["edge_region_pct"]) & (~e1_mask)
-        out["e1_fail_ratio"] = _r(fm[e1_mask].mean() / overall) if e1_mask.any() else None
-        out["edge_fail_ratio"] = _r(fm[edge].mean() / overall) if edge.any() else None
-        out["center_fail_ratio"] = _r(fm[center].mean() / overall) if center.any() else None
-        out["ring_fail_ratio"] = _r(fm[ring].mean() / overall) if ring.any() else None
+        for nm, mask in (("e1", e1_mask), ("edge", edge), ("center", center), ("ring", ring)):
+            if mask.any():
+                out[f"{nm}_fail_ratio"] = _r(fm[mask].mean() / overall)
+                # 공간 룰의 판정 지표 — 전체 fail 중 그 영역이 차지하는 **점유율**
+                out[f"{nm}_fail_share"] = _r(fm[mask].sum() / total)
+            else:
+                out[f"{nm}_fail_ratio"] = out[f"{nm}_fail_share"] = None
         rates = []
         for sx in (True, False):
             for sy in (True, False):
@@ -1569,9 +1713,11 @@ def write_answer_key(out_dir: Path, sources):
             th_key = {"spread_norm": "spread_norm_warn", "outlier_ratio": "outlier_ratio_warn",
                       "cpk": "cpk_warn", "center_bias": "mean_shift_warn",
                       "kurtosis": "kurtosis_warn", "code_edge_hit": "code_edge_hit_warn",
-                      "edge_fail_ratio": "edge_fail_ratio_warn",
-                      "center_fail_ratio": "edge_fail_ratio_warn",
-                      "ring_fail_ratio": "ring_fail_ratio_warn",
+                      "fail_robust_z_max": "outlier_fail_z_min",
+                      "e1_fail_share": "region_fail_share_min",
+                      "edge_fail_share": "region_fail_share_min",
+                      "center_fail_share": "region_fail_share_min",
+                      "ring_fail_share": "region_fail_share_min",
                       "quadrant_imbalance": "quadrant_imbalance_warn",
                       "gradient_norm_abs_max": "gradient_norm_warn",
                       "yield": "gross_yield_bad", "n_dut": "n_min",
@@ -1723,13 +1869,24 @@ def verify(out_dir: Path, answer_rows, args):
     stat = {"ok": 0, "miss": 0, "false_fire": 0, "normal_fp": 0, "cofire": 0,
             "suppressed": 0, "unknown": 0}
     cofire: dict[str, int] = {}
+    observed: dict[str, int] = {}       # 관찰군(random) — 엔진이 뭐라고 했나
+    observed_n = observed_silent = 0
     for r in answer_rows:
         want = [s for s in r["intent"].split(";") if s]
         want_fireable = [s for s in want if s not in UNFIRABLE]
         fired_live = live["signatures"].get(r["item"], [])
         fired_all = full["signatures"].get(r["item"], [])
         suppressed = []
-        if r["expect"] == "fire":
+        if r["expect"] == "observe":
+            # 관찰군 — 겨냥한 룰이 없으므로 누락/오발화 개념이 없다. 분포만 센다.
+            missing = false_fire = []
+            observed_n += 1
+            live_ids = [s for s in fired_live if s != UNKNOWN_ID]
+            if not live_ids:
+                observed_silent += 1
+            for s in live_ids:
+                observed[s] = observed.get(s, 0) + 1
+        elif r["expect"] == "fire":
             missing = [s for s in want_fireable if s not in fired_all]
             # 조건은 맞았지만 더 구체적인 룰에 눌린 것(suppressed_by)은 누락이 아니다.
             suppressed = [s for s in missing
@@ -1742,7 +1899,9 @@ def verify(out_dir: Path, answer_rows, args):
         # UNKNOWN 은 "아무 룰도 안 뜬 케이스" 표식이라 오탐이 아니다 — 정상군에서는
         # 오히려 이게 떠야 맞다(엔진 미분류). 별도로만 센다.
         unknown = UNKNOWN_ID in fired_all
-        unexpected = [s for s in fired_all if s not in want and s != UNKNOWN_ID]
+        # 관찰군은 겨냥이 없어 모든 발화가 "겨냥 밖"으로 세어져 동반발화 통계를 왜곡한다.
+        unexpected = ([] if r["expect"] == "observe"
+                      else [s for s in fired_all if s not in want and s != UNKNOWN_ID])
         stat["unknown"] += 1 if unknown else 0
         stat["suppressed"] += len(suppressed)
         stat["miss"] += len(missing)
@@ -1798,6 +1957,13 @@ def verify(out_dir: Path, answer_rows, args):
     if cofire:
         top = sorted(cofire.items(), key=lambda kv: -kv[1])[:8]
         print("  동반발화 상위: " + " | ".join(f"{k}×{v}" for k, v in top))
+    if observed_n:
+        # 관찰군 — 정답이 없으므로 "맞았나" 가 아니라 "무엇이라 판정했나" 를 본다.
+        print(f"\n[관찰군] 무작위 item {observed_n}개에 대한 **현재 룰** 판정 분포")
+        for sig, cnt in sorted(observed.items(), key=lambda kv: -kv[1]):
+            print(f"    {sig:22} {cnt:3}건 ({cnt / observed_n:.0%})")
+        print(f"    {'(발화 없음)':22} {observed_silent:3}건 "
+              f"({observed_silent / observed_n:.0%}) — UNKNOWN 만 붙는다")
     for sig, why in UNFIRABLE.items():
         print(f"  [발화불가] {sig}: {why}")
     return rows
@@ -1857,6 +2023,8 @@ def main():
     ap = argparse.ArgumentParser(description="eval_analyzer 디버깅용 web_report 테스트 데이터 생성")
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent / "out"))
     ap.add_argument("--items", type=int, default=500, help="test item 총 개수 (기본 500)")
+    ap.add_argument("--random-items", type=int, default=RANDOM_COUNT,
+                    help="관찰용 무작위 item 수 — 정답 기대 없이 엔진 판정만 본다 (기본 100)")
     ap.add_argument("--radius", type=int, default=0,
                     help="웨이퍼 반경(die) — 행 수 ≈ πr² (기본 28 ≈ 2,460행)")
     ap.add_argument("--seed", type=int, default=20260812)
@@ -1880,8 +2048,11 @@ def main():
 
     # 웨이퍼 크기는 필요한 CSV 장수를 거의 바꾸지 못한다(fail 이 비율로 늘기 때문) —
     # 파일이 작아지도록 2,453행(반경 28)을 기본으로 쓴다.
-    # 단일 CSV 는 item 당 chip 1,500여 개면 충분하다(엔진 최소표본 n_min 20·subpop 50).
-    args.radius = args.radius or (22 if args.single_csv else 28)
+    # 단일 CSV 는 반경 44(≈6,082 chip). fail 은 chip 을 서로 배타적으로 쓰므로(FAILTNO 는
+    # chip 당 하나) 관찰군 100개가 붙은 뒤로는 반경 22(1,517)로는 예산이 한참 모자라고,
+    # 36(4,053)에서도 90% 가 차 마지막 item 들이 밀려났다(표본이 적은 항목은 쓸 chip 자체가
+    # 없어져 fail 0 = 평가 제외가 된다).
+    args.radius = args.radius or (44 if args.single_csv else 28)
 
     out_dir = Path(args.out)
     if getattr(args, "_eval_dump"):
@@ -1958,14 +2129,16 @@ def versioned_path(path: Path) -> Path:
 CSV_EXCLUDE = {"GROSS_FAIL", "WAFER_GRADIENT", "CONSTANT_VALUE", "BIDIR_TAIL", "TAIL_RISK"}
 
 
-def single_csv_specs(n_rows: int):
-    """CSV 1장(웨이퍼 1장)에 담을 item 목록 — 단독 세트(signature × 5단계) 기준.
+def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT):
+    """CSV 1장(웨이퍼 1장)에 담을 item 목록 — 단독 세트 + 관찰군(random).
 
     분포를 spec 안에 가둬(`bounded`) fail 은 레벨 사다리(FAIL_N)만큼만 나오게 했으므로
     한 장에 들어간다. 그래도 예산(행의 90%)을 넘으면 비싼 것부터 뺀다.
     반환: (담은 specs, 제외 [(item, 필요 fail 수)], 사용한 fail 행 수)
     """
-    specs = assign_tno([s for s in single_specs() if not (set(s["intent"]) & CSV_EXCLUDE)])
+    pool = [s for s in single_specs() if not (set(s["intent"]) & CSV_EXCLUDE)]
+    pool += random_specs(random_count, random.Random(20260812))
+    specs = assign_tno(pool)
     prepare_specs(specs, n_rows)
     budget = int(n_rows * 0.9)
     kept, dropped, used = [], [], 0
@@ -2006,9 +2179,10 @@ def make_single_csv(args):
     _check_coord_limits(args)
     wafer = build_wafer(args.radius)
     n_rows = wafer[0].size
-    specs, dropped, used = single_csv_specs(n_rows)
-    print(f"[1/3] item {len(specs)}개 · chip {n_rows}개/item · fail chip {used}개 "
-          f"({used / n_rows:.0%} 사용)")
+    specs, dropped, used = single_csv_specs(n_rows, args.random_items)
+    n_random = sum(1 for s in specs if s["group"] == "random")
+    print(f"[1/3] item {len(specs)}개 (겨냥 {len(specs) - n_random} + 관찰용 무작위 {n_random}) "
+          f"· chip {n_rows}개/item · fail chip {used}개 ({used / n_rows:.0%} 사용)")
     if dropped:
         print("      예산 초과 제외: " + ", ".join(f"{n}({k})" for n, k in dropped))
     print("      CSV 1장에 못 담는 signature(별도 파일 필요): "

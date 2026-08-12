@@ -39,24 +39,34 @@ SID = "1700000002_review1"
 
 
 def make_table():
-    """ItemA 에 outlier 성 값을 섞어 SEVERE_OUTLIER/OUTLIER_WARN 후보를 만든다."""
-    cols = META_COLUMNS + ["ItemA"]
+    """item 2개 — 표본함이 다루는 두 경우를 한 세션에 담는다.
+
+    · ItemA: 넓게 퍼진 분포 + limit 바로 밖 fail → **LOW_CPK** (표본 층화 대상).
+    · ItemB: 정상 몸통에서 뚝 떨어진 fail → **OUTLIER**, 그래서 이 case 의 LOW_CPK 는
+      suppressed_by 로 지워진다(= LOW_CPK 표본이 1건만 남는 것이 억제의 증거다).
+
+    ItemB 의 pass 값에 미세한 잡음을 주는 이유: 전부 같은 값이면 MAD=0 이라 meanAD 폴백을
+    타는데, 그 경우 modified z 의 상한이 `n/(1.2533·fail수)`(60/(1.2533·8)≈6.0)로 눌려
+    임계 12 를 넘을 수 없다. 잡음이 있으면 MAD 가 정상 몸통 폭을 재어 거리가 그대로 나온다.
+    """
+    cols = META_COLUMNS + ["ItemA", "ItemB"]
     head = [
-        ["TSEQ", "", "", "", "", "", "", 1],
-        ["TNO", "", "", "", "", "", "", 100],
-        ["STEP", "", "", "", "", "", "", "P1"],
-        ["UNIT", "", "", "", "", "", "", "V"],
-        ["HILIM", "", "", "", "", "", "", 10],
-        ["LOLIM", "", "", "", "", "", "", 0],
+        ["TSEQ", "", "", "", "", "", "", 1, 2],
+        ["TNO", "", "", "", "", "", "", 100, 200],
+        ["STEP", "", "", "", "", "", "", "P1", "P1"],
+        ["UNIT", "", "", "", "", "", "", "V", "V"],
+        ["HILIM", "", "", "", "", "", "", 10, 10],
+        ["LOLIM", "", "", "", "", "", "", 0, 0],
     ]
     body = []
-    # 8/60 = 13% outlier — outlier_ratio_bad(0.05) 를 넘고 **동시에**
-    # outlier_count(8) > severe_outlier_count_min(5) 이어야 SEVERE_OUTLIER 가 뜬다.
     for i in range(60):
-        value = 5.0 if i < 52 else 15.0
-        bin_ = 4 if value > 10 else 1
-        ft = 100 if value > 10 else ""
-        body.append([f"s{i}", 1, 1, i, 0, bin_, ft, value])
+        a_fail, b_fail = 40 <= i < 48, 50 <= i < 58
+        # ItemA — spec 폭(0~10) 대비 넓게 퍼뜨려 cpk 를 떨어뜨린다. fail 은 limit 바로 밖.
+        a = 10.2 if a_fail else 1.5 + (i * 7 % 52) * 0.133
+        b = 15.0 if b_fail else 5.0 + (i % 5) * 0.02
+        bin_ = 4 if a_fail else (5 if b_fail else 1)
+        ft = 100 if a_fail else (200 if b_fail else "")
+        body.append([f"s{i}", 1, 1, i, 0, bin_, ft, a, b])
     return split_honeyform(pd.DataFrame(head + body, columns=cols),
                            source="src0", file_name="src0")
 
@@ -130,13 +140,17 @@ def test_criterion_from_rules_not_hardcoded():
     th = eval_debug.effective_thresholds("MDDI", "MDDI_ETC")
     sigs = {s["id"]: s for s in eval_debug.signatures_scoped("MDDI", "MDDI_ETC")}
 
-    assert review._rule_criterion(sigs["SEVERE_OUTLIER"], th) \
-        == ("outlier_ratio", ">", "outlier_ratio_bad")
-    assert review._rule_criterion(sigs["OUTLIER_WARN"], th) \
-        == ("outlier_ratio", ">", "outlier_ratio_warn")
-    # SUBPOP_GAP 은 when_metric 이 판정 기준이 아니라 yaml review_metric 을 따른다.
-    assert review._rule_criterion(sigs["SUBPOP_GAP"], th) \
+    assert review._rule_criterion(sigs["LOW_CPK"], th) == ("cpk", "<", "cpk_warn")
+    assert review._rule_criterion(sigs["MEAN_SHIFT"], th) \
+        == ("center_bias", ">", "mean_shift_warn")
+    # BIMODALITY 는 when_metric 이 판정 기준이 아니라 yaml review_metric 을 따른다.
+    assert review._rule_criterion(sigs["BIMODALITY"], th) \
         == ("density_gap", ">", "subpop_density_gap_warn")
+    # 스냅샷에서 되살릴 수 없는 지표(per-DUT 원본 필요)는 층화하지 않는다 — OUTLIER 의
+    # fail_robust_z_max, 공간 룰의 *_fail_share 가 여기 해당한다. 억지로 정렬하는 대신
+    # 사유가 보이게 None 을 돌려준다(빈 표본 목록이 이유 없이 뜨는 것을 막는다).
+    assert review._rule_criterion(sigs["OUTLIER"], th) is None
+    assert review._rule_criterion(sigs["EDGE_FAIL"], th) is None
     # 임계값 키를 참조하지 않는 룰은 층화 불가로 정직하게 None
     assert review._rule_criterion({"when_metric": {"stdev": "<=0"}}, th) is None
     print("[b] 기준 metric 이 yaml 에서 나옴 OK")
@@ -191,27 +205,28 @@ def main():
     assert set(by_id) == deployed, (sorted(by_id), sorted(deployed))
     # UNKNOWN(미분류 명시 발화)은 임계값이 없어 강화할 대상이 없다 — 무판정 트랙의 몫.
     assert eval_debug.unknown_id() not in by_id
-    severe = by_id["SEVERE_OUTLIER"]
-    assert severe["criterion"]["threshold_key"] == "outlier_ratio_bad"
+    severe = by_id["LOW_CPK"]
+    assert severe["criterion"]["threshold_key"] == "cpk_warn"
     assert severe["pending_total"] >= 1 and severe["samples"], severe
-    # suppressed_by 가 실제로 먹었는지 — SEVERE 가 떴으면 OUTLIER_WARN 은 표본이 없다.
-    assert by_id["OUTLIER_WARN"]["pending_total"] == 0, \
-        "SEVERE_OUTLIER 동반발화인데 OUTLIER_WARN 이 남았다(suppressed_by 미적용)"
-    print(f"[c] 표본함 조회 OK — SEVERE_OUTLIER 후보 {severe['pending_total']}건, "
-          f"OUTLIER_WARN 억제됨")
+    # suppressed_by 가 실제로 먹었는지 — ItemB 도 cpk 는 낮지만 원인이 OUTLIER 라
+    # 그 case 의 LOW_CPK 는 지워진다. 그래서 후보는 ItemA 하나뿐이어야 한다.
+    assert severe["pending_total"] == 1, \
+        f"OUTLIER 동반발화 case 의 LOW_CPK 가 남았다(suppressed_by 미적용): {severe}"
+    print(f"[c] 표본함 조회 OK — LOW_CPK 후보 {severe['pending_total']}건, "
+          f"OUTLIER case 는 억제됨")
 
     sample = severe["samples"][0]
     review.save_review_label(sample["eval_id"], correct=False, comment="산발 아님",
                              reviewer="tester")
     q2 = review.queue("MDDI", "MDDI_ETC")
-    s2 = {r["id"]: r for r in q2["rules"]}["SEVERE_OUTLIER"]
+    s2 = {r["id"]: r for r in q2["rules"]}["LOW_CPK"]
     assert s2["labeled"] == 1 and s2["labeled_over"] == 1, s2
     assert all(x["eval_id"] != sample["eval_id"] for x in s2["samples"]), \
         "검수한 케이스가 다시 표본으로 나왔다"
     print("[c] 검수 라벨 저장·재출제 방지 OK")
 
     # (d) 추천 게이트 — 표본이 적으면 만들지 않는다
-    p = review.proposal("SEVERE_OUTLIER", "MDDI", "MDDI_ETC")
+    p = review.proposal("LOW_CPK", "MDDI", "MDDI_ETC")
     assert "blocked" in p and "표본 부족" in p["blocked"], p
     print(f"[d] 추천 게이트 OK — {p['blocked']}")
 

@@ -26,6 +26,10 @@ _FEATURE_KEYS = [
     "value_gap_ratio", "value_gap_minor_mass",
     # 파생(DB 미저장): E1(최외곽 1 chip line) 집중도 · 모멘트 왜도
     "e1_fail_ratio", "skewness_moment",
+    # 파생(DB 미저장): OUTLIER 판정용 — fail 값이 분포 중심에서 얼마나 떨어졌나
+    "fail_robust_z_max", "fail_value_gap_norm",
+    # 파생(DB 미저장): 공간 룰 판정용 — 전체 fail 중 그 영역이 차지하는 **점유율**
+    "e1_fail_share", "edge_fail_share", "center_fail_share", "ring_fail_share",
 ]
 
 
@@ -106,6 +110,61 @@ def _n_modes(v):
     peaks, _ = peaks_hist
     return max(len(peaks), 1)
 
+def _modified_z(v, median, mad):
+    """Iglewicz-Hoaglin modified z (MAD 기반). MAD=0(과반 동일값)이면 meanAD 폴백.
+
+    표준편차 대신 중앙값·MAD 를 쓰는 이유는 **자가 오염** 때문이다 — 멀리 튄 값이 몇 개만
+    있어도 stdev 가 그만큼 커져 그 값의 z 가 도로 작아진다(masking). 중앙값 기준은 표본
+    절반이 오염돼도 흔들리지 않는다. 정규분포에서 1.4826·MAD ≈ σ 라 스케일도 호환된다.
+    둘 다 0(전부 동일값)이면 흩어짐 자체가 없으므로 None.
+    """
+    if mad != 0:
+        return 0.6745 * (v - median) / mad
+    mean_ad = float(np.mean(np.abs(v - median)))
+    if mean_ad > 0:
+        return (v - median) / (1.253314 * mean_ad)
+    return None
+
+
+def _fail_outlier_features(v, fail_mask, median, mad, mean, lsl, usl):
+    """fail 값이 정상 몸통에서 얼마나 떨어졌는지 — (robust z 최대, 정규화 gap).
+
+    `fail_robust_z_max` 가 OUTLIER 룰의 판정 근거다. "fail 비율이 몇 %냐"(outlier_ratio)가
+    아니라 "fail 이 얼마나 멀리 떨어졌냐"를 본다 — limit 바로 밖에 붙은 fail(공정능력 문제)과
+    뚝 떨어진 fail(산발 이상)을 가르는 것이 이 축이기 때문이다.
+    `fail_value_gap_norm` 은 판정에 쓰지 않는 참고 지표 — 마지막 pass 와 첫 fail 사이의
+    빈 구간을 (limit − 평균) 으로 정규화한 값이라 트레이스에서 눈으로 보는 용도다.
+    """
+    fm = np.asarray(fail_mask, dtype=bool)
+    if fm.size != v.size or not fm.any():
+        return None, None
+    ok = np.isfinite(v)
+    z = _modified_z(v, median, mad)
+    z_max = None
+    if z is not None:
+        zf = np.abs(z)[fm & ok]
+        if zf.size:
+            z_max = float(zf.max())
+
+    gap = None
+    fv, pv = v[fm & ok], v[(~fm) & ok]
+    if fv.size and pv.size:
+        cands = []
+        hi_f = fv[fv > mean]
+        if hi_f.size and usl is not None and (usl - mean) > 0:
+            hi_p = pv[pv < hi_f.min()]
+            if hi_p.size:
+                cands.append(float((hi_f.min() - hi_p.max()) / (usl - mean)))
+        lo_f = fv[fv < mean]
+        if lo_f.size and lsl is not None and (mean - lsl) > 0:
+            lo_p = pv[pv > lo_f.max()]
+            if lo_p.size:
+                cands.append(float((lo_p.min() - lo_f.max()) / (mean - lsl)))
+        if cands:
+            gap = max(cands)
+    return z_max, gap
+
+
 def _gradient(coord, fail_mask, bins=8):
     """coord 를 bins 구간으로 나눠 구간별 fail율 회귀 기울기."""
     coord = np.asarray(coord, dtype=float)
@@ -159,8 +218,12 @@ def _e1_mask(xs, ys):
 def _spatial_features(case_ctx, th):
     """웨이퍼 좌표 기반 fail 편중 feature. 좌표가 없거나 fail 이 0 이면 전부 None.
 
-    반경을 최대반경으로 정규화해 edge/center/ring 영역을 가르고, 각 영역의 fail 율을
-    **전체 fail 율로 나눈 비**를 낸다 — 1.0 이면 편중 없음, 클수록 그 영역에 몰린 것.
+    반경을 최대반경으로 정규화해 edge/center/ring 영역을 가르고, 영역마다 두 가지를 낸다:
+      · `*_fail_ratio`  = 영역 fail율 / 전체 fail율 — 1.0 이면 편중 없음(밀도 비)
+      · `*_fail_share`  = 영역 fail 수 / 전체 fail 수 — "그 영역이 fail 을 몇 % 가졌나"(점유율)
+    **룰 판정은 share 를 쓴다**(2026-08-12). 밀도 비는 영역이 좁을수록 쉽게 커지고
+    수학적 상한도 영역마다 달라(edge≈2.8, center≈11, ring≈1.8) 임계값을 공유할 수 없는데,
+    엔지니어가 "edge 불량"이라 부르는 것은 결국 "fail 이 죄다 edge 에 있다"이기 때문이다.
     gradient 는 좌표를 8구간으로 나눈 구간별 fail 율의 회귀 기울기이고, `_norm` 변형은
     좌표 스케일이 제품마다 달라도 비교되도록 정규화 좌표로 다시 잰 값이다.
     영역 경계(edge_region_pct/center_region_pct)는 thresholds.yaml.
@@ -172,7 +235,9 @@ def _spatial_features(case_ctx, th):
            "quadrant_imbalance": None, "x_gradient": None, "y_gradient": None,
            "wafer_zone_signature": None, "ring_fail_ratio" : None,
            "radial_gradient_norm" : None, "x_gradient_norm" : None, "y_gradient_norm" : None,
-           "e1_fail_ratio" : None}
+           "e1_fail_ratio" : None,
+           "e1_fail_share": None, "edge_fail_share": None,
+           "center_fail_share": None, "ring_fail_share": None}
     xs = np.array([v if v is not None else np.nan for v in x], dtype=float)
     ys = np.array([v if v is not None else np.nan for v in y], dtype=float)
     fm = np.asarray(fail_mask, dtype=bool)
@@ -200,14 +265,12 @@ def _spatial_features(case_ctx, th):
         edge_mask = (rnorm >= th["edge_region_pct"]) & (~e1)
         center_mask = rnorm <= th["center_region_pct"]
         ring_mask = (rnorm > th["center_region_pct"]) & (rnorm <th["edge_region_pct"]) & (~e1)
-        if e1.sum():
-            out["e1_fail_ratio"] = float(fm[e1].mean() / overall_fail)
-        if edge_mask.sum():
-            out["edge_fail_ratio"] = float(fm[edge_mask].mean() / overall_fail)
-        if center_mask.sum():
-            out["center_fail_ratio"] = float(fm[center_mask].mean() / overall_fail)
-        if ring_mask.sum():
-            out["ring_fail_ratio"] = float(fm[ring_mask].mean() / overall_fail)
+        fail_total = float(fm.sum())
+        for name, mask in (("e1", e1), ("edge", edge_mask),
+                           ("center", center_mask), ("ring", ring_mask)):
+            if mask.sum():
+                out[f"{name}_fail_ratio"] = float(fm[mask].mean() / overall_fail)
+                out[f"{name}_fail_share"] = float(fm[mask].sum() / fail_total)
         out["radial_gradient"] = _gradient(radius, fm)
         out["radial_gradient_norm"] = _gradient(rnorm,fm)
 
@@ -235,7 +298,7 @@ def _spatial_features(case_ctx, th):
 
 def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, density_gap,
                           value_gap_ratio, value_gap_minor_mass, th):
-    """이봉·다봉·분리 판정 — SUBPOP_GAP 발화의 유일한 근거. 반환: bimodal|multimodal|separated|None.
+    """이봉·다봉·분리 판정 — BIMODALITY 발화의 유일한 근거. 반환: bimodal|multimodal|separated|None.
 
     게이트 2개를 먼저 통과해야 한다: 표본이 `subpop_n_min` 이상이고, outlier_ratio 가
     `subpop_outlier_ratio_max` 미만일 것. ⚠ 후자 때문에 **소수 모드가 outlier 로 잡히는
@@ -264,19 +327,17 @@ def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, densi
 def _classify_zone(spatial, th):
     """공간 feature → wafer_zone_signature. 앞에서 걸리는 것이 이긴다.
 
-    E1(최외곽 한 줄) → EDGE(가장자리 밴드) → CENTER(중앙 편중) → CLUSTER(사분면 불균형)
-    순으로 보고, 아무 것도 임계를 넘지 못하면 RANDOM.
+    E1(최외곽 한 줄) → EDGE(가장자리 밴드) → CENTER(중앙 편중) → RING(중간 밴드) →
+    CLUSTER(사분면 불균형) 순으로 보고, 아무 것도 임계를 넘지 못하면 RANDOM.
+    **공간 룰과 같은 기준(share)을 쓴다** — 이 라벨과 발화 룰이 갈라지면 같은 화면에서
+    "zone 은 RANDOM 인데 EDGE_FAIL 이 떴다" 같은 모순이 보인다.
     """
-    e1 = spatial.get("e1_fail_ratio")
-    edge = spatial.get("edge_fail_ratio")
-    center = spatial.get("center_fail_ratio")
     quad = spatial.get("quadrant_imbalance")
-    if e1 is not None and e1 >= th.get("e1_fail_ratio_warn", th["edge_fail_ratio_warn"]):
-        return "E1"
-    if edge is not None and edge >= th["edge_fail_ratio_warn"]:
-        return "EDGE"
-    if center is not None and center >= th["edge_fail_ratio_warn"]:
-        return "CENTER"
+    for name, key in (("E1", "e1_fail_share"), ("EDGE", "edge_fail_share"),
+                      ("CENTER", "center_fail_share"), ("RING", "ring_fail_share")):
+        share = spatial.get(key)
+        if share is not None and share >= th["region_fail_share_min"]:
+            return name
     if quad is not None and quad >= th["quadrant_imbalance_warn"]:
         return "CLUSTER"
     return "RANDOM"
@@ -336,18 +397,12 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     if lsl is not None and usl is not None and (usl - lsl) != 0:
         spread_norm = robust_sigma / (usl - lsl)
 
-    if mad != 0:
-        modified_z = 0.6745 * (v - median) / mad
-        outlier_ratio = float(np.mean(np.abs(modified_z) > th["outlier_sigma"]))
-    else:
-        # MAD=0(과반 동일값) — Iglewicz-Hoaglin meanAD 폴백. 그냥 0 으로 두면
-        # "대부분 동일값 + 소수 폭주" 케이스를 outlier 룰이 통째로 놓친다.
-        mean_ad = float(np.mean(np.abs(v - median)))
-        if mean_ad > 0:
-            modified_z = (v - median) / (1.253314 * mean_ad)
-            outlier_ratio = float(np.mean(np.abs(modified_z) > th["outlier_sigma"]))
-        else:
-            outlier_ratio = 0.0
+    # MAD=0(과반 동일값)이면 meanAD 폴백 — 그냥 0 으로 두면 "대부분 동일값 + 소수 폭주"
+    # 케이스를 outlier 룰이 통째로 놓친다. 폴백 규칙은 _modified_z 가 갖고 있고,
+    # fail_robust_z_max 도 같은 함수를 써서 두 지표의 자(尺)가 갈라지지 않게 한다.
+    modified_z = _modified_z(v, median, mad)
+    outlier_ratio = (0.0 if modified_z is None
+                     else float(np.mean(np.abs(modified_z) > th["outlier_sigma"])))
 
     mean = float(v.mean())
     stdev = raw_metrics.get("stdev")
@@ -387,6 +442,8 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     spatial = _spatial_features(case_ctx, th)
     site_cpk_delta = _site_cpk_delta(case_ctx)
     code_edge_hit = limit_hit_ratio if case_ctx.get("value_type") == "CODE" else None
+    fail_robust_z_max, fail_value_gap_norm = _fail_outlier_features(
+        v, case_ctx.get("fail_mask") or [], median, mad, mean, lsl, usl)
 
     if is_pf:
         spread_norm = skewness = kurtosis = skewness_moment = None
@@ -394,6 +451,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         spec_margin_low = spec_margin_high = nearest_spec_side = limit_hit_ratio = None
         n_modes = modality_v2 = None
         value_gap_ratio = value_gap_minor_mass = None
+        fail_robust_z_max = fail_value_gap_norm = None
 
     return {
         "spread_norm": spread_norm, "skewness": skewness, "kurtosis": kurtosis,
@@ -406,4 +464,5 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         "n_dut": n, "site_cpk_delta": site_cpk_delta, "code_edge_hit": code_edge_hit,
         "n_modes" : n_modes, "modality_v2" : modality_v2,
         "value_gap_ratio": value_gap_ratio, "value_gap_minor_mass": value_gap_minor_mass,
+        "fail_robust_z_max": fail_robust_z_max, "fail_value_gap_norm": fail_value_gap_norm,
     }

@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>서버 안정화 · 동시접속 대응 보고</title>
+<!--
+  보고용 문서 (2026-08-12). 독자: 개발 경력은 길지만 웹서버 운영 세부는 보지 않는 결정권자.
+  비유 없이 실제 용어를 쓰되 뜻을 한 줄로 밝히고, 코드 근거는 각 절의 '근거' 접기에 둔다.
+  의존성 없는 단일 파일 — 브라우저로 그냥 열면 된다. 라이트/다크 자동.
+  코드가 바뀌면 이 문서도 같이 고칠 것.
+-->
+<style>
+  :root {
+    --ground: #eef0f6; --surface: #ffffff; --surface-2: #f6f7fb;
+    --ink: #161a2b; --ink-2: #4a5169; --ink-3: #767d95;
+    --line: #d9dde9; --line-2: #c3c9db;
+    --accent: #3b4fd8; --accent-soft: #e7eafc;
+    --ok: #0f7a5a; --ok-soft: #e2f3ec;
+    --warn: #9a6200; --warn-soft: #fbf0da;
+    --bad: #b3341f; --bad-soft: #fbe8e4;
+    --new: #6b2fb3; --new-soft: #f0e8fb;
+    --shadow: 0 1px 2px rgba(22,26,43,.06), 0 8px 24px -12px rgba(22,26,43,.18);
+    --sans: ui-sans-serif, "Segoe UI", system-ui, -apple-system, "Malgun Gothic", sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", Consolas, "D2Coding", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0e1017; --surface: #161a25; --surface-2: #1c212e;
+      --ink: #e4e8f2; --ink-2: #b3bacd; --ink-3: #838ba4;
+      --line: #2a3142; --line-2: #3a4356;
+      --accent: #8798ff; --accent-soft: #1e2542;
+      --ok: #4ecfa4; --ok-soft: #12312a;
+      --warn: #e0ac52; --warn-soft: #332813;
+      --bad: #ff8a72; --bad-soft: #3a1e1a;
+      --new: #c39bf0; --new-soft: #2a1e3d;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -14px rgba(0,0,0,.7);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 20px 80px; background: var(--ground); color: var(--ink);
+    font-family: var(--sans); font-size: 15.5px; line-height: 1.75;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+  header.top { padding: 46px 0 22px; border-bottom: 1px solid var(--line); }
+  h1 { font-size: 31px; margin: 0 0 12px; letter-spacing: -.02em; }
+  .sub { color: var(--ink-2); margin: 0; max-width: 76ch; }
+  .meta { color: var(--ink-3); font-size: 13px; margin-top: 16px; }
+  h2 {
+    font-size: 22px; margin: 50px 0 4px; padding-top: 20px;
+    border-top: 2px solid var(--line-2); letter-spacing: -.01em;
+  }
+  h2 .num { display: inline-block; min-width: 32px; color: var(--accent); }
+  h4 { font-size: 16px; margin: 22px 0 4px; color: var(--ink); }
+  p { margin: 8px 0 14px; max-width: 84ch; }
+  p.lead { color: var(--ink-2); }
+  .small { font-size: 13.5px; color: var(--ink-2); }
+  code {
+    font-family: var(--mono); font-size: .87em; background: var(--surface-2);
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; white-space: nowrap;
+  }
+  .summary {
+    background: var(--surface); border: 1px solid var(--line); border-left: 5px solid var(--accent);
+    border-radius: 12px; padding: 20px 24px; box-shadow: var(--shadow); margin: 26px 0 8px;
+  }
+  .summary h3 { margin: 0 0 8px; font-size: 18px; }
+  .summary ul { margin: 10px 0 0; padding-left: 20px; }
+  .summary li { margin: 8px 0; color: var(--ink-2); }
+  .summary li b { color: var(--ink); }
+  .terms { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 13px; margin: 18px 0; }
+  .term {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+    padding: 13px 16px; box-shadow: var(--shadow);
+  }
+  .term b { display: block; font-size: 14.5px; margin-bottom: 3px; }
+  .term span { color: var(--ink-2); font-size: 13.5px; line-height: 1.62; }
+  .case {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); margin: 18px 0; padding: 16px 20px 18px;
+  }
+  .case h4 { margin: 0 0 2px; font-size: 17px; }
+  .case p { margin: 6px 0 10px; }
+  .lbl {
+    display: inline-block; font-size: 11.5px; font-weight: 700; letter-spacing: .04em;
+    color: var(--ink-3); margin-top: 8px;
+  }
+  .result {
+    background: var(--ok-soft); color: var(--ok); border-radius: 8px;
+    padding: 9px 14px; font-size: 14px; font-weight: 600; margin-top: 4px; display: inline-block;
+  }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(305px, 1fr)); gap: 14px; margin: 18px 0; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .card h4 { margin: 0 0 6px; font-size: 15px; }
+  .card p { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.65; }
+  .card .why { display: block; margin-top: 8px; color: var(--ink-3); font-size: 12.5px; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+  .pill.new { background: var(--new-soft); color: var(--new); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .note {
+    background: var(--surface-2); border-left: 3px solid var(--accent);
+    padding: 13px 17px; border-radius: 0 8px 8px 0; margin: 18px 0; color: var(--ink-2); font-size: 14px;
+  }
+  .note.bad { border-left-color: var(--bad); }
+  .note b { color: var(--ink); }
+  .scroll { overflow-x: auto; margin: 14px 0; }
+  table {
+    border-collapse: collapse; width: 100%; min-width: 560px; background: var(--surface);
+    border-radius: 10px; box-shadow: var(--shadow); overflow: hidden;
+  }
+  th, td { text-align: left; vertical-align: top; padding: 11px 14px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  th { background: var(--surface-2); color: var(--ink-2); font-weight: 600; white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.gain { color: var(--ok); font-weight: 700; white-space: nowrap; }
+  td.when { white-space: nowrap; color: var(--ink-3); font-size: 13px; }
+  details {
+    background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px;
+    padding: 10px 14px; margin: 14px 0;
+  }
+  details summary { cursor: pointer; color: var(--ink-2); font-weight: 600; font-size: 13px; }
+  details .in { margin-top: 10px; color: var(--ink-3); font-family: var(--mono); font-size: 11.8px; line-height: 1.8; }
+  ul.tight { margin: 8px 0 14px; padding-left: 22px; color: var(--ink-2); }
+  ul.tight li { margin: 5px 0; }
+  ul.tight li b { color: var(--ink); }
+  .timeline { border-left: 2px solid var(--line-2); margin: 18px 0; padding-left: 0; list-style: none; }
+  .timeline li { position: relative; padding: 0 0 13px 22px; color: var(--ink-2); font-size: 14px; }
+  .timeline li::before {
+    content: ""; position: absolute; left: -6px; top: 10px; width: 10px; height: 10px;
+    background: var(--line-2); border: 2px solid var(--surface); border-radius: 50%;
+  }
+  .timeline li.hi::before { background: var(--accent); }
+  .timeline li.now::before { background: var(--new); }
+  .timeline .date { font-family: var(--mono); font-size: 12px; color: var(--ink-3); margin-right: 8px; }
+  .timeline b { color: var(--ink); }
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin: 16px 0; }
+  .flow .box {
+    background: var(--surface); border: 1px solid var(--line-2); border-radius: 10px;
+    padding: 11px 14px; flex: 1 1 175px; min-width: 165px;
+  }
+  .flow .box b { display: block; font-size: 13.5px; margin-bottom: 3px; }
+  .flow .box span { color: var(--ink-3); font-size: 12.5px; line-height: 1.55; }
+  .flow .box.accent { border-color: var(--accent); background: var(--accent-soft); }
+  .arrow { align-self: center; color: var(--ink-3); font-size: 17px; }
+  footer { margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>서버 안정화 · 동시접속 대응 보고</h1>
+  <p class="sub">
+    리포트 서버가 사용자 증가에도 멈추거나 오류를 내지 않도록 지금까지 적용한 구조 개선과,
+    이번에 접속 규모가 늘면서 추가로 조치한 내용을 정리했습니다.
+  </p>
+  <p class="meta">
+    2026-08-12 · 목표 규모: 접속 사용자 약 30명, 동시 세션 사용 약 15명 ·
+    서버 자원: 16코어 64GB 중 타 서버 2개 상주 → 이 서버 실효 예산 약 14코어 48GB
+  </p>
+</header>
+
+<div class="summary">
+  <h3>요약</h3>
+  <ul>
+    <li><b>결론</b> — 현재 구조로 “동시 15명이 기존 세션을 조회·편집”하는 주 사용 패턴은 감당 가능합니다.
+        다만 동시 처리 설정이 <b>과거 10명 기준</b>으로 남아 있었고, 드물지만 서버 전체를 마비시킬 수 있는
+        경로가 몇 개 확인되어 이번에 조치했습니다.</li>
+    <li><b>접근 방식</b> — 자원 증설이 아니라 <b>중복 계산 제거와 작업 위치 이동</b>으로 해결했습니다.
+        같은 계산을 사람마다 반복하지 않게 하고, 무거운 계산은 요청 처리 경로 밖으로 빼는 방식입니다.</li>
+    <li><b>주요 성과</b> — 리포트 첫 화면 전송량 <b>55MB → 3.3MB</b>, 웨이퍼 맵 첫 진입
+        <b>30초 이상 → 3초 이내</b>, 배포 직후 세션 열기 <b>1분 → 5초</b>.</li>
+    <li><b>이번 조치 5건</b> — 동시 처리 스레드 상향, 워커 전멸 연쇄 차단, 저장 시 최대 10초 지연 제거,
+        오분류된 404 오류 교정, WAL 정리 실패 감지.</li>
+    <li><b>남은 사항</b> — 30명 규모 부하 시험이 미실시이며, 이번 변경은 <b>서버 재기동 후 적용</b>됩니다.</li>
+  </ul>
+</div>
+
+<h2><span class="num">1</span>용어</h2>
+<p class="lead">본문에서 반복되는 용어의 정의입니다.</p>
+<div class="terms">
+  <div class="term">
+    <b>스레드 (thread)</b>
+    <span>요청 하나를 처리하는 실행 단위입니다. 서버는 스레드 수만큼 요청을 동시에 받습니다.
+    대부분 파일·네트워크 대기 상태라 개수를 늘려도 CPU 부담은 크지 않습니다.</span>
+  </div>
+  <div class="term">
+    <b>프로세스 (process)</b>
+    <span>독립된 메모리 공간을 가진 실행 단위입니다. 파이썬은 <b>한 프로세스 안에서 CPU 연산이 한 번에
+    하나씩만</b> 수행되므로(GIL), 무거운 계산을 진짜로 동시에 돌리려면 프로세스를 나눠야 합니다.
+    스레드만 늘려서는 해결되지 않습니다.</span>
+  </div>
+  <div class="term">
+    <b>캐시 (cache)</b>
+    <span>한 번 계산한 결과를 보관해 두었다가 재사용하는 저장소입니다. 이 서버는 메모리·디스크·
+    완성 응답 3단계로 보관합니다.</span>
+  </div>
+  <div class="term">
+    <b>콜드 / 웜 (cold / warm)</b>
+    <span>콜드는 캐시에 없어 처음부터 계산해야 하는 상태(수 초~수십 초), 웜은 이미 계산돼 있어 즉시
+    응답하는 상태입니다. 성능 문제는 대부분 콜드 경로에서 발생합니다.</span>
+  </div>
+  <div class="term">
+    <b>HTTP 상태 코드 404 / 503</b>
+    <span>404는 “해당 자원이 존재하지 않음”, 503은 “일시적으로 처리 불가, 재시도 가능”입니다.
+    같은 장애라도 404를 주면 사용자는 세션이 삭제된 것으로 판단해 재시도하지 않습니다.</span>
+  </div>
+  <div class="term">
+    <b>watchdog</b>
+    <span>서버 상태를 5분 주기로 점검해 응답이 없으면 자동 재기동하는 감시 스크립트입니다.
+    <b>부하로 응답이 늦은 것</b>을 다운으로 오판하면 정상 서버를 재기동해 사용 중 세션이 끊깁니다.</span>
+  </div>
+</div>
+
+<h2><span class="num">2</span>핵심 개선 3건</h2>
+<p class="lead">지금까지 적용한 12개 항목 중 효과가 가장 컸던 3건입니다.</p>
+
+<div class="case">
+  <h4>① 정렬 연산을 클라이언트(Honey)로 이관</h4>
+  <span class="lbl">문제</span>
+  <p>Distribution(누적분포) 차트는 측정값을 <b>정렬</b>해야 생성됩니다. 항목 수와 소스 수가 곱해지는
+  구조라 대용량 세션에서는 정렬만으로 수십 초의 CPU 를 소모했고, <b>사용자가 열 때마다 같은 정렬을
+  반복</b>했습니다. 서버에서 가장 무거운 지점이었습니다.</p>
+  <span class="lbl">조치</span>
+  <p>업로드 시점에 <b>Honey 클라이언트가 정렬과 중복 묶기까지 완료한 결과(pack)</b>를 함께 전송하도록
+  변경했습니다. 서버는 조회 시 누적합(덧셈)만 수행합니다. 정렬은 데이터당 한 번, 업로드하는 PC 에서만
+  일어납니다.</p>
+  <span class="lbl">설계상 유의점</span>
+  <p>이 결과물은 <b>캐시가 아니라 영구 저장</b>합니다. 캐시로 두면 용량 상한에 걸려 삭제되고 서버 재정렬이
+  재발하기 때문입니다. 또한 클라이언트 산출값과 서버 계산값이 <b>완전히 동일한지 자동 검사</b>로 확인합니다.
+  정확도를 희생한 최적화가 아닙니다.</p>
+  <div class="result">서버 최대 병목이던 Distribution 정렬 제거 (2026-07-23)</div>
+</div>
+
+<div class="case">
+  <h4>② 썸네일 렌더링 점 개수 축소 (데이터는 전량 유지)</h4>
+  <div class="note bad" style="margin-top:10px">
+    <b>전제</b> — 이 프로젝트는 <b>Distribution 데이터의 다운샘플링을 금지</b>합니다. 데이터를 솎아내면
+    리포트 수치의 신뢰가 무너지기 때문입니다. 여기서 줄이는 대상은 <b>브라우저가 썸네일에 그리는 점의
+    개수</b>뿐이며, 서버 응답 데이터와 확대 보기 차트는 전량 그대로입니다.
+  </div>
+  <span class="lbl">문제</span>
+  <p>Issue Table 안의 소형 분포 셀(가로 약 112px)에 모든 점을 그리고 있었습니다. 해당 크기에서 실제로
+  표현 가능한 픽셀은 약 1.7만 개인데, 소스 40개 세션은 <b>6만 개를 중첩해서 그렸습니다.</b> 화면에 나타나지
+  않는 연산이라 표 스크롤 시 지연이 발생했습니다.</p>
+  <span class="lbl">조치</span>
+  <p>셀 단위 점 예산을 정하고 소스 수로 나눠 배분했으며, 렌더링도 SVG 마커에서 canvas 로 변경해 DOM 부담을
+  없앴습니다. 점을 솎을 때는 <b>분포 꼬리 구간과 고립점(이상치)을 강제 보존</b>합니다. 균등 간격으로 솎으면
+  판단에 필요한 이상치가 먼저 사라지기 때문입니다.</p>
+  <div class="result">썸네일 1장 렌더 44.6ms → 11.3ms · 형상 오차 10~20% → 3% (2026-07-20/21)</div>
+</div>
+
+<div class="case">
+  <h4>③ 요청 처리와 계산 실행의 분리</h4>
+  <span class="lbl">문제</span>
+  <p>파이썬 GIL 때문에 한 프로세스 안에서는 CPU 연산이 직렬화됩니다. 그래서 한 사용자가 새 세션을 여는
+  계산을 하는 동안 <b>무관한 사용자의 목록 조회·검색까지 함께 지연</b>됐습니다.</p>
+  <span class="lbl">조치</span>
+  <p>무거운 계산을 <b>별도 워커 프로세스 8개</b>로 분리했습니다. 요청을 받는 스레드는 계산을 직접 수행하지
+  않습니다. 역할은 다음과 같이 분리되어 있습니다.</p>
+  <div class="flow">
+    <div class="box accent"><b>waitress 요청 스레드 · 28</b><span>HTTP 요청 수신·응답 전용. 대부분 I/O 대기</span></div>
+    <div class="arrow">→</div>
+    <div class="box"><b>온디맨드 소비자 스레드 · 8</b><span>대기 중인 콜드 빌드를 워커에 전달</span></div>
+    <div class="arrow">→</div>
+    <div class="box"><b>컴퓨트 워커 프로세스 · 8</b><span>실제 계산 수행. 프로세스가 분리되어 GIL 무관</span></div>
+  </div>
+  <p class="small">이 외에 <b>프리웜 소비자</b>(업로드 직후 예열), <b>정렬 pack 생성 전용 소비자</b>,
+  <b>재웜 스윕</b>(재기동 후 예열), <b>진단 리스너</b>(요청 스레드 풀 밖에서 동작해 풀이 포화되어도 응답)가
+  각각 별도로 동작합니다.</p>
+  <div class="result">계산 부하가 조회 응답성을 잠식하지 않도록 격리 (2026-07-11, 워커 8 상향 08-06)</div>
+</div>
+
+<details>
+  <summary>근거 (코드 위치)</summary>
+  <div class="in">
+    ① web_report/dist_pack.py:1-25 · dist_pack_store.py · docs/12 §22-57 · 값 일치 검증 tests/test_dist_pack.py<br>
+    ② static/webreport/distribution.js:43-55, 788-920 · docs/11 §775-814 · 금지 원칙 CLAUDE.md 규칙5 · 자동 가드 perf_guard R01/R02<br>
+    ③ web_report/compute.py:1-18 · server/wsgi.py:318-334 · docs/12 §121-127 · 워커/소비자 짝 유지 가드 perf_guard S03
+  </div>
+</details>
+
+<h2><span class="num">3</span>그 외 적용 항목 9건</h2>
+<div class="cards">
+  <div class="card">
+    <h4>④ 콜드 빌드 비동기 처리 (HTTP 202)</h4>
+    <p>캐시에 없는 세션은 계산에 수 초~수십 초가 걸립니다. 요청 스레드를 점유한 채 기다리지 않고
+    <b>“생성 중” 응답을 즉시 반환</b>한 뒤 백그라운드에서 생성합니다. 화면에는 진행 상태와 예상 소요가
+    표시됩니다.</p>
+    <span class="why">미적용 시: 신규 세션 동시 조회가 늘수록 요청 스레드가 고갈되어 검색·목록까지 지연</span>
+  </div>
+  <div class="card">
+    <h4>⑤ 3단계 캐시 + 중복 계산 방지</h4>
+    <p>메모리 · 디스크 · 완성 응답(gzip) 3단계로 보관합니다. 동일 세션을 15명이 동시에 열어도
+    <b>계산은 1회</b>만 수행하고 나머지는 그 결과를 공유합니다.</p>
+    <span class="why">미적용 시: 접속자 수만큼 동일 계산 반복</span>
+  </div>
+  <div class="card">
+    <h4>⑥ 프리웜 / 재기동 후 재웜</h4>
+    <p>업로드 직후 서버가 미리 계산해 둡니다. 재기동·배포 후에는 최근 세션 30건을 자동 예열하되,
+    <b>사용자 요청이 대기 중이면 양보</b>합니다.</p>
+    <span class="why">미적용 시 실제 사례: 배포 직후 세션 열기 5초 → 1분</span>
+  </div>
+  <div class="card">
+    <h4>⑦ Map Analysis 3초 SLA</h4>
+    <p>웨이퍼 맵은 die 수가 많아 첫 진입이 상시 콜드였습니다. 리포트 생성 시 <b>이미 메모리에 올라온 동일
+    데이터로 맵까지 함께 생성</b>하도록 순서를 바꿨습니다. 데이터 축소는 하지 않았습니다.</p>
+    <span class="why">효과: 30초 이상 → 3초 이내 (자동 측정으로 상시 감시)</span>
+  </div>
+  <div class="card">
+    <h4>⑧ 동시 실행 상한</h4>
+    <p>업로드는 동시 2건, 챗봇은 동시 3건까지 처리하고 초과분은 대기시키지 않고 즉시 거절 응답을 보냅니다.</p>
+    <span class="why">미적용 시: 업로드 몇 건이 요청 스레드를 모두 점유 → 조회·상태 점검까지 무응답 → watchdog 오판 재기동</span>
+  </div>
+  <div class="card">
+    <h4>⑨ DB 동시성 (WAL)</h4>
+    <p>읽기와 쓰기가 서로를 차단하지 않는 방식(WAL)으로 운용합니다. 백업은 온라인 백업 API 로 수행하고
+    무결성 검사까지 합니다.</p>
+    <span class="why">미적용 시: 저장 중 다른 사용자의 조회가 대기</span>
+  </div>
+  <div class="card">
+    <h4>⑩ 프런트엔드 전송량·재방문 최적화</h4>
+    <p>Distribution 은 화면에 보이는 항목부터 나눠 받습니다. 목록 화면은 직전 결과를 먼저 표시하고
+    뒤에서 갱신하며, 뒤로가기 복귀 시 재요청하지 않습니다.</p>
+    <span class="why">효과: 첫 화면 전송량 55MB → 3.3MB</span>
+  </div>
+  <div class="card">
+    <h4>⑪ 자동 복구 및 장애 추적</h4>
+    <p>watchdog 이 재기동하되 <b>회복되지 않는 상태에서 반복 재기동하지 않도록 백오프</b>를 둡니다.
+    오류는 상관 ID 하나로 묶여 기록돼 특정 사용자가 겪은 장애를 역추적할 수 있습니다.</p>
+    <span class="why">미적용 시 실제 사례: 하루 142회 재기동 — 복구를 방해하고 로그까지 소실</span>
+  </div>
+  <div class="card">
+    <h4>⑫ 회귀 방지 자동화</h4>
+    <p>위 장치들은 제거해도 단기적으로는 정상 동작하는 것처럼 보여 정리 과정에서 삭제되곤 했습니다.
+    규칙 17개를 검사로 만들어 <b>위반 코드는 저장 단계에서 거부</b>합니다.</p>
+    <span class="why">추가로 성능 측정 도구가 이전 실행 대비 저하를 자동 판정합니다</span>
+  </div>
+</div>
+
+<details>
+  <summary>근거 (코드 위치)</summary>
+  <div class="in">
+    ④ routes_session.py:55-89 · boot.js:118-166 · build_status.py · eta.py (분포·산점도 202 확장은 2026-08-06 철회)<br>
+    ⑤ web_report/cache.py · disk_cache.py · response_cache.py · 키 규약 cache_policy.py · docs/12 §9-16, §62-120<br>
+    ⑥ compute.py 프리웜·재웜 스윕 · docs/12 §220-228<br>
+    ⑦ service.py:631-690 seed_map · CLAUDE.md 규칙11 · bench SLA 3.0s · perf_guard S09<br>
+    ⑧ upload_webreport.py:29-60 · routes_chat.py:37-40 · build_status.py:33-40<br>
+    ⑨ database/core.py:468-495 · db_backup.py<br>
+    ⑩ docs/11 §415-429 · report_analysis_index.html (SWR·BFCache) · boot.js<br>
+    ⑪ watchdog.ps1:10-13, 118, 261-272 · diagnostics.py · build_log.py<br>
+    ⑫ tools/perf_guard.py --list (규칙 정본) · tests/bench_webreport.py · docs/18
+  </div>
+</details>
+
+<h2><span class="num">4</span>이번 조치 (2026-08-12)</h2>
+<p class="lead">접속 규모 확대에 따라 점검한 결과 확인된 5건입니다. 증상 기준으로 기술합니다.</p>
+<div class="scroll">
+<table>
+<thead><tr><th>조치</th><th>사유 (미조치 시 발생하는 상황)</th></tr></thead>
+<tbody>
+<tr>
+  <td><b>요청 스레드 13 → 28</b><br><span class="small">설정 1행</span></td>
+  <td>13은 <b>동시 접속 10명 기준</b>으로 산정된 값입니다. 세션 상세 화면 1개를 여는 브라우저가 여러 요청을
+      병렬로 보내므로 15명 동시 조회 시 부족해집니다. 이때 <b>서버 상태 점검 요청(/healthz)도 같은 대기열에
+      들어가</b> 응답하지 못하고, watchdog 이 이를 다운으로 판단해 <b>정상 서버를 재기동</b>합니다.
+      결과적으로 사용 중이던 세션이 끊깁니다.</td>
+</tr>
+<tr>
+  <td><b>워커 전멸 연쇄 차단</b><br><span class="small">큐 대기 60초 상한</span></td>
+  <td>계산 타임아웃(300초)이 <b>큐 대기 시간까지 포함</b>해 측정되었습니다. 대기만 하다 시간을 소진한 작업이
+      실행 중으로 오인되면 서버가 워커 이상으로 판단해 <b>워커 8개를 전부 강제 종료</b>합니다. 이때 정상
+      진행 중이던 다른 사용자의 생성 작업까지 동반 실패하고, 실패가 2회 누적되면 해당 세션은
+      <b>10분간 열 수 없게</b> 됩니다. 이제 아직 시작되지 않은 작업은 60초에 취소하고 <b>워커는 유지</b>합니다.</td>
+</tr>
+<tr>
+  <td><b>저장 시 최대 10초 지연 제거</b></td>
+  <td>열람 이력·방문자 기록은 실패해도 무시하는 부가 기록인데 <b>DB 경합 시 5초를 대기한 뒤</b> 포기했습니다.
+      코멘트 저장은 “본 저장(최대 5초) + 부가 기록(최대 5초)”이 직렬로 이어져 <b>합계 10초 지연</b>이 가능했고,
+      예외를 무시하는 구조라 로그에도 남지 않았습니다. 부가 기록의 대기를 0.15초로 단축했습니다.
+      <b>사용자 입력을 저장하는 경로는 5초를 유지</b>합니다(유실 방지 우선).</td>
+</tr>
+<tr>
+  <td><b>404 오분류 교정</b><br><span class="small">조회·편집 29개 경로 + 세션 상세</span></td>
+  <td>세션과 권한은 정상이고 <b>산출물 파일만 읽지 못한 경우</b>에도 404를 반환했습니다. 404는 “존재하지 않음”을
+      의미하므로 사용자는 세션이 삭제된 것으로 판단해 재시도하지 않고, 관리자도 신고를 단순 오조회로
+      처리했습니다. 이제 <b>503과 오류 번호</b>를 반환합니다. 사용자가 번호를 전달하면 관리자가 진단 기록에서
+      해당 건을 바로 조회할 수 있습니다.</td>
+</tr>
+<tr>
+  <td><b>WAL 정리 실패 감지</b></td>
+  <td>DB 로그 파일 정리 작업은 <b>읽는 연결이 남아 있으면 예외 없이 실패</b>하는데 반환값을 확인하지 않았습니다.
+      상시 조회가 있는 서버에서는 매 주기 실패해도 인지하지 못한 채 파일이 계속 증가할 수 있었습니다.
+      실패 시 경고를 기록하도록 했습니다.</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="note">
+  <b>검증</b> — 신규 자동 검사(오류 코드 교정 5개 항목, 워커 보존 시나리오)를 작성해 통과했고, 기존 자동 검사
+  12종도 통과했습니다. 성능은 변경 전 코드와 동일 조건에서 나란히 측정해 차이가 없음을 확인했습니다
+  (Map 3초 SLA 위반 0건). <span class="pill warn">유의</span> 본 변경은 <b>서버 재기동 후 적용</b>됩니다.
+</div>
+
+<h2><span class="num">5</span>정량 성과</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>항목</th><th>이전</th><th>현재</th></tr></thead>
+<tbody>
+<tr><td>리포트 첫 화면 전송량</td><td>55MB</td><td class="gain">3.3MB (17배 감소)</td></tr>
+<tr><td>Map Analysis 첫 진입 (대용량 세션)</td><td>30초 이상</td><td class="gain">3초 이내</td></tr>
+<tr><td>배포 직후 세션 열기</td><td>1분</td><td class="gain">5초</td></tr>
+<tr><td>Issue Table 썸네일 1장 렌더 (소스 40)</td><td>44.6ms</td><td class="gain">11.3ms</td></tr>
+<tr><td>기존 세션 재조회</td><td>수 초 재계산</td><td class="gain">수십~수백 ms</td></tr>
+<tr><td>watchdog 자동 재기동 (문제 구간)</td><td>142회/일</td><td class="gain">백오프로 억제</td></tr>
+</tbody>
+</table>
+</div>
+<p class="small">
+  용량 판단용 실측치: 디코드된 데이터 세션 1건 약 229MB, 분포 데이터 최대 1건 약 505MB,
+  유휴 워커 프로세스 약 100MB, parquet 디코드 고정비 요청당 약 2.4초.
+</p>
+
+<h2><span class="num">6</span>적용 이력</h2>
+<ul class="timeline">
+  <li><span class="date">7/11</span> 무거운 계산을 <b>별도 워커 프로세스로 분리</b> (GIL 직렬화 해소)</li>
+  <li class="hi"><span class="date">7/21</span> <b>콜드 빌드 비동기 처리(202)</b> 도입 · Distribution 분할 전송 (전송량 17배 감소)</li>
+  <li class="hi"><span class="date">7/23</span> <b>정렬 연산 클라이언트 이관</b>(최대 병목 제거) · <b>watchdog 재기동 백오프</b></li>
+  <li><span class="date">7/28</span> 콜드 판정을 잠금 밖으로 이동 (대기자가 다른 요청을 막지 않도록)</li>
+  <li><span class="date">8/4~8/5</span> 빌드 단계별 소요 계측 · 예상 소요 시간 안내</li>
+  <li class="hi"><span class="date">8/6</span> <b>재기동 후 자동 재웜</b>(배포 직후 1분 → 5초) · 워커 4 → 8</li>
+  <li class="hi"><span class="date">8/10</span> <b>Map Analysis 3초 SLA 달성</b> (30초 이상 → 3초)</li>
+  <li><span class="date">8/11</span> 장애를 상관 ID 로 묶는 진단 기록 도입</li>
+  <li class="now"><span class="date">8/12</span> <b>접속 30명 대응</b> — 스레드 28, 워커 전멸 차단, 10초 지연 제거, 404 교정, WAL 감지</li>
+</ul>
+
+<h2><span class="num">7</span>후속 조치</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>항목</th><th>내용</th><th>상태</th></tr></thead>
+<tbody>
+<tr>
+  <td><b>서버 재기동</b></td>
+  <td>이번 변경 적용에 필요합니다. 서비스 중이므로 시점 협의가 필요합니다.</td>
+  <td class="when">대기</td>
+</tr>
+<tr>
+  <td><b>부하 시험</b></td>
+  <td>30명 접속 / 15명 동시 사용, 30분. 구성은 <b>기존 세션 조회·편집 중심 + 콜드 세션 5개 +
+      동시 업로드 3건</b>. 합격 기준: 기존 세션 응답 p95 2초 이내, 모든 요청이 10초 이내에 응답 또는
+      진행 상태 표시, 유효 세션에서 예기치 않은 404/500/503 0건, Map 3초 이내, DB 잠금 오류·워커 붕괴 0건,
+      총 메모리 36GB 이하.</td>
+  <td class="when">미실시</td>
+</tr>
+<tr>
+  <td><b>이미지 프록시 개선</b></td>
+  <td>차트·이슈 이미지를 외부 저장소에서 동기로 받아오는 구간이 지연 시 요청 스레드를 장시간 점유합니다
+      (최대 39초/건, 메모리 캐시 없음).</td>
+  <td class="when">외부 담당 영역<br>요청 전달 필요</td>
+</tr>
+<tr>
+  <td><b>자동 복구 방식</b></td>
+  <td>현재 5분 주기 점검 방식이라 다운 시 최대 5분간 접속 불가 구간이 발생합니다.
+      프로세스 종료를 즉시 감지해 재기동하는 방식을 1차 수단으로 두는 것을 권고합니다.</td>
+  <td class="when">운영 환경 확인</td>
+</tr>
+<tr>
+  <td><b>산출물 백업</b></td>
+  <td>DB 는 백업되지만 업로드된 원천 데이터(parquet)는 별도 매체로 복제하지 않습니다.</td>
+  <td class="when">검토 권고</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<h2><span class="num">8</span>운영 판단 기준</h2>
+<p class="lead">관리자 화면에서 아래 기준을 넘으면 조치가 필요합니다.</p>
+<div class="scroll">
+<table>
+<thead><tr><th>지표</th><th>정상</th><th>초과 시 조치</th></tr></thead>
+<tbody>
+<tr><td>메모리 (부모 + 워커 합계)</td><td>32GB 미만</td><td>40GB 초과 시 캐시 상한 하향</td></tr>
+<tr><td>CPU (전 코어 합, 1600% 만점)</td><td>순간 상승은 정상</td><td>85% 지속 시 워커 수 하향</td></tr>
+<tr><td>온디맨드 대기</td><td>대부분 0</td><td>30초 초과가 잦으면 워커 부족 (상시 0이면 과잉)</td></tr>
+<tr><td>watchdog 재기동 이력</td><td>0건</td><td>발생 시 요청 스레드 부족을 우선 확인</td></tr>
+<tr><td>DB 잠금 오류</td><td>0건</td><td>증가 시 저장 경합 점검</td></tr>
+</tbody>
+</table>
+</div>
+
+<footer>
+  본 문서는 요약이며, 각 절의 “근거”에 실제 코드 위치를 표기했습니다. 상세 설계는 저장소
+  <code>docs/</code> 의 캐시·탭·성능 가드·오류 추적 문서를 참조하십시오. 규칙과 수치의 정본은 코드이며,
+  구조 변경 시 본 문서도 함께 갱신해야 합니다.
+</footer>
+
+</div>
+</body>
+</html>

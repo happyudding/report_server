@@ -84,7 +84,8 @@ function renderMeta(session) {
     // 별개 값이라 서로 덮어쓰지 않는다.
     `<span class="meta-inline" title="세션 이름 (검색결과 목록에 표시)"><span class="mk">Session_name</span>${esc(session.file_name || "-")}</span>`,
     `<span class="meta-inline-file" title="${esc(fnameTitle)}"><span class="mk">Filename</span>${esc(fname)}</span>`,
-    `<span class="meta-inline" title="${esc(session.client_host || "")}"><span class="mk">Uploader</span>${esc(session.uploaded_by || "-")}</span>`,
+    // 업로더는 '이름(ID)' 로 — 이름은 my_access 가 실어준다(UPLOADER_NAME, core.js).
+    `<span class="meta-inline" title="${esc(session.client_host || "")}"><span class="mk">Uploader</span>${esc(UserName.fmt((session.uploaded_by || "").split("\\").pop(), UPLOADER_NAME) || "-")}</span>`,
     `<span class="meta-inline"><span class="mk">Uploaded</span>${esc(fmtDate(session.created_at))}</span>`,
     `<span class="meta-inline"><span class="mk">Status</span>${esc(session.status || "-")}</span>`,
   ];

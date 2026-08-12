@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import time
 
-from . import conversation, planner, tools_eval, tools_metrics, tools_report
+from . import conversation, planner, tools_eval, tools_help, tools_metrics, tools_report
 
 _log = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class _Trace:
 def _count(result):
     if isinstance(result, dict):
         for key in ("items", "history", "similar", "comments", "hits", "issues",
-                    "sessions", "products", "groups"):
+                    "sessions", "products", "groups", "features"):
             value = result.get(key)
             if isinstance(value, list):
                 return len(value)
@@ -109,6 +109,7 @@ def _run(question, *, viewer, see_all_private, use_llm, context_session_id=None,
         "stats": _stats,
         "item_search": _item_search,
         "session_meta": _session_meta,
+        "feature_help": _feature_help,
         "help": _help,
     }.get(plan.intent, _unknown)
 
@@ -778,6 +779,51 @@ def _help(plan, ctx):
         "아직 못 하는 것: 세션 A 와 B 를 직접 비교하는 것(각각 물어보셔야 합니다), "
         "데이터 수정·삭제(조회 전용입니다).",
     ]), {})
+
+
+_FEATURE_STATUS = {
+    "available": "사용 가능",
+    "conditional": "조건부 사용 가능",
+    "coming_soon": "준비 중",
+}
+
+
+def _feature_help(plan, ctx):
+    """공개 기능 카탈로그만 조회해 제공 상태·사용법·도움말 링크를 답한다."""
+    result = ctx["trace"].call(
+        tools_help.search_help_features, query=ctx["question"], limit=8)
+    features = result.get("features") or []
+    if not features:
+        ctx["web"]["links"].append(
+            {"label": "HONEY 전체 도움말", "url": "/pe/report/help"})
+        return (
+            "공개 기능 카탈로그에서 확인되지 않습니다. 기능명이 다르거나 아직 공개되지 "
+            "않았을 수 있습니다. 전체 도움말에서 현재 제공 기능을 확인해 주세요.", result)
+
+    if result.get("generic"):
+        lines = ["HONEY에서 제공하는 대표 기능입니다:"]
+        for feature in features:
+            lines.append(
+                f"  · {feature['title']} — {_FEATURE_STATUS[feature['status']]} · "
+                f"{feature['summary']}")
+        lines.append("\n기능명을 넣어 ‘Temperature 모드 있어?’, ‘DUT 제외 어떻게 해?’처럼 물어보세요.")
+        ctx["web"]["links"].append(
+            {"label": "HONEY 전체 도움말", "url": "/pe/report/help"})
+        return "\n".join(lines), result
+
+    feature = features[0]
+    status = _FEATURE_STATUS[feature["status"]]
+    lines = [f"{feature['title']}: {status}", feature["summary"],
+             f"사용 조건: {feature['availability']}"]
+    if feature["usage"]:
+        lines.append("사용 방법:")
+        lines.extend(f"  {idx}. {step}" for idx, step in enumerate(feature["usage"], 1))
+    if feature["cautions"]:
+        lines.append("주의: " + " ".join(feature["cautions"]))
+    url = f"/pe/report/help#{feature['help_anchor']}"
+    ctx["web"]["links"].append({"label": f"도움말: {feature['title']}", "url": url})
+    return "\n".join(lines), {"features": [feature],
+                               "catalog_version": result.get("catalog_version")}
 
 
 # `help` 와 광역 폴백이 공유하는 예시 — 한 곳에서만 고친다.

@@ -40,8 +40,10 @@ function colWidth(name, kind, narrowSrc) {
   // Open/Close 드랍다운은 CSS 로 "Close" 글자 폭까지 좁혔다(select.issue-status-sel) —
   // 폭 힌트도 함께 낮춰 실제 폭이 max(헤더 "Status", 드랍다운) 로 정해지게 한다.
   if (n === "status")                   return px(38);   // Issue Table Open/Close 드랍다운
-  // Signature: 드랍다운이 여러 개 세로로 쌓이므로 룰 이름(WIDE_DISTRIBUTION)이 들어갈 폭.
-  if (n === "signature")                return px(150);
+  // Signature: 드랍다운이 여러 개 세로로 쌓이므로 룰 이름이 들어갈 폭. 비활성 룰을
+  // 목록에서 뺀 뒤(signatureChoices) 가장 긴 활성 id 는 CLUSTER_FAIL(12자)이라 종전
+  // 150(=225px, 비활성 장문 라벨 기준) 에서 좁혔다. 버튼 3개(+ / ? / 확정)도 들어간다.
+  if (n === "signature")                return px(76);
   if (n === "item")                     return px(kind === "issue" ? 150 * 0.55 : 150);
   if (n === "category")                 return "50px";
   if (n === "condition & judge limit")  return "185px";
@@ -66,33 +68,51 @@ function signatureOptions() {
     .filter(o => o && o.id);
 }
 
-// 저장된 legacy 값(현재 카탈로그에 없는 룰)도 고를 수 있는 상태로 남겨야 드랍다운이
-// 제 값을 잃지 않는다 — 목록에 없으면 그 항목만 덧붙인다.
+// 실제로 고를 수 있는 목록 — **발화하지 않는 비활성 룰은 뺀다**(사용자 요청 2026-08-12).
+// 단 이 행에 이미 저장된 값이 그 목록에 없으면(비활성이거나 카탈로그 밖 legacy) 그 항목만
+// 덧붙여 남긴다 — 안 그러면 select 가 제 값을 잃고, 다른 칸을 하나 고치는 순간 셀 전체
+// id 목록이 재전송되면서 사용자가 넣은 값이 사라진다(저장은 셀 단위 전량 전송).
+// ⚠️ 서버 카탈로그(ai_comment.signature_catalog)는 비활성 룰을 계속 포함해야 한다 —
+// service._norm_issue_signature 가 그 목록으로 저장을 검증하므로, 서버에서 빼면 기존
+// 저장값 재전송이 400 으로 거부된다. 비활성 제외는 여기(표시)에서만 한다.
+function signatureChoices(value) {
+  const rows = signatureOptions().filter(o => o.enabled !== false);
+  return (!value || rows.some(o => o.id === value)) ? rows
+    : rows.concat([{ id: value, enabled: false }]);
+}
+
 function signatureSelect(value, idx) {
-  const opts = signatureOptions();
-  const known = opts.some(o => o.id === value);
-  const rows = known || !value ? opts : opts.concat([{ id: value, enabled: false }]);
+  const rows = signatureChoices(value);
   const label = o => o.id === SIG_UNKNOWN ? "Unknown"
-    : (o.enabled ? o.id : `${o.id} (현재 비활성)`);
-  return `<select class="issue-sig-sel" data-idx="${idx}">` +
+    : (o.enabled ? o.id : `${o.id} (비활성)`);
+  return `<select class="issue-sig-sel" data-idx="${idx}" title="${esc(value || "")}">` +
     `<option value=""${value ? "" : " selected"}>(선택)</option>` +
     rows.map(o => `<option value="${esc(o.id)}"${o.id === value ? " selected" : ""}>` +
       `${esc(label(o))}</option>`).join("") +
     `<option value="__del">(제거)</option></select>`;
 }
 
+// 판정 근거 팝업(sig_reason.js) 여는 버튼. **조회 모드에도 단다** — 근거가 정작 필요한
+// 사람은 편집 권한이 없는 검토자이고, 이 버튼만은 읽기 동작이라 안전하다.
+function sigWhyBtnHtml() {
+  return `<button type="button" class="sig-why" aria-haspopup="true" aria-expanded="false"` +
+    ` title="판정 근거 — 이 룰의 기준·임계값·실측값">?</button>`;
+}
+
 function renderSignatureCell(ids, reviewed, edit) {
   if (!edit) {
     if (!ids.length) return `<span class="sig-chip sig-none">${SIG_UNCLASSIFIED}</span>`;
-    return ids.map(id => `<span class="sig-chip${reviewed ? "" : " sig-suggest"}">` +
-      `${esc(id === SIG_UNKNOWN ? "Unknown" : id)}</span>`).join("");
+    return ids.map(id => `<span class="sig-chip${reviewed ? "" : " sig-suggest"}" ` +
+      `title="${esc(id)}">${esc(id === SIG_UNKNOWN ? "Unknown" : id)}</span>`).join("") +
+      `<div class="sig-btns sig-btns-view">${sigWhyBtnHtml()}</div>`;
   }
   const sels = ids.map((id, i) => signatureSelect(id, i)).join("");
   const empty = ids.length ? "" : `<span class="sig-chip sig-none">${SIG_UNCLASSIFIED}</span>`;
   // [+] 는 칸 추가(다축 원인 — 예: 값 패턴 + 공간 패턴), [✓] 는 엔진 제안 그대로
-  // 확정(값이 같아도 저장해야 "동의한 사례"가 남는다).
+  // 확정(값이 같아도 저장해야 "동의한 사례"가 남는다). [?] 는 판정 근거 팝업.
   return empty + sels +
     `<div class="sig-btns"><button type="button" class="sig-add" title="원인 칸 추가">+</button>` +
+    sigWhyBtnHtml() +
     (reviewed ? `<span class="sig-ok" title="ENGR 확정됨">✓</span>`
       : `<button type="button" class="sig-confirm" title="이 내용으로 확정">확정</button>`) +
     `</div>`;
@@ -160,6 +180,74 @@ function linkifyComment(txt) {
   }
   out += esc(s.slice(last));
   return out;
+}
+
+// ── Issue Table "AI Comment" 셀 렌더 ────────────────────────────────────────
+// 서버가 만든 평문 한 덩어리
+//   "[MAJOR][이봉] [현상] … \n[과거사례] … \n [점검제안] …"
+// 를 **화면에서만** 재배치한다 — 섹션별 색 + 줄바꿈, 심각도/분포 배지는 맨 아랫줄.
+// ⚠️ 서버(web_report/ai_comment.py `_cell_text`)를 고치지 않는 이유: 그 문자열은 payload 에
+// 그대로 굳어 디스크/응답 캐시에 남는다. 형식을 바꾸면 캐시된 세션과 새 세션이 갈리고,
+// 해소하려면 REPORT_SCHEMA_VERSION bump(= 전 세션 콜드 리빌드)가 필요하다. 같은 문자열을
+// Excel·챗봇·eval export 가 평문으로 소비하기도 한다. 여기서 파싱하면 옛/새 payload 가
+// 같은 화면을 낸다.
+const AIC_SECTIONS = ["현상", "과거사례", "점검제안"];
+const AIC_SEC_CLASS = { "현상": "aic-sym", "과거사례": "aic-past", "점검제안": "aic-act" };
+function isAiCommentCol(c) { return String(c || "").trim().toLowerCase() === "ai comment"; }
+
+// 선두 배지([MAJOR]/[이봉] …)를 떼어낸다. 알려진 값 목록으로 막지 않는 이유 — 상태·배지
+// 종류가 늘어도 따라가야 하고, 못 알아본 토큰은 배지가 아니라 **본문으로 남아 글자를 잃지
+// 않는다**. 실제 값은 ai_comment.py 의 _SEVERITY(OK/MONITOR/MINOR/MAJOR/CRITICAL) 와
+// _MODALITY_TAG(이봉/다봉/분리/분포분리).
+function aicSplitBadges(raw) {
+  const badges = [];
+  let s = String(raw), m;
+  const re = /^\s*\[([^\]\s]{1,12})\]/;
+  while ((m = re.exec(s))) {
+    if (AIC_SECTIONS.indexOf(m[1]) >= 0) break;   // 본문 섹션이 시작됐다
+    badges.push(m[1]);
+    s = s.slice(m[0].length);
+  }
+  return { badges: badges, body: s.replace(/^\s+/, "") };
+}
+
+// 배지 1개 → span class. 영문(심각도)만 색을 달리하고, 한글 배지(이봉 등)는 중립.
+function aicBadgeClass(text) {
+  return /^[A-Za-z_]+$/.test(text) ? "aic-badge aic-sev-" + text.toLowerCase()
+    : "aic-badge aic-mod";
+}
+
+// txt → 섹션 div + 배지 div. 본문은 반드시 linkifyComment 를 통과시킨다(@[..] 링크와
+// *[..] 서식 토큰 유지). linkifyComment 가 이미 esc 하므로 **이중 esc 금지** — 태그·배지
+// 텍스트만 esc 한다.
+function renderAiComment(txt) {
+  const raw = String(txt == null ? "" : txt);
+  // 섹션 토큰이 없으면 손대지 않는다 — 옛 코멘트/형식 불일치는 오늘과 똑같이 보인다.
+  if (raw.indexOf("[현상]") < 0) return linkifyComment(raw);
+  const split = aicSplitBadges(raw);
+  const body = split.body;
+  const re = /\[(현상|과거사례|점검제안)\]/g;
+  const parts = [];
+  let last = 0, cur = null, m;
+  while ((m = re.exec(body))) {
+    if (cur) { cur.body = body.slice(last, m.index); parts.push(cur); }
+    else if (m.index > 0) parts.push({ tag: "", body: body.slice(0, m.index) });   // 섹션 앞 잔여
+    cur = { tag: m[1], body: "" };
+    last = m.index + m[0].length;
+  }
+  if (cur) { cur.body = body.slice(last); parts.push(cur); }
+  let out = "";
+  parts.forEach(p => {
+    const t = String(p.body || "").trim();
+    if (!p.tag) { if (t) out += `<div class="aic-lead">${linkifyComment(t)}</div>`; return; }
+    out += `<div class="aic-sec ${AIC_SEC_CLASS[p.tag]}">` +
+      `<b class="aic-tag">[${esc(p.tag)}]</b> ${linkifyComment(t)}</div>`;
+  });
+  if (split.badges.length) {
+    out += `<div class="aic-badges">` + split.badges.map(b =>
+      `<span class="${aicBadgeClass(b)}">${esc("[" + b + "]")}</span>`).join("") + `</div>`;
+  }
+  return out || linkifyComment(raw);
 }
 
 // 서식 토큰의 본문만 남긴다 — Excel·챗봇 등 평문 소비처로 나가기 직전에만 쓴다.
@@ -888,7 +976,9 @@ function renderSheetTable(rows, opts) {
         if (!gkey || (txt === "" && !(r._sig || []).length)) {
           return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
         }
-        return `<td class="issue-sig-cell${r._sigrev ? " is-reviewed" : ""}" data-r="${ri}" data-c="${ci}" data-key="${esc(gkey)}">` +
+        // data-sig 는 조회모드 근거 팝업이 읽는 원본 id — 칩 텍스트는 UNKNOWN 을
+        // "Unknown" 으로 보여주므로 화면 문자열을 되파싱하면 안 된다.
+        return `<td class="issue-sig-cell${r._sigrev ? " is-reviewed" : ""}" data-r="${ri}" data-c="${ci}" data-key="${esc(gkey)}" data-sig="${esc((r._sig || []).join(","))}">` +
           renderSignatureCell(r._sig || [], !!r._sigrev, !!opts.edit) + `</td>`;
       }
       // opts.editableCols 가 있으면 그 컬럼만 편집 가능(더블클릭으로 활성화), 나머지는 읽기전용으로
@@ -945,7 +1035,9 @@ function renderSheetTable(rows, opts) {
       if (itemClickable) {
         cellHtml = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;
       } else if (opts.kind === "issue" && isCommentCol(c) && !isEmpty) {
-        cellHtml = linkifyComment(txt);   // 읽기 모드 comment: @[항목] → Item_detail 링크
+        // 읽기 모드 comment: @[항목] → Item_detail 링크. AI Comment 만 섹션 분해까지 한다
+        // (isCommentCol 은 그대로 둬야 .st-comment 열너비 규칙이 유지된다).
+        cellHtml = isAiCommentCol(c) ? renderAiComment(txt) : linkifyComment(txt);
       } else {
         cellHtml = isEmpty ? "" : esc(txt);
       }
@@ -1308,22 +1400,23 @@ function cellSelClear() {
 
 // 선택 사각형(minR..maxR × minC..maxC)을 .cell-sel 클래스로 표시 (숨김 행 제외).
 // 새 사각형만 칠하고 직전 도색분 중 범위 밖만 지운다 — 표가 커도 mousemove 비용이 일정.
+// ⚠️ 레이아웃 읽기(offsetParent)와 쓰기(classList)를 한 루프에서 섞지 말 것 — 쓰기가
+// 레이아웃을 무효화한 직후 읽으면 셀마다 강제 리플로우가 걸려(layout thrash) 넓은 범위를
+// 드래그할 때 프레임이 통째로 멈춘다. 읽기 패스를 먼저 끝내고 쓰기를 몰아서 한다.
 function cellSelPaint(sel) {
   const rA = Math.min(sel.r1, sel.r2), rB = Math.max(sel.r1, sel.r2);
   const cA = Math.min(sel.c1, sel.c2), cB = Math.max(sel.c1, sel.c2);
   const next = [];
-  for (let r = rA; r <= rB; r++) {
+  for (let r = rA; r <= rB; r++) {            // 1) 읽기 전용 — 숨김 행 제외
     for (let c = cA; c <= cB; c++) {
       const td = sel.grid.get(r + ":" + c);
-      if (!td || !td.offsetParent) continue;
-      td.classList.add("cell-sel");
-      next.push(td);
+      if (td && td.offsetParent) next.push(td);
     }
   }
-  _cellPainted.forEach(td => {
-    const r = +td.dataset.r, c = +td.dataset.c;
-    if (r < rA || r > rB || c < cA || c > cB || !td.offsetParent) td.classList.remove("cell-sel");
-  });
+  const keep = new Set(next);                 // 2) 쓰기 전용
+  next.forEach(td => td.classList.add("cell-sel"));
+  // next = "범위 안 + 보이는 셀" 전부라, 여기 없는 직전 도색분이 곧 지울 대상이다.
+  _cellPainted.forEach(td => { if (!keep.has(td)) td.classList.remove("cell-sel"); });
   _cellPainted = next;
 }
 
@@ -1340,13 +1433,17 @@ function cellSelTsv(sel) {
   const cA = Math.min(sel.c1, sel.c2), cB = Math.max(sel.c1, sel.c2);
   const grid = new Map();  // r → Map(c → text)
   let count = 0;
-  sel.table.querySelectorAll("td[data-r][data-c]").forEach(td => {
-    const r = +td.dataset.r, c = +td.dataset.c;
-    if (r < rA || r > rB || c < cA || c > cB || !td.offsetParent) return;
-    if (!grid.has(r)) grid.set(r, new Map());
-    grid.get(r).set(c, cellSelText(td));
-    count++;
-  });
+  // 선택 범위만 훑는다 — 표 전체 querySelectorAll 은 행이 수천이면 수만 노드를 돌며
+  // 대부분을 범위 밖이라고 버리는 낭비였다(좌표 맵은 mousedown 때 이미 만들어 뒀다).
+  for (let r = rA; r <= rB; r++) {
+    for (let c = cA; c <= cB; c++) {
+      const td = sel.grid.get(r + ":" + c);
+      if (!td || !td.offsetParent) continue;   // 접힌 행 제외
+      if (!grid.has(r)) grid.set(r, new Map());
+      grid.get(r).set(c, cellSelText(td));
+      count++;
+    }
+  }
   const lines = [];
   // spread 대신 Array.from — QJSEngine 검증 하네스 파서 호환 (js-verify 관례)
   Array.from(grid.keys()).sort((a, b) => a - b).forEach(r => {

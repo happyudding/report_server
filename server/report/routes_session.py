@@ -34,6 +34,7 @@ from report.security import (
     _require_csrf,
     _uploader_guard,
     _validate_session_id,
+    artifact_missing,
 )
 from web_report import service as web_report_service
 from web_report.validation import validate_meta as _validate_upload_meta
@@ -220,8 +221,10 @@ def session_full(session_id):
         except web_report_service.ColdBuildRequired:
             # 위 조기 판정을 통과했는데 여기 온 경우 = 판정 후 축출된 레이스.
             return _building_response(session_id, "report", session=session)
-        except FileNotFoundError:
-            abort(404, "web_report session data not found")
+        except FileNotFoundError as exc:
+            # 세션 행은 여기까지 오는 동안 이미 확인됐다 — 없는 것은 산출물 파일이다.
+            # 404 로 돌려주면 사용자는 세션이 삭제된 줄 알고 다시 안 온다(복구 가능한데도).
+            return artifact_missing(session_id, str(exc))
         except KeyError:
             abort(404, "session not found")
         except Exception:
@@ -458,6 +461,13 @@ def update_session_content(session_id):
 
 # ── 편집 권한 위임 / 개인 접근 상태 ───────────────────────────────────────────
 
+def _editors_payload(session_id):
+    """편집자 목록 + uid→실명 맵. 권한 창이 '이름(ID)' 로 그리려면 이름이 필요한데,
+    행마다 조회하면 N+1 이라 display_names 배치 한 번으로 붙인다."""
+    editors = report_db.list_session_editors(session_id)
+    return {"editors": editors,
+            "names": report_db.display_names([e["editor_user"] for e in editors])}
+
 @report_bp.get("/session/<session_id>/my_access")
 def session_my_access(session_id):
     """현재 요청자 기준 이 세션에 대한 권한/개인상태 — 사용자별 값이라 session_full
@@ -476,10 +486,14 @@ def session_my_access(session_id):
     return jsonify({
         "user_id": uid,
         "source": _identity_source(),   # 프런트의 'Honey 전용 기능' 안내 판단용
+        "display_name": report_db.get_display_name(uid) or "",  # 비면 이름 입력창 유도
         "is_uploader": is_uploader,
         "is_master": is_master,
         "can_edit": can_edit,
         "my_important": report_db.is_user_important(uid, session_id) if uid else False,
+        # 상단바 Uploader 표기를 '이름(ID)' 로 그리기 위한 이름 (세션 소유자)
+        "uploader_name": report_db.get_display_name(
+            (session.get("uploaded_by") or "").split("\\")[-1].strip().lower()) or "",
     })
 
 
@@ -493,8 +507,7 @@ def list_editors(session_id):
     denied = _uploader_guard(session)
     if denied:
         return denied
-    return jsonify({"session_id": session_id,
-                    "editors": report_db.list_session_editors(session_id)})
+    return jsonify({"session_id": session_id, **_editors_payload(session_id)})
 
 
 @report_bp.post("/session/<session_id>/editors")
@@ -517,7 +530,7 @@ def add_editor(session_id):
     report_db.add_session_editor(session_id, editor, uploader)
     _audit("edit", session=session, changed_fields=f"grant_editor:{editor}")
     return jsonify({"ok": True, "session_id": session_id, "editor": editor,
-                    "editors": report_db.list_session_editors(session_id)})
+                    **_editors_payload(session_id)})
 
 
 @report_bp.delete("/session/<session_id>/editors/<editor_user>")
@@ -535,7 +548,7 @@ def remove_editor(session_id, editor_user):
     report_db.remove_session_editor(session_id, editor)
     _audit("edit", session=session, changed_fields=f"revoke_editor:{editor}")
     return jsonify({"ok": True, "session_id": session_id, "editor": editor,
-                    "editors": report_db.list_session_editors(session_id)})
+                    **_editors_payload(session_id)})
 
 
 @report_bp.get("/session/<session_id>/editors/candidates")
@@ -553,6 +566,10 @@ def editor_candidates(session_id):
     q = request.args.get("q") or ""
     uploader = _current_user()
     current = {e["editor_user"] for e in report_db.list_session_editors(session_id)}
-    out = [{"user": uid, "already": uid in current}
-           for uid in report_db.search_web_visitors(q, limit=50) if uid != uploader]
+    uids = [uid for uid in report_db.search_web_visitors(q, limit=50) if uid != uploader]
+    # q 는 ID 뿐 아니라 실명에도 매칭된다 (search_web_visitors) — 화면이 '이름(ID)' 라서
+    # 눈에 보이는 이름으로 검색이 안 되면 사람을 찾을 수 없다.
+    names = report_db.display_names(uids)
+    out = [{"user": uid, "name": names.get(uid, ""), "already": uid in current}
+           for uid in uids]
     return jsonify({"candidates": out})

@@ -31,6 +31,33 @@ _MAX_WEBREPORT_BYTES = 512 * 1024 * 1024
 # ⚠️ acquire 는 request.form/files 에 손대기 **전에** 해야 한다 — werkzeug 는 멀티파트를
 # 디스크에 스풀해 두므로, 대기 중인 요청은 RAM 이 아니라 임시파일만 점유한다.
 _UPLOAD_SEM = threading.BoundedSemaphore(max(1, int(config.WEB_REPORT_UPLOAD_CONCURRENCY)))
+# 대기는 RAM 을 안 쓰지만 waitress 스레드는 문다 — 줄 설 수 있는 요청 수를 따로 막지
+# 않으면 업로드 폭주 1회로 스레드가 전멸해 조회·/healthz 까지 수 분간 멎는다.
+_UPLOAD_MAX_WAITERS = max(0, int(config.WEB_REPORT_UPLOAD_MAX_WAITERS))
+_upload_waiters = 0
+_upload_waiters_lock = threading.Lock()
+
+
+def _acquire_upload_slot():
+    """업로드 슬롯을 잡는다. (성공, 거절사유) 반환.
+
+    빈 슬롯이 있으면 즉시 통과(종전과 동일). 없으면 대기열 길이를 보고 **대기할지
+    즉시 거절할지**를 정한다 — 소수 버스트는 종전처럼 기다렸다 성공하고, 폭주만 잘라
+    스레드 고갈을 막는다.
+    """
+    global _upload_waiters
+    if _UPLOAD_SEM.acquire(blocking=False):
+        return True, ""
+    with _upload_waiters_lock:
+        if _upload_waiters >= _UPLOAD_MAX_WAITERS:
+            return False, "queue_full"
+        _upload_waiters += 1
+    try:
+        ok = _UPLOAD_SEM.acquire(timeout=float(config.WEB_REPORT_UPLOAD_WAIT_SEC))
+    finally:
+        with _upload_waiters_lock:
+            _upload_waiters -= 1
+    return (True, "") if ok else (False, "wait_timeout")
 
 
 def _client_meta():
@@ -174,10 +201,14 @@ def _record_upload_failure(manifest, exc, status, severity):
 def upload_webreport():
     started = time.perf_counter()
     manifest = None
-    if not _UPLOAD_SEM.acquire(timeout=float(config.WEB_REPORT_UPLOAD_WAIT_SEC)):
-        _log.warning("[upload_webreport] 동시 업로드 상한 대기 초과 — 거절")
+    ok, reason = _acquire_upload_slot()
+    if not ok:
+        _log.warning("[upload_webreport] 동시 업로드 상한 — 거절(%s, 대기 %d건)",
+                     reason, _upload_waiters)
+        # Retry-After: 클라가 언제 다시 시도하면 되는지 알린다(현재 클라는 수동 재시도).
         return jsonify({"status": "failed",
-                        "error": "서버가 다른 업로드를 처리 중입니다. 잠시 후 다시 시도해 주세요."}), 503
+                        "error": "서버가 다른 업로드를 처리 중입니다. 잠시 후 다시 시도해 주세요."}), 503, \
+                       {"Retry-After": "30"}
     try:
         manifest = _read_manifest()
         files = _read_files()

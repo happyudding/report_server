@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LSI PTE REPORT SERVER</title>
+<!-- 사용자 실명 표기('이름(ID)')와 이름 입력창 — 검색결과·세션 상세와 공유하는 모듈.
+     이 페이지는 landing 블루프린트지만 모듈은 report_bp 의 정적 경로에서 가져온다. -->
+<script src="/pe/report/static/webreport/user_name.js"></script>
 <style>
 /* 랜딩은 다크 한 벌로 고정한다(검색결과/세션 상세의 report_theme 토글과 무관).
    배경 canvas 가 다크 전제로 그려지고, 이 화면은 한 장짜리 관문이라 테마 전환의
@@ -454,6 +457,8 @@ a:focus-visible, button:focus-visible {
       <span class="id-prefix">SECDS\</span>
       <input type="text" id="suIdInput" placeholder="singleID" autocomplete="username">
     </div>
+    <input type="text" class="pw-input" id="suNameInput" maxlength="30"
+           autocomplete="name" placeholder="이름 (예: 홍길동)" style="letter-spacing:normal;">
     <input type="password" class="pw-input" id="suPwInput" inputmode="numeric" maxlength="4"
            autocomplete="new-password" placeholder="비밀번호 (숫자 4자리)">
     <input type="password" class="pw-input" id="suPw2Input" inputmode="numeric" maxlength="4"
@@ -484,6 +489,7 @@ a:focus-visible, button:focus-visible {
 var PT_NAMES = ["MDDI", "PDDI", "PMIC", "SECURITY", "TCON"];
 var _userId = "";        // 현재 신원 (Honey UA / SSO / 웹 로그인 세션)
 var _authSource = "";    // "honey" | "login" | "sso" | "" — 서버 identity_source()
+var _displayName = "";   // 사용자 실명 — 비어 있으면 이름 입력창을 띄운다
 
 function $(id) { return document.getElementById(id); }
 function num(n) { return (typeof n === "number" && isFinite(n)) ? n.toLocaleString() : "—"; }
@@ -497,13 +503,15 @@ function applyViewer(v) {
   v = v || {};
   _userId = v.user_id || "";
   _authSource = v.source || "";
+  _displayName = v.display_name || "";
   var chip = $("userChip");
   if (_userId) {
-    chip.textContent = "👤 " + _userId;
-    chip.title = _authSource === "honey"
-      ? "PC 계정으로 자동 로그인됨 (" + _userId + ")"
-      : _userId + " 계정으로 로그인됨";
-    chip.style.cursor = "default";
+    var who = UserName.fmt(_userId, _displayName);
+    chip.textContent = "👤 " + who;
+    chip.title = (_authSource === "honey"
+      ? "PC 계정으로 자동 로그인됨 (" + who + ")"
+      : who + " 계정으로 로그인됨") + " — 클릭하면 이름을 바꿀 수 있습니다";
+    chip.style.cursor = "pointer";
   } else {
     chip.textContent = "로그인";
     chip.title = "singleID + 비밀번호로 로그인 (비밀번호는 Honey 앱에서 설정)";
@@ -511,6 +519,21 @@ function applyViewer(v) {
   }
   // 로그아웃은 웹 로그인 세션일 때만 의미가 있다 (Honey UA 신원은 끌 수 없다).
   $("logoutBtn").hidden = _authSource !== "login";
+  // 서버 첫 화면이라 이름 수집도 여기서 시작한다. CSRF 쿠키는 이 함수를 부른
+  // /api/landing 응답이 이미 심었지만(GET /pe 응답에는 안 붙는다), 방어적으로 확인한다.
+  UserName.promptIfMissing(v, {
+    ensureCsrf: function () { return csrfToken() ? Promise.resolve() : loadLanding(); },
+    onSaved: function (name) { _displayName = name; applyChipName(); },
+  });
+}
+
+// 칩 텍스트만 다시 그린다 (applyViewer 재호출 = 이름창 재판정이라 저장 직후엔 쓸 수 없다).
+function applyChipName() {
+  if (!_userId) return;
+  var who = UserName.fmt(_userId, _displayName);
+  var chip = $("userChip");
+  chip.textContent = "👤 " + who;
+  chip.title = who + " — 클릭하면 이름을 바꿀 수 있습니다";
 }
 
 function applyStats(d) {
@@ -630,7 +653,7 @@ function signupErr(msg) {
 }
 
 function openSignup() {
-  ["suIdInput", "suPwInput", "suPw2Input"].forEach(function (id) { $(id).value = ""; });
+  ["suIdInput", "suNameInput", "suPwInput", "suPw2Input"].forEach(function (id) { $(id).value = ""; });
   signupErr("");
   $("signupHint").hidden = true;
   $("signupHint").textContent = "";
@@ -659,9 +682,12 @@ function closeSignup() { $("signupModal").classList.remove("show"); }
 
 function doSignup() {
   var id = ($("suIdInput").value || "").split("\\").pop().trim().toLowerCase();
+  var name = ($("suNameInput").value || "").trim();
   var pw = $("suPwInput").value || "";
   var pw2 = $("suPw2Input").value || "";
   if (!/^[^\s\\/]{1,64}$/.test(id)) { signupErr("singleID 를 공백 없이 입력하세요."); return; }
+  // 이름은 폼에서만 필수 — 서버는 옛 캐시 JS 를 위해 없어도 가입시킨다(그 경우 입력창이 뜬다).
+  if (!name) { signupErr("이름을 입력하세요."); return; }
   if (!/^\d{4}$/.test(pw)) { signupErr("비밀번호는 숫자 4자리입니다."); return; }
   if (pw !== pw2) { signupErr("비밀번호가 서로 다릅니다."); return; }
   signupErr("");
@@ -671,7 +697,7 @@ function doSignup() {
     return fetch("/pe/report/api/auth/signup", {
       method: "POST",
       headers: {"Content-Type": "application/json", "X-CSRF-Token": csrfToken()},
-      body: JSON.stringify({user_id: id, password: pw})
+      body: JSON.stringify({user_id: id, password: pw, name: name})
     });
   }).then(function (res) {
     return res.json().catch(function () { return {}; }).then(function (j) {
@@ -680,14 +706,23 @@ function doSignup() {
     });
   }).then(function (j) {
     closeSignup();
-    applyViewer({user_id: j.user_id, source: j.source || "login"});
+    applyViewer({user_id: j.user_id, source: j.source || "login",
+                 display_name: j.display_name || name});
     return loadLanding();
   }).catch(function (e) {
     signupErr(e.message || "가입 실패");
   });
 }
 
-$("userChip").addEventListener("click", openLogin);
+// 칩: 비로그인이면 로그인, 로그인 상태면 이름 변경 (본인 변경 경로)
+$("userChip").addEventListener("click", function () {
+  if (!_userId) { openLogin(); return; }
+  UserName.promptIfMissing({user_id: _userId, display_name: _displayName}, {
+    force: true,
+    ensureCsrf: function () { return csrfToken() ? Promise.resolve() : loadLanding(); },
+    onSaved: function (name) { _displayName = name; applyChipName(); },
+  });
+});
 $("loginSubmit").addEventListener("click", doLogin);
 $("loginCancel").addEventListener("click", closeLogin);
 $("loginModal").addEventListener("click", function (e) {
@@ -706,7 +741,7 @@ $("signupCancel").addEventListener("click", function () {
 $("signupModal").addEventListener("click", function (e) {
   if (e.target === $("signupModal")) closeSignup();
 });
-["suIdInput", "suPwInput", "suPw2Input"].forEach(function (id) {
+["suIdInput", "suNameInput", "suPwInput", "suPw2Input"].forEach(function (id) {
   $(id).addEventListener("keydown", function (e) { if (e.key === "Enter") doSignup(); });
 });
 // 숫자 4자리 입력칸: 비숫자 제거 (붙여넣기 포함)

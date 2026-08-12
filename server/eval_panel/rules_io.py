@@ -238,6 +238,7 @@ _CODE_REFS = {
     "edge_region_pct": "L2 features(공간 영역 분할)",
     "center_region_pct": "L2 features(공간 영역 분할)",
     "spatial_fail_count_min": "L2 features(공간 룰 최소 fail)",
+    "region_fail_share_min": "L2 features(wafer_zone_signature)",
     "cpk_warn": "L6 저장 게이트(코멘트 생성 여부)",
     "cpk_bad": "L4 trump(CRITICAL 강제)",
     "cpk_trump_yield_floor": "L4 trump(CRITICAL 강제)",
@@ -277,9 +278,10 @@ THRESHOLD_KINDS = {
     "subpop_value_gap_warn": "ratio", "code_edge_hit_warn": "ratio",
     "edge_region_pct": "ratio", "center_region_pct": "ratio",
     "gross_yield_bad": "ratio", "cpk_trump_yield_floor": "ratio",
+    "region_fail_share_min": "ratio",
     "n_min": "count", "subpop_n_min": "count", "spatial_fail_count_min": "count",
     "severe_outlier_count_min": "count", "source_min_count": "count",
-    "outlier_sigma": "positive",
+    "outlier_sigma": "positive", "outlier_fail_z_min": "positive",
 }
 
 

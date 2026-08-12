@@ -165,7 +165,10 @@ function hideLoadOverlay() {
   // 100% 표시가 한 프레임은 보이도록 최소 지연만 둔다 (체감 지연 최소화: 200→50ms)
   if (ov) setTimeout(() => ov.classList.remove("show"), 50);
 }
+// 로딩이 실제로 진행 중인가 — BFCache 복원 시 덮개를 걷어도 되는지 판단하는 데 쓴다.
+let _loadInFlight = false;
 async function load(resetMode=true) {
+  _loadInFlight = true;
   try {
     showLoadOverlay();
     // 서버가 parquet 재계산(수 초)을 마칠 때까지 첫 바이트가 없어 실제 %를 알 수 없으므로
@@ -266,8 +269,20 @@ async function load(resetMode=true) {
     box.textContent = "로드 실패: " + e.message;
     reportLoadFailure("load_exception", e && e.message ? e.message : String(e), 0);
     hideLoadOverlay();
+  } finally {
+    _loadInFlight = false;
   }
 }
+
+// BFCache 복원(뒤로가기로 이전 DOM 통째 복귀)은 DOMContentLoaded 를 다시 내지 않는다.
+// load-overlay 를 걷는 코드는 load()/raw_data/edit_mode 의 완료 경로에만 있어서, 덮개가
+// 켜진 상태로 이탈했다 돌아오면 화면을 덮은 채 영구히 남는다(= 사용자 눈에는 freeze).
+// 검색결과 홈은 같은 이유로 이미 pageshow 에서 덮개를 걷는다.
+// 단 진짜 진행 중인 로딩(콜드 빌드 폴링 재개)은 그대로 두고 완료 시 스스로 걷게 한다.
+window.addEventListener("pageshow", e => {
+  if (!e.persisted || _loadInFlight) return;
+  document.getElementById("loadOverlay")?.classList.remove("show");
+});
 
 // 세션 로드 실패 보고 — error_beacon.js 가 노출한 창구를 쓴다(전송 상한·중복 제거 공유).
 // beacon 이 없으면 조용히 넘어간다 (보고가 화면을 깨면 안 된다).

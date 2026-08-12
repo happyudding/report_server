@@ -55,7 +55,16 @@ def _maintain_wal(conn):
     """
     try:
         conn.execute("PRAGMA busy_timeout = 5000")
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        # 반환은 (busy, log, checkpointed). busy=1 은 **예외가 아니라 조용한 실패**다 —
+        # 읽는 커넥션이 하나라도 남아 있으면 truncate 를 포기하고 그냥 1 을 돌려준다.
+        # 여태 이 값을 보지 않아서, 상시 조회 트래픽이 있는 서버에서는 체크포인트가
+        # 매번 실패해도 아무도 모른 채 -wal 만 계속 커졌다. 경고만 남긴다(재시도 안 함 —
+        # 다음 백업 사이클에 다시 시도하고, 그래도 계속 실패하면 -wal 크기가 관리자
+        # 현황 탭에 보인다).
+        if row and row[0]:
+            _log.warning("[db-backup] wal checkpoint busy — 이번 사이클 truncate 실패 "
+                         "(reader 가 남아 있음). -wal 크기를 관리자 현황 탭에서 확인할 것")
         conn.execute("PRAGMA optimize")
     except Exception:
         _log.exception("[db-backup] wal maintenance failed")

@@ -17,7 +17,8 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out 
 (`versioned_path`). 기존 raw data 를 절대 덮지 않는다 — 이전 버전으로 재현·비교할 수 있어야
 하기 때문.
 
-**① CSV 1장** (`--single-csv`) — item 85개(17 signature × 5단계) × **chip 1,517개**, 약 1MB:
+**① CSV 1장** (`--single-csv`) — item 180개(겨냥 80 = 16 signature × 5단계 + **관찰용 무작위
+100**) × **chip 6,077개**(반경 44), 약 8MB:
 
 | 파일 | 내용 |
 |---|---|
@@ -31,10 +32,14 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out 
 > = 전량 fail) · `BIDIR_TAIL`(양쪽 margin<1σ) · `TAIL_RISK`(spec_margin_min<1σ = 꼬리가
 > spec 을 넘어야 함). 이 다섯은 전체 세트(`--out`, source 여러 개)에서 확인한다.
 
-**② 전체 세트** (`--out DIR`) — parquet 30 source × 2,453행 + `manifest.json` +
+> **웨이퍼가 커진 이유(반경 22→44)**: fail 은 chip 을 서로 배타적으로 쓰므로(`FAILTNO` 는
+> chip 당 하나) 관찰군 100개가 붙으면서 예산이 모자라 뒤쪽 item 이 통째로 밀려났다
+> (표본이 적은 항목은 쓸 chip 이 없어져 fail 0 = 평가 제외가 된다).
+
+**② 전체 세트** (`--out DIR`) — parquet source 여러 개 × 2,453행 + `manifest.json` +
 `answer_key.csv` + `verify.csv` + `metrics_detail.json`. item 500개.
 
-`--items` `--radius` `--product-type` `--family` `--lot` `--seed` 로 조절한다.
+`--items` `--random-items` `--radius` `--product-type` `--family` `--lot` `--seed` 로 조절한다.
 
 ---
 
@@ -43,22 +48,23 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out 
 ### 1-1. 세기 5단계 (L1~L5)
 
 각 signature 마다 그 룰의 판정 지표를 임계값에서 얼마나 벗어나게 할지로 5단계를 만든다.
-**L1·L2 = 미발화(정상, fail 0), L3부터 발화**하고 L5 까지 심해진다.
+**L1 = 미발화(정상, fail 0), L2부터 발화**하고 L5 까지 심해진다 — 즉 **fail 경계가 L1/L2
+사이**다(2026-08-12 재편: 종전 사다리를 한 단계씩 내리고 L5 를 더 강하게 만들었다).
 
 | 단계 | 의미 | `spread_norm`(warn 0.18) | fail chip |
 |---|---|---|---|
-| L1 | 정상(가장 여유) | 0.09 | **0** |
-| L2 | 정상(임계값 근접) | 0.14 | **0** |
-| L3 | **발화 시작** | 0.20 | 6 |
-| L4 | 초과 | 0.24 | 15 |
-| L5 | 심각 | 0.29 | 30 |
+| L1 | 정상(fail 0) | 0.10 | **0** |
+| L2 | **발화 시작** | 0.20 | 6 |
+| L3 | 초과 | 0.26 | 15 |
+| L4 | 크게 초과 | 0.33 | 30 |
+| L5 | 심각 | 0.40 | 60 |
 
 fail chip 수(`FAIL_N`)와 지표가 **함께** 올라간다. 그러려면 분포가 spec 밖으로 새면 안 되므로
 값 기반 항목은 전부 **spec 안에 가둔다**(`bounded` — spec 밖으로 나간 값은 spec 안에서 재추출).
 가두지 않으면 산포가 큰 항목은 chip 의 수십 %가 spec 밖 = fail 이 되어 웨이퍼 하나를 통째로
 먹는다(§1-2 의 불변 법칙 때문).
 
-> L1·L2 는 **"겨냥한 그 룰"이 뜨지 않는다**는 뜻이다. 지표가 상관된 다른 룰
+> L1 은 **"겨냥한 그 룰"이 뜨지 않는다**는 뜻이다. 지표가 상관된 다른 룰
 > (예: 산포가 넓으면 cpk 는 반드시 낮다)은 뜰 수 있고, 그건 오탐이 아니다.
 > 아무것도 뜨면 안 되는 항목은 `NORMAL_*` (group=normal) 이다.
 
@@ -67,11 +73,13 @@ fail chip 수(`FAIL_N`)와 지표가 **함께** 올라간다. 그러려면 분�
 이 엔진의 목적은 "fail 난 item 이 왜 죽었는지" 설명하는 것이므로, 데이터는 양방향으로
 정합해야 한다. **spec 을 벗어난 chip 은 예외 없이 fail 이고, spec 안인 chip 은 fail 이 아니다.**
 
-- fail chip 수는 **분포가 정한다** — 산포가 넓거나 중심이 치우칠수록 자동으로 늘어난다
-  (WIDE L3 22개 → L7 1,413개). 고정 개수를 강요하지 않는다.
+- fail chip 수는 **분포가 정한다** — 산포가 넓거나 중심이 치우칠수록 자동으로 늘어난다.
+  고정 개수를 강요하지 않는다.
 - 값만으로 fail 이 안 생기는 항목(좁은 분포·공간 룰·수율 룰)만 레벨 사다리(`FAIL_N`)만큼
   chip 을 골라 limit 밖으로 민다(`_push_out_of_spec`).
-- **L1·L2 는 fail 0** — spec 밖 값이 나오면 안쪽으로 당겨 없앤다. fail 이 없으므로 서버
+  ⚠ 미는 거리(`FAIL_MARGIN`)를 키우면 밀려난 chip 이 **OUTLIER 판정선(중심에서 12 robust σ)**
+  에 닿아 겨냥하지 않은 OUTLIER 가 동반발화한다. 산포가 좁은 시나리오일수록 먼저 닿는다.
+- **L1 은 fail 0** — spec 밖 값이 나오면 안쪽으로 당겨 없앤다. fail 이 없으므로 서버
   평가 범위(`WEB_REPORT_EVAL_FAIL_ONLY=1`)에서 아예 빠진다 = "정상 item 은 발화하지 않는다"가
   구조적으로 보장된다.
 - chip 하나는 `FAILTNO` 를 하나만 가지므로, **다른 item 이 이미 fail 로 쓴 chip 에서
@@ -79,10 +87,9 @@ fail chip 수(`FAIL_N`)와 지표가 **함께** 올라간다. 그러려면 분�
   하나로 귀속한다).
 - 측정값이 없는(공란) chip 은 fail 로 찍지 않는다 — 값으로 설명 못 하는 fail 이 된다.
 
-검증(마지막 생성물, item 147개 · fail chip 46,235개):
-**spec 안인데 fail = 0건, spec 밖인데 pass = 0건.**
+검증: **spec 안인데 fail = 0건, spec 밖인데 pass = 0건.**
 
-**item 이름에 `(FAIL)`** — L3 이상(= 값이 죽어서 fail 난 항목)에만 붙는다.
+**item 이름에 `(FAIL)`** — L2 이상(= 값이 죽어서 fail 난 항목)에만 붙는다.
 `WIDE_DISTRIBUTION_L5(FAIL)` 처럼 이름만으로 정답과 세기를 읽을 수 있다.
 
 ### 1-2-1. TNO 도 유형·레벨로 구분한다
@@ -94,21 +101,21 @@ bin 규칙과 대칭이라 **번호만 보고 불량 유형·세기를 읽을 �
 
 ### 1-3. fail 유형별 bin — Map Analysis 색 구분
 
-**bin = 유형(SIG_BIN) × 10 + 레벨**. 예: `113` = WIDE_DISTRIBUTION(11) L3, `207` =
-SUBPOP_GAP(20) L7. 십의 자리 이상으로 불량 유형이, 일의 자리로 세기가 갈린다 —
-Map Analysis 에서 색이 유형별로 뭉치면서도 다양하게 나온다(실측 105종).
-L1·L2(fail 0)와 정상군은 일반 fail bin `2`.
+**bin = 유형(SIG_BIN) × 10 + 레벨**. 예: `112` = WIDE_DISTRIBUTION(11) L2, `205` =
+BIMODALITY(20) L5. 십의 자리 이상으로 불량 유형이, 일의 자리로 세기가 갈린다 —
+Map Analysis 에서 색이 유형별로 뭉치면서도 다양하게 나온다.
+L1(fail 0)과 정상군은 일반 fail bin `2`, 관찰군(random)은 `41~49`.
 
 | bin | signature | bin | signature | bin | signature |
 |---|---|---|---|---|---|
-| 11 | WIDE_DISTRIBUTION | 19 | HEAVY_TAIL | 27 | EDGE_FAIL(E1 제외) |
-| 12 | SEVERE_OUTLIER | 20 | SUBPOP_GAP | 28 | CENTER_FAIL |
-| 13 | OUTLIER_WARN | 21 | TAIL_RISK | 29 | RING_FAIL |
-| 14 | SPEC_TOO_TIGHT | 22 | CONSTANT_VALUE | 30 | CLUSTER_FAIL |
+| 11 | WIDE_DISTRIBUTION(off) | 19 | HEAVY_TAIL | 27 | EDGE_FAIL(E1 제외) |
+| 12 | **OUTLIER**(구 SEVERE/WARN 통합) | 20 | BIMODALITY(구 SUBPOP_GAP) | 28 | CENTER_FAIL |
+| 13 | *(결번 — 통합)* | 21 | TAIL_RISK | 29 | RING_FAIL |
+| 14 | SPEC_TOO_TIGHT(off) | 22 | CONSTANT_VALUE | 30 | CLUSTER_FAIL |
 | 15 | LOW_CPK | 23 | EQUIPMENT_SUSPECT | 32 | WAFER_GRADIENT |
 | 16 | MEAN_SHIFT | 24 | CODE_RAIL | 33 | GROSS_FAIL |
 | 17 | BIDIR_TAIL | 25 | MISSING_LIMIT | 34 | **E1_FAIL**(최외곽 1열) |
-|  |  | 26 | LOW_SAMPLE_UNCERTAIN | 2 | 일반(L1·L2·정상군) |
+|  |  | 26 | LOW_SAMPLE_UNCERTAIN | 2 / 41~49 | 일반(L1·정상군) / 관찰군 |
 
 18(defective)·31(abnormal)은 `bin_taxonomy.yaml` 예약값이라 피했다 — 그 둘을 쓰면
 severity_bias 가 얹혀 status 가 달라진다.
@@ -119,19 +126,26 @@ severity_bias 가 얹혀 status 가 달라진다.
 
 ### 1-4. 구성 (전체 세트 500개)
 
-| group | 개수 | 내용 |
-|---|---|---|
-| `single` | 147 | signature 21종 × 7단계 — **한 룰만 겨냥** |
-| `combo` | 119 | 2~3개 동시발화 조합 17종 × 7단계 |
-| `unit_axis` | 72 | 같은 시나리오를 UNIT 9종으로 (V/A/Hz/Ohm/Sec/CODE/PCT/PF/미등록) → `item_class` 스코프 |
-| `bin_axis` | 36 | fail bin 6종(3·4·5·8·**18**·**31**) → `bin_taxonomy` severity_bias |
-| `trim_axis` | 20 | item 명에 TRIM → `category_major=TRIM` |
-| `boundary` | 46 | 임계값 바로 앞뒤 6점 스윕(7지표) + 상수값 부동소수 함정 4건 |
-| `normal` | 54 | 정상 분포 — **발화 0건이어야 한다**(오탐 검사) |
-| `mixed` | 82 | 무작위 조합(현실형) — 공간·수율 항목은 fail chip 값을 spec 밖으로 |
+| group | 내용 |
+|---|---|
+| `single` | signature × 5단계 — **한 룰만 겨냥** |
+| `combo` | 2~3개 동시발화 조합 × 5단계 |
+| `unit_axis` | 같은 시나리오를 UNIT 9종으로 (V/A/Hz/Ohm/Sec/CODE/PCT/PF/미등록) → `item_class` 스코프 |
+| `bin_axis` | fail bin 6종(3·4·5·8·**18**·**31**) → `bin_taxonomy` severity_bias |
+| `trim_axis` | item 명에 TRIM → `category_major=TRIM` |
+| `boundary` | 임계값 바로 앞뒤 6점 스윕 + 상수값 부동소수 함정 4건 |
+| `random` | **관찰군 100개**(`--random-items`) — 정답 기대 없음 |
+| `normal` | 정상 분포 — **발화 0건이어야 한다**(오탐 검사) |
+| `mixed` | 무작위 조합(현실형) — 공간·수율 항목은 fail chip 값을 spec 밖으로 |
+
+**관찰군(`random`)** 은 룰 사다리를 쓰지 않는다(2026-08-12 추가). 산포 모양 9종
+(normal/wide/shifted/bimodal/spiky/tailed/quantized/flat/skewed) × fail 배치
+(random/edge/center/ring/quadrant/e1)를 무작위로 섞어, **아무렇게나 들어온 데이터를 엔진이
+어떻게 판정하는지** 보는 용도다. 겨냥한 룰이 없으므로 verify 는 이 그룹을 누락·오발화로
+세지 않고 **발화 분포만 따로 요약**한다(`expect=observe`).
 
 **모든 item 은 fail item 이다** (FAILTNO == 그 item 의 TNO 인 chip 이 1개 이상).
-서버 기본값 `WEB_REPORT_EVAL_FAIL_ONLY=1` 에서 500개 전부가 평가 대상이 된다.
+서버 기본값 `WEB_REPORT_EVAL_FAIL_ONLY=1` 에서 전부가 평가 대상이 된다.
 
 ### 1-5. 왜 source 가 30개인가 (item 을 나눠 담는 이유)
 
@@ -182,17 +196,18 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
   (`fired_all_rules`). **운영 rules 파일은 건드리지 않는다**(복사본에만 쓴다).
   비활성 룰까지 "데이터가 조건을 맞췄는지" 확인하기 위한 경로다.
 
-판정 4종 — 마지막 실행 결과는 단일 CSV **136/136**, 전체 세트 **500/500**:
+판정 4종 — 마지막 실행 결과(v6, 단일 CSV)는 **180/180**:
 
 | 지표 | 의미 | 기대 |
 |---|---|---|
-| `missing` | L3~L7 인데 겨냥한 룰이 안 뜸 | 0 |
-| `false_fire` | L1·L2 인데 겨냥한 룰이 뜸 | 0 |
+| `missing` | L2~L5 인데 겨냥한 룰이 안 뜸 | 0 |
+| `false_fire` | L1 인데 겨냥한 룰이 뜸 | 0 |
 | 정상군 오탐 | `NORMAL_*` 에서 룰 발화 | 0 |
-| `suppressed` | 조건은 맞았지만 `suppressed_by` 로 눌림 | 정상 동작(현재 1건: SPEC_TOO_TIGHT → LOW_CPK) |
+| `suppressed` | 조건은 맞았지만 `suppressed_by` 로 눌림 | 정상 동작(v6 1건: HEAVY_TAIL L5 → OUTLIER) |
 | `co_fired` | 겨냥 밖 동반발화 | 구조상 발생(§4-1) |
 
 `UNKNOWN` 은 "아무 룰도 안 뜬 케이스" 표식이라 오탐으로 세지 않는다.
+관찰군(`random`)은 위 4종 어디에도 안 들어가고 **발화 분포 요약**만 출력된다.
 
 ---
 
@@ -206,11 +221,12 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
 | 관계 | 이유 |
 |---|---|
 | WIDE_DISTRIBUTION ⟹ LOW_CPK | 대칭 limit 에서 `cpk = 1/(6·spread_norm)` → spread>0.18 이면 cpk<0.93 |
-| SEVERE_OUTLIER ⟹ OUTLIER_WARN | 임계값 관계상 항상 (그래서 `suppressed_by` 로 정리돼 있다) |
-| SEVERE/OUTLIER_WARN ⟹ HEAVY_TAIL | outlier 가 곧 kurtosis |
+| OUTLIER ⟹ HEAVY_TAIL | 멀리 튄 값 하나가 kurtosis 를 4제곱으로 밀어올린다 (그래서 `suppressed_by`) |
+| **kurtosis ≥ 8 ⟹ OUTLIER 근접** | 임계 8 을 채우려면 spike 가 σ 의 9배 밖에 있어야 하는데, 그 값은 곧 spec 밖이라 fail 이 되고 robust z 12 에 닿는다. v6 에서 HEAVY_TAIL L5 가 OUTLIER 에 눌리는 이유 — **두 룰은 강도 축이 겹친다** |
 | BIDIR_TAIL ⟹ WIDE + LOW_CPK | 양쪽 margin<1σ 면 σ>폭/2 |
 | SPEC_TOO_TIGHT ⊻ WIDE/MEAN_SHIFT/SUBPOP | 조건이 "좁고·중앙·단봉"이라 **동시 발화 불가** |
-| SUBPOP_GAP ⊻ outlier 계열 | `outlier_ratio ≥ 3%` 면 판정 보류(게이트) |
+| BIMODALITY ⊻ outlier 계열 | `outlier_ratio ≥ 3%` 면 판정 보류(게이트) |
+| OUTLIER ⊻ 공간 룰 | OUTLIER 의 spike 는 **위치와 무관하게** spec 밖 fail 이라, 섞이면 영역 점유율 95% 가 깨진다 |
 
 `INCOMPATIBLE` 상수가 이 관계를 코드로 갖고 있다.
 
@@ -222,30 +238,32 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
 
 | 조합 | 왜 불가능한가 |
 |---|---|
-| WIDE × SEVOUT/OUTWARN/HEAVYTAIL | outlier 로 잡히려면 spike 가 robust σ 의 4.5배 밖이어야 하는데 spec 안(≤0.47 폭)을 못 벗어난다 |
+| WIDE × OUTLIER/HEAVYTAIL | 산포가 넓으면 spike 를 얼마나 멀리 둬도 robust σ 대비 거리가 12 에 못 미친다 |
 | WIDE × SUBPOP | 모드를 spec 안에 두면서 골(density_gap)까지 만들 폭이 없다 |
 | WIDE/SUBPOP × MEANSHIFT | 가둔 분포는 재추출이 치우침을 되돌려 center_bias 가 임계에 못 미친다 |
-| CONSTANT × 공간 룰 | 전 chip 이 fail 이면 "특정 영역 집중" 이라는 개념이 성립하지 않는다(비율 항상 1.0) |
+| CONSTANT × 공간 룰 | 전 chip 이 fail 이면 "특정 영역 집중" 이라는 개념이 성립하지 않는다(점유율 항상 1.0) |
 | SPECTIGHT × WIDE/MEANSHIFT/SUBPOP | 룰 조건이 서로 배타(좁고·중앙·단봉) |
+| **OUTLIER × 공간 룰(E1/EDGE/CENTER/RING/CLUSTER)** | OUTLIER 의 spike 는 spec 밖이라 위치와 무관하게 fail 이 된다 → 영역 점유율 95% 가 깨진다 |
 
-### 4-2. 현 임계값으로 **발화가 불가능한** 룰 3종
+### 4-2. 현 룰셋으로 **발화가 불가능한** 룰
 
 | 룰 | 이유 |
 |---|---|
 | `EQUIPMENT_SUSPECT` | `raw_df` 경로는 site 를 항상 `None` 으로 채운다(`ingest._ingest_raw_df`) → `site_cpk_delta` 영구 결측. **켜도 절대 안 뜬다.** DUT 를 site 로 넘기면 살아난다 |
-| `TAIL_RISK` | `skewness = (mean-median)/stdev` (비모수 왜도)는 **수학적 상한이 1.0** → `skew_warn: 1.0` 초과 불가. 임계값을 0.3~0.5 로 낮추거나 모멘트 왜도로 바꿔야 한다 |
-| `RING_FAIL` | ring 영역(반경 0.3~0.8)이 die 의 55% → `ring_fail_ratio` 상한 `1/0.55 ≈ 1.82` < 임계 2.0. 임계값을 1.5 근처로 낮춰야 의미가 생긴다 |
 
-같은 방식의 상한이 다른 공간 룰에도 있다: `edge_fail_ratio` 상한 2.78(영역 36%),
-`center_fail_ratio` 11(9%), `quadrant_imbalance` 4. 임계값을 상한 위로 두면 그 룰은
-영원히 침묵한다.
+해소된 것 2건 — `TAIL_RISK` 는 지표를 모멘트 왜도로 갈아탔고(2026-08-12), `RING_FAIL` 은
+판정이 점유율(`ring_fail_share`)로 바뀌어 밀도 배수 상한(1.82 < 임계 2.0) 문제가 사라졌다.
+밀도 배수(`*_fail_ratio`)는 여전히 영역마다 상한이 다르다(edge 2.78 / center 11 / ring 1.82
+/ quadrant 4) — 그 값을 임계로 쓰는 룰을 새로 만들 때는 상한을 먼저 확인할 것.
 
 ### 4-2-1. fail chip 을 limit 밖에 두면 좁은 분포는 반드시 heavy tail 이 된다
 
 `fail = limit 위반` 규칙(§1-2) 때문에, 산포가 좁은 item 은 fail chip 이 곧 극단값이 되어
-`HEAVY_TAIL`(kurtosis>2)이 함께 뜬다. 데이터의 결함이 아니라 **사실 그대로**다 —
-"대부분 잘 나오는데 몇 개만 멀리 튀었다" 가 정확히 heavy tail 이다. 기준 분포가 지나치게
-좁아 이 동반발화가 과했던 항목(HEAVY_TAIL 자신·MEAN_SHIFT·공간 룰)은 σ 를 키워 완화했다.
+`HEAVY_TAIL`(kurtosis>8)이 함께 뜬다. 데이터의 결함이 아니라 **사실 그대로**다 —
+"대부분 잘 나오는데 몇 개만 멀리 튀었다" 가 정확히 heavy tail 이다. 같은 이유로 **밀어낸
+fail 이 OUTLIER 판정선(12 robust σ)에 닿을 수 있다** — `FAIL_MARGIN` 을 키우거나 기준 σ 를
+줄이면 겨냥하지 않은 OUTLIER 가 붙는다. 기준 분포가 지나치게 좁아 이 동반발화가 과했던
+항목(HEAVY_TAIL 자신·MEAN_SHIFT·공간 룰)은 σ 를 키워 완화했다.
 
 ### 4-3. `CONSTANT_VALUE` 의 부동소수 함정
 
@@ -253,6 +271,13 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
 값 1.4 를 2,453개 넣으면 표본표준편차가 `2.2e-16` 으로 떠서 미발화, 1.25/1.5 는 정확히 0 →
 발화. 경계 항목 `EDGEC_constant_*` 4건이 이 차이를 보여준다.
 실데이터의 clamp 값이 1.4·1.8 류면 이 룰은 조용히 놓친다 — 상대 산포 기준(`stdev/폭 < 1e-9`)이 안전하다.
+
+### 4-4. MAD=0 이면 outlier 거리에 상한이 생긴다
+
+pass 값이 **전부 같은 값**이면 MAD=0 이라 modified z 가 meanAD 폴백을 탄다. 그 경우
+z 의 상한이 `n/(1.2533 × fail수)` 로 눌린다 — 60 chip 중 8개가 fail 이면 아무리 멀리
+떨어뜨려도 z 는 6.0 을 못 넘어 `OUTLIER`(임계 12)가 발화하지 않는다. 테스트 픽스처에서
+정상 몸통에 미세한 잡음을 주는 이유다(실데이터는 측정 잡음이 있어 이 상황이 드물다).
 
 ### 4-4. UNIT 표기 → `value_type` (무판정 경로)
 

@@ -1,4 +1,4 @@
-"""Issue Table Signature 컬럼(ENGR 확정 정답 룰) + eval DB 라벨 동기화 검증.
+﻿"""Issue Table Signature 컬럼(ENGR 확정 정답 룰) + eval DB 라벨 동기화 검증.
 
 실행:
     server\\.venv\\Scripts\\python.exe tests\\test_issue_signature.py
@@ -135,11 +135,11 @@ def main():
     assert all(SIGNATURE_COL not in r and "_sig" not in r for r in plain), \
         "ai_comment 를 안 쓰는 세션에 Signature 키가 생겼다 (기존 payload 계약 위반)"
 
-    sigs = {"engine": {ROW_KEY: ["WIDE_DISTRIBUTION", "SUBPOP_GAP"]}, "engr": {}}
+    sigs = {"engine": {ROW_KEY: ["WIDE_DISTRIBUTION", "BIMODALITY"]}, "engr": {}}
     rows = issue_rows(ai_comments={}, signatures=sigs)
     row = find_row(rows, "ItemA", "4")
-    assert row[SIGNATURE_COL] == "WIDE_DISTRIBUTION+SUBPOP_GAP", row[SIGNATURE_COL]
-    assert row["_sig"] == ["WIDE_DISTRIBUTION", "SUBPOP_GAP"] and row["_sigrev"] == 0
+    assert row[SIGNATURE_COL] == "WIDE_DISTRIBUTION+BIMODALITY", row[SIGNATURE_COL]
+    assert row["_sig"] == ["WIDE_DISTRIBUTION", "BIMODALITY"] and row["_sigrev"] == 0
 
     # 엔진 발화가 없으면 "미분류" — fail 인데 룰이 설명 못 한 케이스를 OK 로 착각하지 않게.
     bare = find_row(issue_rows(ai_comments={},
@@ -176,11 +176,11 @@ def main():
     print("[b] 저장 검증 OK — 미등록 id / 중복 / 9개 / 잘못된 row_key 거부")
 
     # 정상 저장 — 편집 DB 에 JSON 배열(순서 보존)로 남는다.
-    res = save(SID_A, ["subpop_gap", "UNKNOWN"])          # 소문자도 대문자로 정규화
-    assert res["signatures"] == ["SUBPOP_GAP", "UNKNOWN"], res
+    res = save(SID_A, ["BIMODALITY", "UNKNOWN"])          # 소문자도 대문자로 정규화
+    assert res["signatures"] == ["BIMODALITY", "UNKNOWN"], res
     stored = db.rows[SID_A][(edits.KIND_ISSUE_SIGNATURE, ROW_KEY)]
-    assert json.loads(stored) == ["SUBPOP_GAP", "UNKNOWN"], stored
-    assert edits.load_issue_signatures(db, SID_A) == {ROW_KEY: ["SUBPOP_GAP", "UNKNOWN"]}
+    assert json.loads(stored) == ["BIMODALITY", "UNKNOWN"], stored
+    assert edits.load_issue_signatures(db, SID_A) == {ROW_KEY: ["BIMODALITY", "UNKNOWN"]}
 
     # (c) 동기화 멱등 ────────────────────────────────────────────────────────
     r = eval_export.sync_session_signatures(SID_A, report_db=db)
@@ -190,7 +190,7 @@ def main():
     try:
         assert qv(conn, "SELECT COUNT(*) FROM label WHERE labeler='web-signature'") == 1
         assert qv(conn, "SELECT COUNT(*) FROM label_signature") == 2
-        assert qv(conn, "SELECT signature FROM label_signature WHERE rank=1") == "SUBPOP_GAP"
+        assert qv(conn, "SELECT signature FROM label_signature WHERE rank=1") == "BIMODALITY"
         # 라벨은 세션 전용 run 에 매달려 있어야 세션 역참조가 가능하다.
         assert qv(conn, "SELECT ingested_by FROM ingest_run") == "web-signature"
         assert qv(conn, "SELECT ir.session_id FROM label l "
@@ -214,7 +214,7 @@ def main():
         assert n_label == 2, f"세션 B 확정이 세션 A 라벨을 덮어썼다 (label={n_label})"
         assert qv(conn, "SELECT COUNT(DISTINCT run_id) FROM ingest_run") == 2
         got = sorted(r[0] for r in conn.execute("SELECT signature FROM label_signature"))
-        assert got == ["SEVERE_OUTLIER", "SUBPOP_GAP", "UNKNOWN"], got
+        assert got == ["BIMODALITY", "SEVERE_OUTLIER", "UNKNOWN"], got
         print("[d] 세션 구분 OK — 같은 case 를 두 세션에서 확정해도 안 덮인다")
 
         # (e) 해제 → 라벨·자식 동시 소멸 (고아 0건) ─────────────────────────────

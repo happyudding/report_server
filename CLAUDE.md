@@ -174,7 +174,7 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 
 **정본은 [server/database/core.py](server/database/core.py) 의 `SCHEMA`.** 전체 테이블·컬럼은
 [docs/03](docs/03_storage.md) 와 스냅샷 [DB/pe/report/report_README.md](DB/pe/report/report_README.md)
-참조. 테이블 18개 요지:
+참조. 테이블 19개 요지:
 
 - `report_session` — 세션 1건. `source`('xlsx_upload'|'web_report'), `mode`('Normal' 기본),
   `uploaded_by`·`client_host`(신원), `webreport_options`, `password`(미사용 보존) 컬럼 포함.
@@ -192,6 +192,11 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
   무효화 토큰. manifest 는 불변 스냅샷 ([web_report/edits.py](web_report/edits.py)).
 - `report_session_editor`(편집 위임) / `report_web_visitor`(편집자 후보 풀) /
   `report_user_important`(개인 중요표시) / `report_user_favorite`(즐겨찾기).
+- `report_user_profile` — 사용자 **실명**(표시용). 화면 표기는 전부 `이름(ID)` 이며, 이름이
+  없으면 접속할 때마다 입력창이 뜬다(`static/webreport/user_name.js`, 검색결과·랜딩·세션
+  상세 공용). `report_user` 의 컬럼이 **아닌** 이유는 로그인 계정이 없는 Honey 전용
+  사용자도 이름을 가져야 하기 때문(`password_hash NOT NULL`). 이름은 표시 전용 —
+  접근제어·감사 식별은 계속 `user_id` 로 한다.
 - `report_usage_daily` — 접속 사용량 일별 카운터(Honey 실행·웹 방문, 관리자 통계 탭).
   `kind`=`honey_run/web_index/web_view`, 무신원은 `ip:<addr>` 행.
 - `report_chatbot_log` — 웹 챗봇 질문/답변 전문 + 부하 계측(`total_ms`=`wait_ms`(동시실행

@@ -111,8 +111,10 @@ def build_trace_cases():
             ["STEP", "", "", "", "", "", "", "P1"], ["UNIT", "", "", "", "", "", "", "V"],
             ["HILIM", "", "", "", "", "", "", 10], ["LOLIM", "", "", "", "", "", "", 0]]
     body = []
-    for i in range(60):                       # 8/60 outlier → SEVERE_OUTLIER 발화
-        v = 5.0 if i < 52 else 15.0
+    for i in range(60):                       # 정상 몸통에서 뚝 떨어진 fail 8개 → OUTLIER 발화
+        # pass 값에 잡음을 준다 — 전부 같은 값이면 MAD=0 폴백이 걸려 robust z 상한이
+        # n/(1.2533·fail수)≈6.0 으로 눌려 임계 12 를 못 넘는다.
+        v = 5.0 + (i % 5) * 0.02 if i < 52 else 15.0
         body.append([f"s{i}", 1, 1, i, 0, (4 if v > 10 else 1), (100 if v > 10 else ""), v])
     table = split_honeyform(pd.DataFrame(head + body, columns=cols),
                             source="src0", file_name="src0")
@@ -155,7 +157,7 @@ def test_render_and_goto(cases, sigs):
         "       root_cause_category:'x',created_at:1700000000});"
         "     out.push('renderCase=OK'); }"
         "catch(e){ out.push('renderCase=FAIL '+e.message); }"
-        "gotoSignature('SEVERE_OUTLIER').then(function(){out.push('goto=OK');},"
+        "gotoSignature('OUTLIER').then(function(){out.push('goto=OK');},"
         " function(e){out.push('goto=FAIL '+e.message);}).then(function(){"
         "  out.push('sigListLen='+document.getElementById('sigList').innerHTML.length);"
         "  var pre=document.createElement('pre');pre.id='res';"

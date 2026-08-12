@@ -26,9 +26,12 @@ SPECIFICITY_ORDER = ["LOW_SAMPLE_UNCERTAIN", "MISSING_LIMIT", "CONSTANT_VALUE",
                      # 공간 존은 좁은 것부터: E1(최외곽 한 줄) > EDGE(바깥 밴드) > CENTER
                      "E1_FAIL",
                      "EDGE_FAIL", "CENTER_FAIL", "CLUSTER_FAIL", "WAFER_GRADIENT",
-                     "CODE_RAIL", "TAIL_RISK", "SEVERE_OUTLIER", "OUTLIER_WARN",
+                     "CODE_RAIL", "TAIL_RISK",
+                     # OUTLIER 가 현행 룰. SEVERE_OUTLIER/OUTLIER_WARN 은 통합돼 꺼졌지만
+                     # yaml 에 선언이 남아 있어 이 목록도 1:1 이어야 한다(validate_all).
+                     "OUTLIER", "SEVERE_OUTLIER", "OUTLIER_WARN",
                      "MEAN_SHIFT", "HEAVY_TAIL",
-                     "BIDIR_TAIL", "WIDE_DISTRIBUTION", "SUBPOP_GAP", "LOW_CPK",
+                     "BIDIR_TAIL", "WIDE_DISTRIBUTION", "BIMODALITY", "LOW_CPK",
                      "SPEC_TOO_TIGHT", "GROSS_FAIL",
                      # UNKNOWN 은 다른 발화가 하나도 없을 때만 생기므로 경쟁 상대가 없다.
                      # 그래도 맨 끝에 둔다 — 순서 정합 검증(rules_io.validate_all)이 전 id 를 요구.

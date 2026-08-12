@@ -218,6 +218,17 @@ CREATE TABLE IF NOT EXISTS report_user (
     created_at    INTEGER NOT NULL
 );
 
+-- 사용자 실명(표시용). report_user 의 컬럼이 아니라 별도 테이블인 이유는, 웹 로그인 계정이
+-- 없는 Honey 전용 사용자(password_hash NOT NULL 이라 report_user 에 행을 만들 수 없다)도
+-- 이름을 가져야 하기 때문이다. 키는 report_user·report_web_visitor 와 같은 소문자 singleID.
+-- 이름은 **표시 전용**이며 접근제어·감사 식별에는 쓰지 않는다(신원 판단은 계속 user_id).
+CREATE TABLE IF NOT EXISTS report_user_profile (
+    user_id      TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    updated_by   TEXT                -- 'self' | 'admin:<uid>'
+);
+
 CREATE TABLE IF NOT EXISTS report_session_editor (
     session_id  TEXT NOT NULL,       -- 편집 권한을 위임한 세션
     editor_user TEXT NOT NULL,       -- 권한을 받은 PC 계정 (소문자 정규화, _current_user 규칙)

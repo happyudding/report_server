@@ -523,6 +523,45 @@ document.getElementById("btnPrivate").addEventListener("click", () => {
   doSetPrivate(!(DATA.session && DATA.session.is_private));
 });
 
+// ── Rawdata 원본 CSV 다운로드 ──────────────────────────────────────────────────
+// 조회 기능이라 권한 게이트가 없다 — 읽기 전용 사용자도 받는다(서버 라우트도 같은 판단).
+// source 배열의 순서가 곧 서버의 source idx 다(metrics.py 가 테이블 순서 그대로 싣는다).
+function rawdlClose() {
+  document.getElementById("rawdlMenu").classList.remove("show");
+}
+
+function rawdlDownload(idx) {
+  // 서버가 attachment 로 내려주므로 페이지는 그대로 있는다(파일명도 서버가 정한다).
+  const a = document.createElement("a");
+  a.href = `/pe/report/session/${SESSION_ID}/web_report/rawdata_csv?source=${idx}`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  showToast("Rawdata CSV 다운로드를 시작했습니다.");
+}
+
+document.getElementById("btnRawdataDl").addEventListener("click", e => {
+  e.stopPropagation();      // 바깥 클릭 닫기 핸들러가 방금 연 메뉴를 즉시 닫지 않게
+  const sources = (DATA && DATA.web_report && DATA.web_report.sources) || [];
+  if (!sources.length) { showToast("Rawdata source 가 없습니다."); return; }
+  if (sources.length === 1) { rawdlDownload(0); return; }
+  const menu = document.getElementById("rawdlMenu");
+  if (menu.classList.contains("show")) { rawdlClose(); return; }
+  menu.innerHTML = `<div class="rawdl-menu-title">Rawdata CSV 다운로드 (source 선택)</div>` +
+    sources.map((s, i) => `<button class="rawdl-item" data-rawdl-idx="${i}">`
+      + `${esc(s.name || `source_${i + 1}`)}</button>`).join("");
+  menu.classList.add("show");
+});
+
+document.getElementById("rawdlMenu").addEventListener("click", e => {
+  const item = e.target.closest("[data-rawdl-idx]");
+  if (!item) return;
+  rawdlClose();
+  rawdlDownload(Number(item.dataset.rawdlIdx));
+});
+
+document.addEventListener("click", rawdlClose);
+
 // 개인 중요표시 토글 — 서버가 report_user_important 에 내 계정 기준으로만 저장한다.
 async function doSetImportant(important) {
   try {

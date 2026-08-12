@@ -38,7 +38,7 @@ STATS = {"submitted": 0, "inline": 0, "ok": 0, "timeout": 0, "broken": 0, "error
          "prewarm_queued": 0, "prewarm_dropped": 0, "prewarm_done": 0,
          "ondemand_queued": 0, "ondemand_done": 0, "ondemand_error": 0,
          "distpack_queued": 0, "distpack_done": 0, "distpack_error": 0,
-         "rewarm_queued": 0}
+         "rewarm_queued": 0, "consumer_restart": 0}
 
 _WORKERS = max(0, int(os.getenv("WEB_REPORT_COMPUTE_WORKERS", "2") or 2))
 # 워커 N개 태스크 처리 후 프로세스 재기동 — 워커 프로세스 내 TABLES_CACHE(최대 4GB)로
@@ -46,6 +46,23 @@ _WORKERS = max(0, int(os.getenv("WEB_REPORT_COMPUTE_WORKERS", "2") or 2))
 _TASKS_PER_CHILD = max(1, int(os.getenv("WEB_REPORT_COMPUTE_TASKS_PER_CHILD", "32") or 32))
 # 워커 hang 시 waitress 스레드가 .result() 에서 영구 대기하는 것을 막는 상한.
 _TIMEOUT_SEC = float(os.getenv("WEB_REPORT_COMPUTE_TIMEOUT_SEC", "300") or 300)
+# **워커에 들어가지도 못한 채 큐에서만 기다린 시간**의 상한 (2026-08-12).
+# _TIMEOUT_SEC 하나로만 재면 붐빌 때 "큐에서 300초 대기 → 그제야 워커 진입 → 타임아웃
+# 판정이 RUNNING 으로 나옴 → 전 워커 terminate" 가 성립한다. 큐 대기 중인 잡은
+# cancel 이 성공(=워커 무결)하므로, 그 전에 끊으면 풀을 보존한 채 실패시킬 수 있다.
+# 0 이면 이 상한을 끄고 종전 동작(_TIMEOUT_SEC 단독)으로 돌아간다.
+_QUEUE_WAIT_MAX_SEC = float(os.getenv("WEB_REPORT_COMPUTE_QUEUE_WAIT_SEC", "60") or 0)
+_WAIT_POLL_SEC = 1.0
+
+
+class QueueWaitTimeout(TimeoutError):
+    """워커에 들어가 보지도 못하고 큐 대기만 하다 끊긴 잡.
+
+    TimeoutError 를 상속하므로 run() 의 기존 처리(풀 보존 + 실패 기록)는 그대로 탄다.
+    따로 이름을 붙인 이유는 **세션의 잘못이 아니기 때문**이다 — 온디맨드 소비자가 이걸
+    빌드 실패로 세면 연속 2회에 그 세션이 10분간 503 으로 막히는데, 실제로는 그 순간
+    서버가 붐볐을 뿐이라 잠시 뒤 재시도하면 정상적으로 빌드된다.
+    """
 _IN_WORKER = False
 _pool = None
 _pool_lock = threading.Lock()
@@ -196,8 +213,17 @@ def should_offload(tables_key) -> bool:
     return not warm
 
 
-def _reset_pool(shutdown=False):
+def _reset_pool(shutdown=False, expected=None):
     """현재 풀을 버린다. shutdown=True 면 워커 프로세스도 즉시 정리한다.
+
+    ⚠️ expected 를 넘기면 **전역 풀이 그 풀일 때만** 버린다(compare-and-swap).
+    안 그러면 도미노가 난다 — 실행 중 잡 하나가 타임아웃해 풀 ①을 terminate 하면 같은
+    풀에서 돌던 동시 빌드 전부가 BrokenProcessPool 을 받고, 그 스레드들이 각자 다시
+    _reset_pool 을 부른다. 그 사이 다른 요청이 만들어 정상 작동 중인 풀 ②·③ 까지
+    연쇄로 파괴돼, 타임아웃 1건이 그 구간 모든 콜드 조회를 503 으로 만들고
+    build_status 실패 누적(FAIL_LIMIT)으로 세션들을 재빌드 쿨다운에 빠뜨린다.
+    호출부는 자기가 쓰던 풀 객체를 넘겨 뒷북 리셋이 무해하게 되도록 한다.
+    (인자 없이 부르면 종전대로 무조건 버린다 — 테스트·명시적 정리용.)
 
     hang 된 워커는 태스크를 끝내지 못해 max_tasks_per_child 재기동에도 걸리지 않으므로,
     풀을 통째로 버리지 않으면 그 슬롯이 영구히 죽는다(워커 2개면 2번이면 전멸).
@@ -210,6 +236,8 @@ def _reset_pool(shutdown=False):
     """
     global _pool
     with _pool_lock:
+        if expected is not None and _pool is not expected:
+            return          # 이미 다른 스레드가 버리고 새 풀로 교체됨 — 무고한 풀을 지키다
         pool, _pool = _pool, None
     if pool is None or not shutdown:
         return
@@ -236,6 +264,45 @@ def _reset_pool(shutdown=False):
         _log.warning("compute pool: %d 워커 프로세스 강제 종료(terminate)", killed)
 
 
+def _wait_result(fut):
+    """fut 완료를 기다리되, **워커에 들어가지도 못한 잡**은 큐 대기 상한에서 끊는다.
+
+    종전에는 fut.result(_TIMEOUT_SEC) 하나로 큐 대기와 실행 시간을 합쳐 쟀다. 그러면
+    붐빌 때 이런 일이 난다: 큐에서 295초 대기 → 워커 진입 → 5초 뒤 300초 소진 →
+    이때 fut 는 RUNNING 이라 cancel 이 실패 → 호출부가 "hang 워커"로 보고 풀을 통째로
+    버린다(= 그 순간 정상 진행 중이던 **다른 콜드 빌드까지 전부 terminate**).
+    실제로는 아무도 hang 하지 않았고 그냥 붐볐을 뿐인데 동시 사용자 전원이 실패한다.
+
+    그래서 대기를 쪼개 보면서, 아직 시작조차 못 한 잡은 _QUEUE_WAIT_MAX_SEC 에서
+    직접 cancel 한다. PENDING 잡의 cancel 은 항상 성공하므로 워커는 손대지 않는다
+    (호출부의 TimeoutError 처리는 그대로 — 거기서 fut.cancel() 이 True 를 돌려받아
+    '큐 대기 타임아웃, 풀 보존' 경로를 탄다).
+
+    ※ ProcessPoolExecutor 는 call queue 에 밀어 넣는 시점에 RUNNING 으로 표시한다
+      (워커가 실제로 집기 전 = 선급행). 그래서 이 상한에 걸리는 것은 call queue 에도
+      못 들어간 진짜 대기분뿐이고, 선급행 RUNNING 은 종전대로 _TIMEOUT_SEC 를 쓴다.
+
+    반환: 잡 결과. 시간 초과 시 TimeoutError (종전과 동일한 예외).
+    """
+    t0 = time.time()
+    started = False
+    while True:
+        remain = _TIMEOUT_SEC - (time.time() - t0)
+        if remain <= 0:
+            raise TimeoutError(f"{_TIMEOUT_SEC}s")
+        try:
+            return fut.result(timeout=min(_WAIT_POLL_SEC, remain))
+        except TimeoutError:
+            pass
+        if not started:
+            started = fut.running() or fut.done()
+        if (not started and _QUEUE_WAIT_MAX_SEC > 0
+                and time.time() - t0 >= _QUEUE_WAIT_MAX_SEC):
+            if fut.cancel():
+                raise QueueWaitTimeout(f"queue wait {_QUEUE_WAIT_MAX_SEC:.0f}s")
+            started = True          # 하필 지금 시작됐다 — 종전대로 끝까지 기다린다
+
+
 def run(job, *args):
     """job 을 워커에서 실행하고 결과를 반환. 풀 비활성/워커 내부면 인라인 실행.
 
@@ -253,7 +320,7 @@ def run(job, *args):
     t0 = time.time()
     try:
         fut = pool.submit(job, *args)
-        result = fut.result(timeout=_TIMEOUT_SEC)
+        result = _wait_result(fut)
         STATS["ok"] += 1
         return result
     except BrokenProcessPool as exc:
@@ -265,7 +332,7 @@ def run(job, *args):
         state = _dead_worker_state(args[0] if args else "")
         build_log.record_failure(name, args, "broken", time.time() - t0, repr(exc), state)
         _emit_build_failure(name, args, "broken", time.time() - t0, repr(exc), state)
-        _reset_pool(shutdown=True)
+        _reset_pool(shutdown=True, expected=pool)
         raise
     except TimeoutError:
         STATS["timeout"] += 1
@@ -273,9 +340,10 @@ def run(job, *args):
         # 소진한 잡은 cancel 이 성공한다(아직 미시작 = 워커 무결). 이때 풀을 버리면 무고한
         # 동시 빌드까지 전멸하므로(전 워커 terminate) 실패만 기록하고 풀은 보존한다.
         if fut.cancel():
-            _log.error("compute queue-wait timeout (%ss) — 미시작 잡 취소, 풀 보존: %s%r",
-                       _TIMEOUT_SEC, name, args)
-            err = f"TimeoutError(queued, {_TIMEOUT_SEC}s)"
+            waited = time.time() - t0
+            _log.error("compute queue-wait timeout (%.0fs 대기) — 미시작 잡 취소, 풀 보존: %s%r",
+                       waited, name, args)
+            err = f"TimeoutError(queued, {waited:.0f}s)"
             build_log.record_failure(name, args, "timeout", time.time() - t0, err)
             _emit_build_failure(name, args, "timeout", time.time() - t0, err, None)
             raise
@@ -295,7 +363,7 @@ def run(job, *args):
         err = f"TimeoutError({_TIMEOUT_SEC}s)"
         build_log.record_failure(name, args, "timeout", time.time() - t0, err, state)
         _emit_build_failure(name, args, "timeout", time.time() - t0, err, state)
-        _reset_pool(shutdown=True)
+        _reset_pool(shutdown=True, expected=pool)
         build_log.drop_states(doomed_pids)   # terminate 된 워커의 sidecar 잔해 정리
         raise
     except Exception as exc:
@@ -503,6 +571,38 @@ def _prewarm_one(session_id: str, upload_root_str: str, dist_seeded: bool,
         _log.warning("[prewarm] failed session=%s", session_id, exc_info=True)
 
 
+def _supervise(loop, label: str) -> None:
+    """소비자 스레드 본체를 감싸 **어떤 예외로도 죽지 않게** 한다.
+
+    각 루프는 이미 잡별 try/except 를 갖고 있지만, 그 **except 블록 안에서** 예외가
+    나면(예: 실패 기록·로그 자체가 실패) 잡히는 곳이 없어 while 밖으로 튀고 스레드가
+    조용히 끝난다. 그러면 202 백그라운드 빌드가 영영 시작되지 않는데, 화면에는 "만드는
+    중" 으로만 보이고 15분 뒤 폴링 타임아웃이 날 뿐이라 아무도 원인을 모른다.
+    여기서 잡아 다시 루프에 들어가고, 죽었다는 사실 자체를 진단 사건으로 남긴다.
+    """
+    while True:
+        try:
+            loop()
+            return          # 루프가 정상 반환(무한 루프라 실제로는 오지 않는다)
+        except Exception as exc:
+            STATS["consumer_restart"] += 1
+            _log.error("[%s] 소비자 스레드가 예외로 종료됨 — 재시작합니다", label,
+                       exc_info=True)
+            _emit_consumer_death(label, exc)
+            time.sleep(1.0)   # 즉시 재진입이 같은 예외로 폭주하지 않게 한 박자 쉰다
+
+
+def _emit_consumer_death(label: str, exc: Exception) -> None:
+    """소비자 스레드 사망을 진단 사건으로 — 로그 한 줄로는 아무도 알아채지 못한다."""
+    try:
+        import diagnostics
+        diagnostics.emit("critical", "build", "consumer_thread_died",
+                         error_type=type(exc).__name__,
+                         message=f"{label}: {exc!r}")
+    except Exception:
+        pass
+
+
 def _prewarm_loop() -> None:
     while True:
         with _prewarm_lock:
@@ -536,8 +636,11 @@ def prewarm(session_id: str, upload_root_str: str, dist_seeded: bool = False) ->
                          _PREWARM_MAX_PENDING, dropped[0])
         _prewarm_queue.append((session_id, upload_root_str, bool(dist_seeded), time.time()))
         STATS["prewarm_queued"] += 1
-        if _prewarm_thread is None:
-            _prewarm_thread = threading.Thread(target=_prewarm_loop,
+        # is_alive 까지 보는 이유 — 스레드가 죽었는데 핸들만 남아 있으면 `is None` 검사가
+        # 계속 통과해 소비자 없는 큐에 요청만 쌓인다(_supervise 가 있어도 최후 방어).
+        if _prewarm_thread is None or not _prewarm_thread.is_alive():
+            _prewarm_thread = threading.Thread(target=_supervise,
+                                               args=(_prewarm_loop, "prewarm"),
                                                name="webreport-prewarm", daemon=True)
             _prewarm_thread.start()
     _prewarm_wake.set()
@@ -582,6 +685,13 @@ def _ondemand_loop() -> None:
                 _ONDEMAND_JOBS[kind](session_id, upload_root_str)
             STATS["ondemand_done"] += 1
             build_status.clear_failure(session_id, kind)
+        except QueueWaitTimeout:
+            # 서버가 붐벼 워커 슬롯을 못 받았을 뿐 — 이 세션의 실패가 아니다. 실패로
+            # 세면 연속 2회에 세션이 10분간 막히는데, 정작 필요한 것은 잠시 뒤 재시도다.
+            # pending 만 풀어(아래 finally) 다음 폴링이 다시 큐에 넣게 둔다.
+            STATS["ondemand_error"] += 1
+            _log.warning("[ondemand] %s build 큐 대기 초과 — 재시도 대기 session=%s",
+                         kind, session_id)
         except Exception as exc:
             # 실패하면 pending 이 풀려 다음 폴링이 다시 큐에 넣는다 — 워커 타임아웃을
             # 넘기는 세션은 그 재등록이 15분간 반복됐다. 연속 실패를 세어 일정 횟수
@@ -615,8 +725,12 @@ def request_build(session_id: str, upload_root_str: str, kind: str = "report") -
         _ondemand_pending.add(key)
         _ondemand_queue.append((session_id, upload_root_str, kind, time.time()))
         STATS["ondemand_queued"] += 1
+        # 죽은 스레드를 먼저 걷어낸다 — 종전에는 죽어도 리스트에 남아 len 이 줄지 않아
+        # 소비자가 0이 돼도 "8개 다 있다"고 판단했다(202 빌드가 영영 시작되지 않는다).
+        _ondemand_threads[:] = [t for t in _ondemand_threads if t.is_alive()]
         while len(_ondemand_threads) < _ONDEMAND_WORKERS:
-            th = threading.Thread(target=_ondemand_loop,
+            th = threading.Thread(target=_supervise,
+                                  args=(_ondemand_loop, "ondemand"),
                                   name=f"webreport-ondemand-{len(_ondemand_threads)}",
                                   daemon=True)
             _ondemand_threads.append(th)
@@ -686,8 +800,9 @@ def request_dist_pack(session_id: str, upload_root_str: str, base: bool = False)
         _distpack_pending.add(key)
         _distpack_queue.append((session_id, upload_root_str, bool(base), time.time()))
         STATS["distpack_queued"] += 1
-        if _distpack_thread is None:
-            _distpack_thread = threading.Thread(target=_distpack_loop,
+        if _distpack_thread is None or not _distpack_thread.is_alive():
+            _distpack_thread = threading.Thread(target=_supervise,
+                                                args=(_distpack_loop, "distpack"),
                                                 name="webreport-distpack", daemon=True)
             _distpack_thread.start()
     _distpack_wake.set()

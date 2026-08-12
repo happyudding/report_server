@@ -17,7 +17,7 @@ from ._rules import (thresholds_for, signatures_doc, signatures_for,  # noqa: F4
 
 # 고차모멘트(표본 부족 시 비활성) 의존 metric
 _HIGH_MOMENT_METRICS = {"skewness", "kurtosis", "bimodality_score"}
-_SUBPOP_GAP_ID = "SUBPOP_GAP"
+_BIMODALITY_ID = "BIMODALITY"      # 2026-08-12 개명 (구 SUBPOP_GAP)
 _UNKNOWN_ID = "UNKNOWN"
 
 
@@ -67,7 +67,7 @@ def _evaluate_unknown(case_ctx, features, raw_metrics, thresholds, doc):
             "action_ko": doc.get("action_ko"), "unknown_reason": code}
 
 def _evaluate_subpop_gap(features : dict):
-    """SUBPOP_GAP(이봉·분리) 전용 평가 — features 의 modality_v2 판정을 그대로 발화 근거로 쓴다.
+    """BIMODALITY(이봉·분리) 전용 평가 — features 의 modality_v2 판정을 그대로 발화 근거로 쓴다.
 
     다른 signature 처럼 when_metric 조건식 하나로 줄일 수 없어서 별도 경로를 둔다.
     modality_v2 가 없으면(표본 부족 등) 발화하지 않는다.
@@ -213,8 +213,8 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     비활성 경로 4종: yaml `enabled: false`(룰 끄기), `scope`(제품군/family 밖), 표본
     부족(n_dut < n_min)일 때 고차모멘트 의존 signature, feature 결측(값 None → 조건
     False). 뒤 둘은 **결측을 양호로 읽지 않기 위한** 장치다.
-    조건식으로 못 줄이는 특수분기 2개는 루프 밖으로 뺀다 — `SUBPOP_GAP`(modality_v2 로
-    판정)과 `UNKNOWN`(다른 룰이 하나도 안 떴을 때 fail 을 설명 없음으로 명시 발화).
+    조건식으로 못 줄이는 특수분기 2개는 루프 밖으로 뺀다 — `BIMODALITY`(modality_v2 로
+    판정)와 `UNKNOWN`(다른 룰이 하나도 안 떴을 때 fail 을 설명 없음으로 명시 발화).
     `applies` 는 "그 조건을 판정할 데이터가 있었나"를 남기는 트레이스용 기록(발화 여부와 별개).
     반환 키: signatures / reason_codes / bin_class / severity_bias / applies /
     raw_metrics_snapshot(status.decide 의 trump 판단용 cpk·yield).
@@ -246,10 +246,10 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
         # yaml 의 enabled:false 는 룰 비활성 (키 부재 = 활성 — 기존 yaml 무영향)
         if sig.get("enabled") is False:
             continue
-        # scope 는 enabled 다음, 특수분기보다 앞 — "이 제품군에서 안 쓰는 룰" 은 SUBPOP 도 예외 아님
+        # scope 는 enabled 다음, 특수분기보다 앞 — "이 제품군에서 안 쓰는 룰" 은 BIMODALITY 도 예외 아님
         if not scope_matches(sig, case_ctx):
             continue
-        if sig["id"] == _SUBPOP_GAP_ID:
+        if sig["id"] == _BIMODALITY_ID:
             subpop_doc = sig
             continue
         if sig["id"] == _UNKNOWN_ID:
@@ -274,11 +274,11 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
 
     if subpop_doc is not None:
         subpop = _evaluate_subpop_gap(features)
-        applies[f"{_SUBPOP_GAP_ID}.modality_v2"] = features.get("modality_v2") is not None
+        applies[f"{_BIMODALITY_ID}.modality_v2"] = features.get("modality_v2") is not None
         if subpop is not None:
-            fired.append({"id": _SUBPOP_GAP_ID, "status_hint" : subpop_doc["status_hint"],
+            fired.append({"id": _BIMODALITY_ID, "status_hint" : subpop_doc["status_hint"],
                           "score":None, "evidence" : subpop["evidence"], "action_ko":subpop_doc.get("action_ko"), "modality_v2":subpop["modality_v2"]})
-            suppressors[_SUBPOP_GAP_ID] = _suppressor_ids(subpop_doc)
+            suppressors[_BIMODALITY_ID] = _suppressor_ids(subpop_doc)
 
     fired, suppressed = _apply_suppression(fired, suppressors)
 

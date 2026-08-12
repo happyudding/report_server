@@ -36,10 +36,15 @@ _AKEY_RE = re.compile(r"^[0-9a-f]{64}$")
 
 def _log_audit(session, result):
     """정리 이력을 report_audit_log 에 기록 (best-effort). 백그라운드 스레드라
-    Flask request 컨텍스트가 없으므로 client_ip/user_agent 는 고정값을 넣는다."""
+    Flask request 컨텍스트가 없으므로 client_ip/user_agent 는 고정값을 넣는다.
+
+    busy_timeout 은 log_audit 기본값(짧음 — 요청 지연 방지)이 아니라 5초를 명시한다:
+    여기는 사용자를 기다리게 하지 않는 스케줄러이고, 산출물을 실제로 지운 기록이라
+    유실되면 "왜 사라졌나"를 추적할 방법이 없다."""
     try:
         report_db.log_audit(
             "delete",
+            busy_timeout_ms=5000,
             session_id=session.get("session_id"),
             analysis_key=session.get("analysis_key"),
             product_type=session.get("product_type"),

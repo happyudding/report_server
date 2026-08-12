@@ -5,9 +5,13 @@ Honey 가 재인코딩한 parquet 전체를 받아 기존 analysis_key 원본을
 덮어쓰기 직전 현재 원본을 1세대 백업한다(backup_current_sources) — 앱 내 undo 는 없고
 복구는 운영자 수동. service.edit_raw_data 와 동일한 백업·content_hash 산출·캐시 무효화·
 audit 패턴을 그대로 따른다 (여기는 셀 단위가 아니라 source 전체 교체라는 점만 다름).
+
+웹 브라우저용 source 1개 CSV 내보내기(export_source_csv)도 여기 둔다 — Honey 없이
+세션 rawdata 원본을 받는 조회 전용 경로다.
 """
 from __future__ import annotations
 
+import csv
 import hashlib
 import io
 import json
@@ -20,7 +24,7 @@ from pathlib import Path
 from . import cache
 from . import edits
 from . import runtime
-from .honeyform import validate_parquet_bytes
+from .honeyform import META_COLUMNS, validate_parquet_bytes
 from .validation import canon
 
 _log = logging.getLogger(__name__)
@@ -74,6 +78,62 @@ def export_sources_zip(session_id, *, report_db, upload_root) -> bytes:
         for idx, data in enumerate(sources):
             zf.writestr(f"source_{idx}.parquet", data)
     return buf.getvalue()
+
+
+def _csv_row(values) -> str:
+    buf = io.StringIO()
+    csv.writer(buf, lineterminator="\r\n").writerow(values)
+    return buf.getvalue()
+
+
+def export_source_csv(session_id, source_idx, *, report_db, upload_root):
+    """세션의 source 1개를 7-meta honeyform 원형 그대로 CSV 청크로 흘려보낸다.
+
+    반환: (chunks, source_name) — chunks 는 문자열 generator(첫 청크에 UTF-8 BOM).
+    없는 세션/산출물은 KeyError/FileNotFoundError, source_idx 범위 밖은 IndexError.
+
+    parquet 은 전 셀 string 으로 저장돼 있으므로(honeyform._string_frame_for_parquet)
+    숫자 재포맷 없이 저장된 문자 그대로가 나간다. 메타 6행(TSEQ~LOLIM)도 자르지 않는다 —
+    파일 하나가 곧 업로드 당시의 원본이다. 전처리·편집 상태는 반영하지 않는다.
+
+    응답을 흘리기 시작한 뒤에는 4xx/5xx 로 돌아갈 수 없으므로, 파일을 열어 스키마를
+    읽는 데까지는 generator 밖(=라우트가 아직 상태 코드를 정할 수 있는 시점)에서 끝낸다.
+    행 데이터는 batch 단위로 읽어 넘긴다 — 컬럼 2000개짜리 소스를 통째로 pandas 프레임
+    으로 펼치면 CSV 텍스트와 프레임을 동시에 들고 있게 된다.
+    """
+    import pyarrow.parquet as pq
+
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+
+    sources, manifest = runtime.storage().load_webreport_sources(analysis_key, upload_root)
+    if not 0 <= source_idx < len(sources):
+        raise IndexError(source_idx)
+    entries = manifest.get("sources") or []
+    entry = entries[source_idx] if source_idx < len(entries) else {}
+    # loader.download_decode_tables 와 같은 이름 규칙 — 화면 source 이름과 일치시킨다.
+    source_name = str(entry.get("name") or "").strip() or f"source_{source_idx + 1}"
+
+    pf = pq.ParquetFile(io.BytesIO(sources[source_idx]))
+    names = [str(c) for c in pf.schema_arrow.names]
+    if len(names) >= len(META_COLUMNS):
+        # 조회 경로(_decode_parts)와 같은 구제 — legacy 'Bin' 헤더도 규격대로 내보낸다.
+        names[:len(META_COLUMNS)] = META_COLUMNS
+    # 청크는 셀 수로 잡는다 — 행 수로 고정하면 컬럼이 넓은 소스에서 청크 하나가 수십 MB 가 된다.
+    batch_rows = max(50, min(1000, 200_000 // max(1, len(names))))
+
+    def chunks():
+        # 선두 U+FEFF(BOM) — Excel 이 CSV 를 UTF-8 로 열게 하는 유일한 신호. 눈에 안 보이는
+        # 문자를 소스에 직접 박으면 지워져도 티가 안 나므로 코드포인트로 쓴다.
+        yield chr(0xFEFF) + _csv_row(names)
+        for batch in pf.iter_batches(batch_size=batch_rows):
+            yield batch.to_pandas().to_csv(header=False, index=False, lineterminator="\r\n")
+
+    return chunks(), source_name
 
 
 def backup_current_sources(analysis_key, upload_root, old_content_hash="") -> str:

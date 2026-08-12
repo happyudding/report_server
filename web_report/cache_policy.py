@@ -281,7 +281,14 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      WIDE_DISTRIBUTION·MEAN_SHIFT·HEAVY_TAIL 4룰을 다시 켰다(2026-08-12 — 실측 미분류
 #      46.8%→6.9%). AI Comment 셀 텍스트·Signature 컬럼 값이 바뀐다. 룰 yaml 을 손으로
 #      고쳤으므로 `.rules_rev`(패널 저장 카운터)로는 무효화되지 않아 여기서 올린다.
-REPORT_SCHEMA_VERSION = 35
+# v36: eval 룰셋 재편(2026-08-12 사용자 검토 반영) — ① SEVERE_OUTLIER+OUTLIER_WARN 을
+#      **OUTLIER** 하나로 통합하고 판정을 비율이 아닌 **거리**(fail_robust_z_max ≥ 12,
+#      MAD 기반 robust z)로 바꿨다 ② SPEC_TOO_TIGHT·WIDE_DISTRIBUTION 을 LOW_CPK 로 통합
+#      (둘 다 off) ③ 공간 룰 E1/EDGE/CENTER/RING 을 **점유율 95%** 기준으로 재정의해 켜고
+#      CLUSTER 는 임계 1.0→2.5 로 올려 켰다 ④ HEAVY_TAIL 임계 2.0→8.0 ⑤ SUBPOP_GAP →
+#      **BIMODALITY** 개명. AI Comment 본문·Signature 컬럼 값이 광범위하게 바뀐다.
+#      룰 yaml 을 손으로 고쳤으므로 `.rules_rev`(패널 저장 카운터)로는 무효화되지 않는다.
+REPORT_SCHEMA_VERSION = 36
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:

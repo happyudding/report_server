@@ -1,4 +1,4 @@
-"""AI Comment 이봉(SUBPOP_GAP) 배지 회귀 테스트 (2026-08-03).
+"""AI Comment 이봉(BIMODALITY) 배지 회귀 테스트 (2026-08-03, 2026-08-12 개명).
 
 실행:
     python tests/test_ai_comment_modality.py
@@ -7,8 +7,8 @@ eval_engine 을 호출하지 않는다 — `present.to_result` 가 돌려주는 
 합성해 `_modality_tag` / `_cell_text` / `_to_row_keys` 를 검증한다(DB·룰 무의존).
 
 핵심 계약 2가지:
-  1. SUBPOP_GAP 이 **primary 가 아니어도** 배지가 붙는다 (엔진의 primary 편중 우회).
-  2. SUBPOP_GAP 미발화 케이스의 셀 텍스트는 **종전과 문자 그대로 동일**하다.
+  1. BIMODALITY 가 **primary 가 아니어도** 배지가 붙는다 (엔진의 primary 편중 우회).
+  2. BIMODALITY 미발화 케이스의 셀 텍스트는 **종전과 문자 그대로 동일**하다.
 
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례).
 """
@@ -25,7 +25,7 @@ from web_report.ai_comment import (_cell_text, _modality_tag,  # noqa: E402
 
 def _subpop_sig(note, role="secondary"):
     """signatures._evaluate_subpop_gap 이 만드는 evidence 모양 그대로."""
-    return {"id": "SUBPOP_GAP", "role": role, "action_ko": None,
+    return {"id": "BIMODALITY", "role": role, "action_ko": None,
             "evidence": [{"signal_code": "MODALITY_V2", "value": None, "note": note},
                          {"signal_code": "N_MODES", "value": 2, "note": "n_modes 2"},
                          {"signal_code": "DENSITY_GAP", "value": 12.5, "note": "cdf_gap 12.5"}]}
@@ -40,7 +40,7 @@ def _case(status="MAJOR", comment="[현상] 산포가 넓습니다.", signatures
 
 
 def test_no_subpop_is_byte_identical():
-    """SUBPOP_GAP 미발화 → 배지 없음 + 종전 포맷과 완전 일치."""
+    """BIMODALITY 미발화 → 배지 없음 + 종전 포맷과 완전 일치."""
     case = _case()
     assert _modality_tag(case) == ""
     assert _cell_text(case) == "[MAJOR] [현상] 산포가 넓습니다."
@@ -73,10 +73,10 @@ def test_note_format_drift_falls_back():
     """note 포맷이 바뀌어도 '발화했다' 는 사실은 잃지 않는다(조용한 미표시 방지)."""
     assert _modality_tag(_case(signatures=[_subpop_sig("모달리티 두봉")])) == "[분포분리]"
     # MODALITY_V2 evidence 자체가 사라져도 마찬가지.
-    sig = {"id": "SUBPOP_GAP", "evidence": [{"signal_code": "N_MODES", "note": "n_modes 2"}]}
+    sig = {"id": "BIMODALITY", "evidence": [{"signal_code": "N_MODES", "note": "n_modes 2"}]}
     assert _modality_tag(_case(signatures=[sig])) == "[분포분리]"
     # evidence 가 통째로 없어도 예외 없이 폴백.
-    assert _modality_tag(_case(signatures=[{"id": "SUBPOP_GAP"}])) == "[분포분리]"
+    assert _modality_tag(_case(signatures=[{"id": "BIMODALITY"}])) == "[분포분리]"
 
 
 def test_status_missing_keeps_tag_only():

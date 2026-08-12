@@ -106,18 +106,21 @@ def test_signature_enabled_false_does_not_fire(tmp_path, monkeypatch):
     _tmp_rules(tmp_path, monkeypatch)
     doc = yaml.safe_load(config.SIGNATURES_FILE.read_text(encoding="utf-8"))
     for s in doc["signatures"]:
-        if s["id"] == "SEVERE_OUTLIER":
+        if s["id"] == "OUTLIER":
             s["enabled"] = False
     config.SIGNATURES_FILE.write_text(yaml.safe_dump(doc, allow_unicode=True),
                                       encoding="utf-8")
     load_yaml.cache_clear()
 
-    case, feats, raw = _case(), _full_features(outlier_ratio=0.10), {"yield": 0.95, "cpk": 1.5}
+    # OUTLIER(거리) 와 MEAN_SHIFT(중심 치우침)가 함께 뜨는 입력 — 서로 억제 관계가 없다.
+    case = _case()
+    feats = _full_features(fail_robust_z_max=20.0, spec_margin_low=1.0, spec_margin_high=5.0)
+    raw = {"yield": 0.95, "cpk": 1.5}
     sig = signatures.evaluate(case, feats, raw)
     ids = [s["id"] for s in sig["signatures"]]
-    assert "SEVERE_OUTLIER" not in ids
-    assert "OUTLIER_WARN" in ids       # 다른 룰은 그대로 발화
-    assert not any(k.startswith("SEVERE_OUTLIER.") for k in sig["applies"])
+    assert "OUTLIER" not in ids
+    assert "MEAN_SHIFT" in ids         # 다른 룰은 그대로 발화
+    assert not any(k.startswith("OUTLIER.") for k in sig["applies"])
 
 
 # ── signature 제품군 오버레이 트리 ────────────────────────────────────────────
@@ -140,43 +143,43 @@ def test_no_signature_tree_keeps_base(tmp_path, monkeypatch):
 def test_signature_overlay_is_per_product_type(tmp_path, monkeypatch):
     """제품군 오버레이는 그 제품군에만 적용되고 기준값·다른 제품군은 안 건드린다."""
     _tmp_rules(tmp_path, monkeypatch)
-    _write_sig_overlay("PMIC", None, {"OUTLIER_WARN": {"enabled": False,
-                                                       "status_hint": "CRITICAL"}})
+    _write_sig_overlay("PMIC", None, {"MEAN_SHIFT": {"enabled": False,
+                                                     "status_hint": "CRITICAL"}})
 
     by_id = {s["id"]: s for s in signatures_for(_case())}
-    assert by_id["OUTLIER_WARN"]["enabled"] is False
-    assert by_id["OUTLIER_WARN"]["status_hint"] == "CRITICAL"
+    assert by_id["MEAN_SHIFT"]["enabled"] is False
+    assert by_id["MEAN_SHIFT"]["status_hint"] == "CRITICAL"
     # 선언하지 않은 필드는 기준값 그대로
-    assert by_id["OUTLIER_WARN"]["when_metric"] == {"outlier_ratio": ">outlier_ratio_warn"}
+    assert by_id["MEAN_SHIFT"]["when_metric"] == {"center_bias": "abs>mean_shift_warn"}
     # 다른 제품군은 무영향
     other = {s["id"]: s for s in signatures_for(_case(product_type="MDDI", family_product="MX"))}
-    assert other["OUTLIER_WARN"].get("enabled") is not False
+    assert other["MEAN_SHIFT"].get("enabled") is not False
 
 
 def test_signature_family_overlay_wins_over_pt(tmp_path, monkeypatch):
     """_default.yaml → <FAMILY>.yaml 순으로 덮인다 (thresholds 와 같은 규약)."""
     _tmp_rules(tmp_path, monkeypatch)
-    _write_sig_overlay("PMIC", None, {"OUTLIER_WARN": {"status_hint": "CRITICAL",
-                                                       "enabled": False}})
-    _write_sig_overlay("PMIC", "SOC", {"OUTLIER_WARN": {"status_hint": "MONITOR"}})
+    _write_sig_overlay("PMIC", None, {"MEAN_SHIFT": {"status_hint": "CRITICAL",
+                                                     "enabled": False}})
+    _write_sig_overlay("PMIC", "SOC", {"MEAN_SHIFT": {"status_hint": "MONITOR"}})
 
     soc = {s["id"]: s for s in signatures_for(_case())}
-    assert soc["OUTLIER_WARN"]["status_hint"] == "MONITOR"   # family 최우선
-    assert soc["OUTLIER_WARN"]["enabled"] is False           # family 에 없는 키는 _default 유지
+    assert soc["MEAN_SHIFT"]["status_hint"] == "MONITOR"   # family 최우선
+    assert soc["MEAN_SHIFT"]["enabled"] is False           # family 에 없는 키는 _default 유지
     mem = {s["id"]: s for s in signatures_for(_case(family_product="MEMORY"))}
-    assert mem["OUTLIER_WARN"]["status_hint"] == "CRITICAL"
+    assert mem["MEAN_SHIFT"]["status_hint"] == "CRITICAL"
 
 
 @pytest.mark.rules_as_deployed
 def test_signature_overlay_changes_firing(tmp_path, monkeypatch):
     """오버레이로 끈 룰은 그 제품군 평가에서 빠지고 다른 제품군은 그대로 발화한다."""
     _tmp_rules(tmp_path, monkeypatch)
-    _write_sig_overlay("PMIC", None, {"OUTLIER_WARN": {"enabled": False}})
+    _write_sig_overlay("PMIC", None, {"MEAN_SHIFT": {"enabled": False}})
 
-    # outlier_ratio 는 warn(0.02) 은 넘고 bad(0.05) 는 안 넘는 값이어야 한다 — 0.05 를
-    # 넘기면 SEVERE_OUTLIER 가 함께 떠서 OUTLIER_WARN 이 suppressed_by 로 가려지므로
-    # 이 테스트가 보려는 "오버레이 때문에 빠졌나" 와 사유가 섞인다.
-    feats, raw = _full_features(outlier_ratio=0.03), {"yield": 0.95, "cpk": 1.5}
+    # MEAN_SHIFT 를 쓰는 이유: 억제 관계가 없는 룰이라 "오버레이 때문에 빠졌나" 와
+    # "다른 룰에 가려졌나" 가 섞이지 않는다. 중심이 LOW 쪽으로 치우친 margin 을 준다.
+    feats = _full_features(spec_margin_low=1.0, spec_margin_high=5.0)
+    raw = {"yield": 0.95, "cpk": 1.5}
     fired = lambda case: [s["id"] for s in signatures.evaluate(case, feats, raw)["signatures"]]
-    assert "OUTLIER_WARN" not in fired(_case())
-    assert "OUTLIER_WARN" in fired(_case(product_type="MDDI", family_product="MX"))
+    assert "MEAN_SHIFT" not in fired(_case())
+    assert "MEAN_SHIFT" in fired(_case(product_type="MDDI", family_product="MX"))

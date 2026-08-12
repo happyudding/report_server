@@ -86,6 +86,61 @@ part_id (또는 sub_part_id) 하나에 대한 기준정보 14개 컬럼.
 - 등록되지 않은 part_id → **404** (`{"error": "not_found"}`)
 - 값은 전부 문자열이다. 숫자로 쓰려면 호출 측에서 변환한다.
 
+### `GET /help/features`
+
+HONEY와 web_report의 현재 사용자 기능 카탈로그. 파라미터 없이 호출하면 전체를 반환하고,
+아래 선택 필터를 조합할 수 있다.
+
+| 파라미터 | 필수 | 설명 |
+|---|---|---|
+| `q` | 아니오 | 제목·별칭·키워드·설명 자연어 검색(한글·영문 대소문자, 공백·기호 차이 무시, 최대 200자) |
+| `category` | 아니오 | `getting_started`, `report_management`, `input_upload`, `rawdata_excel`, `report_tabs`, `support` |
+| `surface` | 아니오 | `landing`, `search`, `honey`, `web_report`, `support`, `chatbot` |
+| `status` | 아니오 | `available`, `conditional`, `coming_soon` |
+
+```json
+{
+  "schema_version": 1,
+  "catalog_version": "2026-08-12",
+  "count": 1,
+  "features": [{
+    "id": "temperature-mode",
+    "category": "input_upload",
+    "title": "Temperature 모드",
+    "aliases": ["Temperature 모드", "온도 분석 모드", "RT CT HT"],
+    "keywords": ["Temperature", "RT", "CT", "HT", "ROOM", "COLD", "HOT", "Limit 파일"],
+    "status": "conditional",
+    "surfaces": ["honey", "web_report"],
+    "audience": ["all"],
+    "availability": "PMIC·SECURITY 전용",
+    "summary": "RT를 기준으로 CT·HT corner를 그룹화하고 온도별 Fail을 분석합니다.",
+    "usage": ["PMIC 또는 SECURITY를 선택한 뒤 Temperature를 고릅니다."],
+    "cautions": ["각 그룹의 RT가 Limit 기준이며 Yield는 RT source만 계산합니다."],
+    "help_anchor": "new-report",
+    "related_ids": ["source-arrangement", "issue-table-temp", "map-analysis"]
+  }]
+}
+```
+
+`schema_version`은 응답 필드 계약 버전이고 `catalog_version`은 기능 내용의 갱신 버전이다.
+v1 소비자는 모르는 필드를 무시해야 하며 기존 필드는 삭제·개명하지 않는다.
+
+검색 결과가 없으면 200과 빈 `features`를 반환하고 `help_url`을 함께 준다. 알 수 없는
+category·surface·status 또는 200자를 넘는 `q`는 `400 bad_request`다.
+
+```json
+{"error": "bad_request", "message": "unknown status: disabled (...)"}
+```
+
+### `GET /help/features/<id>`
+
+기능 ID 한 건을 같은 envelope 형식으로 반환한다. 없는 ID는 `404 not_found`다.
+`help_anchor`는 `/pe/report/help#<help_anchor>`로 연결할 수 있다.
+
+```json
+{"error": "not_found"}
+```
+
 ---
 
 ## 호출 예시
@@ -93,6 +148,8 @@ part_id (또는 sub_part_id) 하나에 대한 기준정보 14개 컬럼.
 ```bash
 curl "http://12.81.220.117:8080/pe/api/v1/product-info/candidates"
 curl "http://12.81.220.117:8080/pe/api/v1/product-info/lookup?part_id=ABC123"
+curl "http://12.81.220.117:8080/pe/api/v1/help/features?q=Temperature%20모드"
+curl "http://12.81.220.117:8080/pe/api/v1/help/features/temperature-mode"
 ```
 
 ```python
@@ -138,8 +195,10 @@ server/public_api/
 ├── __init__.py            register_public_api(app) — 기능별 Blueprint 등록만
 ├── metrics.py             호출 계측 (관리자 패널 'public API' 탭 — 아래 절)
 ├── README.md              이 문서 (외부 소비자용 접근 규약)
-└── product_info/
-    └── routes.py          public_api_product_info — /pe/api/v1/product-info/*
+├── product_info/
+│   └── routes.py          public_api_product_info — /pe/api/v1/product-info/*
+└── help/
+    └── routes.py          public_api_help — /pe/api/v1/help/*
 ```
 
 새 기능(예: eval 이력 조회)을 붙일 때:

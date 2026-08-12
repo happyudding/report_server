@@ -9,7 +9,7 @@ ai_comment.py(운영 평가) / eval_export.py(코멘트 export) / **이 모듈(�
 
 엔진 사설 API 핀(엔진 변경 시 함께 확인):
   pipeline.signatures.build_ctx_values / _eval_condition / _HIGH_MOMENT_METRICS
-  pipeline.signatures._SUBPOP_GAP_ID  ← subpop_gap_id() 로 패널에 노출(특수분기 표시)
+  pipeline.signatures._BIMODALITY_ID  ← subpop_gap_id() 로 패널에 노출(특수분기 표시)
   pipeline.signatures._UNKNOWN_ID / fail_count_of / _evaluate_unknown 의 evidence 포맷
       ← unknown_id() 노출 + _coverage 사유별 집계(UNKNOWN_<사유> signal_code)
   pipeline.signatures.signatures_for  ← 트레이스가 평가와 같은 스코프 병합 결과를 봐야 한다
@@ -152,7 +152,7 @@ def subpop_gap_id() -> str:
     """
     _eval_path()
     from eval_engine.pipeline import signatures
-    return str(signatures._SUBPOP_GAP_ID)
+    return str(signatures._BIMODALITY_ID)
 
 
 def unknown_id() -> str:
@@ -234,7 +234,7 @@ def _subpop_cond(metric, op, actual, ref_key, ref_value, passed):
 
 
 def _subpop_conditions(features, thresholds):
-    """SUBPOP_GAP(특수분기)의 AND 체인을 조건행으로 분해 — "왜 안 잡혔나" 진단용.
+    """BIMODALITY(특수분기)의 AND 체인을 조건행으로 분해 — "왜 안 잡혔나" 진단용.
 
     엔진 pipeline.features._classify_modality_v2 를 1:1 미러링한다(임계값은 키 이름으로만
     읽어 하드코딩하지 않는다). 엔진이 분기 구조를 바꾸면 여기도 함께 고쳐야 한다.
@@ -283,6 +283,24 @@ def _subpop_conditions(features, thresholds):
     return rows
 
 
+def condition_details(when_metric, ctx_values, thresholds):
+    """when_metric 조건 전부를 '실제값 vs 임계값' 행으로 분해 — 트레이스와 같은 계산.
+
+    `_cond_detail` 은 엔진 내부 함수(`signatures._eval_condition`)를 인자로 받으므로 밖에서
+    부를 수 없다. 리포트의 Signature 근거 팝업(server/eval_panel/signature_reason.py)도 같은
+    분해를 써야 `/pe/eval` 트레이스와 화면이 갈리지 않아 여기에 공개 래퍼를 둔다.
+    """
+    _eval_path()
+    from eval_engine.pipeline import signatures as sig_mod
+    return [_cond_detail(metric, cond, ctx_values, thresholds, sig_mod._eval_condition)
+            for metric, cond in (when_metric or {}).items()]
+
+
+def subpop_conditions(features, thresholds):
+    """BIMODALITY 특수분기(when_metric 을 안 쓰는 유일한 룰)의 조건행 — 위와 같은 이유."""
+    return _subpop_conditions(features, thresholds)
+
+
 def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, sig_mod):
     """signature 21개 × (활성/스킵사유/조건분해/발화) 매트릭스."""
     fired_ids = {s["id"] for s in (sig_result.get("signatures") or [])}
@@ -299,7 +317,7 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
         when = sig.get("when_metric") or {}
         enabled = sig.get("enabled") is not False
         # skip_reason = 평가에서 제외된 사유(조건 없음) / branch_note = 평가는 하되
-        # when_metric 이 아닌 경로를 타는 사유(조건 있음). SUBPOP_GAP 만 후자다.
+        # when_metric 이 아닌 경로를 타는 사유(조건 있음). BIMODALITY 만 후자다.
         skip, branch = None, None
         if excluded:
             # 제외 목록 매칭 — 엔진(signatures.evaluate)이 룰 평가 자체를 건너뛴다.
@@ -312,7 +330,7 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
             skip = (f"scope 밖 (이 룰은 product_type={scope.get('product_type') or '전체'} / "
                     f"family_product={scope.get('family_product') or '전체'} 에만 적용 — "
                     f"이 세션은 {case_ctx.get('product_type')}/{case_ctx.get('family_product')})")
-        elif sig_id == sig_mod._SUBPOP_GAP_ID:
+        elif sig_id == sig_mod._BIMODALITY_ID:
             branch = ("특수분기 (when_metric 미사용 — features.modality_v2 로 판정) → "
                       f"modality_v2={features.get('modality_v2') or '—'}")
         elif sig_id == sig_mod._UNKNOWN_ID:
@@ -327,10 +345,10 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
         elif sig_id in suppressed_by:
             branch = (f"조건은 만족했으나 {', '.join(suppressed_by[sig_id])} 발화에 가려짐 "
                       "(suppressed_by — 같은 현상의 약한 표현이라 중복 제거)")
-        # 조건행은 그 룰이 실제로 쓰는 판정 경로로 그린다 — SUBPOP_GAP 만 when_metric 이
+        # 조건행은 그 룰이 실제로 쓰는 판정 경로로 그린다 — BIMODALITY 만 when_metric 이
         # 아니라 modality_v2 체인이고, 나머지는(억제된 것 포함) when_metric 그대로다.
         conds = []
-        if sig_id == sig_mod._SUBPOP_GAP_ID and skip is None:
+        if sig_id == sig_mod._BIMODALITY_ID and skip is None:
             conds = _subpop_conditions(features, thresholds)
         elif skip is None:
             conds = [_cond_detail(metric, cond, ctx_values, thresholds,

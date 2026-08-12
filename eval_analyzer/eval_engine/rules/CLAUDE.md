@@ -47,7 +47,7 @@ default (cold-start 표준 robust 시드)
   조립 로직 정본은 `signatures.build_ctx_values()` — 관리자 트레이스가 같은 함수를 쓴다.
 - `enabled: false` 를 넣으면 그 signature 는 평가에서 통째로 빠진다(키 부재 = 활성).
 - **when_metric 을 쓰지 않는 특수분기 2개** — 조건을 고쳐도 효력이 없다(패널도 읽기 전용):
-  `SUBPOP_GAP`(features.modality_v2 로 판정) · `UNKNOWN`(fail 인데 다른 룰이 하나도 안
+  `BIMODALITY`(features.modality_v2 로 판정) · `UNKNOWN`(fail 인데 다른 룰이 하나도 안
   뜨면 발화 — `signatures._evaluate_unknown`, 사유는 evidence `UNKNOWN_<코드>`).
 - `scope` 는 하위호환용 필터로 남아 있다(`signatures.scope_matches()`, enabled 다음·SUBPOP
   특수분기보다 먼저). **제품군별 차이는 아래 오버레이 트리로 낸다** — 배포 룰 중 `scope` 를
@@ -77,15 +77,30 @@ signatures:
 - signature 추가 시 체크: (1) status.py `SPECIFICITY_ORDER` 에 id 추가, (2) 필요한 임계값 키를 thresholds 에 추가.
 - **현상 5축 체계(2026-08-12)** — 중심 / 산포·여유 / 형태 / 공간 / 데이터품질. 축당 primary
   하나만 남기고 같은 현상의 약한 통계는 `suppressed_by` 로 목록에만 둔다
-  (`LOW_CPK ← [SPEC_TOO_TIGHT, WIDE_DISTRIBUTION, MEAN_SHIFT]`,
-  `HEAVY_TAIL ← [SEVERE_OUTLIER, OUTLIER_WARN]`, `BIDIR_TAIL ← [WIDE_DISTRIBUTION]`).
+  (`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]`, `HEAVY_TAIL ← [OUTLIER]`,
+  `BIDIR_TAIL ← [WIDE_DISTRIBUTION]`).
   결과 지표(cpk)는 원인 룰이 있으면 primary 가 되지 않는다. 배경은
   [../../../docs/13 §16](../../../docs/13_eval_analyzer_integration.md).
-- **공간 존은 E1/EDGE/CENTER** — `E1_FAIL` 은 최외곽 1 chip line(4-이웃 중 결손이 있는 die,
-  `features._e1_mask`)이고 `edge_fail_ratio`·`ring_fail_ratio` 는 **E1 을 뺀** 영역이다.
-- ⚠ **임계값을 그 지표의 상한 위로 두면 그 룰은 영원히 침묵한다.** 비율형 공간 지표의 상한은
-  `1/영역면적비`(edge≈2.8, center≈11, ring≈1.8, quadrant≤4)이고, 비모수 왜도(`skewness`)는
-  1.0 이다(그래서 TAIL_RISK 는 `skewness_moment` 로 갈아탔다).
+- **룰셋 재편(2026-08-12, 사용자 v5 검토 반영)** — 겹치는 이름을 지우고 판정축을 바꿨다:
+  - `SEVERE_OUTLIER`+`OUTLIER_WARN` → **`OUTLIER`** 하나. 판정이 "outlier 비율"이 아니라
+    **"fail 이 중심에서 몇 robust σ 떨어졌나"**(`fail_robust_z_max ≥ outlier_fail_z_min` 12)로
+    바뀌었다 — 비율로는 limit 바로 밖에 붙은 fail(공정능력 문제)과 뚝 떨어진 fail(산발
+    이상)이 구분되지 않았다. 구 두 룰은 `enabled:false` 로 **남겨 둔다**(과거 DB 값 해석용).
+  - `SPEC_TOO_TIGHT`·`WIDE_DISTRIBUTION` → `LOW_CPK` 로 통합(둘 다 off).
+  - `SUBPOP_GAP` → **`BIMODALITY`** 개명(누적 DB 는 1회 마이그레이션으로 치환 —
+    `server/tools/migrate_bimodality_rename.py`).
+  - `kurtosis_warn` 2.0 → 8.0 (2.0 은 정상 산포에도 붙었다).
+- **공간 존은 E1/EDGE/CENTER/RING + CLUSTER** — `E1_FAIL` 은 최외곽 1 chip line(각 줄의 양끝
+  die, `features._e1_mask`)이고 EDGE·RING 은 **E1 을 뺀** 영역이다.
+  판정 기준은 **점유율** `*_fail_share ≥ region_fail_share_min`(0.95, 네 룰 공용) —
+  "전체 fail 중 그 영역이 몇 %를 가졌나". CLUSTER 만 사분면 불균형(`quadrant_imbalance`)이다.
+  `*_fail_ratio`(밀도 배수)는 evidence 참고값으로만 남는다.
+- ⚠ **임계값을 그 지표의 상한 위로 두면 그 룰은 영원히 침묵한다.** 밀도 배수형 공간 지표의
+  상한은 `1/영역면적비`(edge≈2.8, center≈11, ring≈1.8, quadrant≤4)라 룰마다 임계를 공유할 수
+  없었고 ring 은 아예 도달 불가였다 — 공간 4종을 점유율로 갈아탄 이유다. 비모수
+  왜도(`skewness`)의 상한 1.0 도 같은 부류(그래서 TAIL_RISK 는 `skewness_moment` 로 갈아탔다).
+- ⚠ **점유율 판정은 fail 이 적으면 우연에 흔들린다** — fail 6개면 무작위 배치라도 한 영역에
+  다 들어갈 확률이 몇 %나 된다(ring 은 0.55⁶≈3%). `spatial_fail_count_min` 을 10 으로 둔 이유.
 
 ## calibrate 와의 관계
 `calibrate.recalibrate()`가 누적 features 분위수(`calibration:` 스펙, item_class 별 `min_n` 이상)로

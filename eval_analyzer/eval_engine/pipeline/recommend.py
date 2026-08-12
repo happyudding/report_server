@@ -9,6 +9,7 @@ make_comment:
 """
 from .. import llm_client, precedent_client
 from ._rules import signatures_for
+from .signatures import _BIMODALITY_ID
 
 _MODALITY_V2_COMMENT = { 
     "bimodal": "분포가 2개 level로 분리되는 양상입니다.", 
@@ -29,9 +30,9 @@ def find_precedents(case_ctx: dict, sig_result: dict) -> list:
 
 
 def _subpop_gap_comment(sig_result) -> str | None:
-    """발화 signature 중 SUBPOP_GAP 의 modality_v2 → 한국어 현상 문구. 없으면 None."""
-    for s in sig_result.get("signatures", []): 
-        if s["id"] == "SUBPOP_GAP" and s.get("modality_v2"):
+    """발화 signature 중 BIMODALITY 의 modality_v2 → 한국어 현상 문구. 없으면 None."""
+    for s in sig_result.get("signatures", []):
+        if s["id"] == _BIMODALITY_ID and s.get("modality_v2"):
             return _MODALITY_V2_COMMENT.get(s["modality_v2"])
     return None
 
@@ -43,13 +44,13 @@ def _signature_by_id(case_ctx=None) -> dict:
 def _phenomenon_text(verdict, sig_result, case_ctx=None) -> str:
     """[현상] 섹션 문구 — primary signature 의 phenomenon_ko.
 
-    SUBPOP_GAP 만 modality_v2(bimodal/multimodal/separated)별 문구로 덮어쓴다. 같은
+    BIMODALITY 만 modality_v2(bimodal/multimodal/separated)별 문구로 덮어쓴다. 같은
     signature 라도 분포 모양이 달라 한 문장으로 뭉뚱그릴 수 없기 때문.
     """
     by_id = _signature_by_id(case_ctx)
     primary = verdict.get("primary_signature")
     text = by_id[primary].get("phenomenon_ko") if primary in by_id else None
-    if primary == "SUBPOP_GAP":
+    if primary == _BIMODALITY_ID:
         text = _subpop_gap_comment(sig_result) or text
     return text or _NO_PHENOMENON_FALLBACK
 

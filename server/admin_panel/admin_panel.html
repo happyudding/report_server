@@ -804,18 +804,20 @@ body { position: relative; }
     <h2>웹 로그인 계정 <span class="hint">현재 접근제어는 Honey 클라이언트 신원(UA)으로 하며, 이 계정은 즐겨찾기·중요표시 보관용입니다</span>
       <span id="usersSummary" class="hint"></span></h2>
     <div class="toolbar">
-      <input id="userQ" class="inp" style="width:260px" placeholder="ID 검색…">
+      <input id="userQ" class="inp" style="width:260px" placeholder="ID · 이름 검색…">
       <button class="btn primary" id="btnUserSearch">검색</button>
       <span class="grow"></span>
       <span class="hint">초기 비밀번호는 <b>0000</b> · 로그인 시 없는 ID 는 자동 생성됩니다</span>
     </div>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th title="웹 로그인 계정 ID">ID</th><th title="계정이 만들어진 날짜">생성일</th>
+        <th title="웹 로그인 계정 ID">ID</th>
+        <th title="사용자가 입력한 실명 (표시 전용 — 접근제어에는 쓰지 않습니다)">이름</th>
+        <th title="계정이 만들어진 날짜">생성일</th>
         <th class="num" title="이 사용자가 즐겨찾기한 세션 수">즐겨찾기</th>
         <th class="num" title="이 사용자가 업로드한 세션 수">업로드</th><th title="행별 작업">작업</th>
       </tr></thead>
-      <tbody id="userBody"><tr class="empty-row"><td colspan="5">로딩 중…</td></tr></tbody>
+      <tbody id="userBody"><tr class="empty-row"><td colspan="6">로딩 중…</td></tr></tbody>
     </table></div>
     <div class="pager" id="userPager"></div>
     <div class="msg" id="userMsg"></div>
@@ -1587,12 +1589,20 @@ function mergeBadge(list) {
   if (!arr.length) return "";
   return ` <span class="badge gray" title="같은 IP 라서 한 사람으로 합쳤습니다: ${esc(arr.join(", "))}">IP 병합</span>`;
 }
+// 사용자 표기는 전 화면이 '이름(ID)' 로 통일한다 — 서버가 각 행에 붙여준 name
+// (report_user_profile, users_admin.attach_names)을 쓴다. 이름이 없으면 ID 만.
+// 검색·필터에 넘기는 값은 계속 ID 다(이름은 표시 전용).
+function whoLabel(id, name) {
+  id = String(id || ""); name = String(name || "").trim();
+  if (!id) return esc(name);
+  return esc(name ? `${name}(${id})` : id);
+}
 // 감사 기록의 사용자 칸 — 신원이 비었는데 IP 로 계정이 확정되면 '(IP 추정)' 으로 보여준다.
 function auditWho(r) {
-  if (r.client_user) return esc(r.client_user);
+  if (r.client_user) return whoLabel(r.client_user, r.name);
   if (r.resolved_user) {
     return `<span title="이 기록에는 신원이 없지만 같은 IP(${esc(r.client_ip || "")})를 쓰는 계정이 하나뿐이라 추정한 값입니다">`
-      + `${esc(r.resolved_user)} <span style="color:var(--ink-3);font-size:11px">(IP 추정)</span></span>`;
+      + `${whoLabel(r.resolved_user, r.name)} <span style="color:var(--ink-3);font-size:11px">(IP 추정)</span></span>`;
   }
   return "-";
 }
@@ -2298,7 +2308,7 @@ async function loadLiveUsers() {
       <td><span class="live-dot ${u.ago < 60 ? "on" : ""}" title="${u.ago < 60 ? "1분 안에 활동" : "잠시 조용함"}"></span></td>
       <td>${u.user
             ? `<b class="who-link" data-who="${esc(u.user)}" title="이 사용자의 활동 기록 보기"
-                  style="cursor:pointer;color:var(--accent)">${esc(u.user)}</b>`
+                  style="cursor:pointer;color:var(--accent)">${whoLabel(u.user, u.name)}</b>`
             : `<span style="color:var(--ink-3)" title="신원 토큰이 없고, 이 IP 로 활동한 계정 기록도 없어 IP 로만 구분합니다">익명</span>`
           }${u.merged ? mergeBadge(u.ips) : ""}</td>
       <td>${u.honey ? `<span class="badge done">Honey</span>` : `<span class="badge gray">브라우저</span>`}</td>
@@ -2339,7 +2349,7 @@ async function loadUsageTables() {
     $("activeUserBody").innerHTML = u.rows.length ? u.rows.map((r, i) => `
       <tr><td>${i + 1}</td>
         <td><b class="who-link" data-who="${esc(r.who)}" title="이 사용자의 활동 기록 보기"
-              style="cursor:pointer;color:var(--accent)">${esc(r.who)}</b>${mergeBadge(r.merged_from)}</td>
+              style="cursor:pointer;color:var(--accent)">${whoLabel(r.who, r.name)}</b>${mergeBadge(r.merged_from)}</td>
         <td>${esc(r.host || "-")}</td>
         <td class="mono">${esc(r.ip || "-")}</td>
         <td class="num">${r.upload}</td><td class="num">${r.edit}</td><td class="num">${r.delete}</td>
@@ -2353,7 +2363,7 @@ async function loadUsageTables() {
     $("usageRankBody").innerHTML = g.rows.length ? g.rows.map((r, i) => `
       <tr><td>${i + 1}</td>
         <td><b class="who-link" data-who="${esc(r.user_id)}" title="이 사용자의 활동 기록 보기"
-              style="cursor:pointer;color:var(--accent)">${esc(r.user_id)}</b>${mergeBadge(r.merged_from)}</td>
+              style="cursor:pointer;color:var(--accent)">${whoLabel(r.user_id, r.name)}</b>${mergeBadge(r.merged_from)}</td>
         <td class="num">${r.honey_run}</td><td class="num">${r.web_index}</td>
         <td class="num">${r.web_view}</td>
         <td class="num"><b>${r.total}</b></td><td>${fmtDate(r.last_at)}</td></tr>`).join("")
@@ -2468,27 +2478,29 @@ const USER_PAGE = 50;
 let userOffset = 0, userTotal = 0;
 async function loadUsers() {
   const tb = $("userBody");
-  tb.innerHTML = `<tr class="empty-row"><td colspan="5">로딩 중…</td></tr>`;
+  tb.innerHTML = `<tr class="empty-row"><td colspan="6">로딩 중…</td></tr>`;
   const params = new URLSearchParams({ limit: USER_PAGE, offset: userOffset });
   const q = $("userQ").value.trim(); if (q) params.set("q", q);
   let data;
   try { data = await getJSON("api/users?" + params); }
   catch (e) {
-    tb.innerHTML = `<tr class="empty-row"><td colspan="5">조회 실패: ${esc(e)}</td></tr>`;
+    tb.innerHTML = `<tr class="empty-row"><td colspan="6">조회 실패: ${esc(e)}</td></tr>`;
     return;
   }
   userTotal = data.total;
   $("usersSummary").textContent = `총 ${userTotal}명`;
   if (!data.rows.length) {
-    tb.innerHTML = `<tr class="empty-row"><td colspan="5">계정이 없습니다.</td></tr>`;
+    tb.innerHTML = `<tr class="empty-row"><td colspan="6">계정이 없습니다.</td></tr>`;
   } else {
     tb.innerHTML = data.rows.map(u => `
       <tr data-uid="${esc(u.user_id)}">
         <td class="mono">${esc(u.user_id)}</td>
+        <td>${u.display_name ? esc(u.display_name) : '<span class="hint">미입력</span>'}</td>
         <td>${fmtDate(u.created_at)}</td>
         <td class="num">${u.fav_count}</td>
         <td class="num">${u.upload_count}</td>
         <td>
+          <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="name" data-uid="${esc(u.user_id)}" data-name="${esc(u.display_name || "")}">이름 수정</button>
           <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="reset" data-uid="${esc(u.user_id)}">비밀번호 초기화(0000)</button>
           <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="setpw" data-uid="${esc(u.user_id)}">비밀번호 지정</button>
           <button class="btn danger" style="height:24px;padding:0 8px;font-size:11px" data-act="del" data-uid="${esc(u.user_id)}">삭제</button>
@@ -2511,7 +2523,15 @@ $("userBody").addEventListener("click", async e => {
   const uid = btn.dataset.uid, msg = $("userMsg");
   msg.className = "msg"; msg.textContent = "";
   try {
-    if (btn.dataset.act === "reset") {
+    if (btn.dataset.act === "name") {
+      const nm = prompt(`${uid} 의 이름:`, btn.dataset.name || "");
+      if (nm === null) return;
+      const v = nm.trim();
+      if (!v || v.length > 30) { alert("이름은 1~30자로 입력하세요."); return; }
+      await postJSON(`api/user/${encodeURIComponent(uid)}/name`, { name: v });
+      msg.textContent = `${uid}: 이름을 '${v}' 로 저장했습니다.`;
+      loadUsers();
+    } else if (btn.dataset.act === "reset") {
       if (!confirm(`${uid} 의 비밀번호를 초기값 0000 으로 되돌릴까요?`)) return;
       await postJSON(`api/user/${encodeURIComponent(uid)}/reset_password`, {});
       msg.textContent = `${uid}: 비밀번호를 0000 으로 초기화했습니다.`;
@@ -2839,7 +2859,7 @@ async function loadChatLog() {
     const body = bad ? (r.error_detail || r.answer || "(상세 없음)") : (r.answer || "-");
     return `<tr>
       <td>${fmtDate(r.created_at)}</td>
-      <td>${esc(r.user || "-")}</td>
+      <td>${r.user ? whoLabel(r.user, r.name) : "-"}</td>
       <td class="detail-cell"><div class="clamp">${esc(r.question || "")}</div></td>
       <td class="detail-cell"${bad ? ` style="color:#dc2626"` : ""}><div class="clamp">${esc(body)}</div></td>
       <td>${esc(CHAT_INTENT_LABEL[r.intent] || r.intent || "-")}</td>

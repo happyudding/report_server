@@ -79,11 +79,16 @@ def remove_session_editor(session_id, editor_user):
 # ── web_report 방문자 (편집자 후보 풀) ────────────────────────────────────────
 
 def record_web_visitor(user_id):
-    """web_report 세션을 연 Honey 사용자 기록 (UPSERT). first_seen 유지, last_seen 갱신."""
+    """web_report 세션을 연 Honey 사용자 기록 (UPSERT). first_seen 유지, last_seen 갱신.
+
+    busy_timeout 을 기본(5초)이 아니라 150ms 로 잡는다 — 이 쓰기는 세션을 열 때마다
+    (/my_access) 일어나는 best-effort 기록이고 호출부가 예외를 삼킨다. 잠금이 붐빌 때
+    5초를 기다리면 그만큼 세션 열기가 통째로 멈추는데, 정작 얻는 것은 편집자 후보
+    목록의 last_seen 한 칸이다. 잠깐 못 쓰면 다음 조회에서 다시 기록된다."""
     if not user_id:
         return
     now = _now()
-    with get_conn() as conn:
+    with get_conn(busy_timeout_ms=150) as conn:
         conn.execute(
             "INSERT INTO report_web_visitor (user_id, first_seen, last_seen) VALUES (?, ?, ?) "
             "ON CONFLICT(user_id) DO UPDATE SET last_seen=excluded.last_seen",
@@ -97,21 +102,27 @@ def search_web_visitors(q="", limit=50):
     후보 풀은 **web_report 방문자(report_web_visitor) ∪ 웹 로그인 계정(report_user)** 이다.
     방문자만 보면 갓 가입한 계정은 web_report 세션을 한 번 열기 전까지 후보에 뜨지 않아
     "가입했는데 권한을 못 준다"가 된다 — 가입(=report_user INSERT) 즉시 후보가 되도록
-    두 테이블을 합친다. 정렬 기준 시각은 방문자=last_seen, 계정=created_at."""
+    두 테이블을 합친다. 정렬 기준 시각은 방문자=last_seen, 계정=created_at.
+
+    q 는 ID 뿐 아니라 **실명(report_user_profile.display_name)에도 매칭**한다 — 권한 부여 창이
+    '이름(ID)' 로 표시되므로 눈에 보이는 이름으로 검색이 안 되면 찾을 수가 없다.
+    반환은 계속 user_id 문자열 목록이다(호출부 무변경 — 이름은 display_names 로 따로 붙인다)."""
     q = (q or "").strip().lower()
     sql = """
-        SELECT user_id, MAX(ts) AS ts FROM (
+        SELECT v.user_id AS user_id, MAX(v.ts) AS ts FROM (
             SELECT user_id, last_seen  AS ts FROM report_web_visitor
             UNION ALL
             SELECT user_id, created_at AS ts FROM report_user
-        )
+        ) v
+        LEFT JOIN report_user_profile p ON p.user_id = v.user_id
         {where}
-        GROUP BY user_id ORDER BY ts DESC LIMIT ?
+        GROUP BY v.user_id ORDER BY ts DESC LIMIT ?
     """
     with get_conn() as conn:
         if q:
             rows = conn.execute(
-                sql.format(where="WHERE user_id LIKE ?"), (f"%{q}%", int(limit)),
+                sql.format(where="WHERE v.user_id LIKE ? OR lower(p.display_name) LIKE ?"),
+                (f"%{q}%", f"%{q}%", int(limit)),
             ).fetchall()
         else:
             rows = conn.execute(sql.format(where=""), (int(limit),)).fetchall()
@@ -202,3 +213,53 @@ def update_user_password(user_id, password_hash):
             (password_hash, user_id),
         )
         return cur.rowcount
+
+
+# ── 사용자 실명 (report_user_profile — 표시 전용) ─────────────────────────────
+# 로그인 계정(report_user)과 분리한 이유는 core.py SCHEMA 주석 참조: Honey 전용 사용자도
+# 이름을 가져야 한다. 관리자가 로그인 계정을 삭제해도(delete_user) 프로필은 남긴다 —
+# 계정이 없어져도 그 사람은 Honey 사용자로 계속 남기 때문.
+
+def get_display_name(user_id):
+    """사용자 실명. 미등록이면 None."""
+    if not user_id:
+        return None
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT display_name FROM report_user_profile WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+    return row["display_name"] if row else None
+
+
+def set_display_name(user_id, display_name, updated_by="self"):
+    """실명 등록/변경 (UPSERT). 형식 검증은 호출부(라우트) 책임."""
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO report_user_profile (user_id, display_name, updated_at, updated_by) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name, "
+            "updated_at=excluded.updated_at, updated_by=excluded.updated_by",
+            (user_id, display_name, _now(), updated_by),
+        )
+
+
+def display_names(user_ids):
+    """{user_id: 실명} 배치 조회 — 목록 화면이 행마다 조회(N+1)하지 않도록 하는 유일한 경로.
+    미등록 사용자는 키 자체가 없다(프런트가 이름 없으면 ID 만 표시). 소문자 정규화된 키로
+    조회하며, SQLite 파라미터 상한(999)을 넘지 않게 나눠 던진다."""
+    uids = sorted({(u or "").strip().lower() for u in (user_ids or []) if u})
+    if not uids:
+        return {}
+    out = {}
+    with get_conn() as conn:
+        for i in range(0, len(uids), 900):
+            chunk = uids[i:i + 900]
+            marks = ",".join("?" * len(chunk))
+            rows = conn.execute(
+                f"SELECT user_id, display_name FROM report_user_profile "
+                f"WHERE user_id IN ({marks})", chunk,
+            ).fetchall()
+            for r in rows:
+                out[r["user_id"]] = r["display_name"]
+    return out

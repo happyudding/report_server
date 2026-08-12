@@ -7,11 +7,20 @@ _AUDIT_COLUMNS = (
     "client_user", "client_host", "result", "created_at",
 )
 
+# 감사 기록은 전 호출부가 try/except 로 감싼 best-effort 다 — 실패해도 본 요청은 성공한다.
+# 그런데 종전 기본값 5000ms 는 그 "실패"가 **5초를 기다린 뒤**에야 나게 만들었다. 감사는
+# 대개 본 작업 **뒤에** 붙으므로(편집 저장 → log_audit), 잠금이 붐비면 사용자 응답이
+# 5초(본 작업) + 5초(감사) = 10초까지 늘어나고, 예외는 삼켜지니 로그에도 안 남는다.
+# 기록 1행을 포기하는 편이 10초 프리즈보다 낫다 — 짧게 시도하고 안 되면 버린다.
+# 지연이 무관한 백그라운드 스케줄러(report_cleanup/report_tiering)는 이 값을 명시적으로
+# 늘려 기록 유실을 피한다.
+BEST_EFFORT_TIMEOUT_MS = 150
+
 
 def log_audit(action, session_id=None, analysis_key=None, product_type=None,
               product=None, lot_id=None, file_name=None, changed_fields=None,
               client_ip=None, user_agent=None, client_user=None, client_host=None,
-              result="ok", busy_timeout_ms=5000):
+              result="ok", busy_timeout_ms=BEST_EFFORT_TIMEOUT_MS):
     """업로드/수정/삭제 감사 기록 1행 추가. user_agent 는 과도하게 길면 잘라 저장."""
     if user_agent and len(user_agent) > 500:
         user_agent = user_agent[:500]

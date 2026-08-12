@@ -112,9 +112,9 @@ PyQt6+WebEngine 앱을 두 번 띄우지 않는다). Steam·Riot 런처와 같�
 보고 — 표준 라이브러리만), `client\build_launcher.spec`, `client\build_honeyapp.spec`,
 `server\honey_routes.py`(델타 라우트 2개).
 
-> 미니 서버(`test_update_server.py`)는 델타 라우트를 흉내내지 **않는다** — 그쪽으로
-> 검증하면 전체 zip 폴백 경로를 보게 된다. 델타까지 보려면 실제 서버(`mypc_start.bat`)를
-> 쓰거나 아래 자동 점검을 쓴다.
+> 미니 서버도 델타 라우트(`/honey/files/<ver>`, `/honey/file/<ver>?path=`)를 운영
+> `honey_routes.py` 와 같은 규약으로 제공한다 — 그래서 파이썬도 네트워크도 없는 PC 에서
+> **델타까지 그대로 검증**할 수 있다.
 
 ## 6. 자동 점검 (빌드 없이 수 초 — 항상 이것부터)
 

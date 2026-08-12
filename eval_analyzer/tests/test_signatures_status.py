@@ -41,6 +41,28 @@ def test_severe_outlier_fires():
     assert "SEVERE_OUTLIER" in [s["id"] for s in sig["signatures"]]
 
 
+def test_outlier_fires_on_distant_fail():
+    """현행 OUTLIER 는 **거리**로 판정한다 — fail 이 중심에서 12 robust σ 이상 떨어졌을 때."""
+    case = _case()
+    raw = {"yield": 0.95, "cpk": 1.5}
+    far = _full_features(fail_robust_z_max=20.0)
+    assert "OUTLIER" in [s["id"] for s in signatures.evaluate(case, far, raw)["signatures"]]
+    # limit 바로 밖에 붙은 fail(거리 작음)은 outlier 가 아니다 — 이게 비율 판정과의 차이다.
+    near = _full_features(fail_robust_z_max=4.0, outlier_ratio=0.10)
+    assert "OUTLIER" not in [s["id"] for s in signatures.evaluate(case, near, raw)["signatures"]]
+
+
+def test_outlier_suppresses_low_cpk_and_heavy_tail():
+    """멀리 튄 die 는 stdev·kurtosis 를 함께 밀어올린다 — 원인 룰 하나만 primary 로 남긴다."""
+    case = _case()
+    feats = _full_features(fail_robust_z_max=20.0, kurtosis=15.0, n_dut=100)
+    sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 0.8})
+    ids = [s["id"] for s in sig["signatures"]]
+    assert "OUTLIER" in ids
+    assert "LOW_CPK" not in ids and "HEAVY_TAIL" not in ids
+    assert {"LOW_CPK", "HEAVY_TAIL"} <= {s["id"] for s in sig["suppressed"]}
+
+
 def test_tail_risk_disabled_when_few_samples():
     case = _case()
     # skewness 큼 + spec margin 작음 → 정상이면 TAIL_RISK 발화. 단 n_dut < n_min 이면 비활성
@@ -163,7 +185,7 @@ def test_code_rail_not_fires_when_feature_missing():
 
 def test_heavy_tail_fires_with_enough_samples():
     case = _case()
-    feats = _full_features(kurtosis=3.0, n_dut=100)  # > kurtosis_warn(2.0)
+    feats = _full_features(kurtosis=9.0, n_dut=100)  # > kurtosis_warn(8.0)
     raw = {"yield": 0.95, "cpk": 1.5}
     sig = signatures.evaluate(case, feats, raw)
     assert "HEAVY_TAIL" in [s["id"] for s in sig["signatures"]]
@@ -171,7 +193,7 @@ def test_heavy_tail_fires_with_enough_samples():
 
 def test_heavy_tail_disabled_when_few_samples():
     case = _case()
-    feats = _full_features(kurtosis=3.0, n_dut=5)  # 고차모멘트 min-n 가드
+    feats = _full_features(kurtosis=9.0, n_dut=5)  # 고차모멘트 min-n 가드
     raw = {"yield": 0.95, "cpk": 1.5}
     sig = signatures.evaluate(case, feats, raw)
     assert "HEAVY_TAIL" not in [s["id"] for s in sig["signatures"]]
@@ -221,7 +243,7 @@ def test_subpop_evidence_signal_codes_match_values():
     assert by_code["VALUE_GAP"]["value"] == 0.5
 
 
-# --- SUBPOP_GAP: 측정값 → features → signatures 전 구간 ------------------------------
+# --- BIMODALITY: 측정값 → features → signatures 전 구간 ------------------------------
 #
 # 위 test_subpop_evidence_signal_codes_match_values 는 features dict 를 손으로 주입해
 # `_evaluate_subpop_gap` 하나만 본다. 아래 두 건은 실제 측정값에서 출발해 배선까지 본다 —
@@ -245,7 +267,7 @@ _BUMP_W = [2, 4, 8, 12, 8, 4, 2]   # 무리 1개당 40개
 
 
 def test_subpop_gap_fires_end_to_end_on_two_clusters():
-    """분리된 두 무리는 compute→evaluate 를 거쳐 SUBPOP_GAP 으로 발화한다.
+    """분리된 두 무리는 compute→evaluate 를 거쳐 BIMODALITY 로 발화한다.
 
     evidence 의 값이 features 실값과 같은지까지 확인한다 — DENSITY_GAP 라벨에 다른 지표를
     싣던 과거 오라벨(2026-08-03 수정)이 재발하면 여기서 잡힌다.
@@ -258,9 +280,9 @@ def test_subpop_gap_fires_end_to_end_on_two_clusters():
 
     sig = signatures.evaluate(case, feats, raw)
     fired = {s["id"]: s for s in sig["signatures"]}
-    assert "SUBPOP_GAP" in fired
-    assert fired["SUBPOP_GAP"]["modality_v2"] == "bimodal"
-    by_code = {e["signal_code"]: e["value"] for e in fired["SUBPOP_GAP"]["evidence"]}
+    assert "BIMODALITY" in fired
+    assert fired["BIMODALITY"]["modality_v2"] == "bimodal"
+    by_code = {e["signal_code"]: e["value"] for e in fired["BIMODALITY"]["evidence"]}
     assert by_code["DENSITY_GAP"] == feats["density_gap"]
     assert by_code["VALUE_GAP"] == feats["value_gap_ratio"]
     assert by_code["N_MODES"] == feats["n_modes"]
@@ -278,8 +300,8 @@ def test_subpop_gap_silent_on_quantized_values():
     assert feats["modality_v2"] is None
 
     sig = signatures.evaluate(case, feats, raw)
-    assert "SUBPOP_GAP" not in [s["id"] for s in sig["signatures"]]
-    assert sig["applies"]["SUBPOP_GAP.modality_v2"] is False
+    assert "BIMODALITY" not in [s["id"] for s in sig["signatures"]]
+    assert sig["applies"]["BIMODALITY.modality_v2"] is False
 
 
 def test_build_ctx_values_covers_every_referenced_metric():
@@ -307,7 +329,7 @@ def test_build_ctx_values_covers_every_referenced_metric():
 def test_should_store_covers_rule_only_case():
     """수율·cpk 는 정상인데 signature 만 발화한 케이스도 저장(=코멘트 생성) 대상.
 
-    이게 없으면 분포만 이상한 item(SUBPOP_GAP 등)은 코멘트가 아예 안 만들어져
+    이게 없으면 분포만 이상한 item(BIMODALITY 등)은 코멘트가 아예 안 만들어져
     룰 디버깅이 불가능하다. report_server 는 이 부류를 Issue Table ETC 로 올린다.
     """
     case, m = _case(), {"fail_count": 0, "cpk": 2.0}

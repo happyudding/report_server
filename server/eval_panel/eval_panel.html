@@ -765,7 +765,7 @@ async function saveThresholds() {
 // 편집 범위(제품군/Family)는 Thresholds 와 같은 규약 — 고른 범위 파일에만 저장되고,
 // 상속값과 같은 필드는 기록하지 않는다(기준값을 고치면 지정 안 한 제품군은 따라간다).
 let SIGS = [], SIG_METRICS = [], SIG_TH = {};
-// SUBPOP_GAP 이 실제로 쓰는 임계값 (엔진 features._classify_modality_v2 = eval_debug
+// BIMODALITY 가 실제로 쓰는 임계값 (엔진 features._classify_modality_v2 = eval_debug
 // _subpop_conditions 미러). 이 룰은 when_metric 이 판정에 안 쓰이므로 여기로 안내한다.
 const SUBPOP_TH_KEYS = ['subpop_n_min', 'subpop_outlier_ratio_max', 'bimodality_warn',
   'subpop_density_gap_warn', 'subpop_density_gap_strong',

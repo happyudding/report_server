@@ -38,6 +38,36 @@ def _validate_session_id(value):
         abort(400, "invalid session_id")
 
 
+def artifact_missing(session_id, detail=""):
+    """세션은 멀쩡한데 **산출물 파일**(parquet/manifest)을 못 찾았다 → 503 + error_id.
+
+    여태 이 경우도 404 였다. 404 는 "그런 세션 없다"는 뜻이라 사용자는 세션이 삭제된
+    줄 알고 포기하고, 관리자도 신고를 받아봐야 "없는 세션을 열었나 보다" 로 넘긴다.
+    실제로는 세션 행·권한 모두 정상이고 파일만 못 읽은 상태 = 사람이 고치면 살아난다.
+    복구 가능한 장애라는 뜻의 503 으로 돌려주고, 화면에 읽어줄 error_id 를 함께 준다
+    (관리자 진단 사건 탭에서 같은 번호로 상세를 연다).
+
+    반환값을 그대로 `return` 하면 된다 — abort 가 아니라 응답 튜플이다.
+    """
+    ids = {}
+    try:
+        import diagnostics
+        ids = diagnostics.current_ids()
+        rid = ids.get("request_id") or diagnostics.new_id()
+        diagnostics.emit("critical", "server", "artifact_missing", event_id=rid,
+                         http_status=503, session_id=session_id or "",
+                         error_type="FileNotFoundError",
+                         message=(detail or "session artifacts not found")[:500], **ids)
+    except Exception:
+        rid = ""
+    _log.error("artifact missing [rid=%s] session=%s %s", rid, session_id, detail)
+    return jsonify({
+        "error": "세션 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요. "
+                 "계속되면 관리자에게 오류 번호를 알려주세요.",
+        "error_id": rid,
+    }), 503
+
+
 # ── CSRF (double-submit cookie) ───────────────────────────────────────────────
 # 쿠키 기반 세션 인증이 없고 PIN 을 본문으로 보내는 구조라, 표준 stateless 방어인
 # double-submit 쿠키 패턴을 쓴다: GET(/, /view)에서 JS 가 읽을 수 있는 토큰 쿠키를
@@ -243,6 +273,9 @@ def _require_web_report_session(session_id):
 _USER_ID_RE = re.compile(r"^[^\s\\/]{1,64}$")
 _PIN_RE = re.compile(r"^\d{4}$")   # 웹 로그인 PIN 은 숫자 4자리 (routes_misc auth 라우트)
 _DEFAULT_PIN = "0000"              # 관리자 리셋값 (admin_panel/users_admin.py)
+# 사용자 실명(표시용). 제어문자만 막고 한글·영문·공백은 허용한다. 30자 상한은 권한 창·
+# 감사표처럼 좁은 칸에서 '이름(ID)' 가 감당 가능한 길이라는 표시 제약에서 왔다.
+_DISPLAY_NAME_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,30}$")
 
 
 def _normalize_user_id(value):

@@ -149,12 +149,12 @@ L1/L2/evaluation 이 영구 0행이라 룰 채점·표본 검수의 재료가 �
 
 ### 6-1. 이봉 배지 `[이봉]`/`[다봉]`/`[분리]` (2026-08-03)
 
-엔진은 SUBPOP_GAP 이 **primary_signature 일 때만** 코멘트 본문에 이봉 문구를 쓴다
-(`recommend._phenomenon_text`). 그런데 SUBPOP_GAP 은 `status.SPECIFICITY_ORDER` 21개 중
-18번째라 같은 MAJOR 인 WIDE_DISTRIBUTION·TAIL_RISK 등에 밀리기 쉽고, 이봉 분포는 산포도
-넓어 그 동시발화가 흔하다 → **발화해도 코멘트에 안 보이던 문제**.
+엔진은 BIMODALITY(구 SUBPOP_GAP)가 **primary_signature 일 때만** 코멘트 본문에 이봉 문구를
+쓴다(`recommend._phenomenon_text`). 그런데 BIMODALITY 는 `status.SPECIFICITY_ORDER` 에서
+뒤쪽이라 같은 MAJOR 인 공간 룰 등에 밀리기 쉽고, 이봉 분포는 산포도 넓어 그 동시발화가
+흔하다 → **발화해도 코멘트에 안 보이던 문제**.
 
-`ai_comment._modality_tag` 가 `case["signatures"]` 에서 SUBPOP_GAP 항목의
+`ai_comment._modality_tag` 가 `case["signatures"]` 에서 BIMODALITY 항목의
 `evidence[signal_code=="MODALITY_V2"].note`(`"modality_v2 <label>"`)를 직접 읽어
 **primary/secondary 구분 없이** status 뒤에 배지를 붙인다. 엔진은 수정하지 않는다.
 
@@ -420,19 +420,19 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
      - 저장 전에 **조건 문제를 카드 안에 인라인 표시**한다(지표 중복 → 마지막 행만 저장됨 /
        한쪽만 채운 행 → 저장 시 버려짐 / 없는 임계값 / 이름 형식). 표시일 뿐 저장을 막지는
        않는다 — 최종 권위는 서버 `_validate_signature_payload` 다.
-     - **SUBPOP_GAP 카드는 조건·근거가 읽기 전용**이다(2026-08-05). 이 룰은 `when_metric` 이
+     - **BIMODALITY 카드는 조건·근거가 읽기 전용**이다(2026-08-05). 이 룰은 `when_metric` 이
        판정에 쓰이지 않으므로(아래 트레이스 항목) 고쳐도 아무 일이 안 일어나는 칸을 열어두면
        오해가 쌓인다. 대신 실제로 효력이 있는 `subpop_*`·`bimodality_warn` 7종으로 가는
        바로가기 칩을 보여주고, 저장 시 두 필드를 payload 에서 아예 뺀다. id 는 하드코딩하지
-       않고 `eval_debug.subpop_gap_id()`(엔진 `signatures._SUBPOP_GAP_ID`)를 `/api/meta` 로
-       받는다.
+       않고 `eval_debug.subpop_gap_id()`(엔진 `signatures._BIMODALITY_ID`)를 `/api/meta` 로
+       받는다(함수명·API 키는 종전 그대로 — 반환값만 개명을 따라간다).
   3. *L0~L6 트레이스* — 세션 1건을 AI Comment 와 **같은 경로**(loader→mode_tables→
      `ai_comment._table_to_raw_df`)로 재현하되 `evaluate()` 대신 단계 함수를 직접 호출해
      raw_metrics/features/조건분해를 노출한다. signature 21행 매트릭스에 조건별
      `실제값 ⟨op⟩ 임계값(키=값)` 과 미발화 사유(disabled / min-n 가드 / 특수분기 / 결측)를
      찍는다. **`should_store` 게이팅 탈락 케이스도 포함**한다 — "왜 코멘트가 안 나왔나" 가
      이 화면의 주 용도다. 결과는 프로세스 메모리 LRU(4런/30분)에 두고 상세는 1건씩 조회.
-     - **SUBPOP_GAP 만 예외 처리**(2026-08-03): 이 룰은 `when_metric` 을 쓰지 않고
+     - **BIMODALITY 만 예외 처리**(2026-08-03): 이 룰은 `when_metric` 을 쓰지 않고
        `features.modality_v2` 로 판정하는 하드코딩 특수분기라, yaml 의 `when_metric`·
        `evidence` 선언은 **죽은 설정**이다(패널에서 고쳐도 무효 — `status_hint`/
        `phenomenon_ko`/`action_ko` 만 실효). 그래서 조건을 못 찍어 "왜 안 잡혔나" 를
@@ -658,7 +658,11 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   낮게 나온다 — 화면·추천에 그렇게 표기한다.
 - **층화 기준은 하드코딩하지 않는다**: 그 룰 `when_metric` 중 임계값 키를 참조하는 첫
   조건에서 뽑고, when_metric 이 판정 기준이 아닌 룰만 yaml `review_metric` 으로 지목한다
-  (현재 `SUBPOP_GAP` 하나 — 판정에는 무영향, 표본 정렬 전용).
+  (현재 `BIMODALITY` 하나 — 판정에는 무영향, 표본 정렬 전용).
+  ⚠ 그 지표를 스냅샷에서 되살릴 수 없으면(`review._STRATIFIABLE` 밖 — per-DUT 원본이
+  필요한 `fail_robust_z_max`·`*_fail_share`) **층화하지 않고 사유를 표시**한다.
+  뒤에 오는 가드 조건(`fail_count` 등)으로 대신 정렬하면 판정 축이 아닌 다른 축으로
+  표본을 뽑게 되어 검수 결과가 임계값 판단에 쓸 수 없게 된다.
 - **라벨**: 기존 `label` 테이블 재사용, `labeler='eval-review'`,
   `engine_comment_accepted` 에 맞음(1)/과다발화(0). **`human_status` 는 비운다** — 그래야
   전체 status 채점(`eval_admin.scoring()`, `labeler='eval-panel'` 로 한정)과 섞이지 않는다.
@@ -783,15 +787,31 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 | 축 | primary | 억제되어 목록에만(secondary) |
 |---|---|---|
 | 중심 | `MEAN_SHIFT` | — |
-| 산포/여유 | `WIDE_DISTRIBUTION` \| `SPEC_TOO_TIGHT` | `LOW_CPK`, `BIDIR_TAIL` |
-| 형태 | `SUBPOP_GAP` \| `SEVERE_OUTLIER` \| `CODE_RAIL` | `OUTLIER_WARN`, `HEAVY_TAIL` |
-| 공간 | `E1_FAIL` \| `EDGE_FAIL` \| `CENTER_FAIL` \| `CLUSTER_FAIL` \| `WAFER_GRADIENT` | `RING_FAIL` |
+| 산포/여유 | `LOW_CPK` | `BIDIR_TAIL` |
+| 형태 | `BIMODALITY` \| `OUTLIER` \| `CODE_RAIL` | `HEAVY_TAIL` |
+| 공간 | `E1_FAIL` \| `EDGE_FAIL` \| `CENTER_FAIL` \| `RING_FAIL` \| `CLUSTER_FAIL` | `WAFER_GRADIENT`(off) |
 | 데이터 품질 | `LOW_SAMPLE_UNCERTAIN` \| `MISSING_LIMIT` \| `CONSTANT_VALUE` | — |
 
 억제는 전부 yaml `suppressed_by` 선언이다(엔진 코드 무수정):
-`LOW_CPK ← [SPEC_TOO_TIGHT, WIDE_DISTRIBUTION, MEAN_SHIFT]` ·
-`HEAVY_TAIL ← [SEVERE_OUTLIER, OUTLIER_WARN]` · `BIDIR_TAIL ← [WIDE_DISTRIBUTION]`.
+`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]` · `HEAVY_TAIL ← [OUTLIER]` ·
+`BIDIR_TAIL ← [WIDE_DISTRIBUTION]`.
 **결과 지표(cpk)는 primary 가 되지 않는다** — "왜 낮은가"를 말하는 룰에 자리를 내준다.
+
+> **2026-08-12 룰셋 재편(사용자 v5 데이터 검토 반영)** — 위 표는 재편 후 상태다.
+> `SEVERE_OUTLIER`+`OUTLIER_WARN` → **`OUTLIER`** 통합(판정을 비율에서 **거리**로:
+> `fail_robust_z_max ≥ 12`, MAD 기반 robust z) · `SPEC_TOO_TIGHT`·`WIDE_DISTRIBUTION` →
+> `LOW_CPK` 로 통합(off) · 공간 4종을 **점유율 95%**(`*_fail_share ≥ region_fail_share_min`)로
+> 재정의해 활성화 + `CLUSTER_FAIL` 임계 1.0→2.5 로 올려 활성화 ·
+> `kurtosis_warn` 2.0→8.0 · `SUBPOP_GAP` → **`BIMODALITY`** 개명(누적 DB 는
+> [server/tools/migrate_bimodality_rename.py](../server/tools/migrate_bimodality_rename.py)
+> 로 1회 치환). 꺼진 구 룰은 **선언을 지우지 않는다** — 과거 발화·정답라벨이 그 이름으로
+> eval.db 에 남아 있어 패널·트레이스가 계속 해석해야 한다.
+>
+> ⚠ **표본함(§14) 제약**: `fail_robust_z_max`·`*_fail_share` 는 per-DUT 원본이 있어야
+> 계산되는 값이라 eval.db 에 저장하지 않는다(불변 규칙 3). 그래서 `OUTLIER` 와 공간
+> 4종은 **표본 층화가 불가**하고 패널에 "층화 불가"로 표시된다(`review._STRATIFIABLE`).
+> 승인형 임계값 튜닝을 이 룰들에도 적용하려면 features 테이블에 컬럼을 추가해야 하는데,
+> eval.db 스키마 변경은 **사용자 사전 승인 대상**이라 보류했다.
 
 ### 16-2. 공간 존 세분 — E1(최외곽 1 chip line) 신설
 

@@ -210,11 +210,13 @@ def _tier_one(akey, dry_run) -> dict:
 
 def _log_audit(akey, result):
     """티어링 이력을 report_audit_log 에 기록 (best-effort). cleanup 스케줄러와 동일 패턴 —
-    Flask request 컨텍스트가 없으므로 client_ip/user_agent 는 고정값."""
+    Flask request 컨텍스트가 없으므로 client_ip/user_agent 는 고정값.
+    busy_timeout 도 cleanup 과 같은 이유로 5초 명시(사용자 대기 없음 + 이동 기록 보존)."""
     try:
         report_db.log_audit(
             "tier", analysis_key=akey, changed_fields="storage:local->s3",
-            client_ip="system", user_agent="tier-scheduler", result=result)
+            client_ip="system", user_agent="tier-scheduler", result=result,
+            busy_timeout_ms=5000)
     except Exception:
         pass
 

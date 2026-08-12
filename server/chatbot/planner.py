@@ -22,11 +22,13 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field, asdict
 
+import help_catalog
+
 _log = logging.getLogger(__name__)
 
 INTENTS = ("item_history", "session_issue", "product_search", "similar_case",
            "comment_search", "session_find", "session_metrics", "page_jump",
-           "stats", "item_search", "session_meta", "help", "unknown")
+           "stats", "item_search", "session_meta", "feature_help", "help", "unknown")
 
 METRICS = ("yield", "cpk", "raw")
 JUMP_TARGETS = ("item_detail", "map")
@@ -164,6 +166,7 @@ intent 는 다음 중 하나다.
 - stats          : 목록이 아니라 **건수/분포**를 묻는다 ("PMIC 에 MAJOR 몇 건", "제품별 몇 건")
 - item_search    : 특정 제품군에 **어떤 항목들이 있는지** 목록을 묻는다 ("PMIC SOC 에 무슨 Item 있어")
 - session_meta   : 열려 있는 세션의 메타를 묻는다 (누가/언제 올렸나, 온도·공정·설비·패키지 등)
+- feature_help   : HONEY 또는 web_report 기능의 존재 여부·제공 상태·사용법을 묻는다
 - help           : 인사이거나 "뭐 할 수 있어?" 같은 기능 안내 요청이다
 - unknown        : 위 어디에도 해당하지 않는다
 
@@ -438,6 +441,10 @@ def rule_plan(question: str, context_session_id=None) -> QueryPlan:
     없어 unknown 으로 빠지던 것을, 열린 세션이 있으면 그 세션 질문으로 읽게 하려는 것이다.
     """
     q = str(question or "").strip()
+    # 기능 안내는 정적 카탈로그만으로 답한다. taxonomy/DB/LLM 보다 먼저 확정해야
+    # "Temperature 모드 있어?" 같은 질문이 item 이력으로 새지 않는다.
+    if help_catalog.is_feature_question(q):
+        return QueryPlan(intent="feature_help", normalized_question=q, planner="rule")
     tax = taxonomy()
 
     product_type = next((pt for pt in tax if pt.lower() in q.lower()), None)

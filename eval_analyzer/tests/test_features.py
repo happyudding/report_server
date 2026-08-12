@@ -54,6 +54,57 @@ def test_outlier_ratio_mad_zero_fallback():
     assert f2["outlier_ratio"] == 0.0
 
 
+def test_fail_robust_z_max_measures_distance_not_ratio():
+    """OUTLIER 판정축 — fail 이 정상 몸통에서 몇 robust σ 떨어졌나.
+
+    같은 "fail 1개" 라도 limit 바로 밖에 붙은 것과 뚝 떨어진 것을 갈라야 하므로 거리로 잰다.
+    """
+    body = [10.0 + 0.1 * i for i in range(20)]        # median≈11, MAD≈0.5
+    m = {"stdev": 1.0}
+    far = features.compute(_case(body + [100.0], usl=200,
+                                 fail_mask=[False] * 20 + [True]), m, "ev1")
+    near = features.compute(_case(body + [12.1], usl=200,
+                                  fail_mask=[False] * 20 + [True]), m, "ev1")
+    assert far["fail_robust_z_max"] > 12
+    assert near["fail_robust_z_max"] < 12
+    # fail 이 없으면 판정 대상 자체가 없다 — 0 이 아니라 None(결측을 양호로 읽지 않는다)
+    assert features.compute(_case(body), m, "ev1")["fail_robust_z_max"] is None
+
+
+def test_fail_robust_z_max_mad_zero_fallback():
+    """과반 동일값(MAD=0)이어도 폭주한 fail 의 거리를 잰다 — outlier_ratio 와 같은 폴백."""
+    vals = [5.0] * 20 + [100.0]
+    f = features.compute(_case(vals, lsl=0, usl=200,
+                               fail_mask=[False] * 20 + [True]),
+                         {"stdev": float(np.std(vals, ddof=1))}, "ev1")
+    assert f["fail_robust_z_max"] > 12
+
+
+def test_fail_value_gap_norm_is_reference_only():
+    """참고 지표 — 마지막 pass 와 첫 fail 사이 빈 구간을 (USL−평균) 으로 정규화."""
+    vals = [10.0, 10.5, 11.0, 30.0]                   # pass 3개, fail 1개(USL 쪽)
+    f = features.compute(_case(vals, lsl=0, usl=20, fail_mask=[False, False, False, True]),
+                         {"stdev": float(np.std(vals, ddof=1))}, "ev1")
+    mean = float(np.mean(vals))
+    assert f["fail_value_gap_norm"] == pytest.approx((30.0 - 11.0) / (20 - mean))
+
+
+def test_region_fail_share_is_occupancy_not_density():
+    """공간 룰 판정축 — 전체 fail 중 그 영역이 차지하는 점유율(밀도 비와 다르다)."""
+    th = thresholds_for({})
+    dies = _disc()
+    e1 = features._e1_mask(np.array([d[0] for d in dies], dtype=float),
+                           np.array([d[1] for d in dies], dtype=float))
+    case = {"values": [1.0] * len(dies),
+            "x_pos": [float(x) for x, _ in dies], "y_pos": [float(y) for _, y in dies],
+            "fail_mask": list(e1), "lsl": 0, "usl": 11}
+    out = features._spatial_features(case, th)
+    assert out["e1_fail_share"] == pytest.approx(1.0)     # fail 이 전부 E1
+    assert out["edge_fail_share"] == pytest.approx(0.0)
+    # 밀도 비는 영역 면적에 좌우돼 값이 다르다 — 두 지표를 혼동하지 말 것
+    assert out["e1_fail_ratio"] != pytest.approx(out["e1_fail_share"])
+
+
 def test_value_gap_separated_vs_quantized():
     """separated 는 값축 빈 구간 기준 — 양자화(동일값 쏠림)와 구분된다."""
     # 두 무리(0 근처 45개 + 10 근처 15개) — 값축 간격이 범위의 대부분

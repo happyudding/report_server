@@ -6,32 +6,47 @@ version: ev1
 default:
   cpk_warn: 1.33        # 주의 (업계 표준 시드)
   cpk_bad: 1.00         # 부적합 (절대 floor)
-  outlier_ratio_warn: 0.02   # outlier(튀는 die) 비율 주의 (OUTLIER_WARN)
-  outlier_ratio_bad: 0.05    # outlier 비율 심각 (SEVERE_OUTLIER, 개수 조건과 AND)
+  outlier_ratio_warn: 0.02   # outlier(튀는 die) 비율 주의 (구 OUTLIER_WARN — 룰은 off, 지표는 SUBPOP 게이트·calibrate 가 계속 사용)
+  outlier_ratio_bad: 0.05    # outlier 비율 심각 (구 SEVERE_OUTLIER — 룰 off, 위와 같은 사유로 키 보존)
+  outlier_fail_z_min: 12.0   # OUTLIER 컷 — fail 값이 분포 중심에서 robust σ 의 이 배수 이상 떨어지면 발화
+                             # (fail_robust_z_max). "비율이 몇 %냐" 가 아니라 "얼마나 멀리 떨어졌냐" 로
+                             # 판정한다 — limit 바로 밖 fail(공정능력)과 뚝 떨어진 fail(산발 이상)을 가른다.
   spread_norm_warn: 0.18     # robust_sigma/(USL-LSL)
-  outlier_sigma: 4.5         # outlier 컷 — 중앙값에서 robust σ(1.4826·MAD) 이 배수 밖이면 outlier (Iglewicz-Hoaglin modified z, 원 권장 3.5 → 과검출 완화)
+  outlier_sigma: 4.5         # outlier_ratio 계산 컷 — 중앙값에서 robust σ(1.4826·MAD) 이 배수 밖이면 outlier (Iglewicz-Hoaglin modified z, 원 권장 3.5 → 과검출 완화)
   skew_warn: 1.0            # |skew| 주의
   spec_margin_warn: 1.0     # σ 단위 여유 (작을수록 위험)
-  edge_fail_ratio_warn: 2.0 # edge 영역 fail 집중 배수 (E1 제외한 바깥 밴드)
-  e1_fail_ratio_warn: 2.0   # 최외곽 1 chip line(E1) fail 집중 배수 (E1_FAIL)
+  region_fail_share_min: 0.95  # 공간 룰(E1/EDGE/CENTER/RING) 컷 — 전체 fail 중 그 영역이 차지하는
+                               # **점유율**. "fail 이 죄다 거기 있다" 가 엔지니어의 판단 기준이라
+                               # 밀도 비(*_fail_ratio)에서 갈아탔다(2026-08-12). 밀도 비는 영역이
+                               # 좁을수록 쉽게 커지고 상한도 영역마다 달라 임계값 공유가 불가능했다.
+  edge_fail_ratio_warn: 2.0 # (참고 지표) edge 영역 fail 집중 배수 — 룰 판정은 region_fail_share_min 으로 이동
+  e1_fail_ratio_warn: 2.0   # (참고 지표) 최외곽 1 chip line(E1) fail 집중 배수 — 위와 동일
   n_min: 20                 # min-n 가드 (고차모멘트 룰)
   bimodality_warn: 0.555    # Sarle's bimodality coefficient (5/9 권장값)
   edge_region_pct: 0.8      # 반경 정규화 0~1 중 상위 20% = edge
   center_region_pct: 0.3    # 반경 정규화 하위 30% = center
-  quadrant_imbalance_warn: 1.0  # 사분면 fail 률 편중 ((최대-최소)/평균) 컷 (CLUSTER_FAIL)
+  quadrant_imbalance_warn: 2.5  # 사분면 fail 률 편중 ((최대-최소)/평균) 컷 (CLUSTER_FAIL)
+                                # 상한이 4 다. 1.0 은 너무 헐거워 fail case 의 87% 가 CLUSTER 로
+                                # 덮였다(2026-08-12 실측) — fail_count 가드와 함께 2.5 로 올렸다.
   mean_shift_warn: 0.30     # center_bias 이탈도(무차원 0~1) — 중심 치우침 컷
   cpk_trump_yield_floor: 0.7  # trump: cpk<cpk_bad AND yield<이값 → CRITICAL 강제
   site_cpk_delta_warn: 0.5  # site 간 cpk 편차 컷 (EQUIPMENT_SUSPECT)
   gross_yield_bad: 0.5      # yield 이 값 미만 → GROSS_FAIL
   code_edge_hit_warn: 0.05  # CODE/TRIM 레일(min/max) 포화 비율 컷 (CODE_RAIL)
-  kurtosis_warn: 2.0        # excess kurtosis 컷 — heavy tail(간헐 spike) (HEAVY_TAIL)
-  spatial_fail_count_min : 5      # 공간 룰(EDGE/CENTER/RING/GRADIENT) 최소 fail 수 — 소수 fail 오탐 방지
-  severe_outlier_count_min : 5    # SEVERE_OUTLIER 최소 outlier 개수 (비율만으론 소표본 오탐)
-  ring_fail_ratio_warn : 1.5      # 중간 반경(ring) fail 집중 배수 (RING_FAIL)
-                                  # ⚠ ring 영역이 die 의 절반 이상이라 비율 상한이 ~1.8 이다
-                                  # — 2.0 으로 두면 수학적으로 발화 불가(2026-08-12 하향)
+  kurtosis_warn: 8.0        # excess kurtosis 컷 — heavy tail(간헐 spike) (HEAVY_TAIL)
+                            # 2.0 은 과민했다(정상 수준 산포에도 발화) — 실데이터 검토 결과
+                            # "꼬리가 두껍다" 고 부를 수준은 8 부터다(2026-08-12 상향).
+  spatial_fail_count_min : 10     # 공간 룰(E1/EDGE/CENTER/RING/CLUSTER/GRADIENT) 최소 fail 수
+                                  # 판정이 점유율(95%)로 바뀌면서 5 로는 부족해졌다 — fail 이
+                                  # 6개뿐이면 무작위 배치라도 한 영역에 다 들어갈 확률이 몇 %
+                                  # 나 되어(ring 은 0.55^6≈3%) 엉뚱한 항목에 공간 룰이 붙는다.
+                                  # 실제로 LOW_CPK 겨냥 항목이 RING_FAIL 로 오발화했다.
+  severe_outlier_count_min : 5    # (구 SEVERE_OUTLIER 용, 룰 off) 최소 outlier 개수
+  ring_fail_ratio_warn : 1.5      # (참고 지표) 중간 반경(ring) fail 집중 배수
+                                  # — 룰 판정은 region_fail_share_min 으로 이동. 배수 기준일 때는
+                                  # ring 영역이 die 의 절반 이상이라 상한이 ~1.8 인 것이 문제였다.
   gradient_norm_warn : 0.3        # wafer 한쪽으로 기우는 경사 세기 컷 (WAFER_GRADIENT)
-  subpop_n_min : 50               # 부분집단(SUBPOP_GAP) 판정 최소 표본 — 미만이면 판정 보류
+  subpop_n_min : 50               # 부분집단(BIMODALITY) 판정 최소 표본 — 미만이면 판정 보류
   subpop_outlier_ratio_max : 0.03 # 이 비율 이상 outlier 면 부분집단이 아니라 산발로 보고 판정 보류
   subpop_density_gap_warn : 0.3   # 분포 사이 골(density gap) 약한 컷 — multimodal/bimodal 판정용
   subpop_density_gap_strong : 0.5 # 분포 사이 골 강한 컷 — separated(완전 분리) 판정용
@@ -53,7 +68,8 @@ calibration:
     outlier_ratio_warn: {feature: outlier_ratio, q: 0.90}
     outlier_ratio_bad:  {feature: outlier_ratio, q: 0.97}
     skew_warn:          {feature: skewness,      q: 0.90, abs: true}
-    kurtosis_warn:      {feature: kurtosis,      q: 0.90}
+    # kurtosis_warn 은 보정 대상에서 뺐다(2026-08-12) — 분위수 q0.90 은 관측 분포의 상위 10%
+    # 지점이라 항상 2 근처로 내려앉아, 손으로 올린 8.0 을 item_class override 가 조용히 덮었다.
 
 # item_class 별 override (TRIM|CODE|18 형태). calibrate 가 이 섹션을 재작성하므로
 # 반드시 파일 마지막 섹션으로 유지할 것(위 주석/섹션은 보존됨).

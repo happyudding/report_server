@@ -1219,6 +1219,32 @@ html[data-theme="dark"] .cmt-red    { color: #ff8b82; }
 html[data-theme="dark"] .cmt-orange { color: #f5b544; }
 html[data-theme="dark"] .cmt-green  { color: #6ee7a8; }
 html[data-theme="dark"] .cmt-blue   { color: #7fb3ef; }
+/* Issue Table AI Comment — 서버 평문(_cell_text)을 sheets.js renderAiComment 가 화면에서만
+   재배치한 결과. payload 는 그대로라 옛/새 세션이 같은 화면을 낸다(캐시 스키마 무변경).
+   본문 색은 여기서 주고, *r[..] 서식 토큰(.cmt-*)은 더 안쪽 span 이라 그대로 이긴다. */
+.aic-lead { margin: 0 0 4px; }
+.aic-sec { margin: 0 0 4px; }
+.aic-tag { font-weight: 700; margin-right: 2px; }
+.aic-sym  { color: #1d4ed8; }   /* 현상 — 파랑 */
+.aic-past { color: #6d28d9; }   /* 과거사례 — 보라 */
+.aic-act  { color: #15803d; }   /* 점검제안 — 초록 */
+.aic-badges { margin-top: 5px; padding-top: 4px; border-top: 1px dashed #e4e7ec; }
+.aic-badge { display: inline-block; margin-right: 4px; padding: 0 6px; border-radius: 9px;
+  font-size: 10px; font-weight: 700; background: #eef2f7; color: #1f2937; }
+.aic-sev-major, .aic-sev-critical { background: #fde2e2; color: #b42318; }
+.aic-sev-minor   { background: #fff3d6; color: #b45309; }
+.aic-sev-monitor { background: #eef2f7; color: #475467; }
+.aic-mod { background: #ede9fe; color: #5b21b6; }
+html[data-theme="dark"] .aic-sym  { color: #7fb3ef; }
+html[data-theme="dark"] .aic-past { color: #b794f6; }
+html[data-theme="dark"] .aic-act  { color: #6ee7a8; }
+html[data-theme="dark"] .aic-badges { border-top-color: #3a3f4b; }
+html[data-theme="dark"] .aic-badge  { background: #26303f; color: #d7dbe2; }
+html[data-theme="dark"] .aic-sev-major,
+html[data-theme="dark"] .aic-sev-critical { background: rgba(255,139,130,.15); color: #ff8b82; }
+html[data-theme="dark"] .aic-sev-minor   { background: rgba(245,181,68,.15); color: #f5b544; }
+html[data-theme="dark"] .aic-sev-monitor { background: #26303f; color: #9aa3b0; }
+html[data-theme="dark"] .aic-mod { background: rgba(183,148,246,.15); color: #b794f6; }
 /* comment 서식 플로팅 툴바 — 편집 중 셀에서 글자를 선택하면 뜬다(edit_mode.js _cmtFmtBar).
    mention-dd 와 같은 body 직속 절대위치. 동시에 뜨는 일은 없다(저쪽은 캐럿, 이쪽은 선택 구간). */
 .cmt-fmt-bar { position: absolute; z-index: 300; display: flex; gap: 2px; padding: 3px;
@@ -1653,6 +1679,57 @@ html[data-theme="dark"] .issue-menu-item.checked { color: #7fb3ef; }
 html[data-theme="dark"] .issue-menu-mark { color: #6ee7a8; }
 html[data-theme="dark"] .issue-menu-sep { background: #3a3f4b; }
 
+/* Signature 판정 근거 팝업 (sig_reason.js) — 배치·z-index 는 .issue-menu 와 같은 처방. */
+.sigr-pop { position: fixed; z-index: 320; width: 430px; max-width: 92vw; max-height: 70vh;
+  display: flex; flex-direction: column; font-size: 12px; color: #222;
+  background: #fff; border: 1px solid #d0d5dd; border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.18); }
+.sigr-head { display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 10px;
+  border-bottom: 1px solid #e4e7ec; }
+.sigr-title { font-weight: 700; }
+.sigr-stamp { font-size: 10px; color: #667085; background: #f2f4f7; border-radius: 8px; padding: 1px 6px; }
+.sigr-close { margin-left: auto; border: 0; background: none; cursor: pointer;
+  font-size: 15px; line-height: 1; color: #667085; }
+.sigr-body { padding: 8px 10px 10px; overflow: auto; }
+.sigr-note { margin-bottom: 6px; padding: 5px 7px; border-radius: 5px;
+  background: #f2f4f7; color: #475467; }
+.sigr-warn { margin-bottom: 6px; padding: 5px 7px; border-radius: 5px;
+  background: #fff3d6; color: #b45309; }
+.sigr-rule { margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px dashed #e4e7ec; }
+.sigr-rule:last-child { margin-bottom: 0; padding-bottom: 0; border-bottom: 0; }
+.sigr-rule-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 3px; }
+.sigr-tag { font-size: 10px; padding: 0 5px; border-radius: 8px; background: #eef2f7; color: #475467; }
+.sigr-desc { color: #475467; margin-bottom: 3px; }
+.sigr-crit { margin-bottom: 4px; }
+.sigr-crit code { font-size: 11px; background: #f2f4f7; border-radius: 3px; padding: 0 4px; }
+.sigr-act { margin-top: 4px; color: #15803d; }
+.sigr-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.sigr-table th, .sigr-table td { border: 1px solid #e4e7ec; padding: 2px 5px; text-align: left; }
+.sigr-table th { background: #f7f8fa; color: #475467; font-weight: 600; }
+.sigr-metric, .sigr-cond { word-break: break-all; }
+.sigr-src { display: block; font-size: 9px; color: #98a2b3; }
+.sigr-hit { color: #b42318; font-weight: 700; }
+.sigr-miss { color: #667085; }
+.sigr-na { color: #98a2b3; font-style: italic; }
+html[data-theme="dark"] .sigr-pop { background: #1e2128; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .sigr-head { border-bottom-color: #3a3f4b; }
+html[data-theme="dark"] .sigr-stamp,
+html[data-theme="dark"] .sigr-tag { background: #26303f; color: #9aa3b0; }
+html[data-theme="dark"] .sigr-close { color: #9aa3b0; }
+html[data-theme="dark"] .sigr-note { background: #26303f; color: #9aa3b0; }
+html[data-theme="dark"] .sigr-warn { background: rgba(245,181,68,.15); color: #f5b544; }
+html[data-theme="dark"] .sigr-rule { border-bottom-color: #3a3f4b; }
+html[data-theme="dark"] .sigr-desc { color: #9aa3b0; }
+html[data-theme="dark"] .sigr-crit code { background: #26303f; }
+html[data-theme="dark"] .sigr-act { color: #6ee7a8; }
+html[data-theme="dark"] .sigr-table th { background: #26303f; color: #9aa3b0; }
+html[data-theme="dark"] .sigr-table th,
+html[data-theme="dark"] .sigr-table td { border-color: #3a3f4b; }
+html[data-theme="dark"] .sigr-src { color: #8b93a1; }
+html[data-theme="dark"] .sigr-hit { color: #ff8b82; }
+html[data-theme="dark"] .sigr-miss { color: #9aa3b0; }
+html[data-theme="dark"] .sigr-na { color: #8b93a1; }
+
 /* Issue Table 섹션 이동 버튼 묶음(YIELD/CPK/ETC) — 세그먼트 형태로 붙여 표시.
    Yield 탭 STEP/Temp Corner 점프 묶음(.yield-jump-group)도 같은 모양을 쓴다. */
 .issue-jump-group, .yield-jump-group { display: inline-flex; }
@@ -1691,19 +1768,25 @@ td.issue-sig-cell { text-align: left; vertical-align: top; padding: 2px 3px; }
 }
 .sig-chip.sig-suggest { background: #f5f6f8; color: #98a2b3; font-style: italic; }
 .sig-chip.sig-none { background: #fff1f0; color: #b42318; }
+/* 열을 좁혔으므로(sheets.js colWidth "signature") 목록에 없는 legacy 장문 id 는 하드
+   클리핑 대신 말줄임으로 무너뜨린다 — 선택된 값 전체는 select 의 title 로 확인한다. */
 select.issue-sig-sel {
   display: block; width: 100%; margin: 1px 0; padding: 1px 0 1px 2px;
-  border: 1px solid #d0d5dd; border-radius: 4px;
+  border: 1px solid #d0d5dd; border-radius: 4px; text-overflow: ellipsis;
   font-size: 10px; background: #fff; cursor: pointer;
 }
 select.issue-sig-sel:focus { border-color: #4a90e2; outline: none; }
 td.issue-sig-cell.is-reviewed select.issue-sig-sel { border-color: #16a34a; }
-.sig-btns { display: flex; gap: 4px; align-items: center; margin-top: 2px; }
-.sig-btns .sig-add, .sig-btns .sig-confirm {
-  padding: 0 5px; border: 1px solid #d0d5dd; border-radius: 4px;
+td.issue-sig-cell .sig-chip { max-width: 104px; overflow: hidden; text-overflow: ellipsis;
+  vertical-align: bottom; }
+.sig-btns { display: flex; gap: 3px; align-items: center; margin-top: 2px; }
+.sig-btns-view { margin-top: 1px; }
+.sig-btns .sig-add, .sig-btns .sig-confirm, .sig-btns .sig-why {
+  padding: 0 4px; border: 1px solid #d0d5dd; border-radius: 4px;
   background: #fff; font-size: 10px; line-height: 16px; cursor: pointer;
 }
 .sig-btns .sig-confirm { color: #15803d; border-color: #86c99a; }
+.sig-btns .sig-why { color: #1f4d8c; border-color: #a7c3e6; font-weight: 700; }
 .sig-btns .sig-ok { color: #16a34a; font-size: 11px; }
 
 /* Summary 탭 Issue Status 카드(카테고리별 Open/Close 소표) */
@@ -1850,6 +1933,31 @@ td.issue-sig-cell.is-reviewed select.issue-sig-sel { border-color: #16a34a; }
 /* 미저장 변경사항이 있을 때(= _dirty) 눈에 띄게 강조 */
 .btn-topbar-save.dirty { border-color: #f59e0b; background: #fffbeb; box-shadow: 0 0 0 2px rgba(245,158,11,.25); }
 
+/* ── Rawdata CSV 다운로드 (source 선택 메뉴) ───────────────────────────────── */
+.rawdl-wrap { position: relative; display: inline-flex; }
+.btn-topbar-rawdl {
+  padding: 5px 10px; border-radius: 8px; border: 1px solid #d8dee6;
+  background: #fff; cursor: pointer; font-size: 13px; line-height: 1;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05); transition: all .15s ease;
+}
+.btn-topbar-rawdl:hover {
+  background: #f0f6ff; box-shadow: 0 2px 6px rgba(0,0,0,.08); transform: translateY(-1px);
+}
+.rawdl-menu {
+  display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 300;
+  min-width: 210px; max-height: calc(var(--vph) * 0.5); overflow-y: auto;
+  background: #fff; border: 1px solid #d8dee6; border-radius: 8px; padding: 4px;
+  box-shadow: 0 6px 18px rgba(0,0,0,.14);
+}
+.rawdl-menu.show { display: block; }
+.rawdl-menu-title { font-size: 11px; color: #888; padding: 6px 10px 4px; }
+.rawdl-item {
+  display: block; width: 100%; text-align: left; padding: 7px 10px; border: 0;
+  background: none; cursor: pointer; font-size: 12px; color: #333;
+  border-radius: 6px; white-space: nowrap;
+}
+.rawdl-item:hover { background: #f0f6ff; color: #2a5db0; }
+
 /* 자동저장 상태 표시 (edit bar 왼쪽) */
 .autosave-dot {
   width: 7px; height: 7px; border-radius: 50%; background: #d1d5db;
@@ -1985,6 +2093,12 @@ html[data-theme="dark"] .btn-topbar-lock.active { background: #38301b; border-co
 html[data-theme="dark"] .btn-topbar-save { background: #262a33; border-color: #3a3f4b; }
 html[data-theme="dark"] .btn-topbar-save:hover { background: #243044; }
 html[data-theme="dark"] .btn-topbar-save.dirty { border-color: #d9a441; background: #38301b; }
+html[data-theme="dark"] .btn-topbar-rawdl { background: #262a33; border-color: #3a3f4b; }
+html[data-theme="dark"] .btn-topbar-rawdl:hover { background: #243044; }
+html[data-theme="dark"] .rawdl-menu { background: #1b1e24; border-color: #3a3f4b; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+html[data-theme="dark"] .rawdl-menu-title { color: #8b93a1; }
+html[data-theme="dark"] .rawdl-item { color: #d5d9e0; }
+html[data-theme="dark"] .rawdl-item:hover { background: #243044; color: #7fb3ef; }
 
 /* ── 공통 텍스트/테이블 ── */
 html[data-theme="dark"] .section-title { color: #c6ccd6; border-bottom-color: #2a2e37; }
@@ -2414,6 +2528,11 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
       <span class="meta-inline">로드 중...</span>
     </div>
     <div class="topbar-actions" id="topbarActions">
+      <!-- Rawdata 다운로드는 조회 기능이라 읽기 전용 사용자에게도 보인다(권한 게이트 없음) -->
+      <span class="rawdl-wrap">
+        <button class="btn-topbar-rawdl" id="btnRawdataDl" title="Rawdata 원본 다운로드 (CSV)">⬇</button>
+        <div class="rawdl-menu" id="rawdlMenu"></div>
+      </span>
       <span class="autosave-dot" id="autosaveDot" title="자동저장 상태 — 주황: 미저장 / 파랑: 저장 중 / 초록: 저장됨"></span>
       <button class="btn-topbar-save" id="btnSaveComment" title="변경사항 저장">💾</button>
       <button class="btn-topbar-star" id="btnImportant" title="중요 표시(오래된 세션 자동삭제에서 제외)">☆</button>
@@ -2578,10 +2697,12 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
 
 <script src="/pe/report/static/webreport/error_beacon.js"></script>
 <script src="/pe/report/static/webreport/honey_hint.js"></script>
+<script src="/pe/report/static/webreport/user_name.js"></script>
 <script src="/pe/report/static/webreport/core.js"></script>
 <script src="/pe/report/static/webreport/tabs_topbar.js"></script>
 <script src="/pe/report/static/webreport/sheets.js"></script>
 <script src="/pe/report/static/webreport/yield_issue.js"></script>
+<script src="/pe/report/static/webreport/sig_reason.js"></script>
 <script src="/pe/report/static/webreport/wafer_charts.js"></script>
 <script src="/pe/report/static/webreport/stdf_map.js"></script>
 <script src="/pe/report/static/webreport/compare.js"></script>
