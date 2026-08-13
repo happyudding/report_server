@@ -369,6 +369,18 @@ def api_stats_usage():
     return jsonify(out)
 
 
+@admin_panel_bp.get("/api/stats/usage_trend")
+def api_stats_usage_trend():
+    """일별 접속 추이 — 고유 사용자·접속 횟수·주간(WAU)·누적·일별 Peak 동시 접속자."""
+    return jsonify(stats.usage_trend(request.args.get("days", 30)))
+
+
+@admin_panel_bp.get("/api/stats/usage_hourly")
+def api_stats_usage_hourly():
+    """요일×시간 접속 히트맵 (report_usage_hourly 집계)."""
+    return jsonify(stats.usage_hourly_heatmap(request.args.get("days", 30)))
+
+
 # ── VOC 게시판 (읽기 전용 — 등록/수정/상태전환은 /pe/report/voc) ────────────────
 
 @admin_panel_bp.get("/api/voc/overview")

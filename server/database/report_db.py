@@ -92,7 +92,13 @@ from .users import (  # noqa: F401
     set_user_important,
     update_user_password,
 )
-from .usage import record_usage, usage_totals  # noqa: F401
+from .usage import (  # noqa: F401
+    peak_first_day,
+    peak_series,
+    record_active_peak,
+    record_usage,
+    usage_totals,
+)
 from .annotations import (  # noqa: F401
     create_annotation,
     delete_annotation,

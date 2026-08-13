@@ -326,14 +326,17 @@ function renderWebSummary() {
     engrCommentFields().map(f =>
       `<label class="engr-comment-label" for="engr-${f.key}">${f.label}</label>` +
       (engrEditable
-        // 편집: textarea 는 그대로 두고(줄바꿈·붙여넣기·캐럿 전부 브라우저 기본), 태그는
-        // 아래 링크 칩 줄로 클릭한다. @/#/$ 자동완성은 edit_mode.js 가 붙인다.
+        // 편집: contenteditable 편집칸(글자 크기·색을 그 자리에서 보며 편집) + 위쪽 서식
+        // 도구모음. 태그(@[..] 등)는 편집 중 원문으로 두고 아래 링크 칩 줄로 클릭한다.
+        // @/#/$ 자동완성은 edit_mode.js 가 붙인다.
         ? `<div class="engr-comment-cell">` +
-          `<textarea id="engr-${f.key}" class="engr-comment-input" data-engr="${f.key}" rows="4">${esc(engr[f.key] || "")}</textarea>` +
+          engrFmtBarHtml(f.key) +
+          `<div id="engr-${f.key}" class="engr-comment-input" contenteditable="true" ` +
+          `data-engr="${f.key}">${engrEditorHtml(engr[f.key])}</div>` +
           `<div class="engr-comment-links" data-engr-links="${f.key}" hidden></div>` +
           `</div>`
-        // 조회: 편집이 없으니 본문 자체를 링크로 그린다.
-        : `<div class="engr-comment-view">${linkifyComment(engr[f.key] || "")}</div>`)).join("") +
+        // 조회: 편집이 없으니 본문 자체를 링크·서식으로 그린다.
+        : `<div class="engr-comment-view">${engrValueHtml(engr[f.key])}</div>`)).join("") +
     `</div>` +
     `<div class="engr-note-jump" id="engrNoteJump" hidden></div>` +
     `</div>`;
@@ -358,7 +361,8 @@ function renderEngrChips(key) {
   const ta = document.getElementById(`engr-${key}`);
   const box = document.querySelector(`[data-engr-links="${key}"]`);
   if (!ta || !box) return;
-  const html = engrLinkChips(ta.value);
+  // 편집칸은 contenteditable 이므로 값이 아니라 표시 텍스트에서 토큰을 뽑는다.
+  const html = engrLinkChips(ta.textContent || "");
   box.innerHTML = html;
   box.hidden = !html;
 }
@@ -397,16 +401,215 @@ function engrCommentFields() {
   ];
 }
 
-// textarea 값이 바뀌면(blur 시 change 발생) autoSave 경로로 저장 — dot/dirty/실패복원을
-// Issue comment 와 일원화하고, 탭 전환·페이지 이탈 시에도 autoSave 안전망이 ENGR 를 덮는다.
-// (_dirty 명시 세팅은 .content input 버블링에 의존하지 않기 위한 방어 1줄.)
+// ── Engr Comment 서식(글자 크기·색) ──────────────────────────────────────────
+// 저장값은 종전과 같은 **문자열 1개**다. 서식이 붙은 값만 선두에 마커를 달고 제한된 HTML 을
+// 담고, 마커가 없으면 예전 그대로 평문으로 읽는다 → 기존 세션 값은 그대로 보인다(§5-12).
+// 서식을 하나도 안 쓴 편집 결과는 다시 평문으로 되돌려 저장하므로, 서식을 안 쓰는 사용자의
+// 저장값 모양은 종전과 같다.
+// ⚠️ 화면에 그리기 직전에 **항상** engrSanitize 를 통과시킨다 — 저장 시 걸러도 남의 브라우저에
+// 그려지는 값이라 렌더 쪽 필터가 실제 방어선이다(script/on*/href 는 전부 버린다).
+const ENGR_RICH_MARK = "<!--rich-->";
+const ENGR_TAGS = { SPAN: 1, B: 1, STRONG: 1, I: 1, EM: 1, U: 1, BR: 1, DIV: 1, P: 1 };
+// 이 태그들은 **속 내용까지 통째로** 버린다 — 모르는 태그는 글자를 살리는 게 원칙이지만,
+// 이들의 내용은 글이 아니라 코드라 살리면 "alert(1)" 같은 문자열이 코멘트 본문으로 남는다.
+const ENGR_DROP_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, TEMPLATE: 1, IFRAME: 1, OBJECT: 1, EMBED: 1 };
+const ENGR_STYLE_PROPS = ["color", "background-color", "font-size", "font-weight"];
+const ENGR_COLOR_RE = /^(#[0-9a-f]{3,8}|rgba?\([\d\s.,%]+\))$/i;
+const ENGR_SIZE_RE = /^\d{1,3}(\.\d+)?px$/;
+// 도구모음 항목 — 크기 4단(기본 14px)과 색 5종. 값은 그대로 style 에 들어가므로 위 정규식을
+// 통과하는 형태여야 한다.
+const ENGR_FMT_SIZES = [["작게", "12px"], ["기본", "14px"], ["크게", "18px"], ["특대", "24px"]];
+const ENGR_FMT_COLORS = [["#111827", "검정"], ["#d92d20", "빨강"], ["#ea580c", "주황"],
+                         ["#12805c", "초록"], ["#1d4ed8", "파랑"]];
+
+function engrFmtBarHtml(key) {
+  return `<div class="engr-fmt-bar" data-engr-bar="${key}">` +
+    ENGR_FMT_SIZES.map(([label, px]) =>
+      `<button type="button" class="engr-fmt-btn" data-engr-size="${px}" ` +
+      `title="글자 크기 ${label}(${px})">${label}</button>`).join("") +
+    `<span class="engr-fmt-sep"></span>` +
+    ENGR_FMT_COLORS.map(([hex, name]) =>
+      `<button type="button" class="engr-fmt-btn engr-fmt-color" data-engr-color="${hex}" ` +
+      `style="background:${hex}" title="글자색 ${name}"></button>`).join("") +
+    `<span class="engr-fmt-sep"></span>` +
+    `<button type="button" class="engr-fmt-btn" data-engr-cmd="bold" title="굵게"><b>B</b></button>` +
+    `<button type="button" class="engr-fmt-btn" data-engr-cmd="clear" title="선택 구간 서식 지우기">✕ 서식</button>` +
+    `<span class="engr-fmt-hint">글자를 드래그해 선택한 뒤 누르세요</span>` +
+    `</div>`;
+}
+
+// 새 문서에서 파싱한다 — 이 문서는 렌더되지 않아 파싱 단계에서 스크립트/이미지가 돌지 않는다.
+function _engrDoc() { return new DOMParser().parseFromString("<body></body>", "text/html"); }
+
+// 허용 style 속성만 남긴 style 문자열 (값 형식까지 검사).
+function engrSafeStyle(el) {
+  const out = [];
+  ENGR_STYLE_PROPS.forEach(p => {
+    const v = String(el.style.getPropertyValue(p) || "").trim();
+    if (!v) return;
+    if ((p === "color" || p === "background-color") && !ENGR_COLOR_RE.test(v)) return;
+    if (p === "font-size" && !ENGR_SIZE_RE.test(v)) return;
+    if (p === "font-weight" && !/^(bold|[1-9]00)$/i.test(v)) return;
+    out.push(`${p}:${v}`);
+  });
+  return out.join(";");
+}
+// 허용 태그·style 만 남긴 복사본을 만든다. 모르는 태그는 껍데기만 버리고 **글자는 살린다**
+// (버리면 사용자가 붙여넣은 글이 사라진다 — §5-12).
+function engrSanitizeInto(src, out, doc) {
+  Array.from(src.childNodes).forEach(n => {
+    if (n.nodeType === 3) { out.appendChild(doc.createTextNode(n.nodeValue)); return; }
+    if (n.nodeType !== 1) return;                       // 주석 등은 버린다
+    if (ENGR_DROP_TAGS[n.tagName]) return;              // 내용까지 통째로 버린다
+    if (n.tagName === "BR") { out.appendChild(doc.createElement("br")); return; }
+    if (!ENGR_TAGS[n.tagName]) { engrSanitizeInto(n, out, doc); return; }
+    const el = doc.createElement(n.tagName.toLowerCase());
+    const style = engrSafeStyle(n);
+    if (style) el.setAttribute("style", style);
+    engrSanitizeInto(n, el, doc);
+    out.appendChild(el);
+  });
+}
+function engrSanitize(html) {
+  const doc = _engrDoc();
+  const src = doc.createElement("div");
+  src.innerHTML = String(html == null ? "" : html);
+  const out = doc.createElement("div");
+  engrSanitizeInto(src, out, doc);
+  return out.innerHTML;
+}
+// 제한 HTML 안의 **텍스트 노드만** linkifyComment 를 태운다 — 문자열 전체에 정규식을 돌리면
+// 태그 속성까지 건드려 서식이 깨진다.
+function engrLinkifyHtml(html) {
+  const doc = _engrDoc();
+  const root = doc.createElement("div");
+  root.innerHTML = html;
+  const walk = node => {
+    Array.from(node.childNodes).forEach(n => {
+      if (n.nodeType === 1) { walk(n); return; }
+      if (n.nodeType !== 3) return;
+      const holder = doc.createElement("span");
+      holder.innerHTML = linkifyComment(n.nodeValue);
+      n.replaceWith.apply(n, Array.from(holder.childNodes));
+    });
+  };
+  walk(root);
+  return root.innerHTML;
+}
+// 저장값 → 조회 화면 HTML.
+function engrValueHtml(value) {
+  const s = String(value == null ? "" : value);
+  if (s.indexOf(ENGR_RICH_MARK) !== 0) return linkifyComment(s);
+  return engrLinkifyHtml(engrSanitize(s.slice(ENGR_RICH_MARK.length)));
+}
+// 저장값 → 편집칸 초기 HTML. 편집 중에는 토큰을 원문 그대로 둔다(링크로 바꾸면 되돌릴 수 없다).
+function engrEditorHtml(value) {
+  const s = String(value == null ? "" : value);
+  if (s.indexOf(ENGR_RICH_MARK) === 0) return engrSanitize(s.slice(ENGR_RICH_MARK.length));
+  return esc(s).replace(/\n/g, "<br>");
+}
+// 편집칸 DOM → 평문 (블록·<br> 을 줄바꿈으로 되돌린다).
+function engrTextOf(node) {
+  let out = "";
+  Array.from(node.childNodes).forEach(n => {
+    if (n.nodeType === 3) { out += n.nodeValue; return; }
+    if (n.nodeType !== 1) return;
+    if (n.tagName === "BR") { out += "\n"; return; }
+    if ((n.tagName === "DIV" || n.tagName === "P") && out && !out.endsWith("\n")) out += "\n";
+    out += engrTextOf(n);
+  });
+  return out;
+}
+// 편집칸 → 저장값. 서식이 하나도 없으면 평문으로, 있으면 마커+제한 HTML 로 저장한다.
+function engrEditorValue(el) {
+  const doc = _engrDoc();
+  const root = doc.createElement("div");
+  root.innerHTML = engrSanitize(el.innerHTML);
+  const text = engrTextOf(root).replace(/\u00a0/g, " ").trim();
+  if (!text) return "";                                   // 빈 값 = 삭제 (서버 규약)
+  if (!root.querySelector("span, b, strong, i, em, u, [style]")) return text;
+  return ENGR_RICH_MARK + root.innerHTML;
+}
+
+// 선택 구간에 서식을 적용한다. 도구모음 버튼은 mousedown 을 preventDefault 하므로
+// 편집칸의 선택이 살아 있다(blur 가 안 난다).
+function engrApplyFormat(key, fn) {
+  const el = document.getElementById(`engr-${key}`);
+  if (!el) return;
+  const sel = window.getSelection();
+  const range = (sel && sel.rangeCount) ? sel.getRangeAt(0) : null;
+  if (!range || sel.isCollapsed || !el.contains(range.commonAncestorContainer)) {
+    showToast("서식을 적용할 글자를 먼저 드래그해 선택하세요.");
+    return;
+  }
+  fn(el);
+  _dirty = true;
+  renderEngrChips(key);
+}
+// 크기: execCommand("fontSize") 는 브라우저에 따라 <font size=7> 또는 span[font-size:키워드] 를
+// 남긴다 — 둘 다 우리 규격(span[style=font-size:Npx])으로 정규화하고, 새로 감싼 구간 안쪽의
+// 옛 크기는 지운다(안 지우면 안쪽 값이 이겨 크기가 안 바뀐 것처럼 보인다).
+function engrSetSize(key, px) {
+  engrApplyFormat(key, el => {
+    document.execCommand("styleWithCSS", false, false);
+    document.execCommand("fontSize", false, "7");
+    el.querySelectorAll('font[size="7"]').forEach(f => {
+      const span = document.createElement("span");
+      span.style.fontSize = px;
+      while (f.firstChild) span.appendChild(f.firstChild);
+      f.replaceWith(span);
+      span.querySelectorAll('[style*="font-size"]').forEach(d => d.style.removeProperty("font-size"));
+    });
+    el.querySelectorAll('span[style*="font-size"]').forEach(s => {
+      if (!ENGR_SIZE_RE.test(s.style.fontSize || "")) {
+        s.style.fontSize = px;
+        s.querySelectorAll('[style*="font-size"]').forEach(d => d.style.removeProperty("font-size"));
+      }
+    });
+  });
+}
+function engrSetColor(key, hex) {
+  engrApplyFormat(key, () => {
+    document.execCommand("styleWithCSS", false, true);
+    document.execCommand("foreColor", false, hex);
+  });
+}
+function engrRunCmd(key, cmd) {
+  engrApplyFormat(key, () => {
+    document.execCommand("styleWithCSS", false, true);
+    document.execCommand(cmd === "bold" ? "bold" : "removeFormat");
+  });
+}
+
+// 편집칸 입력은 autoSave 경로로 저장 — dot/dirty/실패복원을 Issue comment 와 일원화하고,
+// 탭 전환·페이지 이탈 시에도 autoSave 안전망이 ENGR 를 덮는다. contenteditable 은 change
+// 이벤트가 없으므로 blur(focusout) 에서 저장한다.
 function bindEngrComment(panel) {
-  panel.querySelectorAll("textarea[data-engr]").forEach(ta => {
-    ta.addEventListener("change", () => { _dirty = true; autoSave(); });
+  panel.querySelectorAll("[data-engr]").forEach(el => {
+    el.addEventListener("focusout", () => { autoSave(); });
     // 방금 입력·선택한 태그가 blur 를 기다리지 않고 바로 클릭 가능해지도록 칩을 갱신한다
     // (≤2000자 정규식이라 debounce 없이 충분).
-    ta.addEventListener("input", () => renderEngrChips(ta.dataset.engr));
-    renderEngrChips(ta.dataset.engr);
+    el.addEventListener("input", () => { _dirty = true; renderEngrChips(el.dataset.engr); });
+    renderEngrChips(el.dataset.engr);
+  });
+  // contenteditable 은 <label for> 로 포커스가 가지 않는다 — 라벨 클릭 동작을 유지한다.
+  panel.querySelectorAll("label.engr-comment-label[for]").forEach(lb => {
+    lb.addEventListener("click", () => {
+      const el = document.getElementById(lb.getAttribute("for"));
+      if (el) el.focus();
+    });
+  });
+  panel.querySelectorAll(".engr-fmt-bar").forEach(bar => {
+    // mousedown 을 막아야 편집칸이 blur 되지 않아 선택 구간이 유지된다.
+    bar.addEventListener("mousedown", ev => { if (ev.target.closest("button")) ev.preventDefault(); });
+    bar.addEventListener("click", ev => {
+      const btn = ev.target.closest("button");
+      if (!btn) return;
+      const key = bar.dataset.engrBar;
+      if (btn.dataset.engrSize) engrSetSize(key, btn.dataset.engrSize);
+      else if (btn.dataset.engrColor) engrSetColor(key, btn.dataset.engrColor);
+      else if (btn.dataset.engrCmd) engrRunCmd(key, btn.dataset.engrCmd);
+    });
   });
 }
 
@@ -421,9 +624,9 @@ async function saveSummaryEngr(opts) {
   const cur = DATA.web_report.summary_engr || {};
   const values = {};
   let changed = false;
-  panel.querySelectorAll("textarea[data-engr]").forEach(ta => {
-    const k = ta.dataset.engr;
-    const v = (ta.value || "").trim();
+  panel.querySelectorAll("[data-engr]").forEach(el => {
+    const k = el.dataset.engr;
+    const v = engrEditorValue(el);
     if (v !== String(cur[k] || "").trim()) { values[k] = v; changed = true; }
   });
   if (!changed) return;

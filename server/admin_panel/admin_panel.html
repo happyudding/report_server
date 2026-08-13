@@ -16,6 +16,8 @@ body {
   --ink-1: #e8e9ec; --ink-2: #a4a8b3; --ink-3: #6f737e;
   --grid: #2b2e36; --axis: #40444e;
   --s-upload: #22c55e; --s-edit: #3d8bef; --s-delete: #f0605f;
+  /* 접속 추이 차트 (사용자 탭) — 위 3색은 작업 종류(업로드/수정/삭제) 전용이라 재사용하지 않는다 */
+  --s-new: #a78bfa; --s-return: #3d8bef; --s-visit: #fbbf24; --s-peak: #f472b6;
   --st-warn: #fbbf24; --st-crit: #f0605f; --accent: #3d8bef;
 }
 h1 { margin: 0 0 14px; font-size: 20px; font-weight: 700; color: var(--ink-1); }
@@ -132,6 +134,10 @@ pre.logbox {
 #chartTip .t-row, .m-tip .t-row { display: flex; align-items: center; gap: 6px; color: var(--ink-2); }
 #chartTip .sw, .m-tip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 details.tblview summary { font-size: 12px; color: var(--ink-3); cursor: pointer; margin-top: 8px; }
+/* 접속 추이 카드 — 그래프 여러 개를 한 카드에 쌓으므로 소제목으로 구분한다 */
+.trend-h { font-size: 13px; font-weight: 600; color: var(--ink-1); margin: 16px 0 6px; }
+.trend-h:first-of-type { margin-top: 4px; }
+.trend-h .hint { font-weight: 400; }
 
 /* 클릭 가능한 현황 타일 — 관련 상세 탭으로 이동 */
 .tile.clickable { cursor: pointer; transition: border-color .12s, background .12s; }
@@ -722,6 +728,69 @@ body { position: relative; }
     </table></div>
     <div class="msg">서버 메모리 기준이라 <b>서버를 재시작하면 초기화</b>됩니다. 화면을 열어만 두고 아무 요청도 하지 않는 사람은 기간이 지나면 목록에서 빠집니다.
       같은 IP 에서 온 접속은 그 IP 의 <b>주 사용자</b>(활동이 가장 많은 계정)로 합쳐 보여줍니다 (<span class="badge gray">IP 병합</span>).</div>
+  </div>
+
+  <!-- 접속 추이 — 위 '지금 접속 중'(순간)과 아래 '누적 사용량'(기간 합계) 사이의 빈칸:
+       날짜에 따라 늘고 있나 줄고 있나. 소스는 report_usage_daily/_hourly/_peak_daily. -->
+  <div class="card">
+    <h2>📈 접속 추이 <span class="hint">날짜별로 몇 명이 얼마나 썼는지 · 막대에 마우스를 올리면 정확한 수치가 보입니다</span>
+      <span style="float:right">
+        <select id="trendDays" class="sel" title="아래 그래프 전체의 집계 기간">
+          <option value="7">최근 7일</option>
+          <option value="30" selected>최근 30일</option>
+          <option value="90">최근 90일</option>
+          <option value="365">최근 1년</option>
+        </select>
+        <button class="btn" id="btnTrendRefresh" title="지금 즉시 새로고침">↻</button>
+      </span></h2>
+
+    <div class="trend-h">일별 접속자 <span class="hint">막대 = 그날 접속한 사람 수(신규/재방문) · 선 = 접속 횟수(오른쪽 축)</span></div>
+    <div class="chart-legend">
+      <span class="key"><span class="sw" style="background:var(--s-new)"></span>신규</span>
+      <span class="key"><span class="sw" style="background:var(--s-return)"></span>재방문</span>
+      <span class="key"><span class="sw" style="background:var(--s-visit)"></span>접속 횟수(우축)</span>
+    </div>
+    <div class="chart-box">
+      <svg id="trendUserChart" width="100%" height="240" viewBox="0 0 900 240" preserveAspectRatio="none"></svg>
+      <div class="m-tip"></div>
+    </div>
+
+    <div class="trend-h">주간 접속자 · 누적 사용자 <span class="hint">막대 = 그날 포함 최근 7일 동안 접속한 사람 수(WAU) · 선 = 지금까지 한 번이라도 쓴 사람 총합(오른쪽 축)</span></div>
+    <div class="chart-legend">
+      <span class="key"><span class="sw" style="background:var(--s-return)"></span>주간 접속자(7일)</span>
+      <span class="key"><span class="sw" style="background:var(--s-upload)"></span>누적 사용자(우축)</span>
+    </div>
+    <div class="chart-box">
+      <svg id="trendWeeklyChart" width="100%" height="200" viewBox="0 0 900 200" preserveAspectRatio="none"></svg>
+      <div class="m-tip"></div>
+    </div>
+
+    <div class="trend-h">Peak 동시 접속자 <span class="hint" id="trendPeakHint">최근 5분 안에 요청을 보낸 사람 수의 그날 최대값</span></div>
+    <div class="chart-box">
+      <svg id="trendPeakChart" width="100%" height="200" viewBox="0 0 900 200" preserveAspectRatio="none"></svg>
+      <div class="m-tip"></div>
+    </div>
+
+    <div class="trend-h">용도별 접속 횟수 <span class="hint">Honey 앱을 쓰는지 웹으로 보는지</span></div>
+    <div class="chart-legend">
+      <span class="key"><span class="sw" style="background:var(--s-upload)"></span>Honey 실행</span>
+      <span class="key"><span class="sw" style="background:var(--s-edit)"></span>검색페이지</span>
+      <span class="key"><span class="sw" style="background:var(--s-peak)"></span>세션 상세</span>
+    </div>
+    <div class="chart-box">
+      <svg id="trendKindChart" width="100%" height="200" viewBox="0 0 900 200" preserveAspectRatio="none"></svg>
+      <div class="m-tip"></div>
+    </div>
+
+    <div class="trend-h">요일 · 시간대 <span class="hint">언제 몰리는지 — 색이 진할수록 접속이 많습니다</span></div>
+    <div class="chart-box">
+      <svg id="trendHourHeat" width="100%" height="210" viewBox="0 0 900 210" preserveAspectRatio="none"></svg>
+      <div class="m-tip"></div>
+    </div>
+
+    <div class="msg"><b>접속자</b> = 서로 다른 계정 수, <b>접속 횟수</b> = 페이지에 들어온 횟수(새로고침도 셉니다) — 둘은 다른 값입니다.
+      <b>Peak 동시 접속자</b>와 <b>요일·시간대</b>는 <b id="trendSince">이 기능을 배포한 날</b>부터 기록되므로 그 이전 기간은 비어 있는 것이 정상입니다.
+      사람 수는 위 표들과 같은 기준으로 <span class="badge gray">IP 병합</span> 후 셉니다.</div>
   </div>
 
   <!-- 팝업 메시지 — 웹 화면(검색결과·세션 상세)을 열어둔 사람에게 공지를 띄운다. -->
@@ -2227,7 +2296,7 @@ $("btnPurgeExpired").onclick = async () => {
 // 사용자 관련 화면은 전부 이 탭에 모았다 (실시간 접속 / 누적 사용량 / 웹 로그인 계정).
 // 이전에는 현황·통계·사용자 세 탭에 흩어져 있었고 통계 탭 '사용자별 사용량' 은 여기
 // '작업 활동' 표와 같은 API 를 두 번 그리는 중복이었다.
-function loadUsersTab() { loadLiveUsers(); loadUsageTables(); loadUsers(); loadMessages(); }
+function loadUsersTab() { loadLiveUsers(); loadUsageTrend(); loadUsageTables(); loadUsers(); loadMessages(); }
 
 function goUsersTab() {
   const btn = document.querySelector('.tab[data-panel="pUsers"]');
@@ -2372,6 +2441,185 @@ async function loadUsageTables() {
     $("usageRankBody").innerHTML = `<tr class="empty-row"><td colspan="7">조회 실패: ${esc(e)}</td></tr>`;
   }
 }
+// ── 접속 추이 그래프 ──────────────────────────────────────────────────────────
+// 스택 막대(좌축) + 선(우축) 겸용 렌더러. 추이 차트 4개가 이 하나를 공유한다
+// (통계 탭의 renderDailyChart 는 #dailyChart·SERIES 고정 전용이라 건드리지 않는다).
+// 값이 null 이면 '기록 없음'이라 막대를 그리지 않는다 — 0(그날 아무도 안 씀)과 다르다.
+function renderTrendChart(svgId, rows, opt) {
+  const svg = $(svgId), H = +svg.getAttribute("height");
+  const W = 900, padL = 44, padR = opt.line ? 46 : 10, padT = 10, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = rows.length;
+  const stack = r => opt.bars.reduce((a, s) => a + (r[s.key] || 0), 0);
+  const barMax = n ? Math.max(...rows.map(stack)) : 0;
+  const lineMax = (n && opt.line) ? Math.max(...rows.map(r => r[opt.line.key] || 0)) : 0;
+  if (!n || (barMax === 0 && lineMax === 0)) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#6f737e"
+                      font-size="13">${esc(opt.empty || "기간 내 기록이 없습니다.")}</text>`;
+    return;
+  }
+  const yMax = niceMax(barMax || 1), rMax = niceMax(lineMax || 1);
+  const slot = plotW / n, barW = Math.min(24, Math.max(3, slot - 2));
+  const y = v => padT + plotH * (1 - v / yMax);
+  const ry = v => padT + plotH * (1 - v / rMax);
+  const parts = [];
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const yy = y(yMax * i / ticks);
+    parts.push(`<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="var(--grid)" stroke-width="1"/>`);
+    parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10" fill="#6f737e"
+                 font-variant-numeric="tabular-nums">${Math.round(yMax * i / ticks).toLocaleString()}</text>`);
+    if (opt.line)
+      parts.push(`<text x="${W - padR + 6}" y="${yy + 4}" font-size="10" fill="${opt.line.color}"
+                   font-variant-numeric="tabular-nums">${Math.round(rMax * i / ticks).toLocaleString()}</text>`);
+  }
+  const labelEvery = n > 180 ? 30 : n > 40 ? 10 : n > 14 ? 5 : 1;
+  rows.forEach((r, i) => {
+    const x = padL + slot * i + (slot - barW) / 2;
+    const segs = opt.bars.map(s => ({ ...s, v: r[s.key] })).filter(s => s.v > 0);
+    let cursor = padT + plotH;
+    segs.forEach((s, si) => {
+      const hRaw = plotH * s.v / yMax;
+      const h = Math.max(hRaw - (si < segs.length - 1 ? 2 : 0), 1);
+      const top = cursor - hRaw;
+      parts.push(si === segs.length - 1
+        ? `<path d="${roundedTopRect(x, top, barW, h, 4)}" fill="${s.color}"/>`
+        : `<rect x="${x}" y="${top}" width="${barW}" height="${h}" fill="${s.color}"/>`);
+      cursor = top;
+    });
+    if (i % labelEvery === 0)
+      parts.push(`<text x="${padL + slot * i + slot / 2}" y="${H - 8}" text-anchor="middle"
+                   font-size="10" fill="#6f737e">${esc(r.date.slice(5))}</text>`);
+    parts.push(`<rect class="hit" data-i="${i}" x="${padL + slot * i}" y="${padT}"
+                 width="${slot}" height="${plotH}" fill="transparent"/>`);
+  });
+  if (opt.line) {
+    const pts = rows.map((r, i) =>
+      `${(padL + slot * i + slot / 2).toFixed(1)},${ry(r[opt.line.key] || 0).toFixed(1)}`).join(" ");
+    parts.push(`<polyline points="${pts}" fill="none" stroke="${opt.line.color}" stroke-width="1.6"/>`);
+  }
+  parts.push(`<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}" stroke="var(--axis)" stroke-width="1"/>`);
+  svg.innerHTML = parts.join("");
+
+  const tip = svg.closest(".chart-box").querySelector(".m-tip");
+  const row = (color, label, text) =>
+    `<div class="t-row"><span class="sw" style="background:${color}"></span>${label} ${text}</div>`;
+  svg.querySelectorAll(".hit").forEach(hit => {
+    hit.addEventListener("mousemove", ev => {
+      const r = rows[+hit.dataset.i];
+      tip.innerHTML = `<div class="t-date">${esc(r.date)}</div>` +
+        opt.bars.map(s => row(s.color, s.label,
+          r[s.key] == null ? "기록 없음" : `${r[s.key].toLocaleString()}${opt.barUnit || ""}`)).join("") +
+        (opt.line ? row(opt.line.color, opt.line.label,
+          `${(r[opt.line.key] || 0).toLocaleString()}${opt.lineUnit || ""}`) : "");
+      showTip(tip, svg, ev, 170);
+    });
+    hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  });
+}
+
+// 요일(7) × 시간(24) 히트맵 — 언제 몰리는지.
+function renderHourHeat(svgId, data) {
+  const svg = $(svgId), H = +svg.getAttribute("height");
+  const W = 900, padL = 34, padR = 10, padT = 18, padB = 8;
+  const cw = (W - padL - padR) / 24, ch = (H - padT - padB) / 7;
+  const max = data.max || 0;
+  if (!max) {
+    svg.innerHTML = `<text x="${W/2}" y="${H/2}" text-anchor="middle" fill="#6f737e"
+                      font-size="13">아직 시간대 기록이 없습니다.</text>`;
+    return;
+  }
+  const WD = ["월", "화", "수", "목", "금", "토", "일"];
+  const parts = [];
+  for (let h = 0; h < 24; h += 3)
+    parts.push(`<text x="${padL + cw * h + cw / 2}" y="${padT - 6}" text-anchor="middle"
+                 font-size="10" fill="#6f737e">${h}</text>`);
+  for (let d = 0; d < 7; d++) {
+    parts.push(`<text x="${padL - 6}" y="${padT + ch * d + ch / 2 + 4}" text-anchor="end"
+                 font-size="10" fill="#6f737e">${WD[d]}</text>`);
+    for (let h = 0; h < 24; h++) {
+      const v = data.matrix[d][h];
+      // 0 은 배경색, 나머지는 최소 0.12 부터 시작해 1건도 눈에 보이게 한다
+      const op = v ? 0.12 + 0.88 * (v / max) : 0;
+      parts.push(`<rect class="hit" data-d="${d}" data-h="${h}"
+                   x="${padL + cw * h + 0.5}" y="${padT + ch * d + 0.5}"
+                   width="${cw - 1}" height="${ch - 1}" rx="2"
+                   fill="${v ? "var(--accent)" : "var(--grid)"}" fill-opacity="${v ? op.toFixed(3) : 1}"/>`);
+    }
+  }
+  svg.innerHTML = parts.join("");
+
+  const tip = svg.closest(".chart-box").querySelector(".m-tip");
+  svg.querySelectorAll(".hit").forEach(hit => {
+    hit.addEventListener("mousemove", ev => {
+      const d = +hit.dataset.d, h = +hit.dataset.h;
+      tip.innerHTML = `<div class="t-date">${WD[d]}요일 ${h}시</div>` +
+        `<div class="t-row">접속 ${data.matrix[d][h].toLocaleString()}회</div>` +
+        `<div class="t-row">사용자 ${data.users[d][h].toLocaleString()}명</div>`;
+      showTip(tip, svg, ev, 140);
+    });
+    hit.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+  });
+}
+
+// 툴팁 위치 — 추이 차트들이 공유 (renderDailyChart 의 배치 규칙과 같다)
+function showTip(tip, svg, ev, w) {
+  const box = svg.parentElement.getBoundingClientRect();
+  tip.style.display = "block";
+  tip.style.left = Math.min(ev.clientX - box.left + 14, box.width - w) + "px";
+  tip.style.top = (ev.clientY - box.top - 10) + "px";
+}
+
+const TREND_C = {
+  new: "var(--s-new)", ret: "var(--s-return)", visit: "var(--s-visit)",
+  peak: "var(--s-peak)", cum: "var(--s-upload)", idx: "var(--s-edit)",
+};
+async function loadUsageTrend() {
+  const days = $("trendDays").value;
+  const fail = (id, e) => {
+    const svg = $(id);
+    svg.innerHTML = `<text x="450" y="${+svg.getAttribute("height") / 2}" text-anchor="middle"
+                      fill="#f0605f" font-size="13">조회 실패: ${esc(e)}</text>`;
+  };
+  try {
+    const t = await getJSON("api/stats/usage_trend?days=" + days);
+    if (t.peak_since) $("trendSince").textContent = t.peak_since;
+    if (t.peak_window)
+      $("trendPeakHint").textContent =
+        `최근 ${Math.round(t.peak_window / 60)}분 안에 요청을 보낸 사람 수의 그날 최대값`;
+    renderTrendChart("trendUserChart", t.rows, {
+      bars: [{ key: "new_users", label: "신규", color: TREND_C.new },
+             { key: "returning", label: "재방문", color: TREND_C.ret }],
+      line: { key: "visits", label: "접속 횟수", color: TREND_C.visit },
+      barUnit: "명", lineUnit: "회",
+    });
+    renderTrendChart("trendWeeklyChart", t.rows, {
+      bars: [{ key: "wau", label: "주간 접속자", color: TREND_C.ret }],
+      line: { key: "cum_users", label: "누적 사용자", color: TREND_C.cum },
+      barUnit: "명", lineUnit: "명",
+    });
+    renderTrendChart("trendPeakChart", t.rows, {
+      bars: [{ key: "peak_users", label: "Peak 동시 접속자", color: TREND_C.peak }],
+      barUnit: "명",
+      empty: "아직 기록이 없습니다 — 이 기능을 배포한 뒤부터 쌓입니다.",
+    });
+    renderTrendChart("trendKindChart", t.rows, {
+      bars: [{ key: "honey_run", label: "Honey 실행", color: TREND_C.cum },
+             { key: "web_index", label: "검색페이지", color: TREND_C.idx },
+             { key: "web_view", label: "세션 상세", color: TREND_C.peak }],
+      barUnit: "회",
+    });
+  } catch (e) {
+    ["trendUserChart", "trendWeeklyChart", "trendPeakChart", "trendKindChart"]
+      .forEach(id => fail(id, e));
+  }
+  try {
+    renderHourHeat("trendHourHeat", await getJSON("api/stats/usage_hourly?days=" + days));
+  } catch (e) { fail("trendHourHeat", e); }
+}
+$("trendDays").onchange = loadUsageTrend;
+$("btnTrendRefresh").onclick = loadUsageTrend;
+
 // ── 팝업 메시지 (저장소는 서버 프로세스 메모리 — admin_panel/messages.py) ─────
 async function loadMessages() {
   const tb = $("msgListBody");

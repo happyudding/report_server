@@ -27,13 +27,13 @@ body {
   background: #000; color: #fff;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
 }
-.page-title { margin: 0; font-size: 26px; font-weight: 800; letter-spacing: 0; }
+.page-title { margin: 0; font-size: 25px; font-weight: 800; letter-spacing: 0; }
 /* 제목을 누르면 시작 화면(/pe) 으로 — 헤더 배경이 검정이라 링크 색을 따로 잡는다 */
 .page-title-link { text-decoration: none; color: inherit; }
 .page-title-link:hover .page-title { opacity: .82; }
 .back-main-btn {
   border: 0; background: transparent; color: #fff;
-  font-size: 19px; font-weight: 700; cursor: pointer;
+  font-size: 18px; font-weight: 700; cursor: pointer;
   text-decoration: none;
   padding: 8px 0; white-space: nowrap;
 }
@@ -47,7 +47,7 @@ body {
 .pt-btn {
   flex: 0 0 198px; height: 51px; border: 2px solid var(--pt-color, #d0d5dd);
   border-radius: 8px; background: var(--pt-color, #fff); cursor: pointer;
-  font-size: 26px; font-weight: 800; color: #fff;
+  font-size: 25px; font-weight: 800; color: #fff;
   text-shadow: 0 1px 2px rgba(0,0,0,.20);
   transition: all .15s; opacity: .82;
 }
@@ -55,7 +55,7 @@ body {
 .pt-btn[data-pt="MDDI"]     { --pt-color: #4a90e2; }
 .pt-btn[data-pt="PDDI"]     { --pt-color: #1e3a8a; }
 .pt-btn[data-pt="PMIC"]     { --pt-color: #16a34a; }
-.pt-btn[data-pt="SECURITY"] { --pt-color: #9333ea; font-size: 21px; }
+.pt-btn[data-pt="SECURITY"] { --pt-color: #9333ea; font-size: 20px; }
 .pt-btn[data-pt="TCON"]     { --pt-color: #0d9488; }
 .pt-btn:hover { opacity: 1; filter: brightness(1.07); }
 .pt-btn.active {
@@ -64,7 +64,7 @@ body {
 }
 .pt-badge {
   display: inline-block; padding: 2px 9px; border-radius: 4px;
-  font-size: 16px; font-weight: 700; color: #fff; white-space: nowrap;
+  font-size: 15px; font-weight: 700; color: #fff; white-space: nowrap;
 }
 .pt-badge.MDDI { background: #4a90e2; }
 .pt-badge.PDDI { background: #1e3a8a; }
@@ -77,7 +77,7 @@ body {
 .mode-badge {
   display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border-radius: 50%;
-  font-size: 14px; font-weight: 700; color: #fff; white-space: nowrap;
+  font-size: 13px; font-weight: 700; color: #fff; white-space: nowrap;
   vertical-align: middle;
 }
 .mode-badge.Normal { background: #64748b; }
@@ -88,10 +88,10 @@ body {
 .mode-badge.none {
   width: auto; height: auto; background: transparent; color: #94a3b8; font-weight: 400;
 }
-.star-important { color: #f59e0b; font-size: 19px; margin-right: 4px; }
+.star-important { color: #f59e0b; font-size: 18px; margin-right: 4px; }
 /* 사용자별 즐겨찾기 별표 — 전역 '중요'(amber)와 구분되게 파란색 */
 .star-fav {
-  color: #cbd5e1; font-size: 19px; margin-right: 4px;
+  color: #cbd5e1; font-size: 18px; margin-right: 4px;
   cursor: pointer; user-select: none;
 }
 .star-fav.on { color: #2563eb; }
@@ -100,7 +100,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .user-chip {
   flex: 0 0 auto; height: 34px; padding: 0 12px;
   border: 1px solid #d0d5dd; border-radius: 8px; background: #fff;
-  font-size: 17px; font-weight: 600; color: #475569; cursor: pointer;
+  font-size: 16px; font-weight: 600; color: #475569; cursor: pointer;
   white-space: nowrap;
 }
 .user-chip:hover { border-color: #4a90e2; color: #4a90e2; }
@@ -115,7 +115,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   flex: 0 0 auto; height: 34px; padding: 0 16px;
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: 8px; border: 1px solid #16a34a;
-  background: #16a34a; color: #fff; font-size: 19px; font-weight: 600;
+  background: #16a34a; color: #fff; font-size: 18px; font-weight: 600;
   text-decoration: none; cursor: pointer; transition: all .15s;
   white-space: nowrap;
 }
@@ -127,7 +127,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 
 .help-btn {
   border: 0; background: transparent; color: #fff;
-  font-size: 19px; font-weight: 700; cursor: pointer;
+  font-size: 18px; font-weight: 700; cursor: pointer;
   text-decoration: none;
   padding: 8px 0; white-space: nowrap;
 }
@@ -144,14 +144,14 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .filter-group.search-group { position: relative; flex: 1 1 480px; min-width: 360px; }
 .mine-toggle {
   height: 36px; display: inline-flex; align-items: center; gap: 6px;
-  font-size: 16px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
+  font-size: 15px; color: #333; cursor: pointer; white-space: nowrap; user-select: none;
 }
 .mine-toggle input { width: 18px; height: 18px; cursor: pointer; }
 .filter-actions { margin-left: auto; }
-.filter-label { font-size: 16px; color: #666; font-weight: 600; }
+.filter-label { font-size: 15px; color: #666; font-weight: 600; }
 .filter-input, .sel-input {
   height: 36px; padding: 0 10px; border: 1px solid #d0d5dd;
-  border-radius: 6px; font-size: 18px; outline: none;
+  border-radius: 6px; font-size: 17px; outline: none;
   background: #fff;
 }
 .filter-input:focus, .sel-input:focus { border-color: #4a90e2; }
@@ -163,7 +163,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 }
 .suggest-box.show { display: block; }
 .suggest-item {
-  padding: 7px 10px; cursor: pointer; font-size: 16px; color: #333;
+  padding: 7px 10px; cursor: pointer; font-size: 15px; color: #333;
   border-bottom: 1px solid #f1f3f5;
 }
 .suggest-item:last-child { border-bottom: none; }
@@ -173,7 +173,7 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
 .filter-actions { display: flex; gap: 8px; align-items: end; }
 .btn-action {
   height: 36px; padding: 0 16px; border-radius: 6px; border: 1px solid #d0d5dd;
-  background: #fff; color: #333; font-size: 18px; cursor: pointer; font-weight: 500;
+  background: #fff; color: #333; font-size: 17px; cursor: pointer; font-weight: 500;
 }
 .btn-action.primary { background: #4a90e2; color: #fff; border-color: #4a90e2; }
 .btn-action.primary:hover { background: #357abd; }
@@ -183,24 +183,24 @@ td.pt-cell { cursor: pointer; white-space: nowrap; }
   box-shadow: 0 1px 6px rgba(0,0,0,.07);
 }
 .results-header {
-  font-size: 19px; font-weight: 600; color: #333;
+  font-size: 18px; font-weight: 600; color: #333;
   display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
 }
-.results-count { font-size: 16px; color: #888; font-weight: 400; }
-.refreshing-badge { font-size: 13px; color: #aaa; font-weight: 400; }
+.results-count { font-size: 15px; color: #888; font-weight: 400; }
+.refreshing-badge { font-size: 12px; color: #aaa; font-weight: 400; }
 
 /* min-width 는 colgroup 퍼센트가 실제 px 로 환산될 때의 하한이자 열 폭 산정 기준폭이다 —
    이 값 미만으로 좁아지면 열을 뭉개는 대신 .table-wrap 가로 스크롤로 넘긴다.
    1440px 는 Owner 13자(대문자 기준 144px)·Mode 헤더 글자폭까지 담기는 실측 하한. */
 table {
   width: 100%; min-width: 1440px; border-collapse: collapse;
-  font-size: 18px; table-layout: fixed;
+  font-size: 17px; table-layout: fixed;
 }
 th, td {
   padding: 4px 8px; border-bottom: 1px solid #eef0f3; text-align: left;   /* 행 세로폭 ~0.8배 축소 */
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-th { background: #fafbfc; font-weight: 600; color: #555; font-size: 16px; }
+th { background: #fafbfc; font-weight: 600; color: #555; font-size: 15px; }
 tr.empty-row td { text-align: center; color: #999; padding: 30px; overflow: visible; white-space: normal; }
 /* 액션칸(자물쇠/삭제)은 버튼이 잘리면 안 되고, 업로드날짜와 시각적 간격을 더 벌린다 */
 th.act-cell, td.act-cell { overflow: visible; white-space: nowrap; padding-left: 10px; }
@@ -209,7 +209,7 @@ tr.result-row:hover { background: #f5f8ff; }
 
 .btn-row { display: inline-flex; gap: 6px; }
 .btn-mini {
-  padding: 2px 8px; font-size: 16px; border-radius: 4px;
+  padding: 2px 8px; font-size: 15px; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-mini.edit { color: #1f4d8c; border-color: #bcd3f0; }
@@ -227,19 +227,19 @@ td.fname-cell .fname-txt {
 
 /* 액션칸 아이콘 버튼 (비공개 자물쇠 / 삭제 휴지통) */
 .btn-icon {
-  padding: 2px 6px; font-size: 19px; line-height: 1; border-radius: 4px;
+  padding: 2px 6px; font-size: 18px; line-height: 1; border-radius: 4px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .btn-icon:hover { background: #f5f8ff; border-color: #4a90e2; }
 .btn-icon.trash:hover { background: #fef2f2; border-color: #fca5a5; }
 .btn-icon.lock.on { border-color: #f0c869; background: #fffbeb; }
-.lock-badge { font-size: 18px; opacity: .7; padding: 0 4px; }
+.lock-badge { font-size: 17px; opacity: .7; padding: 0 4px; }
 
 .pager {
   display: flex; gap: 6px; justify-content: center; margin-top: 14px;
 }
 .pager .pg-btn {
-  min-width: 32px; height: 30px; padding: 0 8px; font-size: 16px;
+  min-width: 32px; height: 30px; padding: 0 8px; font-size: 15px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer; border-radius: 4px;
 }
 .pager .pg-btn.active { background: #4a90e2; color: #fff; border-color: #4a90e2; }
@@ -247,7 +247,7 @@ td.fname-cell .fname-txt {
 .toast {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
   background: #333; color: #fff; padding: 10px 18px; border-radius: 6px;
-  font-size: 19px; opacity: 0; transition: opacity .2s;
+  font-size: 18px; opacity: 0; transition: opacity .2s;
   pointer-events: none; z-index: 1000;
 }
 .toast.show { opacity: 1; }
@@ -262,11 +262,11 @@ td.fname-cell .fname-txt {
   background: #fff; border-radius: 10px; padding: 24px;
   width: 360px; max-width: 90%;
 }
-.modal-title { font-size: 23px; font-weight: 600; margin: 0 0 8px; }
-.modal-desc { font-size: 19px; color: #666; margin: 0 0 14px; }
+.modal-title { font-size: 22px; font-weight: 600; margin: 0 0 8px; }
+.modal-desc { font-size: 18px; color: #666; margin: 0 0 14px; }
 .modal-actions { display: flex; gap: 8px; margin-top: 18px; justify-content: flex-end; }
 .modal-btn {
-  padding: 8px 16px; font-size: 19px; border-radius: 6px;
+  padding: 8px 16px; font-size: 18px; border-radius: 6px;
   border: 1px solid #d0d5dd; background: #fff; cursor: pointer;
 }
 .modal-btn.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
@@ -275,14 +275,14 @@ td.fname-cell .fname-txt {
    padding 10px·gap 6px) 박스를 넓혀 한 줄에 담는다. 다른 모달은 건드리지 않는다. */
 #idModal .modal-box { width: 420px; }
 #idModal .modal-actions { gap: 6px; }
-#idModal .modal-btn { font-size: 13px; padding: 8px 10px; white-space: nowrap; }
+#idModal .modal-btn { font-size: 12px; padding: 8px 10px; white-space: nowrap; }
 /* ── 세션 로드 오버레이 ─────────────────────────────────────────────── */
 .load-overlay {
   position: fixed; inset: 0; background: rgba(255,255,255,.72);
   display: none; align-items: center; justify-content: center; z-index: 9999;
 }
 .load-overlay.show { display: flex; }
-.load-msg { font-size: 19px; color: #475569; }
+.load-msg { font-size: 18px; color: #475569; }
 .load-bar {
   width: 240px; height: 6px; border-radius: 3px; background: #e5e7eb;
   overflow: hidden; margin: 12px auto 0;
@@ -318,17 +318,17 @@ td.fname-cell .fname-txt {
   td.pt-cell   { order: 1; white-space: normal; }
   td.act-cell  { order: 2; margin-left: auto; padding-left: 0; }
   /* 세션 정보(핵심): 파일명 → Product → LOT (각 줄) */
-  td.fname-cell { order: 3; flex-basis: 100%; font-weight: 700; font-size: 21px; }
+  td.fname-cell { order: 3; flex-basis: 100%; font-weight: 700; font-size: 20px; }
   td.fname-cell .fname-txt { direction: ltr; white-space: normal; }
-  td[data-col="product"] { order: 4; flex-basis: 100%; font-size: 18px; }
-  td[data-col="lot"]     { order: 5; flex-basis: 100%; font-size: 18px; }
+  td[data-col="product"] { order: 4; flex-basis: 100%; font-size: 17px; }
+  td[data-col="lot"]     { order: 5; flex-basis: 100%; font-size: 17px; }
   td[data-col="product"]::before, td[data-col="lot"]::before {
-    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 14px;
+    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 13px;
   }
   /* 보조 정보: 라벨 붙여 세션 정보 아래에 한 줄로 흐른다 */
-  td.sub-cell { order: 6; color: #64748b; font-size: 16px; }
+  td.sub-cell { order: 6; color: #64748b; font-size: 15px; }
   td.sub-cell::before {
-    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 13px;
+    content: attr(data-label) " "; color: #94a3b8; font-weight: 600; font-size: 12px;
   }
   .empty-row td { flex-basis: 100%; }
   .results-header { flex-wrap: wrap; }
@@ -341,7 +341,7 @@ td.fname-cell .fname-txt {
 .theme-toggle {
   flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%;
   border: 1px solid rgba(255,255,255,.35); background: transparent;
-  font-size: 21px; line-height: 1; padding: 0; cursor: pointer;
+  font-size: 20px; line-height: 1; padding: 0; cursor: pointer;
 }
 .theme-toggle:hover { background: rgba(255,255,255,.15); }
 
@@ -555,7 +555,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
              maxlength="4" autocomplete="current-password" placeholder="PW"
              style="flex:0 0 76px; width:76px; padding:0 6px; letter-spacing:3px; text-align:center;">
     </div>
-    <p style="font-size:14px; color:#888; margin:10px 0 0; line-height:1.55;">
+    <p style="font-size:13px; color:#888; margin:10px 0 0; line-height:1.55;">
       계정이 없으면 [회원가입] 을 눌러 만드세요 (Honey 사용 이력이 있는 계정은
       Honey 앱에서 비밀번호를 설정합니다)<br>
       web 환경에서는 수정이 제한됩니다. (조회전용)<br>
@@ -590,10 +590,10 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
     <input type="password" class="filter-input" id="signupPw2Input" inputmode="numeric"
            maxlength="4" autocomplete="new-password" placeholder="비밀번호 확인"
            style="width:100%; margin-top:8px; letter-spacing:4px;">
-    <p style="font-size:14px; color:#888; margin:10px 0 0; line-height:1.55;">
+    <p style="font-size:13px; color:#888; margin:10px 0 0; line-height:1.55;">
       본인의 singleID 로 가입해주세요. PC 비밀번호와 <b>다른 값</b>을 쓰세요.
     </p>
-    <p id="signupHint" style="display:none; font-size:14px; color:#b45309; margin:8px 0 0;
+    <p id="signupHint" style="display:none; font-size:13px; color:#b45309; margin:8px 0 0;
        line-height:1.55;"></p>
     <div class="modal-actions">
       <button class="modal-btn" id="signupCancel">취소</button>
@@ -607,7 +607,7 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
 <div class="modal-overlay" id="pwChangeModal">
   <div class="modal-box">
     <p class="modal-title">웹 로그인 비밀번호 설정</p>
-    <p style="font-size:17px; color:#888; margin:0 0 10px;">
+    <p style="font-size:16px; color:#888; margin:0 0 10px;">
       Honey 밖의 <b>일반 브라우저</b>에서 이 계정(<span id="pwSetWho"></span>)으로
       로그인할 때 쓸 비밀번호입니다. Honey 접속에는 필요 없습니다.<br>
       PC 비밀번호와 <b>다른 값</b>을 쓰세요.

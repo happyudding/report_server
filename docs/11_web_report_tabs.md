@@ -260,7 +260,11 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   Status 전체 일괄(All Open/All Close)은 선택과 무관해 편집모드 툴바에 상시 노출된다.
   Status 일괄은 `/issue_table/status` 에 `items:[{key,value},…]` 로 보내
   (`service.update_issue_status_bulk`) 편집 DB write·rev 증가를 1회로 묶고, 프런트는
-  재렌더 없이 드랍다운·신호등·`DATA.issue_table_text` 만 낙관 갱신한다(단건 경로와 동일).
+  재렌더 없이 드랍다운·셀 색·`DATA.issue_table_text` 만 낙관 갱신한다(단건 경로와 동일).
+  Status 표시는 **셀 전체 배경색**이다(2026-08-13 사용자 요청 — 종전 신호등 점 폐지):
+  Open 파스텔 주황 / Close 파스텔 초록. Issue Table 과 Issue Table Temp 가 같은 렌더 경로
+  ([sheets.js](../server/report/static/webreport/sheets.js) `renderSheetTable`)라 함께 바뀐다.
+  배경 CSS 에는 `!important` 가 필요하다 — zebra·hover 규칙이 특이도로 이기기 때문.
 - **Issue Table Map/Distribution 미니셀 클릭 이동** (2026-07-21): 미니셀 그림 자체가 링크다
   ([edit_mode.js](../server/report/static/webreport/edit_mode.js) `.content` 위임).
   Distribution 셀 → 그 Item 의 Item_detail(`openItemDetail`). Map 셀 → Map Analysis 탭
@@ -701,15 +705,16 @@ vendored v3.5) 사용, 프런트는 [chart_notes.js](../server/report/static/web
 | `#[태그명]` | `DATA.note_tags` (Note 앵커 태그) | Note 탭 + 그 **셀**로 점프 | 태그 없으면 표시 |
 | `$[시트명]` | Note 시트 이름 목록 | Note 탭 + 그 **시트**로 점프 | 목록 도착 후 이름 없으면 표시 |
 
-- **쓸 수 있는 자리 2곳**: Issue Table 의 comment 열(`contenteditable td`)과 Summary 탭
-  **Engr Comment**(`textarea`). 위젯이 달라 `mentionQueryAtCaret`/`mentionInsert` 는
-  textarea(`selectionStart`) / contenteditable(`Selection` + Text 노드) **두 경로**를 갖고,
-  대상 판별은 `tagFieldOf()` 하나로 모은다.
-- **Engr Comment 는 textarea 를 유지한다** — contenteditable 로 바꾸면 패널이 `display:none`
-  일 때 `innerText` 가 줄바꿈을 잃어(자동저장은 그 상태로도 돈다) 값이 뭉개진다. 대신 링크는
-  입력칸 **아래 칩 줄**(`engrLinkChips`, [map_select.js](../server/report/static/webreport/map_select.js))
-  에 띄우고, 조회 모드는 본문 자체를 `linkifyComment` 로 렌더한다. 저장 경로
-  (`POST .../summary/engr`, kind=`summary_engr`)는 종전 그대로다.
+- **쓸 수 있는 자리 2곳**: Issue Table 의 comment 열과 Summary 탭 **Engr Comment** — 둘 다
+  `contenteditable` 이라 `mentionQueryAtCaret`/`mentionInsert` 는 `Selection` + Text 노드
+  한 경로만 쓰고, 대상 판별은 `tagFieldOf()` 하나로 모은다.
+- **Engr Comment 는 contenteditable 이다** (2026-08-13 — 글자 크기·색 편집 도입으로 종전
+  textarea 에서 전환). ⚠️ **값을 읽을 때 `innerText` 를 쓰면 안 된다** — 패널이 `display:none`
+  인 상태(탭 전환 뒤 자동저장)에서 줄바꿈을 통째로 잃는다(headless 실측 확인). 그래서
+  `engrEditorValue`/`engrTextOf`([map_select.js](../server/report/static/webreport/map_select.js))는
+  렌더와 무관한 **DOM 순회**로 `<br>`·`<div>` 를 `\n` 으로 되돌린다. 링크는 종전대로 입력칸
+  **아래 칩 줄**(`engrLinkChips`)에 띄우고, 조회 모드는 본문을 `engrValueHtml` 로 렌더한다.
+  저장 경로(`POST .../summary/engr`, kind=`summary_engr`)는 종전 그대로다.
 - **Note 시트 이름 목록**: `GET .../web_report/note/sheet_names` → `{"sheets":[{index,name,order}]}`.
   이름만 필요한 화면이 본문까지 내려주는 lazy `GET .../note`(≤10MB)를 부르지 않게 만든 경량
   라우트다. 서버는 `updated_at` 을 키로 memo 하고, 클라(note.js `noteEnsureSheetList`)는 Note
@@ -758,6 +763,27 @@ PTE/개발 comment 안에서 **특정 글자만** 색·굵기로 강조한다. �
   검사도 마크업 포함 길이 그대로다(서식 1개당 3~4자 오버헤드).
 - 회귀 고정: [tests/test_comment_format.py](../tests/test_comment_format.py) — strip 표·멱등성·
   `_merge_comment` 관문 + **JS↔Python 문법 드리프트 가드**(sheets.js 정규식·색 테이블 대조).
+
+### Summary Engr Comment 서식 — 글자 크기·색 (2026-08-13)
+Engr Comment 4칸(Yield/CPK/TEMP/ETC)은 위 `*[..]` 토큰이 아니라 **WYSIWYG 편집**이다
+(도구모음: 크기 12/14/18/24px · 색 5종 · 굵게 · 서식 지우기 —
+[map_select.js](../server/report/static/webreport/map_select.js) `engrFmtBarHtml`).
+Issue comment 와 문법이 다른 이유는 소비처가 다르기 때문 — Engr 값은 웹 화면 밖으로 나가는
+경로(Excel·eval·챗봇)가 **없어서** strip 짝이 필요 없다.
+
+- **저장값은 문자열 1개 그대로**다(DB 스키마·API·캐시 무변경). 서식이 붙은 값만 선두에
+  마커 `<!--rich-->` + 제한 HTML 이고, 마커가 없으면 예전 그대로 **평문**이다 → 기존 세션
+  값은 손대지 않아도 그대로 보인다. 서식을 안 쓴 편집 결과는 다시 평문으로 되돌려 저장한다.
+- **허용 태그/스타일 화이트리스트**: `span/b/strong/i/em/u/br/div/p` + style 은
+  `color`·`background-color`(#hex·rgb())·`font-size`(Npx)·`font-weight` 만. `script/style/
+  iframe/object/embed` 는 **내용까지** 버리고, 그 외 모르는 태그는 껍데기만 버리고 글자는 살린다.
+- **필터는 저장할 때와 그릴 때 양쪽에서 돈다**(`engrSanitize`). 남의 브라우저에 그려지는
+  값이라 렌더 쪽이 실제 방어선이다 — 조회 경로에서 이 호출을 빼지 말 것.
+  서버([service.py](../web_report/service.py) `update_summary_engr`)는 얕은 방어로 실행 가능
+  태그만 거부하고 나머지는 해석하지 않는다. 상한은 Issue comment(2000자)와 분리된
+  `_ENGR_MAX_LEN`(8000자) — 태그 오버헤드로 정상 입력이 저장 거부되면 안 되기 때문(§5-12).
+- 화면 표기는 크기·색뿐이므로 **세로 스크롤을 만들지 않는다** — 내용이 길어지면 칸 자체가
+  늘어난다(`.engr-comment-input`/`.engr-comment-view` 에 `max-height`·`overflow-y` 금지).
 
 ## 렌더 구조 (report_view.html + static/webreport)
 - 마크업+CSS 는 [report_view.html](../server/report/report_view.html), 탭별 JS 는

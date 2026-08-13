@@ -337,7 +337,7 @@ document.querySelector(".content").addEventListener("change", async e => {
     // rows 는 그 셀이 속한 패널의 것(Issue Table / Issue Table Temp)이어야 한다.
     const td = sel.closest("td");
     applyIssueStatusToRows(issueRowsOf(issuePanelOf(sel)), key, value);
-    setStatusDot(td, value);   // 드랍다운 아래 신호등 점 갱신
+    setStatusDot(td, value);   // 셀 색(Open 주황 / Close 초록) 갱신
     tabDirty["summary"] = true;
   } catch (err) {
     sel.value = (value === "Close") ? "Open" : "Close";   // 실패 시 롤백
@@ -638,10 +638,10 @@ const TRIGGER_RE = /([@#$])([^\[\]@#$\n]*)$/;        // 캐럿 앞의 미완결 
 const TRIGGER_TAIL_RE = /[@#$]([^\[\]@#$\n]*)$/;     // 그 부분을 토큰으로 치환할 때
 let _mentionCell = null;
 // 태그를 입력할 수 있는 필드면 그 요소, 아니면 null.
-// contenteditable comment 셀(Issue Table)과 textarea(Summary Engr Comment) 둘 다 대상.
+// comment 셀(Issue Table)과 Summary Engr Comment 둘 다 contenteditable 이다.
 function tagFieldOf(t) {
   if (!t) return null;
-  if (t.matches && t.matches("textarea.engr-comment-input") && !t.readOnly) return t;
+  if (t.matches && t.matches(".engr-comment-input[contenteditable=\"true\"]")) return t;
   const td = t.closest && t.closest("td.dblclick-edit");
   if (td && td.isContentEditable && isCommentCol(td.dataset.col)) return td;
   return null;
@@ -672,10 +672,6 @@ function _mentionDD() {
 }
 function hideMention() { const dd = document.getElementById("mentionDropdown"); if (dd) dd.style.display = "none"; _mentionCell = null; }
 function mentionQueryAtCaret(cell) {
-  if (cell.tagName === "TEXTAREA") {   // Summary Engr Comment — selectionStart 기준
-    const m = cell.value.slice(0, cell.selectionStart).match(TRIGGER_RE);
-    return m ? { trigger: m[1], q: m[2] } : null;
-  }
   const sel = window.getSelection();
   if (!sel.rangeCount) return null;
   const range = sel.getRangeAt(0);
@@ -687,19 +683,19 @@ function mentionQueryAtCaret(cell) {
 }
 function mentionInsert(cell, item, trigger) {
   const token = `${trigger || "@"}[${item}] `;
-  if (cell.tagName === "TEXTAREA") {
-    const head = cell.value.slice(0, cell.selectionStart).replace(TRIGGER_TAIL_RE, token);
-    const tail = cell.value.slice(cell.selectionStart);
-    cell.value = head + tail;
-    cell.selectionStart = cell.selectionEnd = head.length;
-    cell.dispatchEvent(new Event("input", { bubbles: true }));   // _dirty + 링크 칩 갱신
-    return;
-  }
   const sel = window.getSelection();
   if (!sel.rangeCount) return;
   const range = sel.getRangeAt(0);
   const node = range.startContainer;
-  if (node.nodeType !== 3) {
+  if (node.nodeType !== 3 && cell.querySelector("*")) {
+    // 서식 span 이 든 칸(Summary Engr Comment)에서 textContent 를 통째로 갈아끼우면 색·크기가
+    // 통째로 사라진다 — 캐럿 자리에 토큰만 끼워 넣는다.
+    const tn = document.createTextNode(token);
+    range.insertNode(tn);
+    const r = document.createRange();
+    r.setStart(tn, tn.length); r.collapse(true);
+    sel.removeAllRanges(); sel.addRange(r);
+  } else if (node.nodeType !== 3) {
     cell.textContent = (cell.textContent || "").replace(TRIGGER_TAIL_RE, "") + token;
   } else {
     const off = range.startOffset, text = node.textContent;
@@ -762,7 +758,7 @@ document.querySelector(".content").addEventListener("input", e => {
 document.addEventListener("keydown", e => { if (e.key === "Escape") { hideMention(); hideCmtFmtBar(); } });
 document.addEventListener("click", e => {
   if (!e.target.closest("#mentionDropdown") && !e.target.closest("td.dblclick-edit")
-      && !e.target.closest("textarea.engr-comment-input")) hideMention();
+      && !e.target.closest(".engr-comment-input")) hideMention();
 });
 
 // ── comment 서식 툴바: 편집 중 셀에서 글자를 선택하면 뜨는 플로팅 버튼 ─────────
@@ -1211,7 +1207,8 @@ async function hideIssueRow(key) {
   }
 }
 
-// Status 셀 신호등 점 갱신 — 색은 td 의 is-open/is-close 클래스가 결정한다(CSS).
+// Status 셀 색 갱신 — 셀 전체 배경색은 td 의 is-open/is-close 클래스가 결정한다(CSS).
+// (2026-08-13 신호등 점 폐지 이후에도 함수명은 호출부 3곳과 함께 그대로 둔다.)
 function setStatusDot(td, value) {
   if (!td) return;
   const close = value === "Close";
@@ -1260,7 +1257,7 @@ async function deleteSelectedIssueRows(panel) {
 
 // Issue Table Status 일괄 변경 (편집모드 전용) — scope "selected" = 체크한 행, "all" = 표 전체.
 // 대상 행의 Status 드랍다운을 모아 배치 API(items)로 한 번에 저장하고, 재렌더 없이 화면
-// (드랍다운·신호등·DATA)만 갱신한다 — 단건 변경(change 위임)과 같은 낙관 반영 방식.
+// (드랍다운·셀 색·DATA)만 갱신한다 — 단건 변경(change 위임)과 같은 낙관 반영 방식.
 async function bulkSetIssueStatus(value, scope, panel) {
   panel = panel || activeIssuePanel();
   if (!panel) return;

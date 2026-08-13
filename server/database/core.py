@@ -279,6 +279,32 @@ CREATE TABLE IF NOT EXISTS report_usage_daily (
     last_at INTEGER NOT NULL,
     PRIMARY KEY (day, kind, user_id)
 );
+
+-- 접속 사용량 시간별 집계 — 위 일별 테이블과 같은 이벤트를 시각(0~23) 축으로도 남긴다.
+-- 일별 테이블의 day 는 'YYYY-MM-DD' 문자열이라 시간대 분포를 복원할 수 없고, 그 PK 를
+-- 바꾸면 이미 쌓인 행이 무의미해지므로 별도 테이블을 둔다. 기록은 record_usage 가 함께 한다.
+CREATE TABLE IF NOT EXISTS report_usage_hourly (
+    day     TEXT NOT NULL,           -- 'YYYY-MM-DD' (서버 localtime)
+    hour    INTEGER NOT NULL,        -- 0~23 (서버 localtime)
+    kind    TEXT NOT NULL,           -- honey_run | web_index | web_view
+    user_id TEXT NOT NULL,           -- 소문자 계정. 신원 없으면 'ip:<addr>'
+    count   INTEGER NOT NULL DEFAULT 0,
+    last_at INTEGER NOT NULL,
+    PRIMARY KEY (day, hour, kind, user_id)
+);
+
+-- 일별 Peak 동시 접속자 수 — metrics.active_users() 의 사람 수는 프로세스 메모리에만 있어
+-- 지금까지 이력이 남지 않았다. 리소스 샘플러(10초)가 그날 최대치를 갱신한다. 값은 절대
+-- **낮아지지 않는다**(서버 재시작으로 메모리 최대치가 0 이 되어도 MAX 로 막는다).
+-- window_sec 를 함께 남기는 이유는 '동시'의 정의(최근 N초 안에 요청)가 env 로 바뀔 수 있어
+-- 나중에 과거 값을 해석하려면 그때의 기준이 필요하기 때문이다.
+CREATE TABLE IF NOT EXISTS report_usage_peak_daily (
+    day        TEXT PRIMARY KEY,     -- 'YYYY-MM-DD' (서버 localtime)
+    peak_users INTEGER NOT NULL,     -- 그날 동시 접속자(사람) 최대값
+    peak_at    INTEGER NOT NULL,     -- 최대값을 찍은 시각 (epoch)
+    window_sec INTEGER NOT NULL,     -- 그때의 '동시' 판정 창 (ACTIVE_USER_WINDOW_SEC)
+    updated_at INTEGER NOT NULL
+);
 """
 
 _PRODUCT_TYPE_NAMES = ("MDDI", "PDDI", "PMIC", "SECURITY", "TCON")

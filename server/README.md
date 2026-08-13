@@ -371,7 +371,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 
 비-GET 요청은 `X-Admin-Request: 1` 헤더 요구. `GET /` 대시보드 + `GET /api/*`
 (health/storage/s3-status/metrics/stats(daily·users·client_errors·usage(접속 사용량 —
-Honey 실행·웹 방문 순위))/sessions/users/
+Honey 실행·웹 방문 순위)·usage_trend·usage_hourly)/sessions/users/
 voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail/webreport/builds) +
 `POST /api/*` (sessions/delete·restore·purge, session/<sid>/important·password, db/backup·cleanup 등).
 **사용자 팝업 메시지**(사용자 탭 `📢 메시지 보내기`): `GET /api/messages`(보낸 목록 + 확인 인원) ·
@@ -380,6 +380,13 @@ voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail/webreport/build
 `POST /api/messages/<id>/delete`. 저장소는 **DB 가 아니라 프로세스 메모리**
 (`admin_panel/messages.py` — 단일 프로세스 전제, metrics 의 in-flight 카운터와 같은 방식)라
 서버 재시작 시 미확인 메시지가 사라진다. 보관 상한 200건 / 7일.
+**접속 추이 그래프**(사용자 탭 `📈 접속 추이`): `GET /api/stats/usage_trend?days=`(일별 고유
+사용자·신규/재방문·접속 횟수·주간 WAU(7일 롤링)·누적 고유 사용자·일별 Peak 동시 접속자) ·
+`GET /api/stats/usage_hourly?days=`(요일×시간 히트맵). 소스는 `report_usage_daily` /
+`report_usage_hourly` / `report_usage_peak_daily`. 사람 수는 순위표와 **같은 기준**으로
+identity_merge 병합 후 센다 — 한쪽만 병합하면 같은 사람이 둘로 세어져 표와 그래프가 어긋난다.
+**Peak 동시 접속자·시간대 데이터는 2026-08-13 배포분부터 쌓인다**(그 이전 기간은 빈 것이 정상 —
+`peak_users`는 수집 이전 날짜에서 `0` 이 아니라 `null`).
 **Eval DB 탭·`/api/eval/*` 라우트는 2026-08-03 `/pe/eval` 로 이관**했다(아래 절) — 구현 모듈
 `admin_panel/eval_admin.py` 는 그대로 남아 eval_panel 이 import 한다.
 **세션 삭제 3종 구분**: `sessions/delete` = 관리자 **즉시 영구 삭제**(휴지통을 거치지 않고

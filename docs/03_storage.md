@@ -24,6 +24,8 @@
 | `report_session_editor` | 편집 위임 | `PK(session_id,editor_user)` |
 | `report_web_visitor` | 편집자 후보 풀 | `user_id`(PK) |
 | `report_usage_daily` | 접속 사용량 일별 카운터 (Honey 실행·웹 방문 — 관리자 통계 탭) | `PK(day,kind,user_id)`, `kind`=`honey_run/web_index/web_view`, 무신원은 `ip:<addr>` ([database/usage.py](../server/database/usage.py)) |
+| `report_usage_hourly` | 같은 접속을 시각(0~23) 축으로도 집계 (관리자 요일×시간 히트맵) | `PK(day,hour,kind,user_id)`, `record_usage` 가 일별과 **한 트랜잭션**으로 함께 기록 ([database/usage.py](../server/database/usage.py)) |
+| `report_usage_peak_daily` | 일별 Peak 동시 접속자(사람) 수 | `day`(PK), `peak_users`는 SQL `MAX` 라 **낮아지지 않음**(재시작 대비), `window_sec`=그때의 '동시' 판정 창. 적재는 [admin_panel/metrics.py](../server/admin_panel/metrics.py) `_record_user_peak` |
 | `report_user_important` / `report_user_favorite` | 개인 중요표시/즐겨찾기 | `PK(user_id,session_id)` |
 | `report_chatbot_log` | 웹 챗봇 질문/답변 + 부하 계측 (관리자 Chatbot 탭) | `created_at DESC` 인덱스, `total_ms`=`wait_ms`(동시실행 대기)+`llm_ms`+조회, `result`=`ok/busy/error:*` ([database/chatbot_log.py](../server/database/chatbot_log.py)) |
 | `report_annotation` | 세션 주석 | `session_id` 인덱스 |

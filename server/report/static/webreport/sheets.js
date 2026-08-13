@@ -957,16 +957,16 @@ function renderSheetTable(rows, opts) {
         if (!skey || txt === "") {
           return `<td class="st-empty${subhead ? " sheet-subhead" : ""}" data-r="${ri}" data-c="${ci}"></td>`;
         }
-        // 드랍다운(또는 텍스트) 아래 신호등 점 — Open 빨강 / Close 초록. 색은 td 의
-        // is-open/is-close 클래스가 결정한다(편집모드 변경 시 edit_mode.js 가 갱신).
+        // 셀 **전체**를 Status 색으로 칠한다 — Open 주황 / Close 초록 (사용자 요청 2026-08-13,
+        // 종전 신호등 점은 폐지). 색은 td 의 is-open/is-close 클래스가 결정한다(편집모드
+        // 변경 시 edit_mode.js 가 갱신).
         const statusCls = `issue-status-cell ${txt === "Close" ? "is-close" : "is-open"}`;
         if (opts.edit) {
           return `<td class="${statusCls}" data-r="${ri}" data-c="${ci}"><select class="issue-status-sel" data-skey="${esc(skey)}">` +
             `<option value="Open"${txt !== "Close" ? " selected" : ""}>Open</option>` +
-            `<option value="Close"${txt === "Close" ? " selected" : ""}>Close</option></select>` +
-            `<span class="status-dot"></span></td>`;
+            `<option value="Close"${txt === "Close" ? " selected" : ""}>Close</option></select></td>`;
         }
-        return `<td class="issue-status ${statusCls}" data-r="${ri}" data-c="${ci}">${esc(txt)}<span class="status-dot"></span></td>`;
+        return `<td class="issue-status ${statusCls}" data-r="${ri}" data-c="${ci}">${esc(txt)}</td>`;
       }
       // Signature 열: 엔진이 발화한 룰(제안) 또는 ENGR 이 확정한 룰 목록.
       // 편집모드는 룰마다 드랍다운 1개 + [+]/[확정] 버튼(변경 즉시 저장 — edit_mode.js 위임),

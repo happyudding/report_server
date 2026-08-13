@@ -1535,17 +1535,33 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
 /* Summary 탭 Engr Comment 폼: 3행(Yield/CPK/ETC) × 2열(라벨 | 큰 입력칸) */
 .engr-comment-grid { display: grid; grid-template-columns: 90px 1fr; gap: 12px 16px; align-items: start; }
 .engr-comment-label { font-weight: 700; color: #333; padding-top: 8px; font-size: 13px; }
+/* 편집칸(contenteditable). **세로 스크롤을 만들지 않는다** — 내용이 길어지면 칸 자체가
+   아래로 늘어나 전체가 한눈에 보여야 한다(사용자 요청 2026-08-13). 그래서 max-height·
+   overflow-y·resize 를 두지 않는다. */
 .engr-comment-input {
-  width: 100%; box-sizing: border-box; resize: vertical; min-height: 84px;
+  width: 100%; box-sizing: border-box; min-height: 84px;
   padding: 8px 10px; border: 1px solid #ccc; border-radius: 6px; font: inherit; line-height: 1.5;
+  white-space: pre-wrap; word-break: break-word; overflow: visible;
 }
 .engr-comment-input:focus { outline: none; border-color: #4a90e2; box-shadow: 0 0 0 2px rgba(74,144,226,.18); }
-/* 입력칸 + 그 아래 링크 칩 줄 (textarea 는 HTML 을 못 그리므로 링크를 본문 밖에 둔다) */
+/* 서식 도구모음(편집 모드 전용) — 글자 크기 / 색 / 굵게 / 서식 지우기.
+   버튼만 쓰는 이유: mousedown 을 preventDefault 해 편집칸의 선택 구간을 살려야 하는데,
+   select 드롭다운은 그 방식과 공존하지 못한다(열리지 않는다). */
+.engr-fmt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.engr-fmt-btn {
+  border: 1px solid #d0d5dd; background: #fff; color: #344054; border-radius: 5px;
+  font-size: 11px; line-height: 1.4; padding: 2px 7px; cursor: pointer;
+}
+.engr-fmt-btn:hover { background: #eef3fb; border-color: #a9bcd8; }
+.engr-fmt-btn.engr-fmt-color { width: 18px; height: 18px; padding: 0; border-radius: 50%; }
+.engr-fmt-sep { width: 1px; align-self: stretch; background: #e4e7ec; margin: 0 3px; }
+.engr-fmt-hint { font-size: 11px; color: #98a2b3; margin-left: 2px; }
+/* 입력칸 + 그 아래 링크 칩 줄 (@[..] 토큰은 편집 중엔 원문으로 두고 칩으로 클릭한다) */
 .engr-comment-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .engr-comment-links { display: flex; flex-wrap: wrap; gap: 6px; font-size: 12px; }
-/* 조회 모드: 본문 자체를 링크로 렌더 (편집이 없어 textarea 가 필요 없다) */
+/* 조회 모드: 본문 자체를 링크·서식으로 렌더. 편집칸과 같은 이유로 세로 스크롤을 두지 않는다. */
 .engr-comment-view {
-  width: 100%; box-sizing: border-box; min-height: 84px; max-height: 220px; overflow-y: auto;
+  width: 100%; box-sizing: border-box; min-height: 84px;
   padding: 8px 10px; border: 1px solid #e7e7ea; border-radius: 6px; background: #fafafa;
   font: inherit; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
 }
@@ -1557,6 +1573,10 @@ html[data-theme="dark"] .bin-table td.bin-desc { color: #9aa3b0; }
   border: 1px solid rgba(15,118,110,.35); background: rgba(15,118,110,.08); color: #0f766e; }
 .note-sheet-btn:hover { background: rgba(15,118,110,.18); }
 html[data-theme="dark"] .engr-comment-view { background: #14161a; border-color: #3a3f4b; color: #d7dbe2; }
+html[data-theme="dark"] .engr-fmt-btn { background: #1b1e24; border-color: #3a3f4b; color: #c6ccd6; }
+html[data-theme="dark"] .engr-fmt-btn:hover { background: #262c38; border-color: #4a5261; }
+html[data-theme="dark"] .engr-fmt-sep { background: #3a3f4b; }
+html[data-theme="dark"] .engr-fmt-hint { color: #767f8c; }
 html[data-theme="dark"] .engr-note-jump { border-top-color: #2a2f38; }
 html[data-theme="dark"] .engr-note-jump-label { color: #8b93a1; }
 html[data-theme="dark"] .note-sheet-btn { border-color: rgba(94,234,212,.35); background: rgba(94,234,212,.10); color: #5eead4; }
@@ -1746,18 +1766,21 @@ html[data-theme="dark"] .sigr-na { color: #8b93a1; }
 select.issue-status-sel {
   width: auto; min-width: 0; padding: 1px 0 1px 2px;
   border: 1px solid #d0d5dd; border-radius: 4px;
-  font-size: 10px; background: #fff; cursor: pointer;
+  /* 배경은 투명 — 셀 전체 색(아래 .issue-status-cell)을 흰 박스로 가리지 않게 한다. */
+  font-size: 10px; background: transparent; cursor: pointer;
 }
 select.issue-status-sel:focus { border-color: #4a90e2; outline: none; }
-td.issue-status.is-open { color: #ea580c; font-weight: 600; }
+td.issue-status.is-open { color: #c2410c; font-weight: 600; }
 td.issue-status.is-close { color: #15803d; font-weight: 600; }
-/* 드랍다운(조회모드는 텍스트) 아래 신호등 점 — Open 주황 / Close 초록 */
+/* 신호등 점 대신 **셀 전체**를 Open 주황 / Close 초록 파스텔로 칠한다(사용자 요청 2026-08-13).
+   background 에 !important 가 붙는 이유는 파일 앞머리(§149)와 같다 — zebra(0,2,2)·hover(0,2,2)가
+   여기(0,2,1)를 이겨 짝수 행·마우스오버에서 색이 사라지기 때문. */
 td.issue-status-cell { text-align: center; }
-td.issue-status-cell .status-dot {
-  display: block; width: 10px; height: 10px; border-radius: 50%; margin: 4px auto 1px;
-}
-td.issue-status-cell.is-open .status-dot { background: #f97316; box-shadow: 0 0 5px rgba(249,115,22,.75); }
-td.issue-status-cell.is-close .status-dot { background: #16a34a; box-shadow: 0 0 5px rgba(22,163,74,.75); }
+td.issue-status-cell.is-open { background: #ffedd5 !important; }
+td.issue-status-cell.is-close { background: #dcfce7 !important; }
+/* 셀 선택(.cell-sel §464)은 위 두 줄보다 뒤에 있어야 이긴다 — 특이도를 한 단계 올려 둔다
+   (안 그러면 Status 열만 클릭해도 선택 표시가 안 보인다). */
+.sheet-table.kind-issue td.issue-status-cell.cell-sel { background: #e3ebfc !important; }
 
 /* Issue Table Signature — 엔진 발화 룰(제안) / ENGR 확정값. AI Comment 왼쪽 열.
    미확정(제안)은 흐리게, 확정은 진하게 — 사람 판단과 엔진 제안이 섞여 보이면 안 된다. */
@@ -2213,6 +2236,13 @@ html[data-theme="dark"] .sheet-table.kind-issue td.sheet-subhead { background: #
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-cell-warn { background: #46201f !important; }
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-yield-warn { background: hsl(0, 55%, calc(20% + var(--yw, 0) * 22%)) !important; }
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #20242c; color: #9aa3b0; }
+/* Status 셀 전체 색 — 라이트의 파스텔에 대응하는 어두운 톤(글자는 밝은 주황/초록). */
+html[data-theme="dark"] td.issue-status-cell.is-open { background: #3f2413 !important; }
+html[data-theme="dark"] td.issue-status-cell.is-close { background: #12301f !important; }
+html[data-theme="dark"] td.issue-status.is-open { color: #fdba74; }
+html[data-theme="dark"] td.issue-status.is-close { color: #86efac; }
+html[data-theme="dark"] .sheet-table.kind-issue td.issue-status-cell.cell-sel { background: #1f2a41 !important; }
+html[data-theme="dark"] select.issue-status-sel { color: #d7dbe2; border-color: #4a5261; }
 /* 라이트와 같은 이유 — hover 시 고정열도 불투명하게 덮어 우측 데이터 비침을 막는다. */
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr:hover td:nth-child(-n+6) { background: #263043; }
 /* 고정열 셀 선택 — 라이트와 같은 이유로 불투명(다크 고정열 배경 #1e2128 위 합성값). */

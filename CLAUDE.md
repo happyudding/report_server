@@ -197,8 +197,13 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
   상세 공용). `report_user` 의 컬럼이 **아닌** 이유는 로그인 계정이 없는 Honey 전용
   사용자도 이름을 가져야 하기 때문(`password_hash NOT NULL`). 이름은 표시 전용 —
   접근제어·감사 식별은 계속 `user_id` 로 한다.
-- `report_usage_daily` — 접속 사용량 일별 카운터(Honey 실행·웹 방문, 관리자 통계 탭).
-  `kind`=`honey_run/web_index/web_view`, 무신원은 `ip:<addr>` 행.
+- `report_usage_daily` / `report_usage_hourly` — 접속 사용량 카운터(Honey 실행·웹 방문).
+  `kind`=`honey_run/web_index/web_view`, 무신원은 `ip:<addr>` 행. `record_usage` 가 **두
+  테이블에 함께** 기록한다(일별은 날짜 문자열이라 시간대 분포를 복원할 수 없다 — hourly 는
+  요일×시간 히트맵용, 2026-08-13 신설).
+- `report_usage_peak_daily` — 일별 Peak 동시 접속자(사람) 수. `metrics.active_users()` 는
+  메모리에만 있어 이력이 없었다 → 리소스 샘플러(10초)가 그날 최대치만 적재. 값은 **낮아지지
+  않는다**(재시작 대비 SQL `MAX`). 관리자 사용자 탭 '📈 접속 추이' 그래프의 소스.
 - `report_chatbot_log` — 웹 챗봇 질문/답변 전문 + 부하 계측(`total_ms`=`wait_ms`(동시실행
   대기)+`llm_ms`(질문 해석)+조회). 관리자 Chatbot 탭의 유일한 데이터원. 감사로그와 분리한
   이유는 답변이 수 KB 라 `changed_fields` 1500자 관례에 안 맞고 감사 화면을 밀어내기 때문.

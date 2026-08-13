@@ -94,6 +94,12 @@ ACTIVE_USER_WINDOW_SEC = max(30, int(os.getenv("REPORT_ACTIVE_USER_WINDOW_SEC", 
 _ACTIVE_USERS_MAX = 300
 _active_users: OrderedDict = OrderedDict()   # key -> dict(uid, ip, honey, first, last, count, route, session_id)
 
+# 일별 Peak 동시 접속자 — 위 실시간 값은 메모리에만 있어 이력이 남지 않았다. 샘플러가 그날
+# 최대치를 report_usage_peak_daily 에 적재한다. 아래 둘은 **DB 쓰기 억제용 캐시**일 뿐이라
+# 재시작으로 0 이 되어도 무해하다(낮은 값으로 덮어쓰는 것은 DB 쪽 MAX 가 막는다).
+_peak_day = None   # 마지막으로 본 날짜 ('YYYY-MM-DD') — 자정에 _peak_val 리셋
+_peak_val = 0      # 그날 지금까지 기록한 최대값
+
 
 def _on_request_start():
     global _inflight, _inflight_window_peak
@@ -364,6 +370,42 @@ def _sample():
     _flight_record(ts, cpu, mem_used, rss, inflight, win_peak, wrss)
     _runtime_record(ts)
     _publicapi_record(ts)
+    _record_user_peak(ts)
+
+
+def _record_user_peak(ts):
+    """그날 동시 접속자(사람) 최대값을 **갱신될 때만** DB 에 남긴다.
+
+    사람 수는 active_users() 를 그대로 쓴다 — 관리자 '지금 접속 중' 타일과 같은 값이어야
+    하고, 사람 수 산정(IP 병합 포함)을 두 벌 두면 화면마다 숫자가 갈린다.
+    대부분의 샘플은 최대치를 넘지 않으므로 DB 쓰기는 하루 수십 건 수준이다.
+    """
+    global _peak_day, _peak_val
+    day = time.strftime("%Y-%m-%d", time.localtime(ts))
+    if day != _peak_day:
+        _peak_day, _peak_val = day, 0
+    # 병합 전 원시 인원으로 먼저 거른다 — active_users() 는 IP 병합 때문에 감사로그를
+    # 집계(60초 TTL)하므로, 관리자가 안 보고 있어도 10초마다 부르면 상시 DB 부하가 된다.
+    # 병합은 사람 수를 **줄이기만** 하므로 원시 개수가 최대치 이하면 결과도 반드시 이하다.
+    cut = ts - ACTIVE_USER_WINDOW_SEC
+    with _lock:
+        raw = sum(1 for v in _active_users.values() if v["last"] >= cut)
+    if raw <= _peak_val:
+        return
+    try:
+        count = active_users()["count"]
+    except Exception:
+        return
+    if count <= _peak_val:
+        return
+    _peak_val = count
+    try:
+        from database.usage import record_active_peak
+        record_active_peak(count, ACTIVE_USER_WINDOW_SEC, now=ts)
+    except Exception:
+        # 샘플러 스레드가 죽으면 리소스 차트가 통째로 멈춘다 — 기록 실패는 삼킨다
+        # (_flight_record/_runtime_record 와 같은 원칙).
+        _log.debug("[metrics] active peak record failed", exc_info=True)
 
 
 def _publicapi_record(ts):

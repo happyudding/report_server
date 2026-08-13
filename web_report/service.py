@@ -1585,6 +1585,14 @@ def update_issue_comments(session_id: str, comments: list, *, report_db, upload_
 # 키 자체는 모드와 무관하게 받는다 — 모드 판정을 저장 경로에 넣으면 옵션이 바뀐 세션의
 # 기존 값이 저장 불가로 막힌다.
 _ENGR_KEYS = ("yield", "cpk", "temp", "etc")
+# 글자 크기·색 서식이 붙은 값은 제한 HTML(선두 마커 "<!--rich-->")이라 태그만큼 길어진다.
+# Issue comment 와 같은 2000자를 그대로 쓰면 평문 기준으로는 짧은 글이 저장 거부돼 사용자
+# 입력이 날아간다(§5-12) — Engr 칸만 상한을 따로 둔다.
+_ENGR_MAX_LEN = 8000
+# 클라이언트는 저장 전에도 화이트리스트로 걸러 보내고, **조회 화면도 그릴 때마다 다시 거른다**
+# (map_select.js engrSanitize). 여기 검사는 그 위의 얕은 방어일 뿐이라, 평문에는 나올 수 없는
+# 실행 가능 태그만 막는다 — 조건을 넓히면 정상 문장이 저장 거부돼 입력을 잃는다.
+_ENGR_UNSAFE_RE = re.compile(r"<\s*/?\s*(script|iframe|object|embed|link|meta|style)\b", re.I)
 
 
 def update_summary_engr(session_id: str, values: dict, *, report_db, upload_root: Path,
@@ -1594,6 +1602,10 @@ def update_summary_engr(session_id: str, values: dict, *, report_db, upload_root
 
     values: {"yield": str, "cpk": str, "temp": str, "etc": str} 중 온 키만 갱신하고,
     빈 값은 삭제로 처리한다. (temp 는 Temperature 모드 화면에서만 노출)
+
+    값은 평문이거나, 글자 크기·색 서식이 붙었으면 선두 마커 ``<!--rich-->`` + 제한 HTML 이다
+    (마커 문법·화이트리스트 정본은 static/webreport/map_select.js). 서버는 저장만 하고
+    해석하지 않는다 — 서식 없는 편집 결과는 클라이언트가 다시 평문으로 되돌려 보낸다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -1614,8 +1626,10 @@ def update_summary_engr(session_id: str, values: dict, *, report_db, upload_root
         if key not in values:
             continue
         val = str(values.get(key) or "").strip()
-        if len(val) > _COMMENT_MAX_LEN:
-            raise ValueError(f"comment too long ({len(val)} > {_COMMENT_MAX_LEN} chars)")
+        if len(val) > _ENGR_MAX_LEN:
+            raise ValueError(f"comment too long ({len(val)} > {_ENGR_MAX_LEN} chars)")
+        if _ENGR_UNSAFE_RE.search(val):
+            raise ValueError("허용되지 않는 태그가 포함돼 있습니다.")
         if str(saved.get(key) or "") == val:
             continue
         changes.append((edits.KIND_SUMMARY_ENGR, key, val if val else None))
