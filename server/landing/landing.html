@@ -247,9 +247,15 @@ a:focus-visible, button:focus-visible {
 /* ── 로그인 모달 ────────────────────────────────────────────────────────── */
 /* 표시 토글은 [hidden] 이 아니라 .show 클래스로 한다 — .modal-overlay 의 display 가
    UA 의 [hidden]{display:none} 을 이겨버리기 때문(검색결과 페이지도 같은 규약). */
+/* ⚠️ backdrop-filter 를 쓰지 않는다 (2026-08-13). 이 오버레이 뒤에는 #bg canvas 가
+   30fps 로 계속 다시 그려지는데, backdrop-filter 는 "뒤 픽셀"을 읽어 흐리는 필터라
+   매 프레임 전체화면 블러를 재합성하게 된다 — 그 합성이 프레임 안에 못 끝나면
+   갱신 전/후 화면이 번갈아 보여 모달이 깜빡인다(이름 입력창 신고). 블러 대신
+   배경을 더 어둡게 깔아 같은 "뒤가 물러나는" 효과를 낸다.
+   검색결과·세션 상세 모달은 애초에 backdrop-filter 를 쓰지 않아 같은 문제가 없다. */
 .modal-overlay {
   position: fixed; inset: 0; z-index: 20;
-  background: rgba(6,9,13,.74); backdrop-filter: blur(3px);
+  background: rgba(6,9,13,.86);
   display: none; align-items: center; justify-content: center; padding: 20px;
 }
 .modal-overlay.show { display: flex; }
