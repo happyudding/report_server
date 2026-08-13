@@ -944,7 +944,7 @@ def web_report_issue_table_signature(session_id):
     """Issue Table 행의 ENGR 확정 signature 저장 — 세션 편집 DB(kind=issue_signature).
 
     body: {"key": "Yield|<bin>|<item>"|"CPK|<item>"|"ETC|<item>",
-           "signatures": ["WIDE_DISTRIBUTION", "UNKNOWN"]}.
+           "signatures": ["LOW_CPK", "UNKNOWN"]}.
     빈 배열이면 확정을 해제해 "미검수 + 엔진 제안" 상태로 되돌린다.
     편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()

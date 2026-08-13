@@ -51,8 +51,10 @@ def test_no_subpop_is_byte_identical():
 
 
 def test_modality_labels():
+    # multimodal 은 **배지를 붙이지 않는다**(2026-08-13 사용자 요청) — 판정·목록에는
+    # 그대로 남고 셀 표기만 생략한다. 폴백([분포분리])도 타면 안 된다.
     for note, tag in (("modality_v2 bimodal", "[이봉]"),
-                      ("modality_v2 multimodal", "[다봉]"),
+                      ("modality_v2 multimodal", ""),
                       ("modality_v2 separated", "[분리]")):
         case = _case(signatures=[_subpop_sig(note)])
         assert _modality_tag(case) == tag, note

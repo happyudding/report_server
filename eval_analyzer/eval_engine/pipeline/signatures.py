@@ -145,7 +145,15 @@ def _apply_suppression(fired: list, suppressors: dict):
 
 
 def _eval_condition(op_str, actual_value, thresholds):
-    """'>key' / '<key' / 'abs>key' / '>0.5' 형태 해석. 결측이면 False."""
+    """'>key' / '<key' / 'abs>key' / '>0.5' 형태 해석. 결측이면 False.
+
+    **목록을 주면 전부 만족해야 한다**(AND) — 같은 지표에 상·하한을 함께 거는 밴드용
+    (`tail_mass_3s: [">=heavy_tail_mass_min", "<=heavy_tail_mass_max"]`). when_metric 은
+    dict 라 한 지표에 조건 하나만 쓸 수 있었는데, "너무 작지도 크지도 않을 것" 이 판정
+    기준인 룰(HEAVY_TAIL 의 꼬리 질량)이 생겨 확장했다.
+    """
+    if isinstance(op_str, (list, tuple)):
+        return all(_eval_condition(one, actual_value, thresholds) for one in op_str)
     if actual_value is None:
         return False
     m = re.match(r"(abs)?\s*([<>]=?)\s*(.+)", str(op_str).strip())

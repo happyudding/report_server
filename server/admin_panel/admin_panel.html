@@ -256,8 +256,14 @@ body { position: relative; }
     <h2>런타임 상태 <span class="hint">응답시간 · 컴퓨트 워커 · 캐시 · DB 잠금 · 열람/빌드 · 스케줄러 (서버 재시작 시 초기화)</span></h2>
     <div class="tiles" id="runtimeTiles"><div class="tile"><div class="lbl">로딩 중…</div></div></div>
     <div class="table-wrap" style="margin-top:12px"><table>
-      <thead><tr><th>진행 중 콜드 빌드</th><th>단계</th><th class="num">경과</th></tr></thead>
-      <tbody id="buildBody"><tr class="empty-row"><td colspan="3">-</td></tr></tbody>
+      <thead><tr><th>진행 중 콜드 빌드</th><th>유발 원인</th><th>워커 현재 위치</th>
+        <th>대기 중인 사용자</th><th class="num">경과 / 예상</th><th>조치</th></tr></thead>
+      <tbody id="buildBody"><tr class="empty-row"><td colspan="6">-</td></tr></tbody>
+    </table></div>
+    <div class="table-wrap" style="margin-top:12px"><table>
+      <thead><tr><th>빌드 큐 · 재빌드 차단 <span class="hint">시작조차 못 한 것들</span></th>
+        <th>상태</th><th>종류</th><th class="num">대기</th><th>조치</th></tr></thead>
+      <tbody id="buildQueueBody"><tr class="empty-row"><td colspan="5">-</td></tr></tbody>
     </table></div>
     <div class="table-wrap" style="margin-top:12px"><table>
       <thead><tr><th>느린 경로 (평균 기준 상위)</th><th class="num">호출</th><th class="num">평균</th><th class="num">최대</th></tr></thead>
@@ -1682,6 +1688,96 @@ function fmtAgo(sec) {
   if (sec < 3600) return `${Math.floor(sec / 60)}분 전`;
   return `${Math.floor(sec / 3600)}시간 ${Math.floor((sec % 3600) / 60)}분 전`;
 }
+// ── 진행 중 콜드 빌드 상세 ──────────────────────────────────────────────────
+// 서버(admin_panel/builds_admin.py)가 build_status(진행 중)·세션 메타·active_users(대기자)·
+// 워커 sidecar(지금 어느 단계)를 한 행으로 합쳐 준다. 여기서는 표기만 한다 — 세션 ID 3칸
+// 만으로는 "누가 뭘 기다리는지, 어디서 멎었는지"를 알 수 없어 손 쓸 방법이 없었다.
+function buildStageCell(b) {
+  const w = b.worker;
+  if (!w) {
+    return `<span style="color:var(--ink-3)">체크포인트 없음 · ${
+      b.stuck ? "타임아웃 초과(잔재 의심)" : "워커 대기 중이거나 부모 인라인 빌드"}</span>`;
+  }
+  const done = w.stages_done || {};
+  const keys = Object.keys(done);
+  return `<b>${esc(w.stage || "?")}</b>${
+    w.source ? ` <span class="mono" style="font-size:11px">[${esc(w.source)}]</span>` : ""} ${
+    w.stage_elapsed == null ? "" : Math.round(w.stage_elapsed) + "초째"}`
+    + `<div style="font-size:11px;color:var(--ink-3)">pid ${w.pid} · 워커 내 ${Math.round(w.elapsed || 0)}s</div>`
+    + (keys.length ? `<div style="font-size:11px;color:var(--ink-3)">완료 ${
+        keys.map(k => `${esc(k)} ${done[k]}s`).join(" · ")}</div>` : "");
+}
+function renderBuilds(builds) {
+  $("buildBody").innerHTML = builds.length ? builds.map(b => {
+    const wait = b.waiting || [];
+    const sub = [b.product_type, b.product, b.lot_id].filter(Boolean).map(esc).join(" · ");
+    const kind = b.kind === "inline" ? "report" : (b.kind || "report");
+    return `<tr>
+      <td><div>${esc(b.file_name || "(이름 없음)")}</div>
+        <div style="font-size:11px;color:var(--ink-3)">${sub}${
+          b.uploader ? ` · 업로더 ${whoLabel(b.uploader, b.uploader_name)}` : ""}</div>
+        <div class="mono" style="font-size:11px;color:var(--ink-3)">${esc(b.session_id || "")} · ${esc(b.stage || "")}</div></td>
+      <td>${esc(b.cause || "")}${
+        b.session_age_sec != null && b.session_age_sec < 900
+          ? `<div style="font-size:11px;color:var(--ink-3)">업로드 ${fmtAgo(b.session_age_sec)} — 첫 조회는 원래 콜드</div>` : ""}</td>
+      <td>${buildStageCell(b)}</td>
+      <td>${wait.length ? wait.map(w => whoLabel(w.user, w.name)
+          + `<span style="color:var(--ink-3);font-size:11px"> ${fmtAgo(w.ago)}</span>`).join("<br>")
+        : `<span style="color:var(--ink-3)">없음</span>`}</td>
+      <td class="num"${(b.elapsed || 0) >= 60 ? ' style="color:var(--st-warn)"' : ""}>${b.elapsed}s
+        <div style="font-size:11px;color:var(--ink-3)">${
+          b.eta ? `예상 ${b.eta}s${b.over ? ` · ${b.over}배` : ""}` : "예상 불명"}</div></td>
+      <td>${b.stuck
+        ? `<button class="btn danger" data-build-act="clear_stuck" data-sid="${esc(b.session_id)}" data-kind="${esc(kind)}"
+             title="진행 표시와 큐 등록 잔재만 지웁니다 (캐시·편집·산출물은 건드리지 않음)">잔재 정리</button>`
+        : "-"}</td>
+    </tr>`;
+  }).join("") : `<tr class="empty-row"><td colspan="6">없음</td></tr>`;
+}
+function renderBuildQueues(q) {
+  const rows = [];
+  (q.ondemand_running || []).forEach(x => rows.push(
+    { sid: x.session_id, kind: x.kind, state: "실행 중" }));
+  (q.ondemand_queued || []).forEach(x => rows.push(
+    { sid: x.session_id, kind: x.kind, state: "큐 대기", wait: x.wait, tone: "warn" }));
+  (q.prewarm_queued || []).forEach(x => rows.push(
+    { sid: x.session_id, kind: "prewarm", state: "프리웜 대기", wait: x.wait }));
+  (q.failures || []).forEach(f => rows.push({
+    sid: f.session_id, kind: f.stage,
+    state: f.blocked ? `재빌드 차단 (쿨다운 ${Math.round(f.cooldown_left)}s)` : `실패 ${f.count}회`,
+    tone: f.blocked ? "crit" : "", error: f.error, act: true,
+  }));
+  $("buildQueueBody").innerHTML = rows.length ? rows.map(r => `<tr>
+    <td class="mono">${esc(r.sid)}${r.error
+      ? `<div style="font-size:11px;color:var(--ink-3)" title="${esc(r.error)}">${esc(String(r.error).slice(0, 90))}</div>` : ""}</td>
+    <td${r.tone === "crit" ? ' style="color:#d33"' : r.tone === "warn" ? ' style="color:var(--st-warn)"' : ""}>${esc(r.state)}</td>
+    <td>${esc(r.kind || "")}</td>
+    <td class="num">${r.wait == null ? "-" : r.wait + "s"}</td>
+    <td>${r.act
+      ? `<button class="btn" data-build-act="clear_failure" data-sid="${esc(r.sid)}" data-kind="${esc(r.kind)}"
+           title="연속 실패 쿨다운을 즉시 해제합니다">차단 해제</button>
+         <button class="btn primary" data-build-act="rebuild" data-sid="${esc(r.sid)}" data-kind="${esc(r.kind)}"
+           title="차단을 풀고 빌드를 큐에 넣습니다">재빌드</button>`
+      : "-"}</td>
+  </tr>`).join("") : `<tr class="empty-row"><td colspan="5">없음</td></tr>`;
+}
+// 개입 버튼 (표는 10초마다 재렌더되므로 문서에 위임 1회 등록)
+document.addEventListener("click", async e => {
+  const btn = e.target.closest("[data-build-act]");
+  if (!btn) return;
+  const act = btn.dataset.buildAct, sid = btn.dataset.sid, kind = btn.dataset.kind || "report";
+  if (!confirm(`${btn.textContent.trim()}\n\n세션 ${sid} (${kind})\n\n실행할까요?`)) return;
+  btn.disabled = true;
+  try {
+    const d = await postJSON("api/webreport/build_action", { action: act, session_id: sid, kind });
+    alert(d.message || "완료");
+  } catch (err) {
+    alert("실패: " + err.message);
+  } finally {
+    btn.disabled = false;
+    loadRuntime();
+  }
+});
 async function loadRuntime() {
   try {
     const r = await getJSON("api/runtime");
@@ -1689,6 +1785,7 @@ async function loadRuntime() {
     const cs = cp.stats || {};
     const sch = r.schedulers || {};
     const vw = r.viewers || {}, builds = r.builds || [], au = r.active_users || {};
+    const bq = r.build_queues || {};
     const resp = ca.response || {};
     const respBytes = ["full", "scatter", "dist_batch"].reduce((a, k) => a + ((resp[k] || {}).bytes || 0), 0);
     const lockWaits = Object.values(ca.lock_waits || {}).reduce((a, v) => a + (v.count || 0), 0);
@@ -1713,7 +1810,9 @@ async function loadRuntime() {
             ? ` · <span class="log-link" data-grep="compute" title="관련 로그를 console log 에서 보기">로그 ›</span>` : ""}</div></div>
       <div class="tile"><div class="lbl">진행 중 콜드 빌드</div>
         <div class="val" style="font-size:20px${longBuilds.length ? ";color:var(--st-warn)" : ""}">${builds.length}</div>
-        <div class="det">${builds.length ? `최장 ${builds[0].elapsed}s (${esc(builds[0].stage || "")})` : "없음"}${longBuilds.length ? ` · 60s 초과 ${longBuilds.length}건` : ""}</div></div>
+        <div class="det">${builds.length ? `최장 ${builds[0].elapsed}s · ${esc(builds[0].kind || builds[0].stage || "")}${
+          (builds[0].waiting || []).length ? ` · 대기 ${(builds[0].waiting || []).length}명` : ""}` : "없음"}${
+          longBuilds.length ? ` · 60s 초과 ${longBuilds.length}건` : ""}</div></div>
       <div class="tile"><div class="lbl">프리웜 큐</div>
         <div class="val" style="font-size:20px">${cp.prewarm_pending || 0} / ${cp.prewarm_max || 0}</div>
         <div class="det">완료 ${cs.prewarm_done || 0} · 폐기 ${cs.prewarm_dropped || 0}</div></div>
@@ -1734,13 +1833,17 @@ async function loadRuntime() {
     if (schedOverdue(sch.cleanup)) _warnRuntime.push({ level: "warn", text: "정리 스케줄러 지연" });
     if (lk.count) _warnRuntime.push({ level: "warn", text: `DB 잠금 경합 ${lk.count}건`, go: "logs:locked" });
     if (cs.broken) _warnRuntime.push({ level: "crit", text: `컴퓨트 워커 붕괴 ${cs.broken}건`, go: "logs:compute" });
-    if (longBuilds.length) _warnRuntime.push({ level: "warn", text: `콜드 빌드 장기화 ${longBuilds.length}건` });
+    if (longBuilds.length) _warnRuntime.push({ level: "warn",
+      text: `콜드 빌드 장기화 ${longBuilds.length}건 — 최장 ${longBuilds[0].elapsed}s `
+        + `(${longBuilds[0].file_name || longBuilds[0].session_id || ""}${
+          longBuilds[0].cause ? ", " + longBuilds[0].cause : ""})` });
     if (ondemandPending) _warnRuntime.push({ level: "warn", text: `콜드 빌드 대기 ${ondemandPending}건 (워커 포화)` });
+    const blockedBuilds = (bq.failures || []).filter(f => f.blocked);
+    if (blockedBuilds.length) _warnRuntime.push({ level: "crit",
+      text: `재빌드 차단 세션 ${blockedBuilds.length}건 — 연속 실패로 쿨다운 중` });
     renderWarnings();
-    $("buildBody").innerHTML = builds.length ? builds.map(b =>
-      `<tr><td class="mono">${esc(b.session_id || "")}</td><td>${esc(b.stage || "")}</td>` +
-      `<td class="num"${(b.elapsed || 0) >= 60 ? ' style="color:var(--st-warn)"' : ""}>${b.elapsed}s</td></tr>`).join("")
-      : `<tr class="empty-row"><td colspan="3">없음</td></tr>`;
+    renderBuilds(builds);
+    renderBuildQueues(bq);
     const slow = lat.slowest || [];
     $("slowRouteBody").innerHTML = slow.length ? slow.map(s =>
       `<tr><td class="mono">${esc(s.route)}</td><td class="num">${s.count}</td>` +

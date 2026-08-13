@@ -317,8 +317,12 @@ confidence / comment / evidence / precedents 뿐이다 — **`raw_metrics`(L1)�
   BIMODALITY `separated` 판정의 실제 기준값이라 **채점하려면 있어야 한다.**
   추가는 스키마 변경이므로 §3-4 승인에 묶어 함께 판단한다.
   **같은 처지의 미저장 지표가 늘었다** — `fail_mad_min`·`fail_pass_gap_sigma`(OUTLIER 판정
-  2축, 2026-08-13) · `e1/edge/center/ring_fail_share`(공간 4종 판정). 그래서 표본함
-  (docs/13 §14)이 이 5개 룰을 층화하지 못한다. 승인 시 함께 올리는 것이 좋다.
+  2축) · `e1/edge/center/ring_fail_share`(공간 4종 판정) · `tail_mass_3s`(HEAVY_TAIL 밴드의
+  둘째 축) · `fail_spread_norm`(SPOT_CLUSTER 단일 축) · `rail_low/high_ratio`(CODE_RAIL
+  evidence) — 전부 2026-08-13 기준. 그래서 표본함(docs/13 §14)이 이 7개 룰을 층화하지
+  못한다. 승인 시 함께 올리는 것이 좋다.
+  (신규 지표를 파생으로만 둔 것은 의도다 — eval.db 스키마 변경은 사전 승인 대상이라
+  룰 재편과 스키마 변경을 한 커밋에 섞지 않았다.)
 
 ---
 

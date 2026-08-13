@@ -135,11 +135,11 @@ def main():
     assert all(SIGNATURE_COL not in r and "_sig" not in r for r in plain), \
         "ai_comment 를 안 쓰는 세션에 Signature 키가 생겼다 (기존 payload 계약 위반)"
 
-    sigs = {"engine": {ROW_KEY: ["WIDE_DISTRIBUTION", "BIMODALITY"]}, "engr": {}}
+    sigs = {"engine": {ROW_KEY: ["LOW_CPK", "BIMODALITY"]}, "engr": {}}
     rows = issue_rows(ai_comments={}, signatures=sigs)
     row = find_row(rows, "ItemA", "4")
-    assert row[SIGNATURE_COL] == "WIDE_DISTRIBUTION+BIMODALITY", row[SIGNATURE_COL]
-    assert row["_sig"] == ["WIDE_DISTRIBUTION", "BIMODALITY"] and row["_sigrev"] == 0
+    assert row[SIGNATURE_COL] == "LOW_CPK+BIMODALITY", row[SIGNATURE_COL]
+    assert row["_sig"] == ["LOW_CPK", "BIMODALITY"] and row["_sigrev"] == 0
 
     # 엔진 발화가 없으면 "미분류" — fail 인데 룰이 설명 못 한 케이스를 OK 로 착각하지 않게.
     bare = find_row(issue_rows(ai_comments={},
@@ -147,7 +147,7 @@ def main():
     assert bare[SIGNATURE_COL] == UNCLASSIFIED, bare[SIGNATURE_COL]
 
     # ENGR 확정값은 엔진 제안을 이긴다 + reviewed 표식.
-    over = {"engine": {ROW_KEY: ["WIDE_DISTRIBUTION"]}, "engr": {ROW_KEY: ["UNKNOWN"]}}
+    over = {"engine": {ROW_KEY: ["LOW_CPK"]}, "engr": {ROW_KEY: ["UNKNOWN"]}}
     ov = find_row(issue_rows(ai_comments={}, signatures=over), "ItemA", "4")
     assert ov[SIGNATURE_COL] == "UNKNOWN" and ov["_sigrev"] == 1, ov
     print("[a] payload 계약 OK — 컬럼 조건부 생성 / 미분류 / ENGR 우선")
@@ -208,13 +208,13 @@ def main():
         print("[c] 동기화 멱등 OK — 라벨/자식/run 증식 없음")
 
         # (d) 세션 구분 — 같은 제품·lot·item·bin 을 다른 세션에서 확정 ─────────
-        save(SID_B, ["SEVERE_OUTLIER"])
+        save(SID_B, ["OUTLIER"])
         eval_export.sync_session_signatures(SID_B, report_db=db)
         n_label = qv(conn, "SELECT COUNT(*) FROM label WHERE labeler='web-signature'")
         assert n_label == 2, f"세션 B 확정이 세션 A 라벨을 덮어썼다 (label={n_label})"
         assert qv(conn, "SELECT COUNT(DISTINCT run_id) FROM ingest_run") == 2
         got = sorted(r[0] for r in conn.execute("SELECT signature FROM label_signature"))
-        assert got == ["BIMODALITY", "SEVERE_OUTLIER", "UNKNOWN"], got
+        assert got == ["BIMODALITY", "OUTLIER", "UNKNOWN"], got
         print("[d] 세션 구분 OK — 같은 case 를 두 세션에서 확정해도 안 덮인다")
 
         # (e) 해제 → 라벨·자식 동시 소멸 (고아 0건) ─────────────────────────────
@@ -227,7 +227,7 @@ def main():
                            "WHERE l.label_id IS NULL")
         assert orphans == 0, f"고아 label_signature {orphans}행"
         got = sorted(r[0] for r in conn.execute("SELECT signature FROM label_signature"))
-        assert got == ["SEVERE_OUTLIER"], got
+        assert got == ["OUTLIER"], got
         print("[e] 해제 OK — 라벨·자식 동시 삭제, 고아 0건")
     finally:
         conn.close()

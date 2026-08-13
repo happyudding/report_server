@@ -152,6 +152,20 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   - 조회: 관리자 `/pe/admin-<secret>/` **이력 탭 → 콜드 빌드 이력** 카드
     (`GET api/webreport/builds?hours=&limit=`). 원본 파일은 console log 탭에서도 열람 가능
     (`maintenance._LOG_GLOBS`). 계측은 전부 best-effort — 실패해도 빌드에 영향 없다.
+- **진행 중 콜드 빌드 상세 + 개입** ([admin_panel/builds_admin.py](../server/admin_panel/builds_admin.py),
+  2026-08-13): 위 build_log 는 **끝난** 빌드의 기록이다. 지금 도는 빌드는 현황 탭이
+  `GET api/runtime` 의 `builds` 로 본다 — 세션 메타(제품·LOT·파일명·업로더)·대기 중인
+  사용자(`metrics.active_users` 의 session_id 조인)·**워커의 현재 단계/source**
+  (`compute.worker_states()` = 살아 있는 sidecar 읽기, 종전에는 타임아웃 실패 때만 읽었다)·
+  `eta` 대비 초과 배수를 한 행에 합쳐 준다. **유발 원인**은 `build_status` 가 등록 시점에
+  큐 컨텍스트(`build_log.current_context()` 의 trigger/kind)를 함께 담아 얻는다 —
+  `ondemand:report`(사용자 대기) / `ondemand:map` / `ondemand:ai`(백그라운드 평가) /
+  `prewarm` / 빈 값(부모 인라인). 호출부(service.py)는 무변경이다.
+  - 개입 `POST api/webreport/build_action`: `clear_failure` / `clear_stuck`(워커 타임아웃
+    초과 건만 — 정상 진행 중인 등록을 지우면 프런트가 "끝났다"고 오판한다) / `rebuild`.
+    **개별 빌드 취소는 구조적으로 불가능하다**(ProcessPoolExecutor 는 실행 중 잡 cancel 불가,
+    워커 1개만 죽여도 풀 전체가 broken — `run()` 주석). 그래서 액션은 전부 *막힌 것을 푸는*
+    쪽이고 캐시·편집·산출물은 건드리지 않는다.
 - **202 + 백그라운드 빌드** (2026-07-21): `/full` 과 `/web_report/map_analysis` 는 콜드
   미스에서 요청 스레드가 빌드를 기다리지 않는다. `service.ColdBuildRequired` 를 올려
   `compute.request_build`(전용 큐 + 소비자 스레드 `WEB_REPORT_ONDEMAND_WORKERS`)에 넘기고
@@ -198,8 +212,15 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
     dedup 형제 세션의 재빌드는 캐시 히트로 평가를 건너뛴다. **예외 폴백(빈 결과)은
     캐시하지 않는다**(일시 오류 영구화 방지 — `ai_comment.safe_build_ex`).
   - **pending payload**: 캐시 미스 콜드 빌드(사용자 대기 경로, `ai_inline=False`)는
-    AI 없는 payload 에 `ai_comment_pending: true` 를 얹어 **리포트를 먼저 연다**
-    (RAM 캐시 전용 — 디스크에는 최종본만 저장). AI 평가는 온디맨드 `"ai"` 잡
+    AI 없는 payload 에 `ai_comment_pending: true` 를 얹어 **리포트를 먼저 연다**.
+    이 대기본은 **별도 키**(`cache_policy.report_pending_key` = 정본 키 + `"aipending"`)로
+    디스크에도 저장한다 — 없으면 AI 잡이 끝나기 전 재접속(서버 재시작·RAM 축출 후)이
+    매번 완전 콜드가 되어 "첫 조회만 빠르고 재접속은 느린" 회귀가 된다(2026-08-13 신고).
+    정본 키를 쓰지 않는 이유는 **롤백 안전**이다: 이 기능을 되돌린 옛 코드가 정본 키에서
+    대기본을 읽으면 AI Comment 가 빈 채로 굳는다. 조회 순서는 **정본 → (AI 캐시 미준비
+    시) 대기본**이고, 최종본 저장 시 `disk_cache.drop_report` 로 대기본을 회수한다.
+    콜드 판정(`report_is_cold`)과 실제 로드가 같은 조건(`_pending_report_ready`)을 봐야
+    202 를 냈다가 200 이 되는 불일치가 없다. AI 평가는 온디맨드 `"ai"` 잡
     (`compute._ONDEMAND_JOBS`, `report_job(ai_inline=True)` — 워커 강제 오프로드)이
     백그라운드로 끝내고 최종 payload 를 재빌드·디스크 저장하며, 부모 RAM 의 pending
     본을 최종본으로 덮는다. 프런트(boot.js `maybeStartAiPendingPoll`)는 /full 을

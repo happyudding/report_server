@@ -225,6 +225,20 @@ def _cond_detail(metric, cond, ctx_values, thresholds, eval_condition):
             "passed": bool(eval_condition(cond, actual, thresholds))}
 
 
+def _cond_rows(when_metric, ctx_values, thresholds, eval_condition):
+    """when_metric 전체 → 조건행 목록. **밴드(조건 목록)는 행을 나눠 그린다**.
+
+    같은 지표에 상·하한을 함께 거는 룰(HEAVY_TAIL 의 꼬리 질량)이 생겨(2026-08-13) 값이
+    문자열 하나가 아니라 목록일 수 있다. 한 행에 뭉쳐 놓으면 "어느 쪽에서 걸렸나" 가
+    안 보이므로 상한·하한을 각각 한 줄로 보여 준다.
+    """
+    rows = []
+    for metric, cond in (when_metric or {}).items():
+        for one in (cond if isinstance(cond, (list, tuple)) else [cond]):
+            rows.append(_cond_detail(metric, one, ctx_values, thresholds, eval_condition))
+    return rows
+
+
 def _subpop_cond(metric, op, actual, ref_key, ref_value, passed):
     """_cond_detail 과 같은 dict 모양 — 패널 condHtml 이 그대로 렌더한다."""
     return {"metric": metric, "cond": f"{op}{ref_key or ref_value}",
@@ -292,8 +306,7 @@ def condition_details(when_metric, ctx_values, thresholds):
     """
     _eval_path()
     from eval_engine.pipeline import signatures as sig_mod
-    return [_cond_detail(metric, cond, ctx_values, thresholds, sig_mod._eval_condition)
-            for metric, cond in (when_metric or {}).items()]
+    return _cond_rows(when_metric, ctx_values, thresholds, sig_mod._eval_condition)
 
 
 def subpop_conditions(features, thresholds):
@@ -351,9 +364,7 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
         if sig_id == sig_mod._BIMODALITY_ID and skip is None:
             conds = _subpop_conditions(features, thresholds)
         elif skip is None:
-            conds = [_cond_detail(metric, cond, ctx_values, thresholds,
-                                  sig_mod._eval_condition)
-                     for metric, cond in when.items()]
+            conds = _cond_rows(when, ctx_values, thresholds, sig_mod._eval_condition)
         rows.append({"id": sig_id, "enabled": enabled, "skip_reason": skip,
                      "branch_note": branch, "scope": sig.get("scope") or {},
                      "status_hint": sig.get("status_hint"),

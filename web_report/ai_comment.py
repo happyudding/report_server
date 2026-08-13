@@ -70,7 +70,9 @@ UNKNOWN_SIGNATURE = "UNKNOWN"
 _SUBPOP_SIG_ID = "BIMODALITY"
 _MODALITY_SIGNAL = "MODALITY_V2"
 _MODALITY_RE = re.compile(r"modality_v2\s+(\w+)")
-_MODALITY_TAG = {"bimodal": "[이봉]", "multimodal": "[다봉]", "separated": "[분리]"}
+# multimodal 은 **배지를 붙이지 않는다**(2026-08-13 사용자 요청) — 값이 빈 문자열이라
+# 아래 폴백([분포분리])도 타지 않는다. 판정·목록에는 그대로 남고 셀 표기만 생략한다.
+_MODALITY_TAG = {"bimodal": "[이봉]", "multimodal": "", "separated": "[분리]"}
 # note 포맷이 바뀌어도 "발화했다" 는 사실은 잃지 않는다 (조용한 미표시 방지).
 _MODALITY_TAG_FALLBACK = "[분포분리]"
 

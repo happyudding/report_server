@@ -374,7 +374,18 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 (health/storage/s3-status/metrics/stats(daily·users·client_errors·usage(접속 사용량 —
 Honey 실행·웹 방문 순위)·usage_trend·usage_hourly)/sessions/users/
 voc(overview·목록, 읽기 전용)/audit(.csv)/logs/list·tail/webreport/builds) +
-`POST /api/*` (sessions/delete·restore·purge, session/<sid>/important·password, db/backup·cleanup 등).
+`POST /api/*` (sessions/delete·restore·purge, session/<sid>/important·password, db/backup·cleanup,
+webreport/build_action 등).
+**진행 중 콜드 빌드**(현황 탭): `GET /api/runtime` 의 `builds` 는 (세션, stage, 경과) 3칸이
+아니라 세션 메타(제품·LOT·파일명·업로더)·**대기 중인 사용자**·**워커의 현재 단계/source**
+(build_log sidecar)·예상 대비 초과 배수까지 붙여 준다 — 조립은
+[admin_panel/builds_admin.py](admin_panel/builds_admin.py), 빌드가 0건이면 DB·파일 접근 없음.
+같은 응답의 `build_queues` 는 큐 대기/실행 중 목록 + 재빌드 차단 세션이다.
+개입은 `POST /api/webreport/build_action {action, session_id, kind}` — `clear_failure`(연속 실패
+쿨다운 해제) / `clear_stuck`(등록 잔재 정리 — 워커 타임아웃 초과 건만, 그 미만은 400) /
+`rebuild`(빌드 큐 투입). 셋 다 관측 상태만 건드리고 캐시·편집·산출물은 손대지 않으며 감사
+기록(`build_action`)이 남는다. **개별 빌드만 취소하는 수단은 없다** — ProcessPoolExecutor 는
+실행 중 잡을 cancel 할 수 없고 워커 1개만 죽여도 풀 전체가 broken 이 된다(compute.run).
 **사용자 팝업 메시지**(사용자 탭 `📢 메시지 보내기`): `GET /api/messages`(보낸 목록 + 확인 인원) ·
 `POST /api/messages`(발송 — `targets` 가 비면 전체 공지, 있으면 그 계정만. 접속자 표의 `보내기`
 버튼이 대상을 채운다) · `POST /api/messages/<id>/revoke`(회수 — 아직 안 본 사람에게 중단) ·

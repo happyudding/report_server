@@ -429,6 +429,59 @@ def status():
             "stats": dict(STATS)}
 
 
+def worker_states() -> list[dict]:
+    """지금 풀의 워커들이 남긴 **실행 중** 체크포인트 (관리자 진행 상황 표시용).
+
+    _dead_worker_state 는 같은 sidecar 를 실패 순간에만 읽는다 — 살아 있는 빌드에도
+    똑같이 "지금 어느 단계·어느 source 에서 몇 초째"가 들어 있으므로, 그것을 관리자가
+    실시간으로 볼 수 있게 공개한다(작은 JSON 파일 워커 수만큼 읽기)."""
+    try:
+        return build_log.read_states(_pool_pids())
+    except Exception:
+        return []
+
+
+def pending_items() -> dict:
+    """큐 대기/실행 중 **목록** — status() 의 개수만으로는 무엇이 밀렸는지 알 수 없다.
+
+    ondemand_running 은 pending 에는 있는데 큐에는 없는 것 = 소비자 스레드가 이미 집어
+    돌고 있는 잡이다(부모가 워커 결과를 기다리는 구간 포함)."""
+    now = time.time()
+    with _ondemand_lock:
+        queued = [{"session_id": it[0], "kind": it[2],
+                   "wait": round(max(0.0, now - it[3]), 1)} for it in _ondemand_queue]
+        pending = sorted(_ondemand_pending)
+    queued_keys = {(d["session_id"], d["kind"]) for d in queued}
+    running = [{"session_id": sid, "kind": kind} for sid, kind in pending
+               if (sid, kind) not in queued_keys]
+    with _prewarm_lock:
+        prewarm = [{"session_id": q[0], "wait": round(max(0.0, now - q[3]), 1)}
+                   for q in _prewarm_queue]
+    return {"ondemand_queued": queued, "ondemand_running": running,
+            "prewarm_queued": prewarm}
+
+
+def drop_pending(session_id: str, kind: str = "report") -> bool:
+    """온디맨드 등록(대기 + 실행 중 표시)을 해제한다 — 관리자 '유령 정리' 전용.
+
+    소비자 스레드는 예외를 삼키고 finally 에서 반드시 등록을 푼다(_supervise 가 죽은
+    스레드도 되살린다). 그래도 프로세스가 비정상 종료되는 등으로 등록만 남으면
+    request_build 가 그 (세션, kind) 를 **영원히 무시**해 다시는 빌드되지 않는다.
+    그때 관리자가 끊어 주기 위한 수단이라 여기서는 큐에 남은 항목도 함께 걷어낸다.
+
+    반환값은 "실제로 지운 것이 있었는가".
+    """
+    with _ondemand_lock:
+        found = (session_id, kind) in _ondemand_pending
+        _ondemand_pending.discard((session_id, kind))
+        keep = [it for it in _ondemand_queue if not (it[0] == session_id and it[2] == kind)]
+        if len(keep) != len(_ondemand_queue):
+            found = True
+            _ondemand_queue.clear()
+            _ondemand_queue.extend(keep)
+    return found
+
+
 # ── 워커 잡 (모듈 최상위 — spawn pickling 요건). service 를 재사용하므로 값이
 #    인라인 계산과 동일하고, 워커 안에서는 should_offload=False 라 재귀하지 않는다. ──
 #
@@ -708,7 +761,10 @@ def _ondemand_loop() -> None:
         session_id, upload_root_str, kind, t_enq = item
         try:
             # 큐 대기(= 앞선 콜드 빌드에 밀린 시간)는 여기서만 잴 수 있다.
-            with build_log.context(trigger="ondemand",
+            # kind 를 함께 심는 이유: 부모에 남는 build_status 등록은 report/map 두
+            # stage 뿐이라 ai 잡(=report stage 로 등록됨)을 구분할 수 없다. 관리자
+            # 화면이 "사용자 대기"와 "AI 백그라운드"를 갈라 보려면 이 값이 필요하다.
+            with build_log.context(trigger="ondemand", kind=kind,
                                    queue_wait=round(max(0.0, time.time() - t_enq), 3)):
                 _ONDEMAND_JOBS[kind](session_id, upload_root_str)
             STATS["ondemand_done"] += 1

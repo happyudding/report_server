@@ -44,13 +44,12 @@ def test_recalibrate_writes_item_class_overrides(fresh_db, tmp_path, monkeypatch
 
     assert result["engine_version"].startswith(config.ENGINE_VERSION + "-cal")
     ov = result["item_class"]["TRIM|V|18"]
-    arr = np.array([0.1 + i * 0.01 for i in range(40)])
-    assert ov["spread_norm_warn"] == round(float(np.quantile(arr, 0.9)), 4)
+    # 2026-08-13 로 보정 대상은 skew_warn 하나만 남았다(나머지는 그 키를 쓰던 룰이 삭제됨).
     assert ov["skew_warn"] == 0.5  # abs: true — |-0.5| 의 분위수
 
     # 파일 반영: item_class override 가 로더 병합에서 우선 적용
     th = thresholds_for({"item_class": "TRIM|V|18", "product_type": None})
-    assert th["spread_norm_warn"] == ov["spread_norm_warn"]
+    assert th["skew_warn"] == ov["skew_warn"]
     # default 시드는 보존
     assert thresholds_for({})["cpk_warn"] == 1.33
     # item_class 위 주석/섹션(calibration 스펙 포함) 보존
@@ -106,8 +105,7 @@ def test_recalibrate_nan_features_do_not_poison_thresholds(fresh_db, tmp_path, m
                                 conn=conn)
     result = calibrate.recalibrate()
     ov = result["item_class"]["TRIM|V|18"]
-    arr = np.array([0.1 + i * 0.01 for i in range(40)])
-    assert ov["spread_norm_warn"] == round(float(np.quantile(arr, 0.9)), 4)  # NaN 행 무시
+    assert ov["skew_warn"] == 0.5                          # NaN 행 무시
     assert all(not np.isnan(v) for v in ov.values())
 
 
@@ -123,7 +121,7 @@ def test_recalibrate_skips_unknown_feature_with_warning(fresh_db, tmp_path, monk
     result = calibrate.recalibrate()
     ov = result["item_class"]["TRIM|V|18"]
     assert "bogus_warn" not in ov
-    assert "spread_norm_warn" in ov  # 오타 키 외에는 영향 없음
+    assert "skew_warn" in ov  # 오타 키 외에는 영향 없음
     assert any("no_such_col" in w for w in result["warnings"])
 
 

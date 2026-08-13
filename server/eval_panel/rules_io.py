@@ -210,12 +210,14 @@ def threshold_usage() -> dict:
         sig_id = s.get("id")
         enabled = s.get("enabled") is not False
         for cond in (s.get("when_metric") or {}).values():
-            m = _COND_RE.match(str(cond).strip())
-            if not m:
-                continue
-            ref = m.group(3).strip()
-            if ref and not _is_number(ref):
-                usage.setdefault(ref, []).append({"id": sig_id, "enabled": enabled})
+            # 조건은 문자열 하나이거나 밴드(목록) 다 — 목록이면 항목마다 참조를 센다.
+            for one in (cond if isinstance(cond, (list, tuple)) else [cond]):
+                m = _COND_RE.match(str(one).strip())
+                if not m:
+                    continue
+                ref = m.group(3).strip()
+                if ref and not _is_number(ref):
+                    usage.setdefault(ref, []).append({"id": sig_id, "enabled": enabled})
     # 코드가 직접 읽는 임계값(선언형 조건이 아니라 파이썬에서 참조) — 표에서 "미사용" 으로
     # 보이면 지워도 되는 값으로 오해하므로 사용처를 명시한다.
     for key, where in _CODE_REFS.items():
@@ -239,6 +241,7 @@ _CODE_REFS = {
     "center_region_pct": "L2 features(공간 영역 분할)",
     "spatial_fail_count_min": "L2 features(공간 룰 최소 fail)",
     "region_fail_share_min": "L2 features(wafer_zone_signature)",
+    "spot_cluster_spread_max": "L2 features(wafer_zone_signature)",
     "cpk_warn": "L6 저장 게이트(코멘트 생성 여부)",
     "cpk_bad": "L4 trump(CRITICAL 강제)",
     "cpk_trump_yield_floor": "L4 trump(CRITICAL 강제)",
@@ -262,9 +265,9 @@ _CODE_REFS = {
 # 상위 층 위반은 validate_all 이 전역 보고한다).
 THRESHOLD_RELATIONS = (
     ("cpk_bad", "<=", "cpk_warn"),
-    ("outlier_ratio_warn", "<=", "outlier_ratio_bad"),
     ("center_region_pct", "<", "edge_region_pct"),
     ("subpop_density_gap_warn", "<=", "subpop_density_gap_strong"),
+    ("heavy_tail_mass_min", "<=", "heavy_tail_mass_max"),
 )
 
 # 값 종류 — **opt-in 표**. 여기 없는 키는 검사하지 않는다(새 임계값이 저장을 막지 않게).
@@ -272,15 +275,15 @@ THRESHOLD_RELATIONS = (
 # positive=0 초과. "큰 값을 넣어 사실상 끄기" 가 정당한 키(spread_norm_warn·kurtosis_warn
 # 등)는 일부러 뺐다 — 그 용도는 signature 의 enabled:false 가 담당한다.
 THRESHOLD_KINDS = {
-    "outlier_ratio_warn": "ratio", "outlier_ratio_bad": "ratio",
     "subpop_outlier_ratio_max": "ratio", "subpop_minor_mass_min": "ratio",
     "subpop_density_gap_warn": "ratio", "subpop_density_gap_strong": "ratio",
     "subpop_value_gap_warn": "ratio", "code_edge_hit_warn": "ratio",
     "edge_region_pct": "ratio", "center_region_pct": "ratio",
     "gross_yield_bad": "ratio", "cpk_trump_yield_floor": "ratio",
-    "region_fail_share_min": "ratio",
+    "region_fail_share_min": "ratio", "spot_cluster_spread_max": "ratio",
+    "heavy_tail_mass_min": "ratio", "heavy_tail_mass_max": "ratio",
     "n_min": "count", "subpop_n_min": "count", "spatial_fail_count_min": "count",
-    "severe_outlier_count_min": "count", "source_min_count": "count",
+    "source_min_count": "count",
     "outlier_sigma": "positive", "outlier_fail_mad_min": "positive",
     "outlier_fail_gap_sigma_min": "positive",
 }
@@ -638,6 +641,14 @@ def set_signatures_enabled(sig_ids: list, enabled: bool, product_type: str | Non
 def _validate_condition(metric: str, cond, threshold_keys: set) -> None:
     if not _NAME_RE.match(str(metric)):
         raise RuleError(f"잘못된 metric 이름: {metric}")
+    if isinstance(cond, (list, tuple)):
+        # 같은 지표에 상·하한을 함께 거는 밴드(AND) — 엔진 `signatures._eval_condition` 과
+        # 같은 규약. 각 항목을 따로 검증한다.
+        if not cond:
+            raise RuleError(f"{metric}: 조건 목록이 비어 있음")
+        for one in cond:
+            _validate_condition(metric, one, threshold_keys)
+        return
     m = _COND_RE.match(str(cond).strip())
     if not m:
         raise RuleError(f"{metric}: 조건 형식이 아님 ('>key' '<=0.5' 'abs>key') — {cond!r}")

@@ -29,9 +29,9 @@
 #     note: PMIC SOC — VREF_TRIM 이 육안상 명확한 이봉
 #     expect:
 #       - item: VREF_TRIM
-#         fire: [SUBPOP_GAP]
+#         fire: [BIMODALITY]
 #       - item: IDDQ
-#         not_fire: [SUBPOP_GAP, SEVERE_OUTLIER]
+#         not_fire: [BIMODALITY, OUTLIER]
 #         status: OK
 
 sessions: []

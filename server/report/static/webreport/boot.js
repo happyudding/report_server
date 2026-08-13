@@ -162,8 +162,17 @@ const AI_POLL = { INTERVAL_MS: 5000, MAX_MS: 20 * 60 * 1000 };
 let _aiPoll = null;
 function stopAiPendingPoll() { if (_aiPoll) { clearTimeout(_aiPoll); _aiPoll = null; } }
 function _aiPendingActive() {
+  // 폴링을 계속할지의 판정 — 표시 상태(sheets.js aiCommentState)와 달리 실패 여부를
+  // 보지 않는다(실패해도 payload 는 여전히 pending 이다).
   try { return !!(DATA && DATA.web_report && DATA.web_report.ai_comment_pending); }
   catch (e) { return false; }
+}
+// 폴링을 포기했다 — 셀 문구를 "Loading 중…"에서 "미완료"로 바꾼다. 안 그러면 오지 않을
+// 결과를 사용자가 계속 기다린다(리포트 자체는 정상이라 에러 화면을 띄울 일은 아니다).
+function _aiPollGiveUp() {
+  if (window.__aiPendingFailed) return;
+  window.__aiPendingFailed = true;
+  try { renderActive(); } catch (e) { /* 렌더 실패는 표시 문제일 뿐 */ }
 }
 function _editingNow() {
   const el = document.activeElement;
@@ -173,13 +182,14 @@ function _editingNow() {
 function maybeStartAiPendingPoll() {
   stopAiPendingPoll();
   if (!_aiPendingActive()) return;
+  window.__aiPendingFailed = false;   // 새 로드 = 새 시도 (문구를 "Loading 중…"으로 되돌린다)
   const deadline = Date.now() + AI_POLL.MAX_MS;
   const tick = async () => {
     _aiPoll = null;
     if (!_aiPendingActive()) return;
-    // 데드라인 초과 = AI 잡 지연/실패 — 리포트 자체는 정상이므로 조용히 멈춘다
-    // (다음 새로고침이 다시 폴링을 시작한다. 셀에는 "계산 중" 안내가 남는다).
-    if (Date.now() > deadline) return;
+    // 데드라인 초과 = AI 잡 지연/실패. 리포트 자체는 정상이라 에러 화면은 띄우지 않고
+    // 셀 문구만 "미완료"로 바꾼다(다음 새로고침이 다시 폴링을 시작한다).
+    if (Date.now() > deadline) { _aiPollGiveUp(); return; }
     try {
       const res = await fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-cache" });
       if (res.status === 200) {
@@ -199,7 +209,8 @@ function maybeStartAiPendingPoll() {
           return;   // 완료 — 폴링 종료
         }
       } else if (res.status !== 202) {
-        return;   // 4xx/5xx — 폴링 중단 (리포트는 이미 떠 있다)
+        _aiPollGiveUp();   // 4xx/5xx — 폴링 중단 (리포트는 이미 떠 있다)
+        return;
       }
       // 202 = 서버가 최종본을 재빌드 중 — 다음 tick 에 다시 확인.
     } catch (e) { /* 일시 네트워크 오류 — 다음 tick 재시도 */ }

@@ -105,8 +105,10 @@ def test_quantized_steps_are_not_bimodal():
     counts = [23, 87, 573, 1393, 1797, 1443, 568, 115]   # 실데이터에서 뽑은 단봉 계단
     vals = [1.0 + i * step for i, c in enumerate(counts) for _ in range(c)]
     v = np.asarray(vals, dtype=float)
-    peaks, _hist = features._histogram_peaks(v)
+    peaks, _hist, grid = features._histogram_peaks(v)
     assert len(peaks) == 1, f"계단형 단봉인데 봉우리 {len(peaks)}개로 잡혔다"
+    # 격자로 인식됐고 빈 계단이 없다 → 이봉 판정 게이트에서 차단된다
+    assert features._grid_empty_levels(grid) == 0
     assert features._density_gap(v) == 0.0
     assert features._grid_step(v) == pytest.approx(step)
     # 격자가 아닌(연속) 값에는 가드가 걸리지 않는다
@@ -215,7 +217,7 @@ def test_spatial_e1_concentration():
             "x_pos": [float(x) for x, _ in dies], "y_pos": [float(y) for _, y in dies],
             "fail_mask": list(e1), "lsl": 0, "usl": 11}
     out = features._spatial_features(case, th)
-    assert out["e1_fail_ratio"] > th["e1_fail_ratio_warn"]
+    assert out["e1_fail_share"] >= th["region_fail_share_min"]
     assert out["edge_fail_ratio"] == 0.0          # E1 을 뺀 밴드에는 fail 이 없다
     assert out["wafer_zone_signature"] == "E1"
 

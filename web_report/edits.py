@@ -32,7 +32,7 @@ KIND_NOTE_SHEET = "note_sheet"
 KIND_ISSUE_HIDDEN = "issue_hidden"
 KIND_ISSUE_STATUS = "issue_status"
 # 2026-08-11 추가 — Issue Table Signature 컬럼의 **ENGR 확정값**
-# (item_key=comment 와 같은 row_key, value=JSON 배열 ["WIDE_DISTRIBUTION","UNKNOWN"]).
+# (item_key=comment 와 같은 row_key, value=JSON 배열 ["LOW_CPK","UNKNOWN"]).
 # 순서를 보존해야 rank(1순위 정답)를 알 수 있어 문자열 조인이 아니라 배열로 담는다.
 # 행이 있으면 "ENGR 가 검수해 확정했다"는 뜻이고(엔진 제안과 같은 값이어도 저장한다 —
 # 동의 사례가 빠지면 정정 사례만 쌓여 통계가 편향된다), 행이 없으면 미검수 상태다.

@@ -23,16 +23,14 @@ RANK_TO_STATUS = {v: k for k, v in SEVERITY_RANK.items()}
 # 구체적(원인 특정) → 일반적 순. 같은 severity 충돌 시 앞쪽이 primary.
 SPECIFICITY_ORDER = ["LOW_SAMPLE_UNCERTAIN", "MISSING_LIMIT", "CONSTANT_VALUE",
                      "EQUIPMENT_SUSPECT", "RING_FAIL",
-                     # 공간 존은 좁은 것부터: E1(최외곽 한 줄) > EDGE(바깥 밴드) > CENTER
+                     # 공간 존은 좁은 것부터: E1(최외곽 한 줄) > EDGE(바깥 밴드) > CENTER.
+                     # SPOT_CLUSTER(국부 뭉침)는 존보다 구체적이지만 존으로 설명되면 그쪽이
+                     # 조치가 분명하므로 뒤에 둔다. CLUSTER_FAIL(사분면)보다는 앞.
                      "E1_FAIL",
-                     "EDGE_FAIL", "CENTER_FAIL", "CLUSTER_FAIL", "WAFER_GRADIENT",
-                     "CODE_RAIL", "TAIL_RISK",
-                     # OUTLIER 가 현행 룰. SEVERE_OUTLIER/OUTLIER_WARN 은 통합돼 꺼졌지만
-                     # yaml 에 선언이 남아 있어 이 목록도 1:1 이어야 한다(validate_all).
-                     "OUTLIER", "SEVERE_OUTLIER", "OUTLIER_WARN",
+                     "EDGE_FAIL", "CENTER_FAIL", "SPOT_CLUSTER", "CLUSTER_FAIL",
+                     "CODE_RAIL", "TAIL_RISK", "OUTLIER",
                      "MEAN_SHIFT", "HEAVY_TAIL",
-                     "BIDIR_TAIL", "WIDE_DISTRIBUTION", "BIMODALITY", "LOW_CPK",
-                     "SPEC_TOO_TIGHT", "GROSS_FAIL",
+                     "BIDIR_TAIL", "BIMODALITY", "LOW_CPK", "GROSS_FAIL",
                      # UNKNOWN 은 다른 발화가 하나도 없을 때만 생기므로 경쟁 상대가 없다.
                      # 그래도 맨 끝에 둔다 — 순서 정합 검증(rules_io.validate_all)이 전 id 를 요구.
                      "UNKNOWN"]

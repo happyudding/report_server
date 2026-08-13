@@ -812,16 +812,46 @@ primary specificity 경쟁까지 흐리므로, 임계값은 그대로 두고 중
 | 축 | primary | 양보해 secondary 로 (목록에는 남는다) |
 |---|---|---|
 | 중심 | `MEAN_SHIFT` | — |
-| 산포/여유 | `LOW_CPK` | `BIDIR_TAIL` |
+| 산포/여유 | `LOW_CPK` \| `BIDIR_TAIL` | — |
 | 형태 | `BIMODALITY` \| `OUTLIER` \| `CODE_RAIL` | `HEAVY_TAIL` |
-| 공간 | `E1_FAIL` \| `EDGE_FAIL` \| `CENTER_FAIL` \| `RING_FAIL` \| `CLUSTER_FAIL` | `WAFER_GRADIENT`(off) |
+| 공간 | `E1_FAIL` \| `EDGE_FAIL` \| `CENTER_FAIL` \| `RING_FAIL` \| `SPOT_CLUSTER` \| `CLUSTER_FAIL` | — |
 | 데이터 품질 | `LOW_SAMPLE_UNCERTAIN` \| `MISSING_LIMIT` \| `CONSTANT_VALUE` | — |
 
 양보는 전부 yaml `suppressed_by` 선언이다:
-`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]` · `HEAVY_TAIL ← [OUTLIER]` ·
-`BIDIR_TAIL ← [WIDE_DISTRIBUTION]`.
+`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]` · `HEAVY_TAIL ← [OUTLIER]`.
 **결과 지표(cpk)는 primary 가 되지 않는다** — "왜 낮은가"를 말하는 룰에 자리를 내준다.
 단 **목록에서 사라지지는 않는다**(2026-08-13) — 두 현상이 실제로 다 있으면 둘 다 보여야 한다.
+
+> **2026-08-13 3차 재편(사용자 v8 검토 반영)** — 현재 상태는 아래를 다 반영한 것이다.
+>
+> **① 룰 5종 완전 삭제** — `SPEC_TOO_TIGHT`·`SEVERE_OUTLIER`·`WIDE_DISTRIBUTION`·
+> `OUTLIER_WARN`(통합돼 꺼져 있던 것) + `WAFER_GRADIENT`. `enabled:false` 보존을 그만두고
+> yaml·SPECIFICITY_ORDER·생성기에서 지웠다. 안전 확인: 운영 eval.db `label_signature` 0행,
+> report.db `issue_signature` 편집 0건이라 **마이그레이션 불필요**(과거 `case_signature`
+> 발화 기록은 읽기에 영향 없음). 이제 ENGR 라벨 카탈로그에도 이 5개가 안 나온다.
+>
+> **② HEAVY_TAIL = kurtosis>10 AND 꼬리질량 1~5%.** 초과첨도는 4제곱이라 양쪽으로
+> 오해를 만든다 — 점 몇 개만 튀어도 치솟고(질량 0.9% 인데 kurt 21.5 → 그건 outlier),
+> 몸통이 갈라진 다봉에서도 커진다(질량 17% 에 kurt 112 → 그건 이봉). 진짜 heavy tail
+> 항목의 3σ 밖 질량은 1.55~1.89% 였다. 신규 feature `tail_mass_3s`.
+> ⚠ 같은 지표에 상·하한을 걸어야 해서 `when_metric` 값에 **조건 목록(AND)** 을 허용했다
+> (`tail_mass_3s: [">=heavy_tail_mass_min", "<=heavy_tail_mass_max"]`) — 엔진
+> `_eval_condition`, 패널 `rules_io._validate_condition`, 트레이스 `eval_debug._cond_rows`
+> 세 곳이 같은 규약을 안다.
+>
+> **③ `SPOT_CLUSTER` 신설 + CLUSTER 45° 보완.** 사분면 편중은 **축에 걸친 뭉침을 놓친다** —
+> 같은 blob 이 사분면 한가운데면 4.00, x축 경계면 2.20(임계 2.5 미달)이었다. 그래서
+> `quadrant_imbalance` 를 0°·45° 두 격자의 max 로 재고, 위치·모양과 무관하게 "fail 좌표가
+> 서로 붙어 있나" 만 보는 `SPOT_CLUSTER`(`fail_spread_norm ≤ 0.25`)를 신설했다
+> (사용자 제안). fail 무게중심 기준 RMS 거리 / 웨이퍼 반경 — 전면에 흩어지면 ≈0.6.
+>
+> **④ CODE(이산) 정비** — 신규 룰 없이: `CODE_RAIL` 활성화(레일 처박힘, evidence 를 상·하단
+> `rail_low_ratio`/`rail_high_ratio` 로 분리) + **격자 데이터의 BIMODALITY 는 모드 사이 실제
+> 빈 레벨 ≥2 를 요구**(계단으로 그린 정규분포는 이산이라 울퉁불퉁한 것이지 이봉이 아니다).
+> tail·치우침·산포는 기존 HEAVY_TAIL·MEAN_SHIFT·LOW_CPK 가 그대로 받는다.
+>
+> **⑤ `BIDIR_TAIL` 재활성화**(양방향 초과는 조치가 다르다) · **AI Comment 에서 `[다봉]` 배지
+> 제거**(`_MODALITY_TAG["multimodal"] = ""` — 판정·목록에는 남고 셀 표기만 생략).
 
 > **2026-08-13 2차 재편(사용자 v6 검토 반영)** — 위 표에서 두 가지가 더 바뀌었다.
 >

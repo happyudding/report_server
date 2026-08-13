@@ -8,7 +8,7 @@
 |---|---|---|---|
 | `ingest.py` | L0 | `ingest()` | run_input → fail_case 들. 마스터 upsert, item 파싱, item_class, case_id, 측정 시리즈 메모리 첨부. |
 | `metrics.py` | L1 | `compute()`, `cpk_summary()` | raw(메모리)에서 cpk/cpl/cpu/cp/mean/stdev/min/max/yield/bimodality. |
-| `features.py` | L2 | `compute()` | robust 산포(MAD)/spec margin/공간(edge·center·quadrant·gradient)/site_cpk_delta. |
+| `features.py` | L2 | `compute()` | robust 산포(MAD)/spec margin/공간(영역 점유율·quadrant 0°·45° max·`fail_spread_norm`)/OUTLIER 2축(`fail_mad_min`·`fail_pass_gap_sigma`)/`tail_mass_3s`/격자(CODE) 판정/site_cpk_delta. |
 | `signatures.py` | L3 | `evaluate()` | `signatures.yaml` when_metric 평가 → 발화 signature + evidence + bin context. |
 | `status.py` | L4 | `decide()` | severity 집계 + severity_bias + trump + specificity → status/confidence/completeness. |
 | `recommend.py` | L5 | `find_precedents()`, `make_comment()` | 선례검색(어댑터 위임) + 템플릿/LLM comment. |

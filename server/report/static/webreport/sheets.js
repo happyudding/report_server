@@ -62,6 +62,28 @@ function isNumVal(v) { return v !== null && v !== undefined && v !== "" && !isNa
 const SIG_UNKNOWN = "UNKNOWN";
 const SIG_UNCLASSIFIED = "미분류";
 
+// ── AI 평가 진행 상태 (2026-08-13 비동기 분리) ───────────────────────────────
+// AI Comment 세션의 콜드 첫 조회는 서버가 AI 없는 payload(web_report.ai_comment_pending)
+// 를 먼저 돌려줘 리포트가 즉시 열린다. 그동안 AI Comment/Signature 컬럼이 **빈 셀·"미분류"**
+// 로 보이면 사용자는 "평가 결과가 없다"고 읽는다(실제 신고 2026-08-13) — 계산 중임을
+// 셀에 명시한다. 최종본이 도착하면 boot.js 가 화면을 다시 그린다.
+// 상태: "" (해당 없음) | "loading" (백그라운드 계산 중) | "failed" (폴링 포기 — 영원히
+// "계산 중"으로 두면 사용자가 오지 않을 결과를 기다린다).
+const AI_WAIT_TEXT = "Loading 중…";
+const AI_FAIL_TEXT = "AI 평가 미완료 (새로고침)";
+function aiCommentState() {
+  try {
+    if (!(DATA && DATA.web_report && DATA.web_report.ai_comment_pending)) return "";
+    return window.__aiPendingFailed ? "failed" : "loading";
+  } catch (e) { return ""; }
+}
+function aiWaitHtml(extraClass) {
+  const st = aiCommentState();
+  if (!st) return "";
+  const cls = (st === "failed" ? "ai-fail" : "ai-wait") + (extraClass ? " " + extraClass : "");
+  return `<span class="${cls}">${esc(st === "failed" ? AI_FAIL_TEXT : AI_WAIT_TEXT)}</span>`;
+}
+
 function signatureOptions() {
   const opts = (DATA.web_report && DATA.web_report.signature_options) || [];
   return opts.map(o => (typeof o === "string" ? { id: o, enabled: true } : o))
@@ -100,6 +122,13 @@ function sigWhyBtnHtml() {
 }
 
 function renderSignatureCell(ids, reviewed, edit) {
+  // AI 평가 대기 중 + 이 행에 확정값이 없으면 "미분류"가 아니라 계산 중임을 알린다.
+  // ids 가 있으면(ENGR 확정값 — 편집 DB 유래라 AI 와 무관) 종전대로 그대로 보여준다.
+  // 편집 모드에서도 select 를 내지 않는다 — pending payload 의 signature_options 는
+  // 비어 있어 고를 항목이 없고, 그 상태로 저장하면 빈 값이 확정될 수 있다.
+  if (!ids.length && aiCommentState()) {
+    return aiWaitHtml("sig-chip sig-none");
+  }
   if (!edit) {
     if (!ids.length) return `<span class="sig-chip sig-none">${SIG_UNCLASSIFIED}</span>`;
     return ids.map(id => `<span class="sig-chip${reviewed ? "" : " sig-suggest"}" ` +
@@ -224,14 +253,9 @@ function renderAiComment(txt) {
   const raw = String(txt == null ? "" : txt);
   // AI 백그라운드 계산 중(pending payload) — 빈 셀에 진행 안내를 채운다. 완료되면
   // boot.js maybeStartAiPendingPoll 이 최종 payload 로 화면을 다시 그린다.
-  if (!raw.trim()) {
-    try {
-      if (DATA && DATA.web_report && DATA.web_report.ai_comment_pending) {
-        return '<span class="aic-pending">AI 평가 계산 중…</span>';
-      }
-    } catch (e) { /* DATA 미정의 — 종전대로 빈 셀 */ }
-    return "";
-  }
+  // ⚠ 이 분기가 실제로 도달하려면 호출부(셀 렌더)가 **빈 값에도** 이 함수를 불러야 한다
+  // — 종전 `!isEmpty` 게이트 때문에 안내가 영영 안 보였다(2026-08-13 신고).
+  if (!raw.trim()) return aiWaitHtml();
   // 섹션 토큰이 없으면 손대지 않는다 — 옛 코멘트/형식 불일치는 오늘과 똑같이 보인다.
   if (raw.indexOf("[현상]") < 0) return linkifyComment(raw);
   const split = aicSplitBadges(raw);
@@ -1044,9 +1068,12 @@ function renderSheetTable(rows, opts) {
       let cellHtml;
       if (itemClickable) {
         cellHtml = `<span class="item-detail-link" data-subject="${esc(txt)}">${esc(txt)}</span>`;
-      } else if (opts.kind === "issue" && isCommentCol(c) && !isEmpty) {
+      } else if (opts.kind === "issue" && isCommentCol(c)
+                 && (!isEmpty || isAiCommentCol(c))) {
         // 읽기 모드 comment: @[항목] → Item_detail 링크. AI Comment 만 섹션 분해까지 한다
         // (isCommentCol 은 그대로 둬야 .st-comment 열너비 규칙이 유지된다).
+        // AI Comment 는 **빈 값도** 통과시킨다 — 백그라운드 평가 중이면 renderAiComment 가
+        // "Loading 중…" 을 낸다(빈 값이면 종전대로 빈 문자열). 다른 comment 컬럼은 종전 그대로.
         cellHtml = isAiCommentCol(c) ? renderAiComment(txt) : linkifyComment(txt);
       } else {
         cellHtml = isEmpty ? "" : esc(txt);

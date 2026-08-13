@@ -22,10 +22,14 @@ import threading
 import time
 
 _LOCK = threading.Lock()
-# (session_id, stage) -> t0.  stage 별로 나눠 담는 이유: report 와 map 콜드 빌드가
-# 겹칠 수 있는데(세션 열자마자 Map 탭), 세션당 1칸이면 나중에 끝난 쪽의 end() 가
-# 아직 진행 중인 다른 stage 의 기록까지 지워 프런트가 "끝났다"고 오판한다.
-_ACTIVE: dict[tuple, float] = {}
+# (session_id, stage) -> {"t0", "started", "trigger"}.  stage 별로 나눠 담는 이유:
+# report 와 map 콜드 빌드가 겹칠 수 있는데(세션 열자마자 Map 탭), 세션당 1칸이면 나중에
+# 끝난 쪽의 end() 가 아직 진행 중인 다른 stage 의 기록까지 지워 프런트가 "끝났다"고 오판한다.
+#   t0       monotonic — 경과 계산(시계 튐 무관)
+#   started  time.time() — 관리자 화면에 "언제 시작됐나"를 보이기 위한 벽시계
+#   trigger  이 빌드를 시작시킨 경로(ondemand:report / ondemand:ai / prewarm …) —
+#            "무엇이 콜드 빌드를 유발했나"에 답하는 유일한 단서다
+_ACTIVE: dict[tuple, dict] = {}
 
 # (session_id, stage) -> {"count", "t_last", "error"}.  연속 실패 기록.
 # 워커 타임아웃(_TIMEOUT_SEC=300)을 넘기는 세션은 온디맨드 소비자가 예외를 삼키고
@@ -37,10 +41,33 @@ FAIL_LIMIT = max(1, int(os.getenv("WEB_REPORT_BUILD_FAIL_LIMIT", "2") or 2))
 FAIL_COOLDOWN_SEC = float(os.getenv("WEB_REPORT_BUILD_FAIL_COOLDOWN_SEC", "600") or 600)
 
 
-def begin(session_id: str, stage: str = "report") -> None:
+def _ambient_trigger() -> str:
+    """이 빌드를 시작시킨 큐 컨텍스트 — 호출부를 고치지 않고 알아내는 방법.
+
+    begin() 을 부르는 service.load_webreport 는 자기가 어느 경로로 불렸는지 모른다.
+    반면 큐 소비자 스레드(compute._ondemand_loop 등)는 같은 스레드에 이미
+    build_log.context(trigger=..., kind=...) 를 심어두므로 그것을 그대로 읽는다.
+    부모가 사용자 요청 스레드에서 직접 빌드하면 컨텍스트가 없어 빈 문자열이다.
+    """
+    try:
+        from . import build_log
+        ctx = build_log.current_context()
+        trig = str(ctx.get("trigger") or "")
+        kind = str(ctx.get("kind") or "")
+        return f"{trig}:{kind}" if (trig and kind) else trig
+    except Exception:
+        return ""
+
+
+def begin(session_id: str, stage: str = "report", trigger: str = "") -> None:
     """콜드 빌드 시작 기록. 같은 (세션, stage) 중복 진입은 최초 t0 를 유지한다."""
+    if not trigger:
+        trigger = _ambient_trigger()
     with _LOCK:
-        _ACTIVE.setdefault((session_id, stage), time.monotonic())
+        if (session_id, stage) in _ACTIVE:
+            return
+        _ACTIVE[(session_id, stage)] = {"t0": time.monotonic(), "started": time.time(),
+                                        "trigger": trigger}
 
 
 def end(session_id: str, stage: str = "report") -> None:
@@ -96,7 +123,7 @@ def snapshot(session_id: str) -> dict:
     구 프런트는 ``state !== "building"`` 을 전부 무시하므로 failed 추가는 하위호환이다.
     """
     with _LOCK:
-        entries = [(t0, stage) for (sid, stage), t0 in _ACTIVE.items() if sid == session_id]
+        entries = [(m["t0"], stage) for (sid, stage), m in _ACTIVE.items() if sid == session_id]
         if entries:
             t0, stage = min(entries)
             return {"state": "building", "stage": stage,
@@ -120,7 +147,29 @@ def snapshot_all() -> list[dict]:
     with _LOCK:
         entries = list(_ACTIVE.items())
     now = time.monotonic()
-    out = [{"session_id": sid, "stage": stage, "elapsed": round(now - t0, 1)}
-           for (sid, stage), t0 in entries]
+    out = [{"session_id": sid, "stage": stage, "elapsed": round(now - m["t0"], 1),
+            "trigger": m.get("trigger") or "", "started": m.get("started")}
+           for (sid, stage), m in entries]
     out.sort(key=lambda d: d["elapsed"], reverse=True)
+    return out
+
+
+def failures() -> list[dict]:
+    """연속 실패 기록 전부 — 차단 중인 것 먼저. 관리자 화면(해제 버튼) 전용.
+
+    snapshot() 은 세션 1건의 차단 여부만 답한다. 관리자는 "지금 어떤 세션들이 재빌드
+    차단에 걸려 있고 쿨다운이 얼마 남았나"를 봐야 손을 쓸 수 있다.
+    """
+    now = time.monotonic()
+    with _LOCK:
+        items = [(sid, stage, dict(e)) for (sid, stage), e in _FAILED.items()]
+    out = []
+    for sid, stage, e in items:
+        age = now - e["t_last"]
+        blocked = e["count"] >= FAIL_LIMIT and age < FAIL_COOLDOWN_SEC
+        out.append({"session_id": sid, "stage": stage, "count": e["count"],
+                    "error": e.get("error") or "", "age": round(age, 1),
+                    "blocked": blocked,
+                    "cooldown_left": round(FAIL_COOLDOWN_SEC - age, 1) if blocked else 0.0})
+    out.sort(key=lambda d: (not d["blocked"], d["age"]))
     return out

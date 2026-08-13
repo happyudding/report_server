@@ -60,10 +60,10 @@ def test_no_fail_stays_ok_without_unknown():
 def test_unknown_not_added_when_another_rule_fires():
     """다른 룰이 하나라도 뜨면 UNKNOWN 은 붙지 않는다(중복 표시 방지)."""
     case = _case()
-    feats = _quiet_features(outlier_ratio=0.10)     # > outlier_ratio_bad
+    feats = _quiet_features(fail_mad_min=10.0, fail_pass_gap_sigma=3.0)   # OUTLIER 조건
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 1.5})
     ids = [s["id"] for s in sig["signatures"]]
-    assert "SEVERE_OUTLIER" in ids and UNKNOWN not in ids
+    assert "OUTLIER" in ids and UNKNOWN not in ids
 
 
 def test_unknown_skipped_when_fail_unknown():

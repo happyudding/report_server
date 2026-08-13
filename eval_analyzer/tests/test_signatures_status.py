@@ -33,14 +33,6 @@ def test_gross_fail_fires_on_low_yield():
     assert verdict["status"] == "CRITICAL"
 
 
-def test_severe_outlier_fires():
-    case = _case()
-    feats = _full_features(outlier_ratio=0.10)  # > outlier_ratio_bad(0.05)
-    raw = {"yield": 0.95, "cpk": 1.5}
-    sig = signatures.evaluate(case, feats, raw)
-    assert "SEVERE_OUTLIER" in [s["id"] for s in sig["signatures"]]
-
-
 def test_outlier_needs_both_distance_and_gap():
     """현행 OUTLIER 는 **거리 AND 끊김** 두 조건이다 (2026-08-13).
 
@@ -66,7 +58,7 @@ def test_outlier_keeps_low_cpk_and_heavy_tail_in_list():
     """
     case = _case()
     feats = _full_features(fail_mad_min=10.0, fail_pass_gap_sigma=3.0,
-                           kurtosis=15.0, n_dut=100)
+                           kurtosis=15.0, tail_mass_3s=0.02, n_dut=100)
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 0.8})
     ids = [s["id"] for s in sig["signatures"]]
     assert {"OUTLIER", "LOW_CPK", "HEAVY_TAIL"} <= set(ids)
@@ -96,12 +88,12 @@ def test_tail_risk_fires_with_enough_samples():
 
 def test_specificity_picks_equipment_over_general():
     case = _case()
-    # WIDE_DISTRIBUTION(일반) + EQUIPMENT_SUSPECT(구체) 동시 발화 → primary=EQUIPMENT
-    feats = _full_features(spread_norm=0.5, site_cpk_delta=0.8)
-    raw = {"yield": 0.95, "cpk": 1.5}
+    # LOW_CPK(일반) + EQUIPMENT_SUSPECT(구체) 동시 발화 → primary=EQUIPMENT
+    feats = _full_features(site_cpk_delta=0.8)
+    raw = {"yield": 0.95, "cpk": 0.9}
     sig = signatures.evaluate(case, feats, raw)
     ids = [s["id"] for s in sig["signatures"]]
-    assert "EQUIPMENT_SUSPECT" in ids and "WIDE_DISTRIBUTION" in ids
+    assert "EQUIPMENT_SUSPECT" in ids and "LOW_CPK" in ids
     verdict = status.decide(case, feats, sig)
     assert verdict["primary_signature"] == "EQUIPMENT_SUSPECT"
 
@@ -165,17 +157,20 @@ def test_missing_limit_fires_without_spec():
     assert status.decide(case, feats, sig)["status"] == "MINOR"
 
 
-def test_outlier_warn_fires_between_warn_and_bad():
+def test_spot_cluster_fires_on_tight_fail_group():
+    """fail 좌표가 좁게 뭉치면 위치·모양과 무관하게 발화한다(사분면 경계 포함)."""
     case = _case()
-    # warn(0.02) < 0.03 < bad(0.05) → OUTLIER_WARN 만 발화(MINOR)
-    feats = _full_features(outlier_ratio=0.03)
     raw = {"yield": 0.95, "cpk": 1.5}
-    sig = signatures.evaluate(case, feats, raw)
-    ids = [s["id"] for s in sig["signatures"]]
-    assert "OUTLIER_WARN" in ids
-    assert "SEVERE_OUTLIER" not in ids
-    verdict = status.decide(case, feats, sig)
-    assert verdict["status"] == "MINOR"
+    tight = _full_features(fail_spread_norm=0.10, fail_count=40)
+    assert "SPOT_CLUSTER" in [s["id"] for s in signatures.evaluate(case, tight, raw)["signatures"]]
+    # 웨이퍼 전면에 흩어지면 몰림이 아니다
+    spread = _full_features(fail_spread_norm=0.60, fail_count=40)
+    assert "SPOT_CLUSTER" not in [s["id"]
+                                  for s in signatures.evaluate(case, spread, raw)["signatures"]]
+    # fail 이 적으면 우연히 몰릴 수 있어 판정하지 않는다(spatial_fail_count_min 가드)
+    few = _full_features(fail_spread_norm=0.10, fail_count=4)
+    assert "SPOT_CLUSTER" not in [s["id"]
+                                  for s in signatures.evaluate(case, few, raw)["signatures"]]
 
 
 def test_code_rail_fires_on_code_edge_hit():
@@ -197,7 +192,8 @@ def test_code_rail_not_fires_when_feature_missing():
 
 def test_heavy_tail_fires_with_enough_samples():
     case = _case()
-    feats = _full_features(kurtosis=9.0, n_dut=100)  # > kurtosis_warn(8.0)
+    # kurtosis > 10 **AND** 꼬리 질량 1~5% — 둘 다 넘어야 발화한다(2026-08-13)
+    feats = _full_features(kurtosis=12.0, tail_mass_3s=0.02, n_dut=100)
     raw = {"yield": 0.95, "cpk": 1.5}
     sig = signatures.evaluate(case, feats, raw)
     assert "HEAVY_TAIL" in [s["id"] for s in sig["signatures"]]
@@ -205,7 +201,7 @@ def test_heavy_tail_fires_with_enough_samples():
 
 def test_heavy_tail_disabled_when_few_samples():
     case = _case()
-    feats = _full_features(kurtosis=9.0, n_dut=5)  # 고차모멘트 min-n 가드
+    feats = _full_features(kurtosis=12.0, tail_mass_3s=0.02, n_dut=5)  # 고차모멘트 min-n 가드
     raw = {"yield": 0.95, "cpk": 1.5}
     sig = signatures.evaluate(case, feats, raw)
     assert "HEAVY_TAIL" not in [s["id"] for s in sig["signatures"]]

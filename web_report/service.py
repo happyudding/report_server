@@ -92,7 +92,13 @@ def report_is_cold(session_id: str, *, report_db, upload_root: Path,
     cache_key = cache_policy.report_key(session, session_id, edits_rev)
     if cache.cache_get(cache.REPORT_CACHE, cache_key) is not None:
         return False
-    return not disk_cache.report_exists(upload_root, cache_key)
+    if disk_cache.report_exists(upload_root, cache_key):
+        return False
+    # AI 세션은 **대기용 pending 본**도 즉시 열 수 있는 산출물이다 — 이걸 콜드로 치면
+    # AI 잡이 끝나기 전 재접속(서버 재시작·RAM 축출 후)이 매번 202 + 전체 재빌드가 된다
+    # (2026-08-13 사용자 신고: "첫 조회는 빠른데 재접속은 콜드 빌드가 보인다").
+    return not _pending_report_ready(session, session_id, report_db=report_db,
+                                     upload_root=upload_root, edits_rev=edits_rev)
 
 
 # _ai_comment_cached 가 디스크 캐시에서 읽은 dict 의 최소 형태 검증용 — build_ai_comments
@@ -150,6 +156,34 @@ def _ai_cache_ready(session, session_id: str, *, report_db, upload_root: Path) -
     return disk_cache.ai_comment_exists(upload_root, key)
 
 
+def _pending_report_ready(session, session_id: str, *, report_db, upload_root: Path,
+                          edits_rev: int, ai_inline: bool = False) -> bool:
+    """AI 대기용 pending payload 를 **지금 쓸 수 있는가** (stat 1회, 읽지 않는다).
+
+    콜드 판정(`report_is_cold` / 락 밖 202 판정)과 실제 로드(`_load_pending_report`)가
+    **같은 조건**을 봐야 202 를 냈다가 200 이 되는 불일치가 없다.
+    쓰지 않는 경우 2가지: ① `ai_inline`(최종본을 만들러 온 잡·프리웜) ② AI 분리 캐시가
+    이미 준비됨(최종본을 만들 수 있으므로 대기본을 쓸 이유가 없다).
+    """
+    if ai_inline or not _webreport_ai_comment(session.get("webreport_options") or ""):
+        return False
+    if _ai_cache_ready(session, session_id, report_db=report_db, upload_root=upload_root):
+        return False
+    return disk_cache.report_exists(
+        upload_root, cache_policy.report_pending_key(session, session_id, edits_rev))
+
+
+def _load_pending_report(session, session_id: str, *, report_db, upload_root: Path,
+                         edits_rev: int, ai_inline: bool):
+    """AI 대기용 pending payload 를 디스크에서 — 최종본이 없을 때만 쓰는 폴백."""
+    if not _pending_report_ready(session, session_id, report_db=report_db,
+                                 upload_root=upload_root, edits_rev=edits_rev,
+                                 ai_inline=ai_inline):
+        return None
+    return disk_cache.load_report(
+        upload_root, cache_policy.report_pending_key(session, session_id, edits_rev))
+
+
 def _report_usable(report, session, session_id: str, *, report_db,
                    upload_root: Path, ai_inline: bool):
     """RAM 캐시의 payload 를 그대로 써도 되는가 — 아니면 None(미스 취급).
@@ -185,11 +219,12 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     get_map_gzip 으로 지연 로드한다 (schema v8).
 
     AI Comment 세션의 비동기 분리 (2026-08-13): AI 분리 캐시 미스 콜드 빌드는 기본
-    (ai_inline=False)으로 AI 없는 **pending payload**(최상위 ai_comment_pending=True,
-    RAM 캐시 전용·디스크 미저장)를 먼저 만들어 리포트를 즉시 열고, AI 평가는 백그라운드
-    'ai' 잡(compute.request_build)에 맡긴다. ai_inline=True(프리웜·ai 잡)는 종전처럼
-    AI 평가까지 동기로 끝낸 최종본을 만든다 — 그 최종본이 disk_cache 에 저장되고
-    부모 RAM 의 pending 본을 덮는다.
+    (ai_inline=False)으로 AI 없는 **pending payload**(최상위 ai_comment_pending=True)를
+    먼저 만들어 리포트를 즉시 열고, AI 평가는 백그라운드 'ai' 잡(compute.request_build)에
+    맡긴다. ai_inline=True(프리웜·ai 잡)는 종전처럼 AI 평가까지 동기로 끝낸 최종본을
+    만든다 — 그 최종본이 정본 키로 disk_cache 에 저장되고 부모 RAM 의 pending 본을 덮는다.
+    pending 본은 **별도 키**(`cache_policy.report_pending_key`)로 디스크에도 남긴다 —
+    없으면 AI 잡이 끝나기 전 재접속이 매번 완전 콜드가 된다(§report_is_cold).
     """
     if session is None:
         session = report_db.get_session(session_id)
@@ -217,7 +252,10 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
         # keyed_lock 을 잡고 있어, 락에 들어간 뒤 판정하면 202 로 즉시 돌려보내려던
         # 폴링 요청이 빌드가 끝날 때까지 waitress 스레드를 물고 대기했다(같은 세션을
         # 여러 명이 열면 스레드가 그만큼 묶임). stat 1회면 "아직 산출물 없음"을 알 수 있다.
-        if not disk_cache.report_exists(upload_root, cache_key):
+        if (not disk_cache.report_exists(upload_root, cache_key)
+                and not _pending_report_ready(
+                    session, session_id, report_db=report_db, upload_root=upload_root,
+                    edits_rev=edits_rev, ai_inline=ai_inline)):
             raise ColdBuildRequired(session_id)
     if report is None:
         with cache.keyed_lock_ctx(("report",) + cache_key):
@@ -227,6 +265,13 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
             if report is None:
                 # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
                 report = disk_cache.load_report(upload_root, cache_key)
+                if report is None:
+                    # 최종본이 없으면 AI 대기용 pending 본으로 연다 — 없으면 재접속이
+                    # 매번 완전 콜드가 된다(2026-08-13).
+                    report = _load_pending_report(
+                        session, session_id, report_db=report_db,
+                        upload_root=upload_root, edits_rev=edits_rev,
+                        ai_inline=ai_inline)
                 if report is None and not build_if_cold:
                     # 캐시 3계층(RAM→disk) 전부 미스 = 실제 콜드 빌드가 필요한 지점.
                     # 대기하지 않기로 한 호출자(라우트 202 경로)에게 즉시 알린다.
@@ -347,12 +392,24 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             # 캐시 크기추정에 함께 재사용한다(콜드 1회 3중 직렬화 제거).
                             with build_log.stage("serialize"):
                                 report_bytes = disk_cache.dumps_report(report)
-                                if not ai_pending:
-                                    # pending 본은 **디스크에 저장하지 않는다** — 디스크에는
-                                    # 최종본만 남아 report_is_cold/롤백 판정이 단순해지고,
-                                    # RAM 축출 시 pending 재빌드(웜 tables, 값싼 편)로 복구.
+                                if ai_pending:
+                                    # 대기용 본은 **별도 키**로 저장한다(롤백 안전 —
+                                    # 옛 코드는 이 키를 모른다). 이게 없으면 AI 잡이
+                                    # 끝나기 전 재접속이 매번 완전 콜드가 된다.
+                                    disk_cache.save_report_gz(
+                                        upload_root,
+                                        cache_policy.report_pending_key(
+                                            session, session_id, edits_rev),
+                                        report_bytes)
+                                else:
                                     disk_cache.save_report_gz(upload_root, cache_key,
                                                               report_bytes)
+                                    # 최종본 승격 — 같은 세대의 대기용 본을 회수한다
+                                    # (세대 정리는 다른 content_hash 만 지운다).
+                                    disk_cache.drop_report(
+                                        upload_root,
+                                        cache_policy.report_pending_key(
+                                            session, session_id, edits_rev))
                             report_size = len(report_bytes)
                             # Temperature: 방금 판정한 결과(tables 에 캐시됨)로 temp_map 을
                             # 함께 채운다 — 안 하면 Issue Table 첫 진입에서 요청 스레드가

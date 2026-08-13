@@ -30,12 +30,22 @@ def _default_thresholds():
     return load_yaml(str(config.THRESHOLDS_FILE))["default"]
 
 
+def _conditions(sig):
+    """(metric, 조건문자열) 평탄화 — 조건은 문자열 하나이거나 **밴드(목록)** 다.
+
+    같은 지표에 상·하한을 함께 거는 룰(HEAVY_TAIL 의 꼬리 질량, 2026-08-13)이 생겼다.
+    """
+    for metric, cond in (sig.get("when_metric") or {}).items():
+        for one in (cond if isinstance(cond, (list, tuple)) else [cond]):
+            yield metric, one
+
+
 def test_every_condition_reference_exists_in_thresholds():
     """조건이 가리키는 임계값 이름이 thresholds.yaml default 에 전부 있어야 한다."""
     default = _default_thresholds()
     missing = []
     for sig in _signatures():
-        for metric, cond in (sig.get("when_metric") or {}).items():
+        for metric, cond in _conditions(sig):
             m = _COND_RE.match(str(cond).strip())
             assert m, f"{sig['id']}.{metric}: 조건식 문법 위반 {cond!r}"
             ref = m.group(3).strip()
@@ -69,7 +79,7 @@ def test_every_code_referenced_threshold_exists():
 def test_condition_operators_are_supported():
     """_eval_condition 이 실제로 아는 연산자만 쓴다(오타 연산자는 KeyError 로 터진다)."""
     for sig in _signatures():
-        for metric, cond in (sig.get("when_metric") or {}).items():
+        for metric, cond in _conditions(sig):
             op = _COND_RE.match(str(cond).strip()).group(2)
             assert op in {">", ">=", "<", "<="}, f"{sig['id']}.{metric}: {cond!r}"
 

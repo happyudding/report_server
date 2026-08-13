@@ -292,6 +292,15 @@ def context(**kw):
         _tls.ctx = prev
 
 
+def current_context() -> dict:
+    """이 스레드에 심어둔 큐 컨텍스트(trigger/kind/queue_wait). 없으면 빈 dict.
+
+    build_status.begin 이 "무엇이 이 빌드를 유발했나"를 알아내는 데 쓴다 — 빌드 완료
+    레코드에만 남던 trigger 를 **진행 중**에도 관리자가 볼 수 있게 하는 통로다.
+    """
+    return dict(getattr(_tls, "ctx", None) or {})
+
+
 # ── 레코드 싱크 ──────────────────────────────────────────────────────────────
 
 def _log_dir() -> Path:

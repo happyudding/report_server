@@ -253,6 +253,29 @@ def api_webreport_builds():
     return jsonify(out)
 
 
+@admin_panel_bp.post("/api/webreport/build_action")
+def api_webreport_build_action():
+    """진행 중/막힌 콜드 빌드에 대한 관리자 개입 (clear_failure / clear_stuck / rebuild).
+
+    개별 빌드만 취소하는 수단은 없다 — ProcessPoolExecutor 는 실행 중 잡을 cancel 할 수
+    없기 때문이다(web_report/compute.py run()). 여기 액션은 전부 '막힌 것을 푸는' 쪽이며
+    캐시·편집·산출물은 건드리지 않는다."""
+    from admin_panel import builds_admin
+    body = request.get_json(force=True, silent=True) or {}
+    action = str(body.get("action") or "").strip()
+    session_id = str(body.get("session_id") or "").strip()
+    kind = str(body.get("kind") or "report").strip()
+    if not _SESSION_ID_RE.match(session_id):
+        abort(400, "invalid session_id")
+    out = builds_admin.act(action, session_id, kind)
+    if not out.get("ok"):
+        out["error"] = out.get("message", "")   # 프런트 postJSON 이 error 키를 띄운다
+    _audit("build_action", session_id=session_id,
+           changed_fields=f"action={action} kind={kind} :: {out.get('message', '')}"[:1500],
+           result="ok" if out.get("ok") else "fail")
+    return jsonify(out), (200 if out.get("ok") else 400)
+
+
 @admin_panel_bp.get("/api/diagnostics/events")
 def api_diagnostics_events():
     """진단 사건 목록 — 서버 500/503·느린 요청·콜드 빌드 실패·브라우저/Honey 오류.
@@ -313,8 +336,12 @@ def api_runtime():
     except Exception:
         out["active_users"] = None
     try:
-        from web_report import build_status
-        out["builds"] = build_status.snapshot_all()
+        # 진행 중 콜드 빌드는 (세션, stage, 경과) 3칸만으로는 손을 쓸 수 없어, 세션 메타·
+        # 대기자·워커 현재 단계·예상 대비 초과를 붙여서 준다 (admin_panel/builds_admin.py).
+        # 빌드 0건이면 DB·파일 접근이 전혀 없다.
+        from admin_panel import builds_admin
+        out["builds"] = builds_admin.active_builds()
+        out["build_queues"] = builds_admin.queues()
     except Exception:
         out["builds"] = None
     try:

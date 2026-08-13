@@ -77,17 +77,25 @@ signatures:
 - signature 추가 시 체크: (1) status.py `SPECIFICITY_ORDER` 에 id 추가, (2) 필요한 임계값 키를 thresholds 에 추가.
 - **현상 5축 체계(2026-08-12)** — 중심 / 산포·여유 / 형태 / 공간 / 데이터품질. 축당 primary
   하나만 두고 같은 현상의 약한 통계는 `suppressed_by` 로 **primary 를 양보**한다
-  (`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]`, `HEAVY_TAIL ← [OUTLIER]`,
-  `BIDIR_TAIL ← [WIDE_DISTRIBUTION]`).
+  (`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]`, `HEAVY_TAIL ← [OUTLIER]`).
   결과 지표(cpk)는 원인 룰이 있으면 primary 가 되지 않는다. 배경은
   [../../../docs/13 §16](../../../docs/13_eval_analyzer_integration.md).
   ⚠ **`suppressed_by` 는 목록에서 지우지 않는다**(2026-08-13 의미 변경). 지우던 시절에는
   "cpk 도 낮고 outlier 도 있다" 가 한 줄로만 보여 나머지를 볼 수 없었다. 지금은
   `signatures._apply_suppression` 이 `demoted_by` 를 달고 `status.decide` 가 primary
   후보에서만 뺀다 — 발화 목록·Signature 컬럼에는 둘 다 남는다.
+- **`when_metric` 값은 문자열 하나 또는 조건 목록(AND)** 이다(2026-08-13). 같은 지표에
+  상·하한을 함께 거는 밴드용 — `tail_mass_3s: [">=heavy_tail_mass_min", "<=heavy_tail_mass_max"]`.
+  엔진 `_eval_condition` / 패널 `rules_io._validate_condition` / 트레이스
+  `eval_debug._cond_rows` 세 곳이 같은 규약을 안다(하나만 고치면 화면이 갈린다).
+- **삭제된 룰 5종(2026-08-13)** — `SPEC_TOO_TIGHT`·`SEVERE_OUTLIER`·`WIDE_DISTRIBUTION`·
+  `OUTLIER_WARN`·`WAFER_GRADIENT`. `enabled:false` 보존을 그만두고 선언 자체를 지웠다
+  (운영 DB 에 이 이름의 사람 라벨이 0건이라 마이그레이션 불필요였다).
+  그 룰만 쓰던 임계값(`spread_norm_warn`·`outlier_ratio_*`·`gradient_norm_warn`·
+  `*_fail_ratio_warn`·`severe_outlier_count_min`)도 함께 지웠다 —
+  ⚠ 임계값을 지울 땐 `calibration.quantiles` 와 `rules_io` 의 KINDS/RELATIONS 도 같이 본다.
 - **룰셋 재편(2026-08-12, 사용자 v5 검토 반영)** — 겹치는 이름을 지우고 판정축을 바꿨다:
-  - `SEVERE_OUTLIER`+`OUTLIER_WARN` → **`OUTLIER`** 하나. 구 두 룰은 `enabled:false` 로
-    **남겨 둔다**(과거 DB 값 해석용).
+  - `SEVERE_OUTLIER`+`OUTLIER_WARN` → **`OUTLIER`** 하나.
     판정축은 2026-08-13 에 다시 바뀌어 **거리 AND 끊김** 두 조건이다:
     `fail_mad_min ≥ 4`(중심에 가장 가까운 fail 의 MAD 배수) **AND**
     `fail_pass_gap_sigma ≥ 1.5`(마지막 pass ↔ 첫 fail 빈 구간, robust σ).
@@ -99,11 +107,18 @@ signatures:
   - `SUBPOP_GAP` → **`BIMODALITY`** 개명(누적 DB 는 1회 마이그레이션으로 치환 —
     `server/tools/migrate_bimodality_rename.py`).
   - `kurtosis_warn` 2.0 → 8.0 (2.0 은 정상 산포에도 붙었다).
-- **공간 존은 E1/EDGE/CENTER/RING + CLUSTER** — `E1_FAIL` 은 최외곽 1 chip line(각 줄의 양끝
-  die, `features._e1_mask`)이고 EDGE·RING 은 **E1 을 뺀** 영역이다.
-  판정 기준은 **점유율** `*_fail_share ≥ region_fail_share_min`(0.95, 네 룰 공용) —
-  "전체 fail 중 그 영역이 몇 %를 가졌나". CLUSTER 만 사분면 불균형(`quadrant_imbalance`)이다.
-  `*_fail_ratio`(밀도 배수)는 evidence 참고값으로만 남는다.
+- **공간 존은 E1/EDGE/CENTER/RING + SPOT_CLUSTER + CLUSTER_FAIL** — `E1_FAIL` 은 최외곽
+  1 chip line(각 줄의 양끝 die, `features._e1_mask`)이고 EDGE·RING 은 **E1 을 뺀** 영역이다.
+  존 4종의 판정 기준은 **점유율** `*_fail_share ≥ region_fail_share_min`(0.95, 공용) —
+  "전체 fail 중 그 영역이 몇 %를 가졌나". `*_fail_ratio`(밀도 배수)는 evidence 참고값이다.
+  - `SPOT_CLUSTER`(2026-08-13 신설) = `fail_spread_norm ≤ 0.25` — fail 무게중심 기준 RMS
+    거리/웨이퍼 반경. **위치·모양과 무관**하게 "서로 붙어 있나" 만 본다.
+  - `CLUSTER_FAIL` = 사분면 불균형. ⚠ **축에 걸친 뭉침을 놓친다** — 같은 blob 이 사분면
+    한가운데면 4.00, x축 경계면 2.20 이었다. 그래서 `quadrant_imbalance` 는 **0°·45° 두
+    격자의 max** 로 잰다(그래도 원점 근처 뭉침은 CENTER_FAIL·SPOT_CLUSTER 몫).
+- **이산(CODE) 값의 BIMODALITY 는 빈 계단 ≥2 를 요구한다**(2026-08-13) — 계단으로 그린
+  정규분포는 이산이라 울퉁불퉁한 것이지 이봉이 아니다. 진짜로 갈라졌다면 **레벨 자체가
+  비어 있는 구간**이 생긴다(`features._grid_empty_levels`).
 - ⚠ **임계값을 그 지표의 상한 위로 두면 그 룰은 영원히 침묵한다.** 밀도 배수형 공간 지표의
   상한은 `1/영역면적비`(edge≈2.8, center≈11, ring≈1.8, quadrant≤4)라 룰마다 임계를 공유할 수
   없었고 ring 은 아예 도달 불가였다 — 공간 4종을 점유율로 갈아탄 이유다. 비모수

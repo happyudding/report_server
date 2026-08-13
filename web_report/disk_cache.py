@@ -229,6 +229,20 @@ def save_report(upload_root: Path, cache_key: tuple, report: dict) -> None:
     save_report_gz(upload_root, cache_key, report_bytes)
 
 
+def drop_report(upload_root: Path, cache_key: tuple) -> None:
+    """report 디스크 캐시 파일 1건 삭제 — AI 대기용 pending 본을 최종본 저장 후 회수한다.
+
+    `_cleanup_stale_generations` 는 **다른 content_hash 세대**만 지우므로(같은 세대의
+    다른 변형은 유효), 같은 세대인 pending 본은 여기서 명시적으로 지워야 한다.
+    """
+    if not _enabled():
+        return
+    try:
+        _path_for(upload_root, "report", cache_key, ".json.gz").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def load_dist(upload_root: Path, cache_key: tuple) -> bytes | None:
     """distribution gzip bytes 디스크 캐시 조회. cache_key 는
     service.get_distribution_gzip 의 DIST_CACHE 키 (analysis_key, content_hash, mode)."""

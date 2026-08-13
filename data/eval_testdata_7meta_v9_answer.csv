@@ -1,0 +1,106 @@
+﻿item,source,wafer,group,level,level_ko,intent,expect,unit,lsl,usl,bin,metric,target,actual_metric,threshold,n_dut,fail_count,yield,note
+CENTER_FAIL_L1,0,1,single,1,정상(fail 0),CENTER_FAIL,not_fire,V,0.5,1.5,2,center_fail_share,0.5,,0.95,5025,0,1.0,
+CENTER_FAIL_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),CENTER_FAIL,fire,V,0.5,1.5,282,center_fail_share,0.96,0.9583,0.95,5025,24,0.9952,
+CENTER_FAIL_L3(FAIL),0,1,single,3,초과,CENTER_FAIL,fire,V,0.5,1.5,283,center_fail_share,0.98,1.0,0.95,5025,24,0.9952,
+CENTER_FAIL_L4(FAIL),0,1,single,4,크게 초과,CENTER_FAIL,fire,V,0.5,1.5,284,center_fail_share,0.99,1.0,0.95,5025,30,0.994,
+CENTER_FAIL_L5(FAIL),0,1,single,5,심각,CENTER_FAIL,fire,V,0.5,1.5,285,center_fail_share,1.0,1.0,0.95,5025,60,0.9881,
+CLUSTER_FAIL_L1,0,1,single,1,정상(fail 0),CLUSTER_FAIL,not_fire,V,0.5,1.5,2,quadrant_imbalance,0.5,,2.5,5025,0,1.0,
+CLUSTER_FAIL_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),CLUSTER_FAIL,fire,V,0.5,1.5,302,quadrant_imbalance,2.7,2.8011,2.5,5025,24,0.9952,
+CLUSTER_FAIL_L3(FAIL),0,1,single,3,초과,CLUSTER_FAIL,fire,V,0.5,1.5,303,quadrant_imbalance,3.0,3.1353,2.5,5025,24,0.9952,
+CLUSTER_FAIL_L4(FAIL),0,1,single,4,크게 초과,CLUSTER_FAIL,fire,V,0.5,1.5,304,quadrant_imbalance,3.4,3.5762,2.5,5025,30,0.994,
+CLUSTER_FAIL_L5(FAIL),0,1,single,5,심각,CLUSTER_FAIL,fire,V,0.5,1.5,305,quadrant_imbalance,3.8,3.8625,2.5,5025,60,0.9881,
+E1_FAIL_L1,0,1,single,1,정상(fail 0),E1_FAIL,not_fire,V,0.5,1.5,2,e1_fail_share,0.5,,0.95,5025,0,1.0,
+E1_FAIL_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),E1_FAIL,fire,V,0.5,1.5,342,e1_fail_share,0.96,0.9583,0.95,5025,24,0.9952,
+E1_FAIL_L3(FAIL),0,1,single,3,초과,E1_FAIL,fire,V,0.5,1.5,343,e1_fail_share,0.98,1.0,0.95,5025,24,0.9952,
+E1_FAIL_L4(FAIL),0,1,single,4,크게 초과,E1_FAIL,fire,V,0.5,1.5,344,e1_fail_share,0.99,1.0,0.95,5025,30,0.994,
+E1_FAIL_L5(FAIL),0,1,single,5,심각,E1_FAIL,fire,V,0.5,1.5,345,e1_fail_share,1.0,1.0,0.95,5025,60,0.9881,
+EDGE_FAIL_L1,0,1,single,1,정상(fail 0),EDGE_FAIL,not_fire,V,0.5,1.5,2,edge_fail_share,0.5,,0.95,5025,0,1.0,
+EDGE_FAIL_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),EDGE_FAIL,fire,V,0.5,1.5,272,edge_fail_share,0.96,0.9583,0.95,5025,24,0.9952,
+EDGE_FAIL_L3(FAIL),0,1,single,3,초과,EDGE_FAIL,fire,V,0.5,1.5,273,edge_fail_share,0.98,1.0,0.95,5025,24,0.9952,
+EDGE_FAIL_L4(FAIL),0,1,single,4,크게 초과,EDGE_FAIL,fire,V,0.5,1.5,274,edge_fail_share,0.99,1.0,0.95,5025,30,0.994,
+EDGE_FAIL_L5(FAIL),0,1,single,5,심각,EDGE_FAIL,fire,V,0.5,1.5,275,edge_fail_share,1.0,1.0,0.95,5025,60,0.9881,
+RANDOM_003(FAIL),0,1,random,5,심각,,observe,mv,0.16366720163697024,0.32723426295280855,43,(관찰),,,,4219,12,0.9976,관찰용 무작위 — 모드 1개 · spike z27.1 · 비절단 · fail 12개 (spot 편중 0.50)
+RANDOM_008(FAIL),0,1,random,2,발화 시작(임계값 소폭 초과),,observe,khz,2.234740991433661,4.434777375320365,48,(관찰),,,,5025,45,0.991,관찰용 무작위 — 모드 1개 · 양자화 0.03438 · spike z10.4 · rail · fail 45개 (center 편중 0.71)
+RANDOM_009(FAIL),0,1,random,3,초과,,observe,LSB,0.12048081235980201,4.029127726778918,49,(관찰),,,,5025,52,0.9897,관찰용 무작위 — 모드 1개 · 양자화 0.2443 · fail 52개 (center 편중 0.68)
+RANDOM_011(FAIL),0,1,random,5,심각,,observe,CODE,0.0,63.0,41,(관찰),,,,4202,18,0.9964,관찰용 무작위 — 모드 1개 · 비절단 · fail 18개 (center 편중 0.97)
+RANDOM_012(FAIL),0,1,random,2,발화 시작(임계값 소폭 초과),,observe,CODE,0.0,255.0,42,(관찰),,,,5025,20,0.996,관찰용 무작위 — 모드 4개 · spike z4.1 · rail · 비절단 · fail 20개 (spot 편중 0.09)
+RANDOM_015(FAIL),0,1,random,5,심각,,observe,CODE,0.0,63.0,45,(관찰),,,,3804,10,0.998,관찰용 무작위 — 모드 1개 · spike z17.8 · fail 10개 (edge 편중 0.80)
+RANDOM_016(FAIL),0,1,random,2,발화 시작(임계값 소폭 초과),,observe,CODE,0.0,63.0,46,(관찰),,,,5025,4,0.9992,관찰용 무작위 — 모드 1개 · fail 4개 (edge 편중 0.66)
+RANDOM_019(FAIL),0,1,random,5,심각,,observe,ms,3.0822431057196926,6.764643306096291,49,(관찰),,,,5025,41,0.9918,관찰용 무작위 — 모드 1개 · spike z12.0 · fail 41개 (center 편중 0.68)
+RANDOM_022(FAIL),0,1,random,4,크게 초과,,observe,ua,1.3081774262763113,2.502627906974072,42,(관찰),,,,5025,37,0.9926,관찰용 무작위 — 모드 1개 · spike z11.4 · fail 37개 (ring 편중 0.48)
+RANDOM_023(FAIL),0,1,random,5,심각,,observe,mv,2.7321840154915296,2.8921453968906206,43,(관찰),,,,5025,6,0.9988,관찰용 무작위 — 모드 2개 · fail 6개 (quadrant 편중 0.49)
+RANDOM_025(FAIL),0,1,random,3,초과,,observe,ohm,4.166675382364508,4.2505494886975,45,(관찰),,,,5025,44,0.9912,관찰용 무작위 — 모드 3개 · fail 44개 (e1 편중 0.58)
+RANDOM_026(FAIL),0,1,random,4,크게 초과,,observe,ma,2.3182555785741057,5.62520060561883,46,(관찰),,,,5025,23,0.9954,관찰용 무작위 — 모드 3개 · fail 23개 (quadrant 편중 0.72)
+RANDOM_027(FAIL),0,1,random,5,심각,,observe,ua,3.8886935781402823,5.5031396644569615,47,(관찰),,,,5025,21,0.9958,관찰용 무작위 — 모드 1개 · 비절단 · fail 21개 (ring 편중 0.52)
+RANDOM_028(FAIL),0,1,random,2,발화 시작(임계값 소폭 초과),,observe,ua,1.6677517381295572,1.780481397467862,48,(관찰),,,,5025,46,0.9908,관찰용 무작위 — 모드 2개 · fail 46개 (quadrant 편중 0.88)
+RANDOM_029(FAIL),0,1,random,3,초과,,observe,khz,2.9724898216969273,3.096400872849084,49,(관찰),,,,5025,7,0.9986,관찰용 무작위 — 모드 2개 · fail 7개 (quadrant 편중 0.76)
+RING_FAIL_L1,0,1,single,1,정상(fail 0),RING_FAIL,not_fire,V,0.5,1.5,2,ring_fail_share,0.5,,0.95,5025,0,1.0,
+RING_FAIL_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),RING_FAIL,fire,V,0.5,1.5,292,ring_fail_share,0.96,0.9583,0.95,5025,24,0.9952,
+RING_FAIL_L3(FAIL),0,1,single,3,초과,RING_FAIL,fire,V,0.5,1.5,293,ring_fail_share,0.98,1.0,0.95,5025,24,0.9952,
+RING_FAIL_L4(FAIL),0,1,single,4,크게 초과,RING_FAIL,fire,V,0.5,1.5,294,ring_fail_share,0.99,1.0,0.95,5025,30,0.994,
+RING_FAIL_L5(FAIL),0,1,single,5,심각,RING_FAIL,fire,V,0.5,1.5,295,ring_fail_share,1.0,1.0,0.95,5025,60,0.9881,
+SPOT_CLUSTER_L1,0,1,single,1,정상(fail 0),SPOT_CLUSTER,not_fire,V,0.5,1.5,2,fail_spread_norm,,,,5025,0,1.0,blob 반경 = 웨이퍼의 60% · 사분면 경계(x축) 위
+SPOT_CLUSTER_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),SPOT_CLUSTER,fire,V,0.5,1.5,352,fail_spread_norm,,0.2107,,5025,24,0.9952,blob 반경 = 웨이퍼의 30% · 사분면 경계(x축) 위
+SPOT_CLUSTER_L3(FAIL),0,1,single,3,초과,SPOT_CLUSTER,fire,V,0.5,1.5,353,fail_spread_norm,,0.1348,,5025,24,0.9952,blob 반경 = 웨이퍼의 20% · 사분면 경계(x축) 위
+SPOT_CLUSTER_L4(FAIL),0,1,single,4,크게 초과,SPOT_CLUSTER,fire,V,0.5,1.5,354,fail_spread_norm,,0.0943,,5025,30,0.994,blob 반경 = 웨이퍼의 12% · 사분면 경계(x축) 위
+SPOT_CLUSTER_L5(FAIL),0,1,single,5,심각,SPOT_CLUSTER,fire,V,0.5,1.5,355,fail_spread_norm,,0.154,,5025,60,0.9881,blob 반경 = 웨이퍼의 6% · 사분면 경계(x축) 위
+BIMODALITY_L1,0,1,single,1,정상(fail 0),BIMODALITY,not_fire,V,0.5,1.5,2,density_gap,,0.0,,5025,0,1.0,모드 분리 0.0σ (성분 σ 0.12)
+BIMODALITY_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),BIMODALITY,fire,V,0.5,1.5,202,density_gap,,0.8581,,5025,6,0.9988,모드 분리 5.0σ (성분 σ 0.12)
+BIMODALITY_L3(FAIL),0,1,single,3,초과,BIMODALITY,fire,V,0.5,1.5,203,density_gap,,0.881,,5025,15,0.997,모드 분리 6.5σ (성분 σ 0.12)
+BIMODALITY_L4(FAIL),0,1,single,4,크게 초과,BIMODALITY,fire,V,0.5,1.5,204,density_gap,,0.9013,,5025,30,0.994,모드 분리 8.0σ (성분 σ 0.09)
+BIMODALITY_L5(FAIL),0,1,single,5,심각,BIMODALITY,fire,V,0.5,1.5,205,density_gap,,0.9872,,5025,60,0.9881,모드 분리 9.5σ (성분 σ 0.04) · 3봉(다봉)
+CODE_RAIL_L1,0,1,single,1,정상(fail 0),CODE_RAIL,not_fire,CODE,0.0,63.0,2,code_edge_hit,0.01,0.0101,0.05,5025,0,1.0,
+CODE_RAIL_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),CODE_RAIL,fire,CODE,0.0,63.0,242,code_edge_hit,0.07,0.07,0.05,5025,6,0.9988,
+CODE_RAIL_L3(FAIL),0,1,single,3,초과,CODE_RAIL,fire,CODE,0.0,63.0,243,code_edge_hit,0.15,0.1504,0.05,5025,15,0.997,
+CODE_RAIL_L4(FAIL),0,1,single,4,크게 초과,CODE_RAIL,fire,CODE,0.0,63.0,244,code_edge_hit,0.3,0.3003,0.05,5025,30,0.994,
+CODE_RAIL_L5(FAIL),0,1,single,5,심각,CODE_RAIL,fire,CODE,0.0,63.0,245,code_edge_hit,0.45,0.45,0.05,5025,60,0.9881,
+EQUIPMENT_SUSPECT_L1,0,1,single,1,정상(fail 0),EQUIPMENT_SUSPECT,not_fire,V,0.5,1.5,2,site_cpk_delta,0.1,,0.5,5025,0,1.0,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),EQUIPMENT_SUSPECT,fire,V,0.5,1.5,232,site_cpk_delta,0.6,,0.5,5025,6,0.9988,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L3(FAIL),0,1,single,3,초과,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,233,site_cpk_delta,1.5,,0.5,5025,15,0.997,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L4(FAIL),0,1,single,4,크게 초과,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,234,site_cpk_delta,3.0,,0.5,5025,30,0.994,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+EQUIPMENT_SUSPECT_L5(FAIL),0,1,single,5,심각,EQUIPMENT_SUSPECT,fire,V,0.5,1.5,235,site_cpk_delta,4.5,,0.5,5025,60,0.9881,raw_df 경로는 site 를 항상 None 으로 채운다(ingest._ingest_raw_df) → site_cpk_delta 가 영구 None
+HEAVY_TAIL_L1,0,1,single,1,정상(fail 0),HEAVY_TAIL,not_fire,V,0.5,1.5,2,kurtosis,2.0,2.0,8.0,5025,0,1.0,
+HEAVY_TAIL_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),HEAVY_TAIL,fire,V,0.5,1.5,192,kurtosis,12.0,11.3517,8.0,5025,6,0.9988,
+HEAVY_TAIL_L3(FAIL),0,1,single,3,초과,HEAVY_TAIL,fire,V,0.5,1.5,193,kurtosis,15.0,15.9263,8.0,5025,15,0.997,
+HEAVY_TAIL_L4(FAIL),0,1,single,4,크게 초과,HEAVY_TAIL,fire,V,0.5,1.5,194,kurtosis,19.0,21.77,8.0,5025,30,0.994,
+HEAVY_TAIL_L5(FAIL),0,1,single,5,심각,HEAVY_TAIL,fire,V,0.5,1.5,195,kurtosis,25.0,24.8036,8.0,5025,60,0.9881,
+LOW_CPK_L1,0,1,single,1,정상(fail 0),LOW_CPK,not_fire,V,0.5,1.5,2,cpk,1.8,1.8295,1.33,5025,0,1.0,
+LOW_CPK_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),LOW_CPK,fire,V,0.5,1.5,152,cpk,1.25,1.2603,1.33,5025,6,0.9988,
+LOW_CPK_L3(FAIL),0,1,single,3,초과,LOW_CPK,fire,V,0.5,1.5,153,cpk,0.95,0.9605,1.33,5025,15,0.997,
+LOW_CPK_L4(FAIL),0,1,single,4,크게 초과,LOW_CPK,fire,V,0.5,1.5,154,cpk,0.75,0.7963,1.33,5025,30,0.994,
+LOW_CPK_L5(FAIL),0,1,single,5,심각,LOW_CPK,fire,V,0.5,1.5,155,cpk,0.62,0.716,1.33,5025,60,0.9881,
+LOW_SAMPLE_UNCERTAIN_L1,0,1,single,1,정상(fail 0),LOW_SAMPLE_UNCERTAIN,not_fire,V,0.5,1.5,2,n_dut,400,400,20,400,0,1.0,
+LOW_SAMPLE_UNCERTAIN_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,262,n_dut,19,19,20,19,6,0.9988,
+LOW_SAMPLE_UNCERTAIN_L3(FAIL),0,1,single,3,초과,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,263,n_dut,12,12,20,12,7,0.9986,
+LOW_SAMPLE_UNCERTAIN_L4(FAIL),0,1,single,4,크게 초과,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,264,n_dut,8,8,20,8,5,0.999,
+LOW_SAMPLE_UNCERTAIN_L5(FAIL),0,1,single,5,심각,LOW_SAMPLE_UNCERTAIN,fire,V,0.5,1.5,265,n_dut,4,4,20,4,2,0.9996,
+MEAN_SHIFT_L1,0,1,single,1,정상(fail 0),MEAN_SHIFT,not_fire,V,0.5,1.5,2,center_bias,0.15,0.15,0.3,5025,0,1.0,
+MEAN_SHIFT_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),MEAN_SHIFT,fire,V,0.5,1.5,162,center_bias,0.36,0.3604,0.3,5025,6,0.9988,
+MEAN_SHIFT_L3(FAIL),0,1,single,3,초과,MEAN_SHIFT,fire,V,0.5,1.5,163,center_bias,0.55,0.5506,0.3,5025,15,0.997,
+MEAN_SHIFT_L4(FAIL),0,1,single,4,크게 초과,MEAN_SHIFT,fire,V,0.5,1.5,164,center_bias,0.8,0.5267,0.3,5025,30,0.994,
+MEAN_SHIFT_L5(FAIL),0,1,single,5,심각,MEAN_SHIFT,fire,V,0.5,1.5,165,center_bias,0.92,0.5301,0.3,5025,60,0.9881,
+MISSING_LIMIT_L1,0,1,single,1,정상(fail 0),MISSING_LIMIT,not_fire,V,0.5,1.5,2,limit_missing,0,0,,5025,0,1.0,
+MISSING_LIMIT_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),MISSING_LIMIT,fire,V,0.5,,252,limit_missing,1,1,,5025,6,0.9988,
+MISSING_LIMIT_L3(FAIL),0,1,single,3,초과,MISSING_LIMIT,fire,V,,1.5,253,limit_missing,1,1,,5025,15,0.997,
+MISSING_LIMIT_L4(FAIL),0,1,single,4,크게 초과,MISSING_LIMIT,fire,V,,,254,limit_missing,1,1,,5025,30,0.994,
+MISSING_LIMIT_L5(FAIL),0,1,single,5,심각,MISSING_LIMIT,fire,,,,255,limit_missing,1,1,,5025,60,0.9881,
+OUTLIER_L1,0,1,single,1,정상(fail 0),OUTLIER,not_fire,V,0.5,1.5,2,fail_mad_min,8.0,,4.0,5025,0,1.0,
+OUTLIER_L2(FAIL),0,1,single,2,발화 시작(임계값 소폭 초과),OUTLIER,fire,V,0.5,1.5,122,fail_mad_min,16.0,14.9316,4.0,5025,6,0.9988,
+OUTLIER_L3(FAIL),0,1,single,3,초과,OUTLIER,fire,V,0.5,1.5,123,fail_mad_min,22.0,14.8825,4.0,5025,15,0.997,
+OUTLIER_L4(FAIL),0,1,single,4,크게 초과,OUTLIER,fire,V,0.5,1.5,124,fail_mad_min,32.0,15.5605,4.0,5025,30,0.994,
+OUTLIER_L5(FAIL),0,1,single,5,심각,OUTLIER,fire,V,0.5,1.5,125,fail_mad_min,50.0,14.758,4.0,5025,60,0.9881,
+RANDOM_000(FAIL),0,1,random,2,발화 시작(임계값 소폭 초과),,observe,ma,0.28530330840272144,2.7834386951014434,40,(관찰),,,,5025,14,0.9972,관찰용 무작위 — 모드 4개 · spike z27.8 · 비절단 · fail 14개 (위치 무관)
+RANDOM_001(FAIL),0,1,random,3,초과,,observe,ma,0.5177029618166267,3.4081715747915142,41,(관찰),,,,5025,11,0.9978,관찰용 무작위 — 모드 1개 · fail 11개 (위치 무관)
+RANDOM_002(FAIL),0,1,random,4,크게 초과,,observe,ma,1.8845143044262764,2.068384152488547,42,(관찰),,,,5025,11,0.9978,관찰용 무작위 — 모드 1개 · fail 11개 (위치 무관)
+RANDOM_004(FAIL),0,1,random,2,발화 시작(임계값 소폭 초과),,observe,ma,0.4721276069942584,0.5302998007350626,44,(관찰),,,,5025,8,0.9984,관찰용 무작위 — 모드 1개 · spike z15.8 · fail 8개 (위치 무관)
+RANDOM_005(FAIL),0,1,random,3,초과,,observe,CODE,0.0,31.0,45,(관찰),,,,5025,5,0.999,관찰용 무작위 — 모드 1개 · 양자화 0.4844 · fail 5개 (위치 무관)
+RANDOM_006(FAIL),0,1,random,4,크게 초과,,observe,ohm,-0.08970004499125867,0.6522864754677842,46,(관찰),,,,3603,32,0.9936,관찰용 무작위 — 모드 4개 · fail 32개 (위치 무관)
+RANDOM_007(FAIL),0,1,random,5,심각,,observe,v,2.076291801957885,2.2494366381419106,47,(관찰),,,,5025,10,0.998,관찰용 무작위 — 모드 4개 · fail 10개 (위치 무관)
+RANDOM_010(FAIL),0,1,random,4,크게 초과,,observe,ohm,3.164181908137076,3.8675296410765343,40,(관찰),,,,5025,22,0.9956,관찰용 무작위 — 모드 1개 · spike z7.4 · fail 22개 (위치 무관)
+RANDOM_013(FAIL),0,1,random,3,초과,,observe,khz,3.2827695604776053,3.5502161259307665,43,(관찰),,,,5025,44,0.9912,관찰용 무작위 — 모드 2개 · rail · fail 44개 (위치 무관)
+RANDOM_014(FAIL),0,1,random,4,크게 초과,,observe,PCT,0.0,100.0,44,(관찰),,,,5025,26,0.9948,관찰용 무작위 — 모드 2개 · 양자화 12.5 · spike z21.2 · fail 26개 (위치 무관)
+RANDOM_017(FAIL),0,1,random,3,초과,,observe,LSB,4.721977555592952,4.776721855922265,47,(관찰),,,,5025,44,0.9912,관찰용 무작위 — 모드 4개 · 양자화 0.001711 · fail 44개 (위치 무관)
+RANDOM_018(FAIL),0,1,random,4,크게 초과,,observe,CODE,0.0,63.0,48,(관찰),,,,5025,48,0.9904,관찰용 무작위 — 모드 4개 · fail 48개 (위치 무관)
+RANDOM_020(FAIL),0,1,random,2,발화 시작(임계값 소폭 초과),,observe,khz,4.6344443459365126,5.320019954866132,40,(관찰),,,,5025,7,0.9986,관찰용 무작위 — 모드 2개 · spike z5.7 · fail 7개 (위치 무관)
+RANDOM_021(FAIL),0,1,random,3,초과,,observe,CODE,0.0,63.0,41,(관찰),,,,5025,44,0.9912,관찰용 무작위 — 모드 2개 · spike z27.5 · fail 44개 (위치 무관)
+RANDOM_024(FAIL),0,1,random,2,발화 시작(임계값 소폭 초과),,observe,khz,2.2490896532212212,2.397138043117551,44,(관찰),,,,5025,37,0.9926,관찰용 무작위 — 모드 1개 · spike z12.4 · fail 37개 (위치 무관)

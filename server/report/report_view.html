@@ -1223,7 +1223,10 @@ html[data-theme="dark"] .cmt-blue   { color: #7fb3ef; }
    재배치한 결과. payload 는 그대로라 옛/새 세션이 같은 화면을 낸다(캐시 스키마 무변경).
    본문 색은 여기서 주고, *r[..] 서식 토큰(.cmt-*)은 더 안쪽 span 이라 그대로 이긴다. */
 .aic-lead { margin: 0 0 4px; }
-.aic-pending { color: #98a2b3; font-style: italic; }   /* AI 백그라운드 계산 중 안내 */
+/* AI 백그라운드 평가 진행 안내 — AI Comment / Signature 셀 공용 (sheets.js aiWaitHtml).
+   Signature 셀에서는 .sig-chip 과 함께 붙어 칩 모양을 그대로 쓴다. */
+.ai-wait { color: #98a2b3; font-style: italic; }
+.ai-fail { color: #b45309; font-style: italic; }
 .aic-sec { margin: 0 0 4px; }
 .aic-tag { font-weight: 700; margin-right: 2px; }
 .aic-sym  { color: #1d4ed8; }   /* 현상 — 파랑 */
@@ -1236,7 +1239,8 @@ html[data-theme="dark"] .cmt-blue   { color: #7fb3ef; }
 .aic-sev-minor   { background: #fff3d6; color: #b45309; }
 .aic-sev-monitor { background: #eef2f7; color: #475467; }
 .aic-mod { background: #ede9fe; color: #5b21b6; }
-html[data-theme="dark"] .aic-pending { color: #6b7280; }
+html[data-theme="dark"] .ai-wait { color: #6b7280; }
+html[data-theme="dark"] .ai-fail { color: #f5b544; }
 html[data-theme="dark"] .aic-sym  { color: #7fb3ef; }
 html[data-theme="dark"] .aic-past { color: #b794f6; }
 html[data-theme="dark"] .aic-act  { color: #6ee7a8; }

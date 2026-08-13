@@ -299,7 +299,14 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      히스토그램 bin 이 어긋나 생기던 **BIMODALITY 오탐 제거**(격자 정렬).
 #      AI Comment 본문·Signature 컬럼 값이 광범위하게 바뀐다(코드 변경이라 .rules_rev 로는
 #      무효화되지 않는다).
-REPORT_SCHEMA_VERSION = 37
+# v38: eval 룰셋 **3차** 재편(2026-08-13 사용자 v8 검토) — ① HEAVY_TAIL 이 kurtosis 단독에서
+#      **kurtosis>10 AND 꼬리질량 1~5%** 로(4제곱 지표라 점 몇 개에도 치솟고 다봉에서도
+#      커지던 과대평가 해소) ② 룰 5종 **완전 삭제**(SPEC_TOO_TIGHT·SEVERE_OUTLIER·
+#      WIDE_DISTRIBUTION·OUTLIER_WARN·WAFER_GRADIENT) ③ **SPOT_CLUSTER 신설**(fail 좌표
+#      몰림 — 사분면 경계에 걸친 뭉침까지) + quadrant_imbalance 를 0°/45° max 로
+#      ④ CODE_RAIL·BIDIR_TAIL 활성화, 이산(격자) 데이터의 BIMODALITY 는 빈 계단 ≥2 요구
+#      ⑤ AI Comment 에서 [다봉] 배지 제거. Signature 컬럼·코멘트 값이 광범위하게 바뀐다.
+REPORT_SCHEMA_VERSION = 38
 
 
 def _eval_rules_suffix() -> tuple:
@@ -355,6 +362,19 @@ def _ai_meta_digest(session) -> str:
               session.get("revision") or "")
     canon = "|".join(str(f).strip() for f in fields).encode("utf-8")
     return hashlib.sha256(canon).hexdigest()[:12]
+
+
+def report_pending_key(session, session_id: str, edits_rev: int) -> tuple:
+    """AI 평가 **대기 중** payload(ai_comment_pending)의 디스크 캐시 키 (2026-08-13).
+
+    정본 키(`report_key`)에 표식 하나를 덧붙인 별도 키다. 정본 키에 그냥 저장하지 않는
+    이유는 **롤백 안전**이다 — 이 기능을 되돌린 옛 코드가 정본 키에서 pending 본을 읽으면
+    AI Comment 가 빈 채로 굳는다. 표식이 붙으면 옛 코드는 이 키를 만들지도, 읽지도 않는다.
+
+    이 본이 없으면 AI 잡이 끝나기 전의 재접속(서버 재시작·RAM 축출 후)이 매번 완전
+    콜드 빌드가 된다 — 첫 조회만 빠르고 재접속은 느린 것이 사용자에게는 회귀로 보인다.
+    """
+    return report_key(session, session_id, edits_rev) + ("aipending",)
 
 
 def ai_comment_key(session, prep_digest: str = "") -> tuple:
