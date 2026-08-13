@@ -68,9 +68,14 @@ def run_probe(harness_js: str, name: str) -> str:
     scripts = "".join(
         f"<script>{(_JS / n).read_text(encoding='utf-8')}</script>"
         for n in ("core.js", "sheets.js", "sig_reason.js"))
+    # ⚠ DATA/SESSION_ID 를 스크립트보다 **먼저 선언하면 안 된다** — core.js 가 둘 다
+    # let/const 로 스스로 선언해, 하네스의 var 선선언과 충돌하면 core.js 스크립트
+    # 전체가 SyntaxError 로 죽는다(esc 등 미정의 → <pre id=res> 미생성 → 전 항목이
+    # "파싱 오류 의심"으로 위장 실패). 로드 **뒤에 대입**만 한다.
     html = ("<!doctype html><html><head><meta charset='utf-8'></head><body>"
-            "<script>var DATA={web_report:{}}, SESSION_ID='s1';</script>"
-            + scripts + harness_js + "</body></html>")
+            + scripts
+            + "<script>DATA={web_report:{}};</script>"
+            + harness_js + "</body></html>")
     page = _TMP / f"{name}.html"
     page.write_text(html, encoding="utf-8")
     dump = _TMP / f"{name}.dom.txt"
@@ -115,8 +120,16 @@ def test_ai_comment_render():
         "var box=document.createElement('div');"
         "try{ box.innerHTML=renderAiComment(SAMPLE); out.render='OK'; }"
         "catch(e){ out.render='FAIL '+e.message; }"
-        # (a) 무손실 — 대괄호 배지까지 원문 그대로 남는지 (공백만 무시)
-        "out.lossless = norm(box.textContent)===norm(SAMPLE);"
+        # (a) 무손실 — 기준은 원문이 아니라 **종전 렌더(linkifyComment)의 표시 텍스트**다.
+        # @[..]→@.. / *r[..]→본문 변환은 종전부터 의도된 표시 규약이라 원문과 직접
+        # 비교하면 영원히 실패한다. renderAiComment 는 선두 배지를 맨 끝으로 옮기므로
+        # 기준 텍스트도 같은 재배열 후 비교한다(공백 무시).
+        "var ref=document.createElement('div');ref.innerHTML=linkifyComment(SAMPLE);"
+        "var rt=ref.textContent;"
+        "var mm=rt.match(/^\\s*((?:\\[[^\\]\\s]{1,12}\\])+)\\s*([\\s\\S]*)$/);"
+        "var expected=mm?mm[2]+mm[1]:rt;"
+        "out.lossless = norm(box.textContent)===norm(expected);"
+        "out.expected = expected;"
         "out.text = box.textContent;"
         # (b) 마지막 블록이 배지
         "var last=box.lastElementChild;"

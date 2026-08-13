@@ -54,39 +54,63 @@ def test_outlier_ratio_mad_zero_fallback():
     assert f2["outlier_ratio"] == 0.0
 
 
-def test_fail_robust_z_max_measures_distance_not_ratio():
-    """OUTLIER 판정축 — fail 이 정상 몸통에서 몇 robust σ 떨어졌나.
-
-    같은 "fail 1개" 라도 limit 바로 밖에 붙은 것과 뚝 떨어진 것을 갈라야 하므로 거리로 잰다.
-    """
+def test_fail_mad_min_measures_distance():
+    """OUTLIER 판정축① 거리 — 중심에 **가장 가까운** fail 이 MAD 의 몇 배 밖인가."""
     body = [10.0 + 0.1 * i for i in range(20)]        # median≈11, MAD≈0.5
     m = {"stdev": 1.0}
     far = features.compute(_case(body + [100.0], usl=200,
                                  fail_mask=[False] * 20 + [True]), m, "ev1")
-    near = features.compute(_case(body + [12.1], usl=200,
+    near = features.compute(_case(body + [11.6], usl=200,
                                   fail_mask=[False] * 20 + [True]), m, "ev1")
-    assert far["fail_robust_z_max"] > 12
-    assert near["fail_robust_z_max"] < 12
+    assert far["fail_mad_min"] > 4
+    assert near["fail_mad_min"] < 4
     # fail 이 없으면 판정 대상 자체가 없다 — 0 이 아니라 None(결측을 양호로 읽지 않는다)
-    assert features.compute(_case(body), m, "ev1")["fail_robust_z_max"] is None
+    assert features.compute(_case(body), m, "ev1")["fail_mad_min"] is None
 
 
-def test_fail_robust_z_max_mad_zero_fallback():
+def test_fail_mad_min_mad_zero_fallback():
     """과반 동일값(MAD=0)이어도 폭주한 fail 의 거리를 잰다 — outlier_ratio 와 같은 폴백."""
     vals = [5.0] * 20 + [100.0]
     f = features.compute(_case(vals, lsl=0, usl=200,
                                fail_mask=[False] * 20 + [True]),
                          {"stdev": float(np.std(vals, ddof=1))}, "ev1")
-    assert f["fail_robust_z_max"] > 12
+    assert f["fail_mad_min"] > 4
 
 
-def test_fail_value_gap_norm_is_reference_only():
-    """참고 지표 — 마지막 pass 와 첫 fail 사이 빈 구간을 (USL−평균) 으로 정규화."""
-    vals = [10.0, 10.5, 11.0, 30.0]                   # pass 3개, fail 1개(USL 쪽)
-    f = features.compute(_case(vals, lsl=0, usl=20, fail_mask=[False, False, False, True]),
-                         {"stdev": float(np.std(vals, ddof=1))}, "ev1")
-    mean = float(np.mean(vals))
-    assert f["fail_value_gap_norm"] == pytest.approx((30.0 - 11.0) / (20 - mean))
+def test_fail_pass_gap_sigma_separates_tail_from_outlier():
+    """OUTLIER 판정축② 끊김 — 꼬리가 이어졌으면 작고, 뚝 떨어졌으면 크다.
+
+    거리만으로는 못 가른다는 것이 이 지표의 존재 이유다: 아래 두 입력은 fail 이 **같은
+    위치**(30.0)인데, 하나는 중간값들이 채워져 있고 하나는 비어 있다.
+    """
+    body = [10.0 + 0.1 * i for i in range(20)]
+    tail = body + [14.0, 18.0, 24.0, 30.0]            # 꼬리가 이어져 마지막이 fail
+    jump = body + [30.0]                              # 몸통과 뚝 끊긴 fail
+    m = {"stdev": 5.0}
+    f_tail = features.compute(_case(tail, usl=28, fail_mask=[False] * 23 + [True]), m, "ev1")
+    f_jump = features.compute(_case(jump, usl=28, fail_mask=[False] * 20 + [True]), m, "ev1")
+    assert f_tail["fail_pass_gap_sigma"] < f_jump["fail_pass_gap_sigma"]
+    # pass 가 하나도 없으면(전량 fail) 잴 수가 없다 → None → 조건 False → 미발화
+    allfail = features.compute(_case(body, usl=200, fail_mask=[True] * 20), m, "ev1")
+    assert allfail["fail_pass_gap_sigma"] is None
+
+
+def test_quantized_steps_are_not_bimodal():
+    """양자화(계단형) 단봉을 이봉으로 오판하지 않는다 — 히스토그램 격자 정렬 회귀 방지선.
+
+    bin 폭이 계단 간격보다 좁으면 빈 칸이 사이사이 끼어 **가짜 봉우리**가 생긴다
+    (실측: 8단 단봉이 봉우리 8개로 잡혀 BIMODALITY 오발화).
+    """
+    step = 0.125
+    counts = [23, 87, 573, 1393, 1797, 1443, 568, 115]   # 실데이터에서 뽑은 단봉 계단
+    vals = [1.0 + i * step for i, c in enumerate(counts) for _ in range(c)]
+    v = np.asarray(vals, dtype=float)
+    peaks, _hist = features._histogram_peaks(v)
+    assert len(peaks) == 1, f"계단형 단봉인데 봉우리 {len(peaks)}개로 잡혔다"
+    assert features._density_gap(v) == 0.0
+    assert features._grid_step(v) == pytest.approx(step)
+    # 격자가 아닌(연속) 값에는 가드가 걸리지 않는다
+    assert features._grid_step(np.linspace(0, 1, 500)) is None
 
 
 def test_region_fail_share_is_occupancy_not_density():

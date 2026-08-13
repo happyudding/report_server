@@ -26,8 +26,8 @@ _FEATURE_KEYS = [
     "value_gap_ratio", "value_gap_minor_mass",
     # 파생(DB 미저장): E1(최외곽 1 chip line) 집중도 · 모멘트 왜도
     "e1_fail_ratio", "skewness_moment",
-    # 파생(DB 미저장): OUTLIER 판정용 — fail 값이 분포 중심에서 얼마나 떨어졌나
-    "fail_robust_z_max", "fail_value_gap_norm",
+    # 파생(DB 미저장): OUTLIER 판정용 — 거리(MAD 배수) AND 끊김(gap). z_max 는 참고값
+    "fail_mad_min", "fail_pass_gap_sigma", "fail_robust_z_max",
     # 파생(DB 미저장): 공간 룰 판정용 — 전체 fail 중 그 영역이 차지하는 **점유율**
     "e1_fail_share", "edge_fail_share", "center_fail_share", "ring_fail_share",
 ]
@@ -40,6 +40,10 @@ def _empty_features():
     return f
 
 
+# "인자 미전달" 구분용 센티널 — 계산 결과가 None 인 경우와 갈라야 하는 선택 인자에 쓴다.
+_UNSET = object()
+
+
 def _cdf_gap(v):
     """ECDF(CODE_TO_PORT §3) 후 인접 누적% 최대 점프.
 
@@ -49,7 +53,8 @@ def _cdf_gap(v):
     v = v[np.isfinite(v)]
     if v.size == 0:
         return None
-    uniq, cnt = np.unique(np.sort(v), return_counts=True)
+    # np.unique 가 내부에서 정렬한다 — 종전 np.unique(np.sort(v)) 와 결과 동일, 정렬 1회 절감.
+    uniq, cnt = np.unique(v, return_counts=True)
     cum = np.cumsum(cnt) / v.size * 100.0
     return float(np.max(np.diff(cum))) if len(cum) > 1 else 0.0
 
@@ -73,21 +78,74 @@ def _value_gap(v):
     below = float(np.mean(v <= uniq[i]))   # 간격 아래쪽 질량
     return gap_ratio, float(min(below, 1.0 - below))
 
+# 양자화 격자 검출 상수 — 판정 임계가 아니라 **히스토그램을 어떻게 만들지**의 규칙이라
+# thresholds.yaml 이 아니라 코드에 둔다(불변 규칙 5 는 판정 임계에 대한 것).
+_GRID_MIN_LEVELS = 3        # 격자로 인정할 최소 계단 수
+_GRID_MASS_MIN = 0.8        # 계단 위에 있어야 할 최소 질량 비율
+_GRID_TOL = 0.25            # 계단 간격이 기본 간격의 정수배에서 벗어나도 되는 허용 오차
+
+
+def _grid_step(v):
+    """값이 일정 간격 격자(양자화 계단) 위에 있으면 그 간격, 아니면 None.
+
+    도수가 적은 값(밀려난 fail chip 등)은 제외하고 **몸통을 이루는 계단**만 본다.
+    """
+    uniq, cnt = np.unique(v, return_counts=True)
+    heavy = uniq[cnt >= max(2, 0.005 * v.size)]
+    if heavy.size < _GRID_MIN_LEVELS:
+        return None
+    if float(cnt[cnt >= max(2, 0.005 * v.size)].sum()) < _GRID_MASS_MIN * v.size:
+        return None
+    diffs = np.diff(heavy)
+    step = float(np.median(diffs))
+    if step <= 0:
+        return None
+    # 간격이 전부 step 의 정수배여야 진짜 격자다(불규칙하면 그냥 이산 분포)
+    k = np.round(diffs / step)
+    if np.any(k < 1) or np.any(np.abs(diffs - k * step) > _GRID_TOL * step):
+        return None
+    return step
+
+
 def _histogram_peaks(v):
     """히스토그램 + 국소 최대(양옆 bin 보다 큰) 인덱스. 표본 8 미만이면 None(판정 불가).
 
     반환: (peaks, hist). bin 수는 표본 크기에 따라 5~20 사이. `_density_gap` 과 `_n_modes`
     가 **같은 히스토그램**을 봐야 골 깊이와 봉우리 수가 어긋나지 않으므로 둘이 공유한다.
+
+    ⚠ **양자화 격자 정렬**(2026-08-13): 값이 계단형(CODE·PCT 등)이면 bin 폭이 계단 간격보다
+    좁아 **빈 칸이 사이사이 끼며 가짜 봉우리**가 생긴다. 실측 예 — step 0.125 인 단봉
+    데이터의 히스토그램이 `[28,0,23,0,87,0,573,0,1393,1797,0,…]` 이 되어 봉우리 8개로
+    잡혔다(계단별 도수는 완벽한 단봉인데도 BIMODALITY 오발화). bin 경계를 격자에 맞추면
+    사라진다. 격자가 촘촘하면(CODE 64레벨) 칸별 도수가 잡음이 되므로 m칸씩 묶어 집계한다.
     """
     if v.size < 8:
         return None
-    hist, _ = np.histogram(v, bins=min(20,max(5, v.size // 5)))
+    bins = min(20, max(5, v.size // 5))
+    step = _grid_step(v)
+    if step:
+        idx = np.round((v - v.min()) / step).astype(int)
+        counts = np.bincount(idx)
+        m = max(1, int(np.ceil(counts.size / bins)))
+        if m > 1:                                  # m칸씩 묶기 — 남는 칸은 0 으로 패딩
+            pad = (-counts.size) % m
+            counts = np.concatenate([counts, np.zeros(pad, dtype=counts.dtype)])
+            counts = counts.reshape(-1, m).sum(axis=1)
+        hist = counts
+    else:
+        hist, _ = np.histogram(v, bins=bins)
     return [i for i in range(1, len(hist) - 1)
             if hist[i] > hist[i-1] and hist[i] > hist[i+1]], hist
 
-def _density_gap(v):
-    """히스토그램 기반 이봉 골 깊이(0~1 정규화). 단봉이면 0, 표본 부족이면 None."""
-    peaks_hist = _histogram_peaks(v)
+def _density_gap(v, peaks_hist=_UNSET):
+    """히스토그램 기반 이봉 골 깊이(0~1 정규화). 단봉이면 0, 표본 부족이면 None.
+
+    peaks_hist 를 넘기면(compute 가 _histogram_peaks 1회 계산 후 _n_modes 와 공유)
+    재계산하지 않는다 — 같은 히스토그램을 두 번 만들던 낭비 제거(docstring 의 "둘이
+    공유한다" 를 실제로 수행).
+    """
+    if peaks_hist is _UNSET:
+        peaks_hist = _histogram_peaks(v)
     if peaks_hist is None:
         return None
     peaks, hist = peaks_hist
@@ -102,9 +160,10 @@ def _density_gap(v):
         return 0.0
     return float((min(int(hist[p1]), int(hist[p2])) - valley) / peak_max)
 
-def _n_modes(v):
-    """히스토그램 봉우리 개수(최소 1). 표본 부족이면 None."""
-    peaks_hist = _histogram_peaks(v)
+def _n_modes(v, peaks_hist=_UNSET):
+    """히스토그램 봉우리 개수(최소 1). 표본 부족이면 None. peaks_hist 공유는 _density_gap 참조."""
+    if peaks_hist is _UNSET:
+        peaks_hist = _histogram_peaks(v)
     if peaks_hist is None:
         return None
     peaks, _ = peaks_hist
@@ -126,43 +185,44 @@ def _modified_z(v, median, mad):
     return None
 
 
-def _fail_outlier_features(v, fail_mask, median, mad, mean, lsl, usl):
-    """fail 값이 정상 몸통에서 얼마나 떨어졌는지 — (robust z 최대, 정규화 gap).
+def _fail_outlier_features(v, fail_mask, median, mad, z=_UNSET):
+    """fail 이 정상 몸통에서 **얼마나 떨어졌고 얼마나 끊겼는지** — OUTLIER 판정의 두 축.
 
-    `fail_robust_z_max` 가 OUTLIER 룰의 판정 근거다. "fail 비율이 몇 %냐"(outlier_ratio)가
-    아니라 "fail 이 얼마나 멀리 떨어졌냐"를 본다 — limit 바로 밖에 붙은 fail(공정능력 문제)과
-    뚝 떨어진 fail(산발 이상)을 가르는 것이 이 축이기 때문이다.
-    `fail_value_gap_norm` 은 판정에 쓰지 않는 참고 지표 — 마지막 pass 와 첫 fail 사이의
-    빈 구간을 (limit − 평균) 으로 정규화한 값이라 트레이스에서 눈으로 보는 용도다.
+    반환 (fail_mad_min, fail_pass_gap_sigma, fail_robust_z_max):
+      · `fail_mad_min`         = 중심에 **가장 가까운** fail 의 |x−median|/MAD (= MAD 배수)
+      · `fail_pass_gap_sigma`  = min(fail 거리) − max(pass 거리), robust σ 단위
+      · `fail_robust_z_max`    = 가장 먼 fail 의 거리 (판정 미사용, evidence 참고값)
+
+    **왜 두 축인가** (2026-08-13, 사용자 v6 검토로 확정): 거리 하나로는 가릴 수 없다.
+    실측에서 z 13.2 인 항목이 heavy tail 이고 z 8.5 인 항목이 outlier 였다 — 거리 순서가
+    라벨과 뒤집힌다. 가르는 것은 **연속성**이다:
+      · 꼬리가 몸통에서 limit 까지 이어져 넘어갔으면 → gap ≈ 0 → HEAVY_TAIL
+      · 몸통과 뚝 끊겨 따로 놀면            → gap 큼   → OUTLIER
+    거리(mad) 조건은 "limit 바로 밖에 붙은 fail"(공정능력 문제)을 걸러내는 하한이다.
+
+    거리를 MAD 배수로 돌려주는 이유: 사용자가 "MAD 기준 4σ" 라고 말하는 값이 화면·트레이스에
+    그대로 보여야 한다. `0.6745 × 1.4826 ≈ 1` 이라 `|x−med|/robustσ ≡ |modified z|` 이고,
+    MAD 배수는 거기에 `/0.6745` 한 것이다 — 자(尺)는 하나다.
+
+    fail 이 없거나 pass 가 하나도 없으면(전량 fail) gap 을 잴 수 없어 None → 조건 False
+    → 미발화. 결측을 양호로 읽지 않는 규칙과 같은 취급이다.
     """
     fm = np.asarray(fail_mask, dtype=bool)
     if fm.size != v.size or not fm.any():
-        return None, None
+        return None, None, None
+    if z is _UNSET:
+        z = _modified_z(v, median, mad)
+    if z is None:                                  # 전부 동일값 — 흩어짐 자체가 없다
+        return None, None, None
     ok = np.isfinite(v)
-    z = _modified_z(v, median, mad)
-    z_max = None
-    if z is not None:
-        zf = np.abs(z)[fm & ok]
-        if zf.size:
-            z_max = float(zf.max())
-
-    gap = None
-    fv, pv = v[fm & ok], v[(~fm) & ok]
-    if fv.size and pv.size:
-        cands = []
-        hi_f = fv[fv > mean]
-        if hi_f.size and usl is not None and (usl - mean) > 0:
-            hi_p = pv[pv < hi_f.min()]
-            if hi_p.size:
-                cands.append(float((hi_f.min() - hi_p.max()) / (usl - mean)))
-        lo_f = fv[fv < mean]
-        if lo_f.size and lsl is not None and (mean - lsl) > 0:
-            lo_p = pv[pv > lo_f.max()]
-            if lo_p.size:
-                cands.append(float((lo_p.min() - lo_f.max()) / (mean - lsl)))
-        if cands:
-            gap = max(cands)
-    return z_max, gap
+    dist = np.abs(z)
+    df, dp = dist[fm & ok], dist[(~fm) & ok]
+    if not df.size:
+        return None, None, None
+    mad_min = float(df.min()) / 0.6745
+    z_max = float(df.max())
+    gap = float(df.min() - dp.max()) if dp.size else None
+    return mad_min, gap, z_max
 
 
 def _gradient(coord, fail_mask, bins=8):
@@ -187,12 +247,18 @@ def _gradient(coord, fail_mask, bins=8):
 
 
 def _edge_of_line(key, val):
-    """key 로 묶은 각 줄에서 val 이 **양끝**인 die 마스크 (행별 좌우끝 / 열별 상하끝)."""
+    """key 로 묶은 각 줄에서 val 이 **양끝**인 die 마스크 (행별 좌우끝 / 열별 상하끝).
+
+    그룹별 min/max 는 정렬 + reduceat 로 구한다 — 종전 `np.minimum.at`/`maximum.at`
+    (unbuffered ufunc.at, 벡터 연산 대비 수십 배 느리고 GIL 도 놓지 않음)과 결과 동일
+    (min/max 는 순서 무관). inv 는 np.unique 산출이라 0..k-1 을 모두 가진다(빈 그룹 없음).
+    """
     uniq, inv = np.unique(key, return_inverse=True)
-    lo = np.full(uniq.size, np.inf)
-    hi = np.full(uniq.size, -np.inf)
-    np.minimum.at(lo, inv, val)
-    np.maximum.at(hi, inv, val)
+    order = np.argsort(inv, kind="stable")
+    sv = np.asarray(val)[order]
+    starts = np.searchsorted(inv[order], np.arange(uniq.size))
+    lo = np.minimum.reduceat(sv, starts)
+    hi = np.maximum.reduceat(sv, starts)
     return (val == lo[inv]) | (val == hi[inv])
 
 
@@ -215,7 +281,35 @@ def _e1_mask(xs, ys):
     return mask if mask.mean() <= 0.5 else np.zeros(xs.shape, dtype=bool)
 
 
-def _spatial_features(case_ctx, th):
+def _spatial_geometry(case_ctx):
+    """fail 과 무관한 좌표 전처리(중심 정렬·반경·E1) — 같은 item 의 case(bin)들이 공유.
+
+    valid 좌표가 2개 미만이면 None(공간 feature 전부 결측 — 종전 게이트와 동일 조건).
+    **웨이퍼 중심을 좌표에서 구한다** — XPOS/YPOS 는 실데이터에서 항상 양수(0/1-based die
+    인덱스)라, 원점(0,0) 기준으로 반경을 재면 웨이퍼 한 귀퉁이가 중심이 되어 edge/center/
+    ring/quadrant 판정이 통째로 어긋난다. 좌표 범위의 중앙(bounding box 중심)을 쓴다.
+    이미 중심 정렬된(음수 포함) 입력에는 no-op 이다.
+    """
+    x = case_ctx.get("x_pos") or []
+    y = case_ctx.get("y_pos") or []
+    xs = np.array([v if v is not None else np.nan for v in x], dtype=float)
+    ys = np.array([v if v is not None else np.nan for v in y], dtype=float)
+    valid = np.isfinite(xs) & np.isfinite(ys)
+    if valid.sum() < 2:
+        return None
+    xs, ys = xs[valid], ys[valid]
+    xs = xs - (float(xs.max()) + float(xs.min())) / 2.0
+    ys = ys - (float(ys.max()) + float(ys.min())) / 2.0
+    radius = np.sqrt(xs ** 2 + ys ** 2)
+    rmax = radius.max()
+    return {"xs": xs, "ys": ys, "valid": valid, "radius": radius, "rmax": rmax,
+            "xmax": float(np.max(np.abs(xs))) or None,
+            "ymax": float(np.max(np.abs(ys))) or None,
+            "rnorm": (radius / rmax) if rmax > 0 else None,
+            "e1": _e1_mask(xs, ys)}
+
+
+def _spatial_features(case_ctx, th, geom=_UNSET):
     """웨이퍼 좌표 기반 fail 편중 feature. 좌표가 없거나 fail 이 0 이면 전부 None.
 
     반경을 최대반경으로 정규화해 edge/center/ring 영역을 가르고, 영역마다 두 가지를 낸다:
@@ -227,9 +321,9 @@ def _spatial_features(case_ctx, th):
     gradient 는 좌표를 8구간으로 나눈 구간별 fail 율의 회귀 기울기이고, `_norm` 변형은
     좌표 스케일이 제품마다 달라도 비교되도록 정규화 좌표로 다시 잰 값이다.
     영역 경계(edge_region_pct/center_region_pct)는 thresholds.yaml.
+    geom 은 _spatial_geometry 결과 재사용용(compute 가 item 단위로 공유) — 미전달이면
+    여기서 계산한다(종전 동작·직접 호출 테스트 호환).
     """
-    x = case_ctx.get("x_pos") or []
-    y = case_ctx.get("y_pos") or []
     fail_mask = case_ctx.get("fail_mask") or []
     out = {"edge_fail_ratio": None, "center_fail_ratio": None, "radial_gradient": None,
            "quadrant_imbalance": None, "x_gradient": None, "y_gradient": None,
@@ -238,30 +332,21 @@ def _spatial_features(case_ctx, th):
            "e1_fail_ratio" : None,
            "e1_fail_share": None, "edge_fail_share": None,
            "center_fail_share": None, "ring_fail_share": None}
-    xs = np.array([v if v is not None else np.nan for v in x], dtype=float)
-    ys = np.array([v if v is not None else np.nan for v in y], dtype=float)
+    if geom is _UNSET:
+        geom = _spatial_geometry(case_ctx)
     fm = np.asarray(fail_mask, dtype=bool)
-    valid = np.isfinite(xs) & np.isfinite(ys)
-    if valid.sum() < 2 or fm.sum() == 0:
+    if geom is None or fm.sum() == 0:
         return out
 
-    xs, ys, fm = xs[valid], ys[valid], fm[valid]
-    # **웨이퍼 중심을 좌표에서 구한다** — XPOS/YPOS 는 실데이터에서 항상 양수(0/1-based die
-    # 인덱스)라, 원점(0,0) 기준으로 반경을 재면 웨이퍼 한 귀퉁이가 중심이 되어 edge/center/
-    # ring/quadrant 판정이 통째로 어긋난다. 좌표 범위의 중앙(bounding box 중심)을 쓴다.
-    # 이미 중심 정렬된(음수 포함) 입력에는 no-op 이다.
-    xs = xs - (float(xs.max()) + float(xs.min())) / 2.0
-    ys = ys - (float(ys.max()) + float(ys.min())) / 2.0
-    radius = np.sqrt(xs ** 2 + ys ** 2)
-    rmax = radius.max()
-    xmax = float(np.max(np.abs(xs))) or None
-    ymax = float(np.max(np.abs(ys))) or None
+    xs, ys, radius = geom["xs"], geom["ys"], geom["radius"]
+    rmax, xmax, ymax = geom["rmax"], geom["xmax"], geom["ymax"]
+    fm = fm[geom["valid"]]
     overall_fail = fm.mean()
     if rmax > 0 and overall_fail > 0:
-        rnorm = radius / rmax
+        rnorm = geom["rnorm"]
         # E1(최외곽 1열)은 EDGE 밴드에서 뺀다 — 같은 die 를 두 룰이 각각 세면 "가장자리
         # 한 줄 문제" 와 "바깥 밴드 전체 문제" 가 구분되지 않는다(2026-08-12 공간축 세분).
-        e1 = _e1_mask(xs, ys)
+        e1 = geom["e1"]
         edge_mask = (rnorm >= th["edge_region_pct"]) & (~e1)
         center_mask = rnorm <= th["center_region_pct"]
         ring_mask = (rnorm > th["center_region_pct"]) & (rnorm <th["edge_region_pct"]) & (~e1)
@@ -388,9 +473,26 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     if n == 0:
         return _empty_features()
 
-    v = np.asarray(values, dtype=float)
-    median = float(np.median(v))
-    mad = float(np.median(np.abs(v - median)))
+    # item 단위 공유(_shared — ingest 가 같은 item 의 case(bin)들에 같은 dict 를 붙임):
+    # fail bin 과 무관한 계산(배열 변환·정렬·히스토그램·robust 통계·좌표 전처리)을 case
+    # 수만큼 반복하지 않는다(2026-08-13 콜드 빌드 최적화 — 값 완전 동일, 재계산만 제거).
+    # 값은 1-튜플로 감싸 "계산 결과가 None" 과 "미계산" 을 구분한다. th 의존값
+    # (outlier_ratio·공간 밴드·modality_v2 등)은 item_class 오버레이가 bin 축을 가질 수
+    # 있어 공유하지 않는다. 동시 계산 경합은 무해(같은 입력 → 같은 값, dict 대입 원자적).
+    shared = case_ctx.get("_shared")
+
+    def _memo(key, fn):
+        if shared is None:
+            return fn()
+        hit = shared.get(key)
+        if hit is None:
+            hit = (fn(),)
+            shared[key] = hit
+        return hit[0]
+
+    v = _memo("v", lambda: np.asarray(values, dtype=float))
+    median = _memo("median", lambda: float(np.median(v)))
+    mad = _memo("mad", lambda: float(np.median(np.abs(v - median))))
     robust_sigma = 1.4826 * mad
 
     spread_norm = None
@@ -399,22 +501,24 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
 
     # MAD=0(과반 동일값)이면 meanAD 폴백 — 그냥 0 으로 두면 "대부분 동일값 + 소수 폭주"
     # 케이스를 outlier 룰이 통째로 놓친다. 폴백 규칙은 _modified_z 가 갖고 있고,
-    # fail_robust_z_max 도 같은 함수를 써서 두 지표의 자(尺)가 갈라지지 않게 한다.
-    modified_z = _modified_z(v, median, mad)
+    # fail 거리 지표들도 같은 함수를 써서 두 지표의 자(尺)가 갈라지지 않게 한다.
+    modified_z = _memo("modified_z", lambda: _modified_z(v, median, mad))
     outlier_ratio = (0.0 if modified_z is None
                      else float(np.mean(np.abs(modified_z) > th["outlier_sigma"])))
 
-    mean = float(v.mean())
+    mean = _memo("mean", lambda: float(v.mean()))
     stdev = raw_metrics.get("stdev")
     skewness = case_ctx.get("skewness")
     if skewness is None and stdev:
         skewness = (mean - median) / stdev
-    kurtosis = float(np.mean(((v - mean) / stdev) ** 4) - 3) if stdev else None
+    kurtosis = _memo("kurtosis", lambda: (
+        float(np.mean(((v - mean) / stdev) ** 4) - 3) if stdev else None))
     # 모멘트 왜도(3차) — `skewness`(비모수 (mean-median)/stdev)는 **수학적 상한이 1.0** 이라
     # `skew_warn: 1.0` 을 넘을 수 없다(TAIL_RISK 가 영원히 발화 못 하던 원인). 상한이 없는
     # 3차 모멘트를 따로 둬 룰이 실제로 판정할 수 있게 한다. 기존 컬럼은 그대로 둔다
     # (eval.db features.skewness 의 의미가 바뀌면 과거 데이터와 섞인다).
-    skewness_moment = float(np.mean(((v - mean) / stdev) ** 3)) if stdev else None
+    skewness_moment = _memo("skewness_moment", lambda: (
+        float(np.mean(((v - mean) / stdev) ** 3)) if stdev else None))
 
     bimodality_score = raw_metrics.get("bimodality")
     if bimodality_score is not None:
@@ -422,10 +526,13 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     else:
         modality = None
 
-    density_gap = _density_gap(v)
-    cdf_gap = _cdf_gap(v)
-    n_modes = _n_modes(v)
-    value_gap_ratio, value_gap_minor_mass = _value_gap(v)
+    # _density_gap 과 _n_modes 는 같은 히스토그램을 봐야 한다(각 함수 docstring) —
+    # 1회 계산해 공유(종전에는 같은 입력으로 두 번 계산했다).
+    peaks_hist = _memo("peaks_hist", lambda: _histogram_peaks(v))
+    density_gap = _memo("density_gap", lambda: _density_gap(v, peaks_hist))
+    cdf_gap = _memo("cdf_gap", lambda: _cdf_gap(v))
+    n_modes = _memo("n_modes", lambda: _n_modes(v, peaks_hist))
+    value_gap_ratio, value_gap_minor_mass = _memo("value_gap", lambda: _value_gap(v))
     modality_v2 = _classify_modality_v2(n, outlier_ratio, n_modes, bimodality_score,
                                         density_gap, value_gap_ratio,
                                         value_gap_minor_mass, th)
@@ -435,15 +542,17 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     if spec_margin_low is not None and spec_margin_high is not None:
         nearest_spec_side = "LOW" if spec_margin_low < spec_margin_high else "HIGH"
 
-    limit_hit_ratio = None
-    if lsl is not None and usl is not None:
-        limit_hit_ratio = float(np.mean(np.isclose(v, lsl) | np.isclose(v, usl)))
+    limit_hit_ratio = _memo("limit_hit_ratio", lambda: (
+        float(np.mean(np.isclose(v, lsl) | np.isclose(v, usl)))
+        if (lsl is not None and usl is not None) else None))
 
-    spatial = _spatial_features(case_ctx, th)
+    spatial = _spatial_features(case_ctx, th,
+                                _memo("spatial_geom",
+                                      lambda: _spatial_geometry(case_ctx)))
     site_cpk_delta = _site_cpk_delta(case_ctx)
     code_edge_hit = limit_hit_ratio if case_ctx.get("value_type") == "CODE" else None
-    fail_robust_z_max, fail_value_gap_norm = _fail_outlier_features(
-        v, case_ctx.get("fail_mask") or [], median, mad, mean, lsl, usl)
+    fail_mad_min, fail_pass_gap_sigma, fail_robust_z_max = _fail_outlier_features(
+        v, case_ctx.get("fail_mask") or [], median, mad, z=modified_z)
 
     if is_pf:
         spread_norm = skewness = kurtosis = skewness_moment = None
@@ -451,7 +560,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         spec_margin_low = spec_margin_high = nearest_spec_side = limit_hit_ratio = None
         n_modes = modality_v2 = None
         value_gap_ratio = value_gap_minor_mass = None
-        fail_robust_z_max = fail_value_gap_norm = None
+        fail_mad_min = fail_pass_gap_sigma = fail_robust_z_max = None
 
     return {
         "spread_norm": spread_norm, "skewness": skewness, "kurtosis": kurtosis,
@@ -464,5 +573,6 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         "n_dut": n, "site_cpk_delta": site_cpk_delta, "code_edge_hit": code_edge_hit,
         "n_modes" : n_modes, "modality_v2" : modality_v2,
         "value_gap_ratio": value_gap_ratio, "value_gap_minor_mass": value_gap_minor_mass,
-        "fail_robust_z_max": fail_robust_z_max, "fail_value_gap_norm": fail_value_gap_norm,
+        "fail_mad_min": fail_mad_min, "fail_pass_gap_sigma": fail_pass_gap_sigma,
+        "fail_robust_z_max": fail_robust_z_max,
     }

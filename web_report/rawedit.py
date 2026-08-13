@@ -6,8 +6,8 @@ Honey 가 재인코딩한 parquet 전체를 받아 기존 analysis_key 원본을
 복구는 운영자 수동. service.edit_raw_data 와 동일한 백업·content_hash 산출·캐시 무효화·
 audit 패턴을 그대로 따른다 (여기는 셀 단위가 아니라 source 전체 교체라는 점만 다름).
 
-웹 브라우저용 source 1개 CSV 내보내기(export_source_csv)도 여기 둔다 — Honey 없이
-세션 rawdata 원본을 받는 조회 전용 경로다.
+웹 브라우저용 CSV 내보내기(export_source_csv = source 1개, export_sources_csv_zip =
+전 source 를 zip 하나로)도 여기 둔다 — Honey 없이 세션 rawdata 원본을 받는 조회 전용 경로다.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import shutil
 import time
 import zipfile
@@ -86,6 +87,69 @@ def _csv_row(values) -> str:
     return buf.getvalue()
 
 
+# 파일명에 쓸 수 없는 문자 — 단일 CSV 다운로드와 zip 내부 이름이 같은 규칙을 쓰게 여기 둔다.
+_FS_UNSAFE = re.compile(r'[\\/:*?"<>|\r\n]+')
+
+
+def csv_download_name(lot, source_name) -> str:
+    """rawdata CSV 파일명 — 단일 다운로드 파일명이자 전체 zip 의 내부 파일명.
+
+    전체 zip 을 푼 뒤 개별 source 를 추가로 받아도 같은 폴더에서 이름이 겹치지 않고
+    일관되도록 두 경로가 이 함수 하나를 공유한다. `/`·`\\` 가 `_` 로 치환되므로 zip
+    내부 이름에 경로 구분자가 섞일 여지(zip slip)도 함께 사라진다.
+    """
+    return _FS_UNSAFE.sub("_", f"rawdata_{lot}_{source_name}.csv")
+
+
+def _load_session_sources(session_id, report_db, upload_root):
+    """세션 → (session, source parquet bytes 리스트, manifest).
+
+    없는 세션은 KeyError, 산출물이 없는 세션은 FileNotFoundError.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+    sources, manifest = runtime.storage().load_webreport_sources(analysis_key, upload_root)
+    return session, sources, manifest
+
+
+def _open_source(sources, manifest, idx):
+    """source idx 의 parquet 을 열어 (pf, names, batch_rows, source_name) 을 준다.
+
+    footer 만 읽는다 — 행 데이터는 iter_batches 때 들어온다. BufferReader 는 io.BytesIO
+    와 달리 원본 bytes 를 복사하지 않는다(zero-copy) — 전 source 를 동시에 여는
+    export_sources_csv_zip 에서 peak 메모리가 2배가 되는 것을 막는다.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    if not 0 <= idx < len(sources):
+        raise IndexError(idx)
+    entries = manifest.get("sources") or []
+    entry = entries[idx] if idx < len(entries) else {}
+    # loader.download_decode_tables 와 같은 이름 규칙 — 화면 source 이름과 일치시킨다.
+    source_name = str(entry.get("name") or "").strip() or f"source_{idx + 1}"
+
+    pf = pq.ParquetFile(pa.BufferReader(pa.py_buffer(sources[idx])))
+    names = [str(c) for c in pf.schema_arrow.names]
+    if len(names) >= len(META_COLUMNS):
+        # 조회 경로(_decode_parts)와 같은 구제 — legacy 'Bin' 헤더도 규격대로 내보낸다.
+        names[:len(META_COLUMNS)] = META_COLUMNS
+    # 청크는 셀 수로 잡는다 — 행 수로 고정하면 컬럼이 넓은 소스에서 청크 하나가 수십 MB 가 된다.
+    batch_rows = max(50, min(1000, 200_000 // max(1, len(names))))
+    return pf, names, batch_rows, source_name
+
+
+def _csv_chunks(pf, names, batch_rows):
+    """헤더 1행 + batch 별 CSV 텍스트 청크 (str generator). BOM 은 붙이지 않는다."""
+    yield _csv_row(names)
+    for batch in pf.iter_batches(batch_size=batch_rows):
+        yield batch.to_pandas().to_csv(header=False, index=False, lineterminator="\r\n")
+
+
 def export_source_csv(session_id, source_idx, *, report_db, upload_root):
     """세션의 source 1개를 7-meta honeyform 원형 그대로 CSV 청크로 흘려보낸다.
 
@@ -101,39 +165,140 @@ def export_source_csv(session_id, source_idx, *, report_db, upload_root):
     행 데이터는 batch 단위로 읽어 넘긴다 — 컬럼 2000개짜리 소스를 통째로 pandas 프레임
     으로 펼치면 CSV 텍스트와 프레임을 동시에 들고 있게 된다.
     """
-    import pyarrow.parquet as pq
-
-    session = report_db.get_session(session_id)
-    if not session:
-        raise KeyError(session_id)
-    analysis_key = session.get("analysis_key")
-    if not analysis_key:
-        raise FileNotFoundError(session_id)
-
-    sources, manifest = runtime.storage().load_webreport_sources(analysis_key, upload_root)
-    if not 0 <= source_idx < len(sources):
-        raise IndexError(source_idx)
-    entries = manifest.get("sources") or []
-    entry = entries[source_idx] if source_idx < len(entries) else {}
-    # loader.download_decode_tables 와 같은 이름 규칙 — 화면 source 이름과 일치시킨다.
-    source_name = str(entry.get("name") or "").strip() or f"source_{source_idx + 1}"
-
-    pf = pq.ParquetFile(io.BytesIO(sources[source_idx]))
-    names = [str(c) for c in pf.schema_arrow.names]
-    if len(names) >= len(META_COLUMNS):
-        # 조회 경로(_decode_parts)와 같은 구제 — legacy 'Bin' 헤더도 규격대로 내보낸다.
-        names[:len(META_COLUMNS)] = META_COLUMNS
-    # 청크는 셀 수로 잡는다 — 행 수로 고정하면 컬럼이 넓은 소스에서 청크 하나가 수십 MB 가 된다.
-    batch_rows = max(50, min(1000, 200_000 // max(1, len(names))))
+    _session, sources, manifest = _load_session_sources(session_id, report_db, upload_root)
+    pf, names, batch_rows, source_name = _open_source(sources, manifest, source_idx)
 
     def chunks():
+        inner = _csv_chunks(pf, names, batch_rows)
         # 선두 U+FEFF(BOM) — Excel 이 CSV 를 UTF-8 로 열게 하는 유일한 신호. 눈에 안 보이는
         # 문자를 소스에 직접 박으면 지워져도 티가 안 나므로 코드포인트로 쓴다.
-        yield chr(0xFEFF) + _csv_row(names)
-        for batch in pf.iter_batches(batch_size=batch_rows):
-            yield batch.to_pandas().to_csv(header=False, index=False, lineterminator="\r\n")
+        yield chr(0xFEFF) + next(inner)      # 첫 청크(헤더)에만 BOM
+        yield from inner
 
     return chunks(), source_name
+
+
+class _ZipSink:
+    """zipfile 이 쓴 바이트를 모았다가 generator 가 뽑아가는 unseekable sink.
+
+    seek·tell 을 **일부러 제공하지 않는다** — 있으면 zipfile 이 엔트리를 다 쓴 뒤 로컬
+    헤더로 되감아 CRC/크기를 고치려 들어(_ZipWriteFile.close) 스트리밍이 불가능해진다.
+    없으면 zipfile 이 _Tellable 로 감싸고 _seekable=False 로 내려가 CRC/크기를 데이터
+    뒤 data descriptor 로 붙인다 — 표준 압축 해제 도구가 정상 인식하는 방식이다.
+
+    write 는 **쓴 바이트 수를 반환해야** 하고(_Tellable.write 가 offset 에 더한다),
+    flush 는 **있어야 한다**(_write_end_record 가 fp.flush() 를 부른다). 둘 중 하나만
+    빠져도 zip 마감에서 터진다.
+    """
+    __slots__ = ("_parts",)
+
+    def __init__(self):
+        self._parts = []
+
+    def write(self, data):
+        self._parts.append(bytes(data))
+        return len(data)
+
+    def flush(self):
+        pass
+
+    def drain(self) -> bytes:
+        parts, self._parts = self._parts, []
+        return b"".join(parts)
+
+
+def _unique_entry_name(name, used) -> str:
+    """zip 내부 이름 중복 제거 — 같은 이름이 또 오면 stem 에 _2, _3 을 붙인다.
+
+    zipfile 은 중복 이름을 UserWarning 만 내고 그대로 써서, 푸는 쪽에서 하나가 다른
+    하나를 조용히 덮어쓴다(= source 유실). 키는 소문자로 비교한다 — Windows 파일
+    시스템이 대소문자를 구분하지 않으므로 'A.csv'/'a.csv' 도 충돌이다.
+    """
+    key = name.lower()
+    if key not in used:
+        used[key] = 1
+        return name
+    stem, _, ext = name.rpartition(".")
+    while True:
+        used[key] += 1
+        cand = f"{stem}_{used[key]}.{ext}"
+        if cand.lower() not in used:
+            used[cand.lower()] = 1
+            return cand
+
+
+def export_sources_csv_zip(session_id, *, report_db, upload_root):
+    """세션의 전 source 를 CSV 로 만들어 **스트리밍 zip** bytes 청크로 흘려보낸다.
+
+    반환: (chunks, count) — chunks 는 bytes generator, count 는 담기는 source 개수.
+    없는 세션/산출물은 KeyError/FileNotFoundError, source 가 0개면 IndexError.
+
+    내용 정책은 export_source_csv 와 완전히 같다(저장된 parquet 원형, 메타 6행 포함,
+    전처리·편집 미반영). 파일마다 UTF-8 BOM 을 넣는다 — 풀어서 Excel 로 바로 연다.
+    zip 내부 파일명도 단일 다운로드와 같은 csv_download_name 규칙을 쓴다.
+
+    압축은 ZIP_DEFLATED(level 1) — parquet 을 담는 export_sources_zip 이 ZIP_STORED 인
+    것과 다르다. 저쪽은 이미 zstd 압축이라 재압축이 CPU 만 먹지만 여기는 순수 텍스트라
+    실측 1.6배(level 1)~2.6배(level 6)가 줄어든다. level 을 1 로 고정한 이유는 사내
+    LAN 에서 병목이 대역폭이 아니라 waitress 스레드 점유 시간이기 때문이다 — 20MB 당
+    level 1 은 0.09s(234MB/s), level 6 은 0.44s(48MB/s) 를 쓰고 절약분은 원본의 4% 다.
+
+    zip 전체를 메모리에 만들어 두지 않는다. CSV 는 parquet 대비 전개 크기가 몇 배라
+    전량을 들고 있으면 대형 세션 1건이 웹 프로세스 RAM 을 통째로 먹는다.
+    """
+    _session, sources, manifest = _load_session_sources(session_id, report_db, upload_root)
+    if not sources:
+        raise IndexError(0)
+    lot = str((_session or {}).get("lot_id") or "").strip() or str(session_id)
+
+    # 응답을 흘리기 시작하면 4xx/5xx 로 돌아갈 수 없으므로, 실패할 수 있는 일(스키마 읽기·
+    # 이름 확정)은 전부 여기서 끝낸다 — export_source_csv 와 같은 판단. footer 만 읽으므로
+    # 전 source 를 미리 열어도 행 데이터는 아직 안 들어온다.
+    opened, used_names = [], {}
+    for idx in range(len(sources)):
+        pf, names, batch_rows, source_name = _open_source(sources, manifest, idx)
+        entry_name = _unique_entry_name(csv_download_name(lot, source_name), used_names)
+        opened.append((pf, names, batch_rows, entry_name))
+    sources.clear()      # 원본 bytes 는 BufferReader 가 참조로 들고 있다(zero-copy)
+
+    def chunks():
+        sink = _ZipSink()
+        # with 를 쓰지 않는다 — __exit__ 가 예외 상황에서도 close() 로 중앙 디렉토리를 써서
+        # "정상적으로 열리지만 source 가 빠진 zip" 을 만든다(조용한 유실). 성공했을 때만 닫는다.
+        zf = zipfile.ZipFile(sink, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=1)
+        try:
+            for i, item in enumerate(opened):
+                pf, names, batch_rows, entry_name = item
+                # 단일 엔트리 4GB 초과 시 zip64 가 필요하다(force_zip64=True). 현 규모
+                # (source 당 parquet 수 MB)에서는 도달하지 않으므로 켜지 않는다.
+                with zf.open(entry_name, "w") as w:
+                    inner = _csv_chunks(pf, names, batch_rows)
+                    w.write((chr(0xFEFF) + next(inner)).encode("utf-8"))
+                    for text in inner:
+                        w.write(text.encode("utf-8"))
+                        out = sink.drain()
+                        if out:
+                            yield out
+                out = sink.drain()      # 엔트리 마감(deflate flush + data descriptor)
+                if out:
+                    yield out
+                opened[i] = None        # 끝난 source 의 parquet bytes 를 즉시 회수
+            zf.close()                  # ← 성공 경로에서만 중앙 디렉토리를 쓴다
+            out = sink.drain()
+            if out:
+                yield out
+        except GeneratorExit:
+            zf.fp = None                # 클라 중단 — 마감 없이 종료
+            raise
+        except Exception:
+            # 이미 200 을 보낸 뒤라 상태 코드를 바꿀 수 없다. 중앙 디렉토리 없이 끊어
+            # 받는 쪽이 "손상된 zip"(BadZipFile)으로 인지하게 한다.
+            # zf.fp=None 은 GC __del__ → close() 재진입을 막는다(close 는 fp None 이면 즉시 반환).
+            zf.fp = None
+            _log.exception("rawdata csv zip 스트리밍 중단 (session=%s)", session_id)
+            return
+
+    return chunks(), len(opened)
 
 
 def backup_current_sources(analysis_key, upload_root, old_content_hash="") -> str:

@@ -76,16 +76,25 @@ signatures:
   present)는 전부 `signatures_for(case_ctx)` 를 쓴다.
 - signature 추가 시 체크: (1) status.py `SPECIFICITY_ORDER` 에 id 추가, (2) 필요한 임계값 키를 thresholds 에 추가.
 - **현상 5축 체계(2026-08-12)** — 중심 / 산포·여유 / 형태 / 공간 / 데이터품질. 축당 primary
-  하나만 남기고 같은 현상의 약한 통계는 `suppressed_by` 로 목록에만 둔다
+  하나만 두고 같은 현상의 약한 통계는 `suppressed_by` 로 **primary 를 양보**한다
   (`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]`, `HEAVY_TAIL ← [OUTLIER]`,
   `BIDIR_TAIL ← [WIDE_DISTRIBUTION]`).
   결과 지표(cpk)는 원인 룰이 있으면 primary 가 되지 않는다. 배경은
   [../../../docs/13 §16](../../../docs/13_eval_analyzer_integration.md).
+  ⚠ **`suppressed_by` 는 목록에서 지우지 않는다**(2026-08-13 의미 변경). 지우던 시절에는
+  "cpk 도 낮고 outlier 도 있다" 가 한 줄로만 보여 나머지를 볼 수 없었다. 지금은
+  `signatures._apply_suppression` 이 `demoted_by` 를 달고 `status.decide` 가 primary
+  후보에서만 뺀다 — 발화 목록·Signature 컬럼에는 둘 다 남는다.
 - **룰셋 재편(2026-08-12, 사용자 v5 검토 반영)** — 겹치는 이름을 지우고 판정축을 바꿨다:
-  - `SEVERE_OUTLIER`+`OUTLIER_WARN` → **`OUTLIER`** 하나. 판정이 "outlier 비율"이 아니라
-    **"fail 이 중심에서 몇 robust σ 떨어졌나"**(`fail_robust_z_max ≥ outlier_fail_z_min` 12)로
-    바뀌었다 — 비율로는 limit 바로 밖에 붙은 fail(공정능력 문제)과 뚝 떨어진 fail(산발
-    이상)이 구분되지 않았다. 구 두 룰은 `enabled:false` 로 **남겨 둔다**(과거 DB 값 해석용).
+  - `SEVERE_OUTLIER`+`OUTLIER_WARN` → **`OUTLIER`** 하나. 구 두 룰은 `enabled:false` 로
+    **남겨 둔다**(과거 DB 값 해석용).
+    판정축은 2026-08-13 에 다시 바뀌어 **거리 AND 끊김** 두 조건이다:
+    `fail_mad_min ≥ 4`(중심에 가장 가까운 fail 의 MAD 배수) **AND**
+    `fail_pass_gap_sigma ≥ 1.5`(마지막 pass ↔ 첫 fail 빈 구간, robust σ).
+    ⚠ 거리 하나로는 못 가른다 — 실측에서 z 13.2 가 heavy tail, z 8.5 가 outlier 였다.
+    꼬리가 이어져 limit 을 넘었으면 HEAVY_TAIL, 몸통과 끊겼으면 OUTLIER 다.
+    정규 몸통은 최대 pass 거리가 ≈3.85σ 로 고정이라 **낮은 MAD 배수(4~6)의 OUTLIER 를
+    합성으로 만들 수 없다** — 그 구간은 균등분포 몸통(최대 1.35σ)으로만 재현된다.
   - `SPEC_TOO_TIGHT`·`WIDE_DISTRIBUTION` → `LOW_CPK` 로 통합(둘 다 off).
   - `SUBPOP_GAP` → **`BIMODALITY`** 개명(누적 DB 는 1회 마이그레이션으로 치환 —
     `server/tools/migrate_bimodality_rename.py`).

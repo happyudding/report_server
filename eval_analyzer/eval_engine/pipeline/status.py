@@ -57,7 +57,12 @@ def decide(case_ctx: dict, features: dict, sig_result: dict) -> dict:
         bias = sig_result.get("severity_bias", 0.0) or 0.0
         rank = max(1, min(4, round(max_rank + bias)))
         top = [s for r, s in ranks if r == max_rank]
-        primary = next((s for sid in SPECIFICITY_ORDER for s in top if s["id"] == sid), top[0])
+        # `demoted_by`(구 suppressed_by) = "원인 룰이 떠 있으니 primary 자리는 양보한다".
+        # 목록에서는 지우지 않는다(2026-08-13) — 여러 현상이 실제로 다 있으면 다 보여야
+        # 한다는 사용자 요구. 같은 severity 안에서 양보하지 않은 것을 먼저 고르고,
+        # 전부 양보했으면 그때 원래 순서대로 고른다.
+        pick = [s for s in top if not s.get("demoted_by")] or top
+        primary = next((s for sid in SPECIFICITY_ORDER for s in pick if s["id"] == sid), pick[0])
         secondary = [s["id"] for s in fired if s["id"] != primary["id"]]
 
     status = RANK_TO_STATUS[rank]

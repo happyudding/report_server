@@ -86,6 +86,10 @@ SCALE_QUICK = (5, 200, 200)
 SCALE_SLA = (7, 100, 10000)
 SLA_MAP_SECONDS = 3.0            # 서버 응답 + gunzip + JSON 파싱 합산 상한
 SLA_STEPS = 3                    # P1/P2/P3 — STEP 분리(die×STEP 증폭) 경로를 실제로 태운다
+# AI Comment 세션 시나리오 (2026-08-13 비동기 분리) — eval 평가가 지배 비용이라 규모는
+# 작게 잡아도 경로 자체(202 pending → 백그라운드 평가 → 분리 캐시 재빌드)가 재진다.
+SCALE_AI_FULL = (5, 200, 1000)
+SCALE_AI_QUICK = (3, 60, 200)
 N_COLD, N_DISK, N_WARM, N_TAB = 3, 5, 10, 5
 BATCH_N = 30                     # distribution_batch 요청 항목 수 (프런트 DIST_BATCH.SIZE)
 
@@ -502,6 +506,88 @@ def bench_sla_map(run_id: str) -> tuple[dict, dict, dict]:
     return metrics, sizes, sla
 
 
+def bench_ai_comment(run_id: str, quick: bool) -> dict:
+    """#14 AI Comment 세션 — pending 즉시 오픈 + 백그라운드 평가 + 분리 캐시 재빌드.
+
+    2026-08-13 비동기 분리(docs/13)의 계약을 지표로 잰다. 종전 벤치에는 AI Comment
+    경로가 없어 콜드 300초 회귀(운영 실사고)를 자동으로 못 잡았다.
+      ai.open_pending    완전 콜드에서 /full 첫 200 — AI 평가를 기다리지 않아야 한다
+      ai.final_ready     첫 조회 시작 → AI 포함 최종 payload 수신까지 총 대기
+      ai.eval_stage      build_log 의 ai_comment 단계 최대값(엔진 실평가 비용)
+      ai.rebuild_cached  report 캐시만 삭제 후 재빌드 — AI 분리 캐시 히트라 평가 없이
+                         빨라야 한다(comment 편집·스키마 bump 재빌드와 같은 경로)
+    """
+    n_sources, n_items, n_rows = SCALE_AI_QUICK if quick else SCALE_AI_FULL
+    print(f"#14 AI Comment 픽스처: {n_sources} 소스 × {n_items} 항목 × {n_rows} 행")
+    df, _items = make_honeyform_df(n_items, n_rows, seed=7)
+    files = make_files(encode_honeyform_parquet(df), n_sources)
+    manifest = build_manifest(files, f"BENCH_{run_id}_AI")
+    manifest["options"] = {"ai_comment": True, "ai_comment_optin": True}
+    result = wr_ingest.ingest_webreport(
+        manifest, files, report_db=report_db, upload_root=UPLOAD_ROOT,
+        client_ip="127.0.0.1", user_agent=UA["User-Agent"])
+    sid = result["session_id"]
+    settle()
+    akey = report_db.get_session(sid).get("analysis_key")
+    url = f"/pe/report/session/{sid}/full"
+    metrics = {}
+
+    def _web(r):
+        body = r.data
+        if r.headers.get("Content-Encoding") == "gzip":
+            body = _gzip.decompress(body)
+        return json.loads(body).get("web_report") or {}
+
+    # ① 완전 콜드 (drop_all 이 cache/ 를 통째로 지워 AI 분리 캐시도 함께 콜드)
+    drop_all(akey)
+    t_first = time.perf_counter()
+    sec, r, polls = open_until_200(url)
+    web = _web(r)
+    metrics["ai.open_pending"] = summarize([sec])
+    pending = bool(web.get("ai_comment_pending"))
+    # 작은 픽스처는 AI 평가가 폴링 간격(0.1s)보다 빨리 끝나 첫 200 이 이미 최종본일 수
+    # 있다(정상). 진짜 회귀 증상은 "첫 200 을 오래 기다렸는데 pending 도 아니었다"
+    # = 리포트가 AI 평가를 동기로 기다린 것 — 그때만 경고한다.
+    if not pending and sec > 1.0:
+        warn(f"AI 콜드 첫 200 이 {sec:.1f}s 걸렸는데 pending 이 아님 — "
+             "리포트가 AI 평가를 동기로 기다렸는지(비동기 분리 미동작) 의심")
+    print(f"#14 AI 콜드 /full 첫 200: {sec:.2f}s ({polls}회 폴링, pending={pending})")
+
+    # ② AI 백그라운드 완료 대기 (boot.js maybeStartAiPendingPoll 과 같은 흐름)
+    deadline = time.monotonic() + 900
+    while pending and time.monotonic() < deadline:
+        time.sleep(0.1)
+        _s, r, _p = open_until_200(url)
+        pending = bool(_web(r).get("ai_comment_pending"))
+    if pending:
+        warn("AI 백그라운드 평가가 900s 안에 끝나지 않음")
+    final_ready = time.perf_counter() - t_first
+    metrics["ai.final_ready"] = summarize([final_ready])
+
+    # 엔진 실평가 비용 — 이 세션의 report 빌드 레코드 중 ai_comment 단계 최대값
+    # (캐시 히트 빌드는 ~0 이라 최대값이 실평가다).
+    stage_vals = [(rec.get("stages") or {}).get("ai_comment") or 0.0
+                  for rec in build_log.history(hours=1, limit=300)
+                  if rec.get("session") == sid and rec.get("kind") == "report"]
+    if any(stage_vals):
+        metrics["ai.eval_stage"] = summarize([max(stage_vals)])
+    print(f"#14 AI 최종본 도착: {final_ready:.2f}s "
+          f"(eval 단계 {max(stage_vals) if stage_vals else 0:.2f}s)")
+
+    # ③ 분리 캐시 재빌드 — report 캐시만 삭제(aicmt 파일 유지). comment 편집·스키마
+    #    bump 후의 재빌드와 같은 경로라, 여기가 느리면 분리 캐시가 안 먹는 회귀다.
+    settle()
+    wr_cache.invalidate_caches(akey)
+    for path in (UPLOAD_ROOT / "web_report").glob("*/cache/report-*.json.gz"):
+        path.unlink()
+    sec, r, polls = open_until_200(url)
+    metrics["ai.rebuild_cached"] = summarize([sec])
+    if _web(r).get("ai_comment_pending"):
+        warn("AI 분리 캐시가 있는데 재빌드가 pending 을 반환 — 캐시 조회 미동작 의심")
+    print(f"#14 재빌드(AI 캐시 히트): {sec:.2f}s ({polls}회 폴링)")
+    return metrics
+
+
 # ── 환경/카운터/저장/비교/리포트 ─────────────────────────────────────────────
 
 def collect_env(scale, quick: bool, label: str) -> dict:
@@ -782,6 +868,10 @@ def main() -> int:
     metrics.update(m); sizes.update(sz)
 
     metrics.update(bench_tabs(sid_a, akey_a, items))
+
+    # #14 AI Comment — quick 에도 돈다(픽스처가 작고, 이 경로가 없으면 콜드 300초
+    # 회귀를 벤치가 영영 못 본다 — 2026-08-13 도입 배경).
+    metrics.update(bench_ai_comment(run_id, args.quick))
 
     # #13 Map 3초 SLA — 픽스처 규모가 달라 full 실행에서만 돈다(quick 스모크 제외).
     sla = None

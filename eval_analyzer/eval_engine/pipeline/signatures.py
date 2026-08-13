@@ -118,30 +118,30 @@ def _suppressor_ids(sig: dict) -> list:
 
 
 def _apply_suppression(fired: list, suppressors: dict):
-    """포함관계인 룰의 중복 발화 제거 — "A 가 뜨면 B 는 군더더기" 를 선언으로 처리한다.
+    """`suppressed_by` 선언을 **primary 양보**로 적용한다 (2026-08-13 의미 변경).
 
-    왜 필요한가: `SEVERE_OUTLIER`(outlier_ratio > outlier_ratio_bad)가 뜨면
-    `OUTLIER_WARN`(> outlier_ratio_warn)은 **조건상 항상** 함께 뜬다(임계값 관계 검증이
-    warn <= bad 를 강제한다). 같은 현상의 약한 표현이 secondary 를 채우고 primary
-    specificity 경쟁까지 흐린다. 임계값은 건드리지 않고 중복 의미만 걷어낸다.
+    "A 가 뜨면 B 는 군더더기" 라는 선언은 그대로 두되, **목록에서 지우지 않는다**.
+    지우던 시절에는 "cpk 도 낮고 outlier 도 있다" 같은 케이스에서 한쪽이 통째로 사라져
+    사용자가 볼 수 없었다(실사용 피드백: "여러 개 걸리면 중복해서 잘 안 나온다").
+    지금은 발화 항목에 `demoted_by` 를 달기만 하고, `status.decide` 가 같은 severity 안에서
+    **primary 후보에서만** 제외한다 — 결과 지표(cpk)가 원인 룰의 자리를 뺏지 않으면서
+    두 현상이 모두 화면에 남는다.
 
-    판정은 **억제 적용 전(원본) 발화 집합 기준 1패스**다 — 전이(A→B→C)나 상호 참조로
-    체인이 도는 것을 원천 차단하기 위해서다. 그래서 "B 가 A 에 의해 지워졌더라도 B 가
-    지목한 C 는 여전히 지워진다" 가 아니라, C 는 B 의 원본 발화 여부만 본다.
-    (순환·미존재 id 검사는 룰 저장 시점 검증의 몫이다.)
-    반환: (살아남은 fired, [{"id":..,"by":..}, ...])
+    판정은 **원본 발화 집합 기준 1패스**다 — 전이(A→B→C)나 상호 참조로 체인이 도는 것을
+    원천 차단하기 위해서다. (순환·미존재 id 검사는 룰 저장 시점 검증의 몫이다.)
+    반환: (fired 전체, [{"id":..,"by":..}, ...]) — 두 번째 값은 트레이스·검증 표시용이며
+    첫 번째 값에서 빠지지 않는다.
     """
     if not any(suppressors.values()):
         return fired, []
     fired_ids = {s["id"] for s in fired}
-    kept, suppressed = [], []
+    demoted = []
     for s in fired:
         by = [sid for sid in suppressors.get(s["id"], []) if sid in fired_ids]
         if by:
-            suppressed.append({"id": s["id"], "by": sorted(by)})
-        else:
-            kept.append(s)
-    return kept, suppressed
+            s["demoted_by"] = sorted(by)
+            demoted.append({"id": s["id"], "by": sorted(by)})
+    return fired, demoted
 
 
 def _eval_condition(op_str, actual_value, thresholds):
@@ -282,9 +282,8 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
 
     fired, suppressed = _apply_suppression(fired, suppressors)
 
-    # UNKNOWN 은 **억제까지 끝난 최종 발화 집합**을 보고 판정한다 — 억제로 발화가 0이 된
-    # 경우는 "설명이 있었는데 중복이라 지운 것" 이므로 여기 해당하지 않는다(억제는 같은
-    # 현상의 약한 표현만 지우므로 최소 1건은 남는다).
+    # UNKNOWN 은 최종 발화 집합이 비었을 때만 붙는다. (양보는 목록에서 지우지 않으므로
+    # 이 시점의 fired 는 조건을 만족한 룰 전부다 — 2026-08-13 의미 변경 후에도 동일.)
     fail_count = fail_count_of(case_ctx)
     if unknown_doc is not None and not fired and fail_count:
         fired.append(_evaluate_unknown(case_ctx, features, raw_metrics, th, unknown_doc))

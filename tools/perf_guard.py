@@ -60,7 +60,7 @@ PERF_SENSITIVE = (
     "web_report/loader.py", "web_report/metrics.py", "web_report/honeyform.py",
     "web_report/ingest.py", "web_report/preprocess.py",
     "web_report/dist_pack.py", "web_report/dist_pack_store.py",
-    "web_report/dist_blob.py", "web_report/tabs/**/*.py",
+    "web_report/dist_blob.py", "web_report/ai_comment.py", "web_report/tabs/**/*.py",
     "server/report/routes_session.py", "server/report/routes_webreport.py",
     "server/report/static/webreport/*.js",
 )
@@ -246,6 +246,18 @@ _RULES = [
                "콜드 202 + 전체 재디코드로 돌아가 대형 세션에서 30초+ 프리즈가 된다. "
                "옮기는 것뿐이라면 면제 주석을 달 것.",
         "doc": "CLAUDE.md §5-11, docs/12_web_report_cache.md",
+    },
+    {
+        "id": "S10-ai-comment-cache",
+        "kind": "forbid_remove",
+        "paths": ["web_report/service.py"],
+        "pattern": r"_ai_comment_cached\(|save_ai_comment\(",
+        "why": "AI Comment 세션 콜드 빌드의 80%가 eval 평가였다(2026-08-13 실측 4.7s/5.9s). "
+               "분리 캐시(_ai_comment_cached → disk_cache.save_ai_comment)를 우회하면 "
+               "comment 편집·스키마 bump·dedup 형제 세션마다 전량 재평가로 돌아가고, "
+               "대형 세션에서 300초 타임아웃(워커 연쇄 전멸)이 재발한다. "
+               "옮기는 것뿐이라면 면제 주석을 달 것.",
+        "doc": "docs/13_eval_analyzer_integration.md, web_report/service.py _ai_comment_cached",
     },
     {
         "id": "R11-keyed-lock-cap",

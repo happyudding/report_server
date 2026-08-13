@@ -208,12 +208,14 @@ def main():
     severe = by_id["LOW_CPK"]
     assert severe["criterion"]["threshold_key"] == "cpk_warn"
     assert severe["pending_total"] >= 1 and severe["samples"], severe
-    # suppressed_by 가 실제로 먹었는지 — ItemB 도 cpk 는 낮지만 원인이 OUTLIER 라
-    # 그 case 의 LOW_CPK 는 지워진다. 그래서 후보는 ItemA 하나뿐이어야 한다.
-    assert severe["pending_total"] == 1, \
-        f"OUTLIER 동반발화 case 의 LOW_CPK 가 남았다(suppressed_by 미적용): {severe}"
-    print(f"[c] 표본함 조회 OK — LOW_CPK 후보 {severe['pending_total']}건, "
-          f"OUTLIER case 는 억제됨")
+    # 2026-08-13 부터 `suppressed_by` 는 **목록에서 지우지 않고 primary 만 양보**한다 —
+    # ItemB(원인이 OUTLIER)의 LOW_CPK 도 발화 목록에 남으므로 표본 후보는 두 건이다.
+    # cpk 임계를 검수하려면 오히려 이쪽이 맞다(양보했다고 cpk 가 정상인 것은 아니다).
+    assert severe["pending_total"] == 2, \
+        f"LOW_CPK 발화가 목록에서 사라졌다(양보는 primary 만 바꿔야 한다): {severe}"
+    assert by_id["OUTLIER"]["pending_total"] == 1, by_id["OUTLIER"]
+    print(f"[c] 표본함 조회 OK — LOW_CPK 후보 {severe['pending_total']}건 "
+          f"(OUTLIER case 포함, primary 만 양보) · OUTLIER 후보 1건")
 
     sample = severe["samples"][0]
     review.save_review_label(sample["eval_id"], correct=False, comment="산발 아님",

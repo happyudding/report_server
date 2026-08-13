@@ -222,6 +222,16 @@ function aicBadgeClass(text) {
 // 텍스트만 esc 한다.
 function renderAiComment(txt) {
   const raw = String(txt == null ? "" : txt);
+  // AI 백그라운드 계산 중(pending payload) — 빈 셀에 진행 안내를 채운다. 완료되면
+  // boot.js maybeStartAiPendingPoll 이 최종 payload 로 화면을 다시 그린다.
+  if (!raw.trim()) {
+    try {
+      if (DATA && DATA.web_report && DATA.web_report.ai_comment_pending) {
+        return '<span class="aic-pending">AI 평가 계산 중…</span>';
+      }
+    } catch (e) { /* DATA 미정의 — 종전대로 빈 셀 */ }
+    return "";
+  }
   // 섹션 토큰이 없으면 손대지 않는다 — 옛 코멘트/형식 불일치는 오늘과 똑같이 보인다.
   if (raw.indexOf("[현상]") < 0) return linkifyComment(raw);
   const split = aicSplitBadges(raw);

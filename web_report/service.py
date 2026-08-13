@@ -95,9 +95,82 @@ def report_is_cold(session_id: str, *, report_db, upload_root: Path,
     return not disk_cache.report_exists(upload_root, cache_key)
 
 
+# _ai_comment_cached 가 디스크 캐시에서 읽은 dict 의 최소 형태 검증용 — build_ai_comments
+# 반환 계약(ai_comment._EMPTY_RESULT 와 동일 키). 손상/구버전 파일이 KeyError 로 빌드를
+# 죽이지 않게 키가 모자라면 미스로 취급한다.
+_AI_RESULT_KEYS = ("comments", "etc_auto_items", "row_signatures", "signature_options")
+
+
+def _ai_comment_cached(session, session_id: str, tables, manifest, *,
+                       report_db, upload_root: Path,
+                       allow_build: bool = True) -> tuple[dict | None, str]:
+    """AI Comment 평가 결과 — 분리 캐시(RAM→디스크) 조회, 미스에만 엔진 평가.
+
+    payload 캐시(report_key)와 분리된 cache_policy.ai_comment_key 로 잡히므로
+    comment/override 편집(edits_rev+1)·REPORT_SCHEMA_VERSION bump·dedup 형제 세션에서
+    eval 엔진 재평가(콜드 빌드 최대 병목 — 실측 80%)를 반복하지 않는다.
+    반환 (result, how) — how ∈ {"ram","disk","build","fallback","miss"} (build_log 기록).
+    allow_build=False 면 캐시 미스에 평가하지 않고 (None, "miss") — pending payload
+    경로(사용자가 기다리는 콜드 빌드)가 AI 를 백그라운드 잡에 미루기 위한 모드다.
+    **예외 폴백(빈 결과)은 캐시하지 않는다** — 일시 오류의 빈 값이 영구화되면
+    사용자에겐 에러가 아니라 "AI Comment 가 조용히 비어 있음"으로 보이기 때문.
+    """
+    from . import ai_comment
+    key = cache_policy.ai_comment_key(
+        session, _preprocess.session_digest(report_db, session_id))
+    result = cache.cache_get(cache.AI_COMMENT_CACHE, key)
+    if result is not None:
+        return result, "ram"
+    result = disk_cache.load_ai_comment(upload_root, key)
+    if result is not None and all(k in result for k in _AI_RESULT_KEYS):
+        cache.cache_put(cache.AI_COMMENT_CACHE, key, result,
+                        cache.AI_COMMENT_CACHE_MAX)
+        return result, "disk"
+    if not allow_build:
+        return None, "miss"
+    result, ok = ai_comment.safe_build_ex(tables, session,
+                                          manifest.get("selected_items") or [])
+    if ok:
+        cache.cache_put(cache.AI_COMMENT_CACHE, key, result,
+                        cache.AI_COMMENT_CACHE_MAX)
+        disk_cache.save_ai_comment(upload_root, key, result)
+    return result, ("build" if ok else "fallback")
+
+
+def _ai_cache_ready(session, session_id: str, *, report_db, upload_root: Path) -> bool:
+    """AI 분리 캐시(RAM 또는 디스크)가 준비됐는가 — 값싼 판정(SELECT 1 + dict/stat).
+
+    pending payload 를 계속 서빙할지(미준비), 최종본으로 재빌드할지(준비)의 분기 전용.
+    """
+    key = cache_policy.ai_comment_key(
+        session, _preprocess.session_digest(report_db, session_id))
+    with cache.CACHE_LOCK:
+        if key in cache.AI_COMMENT_CACHE:
+            return True
+    return disk_cache.ai_comment_exists(upload_root, key)
+
+
+def _report_usable(report, session, session_id: str, *, report_db,
+                   upload_root: Path, ai_inline: bool):
+    """RAM 캐시의 payload 를 그대로 써도 되는가 — 아니면 None(미스 취급).
+
+    pending 본(ai_comment_pending, AI 없이 먼저 연 payload)은 ① ai 잡(ai_inline=True)
+    이거나 ② AI 분리 캐시가 준비됐으면 미스로 취급해 최종본 재빌드로 흘려보낸다.
+    최종본·비 AI 세션 payload 는 플래그 자체가 없어 이 검사가 공짜다.
+    """
+    if report is None:
+        return None
+    if report.get("ai_comment_pending") and (
+            ai_inline or _ai_cache_ready(session, session_id, report_db=report_db,
+                                         upload_root=upload_root)):
+        return None
+    return report
+
+
 def load_webreport(session_id: str, *, report_db, upload_root: Path,
                    session: dict | None = None,
-                   build_if_cold: bool = True) -> tuple[dict, dict]:
+                   build_if_cold: bool = True,
+                   ai_inline: bool = False) -> tuple[dict, dict]:
     """세션 조회: build_report_payload 결과를 (analysis_key, content_hash, session_id,
     edits_rev) 키로 캐시한다 — comment/override 편집은 세션 편집 rev 증가로 자연 무효화되고,
     raw_data 편집은 content_hash 변경으로 무효화된다. 편집 상태는 세션 단위 DB
@@ -110,6 +183,13 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
     Distribution ECDF(대용량)는 항상 payload 에서 제외되고 프런트가 get_distribution 으로
     지연 로드한다. Map Analysis dies(대용량)도 payload 에서 제외(경량 메타만)되고
     get_map_gzip 으로 지연 로드한다 (schema v8).
+
+    AI Comment 세션의 비동기 분리 (2026-08-13): AI 분리 캐시 미스 콜드 빌드는 기본
+    (ai_inline=False)으로 AI 없는 **pending payload**(최상위 ai_comment_pending=True,
+    RAM 캐시 전용·디스크 미저장)를 먼저 만들어 리포트를 즉시 열고, AI 평가는 백그라운드
+    'ai' 잡(compute.request_build)에 맡긴다. ai_inline=True(프리웜·ai 잡)는 종전처럼
+    AI 평가까지 동기로 끝낸 최종본을 만든다 — 그 최종본이 disk_cache 에 저장되고
+    부모 RAM 의 pending 본을 덮는다.
     """
     if session is None:
         session = report_db.get_session(session_id)
@@ -129,7 +209,9 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
 
     # 키 구성 규약은 cache_policy 참조 (opts/mode 포함 이유 포함)
     cache_key = cache_policy.report_key(session, session_id, edits_rev)
-    report = cache.cache_get(cache.REPORT_CACHE, cache_key)
+    report = _report_usable(cache.cache_get(cache.REPORT_CACHE, cache_key),
+                            session, session_id, report_db=report_db,
+                            upload_root=upload_root, ai_inline=ai_inline)
     if report is None and not build_if_cold:
         # 콜드 판정을 락 **밖에서** 먼저 한다 — 온디맨드 소비자가 빌드 내내 같은 키의
         # keyed_lock 을 잡고 있어, 락에 들어간 뒤 판정하면 202 로 즉시 돌려보내려던
@@ -139,7 +221,9 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
             raise ColdBuildRequired(session_id)
     if report is None:
         with cache.keyed_lock_ctx(("report",) + cache_key):
-            report = cache.cache_get(cache.REPORT_CACHE, cache_key)
+            report = _report_usable(cache.cache_get(cache.REPORT_CACHE, cache_key),
+                                    session, session_id, report_db=report_db,
+                                    upload_root=upload_root, ai_inline=ai_inline)
             if report is None:
                 # RAM 미스여도 디스크 캐시(재시작·LRU 퇴출 생존)가 있으면 재계산 생략
                 report = disk_cache.load_report(upload_root, cache_key)
@@ -154,13 +238,19 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                     # 표시한다 (관측 전용 — 빌드 로직에는 영향 없음).
                     build_status.begin(session_id, "report")
                     try:
-                        if compute.should_offload(cache_policy.tables_key(
-                                session, _preprocess.session_digest(report_db, session_id))):
+                        offload = compute.should_offload(cache_policy.tables_key(
+                            session, _preprocess.session_digest(report_db, session_id)))
+                        if ai_inline and compute.offload_available():
+                            # AI 평가는 GIL 을 오래 잡는다(eval 엔진 파이썬 루프) —
+                            # ai 잡/프리웜 소비자 스레드가 부모에서 인라인으로 돌리면
+                            # 웹 프로세스 전체가 밀리므로 tables 가 웜이어도 워커로 보낸다.
+                            offload = True
+                        if offload:
                             # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
                             # 워커가 disk_cache 도 채우므로 여기서는 RAM 캐시만 넣는다.
                             t_sub = time.time()
                             report, child_t = compute.run(compute.report_job, session_id,
-                                                          str(upload_root))
+                                                          str(upload_root), ai_inline)
                             build_log.record_offloaded("report", session_id, analysis_key,
                                                        t_sub, time.time(), child_t)
                         if report is None:
@@ -178,12 +268,24 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             etc_auto_items = None
                             ai_signatures = None
                             signature_options = None
+                            ai_how = None
+                            ai_pending = False
                             if _webreport_ai_comment(session.get("webreport_options") or ""):
-                                from . import ai_comment
                                 with build_log.stage("ai_comment"):
-                                    ai_result = ai_comment.safe_build(
-                                        tables, session,
-                                        manifest.get("selected_items") or [])
+                                    # 사용자 대기 경로(ai_inline=False)는 캐시 히트만 쓰고
+                                    # 미스면 평가하지 않는다 — AI 는 백그라운드 'ai' 잡으로.
+                                    ai_result, ai_how = _ai_comment_cached(
+                                        session, session_id, tables, manifest,
+                                        report_db=report_db, upload_root=upload_root,
+                                        allow_build=ai_inline)
+                                if ai_result is None:
+                                    # pending payload — AI 컬럼은 빈 값으로 먼저 열고,
+                                    # 프런트가 ai_comment_pending 플래그로 "계산 중" 표시.
+                                    ai_pending = True
+                                    ai_how = "deferred"
+                                    ai_result = {"comments": {}, "etc_auto_items": [],
+                                                 "row_signatures": {},
+                                                 "signature_options": []}
                                 ai_comments = ai_result["comments"]
                                 # 수율·cpk 는 정상인데 룰만 위반한 item → ETC 자동 행
                                 etc_auto_items = ai_result["etc_auto_items"]
@@ -237,11 +339,20 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             )
                             # payload(= 탭별 stage 합 + 조립 오버헤드) 총계.
                             stages["payload"] = round(time.perf_counter() - t_payload, 3)
+                            if ai_pending:
+                                # AI 백그라운드 계산 중 표시 — 최종본에는 이 키가 없다
+                                # (프런트 하위호환: 플래그 부재 = 종전 렌더).
+                                report["ai_comment_pending"] = True
                             # payload 를 한 번만 직렬화해 gzip 디스크 저장과 아래 RAM
                             # 캐시 크기추정에 함께 재사용한다(콜드 1회 3중 직렬화 제거).
                             with build_log.stage("serialize"):
                                 report_bytes = disk_cache.dumps_report(report)
-                                disk_cache.save_report_gz(upload_root, cache_key, report_bytes)
+                                if not ai_pending:
+                                    # pending 본은 **디스크에 저장하지 않는다** — 디스크에는
+                                    # 최종본만 남아 report_is_cold/롤백 판정이 단순해지고,
+                                    # RAM 축출 시 pending 재빌드(웜 tables, 값싼 편)로 복구.
+                                    disk_cache.save_report_gz(upload_root, cache_key,
+                                                              report_bytes)
                             report_size = len(report_bytes)
                             # Temperature: 방금 판정한 결과(tables 에 캐시됨)로 temp_map 을
                             # 함께 채운다 — 안 하면 Issue Table 첫 진입에서 요청 스레드가
@@ -272,13 +383,23 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 "result": "ok", "total": round(time.perf_counter() - t0, 3),
                                 "stages": stages, "sources": len(tables),
                                 "items": len(report.get("distribution_index") or ()),
-                                "mcells": mcells, "kcols": kcols})
+                                "mcells": mcells, "kcols": kcols,
+                                # AI Comment 경로 관측 — ram/disk(캐시 히트)·build(실평가)·
+                                # fallback(예외 폴백, 미캐시). 비 AI 세션은 키 자체가 없다.
+                                **({"ai": ai_how} if ai_how else {})})
                     finally:
                         build_log.clear_stages()
                         build_status.end(session_id, "report")
                 # size: 인라인 빌드면 위에서 잰 bytes 길이 재사용, 그 외(disk hit·워커
                 # 오프로드)는 None → report_cache_put 이 자체 추정(현행 유지).
                 cache.report_cache_put(cache_key, report, size=report_size)   # 이중 상한 (cache.py)
+    if (report.get("ai_comment_pending") and not ai_inline
+            and not compute.in_worker()):
+        # AI 백그라운드 잡 예약 (부모 프로세스 전용 — 워커에서 큐 소비자 스레드를 띄우지
+        # 않는다). 중복 등록은 _ondemand_pending 이, 연속 실패는 build_status
+        # failure_blocked(sid,"ai") 가 막는다. 완료되면 ai 잡의 report_cache_put 이
+        # 부모 RAM 의 이 pending 본을 최종본으로 덮고 disk_cache 에도 최종본이 남는다.
+        compute.request_build(session_id, str(upload_root), "ai")
     public = dict(session)
     public["has_password"] = bool(public.get("password"))
     public.pop("password", None)

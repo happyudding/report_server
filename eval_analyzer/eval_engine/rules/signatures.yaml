@@ -45,14 +45,18 @@ signatures:
   # outlier 축의 단일 룰(2026-08-12) — 구 SEVERE_OUTLIER/OUTLIER_WARN 을 대체한다.
   # 옛 두 룰은 같은 지표(outlier_ratio)의 임계값만 다른 강약 표현이라 늘 함께 떴고,
   # 무엇보다 **비율**로는 "limit 바로 밖에 붙은 fail" 과 "뚝 떨어져 나간 fail" 이 구분되지
-  # 않았다. 판정을 거리(fail_robust_z_max)로 바꾼 이유가 이것이다.
+  # 않았다.
+  # 판정축 2차 교체(2026-08-13): **거리 AND 끊김**. 거리 하나로는 못 가른다는 것이 실측으로
+  # 확인됐다(z 13.2=heavy tail, z 8.5=outlier — 순서가 뒤집힘). 꼬리가 몸통에서 limit 까지
+  # 이어져 넘어갔으면 HEAVY_TAIL, 몸통과 끊겨 따로 놀면 OUTLIER 다.
   - id: OUTLIER
-    when_metric: { fail_robust_z_max: ">=outlier_fail_z_min" }
+    when_metric: { fail_mad_min: ">=outlier_fail_mad_min",
+                   fail_pass_gap_sigma: ">=outlier_fail_gap_sigma_min" }
     status_hint: MAJOR
-    phenomenon_ko : "일부 die 가 분포 중심에서 극단적으로 벗어나 fail 했습니다."
+    phenomenon_ko : "일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다."
     action_ko: "outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
-    evidence: ["fail_robust_z_max {fail_robust_z_max}", "fail_value_gap_norm {fail_value_gap_norm}",
-               "outlier_ratio {outlier_ratio}", "outlier_count {outlier_count}"]
+    evidence: ["fail_mad_min {fail_mad_min}", "fail_pass_gap_sigma {fail_pass_gap_sigma}",
+               "fail_robust_z_max {fail_robust_z_max}", "outlier_ratio {outlier_ratio}"]
 
   # 아래 두 룰은 OUTLIER 로 통합돼 꺼졌다. **지우지 않는 이유**: eval.db 에 이 이름으로
   # 쌓인 과거 발화·정답라벨이 있어 패널·트레이스가 계속 해석해야 하고, 테스트데이터

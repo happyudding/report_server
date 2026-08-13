@@ -80,6 +80,16 @@ REPORT_UPLOAD_DIR = _path_env("REPORT_UPLOAD_DIR", ROOT_DIR / "uploads" / "repor
 # EVAL_DB_PATH env 로 이 파일을 가리켜 읽는다 (docs/13_eval_analyzer_integration.md).
 REPORT_EVAL_DB_PATH = _path_env("REPORT_EVAL_DB_PATH", ROOT_DIR / "DB" / "pe" / "report" / "eval" / "eval.db")
 
+# 엔진이 **선례검색에서 읽을** DB 를 위 파일로 맞춘다 (2026-08-13 배선 복구).
+# 이게 없으면 `EVAL_DB_PATH` 기본값(eval_analyzer/data/eval.db — 존재하지 않는 파일)을
+# 보고 `store.search_precedents` 가 항상 빈 목록을 돌려줘, AI Comment 의 [과거사례] 가
+# 늘 "참고할 수 있는 과거 사례가 없습니다" 로 나갔다(코멘트 export 는 정상 적재 중인데도).
+# server.env 에 경로를 따로 적지 않고 여기서 잇는 이유: 두 군데 적으면 export 대상과
+# 조회 대상이 갈라져 "쌓기는 A 에, 읽기는 B 에서" 가 조용히 성립한다.
+# ⚠ 쓰기는 늘어나지 않는다 — 조회 경로는 `evaluate(persist=False)` 라 DB 에 기록하지
+# 않는다(docs/13 §4 "엔진 소유 eval.db 무기록" 규약 유지). 명시 지정이 있으면 그게 이긴다.
+os.environ.setdefault("EVAL_DB_PATH", str(REPORT_EVAL_DB_PATH))
+
 # Honey 'DB Input'(선례 CSV 적재)이 돌리는 db_input/import_csv.py 의 인터프리터.
 # 기본은 서버 자신 — waitress 가 python.exe 안에서 도는 현 구성에선 이게 맞다.
 # 서버가 파이썬이 아닌 호스트(frozen 등) 아래 돌 때만 env 로 지정한다.

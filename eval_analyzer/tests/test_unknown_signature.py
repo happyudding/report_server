@@ -114,13 +114,14 @@ def test_excluded_case_has_no_unknown():
 def test_low_cpk_does_not_bury_its_cause():
     """cpk 는 **결과** 지표다 — 원인 룰이 떠 있으면 primary 자리를 그쪽에 내준다.
 
-    SPEC_TOO_TIGHT·WIDE_DISTRIBUTION 이 LOW_CPK 로 통합된 뒤(2026-08-12) 남은 원인 룰은
-    MEAN_SHIFT(중심 치우침)와 OUTLIER(멀리 튄 die 가 산포를 부풀림)다. suppressed_by 가
-    빠지면 MAJOR 인 LOW_CPK 가 primary 를 독점해 "무엇을 고쳐야 하나" 가 사라진다.
+    2026-08-13 부터 LOW_CPK 는 목록에서 사라지지 않고 **primary 만 양보**한다 —
+    "cpk 도 낮고 outlier 도 있다" 를 둘 다 보여 달라는 요구 때문. 대표가 원인 룰이어야
+    한다는 원칙은 그대로다(안 그러면 "무엇을 고쳐야 하나" 가 사라진다).
     """
     case = _case()
-    feats = _quiet_features(fail_robust_z_max=20.0)     # 멀리 떨어진 fail = cpk 하락의 원인
+    # 멀리 떨어지고(4 MAD 초과) 몸통과 끊긴(1.5σ 초과) fail = cpk 하락의 원인
+    feats = _quiet_features(fail_mad_min=10.0, fail_pass_gap_sigma=3.0)
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 1.0})
     ids = [s["id"] for s in sig["signatures"]]
-    assert "OUTLIER" in ids and "LOW_CPK" not in ids
+    assert {"OUTLIER", "LOW_CPK"} <= set(ids)
     assert status.decide(case, feats, sig)["primary_signature"] == "OUTLIER"

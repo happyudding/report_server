@@ -47,6 +47,8 @@ row0 TSEQ  row1 TNO  row2 STEP(P1/P2/P3, 미사용)  row3 UNIT  row4 HILIM(USL) 
 - **specificity**: 같은 severity 충돌 시 구체 signature(EQUIPMENT_SUSPECT/EDGE_FAIL…) > 일반(LOW_CPK) 가 primary.
   순서는 `SPECIFICITY_ORDER` 리스트 — signatures.yaml 에 signature 추가 시 이 리스트도 갱신.
   꺼진(enabled:false) 룰도 yaml 에 선언이 남아 있으면 이 목록에 있어야 한다(정합 검증 1:1).
+  **`demoted_by`(= yaml `suppressed_by`) 가 달린 발화는 primary 후보에서만 빠진다** — 목록에는
+  남는다(2026-08-13). 같은 severity 안에 비-demoted 가 하나도 없으면 그때 원래 순서로 고른다.
 
 ## preview(persist=False) 주의
 DB 미접근 — `item_id` 를 canonical 해시로 대체하므로 이때 `case_id` 는 persist 재실행 시 달라질 수 있음(미리보기 전용).

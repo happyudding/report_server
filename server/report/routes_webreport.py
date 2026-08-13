@@ -724,7 +724,7 @@ def web_report_rawdata_csv(session_id):
         abort(500, "rawdata csv export failed")
 
     lot = str(session.get("lot_id") or "").strip() or session_id
-    pretty = re.sub(r'[\\/:*?"<>|\r\n]+', "_", f"rawdata_{lot}_{source_name}.csv")
+    pretty = web_report_rawedit.csv_download_name(lot, source_name)
     # filename= 은 ASCII 만 안전하므로 세션/idx 기반 폴백을 두고, 실제 이름(한글 가능)은
     # filename*(RFC5987) 로 준다 — 브라우저는 filename* 를 우선한다.
     ascii_name = f"rawdata_{session_id}_src{source_idx}.csv"
@@ -736,6 +736,52 @@ def web_report_rawdata_csv(session_id):
     if etag:
         headers["ETag"] = etag
     return Response(chunks, mimetype="text/csv; charset=utf-8", headers=headers)
+
+
+@report_bp.get("/session/<session_id>/web_report/rawdata_csv_all")
+def web_report_rawdata_csv_all(session_id):
+    """웹 브라우저용: 세션 rawdata 전 source 를 CSV 로 묶은 zip 하나로 내려준다.
+
+    rawdata_csv 를 source 개수만큼 반복하는 대신 한 번에 받는 경로다. 가드·내용 정책은
+    rawdata_csv 와 완전히 같다(_require_web_report_session 하나, 조회라 CSRF·편집자
+    가드 없음, 저장된 parquet 원형, 전처리·편집 미반영). ETag 도 같은 content_hash 에
+    ':all' 을 붙인 것이라 source 별 ':src<idx>' 와 섞이지 않는다.
+
+    zip 은 메모리에 다 만들어 두지 않고 흘려보낸다(export_sources_csv_zip) — 스트리밍
+    이라 Content-Length 를 줄 수 없어 브라우저 진행률에 총 크기가 뜨지 않는다.
+    Honey 용 rawdata_export(parquet zip)와는 파일명·내용이 모두 다른 별개 경로다.
+    """
+    session = _require_web_report_session(session_id)
+
+    base_etag = web_report_rawedit.export_etag(session)
+    etag = f'"{base_etag}:all"' if base_etag else ""
+    if etag and request.headers.get("If-None-Match") == etag:
+        return Response(status=304, headers={"ETag": etag, "Cache-Control": "no-cache"})
+
+    try:
+        chunks, _count = web_report_rawedit.export_sources_csv_zip(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except IndexError:
+        abort(404, "source not found")
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report rawdata csv zip failed for session %s", session_id)
+        abort(500, "rawdata csv zip export failed")
+
+    lot = str(session.get("lot_id") or "").strip() or session_id
+    pretty = re.sub(r'[\\/:*?"<>|\r\n]+', "_", f"rawdata_{lot}_all.csv.zip")
+    ascii_name = f"rawdata_{session_id}_all.csv.zip"
+    headers = {
+        "Content-Disposition": (f'attachment; filename="{ascii_name}"; '
+                                f"filename*=UTF-8''{quote(pretty)}"),
+        "Cache-Control": "no-cache",
+    }
+    if etag:
+        headers["ETag"] = etag
+    return Response(chunks, mimetype="application/zip", headers=headers)
 
 
 @report_bp.post("/session/<session_id>/web_report/rawdata_replace")

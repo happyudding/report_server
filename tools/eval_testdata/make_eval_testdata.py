@@ -1,4 +1,4 @@
-"""eval_analyzer 디버깅용 합성 web_report 테스트 데이터 생성기 (L0~L6 트레이스 / signature 검증).
+﻿"""eval_analyzer 디버깅용 합성 web_report 테스트 데이터 생성기 (L0~L6 트레이스 / signature 검증).
 
 무엇을 만드나
   - 7-meta honeyform parquet 여러 개(= source = wafer) + manifest.json.
@@ -71,9 +71,10 @@ FIRE_FROM = 2
 # 평가 대상에서 아예 빠진다(= 미발화가 구조적으로 보장된다).
 FAIL_N = [0, 6, 15, 30, 60]
 # fail chip 을 limit 밖으로 얼마나 밀지(spec 폭 대비) — 레벨이 오를수록 더 멀리 나간다.
-# ⚠ 이 값이 커지면 밀려난 chip 이 OUTLIER 판정선(중심에서 12 robust σ)에 닿아 겨냥하지
-# 않은 OUTLIER 가 동반발화한다. 산포가 좁은 시나리오일수록 먼저 닿으므로 과하게 키우지 말 것.
-FAIL_MARGIN = [0.01, 0.02, 0.03, 0.05, 0.07]
+# ⚠ 이 값이 커지면 밀려난 chip 이 정상 몸통과 **끊겨** 보여(gap↑) 겨냥하지 않은 OUTLIER 가
+# 동반발화한다. 산포가 좁은 시나리오일수록 먼저 닿는다 — limit 을 겨우 넘는 정도로 둔다
+# (2026-08-13 축소: 공간 룰 항목의 gap 이 1.5σ 를 넘어 OUTLIER 가 붙던 문제).
+FAIL_MARGIN = [0.002, 0.004, 0.006, 0.008, 0.010]
 
 # fail 유형별 bin — Map Analysis 에서 **유형을 색으로 구분**하기 위한 배정.
 # 1=Pass. 18(defective)·31(abnormal)은 bin_taxonomy.yaml 예약값이라 피한다.
@@ -106,8 +107,9 @@ TH = {
     "mean_shift_warn": 0.30, "site_cpk_delta_warn": 0.5, "gross_yield_bad": 0.5,
     "code_edge_hit_warn": 0.05, "kurtosis_warn": 8.0, "spatial_fail_count_min": 10,
     "severe_outlier_count_min": 5, "ring_fail_ratio_warn": 2.0,
-    # 2026-08-12 신설 — OUTLIER 는 거리로, 공간 룰 4종은 점유율로 판정한다.
-    "outlier_fail_z_min": 12.0, "region_fail_share_min": 0.95,
+    # OUTLIER 는 거리 AND 끊김(2026-08-13), 공간 룰 4종은 점유율로 판정한다.
+    "outlier_fail_mad_min": 4.0, "outlier_fail_gap_sigma_min": 1.5,
+    "region_fail_share_min": 0.95,
     "gradient_norm_warn": 0.3, "subpop_n_min": 50, "subpop_outlier_ratio_max": 0.03,
     "subpop_density_gap_warn": 0.3, "subpop_density_gap_strong": 0.5,
     "subpop_value_gap_warn": 0.3, "subpop_minor_mass_min": 0.05,
@@ -152,21 +154,22 @@ def m_outlier_ratio(v):
     return float(np.mean(np.abs(z) > TH["outlier_sigma"]))
 
 
-def m_fail_z_max(values, fail_idx):
-    """OUTLIER 판정 지표 — fail chip 의 modified z 최대 (엔진 features._fail_outlier_features).
+def m_fail_outlier(values, fail_idx):
+    """OUTLIER 판정 지표 3종 — 엔진 `features._fail_outlier_features` 와 같은 식.
 
+    반환 (fail_mad_min, fail_pass_gap_sigma, fail_robust_z_max).
     `values` 는 **전체 길이** 배열(NaN 포함), `fail_idx` 는 그 배열의 인덱스다.
     엔진은 파싱된(=유한) 값만 보므로 여기서도 유한값 기준으로 맞춘다.
     """
     v = np.asarray(values, dtype=float)
     ok = np.isfinite(v)
     if not ok.any() or len(fail_idx) == 0:
-        return None
+        return None, None, None
     fm = np.zeros(v.size, dtype=bool)
     fm[np.asarray(fail_idx, dtype=int)] = True
     fm, vv = fm[ok], v[ok]
     if not fm.any():
-        return None
+        return None, None, None
     med = float(np.median(vv))
     mad = float(np.median(np.abs(vv - med)))
     if mad != 0:
@@ -174,9 +177,12 @@ def m_fail_z_max(values, fail_idx):
     else:
         mean_ad = float(np.mean(np.abs(vv - med)))
         if mean_ad <= 0:
-            return None
+            return None, None, None
         z = (vv - med) / (1.253314 * mean_ad)
-    return float(np.max(np.abs(z[fm])))
+    dist = np.abs(z)
+    df, dp = dist[fm], dist[~fm]
+    gap = float(df.min() - dp.max()) if dp.size else None
+    return float(df.min()) / 0.6745, gap, float(df.max())
 
 
 def m_std(v):
@@ -234,10 +240,43 @@ def m_limit_hit(v, lsl=LSL, usl=USL):
     return float(np.mean(np.isclose(v, lsl) | np.isclose(v, usl)))
 
 
+def _grid_step_gen(v):
+    """양자화 격자 간격 — 엔진 `features._grid_step` 과 **같은 규칙**(복제)."""
+    uniq, cnt = np.unique(v, return_counts=True)
+    floor = max(2, 0.005 * v.size)
+    heavy = uniq[cnt >= floor]
+    if heavy.size < 3 or float(cnt[cnt >= floor].sum()) < 0.8 * v.size:
+        return None
+    diffs = np.diff(heavy)
+    step = float(np.median(diffs))
+    if step <= 0:
+        return None
+    k = np.round(diffs / step)
+    if np.any(k < 1) or np.any(np.abs(diffs - k * step) > 0.25 * step):
+        return None
+    return step
+
+
 def _hist_peaks(v):
+    """엔진 `features._histogram_peaks` 복제 — 양자화 격자 정렬 포함.
+
+    ⚠ 엔진과 갈라지면 정답표(answer_key)의 density_gap·modality 가 실제 판정과 어긋난다.
+    """
     if v.size < 8:
         return None
-    hist, _ = np.histogram(v, bins=min(20, max(5, v.size // 5)))
+    bins = min(20, max(5, v.size // 5))
+    step = _grid_step_gen(v)
+    if step:
+        idx = np.round((v - v.min()) / step).astype(int)
+        counts = np.bincount(idx)
+        m = max(1, int(np.ceil(counts.size / bins)))
+        if m > 1:
+            pad = (-counts.size) % m
+            counts = np.concatenate([counts, np.zeros(pad, dtype=counts.dtype)])
+            counts = counts.reshape(-1, m).sum(axis=1)
+        hist = counts
+    else:
+        hist, _ = np.histogram(v, bins=bins)
     return [i for i in range(1, len(hist) - 1)
             if hist[i] > hist[i - 1] and hist[i] > hist[i + 1]], hist
 
@@ -570,12 +609,21 @@ def with_tune(plan, apply, metric_fn, target, lo, hi, ensure=None):
 # ── 레벨별 목표치 (단독 세트) ────────────────────────────────────────────────
 # 전부 **L1 = 정상(미발화) / L2 = 임계 소폭 초과(발화 시작) / L5 = 심각** 사다리다.
 SPREAD_T = [0.10, 0.20, 0.26, 0.33, 0.40]                  # spread_norm (warn 0.18)
-# 통합 OUTLIER — fail chip 이 중심에서 몇 robust σ 떨어졌나(warn 12). 비율이 아니라 거리다.
-OUTLIER_Z = [0.0, 14.0, 20.0, 30.0, 45.0]                  # fail_robust_z_max (warn 12)
+# 통합 OUTLIER — 판정은 **거리 AND 끊김** 두 축이다(2026-08-13).
+#   거리: fail_mad_min ≥ 4  (중심에 가장 가까운 fail 의 MAD 배수)
+#   끊김: fail_pass_gap_sigma ≥ 1.5  (마지막 pass ↔ 첫 fail 빈 구간, robust σ)
+# spike 를 spec 밖에 두면 두 축이 함께 커지므로 사다리는 거리(MAD 배수)로 매기고 gap 은
+# 따라오게 둔다 — 실측 gap 은 answer_key/verify 에 기록된다.
+# ⚠ 정규 몸통에서는 두 축이 **양의 상관**이라 낮은 MAD 배수를 만들 수 없다: 몸통 최대
+# pass 거리가 ≈3.85σ 로 고정이라 gap≥1.5 를 만족하려면 fail 이 최소 5.35σ(≈8 MAD) 밖이어야
+# 한다. 그래서 단독 세트는 8 부터 시작하고, **임계 4 앞뒤 경계는 균등분포 몸통**으로 만든다
+# (균등분포는 pass 최대 거리가 1.35σ 뿐이라 4 MAD 에서도 gap 이 선다 — 실데이터의
+# FLAT 항목이 정확히 그 구조였다). 경계 스윕은 BOUNDARY 참조.
+OUTLIER_MAD = [8.0, 16.0, 22.0, 32.0, 50.0]                # fail_mad_min (warn 4)
 # spike 비율은 레벨별 fail 수(FAIL_N)와 맞춘다 — spike 자체가 spec 밖이라 그대로 fail 이
 # 되고, fail 은 chip 을 배타적으로 쓰므로 비율이 크면 한 item 이 웨이퍼 예산을 다 먹는다.
-# (반경 36 ≈ 4,053 chip 기준으로 6/16/32/61개 = FAIL_N 과 같은 눈금)
-OUTLIER_P = [0.0000, 0.0015, 0.0040, 0.0080, 0.0150]
+# (반경 40 ≈ 5,025 chip 기준으로 6/15/30/60개 = FAIL_N 과 같은 눈금)
+OUTLIER_P = [0.0000, 0.0012, 0.0030, 0.0060, 0.0120]
 SEVOUT_T = [0.000, 0.060, 0.120, 0.220, 0.320]             # (구 룰, off) outlier_ratio bad 0.05
 OUTWARN_T = [0.000, 0.022, 0.032, 0.045, 0.060]            # (구 룰, off) outlier_ratio warn 0.02
 # SPEC_TOO_TIGHT 은 spread_norm(<0.18) 로 세기를 매긴다 (LOW_CPK 로 통합돼 현재 off).
@@ -589,6 +637,13 @@ RAIL_T = [0.010, 0.070, 0.150, 0.300, 0.450]               # limit_hit_ratio (wa
 # 영역마다 상한이 달라 사다리를 공유할 수 없었고 ring 은 아예 도달 불가였다.
 REGION_SHARE_T = [0.50, 0.96, 0.98, 0.99, 1.00]            # *_fail_share (warn 0.95)
 CLUSTER_T = [0.5, 2.7, 3.0, 3.4, 3.8]                      # quadrant_imbalance (warn 2.5, 상한 4)
+# 공간 룰 항목의 몸통 σ — 겨냥한 것은 **위치 편중**이므로 값 쪽 룰이 붙으면 안 된다.
+# 0.10 이 두 요구의 접점이다:
+#   · 더 좁으면 밀려난 fail 이 몸통과 끊겨 보여(gap = (0.5+margin)/σ − 3.85 ≥ 1.5) OUTLIER
+#   · 더 넓으면 cpk 가 1.33 아래로 내려가 LOW_CPK (fail 이 stdev 를 밀어올린다 —
+#     σ 0.12·fail 1.2% 면 실효 stdev 0.132 → cpk 1.26 으로 실제 발화했다)
+# σ 0.10 → gap 1.17 · 실효 stdev 0.114 → cpk 1.46. 둘 다 안전 구간.
+SPATIAL_SIGMA = 0.10
 GRAD_T = [0.10, 0.35, 0.55, 0.85, 0.95]                    # gradient_norm (warn 0.3, radial 상한 1.0)
 YIELD_T = [0.97, 0.46, 0.28, 0.08, 0.03]                   # yield (bad 0.5)
 NSAMPLE_T = [400, 19, 12, 8, 4]                            # n_dut (n_min 20)
@@ -636,16 +691,17 @@ def _outwarn_plan(lv, base_sigma=0.02):
 def _outlier_plan(lv, base_sigma=0.05):
     """통합 OUTLIER — spike 를 **spec 밖**에 두어 그 자체가 fail 이 되게 한다.
 
-    `bounded` 를 걸지 않는 것이 요점이다. 판정이 "fail chip 이 중심에서 몇 σ 떨어졌나"
-    라서, spike 를 spec 안에 가두면(bounded) 그 chip 은 fail 이 아니고 대신 limit 바로 밖으로
-    밀린 평범한 chip 이 fail 이 되어 거리가 나오지 않는다.
-    base σ=0.05 · spike z=14 이면 중심에서 0.7 (spec 반폭 0.5)이라 확실히 밖이다.
+    `bounded` 를 걸지 않는 것이 요점이다. spike 를 spec 안에 가두면(bounded) 그 chip 은
+    fail 이 아니고 대신 limit 바로 밖으로 밀린 평범한 chip 이 fail 이 되는데, 그건
+    몸통과 이어져 있어(gap≈0) OUTLIER 가 아니라 그냥 공정능력 문제로 읽힌다.
+    spike 오프셋은 `z × base_sigma` 이고 modified z ≈ z 이므로 MAD 배수는 z/0.6745 다 —
+    목표 MAD 배수에서 역산해 z 를 잡는다.
     """
-    z = OUTLIER_Z[lv]
-    if z <= 0:                                     # L1 = 정상(미발화)
+    mad_target = OUTLIER_MAD[lv]
+    if OUTLIER_P[lv] <= 0:                         # L1 = 정상(미발화)
         return {"kind": "normal", "mean": CENTER, "sigma": base_sigma, "bounded": True}
     return {"kind": "normal", "mean": CENTER, "sigma": base_sigma,
-            "spike": {"p": OUTLIER_P[lv], "z": z, "neg_p": 0.5}}
+            "spike": {"p": OUTLIER_P[lv], "z": mad_target * 0.6745, "neg_p": 0.5}}
 
 
 def _spectight_plan(lv):
@@ -684,10 +740,20 @@ def _heavytail_plan(lv):
 
 
 def _kurt_plan(target, p=0.03, sigma=0.05):
-    plan = {"kind": "normal", "mean": CENTER, "sigma": sigma, "bounded": True,
-            "spike": {"p": p, "z": 8.0, "neg_p": 0.5}}
-    return with_tune(plan, lambda pl, z: pl["spike"].update(z=z),
-                     m_kurtosis, target, 0.5, 60.0)
+    """HEAVY_TAIL — **연속 꼬리**(scale mixture, 2026-08-13).
+
+    같은 중심의 넓은 성분을 소수 섞어 꼬리가 몸통에서 limit 까지 **이어지게** 한다.
+    `bounded` 를 걸지 않아 꼬리 끝이 자연히 spec 을 넘고 그 chip 이 fail 이 된다 →
+    마지막 pass 와 첫 fail 이 붙어 **gap≈0** → OUTLIER(gap≥1.5)와 구조적으로 갈린다.
+    종전 고정 오프셋 spike 방식은 spike 가 전부 같은 거리에 뭉쳐 gap 이 1.4σ 까지
+    올라가 판정선 1.5 에 아슬아슬했다(HEAVY_TAIL_L5 가 OUTLIER 로 넘어갈 뻔한 자리).
+    """
+    def apply(pl, k):
+        pl["comps"] = [(1 - p, CENTER, sigma), (p, CENTER, k * sigma)]
+
+    plan = {"kind": "mixture", "mean": CENTER, "comps": [(1, CENTER, sigma)]}
+    apply(plan, 3.0)
+    return with_tune(plan, apply, m_kurtosis, target, 1.0, 12.0)
 
 
 def _coderail_plan(lv, p=None):
@@ -786,7 +852,7 @@ def _spatial_n(lv):
 
 SINGLE_BUILDERS = {
     "WIDE_DISTRIBUTION": lambda lv: (_wide_plan(lv), None, "spread_norm", SPREAD_T[lv], {}),
-    "OUTLIER": lambda lv: (_outlier_plan(lv), None, "fail_robust_z_max", OUTLIER_Z[lv], {}),
+    "OUTLIER": lambda lv: (_outlier_plan(lv), None, "fail_mad_min", OUTLIER_MAD[lv], {}),
     "SPEC_TOO_TIGHT": lambda lv: (_spectight_plan(lv), None, "spread_norm",
                                   SPECTIGHT_T[lv], {}),
     "LOW_CPK": lambda lv: (_lowcpk_plan(lv), None, "cpk", LOWCPK_T[lv], {}),
@@ -817,27 +883,27 @@ SINGLE_BUILDERS = {
     # 공간 4종 — share 가 그대로 "전체 fail 중 그 영역 몫"이라 면적 환산이 필요 없다
     # (배수 지표 시절에는 영역 면적으로 나눠 몫을 역산해야 했다).
     "E1_FAIL": lambda lv: (
-        {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
+        {"kind": "normal", "mean": CENTER, "sigma": SPATIAL_SIGMA, "bounded": True},
         {"pattern": "e1", "count": _spatial_n(lv), "share": REGION_SHARE_T[lv]},
         "e1_fail_share", REGION_SHARE_T[lv], {}),
     "EDGE_FAIL": lambda lv: (
-        {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
+        {"kind": "normal", "mean": CENTER, "sigma": SPATIAL_SIGMA, "bounded": True},
         {"pattern": "edge", "count": _spatial_n(lv), "share": REGION_SHARE_T[lv]},
         "edge_fail_share", REGION_SHARE_T[lv], {}),
     "CENTER_FAIL": lambda lv: (
-        {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
+        {"kind": "normal", "mean": CENTER, "sigma": SPATIAL_SIGMA, "bounded": True},
         {"pattern": "center", "count": _spatial_n(lv), "share": REGION_SHARE_T[lv]},
         "center_fail_share", REGION_SHARE_T[lv], {}),
     "RING_FAIL": lambda lv: (
-        {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
+        {"kind": "normal", "mean": CENTER, "sigma": SPATIAL_SIGMA, "bounded": True},
         {"pattern": "ring", "count": _spatial_n(lv), "share": REGION_SHARE_T[lv]},
         "ring_fail_share", REGION_SHARE_T[lv], {}),
     "CLUSTER_FAIL": lambda lv: (
-        {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
+        {"kind": "normal", "mean": CENTER, "sigma": SPATIAL_SIGMA, "bounded": True},
         {"pattern": "quadrant", "count": _spatial_n(lv), "share": _quadrant_share(CLUSTER_T[lv])},
         "quadrant_imbalance", CLUSTER_T[lv], {}),
     "WAFER_GRADIENT": lambda lv: (
-        {"kind": "normal", "mean": CENTER, "sigma": 0.10, "bounded": True},
+        {"kind": "normal", "mean": CENTER, "sigma": SPATIAL_SIGMA, "bounded": True},
         {"pattern": "grad_r", "count": 0, "share": GRAD_T[lv]},
         "gradient_norm_abs_max", GRAD_T[lv], {}),
     "GROSS_FAIL": lambda lv: (
@@ -887,12 +953,12 @@ def _ing(name, lv, plan, fails, meta):
         if plan.get("comps"):                      # 이미 mixture 면 성분 폭을 함께 넓힌다
             plan["comps"] = [(w, mu, SPREAD_T[i] * width) for w, mu, _sd in plan["comps"]]
     elif name == "OUTLIER":
-        if OUTLIER_Z[i] > 0:
-            # spike 는 **spec 밖**에 둔다 — 그 chip 이 곧 fail 이고, 그 거리가 판정 지표다.
-            # bounded 를 지워야(spec 안 재추출 금지) spike 가 살아남는다.
+        if OUTLIER_P[i] > 0:
+            # spike 는 **spec 밖**에 둔다 — 그 chip 이 곧 fail 이고, 몸통과 끊겨 있어야
+            # 한다. bounded 를 지워야(spec 안 재추출 금지) spike 가 살아남는다.
             plan["sigma"] = min(plan.get("sigma", 0.05), 0.05)
             plan.pop("bounded", None)
-            plan["spike"] = {"p": OUTLIER_P[i], "z": OUTLIER_Z[i], "neg_p": 0.5}
+            plan["spike"] = {"p": OUTLIER_P[i], "z": OUTLIER_MAD[i] * 0.6745, "neg_p": 0.5}
     elif name == "SPECTIGHT":
         plan["sigma"] = SPECTIGHT_T[i] * width
         with_tune(plan, lambda pl, s: pl.update(sigma=s), lambda v: m_spread_norm(v, lo, hi),
@@ -1036,11 +1102,14 @@ BOUNDARY = [
                          lambda pl, s: pl.update(sigma=s),
                          lambda v: m_spread_norm(v, LSL, USL), t, WIDTH * 0.02, WIDTH),
      "WIDE_DISTRIBUTION"),
-    # OUTLIER 는 **거리**(fail chip 의 robust z)가 지표다 — spike 를 spec 밖에 두어
-    # 그 chip 이 fail 이 되게 하고, z 를 임계 12 앞뒤로 훑는다.
-    ("fail_robust_z_max", TH["outlier_fail_z_min"], [9.0, 10.8, 11.8, 12.2, 14.0, 20.0],
-     lambda t: {"kind": "normal", "mean": CENTER, "sigma": 0.05,
-                "spike": {"p": 0.01, "z": t, "neg_p": 0.5}}, "OUTLIER"),
+    # OUTLIER 는 **거리 AND 끊김** 두 축이다 — spike 를 spec 밖에 두면 둘이 함께 커지므로
+    # 거리(MAD 배수) 축으로 임계 4 앞뒤를 훑는다(gap 은 실측으로 answer_key 에 남는다).
+    # 균등분포 몸통 — 반폭 h 를 손잡이로 두면 `mad_min ≈ 1/h` 이고 gap 도 같이 움직인다
+    # (limit 밖으로 밀린 fail 의 거리 0.5/0.741h, pass 최대 1.35σ). 정규 몸통으로는
+    # 4 근처를 만들 수 없다(위 OUTLIER_MAD 주석).
+    ("fail_mad_min", TH["outlier_fail_mad_min"], [3.0, 3.6, 3.9, 4.2, 5.0, 8.0],
+     lambda t: {"kind": "uniform", "low": CENTER - 1.0 / t, "high": CENTER + 1.0 / t},
+     "OUTLIER"),
     ("cpk_warn", TH["cpk_warn"], [1.45, 1.38, 1.34, 1.32, 1.25, 1.10],
      # 산포(sigma)를 손잡이로 두고 -cpk 를 목표로 잡는다 — sigma 가 커질수록 -cpk 가
      # 커지므로(단조 증가) 이분법이 성립한다.
@@ -1101,81 +1170,98 @@ def normal_specs(count, rng: random.Random):
 
 
 # ── 관찰군(random) — 정답 없이 "엔진이 뭐라고 하는지" 만 보는 항목 ──────────────
-# 겨냥한 룰이 없다(intent=[]). 산포 모양과 fail 배치를 무작위로 섞어, 룰 사다리에 맞춰
-# 만든 데이터가 아니라 **아무렇게나 들어온 데이터**를 엔진이 어떻게 판정하는지 본다.
+# 겨냥한 룰이 없다(intent=[]). **유형을 정해 놓고 만들지 않는다**(2026-08-13 전면 재설계):
+# "wide/bimodal/spiky…" 같은 목록에서 고르면 결국 우리가 아는 유형만 나와, 실데이터처럼
+# 유형 사이 어딘가에 걸친 분포를 못 만든다. 그래서 **파라미터 공간에서 직접 뽑는다** —
+# 모드 수·무게·중심·산포·왜도·양자화·spike·rail·절단·결측을 각각 확률로 굴려 섞는다.
 # verify 는 이 그룹을 누락·오발화로 세지 않고 발화 분포만 따로 요약한다.
-RANDOM_COUNT = 100              # 관찰군 기본 개수 (--random-items 로 조절)
-RANDOM_SHAPES = ["normal", "wide", "shifted", "bimodal", "spiky", "tailed", "quantized",
-                 "flat", "skewed"]
+RANDOM_COUNT = 30               # 관찰군 기본 개수 (--random-items 로 조절)
 # grad_r(반경 경사)은 뺐다 — fail 수를 "행 비율"로 정하는 패턴이라 item 하나가 웨이퍼
 # 예산을 통째로 먹는다(실측 1,900 chip). 경사형 맵은 겨냥 세트의 WAFER_GRADIENT 담당.
-RANDOM_PATTERNS = ["random", "random", "edge", "center", "ring", "quadrant", "e1"]
+RANDOM_REGIONS = [None, None, None, None, None,        # 45% 는 위치 편중 없음
+                  "e1", "edge", "center", "ring", "quadrant"]
+# unit → (lsl, usl) 생성 규칙. PF 로 떨어지는 표기(공란·DEGC)는 관찰 대상이 아니라 뺀다.
+RANDOM_UNITS = ["v", "mv", "ma", "ua", "khz", "ohm", "ms", "CODE", "PCT", "LSB"]
 
 
-def _random_plan(shape: str, rng: random.Random):
-    """관찰군 1건의 값 plan — 사다리를 쓰지 않고 파라미터를 구간에서 뽑는다."""
-    sd = rng.uniform(0.03, 0.22)
-    mean = CENTER + rng.uniform(-0.35, 0.35)
-    if shape == "wide":
-        return {"kind": "normal", "mean": CENTER, "sigma": rng.uniform(0.18, 0.40),
-                "bounded": True}
-    if shape == "shifted":
-        return {"kind": "normal", "mean": mean, "sigma": rng.uniform(0.03, 0.10),
-                "bounded": True}
-    if shape == "bimodal":
-        gap = rng.uniform(0.15, 0.55)
-        sd = min(sd, 0.10)
-        return {"kind": "mixture", "bounded": True,
-                "comps": [(rng.uniform(0.3, 1.0), CENTER - gap / 2, sd),
-                          (rng.uniform(0.3, 1.0), CENTER + gap / 2, sd)]}
-    if shape == "spiky":
-        # spike 는 bounded 를 안 걸어 spec 밖으로 나간다 = 그대로 fail 이다. 비율을 키우면
-        # 이 item 하나가 웨이퍼 fail 예산을 다 먹으므로 1% 근처로 묶는다.
-        return {"kind": "normal", "mean": CENTER, "sigma": rng.uniform(0.03, 0.08),
-                "spike": {"p": rng.uniform(0.002, 0.010),
-                          "z": rng.uniform(5.0, 30.0), "neg_p": 0.5}}
-    if shape == "tailed":
-        return {"kind": "normal", "mean": CENTER, "sigma": rng.uniform(0.04, 0.09),
-                "bounded": True,
-                "spike": {"p": rng.uniform(0.01, 0.06), "z": rng.uniform(3.0, 9.0),
-                          "neg_p": 0.5}}
-    if shape == "quantized":
-        return {"kind": "normal", "mean": CENTER, "sigma": rng.uniform(0.08, 0.20),
-                "quantize": rng.choice([0.03125, 0.0625, 0.125]), "bounded": True}
-    if shape == "flat":
-        half = rng.uniform(0.15, 0.45)
-        return {"kind": "uniform", "low": CENTER - half, "high": CENTER + half}
-    if shape == "skewed":
-        w = rng.uniform(0.15, 0.35)
-        return {"kind": "mixture", "bounded": True,
-                "comps": [(0.75, CENTER - w / 2, 0.05), (0.25, CENTER + w, 0.12)]}
-    return {"kind": "normal", "mean": CENTER, "sigma": rng.uniform(0.03, 0.12),
-            "bounded": True}
+def _random_limits(unit: str, rng: random.Random):
+    """관찰군 limit — 단위에 어울리는 범위를 랜덤으로. (lsl, usl) 반환."""
+    if unit == "CODE":
+        return 0.0, float(rng.choice([31, 63, 255]))
+    if unit == "PCT":
+        return 0.0, 100.0
+    center = rng.uniform(0.2, 5.0)
+    width = math.exp(rng.uniform(math.log(0.05), math.log(4.0)))
+    return center - width / 2, center + width / 2
 
 
-def random_specs(count, rng: random.Random):
-    """관찰군 — 정답 기대 없음(expect='observe'). 산포 모양 × fail 배치를 섞는다."""
+def _sample_random_plan(rng: random.Random, lo: float, hi: float):
+    """관찰군 1건의 값 plan — **유형 이름 없이** 파라미터를 굴려 만든다.
+
+    반환 (plan, 요약문). 요약문은 note 에 적어 "무엇을 만들었는지" 는 남기되, 그것이
+    정답은 아니다(엔진 판정과 대조해 보라는 관찰용 기록).
+    """
+    span = hi - lo
+    c0 = (hi + lo) / 2
+    k = rng.choice([1, 1, 1, 2, 2, 3, 4])                  # 단봉이 흔한 게 현실이다
+    comps, notes = [], []
+    for _ in range(k):
+        w = rng.uniform(0.15, 1.0)
+        mu = rng.uniform(lo + 0.1 * span, hi - 0.1 * span)
+        sd = span * math.exp(rng.uniform(math.log(0.02), math.log(0.25)))
+        comps.append((w, mu, sd))
+    notes.append(f"모드 {k}개")
+
+    if k == 1:
+        plan = {"kind": "normal", "mean": comps[0][1], "sigma": comps[0][2]}
+    else:
+        plan = {"kind": "mixture", "mean": c0, "comps": comps}
+
+    if rng.random() < 0.25:                                # 양자화(계단형) — CODE 류 모사
+        step = span / rng.choice([8, 16, 32, 64, 128])
+        plan["quantize"] = step
+        notes.append(f"양자화 {step:.4g}")
+    if rng.random() < 0.30:                                # 튀는 값 — 거리·비율·방향 전부 랜덤
+        plan["spike"] = {"p": math.exp(rng.uniform(math.log(0.0005), math.log(0.01))),
+                         "z": rng.uniform(3.0, 30.0), "neg_p": rng.uniform(0.0, 1.0)}
+        notes.append(f"spike z{plan['spike']['z']:.1f}")
+    if rng.random() < 0.15:                                # limit 레일 포화
+        plan["rail"] = {"p": rng.uniform(0.01, 0.30)}
+        notes.append("rail")
+    if rng.random() < 0.60:                                # 절단 — 안 걸면 꼬리가 spec 을 넘는다
+        plan["bounded"] = True
+    else:
+        notes.append("비절단")
+    return plan, " · ".join(notes)
+
+
+def random_specs(count, rng: random.Random, salt: str = ""):
+    """관찰군 — 정답 기대 없음(expect='observe'). 분포·limit·fail 배치를 전부 굴린다."""
     out = []
     for i in range(count):
-        shape = RANDOM_SHAPES[i % len(RANDOM_SHAPES)]
-        pattern = rng.choice(RANDOM_PATTERNS)
-        n_fail = rng.randint(4, 20)
-        fails = {"pattern": pattern, "count": n_fail}
-        if pattern in ("edge", "center", "ring", "quadrant", "e1"):
+        unit = rng.choice(RANDOM_UNITS)
+        lo, hi = _random_limits(unit, rng)
+        plan, shape_note = _sample_random_plan(rng, lo, hi)
+        region = rng.choice(RANDOM_REGIONS)
+        n_fail = int(round(math.exp(rng.uniform(math.log(4), math.log(60)))))
+        fails = {"pattern": region or "random", "count": n_fail}
+        if region:
             # 점유율을 **일부러 애매하게** 흩는다 — 임계 0.95 를 넘는 것도, 못 넘는 것도 섞인다.
-            fails["share"] = rng.uniform(0.4, 1.0)
-        elif pattern.startswith("grad"):
-            fails["share"] = rng.uniform(0.1, 0.7)
-        unit_raw, _vt = UNIT_AXIS[i % len(UNIT_AXIS)]
-        if unit_raw in ("", "DEGC"):
-            unit_raw = "v"                        # 무판정(PF) 은 관찰 대상이 아니다
-        # 레벨은 fail 수만 정한다(사다리 의미 없음) — TNO/bin 번호가 겹치지 않게 흩어 준다.
+            # Beta(2,2) 를 [0.3,1.0] 으로 사상해 가운데가 흔하게.
+            fails["share"] = 0.3 + 0.7 * rng.betavariate(2, 2)
+        if rng.random() < 0.20:                            # 측정 결측(표본 부족 상황)
+            # 행 수를 아직 모르므로 비율로 남긴다 — prepare_specs 가 n_valid 로 바꾼다.
+            plan["n_valid_ratio"] = rng.uniform(0.3, 0.95)
+        # 레벨은 fail 수만 정하는 눈금이 아니다(관찰군은 자기 count 를 쓴다) —
+        # TNO/bin 번호가 겹치지 않게 흩는 용도로만 쓴다.
         lv = 2 + i % 4
-        out.append(spec(f"RANDOM{shape.upper()}_{i:03d}", [], lv,
-                        values=_random_plan(shape, rng), fails=fails, unit=unit_raw,
-                        bin_=RANDOM_BIN_BASE + i % len(RANDOM_SHAPES),
-                        metric="(관찰)", target=None, group="random", expect="observe",
-                        note=f"관찰용 무작위 — 분포 {shape} · fail 배치 {pattern} {n_fail}개"))
+        item = spec(f"RANDOM_{i:03d}", [], lv, values=plan, fails=fails, unit=unit,
+                    lsl=lo, usl=hi, bin_=RANDOM_BIN_BASE + i % 10,
+                    metric="(관찰)", target=None, group="random", expect="observe",
+                    note=f"관찰용 무작위 — {shape_note} · fail {n_fail}개"
+                         + (f" ({region} 편중 {fails['share']:.2f})" if region else " (위치 무관)"))
+        item["seed_salt"] = salt        # --seed 를 바꾸면 관찰군만 새 표본이 된다
+        out.append(item)
     return out
 
 
@@ -1243,7 +1329,10 @@ def assign_tno(specs):
     """
     seq: dict = {}
     for s in specs:
-        base = SIG_BIN.get(s["intent"][0], 99) if s["intent"] else 99
+        # 관찰군은 유형 98 로 분리한다 — 정상군·경계군과 같은 99 를 쓰면 (유형,레벨) 당
+        # 순번 99개 상한에 먼저 걸린다(assert dup==0).
+        base = (98 if s.get("group") == "random"
+                else SIG_BIN.get(s["intent"][0], 99) if s["intent"] else 99)
         key = (base, s["level"])
         seq[key] = seq.get(key, 0) + 1
         s["tno"] = base * 1000 + s["level"] * 100 + seq[key]
@@ -1272,9 +1361,13 @@ def build_catalog(total: int, seed: int):
 # source 로 패킹 → honeyform DataFrame
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _stable_seed(name: str) -> int:
-    """item 이름으로 고정 seed — 배치(순서·source)가 달라져도 같은 측정값이 나온다."""
-    return int(hashlib.sha1(name.encode("utf-8")).hexdigest()[:8], 16)
+def _stable_seed(name: str, salt: str = "") -> int:
+    """item 이름(+salt)으로 고정 seed — 배치(순서·source)가 달라져도 같은 측정값이 나온다.
+
+    salt 는 **관찰군에만** 준다(`--seed` 값). 겨냥 세트는 salt 없이 두어 seed 를 바꿔도
+    값이 그대로다 — 룰 회귀를 비교할 때 기준선이 흔들리면 안 되기 때문이다.
+    """
+    return int(hashlib.sha1(f"{name}{salt}".encode("utf-8")).hexdigest()[:8], 16)
 
 
 def _pattern_count(s, n_rows):
@@ -1301,7 +1394,11 @@ def prepare_specs(specs, n_rows):
     """
     for s in specs:
         lsl, usl = s["lsl"], s["usl"]
-        seed = _stable_seed(s["name"])
+        seed = _stable_seed(s["name"], s.get("seed_salt", ""))
+        # 관찰군은 행 수를 모른 채 결측을 비율로 선언한다 — 여기서 개수로 바꾼다.
+        ratio = s["values"].pop("n_valid_ratio", None)
+        if ratio is not None:
+            s["values"]["n_valid"] = int(n_rows * ratio)
         plan = resolve_tuning(s["values"], n_rows, seed, lsl, usl)
         v = synth_values(plan, n_rows, np.random.default_rng(seed), lsl, usl)
         fires = s["level"] >= FIRE_FROM
@@ -1320,7 +1417,9 @@ def prepare_specs(specs, n_rows):
         elif s["fails"].get("pattern") in SPATIAL_PATTERNS or s["fails"].get("fraction"):
             cost = max(_pattern_count(s, n_rows), int(oos.sum()))
         else:
-            cost = max(FAIL_N[s["level"] - 1], int(oos.sum()))
+            # `fails["count"]` 를 존중한다 — 종전엔 비공간 항목에서 이 값을 무시하고
+            # 레벨 사다리만 봐서, 관찰군의 "fail 16개" 선언이 실제로는 60개가 됐다.
+            cost = max(int(s["fails"].get("count", FAIL_N[s["level"] - 1])), int(oos.sum()))
         s["_cost"] = int(min(cost, n_rows))
     return specs
 
@@ -1513,8 +1612,9 @@ def build_source_df(specs, wafer, seed):
                                    rng, e1=e1)
             _push_out_of_spec(values, extra, lsl, usl, FAIL_MARGIN[s["level"] - 1], rng)
             fail_idx = np.concatenate([fail_idx, extra]).astype(int)
-        elif fires and fail_idx.size < FAIL_N[s["level"] - 1]:
-            need = FAIL_N[s["level"] - 1] - fail_idx.size
+        elif fires and fail_idx.size < int(f.get("count", FAIL_N[s["level"] - 1])):
+            # 선언된 fail 수를 존중한다(관찰군은 사다리와 무관한 자기 count 를 쓴다).
+            need = int(f.get("count", FAIL_N[s["level"] - 1])) - fail_idx.size
             pick_from = np.setdiff1d(free_idx, fail_idx, assume_unique=False)
             # 측정값이 없는(NaN) chip 은 fail 로 찍지 않는다 — 값으로 설명할 수 없는 fail 이
             # 생긴다(LOW_SAMPLE 처럼 대부분이 공란인 항목에서 실제로 195건 나왔다).
@@ -1529,12 +1629,20 @@ def build_source_df(specs, wafer, seed):
         # 다른 item 이 이미 쓴 chip 에서 이 item 이 spec 을 벗어나면 fail 로 찍을 수 없다
         # (FAILTNO 는 chip 당 하나). 그 값은 spec 안으로 당겨 불변 법칙을 지킨다 —
         # 실제 테스터에서도 chip 은 처음 걸린 test 하나로 귀속된다.
+        # ⚠ **몸통 안으로** 당긴다(2026-08-13). limit 바로 안쪽(usl−0.01·span)으로 당기던
+        # 종전 방식은 σ=0.05 항목에서 중심 9.8 robust σ 짜리 인공 pass 를 만들어,
+        # OUTLIER 판정의 gap(마지막 pass ↔ 첫 fail 빈 구간)을 통째로 메웠다 —
+        # OUTLIER_L2·L3 가 gap 0.7~0.9 로 죽던 원인. 실데이터에도 그런 pass 는 없다.
         if lsl is not None and usl is not None:
             stuck = np.flatnonzero(oos & ~free)
             if stuck.size:
-                span = usl - lsl
-                values[stuck] = np.where(values[stuck] > usl, usl - 0.01 * span,
-                                         lsl + 0.01 * span)
+                finite = values[np.isfinite(values)]
+                med = float(np.median(finite)) if finite.size else (usl + lsl) / 2
+                mad = float(np.median(np.abs(finite - med))) if finite.size else 0.0
+                sigma = 1.4826 * mad or (usl - lsl) * 0.01
+                pulled = med + np.sign(values[stuck] - med) * rng.uniform(
+                    0.0, 2.0 * sigma, stuck.size)
+                values[stuck] = np.clip(pulled, lsl, usl)
 
         free[fail_idx] = False
         bin_col[fail_idx] = int(s["bin"])
@@ -1604,7 +1712,10 @@ def measure(v, lsl, usl, fail_idx, n_rows, x, y, rnorm, xn, yn, e1=None, all_val
             limit_missing=int(lsl is None or usl is None))
     if fail_idx.size:
         if all_values is not None:
-            out["fail_robust_z_max"] = _r(m_fail_z_max(all_values, fail_idx))
+            mad_min, gap, z_max = m_fail_outlier(all_values, fail_idx)
+            out["fail_mad_min"] = _r(mad_min)
+            out["fail_pass_gap_sigma"] = _r(gap)
+            out["fail_robust_z_max"] = _r(z_max)
         fm = np.zeros(n_rows, dtype=bool)
         fm[fail_idx] = True
         overall = fm.mean()
@@ -1713,7 +1824,8 @@ def write_answer_key(out_dir: Path, sources):
             th_key = {"spread_norm": "spread_norm_warn", "outlier_ratio": "outlier_ratio_warn",
                       "cpk": "cpk_warn", "center_bias": "mean_shift_warn",
                       "kurtosis": "kurtosis_warn", "code_edge_hit": "code_edge_hit_warn",
-                      "fail_robust_z_max": "outlier_fail_z_min",
+                      "fail_mad_min": "outlier_fail_mad_min",
+                      "fail_pass_gap_sigma": "outlier_fail_gap_sigma_min",
                       "e1_fail_share": "region_fail_share_min",
                       "edge_fail_share": "region_fail_share_min",
                       "center_fail_share": "region_fail_share_min",
@@ -2024,7 +2136,7 @@ def main():
     ap.add_argument("--out", default=str(Path(__file__).resolve().parent / "out"))
     ap.add_argument("--items", type=int, default=500, help="test item 총 개수 (기본 500)")
     ap.add_argument("--random-items", type=int, default=RANDOM_COUNT,
-                    help="관찰용 무작위 item 수 — 정답 기대 없이 엔진 판정만 본다 (기본 100)")
+                    help="관찰용 무작위 item 수 — 정답 기대 없이 엔진 판정만 본다 (기본 30)")
     ap.add_argument("--radius", type=int, default=0,
                     help="웨이퍼 반경(die) — 행 수 ≈ πr² (기본 28 ≈ 2,460행)")
     ap.add_argument("--seed", type=int, default=20260812)
@@ -2048,11 +2160,11 @@ def main():
 
     # 웨이퍼 크기는 필요한 CSV 장수를 거의 바꾸지 못한다(fail 이 비율로 늘기 때문) —
     # 파일이 작아지도록 2,453행(반경 28)을 기본으로 쓴다.
-    # 단일 CSV 는 반경 44(≈6,082 chip). fail 은 chip 을 서로 배타적으로 쓰므로(FAILTNO 는
-    # chip 당 하나) 관찰군 100개가 붙은 뒤로는 반경 22(1,517)로는 예산이 한참 모자라고,
-    # 36(4,053)에서도 90% 가 차 마지막 item 들이 밀려났다(표본이 적은 항목은 쓸 chip 자체가
-    # 없어져 fail 0 = 평가 제외가 된다).
-    args.radius = args.radius or (44 if args.single_csv else 28)
+    # 단일 CSV 는 반경 40(≈5,024 chip). fail 은 chip 을 서로 배타적으로 쓰므로(FAILTNO 는
+    # chip 당 하나) 관찰군이 붙은 뒤로는 반경 22(1,517)로 예산이 한참 모자란다 — 예산이
+    # 90% 를 넘으면 뒤쪽 item 이 통째로 밀려나고, 표본이 적은 항목은 쓸 chip 자체가 없어져
+    # fail 0 = 평가 제외가 된다. 관찰군 수를 크게 올릴 땐 반경도 같이 올릴 것.
+    args.radius = args.radius or (40 if args.single_csv else 28)
 
     out_dir = Path(args.out)
     if getattr(args, "_eval_dump"):
@@ -2129,7 +2241,7 @@ def versioned_path(path: Path) -> Path:
 CSV_EXCLUDE = {"GROSS_FAIL", "WAFER_GRADIENT", "CONSTANT_VALUE", "BIDIR_TAIL", "TAIL_RISK"}
 
 
-def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT):
+def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT, seed: int = 20260812):
     """CSV 1장(웨이퍼 1장)에 담을 item 목록 — 단독 세트 + 관찰군(random).
 
     분포를 spec 안에 가둬(`bounded`) fail 은 레벨 사다리(FAIL_N)만큼만 나오게 했으므로
@@ -2137,7 +2249,7 @@ def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT):
     반환: (담은 specs, 제외 [(item, 필요 fail 수)], 사용한 fail 행 수)
     """
     pool = [s for s in single_specs() if not (set(s["intent"]) & CSV_EXCLUDE)]
-    pool += random_specs(random_count, random.Random(20260812))
+    pool += random_specs(random_count, random.Random(seed), salt=str(seed))
     specs = assign_tno(pool)
     prepare_specs(specs, n_rows)
     budget = int(n_rows * 0.9)
@@ -2179,7 +2291,7 @@ def make_single_csv(args):
     _check_coord_limits(args)
     wafer = build_wafer(args.radius)
     n_rows = wafer[0].size
-    specs, dropped, used = single_csv_specs(n_rows, args.random_items)
+    specs, dropped, used = single_csv_specs(n_rows, args.random_items, args.seed)
     n_random = sum(1 for s in specs if s["group"] == "random")
     print(f"[1/3] item {len(specs)}개 (겨냥 {len(specs) - n_random} + 관찰용 무작위 {n_random}) "
           f"· chip {n_rows}개/item · fail chip {used}개 ({used / n_rows:.0%} 사용)")

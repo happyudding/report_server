@@ -17,6 +17,7 @@
 | _FULL_CACHE        | (akey, chash, "sid:edits_rev", extras_digest)    | 편집 rev / annotations 등 extras    |
 | _SCATTER_CACHE     | (akey, chash[, prep], mode, subject[, "bin1"])   | raw_data 편집 / 전처리 / 세션 삭제 ("bin1"=양품만) |
 | DIST_CHUNK_CACHE   | (akey, chash[, prep], mode, chunk_id)            | raw_data 편집 / 전처리 / 세션 삭제  |
+| AI_COMMENT_CACHE   | (akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail"], aiver) | raw_data 편집 / 전처리 / 세션 메타(PATCH) / eval 룰 편집 — **edits_rev·sid 무관**(comment 편집으로 재평가 안 함) |
 
 공통 규약:
 - 모든 키의 **첫 요소는 analysis_key** — AKEY_CACHES 무효화(evict/invalidate)의 전제.
@@ -33,6 +34,8 @@
 - selected_items 는 analysis_key 산출에 포함되므로 어떤 키에도 따로 넣지 않는다.
 """
 from __future__ import annotations
+
+import hashlib
 
 from .validation import validate_mode, webreport_ai_comment
 
@@ -288,7 +291,34 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      CLUSTER 는 임계 1.0→2.5 로 올려 켰다 ④ HEAVY_TAIL 임계 2.0→8.0 ⑤ SUBPOP_GAP →
 #      **BIMODALITY** 개명. AI Comment 본문·Signature 컬럼 값이 광범위하게 바뀐다.
 #      룰 yaml 을 손으로 고쳤으므로 `.rules_rev`(패널 저장 카운터)로는 무효화되지 않는다.
-REPORT_SCHEMA_VERSION = 36
+# v37: eval 룰셋 **2차** 재편(2026-08-13 사용자 v6 검토 반영) — ① OUTLIER 판정축을 거리 단독
+#      에서 **거리 AND 끊김**(`fail_mad_min ≥ 4` AND `fail_pass_gap_sigma ≥ 1.5`)으로 교체.
+#      거리만으로는 "꼬리가 이어져 규격을 넘은 것"(HEAVY_TAIL)과 "뚝 떨어져 나간 것"이
+#      구분되지 않았다(실측에서 순서가 뒤집혔다) ② `suppressed_by` 의 의미를 "목록에서 제거"
+#      → **"primary 만 양보"** 로 바꿔 여러 현상이 동시에 보이게 했다 ③ 양자화(계단형) 값에서
+#      히스토그램 bin 이 어긋나 생기던 **BIMODALITY 오탐 제거**(격자 정렬).
+#      AI Comment 본문·Signature 컬럼 값이 광범위하게 바뀐다(코드 변경이라 .rules_rev 로는
+#      무효화되지 않는다).
+REPORT_SCHEMA_VERSION = 37
+
+
+def _eval_rules_suffix() -> tuple:
+    """eval 룰 상태 키 꼬리표 — report_key(ai 세션)와 ai_comment_key 가 공유.
+
+    rules_rev: /pe/eval 저장 시 +1 되는 카운터 — 룰 편집이 재평가를 강제한다.
+    rev 파일이 없으면 빈 문자열이라 아무것도 덧붙지 않는다(기존 키 불변).
+    "evalfail": 평가 범위(fail item 만 ↔ 전체 item) env 토글 표식 — rules_rev 가
+    감지하지 못하므로 기본(fail-only)에서만 붙어, 되돌리면 종전 키 캐시가 재사용된다.
+    """
+    from .eval_debug import rules_rev
+    parts = ()
+    rev = rules_rev()
+    if rev:
+        parts += ("rules" + rev,)
+    from .ai_comment import fail_only_enabled
+    if fail_only_enabled():
+        parts += ("evalfail",)
+    return parts
 
 
 def report_key(session, session_id: str, edits_rev: int) -> tuple:
@@ -302,17 +332,43 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
     # 덧붙고 rev 파일이 없으면 빈 문자열이라, 그 외 세션의 기존 캐시는 그대로 유효하다.
     opts = session.get("webreport_options") or ""
     if webreport_ai_comment(opts):
-        from .eval_debug import rules_rev
-        rev = rules_rev()
-        if rev:
-            key += ("rules" + rev,)
-        # 평가 범위(fail item 만 ↔ 전체 item)가 바뀌면 AI Comment 값이 달라진다.
-        # env 토글이라 rules_rev 가 감지하지 못하므로 표식을 덧붙인다 — 기본(fail-only)
-        # 에서만 붙어 되돌리면 종전 키의 캐시가 그대로 재사용된다.
-        from .ai_comment import fail_only_enabled
-        if fail_only_enabled():
-            key += ("evalfail",)
+        key += _eval_rules_suffix()
     return key
+
+
+# AI Comment 평가 결과(build_ai_comments 반환 dict)의 캐시 세대 — _to_row_keys 반환
+# **구조**(키 구성)가 바뀔 때만 올린다. 평가 **값**의 변화는 rules_rev(_eval_rules_suffix)
+# 가 덮으므로 여기서 올리지 않는다. REPORT_SCHEMA_VERSION 과 무관(payload 와 분리 캐시).
+AI_COMMENT_SCHEMA_VERSION = 1
+
+
+def _ai_meta_digest(session) -> str:
+    """ai_comment._session_meta 가 평가 입력으로 쓰는 세션 메타의 digest.
+
+    `PATCH /session/<sid>/meta` 는 analysis_key 를 재산출하지 않으므로(CLAUDE.md 규칙 #3)
+    product/lot 등이 바뀌어도 akey 로는 감지할 수 없다 — 이 digest 가 재평가를 강제한다.
+    필드 목록은 _session_meta 와 짝: product/product_type/family_product/lot_id/revision.
+    (session_id·analysis_key 는 선례검색 자기제외용 전달값이라 평가 결과에 영향 없음 — 제외.)
+    """
+    fields = (session.get("product") or "", session.get("product_type") or "",
+              session.get("family_product") or "", session.get("lot_id") or "",
+              session.get("revision") or "")
+    canon = "|".join(str(f).strip() for f in fields).encode("utf-8")
+    return hashlib.sha256(canon).hexdigest()[:12]
+
+
+def ai_comment_key(session, prep_digest: str = "") -> tuple:
+    """AI Comment 평가 결과 캐시 키 — report payload 캐시와 **분리** (2026-08-13).
+
+    session_id·edits_rev 를 넣지 않는 것이 핵심이다: 평가 입력은 tables(= chash + prep)
+    + 세션 메타(_ai_meta_digest) + eval 룰(_eval_rules_suffix)뿐이라, comment/override
+    편집(edits_rev+1)·REPORT_SCHEMA_VERSION bump·dedup 형제 세션에서 재평가가 필요 없다.
+    selected_items 는 analysis_key 산출에 이미 포함(모듈 docstring)이라 따로 넣지 않는다.
+    ⚠ 선례검색이 실제 DB 를 갖게 되면(meta 의 session_id 자기제외로 세션마다 선례가
+    달라질 수 있음) 이 전제가 흔들린다 — LLM/선례 활성화 시 세션 축 추가를 재검토할 것.
+    """
+    return (_base(session, prep_digest) + (_mode(session), _ai_meta_digest(session))
+            + _eval_rules_suffix() + (AI_COMMENT_SCHEMA_VERSION,))
 
 
 def trim_key(session, session_id: str, edits_rev: int, source: str) -> tuple:

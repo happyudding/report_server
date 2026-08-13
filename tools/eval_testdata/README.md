@@ -17,8 +17,8 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out 
 (`versioned_path`). 기존 raw data 를 절대 덮지 않는다 — 이전 버전으로 재현·비교할 수 있어야
 하기 때문.
 
-**① CSV 1장** (`--single-csv`) — item 180개(겨냥 80 = 16 signature × 5단계 + **관찰용 무작위
-100**) × **chip 6,077개**(반경 44), 약 8MB:
+**① CSV 1장** (`--single-csv`) — item 110개(겨냥 80 = 16 signature × 5단계 + **관찰용 무작위
+30**) × **chip 5,025개**(반경 40), 약 4MB:
 
 | 파일 | 내용 |
 |---|---|
@@ -32,9 +32,11 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out 
 > = 전량 fail) · `BIDIR_TAIL`(양쪽 margin<1σ) · `TAIL_RISK`(spec_margin_min<1σ = 꼬리가
 > spec 을 넘어야 함). 이 다섯은 전체 세트(`--out`, source 여러 개)에서 확인한다.
 
-> **웨이퍼가 커진 이유(반경 22→44)**: fail 은 chip 을 서로 배타적으로 쓰므로(`FAILTNO` 는
-> chip 당 하나) 관찰군 100개가 붙으면서 예산이 모자라 뒤쪽 item 이 통째로 밀려났다
+> **웨이퍼가 커진 이유(반경 22→40)**: fail 은 chip 을 서로 배타적으로 쓰므로(`FAILTNO` 는
+> chip 당 하나) 관찰군이 붙으면서 예산이 모자라 뒤쪽 item 이 통째로 밀려났다
 > (표본이 적은 항목은 쓸 chip 이 없어져 fail 0 = 평가 제외가 된다).
+> 관찰군을 `--random-items` 로 크게 늘릴 때는 `--radius` 도 같이 올릴 것 —
+> 사용률이 90% 를 넘으면 생성기가 "예산 초과 제외" 로 항목을 버린다(콘솔에 찍힌다).
 
 **② 전체 세트** (`--out DIR`) — parquet source 여러 개 × 2,453행 + `manifest.json` +
 `answer_key.csv` + `verify.csv` + `metrics_detail.json`. item 500개.
@@ -134,15 +136,23 @@ severity_bias 가 얹혀 status 가 달라진다.
 | `bin_axis` | fail bin 6종(3·4·5·8·**18**·**31**) → `bin_taxonomy` severity_bias |
 | `trim_axis` | item 명에 TRIM → `category_major=TRIM` |
 | `boundary` | 임계값 바로 앞뒤 6점 스윕 + 상수값 부동소수 함정 4건 |
-| `random` | **관찰군 100개**(`--random-items`) — 정답 기대 없음 |
+| `random` | **관찰군 30개**(`--random-items`) — 정답 기대 없음 |
 | `normal` | 정상 분포 — **발화 0건이어야 한다**(오탐 검사) |
 | `mixed` | 무작위 조합(현실형) — 공간·수율 항목은 fail chip 값을 spec 밖으로 |
 
-**관찰군(`random`)** 은 룰 사다리를 쓰지 않는다(2026-08-12 추가). 산포 모양 9종
-(normal/wide/shifted/bimodal/spiky/tailed/quantized/flat/skewed) × fail 배치
-(random/edge/center/ring/quadrant/e1)를 무작위로 섞어, **아무렇게나 들어온 데이터를 엔진이
-어떻게 판정하는지** 보는 용도다. 겨냥한 룰이 없으므로 verify 는 이 그룹을 누락·오발화로
-세지 않고 **발화 분포만 따로 요약**한다(`expect=observe`).
+**관찰군(`random`)** 은 룰 사다리를 쓰지 않는다. **유형을 정해 놓고 만들지도 않는다**
+(2026-08-13 재설계) — "wide/bimodal/spiky…" 목록에서 고르면 결국 우리가 아는 유형만 나와,
+실데이터처럼 유형 사이 어딘가에 걸친 분포를 못 만들기 때문이다. 대신 **파라미터 공간에서
+직접 뽑는다**: 모드 수 1~4(무게·중심·σ 각각 랜덤) · 양자화 25% · spike 30%(비율·거리·부호
+랜덤) · rail 15% · 절단 60% · 결측 20%, unit·limit 도 랜덤(CODE/PCT/V/Hz…). fail 배치는
+영역 편중을 연속값(share~Beta)으로 섞는다. **아무렇게나 들어온 데이터를 엔진이 어떻게
+판정하는지** 보는 용도라, verify 는 이 그룹을 누락·오발화로 세지 않고 **발화 분포만 따로
+요약**한다(`expect=observe`). 실제로 만든 파라미터는 `note` 에 남는다(정답이 아니라 관찰 기록).
+
+**재현성**: `--seed` 는 **관찰군만** 바꾼다(`_stable_seed(name, salt)`). 겨냥 세트는 salt 없이
+이름만으로 seed 를 잡아 값이 고정된다 — 룰 회귀를 비교할 때 기준선이 흔들리면 안 되기 때문.
+⚠ 다만 한 웨이퍼를 공유하므로 관찰군이 바뀌면 남는 chip 이 달라져 **겨냥 세트의 fail 배치와
+그 실측 지표는 일부 달라진다**(측정값 자체는 동일). 같은 seed 로 두 번 돌리면 완전히 같다.
 
 **모든 item 은 fail item 이다** (FAILTNO == 그 item 의 TNO 인 chip 이 1개 이상).
 서버 기본값 `WEB_REPORT_EVAL_FAIL_ONLY=1` 에서 전부가 평가 대상이 된다.
@@ -196,14 +206,14 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
   (`fired_all_rules`). **운영 rules 파일은 건드리지 않는다**(복사본에만 쓴다).
   비활성 룰까지 "데이터가 조건을 맞췄는지" 확인하기 위한 경로다.
 
-판정 4종 — 마지막 실행 결과(v6, 단일 CSV)는 **180/180**:
+판정 4종 — 마지막 실행 결과(v8, 단일 CSV)는 **110/110**:
 
 | 지표 | 의미 | 기대 |
 |---|---|---|
 | `missing` | L2~L5 인데 겨냥한 룰이 안 뜸 | 0 |
 | `false_fire` | L1 인데 겨냥한 룰이 뜸 | 0 |
 | 정상군 오탐 | `NORMAL_*` 에서 룰 발화 | 0 |
-| `suppressed` | 조건은 맞았지만 `suppressed_by` 로 눌림 | 정상 동작(v6 1건: HEAVY_TAIL L5 → OUTLIER) |
+| `suppressed` | 조건은 맞았지만 `suppressed_by` 로 **primary 를 양보** | 0 이어도 정상(목록에서 사라지지 않는다 — 2026-08-13 의미 변경) |
 | `co_fired` | 겨냥 밖 동반발화 | 구조상 발생(§4-1) |
 
 `UNKNOWN` 은 "아무 룰도 안 뜬 케이스" 표식이라 오탐으로 세지 않는다.
@@ -221,12 +231,20 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
 | 관계 | 이유 |
 |---|---|
 | WIDE_DISTRIBUTION ⟹ LOW_CPK | 대칭 limit 에서 `cpk = 1/(6·spread_norm)` → spread>0.18 이면 cpk<0.93 |
-| OUTLIER ⟹ HEAVY_TAIL | 멀리 튄 값 하나가 kurtosis 를 4제곱으로 밀어올린다 (그래서 `suppressed_by`) |
-| **kurtosis ≥ 8 ⟹ OUTLIER 근접** | 임계 8 을 채우려면 spike 가 σ 의 9배 밖에 있어야 하는데, 그 값은 곧 spec 밖이라 fail 이 되고 robust z 12 에 닿는다. v6 에서 HEAVY_TAIL L5 가 OUTLIER 에 눌리는 이유 — **두 룰은 강도 축이 겹친다** |
+| OUTLIER ⟹ HEAVY_TAIL | 멀리 튄 값 하나가 kurtosis 를 4제곱으로 밀어올린다 (그래서 `suppressed_by` — 목록에는 둘 다 남고 primary 만 OUTLIER) |
+| **cpk 넉넉 + fail 존재 ⟹ OUTLIER** | 정규 몸통은 최대 pass 거리가 ≈3.85σ 로 고정이라 `gap ≈ 3·cpk·(σ/robustσ) − 3.85` 다. cpk 가 1.8 을 넘으면 fail 이 하나만 있어도 gap 1.5 를 넘는다 — 맞는 판정이다(공정능력이 충분한데 죽었으면 산발 이상) |
 | BIDIR_TAIL ⟹ WIDE + LOW_CPK | 양쪽 margin<1σ 면 σ>폭/2 |
 | SPEC_TOO_TIGHT ⊻ WIDE/MEAN_SHIFT/SUBPOP | 조건이 "좁고·중앙·단봉"이라 **동시 발화 불가** |
 | BIMODALITY ⊻ outlier 계열 | `outlier_ratio ≥ 3%` 면 판정 보류(게이트) |
 | OUTLIER ⊻ 공간 룰 | OUTLIER 의 spike 는 **위치와 무관하게** spec 밖 fail 이라, 섞이면 영역 점유율 95% 가 깨진다 |
+
+### 4-1-2. 낮은 MAD 배수의 OUTLIER 는 정규 몸통으로 못 만든다
+
+새 판정은 `fail_mad_min ≥ 4` **AND** `gap ≥ 1.5σ` 인데, 두 축은 정규 몸통에서 **양의 상관**이다 —
+최대 pass 거리가 ≈3.85σ 라 gap 1.5 를 만족하려면 fail 이 최소 5.35σ(≈8 MAD) 밖이어야 한다.
+그래서 단독 세트 사다리는 8 부터 시작하고, **임계 4 앞뒤 경계는 균등분포 몸통**으로 만든다
+(균등분포는 최대 pass 거리가 1.35σ 뿐이라 4 MAD 에서도 gap 이 선다 — 반폭 h 를 손잡이로 두면
+`mad_min ≈ 1/h`). 실데이터에서 이 구조로 나온 것이 "평평한 분포 + limit 밖 소수" 항목이었다.
 
 `INCOMPATIBLE` 상수가 이 관계를 코드로 갖고 있다.
 
@@ -260,10 +278,20 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
 
 `fail = limit 위반` 규칙(§1-2) 때문에, 산포가 좁은 item 은 fail chip 이 곧 극단값이 되어
 `HEAVY_TAIL`(kurtosis>8)이 함께 뜬다. 데이터의 결함이 아니라 **사실 그대로**다 —
-"대부분 잘 나오는데 몇 개만 멀리 튀었다" 가 정확히 heavy tail 이다. 같은 이유로 **밀어낸
-fail 이 OUTLIER 판정선(12 robust σ)에 닿을 수 있다** — `FAIL_MARGIN` 을 키우거나 기준 σ 를
-줄이면 겨냥하지 않은 OUTLIER 가 붙는다. 기준 분포가 지나치게 좁아 이 동반발화가 과했던
-항목(HEAVY_TAIL 자신·MEAN_SHIFT·공간 룰)은 σ 를 키워 완화했다.
+"대부분 잘 나오는데 몇 개만 멀리 튀었다" 가 정확히 heavy tail 이다.
+
+같은 이유로 **밀어낸 fail 이 OUTLIER 판정선(gap 1.5σ)에 닿는다.** 이쪽은 손잡이가 둘이다:
+- `FAIL_MARGIN` — 얼마나 멀리 미느냐. limit 을 겨우 넘는 정도(0.002~0.010)로 둔다.
+- 기준 σ — 좁을수록 같은 거리가 더 크게 보인다. 공간 룰 항목은 `SPATIAL_SIGMA` 0.10 이
+  접점이다(더 좁으면 OUTLIER, 더 넓으면 fail 이 stdev 를 밀어올려 LOW_CPK).
+
+⚠ **HEAVY_TAIL 은 `_kurt_plan` 이 연속 꼬리(scale mixture)로 만든다** — 고정 오프셋 spike 는
+전부 같은 거리에 뭉쳐 gap 이 1.4σ 까지 올라가 OUTLIER 판정선에 아슬아슬했다. 넓은 성분을
+섞고 `bounded` 를 걸지 않으면 꼬리가 몸통에서 limit 까지 이어져 gap≈0 이 보장된다.
+
+⚠ **`build_source_df` 의 stuck 되돌리기는 몸통 안으로** 당긴다. limit 바로 안쪽으로 당기던
+종전 방식은 σ=0.05 항목에서 중심 9.8σ 짜리 인공 pass 를 만들어 gap 을 통째로 메웠다
+(OUTLIER 사다리 L2·L3 가 죽던 원인).
 
 ### 4-3. `CONSTANT_VALUE` 의 부동소수 함정
 
@@ -272,12 +300,20 @@ fail 이 OUTLIER 판정선(12 robust σ)에 닿을 수 있다** — `FAIL_MARGIN
 발화. 경계 항목 `EDGEC_constant_*` 4건이 이 차이를 보여준다.
 실데이터의 clamp 값이 1.4·1.8 류면 이 룰은 조용히 놓친다 — 상대 산포 기준(`stdev/폭 < 1e-9`)이 안전하다.
 
+### 4-3-1. 양자화 값은 히스토그램이 가짜 봉우리를 만든다
+
+계단형(CODE·PCT) 값에서 bin 폭이 계단 간격보다 좁으면 **빈 칸이 사이사이 끼어** 봉우리가
+여러 개로 잡힌다 — 실측에서 step 0.125 인 **단봉** 데이터의 히스토그램이
+`[28,0,23,0,87,0,573,0,1393,1797,0,…]` 이 되어 BIMODALITY 가 오발화했다(계단별 도수는
+완벽한 단봉인데도). 엔진 `features._grid_step` 이 격자를 검출해 bin 경계를 계단에 맞추고,
+생성기 `_grid_step_gen` 이 **같은 규칙을 복제**한다(갈라지면 정답표가 실제 판정과 어긋난다).
+
 ### 4-4. MAD=0 이면 outlier 거리에 상한이 생긴다
 
 pass 값이 **전부 같은 값**이면 MAD=0 이라 modified z 가 meanAD 폴백을 탄다. 그 경우
 z 의 상한이 `n/(1.2533 × fail수)` 로 눌린다 — 60 chip 중 8개가 fail 이면 아무리 멀리
-떨어뜨려도 z 는 6.0 을 못 넘어 `OUTLIER`(임계 12)가 발화하지 않는다. 테스트 픽스처에서
-정상 몸통에 미세한 잡음을 주는 이유다(실데이터는 측정 잡음이 있어 이 상황이 드물다).
+떨어뜨려도 z 는 6.0(= MAD 배수 8.9)을 못 넘는다. 테스트 픽스처에서 정상 몸통에 미세한
+잡음을 주는 이유다(실데이터는 측정 잡음이 있어 이 상황이 드물다).
 
 ### 4-4. UNIT 표기 → `value_type` (무판정 경로)
 

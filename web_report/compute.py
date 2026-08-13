@@ -213,6 +213,18 @@ def should_offload(tables_key) -> bool:
     return not warm
 
 
+def in_worker() -> bool:
+    """지금 코드가 컴퓨트 워커 프로세스 안에서 돌고 있는가 (service 의 큐 등록 가드용)."""
+    return _IN_WORKER
+
+
+def offload_available() -> bool:
+    """워커 풀로 보낼 수 있는 상태인가 — AI 평가처럼 tables 가 웜이어도
+    GIL 점유가 긴 작업을 강제 오프로드할지 판단하는 용도(should_offload 와 달리
+    tables 캐시 상태를 보지 않는다)."""
+    return not _IN_WORKER and _WORKERS > 0
+
+
 def _reset_pool(shutdown=False, expected=None):
     """현재 풀을 버린다. shutdown=True 면 워커 프로세스도 즉시 정리한다.
 
@@ -435,12 +447,20 @@ def _stamp(t_start: float) -> dict | None:
 
 
 @_job("report")
-def report_job(session_id: str, upload_root_str: str):
+def report_job(session_id: str, upload_root_str: str, ai_inline: bool = False):
+    """report payload 빌드 잡.
+
+    ai_inline=True 면 AI Comment 세션에서 eval 평가를 **이 빌드 안에서 동기로** 끝내
+    최종 payload 를 만든다(프리웜·백그라운드 'ai' 잡 경로 — 아무도 화면에서 기다리지
+    않는다). False(기본 — 온디맨드 'report' 경로)면 AI 분리 캐시 미스 시 AI 없는
+    pending payload 를 먼저 만들어 리포트가 즉시 열리게 한다 (service.load_webreport).
+    """
     from database import report_db
     from . import service
     t_start = time.time()
     _, report = service.load_webreport(
-        session_id, report_db=report_db, upload_root=Path(upload_root_str))
+        session_id, report_db=report_db, upload_root=Path(upload_root_str),
+        ai_inline=bool(ai_inline))
     return report, _stamp(t_start)
 
 
@@ -520,7 +540,9 @@ def prewarm_job(session_id: str, upload_root_str: str, dist_seeded: bool = False
     캐시로 열린다. dist 는 시딩된 blob 이 disk_cache 에 이미 있어 값싼 작업이다.
     payload 는 여기서 버리고 단계 기록(수 KB 미만)만 실어 보낸다.
     """
-    _, report_timing = report_job(session_id, upload_root_str)
+    # ai_inline=True — 프리웜은 아무도 기다리지 않는 경로라 AI 평가까지 동기로 끝내
+    # AI 분리 캐시·최종 payload 를 미리 채운다 (pending 본을 만들 이유가 없다).
+    _, report_timing = report_job(session_id, upload_root_str, True)
     dist_timing = None
     if dist_seeded:
         _, dist_timing = dist_job(session_id, upload_root_str)
@@ -665,6 +687,12 @@ _ondemand_threads: list = []
 _ONDEMAND_JOBS = {
     "report": lambda sid, root: report_job(sid, root),
     "map": lambda sid, root: map_job(sid, root),
+    # AI Comment 백그라운드 평가 (2026-08-13) — 사용자는 pending payload 로 이미 리포트를
+    # 보고 있다. ai_inline=True 라 load_webreport 가 pending 본을 미스로 취급해 AI 평가
+    # 포함 최종 payload 를 재빌드하고(워커 강제 오프로드 — GIL 비점유), 완료되면 부모
+    # RAM 의 pending 본이 최종본으로 덮인다. 실패는 build_status 의 (sid,"ai") 실패
+    # 누적으로 차단된다 — 리포트 자체는 이미 열려 있어 사용자 화면은 죽지 않는다.
+    "ai": lambda sid, root: report_job(sid, root, True),
 }
 
 

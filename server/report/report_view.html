@@ -1223,6 +1223,7 @@ html[data-theme="dark"] .cmt-blue   { color: #7fb3ef; }
    재배치한 결과. payload 는 그대로라 옛/새 세션이 같은 화면을 낸다(캐시 스키마 무변경).
    본문 색은 여기서 주고, *r[..] 서식 토큰(.cmt-*)은 더 안쪽 span 이라 그대로 이긴다. */
 .aic-lead { margin: 0 0 4px; }
+.aic-pending { color: #98a2b3; font-style: italic; }   /* AI 백그라운드 계산 중 안내 */
 .aic-sec { margin: 0 0 4px; }
 .aic-tag { font-weight: 700; margin-right: 2px; }
 .aic-sym  { color: #1d4ed8; }   /* 현상 — 파랑 */
@@ -1235,6 +1236,7 @@ html[data-theme="dark"] .cmt-blue   { color: #7fb3ef; }
 .aic-sev-minor   { background: #fff3d6; color: #b45309; }
 .aic-sev-monitor { background: #eef2f7; color: #475467; }
 .aic-mod { background: #ede9fe; color: #5b21b6; }
+html[data-theme="dark"] .aic-pending { color: #6b7280; }
 html[data-theme="dark"] .aic-sym  { color: #7fb3ef; }
 html[data-theme="dark"] .aic-past { color: #b794f6; }
 html[data-theme="dark"] .aic-act  { color: #6ee7a8; }
@@ -1770,13 +1772,17 @@ select.issue-status-sel {
   font-size: 10px; background: transparent; cursor: pointer;
 }
 select.issue-status-sel:focus { border-color: #4a90e2; outline: none; }
-td.issue-status.is-open { color: #c2410c; font-weight: 600; }
-td.issue-status.is-close { color: #15803d; font-weight: 600; }
-/* 신호등 점 대신 **셀 전체**를 Open 주황 / Close 초록 파스텔로 칠한다(사용자 요청 2026-08-13).
-   background 에 !important 가 붙는 이유는 파일 앞머리(§149)와 같다 — zebra(0,2,2)·hover(0,2,2)가
-   여기(0,2,1)를 이겨 짝수 행·마우스오버에서 색이 사라지기 때문. */
+/* 글씨는 굵게 + 진한 대비색 (사용자 요청 2026-08-13). 편집모드 드랍다운도 같이 굵게 —
+   조회/편집에서 글자 무게가 달라 보이지 않게 한다. */
+td.issue-status.is-open { color: #9c0006; font-weight: 700; }
+td.issue-status.is-close { color: #14532d; font-weight: 700; }
+td.issue-status-cell.is-open select.issue-status-sel { color: #9c0006; font-weight: 700; }
+td.issue-status-cell.is-close select.issue-status-sel { color: #14532d; font-weight: 700; }
+/* 신호등 점 대신 **셀 전체**를 Open 연빨강(#ffc7ce) / Close 초록 파스텔로 칠한다
+   (사용자 요청 2026-08-13). background 에 !important 가 붙는 이유는 파일 앞머리(§149)와 같다 —
+   zebra(0,2,2)·hover(0,2,2)가 여기(0,2,1)를 이겨 짝수 행·마우스오버에서 색이 사라지기 때문. */
 td.issue-status-cell { text-align: center; }
-td.issue-status-cell.is-open { background: #ffedd5 !important; }
+td.issue-status-cell.is-open { background: #ffc7ce !important; }
 td.issue-status-cell.is-close { background: #dcfce7 !important; }
 /* 셀 선택(.cell-sel §464)은 위 두 줄보다 뒤에 있어야 이긴다 — 특이도를 한 단계 올려 둔다
    (안 그러면 Status 열만 클릭해도 선택 표시가 안 보인다). */
@@ -1980,6 +1986,8 @@ td.issue-sig-cell .sig-chip { max-width: 104px; overflow: hidden; text-overflow:
   border-radius: 6px; white-space: nowrap;
 }
 .rawdl-item:hover { background: #f0f6ff; color: #2a5db0; }
+/* 전체(zip) 항목은 개별 source 목록과 시각적으로 분리 */
+.rawdl-item-all { border-bottom: 1px solid #e5e7eb; border-radius: 6px 6px 0 0; font-weight: 600; }
 
 /* 자동저장 상태 표시 (edit bar 왼쪽) */
 .autosave-dot {
@@ -2122,6 +2130,7 @@ html[data-theme="dark"] .rawdl-menu { background: #1b1e24; border-color: #3a3f4b
 html[data-theme="dark"] .rawdl-menu-title { color: #8b93a1; }
 html[data-theme="dark"] .rawdl-item { color: #d5d9e0; }
 html[data-theme="dark"] .rawdl-item:hover { background: #243044; color: #7fb3ef; }
+html[data-theme="dark"] .rawdl-item-all { border-bottom-color: #3a3f4b; }
 
 /* ── 공통 텍스트/테이블 ── */
 html[data-theme="dark"] .section-title { color: #c6ccd6; border-bottom-color: #2a2e37; }
@@ -2236,11 +2245,14 @@ html[data-theme="dark"] .sheet-table.kind-issue td.sheet-subhead { background: #
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-cell-warn { background: #46201f !important; }
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-yield-warn { background: hsl(0, 55%, calc(20% + var(--yw, 0) * 22%)) !important; }
 html[data-theme="dark"] .sheet-table.kind-issue tbody tr.issue-bin-detail td { background: #20242c; color: #9aa3b0; }
-/* Status 셀 전체 색 — 라이트의 파스텔에 대응하는 어두운 톤(글자는 밝은 주황/초록). */
-html[data-theme="dark"] td.issue-status-cell.is-open { background: #3f2413 !important; }
+/* Status 셀 전체 색 — 라이트(Open #ffc7ce / Close 초록)에 대응하는 어두운 톤.
+   글자는 어두운 배경에서 대비가 나오게 밝은 빨강/초록으로 뒤집는다(굵기는 라이트와 공유). */
+html[data-theme="dark"] td.issue-status-cell.is-open { background: #4a1d20 !important; }
 html[data-theme="dark"] td.issue-status-cell.is-close { background: #12301f !important; }
-html[data-theme="dark"] td.issue-status.is-open { color: #fdba74; }
-html[data-theme="dark"] td.issue-status.is-close { color: #86efac; }
+html[data-theme="dark"] td.issue-status.is-open,
+html[data-theme="dark"] td.issue-status-cell.is-open select.issue-status-sel { color: #fca5a5; }
+html[data-theme="dark"] td.issue-status.is-close,
+html[data-theme="dark"] td.issue-status-cell.is-close select.issue-status-sel { color: #86efac; }
 html[data-theme="dark"] .sheet-table.kind-issue td.issue-status-cell.cell-sel { background: #1f2a41 !important; }
 html[data-theme="dark"] select.issue-status-sel { color: #d7dbe2; border-color: #4a5261; }
 /* 라이트와 같은 이유 — hover 시 고정열도 불투명하게 덮어 우측 데이터 비침을 막는다. */
@@ -2560,7 +2572,7 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
     <div class="topbar-actions" id="topbarActions">
       <!-- Rawdata 다운로드는 조회 기능이라 읽기 전용 사용자에게도 보인다(권한 게이트 없음) -->
       <span class="rawdl-wrap">
-        <button class="btn-topbar-rawdl" id="btnRawdataDl" title="Rawdata 원본 다운로드 (CSV)">⬇</button>
+        <button class="btn-topbar-rawdl" id="btnRawdataDl" title="Rawdata 원본 다운로드 (source별 CSV / 전체 zip)">⬇</button>
         <div class="rawdl-menu" id="rawdlMenu"></div>
       </span>
       <span class="autosave-dot" id="autosaveDot" title="자동저장 상태 — 주황: 미저장 / 파랑: 저장 중 / 초록: 저장됨"></span>

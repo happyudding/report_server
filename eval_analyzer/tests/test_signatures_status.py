@@ -41,26 +41,38 @@ def test_severe_outlier_fires():
     assert "SEVERE_OUTLIER" in [s["id"] for s in sig["signatures"]]
 
 
-def test_outlier_fires_on_distant_fail():
-    """현행 OUTLIER 는 **거리**로 판정한다 — fail 이 중심에서 12 robust σ 이상 떨어졌을 때."""
+def test_outlier_needs_both_distance_and_gap():
+    """현행 OUTLIER 는 **거리 AND 끊김** 두 조건이다 (2026-08-13).
+
+    거리만 보면 "꼬리가 길어 규격을 넘은 것"(HEAVY_TAIL)까지 outlier 로 잡힌다 —
+    실측에서 더 멀리 나간 항목이 오히려 heavy tail 이었다. 몸통과 끊겼는지를 함께 본다.
+    """
     case = _case()
     raw = {"yield": 0.95, "cpk": 1.5}
-    far = _full_features(fail_robust_z_max=20.0)
-    assert "OUTLIER" in [s["id"] for s in signatures.evaluate(case, far, raw)["signatures"]]
-    # limit 바로 밖에 붙은 fail(거리 작음)은 outlier 가 아니다 — 이게 비율 판정과의 차이다.
-    near = _full_features(fail_robust_z_max=4.0, outlier_ratio=0.10)
-    assert "OUTLIER" not in [s["id"] for s in signatures.evaluate(case, near, raw)["signatures"]]
+    fired = lambda f: [s["id"] for s in signatures.evaluate(case, f, raw)["signatures"]]
+
+    assert "OUTLIER" in fired(_full_features(fail_mad_min=10.0, fail_pass_gap_sigma=3.0))
+    # 멀지만 꼬리가 이어져 있다 → outlier 아님(HEAVY_TAIL 축)
+    assert "OUTLIER" not in fired(_full_features(fail_mad_min=16.0, fail_pass_gap_sigma=0.4))
+    # 끊겼지만 limit 바로 밖이라 가깝다 → outlier 아님(공정능력 축)
+    assert "OUTLIER" not in fired(_full_features(fail_mad_min=3.0, fail_pass_gap_sigma=2.0))
 
 
-def test_outlier_suppresses_low_cpk_and_heavy_tail():
-    """멀리 튄 die 는 stdev·kurtosis 를 함께 밀어올린다 — 원인 룰 하나만 primary 로 남긴다."""
+def test_outlier_keeps_low_cpk_and_heavy_tail_in_list():
+    """동반 발화는 **목록에 남는다** — primary 만 원인 룰에 양보한다 (2026-08-13).
+
+    지우던 시절에는 "cpk 도 낮고 outlier 도 있다" 가 한 줄로만 보여, 사용자가 다른 하나를
+    영영 볼 수 없었다. 지금은 둘 다 보이고 대표만 OUTLIER 다.
+    """
     case = _case()
-    feats = _full_features(fail_robust_z_max=20.0, kurtosis=15.0, n_dut=100)
+    feats = _full_features(fail_mad_min=10.0, fail_pass_gap_sigma=3.0,
+                           kurtosis=15.0, n_dut=100)
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 0.8})
     ids = [s["id"] for s in sig["signatures"]]
-    assert "OUTLIER" in ids
-    assert "LOW_CPK" not in ids and "HEAVY_TAIL" not in ids
+    assert {"OUTLIER", "LOW_CPK", "HEAVY_TAIL"} <= set(ids)
+    # 양보 표시는 남되 목록에서 빠지지는 않는다
     assert {"LOW_CPK", "HEAVY_TAIL"} <= {s["id"] for s in sig["suppressed"]}
+    assert status.decide(case, feats, sig)["primary_signature"] == "OUTLIER"
 
 
 def test_tail_risk_disabled_when_few_samples():

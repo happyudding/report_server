@@ -114,6 +114,11 @@ def get_full_gzip(session_id: str, *, session: dict, extras: dict,
         payload["issue_table_text"] = sheets.get("Issue Table")
         payload["web_report"] = report
         blob = _gzip_json(payload)
+        if report.get("ai_comment_pending"):
+            # AI 백그라운드 계산 중의 임시 응답 — 캐시하면 AI 완료 후에도 같은 키로
+            # stale 이 서빙된다(키에 AI 상태가 없음). etag 도 최종본과 갈라 pending
+            # 응답의 If-None-Match 가 최종본 304 로 오인되지 않게 한다.
+            return etag[:-1] + '-ai"', blob
         cache._bytes_capped_put(_FULL_CACHE, cache_key, blob,
                                 _FULL_CACHE_MAX, _FULL_CACHE_MAX_BYTES)
     return etag, blob

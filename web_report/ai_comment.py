@@ -342,8 +342,15 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None):
     selected = {str(v) for v in (selected_items or []) if str(v)}
     fail_set = eval_fail_scope(tables) \
         if (fail_only if fail_only is not None else _FAIL_ONLY) else None
+    from . import build_log
     best = {}
     for idx, table in enumerate(tables):
+        # 실행 중 체크포인트 — 타임아웃으로 워커가 죽어도 실패 레코드의 last_source 에
+        # "몇 번째 소스에서 멎었나"가 남는다(docs/20 §3). stage("ai_comment") 는 호출부
+        # (service)가 이미 잡고 있으므로 여기서 stage 를 중첩하면 소요가 2배가 된다 —
+        # 반드시 checkpoint 를 쓴다 (build_log 모듈 주석).
+        build_log.checkpoint("ai_comment",
+                             f"{idx + 1}/{len(tables)} {table.source or ''}")
         meta = _session_meta(session, idx + 1)
         if meta is None:
             logger.warning("ai_comment: product_type=%r 는 평가 대상이 아님 — 건너뜀",
@@ -362,6 +369,21 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None):
     return _to_row_keys(best)
 
 
+def safe_build_ex(tables, session, selected_items=None, fail_only=None):
+    """safe_build + 성공 여부 — (result dict, ok). ok=False 는 **예외 폴백**(빈 결과).
+
+    캐시 경로(service)가 폴백을 캐시하지 않기 위한 구분이다 — 일시 오류(메모리·룰 파일
+    잠금 등)의 빈 결과를 캐시하면 오류가 영구화된다. product_type 미허용 등 '정상적으로
+    빈 결과'는 결정적이므로 ok=True 다(캐시해도 안전).
+    """
+    try:
+        return build_ai_comments(tables, session, selected_items, fail_only), True
+    except Exception:
+        logger.warning("ai_comment 빌드 실패 — 빈 값으로 진행 (session=%s)",
+                       session.get("session_id"), exc_info=True)
+        return _EMPTY_RESULT.copy(), False
+
+
 def safe_build(tables, session, selected_items=None, fail_only=None):
     """build_ai_comments 실패 격리 — 예외 시 warning 로그 + 빈 결과.
 
@@ -369,9 +391,4 @@ def safe_build(tables, session, selected_items=None, fail_only=None):
     (값만 비어 있음). None 을 반환하지 않는다 — 컬럼 표시 여부는 호출자(service)의
     옵션 판정이 결정한다.
     """
-    try:
-        return build_ai_comments(tables, session, selected_items, fail_only)
-    except Exception:
-        logger.warning("ai_comment 빌드 실패 — 빈 값으로 진행 (session=%s)",
-                       session.get("session_id"), exc_info=True)
-        return _EMPTY_RESULT.copy()
+    return safe_build_ex(tables, session, selected_items, fail_only)[0]

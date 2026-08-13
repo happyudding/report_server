@@ -7,9 +7,21 @@ bimodality(Sarle's coefficient). 결측(n<=1, limit 없음)이면 cpk 류 None.
 import numpy as np
 
 
+def _finite(values):
+    """유한값만 float ndarray 로 — 종전 [x for x in values if x is not None and
+    np.isfinite(x)] 와 원소·순서 동일(벡터화 — 2026-08-13 콜드 빌드 최적화).
+
+    np.asarray(dtype=float) 가 None→nan 으로 바꾸고, isfinite 마스크가 nan(±inf 포함)을
+    거르므로 걸러지는 집합이 종전 스칼라 필터와 정확히 같다. 종전엔 case 마다 N 회의
+    파이썬 레벨 np.isfinite 호출이 있었다(콜드 빌드 최대 상수 비용).
+    """
+    a = np.asarray(values, dtype=float)
+    return a[np.isfinite(a)]
+
+
 def cpk_summary(values, lsl, usl):
     """CODE_TO_PORT §2 그대로. 유한값만 사용, 표본 표준편차(ddof=1)."""
-    v = np.asarray([x for x in values if x is not None and np.isfinite(x)], dtype=float)
+    v = _finite(values)
     n = v.size
     if n == 0:
         return dict(n=0, min=None, max=None, median=None, mean=None, stdev=None,
@@ -30,7 +42,7 @@ def cpk_summary(values, lsl, usl):
 
 def _bimodality_coefficient(values):
     """Sarle's BC = (skew^2 + 1) / kurtosis. n<4 또는 kurtosis=0 이면 None."""
-    v = np.asarray([x for x in values if x is not None and np.isfinite(x)], dtype=float)
+    v = _finite(values)
     if v.size < 4:
         return None
     mean, std = v.mean(), v.std(ddof=1)
@@ -56,7 +68,21 @@ def compute(case_ctx: dict) -> dict:
     """
     values = case_ctx.get("values") or []
     is_pf = case_ctx.get("value_type") == "PF"
-    summary = cpk_summary(values, case_ctx.get("lsl"), case_ctx.get("usl"))
+    # item 단위 공유(_shared, ingest 가 같은 item 의 case(bin)들에 같은 dict 를 붙임) —
+    # cpk_summary/bimodality 는 values+limit 만의 함수라 fail bin 이 달라도 동일하다.
+    # 같은 배열을 bin 수만큼 재계산하던 비용 제거(2026-08-13). 값은 1-튜플로 감싸
+    # "계산 결과가 None" 과 "아직 미계산" 을 구분한다. 동시 계산 경합은 무해하다
+    # (같은 입력 → 같은 값, dict 대입은 GIL 원자적).
+    shared = case_ctx.get("_shared")
+    summary = None
+    if shared is not None:
+        hit = shared.get("cpk_summary")
+        if hit is not None:
+            summary = hit[0]
+    if summary is None:
+        summary = cpk_summary(values, case_ctx.get("lsl"), case_ctx.get("usl"))
+        if shared is not None:
+            shared["cpk_summary"] = (summary,)
     if values:
         # 분모는 전체 DUT 수(ingest 가 넣은 total_count) 우선 — len(values)(파싱 성공분)로
         # 재면 item 마다 분모가 달라 yield 비교·trump 판정이 왜곡된다. 구 경로 폴백 유지.
@@ -78,10 +104,19 @@ def compute(case_ctx: dict) -> dict:
             "yield": yield_, "fail_count": fail, "total_count": total,
             "bimodality":None,
         }
+    bimod = None
+    if values:
+        hit = shared.get("bimodality") if shared is not None else None
+        if hit is not None:
+            bimod = hit[0]
+        else:
+            bimod = _bimodality_coefficient(values)
+            if shared is not None:
+                shared["bimodality"] = (bimod,)
     return {
         "cpk": summary["cpk"], "cpl": summary["cpl"], "cpu": summary["cpu"],
         "cp": summary["cp"], "mean": summary["mean"], "stdev": summary["stdev"],
         "min": summary["min"], "max": summary["max"],
         "yield": yield_, "fail_count": fail, "total_count": total,
-        "bimodality": _bimodality_coefficient(values) if values else None,
+        "bimodality": bimod,
     }

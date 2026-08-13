@@ -115,19 +115,38 @@ L1/L2/evaluation 이 영구 0행이라 룰 채점·표본 검수의 재료가 �
 ## 5. 재계산·캐시 규약
 
 - evaluate 호출 지점은 **콜드 빌드 1곳** — `service.load_webreport` 의 인라인/워커 빌드
-  (`build_report_payload` 직전). 캐시 키 `cache_policy.report_key` 에 `content_hash` 와
-  `webreport_options` 가 들어 있으므로 **rawdata 편집 시 자동 재평가**되고, 옵션 on/off
-  세션은 캐시가 분리된다.
-- **룰(threshold/signature) 편집도 재평가시킨다** (2026-08-03). AI Comment 는 payload 안에
-  박혀 캐시되므로 rules yaml 을 고쳐도 그 자체로는 무효화되지 않는다 → `/pe/eval` 저장이
-  `rules/.rules_rev` 를 +1 하고 `report_key` 가 그 값을 키에 덧붙인다. **ai_comment 옵션
-  세션에만** 덧붙고 rev 파일이 없으면 아무것도 붙지 않으므로, 패널을 안 쓰는 서버·일반
-  세션의 기존 캐시는 그대로 유효하다(`REPORT_SCHEMA_VERSION` 은 건드리지 않는다 — 그건
-  코드 배포용).
+  (`build_report_payload` 직전, `service._ai_comment_cached` 경유). 실측(2026-08-13)에서
+  이 단계가 **콜드 빌드의 80%** 였으므로(5.9s 중 4.7s) 두 겹으로 분리했다
+  ([docs/12 "AI Comment 비동기 분리"](12_web_report_cache.md)):
+  - **분리 캐시**: 평가 결과 dict 를 `cache_policy.ai_comment_key`
+    (`(akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail"], aiver)` —
+    **sid·edits_rev 불포함**)로 RAM+디스크에 저장한다. comment 편집(rev+1)·
+    `REPORT_SCHEMA_VERSION` bump·dedup 형제 세션의 payload 재빌드는 캐시 히트로
+    evaluate 를 건너뛴다. rawdata 편집(chash)·전처리(prep)·**세션 메타 PATCH**
+    (meta_digest — `_session_meta` 필드의 digest, akey 는 메타 수정을 감지 못 하므로)·
+    룰 편집(rules_rev)만 재평가를 강제한다. `safe_build` 예외 폴백(빈 결과)은
+    캐시하지 않는다(일시 오류 영구화 방지 — `safe_build_ex` 가 성공/폴백 구분).
+  - **비동기(pending)**: 분리 캐시 미스의 사용자 대기 콜드 빌드는 evaluate 를 돌리지
+    않고 `ai_comment_pending` payload 로 리포트를 먼저 연다. evaluate 는 온디맨드
+    `"ai"` 잡(`report_job(ai_inline=True)`, 워커 강제 오프로드)이 백그라운드로 돌리고,
+    프리웜·ingest 경로는 종전처럼 동기다.
+- payload 캐시 키(`cache_policy.report_key`)에는 `content_hash` 와 `webreport_options` 가
+  들어 있어 **rawdata 편집 시 자동 재평가**되고, 옵션 on/off 세션은 캐시가 분리된다.
+- **룰(threshold/signature) 편집도 재평가시킨다** (2026-08-03). `/pe/eval` 저장이
+  `rules/.rules_rev` 를 +1 하고 `report_key` 와 `ai_comment_key` 가 그 값을 키에
+  덧붙인다(`cache_policy._eval_rules_suffix` 공유). **ai_comment 옵션 세션에만** 덧붙고
+  rev 파일이 없으면 아무것도 붙지 않으므로, 패널을 안 쓰는 서버·일반 세션의 기존 캐시는
+  그대로 유효하다(`REPORT_SCHEMA_VERSION` 은 건드리지 않는다 — 그건 코드 배포용).
 - 엔진 쪽 반영은 캐시 키에 파일 mtime 을 넣어 해결한다 — 웹 프로세스든 컴퓨트 워커든
   다음 호출에서 자동 재파싱이라 **프로세스 간 리로드 신호가 필요 없다**.
 - evaluate 실패(메타 부적합·의존 미설치 등)는 `ai_comment.safe_build` 가 빈 dict 로
   격리한다 — **IssueTable 빌드는 절대 죽지 않는다** (컬럼은 뜨되 빈 값 + warning 로그).
+- **엔진 내부 최적화 (2026-08-13)**: L0 ingest 의 item별 파싱 벡터화(빠른 경로 —
+  `_FAST_NUM_TYPES` 만일 때, 판정은 `_is_num` 과 동치) + 같은 item 의 case(bin)들이
+  배열·통계·좌표 전처리를 공유(`case["_shared"]` — metrics/features 의 `_memo`) +
+  `ufunc.at`→`reduceat`·히스토그램 1회화 등. **완전 등가**가 계약이다 — 등가 픽스처로
+  evaluate 결과 canonical JSON 완전 일치를 확인했고, 값이 달라지는 최적화는 넣지 않는다
+  (부동소수 합산 순서가 바뀌는 `_gradient` 벡터화는 그래서 제외).
 
 ## 6. 컬럼·매핑 규약 (IssueTable "AI Comment")
 
@@ -558,10 +577,17 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 남기고 나머지를 `enabled: false`** 로 껐다(2026-08-04 CONSTANT_VALUE 추가로 끔 — 5→4개). 개념이 잡히는 대로 `/pe/eval` Signatures 탭에서
 하나씩 다시 켠다. 되돌리기는 그 탭의 일괄 켜기 한 번이다(코드 변경 없음).
 
-> **2026-08-12**: unknown 축소 작업(§15)으로 `LOW_CPK` · `WIDE_DISTRIBUTION` ·
-> `MEAN_SHIFT` · `HEAVY_TAIL` 4개를 다시 켰다(활성 8 + UNKNOWN). LOW_CPK 는 아래 항목
-> 그대로 `suppressed_by: [SPEC_TOO_TIGHT]` 를 달아 재활성했다 — 선언 없이 켜면 축소
-> 디버깅의 원인이던 "SPEC_TOO_TIGHT 이 영영 primary 가 안 됨" 으로 그대로 되돌아간다.
+> **2026-08-12 (1차)**: unknown 축소 작업(§15)으로 `LOW_CPK` · `WIDE_DISTRIBUTION` ·
+> `MEAN_SHIFT` · `HEAVY_TAIL` 4개를 다시 켰다(활성 8 + UNKNOWN).
+>
+> **2026-08-12 (2차, 룰셋 재편)**: 사용자 v5 데이터 검토 결과 겹치는 룰을 통합하고 공간
+> 룰을 살렸다 → 현재 활성 **10 + UNKNOWN**: `OUTLIER`(통합) · `LOW_CPK`(SPEC_TOO_TIGHT·
+> WIDE_DISTRIBUTION 흡수) · `MEAN_SHIFT` · `HEAVY_TAIL` · `BIMODALITY`(개명) ·
+> `E1_FAIL` · `EDGE_FAIL` · `CENTER_FAIL` · `RING_FAIL` · `CLUSTER_FAIL`.
+> off: `SPEC_TOO_TIGHT`·`WIDE_DISTRIBUTION`·`SEVERE_OUTLIER`·`OUTLIER_WARN`(통합돼 꺼짐,
+> 선언은 보존) · `MISSING_LIMIT`·`EQUIPMENT_SUSPECT`·`CONSTANT_VALUE`·`CODE_RAIL`·
+> `TAIL_RISK`·`BIDIR_TAIL`·`GROSS_FAIL`·`LOW_SAMPLE_UNCERTAIN`·`WAFER_GRADIENT`.
+> 상세는 §16-1 의 재편 항목.
 
 - **LOW_CPK 를 끈 것이 핵심**이다. SPEC_TOO_TIGHT 은 발화 조건에 `cpk < cpk_warn` 이
   들어 있어 LOW_CPK(MAJOR)와 항상 같이 뜨고, 자신은 MINOR 라 specificity 경쟁에서 져
@@ -685,19 +711,18 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 
 ### 14-1. signature 포함관계 억제 `suppressed_by`
 
-`SEVERE_OUTLIER`(`outlier_ratio > outlier_ratio_bad`)가 뜨면
-`OUTLIER_WARN`(`> outlier_ratio_warn`)은 **조건상 항상** 함께 뜬다 —
-`rules_io._check_threshold_values` 가 `warn <= bad` 를 강제하므로 구조적으로 보장된
-포함관계다. 같은 현상의 약한 표현이 secondary 를 채우고 primary specificity 경쟁까지
-흐리므로, 임계값은 그대로 두고 중복 의미만 걷어낸다.
+`OUTLIER` 가 뜨면 `HEAVY_TAIL`(kurtosis)은 **거의 항상** 함께 뜬다 — 멀리 튄 값 하나가
+kurtosis 를 4제곱으로 밀어올리기 때문이다. 같은 현상의 약한 표현이 secondary 를 채우고
+primary specificity 경쟁까지 흐리므로, 임계값은 그대로 두고 중복 의미만 걷어낸다.
 
 ```yaml
-- id: OUTLIER_WARN
-  suppressed_by: [SEVERE_OUTLIER]     # 이 룰이 발화하면 나는 발화하지 않는다
+- id: HEAVY_TAIL
+  suppressed_by: [OUTLIER]            # 이 룰이 발화하면 나는 발화하지 않는다
 ```
 
-- **코드에 쌍을 박지 않는다** — 같은 모양이 하나 더 있다(`LOW_CPK` ⊃ `SPEC_TOO_TIGHT`,
-  §12). 선언형이라 나중에 LOW_CPK 를 다시 켜도 SPEC_TOO_TIGHT 이 묻히지 않는다.
+- **코드에 쌍을 박지 않는다** — 같은 모양이 더 있다(`LOW_CPK ← [MEAN_SHIFT, OUTLIER,
+  BIMODALITY]`). 선언형이라 룰을 껐다 켜도 관계가 유지된다.
+  (구 `OUTLIER_WARN ← [SEVERE_OUTLIER]` 쌍은 두 룰이 `OUTLIER` 로 통합되며 무의미해졌다.)
 - 판정은 **억제 적용 전(원본) 발화 집합 기준 1패스**다 — 전이·순환을 원천 차단하기 위해서.
   참조 무결성과 상호 참조는 검증 탭(`rules_io.validate_all`)이 잡는다.
 - 트레이스는 그 룰을 "조건은 만족했으나 X 발화에 가려짐" 으로 찍는다(조건만 보면
@@ -718,7 +743,7 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 ### 15-1. 엔진 — UNKNOWN 특수분기
 
 `signatures.yaml` 에 `UNKNOWN` 룰을 선언하고 `signatures._evaluate_unknown` 이 판정한다.
-`SUBPOP_GAP` 과 같은 **특수분기**라 `when_metric` 을 쓰지 않는다(패널에서도 조건이 읽기
+`BIMODALITY` 와 같은 **특수분기**라 `when_metric` 을 쓰지 않는다(패널에서도 조건이 읽기
 전용 — `data-nocond`).
 
 - 발화 조건: **억제까지 끝난 최종 발화 집합이 비었고** `fail_count > 0`. fail 을 모르면
@@ -784,7 +809,7 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 
 ### 16-1. 현상 5축 — 축당 primary 1개
 
-| 축 | primary | 억제되어 목록에만(secondary) |
+| 축 | primary | 양보해 secondary 로 (목록에는 남는다) |
 |---|---|---|
 | 중심 | `MEAN_SHIFT` | — |
 | 산포/여유 | `LOW_CPK` | `BIDIR_TAIL` |
@@ -792,10 +817,42 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 | 공간 | `E1_FAIL` \| `EDGE_FAIL` \| `CENTER_FAIL` \| `RING_FAIL` \| `CLUSTER_FAIL` | `WAFER_GRADIENT`(off) |
 | 데이터 품질 | `LOW_SAMPLE_UNCERTAIN` \| `MISSING_LIMIT` \| `CONSTANT_VALUE` | — |
 
-억제는 전부 yaml `suppressed_by` 선언이다(엔진 코드 무수정):
+양보는 전부 yaml `suppressed_by` 선언이다:
 `LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]` · `HEAVY_TAIL ← [OUTLIER]` ·
 `BIDIR_TAIL ← [WIDE_DISTRIBUTION]`.
 **결과 지표(cpk)는 primary 가 되지 않는다** — "왜 낮은가"를 말하는 룰에 자리를 내준다.
+단 **목록에서 사라지지는 않는다**(2026-08-13) — 두 현상이 실제로 다 있으면 둘 다 보여야 한다.
+
+> **2026-08-13 2차 재편(사용자 v6 검토 반영)** — 위 표에서 두 가지가 더 바뀌었다.
+>
+> **① OUTLIER 판정축을 "거리"에서 "거리 AND 끊김"으로.**
+> `fail_mad_min ≥ outlier_fail_mad_min(4)` **AND** `fail_pass_gap_sigma ≥ outlier_fail_gap_sigma_min(1.5)`.
+> 거리 하나로는 가릴 수 없다는 것이 실측으로 확인됐다 — robust z 13.2 인 항목이 heavy tail
+> 이고 8.5 인 항목이 outlier 였다(순서가 뒤집힌다). kurtosis 가 20.1/20.0 으로 같은 두 항목의
+> 라벨도 갈렸다. 가르는 것은 **연속성**이다: 꼬리가 몸통에서 limit 까지 이어져 넘어갔으면
+> HEAVY_TAIL, 몸통과 끊겨 따로 놀면 OUTLIER.
+> `fail_mad_min` 은 **중심에 가장 가까운** fail 의 `|x−median|/MAD` 이고(사용자가 말하는
+> "MAD 4배"가 화면에 그대로 보이게 한 것), `fail_pass_gap_sigma` 는
+> `min(fail 거리) − max(pass 거리)` 를 robust σ 단위로 잰 빈 구간이다.
+> 구 `fail_robust_z_max` 는 evidence 참고값으로만 남고, `fail_value_gap_norm` 은 삭제했다.
+>
+> ⚠ **구조적 성질**: 정규 몸통에서 최대 pass 거리는 표본이 크면 ≈3.85σ 로 고정이므로
+> `gap ≈ 3·cpk·(σ/robustσ) − 3.85` 다. 즉 **cpk 가 넉넉한데 fail 이 난 항목**은 fail 이
+> 하나만 있어도 OUTLIER 가 성립한다(그게 맞는 판정이다 — 공정능력이 충분한데 죽었으면
+> 산발 이상이다). 균등분포처럼 꼬리가 없는 모양은 최대 pass 거리가 1.35σ 뿐이라 낮은 MAD
+> 배수에서도 성립한다. 이 지표는 **분포 모양을 본다.**
+>
+> **② `suppressed_by` 의 의미를 "목록에서 제거" → "primary 만 양보" 로.**
+> 종전에는 결과 룰을 발화 목록에서 지웠는데, 그러면 "cpk 도 낮고 outlier 도 있다" 가 한 줄로만
+> 보여 사용자가 나머지를 볼 수 없었다(실사용 피드백: "여러 개 걸리면 중복해서 잘 안 나온다").
+> 지금은 `signatures._apply_suppression` 이 `demoted_by` 를 달기만 하고,
+> `status.decide` 가 같은 severity 안에서 primary 후보에서만 뺀다. 부수 효과로 결과 룰의
+> severity 가 status 에 그대로 반영된다(MAJOR 결과 룰이 사라지며 status 가 내려가던 문제 해소).
+>
+> **③ 양자화 오탐 제거** — 계단형(CODE·PCT) 값에서 히스토그램 bin 폭이 계단 간격보다 좁으면
+> 빈 칸이 사이사이 끼어 가짜 봉우리가 생겨 BIMODALITY 가 오발화했다(실측: 8단 단봉이 봉우리
+> 8개). `features._grid_step` 으로 격자를 검출해 bin 경계를 계단에 맞춘다. v6 전수에서
+> BIMODALITY 20→13 건이 되고 **사라진 7건이 전부 양자화 항목**(진짜 이봉은 하나도 안 잃음).
 
 > **2026-08-12 룰셋 재편(사용자 v5 데이터 검토 반영)** — 위 표는 재편 후 상태다.
 > `SEVERE_OUTLIER`+`OUTLIER_WARN` → **`OUTLIER`** 통합(판정을 비율에서 **거리**로:

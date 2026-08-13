@@ -343,10 +343,10 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
         elif not high_moment_ok and (set(when) & sig_mod._HIGH_MOMENT_METRICS):
             skip = f"min-n 가드 (n_dut {n_dut} < n_min {thresholds.get('n_min')})"
         elif sig_id in suppressed_by:
-            branch = (f"조건은 만족했으나 {', '.join(suppressed_by[sig_id])} 발화에 가려짐 "
-                      "(suppressed_by — 같은 현상의 약한 표현이라 중복 제거)")
+            branch = (f"{', '.join(suppressed_by[sig_id])} 발화 시 primary 를 양보한다 "
+                      "(suppressed_by — 목록에는 남는다. 원인 룰이 대표가 되게 하는 장치)")
         # 조건행은 그 룰이 실제로 쓰는 판정 경로로 그린다 — BIMODALITY 만 when_metric 이
-        # 아니라 modality_v2 체인이고, 나머지는(억제된 것 포함) when_metric 그대로다.
+        # 아니라 modality_v2 체인이고, 나머지는(양보된 것 포함) when_metric 그대로다.
         conds = []
         if sig_id == sig_mod._BIMODALITY_ID and skip is None:
             conds = _subpop_conditions(features, thresholds)

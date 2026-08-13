@@ -18,6 +18,9 @@ import hashlib
 import logging
 import math
 import re
+from collections import Counter
+
+import numpy as np
 
 from .. import store
 from ._rules import load_yaml
@@ -26,6 +29,12 @@ from .. import config
 logger = logging.getLogger(__name__)
 
 PASS_BIN = 1
+
+# `_is_num` 과 동치인 "빠른 경로" 셀 타입 — 셀 타입이 전부 이 집합이면 NaN 제외 벡터
+# 필터(astype float64 → isnan)가 종전 행 단위 _is_num 루프와 같은 집합을 남긴다.
+# np.float64 는 float 하위형이라 _is_num 통과. np.int64/np.float32 는 (int, float)
+# 하위형이 **아니라서** _is_num 이 걸렀으므로 여기 넣으면 안 된다(판정이 뒤집힌다).
+_FAST_NUM_TYPES = {float, int, bool, np.float64}
 
 # 단위 원문(소문자) → value_type. **정확일치 표**라 여기 없는 표기는 PF 로 떨어지고,
 # PF 는 L1/L2 가 통계를 전부 비우는 부류라 그 item 은 어떤 signature 도 발화하지 못한다
@@ -78,7 +87,8 @@ def _validate_raw_df(df) -> None:
         raise ValueError(
             f"raw_df 메타행 순서 불일치 - 기대 {_META_ROW_LABELS}, 실제 {got_labels}")
     item_cols = list(df.columns[7:])
-    dups = sorted({c for c in item_cols if item_cols.count(c) > 1})
+    # Counter 1회 — 종전 list.count 를 컬럼마다 부르면 O(M²)라 item 수천 개에서 눈에 띈다.
+    dups = sorted(c for c, n in Counter(item_cols).items() if n > 1)
     if dups:
         raise ValueError(f"raw_df item 컬럼 중복: {dups}")
 
@@ -320,6 +330,10 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
     y_all = [_num_or_none(v) for v in data["YPOS"]]
     bin_all = [_bin_or_none(v) for v in data["BIN"]]
     failtno_all = [_tno_norm(v) for v in data["FAILTNO"]]
+    # fail 행 인덱스 사전 계산 (2026-08-13 콜드 빌드 최적화) — fail 은 전체 행의 소수라,
+    # case(bin)마다 전량 재스캔하던 fail_bins/fail_mask/fail_count 를 이 목록 순회로
+    # 대체한다(판정값 동일 — FAILTNO 가 None 인 행은 어떤 tno 와도 같을 수 없다).
+    fail_idx_all = [i for i, ft in enumerate(failtno_all) if ft is not None]
 
     cases = []
     for item in item_cols:
@@ -327,21 +341,47 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
         lsl, usl = _num_or_none(lolim_row[item]), _num_or_none(hilim_row[item])
         tno_i = _tno_norm(tno_row[item])
 
-        values, x_pos, y_pos, bins, failtnos = [], [], [], [], []
-        for v, x, y, b, ft in zip(data[item], x_all, y_all, bin_all, failtno_all):
-            if not _is_num(v):
-                continue
-            values.append(float(v))
-            x_pos.append(x); y_pos.append(y); bins.append(b); failtnos.append(ft)
+        # ── 측정 셀 파싱 — _is_num 규약(이미 숫자 타입만, NaN 제외) 그대로 ──────────
+        # 빠른 경로: 셀 타입이 전부 _FAST_NUM_TYPES 면 _is_num 은 "NaN 만 제외" 와
+        # 동치라 벡터로 거른다. honeyform 경로(ai_comment._table_to_raw_df)는
+        # astype("float64") 를 거쳐 와 실운영 셀이 전부 이 경로다. 전 셀 유효(대부분)면
+        # 메타 병렬 배열을 복사하지 않고 **그대로 공유**한다 — 종전에는 item 마다
+        # N 행 파이썬 루프로 5개 리스트를 재조립했다(O(N·M) 지배 비용).
+        # 그 외 타입(문자열·None·np.int64 등)이 섞이면 종전 행 단위 루프로 폴백한다.
+        arr = data[item].to_numpy()
+        values = x_pos = y_pos = bins = failtnos = fail_idx = None
+        if set(map(type, arr)) <= _FAST_NUM_TYPES:
+            farr = arr.astype(np.float64)
+            keep = ~np.isnan(farr)
+            if keep.all():
+                values = farr.tolist()
+                x_pos, y_pos, bins, failtnos = x_all, y_all, bin_all, failtno_all
+                fail_idx = fail_idx_all
+            else:
+                values = farr[keep].tolist()
+                keep_list = keep.tolist()
+                x_pos = [x for x, k in zip(x_all, keep_list) if k]
+                y_pos = [y for y, k in zip(y_all, keep_list) if k]
+                bins = [b for b, k in zip(bin_all, keep_list) if k]
+                failtnos = [f for f, k in zip(failtno_all, keep_list) if k]
+        if values is None:
+            values, x_pos, y_pos, bins, failtnos = [], [], [], [], []
+            for v, x, y, b, ft in zip(arr, x_all, y_all, bin_all, failtno_all):
+                if not _is_num(v):
+                    continue
+                values.append(float(v))
+                x_pos.append(x); y_pos.append(y); bins.append(b); failtnos.append(ft)
         if not values:
             continue
+        if fail_idx is None:
+            fail_idx = [i for i, ft in enumerate(failtnos) if ft is not None]
 
         # fail bin: FAILTNO == 이 item 의 TNO 인 serial 의 BIN
         fail_bins = set()
         if tno_i is not None:
-            for b, ft in zip(bins, failtnos):
-                if ft == tno_i and b is not None:
-                    fail_bins.add(b)
+            for i in fail_idx:
+                if failtnos[i] == tno_i and bins[i] is not None:
+                    fail_bins.add(bins[i])
 
         item_id, item_canonical, cat = _resolve_item_identity(
             item, value_type, persist, conn, alias, unit_row[item])
@@ -349,11 +389,19 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
             store.upsert_item_spec(item_id, meta.get("product_name"), revision,
                                    lsl, usl, conn=conn)
 
-        site = [None] * len(values)
+        # site 는 raw_df 경로에 없다 — [None]*n 리스트 대신 None:
+        # features._site_cpk_delta 가 O(N) 전수 스캔 없이 즉시 결측 처리한다(판정 동일).
+        site = None
+        # 같은 item 의 case(bin)들이 공유하는 계산 캐시 — metrics/features 가 fail 과
+        # 무관한 배열·통계를 bin 수만큼 재계산하지 않게 한다 (case dict 의 사설 키).
+        item_shared = {}
         # fail bin 별 case; fail 없으면 PASS_BIN candidate 1개(저장 판단은 rule 계산 후 present.should_store)
         for bin_ in (sorted(fail_bins) if fail_bins else [PASS_BIN]):
             if fail_bins:
-                fail_mask = [(ft == tno_i and b == bin_) for b, ft in zip(bins, failtnos)]
+                fail_mask = [False] * len(values)
+                for i in fail_idx:
+                    if failtnos[i] == tno_i and bins[i] == bin_:
+                        fail_mask[i] = True
             else:
                 fail_mask = [False] * len(values)
             case_id = store.make_case_id(meta.get("product_name"), meta.get("lot_id"),
@@ -362,13 +410,14 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
                               value_type, bin_, revision, lsl, usl,
                               values, fail_mask, x_pos, y_pos, site,
                               item_raw=item, unit=unit_row[item])
+            case["_shared"] = item_shared
             # yield 분모/분자는 전체 DUT(데이터 행) 기준 — item 셀 파싱 성공분(len(values))으로
             # 재면 item 마다 분모가 달라져 trump/GROSS_FAIL 비교가 왜곡된다. FAILTNO 기반
             # fail 식별은 측정값 파싱과 무관하므로 전체 행에서 센다. (fail_mask 는 공간
             # feature 용 — values 배열과 정렬 유지, 그대로 둔다.)
             case["total_count"] = len(data)
-            case["fail_count"] = sum(1 for b, ft in zip(bin_all, failtno_all)
-                                     if ft is not None and ft == tno_i and b == bin_)
+            case["fail_count"] = sum(1 for i in fail_idx_all
+                                     if failtno_all[i] == tno_i and bin_all[i] == bin_)
             cases.append(case)
     if item_cols and len(data) > 0 and not cases:
         logger.warning("raw_df: item %d개, 데이터 %d행이나 case 0 - item 셀 dtype 확인"

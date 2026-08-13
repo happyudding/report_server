@@ -8,9 +8,15 @@ default:
   cpk_bad: 1.00         # 부적합 (절대 floor)
   outlier_ratio_warn: 0.02   # outlier(튀는 die) 비율 주의 (구 OUTLIER_WARN — 룰은 off, 지표는 SUBPOP 게이트·calibrate 가 계속 사용)
   outlier_ratio_bad: 0.05    # outlier 비율 심각 (구 SEVERE_OUTLIER — 룰 off, 위와 같은 사유로 키 보존)
-  outlier_fail_z_min: 12.0   # OUTLIER 컷 — fail 값이 분포 중심에서 robust σ 의 이 배수 이상 떨어지면 발화
-                             # (fail_robust_z_max). "비율이 몇 %냐" 가 아니라 "얼마나 멀리 떨어졌냐" 로
-                             # 판정한다 — limit 바로 밖 fail(공정능력)과 뚝 떨어진 fail(산발 이상)을 가른다.
+  outlier_fail_mad_min: 4.0       # OUTLIER 컷① 거리 — 중심에 **가장 가까운** fail 이 중앙값에서
+                                  # MAD 의 몇 배 밖인가(fail_mad_min). limit 바로 밖에 붙은
+                                  # fail(공정능력 문제)을 걸러내는 하한이다.
+  outlier_fail_gap_sigma_min: 1.5 # OUTLIER 컷② 끊김 — 마지막 pass 와 첫 fail 사이 빈 구간이
+                                  # robust σ 의 몇 배인가(fail_pass_gap_sigma). 둘은 AND 다.
+                                  # ⚠ 거리만으로는 못 가른다: 실측에서 z 13.2 가 heavy tail,
+                                  # z 8.5 가 outlier 였다(순서가 뒤집힌다). 가르는 것은 연속성 —
+                                  # 꼬리가 이어져 limit 을 넘었으면 gap≈0(HEAVY_TAIL), 몸통과
+                                  # 뚝 끊겼으면 gap 큼(OUTLIER). 2026-08-13 사용자 검토로 확정.
   spread_norm_warn: 0.18     # robust_sigma/(USL-LSL)
   outlier_sigma: 4.5         # outlier_ratio 계산 컷 — 중앙값에서 robust σ(1.4826·MAD) 이 배수 밖이면 outlier (Iglewicz-Hoaglin modified z, 원 권장 3.5 → 과검출 완화)
   skew_warn: 1.0            # |skew| 주의

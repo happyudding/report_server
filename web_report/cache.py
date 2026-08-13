@@ -77,6 +77,12 @@ DIST_CHUNK_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_DIST_CHUNK_CACHE_M
 DIST_CHUNK_CACHE: OrderedDict = OrderedDict()  # (akey, chash[, prep], mode, chunk_id) -> items dict
 _DIST_CHUNK_SIZES: dict = {}                   # 키 -> 비압축 바이트 (DIST_CHUNK_CACHE 와 동기)
 
+# AI Comment 평가 결과 캐시 (2026-08-13) — build_ai_comments 반환 dict. report payload
+# 캐시와 분리해 comment 편집(edits_rev+1)·스키마 bump·dedup 형제 세션에서 eval 엔진
+# 재평가(콜드 빌드 최대 병목)를 없앤다. 값은 작은 dict(코멘트 문자열 사전)라 개수 상한만.
+AI_COMMENT_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_AI_COMMENT_CACHE", "8") or 8))
+AI_COMMENT_CACHE: OrderedDict = OrderedDict()  # cache_policy.ai_comment_key -> result dict
+
 # Commonality 인덱스 캐시 — chip 검색(키스트로크)·백분위(chip 클릭)가 매번 전 item 컬럼을
 # 재변환하던 유일한 무캐시 heavy 경로였다. 메타 리스트 + item별 정렬 배열을 세션 단위로 보관.
 COMMONALITY_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_COMMONALITY_CACHE", "2") or 2))
@@ -107,7 +113,8 @@ MANIFEST_CACHE: OrderedDict = OrderedDict()  # analysis_key -> (canonical bytes,
 # evict_akey_caches)가 이 리스트를 순회한다. 파생 캐시를 새로 만들면 register_akey_cache
 # 로 등록만 하면 무효화에 자동 편입된다 (response_cache.py 가 import 시 자기 캐시를 등록).
 AKEY_CACHES: list = [TABLES_CACHE, DIST_CACHE, MAP_CACHE, TEMP_MAP_CACHE, REPORT_CACHE,
-                     COMMONALITY_CACHE, TRIM_CACHE, TRIM_CHART_CACHE, DIST_CHUNK_CACHE]
+                     COMMONALITY_CACHE, TRIM_CACHE, TRIM_CHART_CACHE, DIST_CHUNK_CACHE,
+                     AI_COMMENT_CACHE]
 
 # 콜드 캐시 동시 진입(stampede) 방지 single-flight 락 — 캐시에 없는 같은 세션을 여러
 # 사용자가 동시에 열면 수 초짜리 CPU-bound 계산이 중복 실행되며 GIL 로 서로 밀어내므로,
@@ -162,7 +169,8 @@ def cache_stats():
     names = (("tables", TABLES_CACHE), ("dist", DIST_CACHE), ("map", MAP_CACHE),
              ("report", REPORT_CACHE), ("commonality", COMMONALITY_CACHE),
              ("trim", TRIM_CACHE), ("trim_chart", TRIM_CHART_CACHE),
-             ("manifest", MANIFEST_CACHE), ("dist_chunk", DIST_CHUNK_CACHE))
+             ("manifest", MANIFEST_CACHE), ("dist_chunk", DIST_CHUNK_CACHE),
+             ("ai_comment", AI_COMMENT_CACHE))
     with CACHE_LOCK:
         sizes = {name: len(c) for name, c in names}
         tables_bytes = sum(_TABLES_SIZES.values())

@@ -492,6 +492,24 @@ source 1개가 Excel 시트 1장이다([excel_session.py](../client/excel_edit/e
   parquet 으로 만든 **Distribution pack** 을 함께 받아 저장한 뒤 프리웜을 걸어 리빌드를
   컴퓨트 워커로 넘긴다.
 
+#### 웹 Rawdata 다운로드 — 조회 전용 2경로 (개별 CSV / 전체 zip)
+위 Excel 왕복(`rawdata_export`)은 **Honey 전용 편집 경로**다. Honey 없이 원본만 받아 보는
+읽기 전용 경로가 따로 있고, 세션 상세 상단 **⬇ 버튼** 하나에서 둘 다 진입한다
+([edit_mode.js](../server/report/static/webreport/edit_mode.js) `rawdlDownload`, 구현은
+[rawedit.py](../web_report/rawedit.py)).
+- `GET .../web_report/rawdata_csv?source=<idx>` — source 1개를 7-meta honeyform CSV 로.
+- `GET .../web_report/rawdata_csv_all` — 전 source 를 CSV 로 만들어 **zip 하나**로.
+  source 가 2개 이상일 때만 메뉴에 뜬다(1개면 zip 이 순손해라 개별 CSV 를 바로 받는다).
+- 둘 다 저장된 parquet 문자 그대로다 — 메타 6행 포함, **전처리·편집 상태 미반영**
+  (Raw Data 탭 조회 API 와 같은 판단: 표시용 필터를 여기까지 적용하면 편집 대상 값과
+  화면 값이 어긋난다). 가드는 `_require_web_report_session` 하나뿐이라 읽기 전용
+  사용자도 받는다.
+- **xlsx 다중 시트가 아닌 이유**: 서버는 openpyxl 을 쓰지 않는다(불변 규칙 #1). 브라우저
+  ExcelJS 로 만드는 탭 Excel 과 달리 raw data 는 규모가 커서 브라우저에서 만들 수 없다.
+- zip 은 전량을 메모리에 만들지 않고 흘려보낸다(CSV 는 parquet 대비 전개 크기가 몇 배).
+  중간에 실패하면 중앙 디렉토리를 쓰지 않고 끊어 **손상 zip 으로 인지**되게 한다 —
+  정상처럼 열리는데 source 가 빠진 zip 은 유실을 조용히 지나가게 하므로 만들지 않는다.
+
 #### 조회 전처리 — Item Select / Outlier / 빠른 수정 (2026-07-23, 패치 계층 2026-07-28)
 Honey 의 `Rawdata edit` 은 Excel 을 바로 띄우지 않고 **허브 다이얼로그**
 ([rawdata_hub_dialog.py](../client/honey_ui/rawdata_hub_dialog.py))를 먼저 연다. 레이아웃은

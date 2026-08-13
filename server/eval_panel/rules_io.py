@@ -281,7 +281,8 @@ THRESHOLD_KINDS = {
     "region_fail_share_min": "ratio",
     "n_min": "count", "subpop_n_min": "count", "spatial_fail_count_min": "count",
     "severe_outlier_count_min": "count", "source_min_count": "count",
-    "outlier_sigma": "positive", "outlier_fail_z_min": "positive",
+    "outlier_sigma": "positive", "outlier_fail_mad_min": "positive",
+    "outlier_fail_gap_sigma_min": "positive",
 }
 
 

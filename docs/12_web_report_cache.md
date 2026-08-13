@@ -77,7 +77,8 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
 | MAP_CACHE | (akey, chash[, prep], mode) | 〃 — Map dies gzip (`/web_report/map_analysis`, schema v8). **report 콜드 빌드가 `service.seed_map` 으로 RAM+디스크를 함께 채운다** (아래 "Map dies 시딩" — Map 3초 SLA) |
 | TEMP_MAP_CACHE | (akey, chash[, prep], mode, v) | 〃 — Temperature 항목별 fail die **인덱스** gzip (`/web_report/temp_map`, 2026-08-05). map dies 와 같은 세대여야 인덱스가 맞는다. **report 콜드 빌드가 `service.seed_temp_map` 으로 RAM+디스크를 함께 채운다**(같은 판정 결과 재사용) — 라우트 단독 콜드는 디스크 → 워커 오프로드(`compute.temp_map_job`) 순 |
 | COMMONALITY_CACHE | (akey, chash) | raw_data 편집 / 세션 삭제 (메타만 쓰므로 전처리 무관) |
-| REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode) | comment/override/전처리 편집(rev) + 위 전부 |
+| REPORT_CACHE | (akey, chash, sid, edits_rev, opts, mode[, rules_rev][, "evalfail"]) | comment/override/전처리 편집(rev) + eval 룰 편집(ai 세션만) + 위 전부 |
+| AI_COMMENT_CACHE | (akey, chash[, prep], mode, meta_digest[, rules_rev][, "evalfail"], aiver) | raw_data 편집 / 전처리 / **세션 메타 PATCH**(meta_digest) / eval 룰 편집 — **sid·edits_rev 무관**: comment 편집·스키마 bump·dedup 형제 세션에서 eval 재평가(콜드 빌드 80%)를 안 한다 (2026-08-13, 아래 "AI Comment 비동기 분리") |
 | TRIM_CACHE | (akey, chash, sid, edits_rev, mode, source) | trim override/전처리 편집(rev) + 위 전부 |
 | TRIM_CHART_CACHE | (akey, chash[, prep], mode, source, items_digest) | 그룹 슬롯 구성 변경 / raw_data 편집 — 단일 `/trim_chart` 와 배치 `/trim_chart_batch` 가 **같은 엔트리를 공유**한다(배치는 그룹별로 이 캐시를 조회·적재할 뿐) |
 | _FULL_CACHE | (akey, chash, "sid:edits_rev", extras_digest) | 편집 rev / annotations 등 extras |
@@ -188,6 +189,27 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
     대기했다(같은 세션을 N명이 열면 스레드 N개가 묶임). 지금은
     `disk_cache.report_exists`/`map_exists`(stat 1회)로 락 **전에** 판정한다. 락 안의
     기존 판정은 TOCTOU 안전망으로 남겨 둔다.
+- **AI Comment 비동기 분리** (2026-08-13): ai_comment 옵션 세션의 콜드 빌드는 실측에서
+  **eval 평가가 80%** 였다(5.9s 중 4.7s — 운영 대형 세션은 300s 타임아웃의 주범).
+  두 겹으로 분리했다:
+  - **분리 캐시**: 평가 결과(build_ai_comments dict)를 `cache_policy.ai_comment_key`
+    (위 표 AI_COMMENT_CACHE — sid·edits_rev 불포함)로 RAM+디스크(`aicmt-*`)에 따로
+    저장한다(`service._ai_comment_cached`). comment 편집·`REPORT_SCHEMA_VERSION` bump·
+    dedup 형제 세션의 재빌드는 캐시 히트로 평가를 건너뛴다. **예외 폴백(빈 결과)은
+    캐시하지 않는다**(일시 오류 영구화 방지 — `ai_comment.safe_build_ex`).
+  - **pending payload**: 캐시 미스 콜드 빌드(사용자 대기 경로, `ai_inline=False`)는
+    AI 없는 payload 에 `ai_comment_pending: true` 를 얹어 **리포트를 먼저 연다**
+    (RAM 캐시 전용 — 디스크에는 최종본만 저장). AI 평가는 온디맨드 `"ai"` 잡
+    (`compute._ONDEMAND_JOBS`, `report_job(ai_inline=True)` — 워커 강제 오프로드)이
+    백그라운드로 끝내고 최종 payload 를 재빌드·디스크 저장하며, 부모 RAM 의 pending
+    본을 최종본으로 덮는다. 프런트(boot.js `maybeStartAiPendingPoll`)는 /full 을
+    폴링하다 최종본이 오면 다시 그린다(셀 표시는 sheets.js `renderAiComment` 의
+    "계산 중…"). **프리웜·ingest 경로는 종전처럼 동기**(`ai_inline=True`) — 아무도
+    기다리지 않으므로 AI 캐시·최종본을 미리 채우는 편이 낫다.
+  - pending 응답은 response 캐시(_FULL_CACHE)에 넣지 않고 etag 도 `-ai` 꼬리로 가른다
+    (완료 후 stale 304 방지). AI 잡 실패는 `build_status` (sid,"ai") 실패 누적으로
+    재시도가 차단되고 리포트는 계속 열린다. 가드: perf_guard `S10-ai-comment-cache`,
+    벤치 `#14 bench_ai_comment`(quick 포함).
 - **Map dies 시딩** (2026-08-10, CLAUDE.md §5-11 Map 3초 SLA): 위 202 규약은 "콜드일 때
   스레드를 물지 않는다"를 보장할 뿐, **사용자 대기 자체는 그대로**다. map dies 는
   프리웜 대상이 아니라(`compute._prewarm_one` 은 report payload 만 만든다) Map 탭 /

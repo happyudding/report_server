@@ -301,7 +301,7 @@ confidence / comment / evidence / precedents 뿐이다 — **`raw_metrics`(L1)�
 `ingest_run` 은 `eval_export._find_run_id` 와 같이 **세션당 1행 재사용**해 증식을 막는다.
 
 소스가 여럿일 때 같은 item 이 중복되면 `ai_comment._rank` 가 이미 쓰는 규칙
-(severity 최고, 동률이면 SUBPOP_GAP 발화 쪽)으로 하나만 남긴다.
+(severity 최고, 동률이면 BIMODALITY 발화 쪽)으로 하나만 남긴다.
 
 **§1-3 (AI Comment 원문)은 (B) 로는 해결되지 않는다.** `evaluation.comment` 에
 남는 것은 이 전용 실행이 만든 엔진 코멘트이지, 사용자가 IssueTable 셀에서 본
@@ -314,8 +314,11 @@ confidence / comment / evidence / precedents 뿐이다 — **`raw_metrics`(L1)�
 - `features.shot_fail_ratio` — DDL 에는 있으나 `save_features` 컬럼 목록에 빠져
   있고 계산 경로도 없어 **항상 NULL**. 잔재.
 - `value_gap_ratio` / `value_gap_minor_mass` — L2 가 계산하지만 의도적 미저장.
-  SUBPOP_GAP `separated` 판정의 실제 기준값이라 **채점하려면 있어야 한다.**
+  BIMODALITY `separated` 판정의 실제 기준값이라 **채점하려면 있어야 한다.**
   추가는 스키마 변경이므로 §3-4 승인에 묶어 함께 판단한다.
+  **같은 처지의 미저장 지표가 늘었다** — `fail_mad_min`·`fail_pass_gap_sigma`(OUTLIER 판정
+  2축, 2026-08-13) · `e1/edge/center/ring_fail_share`(공간 4종 판정). 그래서 표본함
+  (docs/13 §14)이 이 5개 룰을 층화하지 못한다. 승인 시 함께 올리는 것이 좋다.
 
 ---
 

@@ -152,6 +152,62 @@ async function retryWhileBuilding(res, refetch) {
   return res;
 }
 
+// ── AI Comment 백그라운드 완료 폴링 (2026-08-13) ─────────────────────────────
+// AI Comment 세션의 콜드 첫 조회는 서버가 AI 없는 pending payload(web_report.
+// ai_comment_pending=true)를 먼저 돌려줘 리포트가 즉시 열린다. AI 평가는 서버
+// 백그라운드 'ai' 잡이 하고, 끝나면 /full 이 최종본(플래그 없음)을 준다. 여기서
+// 주기적으로 재조회해 도착하면 화면을 다시 그린다 — 셀 단위 패치를 만들지 않는
+// 이유: ETC 자동행·Signature 구성은 서버 1곳(issue_table.py)이 만든다(재계산 금지).
+const AI_POLL = { INTERVAL_MS: 5000, MAX_MS: 20 * 60 * 1000 };
+let _aiPoll = null;
+function stopAiPendingPoll() { if (_aiPoll) { clearTimeout(_aiPoll); _aiPoll = null; } }
+function _aiPendingActive() {
+  try { return !!(DATA && DATA.web_report && DATA.web_report.ai_comment_pending); }
+  catch (e) { return false; }
+}
+function _editingNow() {
+  const el = document.activeElement;
+  return !!el && (el.isContentEditable || el.tagName === "TEXTAREA" ||
+    (el.tagName === "INPUT" && !/^(checkbox|radio|button)$/i.test(el.type || "")));
+}
+function maybeStartAiPendingPoll() {
+  stopAiPendingPoll();
+  if (!_aiPendingActive()) return;
+  const deadline = Date.now() + AI_POLL.MAX_MS;
+  const tick = async () => {
+    _aiPoll = null;
+    if (!_aiPendingActive()) return;
+    // 데드라인 초과 = AI 잡 지연/실패 — 리포트 자체는 정상이므로 조용히 멈춘다
+    // (다음 새로고침이 다시 폴링을 시작한다. 셀에는 "계산 중" 안내가 남는다).
+    if (Date.now() > deadline) return;
+    try {
+      const res = await fetch(`/pe/report/session/${SESSION_ID}/full`, { cache: "no-cache" });
+      if (res.status === 200) {
+        const data = await res.json();
+        const web = data.web_report || {};
+        if (!web.ai_comment_pending) {
+          if (_editingNow()) {
+            // 사용자가 입력 중 — 다시 그리면 입력을 잃는다(불변 규칙 #12). 잠시 후 재시도.
+            _aiPoll = setTimeout(tick, 3000);
+            return;
+          }
+          DATA = data;
+          _globalBinColors = null;
+          seedEmptyFrames();
+          buildDistColorMap(web.sources || []);
+          renderActive();
+          return;   // 완료 — 폴링 종료
+        }
+      } else if (res.status !== 202) {
+        return;   // 4xx/5xx — 폴링 중단 (리포트는 이미 떠 있다)
+      }
+      // 202 = 서버가 최종본을 재빌드 중 — 다음 tick 에 다시 확인.
+    } catch (e) { /* 일시 네트워크 오류 — 다음 tick 재시도 */ }
+    _aiPoll = setTimeout(tick, AI_POLL.INTERVAL_MS);
+  };
+  _aiPoll = setTimeout(tick, AI_POLL.INTERVAL_MS);
+}
+
 function showLoadOverlay() {
   const ov = document.getElementById("loadOverlay");
   if (ov) ov.classList.add("show");
@@ -169,6 +225,7 @@ function hideLoadOverlay() {
 let _loadInFlight = false;
 async function load(resetMode=true) {
   _loadInFlight = true;
+  stopAiPendingPoll();   // 재로드 시 이전 세대 폴링 정리 (완료 후 아래서 다시 판단)
   try {
     showLoadOverlay();
     // 서버가 parquet 재계산(수 초)을 마칠 때까지 첫 바이트가 없어 실제 %를 알 수 없으므로
@@ -263,6 +320,7 @@ async function load(resetMode=true) {
     renderActive();
     applyDeepLink();
     hideLoadOverlay();
+    maybeStartAiPendingPoll();   // AI 백그라운드 계산 중이면 완료를 폴링해 반영
   } catch (e) {
     const box = document.getElementById("errorBox");
     box.style.display = "";

@@ -87,6 +87,10 @@ REMOVE_CASES = [
      "                                seed_map(session_id, session, tables,"),
     ("S09-map-seed", "server/report/routes_session.py",
      "        web_report_service.schedule_map_backfill("),
+    ("S10-ai-comment-cache", "web_report/service.py",
+     "                                    ai_result, ai_how = _ai_comment_cached("),
+    ("S10-ai-comment-cache", "web_report/service.py",
+     "        disk_cache.save_ai_comment(upload_root, key, result)"),
 ]
 
 

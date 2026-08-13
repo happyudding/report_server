@@ -176,20 +176,21 @@
     <div class="mid">
       <h3>공정능력 <span class="en">capability</span></h3>
       <div class="rule on">
-        <div class="id">SPEC_TOO_TIGHT <span class="cat">CPK</span> <span class="sev MINOR">MINOR</span></div>
-        <div class="m">좁고·중앙·단봉인데 cpk↓ → spec 재검토</div>
+        <div class="id">LOW_CPK <span class="cat">CPK</span> <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">cpk &lt; cpk_warn (1.33)<br>
+          <span class="live">원인 룰(MEAN_SHIFT·OUTLIER·BIMODALITY) 발화 시 억제</span></div>
       </div>
       <div class="rule off">
-        <div class="id">LOW_CPK <span class="cat">CPK</span> <span class="sev MAJOR">MAJOR</span></div>
-        <div class="m">cpk &lt; cpk_warn (1.33)</div>
+        <div class="id">SPEC_TOO_TIGHT <span class="cat">CPK</span> <span class="sev MINOR">off</span></div>
+        <div class="m">좁고·중앙·단봉인데 cpk↓ · <span class="live">LOW_CPK 로 통합(2026-08-12)</span></div>
       </div>
     </div>
 
     <div class="mid">
       <h3>산포 과대 <span class="en">spread</span></h3>
       <div class="rule off">
-        <div class="id">WIDE_DISTRIBUTION <span class="sev MAJOR">MAJOR</span></div>
-        <div class="m">spread_norm &gt; warn</div>
+        <div class="id">WIDE_DISTRIBUTION <span class="sev MAJOR">off</span></div>
+        <div class="m">spread_norm &gt; warn · <span class="live">LOW_CPK 로 통합(2026-08-12)</span></div>
       </div>
       <div class="rule off">
         <div class="id">BIDIR_TAIL <span class="sev MAJOR">MAJOR</span></div>
@@ -218,20 +219,21 @@
     <div class="mid">
       <h3>이상치 <span class="en">outlier</span></h3>
       <div class="rule on">
-        <div class="id">SEVERE_OUTLIER <span class="sev MAJOR">MAJOR</span></div>
-        <div class="m">outlier_ratio &gt; bad &amp; count &gt; min</div>
+        <div class="id">OUTLIER <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">fail_mad_min &ge; 4 (<b>거리</b>) <b>AND</b> fail_pass_gap_sigma &ge; 1.5 (<b>끊김</b>)
+          <br><span class="live">거리만 보면 "꼬리가 길어 넘은 것"까지 잡힌다 — 몸통과 끊겼는지를 함께 본다</span></div>
       </div>
-      <div class="rule on">
-        <div class="id">OUTLIER_WARN <span class="sev MINOR">MINOR</span></div>
-        <div class="m">ratio &gt; warn · <span class="live">SEVERE 시 억제</span></div>
+      <div class="rule off">
+        <div class="id">SEVERE_OUTLIER / OUTLIER_WARN <span class="sev MINOR">off</span></div>
+        <div class="m">구 비율 판정 · <span class="live">OUTLIER 로 통합(2026-08-12)</span></div>
       </div>
     </div>
 
     <div class="mid">
       <h3>간헐 spike <span class="en">tail</span></h3>
-      <div class="rule off">
+      <div class="rule on">
         <div class="id">HEAVY_TAIL <span class="sev MINOR">MINOR</span></div>
-        <div class="m">kurtosis &gt; kurtosis_warn</div>
+        <div class="m">kurtosis &gt; 8.0 · <span class="live">OUTLIER 시 억제</span></div>
       </div>
     </div>
   </section>
@@ -243,31 +245,40 @@
 
     <div class="mid">
       <h3>영역 집중 <span class="en">localized</span></h3>
-      <div class="rule off">
+      <div class="rule on">
+        <div class="id">E1_FAIL <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">e1_fail_share &ge; 0.95 (최외곽 1열)</div>
+      </div>
+      <div class="rule on">
         <div class="id">EDGE_FAIL <span class="sev MAJOR">MAJOR</span></div>
-        <div class="m">edge_fail_ratio &gt; warn</div>
+        <div class="m">edge_fail_share &ge; 0.95 (E1 제외 밴드)</div>
       </div>
-      <div class="rule off">
+      <div class="rule on">
         <div class="id">CENTER_FAIL <span class="sev MAJOR">MAJOR</span></div>
-        <div class="m">center_fail_ratio &gt; warn</div>
+        <div class="m">center_fail_share &ge; 0.95</div>
       </div>
-      <div class="rule off">
+      <div class="rule on">
         <div class="id">CLUSTER_FAIL <span class="sev MAJOR">MAJOR</span></div>
-        <div class="m">quadrant_imbalance &gt; warn</div>
+        <div class="m">quadrant_imbalance &gt; 2.5 (존으로 설명 안 되는 편중)</div>
       </div>
     </div>
 
     <div class="mid">
       <h3>반경·방향성 <span class="en">radial / gradient</span></h3>
-      <div class="rule off">
+      <div class="rule on">
         <div class="id">RING_FAIL <span class="sev MAJOR">MAJOR</span></div>
-        <div class="m">ring_fail_ratio &gt; warn</div>
+        <div class="m">ring_fail_share &ge; 0.95 (중간 밴드)</div>
       </div>
       <div class="rule off">
         <div class="id">WAFER_GRADIENT <span class="sev MAJOR">MAJOR</span></div>
         <div class="m">gradient_norm_abs_max &gt; warn</div>
       </div>
     </div>
+
+    <p class="why">공간 4종의 판정은 <b>점유율</b>(전체 fail 중 그 영역 몫, 공용 임계
+      <code>region_fail_share_min</code> 0.95)이다 — 밀도 배수는 영역마다 상한이 달라
+      임계를 공유할 수 없었다. fail 이 10개 미만이면 우연히 한 영역에 몰릴 수 있어
+      <code>spatial_fail_count_min</code> 10 으로 가드한다.</p>
 
     <div class="mid">
       <h3>설비·site 계통 <span class="en">equipment</span></h3>
@@ -286,8 +297,9 @@
     <div class="mid">
       <h3>모집단 혼입 <span class="en">bimodality</span></h3>
       <div class="rule on">
-        <div class="id">SUBPOP_GAP <span class="sev MAJOR">MAJOR</span></div>
-        <div class="m">modality_v2 특수분기 (density_gap)<br>로트/장비 혼입·조건 이원화</div>
+        <div class="id">BIMODALITY <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">modality_v2 특수분기 (density_gap)<br>로트/장비 혼입·조건 이원화
+          <br><span class="live">2026-08-12 개명 (구 SUBPOP_GAP)</span></div>
       </div>
     </div>
 

@@ -532,12 +532,17 @@ function rawdlClose() {
 
 function rawdlDownload(idx) {
   // 서버가 attachment 로 내려주므로 페이지는 그대로 있는다(파일명도 서버가 정한다).
+  // idx 가 null 이면 전 source 를 CSV 로 담은 zip 하나를 받는다(스트리밍이라 진행률 없음).
   const a = document.createElement("a");
-  a.href = `/pe/report/session/${SESSION_ID}/web_report/rawdata_csv?source=${idx}`;
+  a.href = idx === null
+    ? `/pe/report/session/${SESSION_ID}/web_report/rawdata_csv_all`
+    : `/pe/report/session/${SESSION_ID}/web_report/rawdata_csv?source=${idx}`;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  showToast("Rawdata CSV 다운로드를 시작했습니다.");
+  showToast(idx === null
+    ? "Rawdata 전체 CSV(zip) 다운로드를 시작했습니다. source 가 많으면 시간이 걸립니다."
+    : "Rawdata CSV 다운로드를 시작했습니다.");
 }
 
 document.getElementById("btnRawdataDl").addEventListener("click", e => {
@@ -547,7 +552,11 @@ document.getElementById("btnRawdataDl").addEventListener("click", e => {
   if (sources.length === 1) { rawdlDownload(0); return; }
   const menu = document.getElementById("rawdlMenu");
   if (menu.classList.contains("show")) { rawdlClose(); return; }
+  // source 가 1개면 위에서 이미 즉시 다운로드했다 — 여기 오는 건 2개 이상뿐이라
+  // '전체'(zip)가 개별 CSV 와 같아지는 경우가 없다.
   menu.innerHTML = `<div class="rawdl-menu-title">Rawdata CSV 다운로드 (source 선택)</div>` +
+    `<button class="rawdl-item rawdl-item-all" data-rawdl-idx="all">`
+      + `전체 (${sources.length}개, zip)</button>` +
     sources.map((s, i) => `<button class="rawdl-item" data-rawdl-idx="${i}">`
       + `${esc(s.name || `source_${i + 1}`)}</button>`).join("");
   menu.classList.add("show");
@@ -557,7 +566,8 @@ document.getElementById("rawdlMenu").addEventListener("click", e => {
   const item = e.target.closest("[data-rawdl-idx]");
   if (!item) return;
   rawdlClose();
-  rawdlDownload(Number(item.dataset.rawdlIdx));
+  const v = item.dataset.rawdlIdx;
+  rawdlDownload(v === "all" ? null : Number(v));
 });
 
 document.addEventListener("click", rawdlClose);
