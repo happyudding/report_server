@@ -335,6 +335,11 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
     # 대체한다(판정값 동일 — FAILTNO 가 None 인 행은 어떤 tno 와도 같을 수 없다).
     fail_idx_all = [i for i, ft in enumerate(failtno_all) if ft is not None]
 
+    # 좌표 전처리(features._spatial_geometry: 중심정렬·반경·E1 마스크) 공유통 — 한 소스의
+    # item 들은 같은 die 목록을 쓰므로 좌표가 하나뿐인데 종전에는 item 마다 다시 만들었다.
+    # 아래에서 **x_pos/y_pos 가 x_all/y_all 그 객체인 case 에만** 붙인다(NaN 이 섞여 좌표를
+    # 따로 만든 item 은 좌표가 다르므로 공유하면 안 된다).
+    run_geom = {}
     cases = []
     for item in item_cols:
         value_type = _classify_value_type(unit_row[item], item)
@@ -411,6 +416,8 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
                               values, fail_mask, x_pos, y_pos, site,
                               item_raw=item, unit=unit_row[item])
             case["_shared"] = item_shared
+            if x_pos is x_all and y_pos is y_all:      # 좌표가 소스 공용 배열 그대로일 때만
+                case["_geom_shared"] = run_geom
             # yield 분모/분자는 전체 DUT(데이터 행) 기준 — item 셀 파싱 성공분(len(values))으로
             # 재면 item 마다 분모가 달라져 trump/GROSS_FAIL 비교가 왜곡된다. FAILTNO 기반
             # fail 식별은 측정값 파싱과 무관하므로 전체 행에서 센다. (fail_mask 는 공간

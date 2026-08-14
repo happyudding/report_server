@@ -28,6 +28,11 @@
 .PARAMETER NoBump
     버전을 올리지 않고 현재 CURRENT_VERSION 그대로 다시 빌드·배포한다.
 
+.PARAMETER ServerUrl
+    빌드본이 접속할 서버 주소를 server\env\server.env 대신 이 값으로 덮는다.
+    **테스트 서버로 배포할 때만 사용** (예: http://192.168.0.10:8090 — mypc_start.bat).
+    운영 릴리스는 지정하지 말 것 — server.env 가 정본이다.
+
 .PARAMETER Yes
     배포 전 확인 프롬프트를 건너뛴다 (무인 실행용).
 
@@ -40,7 +45,8 @@ param(
     [string]$Notes,
     [switch]$NoBump,
     [switch]$Yes,
-    [switch]$Clean
+    [switch]$Clean,
+    [string]$ServerUrl
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,15 +108,26 @@ if ($Version -notmatch '^\d+\.\d+\.\d+$') { throw "Version 은 x.y.z 형식이�
 # ── 2. 서버 주소 (정본은 server\env\server.env 하나) ─────────────────────────
 # 여기서 멈추지 않고 넘어가면 빌드본이 엉뚱한 주소(빌드 스크립트 기본값 127.0.0.1)로
 # 나가고, 배포된 뒤에야 "아무도 업데이트를 못 받는다"로 드러난다.
-$BaseUrl = $null
-foreach ($line in (Get-Content -Path $ServerEnv -Encoding UTF8)) {
-    $t = $line.Trim()
-    if ($t -eq "" -or $t.StartsWith("#")) { continue }
-    $m = [regex]::Match($t, '^SERVER_BASE_URL\s*=\s*(\S+)$')
-    if ($m.Success) { $BaseUrl = $m.Groups[1].Value }
-}
-if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
-    throw "SERVER_BASE_URL 을 $ServerEnv 에서 찾지 못했습니다."
+#
+# -ServerUrl 은 그 정본을 **이 실행에 한해** 덮는다 (테스트 서버 배포용). server.env
+# 파일 자체는 건드리지 않으므로, 인자 없이 다시 돌리면 곧바로 운영 주소로 돌아온다.
+$BaseUrlOverridden = -not [string]::IsNullOrWhiteSpace($ServerUrl)
+if ($BaseUrlOverridden) {
+    $BaseUrl = $ServerUrl.Trim()
+    if ($BaseUrl -notmatch '^https?://') {
+        throw "ServerUrl 은 http:// 또는 https:// 로 시작해야 합니다: $BaseUrl"
+    }
+} else {
+    $BaseUrl = $null
+    foreach ($line in (Get-Content -Path $ServerEnv -Encoding UTF8)) {
+        $t = $line.Trim()
+        if ($t -eq "" -or $t.StartsWith("#")) { continue }
+        $m = [regex]::Match($t, '^SERVER_BASE_URL\s*=\s*(\S+)$')
+        if ($m.Success) { $BaseUrl = $m.Groups[1].Value }
+    }
+    if ([string]::IsNullOrWhiteSpace($BaseUrl)) {
+        throw "SERVER_BASE_URL 을 $ServerEnv 에서 찾지 못했습니다."
+    }
 }
 
 Write-Host ""
@@ -119,6 +136,13 @@ Write-Host "  현재 버전   : $currentVersion"
 Write-Host "  만들 버전   : $Version"
 Write-Host "  서버 주소   : $BaseUrl   <- 빌드본이 접속할 주소"
 Write-Host "  배포 위치   : $ReleasesDir"
+
+if ($BaseUrlOverridden) {
+    Write-Host ""
+    Write-Host "  [오버라이드] 서버 주소를 -ServerUrl 로 덮었습니다 (server.env 무시)." -ForegroundColor Yellow
+    Write-Host "               테스트 배포용입니다. 이 빌드본은 위 주소만 바라봅니다 —" -ForegroundColor Yellow
+    Write-Host "               운영 배포라면 지금 중단하고 인자 없이 다시 실행하세요." -ForegroundColor Yellow
+}
 
 if ($BaseUrl -match '127\.0\.0\.1|localhost') {
     Write-Host ""

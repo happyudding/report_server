@@ -11,6 +11,7 @@ signature 선언도 같은 규칙의 오버레이 트리를 갖는다(signatures
 """
 import functools
 import os
+from contextlib import contextmanager
 
 import yaml
 
@@ -30,9 +31,54 @@ def _load_yaml_cached(path_str: str, mtime_ns: int):
         return yaml.safe_load(f)
 
 
+# ── run 단위 룰 스냅샷 ───────────────────────────────────────────────────────
+# `evaluate()` 한 번 동안은 룰을 1회만 읽는다. 종전에는 mtime 을 캐시 키로 쓰느라
+# **호출마다 os.stat** 했고, `thresholds_for` 는 case 당 3~4회 불리며 매번 파일 3개
+# (기준 + _default 오버레이 + family 오버레이)를 stat 했다 — 실측 11,367회로 콜드
+# 평가 시간의 18% 였다(계산이 아니라 파일 I/O). 없는 오버레이는 FileNotFoundError 라
+# lru_cache 에 남지도 않아 case 마다 그대로 재시도했다.
+#
+# 스코프 **밖에서는 종전 mtime 경로 그대로**다(cross_source·eval_debug 등 상시 호출부의
+# "yaml 고치면 다음 호출에서 반영" 계약 무변경). 스코프 안이어도 run 이 끝나면 다시
+# stat 하므로 `/pe/eval` 룰 편집은 다음 평가부터 반영된다 — 종전과 같다. 오히려 한 run
+# 중간에 파일이 바뀌어 case 마다 다른 임계값이 적용되던 틈이 없어진다.
+_scope = None
+_MISS = object()
+
+
+@contextmanager
+def rules_scope():
+    """이 블록 동안 룰 파일·병합 결과를 1회만 만든다 (run 단위 스냅샷). 중첩 안전.
+
+    스레드 경합은 무해하다 — 같은 입력이면 같은 값이고 dict 대입은 원자적이다
+    (features._shared 와 같은 논리). 중첩 호출은 바깥 스코프를 그대로 쓴다.
+    """
+    global _scope
+    outer = _scope
+    if outer is None:
+        _scope = {}
+    try:
+        yield
+    finally:
+        _scope = outer
+
+
 def load_yaml(path_str: str):
-    """yaml 파싱 결과(캐시). 파일이 바뀌면 mtime 이 달라져 자동 재파싱된다."""
-    return _load_yaml_cached(path_str, os.stat(path_str).st_mtime_ns)
+    """yaml 파싱 결과(캐시). 파일이 바뀌면 mtime 이 달라져 자동 재파싱된다.
+
+    `rules_scope()` 안에서는 stat 없이 스코프 캐시를 쓴다. **예외(파일 없음)도 캐시**해야
+    존재하지 않는 오버레이를 case 마다 다시 stat 하지 않는다 — 그게 이 캐시의 최대 절감분이다.
+    되던지는 예외는 traceback 을 지워 재사용한다(같은 객체에 tb 가 누적되지 않게).
+    """
+    scope = _scope
+    if scope is None:
+        return _load_yaml_cached(path_str, os.stat(path_str).st_mtime_ns)
+    key = ("yaml", path_str)
+    hit = scope.get(key, _MISS)
+    if hit is _MISS:
+        hit = _load_yaml_cached(path_str, os.stat(path_str).st_mtime_ns)
+        scope[key] = hit
+    return hit
 
 
 # calibrate.py 등 기존 호출부 호환 (load_yaml.cache_clear()).
@@ -43,6 +89,8 @@ load_yaml.cache_info = _load_yaml_cached.cache_info
 def reload_rules() -> None:
     """룰 yaml 캐시 명시 클리어. mtime 키라 평시엔 불필요하지만 강제 리로드용."""
     _load_yaml_cached.cache_clear()
+    if _scope is not None:                     # 활성 run 스냅샷도 함께 버린다
+        _scope.clear()
 
 
 def threshold_overlay_path(product_type, family_product=None):
@@ -62,7 +110,26 @@ def _overlay(path):
 
 
 def thresholds_for(case_ctx: dict) -> dict:
-    """case 의 product_type/family_product/item_class 에 맞춰 병합된 임계값 dict 반환."""
+    """case 의 product_type/family_product/item_class 에 맞춰 병합된 임계값 dict 반환.
+
+    ⚠ **반환 dict 는 읽기 전용이다.** `rules_scope()` 안에서는 스코프가 같은
+    (product_type, family_product, item_class) 조합의 case 들에 **같은 객체**를 돌려주므로,
+    호출부가 값을 고치면 다른 case 로 번진다. 현재 파이프라인은 전부 읽기만 한다.
+    """
+    scope = _scope
+    if scope is None:
+        return _thresholds_merged(case_ctx)
+    key = ("th", case_ctx.get("product_type"), case_ctx.get("family_product"),
+           case_ctx.get("item_class"))
+    hit = scope.get(key)
+    if hit is None:
+        hit = _thresholds_merged(case_ctx)
+        scope[key] = hit
+    return hit
+
+
+def _thresholds_merged(case_ctx: dict) -> dict:
+    """thresholds_for 의 병합 실체 (스코프 캐시 미스에서만 실행)."""
     doc = load_yaml(str(config.THRESHOLDS_FILE))
     merged = dict(doc.get("default", {}))
     product_type = case_ctx.get("product_type")
@@ -123,7 +190,23 @@ def signatures_for(case_ctx: dict) -> list:
 
     스코프 우선순위는 thresholds 와 같다:
         signatures.yaml → signatures/<PT>/_default.yaml → signatures/<PT>/<FAMILY>.yaml
+
+    ⚠ 반환 목록·항목 dict 는 `thresholds_for` 와 같은 이유로 **읽기 전용**이다.
     """
+    scope = _scope
+    if scope is None:
+        return _signatures_merged(case_ctx)
+    ctx = case_ctx or {}
+    key = ("sig", ctx.get("product_type"), ctx.get("family_product"))
+    hit = scope.get(key)
+    if hit is None:
+        hit = _signatures_merged(case_ctx)
+        scope[key] = hit
+    return hit
+
+
+def _signatures_merged(case_ctx: dict) -> list:
+    """signatures_for 의 병합 실체 (스코프 캐시 미스에서만 실행)."""
     base = signatures_doc().get("signatures") or []
     overrides = signature_overrides((case_ctx or {}).get("product_type"),
                                     (case_ctx or {}).get("family_product"))

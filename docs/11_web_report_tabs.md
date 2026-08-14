@@ -307,6 +307,10 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
       배경을 그대로 쓰면 고정열 밑을 지나가는 우측 데이터가 비쳐 글자가 겹친다.
   - **TNO 전체 펼치기**: 툴바 버튼이 아니라 **Yield 섹션 헤더 Step 열 아래 작은 ▼**
     (`.issue-toggle-all`, 2026-08-10). 핸들러는 종전 `data-issue-act="toggle-all"` 그대로.
+  - **Excel식 셀 조작**: 클릭=1셀 / 드래그=사각 범위 선택(`.cell-sel`) → `Ctrl+C` 로 TSV 복사,
+    **`F2` 로 선택 셀 편집 진입**(2026-08-14). F2 는 편집 로직을 새로 갖지 않고 anchor 셀에
+    **합성 `dblclick` 을 보내** edit_mode.js 의 진입 핸들러를 그대로 태운다(`cellSelEditAnchor`)
+    — 진입 조건(`MODE==="edit"` 가드·`data-raw` 원문 복원)이 두 벌로 갈라지면 안 되기 때문.
   - **source 헤더 축약**: source 컬럼이 `SRC_ABBREV_MIN`(8) 이상이면 공통 접두/접미를 떼고
     다른 부분만 표시한다(첫 컬럼만 전체 이름, `sourceHeaderLabels`). 전체 이름은 th `title`
     에 남는다. 이때 `{src}_yield/_count` 열너비도 숫자 크기로 좁힌다(`colWidth(..., narrowSrc)`).
@@ -803,8 +807,13 @@ PTE/개발 comment 안에서 **특정 글자만** 색·굵기로 강조한다. �
 
 ### Summary Engr Comment 서식 — 글자 크기·색 (2026-08-13)
 Engr Comment 4칸(Yield/CPK/TEMP/ETC)은 위 `*[..]` 토큰이 아니라 **WYSIWYG 편집**이다
-(도구모음: 크기 12/14/18/24px · 색 5종 · 굵게 · 서식 지우기 —
+(도구모음: 크기 12/14/18/24px · 색 5종 · 굵게/기울임/밑줄 · 서식 지우기 —
 [map_select.js](../server/report/static/webreport/map_select.js) `engrFmtBarHtml`).
+⚠️ **굵게와 기울임·밑줄은 `styleWithCSS` 값이 반대다**(`engrRunCmd`/`ENGR_TAG_CMDS`).
+굵게는 `true`(→`span[font-weight:bold]`, 허용 style)이고, 기울임·밑줄은 `false` 여야
+`<i>`/`<u>` 태그로 남는다 — `true` 로 두면 브라우저가 `font-style`/`text-decoration`
+span 을 만드는데 그 둘은 허용 style 목록에 없어 저장 직전 `engrSanitize` 가 지운다
+(= 사용자가 건 서식이 조용히 사라진다).
 Issue comment 와 문법이 다른 이유는 소비처가 다르기 때문 — Engr 값은 웹 화면 밖으로 나가는
 경로(Excel·eval·챗봇)가 **없어서** strip 짝이 필요 없다.
 

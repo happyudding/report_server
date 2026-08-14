@@ -1577,9 +1577,38 @@ document.addEventListener("mouseup", () => {
   if (_cellDrag) { _cellDrag.table.classList.remove("cell-drag"); _cellDrag = null; }
 });
 
+// F2 = 선택한 셀을 편집 상태로 (Excel 관례). 편집 진입 로직은 edit_mode.js 의 dblclick
+// 핸들러 하나뿐이므로 합성 dblclick 을 보내 **그것을 그대로 재사용**한다 — 진입 조건
+// (MODE==="edit" 가드 · data-raw 원문 복원)이 두 벌로 갈라지지 않는다.
+// 편집 대상이 아닌 셀(읽기전용 열·뷰 모드)에서는 아무 일도 일어나지 않는다.
+function cellSelEditAnchor() {
+  const td = _cellSel.grid.get(_cellSel.r1 + ":" + _cellSel.c1);
+  if (!td || !td.classList.contains("dblclick-edit") || td.isContentEditable) return false;
+  td.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+  if (!td.isContentEditable) return false;   // 뷰 모드 등 진입이 거부된 경우
+  cellSelClear();
+  // 캐럿을 글 끝에 둔다 — focus() 만 하면 맨 앞에 놓여 Excel 의 F2 와 다르게 느껴진다.
+  const sel = window.getSelection && window.getSelection();
+  if (sel) {
+    const r = document.createRange();
+    r.selectNodeContents(td);
+    r.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+  return true;
+}
+
 document.addEventListener("keydown", (ev) => {
   if (!_cellSel) return;
   if (ev.key === "Escape") { cellSelClear(); return; }
+  if (ev.key === "F2") {
+    // 이미 다른 입력칸에 포커스가 있으면 그쪽 기본 동작에 양보 (Ctrl+C 규칙과 동일)
+    const ae0 = document.activeElement;
+    if (ae0 && (ae0.isContentEditable || ae0.tagName === "INPUT" || ae0.tagName === "TEXTAREA")) return;
+    if (cellSelEditAnchor()) ev.preventDefault();
+    return;
+  }
   if (!(ev.ctrlKey || ev.metaKey) || (ev.key !== "c" && ev.key !== "C")) return;
   // 사용자가 텍스트를 직접 드래그 선택했거나 편집 중이면 기본 복사에 양보
   const s = window.getSelection && window.getSelection();

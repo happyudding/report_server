@@ -585,14 +585,23 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     # (outlier_ratio·공간 밴드·modality_v2 등)은 item_class 오버레이가 bin 축을 가질 수
     # 있어 공유하지 않는다. 동시 계산 경합은 무해(같은 입력 → 같은 값, dict 대입 원자적).
     shared = case_ctx.get("_shared")
+    # 좌표 전처리만 **run(소스) 단위** 통을 쓴다 — 한 소스의 item 들은 같은 die 목록이라
+    # 좌표가 하나뿐인데 종전에는 item 마다 중심정렬·반경·E1 마스크를 다시 만들었다
+    # (실측 콜드 평가의 10%). ingest 가 좌표를 소스 공용 배열 그대로 넘긴 case 에만
+    # `_geom_shared` 를 붙여 준다 — 없으면(NaN 이 섞여 좌표를 따로 만든 item, 레거시 입력
+    # 경로) 종전대로 item 단위 `_shared` 로 폴백한다.
+    geom_store = case_ctx.get("_geom_shared")
+    if geom_store is None:
+        geom_store = shared
 
-    def _memo(key, fn):
-        if shared is None:
+    def _memo(key, fn, store=_UNSET):
+        store = shared if store is _UNSET else store
+        if store is None:
             return fn()
-        hit = shared.get(key)
+        hit = store.get(key)
         if hit is None:
             hit = (fn(),)
-            shared[key] = hit
+            store[key] = hit
         return hit[0]
 
     v = _memo("v", lambda: np.asarray(values, dtype=float))
@@ -666,7 +675,8 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
 
     spatial = _spatial_features(case_ctx, th,
                                 _memo("spatial_geom",
-                                      lambda: _spatial_geometry(case_ctx)))
+                                      lambda: _spatial_geometry(case_ctx),
+                                      store=geom_store))
     site_cpk_delta = _site_cpk_delta(case_ctx)
     code_edge_hit = limit_hit_ratio if case_ctx.get("value_type") == "CODE" else None
     fail_mad_min, fail_pass_gap_sigma, fail_robust_z_max = _fail_outlier_features(

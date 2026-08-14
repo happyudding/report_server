@@ -415,7 +415,9 @@ html[data-theme="dark"] .mine-toggle { color: #c6ccd6; }
     <h1 class="page-title">LSI PTE REPORT SERVER</h1>
   </a>
   <div style="display:flex; align-items:center; gap:14px;">
-    <a class="help-btn" href="/pe/report/help">HELP</a>
+    <!-- HELP 는 새 창으로 연다 — 보던 검색결과를 잃지 않고 도움말을 나란히 보기 위함.
+         Honey 내장 브라우저에서는 target=_blank 가 새 내장 창으로 열린다(embedded_browser). -->
+    <a class="help-btn" href="/pe/report/help" target="_blank" rel="noopener">HELP</a>
     <a class="help-btn" href="https://confluence.samsungds.net/pages/editpage.action?pageId=3473285336" target="_blank" rel="noopener">VOC</a>
     <a id="honeyDlBtn" class="honey-dl-btn" href="/honey/download">⬇ HONEY 다운로드</a>
     <a class="back-main-btn" href="http://lsipte.samsungds.net:8080">BACK TO MAIN</a>

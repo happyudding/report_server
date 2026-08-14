@@ -444,6 +444,8 @@ function engrFmtBarHtml(key) {
       `style="background:${hex}" title="글자색 ${name}"></button>`).join("") +
     `<span class="engr-fmt-sep"></span>` +
     `<button type="button" class="engr-fmt-btn" data-engr-cmd="bold" title="굵게"><b>B</b></button>` +
+    `<button type="button" class="engr-fmt-btn" data-engr-cmd="italic" title="기울임"><i>I</i></button>` +
+    `<button type="button" class="engr-fmt-btn" data-engr-cmd="underline" title="밑줄"><u>U</u></button>` +
     `<button type="button" class="engr-fmt-btn" data-engr-cmd="clear" title="선택 구간 서식 지우기">✕ 서식</button>` +
     `<span class="engr-fmt-hint">글자를 드래그해 선택한 뒤 누르세요</span>` +
     `</div>`;
@@ -585,8 +587,19 @@ function engrSetColor(key, hex) {
     document.execCommand("foreColor", false, hex);
   });
 }
+// 굵게는 styleWithCSS=true 로 span[font-weight:bold] 를 남긴다(허용 style 목록에 있음).
+// 기울임·밑줄은 반대로 styleWithCSS=false 여야 한다 — true 면 브라우저가
+// span[font-style/text-decoration] 을 만드는데 그 두 속성은 ENGR_STYLE_PROPS 에 없어
+// 저장 직전 engrSanitize 가 통째로 지운다(=서식이 조용히 사라진다). false 면 <i>/<u>
+// 태그가 남고 ENGR_TAGS 가 그대로 허용한다.
+const ENGR_TAG_CMDS = { italic: 1, underline: 1 };
 function engrRunCmd(key, cmd) {
   engrApplyFormat(key, () => {
+    if (ENGR_TAG_CMDS[cmd]) {
+      document.execCommand("styleWithCSS", false, false);
+      document.execCommand(cmd);
+      return;
+    }
     document.execCommand("styleWithCSS", false, true);
     document.execCommand(cmd === "bold" ? "bold" : "removeFormat");
   });

@@ -7,7 +7,8 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 from . import config, store
-from .pipeline import ingest, metrics, features, signatures, status, recommend, present
+from .pipeline import (ingest, metrics, features, signatures, status, recommend,
+                       present, _rules)
 
 _MAX_WORKERS = 3
 
@@ -15,6 +16,9 @@ _MAX_WORKERS = 3
 logger = logging.getLogger(__name__)
 
 
+# 룰 파일은 이 호출 1회 동안 1회만 읽는다(run 단위 스냅샷 — _rules.rules_scope 참조).
+# @contextmanager 산출물은 ContextDecorator 라 호출마다 새 스코프가 만들어진다.
+@_rules.rules_scope()
 def evaluate(run_input: dict, *, engine_version: str | None = None,
              model_version: str | None = None, persist: bool = True,
              db_path=None, generate_comment: bool = True) -> dict:
