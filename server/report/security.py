@@ -14,6 +14,7 @@ from flask import abort, jsonify, make_response, request
 from admin_panel import MASTER_COOKIE, master_value_valid
 from auth_identity import current_user as _current_user, is_uploader as _is_uploader
 from database import report_db
+from identity_norm import normalize_uid
 
 _log = logging.getLogger(__name__)
 
@@ -302,14 +303,22 @@ def _require_web_report_session(session_id):
 _USER_ID_RE = re.compile(r"^[^\s\\/]{1,64}$")
 _PIN_RE = re.compile(r"^\d{4}$")   # 웹 로그인 PIN 은 숫자 4자리 (routes_misc auth 라우트)
 _DEFAULT_PIN = "0000"              # 관리자 리셋값 (admin_panel/users_admin.py)
-# 사용자 실명(표시용). 제어문자만 막고 한글·영문·공백은 허용한다. 30자 상한은 권한 창·
-# 감사표처럼 좁은 칸에서 '이름(ID)' 가 감당 가능한 길이라는 표시 제약에서 왔다.
-_DISPLAY_NAME_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,30}$")
+# 사용자 실명(표시용) — **완성형 한글 2~10자만** (2026-08-14 사용자 요청).
+# 사내 실명 표기를 한 가지로 고정하려는 것이다: 영문 로마자·자모('ㄱㄴ')·공백을 섞으면
+# 같은 사람이 'Kim'/'김첨지' 두 표기로 불려 '이름(ID)' 표기의 의미가 사라진다.
+# 10자 상한은 권한 창·감사표처럼 좁은 칸이 감당 가능한 길이 (종전 30자는 한글 이름에 과함).
+# 규칙 변경 전에 저장된 비한글 이름은 **지우지 않는다** — 표시는 그대로 두고, 다음 접속에
+# 이름 입력창이 다시 떠서 한글로 고치도록 유도한다(user_name.js `isValidName`).
+_DISPLAY_NAME_RE = re.compile(r"^[가-힣]{2,10}$")
+DISPLAY_NAME_HELP = "이름은 한글 2~10자로 입력해주세요. (예: 홍길동)"
 
 
 def _normalize_user_id(value):
-    """Windows ID 는 대소문자 무구분 — 소문자 정규화. 형식 불량이면 400."""
-    uid = (value or "").strip().lower()
+    """사용자 입력 ID → 신원 키. 형식 불량이면 400.
+
+    도메인 접두('SECDS\\hgd123')와 대문자를 떼는 규칙은 신원 계층과 같은 것을 쓴다
+    (identity_norm) — 편집 권한 위임 창에 도메인째 붙여넣어도 같은 사람으로 붙는다."""
+    uid = normalize_uid(value)
     if not _USER_ID_RE.match(uid):
         abort(400, "invalid user_id")
     return uid

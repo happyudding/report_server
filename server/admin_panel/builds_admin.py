@@ -33,6 +33,7 @@ import time
 from admin_panel import metrics
 from config import REPORT_UPLOAD_DIR
 from database import report_db
+from identity_norm import normalize_uid
 
 _log = logging.getLogger(__name__)
 
@@ -78,14 +79,16 @@ def _session_meta(session_id: str) -> dict:
             "product": s.get("product") or "",
             "product_type": s.get("product_type") or "",
             "lot_id": s.get("lot_id") or "",
-            "uploader": s.get("uploaded_by") or "",
+            # 표기용 ID 는 정규화한다 — DB 원문('SECDS\\HGD123')을 그대로 그리면
+            # 다른 관리자 표의 같은 사람과 다른 이름으로 보인다 (identity_norm).
+            "uploader": normalize_uid(s.get("uploaded_by")),
             "created_at": created,
             "akey": str(s.get("analysis_key") or "")[:12],
         }
         if meta["uploader"]:
             # 화면 표기는 전 관리자 화면이 '이름(ID)' 로 통일돼 있다 (users_admin.attach_names
             # 와 같은 규칙). 여기는 세션 1건이라 캐시에 실어 두고 배치 조회는 생략한다.
-            key = meta["uploader"].split("\\")[-1].lower()
+            key = meta["uploader"]
             meta["uploader_name"] = report_db.display_names([key]).get(key, "")
         try:
             from pathlib import Path

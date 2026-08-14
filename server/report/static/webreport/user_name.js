@@ -11,8 +11,18 @@
   "use strict";
 
   var MODAL_ID = "userNameModal";
-  var MAX_LEN = 30;                    // 서버 _DISPLAY_NAME_RE 와 같은 상한
+  var MAX_LEN = 10;                    // 서버 _DISPLAY_NAME_RE 와 같은 상한
+  // 실명은 **완성형 한글 2~10자만** 받는다 (서버 report/security.py `_DISPLAY_NAME_RE`
+  // 와 같은 규칙). 여기 검증은 사용자에게 즉시 알려주기 위한 것이고, 강제는 서버가 한다.
+  var NAME_RE = /^[가-힣]{2,10}$/;
+  var NAME_HELP = "이름은 한글 2~10자로 입력해주세요. (예: 홍길동)";
   var _open = false;                   // 같은 화면에서 두 번 겹쳐 띄우지 않기
+
+  // 규칙에 맞는 이름인지. 규칙이 생기기 전에 저장된 영문 이름은 여기서 false 가 되어
+  // 다음 접속에 입력창이 다시 뜬다(값을 지우지는 않는다 — 고칠 때까지 화면에는 그대로).
+  function isValidName(name) {
+    return NAME_RE.test(String(name == null ? "" : name).trim());
+  }
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -34,10 +44,16 @@
     return name ? name + "(" + uid + ")" : uid;
   }
 
-  // 목록 응답의 names 맵({uid: 이름})에서 찾아 표기. uid 는 'SECDS\hgd123' 처럼
-  // 도메인이 붙어 올 수 있어 꼬리만 소문자로 떼어 맞춘다(서버 키와 동일 규칙).
-  function fromMap(uid, names) {
-    var tail = String(uid || "").split("\\").pop().trim().toLowerCase();
+  // 신원 키 정규화 — 서버 identity_norm.normalize_uid 와 같은 규칙
+  // (마지막 백슬래시 뒤 → trim → 소문자). 'SECDS\Chumji.Kim' 과 'chumji.kim' 이
+  // 화면에서 다른 사람으로 보이지 않게, ID 를 그리는 자리는 전부 이걸 통과시킨다.
+  function uid(value) {
+    return String(value == null ? "" : value).split("\\").pop().trim().toLowerCase();
+  }
+
+  // 목록 응답의 names 맵({uid: 이름})에서 찾아 표기.
+  function fromMap(who, names) {
+    var tail = uid(who);
     return fmt(tail, (names || {})[tail] || "");
   }
 
@@ -51,7 +67,8 @@
       '<div class="modal-box" style="max-width:400px;">' +
         '<p class="modal-title">이름을 알려주세요</p>' +
         '<p style="font-size:14px; color:#888; margin:0 0 12px; line-height:1.6;">' +
-          '권한 부여 창·업로더 표시가 ID 대신 <b>이름(ID)</b> 로 보이게 됩니다.</p>' +
+          '권한 부여 창·업로더 표시가 ID 대신 <b>이름(ID)</b> 로 보이게 됩니다.<br>' +
+          '이름은 <b>한글 2~10자</b>로만 입력할 수 있습니다.</p>' +
         '<div style="font-size:13px; color:#888; margin:0 0 6px;">계정 ' +
           '<b id="userNameWho" style="color:inherit;"></b></div>' +
         '<input id="userNameInput" type="text" maxlength="' + MAX_LEN + '" ' +
@@ -89,22 +106,27 @@
    * opts.force : 이미 이름이 있어도 띄운다 (사용자가 직접 '이름 변경' 을 누른 경우)
    * 반환 Promise 는 **모달이 끝났을 때**(저장/나중에/안 띄움) resolve 한다 —
    * 호출부가 뒤이은 다른 모달(비밀번호 설정)을 겹치지 않게 이어 띄우기 위한 것.
+   *
+   * 한글 규칙(2026-08-14)이 생기기 전에 저장된 영문 이름도 '이름 없음' 과 같이 취급해
+   * 다시 띄운다 — 저장된 값을 지우지는 않으므로, 고치기 전까지 화면 표기는 그대로다.
    */
   function promptIfMissing(viewer, opts) {
     opts = opts || {};
     var uid = (viewer || {}).user_id || "";
     var name = ((viewer || {}).display_name || "").trim();
+    var needsFix = !!name && !isValidName(name);   // 규칙 이전에 저장된 이름
     // 신원이 없는 일반 브라우저(익명 열람자)에게는 절대 띄우지 않는다.
-    if (!uid || _open || (name && !opts.force)) return Promise.resolve(false);
+    if (!uid || _open || (name && !needsFix && !opts.force)) return Promise.resolve(false);
 
     _open = true;
     buildModal();
     var wrap = document.getElementById(MODAL_ID);
     var input = document.getElementById("userNameInput");
     document.getElementById("userNameWho").textContent = "SECDS\\" + uid;
-    input.value = opts.force ? name : "";
+    // 고쳐야 하는 이름은 입력칸에 채워 둔다 — 지우고 새로 치게 하면 번거롭다.
+    input.value = (opts.force || needsFix) ? name : "";
     document.getElementById("userNameLater").textContent = opts.force ? "취소" : "나중에";
-    showErr("");
+    showErr(needsFix ? NAME_HELP : "");
     wrap.classList.add("show");
     setTimeout(function () { try { input.focus(); } catch (e) {} }, 50);
 
@@ -114,7 +136,7 @@
       function save() {
         var val = (input.value || "").trim();
         if (!val) { showErr("이름을 입력해주세요."); input.focus(); return; }
-        if (val.length > MAX_LEN) { showErr("이름은 " + MAX_LEN + "자 이내로 입력해주세요."); return; }
+        if (!isValidName(val)) { showErr(NAME_HELP); input.focus(); return; }
         showErr("");
         var ready = opts.ensureCsrf ? opts.ensureCsrf() : Promise.resolve();
         Promise.resolve(ready).then(function () {
@@ -153,6 +175,7 @@
     });
   }
 
-  global.UserName = {fmt: fmt, fromMap: fromMap, promptIfMissing: promptIfMissing,
-                     close: close, MAX_LEN: MAX_LEN};
+  global.UserName = {fmt: fmt, uid: uid, fromMap: fromMap, promptIfMissing: promptIfMissing,
+                     close: close, MAX_LEN: MAX_LEN,
+                     isValidName: isValidName, NAME_HELP: NAME_HELP};
 })(window);

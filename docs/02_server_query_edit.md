@@ -18,6 +18,18 @@
 `current_user()` = SSO 헤더(`AUTH_SSO_HEADER` 설정 시) → Honey UA `HoneyUser/<계정>` →
 웹 로그인 세션. **셋 다 없는 일반 브라우저는 읽기 전용.**
 
+**신원 키 정규화 (2026-08-14)** — provider 3개가 모두
+[identity_norm.normalize_uid](..\server\identity_norm.py) 를 통과한다: *마지막 백슬래시 뒤 →
+trim → 소문자*. `SECDS\Chumji.Kim`·`Chumji.Kim`·`chumji.kim` 은 한 사람이다. 정규화가 빠진
+경로가 하나라도 있으면 그 사람의 접속 통계·즐겨찾기·편집 권한이 갈라져 관리자 사용자
+현황에 여러 명으로 나온다. 사람 ID 를 저장하거나 화면에 그리는 코드를 새로 쓸 때는
+반드시 이 함수를 거칠 것 — 파이썬은 `normalize_uid`, JS 는 `UserName.uid()`(정적 페이지)
+또는 `normUid()`(관리자 패널), SQL 은 `_UPLOADER_MATCH`(sessions.py)·`_NORM_CLIENT_USER`
+(admin_panel/stats.py) 표현을 쓴다. 규칙 이전에 쌓인 행은
+[tools/merge_duplicate_users.py](..\server\tools\merge_duplicate_users.py) 로 합친다.
+단 **감사로그 `client_user` 와 세션 `uploaded_by` 는 원문을 보존**한다(증거·소유 근거) —
+화면 표기는 조회 시점에 정규화한다.
+
 **웹 로그인 계정(`report_user`, singleID + 비밀번호 4자리)** — 라우트는
 [routes_misc.py](../server/report/routes_misc.py) 의 auth 블록. 계정 생성 경로는 2개:
 - `/api/auth/set_password` — **Honey 접속 전용**(`identity_source()=="honey"`). 실행 자체가

@@ -8,8 +8,17 @@ from datetime import date, timedelta
 
 from admin_panel import identity_merge
 from database import report_db
+from identity_norm import normalize_uid
 
 _ACTIONS = ("upload", "edit", "delete")
+
+# 감사로그 client_user 를 사람 키로 정규화하는 SQL — identity_norm.normalize_uid 와 동치
+# (마지막 백슬래시 뒤 → trim → 소문자). 실데이터의 백슬래시는 하나뿐이라 INSTR 로 충분하다
+# (database/sessions.py `_UPLOADER_MATCH` 와 같은 근사).
+_NORM_CLIENT_USER = (
+    "LOWER(TRIM(CASE WHEN INSTR(client_user, '\\') > 0"
+    " THEN SUBSTR(client_user, INSTR(client_user, '\\') + 1)"
+    " ELSE client_user END))")
 
 
 def _clamp_days(days, default=30, lo=1, hi=365):
@@ -64,6 +73,10 @@ def usage_ranking(days=30, limit=50):
     web_view = 세션 상세 페이지. 신원 없는 접속은 'ip:<addr>' 행으로 집계되는데,
     그 IP 가 계정 하나로 확정되면 같은 사람으로 합친다(identity_merge).
 
+    user_id 에는 신원 정규화 이전(2026-08-14)에 쌓인 'SECDS\\hgd123' 표기가 남아 있을 수
+    있어 집계 때 한 번 더 정규화한다 — DB 병합(tools/merge_duplicate_users.py) 전에도
+    화면에서는 한 사람으로 보이게 하는 안전망이다('ip:<addr>' 는 규칙을 그대로 통과).
+
     LIMIT 은 병합 **후** 적용한다 — 갈라져 있던 두 행이 합쳐지면 순위가 바뀌므로
     DB 단계에서 자르면 잘린 조각이 사라진다."""
     days = _clamp_days(days)
@@ -82,7 +95,7 @@ def usage_ranking(days=30, limit=50):
     mapping = identity_merge.ip_to_user()
     merged = {}
     for r in rows:
-        name, was_merged = identity_merge.resolve(r["user_id"], mapping=mapping)
+        name, was_merged = identity_merge.resolve(normalize_uid(r["user_id"]), mapping=mapping)
         cur = merged.get(name)
         if cur is None:
             cur = merged[name] = {"user_id": name, "honey_run": 0, "web_index": 0,
@@ -109,7 +122,7 @@ def _merged_first_days(mapping):
             "GROUP BY user_id").fetchall()
     out = {}
     for r in rows:
-        name, _ = identity_merge.resolve(r["user_id"], mapping=mapping)
+        name, _ = identity_merge.resolve(normalize_uid(r["user_id"]), mapping=mapping)
         cur = out.get(name)
         if cur is None or r["first_day"] < cur:
             out[name] = r["first_day"]
@@ -140,7 +153,7 @@ def usage_trend(days=30):
     mapping = identity_merge.ip_to_user()
     by_day = {}          # day -> {"users": set, "visits": int, kind: int}
     for r in rows:
-        name, _ = identity_merge.resolve(r["user_id"], mapping=mapping)
+        name, _ = identity_merge.resolve(normalize_uid(r["user_id"]), mapping=mapping)
         d = by_day.get(r["day"])
         if d is None:
             d = by_day[r["day"]] = {"users": set(), "visits": 0,
@@ -222,7 +235,7 @@ def usage_hourly_heatmap(days=30):
             continue
         if not (0 <= hh <= 23):
             continue
-        name, _ = identity_merge.resolve(r["user_id"], mapping=mapping)
+        name, _ = identity_merge.resolve(normalize_uid(r["user_id"]), mapping=mapping)
         n = int(r["n"] or 0)
         matrix[wd][hh] += n
         users[wd][hh].add(name)
@@ -238,12 +251,16 @@ def user_ranking(days=30, limit=50):
     (전부 클라이언트 신고값 + IP 라 참고용). 'system' 은 cleanup 스케줄러.
 
     이름이 IP 로 떨어진 행(= 신원 토큰 없이 남은 기록)은 그 IP 가 계정 하나로 확정되면
-    같은 사람으로 합친다(identity_merge). usage_ranking 과 같은 이유로 LIMIT 은 병합 후."""
+    같은 사람으로 합친다(identity_merge). usage_ranking 과 같은 이유로 LIMIT 은 병합 후.
+
+    client_user 는 **기록 당시의 원문**이라 'SECDS\\hgd123'·'HGD123'·'hgd123' 이 섞여 있다
+    (감사 원본이므로 그대로 보존한다). 사람 축으로 묶을 때는 identity_norm 과 같은 규칙으로
+    도메인·대소문자를 떼고 GROUP BY 한다 — 안 그러면 한 사람이 표에서 3~4행으로 갈라진다."""
     days = _clamp_days(days)
     cutoff = int(time.time()) - days * 86400
     with report_db.get_conn() as conn:
         rows = conn.execute(
-            "SELECT COALESCE(NULLIF(client_user,''), NULLIF(client_host,''), "
+            "SELECT COALESCE(NULLIF(" + _NORM_CLIENT_USER + ",''), NULLIF(client_host,''), "
             "                NULLIF(client_ip,''), 'unknown') AS who, "
             "       MAX(NULLIF(client_host,'')) AS host, "
             "       MAX(NULLIF(client_ip,'')) AS ip, "

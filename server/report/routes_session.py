@@ -21,6 +21,7 @@ from config import REPORT_TRASH_RETENTION_DAYS, REPORT_UPLOAD_DIR
 from database import report_db
 import product_info
 import storage_gateway
+from identity_norm import normalize_uid
 from report.report_extension import report_bp
 from report.security import (
     _active_or_404,
@@ -493,7 +494,7 @@ def session_my_access(session_id):
         "my_important": report_db.is_user_important(uid, session_id) if uid else False,
         # 상단바 Uploader 표기를 '이름(ID)' 로 그리기 위한 이름 (세션 소유자)
         "uploader_name": report_db.get_display_name(
-            (session.get("uploaded_by") or "").split("\\")[-1].strip().lower()) or "",
+            normalize_uid(session.get("uploaded_by"))) or "",
     })
 
 

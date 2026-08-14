@@ -27,7 +27,14 @@ rem ===========================================================================
 set "ROOT=%~dp0"
 set "PORT=%~1"
 if not defined PORT set "PORT=8090"
+set /a DIAGPORT=%PORT%+1
 set "HOST=0.0.0.0"
+
+rem -- 이 창의 QuickEdit(빠른 편집) 끄기 -----------------------------------------
+rem   서버가 이 창에서 직접 돌기 때문에, 창을 클릭/드래그하면 콘솔이 선택 모드로
+rem   들어가 stdout 쓰기가 블록되고 서버 전체가 멈춘다(창은 살아 있고 출력만 정지 →
+rem   클라는 업로드 100% 에서 timeout, 브라우저는 네트워크 에러). 실패해도 그냥 진행.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%_disable_quickedit.ps1"
 
 rem -- 파이썬 탐색: 경로를 박아두지 않고 순서대로 찾아 "실제로 실행되는" 것을 고른다 --
 rem   존재만 보지 않고 -c 로 한 번 돌려본다. venv 는 만든 뒤 전역 파이썬이 옮겨/지워지면
@@ -116,6 +123,14 @@ echo.
 echo [mypc] 외부 PC 에서 처음 접속 시 방화벽 허용이 필요할 수 있습니다
 echo [mypc]   (관리자 PowerShell 에서 1회)
 echo [mypc]   New-NetFirewallRule -DisplayName "report-server %PORT%" -Direction Inbound -LocalPort %PORT% -Protocol TCP -Action Allow
+echo.
+echo [mypc] 서버가 응답이 없을 때 (클라 timeout / 브라우저 네트워크 에러)
+echo [mypc]   1) 이 창을 클릭한 적이 있으면 창에서 Enter 를 한 번 눌러 본다
+echo [mypc]      ^(선택 모드에 걸린 것이면 그 즉시 다시 응답한다^)
+echo [mypc]   2) 그래도 무응답이면 *다른* 창에서 스레드 덤프를 받는다 - 어느 요청이
+echo [mypc]      멈춰 있는지 그대로 나온다 ^(이 포트는 서버 스레드 풀 밖에서 돈다^)
+echo [mypc]      curl http://127.0.0.1:%DIAGPORT%/threads -o threads.txt
+echo [mypc]   3) 서버 콘솔 로그는 log\server_*.txt 에도 그대로 쌓인다
 echo.
 echo [mypc] 종료하려면 이 창에서 Ctrl+C (또는 창 닫기). watchdog 이 되살리지 않습니다.
 echo.

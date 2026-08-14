@@ -21,6 +21,7 @@ from admin_panel import (GATE_COOKIE_EVAL, GATE_COOKIE_EVAL_PATH, GATE_COOKIE_VO
                          metrics, sessions_admin, stats, storage_admin, sysinfo,
                          users_admin, voc_admin, voc_gate_token)
 from database import report_db
+from identity_norm import normalize_uid
 from report.static_pages import send_html_gzip
 
 _log = logging.getLogger(__name__)
@@ -32,7 +33,10 @@ _LOGIN_HTML = Path(__file__).resolve().parent / "admin_login.html"
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _PIN_RE = re.compile(r"^\d{4}$")
 _USER_ID_RE = re.compile(r"^[^\s\\/]{1,64}$")
-_DISPLAY_NAME_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,30}$")   # report/security.py 와 같은 규칙
+# 사용자 실명 = 완성형 한글 2~10자. 정본은 report/security.py `_DISPLAY_NAME_RE` 이며
+# 여기 사본은 import 순환(report.security → admin_panel)을 피하려고 값만 맞춰 둔 것이다
+# — 한쪽만 고치면 관리자가 지정한 이름과 본인이 넣은 이름의 규칙이 갈라진다.
+_DISPLAY_NAME_RE = re.compile(r"^[가-힣]{2,10}$")
 
 # ── 접속 비밀번호 게이트 (아무나 못 들어오게 하는 간단한 쿠키 게이트) ─────────
 # 비밀번호가 맞으면 쿠키를 발급하고, before_request 가 매 요청 쿠키를 확인한다.
@@ -593,7 +597,8 @@ def api_session_password(session_id):
 # ── 사용자(웹 로그인 계정) 컨트롤 ───────────────────────────────────────────
 
 def _norm_user_id(user_id):
-    uid = (user_id or "").strip().lower()
+    """URL 로 들어온 계정 → 신원 키. 규칙은 사용자 라우트와 같다 (identity_norm)."""
+    uid = normalize_uid(user_id)
     if not _USER_ID_RE.match(uid):
         abort(400, "invalid user_id")
     return uid
@@ -638,7 +643,7 @@ def api_user_set_name(user_id):
     body = request.get_json(force=True, silent=True) or {}
     name = (body.get("name") or "").strip()
     if not _DISPLAY_NAME_RE.match(name):
-        abort(400, "name must be 1-30 chars")
+        abort(400, "이름은 한글 2~10자로 입력해주세요. (예: 홍길동)")
     users_admin.set_display_name(uid, name, admin_user="admin-panel")
     _audit("edit", changed_fields="user_name_set(%s)" % uid)
     return jsonify({"ok": True, "user_id": uid, "display_name": name})

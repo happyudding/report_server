@@ -23,6 +23,7 @@ import threading
 import time
 
 from database import report_db
+from identity_norm import normalize_uid
 
 # 사람이 아닌 예약 계정 — 매핑 근거에서 제외
 _NON_HUMAN = frozenset(("admin-panel", "system"))
@@ -55,13 +56,16 @@ def ip_of_name(name):
 def _db_pairs(days):
     """report_audit_log 의 (ip, 계정) 짝 → {ip: {계정: 활동건수}}.
 
-    건수를 함께 세는 이유는 한 IP 에 계정이 여럿일 때 주 사용자를 고르기 위해서다."""
+    건수를 함께 세는 이유는 한 IP 에 계정이 여럿일 때 주 사용자를 고르기 위해서다.
+    계정은 파이썬 쪽에서 identity_norm 규칙으로 정규화한다 — 원문 그대로 세면
+    'SECDS\\hgd123' 과 'hgd123' 이 서로 다른 계정이 되어, 한 사람만 쓰는 PC 가
+    '계정 2개인 공용 PC' 로 오판되고 대표 선정도 건수가 갈려 흔들린다."""
     cutoff = int(time.time()) - days * 86400
     out = {}
     try:
         with report_db.get_conn() as conn:
             rows = conn.execute(
-                "SELECT client_ip AS ip, LOWER(TRIM(client_user)) AS uid, COUNT(*) AS n "
+                "SELECT client_ip AS ip, client_user AS uid, COUNT(*) AS n "
                 "FROM report_audit_log "
                 "WHERE created_at >= ? AND client_ip IS NOT NULL AND client_ip <> '' "
                 "      AND client_user IS NOT NULL AND TRIM(client_user) <> '' "
@@ -69,7 +73,7 @@ def _db_pairs(days):
     except Exception:
         return out
     for r in rows:
-        uid = (r["uid"] or "").strip()
+        uid = normalize_uid(r["uid"])
         if not uid or uid in _NON_HUMAN:
             continue
         by_uid = out.setdefault(r["ip"], {})
@@ -85,6 +89,7 @@ def _live_pairs(into):
     try:
         from admin_panel import metrics
         for uid, ip in metrics.live_identity_pairs():
+            uid = normalize_uid(uid)
             if uid and ip and uid not in _NON_HUMAN:
                 into.setdefault(ip, {}).setdefault(uid, 0)
     except Exception:

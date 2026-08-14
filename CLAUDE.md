@@ -42,6 +42,7 @@ report_server/
 │   ├── plugin.py                register_report_server() — Blueprint 3개 + admin_panel + ops 등록
 │   ├── config.py                환경변수·경로 통합 설정
 │   ├── auth_identity.py         신원 provider 체인 (기본 HoneyUser UA, AUTH_SSO_HEADER 로 SSO 전환)
+│   ├── identity_norm.py         사람 식별 키 정규화 정본 (`SECDS\Chumji.Kim`→`chumji.kim`)
 │   ├── diagnostics.py           진단 사건 저장소 — 서버 500/503·느린 요청·콜드 빌드 실패·
 │   │                            브라우저/Honey 오류를 상관 ID(request/operation/build/session)
 │   │                            로 이어 `server/log/diagnostic_*.log` JSONL 로 모은다.
@@ -153,6 +154,14 @@ report_server/
   시점에만 적용되는 되돌릴 수 있는 편집이라, 원본을 실제로 교체하는 `raw_data/edit`(웹 셀
   편집)·`rawdata_replace`(Excel 왕복)와 성격이 정반대다 → [docs/11](docs/11_web_report_tabs.md).
 - `DELETE /pe/report/session/<sid>` → 세션 삭제 (업로더만)
+
+**신원 키는 한 규칙으로 정규화한다** ([identity_norm.py](server/identity_norm.py)
+`normalize_uid` — 마지막 백슬래시 뒤 → trim → 소문자). `SECDS\Chumji.Kim`·`Chumji.Kim`·
+`chumji.kim` 은 **한 사람**이며, 사람 ID 를 저장하거나 화면에 그리는 모든 코드가 이 함수를
+거쳐야 한다(JS 는 `UserName.uid()` / 관리자 패널 `normUid()`). 어느 한 경로만 빠져도 통계·
+즐겨찾기·편집 권한이 사람당 여러 벌로 갈라진다. 예외는 **원문 보존**이 목적인 감사로그
+`client_user` 와 세션 `uploaded_by` 뿐이다(표기는 조회 시점 정규화). 사용자 실명은
+**한글 2~10자만** 받는다(`_DISPLAY_NAME_RE`) → [docs/02](docs/02_server_query_edit.md).
 
 **인증**: 신원은 Honey 내장 브라우저 User-Agent 의 `HoneyUser/<계정>` 토큰으로 자동 식별한다
 ([server/auth_identity.py](server/auth_identity.py) — env `AUTH_SSO_HEADER` 설정 시 역프록시
@@ -438,6 +447,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 라우트 (세션/web_report/기타) | [routes_session.py](server/report/routes_session.py) / [routes_webreport.py](server/report/routes_webreport.py) / [routes_misc.py](server/report/routes_misc.py) |
 | 접근제어·CSRF·가드 | [server/report/security.py](server/report/security.py) → [docs/02](docs/02_server_query_edit.md) |
 | 신원/인증 (SSO 전환) | [server/auth_identity.py](server/auth_identity.py) |
+| 사람 식별 키 정규화 (중복 사용자 통합) | [server/identity_norm.py](server/identity_norm.py) `normalize_uid` · 기존 DB 병합 [tools/merge_duplicate_users.py](server/tools/merge_duplicate_users.py) → [docs/02](docs/02_server_query_edit.md) |
 | DB 스키마 (정본) | [server/database/core.py](server/database/core.py) `SCHEMA` (report_db.py 는 재노출 facade) |
 | web_report 편집 상태 | [web_report/edits.py](web_report/edits.py) + [server/database/webreport_edits.py](server/database/webreport_edits.py) |
 | web_report 캐시 키 규약 | [web_report/cache_policy.py](web_report/cache_policy.py) → [docs/12](docs/12_web_report_cache.md) |

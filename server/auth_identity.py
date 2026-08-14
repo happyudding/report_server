@@ -20,6 +20,8 @@ from urllib.parse import unquote
 
 from flask import request, session as _flask_session
 
+from identity_norm import normalize_uid
+
 _HONEY_UA_RE = re.compile(r"HoneyUser/(\S+)")
 
 # 웹 로그인 세션 쿠키에 담기는 키 (routes_misc.py auth 라우트가 설정/삭제).
@@ -33,18 +35,21 @@ def _from_sso_header():
     """신뢰 헤더 provider — AUTH_SSO_HEADER 미설정이면 항상 ""."""
     if not AUTH_SSO_HEADER:
         return ""
-    value = request.headers.get(AUTH_SSO_HEADER) or ""
-    # 'DOMAIN\\user' 형식 허용 — 저장/비교 규칙(_current_user 규칙)과 동일하게 정규화
-    return value.split("\\")[-1].strip().lower()
+    # 'DOMAIN\\user' 형식 허용 — 저장/비교 규칙과 동일하게 정규화
+    return normalize_uid(request.headers.get(AUTH_SSO_HEADER))
 
 
 def _from_honey_ua():
-    """Honey 내장 브라우저 UA 토큰 provider (현행 기본)."""
+    """Honey 내장 브라우저 UA 토큰 provider (현행 기본).
+
+    UA 토큰은 클라의 getpass.getuser() 라 보통 도메인이 없지만, PC 설정에 따라
+    'SECDS\\user' 로 실려 올 수 있다 — 그대로 두면 같은 사람이 도메인 유무로 갈라져
+    통계·즐겨찾기·권한이 두 벌이 된다. 다른 provider 와 같은 규칙으로 정규화한다."""
     m = _HONEY_UA_RE.search(str(request.user_agent) or "")
     if not m:
         return ""
     try:
-        return unquote(m.group(1)).strip().lower()
+        return normalize_uid(unquote(m.group(1)))
     except Exception:
         return ""
 
@@ -52,9 +57,10 @@ def _from_honey_ua():
 def _from_login_session():
     """웹 로그인 세션 provider — 일반 브라우저가 singleID+PIN 으로 로그인한 경우.
 
-    값은 로그인 시점에 이미 정규화되어 저장되므로 그대로 돌려준다."""
+    값은 로그인 시점에 이미 정규화되어 저장되지만, 정규화 규칙을 바꾸기 전에 발급된
+    쿠키가 남아 있을 수 있어 읽을 때도 같은 규칙을 통과시킨다."""
     try:
-        return (_flask_session.get(_LOGIN_SESSION_KEY) or "").strip().lower()
+        return normalize_uid(_flask_session.get(_LOGIN_SESSION_KEY))
     except Exception:
         # 요청 컨텍스트 밖이거나 SECRET_KEY 미설정 등 — 신원 없음으로 처리
         return ""
@@ -100,4 +106,4 @@ def is_uploader(session, uid):
     ub = str((session or {}).get("uploaded_by") or "")
     if not ub:
         return str((session or {}).get("source") or "") != "web_report"
-    return ub.split("\\")[-1].strip().lower() == uid
+    return normalize_uid(ub) == uid

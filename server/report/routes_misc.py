@@ -20,12 +20,13 @@ from config import (
     REPORT_VIEW_HTML,
 )
 from database import report_db
+from identity_norm import normalize_uid
 from product_info import list_search_candidates
 from report.report_extension import report_bp
 from report.security import (
+    DISPLAY_NAME_HELP,
     _DISPLAY_NAME_RE,
     _PIN_RE,
-    _USER_ID_RE,
     _active_or_404,
     _client_meta,
     _editor_guard,
@@ -293,8 +294,8 @@ def _epoch_arg(name, end_of_day=False):
 
 def _uid_tail(value):
     """'SECDS\\hgd123' → 'hgd123' (소문자). 세션의 uploaded_by 처럼 도메인이 섞여 들어오는
-    값을 report_user_profile 의 키(소문자 singleID)로 맞춘다."""
-    return (value or "").split("\\")[-1].strip().lower()
+    값을 report_user_profile 의 키(소문자 singleID)로 맞춘다 — 규칙은 identity_norm."""
+    return normalize_uid(value)
 
 
 @report_bp.get("/api/history")
@@ -376,11 +377,9 @@ _signup_ips = {}
 def _normalize_login_id(value):
     """로그인 폼의 singleID → current_user() 포맷(소문자, 도메인 없음).
     폼은 SECDS\\ 를 입력받지 않지만 붙여넣기 대비로 도메인 접두를 떼어낸다.
-    (_normalize_user_id 는 백슬래시를 거부하므로 재사용할 수 없다.)"""
-    uid = (value or "").split("\\")[-1].strip().lower()
-    if not _USER_ID_RE.match(uid):
-        abort(400, "invalid user_id")
-    return uid
+    (_normalize_user_id 가 같은 규칙을 쓰게 된 뒤로는 그 함수의 별칭이다 — 로그인
+    문맥에서 이름이 읽히도록 남겨 둔다.)"""
+    return _normalize_user_id(value)
 
 
 def _auth_audit(action, uid, result="ok"):
@@ -525,7 +524,7 @@ def auth_signup():
     # 없이 보내도 가입 자체는 되어야 한다. 비면 첫 화면에서 이름 입력창이 뜨므로 결과는 같다.
     name = (body.get("name") or "").strip()
     if name and not _DISPLAY_NAME_RE.match(name):
-        return jsonify({"error": "이름은 1~30자여야 합니다."}), 400
+        return jsonify({"error": DISPLAY_NAME_HELP}), 400
 
     ip, _ua = _client_meta()
     if _signup_flooded(ip):
@@ -571,8 +570,7 @@ def auth_signup_hint():
         uid = None
     if not uid:
         return jsonify({})
-    uid = uid.split("\\")[-1].strip().lower()
-    return jsonify({"user_id": uid, "honey_seen": True})
+    return jsonify({"user_id": normalize_uid(uid), "honey_seen": True})
 
 
 @report_bp.get("/api/auth/me")
@@ -601,7 +599,7 @@ def auth_display_name():
         return jsonify({"error": "이름을 저장하려면 Honey 앱이나 웹 로그인이 필요합니다."}), 403
     name = ((request.get_json(force=True, silent=True) or {}).get("name") or "").strip()
     if not _DISPLAY_NAME_RE.match(name):
-        return jsonify({"error": "이름은 1~30자여야 합니다."}), 400
+        return jsonify({"error": DISPLAY_NAME_HELP}), 400
     report_db.set_display_name(uid, name, "self")
     _auth_audit("display_name", uid)
     return jsonify({"ok": True, "user_id": uid, "display_name": name})

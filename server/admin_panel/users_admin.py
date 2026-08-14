@@ -7,6 +7,7 @@ report_db.py 는 수정하지 않는다 (sessions_admin 과 동일 방침). 목�
 from werkzeug.security import generate_password_hash
 
 from database import report_db
+from identity_norm import normalize_uid
 
 _DEFAULT_PIN = "0000"
 
@@ -23,14 +24,19 @@ def attach_names(rows, *keys):
 
     def pick(r):
         for k in keys:
-            v = str(r.get(k) or "").strip()
+            v = normalize_uid(r.get(k))
             if v:
-                return v.split("\\")[-1].lower()
+                return v
         return ""
 
     names = report_db.display_names([pick(r) for r in rows])
     for r in rows:
-        r["name"] = names.get(pick(r), "")
+        uid = pick(r)
+        r["name"] = names.get(uid, "")
+        # 화면이 '이름(ID)' 로 그릴 때 쓰는 정규화된 ID. 감사로그처럼 원문 컬럼
+        # (client_user='SECDS\\HGD123')을 그대로 보여주면 같은 사람이 표기별로 갈라져
+        # 보이므로, 표시용 ID 를 따로 실어 보낸다 (원문 컬럼은 감사 근거라 남겨 둔다).
+        r["uid"] = uid
     return rows
 
 
