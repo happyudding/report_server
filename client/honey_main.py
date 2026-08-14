@@ -4090,7 +4090,11 @@ HONEY_QSS = """
         background: #F3E5B8; color: #6B4E16; border: none;
         border-right: 1px solid #E8D9A8; padding: 4px 6px; font-weight: 600;
     }
-    QMenuBar { background: #F3E5B8; color: #6B4E16; }
+    /* 상단 메뉴바는 전역 폰트(10pt)보다 작게 + 수직 여백을 줄여 띠 높이를 낮춘다. */
+    QMenuBar {
+        background: #F3E5B8; color: #6B4E16; font-size: 8pt; padding: 0px;
+    }
+    QMenuBar::item { padding: 2px 8px; }
     QMenuBar::item:selected { background: #FFD65A; }
     QMenu { background: #FFFDF5; border: 1px solid #E8D9A8; color: #4A3B1A; }
     /* QMenu 에 스타일시트가 걸리면 item 패딩을 명시하지 않을 때 Qt 가 우측 글자를 잘라
