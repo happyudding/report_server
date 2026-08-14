@@ -68,6 +68,35 @@ def artifact_missing(session_id, detail=""):
     }), 503
 
 
+def compute_busy(session_id, detail="", retry_after=5):
+    """컴퓨트 워커를 못 잡아 계산을 못 끝냈다 → 503 + Retry-After (재시도하면 된다).
+
+    큐 대기 초과(QueueWaitTimeout)·워커 풀 붕괴는 **이 세션 데이터의 잘못이 아니라**
+    그 순간 서버가 붐볐거나 워커가 죽은 것이다. 여태 이 경우가 generic except 에 잡혀
+    500 "distribution failed" 로 나갔는데, 500 은 프런트에 "고쳐야 고쳐지는 오류"로
+    보여 재시도 안내가 나가지 않는다. 잠시 뒤 재시도하면 정상 동작하므로 503 +
+    Retry-After 로 알린다.
+
+    반환값을 그대로 `return` 하면 된다 — abort 가 아니라 응답 튜플이다.
+    """
+    ids = {}
+    try:
+        import diagnostics
+        ids = diagnostics.current_ids()
+        rid = ids.get("request_id") or diagnostics.new_id()
+        diagnostics.emit("warning", "build", "compute_busy", event_id=rid,
+                         http_status=503, session_id=session_id or "",
+                         error_type="busy", message=(detail or "compute busy")[:500], **ids)
+    except Exception:
+        rid = ""
+    _log.warning("compute busy [rid=%s] session=%s %s", rid, session_id, detail)
+    return jsonify({
+        "error": "서버가 다른 계산으로 붐벼 결과를 만들지 못했습니다. "
+                 "잠시 후 다시 시도해 주세요.",
+        "error_id": rid,
+    }), 503, {"Retry-After": str(int(retry_after))}
+
+
 # ── CSRF (double-submit cookie) ───────────────────────────────────────────────
 # 쿠키 기반 세션 인증이 없고 PIN 을 본문으로 보내는 구조라, 표준 stateless 방어인
 # double-submit 쿠키 패턴을 쓴다: GET(/, /view)에서 JS 가 읽을 수 있는 토큰 쿠키를

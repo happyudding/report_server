@@ -352,6 +352,31 @@ function cmtFormatRange(raw, start, end, action) {
   return { text: s.slice(0, a) + rep + s.slice(b), caret: a + rep.length };
 }
 
+// 선택 구간과 겹치는 **모든** 서식 토큰을 되돌린다 (cmtFormatRange 와 달리 여러 토큰에
+// 걸친 선택·부분 겹침도 허용 — 사용자가 문단을 통째로 잡고 되돌리는 사용법이 기본이라
+// "서식을 넣을 수 없습니다" 로 거부하면 되돌릴 방법이 없다, 2026-08-14 요청).
+// 겹친 토큰은 **토큰 전체** 단위로 되돌린다(토큰을 쪼개면 표시가 깨진다).
+//   mode "color" = 색만 해제(굵기 유지) / "all" = 색·굵기 전부 해제(평문)
+// 링크 토큰(@[..]/#[..]/$[..])은 건드리지 않는다. 되돌릴 토큰이 없으면 null.
+function cmtClearRange(raw, start, end, mode) {
+  const s = String(raw == null ? "" : raw);
+  const a = Math.max(0, Math.min(start, end)), b = Math.min(s.length, Math.max(start, end));
+  if (a >= b) return null;
+  const hits = cmtScanTokens(s).filter(t => !t.link && b > t.start && a < t.end);
+  if (!hits.length) return null;
+  let out = "", last = 0;
+  hits.forEach(t => {
+    out += s.slice(last, t.start);
+    // 대문자 스타일 = 색+굵게, "" = 굵게만. 색만 뺄 때는 굵기 토큰으로 남긴다.
+    const bold = t.style === "" || (t.style && t.style === t.style.toUpperCase());
+    out += (mode === "color" && bold) ? `*[${t.body}]` : t.body;
+    last = t.end;
+  });
+  const tail = out.length;                      // 마지막 토큰까지 변환한 길이
+  out += s.slice(last);
+  return { text: out, caret: b >= last ? tail + (b - last) : tail };
+}
+
 // Issue Table Bin 미니셀 Map 소스(웨이퍼) 개수 — 2개 이상일 때만 ⤢(전 소스 보기) 노출.
 // 실제로 그릴 목록과 같은 것을 세야 한다(Temperature 는 RT 만 — wafer_charts.issueBinMaps).
 function mapSourceCount() {

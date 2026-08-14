@@ -187,6 +187,8 @@ function maybeStartAiPendingPoll() {
   const tick = async () => {
     _aiPoll = null;
     if (!_aiPendingActive()) return;
+    // 백그라운드 탭에서는 무거운 /full 재조회를 건너뛰고 재예약만 한다.
+    if (document.hidden) { _aiPoll = setTimeout(tick, AI_POLL.INTERVAL_MS); return; }
     // 데드라인 초과 = AI 잡 지연/실패. 리포트 자체는 정상이라 에러 화면은 띄우지 않고
     // 셀 문구만 "미완료"로 바꾼다(다음 새로고침이 다시 폴링을 시작한다).
     if (Date.now() > deadline) { _aiPollGiveUp(); return; }
@@ -260,6 +262,18 @@ async function load(resetMode=true) {
       // 재시도 루프가 15분 데드라인을 넘겨 빠져나온 경우 — 여태 "로딩 중"으로만 끝나
       // 서버에는 아무 흔적도 남지 않았다. 사용자가 실제로 겪은 실패를 보고한다.
       reportLoadFailure("poll_timeout", "콜드 빌드 폴링 타임아웃(15분)", 202);
+      // 여기서 끝내지 않으면 202 는 res.ok===true 라 아래 성공 경로로 흘러가, 본문
+      // {"building":true} 를 payload 로 파싱해 "web_report 형식이 아닙니다"라는 엉뚱한
+      // 안내로 끝났다(2026-08-13). 재시도 방법을 알려주고 종결한다.
+      stopBuildStatusPoll();
+      const errorId = res.headers.get("X-Request-ID") || "";
+      const box = document.getElementById("errorBox");
+      box.style.display = "";
+      box.textContent = "리포트 계산이 예상보다 오래 걸리고 있습니다. "
+        + "잠시 후 새로고침으로 다시 시도해 주세요. 계속되면 관리자에게 문의해 주세요."
+        + (errorId ? ` [오류번호 ${errorId}]` : "");
+      hideLoadOverlay();
+      return;
     }
     if (!res.ok) {
       const box = document.getElementById("errorBox");

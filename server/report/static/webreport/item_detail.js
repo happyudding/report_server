@@ -147,14 +147,20 @@ function idetLegendHtml(data) {
   return distLegendHtml((data && data.sources) || [], "idet-legend " + DIST_LEGEND_VERT_CLS);
 }
 
-// Temperature 전용 — 갤러리 툴바의 "Bin1 (RT만)" 토글을 상세 안에서도 제공(2026-08-07 사용자
-// 요청). 갤러리와 같은 전역 상태(distRtBin1Only)를 공유하며, 토글 시 현재 항목을 같은
-// 변형(?bin1=1&bin1_scope=rt)으로 다시 연다. 클릭 처리는 bindItemDetailPanel 위임.
-function idetRtBin1Html() {
-  if (!tempIsMode()) return "";
-  return `<div class="distseg-group idet-rtbin1">` +
-    `<button class="distseg${distRtBin1Only ? " active" : ""}" data-idet-rtbin1 ` +
-    `title="켜짐: RT source 만 양품(Bin1)·규격내로 좁히고 CT / HT 는 fail 포함 전체 die 로 표시 · 꺼짐: 전체 die">Bin1 (RT만)</button></div>`;
+// 갤러리 툴바의 표시 옵션을 상세 안에서도 제공 — "Limit 안 Data만"(축 클램프)과
+// "Bin1 only"(양품·규격내 재계산). Temperature 모드는 갤러리와 같은 규칙으로 Bin1 only
+// 대신 "Bin1 (RT만)" 하나만 낸다(2026-08-07 Bin1(RT만) → 2026-08-14 Limit·Bin1 추가).
+// 갤러리와 **같은 전역 상태**(distLimitOnly / distBin1Only / distRtBin1Only)를 공유하므로
+// 어느 쪽에서 켜도 다른 쪽 버튼이 같은 상태로 보인다. 클릭 처리는 bindItemDetailPanel 위임.
+function idetOptsHtml() {
+  const limitBtn = `<button class="distseg${distLimitOnly ? " active" : ""}" data-idet-seg="limit" ` +
+    `title="켜짐: x축을 Limit(LSL~USL) 범위로 고정 · 꺼짐: 데이터 전 범위">Limit 안 Data만</button>`;
+  const bin1Btn = tempIsMode()
+    ? `<button class="distseg${distRtBin1Only ? " active" : ""}" data-idet-seg="rtbin1" ` +
+      `title="켜짐: RT source 만 양품(Bin1)·규격내로 좁히고 CT / HT 는 fail 포함 전체 die 로 표시 · 꺼짐: 전체 die">Bin1 (RT만)</button>`
+    : `<button class="distseg${distBin1Only ? " active" : ""}" data-idet-seg="bin1" ` +
+      `title="켜짐: 양품(Bin1, BIN==1) & 규격(LSL/USL) 이내 die 측정값만으로 재계산해 표시 · 꺼짐: 전체 die">Bin1 only</button>`;
+  return `<div class="distseg-group idet-opts">${limitBtn}${bin1Btn}</div>`;
 }
 
 function renderItemDetail(data) {
@@ -194,7 +200,7 @@ function renderItemDetail(data) {
     </div>
     <div id="cdfEditBar" class="cdf-editbar"></div>
     <div id="chartNoteBar"></div>
-    ${distTempFilterHtml()}${idetRtBin1Html()}
+    ${distTempFilterHtml()}${idetOptsHtml()}
     <div class="idet-body">
     <div class="idet-charts">
       <div class="idet-chart-block">
@@ -440,12 +446,32 @@ function bindItemDetailPanel() {
     if (e.target.closest(".idet-back")) { closeItemDetail(); return; }
     if (e.target.closest(".idet-prev")) { itemDetailNav(-1); return; }
     if (e.target.closest(".idet-next")) { itemDetailNav(1); return; }
-    // Bin1 (RT만) 토글 (Temperature 전용) — 갤러리와 같은 상태를 바꾸고 현재 항목을
-    // 새 변형으로 다시 연다. 갤러리 툴바가 이미 그려져 있으면 재렌더해 버튼 상태를 맞춘다
+    // 표시 옵션 토글(Limit 안 Data만 / Bin1 only / Bin1 (RT만)) — 갤러리와 같은 전역
+    // 상태를 바꾼다. 갤러리 툴바가 이미 그려져 있으면 재렌더해 버튼 상태를 맞춘다
     // (숨겨진 패널이라 실제 카드 렌더는 다시 보일 때 IntersectionObserver 가 지연 수행).
-    if (e.target.closest("[data-idet-rtbin1]")) {
-      distRtBin1Only = !distRtBin1Only;
-      if (distRtBin1Only) { distBin1Only = false; ensureDistRtBin1Data(); }
+    const iseg = e.target.closest("[data-idet-seg]");
+    if (iseg) {
+      const kind = iseg.dataset.idetSeg;
+      if (kind === "limit") {
+        // 축 범위만 바뀌는 옵션이라 데이터를 다시 받지 않는다 — 상세 차트만 다시 그린다
+        // (Report 탭은 이미 그려진 적 있을 때만; 안 그러면 숨김 상태에서 크기 0 으로 그려진다).
+        distLimitOnly = !distLimitOnly;
+        iseg.classList.toggle("active", distLimitOnly);
+        if (_itemDetailData) {
+          distRenderDetailCharts(_itemDetailData);
+          if (_idetNormalRendered) distRenderNormal(_itemDetailData);
+        }
+        if (document.querySelector("#panel-distribution .dist-toolbar")) distRenderGallery();
+        return;
+      }
+      // Bin1 계열은 데이터 변형이라 현재 항목을 새 변형으로 다시 연다. 두 버튼은 상호배타.
+      if (kind === "bin1") {
+        distBin1Only = !distBin1Only;
+        if (distBin1Only) { distRtBin1Only = false; ensureDistBin1Data(); }
+      } else if (kind === "rtbin1") {
+        distRtBin1Only = !distRtBin1Only;
+        if (distRtBin1Only) { distBin1Only = false; ensureDistRtBin1Data(); }
+      } else return;
       if (document.querySelector("#panel-distribution .dist-toolbar")) distRenderGallery();
       if (_itemDetailSubject) openItemDetail(_itemDetailSubject, _itemDetailNav);
       return;
@@ -756,6 +782,7 @@ function distRenderCdf(data) {
     shapes: cdfShapes,
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
     margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
+  idetBindLegendHighlight(cdfDiv);   // 내장 legend 클릭 = 숨김이 아니라 강조
   // 재렌더마다 중복 방지 후 편집 모드에서만 동작하는 선택 이벤트 바인딩.
   if (cdfDiv.removeAllListeners) { cdfDiv.removeAllListeners("plotly_click"); cdfDiv.removeAllListeners("plotly_selected"); }
   cdfDiv.on("plotly_click", ev => {
@@ -825,6 +852,7 @@ function distRenderHist(data) {
   // dragmode 를 select 로 두므로 드래그 도구는 박스뿐이고, 아래 가드가 이중 방어다.
   // ★ newPlot 은 div 에 걸린 .on 핸들러를 지우지 않는다(CDF 는 앞서 purge 하지만 여기는
   //   안 한다). 제거하지 않으면 편집마다 핸들러가 누적돼 선택 1회에 cdfAfterEdit 가 N회 돈다.
+  idetBindLegendHighlight(hDiv);   // 내장 legend 클릭 = 숨김이 아니라 강조
   if (hDiv.removeAllListeners) hDiv.removeAllListeners("plotly_selected");
   hDiv.on("plotly_selected", ev => {
     const set = cdfActiveSet();
@@ -846,6 +874,30 @@ function distRenderHist(data) {
   syncIdetAxisInputs("hist", hDiv);
   // 차트 주석 오버레이 (chart_notes.js) — base shapes 기억을 위해 렌더 직후 호출.
   if (window.chartNotesApply) chartNotesApply("hist", data.subject, hDiv);
+}
+// 차트 **내장** legend 클릭 = 해당 source 강조 (2026-08-14 사용자 요청).
+// Plotly 기본은 클릭한 trace 를 숨기는 것인데, 우측 칸 범례(distLegendClick)는 강조라
+// 소스가 8개 미만(=내장 legend 를 쓰는 세션)에서만 규칙이 갈렸다. false 를 돌려 기본
+// 토글(숨김)을 막고 우측 범례와 같은 distSourceFilter 를 토글한다. 더블클릭(기본:
+// 나머지 전부 숨김)은 강조 전체 해제로 맞춘다.
+// ※ 색 반영(distApplySourceFilter → Plotly.restyle)은 이벤트 처리가 끝난 뒤로 미룬다 —
+//   legend 클릭 처리 도중의 재스타일은 Plotly 내부 상태와 얽힌다.
+function idetBindLegendHighlight(div) {
+  if (!div || !div.on) return;
+  if (div.removeAllListeners) {
+    div.removeAllListeners("plotly_legendclick");
+    div.removeAllListeners("plotly_legenddoubleclick");
+  }
+  div.on("plotly_legendclick", ev => {
+    const t = ev && ev.data && ev.data[ev.curveNumber];
+    const nm = t && t.name;
+    if (nm) setTimeout(() => distToggleSourceHighlight(nm), 0);
+    return false;
+  });
+  div.on("plotly_legenddoubleclick", () => {
+    setTimeout(distClearSourceHighlight, 0);
+    return false;
+  });
 }
 function distRenderDetailCharts(data) {
   distRenderCdf(data);    // #distCdf (제외 편집 반영)
@@ -910,6 +962,7 @@ function distRenderNormal(data) {
     shapes: distSpecShapes(lo, hi, false).concat(spikes, beforeLimitShapes(data.subject)),
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
     margin: { l: 24, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
+  idetBindLegendHighlight(nDiv);   // 내장 legend 클릭 = 숨김이 아니라 강조
 }
 // 강조 변경 시 상세 차트의 색만 갈아끼운다 — 재렌더 없이 zoom/선택/주석을 보존.
 // source trace 만 골라야 한다: chipMarkersFor(map_select.js) 가 붙이는 칩 trace 는
@@ -1108,7 +1161,8 @@ function renderMiniDistCell(cell) {
   // 데이터 없는 항목: 빈 칸으로 확정 (loaded 마킹해 재큐잉 no-op 방지)
   if (!info) { cell.innerHTML = ""; cell.dataset.distLoaded = "1"; return; }
 
-  const lo = info.lower_limit, hi = info.upper_limit;
+  // 규격선은 distribution_index 기준(distSpecLimits) — Temperature 는 RT limit 이다.
+  const { lo, hi } = distSpecLimits(subject, info);
   // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
   // 점은 canvas 로 그린다(distPaintPoints) — Plotly 에는 sentinel 만. 이 칸은 112px 로
   // 작아 칸 예산(CELL_BUDGET_MINI)을 소스 수로 나눈 캡을 쓴다 — 소스가 적으면 갤러리와

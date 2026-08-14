@@ -55,13 +55,31 @@ function applyChipToDistribution() {
   if (_itemDetailData) { distRenderCdf(_itemDetailData); renderIdetChipVals(); }
 }
 
+// 좌표 검색 패널의 펼침 상태 — 좌표를 추가/해제하면 renderMapAnalysis 가 Map 패널을
+// 통째로 다시 그려 패널이 닫혀 버렸다. 상태를 여기서 기억하고 재렌더 후 되살려,
+// 열고 닫는 것은 '좌표 선택'/'접기 ▲' 두 버튼으로만 하게 한다 (2026-08-14 요청).
+let _mapSelBoxOpen = false;
+
 // Map Analysis 툴바 '좌표 선택' → 검색 패널 토글.
-function mapSelToggleSearch() {
+function mapSelToggleSearch() { mapSelSetSearchOpen(!_mapSelBoxOpen); }
+
+function mapSelSetSearchOpen(open) {
+  _mapSelBoxOpen = !!open;
   const box = document.getElementById("mapSelSearchBox");
-  if (!box) return;
-  const show = (box.style.display === "none" || !box.style.display);
-  box.style.display = show ? "" : "none";
-  if (show) { ensureDistData(); const inp = document.getElementById("mapSelSerial"); if (inp) inp.focus(); }
+  if (box) box.style.display = _mapSelBoxOpen ? "" : "none";
+  if (_mapSelBoxOpen) { ensureDistData(); const inp = document.getElementById("mapSelSerial"); if (inp) inp.focus(); }
+}
+
+// Map 패널 재렌더 직후 호출 — 펼쳐져 있었으면 그대로 펼치고 마지막 검색어·결과까지
+// 되살린다(추가·해제된 좌표가 체크 상태에 반영된다). 닫혀 있었으면 아무것도 안 한다.
+function mapSelRestoreSearchBox() {
+  const box = document.getElementById("mapSelSearchBox");
+  if (!box || !_mapSelBoxOpen) return;
+  box.style.display = "";
+  const q = _mapSelLastQ || {};
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ""; };
+  setVal("mapSelSerial", q.serial); setVal("mapSelXpos", q.xpos); setVal("mapSelYpos", q.ypos);
+  if (q.serial || q.xpos || q.ypos) mapSelSearch();
 }
 
 // 좌표 검색(serial 부분일치 / xpos·ypos 정확일치, AND) → 후보 목록(체크박스). 여러 개 체크 후 '선택 추가' 로 일괄 추가.
@@ -157,16 +175,9 @@ async function mapSelAddSelected() {
   mapSelReassignColors();
   renderMapAnalysis();          // Map 강조 반영(전역 상태 읽어 redraw)
   applyChipToDistribution();    // Distribution 카드+상세 재렌더
+  // 검색 패널 복원(추가된 항목 disabled 반영)은 renderMapAnalysis 끝의
+  // mapSelRestoreSearchBox 가 이미 했다.
   showToast(`${added}개 추가${failed ? ` · ${failed}개 실패 (${(lastErr && lastErr.message) || "네트워크 오류"})` : ""}`);
-  // renderMapAnalysis 가 패널을 다시 그려 검색 패널이 닫히므로, 다시 열고 재검색(추가된 항목 disabled 반영).
-  const box = document.getElementById("mapSelSearchBox");
-  if (box) {
-    box.style.display = "";
-    const q = _mapSelLastQ || {};
-    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ""; };
-    setVal("mapSelSerial", q.serial); setVal("mapSelXpos", q.xpos); setVal("mapSelYpos", q.ypos);
-    mapSelSearch();
-  }
 }
 
 function mapSelRemove(key) {

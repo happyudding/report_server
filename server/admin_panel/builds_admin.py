@@ -229,6 +229,24 @@ def act(action: str, session_id: str, kind: str = "report") -> dict:
                 "message": f"등록 잔재 정리 — 진행 표시 {len(cur)}건"
                            f"{', 큐 등록 해제' if dropped else ''}"}
 
+    if action == "kill_wait":
+        # 방치된 탭이 콜드 빌드를 폴링하며 서버를 계속 먹을 때 **사용자 대기를 끊는다**.
+        # ⚠️ 워커에서 이미 도는 계산 자체는 못 끊는다(ProcessPool 은 실행 중 잡을 cancel
+        # 할 수 없고, 풀을 버리면 무고한 동시 빌드까지 전멸한다) — 그 계산은 워커
+        # 타임아웃까지 돌다 스스로 끝난다. 여기서 하는 일은 재등록을 막고(pending 해제),
+        # 진행 표시를 지우고, 실패를 FAIL_LIMIT 만큼 세워 /full 이 202 대신 즉시 503 을
+        # 주게 하는 것이다. 쿨다운이 지나면 자동으로 다시 열린다(clear_failure 로 즉시 해제).
+        for b in [x for x in build_status.snapshot_all() if x.get("session_id") == session_id]:
+            build_status.end(session_id, b.get("stage") or "report")
+        compute.drop_pending(session_id, kind)
+        for _ in range(build_status.FAIL_LIMIT):
+            build_status.mark_failure(session_id, kind, "관리자 중단(kill_wait)")
+        return {"ok": True,
+                "message": f"{kind} 대기 중단 — 이 세션 조회는 "
+                           f"{build_status.FAIL_COOLDOWN_SEC / 60:.0f}분간 즉시 실패 안내로 "
+                           f"응답합니다(진행 중 계산은 워커 타임아웃까지 계속됨). "
+                           f"바로 풀려면 '실패 차단 해제'를 누르세요"}
+
     if action == "rebuild":
         build_status.clear_failure(session_id, kind)
         queued = compute.request_build(session_id, str(REPORT_UPLOAD_DIR), kind)

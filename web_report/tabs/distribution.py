@@ -14,7 +14,8 @@ import numpy as np
 import pandas as pd
 
 from .common import _is_passfail_unit, finite_count_map, fmt_type, json_safe, num, round_num
-from .cpk import CPK_THRESHOLD, _stats, worst_cpk_by_subject
+from .cpk import (CPK_THRESHOLD, _stats, temperature_reference_tables,
+                  worst_cpk_by_subject)
 from .raw_data import _META_COLUMNS
 from .yield_tab import _tno_norm, failtno_norms, tno_to_item_map
 
@@ -165,15 +166,26 @@ def tseq_sort_key(tables):
     return key
 
 
-def build_distribution_index(tables, cpk_rows, exclude=None, counts=None) -> list:
+def build_distribution_index(tables, cpk_rows, exclude=None, counts=None,
+                             temperature_groups=None) -> list:
     """갤러리/툴바/타입어헤드용 항목 인덱스. subject 당 1행 (경량, 점 배열 없음).
 
     cpk 는 ``cpk_rows`` 재사용(재계산 없음 — Bin1 기준 단일 값), fail 은 ``fail_items`` 로 귀속.
     항목 순서는 TEST SEQ(TSEQ) 순 — 갤러리가 이 순서대로 표시된다.
     ``exclude`` 에 담긴 항목(Pass/Fail unit·측정 data 전무)은 인덱스에서 제외한다.
     ``counts``(finite_count_map 결과)를 주면 ``n`` 을 재스캔하지 않고 그대로 쓴다.
+
+    ``temperature_groups`` (그룹 **리스트**)를 주면 ``lower/upper_limit`` 을 그 그룹의
+    **RT limit** 으로 낸다 — Temperature 모드는 CT/HT 도 RT limit 으로 판정되므로 화면
+    규격선도 RT 여야 한다(CPK 탭·Item_detail 과 같은 기준). 종전에는 항목이 **처음
+    등장한 소스**의 limit 을 실어, 업로드 소스 순서상 첫 소스가 CT/HT 면 그 limit 이
+    규격선으로 나갔다. 이 인덱스가 **표시 규격선의 단일 기준**이다 — ECDF compact/pack 의
+    ``lo``/``hi`` 는 pack 이 업로드 시점에 굳는 값이라 RT 를 알 수 없어, 프런트가 미니셀·
+    갤러리 셀의 규격선을 여기서 가져간다(static/webreport/distribution.js distSpecLimits).
     """
     exclude = exclude or set()
+    # {CT/HT source: 그 그룹의 RT table} — 비Temperature 는 빈 dict 라 종전과 동일하다.
+    ref_of = temperature_reference_tables(tables, temperature_groups)
     worst = worst_cpk_by_subject(cpk_rows)
     failed = fail_items(tables)
     all_items = sorted({c for t in tables for c in t.item_columns if c not in exclude},
@@ -184,6 +196,12 @@ def build_distribution_index(tables, cpk_rows, exclude=None, counts=None) -> lis
     rows = []
     for item in all_items:
         meta_t = _first_table_for(tables, item)
+        # 규격선만 RT 로 바꾼다(test_num/units 는 종전대로 첫 소스) — meta_t 가 RT 이거나
+        # 그룹 밖 소스면 ref_of 에 없어 meta_t 그대로다. scatter_item 의 limit_t 와 동일 규칙.
+        # perf-guard: allow S01-report-schema — 행 **구조**(키 집합)는 불변이고 Temperature
+        # 세션의 limit 값만 바뀐다. 캐시 무효화는 cache_policy.TEMPERATURE_SCHEMA_VERSION
+        # (그 모드 전용 세대)이 담당한다 — 전역 bump 는 전 세션 콜드 폭풍을 부른다.
+        limit_t = ref_of.get(meta_t.source, meta_t) if meta_t else None
         n = int(counts.get(item, 0))
         cpk = worst.get(item)
         is_fail = item in failed
@@ -191,8 +209,8 @@ def build_distribution_index(tables, cpk_rows, exclude=None, counts=None) -> lis
             "subject": item,
             "test_num": fmt_type(meta_t.tno.get(item)) if meta_t else "",
             "units": (json_safe(meta_t.units.get(item)) if meta_t else None) or "",
-            "lower_limit": round_num(meta_t.lolim.get(item)) if meta_t else None,
-            "upper_limit": round_num(meta_t.hilim.get(item)) if meta_t else None,
+            "lower_limit": round_num(limit_t.lolim.get(item)) if limit_t else None,
+            "upper_limit": round_num(limit_t.hilim.get(item)) if limit_t else None,
             "n": n,
             "cpk": round_num(cpk, 3),
             "is_fail": is_fail,

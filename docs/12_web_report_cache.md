@@ -94,6 +94,15 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   서빙한다.
 - `edits_rev` 는 세션 편집 DB(`report_webreport_edit_rev`)의 단조 rev — comment/etc/trim
   override/engr 편집으로 바뀐다. 세션 단위 편집이라 `sid` 와 항상 짝으로 들어간다.
+  ⚠️ **REPORT 키만은 `rev` 가 아니라 `payload_rev` 를 쓴다** (2026-08-14,
+  `service._payload_rev` → `get_webreport_edit_rev(payload=True)`). 같은 표의 rev 를
+  그대로 쓰면 **Note 시트 한 글자·차트 주석 하나**를 고쳐도 report payload 가 통째로
+  콜드가 됐다 — 그 편집들은 payload 계산에 안 들어가고 `/full` 조립에서만 붙는데도.
+  `payload_rev` 는 `webreport_edits.PAYLOAD_NEUTRAL_KINDS`(chart_note/note_sheet/
+  note_tag) **외의** kind 가 저장될 때만 오른다(모르는 kind 는 무효화하는 쪽으로 간주).
+  `_FULL_CACHE`·`TRIM_CACHE` 는 종전대로 `rev` 를 쓴다 — /full 은 그 extras 를 담으므로
+  빼면 Note 편집이 화면에 반영되지 않는다. 마이그레이션은 기존 행에 `payload_rev = rev`
+  를 물려줘 배포 시 무효화도, 옛 캐시 부활도 없다(core.py 마이그레이션 주석).
 - `mode`/`webreport_options` 는 세션 생성 시 확정되어 불변 — 키에 넣는 이유는 dedup(동일
   akey 공유 세션)과의 충돌 방지.
 - **`prep`** 은 조회 전처리(항목 제외·outlier 마스킹 + 셀 패치·조건 규칙) spec 의 digest —
@@ -166,6 +175,15 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
     **개별 빌드 취소는 구조적으로 불가능하다**(ProcessPoolExecutor 는 실행 중 잡 cancel 불가,
     워커 1개만 죽여도 풀 전체가 broken — `run()` 주석). 그래서 액션은 전부 *막힌 것을 푸는*
     쪽이고 캐시·편집·산출물은 건드리지 않는다.
+  - **사용자 단위 강제 중단** (2026-08-14): 콜드 빌드가 오래 걸리는 세션을 열어둔 채 자리를
+    뜬 탭이 15분간 폴링하며 재빌드를 계속 유발한다. 관리자 **사용자 탭 → 지금 접속 중 →
+    ⛔ 중단**(`POST api/users/action`)이 ① 그 세션에 `kill_wait`(진행 표시 정리 +
+    `drop_pending` + `mark_failure`×FAIL_LIMIT → `/full` 이 202 대신 즉시 503) ② 그 사용자
+    브라우저에 중단 신호(`admin_panel/messages.request_stop` → 기존 `GET /api/my_messages`
+    30초 폴링에 실려 감 → `admin_message.js` 가 대기 폴링 정지 + 안내)를 건다.
+    **여기서도 진행 중인 워커 계산은 못 끊는다** — 워커 타임아웃까지 돌다 스스로 끝난다.
+    쿨다운(기본 10분)은 `clear_failure` 로 즉시 해제. `location.reload()` 강제는 쓰지
+    않는다(leave_guard 의 beforeunload 에 걸려 미저장 입력을 잃을 수 있다 — 불변 규칙 12).
 - **202 + 백그라운드 빌드** (2026-07-21): `/full` 과 `/web_report/map_analysis` 는 콜드
   미스에서 요청 스레드가 빌드를 기다리지 않는다. `service.ColdBuildRequired` 를 올려
   `compute.request_build`(전용 큐 + 소비자 스레드 `WEB_REPORT_ONDEMAND_WORKERS`)에 넘기고
@@ -178,6 +196,27 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
   `(session, kind)` 중복 등록을 막아 재요청 폭주에도 큐가 자라지 않게 한다.
   `build_status` 는 (session, stage) 단위로 기록한다 — report/map 콜드가 겹칠 때
   한쪽 `end()` 가 다른 쪽 기록을 지우지 않게 하기 위함.
+  - ⚠️ **시간 상한은 워커 오프로드에서만 나온다** (2026-08-14). 소비자 스레드는 잡을 직접
+    부르므로, 그 안에서 `should_offload=False`(편집 직후처럼 부모 tables 가 웜)로 떨어지면
+    빌드 전체가 그 스레드에서 인라인으로 돌고 **파이썬 스레드는 강제 종료가 불가**해 아무도
+    못 끊는다(2026-08-13 Issue Table 편집 후 무한 로딩의 근본 원인). 그래서
+    `compute.force_offload_for_consumer()` 가 온디맨드 컨텍스트를 보고 무조건 워커로 보내고,
+    202 규약이 없어 요청 스레드가 직접 계산하던 dist/temp_map/trim 도
+    `compute.should_offload_heavy()` 로 항상 워커로 간다. perf_guard `S11` 이 이 둘의 제거를
+    막는다. 이 경로들이 `QueueWaitTimeout`/`BrokenProcessPool` 로 끊기면 라우트가
+    `security.compute_busy` 로 **503 + Retry-After**(재시도하면 되는 상황)를 준다.
+  - **자동 재시도 1회** (총 실행 2회, `WEB_REPORT_ONDEMAND_MAX_ATTEMPTS`): 소비자가
+    `time.sleep` 없이 **재큐잉**한다(소비자가 2개뿐이라 sleep 하면 다른 사용자 202 가 멈춘다).
+    재시도 대상은 `QueueWaitTimeout`/`CancelledError`/`BrokenProcessPool` 뿐이고 **순수
+    `TimeoutError`(워커 hang)는 제외** — 재시도 1회당 300초를 더 태우고 `_reset_pool` 이
+    무고한 동시 빌드를 함께 죽이므로 피해가 배가 된다. `mark_failure` 는 **마지막 시도에서만**
+    불러 `FAIL_LIMIT`(2)의 의미가 "논리 빌드 실패 2회"로 유지된다.
+  - **유령 자동 회수**: 등록만 남고 소비자가 사라지면 `request_build` 가 그 (세션,kind)를
+    영원히 무시해 202 가 무한 반복됐다(회수 수단은 관리자 수동뿐). 이제
+    `_expire_ghost_pending` 이 TTL(`WEB_REPORT_ONDEMAND_PENDING_TTL_SEC`, 기본 480s) 초과 +
+    큐에 없음이면 해제 후 즉시 재등록한다 — 사용자가 새로고침만 해도 풀린다. 진행 표시도
+    `build_status.snapshot` 이 `STALE_SEC`(900s) 초과 등록을 걷어내 "N초 경과"가 무한히
+    커지지 않는다(관리자 `snapshot_all` 은 지우지 않고 `stale` 플래그만 — 안 보이면 지울 수도 없다).
   - **적용 범위는 `/full` 과 `map_analysis` 둘뿐이다.** `distribution_batch`/`scatter` 에도
     잠시 확장했다가 **철회했다**(2026-08-06) — 그 둘은 배치당 부분 계산이라 인라인이
     싼데도 백오프(3s/5s/8s/10s) 대기가 붙어 첫 진입 체감이 오히려 느려졌다.

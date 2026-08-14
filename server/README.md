@@ -95,6 +95,20 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 `WEB_REPORT_DIST_CHUNK_CACHE_MB`(기본 512 — dist pack chunk 디코드 결과 캐시).
 컴퓨트 워커 2종은 **짝으로** 올려야 한다 — 풀만 늘리면 소비자 스레드 수가 새 상한이 된다.
 
+**시간 상한·재시도 (2026-08-14 — 콜드 빌드 무한 대기 대응)**. 계산 상한은
+`WEB_REPORT_COMPUTE_TIMEOUT_SEC`(기본 300) 하나인데, 그 상한은 **워커 오프로드 경로에만**
+걸린다(파이썬 스레드는 강제 종료가 불가하다). 그래서 아래 두 스위치가 기본 켜져 있고,
+끄면 그 경로의 계산이 다시 상한 없이 돌 수 있다 — 긴급 롤백용으로만 쓸 것:
+
+| 변수 | 기본 | 뜻 |
+|------|------|-----|
+| `WEB_REPORT_ONDEMAND_FORCE_OFFLOAD` | 1 | 온디맨드(202) 백그라운드 빌드를 tables 웜이어도 워커로 |
+| `WEB_REPORT_HEAVY_FORCE_OFFLOAD` | 1 | dist/temp_map/trim 콜드 산출물도 항상 워커로 (202 규약이 없어 인라인이면 요청 스레드가 무제한 계산) |
+| `WEB_REPORT_ONDEMAND_MAX_ATTEMPTS` | 2 | 논리 빌드 1건의 최대 실행 횟수(최초+재시도). 일시 장애(큐 대기 초과·워커 붕괴·취소)만 재시도하고 **워커 hang(순수 TimeoutError)은 재시도하지 않는다** |
+| `WEB_REPORT_ONDEMAND_RETRY_DELAY_SEC` | 1 | 재시도 재큐잉 지연 |
+| `WEB_REPORT_ONDEMAND_PENDING_TTL_SEC` | 480 | 등록만 남은 "유령" 자동 회수 상한(다음 요청에서 해제 후 즉시 재빌드) |
+| `WEB_REPORT_BUILD_STATUS_STALE_SEC` | 900 | 진행 표시 유령 정리 — 이걸 넘긴 등록은 프런트 조회에서 걷어낸다("N초 경과" 무한 증가 차단) |
+
 ### 세션/DB 유지보수
 
 | 변수 | 기본값 | 설명 |

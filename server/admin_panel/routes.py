@@ -276,6 +276,36 @@ def api_webreport_build_action():
     return jsonify(out), (200 if out.get("ok") else 400)
 
 
+@admin_panel_bp.post("/api/users/action")
+def api_users_action():
+    """'접속중' 탭에서 특정 사용자의 대기를 강제로 끊는다 (⛔ 중단).
+
+    쓰는 상황: 콜드 빌드가 오래 걸리는 세션을 열어둔 채 자리를 뜬 사용자. 그 탭은 최대
+    15분간 폴링하며 재빌드를 계속 유발한다. 여기서 두 가지를 한다 —
+      ① 그 세션의 빌드 대기 차단(builds_admin kill_wait) → /full 이 즉시 503,
+      ② 그 사용자 브라우저에 중단 신호(messages.request_stop) → 다음 폴링에 폴링 정지.
+    **진행 중인 워커 계산 자체는 끊지 못한다**(build_action docstring 참조).
+    """
+    from admin_panel import builds_admin, messages
+    body = request.get_json(force=True, silent=True) or {}
+    user_key = str(body.get("user_key") or "").strip()
+    session_id = str(body.get("session_id") or "").strip()
+    if not user_key:
+        return jsonify({"ok": False, "error": "user_key 가 필요합니다"}), 400
+    if session_id and not _SESSION_ID_RE.match(session_id):
+        abort(400, "invalid session_id")
+    parts = []
+    if session_id:
+        out = builds_admin.act("kill_wait", session_id, "report")
+        parts.append(out.get("message", ""))
+    if messages.request_stop(user_key, "관리자 중단"):
+        parts.append("사용자 화면에 중단 신호 예약(다음 폴링 최대 30초)")
+    msg = " / ".join(p for p in parts if p) or "중단할 대상이 없습니다"
+    _audit("user_action", session_id=session_id or None,
+           changed_fields=f"action=kill_wait user={user_key} :: {msg}"[:1500], result="ok")
+    return jsonify({"ok": True, "message": msg})
+
+
 @admin_panel_bp.get("/api/diagnostics/events")
 def api_diagnostics_events():
     """진단 사건 목록 — 서버 500/503·느린 요청·콜드 빌드 실패·브라우저/Honey 오류.

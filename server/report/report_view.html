@@ -476,9 +476,10 @@ tbody tr:hover { background: #f9fbff; }
 .sheet-table.kind-issue td[data-col="bin" i],
 .sheet-table.kind-issue td[data-col="tno" i],
 .sheet-table.kind-issue td[data-col="item" i] { font-size: 17px; }
-/* Yield/CPK 값 셀은 식별 셀보다 1pt 작게(16px) — 웹에서 너무 컸다는 사용자 요청 2026-07-21. */
+/* Yield/CPK 값 셀(avg · {src}_yield): 종전 16px 이 작다는 사용자 요청으로 +5px(21px)
+   — 2026-08-14. 식별 셀(17px)은 그대로라 값이 식별 셀보다 커진다(값 가독성 우선). */
 .sheet-table.kind-issue td[data-col="avg" i],
-.sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 16px; }
+.sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 21px; }
 /* Issue Table: Yield 식별/값 글자 셀 가운데 정렬 (사용자 요청 — st-num 좌측정렬 덮어씀). */
 .sheet-table.kind-issue td[data-col="step" i],
 .sheet-table.kind-issue td[data-col="bin" i],
@@ -868,8 +869,9 @@ tbody tr:hover { background: #f9fbff; }
 .dist-temp-group { border: none; border-left: 1px solid #f3c9a3; background: #fff5eb;
   color: #7c2d12; font-size: 13px; padding: 0 8px; cursor: pointer; }
 .idet .dist-temp-filter { margin: 6px 0 10px; }
-/* 상세 안 "Bin1 (RT만)" 토글 — Temperature 필터 줄 옆에 같은 높이로 나란히 선다. */
-.idet .idet-rtbin1 { margin: 6px 0 10px 8px; vertical-align: top; }
+/* 상세 안 표시 옵션 토글("Limit 안 Data만" · "Bin1 only"/"Bin1 (RT만)") —
+   Temperature 필터 줄 옆에 같은 높이로 나란히 선다. */
+.idet .idet-opts { margin: 6px 0 10px 8px; vertical-align: top; }
 /* 선택 해제 칩 — 세그먼트 그룹 밖 독립 버튼(토글이 아니라 액션). 그룹 멤버용
    반쪽 테두리(.distseg border-right) 대신 단독 버튼 외형을 준다. */
 .dist-toolbar > .dist-sel-clear { border: 1px solid #d0d5dd; border-right: 1px solid #d0d5dd;
@@ -915,10 +917,16 @@ tbody tr:hover { background: #f9fbff; }
 .dist-leg-clear { color: #b42318; }
 .dist-search-wrap { position: relative; }
 .dist-search { padding: 6px 10px; border: 1px solid #d0d5dd; border-radius: 6px; font-size: 13px; width: 240px; }
-.dist-suggest { position: absolute; top: 100%; left: 0; right: 0; background: #fff; border: 1px solid #e0e0e0;
-  border-radius: 6px; margin-top: 4px; max-height: 320px; overflow-y: auto; z-index: 100;
+/* 폭은 검색창(240px)이 아니라 **항목명 길이**에 맞춘다 — right:0 으로 입력칸 폭에 묶여 있어
+   긴 Item 명이 줄바꿈·잘림으로 보였다(사용자 요청 2026-08-14). width:max-content 로 필요한
+   만큼 늘리되(min-width 로 최소 입력칸 폭 유지) 화면을 넘지 않게 상한을 둔다. */
+.dist-suggest { position: absolute; top: 100%; left: 0; right: auto; background: #fff; border: 1px solid #e0e0e0;
+  min-width: 100%; width: max-content; max-width: min(720px, 70vw);
+  border-radius: 6px; margin-top: 4px; max-height: 320px; overflow-y: auto; overflow-x: auto; z-index: 100;
   box-shadow: 0 6px 20px rgba(0,0,0,.12); }
 .dist-sug-item { display: flex; gap: 8px; align-items: center; padding: 6px 10px; cursor: pointer; font-size: 12.5px; }
+/* 한 줄 유지 — 줄바꿈되면 위 폭 확장이 무의미해진다(상한 초과분은 가로 스크롤). */
+.dist-sug-item .sug-name { white-space: nowrap; }
 .dist-sug-item:hover { background: #f2f4ff; }
 .dist-sug-item .sug-tno { color: #999; min-width: 34px; }
 .dist-sug-item .sug-name { flex: 1; font-weight: 600; color: #222; }
@@ -1264,6 +1272,8 @@ html[data-theme="dark"] .aic-mod { background: rgba(183,148,246,.15); color: #b7
 .cmt-fmt-btn[data-act="o"] { color: #c2410c; }
 .cmt-fmt-btn[data-act="g"] { color: #067647; }
 .cmt-fmt-btn[data-act="b"] { color: #175cd3; }
+/* 검정(색만 해제) — 색 버튼들과 같은 ● 라 색으로만 구분된다. */
+.cmt-fmt-btn[data-act="k"] { color: #1a1a1f; }
 html[data-theme="dark"] .cmt-fmt-bar { background: #1e2128; border-color: #3a3f4b; }
 html[data-theme="dark"] .cmt-fmt-btn { color: #d7dbe2; }
 html[data-theme="dark"] .cmt-fmt-btn:hover { background: #26303f; }

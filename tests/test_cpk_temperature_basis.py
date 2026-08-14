@@ -186,6 +186,28 @@ def test_item_detail_matches_cpk_tab():
             assert legacy_tab[source][field] == legacy[source][field], (source, field)
 
 
+def test_distribution_index_limits_are_rt_even_if_ct_is_first():
+    """Distribution 규격선(distribution_index)은 **소스 순서와 무관하게** RT limit (2026-08-13).
+
+    갤러리 카드·미니셀의 LSL/USL 점선은 이 인덱스에서 나온다(프런트 distSpecLimits).
+    종전에는 항목이 **처음 등장한 소스**의 limit 을 실어, 업로드 순서상 CT 가 먼저면
+    CT 의 느슨한 규격(0~100)이 그려졌다 — CT/HT 가 RT limit 을 넘은 것이 그림에서
+    보이지 않는다. ECDF compact/pack 의 lo/hi 는 pack 이 업로드 시점에 굳는 값이라
+    그대로 두고, 표시 기준만 이 인덱스로 모았다.
+    """
+    tables = temp_tables()[::-1]                 # CT 가 첫 소스인 세션
+    assert tables[0].source == "WF1_CT", tables[0].source
+    payload = build_report_payload(tables, mode="Temperature",
+                                   temperature_groups={"groups": GROUPS})
+    idx = {r["subject"]: r for r in payload["distribution_index"]}["ItemA"]
+    assert (idx["lower_limit"], idx["upper_limit"]) == (8, 12), idx
+
+    # Temperature 가 아니면 종전대로 첫 소스(CT)의 limit — 다른 모드는 무영향.
+    normal = build_report_payload(temp_tables()[::-1])
+    nidx = {r["subject"]: r for r in normal["distribution_index"]}["ItemA"]
+    assert (nidx["lower_limit"], nidx["upper_limit"]) == (0, 100), nidx
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -197,7 +219,8 @@ def main():
                test_rt_source_unchanged,
                test_without_groups_is_legacy_behaviour,
                test_payload_wires_groups_through,
-               test_item_detail_matches_cpk_tab):
+               test_item_detail_matches_cpk_tab,
+               test_distribution_index_limits_are_rt_even_if_ct_is_first):
         fn()
         checks += 1
     print(f"PASS: test_cpk_temperature_basis ({checks} checks)")

@@ -16,13 +16,25 @@ def note_base_token(blob):
     return hashlib.sha1(str(blob).encode("utf-8")).hexdigest()[:16]
 
 
-def get_webreport_edit_rev(session_id):
-    """세션 편집 rev (없으면 0). 캐시 키의 무효화 토큰."""
+# report payload 계산에 **들어가지 않는** 편집 kind — /full 조립 단계에서만 붙는다
+# (routes_session extras). 이것들만 저장하면 payload_rev 를 올리지 않아 report 캐시가
+# 살아남는다. 여기 없는 kind 는 전부 payload 영향으로 간주한다(모르는 kind 가 생기면
+# 캐시를 유지하는 쪽보다 무효화하는 쪽이 안전 — 틀린 화면을 서빙하지 않는다).
+PAYLOAD_NEUTRAL_KINDS = ("chart_note", "note_sheet", "note_tag")
+
+
+def get_webreport_edit_rev(session_id, payload=False):
+    """세션 편집 rev (없으면 0). 캐시 키의 무효화 토큰.
+
+    payload=True 면 **report payload 에 영향을 준 편집만** 센 payload_rev 를 준다
+    (Note 시트·차트 주석 편집으로 리포트 전체가 콜드가 되지 않게 — core.py 스키마 주석).
+    """
+    col = "payload_rev" if payload else "rev"
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT rev FROM report_webreport_edit_rev WHERE session_id=?",
+            f"SELECT {col} AS v FROM report_webreport_edit_rev WHERE session_id=?",
             (session_id,)).fetchone()
-    return int(row["rev"]) if row else 0
+    return int(row["v"]) if row else 0
 
 
 def get_webreport_edits(session_id, kinds=None, exclude_kinds=None):
@@ -82,10 +94,13 @@ def apply_webreport_edits(session_id, changes, updated_by=None):
                     "  value=excluded.value, updated_at=excluded.updated_at, "
                     "  updated_by=excluded.updated_by",
                     (session_id, kind, item_key, str(value), now, updated_by))
+        # payload_rev 는 report payload 를 실제로 바꾸는 kind 가 하나라도 있을 때만 올린다.
+        bump = 1 if any(k not in PAYLOAD_NEUTRAL_KINDS for k, _, _ in changes) else 0
         conn.execute(
-            "INSERT INTO report_webreport_edit_rev (session_id, rev) VALUES (?, 1) "
-            "ON CONFLICT(session_id) DO UPDATE SET rev=rev+1",
-            (session_id,))
+            "INSERT INTO report_webreport_edit_rev (session_id, rev, payload_rev) "
+            "VALUES (?, 1, ?) "
+            "ON CONFLICT(session_id) DO UPDATE SET rev=rev+1, payload_rev=payload_rev+?",
+            (session_id, bump, bump))
         row = conn.execute(
             "SELECT rev FROM report_webreport_edit_rev WHERE session_id=?",
             (session_id,)).fetchone()

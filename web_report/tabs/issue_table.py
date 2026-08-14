@@ -254,12 +254,18 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
     # 남아 '삭제 전체 초기화' 후 재표시). Category 라벨은 필터 후 첫 그룹 기준.
     groups = [g for g in build_yield_bin_groups(base_rows)
               if f"Yield|{g['bin']}" not in hidden]
+    # Yield 섹션에 **실제로 출력된** item 이름 — 아래 CPK 섹션에서 같은 item 을 빼는 데 쓴다
+    # (같은 항목이 두 섹션에 중복으로 뜨지 않게, 2026-08-14 사용자 요청). 숨긴 bin 은
+    # groups 에서 이미 빠졌으므로 자연히 대상 밖이다.
+    yield_items = set()
     for gi, group in enumerate(groups):
         group_rows = group["rows"]
         grp_id = f"y{gi}"
         for j, gr in enumerate(group_rows):
             bin_value = gr.get("bin")
             item = gr.get("Item")
+            if item:
+                yield_items.add(item)
             out = {
                 "Category": "Yield" if (gi == 0 and j == 0 and not pass_added) else "",
                 "Step": gr.get("step", ""),
@@ -295,8 +301,11 @@ def build_issue_table_rows(tables, yield_rows=None, cpk_rows=None, etc_items=Non
                if f"CPK|{subject}" not in hidden]
     # 제외 항목은 CPK 섹션에서만 빼고 _auto_etc_items 의 seen 에는 그대로 넘긴다
     # (cpk_hit) — 안 그러면 여기서 뺀 항목이 룰 위반 자동 ETC 행으로 다시 올라온다.
+    # yield_items 제외도 같은 취급이다: Yield 섹션에 이미 같은 item 행이 있으므로 CPK
+    # 섹션에서만 뺀다(그 항목의 "CPK|<item>" comment 는 편집 DB 에 그대로 남는다).
     cpk_fails = [(subject, cpk) for subject, cpk in cpk_hit
-                 if not _cpk_skip_subject(subject, cpk_units.get(subject))]
+                 if subject not in yield_items
+                 and not _cpk_skip_subject(subject, cpk_units.get(subject))]
     # CPK 구간은 source 컬럼({src}_yield)에 source 별 CPK 값을 담는다(Yield 값 대신).
     # subhead 행이 그 컬럼을 "CPK"로 재정의(프런트 isCpkSubheadRow 감지). STEP/TNO 는 항목
     # 메타에서, BIN 은 CPK 항목엔 없어 비운다. 값은 선정 기준과 동일한 Bin1 기준 cpk.

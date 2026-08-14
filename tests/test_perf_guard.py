@@ -74,6 +74,15 @@ ADD_CASES = [
     ("R11-keyed-lock-cap", "web_report/cache.py",
      "_KEYED_LOCKS_MAX = 64",
      "_KEYED_LOCKS_MAX = 256"),
+    ("R12-issue-delete-reload", "server/report/static/webreport/edit_mode.js",
+     "async function hideIssueRow(key, panel) {\n"
+     "  await save();\n"
+     "  await load(false);\n"
+     "}\n",
+     "async function hideIssueRow(key, panel) {\n"
+     "  await save();\n"
+     "  if (removeIssueRowsLocal(panel, [key], [])) rerenderIssuePanel(panel);\n"
+     "}\n"),
 ]
 
 REMOVE_CASES = [
@@ -91,6 +100,10 @@ REMOVE_CASES = [
      "                                    ai_result, ai_how = _ai_comment_cached("),
     ("S10-ai-comment-cache", "web_report/service.py",
      "        disk_cache.save_ai_comment(upload_root, key, result)"),
+    ("S11-ondemand-force-offload", "web_report/service.py",
+     "                        if compute.force_offload_for_consumer():"),
+    ("S11-ondemand-force-offload", "web_report/compute.py",
+     "def force_offload_for_consumer() -> bool:"),
 ]
 
 

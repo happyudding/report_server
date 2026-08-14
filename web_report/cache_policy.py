@@ -308,6 +308,16 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      ⑤ AI Comment 에서 [다봉] 배지 제거. Signature 컬럼·코멘트 값이 광범위하게 바뀐다.
 REPORT_SCHEMA_VERSION = 38
 
+# Temperature 세션 **전용** payload 세대 — 값이 Temperature 모드에서만 바뀌는 변경은
+# REPORT_SCHEMA_VERSION 대신 여기를 올린다. 전역 bump 는 전 세션의 report 캐시를 한 번에
+# 무효화해 콜드 빌드 폭풍을 부른다(2026-08-06 조회 성능 급락의 원인 중 하나) — 영향 범위가
+# 한 모드로 한정되면 그 모드만 갈아끼우는 편이 안전하다.
+# v1: distribution_index 의 lower/upper_limit 을 그룹의 **RT limit** 으로 (2026-08-13).
+#     종전에는 항목이 처음 등장한 소스의 limit 이라, 업로드 소스 순서상 첫 소스가 CT/HT 면
+#     CT/HT 규격선이 나갔다. 프런트가 미니셀·갤러리 규격선을 이 인덱스에서 가져가므로
+#     (static/webreport/distribution.js distSpecLimits) 캐시된 옛 payload 를 쓰면 안 바뀐다.
+TEMPERATURE_SCHEMA_VERSION = 1
+
 
 def _eval_rules_suffix() -> tuple:
     """eval 룰 상태 키 꼬리표 — report_key(ai 세션)와 ai_comment_key 가 공유.
@@ -334,6 +344,9 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
     key = _base(session) + (session_id, edits_rev,
                             session.get("webreport_options") or "", _mode(session),
                             REPORT_SCHEMA_VERSION)
+    # Temperature 세션만 갈리는 세대 — 그 외 모드의 기존 캐시는 종전 키 그대로 유효하다.
+    if _mode(session) == "Temperature":
+        key += (TEMPERATURE_SCHEMA_VERSION,)
     # AI Comment 는 payload 안에 박혀 캐시되므로 eval 룰(threshold/signature)을 고치면
     # 이 키가 갈려야 재평가된다(/pe/eval 저장 시 rev +1). **ai_comment 옵션 세션에만**
     # 덧붙고 rev 파일이 없으면 빈 문자열이라, 그 외 세션의 기존 캐시는 그대로 유효하다.

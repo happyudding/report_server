@@ -147,3 +147,32 @@ def delete(message_id):
         before = len(_messages)
         _messages = [m for m in _messages if m["id"] != message_id]
         return len(_messages) < before
+
+
+# ── 대기 중단 신호 (관리자 '접속중' 탭 ⛔ 중단) ──────────────────────────────────
+# 방치된 탭이 콜드 빌드를 15분간 폴링하며 서버를 계속 먹는 것을 관리자가 끊기 위한 통로.
+# 메시지와 같은 사용자 키를 쓰고 같은 폴링(GET /api/my_messages, 30초)에 실려 나가므로
+# 새 엔드포인트·새 폴링이 필요 없다. 한 번 가져가면 사라지는 1회성 신호다(재접속은 정상).
+_STOP_TTL_SEC = 600
+_stops = {}         # user_key -> {"reason", "at"}
+
+
+def request_stop(user_key, reason=""):
+    """이 사용자의 다음 폴링에 '대기 중단' 신호를 실어 보낸다."""
+    if not user_key:
+        return False
+    with _lock:
+        _stops[user_key] = {"reason": (reason or "")[:200], "at": int(time.time())}
+    return True
+
+
+def take_stop(user_key):
+    """대기 중인 중단 신호를 **가져가며 지운다** (없으면 None). 만료분도 함께 정리."""
+    if not user_key:
+        return None
+    now = int(time.time())
+    with _lock:
+        for key in [k for k, v in _stops.items() if now - v["at"] > _STOP_TTL_SEC]:
+            _stops.pop(key, None)
+        entry = _stops.pop(user_key, None)
+    return dict(entry) if entry else None

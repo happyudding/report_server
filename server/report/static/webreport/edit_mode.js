@@ -275,10 +275,10 @@ document.querySelector(".content").addEventListener("click", e => {
   if (e.target.id === "yieldExcelBtn") { exportYieldExcel(); return; }
   if (e.target.id === "cpkExcelBtn") { exportCpkExcel(); return; }
   const etcDelBtn = e.target.closest(".btn-del-etc-item");
-  if (etcDelBtn) { removeEtcItem(etcDelBtn.dataset.item); return; }
+  if (etcDelBtn) { removeEtcItem(etcDelBtn.dataset.item, issuePanelOf(etcDelBtn)); return; }
   // Issue Table Yield 대표행/CPK 행 숨김(삭제) + 숨김 전체 초기화 (편집모드 전용).
   const rowDelBtn = e.target.closest(".btn-del-issue-row");
-  if (rowDelBtn) { hideIssueRow(rowDelBtn.dataset.hkey); return; }
+  if (rowDelBtn) { hideIssueRow(rowDelBtn.dataset.hkey, issuePanelOf(rowDelBtn)); return; }
   const delChk = e.target.closest(".issue-del-chk");
   if (delChk) { markIssueRowSelected(delChk); syncIssueDelCount(issuePanelOf(delChk)); return; }
   // 선택 모드: Step 셀 아무 곳이나 클릭해도 체크된다 — 체크박스가 작아 정확히 누르기 어렵다.
@@ -315,6 +315,60 @@ function applyIssueStatusToRows(rows, skey, value) {
     if (issueHideStatusKey(r, sec) === skey) { r["Status"] = value; hit = true; }
   });
   return hit;
+}
+
+// Issue Table 행 삭제(숨김/ETC 제거)의 **낙관 반영** — 저장 성공 후 화면에서만 지운다.
+// 종전에는 저장 후 load(false) 로 세션을 통째로 다시 받았는데, 편집은 edits_rev 를 올려
+// report/full 캐시 키를 바꾸므로 그 재로드가 **매번 콜드 빌드**를 유발했다(행 하나 지울
+// 때마다 리포트 전체 재계산 — 2026-08-13 무한 로딩 사건의 방아쇠). 서버 저장은 그대로라
+// 진실은 편집 DB 에 남고, 다음 새로고침 때 서버가 같은 행을 빼고 그려준다.
+// 삭제 규칙은 백엔드 build_issue_table_rows 와 같아야 한다:
+//   Yield|<bin> = 그 bin 의 대표행+상세행 전부 / CPK|<item>·TEMP|<item> = 그 행 /
+//   ETC 항목 = 그 항목 행.
+// 섹션 판정은 sheets.js rowSection 과 같은 Category 상속 규칙을 쓴다.
+function removeIssueRowsLocal(panel, hkeys, etcItems) {
+  const rows = issueRowsOf(panel);
+  if (!Array.isArray(rows) || !rows.length) return false;
+  const hset = new Set((hkeys || []).filter(Boolean));
+  const eset = new Set((etcItems || []).filter(Boolean));
+  if (!hset.size && !eset.size) return false;
+  let sec = "";
+  const keep = [], dropped = [];
+  rows.forEach(r => {
+    if (r && r["Category"]) sec = String(r["Category"]);
+    const item = String((r && r["Item"]) ?? "").trim();
+    let drop = false;
+    if (sec === "Yield") {
+      const bin = String((r && r["Bin"]) ?? "").trim();
+      drop = !!bin && hset.has(`Yield|${bin}`);
+    } else if (sec === "CPK" || sec === "TEMP") {
+      drop = !!item && hset.has(`${sec}|${item}`);
+    } else if (sec === "ETC") {
+      drop = !!item && (eset.has(item) || hset.has(`ETC|${item}`));
+    }
+    // 지우는 행이 섹션 라벨(Category)을 들고 있으면 남는 첫 행으로 옮긴다 — 라벨을 잃으면
+    // 뒤 행들이 상속할 섹션이 사라져 표가 통째로 어긋난다(백엔드도 필터 후 첫 행에 붙인다).
+    (drop ? dropped : keep).push({ row: r, sec });
+  });
+  if (!dropped.length) return false;
+  dropped.forEach(d => {
+    const cat = d.row && d.row["Category"];
+    if (!cat) return;
+    d.row["Category"] = "";
+    const heir = keep.find(k => k.sec === d.sec && !k.row["Category"]);
+    if (heir) heir.row["Category"] = cat;
+  });
+  rows.length = 0;
+  keep.forEach(k => rows.push(k.row));
+  return true;
+}
+
+// 삭제 후 그 패널만 다시 그린다 (세션 재로드 없음). Summary 는 이슈 수를 세므로 dirty 로.
+function rerenderIssuePanel(panel) {
+  if (panel && panel.id === ISSUE_PANEL_TEMP) renderIssueTempTab();
+  else if (MODE === "edit") renderIssuesEdit();
+  else renderIssues(DATA.issue_table_text);
+  tabDirty["summary"] = true;
 }
 
 // Issue Table Status(Open/Close) 드랍다운 — 변경 즉시 저장 (편집모드 전용, 세션 편집 DB).
@@ -775,13 +829,16 @@ document.addEventListener("click", e => {
 // 토큰 문법·문자열 조작은 전부 sheets.js 순수 함수(cmtFormatRange)에 있고 여기는 DOM 글루만.
 // mention 드롭다운과 같은 방식이다 — body 직속 절대위치 + mousedown+preventDefault 로 blur 회피.
 // (둘이 동시에 뜨는 일은 없다: mention 은 캐럿이 collapsed 일 때, 이건 선택 구간이 있을 때.)
+// k(검정)·none(되돌리기) 두 해제 버튼은 cmtClearRange 를 쓴다 — 선택이 여러 토큰에
+// 걸치거나 토큰과 부분만 겹쳐도 되돌린다(색 넣기와 달리 거부하지 않는다, 2026-08-14 요청).
 const CMT_FMT_BTNS = [
   ["",     "B", "굵게 (Ctrl+B)"],
   ["r",    "●", "빨강 (Ctrl+Shift+1)"],
   ["o",    "●", "주황 (Ctrl+Shift+2)"],
   ["g",    "●", "초록 (Ctrl+Shift+3)"],
   ["b",    "●", "파랑 (Ctrl+Shift+4)"],
-  ["none", "✕", "서식 제거 (Ctrl+Shift+0)"],
+  ["k",    "●", "검정 — 선택 구간의 색만 해제 (굵기는 유지)"],
+  ["none", "↺", "되돌리기 — 선택 구간의 색·굵기를 모두 기본값으로 (Ctrl+Shift+0)"],
 ];
 let _cmtFmtCell = null;
 function _cmtFmtBarEl() {
@@ -831,10 +888,15 @@ function cmtApplyFormat(cell, action) {
   const range = sel.getRangeAt(0);
   if (!cell.contains(range.startContainer) || !cell.contains(range.endContainer)) return;
   const off = cmtSelOffsets(cell, range);
-  const res = cmtFormatRange(cell.textContent || "", off.start, off.end,
-                             action === "none" ? null : action);
+  // 해제 계열(k=색만 / none=색+굵기)은 겹친 토큰을 통째로 되돌리는 cmtClearRange 로.
+  const clearMode = action === "k" ? "color" : action === "none" ? "all" : null;
+  const res = clearMode
+    ? cmtClearRange(cell.textContent || "", off.start, off.end, clearMode)
+    : cmtFormatRange(cell.textContent || "", off.start, off.end, action);
   if (!res) {
-    showToast("이 구간에는 서식을 넣을 수 없습니다 — 대괄호나 @[]/#[] 토큰과 겹칩니다.");
+    showToast(clearMode
+      ? "선택 구간에 되돌릴 서식이 없습니다."
+      : "이 구간에는 서식을 넣을 수 없습니다 — 대괄호나 @[]/#[] 토큰과 겹칩니다.");
     return;
   }
   cell.textContent = res.text;
@@ -856,7 +918,11 @@ document.addEventListener("selectionchange", () => {
   const cell = cmtCellOfNode(range.startContainer);
   if (!cell || !cell.contains(range.endContainer)) { hideCmtFmtBar(); return; }
   const off = cmtSelOffsets(cell, range);
-  if (!cmtFormatRange(cell.textContent || "", off.start, off.end, "")) { hideCmtFmtBar(); return; }
+  // 서식 넣기가 불가한 선택이어도 **되돌릴 토큰이 있으면** 띄운다 — 여러 토큰에 걸친
+  // 선택이 그 경우이고, 안 띄우면 되돌리기(↺/●검정) 버튼에 닿을 방법이 없다.
+  const txt = cell.textContent || "";
+  if (!cmtFormatRange(txt, off.start, off.end, "")
+      && !cmtClearRange(txt, off.start, off.end, "all")) { hideCmtFmtBar(); return; }
   const bar = _cmtFmtBarEl();
   _cmtFmtCell = cell;
   bar.style.display = "block";
@@ -1178,8 +1244,9 @@ async function addEtcEngrItem(name, comment, col) {
   }
 }
 
-async function removeEtcItem(item) {
+async function removeEtcItem(item, panel) {
   if (!confirm(`"${item}" 항목을 Issue Table 에서 제거할까요?`)) return;
+  panel = panel || activeIssuePanel();
   if (!(await flushPendingComments())) return;
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/etc`, {
@@ -1190,7 +1257,8 @@ async function removeEtcItem(item) {
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
     showToast(`${item} 제거되었습니다.`);
-    await load(false);
+    // 세션 재로드(=콜드 빌드) 대신 화면에서만 제거 — removeIssueRowsLocal 주석 참조.
+    if (removeIssueRowsLocal(panel, [], [item])) rerenderIssuePanel(panel);
   } catch (e) {
     showToast("제거 실패: " + e.message);
   }
@@ -1198,9 +1266,10 @@ async function removeEtcItem(item) {
 
 // Issue Table Yield 대표행(bin 단위)/CPK 행 숨김(삭제) — 세션 편집 DB(issue_hidden)에
 // 키만 기록하고 재로드로 반영한다. 행별 복원은 없고 resetHiddenIssueRows(전체 초기화)뿐.
-async function hideIssueRow(key) {
+async function hideIssueRow(key, panel) {
   if (!key) return;
   if (!confirm(`이 행을 Issue Table 에서 삭제(숨김)할까요?\n(${key})\n※ 복원은 툴바 "삭제 전체 초기화"로만 가능합니다.`)) return;
+  panel = panel || activeIssuePanel();
   if (!(await flushPendingComments())) return;
   try {
     const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/issue_table/hidden`, {
@@ -1211,7 +1280,8 @@ async function hideIssueRow(key) {
     const j = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
     showToast("행이 삭제(숨김)되었습니다.");
-    await load(false);
+    // 세션 재로드(=콜드 빌드) 대신 화면에서만 제거 — removeIssueRowsLocal 주석 참조.
+    if (removeIssueRowsLocal(panel, [key], [])) rerenderIssuePanel(panel);
   } catch (e) {
     showToast("행 삭제 실패: " + e.message);
   }
@@ -1236,24 +1306,34 @@ async function deleteSelectedIssueRows(panel) {
   if (!(await flushPendingComments())) return;
   const btn = panel.querySelector('[data-issue-act="del-selected"]');
   if (btn) btn.disabled = true;
+  // 숨김 키는 배치 API(keys)로 한 번에 — 편집 1회당 rev 가 1 오르고 그때마다 report
+  // 캐시 키가 갈리므로, 단건 N회로 보내면 콜드 빌드 유발 지점이 N개가 된다.
+  // ETC 항목 제거는 별도 API 라 그대로 순차 호출한다(선택 건수가 적다).
+  const hkeys = checked.map(chk => chk.dataset.hkey || "").filter(Boolean);
+  const etcItems = checked.map(chk => chk.dataset.etc || "").filter(Boolean);
   let done = 0;
+  const okHkeys = [], okEtc = [];
+  const post = async (url, body) => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify(body),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    return j;
+  };
   try {
-    for (const chk of checked) {
-      const hkey = chk.dataset.hkey || "";
-      const item = chk.dataset.etc || "";
-      const url = hkey
-        ? `/pe/report/session/${SESSION_ID}/web_report/issue_table/hidden`
-        : `/pe/report/session/${SESSION_ID}/web_report/issue_table/etc`;
-      const body = hkey
-        ? { password: verifiedPassword, action: "hide", key: hkey }
-        : { password: verifiedPassword, action: "remove", item };
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
-        body: JSON.stringify(body),
-      });
-      const j = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    if (hkeys.length) {
+      await post(`/pe/report/session/${SESSION_ID}/web_report/issue_table/hidden`,
+                 { password: verifiedPassword, action: "hide", keys: hkeys });
+      okHkeys.push(...hkeys);
+      done += hkeys.length;
+    }
+    for (const item of etcItems) {
+      await post(`/pe/report/session/${SESSION_ID}/web_report/issue_table/etc`,
+                 { password: verifiedPassword, action: "remove", item });
+      okEtc.push(item);
       done += 1;
     }
     showToast(`${done}개 행을 삭제했습니다.`);
@@ -1261,7 +1341,8 @@ async function deleteSelectedIssueRows(panel) {
     showToast(`일괄 삭제 실패 (${done}개 처리 후 중단): ` + e.message);
   } finally {
     if (btn) btn.disabled = false;
-    if (done) await load(false);
+    // 중단됐어도 **저장에 성공한 것만** 화면에서 지운다 (세션 재로드 없음).
+    if (done && removeIssueRowsLocal(panel, okHkeys, okEtc)) rerenderIssuePanel(panel);
   }
 }
 

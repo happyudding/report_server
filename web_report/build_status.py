@@ -40,6 +40,12 @@ _FAILED: dict[tuple, dict] = {}
 FAIL_LIMIT = max(1, int(os.getenv("WEB_REPORT_BUILD_FAIL_LIMIT", "2") or 2))
 FAIL_COOLDOWN_SEC = float(os.getenv("WEB_REPORT_BUILD_FAIL_COOLDOWN_SEC", "600") or 600)
 
+# begin() 만 남고 end() 가 오지 않은 등록을 "유령"으로 보는 상한. 등록자는 try/finally
+# 라 예외로는 새지 않지만, 스레드가 통째로 사라지면 등록이 남아 경과초가 무한히 커진다
+# (사용자가 본 "10,000초 경과"의 정체). 워커 타임아웃 300s + 큐 대기 + 여유보다 크게 잡아
+# 정상 빌드를 조기에 지우지 않는다.
+STALE_SEC = float(os.getenv("WEB_REPORT_BUILD_STATUS_STALE_SEC", "900") or 900)
+
 
 def _ambient_trigger() -> str:
     """이 빌드를 시작시킨 큐 컨텍스트 — 호출부를 고치지 않고 알아내는 방법.
@@ -122,12 +128,19 @@ def snapshot(session_id: str) -> dict:
 
     구 프런트는 ``state !== "building"`` 을 전부 무시하므로 failed 추가는 하위호환이다.
     """
+    now = time.monotonic()
     with _LOCK:
+        # 유령(STALE_SEC 초과)은 여기서 걷어낸다 — 주기 스레드 없이, 문제가 되는 바로 그
+        # 순간(프런트 폴링)에 정리한다. 안 지우면 min() 이 유령을 고르므로 실제로 도는
+        # 다른 stage 대신 "N초 경과"가 무한히 자란다.
+        for key in [k for k, m in _ACTIVE.items()
+                    if k[0] == session_id and now - m["t0"] > STALE_SEC]:
+            _ACTIVE.pop(key, None)
         entries = [(m["t0"], stage) for (sid, stage), m in _ACTIVE.items() if sid == session_id]
         if entries:
             t0, stage = min(entries)
             return {"state": "building", "stage": stage,
-                    "elapsed": round(time.monotonic() - t0, 1)}
+                    "elapsed": round(now - t0, 1)}
         failed = [(stage, dict(e)) for (sid, stage), e in _FAILED.items()
                   if sid == session_id and e["count"] >= FAIL_LIMIT
                   and time.monotonic() - e["t_last"] < FAIL_COOLDOWN_SEC]
@@ -147,8 +160,11 @@ def snapshot_all() -> list[dict]:
     with _LOCK:
         entries = list(_ACTIVE.items())
     now = time.monotonic()
+    # 관리자 화면은 유령도 **보여야** 한다 — 보이지 않으면 clear_stuck 으로 지울 수도
+    # 없다. 그래서 여기서는 지우지 않고 표시만 한다(프런트용 snapshot 과 정반대).
     out = [{"session_id": sid, "stage": stage, "elapsed": round(now - m["t0"], 1),
-            "trigger": m.get("trigger") or "", "started": m.get("started")}
+            "trigger": m.get("trigger") or "", "started": m.get("started"),
+            "stale": (now - m["t0"]) > STALE_SEC}
            for (sid, stage), m in entries]
     out.sort(key=lambda d: d["elapsed"], reverse=True)
     return out

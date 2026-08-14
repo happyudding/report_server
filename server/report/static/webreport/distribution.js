@@ -232,6 +232,28 @@ function distHasData(subject) {
   return _distSubjectSet.has(subject);
 }
 
+let _distLimitMap = null;      // subject → {lo, hi} (표시 규격선, distribution_index 기준)
+// 미니셀·갤러리 셀의 LSL/USL 점선은 **distribution_index** 를 단일 기준으로 삼는다.
+// ECDF compact/pack 이 실어 보내는 lo/hi 는 항목이 **처음 등장한 소스**의 limit 이라,
+// Temperature 모드에서 첫 소스가 CT/HT 면 CT/HT limit 이 규격선으로 그려졌다(CPK 탭·
+// Item_detail 은 RT 기준이라 화면끼리 어긋난다). 인덱스는 서버가 RT 로 채워 준다
+// (tabs/distribution.build_distribution_index 의 temperature_groups). pack 은 업로드 시점에
+// 값이 굳어 RT 를 알 수 없으므로 데이터(lo/hi)가 아니라 여기서 규격선을 가져온다.
+// distIndex 전역이 아니라 DATA 에서 읽는 이유는 distHasData 와 같다 — Issue Table 이
+// Distribution 탭보다 먼저 그려지면 distIndex 가 아직 비어 있다.
+function distSpecLimits(subject, info) {
+  if (!_distLimitMap) {
+    const idx = (DATA && DATA.web_report && DATA.web_report.distribution_index) || [];
+    if (idx.length) {
+      _distLimitMap = new Map();
+      idx.forEach(r => _distLimitMap.set(r.subject, { lo: r.lower_limit, hi: r.upper_limit }));
+    }
+  }
+  const hit = _distLimitMap && _distLimitMap.get(subject);
+  if (hit) return hit;
+  return { lo: info ? info.lower_limit : null, hi: info ? info.upper_limit : null };
+}
+
 // 변형 3종: all(전체) / bin1(전 소스 양품) / rtbin1(RT 만 양품 — Temperature 전용).
 const DIST_VARIANTS = ["all", "bin1", "rtbin1"];
 const _distPending = { all: new Set(), bin1: new Set(), rtbin1: new Set() };   // 요청 대기
@@ -612,19 +634,31 @@ function distLegendClick(e) {
   if (distTempFilterClick(e)) return true;
   const b = e.target.closest("[data-dist-leg]");
   if (b) {
-    if (b.dataset.distLeg === "toggle") distLegendOpen = !distLegendOpen;
-    else distSourceFilter.clear();
-    distTempClearActive(b.dataset.distLeg !== "toggle");
-    distApplySourceFilter();
+    if (b.dataset.distLeg === "toggle") {
+      distLegendOpen = !distLegendOpen;
+      distTempClearActive(false);
+      distApplySourceFilter();
+    } else distClearSourceHighlight();
     return true;
   }
   const it = e.target.closest("[data-dist-src]");
   if (!it) return false;
-  const s = it.dataset.distSrc;
-  if (distSourceFilter.has(s)) distSourceFilter.delete(s); else distSourceFilter.add(s);
+  distToggleSourceHighlight(it.dataset.distSrc);
+  return true;
+}
+
+// 강조 토글/해제의 단일 진입점 — 우측 칸 범례와 **차트 내장 legend**(item_detail.js
+// idetBindLegendHighlight)가 같은 규칙으로 동작해야 하므로 로직을 여기 하나로 둔다.
+function distToggleSourceHighlight(name) {
+  if (!name) return;
+  if (distSourceFilter.has(name)) distSourceFilter.delete(name); else distSourceFilter.add(name);
   distTempClearActive(false);
   distApplySourceFilter();
-  return true;
+}
+function distClearSourceHighlight() {
+  distSourceFilter.clear();
+  distTempClearActive(true);
+  distApplySourceFilter();
 }
 
 // 범례를 직접 눌러 강조를 바꾸면 그룹 필터 버튼의 active 표시가 사실과 어긋난다.
@@ -669,7 +703,7 @@ function renderDistCell(cell) {
 
   const idx = distIndex.find(x => x.subject === subject);
   const status = (idx && idx.status) || "ok";
-  const lo = info.lower_limit, hi = info.upper_limit;
+  const { lo, hi } = distSpecLimits(subject, info);
   // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간으로 이산값 성김을 보정.
   // 점은 canvas 로 그리고 Plotly 에는 축 재현용 sentinel 만 넘긴다(distPaintPoints).
   const pts = {};
@@ -1064,8 +1098,7 @@ function distRenderGalleryCell(cell) {
   if (!info && distHasData(subject)) { distRequestSubject(subject, distGalleryVariant()); return; }
   const plot = cell.querySelector(".distg-plot");
   if (!plot || typeof Plotly === "undefined") return;
-  const lo = info ? info.lower_limit : null;
-  const hi = info ? info.upper_limit : null;
+  const { lo, hi } = distSpecLimits(subject, info);
   // markers 전용(선 금지 — CLAUDE.md §5). 세로 점 보간(distPointsForDisplay)으로
   // 이산(code)값의 성김을 세로 점기둥으로 채운다. 점 자체는 canvas 로 그린다(distPaintPoints).
   const pts = {};

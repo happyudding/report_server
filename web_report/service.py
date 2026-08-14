@@ -75,6 +75,17 @@ class ColdBuildRequired(Exception):
     """
 
 
+def _payload_rev(report_db, session_id: str) -> int:
+    """report payload 캐시 키에 쓸 편집 rev — **Note 시트·차트 주석·Note 태그는 세지
+    않는다**(그 편집들은 payload 계산에 안 들어가고 /full 조립에서만 붙는데도, 세션 전역
+    rev 를 올려 리포트 전체를 콜드로 만들었다 — 한 글자 고쳐도 전체 재계산).
+    구 포트 구현(payload 인자 없는 get_webreport_edit_rev)도 그대로 받도록 폴백한다."""
+    try:
+        return report_db.get_webreport_edit_rev(session_id, payload=True)
+    except TypeError:
+        return report_db.get_webreport_edit_rev(session_id)
+
+
 def report_is_cold(session_id: str, *, report_db, upload_root: Path,
                    session: dict) -> bool:
     """report payload 가 콜드(RAM·디스크 둘 다 미스)인지 값싸게 판정한다.
@@ -88,7 +99,7 @@ def report_is_cold(session_id: str, *, report_db, upload_root: Path,
     판정 후 응답 직전에 캐시가 축출되는 레이스는 여기서 막지 않는다 — 라우트의
     ``except ColdBuildRequired`` 폴백이 그대로 남아 있어 결과는 동일하다.
     """
-    edits_rev = report_db.get_webreport_edit_rev(session_id)
+    edits_rev = _payload_rev(report_db, session_id)
     cache_key = cache_policy.report_key(session, session_id, edits_rev)
     if cache.cache_get(cache.REPORT_CACHE, cache_key) is not None:
         return False
@@ -236,7 +247,8 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
 
     # 편집 rev 는 작은 인덱스 SELECT 1회 — warm 요청은 manifest/tables 로드 없이
     # 캐시 키만으로 끝난다. 콜드 미스에서만 manifest(캐시)와 tables 를 로드한다.
-    edits_rev = report_db.get_webreport_edit_rev(session_id)
+    # payload 에 영향 없는 편집(Note·차트 주석)은 세지 않는다 — _payload_rev 참조.
+    edits_rev = _payload_rev(report_db, session_id)
 
     # F10 웹리포트 옵션(세션 DB, authoritative): Distribution source 색.
     dist_colors = _webreport_colors(session.get("webreport_options") or "")
@@ -289,6 +301,10 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                             # AI 평가는 GIL 을 오래 잡는다(eval 엔진 파이썬 루프) —
                             # ai 잡/프리웜 소비자 스레드가 부모에서 인라인으로 돌리면
                             # 웹 프로세스 전체가 밀리므로 tables 가 웜이어도 워커로 보낸다.
+                            offload = True
+                        if compute.force_offload_for_consumer():
+                            # 온디맨드(202) 소비자 스레드 = 이 빌드에 시간 상한을 걸 수
+                            # 있는 유일한 수단이 워커 오프로드다 (compute 쪽 docstring).
                             offload = True
                         if offload:
                             # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
@@ -674,7 +690,7 @@ def get_distribution_gzip(session_id: str, *, report_db, upload_root: Path,
             # 생성을 예약한다(워커 오프로드 경로는 _pack_items 를 부모에서 타지 않는다).
             compute.request_dist_pack(session_id, str(upload_root))
         if blob is None and not has_pack \
-                and compute.should_offload(cache_policy.tables_key(session, prep)):
+                and compute.should_offload_heavy(cache_policy.tables_key(session, prep)):
             # 콜드 빌드(수십 초 CPU 가능)는 전체/bin1 변형 모두 워커 프로세스로 —
             # 요청 스레드 GIL 점유를 피한다 (워커가 disk_cache 도 채움).
             t_sub = time.time()
@@ -887,7 +903,7 @@ def get_temp_map_gzip(session_id: str, *, report_db, upload_root: Path) -> bytes
         if blob is not None:
             return blob
         blob = disk_cache.load_temp_map(upload_root, cache_key)
-        if blob is None and compute.should_offload(cache_policy.tables_key(session, prep)):
+        if blob is None and compute.should_offload_heavy(cache_policy.tables_key(session, prep)):
             blob, _child_t = compute.run(compute.temp_map_job, session_id, str(upload_root))
         if blob is None:
             blob = _temp_map_blob(
@@ -939,7 +955,8 @@ def get_map_gzip(session_id: str, *, report_db, upload_root: Path,
             # (report 와 같은 레지스트리를 stage 로 구분해 쓴다).
             build_status.begin(session_id, "map")
         try:
-            if blob is None and compute.should_offload(cache_policy.tables_key(session, prep)):
+            if blob is None and (compute.should_offload(cache_policy.tables_key(session, prep))
+                                 or compute.force_offload_for_consumer()):
                 # 콜드 빌드(디코드 포함 수 초 CPU)는 워커 프로세스로 — GIL 비점유.
                 t_sub = time.time()
                 blob, child_t = compute.run(compute.map_job, session_id, str(upload_root))
@@ -1411,16 +1428,22 @@ def update_issue_etc_items(session_id: str, *, report_db, upload_root: Path,
             "storage": "db" if changes else "unchanged"}
 
 
+_ISSUE_HIDDEN_MAX_KEYS = 3000
+
+
 def update_issue_hidden(session_id: str, *, report_db, upload_root: Path,
-                        action: str, key: str = "",
+                        action: str, key: str = "", keys=None,
                         client_ip: str = "", user_agent: str = "") -> dict:
     """Issue Table 행 숨김(삭제)을 세션 편집 DB(kind=issue_hidden)에 반영한다.
 
-    action="hide": key("Yield|<bin>"|"CPK|<item>") 1건 숨김. ETC 행은 기존 etc_item
-    remove 가 담당하므로 "ETC|" 키는 거부한다. action="reset_all": 숨김 전건 복원
-    (행별 복원 없음 — '삭제 전체 초기화' 버튼 전용). 행 데이터는 저장하지 않고 키만
-    기억한다 — build_issue_table_rows 가 조회 시 해당 이슈 행을 제외할 뿐이라,
-    rawdata 변경(새 세션)이나 초기화 시 원래 행이 그대로 되살아난다.
+    action="hide": key("Yield|<bin>"|"CPK|<item>") 1건, 또는 keys=[...] 로 여러 건을
+    **편집 DB write 1회**로 숨긴다. 일괄판이 따로 필요한 이유는 rev 다 — 편집 1회당
+    rev 가 1 오르고 그때마다 report 캐시 키가 갈리므로, N행 삭제를 단건 N회로 보내면
+    콜드 빌드 유발 지점이 N개가 된다(2026-08-13 무한 로딩 사건의 배경).
+    ETC 행은 기존 etc_item remove 가 담당하므로 "ETC|" 키는 거부한다.
+    action="reset_all": 숨김 전건 복원(행별 복원 없음 — '삭제 전체 초기화' 버튼 전용).
+    행 데이터는 저장하지 않고 키만 기억한다 — build_issue_table_rows 가 조회 시 해당
+    이슈 행을 제외할 뿐이라, rawdata 변경(새 세션)이나 초기화 시 원래 행이 되살아난다.
     """
     session = report_db.get_session(session_id)
     if not session:
@@ -1430,14 +1453,23 @@ def update_issue_hidden(session_id: str, *, report_db, upload_root: Path,
         raise FileNotFoundError(session_id)
 
     action = str(action or "").strip()
-    key = str(key or "").strip()
     if action not in ("hide", "reset_all"):
         raise ValueError(f"unknown action: {action!r}")
+    want = []
     if action == "hide":
-        if not key or len(key) > 300:
-            raise ValueError(f"invalid row key: {key!r}")
-        if not key.startswith(_ISSUE_KEY_PREFIXES[:3]):   # ETC 는 숨김 대신 항목 제거
-            raise ValueError(f"row not hidable: {key!r}")
+        raw = keys if keys is not None else [key]
+        if not isinstance(raw, list) or not raw:
+            raise ValueError("keys must be a non-empty list")
+        if len(raw) > _ISSUE_HIDDEN_MAX_KEYS:
+            raise ValueError(f"too many keys: {len(raw)}")
+        for k in raw:
+            k = str(k or "").strip()
+            if not k or len(k) > 300:
+                raise ValueError(f"invalid row key: {k!r}")
+            if not k.startswith(_ISSUE_KEY_PREFIXES[:3]):   # ETC 는 숨김 대신 항목 제거
+                raise ValueError(f"row not hidable: {k!r}")
+            if k not in want:
+                want.append(k)
 
     # legacy 미이전 세션이면 manifest 편집값을 먼저 세션 편집행으로 복사 (연속성 보존)
     edits.ensure_seeded(report_db, session_id,
@@ -1445,9 +1477,10 @@ def update_issue_hidden(session_id: str, *, report_db, upload_root: Path,
     hidden = edits.load_edit_state(report_db, session_id)["issue_hidden"]
     changes = []
     if action == "hide":
-        if key not in hidden:
-            changes.append((edits.KIND_ISSUE_HIDDEN, key, "1"))
-            hidden.append(key)
+        for k in want:
+            if k not in hidden:
+                changes.append((edits.KIND_ISSUE_HIDDEN, k, "1"))
+                hidden.append(k)
     else:
         changes = [(edits.KIND_ISSUE_HIDDEN, k, None) for k in hidden]
         hidden = []
@@ -1455,11 +1488,12 @@ def update_issue_hidden(session_id: str, *, report_db, upload_root: Path,
         report_db.apply_webreport_edits(session_id, changes,
                                         updated_by=edits.user_from_ua(user_agent) or None)
     try:
+        what = repr(want[0]) if len(want) == 1 else f"{len(want)} rows"
         report_db.log_audit(
             "edit", session_id=session_id, analysis_key=analysis_key,
             product_type=session.get("product_type", ""), product=session.get("product", ""),
             lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
-            changed_fields=f"issue_hidden({action}:{key!r})",
+            changed_fields=f"issue_hidden({action}:{what})",
             client_ip=client_ip, user_agent=user_agent)
     except Exception:
         pass
@@ -2235,7 +2269,7 @@ def get_trim_analysis_gzip(session_id: str, *, report_db, upload_root: Path,
         return blob, etag_token
     with cache.keyed_lock_ctx(("trim",) + cache_key):
         blob = cache.cache_get(cache.TRIM_CACHE, cache_key)
-        if blob is None and compute.should_offload(cache_policy.tables_key(
+        if blob is None and compute.should_offload_heavy(cache_policy.tables_key(
                 session, _preprocess.session_digest(report_db, session_id))):
             blob = compute.run(compute.trim_job, session_id, str(upload_root),
                                str(source or ""))
@@ -2354,7 +2388,7 @@ def get_trim_charts_batch(session_id: str, *, report_db, upload_root: Path,
         raise KeyError(session_id)
     if not session.get("analysis_key"):
         raise FileNotFoundError(session_id)
-    if ids and compute.should_offload(cache_policy.tables_key(
+    if ids and compute.should_offload_heavy(cache_policy.tables_key(
             session, _preprocess.session_digest(report_db, session_id))):
         return compute.run(compute.trim_chart_batch_job, session_id, str(upload_root),
                            str(source or ""), ids)

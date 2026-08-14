@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import uuid
+from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 from urllib.parse import quote
 
@@ -27,7 +28,9 @@ from report.security import (
     _require_csrf,
     _require_web_report_session,
     artifact_missing,
+    compute_busy,
 )
+from web_report import compute as web_report_compute
 from web_report import service as web_report_service
 from web_report import build_status as web_report_build_status_mod
 from web_report import eta as web_report_eta
@@ -38,6 +41,11 @@ from web_report import rawedit as web_report_rawedit
 _log = logging.getLogger(__name__)
 
 _MAX_WEBREPORT_SOURCE_BYTES = 512 * 1024 * 1024
+
+# 컴퓨트 워커를 못 잡아 계산이 끊긴 경우 — 세션 데이터의 잘못이 아니라 그 순간 붐볐거나
+# 워커가 죽은 것이다. generic except 로 흘려 500 을 주면 프런트가 "재시도하면 되는 상황"
+# 임을 알 수 없으므로 503 + Retry-After(compute_busy)로 갈라 준다.
+_COMPUTE_BUSY_EXC = (web_report_compute.QueueWaitTimeout, BrokenProcessPool)
 
 # distribution_batch 한 요청의 항목 수 상한 — 프런트는 화면에 보이는 만큼(수십 개)만
 # 요청한다. 상한을 두는 이유는 URL 길이/계산량 폭주 차단이며, 초과분은 프런트가 다음
@@ -160,6 +168,8 @@ def web_report_distribution(session_id):
         return artifact_missing(session_id, str(exc))
     except KeyError:
         abort(404, "web_report session data not found")
+    except _COMPUTE_BUSY_EXC as exc:
+        return compute_busy(session_id, f"distribution: {exc!r}")
     except Exception:
         _log.exception("web_report distribution failed for session %s", session_id)
         abort(500, "distribution failed")
@@ -200,6 +210,8 @@ def web_report_distribution_batch(session_id):
         return artifact_missing(session_id, str(exc))
     except KeyError:
         abort(404, "web_report session data not found")
+    except _COMPUTE_BUSY_EXC as exc:
+        return compute_busy(session_id, f"distribution_batch: {exc!r}")
     except Exception:
         _log.exception("web_report distribution_batch failed for session %s", session_id)
         abort(500, "distribution_batch failed")
@@ -235,6 +247,8 @@ def web_report_temp_map(session_id):
         return artifact_missing(session_id, str(exc))
     except KeyError:
         abort(404, "web_report session data not found")
+    except _COMPUTE_BUSY_EXC as exc:
+        return compute_busy(session_id, f"temp_map: {exc!r}")
     except Exception:
         _log.exception("web_report temp_map failed for session %s", session_id)
         abort(500, "temp_map failed")
@@ -272,6 +286,8 @@ def web_report_map_analysis(session_id):
         return artifact_missing(session_id, str(exc))
     except KeyError:
         abort(404, "web_report session data not found")
+    except _COMPUTE_BUSY_EXC as exc:
+        return compute_busy(session_id, f"map_analysis: {exc!r}")
     except Exception:
         _log.exception("web_report map_analysis failed for session %s", session_id)
         abort(500, "map_analysis failed")
@@ -342,6 +358,8 @@ def web_report_trim_analysis(session_id):
         return artifact_missing(session_id, str(exc))
     except KeyError:
         abort(404, "web_report session data not found")
+    except _COMPUTE_BUSY_EXC as exc:
+        return compute_busy(session_id, f"trim_analysis: {exc!r}")
     except Exception:
         _log.exception("web_report trim_analysis failed for session %s", session_id)
         abort(500, "trim_analysis failed")
@@ -412,6 +430,8 @@ def web_report_trim_chart_batch(session_id):
         return artifact_missing(session_id, str(exc))
     except KeyError:
         abort(404, "web_report trim group or session data not found")
+    except _COMPUTE_BUSY_EXC as exc:
+        return compute_busy(session_id, f"trim_chart_batch: {exc!r}")
     except Exception:
         _log.exception("web_report trim_chart_batch failed for session %s groups %r",
                        session_id, groups)
@@ -874,6 +894,8 @@ def web_report_issue_table_hidden(session_id):
     """Issue Table 행 숨김(삭제)/전체 초기화 — 세션 편집 DB(kind=issue_hidden) 갱신.
 
     body: {"action": "hide"|"reset_all", "key": "Yield|<bin>"|"CPK|<item>"}.
+    일괄 삭제는 {"action":"hide", "keys": [...]} 로 보내 편집 DB write 1회·rev +1 로
+    처리한다 — 단건을 N회 보내면 rev 가 N 올라 콜드 빌드 유발 지점이 N개가 된다.
     편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
     _require_csrf()
     session = _require_web_report_session(session_id)
@@ -883,11 +905,12 @@ def web_report_issue_table_hidden(session_id):
     body = request.get_json(force=True, silent=True) or {}
     action = (body.get("action") or "").strip()
     key = (body.get("key") or "").strip()
+    keys = body.get("keys")
     ip, ua = _client_meta()
     try:
         result = web_report_service.update_issue_hidden(
             session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
-            action=action, key=key, client_ip=ip, user_agent=ua)
+            action=action, key=key, keys=keys, client_ip=ip, user_agent=ua)
     except FileNotFoundError as exc:
         return artifact_missing(session_id, str(exc))
     except KeyError:

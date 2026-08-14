@@ -24,6 +24,7 @@ import logging
 import os
 import threading
 import time
+from concurrent.futures import CancelledError
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
@@ -37,6 +38,7 @@ STATS = {"submitted": 0, "inline": 0, "ok": 0, "timeout": 0, "broken": 0, "error
          "worker_killed": 0,
          "prewarm_queued": 0, "prewarm_dropped": 0, "prewarm_done": 0,
          "ondemand_queued": 0, "ondemand_done": 0, "ondemand_error": 0,
+         "ondemand_retried": 0,
          "distpack_queued": 0, "distpack_done": 0, "distpack_error": 0,
          "rewarm_queued": 0, "consumer_restart": 0}
 
@@ -53,6 +55,12 @@ _TIMEOUT_SEC = float(os.getenv("WEB_REPORT_COMPUTE_TIMEOUT_SEC", "300") or 300)
 # 0 이면 이 상한을 끄고 종전 동작(_TIMEOUT_SEC 단독)으로 돌아간다.
 _QUEUE_WAIT_MAX_SEC = float(os.getenv("WEB_REPORT_COMPUTE_QUEUE_WAIT_SEC", "60") or 0)
 _WAIT_POLL_SEC = 1.0
+# 온디맨드(202) 백그라운드 빌드를 tables 웜이어도 워커로 강제 오프로드할지
+# (force_offload_for_consumer). 끄면 종전 동작 = 소비자 스레드 인라인 = 시간 상한 없음.
+_FORCE_OFFLOAD_ONDEMAND = (os.getenv("WEB_REPORT_ONDEMAND_FORCE_OFFLOAD", "1") or "1") != "0"
+# dist/temp_map/trim 콜드 산출물을 tables 웜이어도 워커로 보낼지 (should_offload_heavy).
+# 끄면 종전 동작 = 요청 스레드 인라인 계산 = 시간 상한 없음.
+_FORCE_OFFLOAD_HEAVY = (os.getenv("WEB_REPORT_HEAVY_FORCE_OFFLOAD", "1") or "1") != "0"
 
 
 class QueueWaitTimeout(TimeoutError):
@@ -218,11 +226,47 @@ def in_worker() -> bool:
     return _IN_WORKER
 
 
+def should_offload_heavy(tables_key) -> bool:
+    """dist / temp_map / trim 처럼 **요청 스레드가 직접 계산하던** 콜드 산출물의 오프로드 판정.
+
+    should_offload 는 부모 tables 가 웜이면 False 를 돌려 인라인 계산을 허용한다. report/map
+    은 그래도 괜찮았지만(콜드면 202 로 빠진다) 이 경로들은 **202 규약이 없어** 그 인라인이
+    waitress 요청 스레드에서 상한 없이 돌고, 그동안 스레드 1개가 통째로 묶인다. 하필
+    "부모 tables 가 웜"인 순간이 편집 직후·프리웜 직후·같은 세션 두 번째 탭이라 흔하다.
+    워커로 보내야 run() 의 _TIMEOUT_SEC(300초)과 terminate 회수가 실제로 걸린다.
+
+    대가는 tables 웜일 때의 워커 재디코드 몇 초다 — 상한 없는 계산을 없애는 값으로 싸다.
+    env WEB_REPORT_HEAVY_FORCE_OFFLOAD=0 이면 종전(웜이면 인라인) 동작으로 되돌린다.
+    """
+    if _FORCE_OFFLOAD_HEAVY and offload_available():
+        return True
+    return should_offload(tables_key)
+
+
 def offload_available() -> bool:
     """워커 풀로 보낼 수 있는 상태인가 — AI 평가처럼 tables 가 웜이어도
     GIL 점유가 긴 작업을 강제 오프로드할지 판단하는 용도(should_offload 와 달리
     tables 캐시 상태를 보지 않는다)."""
     return not _IN_WORKER and _WORKERS > 0
+
+
+def force_offload_for_consumer() -> bool:
+    """온디맨드 소비자 스레드의 빌드인가 — 그렇다면 tables 웜이어도 워커로 보낸다.
+
+    **이 빌드의 유일한 시간 상한이 워커 오프로드다.** 소비자 스레드는 잡을 직접 부르고
+    (_ondemand_loop), 그 안에서 should_offload 가 False(=편집 직후처럼 부모 tables 가
+    웜)로 떨어지면 빌드 전체가 이 스레드에서 인라인으로 돈다 — 파이썬 스레드는 강제
+    종료가 불가하므로 그때는 300초든 3시간이든 아무도 끊지 못하고, 사용자 화면은 202 를
+    무한 폴링한다(2026-08-13 Issue Table 편집 후 무한 로딩의 근본 원인).
+    워커로 보내면 run() 의 _TIMEOUT_SEC + terminate 회수가 그대로 적용된다.
+
+    대가는 편집 직후 재빌드에서 워커가 tables 를 다시 디코드하는 몇 초다 — 아무도
+    블로킹되지 않는 백그라운드 경로이므로 상한을 얻는 값으로 싸다.
+    env WEB_REPORT_ONDEMAND_FORCE_OFFLOAD=0 이면 종전(인라인 허용) 동작으로 되돌린다.
+    """
+    if not _FORCE_OFFLOAD_ONDEMAND or not offload_available():
+        return False
+    return build_log.current_context().get("trigger") == "ondemand"
 
 
 def _reset_pool(shutdown=False, expected=None):
@@ -473,7 +517,7 @@ def drop_pending(session_id: str, kind: str = "report") -> bool:
     """
     with _ondemand_lock:
         found = (session_id, kind) in _ondemand_pending
-        _ondemand_pending.discard((session_id, kind))
+        _ondemand_pending.pop((session_id, kind), None)
         keep = [it for it in _ondemand_queue if not (it[0] == session_id and it[2] == kind)]
         if len(keep) != len(_ondemand_queue):
             found = True
@@ -731,11 +775,43 @@ def prewarm(session_id: str, upload_root_str: str, dist_seeded: bool = False) ->
 # 사용자가 화면에서 대기 중이라 버리면 그 사용자만 영영 로드되지 않는다. 대신 (session,
 # kind) 중복 등록을 막아 재요청 폭주에도 큐가 자라지 않게 한다.
 _ONDEMAND_WORKERS = max(1, int(os.getenv("WEB_REPORT_ONDEMAND_WORKERS", "2") or 2))
+# 등록만 남고 소비자가 풀지 못한 "유령" 을 자동 회수하는 상한 (request_build 에서 lazy
+# 판정). 정상 실행은 워커 타임아웃(_TIMEOUT_SEC) + 큐 대기 상한 안에 반드시 끝나거나
+# 실패하므로 그보다 넉넉히 잡는다.
+_ONDEMAND_PENDING_TTL_SEC = float(
+    os.getenv("WEB_REPORT_ONDEMAND_PENDING_TTL_SEC", "0") or 0
+) or (_TIMEOUT_SEC + max(_QUEUE_WAIT_MAX_SEC, 60.0) + 120.0)
 _ondemand_queue = collections.deque()
-_ondemand_pending: set = set()      # (session_id, kind) — 큐 대기 + 실행 중
+# (session_id, kind) → 마지막 진행 시각. 소비자가 큐에서 집을 때 갱신한다(큐 대기가
+# 길어도 유령으로 오판하지 않게 — TTL 은 "실행 시작 후 경과"를 재야 한다).
+_ondemand_pending: dict = {}        # 큐 대기 + 실행 중
 _ondemand_lock = threading.Lock()
 _ondemand_wake = threading.Event()
 _ondemand_threads: list = []
+
+# 일시 장애로 판단해 **자동 재시도**하는 예외. 셋 다 "이 세션 데이터의 잘못이 아니다":
+#   QueueWaitTimeout  — 워커 슬롯을 못 받고 큐에서만 대기하다 끊김(풀 무결)
+#   CancelledError    — 남의 타임아웃이 풀을 버릴 때 cancel_futures 로 함께 취소됨
+#   BrokenProcessPool — 워커 프로세스 붕괴(대개 OOM)
+# ⚠️ 순수 TimeoutError(진짜 워커 hang)는 **일부러 뺐다** — 재시도 1회당 300초를 더 태우고
+# _reset_pool(shutdown=True) 가 그때 돌던 무고한 동시 빌드까지 terminate 하므로, 재시도가
+# 피해를 배로 늘린다. QueueWaitTimeout 이 TimeoutError 를 상속하므로 판정 순서에 주의.
+_RETRY_EXC = (QueueWaitTimeout, CancelledError, BrokenProcessPool)
+# 재시도해도 이 세션의 실패로 세지 않는 것 (build_status 연속 실패 카운트 면제).
+# CancelledError 는 지금까지 generic except 에 잡혀 **무고한 세션에 실패 1점**을 먹였다.
+_NO_FAULT_EXC = (QueueWaitTimeout, CancelledError)
+# 논리 빌드 1건의 최대 실행 횟수(최초 1 + 재시도). mark_failure 는 마지막 시도에서만
+# 부르므로 FAIL_LIMIT(2) 의 의미가 "논리 빌드 실패 2회"로 유지된다(총 실행 상한 4회).
+_ONDEMAND_MAX_ATTEMPTS = max(1, int(os.getenv("WEB_REPORT_ONDEMAND_MAX_ATTEMPTS", "2") or 2))
+_ONDEMAND_RETRY_DELAY_SEC = float(os.getenv("WEB_REPORT_ONDEMAND_RETRY_DELAY_SEC", "1") or 1)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """일시 장애인가 — 순수 TimeoutError(워커 hang)는 재시도하지 않는다."""
+    if isinstance(exc, TimeoutError) and not isinstance(exc, QueueWaitTimeout):
+        return False
+    return isinstance(exc, _RETRY_EXC)
+
 
 _ONDEMAND_JOBS = {
     "report": lambda sid, root: report_job(sid, root),
@@ -758,35 +834,89 @@ def _ondemand_loop() -> None:
         if item is None:
             _ondemand_wake.wait()
             continue
-        session_id, upload_root_str, kind, t_enq = item
+        session_id, upload_root_str, kind, t_enq, attempt, t_ready = item
+        # 재시도 대기분은 아직 때가 안 됐으면 뒤로 돌린다 — time.sleep 으로 스레드를
+        # 묶으면 소비자가 2개뿐이라 **다른 사용자의 202 빌드가 그만큼 멈춘다**.
+        wait_left = t_ready - time.time()
+        if wait_left > 0:
+            with _ondemand_lock:
+                _ondemand_queue.append(item)
+            # 짧게 양보만 한다. _ondemand_wake.wait 로 기다리면 그 이벤트가 이미 set 인
+            # 동안(재시도 예약이 방금 set 한다) 즉시 반환해 지연 내내 바쁜 대기가 된다.
+            # time.sleep 을 길게 잡지 않는 이유는 소비자가 2개뿐이라 그동안 다른 사용자의
+            # 202 빌드가 멈추기 때문 — 50ms 면 양쪽을 다 만족한다.
+            time.sleep(min(0.05, wait_left))
+            continue
+        with _ondemand_lock:
+            # 실행 시작 시각으로 갱신 — TTL 유령 판정이 큐 대기까지 세면 붐빌 때 정상
+            # 대기분을 유령으로 오판한다(재시도 중인 잡도 여기서 계속 갱신된다).
+            if (session_id, kind) in _ondemand_pending:
+                _ondemand_pending[(session_id, kind)] = time.time()
+        requeued = False
         try:
             # 큐 대기(= 앞선 콜드 빌드에 밀린 시간)는 여기서만 잴 수 있다.
             # kind 를 함께 심는 이유: 부모에 남는 build_status 등록은 report/map 두
             # stage 뿐이라 ai 잡(=report stage 로 등록됨)을 구분할 수 없다. 관리자
             # 화면이 "사용자 대기"와 "AI 백그라운드"를 갈라 보려면 이 값이 필요하다.
-            with build_log.context(trigger="ondemand", kind=kind,
+            with build_log.context(trigger="ondemand", kind=kind, attempt=attempt + 1,
                                    queue_wait=round(max(0.0, time.time() - t_enq), 3)):
                 _ONDEMAND_JOBS[kind](session_id, upload_root_str)
             STATS["ondemand_done"] += 1
             build_status.clear_failure(session_id, kind)
-        except QueueWaitTimeout:
-            # 서버가 붐벼 워커 슬롯을 못 받았을 뿐 — 이 세션의 실패가 아니다. 실패로
-            # 세면 연속 2회에 세션이 10분간 막히는데, 정작 필요한 것은 잠시 뒤 재시도다.
-            # pending 만 풀어(아래 finally) 다음 폴링이 다시 큐에 넣게 둔다.
-            STATS["ondemand_error"] += 1
-            _log.warning("[ondemand] %s build 큐 대기 초과 — 재시도 대기 session=%s",
-                         kind, session_id)
         except Exception as exc:
-            # 실패하면 pending 이 풀려 다음 폴링이 다시 큐에 넣는다 — 워커 타임아웃을
-            # 넘기는 세션은 그 재등록이 15분간 반복됐다. 연속 실패를 세어 일정 횟수
-            # 넘으면 재등록을 막고(request_build) 프런트에도 실패를 알린다.
             STATS["ondemand_error"] += 1
-            build_status.mark_failure(session_id, kind, f"{type(exc).__name__}: {exc}")
-            _log.warning("[ondemand] %s build failed session=%s", kind, session_id,
-                         exc_info=True)
+            # 일시 장애는 자동으로 한 번 더 돌린다. pending 은 **풀지 않고 유지**한다 —
+            # 풀면 프런트 폴링의 request_build 가 별도 항목을 하나 더 넣어 재시도가
+            # 겹친다(그래서 아래 finally 가 requeued 를 본다).
+            if _is_retryable(exc) and attempt + 1 < _ONDEMAND_MAX_ATTEMPTS:
+                with _ondemand_lock:
+                    _ondemand_queue.append((session_id, upload_root_str, kind, time.time(),
+                                            attempt + 1,
+                                            time.time() + _ONDEMAND_RETRY_DELAY_SEC))
+                    requeued = True
+                STATS["ondemand_retried"] += 1
+                _log.warning("[ondemand] %s build %s — %d/%d 시도 후 재시도 예약 session=%s",
+                             kind, type(exc).__name__, attempt + 1,
+                             _ONDEMAND_MAX_ATTEMPTS, session_id)
+                _ondemand_wake.set()
+            elif isinstance(exc, _NO_FAULT_EXC):
+                # 서버가 붐볐거나(큐 대기 초과) 남의 타임아웃이 풀을 버려 함께 취소된 것 —
+                # 이 세션의 실패가 아니다. 실패로 세면 연속 2회에 세션이 10분간 막히는데,
+                # 정작 필요한 것은 잠시 뒤 재시도다. pending 만 풀어 다음 폴링에 맡긴다.
+                _log.warning("[ondemand] %s build %s — 재시도 대기 session=%s",
+                             kind, type(exc).__name__, session_id)
+            else:
+                # 실패하면 pending 이 풀려 다음 폴링이 다시 큐에 넣는다 — 워커 타임아웃을
+                # 넘기는 세션은 그 재등록이 15분간 반복됐다. 연속 실패를 세어 일정 횟수
+                # 넘으면 재등록을 막고(request_build) 프런트에도 실패를 알린다.
+                build_status.mark_failure(session_id, kind, f"{type(exc).__name__}: {exc}")
+                _log.warning("[ondemand] %s build failed session=%s", kind, session_id,
+                             exc_info=True)
         finally:
-            with _ondemand_lock:
-                _ondemand_pending.discard((session_id, kind))
+            if not requeued:
+                with _ondemand_lock:
+                    _ondemand_pending.pop((session_id, kind), None)
+
+
+def _expire_ghost_pending(key) -> bool:
+    """등록만 남은 유령이면 해제한다 (_ondemand_lock 을 잡은 채 호출할 것).
+
+    소비자 스레드는 finally 에서 반드시 등록을 푼다. 그래도 스레드가 통째로 사라지는
+    등으로 등록만 남으면 request_build 가 그 (세션, kind) 를 **영원히 무시**해 사용자
+    화면은 202 를 무한 폴링한다 — 지금까지 이 상태를 푸는 방법은 관리자의 수동
+    drop_pending 뿐이었다. 여기서 TTL 을 넘긴 등록을 스스로 걷어내, 사용자가 새로고침만
+    해도 다시 빌드가 걸리게 한다.
+
+    큐에 아직 남아 있는 항목은 유령이 아니라 순번 대기이므로 만료 대상에서 뺀다
+    (죽은 소비자 스레드는 request_build 가 되살린다).
+    """
+    ts = _ondemand_pending.get(key)
+    if ts is None or time.time() - ts <= _ONDEMAND_PENDING_TTL_SEC:
+        return False
+    if any(it[0] == key[0] and it[2] == key[1] for it in _ondemand_queue):
+        return False
+    _ondemand_pending.pop(key, None)
+    return True
 
 
 def request_build(session_id: str, upload_root_str: str, kind: str = "report") -> bool:
@@ -804,10 +934,13 @@ def request_build(session_id: str, upload_root_str: str, kind: str = "report") -
         return False
     with _ondemand_lock:
         key = (session_id, kind)
+        ghost = _expire_ghost_pending(key)
         if key in _ondemand_pending:
             return False
-        _ondemand_pending.add(key)
-        _ondemand_queue.append((session_id, upload_root_str, kind, time.time()))
+        now = time.time()
+        _ondemand_pending[key] = now
+        # (…, t_enq, attempt, t_ready) — attempt/t_ready 는 소비자의 자동 재시도용
+        _ondemand_queue.append((session_id, upload_root_str, kind, now, 0, 0.0))
         STATS["ondemand_queued"] += 1
         # 죽은 스레드를 먼저 걷어낸다 — 종전에는 죽어도 리스트에 남아 len 이 줄지 않아
         # 소비자가 0이 돼도 "8개 다 있다"고 판단했다(202 빌드가 영영 시작되지 않는다).
@@ -819,8 +952,26 @@ def request_build(session_id: str, upload_root_str: str, kind: str = "report") -
                                   daemon=True)
             _ondemand_threads.append(th)
             th.start()
+    if ghost:
+        _log.warning("[ondemand] %s 유령 등록(%.0fs 초과) 자동 해제 후 재등록 session=%s",
+                     kind, _ONDEMAND_PENDING_TTL_SEC, session_id)
+        _emit_ghost_expired(session_id, kind)
     _ondemand_wake.set()
     return True
+
+
+def _emit_ghost_expired(session_id: str, kind: str) -> None:
+    """유령 등록 자동 해제를 진단 사건으로 — 조용히 고치면 "가끔 안 열린다"의 빈도를
+    아무도 모른다(자동 회수가 잦으면 소비자 스레드가 사라지는 진짜 원인이 따로 있다)."""
+    try:
+        import diagnostics
+        diagnostics.emit("warning", "build", "ondemand_ghost_expired",
+                         session_id=session_id, error_type="ghost",
+                         message=f"{kind}: pending 등록만 남아 자동 해제 "
+                                 f"(TTL {_ONDEMAND_PENDING_TTL_SEC:.0f}s)",
+                         **diagnostics.current_ids())
+    except Exception:
+        pass
 
 
 # ── Distribution pack 생성 큐 (2026-07-23) ───────────────────────────────────

@@ -56,7 +56,9 @@ from web_report import cache_policy, disk_cache, service  # noqa: E402
 
 def _is_warm(session: dict, upload_root: Path) -> bool:
     """이 세션의 report payload 가 이미 디스크 캐시에 있는가 (stat 1회)."""
-    edits_rev = report_db.get_webreport_edit_rev(session["session_id"])
+    # service 와 **같은 rev** 를 써야 한다 — 여기만 전역 rev 를 쓰면 Note 편집 세션이
+    # 영원히 콜드로 보여 매번 헛 프리웜을 돈다(service._payload_rev 참조).
+    edits_rev = service._payload_rev(report_db, session["session_id"])
     key = cache_policy.report_key(session, session["session_id"], edits_rev)
     return disk_cache.report_exists(upload_root, key)
 

@@ -270,6 +270,35 @@ _RULES = [
         "doc": "web_report/cache.py _KEYED_LOCKS_MAX",
     },
     {
+        "id": "S11-ondemand-force-offload",
+        "kind": "forbid_remove",
+        "paths": ["web_report/compute.py", "web_report/service.py"],
+        "pattern": r"force_offload_for_consumer\(|should_offload_heavy\(",
+        "why": "온디맨드(202) 소비자 스레드의 빌드와 dist/temp_map/trim 콜드 산출물은 "
+               "**워커 오프로드가 유일한 시간 상한**이다. 파이썬 스레드는 강제 종료가 "
+               "불가하므로 인라인으로 떨어지면 300초든 3시간이든 아무도 끊지 못하고 "
+               "화면은 202 를 무한 폴링한다(2026-08-13 Issue Table 편집 후 무한 로딩). "
+               "옮기는 것뿐이라면 면제 주석을 달 것.",
+        "doc": "web_report/compute.py force_offload_for_consumer / should_offload_heavy",
+    },
+    {
+        "id": "R12-issue-delete-reload",
+        "kind": "forbid_add",
+        "paths": ["server/report/static/webreport/edit_mode.js"],
+        # 삭제/숨김 계열 함수 본문 안의 load(false) 만 잡는다 — 같은 파일의 ETC '추가'와
+        # '삭제 전체 초기화'는 서버가 행을 만들어/되살려야 하므로 재로드가 정당하다.
+        # 함수 선언부와 묶지 않으면 이 규칙의 배경을 적어 둔 주석 문자열에도 걸린다.
+        "pattern": r"async function (?:removeEtcItem|hideIssueRow|deleteSelectedIssueRows)"
+                   r"[\s\S]{0,1500}?\bload\s*\(\s*false\s*\)",
+        "multi": True,
+        "why": "Issue Table 행 삭제(숨김/ETC 제거) 후 load(false) 로 세션을 통째로 다시 "
+               "받으면 안 된다. 편집은 rev 를 올려 report 캐시 키를 바꾸므로 그 재로드가 "
+               "**행 하나 지울 때마다 리포트 전체 콜드 빌드**를 유발한다(2026-08-13 무한 "
+               "로딩 사건의 방아쇠). 낙관 반영(removeIssueRowsLocal)으로 화면에서만 지우고 "
+               "진실은 편집 DB 에 남겨, 다음 새로고침 때 서버가 같은 행을 빼고 그린다.",
+        "doc": "server/report/static/webreport/edit_mode.js removeIssueRowsLocal",
+    },
+    {
         "id": "S06-cache-key-builder",
         "kind": "require_import",
         "severity": "warn",

@@ -654,12 +654,20 @@ def my_messages():
 
     admin_panel 미등록(REPORT_ADMIN_SECRET 없음) 환경에서도 import 자체는 안전하지만,
     폴링이 페이지 동작을 막지 않도록 실패는 빈 목록으로 삼킨다."""
+    stop = None
     try:
         from admin_panel import messages as admin_messages
-        rows = admin_messages.pending_for(_message_user_key())
+        key = _message_user_key()
+        rows = admin_messages.pending_for(key)
+        # 관리자가 '접속중' 탭에서 이 사용자의 대기를 끊었으면 그 신호를 함께 싣는다 —
+        # 방치된 탭의 콜드 빌드 폴링을 멈추게 하는 통로다(별도 폴링을 만들지 않는다).
+        stop = admin_messages.take_stop(key)
     except Exception:
         rows = []
-    return jsonify({"messages": rows})
+    out = {"messages": rows}
+    if stop:
+        out["stop"] = stop
+    return jsonify(out)
 
 
 @report_bp.post("/api/my_messages/<int:message_id>/ack")

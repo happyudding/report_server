@@ -947,15 +947,17 @@ function renderMapAnalysis() {
   const _doMapSelSearch = () => mapSelSearch();
   panel.querySelector("#mapSelSearchBtn").addEventListener("click", _doMapSelSearch);
   panel.querySelector("#mapSelAddSelected").addEventListener("click", mapSelAddSelected);
-  panel.querySelector("#mapSelCollapseBtn").addEventListener("click", () => {
-    const box = document.getElementById("mapSelSearchBox");
-    if (box) box.style.display = "none";   // 검색 패널 접기(명시적 닫기).
-  });
+  // 검색 패널 접기(명시적 닫기) — 펼침 상태(_mapSelBoxOpen)까지 내려야 다음 재렌더에서
+  // 다시 열리지 않는다.
+  panel.querySelector("#mapSelCollapseBtn").addEventListener("click", () => mapSelSetSearchOpen(false));
   ["mapSelSerial", "mapSelXpos", "mapSelYpos"].forEach(id => {
     const el = panel.querySelector("#" + id);
     if (el) el.addEventListener("keydown", e => { if (e.key === "Enter") _doMapSelSearch(); });
   });
   panel.querySelectorAll(".mapsel-del").forEach(b => b.addEventListener("click", () => mapSelRemove(b.dataset.key)));
+  // 좌표 추가·해제, 칸수·축 변경 등 어떤 이유로 패널을 다시 그렸든 검색 패널의 펼침
+  // 상태·검색어를 되살린다(닫혀 있었으면 no-op) — 2026-08-14 요청.
+  mapSelRestoreSearchBox();
 
   // 카드 클릭 → Map Detail 전체화면(확대·마우스오버). 갤러리는 개요(빠른 canvas 썸네일).
   panel.querySelector(".wafer-grid").addEventListener("click", (e) => {

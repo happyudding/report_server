@@ -192,9 +192,17 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
         with build_log.stage("tab:" + spec.name):
             sheets_out[spec.name] = spec.builder(ctx)
     with build_log.stage("dist_index"):
+        # temp_groups 를 넘기면 lower/upper_limit 이 그룹의 RT limit 이 된다 — 프런트가
+        # 미니셀·갤러리 규격선을 이 인덱스에서 가져가므로(distSpecLimits) 첫 소스가
+        # CT/HT 인 세션도 RT 규격선으로 그려진다.
+        # perf-guard: allow S01-report-schema — payload **구조**는 그대로고 Temperature
+        # 세션의 limit **값**만 바뀐다. 무효화는 전역 REPORT_SCHEMA_VERSION 대신
+        # cache_policy.TEMPERATURE_SCHEMA_VERSION(그 모드 전용 세대)으로 한다 — 전역
+        # bump 는 전 세션 report 캐시를 한 번에 날려 콜드 빌드 폭풍을 부른다(2026-08-06).
         distribution_index = build_distribution_index(tables, cpk_rows,
                                                       exclude=dist_excluded,
-                                                      counts=item_counts)
+                                                      counts=item_counts,
+                                                      temperature_groups=temp_groups)
 
     payload = {
         "mode": mode or "Normal",

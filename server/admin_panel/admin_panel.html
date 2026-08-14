@@ -729,8 +729,9 @@ body { position: relative; }
         <th class="num" title="마지막 요청 이후 경과">최근 활동</th>
         <th title="클라이언트 IP">IP</th>
         <th title="이 사람에게만 보낼 팝업 메시지 — 누르면 아래 '메시지 보내기' 받는 사람에 추가됩니다">메시지</th>
+        <th title="이 사람이 열어둔 세션의 계산 대기를 끊습니다 — 방치된 탭이 콜드 빌드를 계속 유발할 때 사용">중단</th>
       </tr></thead>
-      <tbody id="auBody"><tr class="empty-row"><td colspan="10">로딩 중…</td></tr></tbody>
+      <tbody id="auBody"><tr class="empty-row"><td colspan="11">로딩 중…</td></tr></tbody>
     </table></div>
     <div class="msg">서버 메모리 기준이라 <b>서버를 재시작하면 초기화</b>됩니다. 화면을 열어만 두고 아무 요청도 하지 않는 사람은 기간이 지나면 목록에서 빠집니다.
       같은 IP 에서 온 접속은 그 IP 의 <b>주 사용자</b>(활동이 가장 많은 계정)로 합쳐 보여줍니다 (<span class="badge gray">IP 병합</span>).</div>
@@ -1778,6 +1779,28 @@ document.addEventListener("click", async e => {
     loadRuntime();
   }
 });
+// '접속중' 탭 ⛔ 중단 — 방치된 탭이 콜드 빌드를 계속 유발할 때 그 사람의 대기를 끊는다.
+// 진행 중인 워커 계산 자체는 못 끊는다(ProcessPool 은 실행 중 잡을 cancel 할 수 없다).
+document.addEventListener("click", async e => {
+  const btn = e.target.closest('[data-user-act="kill"]');
+  if (!btn) return;
+  const user = btn.dataset.user, sid = btn.dataset.sid || "";
+  if (!confirm(`${user} 의 계산 대기를 중단할까요?\n\n`
+      + (sid ? `대상 세션: ${sid}\n` : "열어둔 세션이 확인되지 않아 화면 중단 신호만 보냅니다.\n")
+      + "\n· 그 세션 조회는 잠시 동안 즉시 실패 안내로 응답합니다"
+      + "\n· 그 사람 화면의 대기 폴링이 멈춥니다 (최대 30초 후)"
+      + "\n· 이미 워커에서 도는 계산은 타임아웃까지 계속됩니다")) return;
+  btn.disabled = true;
+  try {
+    const d = await postJSON("api/users/action", { action: "kill", user_key: user, session_id: sid });
+    alert(d.message || "완료");
+  } catch (err) {
+    alert("실패: " + err.message);
+  } finally {
+    btn.disabled = false;
+    loadLiveUsers();
+  }
+});
 async function loadRuntime() {
   try {
     const r = await getJSON("api/runtime");
@@ -1863,6 +1886,7 @@ $("runtimeTiles").addEventListener("click", e => {
 
 // 현황 탭이 화면에 보일 때만 10초 자동 갱신 — 그 외엔 서버 요청 없음
 setInterval(() => {
+  if (idleGate()) return;
   if (document.visibilityState === "visible" && $("pHealth").classList.contains("active")) {
     loadMetrics();
     loadRuntime();
@@ -1965,6 +1989,7 @@ $("paWindow").onchange = loadPublicApi;
 $("paHistHours").onchange = loadPublicApiHistory;
 // 이 탭이 보일 때만 10초 자동 갱신 (현황 탭과 같은 규칙 — 그 외엔 서버 요청 없음)
 setInterval(() => {
+  if (idleGate()) return;
   if (document.visibilityState === "visible" && $("pPublicApi").classList.contains("active"))
     loadPublicApi();
 }, 10000);
@@ -2456,7 +2481,7 @@ async function loadLiveUsers() {
   try { au = await getJSON("api/active_users?window=" + encodeURIComponent(win)); }
   catch (e) {
     $("auSummary").textContent = "조회 실패";
-    $("auBody").innerHTML = `<tr class="empty-row"><td colspan="9">조회 실패: ${esc(e)}</td></tr>`;
+    $("auBody").innerHTML = `<tr class="empty-row"><td colspan="11">조회 실패: ${esc(e)}</td></tr>`;
     return;
   }
   const rows = au.users || [], anon = (au.count || 0) - (au.named || 0);
@@ -2494,8 +2519,13 @@ async function loadLiveUsers() {
             ? `<button class="btn msg-to" data-to="${esc(msgTargetOf(u))}"
                   title="이 사람에게만 보낼 대상으로 추가">보내기</button>`
             : "-"}</td>
+      <td>${msgTargetOf(u)
+            ? `<button class="btn" data-user-act="kill" data-user="${esc(msgTargetOf(u))}"
+                  data-sid="${esc(u.session_id || "")}"
+                  title="이 사람의 계산 대기를 끊습니다 (진행 중 계산 자체는 워커 타임아웃까지 계속됩니다)">⛔ 중단</button>`
+            : "-"}</td>
     </tr>`).join("")
-    : `<tr class="empty-row"><td colspan="10">최근 ${mins}분 안에 접속한 사용자가 없습니다.</td></tr>`;
+    : `<tr class="empty-row"><td colspan="11">최근 ${mins}분 안에 접속한 사용자가 없습니다.</td></tr>`;
 }
 
 // 접속자 행 → 메시지 수신자 키. 서버 쪽 규칙(report/routes_misc._message_user_key)과
@@ -2508,6 +2538,7 @@ $("auWindow").onchange = loadLiveUsers;
 $("btnAuRefresh").onclick = loadLiveUsers;
 // 사용자 탭이 보이는 동안만 10초 자동 갱신 (현황 탭과 동일 규칙 — 그 외엔 요청 없음)
 setInterval(() => {
+  if (idleGate()) return;
   if (document.visibilityState === "visible" && $("pUsers").classList.contains("active")) {
     loadLiveUsers();
   }
@@ -3244,6 +3275,7 @@ $("chatQ").addEventListener("keydown", e => { if (e.key === "Enter") { chatOffse
 // 실시간 현황(처리 중 건수)은 그 탭을 보고 있을 때만 갱신한다 — 다른 탭에서 도는 폴링은
 // 서버 부하를 보려고 서버에 부하를 주는 셈이다(public API 탭과 같은 규칙).
 setInterval(() => {
+  if (idleGate()) return;
   if (document.visibilityState === "visible" && $("pChatbot").classList.contains("active")) {
     loadChatbotTab();
   }
@@ -3475,6 +3507,62 @@ $("fAction").onchange = () => { auditPage = 0; loadAudit(); };
 $("btnAuditReset").onclick = () => {
   $("fAction").value = ""; $("fQuery").value = ""; auditPage = 0; loadAudit();
 };
+
+// ── 유휴 일시정지 — 패널을 켜둔 채 자리를 비우면(무입력 4시간) 자동 갱신을 멈추고
+// "클릭하면 재개" 오버레이를 띄운다(리포트 페이지 admin_message.js 와 같은 규칙).
+// localStorage.idle_limit_ms 는 검증용 훅.
+const IDLE_LIMIT_MS = Number(localStorage.idle_limit_ms) || 4 * 3600 * 1000;
+let adminLastActivity = Date.now();
+let adminIdle = false;
+let idleMaskEl = null;
+
+function adminTouch() {
+  const now = Date.now();
+  if (now - adminLastActivity < 30000) return;   // 갱신 스로틀
+  adminLastActivity = now;
+}
+["mousemove", "mousedown", "keydown", "wheel", "touchstart", "scroll"].forEach(ev => {
+  window.addEventListener(ev, adminTouch, { capture: true, passive: true });
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") adminLastActivity = Date.now();
+});
+
+function idleGate() {
+  if (adminIdle) return true;
+  if (document.visibilityState === "visible" &&
+      Date.now() - adminLastActivity > IDLE_LIMIT_MS) {
+    adminIdle = true;
+    if (!idleMaskEl) {
+      idleMaskEl = document.createElement("div");
+      idleMaskEl.id = "idleMask";
+      idleMaskEl.style.cssText = "position:fixed;inset:0;z-index:4000;display:flex;" +
+        "align-items:center;justify-content:center;background:rgba(15,23,42,.55);cursor:pointer";
+      idleMaskEl.innerHTML =
+        '<div style="max-width:360px;border-radius:12px;background:#fff;border:1px solid #d0d7de;' +
+          'box-shadow:0 12px 40px rgba(0,0,0,.28);padding:22px 26px;text-align:center;' +
+          'font-size:13.5px;line-height:1.7;color:#24292f">' +
+          '<div style="font-size:26px;margin-bottom:6px">⏸️</div>' +
+          '유휴 상태로 자동 갱신이 일시정지되었습니다.<br>화면을 클릭하면 재개됩니다.</div>';
+      idleMaskEl.addEventListener("click", resumeAdminIdle);
+      document.body.appendChild(idleMaskEl);
+    }
+    idleMaskEl.style.display = "flex";
+    return true;
+  }
+  return false;
+}
+
+function resumeAdminIdle() {
+  adminIdle = false;
+  adminLastActivity = Date.now();
+  if (idleMaskEl) idleMaskEl.style.display = "none";
+  // 보고 있던 탭의 로더를 즉시 1회 — 10초 tick 을 기다리지 않게.
+  if ($("pHealth").classList.contains("active")) { loadMetrics(); loadRuntime(); }
+  else if ($("pPublicApi").classList.contains("active")) loadPublicApi();
+  else if ($("pUsers").classList.contains("active")) loadLiveUsers();
+  else if ($("pChatbot").classList.contains("active")) loadChatbotTab();
+}
 
 // 초기 로드 — #pStats 처럼 해시로 특정 탭 딥링크 가능
 const hashTab = document.querySelector(`.tab[data-panel="${location.hash.slice(1)}"]`);

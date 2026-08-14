@@ -263,10 +263,16 @@ CREATE TABLE IF NOT EXISTS report_webreport_edit (
     PRIMARY KEY (session_id, kind, item_key)
 );
 
--- 세션별 편집 rev (단조 증가) — REPORT/TRIM//full 캐시 키의 무효화 토큰.
+-- 세션별 편집 rev (단조 증가) — TRIM//full 캐시 키의 무효화 토큰.
+-- payload_rev 는 **report payload 계산에 실제로 들어가는 편집**(comment/hidden/status/
+-- etc_item/engr/signature/preprocess/yield_basis)에만 오르는 두 번째 카운터다. Note 시트·
+-- 차트 주석·Note 태그는 /full 조립 단계에서만 붙는데도 rev 를 올려 report payload 를
+-- 통째로 콜드로 만들었다(한 글자 고쳐도 전체 재계산). rev 는 그대로 두어 /full·note
+-- 낙관 잠금 의미를 보존한다.
 CREATE TABLE IF NOT EXISTS report_webreport_edit_rev (
-    session_id TEXT PRIMARY KEY,
-    rev        INTEGER NOT NULL
+    session_id  TEXT PRIMARY KEY,
+    rev         INTEGER NOT NULL,
+    payload_rev INTEGER NOT NULL DEFAULT 0
 );
 
 -- 접속 사용량 일별 집계 (관리자 통계 탭) — Honey 실행·웹페이지 방문 횟수.
@@ -437,6 +443,18 @@ def _migrate(conn):
         chat_cols = {r[1] for r in conn.execute("PRAGMA table_info(report_chatbot_log)")}
         if "error_detail" not in chat_cols:
             conn.execute("ALTER TABLE report_chatbot_log ADD COLUMN error_detail TEXT")
+
+    # report_webreport_edit_rev: payload 전용 rev 컬럼 (2026-08-14).
+    # ⚠️ 기존 행은 payload_rev = rev 로 **초기화한다**. 0 으로 두면 이미 rev 1..N 을
+    # 키로 저장된 옛 report 캐시가 payload_rev 가 그 값에 다시 도달할 때 되살아나
+    # 현재 편집이 반영 안 된 화면이 나간다(그리고 배포 즉시 전 세션이 콜드가 된다).
+    # rev 를 그대로 물려받으면 키가 안 바뀌어 무효화도, 부활도 없다.
+    if _table_exists(conn, "report_webreport_edit_rev"):
+        rev_cols = {r[1] for r in conn.execute("PRAGMA table_info(report_webreport_edit_rev)")}
+        if "payload_rev" not in rev_cols:
+            conn.execute("ALTER TABLE report_webreport_edit_rev "
+                         "ADD COLUMN payload_rev INTEGER NOT NULL DEFAULT 0")
+            conn.execute("UPDATE report_webreport_edit_rev SET payload_rev=rev")
 
     # 편집 권한 위임 / web_report 방문자 / 사용자별 개인 중요표시 (기존 DB 에도 생성)
     if not _table_exists(conn, "report_session_editor"):

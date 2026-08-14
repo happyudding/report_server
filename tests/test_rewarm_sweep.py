@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+import time
 import types
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -97,7 +98,7 @@ def test_yields_to_ondemand_and_gives_up():
     compute._REWARM_POLL_SEC = 0.01
     compute._REWARM_BUDGET_SEC = 0.05
     with compute._ondemand_lock:
-        compute._ondemand_pending.add(("someone-else", "report"))
+        compute._ondemand_pending[("someone-else", "report")] = time.time()
     try:
         assert compute._rewarm_idle() is False
         with _patched({"cold-1": {"analysis_key": "a1"}}, {"cold-1"}, queued):
@@ -105,7 +106,7 @@ def test_yields_to_ondemand_and_gives_up():
         assert queued == [], queued          # 사용자 잡이 끝날 때까지 투입 없음
     finally:
         with compute._ondemand_lock:
-            compute._ondemand_pending.discard(("someone-else", "report"))
+            compute._ondemand_pending.pop(("someone-else", "report"), None)
 
 
 def test_start_guards():

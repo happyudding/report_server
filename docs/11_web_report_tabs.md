@@ -238,7 +238,17 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   `Yield|<bin>`(대표행+상세행 일괄), CPK/TEMP/ETC 는 `CPK|<item>`/`TEMP|<item>`/`ETC|<item>`
   (sheets.js `issueHideStatusKey` ↔ issue_table.py 동기 필수). 숨김(kind `issue_hidden`,
   Yield/CPK 만 — ETC 는 기존 etc remove)은 행별 복원 없이 툴바 "삭제 전체 초기화"로만
-  일괄 복원. Status(kind `issue_status`)는 Open/Close 드랍다운(편집모드 전용, 기본 Open —
+  일괄 복원.
+  ⚠️ **삭제 후 세션을 재로드하지 않는다** (2026-08-14, perf_guard `R12`). 저장은 그대로
+  편집 DB 에 하되, 프런트는 `load(false)` 대신 `removeIssueRowsLocal` 로 화면에서만 지우고
+  그 패널만 다시 그린다 — 편집은 rev 를 올려 report 캐시 키를 바꾸므로 그 재로드가 **행
+  하나 지울 때마다 리포트 전체 콜드 빌드**를 유발했다(무한 로딩 사건의 방아쇠 →
+  [12](12_web_report_cache.md)). 로컬 삭제 규칙은 백엔드와 같아야 한다: Yield 는 그 bin 의
+  대표행+상세행 전부, CPK/TEMP/ETC 는 item 단위, 그리고 **지운 행이 들고 있던 Category
+  라벨은 남는 첫 행으로 옮긴다**(라벨을 잃으면 뒤 행들의 섹션 상속이 끊겨 표가 어긋난다).
+  일괄 삭제는 `{"action":"hide","keys":[...]}` 배치 1회로 보낸다(rev +1) — 단건을 N회
+  보내면 콜드 유발 지점이 N개가 된다. ETC **추가**와 '삭제 전체 초기화'는 서버가 행을
+  만들어/되살려야 하므로 재로드를 유지한다. Status(kind `issue_status`)는 Open/Close 드랍다운(편집모드 전용, 기본 Open —
   **"Close" 만 저장, 부재=Open**). Summary 탭 Issue Status 카드가 카테고리별 Open/Close
   를 집계한다(`issueStatusCounts`, map_select.js).
 - **Issue Table Signature 컬럼** (2026-08-11): AI Comment **왼쪽** 열. 값은 엔진이 발화한
@@ -425,6 +435,15 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
     첫 화면 전송량 gz 3.3MB(17배 감소). 서버는 `compute_dist_compact(only=…)` 로 항목만
     좁혀 계산하므로 **결과는 전량 payload 에서 그 항목만 뽑은 것과 정준 JSON 일치**
     (다운샘플 아님 — 규칙 #6 무관). 표시용 다운샘플·세로 채움은 종전대로 클라 담당.
+  - **표시 규격선(LSL/USL)의 단일 기준도 `distribution_index`** (2026-08-13). ECDF
+    compact/pack 이 함께 싣는 `lo`/`hi` 는 **항목이 처음 등장한 소스**의 limit 이라,
+    Temperature 세션에서 업로드 소스 순서상 첫 소스가 CT/HT 면 CT/HT 규격선이 그려졌다
+    (CPK 탭·Item_detail 은 RT 기준이라 화면끼리 어긋난다). 이제 인덱스가 그룹의 **RT
+    limit** 을 담고(`build_distribution_index(temperature_groups=…)`, 기준 선택은
+    `cpk.temperature_reference_tables` 한 곳), 프런트 미니셀·갤러리 셀은 `distSpecLimits`
+    로 인덱스에서 가져간다. pack 의 `lo`/`hi` 는 업로드 시점에 굳어 RT 를 알 수 없으므로
+    **데이터가 아니라 표시 기준을 인덱스로 모으는** 방향으로 맞췄다. 캐시는
+    `cache_policy.TEMPERATURE_SCHEMA_VERSION`(Temperature 세션 전용 세대)으로 무효화한다.
   - **항목 존재 판단은 `distribution_index`** — 인덱스와 ECDF compact 는 같은 기준
     (측정 data 전무 항목만 제외)으로 항목을 고르므로, 데이터를 받아보지 않고도 "분포가
     있는 항목인지"를 알 수 있다. Issue Table 미니셀 생성 여부가 이 판단을 쓴다
