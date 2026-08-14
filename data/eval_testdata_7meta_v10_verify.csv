@@ -1,0 +1,301 @@
+﻿item,source,group,level,intent,expect,metric,target,actual_metric,fired_all_rules,fired_live,missing,false_fire,suppressed,co_fired,status_live,cell_live
+CENTER_FAIL_L1,0,single,1,CENTER_FAIL,not_fire,center_fail_share,0.5,,,,,,,,,
+CENTER_FAIL_L2(FAIL),0,single,2,CENTER_FAIL,fire,center_fail_share,0.96,0.9583,CENTER_FAIL;OUTLIER,CENTER_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer 중심부에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer 중심부 불량 집중 — center 공정(증착/CMP 등) 점검"
+CENTER_FAIL_L3(FAIL),0,single,3,CENTER_FAIL,fire,center_fail_share,0.98,1.0,CENTER_FAIL;OUTLIER;SPOT_CLUSTER,CENTER_FAIL;OUTLIER;SPOT_CLUSTER,,,,OUTLIER;SPOT_CLUSTER,MAJOR,"[MAJOR] [현상] wafer 중심부에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer 중심부 불량 집중 — center 공정(증착/CMP 등) 점검"
+CENTER_FAIL_L4(FAIL),0,single,4,CENTER_FAIL,fire,center_fail_share,0.99,1.0,CENTER_FAIL;OUTLIER;SPOT_CLUSTER,CENTER_FAIL;OUTLIER;SPOT_CLUSTER,,,,OUTLIER;SPOT_CLUSTER,MAJOR,"[MAJOR] [현상] wafer 중심부에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer 중심부 불량 집중 — center 공정(증착/CMP 등) 점검"
+CENTER_FAIL_L5(FAIL),0,single,5,CENTER_FAIL,fire,center_fail_share,1.0,1.0,CENTER_FAIL;OUTLIER;SPOT_CLUSTER,CENTER_FAIL;OUTLIER;SPOT_CLUSTER,,,,OUTLIER;SPOT_CLUSTER,MAJOR,"[MAJOR] [현상] wafer 중심부에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer 중심부 불량 집중 — center 공정(증착/CMP 등) 점검"
+CLUSTER_FAIL_L1,0,single,1,CLUSTER_FAIL,not_fire,quadrant_imbalance,0.5,,,,,,,,,
+CLUSTER_FAIL_L2(FAIL),0,single,2,CLUSTER_FAIL,fire,quadrant_imbalance,2.7,2.7955,CLUSTER_FAIL;OUTLIER,CLUSTER_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] 특정 영역에 불량이 편중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 특정 영역 불량 편중 — 국부 결함/handler/scratch 확인"
+CLUSTER_FAIL_L3(FAIL),0,single,3,CLUSTER_FAIL,fire,quadrant_imbalance,3.0,3.3153,CLUSTER_FAIL;OUTLIER,CLUSTER_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] 특정 영역에 불량이 편중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 특정 영역 불량 편중 — 국부 결함/handler/scratch 확인"
+CLUSTER_FAIL_L4(FAIL),0,single,4,CLUSTER_FAIL,fire,quadrant_imbalance,3.4,3.5802,CLUSTER_FAIL;OUTLIER,CLUSTER_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] 특정 영역에 불량이 편중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 특정 영역 불량 편중 — 국부 결함/handler/scratch 확인"
+CLUSTER_FAIL_L5(FAIL),0,single,5,CLUSTER_FAIL,fire,quadrant_imbalance,3.8,3.8625,CLUSTER_FAIL;OUTLIER,CLUSTER_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] 특정 영역에 불량이 편중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 특정 영역 불량 편중 — 국부 결함/handler/scratch 확인"
+E1_FAIL_L1,0,single,1,E1_FAIL,not_fire,e1_fail_share,0.5,,,,,,,,,
+E1_FAIL_L2(FAIL),0,single,2,E1_FAIL,fire,e1_fail_share,0.96,0.9583,E1_FAIL;OUTLIER,E1_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer 최외곽 한 줄(E1)에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 최외곽 1열(E1) 불량 집중 — edge exclusion/척킹·프로브 접촉, edge die 취급 기준 확인"
+E1_FAIL_L3(FAIL),0,single,3,E1_FAIL,fire,e1_fail_share,0.98,1.0,E1_FAIL;OUTLIER,E1_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer 최외곽 한 줄(E1)에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 최외곽 1열(E1) 불량 집중 — edge exclusion/척킹·프로브 접촉, edge die 취급 기준 확인"
+E1_FAIL_L4(FAIL),0,single,4,E1_FAIL,fire,e1_fail_share,0.99,1.0,E1_FAIL;OUTLIER,E1_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer 최외곽 한 줄(E1)에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 최외곽 1열(E1) 불량 집중 — edge exclusion/척킹·프로브 접촉, edge die 취급 기준 확인"
+E1_FAIL_L5(FAIL),0,single,5,E1_FAIL,fire,e1_fail_share,1.0,1.0,E1_FAIL;OUTLIER,E1_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer 최외곽 한 줄(E1)에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 최외곽 1열(E1) 불량 집중 — edge exclusion/척킹·프로브 접촉, edge die 취급 기준 확인"
+EDGE_FAIL_L1,0,single,1,EDGE_FAIL,not_fire,edge_fail_share,0.5,,,,,,,,,
+EDGE_FAIL_L2(FAIL),0,single,2,EDGE_FAIL,fire,edge_fail_share,0.96,0.9583,EDGE_FAIL;OUTLIER,EDGE_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer edge 영역(최외곽 한 줄 제외)에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer edge 불량 집중 — uniformity/edge 보정, 모과제 동일유형 확인"
+EDGE_FAIL_L3(FAIL),0,single,3,EDGE_FAIL,fire,edge_fail_share,0.98,1.0,EDGE_FAIL;OUTLIER,EDGE_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer edge 영역(최외곽 한 줄 제외)에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer edge 불량 집중 — uniformity/edge 보정, 모과제 동일유형 확인"
+EDGE_FAIL_L4(FAIL),0,single,4,EDGE_FAIL,fire,edge_fail_share,0.99,1.0,EDGE_FAIL;OUTLIER,EDGE_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer edge 영역(최외곽 한 줄 제외)에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer edge 불량 집중 — uniformity/edge 보정, 모과제 동일유형 확인"
+EDGE_FAIL_L5(FAIL),0,single,5,EDGE_FAIL,fire,edge_fail_share,1.0,1.0,EDGE_FAIL;OUTLIER,EDGE_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer edge 영역(최외곽 한 줄 제외)에 불량이 집중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer edge 불량 집중 — uniformity/edge 보정, 모과제 동일유형 확인"
+RANDOM_001(FAIL),0,random,3,,observe,(관찰),,,OUTLIER;LOW_CPK;BIMODALITY,OUTLIER;LOW_CPK;BIMODALITY,,,,,MAJOR,"[MAJOR][이봉] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_003(FAIL),0,random,5,,observe,(관찰),,,LOW_CPK,LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+RANDOM_004(FAIL),0,random,2,,observe,(관찰),,,OUTLIER;MEAN_SHIFT,OUTLIER;MEAN_SHIFT,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_005(FAIL),0,random,3,,observe,(관찰),,,CLUSTER_FAIL;LOW_CPK;BIMODALITY,CLUSTER_FAIL;LOW_CPK;BIMODALITY,,,,,MAJOR,"[MAJOR] [현상] 특정 영역에 불량이 편중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 특정 영역 불량 편중 — 국부 결함/handler/scratch 확인"
+RANDOM_006(FAIL),0,random,4,,observe,(관찰),,,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_007(FAIL),0,random,5,,observe,(관찰),,,CLUSTER_FAIL;OUTLIER;LOW_CPK,CLUSTER_FAIL;OUTLIER;LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 특정 영역에 불량이 편중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 특정 영역 불량 편중 — 국부 결함/handler/scratch 확인"
+RANDOM_009(FAIL),0,random,3,,observe,(관찰),,,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_010(FAIL),0,random,4,,observe,(관찰),,,CLUSTER_FAIL;OUTLIER,CLUSTER_FAIL;OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 특정 영역에 불량이 편중되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 특정 영역 불량 편중 — 국부 결함/handler/scratch 확인"
+RANDOM_012(FAIL),0,random,2,,observe,(관찰),,,MEAN_SHIFT;HEAVY_TAIL,MEAN_SHIFT;HEAVY_TAIL,,,,,MINOR,"[MINOR] [현상] 분포 중심이 한쪽 spec으로 치우쳐 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 중심이 한쪽 spec 으로 치우침 — offset/센터링 trim 검토"
+RANDOM_017(FAIL),0,random,3,,observe,(관찰),,,OUTLIER;LOW_CPK,OUTLIER;LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_018(FAIL),0,random,4,,observe,(관찰),,,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_019(FAIL),0,random,5,,observe,(관찰),,,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+RANDOM_021(FAIL),0,random,3,,observe,(관찰),,,OUTLIER;LOW_CPK,OUTLIER;LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_022(FAIL),0,random,4,,observe,(관찰),,,OUTLIER;MEAN_SHIFT,OUTLIER;MEAN_SHIFT,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_025(FAIL),0,random,3,,observe,(관찰),,,BIMODALITY;LOW_CPK,BIMODALITY;LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 분포가 여러 level로 분리되는 양상입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+RANDOM_026(FAIL),0,random,4,,observe,(관찰),,,OUTLIER;LOW_CPK,OUTLIER;LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_027(FAIL),0,random,5,,observe,(관찰),,,OUTLIER;MEAN_SHIFT;HEAVY_TAIL,OUTLIER;MEAN_SHIFT;HEAVY_TAIL,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_028(FAIL),0,random,2,,observe,(관찰),,,RING_FAIL;OUTLIER,RING_FAIL;OUTLIER,,,,,MAJOR,"[MAJOR] [현상] wafer 반경 방향으로 ring성 fail이 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer 반경 방향 ring성 fail - radial uniformity 및 edge/center band 반복성 확인"
+RING_FAIL_L1,0,single,1,RING_FAIL,not_fire,ring_fail_share,0.5,,,,,,,,,
+RING_FAIL_L2(FAIL),0,single,2,RING_FAIL,fire,ring_fail_share,0.96,0.9583,RING_FAIL;OUTLIER,RING_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer 반경 방향으로 ring성 fail이 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer 반경 방향 ring성 fail - radial uniformity 및 edge/center band 반복성 확인"
+RING_FAIL_L3(FAIL),0,single,3,RING_FAIL,fire,ring_fail_share,0.98,1.0,RING_FAIL;OUTLIER,RING_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer 반경 방향으로 ring성 fail이 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer 반경 방향 ring성 fail - radial uniformity 및 edge/center band 반복성 확인"
+RING_FAIL_L4(FAIL),0,single,4,RING_FAIL,fire,ring_fail_share,0.99,1.0,RING_FAIL;OUTLIER,RING_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer 반경 방향으로 ring성 fail이 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer 반경 방향 ring성 fail - radial uniformity 및 edge/center band 반복성 확인"
+RING_FAIL_L5(FAIL),0,single,5,RING_FAIL,fire,ring_fail_share,1.0,1.0,RING_FAIL;OUTLIER,RING_FAIL;OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] wafer 반경 방향으로 ring성 fail이 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] wafer 반경 방향 ring성 fail - radial uniformity 및 edge/center band 반복성 확인"
+SPOT_CLUSTER_L1,0,single,1,SPOT_CLUSTER,not_fire,fail_spread_norm,,,,,,,,,,
+SPOT_CLUSTER_L2(FAIL),0,single,2,SPOT_CLUSTER,fire,fail_spread_norm,,0.2112,SPOT_CLUSTER;OUTLIER;CLUSTER_FAIL,SPOT_CLUSTER;OUTLIER;CLUSTER_FAIL,,,,OUTLIER;CLUSTER_FAIL,MAJOR,"[MAJOR] [현상] 불량이 wafer 의 좁은 한 곳에 뭉쳐 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 국부 몰림 불량 — scratch/파티클/척킹 자국 등 국부 결함 위치 확인"
+SPOT_CLUSTER_L3(FAIL),0,single,3,SPOT_CLUSTER,fire,fail_spread_norm,,0.1286,SPOT_CLUSTER;OUTLIER;CLUSTER_FAIL,SPOT_CLUSTER;OUTLIER;CLUSTER_FAIL,,,,OUTLIER;CLUSTER_FAIL,MAJOR,"[MAJOR] [현상] 불량이 wafer 의 좁은 한 곳에 뭉쳐 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 국부 몰림 불량 — scratch/파티클/척킹 자국 등 국부 결함 위치 확인"
+SPOT_CLUSTER_L4(FAIL),0,single,4,SPOT_CLUSTER,fire,fail_spread_norm,,0.0773,SPOT_CLUSTER;OUTLIER;CLUSTER_FAIL,SPOT_CLUSTER;OUTLIER;CLUSTER_FAIL,,,,OUTLIER;CLUSTER_FAIL,MAJOR,"[MAJOR] [현상] 불량이 wafer 의 좁은 한 곳에 뭉쳐 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 국부 몰림 불량 — scratch/파티클/척킹 자국 등 국부 결함 위치 확인"
+SPOT_CLUSTER_L5(FAIL),0,single,5,SPOT_CLUSTER,fire,fail_spread_norm,,0.1301,SPOT_CLUSTER;OUTLIER;CLUSTER_FAIL,SPOT_CLUSTER;OUTLIER;CLUSTER_FAIL,,,,OUTLIER;CLUSTER_FAIL,MAJOR,"[MAJOR] [현상] 불량이 wafer 의 좁은 한 곳에 뭉쳐 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 국부 몰림 불량 — scratch/파티클/척킹 자국 등 국부 결함 위치 확인"
+UNKNOWN_000(FAIL),0,unknown,3,,observe,(미분류),,,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+UNKNOWN_001(FAIL),0,unknown,3,,observe,(미분류),,,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+UNKNOWN_002(FAIL),0,unknown,3,,observe,(미분류),,,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+UNKNOWN_003(FAIL),0,unknown,3,,observe,(미분류),,,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+UNKNOWN_004(FAIL),0,unknown,3,,observe,(미분류),,,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+BIMODALITY_L1,0,single,1,BIMODALITY,not_fire,density_gap,,0.0,,,,,,,,
+BIMODALITY_L2(FAIL),0,single,2,BIMODALITY,fire,density_gap,,0.8514,BIMODALITY;LOW_CPK,BIMODALITY;LOW_CPK,,,,LOW_CPK,MAJOR,"[MAJOR][이봉] [현상] 분포가 2개 level로 분리되는 양상입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+BIMODALITY_L3(FAIL),0,single,3,BIMODALITY,fire,density_gap,,0.8916,BIMODALITY;LOW_CPK,BIMODALITY;LOW_CPK,,,,LOW_CPK,MAJOR,"[MAJOR] [현상] 분포가 여러 level로 분리되는 양상입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+BIMODALITY_L4(FAIL),0,single,4,BIMODALITY,fire,density_gap,,0.9139,BIMODALITY;LOW_CPK,BIMODALITY;LOW_CPK,,,,LOW_CPK,MAJOR,"[MAJOR] [현상] 분포가 여러 level로 분리되는 양상입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+BIMODALITY_L5(FAIL),0,single,5,BIMODALITY,fire,density_gap,,0.9949,BIMODALITY;LOW_CPK,BIMODALITY;LOW_CPK,,,,LOW_CPK,MAJOR,"[MAJOR] [현상] 분포가 여러 level로 분리되는 양상입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+CODE_RAIL_L1,0,single,1,CODE_RAIL,not_fire,code_edge_hit,0.01,0.0101,,,,,,,,
+CODE_RAIL_L2(FAIL),0,single,2,CODE_RAIL,fire,code_edge_hit,0.07,0.07,CODE_RAIL;OUTLIER;LOW_CPK,CODE_RAIL;OUTLIER;LOW_CPK,,,,OUTLIER;LOW_CPK,MAJOR,"[MAJOR] [현상] CODE 값이 min/max 레일에 포화되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] CODE/TRIM 값이 레일(min/max)에 포화 — trim range/알고리즘·headroom 점검"
+CODE_RAIL_L3(FAIL),0,single,3,CODE_RAIL,fire,code_edge_hit,0.15,0.1504,CODE_RAIL;OUTLIER;LOW_CPK,CODE_RAIL;OUTLIER;LOW_CPK,,,,OUTLIER;LOW_CPK,MAJOR,"[MAJOR] [현상] CODE 값이 min/max 레일에 포화되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] CODE/TRIM 값이 레일(min/max)에 포화 — trim range/알고리즘·headroom 점검"
+CODE_RAIL_L4(FAIL),0,single,4,CODE_RAIL,fire,code_edge_hit,0.3,0.3003,CODE_RAIL;LOW_CPK,CODE_RAIL;LOW_CPK,,,,LOW_CPK,MAJOR,"[MAJOR] [현상] CODE 값이 min/max 레일에 포화되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] CODE/TRIM 값이 레일(min/max)에 포화 — trim range/알고리즘·headroom 점검"
+CODE_RAIL_L5(FAIL),0,single,5,CODE_RAIL,fire,code_edge_hit,0.45,0.45,CODE_RAIL;LOW_CPK,CODE_RAIL;LOW_CPK,,,,LOW_CPK,MAJOR,"[MAJOR] [현상] CODE 값이 min/max 레일에 포화되어 있습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] CODE/TRIM 값이 레일(min/max)에 포화 — trim range/알고리즘·headroom 점검"
+EQUIPMENT_SUSPECT_L1,0,single,1,EQUIPMENT_SUSPECT,not_fire,site_cpk_delta,0.1,,,,,,,,,
+EQUIPMENT_SUSPECT_L2(FAIL),0,single,2,EQUIPMENT_SUSPECT,fire,site_cpk_delta,0.6,,OUTLIER;HEAVY_TAIL,OUTLIER;HEAVY_TAIL,,,,OUTLIER;HEAVY_TAIL,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+EQUIPMENT_SUSPECT_L3(FAIL),0,single,3,EQUIPMENT_SUSPECT,fire,site_cpk_delta,1.5,,OUTLIER,OUTLIER,,,,OUTLIER,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+EQUIPMENT_SUSPECT_L4(FAIL),0,single,4,EQUIPMENT_SUSPECT,fire,site_cpk_delta,3.0,,UNKNOWN,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+EQUIPMENT_SUSPECT_L5(FAIL),0,single,5,EQUIPMENT_SUSPECT,fire,site_cpk_delta,4.5,,LOW_CPK,LOW_CPK,,,,LOW_CPK,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+HEAVY_TAIL_L1,0,single,1,HEAVY_TAIL,not_fire,kurtosis,2.0,2.0,,,,,,,,
+HEAVY_TAIL_L2(FAIL),0,single,2,HEAVY_TAIL,fire,kurtosis,12.0,12.0,HEAVY_TAIL,HEAVY_TAIL,,,,,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+HEAVY_TAIL_L3(FAIL),0,single,3,HEAVY_TAIL,fire,kurtosis,15.0,14.5336,HEAVY_TAIL,HEAVY_TAIL,,,,,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+HEAVY_TAIL_L4(FAIL),0,single,4,HEAVY_TAIL,fire,kurtosis,19.0,17.0464,HEAVY_TAIL,HEAVY_TAIL,,,,,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+HEAVY_TAIL_L5(FAIL),0,single,5,HEAVY_TAIL,fire,kurtosis,25.0,23.4835,HEAVY_TAIL,HEAVY_TAIL,,,,,MINOR,"[MINOR] [현상] 분포 꼬리가 두껍게 나타납니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
+LOW_CPK_L1,0,single,1,LOW_CPK,not_fire,cpk,1.8,1.8295,,,,,,,,
+LOW_CPK_L2(FAIL),0,single,2,LOW_CPK,fire,cpk,1.25,1.2603,OUTLIER;LOW_CPK,OUTLIER;LOW_CPK,,,,OUTLIER,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+LOW_CPK_L3(FAIL),0,single,3,LOW_CPK,fire,cpk,0.95,0.9605,LOW_CPK,LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+LOW_CPK_L4(FAIL),0,single,4,LOW_CPK,fire,cpk,0.75,0.7963,LOW_CPK,LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+LOW_CPK_L5(FAIL),0,single,5,LOW_CPK,fire,cpk,0.62,0.7159,LOW_CPK,LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+LOW_SAMPLE_UNCERTAIN_L1,0,single,1,LOW_SAMPLE_UNCERTAIN,not_fire,n_dut,400,400,,,,,,,,
+LOW_SAMPLE_UNCERTAIN_L2(FAIL),0,single,2,LOW_SAMPLE_UNCERTAIN,fire,n_dut,19,19,OUTLIER;LOW_SAMPLE_UNCERTAIN;LOW_CPK,OUTLIER;LOW_CPK,,,,OUTLIER;LOW_CPK,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+LOW_SAMPLE_UNCERTAIN_L3(FAIL),0,single,3,LOW_SAMPLE_UNCERTAIN,fire,n_dut,12,12,LOW_CPK;LOW_SAMPLE_UNCERTAIN;MEAN_SHIFT,LOW_CPK;MEAN_SHIFT,,,,LOW_CPK;MEAN_SHIFT,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+LOW_SAMPLE_UNCERTAIN_L4(FAIL),0,single,4,LOW_SAMPLE_UNCERTAIN,fire,n_dut,8,8,LOW_CPK;LOW_SAMPLE_UNCERTAIN,LOW_CPK,,,,LOW_CPK,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+LOW_SAMPLE_UNCERTAIN_L5(FAIL),0,single,5,LOW_SAMPLE_UNCERTAIN,fire,n_dut,4,4,LOW_CPK;LOW_SAMPLE_UNCERTAIN;MEAN_SHIFT,LOW_CPK;MEAN_SHIFT,,,,LOW_CPK;MEAN_SHIFT,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+MEAN_SHIFT_L1,0,single,1,MEAN_SHIFT,not_fire,center_bias,0.15,0.15,,,,,,,,
+MEAN_SHIFT_L2(FAIL),0,single,2,MEAN_SHIFT,fire,center_bias,0.36,0.3604,OUTLIER;MEAN_SHIFT,OUTLIER;MEAN_SHIFT,,,,OUTLIER,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+MEAN_SHIFT_L3(FAIL),0,single,3,MEAN_SHIFT,fire,center_bias,0.55,0.5506,OUTLIER;MEAN_SHIFT,OUTLIER;MEAN_SHIFT,,,,OUTLIER,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+MEAN_SHIFT_L4(FAIL),0,single,4,MEAN_SHIFT,fire,center_bias,0.8,0.5267,TAIL_RISK;LOW_CPK;MEAN_SHIFT,LOW_CPK;MEAN_SHIFT,,,,TAIL_RISK;LOW_CPK,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+MEAN_SHIFT_L5(FAIL),0,single,5,MEAN_SHIFT,fire,center_bias,0.92,0.5301,TAIL_RISK;LOW_CPK;MEAN_SHIFT,LOW_CPK;MEAN_SHIFT,,,,TAIL_RISK;LOW_CPK,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+MISSING_LIMIT_L1,0,single,1,MISSING_LIMIT,not_fire,limit_missing,0,0,,,,,,,,
+MISSING_LIMIT_L2(FAIL),0,single,2,MISSING_LIMIT,fire,limit_missing,1,1,MISSING_LIMIT,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+MISSING_LIMIT_L3(FAIL),0,single,3,MISSING_LIMIT,fire,limit_missing,1,1,MISSING_LIMIT,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+MISSING_LIMIT_L4(FAIL),0,single,4,MISSING_LIMIT,fire,limit_missing,1,1,MISSING_LIMIT,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+MISSING_LIMIT_L5(FAIL),0,single,5,MISSING_LIMIT,fire,limit_missing,1,1,MISSING_LIMIT,UNKNOWN,,,,,MONITOR,"[MONITOR] [현상] fail 이 있으나 기존 룰로 설명되지 않는 상태입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 기존 signature 로 설명되지 않는 fail — 발화 사유(단위/limit/표본/조건)를 확인하고 새 불량유형 후보로 검토"
+OUTLIER_L1,0,single,1,OUTLIER,not_fire,fail_mad_min,8.0,,,,,,,,,
+OUTLIER_L2(FAIL),0,single,2,OUTLIER,fire,fail_mad_min,16.0,14.899,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+OUTLIER_L3(FAIL),0,single,3,OUTLIER,fire,fail_mad_min,22.0,14.8138,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+OUTLIER_L4(FAIL),0,single,4,OUTLIER,fire,fail_mad_min,32.0,15.5675,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+OUTLIER_L5(FAIL),0,single,5,OUTLIER,fire,fail_mad_min,50.0,14.7606,OUTLIER;LOW_CPK;HEAVY_TAIL,OUTLIER;LOW_CPK;HEAVY_TAIL,,,,LOW_CPK;HEAVY_TAIL,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_000(FAIL),0,random,2,,observe,(관찰),,,BIMODALITY;LOW_CPK,BIMODALITY;LOW_CPK,,,,,MAJOR,"[MAJOR][이봉] [현상] 분포가 2개 level로 분리되는 양상입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+RANDOM_002(FAIL),0,random,4,,observe,(관찰),,,OUTLIER;HEAVY_TAIL,OUTLIER;HEAVY_TAIL,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_008(FAIL),0,random,2,,observe,(관찰),,,OUTLIER;LOW_CPK,OUTLIER;LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_011(FAIL),0,random,5,,observe,(관찰),,,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_013(FAIL),0,random,3,,observe,(관찰),,,LOW_CPK,LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 공정능력지수(Cpk)가 기준(1.33) 미달입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 공정능력지수 미달(cpk<1.33) — 산포/센터링 근본 점검"
+RANDOM_014(FAIL),0,random,4,,observe,(관찰),,,BIMODALITY;LOW_CPK,BIMODALITY;LOW_CPK,,,,,MAJOR,"[MAJOR] [현상] 분포가 여러 level로 분리되는 양상입니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] 분포가 두 무리로 분리(이봉) — 로트/장비 혼입·조건 이원화 점검"
+RANDOM_015(FAIL),0,random,5,,observe,(관찰),,,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_016(FAIL),0,random,2,,observe,(관찰),,,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_020(FAIL),0,random,2,,observe,(관찰),,,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_023(FAIL),0,random,5,,observe,(관찰),,,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_024(FAIL),0,random,2,,observe,(관찰),,,OUTLIER,OUTLIER,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
+RANDOM_029(FAIL),0,random,3,,observe,(관찰),,,OUTLIER;MEAN_SHIFT,OUTLIER;MEAN_SHIFT,,,,,MAJOR,"[MAJOR] [현상] 일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다.
+[과거사례] 참고할 수 있는 과거 사례가 없습니다. 
+ [점검제안] outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"

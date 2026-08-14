@@ -9,12 +9,21 @@ default:
   outlier_fail_mad_min: 4.0       # OUTLIER 컷① 거리 — 중심에 **가장 가까운** fail 이 중앙값에서
                                   # MAD 의 몇 배 밖인가(fail_mad_min). limit 바로 밖에 붙은
                                   # fail(공정능력 문제)을 걸러내는 하한이다.
-  outlier_fail_gap_sigma_min: 1.5 # OUTLIER 컷② 끊김 — 마지막 pass 와 첫 fail 사이 빈 구간이
-                                  # robust σ 의 몇 배인가(fail_pass_gap_sigma). 둘은 AND 다.
+  outlier_body_z: 3.0             # OUTLIER 컷② 끊김 — 몸통 경계(|modified z|). 여기서부터
+                                  # 최근접 fail 까지의 구간을 "비었나" 로 본다.
+  outlier_jump_ratio_min: 0.35    # 그 구간에서 한 번에 비어 있는 최대 폭이 구간 전체의 몇
+                                  # 배인가(fail_body_jump_ratio). 컷①과 AND 다.
                                   # ⚠ 거리만으로는 못 가른다: 실측에서 z 13.2 가 heavy tail,
                                   # z 8.5 가 outlier 였다(순서가 뒤집힌다). 가르는 것은 연속성 —
-                                  # 꼬리가 이어져 limit 을 넘었으면 gap≈0(HEAVY_TAIL), 몸통과
-                                  # 뚝 끊겼으면 gap 큼(OUTLIER). 2026-08-13 사용자 검토로 확정.
+                                  # 꼬리가 촘촘히 이어져 limit 을 넘었으면 비율 0 쪽(HEAVY_TAIL),
+                                  # 몸통과 뚝 끊겨 구간이 통째로 비면 1 쪽(OUTLIER).
+                                  # 0.35 근거(v9 겨냥 세트 실측): HEAVY_TAIL 0.170~0.287 /
+                                  # OUTLIER 0.940~1.000, 사용자가 outlier 로 지목한 관찰군
+                                  # 8건 0.406~1.000. 양쪽 여유가 균형 잡히는 지점이다.
+  outlier_fail_gap_sigma_min: 1.5 # [미사용 — 2026-08-14] 구 컷②. `fail_pass_gap_sigma` 는
+                                  # |z| 라 양쪽 꼬리를 한 자에 섞어 재서, 반대쪽에 더 먼 pass 가
+                                  # 하나만 있어도 음수가 됐다(끊긴 fail 덩어리가 통째로 미발화).
+                                  # 지표 자체는 evidence 로 남기므로 키도 남긴다(참조 시 KeyError 방지).
   outlier_sigma: 4.5         # outlier_ratio 계산 컷 — 중앙값에서 robust σ(1.4826·MAD) 이 배수 밖이면 outlier (Iglewicz-Hoaglin modified z, 원 권장 3.5 → 과검출 완화)
                              # 룰 판정에는 안 쓰인다(evidence 표시 + BIMODALITY 게이트용)
   skew_warn: 1.0            # |skew| 주의

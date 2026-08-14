@@ -98,7 +98,15 @@ signatures:
   - `SEVERE_OUTLIER`+`OUTLIER_WARN` → **`OUTLIER`** 하나.
     판정축은 2026-08-13 에 다시 바뀌어 **거리 AND 끊김** 두 조건이다:
     `fail_mad_min ≥ 4`(중심에 가장 가까운 fail 의 MAD 배수) **AND**
-    `fail_pass_gap_sigma ≥ 1.5`(마지막 pass ↔ 첫 fail 빈 구간, robust σ).
+    ~~`fail_pass_gap_sigma ≥ 1.5`~~ → **`fail_body_jump_ratio ≥ 0.35`**(2026-08-14 교체).
+    구 지표는 `|z|` 라 **양쪽 꼬리를 한 자에 섞어** 반대쪽에 더 먼 pass 가 하나만 있어도
+    음수가 됐다 — 사용자가 outlier 로 지목한 v9 관찰군 8건이 −3.4~+1.5 로 통째 미발화.
+    새 지표는 `fail_mad_min` 을 만든 **그 쪽에서만**, 몸통 경계(`outlier_body_z` 3.0)부터
+    최근접 fail 까지 구간의 "한 번에 비어 있는 최대 폭 / 구간 폭" 을 잰다.
+    v9/v10 겨냥 실측: HEAVY_TAIL 0.09~0.29 / OUTLIER 0.94~1.00 으로 갈린다.
+    ⚠ **겨냥 데이터의 fail 을 `_push_out_of_spec` 으로 밀어 만들면 이 지표가 오염된다** —
+    중간 꼬리 chip 을 limit 밖으로 *옮기므로* 그 자리에 구멍이 생긴다. 그래서 HEAVY_TAIL
+    겨냥은 `fails={"mode":"natural"}` 로 자연 꼬리만 쓴다(tools/eval_testdata).
     ⚠ 거리 하나로는 못 가른다 — 실측에서 z 13.2 가 heavy tail, z 8.5 가 outlier 였다.
     꼬리가 이어져 limit 을 넘었으면 HEAVY_TAIL, 몸통과 끊겼으면 OUTLIER 다.
     정규 몸통은 최대 pass 거리가 ≈3.85σ 로 고정이라 **낮은 MAD 배수(4~6)의 OUTLIER 를
@@ -113,6 +121,11 @@ signatures:
   "전체 fail 중 그 영역이 몇 %를 가졌나". `*_fail_ratio`(밀도 배수)는 evidence 참고값이다.
   - `SPOT_CLUSTER`(2026-08-13 신설) = `fail_spread_norm ≤ 0.25` — fail 무게중심 기준 RMS
     거리/웨이퍼 반경. **위치·모양과 무관**하게 "서로 붙어 있나" 만 본다.
+    ⚠ `RING_FAIL` 은 같은 임계로 **반대 부호** 조건(`> 0.25`)을 함께 건다(2026-08-14) —
+    ring 밴드가 die 의 절반이라 국부 blob 이 거기 놓이면 점유율 1.0 이 되고, RING 이
+    `SPECIFICITY_ORDER` 에서 앞이라 primary 까지 가져갔다(SPOT 겨냥 L2~L5 전부). 두 룰이
+    **같은 키를 공유**해야 "둘 다 발화"/"둘 다 미발화" 틈이 안 생긴다.
+    실측: RING 겨냥 0.593~0.619 / SPOT 겨냥 0.094~0.211.
   - `CLUSTER_FAIL` = 사분면 불균형. ⚠ **축에 걸친 뭉침을 놓친다** — 같은 blob 이 사분면
     한가운데면 4.00, x축 경계면 2.20 이었다. 그래서 `quadrant_imbalance` 는 **0°·45° 두
     격자의 max** 로 잰다(그래도 원점 근처 뭉침은 CENTER_FAIL·SPOT_CLUSTER 몫).

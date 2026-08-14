@@ -95,6 +95,34 @@ def test_fail_pass_gap_sigma_separates_tail_from_outlier():
     assert allfail["fail_pass_gap_sigma"] is None
 
 
+def test_fail_body_jump_ratio_separates_tail_from_outlier():
+    """OUTLIER 판정축② (2026-08-14 교체) — 몸통~최근접 fail 구간이 얼마나 비었나.
+
+    위 `fail_pass_gap_sigma` 와 같은 것을 재려던 지표인데, 그쪽은 `|z|` 라 **양쪽 꼬리를
+    한 자에 섞는다** — 반대쪽에 더 먼 pass 가 하나만 있어도 음수가 되어 끊긴 fail 이
+    통째로 미발화했다. 아래 `two_sided` 가 정확히 그 경우다: fail 은 위쪽에서 몸통과
+    뚝 끊겼는데, 아래쪽에 더 멀리 나간 pass 가 있어 구 지표는 음수가 된다.
+    """
+    body = [10.0 + 0.1 * i for i in range(20)]
+    tail = body + [14.0, 18.0, 24.0, 30.0]            # 꼬리가 이어져 마지막이 fail
+    jump = body + [30.0]                              # 몸통과 뚝 끊긴 fail
+    m = {"stdev": 5.0}
+    f_tail = features.compute(_case(tail, usl=28, fail_mask=[False] * 23 + [True]), m, "ev1")
+    f_jump = features.compute(_case(jump, usl=28, fail_mask=[False] * 20 + [True]), m, "ev1")
+    assert f_tail["fail_body_jump_ratio"] < f_jump["fail_body_jump_ratio"]
+    assert f_jump["fail_body_jump_ratio"] > 0.35      # 배포 임계(outlier_jump_ratio_min)
+
+    # 반대쪽 꼬리에 더 먼 pass 가 있어도 이쪽 끊김을 그대로 잡는다(구 지표는 여기서 죽었다)
+    two_sided = [-40.0] + body + [30.0]
+    f_two = features.compute(_case(two_sided, lsl=-60, usl=28,
+                                   fail_mask=[False] * 21 + [True]), m, "ev1")
+    assert f_two["fail_pass_gap_sigma"] < 0            # 구 지표: 음수 → 미발화
+    assert f_two["fail_body_jump_ratio"] > 0.35        # 새 지표: 끊김을 본다
+
+    # fail 이 없으면 판정 대상 자체가 없다 → None(결측을 양호로 읽지 않는다)
+    assert features.compute(_case(body), m, "ev1")["fail_body_jump_ratio"] is None
+
+
 def test_quantized_steps_are_not_bimodal():
     """양자화(계단형) 단봉을 이봉으로 오판하지 않는다 — 히스토그램 격자 정렬 회귀 방지선.
 

@@ -306,7 +306,15 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      몰림 — 사분면 경계에 걸친 뭉침까지) + quadrant_imbalance 를 0°/45° max 로
 #      ④ CODE_RAIL·BIDIR_TAIL 활성화, 이산(격자) 데이터의 BIMODALITY 는 빈 계단 ≥2 요구
 #      ⑤ AI Comment 에서 [다봉] 배지 제거. Signature 컬럼·코멘트 값이 광범위하게 바뀐다.
-REPORT_SCHEMA_VERSION = 38
+# v39: OUTLIER 연속성 축 교체 + RING_FAIL 산포 하한(2026-08-14 사용자 v9 검토).
+#      ① OUTLIER 의 끊김 조건이 `fail_pass_gap_sigma`(양쪽 꼬리 |z| 혼합 — 반대쪽에 더 먼
+#      pass 가 있으면 음수) → **`fail_body_jump_ratio`**(같은 쪽에서 몸통~최근접 fail 구간의
+#      최대 빈 폭 비율)로. 튄 값 때문에 죽은 fail 이 LOW_CPK/HEAVY_TAIL/UNKNOWN 으로 새던
+#      것이 OUTLIER 로 잡히고, 반대로 HEAVY_TAIL 이 OUTLIER 에 primary 를 뺏기던 것도 해소.
+#      ② RING_FAIL 에 `fail_spread_norm > 0.25` AND 추가 — ring 밴드 안의 한 점 뭉침이
+#      전부 RING 으로 잡히던 것(SPOT_CLUSTER 겨냥 4건 전부)을 차단.
+#      features.py 코드 변경이라 .rules_rev 로는 무효화되지 않아 전역 bump 가 필요하다.
+REPORT_SCHEMA_VERSION = 39
 
 # Temperature 세션 **전용** payload 세대 — 값이 Temperature 모드에서만 바뀌는 변경은
 # REPORT_SCHEMA_VERSION 대신 여기를 올린다. 전역 bump 는 전 세션의 report 캐시를 한 번에

@@ -588,6 +588,26 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
 > 선언은 보존) · `MISSING_LIMIT`·`EQUIPMENT_SUSPECT`·`CONSTANT_VALUE`·`CODE_RAIL`·
 > `TAIL_RISK`·`BIDIR_TAIL`·`GROSS_FAIL`·`LOW_SAMPLE_UNCERTAIN`·`WAFER_GRADIENT`.
 > 상세는 §16-1 의 재편 항목.
+>
+> **2026-08-14 (3차, 사용자 v9 검토)** — 룰 목록은 그대로 두고 **판정축 2개**를 고쳤다.
+> 룰을 켜고 끄는 단계가 끝나 이제는 "같은 룰이 무엇을 보고 판정하나" 가 문제였다.
+> - `OUTLIER` 끊김 조건: `fail_pass_gap_sigma ≥ 1.5` → **`fail_body_jump_ratio ≥ 0.35`**.
+>   구 지표는 `min(|z| of fail) − max(|z| of pass)` 라 **양쪽 꼬리를 한 자에 섞어** 쟀다 —
+>   반대쪽 꼬리에 더 먼 pass 가 하나만 있어도 음수가 되어, 몸통과 뚝 끊긴 fail 덩어리가
+>   통째로 미발화했다(사용자가 outlier 로 지목한 v9 관찰군 8건이 −3.4 ~ +1.5).
+>   새 지표는 같은 쪽에서 몸통 경계(3σ)~최근접 fail 구간의 "최대 빈 폭 / 구간 폭" 이다.
+>   부수 효과로 `HEAVY_TAIL_L3` 가 OUTLIER 에 primary 를 뺏기던 것도 해소됐다.
+> - `RING_FAIL` 에 `fail_spread_norm > spot_cluster_spread_max` AND 추가. ring 밴드는
+>   die 의 절반이라 국부 blob 이 거기 놓이면 점유율 1.0 이 되고, RING 이
+>   `SPECIFICITY_ORDER` 에서 SPOT_CLUSTER 보다 앞이라 primary 까지 가져갔다
+>   (v9 SPOT_CLUSTER 겨냥 L2~L5 **전부** RING_FAIL 로 판정).
+>
+> 남은 알려진 겨냥 오분류(v10 기준, 룰이 아니라 **겨냥 데이터**의 한계):
+> `LOW_CPK_L2` · `MEAN_SHIFT_L2` · `MEAN_SHIFT_L3` 이 OUTLIER 에 primary 를 내준다.
+> 이 겨냥들은 분포를 spec 안에 가두고(`bounded`) fail 을 `_push_out_of_spec` 로 limit
+> 바로 밖에 만들어서, 값 축에서 실제로 "몸통과 끊긴 덩어리" 가 된다. 자연 꼬리로 바꾸면
+> fail 이 0 이 되어 항목 자체가 사라지므로(cpk 1.25 → 5025 chip 에 0.5개꼴) 사다리 상수를
+> 함께 재설계해야 한다 — 보류.
 
 - **LOW_CPK 를 끈 것이 핵심**이다. SPEC_TOO_TIGHT 은 발화 조건에 `cpk < cpk_warn` 이
   들어 있어 LOW_CPK(MAJOR)와 항상 같이 뜨고, 자신은 MINOR 라 specificity 경쟁에서 져

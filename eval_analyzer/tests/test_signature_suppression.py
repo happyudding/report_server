@@ -88,16 +88,16 @@ def test_suppressor_ids_accepts_scalar():
     assert signatures._suppressor_ids({}) == []
 
 
-@pytest.mark.parametrize("mad_min, gap, expect_outlier", [
-    (10.0, 3.0, True),        # 멀고 끊겼다 → OUTLIER
-    (16.0, 0.4, False),       # 멀지만 이어졌다 → 꼬리(HEAVY_TAIL 축)
+@pytest.mark.parametrize("mad_min, jump, expect_outlier", [
+    (10.0, 0.9, True),        # 멀고 끊겼다 → OUTLIER
+    (16.0, 0.2, False),       # 멀지만 이어졌다 → 꼬리(HEAVY_TAIL 축)
 ])
-def test_evaluate_end_to_end(mad_min, gap, expect_outlier):
+def test_evaluate_end_to_end(mad_min, jump, expect_outlier):
     """엔진 evaluate 를 통과시켰을 때 배포 yaml 선언대로 동작하는지."""
     case = {"product_type": None, "family_product": None, "item_class": None,
             "bin": 99, "lsl": 0.0, "usl": 10.0, "value_type": "V"}
     # cpk 는 raw_metrics 쪽 값이다 — features 에 None 으로 넣으면 그게 덮어써 LOW_CPK 가 죽는다.
-    features = {"n_dut": 200, "fail_mad_min": mad_min, "fail_pass_gap_sigma": gap}
+    features = {"n_dut": 200, "fail_mad_min": mad_min, "fail_body_jump_ratio": jump}
     result = signatures.evaluate(case, features, {"cpk": 0.9, "yield": 0.99})
     fired = {s["id"] for s in result["signatures"]}
     assert ("OUTLIER" in fired) is expect_outlier

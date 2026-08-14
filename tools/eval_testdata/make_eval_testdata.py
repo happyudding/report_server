@@ -90,6 +90,7 @@ SIG_BIN = {
 }
 NORMAL_BIN = 2                  # 겨냥한 룰이 없는 항목(정상군·경계군)의 fail bin
 RANDOM_BIN_BASE = 40            # 관찰군(random) — Map 에서 40번대 색으로 한눈에 갈린다
+UNKNOWN_BIN_BASE = 50           # 미분류군(unknown) — 50번대. 관찰군과 색을 가른다
 
 # 기준 limit — 폭(WIDTH)=1.0 이라 spread_norm·center_bias 계산이 그대로 눈에 보인다.
 LSL, USL = 0.5, 1.5
@@ -871,7 +872,12 @@ SINGLE_BUILDERS = {
     "LOW_CPK": lambda lv: (_lowcpk_plan(lv), None, "cpk", LOWCPK_T[lv], {}),
     "MEAN_SHIFT": lambda lv: (_meanshift_plan(lv), None, "center_bias", MEANSHIFT_T[lv], {}),
     "BIDIR_TAIL": lambda lv: (_bidir_plan(lv), None, "spec_margin_min", BIDIR_T[lv], {}),
-    "HEAVY_TAIL": lambda lv: (_heavytail_plan(lv), None, "kurtosis", KURT_T[lv], {}),
+    # fail 은 **자연 꼬리로만** 만든다 — `_kurt_plan` 이 bounded 를 안 걸어 꼬리가 스스로
+    # spec 을 넘는데, 거기에 레벨 사다리(FAIL_N)만큼 `_push_out_of_spec` 로 보충하면
+    # 중간 꼬리의 chip 을 limit 밖으로 **옮겨서** 그 자리에 구멍이 난다. 그 구멍이 곧
+    # `fail_body_jump_ratio` 라 HEAVY_TAIL 겨냥이 OUTLIER 로 넘어갔다(v10 L4 0.487).
+    "HEAVY_TAIL": lambda lv: (_heavytail_plan(lv), {"mode": "natural", "pattern": "random"},
+                              "kurtosis", KURT_T[lv], {}),
     "BIMODALITY": lambda lv: (_subpop_plan(lv), None, "density_gap", None,
                               {"note": f"모드 분리 {SUBPOP_SEP_SD[lv]}σ (성분 σ {SUBPOP_SD[lv]})"
                                        + (" · 3봉(다봉)" if lv == len(LEVELS) - 1 else "")}),
@@ -1275,6 +1281,66 @@ def random_specs(count, rng: random.Random, salt: str = ""):
     return out
 
 
+UNKNOWN_COUNT = 5               # 미분류군 기본 개수 (--unknown-items 로 조절)
+
+# 미분류군이 쓰는 단위 — CODE/PCT 는 제외한다(CODE_RAIL·양자화가 끼어들어 "아무 룰도 안
+# 걸림" 이 깨진다). limit 은 관찰군과 같은 `_random_limits` 로 굴린다.
+UNKNOWN_UNITS = [u for u in RANDOM_UNITS if u not in ("CODE", "PCT")]
+
+
+def unknown_specs(count, rng: random.Random, salt: str = ""):
+    """미분류군 — **어떤 룰도 안 걸려 UNKNOWN 으로 떨어지는** 항목(2026-08-14 신설).
+
+    왜 따로 만드나: 관찰군은 fail 을 `_push_out_of_spec` 로 limit 바로 밖에 몰아 만들어
+    몸통과 fail 사이가 늘 비어 있다 — 값 축에서 구조적으로 outlier 모양이라 UNKNOWN 이
+    나올 수 없었다(v9 실측: 관찰군 30개 중 23개가 OUTLIER 조건 충족). 그래서 fail 을
+    `mode: "natural"`(분포가 스스로 넘긴 chip 만) 로 만든다.
+
+    모양은 **중심이 같은 좁은 몸통 + 넓은 소수 성분** 하나다. 이 조합이라야 세 가지가
+    동시에 성립한다 — 넓은 성분이 limit 을 넘겨 fail 을 10개 이상 만들고(자연 꼬리),
+    몸통~limit 구간을 촘촘히 채워 끊김이 없고(OUTLIER 회피), 그러면서도 전체 σ 가 작아
+    cpk 가 1.33 위에 남는다(LOW_CPK 회피). 단봉 정규분포로는 불가능하다 — cpk ≥ 1.33 이면
+    limit 이 4σ 밖이라 자연 초과가 5025 chip 에 0.3 개꼴이다.
+
+    ⚠ kurtosis 는 이 모양에서 10 을 넘지만 HEAVY_TAIL 은 뜨지 않는다 — 넓은 성분이
+    `tail_mass_3s` 를 밴드 상한(0.05) 위로 밀어 올리기 때문이다. 그 밴드는 원래 "다봉이라
+    몸통이 갈라진 경우" 를 빼려고 둔 것인데, 여기서는 꼬리가 두꺼운 정도가 밴드를 넘는다.
+
+    파라미터는 관찰군처럼 **굴린다**(고정 형상을 손으로 박지 않는다). 다만 위 세 조건이
+    서로 밀고 당기므로(꼬리를 키우면 σ 가 커져 cpk 가 떨어진다) **cpk 목표에서 역산**한다:
+      · cpk 목표 U(1.55, 2.10) → 전체 σ = 반폭 / (3·cpk)     → LOW_CPK(1.33) 회피
+      · 몸통 σ = 전체 σ × U(0.35, 0.50), 넓은 성분 w = U(0.10, 0.16)
+        → 넓은 성분 σ 는 전체 σ 를 맞추도록 역산 → fail 20~50개(5025 chip 기준)
+      · 중심 = 정중앙 ± 0.03·span            → MEAN_SHIFT(center_bias 0.30) 회피
+      · 위치 편중 없음(region=None)          → 공간 룰 회피
+    실제로 UNKNOWN 이 떴는지는 생성 직후 내장 verify(2패스)가 확인한다.
+    """
+    out = []
+    for i in range(count):
+        unit = rng.choice(UNKNOWN_UNITS)
+        lo, hi = _random_limits(unit, rng)
+        span = hi - lo
+        c0 = (hi + lo) / 2 + rng.uniform(-0.03, 0.03) * span
+        cpk_goal = rng.uniform(1.55, 2.10)
+        sd_all = (span / 2) / (3 * cpk_goal)
+        sd_body = sd_all * rng.uniform(0.35, 0.50)
+        w_wide = rng.uniform(0.10, 0.16)
+        # σ_all² = (1−w)·σ_body² + w·σ_wide² 를 σ_wide 에 대해 푼다.
+        sd_wide = math.sqrt(max(sd_all ** 2 - (1 - w_wide) * sd_body ** 2, 1e-12) / w_wide)
+        plan = {"kind": "mixture", "mean": c0,
+                "comps": [(1.0 - w_wide, c0, sd_body), (w_wide, c0, sd_wide)]}
+        # bounded 를 걸지 않는다 — 가두면 자연 꼬리가 사라져 fail 이 0 이 된다.
+        item = spec(f"UNKNOWN_{i:03d}", [], 3, values=plan,
+                    fails={"mode": "natural", "pattern": "random"},
+                    unit=unit, lsl=lo, usl=hi, bin_=UNKNOWN_BIN_BASE + i,
+                    metric="(미분류)", target=None, group="unknown", expect="observe",
+                    note=f"미분류 겨냥 — cpk 목표 {cpk_goal:.2f} · 몸통 σ {sd_body:.4g} + "
+                         f"넓은 성분 {w_wide:.0%}·σ {sd_wide:.4g} · 자연 꼬리 fail (위치 무관)")
+        item["seed_salt"] = salt
+        out.append(item)
+    return out
+
+
 MIX_POOL = ["OUTLIER", "MEANSHIFT", "HEAVYTAIL", "SUBPOP",
             "E1", "EDGE", "CENTER", "RING", "CLUSTER", "SPOT"]
 
@@ -1332,6 +1398,7 @@ def assign_tno(specs):
         # 관찰군은 유형 98 로 분리한다 — 정상군·경계군과 같은 99 를 쓰면 (유형,레벨) 당
         # 순번 99개 상한에 먼저 걸린다(assert dup==0).
         base = (98 if s.get("group") == "random"
+                else 97 if s.get("group") == "unknown"
                 else SIG_BIN.get(s["intent"][0], 99) if s["intent"] else 99)
         key = (base, s["level"])
         seq[key] = seq.get(key, 0) + 1
@@ -1414,6 +1481,8 @@ def prepare_specs(specs, n_rows):
         s["_seed"] = seed
         if not fires:
             cost = 0
+        elif s["fails"].get("mode") == "natural":
+            cost = int(oos.sum())              # 자연 초과분이 곧 fail (build_source_df 참조)
         elif s["fails"].get("pattern") in SPATIAL_PATTERNS or s["fails"].get("fraction"):
             cost = max(_pattern_count(s, n_rows), int(oos.sum()))
         else:
@@ -1602,8 +1671,17 @@ def build_source_df(specs, wafer, seed):
         # ② 공간·수율 룰은 위치/비율로 chip 을 더 골라 limit 밖으로 밀어 fail 로 만든다.
         # ③ 값만으로 fail 이 모자라면 레벨 사다리(FAIL_N)만큼 극단값 chip 을 밀어 채운다.
         # L1·L2(정상 단계)는 prepare_specs 가 spec 밖 값을 없앴으므로 fail 이 0 이다.
+        #
+        # ⚠ **`mode: "natural"` 은 ②③ 을 건너뛴다**(2026-08-14). ②③ 의 `_push_out_of_spec`
+        # 은 고른 chip 을 limit 바로 밖으로 옮기는데, 몸통이 좁으면 몸통과 limit 사이가
+        # 통째로 비어 **어떤 겨냥이든 값 축에서 outlier 모양**이 된다. 그래서 이 방식만으로는
+        # "꼬리가 자연히 limit 을 넘은" 항목 — 즉 어떤 룰도 안 걸리는 UNKNOWN — 을 만들 수
+        # 없었다. natural 모드는 fail 을 ① 로만, 곧 분포가 스스로 넘긴 chip 으로만 만든다.
+        natural = fires and f.get("mode") == "natural"
         fail_idx = free_idx[oos[free_idx]] if fires else np.asarray([], dtype=int)
-        if fires and (pattern in SPATIAL_PATTERNS or f.get("fraction")):
+        if natural:
+            pass
+        elif fires and (pattern in SPATIAL_PATTERNS or f.get("fraction")):
             want = _pattern_count(s, n)
             pick_from = np.setdiff1d(free_idx, fail_idx, assume_unique=False)
             extra = pick_fail_rows(pattern, max(0, want - fail_idx.size), pick_from,
@@ -2095,6 +2173,17 @@ def verify(out_dir: Path, answer_rows, args):
             print(f"    {sig:22} {cnt:3}건 ({cnt / observed_n:.0%})")
         print(f"    {'(발화 없음)':22} {observed_silent:3}건 "
               f"({observed_silent / observed_n:.0%}) — UNKNOWN 만 붙는다")
+    # 미분류군 — "아무 룰도 안 걸림" 이 목표라 성공 여부를 item 단위로 보여 준다.
+    unk = [r for r in rows if r["group"] == "unknown"]
+    if unk:
+        hit = [r for r in unk
+               if not [s for s in r["fired_live"].split(";") if s and s != UNKNOWN_ID]]
+        print(f"\n[미분류군] UNKNOWN 겨냥 {len(unk)}개 중 {len(hit)}개 성공 "
+              f"(현재 룰 기준 다른 발화 0건)")
+        for r in unk:
+            other = [s for s in r["fired_live"].split(";") if s and s != UNKNOWN_ID]
+            print(f"    {r['item'][:26]:28} {'OK' if not other else '실패'} "
+                  f"발화={';'.join(other) or 'UNKNOWN 만'} · {r['status_live'] or '-'}")
     for sig, why in UNFIRABLE.items():
         print(f"  [발화불가] {sig}: {why}")
     return rows
@@ -2156,6 +2245,8 @@ def main():
     ap.add_argument("--items", type=int, default=500, help="test item 총 개수 (기본 500)")
     ap.add_argument("--random-items", type=int, default=RANDOM_COUNT,
                     help="관찰용 무작위 item 수 — 정답 기대 없이 엔진 판정만 본다 (기본 30)")
+    ap.add_argument("--unknown-items", type=int, default=UNKNOWN_COUNT,
+                    help="미분류(UNKNOWN) 겨냥 item 수 — 어떤 룰도 안 걸리는 항목 (기본 5)")
     ap.add_argument("--radius", type=int, default=0,
                     help="웨이퍼 반경(die) — 행 수 ≈ πr² (기본 28 ≈ 2,460행)")
     ap.add_argument("--seed", type=int, default=20260812)
@@ -2260,8 +2351,9 @@ def versioned_path(path: Path) -> Path:
 CSV_EXCLUDE = {"GROSS_FAIL", "CONSTANT_VALUE", "BIDIR_TAIL", "TAIL_RISK"}
 
 
-def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT, seed: int = 20260812):
-    """CSV 1장(웨이퍼 1장)에 담을 item 목록 — 단독 세트 + 관찰군(random).
+def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT, seed: int = 20260812,
+                     unknown_count: int = UNKNOWN_COUNT):
+    """CSV 1장(웨이퍼 1장)에 담을 item 목록 — 단독 세트 + 관찰군 + 미분류군.
 
     분포를 spec 안에 가둬(`bounded`) fail 은 레벨 사다리(FAIL_N)만큼만 나오게 했으므로
     한 장에 들어간다. 그래도 예산(행의 90%)을 넘으면 비싼 것부터 뺀다.
@@ -2269,6 +2361,9 @@ def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT, seed: int = 
     """
     pool = [s for s in single_specs() if not (set(s["intent"]) & CSV_EXCLUDE)]
     pool += random_specs(random_count, random.Random(seed), salt=str(seed))
+    # 미분류군은 관찰군과 **다른 난수열**을 쓴다 — 같은 rng 를 이어 쓰면 관찰군 개수를
+    # 바꿀 때마다 미분류군 표본까지 통째로 바뀌어 재현이 어긋난다.
+    pool += unknown_specs(unknown_count, random.Random(seed + 1), salt=str(seed))
     specs = assign_tno(pool)
     prepare_specs(specs, n_rows)
     budget = int(n_rows * 0.9)
@@ -2281,7 +2376,11 @@ def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT, seed: int = 
         kept.append(s)
         used += need
     # 공간 패턴 item 이 먼저 행을 고르게 한다(뒤로 밀리면 남은 행이 편중돼 패턴이 깨진다).
-    kept.sort(key=lambda s: (s["fails"].get("pattern") not in SPATIAL_PATTERNS, s["name"]))
+    # 그 다음이 미분류군이다 — fail 을 밀어 만들지 않고 **값이 넘긴 chip 그 자리**를 써야
+    # 하므로, 그 chip 을 앞 item 이 먼저 가져가면 fail 이 통째로 사라진다(실측: 뒤로 밀면
+    # 자연 fail 9개가 1개로 줄었다). 밀어 만드는 item 들은 아무 여유 chip 이나 쓰면 된다.
+    kept.sort(key=lambda s: (s["fails"].get("pattern") not in SPATIAL_PATTERNS,
+                             s["group"] != "unknown", s["name"]))
     return kept, dropped, used
 
 
@@ -2310,9 +2409,12 @@ def make_single_csv(args):
     _check_coord_limits(args)
     wafer = build_wafer(args.radius)
     n_rows = wafer[0].size
-    specs, dropped, used = single_csv_specs(n_rows, args.random_items, args.seed)
+    specs, dropped, used = single_csv_specs(n_rows, args.random_items, args.seed,
+                                            args.unknown_items)
     n_random = sum(1 for s in specs if s["group"] == "random")
-    print(f"[1/3] item {len(specs)}개 (겨냥 {len(specs) - n_random} + 관찰용 무작위 {n_random}) "
+    n_unknown = sum(1 for s in specs if s["group"] == "unknown")
+    print(f"[1/3] item {len(specs)}개 (겨냥 {len(specs) - n_random - n_unknown} + "
+          f"관찰용 무작위 {n_random} + 미분류 {n_unknown}) "
           f"· chip {n_rows}개/item · fail chip {used}개 ({used / n_rows:.0%} 사용)")
     if dropped:
         print("      예산 초과 제외: " + ", ".join(f"{n}({k})" for n, k in dropped))

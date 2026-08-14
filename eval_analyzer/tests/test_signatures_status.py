@@ -34,20 +34,25 @@ def test_gross_fail_fires_on_low_yield():
 
 
 def test_outlier_needs_both_distance_and_gap():
-    """현행 OUTLIER 는 **거리 AND 끊김** 두 조건이다 (2026-08-13).
+    """현행 OUTLIER 는 **거리 AND 끊김** 두 조건이다 (끊김 지표 교체 2026-08-14).
 
     거리만 보면 "꼬리가 길어 규격을 넘은 것"(HEAVY_TAIL)까지 outlier 로 잡힌다 —
     실측에서 더 멀리 나간 항목이 오히려 heavy tail 이었다. 몸통과 끊겼는지를 함께 본다.
+    끊김은 `fail_body_jump_ratio`(같은 쪽에서 몸통~최근접 fail 구간의 최대 빈 폭 비율)로
+    잰다. 구 `fail_pass_gap_sigma` 는 양쪽 꼬리 |z| 를 섞어 재서 판정에서 뺐다.
     """
     case = _case()
     raw = {"yield": 0.95, "cpk": 1.5}
     fired = lambda f: [s["id"] for s in signatures.evaluate(case, f, raw)["signatures"]]
 
-    assert "OUTLIER" in fired(_full_features(fail_mad_min=10.0, fail_pass_gap_sigma=3.0))
+    assert "OUTLIER" in fired(_full_features(fail_mad_min=10.0, fail_body_jump_ratio=0.9))
     # 멀지만 꼬리가 이어져 있다 → outlier 아님(HEAVY_TAIL 축)
-    assert "OUTLIER" not in fired(_full_features(fail_mad_min=16.0, fail_pass_gap_sigma=0.4))
+    assert "OUTLIER" not in fired(_full_features(fail_mad_min=16.0, fail_body_jump_ratio=0.2))
     # 끊겼지만 limit 바로 밖이라 가깝다 → outlier 아님(공정능력 축)
-    assert "OUTLIER" not in fired(_full_features(fail_mad_min=3.0, fail_pass_gap_sigma=2.0))
+    assert "OUTLIER" not in fired(_full_features(fail_mad_min=3.0, fail_body_jump_ratio=0.9))
+    # 구 지표는 이제 판정에 관여하지 않는다 — 값이 커도 끊김 비율이 낮으면 미발화
+    assert "OUTLIER" not in fired(_full_features(fail_mad_min=10.0, fail_pass_gap_sigma=9.0,
+                                                 fail_body_jump_ratio=0.1))
 
 
 def test_outlier_keeps_low_cpk_and_heavy_tail_in_list():
@@ -57,7 +62,7 @@ def test_outlier_keeps_low_cpk_and_heavy_tail_in_list():
     영영 볼 수 없었다. 지금은 둘 다 보이고 대표만 OUTLIER 다.
     """
     case = _case()
-    feats = _full_features(fail_mad_min=10.0, fail_pass_gap_sigma=3.0,
+    feats = _full_features(fail_mad_min=10.0, fail_body_jump_ratio=0.9,
                            kurtosis=15.0, tail_mass_3s=0.02, n_dut=100)
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 0.8})
     ids = [s["id"] for s in sig["signatures"]]

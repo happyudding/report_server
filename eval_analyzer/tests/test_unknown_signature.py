@@ -60,7 +60,7 @@ def test_no_fail_stays_ok_without_unknown():
 def test_unknown_not_added_when_another_rule_fires():
     """다른 룰이 하나라도 뜨면 UNKNOWN 은 붙지 않는다(중복 표시 방지)."""
     case = _case()
-    feats = _quiet_features(fail_mad_min=10.0, fail_pass_gap_sigma=3.0)   # OUTLIER 조건
+    feats = _quiet_features(fail_mad_min=10.0, fail_body_jump_ratio=0.9)   # OUTLIER 조건
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 1.5})
     ids = [s["id"] for s in sig["signatures"]]
     assert "OUTLIER" in ids and UNKNOWN not in ids
@@ -119,8 +119,8 @@ def test_low_cpk_does_not_bury_its_cause():
     한다는 원칙은 그대로다(안 그러면 "무엇을 고쳐야 하나" 가 사라진다).
     """
     case = _case()
-    # 멀리 떨어지고(4 MAD 초과) 몸통과 끊긴(1.5σ 초과) fail = cpk 하락의 원인
-    feats = _quiet_features(fail_mad_min=10.0, fail_pass_gap_sigma=3.0)
+    # 멀리 떨어지고(4 MAD 초과) 몸통과 끊긴(빈 구간 비율 0.35 초과) fail = cpk 하락의 원인
+    feats = _quiet_features(fail_mad_min=10.0, fail_body_jump_ratio=0.9)
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 1.0})
     ids = [s["id"] for s in sig["signatures"]]
     assert {"OUTLIER", "LOW_CPK"} <= set(ids)

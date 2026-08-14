@@ -26,8 +26,9 @@ _FEATURE_KEYS = [
     "value_gap_ratio", "value_gap_minor_mass",
     # 파생(DB 미저장): E1(최외곽 1 chip line) 집중도 · 모멘트 왜도
     "e1_fail_ratio", "skewness_moment",
-    # 파생(DB 미저장): OUTLIER 판정용 — 거리(MAD 배수) AND 끊김(gap). z_max 는 참고값
-    "fail_mad_min", "fail_pass_gap_sigma", "fail_robust_z_max",
+    # 파생(DB 미저장): OUTLIER 판정용 — 거리(MAD 배수) AND 끊김(body_jump_ratio).
+    # gap_sigma·z_max 는 evidence 참고값(2026-08-14 판정에서 제외 — features 상단 참조)
+    "fail_mad_min", "fail_pass_gap_sigma", "fail_robust_z_max", "fail_body_jump_ratio",
     # 파생(DB 미저장): 공간 룰 판정용 — 전체 fail 중 그 영역이 차지하는 **점유율**
     "e1_fail_share", "edge_fail_share", "center_fail_share", "ring_fail_share",
     # 파생(DB 미저장): fail 좌표 몰림도(SPOT_CLUSTER) · 꼬리 질량(HEAVY_TAIL) ·
@@ -221,6 +222,11 @@ def _fail_outlier_features(v, fail_mask, median, mad, z=_UNSET):
       · 몸통과 뚝 끊겨 따로 놀면            → gap 큼   → OUTLIER
     거리(mad) 조건은 "limit 바로 밖에 붙은 fail"(공정능력 문제)을 걸러내는 하한이다.
 
+    ⚠ **`fail_pass_gap_sigma` 는 2026-08-14 부터 판정에 쓰지 않는다**(evidence·저장은 유지).
+    연속성이라는 착안은 맞았으나 이 식이 그것을 못 쟀다 — `dist` 가 `|z|` 라 **양쪽 꼬리를
+    한 자에 섞어서**, 반대쪽에 더 먼 pass 가 하나만 있어도 음수가 됐다. 연속성 축은 같은
+    쪽만 보는 `_fail_body_jump_ratio` 로 옮겼다(그 docstring에 근거).
+
     거리를 MAD 배수로 돌려주는 이유: 사용자가 "MAD 기준 4σ" 라고 말하는 값이 화면·트레이스에
     그대로 보여야 한다. `0.6745 × 1.4826 ≈ 1` 이라 `|x−med|/robustσ ≡ |modified z|` 이고,
     MAD 배수는 거기에 `/0.6745` 한 것이다 — 자(尺)는 하나다.
@@ -244,6 +250,52 @@ def _fail_outlier_features(v, fail_mask, median, mad, z=_UNSET):
     z_max = float(df.max())
     gap = float(df.min() - dp.max()) if dp.size else None
     return mad_min, gap, z_max
+
+
+def _fail_body_jump_ratio(v, fail_mask, median, mad, th, z=_UNSET):
+    """몸통과 최근접 fail 사이가 **얼마나 비어 있나** — OUTLIER 연속성 축(2026-08-14).
+
+    `fail_pass_gap_sigma` 를 판정에서 대체한다. 그 지표는 이름과 달리 연속성을 재지
+    못했다 — `min(|z| of fail) − max(|z| of pass)` 라 **양쪽 꼬리를 한 자에 섞는다**.
+    반대쪽 꼬리에 더 먼 pass 가 하나만 있어도 음수가 되어, 몸통과 뚝 끊긴 fail 덩어리가
+    통째로 미발화했다(v9 실측: 사용자가 outlier 로 지목한 8건이 −3.4 ~ +1.5).
+
+    그래서 **같은 쪽에서, 몸통 경계부터 최근접 fail 까지만** 본다:
+      · side  = `fail_mad_min` 을 만든 그 fail 이 있는 쪽 (두 축의 기준을 일치시킨다)
+      · body  = min(outlier_body_z, 0.8·zfm) — 몸통 경계. 0.8 배는 fail 이 몸통 경계보다
+                안쪽에 있어(zfm < 3) 구간이 뒤집히는 경우의 폴백이다.
+      · 반환  = 그 구간에서 **한 번에 비어 있는 최대 폭 / 구간 전체 폭**
+
+    1.0 에 가까우면 구간이 통째로 비었다(= 몸통과 끊긴 별개 덩어리 → OUTLIER),
+    0 에 가까우면 점들이 촘촘히 이어져 넘어갔다(= 꼬리가 길어진 것 → HEAVY_TAIL).
+    v9 겨냥 세트 실측: HEAVY_TAIL 0.170~0.287 / OUTLIER 0.940~1.000 으로 갈린다.
+
+    **DB 에 저장하지 않는 파생 키다**(value_gap_ratio 선례) — eval.db 스키마 무변경.
+    fail 이 없거나 흩어짐 자체가 없으면(전부 동일값) None → 조건 False → 미발화.
+    """
+    fm = np.asarray(fail_mask, dtype=bool)
+    if fm.size != v.size or not fm.any():
+        return None
+    if z is _UNSET:
+        z = _modified_z(v, median, mad)
+    if z is None:                                  # 전부 동일값 — 흩어짐이 없다
+        return None
+    ok = np.isfinite(v)
+    fm = fm & ok
+    if not fm.any():
+        return None
+    dist = np.abs(z)
+    i = int(np.argmin(np.where(fm, dist, np.inf)))  # 중심에 가장 가까운 fail = mad_min 의 주인
+    zfm = float(dist[i])
+    body = min(float(th["outlier_body_z"]), 0.8 * zfm)
+    span = zfm - body
+    if span <= 0:
+        return None
+    side = (z > 0) if z[i] > 0 else (z < 0)
+    pz = dist[(~fm) & ok & side]
+    band = np.sort(pz[(pz >= body) & (pz < zfm)])
+    seq = np.concatenate(([body], band, [zfm]))
+    return float(np.max(np.diff(seq)) / span)
 
 
 def _gradient(coord, fail_mask, bins=8):
@@ -619,6 +671,8 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     code_edge_hit = limit_hit_ratio if case_ctx.get("value_type") == "CODE" else None
     fail_mad_min, fail_pass_gap_sigma, fail_robust_z_max = _fail_outlier_features(
         v, case_ctx.get("fail_mask") or [], median, mad, z=modified_z)
+    fail_body_jump_ratio = _fail_body_jump_ratio(
+        v, case_ctx.get("fail_mask") or [], median, mad, th, z=modified_z)
 
     if is_pf:
         spread_norm = skewness = kurtosis = skewness_moment = None
@@ -627,6 +681,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         n_modes = modality_v2 = None
         value_gap_ratio = value_gap_minor_mass = None
         fail_mad_min = fail_pass_gap_sigma = fail_robust_z_max = None
+        fail_body_jump_ratio = None
         tail_mass_3s = rail_low_ratio = rail_high_ratio = None
 
     return {
@@ -641,6 +696,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         "n_modes" : n_modes, "modality_v2" : modality_v2,
         "value_gap_ratio": value_gap_ratio, "value_gap_minor_mass": value_gap_minor_mass,
         "fail_mad_min": fail_mad_min, "fail_pass_gap_sigma": fail_pass_gap_sigma,
+        "fail_body_jump_ratio": fail_body_jump_ratio,
         "fail_robust_z_max": fail_robust_z_max, "tail_mass_3s": tail_mass_3s,
         "rail_low_ratio": rail_low_ratio, "rail_high_ratio": rail_high_ratio,
     }

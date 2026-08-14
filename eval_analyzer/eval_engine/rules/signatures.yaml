@@ -38,13 +38,19 @@ signatures:
   # 판정축은 **거리 AND 끊김**이다. 거리 하나로는 못 가른다는 것이 실측으로 확인됐다
   # (z 13.2=heavy tail, z 8.5=outlier — 순서가 뒤집힘). 꼬리가 몸통에서 limit 까지 이어져
   # 넘어갔으면 HEAVY_TAIL, 몸통과 끊겨 따로 놀면 OUTLIER 다.
+  # ⚠ 끊김 지표는 2026-08-14 에 `fail_pass_gap_sigma` → `fail_body_jump_ratio` 로 갈았다.
+  # 구 지표는 |z| 라 **양쪽 꼬리를 한 자에 섞어서**, 반대쪽에 더 먼 pass 가 하나만 있어도
+  # 음수가 됐다 — 사용자가 outlier 로 지목한 v9 관찰군 8건이 −3.4~+1.5 로 통째 미발화했다.
+  # 새 지표는 같은 쪽에서 몸통 경계~최근접 fail 구간의 "최대 빈 폭 / 구간 폭" 만 본다.
   - id: OUTLIER
     when_metric: { fail_mad_min: ">=outlier_fail_mad_min",
-                   fail_pass_gap_sigma: ">=outlier_fail_gap_sigma_min" }
+                   fail_body_jump_ratio: ">=outlier_jump_ratio_min" }
     status_hint: MAJOR
     phenomenon_ko : "일부 die 가 정상 분포와 뚝 떨어진 곳에서 fail 했습니다."
     action_ko: "outlier 성 fail — 개별 die 산발 이상, contact/probe mark·retest 재현성 확인"
-    evidence: ["fail_mad_min {fail_mad_min}", "fail_pass_gap_sigma {fail_pass_gap_sigma}",
+    evidence: ["fail_mad_min {fail_mad_min}",
+               "fail_body_jump_ratio {fail_body_jump_ratio}",
+               "fail_pass_gap_sigma {fail_pass_gap_sigma}",
                "fail_robust_z_max {fail_robust_z_max}", "outlier_ratio {outlier_ratio}"]
 
   - id: TAIL_RISK
@@ -216,11 +222,21 @@ signatures:
     # ring = center 와 edge 사이 중간 밴드(E1 제외). 배수 기준일 때는 이 영역이 die 의
     # 절반 이상이라 지표 상한(~1.8)이 임계 아래여서 켜도 발화할 수 없었다 — share 기준으로
     # 바꾸면서 실제로 판정 가능해졌다(2026-08-12).
-    when_metric: { ring_fail_share : ">=region_fail_share_min", fail_count: ">spatial_fail_count_min"}
+    # ⚠ 점유율만 보면 **ring 밴드 안의 한 점 뭉침**이 전부 ring 으로 잡힌다(2026-08-14).
+    # ring 밴드는 die 의 절반을 차지해 국부 blob 이 거기 놓일 확률이 높고, RING_FAIL 이
+    # SPECIFICITY_ORDER 에서 SPOT_CLUSTER 보다 앞이라 primary 까지 가져갔다 — v9 의
+    # SPOT_CLUSTER 겨냥 L2~L5 가 전부 RING_FAIL 로 판정됐다. 그래서 산포 하한을 AND 로 건다:
+    # ring 은 원주를 한 바퀴 돌아야 하므로 fail 이 넓게 퍼진다(v9 겨냥 실측 0.593~0.619),
+    # 한 점 뭉침은 그럴 수 없다(0.094~0.211). 임계는 SPOT_CLUSTER 와 같은 키를 쓴다 —
+    # 두 룰이 같은 선을 공유해야 "둘 다 발화" / "둘 다 미발화" 틈이 안 생긴다.
+    when_metric: { ring_fail_share : ">=region_fail_share_min",
+                   fail_count: ">spatial_fail_count_min",
+                   fail_spread_norm: ">spot_cluster_spread_max"}
     status_hint: MAJOR
     phenomenon_ko : "wafer 반경 방향으로 ring성 fail이 나타납니다."
     action_ko: "wafer 반경 방향 ring성 fail - radial uniformity 및 edge/center band 반복성 확인"
-    evidence: ["ring_fail_share {ring_fail_share}", "ring_fail_ratio {ring_fail_ratio}", "fail_count {fail_count}"]
+    evidence: ["ring_fail_share {ring_fail_share}", "ring_fail_ratio {ring_fail_ratio}",
+               "fail_spread_norm {fail_spread_norm}", "fail_count {fail_count}"]
 
 
   # (WAFER_GRADIENT 는 2026-08-13 삭제 — 경사형 편중은 Map 화면으로 보는 것이 낫고,
