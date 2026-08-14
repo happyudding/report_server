@@ -42,6 +42,20 @@ STARTUP_WATCH_SEC = 15.0     # 이 시간 살아 있으면 정상 기동으로 �
 WAIT_PARENT_SEC = 30.0
 MAX_UPDATE_FAILS = 3         # 같은 버전에서 이만큼 연속 실패하면 그 버전은 건너뛴다
 FAILURE_AUTORUN_SEC = 10     # 실패 안내창이 이 시간 뒤 자동으로 닫히고 앱이 뜬다
+APP_WINDOW_WAIT_SEC = 90.0   # 기동 대기창을 최대 이만큼 띄워 둔다 (그 뒤엔 접는다)
+
+# ── 브랜드 색 (꿀단지 = 노란 계열) ───────────────────────────────────────────
+# 런처는 리소스 파일을 들고 다니지 않는다(onefile 이라 풀어 쓰는 비용이 있고, 아이콘
+# 하나 때문에 spec 에 datas 를 늘리고 싶지 않다). 그래서 색과 도형으로만 꾸민다.
+BG_CREAM   = "#FFFDF6"   # 창 배경
+BG_BAND    = "#FFF4D6"   # 상단 띠
+GOLD       = "#E8A317"   # 포인트(꿀)
+GOLD_DARK  = "#C8860D"   # 뚜껑·윤곽
+GOLD_BAR   = "#F0B429"   # 진행바
+INK        = "#4A3A10"   # 본문 글자
+INK_SUB    = "#8A7746"   # 보조 글자
+
+UI_FONT = "Malgun Gothic"
 
 # 업데이트 기능은 이 모듈에 있다. 없으면(개발 트리 밖으로 복사돼 실행되는 경우 등)
 # 업데이트만 조용히 비활성화되고 실행 기능은 그대로 동작해야 한다.
@@ -137,6 +151,109 @@ def message_box(text: str, enabled: bool = True) -> None:
         pass
 
 
+# ── 공용 UI 조각 ─────────────────────────────────────────────────────────────
+def draw_honey_pot(canvas, cx, cy, scale=1.0):
+    """꿀단지를 도형으로 그린다 (48x48 기준, cx/cy 가 중심).
+
+    이미지 파일을 쓰지 않는 이유: tkinter 의 PhotoImage 는 .ico 를 못 읽고,
+    이모지(U+1F36F)는 Tk 8.6 이 BMP 밖 문자라 제대로 못 그린다. 도형으로 그리면
+    런처에 리소스를 넣지 않아도 되고 어떤 PC 에서도 똑같이 보인다.
+    """
+    def px(x, y):
+        return cx + (x - 24) * scale, cy + (y - 24) * scale
+
+    def box(x0, y0, x1, y1, **kw):
+        a, b = px(x0, y0)
+        c, d = px(x1, y1)
+        return a, b, c, d, kw
+
+    # 뚜껑 (윗면 타원 + 몸통)
+    a, b, c, d, kw = box(8, 3, 40, 13, fill=GOLD_DARK, outline="")
+    canvas.create_oval(a, b, c, d, **kw)
+    a, b, c, d, kw = box(8, 8, 40, 16, fill=GOLD_DARK, outline="")
+    canvas.create_rectangle(a, b, c, d, **kw)
+    # 목
+    a, b, c, d, kw = box(14, 15, 34, 20, fill="#D9950F", outline="")
+    canvas.create_rectangle(a, b, c, d, **kw)
+    # 몸통
+    a, b, c, d, kw = box(6, 17, 42, 45, fill=GOLD, outline=GOLD_DARK, width=max(1, int(1.5 * scale)))
+    canvas.create_oval(a, b, c, d, **kw)
+    # 라벨 띠 + 글자
+    a, b, c, d, kw = box(12, 27, 36, 37, fill="#FFF9E8", outline="")
+    canvas.create_rectangle(a, b, c, d, **kw)
+    tx, ty = px(24, 32)
+    canvas.create_text(tx, ty, text="HONEY", fill=GOLD_DARK,
+                       font=(UI_FONT, max(5, int(6 * scale)), "bold"))
+
+
+def icon_path():
+    """번들된 honey.ico 경로 (없으면 None).
+
+    onefile 로 빌드되면 datas 는 sys._MEIPASS 아래 풀린다. 개발 실행이면 이 파일 옆.
+    """
+    base = getattr(sys, "_MEIPASS", None) or str(Path(__file__).resolve().parent)
+    path = Path(base) / "honey.ico"
+    return str(path) if path.exists() else None
+
+
+def apply_window_icon(root):
+    """타이틀바·작업표시줄 아이콘을 꿀단지로. 실패해도 창은 그대로 뜬다."""
+    path = icon_path()
+    if not path:
+        return
+    try:
+        root.iconbitmap(path)
+    except Exception:   # noqa: BLE001 - 아이콘이 없다고 업데이트를 멈출 이유는 없다
+        pass
+
+
+def build_shell(tk, root, title, heading):
+    """창 뼈대(배경·상단 띠·꿀단지·제목)를 만들고 본문 프레임을 돌려준다.
+
+    업데이트 진행창과 기동 대기창이 같은 얼굴을 갖게 하려고 한 곳에 모았다.
+    """
+    root.title(title)
+    root.resizable(False, False)
+    root.configure(bg=BG_CREAM)
+    apply_window_icon(root)
+
+    band = tk.Frame(root, bg=BG_BAND)
+    band.pack(fill="x")
+    inner = tk.Frame(band, bg=BG_BAND, padx=20, pady=14)
+    inner.pack(fill="x")
+    canvas = tk.Canvas(inner, width=52, height=52, bg=BG_BAND,
+                       highlightthickness=0, bd=0)
+    canvas.pack(side="left")
+    draw_honey_pot(canvas, 26, 26, scale=1.05)
+    tk.Label(inner, text=heading, bg=BG_BAND, fg=INK, anchor="w",
+             font=(UI_FONT, 12, "bold")).pack(side="left", padx=(14, 0))
+
+    body = tk.Frame(root, bg=BG_CREAM, padx=22, pady=16)
+    body.pack(fill="both", expand=True)
+    return body
+
+
+def style_bar(ttk):
+    """진행바를 꿀색으로. 기본 테마(vista)는 색을 무시하므로 clam 으로 바꾼다."""
+    style = ttk.Style()
+    try:
+        style.theme_use("clam")
+    except Exception:   # noqa: BLE001 - 테마가 없으면 기본 모양 그대로 쓴다
+        pass
+    style.configure("Honey.Horizontal.TProgressbar",
+                    troughcolor="#F2E7C7", background=GOLD_BAR,
+                    bordercolor="#F2E7C7", lightcolor=GOLD_BAR, darkcolor=GOLD_BAR)
+    return "Honey.Horizontal.TProgressbar"
+
+
+def center_window(win, y_divisor=3):
+    win.update_idletasks()
+    w, h = win.winfo_width(), win.winfo_height()
+    x = (win.winfo_screenwidth() - w) // 2
+    y = (win.winfo_screenheight() - h) // y_divisor
+    win.geometry(f"+{x}+{y}")
+
+
 # ── 업데이트 진행창 (tkinter) ────────────────────────────────────────────────
 class ProgressWindow:
     """작은 진행창. 생성에 실패하면 예외가 나고, 호출부는 업데이트를 건너뛴다.
@@ -152,34 +269,40 @@ class ProgressWindow:
         self._tk = tk
         self._cancelled = False
         self.root = tk.Tk()
-        self.root.title("Honey 업데이트")
-        self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self.cancel)
 
-        frame = tk.Frame(self.root, padx=22, pady=18)
-        frame.pack(fill="both", expand=True)
-        self.label = tk.Label(frame, text=f"새 버전 {version} 준비 중...",
-                              anchor="w", justify="left", font=("Malgun Gothic", 10))
+        frame = build_shell(tk, self.root, "Honey 업데이트", "Honey 업데이트")
+        self.label = tk.Label(frame, text=f"새 버전 {version} 확인 중...",
+                              bg=BG_CREAM, fg=INK, anchor="w", justify="left",
+                              font=(UI_FONT, 10))
         self.label.pack(fill="x")
-        self.bar = ttk.Progressbar(frame, length=380, mode="indeterminate", maximum=100)
+        bar_style = style_bar(ttk)
+        self.bar = ttk.Progressbar(frame, length=400, mode="indeterminate",
+                                   maximum=100, style=bar_style)
         self.bar.pack(pady=(12, 6), fill="x")
         self.bar.start(12)
-        self.sub = tk.Label(frame, text="", anchor="w", fg="#666666",
-                            font=("Malgun Gothic", 9))
+        self.sub = tk.Label(frame, text="", bg=BG_CREAM, fg=INK_SUB, anchor="w",
+                            font=(UI_FONT, 9))
         self.sub.pack(fill="x")
-        self.buttons = tk.Frame(frame)
+        # 사용자가 가장 불안해하는 구간이라 "기다리면 된다"를 못박아 둔다 —
+        # 여기서 Honey 를 다시 실행하면 업데이트 중인 폴더를 두 프로세스가 만진다.
+        self.notice = tk.Label(
+            frame, text="Honey 를 다시 실행하지 마시고 잠시만 기다려 주세요.",
+            bg=BG_CREAM, fg=GOLD_DARK, anchor="w", justify="left",
+            font=(UI_FONT, 9, "bold"))
+        self.notice.pack(fill="x", pady=(10, 0))
+        self.buttons = tk.Frame(frame, bg=BG_CREAM)
         self.buttons.pack(fill="x", pady=(14, 0))
-        self.cancel_btn = tk.Button(self.buttons, text="취소", width=12, command=self.cancel)
+        self.cancel_btn = tk.Button(self.buttons, text="취소", width=12,
+                                    command=self.cancel, relief="flat",
+                                    bg=BG_BAND, fg=INK, activebackground=GOLD_BAR,
+                                    font=(UI_FONT, 9))
         self.cancel_btn.pack(side="right")
         self._indeterminate = True
         self._center()
 
     def _center(self):
-        self.root.update_idletasks()
-        w, h = self.root.winfo_width(), self.root.winfo_height()
-        x = (self.root.winfo_screenwidth() - w) // 2
-        y = (self.root.winfo_screenheight() - h) // 3
-        self.root.geometry(f"+{x}+{y}")
+        center_window(self.root)
 
     def cancel(self):
         self._cancelled = True
@@ -204,6 +327,7 @@ class ProgressWindow:
         """실패 안내 + 카운트다운. 사용자가 아무것도 안 눌러도 앱은 반드시 뜬다."""
         self.bar.stop()
         self.bar.pack_forget()
+        self.notice.pack_forget()   # 실패했으니 "기다려 주세요" 는 더 이상 맞지 않는다
         self.label.config(text=f"업데이트에 실패했습니다.\n{message}")
         self.sub.config(text="기존 버전으로 실행합니다. 설치파일을 직접 받아 "
                              "압축을 풀고 Honey.exe 를 실행해도 됩니다.")
@@ -215,7 +339,9 @@ class ProgressWindow:
                 except Exception:
                     pass
             self._tk.Button(self.buttons, text="설치파일 직접 받기", width=18,
-                            command=_open).pack(side="right", padx=(0, 8))
+                            command=_open, relief="flat", bg=BG_BAND, fg=INK,
+                            activebackground=GOLD_BAR, font=(UI_FONT, 9)
+                            ).pack(side="right", padx=(0, 8))
         countdown = {"left": FAILURE_AUTORUN_SEC}
 
         def tick():
@@ -232,9 +358,139 @@ class ProgressWindow:
 
     def close(self):
         try:
+            self.bar.stop()   # StartupWindow.close 와 같은 이유 (죽은 창 갱신 방지)
+        except Exception:
+            pass
+        try:
             self.root.destroy()
         except Exception:
             pass
+
+
+# ── 앱 기동 대기창 ───────────────────────────────────────────────────────────
+def app_window_visible(pid: int) -> bool:
+    """그 PID 가 화면에 보이는 최상위 창을 가졌는가.
+
+    런처가 창을 언제 접을지 판단하는 기준이다. 앱이 플래그 파일을 남기게 하는 방법도
+    있지만, 그러면 **구버전 앱**(그 코드가 없는 versions\\ 폴더)을 실행할 때 영영
+    신호가 오지 않는다. 창 존재는 앱 버전과 무관하게 통하므로 이쪽을 쓴다.
+
+    숨은 창·크기 0 짜리 도우미 창을 세지 않으려고 가시성과 제목까지 본다
+    (PyQt6 은 초기화 중 보이지 않는 최상위 창을 만들 수 있다).
+    """
+    user32 = ctypes.windll.user32
+    # argtypes 를 반드시 지정한다 — 없으면 64비트에서 HWND 가 32비트로 잘려
+    # GetWindowThreadProcessId 가 엉뚱한 값을 돌려주고 감지가 항상 실패한다.
+    proc_cb = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    user32.EnumWindows.argtypes = [proc_cb, ctypes.c_void_p]
+    user32.EnumWindows.restype = ctypes.c_bool
+    user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p,
+                                               ctypes.POINTER(ctypes.c_ulong)]
+    user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    user32.GetWindowTextLengthW.argtypes = [ctypes.c_void_p]
+    found = []
+
+    @proc_cb
+    def _cb(hwnd, _lparam):
+        owner = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value != pid or not user32.IsWindowVisible(hwnd):
+            return True
+        if user32.GetWindowTextLengthW(hwnd) > 0:
+            found.append(hwnd)
+            return False        # 하나 찾으면 그만 본다
+        return True
+
+    try:
+        user32.EnumWindows(_cb, None)
+    except Exception:   # noqa: BLE001 - 감지 실패가 실행을 막으면 안 된다
+        return False
+    return bool(found)
+
+
+class StartupWindow:
+    """앱이 화면에 뜰 때까지 자리를 지키는 작은 창.
+
+    업데이트 진행창이 닫힌 뒤 HoneyApp.exe(PyQt6+WebEngine)가 실제로 그려지기까지
+    수 초~수십 초가 비는데, 그 사이 화면에 아무것도 없어 사용자가 런처를 다시 눌렀다.
+    이 창이 그 빈틈을 덮는다 — 앱 창이 보이는 순간 닫으므로 두 화면이 이어진다.
+    """
+
+    def __init__(self, version):
+        import tkinter as tk
+        from tkinter import ttk
+
+        self.root = tk.Tk()
+        self.root.protocol("WM_DELETE_WINDOW", lambda: None)   # 실수로 닫지 못하게
+
+        frame = build_shell(tk, self.root, "Honey", "Honey 를 준비하고 있습니다")
+        tk.Label(frame, text="Honey UI 구동 중입니다. 잠시만 기다려 주세요.",
+                 bg=BG_CREAM, fg=INK, anchor="w", font=(UI_FONT, 10)).pack(fill="x")
+        self.bar = ttk.Progressbar(frame, length=400, mode="indeterminate",
+                                   maximum=100, style=style_bar(ttk))
+        self.bar.pack(pady=(12, 6), fill="x")
+        self.bar.start(12)
+        tk.Label(frame, text=f"버전 {version}", bg=BG_CREAM, fg=INK_SUB,
+                 anchor="w", font=(UI_FONT, 9)).pack(fill="x")
+        tk.Label(frame, text="Honey 를 다시 실행하지 마세요. 창이 곧 나타납니다.",
+                 bg=BG_CREAM, fg=GOLD_DARK, anchor="w",
+                 font=(UI_FONT, 9, "bold")).pack(fill="x", pady=(10, 0))
+        center_window(self.root)
+
+    def wait_until(self, proc, timeout_sec, logf):
+        """앱 창이 뜨거나 프로세스가 죽을 때까지 창을 띄운 채 기다린다.
+
+        반환 'window'(창 떴음) | 'exited'(먼저 종료됨) | 'timeout'.
+        tkinter 를 계속 돌려야 "응답 없음" 으로 흐려지지 않으므로 after 폴링을 쓴다.
+        """
+        import time as _time
+
+        outcome = {"how": "timeout"}
+        deadline = _time.monotonic() + timeout_sec
+
+        def poll():
+            if proc.poll() is not None:
+                outcome["how"] = "exited"
+                self.close()
+                return
+            if app_window_visible(proc.pid):
+                outcome["how"] = "window"
+                self.close()
+                return
+            if _time.monotonic() >= deadline:
+                logf(f"app window not detected in {timeout_sec:.0f}s — 대기창을 닫는다")
+                self.close()
+                return
+            self.root.after(200, poll)
+
+        self.root.after(300, poll)
+        self.root.mainloop()
+        return outcome["how"]
+
+    def close(self):
+        # 애니메이션을 먼저 멈춘다 — indeterminate 진행바는 after 로 다음 프레임을
+        # 예약해 두므로, 그냥 destroy 하면 그 콜백이 죽은 창을 건드려 Tcl 오류를 뱉는다.
+        try:
+            self.bar.stop()
+        except Exception:
+            pass
+        try:
+            self.root.quit()
+            self.root.destroy()
+        except Exception:
+            pass
+
+
+def wait_for_app_window(proc, version, timeout_sec, logf, show_ui=True):
+    """기동 대기창을 띄우고 결과를 돌려준다. 창을 못 만들면 조용히 폴백한다."""
+    if not show_ui:
+        return "skipped"
+    try:
+        window = StartupWindow(version)
+    except Exception as exc:   # noqa: BLE001 - 창이 안 떠도 앱 실행은 계속돼야 한다
+        logf(f"startup window unavailable ({type(exc).__name__}: {exc})")
+        return "skipped"
+    return window.wait_until(proc, timeout_sec, logf)
 
 
 # ── 업데이트 ────────────────────────────────────────────────────────────────
@@ -435,11 +691,26 @@ def main(argv) -> int:
         except OSError as exc:
             log(root, f"launch failed {version}: {exc}")
             continue
-        try:
-            rc = proc.wait(timeout=STARTUP_WATCH_SEC)
-        except subprocess.TimeoutExpired:
-            log(root, f"ok {version} (running)")
+
+        # 앱이 화면에 그려질 때까지 대기창으로 빈틈을 덮는다 (PyQt6+WebEngine 기동은
+        # 수 초~수십 초). 창이 보이는 순간 대기창이 닫혀 두 화면이 이어진다.
+        how = wait_for_app_window(proc, version, APP_WINDOW_WAIT_SEC,
+                                  lambda m: log(root, m), show_ui)
+        if how == "window":
+            log(root, f"ok {version} (window shown)")
             return 0
+        if how == "exited":
+            rc = proc.poll()
+            if rc is None:
+                rc = proc.wait()
+        else:
+            # 창을 못 봤다(감지 실패·타임아웃·--no-ui) — 종전 판정으로 돌아간다:
+            # 일정 시간 살아 있으면 정상 기동으로 본다.
+            try:
+                rc = proc.wait(timeout=STARTUP_WATCH_SEC)
+            except subprocess.TimeoutExpired:
+                log(root, f"ok {version} (running)")
+                return 0
         if rc == 0:
             log(root, f"ok {version} (exited 0)")
             return 0

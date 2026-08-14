@@ -75,7 +75,10 @@ body.no-canvas #bg {
   height: 34px; padding: 0 14px;
   display: inline-flex; align-items: center; gap: 7px;
   border: 1px solid var(--ink-600); border-radius: 999px;
-  background: rgba(18,23,33,.72); backdrop-filter: blur(6px);
+  /* backdrop-filter 금지 — 뒤에서 #bg canvas 가 30fps 로 계속 움직여 매 프레임 전체
+     블러 재합성이 되고, QtWebEngine+일부 GPU 드라이버에서 깜빡임을 일으킨다
+     (로그인 모달 2026-08-13 선례와 동일). 블러 대신 불투명도를 올려 가독성 유지. */
+  background: rgba(18,23,33,.92);
   color: var(--si-050); font-family: var(--font-body); font-size: 14px; font-weight: 600;
   text-decoration: none; cursor: pointer; white-space: nowrap;
   transition: border-color .15s, color .15s;
@@ -102,7 +105,9 @@ body.no-canvas #bg {
   text-wrap: balance;
   color: var(--si-050);
   text-shadow: 0 0 46px rgba(74,144,226,.28), 0 2px 18px rgba(0,0,0,.6);
-  transition: text-shadow .25s;
+  /* text-shadow 는 transition 하지 않는다 — 큰 글자의 그림자를 매 프레임 다시 칠하게
+     되고(그 아래 canvas 는 계속 갱신 중) hover 중 재페인트 폭풍의 원인이 된다.
+     hover 글로우 자체는 아래 규칙으로 즉시 전환된다. */
 }
 .title-link:hover .title { text-shadow: 0 0 60px rgba(74,144,226,.5), 0 2px 18px rgba(0,0,0,.6); }
 .subtitle {
@@ -148,13 +153,23 @@ body.no-canvas #bg {
   background: var(--tile, var(--ink-800));
   color: #fff; text-decoration: none;
   box-shadow: 0 12px 34px rgba(0,0,0,.46);
-  transition: transform .18s ease, box-shadow .18s ease, filter .18s ease;
 }
 .tile::before {
   content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
   background: var(--stripe, var(--tile));
 }
-.tile:hover { transform: translateY(-5px); filter: brightness(1.09); box-shadow: 0 20px 46px rgba(0,0,0,.58); }
+/* hover 강조는 ::after 오버레이의 opacity 하나만 바꾼다. 종전의 transform(버튼 5px
+   들어올리기)+filter: brightness+box-shadow 확대 transition 은 hover 마다 GPU 합성
+   레이어를 승격/해제시키고, 그 아래 #bg canvas 가 30fps 로 갱신되는 탓에 매 프레임
+   전체 재합성이 됐다 — QtWebEngine 내장 브라우저 + 일부 GPU 드라이버에서 버튼이
+   깜빡이거나 통째로 사라지는 원인. opacity 는 레이어 churn 없이 합성만으로 끝난다.
+   버튼이 움직이지 않으므로 아래 경계에서 hover 가 진입↔이탈 진동하던 문제도 없다. */
+.tile::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: rgba(255,255,255,.10);
+  opacity: 0; transition: opacity .18s ease;
+}
+.tile:hover::after { opacity: 1; }
 .tile-name {
   font-family: var(--font-display);
   font-size: clamp(18px, 2.35vw, 37px);
@@ -325,7 +340,7 @@ a:focus-visible, button:focus-visible {
   .stat-meta { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .tile, .title, .refresh { transition: none; }
+  .tile::after, .refresh { transition: none; }
   .refresh:hover { transform: none; }
 }
 </style>

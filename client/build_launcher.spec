@@ -14,7 +14,9 @@ a = Analysis(
     ['launcher.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    # honey.ico 는 exe 아이콘(아래 icon=)과 별개로 **런타임에도** 필요하다 —
+    # 진행창/기동 대기창의 타이틀바 아이콘으로 tkinter 가 파일을 직접 읽는다.
+    datas=[('honey.ico', '.')],
     # tkinter = 업데이트 진행창(런처가 앱을 띄우기 전에 띄운다). 나머지는 함수 안에서
     # 지연 import 되는 것들이라 정적 분석에 안 잡힐 수 있어 명시한다.
     hiddenimports=['tkinter', 'tkinter.ttk',
