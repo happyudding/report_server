@@ -171,8 +171,24 @@ $buildArgs = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $BuildScript
                "-Version", $Version, "-ServerUrl", $BaseUrl)
 if ($Clean) { $buildArgs += "-Clean" }
 $BuildLog = Join-Path $env:TEMP "honey_launcher_build_$Version.log"
-& powershell @buildArgs 2>&1 | Tee-Object -FilePath $BuildLog
-if ($LASTEXITCODE -ne 0) { throw "빌드 실패 (exit $LASTEXITCODE)" }
+
+# PyInstaller 는 진행 로그를 **stderr** 로 찍는다. $ErrorActionPreference='Stop' 인 채로
+# 네이티브 stderr 를 2>&1 로 받으면 그 첫 줄(예: "463 INFO: PyInstaller: 6.21.0, contrib
+# hooks: 2026.6")이 NativeCommandError 예외로 승격돼, 빌드가 **시작하자마자** 그 정상
+# 로그 한 줄을 실패로 오인하고 죽는다. release_honey.ps1 의 Resolve-Python 이 같은 이유로
+# 지역 Continue 를 쓴다. 여기서도 이 호출 구간만 낮추고, 실패 판정은 종료코드로만 한다.
+# ForEach-Object { "$_" } 는 ErrorRecord 를 문자열로 펴서 화면과 로그에 PowerShell 의
+# 예외 장식(At line: / CategoryInfo / FullyQualifiedErrorId)이 섞이지 않게 한다 —
+# 아래 데이터 파일 누락 게이트가 이 로그를 Select-String 으로 읽는다.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & powershell @buildArgs 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $BuildLog
+    $buildExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $prevEap
+}
+if ($buildExit -ne 0) { throw "빌드 실패 (exit $buildExit)" }
 
 # honey_parse 실물이 없는 PC(개발 PC)에서 돌리면 원본 spec 이 요구하는 데이터 파일이
 # 빠진 채로도 빌드가 "성공"한다 — 그 빌드본을 배포하면 해당 기능이 조용히 죽는다.
