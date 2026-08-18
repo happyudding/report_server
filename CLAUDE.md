@@ -183,10 +183,22 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 
 **정본은 [server/database/core.py](server/database/core.py) 의 `SCHEMA`.** 전체 테이블·컬럼은
 [docs/03](docs/03_storage.md) 와 스냅샷 [DB/pe/report/report_README.md](DB/pe/report/report_README.md)
-참조. 테이블 19개 요지:
+참조. 테이블 25개 요지:
 
 - `report_session` — 세션 1건. `source`('xlsx_upload'|'web_report'), `mode`('Normal' 기본),
-  `uploaded_by`·`client_host`(신원), `webreport_options`, `password`(미사용 보존) 컬럼 포함.
+  `uploaded_by`·`client_host`(신원), `webreport_options` 컬럼 포함. `password`(4자리 PIN)는
+  **2026-08-14 폐지** — 신규 저장 중단·기존 값 NULL 처리, 컬럼만 보존하고 `has_password` 는
+  항상 false 다(접근제어는 신원 기반).
+- `report_analysis` — analysis_key 단위 **물리 원본 상태**(authoritative `content_hash`·
+  `source_count`·`artifact_status`). dedup 형제 세션이 각자 hash 를 들고 갈라지던 문제의
+  단일 진실. `report_session.content_hash` 는 rollback 대비로 계속 동기화한다.
+- `report_session_blob` — 세션 단위 **큰 본문의 포인터**(현재 kind=`note_sheet`). 본문은
+  객체 저장(S3 `pe/report_server/session_blob/<sid>/<kind>/<sha256>.json.gz` 또는 로컬
+  spool)에 있고 DB 에는 `backend`/`object_key`/`content_hash`/`base_token`/`size_bytes` 만.
+  `backend='local_pending'` = S3 업로드 실패로 로컬 보관 중(cleanup 이 재이관, 관리자 경고).
+- `report_schema_migration` — backfill 단계·cursor(중단 후 재개용). 부팅 시 대량 작업을
+  하지 않으므로 이전은 [tools/migrate_session_db.py](server/tools/migrate_session_db.py) 가 한다.
+- `report_chatbot_daily` — 챗봇 원문 보존기간(기본 90일) 후에도 남기는 일별 비식별 집계.
 - `report_analysis_summary` — yield/cpk 등 summary 행 (UNIQUE analysis_key,item,bin).
 - `report_object_info` — S3/로컬 산출물 위치. `options_json` 에 `{"storage":"s3"|"local"}` 기록.
   `object_type`: `distribution_combined`, `web_report_source_<idx>`, `web_report_manifest`,
@@ -199,6 +211,9 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
   spec — 항목 제외·outlier·셀 패치·조건 규칙)/yield_basis)의 **진실 저장소,
   세션 단위**. dedup(동일 analysis_key) 세션 간 편집 비공유. `rev` 는 단조 증가 캐시
   무효화 토큰. manifest 는 불변 스냅샷 ([web_report/edits.py](web_report/edits.py)).
+  ⚠️ **note_sheet 본문만 객체 저장으로 나갔다**(2026-08-14) — 저장은 blob+legacy 행
+  **dual-write**, 조회는 blob 우선 + legacy 폴백이라 이 표만 보는 기존 코드도 그대로
+  동작한다. 낙관적 잠금 base(본문 sha1 16자) 의미는 불변.
 - `report_session_editor`(편집 위임) / `report_web_visitor`(편집자 후보 풀) /
   `report_user_important`(개인 중요표시) / `report_user_favorite`(즐겨찾기).
 - `report_user_profile` — 사용자 **실명**(표시용). 화면 표기는 전부 `이름(ID)` 이며, 이름이
@@ -216,6 +231,13 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 - `report_chatbot_log` — 웹 챗봇 질문/답변 전문 + 부하 계측(`total_ms`=`wait_ms`(동시실행
   대기)+`llm_ms`(질문 해석)+조회). 관리자 Chatbot 탭의 유일한 데이터원. 감사로그와 분리한
   이유는 답변이 수 KB 라 `changed_fields` 1500자 관례에 안 맞고 감사 화면을 밀어내기 때문.
+
+**보존 정책** (2026-08-14 — 세션 원본·사용자 편집은 **영구**, 운영 로그만 유한 보존):
+감사 365일 / 챗봇 원문 90일(이후 `report_chatbot_daily` 집계만) / 시간별 사용량 90일 /
+일별 사용량·Peak 730일 / 휴지통 30일. 로그 롤오프는 감사와 같은 이유로 `REPORT_CLEANUP_DRYRUN`
+과 무관하게 실행된다(끄면 무한 증가). env 는 [server/README.md](server/README.md) 참조.
+브라우저/Honey 오류는 **진단 사건 저장소(14일 JSONL) 한 곳**에만 남긴다 — 감사 이중 기록은
+중단됐다([docs/20](docs/20_error_tracking.md)).
 - `report_annotation` / `report_dashboard_comment` / `report_csv_files` /
   `report_analysis_lock` / `report_user`(ID/PW 로그인 폐지 — 미사용 보존).
 

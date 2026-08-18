@@ -589,6 +589,48 @@ def delete_note_images(session_id):
     return delete_all(session_id)
 
 
+# ── 세션 단위 큰 본문 blob (Note 시트 등 — _session_blobs.py, 2026-08-14) ─────
+
+def save_session_blob(session_id, kind, content_hash, data):
+    """본문 저장. {"backend","object_key","size_bytes"} 반환.
+
+    backend='local_pending' 은 S3 설정 상태에서 업로드가 실패해 로컬에 보관됐다는 뜻 —
+    호출자는 그대로 기록하고 cleanup 의 재이관에 맡긴다(사용자 입력을 잃지 않는다).
+    """
+    from ._session_blobs import save_blob
+    return save_blob(session_id, kind, content_hash, data)
+
+
+def load_session_blob(backend, object_key):
+    """본문 bytes. 없으면 예외 (호출자가 legacy 폴백)."""
+    from ._session_blobs import load_blob
+    return load_blob(backend, object_key)
+
+
+def delete_session_blob(backend, object_key):
+    """본문 1건 삭제 — best-effort, warnings 리스트 반환."""
+    from ._session_blobs import delete_blob
+    return delete_blob(backend, object_key)
+
+
+def delete_session_blobs(session_id, keys=()):
+    """세션 삭제 훅 — keys 는 [(backend, object_key)]. best-effort, warnings 반환."""
+    from ._session_blobs import delete_all
+    return delete_all(session_id, keys)
+
+
+def promote_session_blob(object_key):
+    """local_pending → S3 재이관. 성공 시 True (cleanup 스케줄러가 호출)."""
+    from ._session_blobs import promote_pending
+    return promote_pending(object_key)
+
+
+def session_blob_local_root():
+    """로컬 spool 루트 (관리자 스토리지 집계용)."""
+    from ._session_blobs import local_root
+    return local_root()
+
+
 def load_issue_image(analysis_key, row):
     from ._issue_images import load_image
     return load_image(analysis_key, row)

@@ -480,6 +480,21 @@ tbody tr:hover { background: #f9fbff; }
    — 2026-08-14. 식별 셀(17px)은 그대로라 값이 식별 셀보다 커진다(값 가독성 우선). */
 .sheet-table.kind-issue td[data-col="avg" i],
 .sheet-table.kind-issue td[data-col$="_yield" i] { font-size: 21px; }
+/* CPK 값은 자리수가 들쭉날쭉해서(부호·정수부·소수부) 21px 그대로면 긴 값 하나가 그 source
+   컬럼 전체 폭을 밀어낸다(사용자 요청 2026-08-14). 기준 5자 폭(≈5×21px)을 유지하도록
+   글자 수가 늘수록 폰트를 단계적으로 줄인다(21×5/N, 12px 하한). 클래스는 sheets.js 가
+   CPK 섹션 값 셀에만 붙인다 — Yield 섹션 값(≤6자)은 종전 21px 그대로다.
+   [data-col] 을 함께 붙이는 이유: 위 21px 규칙과 특이도가 같아지면(0,3,1) 순서에만
+   의존하게 되므로 한 단계 올려(0,4,1) 확실히 이기게 한다. */
+.sheet-table.kind-issue td[data-col].cpk-fit-6 { font-size: 17.5px; }
+.sheet-table.kind-issue td[data-col].cpk-fit-7 { font-size: 15px; }
+.sheet-table.kind-issue td[data-col].cpk-fit-8 { font-size: 13px; }
+.sheet-table.kind-issue td[data-col].cpk-fit-9 { font-size: 12px; }
+/* 지수 표기로 축약된 CPK 값(폰트 하한으로도 폭을 못 맞추는 극단값) — 원래 값 전체는 title
+   툴팁에 있다. hover 로 확인 가능함을 점선 밑줄로 힌트(source 헤더와 같은 관례). */
+.sheet-table.kind-issue td.cpk-abbr {
+  cursor: help; text-decoration: underline dotted; text-underline-offset: 2px;
+}
 /* Issue Table: Yield 식별/값 글자 셀 가운데 정렬 (사용자 요청 — st-num 좌측정렬 덮어씀). */
 .sheet-table.kind-issue td[data-col="step" i],
 .sheet-table.kind-issue td[data-col="bin" i],

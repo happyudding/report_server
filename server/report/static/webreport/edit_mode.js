@@ -996,6 +996,26 @@ function buildPayload() {
 // web_report 세션 전용 저장: Issue Table comment(PTE/개발) 변경분만 모아
 // manifest.issue_comments 로 보낸다 (PATCH /content 는 web_report 를 지원하지 않음).
 // 변경 없으면 요청을 보내지 않는다. 실패 시 throw — 호출부가 dirty 복원.
+//
+// 행 조회는 인덱스(td.dataset.r)가 아니라 **row_key** 로 한다 — Status(2026-08-11)와 같은
+// 이유: 화면이 그린 배열은 dropIssueMostFailDetailRows 로 걸러진 사본이라 td.dataset.r 이
+// 원본 rows(DATA.issue_table_text) 인덱스와 어긋난다. 인덱스로 찍으면 write-back 이 위쪽
+// 엉뚱한 행에 들어가, 일괄 삭제 후 재렌더에서 comment 가 밀려 보였다(2026-08-14 수정).
+// Yield 대표행과 걸러진 첫 상세행은 같은 키를 공유하므로 매칭된 모든 행에 쓴다
+// (서버 병합 _comment_values 도 키 단위라 규약 일치).
+function issueRowsByKey(rows) {
+  const map = new Map();
+  let sec = "";
+  (rows || []).forEach(r => {
+    if (r && r["Category"]) sec = String(r["Category"]);
+    const k = issueRowKey(r, sec);
+    if (!k) return;
+    if (!map.has(k)) map.set(k, []);
+    map.get(k).push(r);
+  });
+  return map;
+}
+
 async function saveIssueComments(opts) {
   opts = opts || {};
   const comments = [];
@@ -1003,18 +1023,18 @@ async function saveIssueComments(opts) {
   // Issue Table + Issue Table Temp 두 패널을 함께 훑는다 — 서버는 row_key 로 저장하므로
   // 요청 형식·엔드포인트는 종전과 같다(패널이 하나뿐이면 동작도 완전히 같다).
   issuePanelEls().forEach(panel => {
-    const rows = issueRowsOf(panel);
+    const byKey = issueRowsByKey(issueRowsOf(panel));
     panel.querySelectorAll("td[data-key][data-col]").forEach(td => {
       const col = td.dataset.col;
-      const ri = parseInt(td.dataset.r, 10);
-      const orig = String(((rows[ri] || {})[col]) ?? "").trim();
+      const hits = byKey.get(td.dataset.key) || [];
+      const orig = String(((hits[0] || {})[col]) ?? "").trim();
       // 링크 표시 중인 comment 셀은 textContent 가 대괄호 없는 표시용 문자열(@항목)이므로
       // 원문(@[항목])을 보관한 data-raw 를 읽는다. 편집 중(contenteditable)이면 textContent 가 원문.
       const value = ((isCommentCol(col) && !td.isContentEditable && td.dataset.raw != null)
         ? td.dataset.raw : (td.textContent || "")).trim();
       if (value !== orig) {
         comments.push({ key: td.dataset.key, col, value });
-        applied.push({ rows, ri, col, value });
+        applied.push({ hits, col, value });
       }
     });
   });
@@ -1027,7 +1047,7 @@ async function saveIssueComments(opts) {
   });
   const j = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(j.error || `comment 저장 실패 (HTTP ${res.status})`);
-  applied.forEach(({ rows, ri, col, value }) => { if (rows[ri]) rows[ri][col] = value; });
+  applied.forEach(({ hits, col, value }) => { hits.forEach(r => { if (r) r[col] = value; }); });
   return j;
 }
 

@@ -897,6 +897,10 @@ function renderSheetTable(rows, opts) {
   const gradYield = opts.kind === "issue" || !!opts.grad;
   const isGradCol = c => /_yield$/i.test(String(c))
     || (!!opts.grad && String(c).trim().toLowerCase() === "avg");
+  // 폰트를 키워 둔 Issue Table 값 셀(CSS 21px: avg · {src}_yield). CPK 섹션은 이 컬럼에
+  // cpk 값이 들어가는데, 글자 수가 길어지면 21px 그대로는 컬럼 폭을 밀어낸다(아래 cpk-fit-N).
+  const isBigValCol = c => /_yield$/i.test(String(c))
+    || String(c).trim().toLowerCase() === "avg";
   const issueYieldColMax = {};
   if (gradYield) {
     bodyRows.forEach((r, ri) => {
@@ -1080,6 +1084,27 @@ function renderSheetTable(rows, opts) {
           }
         }
       }
+      // CPK 값 셀: 글자 수가 기준(5자)을 넘으면 넘는 만큼 폰트를 단계적으로 줄여, 값이 길어져도
+      // 컬럼 폭이 벌어지지 않게 한다(사용자 요청 2026-08-14 — 값 셀 폰트가 21px 라 긴 CPK 하나가
+      // 그 source 컬럼 전체를 밀어냈다). 실제 크기는 CSS .cpk-fit-N 이 정한다(9 = 9자 이상).
+      // 폰트만으로는 감당이 안 되는 극단값(예: 1278439127218.121 = 17자)은 지수 표기로 축약하고
+      // 원래 값 전체는 title 툴팁에 남긴다 — 축약본이 더 짧을 때만 바꾸므로 짧은 값은 원문 그대로다.
+      let cpkTitle = "";
+      if (opts.kind === "issue" && !opts.edit && issueRowSec === "CPK" && !subhead && !isEmpty
+        && isBigValCol(c)) {
+        // 임계 10자 = 지수 표기("1.278e+12" 9자 / 음수 10자)보다 확실히 길어지는 지점.
+        if (txt.trim().length > 10) {
+          const num = parseFloat(txt);
+          const abbr = isNaN(num) ? "" : num.toExponential(3);
+          if (abbr && abbr.length < txt.trim().length) {
+            cpkTitle = ` title="${esc(txt)}"`;
+            txt = abbr;
+            clsParts.push("cpk-abbr");
+          }
+        }
+        const n = Math.min(9, txt.trim().length);
+        if (n > 5) clsParts.push(`cpk-fit-${n}`);
+      }
       // 선택 모드에서 체크박스를 다는 Step 셀 — 셀 전체가 체크 클릭 영역이다(edit_mode.js).
       const isSelCell = opts.kind === "issue" && ci === 0 && (delHideKey || delEtcItem);
       if (isSelCell) clsParts.push("issue-sel-cell");
@@ -1128,7 +1153,7 @@ function renderSheetTable(rows, opts) {
       // 읽기 모드 Issue Table 셀에만 data-col 부여 → CSS 로 BIN/ITEM/Yield/CPK 폰트 확대(값 가독성).
       // 편집 모드는 부여하지 않아 collectSheetTable 저장 대상(=comment 셀)이 그대로 유지된다.
       const colAttr = (opts.kind === "issue" && !opts.edit) ? ` data-col="${esc(c)}"` : "";
-      return `<td${cls ? ` class="${cls}"` : ""}${cellStyle}${colAttr} data-r="${ri}" data-c="${ci}">${cellHtml}</td>`;
+      return `<td${cls ? ` class="${cls}"` : ""}${cellStyle}${colAttr}${cpkTitle} data-r="${ri}" data-c="${ci}">${cellHtml}</td>`;
     }).join("");
     const isPassRow = !subhead && (issuePassRow
       || (binCol && String((r ? r[binCol] : "") ?? "").trim() === "1"));

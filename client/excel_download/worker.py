@@ -11,19 +11,23 @@ from PyQt6.QtCore import QThread, pyqtSignal
 
 class ExcelDownloadWorker(QThread):
     status = pyqtSignal(str, str)   # (state, message)
+    progress = pyqtSignal(int, str)  # (0~100, message) — 하단 진행바 상세 표시
     done = pyqtSignal(str, float)   # (out_path, elapsed_sec)
     failed = pyqtSignal(str)        # error message
 
     def __init__(self, session_id, server_base, out_path, bin1=False, parent=None,
-                 chips=None):
+                 chips=None, engine=None):
         super().__init__(parent)
         self._session_id = session_id
         self._server_base = server_base
         self._out_path = out_path
         self._bin1 = bin1
         self._chips = chips
+        self._engine = engine
+        self.result = {}            # 완료 후 honey_main 이 엔진·경고를 읽는다
 
     def run(self):
+        # COM 은 폴백 경로에서만 쓰지만, 폴백은 예고 없이 발동하므로 항상 초기화해 둔다.
         try:
             import pythoncom
             pythoncom.CoInitialize()
@@ -34,7 +38,9 @@ class ExcelDownloadWorker(QThread):
             result = run_excel_download(
                 self._session_id, self._server_base, self._out_path,
                 status_cb=lambda s, m: self.status.emit(s, m),
-                bin1=self._bin1, chips=self._chips)
+                progress_cb=lambda pct, m: self.progress.emit(int(pct), m),
+                bin1=self._bin1, chips=self._chips, engine=self._engine)
+            self.result = result or {}
             self.done.emit(str(result.get("out_path") or self._out_path),
                            float(result.get("elapsed") or 0.0))
         except Exception as exc:

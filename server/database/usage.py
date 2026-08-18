@@ -118,3 +118,25 @@ def peak_first_day():
     with get_conn() as conn:
         row = conn.execute("SELECT MIN(day) AS d FROM report_usage_peak_daily").fetchone()
     return row["d"] if row and row["d"] else None
+
+
+def purge_usage(hourly_cutoff_day=None, daily_cutoff_day=None):
+    """사용량 롤오프 — cutoff **이전** 날짜 행 삭제. {"hourly","daily","peak"} 반환.
+
+    시간별은 요일×시간 히트맵용이라 최근 구간만 있으면 되고(카디널리티가 24배), 일별·Peak
+    은 장기 추이라 훨씬 길게 둔다. cutoff 는 'YYYY-MM-DD' 문자열 — day 컬럼이 문자열이라
+    사전순 비교가 곧 날짜 비교다."""
+    out = {"hourly": 0, "daily": 0, "peak": 0}
+    with get_conn() as conn:
+        if hourly_cutoff_day:
+            out["hourly"] = conn.execute(
+                "DELETE FROM report_usage_hourly WHERE day < ?",
+                (hourly_cutoff_day,)).rowcount
+        if daily_cutoff_day:
+            out["daily"] = conn.execute(
+                "DELETE FROM report_usage_daily WHERE day < ?",
+                (daily_cutoff_day,)).rowcount
+            out["peak"] = conn.execute(
+                "DELETE FROM report_usage_peak_daily WHERE day < ?",
+                (daily_cutoff_day,)).rowcount
+    return out

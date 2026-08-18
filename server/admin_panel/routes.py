@@ -579,19 +579,15 @@ def api_session_important(session_id):
 
 @admin_panel_bp.post("/api/session/<session_id>/password")
 def api_session_password(session_id):
+    """[폐지 2026-08-14] 세션 PIN 설정.
+
+    세션 PIN 은 접근제어에 쓰이지 않은 지 오래인데 평문으로 DB 에 남아 있었다. 신규 저장은
+    중단하고 기존 값은 마이그레이션에서 비운다. 라우트는 구 화면이 호출해도 500 이 되지
+    않도록 남겨두되, 저장은 하지 않고 410 으로 폐지를 알린다."""
     if not _SESSION_ID_RE.match(session_id):
         abort(400, "invalid session_id")
-    body = request.get_json(force=True, silent=True) or {}
-    password = (body.get("password") or "").strip()
-    if password and not _PIN_RE.match(password):
-        abort(400, "password must be 4 digits or empty")
-    session = report_db.get_session(session_id)
-    if not session:
-        abort(404, "session not found")
-    sessions_admin.set_password(session_id, password)
-    _audit("edit", session=session,
-           changed_fields="password(admin:%s)" % ("set" if password else "clear"))
-    return jsonify({"ok": True, "session_id": session_id, "has_password": bool(password)})
+    return jsonify({"ok": False, "session_id": session_id, "has_password": False,
+                    "error": "세션 PIN 은 폐지되었습니다 (접근제어는 신원 기반)."}), 410
 
 
 # ── 사용자(웹 로그인 계정) 컨트롤 ───────────────────────────────────────────

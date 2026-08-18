@@ -45,13 +45,21 @@ def log_chat(*, question, user=None, client_ip=None, context_session_id=None,
         _log.debug("chatbot 로그 기록 실패 — 무시", exc_info=True)
 
 
+# plan/steps 는 호출된 조회 툴 기록이라 보통 수백 바이트지만 상한이 없었다 — 툴 결과가
+# 실려 들어오면 행 하나가 커진다. 유효 JSON 을 유지하면서 크기만 막는다.
+_JSON_CAP = 8000
+
+
 def _dump(value):
     if value is None:
         return None
     try:
-        return json.dumps(value, ensure_ascii=False)
+        text = json.dumps(value, ensure_ascii=False)
     except (TypeError, ValueError):
         return None
+    if len(text) > _JSON_CAP:
+        return json.dumps({"_truncated_bytes": len(text)})
+    return text
 
 
 def _int(value):
@@ -137,8 +145,52 @@ def chat_stats(hours=24):
     return out
 
 
+def rollup_chat_daily(cutoff_epoch):
+    """삭제 대상 구간을 일별 비식별 집계(report_chatbot_daily)로 접어 넣는다. 접은 행 수 반환.
+
+    질문/답변 전문은 보존기간이 지나면 지우지만 "언제 얼마나 쓰였고 얼마나 걸렸나"는 계속
+    필요하다. **purge 직전에** 호출해야 하며, 같은 날을 두 번 접지 않도록 UPSERT 가 아니라
+    (day, intent, planner, result) 별 합계를 그대로 더한다 — 재실행 시 중복되지 않도록
+    purge 와 한 트랜잭션에서 처리한다."""
+    cutoff = int(cutoff_epoch)
+    with get_conn() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        rows = conn.execute(
+            "SELECT date(created_at, 'unixepoch', 'localtime') AS day, "
+            "       COALESCE(intent, '') AS intent, COALESCE(planner, '') AS planner, "
+            "       COALESCE(result, '') AS result, COUNT(*) AS cnt, "
+            "       COALESCE(SUM(total_ms), 0) AS t, COALESCE(SUM(wait_ms), 0) AS w, "
+            "       COALESCE(SUM(llm_ms), 0) AS l "
+            "FROM report_chatbot_log WHERE created_at < ? "
+            "GROUP BY day, intent, planner, result", (cutoff,)).fetchall()
+        for r in rows:
+            conn.execute(
+                "INSERT INTO report_chatbot_daily "
+                "(day, intent, planner, result, cnt, total_ms_sum, wait_ms_sum, llm_ms_sum) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(day, intent, planner, result) DO UPDATE SET "
+                "  cnt=cnt+excluded.cnt, total_ms_sum=total_ms_sum+excluded.total_ms_sum, "
+                "  wait_ms_sum=wait_ms_sum+excluded.wait_ms_sum, "
+                "  llm_ms_sum=llm_ms_sum+excluded.llm_ms_sum",
+                (r["day"], r["intent"], r["planner"], r["result"], r["cnt"],
+                 r["t"], r["w"], r["l"]))
+        cur = conn.execute("DELETE FROM report_chatbot_log WHERE created_at < ?", (cutoff,))
+        return cur.rowcount
+
+
+def chat_daily(limit=400):
+    """일별 비식별 집계 (관리자 Chatbot 탭 — 원문이 지워진 구간의 추이)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT day, intent, planner, result, cnt, total_ms_sum, wait_ms_sum, llm_ms_sum "
+            "FROM report_chatbot_daily ORDER BY day DESC LIMIT ?", (int(limit),)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def purge_chat_logs(cutoff_epoch):
-    """created_at 이 cutoff 이전인 챗 로그 삭제. 삭제 행 수 반환."""
+    """created_at 이 cutoff 이전인 챗 로그 삭제. 삭제 행 수 반환.
+
+    집계를 남기려면 rollup_chat_daily 를 쓴다 (cleanup 스케줄러가 쓰는 쪽)."""
     with get_conn() as conn:
         cur = conn.execute("DELETE FROM report_chatbot_log WHERE created_at < ?",
                            (int(cutoff_epoch),))

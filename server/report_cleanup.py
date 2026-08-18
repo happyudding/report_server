@@ -2,11 +2,14 @@
 
 **보존기간(retention) 만료 세션 삭제는 폐지됐다** — 데이터 유실 방지를 위해
 report_tiering 이 산출물만 S3 로 아카이브하고 세션/DB 는 유지한다. 이 모듈이 실제로
-하는 일은 4가지다:
+하는 일은 7가지다:
   1. 감사 로그 롤오프 (REPORT_AUDIT_RETENTION_DAYS, dry-run 무관 항상 실행)
-  2. ingest 크래시 잔존 세션행(orphan pending, 48h) 회수
-  3. 휴지통(soft delete) 경과분(REPORT_TRASH_RETENTION_DAYS) 영구 purge
-  4. 세션 참조 없는 FS 고아 산출물(48h) 회수
+  2. 운영 로그 롤오프 — 챗봇 원문(집계로 접은 뒤 삭제)·사용량 (dry-run 무관, 1과 동일 논리)
+  3. S3 이관 대기(local_pending) 본문 재시도
+  4. ingest 크래시 잔존 세션행(orphan pending, 48h) 회수
+  5. 휴지통(soft delete) 경과분(REPORT_TRASH_RETENTION_DAYS) 영구 purge
+  6. 세션 참조 없는 FS 고아 산출물(48h) 회수 — akey 축(web_report/issue_img/
+     dist_combined/webreport_backup) + 세션 축(note_img/session_blob)
 
 세션 삭제 라우트(report_routes.delete_session_route)와 동일한 산출물 정리 경로
 (storage_gateway.delete_report_artifacts + report_db.delete_analysis_rows)를 재사용하며,
@@ -104,6 +107,17 @@ def _cleanup_one(session, dry_run):
         except Exception:
             _log.exception("cleanup cache invalidate failed for %s", akey)
         _remove_rawedit_backups(akey)
+    # Note 이미지·큰 본문 blob 은 세션 단위라 akey 공유 여부와 무관하게 정리한다
+    # (sessions_admin._delete_one/_purge_one 과 대칭 — 여기만 빠져 있었다).
+    try:
+        import storage_gateway
+        for warning in storage_gateway.delete_note_images(sid):
+            _log.warning("cleanup note image (%s): %s", sid, warning)
+        keys = [(b["backend"], b["object_key"]) for b in report_db.list_session_blobs(sid)]
+        for warning in storage_gateway.delete_session_blobs(sid, keys):
+            _log.warning("cleanup session blob (%s): %s", sid, warning)
+    except Exception:
+        _log.exception("cleanup session-scoped artifact cleanup failed for %s", sid)
     report_db.delete_session(sid)
     _log_audit(session, "ok")
     _log.info("[cleanup] deleted session=%s akey=%s last_ref=%s", sid, akey, last_ref)
@@ -130,6 +144,104 @@ def _purge_audit_logs():
         return 0
 
 
+def _purge_operational_logs():
+    """운영 로그 롤오프 — 챗봇 원문(집계로 접은 뒤 삭제) + 사용량(시간별/일별·Peak).
+
+    감사 롤오프와 같은 이유로 dry-run 과 무관하게 동작한다: 로그 행 삭제는 산출물 파괴가
+    아니고, 끄면 무한 증가한다. **세션 원본·사용자 편집은 여기 대상이 아니다.**
+    {"chat","usage_hourly","usage_daily"} 반환."""
+    out = {"chat": 0, "usage_hourly": 0, "usage_daily": 0}
+    now = int(time.time())
+
+    chat_days = int(getattr(config, "REPORT_CHATBOT_RETENTION_DAYS", 0) or 0)
+    if chat_days > 0:
+        try:
+            out["chat"] = report_db.rollup_chat_daily(now - chat_days * 86400)
+            if out["chat"]:
+                _log.info("[cleanup] chatbot 원문 %d행을 일별 집계로 접고 삭제 (%d일 경과)",
+                          out["chat"], chat_days)
+        except Exception:
+            _log.exception("[cleanup] chatbot purge failed")
+
+    hourly_days = int(getattr(config, "REPORT_USAGE_HOURLY_RETENTION_DAYS", 0) or 0)
+    daily_days = int(getattr(config, "REPORT_USAGE_DAILY_RETENTION_DAYS", 0) or 0)
+    if hourly_days > 0 or daily_days > 0:
+        def _day(days):
+            if days <= 0:
+                return None
+            return time.strftime("%Y-%m-%d", time.localtime(now - days * 86400))
+        try:
+            usage = report_db.purge_usage(hourly_cutoff_day=_day(hourly_days),
+                                          daily_cutoff_day=_day(daily_days))
+            out["usage_hourly"] = usage["hourly"]
+            out["usage_daily"] = usage["daily"] + usage["peak"]
+            if out["usage_hourly"] or out["usage_daily"]:
+                _log.info("[cleanup] usage 롤오프: hourly=%d daily+peak=%d",
+                          out["usage_hourly"], out["usage_daily"])
+        except Exception:
+            _log.exception("[cleanup] usage purge failed")
+    return out
+
+
+def _retry_pending_blobs():
+    """S3 이관 대기(local_pending) 본문 재시도. 이관 성공 건수 반환.
+
+    S3 업로드가 실패한 순간에도 사용자 입력은 로컬에 원자적으로 저장돼 있다. 여기서 다시
+    올려 backend 를 s3 로 승격한다 — 실패하면 다음 주기에 또 시도한다(데이터는 그대로)."""
+    promoted = 0
+    try:
+        pending = report_db.list_pending_session_blobs()
+    except Exception:
+        _log.exception("[cleanup] pending blob 조회 실패")
+        return 0
+    if not pending:
+        return 0
+    import storage_gateway
+    for row in pending:
+        try:
+            if storage_gateway.promote_session_blob(row["object_key"]):
+                report_db.mark_session_blob_backend(row["session_id"], row["kind"], "s3")
+                promoted += 1
+        except Exception:
+            _log.warning("[cleanup] session blob 재이관 실패 (%s)", row["object_key"],
+                         exc_info=True)
+    if promoted:
+        _log.info("[cleanup] session blob %d건 S3 재이관 완료", promoted)
+    return promoted
+
+
+def _purge_session_orphans(dry_run):
+    """세션 참조 없는 **세션 단위** 잔존물 회수 — note_img/<sid>/ · session_blob/<sid>/.
+
+    akey 단위 고아(_purge_fs_orphans)와 달리 이쪽은 세션이 지워졌는데 파일만 남은 경우다.
+    관리자 삭제 경로에는 정리 훅이 있지만, 그 훅이 없던 시절에 지워진 세션과 훅이 실패한
+    건은 여기서만 회수된다. 48h 유예는 진행 중인 업로드/편집 보호."""
+    cutoff = time.time() - 48 * 3600
+    found = 0
+    roots = [Path(config.REPORT_UPLOAD_DIR) / "note_img",
+             Path(config.REPORT_UPLOAD_DIR) / "session_blob"]
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for entry in root.iterdir():
+            try:
+                if not entry.is_dir() or entry.stat().st_mtime > cutoff:
+                    continue
+                sid = entry.name
+                if report_db.get_session(sid):
+                    continue
+                found += 1
+                if dry_run:
+                    _log.info("[cleanup:dry-run] would purge orphan %s/%s", root.name, sid)
+                    continue
+                import shutil
+                shutil.rmtree(entry)
+                _log.info("[cleanup] purged orphan %s/%s", root.name, sid)
+            except Exception:
+                _log.exception("[cleanup] session orphan purge failed for %s", entry)
+    return found
+
+
 def _purge_fs_orphans(dry_run):
     """DB 참조 없는 uploads/web_report/<akey>/ 고아 산출물 회수. 대상 건수 반환.
 
@@ -137,18 +249,39 @@ def _purge_fs_orphans(dry_run):
     산출물이 세션행 없이 남고, 기존 orphan pending 회수(DB 행 기준)로는 발견되지 않는다.
     세션이 하나도 참조하지 않는 akey 디렉터리를 48h 유예(진행 중 ingest 보호) 후
     세션 삭제와 동일 경로(delete_report_artifacts + delete_analysis_rows)로 정리한다.
-    로컬 디렉터리 스캔 기준이라 S3 단독 고아는 대상 밖(관리자 스토리지 탭과 동일 정책)."""
-    root = Path(config.REPORT_UPLOAD_DIR) / "web_report"
-    if not root.is_dir():
-        return 0
+    로컬 디렉터리 스캔 기준이라 S3 단독 고아는 대상 밖(관리자 스토리지 탭과 동일 정책).
+
+    스캔 루트는 web_report/ 하나가 아니다 — issue_img/·dist_combined/·webreport_backup/
+    도 akey 네임스페이스라 같은 이유로 고아가 될 수 있는데 종전에는 어떤 자동 경로로도
+    회수되지 않았다. akey 집합을 네 곳에서 모아 한 번에 판정한다."""
+    upload_root = Path(config.REPORT_UPLOAD_DIR)
     cutoff = time.time() - 48 * 3600
+    candidates = {}          # akey -> 가장 최근 mtime (한 곳이라도 최근이면 유예)
+    for name in ("web_report", "issue_img", "webreport_backup"):
+        root = upload_root / name
+        if not root.is_dir():
+            continue
+        for entry in root.iterdir():
+            if entry.is_dir() and _AKEY_RE.match(entry.name):
+                try:
+                    candidates[entry.name] = max(candidates.get(entry.name, 0),
+                                                 entry.stat().st_mtime)
+                except OSError:
+                    continue
+    dist_root = upload_root / "dist_combined"
+    if dist_root.is_dir():
+        for entry in dist_root.iterdir():
+            if entry.is_file() and _AKEY_RE.match(entry.stem):
+                try:
+                    candidates[entry.stem] = max(candidates.get(entry.stem, 0),
+                                                 entry.stat().st_mtime)
+                except OSError:
+                    continue
+
     found = 0
-    for entry in root.iterdir():
+    for akey, mtime in candidates.items():
         try:
-            akey = entry.name
-            if not entry.is_dir() or not _AKEY_RE.match(akey):
-                continue
-            if entry.stat().st_mtime > cutoff:
+            if mtime > cutoff:
                 continue
             if report_db.count_sessions_for_analysis_key(akey) > 0:
                 continue
@@ -170,7 +303,7 @@ def _purge_fs_orphans(dry_run):
             _remove_rawedit_backups(akey)
             _log.info("[cleanup] purged orphan artifacts akey=%s", akey)
         except Exception:
-            _log.exception("[cleanup] orphan artifact purge failed for %s", entry)
+            _log.exception("[cleanup] orphan artifact purge failed for %s", akey)
     return found
 
 
@@ -187,6 +320,8 @@ def run_cleanup(dry_run=None):
     if dry_run is None:
         dry_run = config.REPORT_CLEANUP_DRYRUN
     audit_purged = _purge_audit_logs()
+    logs = _purge_operational_logs()
+    blobs_promoted = _retry_pending_blobs()
 
     # ingest 크래시 잔존물(status='pending'·analysis_key 없음) — 48h 지나면 회수.
     # analysis_key 가 없어 산출물 참조도 없으므로 세션 행만 지워진다.
@@ -231,12 +366,25 @@ def run_cleanup(dry_run=None):
         fs_orphans = 0
         _log.exception("[cleanup] fs orphan purge failed")
 
+    # 세션 단위 잔존물(note_img/·session_blob/) — akey 스캔이 못 보는 축.
+    try:
+        session_orphans = _purge_session_orphans(dry_run)
+    except Exception:
+        session_orphans = 0
+        _log.exception("[cleanup] session orphan purge failed")
+
     _log.info("[cleanup] done: orphan_pending=%d deleted=%d trash_scanned=%d trash_purged=%d "
-              "fs_orphans=%d dry_run=%s audit_purged=%d",
+              "fs_orphans=%d session_orphans=%d dry_run=%s audit_purged=%d chat_purged=%d "
+              "usage_purged=%d blobs_promoted=%d",
               len(orphans), deleted, trash["scanned"], len(trash["purged"]), fs_orphans,
-              dry_run, audit_purged)
+              session_orphans, dry_run, audit_purged, logs["chat"],
+              logs["usage_hourly"] + logs["usage_daily"], blobs_promoted)
     return {"scanned": len(orphans), "deleted": deleted, "dry_run": dry_run,
             "audit_purged": audit_purged, "fs_orphans": fs_orphans,
+            "session_orphans": session_orphans,
+            "chat_purged": logs["chat"],
+            "usage_purged": logs["usage_hourly"] + logs["usage_daily"],
+            "blobs_promoted": blobs_promoted,
             "trash_scanned": trash["scanned"], "trash_purged": len(trash["purged"])}
 
 
@@ -260,7 +408,9 @@ def start_cleanup_scheduler():
                 STATE["last_result"] = (
                     f"orphan {summary['deleted']}/{summary['scanned']} · "
                     f"trash {summary['trash_purged']} · fs {summary['fs_orphans']} · "
-                    f"audit {summary['audit_purged']}"
+                    f"sess {summary['session_orphans']} · audit {summary['audit_purged']} · "
+                    f"chat {summary['chat_purged']} · usage {summary['usage_purged']} · "
+                    f"blob↑{summary['blobs_promoted']}"
                     + (" (dry-run)" if summary["dry_run"] else ""))
             except Exception:
                 STATE["last_ok"] = False

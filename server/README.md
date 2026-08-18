@@ -116,6 +116,9 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_RETENTION_DAYS` | `180` | (보존기간 만료 **삭제는 폐지** — 티어링이 대체. 값은 표시용으로만 남음) |
 | `REPORT_CLEANUP_DRYRUN` | `1`(참) | **기본은 실삭제 안 함**(대상만 로그). 실삭제는 `0` 으로 명시. 대상=고아 세션행·휴지통 경과분·고아 산출물 |
 | `REPORT_AUDIT_RETENTION_DAYS` | `365` | 감사 로그 롤오프. 0 이하 = 무기한. **cleanup dry-run 과 무관하게 항상 실행** |
+| `REPORT_CHATBOT_RETENTION_DAYS` | `90` | 챗봇 질문/답변 **전문** 보존. 삭제 직전 `report_chatbot_daily` 일별 비식별 집계로 접는다(추이·부하 지표는 영구). dry-run 무관 |
+| `REPORT_USAGE_HOURLY_RETENTION_DAYS` | `90` | 시간별 사용량(`report_usage_hourly`) 롤오프 — 요일×시간 히트맵용이라 최근 구간만 필요. dry-run 무관 |
+| `REPORT_USAGE_DAILY_RETENTION_DAYS` | `730` | 일별 사용량·Peak 롤오프(장기 추이라 2년). dry-run 무관 |
 | `REPORT_DB_BACKUP_ENABLED` / `_INTERVAL_HOURS` / `_KEEP` / `_DIR` | `1` / `24` / `7` / `<db>/backup` | 온라인 백업 사이클. 대상은 report.db + eval.db (voc.db 는 VOC 미사용 중이라 제외, DB 별 prefix 로 rotation) |
 | `REPORT_DB_BACKUP_EXTERNAL_DIR` | (없음) | 지정 시 integrity 통과 백업본을 이 경로로도 복사(best-effort). 같은 디스크 사망 대비 |
 | `REPORT_WEBREPORT_TOTAL_MB` | `1024` | web_report parquet **합계** 상한. 개별 파일은 512MB 고정, 요청 전체는 `MAX_CONTENT_LENGTH_MB` |
@@ -309,7 +312,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `POST` | `/session/<sid>/private` | 업로더 | 비공개 토글 |
 | `PATCH` | `/session/<sid>/meta` | 편집자 + Honey | 세션 메타 수정 — `{file_name, family_product, product, lot_id, process}`. **`X-Honey-Agent: 1` 필수**(= Honey 앱 전용 강제, CSRF 대체). product 변경 시 product_info.db 재lookup(미등록이면 기준정보 14컬럼 비움). product_type·analysis_key 는 불변 |
 | `GET` | `/honey/session_meta/<sid>` | 공개 | 위 편집창의 **진입 URL** — Honey 내장 브라우저가 네비게이션을 가로채 편집창을 띄우므로 실제로는 요청되지 않는다. 가드 없는 환경용 안내 HTML |
-| `POST` | `/session/<sid>/verify_password` | Honey | **하위호환 스텁** — UA 업로더 확인만, 항상 `has_password:false` |
+| `POST` | `/session/<sid>/verify_password` | Honey | **하위호환 스텁** — UA 업로더 확인만, 항상 `has_password:false`. 세션 PIN 자체가 2026-08-14 폐지(평문 저장 중단·기존 값 NULL, 관리자 `POST /api/session/<sid>/password` 는 410) |
 | `PATCH` | `/session/<sid>/content` | — | **비활성, 항상 405** (구 xlsx 텍스트 수정 폐기) |
 | `GET`/`POST` | `/session/<sid>/editors` | 업로더 | 편집자 위임 조회/부여 |
 | `DELETE` | `/session/<sid>/editors/<user>` | 업로더 | 편집자 회수 |
@@ -338,7 +341,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `POST` | `/issue_table/status` | 편집자 | Issue 행 Status Open/Close (kind=issue_status, Close 만 저장). 단건 `{key,value}` / 일괄 `{items:[{key,value},…]}` (전체·선택 Open/Close, DB write 1회) |
 | `POST` | `/issue_table/signature` | 편집자 | Issue 행의 **ENGR 확정 Signature** 저장 (kind=issue_signature, `{key, signatures:[id,…]}`, 빈 배열=해제). 카탈로그 id 또는 `UNKNOWN` 만·중복 불가·최대 8개. 저장 후 eval DB 로 비동기 동기화 ([docs/13 §6-3](../docs/13_eval_analyzer_integration.md)) |
 | `POST` | `/chart_notes` | 편집자 | 차트 주석(도형/텍스트/코멘트) 저장 (kind=chart_note) |
-| `GET`/`POST` | `/note` | 공개/편집자 | Note 탭 시트 JSON 지연 조회 / 저장 (kind=note_sheet, ≤10MB) |
+| `GET`/`POST` | `/note` | 공개/편집자 | Note 탭 시트 JSON 지연 조회 / 저장 (kind=note_sheet, ≤10MB). 본문은 **객체 저장**(report_session_blob 포인터), 전환 기간에는 legacy 편집행에도 dual-write — 응답 형식·낙관적 잠금 `base` 는 불변 |
 | `GET` | `/note/sheet_names` | 공개 | Note 시트 **이름만** `[{index,name,order}]`. Summary 의 `$[시트명]` 자동완성·시트 버튼 줄 전용 — 본문(≤10MB)까지 내려주는 `/note` 를 이름 때문에 부르지 않게 한 경량 라우트 (서버는 updated_at 키로 memo) |
 | `POST` | `/note_image` | 편집자 | Note 이미지 업로드 (PNG/JPEG raw body, ≤2MB·세션 200장) |
 | `GET` | `/rawdata_export` | 공개 | **Honey 전용** Excel 편집용 zip(manifest + source_*.parquet, ZIP_STORED) 내보내기 — 웹 다운로드용 `/rawdata_csv_all` 과는 내용·파일명이 다른 별개 경로다. **ETag = content_hash** — Honey 가 temp 에 받아둔 zip 을 `If-None-Match` 로 물어보면 내용 무변경 시 **304**(서버가 원본을 메모리에 올려 zip 으로 싸는 작업 자체를 안 함) |

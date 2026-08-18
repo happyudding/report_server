@@ -2024,7 +2024,11 @@ async function loadStgOverview(refresh) {
         <div class="det">DB + 백업 + 업로드 로컬 실측 (S3 저장분 제외)</div></div>
       <div class="tile"><div class="lbl">S3 백엔드</div>
         <div class="val" style="font-size:20px">${o.s3_configured ? "설정됨" : "미설정"}</div>
-        <div class="det">${o.s3_configured ? "산출물은 S3 저장 · 용량 미집계" : "로컬 폴백 사용"}</div></div>`;
+        <div class="det">${o.s3_configured ? "산출물은 S3 저장 · 용량 미집계" : "로컬 폴백 사용"}</div></div>
+      ${(o.s3_pending && o.s3_pending.count) ? `
+      <div class="tile"><div class="lbl">⚠ S3 이관 대기</div>
+        <div class="val" style="font-size:22px">${o.s3_pending.count.toLocaleString()}건</div>
+        <div class="det">${fmtBytes(o.s3_pending.bytes)} · 업로드 실패로 로컬에만 있음 (정리 주기마다 재시도)</div></div>` : ""}`;
     const cats = o.categories.slice().sort((a, b) => b.bytes - a.bytes);
     const max = Math.max(...cats.map(c => c.bytes), 1);
     $("stgCatBody").innerHTML = cats.map(c => `

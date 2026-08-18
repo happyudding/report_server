@@ -16,6 +16,9 @@ def create_session(session_id, file_name, file_path, product_type=None, dataset_
                    process=None, revision=None, edm_link=None, source='xlsx_upload',
                    uploaded_by=None, client_host=None, mode='Normal', product_info=None,
                    family_product=None):
+    # password(4자리 PIN)는 2026-08-14 폐지 — 접근제어에 쓰이지 않은 지 오래인데 평문으로
+    # 남아 있었다. 인자는 호출부 호환을 위해 받되 **저장하지 않는다**(항상 NULL).
+    password = None
     now = _now()
     file_path_str = str(file_path) if file_path is not None else None
     # 기준정보(product_info)는 화이트리스트 컬럼 중 값이 있는 것만 동적 병합한다. 컬럼명은
@@ -47,6 +50,9 @@ def delete_session(session_id):
         conn.execute("DELETE FROM report_annotation WHERE session_id=?", (session_id,))
         conn.execute("DELETE FROM report_webreport_edit WHERE session_id=?", (session_id,))
         conn.execute("DELETE FROM report_webreport_edit_rev WHERE session_id=?", (session_id,))
+        # 큰 본문 포인터 — 실제 객체 삭제는 호출부(storage_gateway.delete_session_blobs)가
+        # 이 행을 읽어 먼저 수행한다. 여기서는 포인터만 지운다.
+        conn.execute("DELETE FROM report_session_blob WHERE session_id=?", (session_id,))
         # 세션을 참조하는 사용자별 부가 테이블 — 안 지우면 purge 후 영구 고아로 남는다.
         conn.execute("DELETE FROM report_user_favorite WHERE session_id=?", (session_id,))
         conn.execute("DELETE FROM report_user_important WHERE session_id=?", (session_id,))
@@ -314,7 +320,7 @@ def get_history(product_type=None, process=None, product=None, revision=None, lo
                COALESCE(s.mode, 'Normal') AS mode,
                COALESCE(s.is_important, 0) AS is_important,
                COALESCE(s.is_private, 0) AS is_private,
-               CASE WHEN s.password IS NOT NULL THEN 1 ELSE 0 END AS has_password,
+               0 AS has_password,   -- PIN 폐지 (2026-08-14) — 컬럼은 보존, 표기는 항상 false
                CASE WHEN f.session_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
                COALESCE(SUM(c.file_size), 0) AS total_file_size
         FROM report_session s
@@ -421,7 +427,7 @@ def get_history_page(product_type=None, process=None, product=None, revision=Non
                COALESCE(s.mode, 'Normal') AS mode,
                COALESCE(s.is_important, 0) AS is_important,
                COALESCE(s.is_private, 0) AS is_private,
-               CASE WHEN s.password IS NOT NULL THEN 1 ELSE 0 END AS has_password,
+               0 AS has_password,   -- PIN 폐지 (2026-08-14) — 컬럼은 보존, 표기는 항상 false
                CASE WHEN f.session_id IS NOT NULL THEN 1 ELSE 0 END AS is_favorite,
                (SELECT COALESCE(SUM(c.file_size), 0) FROM report_csv_files c
                  WHERE c.analysis_key = s.analysis_key) AS total_file_size

@@ -7,8 +7,15 @@
 // _sheets.py 규칙을 이 파일 한 곳에 미러링하고, 3개 탭이 같은 hxl* 헬퍼를 공유한다
 // (탭마다 따로 만들면 서식이 다시 갈라진다 — 2026-07-23 통합).
 //
-// 전체본(Excel Download)과의 유일한 의도적 차이: Issue Table 의 Map/Distribution 은
-// **열만 있고 이미지는 없다**(브라우저에서 썸네일을 렌더하지 않는다).
+// 전체본(Excel Download)과의 의도적 차이:
+//  · Issue Table 의 Map/Distribution 은 **열만 있고 이미지는 없다**(브라우저에서 썸네일을
+//    렌더하지 않는다).
+//  · Honey 전용 확장(여기 미러 대상 아님, 2026-08-14): Yield 상단 요약 3표 · fail 빨강
+//    그라데이션 · Status 셀 Open/Close 색 · Summary 의 Issue Status/Engr Comment 카드 ·
+//    전처리 안내/Compare/Download Status 시트 · 차트 주석(chart_note) 오버레이.
+//    이것들은 Honey 의 XlsxWriter 엔진(client/excel_download/_xlsx.py + _extra.py)에만 있다.
+//    여기서 미러하는 범위는 종전대로 **탭 단위 3종(Yield/CPK/Issue)의 표 값과 기본 서식**이다.
+//    (Status 색·그라데이션은 exceljs 로도 저렴하게 포팅 가능 — 필요해지면 그때.)
 //
 // 순수 빌더(buildYieldSheetData/buildCpkSheetData/buildIssueSheetData)는 DOM·ExcelJS 를
 // 참조하지 않는다 — QJSEngine 으로 함수만 추출해 검증하기 위한 관례(spread 문법도 안 쓴다).

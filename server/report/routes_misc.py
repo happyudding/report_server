@@ -800,14 +800,8 @@ def client_error():
         str(body.get("stack") or "")[:1000],
     ) if p)
     _log.warning("client_error [%s] %s", ip, detail)
-    try:  # 감사 기록은 best-effort — 실패해도 beacon 응답은 정상
-        report_db.log_audit(
-            action="client_error", session_id=session_id or None,
-            changed_fields=detail[:1500], client_ip=ip,
-            user_agent=request.headers.get("User-Agent"),
-            client_user=_current_user(), result="error")
-    except Exception:
-        _log.warning("client_error 감사 기록 실패", exc_info=True)
+    # 감사 로그 이중 기록은 2026-08-14 중단 — 오류는 진단 사건 저장소(14일 JSONL) 한 곳에만
+    # 남긴다. 감사 표는 "누가 무엇을 했나"의 이력이라 오류가 섞이면 그 이력이 밀려난다.
     _emit_client_event("browser", body, msg, session_id, ip)
     return "", 204
 
@@ -869,14 +863,7 @@ def client_diagnostic():
         f"ver={body.get('version')}" if body.get("version") else "",
     ) if p)
     _log.warning("honey_diagnostic [%s] %s", ip, detail)
-    try:
-        report_db.log_audit(
-            action="client_error", session_id=session_id or None,
-            changed_fields=detail[:1500], client_ip=ip,
-            user_agent=request.headers.get("User-Agent"),
-            client_user=_current_user(), result="error")
-    except Exception:
-        _log.warning("honey_diagnostic 감사 기록 실패", exc_info=True)
+    # client_error 와 같은 이유로 감사 이중 기록 중단 (2026-08-14) — 진단 사건만 남긴다.
     _emit_client_event("honey", body, msg, session_id, ip)
     return "", 204
 

@@ -1513,21 +1513,34 @@ class HoneyMainWindow(QMainWindow):
         # 없으면 빈 목록 → 강조 없이 기존과 동일하게 저장한다.
         chips = self._map_selection_chips()
 
-        from PyQt6.QtWidgets import QCheckBox
-        opt = QMessageBox(self)
-        opt.setWindowTitle("Excel Download")
-        opt.setIcon(QMessageBox.Icon.Question)
-        opt.setText("web report 를 Excel 로 저장합니다."
-                    + (f"\n\nMap Analysis 에서 선택한 좌표 {len(chips)}개가 "
-                       "Map·Distribution 차트에 화면과 같은 색으로 강조됩니다."
-                       if chips else ""))
+        # 옵션 2개(산포 기준·기입 엔진) — QMessageBox 는 체크박스를 하나만 받으므로
+        # 체크박스 2개를 담은 작은 다이얼로그로 만든다.
+        from PyQt6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QLabel,
+                                     QVBoxLayout)
+        from excel_download import DEFAULT_ENGINE
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Excel Download")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel(
+            "web report 를 Excel 로 저장합니다."
+            + (f"\n\nMap Analysis 에서 선택한 좌표 {len(chips)}개가 "
+               "Map·Distribution 차트에 화면과 같은 색으로 강조됩니다." if chips else "")))
         bin1_cb = QCheckBox("산포(Distribution·Histogram)를 Bin1(양품·규격내) 기준으로 그리기")
-        opt.setCheckBox(bin1_cb)
-        opt.setStandardButtons(
-            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Cancel)
-        if opt.exec() != QMessageBox.StandardButton.Ok:
+        lay.addWidget(bin1_cb)
+        engine_cb = QCheckBox("새 방식으로 만들기 (Excel 없이 생성 — 빠르고 web report 와 더 비슷)")
+        engine_cb.setChecked(DEFAULT_ENGINE == "xlsxwriter")
+        engine_cb.setToolTip("끄면 기존 Excel(COM) 방식으로 만듭니다. 새 방식이 실패하면 "
+                             "자동으로 기존 방식으로 다시 만들기 때문에 파일은 항상 생성됩니다.")
+        lay.addWidget(engine_cb)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok
+                                   | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        lay.addWidget(buttons)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         bin1 = bin1_cb.isChecked()
+        engine = "xlsxwriter" if engine_cb.isChecked() else "com"
 
         # 여기서부터 워커 완료(_on_excel_dl_done/_failed)까지 새 작업 진입점을 잠근다.
         self._set_busy(True)
@@ -1563,16 +1576,17 @@ class HoneyMainWindow(QMainWindow):
 
         from excel_download.worker import ExcelDownloadWorker
         self._excel_dl_worker = ExcelDownloadWorker(sid, SERVER_BASE_URL, out_path, bin1,
-                                                    self, chips=chips)
+                                                    self, chips=chips, engine=engine)
         w = self._excel_dl_worker
         w.status.connect(self._on_excel_dl_status)
+        w.progress.connect(self._on_excel_dl_progress)
         w.done.connect(self._on_excel_dl_done)
         w.failed.connect(self._on_excel_dl_failed)
-        # 진행바(하단 dock) — 단계가 병렬이라 % 대신 경과시간 + 단계 메시지(indeterminate).
-        # 워커는 단계별 status 만 보내므로 QTimer 로 경과시간 표시를 계속 갱신한다.
+        # 진행바(하단 dock) — 단계별 가중치로 0~100% 를 계산해 실제로 채워지게 한다.
+        # 차트 렌더처럼 오래 걸리는 구간은 "34/120" 같은 진행 분수까지 문구에 실린다.
         self._excel_dl_progress = _ElapsedProgress(
             self.progress_status, "Excel Download 준비 중...", self._status,
-            busy=True, minimum=0, maximum=0)
+            busy=True, minimum=0, maximum=100)
         self._excel_dl_timer = QTimer(self)
         self._excel_dl_timer.timeout.connect(
             lambda: self._excel_dl_progress.update())
@@ -1589,20 +1603,35 @@ class HoneyMainWindow(QMainWindow):
     def _on_excel_dl_status(self, state, message):
         self._status(message)
         self._append_run_log(f"[ExcelDL] {message}")
+
+    def _on_excel_dl_progress(self, percent, message):
+        """하단 진행바 — 단계 문구 + 진행 분수 + %. 만드는 동안 화면이 멈춘 듯 보이지 않게."""
         progress = getattr(self, "_excel_dl_progress", None)
         if progress is not None:
-            progress.set(message)
+            progress.set(label=f"{message} · {percent}%", value=int(percent))
 
     def _on_excel_dl_done(self, out_path, elapsed):
         self._set_busy(False)
         self._stop_excel_dl_timer()
+        result = getattr(getattr(self, "_excel_dl_worker", None), "result", {}) or {}
+        engine = "새 방식" if result.get("engine") == "xlsxwriter" else "기존 Excel 방식"
+        warnings = result.get("warnings") or []
         progress = getattr(self, "_excel_dl_progress", None)
         if progress is not None:
-            progress.success(f"완료: Excel Download ({elapsed:.1f}s)")
-        self._status(f"Excel Download 완료 ({elapsed:.1f}s)")
-        self._append_run_log(f"[ExcelDL] 완료 ({elapsed:.1f}s): {out_path}")
-        QMessageBox.information(
-            self, "Excel Download", f"저장 완료 ({elapsed:.1f}초)\n{out_path}")
+            progress.success(f"완료: Excel Download ({elapsed:.1f}s, {engine})")
+        self._status(f"Excel Download 완료 ({elapsed:.1f}s, {engine})")
+        self._append_run_log(f"[ExcelDL] 완료 ({elapsed:.1f}s, {engine}): {out_path}")
+        text = f"저장 완료 ({elapsed:.1f}초 · {engine})\n{out_path}"
+        if warnings:
+            # 일부만 실패한 경우 — 파일은 만들어졌고 무엇이 빠졌는지는 시트에도 남아 있다.
+            for w in warnings:
+                self._append_run_log(f"[ExcelDL] 경고: {w}")
+            preview = "\n".join(f"· {w}" for w in warnings[:5])
+            if len(warnings) > 5:
+                preview += f"\n· 외 {len(warnings) - 5}건"
+            text += (f"\n\n경고 {len(warnings)}건 — 일부 내용이 빠졌을 수 있습니다"
+                     f"('Download Status' 시트에 전체 기록):\n{preview}")
+        QMessageBox.information(self, "Excel Download", text)
 
     def _on_excel_dl_failed(self, message):
         self._set_busy(False)

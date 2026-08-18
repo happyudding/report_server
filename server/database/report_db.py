@@ -68,10 +68,12 @@ from .audit import (  # noqa: F401
     recent_upload_user_by_ip,
 )
 from .chatbot_log import (  # noqa: F401
+    chat_daily,
     chat_stats,
     list_chats,
     log_chat,
     purge_chat_logs,
+    rollup_chat_daily,
 )
 from .users import (  # noqa: F401
     add_session_editor,
@@ -95,6 +97,7 @@ from .users import (  # noqa: F401
 from .usage import (  # noqa: F401
     peak_first_day,
     peak_series,
+    purge_usage,
     record_active_peak,
     record_usage,
     usage_totals,
@@ -115,4 +118,20 @@ from .webreport_edits import (  # noqa: F401
     get_webreport_edits,
     note_base_token,
     save_note_sheet_checked,
+)
+from .session_blobs import (  # noqa: F401
+    count_pending_session_blobs,
+    delete_analysis,
+    delete_session_blob_row,
+    get_analysis,
+    get_migration_step,
+    get_session_blob,
+    list_migration_steps,
+    list_pending_session_blobs,
+    list_session_blobs,
+    mark_session_blob_backend,
+    set_migration_step,
+    touch_analysis,
+    upsert_analysis,
+    upsert_session_blob,
 )

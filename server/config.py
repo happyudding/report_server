@@ -174,6 +174,17 @@ REPORT_TRASH_RETENTION_DAYS   = int(os.getenv("REPORT_TRASH_RETENTION_DAYS", "30
 # 0 이하 = 비활성(무기한 보존). 세션 cleanup 의 DRYRUN 과 무관하게 동작한다.
 REPORT_AUDIT_RETENTION_DAYS   = int(os.getenv("REPORT_AUDIT_RETENTION_DAYS", "365"))
 
+# ── 운영 로그 롤오프 (2026-08-14) ────────────────────────────────────────────
+# 세션 원본·사용자 편집은 영구 보존하지만 **운영 로그는 유한 보존**한다. 전부 감사 로그와
+# 같은 태도 — 세션 cleanup 의 DRYRUN 과 무관하게 동작하고, 0 이하면 비활성(무기한).
+# 챗봇: 질문/답변 전문은 행당 최대 30KB 라 감사보다 짧게 잡는다. 삭제 전에 일별 비식별
+# 집계(report_chatbot_daily)로 접어 넣으므로 사용 추이·부하 지표는 남는다.
+REPORT_CHATBOT_RETENTION_DAYS      = int(os.getenv("REPORT_CHATBOT_RETENTION_DAYS", "90"))
+# 사용량: 시간별은 요일×시간 히트맵용이라 최근 구간만 있으면 되고, 일별/Peak 은 장기 추이라
+# 2년 보존한다.
+REPORT_USAGE_HOURLY_RETENTION_DAYS = int(os.getenv("REPORT_USAGE_HOURLY_RETENTION_DAYS", "90"))
+REPORT_USAGE_DAILY_RETENTION_DAYS  = int(os.getenv("REPORT_USAGE_DAILY_RETENTION_DAYS", "730"))
+
 # ── 로컬 hot 캐시 → S3 자동 티어링 (report_tiering.py) ────────────────────────
 # 바이너리 산출물(web_report parquet·manifest, issue/dist PNG)을 로컬에 hot 캐시로
 # 두다가, ① 6개월(REPORT_TIER_AGE_DAYS) 이상 됐거나 ② 로컬 티어링대상 총량이

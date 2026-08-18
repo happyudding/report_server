@@ -56,6 +56,8 @@ a = Analysis(
     + collect_submodules('honey_ui')
     + collect_submodules('report_flow')
     + collect_submodules('excel_edit')
+    + collect_submodules('excel_download')
+    + collect_submodules('xlsxwriter')   # Excel Download 기본 엔진(Excel 없이 xlsx 생성)
     ),
     hookspath=[],
     hooksconfig={},

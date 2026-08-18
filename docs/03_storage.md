@@ -11,16 +11,20 @@
 - [server/config.py](../server/config.py) — DB 경로·S3 자격증명·키 prefix
 
 ## SQLite 테이블 (정본 [core.py `SCHEMA`](../server/database/core.py), 스냅샷 [report_README.md](../DB/pe/report/report_README.md))
-테이블 17개. 요지 (전체 컬럼은 스냅샷 참조):
+테이블 25개. 요지 (전체 컬럼은 스냅샷 참조):
 
 | 테이블 | 역할 | 핵심 컬럼 / UNIQUE |
 |--------|------|--------------------|
-| `report_session` | 업로드 1건 = 1행 | `session_id`(UNIQUE), `analysis_key`, `status`, `product_type/product/lot_id`, `source`, `mode`, `uploaded_by`, `client_host`, `webreport_options`, `password`(미사용 보존) |
+| `report_session` | 업로드 1건 = 1행 | `session_id`(UNIQUE), `analysis_key`, `status`, `product_type/product/lot_id`, `source`, `mode`, `uploaded_by`, `client_host`, `webreport_options`, `password`(**폐지 2026-08-14** — 신규 미저장·기존 NULL, `has_password` 항상 false) |
+| `report_analysis` | analysis_key 단위 물리 원본 상태 (dedup 형제의 단일 진실) | `analysis_key`(PK), `content_hash`(authoritative), `source_count`, `artifact_status`, `last_access_at` |
+| `report_session_blob` | 세션 단위 **큰 본문 포인터** (본문은 객체 저장) | `PK(session_id,kind)`, `backend`(`s3`\|`local`\|`local_pending`), `object_key`, `content_hash`(sha256), `base_token`(낙관적 잠금 base), `size_bytes` |
+| `report_schema_migration` | backfill 단계·cursor (중단 후 재개) | `step`(PK), `status`, `cursor` |
+| `report_chatbot_daily` | 챗봇 원문 보존기간 후에도 남는 일별 비식별 집계 | `PK(day,intent,planner,result)`, `cnt`, `*_ms_sum` |
 | `report_analysis_summary` | yield/항목 표 행 | `UNIQUE(analysis_key,item_name,bin_number)`, `yield_percent/fail_count/cpk_val/mean_val…` |
 | `report_object_info` | 산출물 포인터 | `UNIQUE(analysis_key,object_type)`, `s3_bucket/s3_key/s3_uri`, `content_hash`, `options_json`(`{"storage":..}`) |
 | `report_sheet_data` | xlsx 추출 텍스트 | `PK(analysis_key,sheet_name)`, `data_json` |
 | `report_audit_log` | upload/edit/delete 감사 | 메타 스냅샷 + `client_ip/user_agent/client_user/client_host/result` |
-| `report_webreport_edit` / `_rev` | web_report 편집 진실 (세션 단위) | `PK(session_id,kind,item_key)` / `rev`(무효화 토큰) |
+| `report_webreport_edit` / `_rev` | web_report 편집 진실 (세션 단위) | `PK(session_id,kind,item_key)` / `rev`(무효화 토큰). **`note_sheet` 본문만 객체 저장으로 분리** — 저장은 blob+legacy dual-write, 조회는 blob 우선+legacy 폴백 |
 | `report_session_editor` | 편집 위임 | `PK(session_id,editor_user)` |
 | `report_web_visitor` | 편집자 후보 풀 | `user_id`(PK) |
 | `report_usage_daily` | 접속 사용량 일별 카운터 (Honey 실행·웹 방문 — 관리자 통계 탭) | `PK(day,kind,user_id)`, `kind`=`honey_run/web_index/web_view`, 무신원은 `ip:<addr>` ([database/usage.py](../server/database/usage.py)) |
@@ -66,6 +70,19 @@ web_report parquet/manifest 는 저장 위치를 `report_object_info.options_jso
 전체는 [server/README.md](../server/README.md)(정본). `REPORT_S3_BUCKET` 비면 모든 S3 동작이
 로컬 폴백. S3 키 prefix 는 [config.py](../server/config.py) `REPORT_S3_*_PREFIX`
 (web_report·distribution prefix 는 [_s3.py](../server/storage_gateway/_s3.py) 상수).
+
+## 세션 blob (큰 본문의 객체 저장 — 2026-08-14)
+"조회·조인하지 않는 큰 본문"만 DB 밖으로 뺀다. 현재 대상은 Note 시트 JSON 하나
+(kind=`note_sheet` — 이미지가 base64 로 들어와 최대 10MB).
+
+- 키 고정: `pe/report_server/session_blob/<session_id>/<kind>/<sha256>.json.gz`.
+  로컬은 같은 상대경로로 `uploads/report/session_blob/…` (원자적 temp→replace).
+- facade: `storage_gateway.save/load/delete_session_blob`, `promote_session_blob`
+  (`_session_blobs.py`). 포인터 CRUD 는 [database/session_blobs.py](../server/database/session_blobs.py).
+- S3 업로드 실패 시 `backend='local_pending'` 으로 **로컬에 보관**하고 cleanup 이 재이관한다
+  (관리자 스토리지 탭에 미이관 건수·바이트 경고). 사용자 입력을 잃지 않는 것이 우선.
+- **크기 기준으로 무조건 파일화하지 않는다.** `report_sheet_data`(세션당 수 KiB)는 legacy
+  xlsx 조회의 정본이라 DB 에 유지한다.
 
 ## 주의 (불변 규칙 §1·§3·§4)
 - 원본 xlsx 는 서버로 전송·저장하지 않는다 — 추출 텍스트는 DB(sheet_data), issue PNG 만 S3.

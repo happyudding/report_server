@@ -49,12 +49,16 @@ AKEY = "a" * 64
 
 
 def _setup_session():
-    """web_report 세션 1건. uploaded_by='' 라 legacy 우회로 HoneyUser 전원이 편집자다
-    (= 편집 위임 상태와 동일한 동시편집 조건)."""
+    """web_report 세션 1건 — 업로더 alice + 위임 편집자 bob.
+
+    (2026-07-22 이후 uploaded_by 가 빈 web_report 세션은 편집이 막힌다. 이 테스트가
+    필요로 하는 '두 사람이 같은 세션을 편집'하는 조건은 편집 위임으로 만든다 — 원래
+    docstring 이 말하는 report_session_editor 시나리오 그대로다.)"""
     report_db.create_session(SID, "note.parquet", None, product_type="MDDI",
                              lot_id="LOT1", product="P1", source="web_report",
-                             uploaded_by="")
+                             uploaded_by="alice")
     report_db.update_session(SID, analysis_key=AKEY, status="done")
+    report_db.add_session_editor(SID, "bob", granted_by="alice")
     # Engr 저장 경로의 ensure_seeded 가 manifest 를 지연 로드한다 (rev==0 인 첫 편집).
     man = Path(os.environ["REPORT_UPLOAD_DIR"]) / "web_report" / AKEY
     man.mkdir(parents=True, exist_ok=True)
@@ -168,8 +172,9 @@ def test_new_note_race():
     sid2 = "s-note-race"
     report_db.create_session(sid2, "n2.parquet", None, product_type="MDDI",
                              lot_id="LOT2", product="P1", source="web_report",
-                             uploaded_by="")
+                             uploaded_by="alice")
     report_db.update_session(sid2, analysis_key=AKEY, status="done")
+    report_db.add_session_editor(sid2, "bob", granted_by="alice")
     global SID
     prev, SID = SID, sid2
     try:

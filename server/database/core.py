@@ -311,6 +311,67 @@ CREATE TABLE IF NOT EXISTS report_usage_peak_daily (
     window_sec INTEGER NOT NULL,     -- 그때의 '동시' 판정 창 (ACTIVE_USER_WINDOW_SEC)
     updated_at INTEGER NOT NULL
 );
+
+-- ── 2026-08-14 세션 DB 개선 (Expand 단계 — 신규 테이블만 추가, 기존 경로 무변경) ──
+
+-- analysis_key 단위 **물리 원본 상태**. dedup 형제 세션이 각자 report_session.content_hash
+-- 를 들고 있어 같은 산출물인데 값이 갈리는 일이 있었다(실측 1건). 원본의 진실을 여기 한 곳에
+-- 두고 형제가 공유한다. report_session.content_hash 는 rollback 대비로 계속 동기화한다.
+CREATE TABLE IF NOT EXISTS report_analysis (
+    analysis_key   TEXT PRIMARY KEY,
+    content_hash   TEXT NOT NULL,        -- authoritative (parquet 실체 기준)
+    source         TEXT,                 -- 'web_report' | 'xlsx_upload'
+    source_count   INTEGER NOT NULL DEFAULT 0,
+    artifact_status TEXT NOT NULL DEFAULT 'ok',  -- ok | missing | pending
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL,
+    last_access_at INTEGER
+);
+
+-- 세션 단위 **큰 본문**의 객체 저장 포인터. "조회·조인하지 않는 본문"만 여기로 나간다
+-- (현재 kind=note_sheet — Luckysheet 시트 JSON, 이미지가 base64 로 들어와 최대 10MB).
+-- 작은 편집값(comment/status/chart_note 등)은 계속 report_webreport_edit 에 둔다.
+-- base_token 은 Note 낙관적 잠금 base(sha1 16자, webreport_edits.note_base_token)를
+-- 그대로 보존한다 — 이 컬럼이 없으면 충돌 검사 때마다 본문 전체를 로드해야 한다.
+CREATE TABLE IF NOT EXISTS report_session_blob (
+    session_id      TEXT NOT NULL,
+    kind            TEXT NOT NULL,        -- note_sheet
+    backend         TEXT NOT NULL,        -- s3 | local | local_pending(S3 이관 대기)
+    object_key      TEXT NOT NULL,        -- backend 공통 상대 키
+    content_hash    TEXT NOT NULL,        -- 본문 sha256 (무결성 검증)
+    base_token      TEXT,                 -- 본문 sha1 16자 (낙관적 잠금 base)
+    size_bytes      INTEGER NOT NULL DEFAULT 0,
+    content_encoding TEXT,                -- gzip
+    format_version  INTEGER NOT NULL DEFAULT 1,
+    updated_at      INTEGER NOT NULL,
+    updated_by      TEXT,
+    PRIMARY KEY (session_id, kind)
+);
+
+-- 마이그레이션 진행 상태 — 대량 backfill 을 중단 후 **재개**할 수 있게 단계별 cursor 를
+-- 남긴다. 부팅 시 대량 작업을 하지 않는 것이 원칙이라(서버 기동 지연 = 세션 미오픈),
+-- backfill 은 server/tools/migrate_session_db.py 로 따로 돌리고 그 진행을 여기 기록한다.
+CREATE TABLE IF NOT EXISTS report_schema_migration (
+    step        TEXT PRIMARY KEY,
+    status      TEXT NOT NULL,            -- pending | running | done | failed
+    cursor      TEXT,                     -- 재개 지점 (단계별 의미)
+    detail      TEXT,
+    updated_at  INTEGER NOT NULL
+);
+
+-- 챗봇 일별 비식별 집계 — 질문/답변 전문은 보존기간(기본 90일) 후 삭제하지만 사용 추이와
+-- 부하 지표는 계속 필요하다. 원문 purge 직전에 이 표로 접어 넣는다.
+CREATE TABLE IF NOT EXISTS report_chatbot_daily (
+    day           TEXT NOT NULL,          -- 'YYYY-MM-DD'
+    intent        TEXT NOT NULL DEFAULT '',
+    planner       TEXT NOT NULL DEFAULT '',
+    result        TEXT NOT NULL DEFAULT '',
+    cnt           INTEGER NOT NULL DEFAULT 0,
+    total_ms_sum  INTEGER NOT NULL DEFAULT 0,
+    wait_ms_sum   INTEGER NOT NULL DEFAULT 0,
+    llm_ms_sum    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (day, intent, planner, result)
+);
 """
 
 _PRODUCT_TYPE_NAMES = ("MDDI", "PDDI", "PMIC", "SECURITY", "TCON")

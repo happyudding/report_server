@@ -73,22 +73,28 @@ def _do_scan():
     cat = {        # 범주 -> [bytes, files]
         "parquet": [0, 0],
         "cache": [0, 0],
+        "dist_pack": [0, 0],     # Distribution 정렬 pack (영구 파생 — 축출 대상 아님)
         "issue_img": [0, 0],
         "dist_combined": [0, 0],
+        "note_img": [0, 0],      # Note 탭 이미지 (세션 단위)
+        "session_blob": [0, 0],  # Note 시트 본문 객체 (세션 단위)
     }
 
-    # web_report/<akey>/ : 직속 파일 = parquet/manifest, cache/ = compute 캐시
+    # web_report/<akey>/ : 직속 파일 = parquet/manifest, cache/ = compute 캐시,
+    # dist_pack/ = 정렬 pack(캐시가 아니라 영구 파생 데이터라 범주를 나눠 보여준다)
     for entry in _scandir(wr_root):
         if not entry.is_dir(follow_symlinks=False):
             continue
         akey = entry.name
-        p_bytes = p_files = c_bytes = c_files = 0
+        p_bytes = p_files = c_bytes = c_files = d_bytes = d_files = 0
         for sub in _scandir(entry.path):
             try:
                 if sub.is_dir(follow_symlinks=False):
                     b, f = _dir_size(sub.path)
                     if sub.name == "cache":
                         c_bytes += b; c_files += f
+                    elif sub.name == "dist_pack":
+                        d_bytes += b; d_files += f
                     else:
                         p_bytes += b; p_files += f   # 예상 밖 하위디렉토리는 parquet 범주로
                 elif sub.is_file(follow_symlinks=False):
@@ -97,6 +103,8 @@ def _do_scan():
                 pass
         cat["parquet"][0] += p_bytes; cat["parquet"][1] += p_files
         cat["cache"][0] += c_bytes; cat["cache"][1] += c_files
+        cat["dist_pack"][0] += d_bytes; cat["dist_pack"][1] += d_files
+        p_bytes += d_bytes   # pack 은 재생성 캐시가 아니라 원본과 같은 취급(per_key 합계)
         per_key[akey] = per_key.get(akey, 0) + p_bytes + c_bytes
         per_key_cache[akey] = per_key_cache.get(akey, 0) + c_bytes
 
@@ -118,6 +126,13 @@ def _do_scan():
                 per_key[akey] = per_key.get(akey, 0) + b
         except OSError:
             pass
+
+    # 세션 단위 범주 (akey 가 아니라 session_id 네임스페이스라 per_key 에 합치지 않는다)
+    for name in ("note_img", "session_blob"):
+        for entry in _scandir(upload_root / name):
+            if entry.is_dir(follow_symlinks=False):
+                b, f = _dir_size(entry.path)
+                cat[name][0] += b; cat[name][1] += f
 
     return {"per_key": per_key, "per_key_cache": per_key_cache, "cat": cat}
 
@@ -169,10 +184,20 @@ def overview(refresh=False):
         {"key": "rawedit_backup", "label": "Raw Data 편집 원본 백업", "bytes": rawbak_bytes, "files": rawbak_files},
         {"key": "parquet", "label": "web_report parquet/manifest", "bytes": cat["parquet"][0], "files": cat["parquet"][1]},
         {"key": "cache", "label": "web_report compute 캐시 (재생성 가능)", "bytes": cat["cache"][0], "files": cat["cache"][1]},
+        {"key": "dist_pack", "label": "Distribution pack (영구 파생)", "bytes": cat["dist_pack"][0], "files": cat["dist_pack"][1]},
         {"key": "issue_img", "label": "issue 이미지", "bytes": cat["issue_img"][0], "files": cat["issue_img"][1]},
         {"key": "dist_combined", "label": "distribution 합성 PNG", "bytes": cat["dist_combined"][0], "files": cat["dist_combined"][1]},
+        {"key": "note_img", "label": "Note 탭 이미지", "bytes": cat["note_img"][0], "files": cat["note_img"][1]},
+        {"key": "session_blob", "label": "Note 시트 본문 객체", "bytes": cat["session_blob"][0], "files": cat["session_blob"][1]},
     ]
     occupied = sum(c["bytes"] for c in categories)
+
+    # S3 이관 대기(local_pending) — 업로드가 실패해 로컬에만 있는 사용자 입력이다.
+    # 방치하면 로컬 디스크에만 존재하므로 화면에 경고로 띄운다.
+    try:
+        pending_n, pending_b = report_db.count_pending_session_blobs()
+    except Exception:
+        pending_n, pending_b = 0, 0
 
     disk = psutil.disk_usage(str(config.ROOT_DIR))
     return {
@@ -180,6 +205,7 @@ def overview(refresh=False):
         "occupied_bytes": occupied,
         "categories": categories,
         "s3_configured": storage_gateway.s3_available(),
+        "s3_pending": {"count": pending_n, "bytes": pending_b},
     }
 
 

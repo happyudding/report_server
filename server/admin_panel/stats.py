@@ -3,12 +3,15 @@
 report_db.py 는 수정하지 않고 get_conn() 으로 자체 SELECT 만 수행한다.
 created_at 은 epoch 초 → SQLite strftime(..., 'unixepoch', 'localtime') 로 일 단위 그룹.
 """
+import logging
 import time
 from datetime import date, timedelta
 
 from admin_panel import identity_merge
 from database import report_db
 from identity_norm import normalize_uid
+
+_log = logging.getLogger(__name__)
 
 _ACTIONS = ("upload", "edit", "delete")
 
@@ -53,17 +56,26 @@ def daily_counts(days=30):
 
 
 def client_error_count(hours=24):
-    """최근 N시간 client_error(브라우저 beacon) 감사 행 수 — 현황 탭 경고 타일용.
+    """최근 N시간 클라이언트 오류(브라우저 beacon + Honey 보고) 건수 — 현황 탭 경고 타일용.
 
-    get_audit_logs 로 받아 세는 방식은 limit 상한(≤1000)에 걸려 과소집계되므로
-    COUNT 로 직접 센다."""
+    2026-08-14 부터 감사 로그(action='client_error')가 아니라 **진단 사건 저장소**를 센다.
+    오류는 "누가 무엇을 했나"의 이력이 아니라 사건이라 감사 표를 밀어내기만 했고, 이제
+    14일 JSONL 저장소 하나만 쓴다(이중 기록 중단). 옛 감사 행이 남아 있는 구간에서는
+    둘 중 큰 값을 취해 전환 시점에 타일이 갑자기 0 이 되지 않게 한다."""
     hours = _clamp_days(hours, default=24, lo=1, hi=720)
     cutoff = int(time.time()) - hours * 3600
+    diag = 0
+    try:
+        import diagnostics
+        diag = sum(1 for rec in diagnostics.history(hours=hours, limit=1000)
+                   if rec.get("component") in ("browser", "honey"))
+    except Exception:
+        _log.warning("진단 사건 집계 실패 — 감사 로그만 센다", exc_info=True)
     with report_db.get_conn() as conn:
-        cnt = conn.execute(
+        legacy = conn.execute(
             "SELECT COUNT(*) FROM report_audit_log "
             "WHERE action = 'client_error' AND created_at >= ?", (cutoff,)).fetchone()[0]
-    return {"hours": hours, "count": int(cnt)}
+    return {"hours": hours, "count": max(int(legacy), diag)}
 
 
 def usage_ranking(days=30, limit=50):

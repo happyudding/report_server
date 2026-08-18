@@ -23,8 +23,20 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 from matplotlib.figure import Figure    # noqa: E402
+
+# 한글 폰트 — 기본 DejaVu Sans 에는 한글이 없어 항목명·주석의 한글이 두부(□)로 나온다.
+# Windows 기본 탑재 순으로 시도하고, 없으면 기본값 유지(글자만 깨질 뿐 렌더는 계속).
+for _font in ("Malgun Gothic", "MalgunGothic", "Gulim", "Batang", "NanumGothic"):
+    try:
+        from matplotlib import font_manager as _fm
+        if any(f.name == _font for f in _fm.fontManager.ttflist):
+            matplotlib.rcParams["font.family"] = _font
+            matplotlib.rcParams["axes.unicode_minus"] = False   # 마이너스 기호 깨짐 방지
+            break
+    except Exception:
+        break
 from matplotlib.lines import Line2D     # noqa: E402
-from matplotlib.patches import Rectangle  # noqa: E402
+from matplotlib.patches import Ellipse, Rectangle  # noqa: E402
 
 # 웹 report_view.html 의 DIST_PALETTE 와 동일 — source i 색이 웹과 일치하도록 유지.
 DIST_PALETTE = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A",
@@ -37,7 +49,16 @@ ROWS_PER_CHUNK = 16           # 청크당 4열 x 16행 = 64 차트 (PNG 수 = pi
 # 하므로 가독성을 해치지 않는 선에서 픽셀을 줄인다.
 CELL_W_IN = 3.5               # 셀 크기(inch)
 CELL_H_IN = 2.2
-DPI = 96
+# 렌더 해상도. 물리 크기(pt)는 DPI 와 무관하게 고정이므로 이 값은 **선명도와 용량**만 바꾼다.
+# 셀당 픽셀: 96 → 336x211(웹 카드 308x212 CSS px 와 같은 급) / 144 → 504x317 / 192 → 672x422.
+#
+# 실측 (2004항목 x 7source x 1000die = ECDF 14M점, 16코어):
+#     DPI 96  → 29.0s / 46MB      DPI 144 → 29.2s / 83MB      DPI 192 → 32.6s / 120MB
+# 소요는 사실상 평평하다(matplotlib artist 수가 지배, 래스터화가 아니다) — 갈리는 건 용량뿐.
+# 그래서 웹 카드보다 1.5배 선명하면서(확대해도 뭉개지지 않음) 대형 세션 용량이 통제되는
+# 144 를 기본으로 잡았다. 더 선명하게(웹 HiDPI 급) 원하면 192, 파일을 더 줄이려면 96.
+# COM 경로는 그림 삽입 비용이 픽셀 수에 비례(~36ms/Mpx)하므로 폴백 시 이 값이 곧 비용이다.
+DPI = 144
 # Issue Table 행별 단일 CDF 썸네일 크기(inch) — 행 높이에 맞춰 작게.
 ISSUE_CELL_W_IN = 2.6
 ISSUE_CELL_H_IN = 1.15
@@ -124,6 +145,33 @@ def _cell_outer_box(idx, nrows):
     return c * cw, (nrows - 1 - r) * ch, cw, ch
 
 
+def _note_x_values(cell):
+    """주석(도형/텍스트)이 쓰는 데이터 x 값들 — 축 범위에 포함해 주석이 잘리지 않게.
+
+    chips 를 축 범위에 넣는 것과 같은 이유다(웹은 autorange 라 주석이 축을 넓힌다).
+    paper 좌표(0~1 비율)는 축과 무관하므로 제외한다.
+    """
+    out = []
+    note = cell.get("note_cdf") or cell.get("note_hist")
+    if not note:
+        return out
+    try:
+        for shape in (note.get("shapes") or []):
+            if str(shape.get("xref") or "x") == "paper":
+                continue
+            for key in ("x0", "x1"):
+                if shape.get(key) is not None:
+                    out.append(float(shape[key]))
+        for text in (note.get("texts") or []):
+            if str(text.get("xref") or "x") == "paper":
+                continue
+            if text.get("x") is not None:
+                out.append(float(text["x"]))
+    except Exception:
+        return []
+    return out
+
+
 def _x_range(cell):
     """셀 x 데이터 범위 (limit 선 + 선택 좌표 값 포함 — 항상 보이도록). ECDF x 는 정렬됨."""
     xs = [s[2] for s in cell["sources"] if len(s[2])]
@@ -134,7 +182,7 @@ def _x_range(cell):
     # 선택 좌표 값도 범위에 넣는다 — 웹은 autorange 라 마커가 축을 넓히므로 값이 데이터
     # 바깥(측정 이상치)이어도 잘리지 않는다. 넣지 않으면 그 점만 사라져 화면과 어긋난다.
     for v in (cell.get("lo"), cell.get("hi")) + tuple(
-            c["value"] for c in (cell.get("chips") or [])):
+            c["value"] for c in (cell.get("chips") or [])) + tuple(_note_x_values(cell)):
         if v is not None:
             xmin = min(xmin, float(v))
             xmax = max(xmax, float(v))
@@ -335,6 +383,126 @@ def _chip_markers(fig, cell, box, xr):
                               markeredgewidth=_CHIP_EDGE_PT, zorder=6))
 
 
+# ── 차트 주석 (사용자가 웹 차트 위에 남긴 도형/텍스트) ──────────────────────
+# 저장 구조는 web_report/service.py _SHAPE_KEYS/_TEXT_KEYS · chart_notes.js 참조.
+# 좌표는 **데이터 좌표**(xref:"x", yref:"y")다 — CDF 의 y 는 누적%(0~100).
+_NOTE_DEFAULT_COLOR = "#DC2626"
+_NOTE_SCREEN_DPI = 96.0        # Plotly 의 ax/ay 픽셀 offset 을 환산할 때 쓰는 화면 DPI
+
+
+def _note_color(value, fallback=_NOTE_DEFAULT_COLOR):
+    text = str(value or "").strip()
+    return text if text.startswith("#") or text.startswith("rgb") else fallback
+
+
+def _draw_note_overlay(fig, note, box, xr, y_map):
+    """chart_note(도형+텍스트)를 셀 위에 겹쳐 그린다 — 웹에서 본 주석이 Excel 에도 남게.
+
+    주석 좌표가 이상하거나 구조가 예상과 달라도 **차트 자체는 반드시 나와야 하므로**
+    전체를 try/except 로 감싼다(주석 하나 때문에 리포트를 잃지 않는다).
+    y_map(y) 는 데이터 y → figure fraction 변환 (CDF 는 누적%, Histogram 은 PDF 축).
+    """
+    if not note:
+        return
+    try:
+        x0, y0, w, h = box
+
+        def fx(value, ref):
+            if str(ref or "x") == "paper":
+                return x0 + float(value) * w
+            if xr is None:
+                return None
+            xmin, xmax = xr
+            span = (xmax - xmin) or 1.0
+            return x0 + (float(value) - xmin) / span * w
+
+        def fy(value, ref):
+            if str(ref or "y") == "paper":
+                return y0 + float(value) * h
+            return y_map(float(value))
+
+        def clamp(v, lo, hi):
+            return max(lo, min(hi, v))
+
+        for shape in (note.get("shapes") or []):
+            try:
+                kind = str(shape.get("type") or "")
+                if kind == "path":
+                    continue          # 자유곡선은 Plotly SVG path 문법 — 이번 범위 밖
+                px0 = fx(shape.get("x0"), shape.get("xref"))
+                px1 = fx(shape.get("x1"), shape.get("xref"))
+                py0 = fy(shape.get("y0"), shape.get("yref"))
+                py1 = fy(shape.get("y1"), shape.get("yref"))
+                if None in (px0, px1, py0, py1):
+                    continue
+                px0, px1 = (clamp(v, x0, x0 + w) for v in (px0, px1))
+                py0, py1 = (clamp(v, y0, y0 + h) for v in (py0, py1))
+                line = shape.get("line") or {}
+                color = _note_color(line.get("color"))
+                lw = float(line.get("width") or 2) * 0.75      # px → pt
+                dashed = str(line.get("dash") or "") in ("dash", "dot", "dashdot")
+                if kind == "line":
+                    _add_line(fig, (px0, px1), (py0, py1), color, lw=lw,
+                              ls="--" if dashed else "-")
+                    continue
+                left, bottom = min(px0, px1), min(py0, py1)
+                width, height = abs(px1 - px0), abs(py1 - py0)
+                common = dict(transform=fig.transFigure, fill=False, edgecolor=color,
+                              linewidth=lw, linestyle="--" if dashed else "-", zorder=7)
+                if kind == "circle":
+                    fig.add_artist(Ellipse((left + width / 2, bottom + height / 2),
+                                           width, height, **common))
+                else:                                   # rect (기본)
+                    fig.add_artist(Rectangle((left, bottom), width, height, **common))
+            except Exception:
+                continue
+
+        fig_w_px = fig.get_size_inches()[0] * _NOTE_SCREEN_DPI
+        fig_h_px = fig.get_size_inches()[1] * _NOTE_SCREEN_DPI
+        for text in (note.get("texts") or []):
+            try:
+                body = str(text.get("text") or "").strip()
+                if not body:
+                    continue
+                hx = fx(text.get("x"), text.get("xref"))
+                hy = fy(text.get("y"), text.get("yref"))
+                if hx is None or hy is None:
+                    continue
+                hx, hy = clamp(hx, x0, x0 + w), clamp(hy, y0, y0 + h)
+                font = text.get("font") or {}
+                color = _note_color(font.get("color"))
+                size = max(4.0, float(font.get("size") or 12) * 0.5)
+                # ax/ay 는 머리(데이터 지점) 기준 꼬리(글자) 위치의 픽셀 offset.
+                # Plotly 의 ay 는 화면 아래가 양수라 figure 좌표에서는 부호를 뒤집는다.
+                tx = clamp(hx + float(text.get("ax") or 0) / fig_w_px, x0, x0 + w)
+                ty = clamp(hy - float(text.get("ay") or 0) / fig_h_px, y0, y0 + h)
+                if text.get("showarrow"):
+                    _add_line(fig, (tx, hx), (ty, hy),
+                              _note_color(text.get("arrowcolor"), color),
+                              lw=float(text.get("arrowwidth") or 1) * 0.75)
+                    fig.add_artist(Line2D([hx], [hy], transform=fig.transFigure,
+                                          linestyle="none", marker="o", color=color,
+                                          markersize=2.0, zorder=8))
+                fig.text(tx, ty, body, fontsize=size, color=color, ha="center",
+                         va="center", zorder=8,
+                         bbox=dict(facecolor="white", alpha=0.75, pad=0.8,
+                                   edgecolor="none"))
+            except Exception:
+                continue
+
+        comment = str(note.get("comment") or "").strip()
+        if comment:
+            if len(comment) > 60:
+                comment = comment[:59] + "…"
+            # 플롯 **안쪽** 좌상단에 둔다 — 셀 아래는 x 라벨 자리라 밖에 쓰면 잘린다.
+            # ECDF/정규분포 모두 좌상단은 곡선이 지나지 않아 가릴 것이 없다.
+            fig.text(x0 + w * 0.02, y0 + h * 0.97, f"[Note] {comment}", fontsize=5,
+                     color=_NOTE_DEFAULT_COLOR, ha="left", va="top", zorder=8,
+                     bbox=dict(facecolor="white", alpha=0.8, pad=0.8, edgecolor="none"))
+    except Exception:
+        return
+
+
 def _draw_cdf_cell(fig, cell, box, outer=None):
     xr = _x_range(cell)
     _cell_frame(fig, cell, box, xr, y_labels=("0", "50", "100"), outer=outer)
@@ -355,6 +523,9 @@ def _draw_cdf_cell(fig, cell, box, outer=None):
         _add_markers(fig, px, py, color)
     _limit_lines(fig, cell, box, xr)
     _chip_markers(fig, cell, box, xr)
+    # 웹에서 이 항목 CDF 에 남긴 주석 — y 는 누적%(0~100) 그대로 매핑된다.
+    _draw_note_overlay(fig, cell.get("note_cdf"), box, xr,
+                       lambda v: y0 + v / 100.0 * h)
 
 
 def _normal_x_range(cell):
@@ -426,6 +597,10 @@ def _draw_hist_cell(fig, cell, box, outer=None):
         fx = x0 + (mu - xmin) / span * w
         _add_line(fig, (fx, fx), (y0, y0 + h), color, lw=0.9)
     _limit_lines(fig, cell, box, xr)
+    # Histogram 주석: 웹 Report 모드의 y축은 [0, ymax*1.1] 이라 같은 비율로 매핑한다.
+    # (웹 Analysis 모드=빈도 축에서 그린 주석은 y 가 어긋날 수 있어 셀 안으로 클램프된다.)
+    _draw_note_overlay(fig, cell.get("note_hist"), box, xr,
+                       lambda v: y0 + v / (ytop * 1.1) * h)
 
 
 def _render_cells(cells, kind, out_path, nrows):

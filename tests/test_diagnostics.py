@@ -118,10 +118,11 @@ def main():
     assert hev["component"] == "honey" and hev["operation_id"] == "op123456", hev
     # (g) 경로 정제 — 파일명은 남고 폴더 구조는 사라진다
     assert "lot_a.csv" in hev["message"] and "Users" not in hev["message"], hev
-    # 감사 로그에도 1행 (관리자 User Action Monitoring 에서 보인다)
+    # 감사 로그에는 남기지 않는다 (2026-08-14 이중 기록 중단) — 오류는 사건 저장소 한 곳.
+    # 감사 표는 "누가 무엇을 했나"의 이력이라 오류가 섞이면 그 이력이 밀려난다.
     logs = report_db.get_audit_logs(action="client_error", limit=10)
-    assert any("honey_upload_fail" in (r["changed_fields"] or "") for r in logs), logs
-    print("(e)(g) Honey 오류 수집 + event_id 유지 + 경로 정제 ok")
+    assert not logs, f"client_error 가 감사 로그에 이중 기록됐다: {logs}"
+    print("(e)(g) Honey 오류 수집 + event_id 유지 + 경로 정제 ok (감사 이중기록 없음)")
 
     # 같은 event_id 로 재전송해도 사건이 늘지 않는다 (오프라인 큐 flush 시나리오)
     client.post("/pe/report/api/client_diagnostic", json={

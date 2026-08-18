@@ -11,6 +11,7 @@ GET 은 스레드로 동시에 실행한다. requests 가 Content-Encoding: gzip
 """
 from __future__ import annotations
 
+import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 
@@ -20,6 +21,10 @@ try:
     from transport.config import REQUEST_TIMEOUT_SEC
 except Exception:  # 단독 실행/테스트 폴백
     REQUEST_TIMEOUT_SEC = (10, 300)
+
+# 콜드 빌드(202) 대기 상한 — 서버가 준 eta 의 2배, 그래도 이 값을 넘지 않는다.
+COLD_WAIT_MAX_SEC = 180
+_COLD_POLL_SEC = 1.5
 
 
 def _honey_headers():
@@ -50,6 +55,95 @@ def _get_json_optional(url):
     return resp.json()
 
 
+def _note(status_cb, msg):
+    if not status_cb:
+        return
+    try:
+        status_cb(msg)
+    except Exception:
+        pass
+
+
+def _wait_cold_build(poll_url, body, status_cb=None):
+    """서버가 202(building) 를 준 상태에서 빌드 완료까지 대기.
+
+    ``/full`` 은 콜드 세션이면 **202 + {"building": true, ...}** 를 준다. requests 의
+    ``raise_for_status()`` 는 2xx 를 통과시키므로 이 body 를 그대로 쓰면 web_report 키가
+    없어 "web_report 세션이 아닙니다" 로 **오진 실패**했다. build_status 를 폴링해 빌드가
+    끝나기를 기다린다(상한 COLD_WAIT_MAX_SEC).
+
+    빌드 실패로 차단된 세션은 서버가 503 을 주므로 여기 오지 않는다(_get_json_retry 가 raise).
+    """
+    eta = body.get("eta")
+    try:
+        limit = min(COLD_WAIT_MAX_SEC, max(30.0, float(eta) * 2)) if eta else COLD_WAIT_MAX_SEC
+    except Exception:
+        limit = COLD_WAIT_MAX_SEC
+    started = time.monotonic()
+    while True:
+        waited = time.monotonic() - started
+        if waited >= limit:
+            raise TimeoutError(
+                f"서버가 리포트를 준비하는 데 {int(waited)}초를 넘겼습니다 — "
+                "웹에서 세션을 먼저 열어 계산이 끝난 뒤 다시 시도해 주세요.")
+        _note(status_cb, f"서버 계산 대기 중 {int(waited)}초…")
+        time.sleep(_COLD_POLL_SEC)
+        if not poll_url:
+            break
+        try:
+            state = (_get_json(poll_url) or {}).get("state")
+        except Exception:
+            break               # 폴링 자체가 막히면 그냥 재요청으로 확인한다
+        if state != "building":
+            break
+    return None
+
+
+def _get_json_retry(url, *, retries=2, backoff=1.5, status_cb=None, optional=False,
+                    poll_url=None):
+    """GET + 재시도 + 콜드 202 폴링.
+
+    - 연결/타임아웃/5xx → 지수 백오프로 ``retries`` 회 재시도
+    - 202 + body["building"] → ``poll_url``(build_status) 폴링 후 같은 URL 재요청.
+      콜드 대기는 재시도 횟수를 소진하지 않는다(빌드가 끝나면 정상 응답이므로).
+    - ``optional`` 이면 404(구 서버)는 None 폴백
+    """
+    last = None
+    tries = 0
+    cold_waits = 0
+    while True:
+        try:
+            resp = requests.get(url, timeout=REQUEST_TIMEOUT_SEC, headers=_honey_headers())
+            if optional and resp.status_code == 404:
+                return None
+            if resp.status_code == 202:
+                body = {}
+                try:
+                    body = resp.json() or {}
+                except Exception:
+                    pass
+                if body.get("building") and cold_waits < 2:
+                    cold_waits += 1
+                    _wait_cold_build(poll_url, body, status_cb=status_cb)
+                    continue        # 재시도 카운트를 쓰지 않고 같은 URL 재요청
+            resp.raise_for_status()
+            return resp.json()
+        except requests.HTTPError as exc:
+            code = getattr(exc.response, "status_code", 0) or 0
+            if code < 500:          # 4xx 는 재시도해도 같다
+                raise
+            last = exc
+        except (requests.ConnectionError, requests.Timeout) as exc:
+            last = exc
+        tries += 1
+        if tries > retries:
+            break
+        wait = backoff * (2 ** (tries - 1))
+        _note(status_cb, f"서버 응답 없음 — {wait:.0f}초 후 재시도 ({tries}/{retries})")
+        time.sleep(wait)
+    raise last if last else RuntimeError(f"GET 실패: {url}")
+
+
 def _merge_map_dies(report, map_payload):
     """sheets["Map Analysis"] 경량 rows(schema v8)에 map_analysis 응답 dies 를 병합.
 
@@ -72,7 +166,7 @@ def _merge_map_dies(report, map_payload):
         row["dies"] = src.get("dies") or []
 
 
-def fetch_report_data(server_base, session_id, bin1=False):
+def fetch_report_data(server_base, session_id, bin1=False, status_cb=None):
     """(full_payload, dist_payload) 를 동시에 받아 반환.
 
     full_payload["web_report"] 가 없으면(legacy xlsx 세션 등) ValueError —
@@ -83,16 +177,21 @@ def fetch_report_data(server_base, session_id, bin1=False):
     이슈)은 전체 die 기준 그대로.
     """
     base = str(server_base).rstrip("/")
-    full_url = f"{base}/pe/report/session/{session_id}/full"
-    dist_url = f"{base}/pe/report/session/{session_id}/web_report/distribution"
-    map_url = f"{base}/pe/report/session/{session_id}/web_report/map_analysis"
+    sess_base = f"{base}/pe/report/session/{session_id}"
+    full_url = f"{sess_base}/full"
+    dist_url = f"{sess_base}/web_report/distribution"
+    map_url = f"{sess_base}/web_report/map_analysis"
+    poll_url = f"{sess_base}/web_report/build_status"
     if bin1:
         dist_url += "?bin1=1"
 
+    def _get(url, optional=False):
+        return _get_json_retry(url, status_cb=status_cb, optional=optional, poll_url=poll_url)
+
     with ThreadPoolExecutor(max_workers=3) as pool:
-        full_f = pool.submit(_get_json, full_url)
-        dist_f = pool.submit(_get_json, dist_url)
-        map_f = pool.submit(_get_json_optional, map_url)
+        full_f = pool.submit(_get, full_url)
+        dist_f = pool.submit(_get, dist_url)
+        map_f = pool.submit(_get, map_url, True)
         full = full_f.result()
         dist = dist_f.result()
         map_payload = map_f.result()
@@ -125,8 +224,11 @@ def fetch_distribution_bin1(server_base, session_id, subjects):
     chunks = [names[i:i + _DIST_BATCH_CHUNK]
               for i in range(0, len(names), _DIST_BATCH_CHUNK)]
 
+    poll_url = f"{base}/pe/report/session/{session_id}/web_report/build_status"
+
     def _one(chunk):
-        return _get_json(f"{url}?subjects={quote(','.join(chunk), safe='')}&bin1=1")
+        return _get_json_retry(f"{url}?subjects={quote(','.join(chunk), safe='')}&bin1=1",
+                               retries=1, poll_url=poll_url)
 
     out = {}
     try:
@@ -146,8 +248,10 @@ def fetch_temp_map(server_base, session_id):
     열만 비우고 시트는 그대로 만든다(전체 다운로드가 막히지 않게).
     """
     base = str(server_base).rstrip("/")
+    sess_base = f"{base}/pe/report/session/{session_id}"
     try:
-        payload = _get_json(f"{base}/pe/report/session/{session_id}/web_report/temp_map")
+        payload = _get_json_retry(f"{sess_base}/web_report/temp_map", retries=1,
+                                  poll_url=f"{sess_base}/web_report/build_status")
     except Exception:
         return {}
     out = {}
@@ -158,6 +262,23 @@ def fetch_temp_map(server_base, session_id):
         out[src] = {str(e.get("item")): list(e.get("idx") or [])
                     for e in (entry.get("items") or []) if e.get("item")}
     return out
+
+
+def fetch_preprocess(server_base, session_id):
+    """적용 중인 조회 전처리 spec — ``{"spec":…, "summary":…, "digest":…, …}`` 또는 None.
+
+    전처리는 원본 parquet 을 바꾸지 않고 조회 시점에만 적용되므로, 이 파일의 수치가 왜
+    원본과 다른지의 유일한 근거다. 실패·404(구 서버)·전처리 없음은 전부 None —
+    호출부가 안내 시트를 만들지 않을 뿐 다운로드는 계속된다(에러 아님).
+    """
+    base = str(server_base).rstrip("/")
+    try:
+        payload = _get_json_retry(
+            f"{base}/pe/report/session/{session_id}/web_report/preprocess",
+            retries=1, optional=True)
+    except Exception:
+        return None
+    return payload or None
 
 
 def fetch_session_meta(server_base, session_id, timeout=(2, 3)):

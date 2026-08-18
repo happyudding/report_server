@@ -8,4 +8,5 @@ pyarrow>=15.0  # webreport parquet bytes encoding
 numpy>=1.23    # 분석 계산 (cpk/yield/distribution)
 matplotlib>=3.5    # map_report (wafer bin map → PNG)
 xlwings>=0.30  ; sys_platform == "win32"   # 로컬 xlsx 리포트 생성 (Excel COM)
+XlsxWriter>=3.1    # Excel Download 기본 엔진 (excel_download/_xlsx.py) — Excel 없이 xlsx 직접 생성
 pystdf         # honey_parse(외부 프로젝트) STDF 파싱 의존성

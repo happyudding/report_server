@@ -168,11 +168,13 @@ def upload_xlsx():
     name = secure_filename(raw_name) or "upload.xlsx"
 
     meta = _validate_meta(request.form)
-    # password 는 접근 제어용이라 analysis_key 산출(meta)에는 포함하지 않는다.
-    # 빈 문자열 허용 — 미설정 시 웹에서 비밀번호 없이 수정/삭제 가능 (legacy 세션과 동일).
+    # password(4자리 PIN)는 폐지 (2026-08-14) — 접근제어는 신원(HoneyUser) 기반이고 이 값은
+    # 쓰이지 않은 채 평문으로 쌓이기만 했다. 구 클라이언트가 계속 보내므로 형식만 검사하고
+    # **저장하지 않는다**(400 으로 튕기면 구 클라 업로드가 깨진다).
     password = (request.form.get("password") or "").strip()
     if password and not _PIN_RE.match(password):
         abort(400, "password must be 4 digits or empty")
+    password = None
     key_meta = {
         "product_type": meta["product_type"],
         "product": meta["product"],

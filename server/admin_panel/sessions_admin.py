@@ -115,6 +115,19 @@ def _remove_rawedit_backups(akey):
         _log.exception("[admin-panel] rawedit backup cleanup failed for %s", akey)
 
 
+def _remove_session_blobs(sid):
+    """세션 단위 큰 본문 객체(Note 시트 등) 정리 — Note 이미지와 같은 취급.
+
+    포인터 행은 report_db.delete_session 이 지우므로 **그보다 먼저** 객체를 지워야 한다
+    (행을 잃으면 S3 객체 키를 알 방법이 없다). best-effort."""
+    try:
+        keys = [(b["backend"], b["object_key"]) for b in report_db.list_session_blobs(sid)]
+        for warning in storage_gateway.delete_session_blobs(sid, keys):
+            _log.warning("[admin-panel] session blob (%s): %s", sid, warning)
+    except Exception:
+        _log.exception("[admin-panel] session blob cleanup failed for %s", sid)
+
+
 def _delete_one(session):
     """세션 1건 삭제 (PIN 검사 없음). report_routes 삭제 플로우와 동일한 정리 경로."""
     sid = session["session_id"]
@@ -142,6 +155,7 @@ def _delete_one(session):
             _log.warning("[admin-panel] note image (%s): %s", sid, warning)
     except Exception:
         _log.exception("[admin-panel] note image cleanup failed for %s", sid)
+    _remove_session_blobs(sid)
     report_db.delete_session(sid)
 
 
@@ -212,6 +226,7 @@ def _purge_one(session):
             _log.warning("[admin-panel] purge note image (%s): %s", sid, warning)
     except Exception:
         _log.exception("[admin-panel] purge note image cleanup failed for %s", sid)
+    _remove_session_blobs(sid)
     report_db.delete_session(sid)
 
 

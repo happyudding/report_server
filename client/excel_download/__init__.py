@@ -41,8 +41,10 @@ from ._charts import (
     render_single_cdf,
     render_temp_maps_job,
 )
-from ._fetch import fetch_distribution_bin1, fetch_report_data, fetch_temp_map
+from ._fetch import (fetch_distribution_bin1, fetch_preprocess, fetch_report_data,
+                     fetch_temp_map)
 from ._map import build_bin_desc_map, build_global_bin_legend
+from . import _extra
 from . import _sheets
 
 _CHUNK_CELLS = NCOLS * ROWS_PER_CHUNK
@@ -52,246 +54,161 @@ SHEET_ORDER = ["Summary", "Yield", "CPK", "Issue Table",
 # Temperature 세션에만 추가되는 시트 — CT/HT 를 RT Limit 으로 전 항목 재판정한 이슈 표
 # (웹 "Issue Table Temp" 탭과 같은 시트). Issue Table 바로 뒤에 끼운다.
 TEMP_SHEET = "Issue Table Temp"
+# XlsxWriter 엔진에서만 만드는 web_report 파리티 시트
+PREP_SHEET = "전처리 안내"
+COMPARE_SHEET = "Compare"
+STATUS_SHEET = "Download Status"
+
+# 기본 기입 엔진. 되돌리려면 이 한 줄만 "com" 으로 바꾸면 된다 —
+# XlsxWriter 경로 코드는 그대로 남고 옵션으로만 선택된다.
+DEFAULT_ENGINE = "xlsxwriter"
+
+# 시간 예산(초) — 3분 SLA. 넘으면 남은 이미지를 건너뛰고(Download Status 에 기록) 저장으로 간다.
+BUDGET_SKIP_IMAGES_SEC = 150.0
+BUDGET_FORCE_SAVE_SEC = 165.0
 
 
-def _sheet_order(sheets):
-    """이 세션에 실제로 만들 시트 순서 — Temp 행이 있을 때만 TEMP_SHEET 를 끼운다."""
+def _sheet_order(sheets, *, engine=DEFAULT_ENGINE, has_compare=False, has_preprocess=False):
+    """이 세션에 실제로 만들 시트 순서.
+
+    Temp 행이 있을 때만 TEMP_SHEET 를 끼우고, 전처리/Compare/Download Status 는
+    XlsxWriter 엔진에서만 만든다(COM 경로는 동결이라 종전 시트 구성 그대로).
+    """
     order = list(SHEET_ORDER)
     if (sheets or {}).get(TEMP_SHEET):
         order.insert(order.index("Issue Table") + 1, TEMP_SHEET)
+    if engine != "xlsxwriter":
+        return order
+    if has_preprocess:
+        order.insert(1, PREP_SHEET)
+    if has_compare:
+        anchor = TEMP_SHEET if TEMP_SHEET in order else "Issue Table"
+        order.insert(order.index(anchor) + 1, COMPARE_SHEET)
+    order.append(STATUS_SHEET)
     return order
 
 
-def run_excel_download(session_id, server_base, out_path, status_cb=None,
-                       bin1=False, chips=None) -> dict:
-    """세션 web_report 를 out_path(xlsx)로 저장. 반환 {"out_path", "elapsed", "items"}.
+class _Progress:
+    """상세 진행 표시 — 단계별 가중치로 전체 %를 만든다(하단 진행바가 실제로 움직이게).
 
-    status_cb(state, message): 진행 통지 (state ∈ download/render/excel/save/done).
-    호출 스레드에서 COM 초기화(CoInitialize)가 되어 있어야 한다 (worker.py 참조).
+    status_cb(state, message) 는 종전 시그니처 그대로 두고, 선택적 progress_cb(percent,
+    message) 를 하나 더 받는다(있는 쪽만 갱신).
+    """
+
+    WEIGHTS = (("download", 15), ("render", 40), ("attach", 30), ("save", 15))
+
+    def __init__(self, status_cb=None, progress_cb=None):
+        self.status_cb = status_cb
+        self.progress_cb = progress_cb
+        self.t0 = time.perf_counter()
+        self._base = {}
+        acc = 0
+        for name, weight in self.WEIGHTS:
+            self._base[name] = (acc, weight)
+            acc += weight
+
+    def elapsed(self):
+        return time.perf_counter() - self.t0
+
+    def _fmt(self, message):
+        secs = int(self.elapsed())
+        return f"[{secs // 60}:{secs % 60:02d}] {message}"
+
+    def __call__(self, phase, message, done=None, total=None):
+        text = message if not total else f"{message} ({done}/{total})"
+        base, weight = self._base.get(phase, (0, 0))
+        frac = (done / total) if (total and done is not None) else 0.0
+        percent = int(base + weight * min(1.0, max(0.0, frac)))
+        if self.status_cb:
+            try:
+                self.status_cb(phase, self._fmt(text))
+            except Exception:
+                pass
+        if self.progress_cb:
+            try:
+                self.progress_cb(percent, self._fmt(text))
+            except Exception:
+                pass
+
+
+def run_excel_download(session_id, server_base, out_path, status_cb=None,
+                       bin1=False, chips=None, engine=None, progress_cb=None) -> dict:
+    """세션 web_report 를 out_path(xlsx)로 저장.
+
+    반환 {"out_path", "elapsed", "items", "engine", "warnings"}.
+
+    ``engine``: "xlsxwriter"(기본, DEFAULT_ENGINE) 또는 "com"(기존 xlwings/Excel COM).
+    XlsxWriter 경로가 실패하면 **이미 받은 데이터와 렌더된 PNG 를 그대로 재사용해**
+    COM 경로로 자동 재시도한다 — 어떤 경우에도 파일은 만들어진다.
+
+    status_cb(state, message): 진행 통지 (state ∈ download/render/attach/save/done).
+    progress_cb(percent, message): 선택 — 하단 진행바용 0~100 백분율.
+    COM 경로를 쓸 때는 호출 스레드에서 CoInitialize 가 되어 있어야 한다 (worker.py 참조).
 
     ``bin1`` 이면 Distribution(CDF)·Histogram 시트를 양품(BIN==1) & 규격(LSL/USL) 이내
     die 만의 산포로 그린다(그 외 시트는 전체 die 기준 그대로).
 
     ``chips`` 는 브라우저 Map Analysis 에서 선택한 좌표 스냅샷(map_select.js
     honeyMapSelSnapshot). 주면 Map Analysis 시트 맵에 색 원 마커, Distribution 시트
-    CDF 에 그 좌표의 (값, 누적%) 점을 화면과 같은 색으로 그린다. 없으면 기존과 동일.
+    CDF 에 그 좌표의 (값, 누적%) 점을 화면과 같은 색으로 그린다.
     """
-    import xlwings as xw
-    from excel_edit.excel_session import _quit_app
-    from report_generator._xlsx_png_export import (_validate_embedded_images,
-                                                   _wait_for_xlsx_ready)
-    from report_generator._xlsx_style import _XL_CALC_AUTO, _XL_CALC_MANUAL
+    engine = (engine or DEFAULT_ENGINE).lower()
+    emit = _Progress(status_cb, progress_cb)
 
-    def _emit(state, message):
-        if status_cb:
-            try:
-                status_cb(state, message)
-            except Exception:
-                pass
-
-    t0 = time.perf_counter()
-
-    # ── 1. 서버 데이터 수신 (두 GET 동시) ────────────────────────────────────
-    _emit("download", "리포트 데이터 다운로드 중...")
-    full, dist = fetch_report_data(server_base, session_id, bin1=bin1)
+    # ── 1. 서버 데이터 수신 ──────────────────────────────────────────────────
+    emit("download", "리포트 데이터 다운로드 중…")
+    full, dist = fetch_report_data(server_base, session_id, bin1=bin1,
+                                   status_cb=lambda m: emit("download", m))
     report = full["web_report"]
     session_url = f"{str(server_base).rstrip('/')}/pe/report/view/{session_id}"
     sheets = report.get("sheets") or {}
     source_names = [s.get("name") for s in (report.get("sources") or [])]
     colors = _source_colors(source_names, report.get("dist_colors"))
-    t_dl = time.perf_counter()
-    _emit("render", f"데이터 수신 완료 ({t_dl - t0:.1f}s) — 차트 렌더링 시작...")
+    chart_notes = full.get("chart_notes") or {}
+    # 전처리 안내는 있으면 좋고 없어도 그만 — 실패해도 다운로드를 막지 않는다.
+    preprocess = fetch_preprocess(server_base, session_id) if engine == "xlsxwriter" else None
+    emit("download", f"데이터 수신 완료 ({emit.elapsed():.1f}s)", 1, 1)
 
     # ── 2. 차트 렌더 잡 구성 + 프로세스풀 시작 ──────────────────────────────
     tmpdir = tempfile.mkdtemp(prefix="honey_exceldl_")
     try:
         chunk_jobs, n_items, cell_of = _build_chunk_jobs(
-            report, dist, dict(colors), tmpdir, chips)
+            report, dist, dict(colors), tmpdir, chips, chart_notes)
         map_rows = sheets.get("Map Analysis") or []
         map_jobs, map_colors = _build_map_jobs(map_rows, tmpdir, chips)
-        _emit("render", f"차트 잡 구성 완료 ({time.perf_counter() - t_dl:.1f}s, "
-                        f"{len(chunk_jobs)}청크 + map {len(map_jobs)})")
+        emit("render", f"차트 {n_items}항목 렌더 시작 "
+                       f"({len(chunk_jobs)}청크 + 웨이퍼맵 {len(map_jobs)})")
 
         n_workers = max(1, min(16, os.cpu_count() or 4, len(chunk_jobs) + len(map_jobs)))
         pool = ProcessPoolExecutor(max_workers=n_workers)
         try:
-            chunk_futs = [pool.submit(render_chunk_pair, j) for j in chunk_jobs]
-            map_futs = [pool.submit(render_map_png_job, j) for j in map_jobs]
+            ctx = {
+                "report": report, "sheets": sheets, "source_names": source_names,
+                "colors": colors, "session_url": session_url, "map_rows": map_rows,
+                "map_colors": map_colors, "cell_of": cell_of, "tmpdir": tmpdir,
+                "server_base": server_base, "session_id": session_id, "bin1": bin1,
+                "chunk_jobs": chunk_jobs, "map_jobs": map_jobs, "n_items": n_items,
+                "preprocess": preprocess, "pool": pool, "emit": emit,
+                "chunk_futs": [pool.submit(render_chunk_pair, j) for j in chunk_jobs],
+                "map_futs": [pool.submit(render_map_png_job, j) for j in map_jobs],
+            }
 
-            # ── 3. 렌더와 동시에 Excel 텍스트 시트 기입 ─────────────────────
-            _emit("excel", f"Excel 시트 작성 중... (차트 {n_items}항목 x2 병렬 렌더)")
-            app = xw.App(visible=False, add_book=False)
-            try:
-                app.display_alerts = False
-                app.screen_updating = False
-
-                wb = app.books.add()
-                # Calculation 은 열린 workbook 이 있어야 설정 가능 (Excel COM 제약)
-                app.api.Calculation = _XL_CALC_MANUAL
-                ws = {}
-                sheet_order = _sheet_order(sheets)
-                first = wb.sheets[0]
-                first.name = sheet_order[0]
-                ws[sheet_order[0]] = first
-                for name in sheet_order[1:]:
-                    ws[name] = wb.sheets.add(name, after=wb.sheets[wb.sheets.count - 1])
-
-                _sheets.write_summary_sheet(ws["Summary"], report.get("yield_summary"),
-                                            sheets.get("Fail Bin"))
-                _sheets.write_yield_sheet(
-                    ws["Yield"], sheets.get("Yield"), report.get("yield_bin_groups"),
-                    source_names,
-                    step_groups=report.get("yield_step_groups"),
-                    step_summary=(report.get("yield_summary") or {}).get("by_step"))
-                _sheets.write_cpk_sheet(ws["CPK"], sheets.get("CPK"))
-                issue_layout = _sheets.write_issue_sheet(
-                    ws["Issue Table"], sheets.get("Issue Table"), source_names)
-                # Issue Table 행별 CDF PNG 잡(분포 데이터가 있는 항목 행만) — 청크와 병렬 렌더.
-                # CPK 섹션 썸네일만 Bin1(양품) ECDF 로 그린다 — 그 행의 cpk 가 Bin1 기준이라
-                # 웹 미니셀(data-bin1)과 같은 데이터를 쓴다. bin1 모드면 이미 받은 dist 가
-                # Bin1 이라 재수신하지 않고, 배치 수신이 실패하면 전체 기준 셀로 폴백한다.
-                cpk_subjects = [item for item, _r, section in issue_layout["rows"]
-                                if section == "CPK" and item in cell_of]
-                bin1_items = {} if bin1 else fetch_distribution_bin1(
-                    server_base, session_id, cpk_subjects)
-                issue_targets, issue_jobs = [], []
-                for item, excel_row, section in issue_layout["rows"]:
-                    cell = cell_of.get(item)
-                    if cell is None:
-                        continue
-                    if section == "CPK" and item in bin1_items:
-                        cell = _bin1_cell(cell, bin1_items[item])
-                    out = os.path.join(tmpdir, f"issue_{excel_row:04d}.png")
-                    issue_jobs.append({"cell": cell, "out_path": out})
-                    issue_targets.append((excel_row, out))
-                issue_futs = [pool.submit(render_single_cdf, j) for j in issue_jobs]
-                # Issue Table Map 셀(해당 Bin 만 원색인 웨이퍼) — 같은 맵을 쓰는 bin 끼리 묶어 렌더.
-                issue_map_jobs, issue_map_paths = _build_issue_map_jobs(
-                    map_rows, issue_layout["map_rows"], map_colors, tmpdir)
-                issue_map_futs = [pool.submit(render_issue_maps_job, j)
-                                  for j in issue_map_jobs]
-
-                # ── Issue Table Temp (Temperature 세션만) ─────────────────────
-                # 표는 Issue Table 과 같은 writer, 썸네일은 Distribution=항목 CDF(동일 경로),
-                # Map=항목별 fail die 강조(bin 강조가 아니다 — 웹 map-cell-temp 와 같은 의미).
-                temp_layout = None
-                temp_map_futs, temp_map_paths = [], {}
-                temp_targets = []
-                if TEMP_SHEET in ws:
-                    temp_layout = _sheets.write_issue_sheet(
-                        ws[TEMP_SHEET], sheets.get(TEMP_SHEET), source_names,
-                        title=TEMP_SHEET)
-                    for item, excel_row, _section in temp_layout["rows"]:
-                        cell = cell_of.get(item)
-                        if cell is None:
-                            continue
-                        out = os.path.join(tmpdir, f"temp_{excel_row:04d}.png")
-                        temp_targets.append((excel_row, out))
-                        pool_fut = pool.submit(render_single_cdf,
-                                               {"cell": cell, "out_path": out})
-                        temp_map_futs.append(("cdf", excel_row, out, pool_fut))
-                    # temp_map 수신 실패는 Map 열만 비운다(전체 다운로드는 계속).
-                    temp_map = fetch_temp_map(server_base, session_id)
-                    temp_jobs, temp_map_paths = _build_temp_map_jobs(
-                        map_rows, temp_layout["temp_rows"], temp_map, tmpdir)
-                    for j in temp_jobs:
-                        temp_map_futs.append(("map", None, None, pool.submit(
-                            render_temp_maps_job, j)))
-                t_text = time.perf_counter()
-                _emit("excel", f"텍스트 시트 완료 ({t_text - t_dl:.1f}s) — 차트 대기/부착...")
-
-                # ── 4. PNG 를 완료되는 순서대로 즉시 부착 (렌더 꼬리와 겹침) ──
-                # 차트 시트도 시트명 제목 배너 + B3 기준 부착 (표 시트와 시작 위치 통일).
-                for name in ("Distribution", "Histogram", "Map Analysis"):
-                    _sheets.write_sheet_title(ws[name], name)
-                _sheets.write_source_legend(ws["Distribution"], colors)
-                _sheets.write_source_legend(ws["Histogram"], colors)
-                dist_left, dist_top = _sheets.chart_anchor(ws["Distribution"])
-                hist_left, hist_top = _sheets.chart_anchor(ws["Histogram"])
-                sizes = [chunk_px_size(len(j["cells"])) for j in chunk_jobs]
-                heights = [h for _, h in sizes]
-                dist_tops = _sheets.picture_stack_tops(heights, dist_top)
-                hist_tops = _sheets.picture_stack_tops(heights, hist_top)
-                idx_of = {fut: i for i, fut in enumerate(chunk_futs)}
-                for fut in as_completed(chunk_futs):
-                    i = idx_of[fut]
-                    cdf_path, hist_path = fut.result()
-                    w_px, h_px = sizes[i]
-                    _sheets.add_picture_at(ws["Distribution"], cdf_path, left=dist_left,
-                                           top=dist_tops[i], width_px=w_px, height_px=h_px)
-                    _sheets.add_picture_at(ws["Histogram"], hist_path, left=hist_left,
-                                           top=hist_tops[i], width_px=w_px, height_px=h_px)
-
-                # 차트 이미지가 덮는 셀에 항목명 숨김 기입 — Ctrl+F 로 차트 찾기
-                index_entries = _build_item_index(chunk_jobs)
-                _sheets.write_hidden_item_index(ws["Distribution"], index_entries, dist_tops,
-                                                left=dist_left, top=dist_top)
-                _sheets.write_hidden_item_index(ws["Histogram"], index_entries, hist_tops,
-                                                left=hist_left, top=hist_top)
-
-                map_pngs = []
-                for job, fut in zip(map_jobs, map_futs):
-                    map_pngs.append((job["title"], fut.result()))
-                map_left, map_top = _sheets.chart_anchor(ws["Map Analysis"])
-                _sheets.add_map_grid(ws["Map Analysis"], map_pngs,
-                                     left=map_left, top=map_top)
-                # Bin Legend 표 (웹과 동일 집계·색) — 맵 안 bin 번호 텍스트를 대신한다.
-                _sheets.write_map_legend(
-                    ws["Map Analysis"], build_global_bin_legend(map_rows),
-                    build_bin_desc_map(sheets.get("Yield")), map_colors, len(map_pngs),
-                    left=map_left)
-
-                # Issue Table 행별 CDF PNG 부착 (오름차순 — 행 높이 확대가 아래 행 top 에 반영)
-                iw_pt, ih_pt = issue_cdf_pt_size()
-                for (excel_row, out), fut in zip(issue_targets, issue_futs):
-                    fut.result()
-                    _sheets.add_picture_in_cell(ws["Issue Table"], out, excel_row,
-                                                issue_layout["dist_col"], iw_pt, ih_pt)
-                # Map 썸네일은 CDF 부착 뒤에(행 높이가 확정된 상태) 같은 방식으로 칸에 맞춰 부착
-                for fut in issue_map_futs:
-                    fut.result()
-                mw_pt, mh_pt = issue_map_pt_size()
-                for bin_value, excel_row in issue_layout["map_rows"]:
-                    png = issue_map_paths.get(str(bin_value))
-                    if png and os.path.exists(png):
-                        _sheets.add_picture_in_cell(ws["Issue Table"], png, excel_row,
-                                                    issue_layout["map_col"], mw_pt, mh_pt)
-
-                # Issue Table Temp 썸네일 부착 (CDF → Map 순서도 Issue Table 과 동일)
-                if temp_layout is not None:
-                    for _kind, _row, _out, fut in temp_map_futs:
-                        fut.result()
-                    for excel_row, out in temp_targets:
-                        if os.path.exists(out):
-                            _sheets.add_picture_in_cell(ws[TEMP_SHEET], out, excel_row,
-                                                        temp_layout["dist_col"], iw_pt, ih_pt)
-                    for item, excel_row in temp_layout["temp_rows"]:
-                        png = temp_map_paths.get(item)
-                        if png and os.path.exists(png):
-                            _sheets.add_picture_in_cell(ws[TEMP_SHEET], png, excel_row,
-                                                        temp_layout["map_col"], mw_pt, mh_pt)
-
-                # 모든 시트 상단에 세션 웹뷰 링크 삽입
-                for name in sheet_order:
-                    _sheets.add_session_link(ws[name], session_url)
-
-                t_render = time.perf_counter()
-                _emit("save", f"차트 부착 완료 ({t_render - t_text:.1f}s) — 저장 중...")
-
-                # ── 5. 저장 + 무결성 검증 ───────────────────────────────────
-                ws["Summary"].activate()
-                app.api.Calculation = _XL_CALC_AUTO
-                if os.path.exists(out_path):
-                    os.remove(out_path)
-                wb.save(out_path)
-                wb.close()
-            finally:
-                _quit_app(app)
+            warnings = []
+            used_engine = engine
+            if engine == "xlsxwriter":
+                try:
+                    _write_with_xlsxwriter(ctx, out_path, warnings)
+                except Exception as exc:
+                    # 신규 엔진이 실패해도 사용자는 파일을 받아야 한다 — 이미 받은 데이터와
+                    # 렌더된 PNG 를 그대로 재사용해 기존 COM 경로로 다시 만든다.
+                    warnings.append(f"신규 엔진(XlsxWriter) 실패 → 기존 방식으로 재시도: {exc}")
+                    emit("save", f"신규 엔진 실패 — 기존 방식으로 다시 만드는 중… ({exc})")
+                    _write_with_com(ctx, out_path)
+                    used_engine = "com"
+            else:
+                _write_with_com(ctx, out_path)
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
-
-        _wait_for_xlsx_ready(out_path)
-        _validate_embedded_images(out_path)
     except Exception:
         # 부분 생성된 파일은 남기지 않는다
         try:
@@ -303,9 +220,388 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-    elapsed = time.perf_counter() - t0
-    _emit("done", f"Excel Download 완료 ({elapsed:.1f}s): {out_path}")
-    return {"out_path": out_path, "elapsed": elapsed, "items": n_items}
+    elapsed = emit.elapsed()
+    label = "XlsxWriter" if used_engine == "xlsxwriter" else "Excel"
+    suffix = f" · 경고 {len(warnings)}건" if warnings else ""
+    emit("done", f"Excel Download 완료 ({elapsed:.1f}s, {label}{suffix}): {out_path}", 1, 1)
+    return {"out_path": out_path, "elapsed": elapsed, "items": n_items,
+            "engine": used_engine, "warnings": warnings}
+
+
+# ── 기입 단계 (엔진별) ───────────────────────────────────────────────────────
+
+def _write_with_com(ctx, out_path):
+    """기존 xlwings/Excel COM 경로 — `_sheets.py`(동결)를 그대로 쓴다. 폴백 겸 옵션."""
+    import xlwings as xw
+    from excel_edit.excel_session import _quit_app
+    from report_generator._xlsx_png_export import (_validate_embedded_images,
+                                                   _wait_for_xlsx_ready)
+    from report_generator._xlsx_style import _XL_CALC_AUTO, _XL_CALC_MANUAL
+
+    emit = ctx["emit"]
+    sheets = ctx["sheets"]
+    sheet_order = _sheet_order(sheets, engine="com")
+    emit("attach", "Excel 시트 작성 중…")
+    app = xw.App(visible=False, add_book=False)
+    try:
+        app.display_alerts = False
+        app.screen_updating = False
+        wb = app.books.add()
+        app.api.Calculation = _XL_CALC_MANUAL       # 열린 workbook 이 있어야 설정 가능
+        book = _ComBook(wb, sheet_order, ctx["session_url"])
+        _fill_workbook(book, ctx, sheet_order)
+        app.api.Calculation = _XL_CALC_AUTO
+        if os.path.exists(out_path):
+            os.remove(out_path)
+        wb.save(out_path)
+        wb.close()
+    finally:
+        _quit_app(app)
+    _wait_for_xlsx_ready(out_path)
+    _validate_embedded_images(out_path)
+
+
+def _write_with_xlsxwriter(ctx, out_path, warnings):
+    """XlsxWriter 경로 — Excel 없이 파일을 직접 만든다(기본 엔진)."""
+    from . import _xlsx
+    from ._charts import DPI
+
+    sheets = ctx["sheets"]
+    prep_rows = _extra.build_preprocess_rows(ctx.get("preprocess"))
+    sheet_order = _sheet_order(sheets, engine="xlsxwriter",
+                               has_compare=bool((ctx["report"] or {}).get("compare")),
+                               has_preprocess=bool(prep_rows))
+    book = _xlsx.XlsxBook(out_path, ctx["session_url"], chart_dpi=DPI)
+    try:
+        book.add_sheets(sheet_order)
+        _fill_workbook(book, ctx, sheet_order, warnings=warnings, prep_rows=prep_rows)
+        book.close()
+    except Exception:
+        book.abort()
+        raise
+
+
+class _ComBook:
+    """`_sheets.py`(COM) 를 XlsxBook 과 같은 메서드 이름으로 감싼 어댑터.
+
+    두 엔진이 `_fill_workbook` 한 벌을 공유하기 위한 얇은 껍데기다 — `_sheets.py` 자체는
+    손대지 않는다(동결). 파리티 보강 시트(전처리/Compare/Download Status)와 색 인자는
+    COM 경로에 없으므로 조용히 무시한다.
+    """
+
+    def __init__(self, wb, sheet_order, session_url):
+        self.session_url = session_url
+        self.ws = {}
+        first = wb.sheets[0]
+        first.name = sheet_order[0]
+        self.ws[sheet_order[0]] = first
+        for name in sheet_order[1:]:
+            self.ws[name] = wb.sheets.add(name, after=wb.sheets[wb.sheets.count - 1])
+
+    def has(self, name):
+        return name in self.ws
+
+    def write_sheet_title(self, name, text=None, **_kw):
+        _sheets.write_sheet_title(self.ws[name], text or name)
+
+    def add_session_link(self, name):
+        _sheets.add_session_link(self.ws[name], self.session_url)
+
+    def write_summary_sheet(self, yield_summary, fail_bin_rows, **_kw):
+        _sheets.write_summary_sheet(self.ws["Summary"], yield_summary, fail_bin_rows)
+
+    def write_yield_sheet(self, yield_rows, yield_bin_groups, source_names,
+                          step_groups=None, step_summary=None, **_kw):
+        _sheets.write_yield_sheet(self.ws["Yield"], yield_rows, yield_bin_groups,
+                                  source_names, step_groups=step_groups,
+                                  step_summary=step_summary)
+
+    def write_cpk_sheet(self, cpk_rows):
+        _sheets.write_cpk_sheet(self.ws["CPK"], cpk_rows)
+
+    def write_issue_sheet(self, name, issue_rows, source_names, *, title=None):
+        return _sheets.write_issue_sheet(self.ws[name], issue_rows, source_names,
+                                         title=title or name)
+
+    def write_preprocess_sheet(self, *_a, **_kw):
+        pass                                    # COM 경로에는 없는 시트
+
+    def write_compare_sheet(self, *_a, **_kw):
+        pass
+
+    def write_status_sheet(self, *_a, **_kw):
+        pass
+
+    def write_sheet_error(self, name, exc):
+        try:
+            self.ws[name].range((3, 2)).value = f"⚠ 이 시트를 만들지 못했습니다: {exc}"
+        except Exception:
+            pass
+
+    def write_source_legend(self, name, colors):
+        _sheets.write_source_legend(self.ws[name], colors)
+
+    def chart_anchor(self, name):
+        return _sheets.chart_anchor(self.ws[name])
+
+    def picture_stack_tops(self, heights_px, top0):
+        return _sheets.picture_stack_tops(heights_px, top0)
+
+    def add_picture_at(self, name, path, *, top, width_px, height_px, left):
+        _sheets.add_picture_at(self.ws[name], path, top=top, width_px=width_px,
+                               height_px=height_px, left=left)
+
+    def add_picture_in_cell(self, name, path, row, col, w_pt, h_pt):
+        _sheets.add_picture_in_cell(self.ws[name], path, row, col, w_pt, h_pt)
+
+    def write_hidden_item_index(self, name, entries, tops, *, left, top):
+        _sheets.write_hidden_item_index(self.ws[name], entries, tops, left=left, top=top)
+
+    def add_map_grid(self, name, pngs, *, left, top):
+        _sheets.add_map_grid(self.ws[name], pngs, left=left, top=top)
+
+    def write_map_legend(self, name, legend_rows, desc_map, color_map, n_maps, *, left):
+        _sheets.write_map_legend(self.ws[name], legend_rows, desc_map, color_map, n_maps,
+                                 left=left)
+
+    def close(self, *, activate="Summary"):
+        if activate in self.ws:
+            self.ws[activate].activate()
+
+
+def _fill_workbook(book, ctx, sheet_order, *, warnings=None, prep_rows=None):
+    """시트 기입 + 차트 부착 — 두 엔진이 공유하는 본체.
+
+    시트마다 예외를 격리한다(`_safe`): 한 시트가 실패해도 그 시트에 사유만 남기고 나머지는
+    정상적으로 만든다. 이미지 부착도 장별로 격리해 렌더 실패 1건이 전체를 막지 않는다.
+    """
+    warnings = warnings if warnings is not None else []
+    emit = ctx["emit"]
+    report, sheets = ctx["report"], ctx["sheets"]
+    source_names, colors = ctx["source_names"], ctx["colors"]
+    pool, tmpdir, cell_of = ctx["pool"], ctx["tmpdir"], ctx["cell_of"]
+    map_rows, map_colors = ctx["map_rows"], ctx["map_colors"]
+    mode = str(report.get("mode") or "Normal")
+
+    def safe(label, fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            warnings.append(f"{label}: {exc}")
+            try:
+                book.write_sheet_error(label, exc)
+            except Exception:
+                pass
+            return None
+
+    # ── 표 시트 ─────────────────────────────────────────────────────────────
+    emit("render", "Summary·Yield·CPK 시트 작성 중…")
+    safe("Summary", book.write_summary_sheet, report.get("yield_summary"),
+         sheets.get("Fail Bin"), issue_rows=sheets.get("Issue Table"),
+         temp_rows=sheets.get(TEMP_SHEET), summary_engr=report.get("summary_engr"),
+         mode=mode)
+    safe("Yield", book.write_yield_sheet, sheets.get("Yield"),
+         report.get("yield_bin_groups"), source_names,
+         step_groups=report.get("yield_step_groups"),
+         step_summary=(report.get("yield_summary") or {}).get("by_step"),
+         yield_summary=report.get("yield_summary"), yield_basis=report.get("yield_basis"))
+    safe("CPK", book.write_cpk_sheet, sheets.get("CPK"))
+    if PREP_SHEET in sheet_order:
+        safe(PREP_SHEET, book.write_preprocess_sheet, PREP_SHEET, prep_rows or [])
+    if COMPARE_SHEET in sheet_order:
+        safe(COMPARE_SHEET, book.write_compare_sheet, COMPARE_SHEET,
+             _extra.build_compare_tables(report.get("compare")))
+
+    emit("render", "Issue Table 작성 중…")
+    issue_layout = safe("Issue Table", book.write_issue_sheet, "Issue Table",
+                        sheets.get("Issue Table"), source_names)
+    issue_layout = issue_layout or _EMPTY_LAYOUT
+
+    # Issue Table 썸네일 잡 — CPK 섹션만 Bin1(양품) ECDF (그 행의 cpk 가 Bin1 기준이라
+    # 웹 미니셀 data-bin1 과 같은 데이터를 쓴다). 배치 수신 실패 시 전체 기준으로 폴백.
+    cpk_subjects = [item for item, _r, section in issue_layout["rows"]
+                    if section == "CPK" and item in cell_of]
+    bin1_items = {} if ctx["bin1"] else fetch_distribution_bin1(
+        ctx["server_base"], ctx["session_id"], cpk_subjects)
+    issue_targets, issue_futs = [], []
+    for item, excel_row, section in issue_layout["rows"]:
+        cell = cell_of.get(item)
+        if cell is None:
+            continue
+        if section == "CPK" and item in bin1_items:
+            cell = _bin1_cell(cell, bin1_items[item])
+        out = os.path.join(tmpdir, f"issue_{excel_row:04d}.png")
+        issue_futs.append(pool.submit(render_single_cdf, {"cell": cell, "out_path": out}))
+        issue_targets.append((excel_row, out))
+    issue_map_jobs, issue_map_paths = _build_issue_map_jobs(
+        map_rows, issue_layout["map_rows"], map_colors, tmpdir)
+    issue_map_futs = [pool.submit(render_issue_maps_job, j) for j in issue_map_jobs]
+
+    # ── Issue Table Temp (Temperature 세션만) ───────────────────────────────
+    temp_layout, temp_targets, temp_futs, temp_map_paths = None, [], [], {}
+    if TEMP_SHEET in sheet_order:
+        temp_layout = safe(TEMP_SHEET, book.write_issue_sheet, TEMP_SHEET,
+                           sheets.get(TEMP_SHEET), source_names, title=TEMP_SHEET)
+        if temp_layout:
+            for item, excel_row, _section in temp_layout["rows"]:
+                cell = cell_of.get(item)
+                if cell is None:
+                    continue
+                out = os.path.join(tmpdir, f"temp_{excel_row:04d}.png")
+                temp_targets.append((excel_row, out))
+                temp_futs.append(pool.submit(render_single_cdf,
+                                             {"cell": cell, "out_path": out}))
+            temp_map = fetch_temp_map(ctx["server_base"], ctx["session_id"])
+            temp_jobs, temp_map_paths = _build_temp_map_jobs(
+                map_rows, temp_layout["temp_rows"], temp_map, tmpdir)
+            temp_futs.extend(pool.submit(render_temp_maps_job, j) for j in temp_jobs)
+
+    # ── 차트 시트 ───────────────────────────────────────────────────────────
+    for name in ("Distribution", "Histogram", "Map Analysis"):
+        safe(name, book.write_sheet_title, name)
+    safe("Distribution", book.write_source_legend, "Distribution", colors)
+    safe("Histogram", book.write_source_legend, "Histogram", colors)
+
+    chunk_jobs, chunk_futs = ctx["chunk_jobs"], ctx["chunk_futs"]
+    dist_left, dist_top = book.chart_anchor("Distribution")
+    hist_left, hist_top = book.chart_anchor("Histogram")
+    sizes = [chunk_px_size(len(j["cells"])) for j in chunk_jobs]
+    dist_tops = book.picture_stack_tops([h for _, h in sizes], dist_top)
+    hist_tops = book.picture_stack_tops([h for _, h in sizes], hist_top)
+    idx_of = {fut: i for i, fut in enumerate(chunk_futs)}
+    done = 0
+    skipped = 0
+    for fut in as_completed(chunk_futs):
+        i = idx_of[fut]
+        done += 1
+        emit("render", "산포·히스토그램 차트", done, len(chunk_futs))
+        if emit.elapsed() > BUDGET_SKIP_IMAGES_SEC:
+            skipped += 1
+            continue
+        try:
+            cdf_path, hist_path = fut.result()
+            w_px, h_px = sizes[i]
+            book.add_picture_at("Distribution", cdf_path, top=dist_tops[i],
+                                width_px=w_px, height_px=h_px, left=dist_left)
+            book.add_picture_at("Histogram", hist_path, top=hist_tops[i],
+                                width_px=w_px, height_px=h_px, left=hist_left)
+        except Exception as exc:
+            warnings.append(f"차트 청크 {i + 1} 부착 실패: {exc}")
+    if skipped:
+        warnings.append(f"시간 예산({BUDGET_SKIP_IMAGES_SEC:.0f}초) 초과로 차트 "
+                        f"{skipped}청크를 건너뛰었습니다")
+
+    index_entries = _build_item_index(chunk_jobs)
+    safe("Distribution", book.write_hidden_item_index, "Distribution", index_entries,
+         dist_tops, left=dist_left, top=dist_top)
+    safe("Histogram", book.write_hidden_item_index, "Histogram", index_entries,
+         hist_tops, left=hist_left, top=hist_top)
+
+    # ── 웨이퍼맵 ────────────────────────────────────────────────────────────
+    emit("attach", "웨이퍼 맵 부착 중…")
+    map_pngs = []
+    for job, fut in zip(ctx["map_jobs"], ctx["map_futs"]):
+        try:
+            map_pngs.append((job["title"], fut.result()))
+        except Exception as exc:
+            warnings.append(f"웨이퍼 맵 '{job.get('title')}' 렌더 실패: {exc}")
+    map_left, map_top = book.chart_anchor("Map Analysis")
+    safe("Map Analysis", book.add_map_grid, "Map Analysis", map_pngs,
+         left=map_left, top=map_top)
+    safe("Map Analysis", book.write_map_legend, "Map Analysis",
+         build_global_bin_legend(map_rows), build_bin_desc_map(sheets.get("Yield")),
+         map_colors, len(map_pngs), left=map_left)
+
+    # ── Issue Table 썸네일 ──────────────────────────────────────────────────
+    iw_pt, ih_pt = issue_cdf_pt_size()
+    mw_pt, mh_pt = issue_map_pt_size()
+    _attach_thumbs(book, "Issue Table", issue_targets, issue_futs, issue_layout,
+                   iw_pt, ih_pt, emit, warnings, "Issue Table 썸네일")
+    for fut in issue_map_futs:
+        try:
+            fut.result()
+        except Exception as exc:
+            warnings.append(f"Issue Table Map 렌더 실패: {exc}")
+    for bin_value, excel_row in issue_layout["map_rows"]:
+        png = issue_map_paths.get(str(bin_value))
+        if png and os.path.exists(png):
+            try:
+                book.add_picture_in_cell("Issue Table", png, excel_row,
+                                         issue_layout["map_col"], mw_pt, mh_pt)
+            except Exception as exc:
+                warnings.append(f"Issue Table Map 부착 실패(행 {excel_row}): {exc}")
+
+    if temp_layout:
+        for fut in temp_futs:
+            try:
+                fut.result()
+            except Exception as exc:
+                warnings.append(f"Temp 썸네일 렌더 실패: {exc}")
+        for excel_row, out in temp_targets:
+            if os.path.exists(out):
+                try:
+                    book.add_picture_in_cell(TEMP_SHEET, out, excel_row,
+                                             temp_layout["dist_col"], iw_pt, ih_pt)
+                except Exception as exc:
+                    warnings.append(f"Temp 산포 부착 실패(행 {excel_row}): {exc}")
+        for item, excel_row in temp_layout["temp_rows"]:
+            png = temp_map_paths.get(item)
+            if png and os.path.exists(png):
+                try:
+                    book.add_picture_in_cell(TEMP_SHEET, png, excel_row,
+                                             temp_layout["map_col"], mw_pt, mh_pt)
+                except Exception as exc:
+                    warnings.append(f"Temp Map 부착 실패(행 {excel_row}): {exc}")
+
+    # ── 마무리 ──────────────────────────────────────────────────────────────
+    for name in sheet_order:
+        try:
+            book.add_session_link(name)
+        except Exception:
+            pass
+    if STATUS_SHEET in sheet_order:
+        try:
+            book.write_status_sheet(STATUS_SHEET,
+                                    _status_rows(ctx, warnings, prep_rows))
+        except Exception:
+            pass
+    emit("save", "파일 저장·검증 중…")
+
+
+_EMPTY_LAYOUT = {"rows": [], "map_rows": [], "temp_rows": [], "dist_col": 8, "map_col": 7}
+
+
+def _attach_thumbs(book, sheet, targets, futs, layout, w_pt, h_pt, emit, warnings, label):
+    """행별 CDF 썸네일 부착 — 장별 격리(1장 실패가 나머지를 막지 않는다)."""
+    total = len(targets)
+    for i, ((excel_row, out), fut) in enumerate(zip(targets, futs), 1):
+        if i % 25 == 0 or i == total:
+            emit("attach", label, i, total)
+        try:
+            fut.result()
+            book.add_picture_in_cell(sheet, out, excel_row, layout["dist_col"], w_pt, h_pt)
+        except Exception as exc:
+            warnings.append(f"{label} 부착 실패(행 {excel_row}): {exc}")
+
+
+def _status_rows(ctx, warnings, prep_rows):
+    """Download Status 시트 내용 — 무엇으로·얼마나·무엇을 건너뛰었는지."""
+    emit = ctx["emit"]
+    rows = [
+        ["세션", ctx["session_id"]],
+        ["세션 주소", ctx["session_url"]],
+        ["기입 엔진", "XlsxWriter (Excel 미사용)"],
+        ["소요 시간", f"{emit.elapsed():.1f}초"],
+        ["산포 기준", "Bin1(양품·규격내)" if ctx["bin1"] else "전체 die"],
+        ["항목 수", ctx["n_items"]],
+        ["입력 소스", ", ".join(str(s) for s in ctx["source_names"])],
+        ["전처리", "적용됨 — '전처리 안내' 시트 참조" if prep_rows else "없음"],
+    ]
+    if warnings:
+        rows.append([f"경고 ({len(warnings)}건)", "\n".join(str(w) for w in warnings)])
+    else:
+        rows.append(["경고", "없음 — 모든 시트가 정상 생성됐습니다"])
+    return rows
 
 
 # ── 잡 구성 헬퍼 ──────────────────────────────────────────────────────────────
@@ -387,7 +683,7 @@ def _chips_for_subject(chips, subject):
     return out
 
 
-def _build_chunk_jobs(report, dist, color_of, tmpdir, chips=None):
+def _build_chunk_jobs(report, dist, color_of, tmpdir, chips=None, chart_notes=None):
     """distribution_index 순서(TSEQ)로 전 항목 셀을 만들어 32개씩 청크 잡으로 나눈다.
 
     dist items 에만 있고 index 에 없는 항목도 뒤에 붙인다 (데이터 누락 금지).
@@ -437,6 +733,10 @@ def _build_chunk_jobs(report, dist, color_of, tmpdir, chips=None):
             # Issue Table 미니셀도 이 cell 을 재사용하지만 미니 렌더는 chips 를 그리지
             # 않는다(웹 미니셀에도 강조가 없다) — 시트별 차이는 렌더 쪽에서 갈린다.
             "chips": _chips_for_subject(chips, subject),
+            # 사용자가 웹 차트 위에 남긴 주석(도형·텍스트·코멘트). 대부분 None 이라
+            # 자식 프로세스로 넘어가는 피클 크기에 사실상 영향이 없다.
+            "note_cdf": (chart_notes or {}).get(f"cdf:{subject}"),
+            "note_hist": (chart_notes or {}).get(f"hist:{subject}"),
         })
 
     jobs = []
