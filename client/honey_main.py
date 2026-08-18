@@ -1475,6 +1475,33 @@ class HoneyMainWindow(QMainWindow):
         except Exception:
             pass
 
+    def shutdown_browser(self):
+        """종료 직전 내장 브라우저(메인+팝업)를 정리한다. 여러 번 불려도 1회만 동작.
+
+        QApplication 이 QWebEngineView 보다 먼저 파괴되면 Chromium 정리가 뒤늦게 돌아
+        access violation 이 난다. 종료 경로 3개(closeEvent / aboutToQuit / exec 반환)가
+        모두 이 함수를 거치게 해 그 상황 자체를 없앤다.
+
+        정리 실패가 종료를 막아선 안 되므로 전부 best-effort 다.
+        """
+        if getattr(self, "_browser_shutdown", False):
+            return
+        self._browser_shutdown = True
+        try:
+            import embedded_browser
+        except ImportError:
+            return   # PyQtWebEngine 미설치 = 정리할 브라우저도 없다
+        try:
+            embedded_browser.shutdown_all()          # 팝업 창 먼저
+        except Exception:   # noqa: BLE001
+            pass
+        panel = getattr(self, "browser_panel", None)
+        if panel is not None:
+            try:
+                embedded_browser.shutdown_panel(panel)
+            except Exception:   # noqa: BLE001
+                pass
+
     def closeEvent(self, event):
         if self._excel_edit_running():
             if not self._confirm_cancel_edit():
@@ -1484,6 +1511,9 @@ class HoneyMainWindow(QMainWindow):
             worker = getattr(self, "_excel_worker", None)
             if worker is not None:
                 worker.wait(6000)
+        # 닫기가 확정된 뒤에만 정리한다 — 위 ignore 경로에서 브라우저를 죽이면
+        # 사용자가 취소했는데 화면이 먹통이 된다.
+        self.shutdown_browser()
         super().closeEvent(event)
 
     def _on_excel_edit_failed(self, message):
@@ -3643,11 +3673,7 @@ class HoneyMainWindow(QMainWindow):
         """
         updater.ulog("EXIT 브라우저 정리 시작")
         try:
-            panel = getattr(self, "browser_panel", None)
-            if panel is not None:
-                panel.view.stop()
-                panel.view.close()
-                panel.close()
+            self.shutdown_browser()   # 일반 종료와 같은 정리 (팝업 창 포함)
         except Exception as exc:   # noqa: BLE001
             updater.ulog(f"EXIT 브라우저 정리 실패(무시): {exc}")
         # deleteLater/네이티브 창 파괴가 처리되도록 짧게 이벤트를 돌린다.
@@ -4191,16 +4217,45 @@ def main():
     updater.log_startup_state(CURRENT_VERSION)
     # QtWebEngine(내장 브라우저)을 앱 생성 후 lazy import 하려면 필수 (없어도 무해)
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+    # 렌더러 크래시로 GPU 우회를 적용한 PC 인지 로그만 보고 알 수 있게 값을 남긴다.
+    print(f"[startup] QTWEBENGINE_CHROMIUM_FLAGS="
+          f"{os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS') or '(없음)'}")
     app = QApplication(sys.argv)
     app.setWindowIcon(HoneyMainWindow._honey_icon(64))   # 작업표시줄 꿀단지 아이콘
     _apply_honey_theme(app)
     _apply_cute_font(app)
     _install_excepthook()
     win = HoneyMainWindow()
+    # 창 닫기를 거치지 않는 종료(app.quit·세션 로그아웃 등)도 같은 정리를 타게 한다.
+    app.aboutToQuit.connect(win.shutdown_browser)
     win.showMaximized()
     _schedule_version_cleanup()
     _flush_diag_queue()
-    sys.exit(app.exec())
+    code = app.exec()
+    win.shutdown_browser()   # 안전망 — 이미 정리됐으면 no-op
+    _final_exit(code)
+
+
+def _final_exit(code):
+    """정리가 끝난 뒤 프로세스를 확실히 끝낸다 (인터프리터 종료 단계를 건너뛴다).
+
+    파이썬 정상 종료로 두면 QApplication 이 먼저 파괴된 뒤 QWebEngineView 가 GC 로
+    나중에 파괴되면서 access violation 이 난다. 업데이트 종료(_exit_for_update)가
+    같은 이유로 이미 os._exit 을 쓴다.
+
+    ⚠ 종료 시 저장이 필요한 작업은 이 함수보다 앞(shutdown_browser 앞)에서 끝내야
+    한다 — 여기 도달하면 데몬 스레드·atexit 훅은 실행되지 않는다.
+    """
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        QApplication.processEvents()
+        time.sleep(0.05)
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+    os._exit(code)
 
 
 def _flush_diag_queue():

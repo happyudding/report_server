@@ -11,6 +11,7 @@ PyQtWebEngine 미설치 시 이 모듈 import 가 ImportError — 호출부(hone
 Qt.AA_ShareOpenGLContexts 속성이 앱 생성 전에 설정돼 있어야 한다
 (honey_main.main() 에서 설정).
 """
+import sys
 from urllib.parse import quote
 
 from PyQt6.QtCore import QTimer, QUrl
@@ -194,9 +195,12 @@ class BrowserPanel(QWidget):
         super().__init__(parent)
         self._home_url = home_url
         self._start_url = start_url or home_url
+        self._render_crash_count = 0
+        self._closing = False
         _inject_user_agent()
         _install_download_handler()
         self.view = _WebView(home_url)
+        self.view.page().renderProcessTerminated.connect(self._on_render_terminated)
 
         tb = QToolBar("Navigation")
         tb.setMovable(False)
@@ -232,6 +236,44 @@ class BrowserPanel(QWidget):
             text = "http://" + text
         self.view.load(QUrl(text))
 
+    def _on_render_terminated(self, status, exit_code):
+        """렌더러(QtWebEngineProcess) 비정상 종료를 기록하고 1회만 자동 복구한다.
+
+        연결이 없으면 렌더러가 죽어도 화면만 비고 로그·서버 어디에도 흔적이 남지 않아,
+        "가만히 있다가 화면이 하얘졌다"는 신고를 재현 없이는 조사할 수 없었다.
+        GPU/드라이버가 원인인 경우가 많아 조치 힌트도 함께 남긴다.
+
+        Normal 종료와 정리 중(_closing) 발화는 무시한다 — 뷰를 닫으면 렌더러가
+        Normal 로 죽으면서 이 시그널이 뜨는데, 그걸 크래시로 다루면 종료 로그가
+        오염되고 이미 닫은 뷰에 새로고침을 예약하게 된다.
+        """
+        name = getattr(status, "name", str(status))
+        if self._closing or name.startswith("Normal"):
+            return
+        self._render_crash_count += 1
+        url = self.view.url().toString()
+        print(f"[renderer] 종료 status={name} exitCode={exit_code} url={url}",
+              file=sys.stderr)
+        crashed = name.startswith(("Crashed", "Abnormal"))
+        if crashed:
+            print("[renderer] GPU/드라이버 문제일 수 있음 — 재발하면 Windows 환경변수 "
+                  "QTWEBENGINE_CHROMIUM_FLAGS=--disable-gpu 설정 후 재실행해 볼 것",
+                  file=sys.stderr)
+        try:
+            from transport import error_report
+            error_report.report_error(
+                "honey_render_crash", f"{name} exit_code={exit_code}",
+                context={"status": name, "exit_code": exit_code, "url": url})
+        except Exception:   # noqa: BLE001 - 보고 실패가 복구를 막지 않게
+            pass
+        # 첫 크래시만 되살린다 — 크래시→reload→크래시 루프를 만들지 않기 위해.
+        if self._render_crash_count == 1:
+            print("[renderer] 자동 새로고침 1회 시도", file=sys.stderr)
+            QTimer.singleShot(1500, self.view.reload)
+        else:
+            print(f"[renderer] 자동 복구 중단 (이번 실행에서 {self._render_crash_count}회째) "
+                  "— ⟳ 로 직접 새로고침하세요", file=sys.stderr)
+
 
 class EmbeddedBrowserWindow(QMainWindow):
     def __init__(self, home_url):
@@ -247,6 +289,36 @@ class EmbeddedBrowserWindow(QMainWindow):
         if self in _open_windows:
             _open_windows.remove(self)
         super().closeEvent(event)
+
+
+def shutdown_panel(panel):
+    """BrowserPanel 1개의 웹뷰를 끊는다 (best-effort — 실패는 호출부에서 무시).
+
+    QApplication 이 QWebEngineView 보다 먼저 파괴되면 Chromium 정리가 뒤늦게 돌아
+    access violation 이 난다. 종료 경로에서 이 함수로 먼저 뷰를 멈춘다.
+    """
+    panel._closing = True   # 정리 중 뜨는 렌더러 종료 시그널을 크래시로 오인하지 않게
+    view = getattr(panel, "view", None)
+    if view is not None:
+        view.stop()
+        view.close()
+    panel.close()
+
+
+def shutdown_all():
+    """앱 종료 직전, 열려 있는 팝업 창을 전부 정리하고 전역 참조를 비운다.
+
+    _open_windows 는 모듈 전역이라 종료 시 아무도 닫아주지 않으면 인터프리터 종료
+    시점까지 QWebEngineView 를 붙잡는다 — 메인 뷰만 정리해도 여기서 남으면 같은
+    크래시가 난다. 창 하나가 실패해도 나머지는 계속 정리한다.
+    """
+    for win in list(_open_windows):
+        try:
+            shutdown_panel(win.panel)
+            win.close()
+        except Exception:   # noqa: BLE001
+            pass
+    _open_windows.clear()
 
 
 def open_browser(url, navigate=True):

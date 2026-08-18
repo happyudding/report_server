@@ -558,7 +558,7 @@ document.getElementById("btnSaveComment").addEventListener("click", () => { save
 // 아니면 buildPayload()+PATCH 를 태운다.
 async function saveNow() {
   if (!DATA || MODE !== "edit" || _autoSaving) return;
-  if (!_dirty && !_cnDirty.size) { showToast("변경된 내용이 없습니다."); return; }
+  if (!_dirty && !_cnDirty.size) { showToast("저장 되었습니다."); return; }
   const btn = document.getElementById("btnSaveComment");
   if (btn) btn.disabled = true;
   await autoSave();

@@ -110,6 +110,7 @@ sidecar 의 stage 가 `download` 로 멈춰 있는 것까지가 얻을 수 있�
 | `load_failed` / `load_exception` / `poll_timeout` | warning/info | [boot.js](../server/report/static/webreport/boot.js) → `/api/client_error`. **이미 catch 된 실패**라 `window.onerror` 로는 안 잡히는데, 정작 사용자가 신고하는 건 대부분 이쪽이다 |
 | `error` / `unhandledrejection` | warning | [error_beacon.js](../server/report/static/webreport/error_beacon.js) (종전 그대로) |
 | `honey_upload_fail` / `honey_crash` | warning | Honey → `/api/client_diagnostic` |
+| `honey_render_crash` | warning | Honey 내장 브라우저의 렌더러(QtWebEngineProcess) 비정상 종료 — [embedded_browser.py](../client/embedded_browser.py) `_on_render_terminated`. GPU/드라이버가 흔한 원인이라 `status`/`exit_code`/`url` 을 context 로 싣는다. 클라 로그(`log/<날짜>.txt`)에는 `--disable-gpu` 조치 힌트도 남는다 |
 
 **의도된 HTTPException(404 등)은 사건을 만들지 않는다.** 정상 응답까지 사건이 되면 목록이
 못 쓸 물건이 된다.
