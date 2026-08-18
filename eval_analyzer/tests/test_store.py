@@ -49,6 +49,19 @@ def test_make_case_id_deterministic():
     assert a != c
 
 
+def test_make_case_id_condition_backward_compatible():
+    """빈 condition 은 해시 재료에서 빠진다 — 기존 case_id 가 그대로여야 한다.
+
+    이게 깨지면 운영 eval.db 의 모든 case 가 고아가 되고 선례·라벨 매칭이 통째로 끊긴다.
+    """
+    import hashlib
+    base = store.make_case_id("P", "L", None, 7, None, 0.0)
+    assert base == store.make_case_id("P", "L", None, 7, None, 0.0, "")
+    assert base == hashlib.sha256(b"P|L|None|7|None|0.0").hexdigest()
+    # 조건 축이 붙으면 별개 case (TEMP 코멘트가 ETC 코멘트를 덮어쓰던 원인)
+    assert base != store.make_case_id("P", "L", None, 7, None, 0.0, "TEMP")
+
+
 def test_search_precedents_matches_similar_name(fresh_db):
     with store.get_conn() as conn:
         _seed_precedent(conn, item_raw="VREF_TRIM", item_canon="vref_trim")
@@ -257,6 +270,75 @@ def test_migrate_v3_to_v4_idempotent(fresh_db):
     with store.get_conn() as conn:
         store._migrate_v3_to_v4(conn)  # 이미 v4 인 DB 에 재적용 — no-op 이어야 함
         store._migrate_v3_to_v4(conn)
+
+
+_V7_FAIL_CASE_DDL = """
+CREATE TABLE fail_case (
+    case_id TEXT PRIMARY KEY, product_name TEXT NOT NULL, lot_id TEXT, wafer_number INTEGER,
+    item_id INTEGER NOT NULL, bin INTEGER, revision REAL, item_class TEXT,
+    created_at INTEGER NOT NULL, updated_at INTEGER,
+    UNIQUE(product_name, lot_id, wafer_number, item_id, bin, revision)
+);
+CREATE INDEX idx_fail_case_item_class ON fail_case(item_class);
+CREATE INDEX idx_fail_case_product ON fail_case(product_name);
+CREATE INDEX idx_fail_case_item ON fail_case(item_id);
+CREATE TABLE eval_precedent (
+    eval_id INTEGER NOT NULL, precedent_case_id TEXT NOT NULL, rank INTEGER, similarity REAL,
+    PRIMARY KEY (eval_id, precedent_case_id),
+    FOREIGN KEY (precedent_case_id) REFERENCES fail_case(case_id)
+);
+"""
+
+
+def test_migrate_v7_to_v8_rebuilds_fail_case(tmp_path):
+    """v8: test_condition 추가 + UNIQUE 편입. 재구축이라 데이터·인덱스·FK 를 다 확인한다.
+
+    구 테이블을 먼저 RENAME 하면 eval_precedent 의 FK 가 새 이름으로 재작성돼 dangling
+    되므로, 그 순서 실수를 잡는 것이 이 테스트의 핵심이다.
+    """
+    import sqlite3
+    conn = sqlite3.connect(tmp_path / "v7.db")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(_V7_FAIL_CASE_DDL)
+    conn.executemany(
+        "INSERT INTO fail_case (case_id,product_name,lot_id,wafer_number,item_id,bin,"
+        "revision,item_class,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,1,1)",
+        [("c1", "P", "L", 1, 10, 18, 0.0, "TRIM|V|18"),
+         ("c2", "P", "L", None, 11, None, 0.0, "NON_TRIM|V|")])
+    conn.execute("INSERT INTO eval_precedent VALUES (1,'c1',1,0.9)")
+    conn.commit()
+
+    store._migrate_v7_to_v8(conn)
+    store._migrate_v7_to_v8(conn)   # idempotent
+
+    assert "test_condition" in {r[1] for r in conn.execute("PRAGMA table_info(fail_case)")}
+    assert conn.execute("SELECT COUNT(*) FROM fail_case WHERE test_condition=''").fetchone()[0] == 2
+    idx = {r["name"] for r in conn.execute("PRAGMA index_list(fail_case)")}
+    assert {"idx_fail_case_item_class", "idx_fail_case_product", "idx_fail_case_item"} <= idx
+    ucols = [[c["name"] for c in conn.execute(f"PRAGMA index_info('{u['name']}')")]
+             for u in conn.execute("PRAGMA index_list(fail_case)")
+             if u["unique"] and u["origin"] == "u"]
+    assert any(len(u) == 7 and "test_condition" in u for u in ucols)
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name='eval_precedent'").fetchone()[0]
+    assert "REFERENCES fail_case(case_id)" in ddl and "fail_case_new" not in ddl
+    assert not conn.execute("PRAGMA foreign_key_check").fetchall()
+
+    # 같은 자연키라도 조건이 다르면 별개 행 (UNIQUE 가 condition 을 포함해야 통과)
+    conn.execute("INSERT INTO fail_case (case_id,product_name,lot_id,wafer_number,item_id,"
+                 "bin,revision,item_class,test_condition,created_at,updated_at) "
+                 "VALUES ('c3','P','L',NULL,11,NULL,0.0,'NON_TRIM|V|','TEMP',1,1)")
+    assert conn.execute("SELECT COUNT(*) FROM fail_case WHERE item_id=11").fetchone()[0] == 2
+    conn.close()
+
+
+def test_upsert_fail_case_stores_condition(fresh_db):
+    with store.get_conn() as conn:
+        store.upsert_fail_case("x1", "P", "L", None, 1, None, 0.0, "NON_TRIM|V|", conn=conn)
+        store.upsert_fail_case("x2", "P", "L", None, 1, None, 0.0, "NON_TRIM|V|", "TEMP",
+                               conn=conn)
+        got = dict(conn.execute(
+            "SELECT case_id, test_condition FROM fail_case ORDER BY case_id").fetchall())
+        assert got == {"x1": "", "x2": "TEMP"}
 
 
 def test_case_outcome_created_at_populated(fresh_db):

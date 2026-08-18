@@ -12,6 +12,8 @@
       선례로 조회되는지 확인
   (f) **Status 게이트** — Close→Open 으로 되돌린 이슈는 적재에서 빠지고 그 label 이
       정리된다. 다시 Close 로 바꾸면 복귀 (2026-08-04 규약)
+  (g) **온도 평가 구분** — 같은 item 의 TEMP 행과 ETC 행이 별개 case(test_condition)로
+      갈리고 코멘트가 서로 덮이지 않는다 (2026-08-18)
   (d) 코멘트 전부 삭제 → label/run_case 정리 + fail_case 잔존 (reconciliation)
 
 pytest 미사용(그건 eval_analyzer 전용) — 자체 실행 + assert 스타일(tests/ 관례).
@@ -279,6 +281,34 @@ def main():
     db.edit_rows = closed_all
     assert export() == {"cases": 3, "labels": 3, "removed": 0}
 
+    # (g) 온도 평가(TEMP) 구분 ───────────────────────────────────────────────
+    # 같은 item 의 TEMP 행과 ETC 행은 서로 다른 case 여야 한다. 예전에는 둘 다
+    # bin=NULL 로 붕괴해 case_id 가 같았고, 뒤에 처리된 코멘트가 앞 코멘트를 조용히
+    # 지웠다(온도 평가라는 사실도 DB 에 남지 않았다).
+    db.edit_rows = closed_all + [
+        comment_row("TEMP|CustomThing", "PTE comment", "CT 에서만 RT limit 이탈"),
+        close_row("TEMP|CustomThing"),
+    ]
+    r = export()
+    assert r == {"cases": 4, "labels": 4, "removed": 0}, r
+    conn = eval_export.open_conn(create=False)
+    try:
+        etc_im = q1(conn, "SELECT * FROM item_master WHERE item_name_raw='CustomThing'")
+        rows = conn.execute(
+            "SELECT case_id, test_condition FROM fail_case WHERE item_id=? AND bin IS NULL"
+            " ORDER BY test_condition", (etc_im["item_id"],)).fetchall()
+        assert [r_["test_condition"] for r_ in rows] == ["", "TEMP"], [dict(x) for x in rows]
+        assert rows[0]["case_id"] != rows[1]["case_id"], "TEMP/ETC case_id 가 충돌한다"
+        comments = {r_["test_condition"]: qv(
+            conn, "SELECT human_comment FROM label WHERE case_id=?", r_["case_id"])
+            for r_ in rows}
+        assert comments[""] == "[개발] 기타 항목 메모", comments
+        assert comments["TEMP"] == "[PTE] CT 에서만 RT limit 이탈", comments
+    finally:
+        conn.close()
+    db.edit_rows = closed_all
+    assert export() == {"cases": 3, "labels": 3, "removed": 1}
+
     # (d) 코멘트 전부 삭제 → reconciliation ─────────────────────────────────
     db.edit_rows = []
     r = export()
@@ -288,7 +318,8 @@ def main():
         assert qv(conn, "SELECT COUNT(*) FROM label") == 0
         assert qv(conn, "SELECT COUNT(*) FROM run_case") == 0
         assert qv(conn, "SELECT COUNT(*) FROM raw_metrics") == 0
-        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 3, "fail_case 는 보존"
+        # (g) 에서 만든 TEMP case 까지 4건 — label 이 지워져도 fail_case 는 남는다
+        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 4, "fail_case 는 보존"
     finally:
         conn.close()
 
@@ -297,7 +328,7 @@ def main():
     r = export()
     assert "skipped" in r, r
 
-    print("PASS: test_eval_export (a/b/c/e/f/d + guard)")
+    print("PASS: test_eval_export (a/b/c/e/f/g/d + guard)")
     return 0
 
 

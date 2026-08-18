@@ -12,7 +12,7 @@ import yaml
 
 from . import config
 
-SCHEMA_VERSION = 7  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
+SCHEMA_VERSION = 8  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_master (
@@ -48,11 +48,15 @@ CREATE TABLE IF NOT EXISTS run_case (
     run_id INTEGER NOT NULL, case_id TEXT NOT NULL, seen_at INTEGER NOT NULL,
     PRIMARY KEY (run_id, case_id)
 );
+-- test_condition = 측정 조건 축. '' = 일반/미상(기본), 'TEMP' = 온도 평가(Issue Table Temp
+-- 시트 유래), 'FF'/'SS'/'FS'/'SF' = corner 예약(현재 채우는 경로 없음).
+-- 같은 item 이 조건만 달리해 평가되면 별개 case 여야 한다 — 안 그러면 label 이 서로 덮인다.
 CREATE TABLE IF NOT EXISTS fail_case (
     case_id TEXT PRIMARY KEY, product_name TEXT NOT NULL, lot_id TEXT, wafer_number INTEGER,
     item_id INTEGER NOT NULL, bin INTEGER, revision REAL, item_class TEXT,
+    test_condition TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL, updated_at INTEGER,
-    UNIQUE(product_name, lot_id, wafer_number, item_id, bin, revision)
+    UNIQUE(product_name, lot_id, wafer_number, item_id, bin, revision, test_condition)
 );
 CREATE INDEX IF NOT EXISTS idx_fail_case_item_class ON fail_case(item_class);
 CREATE INDEX IF NOT EXISTS idx_fail_case_product ON fail_case(product_name);
@@ -139,9 +143,16 @@ def _now():
     return int(time.time())
 
 
-def make_case_id(product_name, lot_id, wafer_number, item_id, bin_, revision):
-    """자연키 sha256 (재업로드 idempotent). docs/DB_SCHEMA §3."""
-    key = "|".join(str(x) for x in (product_name, lot_id, wafer_number, item_id, bin_, revision))
+def make_case_id(product_name, lot_id, wafer_number, item_id, bin_, revision, condition=""):
+    """자연키 sha256 (재업로드 idempotent). docs/DB_SCHEMA §3.
+
+    `condition`(fail_case.test_condition) 은 **빈 값이면 해시 재료에서 아예 빠진다** —
+    기존 case_id 를 그대로 두기 위한 하위호환이다. 조건 축이 붙은 case 만 새 해시가 된다.
+    """
+    parts = (product_name, lot_id, wafer_number, item_id, bin_, revision)
+    if condition:
+        parts += (condition,)
+    key = "|".join(str(x) for x in parts)
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
@@ -258,9 +269,43 @@ def _migrate_v6_to_v7(conn):
         "CREATE INDEX IF NOT EXISTS idx_label_signature_sig ON label_signature(signature);")
 
 
+def _migrate_v7_to_v8(conn):
+    """v8: fail_case.test_condition 추가 + UNIQUE 자연키에 편입 (2026-08-18, 사용자 승인).
+
+    인라인 UNIQUE 는 ALTER 로 못 바꾸므로 테이블을 재구축한다. **순서 주의** — 구 테이블을
+    RENAME 하면 eval_precedent 의 `REFERENCES fail_case(case_id)` 가 새 이름으로 재작성돼
+    dangling FK 가 남는다(SQLite 3.25+ 기본). 그래서 새 테이블을 먼저 만들고 구 테이블을
+    DROP 한 뒤 RENAME 한다. 인덱스는 DROP 과 함께 사라지므로 재생성한다.
+
+    기존 행은 전부 test_condition='' — 소급 구분은 하지 않는다(원본은 report.db 편집 DB 에
+    있고, 세션이 다시 export 될 때 자연 복구된다).
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(fail_case)")}
+    if "test_condition" in cols:
+        return
+    conn.executescript("""
+        CREATE TABLE fail_case_new (
+            case_id TEXT PRIMARY KEY, product_name TEXT NOT NULL, lot_id TEXT, wafer_number INTEGER,
+            item_id INTEGER NOT NULL, bin INTEGER, revision REAL, item_class TEXT,
+            test_condition TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL, updated_at INTEGER,
+            UNIQUE(product_name, lot_id, wafer_number, item_id, bin, revision, test_condition)
+        );
+        INSERT INTO fail_case_new (case_id,product_name,lot_id,wafer_number,item_id,bin,
+                                   revision,item_class,test_condition,created_at,updated_at)
+            SELECT case_id,product_name,lot_id,wafer_number,item_id,bin,
+                   revision,item_class,'',created_at,updated_at FROM fail_case;
+        DROP TABLE fail_case;
+        ALTER TABLE fail_case_new RENAME TO fail_case;
+        CREATE INDEX IF NOT EXISTS idx_fail_case_item_class ON fail_case(item_class);
+        CREATE INDEX IF NOT EXISTS idx_fail_case_product ON fail_case(product_name);
+        CREATE INDEX IF NOT EXISTS idx_fail_case_item ON fail_case(item_id);
+    """)
+
+
 _MIGRATIONS = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4,
                4: _migrate_v4_to_v5, 5: _migrate_v5_to_v6,
-               6: _migrate_v6_to_v7}  # {from_version: fn} — from → from+1
+               6: _migrate_v6_to_v7, 7: _migrate_v7_to_v8}  # {from_version: fn} — from → from+1
 
 
 def _migrate(conn):
@@ -439,20 +484,21 @@ def link_run_case(run_id, case_id, conn=None) -> None:
 
 
 def upsert_fail_case(case_id, product_name, lot_id, wafer_number, item_id, bin_,
-                     revision, item_class, conn=None) -> str:
+                     revision, item_class, condition="", conn=None) -> str:
     """fail_case upsert. 이미 있으면 updated_at 만 갱신 — 나머지 컬럼은 case_id 의 재료라 불변.
 
     case_id 가 자연키 sha256(make_case_id)이므로 같은 wafer/item/bin 을 재업로드해도 행이
-    늘지 않는다(idempotent).
+    늘지 않는다(idempotent). `condition` 은 test_condition 컬럼이며 case_id 재료와 같은
+    값을 줘야 한다(make_case_id 의 동명 인자).
     """
     sql = """INSERT INTO fail_case
              (case_id,product_name,lot_id,wafer_number,item_id,bin,revision,
-              item_class,created_at,updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?)
+              item_class,test_condition,created_at,updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)
              ON CONFLICT(case_id) DO UPDATE SET updated_at=excluded.updated_at"""
     with _scope(conn) as c:
         c.execute(sql, (case_id, product_name, lot_id, wafer_number, item_id, bin_,
-                        revision, item_class, _now(), _now()))
+                        revision, item_class, condition or "", _now(), _now()))
         return case_id
 
 

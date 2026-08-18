@@ -9,7 +9,7 @@
 - enum 은 `TEXT` + 애플리케이션 검증(별도 CHECK 안 검). vocabulary 는 본 문서 §10.
 - 쓰기는 단일 커넥션 컨텍스트매니저(자동 commit), `PRAGMA journal_mode=WAL`, `busy_timeout=5000`.
 - case_id 는 자연키 해시(§3). 재업로드 idempotent.
-- 스키마 버전은 `PRAGMA user_version`(현재 4). `store.init_db()` 가 버전을 읽어
+- 스키마 버전은 `PRAGMA user_version`(현재 8). `store.init_db()` 가 버전을 읽어
   `_MIGRATIONS`(from_version → fn) 를 순차 적용 후 `SCHEMA_VERSION` 으로 갱신.
   스키마 변경 시 SCHEMA_VERSION +1 과 마이그레이션 단계 추가가 필수.
 - 본 문서의 `-- FK ...` 주석은 **논리적 관계 표기**(무강제) — DDL 에 FOREIGN KEY 제약 없음,
@@ -29,7 +29,7 @@
 | bin_taxonomy | (product_type, bin) 의 의미 1건 |
 | ingest_run | 업로드/실행(클라가 파일 1회 run) 1건 |
 | run_case | (run, case) 접점 1건 |
-| fail_case | fail 발생 instance 1건 |
+| fail_case | fail 발생 instance 1건 (측정 조건 `test_condition` 이 다르면 별개 case) |
 | raw_metrics | (case, run) 표준 측정요약 1건 |
 | features | (case, run, engine_version) 판단지표 1세트 |
 | evaluation | (case, run, engine_version, model_version) 기계 판정 1건 |
@@ -126,7 +126,7 @@ CREATE TABLE IF NOT EXISTS run_case (        -- (run, case) 다대다 (재업로
 );
 
 CREATE TABLE IF NOT EXISTS fail_case (
-    case_id        TEXT PRIMARY KEY,         -- = sha256(product_name|lot_id|wafer_number|item_id|bin|revision)
+    case_id        TEXT PRIMARY KEY,         -- = sha256(product_name|lot_id|wafer_number|item_id|bin|revision[|test_condition])
     product_name   TEXT NOT NULL,
     lot_id         TEXT,
     wafer_number   INTEGER,
@@ -134,20 +134,35 @@ CREATE TABLE IF NOT EXISTS fail_case (
     bin            INTEGER,
     revision       REAL,                     -- FLOAT (0, 0.1, 1.0, 2.1 ...)
     item_class     TEXT,                     -- = category_major|value_type|bin  ← ★룰 스코프 키
+    test_condition TEXT NOT NULL DEFAULT '', -- v8: 측정 조건 축 (아래)
     created_at     INTEGER NOT NULL,
     updated_at     INTEGER,
-    UNIQUE(product_name, lot_id, wafer_number, item_id, bin, revision)
+    UNIQUE(product_name, lot_id, wafer_number, item_id, bin, revision, test_condition)
 );
 CREATE INDEX IF NOT EXISTS idx_fail_case_item_class ON fail_case(item_class);
 CREATE INDEX IF NOT EXISTS idx_fail_case_product ON fail_case(product_name);
 CREATE INDEX IF NOT EXISTS idx_fail_case_item ON fail_case(item_id);            -- §9 JOIN 키
 ```
+**test_condition** (v8, 2026-08-18) — 같은 item 이 **조건만 달리해** 평가될 때 case 를 가르는 축.
+
+| 값 | 의미 |
+|---|---|
+| `''` (기본) | 일반/미상. 조건을 알 수 없으면 **비워 둔다**(추측해서 채우지 않는다) |
+| `'TEMP'` | 온도 평가. report_server 의 `TEMP\|<item>` row_key(Issue Table Temp 시트) 유래 |
+| `'FF'`/`'SS'`/`'FS'`/`'SF'` | corner 예약 — **현재 채우는 경로가 없다**(입력 UI 미도입, `ingest_run.corner` 도 NULL) |
+
+도입 이유: `TEMP|<item>` 과 `ETC|<item>` 이 둘 다 bin=NULL 로 붕괴해 case_id 가 겹쳤고,
+같은 item 에 두 코멘트가 있으면 뒤에 적재된 쪽이 앞 label 을 조용히 덮어썼다.
+`item_class`(룰 스코프 키)는 이와 **무관하게 3조각 그대로** 둔다 — 룰 스코프를 조건별로
+쪼개면 기존 임계값 보정이 통째로 흩어진다.
+
 **case_id 생성** (store.py):
 ```python
 import hashlib
-key = "|".join(str(x) for x in
-      [product_name, lot_id, wafer_number, item_id, bin, revision])
-case_id = hashlib.sha256(key.encode("utf-8")).hexdigest()
+parts = [product_name, lot_id, wafer_number, item_id, bin, revision]
+if condition:                       # 빈 값이면 재료에서 아예 빠진다 (기존 case_id 불변)
+    parts.append(condition)
+case_id = hashlib.sha256("|".join(str(x) for x in parts).encode("utf-8")).hexdigest()
 ```
 
 ## 4. RAW MEASURE (계산값, raw 자체는 미저장)
@@ -349,7 +364,9 @@ outcome.result : recovered_normal | improved | false_fail | confirmed_defective
                   에서 validate_outcome 검증. 'other' = 이스케이프값(미정의 케이스 수용))
 category_major : TRIM | NON_TRIM
 value_type     : V | A | Hz | CODE | PF | Ohm | Sec
-corner         : NN | SS | FF | (기타 코너)
+corner         : NN | SS | FF | (기타 코너)  — ingest_run.corner(입력 전용, 현재 항상 NULL)
+test_condition : '' (일반/미상) | TEMP (온도 평가) | FF | SS | FS | SF (corner 예약, 미사용)
+                 fail_case 의 조건 축(§3). 판별할 수 없으면 '' — 추측해 채우지 않는다
 data_completeness : full | partial | low
 product_type   : MDDI | PDDI | PMIC | SECURITY | TCON
 family_product : (product_type 별 1:1 허용 — rules/product_taxonomy.yaml 에서 검증)
@@ -363,7 +380,10 @@ family_product : (product_type 별 1:1 허용 — rules/product_taxonomy.yaml �
 - dist_digest(quantile/histogram) : raw 폐기해도 feature 소급 재계산(현재 forward-only)
 - family_metrics(family_corr, phase_recovery_rate) : (product, lot, wafer, item_base) grain
 - RAG embedding(comment_embedding) : 텍스트 임베딩 (현재는 §9 구조화 검색)
-- CONDITION 측정축 : temperature/corner 는 입력만(req0), 측정조건별 fail 추적은 후속
+- CONDITION 측정축 : `ingest_run.temperature/corner` 는 입력만(req0)이고 현재 채우는 경로가
+  없어 항상 NULL. case 단위 조건 구분은 v8 `fail_case.test_condition` 이 담당하지만
+  현재 값이 붙는 것은 `'TEMP'` 하나뿐 — corner 판별(어떤 source 가 FF/SS 인지)은 입력 경로가
+  없어 미해결이다. 측정조건별 fail 추적(조건 간 비교·집계)은 후속
 - feature: clamp_ratio(값쏠림), trim_code_margin(TRIM headroom) + signature gradient(radial/x/y)
   / TRIM_INEFFECTIVE / RETEST_RECOVERY (BIDIR_TAIL·SUBPOP_GAP·CODE_RAIL·HEAVY_TAIL·OUTLIER_WARN 은 구현됨)
 - precedent materialize

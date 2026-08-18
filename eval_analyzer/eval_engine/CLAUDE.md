@@ -35,8 +35,10 @@ L6 present   결과 dict 직렬화 (+ persist 시 eval.db 적재, raw 는 저장
 - **임계값·모델·endpoint 하드코딩 금지.** 임계값은 `rules/*.yaml`(+ `pipeline/_rules.py` 로더),
   LLM·선례 백엔드는 `config.EVAL_*` 로만.
 - **DB 에 JSON 컬럼 금지.** 다중값은 정규화 child(eval_evidence / case_signature 등).
-- `make_case_id` = 자연키 sha256(product_name, lot_id, wafer, item_id, bin, revision) → **재업로드 idempotent**.
-  바꾸면 과거 case 와 선례 매칭이 깨진다.
+- `make_case_id` = 자연키 sha256(product_name, lot_id, wafer, item_id, bin, revision
+  [, test_condition]) → **재업로드 idempotent**. 바꾸면 과거 case 와 선례 매칭이 깨진다.
+  마지막 조각은 **빈 값이면 재료에서 아예 빠진다** — 기존 case_id 를 그대로 두기 위한
+  하위호환이라 이 조건부 규칙을 무조건 append 로 바꾸면 운영 case 가 전부 고아가 된다.
 
 ## 실행 / 검증
 ```

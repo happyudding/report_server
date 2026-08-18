@@ -264,7 +264,7 @@ ai_comment 옵션 세션에만). 코멘트 본문은 primary 하나만 서술하
 ## 9. 사람 코멘트 export — Issue Table PTE/개발 comment → eval 스키마 DB (2026-07-15)
 
 eval_analyzer 가 엔지니어 코멘트를 선례(precedent)로 소비할 수 있도록, Issue Table 의
-PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대로의 별도 SQLite**
+PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=8) 그대로의 별도 SQLite**
 로 적재한다. 구현 [web_report/eval_export.py](../web_report/eval_export.py),
 검증 [tests/test_eval_export.py](../tests/test_eval_export.py).
 
@@ -284,12 +284,33 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=4) 그대
   ⑤ `service.update_issue_status_bulk`(④⑤ 는 위 게이트 때문에 필수 — Status 를
   바꾸는 순간 적재/삭제가 갈린다). 매번 세션 **전체 코멘트 상태 재적재**(멱등).
 - **매핑**: PTE+개발 comment 를 `"[PTE] ...\n[개발] ..."` 로 **병합해 label 1행**
-  (labeler=`web_report`, label_quality=`manual`, reviewer=마지막 편집자). row_key →
-  bin: `Yield|<bin>|<item>`→bin, `CPK|<item>`→1(PASS_BIN 관례), `ETC|<item>`→NULL,
-  Pass 요약행(`Yield|1|…`)은 skip. wafer_number=NULL(lot 수준 case).
-  item/unit/limit 은 honeyform tables 에서, fail/total/cpk 통계는 best-effort
-  (rawdata 에 없는 자유입력 ETC 항목은 코멘트만). `ingest_run.session_id` 로 세션
-  역참조, run_case 차집합으로 **삭제된 코멘트의 label 정리**(fail_case 는 보존).
+  (labeler=`web_report`, label_quality=`manual`, reviewer=마지막 편집자).
+  row_key → (bin, test_condition) 은 `eval_export._parse_row_key` 가 정본이다:
+
+  | row_key | bin | `fail_case.test_condition` |
+  |---|---|---|
+  | `Yield\|<bin>\|<item>` | 그 bin | `''` |
+  | `Yield\|1\|…` (Pass 요약행) | — | **skip**(적재 안 함) |
+  | `CPK\|<item>` | 1 (PASS_BIN 관례) | `''` |
+  | `TEMP\|<item>` | NULL | **`'TEMP'`** |
+  | `ETC\|<item>` | NULL | `''` |
+
+  wafer_number=NULL(lot 수준 case). item/unit/limit 은 honeyform tables 에서,
+  fail/total/cpk 통계는 best-effort (rawdata 에 없는 자유입력 ETC 항목은 코멘트만).
+  `ingest_run.session_id` 로 세션 역참조, run_case 차집합으로 **삭제된 코멘트의
+  label 정리**(fail_case 는 보존).
+- **온도 평가 구분 = `test_condition`** (2026-08-18, eval.db v8): `TEMP|` 와 `ETC|` 는
+  둘 다 bin=NULL 이라 예전엔 case_id 가 겹쳤고, 같은 item 에 두 코멘트가 있으면 뒤에
+  적재된 쪽이 앞 label 을 **조용히 덮어썼다**. 이제 조건을 case_id 재료에 넣어 가른다
+  (`make_case_id(..., condition)` — 빈 값이면 재료에서 빠져 **기존 case_id 는 불변**).
+  같은 값을 `sync_session_signatures`(ENGR Signature 라벨)에도 넘겨야 한다 — 안 그러면
+  같은 TEMP 행의 코멘트 라벨과 signature 라벨이 서로 다른 case 로 갈라진다.
+  `item_class`(룰 스코프 키)는 **3조각 그대로** 둔다. 기존에 붕괴돼 적재된 행은
+  소급 복구하지 않는다(원본은 세션 편집 DB 에 있고, 그 세션이 다시 export 될 때 갈라진다).
+  ⚠ **Corner(FF/SS/FS/SF) 평가는 아직 판별할 수 없다** — 분석 모드에도, manifest source
+  메타(`{index,name,file_name}`)에도, 클라 업로드 입력에도 corner 개념이 없다.
+  source 이름(legend)은 자유 텍스트라 토큰을 신뢰할 수 없고, source 가 많다고 corner 도
+  아니다. `test_condition` 에 값만 예약해 두고 **판별할 수 없으면 `''` 로 비워 둔다**.
 - **엔진 코드 재사용** (엔진을 고치지 않고 호출만): `store` CRUD 는 전부 `conn=` 주입 —
   `eval_engine.config.DB_PATH` 는 절대 변경하지 않는다. item 정규화는
   `pipeline.ingest._alias_map/_canonicalize/_classify_category_major/_classify_value_type`

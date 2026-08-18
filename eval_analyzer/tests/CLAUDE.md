@@ -12,7 +12,7 @@
 | `test_signatures_status.py` | L3 signature 발화 + L4 status/trump/specificity. |
 | `test_unknown_signature.py` | L3 `UNKNOWN` 미분류 명시 발화 — 발화/미발화 경계·사유 코드 우선순위·제외 목록·LOW_CPK 억제(SPEC_TOO_TIGHT 보호). "모든 fail 은 signature 로 설명된다" 의 하한선 → ../../docs/13 §15. |
 | `test_ingest_raw_df.py` | L0 정본 raw_df(6-메타행) 파싱·fail 매핑. **정본 레이아웃 기준선**. |
-| `test_store.py` | store CRUD + `make_case_id` idempotent + `search_precedents` + 스키마 v4(eval_precedent/updated_at) + `save_features` 가 파생키(DB 미저장)를 무시하는지. |
+| `test_store.py` | store CRUD + `make_case_id` idempotent·**condition 하위호환** + `search_precedents` + 스키마 v4(eval_precedent/updated_at)·**v8(fail_case.test_condition 재구축 — 인덱스·FK·UNIQUE)** + `save_features` 가 파생키(DB 미저장)를 무시하는지. |
 | `test_precedent_client.py` | L5 선례검색 어댑터 — case_ctx 의 자기 세션/analysis_key·발화 signature·top-k 상한이 **store 로 실제 전달되는지**(배선). store 쪽 동작은 test_store 담당. |
 | `test_rules_integrity.py` | 배포 `rules/*.yaml` 자체 정합성 — 조건·**코드**(`th["키"]`)가 참조하는 임계값이 thresholds.yaml default 에 있는지, SPECIFICITY_ORDER 1:1, 어휘·`enabled` 타입. 룰 파일만 고쳐도 깨지는 부류를 잡는다. |
 | `test_e2e.py` | `evaluate()` 전 구간 E2E + 입력키 검증(raw_df/raw_table/items 부재 시 ValueError). |

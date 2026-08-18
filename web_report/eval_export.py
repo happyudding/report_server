@@ -138,11 +138,14 @@ def _merge_comment(cols: dict) -> str:
 
 
 def _parse_row_key(row_key: str):
-    """row_key(tabs/issue_table.py 규약) → (bin|None, item) | None(대상 아님).
+    """row_key(tabs/issue_table.py 규약) → (bin|None, item, condition) | None(대상 아님).
 
     Yield|<bin>|<item> → 그 bin. 단 Pass 요약행(bin==1)은 fail-item 이 아니라 skip.
     CPK|<item> → bin=1 (엔진 PASS_BIN 관례 — cpk marginal case).
-    TEMP|<item> → bin=None (Temperature 모드 RT limit 이탈 항목 — item 단위 집계라 bin 없음).
+    TEMP|<item> → bin=None + condition='TEMP' (Temperature 모드 RT limit 이탈 항목 —
+      item 단위 집계라 bin 이 없다. bin 만으로는 ETC 와 구별되지 않아 case_id 가 겹치므로
+      **온도 평가라는 사실을 condition 으로 실어 보낸다** — 없으면 같은 item 의 ETC 코멘트와
+      한 case 로 붕괴해 서로 덮어쓴다).
     ETC|<item> → bin=None (rawdata 에 없는 자유입력 item 가능).
     """
     if row_key.startswith("Yield|"):
@@ -156,13 +159,13 @@ def _parse_row_key(row_key: str):
             return None
         if bin_ == 1:
             return None  # Pass 요약행
-        return (bin_, parts[2])
+        return (bin_, parts[2], "")
     if row_key.startswith("CPK|") and row_key[4:]:
-        return (1, row_key[4:])
+        return (1, row_key[4:], "")
     if row_key.startswith("TEMP|") and row_key[5:]:
-        return (None, row_key[5:])
+        return (None, row_key[5:], "TEMP")
     if row_key.startswith("ETC|") and row_key[4:]:
-        return (None, row_key[4:])
+        return (None, row_key[4:], "")
     return None
 
 
@@ -348,14 +351,14 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
         return {"skipped": f"unsupported product_type: {session.get('product_type')!r}"}
     meta["wafer_number"] = None  # 코멘트는 행(세션) 단위 — lot 수준 case 로 적재
 
-    parsed = []  # [(bin|None, item, 병합 comment, 최종 편집자)]
+    parsed = []  # [(bin|None, item, condition, 병합 comment, 최종 편집자)]
     for row_key, ent in _collect_comments(report_db, session).items():
         pk = _parse_row_key(row_key)
         if pk is None:
             continue
         text = _merge_comment(ent["cols"])
         if text:
-            parsed.append((pk[0], pk[1], text, ent.get("by")))
+            parsed.append((pk[0], pk[1], pk[2], text, ent.get("by")))
 
     # 코멘트 0건 + eval DB 미존재면 파일 생성조차 하지 않는다 (업로드마다 빈 DB 방지).
     if not parsed and not db_path().exists():
@@ -390,7 +393,7 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
 
             store.upsert_product_master(meta, conn=conn)
             now_cases = set()
-            for bin_, item, text, by in parsed:
+            for bin_, item, cond, text, by in parsed:
                 item_meta = _find_item_meta(tables, item)
                 unit = item_meta["unit"] if item_meta else None
                 item_canonical = alias.get(item, engine_ingest._canonicalize(item))
@@ -408,12 +411,13 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
                                            item_meta["usl"], conn=conn)
 
                 case_id = store.make_case_id(meta["product_name"], meta["lot_id"],
-                                             None, item_id, bin_, meta["revision"])
+                                             None, item_id, bin_, meta["revision"],
+                                             cond)
                 item_class = (f"{category_major}|{value_type}|"
                               f"{bin_ if bin_ is not None else ''}")
                 store.upsert_fail_case(case_id, meta["product_name"], meta["lot_id"],
                                        None, item_id, bin_, meta["revision"],
-                                       item_class, conn=conn)
+                                       item_class, cond, conn=conn)
                 store.link_run_case(run_id, case_id, conn=conn)
 
                 metrics = {}
@@ -623,11 +627,11 @@ def sync_session_signatures(session_id: str, *, report_db, upload_root=None) -> 
     meta["wafer_number"] = None            # 코멘트/패널 라벨과 같은 lot 수준 case 공간
 
     state = edits.load_issue_signatures(report_db, session_id)
-    parsed = []                            # [(bin|None, item, [signature...])]
+    parsed = []                            # [(bin|None, item, condition, [signature...])]
     for row_key, ids in state.items():
         pk = _parse_row_key(row_key)
         if pk is not None and ids:
-            parsed.append((pk[0], pk[1], ids))
+            parsed.append((pk[0], pk[1], pk[2], ids))
 
     # 확정 0건 + eval DB 미존재면 파일조차 만들지 않는다 (빈 DB 양산 방지 — export 와 동일).
     if not parsed and not db_path().exists():
@@ -654,7 +658,7 @@ def sync_session_signatures(session_id: str, *, report_db, upload_root=None) -> 
                 "labeler=? AND eval_id IN (SELECT eval_id FROM evaluation WHERE run_id=?)",
                 (_SIGNATURE_LABELER, run_id), conn=conn)
 
-            for bin_, item, ids in parsed:
+            for bin_, item, cond, ids in parsed:
                 item_canonical = alias.get(item, engine_ingest._canonicalize(item))
                 item_id = store.resolve_item_id(item, conn=conn)
                 if item_id is None:
@@ -662,11 +666,13 @@ def sync_session_signatures(session_id: str, *, report_db, upload_root=None) -> 
                         item_canonical, item, None, None, "NON_TRIM", None, "PF",
                         None, conn=conn)
                     store.upsert_item_alias(item, item_id, conn=conn)
+                # cond 는 코멘트 export 와 같은 값을 줘야 한다 — 안 그러면 같은 TEMP 행의
+                # 코멘트 라벨과 signature 라벨이 서로 다른 case 로 갈라진다.
                 case_id = store.make_case_id(meta["product_name"], meta["lot_id"], None,
-                                             item_id, bin_, meta["revision"])
+                                             item_id, bin_, meta["revision"], cond)
                 store.upsert_fail_case(case_id, meta["product_name"], meta["lot_id"],
                                        None, item_id, bin_, meta["revision"], None,
-                                       conn=conn)
+                                       cond, conn=conn)
                 store.link_run_case(run_id, case_id, conn=conn)
                 # 사람 라벨을 매달 자리(eval_id)를 만든다 — status 는 비운다.
                 # scoring(관리자 채점)은 human_status 가 있는 라벨만 세므로 오염되지 않는다.
