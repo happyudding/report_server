@@ -141,7 +141,9 @@ report_server/
   확인만, 항상 `has_password:false` — 구 PIN 검사 폐지)
 - `PATCH /pe/report/session/<sid>/meta` → 세션 메타(이름=file_name·family·product·lot·process)
   수정. 세션 상세 ✏️ → **Honey 편집창**(업로드 다이얼로그 재사용) 전용 — 서버가
-  `X-Honey-Agent` 헤더를 요구해 강제한다. product 변경 시 product_info 재lookup.
+  `X-Honey-Agent` 헤더를 요구해 강제한다. **단 master(admin 로그인 4h)는 웹 브라우저에서도
+  고칠 수 있다**(2026-08-19 — 헤더 대신 CSRF 요구, 폼은 `metaEditModal`).
+  product 변경 시 product_info 재lookup.
   `analysis_key`·`product_type` 은 불변 → [docs/02](docs/02_server_query_edit.md)
 - `PATCH /pe/report/session/<sid>/content` → [비활성] 항상 405 (구 xlsx 텍스트 수정 폐기)
 - `POST .../session/<sid>/web_report/issue_table/comments|etc`, `.../summary/engr`,

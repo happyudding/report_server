@@ -315,11 +315,16 @@ def subpop_conditions(features, thresholds):
 
 
 def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, sig_mod):
-    """signature 21개 × (활성/스킵사유/조건분해/발화) 매트릭스."""
+    """signature 전체 × (활성/스킵사유/조건분해/발화) 매트릭스."""
     fired_ids = {s["id"] for s in (sig_result.get("signatures") or [])}
     # 조건은 만족했지만 상위 룰(포함관계)에 가려진 것 — 조건만 보면 "떠야 하는데 안 떴다"
     # 로 읽히므로 사유를 함께 찍는다.
     suppressed_by = {row["id"]: row["by"] for row in (sig_result.get("suppressed") or [])}
+    # 조건을 만족했는데 **목록에서 통째로 사라진** 것 2종 — 화면 어디에도 안 남으므로
+    # 트레이스가 유일한 설명 지점이다(hidden_by / replaces, 2026-08-19).
+    hidden_by = {row["id"]: row["by"] for row in (sig_result.get("hidden") or [])}
+    replaced_by = {tid: row["id"]
+                   for row in (sig_result.get("replaced") or []) for tid in row["of"]}
     excluded = sig_result.get("excluded")
     n_dut = features.get("n_dut") or 0
     high_moment_ok = n_dut >= thresholds.get("n_min", 0)
@@ -355,6 +360,12 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
                          else "fail 없음(미발화)" if fail_count == 0 else "fail 정보 없음(미발화)"))
         elif not high_moment_ok and (set(when) & sig_mod._HIGH_MOMENT_METRICS):
             skip = f"min-n 가드 (n_dut {n_dut} < n_min {thresholds.get('n_min')})"
+        elif sig_id in hidden_by:
+            branch = (f"조건은 만족했으나 {', '.join(hidden_by[sig_id])} 가 함께 발화해 "
+                      "**목록에서 제거**됐다 (hidden_by — 같은 사실을 두 번 말하지 않기 위한 장치)")
+        elif sig_id in replaced_by:
+            branch = (f"조건은 만족했으나 {replaced_by[sig_id]} 가 대신 발화해 "
+                      "**목록에서 제거**됐다 (replaces — 두 발화가 한 현상의 반쪽일 때 합친다)")
         elif sig_id in suppressed_by:
             branch = (f"{', '.join(suppressed_by[sig_id])} 발화 시 primary 를 양보한다 "
                       "(suppressed_by — 목록에는 남는다. 원인 룰이 대표가 되게 하는 장치)")
@@ -370,6 +381,8 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
                      "status_hint": sig.get("status_hint"),
                      "issue_category": sig.get("issue_category") or "ETC",
                      "suppressed_by": suppressed_by.get(sig_id) or [],
+                     "hidden_by": hidden_by.get(sig_id) or [],
+                     "replaced_by": replaced_by.get(sig_id) or "",
                      "conditions": conds, "fired": sig_id in fired_ids})
     return rows
 

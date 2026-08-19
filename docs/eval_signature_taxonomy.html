@@ -141,16 +141,8 @@
 
   <!-- ─────────────── I ─────────────── -->
   <section class="major" style="--c:#8b949e">
-    <h2><span class="no">I.</span> 데이터 유효성 <span class="cnt">3</span></h2>
+    <h2><span class="no">I.</span> 데이터 유효성 <span class="cnt">2</span></h2>
     <p class="why">판정 이전 단계. "이 데이터로 판단이 성립하는가" — 불량이 아니라 <b>측정·수집 문제</b> 신호.</p>
-
-    <div class="mid">
-      <h3>표본 부족 <span class="en">sample</span></h3>
-      <div class="rule off">
-        <div class="id">LOW_SAMPLE_UNCERTAIN <span class="sev MONITOR">MON</span></div>
-        <div class="m">n_dut &lt; n_min</div>
-      </div>
-    </div>
 
     <div class="mid">
       <h3>기준 결측 <span class="en">limit</span></h3>
@@ -203,7 +195,7 @@
 
   <!-- ─────────────── III ─────────────── -->
   <section class="major" style="--c:#ff7b72">
-    <h2><span class="no">III.</span> 산발 결함성 <span class="cnt">2</span></h2>
+    <h2><span class="no">III.</span> 산발 결함성 <span class="cnt">3</span></h2>
     <p class="why"><b>개별 die 가 진짜 이상</b>(defective). 모집단은 정상인데 소수가 튄다 — contact/노이즈/국부 결함 의심.</p>
 
     <div class="mid">
@@ -219,18 +211,25 @@
     <div class="mid">
       <h3>간헐 spike <span class="en">tail</span></h3>
       <div class="rule on">
-        <div class="id">HEAVY_TAIL <span class="sev MINOR">MINOR</span></div>
-        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_mass_3s 1~5% (밴드)
+        <div class="id">USL_TAIL <span class="sev MINOR">MINOR</span></div>
+        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_mass_3s 1~5% (밴드) <b>AND</b> 상한 쪽 몫 &ge; 0.2
           <br><span class="live">첨도만 보면 점 몇 개가 밀어올린 것·양자화 다봉까지 잡힌다 —
             "꼬리에 실제로 얼마나 실렸나"로 상·하한을 함께 건다</span>
           <br><span class="live">OUTLIER 발화 시 primary 양보</span></div>
+      </div>
+      <div class="rule on">
+        <div class="id">LSL_TAIL <span class="sev MINOR">MINOR</span></div>
+        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_mass_3s 1~5% (밴드) <b>AND</b> 하한 쪽 몫 &ge; 0.2
+          <br><span class="live">구 HEAVY_TAIL 을 <b>방향으로 가른 것</b>(2026-08-19) — 위로 튀는 것과
+            아래로 처지는 것은 조치가 다르다. 발화 범위는 그대로다(밴드는 계속 양쪽 합에 건다)</span>
+          <br><span class="live">양쪽이 모두 0.2 를 넘으면 둘 다 사라지고 <b>BIDIR_TAIL</b> 하나가 대신 뜬다(<code>replaces</code>)</span></div>
       </div>
     </div>
   </section>
 
   <!-- ─────────────── IV ─────────────── -->
   <section class="major" style="--c:#3fb950">
-    <h2><span class="no">IV.</span> 공간 패턴성 (Map) <span class="cnt">7</span></h2>
+    <h2><span class="no">IV.</span> 공간 패턴성 (Map) <span class="cnt">6</span></h2>
     <p class="why">fail 의 <b>위치가 편중</b>. XPOS/YPOS 기반 — 값이 아니라 "어디서 났나"로 판정. 공정 uniformity·설비 계통.</p>
 
     <div class="mid">
@@ -248,16 +247,12 @@
         <div class="m">center_fail_share &ge; 0.95</div>
       </div>
       <div class="rule on">
-        <div class="id">SPOT_CLUSTER <span class="sev MAJOR">MAJOR</span></div>
+        <div class="id">SPOT_FAIL <span class="sev MAJOR">MAJOR</span></div>
         <div class="m">fail_spread_norm &le; 0.25 (fail 무게중심 기준 RMS 거리 / 반경)
           <br><span class="live">위치·모양 무관 <b>국부 몰림</b> — 존(중앙/엣지/링)으로 설명 안 되는
-            임의 위치 blob 을 좌표 뭉침 하나로 잡는다(2026-08-13 신설)</span></div>
-      </div>
-      <div class="rule on">
-        <div class="id">CLUSTER_FAIL <span class="sev MAJOR">MAJOR</span></div>
-        <div class="m">quadrant_imbalance &gt; 2.5 (존으로 설명 안 되는 편중)
-          <br><span class="live">0° 격자와 <b>45° 격자</b>의 max — 사분면 경계에 걸친 blob 이
-            네 칸으로 나뉘며 묻히던 문제 보완(실측 2.20 → 4.00)</span></div>
+            임의 위치 blob 을 좌표 뭉침 하나로 잡는다(2026-08-13 신설, 구 SPOT_CLUSTER)</span>
+          <br><span class="live">CENTER_FAIL 과 함께 뜨면 <b>목록에서 빠진다</b>(<code>hidden_by</code>) —
+            중심부 뭉침은 두 룰이 구조적으로 같이 떠 같은 사실을 두 번 말하게 된다</span></div>
       </div>
     </div>
 
@@ -272,8 +267,10 @@
     <p class="why">존 4종(E1/EDGE/CENTER/RING)의 판정은 <b>점유율</b>(전체 fail 중 그 영역 몫,
       공용 임계 <code>region_fail_share_min</code> 0.95)이다 — 밀도 배수는 영역마다 상한이 달라
       임계를 공유할 수 없었다. fail 이 10개 미만이면 우연히 한 영역에 몰릴 수 있어
-      <code>spatial_fail_count_min</code> 10 으로 가드한다(SPOT_CLUSTER 도 같은 가드).
-      WAFER_GRADIENT(기울기)는 2026-08-13 삭제됐다.</p>
+      <code>spatial_fail_count_min</code> 10 으로 가드한다(SPOT_FAIL 도 같은 가드).
+      WAFER_GRADIENT(기울기)는 2026-08-13, CLUSTER_FAIL(사분면 편중)은 2026-08-19 삭제됐다 —
+      사분면 격자는 결함 모양과 무관한 인공 경계라 같은 blob 이 위치만 달라져도 값이 반토막
+      났고(축 경계 2.20 vs 한가운데 4.00), "좁은 한 곳에 뭉쳤나" 는 SPOT_FAIL 이 직접 본다.</p>
 
     <div class="mid">
       <h3>설비·site 계통 <span class="en">equipment</span></h3>
@@ -324,7 +321,7 @@
 
 <footer>
   <span><b>읽는 법</b> — 대분류 = 판정에 쓰는 입력 축(데이터 자체 / spec 여유 / 개별 die / 좌표 / 모집단·수율). 한 item 에 여러 룰이 동시 발화하면 severity → <code>status.SPECIFICITY_ORDER</code>(구체적인 것 우선) 순으로 primary 를 고른다.</span>
-  <span><b>주의</b> — status_hint 는 기준값이고 <code>bin_taxonomy</code> severity_bias 로 변조된다. 제품군별로는 <code>signatures/&lt;PT&gt;/&lt;FAMILY&gt;.yaml</code> 오버레이가 enabled·임계값을 덮으므로 활성 13종은 <b>기준값 기준</b>이다. <code>suppressed_by</code> 는 목록에서 지우지 않고 <b>primary 자리만 양보</b>시킨다(2026-08-13, <code>demoted_by</code>).</span>
+  <span><b>주의</b> — status_hint 는 기준값이고 <code>bin_taxonomy</code> severity_bias 로 변조된다. 제품군별로는 <code>signatures/&lt;PT&gt;/&lt;FAMILY&gt;.yaml</code> 오버레이가 enabled·임계값을 덮으므로 활성 13종은 <b>기준값 기준</b>이다. 룰 사이 관계는 3종이다 — <code>suppressed_by</code> 는 목록에서 지우지 않고 <b>primary 자리만 양보</b>시키고(2026-08-13, <code>demoted_by</code>), <code>hidden_by</code> 는 <b>목록에서 제거</b>하며, <code>replaces</code> 는 나열한 것이 모두 뜨면 <b>대신 발화</b>한다(2026-08-19). 뒤 둘로 사라진 발화는 화면에 안 남고 <code>/pe/eval</code> 트레이스에만 사유가 있다.</span>
 </footer>
 
 </body>

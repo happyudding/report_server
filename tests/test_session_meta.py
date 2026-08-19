@@ -13,6 +13,10 @@ Honey 세션 페이지의 ✏️ 버튼 → Honey 편집창 → 이 라우트다
   (e) 이름 빈 값·Product/LOT 빈 값은 400, 경로문자는 제거된다
   (f) analysis_key 는 재산출하지 않는다 (산출물이 그 키로 저장돼 있음 — 불변 규칙 #3)
   (g) 감사로그에 edit 1행
+  (h) **master(admin 로그인 PC)** 는 Honey 밖에서도, 남의 세션도 고칠 수 있다.
+      단 헤더가 없는 만큼 CSRF 로 대체한다 — master 여도 CSRF 없이는 403이고,
+      master 가 아니면 CSRF 만으로는 여전히 403이다((a) 계약 유지)
+  (i) Family 선택지(/api/family_products)는 eval 엔진 taxonomy 를 그대로 준다
 
 pytest 미사용 (tests/ 관례 — 자체 실행 + assert).
 """
@@ -36,6 +40,7 @@ os.environ["PRODUCT_INFO_DB_PATH"] = str(_TMP / "product_info.db")
 
 from flask import Flask  # noqa: E402
 
+import admin_panel  # noqa: E402  (master 게이트 쿠키 시뮬레이션)
 from database import report_db  # noqa: E402
 from report.report_extension import report_bp  # noqa: E402
 
@@ -162,5 +167,47 @@ assert all(x["action"] == "edit" for x in logs), logs[0]
 # ── 폴백 안내 페이지 (가드 없는 브라우저가 액션 URL 로 실제 이동했을 때) ─────
 r = client.get(f"/pe/report/honey/session_meta/{SID}")
 assert r.status_code == 200 and "Honey" in r.get_data(as_text=True), r.status_code
+
+# ── (h) master 는 Honey 밖에서도 / 남의 세션도 수정 ─────────────────────────
+# 관리자가 남의 세션 메타를 바로잡으려면 그 사람의 Honey 를 빌려야 했다(2026-08-19).
+# master 쿠키는 별도 test_client 에 심는다 — 같은 client 에 심으면 위 (a)(b) 가 오염된다.
+_reset_session()
+mclient = app.test_client()
+mclient.set_cookie("pe_master_gate", admin_panel.issue_master_value(), domain="localhost")
+mclient.get(f"/pe/report/session/{SID}")          # after_request 가 CSRF 쿠키를 발급
+_mcsrf = mclient.get_cookie("report_csrf")
+assert _mcsrf is not None, "CSRF 쿠키가 발급되지 않음"
+
+MASTER_META = {**BASE, "file_name": "관리자 정정", "lot_id": "LOT-BY-MASTER"}
+
+# 헤더도 CSRF 도 없으면 master 여도 거부 — 그러면 브라우저 폼으로 위조 가능해진다.
+r = mclient.patch(f"/pe/report/session/{SID}/meta", json=MASTER_META)
+assert r.status_code == 403, ("master 인데 CSRF 없이 통과", r.status_code)
+assert report_db.get_session(SID)["lot_id"] == "LOT-OLD"
+
+# CSRF 를 실으면 Honey 헤더도 Honey 신원도 없이 통과 (일반 브라우저 admin = 신원 없음).
+r = mclient.patch(f"/pe/report/session/{SID}/meta", json=MASTER_META,
+                  headers={"X-CSRF-Token": _mcsrf.value})
+assert r.status_code == 200, ("master 웹 수정 거부", r.status_code, r.data[:300])
+s = report_db.get_session(SID)
+assert (s["file_name"], s["lot_id"]) == ("관리자 정정", "LOT-BY-MASTER"), dict(s)
+assert s["uploaded_by"] == USER, "업로더는 그대로여야 한다"
+
+# master 가 아니면 CSRF 만으로는 여전히 403 — (a) "수정은 Honey 에서만" 계약 유지.
+plain = app.test_client()
+plain.get(f"/pe/report/session/{SID}")
+r = plain.patch(f"/pe/report/session/{SID}/meta", json=MASTER_META,
+                headers={"X-CSRF-Token": plain.get_cookie("report_csrf").value,
+                         "User-Agent": f"Mozilla/5.0 HoneyUser/{USER}"})
+assert r.status_code == 403, ("master 아닌데 CSRF 만으로 통과", r.status_code)
+
+# ── (i) Family 선택지는 eval taxonomy 정본 ───────────────────────────────────
+r = client.get("/pe/report/api/family_products?product_type=MDDI")
+assert r.status_code == 200, r.status_code
+fams = r.get_json()["families"]
+assert "MX" in fams and "MDDI_ETC" in fams, fams
+r = client.get("/pe/report/api/family_products")
+assert set(r.get_json()["taxonomy"]) >= {"MDDI", "PDDI", "PMIC", "SECURITY", "TCON"}, \
+    r.get_json()["taxonomy"]
 
 print("OK - session meta 수정 계약 통과")

@@ -56,7 +56,7 @@ calibration 피드백. 노하우는 전부 (3)에 쌓인다. [3↔4] 변환기 =
 분포형: spread_norm(=robust_σ/(USL−LSL)), skewness(robust, 부호=꼬리방향), kurtosis,
   outlier_ratio(IQR/modified-z>3.5), modality(uni/bi), bimodality_score, density_gap(이봉 저밀도), cdf_gap(ECDF 점프).
 spec margin: spec_margin_low/high((mean−limit)/stdev), nearest_spec_side(LOW/HIGH), limit_hit_ratio.
-공간: edge_fail_ratio, center_fail_ratio, radial_gradient, quadrant_imbalance, x_gradient, y_gradient, wafer_zone_signature.
+공간: edge_fail_ratio, center_fail_ratio, radial_gradient, quadrant_imbalance(참고값 — 쓰던 룰은 삭제됨), x_gradient, y_gradient, wafer_zone_signature.
 기타: n_dut(min-n 가드), site_cpk_delta(site간 cpk 편차), code_edge_hit(CODE/TRIM 레일 포화).
 - ※ engine_version별 보관 → 공식 바뀌면 새 버전 적재. estimator=표준 robust, 임계=정규화+분위수.
 
@@ -69,9 +69,12 @@ spec margin: spec_margin_low/high((mean−limit)/stdev), nearest_spec_side(LOW/H
 - signal_code(LOW_CPK 등) / value / weight / note.
 **case_signature** ((eval,signature)당 1행)
 - signature / role(primary·secondary) / score.
-- signature 목록(정본 = rules/signatures.yaml): EQUIPMENT_SUSPECT, EDGE_FAIL, CENTER_FAIL, CLUSTER_FAIL,
-  CODE_RAIL, SUBPOP_GAP(이봉), SEVERE_OUTLIER, OUTLIER_WARN, MEAN_SHIFT, TAIL_RISK, HEAVY_TAIL,
-  BIDIR_TAIL, WIDE_DISTRIBUTION, LOW_CPK, SPEC_TOO_TIGHT, GROSS_FAIL.
+- signature 목록(정본 = rules/signatures.yaml): EQUIPMENT_SUSPECT, E1_FAIL, EDGE_FAIL, CENTER_FAIL,
+  RING_FAIL, SPOT_FAIL, CODE_RAIL, BIMODALITY(이봉), OUTLIER, MEAN_SHIFT, TAIL_RISK, USL_TAIL, LSL_TAIL,
+  BIDIR_TAIL, LOW_CPK, MISSING_LIMIT, CONSTANT_VALUE, GROSS_FAIL, UNKNOWN.
+  (삭제된 이름: WIDE_DISTRIBUTION·SPEC_TOO_TIGHT·SEVERE_OUTLIER·OUTLIER_WARN·WAFER_GRADIENT
+   2026-08-13 / CLUSTER_FAIL·LOW_SAMPLE_UNCERTAIN 2026-08-19. HEAVY_TAIL 은 같은 날
+   USL_TAIL·LSL_TAIL 로 갈렸다.)
   (보류) gradient(radial/x/y)·TRIM_INEFFECTIVE·RETEST_RECOVERY.
 
 ## [5] HUMAN

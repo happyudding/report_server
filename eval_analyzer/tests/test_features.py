@@ -123,6 +123,26 @@ def test_fail_body_jump_ratio_separates_tail_from_outlier():
     assert features.compute(_case(body), m, "ev1")["fail_body_jump_ratio"] is None
 
 
+def test_tail_mass_splits_by_direction():
+    """꼬리 질량은 **방향으로 나뉜다** — USL_TAIL/LSL_TAIL 이 이 두 값으로 갈린다.
+
+    합(high+low)이 방향 없는 종전 지표(tail_mass_3s)와 같아야 한다 — 두 룰이 옛 밴드
+    임계(heavy_tail_mass_min/max)를 그대로 쓰기 때문이다.
+    """
+    body = [10.0] * 200
+    vals = body + [30.0, 31.0]            # 위쪽으로만 튄 꼬리
+    f = features.compute(_case(vals, lsl=0, usl=40),
+                         {"stdev": float(np.std(vals, ddof=1))}, "ev1")
+    assert f["tail_mass_3s_high"] > 0 and f["tail_mass_3s_low"] == 0.0
+    assert f["tail_mass_3s"] == pytest.approx(f["tail_mass_3s_high"] + f["tail_mass_3s_low"])
+
+    vals = body + [-10.0, -11.0]          # 아래쪽으로만 처진 꼬리
+    f = features.compute(_case(vals, lsl=-40, usl=40),
+                         {"stdev": float(np.std(vals, ddof=1))}, "ev1")
+    assert f["tail_mass_3s_low"] > 0 and f["tail_mass_3s_high"] == 0.0
+    assert f["tail_mass_3s"] == pytest.approx(f["tail_mass_3s_high"] + f["tail_mass_3s_low"])
+
+
 def test_quantized_steps_are_not_bimodal():
     """양자화(계단형) 단봉을 이봉으로 오판하지 않는다 — 히스토그램 격자 정렬 회귀 방지선.
 

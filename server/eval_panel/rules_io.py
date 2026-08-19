@@ -241,7 +241,7 @@ _CODE_REFS = {
     "center_region_pct": "L2 features(공간 영역 분할)",
     "spatial_fail_count_min": "L2 features(공간 룰 최소 fail)",
     "region_fail_share_min": "L2 features(wafer_zone_signature)",
-    "spot_cluster_spread_max": "L2 features(wafer_zone_signature)",
+    "spot_fail_spread_max": "L2 features(wafer_zone_signature)",
     "cpk_warn": "L6 저장 게이트(코멘트 생성 여부)",
     "cpk_bad": "L4 trump(CRITICAL 강제)",
     "cpk_trump_yield_floor": "L4 trump(CRITICAL 강제)",
@@ -280,8 +280,9 @@ THRESHOLD_KINDS = {
     "subpop_value_gap_warn": "ratio", "code_edge_hit_warn": "ratio",
     "edge_region_pct": "ratio", "center_region_pct": "ratio",
     "gross_yield_bad": "ratio", "cpk_trump_yield_floor": "ratio",
-    "region_fail_share_min": "ratio", "spot_cluster_spread_max": "ratio",
+    "region_fail_share_min": "ratio", "spot_fail_spread_max": "ratio",
     "heavy_tail_mass_min": "ratio", "heavy_tail_mass_max": "ratio",
+    "tail_side_share_min": "ratio",
     "n_min": "count", "subpop_n_min": "count", "spatial_fail_count_min": "count",
     "source_min_count": "count",
     "outlier_sigma": "positive", "outlier_fail_mad_min": "positive",
@@ -480,9 +481,14 @@ def _sig_row(s: dict) -> dict:
             "phenomenon_ko": s.get("phenomenon_ko") or "",
             "action_ko": s.get("action_ko") or "",
             "evidence": list(s.get("evidence") or []),
-            # 읽기 전용 — 이 룰을 지우는 상위 룰(포함관계). 편집 UI 는 제공하지 않고
-            # 화면에 관계만 찍는다(SIGNATURE_FIELDS 에 없으므로 저장에서도 건드리지 않는다).
+            # 읽기 전용 — 룰 사이의 관계 3종. 편집 UI 는 제공하지 않고 화면에 관계만
+            # 찍는다(SIGNATURE_FIELDS 에 없으므로 저장에서도 건드리지 않는다).
+            #   suppressed_by = 함께 뜨면 primary 만 양보(목록에는 남는다)
+            #   hidden_by     = 함께 뜨면 목록에서 통째로 제거
+            #   replaces      = 나열한 것이 모두 뜨면 그것들을 지우고 이 룰이 대신 발화
             "suppressed_by": _norm_suppressed_by(s.get("suppressed_by")),
+            "hidden_by": _norm_suppressed_by(s.get("hidden_by")),
+            "replaces": _norm_suppressed_by(s.get("replaces")),
             "scope": _norm_scope_doc(s.get("scope"))}
 
 
@@ -895,6 +901,21 @@ def validate_all() -> dict:
             elif sig_id in suppress.get(target, []):
                 problems.append(f"[{sig_id}] {target} 와 suppressed_by 상호 참조 — "
                                 "둘 다 발화하면 양쪽이 사라집니다")
+
+    # 1c) hidden_by / replaces 참조 무결성. 억제와 달리 이 둘은 발화를 **목록에서 지우므로**
+    # 없는 id 를 가리키면 조용히 아무 일도 일어나지 않는다(오타가 침묵한다).
+    raw_sigs = eval_debug.signatures_raw()
+    for key in ("hidden_by", "replaces"):
+        rel = {s.get("id"): _norm_suppressed_by(s.get(key)) for s in raw_sigs}
+        for sig_id, targets in rel.items():
+            for target in targets:
+                if target not in sig_ids:
+                    problems.append(f"[{sig_id}] {key} 가 없는 signature 를 가리킴: {target}")
+                elif target == sig_id:
+                    problems.append(f"[{sig_id}] {key} 가 자기 자신을 가리킴")
+                elif sig_id in rel.get(target, []):
+                    problems.append(f"[{sig_id}] {target} 와 {key} 상호 참조 — "
+                                    "둘 다 발화하면 양쪽이 사라집니다")
 
     # 2) 오버레이 트리 점검 (고아 폴더/파일, 미지의 키)
     tree = eval_debug.rules_dir() / "thresholds"

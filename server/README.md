@@ -302,6 +302,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `GET` | `/view/<sid>` | 공개 | 세션 상세 페이지 (HTML) |
 | `GET` | `/api/history` | 공개 | 세션 목록 JSON (필터: product_type/product/lot_id/source) |
 | `GET` | `/api/part_ids` | 공개 | 기준정보 part id 목록 (product_info.db 의 part_id + sub_part_id flatten) |
+| `GET` | `/api/family_products` | 공개 | product_type → family_product 허용 목록. `?product_type=` 주면 `{families:[…]}`, 없으면 `{taxonomy:{…}}`. 세션 메타 편집 폼의 Family 선택지 — 정본은 eval 엔진 `product_taxonomy.yaml`(사본을 두면 eval ingest 가 거부하는 조합을 화면이 권하게 된다). 룰 파일을 못 읽으면 빈 목록(500 아님) |
 | `POST` | `/api/client_error` | 공개 | 브라우저 JS 에러 beacon 수신 (error_beacon.js — CSRF 미적용, per-IP 스로틀, 감사 action=`client_error` + 진단 사건 component=`browser`). fetch 5xx·콜드 빌드 폴링 타임아웃처럼 **이미 catch 된** 실패도 boot.js 가 여기로 명시 전송한다 |
 | `POST` | `/api/client_diagnostic` | 공개 | **Honey 앱** 오류 수신 (client/transport/error_report.py). client_error 와 같은 규약(항상 204·CSRF 미적용·IP 스로틀)이되 본문 상한 640KB(`mode=detail` = 사용자가 오류 창에서 직접 보낸 상세). **event_id 는 클라 값을 유지**한다 — 서버가 죽어 있던 동안 로컬 큐에 쌓였다 재전송되므로 서버가 새로 발급하면 한 사고가 여러 건이 된다 |
 | `POST` | `/api/eval/labels_import` | Honey | **선례 CSV 검증/적재** (Honey 'DB Input'). multipart `file` + `mode=validate\|commit`. **`X-Honey-Agent: 1` 필수**(CSRF 대체), Honey 신원 있으면 누구나, ≤5MB, 단순 5컬럼만. CSV **내용** 오류는 4xx 가 아니라 `200 {"ok":false,"errors":[…]}`. `db_input/import_csv.py` 를 subprocess 로 실행(→ [docs/13 §10](../docs/13_eval_analyzer_integration.md)). 관리자 `GET /api/eval/labels.csv` 의 반대 방향. 감사 action=`eval_db_input` |
@@ -312,7 +313,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `DELETE` | `/session/<sid>` | 업로더 | 세션 삭제 |
 | `POST` | `/session/<sid>/important` | Honey | 개인 중요표시 토글 |
 | `POST` | `/session/<sid>/private` | 업로더 | 비공개 토글 |
-| `PATCH` | `/session/<sid>/meta` | 편집자 + Honey | 세션 메타 수정 — `{file_name, family_product, product, lot_id, process}`. **`X-Honey-Agent: 1` 필수**(= Honey 앱 전용 강제, CSRF 대체). product 변경 시 product_info.db 재lookup(미등록이면 기준정보 14컬럼 비움). product_type·analysis_key 는 불변 |
+| `PATCH` | `/session/<sid>/meta` | 편집자 + Honey(또는 master) | 세션 메타 수정 — `{file_name, family_product, product, lot_id, process, step}`. **`X-Honey-Agent: 1` 필수**(= Honey 앱 전용 강제, CSRF 대체) — **예외: master(admin 로그인 4h)는 웹 브라우저에서도 수정 가능하며, 헤더가 없는 만큼 CSRF 를 요구한다**(둘 중 하나는 반드시 통과). product 변경 시 product_info.db 재lookup(미등록이면 기준정보 14컬럼 비움). product_type·analysis_key 는 불변 |
 | `GET` | `/honey/session_meta/<sid>` | 공개 | 위 편집창의 **진입 URL** — Honey 내장 브라우저가 네비게이션을 가로채 편집창을 띄우므로 실제로는 요청되지 않는다. 가드 없는 환경용 안내 HTML |
 | `POST` | `/session/<sid>/verify_password` | Honey | **하위호환 스텁** — UA 업로더 확인만, 항상 `has_password:false`. 세션 PIN 자체가 2026-08-14 폐지(평문 저장 중단·기존 값 NULL, 관리자 `POST /api/session/<sid>/password` 는 410) |
 | `PATCH` | `/session/<sid>/content` | — | **비활성, 항상 405** (구 xlsx 텍스트 수정 폐기) |

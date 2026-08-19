@@ -165,7 +165,7 @@ def test_ai_comment_render():
 # ── (f) Signature 드랍다운 ───────────────────────────────────────────────────
 
 def test_signature_choices():
-    opts = [{"id": "LOW_CPK", "enabled": True}, {"id": "CLUSTER_FAIL", "enabled": True},
+    opts = [{"id": "LOW_CPK", "enabled": True}, {"id": "SPOT_FAIL", "enabled": True},
             {"id": "WIDE_DISTRIBUTION", "enabled": False}, {"id": "UNKNOWN", "enabled": True}]
     harness = (
         "<script>(function(){var out={};"
@@ -185,7 +185,7 @@ def test_signature_choices():
     r = json.loads(run_probe(harness, "sig_choices"))
     assert "WIDE_DISTRIBUTION" not in r["fresh"], \
         f"비활성 룰이 새 드랍다운에 남아 있습니다: {r['fresh']}"
-    assert {"LOW_CPK", "CLUSTER_FAIL", "UNKNOWN"} <= set(r["fresh"]), r["fresh"]
+    assert {"LOW_CPK", "SPOT_FAIL", "UNKNOWN"} <= set(r["fresh"]), r["fresh"]
     assert "WIDE_DISTRIBUTION" in r["disabledKept"] and r["disabledSelected"] == "WIDE_DISTRIBUTION", \
         f"저장된 비활성 값이 사라졌습니다 — 사용자 입력 유실: {r}"
     assert "ZZZ_GONE" in r["legacyKept"] and r["legacySelected"] == "ZZZ_GONE", \

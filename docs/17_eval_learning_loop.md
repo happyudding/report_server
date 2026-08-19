@@ -31,7 +31,7 @@
 > | # | 단절 | 실태 | 이번 조치 |
 > |---|---|---|---|
 > | 1 | **라벨↔판정 case_id 불일치** | 라벨 case 의 wafer=None 1건 vs 엔진 case 43건(wafer=1/2/3) — **교집합 0**. 채점·선례 부스트가 구조적으로 성립 불가 | **수정 완료**(아래 Phase 3 보수안) |
-> | 2 | 룰 7종 판정지표 미저장 | OUTLIER·공간 4종·HEAVY_TAIL·CLUSTER·BIMODALITY 가 층화 불가 | **수정 완료**(eval.db v9) |
+> | 2 | 룰 7종 판정지표 미저장 | OUTLIER·공간 4종·꼬리 룰·BIMODALITY 가 층화 불가 | **수정 완료**(eval.db v9, 방향별 꼬리 질량은 v10) |
 > | 3 | 정확도에 시간축 없음 | `scoring()` 은 전체 누적 한 숫자, 이력 없음. 단 `created_at` 은 이미 저장돼 있음 | 예정 |
 > | 4 | 선례 루프 미가동 | 스냅샷이 `generate_comment=False` + 클라 AI Comment 비활성 + `eval_precedent` 0행 | 외부 담당 |
 > | 5 | 골든 회귀가 임계값 저장에 미연동 | 수동 버튼만 | 예정 |
@@ -421,8 +421,9 @@ confidence / comment / evidence / precedents 뿐이다 — **`raw_metrics`(L1)�
   BIMODALITY `separated` 판정의 실제 기준값이라 **채점하려면 있어야 한다.**
   추가는 스키마 변경이므로 §3-4 승인에 묶어 함께 판단한다.
   **같은 처지의 미저장 지표가 늘었다** — `fail_mad_min`·`fail_pass_gap_sigma`(OUTLIER 판정
-  2축) · `e1/edge/center/ring_fail_share`(공간 4종 판정) · `tail_mass_3s`(HEAVY_TAIL 밴드의
-  둘째 축) · `fail_spread_norm`(SPOT_CLUSTER 단일 축) · `rail_low/high_ratio`(CODE_RAIL
+  2축) · `e1/edge/center/ring_fail_share`(공간 4종 판정) · `tail_mass_3s`(꼬리 룰 밴드의
+  둘째 축) + `tail_mass_3s_high/_low`(방향 분해, v10) · `fail_spread_norm`(SPOT_FAIL 단일 축) ·
+  `rail_low/high_ratio`(CODE_RAIL
   evidence) — 전부 2026-08-13 기준. 그래서 표본함(docs/13 §14)이 이 7개 룰을 층화하지
   못한다. 승인 시 함께 올리는 것이 좋다.
   (신규 지표를 파생으로만 둔 것은 의도다 — eval.db 스키마 변경은 사전 승인 대상이라

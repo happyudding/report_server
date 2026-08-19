@@ -54,6 +54,17 @@ trim → 소문자*. `SECDS\Chumji.Kim`·`Chumji.Kim`·`chumji.kim` 은 한 사�
   admin 로그인한 PC(서명된 `pe_master_gate` 쿠키, 4h)는 Honey 신원이 없어도 업로더와 동일
   권한이다 — 편집뿐 아니라 삭제·비공개 토글·편집자 부여까지. 프런트도 `is_master` 를
   `IS_UPLOADER` 에 합류시켜 해당 버튼을 노출한다([core.js](../server/report/static/webreport/core.js)).
+  검색결과 목록의 🔒/🗑 버튼도 같은 규칙이다(`canModify` — 2026-08-19까지는 여기만 빠져
+  있어 **서버는 허용하는데 버튼이 안 보였다**. 가드에 master 를 더할 땐 그 권한을 여는
+  화면도 함께 확인할 것).
+- **master 의 Honey 헤더 면제** (2026-08-19) — `PATCH /session/<sid>/meta` 는 원래
+  `X-Honey-Agent` 를 요구해 "메타 수정은 Honey 에서만" 을 강제한다. 관리자가 남의 세션을
+  바로잡으려고 그 사람의 Honey 를 빌려야 했으므로 master 만 면제하되, 헤더가 없는 만큼
+  **CSRF 로 대체**한다(둘 중 하나는 반드시 통과 — 아무것도 없으면 브라우저 폼으로 위조
+  가능해진다). 웹 편집 폼은 세션 상세 ✏️ → `metaEditModal`
+  ([edit_mode.js](../server/report/static/webreport/edit_mode.js) `openMetaEdit`)이며
+  Honey 안에서는 종전대로 앱 편집창이 뜬다. Family 선택지는 eval taxonomy 정본을 주는
+  `GET /api/family_products` 에서 받는다.
 - **`_private_guard`** (2026-07-15) — **비공개(is_private) 세션 조회 차단**. 업로더 본인 또는
   위임 편집자가 아니면 **404**(존재 자체를 숨김 — 편집 가드의 401/403 과 달리 조회는 404).
   적용 지점: `/result`·`/session/<sid>`·`/full`·`/view`·`/annotation/<sid>`(각 라우트),

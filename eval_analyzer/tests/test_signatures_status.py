@@ -55,7 +55,7 @@ def test_outlier_needs_both_distance_and_gap():
                                                  fail_body_jump_ratio=0.1))
 
 
-def test_outlier_keeps_low_cpk_and_heavy_tail_in_list():
+def test_outlier_keeps_low_cpk_and_tail_in_list():
     """동반 발화는 **목록에 남는다** — primary 만 원인 룰에 양보한다 (2026-08-13).
 
     지우던 시절에는 "cpk 도 낮고 outlier 도 있다" 가 한 줄로만 보여, 사용자가 다른 하나를
@@ -63,12 +63,13 @@ def test_outlier_keeps_low_cpk_and_heavy_tail_in_list():
     """
     case = _case()
     feats = _full_features(fail_mad_min=10.0, fail_body_jump_ratio=0.9,
-                           kurtosis=15.0, tail_mass_3s=0.02, n_dut=100)
+                           kurtosis=15.0, tail_mass_3s=0.02, tail_mass_3s_high=0.02,
+                           tail_mass_3s_low=0.0, n_dut=100)
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 0.8})
     ids = [s["id"] for s in sig["signatures"]]
-    assert {"OUTLIER", "LOW_CPK", "HEAVY_TAIL"} <= set(ids)
+    assert {"OUTLIER", "LOW_CPK", "USL_TAIL"} <= set(ids)
     # 양보 표시는 남되 목록에서 빠지지는 않는다
-    assert {"LOW_CPK", "HEAVY_TAIL"} <= {s["id"] for s in sig["suppressed"]}
+    assert {"LOW_CPK", "USL_TAIL"} <= {s["id"] for s in sig["suppressed"]}
     assert status.decide(case, feats, sig)["primary_signature"] == "OUTLIER"
 
 
@@ -162,20 +163,38 @@ def test_missing_limit_fires_without_spec():
     assert status.decide(case, feats, sig)["status"] == "MINOR"
 
 
-def test_spot_cluster_fires_on_tight_fail_group():
-    """fail 좌표가 좁게 뭉치면 위치·모양과 무관하게 발화한다(사분면 경계 포함)."""
+def test_spot_fail_fires_on_tight_fail_group():
+    """fail 좌표가 좁게 뭉치면 위치·모양과 무관하게 발화한다 (구 SPOT_CLUSTER)."""
     case = _case()
     raw = {"yield": 0.95, "cpk": 1.5}
     tight = _full_features(fail_spread_norm=0.10, fail_count=40)
-    assert "SPOT_CLUSTER" in [s["id"] for s in signatures.evaluate(case, tight, raw)["signatures"]]
+    assert "SPOT_FAIL" in [s["id"] for s in signatures.evaluate(case, tight, raw)["signatures"]]
     # 웨이퍼 전면에 흩어지면 몰림이 아니다
     spread = _full_features(fail_spread_norm=0.60, fail_count=40)
-    assert "SPOT_CLUSTER" not in [s["id"]
-                                  for s in signatures.evaluate(case, spread, raw)["signatures"]]
+    assert "SPOT_FAIL" not in [s["id"]
+                               for s in signatures.evaluate(case, spread, raw)["signatures"]]
     # fail 이 적으면 우연히 몰릴 수 있어 판정하지 않는다(spatial_fail_count_min 가드)
     few = _full_features(fail_spread_norm=0.10, fail_count=4)
-    assert "SPOT_CLUSTER" not in [s["id"]
-                                  for s in signatures.evaluate(case, few, raw)["signatures"]]
+    assert "SPOT_FAIL" not in [s["id"]
+                               for s in signatures.evaluate(case, few, raw)["signatures"]]
+
+
+def test_spot_fail_hidden_when_center_fires():
+    """중심부 뭉침에서는 CENTER_FAIL 만 남는다 — SPOT_FAIL 은 **목록에서 제거**된다.
+
+    `suppressed_by`(목록 유지·primary 양보)와 다른 경로다(yaml `hidden_by`, 2026-08-19
+    사용자 결정). 중심에 뭉친 fail 은 두 룰이 구조적으로 함께 뜨는데 같은 사실을 두 번
+    말하는 셈이라, 조치가 분명한 CENTER 쪽만 보이게 한다.
+    """
+    case = _case()
+    raw = {"yield": 0.95, "cpk": 1.5}
+    both = _full_features(fail_spread_norm=0.10, fail_count=40, center_fail_share=1.0)
+    sig = signatures.evaluate(case, both, raw)
+    ids = [s["id"] for s in sig["signatures"]]
+    assert "CENTER_FAIL" in ids
+    assert "SPOT_FAIL" not in ids                       # 양보가 아니라 제거다
+    assert sig["hidden"] == [{"id": "SPOT_FAIL", "by": ["CENTER_FAIL"]}]
+    assert status.decide(case, both, sig)["primary_signature"] == "CENTER_FAIL"
 
 
 def test_code_rail_fires_on_code_edge_hit():
@@ -195,21 +214,54 @@ def test_code_rail_not_fires_when_feature_missing():
     assert "CODE_RAIL" not in [s["id"] for s in sig["signatures"]]
 
 
-def test_heavy_tail_fires_with_enough_samples():
+def test_directional_tail_fires_with_enough_samples():
+    """구 HEAVY_TAIL 은 방향으로 갈렸다 — 꼬리 질량을 **어느 쪽에서 쟀나**로 룰이 나뉜다."""
     case = _case()
-    # kurtosis > 10 **AND** 꼬리 질량 1~5% — 둘 다 넘어야 발화한다(2026-08-13)
-    feats = _full_features(kurtosis=12.0, tail_mass_3s=0.02, n_dut=100)
     raw = {"yield": 0.95, "cpk": 1.5}
-    sig = signatures.evaluate(case, feats, raw)
-    assert "HEAVY_TAIL" in [s["id"] for s in sig["signatures"]]
+    # 발화 조건은 구 HEAVY_TAIL 그대로 — kurtosis > 10 **AND 총 꼬리 질량 1~5%**.
+    # 방향은 그 질량이 어느 쪽에 실렸나(tail_side_share_*)로만 가른다.
+    high = _full_features(kurtosis=12.0, tail_mass_3s=0.02,
+                          tail_mass_3s_high=0.02, tail_mass_3s_low=0.0, n_dut=100)
+    ids = [s["id"] for s in signatures.evaluate(case, high, raw)["signatures"]]
+    assert "USL_TAIL" in ids and "LSL_TAIL" not in ids
+    low = _full_features(kurtosis=12.0, tail_mass_3s=0.02,
+                         tail_mass_3s_high=0.0, tail_mass_3s_low=0.02, n_dut=100)
+    ids = [s["id"] for s in signatures.evaluate(case, low, raw)["signatures"]]
+    assert "LSL_TAIL" in ids and "USL_TAIL" not in ids
+    # 반대쪽에 점 한둘이 섞인 정도(15%)는 여전히 한쪽 꼬리다
+    mostly = _full_features(kurtosis=12.0, tail_mass_3s=0.02,
+                            tail_mass_3s_high=0.017, tail_mass_3s_low=0.003, n_dut=100)
+    ids = [s["id"] for s in signatures.evaluate(case, mostly, raw)["signatures"]]
+    assert "USL_TAIL" in ids and "LSL_TAIL" not in ids
 
 
-def test_heavy_tail_disabled_when_few_samples():
+def test_both_tails_merge_into_bidir():
+    """양쪽 꼬리가 함께 두꺼우면 **BIDIR_TAIL 하나**로 접힌다 (yaml `replaces`).
+
+    "USL 문제 + LSL 문제" 두 건이 아니라 분포가 양방향으로 퍼진 한 건이고, 한쪽 방향
+    조치로는 해결되지 않는다(2026-08-19 사용자 요청). BIDIR_TAIL 자신의 when_metric
+    (양쪽 spec margin 부족)이 성립하지 않아도 대신 발화한다 — 여기 margin 은 5σ 다.
+    """
     case = _case()
-    feats = _full_features(kurtosis=12.0, tail_mass_3s=0.02, n_dut=5)  # 고차모멘트 min-n 가드
+    feats = _full_features(kurtosis=12.0, tail_mass_3s=0.04,
+                           tail_mass_3s_high=0.02, tail_mass_3s_low=0.02, n_dut=100)
+    # 총 질량은 밴드(1~5%) 안이고 양쪽이 반씩 가졌다
+    sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 1.5})
+    ids = [s["id"] for s in sig["signatures"]]
+    assert "BIDIR_TAIL" in ids
+    assert "USL_TAIL" not in ids and "LSL_TAIL" not in ids
+    assert sig["replaced"] == [{"id": "BIDIR_TAIL", "of": ["LSL_TAIL", "USL_TAIL"]}]
+    assert status.decide(case, feats, sig)["primary_signature"] == "BIDIR_TAIL"
+
+
+def test_directional_tail_disabled_when_few_samples():
+    case = _case()
+    # 고차모멘트 min-n 가드
+    feats = _full_features(kurtosis=12.0, tail_mass_3s=0.02, tail_mass_3s_high=0.02,
+                           tail_mass_3s_low=0.0, n_dut=5)
     raw = {"yield": 0.95, "cpk": 1.5}
     sig = signatures.evaluate(case, feats, raw)
-    assert "HEAVY_TAIL" not in [s["id"] for s in sig["signatures"]]
+    assert "USL_TAIL" not in [s["id"] for s in sig["signatures"]]
 
 
 def test_pf_trump_low_yield_forces_critical():

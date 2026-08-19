@@ -398,6 +398,30 @@ def _update_session_step(session_id, session, step):
     return True
 
 
+@report_bp.get("/api/family_products")
+def family_products_route():
+    """product_type → family_product 허용 목록 — 메타 편집 폼의 Family 선택지.
+
+    목록을 여기 복제하지 않는 이유: 정본은 eval 엔진의 product_taxonomy.yaml 이고,
+    허용표에 없는 조합은 eval ingest 가 ValueError 로 거부한다. 사본을 들면 화면이
+    "저장은 되는데 eval 에는 안 들어가는" 값을 권하게 된다. 조회는 허용된 진입점
+    (web_report.eval_debug) 하나만 쓴다 (CLAUDE.md 규칙 #8).
+
+    룰 파일을 못 읽어도 500 을 내지 않는다 — Family 는 선택지일 뿐이고, 폼은 현재 값을
+    유지한 채 열려야 한다(수정하려던 이름·LOT 까지 함께 막히면 안 된다).
+    """
+    try:
+        from web_report import eval_debug
+        tax = eval_debug.taxonomy() or {}
+    except Exception:
+        _log.exception("product taxonomy load failed")
+        tax = {}
+    pt = (request.args.get("product_type") or "").strip()
+    if pt:
+        return jsonify({"families": list(tax.get(pt) or [])})
+    return jsonify({"taxonomy": {k: list(v) for k, v in tax.items()}})
+
+
 @report_bp.patch("/session/<session_id>/meta")
 def update_session_meta_route(session_id):
     """세션 메타 수정 — Honey 편집창 전용 (업로드 다이얼로그 재사용).
@@ -405,6 +429,10 @@ def update_session_meta_route(session_id):
     Honey 클라(브라우저 아님)가 호출하므로 CSRF 대신 커스텀 헤더 X-Honey-Agent 를 요구한다
     (rawdata_replace 선례 — 커스텀 헤더는 브라우저 폼으로 위조 불가). 이 헤더 요구가
     "수정은 Honey 에서만" 을 서버가 강제하는 지점이다.
+
+    **예외: master(admin 로그인 PC, 4h)** 는 웹 브라우저에서도 고칠 수 있다 — 관리자가
+    남의 세션 메타를 바로잡으려면 그 사람의 Honey 로 들어가야 했다. 헤더가 없는 만큼
+    브라우저 변경요청의 표준 방어인 CSRF 로 대체한다(둘 중 하나는 반드시 통과해야 한다).
 
     product 가 바뀌면 product_info.db 를 다시 lookup 해 세션 기준정보 14컬럼을 갱신한다
     (미등록 part_id 면 비운다 — 옛 제품 값이 남으면 상단바가 틀린 정보를 보여준다).
@@ -414,7 +442,9 @@ def update_session_meta_route(session_id):
     시점' 규약이며, 수정 후에는 dedup(같은 데이터 재업로드) 매칭만 어긋난다.
     """
     if request.headers.get("X-Honey-Agent") != "1":
-        abort(403, "X-Honey-Agent header required")
+        if not _is_master():
+            abort(403, "X-Honey-Agent header required")
+        _require_csrf()
     _validate_session_id(session_id)
     session = report_db.get_session(session_id)
     if not session:

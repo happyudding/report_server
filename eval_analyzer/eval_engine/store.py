@@ -12,7 +12,7 @@ import yaml
 
 from . import config
 
-SCHEMA_VERSION = 9  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
+SCHEMA_VERSION = 10  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_master (
@@ -88,6 +88,10 @@ CREATE TABLE IF NOT EXISTS features (
     fail_spread_norm REAL, tail_mass_3s REAL,
     rail_low_ratio REAL, rail_high_ratio REAL,
     value_gap_ratio REAL, value_gap_minor_mass REAL,
+    -- v10 (2026-08-19, 사용자 승인): 꼬리 질량의 **방향 분해**. 구 HEAVY_TAIL 을
+    -- USL_TAIL/LSL_TAIL 로 가르면서 이 둘이 판정 기준값이 됐다(tail_mass_3s 는 |z| 라
+    -- 방향이 없다). 기존 행은 NULL — per-DUT 원본에서만 나오므로 소급 채움 불가.
+    tail_mass_3s_high REAL, tail_mass_3s_low REAL,
     PRIMARY KEY (case_id, run_id, engine_version)
 );
 CREATE TABLE IF NOT EXISTS evaluation (
@@ -335,10 +339,27 @@ def _migrate_v8_to_v9(conn):
             conn.execute(f"ALTER TABLE features ADD COLUMN {col} REAL")
 
 
+_V10_FEATURE_COLS = ("tail_mass_3s_high", "tail_mass_3s_low")
+
+
+def _migrate_v9_to_v10(conn):
+    """v10: features 에 방향별 꼬리 질량 REAL 컬럼 2개 추가 (2026-08-19, 사용자 승인).
+
+    구 `HEAVY_TAIL` 을 `USL_TAIL`/`LSL_TAIL` 로 가르면서 판정 기준값이 `tail_mass_3s`
+    (|z|>3, 방향 없음) 에서 방향별 질량으로 바뀌었다. 기존 행은 NULL 이고 소급 채움은
+    불가능하다(재수집해야 채워진다). 이미 있으면 skip(idempotent).
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+    for col in _V10_FEATURE_COLS:
+        if col not in cols:
+            conn.execute(f"ALTER TABLE features ADD COLUMN {col} REAL")
+
+
 _MIGRATIONS = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4,
                4: _migrate_v4_to_v5, 5: _migrate_v5_to_v6,
                6: _migrate_v6_to_v7, 7: _migrate_v7_to_v8,
-               8: _migrate_v8_to_v9}  # {from_version: fn} — from → from+1
+               8: _migrate_v8_to_v9,
+               9: _migrate_v9_to_v10}  # {from_version: fn} — from → from+1
 
 
 def _migrate(conn):
@@ -557,7 +578,8 @@ def save_features(case_id, run_id, engine_version, f: dict, conn=None) -> None:
     하므로 버전별로 나란히 남긴다(과거 판정 재현 가능).
     ⚠ `shot_fail_ratio` 는 테이블·마이그레이션에는 있지만 features.py 에 계산 경로가 없고
     아래 cols 목록에도 없어 **항상 NULL** 이다(VERIFY_CHECKLIST §1-3, 미해결).
-    v9(2026-08-19)부터 룰 판정지표 14종(`_V9_FEATURE_COLS`)도 저장한다 — 표본함 층화와
+    v9(2026-08-19)부터 룰 판정지표 14종(`_V9_FEATURE_COLS`) + v10 의 방향별 꼬리 질량
+    2종(`_V10_FEATURE_COLS`)도 저장한다 — 표본함 층화와
     임계값 what-if 의 모집단이 된다. **cols 에서 빠지면 컬럼만 있고 영원히 NULL 이 된다**
     (shot_fail_ratio 가 그 전례다).
     """
@@ -569,7 +591,7 @@ def save_features(case_id, run_id, engine_version, f: dict, conn=None) -> None:
             "n_dut", "site_cpk_delta", "code_edge_hit",
             "ring_fail_ratio",
             "radial_gradient_norm", "x_gradient_norm", "y_gradient_norm",
-            "n_modes", "modality_v2", *_V9_FEATURE_COLS]
+            "n_modes", "modality_v2", *_V9_FEATURE_COLS, *_V10_FEATURE_COLS]
     sql = f"""INSERT INTO features (case_id,run_id,engine_version,computed_at,{','.join(cols)})
               VALUES (?,?,?,?,{','.join('?' * len(cols))})
               ON CONFLICT(case_id,run_id,engine_version) DO UPDATE SET

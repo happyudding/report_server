@@ -320,7 +320,14 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      오독하지 않는다. **Compare 모드가 아닌 세션도 함께 콜드가 된다**(전역 bump 의 대가)
 #      — 배포 직후 콜드 폭풍을 감안할 것(webreport-change 절차: 재기동 → 프리웜 스윕).
 #      compare 구조만 바뀔 때는 여기가 아니라 COMPARE_SCHEMA_VERSION 을 올린다.
-REPORT_SCHEMA_VERSION = 40
+# v41: eval 룰셋 **4차** 재편(2026-08-19 사용자 지시). ① `CLUSTER_FAIL` 삭제(사분면 격자는
+#      결함 모양과 무관한 인공 경계) ② `SPOT_CLUSTER` → **`SPOT_FAIL`** 개명 + CENTER_FAIL 과
+#      함께 뜨면 **목록에서 제거**(신규 `hidden_by`) ③ `HEAVY_TAIL` → **`USL_TAIL`/`LSL_TAIL`**
+#      방향 분리, 둘 다 뜨면 **`BIDIR_TAIL` 하나로 합침**(신규 `replaces`)
+#      ④ `LOW_SAMPLE_UNCERTAIN` 삭제 ⑤ `outlier_sigma` 4.5 → 2.5.
+#      Signature 컬럼·AI Comment 값이 광범위하게 바뀌고, features.py(방향별 꼬리 질량 신설)·
+#      signatures.py·status.py 코드 변경이라 .rules_rev 로는 무효화되지 않는다.
+REPORT_SCHEMA_VERSION = 41
 
 # Temperature 세션 **전용** payload 세대 — 값이 Temperature 모드에서만 바뀌는 변경은
 # REPORT_SCHEMA_VERSION 대신 여기를 올린다. 전역 bump 는 전 세션의 report 캐시를 한 번에

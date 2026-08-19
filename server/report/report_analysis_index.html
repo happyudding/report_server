@@ -742,6 +742,7 @@ let _userId = "";        // 현재 신원 (Honey UA 또는 웹 로그인 세션)
 let _authSource = "";    // "honey" | "login" | "sso" | "" — 서버 identity_source()
 let _hasPin = false;     // Honey 접속 시에만 의미: 웹 로그인 PIN 을 설정해 뒀는지
 let _displayName = "";   // 사용자 실명 — 비어 있으면 이름 입력창을 띄운다
+let _isMaster = false;   // admin 로그인 PC(master 쿠키 4h) — 전 세션을 업로더처럼 다룬다
 let _uploaderNames = {}; // 목록 응답의 uid→실명 맵 (업로더 칸 '이름(ID)' 표기용)
 let _favorites = new Set();
 
@@ -788,6 +789,7 @@ function applyViewer(v) {
   _authSource = v.source || "";
   _hasPin = !!v.has_pin;
   _displayName = v.display_name || "";
+  _isMaster = !!v.is_master;
   updateUserChip();
   // 챗봇은 master 전용(테스트 단계) — 서버 라우트도 같은 규칙으로 404 를 낸다.
   // 홈에는 열려 있는 세션이 없으므로 컨텍스트 없이 켠다.
@@ -1100,7 +1102,11 @@ function isMine(r) {
 }
 
 // 수정/삭제 가능 여부 — 로그인 + (업로더 본인 또는 업로더 기록 없는 legacy 세션).
+// master(admin 로그인 PC, 4h)는 전 세션을 업로더와 동일하게 다룬다 — 서버 _uploader_guard
+// 가 이미 같은 규칙이라, 여기서 빼면 서버는 허용하는데 버튼만 안 보인다. 신원(_userId)을
+// 요구하지 않는 것도 서버와 같다: 일반 브라우저로 admin 로그인하면 Honey 신원이 없다.
 function canModify(r) {
+  if (_isMaster) return true;
   return !!_userId && (!r.uploaded_by || isMine(r));
 }
 

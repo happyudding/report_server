@@ -80,13 +80,16 @@ FAIL_MARGIN = [0.002, 0.004, 0.006, 0.008, 0.010]
 # 1=Pass. 18(defective)·31(abnormal)은 bin_taxonomy.yaml 예약값이라 피한다.
 # 11(WIDE_DISTRIBUTION)·13(OUTLIER_WARN)·14(SPEC_TOO_TIGHT)·32(WAFER_GRADIENT)는
 # 그 룰들이 2026-08-13 에 삭제되며 결번. 12 = OUTLIER(구 SEVERE_OUTLIER 자리).
+# 2026-08-19 룰셋 4차 재편으로 결번이 재사용됐다 — 26(구 LOW_SAMPLE_UNCERTAIN) → EDGE_TOP,
+# 30(구 CLUSTER_FAIL) → LSL_TAIL. 19 는 구 HEAVY_TAIL 자리를 USL_TAIL 이 이어받는다.
 SIG_BIN = {
     "OUTLIER": 12,
     "LOW_CPK": 15, "MEAN_SHIFT": 16, "BIDIR_TAIL": 17,
-    "HEAVY_TAIL": 19, "BIMODALITY": 20, "TAIL_RISK": 21, "CONSTANT_VALUE": 22,
+    "USL_TAIL": 19, "BIMODALITY": 20, "TAIL_RISK": 21, "CONSTANT_VALUE": 22,
     "EQUIPMENT_SUSPECT": 23, "CODE_RAIL": 24, "MISSING_LIMIT": 25,
-    "LOW_SAMPLE_UNCERTAIN": 26, "EDGE_FAIL": 27, "CENTER_FAIL": 28, "RING_FAIL": 29,
-    "CLUSTER_FAIL": 30, "GROSS_FAIL": 33, "E1_FAIL": 34, "SPOT_CLUSTER": 35,
+    "EDGE_TOP": 26, "EDGE_FAIL": 27, "CENTER_FAIL": 28, "RING_FAIL": 29,
+    "LSL_TAIL": 30, "GROSS_FAIL": 33, "E1_FAIL": 34, "SPOT_FAIL": 35,
+    "EDGE_BOTTOM": 36,
 }
 NORMAL_BIN = 2                  # 겨냥한 룰이 없는 항목(정상군·경계군)의 fail bin
 RANDOM_BIN_BASE = 40            # 관찰군(random) — Map 에서 40번대 색으로 한눈에 갈린다
@@ -100,12 +103,13 @@ CENTER = (USL + LSL) / 2
 # rules/thresholds.yaml default (표시·목표 산정용 — 정본은 yaml, 여기 값은 참고치다).
 TH = {
     "cpk_warn": 1.33, "cpk_bad": 1.00,
-    "outlier_ratio_warn": 0.02, "outlier_ratio_bad": 0.05, "outlier_sigma": 4.5,
+    "outlier_ratio_warn": 0.02, "outlier_ratio_bad": 0.05, "outlier_sigma": 2.5,
     "spread_norm_warn": 0.18, "skew_warn": 1.0, "spec_margin_warn": 1.0,
     "edge_fail_ratio_warn": 2.0, "n_min": 20, "bimodality_warn": 0.555,
-    "edge_region_pct": 0.8, "center_region_pct": 0.3, "quadrant_imbalance_warn": 2.5,
+    "edge_region_pct": 0.8, "center_region_pct": 0.3, "spot_fail_spread_max": 0.25,
     "mean_shift_warn": 0.30, "site_cpk_delta_warn": 0.5, "gross_yield_bad": 0.5,
-    "code_edge_hit_warn": 0.05, "kurtosis_warn": 8.0, "spatial_fail_count_min": 10,
+    "code_edge_hit_warn": 0.05, "kurtosis_warn": 10.0, "spatial_fail_count_min": 10,
+    "heavy_tail_mass_min": 0.01, "heavy_tail_mass_max": 0.05,
     "severe_outlier_count_min": 5, "ring_fail_ratio_warn": 2.0,
     # OUTLIER 는 거리 AND 끊김(2026-08-13), 공간 룰 4종은 점유율로 판정한다.
     "outlier_fail_mad_min": 4.0, "outlier_fail_gap_sigma_min": 1.5,
@@ -185,17 +189,31 @@ def m_fail_outlier(values, fail_idx):
     return float(df.min()) / 0.6745, gap, float(df.max())
 
 
-def m_tail_mass(v):
-    """꼬리 질량 — 중심에서 3 robust σ 밖 비율 (엔진 features.tail_mass_3s)."""
+def _modified_z_gen(v):
+    """엔진 features._modified_z 복제 (MAD=0 이면 meanAD 폴백). 판정 불가면 None."""
     med = float(np.median(v))
     mad = float(np.median(np.abs(v - med)))
     if mad != 0:
-        z = 0.6745 * (v - med) / mad
-    else:
-        mean_ad = float(np.mean(np.abs(v - med)))
-        if mean_ad <= 0:
-            return None
-        z = (v - med) / (1.253314 * mean_ad)
+        return 0.6745 * (v - med) / mad
+    mean_ad = float(np.mean(np.abs(v - med)))
+    if mean_ad <= 0:
+        return None
+    return (v - med) / (1.253314 * mean_ad)
+
+
+def m_tail_mass(v, side=None):
+    """꼬리 질량 — 중심에서 3 robust σ 밖 비율 (엔진 features.tail_mass_3s).
+
+    `side="high"|"low"` 면 **그 방향만** 센다 — USL_TAIL/LSL_TAIL 의 판정값이다
+    (엔진 tail_mass_3s_high / tail_mass_3s_low, 2026-08-19).
+    """
+    z = _modified_z_gen(v)
+    if z is None:
+        return None
+    if side == "high":
+        return float(np.mean(z > 3.0))
+    if side == "low":
+        return float(np.mean(z < -3.0))
     return float(np.mean(np.abs(z) > 3.0))
 
 
@@ -451,6 +469,17 @@ def synth_values(plan: dict, n: int, rng: np.random.Generator, lsl, usl):
         sign = np.where(rng.random(k) < spike.get("neg_p", 0.0), -1.0, 1.0)
         v[idx] = v[idx] + sign * off
 
+    # 꼬리 **방향 접기** — 몸통은 그대로 두고, 멀리 나간 값만 한쪽으로 몰아 준다.
+    # USL_TAIL/LSL_TAIL 겨냥용(2026-08-19). 전체를 접으면(|dev|) 몸통이 반정규가 되어
+    # kurtosis·이봉 판정이 통째로 달라지므로 **3σ 밖만** 건드린다.
+    tail_side = plan.get("tail_side")
+    if tail_side:
+        base = sigma if kind != "mixture" else min(c[2] for c in plan["comps"])
+        dev = v - mean
+        far = np.isfinite(dev) & (np.abs(dev) > 3.0 * (base if base > 0 else 0.02))
+        if far.any():
+            v[far] = mean + (np.abs(dev[far]) if tail_side == "high" else -np.abs(dev[far]))
+
     rail = plan.get("rail")
     if rail and rail.get("p", 0) > 0 and lsl is not None and usl is not None:
         k = max(1, int(round(rail["p"] * n)))
@@ -488,9 +517,8 @@ def synth_values(plan: dict, n: int, rng: np.random.Generator, lsl, usl):
 def _strata(free, rnorm, xn, yn):
     """사분면 4 × 반경대 3 = 12 층 — 임의 배치를 층화추출해 공간 지표를 1.0 근처로 유지한다.
 
-    그냥 무작위로 12개를 뽑으면 사분면 fail 률 편중(quadrant_imbalance)이 우연히 1.0 을
-    넘어 CLUSTER_FAIL 이 오발화한다(소표본 편중). 공간 룰을 겨냥하지 않은 항목은
-    "공간적으로 균일" 해야 겨냥한 룰만 뜬다.
+    그냥 무작위로 뽑으면 fail 이 우연히 한 영역에 몰려 공간 룰이 오발화한다(소표본 편중).
+    공간 룰을 겨냥하지 않은 항목은 "공간적으로 균일" 해야 겨냥한 룰만 뜬다.
     """
     band = np.digitize(rnorm[free], [TH["center_region_pct"], TH["edge_region_pct"]])
     quad = (xn[free] >= 0).astype(int) * 2 + (yn[free] >= 0).astype(int)
@@ -537,8 +565,9 @@ def pick_fail_rows(pattern: str, count: int, free: np.ndarray, rnorm, xn, yn,
     ring = (rnorm > TH["center_region_pct"]) & (rnorm < TH["edge_region_pct"]) & (~e1_mask)
 
     if pattern == "spot":
-        # 국부 뭉침 — 중심을 **x축 위(사분면 경계)** 에 두어 CLUSTER_FAIL 의 약점 자리를
-        # 그대로 재현한다. share 는 blob 반경 / 웨이퍼 반경.
+        # 국부 뭉침 — 중심을 웨이퍼 중앙에서 **비켜난 곳**(x축 위 0.55R)에 둔다.
+        # 중앙에 두면 CENTER_FAIL 이 함께 떠 SPOT_FAIL 이 `hidden_by` 로 목록에서 빠진다.
+        # share 는 blob 반경 / 웨이퍼 반경.
         r = max(0.02, float(share))
         cx, cy = 0.55, 0.0
         d2 = (xn - cx) ** 2 + (yn - cy) ** 2
@@ -548,6 +577,23 @@ def pick_fail_rows(pattern: str, count: int, free: np.ndarray, rnorm, xn, yn,
         k = int(min(count, pool.size))
         return rng.choice(pool, size=k, replace=False).astype(int) if k else \
             np.asarray([], dtype=int)
+
+    if pattern in ("edge_top", "edge_bottom"):
+        # wafer 상단/하단 **EDGE 반원의 부채꼴**. `share` 는 그 반원(180°) 중 몇 %를 덮는지다
+        # — 중심에서 본 불량 area 의 각도 폭이 곧 세기다(2026-08-19 사용자 요청).
+        # 밴드는 EDGE_FAIL 과 같은 정의(E1 제외 바깥 밴드)라 edge_fail_share 가 1.0 이 된다.
+        half = math.radians(90.0 * min(1.0, max(0.05, float(share))))
+        axis = math.pi / 2 if pattern == "edge_top" else -math.pi / 2
+        ang = np.arctan2(yn, xn) - axis
+        # (-π, π] 로 감아 축에서의 각거리를 잰다 — 하단(-90°)에서 경계를 넘지 않게.
+        ang = (ang + math.pi) % (2 * math.pi) - math.pi
+        sector = edge & (np.abs(ang) <= half)
+        chosen = _from(sector, count)
+        if chosen.size < count:            # 부채꼴이 좁아 모자라면 각거리가 가까운 순으로
+            pool = free[edge[free]]
+            pool = pool[np.argsort(np.abs(ang[pool]))][:count]
+            chosen = np.unique(np.concatenate([chosen, pool]))[:count]
+        return chosen.astype(int)
 
     if pattern in ("edge", "center", "ring", "quadrant", "e1"):
         if pattern == "e1":
@@ -597,8 +643,19 @@ def pick_fail_rows(pattern: str, count: int, free: np.ndarray, rnorm, xn, yn,
 # item 스펙 카탈로그
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _fires(s) -> bool:
+    """이 item 이 fail 을 만드는가 — 보통 L2 부터다(L1 = 정상 = fail 0).
+
+    예외가 `always_fires` 다: 세기 축이 "미발화 → 발화" 가 아니라 **"불량 영역이 얼마나
+    넓은가"** 인 세트(EDGE 상단/하단, 2026-08-19)는 L1 에도 fail 이 있어야 한다.
+    그렇지 않으면 L1 이 fail 0 이라 평가 대상에서 빠져 사다리의 첫 칸이 비어 버린다.
+    """
+    return bool(s.get("always_fires")) or s["level"] >= FIRE_FROM
+
+
 def spec(name, sig, level, *, values, fails=None, unit="V", lsl=LSL, usl=USL, bin_=None,
-         metric="", target=None, group="", note="", fail_values="auto", expect=None):
+         metric="", target=None, group="", note="", fail_values="auto", expect=None,
+         always_fires=False):
     """test item 1건.
 
     - `expect`: 겨냥한 룰이 'fire'(L3~L7) 인지 'not_fire'(L1~L2) 인지.
@@ -608,7 +665,7 @@ def spec(name, sig, level, *, values, fails=None, unit="V", lsl=LSL, usl=USL, bi
     - bin 은 겨냥한 signature 별 고유값(SIG_BIN) — Map Analysis 에서 유형을 색으로 가른다.
     """
     sig = list(sig)
-    fires = level >= FIRE_FROM
+    fires = always_fires or level >= FIRE_FROM
     if fires and "(FAIL)" not in name:
         name = f"{name}(FAIL)"
     if bin_ is None:
@@ -618,6 +675,7 @@ def spec(name, sig, level, *, values, fails=None, unit="V", lsl=LSL, usl=USL, bi
         bin_ = base * 10 + level if (base and fires) else NORMAL_BIN
     return {
         "name": name, "intent": sig, "level": level, "group": group,
+        "always_fires": always_fires,
         "expect": expect or ("fire" if fires else "not_fire"),
         "unit": unit, "lsl": lsl, "usl": usl, "bin": bin_,
         "values": values,
@@ -662,19 +720,25 @@ OUTLIER_P = [0.0000, 0.0012, 0.0030, 0.0060, 0.0120]
 LOWCPK_T = [1.80, 1.25, 0.95, 0.75, 0.62]                  # cpk (bounded 분포 하한 0.58)
 MEANSHIFT_T = [0.15, 0.36, 0.55, 0.80, 0.92]               # |center_bias| (warn 0.30)
 BIDIR_T = [1.60, 0.90, 0.60, 0.35, 0.20]                   # min spec margin (warn 1.0, 작을수록 나쁨)
-# HEAVY_TAIL 은 kurtosis(warn 10) **AND 꼬리 질량 1~5%** 다(2026-08-13). 연속 꼬리
-# (scale mixture)로 만들면 두 지표가 함께 오르므로 사다리는 kurtosis 로 매기고 질량은
-# 따라오게 둔다 — 실측 질량은 answer_key/verify 에 기록된다.
+# USL_TAIL/LSL_TAIL 은 kurtosis(warn 10) **AND 그 방향 꼬리 질량 1~5%** 다(2026-08-19,
+# 구 HEAVY_TAIL 을 방향으로 가름). 연속 꼬리(scale mixture)로 만들면 두 지표가 함께
+# 오르므로 사다리는 kurtosis 로 매기고 질량은 따라오게 둔다 — 실측 질량은
+# answer_key/verify 에 기록된다. 꼬리는 `tail_side` 로 한쪽에 몰아 준다(안 그러면 양쪽이
+# 함께 두꺼워져 BIDIR_TAIL 로 합쳐진다).
 KURT_T = [2.0, 12.0, 15.0, 19.0, 25.0]                     # excess kurtosis (warn 10.0)
 RAIL_T = [0.010, 0.070, 0.150, 0.300, 0.450]               # limit_hit_ratio (warn 0.05)
 # 공간 4종은 **점유율**(전체 fail 중 그 영역 몫, warn 0.95)로 바뀌었다 — 종전 밀도 배수는
 # 영역마다 상한이 달라 사다리를 공유할 수 없었고 ring 은 아예 도달 불가였다.
 REGION_SHARE_T = [0.50, 0.96, 0.98, 0.99, 1.00]            # *_fail_share (warn 0.95)
-CLUSTER_T = [0.5, 2.7, 3.0, 3.4, 3.8]                      # quadrant_imbalance (warn 2.5, 상한 4)
-# SPOT_CLUSTER — fail 을 반경 r 의 원 안에 몰아넣는다. 지표(fail_spread_norm)는 무게중심
+# SPOT_FAIL — fail 을 반경 r 의 원 안에 몰아넣는다. 지표(fail_spread_norm)는 무게중심
 # 기준 RMS 거리/웨이퍼반경 이고 균일 원판이면 ≈ r/(√2·R) 이라, 웨이퍼 반경 대비 blob
 # 반경 비율로 사다리를 매긴다(warn 0.25 → blob 반경 ≈ 웨이퍼의 35%).
 SPOT_R_T = [0.60, 0.30, 0.20, 0.12, 0.06]                  # blob 반경 / 웨이퍼 반경
+# EDGE 상단/하단 — wafer 중심에서 본 **부채꼴 각도**로 세기를 매긴다(2026-08-19 사용자 요청).
+# fail 은 전부 edge 밴드(E1 제외) 안에 두고, 그 반원 중 몇 도를 덮는지만 키운다.
+# ⚠ edge_fail_share 는 전 단계 1.0 이라 **L1 부터 EDGE_FAIL 이 발화한다** — "L1=미발화"
+# 사다리가 아니라 "불량 영역이 얼마나 넓은가" 사다리다(사용자가 그 축을 선택했다).
+EDGE_ARC_T = [0.2, 0.4, 0.6, 0.8, 1.0]                     # 반원(180°) 대비 호 각도 비율
 # 공간 룰 항목의 몸통 σ — 겨냥한 것은 **위치 편중**이므로 값 쪽 룰이 붙으면 안 된다.
 # 0.10 이 두 요구의 접점이다:
 #   · 더 좁으면 밀려난 fail 이 몸통과 끊겨 보여(gap = (0.5+margin)/σ − 3.85 ≥ 1.5) OUTLIER
@@ -700,13 +764,8 @@ SUBPOP_SD = [0.12, 0.12, 0.12, 0.09, 0.040]                # 성분 σ
 CONST_V = [None, 1.5625, 2.0, 3.0, 5.0]
 
 
-def _quadrant_share(imbalance):
-    """quadrant_imbalance 목표 → 1사분면에 몰아줄 fail 비율 s. v=(16s-4)/3."""
-    return min(1.0, max(0.25, (3 * imbalance + 4) / 16))
-
-
 def _spot_plan(lv):
-    """SPOT_CLUSTER — 값은 평범하고 **위치만** 뭉치게 한다(공간 룰 공용 σ)."""
+    """SPOT_FAIL — 값은 평범하고 **위치만** 뭉치게 한다(공간 룰 공용 σ)."""
     return {"kind": "normal", "mean": CENTER, "sigma": SPATIAL_SIGMA, "bounded": True}
 
 
@@ -752,13 +811,18 @@ def _bidir_plan(lv):
     return {"kind": "normal", "mean": CENTER, "sigma": (WIDTH / 2) / BIDIR_T[lv]}
 
 
-def _heavytail_plan(lv):
-    """spike 비율은 outlier warn(2%) 아래로 고정하고 z 를 튜닝해 kurtosis 목표를 맞춘다."""
-    return _kurt_plan(KURT_T[lv])
+def _tail_plan(lv, side):
+    """USL_TAIL / LSL_TAIL — 꼬리를 **한쪽으로만** 두껍게 만든다(2026-08-19).
+
+    구 HEAVY_TAIL 겨냥은 대칭 scale mixture 라 양쪽 꼬리가 같이 두꺼웠다. 룰이 방향으로
+    갈린 뒤로는 그 모양이 `BIDIR_TAIL`(양쪽 합침)로 판정되므로, 3σ 밖 값을 한쪽으로 접어
+    (`tail_side`) 그 방향 질량만 밴드(1~5%) 안에 들게 한다.
+    """
+    return _kurt_plan(KURT_T[lv], side=side)
 
 
-def _kurt_plan(target, p=0.03, sigma=0.05):
-    """HEAVY_TAIL — **연속 꼬리**(scale mixture, 2026-08-13).
+def _kurt_plan(target, p=0.03, sigma=0.05, side=None):
+    """꼬리 룰 겨냥 — **연속 꼬리**(scale mixture, 2026-08-13).
 
     같은 중심의 넓은 성분을 소수 섞어 꼬리가 몸통에서 limit 까지 **이어지게** 한다.
     `bounded` 를 걸지 않아 꼬리 끝이 자연히 spec 을 넘고 그 chip 이 fail 이 된다 →
@@ -770,6 +834,8 @@ def _kurt_plan(target, p=0.03, sigma=0.05):
         pl["comps"] = [(1 - p, CENTER, sigma), (p, CENTER, k * sigma)]
 
     plan = {"kind": "mixture", "mean": CENTER, "comps": [(1, CENTER, sigma)]}
+    if side:
+        plan["tail_side"] = side
     apply(plan, 3.0)
     return with_tune(plan, apply, m_kurtosis, target, 1.0, 12.0)
 
@@ -876,8 +942,10 @@ SINGLE_BUILDERS = {
     # spec 을 넘는데, 거기에 레벨 사다리(FAIL_N)만큼 `_push_out_of_spec` 로 보충하면
     # 중간 꼬리의 chip 을 limit 밖으로 **옮겨서** 그 자리에 구멍이 난다. 그 구멍이 곧
     # `fail_body_jump_ratio` 라 HEAVY_TAIL 겨냥이 OUTLIER 로 넘어갔다(v10 L4 0.487).
-    "HEAVY_TAIL": lambda lv: (_heavytail_plan(lv), {"mode": "natural", "pattern": "random"},
-                              "kurtosis", KURT_T[lv], {}),
+    "USL_TAIL": lambda lv: (_tail_plan(lv, "high"), {"mode": "natural", "pattern": "random"},
+                            "kurtosis", KURT_T[lv], {"note": "3σ 밖 꼬리를 상한(USL) 쪽으로 접음"}),
+    "LSL_TAIL": lambda lv: (_tail_plan(lv, "low"), {"mode": "natural", "pattern": "random"},
+                            "kurtosis", KURT_T[lv], {"note": "3σ 밖 꼬리를 하한(LSL) 쪽으로 접음"}),
     "BIMODALITY": lambda lv: (_subpop_plan(lv), None, "density_gap", None,
                               {"note": f"모드 분리 {SUBPOP_SEP_SD[lv]}σ (성분 σ {SUBPOP_SD[lv]})"
                                        + (" · 3봉(다봉)" if lv == len(LEVELS) - 1 else "")}),
@@ -895,10 +963,6 @@ SINGLE_BUILDERS = {
         dict({}, **[{}, {"usl": None}, {"lsl": None}, {"lsl": None, "usl": None},
                     {"lsl": None, "usl": None, "unit": ""}][lv],
              )),   # limit 이 없는 단계는 밀 대상이 없다(_push_out_of_spec 가 알아서 건너뛴다)
-    "LOW_SAMPLE_UNCERTAIN": lambda lv: (
-        {"kind": "normal", "mean": CENTER, "sigma": 0.05, "n_valid": NSAMPLE_T[lv],
-         "bounded": True},
-        None, "n_dut", NSAMPLE_T[lv], {}),
     # 공간 4종 — share 가 그대로 "전체 fail 중 그 영역 몫"이라 면적 환산이 필요 없다
     # (배수 지표 시절에는 영역 면적으로 나눠 몫을 역산해야 했다).
     "E1_FAIL": lambda lv: (
@@ -917,21 +981,44 @@ SINGLE_BUILDERS = {
         {"kind": "normal", "mean": CENTER, "sigma": SPATIAL_SIGMA, "bounded": True},
         {"pattern": "ring", "count": _spatial_n(lv), "share": REGION_SHARE_T[lv]},
         "ring_fail_share", REGION_SHARE_T[lv], {}),
-    "CLUSTER_FAIL": lambda lv: (
-        {"kind": "normal", "mean": CENTER, "sigma": SPATIAL_SIGMA, "bounded": True},
-        {"pattern": "quadrant", "count": _spatial_n(lv), "share": _quadrant_share(CLUSTER_T[lv])},
-        "quadrant_imbalance", CLUSTER_T[lv], {}),
-    # SPOT_CLUSTER — 위치·모양 무관 국부 뭉침. **사분면 경계에 일부러 걸친다**(중심을 x축
-    # 위에 둔다) — CLUSTER_FAIL 이 놓치던 자리를 이 룰이 잡는지 데이터로 보이기 위해서다.
-    "SPOT_CLUSTER": lambda lv: (
+    # SPOT_FAIL — 위치·모양 무관 국부 뭉침(구 SPOT_CLUSTER). 중심을 **웨이퍼 중앙에서
+    # 비켜난 곳**에 두어 CENTER_FAIL 과 겹치지 않게 한다 — 겹치면 `hidden_by` 로 목록에서
+    # 빠져 이 항목이 무엇을 겨냥했는지 검증할 수 없다.
+    "SPOT_FAIL": lambda lv: (
         _spot_plan(lv),
         {"pattern": "spot", "count": _spatial_n(lv), "share": SPOT_R_T[lv]},
         "fail_spread_norm", None,
-        {"note": f"blob 반경 = 웨이퍼의 {SPOT_R_T[lv]:.0%} · 사분면 경계(x축) 위"}),
+        {"note": f"blob 반경 = 웨이퍼의 {SPOT_R_T[lv]:.0%} · 중심에서 비켜난 자리"}),
     "GROSS_FAIL": lambda lv: (
         {"kind": "normal", "mean": CENTER, "sigma": 0.05, "bounded": True},
         {"pattern": "random", "fraction": 1 - YIELD_T[lv]}, "yield", YIELD_T[lv], {}),
 }
+
+
+def edge_half_specs():
+    """EDGE **상단/하단** 세트 — 같은 EDGE_FAIL 을 겨냥하되 불량이 한쪽 반원에만 있다.
+
+    세기(L1~L5)는 **wafer 중심에서 본 부채꼴 각도**다(2026-08-19 사용자 요청) — L1 은 좁은
+    호(36°), L5 는 반원 전체(180°). 판정 지표(edge_fail_share)는 전 단계 1.0 이라
+    **L1 부터 EDGE_FAIL 이 발화한다**: "미발화 → 발화" 사다리가 아니라 "불량 영역이
+    얼마나 넓게 퍼졌나" 사다리이므로 expect 는 전 단계 fire 다.
+    값은 공간 룰 공용 σ 를 써서 값 쪽 룰이 붙지 않게 한다(SPATIAL_SIGMA 주석 참조).
+    """
+    out = []
+    for tag, pattern in (("EDGE_TOP", "edge_top"), ("EDGE_BOTTOM", "edge_bottom")):
+        for lv in LEVELS:
+            i = lv - 1
+            arc = EDGE_ARC_T[i]
+            out.append(spec(
+                f"{tag}_L{lv}", ["EDGE_FAIL"], lv,
+                values={"kind": "normal", "mean": CENTER, "sigma": SPATIAL_SIGMA,
+                        "bounded": True},
+                fails={"pattern": pattern, "count": _spatial_n(i), "share": arc},
+                bin_=SIG_BIN[tag] * 10 + lv, always_fires=True,
+                metric="edge_fail_share", target=1.0, group="edge_half", expect="fire",
+                note=f"{'상단' if pattern == 'edge_top' else '하단'} edge 부채꼴 "
+                     f"{arc * 180:.0f}° (반원 대비 {arc:.0%})"))
+    return out
 
 
 def single_specs():
@@ -954,7 +1041,7 @@ def single_specs():
 def _ing(name, lv, plan, fails, meta):
     """재료 1개를 plan/fails/meta 에 얹는다 — **자기 손잡이만** 건드린다.
 
-    조합에서 뒤 재료가 앞 재료의 결과를 지우면 둘 다 미발화가 된다(예전엔 HEAVY_TAIL 이
+    조합에서 뒤 재료가 앞 재료의 결과를 지우면 둘 다 미발화가 된다(예전엔 꼬리 재료가
     mean 을 CENTER 로 되돌려 MEAN_SHIFT 를 통째로 지웠다). 그래서 산포·중심·spike 를
     각각 독립 키로만 쓰고, 값 범위는 **그 시점 meta 의 limit** 에서 유도한다
     (CODE 처럼 스케일이 다른 항목과 섞여도 목표 지표가 성립한다).
@@ -982,12 +1069,14 @@ def _ing(name, lv, plan, fails, meta):
             with_tune(plan, lambda pl, m: pl.update(mean=m),
                       lambda v: -(m_center_bias(v, lo, hi) or 0.0), -MEANSHIFT_T[i],
                       center - width * 0.49, center)
-    elif name == "HEAVYTAIL":
+    elif name == "USLTAIL":
         # 연속 꼬리(scale mixture) — `_kurt_plan` 과 같은 구조를 얹는다. 기준 산포는
-        # 좁게 유지해야 꼬리가 limit 을 넘는다.
-        base = _kurt_plan(KURT_T[i], sigma=min(plan.get("sigma", 0.05), 0.06))
+        # 좁게 유지해야 꼬리가 limit 을 넘는다. 꼬리는 **상한 쪽으로만** 접는다 —
+        # 대칭이면 양쪽이 함께 두꺼워져 BIDIR_TAIL 로 합쳐진다(2026-08-19).
+        base = _kurt_plan(KURT_T[i], sigma=min(plan.get("sigma", 0.05), 0.06), side="high")
         plan["comps"] = base["comps"]
         plan["kind"] = "mixture"
+        plan["tail_side"] = "high"
         plan.pop("bounded", None)
         plan.setdefault("tune", []).extend(base["tune"])   # 앞 재료의 역산을 지우지 않는다
     elif name == "SUBPOP":
@@ -1006,8 +1095,6 @@ def _ing(name, lv, plan, fails, meta):
         meta.update(lsl=None if i >= 2 else LSL, usl=None if i >= 1 else USL)
     elif name in ("E1", "EDGE", "CENTER", "RING"):
         fails.update(pattern=name.lower(), count=_spatial_n(i), share=REGION_SHARE_T[i])
-    elif name == "CLUSTER":
-        fails.update(pattern="quadrant", count=80, share=_quadrant_share(CLUSTER_T[i]))
     elif name == "SPOT":
         fails.update(pattern="spot", count=_spatial_n(i), share=SPOT_R_T[i])
     elif name == "GROSS":
@@ -1017,29 +1104,28 @@ def _ing(name, lv, plan, fails, meta):
 
 
 ING_SIG = {"OUTLIER": "OUTLIER",
-           "MEANSHIFT": "MEAN_SHIFT", "HEAVYTAIL": "HEAVY_TAIL", "SUBPOP": "BIMODALITY",
+           "MEANSHIFT": "MEAN_SHIFT", "USLTAIL": "USL_TAIL", "SUBPOP": "BIMODALITY",
            "CODERAIL": "CODE_RAIL", "CONSTANT": "CONSTANT_VALUE",
            "MISSLIMIT": "MISSING_LIMIT", "EDGE": "EDGE_FAIL", "CENTER": "CENTER_FAIL",
-           "RING": "RING_FAIL", "SPOT": "SPOT_CLUSTER",
-           "CLUSTER": "CLUSTER_FAIL", "GROSS": "GROSS_FAIL",
+           "RING": "RING_FAIL", "SPOT": "SPOT_FAIL", "GROSS": "GROSS_FAIL",
            "E1": "E1_FAIL"}
 
 # 재료 적용 순서 — 이름을 준 순서와 무관하게 이 순서로 얹는다. 순서에 따라 뒤 재료가 앞
 # 재료의 결과를 지우면(예: 산포를 정한 뒤 mixture 로 갈아끼우면) 둘 다 미발화가 된다.
 ING_ORDER = {"CONSTANT": 0, "CODERAIL": 1, "SUBPOP": 3,
-             "MEANSHIFT": 4, "OUTLIER": 5, "HEAVYTAIL": 5, "MISSLIMIT": 6,
-             "E1": 7, "EDGE": 7, "CENTER": 7, "RING": 7, "CLUSTER": 7, "SPOT": 7,
+             "MEANSHIFT": 4, "OUTLIER": 5, "USLTAIL": 5, "MISSLIMIT": 6,
+             "E1": 7, "EDGE": 7, "CENTER": 7, "RING": 7, "SPOT": 7,
              "GROSS": 7}
 # fail 행 배치는 item 당 하나만 고를 수 있다 (패턴이 서로 덮어쓴다).
-FAIL_ING = {"E1", "EDGE", "CENTER", "RING", "CLUSTER", "SPOT", "GROSS"}
+FAIL_ING = {"E1", "EDGE", "CENTER", "RING", "SPOT", "GROSS"}
 
 COMBOS = [
-    ("MEANSHIFT", "OUTLIER"), ("SUBPOP", "E1"), ("MEANSHIFT", "HEAVYTAIL"),
+    ("MEANSHIFT", "OUTLIER"), ("SUBPOP", "E1"), ("MEANSHIFT", "USLTAIL"),
     ("RING", "MEANSHIFT"), ("SPOT", "MEANSHIFT"),
-    ("CLUSTER", "MEANSHIFT"), ("CODERAIL", "MEANSHIFT"),
-    ("SUBPOP", "CENTER"), ("HEAVYTAIL", "CLUSTER"), ("MISSLIMIT", "CLUSTER"),
+    ("EDGE", "MEANSHIFT"), ("CODERAIL", "MEANSHIFT"),
+    ("SUBPOP", "CENTER"), ("USLTAIL", "RING"), ("MISSLIMIT", "EDGE"),
     ("CODERAIL", "CENTER"), ("SUBPOP", "SPOT"),
-    ("MEANSHIFT", "HEAVYTAIL", "CLUSTER"), ("MEANSHIFT", "HEAVYTAIL", "RING"),
+    ("MEANSHIFT", "USLTAIL", "E1"), ("MEANSHIFT", "USLTAIL", "RING"),
 ]
 
 
@@ -1068,7 +1154,7 @@ def combo_specs():
 # 엔진 UNIT_TO_VALUE_TYPE 은 정확일치 표라 모르는 표기는 조용히 PF(무판정)로 떨어진다.
 UNIT_AXIS = [("v", "V"), ("ma", "A"), ("khz", "Hz"), ("ohm", "Ohm"), ("ms", "Sec"),
              ("CODE", "CODE"), ("PCT", "PCT"), ("", "PF"), ("DEGC", "PF(오분류)")]
-AXIS_SCENARIOS = ["OUTLIER", "MEANSHIFT", "HEAVYTAIL", "SUBPOP"]
+AXIS_SCENARIOS = ["OUTLIER", "MEANSHIFT", "USLTAIL", "SUBPOP"]
 BIN_AXIS = [3, 4, 5, 8, 18, 31]
 
 
@@ -1129,7 +1215,7 @@ BOUNDARY = [
     ("center_bias", TH["mean_shift_warn"], [0.26, 0.285, 0.298, 0.305, 0.33, 0.40],
      lambda t: {"kind": "normal", "mean": CENTER - t * WIDTH / 2, "sigma": 0.01}, "MEAN_SHIFT"),
     ("kurtosis", TH["kurtosis_warn"], [8.0, 9.2, 9.8, 10.3, 12.0, 16.0],
-     _kurt_plan, "HEAVY_TAIL"),
+     lambda t: _kurt_plan(t, side="high"), "USL_TAIL"),
     ("code_edge_hit", TH["code_edge_hit_warn"], [0.038, 0.045, 0.049, 0.052, 0.060, 0.080],
      lambda t: _coderail_plan(0, p=t), "CODE_RAIL"),
 ]
@@ -1302,7 +1388,7 @@ def unknown_specs(count, rng: random.Random, salt: str = ""):
     cpk 가 1.33 위에 남는다(LOW_CPK 회피). 단봉 정규분포로는 불가능하다 — cpk ≥ 1.33 이면
     limit 이 4σ 밖이라 자연 초과가 5025 chip 에 0.3 개꼴이다.
 
-    ⚠ kurtosis 는 이 모양에서 10 을 넘지만 HEAVY_TAIL 은 뜨지 않는다 — 넓은 성분이
+    ⚠ kurtosis 는 이 모양에서 10 을 넘지만 꼬리 룰(USL_TAIL/LSL_TAIL)은 뜨지 않는다 — 넓은 성분이
     `tail_mass_3s` 를 밴드 상한(0.05) 위로 밀어 올리기 때문이다. 그 밴드는 원래 "다봉이라
     몸통이 갈라진 경우" 를 빼려고 둔 것인데, 여기서는 꼬리가 두꺼운 정도가 밴드를 넘는다.
 
@@ -1341,27 +1427,30 @@ def unknown_specs(count, rng: random.Random, salt: str = ""):
     return out
 
 
-MIX_POOL = ["OUTLIER", "MEANSHIFT", "HEAVYTAIL", "SUBPOP",
-            "E1", "EDGE", "CENTER", "RING", "CLUSTER", "SPOT"]
+MIX_POOL = ["OUTLIER", "MEANSHIFT", "USLTAIL", "SUBPOP",
+            "E1", "EDGE", "CENTER", "RING", "SPOT"]
 
 # **동시에 성립할 수 없는 재료 쌍** — 룰 조건이 서로 배타적이라 둘 다 발화시킬 수 없다.
 #   SUBPOP 은 outlier_ratio<3% 게이트가 있어 outlier·heavy tail 계열과 같이 못 간다.
-INCOMPATIBLE = [{"SUBPOP", "OUTLIER"}, {"SUBPOP", "HEAVYTAIL"},
-                # OUTLIER 의 spike(spec 밖, 몸통과 끊김)와 HEAVY_TAIL 의 연속 꼬리는 같은
+INCOMPATIBLE = [{"SUBPOP", "OUTLIER"}, {"SUBPOP", "USLTAIL"},
+                # OUTLIER 의 spike(spec 밖, 몸통과 끊김)와 꼬리 룰의 연속 꼬리는 같은
                 # 손잡이를 반대로 쓴다 — 끊기면 gap 이 서고 이어지면 안 선다.
-                {"OUTLIER", "HEAVYTAIL"},
+                {"OUTLIER", "USLTAIL"},
                 # OUTLIER + 공간 룰: OUTLIER 의 spike 는 spec 밖이라 **위치와 무관하게** fail 이
                 # 된다. 공간 룰은 "fail 의 95% 이상이 그 영역"(SPOT 은 좌표 몰림)이 조건이라,
                 # 무작위 위치의 spike fail 이 섞이는 순간 깨진다.
                 {"OUTLIER", "E1"}, {"OUTLIER", "EDGE"}, {"OUTLIER", "CENTER"},
-                {"OUTLIER", "RING"}, {"OUTLIER", "CLUSTER"}, {"OUTLIER", "SPOT"},
+                {"OUTLIER", "RING"}, {"OUTLIER", "SPOT"},
                 # 이봉 + 중심 치우침: 모드 재배치가 치우침을 상쇄한다.
                 {"SUBPOP", "MEANSHIFT"},
                 # 상수(전 chip spec 밖 = 전량 fail) + 공간 룰: 전부 fail 이면 특정 영역
                 # 집중이라는 개념 자체가 성립하지 않는다(비율이 항상 1.0).
-                {"CONSTANT", "EDGE"}, {"CONSTANT", "CENTER"}, {"CONSTANT", "CLUSTER"},
+                {"CONSTANT", "EDGE"}, {"CONSTANT", "CENTER"},
                 {"CONSTANT", "GROSS"}, {"CONSTANT", "E1"},
-                {"CONSTANT", "RING"}, {"CONSTANT", "SPOT"}]
+                {"CONSTANT", "RING"}, {"CONSTANT", "SPOT"},
+                # CENTER 와 SPOT 은 함께 발화하면 SPOT 이 목록에서 제거된다(hidden_by,
+                # 2026-08-19) — 겨냥해도 검증에서 "누락" 으로만 보인다.
+                {"CENTER", "SPOT"}]
 
 
 def _compatible(names) -> bool:
@@ -1410,8 +1499,8 @@ def assign_tno(specs):
 
 def build_catalog(total: int, seed: int):
     rng = random.Random(seed)
-    specs = (single_specs() + combo_specs() + axis_specs() + boundary_specs()
-             + random_specs(RANDOM_COUNT, rng))
+    specs = (single_specs() + edge_half_specs() + combo_specs() + axis_specs()
+             + boundary_specs() + random_specs(RANDOM_COUNT, rng))
     fixed = len(specs)
     rest = max(0, total - fixed)
     n_normal = min(rest, max(0, int(round(rest * 0.4))))
@@ -1468,7 +1557,7 @@ def prepare_specs(specs, n_rows):
             s["values"]["n_valid"] = int(n_rows * ratio)
         plan = resolve_tuning(s["values"], n_rows, seed, lsl, usl)
         v = synth_values(plan, n_rows, np.random.default_rng(seed), lsl, usl)
-        fires = s["level"] >= FIRE_FROM
+        fires = _fires(s)
         oos = np.zeros(n_rows, dtype=bool)
         if lsl is not None and usl is not None:
             oos = np.isfinite(v) & ((v < lsl) | (v > usl))
@@ -1497,7 +1586,8 @@ def fail_budget(s, n_rows):
     return s.get("_cost", _pattern_count(s, n_rows))
 
 
-SPATIAL_PATTERNS = {"e1", "edge", "center", "ring", "quadrant", "spot", "grad_r", "grad_x"}
+SPATIAL_PATTERNS = {"e1", "edge", "edge_top", "edge_bottom", "center", "ring",
+                    "quadrant", "spot", "grad_r", "grad_x"}
 
 
 def pack_sources(specs, n_rows, reserve=0.03):
@@ -1661,7 +1751,7 @@ def build_source_df(specs, wafer, seed):
         lsl, usl = s["lsl"], s["usl"]
         values = s["_values"].copy()               # prepare_specs 가 미리 만든 값
         oos = s["_oos"]
-        fires = s["level"] >= FIRE_FROM
+        fires = _fires(s)
         f = s["fails"]
         pattern = f.get("pattern", "random")
         free_idx = np.flatnonzero(free)
@@ -1792,6 +1882,8 @@ def measure(v, lsl, usl, fail_idx, n_rows, x, y, rnorm, xn, yn, e1=None, all_val
             bimodality=_r(m_bimodality(v)), density_gap=_r(m_density_gap(v)),
             modality_v2=m_modality_v2(v), limit_hit=_r(m_limit_hit(v, lsl, usl)),
             stdev=_r(m_std(v)), tail_mass_3s=_r(m_tail_mass(v)),
+            tail_mass_3s_high=_r(m_tail_mass(v, "high")),
+            tail_mass_3s_low=_r(m_tail_mass(v, "low")),
             spec_margin_min=_r(_spec_margin_min(v, lsl, usl)),
             limit_missing=int(lsl is None or usl is None))
     if fail_idx.size:
@@ -1921,13 +2013,14 @@ def write_answer_key(out_dir: Path, sources):
                       "kurtosis": "kurtosis_warn", "code_edge_hit": "code_edge_hit_warn",
                       "fail_mad_min": "outlier_fail_mad_min",
                       "fail_pass_gap_sigma": "outlier_fail_gap_sigma_min",
-                      "fail_spread_norm": "spot_cluster_spread_max",
+                      "fail_spread_norm": "spot_fail_spread_max",
                       "tail_mass_3s": "heavy_tail_mass_min",
+                      "tail_mass_3s_high": "heavy_tail_mass_min",
+                      "tail_mass_3s_low": "heavy_tail_mass_min",
                       "e1_fail_share": "region_fail_share_min",
                       "edge_fail_share": "region_fail_share_min",
                       "center_fail_share": "region_fail_share_min",
                       "ring_fail_share": "region_fail_share_min",
-                      "quadrant_imbalance": "quadrant_imbalance_warn",
                       "gradient_norm_abs_max": "gradient_norm_warn",
                       "yield": "gross_yield_bad", "n_dut": "n_min",
                       "skewness": "skew_warn", "site_cpk_delta": "site_cpk_delta_warn",
@@ -2050,19 +2143,30 @@ def live_enabled_ids(args) -> set:
 
 
 def suppressor_map(args) -> dict:
-    """{signature id: [나를 지우는 id ...]} — signatures.yaml 의 suppressed_by 선언.
+    """{signature id: [나 대신 뜬 id ...]} — 발화했는데 **목록에 안 남는** 사유 전부.
 
-    "조건은 맞았는데 더 구체적인 룰에 눌려 목록에서 빠진" 경우를 누락으로 세지 않기 위해
-    필요하다(예: OUTLIER 가 뜨면 LOW_CPK 는 primary 를 양보한다).
+    세 관계를 한 표로 합친다(2026-08-19):
+      suppressed_by  목록에는 남고 primary 만 양보 (예: OUTLIER 가 뜨면 LOW_CPK 양보)
+      hidden_by      함께 뜨면 목록에서 제거      (SPOT_FAIL ← CENTER_FAIL)
+      replaces       모두 뜨면 대체 발화          (BIDIR_TAIL ← USL_TAIL+LSL_TAIL)
+    셋 다 "조건은 맞았는데 최종 목록에 없다" 로 나타나므로, 누락으로 세지 않으려면
+    한 표에 있어야 한다. `replaces` 는 방향이 반대라(선언한 쪽이 남는다) 뒤집어 담는다.
     """
     from web_report import eval_debug
-    out = {}
-    for s in eval_debug.signatures_scoped(args.product_type, args.family):
-        raw = s.get("suppressed_by") or []
+
+    def _ids(raw):
         if isinstance(raw, str):
             raw = [raw]
-        if raw:
-            out[str(s.get("id"))] = [str(v) for v in raw]
+        return [str(v) for v in (raw or []) if v]
+
+    out: dict = {}
+    for s in eval_debug.signatures_scoped(args.product_type, args.family):
+        sig_id = str(s.get("id"))
+        for key in ("suppressed_by", "hidden_by"):
+            for v in _ids(s.get(key)):
+                out.setdefault(sig_id, []).append(v)
+        for target in _ids(s.get("replaces")):        # target 이 사라지고 sig_id 가 남는다
+            out.setdefault(target, []).append(sig_id)
     return out
 
 
@@ -2097,7 +2201,8 @@ def verify(out_dir: Path, answer_rows, args):
                 observed[s] = observed.get(s, 0) + 1
         elif r["expect"] == "fire":
             missing = [s for s in want_fireable if s not in fired_all]
-            # 조건은 맞았지만 더 구체적인 룰에 눌린 것(suppressed_by)은 누락이 아니다.
+            # 조건은 맞았지만 다른 룰에 눌리거나(suppressed_by) 목록에서 빠진 것
+            # (hidden_by / replaces)은 누락이 아니다.
             suppressed = [s for s in missing
                           if any(b in fired_all for b in suppressors.get(s, []))]
             missing = [s for s in missing if s not in suppressed]
@@ -2149,7 +2254,8 @@ def verify(out_dir: Path, answer_rows, args):
     print(f"  겨냥한 룰이 의도대로     : {stat['ok']}/{total}")
     print(f"  2~5단계인데 미발화(누락) : {stat['miss']}건  ← 0 이어야 정상")
     print(f"  1단계인데 발화(오발화)   : {stat['false_fire']}건  ← 0 이어야 정상")
-    print(f"  조건은 맞았으나 억제됨   : {stat['suppressed']}건 (suppressed_by — 정상 동작)")
+    print(f"  조건은 맞았으나 억제됨   : {stat['suppressed']}건 "
+          "(suppressed_by / hidden_by / replaces — 정상 동작)")
     print(f"  정상군 오탐(item)        : {stat['normal_fp']}건  ← 0 이어야 정상")
     print(f"  UNKNOWN(미분류) 표식     : {stat['unknown']}건 — 아무 룰도 안 뜬 케이스")
     print(f"  겨냥 밖 동반발화         : {stat['cofire']}건 (지표가 상관된 룰은 구조상 함께 뜬다)")
@@ -2359,7 +2465,8 @@ def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT, seed: int = 
     한 장에 들어간다. 그래도 예산(행의 90%)을 넘으면 비싼 것부터 뺀다.
     반환: (담은 specs, 제외 [(item, 필요 fail 수)], 사용한 fail 행 수)
     """
-    pool = [s for s in single_specs() if not (set(s["intent"]) & CSV_EXCLUDE)]
+    pool = [s for s in single_specs() + edge_half_specs()
+            if not (set(s["intent"]) & CSV_EXCLUDE)]
     pool += random_specs(random_count, random.Random(seed), salt=str(seed))
     # 미분류군은 관찰군과 **다른 난수열**을 쓴다 — 같은 rng 를 이어 쓰면 관찰군 개수를
     # 바꿀 때마다 미분류군 표본까지 통째로 바뀌어 재현이 어긋난다.

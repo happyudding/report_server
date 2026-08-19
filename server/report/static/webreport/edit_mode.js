@@ -543,12 +543,107 @@ document.getElementById("btnDel").addEventListener("click", () => {
   if (confirm("정말 삭제하시겠습니까?")) doDelete("");
 });
 
-// 세션 정보 수정 — 편집 UI 는 Honey 앱(업로드 다이얼로그 재사용)에만 있다.
+// 세션 정보 수정 — 편집 UI 는 원래 Honey 앱(업로드 다이얼로그 재사용)에만 있었다.
 // Honey 안에서는 이 이동을 내장 브라우저가 가로채 취소하고(honey_main._browser_leave_guard)
-// 편집창을 띄우므로 실제 요청은 나가지 않는다. 웹에서는 기존 Honey 전용 기능 안내를 띄운다.
+// 편집창을 띄우므로 실제 요청은 나가지 않는다.
+// Honey 밖에서는 master(admin 로그인) 만 아래 웹 폼으로 고칠 수 있다 — 관리자가 남의 세션
+// 메타를 바로잡으려고 그 사람의 Honey 를 빌려야 했다. 그 외에는 종전대로 안내만 띄운다.
 document.getElementById("btnMetaEdit").addEventListener("click", () => {
-  if (IDENTITY_SRC !== "honey") { try { HoneyHint.open(); } catch (e) {} return; }
-  location.href = `/pe/report/honey/session_meta/${SESSION_ID}`;
+  if (IDENTITY_SRC === "honey") {
+    location.href = `/pe/report/honey/session_meta/${SESSION_ID}`;
+    return;
+  }
+  if (IS_MASTER) { openMetaEdit(); return; }
+  try { HoneyHint.open(); } catch (e) {}
+});
+
+// 현재 값은 GET /session/<sid> 로 **다시 읽는다** — DATA.session 에는 STEP 이 없다
+// (webreport_options JSON 안에 있고, 그 라우트만 webreport_step 으로 풀어 준다).
+async function openMetaEdit() {
+  const err = document.getElementById("metaEditErr");
+  err.hidden = true;
+  let cur = (DATA && DATA.session) || {};
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}`);
+    if (res.ok) cur = await res.json();
+  } catch (e) { /* 못 읽으면 화면에 이미 있는 값으로 채운다 */ }
+  document.getElementById("metaName").value = cur.file_name || "";
+  document.getElementById("metaProduct").value = cur.product || "";
+  document.getElementById("metaLot").value = cur.lot_id || "";
+  document.getElementById("metaProcess").value = cur.process || "";
+  document.getElementById("metaStep").value = cur.webreport_step || "";
+  await fillMetaFamily(cur.product_type || "", cur.family_product || "");
+  fillMetaProductList();
+  document.getElementById("metaEditModal").classList.add("show");
+  document.getElementById("metaName").focus();
+}
+
+// Family 선택지의 정본은 eval 엔진 taxonomy(서버 /api/family_products) 다 — 여기에 목록을
+// 복제하면 eval ingest 가 거부하는 조합을 화면이 권하게 된다. 못 받아도 폼은 열려야 하므로
+// (이름·LOT 수정까지 막히면 안 된다) 현재 값 하나만 남기고 넘어간다.
+async function fillMetaFamily(productType, current) {
+  let families = [];
+  try {
+    const res = await fetch("/pe/report/api/family_products?product_type="
+                            + encodeURIComponent(productType));
+    if (res.ok) families = (await res.json()).families || [];
+  } catch (e) { /* 폴백: 현재 값만 */ }
+  if (current && families.indexOf(current) < 0) families = [current].concat(families);
+  document.getElementById("metaFamily").innerHTML = families.map(f =>
+    `<option value="${esc(f)}"${f === current ? " selected" : ""}>${esc(f)}</option>`).join("");
+}
+
+// Product 후보(기준정보 part_id) — 오타로 product_info lookup 이 빗나가면 기준정보 14컬럼이
+// 비워지므로 Honey 편집창과 같이 자동완성을 붙인다. 목록은 세션당 한 번만 받는다.
+let _metaProductIds = null;
+async function fillMetaProductList() {
+  if (_metaProductIds === null) {
+    try {
+      const res = await fetch("/pe/report/api/part_ids");
+      _metaProductIds = res.ok ? ((await res.json()).part_ids || []) : [];
+    } catch (e) { _metaProductIds = []; }
+  }
+  document.getElementById("metaProductList").innerHTML =
+    _metaProductIds.map(p => `<option value="${esc(p)}"></option>`).join("");
+}
+
+document.getElementById("metaEditCancel").addEventListener("click", () => {
+  document.getElementById("metaEditModal").classList.remove("show");
+});
+
+document.getElementById("metaEditSave").addEventListener("click", async () => {
+  const btn = document.getElementById("metaEditSave");
+  const err = document.getElementById("metaEditErr");
+  const body = {
+    file_name: document.getElementById("metaName").value.trim(),
+    family_product: document.getElementById("metaFamily").value,
+    product: document.getElementById("metaProduct").value.trim(),
+    lot_id: document.getElementById("metaLot").value.trim(),
+    process: document.getElementById("metaProcess").value.trim(),
+    step: document.getElementById("metaStep").value.trim(),
+  };
+  if (!body.file_name || !body.product || !body.lot_id) {
+    err.textContent = "Session 이름 · Product · LOT ID 는 비울 수 없습니다.";
+    err.hidden = false;
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/meta`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify(body),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    // product 가 바뀌면 기준정보 14컬럼까지 갈리고 report 캐시 키도 함께 바뀐다 —
+    // 부분 갱신하지 않고 다시 그린다.
+    location.reload();
+  } catch (e) {
+    err.textContent = "저장 실패: " + e.message;
+    err.hidden = false;
+    btn.disabled = false;
+  }
 });
 
 document.getElementById("btnSaveComment").addEventListener("click", () => { saveNow(); });

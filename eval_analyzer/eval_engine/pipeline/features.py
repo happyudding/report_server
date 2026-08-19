@@ -32,9 +32,12 @@ _FEATURE_KEYS = [
     "fail_mad_min", "fail_pass_gap_sigma", "fail_robust_z_max", "fail_body_jump_ratio",
     # 공간 룰 판정용 — 전체 fail 중 그 영역이 차지하는 **점유율**
     "edge_fail_share", "center_fail_share", "ring_fail_share",
-    # fail 좌표 몰림도(SPOT_CLUSTER) · 꼬리 질량(HEAVY_TAIL) ·
+    # fail 좌표 몰림도(SPOT_FAIL) · 꼬리 질량(USL_TAIL/LSL_TAIL) ·
     # CODE 레일 상/하단 분리(CODE_RAIL evidence)
     "fail_spread_norm", "tail_mass_3s", "rail_low_ratio", "rail_high_ratio",
+    # 꼬리 질량의 **방향 분해**(2026-08-19) — USL_TAIL/LSL_TAIL 이 이것으로 갈린다.
+    # tail_mass_3s 는 |z|>3 이라 어느 쪽 꼬리인지 알 수 없어 조치를 못 가른다.
+    "tail_mass_3s_high", "tail_mass_3s_low",
     # 파생(DB 미저장): E1(최외곽 1 chip line) 집중도 · 모멘트 왜도
     "e1_fail_ratio", "skewness_moment",
     # E1_FAIL 판정용 점유율 — v9 저장 대상
@@ -541,21 +544,21 @@ def _classify_zone(spatial, th):
     """공간 feature → wafer_zone_signature. 앞에서 걸리는 것이 이긴다.
 
     E1(최외곽 한 줄) → EDGE(가장자리 밴드) → CENTER(중앙 편중) → RING(중간 밴드) →
-    SPOT(국부 뭉침) → CLUSTER(사분면 불균형) 순으로 보고, 아무 것도 임계를 넘지 못하면 RANDOM.
+    SPOT(국부 뭉침) 순으로 보고, 아무 것도 임계를 넘지 못하면 RANDOM.
     **공간 룰과 같은 기준(share)을 쓴다** — 이 라벨과 발화 룰이 갈라지면 같은 화면에서
-    "zone 은 RANDOM 인데 EDGE_FAIL 이 떴다" 같은 모순이 보인다.
+    "zone 은 RANDOM 인데 EDGE_FAIL 이 떴다" 같은 모순이 보인다. 그래서 CLUSTER(사분면
+    불균형) 라벨은 `CLUSTER_FAIL` 룰이 삭제되면서 함께 뺐다(2026-08-19) — 라벨만 남기면
+    "zone 은 CLUSTER 인데 그런 룰이 없다" 가 된다. `quadrant_imbalance` 는 참고 지표로 계속
+    계산·저장한다.
     """
-    quad = spatial.get("quadrant_imbalance")
     spread = spatial.get("fail_spread_norm")
     for name, key in (("E1", "e1_fail_share"), ("EDGE", "edge_fail_share"),
                       ("CENTER", "center_fail_share"), ("RING", "ring_fail_share")):
         share = spatial.get(key)
         if share is not None and share >= th["region_fail_share_min"]:
             return name
-    if spread is not None and spread <= th["spot_cluster_spread_max"]:
+    if spread is not None and spread <= th["spot_fail_spread_max"]:
         return "SPOT"
-    if quad is not None and quad >= th["quadrant_imbalance_warn"]:
-        return "CLUSTER"
     return "RANDOM"
 
 
@@ -651,6 +654,12 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     # "평소엔 얌전한데 가끔 크게 튄다" 는 그 사이 밴드(1~5%)에 있다.
     tail_mass_3s = (None if modified_z is None
                     else float(np.mean(np.abs(modified_z) > 3.0)))
+    # 방향 분해 — 상한(USL) 쪽 / 하한(LSL) 쪽 꼬리 질량. 두 값의 합이 tail_mass_3s 다.
+    # 조치가 방향마다 다르므로(상방 spike vs 하방 처짐) 룰도 방향으로 갈라 발화한다.
+    tail_mass_3s_high = (None if modified_z is None
+                         else float(np.mean(modified_z > 3.0)))
+    tail_mass_3s_low = (None if modified_z is None
+                        else float(np.mean(modified_z < -3.0)))
 
     mean = _memo("mean", lambda: float(v.mean()))
     stdev = raw_metrics.get("stdev")
@@ -737,6 +746,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         fail_mad_min = fail_pass_gap_sigma = fail_robust_z_max = None
         fail_body_jump_ratio = None
         tail_mass_3s = rail_low_ratio = rail_high_ratio = None
+        tail_mass_3s_high = tail_mass_3s_low = None
 
     return {
         "spread_norm": spread_norm, "skewness": skewness, "kurtosis": kurtosis,
@@ -752,5 +762,6 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         "fail_mad_min": fail_mad_min, "fail_pass_gap_sigma": fail_pass_gap_sigma,
         "fail_body_jump_ratio": fail_body_jump_ratio,
         "fail_robust_z_max": fail_robust_z_max, "tail_mass_3s": tail_mass_3s,
+        "tail_mass_3s_high": tail_mass_3s_high, "tail_mass_3s_low": tail_mass_3s_low,
         "rail_low_ratio": rail_low_ratio, "rail_high_ratio": rail_high_ratio,
     }

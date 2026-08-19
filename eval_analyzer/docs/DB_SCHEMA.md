@@ -208,6 +208,9 @@ CREATE TABLE IF NOT EXISTS features (
     -- 공간(wafer)
     edge_fail_ratio REAL, center_fail_ratio REAL, radial_gradient REAL,
     quadrant_imbalance REAL, x_gradient REAL, y_gradient REAL, wafer_zone_signature TEXT,
+    -- v10 (2026-08-19): 꼬리 질량의 방향 분해. USL_TAIL/LSL_TAIL 의 원재료다
+    -- (판정 밴드는 계속 양쪽 합 tail_mass_3s 에 걸리고, 이 둘은 방향 비중만 정한다).
+    tail_mass_3s_high REAL, tail_mass_3s_low REAL,
     -- 기타
     n_dut INTEGER, site_cpk_delta REAL, code_edge_hit REAL,
     -- v5/v6: shot_fail_ratio(미사용·항상 NULL), ring_fail_ratio,

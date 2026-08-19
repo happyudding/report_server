@@ -246,20 +246,22 @@ def test_schema_user_version_and_objects(fresh_db):
         feat_cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
         assert {"shot_fail_ratio", "ring_fail_ratio", "radial_gradient_norm",
                 "x_gradient_norm", "y_gradient_norm", "n_modes", "modality_v2"} <= feat_cols
-        # v9 — 룰 판정 기준값
+        # v9 — 룰 판정 기준값 / v10 — 방향별 꼬리 질량(USL_TAIL·LSL_TAIL)
         assert set(store._V9_FEATURE_COLS) <= feat_cols
+        assert set(store._V10_FEATURE_COLS) <= feat_cols
 
 
 def test_save_features_persists_rule_criteria(fresh_db):
     """v9 판정지표가 실제로 **저장·조회**된다 — 컬럼만 만들고 화이트리스트에 안 넣으면
     영원히 NULL 인 함정(shot_fail_ratio 전례)을 잡는다."""
     f = {k: None for k in features_module._FEATURE_KEYS}
-    values = {c: 0.1 * (i + 1) for i, c in enumerate(store._V9_FEATURE_COLS)}
+    cols = (*store._V9_FEATURE_COLS, *store._V10_FEATURE_COLS)
+    values = {c: 0.1 * (i + 1) for i, c in enumerate(cols)}
     f.update(n_dut=60, **values)
     with store.get_conn() as conn:
         store.save_features("C_V9", 1, "ev1", f, conn=conn)
         row = conn.execute(
-            f"SELECT {','.join(store._V9_FEATURE_COLS)} FROM features WHERE case_id=?",
+            f"SELECT {','.join(cols)} FROM features WHERE case_id=?",
             ("C_V9",)).fetchone()
         for col, want in values.items():
             assert row[col] == pytest.approx(want), (col, row[col], want)

@@ -93,7 +93,7 @@ def test_pf_case_fires_unknown_with_unit_in_note():
 def test_unknown_reason_priority(kw, feats_kw, expect):
     """사유는 우선순위대로 하나만 — PF > limit 없음 > 표본 부족 > 조건 미달.
 
-    사유 판정 함수를 직접 부른다 — MISSING_LIMIT·LOW_SAMPLE_UNCERTAIN 룰이 켜져 있으면
+    사유 판정 함수를 직접 부른다 — MISSING_LIMIT 같은 룰이 켜져 있으면
     그 케이스는 애초에 UNKNOWN 까지 오지 않으므로(그게 정상), evaluate 경유로는 배포
     on/off 에 따라 결과가 갈린다.
     """

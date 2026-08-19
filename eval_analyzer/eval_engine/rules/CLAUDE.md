@@ -82,13 +82,27 @@ signatures:
 - signature 추가 시 체크: (1) status.py `SPECIFICITY_ORDER` 에 id 추가, (2) 필요한 임계값 키를 thresholds 에 추가.
 - **현상 5축 체계(2026-08-12)** — 중심 / 산포·여유 / 형태 / 공간 / 데이터품질. 축당 primary
   하나만 두고 같은 현상의 약한 통계는 `suppressed_by` 로 **primary 를 양보**한다
-  (`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]`, `HEAVY_TAIL ← [OUTLIER]`).
+  (`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]`, `USL_TAIL`/`LSL_TAIL` `← [OUTLIER]`).
   결과 지표(cpk)는 원인 룰이 있으면 primary 가 되지 않는다. 배경은
   [../../../docs/13 §16](../../../docs/13_eval_analyzer_integration.md).
   ⚠ **`suppressed_by` 는 목록에서 지우지 않는다**(2026-08-13 의미 변경). 지우던 시절에는
   "cpk 도 낮고 outlier 도 있다" 가 한 줄로만 보여 나머지를 볼 수 없었다. 지금은
   `signatures._apply_suppression` 이 `demoted_by` 를 달고 `status.decide` 가 primary
   후보에서만 뺀다 — 발화 목록·Signature 컬럼에는 둘 다 남는다.
+- **룰 사이의 관계는 3종**이다(2026-08-19 에 둘이 늘었다). 셋 다 yaml 선언이고 엔진은
+  `signatures.evaluate` 에서 **대체 → 제거 → 양보** 순으로 적용한다(순서를 바꾸면 이미
+  사라진 발화가 남은 발화를 눌러 아무도 primary 가 아닌 상태가 생긴다):
+
+  | 선언 | 뜻 | 배포 룰 |
+  |---|---|---|
+  | `suppressed_by: [A]` | A 가 함께 뜨면 **primary 만 양보**(목록에는 남는다) | `LOW_CPK` · `USL_TAIL`/`LSL_TAIL` |
+  | `hidden_by: [A]` | A 가 함께 뜨면 **목록에서 통째로 제거** | `SPOT_FAIL ← [CENTER_FAIL]` |
+  | `replaces: [A, B]` | A·B 가 **모두** 뜨면 그것들을 지우고 이 룰이 대신 발화 | `BIDIR_TAIL ← [USL_TAIL, LSL_TAIL]` |
+
+  ⚠ `hidden_by`/`replaces` 로 사라진 발화는 **화면 어디에도 남지 않는다** — 사유는
+  `/pe/eval` 트레이스에만 있다(`eval_debug._signature_matrix` 의 branch_note). 새 선언을
+  추가할 때는 "정말로 정보가 0 인가" 를 먼저 보라. 참조 무결성(없는 id·자기참조·상호참조)은
+  `rules_io.validate_all` 이 검사한다.
 - **`when_metric` 값은 문자열 하나 또는 조건 목록(AND)** 이다(2026-08-13). 같은 지표에
   상·하한을 함께 거는 밴드용 — `tail_mass_3s: [">=heavy_tail_mass_min", "<=heavy_tail_mass_max"]`.
   엔진 `_eval_condition` / 패널 `rules_io._validate_condition` / 트레이스
@@ -120,25 +134,37 @@ signatures:
   - `SUBPOP_GAP` → **`BIMODALITY`** 개명(누적 DB 는 1회 마이그레이션으로 치환 —
     `server/tools/migrate_bimodality_rename.py`).
   - `kurtosis_warn` 2.0 → 8.0 (2.0 은 정상 산포에도 붙었다).
-- **공간 존은 E1/EDGE/CENTER/RING + SPOT_CLUSTER + CLUSTER_FAIL** — `E1_FAIL` 은 최외곽
+- **공간 존은 E1/EDGE/CENTER/RING + SPOT_FAIL** — `E1_FAIL` 은 최외곽
   1 chip line(각 줄의 양끝 die, `features._e1_mask`)이고 EDGE·RING 은 **E1 을 뺀** 영역이다.
   존 4종의 판정 기준은 **점유율** `*_fail_share ≥ region_fail_share_min`(0.95, 공용) —
   "전체 fail 중 그 영역이 몇 %를 가졌나". `*_fail_ratio`(밀도 배수)는 evidence 참고값이다.
-  - `SPOT_CLUSTER`(2026-08-13 신설) = `fail_spread_norm ≤ 0.25` — fail 무게중심 기준 RMS
+  - `SPOT_FAIL`(2026-08-13 신설, 2026-08-19 개명 — 구 `SPOT_CLUSTER`)
+    = `fail_spread_norm ≤ spot_fail_spread_max`(0.25) — fail 무게중심 기준 RMS
     거리/웨이퍼 반경. **위치·모양과 무관**하게 "서로 붙어 있나" 만 본다.
+    ⚠ `CENTER_FAIL` 과 함께 뜨면 **목록에서 빠진다**(`hidden_by`) — 중심부 뭉침은 두 룰이
+    구조적으로 같이 뜨는데 같은 사실을 두 번 말하는 셈이라 사용자가 CENTER 만 요구했다.
     ⚠ `RING_FAIL` 은 같은 임계로 **반대 부호** 조건(`> 0.25`)을 함께 건다(2026-08-14) —
     ring 밴드가 die 의 절반이라 국부 blob 이 거기 놓이면 점유율 1.0 이 되고, RING 이
     `SPECIFICITY_ORDER` 에서 앞이라 primary 까지 가져갔다(SPOT 겨냥 L2~L5 전부). 두 룰이
     **같은 키를 공유**해야 "둘 다 발화"/"둘 다 미발화" 틈이 안 생긴다.
     실측: RING 겨냥 0.593~0.619 / SPOT 겨냥 0.094~0.211.
-  - `CLUSTER_FAIL` = 사분면 불균형. ⚠ **축에 걸친 뭉침을 놓친다** — 같은 blob 이 사분면
-    한가운데면 4.00, x축 경계면 2.20 이었다. 그래서 `quadrant_imbalance` 는 **0°·45° 두
-    격자의 max** 로 잰다(그래도 원점 근처 뭉침은 CENTER_FAIL·SPOT_CLUSTER 몫).
+  - (`CLUSTER_FAIL`(사분면 불균형)은 **2026-08-19 삭제**. 사분면 격자는 실제 결함 모양과
+    무관한 인공 경계라 같은 blob 이 위치만 달라져도 값이 반토막 났고(축 경계 2.20 vs
+    한가운데 4.00), 45° 격자 보완을 넣어도 원점 근처 뭉침은 다른 룰 몫이었다.
+    임계값 `quadrant_imbalance_warn` 도 함께 지웠다 — 지표 `quadrant_imbalance` 는
+    evidence·참고용으로 계속 계산·저장한다.)
+- **꼬리는 방향으로 갈린다** — `USL_TAIL`(상한 쪽) / `LSL_TAIL`(하한 쪽), 2026-08-19 에
+  구 `HEAVY_TAIL` 을 나눈 것이다. ⚠ **판정 밴드는 계속 `tail_mass_3s`(양쪽 합)에 건다** —
+  방향별 질량에 걸면 대칭 분포의 판정 범위가 두 배가 되어(총 8% = 한쪽 4%) 밴드 상한 5%
+  로 일부러 제외했던 "몸통이 벌어진" 항목이 통째로 발화한다(실측: UNKNOWN 겨냥 5건 전부).
+  방향은 파생값 `tail_side_share_high/low`(그 방향이 가진 꼬리 질량 몫, `build_ctx_values`
+  가 주입 — DB 미저장) ≥ `tail_side_share_min`(0.2)로만 가른다. 원재료
+  `tail_mass_3s_high`/`_low` 는 eval.db **v10** 컬럼이다.
 - **이산(CODE) 값의 BIMODALITY 는 빈 계단 ≥2 를 요구한다**(2026-08-13) — 계단으로 그린
   정규분포는 이산이라 울퉁불퉁한 것이지 이봉이 아니다. 진짜로 갈라졌다면 **레벨 자체가
   비어 있는 구간**이 생긴다(`features._grid_empty_levels`).
 - ⚠ **임계값을 그 지표의 상한 위로 두면 그 룰은 영원히 침묵한다.** 밀도 배수형 공간 지표의
-  상한은 `1/영역면적비`(edge≈2.8, center≈11, ring≈1.8, quadrant≤4)라 룰마다 임계를 공유할 수
+  상한은 `1/영역면적비`(edge≈2.8, center≈11, ring≈1.8)라 룰마다 임계를 공유할 수
   없었고 ring 은 아예 도달 불가였다 — 공간 4종을 점유율로 갈아탄 이유다. 비모수
   왜도(`skewness`)의 상한 1.0 도 같은 부류(그래서 TAIL_RISK 는 `skewness_moment` 로 갈아탔다).
 - ⚠ **점유율 판정은 fail 이 적으면 우연에 흔들린다** — fail 6개면 무작위 배치라도 한 영역에

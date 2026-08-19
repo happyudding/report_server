@@ -8,14 +8,6 @@
 #   이 파일은 그 트리가 덮기 전의 **기준값**이다.
 version: ev1
 signatures:
-  - id: LOW_SAMPLE_UNCERTAIN
-    enabled: false
-    when_metric: { n_dut: "<n_min"}
-    status_hint: MONITOR
-    phenomenon_ko : "샘플 수가 부족해 판정 신뢰도가 낮은 상태입니다"
-    action_ko: "샘플 수 부족으로 판정 신뢰도 낮음 - 추가 wafer/lot data 확보 후 재판정 필요"
-    evidence: ["n_dut {n_dut}"]
-
   - id: MISSING_LIMIT
     enabled: false
     when_metric: { limit_missing: ">0"}
@@ -124,10 +116,16 @@ signatures:
     # 종전엔 WIDE_DISTRIBUTION 의 극단 구간이라 억제했는데, 그 룰이 삭제되면서
     # 억제 선언도 함께 걷었다(2026-08-13 재활성화 — 양방향 초과는 조치가 다르다).
     when_metric: { spec_margin_low: "<spec_margin_warn", spec_margin_high: "<spec_margin_warn" }
+    # `replaces` — 나열한 signature 가 **모두** 발화하면 그것들을 목록에서 지우고 이 룰이
+    # 대신 발화한다(자기 when_metric 이 성립하지 않아도 발화한다). 양쪽 꼬리가 함께
+    # 두꺼운 것은 "USL 쪽 문제 + LSL 쪽 문제" 두 건이 아니라 **분포가 양방향으로 퍼진**
+    # 한 건이고, 한쪽 방향 조치로는 해결되지 않는다(2026-08-19 사용자 요청).
+    replaces: [USL_TAIL, LSL_TAIL]
     status_hint: MAJOR
-    phenomenon_ko : "양쪽 spec margin 이 모두 부족한 상태입니다."
-    action_ko: "양쪽 spec 모두 근접 — 분포 폭이 spec 대비 과대, 공정/설계 재검토"
-    evidence: ["spec_margin_low {spec_margin_low}", "spec_margin_high {spec_margin_high}"]
+    phenomenon_ko : "분포가 양방향(USL·LSL 양쪽)으로 벗어나 있습니다."
+    action_ko: "양방향 모두 이상(양쪽 spec 근접 또는 양쪽 꼬리 과대) — 한쪽 방향 조치로 해결되지 않음, 분포 폭·센터링을 함께 재검토"
+    evidence: ["spec_margin_low {spec_margin_low}", "spec_margin_high {spec_margin_high}",
+               "tail_mass_3s_low {tail_mass_3s_low}", "tail_mass_3s_high {tail_mass_3s_high}"]
 
   - id: LOW_CPK
     when_metric: { cpk: "<cpk_warn" }
@@ -162,21 +160,9 @@ signatures:
     action_ko: "wafer 중심부 불량 집중 — center 공정(증착/CMP 등) 점검"
     evidence: ["center_fail_share {center_fail_share}", "center_fail_ratio {center_fail_ratio}", "fail_count {fail_count}"]
 
-  - id: CLUSTER_FAIL
-    # 존(E1/EDGE/CENTER/RING)으로 설명되지 않는 **국부 편중**을 잡는 룰 — 사분면 fail 률의
-    # (최대-최소)/평균 이다. fail_count 가드 없이 켰을 때는 fail 이 1~2개만 있어도 편중이
-    # 항상 성립해 fail case 의 87% 를 덮었다(2026-08-12 실측 2594/2985). 가드 + 임계
-    # 1.0→2.5 상향(상한 4)으로 국부 결함·scratch 수준만 남긴다.
-    when_metric: { quadrant_imbalance: ">quadrant_imbalance_warn",
-                   fail_count: ">spatial_fail_count_min" }
-    status_hint: MAJOR
-    phenomenon_ko : "특정 영역에 불량이 편중되어 있습니다."
-    action_ko: "특정 영역 불량 편중 — 국부 결함/handler/scratch 확인"
-    evidence: ["quadrant_imbalance {quadrant_imbalance}"]
-
   # CODE(이산) 항목 전용 — 2026-08-13 활성화. 이산값은 "울퉁불퉁한 것" 자체가 정상이라
   # 분포 모양 룰로는 잡을 것이 없고, **레일(min/max)에 처박히는 것**이 실제 불량 신호다.
-  # 나머지(꼬리·치우침·산포)는 HEAVY_TAIL·MEAN_SHIFT·LOW_CPK 가 그대로 받는다.
+  # 나머지(꼬리·치우침·산포)는 USL_TAIL/LSL_TAIL·MEAN_SHIFT·LOW_CPK 가 그대로 받는다.
   - id: CODE_RAIL
     # code_edge_hit 는 value_type=CODE 인 item 에만 계산(그 외 None → applies=False) — CODE 전용 룰
     when_metric: { code_edge_hit: ">code_edge_hit_warn" }
@@ -187,31 +173,58 @@ signatures:
     evidence: ["code_edge_hit {code_edge_hit}", "rail_low_ratio {rail_low_ratio}",
                "rail_high_ratio {rail_high_ratio}"]
 
-  - id: HEAVY_TAIL
-    # 판정은 **kurtosis + 꼬리 질량 밴드** 두 축이다(2026-08-13).
-    # kurtosis 는 4제곱이라 양쪽으로 오해를 만든다:
-    #   · 점 몇 개(질량 0.9%)만 튀어도 21.5 까지 올라간다 → 그건 꼬리가 아니라 outlier 다
-    #   · 몸통이 갈라진 다봉(질량 17%)에서도 커진다 → 그건 꼬리가 아니라 분포가 갈라진 것
-    # "평소엔 얌전한데 가끔 크게 튄다" 는 그 사이(1~5%)에 있다 — 실측에서 진짜 heavy tail
-    # 항목의 3σ 밖 질량이 1.55~1.89% 였다.
+  # 구 HEAVY_TAIL 을 **방향으로 갈랐다**(2026-08-19 사용자 요청). 판정축은 그대로
+  # **kurtosis + 꼬리 질량 밴드** 두 개인데, 질량을 방향별로 본다.
+  # kurtosis 는 4제곱이라 양쪽으로 오해를 만든다:
+  #   · 점 몇 개(질량 0.9%)만 튀어도 21.5 까지 올라간다 → 그건 꼬리가 아니라 outlier 다
+  #   · 몸통이 갈라진 다봉(질량 17%)에서도 커진다 → 그건 꼬리가 아니라 분포가 갈라진 것
+  # "평소엔 얌전한데 가끔 크게 튄다" 는 그 사이(1~5%)에 있다 — 실측에서 진짜 heavy tail
+  # 항목의 3σ 밖 질량이 1.55~1.89% 였다.
+  # 방향을 가르는 이유는 **조치가 다르기 때문**이다 — 상한 쪽으로 튀는 것과 하한 쪽으로
+  # 처지는 것은 원인·대응이 같지 않은데 |z| 하나로 재면 구분이 사라진다.
+  # ⚠ **판정 범위는 구 HEAVY_TAIL 과 똑같이 유지한다** — 밴드는 계속 `tail_mass_3s`(양쪽
+  # 합)에 걸고, 방향은 그 질량이 어느 쪽에 얼마나 실렸나(`tail_side_share_*`)로만 가른다.
+  # 밴드를 방향별 질량에 걸면 대칭 분포의 판정 범위가 사실상 두 배가 된다 — 총 질량 8%
+  # (한쪽 4%)로 밴드 상한 5% 를 넘겨 일부러 제외했던 "몸통이 벌어진" 항목이 통째로
+  # 발화한다(실측: UNKNOWN 겨냥 5건 전부가 BIDIR_TAIL 로 뒤집혔다).
+  - id: USL_TAIL
     when_metric:
       kurtosis: ">kurtosis_warn"
       tail_mass_3s: [">=heavy_tail_mass_min", "<=heavy_tail_mass_max"]
+      tail_side_share_high: ">=tail_side_share_min"
     # outlier 와 kurtosis 는 같은 현상(튀는 값)을 두 통계로 본 것이라 함께 뜨기 쉽다.
     # 목록에는 남기고 primary 만 양보한다.
     suppressed_by: [OUTLIER]
     status_hint: MINOR
-    phenomenon_ko : "분포 꼬리가 두껍게 나타납니다."
-    action_ko: "분포 꼬리가 두꺼움(간헐 spike) — 산발 이상치 원인(contact/노이즈) 관찰"
-    evidence: ["kurtosis {kurtosis}", "tail_mass_3s {tail_mass_3s}"]
+    phenomenon_ko : "분포의 USL(상한) 쪽 꼬리가 두껍게 나타납니다."
+    action_ko: "상한(USL) 쪽 꼬리가 두꺼움(상방 간헐 spike) — 위로 튀는 산발 이상치 원인(contact/노이즈) 관찰"
+    evidence: ["tail_mass_3s_high {tail_mass_3s_high}", "kurtosis {kurtosis}",
+               "tail_mass_3s {tail_mass_3s}", "tail_side_share_high {tail_side_share_high}"]
 
-  # 존(E1/EDGE/CENTER/RING)으로도 사분면으로도 설명되지 않는 **국부 뭉침**(2026-08-13 신설).
+  - id: LSL_TAIL
+    when_metric:
+      kurtosis: ">kurtosis_warn"
+      tail_mass_3s: [">=heavy_tail_mass_min", "<=heavy_tail_mass_max"]
+      tail_side_share_low: ">=tail_side_share_min"
+    suppressed_by: [OUTLIER]
+    status_hint: MINOR
+    phenomenon_ko : "분포의 LSL(하한) 쪽 꼬리가 두껍게 나타납니다."
+    action_ko: "하한(LSL) 쪽 꼬리가 두꺼움(하방 간헐 처짐) — 아래로 처지는 산발 이상치 원인(contact/노이즈) 관찰"
+    evidence: ["tail_mass_3s_low {tail_mass_3s_low}", "kurtosis {kurtosis}",
+               "tail_mass_3s {tail_mass_3s}", "tail_side_share_low {tail_side_share_low}"]
+
+  # 존(E1/EDGE/CENTER/RING)으로 설명되지 않는 **국부 뭉침**(2026-08-13 신설,
+  # 2026-08-19 SPOT_CLUSTER → SPOT_FAIL 개명 — 공간 룰 이름을 `<영역>_FAIL` 로 통일).
   # 사용자 제안: "fail 의 x,y 좌표가 서로 일정 수준 이하로 몰려 있으면 몰림성으로 본다".
   # 위치·모양과 무관하다 — 웨이퍼 어디든, 동그랗든 네모나든 붙어 있으면 걸린다.
-  # CLUSTER_FAIL(사분면 편중)과 달리 축 경계에 걸친 뭉침도 그대로 잡힌다.
-  - id: SPOT_CLUSTER
-    when_metric: { fail_spread_norm: "<=spot_cluster_spread_max",
+  - id: SPOT_FAIL
+    when_metric: { fail_spread_norm: "<=spot_fail_spread_max",
                    fail_count: ">spatial_fail_count_min" }
+    # ⚠ `suppressed_by`(primary 양보, 목록 유지)가 아니라 **목록에서 제거**다(2026-08-19
+    # 사용자 결정). 중심부에 뭉친 fail 은 CENTER_FAIL 과 SPOT_FAIL 이 구조적으로 함께
+    # 뜨는데(center 점유율 1.0 이면서 좌표가 붙어 있다), 사용자에게는 같은 사실을 두 번
+    # 말하는 것이라 "CENTER 만 보이게" 해 달라는 요구였다. 조치도 CENTER 쪽이 분명하다.
+    hidden_by: [CENTER_FAIL]
     status_hint: MAJOR
     phenomenon_ko : "불량이 wafer 의 좁은 한 곳에 뭉쳐 있습니다."
     action_ko: "국부 몰림 불량 — scratch/파티클/척킹 자국 등 국부 결함 위치 확인"
@@ -224,14 +237,14 @@ signatures:
     # 바꾸면서 실제로 판정 가능해졌다(2026-08-12).
     # ⚠ 점유율만 보면 **ring 밴드 안의 한 점 뭉침**이 전부 ring 으로 잡힌다(2026-08-14).
     # ring 밴드는 die 의 절반을 차지해 국부 blob 이 거기 놓일 확률이 높고, RING_FAIL 이
-    # SPECIFICITY_ORDER 에서 SPOT_CLUSTER 보다 앞이라 primary 까지 가져갔다 — v9 의
-    # SPOT_CLUSTER 겨냥 L2~L5 가 전부 RING_FAIL 로 판정됐다. 그래서 산포 하한을 AND 로 건다:
+    # SPECIFICITY_ORDER 에서 SPOT_FAIL 보다 앞이라 primary 까지 가져갔다 — v9 의
+    # SPOT 겨냥 L2~L5 가 전부 RING_FAIL 로 판정됐다. 그래서 산포 하한을 AND 로 건다:
     # ring 은 원주를 한 바퀴 돌아야 하므로 fail 이 넓게 퍼진다(v9 겨냥 실측 0.593~0.619),
-    # 한 점 뭉침은 그럴 수 없다(0.094~0.211). 임계는 SPOT_CLUSTER 와 같은 키를 쓴다 —
+    # 한 점 뭉침은 그럴 수 없다(0.094~0.211). 임계는 SPOT_FAIL 과 같은 키를 쓴다 —
     # 두 룰이 같은 선을 공유해야 "둘 다 발화" / "둘 다 미발화" 틈이 안 생긴다.
     when_metric: { ring_fail_share : ">=region_fail_share_min",
                    fail_count: ">spatial_fail_count_min",
-                   fail_spread_norm: ">spot_cluster_spread_max"}
+                   fail_spread_norm: ">spot_fail_spread_max"}
     status_hint: MAJOR
     phenomenon_ko : "wafer 반경 방향으로 ring성 fail이 나타납니다."
     action_ko: "wafer 반경 방향 ring성 fail - radial uniformity 및 edge/center band 반복성 확인"
@@ -240,7 +253,10 @@ signatures:
 
 
   # (WAFER_GRADIENT 는 2026-08-13 삭제 — 경사형 편중은 Map 화면으로 보는 것이 낫고,
-  #  공간 축은 존 4종 + CLUSTER + SPOT_CLUSTER 로 충분하다는 판단.)
+  #  CLUSTER_FAIL 은 2026-08-19 삭제 — 사분면 격자는 실제 결함 모양과 무관한 인공 경계라
+  #  같은 blob 이 위치만 달라져도 값이 반토막 났고(축 경계 2.20 vs 한가운데 4.00),
+  #  "좁은 한 곳에 뭉쳤나" 는 SPOT_FAIL 이 위치·모양 무관하게 직접 본다.
+  #  공간 축은 이제 존 4종(E1/EDGE/CENTER/RING) + SPOT_FAIL 이다.)
 
   # 미분류 명시 발화 — fail 이 있는데 위 룰이 하나도 안 뜬 케이스를 "설명되지 않음" 으로
   # 남긴다. 특수분기라 when_metric 을 쓰지 않는다(다른 룰의 발화 결과로 판정 —

@@ -8,16 +8,19 @@ const PLOTLY_FONT = { family: 'system-ui, -apple-system, "Segoe UI", sans-serif'
 // die 수가 이 값을 넘으면 Bin Map 을 이미지 모드(gap=0, Bin 라벨 off)로 그려 SVG 셀 폭증(freeze)을
 // 막는다. Detail 확대 시엔 보이는 die 가 적어 forceGap/forceText 로 격자선·라벨을 되살린다.
 const MAP_DENSE_DIES = 3000;
-// 회색 die(앞 STEP fail — 모양만 유지)·TNO Map 기타 항목 색.
+// 회색 die(앞 STEP fail — 모양만 유지).
 const MAP_GRAY_RGB = [200, 204, 208];
 const MAP_GRAY_HEX = "#c8ccd0";
-const TNO_OTHER_COLOR = "#9aa0a6";
-// Temperature Map(CT/HT) 의 **기본 die 색** — RT Limit 을 벗어나지 않은 die.
+// 범례에 없는 fail 항목 die 의 폴백색(맵 전용 — 범례에는 이 색을 쓰는 행이 없다).
+const MAP_UNLISTED_ITEM_COLOR = "#9aa0a6";
+// 항목 축(TNO/Temperature) 맵의 **비대상 die 기본색** — Temperature 는 RT Limit 을 벗어나지
+// 않은 die, TNO 는 Bin1(Pass) die.
 // 종전엔 Pass 초록이었는데 바탕이 온통 진한 초록이라 범례를 클릭해 한 항목만 강조해도
-// 눈에 띄지 않았다(2026-08-11 사용자 요청). 거의 흰색에 가까운 중립색을 깔아 셀 사이
-// 격자선(투명=흰 카드)이 chip 윤곽으로만 남게 하고, 이탈 항목 색이 도드라지게 한다.
+// 눈에 띄지 않았다(2026-08-11 Temperature / 2026-08-19 TNO — 둘 다 사용자 요청).
+// 거의 흰색에 가까운 중립색을 깔아 셀 사이 격자선(투명=흰 카드)이 chip 윤곽으로만 남게 하고,
+// 강조 항목 색만 도드라지게 한다.
 // 회색 계열(MAP_GRAY=앞 STEP fail, MAP_BIN_DIM=범례 미선택)보다 밝아 셋이 구분된다.
-const TEMP_MAP_BASE_COLOR = "#f2f4f6";
+const MAP_ITEM_BASE_COLOR = "#f2f4f6";
 
 function webReportSheets() {
   return (DATA && DATA.web_report && DATA.web_report.sheets) ? DATA.web_report.sheets : null;
@@ -653,34 +656,32 @@ function buildBinDescMap() {
 }
 
 // sheets["Fail Bin"](fail_bin_ranking {bin,item,count}) → fail item count 집계.
-// 상위 FAIL_PALETTE 개만 팔레트 색(top), 나머지는 "기타"(중립색). TNO Map/TNO Legend 용.
+// **전 항목에 서로 다른 non-gray 색**을 준다 (사용자 요청 2026-08-19 — 구 "팔레트 7색 밖은
+// 공통 회색 '기타' 1행" 폐지. Temperature Legend 가 2026-08-06 에 먼저 밟은 길과 같은 규약).
+// 아래 항목도 범례에서 클릭해 강조할 수 있어야 하고, 회색은 dim(미선택)·앞 STEP fail 전용이라
+// 항목 고유색으로 쓰면 그 둘과 구분되지 않는다. TNO Map/TNO Legend 용.
 function buildTnoInfo() {
   const fb = (webReportSheets() || {})["Fail Bin"] || [];
   const cnt = {};
   fb.forEach(r => { const it = r.item; if (it) cnt[it] = (cnt[it] || 0) + (Number(r.count) || 0); });
   const items = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]);
   const colorMap = {};
-  items.forEach((it, i) => { colorMap[it] = (i < FAIL_PALETTE.length) ? FAIL_PALETTE[i] : TNO_OTHER_COLOR; });
-  const top = items.slice(0, FAIL_PALETTE.length);
-  const otherCount = items.slice(FAIL_PALETTE.length).reduce((s, it) => s + cnt[it], 0);
-  return { colorMap, items, top, cnt, otherCount };
+  items.forEach((it, i) => { colorMap[it] = tempItemColorAt(i); });
+  return { colorMap, items, cnt };
 }
 
-// TNO Legend 표(상위 항목 색+count, 나머지 "기타" 1행). 클릭 dim 은 상위 항목만(data-tno).
+// TNO Legend 표(전 항목 색+count). 클릭 시 그 항목만 원색, 나머지는 dim(data-tno).
 function tnoLegendHtml(tnoInfo, selected) {
-  const body = tnoInfo.top.map(it => {
+  const body = tnoInfo.items.map(it => {
     const sel = selected.has(it);
     const sw = (selected.size === 0 || sel) ? tnoInfo.colorMap[it] : MAP_BIN_DIM_COLOR;
     return `<tr${sel ? ` class="is-selected"` : ""} data-tno="${esc(it)}">` +
       `<td><span class="bin-swatch" style="background:${sw}"></span>${esc(it)}</td>` +
       `<td>${tnoInfo.cnt[it] || 0}</td></tr>`;
   }).join("");
-  const other = tnoInfo.otherCount > 0
-    ? `<tr class="tno-other"><td><span class="bin-swatch" style="background:${TNO_OTHER_COLOR}"></span>기타</td>` +
-      `<td>${tnoInfo.otherCount}</td></tr>` : "";
-  if (!body && !other) return `<div class="placeholder" style="padding:12px 4px">fail 항목 없음</div>`;
+  if (!body) return `<div class="placeholder" style="padding:12px 4px">fail 항목 없음</div>`;
   return `<table class="bin-table"><thead><tr><th>Item</th><th>Count</th></tr></thead>` +
-         `<tbody>${body}${other}</tbody></table>`;
+         `<tbody>${body}</tbody></table>`;
 }
 
 // ── Temperature Map Legend (Temperature 전용 색 기준 축) ─────────────────────
@@ -695,8 +696,9 @@ function hslHex(h, s, l) {
   const seg = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][Math.floor(h / 60) % 6];
   return "#" + seg.map(v => Math.round((v + m) * 255).toString(16).padStart(2, "0")).join("");
 }
-// 항목 수가 팔레트(7색)를 넘어도 **전 항목에 서로 다른 색**을 준다(사용자 요청 2026-08-06 —
-// 구 "팔레트 밖은 공통 회색" 폐지). 팔레트를 먼저 쓰고, 그 뒤는 황금각(137.5°) 색상환
+// 항목 수가 팔레트(7색)를 넘어도 **전 항목에 서로 다른 색**을 준다(사용자 요청 2026-08-06
+// Temperature Legend / 2026-08-19 TNO Legend — 구 "팔레트 밖은 공통 회색" 폐지. 두 항목 축
+// 범례가 같은 색 생성기를 공유한다). 팔레트를 먼저 쓰고, 그 뒤는 황금각(137.5°) 색상환
 // 회전 + 명도 3단으로 인접 항목끼리 색이 붙지 않게 만든다. Pass 초록 대역은 피한다
 // (맵에서 Pass die 와 같은 색으로 보이면 안 된다).
 function tempItemColorAt(i) {
@@ -1071,9 +1073,11 @@ function renderMapAnalysis() {
       if (mapColorKey === "temp") {
         const it = tempPrimary ? tempPrimary[k] : null;
         // 이탈 항목이 아닌 die 는 초록(Pass)이 아니라 연한 바탕색 — 강조가 묻히지 않게.
-        hex = it ? (tempInfo.colorMap[it] || TNO_OTHER_COLOR) : TEMP_MAP_BASE_COLOR;
+        hex = it ? (tempInfo.colorMap[it] || MAP_UNLISTED_ITEM_COLOR) : MAP_ITEM_BASE_COLOR;
       } else if (mapColorKey === "tno") {
-        hex = (d.bin === "1" || d.it == null) ? PASS_COLOR : (activeTno[d.it] || TNO_OTHER_COLOR);
+        // Bin1(Pass) die 는 **강조하지 않는다** — 초록으로 칠하면 범례에서 TNO 하나를 골라도
+        // 웨이퍼 전체가 같이 강조돼 보인다(2026-08-19 사용자 요청). Temperature 축과 같은 규약.
+        hex = (d.bin === "1" || d.it == null) ? MAP_ITEM_BASE_COLOR : (activeTno[d.it] || MAP_UNLISTED_ITEM_COLOR);
       } else {
         hex = activeBinColorMap[d.bin] || PASS_COLOR;
       }
@@ -1208,31 +1212,34 @@ const _MAP_GRAY_CAT = "__gray__", _MAP_OTHER_CAT = "__other__";
 function mapDetailAxis() {
   if (mapColorKey === "temp" && webReportMode() === "Temperature") {
     // 갤러리와 같은 규칙: 이 소스의 die 인덱스 → RT Limit 이탈 항목(temp_map), 나머지는
-    // 연한 바탕색(TEMP_MAP_BASE_COLOR — 갤러리와 같은 기본색, 초록 아님).
+    // 연한 바탕색(MAP_ITEM_BASE_COLOR — 갤러리와 같은 기본색, 초록 아님).
     // 범례 선택(_mapDetailBinFilter)은 색이 아니라 **칠할 항목 집합**을 좁힌다(tempPrimaryByIdx).
     const info = buildTempItemInfo();
     const m = mapDetailMaps()[_mapDetailIndex];
     const primary = m ? tempPrimaryByIdx(m.source, info.items, _mapDetailBinFilter) : null;
     const order = ["1"].concat(info.items, [_MAP_GRAY_CAT]);
-    const colorMap = { "1": TEMP_MAP_BASE_COLOR, [_MAP_GRAY_CAT]: MAP_GRAY_HEX };
+    const colorMap = { "1": MAP_ITEM_BASE_COLOR, [_MAP_GRAY_CAT]: MAP_GRAY_HEX };
     info.items.forEach(it => { colorMap[it] = info.colorMap[it]; });
     const catOf = (d, k) => d.g ? _MAP_GRAY_CAT : ((primary && primary[k]) || "1");
     return { catOf, order, colorMap };
   }
   if (mapColorKey === "tno") {
+    // 갤러리와 같은 규칙: Bin1(Pass) die 는 강조하지 않는다(연한 바탕색, 초록 아님) —
+    // 범례 클릭 시 그 항목 die 만 원색으로 남게 한다(2026-08-19 사용자 요청).
     const tno = buildTnoInfo();
-    const topSet = {}; tno.top.forEach(it => { topSet[it] = 1; });
-    const order = ["1"].concat(tno.top, [_MAP_OTHER_CAT, _MAP_GRAY_CAT]);
-    const base = { "1": PASS_COLOR, [_MAP_OTHER_CAT]: TNO_OTHER_COLOR, [_MAP_GRAY_CAT]: MAP_GRAY_HEX };
-    tno.top.forEach(it => { base[it] = tno.colorMap[it]; });
+    const itemSet = {}; tno.items.forEach(it => { itemSet[it] = 1; });
+    const order = ["1"].concat(tno.items, [_MAP_OTHER_CAT, _MAP_GRAY_CAT]);
+    const base = { "1": MAP_ITEM_BASE_COLOR, [_MAP_OTHER_CAT]: MAP_UNLISTED_ITEM_COLOR,
+                   [_MAP_GRAY_CAT]: MAP_GRAY_HEX };
+    tno.items.forEach(it => { base[it] = tno.colorMap[it]; });
     let colorMap = base;
-    if (_mapDetailBinFilter.size) {   // 선택 항목만 원색, 나머지 dim(Pass·회색·기타 제외)
+    if (_mapDetailBinFilter.size) {   // 선택 항목만 원색, 나머지 dim(Pass·회색·목록밖 제외)
       colorMap = {};
       order.forEach(c => {
-        colorMap[c] = (tno.top.indexOf(c) >= 0 && !_mapDetailBinFilter.has(c)) ? MAP_BIN_DIM_COLOR : base[c];
+        colorMap[c] = (itemSet[c] && !_mapDetailBinFilter.has(c)) ? MAP_BIN_DIM_COLOR : base[c];
       });
     }
-    const catOf = d => d.g ? _MAP_GRAY_CAT : (d.bin === "1" || d.it == null ? "1" : (topSet[d.it] ? d.it : _MAP_OTHER_CAT));
+    const catOf = d => d.g ? _MAP_GRAY_CAT : (d.bin === "1" || d.it == null ? "1" : (itemSet[d.it] ? d.it : _MAP_OTHER_CAT));
     return { catOf, order, colorMap };
   }
   const legendRows = buildGlobalBinLegend(mapDetailMaps());

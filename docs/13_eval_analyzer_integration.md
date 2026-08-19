@@ -736,7 +736,7 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=8) 그대
   사유를 표시**한다. 뒤에 오는 가드 조건(`fail_count` 등)으로 대신 정렬하면 판정 축이 아닌
   다른 축으로 표본을 뽑게 되어 검수 결과가 임계값 판단에 쓸 수 없게 된다.
   ✅ 2026-08-19(eval.db **v9**, 사용자 승인): 판정 기준값 14종을 `features` 에 저장하게 되어
-  `OUTLIER`·공간 4종·`SPOT_CLUSTER`·`HEAVY_TAIL`·`BIMODALITY`·`CODE_RAIL` 도 층화된다.
+  `OUTLIER`·공간 4종·`SPOT_FAIL`·꼬리 룰·`BIMODALITY`·`CODE_RAIL` 도 층화된다.
   단 **v9 이전에 수집된 행은 그 컬럼이 NULL** 이라(소급 채움 불가 — per-DUT 원본에서만
   나온다) 재수집 전까지는 표본이 얇게 보이는 것이 정상이다.
 - **라벨**: 기존 `label` 테이블 재사용, `labeler='eval-review'`,
@@ -863,14 +863,59 @@ primary specificity 경쟁까지 흐리므로, 임계값은 그대로 두고 중
 |---|---|---|
 | 중심 | `MEAN_SHIFT` | — |
 | 산포/여유 | `LOW_CPK` \| `BIDIR_TAIL` | — |
-| 형태 | `BIMODALITY` \| `OUTLIER` \| `CODE_RAIL` | `HEAVY_TAIL` |
-| 공간 | `E1_FAIL` \| `EDGE_FAIL` \| `CENTER_FAIL` \| `RING_FAIL` \| `SPOT_CLUSTER` \| `CLUSTER_FAIL` | — |
-| 데이터 품질 | `LOW_SAMPLE_UNCERTAIN` \| `MISSING_LIMIT` \| `CONSTANT_VALUE` | — |
+| 형태 | `BIMODALITY` \| `OUTLIER` \| `CODE_RAIL` | `USL_TAIL` \| `LSL_TAIL` |
+| 공간 | `E1_FAIL` \| `EDGE_FAIL` \| `CENTER_FAIL` \| `RING_FAIL` \| `SPOT_FAIL` | — |
+| 데이터 품질 | `MISSING_LIMIT` \| `CONSTANT_VALUE` | — |
 
 양보는 전부 yaml `suppressed_by` 선언이다:
-`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]` · `HEAVY_TAIL ← [OUTLIER]`.
+`LOW_CPK ← [MEAN_SHIFT, OUTLIER, BIMODALITY]` · `USL_TAIL`/`LSL_TAIL` `← [OUTLIER]`.
 **결과 지표(cpk)는 primary 가 되지 않는다** — "왜 낮은가"를 말하는 룰에 자리를 내준다.
 단 **목록에서 사라지지는 않는다**(2026-08-13) — 두 현상이 실제로 다 있으면 둘 다 보여야 한다.
+
+> **2026-08-19 4차 재편(사용자 지시)** — 위 표는 이것까지 반영한 상태다.
+>
+> **① `CLUSTER_FAIL` 삭제.** 사분면 격자는 실제 결함 모양과 무관한 **인공 경계**라 같은
+> blob 이 위치만 달라져도 값이 반토막 났다(축 경계 2.20 vs 한가운데 4.00). 45° 격자를 함께
+>재는 보완을 넣어도 원점 근처 뭉침은 여전히 다른 룰 몫이었다. "좁은 한 곳에 뭉쳤나" 는
+> `SPOT_FAIL` 이 위치·모양과 무관하게 직접 본다 — 축이 겹치는 룰을 둘 유지할 이유가 없다.
+> 임계값 `quadrant_imbalance_warn` 도 함께 삭제(지표 `quadrant_imbalance` 는 참고용으로 계속
+> 계산·저장). `features._classify_zone` 의 `CLUSTER` 라벨도 뺐다 — 라벨만 남기면 "zone 은
+> CLUSTER 인데 그런 룰이 없다" 가 된다.
+>
+> **② `SPOT_CLUSTER` → `SPOT_FAIL` 개명** (공간 룰 이름을 `<영역>_FAIL` 로 통일).
+> 임계값 키도 `spot_cluster_spread_max` → `spot_fail_spread_max`.
+>
+> **③ CENTER + SPOT 은 CENTER 만 보인다 — 신규 `hidden_by`.** 중심부에 뭉친 fail 은 두 룰이
+> 구조적으로 함께 뜬다(center 점유율 1.0 이면서 좌표도 붙어 있다). `suppressed_by`(목록
+> 유지·primary 양보)로는 같은 사실이 두 줄로 남아, 사용자가 "CENTER 만 나오게" 를 요청했다.
+> 그래서 **목록에서 통째로 제거**하는 세 번째 관계를 만들었다(`SPOT_FAIL: hidden_by:
+> [CENTER_FAIL]`). ⚠ 제거된 발화는 화면 어디에도 안 남으므로 사유는 `/pe/eval` 트레이스에만
+> 있다 — 새 선언을 추가할 때는 "정말로 정보가 0 인가" 를 먼저 볼 것.
+>
+> **④ `HEAVY_TAIL` → `USL_TAIL` / `LSL_TAIL` 방향 분리 + 양쪽이면 `BIDIR_TAIL` — 신규
+> `replaces`.** 상한 쪽으로 튀는 것과 하한 쪽으로 처지는 것은 조치가 다른데 `|z|` 하나로
+> 재면 구분이 사라진다. L2 에 방향별 꼬리 질량 `tail_mass_3s_high`/`_low` 를 신설했다
+> (eval.db **v10** 컬럼 2개). 양쪽이 모두 두꺼우면 "USL 문제 + LSL 문제" 두 건이 아니라
+> 분포가 양방향으로 퍼진 한 건이므로 `BIDIR_TAIL` 하나로 접는다 —
+> `BIDIR_TAIL: replaces: [USL_TAIL, LSL_TAIL]`(나열한 것이 모두 뜨면 그것들을 지우고
+> 자기 `when_metric` 이 성립하지 않아도 대신 발화).
+>
+> ⚠ **판정 밴드는 여전히 `tail_mass_3s`(양쪽 합)에 건다.** 방향별 질량에 밴드를 걸면
+> 대칭 분포의 판정 범위가 사실상 두 배가 된다 — 총 질량 8%(한쪽 4%)면 밴드 상한 5% 를
+> 넘겨 일부러 제외했던 "몸통이 벌어진" 항목이 통째로 발화한다(실측: 생성기의 UNKNOWN
+> 겨냥 5건 **전부**가 BIDIR_TAIL 로 뒤집혔다). 방향은 파생값
+> `tail_side_share_high/low`(그 방향이 가진 꼬리 질량 몫) ≥ `tail_side_share_min`(0.2)
+> 로만 가른다 — 한쪽으로만 접힌 꼬리는 1.0/0.0, 대칭이면 0.5/0.5 다.
+>
+> **⑤ `LOW_SAMPLE_UNCERTAIN` 삭제**(꺼진 채였다. 표본 부족은 `n_min` 가드와
+> `data_completeness` 가 이미 말한다) · **⑥ `outlier_sigma` 4.5 → 2.5.**
+> ⚠ ⑥ 은 룰 조건식에 직접 쓰이지 않지만 `outlier_ratio` 를 통해 **BIMODALITY 게이트**
+> (`subpop_outlier_ratio_max` 0.03)에 물려 있다 — 낮추면 이봉 판정이 보류되는 항목이 는다.
+>
+> 안전 확인: 운영 eval.db `case_signature` 에 `SPOT_CLUSTER`/`CLUSTER_FAIL` **0건**,
+> `label_signature` **0건** → 개명·삭제 마이그레이션 불필요. `HEAVY_TAIL` 은 6건 있으나
+> 방향 정보가 없어 소급 치환이 불가능하다(재평가로 갱신된다).
+> 회귀 데이터는 `data/eval_testdata_7meta_v12*`(115/115 의도대로, 누락·오발화 0).
 
 > **2026-08-13 3차 재편(사용자 v8 검토 반영)** — 현재 상태는 아래를 다 반영한 것이다.
 >

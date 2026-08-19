@@ -41,7 +41,7 @@ function colWidth(name, kind, narrowSrc) {
   // 폭 힌트도 함께 낮춰 실제 폭이 max(헤더 "Status", 드랍다운) 로 정해지게 한다.
   if (n === "status")                   return px(38);   // Issue Table Open/Close 드랍다운
   // Signature: 드랍다운이 여러 개 세로로 쌓이므로 룰 이름이 들어갈 폭. 비활성 룰을
-  // 목록에서 뺀 뒤(signatureChoices) 가장 긴 활성 id 는 CLUSTER_FAIL(12자)이라 종전
+  // 목록에서 뺀 뒤(signatureChoices) 가장 긴 활성 id 는 CENTER_FAIL(11자)이라 종전
   // 150(=225px, 비활성 장문 라벨 기준) 에서 좁혔다. 버튼 3개(+ / ? / 확정)도 들어간다.
   if (n === "signature")                return px(76);
   if (n === "item")                     return px(kind === "issue" ? 150 * 0.55 : 150);

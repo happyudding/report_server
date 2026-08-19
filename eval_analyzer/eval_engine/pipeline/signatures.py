@@ -109,12 +109,74 @@ def scope_matches(sig: dict, case_ctx: dict) -> bool:
     return True
 
 
-def _suppressor_ids(sig: dict) -> list:
-    """signature 선언의 `suppressed_by` 정규화 — 문자열 1개도 목록으로 받는다."""
-    raw = sig.get("suppressed_by") or []
+def _id_list(sig: dict, key: str) -> list:
+    """signature 선언의 id 목록 필드 정규화 — 문자열 1개도 목록으로 받는다.
+
+    `suppressed_by`(primary 양보) / `hidden_by`(목록에서 제거) / `replaces`(대체 발화)가
+    같은 표기를 쓴다.
+    """
+    raw = sig.get(key) or []
     if isinstance(raw, str):
         raw = [raw]
     return [str(v) for v in raw if v]
+
+
+def _suppressor_ids(sig: dict) -> list:
+    """signature 선언의 `suppressed_by` 정규화 — 문자열 1개도 목록으로 받는다."""
+    return _id_list(sig, "suppressed_by")
+
+
+def _apply_replacement(fired: list, docs: dict, ctx_values: dict):
+    """`replaces` 선언 — 나열한 signature 가 **모두** 발화하면 그것들을 목록에서 지우고
+    선언한 쪽이 **대신** 발화한다(자기 when_metric 이 성립하지 않아도 발화한다).
+
+    `suppressed_by`(양보) · `hidden_by`(제거)와 다른 세 번째 관계다: 두 발화가 사실은
+    **한 현상의 반쪽**이라 합쳐야 말이 되는 경우를 위한 것이다. 배포 룰에서는
+    `BIDIR_TAIL ← [USL_TAIL, LSL_TAIL]` 하나가 쓴다 — 양쪽 꼬리가 함께 두꺼우면
+    "USL 문제 + LSL 문제" 두 건이 아니라 분포가 양방향으로 퍼진 한 건이고, 한쪽 방향
+    조치로는 해결되지 않는다(2026-08-19 사용자 요청).
+
+    판정은 **원본 발화 집합 기준 1패스**다 — 억제와 같은 이유로 체인이 도는 것을 막는다.
+    반환: (fired, [{"id": 대체한 id, "of": [대체된 id …]}, …])
+    """
+    fired_ids = {s["id"] for s in fired}
+    replaced = []
+    for sig_id, doc in docs.items():
+        targets = _id_list(doc, "replaces")
+        if not targets or not set(targets) <= fired_ids:
+            continue
+        drop = set(targets)
+        fired = [s for s in fired if s["id"] not in drop]
+        replaced.append({"id": sig_id, "of": sorted(drop)})
+        if sig_id not in {s["id"] for s in fired}:
+            fired.append({"id": sig_id, "status_hint": doc["status_hint"], "score": None,
+                          "evidence": [_format_evidence(t, ctx_values)
+                                       for t in doc.get("evidence", [])],
+                          "action_ko": doc.get("action_ko"), "replaced": sorted(drop)})
+    return fired, replaced
+
+
+def _apply_hidden(fired: list, docs: dict):
+    """`hidden_by` 선언 — 지정한 signature 가 함께 발화하면 **목록에서 통째로 제거**한다.
+
+    `suppressed_by` 와 의도가 다르다. 억제는 "둘 다 사실이니 목록에는 남기고 대표만
+    양보" 인데(2026-08-13 사용자 요구), 이쪽은 "구조적으로 늘 함께 뜨는데 같은 사실을 두 번
+    말하는 것이라 아예 보이지 않아야 한다" 이다. 배포 룰에서는 `SPOT_FAIL ← [CENTER_FAIL]`
+    하나가 쓴다(2026-08-19 사용자 결정).
+    ⚠ 새 선언을 추가할 때는 **정말로 정보가 0 인가**를 먼저 보라 — 제거된 발화는 화면 어디에도
+    남지 않아 사용자가 "왜 안 뜨나" 를 알 수 없다(트레이스에만 사유가 남는다).
+
+    판정은 원본 발화 집합 기준 1패스. 반환: (남은 fired, [{"id":.., "by":[..]}, …])
+    """
+    fired_ids = {s["id"] for s in fired}
+    kept, hidden = [], []
+    for s in fired:
+        by = [sid for sid in _id_list(docs.get(s["id"], {}), "hidden_by") if sid in fired_ids]
+        if by:
+            hidden.append({"id": s["id"], "by": sorted(by)})
+        else:
+            kept.append(s)
+    return kept, hidden
 
 
 def _apply_suppression(fired: list, suppressors: dict):
@@ -199,6 +261,17 @@ def build_ctx_values(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     if _sml is not None and _smh is not None and (_sml + _smh) > 0:
         ctx_values["center_bias"] = (_smh - _sml) / (_sml + _smh)
 
+    # 꼬리 질량의 방향 **비중**(파생값, DB 저장 안 함) — USL_TAIL/LSL_TAIL 이 이것으로
+    # 갈린다. 밴드는 총 질량(tail_mass_3s)에 그대로 걸리므로 판정 범위는 안 바뀌고,
+    # 이 값은 "그 질량이 어느 쪽에 실렸나" 만 말한다. 꼬리가 없으면(합 0) 미정의 → 미발화.
+    _tmh, _tml = features.get("tail_mass_3s_high"), features.get("tail_mass_3s_low")
+    if _tmh is not None and _tml is not None:
+        # 꼬리가 아예 없으면(합 0) 어느 쪽도 아니다 → 0.0. **키는 항상 채운다** — 결측이면
+        # 조건이 조용히 False 가 되어 룰이 침묵하는데, 그건 "꼬리 없음" 과 구분이 안 된다.
+        _tot = _tmh + _tml
+        ctx_values["tail_side_share_high"] = (_tmh / _tot) if _tot > 0 else 0.0
+        ctx_values["tail_side_share_low"] = (_tml / _tot) if _tot > 0 else 0.0
+
     _outlier_ratio, _n_dut = features.get("outlier_ratio"), features.get("n_dut")
     if _outlier_ratio is not None and _n_dut:
         ctx_values["outlier_count"] = round(_outlier_ratio * _n_dut)
@@ -236,7 +309,8 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
             "signatures": [], "reason_codes": [],
             "bin_class": bt.get("bin_class") if bt else None,
             "severity_bias": (bt.get("severity_bias") if bt else 0.0) or 0.0,
-            "applies": {}, "suppressed": [], "excluded": excluded,
+            "applies": {}, "suppressed": [], "hidden": [], "replaced": [],
+            "excluded": excluded,
             "raw_metrics_snapshot": {"cpk": raw_metrics.get("cpk"),
                                      "yield": raw_metrics.get("yield")},
         }
@@ -248,7 +322,7 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     high_moment_ok = n_dut >= th["n_min"]
 
     fired, applies = [], {}
-    suppressors = {}                     # {id: [나를 지우는 id, ...]} — 발화분만 모은다
+    docs = {}                            # {id: 룰 선언} — 관계 선언(억제/제거/대체) 조회용
     subpop_doc = unknown_doc = None
     for sig in signatures_for(case_ctx):
         # yaml 의 enabled:false 는 룰 비활성 (키 부재 = 활성 — 기존 yaml 무영향)
@@ -257,6 +331,7 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
         # scope 는 enabled 다음, 특수분기보다 앞 — "이 제품군에서 안 쓰는 룰" 은 BIMODALITY 도 예외 아님
         if not scope_matches(sig, case_ctx):
             continue
+        docs[sig["id"]] = sig
         if sig["id"] == _BIMODALITY_ID:
             subpop_doc = sig
             continue
@@ -278,7 +353,6 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
             fired.append({"id": sig["id"], "status_hint": sig["status_hint"],
                           "score": None, "evidence": evidence,
                           "action_ko": sig.get("action_ko")})
-            suppressors[sig["id"]] = _suppressor_ids(sig)
 
     if subpop_doc is not None:
         subpop = _evaluate_subpop_gap(features)
@@ -286,9 +360,14 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
         if subpop is not None:
             fired.append({"id": _BIMODALITY_ID, "status_hint" : subpop_doc["status_hint"],
                           "score":None, "evidence" : subpop["evidence"], "action_ko":subpop_doc.get("action_ko"), "modality_v2":subpop["modality_v2"]})
-            suppressors[_BIMODALITY_ID] = _suppressor_ids(subpop_doc)
 
-    fired, suppressed = _apply_suppression(fired, suppressors)
+    # 관계 3종은 **순서가 의미를 가진다**: 합칠 것을 먼저 합치고(대체) → 감출 것을 감춘 뒤
+    # (제거) → 남은 것들 사이에서 대표를 정한다(양보). 순서를 바꾸면 이미 사라진 발화가
+    # 남은 발화를 눌러 아무도 primary 가 아닌 상태가 생긴다.
+    fired, replaced = _apply_replacement(fired, docs, ctx_values)
+    fired, hidden = _apply_hidden(fired, docs)
+    fired, suppressed = _apply_suppression(
+        fired, {s["id"]: _suppressor_ids(docs.get(s["id"], {})) for s in fired})
 
     # UNKNOWN 은 최종 발화 집합이 비었을 때만 붙는다. (양보는 목록에서 지우지 않으므로
     # 이 시점의 fired 는 조건을 만족한 룰 전부다 — 2026-08-13 의미 변경 후에도 동일.)
@@ -307,6 +386,7 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
         "signatures": fired, "reason_codes": reason_codes,
         "bin_class": bin_class, "severity_bias": severity_bias or 0.0,
         "applies": applies, "suppressed": suppressed,
+        "hidden": hidden, "replaced": replaced,
         "raw_metrics_snapshot": {"cpk": raw_metrics.get("cpk"),
                                  "yield": raw_metrics.get("yield")},
     }

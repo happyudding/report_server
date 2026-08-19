@@ -48,13 +48,15 @@ _METRIC_COLS = ("spread_norm", "skewness", "kurtosis", "outlier_ratio", "bimodal
                 "quadrant_imbalance", "n_dut", "site_cpk_delta", "code_edge_hit",
                 "ring_fail_ratio", "radial_gradient_norm", "x_gradient_norm",
                 "y_gradient_norm", "n_modes", "modality_v2",
-                # v9(2026-08-19) — OUTLIER·공간 4종·SPOT_CLUSTER·HEAVY_TAIL·
+                # v9(2026-08-19) — OUTLIER·공간 4종·SPOT_FAIL·꼬리 룰·
                 # BIMODALITY·CODE_RAIL 의 판정 기준값. 이게 없어서 그 룰들이 층화 불가였다.
                 "fail_mad_min", "fail_body_jump_ratio", "fail_pass_gap_sigma",
                 "fail_robust_z_max", "e1_fail_share", "edge_fail_share",
                 "center_fail_share", "ring_fail_share", "fail_spread_norm",
                 "tail_mass_3s", "rail_low_ratio", "rail_high_ratio",
-                "value_gap_ratio", "value_gap_minor_mass")
+                "value_gap_ratio", "value_gap_minor_mass",
+                # v10(2026-08-19) — USL_TAIL/LSL_TAIL 의 판정 기준값(방향별 꼬리 질량).
+                "tail_mass_3s_high", "tail_mass_3s_low")
 _RAW_COLS = ("cpk", "mean", "stdev", "min", "max", "fail_count", "total_count")
 
 
@@ -81,6 +83,10 @@ def _derived(row: dict) -> dict:
     ratio, n_dut = row.get("outlier_ratio"), row.get("n_dut")
     if ratio is not None and n_dut:
         out["outlier_count"] = round(ratio * n_dut)
+    tmh, tml = row.get("tail_mass_3s_high"), row.get("tail_mass_3s_low")
+    if tmh is not None and tml is not None and (tmh + tml) > 0:
+        out["tail_side_share_high"] = tmh / (tmh + tml)
+        out["tail_side_share_low"] = tml / (tmh + tml)
     grads = [abs(row[k]) for k in ("radial_gradient_norm", "x_gradient_norm", "y_gradient_norm")
              if row.get(k) is not None]
     if grads:
@@ -89,14 +95,15 @@ def _derived(row: dict) -> dict:
 
 
 # 표본함이 **재현할 수 있는** 지표 — eval.db 에 저장된 컬럼 + `_derived` 가 되살리는 파생.
-# 판정 기준값 14종은 v9(2026-08-19)부터 저장되므로 OUTLIER·공간 4종·SPOT_CLUSTER·
-# HEAVY_TAIL·BIMODALITY·CODE_RAIL 도 층화된다. 단 **v9 이전에 수집된 행은 NULL** 이라
+# 판정 기준값 14종은 v9(2026-08-19)부터, 방향별 꼬리 질량 2종은 v10 부터 저장되므로
+# OUTLIER·공간 4종·SPOT_FAIL·USL_TAIL/LSL_TAIL·BIMODALITY·CODE_RAIL 도 층화된다.
+# 단 **그 버전 이전에 수집된 행은 NULL** 이라
 # `_exceedance` 가 그 표본을 건너뛴다 — 재수집 전까지 표본이 얇게 보이는 것은 정상이다.
 # 여기 없는 지표는 스냅샷에서 되살릴 수 없으므로 억지로 정렬하지 않고 "층화 불가"로
 # 정직하게 비운다 — 빈 표본 목록보다 사유가 보이는 편이 낫다.
 _STRATIFIABLE = set(_METRIC_COLS) | set(_RAW_COLS) | {
     "yield_rate", "spec_margin_min", "center_bias", "outlier_count",
-    "gradient_norm_abs_max"}
+    "gradient_norm_abs_max", "tail_side_share_high", "tail_side_share_low"}
 
 
 def _rule_criterion(sig: dict, thresholds: dict):
