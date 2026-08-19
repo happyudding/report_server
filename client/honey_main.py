@@ -156,6 +156,24 @@ def _slim_temperature_limits(temperature):
     return out or None
 
 
+# 업로드가 성공했더라도 서버 응답 대기가 이 시간을 넘으면 서버에 알린다 — 다음 번
+# 타임아웃의 예보이기 때문이다. 클라 read timeout(200초)의 절반 아래로 잡는다.
+_UPLOAD_SLOW_WAIT_SEC = 60
+
+
+def _upload_timing_line(timing, verdict):
+    """업로드 소요 한 줄 — 실행 로그용. 지금까지 클라는 소요를 어디에도 남기지 않아
+    "100%에서 멈췄다"는 신고에 붙일 수치가 없었다.
+
+    전송(body)과 서버 대기(wait)를 나눠 적는 것이 핵심이다 — 서버는 이 둘을 구분해서
+    볼 수 없으므로(waitress 가 바디 수신 후에야 요청을 큐에 넣는다) 여기 값이 유일하다.
+    """
+    if not timing:
+        return f"Web Report 업로드 {verdict}"
+    return (f"Web Report 업로드 {verdict}: {timing.get('mb', '?')}MB "
+            f"전송 {timing.get('body_sec', '?')}s / 서버대기 {timing.get('wait_sec', '?')}s")
+
+
 def _upload_progress_channel(progress, label_fmt, value_map=None):
     """업로드 진행률 콜백 쌍 (worker_cb, drain_cb) 생성 — _run_web_report/_do_upload 공용.
 
@@ -2972,6 +2990,9 @@ class HoneyMainWindow(QMainWindow):
             progress, "Web Report 업로드 중... ({pct}%)",
             value_map=lambda pct: 40 + int(pct * 0.6))
 
+        # 전송 시간 / 서버 대기 시간 — 서버가 볼 수 없는 구간이라 여기서만 알 수 있다
+        # (uploader.post_webreport docstring 참조).
+        timing = {}
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(
@@ -2980,6 +3001,7 @@ class HoneyMainWindow(QMainWindow):
                     parquet_items,
                     progress_cb=_on_upload_progress,
                     dist_pack=dist_pack,
+                    timing=timing,
                 )
                 result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
         except Exception as exc:
@@ -2989,9 +3011,15 @@ class HoneyMainWindow(QMainWindow):
             event_id = _report_error(
                 "honey_upload_fail", f"{type(exc).__name__}: {exc}",
                 context={"product": meta.get("product", ""), "lot": meta.get("lot_id", ""),
-                         "sources": len(parquet_items)})
+                         "sources": len(parquet_items), **timing})
+            self._append_run_log(_upload_timing_line(timing, "실패"))
+            # 업로드는 멱등이 아니다 — 클라가 read timeout 으로 끊어도 서버는 계속 처리해
+            # 세션이 생길 수 있다. 그대로 재시도하면 같은 데이터로 세션이 두 벌 생기므로
+            # 목록 확인을 먼저 안내한다.
             _show_exc(self, "Web Report 업로드 실패", exc,
-                      prefix="서버에 업로드하지 못했습니다. 네트워크와 서버 상태를 확인해 주세요."
+                      prefix="서버에 업로드하지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.\n"
+                             "다시 올리기 전에 검색결과 목록을 먼저 확인해 주세요 — "
+                             "서버에는 이미 저장돼 있을 수 있습니다."
                              + (f"\n오류번호: {event_id}" if event_id else ""))
             self._status("Web Report 업로드 실패")
             return
@@ -3004,6 +3032,15 @@ class HoneyMainWindow(QMainWindow):
             url = f"{SERVER_BASE_URL.rstrip('/')}/pe/report/web_report/{sid}"
 
         progress.success(f"Web Report 완료: session_id {sid}", value=100)
+        self._append_run_log(_upload_timing_line(timing, "완료"))
+        # 성공했어도 서버 대기가 길었으면 알린다 — 그게 다음 번 타임아웃의 예보다.
+        # (실패만 보고하면 임계 직전 상태를 영영 못 본다.)
+        if timing.get("wait_sec", 0) >= _UPLOAD_SLOW_WAIT_SEC:
+            _report_error("honey_upload_slow",
+                          f"서버 응답 대기 {timing.get('wait_sec')}s",
+                          context={"product": meta.get("product", ""),
+                                   "lot": meta.get("lot_id", ""),
+                                   "sources": len(parquet_items), "session": sid, **timing})
         self._append_run_log(f"Web Report URL: {url}")
         self._status(f"Web Report 완료: {sid}")
         # 완료 팝업 없이 바로 내장 브라우저(웹 화면)로 전환하고 입력/설정 창을 닫는다.
@@ -3462,6 +3499,7 @@ class HoneyMainWindow(QMainWindow):
             progress, f"서버 업로드 중... {name} ({{pct}}%)",
             value_map=lambda pct: 40 + int(pct * 0.6))
 
+        timing = {}
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
                 fut = ex.submit(
@@ -3470,12 +3508,22 @@ class HoneyMainWindow(QMainWindow):
                     parquet_items,
                     progress_cb=_on_upload_progress,
                     dist_pack=dist_pack,
+                    timing=timing,
                 )
                 result = _wait_for_future(fut, progress, poll_cb=_drain_upload_progress)
         except Exception as exc:
             progress.fail(f"실패: 업로드 실패 - {exc}")
+            # 이 경로만 서버 보고가 빠져 있어 xlsx 인제스트 업로드 실패는 흔적이 없었다
+            # (_run_web_report 와 대칭을 맞춘다).
+            event_id = _report_error(
+                "honey_upload_fail", f"{type(exc).__name__}: {exc}",
+                context={"path": "xlsx_ingest", "sources": len(parquet_items), **timing})
+            self._append_run_log(_upload_timing_line(timing, "실패"))
             _show_exc(self, "업로드 실패", exc,
-                      prefix="서버에 업로드하지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.")
+                      prefix="서버에 업로드하지 못했습니다. 네트워크와 서버 상태를 확인해 주세요.\n"
+                             "다시 올리기 전에 검색결과 목록을 먼저 확인해 주세요 — "
+                             "서버에는 이미 저장돼 있을 수 있습니다."
+                             + (f"\n오류번호: {event_id}" if event_id else ""))
             self._status("업로드 실패")
             self._set_busy(False)
             return
@@ -3488,6 +3536,11 @@ class HoneyMainWindow(QMainWindow):
             url = f"{SERVER_BASE_URL.rstrip('/')}/pe/report/view/{sid}"
 
         progress.success(f"업로드 완료: session_id {sid}", value=100)
+        self._append_run_log(_upload_timing_line(timing, "완료"))
+        if timing.get("wait_sec", 0) >= _UPLOAD_SLOW_WAIT_SEC:
+            _report_error("honey_upload_slow",
+                          f"서버 응답 대기 {timing.get('wait_sec')}s",
+                          context={"path": "xlsx_ingest", "session": sid, **timing})
         self._append_run_log(f"Web Report URL: {url}")
         self._status(f"업로드 완료: {sid}")
         # 완료 팝업 없이 내장 브라우저(웹 화면)로 바로 전환한다 (_run_web_report 와 동일).

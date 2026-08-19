@@ -125,7 +125,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_DB_BACKUP_EXTERNAL_DIR` | (없음) | 지정 시 integrity 통과 백업본을 이 경로로도 복사(best-effort). 같은 디스크 사망 대비 |
 | `REPORT_WEBREPORT_TOTAL_MB` | `1024` | web_report parquet **합계** 상한. 개별 파일은 512MB 고정, 요청 전체는 `MAX_CONTENT_LENGTH_MB` |
 | `WEB_REPORT_UPLOAD_CONCURRENCY` | `2` | 동시에 처리하는 web_report 업로드 건수. 업로드 1건이 parquet bytes + 디코드 tables 를 함께 들고 있어 대형 세션이면 건당 RAM 피크가 GB 급 — 겹치면 웹 프로세스가 죽는다 |
-| `WEB_REPORT_UPLOAD_WAIT_SEC` | `180` | 위 상한이 찼을 때 대기하는 시간(초). 초과하면 503. 대기 중에는 본문이 디스크에 스풀돼 있어 RAM 을 거의 안 쓴다 |
+| `WEB_REPORT_UPLOAD_WAIT_SEC` | `180` (운영 **90**) | 위 상한이 찼을 때 대기하는 시간(초). 초과하면 503. 대기 중에는 본문이 디스크에 스풀돼 있어 RAM 을 거의 안 쓴다. ⚠️ **클라 업로드 read timeout(200초)보다 충분히 짧아야 한다** — 대기만 하다 클라가 먼저 끊으면 사용자는 503+`Retry-After` 안내조차 못 받는다(2026-08-19 운영 env 에서 90 으로 명시) |
 | `WEB_REPORT_UPLOAD_MAX_WAITERS` | `4` | **동시에 줄 설 수 있는** 업로드 요청 수. 대기는 RAM 은 안 쓰지만 waitress 스레드는 문다 — 상한이 없으면 클라 여러 대의 동시 업로드가 스레드를 전부 물어 조회·`/healthz` 까지 수 분간 멎는다. 초과분은 기다리지 않고 즉시 503(`Retry-After: 30`) |
 | `WEB_REPORT_PREWARM_QUEUE` | `8` | 업로드 직후 프리웜 대기 큐 상한. 초과 시 가장 오래된 요청 폐기(로그) |
 | `WEB_REPORT_ETA_ENABLED` | `1` | 세션 로드 오버레이의 "예상 약 N초" 안내(202·build_status 응답의 `eta`). `0` 이면 키를 싣지 않고 프런트는 종전 문구 — 추정이 어긋나 혼란을 줄 때의 차단 스위치 ([docs/12](../docs/12_web_report_cache.md)) |
@@ -144,7 +144,9 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `PUBLIC_API_METRICS_ENABLED` | `1` | 공개 API(`/pe/api/v1`) 호출 계측 — 관리자 **public API** 탭. `0` = 계측만 끔(API 는 정상 동작) |
 | `PUBLIC_API_SLOW_MS` | `1000` | 이 시간을 넘긴 공개 API 호출을 '느린·실패 호출' 목록에 개별 기록. 단순 조회만 노출하므로 사람 요청(`REPORT_SLOW_REQ_MS`)보다 낮게 잡는다 |
 | `REPORT_RUNTIME_LOG_INTERVAL_SEC` | `300` | `runtime_*.log` 응답시간 스냅샷(p50/p95/p99 + 느린 경로 top5) 기록 주기. 최소 60 |
-| `REPORT_SLOW_REQ_MS` | `10000` | 이 시간을 넘긴 요청을 `runtime_*.log` 에 개별 기록. `0` 이하 = 비활성 |
+| `REPORT_SLOW_REQ_MS` | `10000` | 이 시간을 넘긴 요청을 `runtime_*.log` 에 개별 기록. `0` 이하 = 비활성. ⚠️ **요청이 끝나야** 기록된다 — 안 끝나는 요청은 아래 `REPORT_STUCK_REQ_SEC` 가 맡는다 |
+| `REPORT_STUCK_REQ_SEC` | `120` | **아직 안 끝난** 요청이 이 시간을 넘기면 진단 사건(`stuck_request`) + 스레드 덤프(`diagnose_stuck_*.txt`, 기동당 1회). `0` 이하 = 비활성. 위 slow 계측은 teardown 에서만 돌아 hang 을 영영 못 잡으므로(2026-08-19 업로드 hang 이 그랬다) 이 경로가 유일한 기록 지점이다 |
+| `REPORT_UPLOAD_SLOW_SEC` | `100` | **업로드 전용** stuck 임계(위 값 대신 적용). 업로드는 동기 구간이 13단계이고 그중 S3 저장·DB 쓰기처럼 밖에서 멎을 수 있는 구간이 섞여 가장 자주 hang 하는데, 정작 사용자는 클라 타임아웃(200초)까지 화면만 보고 기다린다 — 범용 120초보다 먼저 잡아야 조치할 시간이 남는다. 사건에는 **그때 어느 단계였는지**가 함께 실린다(`stage`/`stage_source`) |
 | `REPORT_ACTIVE_USER_WINDOW_SEC` | `300` | 관리자 현황 탭 "실시간 접속 사용자" 기본 판정 창 — 이 시간 안에 요청이 있었으면 접속 중. 화면에서 기간 선택 가능(최소 30) |
 | `WATCHDOG_BACKOFF_MAX_PER_HOUR` / `_GAP_MIN` | `3` / `30` | (watchdog.ps1) healthz 계열 재기동 백오프 — 최근 1시간 재기동이 임계 이상이면 마지막 재기동 후 지정 분이 지날 때까지 재기동을 건너뛴다 |
 | `WATCHDOG_BACKOFF_NL_MAX` / `_NL_GAP_MIN` | `6` / `15` | (watchdog.ps1) `not_listening`(프로세스 사망) 백오프 — 가용성 우선이라 더 관대 |
@@ -162,6 +164,8 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `runtime_YYYYMMDD.log` | metrics 샘플러 | 응답시간 스냅샷(`type:lat`, 5분마다) + 느린 요청 개별 기록(`type:slow`, JSON lines). **재시작으로 초기화되지 않는 부하 이력** — admin '이력' 탭이 읽음 |
 | `diagnostic_YYYYMMDD.log` | [diagnostics.py](diagnostics.py) | **진단 사건**(JSON lines) — 서버 500/503·느린 요청·콜드 빌드 실패/중단·브라우저·Honey 오류를 상관 ID(request/operation/build/session)로 이어 모은 단일 저장소. admin '진단 사건' 탭이 읽음 |
 | `diagnostic_detail_<event_id>.txt` | diagnostics.py | 사용자가 오류 창에서 직접 보낸 상세(정제 traceback + 실행 로그 꼬리). JSONL 한 줄이 커지면 조회가 통째로 느려져 따로 뺀다 |
+| `diagnose_stuck_<stamp>.txt` | metrics 샘플러 | `REPORT_STUCK_REQ_SEC` 를 넘겨 **아직 처리 중인** 요청의 전 스레드 스택. 기동당 1회 |
+| `diagnose_terminate_<stamp>.txt` | [drain_wait.ps1](drain_wait.ps1) | 종료 직전 스레드 덤프 — drain 이 정체/제한시간/무응답으로 끝났을 때만. **서버를 내리면 현행범 스택이 사라지므로** 그 전에 받아 둔다 |
 | `diagnostic_ack.json` | diagnostics.py | 사건 확인 처리 상태(DB 스키마 무변경 원칙) |
 | `compute_worker_YYYYMMDD.log` | 컴퓨트 워커 | 워커 프로세스의 logging — 워커 stdout 은 부모 tee 로 안 흘러 지금까지 증발했다 |
 | `build_state_<pid>.json` | 컴퓨트 워커 | **실행 중** 콜드 빌드 체크포인트(현재 단계·source 파일). 타임아웃으로 워커가 죽어도 부모가 이걸 읽어 마지막 단계를 실패 레코드에 남긴다. 정상 종료 시 삭제 |

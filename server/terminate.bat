@@ -24,6 +24,17 @@ if exist "%ENV_FILE%" (
 if not defined PORT set "PORT=8080"
 rem drain 최대 대기 시간(초). 이 시간을 넘기면 진행 중 요청이 남아 있어도 강제 종료한다.
 if not defined DRAIN_TIMEOUT_SEC set "DRAIN_TIMEOUT_SEC=90"
+rem 진행 중 요청 수가 이 시간(초) 동안 **줄지 않으면** 멈춘 것으로 보고 조기 종료한다.
+rem 안 끝나는 요청을 붙들고 90초를 꽉 채워 기다리는 것은 아무 소용이 없다 (2026-08-19).
+if not defined DRAIN_STALL_SEC set "DRAIN_STALL_SEC=15"
+
+rem 인자 force / -f / /f  ->  drain 을 아예 건너뛰고 즉시 종료 (스레드 덤프는 그래도 남긴다)
+set "FORCE_ARG="
+if /i "%~1"=="force" set "FORCE_ARG=-Force"
+if /i "%~1"=="-f"    set "FORCE_ARG=-Force"
+if /i "%~1"=="/f"    set "FORCE_ARG=-Force"
+set "DIAG_ARG="
+if defined DIAG_PORT set "DIAG_ARG=-DiagPort %DIAG_PORT%"
 
 set "TASK_WATCHDOG=report-server-watchdog"
 
@@ -78,26 +89,17 @@ rem 리스너가 없어도 :kill 로 간다 — 과거 재기동에서 남은 �
 if errorlevel 1 goto :kill
 
 rem ---------------------------------------------------------------------------
-rem 3) graceful drain
-rem    /healthz 의 inflight(진행 중 요청 수, 자기 자신 제외)가 0 이 되는 순간을 노려 내린다.
-rem    한계: waitress 를 "신규 요청 차단" 상태로 만들 수는 없다. 따라서 이것은 요청이 없는
-rem    순간을 포착하는 것이지 완전한 drain 이 아니다. 진행 중인 업로드/리포트 빌드가 통째로
-rem    끊기는 것을 막는 것이 목적이며, 그 목적에는 충분하다.
+rem 3) graceful drain  (구현: drain_wait.ps1 — 인라인으로는 담기 어려워 파일로 뺐다)
+rem    inflight(진행 중 요청 수)가 0 이 되는 순간을 노려 내린다. 다만 **줄지 않으면**
+rem    기다려도 소용없으므로 DRAIN_STALL_SEC 만에 포기하고, 그때는 종료 직전에 스레드
+rem    덤프(log\diagnose_terminate_*.txt)를 남긴다 — 서버를 내리면 안 끝나던 요청의
+rem    현행범 스택이 통째로 사라져 원인 규명이 막히기 때문이다 (2026-08-19 실제 사고).
+rem    한계는 종전과 같다: waitress 를 "신규 요청 차단" 상태로 만들 수는 없어서, 이것은
+rem    요청이 없는 순간을 포착하는 것이지 완전한 drain 이 아니다.
 rem ---------------------------------------------------------------------------
 echo.
-echo [terminate] 진행 중 요청이 끝나기를 기다립니다 (최대 %DRAIN_TIMEOUT_SEC%초) ...
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$port = [int]'%PORT%'; $deadline = (Get-Date).AddSeconds([int]'%DRAIN_TIMEOUT_SEC%'); $idle = 0; " ^
-  "while ($true) { " ^
-  "  if ((Get-Date) -ge $deadline) { Write-Host '[terminate] WARNING: 제한시간 초과 - 진행 중 요청을 남긴 채 강제 종료합니다.'; break }; " ^
-  "  try { $r = Invoke-WebRequest -Uri ('http://127.0.0.1:' + $port + '/healthz') -UseBasicParsing -TimeoutSec 5; $j = $r.Content | ConvertFrom-Json } " ^
-  "  catch { Write-Host '[terminate] healthz 무응답 - drain 생략 (이미 응답 불능 상태).'; break }; " ^
-  "  $n = $j.inflight; " ^
-  "  if ($null -eq $n) { Write-Host '[terminate] 서버가 inflight 를 보고하지 않음 (metrics 비활성) - 5초 고정 대기 후 종료.'; Start-Sleep -Seconds 5; break }; " ^
-  "  if ([int]$n -le 0) { $idle++; if ($idle -ge 2) { Write-Host '[terminate] 진행 중 요청 없음 - 안전하게 종료합니다.'; break } } " ^
-  "  else { $idle = 0; Write-Host ('[terminate]   진행 중 요청 ' + $n + '건 - 완료 대기 중 ...') }; " ^
-  "  Start-Sleep -Seconds 1 " ^
-  "}"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%drain_wait.ps1" ^
+  -Port %PORT% -TimeoutSec %DRAIN_TIMEOUT_SEC% -StallSec %DRAIN_STALL_SEC% %DIAG_ARG% %FORCE_ARG%
 
 rem ---------------------------------------------------------------------------
 rem 4) 종료 + 포트 해제 확인

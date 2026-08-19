@@ -11,6 +11,7 @@ import json
 import logging
 import secrets
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 from . import cache
@@ -28,6 +29,15 @@ from .validation import (
 )
 
 _log = logging.getLogger(__name__)
+
+
+def _no_stage(name, source=""):
+    """trace 미지정 시 기본 계측 — 아무것도 하지 않는다.
+
+    호출부(server/upload_webreport.py)가 `with trace(이름, 파일):` 하나만 요구하는
+    함수를 넘긴다. 계측 구현을 인자로 받는 이유는 web_report 가 server 를 import 하지
+    않기 위해서다(의존 방향 단방향 유지)."""
+    return nullcontext()
 
 
 def seed_client_dist_blobs(dist_blobs, analysis_key, content_hash, mode,
@@ -139,13 +149,20 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
                      client_ip: str = "", user_agent: str = "",
                      dist_blobs: dict | None = None,
                      dist_pack: dict | None = None,
-                     request_started: float | None = None) -> dict:
+                     request_started: float | None = None,
+                     trace=None) -> dict:
     """request_started: 라우트에서 잰 time.perf_counter() 시작값 (선택).
-    주면 파일 수신까지 포함한 업로드 소요시간을 감사 로그에 남긴다."""
+    주면 파일 수신까지 포함한 업로드 소요시간을 감사 로그에 남긴다.
+
+    trace: `with trace(단계이름, 파일명):` 로 쓰는 계측 훅 (선택). 주지 않으면 no-op 라
+    기존 호출부·테스트는 종전과 동일하게 돈다. 업로드가 응답을 못 준 채 멎었을 때
+    **어느 단계인지**를 관리자 화면·stuck 사건이 읽는 유일한 경로다."""
     from .honeyform import decode_split_honeyform_parquet
 
     if request_started is None:
         request_started = time.perf_counter()
+    if trace is None:
+        trace = _no_stage
 
     meta = _validate_meta(manifest.get("meta") or {})
     mode = _validate_mode(manifest.get("mode"))
@@ -164,15 +181,18 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     decoded = []
     for idx, item in enumerate(files):
         data = item["data"]
-        file_hashes.append(hashlib.sha256(data).hexdigest())
         source_info = sources_manifest[idx] if idx < len(sources_manifest) else {}
         source_name = str(source_info.get("name") or item.get("name") or f"source_{idx + 1}")
         file_name = str(source_info.get("file_name") or item.get("filename") or source_name)
         # 검증 겸 decode+split — 이 tables 를 아래에서 TABLES_CACHE 에 시딩해
         # prewarm 의 재디코드(파일당 ~1s)를 없앤다. 원본 bytes 는 이미 손에 있으므로
         # df(재인코딩용 전체 프레임)는 만들지 않는다 (읽기 캐시 규약과 동일 슬림 형태).
-        table = decode_split_honeyform_parquet(data, source=source_name, file_name=file_name,
-                                               keep_df=False)
+        # 계측은 **파일 단위**다 — source 가 7~21개라 "decode 가 느리다"만으로는 부족하고,
+        # 멎었을 때 몇 번째 파일이었는지가 곧 단서다(총 소요는 같은 이름으로 누적된다).
+        with trace("decode", f"{idx + 1}/{len(files)} {file_name}"):
+            file_hashes.append(hashlib.sha256(data).hexdigest())
+            table = decode_split_honeyform_parquet(data, source=source_name,
+                                                   file_name=file_name, keep_df=False)
         decoded.append({
             "source": source_name,
             "file_name": file_name,
@@ -190,50 +210,61 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     content_hash = hashlib.sha256(_canon({"files": file_hashes})).hexdigest()
     session_id = f"{int(time.time())}_{secrets.token_hex(3)}"
 
-    storage_result = runtime.storage().save_webreport_sources(
-        analysis_key, content_hash, [item["bytes"] for item in decoded], manifest,
-        upload_root=upload_root)
+    # S3 는 connect 5s / read 8s / retry 3 이고 실패하면 로컬 폴백으로 **전량 재저장**
+    # 하므로, 저장소가 응답하지 않으면 여기 혼자서 수 분을 먹을 수 있다. storage_gateway
+    # 는 동결 영역이라 내부를 쪼갤 수 없어 이 호출 전체를 한 단계로 잰다.
+    with trace("storage_save"):
+        storage_result = runtime.storage().save_webreport_sources(
+            analysis_key, content_hash, [item["bytes"] for item in decoded], manifest,
+            upload_root=upload_root)
     cache.manifest_cache_put(analysis_key, manifest)
     # ingest 가 이미 디코드한 tables 를 loader 와 같은 키로 시딩 — prewarm/첫 조회의
     # storage 재다운로드+재디코드 생략. (캐시엔 원본 저장, 소비자는 loader 가 클론 반환.)
     # 키는 cache_policy 빌더로 만든다(즉석 조립 금지) — loader 도 tables_key 로 조회하므로
     # 미래에 키 포맷이 바뀌어도 시드/조회가 함께 움직인다(전처리 없는 업로드 시점이라 prep="").
     pseudo_session = {"analysis_key": analysis_key, "content_hash": content_hash}
-    cache.tables_cache_put(cache_policy.tables_key(pseudo_session),
-                           [item["table"] for item in decoded])
+    with trace("seed_cache"):
+        cache.tables_cache_put(cache_policy.tables_key(pseudo_session),
+                               [item["table"] for item in decoded])
     # 클라 프리컴퓨트 dist blob(전체/bin1) 시딩 — 첨부 시 서버 콜드 dist 빌드 소멸.
-    dist_seeded = seed_client_dist_blobs(
-        dist_blobs, analysis_key, content_hash, mode, upload_root)
+    with trace("dist_seed"):
+        dist_seeded = seed_client_dist_blobs(
+            dist_blobs, analysis_key, content_hash, mode, upload_root)
     # 클라 Distribution pack(정렬 완료) 영구 저장 — 첨부 시 조회·재조회 모두 재정렬 없음.
-    pack_saved = save_client_dist_pack(
-        dist_pack, analysis_key, content_hash, mode, upload_root,
-        selected_items=selected_items)
+    with trace("dist_pack_save"):
+        pack_saved = save_client_dist_pack(
+            dist_pack, analysis_key, content_hash, mode, upload_root,
+            selected_items=selected_items)
 
     session_dir = Path(upload_root) / "web_report" / analysis_key
     # 선택된 product(part_id/sub_part_id) → product_info.db 기준정보 lookup 후 세션에 저장.
     # product_info 는 config 급 정적 참조 데이터 로더(server/ sys.path). 기준정보는 위
     # key_meta/analysis_key 산출에 미포함이므로 dedup 키는 불변(규칙 #3).
     from product_info import lookup as _product_info_lookup
-    report_db.create_session(
-        session_id=session_id,
-        file_name=meta["file_name"],
-        file_path=str(session_dir),
-        product_type=meta["product_type"],
-        family_product=meta["family_product"],
-        process=meta["process"],
-        product=meta["product"],
-        revision=meta["revision"],
-        edm_link=meta["edm_link"],
-        lot_id=meta["lot_id"],
-        password=meta["password"],
-        source="web_report",
-        uploaded_by=uploaded_by or None,
-        client_host=client_host or None,
-        mode=mode,
-        product_info=_product_info_lookup(meta["product"]),
-    )
-    report_db.update_session(
-        session_id, analysis_key=analysis_key, content_hash=content_hash, status="done")
+    # SQLite 는 WAL 이라 조회는 멀쩡한데 **쓰기만** 잠길 수 있다(busy_timeout 5초가
+    # create/update×2 연쇄로 누적). "업로드만 멎고 웹은 정상"인 증상과 맞아떨어지는
+    # 후보라 세션 생성 구간을 따로 잰다.
+    with trace("create_session"):
+        report_db.create_session(
+            session_id=session_id,
+            file_name=meta["file_name"],
+            file_path=str(session_dir),
+            product_type=meta["product_type"],
+            family_product=meta["family_product"],
+            process=meta["process"],
+            product=meta["product"],
+            revision=meta["revision"],
+            edm_link=meta["edm_link"],
+            lot_id=meta["lot_id"],
+            password=meta["password"],
+            source="web_report",
+            uploaded_by=uploaded_by or None,
+            client_host=client_host or None,
+            mode=mode,
+            product_info=_product_info_lookup(meta["product"]),
+        )
+        report_db.update_session(
+            session_id, analysis_key=analysis_key, content_hash=content_hash, status="done")
 
     # F10 웹리포트 옵션(Distribution source 색)을 세션에 영속화 — 조회 시 동일 재현용.
     # analysis_key 는 여러 세션이 공유(dedup)할 수 있으나 옵션은 세션 단위이므로 DB 세션행에
@@ -256,8 +287,9 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     # manifest 에 편집값(comment/override)이 실려 오면 세션 편집 DB 로 시드 —
     # 이후 manifest 는 불변 스냅샷이고 편집 진실은 DB(세션 단위)다.
     try:
-        edits.seed_from_manifest(report_db, session_id, manifest,
-                                 updated_by=uploaded_by or None)
+        with trace("seed_edits"):
+            edits.seed_from_manifest(report_db, session_id, manifest,
+                                     updated_by=uploaded_by or None)
     except Exception:
         _log.warning("web_report 편집값 시드 실패 — 업로드 코멘트/override 유실 "
                      "(session=%s)", session_id, exc_info=True)
@@ -266,13 +298,16 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     # 실패 무해 — docs/13). 방금 시딩한 TABLES_CACHE 를 그대로 쓴다.
     try:
         from . import eval_export
-        eval_export.export_async(session_id, report_db=report_db,
-                                 upload_root=Path(upload_root))
-        # 평가 판단 근거(L1~L4) 스냅샷도 같은 큐에 올린다 — 조회 경로는 persist=False 라
-        # 매번 계산하고 버리므로, 룰 채점·표본 검수의 재료가 여기서만 쌓인다(docs/17).
-        # AI Comment 옵션과 무관하게 전 web_report 세션 대상이며 실패는 무해하다.
-        eval_export.collect_async(session_id, report_db=report_db,
-                                  upload_root=Path(upload_root))
+        # 둘 다 큐 enqueue 만이라 기대값은 ~0ms 다 — 계측을 붙여 두는 것은 그 가정이
+        # 깨지는 순간(큐 락 경합 등)을 놓치지 않기 위해서다.
+        with trace("eval_queue"):
+            eval_export.export_async(session_id, report_db=report_db,
+                                     upload_root=Path(upload_root))
+            # 평가 판단 근거(L1~L4) 스냅샷도 같은 큐에 올린다 — 조회 경로는 persist=False 라
+            # 매번 계산하고 버리므로, 룰 채점·표본 검수의 재료가 여기서만 쌓인다(docs/17).
+            # AI Comment 옵션과 무관하게 전 web_report 세션 대상이며 실패는 무해하다.
+            eval_export.collect_async(session_id, report_db=report_db,
+                                      upload_root=Path(upload_root))
     except Exception:
         _log.warning("eval export 시작 실패 — 코멘트 eval DB 적재 누락 (session=%s)",
                      session_id, exc_info=True)
@@ -282,24 +317,27 @@ def ingest_webreport(manifest: dict, files: list[dict], *, report_db, upload_roo
     elapsed = round(time.perf_counter() - request_started, 1)
     total_mb = round(sum(len(item["bytes"]) for item in decoded) / (1024 * 1024), 1)
     try:
-        report_db.log_audit(
-            "upload", session_id=session_id, analysis_key=analysis_key,
-            product_type=meta["product_type"], product=meta["product"],
-            lot_id=meta["lot_id"], file_name=meta["file_name"],
-            changed_fields=f"ingest {elapsed}s / {len(decoded)}파일 {total_mb}MB",
-            client_ip=client_ip, user_agent=user_agent,
-            client_user=uploaded_by or None, client_host=client_host or None)
+        with trace("audit"):
+            report_db.log_audit(
+                "upload", session_id=session_id, analysis_key=analysis_key,
+                product_type=meta["product_type"], product=meta["product"],
+                lot_id=meta["lot_id"], file_name=meta["file_name"],
+                changed_fields=f"ingest {elapsed}s / {len(decoded)}파일 {total_mb}MB",
+                client_ip=client_ip, user_agent=user_agent,
+                client_user=uploaded_by or None, client_host=client_host or None)
     except Exception:
         pass
-    _log.info("[ingest] session=%s elapsed=%.1fs files=%d size=%.1fMB",
-              session_id, elapsed, len(decoded), total_mb)
+    _log.info("[ingest] session=%s elapsed=%.1fs files=%d size=%.1fMB storage=%s",
+              session_id, elapsed, len(decoded), total_mb,
+              storage_result.get("storage") if isinstance(storage_result, dict) else "?")
 
     # 캐시 프리웜: 업로더가 곧바로 여는 첫 조회(cold: parquet decode + payload + dist compact
     # ~10s)를 없애기 위해 미리 계산해 둔다. 부모 데몬 스레드에서 실행되어 위에서 시딩한
     # TABLES_CACHE 를 그대로 쓰고(재디코드 0회), 동시성은 세마포어(워커 수)로 상한된다
     # (compute.prewarm docstring 참조). 실패해도 무해 — 조회 시 다시 계산될 뿐이다.
     from . import compute
-    compute.prewarm(session_id, str(upload_root), dist_seeded=bool(dist_seeded))
+    with trace("prewarm"):
+        compute.prewarm(session_id, str(upload_root), dist_seeded=bool(dist_seeded))
 
     return {
         "session_id": session_id,

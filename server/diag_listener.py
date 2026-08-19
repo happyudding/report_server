@@ -49,6 +49,20 @@ def _inflight():
         return None
 
 
+def _inflight_rows(limit=5):
+    """진행 중 요청 중 오래 걸린 순으로 최대 limit 건 — "무엇이 걸렸나".
+
+    terminate 의 drain(drain_wait.ps1)이 이걸 읽어 "10건" 대신 라우트와 경과를 찍는다.
+    개수만 보고는 기다릴지 끊을지 판단할 수 없기 때문이다. 응답이 커지지 않게 상위
+    몇 건만 준다 — 멈춘 스레드들은 대개 같은 지점이라 표본 몇 개면 충분하다.
+    """
+    try:
+        from admin_panel.metrics import inflight_detail
+        return (inflight_detail() or [])[:limit]
+    except Exception:
+        return []
+
+
 class _Server(ThreadingHTTPServer):
     # 기본값(True)이면 Windows 에서는 이미 리스닝 중인 포트에도 bind 가 성공해버려,
     # 죽어가는 구 프로세스와 새 프로세스가 같은 포트를 나눠 갖는다 — watchdog 이 받은
@@ -67,6 +81,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "uptime_s": int(time.time() - _START_TS),
                 "threads": threading.active_count(),
                 "inflight": _inflight(),
+                "requests": _inflight_rows(),
             }).encode()
             self._send(200, "application/json", body)
         elif self.path.startswith("/threads"):

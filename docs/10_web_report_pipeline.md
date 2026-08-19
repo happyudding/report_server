@@ -93,6 +93,13 @@ DataFrame 레이아웃 (`honeyform.py`, `META_COLUMNS`/`META_ROW_LABELS`):
 
 반환: `{session_id, analysis_key, status, mode, web_report_url, sources, item_count, storage}`.
 
+**단계 계측** — 위 1~9 는 전부 요청 스레드의 동기 구간이라, 어딘가에서 멎으면 클라는
+타임아웃(200초)까지 기다리고 서버에는 아무 기록도 안 남았다. `ingest_webreport(…, trace=)`
+가 `with trace(단계, 파일):` 훅을 받아 각 구간을 표시하고, 관리자 화면·`stuck_request`
+사건이 **아직 안 끝난 요청의 현재 단계**를 읽는다(미지정 시 no-op) →
+[20 §3-1](20_error_tracking.md). 가장 자주 의심되는 두 구간은 `storage_save`(S3 무응답 시
+로컬 폴백 전량 재저장까지 겹친다)와 `create_session`(WAL 이라 조회는 멀쩡한데 쓰기만 잠긴다)이다.
+
 ## 조회 흐름 (`load_webreport()`)
 1. 세션 로드 → `edits_rev = get_webreport_edit_rev(sid)` (작은 인덱스 SELECT 1회).
 2. `cache_policy.report_key(session, sid, edits_rev)` 로 REPORT_CACHE 확인 → 미스면

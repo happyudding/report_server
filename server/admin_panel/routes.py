@@ -462,6 +462,14 @@ def api_runtime():
     except Exception:
         out["viewers"] = None
     try:
+        # 아직 **안 끝난** 요청 중 오래 걸린 것 — 콜드 폭풍(느림)과 달리 이건 hang 신호다.
+        # 요청이 끝나야만 도는 느린-요청 계측으로는 영영 안 보이는 부류라 따로 싣는다.
+        # 임계는 경로별이다(업로드 100초 / 그 외 120초) — 화면과 진단 사건이 같은
+        # 목록을 보이도록 판정을 metrics 한 곳에 맡긴다.
+        out["stuck"] = metrics.stuck_now() or []
+    except Exception:
+        out["stuck"] = None
+    try:
         out["active_users"] = metrics.active_users(
             request.args.get("user_window", metrics.ACTIVE_USER_WINDOW_SEC))
     except Exception:

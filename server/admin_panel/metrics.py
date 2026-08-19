@@ -17,6 +17,7 @@ import os
 import threading
 import time
 from collections import OrderedDict, deque
+from contextlib import contextmanager
 from pathlib import Path
 
 import psutil
@@ -49,6 +50,29 @@ SLOW_REQ_MS = float(os.getenv("REPORT_SLOW_REQ_MS", "10000"))
 _slow_pending = deque(maxlen=200)  # (ts, route, ms) — 요청 훅이 넣고 샘플러가 비운다
 _rt_last_write = 0.0
 _rt_warned = False
+
+# ── 끝나지 않는 요청 (2026-08-19) ──────────────────────────────────────────────
+# 위 SLOW_REQ_MS 는 요청이 **끝난 뒤** teardown 에서만 재므로, 영원히 안 끝나는 요청은
+# 구조적으로 한 줄도 남기지 못한다. 2026-08-19 업로드 hang 이 정확히 그랬다 — 클라는
+# 300초 만에 끊겼는데 서버 로그·진단 사건 모두 무기록이었고, 종료할 때 "진행 중 요청
+# 10건" 이 안 줄어드는 것으로만 존재를 알 수 있었다. 그래서 진행 중 요청을 따로 들고
+# 샘플러가 **끝나기 전에** 잡아낸다.
+STUCK_REQ_SEC = float(os.getenv("REPORT_STUCK_REQ_SEC", "120"))
+# 업로드는 별도 임계다. 동기 구간이 13단계나 되고 그중 S3 저장·DB 쓰기처럼 밖에서 멎을 수
+# 있는 구간이 섞여 있어 가장 자주 hang 하는데, 정작 사용자는 클라 타임아웃(200초)까지
+# 화면만 보고 기다린다 — 범용 120초보다 먼저 잡아야 조치할 시간이 남는다.
+UPLOAD_SLOW_SEC = float(os.getenv("REPORT_UPLOAD_SLOW_SEC", "100"))
+_UPLOAD_ROUTES = frozenset(("report.upload_webreport", "report.upload_xlsx"))
+_inflight_reqs = {}    # thread_ident -> (t0_wall, route, session_id)
+_stuck_seen = set()    # 이미 사건으로 남긴 (tid, t0) — 10초마다 같은 것을 다시 찍지 않는다
+_stuck_dumped = False  # 스레드 덤프는 기동당 1회 (첫 증거가 가장 값지고, 반복은 디스크만 먹는다)
+
+# 요청 **안의 어느 단계**인지 (2026-08-19). _inflight_reqs 는 "무엇이 몇 초째"까지만
+# 주므로, 업로드처럼 동기 구간이 긴 요청은 그것만으로 원인을 좁힐 수 없다. 스택 덤프가
+# 있긴 하나 기동당 1회뿐이고 사람이 읽어야 한다 — 단계 이름은 기계가 바로 쓴다.
+# 스레드 단위이며 teardown 에서 회수한다(요청 훅과 같은 락을 공유).
+_req_stages = {}       # thread_ident -> {"cur","src","t0","done":{name: sec}}
+_STAGE_MAX = 64        # 한 요청이 남길 수 있는 단계 종류 상한 (폭주 방어)
 
 _proc = psutil.Process()
 _lock = threading.Lock()  # 카운터·링버퍼 공용 (임계구역은 정수 연산·append 뿐)
@@ -106,14 +130,103 @@ _peak_day = None   # 마지막으로 본 날짜 ('YYYY-MM-DD') — 자정에 _pe
 _peak_val = 0      # 그날 지금까지 기록한 최대값
 
 
+@contextmanager
+def stage(name, source=""):
+    """이 요청이 지금 어느 단계인지 기록한다 (진행 중 조회·stuck 사건·완료 후 slow 사건 공용).
+
+    같은 이름으로 **반복** 호출하면 소요가 누적된다 — 파일을 순회하는 decode 처럼
+    "총합은 합치고 현재 파일만 바꾸고 싶은" 경우가 그렇다(중첩이 아니라 순차 반복이다).
+    중첩해서 열면 안쪽이 끝날 때 바깥 단계로 되돌아간다.
+
+    실패해도 요청을 깨지 않는다 — 계측이 기능을 망가뜨리면 안 된다.
+    """
+    tid = threading.get_ident()
+    t0 = time.perf_counter()
+    prev = ("", "")
+    try:
+        with _lock:
+            st = _req_stages.get(tid)
+            if st is None:
+                st = _req_stages[tid] = {"cur": "", "src": "", "t0": time.time(), "done": {}}
+            prev = (st["cur"], st["src"])
+            st["cur"] = str(name)[:40]
+            st["src"] = str(source or "")[:120]
+            st["t0"] = time.time()
+    except Exception:
+        pass
+    try:
+        yield
+    finally:
+        try:
+            sec = round(time.perf_counter() - t0, 3)
+            with _lock:
+                st = _req_stages.get(tid)
+                if st is not None:
+                    if len(st["done"]) < _STAGE_MAX or name in st["done"]:
+                        st["done"][name] = round(st["done"].get(name, 0.0) + sec, 3)
+                    st["cur"], st["src"] = prev
+                    st["t0"] = time.time()
+        except Exception:
+            pass
+
+
+def stages_done():
+    """이 요청이 지금까지 끝낸 단계별 소요 (없으면 빈 dict). 라우트가 완료 시 쓴다."""
+    try:
+        with _lock:
+            st = _req_stages.get(threading.get_ident())
+            return dict(st["done"]) if st else {}
+    except Exception:
+        return {}
+
+
+def cpu_snapshot():
+    """(wall, 프로세스 CPU초) 튜플 — 두 시점의 차로 **CPU 시간/실제 시간** 비율을 낸다.
+
+    비율이 낮으면 CPU 를 못 얻었거나(=다른 프로세스와 경합) IO 를 기다린 것이고, 높으면
+    실제로 계산한 것이다. 콜드 빌드 워커가 코어를 채워 업로드 디코드가 굶는 현상
+    (web_report/compute.py `_lower_worker_priority`)을 사후에 판정하는 유일한 지표라
+    업로드 라우트가 요청 전체에 대해 한 번씩만 잰다 — 단계마다 재면 psutil 호출이 늘어난다.
+    """
+    try:
+        t = _proc.cpu_times()
+        return time.perf_counter(), t.user + t.system
+    except Exception:
+        return time.perf_counter(), None
+
+
+def cpu_ratio(before, after):
+    """cpu_snapshot() 두 개로 CPU 점유 비율(0~1, 코어 1개 기준). 계산 불가면 None."""
+    try:
+        wall = after[0] - before[0]
+        if wall <= 0 or before[1] is None or after[1] is None:
+            return None
+        return round((after[1] - before[1]) / wall, 3)
+    except Exception:
+        return None
+
+
 def _on_request_start():
     global _inflight, _inflight_window_peak
+    g._mx_counted = True
+    g._mx_t0 = time.perf_counter()
+    # 진행 중 요청 등록 — 개수만으로는 **무엇이** 걸렸는지 알 수 없다(_inflight_reqs 주석).
+    # route/sid 추출은 락 밖에서 끝내고 락은 종전처럼 한 번만 잡는다.
+    try:
+        route = request.endpoint or request.path
+    except Exception:
+        route = "?"
+    try:
+        sid = (request.view_args or {}).get("session_id") or ""
+    except Exception:
+        sid = ""
+    tid = threading.get_ident()
+    now = time.time()
     with _lock:
         _inflight += 1
         if _inflight > _inflight_window_peak:
             _inflight_window_peak = _inflight
-    g._mx_counted = True
-    g._mx_t0 = time.perf_counter()
+        _inflight_reqs[tid] = (now, route, sid)
 
 
 def _on_response(resp):
@@ -175,6 +288,16 @@ def _on_request_teardown(exc=None):
             status = g.get("_mx_status")
     with _lock:
         _inflight -= 1
+        # 진행 중 등록 해제. stuck 으로 이미 신고된 요청이면 그 표식도 함께 지운다 —
+        # 스레드가 재사용되므로 (tid, t0) 쌍으로 지워야 다음 요청이 오탐되지 않는다.
+        _done = _inflight_reqs.pop(threading.get_ident(), None)
+        if _done is not None:
+            _stuck_seen.discard((threading.get_ident(), _done[0]))
+        # 단계 기록도 같은 자리에서 회수한다 — 스레드가 재사용되므로 남겨두면 다음
+        # 요청이 이전 요청의 단계를 달고 다닌다. 느린 요청 사건에 실어야 하므로
+        # 버리기 전에 집어 둔다(아래 _emit_slow_event 는 락 밖에서 돈다).
+        _st = _req_stages.pop(threading.get_ident(), None)
+        stages_done = dict(_st["done"]) if _st else {}
         if ident is not None:
             key, uid, ip, honey, ver, agent = ident
             now = time.time()
@@ -222,28 +345,37 @@ def _on_request_teardown(exc=None):
                 _slow_pending.append((time.time(), route, ms))
                 slow = True
     if slow:
-        _emit_slow_event(route, ms)     # 락 밖에서 (파일 IO)
+        _emit_slow_event(route, ms, stages_done)    # 락 밖에서 (파일 IO)
     if is_public_api and ms is not None:
         _record_public_api(route, ms)   # 락 밖에서 (전용 모듈이 자기 락을 쓴다)
 
 
-def _emit_slow_event(route, ms):
+def _emit_slow_event(route, ms, stages_done=None):
     """느린 요청을 진단 사건으로 — runtime_*.log 의 통계와 달리 **요청 상관 ID**가 붙는다.
 
     같은 요청이 뒤에 500 으로 끝나거나 콜드 빌드로 이어졌을 때 타임라인에서 이어 보려면
     request_id 가 필요한데, 그건 요청 컨텍스트가 살아 있는 지금만 알 수 있다.
-    ≥10초 요청에서만 도는 경로라 파일 IO 비용은 문제되지 않는다."""
+    ≥10초 요청에서만 도는 경로라 파일 IO 비용은 문제되지 않는다.
+
+    stages_done 이 있으면 **어느 단계에 시간이 갔는지**까지 실린다 — 이 사건은 "응답을
+    줬는데 느렸다" 쪽이고, 아직 응답을 못 준 요청은 stuck_request 가 맡는다(역할 분리)."""
     try:
         import diagnostics
         ctx = {"endpoint": route, "elapsed_ms": int(ms)}
+        if stages_done:
+            ctx["stages_done"] = stages_done
         try:
             ctx["session_id"] = (request.view_args or {}).get("session_id") or ""
             ctx["method"] = request.method
         except Exception:
             pass
         ctx.update(diagnostics.current_ids())
+        top = ""
+        if stages_done:
+            k, v = max(stages_done.items(), key=lambda kv: kv[1])
+            top = f" (최장 {k} {v}s)"
         diagnostics.emit("warning", "server", "slow_request",
-                         message=f"{route} {int(ms)}ms", **ctx)
+                         message=f"{route} {int(ms)}ms{top}", **ctx)
     except Exception:
         pass
 
@@ -449,6 +581,12 @@ def _loop():
             _sample()
         except Exception:
             _log.exception("[metrics] sample failed")
+        # 샘플링과 분리한다 — 끝나지 않는 요청 감지는 샘플이 실패해도 반드시 돌아야 한다
+        # (그 상황이 곧 서버가 이상한 순간이다).
+        try:
+            _check_stuck_requests()
+        except Exception:
+            _log.exception("[metrics] stuck request check failed")
         time.sleep(SAMPLE_INTERVAL)
 
 
@@ -480,6 +618,135 @@ def current_inflight():
         return None
     with _lock:
         return _inflight
+
+
+def inflight_detail(min_sec=0.0):
+    """진행 중 요청 목록 (오래 걸린 것부터). 비활성/미기동이면 None.
+
+    `current_inflight()` 가 **개수**만 준다면 이쪽은 **무엇이 몇 초째인지**를 준다.
+    terminate.bat 의 종료 대기 표시와 관리자 '장시간 처리 중' 칩이 같은 값을 쓴다 —
+    "10건" 만 보고는 기다려야 할지 끊어야 할지 판단할 수 없기 때문이다.
+    """
+    if not METRICS_ENABLED or not _started:
+        return None
+    now = time.time()
+    with _lock:
+        rows = [(t0, route, sid, _stage_view(_req_stages.get(tid), now))
+                for tid, (t0, route, sid) in _inflight_reqs.items()]
+    out = [{"route": route, "session_id": sid, "elapsed": round(now - t0, 1), **st}
+           for t0, route, sid, st in rows if now - t0 >= min_sec]
+    out.sort(key=lambda d: d["elapsed"], reverse=True)
+    return out
+
+
+def stuck_now():
+    """지금 임계를 넘긴 진행 중 요청 (**경로별** 임계 적용 — 업로드는 더 짧다).
+
+    `inflight_detail(고정초)` 를 쓰면 업로드 임계(100초)와 범용 임계(120초) 중 하나만
+    맞출 수 있어, 관리자 화면이 stuck 사건과 다른 목록을 보여주게 된다. 판정 규칙은
+    `_stuck_threshold` 한 곳에만 둔다."""
+    rows = inflight_detail()
+    if rows is None:
+        return None
+    return [r for r in rows if r["elapsed"] >= _stuck_threshold(r["route"])]
+
+
+def _stage_view(st, now):
+    """진행 중 단계 요약 (락 안에서 호출). 단계 기록이 없으면 빈 dict — 종전 응답 그대로."""
+    if not st or not st.get("cur"):
+        return {}
+    return {"stage": st["cur"], "stage_source": st.get("src") or "",
+            "stage_elapsed": round(now - st.get("t0", now), 1),
+            "stages_done": dict(st.get("done") or {})}
+
+
+def _dump_stuck_threads(rows):
+    """stuck 요청의 현행범 스택을 파일로. 반환: 파일명(실패 시 "").
+
+    덤프 자체는 사이드 진단 리스너와 **같은 함수**를 쓴다(diag_listener.dump_threads_text)
+    — 사람이 `/threads` 로 받는 것과 같은 내용이어야 판정 절차도 하나로 유지된다.
+    console log 탭이 `diagnose_*` 를 이미 열람 허용하므로 별도 배선이 필요 없다.
+    """
+    try:
+        import diagnostics
+        from diag_listener import dump_threads_text
+        # 경로는 진단 사건과 같은 폴더 — 규칙을 두 번 쓰지 않고, 테스트 격리
+        # (REPORT_DIAG_DIR)도 그대로 따라온다.
+        path = diagnostics.log_dir() / f"diagnose_stuck_{time.strftime('%Y%m%d_%H%M%S')}.txt"
+        head = ["# 임계를 넘겨 아직 처리 중인 요청 — 아래 스택의 공통 대기 지점이 원인이다"
+                f" (기준: 업로드 {UPLOAD_SLOW_SEC:.0f}s / 그 외 {STUCK_REQ_SEC:.0f}s)"]
+        head += [f"#   {r['route']} {r['elapsed']}s session={r['session_id'] or '-'}"
+                 f"{_stage_label(r)} done={r.get('stages_done') or {}}"
+                 for r in rows]
+        path.write_text("\n".join(head) + "\n\n" + dump_threads_text(), encoding="utf-8")
+        return path.name
+    except Exception:
+        _log.warning("[metrics] stuck 스레드 덤프 실패", exc_info=True)
+        return ""
+
+
+def _stuck_threshold(route):
+    """이 경로의 '너무 오래 걸린다' 기준(초). 비활성 임계는 사실상 무한대로 취급한다."""
+    sec = UPLOAD_SLOW_SEC if route in _UPLOAD_ROUTES else STUCK_REQ_SEC
+    return sec if sec > 0 else float("inf")
+
+
+def _check_stuck_requests():
+    """임계를 넘긴 **진행 중** 요청을 진단 사건으로 남긴다 (샘플러 스레드에서 호출).
+
+    _emit_slow_event 는 teardown(=요청 종료) 에서만 도는 반면 이쪽은 **끝나기 전에** 돈다.
+    끝나지 않는 요청은 그 경로를 영원히 못 타므로, 이것이 유일한 기록 지점이다.
+    """
+    global _stuck_dumped
+    if STUCK_REQ_SEC <= 0 and UPLOAD_SLOW_SEC <= 0:
+        return
+    now = time.time()
+    with _lock:
+        items = [(tid, t0, route, sid, _stage_view(_req_stages.get(tid), now))
+                 for tid, (t0, route, sid) in _inflight_reqs.items()]
+        # 고아 단계 기록 회수 — teardown 을 못 거친 요청(다른 훅이 먼저 abort 한 경우)이
+        # 남긴 것. 스레드가 재사용될 때 남의 단계를 달고 다니는 것을 막는다.
+        for tid in [t for t in _req_stages if t not in _inflight_reqs]:
+            _req_stages.pop(tid, None)
+    fresh = [it for it in items
+             if now - it[1] >= _stuck_threshold(it[2]) and (it[0], it[1]) not in _stuck_seen]
+    if not fresh:
+        return
+    for it in fresh:
+        _stuck_seen.add((it[0], it[1]))
+    rows = [{"route": route, "session_id": sid, "elapsed": round(now - t0, 1), **st}
+            for _tid, t0, route, sid, st in fresh]
+    dump = ""
+    if not _stuck_dumped:
+        _stuck_dumped = True
+        dump = _dump_stuck_threads(rows)
+    for r in rows:
+        _log.error("[metrics] 요청이 %ss 째 끝나지 않음: %s session=%s%s%s",
+                   r["elapsed"], r["route"], r["session_id"] or "-", _stage_label(r),
+                   f" (스레드 덤프: {dump})" if dump else "")
+    try:
+        import diagnostics
+        top = rows[0]
+        diagnostics.emit(
+            "critical", "server", "stuck_request",
+            error_type="StuckRequest",
+            message=(f"{top['route']} {top['elapsed']}s 째 처리 중"
+                     f"{_stage_label(top)} (총 {len(rows)}건)"),
+            endpoint=top["route"], session_id=top["session_id"] or "",
+            elapsed_ms=int(top["elapsed"] * 1000), stuck_count=len(rows),
+            stage=top.get("stage", ""), stage_source=top.get("stage_source", ""),
+            stages_done=top.get("stages_done") or "",
+            thread_dump=dump)
+    except Exception:
+        pass
+
+
+def _stage_label(r):
+    """" [decode 42.1s lot_c.csv]" — 단계 기록이 없으면 빈 문자열(종전 문구 그대로)."""
+    if not r.get("stage"):
+        return ""
+    src = f" {r['stage_source']}" if r.get("stage_source") else ""
+    return f" [{r['stage']} {r.get('stage_elapsed', 0)}s{src}]"
 
 
 def viewers(window_sec=VIEWER_WINDOW_SEC):

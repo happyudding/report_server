@@ -60,3 +60,12 @@ SERVER_BASE_URL = (
 CURRENT_VERSION = "3.2.0"
 
 REQUEST_TIMEOUT_SEC = (10, 300)  # (connect_timeout, read_timeout)
+
+# web_report 업로드 전용 read timeout (2026-08-19, 300 → 200).
+# 위 상수는 xlsx 업로드·part_ids·버전체크·rawdata_replace 가 **함께 쓰는** 값이라 그대로
+# 줄이면 무관한 경로까지 짧아진다. 업로드만 따로 끊는 이유는 300초를 다 기다려도 얻는 게
+# 없기 때문이다 — 그 시간이면 이미 서버 쪽에 진단 사건이 남아 있고(관리자 '업로드 지연'),
+# 사용자는 더 빨리 실패를 알고 재시도할 수 있는 편이 낫다.
+# ⚠️ 서버 슬롯 대기(WEB_REPORT_UPLOAD_WAIT_SEC)가 이 값보다 짧아야 한다 — 대기만 하다
+# 클라가 먼저 끊으면 503 안내조차 못 받는다(server/env/server.env 에서 90 으로 맞춰 둠).
+WEBREPORT_UPLOAD_TIMEOUT_SEC = (10, 200)

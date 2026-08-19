@@ -38,9 +38,14 @@ server\start.bat
 
 1. **watchdog 일시 정지** (`schtasks /Change /TN report-server-watchdog /DISABLE`).
    이걸 건너뛰면 서버를 내려둔 사이 5분 주기 watchdog 이 끼어들어 **옛 코드로 재기동**한다.
-2. `/healthz` 의 `inflight` 가 0 이 되는 순간을 노려 종료(최대 90초, `DRAIN_TIMEOUT_SEC`).
+2. **drain** ([drain_wait.ps1](../../../server/drain_wait.ps1)) — `inflight`(진행 중 요청 수)가
+   0 이 되는 순간을 노려 종료(최대 90초, `DRAIN_TIMEOUT_SEC`). 진행 중 요청 수가
+   `DRAIN_STALL_SEC`(15초) 동안 **줄지 않으면** 멈춘 것으로 보고 곧바로 종료로 넘어가고,
+   그때는 **종료 직전 스레드 덤프**를 `log\diagnose_terminate_*.txt` 에 남긴다 —
+   서버를 내리면 안 끝나던 요청의 현행범 스택이 통째로 사라지기 때문이다(2026-08-19 사고).
    waitress 를 "신규 요청 차단" 상태로 만들 수는 없으므로 **완전한 drain 은 아니다** —
    요청이 없는 순간을 포착하는 것이다.
+   > 급하면 `server\terminate.bat force` — drain 을 아예 건너뛴다(덤프는 그래도 남는다).
 3. `kill_server_tree.ps1` 로 **트리째** 종료. 서버 프로세스 하나만 죽이면 안 된다 —
    web_report 컴퓨트 워커는 포트를 LISTEN 하지 않아 고아로 남고, 워커당 tables 캐시가
    최대 4GB 다.

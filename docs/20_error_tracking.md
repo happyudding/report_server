@@ -97,19 +97,62 @@ build_log.end_job() → sidecar 삭제
 **storage_gateway 는 동결이라 `download` 단계는 전체 소요만 잰다.** 다운로드 중 정체하면
 sidecar 의 stage 가 `download` 로 멈춰 있는 것까지가 얻을 수 있는 정보다.
 
+## 3-1. 업로드 단계 계측 (2026-08-19)
+
+콜드 빌드는 §3 의 sidecar 로 "어느 단계에서 멎었나"를 답할 수 있는데 **업로드는 그럴
+수단이 없었다.** sidecar 는 `_in_worker()` 가 False 면 no-op 이고(웹 요청 스레드에선
+아무것도 안 남는다) PID 단위 전역 1개라 동시 업로드 3건을 표현하지도 못한다. 그래서
+업로드는 별도 레지스트리 대신 **이미 있는 진행 중 요청 등록부에 단계만 얹었다**
+([metrics.py](../server/admin_panel/metrics.py) `stage()` / `_req_stages`).
+
+```
+요청 스레드                                 샘플러(10초) / 관리자 화면
+with stage("slot_wait"):   → 현재 단계 갱신
+with stage("multipart"):
+with stage("decode", "3/7 lot_c.parquet")   inflight_detail() → stage/stage_elapsed/stages_done
+with stage("storage_save"):  (여기서 멎음)   _check_stuck_requests() → stuck_request 사건
+teardown                   → 단계 회수        _emit_slow_event() → slow_request 에 stages_done
+```
+
+- 단계는 **라우트 4개**(`slot_wait`/`multipart`/`read_files`/`read_dist` —
+  [upload_webreport.py](../server/upload_webreport.py)) + **ingest 9개**(`decode`(파일별)/
+  `storage_save`/`seed_cache`/`dist_seed`/`dist_pack_save`/`create_session`/`seed_edits`/
+  `eval_queue`/`prewarm` — [ingest.py](../web_report/ingest.py)).
+- `ingest_webreport(…, trace=)` 는 `with trace(이름, 파일):` 하나만 요구하는 **함수를 인자로**
+  받는다. 미지정이면 no-op 이라 기존 호출부는 종전과 동일하고, `web_report` → `server`
+  의존도 생기지 않는다.
+- 같은 이름으로 **반복** 호출하면 소요가 누적된다(파일을 순회하는 `decode` 가 그렇다).
+  중첩하면 안쪽이 끝날 때 바깥 단계로 복원된다.
+- 완료 시 **항상** `[upload_webreport] 완료 … total=…s cpu=… slot_wait=… decode=…` 한 줄을
+  남긴다. 느리지 않은 업로드까지 남기는 이유는 **기준선이 없으면 "느려졌다"를 판정할 수
+  없기** 때문이다.
+- `cpu` 는 프로세스 CPU 시간 / 실제 시간 비율이다. 낮으면 계산이 아니라 대기(다른
+  프로세스와의 CPU 경합·IO)에 시간을 쓴 것 — 콜드 빌드 워커가 코어를 채워 업로드 디코드가
+  굶는 현상([compute.py](../web_report/compute.py) `_lower_worker_priority`)을 사후에
+  가려내는 지표다. 20초 이상이면서 0.3 미만이면 로그에 `⚠CPU경합의심` 이 붙는다.
+
+**서버가 볼 수 없는 구간이 있다.** waitress 는 바디를 **전량 수신한 뒤에야** 요청을 처리
+큐에 넣으므로, 네트워크 전송 시간과 큐 대기는 위 계측 이전이다. 즉 "클라는 200초 무응답인데
+서버 기록은 20초"가 정상적으로 가능하다. 그 구간은 Honey 가 재는 `body_sec`(바디 송신
+완료까지) / `wait_sec`(그 뒤 응답까지)로만 알 수 있고
+([uploader.post_webreport](../client/transport/uploader.py)), 두 값은 실행 로그와
+`honey_upload_fail`/`honey_upload_slow` 사건에 실려 `operation_id` 로 서버 사건과 이어진다.
+
 ## 4. 사건이 만들어지는 지점
 
 | 사건 | severity | 지점 |
 |---|---|---|
 | `unhandled_exception` | critical | [ops.py](../server/ops.py) 전역 핸들러 (스택 전문 포함) |
 | `compute_unavailable` | warning | 같은 곳 — BrokenProcessPool/TimeoutError → 503 (스택 없음: 서버 버그가 아니라 용량 문제) |
-| `slow_request` | warning | [metrics.py](../server/admin_panel/metrics.py) `_emit_slow_event` — `REPORT_SLOW_REQ_MS`(10초) 초과. 기존 `runtime_*.log` 통계와 달리 **요청 상관 ID가 붙는다** |
+| `slow_request` | warning | [metrics.py](../server/admin_panel/metrics.py) `_emit_slow_event` — `REPORT_SLOW_REQ_MS`(10초) 초과. 기존 `runtime_*.log` 통계와 달리 **요청 상관 ID가 붙는다**. 단 **요청이 끝나야** 도는 teardown 훅이다 |
+| `stuck_request` | critical | 같은 파일 `_check_stuck_requests` — **아직 안 끝난** 요청이 임계 초과(**업로드 `REPORT_UPLOAD_SLOW_SEC` 100초 / 그 외 `REPORT_STUCK_REQ_SEC` 120초**, 판정은 `_stuck_threshold` 한 곳). 샘플러(10초)가 돌며 잡고, **첫 1회 스레드 덤프**(`diagnose_stuck_*.txt`)를 함께 남긴다. 위 slow 는 teardown 에서만 돌아 **영영 안 끝나는 요청은 구조적으로 한 줄도 남기지 못했다** — 2026-08-19 업로드 hang(클라 300초 timeout, 서버 무기록, 종료 때 "진행 중 10건" 으로만 존재를 앎)이 그 공백이었다. 사건·로그·덤프 머리말에 **그때의 단계**(`stage`/`stage_source`)가 함께 실린다 → §3-1 |
 | `upload_failed` | 400=info / 503=warning / 500=critical | [upload_webreport.py](../server/upload_webreport.py) `_record_upload_failure` (+ 감사 `action=upload, result=fail`) |
 | `build_timeout` / `build_broken` / `build_error` | critical/warning | [compute.py](../web_report/compute.py) `_emit_build_failure` |
 | `build_interrupted` | warning | 기동 시 잔존 sidecar 스윕 |
 | `load_failed` / `load_exception` / `poll_timeout` | warning/info | [boot.js](../server/report/static/webreport/boot.js) → `/api/client_error`. **이미 catch 된 실패**라 `window.onerror` 로는 안 잡히는데, 정작 사용자가 신고하는 건 대부분 이쪽이다 |
 | `error` / `unhandledrejection` | warning | [error_beacon.js](../server/report/static/webreport/error_beacon.js) (종전 그대로) |
-| `honey_upload_fail` / `honey_crash` | warning | Honey → `/api/client_diagnostic` |
+| `honey_upload_fail` / `honey_crash` | warning | Honey → `/api/client_diagnostic`. 업로드 실패에는 `mb`/`body_sec`/`wait_sec` 가 함께 실린다(§3-1) |
+| `honey_upload_slow` | warning | Honey → 같은 곳. **성공했는데도** 서버 응답 대기가 60초를 넘긴 업로드. 실패만 보고하면 임계 직전 상태(=다음 타임아웃의 예보)를 영영 못 본다 |
 | `honey_render_crash` | warning | Honey 내장 브라우저의 렌더러(QtWebEngineProcess) 비정상 종료 — [embedded_browser.py](../client/embedded_browser.py) `_on_render_terminated`. GPU/드라이버가 흔한 원인이라 `status`/`exit_code`/`url` 을 context 로 싣는다. 클라 로그(`log/<날짜>.txt`)에는 `--disable-gpu` 조치 힌트도 남는다 |
 
 **의도된 HTTPException(404 등)은 사건을 만들지 않는다.** 정상 응답까지 사건이 되면 목록이
@@ -163,9 +206,16 @@ sidecar 의 stage 가 `download` 로 멈춰 있는 것까지가 얻을 수 있�
 ## 8. 검증
 
 ```
-server\.venv\Scripts\python.exe tests\test_diagnostics.py    # 사건 e2e (a~j)
-server\.venv\Scripts\python.exe tests\test_build_log.py      # (8) 타임아웃 시 last_stage 보존
+server\.venv\Scripts\python.exe tests\test_diagnostics.py        # 사건 e2e (a~j)
+server\.venv\Scripts\python.exe tests\test_build_log.py          # (8) 타임아웃 시 last_stage 보존
+server\.venv\Scripts\python.exe tests\test_stuck_request.py      # 끝나기 전에 사건+덤프
+server\.venv\Scripts\python.exe tests\test_upload_stage_trace.py # §3-1 단계 계측
 ```
+
+`test_upload_stage_trace.py` 가 고정하는 것: 단계 누적/중첩 복원/예외 안전 · 진행 중
+요청에 현재 단계 노출 · **업로드에 전용 임계(100초)가 범용(120초)보다 먼저 적용** ·
+stuck 사건·덤프 머리말에 단계 포함 · 완료된 느린 요청의 `slow_request` 에 단계 분해 첨부 ·
+요청 종료 시 회수.
 
 `test_diagnostics.py` 가 확인하는 것: `X-Request-ID` 헤더 / 500 응답 `error_id` == 헤더 ==
 사건 `request_id` / 503 은 스택 없이 warning / 404 는 사건 미생성 / Honey 수집과 event_id 유지 /

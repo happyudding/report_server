@@ -6,6 +6,7 @@ import logging
 import sys
 import threading
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 from flask import abort, jsonify, redirect, request
@@ -22,6 +23,21 @@ from report.report_extension import report_bp
 from web_report import service as web_report_service
 
 _log = logging.getLogger(__name__)
+
+# 단계 계측 (2026-08-19) — 업로드는 동기 구간이 13단계나 되는데 지금까지 남는 것은 성공 시
+# 총합 1줄뿐이었다. 그래서 300초 타임아웃이 나도 **어디서** 썼는지 알 방법이 없었다.
+# metrics 가 이미 진행 중 요청을 스레드 단위로 들고 있으므로(admin 'stuck' 감지) 거기에
+# 단계만 얹는다 — 별도 레지스트리를 만들면 같은 것이 두 벌이 된다.
+try:
+    from admin_panel import metrics as _metrics
+except Exception:      # 관리자 패널 없이 뜨는 구성(테스트 등)에서도 업로드는 돌아야 한다
+    _metrics = None
+
+
+def _stage(name, source=""):
+    """계측이 없으면 아무것도 하지 않는 with 블록. ingest 에도 이 함수를 그대로 넘긴다."""
+    return _metrics.stage(name, source) if _metrics is not None else nullcontext()
+
 
 _MAX_WEBREPORT_BYTES = 512 * 1024 * 1024
 
@@ -197,11 +213,42 @@ def _record_upload_failure(manifest, exc, status, severity):
         pass
 
 
+def _upload_summary(started, cpu0, files, session_id, ok):
+    """업로드 1건의 단계별 소요를 한 줄로 남긴다 — **느리지 않은 업로드도 항상**.
+
+    기준선이 없으면 "느려졌다"를 판정할 수 없다. cpu 는 프로세스 CPU 시간 / 실제 시간
+    비율이라 낮을수록 계산이 아니라 대기(다른 프로세스와의 CPU 경합·IO)에 시간을 쓴
+    것이다 — 콜드 빌드 워커가 코어를 채워 업로드 디코드가 굶는 현상
+    (web_report/compute.py `_lower_worker_priority`)을 사후에 가려내는 지표다.
+    """
+    try:
+        total = round(time.perf_counter() - started, 1)
+        stages = _metrics.stages_done() if _metrics is not None else {}
+        cpu = (_metrics.cpu_ratio(cpu0, _metrics.cpu_snapshot())
+               if (_metrics is not None and cpu0) else None)
+        mb = round(sum(len(f["data"]) for f in (files or [])) / (1024 * 1024), 1)
+        parts = " ".join(f"{k}={v}" for k, v in
+                         sorted(stages.items(), key=lambda kv: -kv[1]))
+        starved = cpu is not None and cpu < 0.3 and total >= 20
+        _log.info("[upload_webreport] %s session=%s %sMB/%d파일 total=%ss cpu=%s%s %s",
+                  "완료" if ok else "실패", session_id or "-", mb, len(files or []),
+                  total, cpu if cpu is not None else "?",
+                  " ⚠CPU경합의심" if starved else "", parts)
+    except Exception:
+        pass
+
+
 @report_bp.post("/upload_webreport")
 def upload_webreport():
     started = time.perf_counter()
+    cpu0 = _metrics.cpu_snapshot() if _metrics is not None else None
     manifest = None
-    ok, reason = _acquire_upload_slot()
+    files = None
+    result = None
+    # 슬롯 대기는 최대 WEB_REPORT_UPLOAD_WAIT_SEC 초를 먹는데 지금까지 무계측이라,
+    # 총 소요만 보고는 "서버가 느린 것"과 "줄을 선 것"을 구분할 수 없었다.
+    with _stage("slot_wait"):
+        ok, reason = _acquire_upload_slot()
     if not ok:
         _log.warning("[upload_webreport] 동시 업로드 상한 — 거절(%s, 대기 %d건)",
                      reason, _upload_waiters)
@@ -210,15 +257,22 @@ def upload_webreport():
                         "error": "서버가 다른 업로드를 처리 중입니다. 잠시 후 다시 시도해 주세요."}), 503, \
                        {"Retry-After": "30"}
     try:
-        manifest = _read_manifest()
-        files = _read_files()
-        dist_blobs = _read_dist_blobs()
-        dist_pack = _read_dist_pack()
+        # ⚠️ 첫 request.form 접근이 werkzeug 의 멀티파트 lazy 파싱을 통째로 트리거한다
+        # (디스크 스풀 → 파싱). 즉 이 한 줄이 곧 '바디 파싱' 구간이다. 네트워크 수신은
+        # waitress 가 태스크 큐에 넣기 전에 이미 끝나 있어(channel.py) 여기서는 안 잡힌다 —
+        # 그 구간은 클라가 재는 body_sec 로만 알 수 있다.
+        with _stage("multipart"):
+            manifest = _read_manifest()
+        with _stage("read_files"):
+            files = _read_files()
+        with _stage("read_dist"):
+            dist_blobs = _read_dist_blobs()
+            dist_pack = _read_dist_pack()
         ip, ua = _client_meta()
         result = web_report_service.ingest_webreport(
             manifest, files, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR),
             client_ip=ip, user_agent=ua, dist_blobs=dist_blobs, dist_pack=dist_pack,
-            request_started=started)
+            request_started=started, trace=_stage)
     except HTTPException as exc:
         # abort() 가 정한 상태코드(413 등)를 아래 catch-all 이 400 으로 뭉개지 않게 통과시킨다.
         _record_upload_failure(manifest, exc, exc.code or 400, "info")
@@ -240,6 +294,8 @@ def upload_webreport():
         return jsonify({"status": "failed", "error": str(exc)}), 500
     finally:
         _UPLOAD_SEM.release()
+        _upload_summary(started, cpu0, files,
+                        (result or {}).get("session_id"), result is not None)
 
     return jsonify(result)
 

@@ -1,11 +1,13 @@
 """서버 업로드 헬퍼."""
 import json
+import time
 from urllib.parse import quote
 
 import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 
-from .config import CURRENT_VERSION, REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
+from .config import (CURRENT_VERSION, REQUEST_TIMEOUT_SEC, SERVER_BASE_URL,
+                     WEBREPORT_UPLOAD_TIMEOUT_SEC)
 from .retry import get_with_retry
 
 
@@ -87,7 +89,7 @@ def post_grids(sheet_grids, file_name, product_type, product, lot_id, password,
 
 
 def post_webreport(manifest, parquet_items, base_url=None, progress_cb=None,
-                   dist_blobs=None, dist_pack=None):
+                   dist_blobs=None, dist_pack=None, timing=None):
     """7-meta honeyform parquet 묶음을 /pe/report/upload_webreport 로 전송.
 
     manifest: {sources, meta, selected_items, sheets}
@@ -97,6 +99,11 @@ def post_webreport(manifest, parquet_items, base_url=None, progress_cb=None,
     dist_pack: {"index": json str, "chunks": {id: gzip bytes}} — 정렬까지 끝낸
                Distribution pack (web_report.dist_pack). 서버가 **영구** 저장해 조회·
                재조회 모두 재정렬 없이 서빙한다. None 이면 미첨부(서버 폴백 계산).
+    timing: dict 를 주면 {mb, body_sec, wait_sec} 를 채운다 (성공·실패 모두).
+            body_sec = 바디를 소켓에 다 밀어 넣기까지, wait_sec = 그 뒤 응답까지.
+            **서버는 이 둘을 볼 수 없다** — waitress 는 바디를 전량 수신한 뒤에야 요청을
+            처리 큐에 넣으므로 전송 시간과 큐 대기가 서버 계측 밖에 있기 때문이다.
+            "클라는 200초 무응답인데 서버 기록은 20초" 를 설명할 수 있는 유일한 값이다.
     """
     base = (base_url or SERVER_BASE_URL).rstrip("/")
     url = f"{base}/pe/report/upload_webreport"
@@ -124,13 +131,28 @@ def post_webreport(manifest, parquet_items, base_url=None, progress_cb=None,
 
     encoder = MultipartEncoder(fields=fields)
     body = encoder
-    if progress_cb is not None:
-        body = MultipartEncoderMonitor(
-            encoder, lambda monitor: progress_cb(monitor.bytes_read, monitor.len))
+    t_start = time.monotonic()
+    sent = {"at": None}     # 바디를 다 밀어 넣은 시각 (진행률 100% 도달 시점)
 
-    resp = requests.post(
-        url, data=body, headers=_upload_headers(body.content_type),
-        timeout=REQUEST_TIMEOUT_SEC)
+    if progress_cb is not None or timing is not None:
+        def _monitor(monitor):
+            if sent["at"] is None and monitor.bytes_read >= monitor.len:
+                sent["at"] = time.monotonic()
+            if progress_cb is not None:
+                progress_cb(monitor.bytes_read, monitor.len)
+        body = MultipartEncoderMonitor(encoder, _monitor)
+
+    try:
+        resp = requests.post(
+            url, data=body, headers=_upload_headers(body.content_type),
+            timeout=WEBREPORT_UPLOAD_TIMEOUT_SEC)
+    finally:
+        if timing is not None:
+            now = time.monotonic()
+            done = sent["at"] or now
+            timing["mb"] = round(encoder.len / 1048576, 1)
+            timing["body_sec"] = round(done - t_start, 1)
+            timing["wait_sec"] = round(now - done, 1)
 
     if not resp.ok:
         try:

@@ -1270,6 +1270,8 @@ $("healthWarnBody").addEventListener("click", e => {
   else if (go === "wd:detail") { loadWatchdogDetail(); $("wdDetailCard").scrollIntoView({ behavior: "smooth", block: "center" }); }
   else if (go === "logs:locked") showLogsFor("locked", "error");
   else if (go === "logs:compute") showLogsFor("compute", "error");
+  // 스레드 덤프는 파일명이 타임스탬프라 미리 알 수 없다 — 탭만 열어 파일을 고르게 한다.
+  else if (go === "logs:diagnose_stuck") showLogsFor("", "all");
   else if (go === "tab:pDb") document.querySelector('.tab[data-panel="pDb"]').click();
 });
 
@@ -1900,6 +1902,22 @@ async function loadRuntime() {
       text: `콜드 빌드 장기화 ${longBuilds.length}건 — 최장 ${longBuilds[0].elapsed}s `
         + `(${longBuilds[0].file_name || longBuilds[0].session_id || ""}${
           longBuilds[0].cause ? ", " + longBuilds[0].cause : ""})` });
+    // 안 끝나는 요청 — 폭풍(느림)과 **다른 사건**이라 칩을 따로 둔다. 둘을 섞으면
+    // 이번(2026-08-19)처럼 "느린 건가 멈춘 건가" 를 또 헷갈리게 된다. 이쪽이 더 위험하다:
+    // waitress 스레드를 영구히 물어 결국 서버 전체가 무응답이 된다.
+    const stuck = r.stuck || [];
+    if (stuck.length) {
+      // 단계까지 칩에 적는다 — "몇 초째"만으로는 조치를 못 하지만 "storage_save 42초째"면
+      // 저장소를 먼저 보면 된다. 단계는 업로드 라우트가 심는다(서버 upload_webreport.py).
+      const s0 = stuck[0];
+      const st = s0.stage
+        ? ` · ${esc(s0.stage)} ${Math.round(s0.stage_elapsed || 0)}초째`
+          + (s0.stage_source ? ` (${esc(s0.stage_source)})` : "")
+        : "";
+      _warnRuntime.push({ level: "crit",
+        text: `⏳ 안 끝나는 요청 ${stuck.length}건 — 최장 ${esc(s0.route || "?")} ${Math.round(s0.elapsed)}초째${st}`
+          + ` (스레드 덤프: log\\diagnose_stuck_*.txt)`, go: "logs:diagnose_stuck" });
+    }
     // 폭풍이면 원인까지 한 칩에 담고, 같은 사실을 말하는 '대기 N건' 칩은 접는다.
     // 캐시 세대(v41)와 기동 후 경과가 나란히 보여야 "스키마 bump 직후라 전 세션이 콜드"
     // 라는 원인이 화면에서 읽힌다 — 그게 없어 2026-08-19 업로드 지연을 코드 탓으로 의심했다.
@@ -3209,6 +3227,9 @@ const DIAG_EVENT_LABEL = {
   build_interrupted: "빌드 중단(재기동)", load_failed: "세션 로드 실패",
   load_exception: "세션 로드 예외", poll_timeout: "빌드 대기 타임아웃",
   honey_upload_fail: "Honey 업로드 실패", honey_crash: "Honey 비정상 종료",
+  // 아래 둘은 짝이다 — 서버가 "아직 응답을 못 준" 것을 잡고(stuck_request),
+  // 클라는 서버가 볼 수 없는 전송·큐 대기까지 포함해 오래 기다린 것을 알린다.
+  stuck_request: "안 끝나는 요청", honey_upload_slow: "Honey 업로드 지연",
 };
 const diagLabel = (m, v) => m[v] || v || "-";
 const diagTs = s => String(s || "").replace("T", " ");
