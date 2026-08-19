@@ -16,6 +16,11 @@ comment 한 줄 편집·스키마 bump·dedup 형제 세션마다 전량 재계�
       부르지 않는다)이고, 데이터(content_hash)·모드·옵션·세대에는 반응한다.
   (e) pending 키 — ai 단독은 **종전 꼬리(aipending) 그대로**(기존 파일 유효), compare 가
       끼면 갈린다. 안 갈리면 "AI 만 빈 본"과 "둘 다 빈 본"이 서로를 덮어쓴다.
+  (f) **service 경로** — 실제 호출부(`service._compare_cached`)의 build 분기를 태운다.
+      (a)~(e) 는 metrics 를 테스트가 직접 부르므로 service 안의 이름 해석 오류를 못 잡는다.
+      실제로 `metrics` 모듈이 service 에 import 되지 않아 콜드 빌드(prewarm_job/report_job)가
+      NameError 로 전멸한 적이 있다(2026-08-19). 사용자 대기 경로는 allow_build=False 라
+      그 줄에 닿지 않아 조용히 pending 만 남았고, 증상은 "Compare 가 영원히 계산 중"이었다.
 
 pytest 미사용 — 자체 실행 + assert 스타일(tests/ 관례).
 """
@@ -23,11 +28,14 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sys
+import tempfile
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from web_report import cache_policy, metrics  # noqa: E402
+from web_report import cache_policy, metrics, service  # noqa: E402
 from web_report.metrics import build_report_payload  # noqa: E402
 from web_report.validation import webreport_compare_groups  # noqa: E402
 
@@ -52,6 +60,13 @@ def _payload(tables, **kw):
                                 compare_groups=webreport_compare_groups(
                                     {}, [t.source for t in tables]),
                                 **kw)
+
+
+class _StubDB:
+    """전처리 spec 조회만 받는 최소 스텁 — session_digest 가 쓰는 유일한 메서드."""
+
+    def get_webreport_edits(self, session_id, kinds=None):
+        return []
 
 
 def _session(**kw):
@@ -125,6 +140,24 @@ def main():
     assert cache_policy.report_pending_key(s, "sid1", 1, ("compare", "ai")) == both
     assert both != cache_policy.report_key(s, "sid1", 1), "pending 이 정본 키와 같다"
     print("[e] pending 키 OK — ai 단독 종전 유지 · 3종 분리 · 순서 무관")
+
+    # (f) service 경로 — 실제 호출부의 build 분기를 태운다 ──────────────────────
+    root = Path(tempfile.mkdtemp(prefix="cmpasync_"))
+    try:
+        built, how = service._compare_cached(
+            _session(), "sid1", _tables(), {"selected_items": []},
+            report_db=_StubDB(), upload_root=root, allow_build=True)
+        assert how == "build", f"캐시 미스인데 build 가 아니다: {how}"
+        assert _canon(built) == _canon(split), "service 경로 값이 인라인과 다르다"
+        # 사용자 대기 경로 — 미스에 계산하지 않고 miss (여기서 계산하면 요청이 묶인다)
+        idle, how2 = service._compare_cached(
+            _session(content_hash="ch_miss"), "sid1", _tables(),
+            {"selected_items": []}, report_db=_StubDB(), upload_root=root,
+            allow_build=False)
+        assert idle is None and how2 == "miss", (idle is None, how2)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+    print("[f] service 경로 OK — build 분기 실행 + 값 등가 + 대기 경로 miss")
 
     print("\n전부 통과")
 

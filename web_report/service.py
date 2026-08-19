@@ -38,6 +38,7 @@ from . import runtime
 from .honeyform import encode_honeyform_parquet
 from .ingest import ingest_webreport  # noqa: F401  (외부 진입점 재노출 — upload_webreport.py)
 from .loader import load_tables as _load_tables
+from . import metrics
 from .metrics import build_report_payload
 from .tabs import raw_data as raw_data_tab
 from .validation import (
