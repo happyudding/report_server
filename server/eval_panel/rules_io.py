@@ -247,6 +247,7 @@ _CODE_REFS = {
     "cpk_trump_yield_floor": "L4 trump(CRITICAL 강제)",
     "bimodality_warn": "L2 features(modality_v2)",
     "subpop_n_min": "L2 features(modality_v2)",
+    "subpop_outlier_sigma": "L2 features(modality_v2 게이트 전용 outlier 컷)",
     "subpop_outlier_ratio_max": "L2 features(modality_v2)",
     "subpop_density_gap_warn": "L2 features(modality_v2)",
     "subpop_density_gap_strong": "L2 features(modality_v2)",
@@ -266,7 +267,11 @@ _CODE_REFS = {
 THRESHOLD_RELATIONS = (
     ("cpk_bad", "<=", "cpk_warn"),
     ("center_region_pct", "<", "edge_region_pct"),
-    ("subpop_density_gap_warn", "<=", "subpop_density_gap_strong"),
+    # (`subpop_density_gap_warn <= subpop_density_gap_strong` 은 2026-08-19 에 뺐다 —
+    #  두 값은 강약 서열이 아니라 **서로 다른 판정의 컷**이다: warn 은 이봉/다봉(모드가
+    #  둘 이상인가), strong 은 분리(값 축이 끊겼는가)다. 후자는 소수 무리가 떨어져 나간
+    #  모양에서 히스토그램 골이 얕게 나오므로 warn 보다 낮아야 실제로 잡힌다.
+    #  이름의 강약이 값의 대소를 함의하지 않는다.)
     ("heavy_tail_mass_min", "<=", "heavy_tail_mass_max"),
 )
 
@@ -285,7 +290,8 @@ THRESHOLD_KINDS = {
     "tail_side_share_min": "ratio",
     "n_min": "count", "subpop_n_min": "count", "spatial_fail_count_min": "count",
     "source_min_count": "count",
-    "outlier_sigma": "positive", "outlier_fail_mad_min": "positive",
+    "outlier_sigma": "positive", "subpop_outlier_sigma": "positive",
+    "outlier_fail_mad_min": "positive",
     "outlier_fail_gap_sigma_min": "positive",
 }
 

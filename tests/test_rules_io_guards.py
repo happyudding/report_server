@@ -43,16 +43,19 @@ def _check(effective, touched):
 
 def main():
     # (a) 관계·타입 ─────────────────────────────────────────────────────────
-    ok = {"cpk_bad": 1.0, "cpk_warn": 1.33, "outlier_ratio_warn": 0.02,
-          "outlier_ratio_bad": 0.05, "center_region_pct": 0.3, "edge_region_pct": 0.8,
-          "subpop_density_gap_warn": 0.3, "subpop_density_gap_strong": 0.5}
+    # ⚠ 관계 쌍은 **현행 THRESHOLD_RELATIONS 에 실제로 있는 것만** 쓴다. 종전에는
+    # 이미 삭제된 룰의 키(outlier_ratio_warn/bad)로 관계 위반을 기대해 이 테스트가
+    # 계속 실패하고 있었고, subpop_density_gap 쌍은 2026-08-19 에 관계 선언에서 빠졌다
+    # (이름의 강약이 값의 대소를 함의하지 않는다 — rules_io 주석 참조).
+    ok = {"cpk_bad": 1.0, "cpk_warn": 1.33,
+          "center_region_pct": 0.3, "edge_region_pct": 0.8,
+          "heavy_tail_mass_min": 0.01, "heavy_tail_mass_max": 0.05}
     assert _check(ok, ok) == [], _check(ok, ok)
 
     bad_pairs = [
         ({**ok, "cpk_bad": 1.5}, "cpk_bad"),
-        ({**ok, "outlier_ratio_bad": 0.01}, "outlier_ratio_bad"),
         ({**ok, "center_region_pct": 0.9}, "center_region_pct"),
-        ({**ok, "subpop_density_gap_strong": 0.1}, "subpop_density_gap_strong"),
+        ({**ok, "heavy_tail_mass_max": 0.005}, "heavy_tail_mass_max"),
     ]
     for eff, key in bad_pairs:
         got = _check(eff, {key})
@@ -63,10 +66,11 @@ def main():
     # touched 밖이면 통과 — 상위 층의 기존 위반이 무관한 키 저장을 막지 않는다
     assert _check({**ok, "cpk_bad": 1.5}, {"n_min"}) == [], "touched 한정이 안 됨"
 
-    assert _check({"outlier_ratio_warn": 1.4}, {"outlier_ratio_warn"}), "ratio 상한 미검출"
+    assert _check({"heavy_tail_mass_min": 1.4}, {"heavy_tail_mass_min"}), "ratio 상한 미검출"
     assert _check({"n_min": 0}, {"n_min"}), "count 하한 미검출"
     assert _check({"n_min": 2.5}, {"n_min"}), "count 정수 검사 누락"
     assert _check({"outlier_sigma": 0}, {"outlier_sigma"}), "positive 미검출"
+    assert _check({"subpop_outlier_sigma": 0}, {"subpop_outlier_sigma"}),         "게이트 전용 sigma positive 미검출"
     # 표에 없는 키는 검사하지 않는다(opt-in)
     assert _check({"spread_norm_warn": 99}, {"spread_norm_warn"}) == [], "opt-in 위반"
 

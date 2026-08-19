@@ -154,12 +154,28 @@ signatures:
     임계값 `quadrant_imbalance_warn` 도 함께 지웠다 — 지표 `quadrant_imbalance` 는
     evidence·참고용으로 계속 계산·저장한다.)
 - **꼬리는 방향으로 갈린다** — `USL_TAIL`(상한 쪽) / `LSL_TAIL`(하한 쪽), 2026-08-19 에
-  구 `HEAVY_TAIL` 을 나눈 것이다. ⚠ **판정 밴드는 계속 `tail_mass_3s`(양쪽 합)에 건다** —
-  방향별 질량에 걸면 대칭 분포의 판정 범위가 두 배가 되어(총 8% = 한쪽 4%) 밴드 상한 5%
-  로 일부러 제외했던 "몸통이 벌어진" 항목이 통째로 발화한다(실측: UNKNOWN 겨냥 5건 전부).
-  방향은 파생값 `tail_side_share_high/low`(그 방향이 가진 꼬리 질량 몫, `build_ctx_values`
-  가 주입 — DB 미저장) ≥ `tail_side_share_min`(0.2)로만 가른다. 원재료
-  `tail_mass_3s_high`/`_low` 는 eval.db **v10** 컬럼이다.
+  구 `HEAVY_TAIL` 을 나눈 것이다. **판정 밴드는 방향별 질량**(`tail_mass_3s_high`/`_low`,
+  eval.db **v10** 컬럼)에 건다.
+  ⚠ 같은 날 **한 번 뒤집힌 결정**이라 경위를 남긴다. 처음에는 밴드를 `tail_mass_3s`(양쪽
+  합)에 걸었는데, 그러면 **양방향으로 꼬리가 두꺼운 항목이 통째로 미발화**한다 — 한쪽 3%
+  씩이면 합이 6% 라 상한 5% 를 넘는다. 그 결과 `USL_TAIL`·`LSL_TAIL` 이 둘 다 안 떠
+  `BIDIR_TAIL` 의 `replaces` 도 발동하지 못하고, 정작 BIDIR 로 불러야 할 모양이 UNKNOWN
+  으로 떨어졌다(실측: 생성기 UNKNOWN 겨냥 5건 전부 — kurtosis 15~16, 방향 균형 0.48/0.52).
+  방향별로 걸어도 상한의 취지("이건 꼬리가 아니라 몸통이 갈라진 것")는 그대로 산다.
+  전 115 항목 시뮬레이션에서 단방향 겨냥 8건 무변화·오탐 0.
+  `tail_side_share_high/low`(그 방향이 가진 꼬리 질량 몫, `build_ctx_values` 가 주입 —
+  DB 미저장) ≥ `tail_side_share_min`(0.2)는 **보조 조건으로 남는다** — 반대쪽에 점 한둘이
+  섞였을 뿐인 경우를 여전히 한쪽 꼬리로 읽게 해 준다.
+- **BIMODALITY 게이트는 자기 컷(`subpop_outlier_sigma` 4.5)으로 잰다**(2026-08-19 분리).
+  종전에는 표시용 `outlier_sigma` 를 함께 썼는데, 그 값을 4.5 → 2.5 로 내리자 outlier
+  비율이 0.010 → 0.153 으로 뛰어 **이봉 판정이 조용히 죽었다**. 표시 감도("튄 값을 얼마나
+  보여줄까")와 판정 게이트("산발이라 이봉으로 못 볼 정도인가")는 목적이 다르다.
+  같은 날 판정선도 완화됐다(`subpop_outlier_ratio_max` 0.03→0.15 ·
+  `subpop_density_gap_strong` 0.5→**0.20** · `subpop_minor_mass_min` 0.05→0.0003) —
+  떨어져 나간 소수 무리를 분리로 보기 위해서다. ⚠ **실질 판별자는 `density_gap ≥ 0.20`
+  하나**이고 minor_mass 하한은 사실상 꺼졌다. 되돌릴 때 둘을 함께 볼 것.
+  ⚠ `subpop_density_gap_strong`(0.20)이 `subpop_density_gap_warn`(0.3)보다 **작다** —
+  이름의 강약이 값의 대소를 함의하지 않는다(전자는 분리, 후자는 이봉/다봉 판정용).
 - **이산(CODE) 값의 BIMODALITY 는 빈 계단 ≥2 를 요구한다**(2026-08-13) — 계단으로 그린
   정규분포는 이산이라 울퉁불퉁한 것이지 이봉이 아니다. 진짜로 갈라졌다면 **레벨 자체가
   비어 있는 구간**이 생긴다(`features._grid_empty_levels`).

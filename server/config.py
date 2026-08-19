@@ -120,9 +120,14 @@ REPORT_WEBREPORT_TOTAL_MB = int(os.getenv("REPORT_WEBREPORT_TOTAL_MB", "1024") o
 # 초과분은 즉시 거절하지 않고 WAIT_SEC 까지 대기한다 — 대기 중에는 werkzeug 가 요청 본문을
 # 디스크에 스풀해 둔 상태라 RAM 을 거의 쓰지 않는다.
 WEB_REPORT_UPLOAD_CONCURRENCY = int(os.getenv("WEB_REPORT_UPLOAD_CONCURRENCY", "2") or 2)
-WEB_REPORT_UPLOAD_WAIT_SEC = float(os.getenv("WEB_REPORT_UPLOAD_WAIT_SEC", "180") or 180)
+# ⚠️ 기본값은 **클라 read timeout(200초, client/transport/config.py
+# WEBREPORT_UPLOAD_TIMEOUT_SEC)보다 넉넉히 짧아야** 한다. 대기만으로 클라 예산을 다 먹으면
+# 사용자는 503 안내조차 못 받고 "업로드 100% 에서 멈춤" 으로만 본다. 운영은 env(server.env)
+# 로 90 을 주지만, env 파일을 읽지 않는 기동(`python wsgi.py` 직접 = 디버그)에서는 이 기본값이
+# 그대로 뜨므로 여기서도 같은 값으로 맞춘다.
+WEB_REPORT_UPLOAD_WAIT_SEC = float(os.getenv("WEB_REPORT_UPLOAD_WAIT_SEC", "90") or 90)
 # ⚠️ 대기는 RAM 은 안 쓰지만 **waitress 스레드는 그대로 문다**. 상한이 없으면 클라 13대가
-# 동시에 올릴 때 2건 처리 + 11스레드가 최대 WAIT_SEC(180초) 대기 = 가용 스레드 0 이 되어
+# 동시에 올릴 때 2건 처리 + 11스레드가 최대 WAIT_SEC 만큼 대기 = 가용 스레드 0 이 되어
 # 그 사이 조회·/healthz 까지 전면 무응답이 된다(watchdog 이 죽었다고 오판할 수 있다).
 # 그래서 "동시에 줄 설 수 있는 요청 수"를 따로 제한한다. 이 수를 넘으면 기다리지 않고
 # 즉시 503 — 소수 버스트는 종전대로 대기해 성공하고, 폭주만 잘라낸다.

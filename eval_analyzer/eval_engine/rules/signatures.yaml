@@ -182,15 +182,21 @@ signatures:
   # 항목의 3σ 밖 질량이 1.55~1.89% 였다.
   # 방향을 가르는 이유는 **조치가 다르기 때문**이다 — 상한 쪽으로 튀는 것과 하한 쪽으로
   # 처지는 것은 원인·대응이 같지 않은데 |z| 하나로 재면 구분이 사라진다.
-  # ⚠ **판정 범위는 구 HEAVY_TAIL 과 똑같이 유지한다** — 밴드는 계속 `tail_mass_3s`(양쪽
-  # 합)에 걸고, 방향은 그 질량이 어느 쪽에 얼마나 실렸나(`tail_side_share_*`)로만 가른다.
-  # 밴드를 방향별 질량에 걸면 대칭 분포의 판정 범위가 사실상 두 배가 된다 — 총 질량 8%
-  # (한쪽 4%)로 밴드 상한 5% 를 넘겨 일부러 제외했던 "몸통이 벌어진" 항목이 통째로
-  # 발화한다(실측: UNKNOWN 겨냥 5건 전부가 BIDIR_TAIL 로 뒤집혔다).
+  # ⚠ **밴드는 방향별 질량(`tail_mass_3s_high`/`_low`)에 건다** — 2026-08-19 에 양쪽 합
+  # (`tail_mass_3s`)에서 갈아탔다. 그 직전 결정을 **사용자 지시로 뒤집은 것**이라 경위를
+  # 남긴다: 양쪽 합에 걸면 대칭 분포의 판정 범위가 사실상 절반이 되어(한쪽 3% 씩이면 총
+  # 6% 로 상한 5% 초과) **양방향으로 꼬리가 두꺼운 항목이 통째로 미발화**했다. 그러면
+  # USL/LSL_TAIL 이 둘 다 안 떠 `BIDIR_TAIL` 의 `replaces` 도 영영 발동하지 못한다 —
+  # 정작 BIDIR 로 불러야 할 모양이 UNKNOWN 으로 떨어졌다(실측: UNKNOWN 겨냥 5건 전부,
+  # kurtosis 15~16 · 방향 균형 0.48/0.52 인데 합 0.066~0.091 로 상한에 걸림).
+  # 방향별로 걸면 그 5건이 USL+LSL 동시 발화 → BIDIR_TAIL 이 되고, 단방향 겨냥 8건과
+  # OUTLIER 겨냥 5건은 값이 그대로다(전 115 항목 시뮬레이션에서 오탐 0).
+  # 상한(`heavy_tail_mass_max`)의 취지 — "이건 꼬리가 아니라 몸통이 갈라진 것" — 은
+  # 방향별로 재도 그대로 산다(다봉은 한쪽만 재도 상한을 넘는다).
   - id: USL_TAIL
     when_metric:
       kurtosis: ">kurtosis_warn"
-      tail_mass_3s: [">=heavy_tail_mass_min", "<=heavy_tail_mass_max"]
+      tail_mass_3s_high: [">=heavy_tail_mass_min", "<=heavy_tail_mass_max"]
       tail_side_share_high: ">=tail_side_share_min"
     # outlier 와 kurtosis 는 같은 현상(튀는 값)을 두 통계로 본 것이라 함께 뜨기 쉽다.
     # 목록에는 남기고 primary 만 양보한다.
@@ -204,7 +210,7 @@ signatures:
   - id: LSL_TAIL
     when_metric:
       kurtosis: ">kurtosis_warn"
-      tail_mass_3s: [">=heavy_tail_mass_min", "<=heavy_tail_mass_max"]
+      tail_mass_3s_low: [">=heavy_tail_mass_min", "<=heavy_tail_mass_max"]
       tail_side_share_low: ">=tail_side_share_min"
     suppressed_by: [OUTLIER]
     status_hint: MINOR

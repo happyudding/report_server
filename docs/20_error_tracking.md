@@ -138,6 +138,34 @@ teardown                   → 단계 회수        _emit_slow_event() → slow_
 ([uploader.post_webreport](../client/transport/uploader.py)), 두 값은 실행 로그와
 `honey_upload_fail`/`honey_upload_slow` 사건에 실려 `operation_id` 로 서버 사건과 이어진다.
 
+## 3-2. 서버가 통째로 멎는데 로그가 한 줄도 없다 — 콘솔 QuickEdit (2026-08-19)
+
+**증상**: 클라는 "Web Report 업로드 중...(100%)" 에서 read timeout, 브라우저는 네트워크
+에러, 서버 창은 멀쩡히 떠 있는데 출력만 정지. 진단 사건도 로그도 **그 구간에 아무것도 안
+남는다**(로그를 쓰는 것 자체가 막힌 상태이므로).
+
+**원인**: Windows 콘솔은 QuickEdit(빠른 편집)이 기본 켜짐이라 **창을 클릭하거나 드래그하면
+선택 모드**에 들어가고, 그동안 그 창에 대한 쓰기가 블록된다. 이 서버는 stdout/stderr 를
+`_TeeStream`(콘솔+파일 동시 기록)으로 감싸고 루트 로거까지 그 stderr 로 내보내므로
+([wsgi.py](../server/wsgi.py)), 콘솔 쓰기가 막히면 로그를 찍던 스레드가 **logging 핸들러 락을
+쥔 채** 멈추고 waitress 요청 스레드가 전원 그 락에서 줄줄이 대기한다. 요청 하나가 느린 게
+아니라 **서버 전체가 멎는다**.
+
+**판정법 (5초)**: 서버 콘솔 창에서 **Enter 를 한 번** 누른다. 즉시 응답이 재개되면 확정이다
+(선택 모드 해제). `log/server_*.txt` 가 멈춘 구간 동안 비어 있다가 Enter 직후 몰아서 쌓이는
+것도 같은 증거다.
+
+**조치(도입됨)**: [wsgi.py](../server/wsgi.py) `_disable_console_quickedit()` 가 부팅 시
+자기 콘솔의 QuickEdit 비트를 끈다. 배치가 아니라 파이썬 프로세스 자신이 끄는 이유는 기동
+경로가 여러 개(start.bat 이 여는 별도 창 · watchdog 재기동 · mypc_start.bat ·
+`python wsgi.py` 직접)이고, **그중 start.bat 의 새 창에는 방어가 없었기** 때문이다
+(mypc_start.bat 의 `_disable_quickedit.ps1` 은 자기 창만 껐다). 콘솔이 없는 환경이면 조용히
+넘어간다.
+
+⚠️ **스레드 덤프를 읽을 때**: `QueueFeederThread` 가 `_feed → wait()` 에 있는 것은 컴퓨트
+워커 큐의 **정상 유휴**다 — 멈춘 지점이 아니다. 덤프에서는 `#` 머리말의 `stage=`/`done=` 와
+`waitress-*` 스레드의 마지막 프레임을 봐야 한다.
+
 ## 4. 사건이 만들어지는 지점
 
 | 사건 | severity | 지점 |

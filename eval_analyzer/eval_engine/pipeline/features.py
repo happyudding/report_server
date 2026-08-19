@@ -505,14 +505,18 @@ def _quadrant_imbalance(ax, ay, fm):
     mean_rate = float(np.mean(rates))
     return float((max(rates) - min(rates)) / mean_rate) if mean_rate > 0 else None
 
-def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, density_gap,
+def _classify_modality_v2(n_dut, subpop_outlier_ratio, n_modes, bimodality_score, density_gap,
                           value_gap_ratio, value_gap_minor_mass, th, grid_empty=-1):
     """이봉·다봉·분리 판정 — BIMODALITY 발화의 유일한 근거. 반환: bimodal|multimodal|separated|None.
 
-    게이트 3개를 먼저 통과해야 한다: 표본이 `subpop_n_min` 이상이고, outlier_ratio 가
+    게이트 3개를 먼저 통과해야 한다: 표본이 `subpop_n_min` 이상이고, outlier 비율이
     `subpop_outlier_ratio_max` 미만이며, **격자(이산) 데이터면 빈 계단이 2개 이상**일 것.
+    ⚠ 둘째 게이트의 입력은 **`subpop_outlier_sigma`(게이트 전용 컷)로 잰 비율**이다 —
+    화면에 보이는 `outlier_ratio`(`outlier_sigma` 기준)와 다른 값이며, 표시용 컷을 내리면
+    이봉 판정이 조용히 죽던 결합을 끊으려고 2026-08-19 에 분리했다.
     ⚠ 둘째 게이트 때문에 소수 모드가 outlier 로 잡히는 분포는 이봉으로 발화하지 못한다
-    (오발화를 줄이려는 의도된 보수적 게이트).
+    (오발화를 줄이려는 의도된 보수적 게이트 — 임계 자체는 0.03 → 0.15 로 완화됐다.
+    떨어져 나간 무리는 그 자체가 outlier 로도 세어져 0.03 이 구조적으로 전부 막았다).
     셋째 게이트(2026-08-13, `grid_empty`)는 **CODE 같은 이산값** 때문이다 — 값이 몇 개
     레벨에만 놓이는 것은 이산이면 정상이고(계단으로 그린 정규분포도 울퉁불퉁하다), 진짜로
     무리가 갈라졌다면 **레벨 자체가 빈 구간**이 생긴다. `grid_empty = -1` 은 격자가 아니라는
@@ -522,7 +526,8 @@ def _classify_modality_v2(n_dut, outlier_ratio, n_modes, bimodality_score, densi
     """
     if n_dut is None or n_dut < th["subpop_n_min"]:
         return None
-    if outlier_ratio is not None and outlier_ratio >= th["subpop_outlier_ratio_max"]:
+    if (subpop_outlier_ratio is not None
+            and subpop_outlier_ratio >= th["subpop_outlier_ratio_max"]):
         return None
     if 0 <= grid_empty < 2:
         return None
@@ -648,6 +653,14 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     modified_z = _memo("modified_z", lambda: _modified_z(v, median, mad))
     outlier_ratio = (0.0 if modified_z is None
                      else float(np.mean(np.abs(modified_z) > th["outlier_sigma"])))
+    # BIMODALITY 게이트는 **자기 컷**으로 다시 잰다(2026-08-19). 종전에는 위 값을 그대로
+    # 썼는데, `outlier_sigma` 는 화면·evidence 표시용이라 사용자가 자유롭게 조절한다 —
+    # 4.5 → 2.5 로 내리자 outlier_ratio 가 0.010 → 0.153 으로 뛰어 게이트가 이봉 항목을
+    # 통째로 막았다(v12 실측). 표시 기준과 판정 기준을 한 손잡이에 묶어 둔 것이 원인이라
+    # 키를 분리했다. **DB 에 저장하지 않는 파생값**이다(스키마 무변경).
+    subpop_outlier_ratio = (
+        0.0 if modified_z is None
+        else float(np.mean(np.abs(modified_z) > th["subpop_outlier_sigma"])))
     # 꼬리 **질량** — 중심에서 3 robust σ 밖에 있는 값의 비율. kurtosis 를 보조한다:
     # kurtosis 는 4제곱이라 **점 몇 개**로도 치솟고(질량 0.9% 에 kurt 21.5 — 꼬리가 아니라
     # 튄 점), 반대로 몸통이 갈라진 다봉에서도 커진다(질량 17% — 그건 꼬리가 아니다).
@@ -696,7 +709,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     n_modes = _memo("n_modes", lambda: _n_modes(v, peaks_hist))
     value_gap_ratio, value_gap_minor_mass = _memo("value_gap", lambda: _value_gap(v, uq))
     modality_v2 = _classify_modality_v2(
-        n, outlier_ratio, n_modes, bimodality_score, density_gap, value_gap_ratio,
+        n, subpop_outlier_ratio, n_modes, bimodality_score, density_gap, value_gap_ratio,
         value_gap_minor_mass, th,
         grid_empty=_grid_empty_levels(peaks_hist[2] if peaks_hist else None))
     spec_margin_low = (mean - lsl) / stdev if (lsl is not None and stdev) else None

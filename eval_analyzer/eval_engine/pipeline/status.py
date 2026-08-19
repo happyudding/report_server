@@ -29,9 +29,15 @@ SPECIFICITY_ORDER = ["MISSING_LIMIT", "CONSTANT_VALUE",
                      # 빠진다 — yaml `hidden_by`).
                      "E1_FAIL",
                      "EDGE_FAIL", "CENTER_FAIL", "SPOT_FAIL",
-                     "CODE_RAIL", "TAIL_RISK", "OUTLIER",
+                     "CODE_RAIL", "TAIL_RISK",
+                     # BIMODALITY 가 OUTLIER 앞이다(2026-08-19). 몸통에서 멀리 떨어진
+                     # 무리는 두 룰이 함께 뜨는데, **무리로 갈라진 것**이 더 구체적인
+                     # 설명이다 — outlier 는 "몇 개가 튀었다" 로 끝나지만 이봉은 원인
+                     # (로트/장비 혼입·조건 이원화)까지 가리킨다. 순서가 반대면 화면
+                     # Signature 컬럼에 늘 OUTLIER 만 보인다.
+                     "BIMODALITY", "OUTLIER",
                      "MEAN_SHIFT", "USL_TAIL", "LSL_TAIL",
-                     "BIDIR_TAIL", "BIMODALITY", "LOW_CPK", "GROSS_FAIL",
+                     "BIDIR_TAIL", "LOW_CPK", "GROSS_FAIL",
                      # UNKNOWN 은 다른 발화가 하나도 없을 때만 생기므로 경쟁 상대가 없다.
                      # 그래도 맨 끝에 둔다 — 순서 정합 검증(rules_io.validate_all)이 전 id 를 요구.
                      "UNKNOWN"]

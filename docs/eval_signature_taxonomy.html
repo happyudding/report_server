@@ -212,17 +212,19 @@
       <h3>간헐 spike <span class="en">tail</span></h3>
       <div class="rule on">
         <div class="id">USL_TAIL <span class="sev MINOR">MINOR</span></div>
-        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_mass_3s 1~5% (밴드) <b>AND</b> 상한 쪽 몫 &ge; 0.2
+        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_mass_3s_<b>high</b> 1~5% (밴드) <b>AND</b> 상한 쪽 몫 &ge; 0.2
           <br><span class="live">첨도만 보면 점 몇 개가 밀어올린 것·양자화 다봉까지 잡힌다 —
             "꼬리에 실제로 얼마나 실렸나"로 상·하한을 함께 건다</span>
           <br><span class="live">OUTLIER 발화 시 primary 양보</span></div>
       </div>
       <div class="rule on">
         <div class="id">LSL_TAIL <span class="sev MINOR">MINOR</span></div>
-        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_mass_3s 1~5% (밴드) <b>AND</b> 하한 쪽 몫 &ge; 0.2
+        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_mass_3s_<b>low</b> 1~5% (밴드) <b>AND</b> 하한 쪽 몫 &ge; 0.2
           <br><span class="live">구 HEAVY_TAIL 을 <b>방향으로 가른 것</b>(2026-08-19) — 위로 튀는 것과
-            아래로 처지는 것은 조치가 다르다. 발화 범위는 그대로다(밴드는 계속 양쪽 합에 건다)</span>
-          <br><span class="live">양쪽이 모두 0.2 를 넘으면 둘 다 사라지고 <b>BIDIR_TAIL</b> 하나가 대신 뜬다(<code>replaces</code>)</span></div>
+            아래로 처지는 것은 조치가 다르다.</span>
+          <br><span class="live"><b>밴드는 방향별 질량에 건다</b> — 양쪽 합에 걸면 양방향으로 두꺼운
+            분포가 상한을 넘겨 둘 다 미발화하고, 그러면 BIDIR_TAIL 도 영영 못 뜬다</span>
+          <br><span class="live">양쪽이 모두 밴드에 들면 둘 다 사라지고 <b>BIDIR_TAIL</b> 하나가 대신 뜬다(<code>replaces</code>)</span></div>
       </div>
     </div>
   </section>

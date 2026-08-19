@@ -17,8 +17,8 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out 
 (`versioned_path`). 기존 raw data 를 절대 덮지 않는다 — 이전 버전으로 재현·비교할 수 있어야
 하기 때문.
 
-**① CSV 1장** (`--single-csv`) — item 105개(겨냥 75 = 15 signature × 5단계 + **관찰용 무작위
-30**) × **chip 5,025개**(반경 40), 약 4MB:
+**① CSV 1장** (`--single-csv`) — item 120개(겨냥 85 + **관찰용 무작위 30** + **미분류 5**)
+× **chip 5,025개**(반경 40), 약 4.7MB:
 
 | 파일 | 내용 |
 |---|---|
@@ -31,6 +31,12 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out 
 > `GROSS_FAIL`(수율<50%) · `CONSTANT_VALUE`(spec 밖 상수 = 전량 fail) ·
 > `BIDIR_TAIL`(양쪽 margin<1σ) · `TAIL_RISK`(spec_margin_min<1σ = 꼬리가 spec 을 넘어야 함).
 > 이 넷은 전체 세트(`--out`, source 여러 개)에서 확인한다.
+>
+> ⚠ **`BIDIR_TAIL` 은 절반만 제외된다**(2026-08-19). 위 사유는 `_bidir_plan`(분포 자체가
+> 넓어 양쪽 margin<1σ) 세트에만 해당한다. 같은 signature 를 **`replaces` 경로**로 겨냥하는
+> `bidir_tails_specs()`(`BIDIR_TAILS_L1~L5` — 몸통은 멀쩡하고 양쪽 꼬리만 두꺼움)는 fail 이
+> 자연 꼬리뿐이라 CSV 에 들어간다. 두 경로를 다 덮어야 룰이 실제로 검증된다 — v12 까지는
+> 앞의 것만 있었고 그마저 CSV 에서 빠져 **BIDIR_TAIL 이 한 번도 검증되지 않았다**.
 > (`WAFER_GRADIENT` 는 2026-08-13 룰 자체가 삭제돼 목록에서 빠졌다.)
 
 > **웨이퍼가 커진 이유(반경 22→40)**: fail 은 chip 을 서로 배타적으로 쓰므로(`FAILTNO` 는
@@ -90,14 +96,19 @@ fail chip 수(`FAIL_N`)와 지표가 **함께** 올라간다. 그러려면 분�
 - **`fails={"mode": "natural"}` 은 이 밀어내기를 통째로 건너뛴다**(2026-08-14). fail 은
   분포가 스스로 spec 을 넘긴 chip 뿐이다. 밀어내기는 중간 꼬리의 chip 을 limit 밖으로
   **옮기므로** 그 자리에 구멍이 남고, 그 구멍이 곧 `fail_body_jump_ratio`(OUTLIER 끊김
-  지표)라 어떤 겨냥이든 값 축에서 outlier 모양이 된다. 그래서 **HEAVY_TAIL 겨냥**과
-  **미분류군(UNKNOWN)** 은 natural 모드를 쓴다. 대신 fail 수를 레벨 사다리로 강제할 수
+  지표)라 어떤 겨냥이든 값 축에서 outlier 모양이 된다. 그래서 **꼬리 겨냥**
+  (`USL_TAIL`/`LSL_TAIL`/`BIDIR_TAILS`)과 **미분류군(UNKNOWN)** 은 natural 모드를 쓴다. 대신 fail 수를 레벨 사다리로 강제할 수
   없으므로(분포가 정한다), 이 모드는 fail 수가 아니라 **분포 지표가 사다리인 유형**에만
   쓸 수 있다. 예: `LOW_CPK`(cpk 1.25)를 natural 로 바꾸면 자연 초과가 5025 chip 에
   0.5개꼴이라 항목이 통째로 사라진다.
 - natural 모드는 chip 자리를 고를 수 없으므로(값이 넘긴 그 자리를 써야 한다)
   `single_csv_specs` 가 공간 패턴 다음 순서로 배치한다 — 뒤로 밀리면 그 chip 을 앞 item 이
   먼저 가져가 fail 이 사라진다(실측: 자연 fail 9개 → 1개).
+  ⚠ 이 우선권은 **natural 모드 전체**에 준다(2026-08-19). 종전에는 미분류군에만 줬는데,
+  꼬리 겨냥도 같은 성질이라 item 이 늘자 극단 chip 을 뺏겼다. chip 을 뺏기면 그 값은
+  **몸통 안으로 당겨지고**(FAILTNO 는 chip 당 하나라 fail 로 못 찍는다), 최극단 몇 점이
+  4제곱 지표를 지배하므로 한둘만 잃어도 판정이 뒤집힌다 — 실측으로 `USL_TAIL_L2` 의
+  초과첨도가 목표 12.0 대비 **9.96** 으로 주저앉아 미발화했다.
 - **L1 은 fail 0** — spec 밖 값이 나오면 안쪽으로 당겨 없앤다. fail 이 없으므로 서버
   평가 범위(`WEB_REPORT_EVAL_FAIL_ONLY=1`)에서 아예 빠진다 = "정상 item 은 발화하지 않는다"가
   구조적으로 보장된다.
@@ -146,6 +157,11 @@ L1(fail 0)과 정상군은 일반 fail bin `2`, 관찰군(random)은 `41~49`.
 > 과거 데이터와 섞일 여지가 없다). 19 는 구 `HEAVY_TAIL` 자리를 `USL_TAIL` 이 잇는다.
 > `EDGE_TOP`/`EDGE_BOTTOM` 은 signature 가 아니라 **겨냥 세트 이름**이다 — 겨냥 룰은
 > 둘 다 `EDGE_FAIL` 이고 bin 만 갈라 Map 에서 색으로 구분한다.
+> ⚠ **상단/하단은 화면 기준이고 좌표 부호와 반대다**(2026-08-19 수정). 웨이퍼 맵은 y축을
+> 뒤집어 그리므로(`static/webreport/wafer_charts.js` `autorange:"reversed"`) **YPOS 가
+> 작을수록 화면 위**다. 종전에는 `edge_top` 을 +90°(y 큰 쪽)로 잡아 이름과 화면이 정확히
+> 반대였다 — 사용자가 "이름이 서로 바뀌었다" 고 지적한 자리다.
+> 검산: `EDGE_TOP_L*` 의 YPOS 평균이 5~16(작다), `EDGE_BOTTOM_L*` 이 60~75(크다).
 
 > **결번 11·13·14·32** — 삭제된 룰(WIDE_DISTRIBUTION·SEVERE_OUTLIER·OUTLIER_WARN·
 > SPEC_TOO_TIGHT·WAFER_GRADIENT)이 쓰던 값이다. **재사용하지 않는다** — 과거에 생성한
@@ -263,7 +279,8 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
   (`fired_all_rules`). **운영 rules 파일은 건드리지 않는다**(복사본에만 쓴다).
   비활성 룰까지 "데이터가 조건을 맞췄는지" 확인하기 위한 경로다.
 
-판정 4종 — 마지막 실행 결과(v9, 단일 CSV)는 **105/105**(겨냥 75 전부 의도대로 + 관찰군 30):
+판정 4종 — 마지막 실행 결과(**v13**, 단일 CSV)는 **120/120**(겨냥 85 전부 의도대로 +
+관찰군 30 + 미분류 5, 누락·오발화·정상군 오탐 모두 0):
 
 | 지표 | 의미 | 기대 |
 |---|---|---|
@@ -278,8 +295,9 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
 
 v9 관찰군 30개의 분포(참고값 — seed 를 바꾸면 달라진다): OUTLIER 40% · LOW_CPK 33% ·
 MEAN_SHIFT 23% · HEAVY_TAIL 10% · CLUSTER_FAIL 10% · RING_FAIL/CODE_RAIL/BIMODALITY 각 3% ·
-**발화 0건 17%**. (v12 실측 35개: OUTLIER 63% · LOW_CPK 34% · MEAN_SHIFT 14% ·
-BIMODALITY 11% · BIDIR_TAIL 9% · RING_FAIL/LSL_TAIL 각 3% · **발화 0건 17%**.) 한 유형에 쏠리면(예: 종전 관찰군 LOW_CPK 96%) 파라미터 공간이 좁다는
+**발화 0건 17%**. (v13 실측 35개: OUTLIER 69% · LOW_CPK 34% · BIMODALITY 17% · MEAN_SHIFT 14% ·
+RING_FAIL/LSL_TAIL/BIDIR_TAIL 각 3% · **발화 0건 14%**. v12 대비 OUTLIER 가 는 것은 끊김
+임계가 0.35 → 0.30 으로 내려간 결과이고, BIMODALITY 가 는 것은 이봉 게이트 완화 결과다.) 한 유형에 쏠리면(예: 종전 관찰군 LOW_CPK 96%) 파라미터 공간이 좁다는
 뜻이므로 `_sample_random_plan` 의 모드 중심·σ 범위를 다시 본다.
 
 ---

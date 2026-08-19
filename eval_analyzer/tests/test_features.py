@@ -201,8 +201,13 @@ def test_modality_v2_separated_uses_value_gap():
         100, 0.0, 1, 0.2, 0.6, 0.05, 0.4, th) is None      # value_gap 작음 → 미발화
     assert features._classify_modality_v2(
         100, 0.0, 1, 0.2, 0.6, 0.9, 0.25, th) == "separated"  # 진짜 분리
+    # 소수쪽 질량 하한(`subpop_minor_mass_min`)은 2026-08-19 에 0.05 → 0.0003 으로 크게
+    # 완화됐다(떨어져 나간 소수 무리를 분리로 보기 위해). 하한이 **여전히 작동한다**는
+    # 것만 확인한다 — 오탐을 막는 실제 판별자는 density_gap 쪽으로 옮겨갔다.
     assert features._classify_modality_v2(
-        100, 0.0, 1, 0.2, 0.6, 0.9, 0.01, th) is None      # 소수쪽 질량 미달 → 미발화
+        100, 0.0, 1, 0.2, 0.6, 0.9, 0.0001, th) is None    # 소수쪽 질량 미달 → 미발화
+    assert features._classify_modality_v2(
+        100, 0.0, 1, 0.2, 0.15, 0.9, 0.25, th) is None     # density_gap 미달 → 미발화
 
 
 def _disc(radius=6):

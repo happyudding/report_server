@@ -205,6 +205,52 @@ def _enable_faulthandler():
         pass
 
 
+def _disable_console_quickedit():
+    """이 프로세스가 붙어 있는 콘솔 창의 QuickEdit(빠른 편집) 모드를 끈다.
+
+    끄지 않으면 **서버 창을 클릭하거나 드래그하는 것만으로 서버 전체가 멈춘다.**
+    Windows 콘솔은 QuickEdit 이 기본 켜짐이고, 선택 모드에 들어가면 그 창에 대한 쓰기가
+    블록된다. 이 서버는 stdout/stderr 를 _TeeStream 으로 감싸고 루트 로거까지 그 stderr 로
+    내보내므로, 콘솔 쓰기가 막히면 로그를 찍던 스레드가 **logging 핸들러 락을 쥔 채** 멈추고
+    waitress 요청 스레드가 전원 그 락에서 줄줄이 대기한다. 겉으로는
+      * 창은 떠 있고 출력만 정지
+      * 클라이언트는 "업로드 100%" 에서 read timeout
+      * 브라우저는 네트워크 에러
+    로 보여 서버 코드 문제로 오진하기 쉽다(2026-08-19 실제로 그렇게 하루를 썼다 —
+    멈춘 창에서 Enter 를 누르자 즉시 재개된 것이 확정 증거였다).
+
+    배치가 아니라 여기서 끄는 이유: 기동 경로가 여러 개다(start.bat 이 여는 별도 창,
+    watchdog 재기동, mypc_start.bat, `python wsgi.py` 직접). 프로세스 자신이 끄면 전부
+    한 곳에서 덮인다. mypc_start.bat 의 _disable_quickedit.ps1 은 같은 일을 창 쪽에서
+    하는 중복 방어라 그대로 둔다.
+
+    콘솔이 없는 환경(서비스·리다이렉트 실행)이나 win32 가 아니면 조용히 넘어간다."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        STD_INPUT_HANDLE = -10
+        ENABLE_QUICK_EDIT_MODE = 0x0040
+        ENABLE_EXTENDED_FLAGS = 0x0080
+
+        k32 = ctypes.windll.kernel32
+        handle = k32.GetStdHandle(STD_INPUT_HANDLE)
+        if handle in (0, None) or handle == ctypes.c_void_p(-1).value:
+            return
+        mode = ctypes.c_uint(0)
+        if not k32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return          # 콘솔이 아님(파이프·서비스) — 애초에 막힐 일이 없다
+        if not (mode.value & ENABLE_QUICK_EDIT_MODE):
+            return          # 이미 꺼짐 (mypc_start.bat 의 ps1 이 먼저 껐거나 설정)
+        # QuickEdit 비트만 내린다. SetConsoleMode 로 이 비트를 끄려면 EXTENDED_FLAGS 가
+        # 함께 켜져 있어야 한다(Windows 규약) — 없으면 조용히 무시된다.
+        new_mode = (mode.value & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS
+        k32.SetConsoleMode(handle, new_mode)
+    except Exception:
+        pass
+
+
 def _init_root_logging():
     """루트 로거 핸들러 설정 — 저장소 전역의 logging.getLogger 는 핸들러 미설정 상태라
     INFO 로그가 전량 소실되고 WARNING+ 만 무포맷으로 stderr 에 나온다. tee(sys.stderr)
@@ -221,6 +267,7 @@ def _init_root_logging():
 
 
 if not _IS_MP_CHILD:
+    _disable_console_quickedit()   # tee 설치 전에 — 콘솔이 막히면 로그부터 멎는다
     _enable_console_log_file()
     _init_root_logging()   # tee 설치 이후 — basicConfig 가 tee stderr 를 캡처하도록
     _enable_faulthandler()

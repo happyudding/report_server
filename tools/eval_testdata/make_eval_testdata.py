@@ -582,8 +582,12 @@ def pick_fail_rows(pattern: str, count: int, free: np.ndarray, rnorm, xn, yn,
         # wafer 상단/하단 **EDGE 반원의 부채꼴**. `share` 는 그 반원(180°) 중 몇 %를 덮는지다
         # — 중심에서 본 불량 area 의 각도 폭이 곧 세기다(2026-08-19 사용자 요청).
         # 밴드는 EDGE_FAIL 과 같은 정의(E1 제외 바깥 밴드)라 edge_fail_share 가 1.0 이 된다.
+        # ⚠ **화면의 위/아래는 좌표 부호와 반대다**(2026-08-19 수정). 웨이퍼 맵은 y축을
+        # 뒤집어 그리므로(`static/webreport/wafer_charts.js` `autorange:"reversed"`)
+        # **YPOS 가 작을수록 화면 위**다. 종전에는 edge_top 을 +90°(y 큰 쪽)로 잡아
+        # 이름과 화면이 정확히 반대였다 — 사용자가 "이름이 서로 바뀌었다" 고 지적한 자리.
         half = math.radians(90.0 * min(1.0, max(0.05, float(share))))
-        axis = math.pi / 2 if pattern == "edge_top" else -math.pi / 2
+        axis = -math.pi / 2 if pattern == "edge_top" else math.pi / 2
         ang = np.arctan2(yn, xn) - axis
         # (-π, π] 로 감아 축에서의 각거리를 잰다 — 하단(-90°)에서 경계를 넘지 않게.
         ang = (ang + math.pi) % (2 * math.pi) - math.pi
@@ -811,6 +815,15 @@ def _bidir_plan(lv):
     return {"kind": "normal", "mean": CENTER, "sigma": (WIDTH / 2) / BIDIR_T[lv]}
 
 
+# 꼬리 겨냥의 넓은 성분 비중(`_kurt_plan` 의 p). 값이 클수록 꼬리 구간에 점이 촘촘해져
+# `fail_body_jump_ratio`(몸통~fail 사이 최대 빈 폭)가 내려간다 — OUTLIER 와의 간격이
+# 벌어진다는 뜻이다. 2026-08-19 에 OUTLIER 끊김 임계가 0.35 → 0.30 으로 내려가면서
+# 기본값 0.03 으로는 여유가 부족해졌다(실측 USL_TAIL_L3 이 0.3357 로 OUTLIER 동반발화).
+# 시드마다 값이 흔들리므로 임계에서 넉넉히 떨어뜨린다(p=0.06 실측 jump 0.036~0.093).
+TAIL_P = 0.06          # 단방향(USL_TAIL / LSL_TAIL)
+BIDIR_TAIL_P = 0.08    # 양방향(BIDIR_TAIL 겨냥) — 접지 않아 각 방향이 절반씩이라 더 크다
+
+
 def _tail_plan(lv, side):
     """USL_TAIL / LSL_TAIL — 꼬리를 **한쪽으로만** 두껍게 만든다(2026-08-19).
 
@@ -818,7 +831,25 @@ def _tail_plan(lv, side):
     갈린 뒤로는 그 모양이 `BIDIR_TAIL`(양쪽 합침)로 판정되므로, 3σ 밖 값을 한쪽으로 접어
     (`tail_side`) 그 방향 질량만 밴드(1~5%) 안에 들게 한다.
     """
-    return _kurt_plan(KURT_T[lv], side=side)
+    return _kurt_plan(KURT_T[lv], p=TAIL_P, side=side)
+
+
+def _bidir_tails_plan(lv):
+    """BIDIR_TAIL 겨냥 — **양쪽 꼬리가 함께 두꺼운** 대칭 scale mixture(2026-08-19 신설).
+
+    같은 signature 를 겨냥하는 `_bidir_plan`(위)과 **발화 경로가 다르다**:
+      · `_bidir_plan`   분포 자체가 넓어 양쪽 spec margin 이 1σ 미만 → BIDIR_TAIL 의
+                        `when_metric` 직접 발화. 웨이퍼 대부분이 fail 이라 CSV 1장에
+                        못 담는다(`CSV_EXCLUDE`).
+      · 이 함수         몸통은 멀쩡한데 양쪽 꼬리만 두껍다 → USL_TAIL·LSL_TAIL 이 함께
+                        발화하고 `replaces` 가 둘을 BIDIR_TAIL 로 합친다. fail 이 자연
+                        꼬리뿐이라 적어서 CSV 1장에 들어간다.
+    두 경로를 다 덮어야 룰이 실제로 검증된다 — v12 까지는 앞의 것만 있었고 그마저
+    CSV 에서 빠져 **BIDIR_TAIL 이 한 번도 검증되지 않았다**(사용자 지적의 배경).
+    접지 않으므로 각 방향 질량이 총량의 절반이다 — 밴드(1~5%) 하한을 넘기려면 단방향
+    겨냥보다 넓은 성분 비중이 커야 한다(실측 p=0.08 에서 각 방향 1.7~3.0%).
+    """
+    return _kurt_plan(KURT_T[lv], p=BIDIR_TAIL_P)
 
 
 def _kurt_plan(target, p=0.03, sigma=0.05, side=None):
@@ -837,7 +868,10 @@ def _kurt_plan(target, p=0.03, sigma=0.05, side=None):
     if side:
         plan["tail_side"] = side
     apply(plan, 3.0)
-    return with_tune(plan, apply, m_kurtosis, target, 1.0, 12.0)
+    # 넓은 성분 배수 k 의 탐색 상한이 12 였는데, 꼬리를 촘촘하게 만들려고 `p` 를 0.03 →
+    # 0.06 으로 올리면서(TAIL_P) 같은 초과첨도를 내려면 k 가 더 커져야 해 상한에 닿았다
+    # (실측 USL_TAIL_L2 가 목표 12.0 에 못 미친 9.96 으로 굳어 미발화). 20 으로 넓힌다.
+    return with_tune(plan, apply, m_kurtosis, target, 1.0, 20.0)
 
 
 def _coderail_plan(lv, p=None):
@@ -1019,6 +1053,24 @@ def edge_half_specs():
                 note=f"{'상단' if pattern == 'edge_top' else '하단'} edge 부채꼴 "
                      f"{arc * 180:.0f}° (반원 대비 {arc:.0%})"))
     return out
+
+
+def bidir_tails_specs():
+    """BIDIR_TAIL **양쪽 꼬리 경로** 세트 — `replaces` 가 실제로 발동하는지 본다.
+
+    세기(L1~L5)는 단방향 꼬리 세트와 같은 kurtosis 사다리(KURT_T)다. L1 은 초과첨도 2.0
+    이라 미발화이고, L2 부터 USL_TAIL·LSL_TAIL 이 함께 떠 BIDIR_TAIL 로 합쳐진다.
+    fail 은 **자연 꼬리로만** 만든다(`mode: natural`) — 밀어 만들면 그 자리에 구멍이 나
+    `fail_body_jump_ratio` 가 올라가 OUTLIER 로 넘어간다(단방향 세트와 같은 이유).
+    ⚠ verify 에서 이 항목의 `missing` 에 USL_TAIL/LSL_TAIL 이 뜨면 안 된다 — 겨냥은
+    BIDIR_TAIL 하나이고, 두 단방향 룰은 `replaces` 로 사라지는 것이 정상이다.
+    """
+    return [spec(f"BIDIR_TAILS_L{lv}", ["BIDIR_TAIL"], lv,
+                 values=_bidir_tails_plan(lv - 1),
+                 fails={"mode": "natural", "pattern": "random"},
+                 metric="kurtosis", target=KURT_T[lv - 1], group="bidir_tails",
+                 note="양쪽 꼬리가 함께 두꺼움 — USL_TAIL+LSL_TAIL 이 replaces 로 합쳐진다")
+            for lv in LEVELS]
 
 
 def single_specs():
@@ -1388,15 +1440,23 @@ def unknown_specs(count, rng: random.Random, salt: str = ""):
     cpk 가 1.33 위에 남는다(LOW_CPK 회피). 단봉 정규분포로는 불가능하다 — cpk ≥ 1.33 이면
     limit 이 4σ 밖이라 자연 초과가 5025 chip 에 0.3 개꼴이다.
 
-    ⚠ kurtosis 는 이 모양에서 10 을 넘지만 꼬리 룰(USL_TAIL/LSL_TAIL)은 뜨지 않는다 — 넓은 성분이
-    `tail_mass_3s` 를 밴드 상한(0.05) 위로 밀어 올리기 때문이다. 그 밴드는 원래 "다봉이라
-    몸통이 갈라진 경우" 를 빼려고 둔 것인데, 여기서는 꼬리가 두꺼운 정도가 밴드를 넘는다.
+    ⚠ **꼬리 룰을 피하는 방법이 2026-08-19 에 바뀌었다.** 종전에는 넓은 성분이
+    `tail_mass_3s`(양쪽 합)를 밴드 상한(0.05) 위로 밀어 올리는 데 기댔는데, 밴드가
+    **방향별 질량**에 걸리도록 바뀌면서 각 방향은 3~4% 로 밴드 **안**에 들어왔다 —
+    이 겨냥군 5건이 통째로 BIDIR_TAIL 로 뒤집혔다(그 판정 자체는 사용자가 원한 것이라
+    룰은 그대로 두고 이쪽 데이터를 옮긴다). 지금은 **kurtosis 로 막는다**: 넓은 성분
+    비중을 키우면 분포가 정규에 가까워져 초과첨도가 내려간다(w 0.16 → 10.6,
+    w 0.22 → 7.0). 꼬리 룰의 첫 조건이 `kurtosis > 10` 이라 여기서 걸린다.
+    질량 밴드보다 이쪽이 **여유가 넓다** — 질량은 밴드 경계(5%) 근처를 오갔지만
+    초과첨도는 7 대 10 으로 벌어져 있다.
 
     파라미터는 관찰군처럼 **굴린다**(고정 형상을 손으로 박지 않는다). 다만 위 세 조건이
     서로 밀고 당기므로(꼬리를 키우면 σ 가 커져 cpk 가 떨어진다) **cpk 목표에서 역산**한다:
-      · cpk 목표 U(1.55, 2.10) → 전체 σ = 반폭 / (3·cpk)     → LOW_CPK(1.33) 회피
-      · 몸통 σ = 전체 σ × U(0.35, 0.50), 넓은 성분 w = U(0.10, 0.16)
-        → 넓은 성분 σ 는 전체 σ 를 맞추도록 역산 → fail 20~50개(5025 chip 기준)
+      · cpk 목표 U(1.50, 1.90) → 전체 σ = 반폭 / (3·cpk)     → LOW_CPK(1.33) 회피
+        (상한을 2.10 → 1.90 으로 낮췄다 — cpk 가 높을수록 자연 꼬리가 spec 을 덜 넘어
+         fail 이 한 자리로 줄기 때문이다. 하한은 LOW_CPK 와의 여유로 그대로 둔다.)
+      · 몸통 σ = 전체 σ × U(0.35, 0.50), 넓은 성분 w = U(0.20, 0.28)
+        → 넓은 성분 σ 는 전체 σ 를 맞추도록 역산 → 초과첨도 5~8(꼬리 룰 회피)
       · 중심 = 정중앙 ± 0.03·span            → MEAN_SHIFT(center_bias 0.30) 회피
       · 위치 편중 없음(region=None)          → 공간 룰 회피
     실제로 UNKNOWN 이 떴는지는 생성 직후 내장 verify(2패스)가 확인한다.
@@ -1407,10 +1467,10 @@ def unknown_specs(count, rng: random.Random, salt: str = ""):
         lo, hi = _random_limits(unit, rng)
         span = hi - lo
         c0 = (hi + lo) / 2 + rng.uniform(-0.03, 0.03) * span
-        cpk_goal = rng.uniform(1.55, 2.10)
+        cpk_goal = rng.uniform(1.50, 1.90)
         sd_all = (span / 2) / (3 * cpk_goal)
         sd_body = sd_all * rng.uniform(0.35, 0.50)
-        w_wide = rng.uniform(0.10, 0.16)
+        w_wide = rng.uniform(0.20, 0.28)
         # σ_all² = (1−w)·σ_body² + w·σ_wide² 를 σ_wide 에 대해 푼다.
         sd_wide = math.sqrt(max(sd_all ** 2 - (1 - w_wide) * sd_body ** 2, 1e-12) / w_wide)
         plan = {"kind": "mixture", "mean": c0,
@@ -1499,7 +1559,8 @@ def assign_tno(specs):
 
 def build_catalog(total: int, seed: int):
     rng = random.Random(seed)
-    specs = (single_specs() + edge_half_specs() + combo_specs() + axis_specs()
+    specs = (single_specs() + edge_half_specs() + bidir_tails_specs()
+             + combo_specs() + axis_specs()
              + boundary_specs() + random_specs(RANDOM_COUNT, rng))
     fixed = len(specs)
     rest = max(0, total - fixed)
@@ -2454,6 +2515,9 @@ def versioned_path(path: Path) -> Path:
 #   GROSS_FAIL      수율 <50% 가 발화 조건
 #   CONSTANT_VALUE  spec 밖 상수 = 전량 fail       BIDIR_TAIL      양쪽 margin<1σ = 분포가 spec 밖으로
 #   TAIL_RISK       spec_margin_min<1σ 조건상 꼬리가 spec 을 넘어야 한다
+# ⚠ `BIDIR_TAIL` 이 여기 있는 것은 **`_bidir_plan`(margin 경로) 세트에 한한다**. 같은
+# signature 를 `replaces` 경로로 겨냥하는 `bidir_tails_specs()`(양쪽 꼬리)는 fail 이 자연
+# 꼬리뿐이라 CSV 에 들어간다 — 그 세트를 필터 뒤에 따로 더하는 이유(2026-08-19).
 CSV_EXCLUDE = {"GROSS_FAIL", "CONSTANT_VALUE", "BIDIR_TAIL", "TAIL_RISK"}
 
 
@@ -2465,8 +2529,12 @@ def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT, seed: int = 
     한 장에 들어간다. 그래도 예산(행의 90%)을 넘으면 비싼 것부터 뺀다.
     반환: (담은 specs, 제외 [(item, 필요 fail 수)], 사용한 fail 행 수)
     """
+    # `bidir_tails_specs` 는 CSV_EXCLUDE 필터 **뒤**가 아니라 함께 거른 다음 더한다 —
+    # intent 가 BIDIR_TAIL 이라 필터에 걸리는데, 제외 사유(양쪽 margin<1σ = 전량 fail)가
+    # 이 세트에는 해당하지 않는다(몸통은 멀쩡하고 자연 꼬리만 fail 이다).
     pool = [s for s in single_specs() + edge_half_specs()
             if not (set(s["intent"]) & CSV_EXCLUDE)]
+    pool += bidir_tails_specs()
     pool += random_specs(random_count, random.Random(seed), salt=str(seed))
     # 미분류군은 관찰군과 **다른 난수열**을 쓴다 — 같은 rng 를 이어 쓰면 관찰군 개수를
     # 바꿀 때마다 미분류군 표본까지 통째로 바뀌어 재현이 어긋난다.
@@ -2483,11 +2551,17 @@ def single_csv_specs(n_rows: int, random_count: int = RANDOM_COUNT, seed: int = 
         kept.append(s)
         used += need
     # 공간 패턴 item 이 먼저 행을 고르게 한다(뒤로 밀리면 남은 행이 편중돼 패턴이 깨진다).
-    # 그 다음이 미분류군이다 — fail 을 밀어 만들지 않고 **값이 넘긴 chip 그 자리**를 써야
-    # 하므로, 그 chip 을 앞 item 이 먼저 가져가면 fail 이 통째로 사라진다(실측: 뒤로 밀면
-    # 자연 fail 9개가 1개로 줄었다). 밀어 만드는 item 들은 아무 여유 chip 이나 쓰면 된다.
+    # 그 다음이 **`mode:"natural"` 인 item 전부**다 — fail 을 밀어 만들지 않고 **값이 넘긴
+    # chip 그 자리**를 써야 하므로, 그 chip 을 앞 item 이 먼저 가져가면 fail 이 통째로
+    # 사라진다(실측: 뒤로 밀면 자연 fail 9개가 1개로 줄었다). 밀어 만드는 item 들은 아무
+    # 여유 chip 이나 쓰면 된다.
+    # ⚠ 종전에는 이 우선권이 미분류군(group=="unknown")에만 있었다. 꼬리 겨냥 세트도
+    # 똑같이 natural 인데 빠져 있어서, item 이 늘자 극단 chip 을 앞 item 에 뺏기고 그 값이
+    # **몸통 안으로 당겨져**(아래 build_source_df 의 "불변 법칙" 처리) 초과첨도가 주저앉았다
+    # — USL_TAIL_L2 가 목표 12.0 인데 실측 9.96 으로 미발화(2026-08-19). 최극단 몇 점이
+    # 4제곱 지표를 지배하므로 chip 한둘만 뺏겨도 판정이 뒤집힌다.
     kept.sort(key=lambda s: (s["fails"].get("pattern") not in SPATIAL_PATTERNS,
-                             s["group"] != "unknown", s["name"]))
+                             s["fails"].get("mode") != "natural", s["name"]))
     return kept, dropped, used
 
 

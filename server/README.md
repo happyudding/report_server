@@ -125,7 +125,7 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_DB_BACKUP_EXTERNAL_DIR` | (없음) | 지정 시 integrity 통과 백업본을 이 경로로도 복사(best-effort). 같은 디스크 사망 대비 |
 | `REPORT_WEBREPORT_TOTAL_MB` | `1024` | web_report parquet **합계** 상한. 개별 파일은 512MB 고정, 요청 전체는 `MAX_CONTENT_LENGTH_MB` |
 | `WEB_REPORT_UPLOAD_CONCURRENCY` | `2` | 동시에 처리하는 web_report 업로드 건수. 업로드 1건이 parquet bytes + 디코드 tables 를 함께 들고 있어 대형 세션이면 건당 RAM 피크가 GB 급 — 겹치면 웹 프로세스가 죽는다 |
-| `WEB_REPORT_UPLOAD_WAIT_SEC` | `180` (운영 **90**) | 위 상한이 찼을 때 대기하는 시간(초). 초과하면 503. 대기 중에는 본문이 디스크에 스풀돼 있어 RAM 을 거의 안 쓴다. ⚠️ **클라 업로드 read timeout(200초)보다 충분히 짧아야 한다** — 대기만 하다 클라가 먼저 끊으면 사용자는 503+`Retry-After` 안내조차 못 받는다(2026-08-19 운영 env 에서 90 으로 명시) |
+| `WEB_REPORT_UPLOAD_WAIT_SEC` | `90` | 위 상한이 찼을 때 대기하는 시간(초). 초과하면 503. 대기 중에는 본문이 디스크에 스풀돼 있어 RAM 을 거의 안 쓴다. ⚠️ **클라 업로드 read timeout(200초)보다 충분히 짧아야 한다** — 대기만 하다 클라가 먼저 끊으면 사용자는 503+`Retry-After` 안내조차 못 받는다. 운영 env 는 90 을 명시하지만, **env 파일을 읽지 않는 기동**(`python wsgi.py` 직접 = 디버그)에서도 같은 값이 되도록 기본값을 180→90 으로 맞췄다(2026-08-19) |
 | `WEB_REPORT_UPLOAD_MAX_WAITERS` | `4` | **동시에 줄 설 수 있는** 업로드 요청 수. 대기는 RAM 은 안 쓰지만 waitress 스레드는 문다 — 상한이 없으면 클라 여러 대의 동시 업로드가 스레드를 전부 물어 조회·`/healthz` 까지 수 분간 멎는다. 초과분은 기다리지 않고 즉시 503(`Retry-After: 30`) |
 | `WEB_REPORT_PREWARM_QUEUE` | `8` | 업로드 직후 프리웜 대기 큐 상한. 초과 시 가장 오래된 요청 폐기(로그) |
 | `WEB_REPORT_ETA_ENABLED` | `1` | 세션 로드 오버레이의 "예상 약 N초" 안내(202·build_status 응답의 `eta`). `0` 이면 키를 싣지 않고 프런트는 종전 문구 — 추정이 어긋나 혼란을 줄 때의 차단 스위치 ([docs/12](../docs/12_web_report_cache.md)) |
