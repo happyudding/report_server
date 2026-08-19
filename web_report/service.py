@@ -167,47 +167,139 @@ def _ai_cache_ready(session, session_id: str, *, report_db, upload_root: Path) -
     return disk_cache.ai_comment_exists(upload_root, key)
 
 
+def _compare_groups_of(session, tables):
+    """세션 옵션의 Before/After 배치 (소스 이름 기준 정규화). 캐시 키와 계산이 공유한다."""
+    return _webreport_compare_groups(session.get("webreport_options") or "",
+                                     [t.source for t in tables])
+
+
+def _compare_wanted(session) -> bool:
+    """이 세션이 compare 계산 대상인가 — Compare 모드일 때만(소스 수는 tables 를 봐야 안다)."""
+    return cache_policy._mode(session) == "Compare"
+
+
+def _compare_cached(session, session_id: str, tables, manifest, *,
+                    report_db, upload_root: Path,
+                    allow_build: bool = True) -> tuple[dict | None, str]:
+    """Compare 계산 결과 — 분리 캐시(RAM→디스크) 조회, 미스에만 계산 (AI 와 대칭).
+
+    payload 캐시(report_key)와 분리된 cache_policy.compare_key 로 잡히므로
+    comment/override 편집(edits_rev+1)·REPORT_SCHEMA_VERSION bump·dedup 형제 세션에서
+    compare 재계산(콜드 빌드의 34% — 실측 1.1초)을 반복하지 않는다.
+    반환 (payload, how) — how ∈ {"ram","disk","build","miss"} (build_log 기록).
+    allow_build=False 면 미스에 계산하지 않고 (None, "miss") — 사용자가 기다리는 콜드
+    빌드가 compare 를 백그라운드 잡에 미루기 위한 모드다.
+    """
+    key = cache_policy.compare_key(
+        session, _preprocess.session_digest(report_db, session_id))
+    payload = cache.cache_get(cache.COMPARE_CACHE, key)
+    if payload is not None:
+        return payload, "ram"
+    payload = disk_cache.load_compare(upload_root, key)
+    if isinstance(payload, dict) and payload:
+        cache.compare_cache_put(key, payload)
+        return payload, "disk"
+    if not allow_build:
+        return None, "miss"
+    all_items, cpk_rows, stat_items = metrics.compare_inputs(
+        tables, selected_items=manifest.get("selected_items") or [],
+        temperature_groups=_webreport_temperature_groups(
+            session.get("webreport_options") or "", [t.source for t in tables]),
+        mode=cache_policy._mode(session))
+    payload = metrics.build_compare(tables, all_items, cpk_rows, stat_items=stat_items,
+                                    compare_groups=_compare_groups_of(session, tables))
+    cache.compare_cache_put(key, payload)
+    disk_cache.save_compare(upload_root, key, payload)
+    return payload, "build"
+
+
+def _compare_cache_ready(session, session_id: str, *, report_db,
+                         upload_root: Path) -> bool:
+    """Compare 분리 캐시(RAM 또는 디스크)가 준비됐는가 — 값싼 판정(dict/stat 1회).
+
+    키가 **tables 를 열지 않고** 만들어지므로(cache_policy.compare_key) 콜드 판정
+    경로에서도 실제 빌드와 같은 키를 본다 — 202/200 불일치가 생기지 않는다.
+    """
+    key = cache_policy.compare_key(
+        session, _preprocess.session_digest(report_db, session_id))
+    with cache.CACHE_LOCK:
+        if key in cache.COMPARE_CACHE:
+            return True
+    return disk_cache.compare_exists(upload_root, key)
+
+
+def _pending_kinds(session, session_id: str, *, report_db, upload_root: Path,
+                   inline: bool = False) -> tuple:
+    """이 세션에서 **지금 계산이 미뤄질** 부분들 — pending 키 꼬리표이자 판정 기준.
+
+    ai/compare 는 서로 독립이고 동시에 대기할 수 있어 키가 갈려야 한다(cache_policy
+    .report_pending_key docstring). inline(최종본을 만들러 온 잡·프리웜)이면 빈 튜플.
+    각 부분은 **분리 캐시가 이미 준비됐으면 대기 대상이 아니다** — 최종본을 만들 수 있다.
+    """
+    if inline:
+        return ()
+    kinds = []
+    if (_webreport_ai_comment(session.get("webreport_options") or "")
+            and not _ai_cache_ready(session, session_id, report_db=report_db,
+                                    upload_root=upload_root)):
+        kinds.append("ai")
+    if _compare_wanted(session) and not _compare_cache_ready(
+            session, session_id, report_db=report_db, upload_root=upload_root):
+        kinds.append("compare")
+    return tuple(kinds)
+
+
 def _pending_report_ready(session, session_id: str, *, report_db, upload_root: Path,
                           edits_rev: int, ai_inline: bool = False) -> bool:
-    """AI 대기용 pending payload 를 **지금 쓸 수 있는가** (stat 1회, 읽지 않는다).
+    """대기용 pending payload 를 **지금 쓸 수 있는가** (stat 1회, 읽지 않는다).
 
     콜드 판정(`report_is_cold` / 락 밖 202 판정)과 실제 로드(`_load_pending_report`)가
     **같은 조건**을 봐야 202 를 냈다가 200 이 되는 불일치가 없다.
-    쓰지 않는 경우 2가지: ① `ai_inline`(최종본을 만들러 온 잡·프리웜) ② AI 분리 캐시가
-    이미 준비됨(최종본을 만들 수 있으므로 대기본을 쓸 이유가 없다).
+    쓰지 않는 경우 2가지: ① `ai_inline`(최종본을 만들러 온 잡·프리웜) ② 미뤄진 부분이
+    하나도 없음(분리 캐시가 다 준비돼 최종본을 만들 수 있다).
     """
-    if ai_inline or not _webreport_ai_comment(session.get("webreport_options") or ""):
-        return False
-    if _ai_cache_ready(session, session_id, report_db=report_db, upload_root=upload_root):
+    kinds = _pending_kinds(session, session_id, report_db=report_db,
+                           upload_root=upload_root, inline=ai_inline)
+    if not kinds:
         return False
     return disk_cache.report_exists(
-        upload_root, cache_policy.report_pending_key(session, session_id, edits_rev))
+        upload_root,
+        cache_policy.report_pending_key(session, session_id, edits_rev, kinds))
 
 
 def _load_pending_report(session, session_id: str, *, report_db, upload_root: Path,
                          edits_rev: int, ai_inline: bool):
-    """AI 대기용 pending payload 를 디스크에서 — 최종본이 없을 때만 쓰는 폴백."""
+    """대기용 pending payload 를 디스크에서 — 최종본이 없을 때만 쓰는 폴백."""
     if not _pending_report_ready(session, session_id, report_db=report_db,
                                  upload_root=upload_root, edits_rev=edits_rev,
                                  ai_inline=ai_inline):
         return None
+    kinds = _pending_kinds(session, session_id, report_db=report_db,
+                           upload_root=upload_root, inline=ai_inline)
     return disk_cache.load_report(
-        upload_root, cache_policy.report_pending_key(session, session_id, edits_rev))
+        upload_root,
+        cache_policy.report_pending_key(session, session_id, edits_rev, kinds))
 
 
 def _report_usable(report, session, session_id: str, *, report_db,
                    upload_root: Path, ai_inline: bool):
     """RAM 캐시의 payload 를 그대로 써도 되는가 — 아니면 None(미스 취급).
 
-    pending 본(ai_comment_pending, AI 없이 먼저 연 payload)은 ① ai 잡(ai_inline=True)
-    이거나 ② AI 분리 캐시가 준비됐으면 미스로 취급해 최종본 재빌드로 흘려보낸다.
-    최종본·비 AI 세션 payload 는 플래그 자체가 없어 이 검사가 공짜다.
+    pending 본(ai_comment_pending / compare_pending — 그 부분 없이 먼저 연 payload)은
+    ① 최종본을 만들러 온 잡(ai_inline=True)이거나 ② 그 분리 캐시가 준비됐으면 미스로
+    취급해 최종본 재빌드로 흘려보낸다.
+    최종본·해당 없는 세션 payload 는 플래그 자체가 없어 이 검사가 공짜다.
     """
     if report is None:
         return None
     if report.get("ai_comment_pending") and (
             ai_inline or _ai_cache_ready(session, session_id, report_db=report_db,
                                          upload_root=upload_root)):
+        return None
+    if report.get("compare_pending") and (
+            ai_inline or _compare_cache_ready(session, session_id,
+                                              report_db=report_db,
+                                              upload_root=upload_root)):
         return None
     return report
 
@@ -353,6 +445,20 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 # Signature 컬럼 — 엔진 발화 제안 + dropdown 선택지
                                 ai_signatures = ai_result["row_signatures"]
                                 signature_options = ai_result["signature_options"]
+                            # Compare 계산도 분리 캐시 — AI 와 같은 이유(2026-08-19).
+                            # 사용자 대기 경로(ai_inline=False)는 히트만 쓰고 미스면
+                            # 백그라운드 'compare' 잡에 미룬다.
+                            compare_payload = None
+                            compare_how = None
+                            compare_pending = False
+                            if _compare_wanted(session) and len(tables) >= 2:
+                                compare_payload, compare_how = _compare_cached(
+                                    session, session_id, tables, manifest,
+                                    report_db=report_db, upload_root=upload_root,
+                                    allow_build=ai_inline)
+                                compare_pending = compare_payload is None
+                                if compare_pending:
+                                    compare_how = "deferred"
                             # 수율 분모: 기준정보 Gross Die 와 세션에 저장된 소스별 선택을
                             # 함께 넘기고, 실제 판정(자동 예외 포함)은 yield_tab 이 한다.
                             gross_die = session.get("gross_die")
@@ -397,6 +503,10 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 # 종전 그대로. 캐시는 report_key 의 webreport_options 가 덮는다.
                                 step_label=_webreport_step(
                                     session.get("webreport_options") or ""),
+                                # Compare 는 분리 캐시에서 주입한다 — payload 안에서
+                                # 계산하면 편집·스키마 bump 마다 전량 재계산된다.
+                                compare_payload=compare_payload,
+                                compare_deferred=True,
                             )
                             # payload(= 탭별 stage 합 + 조립 오버헤드) 총계.
                             stages["payload"] = round(time.perf_counter() - t_payload, 3)
@@ -404,28 +514,39 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 # AI 백그라운드 계산 중 표시 — 최종본에는 이 키가 없다
                                 # (프런트 하위호환: 플래그 부재 = 종전 렌더).
                                 report["ai_comment_pending"] = True
+                            # compare_pending 은 build_report_payload 가 이미 세웠다
+                            # (compare_deferred=True + 미주입).
+                            # 미뤄진 부분들 — pending 저장 키의 꼬리표이자 승격 판정 기준.
+                            pending_kinds = tuple(
+                                k for k, on in (("ai", ai_pending),
+                                                ("compare", compare_pending)) if on)
                             # payload 를 한 번만 직렬화해 gzip 디스크 저장과 아래 RAM
                             # 캐시 크기추정에 함께 재사용한다(콜드 1회 3중 직렬화 제거).
                             with build_log.stage("serialize"):
                                 report_bytes = disk_cache.dumps_report(report)
-                                if ai_pending:
+                                if pending_kinds:
                                     # 대기용 본은 **별도 키**로 저장한다(롤백 안전 —
-                                    # 옛 코드는 이 키를 모른다). 이게 없으면 AI 잡이
-                                    # 끝나기 전 재접속이 매번 완전 콜드가 된다.
+                                    # 옛 코드는 이 키를 모른다). 이게 없으면 백그라운드
+                                    # 잡이 끝나기 전 재접속이 매번 완전 콜드가 된다.
                                     disk_cache.save_report_gz(
                                         upload_root,
                                         cache_policy.report_pending_key(
-                                            session, session_id, edits_rev),
+                                            session, session_id, edits_rev,
+                                            pending_kinds),
                                         report_bytes)
                                 else:
                                     disk_cache.save_report_gz(upload_root, cache_key,
                                                               report_bytes)
-                                    # 최종본 승격 — 같은 세대의 대기용 본을 회수한다
-                                    # (세대 정리는 다른 content_hash 만 지운다).
-                                    disk_cache.drop_report(
-                                        upload_root,
-                                        cache_policy.report_pending_key(
-                                            session, session_id, edits_rev))
+                                    # 최종본 승격 — 같은 세대의 대기용 본을 **전부**
+                                    # 회수한다(ai 단독·compare 단독·둘 다 = 3가지 키).
+                                    # 한 가지만 지우면 나머지가 남아 다음 콜드에서
+                                    # 이미 계산된 부분이 빠진 본이 되살아난다.
+                                    for kinds in (("ai",), ("compare",),
+                                                  ("ai", "compare")):
+                                        disk_cache.drop_report(
+                                            upload_root,
+                                            cache_policy.report_pending_key(
+                                                session, session_id, edits_rev, kinds))
                             report_size = len(report_bytes)
                             # Temperature: 방금 판정한 결과(tables 에 캐시됨)로 temp_map 을
                             # 함께 채운다 — 안 하면 Issue Table 첫 진입에서 요청 스레드가
@@ -459,20 +580,27 @@ def load_webreport(session_id: str, *, report_db, upload_root: Path,
                                 "mcells": mcells, "kcols": kcols,
                                 # AI Comment 경로 관측 — ram/disk(캐시 히트)·build(실평가)·
                                 # fallback(예외 폴백, 미캐시). 비 AI 세션은 키 자체가 없다.
-                                **({"ai": ai_how} if ai_how else {})})
+                                **({"ai": ai_how} if ai_how else {}),
+                                # Compare 경로 관측 — 같은 어휘(비 Compare 세션은 키 없음).
+                                **({"compare": compare_how} if compare_how else {})})
                     finally:
                         build_log.clear_stages()
                         build_status.end(session_id, "report")
                 # size: 인라인 빌드면 위에서 잰 bytes 길이 재사용, 그 외(disk hit·워커
                 # 오프로드)는 None → report_cache_put 이 자체 추정(현행 유지).
                 cache.report_cache_put(cache_key, report, size=report_size)   # 이중 상한 (cache.py)
-    if (report.get("ai_comment_pending") and not ai_inline
-            and not compute.in_worker()):
-        # AI 백그라운드 잡 예약 (부모 프로세스 전용 — 워커에서 큐 소비자 스레드를 띄우지
+    if not ai_inline and not compute.in_worker():
+        # 백그라운드 잡 예약 (부모 프로세스 전용 — 워커에서 큐 소비자 스레드를 띄우지
         # 않는다). 중복 등록은 _ondemand_pending 이, 연속 실패는 build_status
-        # failure_blocked(sid,"ai") 가 막는다. 완료되면 ai 잡의 report_cache_put 이
-        # 부모 RAM 의 이 pending 본을 최종본으로 덮고 disk_cache 에도 최종본이 남는다.
-        compute.request_build(session_id, str(upload_root), "ai")
+        # failure_blocked(sid, kind) 가 막는다. 완료되면 그 잡의 report_cache_put 이
+        # 부모 RAM 의 pending 본을 최종본으로 덮고 disk_cache 에도 최종본이 남는다.
+        # ai·compare 는 **같은 최종본**을 만드는 잡이라(둘 다 inline 으로 계산) 하나만
+        # 예약하면 나머지도 함께 채워진다 — 두 잡을 겹쳐 돌리면 같은 콜드 빌드를 두 번
+        # 하는 셈이라 ai 를 우선한다(엔진 평가가 더 무거워 먼저 시작하는 편이 낫다).
+        if report.get("ai_comment_pending"):
+            compute.request_build(session_id, str(upload_root), "ai")
+        elif report.get("compare_pending"):
+            compute.request_build(session_id, str(upload_root), "compare")
     public = dict(session)
     public["has_password"] = bool(public.get("password"))
     public.pop("password", None)

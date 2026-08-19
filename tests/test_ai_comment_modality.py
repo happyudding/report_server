@@ -98,23 +98,33 @@ def test_rank_tiebreak_prefers_modality():
     assert _rank(critical) > _rank(bimodal)
 
 
-def test_to_row_keys_keeps_bimodal_on_tie():
-    """같은 item 의 CPK/ETC 폴백 키에 이봉 케이스가 남아야 한다."""
-    plain = _case(item="VDD", bin_=5)
-    bimodal = _case(item="VDD", bin_=7, signatures=[_subpop_sig("modality_v2 bimodal")])
-    # dict 삽입 순서상 plain 이 먼저 — tie-break 가 없으면 plain 이 남는다.
-    out = _to_row_keys({("VDD", 5): plain, ("VDD", 7): bimodal})["comments"]
-    assert out["Yield|5|VDD"] == "[MAJOR] [현상] 산포가 넓습니다."
+def test_to_row_keys_fans_out_to_all_fail_bins():
+    """case 는 item 당 1개이므로 그 item 의 **모든 fail bin 행**에 같은 셀을 뿌린다.
+
+    2026-08-19 — 대표 bin 행에만 넣으면 나머지 Yield 행이 빈 셀이 되어 회귀가 된다.
+    판정 자체가 그 item 의 fail 전체를 보고 낸 결론이라 어느 행에 놓든 같은 값이 맞다.
+    """
+    bimodal = _case(item="VDD", bin_=5, signatures=[_subpop_sig("modality_v2 bimodal")])
+    out = _to_row_keys({"VDD": bimodal}, {"VDD": [5, 7]})["comments"]
+    assert out["Yield|5|VDD"] == "[MAJOR][이봉] [현상] 산포가 넓습니다."
     assert out["Yield|7|VDD"] == "[MAJOR][이봉] [현상] 산포가 넓습니다."
     assert out["CPK|VDD"].startswith("[MAJOR][이봉] ")
     assert out["ETC|VDD"].startswith("[MAJOR][이봉] ")
+
+
+def test_to_row_keys_falls_back_to_case_bin():
+    """fail_bins 를 안 주면(구 호출부·테스트) case 의 대표 bin 한 행만 채운다."""
+    plain = _case(item="VDD", bin_=5)
+    out = _to_row_keys({"VDD": plain})["comments"]
+    assert out["Yield|5|VDD"] == "[MAJOR] [현상] 산포가 넓습니다."
+    assert not any(k.startswith("Yield|7|") for k in out)
 
 
 def test_to_row_keys_etc_auto_item_carries_badge():
     """fail bin 이 없어 ETC 자동 행으로만 나오는 이봉 항목도 배지를 달고 나온다."""
     bimodal = _case(item="IDD", bin_=1,  # PASS bin → Yield 행이 안 생긴다
                     signatures=[_subpop_sig("modality_v2 separated")])
-    res = _to_row_keys({("IDD", 1): bimodal})
+    res = _to_row_keys({"IDD": bimodal}, {})
     assert res["etc_auto_items"] == ["IDD"]
     assert res["comments"]["ETC|IDD"].startswith("[MAJOR][분리] ")
     assert "Yield|1|IDD" not in res["comments"]

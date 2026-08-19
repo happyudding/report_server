@@ -187,6 +187,12 @@ def api_thresholds_save():
                changed_fields=[f"thresholds:{pt}/{family or '_default'}",
                                f"keys={sorted(result['saved'])}",
                                f"rev={result['rules_rev']}"] + _reason(body))
+        # 골든 회귀 자동 실행 — **비차단**. 저장 응답을 붙잡지 않는 이유는 회귀가 골든
+        # 세션마다 트레이스 1회(초~분)라서다. 잠금(_rules_lock) 밖이어야 다른 저장이
+        # 막히지 않는다. 결과로 저장을 되돌리지는 않는다(rev 가 이미 올라 리포트 캐시가
+        # 무효화됐다) — 화면이 사후 경고로 알린다.
+        _golden_auto_start(f"{pt}/{family or '_default'}", result.get("rules_rev"))
+        result["golden_auto"] = True
     result["ok"] = True
     return jsonify(result)
 
@@ -502,6 +508,34 @@ def api_eval_scoring():
     return jsonify(eval_admin.scoring())
 
 
+@eval_panel_bp.get("/api/eval/trend")
+def api_eval_trend():
+    """일별 지표 추이 (report_eval_daily) — "룰을 고쳤더니 나아졌나" 를 보는 유일한 화면.
+
+    비율이 아니라 **카운터**를 그대로 돌려준다(합계는 더할 수 있어도 비율은 못 더한다).
+    화면이 engine_version 을 합칠지 나눠 볼지 정한다.
+    수집 시작 이전 날짜는 행 자체가 없다 — '0' 과 '기록 없음' 은 다르다.
+    """
+    try:
+        days = max(1, min(int(request.args.get("days") or 90), 730))
+    except (TypeError, ValueError):
+        days = 90
+    since = time.strftime("%Y-%m-%d", time.localtime(time.time() - days * 86400))
+    rows = report_db.eval_daily_series(since_day=since)
+    return jsonify({"days": days, "since": since, "rows": rows})
+
+
+@eval_panel_bp.post("/api/eval/trend/rollup")
+def api_eval_trend_rollup():
+    """지금 즉시 재집계 — 스케줄러(24h)를 기다리지 않고 확인할 때. 갱신 행 수 반환.
+
+    최근 구간만 다시 계산하는 **덮어쓰기**라 여러 번 눌러도 값이 부풀지 않는다.
+    """
+    n = report_db.rollup_eval_daily(
+        days=int(getattr(config, "REPORT_EVAL_ROLLUP_DAYS", 14) or 14))
+    return jsonify({"ok": True, "updated": n})
+
+
 # ── 트레이스 ─────────────────────────────────────────────────────────────────
 
 @eval_panel_bp.get("/api/sessions")
@@ -539,7 +573,10 @@ def _summary_row(index, case):
 
 
 def _case_key(case):
-    return (case.get("source_index"), str(case.get("item_raw") or ""), case.get("bin"))
+    # bin 은 키에 넣지 않는다 (2026-08-19) — case 가 item 당 1개이고 `bin` 은 대표 bin
+    # (참고값)이라, 재실행 사이에 흔들리면 같은 case 가 removed+added 한 쌍의 **허위
+    # diff** 로 보고된다.
+    return (case.get("source_index"), str(case.get("item_raw") or ""))
 
 
 def _by_key(cases):
@@ -569,23 +606,24 @@ def _trace_diff(prev_cases, new_cases):
     """
     prev, new = _by_key(prev_cases), _by_key(new_cases)
     changed, added, removed = [], [], []
+    # `bin` 은 키가 아니라 **표시용**이라 case 에서 직접 읽는다(2026-08-19 — 대표 bin).
     for key, (idx, case) in new.items():
         if key not in prev:
             added.append({"idx": idx, "source_index": key[0], "item_raw": key[1],
-                          "bin": key[2], "status": case.get("status")})
+                          "bin": case.get("bin"), "status": case.get("status")})
             continue
         old, cur = _snapshot(prev[key][1]), _snapshot(case)
         if old == cur:
             continue
         old_fired, cur_fired = set(old["fired"]), set(cur["fired"])
-        changed.append({"idx": idx, "source_index": key[0], "item_raw": key[1], "bin": key[2],
-                        "old": old, "new": cur,
+        changed.append({"idx": idx, "source_index": key[0], "item_raw": key[1],
+                        "bin": case.get("bin"), "old": old, "new": cur,
                         "fired_added": sorted(cur_fired - old_fired),
                         "fired_removed": sorted(old_fired - cur_fired)})
     for key, (_, case) in prev.items():
         if key not in new:
-            removed.append({"source_index": key[0], "item_raw": key[1], "bin": key[2],
-                            "old_status": case.get("status")})
+            removed.append({"source_index": key[0], "item_raw": key[1],
+                            "bin": case.get("bin"), "old_status": case.get("status")})
     return {"changed": changed, "added": added, "removed": removed,
             "compared": len(new)}
 
@@ -887,6 +925,98 @@ def api_review_proposal():
     return jsonify({"ok": True, **result})
 
 
+def _golden_run(entries):
+    """골든셋 대조 본체 — 수동 실행과 저장 후 자동 실행이 공유한다.
+
+    호출 전에 `_trace_lock` 을 잡아야 한다(세션마다 트레이스 1회라 CPU 를 쓴다).
+    """
+    t0 = time.perf_counter()
+    rows, total_checked, total_findings = [], 0, 0
+    for entry in entries:
+        sid = str(entry.get("session_id") or "")
+        row = {"session_id": sid, "note": entry.get("note"), "checked": 0, "findings": []}
+        try:
+            findings, checked = golden_check.check_session(entry)
+        except Exception as exc:                       # 세션 삭제·parquet 유실 등
+            row["error"] = f"{type(exc).__name__}: {exc}"
+            total_findings += 1
+            rows.append(row)
+            continue
+        row["checked"], row["findings"] = checked, findings
+        total_checked += checked
+        total_findings += len(findings)
+        rows.append(row)
+    return {"sessions": rows, "total_checked": total_checked,
+            "total_findings": total_findings, "rules_rev": eval_debug.rules_rev(),
+            "elapsed_ms": int((time.perf_counter() - t0) * 1000)}
+
+
+# 임계값 저장 직후 자동 실행한 골든 회귀의 **마지막 결과**. 프로세스 메모리라 재시작하면
+# 사라진다(그게 맞다 — 룰이 그대로여도 세션 데이터가 변할 수 있어 오래된 결과는 근거가
+# 약하다). trace_store 에는 **넣지 않는다**: LRU 4런이라 골든 세션들이 관리자가 보던
+# 트레이스를 밀어낸다.
+_GOLDEN_AUTO = {"state": "idle", "at": None, "scope": None, "rules_rev": None,
+                "total_findings": None, "total_checked": None, "sessions": [],
+                "elapsed_ms": None, "error": None}
+_golden_auto_lock = threading.Lock()
+
+
+def _golden_auto_run(scope, rules_rev):
+    """백그라운드 스레드 본체 — 저장 응답을 막지 않고 회귀를 돌린다.
+
+    저장 자체는 되돌리지 않는다(rev 가 이미 올라 리포트 캐시가 무효화됐으므로 롤백이
+    비싸다). 대신 결과를 여기 남겨 화면이 "회귀 N건 어긋남" 경고를 띄운다.
+    """
+    got = None
+    try:
+        entries = golden_io.read_golden()["sessions"]
+        if not entries:
+            got = {"state": "empty", "sessions": [], "total_findings": 0,
+                   "total_checked": 0, "elapsed_ms": 0, "error": None}
+        elif not _trace_lock.acquire(blocking=False):
+            # 수동 트레이스/회귀가 이미 CPU 를 쓰고 있다 — 겹쳐 돌리지 않고 안내만 남긴다.
+            got = {"state": "skipped", "sessions": [], "total_findings": None,
+                   "total_checked": None, "elapsed_ms": 0,
+                   "error": "다른 트레이스 실행 중이라 건너뜀 — 수동으로 실행하세요"}
+        else:
+            try:
+                res = _golden_run(entries)
+            finally:
+                _trace_lock.release()
+            got = {"state": "done", **res}
+    except Exception as exc:
+        _log.exception("골든 회귀 자동 실행 실패")
+        got = {"state": "error", "sessions": [], "total_findings": None,
+               "total_checked": None, "elapsed_ms": None,
+               "error": f"{type(exc).__name__}: {exc}"}
+    got.update(at=int(time.time()), scope=scope, rules_rev=rules_rev)
+    got.setdefault("error", None)
+    with _golden_auto_lock:
+        _GOLDEN_AUTO.clear()
+        _GOLDEN_AUTO.update(got)
+
+
+def _golden_auto_start(scope, rules_rev):
+    """임계값이 실제로 바뀌었을 때만 회귀를 예약한다(no_op 이면 부르지 않는다)."""
+    with _golden_auto_lock:
+        if _GOLDEN_AUTO.get("state") == "running":
+            return
+        _GOLDEN_AUTO.clear()
+        _GOLDEN_AUTO.update({"state": "running", "at": int(time.time()), "scope": scope,
+                             "rules_rev": rules_rev, "total_findings": None,
+                             "total_checked": None, "sessions": [], "elapsed_ms": None,
+                             "error": None})
+    threading.Thread(target=_golden_auto_run, args=(scope, rules_rev),
+                     name="golden-auto", daemon=True).start()
+
+
+@eval_panel_bp.get("/api/golden/auto")
+def api_golden_auto():
+    """임계값 저장 후 자동 실행된 골든 회귀의 최신 상태 — 화면이 폴링한다."""
+    with _golden_auto_lock:
+        return jsonify(dict(_GOLDEN_AUTO))
+
+
 @eval_panel_bp.post("/api/golden/check")
 def api_golden_check():
     """골든셋 회귀 실행 — 세션마다 트레이스 1회라 CPU 를 쓴다(동기 실행).
@@ -906,26 +1036,8 @@ def api_golden_check():
                                 "'골든셋에 추가' 로 채우세요"})
     if not _trace_lock.acquire(blocking=False):
         return jsonify({"ok": False, "error": "다른 트레이스가 실행 중입니다"}), 409
-    t0 = time.perf_counter()
-    rows, total_checked, total_findings = [], 0, 0
     try:
-        for entry in entries:
-            sid = str(entry.get("session_id") or "")
-            row = {"session_id": sid, "note": entry.get("note"), "checked": 0, "findings": []}
-            try:
-                findings, checked = golden_check.check_session(entry)
-            except Exception as exc:                       # 세션 삭제·parquet 유실 등
-                row["error"] = f"{type(exc).__name__}: {exc}"
-                total_findings += 1
-                rows.append(row)
-                continue
-            row["checked"], row["findings"] = checked, findings
-            total_checked += checked
-            total_findings += len(findings)
-            rows.append(row)
+        res = _golden_run(entries)
     finally:
         _trace_lock.release()
-    return jsonify({"ok": True, "sessions": rows, "total_checked": total_checked,
-                    "total_findings": total_findings,
-                    "rules_rev": eval_debug.rules_rev(),
-                    "elapsed_ms": int((time.perf_counter() - t0) * 1000)})
+    return jsonify({"ok": True, **res})

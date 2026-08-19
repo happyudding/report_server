@@ -134,8 +134,10 @@ def main():
         SID, report_db=db, upload_root=_TMP, tables=[make_table()])
 
     # (a) 최초 export ────────────────────────────────────────────────────────
+    # case 는 **item 당 1개**다 (2026-08-19 — bin 이 case_id 에서 빠졌다):
+    # ItemA 의 Yield|4 행과 CPK 행이 한 case 로 모여 ItemA + CustomThing = 2건.
     r = export()
-    assert r == {"cases": 3, "labels": 3, "removed": 0}, r
+    assert r == {"cases": 2, "labels": 2, "removed": 0}, r
 
     conn = eval_export.open_conn(create=False)
     assert conn is not None, "eval DB 파일이 생성되지 않음"
@@ -144,11 +146,11 @@ def main():
         # 이 숫자를 손으로 고치면 테스트가 조용히 깨진다(고정 4 였다가 엔진 6 에서 실패).
         from eval_engine import store as _store   # eval_export._engine 이 sys.path 추가 완료
         assert qv(conn, "PRAGMA user_version") == _store.SCHEMA_VERSION
-        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 3
-        assert qv(conn, "SELECT COUNT(*) FROM label") == 3
+        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 2
+        assert qv(conn, "SELECT COUNT(*) FROM label") == 2
         assert qv(conn, "SELECT COUNT(*) FROM ingest_run") == 1
         assert qv(conn, "SELECT session_id FROM ingest_run") == SID
-        assert qv(conn, "SELECT COUNT(*) FROM run_case") == 3
+        assert qv(conn, "SELECT COUNT(*) FROM run_case") == 2
 
         # product/item 마스터
         pm = q1(conn, "SELECT * FROM product_master WHERE product_name='PRODX'")
@@ -159,13 +161,16 @@ def main():
         spec = q1(conn, "SELECT * FROM item_spec WHERE item_id=?", im["item_id"])
         assert spec["lsl"] == 0.0 and spec["usl"] == 10.0 and spec["revision"] == 1.0, dict(spec)
 
-        # Yield|4|ItemA — 병합 label + yield/dist metrics
-        fc = q1(conn, "SELECT * FROM fail_case WHERE item_id=? AND bin=4", im["item_id"])
+        # ItemA — Yield|4 행과 CPK 행이 **한 case**. item_class 는 2단(bin 없음).
+        fc = q1(conn, "SELECT * FROM fail_case WHERE item_id=?", im["item_id"])
         assert fc is not None and fc["lot_id"] == "LOT1" and fc["wafer_number"] is None
-        assert fc["item_class"] == "NON_TRIM|V|4", fc["item_class"]
+        assert fc["item_class"] == "NON_TRIM|V", fc["item_class"]
+        assert fc["bin"] == 4, dict(fc)          # 대표 bin — 값은 보존된다
+        # ⚠ **코멘트 무손실**(CLAUDE.md 규칙 12) — 두 행이 한 case 로 합쳐질 때 마지막
+        # 행만 남으면 사용자가 쓴 글이 조용히 사라진다. 세 조각이 모두 남아야 한다.
         lb = q1(conn, "SELECT * FROM label WHERE case_id=?", fc["case_id"])
-        assert lb["human_comment"] == "[PTE] yield fail 분석중\n[개발] 개발 확인 요청", \
-            lb["human_comment"]
+        assert lb["human_comment"] == ("[PTE] yield fail 분석중\n[개발] 개발 확인 요청\n"
+                                       "[PTE] cpk marginal"), lb["human_comment"]
         assert lb["labeler"] == "web_report" and lb["reviewer"] == "user2" \
             and lb["label_quality"] == "manual", dict(lb)
         m = q1(conn, "SELECT * FROM raw_metrics WHERE case_id=?", fc["case_id"])
@@ -173,9 +178,7 @@ def main():
             and abs(m["yield"] - 0.75) < 1e-9, dict(m)
         assert m["mean"] == 7.5 and m["cpk"] is not None, dict(m)
 
-        # CPK|ItemA → bin=1 / ETC|CustomThing → bin NULL (rawdata 밖 항목)
-        assert q1(conn, "SELECT * FROM fail_case WHERE item_id=? AND bin=1",
-                  im["item_id"]) is not None
+        # ETC|CustomThing — rawdata 밖 자유입력 item. bin 은 대표값이 없어 NULL.
         etc_im = q1(conn, "SELECT * FROM item_master WHERE item_name_raw='CustomThing'")
         assert etc_im["value_type"] == "PF" and etc_im["unit"] is None, dict(etc_im)
         etc_fc = q1(conn, "SELECT * FROM fail_case WHERE item_id=?", etc_im["item_id"])
@@ -188,14 +191,14 @@ def main():
 
     # (b) 재-export 멱등 ─────────────────────────────────────────────────────
     r = export()
-    assert r == {"cases": 3, "labels": 3, "removed": 0}, r
+    assert r == {"cases": 2, "labels": 2, "removed": 0}, r
     conn = eval_export.open_conn(create=False)
     try:
-        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 3
-        assert qv(conn, "SELECT COUNT(*) FROM label") == 3
+        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 2
+        assert qv(conn, "SELECT COUNT(*) FROM label") == 2
         assert qv(conn, "SELECT COUNT(*) FROM ingest_run") == 1, "run 이 재사용되지 않음"
-        # metrics 는 rawdata 에 있는 항목 2건만 (ETC 자유입력 항목은 통계 없음)
-        assert qv(conn, "SELECT COUNT(*) FROM raw_metrics") == 2
+        # metrics 는 rawdata 에 있는 항목 1건만 (ETC 자유입력 항목은 통계 없음)
+        assert qv(conn, "SELECT COUNT(*) FROM raw_metrics") == 1
     finally:
         conn.close()
 
@@ -219,11 +222,11 @@ def main():
     assert len(loader_calls) == 1, loader_calls
     assert loader_calls[0][0] == SID and loader_calls[0][1] is db, loader_calls[0]
     assert loader_calls[0][2] == _TMP and loader_calls[0][3] is db.session, loader_calls[0]
-    assert r == {"cases": 3, "labels": 3, "removed": 0}, r
+    assert r == {"cases": 2, "labels": 2, "removed": 0}, r
     conn = eval_export.open_conn(create=False)
     try:
-        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 3
-        assert qv(conn, "SELECT COUNT(*) FROM label") == 3
+        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 2
+        assert qv(conn, "SELECT COUNT(*) FROM label") == 2
         assert qv(conn, "SELECT COUNT(*) FROM ingest_run") == 1
     finally:
         conn.close()
@@ -234,11 +237,13 @@ def main():
     export()
     conn = eval_export.open_conn(create=False)
     try:
-        assert qv(conn, "SELECT COUNT(*) FROM label") == 3
+        assert qv(conn, "SELECT COUNT(*) FROM label") == 2
         lb = q1(conn, """SELECT l.* FROM label l JOIN fail_case fc ON fc.case_id=l.case_id
                          WHERE fc.bin=4""")
-        assert lb["human_comment"] == "[PTE] 수정된 코멘트\n[개발] 개발 확인 요청", \
-            lb["human_comment"]
+        # Yield 행 수정분 + CPK 행이 한 case 에 **함께** 남는다(무손실).
+        assert lb["human_comment"] == ("[PTE] 수정된 코멘트\n[개발] 개발 확인 요청\n"
+                                       "[PTE] cpk marginal"), lb["human_comment"]
+        # 편집자는 **가장 최근에 고친 사람**(user3, at=300) — CPK 행(user1, at=100)이 아니다.
         assert lb["reviewer"] == "user3", lb["reviewer"]
 
         # (e) 읽기 계약 — eval_engine 선례검색이 이 DB 를 그대로 읽는다
@@ -257,45 +262,53 @@ def main():
     closed_all = list(db.edit_rows)
     db.edit_rows = reopened
     r = export()
-    assert r == {"cases": 2, "labels": 2, "removed": 1}, r
+    # ItemA case 는 **남는다** — CPK 행이 아직 Close 라서다(case 는 item 단위,
+    # 2026-08-19). 사라지는 것은 그 case 의 코멘트에서 **Yield 행 몫**이다.
+    assert r == {"cases": 2, "labels": 2, "removed": 0}, r
     conn = eval_export.open_conn(create=False)
     try:
         assert qv(conn, "SELECT COUNT(*) FROM label") == 2
         assert qv(conn, "SELECT COUNT(*) FROM run_case") == 2
         im = q1(conn, "SELECT * FROM item_master WHERE item_name_raw='ItemA'")
-        fc = q1(conn, "SELECT * FROM fail_case WHERE item_id=? AND bin=4", im["item_id"])
-        assert q1(conn, "SELECT * FROM label WHERE case_id=?", fc["case_id"]) is None, \
-            "Open 으로 되돌린 이슈의 label 이 남아 있다"
+        fc = q1(conn, "SELECT * FROM fail_case WHERE item_id=?", im["item_id"])
         assert fc is not None, "fail_case 는 보존(다른 적재와 공유 가능)"
+        lb = q1(conn, "SELECT * FROM label WHERE case_id=?", fc["case_id"])
+        assert lb is not None, "CPK 행이 Close 인데 label 이 통째로 사라졌다"
+        assert lb["human_comment"] == "[PTE] cpk marginal", lb["human_comment"]
+        # 대표 bin 은 그대로 4 — `upsert_fail_case` 는 case_id 충돌 시 updated_at 만
+        # 갱신한다(참고값이라 덮지 않는다). 판정·라벨은 위에서 이미 갱신됐다.
+        assert fc["bin"] == 4, dict(fc)
     finally:
         conn.close()
     # 다시 Close → 복귀
     db.edit_rows = closed_all
     r = export()
-    assert r == {"cases": 3, "labels": 3, "removed": 0}, r
+    assert r == {"cases": 2, "labels": 2, "removed": 0}, r
 
     # Status 가 하나도 없으면(전부 Open) 적재 대상 없음
     db.edit_rows = [row for row in closed_all if row["kind"] != "issue_status"]
     r = export()
-    assert r == {"cases": 0, "labels": 0, "removed": 3}, r
+    assert r == {"cases": 0, "labels": 0, "removed": 2}, r
     db.edit_rows = closed_all
-    assert export() == {"cases": 3, "labels": 3, "removed": 0}
+    assert export() == {"cases": 2, "labels": 2, "removed": 0}
 
     # (g) 온도 평가(TEMP) 구분 ───────────────────────────────────────────────
     # 같은 item 의 TEMP 행과 ETC 행은 서로 다른 case 여야 한다. 예전에는 둘 다
     # bin=NULL 로 붕괴해 case_id 가 같았고, 뒤에 처리된 코멘트가 앞 코멘트를 조용히
     # 지웠다(온도 평가라는 사실도 DB 에 남지 않았다).
+    # 2026-08-19: bin 이 case_id 에서 빠졌으므로 **condition 이 유일한 구분축**이다.
+    # 온도 재판정은 엔진이 평가하지 않는 별개 축이라 여기만은 갈라 둬야 한다.
     db.edit_rows = closed_all + [
         comment_row("TEMP|CustomThing", "PTE comment", "CT 에서만 RT limit 이탈"),
         close_row("TEMP|CustomThing"),
     ]
     r = export()
-    assert r == {"cases": 4, "labels": 4, "removed": 0}, r
+    assert r == {"cases": 3, "labels": 3, "removed": 0}, r
     conn = eval_export.open_conn(create=False)
     try:
         etc_im = q1(conn, "SELECT * FROM item_master WHERE item_name_raw='CustomThing'")
         rows = conn.execute(
-            "SELECT case_id, test_condition FROM fail_case WHERE item_id=? AND bin IS NULL"
+            "SELECT case_id, bin, test_condition FROM fail_case WHERE item_id=?"
             " ORDER BY test_condition", (etc_im["item_id"],)).fetchall()
         assert [r_["test_condition"] for r_ in rows] == ["", "TEMP"], [dict(x) for x in rows]
         assert rows[0]["case_id"] != rows[1]["case_id"], "TEMP/ETC case_id 가 충돌한다"
@@ -307,19 +320,19 @@ def main():
     finally:
         conn.close()
     db.edit_rows = closed_all
-    assert export() == {"cases": 3, "labels": 3, "removed": 1}
+    assert export() == {"cases": 2, "labels": 2, "removed": 1}
 
     # (d) 코멘트 전부 삭제 → reconciliation ─────────────────────────────────
     db.edit_rows = []
     r = export()
-    assert r == {"cases": 0, "labels": 0, "removed": 3}, r
+    assert r == {"cases": 0, "labels": 0, "removed": 2}, r
     conn = eval_export.open_conn(create=False)
     try:
         assert qv(conn, "SELECT COUNT(*) FROM label") == 0
         assert qv(conn, "SELECT COUNT(*) FROM run_case") == 0
         assert qv(conn, "SELECT COUNT(*) FROM raw_metrics") == 0
-        # (g) 에서 만든 TEMP case 까지 4건 — label 이 지워져도 fail_case 는 남는다
-        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 4, "fail_case 는 보존"
+        # (g) 에서 만든 TEMP case 까지 3건 — label 이 지워져도 fail_case 는 남는다
+        assert qv(conn, "SELECT COUNT(*) FROM fail_case") == 3, "fail_case 는 보존"
     finally:
         conn.close()
 

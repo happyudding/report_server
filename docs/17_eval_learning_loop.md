@@ -11,11 +11,115 @@
 > |---|---|
 > | Phase 1 스키마 변경 (`item_master`/`item_alias` UNIQUE·PK) | **미착수** — v1 범위 밖 |
 > | Phase 2 L1/L2 적재 (`db_path` 인자 + 업로드 훅) | **완료** |
-> | §3-2 case 키에서 bin·wafer 제거 | **미착수** — 파급 확인 후 판단(아래) |
+> | §3-2 case 키에서 bin 제거 | **완료**(2026-08-19, 사용자 결정) — 아래 "bin 제거" 절 |
 > | §3-5 `item_class` 2단화 | **보류** — 운영 챗봇이 3축을 집계 축으로 쓴다 |
-> | Phase 3 `eval_export` case 규칙 정렬 | 위 두 건에 종속 |
-> | Phase 4 사후 라벨링 화면 | **표본함이 대체** ([13 §14](13_eval_analyzer_integration.md)) |
+> | Phase 3 `eval_export` case 규칙 정렬 | **완료**(2026-08-19, 보수안 — wafer 정합 + ETC bin) |
+> | 룰 판정지표 저장 (eval.db **v9**) | **완료**(2026-08-19) — 표본함 층화 제약 해소 |
+> | Phase 4 사후 라벨링 화면 | **하지 않는다**(2026-08-19 사용자 결정) — Close 코멘트 + signature 확정이 정답 |
 > | 자동보정 `calibrate` | 계속 비활성 (라벨 없는 분위수라 v1 배제) |
+>
+> ---
+>
+> ## 2026-08-19 진행 — 되먹임 루프 실측 진단과 결정
+>
+> **한 줄 결론: 지금 구조는 "자가성장"이 아니라 "자가축적 + 수동성장"이다.** 축적(입력)은
+> 완전 자동으로 잘 돈다(업로드마다 전 item 판정이 쌓여 `evaluation` 267행 / run 78회).
+> 그런데 그 축적을 판정 개선으로 되먹이는 경로가 전부 사람 클릭에서 멈춰 있었고,
+> 그중 **가장 앞단이 기계적으로 끊겨 있었다**.
+>
+> ### 실측된 단절 (운영 `DB/pe/report/eval/eval.db`)
+> | # | 단절 | 실태 | 이번 조치 |
+> |---|---|---|---|
+> | 1 | **라벨↔판정 case_id 불일치** | 라벨 case 의 wafer=None 1건 vs 엔진 case 43건(wafer=1/2/3) — **교집합 0**. 채점·선례 부스트가 구조적으로 성립 불가 | **수정 완료**(아래 Phase 3 보수안) |
+> | 2 | 룰 7종 판정지표 미저장 | OUTLIER·공간 4종·HEAVY_TAIL·CLUSTER·BIMODALITY 가 층화 불가 | **수정 완료**(eval.db v9) |
+> | 3 | 정확도에 시간축 없음 | `scoring()` 은 전체 누적 한 숫자, 이력 없음. 단 `created_at` 은 이미 저장돼 있음 | 예정 |
+> | 4 | 선례 루프 미가동 | 스냅샷이 `generate_comment=False` + 클라 AI Comment 비활성 + `eval_precedent` 0행 | 외부 담당 |
+> | 5 | 골든 회귀가 임계값 저장에 미연동 | 수동 버튼만 | 예정 |
+> | 6 | eval.db 무한 증가 | cleanup 7작업에 eval 항목 없음. force 재수집이 옛 run 을 남김 | 예정 |
+> | 7 | `calibrate.recalibrate` 배선 없음 | 호출 지점 0개, 대상 키도 1개 | 의도적 보류 유지 |
+>
+> ### bin 제거 — case 는 item 당 1개 (2026-08-19, 사용자 결정으로 **구현 완료**)
+>
+> **결정**: eval 엔진의 동일성 기준은 **value_type + item 명(유사도 70% 이상)** 이다.
+> bin 은 학습 식별 키(case_id·item_class)에서 뺀다. **버리는 것이 아니라** `fail_case.bin`
+> 컬럼에 **대표 bin(최다 fail, 동률은 작은 bin)** 으로 보존하고 bin_taxonomy(severity_bias —
+> bin18 같은 특이케이스)도 그 값으로 계속 적용한다.
+>
+> **근거 (실측)**
+> | 관측 | 값 |
+> |---|---|
+> | 실업로드 raw 3,334 fail 그룹의 `(소스, FAILTNO)` 당 distinct BIN | **100% 가 1개** — bin 은 item 이 이미 결정하는 값이라 **식별 엔트로피 0** |
+> | 반대로 `(소스, bin)` 당 item 수 | 평균 4.53 · 최대 60 — bin 은 item 을 가르는 축이 아니라 **묶는 더 굵은 축** |
+> | 다제품 시드에서 같은 item 의 제품군별 bin 집합 | 전부 다름(`vout_ldo`: MDDI {18,31} / PMIC {18,20,21,31,40} / TCON {18}) — 사용자 주장대로 |
+> | 운영 eval.db 의 사람 라벨 | 1건, **100% 고아**(bin=NULL case 에 붙었는데 판정은 bin=1/2 에) |
+> | `severity_bias` 의 실제 판정 기여 | **0** — taxonomy 3항목(전부 PMIC 예시)뿐이고 운영 제품은 MDDI 라 전부 미매칭, 게다가 `round(rank±0.3)` 이 rank 를 못 바꾼다 |
+> | 선례 top-k 5칸 | **90~94% 가 같은 item 의 bin 복제본** — dedup 이 case_id 단위였기 때문 |
+> | item_class 버킷(calibrate 모집단) | bin 포함 34개(대부분 n<10) → 제외 6개(**전부 n≥10**) |
+>
+> **구현**
+> - `pipeline/ingest.py` — bin 루프 제거, `fail_mask`/`fail_count` 는 그 item 을 fail 한
+>   전 serial 합집합, `case["bin"]` = 대표 bin, `case_id` 의 bin 자리는 **항상 None**.
+>   `item_class` 는 `category_major|value_type` **2단**. degrade/raw_table 경로도 동반.
+> - `eval_export.py` — 라벨 case_id 도 bin=None. 같은 item 의 여러 섹션 행(Yield|2 / Yield|5 /
+>   CPK)이 한 case 로 모이므로 **코멘트를 병합**하고(`_group_by_case`) signature 는 **합집합**.
+>   ⚠ 안 묶으면 delete→insert 가 마지막 행만 남겨 **앞 코멘트가 사라진다**(규칙 12).
+> - `ai_comment.py` — case 가 item 단위라 그 item 의 **모든 fail bin 행에 fan-out**
+>   (`fail_bins_by_item` 이 화면 행 정본 `yield_tab.fail_counts_by_source` 에서 bin 목록을
+>   가져온다 — 재계산 금지 규칙 13). 대표행만 채우면 나머지가 빈 셀이 되는 회귀.
+> - 소비자: `signature_reason._fetch_cases` 의 bin 필터 제거(팝업 근거가 bin 행마다 달랐던
+>   불일치 해소) · `review` dedup·`routes._case_key` 에서 bin 제거(허위 diff 방지) ·
+>   `store.search_precedents` dedup 을 **(제품, lot, item)** 으로(중복행 제거) ·
+>   `eval_admin._apply_value_type` 2단 재작성 · `AI_COMMENT_SCHEMA_VERSION` 2.
+> - **판정값 등가 확인**: 단일-bin 데이터에서 case_id·item_class 를 뺀 나머지 판정 결과가
+>   변경 전과 정준 JSON 완전 일치(5개 dtype 모드). 바뀌는 것은 multi-bin item 뿐이다.
+> - 마이그레이션: 기존 case_id 는 전부 바뀌지만 label 1건(멱등 재-export 자동복구) ·
+>   eval-panel/eval-review 라벨 0행 · 골든셋 `bin:` 0건이라 **비용이 사실상 0**이다.
+>   배포 후 ① `collect-session force=true` ② 코멘트/서명 재-export ③ `purge_stale_snapshots`.
+>
+> ### (참고) 초기 검토에서 기각했던 보수안 — 사용자 재결정으로 대체됨
+> 조사 결과 이 문서의 §3-2 실행 지시("`make_case_id` 함수는 그대로 두고 호출부만 바꾼다")는
+> **검증 기준(§Phase 2 "bin 합쳐진 수")을 달성하지 못한다.** store 의 저장 함수가 전부
+> upsert 라 같은 run 의 bin2/bin3 case 가 같은 case_id 가 되면 **예외 없이 조용히 섞인다** —
+> `fail_case.bin` 은 최소 bin, 스칼라(raw_metrics/evaluation)는 마지막 bin, 자식
+> (case_signature/eval_evidence)은 합집합인 "어느 bin 의 것도 아닌 행"이 된다. 크래시보다
+> 나쁘다(발견이 안 된다). 제대로 하려면 ingest 를 item 당 case 1개로 병합해야 하는데 그러면
+> yield 합집합 → trump CRITICAL 증가, 공간 feature 변화, AI Comment 행 fan-out,
+> 골든셋 재작성, `signature_reason` bin 필터 수정이 연쇄한다.
+>
+> **그런데 정합에는 bin 제거가 필요 없다.** 어긋남의 주범은 wafer 축 하나였다(위 표 #1).
+> 그래서 **wafer 만 맞추고 bin 은 그대로 두는 보수안**으로 Phase 3 를 달성했다:
+> - `eval_export.collect_session_snapshot` — 스냅샷 meta 의 `wafer_number=None`
+>   (종전엔 여기만 소스 순번 1,2,3… 이 들어갔다). 소스 구분은 `ingest_run.source_file` 이 한다.
+> - `eval_export._parse_row_key` — ETC 행 라벨 bin `None→1`(엔진 PASS_BIN 좌표와 일치).
+>   종전 None 은 엔진에 없는 좌표라 ETC 코멘트가 어떤 판정과도 짝이 되지 못했다.
+> - TEMP 행은 현행 유지(엔진이 온도 조건을 평가하지 않아 구조적으로 join 불가 —
+>   `test_condition` 축으로 계속 분리).
+> - 회귀 가드: `tests/test_eval_snapshot.py` (f) — 라벨 case_id ⊆ 스냅샷 case_id.
+>
+> **저장 키를 item+value_type 으로 좁히는 것(bin 완전 제거)은 사용자 최종 목표로 유효하다.**
+> 다만 판정 변화가 섞이지 않도록 **측정 체계(정합 + 정기 집계)를 먼저 세운 뒤** 별도 작업으로
+> 진행한다. 이번 변경은 그 전환을 막지 않는다(라벨은 멱등 재-export 로 복구 가능).
+>
+> ### 구현된 것 (2026-08-19)
+> | # | 무엇 | 어디 |
+> |---|---|---|
+> | 1 | **case_id 정합**(보수안) | `web_report/eval_export.py` — 스냅샷 `wafer_number=None`, ETC 행 bin `None→1`. 가드 `tests/test_eval_snapshot.py` (f) |
+> | 2 | **판정지표 저장**(eval.db v9) | `store._V9_FEATURE_COLS` 14컬럼 + `_migrate_v8_to_v9`. 층화 해소 `review._METRIC_COLS`. 계산 경로 무변경(이미 반환하던 값) |
+> | 3 | **정기 지표 집계·추이** | `server/database/eval_stats.py` → `report_eval_daily`(day×engine_version). `report_cleanup` 24h 편승(비파괴라 dry-run 무관). 화면 `/pe/eval` 채점 탭 추이 카드, 라우트 `GET api/eval/trend` |
+> | 4 | **골든 회귀 저장 연동** | `eval_panel/routes.py` `_golden_auto_start` — 임계값이 실제로 바뀌면 백그라운드 실행, `GET api/golden/auto` 폴링. **비차단·사후 경고**(저장 롤백 안 함 — rev 가 이미 캐시를 무효화했다). `trace_store` 미사용(LRU 4런 축출 방지) |
+> | 5 | **eval.db 옛 run 정리** | `admin_panel/eval_admin.py` `purge_stale_snapshots` — (세션,소스) 최신 아님 **AND** 라벨 참조 0 **AND** `eval-snapshot` run 만. `fail_case`·`label`·마스터 보존. `REPORT_EVAL_PURGE_STALE_RUNS`(기본 0) + dry-run 존중 |
+>
+> 집계(3) → 정리(5) **순서 고정** — 뒤집히면 집계 원재료를 먼저 지운다(`run_cleanup` 주석).
+>
+> ### 개선 우선순위 (라벨 획득 비용 낮추기가 리포트 자동화보다 먼저)
+> 정확도 리포트를 먼저 자동화해도 표본이 없으면 `pairs: 0` 이 3개월마다 나올 뿐이다.
+> 순서: ① case_id 정합(완료) → ② 판정지표 저장(완료) → ③ 정기 정확도·UNKNOWN 추이 →
+> ④ 골든 회귀 저장 연동 + eval.db 정리. **사후 라벨링 화면(구 Phase 4)은 만들지 않는다** —
+> 사용자 결정(2026-08-19): Issue Table 의 `[확정]` 버튼은 signature 확정 용도로 그대로 두고,
+> **PTE comment 의 Close 가 곧 정답**이라는 현행 규약을 유지한다. 따라서 채점의 연료는
+> (a) Close 코멘트 라벨과 (b) signature 확정(✓) 라벨이며, ③은 이 둘로 지표를 구성한다.
+>
+> ---
 >
 > ⚠ **§3-2/§3-5 를 미룬 이유**(2026-08-10 조사): `item_class` 를 2단으로 바꾸면
 > `server/chatbot/tools_eval.py`·`planner.py` 가 **운영에서** 그 값을 집계·필터 축으로

@@ -7,7 +7,8 @@ PNG 로 재현한다. 데스크톱 honey_main 의 map_report.render_map_png 와�
 - Pass(bin "1") = 초록 고정, fail = 전 맵 합산 count 내림차순 전역 팔레트(세션 전체 공통).
 - 앞 step 에서 이미 fail 난 die(payload 에 bin 없음, g=1) = 회색.
 - 압축 격자(waferCompactGrid): die 가 실제 존재하는 x/y 만 남겨 빈 행/열을 제거한다.
-- die 당 cell px 블록 + 셀 사이 1px 흰 격자선(각 chip 구분·윤곽선) — 웹과 동일 시각.
+- 셀 사이 1px 흰 격자선(각 chip 구분·윤곽선) — 웹과 동일 시각. 큰 맵(Map Analysis)은
+  좌표마다 벡터 선으로, 미니셀(Issue Table)은 웹처럼 die 당 픽셀 블록의 끝 1px 로 긋는다.
 - Y 는 아래로 증가(웨이퍼 관례, 웹 autorange:"reversed").
 - 셀에 bin 번호를 쓰지 않는다(웹과 동일 — Bin 은 시트의 Bin Legend 표로 읽는다).
 - 축 눈금은 compact index → 실제 좌표 라벨(웹 Detail _compactTicks).
@@ -34,6 +35,13 @@ DIM_COLOR = "#d9d9d9"               # 선택 bin 외 dim (웹 MAP_BIN_DIM_COLOR)
 _TARGET_PX = 1000                   # 목표 한 변 픽셀 (웹은 표시 폭 기준 — PNG 는 고정)
 _MAX_PX = 4096                      # 축당 픽셀 상한 (웹 cellFor 와 동일 메모리 보호)
 _MAX_TICKS = 8                      # 웹 _compactTicks
+
+# Map Analysis 큰 맵의 출력 해상도 — die 수가 많아도 좌표마다 격자선이 보이게 DPI 를 올린다.
+_FIG_IN = 6.0                       # figure 한 변(inch) — 부착 크기(pt)는 _xlsx 가 정한다
+_PLOT_FRAC = 0.84                   # figure 대비 plot 박스 비율 (subplots_adjust 기준)
+_MIN_DIE_PX = 6                     # die 1칸의 최소 출력 픽셀(색 5px + 격자선 1px)
+_BASE_DPI = 110
+_MAX_DPI = 400                      # 상한 (한 변 2400px — 파일 크기 통제)
 
 # Map Analysis 선택 좌표 마커 (웹 .wafer-sel-marker 미러 — 15px 원 + 3px 테두리 + 흰 halo).
 # 웹은 썸네일 표시 폭과 무관한 고정 px 라 die 수가 많으면 여러 die 를 덮는다 — 같은 사상으로
@@ -163,14 +171,18 @@ def _die_color(die, color_map):
     return color_map.get(str(die.get("bin")), _NA_COLOR)
 
 
-def _map_image(dies, color_of):
-    """die 목록 → (RGB 블록 이미지, xs, ys). color_of(die, k) 가 die 색(hex)을 돌려준다.
+def _map_image(dies, color_of, *, blocks=True):
+    """die 목록 → (RGB 이미지, xs, ys). color_of(die, k) 가 die 색(hex)을 돌려준다.
 
     k 는 dies 배열 인덱스 — Temperature 항목별 fail die 강조가 인덱스로 매칭한다
     (서버 temp_map 이 좌표 대신 인덱스를 준다). 기존 콜백은 인자를 무시하므로 무회귀.
 
-    xs/ys 는 압축 격자의 실제 좌표값(축 눈금 라벨용). 격자 압축·die 당 픽셀 블록·
-    1px 흰 격자선은 웹 drawWaferThumb 와 동일.
+    xs/ys 는 압축 격자의 실제 좌표값(축 눈금 라벨용).
+
+    ``blocks=True``(미니셀): die 당 픽셀 블록 + 1px 흰 격자선 — 웹 drawWaferThumb 와 동일.
+    ``blocks=False``(Map Analysis 큰 맵): die 1개 = 1픽셀. 격자선은 호출부가 **벡터로**
+    그린다 — 블록 이미지를 축 크기로 리샘플하면 1px 격자선이 좌표에 따라 통째로 사라져
+    "격자가 일부만 있는" 맵이 됐다(2026-08-18).
     """
     x_idx, y_idx, xs, ys = _compact_grid(dies)
     W, H = len(xs), len(ys)
@@ -193,10 +205,12 @@ def _map_image(dies, color_of):
             palette.append(_hex_to_rgb255(hex_color))
         codes[cy, cx] = code
 
+    img = np.asarray(palette, dtype="uint8")[codes]
+    if not blocks:
+        return img, xs, ys
     cell_x, cell_y = _cell_for(W), _cell_for(H)
     gap_x = 1 if cell_x >= 3 else 0        # cell 이 너무 작으면 격자선 생략(웹과 동일)
     gap_y = 1 if cell_y >= 3 else 0
-    img = np.asarray(palette, dtype="uint8")[codes]
     img = np.repeat(np.repeat(img, cell_y, axis=0), cell_x, axis=1)
     # 각 die 블록의 오른쪽/아래 끝 1px 을 흰색으로 — 웹은 w=cellX-gapX 만 칠해 같은 자리가 빈다.
     if gap_x:
@@ -233,24 +247,54 @@ def _draw_sel_markers(ax, chips, xs, ys):
                 linestyle="none", clip_on=False, zorder=5)
 
 
+def _map_dpi(n_max):
+    """die 1개가 출력에서 최소 _MIN_DIE_PX 픽셀이 되도록 고른 렌더 DPI.
+
+    격자선을 좌표마다 하나씩 그리려면 die 1칸이 몇 픽셀은 돼야 선과 색이 함께 보인다.
+    plot 영역(정사각 박스)이 figure 의 _PLOT_FRAC 쯤이라 그 비율로 역산한다.
+    """
+    if n_max <= 0:
+        return _BASE_DPI
+    need = _MIN_DIE_PX * n_max / (_FIG_IN * _PLOT_FRAC)
+    return int(min(_MAX_DPI, max(_BASE_DPI, int(np.ceil(need)))))
+
+
+def _draw_cell_grid(ax, W, H):
+    """좌표마다 흰 격자선 — die 경계(0..W, 0..H)에 전부 긋는다.
+
+    이미지 픽셀에 격자를 새기지 않고 벡터로 그리는 이유는 _map_image docstring 참조
+    (리샘플에 선이 먹히지 않게). 선폭은 출력 1픽셀 = 웹 1px gap 과 같은 두께.
+    """
+    from matplotlib.collections import LineCollection
+
+    if W <= 0 or H <= 0:
+        return
+    lw = max(0.4, 72.0 / float(ax.figure.dpi))
+    segs = [[(x, 0), (x, H)] for x in range(W + 1)]
+    segs += [[(0, y), (W, y)] for y in range(H + 1)]
+    ax.add_collection(LineCollection(segs, colors="#ffffff", linewidths=lw, zorder=3))
+
+
 def render_wafer_map_png(dies, color_map, *, title="", out_path, chips=None) -> None:
     """웹-파리티 wafer bin map 을 out_path(PNG, 정사각)로 저장.
 
     dies: [{"x","y","bin"} | {"x","y","g":1}], color_map: build_bin_color_map 산출(전역).
     chips: Map Analysis 에서 선택한 좌표(이 맵의 source 것만) — 웹과 같은 색 원 마커.
     """
-    img, xs, ys = _map_image(dies, lambda d, _k: _die_color(d, color_map))
+    img, xs, ys = _map_image(dies, lambda d, _k: _die_color(d, color_map), blocks=False)
     if img is None:
         raise ValueError(f"{title}: 좌표가 없습니다.")
     W, H = len(xs), len(ys)
 
-    fig = Figure(figsize=(6.0, 6.0), dpi=110)      # 정사각 → 500x500 부착 왜곡 없음
+    # 정사각 → 500x500 부착 왜곡 없음. DPI 는 die 수에 맞춰 올린다(격자선 보존).
+    fig = Figure(figsize=(_FIG_IN, _FIG_IN), dpi=_map_dpi(max(W, H)))
     ax = fig.add_subplot(111)
     # extent 로 index 공간(0..W, 0..H) 매핑 + y 반전(위=작은 y, 웨이퍼 관례).
     # 격자를 축 영역 비율대로 늘리지 않도록(웨이퍼가 타원으로 보임) 플롯 박스를 정사각으로
     # 고정한다(2026-07-23 요청). aspect="auto" 는 그 정사각 박스를 die 격자로 채우는 용도.
     ax.imshow(img, extent=(0, W, H, 0), aspect="auto", interpolation="nearest")
     ax.set_box_aspect(1)
+    _draw_cell_grid(ax, W, H)
     _draw_sel_markers(ax, chips, xs, ys)
     xt, xl = _compact_ticks(xs)
     yt, yl = _compact_ticks(ys)

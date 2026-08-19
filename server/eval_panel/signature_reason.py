@@ -149,18 +149,20 @@ SELECT ev.eval_id, ev.case_id, ev.run_id, ev.status, ev.engine_version,
 """
 
 
-def _fetch_cases(conn, session_id, item, bin_):
-    """이 세션·item(·bin) 의 스냅샷 case 들. item_alias.raw_name 으로 매칭한다.
+def _fetch_cases(conn, session_id, item, bin_=None):
+    """이 세션·item 의 스냅샷 case 들. item_alias.raw_name 으로 매칭한다.
 
     `item_master.item_name_raw` 를 쓰지 않는 이유 — 그 컬럼은 canonical 당 "마지막에 본
     raw name" 하나라 다른 제품이 덮으면 매칭이 조용히 깨진다. `item_alias.raw_name` 은
     PK 라 화면 문자열과 1:1 이다.
+
+    ⚠ **bin 으로 거르지 않는다** (2026-08-19) — 엔진 case 가 item 당 1개이고
+    `fail_case.bin` 은 대표 bin(참고값)일 뿐이라, bin 을 걸면 `Yield|5|X` 팝업이
+    `case_not_found` 로 떨어진다. 종전에 같은 item 의 bin 행마다 **서로 다른 근거**가
+    보이던 불일치도 이걸로 사라진다. `bin_` 인자는 호출부 호환으로 남기고 무시한다.
     """
-    sql, params = _CASE_SQL, [session_id, review.SNAPSHOT_INGESTED_BY, item]
-    if bin_ is not None:
-        sql += " AND fc.bin = ?"
-        params.append(bin_)
-    return conn.execute(sql, params).fetchall()
+    return conn.execute(_CASE_SQL,
+                        [session_id, review.SNAPSHOT_INGESTED_BY, item]).fetchall()
 
 
 def _signatures_of(conn, eval_ids):
@@ -205,9 +207,10 @@ def _ctx_values(row, evidence):
     for k, v in ctx.items():
         if v is not None and k not in sources:
             sources[k] = "derived"
-    # evidence 보강 — 활성 룰 일부(fail_robust_z_max, *_fail_share …)는 features 테이블에
-    # 컬럼이 없어 조인만으로는 전부 None 이 된다. 엔진이 발화 근거를 signal_code 로
-    # 남겨 두므로(`signatures._format_evidence`) 그 값으로 메운다. 저장 컬럼이 우선.
+    # evidence 보강 — v9(2026-08-19) 이전에 수집된 스냅샷은 판정지표 컬럼이 NULL 이라
+    # 조인만으로는 값이 비어 있다. 엔진이 발화 근거를 signal_code 로 남겨 두므로
+    # (`signatures._format_evidence`) 그 값으로 메운다(4자리 반올림, 발화한 case 한정).
+    # 저장 컬럼이 우선이므로 재수집된 세션은 자동으로 정확한 값을 쓴다.
     for signal_code, value in evidence:
         k = str(signal_code or "").lower()
         if not k or value is None or ctx.get(k) is not None:

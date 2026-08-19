@@ -92,7 +92,12 @@ _viewers: OrderedDict = OrderedDict()   # session_id -> 마지막 요청 ts (_lo
 # 오버헤드는 요청당 UA 정규식 1회 + dict 갱신 1회 (기존 teardown 훅 안에서 처리).
 ACTIVE_USER_WINDOW_SEC = max(30, int(os.getenv("REPORT_ACTIVE_USER_WINDOW_SEC", "300")))
 _ACTIVE_USERS_MAX = 300
-_active_users: OrderedDict = OrderedDict()   # key -> dict(uid, ip, honey, first, last, count, route, session_id)
+_active_users: OrderedDict = OrderedDict()   # key -> dict(uid, ip, honey, first, last, count, route, session_id, ver, agent, recent)
+
+# 사용자별 최근 요청 이력 — "지금 하는 일"이 마지막 요청 1건뿐이라 무엇을 하다 막혔는지
+# 흐름을 볼 수 없었다. 사람당 최근 N건만 메모리에 둔다(전역 상한은 _ACTIVE_USERS_MAX 가
+# 이미 건다 — 300명 × 20건). 요청 경로 비용은 기존 락 안에서 deque.append 1회.
+_RECENT_PER_USER = 20
 
 # 일별 Peak 동시 접속자 — 위 실시간 값은 메모리에만 있어 이력이 남지 않았다. 샘플러가 그날
 # 최대치를 report_usage_peak_daily 에 적재한다. 아래 둘은 **DB 쓰기 억제용 캐시**일 뿐이라
@@ -156,6 +161,7 @@ def _on_request_teardown(exc=None):
     # _VIEWER_ENDPOINTS 보다 넓게 잡는다. 지금 보고 있는 세션은 참고용으로만 곁들이므로
     # 열람 세션 계측(sid)과 변수를 분리한다 — 섞으면 viewers 화이트리스트가 무너진다.
     ident = user_sid = None
+    status = None
     slow = False
     if not _skip_user_track(route):
         ident = _identity_for_track()
@@ -164,23 +170,38 @@ def _on_request_teardown(exc=None):
                 user_sid = (request.view_args or {}).get("session_id")
             except Exception:
                 user_sid = None
+            # 응답 코드는 활동 타임라인에서 "실패한 요청"을 가려내는 유일한 단서다.
+            # 락 밖에서 뽑는다(g 접근은 요청 컨텍스트 작업이라 임계구역에 넣지 않는다).
+            status = g.get("_mx_status")
     with _lock:
         _inflight -= 1
         if ident is not None:
-            key, uid, ip, honey = ident
+            key, uid, ip, honey, ver, agent = ident
             now = time.time()
             rec = _active_users.get(key)
             if rec is None:
                 rec = {"uid": uid, "ip": ip, "honey": honey, "first": now, "count": 0,
-                       "session_id": None}
+                       "session_id": None, "ver": "", "agents": [],
+                       "recent": deque(maxlen=_RECENT_PER_USER)}
                 _active_users[key] = rec
             rec["last"] = now
             rec["count"] += 1
             rec["ip"] = ip
             rec["honey"] = honey
             rec["route"] = route
+            # 버전·접속 경로는 **빈 값으로 덮지 않는다** — 같은 사람이 Honey 앱과 내장
+            # 브라우저를 섞어 쓰면 브라우저 요청에는 버전 토큰이 없을 수 있는데, 그때
+            # 덮어쓰면 화면의 버전이 깜빡이며 사라진다.
+            if ver:
+                rec["ver"] = ver
+            # 접속 경로는 **누적**한다 — 한 사람이 Honey 앱(업로드)과 내장 브라우저(열람)를
+            # 오가는 것이 정상이라, 마지막 요청 하나로 덮으면 화면 배지가 계속 바뀐다.
+            if agent and agent not in rec["agents"]:
+                rec["agents"].append(agent)
             if user_sid:
                 rec["session_id"] = user_sid
+            rec["recent"].append((now, route, user_sid or "",
+                                  round(ms, 1) if ms is not None else None, status))
             _active_users.move_to_end(key)
             while len(_active_users) > _ACTIVE_USERS_MAX:
                 _active_users.popitem(last=False)
@@ -237,7 +258,10 @@ def _skip_user_track(route):
 
 
 def _identity_for_track():
-    """요청 신원 → (key, uid, ip, honey). 요청 컨텍스트 문제가 생기면 None (집계 생략)."""
+    """요청 신원 → (key, uid, ip, honey, ver, agent). 요청 컨텍스트 문제 시 None (집계 생략).
+
+    ver/agent 는 UA 토큰 파싱 정본(auth_identity)을 그대로 쓴다 — 버전 토큰은 클라가
+    보내야 있는 값이라 구버전 클라에서는 "" 다."""
     try:
         ip = request.remote_addr or "?"
         ua = request.headers.get("User-Agent") or ""
@@ -247,7 +271,8 @@ def _identity_for_track():
         uid = auth_identity.current_user()
     except Exception:
         uid = ""     # SECRET_KEY 미설정 등으로 로그인 세션 조회가 터져도 IP 로는 잡는다
-    return (uid or f"ip:{ip}", uid, ip, "HoneyUser/" in ua)
+    return (uid or f"ip:{ip}", uid, ip, "HoneyUser/" in ua,
+            auth_identity.client_version(ua), auth_identity.client_agent(ua))
 
 
 def _bump_boot_peak(key, value, ts):
@@ -519,6 +544,7 @@ def active_users(window_sec=ACTIVE_USER_WINDOW_SEC):
                 "requests": v["count"], "last": v["last"], "first": v["first"],
                 "route": v.get("route") or "", "session_id": v.get("session_id"),
                 "merged": was_merged,
+                "ver": v.get("ver") or "", "agents": _agent_set(v),
             }
             continue
         # 합치기 — 요청 수는 더하고, 마지막 활동/보는 세션은 더 최근 쪽을 남긴다.
@@ -526,6 +552,12 @@ def active_users(window_sec=ACTIVE_USER_WINDOW_SEC):
         cur["first"] = min(cur["first"], v["first"])
         cur["honey"] = cur["honey"] or bool(v["honey"])
         cur["merged"] = True
+        # 한 사람이 Honey 앱과 내장 브라우저를 같이 쓰면 두 경로가 모두 남는다.
+        for a in _agent_set(v):
+            if a not in cur["agents"]:
+                cur["agents"].append(a)
+        if v.get("ver") and not cur["ver"]:
+            cur["ver"] = v["ver"]
         if v["ip"] not in cur["ips"]:
             cur["ips"].append(v["ip"])
         if v["last"] > cur["last"]:
@@ -544,11 +576,60 @@ def active_users(window_sec=ACTIVE_USER_WINDOW_SEC):
                     "requests": rec["requests"],
                     "ago": round(now - rec["last"], 1),
                     "since": round(now - rec["first"], 1),
-                    "route": rec["route"], "session_id": rec["session_id"]})
+                    "route": rec["route"], "session_id": rec["session_id"],
+                    "ver": rec["ver"], "agents": rec["agents"]})
     return {"count": len(out), "window_sec": window_sec,
             "named": sum(1 for r in out if r["user"]),
             "honey": sum(1 for r in out if r["honey"]),
             "users": out}
+
+
+def _agent_set(v):
+    """추적 레코드 → 접속 경로 목록(사본). 값이 없으면 honey 불린으로 되돌아간다 —
+    다른 관리자 모듈이 만들어 넣은 레코드에는 이 키가 없을 수 있다."""
+    a = v.get("agents")
+    if a:
+        return list(a)
+    return ["browser"] if v.get("honey") else []
+
+
+def user_timeline(key, window_sec=ACTIVE_USER_WINDOW_SEC, limit=40):
+    """표시 키(active_users 의 `key`) → 그 사람의 최근 요청 목록 (최신 순).
+
+    -> {"key", "count", "items":[{ts, ago, route, session_id, ms, status}]}
+
+    같은 사람이 여러 원본 키(계정 + ip:<addr>)로 잡혀 있을 수 있으므로 active_users 와
+    **같은 병합 규칙**으로 묶어서 합친다 — 화면에 한 줄로 보이는 사람의 이력이 조회에서만
+    갈라지면 안 된다. 소스는 메모리 링버퍼라 서버 재시작 시 비고, 오래된 항목은
+    사람 단위로 최근 20건까지만 남는다.
+    """
+    if not key:
+        return {"key": "", "count": 0, "items": []}
+    try:
+        window_sec = max(30, min(int(window_sec), 24 * 3600))
+    except (TypeError, ValueError):
+        window_sec = ACTIVE_USER_WINDOW_SEC
+    now = time.time()
+    cut = now - window_sec
+    with _lock:
+        rows = [(k, dict(v), list(v.get("recent") or ()))
+                for k, v in _active_users.items() if v["last"] >= cut]
+
+    from admin_panel import identity_merge
+    mapping = identity_merge.ip_to_user()
+
+    items = []
+    for k, v, recent in rows:
+        name, _merged = identity_merge.resolve(v["uid"] or k, v["ip"], mapping)
+        if name != key:
+            continue
+        for ts, route, sid, ms, status in recent:
+            # 정렬은 **반올림 전 원본 시각**으로 한다 — 같은 초에 몰린 요청을 정수로 깎으면
+            # 순서가 뒤섞여, 화면에서 "무엇을 하다 막혔는지" 흐름이 거꾸로 읽힌다.
+            items.append((ts, {"ts": round(ts), "ago": round(now - ts, 1), "route": route,
+                               "session_id": sid, "ms": ms, "status": status}))
+    items.sort(key=lambda p: p[0], reverse=True)
+    return {"key": key, "count": len(items), "items": [d for _ts, d in items[:limit]]}
 
 
 def load_snapshot():

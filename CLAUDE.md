@@ -225,12 +225,24 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
   `kind`=`honey_run/web_index/web_view`, 무신원은 `ip:<addr>` 행. `record_usage` 가 **두
   테이블에 함께** 기록한다(일별은 날짜 문자열이라 시간대 분포를 복원할 수 없다 — hourly 는
   요일×시간 히트맵용, 2026-08-13 신설).
+- `report_client_version` — Honey 클라 **버전 대장**(사람 1명 = 1행, 마지막 실행 버전 +
+  prev_version/runs). 입력은 앱 시작 시 1회 오는 `GET /honey/version` 의 UA 토큰
+  `HoneyVer/<버전>` 하나뿐이다([database/client_versions.py](server/database/client_versions.py)).
+  **행이 없는 사람 = 버전을 안 보내는 구버전 클라**이며, 그게 곧 '업데이트 안 한 사람'
+  신호라 조회(`version_report`)는 사용량 기록을 모집단으로 삼아 미상 사용자도 함께 준다.
 - `report_usage_peak_daily` — 일별 Peak 동시 접속자(사람) 수. `metrics.active_users()` 는
   메모리에만 있어 이력이 없었다 → 리소스 샘플러(10초)가 그날 최대치만 적재. 값은 **낮아지지
   않는다**(재시작 대비 SQL `MAX`). 관리자 사용자 탭 '📈 접속 추이' 그래프의 소스.
 - `report_chatbot_log` — 웹 챗봇 질문/답변 전문 + 부하 계측(`total_ms`=`wait_ms`(동시실행
   대기)+`llm_ms`(질문 해석)+조회). 관리자 Chatbot 탭의 유일한 데이터원. 감사로그와 분리한
   이유는 답변이 수 KB 라 `changed_fields` 1500자 관례에 안 맞고 감사 화면을 밀어내기 때문.
+- `report_eval_daily` — eval 룰 엔진 **일별 지표**(2026-08-19). 정확도·커버리지가 지금까지
+  "탭 열 때 전체 누적 한 숫자"뿐이라 나아지는지 볼 수 없었다. 원재료는 eval.db(읽기 전용),
+  집계는 cleanup 주기(24h)에 편승([database/eval_stats.py](server/database/eval_stats.py)).
+  ⚠ **재계산 UPSERT**(덮어쓰기) — 원본이 남아 있어 같은 날을 몇 번 접어도 값이 같아야 한다.
+  `report_chatbot_daily` 의 누적 더하기와 규약이 **반대**다. `engine_version` 을 키에 둔
+  이유는 룰 버전이 다르면 UNKNOWN 비율·발화 분포가 달라 섞으면 추이가 거짓말을 하기 때문
+  (판정과 무관한 집계는 `''`). 화면은 `/pe/eval` 채점 탭.
 
 **보존 정책** (2026-08-14 — 세션 원본·사용자 편집은 **영구**, 운영 로그만 유한 보존):
 감사 365일 / 챗봇 원문 90일(이후 `report_chatbot_daily` 집계만) / 시간별 사용량 90일 /
@@ -474,6 +486,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | web_report 편집 상태 | [web_report/edits.py](web_report/edits.py) + [server/database/webreport_edits.py](server/database/webreport_edits.py) |
 | web_report 캐시 키 규약 | [web_report/cache_policy.py](web_report/cache_policy.py) → [docs/12](docs/12_web_report_cache.md) |
 | Distribution 정렬 전가(pack) — 서버 최대 병목 제거 | [web_report/dist_pack.py](web_report/dist_pack.py) + [dist_pack_store.py](web_report/dist_pack_store.py) → [docs/12](docs/12_web_report_cache.md) |
+| 콜드 빌드에서 무거운 계산 떼어내기 (AI Comment·Compare) | 분리 캐시 키 [cache_policy.py](web_report/cache_policy.py) `ai_comment_key`/`compare_key` · 조회 [service.py](web_report/service.py) `_ai_comment_cached`/`_compare_cached` · 대기본 `report_pending_key(kinds)` · 백그라운드 잡 [compute.py](web_report/compute.py) `_ONDEMAND_JOBS` · 프런트 폴링 [boot.js](server/report/static/webreport/boot.js) → [docs/12](docs/12_web_report_cache.md). **분리 캐시 키에 sid·edits_rev 를 넣지 말 것** — 그게 편집마다 전량 재계산을 부른다(perf_guard S10·S12) |
 | 새 탭 추가 (레지스트리) | [web_report/tabs/__init__.py](web_report/tabs/__init__.py) `TAB_REGISTRY` → [docs/11](docs/11_web_report_tabs.md) |
 | Temperature(PMIC·SECURITY RT/CT/HT) — 전 항목 RT limit 재판정 | [web_report/tabs/temp_fail.py](web_report/tabs/temp_fail.py) (조회 시점 서버 계산) + 업로드 전 정리 [web_report/temperature.py](web_report/temperature.py) + CT/HT CPK 는 **RT Bin1 die × RT limit** ([tabs/cpk.py](web_report/tabs/cpk.py) `temperature_reference_tables`) → [docs/11](docs/11_web_report_tabs.md) |
 | S3 저장 진입점(facade) | [server/storage_gateway/](server/storage_gateway/__init__.py) ([README](server/storage_gateway/README.md), 키빌더 _s3.py) |
@@ -482,6 +495,7 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | 관리 대시보드 (/pe/admin-pte/) | [server/admin_panel/](server/admin_panel/) (구 admin_routes.py 는 미등록 dead file) |
 | eval 룰 관리 (/pe/eval) — threshold/signature 제품군별 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
 | eval 표본 검수 → 승인형 룰 튜닝 (발화 전수 검토 대신 룰당 8건) | [server/eval_panel/review.py](server/eval_panel/review.py) · 수집 [web_report/eval_export.py](web_report/eval_export.py) `collect_session_snapshot` → [docs/13 §14](docs/13_eval_analyzer_integration.md) |
+| **"룰을 고쳤는데 나아졌나" — eval 정확도·커버리지 추이** | 집계 [server/database/eval_stats.py](server/database/eval_stats.py)(cleanup 24h 편승, 덮어쓰기 UPSERT) · 저장 `report_eval_daily` · 화면 `/pe/eval` 채점 탭 추이 카드 · 라우트 `GET /pe/eval/api/eval/trend` → [docs/17](docs/17_eval_learning_loop.md) |
 | 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |
 | **오류 추적 — "에러가 났는데 어디를 보나"** | 사건 저장소 [server/diagnostics.py](server/diagnostics.py) · 화면 [admin_panel/diagnostics_admin.py](server/admin_panel/diagnostics_admin.py) (`🚨 진단 사건` 탭) · 500/503 발급 [server/ops.py](server/ops.py) · 클라 수집 [routes_misc.py](server/report/routes_misc.py) `client_error`/`client_diagnostic` + [error_beacon.js](server/report/static/webreport/error_beacon.js) + [client/transport/error_report.py](client/transport/error_report.py) → [docs/20](docs/20_error_tracking.md) |
 | **콜드 빌드가 300초 걸렸다 — 어디서 멎었나** | 실행 중 체크포인트 [web_report/build_log.py](web_report/build_log.py) `stage/checkpoint/read_states` + 회수 [compute.py](web_report/compute.py) `_dead_worker_state` → 실패 레코드의 `last_stage`/`last_source` → [docs/20](docs/20_error_tracking.md) |

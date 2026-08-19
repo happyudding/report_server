@@ -721,8 +721,9 @@ body { position: relative; }
       <thead><tr>
         <th style="width:26px" title="1분 안에 요청이 있었으면 초록, 그보다 오래되면 노랑"></th>
         <th title="Honey 계정 / SSO / 웹 로그인 신원 · 신원이 없으면 IP 로 묶어 '익명' 으로 표시합니다 · 클릭하면 이 사용자의 활동 기록으로 이동">사용자</th>
-        <th title="접속 경로 — Honey 앱/내장 브라우저인지 일반 웹 브라우저인지">접속</th>
-        <th title="지금 무엇을 하고 있는지 (마지막 요청 기준)">지금 하는 일</th>
+        <th title="접속 경로 — Honey 앱(업로드·버전체크) / 내장 브라우저(리포트 열람) / 일반 웹 브라우저">접속</th>
+        <th title="이 사람이 쓰고 있는 Honey 버전 · 회색은 마지막 실행 기록(DB)에서 가져온 값 · '미상' 은 버전을 안 보내는 구버전입니다">버전</th>
+        <th title="지금 무엇을 하고 있는지 (마지막 요청 기준) · 🔍 를 누르면 최근 요청 흐름이 펼쳐집니다">지금 하는 일</th>
         <th title="가장 최근에 열어본 세션">보는 세션</th>
         <th class="num" title="이 기간 동안 보낸 요청 수">요청</th>
         <th class="num" title="이 기간 안에서 처음 요청한 뒤 지난 시간">접속</th>
@@ -731,10 +732,37 @@ body { position: relative; }
         <th title="이 사람에게만 보낼 팝업 메시지 — 누르면 아래 '메시지 보내기' 받는 사람에 추가됩니다">메시지</th>
         <th title="이 사람이 열어둔 세션의 계산 대기를 끊습니다 — 방치된 탭이 콜드 빌드를 계속 유발할 때 사용">중단</th>
       </tr></thead>
-      <tbody id="auBody"><tr class="empty-row"><td colspan="11">로딩 중…</td></tr></tbody>
+      <tbody id="auBody"><tr class="empty-row"><td colspan="12">로딩 중…</td></tr></tbody>
     </table></div>
     <div class="msg">서버 메모리 기준이라 <b>서버를 재시작하면 초기화</b>됩니다. 화면을 열어만 두고 아무 요청도 하지 않는 사람은 기간이 지나면 목록에서 빠집니다.
       같은 IP 에서 온 접속은 그 IP 의 <b>주 사용자</b>(활동이 가장 많은 계정)로 합쳐 보여줍니다 (<span class="badge gray">IP 병합</span>).</div>
+  </div>
+
+  <!-- Honey 버전 현황 — 위 '지금 접속 중'이 순간이라면 이쪽은 최근 N일 안에 Honey 를
+       실행한 전원(지금 안 켠 사람 포함)의 버전. 소스는 report_client_version 대장. -->
+  <div class="card">
+    <h2>🍯 Honey 버전 현황 <span class="hint" id="cvSummary">불러오는 중…</span>
+      <span style="float:right">
+        <select id="cvDays" class="sel" title="이 기간 안에 Honey 를 실행한 사람만 셉니다">
+          <option value="7">최근 7일</option>
+          <option value="30" selected>최근 30일</option>
+          <option value="90">최근 90일</option>
+        </select>
+        <button class="btn" id="btnCvRefresh" title="지금 즉시 새로고침">↻</button>
+      </span></h2>
+    <div class="tiles" id="cvTiles" style="margin-bottom:12px"></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th title="Honey 계정">사용자</th>
+        <th title="마지막으로 확인된 클라이언트 버전">버전</th>
+        <th title="이 버전 직전에 쓰던 버전 — 실제로 업데이트가 일어났는지 확인용">직전</th>
+        <th class="num" title="이 기간 동안 Honey 를 실행한 횟수">실행</th>
+        <th class="num" title="마지막으로 Honey 를 실행한 시점">마지막 실행</th>
+      </tr></thead>
+      <tbody id="cvBody"><tr class="empty-row"><td colspan="5">로딩 중…</td></tr></tbody>
+    </table></div>
+    <div class="msg"><b>미상</b> = 버전을 서버에 알리지 않는 <b>구버전 클라이언트</b>입니다 (버전 보고는 2026-08-18 배포분부터).
+      즉 미상으로 남아 있는 사람이 곧 업데이트가 필요한 대상입니다.</div>
   </div>
 
   <!-- 접속 추이 — 위 '지금 접속 중'(순간)과 아래 '누적 사용량'(기간 합계) 사이의 빈칸:
@@ -877,23 +905,24 @@ body { position: relative; }
       한 PC 를 여러 사람이 쓰면(공용 PC·NAT) 다른 사람의 활동도 주 사용자 행에 섞일 수 있으니, 정확히 가려야 할 때는 배지로 확인하세요.</div>
   </div>
   <div class="card">
-    <h2>웹 로그인 계정 <span class="hint">현재 접근제어는 Honey 클라이언트 신원(UA)으로 하며, 이 계정은 즐겨찾기·중요표시 보관용입니다</span>
+    <h2>사용자 이름 관리 <span class="hint">이 서버에 흔적을 남긴 사람 전체 · <b>이름 수정</b> 으로 관리자가 실명을 직접 지정/변경할 수 있습니다 (오타·개명·미입력 대응)</span>
       <span id="usersSummary" class="hint"></span></h2>
     <div class="toolbar">
       <input id="userQ" class="inp" style="width:260px" placeholder="ID · 이름 검색…">
       <button class="btn primary" id="btnUserSearch">검색</button>
       <span class="grow"></span>
-      <span class="hint">초기 비밀번호는 <b>0000</b> · 로그인 시 없는 ID 는 자동 생성됩니다</span>
+      <span class="hint">이름은 표시 전용입니다(접근제어는 신원 기반) · 비밀번호·삭제는 <b>웹 로그인 계정</b> 이 있는 행에만 뜹니다</span>
     </div>
     <div class="table-wrap"><table>
       <thead><tr>
-        <th title="웹 로그인 계정 ID">ID</th>
-        <th title="사용자가 입력한 실명 (표시 전용 — 접근제어에는 쓰지 않습니다)">이름</th>
-        <th title="계정이 만들어진 날짜">생성일</th>
+        <th title="신원 키 (Honey 계정 · SSO · 웹 로그인 계정 공통 · 소문자 정규화)">ID</th>
+        <th title="화면에 '이름(ID)' 로 표기되는 실명 — 사용자가 입력하거나 관리자가 지정합니다">이름</th>
+        <th title="이 사람의 기록이 처음 남은 시각">첫 기록</th>
+        <th title="마지막으로 활동한 시각">최근 활동</th>
         <th class="num" title="이 사용자가 즐겨찾기한 세션 수">즐겨찾기</th>
         <th class="num" title="이 사용자가 업로드한 세션 수">업로드</th><th title="행별 작업">작업</th>
       </tr></thead>
-      <tbody id="userBody"><tr class="empty-row"><td colspan="6">로딩 중…</td></tr></tbody>
+      <tbody id="userBody"><tr class="empty-row"><td colspan="7">로딩 중…</td></tr></tbody>
     </table></div>
     <div class="pager" id="userPager"></div>
     <div class="msg" id="userMsg"></div>
@@ -2434,7 +2463,7 @@ $("btnPurgeExpired").onclick = async () => {
 // 사용자 관련 화면은 전부 이 탭에 모았다 (실시간 접속 / 누적 사용량 / 웹 로그인 계정).
 // 이전에는 현황·통계·사용자 세 탭에 흩어져 있었고 통계 탭 '사용자별 사용량' 은 여기
 // '작업 활동' 표와 같은 API 를 두 번 그리는 중복이었다.
-function loadUsersTab() { loadLiveUsers(); loadUsageTrend(); loadUsageTables(); loadUsers(); loadMessages(); }
+function loadUsersTab() { loadLiveUsers(); loadClientVersions(); loadUsageTrend(); loadUsageTables(); loadUsers(); loadMessages(); }
 
 function goUsersTab() {
   const btn = document.querySelector('.tab[data-panel="pUsers"]');
@@ -2511,15 +2540,18 @@ async function loadLiveUsers() {
       <div class="val">${rows.filter(u => u.session_id).length}<span style="font-size:13px;color:var(--ink-3)">명</span></div>
       <div class="det">리포트 세션을 열어 본 사람</div></div>`;
   $("auBody").innerHTML = rows.length ? rows.map(u => `
-    <tr>
+    <tr data-au-key="${esc(u.key || "")}">
       <td><span class="live-dot ${u.ago < 60 ? "on" : ""}" title="${u.ago < 60 ? "1분 안에 활동" : "잠시 조용함"}"></span></td>
       <td>${u.user
             ? `<b class="who-link" data-who="${esc(whoId(u, u.user))}" title="이 사용자의 활동 기록 보기"
                   style="cursor:pointer;color:var(--accent)">${whoLabel(whoId(u, u.user), u.name)}</b>`
             : `<span style="color:var(--ink-3)" title="신원 토큰이 없고, 이 IP 로 활동한 계정 기록도 없어 IP 로만 구분합니다">익명</span>`
           }${u.merged ? mergeBadge(u.ips) : ""}</td>
-      <td>${u.honey ? `<span class="badge done">Honey</span>` : `<span class="badge gray">브라우저</span>`}</td>
-      <td>${esc(activityLabel(u.route))}</td>
+      <td>${agentBadges(u)}</td>
+      <td>${verCell(u)}</td>
+      <td>${esc(activityLabel(u.route))}${waitBadge(u)}
+        <button class="btn" data-au-tl="${esc(u.key || "")}" style="padding:0 5px;margin-left:4px"
+                title="이 사람의 최근 요청 흐름 보기">🔍</button></td>
       <td>${u.session_id ? sessionLink(u.session_id) : "-"}</td>
       <td class="num">${u.requests}</td>
       <td class="num">${fmtDur(u.since)}</td>
@@ -2535,8 +2567,148 @@ async function loadLiveUsers() {
                   title="이 사람의 계산 대기를 끊습니다 (진행 중 계산 자체는 워커 타임아웃까지 계속됩니다)">⛔ 중단</button>`
             : "-"}</td>
     </tr>`).join("")
-    : `<tr class="empty-row"><td colspan="11">최근 ${mins}분 안에 접속한 사용자가 없습니다.</td></tr>`;
+    : `<tr class="empty-row"><td colspan="12">최근 ${mins}분 안에 접속한 사용자가 없습니다.</td></tr>`;
+  // 펼쳐 둔 타임라인은 자동 갱신 후에도 유지한다 (10초마다 접히면 읽을 수가 없다)
+  for (const key of [...openTimelines]) renderTimeline(key);
 }
+
+// 접속 경로 배지 — Honey 앱(업로드·버전체크)과 내장 브라우저(리포트 열람)는 하는 일이
+// 다르다. 서버가 UA 로 구분해 주며(auth_identity.client_agent), 한 사람이 둘 다 쓰면
+// 배지도 둘 다 나온다. 구버전 클라는 agents 가 비어 honey 불린으로 되돌아간다.
+function agentBadges(u) {
+  const a = u.agents || [];
+  if (!a.length) return u.honey ? `<span class="badge done">Honey</span>`
+                                : `<span class="badge gray">브라우저</span>`;
+  return a.map(k => k === "app"
+    ? `<span class="badge done" title="Honey 앱이 보낸 요청 (업로드·버전 확인)">Honey 앱</span>`
+    : `<span class="badge reused" title="Honey 내장 브라우저 (리포트 열람)">내장 브라우저</span>`).join(" ");
+}
+
+// 버전 셀 — UA 토큰으로 온 값은 진하게, 대장(DB)에서 폴백한 값은 흐리게(지금 이 요청이
+// 그 버전이라는 보장이 없으므로), 둘 다 없으면 '미상'(= 버전을 안 보내는 구버전).
+function verCell(u) {
+  if (!u.ver) return `<span class="badge gray" title="버전을 보고하지 않는 구버전 클라이언트입니다">미상</span>`;
+  if (u.ver_src === "db") {
+    return `<span class="mono" style="color:var(--ink-3)"
+                  title="마지막 Honey 실행 기록의 버전입니다 (지금 요청에는 버전 정보가 없음)">${esc(u.ver)}</span>`;
+  }
+  return `<span class="mono">${esc(u.ver)}</span>`;
+}
+
+// 대기 배지 — 이 사람이 보는 세션이 지금 콜드 빌드 중이면 "무엇을 몇 초째 기다리는지".
+// '지금 하는 일' 이 마지막 요청이라, 요청을 보내 놓고 응답을 기다리는 상태는 안 보였다.
+function waitBadge(u) {
+  const w = u.waiting;
+  if (!w) return "";
+  const cls = w.elapsed >= 60 ? "error" : "pending";
+  return ` <span class="badge ${cls}"
+    title="이 사람이 열어 둔 세션이 서버에서 계산 중입니다 (단계: ${esc(w.stage)})">⏳ 계산 대기 ${w.elapsed}초째</span>`;
+}
+
+// ── 최근 활동 타임라인 (행 펼치기) ─────────────────────────────────────────
+// 소스는 서버 메모리 링버퍼(사람당 최근 20건)라 재시작 시 비워진다.
+const openTimelines = new Set();
+
+async function renderTimeline(key) {
+  const tr = document.querySelector(`#auBody tr[data-au-key="${CSS.escape(key)}"]`);
+  if (!tr) { openTimelines.delete(key); return; }
+  let next = tr.nextElementSibling;
+  if (!next || !next.classList.contains("tl-row")) {
+    next = document.createElement("tr");
+    next.className = "tl-row";
+    next.innerHTML = `<td colspan="12" style="background:var(--bg-2)"></td>`;
+    tr.after(next);
+  }
+  const cell = next.firstElementChild;
+  let tl;
+  try { tl = await getJSON("api/user_timeline?key=" + encodeURIComponent(key)
+                           + "&window=" + encodeURIComponent($("auWindow").value)); }
+  catch (e) { cell.innerHTML = `<span class="msg">조회 실패: ${esc(e)}</span>`; return; }
+  const items = tl.items || [];
+  cell.innerHTML = items.length ? `
+    <div style="padding:6px 4px"><b>최근 요청 ${items.length}건</b>
+      <span class="hint">최신 순 · 서버 메모리 기준(사람당 최근 20건)</span>
+      <table style="margin-top:6px"><thead><tr>
+        <th style="width:90px">시각</th><th>활동</th><th>세션</th>
+        <th class="num" style="width:90px">소요</th><th style="width:70px">결과</th>
+      </tr></thead><tbody>
+      ${items.map(it => `<tr>
+        <td class="mono">${fmtAgo(it.ago)} 전</td>
+        <td>${esc(activityLabel(it.route))}</td>
+        <td>${it.session_id ? sessionLink(it.session_id) : "-"}</td>
+        <td class="num" ${it.ms >= 3000 ? 'style="color:#f87171;font-weight:600"' : ""}>${it.ms == null ? "-" : it.ms + "ms"}</td>
+        <td>${it.status == null ? "-"
+              : `<span class="badge ${it.status >= 500 ? "error" : (it.status >= 400 ? "pending" : "done")}">${it.status}</span>`}</td>
+      </tr>`).join("")}
+      </tbody></table></div>`
+    : `<div class="msg">기록된 요청이 없습니다 (서버 재시작 후 첫 요청 전이거나 기간 밖).</div>`;
+}
+
+function toggleTimeline(key) {
+  if (openTimelines.has(key)) {
+    openTimelines.delete(key);
+    const tr = document.querySelector(`#auBody tr[data-au-key="${CSS.escape(key)}"]`);
+    const next = tr && tr.nextElementSibling;
+    if (next && next.classList.contains("tl-row")) next.remove();
+    return;
+  }
+  openTimelines.add(key);
+  renderTimeline(key);
+}
+
+$("auBody").addEventListener("click", ev => {
+  const btn = ev.target.closest("[data-au-tl]");
+  if (!btn) return;
+  ev.stopPropagation();
+  toggleTimeline(btn.getAttribute("data-au-tl"));
+});
+
+// ── Honey 버전 현황 ────────────────────────────────────────────────────────
+// '지금 접속 중'이 순간이라면 이쪽은 기간 전체다. 소스는 버전 대장(report_client_version)
+// 이고, 모집단은 사용량 기록(honey_run)이라 **버전을 안 보내는 구버전 사용자도 행으로
+// 남는다**(version 이 비면 '미상'). 그 미상이 곧 업데이트가 필요한 사람이다.
+async function loadClientVersions() {
+  let r;
+  try { r = await getJSON("api/client_versions?days=" + encodeURIComponent($("cvDays").value)); }
+  catch (e) {
+    $("cvSummary").textContent = "조회 실패";
+    $("cvBody").innerHTML = `<tr class="empty-row"><td colspan="5">조회 실패: ${esc(e)}</td></tr>`;
+    return;
+  }
+  const latest = r.latest || "";
+  const rows = r.rows || [];
+  const onLatest = latest ? rows.filter(x => x.version === latest).length : 0;
+  $("cvSummary").textContent = `최근 ${r.days}일 안에 Honey 를 실행한 사람 ${r.total}명`
+    + (latest ? ` · 최신 배포 v${latest}` : "");
+  $("cvTiles").innerHTML = `
+    <div class="tile"><div class="lbl">최신 버전 사용</div>
+      <div class="val">${onLatest}<span style="font-size:13px;color:var(--ink-3)">명</span></div>
+      <div class="det">${latest ? "v" + esc(latest) : "배포 버전 정보 없음"}</div></div>
+    <div class="tile"><div class="lbl">구버전 사용</div>
+      <div class="val">${r.known - onLatest}<span style="font-size:13px;color:var(--ink-3)">명</span></div>
+      <div class="det">버전은 알지만 최신이 아님</div></div>
+    <div class="tile"><div class="lbl">버전 미상</div>
+      <div class="val">${r.unknown}<span style="font-size:13px;color:var(--ink-3)">명</span></div>
+      <div class="det">버전을 안 보내는 구버전 클라이언트</div></div>
+    <div class="tile"><div class="lbl">버전 종류</div>
+      <div class="val">${(r.versions || []).filter(v => v.version).length}<span style="font-size:13px;color:var(--ink-3)">개</span></div>
+      <div class="det">${(r.versions || []).map(v => (v.version || "미상") + " " + v.users + "명").join(" · ") || "-"}</div></div>`;
+  $("cvBody").innerHTML = rows.length ? rows.map(x => `
+    <tr>
+      <td><b class="who-link" data-who="${esc(x.user_id)}" title="이 사용자의 활동 기록 보기"
+             style="cursor:pointer;color:var(--accent)">${whoLabel(x.user_id, x.name)}</b></td>
+      <td>${x.version
+            ? `<span class="badge ${latest && x.version === latest ? "done" : "pending"}"
+                     title="${latest && x.version === latest ? "최신 배포 버전" : "최신(" + esc(latest) + ")보다 낮습니다"}">${esc(x.version)}</span>`
+            : `<span class="badge gray" title="버전을 보고하지 않는 구버전 클라이언트입니다">미상</span>`}</td>
+      <td class="mono" style="color:var(--ink-3)">${esc(x.prev_version || "-")}</td>
+      <td class="num">${x.runs || 0}</td>
+      <td class="num">${x.last_at ? fmtDate(x.last_at) : "-"}</td>
+    </tr>`).join("")
+    : `<tr class="empty-row"><td colspan="5">최근 ${r.days}일 안에 Honey 를 실행한 기록이 없습니다.</td></tr>`;
+}
+$("cvDays").onchange = loadClientVersions;
+$("btnCvRefresh").onclick = loadClientVersions;
 
 // 접속자 행 → 메시지 수신자 키. 서버 쪽 규칙(report/routes_misc._message_user_key)과
 // 같아야 한다 — 신원이 있으면 계정, 없으면 'ip:<주소>'.
@@ -2870,32 +3042,37 @@ const USER_PAGE = 50;
 let userOffset = 0, userTotal = 0;
 async function loadUsers() {
   const tb = $("userBody");
-  tb.innerHTML = `<tr class="empty-row"><td colspan="6">로딩 중…</td></tr>`;
+  tb.innerHTML = `<tr class="empty-row"><td colspan="7">로딩 중…</td></tr>`;
   const params = new URLSearchParams({ limit: USER_PAGE, offset: userOffset });
   const q = $("userQ").value.trim(); if (q) params.set("q", q);
   let data;
   try { data = await getJSON("api/users?" + params); }
   catch (e) {
-    tb.innerHTML = `<tr class="empty-row"><td colspan="6">조회 실패: ${esc(e)}</td></tr>`;
+    tb.innerHTML = `<tr class="empty-row"><td colspan="7">조회 실패: ${esc(e)}</td></tr>`;
     return;
   }
   userTotal = data.total;
   $("usersSummary").textContent = `총 ${userTotal}명`;
   if (!data.rows.length) {
-    tb.innerHTML = `<tr class="empty-row"><td colspan="6">계정이 없습니다.</td></tr>`;
+    tb.innerHTML = `<tr class="empty-row"><td colspan="7">사용자가 없습니다.</td></tr>`;
   } else {
+    // 비밀번호·삭제는 웹 로그인 계정(report_user)이 있는 행에만 의미가 있다 — 계정 없는
+    // Honey 전용 사용자에게 누르면 404 라서, 아예 그리지 않는다. 이름 수정은 전원 대상.
+    const btn = 'class="btn" style="height:24px;padding:0 8px;font-size:11px"';
     tb.innerHTML = data.rows.map(u => `
       <tr data-uid="${esc(u.user_id)}">
         <td class="mono">${esc(u.user_id)}</td>
         <td>${u.display_name ? esc(u.display_name) : '<span class="hint">미입력</span>'}</td>
         <td>${fmtDate(u.created_at)}</td>
+        <td>${fmtDate(u.last_seen)}</td>
         <td class="num">${u.fav_count}</td>
         <td class="num">${u.upload_count}</td>
         <td>
-          <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="name" data-uid="${esc(u.user_id)}" data-name="${esc(u.display_name || "")}">이름 수정</button>
-          <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="reset" data-uid="${esc(u.user_id)}">비밀번호 초기화(0000)</button>
-          <button class="btn" style="height:24px;padding:0 8px;font-size:11px" data-act="setpw" data-uid="${esc(u.user_id)}">비밀번호 지정</button>
-          <button class="btn danger" style="height:24px;padding:0 8px;font-size:11px" data-act="del" data-uid="${esc(u.user_id)}">삭제</button>
+          <button class="btn primary" style="height:24px;padding:0 8px;font-size:11px" data-act="name" data-uid="${esc(u.user_id)}" data-name="${esc(u.display_name || "")}">이름 수정</button>
+          ${u.has_account ? `
+          <button ${btn} data-act="reset" data-uid="${esc(u.user_id)}">비밀번호 초기화(0000)</button>
+          <button ${btn} data-act="setpw" data-uid="${esc(u.user_id)}">비밀번호 지정</button>
+          <button class="btn danger" style="height:24px;padding:0 8px;font-size:11px" data-act="del" data-uid="${esc(u.user_id)}">삭제</button>` : ""}
         </td>
       </tr>`).join("");
   }

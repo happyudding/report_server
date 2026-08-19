@@ -18,9 +18,10 @@ from urllib.parse import quote
 import requests
 
 try:
-    from transport.config import REQUEST_TIMEOUT_SEC
+    from transport.config import CURRENT_VERSION, REQUEST_TIMEOUT_SEC
 except Exception:  # 단독 실행/테스트 폴백
     REQUEST_TIMEOUT_SEC = (10, 300)
+    CURRENT_VERSION = ""
 
 # 콜드 빌드(202) 대기 상한 — 서버가 준 eta 의 2배, 그래도 이 값을 넘지 않는다.
 COLD_WAIT_MAX_SEC = 180
@@ -28,16 +29,19 @@ _COLD_POLL_SEC = 1.5
 
 
 def _honey_headers():
-    """서버 신원 토큰 — embedded_browser 와 동일 규칙(HoneyUser/<percent-encoded 계정>).
+    """서버 신원 토큰 — embedded_browser 와 동일 규칙
+    (`HoneyUser/<percent-encoded 계정> HoneyVer/<버전>`).
 
     비공개(is_private) 세션은 업로더/위임 편집자 신원이 있어야 조회 가능하다.
-    수집 실패 시 토큰 없이 진행(공개 세션은 무신원으로도 조회됨)."""
+    수집 실패 시 토큰 없이 진행(공개 세션은 무신원으로도 조회됨).
+    버전 토큰은 관리자 화면 표시용이며 접근제어와 무관하다."""
     try:
         import client_identity
         user = client_identity.collect().get("user", "")
     except Exception:
         user = ""
-    return {"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')}"} if user else {}
+    return ({"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')} "
+                           f"HoneyVer/{CURRENT_VERSION}"} if user else {})
 
 
 def _get_json(url):
@@ -144,6 +148,45 @@ def _get_json_retry(url, *, retries=2, backoff=1.5, status_cb=None, optional=Fal
     raise last if last else RuntimeError(f"GET 실패: {url}")
 
 
+# Compare 계산 대기 상한 — 콜드 빌드와 별개로 한 번 더 기다릴 수 있는 시간.
+COMPARE_WAIT_MAX_SEC = 180
+_COMPARE_POLL_SEC = 3.0
+
+
+def _wait_compare_ready(full_url, report, status_cb=None):
+    """Compare 계산이 끝날 때까지 ``/full`` 을 다시 받아 최종 payload 를 돌려준다.
+
+    서버는 Compare 세션의 콜드 첫 조회에서 compare 를 비운 payload(**200** +
+    ``compare_pending``)를 먼저 준다(2026-08-19 비동기 분리). 그대로 Excel 을 만들면
+    **Compare 시트가 통째로 빠진다** — AI Comment 는 셀만 비지만 이건 시트 단위라
+    사용자가 산출물이 잘못된 줄 모르고 쓰게 된다. 그래서 명시적 내보내기인 다운로드는
+    기다린다(사용자 결정, 2026-08-19).
+
+    상한을 넘기면 **경고만 남기고 그대로 진행**한다 — 나머지 시트는 정상이므로 다운로드
+    전체를 실패시키는 것이 더 나쁘다. AI Comment 단독 대기는 하지 않는다(종전 동작 유지).
+    """
+    if not report.get("compare_pending"):
+        return report
+    started = time.monotonic()
+    while True:
+        waited = time.monotonic() - started
+        if waited >= COMPARE_WAIT_MAX_SEC:
+            _note(status_cb, "Compare 계산이 늦어져 그 시트 없이 진행합니다")
+            return report
+        _note(status_cb, f"Compare 계산 대기 중 {int(waited)}초…")
+        time.sleep(_COMPARE_POLL_SEC)
+        try:
+            body = _get_json(full_url) or {}
+        except Exception:
+            continue          # 일시 오류 — 다음 폴에서 재확인
+        got = body.get("web_report")
+        if not isinstance(got, dict) or not got.get("sheets"):
+            continue
+        if not got.get("compare_pending"):
+            return got
+        report = got
+
+
 def _merge_map_dies(report, map_payload):
     """sheets["Map Analysis"] 경량 rows(schema v8)에 map_analysis 응답 dies 를 병합.
 
@@ -201,6 +244,9 @@ def fetch_report_data(server_base, session_id, bin1=False, status_cb=None):
         raise ValueError("web_report 세션이 아닙니다 — Excel Download 는 웹 리포트 세션에서만 사용할 수 있습니다.")
     if str(dist.get("format") or "") != "ecdf-columnar-v1":
         raise ValueError(f"지원하지 않는 distribution 포맷: {dist.get('format')!r}")
+    # Compare 가 아직 계산 중이면 기다린다 — 안 그러면 Compare 시트가 통째로 빠진다.
+    report = _wait_compare_ready(full_url, report, status_cb=status_cb)
+    full["web_report"] = report
     _merge_map_dies(report, map_payload)
     return full, dist
 
@@ -262,23 +308,6 @@ def fetch_temp_map(server_base, session_id):
         out[src] = {str(e.get("item")): list(e.get("idx") or [])
                     for e in (entry.get("items") or []) if e.get("item")}
     return out
-
-
-def fetch_preprocess(server_base, session_id):
-    """적용 중인 조회 전처리 spec — ``{"spec":…, "summary":…, "digest":…, …}`` 또는 None.
-
-    전처리는 원본 parquet 을 바꾸지 않고 조회 시점에만 적용되므로, 이 파일의 수치가 왜
-    원본과 다른지의 유일한 근거다. 실패·404(구 서버)·전처리 없음은 전부 None —
-    호출부가 안내 시트를 만들지 않을 뿐 다운로드는 계속된다(에러 아님).
-    """
-    base = str(server_base).rstrip("/")
-    try:
-        payload = _get_json_retry(
-            f"{base}/pe/report/session/{session_id}/web_report/preprocess",
-            retries=1, optional=True)
-    except Exception:
-        return None
-    return payload or None
 
 
 def fetch_session_meta(server_base, session_id, timeout=(2, 3)):

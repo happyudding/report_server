@@ -10,6 +10,8 @@ report_tiering 이 산출물만 S3 로 아카이브하고 세션/DB 는 유지�
   5. 휴지통(soft delete) 경과분(REPORT_TRASH_RETENTION_DAYS) 영구 purge
   6. 세션 참조 없는 FS 고아 산출물(48h) 회수 — akey 축(web_report/issue_img/
      dist_combined/webreport_backup) + 세션 축(note_img/session_blob)
+  7. eval 룰 지표 일별 집계 (report_eval_daily) — 원본을 지우지 않는 **비파괴 집계**라
+     dry-run 무관. 안 돌면 정확도·커버리지 추이가 영영 남지 않는다
 
 세션 삭제 라우트(report_routes.delete_session_route)와 동일한 산출물 정리 경로
 (storage_gateway.delete_report_artifacts + report_db.delete_analysis_rows)를 재사용하며,
@@ -181,6 +183,56 @@ def _purge_operational_logs():
         except Exception:
             _log.exception("[cleanup] usage purge failed")
     return out
+
+
+def _rollup_eval_stats():
+    """eval 룰 지표 일별 집계 + 보존기간 경과분 삭제. 갱신한 (day, engine_version) 수 반환.
+
+    **집계는 dry-run 과 무관하게 돈다** — 원본(eval.db)을 지우지 않는 비파괴 작업이고,
+    안 돌면 정확도·커버리지 추이가 영영 남지 않는다(감사 롤오프와 같은 논리).
+    보존기간은 사용량 일별과 같은 값을 쓴다(둘 다 장기 추이 그래프 소스).
+    실패해도 예외를 밖으로 내지 않는다 — 집계가 세션 정리를 막으면 안 된다.
+    """
+    days = int(getattr(config, "REPORT_EVAL_ROLLUP_DAYS", 0) or 0)
+    if days <= 0:
+        return 0
+    try:
+        n = report_db.rollup_eval_daily(days=days)
+    except Exception:
+        _log.exception("[cleanup] eval 지표 집계 실패")
+        return 0
+    keep = int(getattr(config, "REPORT_USAGE_DAILY_RETENTION_DAYS", 0) or 0)
+    if keep > 0:
+        cutoff = time.strftime("%Y-%m-%d", time.localtime(time.time() - keep * 86400))
+        try:
+            report_db.purge_eval_daily(cutoff)
+        except Exception:
+            _log.exception("[cleanup] eval 지표 롤오프 실패")
+    if n:
+        _log.info("[cleanup] eval 지표 %d일치 집계 갱신 (최근 %d일 재계산)", n, days)
+    return n
+
+
+def _purge_stale_eval_runs(dry_run):
+    """옛 eval 스냅샷 run 정리 — 같은 (세션, 소스)의 최신이 아니고 라벨이 안 붙은 것만.
+
+    **dry-run 을 존중한다** — 판정 근거를 실제로 지우는 파괴적 작업이라 집계·로그
+    롤오프와 성격이 다르다. 대상 선정 규약은 `eval_admin.purge_stale_snapshots` 참조.
+    실패해도 예외를 밖으로 내지 않는다.
+    """
+    if not int(getattr(config, "REPORT_EVAL_PURGE_STALE_RUNS", 0) or 0):
+        return 0
+    try:
+        from admin_panel import eval_admin
+        res = eval_admin.purge_stale_snapshots(dry_run=dry_run)
+    except Exception:
+        _log.exception("[cleanup] eval 스냅샷 run 정리 실패")
+        return 0
+    if res["runs"]:
+        _log.info("[cleanup%s] eval 옛 스냅샷 run %d개%s",
+                  ":dry-run" if dry_run else "", res["runs"],
+                  "" if dry_run else f" 정리 (판정 {res['deleted']}행)")
+    return res["runs"]
 
 
 def _retry_pending_blobs():
@@ -373,18 +425,27 @@ def run_cleanup(dry_run=None):
         session_orphans = 0
         _log.exception("[cleanup] session orphan purge failed")
 
+    # eval 지표 일별 집계 — 원본을 지우지 않는 **비파괴 집계**라 dry-run 과 무관하다
+    # (감사·로그 롤오프와 같은 논리). 정확도·커버리지 추이를 남기는 유일한 경로다.
+    # ⚠ 아래 스냅샷 정리보다 **먼저** 돌아야 한다 — 순서가 뒤집히면 집계 원재료를
+    #    먼저 지워 그날 지표가 비게 된다.
+    eval_days = _rollup_eval_stats()
+    eval_runs = _purge_stale_eval_runs(dry_run)
+
     _log.info("[cleanup] done: orphan_pending=%d deleted=%d trash_scanned=%d trash_purged=%d "
               "fs_orphans=%d session_orphans=%d dry_run=%s audit_purged=%d chat_purged=%d "
-              "usage_purged=%d blobs_promoted=%d",
+              "usage_purged=%d blobs_promoted=%d eval_days=%d eval_stale_runs=%d",
               len(orphans), deleted, trash["scanned"], len(trash["purged"]), fs_orphans,
               session_orphans, dry_run, audit_purged, logs["chat"],
-              logs["usage_hourly"] + logs["usage_daily"], blobs_promoted)
+              logs["usage_hourly"] + logs["usage_daily"], blobs_promoted, eval_days,
+              eval_runs)
     return {"scanned": len(orphans), "deleted": deleted, "dry_run": dry_run,
             "audit_purged": audit_purged, "fs_orphans": fs_orphans,
             "session_orphans": session_orphans,
             "chat_purged": logs["chat"],
             "usage_purged": logs["usage_hourly"] + logs["usage_daily"],
-            "blobs_promoted": blobs_promoted,
+            "blobs_promoted": blobs_promoted, "eval_days": eval_days,
+            "eval_stale_runs": eval_runs,
             "trash_scanned": trash["scanned"], "trash_purged": len(trash["purged"])}
 
 

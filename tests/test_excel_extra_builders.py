@@ -190,31 +190,12 @@ def test_compare():
     check("compare 없음 → 빈 dict", _extra.build_compare_tables(None), {})
 
 
-# ── 전처리 안내 ─────────────────────────────────────────────────────────────
-def test_preprocess():
-    print("\n[Preprocess]")
-    check("전처리 없음 → 빈 행", _extra.build_preprocess_rows({"spec": {}}), [])
-    check("None 안전", _extra.build_preprocess_rows(None), [])
-    rows = _extra.build_preprocess_rows({
-        "summary": "항목 2개 제외 · outlier ±3σ 제거",
-        "spec": {"exclude_items": ["A", "B"], "outlier": {"k": 3},
-                 "edits": [{"row": 1}], "rules": []},
-        "yield_basis": "gross", "gross_die": 5000})
-    labels = [r[0] for r in rows]
-    check("구분 목록", labels,
-          ["요약", "항목 제외 (2개)", "Outlier 제거", "셀 수정 (1건)", "수율 분모"])
-    check("Gross Die 분모 표기", rows[-1][1], "Gross Die (5000)")
-    many = _extra.build_preprocess_rows({"spec": {"exclude_items": [f"I{i}" for i in range(40)]}})
-    check("항목 30개 초과는 '외 N개'", many[0][1].endswith("외 10개"), True)
-
-
 if __name__ == "__main__":
     test_issue_status()
     test_engr_plain()
     test_yield_overview()
     test_gradient()
     test_compare()
-    test_preprocess()
     print("\n" + "=" * 60)
     if _fails:
         print(f"실패 {len(_fails)}건")

@@ -51,7 +51,8 @@ def test_df_honey_to_evaluate_preview():
     for case in result["cases"]:
         assert _REQUIRED_KEYS <= set(case)
         assert case["status"] in _VALID_STATUS
-        assert len(case["item_class"].split("|")) == 3
+        # item_class 는 category_major|value_type 2축 (2026-08-19 — bin 제거)
+        assert len(case["item_class"].split("|")) == 2, case["item_class"]
         assert isinstance(case["evidence"], list)
         assert isinstance(case["precedents"], list)
 

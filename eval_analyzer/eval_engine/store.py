@@ -12,7 +12,7 @@ import yaml
 
 from . import config
 
-SCHEMA_VERSION = 8  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
+SCHEMA_VERSION = 9  # PRAGMA user_version. 스키마 변경 시 +1 하고 _MIGRATIONS 에 단계 추가.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS product_master (
@@ -79,6 +79,15 @@ CREATE TABLE IF NOT EXISTS features (
     ring_fail_ratio REAL,
     radial_gradient_norm REAL, x_gradient_norm REAL, y_gradient_norm REAL,
     n_modes INTEGER, modality_v2 TEXT,
+    -- v9 (2026-08-19, 사용자 승인): 룰 7종의 **판정 기준값**. 종전에는 발화한 case 의
+    -- eval_evidence 에 4자리 반올림으로만 남아, 미발화 case 를 포함한 모집단이 없어
+    -- 표본함 층화·임계값 what-if 가 구조적으로 불가능했다(docs/17 §4-6).
+    fail_mad_min REAL, fail_body_jump_ratio REAL,
+    fail_pass_gap_sigma REAL, fail_robust_z_max REAL,
+    e1_fail_share REAL, edge_fail_share REAL, center_fail_share REAL, ring_fail_share REAL,
+    fail_spread_norm REAL, tail_mass_3s REAL,
+    rail_low_ratio REAL, rail_high_ratio REAL,
+    value_gap_ratio REAL, value_gap_minor_mass REAL,
     PRIMARY KEY (case_id, run_id, engine_version)
 );
 CREATE TABLE IF NOT EXISTS evaluation (
@@ -303,9 +312,33 @@ def _migrate_v7_to_v8(conn):
     """)
 
 
+_V9_FEATURE_COLS = ("fail_mad_min", "fail_body_jump_ratio", "fail_pass_gap_sigma",
+                    "fail_robust_z_max", "e1_fail_share", "edge_fail_share",
+                    "center_fail_share", "ring_fail_share", "fail_spread_norm",
+                    "tail_mass_3s", "rail_low_ratio", "rail_high_ratio",
+                    "value_gap_ratio", "value_gap_minor_mass")
+
+
+def _migrate_v8_to_v9(conn):
+    """v9: features 에 룰 판정지표 REAL 컬럼 14개 추가 (2026-08-19, 사용자 승인).
+
+    값은 이미 L2 `features.compute()` 가 계산해 반환하고 있었다 — 저장 화이트리스트
+    (`save_features` 의 cols)가 버렸을 뿐이라 계산 경로는 바뀌지 않는다.
+    PK·UNIQUE 를 건드리지 않으므로 테이블 재구축 없이 ALTER 만 한다(기존 행 재작성 없음).
+    기존 행은 새 컬럼이 NULL 로 남는다 — 소비자(review 층화·calibrate·signature_reason)는
+    전부 None 을 "그 표본 제외"로 처리하므로 안전하고, 값은 per-DUT 원본에서만 나오므로
+    소급 채움은 불가능하다(재수집해야 채워진다). 이미 있으면 skip(idempotent).
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
+    for col in _V9_FEATURE_COLS:
+        if col not in cols:
+            conn.execute(f"ALTER TABLE features ADD COLUMN {col} REAL")
+
+
 _MIGRATIONS = {1: _migrate_v1_to_v2, 2: _migrate_v2_to_v3, 3: _migrate_v3_to_v4,
                4: _migrate_v4_to_v5, 5: _migrate_v5_to_v6,
-               6: _migrate_v6_to_v7, 7: _migrate_v7_to_v8}  # {from_version: fn} — from → from+1
+               6: _migrate_v6_to_v7, 7: _migrate_v7_to_v8,
+               8: _migrate_v8_to_v9}  # {from_version: fn} — from → from+1
 
 
 def _migrate(conn):
@@ -524,7 +557,9 @@ def save_features(case_id, run_id, engine_version, f: dict, conn=None) -> None:
     하므로 버전별로 나란히 남긴다(과거 판정 재현 가능).
     ⚠ `shot_fail_ratio` 는 테이블·마이그레이션에는 있지만 features.py 에 계산 경로가 없고
     아래 cols 목록에도 없어 **항상 NULL** 이다(VERIFY_CHECKLIST §1-3, 미해결).
-    ⚠ value_gap_ratio/value_gap_minor_mass 는 파생값이라 일부러 저장하지 않는다.
+    v9(2026-08-19)부터 룰 판정지표 14종(`_V9_FEATURE_COLS`)도 저장한다 — 표본함 층화와
+    임계값 what-if 의 모집단이 된다. **cols 에서 빠지면 컬럼만 있고 영원히 NULL 이 된다**
+    (shot_fail_ratio 가 그 전례다).
     """
     cols = ["spread_norm", "skewness", "kurtosis", "outlier_ratio", "modality",
             "bimodality_score", "density_gap", "cdf_gap", "spec_margin_low",
@@ -534,7 +569,7 @@ def save_features(case_id, run_id, engine_version, f: dict, conn=None) -> None:
             "n_dut", "site_cpk_delta", "code_edge_hit",
             "ring_fail_ratio",
             "radial_gradient_norm", "x_gradient_norm", "y_gradient_norm",
-            "n_modes", "modality_v2"]
+            "n_modes", "modality_v2", *_V9_FEATURE_COLS]
     sql = f"""INSERT INTO features (case_id,run_id,engine_version,computed_at,{','.join(cols)})
               VALUES (?,?,?,?,{','.join('?' * len(cols))})
               ON CONFLICT(case_id,run_id,engine_version) DO UPDATE SET
@@ -699,14 +734,15 @@ def search_precedents(value_type, item_canonical, family_product=None,
       시간 누출을 막는다. ingest_run 경유(run_case ⨝ ingest_run). None 이면 no-op.
     fired_signatures: 현재 케이스에서 발화한 signature id 목록 — 선례의 primary
       signature 가 겹치면 정렬 부스트(하드필터 아님, 선례 DB 가 얕아도 회수 유지).
-    case 당 1행(최신 label 기준, human_comment 있는 행 우선), 라벨 있는 선례 우선.
+    **(제품, lot, item) 당 1행**(최신 label 기준, human_comment 있는 행 우선) — 2026-08-19
+    까지는 case 당 1행이라 bin 별로 쪼개진 옛 case 가 같은 item 을 여러 줄로 채웠다.
     limit=None 이면 전체 반환(store 계약 — 상한은 호출측 precedent_client 가 건다).
     DB 파일이 없으면(preview 모드 등) 빈 목록 — 빈 파일 생성/크래시 방지.
     """
     if conn is None and not config.DB_PATH.exists():
         return []
     sql = """SELECT fc.case_id, im.item_canonical, fc.bin, im.value_type, fc.product_name,
-                    pm.family_product, cs.signature, l.label_id,
+                    fc.lot_id, pm.family_product, cs.signature, l.label_id,
                     l.root_cause_category, l.human_comment,
                     co.action, co.condition, co.result
              FROM fail_case fc
@@ -744,9 +780,15 @@ def search_precedents(value_type, item_canonical, family_product=None,
         if sim < config.PRECEDENT_NAME_SIMILARITY:
             continue
         r["similarity"] = sim
-        prev = best.get(r["case_id"])
+        # dedup 은 **(제품, lot, item)** 단위다 — case_id 단위로 묶으면 과거에 bin 별로
+        # 쪼개져 적재된 case(2026-08-19 이전 데이터·CSV 적재분)가 같은 item 인데도 각각
+        # 살아남아 선례 목록을 채운다. 실측: 반환 행의 90~94% 가 같은 item 의 복제본이라
+        # top-k 5칸이 사실상 item 1~2개로 채워졌다. 정렬 키(코멘트 유무·발화 겹침·유사도)가
+        # 복제본끼리 전부 동률이라 정렬로도 걸러지지 않는다.
+        key = (r["product_name"], r.get("lot_id"), r["item_canonical"])
+        prev = best.get(key)
         if prev is None or _rank(r) > _rank(prev):
-            best[r["case_id"]] = r
+            best[key] = r
     out = sorted(best.values(),
                  key=lambda r: (r["human_comment"] is not None,
                                 bool(fired) and r.get("signature") in fired,

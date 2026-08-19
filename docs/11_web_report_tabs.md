@@ -329,23 +329,34 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   vendored exceljs(`loadExcelJS`)로 브라우저에서 xlsx 1시트 생성(서버 무관여). 화면과 동일
   컬럼 순서(`orderColumns`)에서 미니차트 열(Map/Distribution)만 빼고 섹션을 Category
   컬럼으로 되살리며, Yield 상세(TNO) 행은 접힘과 무관하게 전부 포함.
-- **Honey Excel Download (전체본) — 기입 엔진 2개 (2026-08-14)**: 진입점은 종전대로
+- **Honey Excel Download (전체본) — XlsxWriter 단일 경로 (2026-08-18)**: 진입점은 종전대로
   [client/excel_download/__init__.py](../client/excel_download/__init__.py)
   `run_excel_download` 하나이고, **서버는 무변경**(기존 조회 GET 만 쓴다 — 계산·렌더·기입은
   전부 클라이언트).
-  - 기본 엔진 **XlsxWriter**([_xlsx.py](../client/excel_download/_xlsx.py)) — Excel 설치·COM
-    없이 xlsx 를 직접 만든다. 되돌리려면 `DEFAULT_ENGINE` 한 줄만 `"com"` 으로.
+  - **엔진 선택 UI 는 없다.** 구 "새 방식으로 만들기" 체크박스를 없애고 항상
+    **XlsxWriter**([_xlsx.py](../client/excel_download/_xlsx.py))로 만든다 — Excel 설치·COM
+    없이 xlsx 를 직접 생성. Honey 다이얼로그에 남은 옵션은 **Bin1 기준 산포** 하나뿐.
   - 폴백 엔진 **Excel COM**([_sheets.py](../client/excel_download/_sheets.py), 동결) —
-    신규 엔진이 실패하면 **이미 받은 데이터·렌더된 PNG 를 재사용해 자동 재시도**하므로
-    파일은 어떤 경우에도 만들어진다. 두 엔진은 `_fill_workbook` 한 벌을 공유하고,
-    COM 쪽은 `_ComBook` 어댑터로 감싼다(`_sheets.py` 자체는 수정하지 않는다).
+    기본 엔진이 실패하면 **이미 받은 데이터·렌더된 PNG 를 재사용해 자동 재시도**하므로
+    파일은 어떤 경우에도 만들어진다(사용자가 고를 수는 없고, 발동 시 완료 안내에만 표기).
+    두 엔진은 `_fill_workbook` 한 벌을 공유하고, COM 쪽은 `_ComBook` 어댑터로 감싼다
+    (`_sheets.py` 자체는 수정하지 않는다).
   - **XlsxWriter 엔진에만 있는 web_report 파리티**: Summary 의 Issue Status·Engr Comment
     카드 / Yield 상단 요약 3표 / fail 빨강 그라데이션(웹 `--yw` 와 같은 hsl 식) /
-    Status 셀 Open·Close 색 / 전처리 안내·Compare·Download Status 시트 /
-    차트 주석(chart_note) PNG 오버레이. 값 계산은 전부 순수 빌더
-    [_extra.py](../client/excel_download/_extra.py) 에 있고 self-run 테스트로 검증한다.
+    Status 셀 Open·Close 색 / Compare 시트 / 차트 주석(chart_note) PNG 오버레이.
+    값 계산은 전부 순수 빌더 [_extra.py](../client/excel_download/_extra.py) 에 있고
+    self-run 테스트로 검증한다.
+    (구 **전처리 안내·Download Status** 시트는 2026-08-18 사용자 요청으로 생성 중단 —
+    경고는 완료 안내창과 Honey 실행 로그로만 보고한다.)
   - 시트 실패는 그 시트에만 안내 문구를 남기고 나머지는 정상 생성하며, 무엇이 빠졌는지는
-    **Download Status 시트**에 모인다. 시간 예산(150s 이미지 skip → 165s 저장)으로 3분 SLA.
+    완료 안내창 경고 목록에 모인다. 시간 예산(150s 이미지 skip → 165s 저장)으로 3분 SLA.
+  - **Issue Table 썸네일**(Map·Distribution)은 가로·세로 각 2배(5.2 x 2.3 in — 2026-08-18).
+    열 너비·행 높이가 이 상수에서 유도되므로 칸도 함께 커진다
+    ([_charts.py](../client/excel_download/_charts.py) `ISSUE_CELL_W_IN`/`ISSUE_CELL_H_IN`).
+  - **Map Analysis 격자**는 좌표마다 벡터 선으로 긋는다
+    ([_map.py](../client/excel_download/_map.py) `_draw_cell_grid`, die 수에 따라 DPI 상향).
+    블록 이미지에 1px 격자를 새기면 축 크기로 리샘플될 때 선이 좌표에 따라 통째로 사라진다
+    (실측: 100x100 die 에서 99개 중 56개만 남았다). 미니셀은 웹과 같은 픽셀 방식 유지.
   - 산포 화질: 차트 렌더 DPI 96 → **144**(웹 카드의 1.5배 선명도). 물리 크기(pt)는
     그대로라 선명도·용량만 바뀐다. 다운샘플은 여전히 없다(규칙 #5) — chip 강조도 종전대로.
     실측(2004항목×7source×1000die): 96→29.0s/46MB · 144→29.2s/83MB · 192→32.6s/120MB

@@ -194,16 +194,23 @@ def _confirm_changes(confirm_cb, payload):
 
 # ── 다운로드/업로드 ──────────────────────────────────────────────────────────
 def _honey_headers():
-    """서버 신원 토큰 — embedded_browser 와 동일 규칙(HoneyUser/<percent-encoded 계정>).
+    """서버 신원 토큰 — embedded_browser 와 동일 규칙
+    (`HoneyUser/<percent-encoded 계정> HoneyVer/<버전>`).
 
     비공개(is_private) 세션은 업로더/위임 편집자 신원이 있어야 조회 가능하다.
-    수집 실패 시 토큰 없이 진행(공개 세션은 무신원으로도 조회됨)."""
+    수집 실패 시 토큰 없이 진행(공개 세션은 무신원으로도 조회됨).
+    버전 토큰은 관리자 화면 표시용이며 접근제어와 무관하다."""
     try:
         import client_identity
         user = client_identity.collect().get("user", "")
     except Exception:
         user = ""
-    return {"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')}"} if user else {}
+    try:
+        from transport.config import CURRENT_VERSION
+    except Exception:      # Qt 비의존 단독 실행/테스트 폴백
+        CURRENT_VERSION = ""
+    return ({"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')} "
+                           f"HoneyVer/{CURRENT_VERSION}"} if user else {})
 
 
 def _cache_dir(session_id):

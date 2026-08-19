@@ -152,20 +152,22 @@ async function retryWhileBuilding(res, refetch) {
   return res;
 }
 
-// ── AI Comment 백그라운드 완료 폴링 (2026-08-13) ─────────────────────────────
-// AI Comment 세션의 콜드 첫 조회는 서버가 AI 없는 pending payload(web_report.
-// ai_comment_pending=true)를 먼저 돌려줘 리포트가 즉시 열린다. AI 평가는 서버
-// 백그라운드 'ai' 잡이 하고, 끝나면 /full 이 최종본(플래그 없음)을 준다. 여기서
-// 주기적으로 재조회해 도착하면 화면을 다시 그린다 — 셀 단위 패치를 만들지 않는
-// 이유: ETC 자동행·Signature 구성은 서버 1곳(issue_table.py)이 만든다(재계산 금지).
+// ── 백그라운드 계산 완료 폴링 (2026-08-13 AI Comment, 2026-08-19 Compare) ─────
+// 무거운 계산이 붙은 세션의 콜드 첫 조회는 서버가 그 부분을 비운 pending payload
+// (web_report.ai_comment_pending / .compare_pending)를 먼저 돌려줘 리포트가 즉시 열린다.
+// 실제 계산은 서버 백그라운드 잡('ai'/'compare')이 하고, 끝나면 /full 이 최종본(플래그
+// 없음)을 준다. 여기서 주기적으로 재조회해 도착하면 화면을 다시 그린다 — 셀 단위 패치를
+// 만들지 않는 이유: ETC 자동행·Signature·Compare 표 구성은 서버 1곳이 만든다(재계산 금지).
 const AI_POLL = { INTERVAL_MS: 5000, MAX_MS: 20 * 60 * 1000 };
 let _aiPoll = null;
 function stopAiPendingPoll() { if (_aiPoll) { clearTimeout(_aiPoll); _aiPoll = null; } }
 function _aiPendingActive() {
   // 폴링을 계속할지의 판정 — 표시 상태(sheets.js aiCommentState)와 달리 실패 여부를
   // 보지 않는다(실패해도 payload 는 여전히 pending 이다).
-  try { return !!(DATA && DATA.web_report && DATA.web_report.ai_comment_pending); }
-  catch (e) { return false; }
+  try {
+    const web = (DATA && DATA.web_report) || {};
+    return !!(web.ai_comment_pending || web.compare_pending);
+  } catch (e) { return false; }
 }
 // 폴링을 포기했다 — 셀 문구를 "Loading 중…"에서 "미완료"로 바꾼다. 안 그러면 오지 않을
 // 결과를 사용자가 계속 기다린다(리포트 자체는 정상이라 에러 화면을 띄울 일은 아니다).
@@ -197,7 +199,7 @@ function maybeStartAiPendingPoll() {
       if (res.status === 200) {
         const data = await res.json();
         const web = data.web_report || {};
-        if (!web.ai_comment_pending) {
+        if (!web.ai_comment_pending && !web.compare_pending) {
           if (_editingNow()) {
             // 사용자가 입력 중 — 다시 그리면 입력을 잃는다(불변 규칙 #12). 잠시 후 재시도.
             _aiPoll = setTimeout(tick, 3000);

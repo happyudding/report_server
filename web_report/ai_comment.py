@@ -278,16 +278,49 @@ def _case_sig_ids(case) -> list:
     return primary + rest
 
 
-def _to_row_keys(cases_by_key):
-    """(item_raw, bin) case 들 → {"comments": row_key 사전, "etc_auto_items": [...]}.
+def fail_bins_by_item(tables) -> dict:
+    """{item: [fail bin…]} — Issue Table 에 Yield 행이 생기는 (bin, item) 조합.
 
-    row_key 규약(tabs/issue_table.py): fail bin(≠1) 케이스는 Yield|<bin>|<item>,
-    item 별 worst 케이스를 CPK|<item> / ETC|<item> 폴백으로도 채운다 — CPK/ETC
-    섹션 행은 bin 이 없어 item 만으로 매칭하고, 미사용 키는 그냥 버려진다.
+    엔진 case 가 **item 당 1개**가 된 뒤로(2026-08-19) case 에서는 그 item 이 어느 bin 행에
+    걸리는지 알 수 없다. 그래서 화면 행 구성의 정본인 `yield_tab.fail_counts_by_source`
+    (Issue Table Yield 행을 만드는 바로 그 집계)에서 가져온다 — 다른 데서 세면 코멘트가
+    붙는 행과 실제로 그려지는 행이 갈린다(CLAUDE.md 규칙 13, 재계산 금지).
+    Pass bin(1)은 fail 행이 아니므로 제외한다.
+    """
+    from .tabs.yield_tab import fail_counts_by_source
+    out: dict = {}
+    for table in tables or ():
+        for (bin_value, item), cnt in fail_counts_by_source(table).items():
+            if not cnt or not item:
+                continue
+            try:
+                b = int(float(bin_value))
+            except (TypeError, ValueError):
+                continue
+            if b == _PASS_BIN:
+                continue
+            bins = out.setdefault(str(item), [])
+            if b not in bins:
+                bins.append(b)
+    return {k: sorted(v) for k, v in out.items()}
 
-    etc_auto_items = fail bin 케이스가 하나도 없는데(=Issue Table 에 Yield 행이
-    생기지 않는데) signature 가 발화한 item. 수율·cpk 는 정상인데 분포만 이상한
-    항목이 표 어디에도 안 나오던 공백을 ETC 섹션 자동 행으로 메운다.
+
+def _to_row_keys(cases_by_item, fail_bins=None):
+    """item 별 case → {"comments": row_key 사전, "etc_auto_items": [...]}.
+
+    row_key 규약(tabs/issue_table.py): 그 item 이 걸리는 **모든 fail bin 행**
+    `Yield|<bin>|<item>` 에 같은 셀을 채우고(fan-out), CPK|<item> / ETC|<item> 도 채운다.
+    미사용 키는 그냥 버려진다.
+
+    **왜 fan-out 인가** (2026-08-19): 엔진 case 가 item 당 1개가 되면서 판정도 item 단위가
+    됐다 — 그 item 의 fail 전체를 보고 낸 결론이므로 어느 bin 행에 놓든 같은 값이 맞다.
+    대표 bin 행에만 넣으면 나머지 Yield 행이 빈 셀이 되어 명백한 회귀가 된다.
+    `fail_bins` 는 `fail_bins_by_item(tables)` 결과이며, 없으면(구 호출부·테스트) case 의
+    대표 bin 한 행에만 채운다.
+
+    etc_auto_items = fail 이 하나도 없는데(=Issue Table 에 Yield 행이 생기지 않는데)
+    signature 가 발화한 item. 수율·cpk 는 정상인데 분포만 이상한 항목이 표 어디에도
+    안 나오던 공백을 ETC 섹션 자동 행으로 메운다.
     cpk<1.33 항목과의 중복 제외는 cpk_rows 를 가진 issue_table 쪽이 한다.
 
     row_signatures = 같은 row_key 규약으로 담은 **발화 signature id 목록**. Issue Table
@@ -296,29 +329,29 @@ def _to_row_keys(cases_by_key):
     """
     out = {}
     sigs = {}
-    worst_by_item = {}
     fail_bin_items, fired_items = set(), set()
-    for (item, bin_), case in cases_by_key.items():
+    for item, case in cases_by_item.items():
         if not item:
             continue
         ids = _case_sig_ids(case)
-        if bin_ is not None and bin_ != _PASS_BIN:
-            out[f"Yield|{bin_}|{item}"] = _cell_text(case)
+        text = _cell_text(case)
+        bins = (fail_bins or {}).get(item)
+        if bins is None:
+            # 폴백 — case 의 대표 bin 한 행만(구 호출부 호환).
+            rep = case.get("bin")
+            bins = [rep] if (rep is not None and rep != _PASS_BIN) else []
+        for b in bins:
+            out[f"Yield|{b}|{item}"] = text
             if ids:
-                sigs[f"Yield|{bin_}|{item}"] = ids
+                sigs[f"Yield|{b}|{item}"] = ids
             fail_bin_items.add(item)
         # UNKNOWN(미분류 명시 발화)만 있는 케이스는 ETC 자동 행을 만들지 않는다 —
         # 자동 행의 취지는 "표 어디에도 안 나오는데 룰이 뭔가 잡아낸 항목" 이라,
         # 설명하지 못했다는 표시만으로 표를 늘리면 취지에 반한다.
         if any(str(s.get("id")) != UNKNOWN_SIGNATURE for s in (case.get("signatures") or [])):
             fired_items.add(item)
-        prev = worst_by_item.get(item)
-        if prev is None or _rank(case) > _rank(prev):
-            worst_by_item[item] = case
-    for item, case in worst_by_item.items():
-        out.setdefault(f"CPK|{item}", _cell_text(case))
-        out.setdefault(f"ETC|{item}", _cell_text(case))
-        ids = _case_sig_ids(case)
+        out.setdefault(f"CPK|{item}", text)
+        out.setdefault(f"ETC|{item}", text)
         if ids:
             sigs.setdefault(f"CPK|{item}", ids)
             sigs.setdefault(f"ETC|{item}", ids)
@@ -333,8 +366,10 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None):
             "row_signatures": {row_key: [signature id...]},
             "signature_options": [{"id","enabled"}...]}.
     selected_items 필터는 build_report_payload 의 in-place 필터와 동일 집합으로
-    적용한다(미선택 item 평가 회피). 여러 소스에서 같은 (item, bin) 케이스가 나오면
+    적용한다(미선택 item 평가 회피). 여러 소스에서 같은 **item** 케이스가 나오면
     severity 높은 쪽이 남고, 동률이면 이봉(BIMODALITY) 발화 쪽이 남는다(_rank).
+    (2026-08-19: 엔진 case 가 item 당 1개가 되어 키에서 bin 이 빠졌다 — 소스 간 대표
+    선정이라는 _rank 의 역할 자체는 그대로다.)
 
     fail_only=None 이면 서버 기본(env). 참이면 fail 이 1chip 이상인 item 만 평가한다 —
     그 결과 **수율·cpk 는 정상인데 룰만 위반한 item(etc_auto_items)이 생기지 않는다**.
@@ -364,11 +399,11 @@ def build_ai_comments(tables, session, selected_items=None, fail_only=None):
         raw_df = _table_to_raw_df(table, items)
         result = evaluate({"meta": meta, "raw_df": raw_df}, persist=False)
         for case in result.get("cases") or []:
-            key = (str(case.get("item_raw") or ""), case.get("bin"))
+            key = str(case.get("item_raw") or "")
             prev = best.get(key)
             if prev is None or _rank(case) > _rank(prev):
                 best[key] = case
-    return _to_row_keys(best)
+    return _to_row_keys(best, fail_bins_by_item(tables))
 
 
 def safe_build_ex(tables, session, selected_items=None, fail_only=None):

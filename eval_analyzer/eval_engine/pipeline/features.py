@@ -22,18 +22,23 @@ _FEATURE_KEYS = [
     "ring_fail_ratio",
     "radial_gradient_norm", "x_gradient_norm", "y_gradient_norm",
     "n_modes","modality_v2",
-    # 파생(DB 미저장 — store.save_features cols 에 없음): separated 판정·트레이스 표시용
+    # ── 아래는 전부 **룰의 판정 기준값**이라 v9(2026-08-19)부터 DB 에 저장한다
+    # (store._V9_FEATURE_COLS). 저장 이전 행은 NULL 이며 소급 채움이 불가능하다
+    # (per-DUT 원본에서만 나온다) — 재수집해야 채워진다.
+    # separated 판정·트레이스 표시용
     "value_gap_ratio", "value_gap_minor_mass",
-    # 파생(DB 미저장): E1(최외곽 1 chip line) 집중도 · 모멘트 왜도
-    "e1_fail_ratio", "skewness_moment",
-    # 파생(DB 미저장): OUTLIER 판정용 — 거리(MAD 배수) AND 끊김(body_jump_ratio).
+    # OUTLIER 판정용 — 거리(MAD 배수) AND 끊김(body_jump_ratio).
     # gap_sigma·z_max 는 evidence 참고값(2026-08-14 판정에서 제외 — features 상단 참조)
     "fail_mad_min", "fail_pass_gap_sigma", "fail_robust_z_max", "fail_body_jump_ratio",
-    # 파생(DB 미저장): 공간 룰 판정용 — 전체 fail 중 그 영역이 차지하는 **점유율**
-    "e1_fail_share", "edge_fail_share", "center_fail_share", "ring_fail_share",
-    # 파생(DB 미저장): fail 좌표 몰림도(SPOT_CLUSTER) · 꼬리 질량(HEAVY_TAIL) ·
+    # 공간 룰 판정용 — 전체 fail 중 그 영역이 차지하는 **점유율**
+    "edge_fail_share", "center_fail_share", "ring_fail_share",
+    # fail 좌표 몰림도(SPOT_CLUSTER) · 꼬리 질량(HEAVY_TAIL) ·
     # CODE 레일 상/하단 분리(CODE_RAIL evidence)
     "fail_spread_norm", "tail_mass_3s", "rail_low_ratio", "rail_high_ratio",
+    # 파생(DB 미저장): E1(최외곽 1 chip line) 집중도 · 모멘트 왜도
+    "e1_fail_ratio", "skewness_moment",
+    # E1_FAIL 판정용 점유율 — v9 저장 대상
+    "e1_fail_share",
 ]
 
 
@@ -48,29 +53,40 @@ def _empty_features():
 _UNSET = object()
 
 
-def _cdf_gap(v):
+def _finite_uniq(v, finite=None):
+    """유한값의 (finite_v, uniq, counts) — `np.unique` 정렬 1회를 세 소비자가 공유한다.
+
+    `_cdf_gap`·`_value_gap`·`_grid_step` 이 각자 같은 배열을 정렬하던 것을 합친 것이라
+    **값은 완전히 동일**하다(2026-08-19). `finite` 를 주면 유한 필터를 건너뛴다
+    (`_grid_step` 은 호출부가 이미 유한값만 넘긴다 — 종전 동작 유지).
+    """
+    fv = v if finite is not None else v[np.isfinite(v)]
+    uniq, cnt = np.unique(fv, return_counts=True)
+    return fv, uniq, cnt
+
+
+def _cdf_gap(v, uq=None):
     """ECDF(CODE_TO_PORT §3) 후 인접 누적% 최대 점프.
 
     주의: 이 값은 "최다 동일값 하나가 차지하는 질량(%)"이다 — 값 축의 빈 구간(분리)이
     아니라 동일값 쏠림(양자화/clamp) 신호다. 분리 판정에는 _value_gap 을 쓴다.
+    `uq` 는 `_finite_uniq` 결과 공유용(없으면 여기서 만든다 — 값 동일).
     """
-    v = v[np.isfinite(v)]
-    if v.size == 0:
+    fv, _, cnt = uq if uq is not None else _finite_uniq(v)
+    if fv.size == 0:
         return None
-    # np.unique 가 내부에서 정렬한다 — 종전 np.unique(np.sort(v)) 와 결과 동일, 정렬 1회 절감.
-    uniq, cnt = np.unique(v, return_counts=True)
-    cum = np.cumsum(cnt) / v.size * 100.0
+    cum = np.cumsum(cnt) / fv.size * 100.0
     return float(np.max(np.diff(cum))) if len(cum) > 1 else 0.0
 
 
-def _value_gap(v):
+def _value_gap(v, uq=None):
     """값 축 최대 인접 간격 → (간격/전체범위, 간격 양쪽 중 소수쪽 질량).
 
     separated(분리) 판정용 — 두 무리 사이의 실제 빈 구간을 본다. cdf_gap(동일값 질량)과
     다르다. 고유값 2개 미만이거나 범위 0 이면 (None, None).
+    `uq` 는 `_finite_uniq` 결과 공유용(없으면 여기서 만든다 — 값 동일).
     """
-    v = v[np.isfinite(v)]
-    uniq = np.unique(v)
+    v, uniq, _ = uq if uq is not None else _finite_uniq(v)
     if uniq.size < 2:
         return None, None
     rng = float(uniq[-1] - uniq[0])
@@ -89,16 +105,22 @@ _GRID_MASS_MIN = 0.8        # 계단 위에 있어야 할 최소 질량 비율
 _GRID_TOL = 0.25            # 계단 간격이 기본 간격의 정수배에서 벗어나도 되는 허용 오차
 
 
-def _grid_step(v):
+def _grid_step(v, uq=None):
     """값이 일정 간격 격자(양자화 계단) 위에 있으면 그 간격, 아니면 None.
 
     도수가 적은 값(밀려난 fail chip 등)은 제외하고 **몸통을 이루는 계단**만 본다.
+    `uq` 는 `_finite_uniq` 결과 공유용(없으면 여기서 만든다 — 값 동일).
     """
-    uniq, cnt = np.unique(v, return_counts=True)
-    heavy = uniq[cnt >= max(2, 0.005 * v.size)]
+    if uq is not None:
+        _, uniq, cnt = uq
+    else:
+        uniq, cnt = np.unique(v, return_counts=True)
+    # 같은 마스크를 두 번 만들던 것을 1회로 (값 동일).
+    keep = cnt >= max(2, 0.005 * v.size)
+    heavy = uniq[keep]
     if heavy.size < _GRID_MIN_LEVELS:
         return None
-    if float(cnt[cnt >= max(2, 0.005 * v.size)].sum()) < _GRID_MASS_MIN * v.size:
+    if float(cnt[keep].sum()) < _GRID_MASS_MIN * v.size:
         return None
     diffs = np.diff(heavy)
     step = float(np.median(diffs))
@@ -111,11 +133,13 @@ def _grid_step(v):
     return step
 
 
-def _histogram_peaks(v):
+def _histogram_peaks(v, uq=None):
     """히스토그램 + 국소 최대(양옆 bin 보다 큰) 인덱스. 표본 8 미만이면 None(판정 불가).
 
     반환: (peaks, hist). bin 수는 표본 크기에 따라 5~20 사이. `_density_gap` 과 `_n_modes`
     가 **같은 히스토그램**을 봐야 골 깊이와 봉우리 수가 어긋나지 않으므로 둘이 공유한다.
+    `uq` 는 `_grid_step` 에 넘길 `_finite_uniq` 결과 — **v 와 같은 배열에서 나온 것만**
+    넘겨야 한다(호출부가 유한 필터 no-op 을 확인한다). 값은 동일.
 
     ⚠ **양자화 격자 정렬**(2026-08-13): 값이 계단형(CODE·PCT 등)이면 bin 폭이 계단 간격보다
     좁아 **빈 칸이 사이사이 끼며 가짜 봉우리**가 생긴다. 실측 예 — step 0.125 인 단봉
@@ -126,7 +150,7 @@ def _histogram_peaks(v):
     if v.size < 8:
         return None
     bins = min(20, max(5, v.size // 5))
-    step = _grid_step(v)
+    step = _grid_step(v, uq)
     grid_counts = None
     if step:
         idx = np.round((v - v.min()) / step).astype(int)
@@ -382,7 +406,7 @@ def _spatial_geometry(case_ctx):
             "e1": _e1_mask(xs, ys)}
 
 
-def _spatial_features(case_ctx, th, geom=_UNSET):
+def _spatial_features(case_ctx, th, geom=_UNSET, fm_in=None):
     """웨이퍼 좌표 기반 fail 편중 feature. 좌표가 없거나 fail 이 0 이면 전부 None.
 
     반경을 최대반경으로 정규화해 edge/center/ring 영역을 가르고, 영역마다 두 가지를 낸다:
@@ -396,6 +420,8 @@ def _spatial_features(case_ctx, th, geom=_UNSET):
     영역 경계(edge_region_pct/center_region_pct)는 thresholds.yaml.
     geom 은 _spatial_geometry 결과 재사용용(compute 가 item 단위로 공유) — 미전달이면
     여기서 계산한다(종전 동작·직접 호출 테스트 호환).
+    fm_in 은 이미 bool ndarray 로 만든 fail_mask 재사용용(compute 가 case 단위로 1회
+    변환) — 미전달이면 여기서 변환한다. 값은 동일하다.
     """
     fail_mask = case_ctx.get("fail_mask") or []
     out = {"edge_fail_ratio": None, "center_fail_ratio": None, "radial_gradient": None,
@@ -408,7 +434,7 @@ def _spatial_features(case_ctx, th, geom=_UNSET):
            "fail_spread_norm": None}
     if geom is _UNSET:
         geom = _spatial_geometry(case_ctx)
-    fm = np.asarray(fail_mask, dtype=bool)
+    fm = fm_in if fm_in is not None else np.asarray(fail_mask, dtype=bool)
     if geom is None or fm.sum() == 0:
         return out
 
@@ -646,13 +672,20 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     else:
         modality = None
 
+    # 값 정렬(np.unique)을 **1회만** 한다 — _cdf_gap·_value_gap·_grid_step 이 각자
+    # 같은 배열을 정렬하던 것을 합쳤다(2026-08-19, 값 동일). item 단위 메모라 같은
+    # item 의 bin 이 여러 개여도 정렬은 한 번뿐이다.
+    uq = _memo("finite_uniq", lambda: _finite_uniq(v))
+    # _grid_step 은 호출부가 유한 필터를 안 거친 v 를 쓰던 함수라, **필터가 no-op 일
+    # 때만** 공유본을 넘긴다(비유한이 섞였으면 종전대로 v 로 다시 계산 — 값 보존).
+    uq_raw = uq if uq[0].size == v.size else None
     # _density_gap 과 _n_modes 는 같은 히스토그램을 봐야 한다(각 함수 docstring) —
     # 1회 계산해 공유(종전에는 같은 입력으로 두 번 계산했다).
-    peaks_hist = _memo("peaks_hist", lambda: _histogram_peaks(v))
+    peaks_hist = _memo("peaks_hist", lambda: _histogram_peaks(v, uq_raw))
     density_gap = _memo("density_gap", lambda: _density_gap(v, peaks_hist))
-    cdf_gap = _memo("cdf_gap", lambda: _cdf_gap(v))
+    cdf_gap = _memo("cdf_gap", lambda: _cdf_gap(v, uq))
     n_modes = _memo("n_modes", lambda: _n_modes(v, peaks_hist))
-    value_gap_ratio, value_gap_minor_mass = _memo("value_gap", lambda: _value_gap(v))
+    value_gap_ratio, value_gap_minor_mass = _memo("value_gap", lambda: _value_gap(v, uq))
     modality_v2 = _classify_modality_v2(
         n, outlier_ratio, n_modes, bimodality_score, density_gap, value_gap_ratio,
         value_gap_minor_mass, th,
@@ -663,26 +696,37 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
     if spec_margin_low is not None and spec_margin_high is not None:
         nearest_spec_side = "LOW" if spec_margin_low < spec_margin_high else "HIGH"
 
+    # limit/rail 3종은 **같은 isclose 두 개**로 전부 나온다 — 종전에는 4번 돌렸다
+    # (limit 이 lo|hi 를 자기 것으로 또 계산). 1회로 합친다(2026-08-19, 값 동일).
+    rail_hits = _memo("rail_hits", lambda: (
+        (None if lsl is None else np.isclose(v, lsl),
+         None if usl is None else np.isclose(v, usl))))
+    lo_hit, hi_hit = rail_hits
     limit_hit_ratio = _memo("limit_hit_ratio", lambda: (
-        float(np.mean(np.isclose(v, lsl) | np.isclose(v, usl)))
-        if (lsl is not None and usl is not None) else None))
+        float(np.mean(lo_hit | hi_hit))
+        if (lo_hit is not None and hi_hit is not None) else None))
     # 레일 포화를 **상·하단으로 갈라** 보여 준다 — 조치가 다르다(하단 레일은 trim 하한
     # 부족, 상단은 상한 부족). 판정은 종전대로 limit_hit_ratio 합계(code_edge_hit).
     rail_low_ratio = _memo("rail_low_ratio", lambda: (
-        float(np.mean(np.isclose(v, lsl))) if lsl is not None else None))
+        float(np.mean(lo_hit)) if lo_hit is not None else None))
     rail_high_ratio = _memo("rail_high_ratio", lambda: (
-        float(np.mean(np.isclose(v, usl))) if usl is not None else None))
+        float(np.mean(hi_hit)) if hi_hit is not None else None))
 
+    # fail_mask 는 case 단위(bin 마다 다름)라 item 메모가 아니라 여기서 1회 변환해
+    # 세 소비자가 공유한다 — 종전에는 파이썬 bool 리스트를 3번 다시 ndarray 로 만들었다
+    # (2026-08-19, 값 동일 — np.asarray 는 이미 bool ndarray 면 그대로 돌려준다).
+    fm = np.asarray(case_ctx.get("fail_mask") or [], dtype=bool)
     spatial = _spatial_features(case_ctx, th,
                                 _memo("spatial_geom",
                                       lambda: _spatial_geometry(case_ctx),
-                                      store=geom_store))
+                                      store=geom_store),
+                                fm_in=fm)
     site_cpk_delta = _site_cpk_delta(case_ctx)
     code_edge_hit = limit_hit_ratio if case_ctx.get("value_type") == "CODE" else None
     fail_mad_min, fail_pass_gap_sigma, fail_robust_z_max = _fail_outlier_features(
-        v, case_ctx.get("fail_mask") or [], median, mad, z=modified_z)
+        v, fm, median, mad, z=modified_z)
     fail_body_jump_ratio = _fail_body_jump_ratio(
-        v, case_ctx.get("fail_mask") or [], median, mad, th, z=modified_z)
+        v, fm, median, mad, th, z=modified_z)
 
     if is_pf:
         spread_norm = skewness = kurtosis = skewness_moment = None

@@ -59,9 +59,11 @@ CELL_H_IN = 2.2
 # 144 를 기본으로 잡았다. 더 선명하게(웹 HiDPI 급) 원하면 192, 파일을 더 줄이려면 96.
 # COM 경로는 그림 삽입 비용이 픽셀 수에 비례(~36ms/Mpx)하므로 폴백 시 이 값이 곧 비용이다.
 DPI = 144
-# Issue Table 행별 단일 CDF 썸네일 크기(inch) — 행 높이에 맞춰 작게.
-ISSUE_CELL_W_IN = 2.6
-ISSUE_CELL_H_IN = 1.15
+# Issue Table 행별 단일 CDF 썸네일 크기(inch).
+# 열 너비·행 높이가 이 값에서 유도되므로(_xlsx.write_issue_sheet) 칸도 함께 커진다 —
+# 2026-08-18 가로·세로 각 2배(2.6x1.15 → 5.2x2.3)로 올려 칸을 채우게 했다.
+ISSUE_CELL_W_IN = 5.2
+ISSUE_CELL_H_IN = 2.3
 ISSUE_DPI = 192               # 썸네일만 2배 해상도(물리 크기는 pt 로 고정 — 확대 시 선명)
 ISSUE_MAP_IN = ISSUE_CELL_H_IN   # Map 썸네일은 정사각(행 높이 = CDF 썸네일 높이)
 

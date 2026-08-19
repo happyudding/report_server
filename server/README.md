@@ -118,7 +118,9 @@ S3 키 prefix(`REPORT_S3_*_PREFIX`, 모두 `pe/report_server/` 네임스페이�
 | `REPORT_AUDIT_RETENTION_DAYS` | `365` | 감사 로그 롤오프. 0 이하 = 무기한. **cleanup dry-run 과 무관하게 항상 실행** |
 | `REPORT_CHATBOT_RETENTION_DAYS` | `90` | 챗봇 질문/답변 **전문** 보존. 삭제 직전 `report_chatbot_daily` 일별 비식별 집계로 접는다(추이·부하 지표는 영구). dry-run 무관 |
 | `REPORT_USAGE_HOURLY_RETENTION_DAYS` | `90` | 시간별 사용량(`report_usage_hourly`) 롤오프 — 요일×시간 히트맵용이라 최근 구간만 필요. dry-run 무관 |
-| `REPORT_USAGE_DAILY_RETENTION_DAYS` | `730` | 일별 사용량·Peak 롤오프(장기 추이라 2년). dry-run 무관 |
+| `REPORT_USAGE_DAILY_RETENTION_DAYS` | `730` | 일별 사용량·Peak 롤오프(장기 추이라 2년). **eval 지표 일별 집계(`report_eval_daily`)도 이 값을 쓴다**. dry-run 무관 |
+| `REPORT_EVAL_ROLLUP_DAYS` | `14` | eval 룰 지표 일별 집계에서 **매번 다시 계산하는 최근 구간**(일). 누적 더하기가 아니라 덮어쓰기라 재실행이 안전하다 — 세션 재수집·뒤늦은 Close 가 과거 날짜 값을 바꾸므로 겹쳐 본다. 0 이하 = 집계 안 함. dry-run 무관(비파괴) |
+| `REPORT_EVAL_PURGE_STALE_RUNS` | `0`(끔) | eval.db 옛 스냅샷 run 정리. `force` 재수집이 기존 run 을 지우지 않고 새로 쌓기 때문에(사람 라벨 보호) 반복하면 판정 사본이 늘어난다. 같은 (세션,소스)의 **최신이 아니고 라벨이 하나도 안 붙은** run 만 걷는다(`fail_case`·`label`·마스터는 보존). **`REPORT_CLEANUP_DRYRUN` 을 존중**한다 — 켜기 전에 dry-run 로그로 대상 수를 먼저 볼 것 |
 | `REPORT_DB_BACKUP_ENABLED` / `_INTERVAL_HOURS` / `_KEEP` / `_DIR` | `1` / `24` / `7` / `<db>/backup` | 온라인 백업 사이클. 대상은 report.db + eval.db (voc.db 는 VOC 미사용 중이라 제외, DB 별 prefix 로 rotation) |
 | `REPORT_DB_BACKUP_EXTERNAL_DIR` | (없음) | 지정 시 integrity 통과 백업본을 이 경로로도 복사(best-effort). 같은 디스크 사망 대비 |
 | `REPORT_WEBREPORT_TOTAL_MB` | `1024` | web_report parquet **합계** 상한. 개별 파일은 512MB 고정, 요청 전체는 `MAX_CONTENT_LENGTH_MB` |
@@ -381,7 +383,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 
 | 메서드 | 경로 | 설명 |
 |--------|------|------|
-| `GET` | `/honey/version` | 버전 정보 JSON (`version.json` 반환). 호출을 'Honey 실행'으로 사용자별 집계 (`report_usage_daily`, 신원은 HoneyUser UA — 구버전 클라는 IP). **`?probe=1` 이면 집계를 건너뛴다** — 웹 페이지가 다운로드 버튼의 링크·파일명을 보정하려고 부르는 경우(실행이 아니다). `/pe` 랜딩이 이걸 쓰고, 응답 내용은 완전히 동일하다 |
+| `GET` | `/honey/version` | 버전 정보 JSON (`version.json` 반환). 호출을 'Honey 실행'으로 사용자별 집계 (`report_usage_daily`, 신원은 HoneyUser UA — 구버전 클라는 IP). **`?probe=1` 이면 집계를 건너뛴다** — 웹 페이지가 다운로드 버튼의 링크·파일명을 보정하려고 부르는 경우(실행이 아니다). `/pe` 랜딩이 이걸 쓰고, 응답 내용은 완전히 동일하다. UA 에 `HoneyVer/<버전>` 토큰이 있으면 **버전 대장**(`report_client_version`)도 함께 갱신한다 — 클라 버전이 바뀌는 시점이 곧 앱 시작이라 서버가 버전을 기록하는 지점은 여기 하나뿐이다 |
 | `GET` | `/honey/download` | Honey exe/ZIP 다운로드 |
 | `GET` | `/honey/announcement` | 릴리스 공지 원문 (`releases/announcement.txt` 그대로, text/plain). 클라가 최신 버전 실행 중일 때 PC 계정별 1회 팝업 → [docs/04](../docs/04_honey_update.md) |
 
@@ -447,8 +449,26 @@ watchdog 병합 + **증거 기반 원인 안내**) / `POST /api/diagnostics/even
 (Honey UA / SSO 헤더 / 웹 로그인), 없으면 `ip:<addr>` 로 묶는다. 관리자 자신·`/healthz`
 (watchdog 폴링)·정적 파일은 집계에서 제외. `GET /api/runtime` 응답에도 같은 값이
 `active_users` 로 실린다(현황 탭 요약 타일용, `?user_window=`).
+각 행에는 **클라 버전**(`ver`, 출처 `ver_src`: `ua`=지금 요청의 UA 토큰 / `db`=버전 대장
+폴백 / 빈 값=버전을 안 보내는 구버전)과 **접속 경로**(`agents`: `app`=Honey 앱 요청,
+`browser`=내장 브라우저 — 누적이라 둘 다 나올 수 있다), 보고 있는 세션이 콜드 빌드 중이면
+`waiting`(stage·경과초, 소스는 `build_status` 메모리 스냅샷이라 DB 접근 없음)이 함께 실린다.
+**활동 타임라인**: `GET /api/user_timeline?key=&window=` — 그 사람의 최근 요청
+(경로·세션·소요 ms·상태코드). 소스는 사람당 최근 20건 메모리 링버퍼라 재시작 시 비워진다.
+**Honey 버전 현황**: `GET /api/client_versions?days=` — 최근 N일 안에 Honey 를 실행한
+**전원**(지금 접속 중이 아니어도)의 버전 분포와 사용자별 마지막 실행 버전. 모집단이
+`report_usage_daily`(honey_run)라 버전 미보고 사용자도 '미상' 행으로 남는다 — 그게 곧
+업데이트 대상이다. 최신 배포 버전(`latest`)은 `releases/version.json` 에서 읽어 동봉한다.
 관리자 화면에서 **사용자 관련 화면은 전부 `사용자` 탭에 모여 있다** — 지금 접속 중(실시간) /
-누적 사용량(작업 활동·접속 횟수) / 웹 로그인 계정. 통계 탭은 일별 추이와 최근 활동만 담당한다.
+누적 사용량(작업 활동·접속 횟수) / 사용자 이름 관리. 통계 탭은 일별 추이와 최근 활동만 담당한다.
+**사용자 이름 관리**(`GET /api/users`, `POST /api/user/<uid>/name`)의 목록 대상은 웹 로그인
+계정이 아니라 **이 서버에 흔적을 남긴 사람 전체**다 — `report_user` ∪ `report_user_profile`
+∪ `report_web_visitor` ∪ `report_usage_daily`(무신원 `ip:` 행 제외)를 uid 로 합친다
+([users_admin.py](admin_panel/users_admin.py) `_PEOPLE_CTE`). ID/PW 로그인 폐지 후 계정 행은
+더 늘지 않으므로 계정만 보면 실제 Honey 사용자가 표에 없다. 관리자는 여기서 사용자 실명을
+직접 지정/변경할 수 있고(오타·개명·미입력 대응, 한글 2~10자 — 사용자 본인 경로는
+`POST /pe/report/api/auth/display_name`), 비밀번호·삭제 버튼은 웹 로그인 계정이 있는 행에만
+뜬다.
 
 **"IP 가 같으면 같은 사용자" 병합** ([admin_panel/identity_merge.py](admin_panel/identity_merge.py)):
 신원 토큰 없는 접속은 `ip:<addr>` 로 잡혀 한 사람이 계정 행 + IP 행으로 갈라져 보인다.
@@ -491,10 +511,18 @@ eval_analyzer 의 임계값·signature 를 브라우저에서 고치고 **서버
 | `GET`/`POST` | `/api/backups[/restore]` | 저장 직전 백업 목록 / 복원 |
 | `GET` | `/api/sessions` | 트레이스 대상 web_report 세션 목록 |
 | `POST`/`GET` | `/api/trace[/<token>/case/<i>]` | L0~L6 트레이스 실행(요약) / 케이스 상세 |
+| `GET` | `/api/eval/scoring` | 엔진 판정 ↔ 사람 정답 채점(전체 누적) — 혼동행렬·precision/recall |
+| `GET` | `/api/golden/auto` | 임계값 저장 직후 **자동 실행된** 골든 회귀의 최신 상태(running/done/empty/skipped/error). 저장은 되돌리지 않고 사후 경고만 한다 — rev 가 이미 올라 리포트 캐시가 무효화됐으므로 롤백이 비싸다. 결과는 프로세스 메모리(재시작 시 소멸), `trace_store` 에는 **넣지 않는다**(LRU 4런이라 관리자가 보던 트레이스를 밀어낸다) |
+| `GET` | `/api/eval/trend?days=` | **일별 지표 추이**(`report_eval_daily`) — UNKNOWN 비율·signature 확정 일치율·코멘트 정합률·status 일치율. 비율이 아니라 **카운터**를 돌려주고 화면이 나눈다. 수집 이전 날짜는 행 자체가 없다(‘0’ 과 ‘기록 없음’ 은 다르다) |
+| `POST` | `/api/eval/trend/rollup` | 지금 즉시 재집계(스케줄러 24h 를 기다리지 않을 때). 최근 `REPORT_EVAL_ROLLUP_DAYS` 일 **덮어쓰기**라 여러 번 눌러도 값이 부풀지 않는다 |
 
 저장은 검증 → `rules/_backup/` 백업 → 원자적 쓰기 → `rules/.rules_rev` +1 → 감사
 (`action=eval_rules_edit`, `client_user=eval-panel`) 순. rev 는 ai_comment 옵션 세션의
 report 캐시 키에 실려 다음 조회에서 재평가를 강제한다.
+**임계값이 실제로 바뀌면(no_op 아님) 골든 회귀가 백그라운드로 자동 실행된다**(2026-08-19) —
+저장 응답을 붙잡지 않는다(회귀는 골든 세션마다 트레이스 1회라 초~분). 화면은
+`/api/golden/auto` 를 3초 간격으로 폴링해 "통과 / N건 어긋남"을 임계값 탭에 띄운다.
+다른 트레이스가 CPU 를 쓰고 있으면 겹쳐 돌리지 않고 `skipped` 로 안내한다(수동 실행 권유).
 
 ### 공개 REST API (`/pe/api/v1`) — 무인증·읽기 전용, 사내망 타 서버용 ([public_api/](public_api/README.md))
 

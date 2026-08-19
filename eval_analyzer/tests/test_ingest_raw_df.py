@@ -99,6 +99,85 @@ def test_raw_df_failtno_blank_is_pass():
     assert all(not any(c["fail_mask"]) for c in cases)
 
 
+def _multibin_df(bin_counts=((18, 5), (31, 3), (20, 3))):
+    """VREF_TRIM 의 fail 이 **여러 bin 으로 흩어진** 프레임.
+
+    bin_counts = ((bin, fail 개수), …). 같은 item 을 fail 한 serial 이 binning 관례에 따라
+    서로 다른 bin 을 받은 상황(제품군·ENGR 이 다르면 실제로 일어난다).
+    """
+    nan = float("nan")
+    meta_rows = [
+        ["TSEQ", None, None, None, None, None, None, 1, 2],
+        ["TNO", None, None, None, None, None, None, _VREF_TNO, _IDDQ_TNO],
+        ["STEP", None, None, None, None, None, None, "P2", "P1"],
+        ["UNIT", None, None, None, None, None, None, "V", "A"],
+        ["HILIM", None, None, None, None, None, None, 1.4, 15.0],
+        ["LOLIM", None, None, None, None, None, None, 1.0, nan],
+    ]
+    rows, s = [], 1
+    for i in range(20):
+        rows.append([s, 1, s, i % 5, i // 5, 1, nan,
+                     1.20 + 0.01 * (i % 3), 12.0 + 0.01 * (i % 4)])
+        s += 1
+    for bin_, cnt in bin_counts:
+        for i in range(cnt):
+            rows.append([s, 1, s, 50 + i, 50 + i, bin_, _VREF_TNO, 1.55 + 0.02 * i, 12.1])
+            s += 1
+    return pd.DataFrame(meta_rows + rows, columns=_COLS)
+
+
+def test_multi_bin_item_becomes_one_case():
+    """**case 는 item 당 1개**다 — fail 이 여러 bin 으로 흩어져도 쪼개지지 않는다 (2026-08-19).
+
+    bin 은 serial(die)의 binning 관례이지 item 의 속성이 아니라, 키로 쓰면 같은 현상의
+    코멘트·라벨·선례가 갈라진다. 동일성 기준은 value_type + item 명이다.
+    """
+    ctx = ingest.ingest({"meta": _meta(), "raw_df": _multibin_df()}, persist=False)
+    cases = ctx["cases"]
+    assert len(cases) == 2, [(c["item_raw"], c["bin"]) for c in cases]   # VREF_TRIM, IDDQ
+    vref = next(c for c in cases if c["item_canonical"] == "vref_trim")
+
+    # fail_mask 는 bin 과 무관하게 **그 item 을 fail 한 전 serial** 의 합집합
+    assert sum(1 for f in vref["fail_mask"] if f) == 11, vref["fail_mask"]
+    assert vref["fail_count"] == 11
+    assert vref["total_count"] == 31
+
+    # 대표 bin = 최다 fail(18: 5건). 참고값으로 보존되며 severity_bias 조회에 쓰인다.
+    assert vref["bin"] == 18
+
+    # item_class 에도 bin 이 없다(2단) — thresholds 스코프가 세션마다 흔들리지 않게.
+    assert vref["item_class"] == "TRIM|V", vref["item_class"]
+
+
+def test_representative_bin_is_deterministic():
+    """동률이면 **작은 bin** — 재실행마다 흔들리면 fail_case.bin 이 요동쳐 트레이스 diff·
+    표본함이 허위 변화를 보고한다."""
+    ctx = ingest.ingest(
+        {"meta": _meta(), "raw_df": _multibin_df(((31, 4), (18, 4)))}, persist=False)
+    vref = next(c for c in ctx["cases"] if c["item_canonical"] == "vref_trim")
+    assert vref["bin"] == 18                      # 4:4 동률 → 작은 쪽
+    assert vref["fail_count"] == 8
+
+
+def test_case_id_ignores_bin():
+    """같은 item 이면 fail bin 구성이 달라도 **같은 case_id** 여야 한다.
+
+    이게 깨지면 사람이 단 코멘트·라벨이 엔진 판정과 다른 case 로 가서 학습이 성립하지 않는다
+    (운영 DB 에서 실제로 라벨 100% 가 고아였다).
+    """
+    a = ingest.ingest({"meta": _meta(), "raw_df": _multibin_df(((18, 5), (31, 3)))},
+                      persist=False)["cases"]
+    b = ingest.ingest({"meta": _meta(), "raw_df": _multibin_df(((20, 2), (40, 9)))},
+                      persist=False)["cases"]
+    id_a = next(c["case_id"] for c in a if c["item_canonical"] == "vref_trim")
+    id_b = next(c["case_id"] for c in b if c["item_canonical"] == "vref_trim")
+    assert id_a == id_b
+    # 대표 bin 은 서로 다르다 — 값은 보존되지만 키에는 안 들어간다는 뜻
+    bin_a = next(c["bin"] for c in a if c["item_canonical"] == "vref_trim")
+    bin_b = next(c["bin"] for c in b if c["item_canonical"] == "vref_trim")
+    assert bin_a == 18 and bin_b == 40
+
+
 _LOWCPK_COLS = ["SERIAL", "SHOT", "DUT", "XPOS", "YPOS", "BIN", "FAILTNO", "VOUT", "VREF_OK"]
 
 

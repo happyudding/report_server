@@ -39,6 +39,13 @@ L6 present   결과 dict 직렬화 (+ persist 시 eval.db 적재, raw 는 저장
   [, test_condition]) → **재업로드 idempotent**. 바꾸면 과거 case 와 선례 매칭이 깨진다.
   마지막 조각은 **빈 값이면 재료에서 아예 빠진다** — 기존 case_id 를 그대로 두기 위한
   하위호환이라 이 조건부 규칙을 무조건 append 로 바꾸면 운영 case 가 전부 고아가 된다.
+- **case 는 item 당 1개다 — 호출부는 `wafer`·`bin` 자리에 항상 `None` 을 넣는다**
+  (2026-08-19 사용자 결정). 동일성 기준은 **value_type + item 명(유사도 70%)** 이고,
+  bin 은 serial(die)의 binning 관례라 제품군·담당자에 따라 달라져 식별 축으로 못 쓴다
+  (실측: `(소스, FAILTNO)` 당 distinct BIN 이 100% 1개 = 식별 정보 0).
+  **버리는 건 아니다** — `fail_case.bin` 에 대표 bin(최다 fail, 동률은 작은 bin)을 남겨
+  `bin_taxonomy`(severity_bias) 조회·화면 표시에 계속 쓴다. `item_class` 도 같은 이유로
+  `category_major|value_type` **2단**이다(구 3단 값은 읽기만 호환). 배경 → ../../../docs/17.
 
 ## 실행 / 검증
 ```

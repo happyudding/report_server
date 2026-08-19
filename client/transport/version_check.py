@@ -16,7 +16,7 @@ from urllib.parse import quote
 import requests
 
 from .app_update import is_newer  # noqa: F401  (재노출 — 아래 주석 참조)
-from .config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
+from .config import CURRENT_VERSION, REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
 from .retry import get_with_retry
 
 
@@ -25,16 +25,22 @@ class DownloadCancelled(Exception):
 
 
 def _honey_headers():
-    """신원 토큰 UA — excel_download._fetch 와 동일 규칙(HoneyUser/<percent-encoded 계정>).
+    """신원 토큰 + 버전 토큰 UA — excel_download._fetch 와 동일 규칙
+    (`HoneyUser/<percent-encoded 계정> HoneyVer/<버전>`).
 
     서버가 /honey/version 호출을 'Honey 실행'으로 사용자별 집계하는 데 쓴다
-    (server/honey_routes.py). 수집 실패 시 토큰 없이 진행 — 서버는 IP 로 집계."""
+    (server/honey_routes.py). 수집 실패 시 토큰 없이 진행 — 서버는 IP 로 집계.
+
+    **버전 토큰이 서버 버전 대장(report_client_version)의 유일한 입력이다** — 이 호출이
+    앱 시작 시 1회 오는 지점이라 서버는 여기서만 대장을 갱신한다. 토큰을 빼면 관리자
+    화면에서 그 사람의 버전이 '미상'으로 남는다."""
     try:
         import client_identity
         user = client_identity.collect().get("user", "")
     except Exception:
         user = ""
-    return {"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')}"} if user else {}
+    return ({"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')} "
+                           f"HoneyVer/{CURRENT_VERSION}"} if user else {})
 
 
 def fetch_latest(base_url=None) -> dict:

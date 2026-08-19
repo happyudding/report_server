@@ -83,6 +83,17 @@ _DIST_CHUNK_SIZES: dict = {}                   # 키 -> 비압축 바이트 (DIS
 AI_COMMENT_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_AI_COMMENT_CACHE", "8") or 8))
 AI_COMMENT_CACHE: OrderedDict = OrderedDict()  # cache_policy.ai_comment_key -> result dict
 
+# Compare 계산 결과 캐시 (2026-08-19) — build_compare_payload 반환 dict. AI Comment 와 같은
+# 이유로 report payload 와 분리한다: compare 입력은 tables+compare_groups 뿐인데 payload
+# 안에 박혀 있어 코멘트 한 줄 편집·스키마 bump·dedup 형제마다 전량 재계산됐다(실측 1.1초,
+# 콜드 빌드의 34%). 값에 common_map 이 있어 세션에 따라 수 MB 라 개수 상한만으로는 RAM 이
+# 예측 불가로 부푼다 → report 와 같은 크기 기록 + 이중 상한을 쓴다.
+COMPARE_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_COMPARE_CACHE", "4") or 4))
+COMPARE_CACHE_MAX_BYTES = max(0, int(os.getenv("WEB_REPORT_COMPARE_CACHE_MB", "256")
+                                     or 256)) * 1024 * 1024   # 0 = 바이트 상한 비활성
+COMPARE_CACHE: OrderedDict = OrderedDict()  # cache_policy.compare_key -> compare payload dict
+_COMPARE_SIZES: dict = {}                   # 키 -> 추정 바이트 (COMPARE_CACHE 와 동기)
+
 # Commonality 인덱스 캐시 — chip 검색(키스트로크)·백분위(chip 클릭)가 매번 전 item 컬럼을
 # 재변환하던 유일한 무캐시 heavy 경로였다. 메타 리스트 + item별 정렬 배열을 세션 단위로 보관.
 COMMONALITY_CACHE_MAX = max(1, int(os.getenv("WEB_REPORT_COMMONALITY_CACHE", "2") or 2))
@@ -114,7 +125,7 @@ MANIFEST_CACHE: OrderedDict = OrderedDict()  # analysis_key -> (canonical bytes,
 # 로 등록만 하면 무효화에 자동 편입된다 (response_cache.py 가 import 시 자기 캐시를 등록).
 AKEY_CACHES: list = [TABLES_CACHE, DIST_CACHE, MAP_CACHE, TEMP_MAP_CACHE, REPORT_CACHE,
                      COMMONALITY_CACHE, TRIM_CACHE, TRIM_CHART_CACHE, DIST_CHUNK_CACHE,
-                     AI_COMMENT_CACHE]
+                     AI_COMMENT_CACHE, COMPARE_CACHE]
 
 # 콜드 캐시 동시 진입(stampede) 방지 single-flight 락 — 캐시에 없는 같은 세션을 여러
 # 사용자가 동시에 열면 수 초짜리 CPU-bound 계산이 중복 실행되며 GIL 로 서로 밀어내므로,
@@ -170,7 +181,7 @@ def cache_stats():
              ("report", REPORT_CACHE), ("commonality", COMMONALITY_CACHE),
              ("trim", TRIM_CACHE), ("trim_chart", TRIM_CHART_CACHE),
              ("manifest", MANIFEST_CACHE), ("dist_chunk", DIST_CHUNK_CACHE),
-             ("ai_comment", AI_COMMENT_CACHE))
+             ("ai_comment", AI_COMMENT_CACHE), ("compare", COMPARE_CACHE))
     with CACHE_LOCK:
         sizes = {name: len(c) for name, c in names}
         tables_bytes = sum(_TABLES_SIZES.values())
@@ -238,7 +249,7 @@ def tables_cache_put(key, tables) -> None:
 
 
 def _prune_tables_sizes_locked() -> None:
-    """크기 기록을 두는 캐시(TABLES/REPORT/DIST_CHUNK)에서 빠진 키의 기록 제거.
+    """크기 기록을 두는 캐시(TABLES/REPORT/DIST_CHUNK/COMPARE)에서 빠진 키의 기록 제거.
 
     (CACHE_LOCK 보유 상태에서 호출 — 무효화 경로가 캐시에서 직접 pop 하므로 크기 기록만
     남아 상한 계산이 실제보다 커지는 것을 막는다.)"""
@@ -248,6 +259,8 @@ def _prune_tables_sizes_locked() -> None:
         _REPORT_SIZES.pop(key, None)
     for key in [k for k in _DIST_CHUNK_SIZES if k not in DIST_CHUNK_CACHE]:
         _DIST_CHUNK_SIZES.pop(key, None)
+    for key in [k for k in _COMPARE_SIZES if k not in COMPARE_CACHE]:
+        _COMPARE_SIZES.pop(key, None)
 
 
 def _bytes_capped_put(cache: OrderedDict, key, blob: bytes,
@@ -291,6 +304,30 @@ def report_cache_put(key, report: dict, size: int | None = None) -> None:
                     and sum(_REPORT_SIZES.values()) > REPORT_CACHE_MAX_BYTES)):
             old_key, _ = REPORT_CACHE.popitem(last=False)
             _REPORT_SIZES.pop(old_key, None)
+
+
+def compare_cache_put(key, payload: dict, size: int | None = None) -> None:
+    """COMPARE_CACHE 전용 put — 개수 + 추정 바이트 이중 상한 (report_cache_put 과 대칭).
+
+    compare payload 는 common_map(die 전량 dict)이 있어 세션에 따라 수 MB 다 — 개수 상한
+    만으로는 RAM 이 예측 불가로 커진다. 최소 1개는 남긴다(방금 넣은 것은 곧 조회된다).
+    """
+    if size is None:
+        try:
+            size = len(json.dumps(payload, ensure_ascii=False,
+                                  separators=(",", ":")).encode("utf-8"))
+        except (TypeError, ValueError):
+            size = 0   # 직렬화 불가는 크기 미상 취급 — 개수 상한만 적용된다
+    with CACHE_LOCK:
+        COMPARE_CACHE[key] = payload
+        COMPARE_CACHE.move_to_end(key)
+        _COMPARE_SIZES[key] = size
+        while len(COMPARE_CACHE) > 1 and (
+                len(COMPARE_CACHE) > COMPARE_CACHE_MAX
+                or (COMPARE_CACHE_MAX_BYTES
+                    and sum(_COMPARE_SIZES.values()) > COMPARE_CACHE_MAX_BYTES)):
+            old_key, _ = COMPARE_CACHE.popitem(last=False)
+            _COMPARE_SIZES.pop(old_key, None)
 
 
 def dist_chunk_cache_put(key, items: dict, size: int) -> None:

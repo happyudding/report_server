@@ -41,8 +41,7 @@ from ._charts import (
     render_single_cdf,
     render_temp_maps_job,
 )
-from ._fetch import (fetch_distribution_bin1, fetch_preprocess, fetch_report_data,
-                     fetch_temp_map)
+from ._fetch import fetch_distribution_bin1, fetch_report_data, fetch_temp_map
 from ._map import build_bin_desc_map, build_global_bin_legend
 from . import _extra
 from . import _sheets
@@ -55,36 +54,31 @@ SHEET_ORDER = ["Summary", "Yield", "CPK", "Issue Table",
 # (웹 "Issue Table Temp" 탭과 같은 시트). Issue Table 바로 뒤에 끼운다.
 TEMP_SHEET = "Issue Table Temp"
 # XlsxWriter 엔진에서만 만드는 web_report 파리티 시트
-PREP_SHEET = "전처리 안내"
 COMPARE_SHEET = "Compare"
-STATUS_SHEET = "Download Status"
 
-# 기본 기입 엔진. 되돌리려면 이 한 줄만 "com" 으로 바꾸면 된다 —
-# XlsxWriter 경로 코드는 그대로 남고 옵션으로만 선택된다.
+# 기본 기입 엔진. 사용자 선택은 없앴고(2026-08-18) XlsxWriter 로만 만든다 —
+# 이것이 실패할 때만 COM 경로로 자동 재시도한다(파일은 항상 생성).
 DEFAULT_ENGINE = "xlsxwriter"
 
-# 시간 예산(초) — 3분 SLA. 넘으면 남은 이미지를 건너뛰고(Download Status 에 기록) 저장으로 간다.
+# 시간 예산(초) — 3분 SLA. 넘으면 남은 이미지를 건너뛰고(경고로 보고) 저장으로 간다.
 BUDGET_SKIP_IMAGES_SEC = 150.0
 BUDGET_FORCE_SAVE_SEC = 165.0
 
 
-def _sheet_order(sheets, *, engine=DEFAULT_ENGINE, has_compare=False, has_preprocess=False):
+def _sheet_order(sheets, *, engine=DEFAULT_ENGINE, has_compare=False):
     """이 세션에 실제로 만들 시트 순서.
 
-    Temp 행이 있을 때만 TEMP_SHEET 를 끼우고, 전처리/Compare/Download Status 는
-    XlsxWriter 엔진에서만 만든다(COM 경로는 동결이라 종전 시트 구성 그대로).
+    Temp 행이 있을 때만 TEMP_SHEET 를 끼우고, Compare 는 XlsxWriter 엔진에서만 만든다
+    (COM 경로는 동결이라 종전 시트 구성 그대로).
     """
     order = list(SHEET_ORDER)
     if (sheets or {}).get(TEMP_SHEET):
         order.insert(order.index("Issue Table") + 1, TEMP_SHEET)
     if engine != "xlsxwriter":
         return order
-    if has_preprocess:
-        order.insert(1, PREP_SHEET)
     if has_compare:
         anchor = TEMP_SHEET if TEMP_SHEET in order else "Issue Table"
         order.insert(order.index(anchor) + 1, COMPARE_SHEET)
-    order.append(STATUS_SHEET)
     return order
 
 
@@ -137,9 +131,9 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
 
     반환 {"out_path", "elapsed", "items", "engine", "warnings"}.
 
-    ``engine``: "xlsxwriter"(기본, DEFAULT_ENGINE) 또는 "com"(기존 xlwings/Excel COM).
+    ``engine``: 기본은 DEFAULT_ENGINE("xlsxwriter") — 호출부(Honey)는 지정하지 않는다.
     XlsxWriter 경로가 실패하면 **이미 받은 데이터와 렌더된 PNG 를 그대로 재사용해**
-    COM 경로로 자동 재시도한다 — 어떤 경우에도 파일은 만들어진다.
+    COM 경로로 자동 재시도한다 — 어떤 경우에도 파일은 만들어진다(테스트만 "com" 지정).
 
     status_cb(state, message): 진행 통지 (state ∈ download/render/attach/save/done).
     progress_cb(percent, message): 선택 — 하단 진행바용 0~100 백분율.
@@ -165,8 +159,6 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
     source_names = [s.get("name") for s in (report.get("sources") or [])]
     colors = _source_colors(source_names, report.get("dist_colors"))
     chart_notes = full.get("chart_notes") or {}
-    # 전처리 안내는 있으면 좋고 없어도 그만 — 실패해도 다운로드를 막지 않는다.
-    preprocess = fetch_preprocess(server_base, session_id) if engine == "xlsxwriter" else None
     emit("download", f"데이터 수신 완료 ({emit.elapsed():.1f}s)", 1, 1)
 
     # ── 2. 차트 렌더 잡 구성 + 프로세스풀 시작 ──────────────────────────────
@@ -188,7 +180,7 @@ def run_excel_download(session_id, server_base, out_path, status_cb=None,
                 "map_colors": map_colors, "cell_of": cell_of, "tmpdir": tmpdir,
                 "server_base": server_base, "session_id": session_id, "bin1": bin1,
                 "chunk_jobs": chunk_jobs, "map_jobs": map_jobs, "n_items": n_items,
-                "preprocess": preprocess, "pool": pool, "emit": emit,
+                "pool": pool, "emit": emit,
                 "chunk_futs": [pool.submit(render_chunk_pair, j) for j in chunk_jobs],
                 "map_futs": [pool.submit(render_map_png_job, j) for j in map_jobs],
             }
@@ -267,14 +259,12 @@ def _write_with_xlsxwriter(ctx, out_path, warnings):
     from ._charts import DPI
 
     sheets = ctx["sheets"]
-    prep_rows = _extra.build_preprocess_rows(ctx.get("preprocess"))
     sheet_order = _sheet_order(sheets, engine="xlsxwriter",
-                               has_compare=bool((ctx["report"] or {}).get("compare")),
-                               has_preprocess=bool(prep_rows))
+                               has_compare=bool((ctx["report"] or {}).get("compare")))
     book = _xlsx.XlsxBook(out_path, ctx["session_url"], chart_dpi=DPI)
     try:
         book.add_sheets(sheet_order)
-        _fill_workbook(book, ctx, sheet_order, warnings=warnings, prep_rows=prep_rows)
+        _fill_workbook(book, ctx, sheet_order, warnings=warnings)
         book.close()
     except Exception:
         book.abort()
@@ -285,8 +275,8 @@ class _ComBook:
     """`_sheets.py`(COM) 를 XlsxBook 과 같은 메서드 이름으로 감싼 어댑터.
 
     두 엔진이 `_fill_workbook` 한 벌을 공유하기 위한 얇은 껍데기다 — `_sheets.py` 자체는
-    손대지 않는다(동결). 파리티 보강 시트(전처리/Compare/Download Status)와 색 인자는
-    COM 경로에 없으므로 조용히 무시한다.
+    손대지 않는다(동결). 파리티 보강 시트(Compare)와 색 인자는 COM 경로에 없으므로
+    조용히 무시한다.
     """
 
     def __init__(self, wb, sheet_order, session_url):
@@ -323,14 +313,8 @@ class _ComBook:
         return _sheets.write_issue_sheet(self.ws[name], issue_rows, source_names,
                                          title=title or name)
 
-    def write_preprocess_sheet(self, *_a, **_kw):
-        pass                                    # COM 경로에는 없는 시트
-
     def write_compare_sheet(self, *_a, **_kw):
-        pass
-
-    def write_status_sheet(self, *_a, **_kw):
-        pass
+        pass                                    # COM 경로에는 없는 시트
 
     def write_sheet_error(self, name, exc):
         try:
@@ -369,7 +353,7 @@ class _ComBook:
             self.ws[activate].activate()
 
 
-def _fill_workbook(book, ctx, sheet_order, *, warnings=None, prep_rows=None):
+def _fill_workbook(book, ctx, sheet_order, *, warnings=None):
     """시트 기입 + 차트 부착 — 두 엔진이 공유하는 본체.
 
     시트마다 예외를 격리한다(`_safe`): 한 시트가 실패해도 그 시트에 사유만 남기고 나머지는
@@ -406,8 +390,6 @@ def _fill_workbook(book, ctx, sheet_order, *, warnings=None, prep_rows=None):
          step_summary=(report.get("yield_summary") or {}).get("by_step"),
          yield_summary=report.get("yield_summary"), yield_basis=report.get("yield_basis"))
     safe("CPK", book.write_cpk_sheet, sheets.get("CPK"))
-    if PREP_SHEET in sheet_order:
-        safe(PREP_SHEET, book.write_preprocess_sheet, PREP_SHEET, prep_rows or [])
     if COMPARE_SHEET in sheet_order:
         safe(COMPARE_SHEET, book.write_compare_sheet, COMPARE_SHEET,
              _extra.build_compare_tables(report.get("compare")))
@@ -559,12 +541,6 @@ def _fill_workbook(book, ctx, sheet_order, *, warnings=None, prep_rows=None):
             book.add_session_link(name)
         except Exception:
             pass
-    if STATUS_SHEET in sheet_order:
-        try:
-            book.write_status_sheet(STATUS_SHEET,
-                                    _status_rows(ctx, warnings, prep_rows))
-        except Exception:
-            pass
     emit("save", "파일 저장·검증 중…")
 
 
@@ -582,26 +558,6 @@ def _attach_thumbs(book, sheet, targets, futs, layout, w_pt, h_pt, emit, warning
             book.add_picture_in_cell(sheet, out, excel_row, layout["dist_col"], w_pt, h_pt)
         except Exception as exc:
             warnings.append(f"{label} 부착 실패(행 {excel_row}): {exc}")
-
-
-def _status_rows(ctx, warnings, prep_rows):
-    """Download Status 시트 내용 — 무엇으로·얼마나·무엇을 건너뛰었는지."""
-    emit = ctx["emit"]
-    rows = [
-        ["세션", ctx["session_id"]],
-        ["세션 주소", ctx["session_url"]],
-        ["기입 엔진", "XlsxWriter (Excel 미사용)"],
-        ["소요 시간", f"{emit.elapsed():.1f}초"],
-        ["산포 기준", "Bin1(양품·규격내)" if ctx["bin1"] else "전체 die"],
-        ["항목 수", ctx["n_items"]],
-        ["입력 소스", ", ".join(str(s) for s in ctx["source_names"])],
-        ["전처리", "적용됨 — '전처리 안내' 시트 참조" if prep_rows else "없음"],
-    ]
-    if warnings:
-        rows.append([f"경고 ({len(warnings)}건)", "\n".join(str(w) for w in warnings)])
-    else:
-        rows.append(["경고", "없음 — 모든 시트가 정상 생성됐습니다"])
-    return rows
 
 
 # ── 잡 구성 헬퍼 ──────────────────────────────────────────────────────────────

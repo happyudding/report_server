@@ -210,7 +210,12 @@ def _case_dict(meta, case_id, item_id, item_canonical, cat, value_type, bin_,
         "case_id": case_id, "item_id": item_id, "item_canonical": item_canonical,
         "item_raw": item_raw, "unit": _unit_text(unit),
         "category_major": cat, "value_type": value_type, "bin": bin_,
-        "revision": revision, "item_class": f"{cat}|{value_type}|{bin_}",
+        # item_class 는 **2단**(category_major|value_type) — 2026-08-19.
+        # 종전 3단은 마지막 조각이 bin 이었는데, case 가 item 단위가 된 뒤로 그 자리에
+        # 대표 bin 을 박으면 세션마다 스코프 키가 흔들린다(thresholds item_class 오버레이·
+        # calibrate 모집단이 갈린다). 동일성 기준을 value_type + item 으로 잡은 결정과도
+        # 일치한다. 실측: 다제품 시드에서 버킷 34개(대부분 n<10) → 6개(전부 n≥10).
+        "revision": revision, "item_class": f"{cat}|{value_type}",
         "product_type": meta.get("product_type"),
         "family_product": meta.get("family_product"),
         "lsl": lsl, "usl": usl, "skewness": skewness,
@@ -298,14 +303,18 @@ def _ingest_raw_table(meta, raw_table, persist, conn, alias):
             store.upsert_item_spec(item_id, meta.get("product_name"), revision,
                                    lsl, usl, conn=conn)
 
-        for bin_ in sorted(fail_bins):
-            fail_mask = [b == bin_ for b in bins]
-            case_id = store.make_case_id(meta.get("product_name"), meta.get("lot_id"),
-                                         meta.get("wafer_number"), item_id, bin_, revision)
-            cases.append(_case_dict(meta, case_id, item_id, item_canonical, cat,
-                                    value_type, bin_, revision, lsl, usl,
-                                    values, fail_mask, x_pos, y_pos, site,
-                                    item_raw=item, unit=unit))
+        # case 는 item 당 1개 (2026-08-19 — raw_df 경로와 같은 규약, 위 _ingest_raw_df 참조).
+        # 대표 bin = fail bin 중 가장 작은 값. 이 레거시 경로는 fail_mask 를 "그 bin 인
+        # DUT 전부" 로 잡는 별개 문제가 있어(이 item 이 limit 을 안 넘긴 DUT 도 fail 로 표시)
+        # **mask 로직은 이번에 건드리지 않는다** — case 축만 맞춘다.
+        bin_ = min(fail_bins)
+        fail_mask = [b in fail_bins for b in bins]
+        case_id = store.make_case_id(meta.get("product_name"), meta.get("lot_id"),
+                                     meta.get("wafer_number"), item_id, None, revision)
+        cases.append(_case_dict(meta, case_id, item_id, item_canonical, cat,
+                                value_type, bin_, revision, lsl, usl,
+                                values, fail_mask, x_pos, y_pos, site,
+                                item_raw=item, unit=unit))
     return cases
 
 
@@ -381,12 +390,13 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
         if fail_idx is None:
             fail_idx = [i for i, ft in enumerate(failtnos) if ft is not None]
 
-        # fail bin: FAILTNO == 이 item 의 TNO 인 serial 의 BIN
-        fail_bins = set()
+        # fail bin 도수: FAILTNO == 이 item 의 TNO 인 serial 의 BIN 별 건수.
+        # **대표 bin 선정에만 쓴다** — case 를 가르는 축이 아니다(2026-08-19, 아래 참조).
+        fail_bin_counts = {}
         if tno_i is not None:
             for i in fail_idx:
                 if failtnos[i] == tno_i and bins[i] is not None:
-                    fail_bins.add(bins[i])
+                    fail_bin_counts[bins[i]] = fail_bin_counts.get(bins[i], 0) + 1
 
         item_id, item_canonical, cat = _resolve_item_identity(
             item, value_type, persist, conn, alias, unit_row[item])
@@ -397,35 +407,49 @@ def _ingest_raw_df(meta, df, persist, conn, alias):
         # site 는 raw_df 경로에 없다 — [None]*n 리스트 대신 None:
         # features._site_cpk_delta 가 O(N) 전수 스캔 없이 즉시 결측 처리한다(판정 동일).
         site = None
-        # 같은 item 의 case(bin)들이 공유하는 계산 캐시 — metrics/features 가 fail 과
-        # 무관한 배열·통계를 bin 수만큼 재계산하지 않게 한다 (case dict 의 사설 키).
+        # ── case 는 **item 당 1개**다 (2026-08-19, 사용자 결정) ──────────────────
+        # 종전에는 fail bin 마다 case 를 만들었다. bin 을 뺀 이유:
+        #  · bin 은 serial(die)의 최종 binning 결과이지 item 의 속성이 아니다. 실업로드
+        #    3,334 fail 그룹 전수에서 (소스, FAILTNO) 당 distinct BIN 이 **100% 1개**였고,
+        #    반대로 bin 하나가 평균 4.53개 item 을 담았다 — bin 은 item 을 가르는 축이
+        #    아니라 item 들을 묶는 더 굵은 축이라 **식별 정보를 0 추가**하면서 case 만 쪼갠다.
+        #  · 제품군·개발 ENGR 이 바뀌면 같은 item 의 bin 이 달라진다(다제품 시드 실측:
+        #    같은 item 이 제품군별로 bin 집합이 전부 다름). 불안정한 축을 키로 쓰면 같은
+        #    현상의 코멘트·라벨·선례가 쪼개져 희석된다(운영 라벨 1건이 실제로 100% 고아였다).
+        #  · 동일성 기준은 **value_type + item 명**이다(선례검색이 이미 그 축만 쓴다).
+        # bin 을 버리는 것은 아니다 — 아래 대표 bin 을 case["bin"] 에 실어 fail_case.bin
+        # 컬럼과 bin_taxonomy(severity_bias) 조회에 계속 쓴다.
         item_shared = {}
-        # fail bin 별 case; fail 없으면 PASS_BIN candidate 1개(저장 판단은 rule 계산 후 present.should_store)
-        for bin_ in (sorted(fail_bins) if fail_bins else [PASS_BIN]):
-            if fail_bins:
-                fail_mask = [False] * len(values)
-                for i in fail_idx:
-                    if failtnos[i] == tno_i and bins[i] == bin_:
-                        fail_mask[i] = True
-            else:
-                fail_mask = [False] * len(values)
-            case_id = store.make_case_id(meta.get("product_name"), meta.get("lot_id"),
-                                         meta.get("wafer_number"), item_id, bin_, revision)
-            case = _case_dict(meta, case_id, item_id, item_canonical, cat,
-                              value_type, bin_, revision, lsl, usl,
-                              values, fail_mask, x_pos, y_pos, site,
-                              item_raw=item, unit=unit_row[item])
-            case["_shared"] = item_shared
-            if x_pos is x_all and y_pos is y_all:      # 좌표가 소스 공용 배열 그대로일 때만
-                case["_geom_shared"] = run_geom
-            # yield 분모/분자는 전체 DUT(데이터 행) 기준 — item 셀 파싱 성공분(len(values))으로
-            # 재면 item 마다 분모가 달라져 trump/GROSS_FAIL 비교가 왜곡된다. FAILTNO 기반
-            # fail 식별은 측정값 파싱과 무관하므로 전체 행에서 센다. (fail_mask 는 공간
-            # feature 용 — values 배열과 정렬 유지, 그대로 둔다.)
-            case["total_count"] = len(data)
-            case["fail_count"] = sum(1 for i in fail_idx_all
-                                     if failtno_all[i] == tno_i and bin_all[i] == bin_)
-            cases.append(case)
+        fail_mask = [False] * len(values)
+        if tno_i is not None:
+            for i in fail_idx:
+                if failtnos[i] == tno_i:
+                    fail_mask[i] = True
+        # 대표 bin = 최다 fail bin. 동률은 **작은 bin**(재실행마다 흔들리면 fail_case.bin
+        # 이 요동쳐 트레이스 diff·표본함이 허위 변화를 보고한다 — 결정성이 필수다).
+        bin_ = (min(fail_bin_counts, key=lambda b: (-fail_bin_counts[b], b))
+                if fail_bin_counts else PASS_BIN)
+        # case_id 는 **fail 유무와 무관하게 bin 자리를 항상 None** 으로 둔다 — CPK/ETC
+        # 섹션 라벨(bin 개념이 없다)과 같은 case 로 만나야 하기 때문(eval_export).
+        case_id = store.make_case_id(meta.get("product_name"), meta.get("lot_id"),
+                                     meta.get("wafer_number"), item_id, None, revision)
+        case = _case_dict(meta, case_id, item_id, item_canonical, cat,
+                          value_type, bin_, revision, lsl, usl,
+                          values, fail_mask, x_pos, y_pos, site,
+                          item_raw=item, unit=unit_row[item])
+        case["_shared"] = item_shared
+        if x_pos is x_all and y_pos is y_all:      # 좌표가 소스 공용 배열 그대로일 때만
+            case["_geom_shared"] = run_geom
+        # yield 분모/분자는 전체 DUT(데이터 행) 기준 — item 셀 파싱 성공분(len(values))으로
+        # 재면 item 마다 분모가 달라져 trump/GROSS_FAIL 비교가 왜곡된다. FAILTNO 기반
+        # fail 식별은 측정값 파싱과 무관하므로 전체 행에서 센다. (fail_mask 는 공간
+        # feature 용 — values 배열과 정렬 유지, 그대로 둔다.)
+        # ⚠ 의미 변화(의도적): 종전 bin 별 합계는 `bin_all[i] is not None` 을 요구해
+        # **FAILTNO 는 맞는데 BIN 셀이 파싱 불가인 행을 조용히 누락**했다. item 단위
+        # 합집합은 그 행도 센다 — 더 옳지만 옛 값과 합이 다를 수 있다.
+        case["total_count"] = len(data)
+        case["fail_count"] = sum(1 for i in fail_idx_all if failtno_all[i] == tno_i)
+        cases.append(case)
     if item_cols and len(data) > 0 and not cases:
         logger.warning("raw_df: item %d개, 데이터 %d행이나 case 0 - item 셀 dtype 확인"
                        "(문자열이면 파서가 무시, docs/EVALUATE_RETURN_SPEC 6절)",
@@ -440,11 +464,31 @@ def _ingest_degrade(meta, items, persist, conn, alias):
     feature 는 결측이 된다(→ data_completeness 하락). raw 를 못 구하는 입력의 폴백 경로.
     """
     revision = meta.get("revision")
-    cases = []
+    # 입력이 (item, bin) 행 목록이라 item 으로 묶는다 — case 는 item 당 1개
+    # (2026-08-19, raw_df 경로와 같은 규약). fail_count 는 합, 대표 bin 은 최다 fail
+    # (동률은 작은 bin — 결정성), total_count/yield 는 같은 item 이면 동일값 전제라 첫 행 값.
+    grouped: dict = {}
+    order: list = []
     for it in items:
+        key = str(it["item_name"])
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(it)
+    cases = []
+    for key in order:
+        rows = grouped[key]
+        it = rows[0]
         raw_name = it["item_name"]
         value_type = _classify_value_type(it.get("unit"), raw_name)
-        bin_ = int(it["bin"])
+        bin_counts: dict = {}
+        for r in rows:
+            b = int(r["bin"])
+            bin_counts[b] = bin_counts.get(b, 0) + int(r.get("fail_count") or 0)
+        bin_ = min(bin_counts, key=lambda b: (-bin_counts[b], b))
+        fail_count = sum(int(r.get("fail_count") or 0) for r in rows)
+        total_count = it.get("total_count")
+        yield_ = (1 - fail_count / total_count) if total_count else it.get("yield")
         lsl, usl = it.get("lsl"), it.get("usl")
         item_id, item_canonical, cat = _resolve_item_identity(
             raw_name, value_type, persist, conn, alias, it.get("unit"))
@@ -452,18 +496,18 @@ def _ingest_degrade(meta, items, persist, conn, alias):
             store.upsert_item_spec(item_id, meta.get("product_name"), revision,
                                    lsl, usl, conn=conn)
         case_id = store.make_case_id(meta.get("product_name"), meta.get("lot_id"),
-                                     meta.get("wafer_number"), item_id, bin_, revision)
+                                     meta.get("wafer_number"), item_id, None, revision)
         cases.append({
             "case_id": case_id, "item_id": item_id, "item_canonical": item_canonical,
             "item_raw": raw_name, "unit": _unit_text(it.get("unit")),
             "category_major": cat, "value_type": value_type, "bin": bin_,
-            "revision": revision, "item_class": f"{cat}|{value_type}|{bin_}",
+            "revision": revision, "item_class": f"{cat}|{value_type}",
             "product_type": meta.get("product_type"),
             "family_product": meta.get("family_product"),
             "lsl": lsl, "usl": usl, "skewness": it.get("skewness"),
             "values": [], "fail_mask": [], "x_pos": [], "y_pos": [], "site": [],
-            "yield": it.get("yield"), "fail_count": it.get("fail_count"),
-            "total_count": it.get("total_count"),
+            "yield": yield_, "fail_count": fail_count,
+            "total_count": total_count,
         })
     return cases
 

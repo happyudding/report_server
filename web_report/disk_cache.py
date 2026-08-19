@@ -317,6 +317,53 @@ def save_ai_comment(upload_root: Path, cache_key: tuple, result: dict) -> None:
     _write(_path_for(upload_root, "aicmt", cache_key, ".json.gz"), data)
 
 
+def load_compare(upload_root: Path, cache_key: tuple) -> dict | None:
+    """Compare 계산 결과(build_compare_payload 반환 dict) 디스크 캐시 조회.
+
+    cache_key 는 cache_policy.compare_key — report payload 와 분리 캐시라
+    edits_rev·session_id 무관하게 같은 데이터(chash+prep)·그룹 배치면 재사용된다.
+    (load_ai_comment 과 같은 규약 — 손상 파일은 지우고 미스로 돌려 재계산에 맡긴다.)
+    """
+    if not _enabled():
+        return None
+    path = _path_for(upload_root, "cmp", cache_key, ".json.gz")
+    blob = _read(path)
+    if blob is None:
+        return None
+    try:
+        return json.loads(gzip.decompress(blob).decode("utf-8"))
+    except Exception:
+        _log.warning("disk cache decode failed: %s", path, exc_info=True)
+        try:
+            path.unlink(missing_ok=True)  # 손상 파일은 재계산으로 대체
+        except OSError:
+            pass
+        return None
+
+
+def compare_exists(upload_root: Path, cache_key: tuple) -> bool:
+    """Compare 디스크 캐시 파일 존재 확인 (ai_comment_exists 와 같은 용도 — stat 1회)."""
+    if not _enabled():
+        return False
+    try:
+        return _path_for(upload_root, "cmp", cache_key, ".json.gz").is_file()
+    except OSError:
+        return False
+
+
+def save_compare(upload_root: Path, cache_key: tuple, payload: dict) -> None:
+    if not _enabled():
+        return
+    try:
+        data = gzip.compress(
+            json.dumps(payload, ensure_ascii=False,
+                       separators=(",", ":")).encode("utf-8"), compresslevel=1)
+    except Exception:
+        _log.warning("disk cache serialize failed", exc_info=True)
+        return
+    _write(_path_for(upload_root, "cmp", cache_key, ".json.gz"), data)
+
+
 def load_temp_map(upload_root: Path, cache_key: tuple) -> bytes | None:
     """Temperature 항목별 fail die 인덱스 gzip bytes 디스크 캐시 조회.
 

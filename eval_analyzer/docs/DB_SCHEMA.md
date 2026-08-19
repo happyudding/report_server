@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS fail_case (
     item_id        INTEGER NOT NULL,         -- FK item_master
     bin            INTEGER,
     revision       REAL,                     -- FLOAT (0, 0.1, 1.0, 2.1 ...)
-    item_class     TEXT,                     -- = category_major|value_type|bin  ← ★룰 스코프 키
+    item_class     TEXT,                     -- = category_major|value_type  ← ★룰 스코프 키 (2026-08-19 2단화)
     test_condition TEXT NOT NULL DEFAULT '', -- v8: 측정 조건 축 (아래)
     created_at     INTEGER NOT NULL,
     updated_at     INTEGER,
@@ -153,13 +153,27 @@ CREATE INDEX IF NOT EXISTS idx_fail_case_item ON fail_case(item_id);            
 
 도입 이유: `TEMP|<item>` 과 `ETC|<item>` 이 둘 다 bin=NULL 로 붕괴해 case_id 가 겹쳤고,
 같은 item 에 두 코멘트가 있으면 뒤에 적재된 쪽이 앞 label 을 조용히 덮어썼다.
-`item_class`(룰 스코프 키)는 이와 **무관하게 3조각 그대로** 둔다 — 룰 스코프를 조건별로
-쪼개면 기존 임계값 보정이 통째로 흩어진다.
+⚠ **2026-08-19 부터 `test_condition` 이 사실상 유일한 구분축**이다(아래 bin 제거) —
+이걸 빼면 온도 코멘트가 그 item 의 일반 코멘트와 한 case 로 붕괴한다.
+
+### ⚠ case grain = **item 당 1개** (2026-08-19, 사용자 결정)
+
+`case_id`·`item_class` 의 재료에서 **bin 이 빠졌다**. 호출부는 `wafer_number`·`bin` 자리에
+항상 `None` 을 넣는다(함수 시그니처는 하위호환으로 그대로).
+
+- **왜**: bin 은 serial(die)의 binning 관례이지 item 의 속성이 아니고, 제품군·담당 ENGR 에
+  따라 달라진다. 실측상 `(소스, FAILTNO)` 당 distinct BIN 이 **100% 1개**(= item 이 이미
+  bin 을 결정하므로 식별 정보 0)인데, 키에 넣으면 같은 현상의 코멘트·라벨·선례가 쪼개진다.
+  동일성 기준은 **value_type + item 명(유사도 70%)** — 선례검색이 이미 쓰던 축이다.
+- **버리는 건 아니다**: `fail_case.bin` 에 **대표 bin**(최다 fail, 동률은 작은 bin)을 남겨
+  `bin_taxonomy`(severity_bias) 조회와 화면 표시에 계속 쓴다. UNIQUE 자연키 컬럼 구성도 그대로다
+  (bin 이 NULL 이면 SQLite 가 서로 distinct 로 보므로 실질 멱등성은 PK(case_id)가 지킨다).
+- 소급 변환은 하지 않는다 — 재수집(`force=true`)·재-export 하면 새 case_id 로 자연히 옮겨간다.
 
 **case_id 생성** (store.py):
 ```python
 import hashlib
-parts = [product_name, lot_id, wafer_number, item_id, bin, revision]
+parts = [product_name, lot_id, wafer_number, item_id, bin, revision]   # wafer·bin 은 None
 if condition:                       # 빈 값이면 재료에서 아예 빠진다 (기존 case_id 불변)
     parts.append(condition)
 case_id = hashlib.sha256("|".join(str(x) for x in parts).encode("utf-8")).hexdigest()
@@ -196,9 +210,19 @@ CREATE TABLE IF NOT EXISTS features (
     quadrant_imbalance REAL, x_gradient REAL, y_gradient REAL, wafer_zone_signature TEXT,
     -- 기타
     n_dut INTEGER, site_cpk_delta REAL, code_edge_hit REAL,
+    -- v5/v6: shot_fail_ratio(미사용·항상 NULL), ring_fail_ratio,
+    --        radial_gradient_norm, x_gradient_norm, y_gradient_norm, n_modes, modality_v2
+    -- v9(2026-08-19): 룰 **판정 기준값** 14종 — store._V9_FEATURE_COLS
+    --   fail_mad_min, fail_body_jump_ratio, fail_pass_gap_sigma, fail_robust_z_max,
+    --   e1_fail_share, edge_fail_share, center_fail_share, ring_fail_share,
+    --   fail_spread_norm, tail_mass_3s, rail_low_ratio, rail_high_ratio,
+    --   value_gap_ratio, value_gap_minor_mass
     PRIMARY KEY (case_id, run_id, engine_version)
 );
 ```
+> ⚠ 이 블록은 요약이다 — **정본은 `eval_engine/store.py` 의 `SCHEMA`**. v5 이후 추가분은
+> 위 주석으로 표기한다. v9 값들은 원래도 L2 가 계산해 반환하던 것이고 저장만 시작한
+> 것이라 raw(per-DUT) 저장 금지 규칙과 무관하다. 소급 채움은 불가(재수집 필요).
 
 ## 6. VERDICT (evaluation + 근거/시그니처 child — JSON 금지)
 ```sql

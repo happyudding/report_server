@@ -146,11 +146,14 @@ def test_criterion_from_rules_not_hardcoded():
     # BIMODALITY 는 when_metric 이 판정 기준이 아니라 yaml review_metric 을 따른다.
     assert review._rule_criterion(sigs["BIMODALITY"], th) \
         == ("density_gap", ">", "subpop_density_gap_warn")
-    # 스냅샷에서 되살릴 수 없는 지표(per-DUT 원본 필요)는 층화하지 않는다 — OUTLIER 의
-    # fail_robust_z_max, 공간 룰의 *_fail_share 가 여기 해당한다. 억지로 정렬하는 대신
-    # 사유가 보이게 None 을 돌려준다(빈 표본 목록이 이유 없이 뜨는 것을 막는다).
-    assert review._rule_criterion(sigs["OUTLIER"], th) is None
-    assert review._rule_criterion(sigs["EDGE_FAIL"], th) is None
+    # v9(2026-08-19)부터 판정 기준값이 저장돼 OUTLIER·공간 룰도 층화된다.
+    # (종전에는 per-DUT 원본이 있어야 계산돼 둘 다 None 이었다.)
+    assert review._rule_criterion(sigs["OUTLIER"], th) \
+        == ("fail_mad_min", ">=", "outlier_fail_mad_min"), \
+        review._rule_criterion(sigs["OUTLIER"], th)
+    assert review._rule_criterion(sigs["EDGE_FAIL"], th) \
+        == ("edge_fail_share", ">=", "region_fail_share_min"), \
+        review._rule_criterion(sigs["EDGE_FAIL"], th)
     # 임계값 키를 참조하지 않는 룰은 층화 불가로 정직하게 None
     assert review._rule_criterion({"when_metric": {"stdev": "<=0"}}, th) is None
     print("[b] 기준 metric 이 yaml 에서 나옴 OK")

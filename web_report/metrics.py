@@ -80,6 +80,39 @@ def _apply_step_label(tables, step_label):
                       for k, v in step.items()}
 
 
+def compare_inputs(tables, selected_items=None, temperature_groups=None, mode="Normal"):
+    """Compare 계산에 필요한 파생 입력 (all_items, cpk_rows, stat_items) 만 만든다.
+
+    분리 캐시가 미스일 때 **payload 전체를 만들지 않고** compare 만 계산하기 위한 경로다
+    (백그라운드 compare 잡). `build_report_payload` 의 같은 구간과 **한 글자도 다르면
+    안 된다** — 값이 갈리면 캐시 히트/미스에 따라 Compare 결과가 달라진다.
+    """
+    sources = [{"name": t.source, "file_name": t.file_name} for t in tables]
+    selected_set = {str(v) for v in (selected_items or []) if str(v)}
+    if selected_set:
+        for table in tables:
+            table.item_columns = [c for c in table.item_columns if c in selected_set]
+    temp_groups, _, _ = _temperature_context(tables, sources, mode, temperature_groups)
+    all_items = sorted({c for t in tables for c in t.item_columns})
+    item_counts = finite_count_map(tables)
+    excluded_items = passfail_or_empty_items(tables, counts=item_counts)
+    stat_items = [i for i in all_items if i not in excluded_items]
+    cpk_rows = build_cpk_rows(tables, stat_items, temp_groups)
+    return all_items, cpk_rows, stat_items
+
+
+def build_compare(tables, all_items, cpk_rows, *, stat_items, compare_groups):
+    """Compare payload 계산 — 인라인 경로와 백그라운드 잡이 **같은 함수**를 쓴다.
+
+    build_log stage 이름을 여기서 잡아 두 경로의 계측이 같은 이름으로 남는다.
+    """
+    from .tabs.compare import build_compare_payload
+    with build_log.stage("compare"):
+        return build_compare_payload(tables, all_items, cpk_rows,
+                                     stat_items=stat_items,
+                                     compare_groups=compare_groups)
+
+
 def build_report_payload(tables, selected_items=None, sheets=None, etc_items=None,
                          issue_comments=None, summary_engr=None, product_type="", product="",
                          mode="Normal", dist_colors=None, ai_comments=None,
@@ -88,7 +121,8 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
                          issue_hidden=None, issue_status=None, gross_die=None,
                          compare_groups=None, yield_basis=None,
                          temperature_groups=None, temperature_limits=None,
-                         step_label="") -> dict:
+                         step_label="", compare_payload=None,
+                         compare_deferred=False) -> dict:
     """Distribution ECDF(대용량)는 payload 에 싣지 않고 항상 지연 로드한다
     (distribution_deferred=True, sheets["Distribution"]=[]) — 프런트가 별도 lazy 엔드포인트
     (GET .../web_report/distribution)로 받아간다. distribution_index(경량)는 항상 포함.
@@ -118,7 +152,12 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
     표시를 이 값으로 바꾼다 (_apply_step_label). 빈 값이면 아무것도 하지 않는다.
     ai_signatures/issue_signatures/signature_options: Issue Table Signature 컬럼
     (엔진 발화 제안 / ENGR 확정값 / 선택 목록). ai_comments 와 **같은 조건**에서만
-    전달된다 — ai_comments 가 None 이면 컬럼도 payload 키도 생기지 않는다(기존 계약 유지)."""
+    전달된다 — ai_comments 가 None 이면 컬럼도 payload 키도 생기지 않는다(기존 계약 유지).
+    compare_payload: Compare 계산 결과(build_compare 반환). 호출자가 **분리 캐시**에서
+    가져와 주입한다(2026-08-19) — payload 안에 박아 캐시하면 편집·스키마 bump 마다 전량
+    재계산되기 때문. 안 주면 여기서 계산한다(구 호출부·테스트 호환).
+    compare_deferred: True 면 미주입 시에도 계산하지 않고 `compare_pending` 만 세운다 —
+    사용자가 기다리는 콜드 빌드가 compare 를 백그라운드 잡에 미루는 모드."""
     _apply_step_label(tables, step_label)
     selected_set = {str(v) for v in (selected_items or []) if str(v)}
     if selected_set:
@@ -237,12 +276,22 @@ def build_report_payload(tables, selected_items=None, sheets=None, etc_items=Non
 
     # Compare 모드: source 2개 이상일 때만 비교 분석을 얹는다 (단일 source 는 비교 대상 없음).
     # compare_groups(세션 옵션의 Before/After 배치)가 없으면 compare 쪽이 legacy 폴백한다.
+    #
+    # 2026-08-19 — 계산은 **호출자(service)가 분리 캐시로 관리**한다. 여기서 직접 부르면
+    # payload 캐시(report_key)에만 실려 코멘트 한 줄 편집·스키마 bump·dedup 형제마다
+    # 전량 재계산됐다(실측 1.1초 = 콜드 빌드의 34%). `compare_payload` 를 주면 그대로 얹고,
+    # None 이면 계산 대기 상태로 표시한다(프런트가 "계산 중"을 그린다).
+    # 호출자가 아무것도 안 주는 경로(테스트·구 호출부)는 종전처럼 여기서 계산한다.
     if mode == "Compare" and len(tables) >= 2:
-        from .tabs.compare import build_compare_payload
-        with build_log.stage("compare"):
-            payload["compare"] = build_compare_payload(
-                tables, all_items, cpk_rows, stat_items=stat_items,
-                compare_groups=compare_groups)
+        if compare_payload is None and not compare_deferred:
+            compare_payload = build_compare(tables, all_items, cpk_rows,
+                                            stat_items=stat_items,
+                                            compare_groups=compare_groups)
+        if compare_payload is not None:
+            payload["compare"] = compare_payload
+        else:
+            # 최종본에는 이 키가 없다(프런트 하위호환: 플래그 부재 = 종전 렌더).
+            payload["compare_pending"] = True
 
     # Temperature 모드: RT/CT/HT 그룹 구성을 그대로 내려 프런트(Distribution 소스 그룹 필터
     # ·Map 항목 legend·Temp 시트 렌더)가 쓴다. Yield 표는 이미 RT 기준이라 Corner 분해 키

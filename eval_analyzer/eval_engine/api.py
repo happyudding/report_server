@@ -53,7 +53,14 @@ def evaluate(run_input: dict, *, engine_version: str | None = None,
         store.init_db(db_path)
 
     # L0
+    t_ingest = time.perf_counter()
     run_ctx = ingest.ingest(run_input, persist=persist, db_path=db_path)
+    ms_ingest = (time.perf_counter() - t_ingest) * 1000
+
+    # 레벨별 누적 소요(ms) — 종전에는 총소요 1줄뿐이라 "L1/L2 가 느리다" 를 확인하거나
+    # 최적화 효과를 증명할 수치가 엔진에 전혀 없었다(2026-08-19 계측 추가).
+    # 워커 스레드에서 더하므로 GIL 아래 float 누적이다 — 관측용이라 정밀 동기화는 불필요.
+    level_ms = {"L1": 0.0, "L2": 0.0, "L3L4": 0.0, "L5": 0.0, "L6": 0.0}
 
     def _process_case(case):
         """case 1건의 L1~L6. 저장 게이트를 못 넘으면 None, 넘으면 (result dict, 선례 수).
@@ -62,22 +69,30 @@ def evaluate(run_input: dict, *, engine_version: str | None = None,
         룰 계산을 먼저 끝내야 한다. 대신 걸러진 case 는 L5(선례검색·코멘트)를 건너뛰므로
         가장 비싼 단계는 아낀다. `generate_comment=False` 면 통과분도 L5 를 건너뛴다.
         """
+        t = time.perf_counter()
         m = metrics.compute(case)                          # L1 raw_metrics
+        t1 = time.perf_counter(); level_ms["L1"] += (t1 - t) * 1000
         f = features.compute(case, m, engine_version)      # L2 features
+        t2 = time.perf_counter(); level_ms["L2"] += (t2 - t1) * 1000
         sig = signatures.evaluate(case, f, m)              # L3 발화 signature 들
         verdict = status.decide(case, f, sig)              # L4 status/confidence
+        level_ms["L3L4"] += (time.perf_counter() - t2) * 1000
         if not present.should_store(case, m, sig):         # 저장 판단(rule 계산 후): yield fail | cpk<cpk_warn
             return None
+        t3 = time.perf_counter()
         if generate_comment:
             preced = recommend.find_precedents(case, sig)  # 선례 검색 (DB_SCHEMA §9)
             comment = recommend.make_comment(case, verdict, sig, preced,
                                     model_version=model_version)  # L5
         else:
             preced, comment = [], None
+        t4 = time.perf_counter(); level_ms["L5"] += (t4 - t3) * 1000
         if persist:
             present.persist(run_ctx, case, m, f, verdict, sig, comment, engine_version,
                             model_version, precedents=preced, db_path=db_path)
-        return present.to_result(case, verdict, sig, comment, preced), len(preced)
+        out = present.to_result(case, verdict, sig, comment, preced), len(preced)
+        level_ms["L6"] += (time.perf_counter() - t4) * 1000
+        return out
 
     cases = run_ctx["cases"]
     # ⚠ persist 는 워커마다 SQLite 커넥션을 열어 같은 파일에 쓴다(VERIFY_CHECKLIST §2-2).
@@ -97,9 +112,12 @@ def evaluate(run_input: dict, *, engine_version: str | None = None,
         n_precedent_hits += n_hits
 
     n_candidates = len(run_ctx["cases"])
-    logger.info("evaluate 완료 run_id=%s candidates=%d stored=%d gated=%d precedent_hits=%d %.1fms",
+    logger.info("evaluate 완료 run_id=%s candidates=%d stored=%d gated=%d precedent_hits=%d "
+                "%.1fms [L0 %.0f L1 %.0f L2 %.0f L3L4 %.0f L5 %.0f L6 %.0f]",
                 run_ctx.get("run_id"), n_candidates, len(results), n_candidates - len(results),
-                n_precedent_hits, (time.perf_counter() - t0) * 1000)
+                n_precedent_hits, (time.perf_counter() - t0) * 1000, ms_ingest,
+                level_ms["L1"], level_ms["L2"], level_ms["L3L4"], level_ms["L5"],
+                level_ms["L6"])
     return {
         "run_id": run_ctx.get("run_id"),
         "engine_version": engine_version,

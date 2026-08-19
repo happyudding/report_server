@@ -270,6 +270,33 @@ pack** 을 올리고, 서버는 조회 때 **덧셈(cumsum)만** 한다.
     (완료 후 stale 304 방지). AI 잡 실패는 `build_status` (sid,"ai") 실패 누적으로
     재시도가 차단되고 리포트는 계속 열린다. 가드: perf_guard `S10-ai-comment-cache`,
     벤치 `#14 bench_ai_comment`(quick 포함).
+- **Compare 비동기 분리** (2026-08-19): Compare 모드 세션의 콜드 빌드에서 compare 계산이
+  **34%** 였다(3.323s 중 1.147s — payload stage 의 74%). AI Comment 와 **같은 두 겹** 구조로
+  분리했다. 값은 완전 등가다(`tests/test_compare_async.py` (a) 가 정준 JSON 일치를 고정).
+  - **분리 캐시**: `cache_policy.compare_key`(sid·edits_rev **불포함**, `COMPARE_SCHEMA_VERSION`)
+    로 RAM(`COMPARE_CACHE`, 바이트 이중 상한 — common_map 이 수 MB)+디스크(`cmp-*`)에 저장
+    (`service._compare_cached`). 코멘트 한 줄 편집·전역 스키마 bump·dedup 형제가 더는
+    compare 를 재계산하지 않는다 — **이게 이번 변경의 가장 큰 이득**이다.
+    키에 정규화된 `compare_groups` 대신 **원본 `webreport_options`** 를 넣는 이유: 정규화에
+    소스 이름이 필요해 tables 를 열어야 하는데, 이 키는 tables 를 열기 전(콜드·pending 판정)
+    에도 같은 값이 나와야 한다. 소스 이름은 content_hash 에 이미 반영돼 정보 손실이 없다.
+  - **pending payload**: 사용자 대기 경로(`ai_inline=False`)는 캐시 히트만 쓰고, 미스면
+    `compare` 키 **없이** `compare_pending: true` 를 얹어 리포트를 먼저 연다
+    (`metrics.build_report_payload(compare_deferred=True)`). 프런트 `compare.js` 가 이
+    플래그로 "⏳ 계산 중"과 "데이터 없음"을 구분하고, `boot.js` 폴링이 완료 시 다시 그린다.
+  - **pending 키가 갈린다**: `report_pending_key(..., kinds)` — ai 단독은 종전 꼬리
+    (`aipending`) 그대로라 **기존 파일이 계속 유효**하고, compare 가 끼면 별도 키가 된다.
+    안 갈리면 "AI 만 빈 본"과 "둘 다 빈 본"이 서로 덮어써 이미 계산된 부분이 사라진 본이
+    최종본처럼 재사용된다. 최종본 승격 시 **3가지 조합을 전부** `drop_report` 한다.
+  - 백그라운드 잡은 `"compare"`(= `report_job(ai_inline=True)` — `"ai"` 와 같은 잡이라 둘 다
+    pending 이면 `"ai"` 하나만 예약해 같은 콜드 빌드를 두 번 하지 않는다). etag 꼬리는
+    무엇이 대기 중인지까지 담는다(`-ai`/`-cmp`/`-aicmp`).
+  - **Excel 다운로드는 compare 완료까지 기다린다**(`client/excel_download/_fetch.py`
+    `_wait_compare_ready`, 상한 180초). AI Comment 는 셀만 비지만 Compare 는 **시트 단위**로
+    빠져 사용자가 산출물이 잘못된 줄 모르고 쓰게 되기 때문이다. 상한 초과 시 경고만 남기고
+    나머지 시트로 진행한다(다운로드 전체 실패가 더 나쁘다).
+  - 가드: perf_guard `S12-compare-cache`, `tests/test_compare_async.py`,
+    값 회귀는 기존 `tests/test_compare_equivalence.py` 가 그대로 지킨다.
 - **Map dies 시딩** (2026-08-10, CLAUDE.md §5-11 Map 3초 SLA): 위 202 규약은 "콜드일 때
   스레드를 물지 않는다"를 보장할 뿐, **사용자 대기 자체는 그대로**다. map dies 는
   프리웜 대상이 아니라(`compute._prewarm_one` 은 report payload 만 만든다) Map 탭 /

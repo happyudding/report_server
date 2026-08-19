@@ -342,10 +342,107 @@ def api_active_users():
     """실시간 접속 사용자 — 사용자 탭 전용(10초 폴링).
 
     api/runtime 에도 같은 값이 실려 있지만, 사용자 탭은 응답시간·캐시·스케줄러가 필요 없어
-    이 가벼운 엔드포인트를 따로 쓴다."""
+    이 가벼운 엔드포인트를 따로 쓴다.
+
+    여기서 두 가지를 덧붙인다(둘 다 계측 자체는 건드리지 않는다):
+      - 클라 버전: UA 토큰이 없는 행은 버전 대장(DB)의 마지막 실행 버전으로 폴백
+      - 대기 상태: 그 사람이 보는 세션이 지금 콜드 빌드 중인지 (build_status 순간값)
+    """
     out = metrics.active_users(request.args.get("window", metrics.ACTIVE_USER_WINDOW_SEC))
-    users_admin.attach_names(out.get("users"), "user")
+    rows = out.get("users") or []
+    users_admin.attach_names(rows, "user")
+    _attach_client_version(rows)
+    _attach_waiting(rows)
     return jsonify(out)
+
+
+def _attach_client_version(rows):
+    """UA 에 버전 토큰이 없는 행을 버전 대장으로 메운다 (`ver_src`: "ua" | "db").
+
+    구버전 클라는 어느 쪽에도 값이 없어 빈 문자열로 남는다 — 그 자체가 '업데이트 안 함'
+    신호다. DB 조회는 배치 1회(행마다 조회하면 N+1)."""
+    need = [r.get("user") for r in rows if r.get("user") and not r.get("ver")]
+    versions = {}
+    if need:
+        try:
+            versions = report_db.get_client_versions(need)
+        except Exception:
+            versions = {}
+    for r in rows:
+        if r.get("ver"):
+            r["ver_src"] = "ua"
+            continue
+        v = versions.get(str(r.get("user") or "").lower(), "")
+        r["ver"] = v
+        r["ver_src"] = "db" if v else ""
+
+
+def _attach_waiting(rows):
+    """보고 있는 세션이 콜드 빌드 중이면 `waiting`={stage, elapsed} 를 붙인다.
+
+    소스는 build_status 의 메모리 스냅샷 하나라 DB·파일 접근이 없다 (진행 중 빌드가
+    없으면 비용 0). builds_admin.active_builds() 는 세션 메타까지 붙이는 무거운 쪽이라
+    10초 폴링에는 쓰지 않는다."""
+    sids = {r.get("session_id") for r in rows if r.get("session_id")}
+    if not sids:
+        return
+    try:
+        from web_report import build_status
+        builds = build_status.snapshot_all()
+    except Exception:
+        return
+    by_sid = {}
+    for b in builds:
+        sid = b.get("session_id")
+        if sid not in sids:
+            continue
+        cur = by_sid.get(sid)
+        # 한 세션에 여러 stage 가 동시에 돌면 가장 오래된 것을 대표로 — 사용자가 실제로
+        # 기다린 시간이 그것이다.
+        if cur is None or float(b.get("elapsed") or 0) > float(cur.get("elapsed") or 0):
+            by_sid[sid] = b
+    for r in rows:
+        b = by_sid.get(r.get("session_id"))
+        if b:
+            r["waiting"] = {"stage": b.get("stage") or "report",
+                            "elapsed": round(float(b.get("elapsed") or 0))}
+
+
+@admin_panel_bp.get("/api/user_timeline")
+def api_user_timeline():
+    """접속자 1명의 최근 요청 목록 — 사용자 탭에서 행을 펼칠 때만 호출된다.
+
+    '지금 하는 일'은 마지막 요청 1건이라 무엇을 하다 막혔는지 흐름이 안 보인다.
+    소스는 메모리 링버퍼(사람당 최근 20건)라 서버 재시작 시 비워진다."""
+    out = metrics.user_timeline(
+        request.args.get("key", ""),
+        request.args.get("window", metrics.ACTIVE_USER_WINDOW_SEC))
+    return jsonify(out)
+
+
+@admin_panel_bp.get("/api/client_versions")
+def api_client_versions():
+    """Honey 클라 버전 현황 — 버전별 인원 + 사용자별 마지막 실행 버전.
+
+    '지금 접속 중' 표가 순간을 본다면 이쪽은 **최근 N일 안에 Honey 를 실행한 전원**을
+    본다(지금 안 켠 사람 포함). 최신 버전은 릴리스 manifest 에서 읽어 함께 준다 —
+    화면이 '구버전 몇 명'을 판정하는 기준이다."""
+    out = report_db.version_report(request.args.get("days", 30))
+    out["latest"] = _latest_release_version()
+    users_admin.attach_names(out.get("rows"), "user_id")
+    return jsonify(out)
+
+
+def _latest_release_version():
+    """releases/version.json 의 최신 버전 문자열. 없으면 "" (화면은 비교를 생략한다)."""
+    try:
+        import json
+        path = config.HONEY_VERSION_JSON
+        if not path.exists():
+            return ""
+        return str(json.loads(path.read_text(encoding="utf-8")).get("version") or "")
+    except Exception:
+        return ""
 
 
 @admin_panel_bp.get("/api/runtime")

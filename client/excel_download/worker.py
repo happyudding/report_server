@@ -16,14 +16,13 @@ class ExcelDownloadWorker(QThread):
     failed = pyqtSignal(str)        # error message
 
     def __init__(self, session_id, server_base, out_path, bin1=False, parent=None,
-                 chips=None, engine=None):
+                 chips=None):
         super().__init__(parent)
         self._session_id = session_id
         self._server_base = server_base
         self._out_path = out_path
         self._bin1 = bin1
         self._chips = chips
-        self._engine = engine
         self.result = {}            # 완료 후 honey_main 이 엔진·경고를 읽는다
 
     def run(self):
@@ -39,7 +38,7 @@ class ExcelDownloadWorker(QThread):
                 self._session_id, self._server_base, self._out_path,
                 status_cb=lambda s, m: self.status.emit(s, m),
                 progress_cb=lambda pct, m: self.progress.emit(int(pct), m),
-                bin1=self._bin1, chips=self._chips, engine=self._engine)
+                bin1=self._bin1, chips=self._chips)
             self.result = result or {}
             self.done.emit(str(result.get("out_path") or self._out_path),
                            float(result.get("elapsed") or 0.0))

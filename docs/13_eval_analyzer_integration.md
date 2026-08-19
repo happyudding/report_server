@@ -305,8 +305,14 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=8) 그대
   (`make_case_id(..., condition)` — 빈 값이면 재료에서 빠져 **기존 case_id 는 불변**).
   같은 값을 `sync_session_signatures`(ENGR Signature 라벨)에도 넘겨야 한다 — 안 그러면
   같은 TEMP 행의 코멘트 라벨과 signature 라벨이 서로 다른 case 로 갈라진다.
-  `item_class`(룰 스코프 키)는 **3조각 그대로** 둔다. 기존에 붕괴돼 적재된 행은
-  소급 복구하지 않는다(원본은 세션 편집 DB 에 있고, 그 세션이 다시 export 될 때 갈라진다).
+  기존에 붕괴돼 적재된 행은 소급 복구하지 않는다(원본은 세션 편집 DB 에 있고, 그 세션이
+  다시 export 될 때 갈라진다).
+  ✅ **2026-08-19 갱신**: `case_id`·`item_class` 에서 **bin 이 빠졌다**(사용자 결정 —
+  동일성 기준은 value_type + item 명). 그래서 `Yield|<bin>|<item>` 과 `CPK|<item>` 은
+  이제 **같은 case** 로 모이고, 코멘트는 병합·signature 는 합집합으로 저장된다.
+  `test_condition` 은 **유일하게 남은 구분축**이라 위 규약이 더 중요해졌다 — TEMP 를
+  빼면 온도 코멘트가 일반 코멘트와 한 case 로 붕괴한다. `item_class` 는
+  `category_major|value_type` **2단**(구 3단 값은 읽기만 호환). 배경 → [17](17_eval_learning_loop.md).
   ⚠ **Corner(FF/SS/FS/SF) 평가는 아직 판별할 수 없다** — 분석 모드에도, manifest source
   메타(`{index,name,file_name}`)에도, 클라 업로드 입력에도 corner 개념이 없다.
   source 이름(legend)은 자유 텍스트라 토큰을 신뢰할 수 없고, source 가 많다고 corner 도
@@ -360,7 +366,7 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=8) 그대
     정확일치 + 모르면 `PF` 폴백이다(엔진 현행 동작). 그래서 `MILLIVOLT` 는 선례에선 `V`,
     같은 표기를 UNIT 행에 쓴 live case 는 `PF` 라 등호 필터에서 서로 안 잡힌다. 새 값
     `%` 도 엔진이 절대 생성하지 않으므로 `%` 선례는 **선례 조회·관리자 탭 표시 용도**다.
-    `rules/*.yaml` 은 `item_class = category_major|value_type|bin` 스코프라 `%` 스코프가
+    `rules/*.yaml` 은 `item_class = category_major|value_type` 스코프라(2026-08-19 2단화) `%` 스코프가
     없어 기본으로 폴백한다. 완전 해소는 엔진 `UNIT_TO_VALUE_TYPE`/`_classify_value_type`
     을 같은 규칙으로 맞추면 되고, 엔진이 자유 수정이 된 지금은 **이 repo 에서 바로 할 수
     있다**(다만 기존 적재 데이터 재분류가 따라와야 하므로 여전히 별건 작업이다).
@@ -726,10 +732,13 @@ PTE/개발 comment 를 **eval.db 스키마(17테이블, SCHEMA_VERSION=8) 그대
 - **층화 기준은 하드코딩하지 않는다**: 그 룰 `when_metric` 중 임계값 키를 참조하는 첫
   조건에서 뽑고, when_metric 이 판정 기준이 아닌 룰만 yaml `review_metric` 으로 지목한다
   (현재 `BIMODALITY` 하나 — 판정에는 무영향, 표본 정렬 전용).
-  ⚠ 그 지표를 스냅샷에서 되살릴 수 없으면(`review._STRATIFIABLE` 밖 — per-DUT 원본이
-  필요한 `fail_robust_z_max`·`*_fail_share`) **층화하지 않고 사유를 표시**한다.
-  뒤에 오는 가드 조건(`fail_count` 등)으로 대신 정렬하면 판정 축이 아닌 다른 축으로
-  표본을 뽑게 되어 검수 결과가 임계값 판단에 쓸 수 없게 된다.
+  ⚠ 그 지표를 스냅샷에서 되살릴 수 없으면(`review._STRATIFIABLE` 밖) **층화하지 않고
+  사유를 표시**한다. 뒤에 오는 가드 조건(`fail_count` 등)으로 대신 정렬하면 판정 축이 아닌
+  다른 축으로 표본을 뽑게 되어 검수 결과가 임계값 판단에 쓸 수 없게 된다.
+  ✅ 2026-08-19(eval.db **v9**, 사용자 승인): 판정 기준값 14종을 `features` 에 저장하게 되어
+  `OUTLIER`·공간 4종·`SPOT_CLUSTER`·`HEAVY_TAIL`·`BIMODALITY`·`CODE_RAIL` 도 층화된다.
+  단 **v9 이전에 수집된 행은 그 컬럼이 NULL** 이라(소급 채움 불가 — per-DUT 원본에서만
+  나온다) 재수집 전까지는 표본이 얇게 보이는 것이 정상이다.
 - **라벨**: 기존 `label` 테이블 재사용, `labeler='eval-review'`,
   `engine_comment_accepted` 에 맞음(1)/과다발화(0). **`human_status` 는 비운다** — 그래야
   전체 status 채점(`eval_admin.scoring()`, `labeler='eval-panel'` 로 한정)과 섞이지 않는다.
@@ -935,11 +944,16 @@ primary specificity 경쟁까지 흐리므로, 임계값은 그대로 두고 중
 > 로 1회 치환). 꺼진 구 룰은 **선언을 지우지 않는다** — 과거 발화·정답라벨이 그 이름으로
 > eval.db 에 남아 있어 패널·트레이스가 계속 해석해야 한다.
 >
-> ⚠ **표본함(§14) 제약**: `fail_robust_z_max`·`*_fail_share` 는 per-DUT 원본이 있어야
-> 계산되는 값이라 eval.db 에 저장하지 않는다(불변 규칙 3). 그래서 `OUTLIER` 와 공간
-> 4종은 **표본 층화가 불가**하고 패널에 "층화 불가"로 표시된다(`review._STRATIFIABLE`).
-> 승인형 임계값 튜닝을 이 룰들에도 적용하려면 features 테이블에 컬럼을 추가해야 하는데,
-> eval.db 스키마 변경은 **사용자 사전 승인 대상**이라 보류했다.
+> ✅ **표본함(§14) 제약 해소 — eval.db v9 (2026-08-19, 사용자 승인)**: 종전에는
+> `fail_mad_min`·`*_fail_share` 같은 **판정 기준값**이 저장되지 않아 `OUTLIER` 와 공간 4종이
+> "층화 불가"였다. 이 값들은 L2 `features.compute()` 가 이미 계산해 반환하고 있었고
+> `store.save_features` 의 화이트리스트만 버리고 있었으므로, **계산 경로 변경 없이**
+> 컬럼 14개(`store._V9_FEATURE_COLS`)를 추가해 저장한다(`ALTER TABLE ADD COLUMN` —
+> PK 불변, 기존 행 재작성 없음). raw(per-DUT) 저장 금지 규칙(불변 규칙 3)은 그대로다 —
+> 저장하는 것은 원본이 아니라 계산된 판정 지표다.
+> ⚠ v9 이전 행은 NULL 이며 **소급 채움이 불가능**하다(원본에서만 나온다). 값이 필요하면
+> 그 세션을 `force=true` 로 재수집한다. 소비자(층화·calibrate·근거 팝업)는 전부 NULL 을
+> "표본 제외"로 안전 처리한다.
 
 ### 16-2. 공간 존 세분 — E1(최외곽 1 chip line) 신설
 

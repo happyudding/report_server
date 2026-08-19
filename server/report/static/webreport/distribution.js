@@ -477,12 +477,6 @@ function distOrderedSources(list) {
   return list.slice().sort((a, b) => (distSourceFilter.has(a.name) ? 1 : 0) - (distSourceFilter.has(b.name) ? 1 : 0));
 }
 
-// source 가 이 수 이상이면 상세 3개 차트(CDF/히스토그램/정규분포)의 내장 세로 legend 를
-// 끄고 차트 위 공용 legend 스트립 1개로 대체 — 내장 legend 가 차트 폭을 잠식하고
-// 같은 내용이 3중복되는 것을 방지. 미만이면 기존 내장 legend 그대로(무회귀).
-const DIST_EXT_LEGEND_MIN = 8;
-function distUseExtLegend(data) { return ((data && data.sources) || []).length >= DIST_EXT_LEGEND_MIN; }
-
 // ── source 색 범례 (갤러리 툴바 · item_detail 상단 공용) ──────────────────────
 // 클릭 → 해당 source 강조(distSourceFilter). 스와치는 항상 원색(distColorFor)이다 —
 // 강조 표시는 행 배경으로 하고 스와치까지 죽이면 어떤 소스인지 못 알아본다
@@ -533,10 +527,8 @@ function distRenderLegends() {
   const g = document.querySelector("#panel-distribution .dist-legend-row");
   if (g) g.outerHTML = distLegendHtml((DATA.web_report && DATA.web_report.sources) || [],
                                       DIST_LEGEND_VERT_CLS);
-  // 상세는 idetLegendHtml 을 거쳐야 게이트가 일관된다 — 소스가 적은데 강조를 해제하면
-  // 빈 문자열이 돌아와 범례가 사라지고 Plotly 내장 legend 가 다시 그 역할을 맡는다.
-  // 우측 칸(aside)은 항상 DOM 에 남기고 그 안만 갈아끼운다 — 행 자체를 outerHTML 로
-  // 지우면 다시 강조를 걸었을 때 되살릴 자리가 없다(빈 aside 는 CSS :empty 로 숨김).
+  // 상세는 항상 우측 칸 범례를 쓴다(내장 legend 는 2026-08-19 제거). 우측 칸(aside)은
+  // DOM 에 남기고 그 안만 갈아끼운다(빈 aside 는 CSS :empty 로 숨김).
   const d = document.querySelector("#panel-item-detail .idet-legend-side");
   if (d && _itemDetailData && typeof idetLegendHtml === "function") d.innerHTML = idetLegendHtml(_itemDetailData);
 }
@@ -647,8 +639,8 @@ function distLegendClick(e) {
   return true;
 }
 
-// 강조 토글/해제의 단일 진입점 — 우측 칸 범례와 **차트 내장 legend**(item_detail.js
-// idetBindLegendHighlight)가 같은 규칙으로 동작해야 하므로 로직을 여기 하나로 둔다.
+// 강조 토글/해제의 단일 진입점 — 갤러리와 item_detail 의 우측 칸 범례가 같은 규칙으로
+// 동작해야 하므로 로직을 여기 하나로 둔다(상세 차트의 Plotly 내장 legend 는 2026-08-19 제거).
 function distToggleSourceHighlight(name) {
   if (!name) return;
   if (distSourceFilter.has(name)) distSourceFilter.delete(name); else distSourceFilter.add(name);

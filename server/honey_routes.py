@@ -15,6 +15,7 @@ import zipfile
 
 from flask import Blueprint, Response, abort, jsonify, request, send_file
 
+import auth_identity
 from auth_identity import current_user
 from config import HONEY_ANNOUNCEMENT_TXT, HONEY_RELEASES_DIR, HONEY_VERSION_JSON
 from database import report_db
@@ -28,7 +29,11 @@ def _record_run():
     """Honey 실행 집계 (best-effort) — 버전체크는 앱 시작 시 1회 호출된다.
 
     신원은 HoneyUser UA 토큰(transport/version_check 가 부착, 구버전 클라는 없음).
-    없으면 IP 로 집계한다 (역프록시 뒤면 X-Forwarded-For 첫 IP)."""
+    없으면 IP 로 집계한다 (역프록시 뒤면 X-Forwarded-For 첫 IP).
+
+    같은 UA 에 실려 오는 `HoneyVer/<버전>` 토큰을 버전 대장에도 남긴다 — 클라 버전이
+    바뀌는 시점이 곧 앱 시작이라 기록 지점이 여기 하나면 충분하다(요청마다 쓰면 DB 경합).
+    신원이 없는 IP 행은 사람이 아닐 수 있어 대장에 넣지 않는다."""
     try:
         uid = current_user()
         if not uid:
@@ -36,6 +41,13 @@ def _record_run():
             ip = fwd.split(",")[0].strip() if fwd else (request.remote_addr or "")
             uid = f"ip:{ip}" if ip else ""
         report_db.record_usage("honey_run", uid)
+    except Exception:
+        pass
+    try:
+        uid = current_user()
+        ver = auth_identity.client_version()
+        if uid and ver:
+            report_db.record_client_version(uid, ver)
     except Exception:
         pass
 

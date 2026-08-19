@@ -96,6 +96,18 @@ body { position: relative; }
 .tile .lbl { font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
 .tile .val { font-size: 26px; font-weight: 600; color: var(--ink-1); }
 .tile .det { font-size: 11px; color: var(--ink-3); margin-top: 4px; }
+/* ── 추이 그래프 (채점 탭, 2026-08-19) ───────────────────────────────── */
+.chart-box { position: relative; }
+.chart-box .m-tip { position: absolute; display: none; pointer-events: none; z-index: 5;
+  background: #12141a; border: 1px solid var(--grid); border-radius: 6px;
+  padding: 6px 8px; font-size: 11px; color: var(--ink-1); white-space: nowrap; }
+.chart-box .m-tip .t-date { color: var(--ink-3); margin-bottom: 3px; }
+.chart-box .m-tip .t-row { display: flex; align-items: center; gap: 5px; }
+.chart-box .m-tip .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 6px;
+  font-size: 11px; color: var(--ink-2); }
+.chart-legend .sw { width: 10px; height: 3px; border-radius: 2px; display: inline-block;
+  margin-right: 5px; vertical-align: middle; }
 .pager { display: flex; gap: 6px; justify-content: center; margin-top: 12px; align-items: center; }
 .pager .pg-btn { min-width: 32px; height: 30px; padding: 0 10px; font-size: 12px;
   border: 1px solid var(--grid); background: var(--surface-1); color: var(--ink-1); cursor: pointer; border-radius: 4px; }
@@ -216,6 +228,8 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
       <span class="msg" id="thMsg"></span>
     </div>
     <div class="note" id="thScopeNote"></div>
+    <!-- 저장 직후 자동 실행되는 골든 회귀 결과 (비차단 — 저장은 이미 반영됨) -->
+    <div id="thGolden" style="margin:6px 0"></div>
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -415,6 +429,35 @@ details.fold > summary { cursor: pointer; font-size: 12px; color: var(--ink-2); 
     </div>
     <div class="tiles" id="scTiles"><div class="tile"><div class="lbl">로딩 중…</div></div></div>
   </div>
+
+  <!-- 추이 — 정답 라벨이 없어도 볼 수 있는 지표(커버리지·확정 일치율·코멘트 정합) -->
+  <div class="card">
+    <h2>추이 <span class="hint">하루 1회 자동 집계 · 값이 없는 날은 선이 끊깁니다(0 과 다름)</span>
+      <span style="float:right">
+        <select class="sel" id="sctDays">
+          <option value="30">최근 30일</option>
+          <option value="90" selected>최근 3개월</option>
+          <option value="180">최근 6개월</option>
+          <option value="365">최근 1년</option>
+        </select>
+        <button class="btn" id="sctRollup" title="스케줄러를 기다리지 않고 지금 다시 집계합니다">지금 집계</button>
+      </span></h2>
+    <div class="note" style="margin-bottom:10px">
+      <b>UNKNOWN 비율</b> = fail 이 있는데 원인을 설명하지 못한 case 비율(낮을수록 좋음) ·
+      <b>Signature 일치율</b> = Issue Table <b>[확정]</b>으로 지목한 원인이 엔진 발화와 같은 비율 ·
+      <b>코멘트 정합률</b> = Close 코멘트가 엔진 판정과 실제로 이어진 비율(1.0 이 정상 —
+      낮으면 case 키가 어긋난 것)
+    </div>
+    <div class="chart-box"><svg id="sctChart" height="220" viewBox="0 0 900 220"
+         preserveAspectRatio="none" style="width:100%"></svg><div class="m-tip"></div></div>
+    <div class="chart-legend" id="sctLegend"></div>
+    <div class="chart-box" style="margin-top:14px"><svg id="sctVolume" height="150"
+         viewBox="0 0 900 150" preserveAspectRatio="none" style="width:100%"></svg>
+      <div class="m-tip"></div></div>
+    <div class="chart-legend" id="sctVolLegend"></div>
+    <div class="msg" id="sctMsg"></div>
+  </div>
+
   <div class="split">
     <div class="card">
       <h2>혼동행렬 <span class="hint">행=엔진 판정, 열=사람 정답 · 대각선=일치</span></h2>
@@ -758,7 +801,51 @@ async function saveThresholds() {
       : `저장됨 — 이 범위 직접 지정 ${n}건 (rules_rev ${r.rules_rev})`, true);
     $('thReason').value = '';
     await loadThresholds();
+    if (r.golden_auto) pollGoldenAuto();
   } catch (e) { flash($('thMsg'), e.message, false); }
+}
+
+// ── 저장 후 골든 회귀 (자동·비차단) ───────────────────────────────────────
+// 저장은 이미 끝났고 rules_rev 도 올라갔다(리포트 캐시 무효화 완료) — 여기서 되돌리지
+// 않고 **사후 경고**만 한다. 어긋난 게 있으면 임계값을 다시 조정하거나 골든셋을 고친다.
+let _goldenPollTimer = null;
+
+async function pollGoldenAuto(tries = 0) {
+  clearTimeout(_goldenPollTimer);
+  const box = $('thGolden');
+  let g;
+  try { g = await getJSON('api/golden/auto'); }
+  catch (e) { box.innerHTML = `<span class="msg err">회귀 상태 조회 실패: ${esc(e.message)}</span>`; return; }
+  const scope = g.scope ? ` <span style="color:var(--ink-3)">(${esc(g.scope)})</span>` : '';
+  if (g.state === 'running') {
+    box.innerHTML = `<span class="msg">골든 회귀 실행 중…${scope}</span>`;
+    // 회귀는 골든 세션마다 트레이스 1회라 분 단위가 될 수 있다 — 3초 간격 100회(5분) 상한.
+    if (tries < 100) _goldenPollTimer = setTimeout(() => pollGoldenAuto(tries + 1), 3000);
+    else box.innerHTML = `<span class="msg">회귀가 5분 넘게 걸립니다 — Maintenance 탭에서 결과를 확인하세요.</span>`;
+    return;
+  }
+  if (g.state === 'empty') {
+    box.innerHTML = `<span class="msg">골든셋이 비어 있어 회귀를 건너뜁니다 — 표본을 '맞음' 으로 검수하면 쌓입니다.</span>`;
+    return;
+  }
+  if (g.state === 'skipped' || g.state === 'error') {
+    box.innerHTML = `<span class="msg err">골든 회귀 미실행: ${esc(g.error || '')}</span>`;
+    return;
+  }
+  if (g.state !== 'done') { box.innerHTML = ''; return; }
+  const secs = g.elapsed_ms == null ? '' : ` · ${(g.elapsed_ms / 1000).toFixed(1)}초`;
+  if (!g.total_findings) {
+    box.innerHTML = `<span class="msg ok">골든 회귀 통과 — ${g.total_checked}건 대조, 어긋남 없음${scope}${secs}</span>`;
+    return;
+  }
+  const lines = (g.sessions || []).filter((s) => s.error || (s.findings || []).length)
+    .map((s) => `<li>${esc(s.session_id)}: ${s.error ? esc(s.error)
+      : (s.findings || []).slice(0, 5).map((f) => esc(typeof f === 'string' ? f : JSON.stringify(f))).join(' / ')}</li>`)
+    .join('');
+  box.innerHTML = `<span class="msg err">골든 회귀 <b>${g.total_findings}건 어긋남</b>
+    (${g.total_checked}건 대조${secs})${scope} — 저장은 이미 반영됐습니다.
+    임계값을 다시 조정하거나 골든셋 기대값을 갱신하세요.</span>
+    <ul class="problems">${lines}</ul>`;
 }
 
 // ── Signatures ───────────────────────────────────────────────────────────
@@ -2100,6 +2187,201 @@ async function loadScoring() {
     '<tr class="empty-row"><td colspan="5">—</td></tr>';
 }
 
+// ── 추이 그래프 ──────────────────────────────────────────────────────────
+// 값이 **null 인 날은 점을 찍지 않고 선을 끊는다** — 분모가 0(그날 표본 없음)인 것과
+// "비율이 0%" 는 완전히 다른 뜻이고, 이어 버리면 없는 추세가 보인다.
+// ⚠ id·함수는 `sct` 접두를 쓴다 — 트레이스 탭이 이미 `tr*`(trMsg/trSort/…)를 쓰고 있어
+// 겹치면 document.getElementById 가 먼저 나온 쪽을 돌려주며 조용히 오작동한다.
+const SCT_RATIO = [
+  { key: 'unknown', label: 'UNKNOWN 비율', color: '#e5734d',
+    num: 'unknown_cases', den: 'fail_cases' },
+  { key: 'sig', label: 'Signature 일치율', color: '#4da3ff',
+    num: 'sig_exact', den: 'sig_labeled' },
+  { key: 'cmt', label: '코멘트 정합률', color: '#59c17a',
+    num: 'comment_matched', den: 'comment_labels' },
+  { key: 'agree', label: 'status 일치율', color: '#c792ea',
+    num: 'score_agree', den: 'score_pairs' },
+];
+const SCT_VOLUME = [
+  { key: 'cases', label: '판정 case', color: '#3d6fa8' },
+  { key: 'comment_labels', label: 'Close 코멘트', color: '#59c17a' },
+  { key: 'sig_labeled', label: 'Signature 확정', color: '#4da3ff' },
+];
+
+/** 일별 행(여러 engine_version)을 날짜 하나로 합친다 — 카운터라 더할 수 있다. */
+function sctMergeDays(rows) {
+  const byDay = new Map();
+  const keys = ['runs', 'cases', 'fail_cases', 'unknown_cases', 'sig_labeled',
+                'sig_exact', 'sig_overlap', 'comment_labels', 'comment_matched',
+                'score_pairs', 'score_agree'];
+  rows.forEach((r) => {
+    let d = byDay.get(r.day);
+    if (!d) { d = { day: r.day, versions: new Set() }; keys.forEach((k) => { d[k] = 0; });
+              byDay.set(r.day, d); }
+    keys.forEach((k) => { d[k] += (r[k] || 0); });
+    if (r.engine_version) d.versions.add(r.engine_version);
+  });
+  return [...byDay.values()].sort((a, b) => a.day < b.day ? -1 : 1);
+}
+
+function sctRatio(row, s) {
+  const den = row[s.den] || 0;
+  return den ? row[s.num] / den : null;   // 분모 0 = 표본 없음(0% 아님)
+}
+
+/** 0~100% 고정 축 다중 선 그래프. 점이 없는 구간은 선을 잇지 않는다. */
+function renderRatioChart(svgId, rows, series, legendId) {
+  const svg = $(svgId), H = +svg.getAttribute('height');
+  const W = 900, padL = 44, padR = 12, padT = 10, padB = 24;
+  const plotW = W - padL - padR, plotH = H - padT - padB, n = rows.length;
+  const legend = legendId ? $(legendId) : null;
+  if (legend) legend.innerHTML = series.map((s) =>
+    `<span><span class="sw" style="background:${s.color}"></span>${esc(s.label)}</span>`).join('');
+  if (!n) {
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="#6f737e"
+      font-size="13">아직 집계된 날짜가 없습니다 — [지금 집계] 를 눌러보세요.</text>`;
+    return;
+  }
+  const slot = plotW / Math.max(n, 1);
+  const cx = (i) => padL + slot * i + slot / 2;
+  const y = (v) => padT + plotH * (1 - v);
+  const parts = [];
+  for (let i = 0; i <= 4; i++) {
+    const yy = y(i / 4);
+    parts.push(`<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}"
+                 stroke="var(--grid)" stroke-width="1"/>`);
+    parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10"
+                 fill="#6f737e">${i * 25}%</text>`);
+  }
+  series.forEach((s) => {
+    let seg = [];
+    const flush = () => {
+      if (seg.length > 1)
+        parts.push(`<polyline points="${seg.join(' ')}" fill="none"
+                     stroke="${s.color}" stroke-width="1.8"/>`);
+      else if (seg.length === 1) {
+        const [x, yy] = seg[0].split(',');
+        parts.push(`<circle cx="${x}" cy="${yy}" r="2.6" fill="${s.color}"/>`);
+      }
+      seg = [];
+    };
+    rows.forEach((r, i) => {
+      const v = sctRatio(r, s);
+      if (v == null) { flush(); return; }
+      seg.push(`${cx(i).toFixed(1)},${y(v).toFixed(1)}`);
+    });
+    flush();
+  });
+  const every = n > 180 ? 30 : n > 40 ? 10 : n > 14 ? 5 : 1;
+  rows.forEach((r, i) => {
+    if (i % every === 0)
+      parts.push(`<text x="${cx(i)}" y="${H - 7}" text-anchor="middle" font-size="10"
+                   fill="#6f737e">${esc(r.day.slice(5))}</text>`);
+    parts.push(`<rect class="hit" data-i="${i}" x="${padL + slot * i}" y="${padT}"
+                 width="${slot}" height="${plotH}" fill="transparent"/>`);
+  });
+  parts.push(`<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}"
+               stroke="var(--grid)" stroke-width="1"/>`);
+  svg.innerHTML = parts.join('');
+  sctBindTip(svg, rows, (r) => series.map((s) => {
+    const v = sctRatio(r, s);
+    const txt = v == null ? '표본 없음'
+      : `${(v * 100).toFixed(1)}% (${r[s.num]}/${r[s.den]})`;
+    return `<div class="t-row"><span class="sw" style="background:${s.color}"></span>${esc(s.label)} ${txt}</div>`;
+  }).join(''));
+}
+
+/** 표본량(카운트) 막대 — 비율만 보면 표본 1건짜리 100% 에 속는다. */
+function renderVolumeChart(svgId, rows, series, legendId) {
+  const svg = $(svgId), H = +svg.getAttribute('height');
+  const W = 900, padL = 44, padR = 12, padT = 10, padB = 24;
+  const plotW = W - padL - padR, plotH = H - padT - padB, n = rows.length;
+  const legend = legendId ? $(legendId) : null;
+  if (legend) legend.innerHTML = series.map((s) =>
+    `<span><span class="sw" style="background:${s.color}"></span>${esc(s.label)}</span>`).join('');
+  const maxV = n ? Math.max(1, ...rows.map((r) => Math.max(...series.map((s) => r[s.key] || 0)))) : 0;
+  if (!n || !maxV) { svg.innerHTML = ''; return; }
+  const pow = Math.pow(10, Math.floor(Math.log10(maxV)));
+  const yMax = Math.ceil(maxV / pow) * pow;
+  const slot = plotW / n, groupW = Math.min(18, Math.max(2, slot - 2));
+  const barW = Math.max(1, groupW / series.length);
+  const parts = [];
+  for (let i = 0; i <= 2; i++) {
+    const yy = padT + plotH * (1 - i / 2);
+    parts.push(`<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}"
+                 stroke="var(--grid)" stroke-width="1"/>`);
+    parts.push(`<text x="${padL - 6}" y="${yy + 4}" text-anchor="end" font-size="10"
+                 fill="#6f737e">${Math.round(yMax * i / 2).toLocaleString()}</text>`);
+  }
+  rows.forEach((r, i) => {
+    const x0 = padL + slot * i + (slot - groupW) / 2;
+    series.forEach((s, si) => {
+      const v = r[s.key] || 0;
+      if (!v) return;
+      const h = Math.max(1, plotH * v / yMax);
+      parts.push(`<rect x="${(x0 + barW * si).toFixed(1)}" y="${(padT + plotH - h).toFixed(1)}"
+                   width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${s.color}"/>`);
+    });
+    parts.push(`<rect class="hit" data-i="${i}" x="${padL + slot * i}" y="${padT}"
+                 width="${slot}" height="${plotH}" fill="transparent"/>`);
+  });
+  parts.push(`<line x1="${padL}" y1="${padT + plotH}" x2="${W - padR}" y2="${padT + plotH}"
+               stroke="var(--grid)" stroke-width="1"/>`);
+  svg.innerHTML = parts.join('');
+  sctBindTip(svg, rows, (r) => series.map((s) =>
+    `<div class="t-row"><span class="sw" style="background:${s.color}"></span>${esc(s.label)} ${(r[s.key] || 0).toLocaleString()}건</div>`).join(''));
+}
+
+function sctBindTip(svg, rows, body) {
+  const tip = svg.parentElement.querySelector('.m-tip');
+  if (!tip) return;
+  svg.querySelectorAll('.hit').forEach((hit) => {
+    hit.addEventListener('mousemove', (ev) => {
+      const r = rows[+hit.dataset.i];
+      const vers = r.versions && r.versions.size
+        ? ` <span style="color:#6f737e">(${esc([...r.versions].join(', '))})</span>` : '';
+      tip.innerHTML = `<div class="t-date">${esc(r.day)}${vers}</div>` + body(r);
+      const box = svg.getBoundingClientRect();
+      const x = ev.clientX - box.left, y = ev.clientY - box.top;
+      tip.style.display = 'block';
+      tip.style.left = Math.min(Math.max(x + 12, 0), box.width - 180) + 'px';
+      tip.style.top = Math.max(y - 10, 0) + 'px';
+    });
+    hit.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+  });
+}
+
+let _sctRows = null;
+
+async function loadTrend() {
+  const days = +($('sctDays').value || 90);
+  try {
+    const t = await getJSON(`api/eval/trend?days=${days}`);
+    _sctRows = sctMergeDays(t.rows || []);
+    renderRatioChart('sctChart', _sctRows, SCT_RATIO, 'sctLegend');
+    renderVolumeChart('sctVolume', _sctRows, SCT_VOLUME, 'sctVolLegend');
+    $('sctMsg').textContent = _sctRows.length
+      ? `${_sctRows.length}일치 (${_sctRows[0].day} ~ ${_sctRows[_sctRows.length - 1].day})` : '';
+    $('sctMsg').className = 'msg';
+  } catch (e) {
+    $('sctMsg').className = 'msg err';
+    $('sctMsg').textContent = `추이 조회 실패: ${e.message}`;
+  }
+}
+
+async function rollupTrendNow() {
+  $('sctMsg').className = 'msg';
+  $('sctMsg').textContent = '집계 중…';
+  try {
+    const r = await sendJSON('api/eval/trend/rollup', 'POST', {});
+    await loadTrend();
+    $('sctMsg').textContent = `${r.updated}건 갱신 · ${$('sctMsg').textContent}`;
+  } catch (e) {
+    $('sctMsg').className = 'msg err';
+    $('sctMsg').textContent = `집계 실패: ${e.message}`;
+  }
+}
+
 // ── Maintenance ──────────────────────────────────────────────────────────
 async function runValidate() {
   flash($('mvMsg'), '검증 중…', true);
@@ -2405,7 +2687,7 @@ const TAB_LOADERS = {
   pReview: loadReview,
   pEngrSig: loadEngrSignatures,
   pEval: loadEvalTab,
-  pScoring: loadScoring,
+  pScoring: () => { loadScoring(); loadTrend(); },
   pMaint: () => { renderFiles(); loadBackups(); loadGoldenInfo(); },
 };
 const loaded = new Set();
@@ -2544,7 +2826,9 @@ $('trStatus').addEventListener('change', renderTraceRows);
 $('trSigSel').addEventListener('change', renderTraceRows);
 $('trSource').addEventListener('change', renderTraceRows);
 $('goRun').addEventListener('click', runGoldenCheck);
-$('scRefresh').addEventListener('click', loadScoring);
+$('scRefresh').addEventListener('click', () => { loadScoring(); loadTrend(); });
+$('sctDays').addEventListener('change', loadTrend);
+$('sctRollup').addEventListener('click', rollupTrendNow);
 $('mvRun').addEventListener('click', runValidate);
 $('mvReload').addEventListener('click', async () => {
   try {

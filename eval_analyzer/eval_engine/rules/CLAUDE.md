@@ -20,8 +20,13 @@ default (cold-start 표준 robust 시드)
   └─ product_type[<PT>]  override                      (thresholds.yaml 안의 레거시 섹션)
         └─ thresholds/<PT>/_default.yaml               (제품군 공통 오버레이 파일)
               └─ thresholds/<PT>/<FAMILY>.yaml         (family_product 오버레이 파일)
-                    └─ item_class["<category>|<value_type>|<bin>"]  ← 가장 구체, 최우선
+                    └─ item_class["<category>|<value_type>"]  ← 가장 구체, 최우선
 ```
+- ⚠ `item_class` 는 **2단**이다(2026-08-19 — 종전 3단의 마지막 조각 `bin` 이 빠졌다).
+  case 가 item 당 1개가 되면서 식별 축에서 bin 을 뺀 결정과 같은 이유이고, 부수 효과로
+  보정 모집단이 합쳐진다(실측: 버킷 34개 대부분 n<10 → 6개 전부 n≥10 — `min_n` 을 넘겨
+  `calibrate` 가 실제로 동작할 수 있게 됐다). 구 3단 키가 남아 있으면 매칭되지 않고
+  default 로 폴백한다(에러 아님).
 - 오버레이 트리는 **파일이 없으면 통째로 skip** 이라, 트리를 안 만들면 종전과 100% 동일하다.
 - 오버레이 파일은 flat 매핑(`cpk_warn: 1.2`)만 쓴다 — `calibration`/`item_class` 섹션 금지
   (calibrate 는 계속 thresholds.yaml 의 마지막 `item_class:` 섹션만 재작성한다).

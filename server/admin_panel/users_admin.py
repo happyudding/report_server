@@ -40,8 +40,36 @@ def attach_names(rows, *keys):
     return rows
 
 
+# 사람 1명 = 1행. 소스가 report_user(웹 로그인 계정) 하나였을 때는 ID/PW 로그인 폐지 이후
+# 이 표가 사실상 비어 있었다 — 계정 행은 로그인할 때만 생기는데 그 로그인이 없어졌기 때문.
+# 신원은 Honey UA 로 자동 식별되므로 실제 사용자는 프로필·방문자·사용량 쪽에만 쌓인다.
+# 관리자가 이름을 지정해 줘야 하는 대상이 바로 그 사람들이라 네 테이블을 합쳐 본다.
+# 'ip:1.2.3.4' 무신원 사용량 행은 사람이 아니므로 제외한다.
+_PEOPLE_CTE = """
+WITH people AS (
+    SELECT user_id, created_at AS first_ts, created_at AS last_ts, 1 AS has_account
+      FROM report_user
+    UNION ALL
+    SELECT user_id, updated_at, updated_at, 0 FROM report_user_profile
+    UNION ALL
+    SELECT user_id, first_seen, last_seen, 0 FROM report_web_visitor
+    UNION ALL
+    SELECT user_id, MIN(last_at), MAX(last_at), 0 FROM report_usage_daily
+     WHERE user_id NOT LIKE 'ip:%' GROUP BY user_id
+), u AS (
+    SELECT user_id,
+           MIN(first_ts)   AS created_at,
+           MAX(last_ts)    AS last_seen,
+           MAX(has_account) AS has_account
+      FROM people GROUP BY user_id
+)
+"""
+
+
 def list_users(q=None, limit=200, offset=0):
-    """계정 목록. user_id · 실명 · 생성일 · 즐겨찾기 수 · 업로드 세션 수(uploaded_by 꼬리 일치).
+    """사용자 목록. user_id · 실명 · 첫 기록 · 최근 활동 · 계정 유무 · 즐겨찾기 수 ·
+    업로드 세션 수(uploaded_by 꼬리 일치). 대상은 이 서버에 흔적을 남긴 사람 전체이며
+    (`_PEOPLE_CTE`), 웹 로그인 계정이 없는 Honey 전용 사용자도 포함된다.
     검색어 q 는 ID 와 실명 둘 다에 매칭한다 (화면 표기가 '이름(ID)' 이므로)."""
     try:
         limit = max(1, min(int(limit), 500))
@@ -60,9 +88,11 @@ def list_users(q=None, limit=200, offset=0):
     join = "LEFT JOIN report_user_profile p ON p.user_id = u.user_id"
     with report_db.get_conn() as conn:
         total = conn.execute(
-            f"SELECT COUNT(*) FROM report_user u {join} WHERE {where}", params).fetchone()[0]
+            f"{_PEOPLE_CTE} SELECT COUNT(*) FROM u {join} WHERE {where}",
+            params).fetchone()[0]
         rows = conn.execute(f"""
-            SELECT u.user_id, u.created_at, p.display_name,
+            {_PEOPLE_CTE}
+            SELECT u.user_id, u.created_at, u.last_seen, u.has_account, p.display_name,
                    (SELECT COUNT(*) FROM report_user_favorite f
                      WHERE f.user_id = u.user_id) AS fav_count,
                    (SELECT COUNT(*) FROM report_session s
@@ -70,7 +100,7 @@ def list_users(q=None, limit=200, offset=0):
                        CASE WHEN instr(s.uploaded_by, '\\') > 0
                             THEN substr(s.uploaded_by, instr(s.uploaded_by, '\\') + 1)
                             ELSE s.uploaded_by END) = u.user_id) AS upload_count
-            FROM report_user u {join}
+            FROM u {join}
             WHERE {where}
             ORDER BY u.user_id
             LIMIT ? OFFSET ?

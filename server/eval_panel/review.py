@@ -47,7 +47,14 @@ _METRIC_COLS = ("spread_norm", "skewness", "kurtosis", "outlier_ratio", "bimodal
                 "limit_hit_ratio", "edge_fail_ratio", "center_fail_ratio",
                 "quadrant_imbalance", "n_dut", "site_cpk_delta", "code_edge_hit",
                 "ring_fail_ratio", "radial_gradient_norm", "x_gradient_norm",
-                "y_gradient_norm", "n_modes", "modality_v2")
+                "y_gradient_norm", "n_modes", "modality_v2",
+                # v9(2026-08-19) — OUTLIER·공간 4종·SPOT_CLUSTER·HEAVY_TAIL·
+                # BIMODALITY·CODE_RAIL 의 판정 기준값. 이게 없어서 그 룰들이 층화 불가였다.
+                "fail_mad_min", "fail_body_jump_ratio", "fail_pass_gap_sigma",
+                "fail_robust_z_max", "e1_fail_share", "edge_fail_share",
+                "center_fail_share", "ring_fail_share", "fail_spread_norm",
+                "tail_mass_3s", "rail_low_ratio", "rail_high_ratio",
+                "value_gap_ratio", "value_gap_minor_mass")
 _RAW_COLS = ("cpk", "mean", "stdev", "min", "max", "fail_count", "total_count")
 
 
@@ -82,9 +89,11 @@ def _derived(row: dict) -> dict:
 
 
 # 표본함이 **재현할 수 있는** 지표 — eval.db 에 저장된 컬럼 + `_derived` 가 되살리는 파생.
-# 여기 없는 지표(OUTLIER 의 fail_robust_z_max, 공간 룰의 *_fail_share 등)는 per-DUT 원본
-# 값이 있어야 계산되는데 raw 는 저장하지 않는다(불변 규칙 3). 그런 룰은 억지로 정렬하지
-# 않고 "층화 불가"로 정직하게 비운다 — 빈 표본 목록보다 사유가 보이는 편이 낫다.
+# 판정 기준값 14종은 v9(2026-08-19)부터 저장되므로 OUTLIER·공간 4종·SPOT_CLUSTER·
+# HEAVY_TAIL·BIMODALITY·CODE_RAIL 도 층화된다. 단 **v9 이전에 수집된 행은 NULL** 이라
+# `_exceedance` 가 그 표본을 건너뛴다 — 재수집 전까지 표본이 얇게 보이는 것은 정상이다.
+# 여기 없는 지표는 스냅샷에서 되살릴 수 없으므로 억지로 정렬하지 않고 "층화 불가"로
+# 정직하게 비운다 — 빈 표본 목록보다 사유가 보이는 편이 낫다.
 _STRATIFIABLE = set(_METRIC_COLS) | set(_RAW_COLS) | {
     "yield_rate", "spec_margin_min", "center_bias", "outlier_count",
     "gradient_norm_abs_max"}
@@ -187,10 +196,13 @@ def _fetch_rule_rows(conn, signature: str, product_type=None, family_product=Non
         params.append(REVIEW_LABELER)
     sql += " ORDER BY ev.eval_id DESC"
 
+    # dedup 키에 bin 이 없다 (2026-08-19) — case 가 item 당 1개이고 `fail_case.bin` 은
+    # 대표 bin(참고값)이라, bin 을 키에 넣으면 대표 bin 이 세션마다 흔들릴 때 같은 item 이
+    # 여러 번 출제된다. 정렬이 eval_id DESC 라 **최신 판정 1건**만 남는다.
     seen, rows = set(), []
     for r in conn.execute(sql, params):
         row = dict(r)
-        key = (row.get("analysis_key"), row.get("item_canonical"), row.get("bin"))
+        key = (row.get("analysis_key"), row.get("item_canonical"))
         if key in seen:
             continue
         seen.add(key)

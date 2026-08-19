@@ -101,7 +101,7 @@ def main():
     iid, _, _ = item_state("BG_CODE")
     res = eval_admin.set_item_value_type([iid], "Ohm")
     assert res == {"updated": 1, "cases": 1, "exists": True}, res
-    assert item_state("BG_CODE")[1:] == ("Ohm", "NON_TRIM|Ohm|0"), item_state("BG_CODE")
+    assert item_state("BG_CODE")[1:] == ("Ohm", "NON_TRIM|Ohm"), item_state("BG_CODE")
     eval_admin.set_item_value_type([iid], "CODE")   # 원복 (e 의 기대값 유지)
 
     try:
@@ -119,10 +119,13 @@ def main():
 
     applied = eval_admin.remap_unit_aliases()
     assert applied["changed"] == 2 and applied["cases"] == 2, applied
-    assert item_state("VREF_TRIM")[1:] == ("V", "NON_TRIM|V|0"), item_state("VREF_TRIM")
-    assert item_state("OSC_FREQ")[1:] == ("Hz", "NON_TRIM|Hz|0"), item_state("OSC_FREQ")
+    # 교정된 item 은 **2단** item_class 로 재작성된다(2026-08-19 — bin 조각 없음).
+    assert item_state("VREF_TRIM")[1:] == ("V", "NON_TRIM|V"), item_state("VREF_TRIM")
+    assert item_state("OSC_FREQ")[1:] == ("Hz", "NON_TRIM|Hz"), item_state("OSC_FREQ")
+    # 손대지 않은 item 은 픽스처가 심어 둔 **구 3단 값 그대로** 남는다 — 하위호환 확인
+    # (소비자는 split 길이를 고정하지 않는다). 재수집·재-export 하면 2단이 된다.
     assert item_state("IDD_LEAK")[1:] == ("A", "NON_TRIM|A|0"), item_state("IDD_LEAK")
-    assert item_state("BG_CODE")[1:] == ("CODE", "NON_TRIM|CODE|0"), item_state("BG_CODE")
+    assert item_state("BG_CODE")[1:] == ("CODE", "NON_TRIM|CODE"), item_state("BG_CODE")
     assert eval_admin.remap_unit_aliases(dry_run=True)["changed"] == 0, "멱등 아님"
 
     print("PASS: test_eval_unit_group (a/b/c/d/e)")

@@ -5,7 +5,7 @@ from urllib.parse import quote
 import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder, MultipartEncoderMonitor
 
-from .config import REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
+from .config import CURRENT_VERSION, REQUEST_TIMEOUT_SEC, SERVER_BASE_URL
 from .retry import get_with_retry
 
 
@@ -22,7 +22,10 @@ def _upload_headers(content_type):
     except Exception:
         user = ""
     if user:
-        headers["User-Agent"] = f"python-requests HoneyUser/{quote(user, safe='')}"
+        # HoneyVer 는 관리자 화면이 "지금 업로드 중인 사람이 어떤 버전을 쓰는가" 를
+        # 보여주는 값이다 (server/auth_identity.client_version).
+        headers["User-Agent"] = (f"python-requests HoneyUser/{quote(user, safe='')} "
+                                 f"HoneyVer/{CURRENT_VERSION}")
     # 작업 상관 ID — 서버가 이 업로드 요청과 그 뒤 콜드 빌드·오류를 한 타임라인으로
     # 묶는다 (server/diagnostics.py). 없으면 헤더 자체가 안 붙어 종전과 동일하다.
     try:

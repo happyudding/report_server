@@ -19,9 +19,13 @@ def _finite(values):
     return a[np.isfinite(a)]
 
 
-def cpk_summary(values, lsl, usl):
-    """CODE_TO_PORT §2 그대로. 유한값만 사용, 표본 표준편차(ddof=1)."""
-    v = _finite(values)
+def cpk_summary(values, lsl, usl, v=None):
+    """CODE_TO_PORT §2 그대로. 유한값만 사용, 표본 표준편차(ddof=1).
+
+    `v` 를 주면 `_finite(values)` 를 건너뛴다 — 같은 배열을 여러 번 변환하지 않기 위한
+    재사용구다(호출부가 `_finite` 결과를 그대로 넘긴다). 값은 동일.
+    """
+    v = _finite(values) if v is None else v
     n = v.size
     if n == 0:
         return dict(n=0, min=None, max=None, median=None, mean=None, stdev=None,
@@ -40,9 +44,12 @@ def cpk_summary(values, lsl, usl):
     return out
 
 
-def _bimodality_coefficient(values):
-    """Sarle's BC = (skew^2 + 1) / kurtosis. n<4 또는 kurtosis=0 이면 None."""
-    v = _finite(values)
+def _bimodality_coefficient(values, v=None):
+    """Sarle's BC = (skew^2 + 1) / kurtosis. n<4 또는 kurtosis=0 이면 None.
+
+    `v` 는 `cpk_summary` 와 같은 재사용구 — 같은 유한값 배열을 두 번 만들지 않는다.
+    """
+    v = _finite(values) if v is None else v
     if v.size < 4:
         return None
     mean, std = v.mean(), v.std(ddof=1)
@@ -74,13 +81,26 @@ def compute(case_ctx: dict) -> dict:
     # "계산 결과가 None" 과 "아직 미계산" 을 구분한다. 동시 계산 경합은 무해하다
     # (같은 입력 → 같은 값, dict 대입은 GIL 원자적).
     shared = case_ctx.get("_shared")
+
+    def _finite_shared():
+        """유한값 배열 1벌 — cpk_summary 와 bimodality 가 각자 만들던 것을 공유한다
+        (2026-08-19, 값 동일). item 단위 메모라 bin 수만큼 반복되지도 않는다."""
+        if shared is None:
+            return _finite(values)
+        hit = shared.get("finite")
+        if hit is None:
+            hit = (_finite(values),)
+            shared["finite"] = hit
+        return hit[0]
+
     summary = None
     if shared is not None:
         hit = shared.get("cpk_summary")
         if hit is not None:
             summary = hit[0]
     if summary is None:
-        summary = cpk_summary(values, case_ctx.get("lsl"), case_ctx.get("usl"))
+        summary = cpk_summary(values, case_ctx.get("lsl"), case_ctx.get("usl"),
+                              v=_finite_shared())
         if shared is not None:
             shared["cpk_summary"] = (summary,)
     if values:
@@ -110,7 +130,7 @@ def compute(case_ctx: dict) -> dict:
         if hit is not None:
             bimod = hit[0]
         else:
-            bimod = _bimodality_coefficient(values)
+            bimod = _bimodality_coefficient(values, v=_finite_shared())
             if shared is not None:
                 shared["bimodality"] = (bimod,)
     return {

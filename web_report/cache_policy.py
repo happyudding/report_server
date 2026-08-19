@@ -314,7 +314,13 @@ def temp_map_key(session, prep_digest: str = "") -> tuple:
 #      ② RING_FAIL 에 `fail_spread_norm > 0.25` AND 추가 — ring 밴드 안의 한 점 뭉침이
 #      전부 RING 으로 잡히던 것(SPOT_CLUSTER 겨냥 4건 전부)을 차단.
 #      features.py 코드 변경이라 .rules_rev 로는 무효화되지 않아 전역 bump 가 필요하다.
-REPORT_SCHEMA_VERSION = 39
+# v40: Compare 계산 분리 (2026-08-19). payload 에 `compare_pending` 플래그가 생기고
+#      compare 본문은 분리 캐시(compare_key)에서 주입된다 — 옛 payload 는 그 플래그를
+#      모르므로 전역 bump 로 세대를 갈라야 프런트/Excel 이 pending 을 "데이터 없음" 으로
+#      오독하지 않는다. **Compare 모드가 아닌 세션도 함께 콜드가 된다**(전역 bump 의 대가)
+#      — 배포 직후 콜드 폭풍을 감안할 것(webreport-change 절차: 재기동 → 프리웜 스윕).
+#      compare 구조만 바뀔 때는 여기가 아니라 COMPARE_SCHEMA_VERSION 을 올린다.
+REPORT_SCHEMA_VERSION = 40
 
 # Temperature 세션 **전용** payload 세대 — 값이 Temperature 모드에서만 바뀌는 변경은
 # REPORT_SCHEMA_VERSION 대신 여기를 올린다. 전역 bump 는 전 세션의 report 캐시를 한 번에
@@ -367,7 +373,10 @@ def report_key(session, session_id: str, edits_rev: int) -> tuple:
 # AI Comment 평가 결과(build_ai_comments 반환 dict)의 캐시 세대 — _to_row_keys 반환
 # **구조**(키 구성)가 바뀔 때만 올린다. 평가 **값**의 변화는 rules_rev(_eval_rules_suffix)
 # 가 덮으므로 여기서 올리지 않는다. REPORT_SCHEMA_VERSION 과 무관(payload 와 분리 캐시).
-AI_COMMENT_SCHEMA_VERSION = 1
+# v2 (2026-08-19): 엔진 case 가 item 당 1개가 되면서 row_key 채움 방식이 바뀌었다
+#   (대표 bin 1행 → 그 item 의 **모든 fail bin 행** fan-out). 반환 dict 의 키 구성이
+#   달라지므로 옛 캐시를 재사용하면 Yield 행 일부가 빈 채로 굳는다.
+AI_COMMENT_SCHEMA_VERSION = 2
 
 
 def _ai_meta_digest(session) -> str:
@@ -385,17 +394,51 @@ def _ai_meta_digest(session) -> str:
     return hashlib.sha256(canon).hexdigest()[:12]
 
 
-def report_pending_key(session, session_id: str, edits_rev: int) -> tuple:
-    """AI 평가 **대기 중** payload(ai_comment_pending)의 디스크 캐시 키 (2026-08-13).
+def report_pending_key(session, session_id: str, edits_rev: int,
+                       kinds=("ai",)) -> tuple:
+    """계산 **대기 중** payload 의 디스크 캐시 키 (2026-08-13 AI, 2026-08-19 Compare).
 
-    정본 키(`report_key`)에 표식 하나를 덧붙인 별도 키다. 정본 키에 그냥 저장하지 않는
+    정본 키(`report_key`)에 표식을 덧붙인 별도 키다. 정본 키에 그냥 저장하지 않는
     이유는 **롤백 안전**이다 — 이 기능을 되돌린 옛 코드가 정본 키에서 pending 본을 읽으면
-    AI Comment 가 빈 채로 굳는다. 표식이 붙으면 옛 코드는 이 키를 만들지도, 읽지도 않는다.
+    그 부분이 빈 채로 굳는다. 표식이 붙으면 옛 코드는 이 키를 만들지도, 읽지도 않는다.
 
-    이 본이 없으면 AI 잡이 끝나기 전의 재접속(서버 재시작·RAM 축출 후)이 매번 완전
+    이 본이 없으면 백그라운드 잡이 끝나기 전의 재접속(서버 재시작·RAM 축출 후)이 매번 완전
     콜드 빌드가 된다 — 첫 조회만 빠르고 재접속은 느린 것이 사용자에게는 회귀로 보인다.
+
+    `kinds` 는 이 본에서 **비어 있는 부분**의 집합이다. AI 와 Compare 는 동시에 대기할 수
+    있으므로 키가 갈려야 한다 — 안 그러면 "AI 만 빈 본"과 "둘 다 빈 본"이 같은 키를 놓고
+    서로 덮어써, 이미 계산된 Compare 가 사라진 본이 최종본처럼 재사용된다.
+    ai 단독은 종전 꼬리(`aipending`)를 그대로 써서 **기존 파일이 계속 유효**하다.
     """
-    return report_key(session, session_id, edits_rev) + ("aipending",)
+    tail = tuple(sorted(str(k) for k in (kinds or ()) if k)) or ("ai",)
+    if tail == ("ai",):
+        return report_key(session, session_id, edits_rev) + ("aipending",)
+    return report_key(session, session_id, edits_rev) + ("pending",) + tail
+
+
+# Compare payload(build_compare_payload 반환 dict)의 캐시 세대 — compare **구조**가
+# 바뀔 때만 올린다. Compare 모드 세션에만 붙는 키라 여기를 올려도 다른 모드의 report
+# 캐시는 그대로다(전역 REPORT_SCHEMA_VERSION bump 가 부르는 콜드 폭풍 회피 —
+# TEMPERATURE_SCHEMA_VERSION 과 같은 취지).
+COMPARE_SCHEMA_VERSION = 1
+
+
+def compare_key(session, prep_digest: str = "") -> tuple:
+    """Compare 계산 결과 캐시 키 — report payload 캐시와 **분리** (2026-08-19).
+
+    `ai_comment_key` 와 같은 논리로 session_id·edits_rev 를 넣지 않는다: compare 입력은
+    tables(= chash + prep) + Before/After 배치 + mode 뿐이라 comment/override 편집
+    (edits_rev+1)·REPORT_SCHEMA_VERSION bump·dedup 형제 세션에서 재계산할 이유가 없다.
+    종전에는 이것들이 전부 compare 전량 재계산(실측 1.1초)을 유발했다.
+
+    배치는 **정규화된 compare_groups 가 아니라 원본 `webreport_options` 문자열**로 넣는다.
+    정규화에는 소스 이름이 필요해 tables 를 디코드해야 하는데, 이 키는 tables 를 열기 전
+    (콜드 판정·pending 판정)에도 같은 값이 나와야 하기 때문이다. 소스 이름 자체는
+    content_hash 에 이미 반영돼 있어(_base) 정보 손실은 없다 — report_key 와 같은 규약.
+    """
+    return (_base(session, prep_digest)
+            + (_mode(session), session.get("webreport_options") or "",
+               COMPARE_SCHEMA_VERSION))
 
 
 def ai_comment_key(session, prep_digest: str = "") -> tuple:

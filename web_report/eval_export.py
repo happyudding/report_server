@@ -140,13 +140,17 @@ def _merge_comment(cols: dict) -> str:
 def _parse_row_key(row_key: str):
     """row_key(tabs/issue_table.py 규약) → (bin|None, item, condition) | None(대상 아님).
 
+    ⚠ **돌려주는 bin 은 표시·참고용이다 — case_id 재료가 아니다** (2026-08-19).
+    엔진 case 가 item 당 1개가 되면서 case_id 의 bin 자리는 항상 None 이다
+    (pipeline/ingest.py). 그래서 어느 섹션에 코멘트를 썼든 같은 item 이면 **같은 case**
+    로 모인다 — 종전에는 `Yield|20|X` 와 `CPK|X` 가 서로 다른 case_id 로 갈려 사람 라벨이
+    엔진 판정과 만나지 못했다(운영 라벨 1건이 실제로 100% 고아였다).
+
     Yield|<bin>|<item> → 그 bin. 단 Pass 요약행(bin==1)은 fail-item 이 아니라 skip.
-    CPK|<item> → bin=1 (엔진 PASS_BIN 관례 — cpk marginal case).
-    TEMP|<item> → bin=None + condition='TEMP' (Temperature 모드 RT limit 이탈 항목 —
-      item 단위 집계라 bin 이 없다. bin 만으로는 ETC 와 구별되지 않아 case_id 가 겹치므로
-      **온도 평가라는 사실을 condition 으로 실어 보낸다** — 없으면 같은 item 의 ETC 코멘트와
-      한 case 로 붕괴해 서로 덮어쓴다).
-    ETC|<item> → bin=None (rawdata 에 없는 자유입력 item 가능).
+    CPK|<item> / ETC|<item> → bin=None (섹션 자체에 bin 개념이 없다).
+    TEMP|<item> → bin=None + condition='TEMP' (Temperature 모드 RT limit 이탈 항목).
+      condition 은 **case_id 재료로 계속 쓴다** — 온도 재판정은 엔진이 평가하지 않는
+      별개 축이라, 같은 item 의 일반 코멘트와 한 case 로 붕괴하면 서로 덮어쓴다.
     """
     if row_key.startswith("Yield|"):
         parts = row_key.split("|", 2)
@@ -161,12 +165,46 @@ def _parse_row_key(row_key: str):
             return None  # Pass 요약행
         return (bin_, parts[2], "")
     if row_key.startswith("CPK|") and row_key[4:]:
-        return (1, row_key[4:], "")
+        return (None, row_key[4:], "")
     if row_key.startswith("TEMP|") and row_key[5:]:
         return (None, row_key[5:], "TEMP")
     if row_key.startswith("ETC|") and row_key[4:]:
         return (None, row_key[4:], "")
     return None
+
+
+def _group_by_case(parsed):
+    """[(bin, item, cond, text, by, at)…] → 같은 case 로 갈 행끼리 묶어 텍스트 병합.
+
+    case_id 재료는 (item, cond) 뿐이므로(bin 은 2026-08-19 부터 키에서 빠졌다) 같은 item 의
+    Yield|2 / Yield|5 / CPK 행이 한 case 로 모인다. 행마다 따로 저장하면 마지막 것만 남아
+    **앞 코멘트가 사라지므로**(CLAUDE.md 규칙 12) 여기서 미리 합친다.
+
+    병합 규칙: 텍스트는 입력 순서대로 줄바꿈 join(중복 문구는 1회만 — 같은 코멘트를 두 행에
+    똑같이 써 둔 흔한 경우에 같은 문장이 두 번 나오지 않게). 대표 bin 은 **가장 작은 fail
+    bin**(엔진 대표 bin 규칙과 같은 방향), 편집자는 **가장 최근에 고친 사람**.
+    반환 튜플은 종전과 같은 5개(bin, item, cond, text, by) — 시각은 선정에만 쓴다.
+    """
+    groups: dict = {}
+    order: list = []
+    for bin_, item, cond, text, by, at in parsed:
+        key = (item, cond)
+        if key not in groups:
+            groups[key] = {"bins": [], "texts": [], "by": None, "at": None}
+            order.append(key)
+        g = groups[key]
+        if bin_ is not None:
+            g["bins"].append(bin_)
+        if text and text not in g["texts"]:
+            g["texts"].append(text)
+        if by and (g["at"] is None or at >= g["at"]):
+            g["by"], g["at"] = by, at
+    out = []
+    for item, cond in order:
+        g = groups[(item, cond)]
+        out.append((min(g["bins"]) if g["bins"] else None, item, cond,
+                    "\n".join(g["texts"]), g["by"]))
+    return out
 
 
 def _status_key(row_key: str) -> str:
@@ -351,14 +389,16 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
         return {"skipped": f"unsupported product_type: {session.get('product_type')!r}"}
     meta["wafer_number"] = None  # 코멘트는 행(세션) 단위 — lot 수준 case 로 적재
 
-    parsed = []  # [(bin|None, item, condition, 병합 comment, 최종 편집자)]
+    # [(bin|None, item, condition, 병합 comment, 최종 편집자, 편집시각)]
+    # 편집시각은 여러 행이 한 case 로 합쳐질 때 **가장 최근 편집자**를 고르는 데만 쓴다.
+    parsed = []
     for row_key, ent in _collect_comments(report_db, session).items():
         pk = _parse_row_key(row_key)
         if pk is None:
             continue
         text = _merge_comment(ent["cols"])
         if text:
-            parsed.append((pk[0], pk[1], pk[2], text, ent.get("by")))
+            parsed.append((pk[0], pk[1], pk[2], text, ent.get("by"), ent.get("_at") or 0))
 
     # 코멘트 0건 + eval DB 미존재면 파일 생성조차 하지 않는다 (업로드마다 빈 DB 방지).
     if not parsed and not db_path().exists():
@@ -393,7 +433,13 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
 
             store.upsert_product_master(meta, conn=conn)
             now_cases = set()
-            for bin_, item, cond, text, by in parsed:
+            # 같은 item 의 여러 섹션 행(Yield|2|X · Yield|5|X · CPK|X …)이 **한 case** 로
+            # 모인다(2026-08-19 — case_id 에서 bin 제거). 행마다 delete→insert 하면
+            # **마지막 행만 남아 앞 코멘트가 조용히 사라진다**(CLAUDE.md 규칙 12 —
+            # 사용자 입력은 무슨 일이 있어도 잃지 않는다). 그래서 먼저 묶어 텍스트를
+            # 병합한 뒤 case 당 1회만 쓴다. 대표 bin/편집자는 마지막 편집분을 따른다.
+            for group in _group_by_case(parsed):
+                bin_, item, cond, text, by = group
                 item_meta = _find_item_meta(tables, item)
                 unit = item_meta["unit"] if item_meta else None
                 item_canonical = alias.get(item, engine_ingest._canonicalize(item))
@@ -410,11 +456,13 @@ def export_session_comments(session_id: str, *, report_db, upload_root,
                                            meta["revision"], item_meta["lsl"],
                                            item_meta["usl"], conn=conn)
 
+                # case_id 의 bin 자리는 **항상 None** — 엔진(pipeline/ingest.py)과 같은
+                # 규약이라야 사람 라벨이 엔진 판정과 같은 case 에 붙는다. bin 은 아래
+                # fail_case.bin 컬럼(대표 bin)으로만 남는다.
                 case_id = store.make_case_id(meta["product_name"], meta["lot_id"],
-                                             None, item_id, bin_, meta["revision"],
+                                             None, item_id, None, meta["revision"],
                                              cond)
-                item_class = (f"{category_major}|{value_type}|"
-                              f"{bin_ if bin_ is not None else ''}")
+                item_class = f"{category_major}|{value_type}"
                 store.upsert_fail_case(case_id, meta["product_name"], meta["lot_id"],
                                        None, item_id, bin_, meta["revision"],
                                        item_class, cond, conn=conn)
@@ -490,9 +538,11 @@ def save_human_label(session: dict, *, item: str, bin_, item_class: str,
         raise ValueError(f"product_type={session.get('product_type')!r} 는 평가 대상이 아님")
     meta["wafer_number"] = None
 
+    # item_class 는 2단(category_major|value_type) — 2026-08-19. 구 3단(…|bin) 값도
+    # 그대로 읽을 수 있게 길이를 고정하지 않는다(누적 트레이스·옛 라벨 호환).
     parts = (item_class or "").split("|")
-    category_major = parts[0] if len(parts) == 3 else "NON_TRIM"
-    value_type = parts[1] if len(parts) == 3 and parts[1] else "PF"
+    category_major = parts[0] if len(parts) >= 2 and parts[0] else "NON_TRIM"
+    value_type = parts[1] if len(parts) >= 2 and parts[1] else "PF"
 
     accepted = bool(human.get("accepted"))
     engine_status = str(engine.get("status") or "").strip() or None
@@ -527,12 +577,12 @@ def save_human_label(session: dict, *, item: str, bin_, item_class: str,
                     value_type, None, conn=conn)
                 store.upsert_item_alias(item, item_id, conn=conn)
 
+            # bin 은 case_id 재료가 아니다(2026-08-19) — fail_case.bin 컬럼에만 남는다.
             case_id = store.make_case_id(meta["product_name"], meta["lot_id"],
-                                         None, item_id, bin_, meta["revision"])
+                                         None, item_id, None, meta["revision"])
             store.upsert_fail_case(case_id, meta["product_name"], meta["lot_id"],
                                    None, item_id, bin_, meta["revision"],
-                                   f"{category_major}|{value_type}|"
-                                   f"{bin_ if bin_ is not None else ''}", conn=conn)
+                                   f"{category_major}|{value_type}", conn=conn)
             store.link_run_case(run_id, case_id, conn=conn)
 
             eval_id = store.save_evaluation(
@@ -588,7 +638,7 @@ def get_panel_label(session: dict, *, item: str, bin_) -> dict | None:
         if item_id is None:
             return None
         case_id = store.make_case_id(meta["product_name"], meta["lot_id"], None,
-                                     item_id, bin_, meta["revision"])
+                                     item_id, None, meta["revision"])
         row = conn.execute(
             "SELECT label_id, human_status, human_comment, root_cause_category, "
             "engine_comment_accepted, reviewer, created_at "
@@ -627,11 +677,29 @@ def sync_session_signatures(session_id: str, *, report_db, upload_root=None) -> 
     meta["wafer_number"] = None            # 코멘트/패널 라벨과 같은 lot 수준 case 공간
 
     state = edits.load_issue_signatures(report_db, session_id)
-    parsed = []                            # [(bin|None, item, condition, [signature...])]
+    # 같은 item 의 여러 섹션 행이 한 case 로 모이므로(2026-08-19) 미리 묶는다 — 안 묶으면
+    # `save_evaluation` UNIQUE 로 같은 eval_id 를 재사용하면서 라벨만 겹쳐 쌓이고,
+    # 사람이 지목한 signature 가 행마다 서로 덮인다. 확정값은 **합집합**(둘 다 사람이
+    # 지목한 것이라 하나를 버릴 근거가 없다), 대표 bin 은 최소 fail bin.
+    merged: dict = {}
+    order: list = []
     for row_key, ids in state.items():
         pk = _parse_row_key(row_key)
-        if pk is not None and ids:
-            parsed.append((pk[0], pk[1], pk[2], ids))
+        if pk is None or not ids:
+            continue
+        bin_, item, cond = pk
+        key = (item, cond)
+        if key not in merged:
+            merged[key] = {"bins": [], "ids": []}
+            order.append(key)
+        g = merged[key]
+        if bin_ is not None:
+            g["bins"].append(bin_)
+        for sid in ids:
+            if sid not in g["ids"]:
+                g["ids"].append(sid)
+    parsed = [(min(merged[k]["bins"]) if merged[k]["bins"] else None,
+               k[0], k[1], merged[k]["ids"]) for k in order]
 
     # 확정 0건 + eval DB 미존재면 파일조차 만들지 않는다 (빈 DB 양산 방지 — export 와 동일).
     if not parsed and not db_path().exists():
@@ -669,7 +737,7 @@ def sync_session_signatures(session_id: str, *, report_db, upload_root=None) -> 
                 # cond 는 코멘트 export 와 같은 값을 줘야 한다 — 안 그러면 같은 TEMP 행의
                 # 코멘트 라벨과 signature 라벨이 서로 다른 case 로 갈라진다.
                 case_id = store.make_case_id(meta["product_name"], meta["lot_id"], None,
-                                             item_id, bin_, meta["revision"], cond)
+                                             item_id, None, meta["revision"], cond)
                 store.upsert_fail_case(case_id, meta["product_name"], meta["lot_id"],
                                        None, item_id, bin_, meta["revision"], None,
                                        cond, conn=conn)
@@ -794,6 +862,14 @@ def collect_session_snapshot(session_id: str, *, report_db, upload_root,
                 if not items:
                     continue
                 meta = dict(ai_comment._session_meta(session, idx + 1))
+                # case_id 는 코멘트/패널/signature 라벨과 **같은 lot 수준 공간**이어야 한다
+                # (2026-08-19). 종전엔 여기만 wafer_number=소스 순번(1,2,3…)이 들어가
+                # 라벨(전부 None)과 case_id 가 100% 어긋났고, 그래서 채점 표본과 선례의
+                # signature 부스트가 한 건도 성립하지 않았다. ingest_run.source_file
+                # (_snapshot_source_file)이 소스를 구분하므로 wafer 축은 필요 없다 —
+                # 소스가 달라도 run_id 가 다르니 raw_metrics/evaluation/features 키는
+                # 그대로 소스별로 갈린다(겹치는 것은 fail_case 한 행뿐, 그게 의도다).
+                meta["wafer_number"] = None
                 meta["session_id"] = session_id
                 meta["analysis_key"] = session.get("analysis_key")
                 meta["source_file"] = source_file

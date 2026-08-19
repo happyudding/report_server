@@ -184,6 +184,17 @@ REPORT_CHATBOT_RETENTION_DAYS      = int(os.getenv("REPORT_CHATBOT_RETENTION_DAY
 # 2년 보존한다.
 REPORT_USAGE_HOURLY_RETENTION_DAYS = int(os.getenv("REPORT_USAGE_HOURLY_RETENTION_DAYS", "90"))
 REPORT_USAGE_DAILY_RETENTION_DAYS  = int(os.getenv("REPORT_USAGE_DAILY_RETENTION_DAYS", "730"))
+# eval 룰 지표 일별 집계(report_eval_daily) — cleanup 주기마다 **최근 N일을 다시 계산**한다
+# (누적 더하기가 아니라 덮어쓰기라 재실행이 안전하다). 하루치가 아니라 겹쳐 보는 이유는
+# 세션 재수집·뒤늦은 코멘트 Close 가 과거 날짜 값을 바꾸기 때문. 0 이하면 집계 안 함.
+# 보존기간은 사용량 일별과 같은 값을 쓴다(둘 다 장기 추이 그래프 소스).
+REPORT_EVAL_ROLLUP_DAYS            = int(os.getenv("REPORT_EVAL_ROLLUP_DAYS", "14"))
+# eval.db 옛 스냅샷 run 정리 — `force=true` 재수집이 기존 run 을 지우지 않고 새로 쌓기 때문에
+# (사람 라벨 보호) 재수집을 반복하면 판정 사본이 계속 늘어난다. 같은 (세션,소스)의 **최신이
+# 아니고 라벨이 하나도 안 붙은** run 만 걷는다 — 조회는 어차피 최신만 본다.
+# 판정 근거를 실제로 지우므로 **REPORT_CLEANUP_DRYRUN 을 존중**한다. 기본 0(비활성) —
+# 켜기 전에 dry-run 로그로 대상 수를 먼저 확인하라.
+REPORT_EVAL_PURGE_STALE_RUNS       = int(os.getenv("REPORT_EVAL_PURGE_STALE_RUNS", "0"))
 
 # ── 로컬 hot 캐시 → S3 자동 티어링 (report_tiering.py) ────────────────────────
 # 바이너리 산출물(web_report parquet·manifest, issue/dist PNG)을 로컬에 hot 캐시로

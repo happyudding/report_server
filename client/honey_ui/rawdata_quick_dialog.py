@@ -77,13 +77,18 @@ _CMP_LABELS = [(">", ">"), (">=", "≥"), ("<", "<"), ("<=", "≤"), ("spec_out"
 
 
 def _headers(extra=None):
-    """서버 신원 토큰 (rawdata_hub_dialog._headers 와 동일 규칙)."""
+    """서버 신원 토큰 + 버전 토큰 (rawdata_hub_dialog._headers 와 동일 규칙)."""
     try:
         import client_identity
         user = client_identity.collect().get("user", "")
     except Exception:
         user = ""
-    headers = {"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')}"} if user else {}
+    try:
+        from transport.config import CURRENT_VERSION
+    except Exception:
+        CURRENT_VERSION = ""
+    headers = ({"User-Agent": f"python-requests HoneyUser/{quote(user, safe='')} "
+                              f"HoneyVer/{CURRENT_VERSION}"} if user else {})
     headers.update(extra or {})
     return headers
 

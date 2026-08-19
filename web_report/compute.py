@@ -547,10 +547,12 @@ def _stamp(t_start: float) -> dict | None:
 def report_job(session_id: str, upload_root_str: str, ai_inline: bool = False):
     """report payload 빌드 잡.
 
-    ai_inline=True 면 AI Comment 세션에서 eval 평가를 **이 빌드 안에서 동기로** 끝내
-    최종 payload 를 만든다(프리웜·백그라운드 'ai' 잡 경로 — 아무도 화면에서 기다리지
-    않는다). False(기본 — 온디맨드 'report' 경로)면 AI 분리 캐시 미스 시 AI 없는
-    pending payload 를 먼저 만들어 리포트가 즉시 열리게 한다 (service.load_webreport).
+    ai_inline=True 면 **분리 캐시로 미뤄지는 계산(AI Comment 평가·Compare)을 이 빌드
+    안에서 동기로** 끝내 최종 payload 를 만든다(프리웜·백그라운드 'ai'/'compare' 잡 경로
+    — 아무도 화면에서 기다리지 않는다). False(기본 — 온디맨드 'report' 경로)면 분리 캐시
+    미스 시 그 부분을 비운 pending payload 를 먼저 만들어 리포트가 즉시 열리게 한다
+    (service.load_webreport). 인자 이름은 AI 만 있던 시절 그대로다 — 호출부 3곳
+    (report_job/prewarm_job/_ONDEMAND_JOBS)이 짝이라 이름을 바꾸려면 함께 고쳐야 한다.
     """
     from database import report_db
     from . import service
@@ -822,6 +824,12 @@ _ONDEMAND_JOBS = {
     # RAM 의 pending 본이 최종본으로 덮인다. 실패는 build_status 의 (sid,"ai") 실패
     # 누적으로 차단된다 — 리포트 자체는 이미 열려 있어 사용자 화면은 죽지 않는다.
     "ai": lambda sid, root: report_job(sid, root, True),
+    # Compare 백그라운드 계산 (2026-08-19) — 'ai' 와 **같은 잡**이다(ai_inline=True 가
+    # 미뤄진 부분을 전부 인라인으로 계산해 최종 payload 를 만든다). kind 를 나눠 두는
+    # 이유는 ① build_status 실패 누적이 축별로 따로 세어지고 ② 관리자 화면·로그에서
+    # 무엇을 기다리는 잡인지 구분되기 때문. Compare 전용 세션(AI 옵션 없음)에서 'ai'
+    # 라는 이름의 잡이 도는 것도 진단을 헷갈리게 한다.
+    "compare": lambda sid, root: report_job(sid, root, True),
 }
 
 

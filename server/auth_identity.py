@@ -24,6 +24,11 @@ from identity_norm import normalize_uid
 
 _HONEY_UA_RE = re.compile(r"HoneyUser/(\S+)")
 
+# Honey 클라가 자기 버전을 실어 보내는 토큰 ('HoneyVer/3.2.0'). 계정 토큰과 이름이 겹치지
+# 않게 지었다 — `HoneyUser/` 는 이 정규식에 걸리지 않는다(Honey 뒤가 'U' 라 슬래시가 아님).
+# 구버전 클라·일반 브라우저는 토큰이 없어 "" 이며, 그 자체가 '아직 업데이트 안 함' 신호다.
+_HONEY_VER_RE = re.compile(r"HoneyVer/([0-9][0-9A-Za-z.\-_]*)")
+
 # 웹 로그인 세션 쿠키에 담기는 키 (routes_misc.py auth 라우트가 설정/삭제).
 _LOGIN_SESSION_KEY = "uid"
 
@@ -88,6 +93,37 @@ def identity_source():
     if _from_login_session():
         return "login"
     return ""
+
+
+def client_version(ua=None):
+    """UA 의 `HoneyVer/<버전>` 토큰 → '3.2.0'. 없으면 "" (구버전 클라 / 일반 브라우저).
+
+    ua 를 인자로 받는 이유는 요청 컨텍스트 밖(계측 스레드·테스트)에서도 같은 규칙을
+    쓰기 위함이다. 생략하면 현재 요청의 UA 를 본다."""
+    if ua is None:
+        try:
+            ua = str(request.user_agent) or ""
+        except Exception:
+            return ""
+    m = _HONEY_VER_RE.search(str(ua or ""))
+    return m.group(1) if m else ""
+
+
+def client_agent(ua=None):
+    """Honey 접속 경로 — "app" | "browser" | "" (Honey 아님).
+
+    같은 계정이라도 **Honey 앱이 보낸 요청**(업로드·버전체크 — python-requests/urllib)과
+    **내장 브라우저가 보낸 요청**(리포트 열람 — Chrome UA)은 하는 일이 전혀 다르다.
+    지금까지 관리자 화면은 둘을 'Honey' 하나로 묶어 구분할 수 없었다."""
+    if ua is None:
+        try:
+            ua = str(request.user_agent) or ""
+        except Exception:
+            return ""
+    ua = str(ua or "")
+    if "HoneyUser/" not in ua:
+        return ""
+    return "app" if ("python-requests" in ua or "python-urllib" in ua) else "browser"
 
 
 def is_uploader(session, uid):

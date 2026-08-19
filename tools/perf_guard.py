@@ -260,6 +260,18 @@ _RULES = [
         "doc": "docs/13_eval_analyzer_integration.md, web_report/service.py _ai_comment_cached",
     },
     {
+        "id": "S12-compare-cache",
+        "kind": "forbid_remove",
+        "paths": ["web_report/service.py"],
+        "pattern": r"_compare_cached\(|save_compare\(",
+        "why": "Compare 계산은 콜드 빌드의 34% 였다(2026-08-19 실측 1.147s/3.323s). "
+               "분리 캐시(_compare_cached → disk_cache.save_compare)를 우회하면 코멘트 "
+               "한 줄 편집·REPORT_SCHEMA_VERSION bump·dedup 형제 세션마다 compare 전량 "
+               "재계산으로 돌아간다(공통 die 맵·항목별 KS/Welch 를 다시 전부 돈다). "
+               "옮기는 것뿐이라면 면제 주석을 달 것.",
+        "doc": "docs/12_web_report_cache.md, web_report/service.py _compare_cached",
+    },
+    {
         "id": "R11-keyed-lock-cap",
         "kind": "forbid_add",
         "paths": ["web_report/cache.py"],

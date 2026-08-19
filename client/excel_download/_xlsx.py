@@ -10,7 +10,7 @@
 
 이 엔진에만 있는 web_report 파리티 보강 (COM 경로는 동결이라 종전 출력 그대로):
   Summary 의 Issue Status·Engr Comment · Yield 상단 요약 3표 · fail 빨강 그라데이션 ·
-  Status 셀 Open/Close 색 · 전처리 안내 시트 · Compare 시트 · Download Status 시트.
+  Status 셀 Open/Close 색 · Compare 시트.
 
 값 계산은 전부 `_extra.py`(순수 빌더)가 하고 여기서는 **기입만** 한다.
 """
@@ -478,20 +478,7 @@ class XlsxBook:
         ws.set_column(col - 1, col - 1, chars)
         self._col_px[col] = float(px)
 
-    # ── 전처리 안내 / Compare / Download Status ─────────────────────────────
-    def write_preprocess_sheet(self, name, rows):
-        ws = self._sheets[name]
-        self.write_sheet_title(name)
-        self._section_label(ws, 3, "적용 중인 조회 전처리")
-        last = self._table(ws, ["구분", "내용"], rows, header_row=4,
-                           hdr_font=_SUMMARY_HDR_FONT, hdr_fill=_SUMMARY_HDR_FILL_RGB,
-                           data_font=_SUMMARY_DATA_FONT, wrap_cols=("내용",))
-        self._caption(ws, last + 2,
-                      "이 파일의 모든 수치는 위 전처리가 적용된 조회 결과입니다 "
-                      "(원본 rawdata 는 바뀌지 않습니다).")
-        ws.set_column(_START_COL - 1, _START_COL - 1, 24)
-        ws.set_column(_START_COL, _START_COL, 110)
-
+    # ── Compare ─────────────────────────────────────────────────────────────
     _MARK_FILL = {"bad": "FAD4D4", "warn": "FFF3B0", "good": "DCFCE7"}
 
     def write_compare_sheet(self, name, tables):
@@ -522,16 +509,6 @@ class XlsxBook:
         if not wrote:
             self._caption(ws, 3, "이 세션에는 Compare 데이터가 없습니다.")
 
-    def write_status_sheet(self, name, info_rows):
-        """Download Status — 사용 엔진·소요·경고. '에러 대신 기록' 정책의 착지점."""
-        ws = self._sheets[name]
-        self.write_sheet_title(name)
-        self._table(ws, ["항목", "내용"], info_rows, header_row=3,
-                    hdr_font=_SUMMARY_HDR_FONT, hdr_fill=_SUMMARY_HDR_FILL_RGB,
-                    data_font=_SUMMARY_DATA_FONT, wrap_cols=("내용",))
-        ws.set_column(_START_COL - 1, _START_COL - 1, 26)
-        ws.set_column(_START_COL, _START_COL, 110)
-
     def write_sheet_error(self, name, exc):
         """시트 하나가 실패해도 파일 전체는 만든다 — 그 시트에 사유만 남긴다."""
         try:
@@ -539,8 +516,7 @@ class XlsxBook:
             fmt = self._cell_fmt({"name": "Calibri", "size": 12, "color": "#B42318"},
                                  center=False, wrap=True)
             ws.write(_HEADER_ROW - 1, _START_COL - 1,
-                     _safe(f"⚠ 이 시트를 만들지 못했습니다: {exc} "
-                           f"— 다른 시트는 정상입니다. Download Status 시트를 확인하세요."),
+                     _safe(f"⚠ 이 시트를 만들지 못했습니다: {exc} — 다른 시트는 정상입니다."),
                      fmt)
             ws.set_column(_START_COL - 1, _START_COL - 1, 120)
         except Exception:

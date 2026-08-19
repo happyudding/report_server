@@ -359,6 +359,20 @@ CREATE TABLE IF NOT EXISTS report_schema_migration (
     updated_at  INTEGER NOT NULL
 );
 
+-- Honey 클라이언트 버전 대장 — 사람 1명 = 1행, "마지막으로 실행한 Honey 버전".
+-- 소스는 앱 시작 시 1회 오는 GET /honey/version 의 UA 토큰(HoneyVer/<버전>) 뿐이라
+-- 쓰기는 사람당 하루 몇 건이다. 버전 토큰을 안 보내는 구버전 클라는 행이 생기지 않거나
+-- 옛 값이 그대로 남는데, 그 자체가 '아직 업데이트하지 않은 사람' 신호다(last_at 으로 구분).
+CREATE TABLE IF NOT EXISTS report_client_version (
+    user_id      TEXT PRIMARY KEY,   -- 소문자 계정(identity_norm). 신원 없으면 'ip:<addr>'
+    version      TEXT NOT NULL,      -- 마지막으로 확인된 클라 버전
+    prev_version TEXT,               -- 직전 버전 (업데이트가 실제로 일어났는지 확인용)
+    first_at     INTEGER NOT NULL,   -- 이 버전을 처음 본 시각 (버전이 바뀌면 갱신)
+    last_at      INTEGER NOT NULL,   -- 마지막 실행 시각
+    runs         INTEGER NOT NULL DEFAULT 0,  -- 이 버전으로 실행한 횟수
+    updated_at   INTEGER NOT NULL
+);
+
 -- 챗봇 일별 비식별 집계 — 질문/답변 전문은 보존기간(기본 90일) 후 삭제하지만 사용 추이와
 -- 부하 지표는 계속 필요하다. 원문 purge 직전에 이 표로 접어 넣는다.
 CREATE TABLE IF NOT EXISTS report_chatbot_daily (
@@ -371,6 +385,36 @@ CREATE TABLE IF NOT EXISTS report_chatbot_daily (
     wait_ms_sum   INTEGER NOT NULL DEFAULT 0,
     llm_ms_sum    INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (day, intent, planner, result)
+);
+
+-- eval 룰 엔진 일별 지표 (2026-08-19). 원재료는 eval.db 에 계속 남지만, 지금까지
+-- 정확도·커버리지는 **관리자가 탭을 열 때 전체 누적 한 숫자**로만 나와 "좋아지고 있나"를
+-- 볼 수 없었다. 여기 접어 두면 3개월 추이가 남는다.
+-- ⚠ 집계는 **재계산 UPSERT**(누적 더하기가 아니다) — 원본이 남아 있어 같은 날을 몇 번
+--   다시 집계해도 같은 값이 나와야 한다(report_chatbot_daily 와 반대 규약이니 주의).
+-- engine_version 을 키에 두는 이유: 룰 버전이 다르면 UNKNOWN 비율·발화 분포가 달라
+--   섞으면 추이가 거짓말을 한다. 판정과 무관한 집계(사람 코멘트 라벨 수)는 ''.
+CREATE TABLE IF NOT EXISTS report_eval_daily (
+    day             TEXT NOT NULL,          -- 'YYYY-MM-DD' (서버 localtime)
+    engine_version  TEXT NOT NULL DEFAULT '',
+    -- 스냅샷 축적 (ingest_run.created_at 기준)
+    runs            INTEGER NOT NULL DEFAULT 0,
+    cases           INTEGER NOT NULL DEFAULT 0,
+    fail_cases      INTEGER NOT NULL DEFAULT 0,  -- fail_count>0 = UNKNOWN 비율의 분모
+    unknown_cases   INTEGER NOT NULL DEFAULT 0,  -- primary 가 없거나 UNKNOWN
+    -- signature 확정(✓, labeler='web-signature') vs 엔진 발화 대조
+    sig_labeled     INTEGER NOT NULL DEFAULT 0,  -- 스냅샷 case 와 짝이 맞은 확정 라벨 수
+    sig_exact       INTEGER NOT NULL DEFAULT 0,  -- 사람 지목 == 엔진 발화 집합
+    sig_overlap     INTEGER NOT NULL DEFAULT 0,  -- 교집합 1개 이상(부분 일치 포함)
+    -- 사람 코멘트(Status=Close) 라벨 — matched 는 엔진 판정과 case 가 이어진 수.
+    -- 이 둘의 비가 곧 case_id 정합 건강도다(2026-08-19 이전에는 구조적으로 0 이었다).
+    comment_labels  INTEGER NOT NULL DEFAULT 0,
+    comment_matched INTEGER NOT NULL DEFAULT 0,
+    -- status 정답 라벨 채점 (labeler='eval-panel')
+    score_pairs     INTEGER NOT NULL DEFAULT 0,
+    score_agree     INTEGER NOT NULL DEFAULT 0,
+    updated_at      INTEGER NOT NULL,
+    PRIMARY KEY (day, engine_version)
 );
 """
 

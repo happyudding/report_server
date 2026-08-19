@@ -9,6 +9,7 @@
 - audit.py           감사 로그 기록·조회·롤오프
 - users.py           즐겨찾기 / 편집 권한 위임 / 방문자 / 개인 중요표시 / (폐지) 로그인 계정
 - usage.py           접속 사용량 일별 집계 (Honey 실행 · 웹페이지 방문)
+- client_versions.py Honey 클라 버전 대장 (사람별 마지막 실행 버전)
 - annotations.py     주석 + Dash 대시보드 편집 셀
 - webreport_edits.py web_report 편집 상태 (세션 단위)
 
@@ -75,6 +76,12 @@ from .chatbot_log import (  # noqa: F401
     purge_chat_logs,
     rollup_chat_daily,
 )
+from .eval_stats import (  # noqa: F401
+    collect_eval_daily,
+    eval_daily_series,
+    purge_eval_daily,
+    rollup_eval_daily,
+)
 from .users import (  # noqa: F401
     add_session_editor,
     create_user,
@@ -93,6 +100,11 @@ from .users import (  # noqa: F401
     set_user_favorite,
     set_user_important,
     update_user_password,
+)
+from .client_versions import (  # noqa: F401
+    get_client_versions,
+    record_client_version,
+    version_report,
 )
 from .usage import (  # noqa: F401
     peak_first_day,

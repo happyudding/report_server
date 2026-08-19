@@ -1177,12 +1177,12 @@ tbody tr:hover { background: #f9fbff; }
 .idet-stats { margin: 0 0 16px; }
 .idet-stats table { width: auto; }
 .idet-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px; }
-/* 상세 차트 + 우측 세로 범례 (사용자 요청 2026-08-05 — Distribution 갤러리와 같은 배치).
-   범례가 없을 때(source 少 + 강조 없음)는 aside 가 비므로 자리를 차지하지 않게 접는다. */
+/* 상세 차트 + 우측 세로 범례 (Distribution 갤러리와 같은 배치). 상세 3개 차트의 Plotly
+   내장 legend 는 껐고(2026-08-19) 강조 선택은 항상 이 우측 범례에서 한다. */
 .idet-body { display: flex; align-items: flex-start; gap: 14px; }
 .idet-body > .idet-charts { flex: 1 1 auto; min-width: 0; }
-.idet-legend-side:empty { display: none; }
-.dist-legend-row.idet-legend { margin: 0; }   /* 상세 공용 legend (source 多 또는 강조 시 렌더) */
+.idet-legend-side:empty { display: none; }   /* sources 없는 극단 케이스 가드 */
+.dist-legend-row.idet-legend { margin: 0; }   /* 상세 공용 legend (항상 렌더) */
 .idet-chart-block { border: 1px solid #e2e4e8; border-radius: 8px; padding: 8px 10px; }
 /* 차트 하단 Comment 표시 (chart_notes.js cnRenderChartComments) — 내용 없으면 여백 0 */
 .idet-chart-comment:not(:empty) { margin-top: 6px; padding-top: 6px; border-top: 1px dashed #e5e7eb;

@@ -246,21 +246,39 @@ def test_schema_user_version_and_objects(fresh_db):
         feat_cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
         assert {"shot_fail_ratio", "ring_fail_ratio", "radial_gradient_norm",
                 "x_gradient_norm", "y_gradient_norm", "n_modes", "modality_v2"} <= feat_cols
+        # v9 — 룰 판정 기준값
+        assert set(store._V9_FEATURE_COLS) <= feat_cols
+
+
+def test_save_features_persists_rule_criteria(fresh_db):
+    """v9 판정지표가 실제로 **저장·조회**된다 — 컬럼만 만들고 화이트리스트에 안 넣으면
+    영원히 NULL 인 함정(shot_fail_ratio 전례)을 잡는다."""
+    f = {k: None for k in features_module._FEATURE_KEYS}
+    values = {c: 0.1 * (i + 1) for i, c in enumerate(store._V9_FEATURE_COLS)}
+    f.update(n_dut=60, **values)
+    with store.get_conn() as conn:
+        store.save_features("C_V9", 1, "ev1", f, conn=conn)
+        row = conn.execute(
+            f"SELECT {','.join(store._V9_FEATURE_COLS)} FROM features WHERE case_id=?",
+            ("C_V9",)).fetchone()
+        for col, want in values.items():
+            assert row[col] == pytest.approx(want), (col, row[col], want)
 
 
 def test_save_features_ignores_derived_keys(fresh_db):
     """DB 컬럼 없는 파생 feature 가 섞여 들어와도 저장은 성공하고, 컬럼은 늘지 않는다.
 
-    features.compute 는 value_gap_ratio/value_gap_minor_mass 를 반환하지만 이는 판정·트레이스
+    features.compute 는 e1_fail_ratio/skewness_moment 를 반환하지만 이는 판정·트레이스
     용 파생값이라 일부러 저장하지 않는다(store.save_features 의 cols 화이트리스트).
     화이트리스트를 걷어내고 dict 를 그대로 쓰면 여기서 OperationalError 로 터진다.
+    (value_gap_* 는 v9 부터 저장 대상 — test_save_features_persists_rule_criteria 참조.)
     """
     f = {k: None for k in features_module._FEATURE_KEYS}
-    f.update(n_dut=60, value_gap_ratio=0.9, value_gap_minor_mass=0.25)
+    f.update(n_dut=60, e1_fail_ratio=0.9, skewness_moment=0.25)
     with store.get_conn() as conn:
         store.save_features("C_DERIVED", 1, "ev1", f, conn=conn)
         cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
-        assert {"value_gap_ratio", "value_gap_minor_mass"} & cols == set()
+        assert {"e1_fail_ratio", "skewness_moment"} & cols == set()
         row = conn.execute("SELECT n_dut FROM features WHERE case_id=?",
                            ("C_DERIVED",)).fetchone()
         assert row["n_dut"] == 60

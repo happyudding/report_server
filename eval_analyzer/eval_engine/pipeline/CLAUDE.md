@@ -6,7 +6,7 @@
 ## 단계별 파일 지도
 | 파일 | 단계 | 핵심 함수 | 무엇을 하나 |
 |---|---|---|---|
-| `ingest.py` | L0 | `ingest()` | run_input → fail_case 들. 마스터 upsert, item 파싱, item_class, case_id, 측정 시리즈 메모리 첨부. |
+| `ingest.py` | L0 | `ingest()` | run_input → fail_case 들(**item 당 1개**). 마스터 upsert, item 파싱, item_class, case_id, 측정 시리즈 메모리 첨부. |
 | `metrics.py` | L1 | `compute()`, `cpk_summary()` | raw(메모리)에서 cpk/cpl/cpu/cp/mean/stdev/min/max/yield/bimodality. |
 | `features.py` | L2 | `compute()` | robust 산포(MAD)/spec margin/공간(영역 점유율·quadrant 0°·45° max·`fail_spread_norm`)/OUTLIER 2축(`fail_mad_min`·`fail_body_jump_ratio` — 구 `fail_pass_gap_sigma` 는 evidence 전용, 2026-08-14)/`tail_mass_3s`/격자(CODE) 판정/site_cpk_delta. |
 | `signatures.py` | L3 | `evaluate()` | `signatures.yaml` when_metric 평가 → 발화 signature + evidence + bin context. |
@@ -30,6 +30,12 @@ row0 TSEQ  row1 TNO  row2 STEP(P1/P2/P3, 미사용)  row3 UNIT  row4 HILIM(USL) 
 ([ingest.py:220-223](ingest.py#L220-L223))으로 **고정**. row/컬럼 순서 바꾸면 파서가 깨진다.
 - **fail 식별** = serial 의 `FAILTNO` == item 의 `TNO` → 그 item·그 serial 의 `BIN` = fail bin.
   FAILTNO 공란/0/NaN = pass. (limit 재판정 아님)
+- ⚠ **case 는 item 당 1개다** (2026-08-19). `fail_mask`·`fail_count` 는 그 item 을 fail 한
+  **전 serial 의 합집합**이고, bin 은 `case["bin"]` 에 **대표 bin**(최다 fail, 동률은 작은
+  bin — 재실행 결정성 필수)으로만 남는다. `case_id`·`item_class` 에는 bin 이 들어가지
+  않는다 — bin 은 die 의 binning 관례라 제품군·담당자에 따라 달라지는데, 실측상 한 item 의
+  fail 은 소스 안에서 100% 단일 bin 이라 **식별 정보를 0 추가하면서 case 만 쪼갠다**
+  (사람 코멘트·라벨·선례가 함께 희석됨). 배경 → ../../../docs/17.
 - `tools/` 의 생성기·testbench 는 **구 5-메타행(STEP 없음)** 을 가정 — 파서와 불일치.
   → [../../tools/CLAUDE.md](../../tools/CLAUDE.md) 의 ⚠ 참조.
 

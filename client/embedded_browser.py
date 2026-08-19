@@ -26,18 +26,23 @@ from PyQt6.QtWidgets import QLineEdit, QMainWindow, QToolBar, QVBoxLayout, QWidg
 
 import client_identity
 from transport import update_policy
+from transport.config import CURRENT_VERSION
 
 # 열린 팝업 창 참조 보관 (GC 로 창이 사라지는 것 방지)
 _open_windows = []
 
 
 def _inject_user_agent():
-    """기본 프로필 User-Agent 에 `HoneyUser/<계정>` 토큰을 1회 추가.
+    """기본 프로필 User-Agent 에 `HoneyUser/<계정> HoneyVer/<버전>` 토큰을 1회 추가.
 
     서버 검색결과 페이지가 navigator.userAgent 에서 파싱해 즐겨찾기·내 업로드
     우선 정렬의 사용자 ID 로 쓴다. 계정에 공백/한글이 있어도 헤더가 깨지지
     않도록 percent-encode 하고, JS 쪽에서 decodeURIComponent 로 되돌린다.
     수집 실패 시 토큰 없이 기존 UA 그대로 둔다 (페이지는 수동 입력으로 폴백).
+
+    버전 토큰은 관리자 화면이 "지금 리포트를 보는 사람이 어떤 Honey 를 쓰는가" 를
+    표시하는 값이다. 계정 토큰 뒤에 **공백으로 구분해** 붙이므로 기존
+    `HoneyUser/(\\S+)` 파싱(서버 auth_identity·검색결과/랜딩 JS)에는 영향이 없다.
     """
     profile = QWebEngineProfile.defaultProfile()
     ua = profile.httpUserAgent()
@@ -48,7 +53,8 @@ def _inject_user_agent():
     except Exception:
         user = ""
     if user:
-        profile.setHttpUserAgent(f"{ua} HoneyUser/{quote(user, safe='')}")
+        profile.setHttpUserAgent(
+            f"{ua} HoneyUser/{quote(user, safe='')} HoneyVer/{CURRENT_VERSION}")
 
 
 _download_handler_installed = False

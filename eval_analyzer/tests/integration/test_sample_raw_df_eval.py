@@ -42,8 +42,9 @@ def test_sample_raw_df_preview():
             assert case["status"] in _VALID_STATUS
             assert case["issue_category"] in _VALID_CATEGORY
             assert case["item_raw"]           # 원본 item명 존재 (join 키)
-            assert len(case["item_class"].split("|")) == 3
-            # bin: yield fail 이면 fail bin, cpk<cpk_warn 트리거면 PASS_BIN(1) 일 수 있음
+            # item_class 는 category_major|value_type 2축 (2026-08-19 — bin 제거)
+            assert len(case["item_class"].split("|")) == 2, case["item_class"]
+            # bin: 대표 bin(최다 fail). fail 이 없으면 PASS_BIN(1)
 
 
 def test_sample_raw_df_persist(fresh_db):

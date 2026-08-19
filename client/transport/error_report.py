@@ -77,7 +77,8 @@ def _headers() -> dict:
     h = {"Content-Type": "application/json"}
     user = _identity()
     if user:
-        h["User-Agent"] = f"python-requests HoneyUser/{quote(user, safe='')}"
+        h["User-Agent"] = (f"python-requests HoneyUser/{quote(user, safe='')} "
+                           f"HoneyVer/{CURRENT_VERSION}")
     h.update(operation_headers())
     return h
 

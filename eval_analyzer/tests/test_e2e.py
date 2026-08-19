@@ -35,10 +35,14 @@ def _raw_run_input(n_pass=20, n_fail=4):
 
 
 def _assert_case_shape(case):
-    """RunResult.cases[i] 의 계약 검사 — 필수 키·status 어휘·item_class 3축(INTEGRATION_CONTRACT §4)."""
+    """RunResult.cases[i] 의 계약 검사 — 필수 키·status 어휘·item_class 2축.
+
+    item_class 는 `category_major|value_type` **2축**이다(2026-08-19) — 종전 3축의
+    마지막 조각은 bin 이었는데, case 가 item 단위가 되면서 bin 은 식별 축에서 빠졌다.
+    """
     assert _REQUIRED_KEYS <= set(case)
     assert case["status"] in _VALID_STATUS
-    assert len(case["item_class"].split("|")) == 3
+    assert len(case["item_class"].split("|")) == 2, case["item_class"]
 
 
 def test_degrade_gross_fail():

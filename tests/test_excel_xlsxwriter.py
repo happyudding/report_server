@@ -4,7 +4,7 @@
 
 서버 없이 돌도록 fetch_* 를 합성 payload 로 대체한다(웹 payload 와 같은 키 구조).
 확인 항목: 시트 구성 / 표 값 / 색(fill) / 병합 / 열너비·행높이 / 차트 이미지 개수·해상도 /
-Download Status 기록 / 시트 1개가 실패해도 파일이 만들어지는지.
+시트 1개가 실패해도 파일이 만들어지는지.
 """
 import io
 import os
@@ -251,14 +251,6 @@ def _full_payload(n_items, n_cpk=1):
     }
 
 
-_PREPROCESS = {
-    "summary": "항목 2개 제외 · outlier ±3σ 제거",
-    "spec": {"exclude_items": ["NOISE_1", "NOISE_2"], "outlier": {"k": 3},
-             "edits": [], "rules": []},
-    "digest": "abc12345", "yield_basis": "gross", "gross_die": 1000,
-}
-
-
 # ── xlsx 읽기 헬퍼 (stdlib 만) ───────────────────────────────────────────────
 
 class Book:
@@ -405,7 +397,6 @@ def build(tmp, *, n_items=40, out_name="out.xlsx", break_sheet=None, engine="xls
     ed.fetch_report_data = fake_fetch_report_data
     ed.fetch_distribution_bin1 = lambda *a, **k: {}
     ed.fetch_temp_map = lambda *a, **k: {}
-    ed.fetch_preprocess = lambda *a, **k: _PREPROCESS
 
     if break_sheet:                     # 시트 1개를 일부러 실패시켜 격리를 확인
         from excel_download import _xlsx
@@ -447,8 +438,8 @@ def main(keep=False):
         bk = Book(path)
 
         check("시트 구성", bk.sheets,
-              ["Summary", "전처리 안내", "Yield", "CPK", "Issue Table", "Compare",
-               "Distribution", "Histogram", "Map Analysis", "Download Status"])
+              ["Summary", "Yield", "CPK", "Issue Table", "Compare",
+               "Distribution", "Histogram", "Map Analysis"])
         check_true("경고 없음", not res["warnings"], str(res["warnings"]))
 
         # ── Summary ─────────────────────────────────────────────────────────
@@ -534,22 +525,12 @@ def main(keep=False):
                    if map_png else False, "맵 PNG 에 PASS_COLOR(#0ca30c) 픽셀이 없다")
 
         # ── 신규 시트 ───────────────────────────────────────────────────────
-        print("\n[6] 전처리 안내 / Compare / Download Status")
-        cells = bk.cells("전처리 안내")
-        check_true("전처리 요약 기입", any(isinstance(v, str) and "outlier" in v
-                                     for v, _f in cells.values()), "")
-        check_true("항목 제외 나열", any(isinstance(v, str) and "NOISE_1" in v
-                                   for v, _f in cells.values()), "")
+        print("\n[6] Compare")
         cells = bk.cells("Compare")
         check_true("동일성 검증 표", find_cell(cells, "동일성 검증") is not None, "")
         check_true("산포 비교 표", find_cell(cells, "산포 비교") is not None, "")
         check_true("Good Log 표", find_cell(cells, "Good Log 비교") is not None, "")
         check_true("goodlog 불일치 X 표기", any(v == "X" for v, _f in cells.values()), "")
-        cells = bk.cells("Download Status")
-        check_true("사용 엔진 기록", any(isinstance(v, str) and "XlsxWriter" in v
-                                   for v, _f in cells.values()), "")
-        check_true("경고 없음 기록", any(isinstance(v, str) and "없음" in v
-                                   for v, _f in cells.values()), "")
 
         # ── 레이아웃 ────────────────────────────────────────────────────────
         print("\n[7] Layout — 열너비·행높이·링크")
@@ -574,9 +555,6 @@ def main(keep=False):
             str(list(cpk_cells.values())[:4]))
         check_true("다른 시트는 정상", find_cell(bk2.cells("Summary"), "Yield Summary")
                    is not None, "")
-        check_true("Download Status 에 경고", any(
-            isinstance(v, str) and "의도적 실패" in v
-            for v, _f in bk2.cells("Download Status").values()), "")
 
         if keep:
             dest = ROOT / "tests" / "bench_results"

@@ -710,7 +710,18 @@ function bindCompareSubtabs(panel) {
 function renderCompare() {
   const panel = document.getElementById("panel-compare");
   const cmp = DATA.web_report && DATA.web_report.compare;
-  if (!cmp) { emptyPanel(panel, "Compare 데이터 없음 (같은 Wafer source 2개 이상 필요)"); return; }
+  if (!cmp) {
+    // 계산 대기(2026-08-19)와 진짜 없음을 구분한다 — 둘 다 "데이터 없음"으로 보이면
+    // 잠시 뒤 채워질 것을 사용자가 오류로 읽는다. boot.js 폴링이 완료 시 다시 그린다.
+    if (DATA.web_report && DATA.web_report.compare_pending) {
+      emptyPanel(panel, window.__aiPendingFailed
+        ? "Compare 계산 미완료 — 새로고침하면 다시 시도합니다."
+        : "⏳ Compare 계산 중… 끝나면 자동으로 표시됩니다.");
+      return;
+    }
+    emptyPanel(panel, "Compare 데이터 없음 (같은 Wafer source 2개 이상 필요)");
+    return;
+  }
   panel.classList.add("viz-root");
   const sources = cmp.sources || [];
   const groups = cmp.groups || {};

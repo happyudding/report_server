@@ -107,7 +107,9 @@ def main():
     got2 = eval_export.get_panel_label(_SESSION, item="IDD_LEAK", bin_=31)
     assert got2["human_status"] == "CRITICAL" and got2["human_comment"] == "누설 실불량", got2
     assert eval_export.get_panel_label(_SESSION, item="NO_SUCH_ITEM", bin_=1) is None
-    assert eval_export.get_panel_label(_SESSION, item="VOUT_TRIM", bin_=99) is None
+    # bin 은 case 를 가르지 않는다(2026-08-19) — 같은 item 이면 어떤 bin 으로 물어도
+    # 같은 라벨이 나온다. 이게 곧 "화면 어느 섹션에서 눌러도 같은 학습 데이터" 라는 뜻이다.
+    assert eval_export.get_panel_label(_SESSION, item="VOUT_TRIM", bin_=99) == got
 
     print("PASS: test_eval_label_scoring (a/b/c/d/e)")
     return 0

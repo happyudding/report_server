@@ -136,14 +136,12 @@ function idetFailBinsHtml(data) {
   return `<span class="idet-fail-bins">Bin ${esc(bins.join(", "))}</span>`;
 }
 
-// 상세 차트 **우측 세로 칸** 공용 legend — distUseExtLegend(소스 다수로 내장 legend 를 끈
-// 경우)이거나 강조가 걸려 있을 때 렌더한다(갤러리와 같은 distLegendHtml 재사용, 순서는
-// data.sources 순서). 강조 조건이 필수인 이유: 소스가 8개 미만이면 상세는 Plotly 내장
-// legend 를 쓰므로, 갤러리에서 건 강조가 해제 UI 없이 따라 들어오는 구멍이 생긴다.
-// 배치는 Distribution 갤러리와 동일한 세로 규격(DIST_LEGEND_VERT_CLS) — 소스가 많으면
-// 가로 스트립은 차트 위를 몇 줄씩 잡아먹어 읽기 어렵다(사용자 요청 2026-08-05).
+// 상세 차트 **우측 세로 칸** 공용 legend — 항상 렌더한다(갤러리와 같은 distLegendHtml
+// 재사용, 순서는 data.sources 순서). Plotly 내장 legend 는 상세 3개 차트(CDF/히스토그램/
+// 정규분포) 모두에서 끈다(2026-08-19 사용자 요청) — 내장 legend 클릭·강조 해제가 차트를
+// 접거나 덮는 문제가 있어, 강조 선택은 Distribution 갤러리와 동일하게 우측 칸에서만 한다.
+// 배치는 Distribution 갤러리와 동일한 세로 규격(DIST_LEGEND_VERT_CLS).
 function idetLegendHtml(data) {
-  if (!distUseExtLegend(data) && !distSourceFilter.size) return "";
   return distLegendHtml((data && data.sources) || [], "idet-legend " + DIST_LEGEND_VERT_CLS);
 }
 
@@ -714,16 +712,11 @@ function distRenderCdf(data) {
   const useGl = !!DIST.CDF_GL;   // 렌더 방식 토글 — distribution.js DIST 상수 참조
   const lo = data.lower_limit, hi = data.upper_limit;
   const bg = DIST_STATUS_BG[data.status] || "#FFFFFF";
-  const multi = (data.sources || []).length > 1;
   const unit = data.units || "";
   const xtitle = `측정값${unit ? " [" + unit + "]" : ""}`;
   // 단측 스펙 클램프용 데이터 끝값 — 제외(cdfExcluded) 반영 후 곡선 기준으로 잡는다.
   let cdfMin = Infinity, cdfMax = -Infinity;
   // 강조 소스가 겹침에 묻히지 않게 dim 소스 먼저 그린다(distOrderedSources).
-  // legendrank 는 원본 sources 순서로 고정 — 그리기 순서를 바꿔도(여기·moveTraces)
-  // 내장 legend 항목이 섞이지 않는다.
-  const srcRank = {};
-  (data.sources || []).forEach((s, i) => { srcRank[s.name] = i; });
   const traces = distOrderedSources(data.sources).map(s => {
     const hasId = Array.isArray(s.serial) && s.serial.length === s.values.length;
     // 제외 칩을 뺀 값/식별정보 — 제외는 CDF 곡선에만 반영(분모 n 감소로 곡선 재계산).
@@ -742,7 +735,7 @@ function distRenderCdf(data) {
     }
     const base = distActiveColorFor(s.name);
     const trace = { type: useGl ? "scattergl" : "scatter", mode: "markers", name: s.name,
-      legendrank: 1000 + srcRank[s.name], x: c.x, y: c.y };
+      x: c.x, y: c.y };
     if (!useGl) trace.cliponaxis = false;   // scattergl 미지원 속성 — SVG 분기에만
     if (hasId) {
       // customdata/hover 는 필터·정렬된 동일 순서 유지(클릭 식별·hover 지속).
@@ -781,8 +774,7 @@ function distRenderCdf(data) {
     yaxis: { title: { text: "누적 %" }, range: [-2, 102], tick0: 0, dtick: 20, ticksuffix: "%", showgrid: true, gridcolor: IDET_GRID_MAJOR, zeroline: false },
     shapes: cdfShapes,
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
-    margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
-  idetBindLegendHighlight(cdfDiv);   // 내장 legend 클릭 = 숨김이 아니라 강조
+    margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: false }, DIST_CFG);
   // 재렌더마다 중복 방지 후 편집 모드에서만 동작하는 선택 이벤트 바인딩.
   if (cdfDiv.removeAllListeners) { cdfDiv.removeAllListeners("plotly_click"); cdfDiv.removeAllListeners("plotly_selected"); }
   cdfDiv.on("plotly_click", ev => {
@@ -809,19 +801,15 @@ function distRenderHist(data) {
   if (!hDiv) return;
   const lo = data.lower_limit, hi = data.upper_limit;
   const bg = DIST_STATUS_BG[data.status] || "#FFFFFF";
-  const multi = (data.sources || []).length > 1;
   const unit = data.units || "";
   const xtitle = `측정값${unit ? " [" + unit + "]" : ""}`;
   // 막대 대신 빈도 폴리곤: 21bin 중심점-빈도 곡선(양끝 0 패딩), CDF 와 동일한 원본 values 재사용.
-  // 강조 시 dim 소스 먼저 그리기 + legendrank 로 legend 순서 고정 (CDF 와 동일 규칙).
-  const srcRank = {};
-  (data.sources || []).forEach((s, i) => { srcRank[s.name] = i; });
+  // 강조 시 dim 소스 먼저 그리기 (CDF 와 동일 규칙).
   const polys = distHistPolygon(distOrderedSources(data.sources), lo, hi, cdfExcluded);
   const hr = distSourcesRange(data.sources);   // 단측 스펙 클램프용 데이터 끝값
   let ymax = 0;
   polys.forEach(p => p.counts.forEach(c => { if (c > ymax) ymax = c; }));
   const traces = polys.map(p => ({ type: "scatter", mode: "lines", name: p.source,
-    legendrank: 1000 + srcRank[p.source],
     x: p.centers, y: p.counts, line: { color: distActiveColorFor(p.source), shape: "spline" },
     hovertemplate: "측정값 %{x}<br>빈도 %{y:d}<extra></extra>" }));
   // x축 우선순위: 사용자 축옵션 > "Limit 안 Data만" 클램프 > 데이터 인지 자동범위 (CDF 와 동일).
@@ -845,14 +833,13 @@ function distRenderHist(data) {
       showgrid: true, gridcolor: IDET_GRID_MAJOR, zeroline: false },
     shapes: distSpecShapes(lo, hi, false).concat(beforeLimitShapes(data.subject)),
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
-    margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
+    margin: { l: 60, r: 22, t: 16, b: 46 }, showlegend: false }, DIST_CFG);
   // 히스토그램은 bin 중심점 폴리곤이라 점 1개 = die 1개가 아니다(customdata 없음).
   // 그래서 박스선택은 x구간만 읽고 원본 values 를 훑어 그 구간 die 를 제외집합에 넣는다.
   // 라쏘는 ev.range 가 없어(ev.lassoPoints) 무시 — DIST_CFG 가 modeBar 를 숨기고
   // dragmode 를 select 로 두므로 드래그 도구는 박스뿐이고, 아래 가드가 이중 방어다.
   // ★ newPlot 은 div 에 걸린 .on 핸들러를 지우지 않는다(CDF 는 앞서 purge 하지만 여기는
   //   안 한다). 제거하지 않으면 편집마다 핸들러가 누적돼 선택 1회에 cdfAfterEdit 가 N회 돈다.
-  idetBindLegendHighlight(hDiv);   // 내장 legend 클릭 = 숨김이 아니라 강조
   if (hDiv.removeAllListeners) hDiv.removeAllListeners("plotly_selected");
   hDiv.on("plotly_selected", ev => {
     const set = cdfActiveSet();
@@ -875,30 +862,6 @@ function distRenderHist(data) {
   // 차트 주석 오버레이 (chart_notes.js) — base shapes 기억을 위해 렌더 직후 호출.
   if (window.chartNotesApply) chartNotesApply("hist", data.subject, hDiv);
 }
-// 차트 **내장** legend 클릭 = 해당 source 강조 (2026-08-14 사용자 요청).
-// Plotly 기본은 클릭한 trace 를 숨기는 것인데, 우측 칸 범례(distLegendClick)는 강조라
-// 소스가 8개 미만(=내장 legend 를 쓰는 세션)에서만 규칙이 갈렸다. false 를 돌려 기본
-// 토글(숨김)을 막고 우측 범례와 같은 distSourceFilter 를 토글한다. 더블클릭(기본:
-// 나머지 전부 숨김)은 강조 전체 해제로 맞춘다.
-// ※ 색 반영(distApplySourceFilter → Plotly.restyle)은 이벤트 처리가 끝난 뒤로 미룬다 —
-//   legend 클릭 처리 도중의 재스타일은 Plotly 내부 상태와 얽힌다.
-function idetBindLegendHighlight(div) {
-  if (!div || !div.on) return;
-  if (div.removeAllListeners) {
-    div.removeAllListeners("plotly_legendclick");
-    div.removeAllListeners("plotly_legenddoubleclick");
-  }
-  div.on("plotly_legendclick", ev => {
-    const t = ev && ev.data && ev.data[ev.curveNumber];
-    const nm = t && t.name;
-    if (nm) setTimeout(() => distToggleSourceHighlight(nm), 0);
-    return false;
-  });
-  div.on("plotly_legenddoubleclick", () => {
-    setTimeout(distClearSourceHighlight, 0);
-    return false;
-  });
-}
 function distRenderDetailCharts(data) {
   distRenderCdf(data);    // #distCdf (제외 편집 반영)
   distRenderHist(data);   // #distHist (제외 반영)
@@ -913,16 +876,13 @@ function distRenderNormal(data) {
   if (!nDiv) return;
   const lo = data.lower_limit, hi = data.upper_limit;
   const bg = data.is_fail ? "#FEF9E7" : "#FFFFFF";   // 규격 이탈(Fail) → 배경 연노랑
-  const multi = (data.sources || []).length > 1;
   const unit = data.units || "";
   const xtitle = `측정값${unit ? " [" + unit + "]" : ""}`;
   const statByName = {};
   (data.stats || []).forEach(s => { statByName[s.source] = s; });
   const traces = [], spikes = [];
   let ymax = 0;
-  // 강조 시 dim 소스 먼저 그리기 + legendrank 로 legend 순서 고정 (CDF 와 동일 규칙).
-  const srcRank = {};
-  (data.sources || []).forEach((s, i) => { srcRank[s.name] = i; });
+  // 강조 시 dim 소스 먼저 그리기 (CDF 와 동일 규칙).
   distOrderedSources(data.sources).forEach(s => {
     const st = statByName[s.name];
     if (!st) return;
@@ -943,7 +903,7 @@ function distRenderNormal(data) {
       xs[i] = x; ys[i] = coef * Math.exp(-0.5 * z * z);
     }
     if (coef > ymax) ymax = coef;   // PDF 최대값은 x=μ 의 coef
-    traces.push({ type: "scatter", mode: "lines", name: s.name, legendrank: 1000 + srcRank[s.name],
+    traces.push({ type: "scatter", mode: "lines", name: s.name,
       x: xs, y: ys, hoverinfo: "skip", line: { color, width: 1.4 } });
   });
   // x축: 1단계(distHistXRange, bin 버전과 동일) → 2단계(±5% 항상 적용, 이중 마진).
@@ -961,8 +921,7 @@ function distRenderNormal(data) {
       showticklabels: false, showgrid: false, zeroline: false },
     shapes: distSpecShapes(lo, hi, false).concat(spikes, beforeLimitShapes(data.subject)),
     annotations: distSpecAnnos(lo, hi, false).concat(beforeLimitAnnos(data.subject)),
-    margin: { l: 24, r: 22, t: 16, b: 46 }, showlegend: multi && !distUseExtLegend(data) }, DIST_CFG);
-  idetBindLegendHighlight(nDiv);   // 내장 legend 클릭 = 숨김이 아니라 강조
+    margin: { l: 24, r: 22, t: 16, b: 46 }, showlegend: false }, DIST_CFG);
 }
 // 강조 변경 시 상세 차트의 색만 갈아끼운다 — 재렌더 없이 zoom/선택/주석을 보존.
 // source trace 만 골라야 한다: chipMarkersFor(map_select.js) 가 붙이는 칩 trace 는
@@ -982,8 +941,7 @@ function idetRestyleSourceColors(div, prop) {
 // 아래 trace 에 깔려 안 보인다(distDrawPoints 의 dim-먼저 정렬과 같은 규칙). 목표 순서를
 // 항상 원본 sources 순서 기준으로 계산하므로 강조 해제 시 원래 그리기 순서로 복원된다.
 // source trace 끼리 같은 슬롯 집합 안에서만 자리를 바꿔, 뒤에 붙는 칩 마커(이름 없음)는
-// 계속 최상단이다. legend 순서는 legendrank 로 고정이라 안 섞인다. moveTraces 는
-// layout 을 건드리지 않아 zoom/주석 보존.
+// 계속 최상단이다. moveTraces 는 layout 을 건드리지 않아 zoom/주석 보존.
 function idetReorderSourceTraces(div) {
   if (!div || !div.data || !_itemDetailData) return;
   const rank = {};

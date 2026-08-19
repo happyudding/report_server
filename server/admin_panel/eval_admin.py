@@ -140,7 +140,9 @@ def list_labels(q=None, limit=100, offset=0) -> dict:
 # ── Unit(value_type) 그룹 수정 ──────────────────────────────────────────────
 # value_type 은 선례검색(store.search_precedents)이 등호 하드필터로 쓰는 값이라
 # 오분류되면 그 item 의 선례가 통째로 안 잡힌다. item_master.value_type 과
-# fail_case.item_class("<category_major>|<value_type>|<bin>") 를 **함께** 고친다.
+# fail_case.item_class("<category_major>|<value_type>") 를 **함께** 고친다.
+# (2026-08-19: item_class 에서 bin 조각이 빠졌다 — case 가 item 단위가 되면서 식별 축에
+#  bin 을 쓰지 않기로 했다. 구 3단 값이 남아 있어도 이 갱신이 2단으로 정리한다.)
 
 VALUE_TYPES = eval_export.VALUE_TYPES
 
@@ -156,14 +158,11 @@ def _apply_value_type(conn, item_id: int, value_type: str) -> int:
                  (value_type, item_id))
     cat = row["category_major"] or ""
     now = int(time.time())
-    cases = conn.execute("SELECT case_id, bin FROM fail_case WHERE item_id=?",
-                         (item_id,)).fetchall()
-    for c in cases:
-        bin_ = c["bin"]
-        item_class = f"{cat}|{value_type}|{'' if bin_ is None else bin_}"
-        conn.execute("UPDATE fail_case SET item_class=?, updated_at=? WHERE case_id=?",
-                     (item_class, now, c["case_id"]))
-    return len(cases)
+    item_class = f"{cat}|{value_type}"          # 2단 — bin 조각 없음(2026-08-19)
+    cur = conn.execute(
+        "UPDATE fail_case SET item_class=?, updated_at=? WHERE item_id=?",
+        (item_class, now, item_id))
+    return cur.rowcount
 
 
 def set_item_value_type(item_ids, value_type: str) -> dict:
@@ -386,6 +385,70 @@ def delete_cases(case_ids) -> dict:
     finally:
         conn.close()
     return {"deleted": deleted, "exists": True}
+
+
+# ── 스냅샷 run 정리 (같은 소스의 옛 재수집분 회수) ──────────────────────────
+# `force=true` 재수집은 **지우지 않고 새 run 으로 다시 쌓는다** — 기존 evaluation 을 지우면
+# 거기 달린 사람 라벨까지 잃기 때문이다(eval_export.collect_session_snapshot). 그래서 재수집을
+# 반복하면 (session, source) 마다 run 이 계속 늘고, 조회는 어차피 최신 것만 본다
+# (review._fetch_rule_rows / signature_reason._pick_case / eval_stats). 그 사역 데이터를 걷는다.
+#
+# 지우는 대상은 아래 **세 조건을 모두** 만족하는 run 의 run-scope 행뿐이다:
+#   ① `ingested_by='eval-snapshot'`  — 사람 라벨용 run(web_report/eval-panel/web-signature)은 제외
+#   ② 그 run 의 evaluation 을 참조하는 label 이 **0건**  — 라벨이 붙었으면 판정 근거를 남긴다
+#   ③ 같은 (session_id, source_file) 에서 **최신 run 이 아님** — 최신은 화면이 보는 것
+# `fail_case`·마스터·`label` 은 절대 지우지 않는다(delete_cases 와 같은 태도 — 선례 매칭
+# 일관성). 즉 "같은 case 의 옛 판정 사본"만 사라지고 case 자체와 사람 입력은 그대로다.
+
+_SNAPSHOT_INGESTED_BY = "eval-snapshot"
+
+
+def stale_snapshot_runs(conn) -> list:
+    """정리 대상 run_id 목록 (위 3조건). 조회 전용 — dry-run 이 그대로 쓴다."""
+    rows = conn.execute(
+        """SELECT ir.run_id FROM ingest_run ir
+            WHERE ir.ingested_by = ?
+              AND ir.run_id < (SELECT MAX(o.run_id) FROM ingest_run o
+                                WHERE o.ingested_by = ir.ingested_by
+                                  AND o.session_id IS ir.session_id
+                                  AND o.source_file IS ir.source_file)
+              AND NOT EXISTS (SELECT 1 FROM label l
+                                JOIN evaluation ev ON ev.eval_id = l.eval_id
+                               WHERE ev.run_id = ir.run_id)""",
+        (_SNAPSHOT_INGESTED_BY,)).fetchall()
+    return [int(r[0]) for r in rows]
+
+
+def purge_stale_snapshots(dry_run=True) -> dict:
+    """옛 스냅샷 run 의 run-scope 행 정리. {"runs","deleted","exists","dry_run"} 반환.
+
+    dry_run 이면 대상만 세고 아무것도 지우지 않는다(cleanup 기본값이 dry-run 이다).
+    """
+    conn = eval_export.open_conn(create=False)
+    if conn is None:
+        return {"runs": 0, "deleted": 0, "exists": False, "dry_run": dry_run}
+    try:
+        runs = stale_snapshot_runs(conn)
+        if not runs or dry_run:
+            return {"runs": len(runs), "deleted": 0, "exists": True, "dry_run": dry_run}
+        deleted = 0
+        for run_id in runs:
+            sub = "SELECT eval_id FROM evaluation WHERE run_id=?"
+            conn.execute(f"DELETE FROM eval_evidence WHERE eval_id IN ({sub})", (run_id,))
+            conn.execute(f"DELETE FROM case_signature WHERE eval_id IN ({sub})", (run_id,))
+            conn.execute(f"DELETE FROM eval_precedent WHERE eval_id IN ({sub})", (run_id,))
+            deleted += conn.execute("DELETE FROM evaluation WHERE run_id=?", (run_id,)).rowcount
+            conn.execute("DELETE FROM features WHERE run_id=?", (run_id,))
+            conn.execute("DELETE FROM raw_metrics WHERE run_id=?", (run_id,))
+            conn.execute("DELETE FROM run_case WHERE run_id=?", (run_id,))
+            conn.execute("DELETE FROM ingest_run WHERE run_id=?", (run_id,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return {"runs": len(runs), "deleted": deleted, "exists": True, "dry_run": dry_run}
 
 
 def reexport(session_id: str) -> dict:
