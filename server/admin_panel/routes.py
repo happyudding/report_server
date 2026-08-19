@@ -473,6 +473,8 @@ def api_runtime():
         from admin_panel import builds_admin
         out["builds"] = builds_admin.active_builds()
         out["build_queues"] = builds_admin.queues()
+        # "지금 콜드 폭풍인가" — 화면 상단 배지 하나로 원인까지 읽히게 한다.
+        out["storm"] = builds_admin.storm_status()
     except Exception:
         out["builds"] = None
     try:

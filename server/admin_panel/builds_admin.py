@@ -200,6 +200,78 @@ def queues() -> dict:
     return out
 
 
+# ── 콜드 폭풍 판정 ──────────────────────────────────────────────────────────
+# 순간 포화는 정상이므로 이만큼 지속돼야 '폭풍'으로 부른다.
+_STORM_MIN_SEC = 60.0
+_storm_since = None      # 포화가 시작된 시각 (풀리면 None)
+_storm_lock = threading.Lock()
+
+
+def _uptime_sec() -> int:
+    """서버 프로세스 기동 후 경과초. 실패하면 0 (표시만 줄어든다).
+
+    sysinfo.snapshot() 에도 같은 값이 있지만 그쪽은 disk_usage 까지 재는 무거운 함수라,
+    10초 폴링에 얹히는 여기서는 필요한 한 줄만 따로 잰다."""
+    try:
+        import psutil
+        return int(time.time() - psutil.Process().create_time())
+    except Exception:
+        return 0
+
+
+def storm_status() -> dict:
+    """지금 **콜드 폭풍** 중인가 — 관리자 화면 배지의 판정 (2026-08-19).
+
+    콜드 폭풍 = 캐시가 통째로 무효화돼(대개 `REPORT_SCHEMA_VERSION` bump 후 재기동)
+    전 세션이 한꺼번에 재빌드되는 상태다. 이때는 워커가 코어를 채워 조회도 업로드도 함께
+    느려지는데, **지금까지 "지금이 그 상태"라는 표시가 화면 어디에도 없었다.** 그래서
+    2026-08-19 업로드 지연 신고 때 코드 변경부터 의심하며 시간을 썼다 — 원인(스키마 bump
+    직후)이 아무 데도 안 보였기 때문이다.
+
+    판정: **풀 포화(실행 중 ≥ 워커 수) + 대기 큐 있음** 이 `_STORM_MIN_SEC` 이상 지속.
+    새로 재는 값은 없고 기존 스냅샷 2개를 합칠 뿐이라 상시 폴링에 얹어도 비용이 없다.
+
+    함께 돌려주는 `schema_version`·`uptime_sec` 이 핵심이다 — "스키마 v41, 기동 후 8분"이
+    나란히 보이면 폭풍의 **원인까지** 화면에서 바로 읽힌다.
+    """
+    global _storm_since
+    try:
+        from web_report import build_status, cache_policy, compute
+        st = compute.status()
+        running = len(build_status.snapshot_all())
+        items = compute.pending_items()
+        queued = (len(items.get("ondemand_queued") or [])
+                  + len(items.get("prewarm_queued") or []))
+    except Exception:
+        return {"storm": False}
+    workers = int(st.get("workers") or 0)
+    saturated = bool(workers > 0 and running >= workers and queued > 0)
+    now = time.time()
+    with _storm_lock:
+        if saturated:
+            if _storm_since is None:
+                _storm_since = now
+            since = _storm_since
+        else:
+            _storm_since = None
+            since = None
+    duration = round(now - since) if since else 0
+    stats = st.get("stats") or {}
+    return {
+        "storm": bool(since and duration >= _STORM_MIN_SEC),
+        "saturated": saturated,
+        "duration_sec": duration,
+        "running": running,
+        "queued": queued,
+        "workers": workers,
+        "schema_version": getattr(cache_policy, "REPORT_SCHEMA_VERSION", None),
+        "uptime_sec": _uptime_sec(),
+        # 기동 후 누적 콜드 빌드 — 폭풍이 걷혀 가는지(더는 안 늘어나는지) 보는 눈금.
+        "builds_done": int(stats.get("prewarm_done") or 0)
+                       + int(stats.get("ondemand_done") or 0),
+    }
+
+
 # ── 개입 ────────────────────────────────────────────────────────────────────
 
 def act(action: str, session_id: str, kind: str = "report") -> dict:

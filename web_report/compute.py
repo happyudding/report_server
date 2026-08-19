@@ -78,11 +78,40 @@ _WORKER_FAULT_FILE = None  # 워커 faulthandler 파일 핸들 (전역 보관 �
 
 
 def _init_worker():
-    """워커 프로세스 초기화 — 재귀 오프로드 방지 플래그 + 네이티브 크래시 로깅 + 로깅."""
+    """워커 프로세스 초기화 — 재귀 오프로드 방지 플래그 + CPU 우선순위 하향
+    + 네이티브 크래시 로깅 + 로깅."""
     global _IN_WORKER
     _IN_WORKER = True
+    _lower_worker_priority()
     _enable_worker_faulthandler()
     _enable_worker_logging()
+
+
+def _lower_worker_priority():
+    """워커를 웹 프로세스보다 낮은 CPU 우선순위로 내린다 (2026-08-19).
+
+    콜드 폭풍(REPORT_SCHEMA_VERSION bump 직후 전 세션 재빌드) 때 워커 8개가 코어를 채우면
+    **웹 프로세스가 CPU 를 못 얻어 업로드 ingest 의 parquet decode 가 굶는다** — 실제로
+    클라 read timeout(300초)까지 응답이 안 나가 "업로드가 100% 에서 멈춘다" 로 신고됐다
+    (2026-08-19, 세션이 생기지도 않았다 = create_session 전에서 멎었다는 뜻).
+
+    ⚠️ **워커 수를 줄이는 것은 해법이 아니다.** 업로드는 컴퓨트 워커를 쓰지 않고 웹
+    프로세스가 직접 디코드하므로, 워커를 몇 개 비워 둬도 업로드 몫이 생기지 않는다.
+    필요한 것은 "웹이 먼저 CPU 를 얻는다"는 우선순위 차이 하나뿐이다.
+
+    콜드 빌드는 한가할 때 유휴 코어를 그대로 다 쓰므로 평상시 속도는 종전과 같고, 붐빌
+    때만 웹 응답 뒤로 밀린다. 실패는 무시 — 권한이 없는 환경에서도 종전대로 동작해야 한다.
+    """
+    try:
+        import psutil
+        psutil.Process().nice(
+            psutil.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 5)
+    except Exception:
+        try:
+            if os.name != "nt":
+                os.nice(5)
+        except Exception:
+            pass
 
 
 def _enable_worker_logging():

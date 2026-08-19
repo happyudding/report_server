@@ -1844,6 +1844,10 @@ async function loadRuntime() {
     const sch = r.schedulers || {};
     const vw = r.viewers || {}, builds = r.builds || [], au = r.active_users || {};
     const bq = r.build_queues || {};
+    // 콜드 폭풍 = 캐시가 통째로 무효화돼 전 세션이 한꺼번에 재빌드되는 상태.
+    // 판정은 서버(builds_admin.storm_status)가 하고 여기서는 표기만 한다.
+    const storm = r.storm || {};
+    const stormMin = m => m < 60 ? `${Math.round(m)}초` : `${Math.floor(m / 60)}분`;
     const resp = ca.response || {};
     const respBytes = ["full", "scatter", "dist_batch"].reduce((a, k) => a + ((resp[k] || {}).bytes || 0), 0);
     const lockWaits = Object.values(ca.lock_waits || {}).reduce((a, v) => a + (v.count || 0), 0);
@@ -1866,11 +1870,12 @@ async function loadRuntime() {
         <div class="det">${cp.pool_alive ? "가동" : "미기동"} · 온디맨드 대기 <span style="${ondemandPending ? "color:var(--st-warn)" : ""}">${ondemandPending}</span>/${cp.ondemand_workers || 0} · distpack 대기 <span style="${distpackPending ? "color:var(--st-warn)" : ""}">${distpackPending}</span><br>타임아웃 ${cs.timeout || 0} · 붕괴 ${cs.broken || 0} · 오류 ${cs.error || 0}${
           ((cs.timeout || 0) + (cs.broken || 0) + (cs.error || 0)) > 0
             ? ` · <span class="log-link" data-grep="compute" title="관련 로그를 console log 에서 보기">로그 ›</span>` : ""}</div></div>
-      <div class="tile"><div class="lbl">진행 중 콜드 빌드</div>
-        <div class="val" style="font-size:20px${longBuilds.length ? ";color:var(--st-warn)" : ""}">${builds.length}</div>
+      <div class="tile"><div class="lbl">진행 중 콜드 빌드${storm.storm ? ` <span style="color:var(--st-warn)">🌩 폭풍</span>` : ""}</div>
+        <div class="val" style="font-size:20px${(longBuilds.length || storm.storm) ? ";color:var(--st-warn)" : ""}">${builds.length}</div>
         <div class="det">${builds.length ? `최장 ${builds[0].elapsed}s · ${esc(builds[0].kind || builds[0].stage || "")}${
           (builds[0].waiting || []).length ? ` · 대기 ${(builds[0].waiting || []).length}명` : ""}` : "없음"}${
-          longBuilds.length ? ` · 60s 초과 ${longBuilds.length}건` : ""}</div></div>
+          longBuilds.length ? ` · 60s 초과 ${longBuilds.length}건` : ""}${
+          storm.storm ? `<br>폭풍 ${stormMin(storm.duration_sec || 0)}째 · 대기 ${storm.queued || 0} · 캐시 세대 v${storm.schema_version ?? "?"} · 기동 후 ${stormMin(storm.uptime_sec || 0)}` : ""}</div></div>
       <div class="tile"><div class="lbl">프리웜 큐</div>
         <div class="val" style="font-size:20px">${cp.prewarm_pending || 0} / ${cp.prewarm_max || 0}</div>
         <div class="det">완료 ${cs.prewarm_done || 0} · 폐기 ${cs.prewarm_dropped || 0}</div></div>
@@ -1895,7 +1900,14 @@ async function loadRuntime() {
       text: `콜드 빌드 장기화 ${longBuilds.length}건 — 최장 ${longBuilds[0].elapsed}s `
         + `(${longBuilds[0].file_name || longBuilds[0].session_id || ""}${
           longBuilds[0].cause ? ", " + longBuilds[0].cause : ""})` });
-    if (ondemandPending) _warnRuntime.push({ level: "warn", text: `콜드 빌드 대기 ${ondemandPending}건 (워커 포화)` });
+    // 폭풍이면 원인까지 한 칩에 담고, 같은 사실을 말하는 '대기 N건' 칩은 접는다.
+    // 캐시 세대(v41)와 기동 후 경과가 나란히 보여야 "스키마 bump 직후라 전 세션이 콜드"
+    // 라는 원인이 화면에서 읽힌다 — 그게 없어 2026-08-19 업로드 지연을 코드 탓으로 의심했다.
+    if (storm.storm) _warnRuntime.push({ level: "warn",
+      text: `🌩 콜드 폭풍 ${stormMin(storm.duration_sec || 0)}째 — 실행 ${storm.running || 0}/${storm.workers || 0} · `
+        + `대기 ${storm.queued || 0} · 캐시 세대 v${storm.schema_version ?? "?"} · 기동 후 ${stormMin(storm.uptime_sec || 0)}`
+        + ` (조회·업로드가 함께 느려집니다)` });
+    else if (ondemandPending) _warnRuntime.push({ level: "warn", text: `콜드 빌드 대기 ${ondemandPending}건 (워커 포화)` });
     const blockedBuilds = (bq.failures || []).filter(f => f.blocked);
     if (blockedBuilds.length) _warnRuntime.push({ level: "crit",
       text: `재빌드 차단 세션 ${blockedBuilds.length}건 — 연속 실패로 쿨다운 중` });
