@@ -143,6 +143,54 @@ def test_tail_mass_splits_by_direction():
     assert f["tail_mass_3s"] == pytest.approx(f["tail_mass_3s_high"] + f["tail_mass_3s_low"])
 
 
+def test_tail_extent_measures_stretch_against_body():
+    """꼬리 extent 는 **몸통 σ 대비 뻗은 정도**다 — 정규는 ≈2.6, 늘어질수록 커진다.
+
+    질량(tail_mass)과 짝이다: 질량은 "꼬리가 실재하나", extent 는 "얼마나 늘어졌나".
+    """
+    rng = np.random.default_rng(7)
+    normal = list(rng.normal(10.0, 1.0, 4000))
+    f = features.compute(_case(normal, lsl=0, usl=20),
+                         {"stdev": float(np.std(normal, ddof=1))}, "ev1")
+    assert 2.2 < f["tail_extent_high"] < 3.2
+    assert 2.2 < f["tail_extent_low"] < 3.2
+
+    # 같은 몸통에 위쪽으로만 긴 꼬리를 붙이면 그 방향만 커진다
+    stretched = normal + list(rng.normal(10.0, 6.0, 200))
+    f2 = features.compute(_case(stretched, lsl=0, usl=40),
+                          {"stdev": float(np.std(stretched, ddof=1))}, "ev1")
+    assert f2["tail_extent_high"] > f["tail_extent_high"]
+
+
+def test_tail_extent_none_when_body_has_no_width():
+    """과반 동일값(MAD=0)이면 extent 는 **None** — meanAD 폴백을 쓰지 않는다.
+
+    v13 오탐의 재발 방지선이다. 폴백을 쓰면 자(尺)가 "모드에서 벗어난 값의 평균 이탈량" 이
+    되어, 눈으로는 1자인 산포에서 이탈 die 몇 개가 통째로 꼬리로 계산됐다.
+    같은 데이터라도 outlier 계열 지표는 폴백을 그대로 쓴다(그쪽은 잡아야 하는 현상이다).
+    """
+    vals = [5.0] * 200 + [6.0] * 3 + [4.0] * 3
+    f = features.compute(_case(vals, lsl=0, usl=255),
+                         {"stdev": float(np.std(vals, ddof=1))}, "ev1")
+    assert f["tail_extent_high"] is None and f["tail_extent_low"] is None
+    assert f["tail_mass_3s_high"] > 0          # 질량 쪽은 폴백으로 계속 계산된다
+
+
+def test_pass_limit_hit_ratio_excludes_fails():
+    """pass 만 모수로 잡는다 — fail 이 많아도 "pass 는 전부 고정값" 이 희석되지 않는다."""
+    vals = [0.0] * 70 + [999.0] * 30
+    fail_mask = [False] * 70 + [True] * 30
+    f = features.compute(_case(vals, lsl=0.0, usl=0.0, fail_mask=fail_mask),
+                         {"stdev": float(np.std(vals, ddof=1))}, "ev1")
+    assert f["pass_limit_hit_ratio"] == pytest.approx(1.0)
+    assert f["limit_hit_ratio"] == pytest.approx(0.7)   # 전체 기준은 fail 에 희석된다
+    # pass 값이 흩어져 있으면 기능성 item 이 아니다
+    loose = [0.0] * 40 + [1.0] * 30 + [999.0] * 30
+    f2 = features.compute(_case(loose, lsl=0.0, usl=0.0, fail_mask=fail_mask),
+                          {"stdev": float(np.std(loose, ddof=1))}, "ev1")
+    assert f2["pass_limit_hit_ratio"] == pytest.approx(40 / 70)
+
+
 def test_quantized_steps_are_not_bimodal():
     """양자화(계단형) 단봉을 이봉으로 오판하지 않는다 — 히스토그램 격자 정렬 회귀 방지선.
 

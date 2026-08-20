@@ -16,8 +16,10 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out 
 **버전 규칙**: `--single-csv` 는 같은 이름이 이미 있으면 `_v2`, `_v3` … 을 붙여 새로 만든다
 (`versioned_path`). 기존 raw data 를 절대 덮지 않는다 — 이전 버전으로 재현·비교할 수 있어야
 하기 때문.
+⚠ **가장 낮은 빈 번호**를 쓴다(최대값+1 이 아니다). 중간 번호를 지우면 다음 생성이 그 자리를
+채우므로, 최신본을 특정 번호로 두려면 생성 후 손으로 옮긴다(v14 가 그렇게 만들어졌다).
 
-**① CSV 1장** (`--single-csv`) — item 120개(겨냥 85 + **관찰용 무작위 30** + **미분류 5**)
+**① CSV 1장** (`--single-csv`) — item 125개(겨냥 90 + **관찰용 무작위 35**)
 × **chip 5,025개**(반경 40), 약 4.7MB:
 
 | 파일 | 내용 |
@@ -26,18 +28,16 @@ server\.venv\Scripts\python.exe tools\eval_testdata\make_eval_testdata.py --out 
 | `<name>_vN_answer.csv` | 정답표 — item·세기·목표/실측 지표·임계값·bin·fail 수 |
 | `<name>_vN_verify.csv` | 실제 엔진 발화 대조 |
 
-> **CSV 1장에 못 담는 signature 4종**(`CSV_EXCLUDE`) — 발화 조건 자체가 "웨이퍼의 상당수가
+> **CSV 1장에 못 담는 signature 3종**(`CSV_EXCLUDE`) — 발화 조건 자체가 "웨이퍼의 상당수가
 > fail" 이라 다른 항목이 쓸 chip 이 남지 않는다(chip 1개는 `FAILTNO` 를 하나만 갖는다):
 > `GROSS_FAIL`(수율<50%) · `CONSTANT_VALUE`(spec 밖 상수 = 전량 fail) ·
-> `BIDIR_TAIL`(양쪽 margin<1σ) · `TAIL_RISK`(spec_margin_min<1σ = 꼬리가 spec 을 넘어야 함).
-> 이 넷은 전체 세트(`--out`, source 여러 개)에서 확인한다.
+> `TAIL_RISK`(spec_margin_min<1σ = 꼬리가 spec 을 넘어야 함).
+> 이 셋은 전체 세트(`--out`, source 여러 개)에서 확인한다.
 >
-> ⚠ **`BIDIR_TAIL` 은 절반만 제외된다**(2026-08-19). 위 사유는 `_bidir_plan`(분포 자체가
-> 넓어 양쪽 margin<1σ) 세트에만 해당한다. 같은 signature 를 **`replaces` 경로**로 겨냥하는
-> `bidir_tails_specs()`(`BIDIR_TAILS_L1~L5` — 몸통은 멀쩡하고 양쪽 꼬리만 두꺼움)는 fail 이
-> 자연 꼬리뿐이라 CSV 에 들어간다. 두 경로를 다 덮어야 룰이 실제로 검증된다 — v12 까지는
-> 앞의 것만 있었고 그마저 CSV 에서 빠져 **BIDIR_TAIL 이 한 번도 검증되지 않았다**.
-> (`WAFER_GRADIENT` 는 2026-08-13 룰 자체가 삭제돼 목록에서 빠졌다.)
+> (`BIDIR_TAIL` 은 2026-08-20 에 목록에서 빠졌다 — 그것을 넣었던 이유인 margin 경로
+> 세트(`_bidir_plan`)가 룰과 함께 삭제됐기 때문이다. 남은 `bidir_tails_specs()`
+> (`BIDIR_TAILS_L1~L5` — 몸통은 멀쩡하고 양쪽 꼬리만 두꺼움)는 fail 이 자연 꼬리뿐이라
+> CSV 에 들어간다. `WAFER_GRADIENT` 는 2026-08-13 룰 자체가 삭제돼 빠졌다.)
 
 > **웨이퍼가 커진 이유(반경 22→40)**: fail 은 chip 을 서로 배타적으로 쓰므로(`FAILTNO` 는
 > chip 당 하나) 관찰군이 붙으면서 예산이 모자라 뒤쪽 item 이 통째로 밀려났다
@@ -97,10 +97,14 @@ fail chip 수(`FAIL_N`)와 지표가 **함께** 올라간다. 그러려면 분�
   분포가 스스로 spec 을 넘긴 chip 뿐이다. 밀어내기는 중간 꼬리의 chip 을 limit 밖으로
   **옮기므로** 그 자리에 구멍이 남고, 그 구멍이 곧 `fail_body_jump_ratio`(OUTLIER 끊김
   지표)라 어떤 겨냥이든 값 축에서 outlier 모양이 된다. 그래서 **꼬리 겨냥**
-  (`USL_TAIL`/`LSL_TAIL`/`BIDIR_TAILS`)과 **미분류군(UNKNOWN)** 은 natural 모드를 쓴다. 대신 fail 수를 레벨 사다리로 강제할 수
+  (`USL_TAIL`/`LSL_TAIL`/`BIDIR_TAILS`)과 **관찰군의 일부**(절단 없는 항목의 40%)가
+  natural 모드를 쓴다. 대신 fail 수를 레벨 사다리로 강제할 수
   없으므로(분포가 정한다), 이 모드는 fail 수가 아니라 **분포 지표가 사다리인 유형**에만
   쓸 수 있다. 예: `LOW_CPK`(cpk 1.25)를 natural 로 바꾸면 자연 초과가 5025 chip 에
   0.5개꼴이라 항목이 통째로 사라진다.
+- **`fails={"mode": "fixed_value", "value": v}`** 는 값을 밀지 않고 **통째로 갈아 끼운다**
+  (2026-08-20, FUNC_FAIL 겨냥). limit 이 점(LSL==USL)이라 "limit 밖으로 민다" 는 개념이
+  없고, 기능성 item 의 fail 은 몸통에서 이어진 꼬리가 아니라 다른 값(코드)이기 때문이다.
 - natural 모드는 chip 자리를 고를 수 없으므로(값이 넘긴 그 자리를 써야 한다)
   `single_csv_specs` 가 공간 패턴 다음 순서로 배치한다 — 뒤로 밀리면 그 chip 을 앞 item 이
   먼저 가져가 fail 이 사라진다(실측: 자연 fail 9개 → 1개).
@@ -140,17 +144,18 @@ bin 규칙과 대칭이라 **번호만 보고 불량 유형·세기를 읽을 �
 BIMODALITY(20) L5. 십의 자리 이상으로 불량 유형이, 일의 자리로 세기가 갈린다 —
 Map Analysis 에서 색이 유형별로 뭉치면서도 다양하게 나온다.
 L1(fail 0)과 정상군은 일반 fail bin `2`, 관찰군(random)은 `41~49`.
+(구 미분류군 자리 `50~54` 는 그 세트가 v14 에서 삭제돼 **결번**이다.)
 
 | bin | signature | bin | signature | bin | signature |
 |---|---|---|---|---|---|
 | 12 | **OUTLIER**(구 SEVERE/WARN 통합) | 21 | TAIL_RISK | 29 | RING_FAIL |
 | 15 | LOW_CPK(구 WIDE/SPEC_TIGHT 흡수) | 22 | CONSTANT_VALUE | 30 | **LSL_TAIL**(하한 쪽 꼬리) |
 | 16 | MEAN_SHIFT | 23 | EQUIPMENT_SUSPECT | 33 | GROSS_FAIL |
-| 17 | BIDIR_TAIL | 24 | CODE_RAIL | 34 | **E1_FAIL**(최외곽 1열) |
+| 17 | BIDIR_TAIL(양쪽 꼬리) | 24 | CODE_RAIL | 34 | **E1_FAIL**(최외곽 1열) |
 | 19 | **USL_TAIL**(상한 쪽 꼬리) | 25 | MISSING_LIMIT | 35 | **SPOT_FAIL**(좌표 몰림) |
 | 20 | BIMODALITY(구 SUBPOP_GAP) | 26 | **EDGE_TOP**(상단 edge) | 36 | **EDGE_BOTTOM**(하단 edge) |
-| | | 27 | EDGE_FAIL(E1 제외) | 2 / 41~49 | 일반(L1·정상군) / 관찰군 |
-| | | 28 | CENTER_FAIL | | |
+| | | 27 | EDGE_FAIL(E1 제외) | 37 | **FUNC_FAIL**(기능성 fail) |
+| | | 28 | CENTER_FAIL | 2 / 41~49 | 일반(L1·정상군) / 관찰군 |
 
 > **2026-08-19 재배치** — `CLUSTER_FAIL`(30)·`LOW_SAMPLE_UNCERTAIN`(26) 룰이 삭제되면서
 > 그 값을 새 세트가 이어받았다(결번 재사용의 유일한 예외 — 삭제와 신설이 같은 커밋이라
@@ -184,31 +189,44 @@ severity_bias 가 얹혀 status 가 달라진다.
 | `bin_axis` | fail bin 6종(3·4·5·8·**18**·**31**) → `bin_taxonomy` severity_bias |
 | `trim_axis` | item 명에 TRIM → `category_major=TRIM` |
 | `boundary` | 임계값 바로 앞뒤 6점 스윕 + 상수값 부동소수 함정 4건 |
-| `random` | **관찰군 30개**(`--random-items`) — 정답 기대 없음 |
-| `unknown` | **미분류군 5개**(`--unknown-items`) — 어떤 룰도 안 걸려야 한다 (CSV 1장 모드) |
+| `random` | **관찰군 35개**(`--random-items`) — 정답 기대 없음 |
+| `func_fail` | **FUNC_FAIL 겨냥 5개** — limit 이 점(0~0)인 기능성 item (CSV 1장 모드) |
 | `normal` | 정상 분포 — **발화 0건이어야 한다**(오탐 검사) |
 | `mixed` | 무작위 조합(현실형) — 공간·수율 항목은 fail chip 값을 spec 밖으로 |
 
 **관찰군(`random`)** 은 룰 사다리를 쓰지 않는다. **유형을 정해 놓고 만들지도 않는다**
 (2026-08-13 재설계) — "wide/bimodal/spiky…" 목록에서 고르면 결국 우리가 아는 유형만 나와,
 실데이터처럼 유형 사이 어딘가에 걸친 분포를 못 만들기 때문이다. 대신 **파라미터 공간에서
-직접 뽑는다**: 모드 수 1~4(무게·중심·σ 각각 랜덤) · 양자화 25% · spike 30%(비율·거리·부호
-랜덤) · rail 15% · 절단 60% · 결측 20%, unit·limit 도 랜덤(CODE/PCT/V/Hz…). fail 배치는
-영역 편중을 연속값(share~Beta)으로 섞는다. **아무렇게나 들어온 데이터를 엔진이 어떻게
-판정하는지** 보는 용도라, verify 는 이 그룹을 누락·오발화로 세지 않고 **발화 분포만 따로
-요약**한다(`expect=observe`). 실제로 만든 파라미터는 `note` 에 남는다(정답이 아니라 관찰 기록).
+직접 뽑는다**: 모드 수 1~5(무게·중심·σ 각각 랜덤) · 양자화 30% · spike 35%(비율·거리·부호
+랜덤) · rail 20% · 절단 50% · 결측 20%, unit·limit 도 랜덤(CODE/PCT/V/Hz…). fail 은
+**생성 방식까지 굴린다** — 절단이 없으면 40% 확률로 `mode:"natural"`(분포가 스스로 넘긴
+chip 만)을 쓰고, 나머지는 종전대로 밀어 만든다. 영역 편중은 연속값(share~균등)으로 섞는다.
+**아무렇게나 들어온 데이터를 엔진이 어떻게 판정하는지** 보는 용도라, verify 는 이 그룹을
+누락·오발화로 세지 않고 **발화 분포만 따로 요약**한다(`expect=observe`).
+실제로 만든 파라미터는 `note` 에 남는다(정답이 아니라 관찰 기록).
 
-**미분류군(`unknown`)** 은 2026-08-14 신설이다. 관찰군만으로는 "어떤 룰도 안 걸리는" 항목이
-구조적으로 안 나왔다 — fail 을 밀어 만드니 늘 몸통과 끊겨 OUTLIER 조건에 닿았다(v9 실측
-관찰군 30개 중 23개). 그래서 fail 을 자연 꼬리(`mode: "natural"`)로만 만들고, 모양은
-**중심이 같은 좁은 몸통 + 넓은 소수 성분**으로 잡는다. 이 조합이라야 세 가지가 동시에
-성립한다 — 넓은 성분이 limit 을 넘겨 fail 을 만들고(자연 꼬리), 몸통~limit 구간을 촘촘히
-채워 끊김이 없고(OUTLIER 회피), 전체 σ 가 작아 cpk 가 1.33 위에 남는다(LOW_CPK 회피).
-**단봉 정규분포로는 불가능**하다: cpk ≥ 1.33 이면 limit 이 4σ 밖이라 자연 초과가 5025 chip 에
-0.3개꼴이다. 세 조건이 서로 밀고 당기므로 파라미터는 **cpk 목표에서 역산**한다
-(`unknown_specs`). bin 은 50번대, TNO 유형은 97. verify 가 `[미분류군]` 절로 성공 수를 센다.
+> ⚠ **룰을 의식한 제약을 넣지 말 것**(2026-08-20 사용자 지시). 종전에는 특정 룰로 쏠리는
+> 것을 막으려 중심 범위·절단 확률을 좁혀 뒀는데, 그 제약이 반대로 모양의 다양성을 깎아
+> 관찰군 30건 중 24건이 OUTLIER 로 수렴했다(v13 실측 80%). 원인은 제약 자체가 아니라
+> **fail 을 전부 밀어 만든 것**이었다 — 밀면 몸통과 fail 사이가 늘 비어 값 축에서
+> 구조적으로 outlier 모양이 된다. v14 는 natural 을 섞어 그 쏠림을 풀었다
+> (실측: LOW_CPK 60% · OUTLIER 49% · MEAN_SHIFT 40% · BIMODALITY 29% ·
+> CODE_RAIL/SPOT_FAIL/LSL_TAIL 각 6% · CENTER_FAIL 3% · 발화 없음 9%).
 
-**재현성**: `--seed` 는 **관찰군·미분류군만** 바꾼다(`_stable_seed(name, salt)`). 겨냥 세트는 salt 없이
+**미분류군(`unknown`)은 v14 에서 삭제됐다**(2026-08-20). 2026-08-14 에 "어떤 룰도 안 걸리는"
+항목을 겨냥해 만들었는데, 그 5건이 사실은 **사용자가 BIDIR_TAIL 로 판정하기를 원한 모양**
+(양쪽 꼬리가 뻗은 scale mixture)이라 겨냥 자체가 잘못돼 있었다. 룰 개정으로 그 5건은
+BIDIR_TAIL 이 되었고, 미분류는 겨냥해서 만드는 것이 아니라 **관찰군에서 자연히 나오면
+나오는 것**으로 규약을 바꿨다(v14 실측 3건). bin 50번대·TNO 유형 97 은 결번이 됐다.
+
+**FUNC_FAIL 겨냥군(`func_fail`)** 은 v14 신설이다. limit 이 **점**(LSL==USL=0)이고 pass 는
+전부 그 고정값, fail 은 레벨마다 다른 값(1·255·999·3.7)을 쓴다 — **이산 상수든 float 든
+발화해야 한다**는 것이 이 룰의 계약이기 때문이다. `fails={"mode":"fixed_value","value":…}`
+는 값을 밀지 않고 통째로 갈아 끼운다(점 limit 에는 "밖으로 민다" 는 개념이 없다).
+bin 은 37, unit 은 **등록 단위**(`v`)를 쓴다 — 미등록이면 `value_type=PF` 가 되어 통계가
+전부 비고 이 룰도 침묵한다. `exclusive` 룰이라 verify 에서 **동반발화 0건**이어야 정상이다.
+
+**재현성**: `--seed` 는 **관찰군만** 바꾼다(`_stable_seed(name, salt)`). 겨냥 세트는 salt 없이
 이름만으로 seed 를 잡아 값이 고정된다 — 룰 회귀를 비교할 때 기준선이 흔들리면 안 되기 때문.
 ⚠ 다만 한 웨이퍼를 공유하므로 관찰군이 바뀌면 남는 chip 이 달라져 **겨냥 세트의 fail 배치와
 그 실측 지표는 일부 달라진다**(측정값 자체는 동일). 같은 seed 로 두 번 돌리면 완전히 같다.
@@ -279,8 +297,8 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
   (`fired_all_rules`). **운영 rules 파일은 건드리지 않는다**(복사본에만 쓴다).
   비활성 룰까지 "데이터가 조건을 맞췄는지" 확인하기 위한 경로다.
 
-판정 4종 — 마지막 실행 결과(**v13**, 단일 CSV)는 **120/120**(겨냥 85 전부 의도대로 +
-관찰군 30 + 미분류 5, 누락·오발화·정상군 오탐 모두 0):
+판정 4종 — 마지막 실행 결과(**v14**, 단일 CSV)는 **125/125**(겨냥 90 전부 의도대로 +
+관찰군 35, 누락·오발화·정상군 오탐 모두 0):
 
 | 지표 | 의미 | 기대 |
 |---|---|---|
@@ -293,12 +311,13 @@ gradient 목표 0.35 → 실측 0.08, 중앙 fail 0건).
 `UNKNOWN` 은 "아무 룰도 안 뜬 케이스" 표식이라 오탐으로 세지 않는다.
 관찰군(`random`)은 위 4종 어디에도 안 들어가고 **발화 분포 요약**만 출력된다.
 
-v9 관찰군 30개의 분포(참고값 — seed 를 바꾸면 달라진다): OUTLIER 40% · LOW_CPK 33% ·
-MEAN_SHIFT 23% · HEAVY_TAIL 10% · CLUSTER_FAIL 10% · RING_FAIL/CODE_RAIL/BIMODALITY 각 3% ·
-**발화 0건 17%**. (v13 실측 35개: OUTLIER 69% · LOW_CPK 34% · BIMODALITY 17% · MEAN_SHIFT 14% ·
-RING_FAIL/LSL_TAIL/BIDIR_TAIL 각 3% · **발화 0건 14%**. v12 대비 OUTLIER 가 는 것은 끊김
-임계가 0.35 → 0.30 으로 내려간 결과이고, BIMODALITY 가 는 것은 이봉 게이트 완화 결과다.) 한 유형에 쏠리면(예: 종전 관찰군 LOW_CPK 96%) 파라미터 공간이 좁다는
-뜻이므로 `_sample_random_plan` 의 모드 중심·σ 범위를 다시 본다.
+관찰군 분포(참고값 — seed 를 바꾸면 달라진다). **v14 실측 35개**: LOW_CPK 60% ·
+OUTLIER 49% · MEAN_SHIFT 40% · BIMODALITY 29% · CODE_RAIL/SPOT_FAIL/LSL_TAIL 각 6% ·
+CENTER_FAIL 3% · **발화 0건 9%**.
+(v13 은 같은 35개에서 OUTLIER 80% 로 쏠렸다 — fail 을 전부 밀어 만들어 값 축에서
+구조적으로 outlier 모양이 됐기 때문이다. v14 가 `natural` 을 섞어 푼 결과다.)
+한 유형에 쏠리면(예: v13 의 OUTLIER 80%, 그 이전 LOW_CPK 96%) 파라미터 공간이 좁다는
+뜻이므로 `_sample_random_plan` 의 모드 중심·σ 범위와 **fail 생성 방식 비율**을 다시 본다.
 
 ---
 
@@ -312,9 +331,10 @@ RING_FAIL/LSL_TAIL/BIDIR_TAIL 각 3% · **발화 0건 14%**. v12 대비 OUTLIER 
 | 관계 | 이유 |
 |---|---|
 | 산포 큼 ⟹ LOW_CPK | 대칭 limit 에서 `cpk = 1/(6·spread_norm)` → spread>0.18 이면 cpk<0.93 (구 WIDE_DISTRIBUTION 은 이 관계 때문에 LOW_CPK 로 흡수·삭제됐다) |
-| OUTLIER ⟹ USL/LSL_TAIL | 멀리 튄 값 하나가 kurtosis 를 4제곱으로 밀어올린다 (그래서 `suppressed_by` — 목록에는 둘 다 남고 primary 만 OUTLIER). 반대로 **꼬리질량 밴드(1~5%)가 꼬리 룰을 지켜준다** — spike 몇 개는 질량이 1% 에 못 미쳐 조건 자체가 안 선다 |
+| OUTLIER ⟹ USL/LSL_TAIL | 멀리 튄 값 하나가 kurtosis 를 4제곱으로 밀어올린다 (그래서 `suppressed_by` — 목록에는 둘 다 남고 primary 만 OUTLIER). 반대로 **꼬리질량 밴드(1~7%)가 꼬리 룰을 지켜준다** — spike 몇 개는 질량이 1% 에 못 미쳐 조건 자체가 안 선다 |
 | **cpk 넉넉 + fail 존재 ⟹ OUTLIER** | 정규 몸통은 최대 pass 거리가 ≈3.85σ 로 고정이라 `gap ≈ 3·cpk·(σ/robustσ) − 3.85` 다. cpk 가 1.8 을 넘으면 fail 이 하나만 있어도 gap 1.5 를 넘는다 — 맞는 판정이다(공정능력이 충분한데 죽었으면 산발 이상) |
-| BIDIR_TAIL ⟹ LOW_CPK | 양쪽 margin<1σ 면 σ>폭/2 |
+| 광폭 분포(양쪽 margin<1σ) ⟹ LOW_CPK | σ>폭/2 면 cpk<0.33 이라 LOW_CPK + trump 가 받는다. **BIDIR_TAIL 은 더 이상 이 모양을 겨냥하지 않는다**(2026-08-20 margin 경로 삭제) — 지금은 "양쪽 꼬리가 뻗은 것"만 본다 |
+| FUNC_FAIL ⟹ 나머지 전부 침묵 | 점 limit item 은 cpk 가 음수(LOW_CPK)·fail 코드값이 몸통과 떨어짐(OUTLIER)·0 vs 999(BIMODALITY)로 여러 룰이 함께 뜨는데, 전부 같은 사실을 잘못된 어휘로 말하는 것이라 `exclusive` 가 나머지를 지운다. **겨냥 세트 verify 에서 동반발화 0건이어야 정상** |
 | BIMODALITY ⊻ outlier 계열 | `outlier_ratio ≥ 3%` 면 판정 보류(게이트) |
 | BIMODALITY ⊻ 격자(CODE·정수) 단봉 | 계단 간격 데이터는 모드 사이 **빈 레벨 ≥2** 를 요구한다(양자화 오탐 차단) — 계단이 촘촘히 차 있으면 봉우리가 몇 개로 보여도 발화하지 않는다 |
 | OUTLIER ⊻ 공간 룰 | OUTLIER 의 spike 는 **위치와 무관하게** spec 밖 fail 이라, 섞이면 영역 점유율 95% 가 깨진다 |

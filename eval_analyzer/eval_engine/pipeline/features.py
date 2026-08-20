@@ -40,6 +40,11 @@ _FEATURE_KEYS = [
     "tail_mass_3s_high", "tail_mass_3s_low",
     # 파생(DB 미저장): E1(최외곽 1 chip line) 집중도 · 모멘트 왜도
     "e1_fail_ratio", "skewness_moment",
+    # 파생(DB 미저장): 꼬리가 **몸통 대비 얼마나 뻗었나**(2026-08-20, `_tail_extent`).
+    # 꼬리 룰 3종의 판정 자(尺)이며 kurtosis 를 대신한다.
+    "tail_extent_high", "tail_extent_low",
+    # 파생(DB 미저장): pass 값이 전부 limit(고정값)에 붙어 있나 — FUNC_FAIL 판정용
+    "pass_limit_hit_ratio",
     # E1_FAIL 판정용 점유율 — v9 저장 대상
     "e1_fail_share",
 ]
@@ -232,6 +237,49 @@ def _modified_z(v, median, mad):
     if mean_ad > 0:
         return (v - median) / (1.253314 * mean_ad)
     return None
+
+
+def _tail_extent(v, median, mad):
+    """꼬리 끝이 **몸통 σ 의 몇 배** 지점까지 뻗었나 — (high, low). 방향별.
+
+    `(P99.5(z), -P0.5(z))`, z 는 modified z(몸통 robust σ 단위). 정규분포면 둘 다 ≈2.58 이고,
+    꼬리가 길어질수록 커진다. 즉 **"산포가 쭉 늘어진 그림"을 그대로 재는 자**다
+    (2026-08-20 사용자 판정축 — spec limit 이 아니라 실측 데이터의 몸통이 기준이다).
+
+    kurtosis 를 대신하는 이유: 4제곱이라 **점 몇 개**로도 치솟아 모양과 단조 대응하지
+    않는다. 실측 반례 — v13 `RANDOM_027` 은 kurtosis 50.0 인데 꼬리는 4.2σ 까지만 뻗은
+    완만한 분포였고 BIDIR_TAIL 로 오탐했다. 반대로 `UNKNOWN_001~004` 는 kurtosis 6~8 로
+    임계(10) 미달이라 침묵했지만 꼬리는 7~8.7σ 까지 뻗은 명백한 양측 꼬리였다.
+
+    ⚠ **MAD=0(과반 동일값)이면 None** — `_modified_z` 의 meanAD 폴백을 **쓰지 않는다**.
+    폴백은 자(尺)를 "모드에서 벗어난 값의 평균 이탈량"으로 바꿔 버려, 사실상 1자인 산포에서
+    3σ 컷이 1 code unit 아래로 내려앉는다. 그러면 모드가 아닌 die 비율이 그대로 꼬리 질량이
+    되고 kurtosis 는 ≈1/p 로 폭등해, **눈으로는 1자인 항목이 양쪽 꼬리로 판정**됐다
+    (v13 오탐의 기전). 몸통 폭이 0 이면 "몸통 대비 몇 배"라는 질문 자체가 성립하지 않으므로
+    None 이 정답이고, 꼬리 룰은 결측=조건 False 로 조용히 빠진다.
+    """
+    if mad == 0:
+        return None, None
+    z = 0.6745 * (v - median) / mad
+    return float(np.quantile(z, 0.995)), float(-np.quantile(z, 0.005))
+
+
+def _pass_limit_hit_ratio(lo_hit, hi_hit, fail_mask):
+    """**pass 값**이 limit(고정값)에 붙어 있는 비율 — FUNC_FAIL 판정용.
+
+    전체 대비 비율인 `limit_hit_ratio` 를 쓰지 않는 이유: fail 이 많을수록 희석된다
+    (fail 30% 면 pass 가 전부 fix 값이어도 0.7). "pass 는 전부 그 값이다" 는 fail 수와
+    무관해야 하는 사실이라 pass 만 모수로 잡는다. limit 이 없거나 pass 가 없으면 None.
+    """
+    if lo_hit is None or hi_hit is None:
+        return None
+    hit = lo_hit | hi_hit
+    if fail_mask.size != hit.size:
+        return None
+    keep = ~fail_mask
+    if not keep.any():
+        return None
+    return float(np.mean(hit[keep]))
 
 
 def _fail_outlier_features(v, fail_mask, median, mad, z=_UNSET):
@@ -673,6 +721,12 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
                          else float(np.mean(modified_z > 3.0)))
     tail_mass_3s_low = (None if modified_z is None
                         else float(np.mean(modified_z < -3.0)))
+    # 꼬리가 몸통 대비 얼마나 **뻗었나** — 질량과 짝이다. 질량은 "꼬리가 실재하나"를,
+    # extent 는 "얼마나 늘어졌나"를 잰다. 둘을 AND 로 걸어야 의미가 선다:
+    # extent 만 보면 튄 점 하나(OUTLIER 영역)가 통과하고, 질량만 보면 살짝 퍼진 몸통이
+    # 통과한다. MAD=0 이면 None(자가 없다) — `_tail_extent` docstring 참조.
+    tail_extent_high, tail_extent_low = _memo(
+        "tail_extent", lambda: _tail_extent(v, median, mad))
 
     mean = _memo("mean", lambda: float(v.mean()))
     stdev = raw_metrics.get("stdev")
@@ -745,6 +799,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
                                 fm_in=fm)
     site_cpk_delta = _site_cpk_delta(case_ctx)
     code_edge_hit = limit_hit_ratio if case_ctx.get("value_type") == "CODE" else None
+    pass_limit_hit_ratio = _pass_limit_hit_ratio(lo_hit, hi_hit, fm)
     fail_mad_min, fail_pass_gap_sigma, fail_robust_z_max = _fail_outlier_features(
         v, fm, median, mad, z=modified_z)
     fail_body_jump_ratio = _fail_body_jump_ratio(
@@ -760,6 +815,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         fail_body_jump_ratio = None
         tail_mass_3s = rail_low_ratio = rail_high_ratio = None
         tail_mass_3s_high = tail_mass_3s_low = None
+        tail_extent_high = tail_extent_low = pass_limit_hit_ratio = None
 
     return {
         "spread_norm": spread_norm, "skewness": skewness, "kurtosis": kurtosis,
@@ -776,5 +832,7 @@ def compute(case_ctx: dict, raw_metrics: dict, engine_version: str) -> dict:
         "fail_body_jump_ratio": fail_body_jump_ratio,
         "fail_robust_z_max": fail_robust_z_max, "tail_mass_3s": tail_mass_3s,
         "tail_mass_3s_high": tail_mass_3s_high, "tail_mass_3s_low": tail_mass_3s_low,
+        "tail_extent_high": tail_extent_high, "tail_extent_low": tail_extent_low,
+        "pass_limit_hit_ratio": pass_limit_hit_ratio,
         "rail_low_ratio": rail_low_ratio, "rail_high_ratio": rail_high_ratio,
     }

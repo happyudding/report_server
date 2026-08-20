@@ -141,8 +141,9 @@
 
   <!-- ─────────────── I ─────────────── -->
   <section class="major" style="--c:#8b949e">
-    <h2><span class="no">I.</span> 데이터 유효성 <span class="cnt">2</span></h2>
-    <p class="why">판정 이전 단계. "이 데이터로 판단이 성립하는가" — 불량이 아니라 <b>측정·수집 문제</b> 신호.</p>
+    <h2><span class="no">I.</span> 데이터 유효성 <span class="cnt">3</span></h2>
+    <p class="why">판정 이전 단계. "이 데이터로 판단이 성립하는가" — 불량이 아니라 <b>측정·수집 문제</b>,
+      또는 <b>값이 측정량이 아닌</b> 경우의 신호.</p>
 
     <div class="mid">
       <h3>기준 결측 <span class="en">limit</span></h3>
@@ -159,6 +160,21 @@
         <div class="m">stdev ≤ 0</div>
       </div>
     </div>
+
+    <div class="mid">
+      <h3>기능 판정 <span class="en">functional</span></h3>
+      <div class="rule on">
+        <div class="id">FUNC_FAIL <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">limit 이 <b>점</b>(LSL==USL) <b>AND</b> pass 값이 전부 그 고정값(&ge; 99%)
+          <b>AND</b> fail 존재
+          <br><span class="live"><b>exclusive</b> — 뜨면 다른 발화를 <b>전부 지우고 혼자 남는다</b>.
+            이런 item 의 값은 측정량이 아니라 판정 코드라 cpk·꼬리·outlier 가 전부 헛말이기
+            때문이다(분모 0 이라 cpk 음수 → LOW_CPK, fail 코드값 → OUTLIER, 0 vs 999 → BIMODALITY)</span>
+          <br><span class="live">fail 값의 모양은 따지지 않는다 — 이산 상수(1·255·999)든 float 든 발화</span>
+          <br><span class="live">모수를 <b>pass 만</b>으로 잡는다(<code>pass_limit_hit_ratio</code>) —
+            전체 대비면 fail 이 많을수록 희석된다</span></div>
+      </div>
+    </div>
   </section>
 
   <!-- ─────────────── II ─────────────── -->
@@ -173,10 +189,6 @@
         <div class="m">cpk &lt; cpk_warn (1.33)<br>
           <span class="live">원인 룰(MEAN_SHIFT·OUTLIER·BIMODALITY) 발화 시 primary 양보 — 목록에는 남는다</span>
           <br><span class="live">SPEC_TOO_TIGHT·WIDE_DISTRIBUTION 을 흡수(2026-08-13 삭제)</span></div>
-      </div>
-      <div class="rule on">
-        <div class="id">BIDIR_TAIL <span class="sev MAJOR">MAJOR</span></div>
-        <div class="m">margin_low &amp; margin_high 동시 부족 (분포가 양방향으로 spec 초과)</div>
       </div>
     </div>
 
@@ -212,19 +224,32 @@
       <h3>간헐 spike <span class="en">tail</span></h3>
       <div class="rule on">
         <div class="id">USL_TAIL <span class="sev MINOR">MINOR</span></div>
-        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_mass_3s_<b>high</b> 1~5% (밴드) <b>AND</b> 상한 쪽 몫 &ge; 0.2
+        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_extent_<b>high</b> &ge; 5σ (<b>뻗은 정도</b>)
+          <b>AND</b> tail_mass_3s_<b>high</b> 1~7% (밴드) <b>AND</b> 상한 쪽 몫 &ge; 0.2
           <br><span class="live">첨도만 보면 점 몇 개가 밀어올린 것·양자화 다봉까지 잡힌다 —
-            "꼬리에 실제로 얼마나 실렸나"로 상·하한을 함께 건다</span>
+            "얼마나 뻗었나(extent)" 와 "꼬리에 실제로 얼마나 실렸나(질량)" 를 함께 건다</span>
           <br><span class="live">OUTLIER 발화 시 primary 양보</span></div>
       </div>
       <div class="rule on">
         <div class="id">LSL_TAIL <span class="sev MINOR">MINOR</span></div>
-        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_mass_3s_<b>low</b> 1~5% (밴드) <b>AND</b> 하한 쪽 몫 &ge; 0.2
+        <div class="m">kurtosis &gt; 10 <b>AND</b> tail_extent_<b>low</b> &ge; 5σ
+          <b>AND</b> tail_mass_3s_<b>low</b> 1~7% (밴드) <b>AND</b> 하한 쪽 몫 &ge; 0.2
           <br><span class="live">구 HEAVY_TAIL 을 <b>방향으로 가른 것</b>(2026-08-19) — 위로 튀는 것과
             아래로 처지는 것은 조치가 다르다.</span>
           <br><span class="live"><b>밴드는 방향별 질량에 건다</b> — 양쪽 합에 걸면 양방향으로 두꺼운
             분포가 상한을 넘겨 둘 다 미발화하고, 그러면 BIDIR_TAIL 도 영영 못 뜬다</span>
-          <br><span class="live">양쪽이 모두 밴드에 들면 둘 다 사라지고 <b>BIDIR_TAIL</b> 하나가 대신 뜬다(<code>replaces</code>)</span></div>
+          <br><span class="live">양쪽이 모두 조건을 채우면 둘 다 사라지고 <b>BIDIR_TAIL</b> 하나가 대신 뜬다(<code>replaces</code>)</span></div>
+      </div>
+      <div class="rule on">
+        <div class="id">BIDIR_TAIL <span class="sev MAJOR">MAJOR</span></div>
+        <div class="m">tail_extent_high &amp; tail_extent_low <b>둘 다</b> &ge; 5σ
+          <b>AND</b> 방향별 질량 <b>둘 다</b> 1~7%
+          <br><span class="live"><b>kurtosis 게이트가 없다</b>(2026-08-20) — 대칭 양측 꼬리는 첨도가
+            낮게 나와(실측 6~8) 게이트를 두면 정작 잡아야 할 모양이 UNKNOWN 으로 떨어진다.
+            정규분포는 질량 하한(1%)이 막는다(정규의 방향별 3σ 밖 질량 0.14%)</span>
+          <br><span class="live">구 조건(양쪽 spec margin 부족)은 삭제 — 그 모양은 LOW_CPK + trump 몫</span>
+          <br><span class="live">몸통 폭이 0(측정값 과반 동일)이면 extent 가 <b>None</b> 이라 꼬리 룰
+            전체에서 빠진다 — "1자인데 양쪽 꼬리로 잡히던" 오탐의 차단선</span></div>
       </div>
     </div>
   </section>

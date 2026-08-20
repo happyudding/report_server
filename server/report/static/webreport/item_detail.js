@@ -48,7 +48,10 @@ function openItemDetail(subject, navList) {
   if (!dp) return;
   // 상세는 Plotly 로 그린다. plotly.min.js 는 async 로드라(첫 화면을 막지 않기 위함)
   // 표에서 곧바로 항목을 클릭하면 아직 도착 전일 수 있다 — 도착 후 다시 연다.
+  // 이 대기는 종전엔 화면에 아무것도 내지 않아 "링크를 눌러도 반응이 없다"로 보였다
+  // (2026-08-20 신고 — AI Comment 과거사례 안 @링크). 대기 중임을 토스트로 알린다.
   if (!window.Plotly && window.__plotlyReady) {
+    showToast("차트 모듈을 불러오는 중입니다 — 잠시 후 자동으로 열립니다.");
     window.__plotlyReady.then(() => openItemDetail(subject, navList));
     return;
   }

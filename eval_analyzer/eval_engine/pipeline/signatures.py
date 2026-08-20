@@ -15,8 +15,10 @@ import re
 from ._rules import (thresholds_for, signatures_doc, signatures_for,  # noqa: F401
                      bin_taxonomy_for, exclusion_reason)
 
-# 고차모멘트(표본 부족 시 비활성) 의존 metric
-_HIGH_MOMENT_METRICS = {"skewness", "kurtosis", "bimodality_score"}
+# 표본 부족 시 비활성 — 고차모멘트와 **극단 분위**. 둘 다 소표본에서 값이 널뛴다
+# (분위는 n 이 작으면 P99.5 가 사실상 최대값이라 점 하나에 좌우된다).
+_HIGH_MOMENT_METRICS = {"skewness", "kurtosis", "bimodality_score",
+                        "tail_extent_high", "tail_extent_low"}
 _BIMODALITY_ID = "BIMODALITY"      # 2026-08-12 개명 (구 SUBPOP_GAP)
 _UNKNOWN_ID = "UNKNOWN"
 
@@ -124,6 +126,29 @@ def _id_list(sig: dict, key: str) -> list:
 def _suppressor_ids(sig: dict) -> list:
     """signature 선언의 `suppressed_by` 정규화 — 문자열 1개도 목록으로 받는다."""
     return _id_list(sig, "suppressed_by")
+
+
+def _apply_exclusive(fired: list, docs: dict):
+    """`exclusive: true` 선언 — 이 룰이 뜨면 **다른 발화를 전부 지우고 혼자 남는다**.
+
+    관계 3종(양보/제거/대체)과 달리 상대를 지목하지 않는다. "이 item 은 측정값 항목이
+    아니라서 산포·꼬리·cpk 같은 통계 해석이 통째로 성립하지 않는다" 는 **해석의 선점**이기
+    때문이다 — 지목할 상대가 특정 룰이 아니라 나머지 전부다. 배포 룰에서는 `FUNC_FAIL`
+    하나가 쓴다(2026-08-20 사용자 요청: "다른 signature 발화하지 말고 FUNC_FAIL 만").
+
+    적용은 **대체보다 먼저**다. 나중에 하면 `replaces` 가 합성한 발화(BIDIR_TAIL)가
+    exclusive 를 통과해 버린다.
+    ⚠ 제거된 발화는 `hidden_by` 와 마찬가지로 화면 어디에도 남지 않는다(트레이스에만).
+
+    판정은 원본 발화 집합 기준 1패스. exclusive 가 여럿이면 그것들만 함께 남긴다
+    (순서 의존을 만들지 않기 위해 — 실제로는 배포 룰에 하나뿐이다).
+    반환: (남은 fired, [{"id": 남은 id, "of": [지워진 id …]}, …])
+    """
+    keep = [s for s in fired if docs.get(s["id"], {}).get("exclusive") is True]
+    if not keep or len(keep) == len(fired):
+        return fired, []
+    dropped = sorted(s["id"] for s in fired if s not in keep)
+    return keep, [{"id": s["id"], "of": dropped} for s in keep]
 
 
 def _apply_replacement(fired: list, docs: dict, ctx_values: dict):
@@ -276,6 +301,13 @@ def build_ctx_values(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
     if _outlier_ratio is not None and _n_dut:
         ctx_values["outlier_count"] = round(_outlier_ratio * _n_dut)
     ctx_values["limit_missing"] = int(case_ctx.get("lsl") is None or case_ctx.get("usl") is None)
+    # limit 이 **점**인가(LSL==USL) — FUNC_FAIL 판정용. 기능성 item 은 "0~0 에서 0 이어야
+    # 통과" 처럼 폭이 0 인 limit 을 쓴다. 이때 산포 통계는 전부 무의미해지므로(spread_norm
+    # 은 분모 0 이라 None, cpk 는 음수) 그 지표들로 만든 룰이 엉뚱하게 뜬다.
+    # limit_missing 과 같은 이유로 **키는 항상 채운다** — 결측이면 조건이 조용히 False 가 된다.
+    _lsl, _usl = case_ctx.get("lsl"), case_ctx.get("usl")
+    ctx_values["limit_is_point"] = int(
+        _lsl is not None and _usl is not None and _lsl == _usl)
 
     _g = [features.get(k) for k in
           ("radial_gradient_norm" , "x_gradient_norm", "y_gradient_norm")]
@@ -310,7 +342,7 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
             "bin_class": bt.get("bin_class") if bt else None,
             "severity_bias": (bt.get("severity_bias") if bt else 0.0) or 0.0,
             "applies": {}, "suppressed": [], "hidden": [], "replaced": [],
-            "excluded": excluded,
+            "exclusive": [], "excluded": excluded,
             "raw_metrics_snapshot": {"cpk": raw_metrics.get("cpk"),
                                      "yield": raw_metrics.get("yield")},
         }
@@ -361,9 +393,11 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
             fired.append({"id": _BIMODALITY_ID, "status_hint" : subpop_doc["status_hint"],
                           "score":None, "evidence" : subpop["evidence"], "action_ko":subpop_doc.get("action_ko"), "modality_v2":subpop["modality_v2"]})
 
-    # 관계 3종은 **순서가 의미를 가진다**: 합칠 것을 먼저 합치고(대체) → 감출 것을 감춘 뒤
-    # (제거) → 남은 것들 사이에서 대표를 정한다(양보). 순서를 바꾸면 이미 사라진 발화가
-    # 남은 발화를 눌러 아무도 primary 가 아닌 상태가 생긴다.
+    # 관계 4종은 **순서가 의미를 가진다**: 해석을 선점한 것이 있으면 나머지를 통째로 지우고
+    # (단독) → 합칠 것을 합치고(대체) → 감출 것을 감춘 뒤(제거) → 남은 것들 사이에서 대표를
+    # 정한다(양보). 순서를 바꾸면 이미 사라진 발화가 남은 발화를 눌러 아무도 primary 가
+    # 아닌 상태가 생기고, 단독을 대체 뒤로 미루면 합성된 발화가 단독을 통과해 버린다.
+    fired, exclusive = _apply_exclusive(fired, docs)
     fired, replaced = _apply_replacement(fired, docs, ctx_values)
     fired, hidden = _apply_hidden(fired, docs)
     fired, suppressed = _apply_suppression(
@@ -386,7 +420,7 @@ def evaluate(case_ctx: dict, features: dict, raw_metrics: dict) -> dict:
         "signatures": fired, "reason_codes": reason_codes,
         "bin_class": bin_class, "severity_bias": severity_bias or 0.0,
         "applies": applies, "suppressed": suppressed,
-        "hidden": hidden, "replaced": replaced,
+        "hidden": hidden, "replaced": replaced, "exclusive": exclusive,
         "raw_metrics_snapshot": {"cpk": raw_metrics.get("cpk"),
                                  "yield": raw_metrics.get("yield")},
     }

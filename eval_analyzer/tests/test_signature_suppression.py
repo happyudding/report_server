@@ -114,3 +114,34 @@ def test_deployed_rules_declare_no_cycle():
         for target in targets:
             assert target in ids, f"{sig_id} → 없는 id {target}"
             assert sig_id not in table.get(target, []), f"{sig_id} ↔ {target} 상호 참조"
+
+
+def test_exclusive_drops_everything_else():
+    """`exclusive` 는 상대를 지목하지 않고 **나머지 전부**를 지운다 (2026-08-20 신설).
+
+    관계 4종 중 가장 먼저 적용된다 — 대체보다 뒤에 두면 `replaces` 가 합성한 발화가
+    exclusive 를 통과해 버린다.
+    """
+    docs = {"FUNC_FAIL": {"exclusive": True}, "LOW_CPK": {}, "OUTLIER": {}}
+    fired = [{"id": "OUTLIER"}, {"id": "LOW_CPK"}, {"id": "FUNC_FAIL"}]
+    kept, note = signatures._apply_exclusive(fired, docs)
+    assert [s["id"] for s in kept] == ["FUNC_FAIL"]
+    assert note == [{"id": "FUNC_FAIL", "of": ["LOW_CPK", "OUTLIER"]}]
+
+    # exclusive 가 안 떴으면 아무 일도 없다
+    kept2, note2 = signatures._apply_exclusive(fired[:2], docs)
+    assert [s["id"] for s in kept2] == ["OUTLIER", "LOW_CPK"] and note2 == []
+
+
+def test_deployed_exclusive_is_bool_and_standalone():
+    """배포 룰의 `exclusive` 는 bool 이고, 관계 선언과 함께 쓰지 않는다.
+
+    exclusive 는 "나머지를 전부 지운다" 이므로 상대를 지목하는 선언(replaces/hidden_by/
+    suppressed_by)과 같은 룰에 붙으면 의미가 겹치거나 서로를 무의미하게 만든다.
+    """
+    for sig in signatures.signatures_doc().get("signatures") or []:
+        if "exclusive" not in sig:
+            continue
+        assert sig["exclusive"] is True, f"{sig['id']}.exclusive 는 bool 이어야 한다"
+        for key in ("replaces", "hidden_by", "suppressed_by"):
+            assert not sig.get(key), f"{sig['id']}: exclusive 와 {key} 를 함께 쓸 수 없다"

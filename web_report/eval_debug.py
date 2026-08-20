@@ -325,6 +325,10 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
     hidden_by = {row["id"]: row["by"] for row in (sig_result.get("hidden") or [])}
     replaced_by = {tid: row["id"]
                    for row in (sig_result.get("replaced") or []) for tid in row["of"]}
+    # 단독 발화(exclusive)에 밀려 사라진 것 — 위 둘과 같은 이유로 트레이스가 유일한 설명
+    # 지점이다. 상대를 지목하지 않는 관계라 "누가 지웠나" 를 역방향으로 편다(2026-08-20).
+    exclusive_by = {tid: row["id"]
+                    for row in (sig_result.get("exclusive") or []) for tid in row["of"]}
     excluded = sig_result.get("excluded")
     n_dut = features.get("n_dut") or 0
     high_moment_ok = n_dut >= thresholds.get("n_min", 0)
@@ -360,6 +364,10 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
                          else "fail 없음(미발화)" if fail_count == 0 else "fail 정보 없음(미발화)"))
         elif not high_moment_ok and (set(when) & sig_mod._HIGH_MOMENT_METRICS):
             skip = f"min-n 가드 (n_dut {n_dut} < n_min {thresholds.get('n_min')})"
+        elif sig_id in exclusive_by:
+            branch = (f"조건은 만족했으나 {exclusive_by[sig_id]} 가 **단독 발화**라 "
+                      "목록에서 제거됐다 (exclusive — 그 룰이 이 item 의 해석을 선점한다. "
+                      "값이 측정량이 아니라 판정 코드면 산포·꼬리·cpk 는 전부 헛말이다)")
         elif sig_id in hidden_by:
             branch = (f"조건은 만족했으나 {', '.join(hidden_by[sig_id])} 가 함께 발화해 "
                       "**목록에서 제거**됐다 (hidden_by — 같은 사실을 두 번 말하지 않기 위한 장치)")
@@ -383,6 +391,7 @@ def _signature_matrix(case_ctx, features, ctx_values, thresholds, sig_result, si
                      "suppressed_by": suppressed_by.get(sig_id) or [],
                      "hidden_by": hidden_by.get(sig_id) or [],
                      "replaced_by": replaced_by.get(sig_id) or "",
+                     "exclusive_by": exclusive_by.get(sig_id) or "",
                      "conditions": conds, "fired": sig_id in fired_ids})
     return rows
 

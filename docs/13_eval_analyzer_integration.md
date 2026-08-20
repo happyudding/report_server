@@ -1117,3 +1117,93 @@ Signature 컬럼에 늘 OUTLIER 만 보인다.
   `rules_io.validate_all()` 무결성 0 problems, 합성 데이터 정답표 대조
   (단독 CSV 85/85, 전체 세트 496/500 — 나머지는 조합 항목의 구조적 상충).
 - `label_signature`(사람 확정 라벨)는 조회 결과 **0행**이라 id 마이그레이션이 필요 없었다.
+
+### 16-6. 6차 재편 — 꼬리 판정을 stretch 로 · `FUNC_FAIL` 단독 발화 (2026-08-20)
+
+사용자가 v13 회귀 데이터를 검토하고 지적한 3건에서 출발했다.
+
+> "UNKNOWN 001~004 는 BIDIR TAIL 인데 왜 안 잡히나? 근데 또 어떤 건 산포가 빠딱 1자로
+> 보이는데도 BIDIR TAIL 로 hard 하게 잡힌다. index 가 부족한 건가 기준이 잘못된 건가"
+
+**① 판정축을 kurtosis → `tail_extent_*`(stretch) 로 옮겼다.**
+
+두 증상은 **같은 원인의 양면**이었다 — 초과첨도는 4제곱이라 "그림이 늘어진 정도" 와 단조
+대응하지 않는다. v13 실측 반례가 둘 다 있었다:
+
+| 항목 | kurtosis | 꼬리가 뻗은 정도 | v13 판정 | 사람이 보는 것 |
+|---|---|---|---|---|
+| `RANDOM_027` | **50.0** | 4.2σ (완만) | BIDIR_TAIL | 늘어지지 않았다 = 오탐 |
+| `UNKNOWN_001~004` | **6.2~7.9** | 7.0~8.7σ | UNKNOWN | 명백한 양측 꼬리 = 미탐 |
+
+신설 지표(둘 다 **DB 미저장 파생** — 스키마 무변경):
+```
+tail_extent_high = P99.5(modified_z)      # 정규분포 ≈ 2.58
+tail_extent_low  = -P0.5(modified_z)
+```
+**기준은 spec limit 이 아니라 실측 데이터의 몸통**이다(사용자 지시). limit 이 넉넉하든
+빠듯하든 "이 분포가 자기 몸통에 비해 늘어졌나" 는 같은 질문이기 때문이다.
+임계 `tail_extent_min: 5.0` — v13 120항목 전수 대입에서 **겨냥 누락 0 · 겨냥 밖 발화 0**
+인 지점으로 골랐다(4.5 는 `EQUIPMENT_SUSPECT_L4` 를 오탐, 5.5 는 여유가 6% 로 빠듯).
+
+**1자 산포 오탐의 기전**도 이 지표가 뿌리째 없앤다. `_tail_extent` 는 `_modified_z` 의
+**meanAD 폴백을 쓰지 않는 유일한 지표**라, MAD=0(과반 동일값)이면 `None` 을 돌려 꼬리 룰
+전체에서 빠진다. 폴백을 쓰면 자(尺)가 "모드에서 벗어난 값의 평균 이탈량" 이 되어 3σ 컷이
+1 code unit 아래로 내려앉고, 모드가 아닌 die 비율(1~3%)이 그대로 질량 밴드에 들어가며
+kurtosis 는 ≈1/p 로 폭등한다 → USL+LSL 동시 발화 → `replaces` → BIDIR_TAIL(MAJOR).
+몸통 폭이 0 이면 "몸통 대비 몇 배" 라는 질문 자체가 성립하지 않으므로 `None` 이 정답이다.
+
+**② `BIDIR_TAIL` 의 `when_metric` 을 전면 교체**(양방향 extent + 양방향 질량 밴드).
+- 구 조건(양쪽 `spec_margin < 1σ`)은 **삭제**했다. 그 모양(σ > spec 폭/2)은 cpk 가 0.33
+  미만이라 `LOW_CPK` + trump(CRITICAL)가 이미 정확히 말한다 — `WIDE_DISTRIBUTION` 을
+  `LOW_CPK` 로 통합한 §16 결정과 같은 정리다. 실발화도 거의 `replaces` 경유였다.
+- **kurtosis 게이트를 두지 않는다.** 대칭 양측 꼬리는 초과첨도가 낮게 나오므로(위 표)
+  게이트를 두면 이 룰의 존재 이유가 사라진다. 정규분포가 새어 드는 것은 질량 하한이 막는다
+  (정규의 방향별 3σ 밖 질량은 0.14% ≪ 1%).
+- `heavy_tail_mass_max` **0.05 → 0.07**. 방향별 질량이 5.3~6.2% 인 대칭 양측 꼬리가 상한에
+  걸려 미발화했다(`UNKNOWN_000`·`001`). 상한의 취지(다봉 배제)는 실측 10%+ 라 7% 에서도 산다.
+- `USL_TAIL`/`LSL_TAIL` 에는 extent 를 **AND 로 추가**만 했다(kurtosis 는 보조로 유지).
+  발화 축소 전용이라 신규 오탐이 구조적으로 0 이고, 1자 오탐이 여기서 막히면 `replaces`
+  경유 BIDIR 오탐도 함께 사라진다.
+
+**③ `FUNC_FAIL` 신설 + 관계 4종째 `exclusive`.**
+
+기능성 item(limit 이 점, 예 `0~0`)은 값이 측정량이 아니라 **판정 코드**다. 그런데 통계 룰들은
+그것을 모르고 각자 말한다 — cpk 는 분모 0 이라 음수(`LOW_CPK`), fail 코드값은 몸통과
+떨어져 있어 `OUTLIER`, 0 과 999 두 무리라 `BIMODALITY`. 전부 같은 사실을 잘못된 어휘로
+말하는 것이라 **해석을 선점**한다.
+
+```yaml
+- id: FUNC_FAIL
+  exclusive: true          # 뜨면 다른 발화를 전부 지우고 혼자 남는다(상대 미지목)
+  when_metric:
+    limit_is_point: ">0"                              # build_ctx_values 파생
+    pass_limit_hit_ratio: ">=func_fail_pass_fix_min"  # 0.99, pass 만 모수
+    fail_count: ">0"
+```
+- `pass_limit_hit_ratio` 를 신설한 이유: 기존 `limit_hit_ratio` 는 전체 대비라 fail 이 30%
+  면 pass 가 전부 고정값이어도 0.7 로 희석된다. "pass 는 전부 그 값이다" 는 fail 수와
+  무관해야 하는 사실이다.
+- **fail 값의 형태는 조건에 넣지 않는다**(사용자 확인) — 이산 상수(1·255·999)든 float 든
+  발화한다. fail 값 표기는 테스터 로깅 관례라 조건화하면 취약하고, "점 limit + pass 고정 +
+  fail 존재" 만으로 이미 기능성 item 이 특정된다.
+- `exclusive` 는 `_apply_exclusive` 가 **대체보다 먼저** 적용한다(단독→대체→제거→양보).
+  나중에 하면 `replaces` 가 합성한 `BIDIR_TAIL` 이 통과해 버린다.
+- `status.py` 는 손대지 않았다 — trump 는 `cpk<bad AND yield<0.7` 이라 fail 소수면 MAJOR
+  가 유지되고, 대량 fail 이면 CRITICAL 이 맞다.
+- ⚠ UNIT 이 엔진 단위표에 없으면 `value_type=PF` 가 되어 통계가 전부 비므로 이 룰도
+  침묵한다(UNKNOWN 사유 `NO_STATS_PF`). 단위표 등록이 해법이다.
+
+**④ 별건 버그 수정** — `rules_io.read_thresholds()` 제품군 분기에서 정의되지 않은 이름
+`doc` 을 읽어 `/pe/eval` Thresholds 탭에서 제품군을 고르는 순간 `NameError` 로 죽었다.
+기준값 분기와 같은 출처(`eval_debug.thresholds_doc()`)를 보도록 고쳤다.
+
+**⑤ 캐시·검증**
+- 룰 yaml 을 손으로 고쳤으므로 `.rules_rev` 를 직접 올렸다(7→8).
+  `REPORT_SCHEMA_VERSION` 은 **건드리지 않았다**(콜드 폭풍 — §16-5 와 같은 이유).
+  단 파이썬 코드(features/signatures/status)도 바뀌었으므로 **서버 재기동이 필요**하다.
+- eval.db **스키마 무변경** — 신규 지표 3개는 `store.save_features` cols 목록에 없다.
+- 검증: `eval_analyzer` 엔진 테스트 **218 passed** · `rules_io.validate_all()` 0 problems ·
+  self-run(`test_rules_io_guards`/`test_issue_signature`/`test_eval_review`) 통과 ·
+  perf_guard selftest 통과.
+- **v13 CSV 실엔진 재평가로 목표 확인**: `unknown_000~004` 전부 `BIDIR_TAIL` ·
+  `bidir_tails_l2~l5` 유지 · `usl/lsl_tail_l2~l5` 유지 · `random_027` 의 BIDIR 오탐 소멸.

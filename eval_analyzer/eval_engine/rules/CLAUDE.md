@@ -89,17 +89,23 @@ signatures:
   "cpk 도 낮고 outlier 도 있다" 가 한 줄로만 보여 나머지를 볼 수 없었다. 지금은
   `signatures._apply_suppression` 이 `demoted_by` 를 달고 `status.decide` 가 primary
   후보에서만 뺀다 — 발화 목록·Signature 컬럼에는 둘 다 남는다.
-- **룰 사이의 관계는 3종**이다(2026-08-19 에 둘이 늘었다). 셋 다 yaml 선언이고 엔진은
-  `signatures.evaluate` 에서 **대체 → 제거 → 양보** 순으로 적용한다(순서를 바꾸면 이미
-  사라진 발화가 남은 발화를 눌러 아무도 primary 가 아닌 상태가 생긴다):
+- **룰 사이의 관계는 4종**이다(2026-08-19 에 둘, 2026-08-20 에 하나 늘었다). 넷 다 yaml
+  선언이고 엔진은 `signatures.evaluate` 에서 **단독 → 대체 → 제거 → 양보** 순으로 적용한다
+  (순서를 바꾸면 이미 사라진 발화가 남은 발화를 눌러 아무도 primary 가 아닌 상태가 생기고,
+  단독을 대체 뒤로 미루면 합성된 발화가 단독을 통과해 버린다):
 
   | 선언 | 뜻 | 배포 룰 |
   |---|---|---|
+  | `exclusive: true` | 이 룰이 뜨면 **다른 발화를 전부 지우고 혼자 남는다**(상대 미지목) | `FUNC_FAIL` |
   | `suppressed_by: [A]` | A 가 함께 뜨면 **primary 만 양보**(목록에는 남는다) | `LOW_CPK` · `USL_TAIL`/`LSL_TAIL` |
   | `hidden_by: [A]` | A 가 함께 뜨면 **목록에서 통째로 제거** | `SPOT_FAIL ← [CENTER_FAIL]` |
   | `replaces: [A, B]` | A·B 가 **모두** 뜨면 그것들을 지우고 이 룰이 대신 발화 | `BIDIR_TAIL ← [USL_TAIL, LSL_TAIL]` |
 
-  ⚠ `hidden_by`/`replaces` 로 사라진 발화는 **화면 어디에도 남지 않는다** — 사유는
+  `exclusive` 만 상대를 지목하지 않는다 — "이 item 의 값은 측정량이 아니라 판정 코드라
+  통계 해석이 통째로 성립하지 않는다" 는 **해석의 선점**이라, 지울 대상이 특정 룰이 아니라
+  나머지 전부이기 때문이다. 그래서 상대를 지목하는 세 선언과 **같은 룰에 함께 쓰지 않는다**
+  (`validate_all` 이 막는다).
+  ⚠ `exclusive`/`hidden_by`/`replaces` 로 사라진 발화는 **화면 어디에도 남지 않는다** — 사유는
   `/pe/eval` 트레이스에만 있다(`eval_debug._signature_matrix` 의 branch_note). 새 선언을
   추가할 때는 "정말로 정보가 0 인가" 를 먼저 보라. 참조 무결성(없는 id·자기참조·상호참조)은
   `rules_io.validate_all` 이 검사한다.
@@ -153,6 +159,20 @@ signatures:
     한가운데 4.00), 45° 격자 보완을 넣어도 원점 근처 뭉침은 다른 룰 몫이었다.
     임계값 `quadrant_imbalance_warn` 도 함께 지웠다 — 지표 `quadrant_imbalance` 는
     evidence·참고용으로 계속 계산·저장한다.)
+- **꼬리 판정의 자(尺)는 `tail_extent_high`/`_low` 다**(2026-08-20 — 사용자 지적 "Tail 로
+  죽는 건 산포가 쭉 늘어지는 그림이어야 하는데 살짝만 늘어져도 발화된다"). 꼬리 끝(P99.5)이
+  **몸통 robust σ 의 몇 배**까지 뻗었나이며(정규 ≈2.58, 임계 `tail_extent_min` 5.0),
+  기준은 spec limit 이 아니라 **실측 데이터의 몸통**이다. 꼬리 룰 3종이 이 키를 공유한다.
+  - ⚠ **MAD=0(과반 동일값)이면 None** — `_modified_z` 의 meanAD 폴백을 쓰지 않는 유일한
+    지표다. 폴백은 자를 "모드에서 벗어난 값의 평균 이탈량" 으로 바꿔, 눈으로는 1자인 산포에서
+    3σ 컷이 1 code unit 아래로 내려앉는다. 그러면 모드가 아닌 die 비율(1~3%)이 그대로 질량
+    밴드에 들고 kurtosis 는 ≈1/p 로 폭등해 **USL+LSL 동시 발화 → BIDIR_TAIL(MAJOR)** 이
+    됐다(v13 오탐의 기전). 몸통 폭이 0 이면 "몸통 대비 몇 배" 라는 질문 자체가 성립하지 않는다.
+  - `kurtosis_warn` 은 **단방향 룰(USL/LSL)에만** 남은 보조 조건이다. `BIDIR_TAIL` 에서는
+    뺐다 — 대칭 양측 꼬리는 초과첨도가 낮게 나와(실측 6~8 < 10) 게이트를 두면 정작 잡아야
+    할 모양이 통째로 UNKNOWN 으로 떨어졌다.
+  - extent(늘어진 정도)와 질량 하한(꼬리가 실재하나)은 **반드시 AND** 다. extent 만 보면
+    튄 점 하나(OUTLIER 영역)가 통과하고, 질량만 보면 살짝 퍼진 몸통이 통과한다.
 - **꼬리는 방향으로 갈린다** — `USL_TAIL`(상한 쪽) / `LSL_TAIL`(하한 쪽), 2026-08-19 에
   구 `HEAVY_TAIL` 을 나눈 것이다. **판정 밴드는 방향별 질량**(`tail_mass_3s_high`/`_low`,
   eval.db **v10** 컬럼)에 건다.

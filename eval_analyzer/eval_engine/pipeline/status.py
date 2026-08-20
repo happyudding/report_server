@@ -22,6 +22,10 @@ RANK_TO_STATUS = {v: k for k, v in SEVERITY_RANK.items()}
 
 # 구체적(원인 특정) → 일반적 순. 같은 severity 충돌 시 앞쪽이 primary.
 SPECIFICITY_ORDER = ["MISSING_LIMIT", "CONSTANT_VALUE",
+                     # FUNC_FAIL 은 `exclusive` 라 혼자 남으므로 실제 경쟁은 없다.
+                     # 그래도 맨 앞부류에 둔다 — 데이터 품질 축(값이 측정량이 아니라
+                     # 판정 코드다)이라 성격이 위 둘과 같고, 순서 정합 검증이 전 id 를 요구한다.
+                     "FUNC_FAIL",
                      "EQUIPMENT_SUSPECT", "RING_FAIL",
                      # 공간 존은 좁은 것부터: E1(최외곽 한 줄) > EDGE(바깥 밴드) > CENTER.
                      # SPOT_FAIL(국부 뭉침)은 존보다 구체적이지만 존으로 설명되면 그쪽이

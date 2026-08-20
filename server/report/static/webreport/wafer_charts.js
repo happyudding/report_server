@@ -671,7 +671,10 @@ function buildTnoInfo() {
 }
 
 // TNO Legend 표(전 항목 색+count). 클릭 시 그 항목만 원색, 나머지는 dim(data-tno).
-function tnoLegendHtml(tnoInfo, selected) {
+// 맨 위에 Bin1(Pass) 행도 두어 클릭/재클릭으로 강조·해제할 수 있다(사용자 요청 2026-08-20).
+// 선택 키는 die 카테고리와 같은 "1" — 필터 Set(mapTnoFilter/_mapDetailBinFilter)을 항목명과
+// 공유한다. 스와치는 맵의 실제 색을 그대로 따른다(선택 시 Pass 초록, 아니면 연한 바탕색).
+function tnoLegendHtml(tnoInfo, selected, passCount) {
   const body = tnoInfo.items.map(it => {
     const sel = selected.has(it);
     const sw = (selected.size === 0 || sel) ? tnoInfo.colorMap[it] : MAP_BIN_DIM_COLOR;
@@ -680,8 +683,12 @@ function tnoLegendHtml(tnoInfo, selected) {
       `<td>${tnoInfo.cnt[it] || 0}</td></tr>`;
   }).join("");
   if (!body) return `<div class="placeholder" style="padding:12px 4px">fail 항목 없음</div>`;
+  const passSel = selected.has("1");
+  const passRow = `<tr class="is-pass${passSel ? " is-selected" : ""}" data-tno="1">` +
+    `<td><span class="bin-swatch" style="background:${passSel ? PASS_COLOR : MAP_ITEM_BASE_COLOR}"></span>1 (Pass)</td>` +
+    `<td>${passCount == null ? "" : passCount}</td></tr>`;
   return `<table class="bin-table"><thead><tr><th>Item</th><th>Count</th></tr></thead>` +
-         `<tbody>${body}</tbody></table>`;
+         `<tbody>${passRow}${body}</tbody></table>`;
 }
 
 // ── Temperature Map Legend (Temperature 전용 색 기준 축) ─────────────────────
@@ -1008,7 +1015,9 @@ function renderMapAnalysis() {
   function renderTnoLegend() {
     const host = panel.querySelector(".tno-legend-body");
     if (!host) return;
-    host.innerHTML = tnoLegendHtml(tnoInfo, mapTnoFilter);
+    // Bin1(Pass) 행의 die 수는 Bin Legend 와 같은 합산(buildGlobalBinLegend)에서 가져온다.
+    const passRow = legendRows.find(r => r.is_pass);
+    host.innerHTML = tnoLegendHtml(tnoInfo, mapTnoFilter, passRow ? passRow.count : null);
     host.querySelectorAll("tbody tr[data-tno]").forEach(tr => {
       tr.addEventListener("click", () => {
         const it = tr.dataset.tno;
@@ -1075,9 +1084,13 @@ function renderMapAnalysis() {
         // 이탈 항목이 아닌 die 는 초록(Pass)이 아니라 연한 바탕색 — 강조가 묻히지 않게.
         hex = it ? (tempInfo.colorMap[it] || MAP_UNLISTED_ITEM_COLOR) : MAP_ITEM_BASE_COLOR;
       } else if (mapColorKey === "tno") {
-        // Bin1(Pass) die 는 **강조하지 않는다** — 초록으로 칠하면 범례에서 TNO 하나를 골라도
-        // 웨이퍼 전체가 같이 강조돼 보인다(2026-08-19 사용자 요청). Temperature 축과 같은 규약.
-        hex = (d.bin === "1" || d.it == null) ? MAP_ITEM_BASE_COLOR : (activeTno[d.it] || MAP_UNLISTED_ITEM_COLOR);
+        // Bin1(Pass) die 는 기본으로 **강조하지 않는다** — 초록으로 칠하면 범례에서 TNO 하나를
+        // 골라도 웨이퍼 전체가 같이 강조돼 보인다(2026-08-19 사용자 요청). Temperature 축과 같은
+        // 규약. 단 범례에서 Bin1(Pass) 행을 클릭해 선택하면 그때만 Pass 초록으로 강조한다
+        // (재클릭 시 해제 — 2026-08-20 사용자 요청).
+        hex = (d.bin === "1" || d.it == null)
+          ? (mapTnoFilter.has("1") ? PASS_COLOR : MAP_ITEM_BASE_COLOR)
+          : (activeTno[d.it] || MAP_UNLISTED_ITEM_COLOR);
       } else {
         hex = activeBinColorMap[d.bin] || PASS_COLOR;
       }
@@ -1229,7 +1242,9 @@ function mapDetailAxis() {
     const tno = buildTnoInfo();
     const itemSet = {}; tno.items.forEach(it => { itemSet[it] = 1; });
     const order = ["1"].concat(tno.items, [_MAP_OTHER_CAT, _MAP_GRAY_CAT]);
-    const base = { "1": MAP_ITEM_BASE_COLOR, [_MAP_OTHER_CAT]: MAP_UNLISTED_ITEM_COLOR,
+    // Bin1(Pass)은 범례에서 선택했을 때만 Pass 초록 — 갤러리(rgbFor)와 같은 규약(2026-08-20).
+    const base = { "1": _mapDetailBinFilter.has("1") ? PASS_COLOR : MAP_ITEM_BASE_COLOR,
+                   [_MAP_OTHER_CAT]: MAP_UNLISTED_ITEM_COLOR,
                    [_MAP_GRAY_CAT]: MAP_GRAY_HEX };
     tno.items.forEach(it => { base[it] = tno.colorMap[it]; });
     let colorMap = base;
@@ -1334,7 +1349,11 @@ function renderMapDetailLegend() {
       tempItemInfoForSource(m ? m.source : ""), _mapDetailBinFilter);
   } else if (mapColorKey === "tno") {
     if (title) title.textContent = "TNO Legend";
-    legendBody.innerHTML = tnoLegendHtml(buildTnoInfo(), _mapDetailBinFilter);
+    // Bin1(Pass) die 수는 지금 보고 있는 맵 1장 기준(Bin Legend 크게 보기와 같은 규약).
+    const m = mapDetailMaps()[_mapDetailIndex];
+    const passRow = buildGlobalBinLegend(m ? [m] : []).find(r => r.is_pass);
+    legendBody.innerHTML = tnoLegendHtml(buildTnoInfo(), _mapDetailBinFilter,
+      passRow ? passRow.count : null);
   } else {
     // 갤러리 범례는 전 소스 합산(Summary)이지만, 크게 보기는 **지금 보고 있는 맵 1장**의
     // Bin 집계다 — count·비율이 화면의 웨이퍼와 일치해야 한다(사용자 요청 2026-08-06).

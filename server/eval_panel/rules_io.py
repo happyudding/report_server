@@ -287,10 +287,12 @@ THRESHOLD_KINDS = {
     "gross_yield_bad": "ratio", "cpk_trump_yield_floor": "ratio",
     "region_fail_share_min": "ratio", "spot_fail_spread_max": "ratio",
     "heavy_tail_mass_min": "ratio", "heavy_tail_mass_max": "ratio",
-    "tail_side_share_min": "ratio",
+    "tail_side_share_min": "ratio", "func_fail_pass_fix_min": "ratio",
     "n_min": "count", "subpop_n_min": "count", "spatial_fail_count_min": "count",
     "source_min_count": "count",
     "outlier_sigma": "positive", "subpop_outlier_sigma": "positive",
+    # 꼬리가 몸통 σ 의 몇 배까지 뻗었나 — 1 을 넘는 것이 정상이라 ratio 가 아니다.
+    "tail_extent_min": "positive",
     "outlier_fail_mad_min": "positive",
     "outlier_fail_gap_sigma_min": "positive",
 }
@@ -370,7 +372,10 @@ def read_thresholds(product_type: str, family_product: str | None = None) -> dic
             "effective": {**inherited, **own}, "origin": origin,
             "descriptions": threshold_descriptions(), "usage": threshold_usage(),
             "help": threshold_help(),
-            "item_class_count": len(doc.get("item_class") or {}),
+            # item_class 섹션은 thresholds.yaml 한 곳에만 있다(오버레이는 flat 매핑 전용).
+            # 위 기준값 분기와 같은 출처를 본다 — 종전에는 정의되지 않은 이름을 읽어
+            # 제품군을 고르는 순간 NameError 로 탭이 통째로 죽었다(2026-08-20 수정).
+            "item_class_count": len(eval_debug.thresholds_doc().get("item_class") or {}),
             "rules_rev": eval_debug.rules_rev()}
 
 
@@ -487,14 +492,16 @@ def _sig_row(s: dict) -> dict:
             "phenomenon_ko": s.get("phenomenon_ko") or "",
             "action_ko": s.get("action_ko") or "",
             "evidence": list(s.get("evidence") or []),
-            # 읽기 전용 — 룰 사이의 관계 3종. 편집 UI 는 제공하지 않고 화면에 관계만
+            # 읽기 전용 — 룰 사이의 관계 4종. 편집 UI 는 제공하지 않고 화면에 관계만
             # 찍는다(SIGNATURE_FIELDS 에 없으므로 저장에서도 건드리지 않는다).
             #   suppressed_by = 함께 뜨면 primary 만 양보(목록에는 남는다)
             #   hidden_by     = 함께 뜨면 목록에서 통째로 제거
             #   replaces      = 나열한 것이 모두 뜨면 그것들을 지우고 이 룰이 대신 발화
+            #   exclusive     = 이 룰이 뜨면 다른 발화를 전부 지우고 혼자 남는다(상대 미지목)
             "suppressed_by": _norm_suppressed_by(s.get("suppressed_by")),
             "hidden_by": _norm_suppressed_by(s.get("hidden_by")),
             "replaces": _norm_suppressed_by(s.get("replaces")),
+            "exclusive": s.get("exclusive") is True,
             "scope": _norm_scope_doc(s.get("scope"))}
 
 
@@ -922,6 +929,20 @@ def validate_all() -> dict:
                 elif sig_id in rel.get(target, []):
                     problems.append(f"[{sig_id}] {target} 와 {key} 상호 참조 — "
                                     "둘 다 발화하면 양쪽이 사라집니다")
+
+    # 1d) exclusive 는 상대를 지목하지 않고 **나머지 전부**를 지운다(2026-08-20).
+    # 그래서 상대를 지목하는 선언과 같은 룰에 붙으면 의미가 겹치거나 서로를 무의미하게
+    # 만든다. bool 이 아닌 값은 yaml 오타(예: "true" 문자열)라 조용히 꺼진다.
+    for s in raw_sigs:
+        if "exclusive" not in s:
+            continue
+        sig_id = s.get("id")
+        if s.get("exclusive") is not True:
+            problems.append(f"[{sig_id}] exclusive 는 true/false 여야 함: {s.get('exclusive')!r}")
+        for key in ("replaces", "hidden_by", "suppressed_by"):
+            if _norm_suppressed_by(s.get(key)):
+                problems.append(f"[{sig_id}] exclusive 와 {key} 를 함께 선언할 수 없음 — "
+                                "exclusive 는 이미 나머지를 전부 지웁니다")
 
     # 2) 오버레이 트리 점검 (고아 폴더/파일, 미지의 키)
     tree = eval_debug.rules_dir() / "thresholds"

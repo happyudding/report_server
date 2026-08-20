@@ -64,7 +64,7 @@ def test_outlier_keeps_low_cpk_and_tail_in_list():
     case = _case()
     feats = _full_features(fail_mad_min=10.0, fail_body_jump_ratio=0.9,
                            kurtosis=15.0, tail_mass_3s=0.02, tail_mass_3s_high=0.02,
-                           tail_mass_3s_low=0.0, n_dut=100)
+                           tail_extent_high=8.0, tail_mass_3s_low=0.0, n_dut=100)
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 0.8})
     ids = [s["id"] for s in sig["signatures"]]
     assert {"OUTLIER", "LOW_CPK", "USL_TAIL"} <= set(ids)
@@ -218,40 +218,80 @@ def test_directional_tail_fires_with_enough_samples():
     """구 HEAVY_TAIL 은 방향으로 갈렸다 — 꼬리 질량을 **어느 쪽에서 쟀나**로 룰이 나뉜다."""
     case = _case()
     raw = {"yield": 0.95, "cpk": 1.5}
-    # 발화 조건은 구 HEAVY_TAIL 그대로 — kurtosis > 10 **AND 총 꼬리 질량 1~5%**.
-    # 방향은 그 질량이 어느 쪽에 실렸나(tail_side_share_*)로만 가른다.
-    high = _full_features(kurtosis=12.0, tail_mass_3s=0.02,
+    # kurtosis > 10 AND 방향별 꼬리 질량 1~7% AND **그 방향으로 5σ 넘게 뻗음**
+    # (extent 는 2026-08-20 신설 — 그 방향 꼬리가 실제로 늘어졌는지를 잰다).
+    high = _full_features(kurtosis=12.0, tail_mass_3s=0.02, tail_extent_high=8.0,
                           tail_mass_3s_high=0.02, tail_mass_3s_low=0.0, n_dut=100)
     ids = [s["id"] for s in signatures.evaluate(case, high, raw)["signatures"]]
     assert "USL_TAIL" in ids and "LSL_TAIL" not in ids
-    low = _full_features(kurtosis=12.0, tail_mass_3s=0.02,
+    low = _full_features(kurtosis=12.0, tail_mass_3s=0.02, tail_extent_low=8.0,
                          tail_mass_3s_high=0.0, tail_mass_3s_low=0.02, n_dut=100)
     ids = [s["id"] for s in signatures.evaluate(case, low, raw)["signatures"]]
     assert "LSL_TAIL" in ids and "USL_TAIL" not in ids
     # 반대쪽에 점 한둘이 섞인 정도(15%)는 여전히 한쪽 꼬리다
-    mostly = _full_features(kurtosis=12.0, tail_mass_3s=0.02,
+    mostly = _full_features(kurtosis=12.0, tail_mass_3s=0.02, tail_extent_high=8.0,
                             tail_mass_3s_high=0.017, tail_mass_3s_low=0.003, n_dut=100)
     ids = [s["id"] for s in signatures.evaluate(case, mostly, raw)["signatures"]]
     assert "USL_TAIL" in ids and "LSL_TAIL" not in ids
+
+
+def test_directional_tail_needs_stretch():
+    """질량이 밴드 안이어도 **뻗지 않았으면** 꼬리가 아니다 (2026-08-20 판정축).
+
+    v13 오탐의 재발 방지선이다 — 과반이 동일값인(눈으로는 1자인) 산포에서 kurtosis 는
+    ≈1/p 로 폭등하고 질량도 밴드에 들어왔지만, 꼬리는 사실 뻗어 있지 않았다.
+    extent 가 None(MAD=0 이라 몸통 폭 자체가 없음)인 경우도 같이 막힌다.
+    """
+    case = _case()
+    raw = {"yield": 0.95, "cpk": 1.5}
+    flat = _full_features(kurtosis=46.0, tail_mass_3s=0.03, tail_extent_high=2.4,
+                          tail_mass_3s_high=0.015, tail_mass_3s_low=0.015,
+                          tail_extent_low=2.4, n_dut=100)
+    ids = [s["id"] for s in signatures.evaluate(case, flat, raw)["signatures"]]
+    assert not ({"USL_TAIL", "LSL_TAIL", "BIDIR_TAIL"} & set(ids))
+    # MAD=0 → extent None(결측) → 조건 False. "꼬리 없음" 과 같은 취급이 아니라 판정 불가다.
+    no_body = _full_features(kurtosis=46.0, tail_mass_3s=0.03, tail_extent_high=None,
+                             tail_mass_3s_high=0.015, tail_mass_3s_low=0.015,
+                             tail_extent_low=None, n_dut=100)
+    ids = [s["id"] for s in signatures.evaluate(case, no_body, raw)["signatures"]]
+    assert not ({"USL_TAIL", "LSL_TAIL", "BIDIR_TAIL"} & set(ids))
 
 
 def test_both_tails_merge_into_bidir():
     """양쪽 꼬리가 함께 두꺼우면 **BIDIR_TAIL 하나**로 접힌다 (yaml `replaces`).
 
     "USL 문제 + LSL 문제" 두 건이 아니라 분포가 양방향으로 퍼진 한 건이고, 한쪽 방향
-    조치로는 해결되지 않는다(2026-08-19 사용자 요청). BIDIR_TAIL 자신의 when_metric
-    (양쪽 spec margin 부족)이 성립하지 않아도 대신 발화한다 — 여기 margin 은 5σ 다.
+    조치로는 해결되지 않는다(2026-08-19 사용자 요청).
     """
     case = _case()
     feats = _full_features(kurtosis=12.0, tail_mass_3s=0.04,
+                           tail_extent_high=8.0, tail_extent_low=8.0,
                            tail_mass_3s_high=0.02, tail_mass_3s_low=0.02, n_dut=100)
-    # 총 질량은 밴드(1~5%) 안이고 양쪽이 반씩 가졌다
+    # 방향별 질량이 밴드(1~7%) 안이고 양쪽이 반씩 가졌다
     sig = signatures.evaluate(case, feats, {"yield": 0.95, "cpk": 1.5})
     ids = [s["id"] for s in sig["signatures"]]
     assert "BIDIR_TAIL" in ids
     assert "USL_TAIL" not in ids and "LSL_TAIL" not in ids
     assert sig["replaced"] == [{"id": "BIDIR_TAIL", "of": ["LSL_TAIL", "USL_TAIL"]}]
     assert status.decide(case, feats, sig)["primary_signature"] == "BIDIR_TAIL"
+
+
+def test_bidir_fires_directly_without_kurtosis():
+    """**대칭 양측 꼬리는 kurtosis 가 낮다** — BIDIR_TAIL 은 자기 조건으로 직접 뜬다.
+
+    v13 미탐의 원인이자 이번 변경의 핵심이다. UNKNOWN_001~004 는 꼬리가 7~8.7σ 까지
+    뻗은 명백한 양측 꼬리인데 kurtosis 가 6~8(임계 10)이라 USL/LSL 이 둘 다 못 떴고,
+    그래서 `replaces` 도 발동하지 못해 통째로 UNKNOWN 으로 떨어졌다.
+    """
+    case = _case()
+    feats = _full_features(kurtosis=7.1, tail_mass_3s=0.10,
+                           tail_extent_high=8.6, tail_extent_low=8.7,
+                           tail_mass_3s_high=0.050, tail_mass_3s_low=0.053, n_dut=5000)
+    sig = signatures.evaluate(case, feats, {"yield": 0.999, "cpk": 1.9})
+    ids = [s["id"] for s in sig["signatures"]]
+    assert "BIDIR_TAIL" in ids
+    # 단방향 룰은 kurtosis 게이트에 막혀 안 뜬다 → 대체가 아니라 직접 발화다
+    assert sig["replaced"] == []
 
 
 def test_directional_tail_disabled_when_few_samples():
@@ -262,6 +302,43 @@ def test_directional_tail_disabled_when_few_samples():
     raw = {"yield": 0.95, "cpk": 1.5}
     sig = signatures.evaluate(case, feats, raw)
     assert "USL_TAIL" not in [s["id"] for s in sig["signatures"]]
+
+
+def test_func_fail_fires_alone_on_point_limit():
+    """기능성 item(limit 폭 0 + pass 는 전부 고정값)은 **FUNC_FAIL 만** 남는다.
+
+    `exclusive: true` — 이런 item 의 값은 측정량이 아니라 판정 코드라, 산포·꼬리·cpk 를
+    말하는 룰들은 전부 같은 사실을 잘못된 어휘로 말하는 것이다(2026-08-20 사용자 요청).
+    """
+    case = _case(lsl=0.0, usl=0.0, fail_count=12)
+    # cpk 가 음수라 원래는 LOW_CPK 가, fail 이 몸통과 떨어져 있어 OUTLIER 가 함께 뜬다
+    feats = _full_features(pass_limit_hit_ratio=1.0, fail_mad_min=20.0,
+                           fail_body_jump_ratio=0.95, n_dut=500)
+    # fail_count 는 L1 이 raw_metrics 로 실어 나른다(metrics.compute)
+    sig = signatures.evaluate(case, feats, {"yield": 0.976, "cpk": -3.0, "fail_count": 12})
+    ids = [s["id"] for s in sig["signatures"]]
+    assert ids == ["FUNC_FAIL"]
+    assert sig["exclusive"] == [{"id": "FUNC_FAIL", "of": ["LOW_CPK", "OUTLIER"]}]
+    assert status.decide(case, feats, sig)["primary_signature"] == "FUNC_FAIL"
+
+
+def test_func_fail_needs_point_limit_and_fixed_pass():
+    """limit 이 구간이거나 pass 가 흩어져 있으면 기능성 item 이 아니다 → 미발화."""
+    def fired(c, f, n_fail=12):
+        raw = {"yield": 0.97, "cpk": 1.5, "fail_count": n_fail}
+        return [s["id"] for s in signatures.evaluate(c, f, raw)["signatures"]]
+
+    feats = _full_features(pass_limit_hit_ratio=1.0, n_dut=500)
+    # 폭이 있는 limit — 보통의 측정 item 이다
+    assert "FUNC_FAIL" not in fired(_case(lsl=0.0, usl=10.0), feats)
+    # 점 limit 이지만 pass 값이 고정값에 안 붙어 있다
+    loose = _full_features(pass_limit_hit_ratio=0.4, n_dut=500)
+    assert "FUNC_FAIL" not in fired(_case(lsl=0.0, usl=0.0), loose)
+    # fail 이 없으면 말할 것이 없다
+    assert "FUNC_FAIL" not in fired(_case(lsl=0.0, usl=0.0), feats, n_fail=0)
+    # limit 자체가 없으면 판정 불가(결측 → 조건 False)
+    missing = _full_features(pass_limit_hit_ratio=None, n_dut=500)
+    assert "FUNC_FAIL" not in fired(_case(lsl=None, usl=None), missing)
 
 
 def test_pf_trump_low_yield_forces_critical():
