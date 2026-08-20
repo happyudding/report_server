@@ -3,6 +3,7 @@
 - GET /honey/version: return releases/version.json as-is.
 - GET /honey/download: serve the release ZIP named by version.json.file.
 - GET /honey/announcement: return releases/announcement.txt as-is (plain text).
+- GET /honey/client_notice: 구버전 클라 사용자에게 웹에서 띄울 안내문 + 기준 버전.
 - GET /honey/files/<version>: 그 버전의 파일 매니페스트 (델타 업데이트용).
 - GET /honey/file/<version>?path=: 릴리스 zip 안의 파일 1개만 스트리밍 (델타 업데이트용).
 
@@ -17,7 +18,12 @@ from flask import Blueprint, Response, abort, jsonify, request, send_file
 
 import auth_identity
 from auth_identity import current_user
-from config import HONEY_ANNOUNCEMENT_TXT, HONEY_RELEASES_DIR, HONEY_VERSION_JSON
+from config import (
+    HONEY_ANNOUNCEMENT_TXT,
+    HONEY_OLD_CLIENT_NOTICE_TXT,
+    HONEY_RELEASES_DIR,
+    HONEY_VERSION_JSON,
+)
 from database import report_db
 
 honey_bp = Blueprint("honey", __name__, url_prefix="/honey")
@@ -88,6 +94,63 @@ def get_announcement():
     except OSError:
         text = ""
     return Response(text, mimetype="text/plain")
+
+
+def _read_text_file(path):
+    """운영자가 직접 편집하는 텍스트 파일을 인코딩 관용적으로 읽는다 (실패 시 "")."""
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError:
+        # 운영자가 메모장 "ANSI" 로 저장한 경우 (한국어 Windows = cp949)
+        try:
+            return path.read_text(encoding="cp949")
+        except (OSError, UnicodeDecodeError):
+            return ""
+    except OSError:
+        return ""
+
+
+@honey_bp.get("/client_notice")
+def get_client_notice():
+    """구버전 Honey 사용자에게 **웹에서** 띄울 안내문 + 기준 버전.
+
+    구버전 클라는 이미 배포된 exe 라 코드를 고칠 수 없다 — 대신 그 사람이 내장
+    브라우저로 서버 페이지를 열 때 서버가 판단해 안내를 띄운다(판정·표시는
+    static/webreport/old_client_notice.js). 이 라우트는 그 JS 가 쓰는 값만 준다.
+
+    - min_version: version.json 의 같은 이름 필드. **없거나 비면 기능 자체가 꺼진다**
+      (안내를 띄우지 않는다) — 실수로 전원에게 팝업이 뜨는 사고를 막는 안전 기본값.
+    - title/body: old_client_notice.txt 의 첫 줄 / 나머지. 파일이 없으면 내장 문구.
+    - file: 다운로드 버튼의 파일명 힌트(version.json 의 file). 링크는 /honey/download.
+
+    집계하지 않는다 — 이 호출은 '실행'이 아니라 웹 페이지 렌더의 부수 요청이다
+    (/honey/version?probe=1 과 같은 취지).
+    """
+    manifest = {}
+    if HONEY_VERSION_JSON.exists():
+        try:
+            manifest = json.loads(HONEY_VERSION_JSON.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            manifest = {}
+
+    text = _read_text_file(HONEY_OLD_CLIENT_NOTICE_TXT).strip()
+    if text:
+        head, _, rest = text.partition("\n")
+        title, body = head.strip(), rest.strip()
+    else:
+        title, body = "Honey 업데이트가 필요합니다", (
+            "지금 사용 중인 Honey 는 예전 버전입니다.\n"
+            "새 버전부터는 자동으로 업데이트되므로 이번 한 번만 새로 받아 주세요.")
+
+    return jsonify({
+        "min_version": str(manifest.get("min_version") or "").strip(),
+        "version": manifest.get("version") or "",
+        "file": manifest.get("file") or "",
+        "title": title,
+        "body": body,
+    })
 
 
 @honey_bp.get("/download")

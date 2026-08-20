@@ -229,6 +229,9 @@ HONEY_RELEASES_DIR = _path_env("HONEY_RELEASES_DIR", ROOT_DIR / "server" / "rele
 HONEY_VERSION_JSON = HONEY_RELEASES_DIR / "version.json"
 # 릴리스 공지 원문. 운영자가 직접 편집하며 /honey/announcement 가 그대로 서빙한다.
 HONEY_ANNOUNCEMENT_TXT = HONEY_RELEASES_DIR / "announcement.txt"
+# 구버전 클라 사용자에게 웹에서 띄울 안내문(첫 줄=제목, 나머지=본문). announcement.txt 와
+# 같은 규약으로 운영자가 직접 편집한다 — /honey/client_notice 가 읽는다.
+HONEY_OLD_CLIENT_NOTICE_TXT = HONEY_RELEASES_DIR / "old_client_notice.txt"
 
 # ── admin 대시보드 (admin_panel/) ────────────────────────────────────────────
 # admin URL 경로 조각. 기본값 'pte' → /pe/admin-pte/ 로 항상 접속 가능.

@@ -391,6 +391,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `GET` | `/honey/version` | 버전 정보 JSON (`version.json` 반환). 호출을 'Honey 실행'으로 사용자별 집계 (`report_usage_daily`, 신원은 HoneyUser UA — 구버전 클라는 IP). **`?probe=1` 이면 집계를 건너뛴다** — 웹 페이지가 다운로드 버튼의 링크·파일명을 보정하려고 부르는 경우(실행이 아니다). `/pe` 랜딩이 이걸 쓰고, 응답 내용은 완전히 동일하다. UA 에 `HoneyVer/<버전>` 토큰이 있으면 **버전 대장**(`report_client_version`)도 함께 갱신한다 — 클라 버전이 바뀌는 시점이 곧 앱 시작이라 서버가 버전을 기록하는 지점은 여기 하나뿐이다 |
 | `GET` | `/honey/download` | Honey exe/ZIP 다운로드 |
 | `GET` | `/honey/announcement` | 릴리스 공지 원문 (`releases/announcement.txt` 그대로, text/plain). 클라가 최신 버전 실행 중일 때 PC 계정별 1회 팝업 → [docs/04](../docs/04_honey_update.md) |
+| `GET` | `/honey/client_notice` | **구버전 클라 사용자에게 웹에서 띄울 안내문 + 기준 버전** (JSON: `min_version`/`version`/`file`/`title`/`body`). 구버전 exe 는 고칠 수 없으므로 그 사람이 내장 브라우저로 서버 페이지를 열 때 안내한다 — 판정·표시는 `static/webreport/old_client_notice.js`(랜딩·검색결과 공유, 하루 1회). 본문은 `releases/old_client_notice.txt`(첫 줄=제목), 기준은 `version.json` 의 `min_version` 이며 **비어 있으면 기능이 꺼진다**. 집계하지 않는다 |
 
 ### 관리 대시보드 (`/pe/admin-<secret>/`, 기본 `/pe/admin-pte/`) — 인증 없음, 내부망 전용
 
@@ -559,7 +560,7 @@ server/
 ├── upload_xlsx.py            POST /upload_xlsx 핸들러
 ├── upload_webreport.py       POST /upload_webreport 핸들러 (web_report.ingest 호출)
 ├── xlsx_parser.py            시트 grid → 텍스트 추출 (_GridSheet 셸, openpyxl 미사용)
-├── honey_routes.py           /honey/version, /honey/download, /honey/announcement
+├── honey_routes.py           /honey/version, /honey/download, /honey/announcement, /honey/client_notice
 ├── admin_routes.py           [미등록 dead file — /pe/admin 구현, admin_panel 로 흡수됨]
 ├── report_cleanup.py         오래된 세션·감사로그 정리 (DRYRUN 기본)
 ├── db_backup.py              report.db 온라인 백업 사이클
