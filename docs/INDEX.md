@@ -72,6 +72,7 @@
 | 18 | **web_report 성능 회귀 가드** — 알려진 지뢰를 밟는 변경을 쓰기 전에 차단(Edit/Write 훅 자동) | Dev | [18_perf_guard.md](18_perf_guard.md) | [tools/perf_guard.py](../tools/perf_guard.py) |
 | 19 | **LLM 배선** — 붙이는 곳(server.env `EVAL_LLM_*` 5줄)과 나가는 곳(소비자 2개+미구현 훅 3개), 확인 명령 | Server | [19_llm_wiring.md](19_llm_wiring.md) | [tools/llm_check.py](../tools/llm_check.py) · [llm_client.py](../eval_analyzer/eval_engine/llm_client.py) |
 | 20 | **오류 추적 / 콜드 빌드 진단** — 상관 ID 한 개로 요청→빌드→오류를 잇는 사건 저장소, 300초 타임아웃의 마지막 단계·파일 보존, Honey 오프라인 큐 | Server + Client | [20_error_tracking.md](20_error_tracking.md) | [server/diagnostics.py](../server/diagnostics.py) · [web_report/build_log.py](../web_report/build_log.py) |
+| 21 | **Input File Information** (세션 상세 ℹ 모달) + **STDF 메타 요청 스펙** + 세션 이름 수정 라우트 | Client + Server | [21_input_file_info.md](21_input_file_info.md) | [web_report/service.py](../web_report/service.py) `input_info` |
 | — | **챗봇 구조 도식** (브라우저로 여는 단일 HTML) — 계층 5개·입력→출력 12단계·인텐트 13종·빈틈 목록·적용 개념(규칙/LLM/RAG/LangChain) | Server | [chatbot_architecture.html](chatbot_architecture.html) | [server/chatbot/](../server/chatbot/README.md) |
 
 > 서버 부팅: [server/wsgi.py](../server/wsgi.py) → [plugin.py](../server/plugin.py)
@@ -113,6 +114,8 @@
 | 검색결과 필터/목록 컬럼 | [02](02_server_query_edit.md) | `history()`, `get_history()` ([routes_misc.py](../server/report/routes_misc.py) / [sessions.py](../server/database/sessions.py)) |
 | 세션 상세에 데이터 추가 | [02](02_server_query_edit.md) | `session_full()` ([routes_session.py](../server/report/routes_session.py)) |
 | web_report comment/override 편집 | — | [web_report/edits.py](../web_report/edits.py) + [database/webreport_edits.py](../server/database/webreport_edits.py) (세션 편집 DB — manifest 불변) |
+| 세션 **이름만** 수정 (상단바 인라인) | [21](21_input_file_info.md) | `PATCH /session/<sid>/name` ([routes_session.py](../server/report/routes_session.py)) + [sessions.py](../server/database/sessions.py) `rename_session` — ⚠ `update_session_meta` 를 쓰면 기준정보 14컬럼이 날아간다 |
+| source 별 입력 파일·STDF 정보 보기 | [21](21_input_file_info.md) | `GET .../web_report/input_info` + [static/webreport/input_info.js](../server/report/static/webreport/input_info.js) |
 | 세션 메타(이름·Product·LOT·Process) 수정 | [02](02_server_query_edit.md) | `PATCH /session/<sid>/meta` ([routes_session.py](../server/report/routes_session.py)) + Honey `SessionMetaDialog` ([05](05_client_ui.md)) — 웹 ✏️ → 내장 브라우저 가드 브리지 |
 | 수정 모드 저장 동작 (구 xlsx) | [02](02_server_query_edit.md) | `update_session_content()` — 비활성(항상 405) |
 | DB 컬럼/테이블 추가 | [03](03_storage.md) | [database/core.py](../server/database/core.py) `SCHEMA`, `_migrate()` (report_db.py 는 facade) |

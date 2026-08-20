@@ -567,6 +567,79 @@ document.getElementById("btnMetaEdit").addEventListener("click", () => {
   try { HoneyHint.open(); } catch (e) {}
 });
 
+// ── 세션 이름 인라인 편집 (상단바 Session_name) ──────────────────────────────
+//
+// 나머지 메타(Product/LOT/Family/Process/STEP)는 여전히 Honey 편집창 전용이다 — 그것들은
+// 기준정보 재lookup·eval 전송 대상을 바꾼다. **이름만** 표시 전용이라 여기서 연다
+// (2026-08-20 요청: "검색결과에 있는 Session name 을 세션 안에서 고치게").
+//
+// renderMeta 가 상단바를 통째로 다시 그리므로 직접 바인딩 대신 document 위임을 쓴다 —
+// 다시 그려도 핸들러가 살아 있고, 로드 순서(tabs_topbar.js 가 먼저)와도 무관하다.
+let _snameEditing = false;
+
+function openSessionNameEdit() {
+  if (_snameEditing || !canEditSession()) return;
+  const span = document.getElementById("sessionNameVal");
+  if (!span) return;
+  _snameEditing = true;
+  const cur = ((DATA && DATA.session && DATA.session.file_name) || "").trim();
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "sname-input";
+  input.maxLength = 120;
+  input.value = cur;
+  input.title = "Enter 저장 / Esc 취소";
+  span.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;                       // Enter 저장 뒤 blur 가 한 번 더 들어온다
+    done = true;
+    _snameEditing = false;
+    const next = input.value.trim();
+    if (!save || !next || next === cur) {
+      renderMeta((DATA && DATA.session) || {});   // 원래 표시로 복구
+      if (save && !next) showToast("세션 이름을 입력하세요.");
+      return;
+    }
+    try {
+      const res = await fetch(`/pe/report/session/${SESSION_ID}/name`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+        body: JSON.stringify({ file_name: next }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+      // 서버가 정규화한 값(금지문자 제거·120자 절단)을 그대로 화면 진실로 삼는다.
+      if (DATA && DATA.session) DATA.session.file_name = j.file_name || next;
+      renderMeta((DATA && DATA.session) || {});
+      showToast("세션 이름을 저장했습니다.");
+    } catch (e) {
+      renderMeta((DATA && DATA.session) || {});
+      showToast(`세션 이름 저장 실패: ${e.message || e}`);
+    }
+  };
+
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
+document.addEventListener("click", e => {
+  if (e.target.closest("#sessionNameVal.sname-editable")) openSessionNameEdit();
+});
+document.addEventListener("keydown", e => {
+  if ((e.key === "Enter" || e.key === " ")
+      && e.target.id === "sessionNameVal" && e.target.classList.contains("sname-editable")) {
+    e.preventDefault();
+    openSessionNameEdit();
+  }
+});
+
 // 현재 값은 GET /session/<sid> 로 **다시 읽는다** — DATA.session 에는 STEP 이 없다
 // (webreport_options JSON 안에 있고, 그 라우트만 webreport_step 으로 풀어 준다).
 async function openMetaEdit() {

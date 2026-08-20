@@ -177,6 +177,21 @@ def update_session_meta(session_id, meta, product_info=None):
         conn.execute(f"UPDATE report_session SET {set_sql} WHERE session_id=?", params)
 
 
+def rename_session(session_id, file_name):
+    """세션 **표시 이름만** 갱신 (검색결과 목록의 이름 칸 = report_session.file_name).
+
+    ⚠️ 이름 하나 고치려고 ``update_session_meta`` 를 쓰면 안 된다 — 그쪽은 기준정보
+    14컬럼을 **항상** 덮어쓰므로(product_info 미지정이면 전부 NULL) Wafer Size/Gross Die
+    가 통째로 날아간다. ``update_session`` 도 안 된다(화이트리스트에 file_name 이 없고,
+    넓히면 다른 호출부가 실수로 메타를 덮는 경로가 생긴다 — 그 주석 참조).
+
+    이름은 표시 전용이라 analysis_key·산출물·기준정보와 무관하다.
+    """
+    with get_conn() as conn:
+        conn.execute("UPDATE report_session SET file_name=?, updated_at=? WHERE session_id=?",
+                     (file_name, _now(), session_id))
+
+
 def update_content_hash_for_analysis_key(analysis_key, content_hash):
     """같은 analysis_key 를 공유하는 모든 세션의 content_hash 를 일괄 갱신. 반환: 갱신 행 수.
 

@@ -483,6 +483,46 @@ def update_session_meta_route(session_id):
                     **meta})
 
 
+@report_bp.patch("/session/<session_id>/name")
+def update_session_name_route(session_id):
+    """세션 **이름만** 수정 — 세션 상세 상단바 인라인 편집 전용 (2026-08-20).
+
+    ``PATCH .../meta`` 와 갈라 둔 이유는 **위험이 다르기 때문**이다. 그쪽은
+    Product/LOT/Family 까지 바꾸고 그 여파로 기준정보 14컬럼 재lookup·eval 전송 대상이
+    달라져서 "수정은 Honey 편집창에서" 를 X-Honey-Agent 헤더로 강제한다. 반면 이름은
+    **표시 전용**이라 analysis_key·산출물·기준정보와 무관하므로, 검색결과에서 본 이름을
+    세션 안에서 그 자리에 고칠 수 있게 웹 브라우저에도 연다(사용자 요청).
+
+    권한은 종전과 같은 편집 권한자(업로더 + 위임 편집자 + master)이고, 브라우저
+    변경요청이므로 CSRF 를 요구한다.
+
+    무거운 report 캐시는 세션 이름을 키에 쓰지 않아 재계산이 없다. /full 응답 gzip 캐시만
+    extras digest 로 자연 무효화된다(response_cache 주석).
+    """
+    _require_csrf()
+    _validate_session_id(session_id)
+    session = report_db.get_session(session_id)
+    if not session:
+        abort(404, "session not found")
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+
+    body = request.get_json(force=True, silent=True) or {}
+    name = _clean_session_name(body.get("file_name"))
+    if not name:
+        return jsonify({"error": "세션 이름을 입력하세요."}), 400
+    before = session.get("file_name") or ""
+    if before == name:
+        # 같은 값이면 쓰지 않는다 — updated_at 만 흔들어 목록 정렬을 바꾸지 않기 위해서.
+        return jsonify({"ok": True, "session_id": session_id, "file_name": name,
+                        "changed": []})
+    report_db.rename_session(session_id, name)
+    _audit("edit", session=session, changed_fields=f"name:{before}→{name}"[:1500])
+    return jsonify({"ok": True, "session_id": session_id, "file_name": name,
+                    "changed": ["file_name"]})
+
+
 @report_bp.patch("/session/<session_id>/content")
 def update_session_content(session_id):
     """수정 모드 저장 라우트 — 기능 비활성화(2026-07-08 사용자 요청, 항상 405).

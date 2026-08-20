@@ -40,6 +40,7 @@ from .ingest import ingest_webreport  # noqa: F401  (외부 진입점 재노출 
 from .loader import load_tables as _load_tables
 from . import metrics
 from .metrics import build_report_payload
+from .tabs import compare as compare_tab
 from .tabs import raw_data as raw_data_tab
 from .validation import (
     canon as _canon,
@@ -1119,6 +1120,75 @@ def get_map_gzip(session_id: str, *, report_db, upload_root: Path,
                 build_status.end(session_id, "map")
         cache.map_cache_put(cache_key, blob)   # 개수+바이트 이중 상한 (cache.py)
     return blob
+
+
+def input_info(session_id: str, *, report_db, upload_root: Path) -> dict:
+    """세션 상세 ℹ(Input File Information) 모달 — source 별 입력 파일 정보.
+
+    **manifest 만 읽는다** — parquet 을 내려받거나 디코드하지 않으므로 대형 세션에서도
+    즉시 응답한다(manifest 는 MANIFEST_CACHE 에 있고 미스여도 작은 JSON 하나).
+
+    파일 정보(`file_path`/`file_size`/`file_created`/`stdf` …)는 Honey 가 업로드 때 실어
+    보내는 값이라 **그 기능이 붙기 전에 올라간 세션에는 없다** — 없는 키는 빈 값으로
+    내보내고 화면이 '-' 로 그린다(에러가 아니다).
+
+    Compare/Temperature 의 그룹·역할은 리포트 본문과 **같은 함수**로 정한다
+    (compare.resolve_group_names / metrics.temperature_roles) — 사본을 두면 모달이
+    리포트와 다른 배치를 보여준다.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+    manifest = cache.load_manifest_cached(analysis_key, upload_root)
+    entries = [e for e in (manifest.get("sources") or []) if isinstance(e, dict)]
+    names = [str(e.get("name") or f"source_{i + 1}") for i, e in enumerate(entries)]
+    opts_raw = session.get("webreport_options") or ""
+    mode = session.get("mode") or "Normal"
+
+    # group_index 는 화면 정렬용이다 — 그룹 안에서는 업로드 순서(= Compare 배치 창의 위→
+    # 아래, Temperature 의 RT→CT→HT)가 그대로 표시 순서라 안정 정렬 하나면 된다.
+    tags = {}
+    if mode == "Compare" and len(names) >= 2:
+        before, after = compare_tab.resolve_group_names(
+            names, _webreport_compare_groups(opts_raw, names))
+        tags.update({n: {"group": "Before", "group_index": 0} for n in before})
+        tags.update({n: {"group": "After", "group_index": 1} for n in after})
+    elif mode == "Temperature":
+        groups = (_webreport_temperature_groups(opts_raw, names) or {}).get("groups") or []
+        for name, (gi, _kind, corner) in metrics.temperature_roles(groups).items():
+            tags[name] = {"group": f"Group {gi + 1}", "group_index": gi, "role": corner}
+
+    sources = []
+    for idx, entry in enumerate(entries):
+        stdf = entry.get("stdf")
+        item = {
+            "index": idx,
+            "name": names[idx],
+            "group": "",
+            "group_index": -1,
+            "role": "",
+            "file_name": str(entry.get("file_name") or ""),
+            "file_path": str(entry.get("file_path") or ""),
+            "input_files": [str(p) for p in (entry.get("input_files") or []) if p],
+            "file_size": entry.get("file_size") if isinstance(
+                entry.get("file_size"), int) else None,
+            "file_created": str(entry.get("file_created") or ""),
+            "file_modified": str(entry.get("file_modified") or ""),
+            "stdf": stdf if isinstance(stdf, dict) else {},
+        }
+        item.update(tags.get(names[idx]) or {})
+        sources.append(item)
+    return {
+        "mode": mode,
+        "sources": sources,
+        # 파일 정보를 하나도 못 받은 세션(= Honey 가 안 보내던 시절)인지. 화면이 표를
+        # 비워 두는 대신 "왜 비었는지"를 안내하는 데 쓴다.
+        "has_file_info": any(s["file_path"] or s["file_size"] for s in sources),
+        "has_stdf": any(s["stdf"] for s in sources),
+    }
 
 
 def get_raw_data_columns(session_id: str, *, report_db, upload_root: Path) -> dict:

@@ -56,7 +56,7 @@ report_server/
 │   │   ├── report_extension.py  report_bp 정의 + DB init + web_report 저장 포트 주입
 │   │   ├── report_routes.py     라우트 집결자 — 구현은 security.py /
 │   │   │                        routes_session.py / routes_webreport.py / routes_misc.py
-│   │   ├── static/webreport/    세션 상세 JS 모듈 17개 (순서 로드, 전역 공유)
+│   │   ├── static/webreport/    세션 상세 JS 모듈 18개 (순서 로드, 전역 공유)
 │   │   ├── report_analysis_index.html  검색결과 페이지
 │   │   └── report_view.html     세션 상세 (마크업+CSS — JS 는 static/webreport/)
 │   ├── storage_gateway/         S3 산출물 저장 단일 진입점 (외부 담당자·동결 — facade+_s3 전체, 진입점 계약 유지)
@@ -501,6 +501,8 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
 | eval 룰 관리 (/pe/eval) — threshold/signature 제품군별 편집·트레이스 | [server/eval_panel/](server/eval_panel/) + [web_report/eval_debug.py](web_report/eval_debug.py) → [docs/13 §11](docs/13_eval_analyzer_integration.md) |
 | eval 표본 검수 → 승인형 룰 튜닝 (발화 전수 검토 대신 룰당 8건) | [server/eval_panel/review.py](server/eval_panel/review.py) · 수집 [web_report/eval_export.py](web_report/eval_export.py) `collect_session_snapshot` → [docs/13 §14](docs/13_eval_analyzer_integration.md) |
 | **"룰을 고쳤는데 나아졌나" — eval 정확도·커버리지 추이** | 집계 [server/database/eval_stats.py](server/database/eval_stats.py)(cleanup 24h 편승, 덮어쓰기 UPSERT) · 저장 `report_eval_daily` · 화면 `/pe/eval` 채점 탭 추이 카드 · 라우트 `GET /pe/eval/api/eval/trend` → [docs/17](docs/17_eval_learning_loop.md) |
+| **Input File 정보 (세션 상세 ℹ) / STDF 메타 요청 스펙** | [docs/21](docs/21_input_file_info.md) — 서버 [service.py](web_report/service.py) `input_info`(manifest 만 읽음) · 화면 [input_info.js](server/report/static/webreport/input_info.js) · 클라 수집 [source_name_dialog.py](client/honey_ui/source_name_dialog.py) `source_file_info` |
+| 세션 **이름만** 수정 (상단바 인라인 편집) | `PATCH /session/<sid>/name` ([routes_session.py](server/report/routes_session.py)) + [sessions.py](server/database/sessions.py) `rename_session` → [docs/21 §5](docs/21_input_file_info.md). ⚠ `update_session_meta` 는 기준정보 14컬럼을 항상 덮는다 |
 | 감사 기록 헬퍼 | [server/database/report_db.py](server/database/report_db.py) `log_audit` / `get_audit_logs` |
 | **오류 추적 — "에러가 났는데 어디를 보나"** | 사건 저장소 [server/diagnostics.py](server/diagnostics.py) · 화면 [admin_panel/diagnostics_admin.py](server/admin_panel/diagnostics_admin.py) (`🚨 진단 사건` 탭) · 500/503 발급 [server/ops.py](server/ops.py) · 클라 수집 [routes_misc.py](server/report/routes_misc.py) `client_error`/`client_diagnostic` + [error_beacon.js](server/report/static/webreport/error_beacon.js) + [client/transport/error_report.py](client/transport/error_report.py) → [docs/20](docs/20_error_tracking.md) |
 | **콜드 빌드가 300초 걸렸다 — 어디서 멎었나** | 실행 중 체크포인트 [web_report/build_log.py](web_report/build_log.py) `stage/checkpoint/read_states` + 회수 [compute.py](web_report/compute.py) `_dead_worker_state` → 실패 레코드의 `last_stage`/`last_source` → [docs/20](docs/20_error_tracking.md) |

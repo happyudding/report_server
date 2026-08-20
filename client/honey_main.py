@@ -2740,6 +2740,8 @@ class HoneyMainWindow(QMainWindow):
 
     def _build_webreport_parquets(self, work_group, order=None, temperature=None,
                                   cache=None):
+        from honey_ui.source_name_dialog import source_file_info
+
         items = []
         sources = []
         # 중복 항목명 자동 개명 내역 — 워커 스레드에서 도는 함수라 여기서 다이얼로그를 띄우면
@@ -2794,6 +2796,10 @@ class HoneyMainWindow(QMainWindow):
                 "index": idx,
                 "name": name,
                 "file_name": file_name,
+                # 세션 상세 ℹ(Input File Information) 모달이 쓰는 입력 파일 정보.
+                # 조회 규칙은 source_name_dialog 한 곳에 모여 있고(동결 영역 안전 조회),
+                # 모르는 항목은 키 자체가 없다 — 서버/화면은 없는 키를 '-' 로 그린다.
+                **source_file_info(md),
             })
         return sources, items
 

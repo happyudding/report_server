@@ -99,6 +99,15 @@ body {
   font-size: 12px; color: #444; max-width: 480px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 세션 이름 인라인 편집 — 고칠 수 있는 자리임을 점선 밑줄로만 알린다(상단바가 이미 빽빽해
+   버튼을 더 넣을 자리가 없다). 실제 편집은 edit_mode.js 가 input 으로 교체해서 한다. */
+.sname-editable { border-bottom: 1px dashed #b7c0cc; cursor: pointer; }
+.sname-editable:hover { border-bottom-color: #4a90e2; color: #4a90e2; }
+.sname-input {
+  font-size: 12px; font-family: inherit; padding: 2px 6px; min-width: 220px;
+  border: 1px solid #4a90e2; border-radius: 4px; background: #fff; color: #222;
+  outline: none; box-shadow: 0 0 0 2px rgba(74,144,226,.18);
+}
 .pt-badge {
   display: inline-block; padding: 3px 11px; border-radius: 4px;
   font-size: 12px; font-weight: 700; color: #fff;
@@ -2021,6 +2030,42 @@ html[data-theme="dark"] .meta-form select { background: #262a33; border-color: #
 /* 미저장 변경사항이 있을 때(= _dirty) 눈에 띄게 강조 */
 .btn-topbar-save.dirty { border-color: #f59e0b; background: #fffbeb; box-shadow: 0 0 0 2px rgba(245,158,11,.25); }
 
+/* ── Input File Information (ℹ 버튼 + 가로로 넓은 모달) ─────────────────────── */
+.btn-topbar-info {
+  padding: 5px 10px; border-radius: 8px; border: 1px solid #d8dee6;
+  background: #fff; cursor: pointer; font-size: 13px; line-height: 1;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05); transition: all .15s ease;
+}
+.btn-topbar-info:hover {
+  background: #f0f6ff; box-shadow: 0 2px 6px rgba(0,0,0,.08); transform: translateY(-1px);
+}
+/* 정보 열이 10개를 넘어 일반 모달(440px)로는 못 담는다 — 화면 폭을 거의 다 쓰고
+   넘치는 만큼만 표 안에서 가로 스크롤한다(페이지 본문은 절대 가로로 밀리지 않는다). */
+.modal-box-input-info {
+  width: min(1560px, 96vw); max-width: 96vw; text-align: left;
+}
+.iinfo-scroll { overflow-x: auto; max-height: calc(var(--vph) * 0.62); overflow-y: auto; }
+.iinfo-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.iinfo-table th, .iinfo-table td {
+  border: 1px solid #e5e7eb; padding: 5px 9px; text-align: left; white-space: nowrap;
+}
+.iinfo-table th {
+  background: #f8fafc; font-weight: 600; position: sticky; top: 0; z-index: 2;
+}
+.iinfo-table tbody tr:nth-child(even) td { background: #fcfdff; }
+.iinfo-table td.iinfo-num { text-align: right; font-variant-numeric: tabular-nums; }
+.iinfo-table td.iinfo-none { color: #9aa3ad; }
+/* 경로는 길어서 잘리는 게 정상 — 전체는 title 툴팁이 책임진다(표 폭 보호). */
+.iinfo-table td.iinfo-path { max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+.iinfo-grouprow td {
+  background: #eef2f7 !important; font-weight: 700; color: #334155; letter-spacing: .02em;
+}
+.iinfo-note {
+  margin: 0 0 10px; padding: 8px 11px; border-radius: 8px; font-size: 12px; line-height: 1.55;
+  background: #fffbeb; border: 1px solid #f0c869; color: #7c5a12;
+}
+.iinfo-sub { font-size: 11px; color: #8a95a3; font-weight: 400; }
+
 /* ── Rawdata CSV 다운로드 (source 선택 메뉴) ───────────────────────────────── */
 .rawdl-wrap { position: relative; display: inline-flex; }
 .btn-topbar-rawdl {
@@ -2163,6 +2208,12 @@ html[data-theme="dark"] .back-btn:hover { background: #2b3442; border-color: #4a
 html[data-theme="dark"] .meta-inline { background: #262a33; color: #c6ccd6; }
 html[data-theme="dark"] .meta-inline .mk { color: #8b94a3; }
 html[data-theme="dark"] .meta-inline-file { color: #c6ccd6; }
+html[data-theme="dark"] .sname-editable { border-bottom-color: #4a5160; }
+html[data-theme="dark"] .sname-editable:hover { border-bottom-color: #7fb3ef; color: #7fb3ef; }
+html[data-theme="dark"] .sname-input {
+  background: #1e2128; color: #d7dbe2; border-color: #33507a;
+  box-shadow: 0 0 0 2px rgba(51,80,122,.35);
+}
 html[data-theme="dark"] .tabs { background: #1e2128; border-bottom-color: #2a2e37; }
 html[data-theme="dark"] .tab { background: #22262e; border-color: #2f3540; color: #8b94a3; }
 html[data-theme="dark"] .tab:hover { background: #262c38; border-color: #33507a; color: #7fb3ef; }
@@ -2185,6 +2236,15 @@ html[data-theme="dark"] .btn-topbar-save:hover { background: #243044; }
 html[data-theme="dark"] .btn-topbar-save.dirty { border-color: #d9a441; background: #38301b; }
 html[data-theme="dark"] .btn-topbar-rawdl { background: #262a33; border-color: #3a3f4b; }
 html[data-theme="dark"] .btn-topbar-rawdl:hover { background: #243044; }
+html[data-theme="dark"] .btn-topbar-info { background: #262a33; border-color: #3a3f4b; }
+html[data-theme="dark"] .btn-topbar-info:hover { background: #243044; }
+html[data-theme="dark"] .iinfo-table th { background: #23262e; color: #d7dbe2; }
+html[data-theme="dark"] .iinfo-table th,
+html[data-theme="dark"] .iinfo-table td { border-color: #33373f; }
+html[data-theme="dark"] .iinfo-table tbody tr:nth-child(even) td { background: #1b1e24; }
+html[data-theme="dark"] .iinfo-grouprow td { background: #2b313b !important; color: #c7d2e0; }
+html[data-theme="dark"] .iinfo-note { background: #38301b; border-color: #6e5326; color: #e8c96a; }
+html[data-theme="dark"] .iinfo-table td.iinfo-none { color: #6b7280; }
 html[data-theme="dark"] .rawdl-menu { background: #1b1e24; border-color: #3a3f4b; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
 html[data-theme="dark"] .rawdl-menu-title { color: #8b93a1; }
 html[data-theme="dark"] .rawdl-item { color: #d5d9e0; }
@@ -2632,6 +2692,8 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
       <span class="meta-inline">로드 중...</span>
     </div>
     <div class="topbar-actions" id="topbarActions">
+      <!-- Input File 정보도 Rawdata 다운로드와 같은 조회 기능(권한 게이트 없음) -->
+      <button class="btn-topbar-info" id="btnInputInfo" title="Input File Information — source 별 입력 파일·STDF 정보">ℹ</button>
       <!-- Rawdata 다운로드는 조회 기능이라 읽기 전용 사용자에게도 보인다(권한 게이트 없음) -->
       <span class="rawdl-wrap">
         <button class="btn-topbar-rawdl" id="btnRawdataDl" title="Rawdata 원본 다운로드 (source별 CSV / 전체 zip)">⬇</button>
@@ -2824,6 +2886,20 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
   </div>
 </div>
 
+<!-- Input File Information — source 별 입력 파일·STDF 헤더. 값이 하나도 없는 열은
+     input_info.js 가 통째로 숨기므로(빈 칸 나열 방지) 여기는 껍데기만 둔다. -->
+<div class="modal-overlay" id="inputInfoModal">
+  <div class="modal-box modal-box-input-info">
+    <p class="modal-title">Input File Information</p>
+    <p class="modal-desc" id="iinfoDesc">이 세션을 만든 입력 파일 정보입니다.</p>
+    <div id="iinfoNote"></div>
+    <div class="iinfo-scroll"><div id="iinfoBody"></div></div>
+    <div class="modal-actions">
+      <button class="modal-btn primary" id="iinfoClose">닫기</button>
+    </div>
+  </div>
+</div>
+
 <script src="/pe/report/static/webreport/error_beacon.js"></script>
 <script src="/pe/report/static/webreport/honey_hint.js"></script>
 <script src="/pe/report/static/webreport/user_name.js"></script>
@@ -2847,6 +2923,7 @@ html[data-theme="dark"] .note-size.warn { color: #f87171; }
 <script src="/pe/report/static/webreport/chart_notes.js"></script>
 <script src="/pe/report/static/webreport/note.js"></script>
 <script src="/pe/report/static/webreport/edit_mode.js"></script>
+<script src="/pe/report/static/webreport/input_info.js"></script>
 <script src="/pe/report/static/webreport/leave_guard.js"></script>
 <!-- 챗봇은 독립 위젯(자체 DOM 주입) — 순서 결합이 없어 boot.js 직전에 둔다.
      실제 노출은 core.js loadAuth() 가 is_master 를 확인한 뒤 enable() 로 켠다. -->

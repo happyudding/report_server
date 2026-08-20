@@ -86,6 +86,27 @@ def web_report_build_status(session_id):
     return jsonify(status)
 
 
+@report_bp.get("/session/<session_id>/web_report/input_info")
+def web_report_input_info(session_id):
+    """세션 상세 ℹ 모달 — source 별 입력 파일 정보 (manifest 만 읽어 즉시 응답).
+
+    조회 기능이라 읽기 전용 사용자에게도 열려 있다(비공개 세션 차단은
+    `_require_web_report_session` 안의 `_private_guard` 가 이미 한다).
+    """
+    _require_web_report_session(session_id)
+    try:
+        result = web_report_service.input_info(
+            session_id, report_db=report_db, upload_root=Path(REPORT_UPLOAD_DIR))
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
+        abort(404, "web_report session data not found")
+    except Exception:
+        _log.exception("web_report input_info failed for session %s", session_id)
+        abort(500, "input_info failed")
+    return jsonify(result)
+
+
 @report_bp.get("/session/<session_id>/web_report/raw_data/columns")
 def web_report_raw_data_columns(session_id):
     """Raw Data 탭 컬럼 선택 UI용: item 메타 + source 목록 + 전체 die 수."""

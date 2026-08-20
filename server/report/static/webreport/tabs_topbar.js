@@ -82,7 +82,13 @@ function renderMeta(session) {
     // Session_name = report_session.file_name — 메인 검색결과 목록의 파일명 칸과 같은 값이고
     // ✏️(Honey 편집창)에서 바꾸는 대상. 오른쪽 Filename(manifest 의 원본 소스 파일명)과는
     // 별개 값이라 서로 덮어쓰지 않는다.
-    `<span class="meta-inline" title="세션 이름 (검색결과 목록에 표시)"><span class="mk">Session_name</span>${esc(session.file_name || "-")}</span>`,
+    // 편집 권한자는 **이 자리를 클릭해 바로** 이름을 고친다(edit_mode.js sessionNameEdit) —
+    // 이름은 표시 전용이라 나머지 메타(Honey 편집창 전용)와 달리 웹에서도 열려 있다.
+    `<span class="meta-inline" title="${canEditSession()
+        ? "세션 이름 (검색결과 목록에 표시) — 클릭해서 수정"
+        : "세션 이름 (검색결과 목록에 표시)"}"><span class="mk">Session_name</span>` +
+      `<span id="sessionNameVal"${canEditSession() ? ' class="sname-editable" role="button" tabindex="0"' : ""}>` +
+      `${esc(session.file_name || "-")}</span></span>`,
     `<span class="meta-inline-file" title="${esc(fnameTitle)}"><span class="mk">Filename</span>${esc(fname)}</span>`,
     // 업로더는 '이름(ID)' 로 — 이름은 my_access 가 실어준다(UPLOADER_NAME, core.js).
     `<span class="meta-inline" title="${esc(session.client_host || "")}"><span class="mk">Uploader</span>${esc(UserName.fmt(UserName.uid(session.uploaded_by), UPLOADER_NAME) || "-")}</span>`,

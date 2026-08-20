@@ -318,6 +318,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `POST` | `/session/<sid>/important` | Honey | 개인 중요표시 토글 |
 | `POST` | `/session/<sid>/private` | 업로더 | 비공개 토글 |
 | `PATCH` | `/session/<sid>/meta` | 편집자 + Honey(또는 master) | 세션 메타 수정 — `{file_name, family_product, product, lot_id, process, step}`. **`X-Honey-Agent: 1` 필수**(= Honey 앱 전용 강제, CSRF 대체) — **예외: master(admin 로그인 4h)는 웹 브라우저에서도 수정 가능하며, 헤더가 없는 만큼 CSRF 를 요구한다**(둘 중 하나는 반드시 통과). product 변경 시 product_info.db 재lookup(미등록이면 기준정보 14컬럼 비움). product_type·analysis_key 는 불변 |
+| `PATCH` | `/session/<sid>/name` | 편집자 | 세션 **이름만** 수정 — `{file_name}`. CSRF 필요, `X-Honey-Agent` 는 **불필요**(세션 상세 상단바 인라인 편집, 2026-08-20). 이름은 표시 전용이라 `analysis_key`·산출물·기준정보와 무관하므로 웹 브라우저에도 열려 있다. 기준정보 14컬럼은 손대지 않는다(`rename_session`) — 나머지 메타는 위 `/meta`(Honey 전용) 그대로 |
 | `GET` | `/honey/session_meta/<sid>` | 공개 | 위 편집창의 **진입 URL** — Honey 내장 브라우저가 네비게이션을 가로채 편집창을 띄우므로 실제로는 요청되지 않는다. 가드 없는 환경용 안내 HTML |
 | `POST` | `/session/<sid>/verify_password` | Honey | **하위호환 스텁** — UA 업로더 확인만, 항상 `has_password:false`. 세션 PIN 자체가 2026-08-14 폐지(평문 저장 중단·기존 값 NULL, 관리자 `POST /api/session/<sid>/password` 는 410) |
 | `PATCH` | `/session/<sid>/content` | — | **비활성, 항상 405** (구 xlsx 텍스트 수정 폐기) |
@@ -333,6 +334,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 
 | 메서드 | 경로 | 접근 | 설명 |
 |--------|------|------|------|
+| `GET` | `/input_info` | 공개 | **Input File Information** — source 별 입력 파일(파일명·경로·크기·생성/수정 시각)과 STDF 헤더(LOT ID·Wafer No·Test 시각·Test Time). manifest 만 읽어 즉시 응답(parquet 디코드 없음). Compare/Temperature 는 `group`/`group_index`/`role` 태그를 함께 준다 — 배치 규칙은 리포트 본문과 **같은 함수** (`compare.resolve_group_names` / `metrics.temperature_roles`). 파일 정보가 없는 옛 세션은 `has_file_info:false` 로 200 (에러 아님) → [docs/21](../docs/21_input_file_info.md) |
 | `GET` | `/raw_data/columns`, `/raw_data` | 공개 | Raw Data 컬럼 UI / 조회 |
 | `POST` | `/raw_data/edit` | 편집자 | Raw Data 셀 편집 (parquet 재인코딩) |
 | `GET` | `/distribution` | 공개 | Distribution ECDF **전량** (컴팩트 gzip, 전 포인트). 클라 프리컴퓨트 시딩·하위호환 폴백용 — 프런트는 아래 배치를 쓴다 |

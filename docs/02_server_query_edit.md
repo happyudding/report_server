@@ -127,6 +127,27 @@ trim → 소문자*. `SECDS\Chumji.Kim`·`Chumji.Kim`·`chumji.kim` 은 한 사�
 - `/full` 응답 캐시는 키의 `extras_digest` 에 세션 행이 통째로 들어가 **자동 무효화**된다.
 - 계약 테스트: [tests/test_session_meta.py](../tests/test_session_meta.py).
 
+### 세션 이름만 수정 — `PATCH /session/<sid>/name` (상단바 인라인, 2026-08-20)
+상단바 `Session_name` 을 **클릭하면 그 자리가 입력란으로 바뀐다**(Enter 저장 / Esc 취소).
+편집 권한자에게만 그 자리가 열린다(`renderMeta` 가 `.sname-editable` 을 붙이는 조건 =
+`canEditSession()`), 실제 판정은 서버 `_editor_guard` 다.
+
+위 메타 라우트와 **갈라 둔 이유는 위험이 다르기 때문**이다 — 이름은 표시 전용이라
+`analysis_key`·산출물·기준정보 어디에도 쓰이지 않으므로 `X-Honey-Agent` 를 요구하지 않고
+**웹 브라우저에서도** 고칠 수 있다(브라우저 변경요청이므로 CSRF 는 요구한다). 반면
+Product/LOT/Family 는 기준정보 재lookup·eval 전송 대상을 함께 움직여 종전대로 Honey 전용이다.
+
+- ⚠️ 저장은 `report_db.rename_session` 을 쓴다. `update_session_meta` 를 쓰면 기준정보
+  14컬럼을 **항상** 덮어써(product_info 미지정이면 전부 NULL) 이름만 고치려다 WF Size/
+  Gross Die 가 날아간다. `update_session` 화이트리스트 확장도 금지(그 주석 참조).
+- 같은 이름이면 **쓰지 않는다**(`changed:[]`) — `updated_at` 만 흔들어 목록 정렬을 바꾸지
+  않기 위해서다.
+- 무거운 report payload 캐시는 이름을 키에 쓰지 않아 재계산이 없다. `/full` gzip 캐시만
+  extras digest 로 자연 무효화된다.
+- 계약 테스트: [tests/test_session_meta.py](../tests/test_session_meta.py) (j)~(n) ·
+  화면 게이트 [tests/test_input_info_js.py](../tests/test_input_info_js.py) (g).
+  전체 설명 → [21](21_input_file_info.md) §5.
+
 ### 수정 저장 — `update_session_content()` (비활성, 항상 405)
 구 xlsx 텍스트 수정 기능은 차단됐다. report_view.html 이 아직 이 경로를 호출하므로 405
 스텁으로만 유지. 재활성화 시 git 히스토리 참조.

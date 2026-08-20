@@ -210,4 +210,61 @@ r = client.get("/pe/report/api/family_products")
 assert set(r.get_json()["taxonomy"]) >= {"MDDI", "PDDI", "PMIC", "SECURITY", "TCON"}, \
     r.get_json()["taxonomy"]
 
-print("OK - session meta 수정 계약 통과")
+
+# ── (j)~(n) 이름 전용 라우트 PATCH /session/<sid>/name ────────────────────────
+# 세션 상세 상단바 인라인 편집(2026-08-20). meta 라우트와 갈라 둔 이유는 위험이 다르기
+# 때문이다 — 이름은 표시 전용이라 기준정보·analysis_key 와 무관해서 웹에도 연다.
+_reset_session()
+nclient = app.test_client()
+nclient.get(f"/pe/report/session/{SID}", headers={"User-Agent": f"Mozilla/5.0 HoneyUser/{USER}"})
+_ncsrf = nclient.get_cookie("report_csrf")
+assert _ncsrf is not None, "CSRF 쿠키가 발급되지 않음"
+
+
+def _patch_name(name, user=USER, csrf=True):
+    h = {"User-Agent": f"Mozilla/5.0 HoneyUser/{user}"} if user else {}
+    if csrf:
+        h["X-CSRF-Token"] = _ncsrf.value
+    return nclient.patch(f"/pe/report/session/{SID}/name", json={"file_name": name}, headers=h)
+
+
+# (j) CSRF 없으면 거부 — 브라우저 변경요청의 표준 방어.
+r = _patch_name("새 이름", csrf=False)
+assert r.status_code == 403, ("CSRF 없이 통과", r.status_code)
+assert report_db.get_session(SID)["file_name"] == "old_name"
+
+# (m) 신원 없음 401 / 남의 세션 403 — meta 와 같은 _editor_guard.
+assert _patch_name("새 이름", user="").status_code == 401, "신원 없이 통과"
+assert _patch_name("새 이름", user=OTHER).status_code == 403, "남의 세션 이름 수정 통과"
+
+# (l) 빈 이름 400 / 경로·금지문자 제거.
+assert _patch_name("   ").status_code == 400, "빈 이름 통과"
+r = _patch_name(r'x/y\z:w*v?u"t<s>r|q')
+assert r.status_code == 200, (r.status_code, r.data[:300])
+assert report_db.get_session(SID)["file_name"] == "xyzwvutsrq",     report_db.get_session(SID)["file_name"]
+
+# (j) 정상 수정 — X-Honey-Agent 헤더는 **필요 없다**(meta 라우트와 다른 점).
+r = _patch_name("7월 재측정 최종")
+assert r.status_code == 200, (r.status_code, r.data[:300])
+body = r.get_json()
+assert body["changed"] == ["file_name"] and body["file_name"] == "7월 재측정 최종", body
+
+s = report_db.get_session(SID)
+assert s["file_name"] == "7월 재측정 최종", s["file_name"]
+# (k) ⚠️ 기준정보 14컬럼 보존 — update_session_meta 를 썼다면 여기서 전부 NULL 이 된다.
+assert (s["wf_size"], s["gross_die"], s["pkg_type"]) == ("8inch", "999", "OLDPKG"), dict(s)
+assert (s["product"], s["lot_id"], s["family_product"]) == ("OLD1", "LOT-OLD", "MX"), dict(s)
+assert s["analysis_key"] == AKEY, "analysis_key 는 손대지 않는다"
+
+# (n) 같은 이름이면 쓰지 않는다 — updated_at 만 흔들어 목록 정렬을 바꾸지 않기 위해.
+before_updated = report_db.get_session(SID)["updated_at"]
+r = _patch_name("7월 재측정 최종")
+assert r.status_code == 200 and r.get_json()["changed"] == [], r.get_json()
+assert report_db.get_session(SID)["updated_at"] == before_updated, "no-op 인데 updated_at 이 바뀌었다"
+
+# 감사로그에 name 편집 1행.
+nlogs = [x for x in report_db.get_audit_logs(limit=50)
+         if x["session_id"] == SID and str(x["changed_fields"] or "").startswith("name:")]
+assert nlogs and all(x["action"] == "edit" for x in nlogs), "감사로그에 name 편집 기록이 없다"
+
+print("OK - session meta + name 수정 계약 통과")

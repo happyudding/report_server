@@ -18,6 +18,28 @@ from .tabs.yield_tab import (build_yield_bin_groups, build_yield_rows,
                              yield_basis_payload, yield_overview)
 
 
+def temperature_roles(groups):
+    """Temperature 그룹 정의 → ``{source 이름: (그룹 index, "rt"|"member", "RT"|"CT"|"HT")}``.
+
+    **member_roles 가 없는 옛 세션의 폴백(members 순서로 CT→HT) 정본은 여기 한 곳이다.**
+    payload 태깅(`_temperature_context`)과 Input File Information 모달(service.input_info)이
+    같은 함수를 쓴다 — 사본이 생기면 같은 source 의 역할이 화면마다 달라진다.
+
+    perf-guard: allow S01-report-schema — 순수 추출이다. `_temperature_context` 가 이
+    함수를 부르도록 바꿨을 뿐 계산·payload 구조·값이 전부 그대로라 캐시 세대를 올릴
+    이유가 없다(bump 는 전 세션 콜드 폭풍을 부른다 — 2026-08-06).
+    """
+    role_of = {}
+    for gi, group in enumerate(groups or []):
+        role_of[group["rt"]] = (gi, "rt", "RT")
+        members = list(group.get("members") or [])
+        roles = list(group.get("member_roles") or [])
+        for mi, name in enumerate(members):
+            corner = roles[mi] if mi < len(roles) else ("CT" if mi == 0 else "HT")
+            role_of[name] = (gi, "member", corner)
+    return role_of
+
+
 def _temperature_context(tables, sources, mode, temperature_groups):
     """Temperature 모드 분기 한 곳 — (groups, CT/HT 이름 집합, Yield 계열 입력 테이블).
 
@@ -35,15 +57,8 @@ def _temperature_context(tables, sources, mode, temperature_groups):
     if not groups:
         return None, set(), tables
 
-    role_of, member_names = {}, set()
-    for gi, group in enumerate(groups):
-        role_of[group["rt"]] = (gi, "rt", "RT")
-        members = list(group.get("members") or [])
-        roles = list(group.get("member_roles") or [])
-        for mi, name in enumerate(members):
-            corner = roles[mi] if mi < len(roles) else ("CT" if mi == 0 else "HT")
-            role_of[name] = (gi, "member", corner)
-            member_names.add(name)
+    role_of = temperature_roles(groups)
+    member_names = {name for name, role in role_of.items() if role[1] == "member"}
     for entry in sources:
         role = role_of.get(entry["name"])
         if role:

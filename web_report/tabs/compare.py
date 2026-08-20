@@ -594,6 +594,28 @@ def build_dist_shift(tables, cpk_rows) -> dict:
 
 # ── Before/After 그룹 ────────────────────────────────────────────────────────
 
+def resolve_group_names(source_names, compare_groups):
+    """source 이름 목록 → (before 이름들, after 이름들). 폴백 포함 **배치 규칙의 정본**.
+
+    ``resolve_groups``(tables 필요)와 Input File Information 모달(service.input_info —
+    tables 를 디코드하지 않는다)이 같은 규칙을 써야 하므로 이름만 다루는 층을 분리했다.
+    사본을 만들면 모달이 리포트와 다른 그룹을 보여준다.
+
+    perf-guard: allow S01-report-schema — 순수 추출이다. `resolve_groups` 가 돌려주는
+    (before, after) 는 이전과 같은 테이블·같은 순서라 compare payload 구조·값이 불변이다.
+    """
+    names = list(source_names)
+    known = set(names)
+    before, after = [], []
+    if isinstance(compare_groups, dict):
+        before = [n for n in (compare_groups.get("before") or []) if n in known]
+        after = [n for n in (compare_groups.get("after") or []) if n in known]
+    if not before or not after:
+        # legacy(옵션 없음) 세션의 종전 관례 — 업로드 순서 [After, Before].
+        after, before = names[:1], names[1:2]
+    return before, after
+
+
 def resolve_groups(tables, compare_groups):
     """세션 옵션의 그룹(source 이름) → (before_tables, after_tables).
 
@@ -603,13 +625,8 @@ def resolve_groups(tables, compare_groups):
     (after=tables[0], before=tables[1]) — 기존 Compare 세션의 화면이 바뀌지 않는다.
     """
     by_name = {t.source: t for t in tables}
-    before, after = [], []
-    if isinstance(compare_groups, dict):
-        before = [by_name[n] for n in (compare_groups.get("before") or []) if n in by_name]
-        after = [by_name[n] for n in (compare_groups.get("after") or []) if n in by_name]
-    if not before or not after:
-        after, before = [tables[0]], [tables[1]]
-    return before, after
+    before_names, after_names = resolve_group_names([t.source for t in tables], compare_groups)
+    return [by_name[n] for n in before_names], [by_name[n] for n in after_names]
 
 
 def _pool_tables(group, label):

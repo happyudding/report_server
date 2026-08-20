@@ -40,6 +40,7 @@ from .sessions import (  # noqa: F401
     get_session_by_dataset_id,
     get_session_path_by_analysis_key,
     get_trashed_sessions,
+    rename_session,
     restore_session,
     session_ids_for_analysis_key,
     trash_session,

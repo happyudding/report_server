@@ -156,6 +156,144 @@ def source_display_path(md, fallback: str = "") -> str:
     return fallback
 
 
+# ── Input File Information (세션 상세 ℹ 모달용 manifest 메타) ────────────────────
+#
+# 아래 3함수는 ``source_display_path`` 와 같은 철학이다 — **조회를 여기 한 곳에 모아**
+# 외부 담당자(honey_parse/report_generator)가 필드를 채우면 UI/업로드 코드를 손대지 않고
+# 값이 흐르게 한다. 동결 영역이라 전부 getattr 안전 조회이고, 없으면 키를 만들지 않는다
+# (빈 문자열을 넣으면 서버가 "값이 있는데 비었다"와 구분하지 못한다).
+
+#: STDF 헤더 메타 정규 키 → 파서가 쓸 법한 속성/딕트 키 후보.
+#: **이 표가 외부 담당자 요청 스펙의 정본**이다 → docs/21_input_file_info.md
+_STDF_FIELDS = {
+    "lot_id":       ("lot_id", "lotid", "LOT_ID"),
+    "sublot_id":    ("sublot_id", "sblot_id", "SBLOT_ID"),
+    "wafer_id":     ("wafer_id", "waferid", "wafer_no", "WAFER_ID"),
+    "part_type":    ("part_type", "part_typ", "PART_TYP"),
+    "job_name":     ("job_name", "job_nam", "JOB_NAM"),
+    "node_name":    ("node_name", "node_nam", "NODE_NAM"),
+    "tester_type":  ("tester_type", "tstr_typ", "TSTR_TYP"),
+    "oper_name":    ("oper_name", "oper_nam", "OPER_NAM"),
+    "setup_time":   ("setup_time", "setup_t", "SETUP_T"),
+    "start_time":   ("start_time", "start_t", "START_T"),
+    "finish_time":  ("finish_time", "finish_t", "FINISH_T"),
+    "test_time_sec": ("test_time_sec", "test_time", "elapsed_sec"),
+    "part_count":   ("part_count", "part_cnt", "PART_CNT"),
+    "good_count":   ("good_count", "good_cnt", "GOOD_CNT"),
+}
+#: epoch 초로 와도 되는 키 — 사람이 읽을 ISO8601 로 정규화한다.
+_STDF_TIME_KEYS = ("setup_time", "start_time", "finish_time")
+
+
+def _iso_time(value):
+    """epoch 초(int/float) 또는 이미 문자열인 시각 → 'YYYY-MM-DD HH:MM:SS'. 실패 시 원문."""
+    import datetime
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.datetime.fromtimestamp(float(value)).strftime("%Y-%m-%d %H:%M:%S")
+        except (OSError, OverflowError, ValueError):
+            return str(value)
+    if isinstance(value, datetime.datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value).strip()
+
+
+def source_input_paths(md) -> list:
+    """이 source 를 만든 **입력 파일 전부**의 절대경로. 병합 정보가 없으면 대표 1개.
+
+    MDDI 처럼 입력 n개가 1 source 로 병합되는 경우를 위해 목록을 먼저 본다. 지금 저장소는
+    파일 1개당 파싱 1회라 대부분 길이 1 이다.
+    """
+    rm = getattr(md, "report_meta", None)
+    for attr in ("source_paths", "input_paths", "file_paths"):
+        try:
+            seq = getattr(rm, attr, None) or getattr(md, attr, None)
+        except Exception:                                  # noqa: BLE001
+            seq = None
+        if not seq:
+            continue
+        try:
+            paths = [str(getattr(item, "path", item)).strip() for item in seq]
+        except Exception:                                  # noqa: BLE001
+            continue
+        paths = [p for p in paths if p]
+        if paths:
+            return paths
+    primary = source_display_path(md, "")
+    return [primary] if primary else []
+
+
+def source_stdf_meta(md) -> dict:
+    """STDF 헤더 메타(LotID·Wafer No·Test 시각 등). **현재 파서는 주지 않아 보통 빈 dict**.
+
+    외부 담당자가 ``report_meta.stdf``(dict) 또는 위 ``_STDF_FIELDS`` 후보 이름의 속성으로
+    채워 주면 클라 코드 수정 없이 그대로 업로드된다 — 요청 스펙이 곧 이 표다.
+    """
+    rm = getattr(md, "report_meta", None)
+    bag = {}
+    for holder in (rm, md):
+        for attr in ("stdf", "stdf_meta", "header_meta"):
+            try:
+                value = getattr(holder, attr, None)
+            except Exception:                              # noqa: BLE001
+                value = None
+            if isinstance(value, dict):
+                bag = value
+                break
+        if bag:
+            break
+
+    out = {}
+    for key, candidates in _STDF_FIELDS.items():
+        value = None
+        for cand in candidates:
+            if isinstance(bag, dict) and bag.get(cand) not in (None, ""):
+                value = bag[cand]
+                break
+            try:
+                got = getattr(rm, cand, None)
+            except Exception:                              # noqa: BLE001
+                got = None
+            if got not in (None, ""):
+                value = got
+                break
+        if value in (None, ""):
+            continue
+        out[key] = _iso_time(value) if key in _STDF_TIME_KEYS else value
+    return out
+
+
+def source_file_info(md) -> dict:
+    """manifest ``sources[]`` 에 실을 입력 파일 정보. 알 수 없는 항목은 키를 만들지 않는다.
+
+    ``file_path``(대표 파일 절대경로) · ``file_size``/``file_created``/``file_modified``
+    (실제 파일 stat) · ``input_files``(병합 입력 목록, 2개 이상일 때만) · ``stdf``.
+    파일이 이미 지워졌거나 네트워크 경로가 끊겨도 업로드를 막으면 안 되므로 전부 best-effort.
+    """
+    import os
+
+    paths = source_input_paths(md)
+    info = {}
+    if paths:
+        info["file_path"] = paths[0]
+    if len(paths) > 1:
+        info["input_files"] = paths
+    if paths:
+        try:
+            st = os.stat(paths[0])
+            info["file_size"] = int(st.st_size)
+            # Windows 의 st_ctime 은 '생성 시각' 이다(POSIX 의 inode 변경 시각이 아니라).
+            info["file_created"] = _iso_time(st.st_ctime)
+            info["file_modified"] = _iso_time(st.st_mtime)
+        except Exception:                                  # noqa: BLE001
+            pass
+    stdf = source_stdf_meta(md)
+    if stdf:
+        info["stdf"] = stdf
+    return info
+
+
 def _fit_to_screen(dialog, width, height, ratio: float = 0.92) -> None:
     """화면 밖으로 나가지 않게 클램프. 최대치는 사용 가능 영역 전체, 초기 크기는 그 ratio.
 

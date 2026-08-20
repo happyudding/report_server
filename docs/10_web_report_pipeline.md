@@ -231,6 +231,15 @@ df 개수 = 업로드 parquet 개수, 입력 파일 개수가 아니다)로 가�
   > 이 저장소는 파일 1개당 `from_csv` 1회라 `len(group) == len(paths)` 가 항상 참이고 위 ①
   > 경로를 탄다. 접기(②)는 실제 honey_parse 가 들어와야 발동한다. 회귀로 오진하지 말 것.
 
+## manifest sources 의 입력 파일 정보 (2026-08-20)
+
+`manifest["sources"][i]` 는 종전 `{index, name, file_name}` 에 더해 Honey 가 수집한 입력
+파일 정보(`file_path`/`file_size`/`file_created`/`file_modified`/`input_files`/`stdf`)를
+싣는다. 세션 상세 **ℹ Input File Information** 모달이 이것만 읽는다(parquet 디코드 없음).
+전부 **선택 키**이고 모르면 키 자체를 만들지 않으므로 구 Honey 가 올린 세션도 그대로 열린다.
+STDF 헤더는 아직 파서가 주지 않아 보통 비어 있다 — 필드 표와 외부 담당자 요청 스펙은
+[21](21_input_file_info.md) §4.
+
 ## 신원 / 업로더 잠금
 `client_identity(manifest["client"])` → `uploaded_by = "<domain>\\<user>"`(또는 user),
 `client_host`. **web_report 세션은 `uploaded_by` 를 채우므로 업로더 잠금이 실효**한다
