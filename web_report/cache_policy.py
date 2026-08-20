@@ -427,7 +427,8 @@ def report_pending_key(session, session_id: str, edits_rev: int,
 # 바뀔 때만 올린다. Compare 모드 세션에만 붙는 키라 여기를 올려도 다른 모드의 report
 # 캐시는 그대로다(전역 REPORT_SCHEMA_VERSION bump 가 부르는 콜드 폭풍 회피 —
 # TEMPERATURE_SCHEMA_VERSION 과 같은 취지).
-COMPARE_SCHEMA_VERSION = 1
+# v2 (2026-08-20): new_items(After 에만 있는 신규 test item) 추가.
+COMPARE_SCHEMA_VERSION = 2
 
 
 def compare_key(session, prep_digest: str = "") -> tuple:

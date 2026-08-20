@@ -27,7 +27,7 @@ Compare 모드에서는 이 창이 공통 ``SourceNameDialog``(표 방식)를 �
 from __future__ import annotations
 
 from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QColor, QIcon, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QColorDialog,
@@ -48,6 +48,7 @@ from honey_ui.source_name_dialog import load_palette
 
 _MOVE_BTN_W = 36
 _SWATCH = 14                  # 항목 앞 색 사각형 한 변(px)
+_HEAD_BG = "#DCFCE7"          # After 최상단(= limit 기준) 강조 배경
 
 
 def dedupe_names(names) -> list:
@@ -74,7 +75,9 @@ class CompareArrangeDialog(QDialog):
     def __init__(self, parent, names, colors=None):
         super().__init__(parent)
         self.setWindowTitle("Compare — Before / After 배치 / 색")
-        self.resize(680, 460)
+        # 가로 150% — source(파일)명이 길면 QListWidget 기본 ElideRight 로 잘려
+        # 어느 파일인지 구분이 안 됐다(2026-08-20 요청). 세로는 그대로.
+        self.resize(1020, 460)
         self._original = [str(n) for n in names]
         self._colors = list(colors) if colors else load_palette()
         self._colors_changed = False
@@ -151,7 +154,7 @@ class CompareArrangeDialog(QDialog):
         tools.addWidget(btn_palette)
 
         hint = QLabel("· 항목 더블클릭 = Legend 이름 변경 / 항목 선택 후 [색 변경…] = 색 지정\n"
-                      "· After 최상단 source 가 limit(HiLIM/LoLIM) 기준이고 Log 비교의 대표입니다.\n"
+                      "· After 최상단 source 가 limit(HiLIM/LoLIM) 기준이고 Log 비교의 대표입니다 (초록 바탕).\n"
                       "· 업로드 순서는 After → Before 순이 되며 웹 리포트의 컬럼·범례 순서와 같습니다.\n"
                       "· 색은 그 업로드 순서(1,2,3…)에 붙습니다 — 항목을 옮기면 색도 그 자리에 남습니다.")
         hint.setStyleSheet("color:#64748b;")
@@ -209,9 +212,22 @@ class CompareArrangeDialog(QDialog):
             pix = QPixmap(_SWATCH, _SWATCH)
             pix.fill(QColor(color))
             it.setIcon(QIcon(pix))
-            it.setToolTip(f"{i + 1}번 (업로드 순서) — 색 {color}")
+            # 이름을 첫 줄에 둔다 — 폭보다 긴 이름은 ElideRight 로 잘리므로
+            # 툴팁이 전체 이름을 볼 수 있는 유일한 경로다.
+            it.setToolTip(f"{it.text()}\n{i + 1}번 (업로드 순서) — 색 {color}")
         for lw in (self.list_before, self.list_after):
             lw.setIconSize(QSize(_SWATCH, _SWATCH))
+        self._refresh_after_head()
+
+    def _refresh_after_head(self):
+        """After 최상단 항목만 초록 배경 — 그 source 가 limit 기준이자 Log 비교 대표다.
+
+        의미가 이름이 아니라 **위치**에 있어서 이동·정렬 뒤 매번 다시 칠해야 한다.
+        """
+        for lw in (self.list_before, self.list_after):
+            for i in range(lw.count()):
+                head = (lw is self.list_after and i == 0)
+                lw.item(i).setBackground(QBrush(QColor(_HEAD_BG)) if head else QBrush())
 
     def _pick_color(self):
         selected = [it for lw in (self.list_before, self.list_after)

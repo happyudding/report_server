@@ -378,8 +378,31 @@ fail 한 die 는 그리는 맵들에선 Pass** 로 남기고(`skip_idx`), fail s
   그룹으로 나눈다(배치·업로드 순서는 [10](10_web_report_pipeline.md) 분석 모드 표). 그룹은
   `webreport_options.compare` → `validation.webreport_compare_groups` → `build_compare_payload`
   로 흐르고, 옵션이 없으면 `after=[s0], before=[s1]` 로 폴백해 **기존 세션 화면이 바뀌지 않는다**.
-  서브탭 4개 = `Map 비교` / `Log 비교` / `산포 비교` / `동일성 검증`
+  서브탭 5개 = `Map 비교` / `Log 비교` / `산포 비교` / `Test Time 비교` / `동일성 검증`
   ([compare.js](../server/report/static/webreport/compare.js)).
+  `Test Time 비교` 는 **자리만 있는 빈 화면**이다(2026-08-20) — 입력 계약(7-meta
+  honeyform)에 시간 컬럼이 없고 STDF 는 서버가 파싱하지 않아 원천 데이터가 없다.
+  - **표의 Before/After 열 순서**(2026-08-20): Log 비교·산포 비교·Bin Yield 비교는
+    **Before 가 왼쪽**이다(시간순으로 읽힌다). 서버 payload 키·`GOODLOG_HEADER` 는
+    after 먼저 그대로이고 **프런트 표시 순서만** 바꾼 것이다. 예외는 공통성 Map —
+    거기 색이 업로드 순서 인덱스(`COMPARE_SRC_PALETTE[i]`)에 묶여 있어 순서를 바꾸면
+    Honey 배치 창·Distribution 탭과 색 의미가 어긋난다(`cmpOrderedSources` 를 쓰지 않는다).
+  - **Compare 행 코멘트 (kind=compare_note, 2026-08-20)**: Log 비교의 Comment 열과
+    동일 좌표 Bin 비교 표의 Comment 열(신설)에 더블클릭으로 직접 입력한다. 종전 Comment
+    열은 서버가 항상 `""` 를 주는 **장식 컬럼**이었다(저장소 자체가 없었다).
+    저장은 세션 편집 DB — `POST .../web_report/compare_notes`, 읽기는 `/full` extras 의
+    `DATA.compare_notes`. compare 캐시(`compare_key`)는 edits_rev 를 안 쓰므로
+    **코멘트를 적어도 compare 재계산이 일어나지 않는다**.
+    **item_key 는 고정 규약이다**(바꾸면 기존 입력 유실 — CLAUDE.md §5-12):
+    `gl:<after_item_name>` + U+001F + `<before_item_name>` (한쪽만 있는 행은 반대편이 빈 문자열) /
+    `bm:<x>,<y>`. **행 인덱스를 쓰면 안 된다** — 필터·접기로 순서가 바뀌어 남의 행에 붙는다.
+  - **Log 비교의 False 셀 강조**(2026-08-20): Compare 열이 False 면 그 값이 든
+    Before/After 셀(Item·LoLim·HiLim)에 `.gl-mismatch` 빨강을 함께 칠한다. CSS 는
+    `!important` 가 필수다 — zebra(`nth-child(even)`)·hover 규칙이 특이도에서 이긴다.
+  - **Distribution 탭 "신규항목보기"**(2026-08-20): Compare 모드에서만 뜨는 필터 버튼으로,
+    Before 에 없고 After 에만 있는 test item 만 남긴다. 판정은 서버
+    `build_compare_payload` 의 `new_items`(= After 그룹 합집합 − Before 그룹 합집합)
+    하나뿐이다 — goodlog(그룹 대표 2개)로 프런트에서 다시 세지 말 것(규칙 #13).
   - 산출물마다 **비교 대상이 다르다**: 공통성 Map·Bin Yield·Bin 불일치 좌표표는 **전 source**,
     goodlog 는 **그룹 대표 2개**(After 최상단 vs Before 최상단), 산포 비교(`dist_shift`)와
     동일성 검증은 **그룹 pool**(그룹 전체 die 를 합친 가상 테이블, `_pool_tables`).

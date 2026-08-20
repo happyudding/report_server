@@ -59,6 +59,18 @@ SERVER_BASE_URL = (
 
 CURRENT_VERSION = "3.2.0"
 
+# 내장 브라우저(QtWebEngine=Chromium) 실행 플래그. 기본은 빈 값 = 아무것도 바꾸지 않는다.
+# GPU 드라이버가 Chromium 의 부분 화면 갱신을 제대로 처리하지 못하는 PC 에서는 마우스를
+# 움직일 때마다 화면 전체가 깜빡이거나(세션 상세처럼 합성 레이어가 많은 페이지) 렌더러가
+# 죽는다. 그런 PC 에서만 `--disable-gpu` 로 소프트웨어 렌더링을 쓰게 하기 위한 통로다.
+# 우선순위는 위 SERVER_BASE_URL 과 같다: PC 환경변수(QTWEBENGINE_CHROMIUM_FLAGS, Qt 가
+# 직접 읽는 이름) > honey.env 의 HONEY_CHROMIUM_FLAGS > 없음.
+CHROMIUM_FLAGS = (
+    os.environ.get("QTWEBENGINE_CHROMIUM_FLAGS")
+    or _env_file_value("HONEY_CHROMIUM_FLAGS")
+    or ""
+)
+
 REQUEST_TIMEOUT_SEC = (10, 300)  # (connect_timeout, read_timeout)
 
 # web_report 업로드 전용 read timeout (2026-08-19, 300 → 200).

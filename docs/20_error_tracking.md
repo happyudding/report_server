@@ -186,6 +186,33 @@ teardown                   → 단계 회수        _emit_slow_event() → slow_
 **의도된 HTTPException(404 등)은 사건을 만들지 않는다.** 정상 응답까지 사건이 되면 목록이
 못 쓸 물건이 된다.
 
+### 4-1. 내장 브라우저가 특정 PC 에서만 이상하다 — GPU 우회
+
+같은 페이지가 **웹 브라우저에서는 멀쩡한데 Honey 내장 브라우저에서만**, 그리고 **특정
+PC 에서만** 이상하면 GPU 드라이버와 Chromium 합성의 궁합을 먼저 의심한다. 증상 3종은
+원인이 같다:
+
+| 증상 | 비고 |
+|---|---|
+| **마우스를 움직일 때마다 화면 전체가 깜빡임** | 세션 상세처럼 sticky 헤더·고정열 + Plotly SVG + canvas 로 합성 레이어가 많은 페이지에서 두드러진다. 커서 이동이 프레임을 만드는데 드라이버가 부분 갱신에 실패하면 매 프레임 전체가 다시 그려진다. 메인 목록은 레이어가 적어 티가 안 난다 |
+| 버튼·모달이 깜빡이거나 통째로 사라짐 | 같은 계열. `server/landing/landing.html` 의 hover 합성 주석 3곳이 그 선례다 |
+| 렌더러 비정상 종료(`honey_render_crash`) | 위 표 참조 |
+
+**조치는 하나다 — 그 PC 에서만 소프트웨어 렌더링을 쓰게 한다.** 재빌드·재배포가 필요 없다.
+
+```
+setx QTWEBENGINE_CHROMIUM_FLAGS "--disable-gpu"
+```
+
+Qt 가 이 환경변수를 직접 읽는다. 사용자 환경변수라 재부팅·클라 업데이트에도 남는다.
+빌드본에 동봉된 `honey_safe_gfx.bat` 가 이 한 줄을 대신 실행한다.
+배포본에서는 `Honey.exe` 옆 `honey.env` 에 `HONEY_CHROMIUM_FLAGS=--disable-gpu` 를 적어도
+같은 효과다(`client/transport/config.py` `CHROMIUM_FLAGS` → `honey_main.main`). 단
+**honey.env 는 자동 업데이트 때 배포본 값으로 덮이므로** 영구 조치는 위 환경변수 쪽이다.
+
+적용됐는지는 시작 로그 한 줄로 확인한다 — `[startup] QTWEBENGINE_CHROMIUM_FLAGS=...`
+(`(없음)` 이면 안 먹은 것이다).
+
 ## 5. Honey 클라이언트 (client/transport/error_report.py)
 
 - `begin_operation(name)` — 작업 단위 시작. 이후 업로드 요청 헤더와 오류 보고가 같은

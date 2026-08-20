@@ -209,7 +209,8 @@ SSO 헤더가 우선, 코드 무변경 전환). 일반 브라우저는 신원이
 - `report_audit_log` — upload/edit/delete 감사. 메타 스냅샷 + client_ip/user_agent/client_user
   (클라 신고 계정, 위조 가능) + result. best-effort. `/pe/admin-pte/` 대시보드에서 조회.
 - `report_webreport_edit` / `_rev` — web_report 편집(comment/etc/trim override/engr/
-  chart_note(차트 주석)/note_sheet(Note 탭 Luckysheet 시트 JSON ≤10MB)/preprocess(조회 전처리
+  chart_note(차트 주석)/compare_note(Compare 탭 행 코멘트)/note_sheet(Note 탭 Luckysheet
+  시트 JSON ≤10MB)/preprocess(조회 전처리
   spec — 항목 제외·outlier·셀 패치·조건 규칙)/yield_basis)의 **진실 저장소,
   세션 단위**. dedup(동일 analysis_key) 세션 간 편집 비공유. `rev` 는 단조 증가 캐시
   무효화 토큰. manifest 는 불변 스냅샷 ([web_report/edits.py](web_report/edits.py)).
@@ -438,8 +439,10 @@ DB 백업 사이클(db_backup.py)이 매회 `PRAGMA wal_checkpoint(TRUNCATE)` + 
       "개발팀 Comment" 는 `COLUMN_DISPLAY_ALIAS` 표기일 뿐 **저장 키는 `"개발 comment"`**.
     - 행 숨김/Status 키 — Yield 는 **bin 단위** `Yield|<bin>`(대표행+상세행 일괄),
       나머지는 `CPK|<item>`/`TEMP|<item>`/`ETC|<item>`.
-    - 편집 `kind` 8종 이름과 item_key — `issue_comment`/`etc_item`/`trim_override`/
-      `summary_engr`/`chart_note`/`note_sheet`/`issue_hidden`/`issue_status`
+    - Compare 탭 행 코멘트 키 — `gl:<after_item>` + U+001F + `<before_item>`(Log 비교 행) /
+      `bm:<x>,<y>`(동일 좌표 Bin 비교 행). **행 인덱스 금지** — 필터·접기로 순서가 바뀐다.
+    - 편집 `kind` 9종 이름과 item_key — `issue_comment`/`etc_item`/`trim_override`/
+      `summary_engr`/`chart_note`/`compare_note`/`note_sheet`/`issue_hidden`/`issue_status`
       ([edits.py](web_report/edits.py) 규약). Note 는 `note_sheet` + item_key `"sheet"` 전체 치환.
       legacy 세션(rev==0)의 manifest 폴백·자동 시드 경로도 함께 유지한다.
 

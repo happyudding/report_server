@@ -42,6 +42,13 @@ KIND_ISSUE_SIGNATURE = "issue_signature"
 # IssueTable comment 의 #[태그명] 토큰이 이 태그를 가리켜 Note 특정 셀로 점프한다.
 # manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
 KIND_NOTE_TAG = "note_tag"
+# 2026-08-20 추가 — Compare 탭 표의 행 코멘트(평문). 화면 2곳이 한 kind 를 공유한다.
+#   item_key "gl:<after_item>" + U+001F + "<before_item>"  : Log 비교(goodlog) 행
+#   item_key "bm:<x>,<y>"                                  : 동일 좌표 Bin 비교 행
+# **키는 고정이다**(CLAUDE.md 5-12) — 행 인덱스를 쓰면 필터/접기로 순서가 바뀌어
+# 사용자가 적은 코멘트가 다른 행에 붙는다. 값은 JSON 이 아니라 평문 문자열이다.
+# manifest 에 존재한 적 없는 신규 kind 라 legacy 시드/폴백 대상이 아니다.
+KIND_COMPARE_NOTE = "compare_note"
 # 2026-07-23 추가 — 조회 전처리 옵션(item_key='spec', value=JSON: exclude_items/outlier).
 # 원본 parquet 을 바꾸지 않고 조회 시점에만 적용되는 되돌릴 수 있는 편집 (preprocess.py).
 KIND_PREPROCESS = "preprocess"
@@ -65,8 +72,9 @@ YIELD_BASIS_AUTO = "auto"
 # (note_sheet 시트 JSON 최대 10MB)이 comment 저장·콜드 빌드마다 딸려오지 않게 한다.
 # note_tag 는 /full extras 로 별도 조회(load_note_tags)라 표 상태에 싣지 않는다.
 # preprocess 는 loader 가 별도 조회(load_preprocess)해 캐시 키에 쓰므로 표 상태 밖이다.
+# compare_note 도 표 payload 빌드와 무관하다 — /full extras 로 별도 조회한다.
 _STATE_EXCLUDED_KINDS = (KIND_CHART_NOTE, KIND_NOTE_SHEET, KIND_NOTE_TAG, KIND_PREPROCESS,
-                         KIND_YIELD_BASIS)
+                         KIND_YIELD_BASIS, KIND_COMPARE_NOTE)
 
 # issue_comment 의 item_key = row_key + SEP + col (row_key 에 '|' 가 쓰여 제어문자 사용)
 _SEP = "\x1f"
@@ -212,6 +220,22 @@ def load_note_tags(report_db, session_id: str) -> dict:
             spec["updated_by"] = row.get("updated_by") or ""
             spec["updated_at"] = row.get("updated_at") or ""
             out[row["item_key"]] = spec
+    return out
+
+
+def load_compare_notes(report_db, session_id: str) -> dict:
+    """행 키 → {text, updated_by, updated_at}. /full extras 조립용.
+
+    값이 평문이라 json.loads 를 하지 않는 것만 load_note_tags 와 다르다.
+    """
+    out = {}
+    for row in report_db.get_webreport_edits(session_id, kinds=(KIND_COMPARE_NOTE,)):
+        text = row["value"]
+        if text is None:
+            continue
+        out[row["item_key"]] = {"text": str(text),
+                                "updated_by": row.get("updated_by") or "",
+                                "updated_at": row.get("updated_at") or ""}
     return out
 
 

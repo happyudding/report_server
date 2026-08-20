@@ -721,6 +721,9 @@ def build_equivalence(pool_before, pool_after, pooled_cpk_rows, tables) -> dict:
     }
 
 
+# perf-guard: allow S01-report-schema (compare 전용 payload — 전역
+# REPORT_SCHEMA_VERSION 이 아니라 COMPARE_SCHEMA_VERSION 을 올린다. 전역 bump 는
+# 전 세션 콜드 폭풍을 부른다 — cache_policy.py COMPARE_SCHEMA_VERSION 주석 참조)
 def build_compare_payload(tables, all_items, cpk_rows, stat_items=None,
                           compare_groups=None) -> dict:
     """Compare 모드 통합 payload. metrics 가 report["compare"] 로 내려준다.
@@ -762,4 +765,9 @@ def build_compare_payload(tables, all_items, cpk_rows, stat_items=None,
         "dist_shift": build_dist_shift([pool_after, pool_before], pooled_cpk_rows),
         # 항목별 동일성 등급(Grade 1/2/3) 판정 — 그룹 pool 기준.
         "equivalence": build_equivalence(pool_before, pool_after, pooled_cpk_rows, tables),
+        # After 에만 있는 신규 test item — Distribution 탭 "신규항목보기" 필터가 쓴다.
+        # goodlog(그룹 대표 2개)가 아니라 **그룹 전체 합집합** 기준이다: 그룹에 파일이
+        # 여러 개면 대표에만 없는 항목이 신규로 잘못 잡힌다. pool 은 위에서 이미
+        # 만들어 둔 것이라 추가 비용이 없다.
+        "new_items": sorted(set(pool_after.item_columns) - set(pool_before.item_columns)),
     }

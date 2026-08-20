@@ -1033,11 +1033,12 @@ function distBindPanel() {
     if (seg) {
       if (seg.dataset.seg === "clearsel") distSelected.clear();
       // 전체 보기 — 항목 숨김 필터 3종 일괄 해제 (토글 아님, distToolbarHtml 참조).
-      else if (seg.dataset.seg === "showall") { distCpkOnly = false; distFailOnly = false; distHidePassfail = false; }
+      else if (seg.dataset.seg === "showall") { distCpkOnly = false; distFailOnly = false; distHidePassfail = false; distNewOnly = false; }
       else if (seg.dataset.seg === "cpk") distCpkOnly = !distCpkOnly;
       else if (seg.dataset.seg === "fail") distFailOnly = !distFailOnly;
       else if (seg.dataset.seg === "limit") distLimitOnly = !distLimitOnly;
       else if (seg.dataset.seg === "nopf") distHidePassfail = !distHidePassfail;
+      else if (seg.dataset.seg === "newitem") distNewOnly = !distNewOnly;
       // Bin1 계열 두 버튼은 상호배타 — 둘 다 켜지면 어느 기준인지 알 수 없다.
       else if (seg.dataset.seg === "bin1") {
         distBin1Only = !distBin1Only;

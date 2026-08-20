@@ -304,10 +304,23 @@ $honeyEnvText = @(
     "# 이 파일은 build_zip 이 server\env\server.env 에서 생성한다 — 직접 고치지 말고",
     "# server\env\server.env 를 고친 뒤 build_zip 을 다시 실행할 것.",
     "SERVER_BASE_URL=$BaseUrl",
+    "",
+    "# 내장 브라우저(Chromium) 실행 플래그. 비워 두면 그래픽카드 가속을 그대로 쓴다.",
+    "# GPU 드라이버 궁합 문제로 화면이 깜빡이는 PC 에서만 아래 줄의 # 을 지운다.",
+    "# ⚠ 이 파일은 자동 업데이트 때 덮인다 — 영구 조치는 honey_safe_gfx.bat 쪽이다.",
+    "# HONEY_CHROMIUM_FLAGS=--disable-gpu",
     ""
 ) -join [Environment]::NewLine
 Write-Utf8NoBomText $HoneyEnv $honeyEnvText
 Write-Host "    server address : $BaseUrl  (-> $HoneyEnv)" -ForegroundColor Green
+
+# 그래픽 우회 스크립트를 배포본에 동봉한다 — 현장에서 재빌드·재배포 없이 처방하기 위한 것.
+$SafeGfxSrc = Join-Path $PSScriptRoot "honey_safe_gfx.bat"
+if (Test-Path $SafeGfxSrc) {
+    Copy-Item $SafeGfxSrc (Join-Path $DistDir "honey_safe_gfx.bat") -Force
+} else {
+    Write-Host "    [warn] honey_safe_gfx.bat 없음 — 배포본에 동봉되지 않습니다" -ForegroundColor Yellow
+}
 
 if (-not (Test-Path $ReleaseDist)) {
     New-Item -ItemType Directory -Path $ReleaseDist | Out-Null

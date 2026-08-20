@@ -239,6 +239,24 @@ def test_sig_reason_render():
     print("[g] 근거 팝업 렌더 + 판정불가 구분 OK")
 
 
+def test_aic_past_expands_on_click():
+    """[과거사례] 4줄 클램프의 펼침은 **클릭 토글**이어야 한다 — hover 로 되돌리지 말 것.
+
+    hover 로 요소 높이를 바꾸면 마우스가 지나가기만 해도 sticky 헤더·좌측 고정열을 얹은
+    Issue Table 전체가 리플로우된다. Honey 내장 브라우저(QtWebEngine)에서는 이것이
+    "세션 화면에서 마우스를 움직일 때마다 화면이 심하게 깜빡인다" 는 신고로 나타난다
+    (2026-08-20, docs/20 §4-1). 같은 계열 선례가 landing.html 에만 3곳 있다.
+    """
+    view = (_ROOT / "server" / "report" / "report_view.html").read_text(encoding="utf-8")
+    assert ".aic-past:hover" not in view, \
+        ".aic-past:hover 금지 — 펼침은 .aic-open 클릭 토글로 할 것 (표 전체 리플로우)"
+    assert ".aic-past.aic-open" in view, ".aic-open 펼침 규칙이 사라졌습니다"
+    edit = (_JS / "edit_mode.js").read_text(encoding="utf-8")
+    assert 'closest(".aic-past")' in edit, \
+        "edit_mode.js 의 클릭 위임이 사라져 [과거사례] 를 펼칠 수 없습니다"
+    print("[정적] [과거사례] 펼침이 클릭 토글 OK")
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -246,6 +264,7 @@ def main():
         pass
     test_no_es_module()
     test_script_registered()
+    test_aic_past_expands_on_click()
     if edge_path() is None:
         print(f"[a~g] SKIP — headless Edge 를 찾지 못했습니다 (찾은 경로: {_EDGE_CANDIDATES})")
         print("\n부분 통과 (정적 검사만)")

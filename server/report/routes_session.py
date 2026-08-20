@@ -203,6 +203,9 @@ def session_full(session_id):
         # 앵커 태그(태그명→Note 셀 위치) — comment 의 #[태그명] 점프 대상.
         extras["note_tags"] = web_report_service.get_note_tags(
             session_id, report_db=report_db)
+        # Compare 탭 행 코멘트(Log 비교 / 동일 좌표 Bin 비교) — 값싼 kind 지정 조회.
+        extras["compare_notes"] = web_report_service.get_compare_notes(
+            session_id, report_db=report_db)
 
     if session.get("source") == "web_report":
         # web_report 세션: parquet 원본에서 재계산 (decoded tables 는 service 의 LRU 캐시 활용).

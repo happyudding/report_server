@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
     QTableWidgetItem, QToolButton, QWidget,
 )
 
-from transport.config import CURRENT_VERSION, SERVER_BASE_URL
+from transport.config import CHROMIUM_FLAGS, CURRENT_VERSION, SERVER_BASE_URL
 from transport import app_update, update_policy, updater, uploader, version_check
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
@@ -4265,6 +4265,10 @@ def main():
     updater.log_startup_state(CURRENT_VERSION)
     # QtWebEngine(내장 브라우저)을 앱 생성 후 lazy import 하려면 필수 (없어도 무해)
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts, True)
+    # honey.env 의 HONEY_CHROMIUM_FLAGS 를 Qt 가 읽는 이름으로 옮긴다. QtWebEngine 초기화
+    # 전이어야 먹으므로 QApplication 생성보다 앞이어야 한다. 기본은 빈 값 = 무변경.
+    if CHROMIUM_FLAGS:
+        os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = CHROMIUM_FLAGS
     # 렌더러 크래시로 GPU 우회를 적용한 PC 인지 로그만 보고 알 수 있게 값을 남긴다.
     print(f"[startup] QTWEBENGINE_CHROMIUM_FLAGS="
           f"{os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS') or '(없음)'}")

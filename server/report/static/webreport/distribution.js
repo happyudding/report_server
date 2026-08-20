@@ -724,6 +724,15 @@ function renderDistCell(cell) {
 }
 
 // ── 세그먼트 / 타입어헤드 필터 ─────────────────────────────────────────────────
+// ── Compare 모드 전용: After 에만 새로 생긴 test item 만 보기 ────────────────
+// 판정은 서버(compare.py build_compare_payload new_items) — **그룹 전체 합집합** 기준이라
+// Before/After 에 파일이 여러 개여도 맞다. 여기서 다시 계산하지 않는다(규칙 #13).
+let distNewOnly = false;
+function distNewItemSet() {
+  const cmp = (DATA && DATA.web_report && DATA.web_report.compare) || null;
+  return new Set((cmp && cmp.new_items) || []);
+}
+
 function distApplySegment(rows) {
   let out = rows.slice();
   if (distHidePassfail) out = out.filter(r => !r.is_passfail);
@@ -732,6 +741,7 @@ function distApplySegment(rows) {
       && !DIST.EXCLUDE.some(k => String(r.subject).toLowerCase().includes(k)));
   }
   if (distFailOnly) out = out.filter(r => r.is_fail);
+  if (distNewOnly) { const nw = distNewItemSet(); out = out.filter(r => nw.has(r.subject)); }
   return out;
 }
 // cap: 반환 상한(기본 30 — 드롭다운 표시용). 0 을 주면 전량 반환 — '전체 선택'이
@@ -1181,11 +1191,18 @@ function distToolbarHtml() {
     ? `<button class="distseg${distRtBin1Only ? " active" : ""}" data-seg="rtbin1" title="켜짐: RT source 만 양품(Bin1)·규격내로 좁히고 CT / HT 는 fail 포함 전체 die 로 표시 · 꺼짐: 전체 die">Bin1 (RT만)</button>`
     : "";
   const nopfBtn = `<button class="distseg${distHidePassfail ? " active" : ""}" data-seg="nopf" title="켜짐: unit 이 Pass/Fail(P/F·P_F) 인 항목 카드를 숨김 · 꺼짐: 표시">P/F 없애기</button>`;
-  // 전체 보기 — 항목을 숨기는 세 필터(cpk<1.33 / Fail Only / P/F 없애기)를 한 번에 해제하는
-  // 액션 버튼(토글 아님). 데이터 변형(Bin1 계열)과 축 옵션(Limit)은 건드리지 않는다.
-  const allBtn = `<button class="distseg" data-seg="showall" title="cpk < 1.33 · Fail Only · P/F 없애기 필터를 모두 해제해 전 항목 표시">전체 보기</button>`;
+  // 전체 보기 — 항목을 숨기는 필터(cpk<1.33 / Fail Only / P/F 없애기 / 신규항목보기)를
+  // 한 번에 해제하는 액션 버튼(토글 아님).
+  // 데이터 변형(Bin1 계열)과 축 옵션(Limit)은 건드리지 않는다.
+  // Compare 모드에서만, 그리고 신규 항목이 실제로 있을 때만 노출한다(Compare 계산이
+  // 아직 pending 이면 new_items 가 없어 자동으로 숨겨진다).
+  const newItems = distNewItemSet();
+  const newBtn = (webReportMode() === "Compare" && newItems.size)
+    ? `<button class="distseg${distNewOnly ? " active" : ""}" data-seg="newitem" title="Before 에 없고 After 에만 있는 신규 Test Item 만 표시 (판정 기준: 그룹 전체 합집합)">신규항목보기 (${newItems.size})</button>`
+    : "";
+  const allBtn = `<button class="distseg" data-seg="showall" title="cpk < 1.33 · Fail Only · P/F 없애기 · 신규항목보기 필터를 모두 해제해 전 항목 표시">전체 보기</button>`;
   return `<div class="dist-toolbar">
-    <div class="distseg-group">${allBtn}${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${rtBin1Btn}${nopfBtn}</div>
+    <div class="distseg-group">${allBtn}${seg(distCpkOnly, "cpk", "cpk < 1.33")}${seg(distFailOnly, "fail", "Fail Only")}${seg(distLimitOnly, "limit", "Limit 안 Data만")}${bin1Btn}${rtBin1Btn}${nopfBtn}${newBtn}</div>
     ${distTempFilterHtml()}
     <div class="dist-search-wrap" data-no-dirty>
       <input id="distSearch" class="dist-search" type="text" autocomplete="off" placeholder="항목 검색 (체크로 선택)">

@@ -55,6 +55,86 @@ function _cmpSrcLabel(src, groups) {
   const g = groups && groups[src];
   return g ? `${src} (${g === "after" ? "After" : "Before"})` : String(src);
 }
+// ── Compare 표 행 코멘트 (kind=compare_note) ────────────────────────────────
+// 저장은 세션 편집 DB — POST .../web_report/compare_notes, 읽기는 DATA.compare_notes.
+// **키는 고정 규약이다**(edits.py KIND_COMPARE_NOTE 주석이 정본, CLAUDE.md 5-12):
+//   Log 비교 행           : "gl:" + after_item_name + U+001F + before_item_name
+//   동일 좌표 Bin 비교 행 : "bm:<x>,<y>"
+// 행 인덱스를 쓰면 필터/접기로 순서가 바뀌어 남의 행에 코멘트가 붙는다.
+const CMP_NOTE_SEP = String.fromCharCode(31);
+function glNoteKey(r) {
+  return "gl:" + (r.after_item_name || "") + CMP_NOTE_SEP + (r.before_item_name || "");
+}
+function cmpNoteText(key) {
+  const e = ((DATA && DATA.compare_notes) || {})[key];
+  return (e && e.text) ? String(e.text) : "";
+}
+function cmpNoteCell(key) {
+  const v = cmpNoteText(key);
+  const tip = (MODE === "edit") ? "더블클릭하여 코멘트 입력" : "코멘트 (읽기 전용)";
+  return `<td class="cmp-note-cell${v ? " has-note" : ""}" data-note-key="${esc(key)}"` +
+    ` title="${esc(tip)}">${esc(v)}</td>`;
+}
+async function saveCompareNote(td, text, before) {
+  try {
+    const res = await fetch(`/pe/report/session/${SESSION_ID}/web_report/compare_notes`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken() },
+      body: JSON.stringify({ ops: [{ key: td.dataset.noteKey, value: text || null }] }),
+      keepalive: true,   // 입력 직후 탭을 닫아도 요청이 취소되지 않게 (다른 편집 채널과 동일)
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+    DATA.compare_notes = j.compare_notes || {};   // 서버 권위본으로 갱신
+    td.textContent = text;
+    td.classList.toggle("has-note", !!text);
+  } catch (err) {
+    td.textContent = before;                      // 실패 시 원복
+    td.classList.toggle("has-note", !!before);
+    showToast("Comment 저장 실패: " + err.message);
+  }
+}
+// 위임 1회 바인딩 — 섹션 innerHTML 이 필터/페이지 전환으로 갈려도 리스너가 살아 있어야 한다.
+// Issue Table 의 td.dblclick-edit 경로는 재사용하지 않는다(그 경로는 @멘션·linkify·
+// issue_comment 저장까지 함께 태워 Compare 표에서 오작동한다).
+function bindCompareNotes(panel) {
+  if (panel.dataset.cmpNoteBound === "1") return;
+  panel.dataset.cmpNoteBound = "1";
+  panel.addEventListener("dblclick", e => {
+    const td = e.target.closest("td.cmp-note-cell");
+    if (!td || MODE !== "edit" || td.isContentEditable) return;
+    td.dataset.before = td.textContent || "";
+    td.contentEditable = "true";
+    td.focus();
+  });
+  panel.addEventListener("keydown", e => {
+    const td = e.target.closest && e.target.closest("td.cmp-note-cell");
+    if (!td || !td.isContentEditable) return;
+    if (e.key === "Escape") { td.textContent = td.dataset.before || ""; td.blur(); }
+    else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); td.blur(); }
+  });
+  // 엑셀·서식 있는 텍스트를 그대로 붙이면 노드가 섞여 저장(textContent)과 화면이 갈린다.
+  panel.addEventListener("paste", e => {
+    const td = e.target.closest("td.cmp-note-cell");
+    if (!td || !td.isContentEditable) return;
+    const cb = e.clipboardData || window.clipboardData;
+    if (!cb) return;
+    e.preventDefault();
+    const text = (cb.getData("text/plain") || "").replace(/\s+/g, " ").trim();
+    if (text) document.execCommand("insertText", false, text);
+  });
+  panel.addEventListener("focusout", e => {
+    const td = e.target.closest ? e.target.closest("td.cmp-note-cell") : null;
+    if (!td || !td.isContentEditable) return;
+    td.contentEditable = "false";
+    const text = (td.textContent || "").trim();
+    const before = (td.dataset.before || "").trim();
+    td.textContent = text;
+    if (text === before) { td.classList.toggle("has-note", !!text); return; }
+    saveCompareNote(td, text, before);
+  });
+}
+
 function drawCompareCommonMap(cm, sources) {
   const div = document.getElementById("cmp-common-map");
   if (!div || !window.Plotly) return;
@@ -128,11 +208,13 @@ function compareBinMatrixHtml(bm) {
   const grpHead = (before.length ? `<th colspan="${before.length}">Before</th>` : "") +
     (after.length ? `<th colspan="${after.length}">After</th>` : "");
   const head = `<thead>
-      <tr><th class="num" rowspan="2">X</th><th class="num" rowspan="2">Y</th>${grpHead}</tr>
+      <tr><th class="num" rowspan="2">X</th><th class="num" rowspan="2">Y</th>${grpHead}
+          <th rowspan="2">Comment</th></tr>
       <tr>${shown.map(s => `<th class="num">${esc(s)}</th>`).join("")}</tr></thead>`;
   const body = bm.rows.map(r =>
     `<tr><td class="num">${_cmpNum(r.x)}</td><td class="num">${_cmpNum(r.y)}</td>` +
-    shown.map(s => binCell(r.bins[idxOf[s]])).join("") + `</tr>`).join("");
+    shown.map(s => binCell(r.bins[idxOf[s]])).join("") +
+    cmpNoteCell("bm:" + r.x + "," + r.y) + `</tr>`).join("");
   return summary +
     `<div class="sheet-wrap cmp-scroll cmp-binmatrix-wrap"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
 }
@@ -235,9 +317,12 @@ function cmpDistSectionHtml(dist) {
   // 소스 색 범례 — Distribution 열의 ECDF 색이 어느 source 인지 알아야 한다(Distribution 탭과 같은 색).
   const srcs = (DATA.web_report && DATA.web_report.sources) || [];
   const grp = (DATA.web_report && DATA.web_report.compare && DATA.web_report.compare.groups) || {};
+  // srcs 는 {name, file_name} **객체** 배열이다(metrics.py). 종전엔 객체를 그대로
+  // distColorFor/_cmpSrcLabel 에 넘겨 색이 전부 회색이고 이름이 [object Object] 로
+  // 찍혔다 — 범례가 없는 것과 같았다(2026-08-20 수정).
   const legendHtml = (typeof distColorFor === "function" && srcs.length)
     ? `<span class="cmp-dist-legend">${srcs.map(s =>
-        `<span class="cmp-lg"><i style="background:${distColorFor(s)}"></i>${esc(_cmpSrcLabel(s, grp))}</span>`).join("")}</span>`
+        `<span class="cmp-lg" title="${esc(s.file_name || s.name)}"><i style="background:${distColorFor(s.name)}"></i>${esc(_cmpSrcLabel(s.name, grp))}</span>`).join("")}</span>`
     : "";
   const toolbar = legacy ? "" : `<div class="compare-summary">
       <button type="button" id="cmpDistFocusBtn" class="btn-sm cmp-fbtn${cmpDistFocusOnly ? " active" : ""}"
@@ -269,8 +354,8 @@ function cmpDistSectionHtml(dist) {
     `<th rowspan="2" title="Distribution 탭 카드와 같은 ECDF(전체 die 기준) — 빨간 점선 LSL/USL, 색은 위 범례의 source 색">Distribution</th>`;
   const head = `<thead>
       <tr><th rowspan="2">Item</th><th rowspan="2">Unit</th>
-          <th colspan="3">After — ${esc(dist.after || "")}</th>
-          <th colspan="3">Before — ${esc(dist.before || "")}</th>${metricHead}</tr>
+          <th colspan="3">Before — ${esc(dist.before || "")}</th>
+          <th colspan="3">After — ${esc(dist.after || "")}</th>${metricHead}</tr>
       <tr><th class="num">Avg</th><th class="num">Stdev</th><th class="num">Cpk</th>
           <th class="num">Avg</th><th class="num">Stdev</th><th class="num">Cpk</th></tr></thead>`;
   const cpkCell = v =>
@@ -288,9 +373,10 @@ function cmpDistSectionHtml(dist) {
     const a = r.after || {}, b = r.before || {};
     const nTip = (a.n != null || b.n != null)
       ? ` title="After n=${a.n == null ? "–" : a.n} · Before n=${b.n == null ? "–" : b.n}"` : "";
+    // Before → After 순 (헤더와 같은 순서 — 2026-08-20 Compare 탭 전체 통일).
     const base = `<tr><td${nTip}>${esc(r.subject)}</td><td>${esc(r.units || "")}</td>` +
-      `<td class="num">${_cmpServer(a.average)}</td><td class="num">${_cmpStdev(a.stdev)}</td>${cpkCell(a.cpk)}` +
-      `<td class="num">${_cmpServer(b.average)}</td><td class="num">${_cmpStdev(b.stdev)}</td>${cpkCell(b.cpk)}`;
+      `<td class="num">${_cmpServer(b.average)}</td><td class="num">${_cmpStdev(b.stdev)}</td>${cpkCell(b.cpk)}` +
+      `<td class="num">${_cmpServer(a.average)}</td><td class="num">${_cmpStdev(a.stdev)}</td>${cpkCell(a.cpk)}`;
     if (legacy) return base + `</tr>`;
     const sdRed = (r.stdev_delta_pct != null && th.stdev_delta_pct != null &&
                    Math.abs(r.stdev_delta_pct) >= th.stdev_delta_pct) ? "gl-gap-red" : "";
@@ -377,6 +463,14 @@ function compareEquivHtml(eq) {
     `<div class="sheet-wrap cmp-scroll"><table class="sheet-table compare-table">${head}<tbody>${body}</tbody></table></div>`;
 }
 
+// 표시용 source 순서 — Before 그룹 먼저, 그 다음 After (2026-08-20 Compare 탭 통일).
+// 공통성 Map 은 **여기를 쓰지 않는다**: 그 색이 업로드 순서 인덱스(COMPARE_SRC_PALETTE[i])
+// 에 묶여 있어 순서를 바꾸면 Honey 배치 창·Distribution 탭과 색 의미가 어긋난다.
+function cmpOrderedSources(cmp) {
+  const b = cmp.before_sources || [], a = cmp.after_sources || [];
+  return (b.length || a.length) ? b.concat(a) : (cmp.sources || []);
+}
+
 function compareBinTableHtml(binDelta, sources, groups) {
   if (!binDelta || !binDelta.length) return '<div class="placeholder">Bin 데이터 없음</div>';
   const srcHead = sources.map(s =>
@@ -408,9 +502,13 @@ function compareBinTableHtml(binDelta, sources, groups) {
 //    이상(항목 추가/제거·limit 변경)만 상단 요약 + 항상 표시하고, 나머지 정상 행은
 //    git-diff 식으로 접어둔다(초기 접힘, '전체 펼치기' 토글). ──
 // 행 분류: added(after 만)·removed(before 만)·limitchg(양쪽 존재 & limit 불일치)·normal.
-// goodlog 15컬럼 기본 폭(px) — colgroup 순서 = GOODLOG_HEADER 순서(compare.py).
-// [after Item/Lo/Hi/Unit/Value, compare Item/Lo/Hi, Comment, Gap%, before Item/Lo/Hi/Unit/Value]
-const GOODLOG_COLW = [130, 76, 76, 44, 84, 58, 58, 58, 110, 58, 130, 76, 76, 44, 84];
+// Comment 열은 서버 payload 의 r.comment(항상 "")가 아니라 **세션 편집 DB**(compare_note)
+// 가 진실이다 — cmpNoteCell/glNoteKey 참조.
+// goodlog 15컬럼 기본 폭(px) — colgroup 순서 = **화면 표시 순서**로, 2026-08-20 부터
+// Before 가 왼쪽이다(사용자 요청 — 시간순으로 읽힌다).
+// [before Item/Lo/Hi/Unit/Value, compare Item/Lo/Hi, Comment, Gap%, after Item/Lo/Hi/Unit/Value]
+// 서버 GOODLOG_HEADER(compare.py)·payload 키는 after 먼저 그대로다 — 표시 순서만 바꾼다.
+const GOODLOG_COLW = [130, 76, 76, 44, 84, 58, 58, 58, 160, 58, 130, 76, 76, 44, 84];
 
 // Gap% 강조/필터 임계값 — 셀 빨강과 'Gap 큰 항목만' 버튼이 같은 값을 쓴다.
 const GL_GAP_LIMIT = 10;
@@ -483,23 +581,30 @@ function goodlogSectionHtml(gl) {
   const colgroup = `<colgroup>${GOODLOG_COLW.map(w => `<col style="width:${w}px">`).join("")}</colgroup>`;
   const rz = i => `<span class="col-resize-handle" data-col="${i}"></span>`;
   const head = colgroup + `<thead>
-      <tr><th colspan="5">After — ${esc(gl.after_source || "")}</th><th colspan="3">Compare</th>
+      <tr><th colspan="5">Before — ${esc(gl.before_source || "")}</th><th colspan="3">Compare</th>
           <th rowspan="2">Comment${rz(8)}</th><th class="num" rowspan="2">Gap %${rz(9)}</th>
-          <th colspan="5">Before — ${esc(gl.before_source || "")}</th></tr>
+          <th colspan="5">After — ${esc(gl.after_source || "")}</th></tr>
       <tr><th>Item${rz(0)}</th><th class="num">LoLim${rz(1)}</th><th class="num">HiLim${rz(2)}</th><th>Unit${rz(3)}</th><th class="num">Value${rz(4)}</th>
           <th>Item${rz(5)}</th><th>LoLim${rz(6)}</th><th>HiLim${rz(7)}</th>
           <th>Item${rz(10)}</th><th class="num">LoLim${rz(11)}</th><th class="num">HiLim${rz(12)}</th><th>Unit${rz(13)}</th><th class="num">Value${rz(14)}</th></tr></thead>`;
+  // Compare 열이 False 면 **그 값이 든 Before/After 셀**도 빨갛게 칠한다 — True/False 만
+  // 보고 어느 숫자가 달라졌는지 눈으로 되짚어야 했다(2026-08-20 요청).
+  const mm = v => (v === false) ? " gl-mismatch" : "";
   // 폭 고정(fixed layout)이라 긴 Item 명은 잘린다 — title 로 전체 이름을 볼 수 있게 한다.
-  const nameCell = v => `<td title="${esc(v || "")}">${esc(v || "")}</td>`;
-  const rowHtml = (r, t) =>
-    `<tr class="gl-row gl-${t}">` + nameCell(r.after_item_name) + `<td class="num">${glNum(r.after_lolimit)}</td>` +
-    `<td class="num">${glNum(r.after_hilimit)}</td><td>${esc(r.after_unit || "")}</td>` +
-    `<td class="num">${esc(r.after_value || "")}</td>` +
-    boolCell(r.compare_item_name) + boolCell(r.compare_lolimit) + boolCell(r.compare_hilimit) +
-    `<td>${esc(r.comment || "")}</td>` + gapCell(r.gap) +
-    nameCell(r.before_item_name) + `<td class="num">${glNum(r.before_lolimit)}</td>` +
-    `<td class="num">${glNum(r.before_hilimit)}</td><td>${esc(r.before_unit || "")}</td>` +
-    `<td class="num">${esc(r.before_value || "")}</td></tr>`;
+  const nameCell = (v, cls) => `<td class="${cls}" title="${esc(v || "")}">${esc(v || "")}</td>`;
+  const limCell = (v, cls) => `<td class="num${cls}">${glNum(v)}</td>`;
+  const rowHtml = (r, t) => {
+    const mName = mm(r.compare_item_name), mLo = mm(r.compare_lolimit), mHi = mm(r.compare_hilimit);
+    return `<tr class="gl-row gl-${t}">` +
+      nameCell(r.before_item_name, mName.trim()) + limCell(r.before_lolimit, mLo) +
+      limCell(r.before_hilimit, mHi) + `<td>${esc(r.before_unit || "")}</td>` +
+      `<td class="num">${esc(r.before_value || "")}</td>` +
+      boolCell(r.compare_item_name) + boolCell(r.compare_lolimit) + boolCell(r.compare_hilimit) +
+      cmpNoteCell(glNoteKey(r)) + gapCell(r.gap) +
+      nameCell(r.after_item_name, mName.trim()) + limCell(r.after_lolimit, mLo) +
+      limCell(r.after_hilimit, mHi) + `<td>${esc(r.after_unit || "")}</td>` +
+      `<td class="num">${esc(r.after_value || "")}</td></tr>`;
+  };
 
   // ── 표시 필터 툴바 (버튼 라벨=기능, active=적용 중) ──
   const nShown = rows.reduce((n, r, k) => n + (glRowPass(r, types[k]) ? 1 : 0), 0);
@@ -748,6 +853,7 @@ function renderCompare() {
           <button class="distseg active" data-cmpsub="map">Map 비교</button>
           <button class="distseg" data-cmpsub="log">Log 비교</button>
           <button class="distseg" data-cmpsub="dist">산포 비교</button>
+          <button class="distseg" data-cmpsub="ttime">Test Time 비교</button>
           <button class="distseg" data-cmpsub="equiv">동일성 검증</button>
         </div>
         ${(cmp.goodlog && (cmp.goodlog.rows || []).length)
@@ -767,7 +873,7 @@ function renderCompare() {
           </section>
           <section>
             <h3 class="compare-h">Bin Yield 비교</h3>
-            ${compareBinTableHtml(cmp.bin_delta, sources, groups)}
+            ${compareBinTableHtml(cmp.bin_delta, cmpOrderedSources(cmp), groups)}
           </section>
         </div>
       </div>
@@ -777,6 +883,12 @@ function renderCompare() {
       <div class="cmp-subpanel" data-cmppanel="dist">
         <h3 class="compare-h">산포 비교 (공통 항목 · MeanShift σ 큰 순 · 그룹 전체 die · Bin1 기준)</h3>
         <div id="cmp-dist-section"></div>
+      </div>
+      <div class="cmp-subpanel" data-cmppanel="ttime">
+        <h3 class="compare-h">Test Time 비교</h3>
+        <div class="placeholder">Test Time 데이터가 아직 없습니다.<br>
+          업로드 입력 계약(7-meta honeyform)에 시간 컬럼이 없고 STDF 는 서버가 파싱하지
+          않습니다 — 클라이언트가 Test Time 을 실어 보내기 시작하면 이 화면에 표시됩니다.</div>
       </div>
       <div class="cmp-subpanel" data-cmppanel="equiv">
         <h3 class="compare-h">동일성 검증 (Before vs After · 그룹 전체 die 기준)</h3>
@@ -806,6 +918,7 @@ function renderCompare() {
   });
   bindGoodlogExpandAll(panel);
   bindCompareSubtabs(panel);
+  bindCompareNotes(panel);
   syncCompareToolbarH(panel);
 }
 

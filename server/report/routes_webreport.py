@@ -1094,6 +1094,38 @@ def web_report_chart_notes(session_id):
     return jsonify(result)
 
 
+@report_bp.post("/session/<session_id>/web_report/compare_notes")
+def web_report_compare_notes(session_id):
+    """Compare 탭 행 코멘트 저장 — 세션 편집 DB(kind=compare_note) 갱신.
+
+    body: {"ops": [{"key": row_key, "value": "텍스트"|null}]}.
+    row_key 는 "gl:<after>"+U+001F+"<before>"(Log 비교) / "bm:<x>,<y>"(동일 좌표 Bin 비교).
+    편집은 업로더 또는 위임받은 편집자만 가능하다 (CSRF + _editor_guard)."""
+    _require_csrf()
+    session = _require_web_report_session(session_id)
+    denied = _editor_guard(session)
+    if denied:
+        return denied
+    body = request.get_json(force=True, silent=True) or {}
+    ops = body.get("ops")
+    if not isinstance(ops, list) or not ops:
+        return jsonify({"error": "ops가 비어 있습니다."}), 400
+    ip, ua = _client_meta()
+    try:
+        result = web_report_service.update_compare_notes(
+            session_id, ops, report_db=report_db, client_ip=ip, user_agent=ua)
+    except FileNotFoundError as exc:
+        return artifact_missing(session_id, str(exc))
+    except KeyError:
+        abort(404, "web_report session data not found")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:
+        _log.exception("web_report compare_notes failed for session %s", session_id)
+        abort(500, "compare_notes failed")
+    return jsonify(result)
+
+
 @report_bp.post("/session/<session_id>/web_report/note_tags")
 def web_report_note_tags(session_id):
     """앵커 태그 생성/삭제 — 세션 편집 DB(kind=note_tag) 갱신.

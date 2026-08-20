@@ -198,6 +198,14 @@ body {
 .compare-table td.gl-true { background: #c6efce !important; color: #1e6b30; text-align: center; }
 .compare-table td.gl-false { background: #ffc7ce !important; color: #9c0006; text-align: center; }
 .compare-table td.gl-gap-red { color: #b91c1c; font-weight: 600; background: #fee2e2 !important; }
+/* Compare 열이 False 인 항목의 **원인 셀**(Before/After 의 Item·LoLim·HiLim) 강조.
+   !important 는 필수 — zebra(nth-child(even))·hover 규칙이 특이도에서 이긴다. */
+.compare-table td.gl-mismatch { background: #ffd9d9 !important; color: #9c0006; font-weight: 600; }
+/* Compare 표 행 코멘트(kind=compare_note) — 더블클릭하면 contenteditable 이 켜진다. */
+.compare-table td.cmp-note-cell { cursor: text; white-space: normal; word-break: break-word; }
+.compare-table td.cmp-note-cell.has-note { background: #fffbeb !important; }
+.compare-table td.cmp-note-cell:focus { outline: 2px solid #2563eb; outline-offset: -2px;
+  background: #ffffff !important; }
 .gl-identical { margin: 8px 0; padding: 10px 12px; background: #f0fdf4;
   border: 1px solid #bbf7d0; border-radius: 6px; color: #166534; font-size: 13px; }
 /* goodlog 이상 요약 + git-diff 식 접기 */
@@ -1261,9 +1269,12 @@ html[data-theme="dark"] .cmt-blue   { color: #7fb3ef; }
 .aic-sym  { color: #1d4ed8; }   /* 현상 — 파랑 */
 .aic-past { color: #6d28d9; }   /* 과거사례 — 보라 */
 /* [과거사례] 는 선례 코멘트 인용이라 얼마든지 길어질 수 있다 — 4줄까지만 보이고(넘치면 …)
-   마우스를 올리면 그 자리에서 전체가 펼쳐진다(사용자 요청 2026-08-20). 4줄 이하면 그대로. */
-.aic-past { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
-.aic-past:hover { -webkit-line-clamp: none; }
+   클릭하면 그 자리에서 전체가 펼쳐진다(사용자 요청 2026-08-20). 4줄 이하면 그대로.
+   ⚠ hover 로 펼치지 말 것: 마우스가 지나가기만 해도 셀 높이가 바뀌어 sticky 헤더·고정열을
+   얹은 Issue Table 전체가 리플로우된다(landing.html 의 hover 합성 주석과 같은 계열 함정).
+   토글은 edit_mode.js 의 .content 클릭 위임에서 .aic-open 을 붙였다 뗀다. */
+.aic-past { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; cursor: pointer; }
+.aic-past.aic-open { -webkit-line-clamp: none; }
 .aic-act  { color: #15803d; }   /* 점검제안 — 초록 */
 .aic-badges { margin-top: 5px; padding-top: 4px; border-top: 1px dashed #e4e7ec; }
 .aic-badge { display: inline-block; margin-right: 4px; padding: 0 6px; border-radius: 9px;
@@ -2358,6 +2369,9 @@ html[data-theme="dark"] .cmp-scroll::-webkit-scrollbar-thumb:hover { background:
 html[data-theme="dark"] .compare-table td.gl-true { background: #1d4527 !important; color: #a7e3b4; }
 html[data-theme="dark"] .compare-table td.gl-false { background: #4d2023 !important; color: #f3a3a8; }
 html[data-theme="dark"] .compare-table td.gl-gap-red { color: #f08c8c; background: #46201f !important; }
+html[data-theme="dark"] .compare-table td.gl-mismatch { background: #4a1f22 !important; color: #f3a3a8; }
+html[data-theme="dark"] .compare-table td.cmp-note-cell.has-note { background: #3b3320 !important; }
+html[data-theme="dark"] .compare-table td.cmp-note-cell:focus { background: #1f2937 !important; }
 html[data-theme="dark"] .gl-identical { background: #16281c; border-color: #1d4527; color: #a7e3b4; }
 html[data-theme="dark"] .gl-ab-summary { background: #322817; border-color: #6e5326; }
 html[data-theme="dark"] .gl-ab-summary.gl-ab-none { background: #16281c; border-color: #1d4527; color: #a7e3b4; }

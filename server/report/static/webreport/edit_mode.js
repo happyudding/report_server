@@ -193,6 +193,16 @@ document.querySelector(".content").addEventListener("click", e => {
     flushPendingComments().then(ok => { if (ok && name) noteJumpToSheet(name); });
     return;
   }
+  // AI Comment 의 [과거사례] 클릭 → 4줄 클램프 펼치기/접기 (report_view.html .aic-past).
+  // hover 로 펼치면 마우스가 지나가기만 해도 셀 높이가 바뀌어 표 전체가 리플로우된다.
+  const aicPast = e.target.closest(".aic-past");
+  if (aicPast) {
+    // 셀·텍스트를 드래그해 선택하고 뗀 것도 click 으로 오므로, 선택이 남아 있으면 토글하지
+    // 않는다 — 복사하려던 사용자가 글이 접히는 것을 보게 되면 안 된다.
+    const sel = window.getSelection();
+    if (!sel || !String(sel).trim()) aicPast.classList.toggle("aic-open");
+    return;
+  }
   // "탭에서 편집 ›" 등 다른 탭으로 보내는 버튼 (Yield 탭 하단 Temp Corner 섹션).
   const gotoTab = e.target.closest("[data-goto-tab]");
   if (gotoTab) {

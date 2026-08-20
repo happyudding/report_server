@@ -2168,6 +2168,62 @@ def get_chart_notes(session_id: str, *, report_db) -> dict:
     return edits.load_chart_notes(report_db, session_id)
 
 
+# Compare 탭 행 코멘트 — Log 비교(goodlog) 행과 동일 좌표 Bin 비교 행이 한 kind 를 쓴다.
+# 키 접두로 화면을 가른다: "gl:" / "bm:" (edits.KIND_COMPARE_NOTE 주석이 규약 정본).
+_COMPARE_NOTE_KEY_RE = re.compile("^(gl|bm):.{1,300}$", re.DOTALL)
+_COMPARE_NOTE_MAX_OPS = 100
+_COMPARE_NOTE_MAX_LEN = 2000
+
+
+def update_compare_notes(session_id: str, ops: list, *, report_db,
+                         client_ip: str = "", user_agent: str = "") -> dict:
+    """Compare 표 행 코멘트 저장 — 세션 편집 DB(kind=compare_note).
+
+    ops: [{"key": row_key, "value": "텍스트" | null}] — null/빈 문자열은 삭제.
+    update_chart_notes 와 같은 규약이되 값이 평문이라 sanitize 가 trim + 길이 검사뿐이다.
+    """
+    session = report_db.get_session(session_id)
+    if not session:
+        raise KeyError(session_id)
+    analysis_key = session.get("analysis_key")
+    if not analysis_key:
+        raise FileNotFoundError(session_id)
+    if not isinstance(ops, list):
+        raise ValueError("ops must be a list")
+    if len(ops) > _COMPARE_NOTE_MAX_OPS:
+        raise ValueError(f"too many note entries ({len(ops)} > {_COMPARE_NOTE_MAX_OPS})")
+
+    changes = []
+    for entry in ops:
+        entry = entry or {}
+        key = str(entry.get("key") or "")
+        if not _COMPARE_NOTE_KEY_RE.match(key):
+            raise ValueError(f"invalid compare note key: {key[:80]!r}")
+        value = entry.get("value")
+        text = "" if value is None else str(value).strip()
+        if len(text) > _COMPARE_NOTE_MAX_LEN:
+            raise ValueError(f"comment too long ({len(text)} > {_COMPARE_NOTE_MAX_LEN} chars)")
+        changes.append((edits.KIND_COMPARE_NOTE, key, text or None))
+    rev = report_db.apply_webreport_edits(session_id, changes,
+                                          updated_by=edits.user_from_ua(user_agent) or None)
+    try:
+        report_db.log_audit(
+            "edit", session_id=session_id, analysis_key=analysis_key,
+            product_type=session.get("product_type", ""), product=session.get("product", ""),
+            lot_id=session.get("lot_id", ""), file_name=session.get("file_name", ""),
+            changed_fields=f"compare_notes({len(changes)} rows)",
+            client_ip=client_ip, user_agent=user_agent)
+    except Exception:
+        pass
+    return {"ok": True, "updated": len(changes), "rev": rev,
+            "compare_notes": edits.load_compare_notes(report_db, session_id)}
+
+
+def get_compare_notes(session_id: str, *, report_db) -> dict:
+    """/full extras 조립용 — 행 키 → {text, updated_by, updated_at}."""
+    return edits.load_compare_notes(report_db, session_id)
+
+
 def get_note_meta(session_id: str, *, report_db) -> dict:
     """/full extras 조립용 Note 존재 여부/최종 수정 메타 — 시트 본문(value)은 읽지 않는다."""
     for row in report_db.get_webreport_edit_meta(session_id, edits.KIND_NOTE_SHEET):

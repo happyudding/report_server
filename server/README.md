@@ -348,6 +348,7 @@ waitress 스레드 풀을 공유해 **정작 스레드 고갈 상황에선 같�
 | `POST` | `/issue_table/status` | 편집자 | Issue 행 Status Open/Close (kind=issue_status, Close 만 저장). 단건 `{key,value}` / 일괄 `{items:[{key,value},…]}` (전체·선택 Open/Close, DB write 1회) |
 | `POST` | `/issue_table/signature` | 편집자 | Issue 행의 **ENGR 확정 Signature** 저장 (kind=issue_signature, `{key, signatures:[id,…]}`, 빈 배열=해제). 카탈로그 id 또는 `UNKNOWN` 만·중복 불가·최대 8개. 저장 후 eval DB 로 비동기 동기화 ([docs/13 §6-3](../docs/13_eval_analyzer_integration.md)) |
 | `POST` | `/chart_notes` | 편집자 | 차트 주석(도형/텍스트/코멘트) 저장 (kind=chart_note) |
+| `POST` | `/compare_notes` | 편집자 | **Compare 탭 행 코멘트** 저장 (kind=compare_note, `{ops:[{key,value}]}`, 빈 값/null=삭제). key 는 `gl:<after>U+001F<before>`(Log 비교 행) 또는 `bm:<x>,<y>`(동일 좌표 Bin 비교 행) — **고정 규약**(키가 바뀌면 기존 입력이 유실된다, CLAUDE.md §5-12). 응답에 권위본 `compare_notes` 동봉 |
 | `GET`/`POST` | `/note` | 공개/편집자 | Note 탭 시트 JSON 지연 조회 / 저장 (kind=note_sheet, ≤10MB). 본문은 **객체 저장**(report_session_blob 포인터), 전환 기간에는 legacy 편집행에도 dual-write — 응답 형식·낙관적 잠금 `base` 는 불변 |
 | `GET` | `/note/sheet_names` | 공개 | Note 시트 **이름만** `[{index,name,order}]`. Summary 의 `$[시트명]` 자동완성·시트 버튼 줄 전용 — 본문(≤10MB)까지 내려주는 `/note` 를 이름 때문에 부르지 않게 한 경량 라우트 (서버는 updated_at 키로 memo) |
 | `POST` | `/note_image` | 편집자 | Note 이미지 업로드 (PNG/JPEG raw body, ≤2MB·세션 200장) |
